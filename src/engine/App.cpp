@@ -1,0 +1,64 @@
+#include "engine/App.hpp"
+
+#include <SDL3/SDL.h>
+#include <cstdio>
+
+namespace majo {
+
+App::~App()
+{
+    delete renderer_;
+    if (sdlRenderer_) {
+        SDL_DestroyRenderer(sdlRenderer_);
+    }
+    if (window_) {
+        SDL_DestroyWindow(window_);
+    }
+    SDL_Quit();
+}
+
+bool App::initialize(const char* title, int width, int height)
+{
+    width_ = width;
+    height_ = height;
+    if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_GAMEPAD)) {
+        std::fprintf(stderr, "SDL_Init failed: %s\n", SDL_GetError());
+        return false;
+    }
+    if (!SDL_CreateWindowAndRenderer(title, width_, height_, SDL_WINDOW_RESIZABLE, &window_, &sdlRenderer_)) {
+        std::fprintf(stderr, "SDL_CreateWindowAndRenderer failed: %s\n", SDL_GetError());
+        return false;
+    }
+    SDL_SetRenderVSync(sdlRenderer_, 1);
+    renderer_ = new Renderer(sdlRenderer_);
+    game_.initialize(width_, height_);
+    time_.reset();
+    running_ = true;
+    return true;
+}
+
+void App::run()
+{
+    while (running_) {
+        input_.beginFrame();
+        SDL_Event event;
+        while (SDL_PollEvent(&event)) {
+            input_.handleEvent(event);
+            if (event.type == SDL_EVENT_WINDOW_RESIZED) {
+                width_ = event.window.data1;
+                height_ = event.window.data2;
+                game_.resize(width_, height_);
+            }
+        }
+        input_.update(width_, height_);
+        if (input_.quitRequested()) {
+            running_ = false;
+        }
+
+        time_.tick();
+        game_.update(input_, time_);
+        game_.render(*renderer_, time_);
+    }
+}
+
+}
