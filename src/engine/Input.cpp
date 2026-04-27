@@ -6,6 +6,11 @@ void Input::beginFrame()
 {
     debugPressed_ = false;
     throwPressed_ = false;
+    inventoryPressed_ = false;
+    menuUpPressed_ = false;
+    menuDownPressed_ = false;
+    useItemPressed_ = false;
+    addRingPressed_ = false;
     for (bool& pressed : upgradePressed_) {
         pressed = false;
     }
@@ -21,6 +26,15 @@ void Input::handleEvent(const SDL_Event& event)
         case SDL_SCANCODE_ESCAPE: quitRequested_ = true; break;
         case SDL_SCANCODE_F1: debugPressed_ = true; break;
         case SDL_SCANCODE_J: throwPressed_ = true; break;
+        case SDL_SCANCODE_I:
+        case SDL_SCANCODE_TAB: inventoryPressed_ = true; break;
+        case SDL_SCANCODE_UP:
+        case SDL_SCANCODE_W: menuUpPressed_ = true; break;
+        case SDL_SCANCODE_DOWN:
+        case SDL_SCANCODE_S: menuDownPressed_ = true; break;
+        case SDL_SCANCODE_RETURN:
+        case SDL_SCANCODE_KP_ENTER: useItemPressed_ = true; break;
+        case SDL_SCANCODE_E: addRingPressed_ = true; break;
         case SDL_SCANCODE_1: upgradePressed_[0] = true; break;
         case SDL_SCANCODE_2: upgradePressed_[1] = true; break;
         case SDL_SCANCODE_3: upgradePressed_[2] = true; break;
@@ -43,7 +57,7 @@ void Input::update(int, int)
     if (lengthSquared(moveAxis_) > 1.0f) {
         moveAxis_ = normalize(moveAxis_);
     }
-    shiftOrbitHeld_ = keys[SDL_SCANCODE_SPACE];
+    shiftRingHeld_ = keys[SDL_SCANCODE_SPACE];
 
     float mx = 0.0f;
     float my = 0.0f;

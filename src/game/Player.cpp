@@ -28,8 +28,8 @@ void Player::update(const Input& input, const Camera& camera, TileMap& map, floa
         facing = normalize(velocity);
     }
 
-    const float targetShift = input.shiftOrbitHeld() ? balance.orbitShiftDistance : 0.0f;
-    orbitShift = lerp(orbitShift, targetShift, 1.0f - std::exp(-14.0f * dt));
+    const float targetShift = input.shiftRingHeld() ? balance.spellRingShiftDistance : 0.0f;
+    spellRingShift = lerp(spellRingShift, targetShift, 1.0f - std::exp(-14.0f * dt));
     throwCooldownRemaining = std::max(0.0f, throwCooldownRemaining - dt);
 }
 

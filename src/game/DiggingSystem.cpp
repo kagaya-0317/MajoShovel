@@ -2,18 +2,34 @@
 
 namespace majo {
 
-void DiggingSystem::update(TileMap& map, OrbitSystem& orbit, float totalTime)
+void DiggingSystem::update(TileMap& map, SpellRingSystem& spellRing, float totalTime)
 {
     openedTiles_.clear();
-    for (auto& item : orbit.items()) {
-        if (item.type != OrbitItemType::Shovel || item.digPower <= 0) {
+    hitTiles_.clear();
+    dugTiles_.clear();
+    for (auto& item : spellRing.items()) {
+        if (item.type != SpellRingItemType::Shovel || item.digPower <= 0) {
             continue;
         }
-        if (totalTime - item.lastTerrainHitTime < item.hitInterval) {
+        const int tileX = map.worldToTile(item.worldPosition.x);
+        const int tileY = map.worldToTile(item.worldPosition.y);
+        if (tileX == item.lastDigTileX && tileY == item.lastDigTileY) {
             continue;
         }
-        std::vector<Vec2> opened = map.damageCircle(item.worldPosition, item.hitRadius, item.digPower);
-        openedTiles_.insert(openedTiles_.end(), opened.begin(), opened.end());
+        item.lastDigTileX = tileX;
+        item.lastDigTileY = tileY;
+
+        if (!map.isTileSolid(tileX, tileY)) {
+            continue;
+        }
+
+        hitTiles_.push_back(map.tileCenter(tileX, tileY));
+        Vec2 openedTileCenter{};
+        TileType openedTileType = TileType::Dirt;
+        if (map.damageTile(tileX, tileY, item.digPower, openedTileCenter, &openedTileType)) {
+            openedTiles_.push_back(openedTileCenter);
+            dugTiles_.push_back({openedTileCenter, openedTileType});
+        }
         item.lastTerrainHitTime = totalTime;
     }
 }

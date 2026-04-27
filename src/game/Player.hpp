@@ -17,7 +17,7 @@ struct Player {
     int level = 1;
     int xp = 0;
     int xpToNext = 12;
-    float orbitShift = 0.0f;
+    float spellRingShift = 0.0f;
     float throwCooldownRemaining = 0.0f;
 
     void update(const Input& input, const Camera& camera, TileMap& map, float dt, bool paused, const RuntimeBalance& balance);

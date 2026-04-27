@@ -14,6 +14,7 @@ public:
     void updateAround(Vec2 worldCenter, float dt, const RuntimeBalance& config);
     void render(Renderer& renderer, const Camera& camera, Vec2 lightCenter, const std::vector<Vec2>& extraLights);
     std::vector<Vec2> damageCircle(Vec2 center, float radius, int damage);
+    bool damageTile(int tx, int ty, int damage, Vec2& openedTileCenter, TileType* openedTileType = nullptr);
     bool isSolidAt(Vec2 world);
     bool isTileSolid(int tx, int ty);
     bool isCircleBlocked(Vec2 center, float radius);
@@ -31,6 +32,7 @@ private:
     Tile* tileAtWorld(int tx, int ty);
     RuntimeBalance balanceSnapshot_;
     Color tileColor(const Tile& tile) const;
+    void drawTileLitByCircles(Renderer& renderer, Vec2 pos, Color color, Vec2 playerLight, const std::vector<Vec2>& extraLights) const;
 
     std::unordered_map<long long, Chunk> chunks_;
     int centerChunkX_ = 0;

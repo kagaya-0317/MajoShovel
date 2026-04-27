@@ -2,6 +2,7 @@
 
 #include "data/GameBalance.hpp"
 #include "game/Collision.hpp"
+#include <algorithm>
 #include <cmath>
 
 namespace majo {
@@ -129,6 +130,27 @@ std::vector<Vec2> TileMap::damageCircle(Vec2 center, float radius, int damage)
     return openedTiles;
 }
 
+bool TileMap::damageTile(int tx, int ty, int damage, Vec2& openedTileCenter, TileType* openedTileType)
+{
+    Tile* tile = tileAtWorld(tx, ty);
+    if (!tile || tile->type == TileType::Empty) {
+        return false;
+    }
+
+    const TileType destroyedType = tile->type;
+    tile->hp = static_cast<unsigned char>(std::max(0, static_cast<int>(tile->hp) - damage));
+    tile->flash = 8;
+    if (tile->hp == 0) {
+        tile->type = TileType::Empty;
+        openedTileCenter = tileCenter(tx, ty);
+        if (openedTileType) {
+            *openedTileType = destroyedType;
+        }
+        return true;
+    }
+    return false;
+}
+
 bool TileMap::isSolidAt(Vec2 world)
 {
     return isTileSolid(worldToTile(world.x), worldToTile(world.y));
@@ -204,6 +226,74 @@ Color TileMap::tileColor(const Tile& tile) const
     return base;
 }
 
+void TileMap::drawTileLitByCircles(Renderer& renderer, Vec2 pos, Color color, Vec2 playerLight, const std::vector<Vec2>& extraLights) const
+{
+    const float tileSize = static_cast<float>(balance::TileSize);
+    const float radius = balanceSnapshot_.lightRadius;
+    const float radiusSq = radius * radius;
+    std::vector<Vec2> lights;
+    lights.reserve(extraLights.size() + 1);
+    lights.push_back(playerLight);
+    lights.insert(lights.end(), extraLights.begin(), extraLights.end());
+
+    for (Vec2 light : lights) {
+        const Vec2 corners[] = {
+            pos,
+            pos + Vec2{tileSize, 0.0f},
+            pos + Vec2{0.0f, tileSize},
+            pos + Vec2{tileSize, tileSize},
+        };
+        bool fullyInside = true;
+        for (Vec2 corner : corners) {
+            if (distanceSquared(corner, light) > radiusSq) {
+                fullyInside = false;
+                break;
+            }
+        }
+        if (fullyInside) {
+            renderer.fillRect(pos, {tileSize, tileSize}, color);
+            return;
+        }
+    }
+
+    for (int row = 0; row < balance::TileSize; ++row) {
+        const float y = pos.y + static_cast<float>(row) + 0.5f;
+        std::vector<Vec2> spans;
+        spans.reserve(lights.size());
+        for (Vec2 light : lights) {
+            const float dy = y - light.y;
+            const float remaining = radiusSq - dy * dy;
+            if (remaining <= 0.0f) {
+                continue;
+            }
+            const float dx = std::sqrt(remaining);
+            const float x0 = std::max(pos.x, light.x - dx);
+            const float x1 = std::min(pos.x + tileSize, light.x + dx);
+            if (x1 > x0) {
+                spans.push_back({x0, x1});
+            }
+        }
+        if (spans.empty()) {
+            continue;
+        }
+        std::sort(spans.begin(), spans.end(), [](Vec2 a, Vec2 b) {
+            return a.x < b.x;
+        });
+        float start = spans[0].x;
+        float end = spans[0].y;
+        for (std::size_t i = 1; i < spans.size(); ++i) {
+            if (spans[i].x <= end) {
+                end = std::max(end, spans[i].y);
+                continue;
+            }
+            renderer.fillRect({start, pos.y + static_cast<float>(row)}, {end - start, 1.0f}, color);
+            start = spans[i].x;
+            end = spans[i].y;
+        }
+        renderer.fillRect({start, pos.y + static_cast<float>(row)}, {end - start, 1.0f}, color);
+    }
+}
+
 void TileMap::render(Renderer& renderer, const Camera&, Vec2 lightCenter, const std::vector<Vec2>& extraLights)
 {
     for (int cy = centerChunkY_ - balance::ActiveChunkRadius; cy <= centerChunkY_ + balance::ActiveChunkRadius; ++cy) {
@@ -218,7 +308,7 @@ void TileMap::render(Renderer& renderer, const Camera&, Vec2 lightCenter, const 
                     if (!isLit(center, lightCenter, extraLights)) {
                         continue;
                     }
-                    renderer.fillRect(pos, {static_cast<float>(balance::TileSize), static_cast<float>(balance::TileSize)}, tileColor(chunk.at(x, y)));
+                    drawTileLitByCircles(renderer, pos, tileColor(chunk.at(x, y)), lightCenter, extraLights);
                 }
             }
         }

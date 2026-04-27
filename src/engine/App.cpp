@@ -31,6 +31,9 @@ bool App::initialize(const char* title, int width, int height)
     }
     SDL_SetRenderVSync(sdlRenderer_, 1);
     renderer_ = new Renderer(sdlRenderer_);
+    if (!renderer_->loadIconSheet("assets/icon.png")) {
+        std::fprintf(stderr, "%s\n", renderer_->lastAssetError().c_str());
+    }
     game_.initialize(width_, height_);
     time_.reset();
     running_ = true;

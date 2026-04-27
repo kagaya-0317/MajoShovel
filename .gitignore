@@ -41,6 +41,10 @@ Win32/
 *.lastbuildstate
 *.recipe
 
+# Prebuilt runtime dependencies intentionally kept in the repo.
+!/external/SDL3-prebuilt/bin/*.dll
+!/external/SDL3-prebuilt/lib/*.lib
+
 # OS/editor noise
 .DS_Store
 Thumbs.db
@@ -48,4 +52,3 @@ desktop.ini
 *.swp
 *.tmp
 *.bak
-

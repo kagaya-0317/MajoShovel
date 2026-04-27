@@ -1,0 +1,29 @@
+{
+  "version": 6,
+  "configurePresets": [
+    {
+      "name": "windows-release",
+      "displayName": "Windows Release",
+      "generator": "Visual Studio 17 2022",
+      "architecture": "x64",
+      "binaryDir": "$env{LOCALAPPDATA}/MajoShovel/build",
+      "cacheVariables": {
+        "CMAKE_DISABLE_PRECOMPILE_HEADERS": "ON",
+        "MAJOSHOVEL_USE_PREBUILT_SDL": "ON",
+        "MAJOSHOVEL_VENDOR_SDL": "OFF"
+      }
+    }
+  ],
+  "buildPresets": [
+    {
+      "name": "windows-release",
+      "displayName": "Windows Release",
+      "configurePreset": "windows-release",
+      "configuration": "Release",
+      "targets": [
+        "MajoShovel"
+      ],
+      "jobs": 1
+    }
+  ]
+}

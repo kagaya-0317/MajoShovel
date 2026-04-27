@@ -12,6 +12,36 @@ namespace majo {
 namespace {
 
 constexpr int FlowRadiusTiles = 80;
+constexpr float SpawnAvoidancePadding = 5.0f;
+constexpr float PlayerPushShare = 0.35f;
+constexpr float EnemyPushShare = 0.65f;
+
+bool tryMoveCircle(TileMap& map, Vec2& position, float radius, Vec2 delta)
+{
+    if (lengthSquared(delta) <= 0.0001f) {
+        return false;
+    }
+
+    Vec2 next = position + delta;
+    if (!map.isCircleBlocked(next, radius)) {
+        position = next;
+        return true;
+    }
+
+    next = position + Vec2{delta.x, 0.0f};
+    if (!map.isCircleBlocked(next, radius)) {
+        position = next;
+        return true;
+    }
+
+    next = position + Vec2{0.0f, delta.y};
+    if (!map.isCircleBlocked(next, radius)) {
+        position = next;
+        return true;
+    }
+
+    return false;
+}
 
 }
 
@@ -21,26 +51,79 @@ void EnemySystem::spawnAt(Vec2 position, const RuntimeBalance& balance)
     if (!enemy) {
         return;
     }
+    enemy->id = nextEnemyId_++;
     enemy->position = position;
     enemy->radius = balance.enemyRadius;
     enemy->hp = balance.enemyHp + std::max(0, activeCount() / 12);
     enemy->xp = balance.enemyXp;
+    enemy->spawnTimer = balance.enemySpawnWarmup;
+    enemy->spawnDuration = balance.enemySpawnWarmup;
 }
 
-void EnemySystem::spawnFromDugTiles(const std::vector<Vec2>& dugTiles, Vec2 playerPosition, const RuntimeBalance& balance)
+bool EnemySystem::findSpawnPosition(TileMap& map, Vec2 desiredPosition, Vec2 playerPosition, const RuntimeBalance& balance, Vec2& outPosition) const
+{
+    const float spacing = balance.enemyRadius * 2.4f;
+    const std::array<Vec2, 13> offsets{{
+        {0.0f, 0.0f},
+        {spacing, 0.0f},
+        {-spacing, 0.0f},
+        {0.0f, spacing},
+        {0.0f, -spacing},
+        {spacing, spacing},
+        {-spacing, spacing},
+        {spacing, -spacing},
+        {-spacing, -spacing},
+        {spacing * 2.0f, 0.0f},
+        {-spacing * 2.0f, 0.0f},
+        {0.0f, spacing * 2.0f},
+        {0.0f, -spacing * 2.0f},
+    }};
+
+    const float minPlayerDistanceSq = balance.enemyMinSpawnDistance * balance.enemyMinSpawnDistance;
+    for (Vec2 offset : offsets) {
+        const Vec2 candidate = desiredPosition + offset;
+        if (distanceSquared(candidate, playerPosition) < minPlayerDistanceSq) {
+            continue;
+        }
+        if (map.isCircleBlocked(candidate, balance.enemyRadius)) {
+            continue;
+        }
+
+        bool overlapsEnemy = false;
+        for (const Enemy& enemy : enemies_.items()) {
+            if (!enemy.active) {
+                continue;
+            }
+            const float minDistance = enemy.radius + balance.enemyRadius + SpawnAvoidancePadding;
+            if (distanceSquared(candidate, enemy.position) < minDistance * minDistance) {
+                overlapsEnemy = true;
+                break;
+            }
+        }
+        if (!overlapsEnemy) {
+            outPosition = candidate;
+            return true;
+        }
+    }
+
+    return false;
+}
+
+void EnemySystem::spawnFromDugTiles(const std::vector<Vec2>& dugTiles, TileMap& map, Vec2 playerPosition, const RuntimeBalance& balance)
 {
     if (activeCount() >= balance.enemySoftCap) {
         return;
     }
     for (Vec2 tileCenter : dugTiles) {
-        if (distanceSquared(tileCenter, playerPosition) < 48.0f * 48.0f) {
-            continue;
-        }
         ++dugSpawnCounter_;
         if (dugSpawnCounter_ % balance.enemyDugSpawnEvery != 0) {
             continue;
         }
-        spawnAt(tileCenter, balance);
+        Vec2 spawnPosition{};
+        if (!findSpawnPosition(map, tileCenter, playerPosition, balance, spawnPosition)) {
+            continue;
+        }
+        spawnAt(spawnPosition, balance);
         if (activeCount() >= balance.enemySoftCap) {
             return;
         }
@@ -140,9 +223,39 @@ Vec2 EnemySystem::flowDirectionFor(TileMap& map, Vec2 enemyPosition, Vec2 player
     return normalize(bestTarget - enemyPosition);
 }
 
+Vec2 EnemySystem::separationFor(const Enemy& enemy) const
+{
+    Vec2 separation{};
+    for (std::size_t i = 0; i < enemies_.items().size(); ++i) {
+        const Enemy& other = enemies_.items()[i];
+        if (!other.active || &other == &enemy || other.spawnTimer > 0.0f) {
+            continue;
+        }
+
+        Vec2 away = enemy.position - other.position;
+        const float minDistance = enemy.radius + other.radius + SpawnAvoidancePadding;
+        const float minDistanceSq = minDistance * minDistance;
+        const float distSq = lengthSquared(away);
+        if (distSq >= minDistanceSq) {
+            continue;
+        }
+        if (distSq <= 0.0001f) {
+            away = fromAngle(static_cast<float>(i) * 2.399963f);
+        }
+        const float dist = std::max(1.0f, std::sqrt(distSq));
+        const float strength = 1.0f - clamp(dist / minDistance, 0.0f, 1.0f);
+        separation += normalize(away) * strength;
+    }
+    return separation;
+}
+
 void EnemySystem::moveWithCollision(Enemy& enemy, TileMap& map, Vec2 desiredVelocity, float dt)
 {
     const Vec2 delta = desiredVelocity * dt;
+    if (lengthSquared(delta) <= 0.0001f) {
+        return;
+    }
+
     Vec2 next = enemy.position + delta;
     if (!map.isCircleBlocked(next, enemy.radius)) {
         enemy.position = next;
@@ -152,15 +265,69 @@ void EnemySystem::moveWithCollision(Enemy& enemy, TileMap& map, Vec2 desiredVelo
     next = enemy.position + Vec2{delta.x, 0.0f};
     if (!map.isCircleBlocked(next, enemy.radius)) {
         enemy.position = next;
+        return;
     }
     next = enemy.position + Vec2{0.0f, delta.y};
     if (!map.isCircleBlocked(next, enemy.radius)) {
         enemy.position = next;
+        return;
+    }
+
+    const Vec2 direction = normalize(desiredVelocity);
+    const float step = length(delta);
+    const Vec2 side{-direction.y, direction.x};
+    const std::array<Vec2, 4> fallbackDirections{{
+        side,
+        side * -1.0f,
+        normalize(side + direction * 0.35f),
+        normalize(side * -1.0f + direction * 0.35f),
+    }};
+    for (Vec2 fallback : fallbackDirections) {
+        next = enemy.position + fallback * step;
+        if (!map.isCircleBlocked(next, enemy.radius)) {
+            enemy.position = next;
+            return;
+        }
     }
 }
 
-void EnemySystem::update(Player& player, OrbitSystem& orbit, TileMap& map, float dt, float totalTime, bool paused, const RuntimeBalance& balance)
+bool EnemySystem::resolvePlayerOverlap(Player& player, Enemy& enemy, TileMap& map, const RuntimeBalance& balance)
 {
+    Vec2 fromPlayer = enemy.position - player.position;
+    const float minimumDistance = enemy.radius + balance.playerRadius;
+    float distSq = lengthSquared(fromPlayer);
+    if (distSq >= minimumDistance * minimumDistance) {
+        return false;
+    }
+
+    if (distSq <= 0.0001f) {
+        fromPlayer = lengthSquared(enemy.velocity) > 0.0001f ? normalize(enemy.velocity) : player.facing;
+        distSq = 1.0f;
+    }
+
+    const float dist = std::sqrt(distSq);
+    const Vec2 normal = fromPlayer / dist;
+    const float overlap = minimumDistance - dist + 0.5f;
+
+    float playerShare = PlayerPushShare;
+    float enemyShare = EnemyPushShare;
+    bool movedPlayer = tryMoveCircle(map, player.position, balance.playerRadius, normal * (-overlap * playerShare));
+    bool movedEnemy = tryMoveCircle(map, enemy.position, enemy.radius, normal * (overlap * enemyShare));
+
+    if (!movedPlayer && movedEnemy) {
+        tryMoveCircle(map, enemy.position, enemy.radius, normal * (overlap * playerShare));
+    } else if (!movedEnemy && movedPlayer) {
+        tryMoveCircle(map, player.position, balance.playerRadius, normal * (-overlap * enemyShare));
+    } else if (!movedEnemy && !movedPlayer) {
+        tryMoveCircle(map, enemy.position, enemy.radius, normal * overlap);
+    }
+
+    return true;
+}
+
+void EnemySystem::update(Player& player, SpellRingSystem& spellRing, TileMap& map, float dt, float totalTime, bool paused, const RuntimeBalance& balance)
+{
+    events_.clear();
     if (paused) {
         return;
     }
@@ -175,29 +342,54 @@ void EnemySystem::update(Player& player, OrbitSystem& orbit, TileMap& map, float
         if (!enemy.active) {
             continue;
         }
+        enemy.hitFlash = std::max(0.0f, enemy.hitFlash - dt);
+        if (enemy.spawnTimer > 0.0f) {
+            enemy.spawnTimer = std::max(0.0f, enemy.spawnTimer - dt);
+            continue;
+        }
+
         const Vec2 direction = flowDirectionFor(map, enemy.position, player.position);
-        enemy.velocity = direction * balance.enemySpeed;
+        enemy.velocity = direction * balance.enemySpeed + separationFor(enemy) * balance.enemySeparationStrength;
+        const float maxSpeed = balance.enemySpeed * 1.75f;
+        if (lengthSquared(enemy.velocity) > maxSpeed * maxSpeed) {
+            enemy.velocity = normalize(enemy.velocity) * maxSpeed;
+        }
         moveWithCollision(enemy, map, enemy.velocity, dt);
         enemy.contactTimer = std::max(0.0f, enemy.contactTimer - dt);
-        enemy.hitFlash = std::max(0.0f, enemy.hitFlash - dt);
-        if (circlesOverlap(enemy.position, enemy.radius, player.position, balance.playerRadius) && enemy.contactTimer <= 0.0f) {
+        const bool touchedPlayer = resolvePlayerOverlap(player, enemy, map, balance);
+        if (touchedPlayer && enemy.contactTimer <= 0.0f) {
             player.hp = std::max(0, player.hp - 1);
             enemy.contactTimer = 0.8f;
         }
 
-        for (auto& item : orbit.items()) {
-            if (!circlesOverlap(enemy.position, enemy.radius, item.worldPosition, item.hitRadius)) {
+        for (auto& item : spellRing.items()) {
+            const bool overlappingItem = circlesOverlap(enemy.position, enemy.radius, item.worldPosition, item.hitRadius);
+            if (item.type == SpellRingItemType::Shovel && !overlappingItem) {
+                item.unlatchEnemy(enemy.id);
                 continue;
             }
-            if (totalTime - item.lastEnemyHitTime < item.hitInterval) {
+            if (!overlappingItem) {
+                continue;
+            }
+            if (item.type == SpellRingItemType::Shovel) {
+                if (item.isEnemyLatched(enemy.id)) {
+                    continue;
+                }
+                item.latchEnemy(enemy.id);
+            } else if (totalTime - item.lastEnemyHitTime < item.hitInterval) {
                 continue;
             }
             item.lastEnemyHitTime = totalTime;
-            const int speedBonus = static_cast<int>(orbit.angularSpeed() * 0.25f);
-            enemy.hp -= item.damage + (item.type == OrbitItemType::Shovel ? speedBonus : 0);
+            const int speedBonus = static_cast<int>(spellRing.angularSpeed() * 0.25f);
+            enemy.hp -= item.damage + (item.type == SpellRingItemType::Shovel ? speedBonus : 0);
             enemy.hitFlash = 0.12f;
+            events_.push_back({EnemyEventType::Hit, enemy.position});
             if (enemy.hp <= 0) {
                 pendingXp_ += enemy.xp;
+                events_.push_back({EnemyEventType::Death, enemy.position});
+                for (auto& clearItem : spellRing.items()) {
+                    clearItem.unlatchEnemy(enemy.id);
+                }
                 enemy.active = false;
                 break;
             }
@@ -212,6 +404,13 @@ void EnemySystem::render(Renderer& renderer, const TileMap& map, Vec2 playerLigh
             continue;
         }
         if (!map.isLit(enemy.position, playerLight, extraLights)) {
+            continue;
+        }
+        if (enemy.spawnTimer > 0.0f) {
+            const float ratio = enemy.spawnDuration > 0.0f ? enemy.spawnTimer / enemy.spawnDuration : 0.0f;
+            const float pulse = 1.0f + (1.0f - ratio) * 0.9f;
+            renderer.drawCircle(enemy.position, enemy.radius * pulse + 4.0f, {190, 58, 76, 210});
+            renderer.drawCircle(enemy.position, enemy.radius * 0.55f, {255, 160, 110, 190});
             continue;
         }
         const Color color = enemy.hitFlash > 0.0f ? Color{255, 220, 220, 255} : Color{178, 38, 54, 255};

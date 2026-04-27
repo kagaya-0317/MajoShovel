@@ -3,7 +3,10 @@ setlocal
 
 set "ROOT=%~dp0"
 set "EXE="
+set "LOCAL_BUILD=%LOCALAPPDATA%\MajoShovel\build-nopch"
 
+if exist "%LOCAL_BUILD%\Release\MajoShovel.exe" set "EXE=%LOCAL_BUILD%\Release\MajoShovel.exe"
+if not defined EXE if exist "%LOCAL_BUILD%\Debug\MajoShovel.exe" set "EXE=%LOCAL_BUILD%\Debug\MajoShovel.exe"
 if exist "%ROOT%build-nopch\Release\MajoShovel.exe" set "EXE=%ROOT%build-nopch\Release\MajoShovel.exe"
 if not defined EXE if exist "%ROOT%build\Release\MajoShovel.exe" set "EXE=%ROOT%build\Release\MajoShovel.exe"
 if not defined EXE if exist "%ROOT%build-nopch\Debug\MajoShovel.exe" set "EXE=%ROOT%build-nopch\Debug\MajoShovel.exe"
@@ -12,8 +15,7 @@ if not defined EXE if exist "%ROOT%build\Debug\MajoShovel.exe" set "EXE=%ROOT%bu
 if not defined EXE (
     echo MajoShovel.exe was not found.
     echo Build first, for example:
-    echo cmake -S . -B build-nopch -DCMAKE_DISABLE_PRECOMPILE_HEADERS=ON
-    echo cmake --build build-nopch --config Release --target MajoShovel
+    echo build_game.bat
     pause
     exit /b 1
 )

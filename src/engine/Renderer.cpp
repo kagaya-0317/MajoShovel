@@ -2,8 +2,63 @@
 
 #include <array>
 #include <cctype>
+#include <cstring>
+#include <string>
+#include <vector>
+
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#include <gdiplus.h>
+#pragma comment(lib, "gdiplus.lib")
+#endif
 
 namespace majo {
+
+namespace {
+
+#ifdef _WIN32
+class GdiPlusSession {
+public:
+    GdiPlusSession()
+    {
+        Gdiplus::GdiplusStartupInput input;
+        initialized_ = Gdiplus::GdiplusStartup(&token_, &input, nullptr) == Gdiplus::Ok;
+    }
+
+    ~GdiPlusSession()
+    {
+        if (initialized_) {
+            Gdiplus::GdiplusShutdown(token_);
+        }
+    }
+
+    bool initialized() const { return initialized_; }
+
+private:
+    ULONG_PTR token_ = 0;
+    bool initialized_ = false;
+};
+
+bool utf8ToWide(std::string_view text, std::wstring& out)
+{
+    const int size = MultiByteToWideChar(CP_UTF8, 0, text.data(), static_cast<int>(text.size()), nullptr, 0);
+    if (size <= 0) {
+        return false;
+    }
+    out.resize(static_cast<size_t>(size));
+    return MultiByteToWideChar(CP_UTF8, 0, text.data(), static_cast<int>(text.size()), out.data(), size) == size;
+}
+#endif
+
+}
+
+Renderer::~Renderer()
+{
+    unloadIconSheet();
+}
 
 void Renderer::setColor(Color color)
 {
@@ -157,6 +212,131 @@ void Renderer::drawText(Vec2 pos, std::string_view text, Color color, int scale)
         cursor.x += 6.0f * scale;
     }
     camera_ = old;
+}
+
+void Renderer::unloadIconSheet()
+{
+    if (iconSheet_.texture) {
+        SDL_DestroyTexture(iconSheet_.texture);
+        iconSheet_.texture = nullptr;
+    }
+    iconSheet_.columns = 0;
+    iconSheet_.rows = 0;
+}
+
+bool Renderer::loadIconSheet(std::string_view path, int iconSize, int columns, int rows)
+{
+    unloadIconSheet();
+    lastAssetError_.clear();
+
+    if (iconSize <= 0 || columns <= 0 || rows <= 0) {
+        lastAssetError_ = "Invalid icon sheet layout";
+        return false;
+    }
+
+    const std::string pathString(path);
+    const int expectedWidth = iconSize * columns;
+    const int expectedHeight = iconSize * rows;
+
+#ifdef _WIN32
+    static GdiPlusSession gdiPlus;
+    if (!gdiPlus.initialized()) {
+        lastAssetError_ = "GDI+ startup failed";
+        return false;
+    }
+
+    std::wstring widePath;
+    if (!utf8ToWide(pathString, widePath)) {
+        lastAssetError_ = "Invalid UTF-8 asset path: " + pathString;
+        return false;
+    }
+
+    Gdiplus::Bitmap bitmap(widePath.c_str());
+    if (bitmap.GetLastStatus() != Gdiplus::Ok) {
+        lastAssetError_ = "Failed to load icon sheet: " + pathString;
+        return false;
+    }
+
+    const int width = static_cast<int>(bitmap.GetWidth());
+    const int height = static_cast<int>(bitmap.GetHeight());
+    if (width != expectedWidth || height != expectedHeight) {
+        lastAssetError_ = "Icon sheet must be " + std::to_string(expectedWidth) + "x" + std::to_string(expectedHeight) +
+            " pixels, got " + std::to_string(width) + "x" + std::to_string(height);
+        return false;
+    }
+
+    Gdiplus::Rect rect(0, 0, width, height);
+    Gdiplus::BitmapData locked{};
+    if (bitmap.LockBits(&rect, Gdiplus::ImageLockModeRead, PixelFormat32bppARGB, &locked) != Gdiplus::Ok) {
+        lastAssetError_ = "Failed to lock icon sheet pixels: " + pathString;
+        return false;
+    }
+
+    std::vector<unsigned char> pixels(static_cast<size_t>(width) * static_cast<size_t>(height) * 4U);
+    const auto* source = static_cast<const unsigned char*>(locked.Scan0);
+    const int sourceStride = locked.Stride;
+    const int rowBytes = width * 4;
+    for (int y = 0; y < height; ++y) {
+        const int sourceY = sourceStride < 0 ? height - 1 - y : y;
+        const unsigned char* sourceRow = source + sourceY * std::abs(sourceStride);
+        unsigned char* targetRow = pixels.data() + static_cast<size_t>(y) * static_cast<size_t>(rowBytes);
+        std::memcpy(targetRow, sourceRow, static_cast<size_t>(rowBytes));
+    }
+    bitmap.UnlockBits(&locked);
+
+    SDL_Surface* surface = SDL_CreateSurfaceFrom(width, height, SDL_PIXELFORMAT_BGRA32, pixels.data(), rowBytes);
+    if (!surface) {
+        lastAssetError_ = std::string("SDL_CreateSurfaceFrom failed: ") + SDL_GetError();
+        return false;
+    }
+
+    SDL_Texture* texture = SDL_CreateTextureFromSurface(renderer_, surface);
+    SDL_DestroySurface(surface);
+    if (!texture) {
+        lastAssetError_ = std::string("SDL_CreateTextureFromSurface failed: ") + SDL_GetError();
+        return false;
+    }
+
+    SDL_SetTextureBlendMode(texture, SDL_BLENDMODE_BLEND);
+    SDL_SetTextureScaleMode(texture, SDL_SCALEMODE_NEAREST);
+
+    iconSheet_.texture = texture;
+    iconSheet_.iconSize = iconSize;
+    iconSheet_.columns = columns;
+    iconSheet_.rows = rows;
+    return true;
+#else
+    lastAssetError_ = "PNG icon sheet loading is only implemented on Windows";
+    return false;
+#endif
+}
+
+void Renderer::drawIcon(int index, Vec2 pos, float scale, Color tint)
+{
+    const float size = static_cast<float>(iconSheet_.iconSize) * scale;
+    drawIcon(index, pos, {size, size}, tint);
+}
+
+void Renderer::drawIcon(int index, Vec2 pos, Vec2 size, Color tint)
+{
+    if (!iconSheet_.texture || index < 0 || index >= iconSheet_.columns * iconSheet_.rows) {
+        return;
+    }
+
+    const int sourceX = (index % iconSheet_.columns) * iconSheet_.iconSize;
+    const int sourceY = (index / iconSheet_.columns) * iconSheet_.iconSize;
+    const SDL_FRect src{
+        static_cast<float>(sourceX),
+        static_cast<float>(sourceY),
+        static_cast<float>(iconSheet_.iconSize),
+        static_cast<float>(iconSheet_.iconSize)
+    };
+    const Vec2 p = transform(pos);
+    const SDL_FRect dst{p.x, p.y, size.x, size.y};
+
+    SDL_SetTextureColorMod(iconSheet_.texture, tint.r, tint.g, tint.b);
+    SDL_SetTextureAlphaMod(iconSheet_.texture, tint.a);
+    SDL_RenderTexture(renderer_, iconSheet_.texture, &src, &dst);
 }
 
 }
