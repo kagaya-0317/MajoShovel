@@ -342,6 +342,7 @@ void EnemySystem::update(Player& player, SpellRingSystem& spellRing, TileMap& ma
         if (!enemy.active) {
             continue;
         }
+        enemy.status.update(dt);
         enemy.hitFlash = std::max(0.0f, enemy.hitFlash - dt);
         if (enemy.spawnTimer > 0.0f) {
             enemy.spawnTimer = std::max(0.0f, enemy.spawnTimer - dt);
@@ -349,8 +350,9 @@ void EnemySystem::update(Player& player, SpellRingSystem& spellRing, TileMap& ma
         }
 
         const Vec2 direction = flowDirectionFor(map, enemy.position, player.position);
-        enemy.velocity = direction * balance.enemySpeed + separationFor(enemy) * balance.enemySeparationStrength;
-        const float maxSpeed = balance.enemySpeed * 1.75f;
+        const float enemySpeed = static_cast<float>(enemy.status.applyModifiers(ModifierStat::Speed, balance.enemySpeed));
+        enemy.velocity = direction * enemySpeed + separationFor(enemy) * balance.enemySeparationStrength;
+        const float maxSpeed = enemySpeed * 1.75f;
         if (lengthSquared(enemy.velocity) > maxSpeed * maxSpeed) {
             enemy.velocity = normalize(enemy.velocity) * maxSpeed;
         }
@@ -381,7 +383,8 @@ void EnemySystem::update(Player& player, SpellRingSystem& spellRing, TileMap& ma
             }
             item.lastEnemyHitTime = totalTime;
             const int speedBonus = static_cast<int>(spellRing.angularSpeed() * 0.25f);
-            enemy.hp -= item.damage + (item.type == SpellRingItemType::Shovel ? speedBonus : 0);
+            const int modifiedDamage = static_cast<int>(player.status.applyModifiers(ModifierStat::Attack, item.damage));
+            enemy.hp -= modifiedDamage + (item.type == SpellRingItemType::Shovel ? speedBonus : 0);
             enemy.hitFlash = 0.12f;
             events_.push_back({EnemyEventType::Hit, enemy.position});
             if (enemy.hp <= 0) {

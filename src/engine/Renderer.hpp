@@ -3,6 +3,7 @@
 #include "engine/Camera.hpp"
 #include "engine/Math.hpp"
 #include <SDL3/SDL.h>
+#include <memory>
 #include <string>
 #include <string_view>
 
@@ -17,7 +18,7 @@ struct Color {
 
 class Renderer {
 public:
-    explicit Renderer(SDL_Renderer* renderer) : renderer_(renderer) { SDL_SetRenderDrawBlendMode(renderer_, SDL_BLENDMODE_BLEND); }
+    explicit Renderer(SDL_Renderer* renderer);
     ~Renderer();
 
     void clear(Color color);
@@ -32,6 +33,7 @@ public:
     void drawCircle(Vec2 center, float radius, Color color);
     void drawLine(Vec2 a, Vec2 b, Color color);
     void drawText(Vec2 pos, std::string_view text, Color color, int scale = 2);
+    bool loadTextFont(std::string_view path);
     bool loadIconSheet(std::string_view path, int iconSize = 32, int columns = 8, int rows = 8);
     void unloadIconSheet();
     bool hasIconSheet() const { return iconSheet_.texture != nullptr; }
@@ -47,13 +49,17 @@ private:
         int rows = 0;
     };
 
+    struct NativeTextFont;
+
     Vec2 transform(Vec2 p) const;
     void setColor(Color color);
     void drawGlyph(char c, Vec2 pos, Color color, int scale);
+    bool drawNativeText(Vec2 pos, std::string_view text, Color color, int scale);
 
     SDL_Renderer* renderer_ = nullptr;
     const Camera* camera_ = nullptr;
     IconSheet iconSheet_;
+    std::unique_ptr<NativeTextFont> nativeTextFont_;
     std::string lastAssetError_;
 };
 

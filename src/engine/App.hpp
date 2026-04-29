@@ -17,6 +17,8 @@ public:
     void run();
 
 private:
+    void toggleFullscreen();
+
     SDL_Window* window_ = nullptr;
     SDL_Renderer* sdlRenderer_ = nullptr;
     Renderer* renderer_ = nullptr;

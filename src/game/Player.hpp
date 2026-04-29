@@ -4,6 +4,7 @@
 #include "engine/Camera.hpp"
 #include "engine/Math.hpp"
 #include "data/RuntimeBalance.hpp"
+#include "game/EntityStatus.hpp"
 
 namespace majo {
 
@@ -19,6 +20,7 @@ struct Player {
     int xpToNext = 12;
     float spellRingShift = 0.0f;
     float throwCooldownRemaining = 0.0f;
+    EntityStatus status;
 
     void update(const Input& input, const Camera& camera, TileMap& map, float dt, bool paused, const RuntimeBalance& balance);
 };

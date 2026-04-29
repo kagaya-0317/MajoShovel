@@ -1,5 +1,7 @@
 #include "game/SpellRingSystem.hpp"
 
+#include <utility>
+
 namespace majo {
 
 namespace {
@@ -26,21 +28,24 @@ void SpellRingSystem::initialize(const RuntimeBalance& balance)
     angularSpeed_ = balance.spellRingSpeed;
     baseAngle_ = 0.0f;
     center_ = {};
+    orbitModifiers_ = OrbitModifiers{};
     state_ = SpellRingState::Normal;
+    activeRingIndex_ = 0;
 }
 
-void SpellRingSystem::update(Player& player, const Input& input, float dt, float, bool paused, const RuntimeBalance& balance)
+void SpellRingSystem::update(Player& player, const Input& input, float dt, float, bool paused, bool blockPointerThrow, const RuntimeBalance& balance)
 {
     if (paused) {
         return;
     }
 
-    baseAngle_ += angularSpeed_ * dt;
+    baseAngle_ += effectiveAngularSpeed() * dt;
     const Vec2 normalCenter = player.position + player.facing * player.spellRingShift;
 
     if (state_ == SpellRingState::Normal) {
         center_ = normalCenter;
-        if (input.throwPressed() && player.throwCooldownRemaining <= 0.0f) {
+        const bool throwPressed = input.throwPressed() && !(blockPointerThrow && input.mouseLeftPressed());
+        if (throwPressed && player.throwCooldownRemaining <= 0.0f) {
             state_ = SpellRingState::Thrown;
             throwDirection_ = player.facing;
             throwStart_ = center_;
@@ -65,6 +70,10 @@ void SpellRingSystem::update(Player& player, const Input& input, float dt, float
         }
     }
 
+    if (items_.empty()) {
+        return;
+    }
+
     const float spacing = Pi * 2.0f / static_cast<float>(items_.size());
     for (std::size_t i = 0; i < items_.size(); ++i) {
         const float angle = baseAngle_ + items_[i].localAngle + spacing * static_cast<float>(i);
@@ -80,6 +89,31 @@ void SpellRingSystem::upgradeShovelPower(int amount)
             item.digPower += amount;
         }
     }
+}
+
+void SpellRingSystem::clearOrbitModifiers()
+{
+    orbitModifiers_ = OrbitModifiers{};
+}
+
+void SpellRingSystem::setOrbitModifiers(OrbitModifiers modifiers)
+{
+    orbitModifiers_ = std::move(modifiers);
+}
+
+void SpellRingSystem::applyOrbitModifierEffect(std::string_view effect, double value, std::string_view source)
+{
+    OrbitModifierAccumulator accumulator;
+    accumulator.clear();
+    accumulator.applyEffect(effect, value, source);
+    const OrbitModifiers& incoming = accumulator.modifiers();
+    orbitModifiers_.speedMultiplier *= incoming.speedMultiplier;
+    orbitModifiers_.powerMultiplier *= incoming.powerMultiplier;
+    orbitModifiers_.gravityMultiplier *= incoming.gravityMultiplier;
+    orbitModifiers_.antigravityMultiplier *= incoming.antigravityMultiplier;
+    orbitModifiers_.anchorStrength += incoming.anchorStrength;
+    orbitModifiers_.shiftMultiplier *= incoming.shiftMultiplier;
+    orbitModifiers_.sources.insert(orbitModifiers_.sources.end(), incoming.sources.begin(), incoming.sources.end());
 }
 
 void SpellRingSystem::upgradeItemDamage(int amount)
@@ -103,9 +137,23 @@ bool SpellRingSystem::addItem(SpellRingItemType type)
     return true;
 }
 
+void SpellRingSystem::switchActiveRing(int delta)
+{
+    constexpr int RingCount = 3;
+    activeRingIndex_ = (activeRingIndex_ + delta) % RingCount;
+    if (activeRingIndex_ < 0) {
+        activeRingIndex_ += RingCount;
+    }
+}
+
 float SpellRingSystem::cooldownRatio(const Player& player, const RuntimeBalance& balance) const
 {
     return clamp(player.throwCooldownRemaining / balance.spellRingThrowCooldown, 0.0f, 1.0f);
+}
+
+float SpellRingSystem::effectiveAngularSpeed() const
+{
+    return static_cast<float>(static_cast<double>(angularSpeed_) * orbitModifiers_.speedMultiplier);
 }
 
 }

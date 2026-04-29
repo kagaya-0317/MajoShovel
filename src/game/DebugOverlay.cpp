@@ -11,7 +11,7 @@ void DebugOverlay::render(Renderer& renderer, const Time& time, const EnemySyste
     }
     char buffer[512];
     std::snprintf(buffer, sizeof(buffer),
-        "FPS: %03d\nENEMIES: %03d\nCHUNKS: %02d\nRADIUS: %03d\nSPEED: %.2f\nLV: %02d XP: %02d/%02d\nTHROW CD: %02d%%",
+        "FPS: %03d\n敵: %03d\nチャンク: %02d\nリング半径: %03d\nリング速度: %.2f\nレベル: %02d 経験値: %02d/%02d\n投げ待ち: %02d%%",
         static_cast<int>(time.fps()),
         enemies.activeCount(),
         map.activeChunkCount(),

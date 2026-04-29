@@ -10,7 +10,9 @@ void Player::update(const Input& input, const Camera& camera, TileMap& map, floa
         return;
     }
 
-    velocity = input.moveAxis() * balance.playerSpeed;
+    status.update(dt);
+    const float speed = static_cast<float>(status.applyModifiers(ModifierStat::Speed, balance.playerSpeed));
+    velocity = input.moveAxis() * speed;
     const Vec2 delta = velocity * dt;
     Vec2 next = position + Vec2{delta.x, 0.0f};
     if (!map.isCircleBlocked(next, balance.playerRadius)) {
@@ -28,7 +30,7 @@ void Player::update(const Input& input, const Camera& camera, TileMap& map, floa
         facing = normalize(velocity);
     }
 
-    const float targetShift = input.shiftRingHeld() ? balance.spellRingShiftDistance : 0.0f;
+    const float targetShift = input.ringOffsetHeld() ? balance.spellRingShiftDistance : 0.0f;
     spellRingShift = lerp(spellRingShift, targetShift, 1.0f - std::exp(-14.0f * dt));
     throwCooldownRemaining = std::max(0.0f, throwCooldownRemaining - dt);
 }

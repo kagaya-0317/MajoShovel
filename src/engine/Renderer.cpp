@@ -2,6 +2,7 @@
 
 #include <array>
 #include <cctype>
+#include <cmath>
 #include <cstring>
 #include <string>
 #include <vector>
@@ -51,8 +52,22 @@ bool utf8ToWide(std::string_view text, std::wstring& out)
     out.resize(static_cast<size_t>(size));
     return MultiByteToWideChar(CP_UTF8, 0, text.data(), static_cast<int>(text.size()), out.data(), size) == size;
 }
+
 #endif
 
+}
+
+struct Renderer::NativeTextFont {
+#ifdef _WIN32
+    Gdiplus::PrivateFontCollection collection;
+    std::wstring familyName;
+#endif
+    bool loaded = false;
+};
+
+Renderer::Renderer(SDL_Renderer* renderer) : renderer_(renderer)
+{
+    SDL_SetRenderDrawBlendMode(renderer_, SDL_BLENDMODE_BLEND);
 }
 
 Renderer::~Renderer()
@@ -199,6 +214,12 @@ void Renderer::drawGlyph(char c, Vec2 pos, Color color, int scale)
 
 void Renderer::drawText(Vec2 pos, std::string_view text, Color color, int scale)
 {
+#ifdef _WIN32
+    if (drawNativeText(pos, text, color, scale)) {
+        return;
+    }
+#endif
+
     const Camera* old = camera_;
     camera_ = nullptr;
     Vec2 cursor = pos;
@@ -212,6 +233,168 @@ void Renderer::drawText(Vec2 pos, std::string_view text, Color color, int scale)
         cursor.x += 6.0f * scale;
     }
     camera_ = old;
+}
+
+bool Renderer::loadTextFont(std::string_view path)
+{
+    lastAssetError_.clear();
+#ifdef _WIN32
+    static GdiPlusSession gdiPlus;
+    if (!gdiPlus.initialized()) {
+        lastAssetError_ = "GDI+ startup failed";
+        return false;
+    }
+
+    std::wstring widePath;
+    if (!utf8ToWide(path, widePath)) {
+        lastAssetError_ = "Invalid UTF-8 font path: " + std::string(path);
+        return false;
+    }
+
+    auto font = std::make_unique<NativeTextFont>();
+    if (font->collection.AddFontFile(widePath.c_str()) != Gdiplus::Ok) {
+        lastAssetError_ = "Failed to load text font: " + std::string(path);
+        return false;
+    }
+
+    const int familyCount = font->collection.GetFamilyCount();
+    if (familyCount <= 0) {
+        lastAssetError_ = "Text font has no usable families: " + std::string(path);
+        return false;
+    }
+
+    std::vector<Gdiplus::FontFamily> families(static_cast<std::size_t>(familyCount));
+    int foundCount = 0;
+    if (font->collection.GetFamilies(familyCount, families.data(), &foundCount) != Gdiplus::Ok || foundCount <= 0) {
+        lastAssetError_ = "Failed to read text font families: " + std::string(path);
+        return false;
+    }
+
+    WCHAR familyName[LF_FACESIZE]{};
+    if (families[0].GetFamilyName(familyName) != Gdiplus::Ok) {
+        lastAssetError_ = "Failed to read text font name: " + std::string(path);
+        return false;
+    }
+
+    font->familyName = familyName;
+    font->loaded = true;
+    nativeTextFont_ = std::move(font);
+    return true;
+#else
+    lastAssetError_ = "TTF text rendering is only implemented on Windows";
+    return false;
+#endif
+}
+
+bool Renderer::drawNativeText(Vec2 pos, std::string_view text, Color color, int scale)
+{
+#ifdef _WIN32
+    if (!nativeTextFont_ || !nativeTextFont_->loaded) {
+        return false;
+    }
+
+    std::wstring wideText;
+    if (!utf8ToWide(text, wideText)) {
+        return false;
+    }
+
+    Gdiplus::FontFamily family(nativeTextFont_->familyName.c_str(), &nativeTextFont_->collection);
+    if (!family.IsAvailable()) {
+        return false;
+    }
+
+    const float fontSize = static_cast<float>(std::max(1, scale) * 8);
+    Gdiplus::Font font(&family, fontSize, Gdiplus::FontStyleRegular, Gdiplus::UnitPixel);
+    Gdiplus::Bitmap measureBitmap(1, 1, PixelFormat32bppARGB);
+    Gdiplus::Graphics measureGraphics(&measureBitmap);
+    measureGraphics.SetTextRenderingHint(Gdiplus::TextRenderingHintAntiAliasGridFit);
+
+    std::vector<std::wstring> lines;
+    std::wstring current;
+    for (wchar_t ch : wideText) {
+        if (ch == L'\n') {
+            lines.push_back(current);
+            current.clear();
+        } else {
+            current.push_back(ch);
+        }
+    }
+    lines.push_back(current);
+
+    const float lineHeight = std::ceil(font.GetHeight(&measureGraphics) + 2.0f);
+    float maxWidth = 1.0f;
+    for (const std::wstring& line : lines) {
+        if (line.empty()) {
+            continue;
+        }
+        Gdiplus::RectF bounds{};
+        measureGraphics.MeasureString(line.c_str(), static_cast<INT>(line.size()), &font, Gdiplus::PointF{0.0f, 0.0f}, &bounds);
+        maxWidth = std::max(maxWidth, std::ceil(bounds.Width + 4.0f));
+    }
+
+    const int bitmapWidth = std::max(1, static_cast<int>(maxWidth));
+    const int bitmapHeight = std::max(1, static_cast<int>(lineHeight * static_cast<float>(lines.size()) + 4.0f));
+    Gdiplus::Bitmap bitmap(bitmapWidth, bitmapHeight, PixelFormat32bppARGB);
+    Gdiplus::Graphics graphics(&bitmap);
+    graphics.Clear(Gdiplus::Color(0, 0, 0, 0));
+    graphics.SetTextRenderingHint(Gdiplus::TextRenderingHintAntiAliasGridFit);
+    graphics.SetPixelOffsetMode(Gdiplus::PixelOffsetModeHalf);
+
+    Gdiplus::SolidBrush brush(Gdiplus::Color(color.a, color.r, color.g, color.b));
+    for (std::size_t i = 0; i < lines.size(); ++i) {
+        if (lines[i].empty()) {
+            continue;
+        }
+        graphics.DrawString(
+            lines[i].c_str(),
+            static_cast<INT>(lines[i].size()),
+            &font,
+            Gdiplus::PointF{0.0f, static_cast<float>(i) * lineHeight},
+            &brush);
+    }
+
+    Gdiplus::Rect lockRect(0, 0, bitmapWidth, bitmapHeight);
+    Gdiplus::BitmapData locked{};
+    if (bitmap.LockBits(&lockRect, Gdiplus::ImageLockModeRead, PixelFormat32bppARGB, &locked) != Gdiplus::Ok) {
+        return false;
+    }
+
+    const int rowBytes = bitmapWidth * 4;
+    std::vector<unsigned char> pixels(static_cast<std::size_t>(rowBytes) * static_cast<std::size_t>(bitmapHeight));
+    const auto* source = static_cast<const unsigned char*>(locked.Scan0);
+    const int sourceStride = locked.Stride;
+    for (int y = 0; y < bitmapHeight; ++y) {
+        const int sourceY = sourceStride < 0 ? bitmapHeight - 1 - y : y;
+        const unsigned char* sourceRow = source + sourceY * std::abs(sourceStride);
+        unsigned char* targetRow = pixels.data() + static_cast<std::size_t>(y) * static_cast<std::size_t>(rowBytes);
+        std::memcpy(targetRow, sourceRow, static_cast<std::size_t>(rowBytes));
+    }
+    bitmap.UnlockBits(&locked);
+
+    SDL_Surface* surface = SDL_CreateSurfaceFrom(bitmapWidth, bitmapHeight, SDL_PIXELFORMAT_BGRA32, pixels.data(), rowBytes);
+    if (!surface) {
+        return false;
+    }
+
+    SDL_Texture* texture = SDL_CreateTextureFromSurface(renderer_, surface);
+    SDL_DestroySurface(surface);
+    if (!texture) {
+        return false;
+    }
+
+    SDL_SetTextureBlendMode(texture, SDL_BLENDMODE_BLEND);
+    SDL_SetTextureScaleMode(texture, SDL_SCALEMODE_LINEAR);
+    const SDL_FRect dst{pos.x, pos.y, static_cast<float>(bitmapWidth), static_cast<float>(bitmapHeight)};
+    SDL_RenderTexture(renderer_, texture, nullptr, &dst);
+    SDL_DestroyTexture(texture);
+    return true;
+#else
+    (void)pos;
+    (void)text;
+    (void)color;
+    (void)scale;
+    return false;
+#endif
 }
 
 void Renderer::unloadIconSheet()

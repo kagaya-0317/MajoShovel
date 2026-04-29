@@ -34,10 +34,22 @@ bool App::initialize(const char* title, int width, int height)
     if (!renderer_->loadIconSheet("assets/icon.png")) {
         std::fprintf(stderr, "%s\n", renderer_->lastAssetError().c_str());
     }
+    if (!renderer_->loadTextFont("assets/fonts/Nosutaru-dotMPlusH-10-Regular.ttf")) {
+        std::fprintf(stderr, "%s\n", renderer_->lastAssetError().c_str());
+    }
     game_.initialize(width_, height_);
     time_.reset();
     running_ = true;
     return true;
+}
+
+void App::toggleFullscreen()
+{
+    const SDL_WindowFlags flags = SDL_GetWindowFlags(window_);
+    const bool fullscreen = (flags & SDL_WINDOW_FULLSCREEN) != 0;
+    if (!SDL_SetWindowFullscreen(window_, !fullscreen)) {
+        std::fprintf(stderr, "SDL_SetWindowFullscreen failed: %s\n", SDL_GetError());
+    }
 }
 
 void App::run()
@@ -47,6 +59,9 @@ void App::run()
         SDL_Event event;
         while (SDL_PollEvent(&event)) {
             input_.handleEvent(event);
+            if (event.type == SDL_EVENT_KEY_DOWN && !event.key.repeat && event.key.scancode == SDL_SCANCODE_F4) {
+                toggleFullscreen();
+            }
             if (event.type == SDL_EVENT_WINDOW_RESIZED) {
                 width_ = event.window.data1;
                 height_ = event.window.data2;
@@ -60,6 +75,9 @@ void App::run()
 
         time_.tick();
         game_.update(input_, time_);
+        if (game_.quitRequested()) {
+            running_ = false;
+        }
         game_.render(*renderer_, time_);
     }
 }

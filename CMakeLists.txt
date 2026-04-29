@@ -37,12 +37,17 @@ add_executable(MajoShovel
     src/engine/Time.cpp
     src/engine/Input.cpp
     src/engine/FileWatcher.cpp
+    src/engine/Log.cpp
+    src/engine/Ui.cpp
     src/engine/Renderer.cpp
     src/engine/Camera.cpp
     src/data/GoogleSheetSource.cpp
     src/data/ObjectCatalog.cpp
     src/data/RuntimeBalance.cpp
     src/game/Game.cpp
+    src/game/EntityStatus.cpp
+    src/game/EffectDispatcher.cpp
+    src/game/OrbitModifiers.cpp
     src/game/Player.cpp
     src/game/SpellRingSystem.cpp
     src/game/SpellRingItem.cpp
@@ -84,7 +89,7 @@ add_custom_command(TARGET MajoShovel POST_BUILD
 )
 
 if(MSVC)
-    target_compile_options(MajoShovel PRIVATE /W4 /permissive-)
+    target_compile_options(MajoShovel PRIVATE /W4 /permissive- /utf-8)
 else()
     target_compile_options(MajoShovel PRIVATE -Wall -Wextra -Wpedantic)
 endif()

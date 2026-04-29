@@ -1,6 +1,7 @@
 #pragma once
 
 #include "engine/Math.hpp"
+#include "game/EntityStatus.hpp"
 
 namespace majo {
 
@@ -17,6 +18,7 @@ struct Enemy {
     float repathTimer = 0.0f;
     float spawnTimer = 0.0f;
     float spawnDuration = 0.0f;
+    EntityStatus status;
 };
 
 }
