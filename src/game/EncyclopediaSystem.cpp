@@ -1,0 +1,354 @@
+#include "game/EncyclopediaSystem.hpp"
+
+#include <algorithm>
+#include <cstdio>
+#include <utility>
+
+namespace majo {
+
+namespace {
+constexpr float PopupSeconds = 2.6f;
+constexpr std::string_view TreasureCategory = "\xE5\xAE\x9D";
+
+int stageValue(EncyclopediaStage stage)
+{
+    return static_cast<int>(stage);
+}
+
+std::string fallbackEffectDescription(std::string_view effectKey)
+{
+    if (effectKey == "enemy_damage") {
+        return "敵にダメージを与える";
+    }
+    if (effectKey == "terrain_dig") {
+        return "地形を掘削できる";
+    }
+    if (effectKey == "light") {
+        return "リング上で周囲を照らす";
+    }
+    if (effectKey == "projectile_guard") {
+        return "飛んできた弾を防ぐ";
+    }
+    if (effectKey == "detect") {
+        return "探知効果を発揮する";
+    }
+    if (effectKey == "heal") {
+        return "HPを回復する";
+    }
+    if (effectKey.rfind("status_", 0) == 0) {
+        return "状態異常を付与する";
+    }
+    if (effectKey.rfind("buff_", 0) == 0 || effectKey.rfind("debuff_", 0) == 0) {
+        return "能力変化を与える";
+    }
+    if (effectKey.rfind("dig", 0) == 0) {
+        return "地形へ掘削効果を発揮する";
+    }
+    return "効果が発動する";
+}
+}
+
+void EncyclopediaSystem::clear()
+{
+    itemStages_.clear();
+    treasureStages_.clear();
+    enemyStages_.clear();
+    objectEffects_.clear();
+    queuedPopups_.clear();
+    activePopup_ = Popup{};
+    updateLog_.clear();
+}
+
+void EncyclopediaSystem::update(float dt)
+{
+    if (activePopup_.remaining > 0.0f) {
+        activePopup_.remaining = std::max(0.0f, activePopup_.remaining - dt);
+    }
+    if (activePopup_.remaining <= 0.0f && !queuedPopups_.empty()) {
+        activePopup_ = queuedPopups_.front();
+        queuedPopups_.pop_front();
+        activePopup_.remaining = PopupSeconds;
+    }
+}
+
+void EncyclopediaSystem::renderPopups(Renderer& renderer, const Camera& camera) const
+{
+    if (activePopup_.remaining <= 0.0f || activePopup_.text.empty()) {
+        return;
+    }
+
+    Vec2 pos = camera.worldToScreen(activePopup_.position) + Vec2{14.0f, -34.0f};
+    const Vec2 size{520.0f, 38.0f};
+    pos.x = clamp(pos.x, 12.0f, static_cast<float>(camera.width()) - size.x - 12.0f);
+    pos.y = clamp(pos.y, 58.0f, static_cast<float>(camera.height()) - size.y - 14.0f);
+
+    renderer.setScreenSpace();
+    renderer.fillRect(pos, size, {18, 14, 28, 232});
+    renderer.drawRect(pos, size, {255, 230, 150, 255});
+    renderer.drawText(pos + Vec2{12.0f, 10.0f}, activePopup_.text, {255, 242, 190, 255}, 2);
+}
+
+void EncyclopediaSystem::noteItemDiscovered(const ObjectDefinition& object, Vec2 position)
+{
+    raiseObjectStage(object, EncyclopediaStage::Discovered, position, false);
+}
+
+void EncyclopediaSystem::noteItemObtained(const ObjectDefinition& object, Vec2 position)
+{
+    raiseObjectStage(object, EncyclopediaStage::Obtained, position, false);
+}
+
+void EncyclopediaSystem::noteItemEquipped(const ObjectDefinition& object, Vec2 position)
+{
+    raiseObjectStage(object, EncyclopediaStage::Equipped, position, false);
+}
+
+void EncyclopediaSystem::noteItemEffect(const ObjectDefinition& object, std::string_view effectKey, std::string_view description, Vec2 position)
+{
+    if (object.id.empty() || effectKey.empty()) {
+        return;
+    }
+    auto& effects = objectEffects_[object.id];
+    const bool newEffect = effects.insert(std::string(effectKey)).second;
+    raiseObjectStage(object, EncyclopediaStage::EffectTriggered, position, false);
+    if (!newEffect) {
+        return;
+    }
+
+    const std::string text = makeEffectText(object, description.empty() ? fallbackEffectDescription(effectKey) : std::string(description));
+    enqueuePopup("効果判明 " + text, position);
+}
+
+void EncyclopediaSystem::noteEffectEvent(const EffectDiscoveryEvent& event, const ObjectCatalog& catalog)
+{
+    if (event.objectId.empty() || event.effectKey.empty()) {
+        return;
+    }
+    const ObjectDefinition* object = catalog.registry.findById(event.objectId);
+    if (object != nullptr) {
+        noteItemEffect(*object, event.effectKey, event.description, event.position);
+        return;
+    }
+
+    ObjectDefinition runtimeObject;
+    runtimeObject.id = event.objectId;
+    runtimeObject.name = event.objectName.empty() ? event.objectId : event.objectName;
+    noteItemEffect(runtimeObject, event.effectKey, event.description, event.position);
+}
+
+void EncyclopediaSystem::noteEnemyDiscovered(std::string_view enemyId, std::string_view enemyName, Vec2 position)
+{
+    raiseEnemyStage(enemyId, enemyName, EncyclopediaStage::Discovered, position, false);
+}
+
+void EncyclopediaSystem::noteEnemyDefeated(std::string_view enemyId, std::string_view enemyName, Vec2 position)
+{
+    raiseEnemyStage(enemyId, enemyName, EncyclopediaStage::Complete, position, false);
+}
+
+EncyclopediaStage EncyclopediaSystem::objectStage(std::string_view objectId, bool treasure) const
+{
+    const auto& stages = treasure ? treasureStages_ : itemStages_;
+    const auto it = stages.find(std::string(objectId));
+    return it == stages.end() ? EncyclopediaStage::Undiscovered : it->second;
+}
+
+EncyclopediaStage EncyclopediaSystem::enemyStage(std::string_view enemyId) const
+{
+    const auto it = enemyStages_.find(std::string(enemyId));
+    return it == enemyStages_.end() ? EncyclopediaStage::Undiscovered : it->second;
+}
+
+bool EncyclopediaSystem::hasObjectEffect(std::string_view objectId, std::string_view effectKey) const
+{
+    const auto it = objectEffects_.find(std::string(objectId));
+    if (it == objectEffects_.end()) {
+        return false;
+    }
+    return it->second.find(std::string(effectKey)) != it->second.end();
+}
+
+std::vector<std::string> EncyclopediaSystem::objectEffects(std::string_view objectId) const
+{
+    std::vector<std::string> effects;
+    const auto it = objectEffects_.find(std::string(objectId));
+    if (it == objectEffects_.end()) {
+        return effects;
+    }
+    for (const std::string& effectKey : it->second) {
+        effects.emplace_back(fallbackEffectDescription(effectKey));
+    }
+    std::sort(effects.begin(), effects.end());
+    return effects;
+}
+
+void EncyclopediaSystem::loadEntry(EncyclopediaKind kind, std::string id, EncyclopediaStage stage)
+{
+    if (id.empty()) {
+        return;
+    }
+    switch (kind) {
+    case EncyclopediaKind::Item:
+        itemStages_[std::move(id)] = stage;
+        break;
+    case EncyclopediaKind::Treasure:
+        treasureStages_[std::move(id)] = stage;
+        break;
+    case EncyclopediaKind::Enemy:
+        enemyStages_[std::move(id)] = stage;
+        break;
+    }
+}
+
+void EncyclopediaSystem::loadEffect(std::string objectId, std::string effectKey)
+{
+    if (objectId.empty() || effectKey.empty()) {
+        return;
+    }
+    objectEffects_[std::move(objectId)].insert(std::move(effectKey));
+}
+
+std::vector<EncyclopediaEntrySave> EncyclopediaSystem::saveEntries() const
+{
+    std::vector<EncyclopediaEntrySave> entries;
+    for (const auto& [id, stage] : itemStages_) {
+        entries.push_back({EncyclopediaKind::Item, id, stage});
+    }
+    for (const auto& [id, stage] : treasureStages_) {
+        entries.push_back({EncyclopediaKind::Treasure, id, stage});
+    }
+    for (const auto& [id, stage] : enemyStages_) {
+        entries.push_back({EncyclopediaKind::Enemy, id, stage});
+    }
+    return entries;
+}
+
+std::vector<EncyclopediaEffectSave> EncyclopediaSystem::saveEffects() const
+{
+    std::vector<EncyclopediaEffectSave> effects;
+    for (const auto& [objectId, objectEffects] : objectEffects_) {
+        for (const std::string& effectKey : objectEffects) {
+            effects.push_back({objectId, effectKey});
+        }
+    }
+    return effects;
+}
+
+bool EncyclopediaSystem::isTreasure(const ObjectDefinition& object)
+{
+    return object.category == TreasureCategory;
+}
+
+std::string EncyclopediaSystem::makeEffectText(const ObjectDefinition& object, std::string_view description)
+{
+    const std::string name = object.name.empty() ? object.id : object.name;
+    return name + ": " + std::string(description);
+}
+
+bool EncyclopediaSystem::raiseObjectStage(const ObjectDefinition& object, EncyclopediaStage stage, Vec2 position, bool popup)
+{
+    if (object.id.empty()) {
+        return false;
+    }
+    auto& stages = isTreasure(object) ? treasureStages_ : itemStages_;
+    EncyclopediaStage& current = stages[object.id];
+    if (stageValue(current) >= stageValue(stage)) {
+        return false;
+    }
+    current = stage;
+    const std::string name = object.name.empty() ? object.id : object.name;
+    const std::string log = std::string("図鑑更新 ") + name + " " + encyclopediaStageName(stage);
+    updateLog_.push_back(log);
+    if (popup) {
+        enqueuePopup(log, position);
+    }
+    return true;
+}
+
+bool EncyclopediaSystem::raiseEnemyStage(std::string_view enemyId, std::string_view enemyName, EncyclopediaStage stage, Vec2 position, bool popup)
+{
+    if (enemyId.empty()) {
+        return false;
+    }
+    EncyclopediaStage& current = enemyStages_[std::string(enemyId)];
+    if (stageValue(current) >= stageValue(stage)) {
+        return false;
+    }
+    current = stage;
+    const std::string name = enemyName.empty() ? std::string(enemyId) : std::string(enemyName);
+    const std::string log = std::string("敵図鑑更新 ") + name + " " + encyclopediaStageName(stage);
+    updateLog_.push_back(log);
+    if (popup) {
+        enqueuePopup(log, position);
+    }
+    return true;
+}
+
+void EncyclopediaSystem::enqueuePopup(std::string text, Vec2 position)
+{
+    if (text.empty()) {
+        return;
+    }
+    updateLog_.push_back(text);
+    queuedPopups_.push_back(Popup{
+        .text = std::move(text),
+        .position = position,
+        .remaining = PopupSeconds,
+    });
+}
+
+const char* encyclopediaStageName(EncyclopediaStage stage)
+{
+    switch (stage) {
+    case EncyclopediaStage::Undiscovered:
+        return "未発見";
+    case EncyclopediaStage::Discovered:
+        return "発見済み";
+    case EncyclopediaStage::Obtained:
+        return "入手済み";
+    case EncyclopediaStage::Equipped:
+        return "リング装備済み";
+    case EncyclopediaStage::EffectTriggered:
+        return "効果発動済み";
+    case EncyclopediaStage::Complete:
+        return "完全確認済み";
+    }
+    return "未発見";
+}
+
+std::string_view encyclopediaKindSaveName(EncyclopediaKind kind)
+{
+    switch (kind) {
+    case EncyclopediaKind::Item:
+        return "item";
+    case EncyclopediaKind::Treasure:
+        return "treasure";
+    case EncyclopediaKind::Enemy:
+        return "enemy";
+    }
+    return "item";
+}
+
+bool encyclopediaKindFromSaveName(std::string_view name, EncyclopediaKind& outKind)
+{
+    if (name == "item") {
+        outKind = EncyclopediaKind::Item;
+        return true;
+    }
+    if (name == "treasure") {
+        outKind = EncyclopediaKind::Treasure;
+        return true;
+    }
+    if (name == "enemy") {
+        outKind = EncyclopediaKind::Enemy;
+        return true;
+    }
+    return false;
+}
+
+EncyclopediaStage encyclopediaStageFromInt(int value)
+{
+    return static_cast<EncyclopediaStage>(std::clamp(value, 0, 5));
+}
+
+}

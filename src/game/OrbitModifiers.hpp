@@ -21,6 +21,7 @@ struct OrbitModifiers {
     double antigravityMultiplier = 1.0;
     double anchorStrength = 0.0;
     double shiftMultiplier = 1.0;
+    double speedDamageMultiplier = 1.0;
     std::vector<OrbitModifierSource> sources;
 };
 

@@ -36,6 +36,8 @@ constexpr KeyBinding KeyBindings[] = {
     {SDL_SCANCODE_G, InputAction::GrabOrPlaceItem},
     {SDL_SCANCODE_Z, InputAction::PreviousActiveRing},
     {SDL_SCANCODE_X, InputAction::NextActiveRing},
+    {SDL_SCANCODE_C, InputAction::CaptureNet},
+    {SDL_SCANCODE_P, InputAction::ToggleProtection},
     {SDL_SCANCODE_ESCAPE, InputAction::Pause},
     {SDL_SCANCODE_I, InputAction::OpenInventory},
     {SDL_SCANCODE_F1, InputAction::ToggleDebug},

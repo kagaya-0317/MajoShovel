@@ -4,15 +4,30 @@
 #include "engine/Renderer.hpp"
 #include "data/RuntimeBalance.hpp"
 #include "game/Chunk.hpp"
+#include "game/DungeonLayout.hpp"
+#include <cstddef>
 #include <unordered_map>
 #include <vector>
 
 namespace majo {
 
+struct LightSource {
+    Vec2 position{};
+    float radius = 0.0f;
+};
+
+struct TerrainDebugInfo {
+    TileType type = TileType::Empty;
+    int hp = 0;
+    int effectiveHp = 0;
+    float localHardnessMultiplier = 1.0f;
+    float distanceFromMainPath = 0.0f;
+};
+
 class TileMap {
 public:
-    void updateAround(Vec2 worldCenter, float dt, const RuntimeBalance& config);
-    void render(Renderer& renderer, const Camera& camera, Vec2 lightCenter, const std::vector<Vec2>& extraLights);
+    void updateAround(Vec2 worldCenter, float dt, const RuntimeBalance& config, const DungeonLayout& dungeonLayout);
+    void render(Renderer& renderer, const Camera& camera, Vec2 lightCenter, const std::vector<LightSource>& extraLights);
     std::vector<Vec2> damageCircle(Vec2 center, float radius, int damage);
     bool damageTile(int tx, int ty, int damage, Vec2& openedTileCenter, TileType* openedTileType = nullptr);
     bool isSolidAt(Vec2 world);
@@ -20,8 +35,10 @@ public:
     bool isCircleBlocked(Vec2 center, float radius);
     Vec2 tileCenter(int tx, int ty) const;
     int worldToTile(float value) const;
-    bool isLit(Vec2 world, Vec2 playerLight, const std::vector<Vec2>& extraLights) const;
+    bool isLit(Vec2 world, Vec2 playerLight, const std::vector<LightSource>& extraLights) const;
+    TerrainDebugInfo terrainDebugAtWorld(Vec2 world) const;
     int activeChunkCount() const { return activeChunkCount_; }
+    std::size_t generatedChunkCount() const { return chunks_.size(); }
 
 private:
     Chunk& getOrCreateChunk(int cx, int cy, const RuntimeBalance& config);
@@ -30,9 +47,12 @@ private:
     static int floorDiv(int a, int b);
     static int floorMod(int a, int b);
     Tile* tileAtWorld(int tx, int ty);
+    const Tile* tileAtWorldIfGenerated(int tx, int ty) const;
     RuntimeBalance balanceSnapshot_;
+    DungeonLayout dungeonLayoutSnapshot_;
+    TerrainDebugInfo terrainInfoForTile(int tx, int ty, const Tile* tile) const;
     Color tileColor(const Tile& tile) const;
-    void drawTileLitByCircles(Renderer& renderer, Vec2 pos, Color color, Vec2 playerLight, const std::vector<Vec2>& extraLights) const;
+    void drawTileLitByCircles(Renderer& renderer, Vec2 pos, Color color, Vec2 playerLight, const std::vector<LightSource>& extraLights) const;
 
     std::unordered_map<long long, Chunk> chunks_;
     int centerChunkX_ = 0;

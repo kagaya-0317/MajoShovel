@@ -84,6 +84,7 @@ bool applyRuntimeBalanceValues(const std::unordered_map<std::string, std::string
 
     if (!setFloat("player_speed", loaded.playerSpeed)) return false;
     if (!setFloat("player_radius", loaded.playerRadius)) return false;
+    if (!setFloat("player_light_radius", loaded.playerLightRadius)) return false;
     if (!setFloat("light_radius", loaded.lightRadius)) return false;
     if (!setFloatAlias("spell_ring_radius", "orbit_radius", loaded.spellRingRadius)) return false;
     if (!setFloatAlias("spell_ring_speed", "orbit_speed", loaded.spellRingSpeed)) return false;
@@ -110,6 +111,7 @@ bool applyRuntimeBalanceValues(const std::unordered_map<std::string, std::string
 
     loaded.playerSpeed = std::max(1.0f, loaded.playerSpeed);
     loaded.playerRadius = std::max(1.0f, loaded.playerRadius);
+    loaded.playerLightRadius = std::max(0.0f, loaded.playerLightRadius);
     loaded.lightRadius = std::max(16.0f, loaded.lightRadius);
     loaded.spellRingRadius = std::max(1.0f, loaded.spellRingRadius);
     loaded.spellRingThrowCooldown = std::max(0.1f, loaded.spellRingThrowCooldown);

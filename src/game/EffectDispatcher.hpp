@@ -2,6 +2,7 @@
 
 #include "data/ObjectCatalog.hpp"
 #include "engine/Math.hpp"
+#include "game/EncyclopediaSystem.hpp"
 
 #include <functional>
 #include <string>
@@ -13,8 +14,11 @@ namespace majo {
 
 struct Enemy;
 struct Player;
+struct DugTile;
 struct SpellRingItem;
+class EffectSystem;
 class SpellRingSystem;
+class TileMap;
 
 enum class EffectTriggerType {
     Unknown,
@@ -24,15 +28,40 @@ enum class EffectTriggerType {
     Debug,
 };
 
+enum class ProjectileKind {
+    Physical,
+    Magic,
+    Water,
+};
+
+struct ProjectileContext {
+    ProjectileKind kind = ProjectileKind::Physical;
+    bool large = false;
+    bool guarded = false;
+    bool largeGuarded = false;
+    bool reflected = false;
+    Vec2 position{};
+    Vec2 velocity{};
+    std::string reflectedBy;
+};
+
 struct EffectContext {
     const ObjectDefinition* sourceObject = nullptr;
     Player* owner = nullptr;
     Enemy* targetEntity = nullptr;
     Enemy* hitTarget = nullptr;
+    ProjectileContext* projectile = nullptr;
     SpellRingSystem* orbit = nullptr;
     SpellRingItem* orbitItem = nullptr;
+    TileMap* tileMap = nullptr;
+    EffectSystem* effects = nullptr;
+    std::vector<Vec2>* terrainHitTiles = nullptr;
+    std::vector<Vec2>* terrainOpenedTiles = nullptr;
+    std::vector<DugTile>* terrainDugTiles = nullptr;
+    std::vector<EffectDiscoveryEvent>* discoveryEvents = nullptr;
     Vec2 position{};
     EffectTriggerType triggerType = EffectTriggerType::Unknown;
+    bool logUnimplementedEffects = true;
 };
 
 struct EffectInvocation {

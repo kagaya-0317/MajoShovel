@@ -26,6 +26,8 @@ void OrbitModifierAccumulator::applyEffect(std::string_view effect, double value
         modifiers_.anchorStrength += value;
     } else if (effect == "orbit_shift") {
         modifiers_.shiftMultiplier *= multiplier;
+    } else if (effect == "damage_speed") {
+        modifiers_.speedDamageMultiplier *= multiplier;
     }
 
     modifiers_.sources.push_back(OrbitModifierSource{
@@ -62,7 +64,8 @@ bool isOrbitModifierEffect(std::string_view effect)
         effect == "orbit_gravity" ||
         effect == "orbit_antigravity" ||
         effect == "orbit_anchor" ||
-        effect == "orbit_shift";
+        effect == "orbit_shift" ||
+        effect == "damage_speed";
 }
 
 OrbitModifiers collectOrbitModifiers(const std::vector<const ObjectDefinition*>& objects)

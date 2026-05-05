@@ -2,7 +2,39 @@
 
 #include "game/TileMap.hpp"
 
+#include <algorithm>
+#include <cmath>
+
 namespace majo {
+
+std::string_view deathCauseText(DamageSource source)
+{
+    switch (source) {
+    case DamageSource::Poison:
+        return "毒で死亡";
+    case DamageSource::SlimeAttack:
+        return "スライムの攻撃で死亡";
+    case DamageSource::SlimeContact:
+        return "スライムの接触で死亡";
+    case DamageSource::Projectile:
+        return "発射物で死亡";
+    case DamageSource::Trap:
+        return "罠で死亡";
+    case DamageSource::Unknown:
+        break;
+    }
+    return "不明なダメージで死亡";
+}
+
+void Player::applyDamage(int amount, DamageSource source)
+{
+    if (amount <= 0 || hp <= 0) {
+        return;
+    }
+
+    lastDamageSource = source;
+    hp = std::max(0, hp - amount);
+}
 
 void Player::update(const Input& input, const Camera& camera, TileMap& map, float dt, bool paused, const RuntimeBalance& balance)
 {
@@ -11,7 +43,21 @@ void Player::update(const Input& input, const Camera& camera, TileMap& map, floa
     }
 
     status.update(dt);
-    const float speed = static_cast<float>(status.applyModifiers(ModifierStat::Speed, balance.playerSpeed));
+    const double poisonDps = status.poisonDamagePerSecond();
+    if (poisonDps > 0.0) {
+        poisonDamageAccumulator += poisonDps * static_cast<double>(dt);
+        const int poisonDamage = static_cast<int>(std::floor(poisonDamageAccumulator));
+        if (poisonDamage > 0) {
+            applyDamage(poisonDamage, DamageSource::Poison);
+            poisonDamageAccumulator -= static_cast<double>(poisonDamage);
+        }
+    } else {
+        poisonDamageAccumulator = 0.0;
+    }
+
+    const float speed = static_cast<float>(
+        status.applyModifiers(ModifierStat::Speed, balance.playerSpeed) *
+        status.movementMultiplierFromStates());
     velocity = input.moveAxis() * speed;
     const Vec2 delta = velocity * dt;
     Vec2 next = position + Vec2{delta.x, 0.0f};
@@ -30,7 +76,9 @@ void Player::update(const Input& input, const Camera& camera, TileMap& map, floa
         facing = normalize(velocity);
     }
 
-    const float targetShift = input.ringOffsetHeld() ? balance.spellRingShiftDistance : 0.0f;
+    const float targetShift = input.ringOffsetHeld()
+        ? balance.spellRingShiftDistance + spellRingShiftDistanceBonus
+        : 0.0f;
     spellRingShift = lerp(spellRingShift, targetShift, 1.0f - std::exp(-14.0f * dt));
     throwCooldownRemaining = std::max(0.0f, throwCooldownRemaining - dt);
 }

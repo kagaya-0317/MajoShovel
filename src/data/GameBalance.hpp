@@ -9,9 +9,11 @@ constexpr int ChunkTiles = 32;
 constexpr int ChunkWorldSize = TileSize * ChunkTiles;
 constexpr int ActiveChunkRadius = 2;
 constexpr int MaxEffects = 384;
+constexpr int MaxProjectiles = 256;
 
 constexpr float PlayerSpeed = 150.0f;
 constexpr float PlayerRadius = 9.0f;
+constexpr float PlayerLightRadius = 48.0f;
 constexpr float LightRadius = 200.0f;
 constexpr float SpellRingRadius = static_cast<float>(TileSize);
 constexpr float SpellRingSpeed = 3.4f;

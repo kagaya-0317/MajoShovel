@@ -60,9 +60,12 @@ public:
         std::string source,
         StateApplyMode mode = StateApplyMode::Overwrite);
     bool removeModifier(std::string_view modifierId);
+    int removeModifiersBySourcePrefix(std::string_view sourcePrefix);
     [[nodiscard]] double multiplierFor(ModifierStat stat) const;
     [[nodiscard]] double flatBonusFor(ModifierStat stat) const;
     [[nodiscard]] double applyModifiers(ModifierStat stat, double baseValue) const;
+    [[nodiscard]] double movementMultiplierFromStates() const;
+    [[nodiscard]] double poisonDamagePerSecond() const;
     [[nodiscard]] const std::vector<EntityModifier>& modifiers() const;
 
 private:

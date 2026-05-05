@@ -10,7 +10,8 @@ enum class TileType : unsigned char {
     Empty = 0,
     Dirt = 1,
     Rock = 2,
-    Ore = 3
+    Ore = 3,
+    HardRock = 4
 };
 
 struct Tile {

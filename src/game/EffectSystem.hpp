@@ -4,6 +4,7 @@
 #include "engine/Math.hpp"
 #include "engine/ObjectPool.hpp"
 #include "engine/Renderer.hpp"
+#include <string_view>
 
 namespace majo {
 
@@ -35,6 +36,8 @@ public:
     void spawnEnemyDeath(Vec2 position);
     void spawnThrowStart(Vec2 position, Vec2 direction);
     void spawnReturn(Vec2 position);
+    void spawnAreaPulse(Vec2 position, float radius, Color color);
+    void spawnMagicCast(Vec2 origin, Vec2 direction, std::string_view element, float power);
 
 private:
     void spawnRing(Vec2 position, float startRadius, float endRadius, Color color, float duration);

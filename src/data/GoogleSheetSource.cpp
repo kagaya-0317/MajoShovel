@@ -85,12 +85,8 @@ std::unordered_map<std::string, std::string> parseKeyValueFile(const std::filesy
     int lineNumber = 0;
     while (std::getline(file, line)) {
         ++lineNumber;
-        const std::size_t comment = line.find('#');
-        if (comment != std::string::npos) {
-            line.erase(comment);
-        }
         line = trim(line);
-        if (line.empty()) {
+        if (line.empty() || line.front() == '#') {
             continue;
         }
 
@@ -387,6 +383,16 @@ bool loadGoogleSheetSourceConfig(const std::filesystem::path& path, GoogleSheetS
         config.objectsSheet = trim(it->second);
     }
 
+    it = values.find("enemies_sheet");
+    if (it != values.end()) {
+        config.enemiesSheet = trim(it->second);
+    }
+
+    it = values.find("behavior_sheet");
+    if (it != values.end()) {
+        config.behaviorSheet = trim(it->second);
+    }
+
     if (config.enabled && config.spreadsheetId.empty()) {
         outError = "spreadsheet_id is required when sheet source is enabled";
         outConfig = GoogleSheetSourceConfig{};
@@ -394,6 +400,12 @@ bool loadGoogleSheetSourceConfig(const std::filesystem::path& path, GoogleSheetS
     }
     if (config.objectsSheet.empty()) {
         config.objectsSheet = "Objects";
+    }
+    if (config.enemiesSheet.empty()) {
+        config.enemiesSheet = "Enemies";
+    }
+    if (config.behaviorSheet.empty()) {
+        config.behaviorSheet = "挙動ID一覧";
     }
 
     outConfig = config;

@@ -46,12 +46,19 @@ const char* upgradeValueText(int option)
     }
 }
 
-void applyUpgrade(int option, LevelSystem& level, SpellRingSystem& spellRing)
+void applyUpgrade(
+    int option,
+    LevelSystem& level,
+    SpellRingSystem& spellRing,
+    int& levelRingRadiusPoints,
+    int& levelRingSpeedPoints)
 {
     if (option == 0) {
         spellRing.upgradeRadius(1.1f);
+        ++levelRingRadiusPoints;
     } else if (option == 1) {
         spellRing.upgradeSpeed(1.1f);
+        ++levelRingSpeedPoints;
     } else {
         spellRing.upgradeShovelPower(1);
     }
@@ -60,7 +67,13 @@ void applyUpgrade(int option, LevelSystem& level, SpellRingSystem& spellRing)
 
 }
 
-void UpgradeSystem::update(const Input& input, UiContext& ui, LevelSystem& level, SpellRingSystem& spellRing)
+void UpgradeSystem::update(
+    const Input& input,
+    UiContext& ui,
+    LevelSystem& level,
+    SpellRingSystem& spellRing,
+    int& levelRingRadiusPoints,
+    int& levelRingSpeedPoints)
 {
     if (!level.isChoosing()) {
         return;
@@ -69,7 +82,7 @@ void UpgradeSystem::update(const Input& input, UiContext& ui, LevelSystem& level
     for (int i = 0; i < 3; ++i) {
         if (ui.pressed(optionRect(i))) {
             selectedOption_ = i;
-            applyUpgrade(i, level, spellRing);
+            applyUpgrade(i, level, spellRing, levelRingRadiusPoints, levelRingSpeedPoints);
             return;
         }
     }
@@ -88,15 +101,15 @@ void UpgradeSystem::update(const Input& input, UiContext& ui, LevelSystem& level
 
     if (input.upgradePressed(0)) {
         selectedOption_ = 0;
-        applyUpgrade(0, level, spellRing);
+        applyUpgrade(0, level, spellRing, levelRingRadiusPoints, levelRingSpeedPoints);
     } else if (input.upgradePressed(1)) {
         selectedOption_ = 1;
-        applyUpgrade(1, level, spellRing);
+        applyUpgrade(1, level, spellRing, levelRingRadiusPoints, levelRingSpeedPoints);
     } else if (input.upgradePressed(2)) {
         selectedOption_ = 2;
-        applyUpgrade(2, level, spellRing);
+        applyUpgrade(2, level, spellRing, levelRingRadiusPoints, levelRingSpeedPoints);
     } else if (input.useItemPressed() || input.confirmPressed()) {
-        applyUpgrade(selectedOption_, level, spellRing);
+        applyUpgrade(selectedOption_, level, spellRing, levelRingRadiusPoints, levelRingSpeedPoints);
     }
 }
 

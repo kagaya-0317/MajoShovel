@@ -131,4 +131,33 @@ void EffectSystem::spawnReturn(Vec2 position)
     spawnBurst(position, 6, {130, 125, 210, 180}, 58.0f, 2.2f, 0.28f);
 }
 
+void EffectSystem::spawnAreaPulse(Vec2 position, float radius, Color color)
+{
+    spawnRing(position, std::max(4.0f, radius * 0.15f), std::max(10.0f, radius), color, 0.32f);
+}
+
+void EffectSystem::spawnMagicCast(Vec2 origin, Vec2 direction, std::string_view element, float power)
+{
+    Color color{235, 235, 255, 220};
+    if (element == "fire") {
+        color = {255, 102, 58, 225};
+    } else if (element == "ice") {
+        color = {120, 210, 255, 220};
+    } else if (element == "thunder") {
+        color = {255, 230, 90, 230};
+    } else if (element == "wind") {
+        color = {150, 245, 190, 210};
+    } else if (element == "earth") {
+        color = {196, 142, 78, 220};
+    }
+
+    const Vec2 forward = normalize(direction);
+    const Vec2 impact = origin + forward * (44.0f + power * 1.5f);
+    spawnRing(impact, 7.0f, 20.0f + power * 0.4f, color, 0.26f);
+    spawnBurst(impact, 7, color, 80.0f + power * 2.0f, 2.8f, 0.38f);
+    for (int i = 0; i < 4; ++i) {
+        spawnParticle(origin + forward * static_cast<float>(i * 8), forward * (120.0f + power * 2.0f), 2.3f, color, 0.22f);
+    }
+}
+
 }

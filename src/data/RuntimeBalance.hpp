@@ -10,6 +10,7 @@ namespace majo {
 struct RuntimeBalance {
     float playerSpeed = balance::PlayerSpeed;
     float playerRadius = balance::PlayerRadius;
+    float playerLightRadius = balance::PlayerLightRadius;
     float lightRadius = balance::LightRadius;
 
     float spellRingRadius = balance::SpellRingRadius;

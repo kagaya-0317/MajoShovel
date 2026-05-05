@@ -31,6 +31,8 @@ enum class InputAction {
     GrabOrPlaceItem,
     PreviousActiveRing,
     NextActiveRing,
+    CaptureNet,
+    ToggleProtection,
     Pause,
     OpenInventory,
     ToggleDebug,
@@ -56,6 +58,7 @@ public:
     bool confirmPressed() const { return pressed(InputAction::Confirm); }
     bool addRingPressed() const { return pressed(InputAction::PutSelectedItemOnRing); }
     bool grabOrPlacePressed() const { return pressed(InputAction::GrabOrPlaceItem); }
+    bool capturePressed() const { return pressed(InputAction::CaptureNet); }
     bool backPressed() const { return pressed(InputAction::Pause) || pressed(InputAction::OffsetRingCenter); }
     bool ringOffsetHeld() const { return held(InputAction::OffsetRingCenter); }
     bool upgradePressed(int option) const;

@@ -10,7 +10,13 @@ namespace majo {
 
 class UpgradeSystem {
 public:
-    void update(const Input& input, UiContext& ui, LevelSystem& level, SpellRingSystem& spellRing);
+    void update(
+        const Input& input,
+        UiContext& ui,
+        LevelSystem& level,
+        SpellRingSystem& spellRing,
+        int& levelRingRadiusPoints,
+        int& levelRingSpeedPoints);
     void render(Renderer& renderer, const LevelSystem& level);
 
 private:

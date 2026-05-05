@@ -79,6 +79,34 @@ constexpr std::array<std::string_view, 9> AllowedDamageTypes = {
     "magic",
 };
 
+struct DeprecatedName {
+    std::string_view name;
+    std::string_view replacement;
+    std::string_view note;
+};
+
+constexpr std::array<DeprecatedName, 8> DeprecatedEffectCodes = {{
+    {"hard_dig", "hard_dig_tool", "old hard dig code/tag name"},
+    {"detect_hidden", "hidden_detector", "use the detector tag name in DB metadata; do not make tags fire effects directly"},
+    {"detect_treasure", "treasure_detector", "use the detector tag name in DB metadata; do not make tags fire effects directly"},
+    {"heal_enemy", "heal with target=enemy", "target should express who receives the effect"},
+    {"buff_enemy", "buff_* with target=enemy", "target should express who receives the effect"},
+    {"stun_chance", "status_stun_chance", "state effects use the status_* naming family"},
+    {"poison_chance", "status_poison_chance", "state effects use the status_* naming family"},
+    {"slow_chance", "status_slow_chance", "state effects use the status_* naming family"},
+}};
+
+constexpr std::array<DeprecatedName, 8> DeprecatedSpecialTags = {{
+    {"hard_dig", "hard_dig_tool", "old hard dig code/tag name"},
+    {"detect_hidden", "hidden_detector", "detector labels are special tags"},
+    {"detect_treasure", "treasure_detector", "detector labels are special tags"},
+    {"orbit_anchor", "orbit effect code orbit_anchor", "orbit_anchor is an EffectSpec effect code, not a special tag"},
+    {"orbit_shift", "orbit effect code orbit_shift", "orbit_shift is an EffectSpec effect code, not a special tag"},
+    {"heal_enemy", "heal with target=enemy", "target should express who receives the effect"},
+    {"buff_enemy", "buff_* with target=enemy", "target should express who receives the effect"},
+    {"stun_chance", "status_stun_chance", "state effects use the status_* naming family"},
+}};
+
 void addValidationIssue(
     ObjectCatalog& catalog,
     DbValidationSeverity severity,
@@ -191,6 +219,17 @@ bool isAllowed(std::string_view value, const auto& allowedValues)
     return std::any_of(allowedValues.begin(), allowedValues.end(), [value](std::string_view allowed) {
         return value == allowed;
     });
+}
+
+const DeprecatedName* findDeprecated(std::string_view name, const auto& deprecatedNames)
+{
+    const auto it = std::find_if(
+        deprecatedNames.begin(),
+        deprecatedNames.end(),
+        [name](const DeprecatedName& candidate) {
+            return candidate.name == name;
+        });
+    return it != deprecatedNames.end() ? &*it : nullptr;
 }
 
 bool splitTopLevel(std::string_view text, char delimiter, std::vector<std::string>& outParts)
@@ -1013,6 +1052,15 @@ bool containsValue(const std::vector<std::string>& values, std::string_view valu
     });
 }
 
+bool targetAllowedByDefinition(const EffectCodeDefinition& definition, std::string_view target)
+{
+    if (definition.targets.empty() || containsValue(definition.targets, target)) {
+        return true;
+    }
+
+    return target == "ground" && containsValue(definition.targets, "terrain");
+}
+
 void validateEffectReferencesForField(
     const ItemData& item,
     std::string_view fieldName,
@@ -1022,6 +1070,12 @@ void validateEffectReferencesForField(
 {
     for (const EffectSpec& spec : specs) {
         for (const std::string& effect : spec.effects) {
+            if (const DeprecatedName* deprecated = findDeprecated(effect, DeprecatedEffectCodes)) {
+                outWarnings.push_back("item=\"" + item.id + "\" " + std::string(fieldName) +
+                    ": deprecated effect code \"" + effect + "\"; migrate to \"" +
+                    std::string(deprecated->replacement) + "\" (" + std::string(deprecated->note) + ")");
+            }
+
             const auto effectIt = effectCodes.find(effect);
             if (effectIt == effectCodes.end()) {
                 outWarnings.push_back("item=\"" + item.id + "\" " + std::string(fieldName) +
@@ -1030,9 +1084,12 @@ void validateEffectReferencesForField(
             }
 
             const EffectCodeDefinition& definition = effectIt->second;
-            if (!definition.targets.empty() && !containsValue(definition.targets, spec.target)) {
+            if (!targetAllowedByDefinition(definition, spec.target)) {
                 outWarnings.push_back("item=\"" + item.id + "\" " + std::string(fieldName) +
                     ": target \"" + spec.target + "\" is not allowed for effect \"" + effect + "\"");
+            } else if (spec.target == "ground" && containsValue(definition.targets, "terrain")) {
+                outWarnings.push_back("item=\"" + item.id + "\" " + std::string(fieldName) +
+                    ": target \"ground\" is accepted as terrain compatibility for effect \"" + effect + "\"");
             }
         }
     }
@@ -1047,6 +1104,9 @@ void validateObjectEffectReferences(ObjectCatalog& catalog)
             const DbValidationCategory category =
                 warning.find("undefined effect code") != std::string::npos
                     ? DbValidationCategory::UndefinedEffectCode
+                    : warning.find("deprecated effect code") != std::string::npos ||
+                            warning.find("terrain compatibility") != std::string::npos
+                        ? DbValidationCategory::DeprecatedEntry
                     : DbValidationCategory::TargetMismatch;
             addValidationIssue(catalog, DbValidationSeverity::Warning, category, warning);
         }
@@ -1057,6 +1117,9 @@ void validateObjectEffectReferences(ObjectCatalog& catalog)
             const DbValidationCategory category =
                 warning.find("undefined effect code") != std::string::npos
                     ? DbValidationCategory::UndefinedEffectCode
+                    : warning.find("deprecated effect code") != std::string::npos ||
+                            warning.find("terrain compatibility") != std::string::npos
+                        ? DbValidationCategory::DeprecatedEntry
                     : DbValidationCategory::TargetMismatch;
             addValidationIssue(catalog, DbValidationSeverity::Warning, category, warning);
         }
@@ -1068,6 +1131,16 @@ void validateObjectTags(ObjectCatalog& catalog)
     for (const ObjectDefinition& item : catalog.objects) {
         std::unordered_map<std::string, std::string> exclusiveGroups;
         for (const std::string& tag : item.tags) {
+            if (const DeprecatedName* deprecated = findDeprecated(tag, DeprecatedSpecialTags)) {
+                addValidationIssue(
+                    catalog,
+                    DbValidationSeverity::Warning,
+                    DbValidationCategory::DeprecatedEntry,
+                    "item=\"" + item.id + "\" tags: deprecated special tag \"" + tag +
+                        "\"; migrate to \"" + std::string(deprecated->replacement) + "\" (" +
+                        std::string(deprecated->note) + ")");
+            }
+
             const auto tagIt = catalog.specialTags.find(tag);
             if (tagIt == catalog.specialTags.end()) {
                 addValidationIssue(
@@ -1205,6 +1278,8 @@ std::string_view dbValidationCategoryName(DbValidationCategory category)
         return "object_field";
     case DbValidationCategory::TagEffectCodeNameCollision:
         return "tag_effect_code_name_collision";
+    case DbValidationCategory::DeprecatedEntry:
+        return "deprecated_entry";
     }
     return "unknown";
 }

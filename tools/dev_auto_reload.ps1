@@ -1,6 +1,7 @@
 param(
     [string]$BuildDir = "",
-    [string]$Config = "Release"
+    [string]$Config = "Release",
+    [int]$Jobs = 0
 )
 
 $ErrorActionPreference = "Stop"
@@ -11,6 +12,7 @@ $PendingBuild = $true
 $LastChangeTime = Get-Date
 $IsBuilding = $false
 $IgnoreEventsUntil = Get-Date
+$NeedsConfigure = $false
 
 function Find-CMake {
     $cmd = Get-Command cmake -ErrorAction SilentlyContinue
@@ -50,12 +52,26 @@ function Resolve-BuildPath([string]$Path) {
 }
 
 $BuildPath = Resolve-BuildPath $BuildDir
+if ($Jobs -le 0) {
+    $Jobs = [Math]::Max(1, [Environment]::ProcessorCount)
+}
+$CMakeCache = Join-Path $BuildPath "CMakeCache.txt"
+$NeedsConfigure = -not (Test-Path $CMakeCache)
 
 function Stop-Game {
     if ($script:GameProcess -and -not $script:GameProcess.HasExited) {
         Write-Host "[dev] stopping running game..."
         Stop-Process -Id $script:GameProcess.Id -Force
         $script:GameProcess = $null
+    }
+
+    $exe = Join-Path $BuildPath "$Config\$TargetName.exe"
+    $running = Get-Process -Name $TargetName -ErrorAction SilentlyContinue |
+        Where-Object { $_.Path -and [System.String]::Equals($_.Path, $exe, [System.StringComparison]::OrdinalIgnoreCase) }
+
+    foreach ($process in $running) {
+        Write-Host "[dev] stopping existing game process $($process.Id)..."
+        Stop-Process -Id $process.Id -Force
     }
 }
 
@@ -79,15 +95,18 @@ function Invoke-GameBuild {
     $cmake = Find-CMake
     $script:IsBuilding = $true
     try {
-        Write-Host "[dev] configuring..."
-        & $cmake -S $Root -B $BuildPath -DCMAKE_DISABLE_PRECOMPILE_HEADERS=ON
-        if ($LASTEXITCODE -ne 0) {
-            Write-Host "[dev] configure failed."
-            return $false
+        if ($script:NeedsConfigure) {
+            Write-Host "[dev] configuring..."
+            & $cmake -S $Root -B $BuildPath -DCMAKE_DISABLE_PRECOMPILE_HEADERS=ON
+            if ($LASTEXITCODE -ne 0) {
+                Write-Host "[dev] configure failed."
+                return $false
+            }
+            $script:NeedsConfigure = $false
         }
 
-        Write-Host "[dev] building..."
-        & $cmake --build $BuildPath --config $Config --target $TargetName --parallel 1
+        Write-Host "[dev] building with $Jobs job(s)..."
+        & $cmake --build $BuildPath --config $Config --target $TargetName --parallel $Jobs
         if ($LASTEXITCODE -ne 0) {
             Write-Host "[dev] build failed. Fix errors and save again."
             return $false
@@ -116,6 +135,12 @@ function Request-Rebuild($path) {
     }
 
     if (Test-RebuildPath $path) {
+        $cmakePath = [System.IO.Path]::GetFullPath((Join-Path $Root "CMakeLists.txt"))
+        $fullPath = [System.IO.Path]::GetFullPath($path)
+        if ([System.String]::Equals($fullPath, $cmakePath, [System.StringComparison]::OrdinalIgnoreCase)) {
+            $script:NeedsConfigure = $true
+        }
+
         $script:PendingBuild = $true
         $script:LastChangeTime = Get-Date
         Write-Host "[dev] code changed: $path"
@@ -175,6 +200,7 @@ Add-FileWatcher "CMakeLists.txt"
 
 Write-Host "[dev] watching source and data. Press Ctrl+C to stop."
 Write-Host "[dev] build output: $BuildPath"
+Write-Host "[dev] build jobs: $Jobs"
 Write-Host "[dev] code changes rebuild and restart the game process; the window will be recreated."
 Write-Host "[dev] data-only runtime reload keeps the existing game window."
 

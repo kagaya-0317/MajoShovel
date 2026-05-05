@@ -1,6 +1,7 @@
 param(
     [string]$BuildDir = "",
     [string]$Config = "Release",
+    [int]$Jobs = 0,
     [switch]$Run
 )
 
@@ -47,17 +48,21 @@ function Resolve-BuildPath([string]$Path) {
 
 $BuildPath = Resolve-BuildPath $BuildDir
 $cmake = Find-CMake
+if ($Jobs -le 0) {
+    $Jobs = [Math]::Max(1, [Environment]::ProcessorCount)
+}
 
 Write-Host "[build] source: $Root"
 Write-Host "[build] output: $BuildPath"
 Write-Host "[build] cmake: $cmake"
+Write-Host "[build] jobs: $Jobs"
 
 & $cmake -S $Root -B $BuildPath -DCMAKE_DISABLE_PRECOMPILE_HEADERS=ON
 if ($LASTEXITCODE -ne 0) {
     exit $LASTEXITCODE
 }
 
-& $cmake --build $BuildPath --config $Config --target $TargetName --parallel 1
+& $cmake --build $BuildPath --config $Config --target $TargetName --parallel $Jobs
 if ($LASTEXITCODE -ne 0) {
     exit $LASTEXITCODE
 }

@@ -35,6 +35,7 @@ struct ObjectDefinition {
     double weightKg = 0.0;
     std::vector<std::string> tags;
     std::string effectText;
+    std::vector<std::string> capturedBehaviorIds;
 
     bool operator==(const ObjectDefinition&) const = default;
 };
@@ -85,6 +86,7 @@ enum class DbValidationCategory {
     NumericValue,
     ObjectField,
     TagEffectCodeNameCollision,
+    DeprecatedEntry,
 };
 
 struct DbValidationIssue {

@@ -1,14 +1,18 @@
 #include "game/InventorySystem.hpp"
 
+#include "engine/Log.hpp"
+#include "game/EffectDispatcher.hpp"
+
 #include <algorithm>
 #include <cstdio>
+#include <cstdlib>
 #include <string>
 #include <string_view>
+#include <utility>
 
 namespace majo {
 
 namespace {
-constexpr int MaxPlayerHp = 10;
 constexpr int InventoryColumns = 8;
 constexpr int InventoryRows = 3;
 constexpr float PanelX = 790.0f;
@@ -189,6 +193,121 @@ void drawDetailLine(Renderer& renderer, float& y, const char* label, std::string
     renderer.drawText({DetailX + 126.0f, y}, value, {235, 235, 240, 255}, 2);
     y += 31.0f;
 }
+
+bool objectCategoryEquals(const ItemData& item, std::string_view category)
+{
+    return item.category == category;
+}
+
+bool objectHasTag(const ItemData& item, std::string_view tag)
+{
+    return std::any_of(item.tags.begin(), item.tags.end(), [tag](const std::string& candidate) {
+        return candidate == tag;
+    });
+}
+
+bool isCapturedObject(const ItemData& item)
+{
+    return item.id.rfind("captured_", 0) == 0 || !item.capturedBehaviorIds.empty();
+}
+
+bool materialTypeForObject(const ItemData& item, MaterialType& outType)
+{
+    if (item.id == "old_wood_building_material" || item.id == "material_old_wood" ||
+        item.name == "\xE5\x8F\xA4\xE6\x9C\xA8\xE3\x81\xAE\xE5\xBB\xBA\xE6\x9D\x90") {
+        outType = MaterialType::OldWoodBuildingMaterial;
+        return true;
+    }
+    if (item.id == "enhancement_ore" || item.id == "material_enhancement_ore" ||
+        item.name == "\xE5\xBC\xB7\xE5\x8C\x96\xE9\x89\xB1\xE7\x9F\xB3") {
+        outType = MaterialType::EnhancementOre;
+        return true;
+    }
+    if (item.id == "moon_fragment" || item.id == "material_moon_fragment" ||
+        item.name == "\xE6\x9C\x88\xE3\x81\xAE\xE3\x82\xAB\xE3\x82\xB1\xE3\x83\xA9") {
+        outType = MaterialType::MoonFragment;
+        return true;
+    }
+    if (item.id == "mana_drop" || item.id == "material_mana_drop" ||
+        item.name == "\xE9\xAD\x94\xE5\x8A\x9B\xE3\x81\xAE\xE3\x81\x97\xE3\x81\x9A\xE3\x81\x8F") {
+        outType = MaterialType::ManaDrop;
+        return true;
+    }
+    return false;
+}
+
+bool isStackableObject(const ItemData& item)
+{
+    if (isCapturedObject(item)) {
+        return false;
+    }
+    if (objectCategoryEquals(item, "\xE5\x9B\x9E\xE5\xBE\xA9") ||
+        objectCategoryEquals(item, "\xE5\xBC\xB7\xE5\x8C\x96") ||
+        objectCategoryEquals(item, "\xE5\xBC\xB1\xE4\xBD\x93")) {
+        return true;
+    }
+    if (objectCategoryEquals(item, "\xE6\xAD\xA6\xE5\x99\xA8") ||
+        objectCategoryEquals(item, "\xE7\x9B\xBE") ||
+        objectCategoryEquals(item, "\xE6\x8E\x98\xE5\x89\x8A") ||
+        objectCategoryEquals(item, "\xE6\x8E\xA2\xE7\xB4\xA2") ||
+        objectCategoryEquals(item, "\xE9\xAD\x94\xE5\xB0\x8E\xE6\x9B\xB8") ||
+        objectCategoryEquals(item, "\xE5\xAE\x9D")) {
+        return false;
+    }
+    return objectHasTag(item, "consumable") ||
+        objectHasTag(item, "food") ||
+        objectHasTag(item, "potion");
+}
+
+Color inventoryObjectColor(const ItemData& item)
+{
+    if (objectCategoryEquals(item, "\xE5\x9B\x9E\xE5\xBE\xA9")) {
+        return {116, 220, 144, 255};
+    }
+    if (objectCategoryEquals(item, "\xE6\xAD\xA6\xE5\x99\xA8")) {
+        return {224, 96, 86, 255};
+    }
+    if (objectCategoryEquals(item, "\xE7\x9B\xBE")) {
+        return {104, 168, 226, 255};
+    }
+    if (objectCategoryEquals(item, "\xE5\xAE\x9D")) {
+        return {244, 206, 78, 255};
+    }
+    if (objectCategoryEquals(item, "\xE6\x8E\xA2\xE7\xB4\xA2")) {
+        return {136, 214, 214, 255};
+    }
+    return {188, 152, 236, 255};
+}
+
+std::string joinValues(const std::vector<std::string>& values)
+{
+    if (values.empty()) {
+        return "-";
+    }
+
+    std::string joined;
+    for (const std::string& value : values) {
+        if (!joined.empty()) {
+            joined += ", ";
+        }
+        joined += value;
+    }
+    return joined;
+}
+
+std::string effectSummary(const std::vector<EffectSpec>& specs)
+{
+    std::string summary;
+    for (const EffectSpec& spec : specs) {
+        for (const std::string& effect : spec.effects) {
+            if (!summary.empty()) {
+                summary += ", ";
+            }
+            summary += effect;
+        }
+    }
+    return summary.empty() ? "-" : summary;
+}
 }
 
 const char* inventoryItemName(InventoryItemType type)
@@ -245,6 +364,288 @@ const InventoryStack& InventorySystem::stack(InventoryItemType type) const
     return stacks_[static_cast<int>(type)];
 }
 
+int InventorySystem::itemCount(InventoryItemType type) const
+{
+    return stack(type).count;
+}
+
+void InventorySystem::setItemCount(InventoryItemType type, int count)
+{
+    stack(type).count = std::max(0, count);
+}
+
+void InventorySystem::clearObjectStacks()
+{
+    objectStacks_.clear();
+    objectInstances_.clear();
+}
+
+std::vector<StackItem> InventorySystem::stackItemsForSave() const
+{
+    std::vector<StackItem> items;
+    items.reserve(objectStacks_.size());
+    for (const InventoryObjectStack& stack : objectStacks_) {
+        if (!stack.objectId.empty() && stack.count > 0) {
+            items.push_back(StackItem{
+                .objectId = stack.objectId,
+                .count = stack.count,
+            });
+        }
+    }
+    return items;
+}
+
+void InventorySystem::addMaterial(MaterialType type, int count)
+{
+    materials_.add(type, count);
+}
+
+void InventorySystem::setMaterialCount(MaterialType type, int count)
+{
+    materials_.setCount(type, count);
+}
+
+int InventorySystem::materialCount(MaterialType type) const
+{
+    return materials_.count(type);
+}
+
+bool InventorySystem::setObjectItemCount(const ObjectCatalog& catalog, std::string_view objectId, int count)
+{
+    if (objectId.empty() || count <= 0) {
+        return false;
+    }
+    const ItemData* item = catalog.registry.findById(objectId);
+    const ItemData missingItem = item == nullptr ? makeMissingItemData(objectId) : ItemData{};
+    const ItemData& resolvedItem = item != nullptr ? *item : missingItem;
+    if (item == nullptr) {
+        logError("[warning] SaveData: object_id=\"" + std::string(objectId) + "\" is missing from Objects DB; restored as missing stack item");
+    }
+
+    for (InventoryObjectStack& stack : objectStacks_) {
+        if (stack.objectId == resolvedItem.id) {
+            stack.count = count;
+            stack.item = resolvedItem;
+            return true;
+        }
+    }
+
+    objectStacks_.push_back(InventoryObjectStack{resolvedItem, count});
+    return true;
+}
+
+bool InventorySystem::addObjectInstance(const ObjectCatalog& catalog, ItemInstance instance)
+{
+    if (instance.instanceId.empty() || instance.objectId.empty()) {
+        return false;
+    }
+    const ItemData* item = catalog.registry.findById(instance.objectId);
+    const ItemData missingItem = item == nullptr ? makeMissingItemData(instance.objectId) : ItemData{};
+    const ItemData& resolvedItem = item != nullptr ? *item : missingItem;
+    if (item == nullptr) {
+        logError("[warning] SaveData: object_id=\"" + instance.objectId + "\" is missing from Objects DB; restored as missing ItemInstance");
+    }
+    if (static_cast<int>(objectStacks_.size() + objectInstances_.size()) >= ShortcutSlotCount - ItemCount) {
+        return false;
+    }
+
+    objectInstances_.push_back(InventoryObjectInstance{
+        .item = resolvedItem,
+        .instance = std::move(instance),
+    });
+    const std::string& storedId = objectInstances_.back().instance.instanceId;
+    constexpr std::string_view Prefix = "iteminst_";
+    if (storedId.rfind(Prefix, 0) == 0) {
+        const unsigned long long parsed = std::strtoull(storedId.c_str() + Prefix.size(), nullptr, 10);
+        nextInstanceId_ = std::max(nextInstanceId_, parsed + 1);
+    }
+    return true;
+}
+
+bool InventorySystem::removeObjectItemCount(std::string_view objectId, int count)
+{
+    if (objectId.empty() || count <= 0) {
+        return false;
+    }
+
+    for (auto it = objectStacks_.begin(); it != objectStacks_.end(); ++it) {
+        if (it->objectId != objectId || it->count < count) {
+            continue;
+        }
+
+        it->count -= count;
+        if (it->count <= 0) {
+            objectStacks_.erase(it);
+        }
+        status_ = "売却しました";
+        return true;
+    }
+
+    return false;
+}
+
+bool InventorySystem::removeObjectInstance(std::string_view instanceId)
+{
+    if (instanceId.empty()) {
+        return false;
+    }
+    const auto it = std::find_if(objectInstances_.begin(), objectInstances_.end(), [instanceId](const InventoryObjectInstance& entry) {
+        return entry.instance.instanceId == instanceId;
+    });
+    if (it == objectInstances_.end()) {
+        return false;
+    }
+    if (it->instance.protectionEnabled) {
+        status_ = "保護中は売却不可";
+        return false;
+    }
+    objectInstances_.erase(it);
+    status_ = "売却しました";
+    return true;
+}
+
+bool InventorySystem::takeObjectInstance(std::string_view instanceId, InventoryObjectInstance& outInstance)
+{
+    if (instanceId.empty()) {
+        return false;
+    }
+    const auto it = std::find_if(objectInstances_.begin(), objectInstances_.end(), [instanceId](const InventoryObjectInstance& entry) {
+        return entry.instance.instanceId == instanceId;
+    });
+    if (it == objectInstances_.end()) {
+        return false;
+    }
+    outInstance = std::move(*it);
+    objectInstances_.erase(it);
+    status_ = "倉庫へ預けました";
+    return true;
+}
+
+bool InventorySystem::repairObjectInstance(std::string_view instanceId)
+{
+    if (instanceId.empty()) {
+        return false;
+    }
+    const auto it = std::find_if(objectInstances_.begin(), objectInstances_.end(), [instanceId](const InventoryObjectInstance& entry) {
+        return entry.instance.instanceId == instanceId;
+    });
+    if (it == objectInstances_.end()) {
+        return false;
+    }
+    ItemInstance& instance = it->instance;
+    if (instance.maxDurability < 0) {
+        status_ = "修理不要";
+        return false;
+    }
+    instance.currentDurability = instance.maxDurability;
+    instance.isBroken = false;
+    status_ = "修理しました";
+    return true;
+}
+
+bool InventorySystem::enhanceObjectInstance(std::string_view instanceId, int attackBonus, int digBonus, int durabilityBonus, int maxEnhanceLevel)
+{
+    if (instanceId.empty()) {
+        return false;
+    }
+    const auto it = std::find_if(objectInstances_.begin(), objectInstances_.end(), [instanceId](const InventoryObjectInstance& entry) {
+        return entry.instance.instanceId == instanceId;
+    });
+    if (it == objectInstances_.end()) {
+        return false;
+    }
+
+    ItemInstance& instance = it->instance;
+    if (instance.enhanceLevel >= maxEnhanceLevel) {
+        status_ = "強化上限です";
+        return false;
+    }
+    ++instance.enhanceLevel;
+    instance.attackBonus += attackBonus;
+    instance.digBonus += digBonus;
+    instance.durabilityBonus += durabilityBonus;
+    if (durabilityBonus > 0 && instance.maxDurability >= 0) {
+        instance.maxDurability += durabilityBonus;
+        instance.currentDurability = std::min(instance.maxDurability, std::max(0, instance.currentDurability + durabilityBonus));
+    }
+    status_ = "個体強化しました";
+    return true;
+}
+
+bool InventorySystem::enhanceObjectStackItem(std::string_view objectId, int attackBonus, int digBonus, int durabilityBonus, int maxEnhanceLevel)
+{
+    if (objectId.empty()) {
+        return false;
+    }
+    const auto it = std::find_if(objectStacks_.begin(), objectStacks_.end(), [objectId](const InventoryObjectStack& stack) {
+        return stack.objectId == objectId && stack.count > 0;
+    });
+    if (it == objectStacks_.end()) {
+        return false;
+    }
+    const bool stackSlotWillRemain = it->count > 1;
+    if (stackSlotWillRemain && static_cast<int>(objectStacks_.size() + objectInstances_.size()) >= ShortcutSlotCount - ItemCount) {
+        status_ = "インベントリ満杯";
+        return false;
+    }
+
+    createObjectInstance(it->item);
+    ItemInstance& itemInstance = objectInstances_.back().instance;
+    if (itemInstance.enhanceLevel >= maxEnhanceLevel) {
+        return false;
+    }
+    ++itemInstance.enhanceLevel;
+    itemInstance.attackBonus += attackBonus;
+    itemInstance.digBonus += digBonus;
+    itemInstance.durabilityBonus += durabilityBonus;
+    if (durabilityBonus > 0 && itemInstance.maxDurability >= 0) {
+        itemInstance.maxDurability += durabilityBonus;
+        itemInstance.currentDurability = std::min(itemInstance.maxDurability, std::max(0, itemInstance.currentDurability + durabilityBonus));
+    }
+
+    --it->count;
+    if (it->count <= 0) {
+        objectStacks_.erase(it);
+    }
+    status_ = "個体化して強化しました";
+    return true;
+}
+
+bool InventorySystem::enhanceSelectedObjectInstance(int attackBonus, int digBonus, int durabilityBonus)
+{
+    InventoryObjectInstance* selectedInstance = selectedObjectInstance();
+    if (selectedInstance == nullptr) {
+        InventoryObjectStack* selectedStack = objectStackAtScreenIndex(selectedShortcutIndex());
+        if (selectedStack == nullptr || selectedStack->count <= 0) {
+            status_ = "強化対象がありません";
+            return false;
+        }
+        if (static_cast<int>(objectStacks_.size() + objectInstances_.size()) >= ShortcutSlotCount - ItemCount) {
+            status_ = "インベントリ満杯";
+            return false;
+        }
+        createObjectInstance(selectedStack->item);
+        --selectedStack->count;
+        if (selectedStack->count <= 0) {
+            const int objectIndex = selectedShortcutIndex() - ItemCount;
+            objectStacks_.erase(objectStacks_.begin() + objectIndex);
+        }
+        selectedInstance = &objectInstances_.back();
+    }
+
+    ItemInstance& instance = selectedInstance->instance;
+    ++instance.enhanceLevel;
+    instance.attackBonus += attackBonus;
+    instance.digBonus += digBonus;
+    instance.durabilityBonus += durabilityBonus;
+    if (instance.maxDurability >= 0) {
+        instance.maxDurability += durabilityBonus;
+        instance.currentDurability = std::min(instance.maxDurability, std::max(0, instance.currentDurability + durabilityBonus));
+    }
+    status_ = "個体強化しました";
+    return true;
+}
+
 InventoryItemType InventorySystem::selectedType() const
 {
     return stacks_[selected_].type;
@@ -260,6 +661,82 @@ ShortcutSlot& InventorySystem::selectedShortcutSlot()
     return shortcutSlots_[selectedShortcutIndex()];
 }
 
+const InventoryObjectStack* InventorySystem::objectStackAtScreenIndex(int index) const
+{
+    const int objectIndex = index - ItemCount;
+    if (objectIndex < 0 || objectIndex >= static_cast<int>(objectStacks_.size())) {
+        return nullptr;
+    }
+    return &objectStacks_[static_cast<std::size_t>(objectIndex)];
+}
+
+InventoryObjectStack* InventorySystem::objectStackAtScreenIndex(int index)
+{
+    const int objectIndex = index - ItemCount;
+    if (objectIndex < 0 || objectIndex >= static_cast<int>(objectStacks_.size())) {
+        return nullptr;
+    }
+    return &objectStacks_[static_cast<std::size_t>(objectIndex)];
+}
+
+const InventoryObjectInstance* InventorySystem::objectInstanceAtScreenIndex(int index) const
+{
+    const int instanceIndex = index - ItemCount - static_cast<int>(objectStacks_.size());
+    if (instanceIndex < 0 || instanceIndex >= static_cast<int>(objectInstances_.size())) {
+        return nullptr;
+    }
+    return &objectInstances_[static_cast<std::size_t>(instanceIndex)];
+}
+
+InventoryObjectInstance* InventorySystem::objectInstanceAtScreenIndex(int index)
+{
+    const int instanceIndex = index - ItemCount - static_cast<int>(objectStacks_.size());
+    if (instanceIndex < 0 || instanceIndex >= static_cast<int>(objectInstances_.size())) {
+        return nullptr;
+    }
+    return &objectInstances_[static_cast<std::size_t>(instanceIndex)];
+}
+
+std::string InventorySystem::allocateInstanceId()
+{
+    return "iteminst_" + std::to_string(nextInstanceId_++);
+}
+
+InventoryObjectInstance InventorySystem::createObjectInstance(const ItemData& item)
+{
+    ItemInstance instance = makeItemInstanceFromDefinition(allocateInstanceId(), item);
+    InventoryObjectInstance objectInstance{
+        .item = item,
+        .instance = std::move(instance),
+    };
+    objectInstances_.push_back(objectInstance);
+    return objectInstance;
+}
+
+const InventoryObjectStack* InventorySystem::selectedObjectStack() const
+{
+    if (selectedShortcutSlot().assigned) {
+        return nullptr;
+    }
+    return objectStackAtScreenIndex(selectedShortcutIndex());
+}
+
+InventoryObjectInstance* InventorySystem::selectedObjectInstance()
+{
+    if (selectedShortcutSlot().assigned) {
+        return nullptr;
+    }
+    return objectInstanceAtScreenIndex(selectedShortcutIndex());
+}
+
+const InventoryObjectInstance* InventorySystem::selectedObjectInstance() const
+{
+    if (selectedShortcutSlot().assigned) {
+        return nullptr;
+    }
+    return objectInstanceAtScreenIndex(selectedShortcutIndex());
+}
+
 int InventorySystem::selectedShortcutIndex() const
 {
     return shortcutRow_ * ShortcutColumns + selectedShortcutColumn_;
@@ -273,6 +750,7 @@ void InventorySystem::addFromDugTile(TileType type)
         status_ = "土を入手";
         break;
     case TileType::Rock:
+    case TileType::HardRock:
         ++stack(InventoryItemType::Stone).count;
         status_ = "石を入手";
         break;
@@ -283,6 +761,102 @@ void InventorySystem::addFromDugTile(TileType type)
     case TileType::Empty:
         break;
     }
+}
+
+bool InventorySystem::addObjectItem(const ObjectCatalog& catalog, std::string_view objectId)
+{
+    if (objectId.empty()) {
+        logError("[warning] InventorySystem: empty object ID cannot be added");
+        return false;
+    }
+    if (catalog.registry.empty()) {
+        logError("[warning] InventorySystem: Objects DB is empty; cannot add object_id=\"" + std::string(objectId) + "\"");
+        return false;
+    }
+
+    const ItemData* item = catalog.registry.findById(objectId);
+    if (item == nullptr) {
+        logError("[warning] InventorySystem: invalid object_id=\"" + std::string(objectId) + "\" cannot be added");
+        return false;
+    }
+
+    MaterialType materialType = MaterialType::Count;
+    if (materialTypeForObject(*item, materialType)) {
+        materials_.add(materialType, 1);
+        status_ = "素材入手: " + std::string(materialTypeDisplayName(materialType));
+        return true;
+    }
+
+    if (!isStackableObject(*item)) {
+        if (static_cast<int>(objectStacks_.size() + objectInstances_.size()) >= ShortcutSlotCount - ItemCount) {
+            status_ = "インベントリ満杯";
+            return false;
+        }
+        createObjectInstance(*item);
+        status_ = "Picked up: " + item->name;
+        return true;
+    }
+
+    for (InventoryObjectStack& stack : objectStacks_) {
+        if (stack.objectId == item->id) {
+            ++stack.count;
+            stack.item = *item;
+            status_ = "Picked up: " + item->name;
+            return true;
+        }
+    }
+
+    if (static_cast<int>(objectStacks_.size() + objectInstances_.size()) >= ShortcutSlotCount - ItemCount) {
+        status_ = "インベントリ満杯";
+        return false;
+    }
+
+    objectStacks_.push_back(InventoryObjectStack{*item, 1});
+    status_ = "Picked up: " + item->name;
+    return true;
+}
+
+bool InventorySystem::addRuntimeObjectItem(const ItemData& item)
+{
+    if (item.id.empty()) {
+        return false;
+    }
+
+    MaterialType materialType = MaterialType::Count;
+    if (materialTypeForObject(item, materialType)) {
+        materials_.add(materialType, 1);
+        status_ = "素材入手: " + std::string(materialTypeDisplayName(materialType));
+        return true;
+    }
+
+    if (!isStackableObject(item)) {
+        if (static_cast<int>(objectStacks_.size() + objectInstances_.size()) >= ShortcutSlotCount - ItemCount) {
+            status_ = "インベントリ満杯";
+            return false;
+        }
+        createObjectInstance(item);
+        status_ = "Picked up: " + item.name;
+        return true;
+    }
+
+    for (InventoryObjectStack& stack : objectStacks_) {
+        if (stack.objectId == item.id) {
+            ++stack.count;
+            stack.item = item;
+            stack.objectId = item.id;
+            status_ = "Picked up: " + item.name;
+            return true;
+        }
+    }
+
+    if (static_cast<int>(objectStacks_.size() + objectInstances_.size()) >= ShortcutSlotCount - ItemCount) {
+        status_ = "インベントリ満杯";
+        return false;
+    }
+
+    objectStacks_.push_back(InventoryObjectStack{item, 1});
+    status_ = "Picked up: " + item.name;
+    return true;
 }
 
 void InventorySystem::moveShortcutCursor(int delta)
@@ -409,11 +983,11 @@ bool InventorySystem::useItemType(InventoryItemType type, Player& player, SpellR
 
     switch (type) {
     case InventoryItemType::Dirt:
-        if (player.hp >= MaxPlayerHp) {
+        if (player.hp >= player.maxHp) {
             status_ = "体力は満タン";
             return false;
         }
-        player.hp = std::min(MaxPlayerHp, player.hp + 1);
+        player.hp = std::min(player.maxHp, player.hp + 1);
         status_ = "体力 +1";
         break;
     case InventoryItemType::Stone:
@@ -452,8 +1026,169 @@ bool InventorySystem::addItemTypeToRing(InventoryItemType type, SpellRingSystem&
     return true;
 }
 
-bool InventorySystem::useShortcutSelection(Player& player, SpellRingSystem& spellRing)
+bool InventorySystem::addObjectSelectionToRing(SpellRingSystem& spellRing)
 {
+    const int index = selectedShortcutIndex();
+    InventoryObjectStack* selected = objectStackAtScreenIndex(index);
+    if (selected == nullptr || selected->count <= 0) {
+        status_ = "Objects DB item not selected";
+        return false;
+    }
+    if (!spellRing.canAddItem()) {
+        status_ = "リング満杯";
+        return false;
+    }
+    InventoryObjectInstance objectInstance = createObjectInstance(selected->item);
+    if (!spellRing.addObjectItem(selected->item, objectInstance.instance)) {
+        status_ = "リング満杯";
+        objectInstances_.pop_back();
+        return false;
+    }
+    objectInstances_.pop_back();
+
+    status_ = "リングに追加: " + selected->item.name;
+    --selected->count;
+    if (selected->count <= 0) {
+        const int objectIndex = index - ItemCount;
+        objectStacks_.erase(objectStacks_.begin() + objectIndex);
+    }
+    return true;
+}
+
+bool InventorySystem::addObjectInstanceSelectionToRing(SpellRingSystem& spellRing)
+{
+    const int index = selectedShortcutIndex();
+    InventoryObjectInstance* selected = objectInstanceAtScreenIndex(index);
+    if (selected == nullptr) {
+        status_ = "個体アイテム未選択";
+        return false;
+    }
+    if (selected->instance.isBroken) {
+        status_ = "壊れています";
+        return false;
+    }
+    if (!spellRing.addObjectItem(selected->item, selected->instance)) {
+        status_ = "リング満杯";
+        return false;
+    }
+    status_ = "リングに追加: " + selected->item.name;
+    const int instanceIndex = index - ItemCount - static_cast<int>(objectStacks_.size());
+    objectInstances_.erase(objectInstances_.begin() + instanceIndex);
+    return true;
+}
+
+bool InventorySystem::useObjectSelection(Player& player, const EffectDispatcher& effectDispatcher)
+{
+    const int index = selectedShortcutIndex();
+    InventoryObjectStack* selected = objectStackAtScreenIndex(index);
+    if (selected == nullptr || selected->count <= 0) {
+        status_ = "Objects DB item not selected";
+        return false;
+    }
+    if (selected->item.normalEffects.empty()) {
+        status_ = "通常効果なし";
+        return false;
+    }
+
+    bool hasImplementedEffect = false;
+    for (const EffectSpec& spec : selected->item.normalEffects) {
+        for (const std::string& effect : spec.effects) {
+            if (effectDispatcher.hasHandler(effect)) {
+                hasImplementedEffect = true;
+                break;
+            }
+        }
+        if (hasImplementedEffect) {
+            break;
+        }
+    }
+
+    if (!hasImplementedEffect) {
+        EffectContext context;
+        context.owner = &player;
+        context.position = player.position;
+        context.triggerType = EffectTriggerType::NormalUse;
+        context.logUnimplementedEffects = true;
+        effectDispatcher.dispatchNormalEffects(selected->item, context);
+        status_ = "未実装効果";
+        return false;
+    }
+
+    const int beforeHp = player.hp;
+    EffectContext context;
+    context.owner = &player;
+    context.position = player.position;
+    context.triggerType = EffectTriggerType::NormalUse;
+    context.logUnimplementedEffects = true;
+    effectDispatcher.dispatchNormalEffects(selected->item, context);
+
+    if (player.hp == beforeHp && beforeHp >= player.maxHp) {
+        bool healOnly = true;
+        for (const EffectSpec& spec : selected->item.normalEffects) {
+            for (const std::string& effect : spec.effects) {
+                if (effect != "heal") {
+                    healOnly = false;
+                    break;
+                }
+            }
+            if (!healOnly) {
+                break;
+            }
+        }
+        if (healOnly) {
+            status_ = "体力は満タン";
+            return false;
+        }
+    }
+
+    status_ = "使用: " + selected->item.name;
+    --selected->count;
+    if (selected->count <= 0) {
+        const int objectIndex = index - ItemCount;
+        objectStacks_.erase(objectStacks_.begin() + objectIndex);
+    }
+    return true;
+}
+
+bool InventorySystem::useObjectInstanceSelection(Player& player, const EffectDispatcher& effectDispatcher)
+{
+    InventoryObjectInstance* selected = selectedObjectInstance();
+    if (selected == nullptr) {
+        status_ = "個体アイテム未選択";
+        return false;
+    }
+    if (selected->instance.isBroken) {
+        status_ = "壊れています";
+        return false;
+    }
+    if (selected->item.normalEffects.empty()) {
+        status_ = "通常効果なし";
+        return false;
+    }
+
+    EffectContext context;
+    context.owner = &player;
+    context.position = player.position;
+    context.triggerType = EffectTriggerType::NormalUse;
+    context.logUnimplementedEffects = true;
+    effectDispatcher.dispatchNormalEffects(selected->item, context);
+    effectDispatcher.dispatch(selected->instance.addedEffects, context);
+    status_ = "使用: " + selected->item.name;
+    return true;
+}
+
+bool InventorySystem::useShortcutSelection(
+    Player& player,
+    SpellRingSystem& spellRing,
+    const EffectDispatcher& effectDispatcher)
+{
+    if (selectedObjectStack() != nullptr) {
+        return useObjectSelection(player, effectDispatcher);
+    }
+    if (selectedObjectInstance() != nullptr) {
+        return useObjectInstanceSelection(player, effectDispatcher);
+    }
+
     const ShortcutSlot& slot = selectedShortcutSlot();
     if (!slot.assigned) {
         status_ = "ショートカット空き";
@@ -464,6 +1199,13 @@ bool InventorySystem::useShortcutSelection(Player& player, SpellRingSystem& spel
 
 bool InventorySystem::addShortcutSelectionToRing(SpellRingSystem& spellRing)
 {
+    if (selectedObjectStack() != nullptr) {
+        return addObjectSelectionToRing(spellRing);
+    }
+    if (selectedObjectInstance() != nullptr) {
+        return addObjectInstanceSelectionToRing(spellRing);
+    }
+
     const ShortcutSlot& slot = selectedShortcutSlot();
     if (!slot.assigned) {
         status_ = "ショートカット空き";
@@ -482,7 +1224,22 @@ bool InventorySystem::addSelectedToRing(SpellRingSystem& spellRing)
     return addItemTypeToRing(selectedType(), spellRing);
 }
 
-void InventorySystem::updateShortcuts(const Input& input, Player& player, SpellRingSystem& spellRing)
+void InventorySystem::toggleSelectedProtection()
+{
+    InventoryObjectInstance* selected = selectedObjectInstance();
+    if (selected == nullptr) {
+        status_ = "個体アイテムのみ保護できます";
+        return;
+    }
+    selected->instance.protectionEnabled = !selected->instance.protectionEnabled;
+    status_ = selected->instance.protectionEnabled ? "保護ON" : "保護OFF";
+}
+
+void InventorySystem::updateShortcuts(
+    const Input& input,
+    Player& player,
+    SpellRingSystem& spellRing,
+    const EffectDispatcher& effectDispatcher)
 {
     if (input.shortcutCursorDelta() != 0) {
         moveShortcutCursor(input.shortcutCursorDelta());
@@ -495,14 +1252,22 @@ void InventorySystem::updateShortcuts(const Input& input, Player& player, SpellR
     }
 
     if (input.useItemPressed()) {
-        useShortcutSelection(player, spellRing);
+        useShortcutSelection(player, spellRing, effectDispatcher);
     }
     if (input.addRingPressed()) {
         addShortcutSelectionToRing(spellRing);
     }
+    if (input.pressed(InputAction::ToggleProtection)) {
+        toggleSelectedProtection();
+    }
 }
 
-void InventorySystem::updateScreen(const Input& input, UiContext& ui, Player& player, SpellRingSystem& spellRing)
+void InventorySystem::updateScreen(
+    const Input& input,
+    UiContext& ui,
+    Player& player,
+    SpellRingSystem& spellRing,
+    const EffectDispatcher& effectDispatcher)
 {
     if (!open_) {
         return;
@@ -548,7 +1313,7 @@ void InventorySystem::updateScreen(const Input& input, UiContext& ui, Player& pl
         if (grabbedSlotActive_) {
             placeGrabbedAtSelected();
         } else {
-            useShortcutSelection(player, spellRing);
+            useShortcutSelection(player, spellRing, effectDispatcher);
         }
     }
     if (input.addRingPressed()) {
@@ -558,11 +1323,24 @@ void InventorySystem::updateScreen(const Input& input, UiContext& ui, Player& pl
             addShortcutSelectionToRing(spellRing);
         }
     }
+    if (input.pressed(InputAction::ToggleProtection)) {
+        if (grabbedSlotActive_) {
+            status_ = "つかみ中は保護変更できません";
+        } else {
+            toggleSelectedProtection();
+        }
+    }
 
     ui.block(inventoryScreenRect());
 }
 
-void InventorySystem::update(const Input& input, UiContext& ui, Player& player, SpellRingSystem& spellRing, bool blocked)
+void InventorySystem::update(
+    const Input& input,
+    UiContext& ui,
+    Player& player,
+    SpellRingSystem& spellRing,
+    const EffectDispatcher& effectDispatcher,
+    bool blocked)
 {
     if (!blocked && ui.pressed(inventoryToggleRect())) {
         open_ = !open_;
@@ -574,11 +1352,14 @@ void InventorySystem::update(const Input& input, UiContext& ui, Player& player, 
     if (!open_ || blocked) {
         return;
     }
-    updateScreen(input, ui, player, spellRing);
+    updateScreen(input, ui, player, spellRing, effectDispatcher);
 }
 
 void InventorySystem::render(Renderer& renderer, const Player& player, const SpellRingSystem& spellRing) const
 {
+    (void)player;
+    (void)spellRing;
+
     renderer.setScreenSpace();
     drawUiButton(renderer, inventoryToggleRect(), "アイテム", false);
 
@@ -589,7 +1370,7 @@ void InventorySystem::render(Renderer& renderer, const Player& player, const Spe
     renderer.fillRect({ScreenX, ScreenY}, {ScreenW, ScreenH}, {8, 8, 14, 238});
     renderer.drawRect({ScreenX, ScreenY}, {ScreenW, ScreenH}, {210, 184, 255, 255});
     renderer.drawText({ScreenX + 28.0f, ScreenY + 24.0f}, "アイテム", {246, 235, 255, 255}, 4);
-    renderer.drawText({ScreenX + 190.0f, ScreenY + 34.0f}, "WASD/矢印 移動  Q/E 左右  F/Enter 使用  R リングへ  G つかむ/置く  Esc 戻る", {198, 198, 206, 255}, 2);
+    renderer.drawText({ScreenX + 190.0f, ScreenY + 34.0f}, "WASD/矢印 移動  Q/E 左右  F/Enter 使用  R リングへ  P 保護  G つかむ/置く  Esc 戻る", {198, 198, 206, 255}, 2);
 
     char buffer[160];
     for (int i = 0; i < ShortcutSlotCount; ++i) {
@@ -614,7 +1395,25 @@ void InventorySystem::render(Renderer& renderer, const Player& player, const Spe
             std::snprintf(buffer, sizeof(buffer), "%s x%d", inventoryItemName(slot.type), item.count);
             renderer.drawText(rect.pos + Vec2{10.0f, 50.0f}, buffer, {235, 235, 240, 255}, 2);
         } else {
-            renderer.drawText(rect.pos + Vec2{22.0f, 30.0f}, "空き", {126, 128, 140, 255}, 2);
+            const InventoryObjectStack* objectStack = objectStackAtScreenIndex(i);
+            if (objectStack != nullptr) {
+                const Color objectColor = inventoryObjectColor(objectStack->item);
+                renderer.fillCircle(rect.pos + Vec2{44.0f, 28.0f}, 13.0f, objectColor);
+                renderer.drawCircle(rect.pos + Vec2{44.0f, 28.0f}, 16.0f, {255, 230, 150, 180});
+                std::snprintf(buffer, sizeof(buffer), "%s x%d", objectStack->item.name.c_str(), objectStack->count);
+                renderer.drawText(rect.pos + Vec2{10.0f, 50.0f}, buffer, {235, 235, 240, 255}, 2);
+            } else if (const InventoryObjectInstance* objectInstance = objectInstanceAtScreenIndex(i)) {
+                const Color objectColor = objectInstance->instance.isBroken ? Color{82, 82, 90, 255} : inventoryObjectColor(objectInstance->item);
+                renderer.fillCircle(rect.pos + Vec2{44.0f, 28.0f}, 13.0f, objectColor);
+                renderer.drawCircle(
+                    rect.pos + Vec2{44.0f, 28.0f},
+                    16.0f,
+                    objectInstance->instance.protectionEnabled ? Color{116, 220, 255, 220} : Color{255, 230, 150, 180});
+                std::snprintf(buffer, sizeof(buffer), "%s", objectInstance->item.name.c_str());
+                renderer.drawText(rect.pos + Vec2{10.0f, 50.0f}, buffer, {235, 235, 240, 255}, 2);
+            } else {
+                renderer.drawText(rect.pos + Vec2{22.0f, 30.0f}, "空き", {126, 128, 140, 255}, 2);
+            }
         }
     }
 
@@ -643,6 +1442,45 @@ void InventorySystem::render(Renderer& renderer, const Player& player, const Spe
         drawDetailLine(renderer, detailLineY, "重さ", buffer);
         drawDetailLine(renderer, detailLineY, "特殊タグ", inventoryTags(selectedSlot.type));
         drawDetailLine(renderer, detailLineY, "効果テキスト", inventoryItemUseText(selectedSlot.type));
+    } else if (const InventoryObjectStack* objectStack = selectedObjectStack()) {
+        const ItemData& item = objectStack->item;
+        std::snprintf(buffer, sizeof(buffer), "%s x%d", item.name.c_str(), objectStack->count);
+        drawDetailLine(renderer, detailLineY, "名前", buffer);
+        drawDetailLine(renderer, detailLineY, "カテゴリ", item.category);
+        drawDetailLine(renderer, detailLineY, "説明文", item.description.empty() ? "-" : item.description);
+        drawDetailLine(renderer, detailLineY, "通常効果", effectSummary(item.normalEffects));
+        drawDetailLine(renderer, detailLineY, "軌道効果", effectSummary(item.orbitEffects));
+        std::snprintf(buffer, sizeof(buffer), "%d", item.attackPower);
+        drawDetailLine(renderer, detailLineY, "攻撃力", buffer);
+        drawDetailLine(renderer, detailLineY, "ダメージ", item.damageType.empty() ? "-" : item.damageType);
+        std::snprintf(buffer, sizeof(buffer), "%d", item.digPower);
+        drawDetailLine(renderer, detailLineY, "掘削力", buffer);
+        std::snprintf(buffer, sizeof(buffer), "%d", item.durability);
+        drawDetailLine(renderer, detailLineY, "耐久力", buffer);
+        std::snprintf(buffer, sizeof(buffer), "%.1fkg", item.weightKg);
+        drawDetailLine(renderer, detailLineY, "重さ", buffer);
+        drawDetailLine(renderer, detailLineY, "特殊タグ", joinValues(item.tags));
+        drawDetailLine(renderer, detailLineY, "効果テキスト", item.effectText.empty() ? "-" : item.effectText);
+    } else if (const InventoryObjectInstance* objectInstance = selectedObjectInstance()) {
+        const ItemData& item = objectInstance->item;
+        const ItemInstance& instance = objectInstance->instance;
+        std::snprintf(buffer, sizeof(buffer), "%s", item.name.c_str());
+        drawDetailLine(renderer, detailLineY, "名前", buffer);
+        drawDetailLine(renderer, detailLineY, "カテゴリ", item.category);
+        std::snprintf(buffer, sizeof(buffer), "%s", instance.instanceId.c_str());
+        drawDetailLine(renderer, detailLineY, "個体ID", buffer);
+        std::snprintf(buffer, sizeof(buffer), "%d", instance.enhanceLevel);
+        drawDetailLine(renderer, detailLineY, "強化Lv", buffer);
+        std::snprintf(buffer, sizeof(buffer), "%d/%d", instance.currentDurability, instance.maxDurability);
+        drawDetailLine(renderer, detailLineY, "耐久力", buffer);
+        drawDetailLine(renderer, detailLineY, "保護", instance.protectionEnabled ? "ON" : "OFF");
+        drawDetailLine(renderer, detailLineY, "状態", instance.isBroken ? "破損" : "通常");
+        std::snprintf(buffer, sizeof(buffer), "+%d / +%d / +%d", instance.attackBonus, instance.digBonus, instance.durabilityBonus);
+        drawDetailLine(renderer, detailLineY, "補正", buffer);
+        drawDetailLine(renderer, detailLineY, "通常効果", effectSummary(item.normalEffects));
+        drawDetailLine(renderer, detailLineY, "追加効果", effectSummary(instance.addedEffects));
+        drawDetailLine(renderer, detailLineY, "特殊タグ", joinValues(item.tags));
+        drawDetailLine(renderer, detailLineY, "操作", "P 保護ON/OFF");
     } else {
         drawDetailLine(renderer, detailLineY, "名前", "空き");
         drawDetailLine(renderer, detailLineY, "カテゴリ", "-");
@@ -685,7 +1523,7 @@ void InventorySystem::renderShortcutHud(Renderer& renderer, const SpellRingSyste
     char buffer[128];
     std::snprintf(buffer, sizeof(buffer), "Row %d/3   Ring %d", shortcutRow_ + 1, spellRing.activeRingIndex() + 1);
     renderer.drawText({innerX, panelY + 12.0f}, buffer, {246, 235, 255, 255}, 2);
-    renderer.drawText({innerX + 300.0f, panelY + 12.0f}, "Q/E 選択, Tab 行切替, F 使用, R リングへ", {198, 198, 206, 255}, 2);
+    renderer.drawText({innerX + 300.0f, panelY + 12.0f}, "Q/E 選択, Tab 行切替, F 使用, R リングへ, P 保護", {198, 198, 206, 255}, 2);
 
     for (int column = 0; column < ShortcutColumns; ++column) {
         const int slotIndex = shortcutRow_ * ShortcutColumns + column;
@@ -705,7 +1543,22 @@ void InventorySystem::renderShortcutHud(Renderer& renderer, const SpellRingSyste
             std::snprintf(buffer, sizeof(buffer), "%s x%d", inventoryItemName(slot.type), item.count);
             renderer.drawText(slotPos + Vec2{20.0f, 18.0f}, buffer, {235, 235, 240, 255}, 2);
         } else {
-            renderer.drawText(slotPos + Vec2{20.0f, 18.0f}, "空き", {126, 128, 140, 255}, 2);
+            const InventoryObjectStack* objectStack = objectStackAtScreenIndex(slotIndex);
+            if (objectStack != nullptr) {
+                std::snprintf(buffer, sizeof(buffer), "%s x%d", objectStack->item.name.c_str(), objectStack->count);
+                renderer.drawText(slotPos + Vec2{20.0f, 18.0f}, buffer, {235, 235, 240, 255}, 2);
+            } else if (const InventoryObjectInstance* objectInstance = objectInstanceAtScreenIndex(slotIndex)) {
+                std::snprintf(buffer, sizeof(buffer), "%s%s",
+                    objectInstance->instance.protectionEnabled ? "[P] " : "",
+                    objectInstance->item.name.c_str());
+                renderer.drawText(
+                    slotPos + Vec2{20.0f, 18.0f},
+                    buffer,
+                    objectInstance->instance.isBroken ? Color{150, 150, 160, 255} : Color{235, 235, 240, 255},
+                    2);
+            } else {
+                renderer.drawText(slotPos + Vec2{20.0f, 18.0f}, "空き", {126, 128, 140, 255}, 2);
+            }
         }
 
         if (selected) {
