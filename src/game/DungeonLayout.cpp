@@ -1,6 +1,7 @@
 #include "game/DungeonLayout.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <random>
 #include <utility>
@@ -122,6 +123,63 @@ Vec2 tangentAtProgress(const std::vector<Vec2>& points, float progress)
     return normalize(points[index + 1] - points[index]);
 }
 
+SpecialRoomType chooseExtraRoomType(int stageId, int index, float progress)
+{
+    const std::array<SpecialRoomType, 5> stageOne{
+        SpecialRoomType::SafeCavern,
+        SpecialRoomType::OreRoom,
+        SpecialRoomType::CoinRoom,
+        SpecialRoomType::TreasureRoom,
+        SpecialRoomType::EnemyRoom,
+    };
+    const std::array<SpecialRoomType, 5> stageTwo{
+        SpecialRoomType::CoinRoom,
+        SpecialRoomType::TreasureRoom,
+        SpecialRoomType::EnemyRoom,
+        SpecialRoomType::OreRoom,
+        SpecialRoomType::SafeCavern,
+    };
+    const std::array<SpecialRoomType, 5> stageThree{
+        SpecialRoomType::TreasureRoom,
+        SpecialRoomType::OreRoom,
+        SpecialRoomType::EnemyRoom,
+        SpecialRoomType::CoinRoom,
+        SpecialRoomType::SafeCavern,
+    };
+    const std::array<SpecialRoomType, 5> stageFour{
+        SpecialRoomType::OreRoom,
+        SpecialRoomType::SafeCavern,
+        SpecialRoomType::CoinRoom,
+        SpecialRoomType::TreasureRoom,
+        SpecialRoomType::EnemyRoom,
+    };
+
+    if (progress > 0.78f && index % 2 == 0) {
+        return index % 4 == 0 ? SpecialRoomType::TreasureRoom : SpecialRoomType::EnemyRoom;
+    }
+    if (stageId <= 1) {
+        return stageOne[static_cast<std::size_t>(index) % stageOne.size()];
+    }
+    if (stageId == 2) {
+        return stageTwo[static_cast<std::size_t>(index) % stageTwo.size()];
+    }
+    if (stageId == 3) {
+        return stageThree[static_cast<std::size_t>(index) % stageThree.size()];
+    }
+    return stageFour[static_cast<std::size_t>(index) % stageFour.size()];
+}
+
+bool overlapsExistingRoom(const std::vector<SpecialRoomAnchor>& rooms, Vec2 center, float radius)
+{
+    for (const SpecialRoomAnchor& room : rooms) {
+        const float minDistance = room.radius + radius + 4.0f;
+        if (distanceSquared(room.center, center) < minDistance * minDistance) {
+            return true;
+        }
+    }
+    return false;
+}
+
 }
 
 DungeonLayout generateDungeonLayout(const DungeonGenerationContext& context)
@@ -155,6 +213,7 @@ DungeonLayout generateDungeonLayout(const DungeonGenerationContext& context)
         0.10f,
         0.035f);
 
+    std::vector<Vec2> roomCandidates;
     const int branchCount = branchCountDist(rng);
     for (int i = 0; i < branchCount; ++i) {
         const float progress = (static_cast<float>(i + 1) / static_cast<float>(branchCount + 1)) + branchJitter(rng) * 0.18f;
@@ -169,7 +228,7 @@ DungeonLayout generateDungeonLayout(const DungeonGenerationContext& context)
 
         DungeonPath branch;
         branch.points = makeWanderingPath(anchor, end, rng, 14, 0.18f, 0.02f);
-        layout.specialRoomAnchors.push_back(branch.points.empty() ? end : branch.points.back());
+        roomCandidates.push_back(branch.points.empty() ? end : branch.points.back());
         layout.branchPathPoints.push_back(std::move(branch));
     }
 
@@ -179,6 +238,51 @@ DungeonLayout generateDungeonLayout(const DungeonGenerationContext& context)
         layout.warpPointAnchors.push_back(pointAtProgress(
             layout.mainPathPoints,
             static_cast<float>(i + 1) / static_cast<float>(WarpAnchorCount + 1)));
+    }
+
+    std::vector<std::pair<Vec2, float>> typedCandidates;
+    typedCandidates.reserve(roomCandidates.size() + 8);
+    for (std::size_t i = 0; i < roomCandidates.size(); ++i) {
+        const DungeonLayoutMetrics metrics = calculateDungeonLayoutMetrics(layout, roomCandidates[i]);
+        typedCandidates.push_back({roomCandidates[i], metrics.pathProgress});
+    }
+    for (float progress : {0.18f, 0.33f, 0.48f, 0.63f, 0.78f, 0.88f}) {
+        const Vec2 anchor = pointAtProgress(layout.mainPathPoints, progress);
+        const Vec2 tangent = tangentAtProgress(layout.mainPathPoints, progress);
+        const Vec2 side = perpendicular(tangent) * (unitDist(rng) < 0.5f ? -1.0f : 1.0f);
+        typedCandidates.push_back({anchor + side * (8.0f + unitDist(rng) * 8.0f), progress});
+    }
+
+    const std::array<SpecialRoomType, 5> requiredRooms{
+        SpecialRoomType::OreRoom,
+        SpecialRoomType::SafeCavern,
+        SpecialRoomType::CoinRoom,
+        SpecialRoomType::TreasureRoom,
+        SpecialRoomType::EnemyRoom,
+    };
+    for (std::size_t i = 0; i < requiredRooms.size() && i < typedCandidates.size(); ++i) {
+        const float progress = typedCandidates[i].second;
+        SpecialRoomAnchor room;
+        room.type = requiredRooms[i];
+        room.center = typedCandidates[i].first;
+        room.radius = 5.5f + unitDist(rng) * 2.0f + (progress > 0.75f ? 1.2f : 0.0f);
+        layout.specialRoomAnchors.push_back(room);
+    }
+
+    const int extraRoomCount = std::clamp(layout.stageId, 1, 4);
+    for (int i = 0; i < extraRoomCount && !typedCandidates.empty(); ++i) {
+        const std::size_t candidateIndex = static_cast<std::size_t>(requiredRooms.size() + i) % typedCandidates.size();
+        const Vec2 center = typedCandidates[candidateIndex].first;
+        const float progress = typedCandidates[candidateIndex].second;
+        const float radius = 5.0f + unitDist(rng) * 3.0f + static_cast<float>(layout.stageId) * 0.25f;
+        if (overlapsExistingRoom(layout.specialRoomAnchors, center, radius)) {
+            continue;
+        }
+        layout.specialRoomAnchors.push_back(SpecialRoomAnchor{
+            .type = chooseExtraRoomType(layout.stageId, i, progress),
+            .center = center,
+            .radius = radius,
+        });
     }
 
     return layout;
@@ -220,6 +324,46 @@ DungeonLayoutMetrics calculateDungeonLayoutMetrics(const DungeonLayout& layout, 
     metrics.distanceFromMainPath = bestDistance;
     metrics.pathProgress = totalLength > 0.0001f ? clamp(bestPathDistance / totalLength, 0.0f, 1.0f) : 0.0f;
     return metrics;
+}
+
+SpecialRoomMetrics calculateSpecialRoomMetrics(const DungeonLayout& layout, Vec2 tilePosition)
+{
+    SpecialRoomMetrics metrics;
+    metrics.distanceToNearestRoom = 1.0e30f;
+    for (const SpecialRoomAnchor& room : layout.specialRoomAnchors) {
+        const float distanceToCenter = length(tilePosition - room.center);
+        const float edgeDistance = std::max(0.0f, distanceToCenter - room.radius);
+        if (distanceToCenter <= room.radius) {
+            metrics.currentRoomType = room.type;
+        }
+        if (edgeDistance < metrics.distanceToNearestRoom) {
+            metrics.distanceToNearestRoom = edgeDistance;
+            metrics.nearestRoomType = room.type;
+        }
+    }
+    if (layout.specialRoomAnchors.empty()) {
+        metrics.distanceToNearestRoom = 0.0f;
+    }
+    return metrics;
+}
+
+const char* specialRoomTypeName(SpecialRoomType type)
+{
+    switch (type) {
+    case SpecialRoomType::None:
+        return "None";
+    case SpecialRoomType::OreRoom:
+        return "OreRoom";
+    case SpecialRoomType::SafeCavern:
+        return "SafeCavern";
+    case SpecialRoomType::CoinRoom:
+        return "CoinRoom";
+    case SpecialRoomType::TreasureRoom:
+        return "TreasureRoom";
+    case SpecialRoomType::EnemyRoom:
+        return "EnemyRoom";
+    }
+    return "Unknown";
 }
 
 }

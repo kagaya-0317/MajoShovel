@@ -23,7 +23,17 @@ public:
         const SpellRingSystem& spellRing,
         const Player& player,
         const RuntimeBalance& balance,
-        const DungeonLayout& dungeonLayout);
+        const DungeonLayout& dungeonLayout,
+        int nearestWarpIndex,
+        bool nearestWarpDiscovered,
+        int discoveredWarpCount,
+        int rewardNodeCount,
+        int moneyNodeCount,
+        int buriedVisibleNodeCount,
+        int buriedHiddenNodeCount,
+        int exposedEnemyNodeCount,
+        int buriedEnemyNodeCount,
+        int spawnedEnemyNodeCount);
 
 private:
     bool visible_ = true;

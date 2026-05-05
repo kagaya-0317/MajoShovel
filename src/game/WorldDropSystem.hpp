@@ -7,6 +7,7 @@
 #include "game/TileMap.hpp"
 
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace majo {
@@ -25,6 +26,7 @@ class WorldDropSystem {
 public:
     void clear();
     void spawnFromDugTiles(const std::vector<DugTile>& dugTiles, const ObjectCatalog& catalog);
+    bool spawnObjectDrop(const ObjectCatalog& catalog, std::string_view objectId, Vec2 position);
     bool spawnRewardDrop(const ObjectCatalog& catalog, Vec2 position);
     int pullMetalDrops(const ObjectCatalog& catalog, Vec2 center, float dt);
     int update(float dt, const Player& player, InventorySystem& inventory, const ObjectCatalog& catalog);

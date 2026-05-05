@@ -343,9 +343,56 @@ TerrainDebugInfo TileMap::terrainInfoForTile(int tx, int ty, const Tile* tile) c
         static_cast<float>(dungeonLayoutSnapshot_.goalTile.y),
     };
     const float distanceFromGoal = length(tilePosition - goal);
+    float distanceFromWarp = 1.0e30f;
+    for (Vec2 warpAnchor : dungeonLayoutSnapshot_.warpPointAnchors) {
+        distanceFromWarp = std::min(distanceFromWarp, length(tilePosition - warpAnchor));
+    }
+    SpecialRoomType currentRoomType = SpecialRoomType::None;
+    float distanceFromSpecialRoomCenter = 1.0e30f;
+    float specialRoomRadius = 0.0f;
+    for (const SpecialRoomAnchor& room : dungeonLayoutSnapshot_.specialRoomAnchors) {
+        const float distanceToRoom = length(tilePosition - room.center);
+        if (distanceToRoom <= room.radius) {
+            currentRoomType = room.type;
+            distanceFromSpecialRoomCenter = distanceToRoom;
+            specialRoomRadius = room.radius;
+            break;
+        }
+        if (room.type == SpecialRoomType::TreasureRoom && distanceToRoom <= room.radius + 2.0f) {
+            currentRoomType = room.type;
+            distanceFromSpecialRoomCenter = distanceToRoom;
+            specialRoomRadius = room.radius;
+        } else if (room.type == SpecialRoomType::OreRoom && distanceToRoom <= room.radius + 1.5f) {
+            currentRoomType = room.type;
+            distanceFromSpecialRoomCenter = distanceToRoom;
+            specialRoomRadius = room.radius;
+        }
+    }
 
     TileType generatedType = TileType::Rock;
-    if (distanceFromGoal <= GoalCavernRadius + (widthNoise - 0.5f) * 2.0f) {
+    if (currentRoomType == SpecialRoomType::SafeCavern && distanceFromSpecialRoomCenter <= specialRoomRadius) {
+        generatedType = TileType::Empty;
+    } else if (currentRoomType == SpecialRoomType::CoinRoom && distanceFromSpecialRoomCenter <= specialRoomRadius) {
+        generatedType = distanceFromSpecialRoomCenter <= specialRoomRadius * 0.88f ? TileType::Empty : TileType::Dirt;
+    } else if (currentRoomType == SpecialRoomType::EnemyRoom && distanceFromSpecialRoomCenter <= specialRoomRadius) {
+        generatedType = distanceFromSpecialRoomCenter <= specialRoomRadius * 0.78f ? TileType::Empty : TileType::Rock;
+    } else if (currentRoomType == SpecialRoomType::OreRoom && distanceFromSpecialRoomCenter <= specialRoomRadius + 1.5f) {
+        if (distanceFromSpecialRoomCenter <= specialRoomRadius * 0.50f) {
+            generatedType = TileType::Empty;
+        } else if (distanceFromSpecialRoomCenter <= specialRoomRadius) {
+            generatedType = fineNoise > 0.28f ? TileType::Ore : TileType::Rock;
+        } else {
+            generatedType = fineNoise > 0.45f ? TileType::Ore : TileType::Rock;
+        }
+    } else if (currentRoomType == SpecialRoomType::TreasureRoom && distanceFromSpecialRoomCenter <= specialRoomRadius + 2.0f) {
+        if (distanceFromSpecialRoomCenter <= specialRoomRadius * 0.58f) {
+            generatedType = TileType::Empty;
+        } else {
+            generatedType = TileType::HardRock;
+        }
+    } else if (distanceFromWarp <= 2.35f) {
+        generatedType = TileType::Empty;
+    } else if (distanceFromGoal <= GoalCavernRadius + (widthNoise - 0.5f) * 2.0f) {
         generatedType = TileType::Empty;
     } else if (shapedDistance <= caveWidth) {
         generatedType = TileType::Empty;
@@ -364,6 +411,11 @@ TerrainDebugInfo TileMap::terrainInfoForTile(int tx, int ty, const Tile* tile) c
     info.localHardnessMultiplier = 0.85f + distanceHardness * 0.75f + (broadNoise - 0.5f) * 0.28f;
     if (generatedType == TileType::HardRock) {
         info.localHardnessMultiplier += 0.35f;
+    }
+    if (currentRoomType == SpecialRoomType::TreasureRoom && generatedType == TileType::HardRock) {
+        info.localHardnessMultiplier += 0.25f;
+    } else if (currentRoomType == SpecialRoomType::SafeCavern) {
+        info.localHardnessMultiplier *= 0.8f;
     }
     info.localHardnessMultiplier = std::max(0.35f, info.localHardnessMultiplier);
 

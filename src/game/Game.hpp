@@ -25,6 +25,7 @@
 #include "game/UpgradeSystem.hpp"
 #include "game/WorldDropSystem.hpp"
 
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -75,10 +76,53 @@ private:
     };
 
     struct WarpPoint {
-        Vec2 position{};
+        int stageId = 1;
         int index = 0;
+        DungeonTile tilePosition{};
+        Vec2 position{};
+        bool discovered = false;
+        float undiscoveredLightRadiusTiles = 3.0f;
+        float discoveredLightRadiusTiles = 6.0f;
+        // Compatibility state for the current checkpoint/base flow. New code
+        // should prefer discovered/discoveredWarpPoints().
         bool unlocked = false;
         bool snapshotCaptured = false;
+    };
+
+    enum class PlacementVisibility {
+        Exposed,
+        BuriedVisible,
+        BuriedHidden,
+    };
+
+    struct RewardNode {
+        DungeonTile tile{};
+        PlacementVisibility visibility = PlacementVisibility::Exposed;
+        std::string rewardKind = "placeholder";
+        std::optional<std::string> objectId;
+        bool revealed = false;
+        bool spawned = false;
+        bool collected = false;
+    };
+
+    struct MoneyNode {
+        DungeonTile tile{};
+        int amount = 1;
+        PlacementVisibility visibility = PlacementVisibility::Exposed;
+        bool collected = false;
+    };
+
+    enum class EnemyPlacementType {
+        Exposed,
+        BuriedHidden,
+    };
+
+    struct EnemyNode {
+        DungeonTile tile{};
+        EnemyPlacementType placementType = EnemyPlacementType::Exposed;
+        int dangerTier = 1;
+        std::string enemySpawnGroup = "default";
+        bool spawned = false;
     };
 
     struct RetrySnapshot {
@@ -94,6 +138,9 @@ private:
         DungeonLayout dungeonLayout;
         RunStats runStats{};
         std::vector<WarpPoint> warpPoints;
+        std::vector<RewardNode> rewardNodes;
+        std::vector<MoneyNode> moneyNodes;
+        std::vector<EnemyNode> enemyNodes;
         int spawnedWarpPointCount = 0;
         int unlockedWarpPointCount = 0;
         Vec2 bossSpawnPoint{};
@@ -237,12 +284,30 @@ private:
     Vec2 latestWarpPointStartPosition() const;
     void rebuildUnlockedWarpPointsForStart(Vec2 latestPosition);
     void resetWarpPointRunState();
+    void initializeWarpPointsFromLayout();
+    int discoveredWarpPointCount() const;
+    std::vector<WarpPoint> discoveredWarpPoints() const;
+    int nearestWarpPointIndex(Vec2 position) const;
     void updateWarpPoints();
+    void initializeRewardNodesFromLayout();
+    void updateExposedRewardNodes();
+    void revealRewardNodesFromOpenedTiles(const std::vector<Vec2>& openedTiles);
+    int rewardNodeCount() const;
+    int moneyNodeCount() const;
+    int buriedVisibleNodeCount() const;
+    int buriedHiddenNodeCount() const;
+    void initializeEnemyNodesFromLayout();
+    void updateExposedEnemyNodes();
+    std::vector<Vec2> spawnHiddenEnemyNodesFromOpenedTiles(const std::vector<Vec2>& openedTiles);
+    int exposedEnemyNodeCount() const;
+    int buriedEnemyNodeCount() const;
+    int spawnedEnemyNodeCount() const;
     void configureBossSpawnPointFromWarp(Vec2 warpPosition);
     void updateBossSpawn();
     void captureRetrySnapshotAtWarpPoint();
     void restoreRetrySnapshot();
     void renderWarpPoints(Renderer& renderer) const;
+    void renderRewardNodes(Renderer& renderer, const std::vector<LightSource>& extraLights) const;
     void enterStageClear();
     void updateStageClearScreen(const Input& input, UiContext& ui);
     bool loadSaveData();
@@ -318,6 +383,9 @@ private:
     InventoryCarryState runStartInventoryState_{};
     RetrySnapshot retrySnapshot_{};
     std::vector<WarpPoint> warpPoints_;
+    std::vector<RewardNode> rewardNodes_;
+    std::vector<MoneyNode> moneyNodes_;
+    std::vector<EnemyNode> enemyNodes_;
     int spawnedWarpPointCount_ = 0;
     Vec2 bossSpawnPoint_{};
     bool hasBossSpawnPoint_ = false;

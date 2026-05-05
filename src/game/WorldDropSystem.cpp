@@ -140,6 +140,23 @@ void WorldDropSystem::spawnFromDugTiles(const std::vector<DugTile>& dugTiles, co
     }
 }
 
+bool WorldDropSystem::spawnObjectDrop(const ObjectCatalog& catalog, std::string_view objectId, Vec2 position)
+{
+    if (objectId.empty()) {
+        logDropWarning("reward node requested an empty object_id; no item drop spawned");
+        return false;
+    }
+
+    const ObjectDefinition* object = catalog.registry.findById(objectId);
+    if (object == nullptr) {
+        logDropWarning("reward node object_id=\"" + std::string(objectId) + "\" is missing; no item drop spawned");
+        return false;
+    }
+
+    spawnDrop(*object, position);
+    return true;
+}
+
 bool WorldDropSystem::spawnRewardDrop(const ObjectCatalog& catalog, Vec2 position)
 {
     const ObjectDefinition* object = chooseDropForTile(TileType::Ore, catalog);

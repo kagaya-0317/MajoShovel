@@ -655,6 +655,28 @@ void EnemySystem::spawnFromDugTiles(const std::vector<Vec2>& dugTiles, TileMap& 
     }
 }
 
+bool EnemySystem::spawnNodeEnemy(
+    TileMap& map,
+    Vec2 desiredPosition,
+    Vec2 playerPosition,
+    const RuntimeBalance& balance,
+    const EnemyCatalog& enemyCatalog,
+    bool allowNearPlayer)
+{
+    if (activeCount() >= balance.enemySoftCap) {
+        return false;
+    }
+
+    Vec2 spawnPosition{};
+    const float minPlayerDistance = allowNearPlayer ? 0.0f : balance.enemyMinSpawnDistance;
+    if (!findSpawnPosition(map, desiredPosition, playerPosition, balance.enemyRadius, minPlayerDistance, spawnPosition)) {
+        return false;
+    }
+
+    spawnAt(spawnPosition, balance, enemyCatalog);
+    return true;
+}
+
 bool EnemySystem::spawnBoss(TileMap& map, Vec2 playerPosition, const RuntimeBalance& balance, const EnemyCatalog& enemyCatalog)
 {
     if (bossActive()) {

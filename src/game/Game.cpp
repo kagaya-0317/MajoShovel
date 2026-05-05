@@ -11,6 +11,7 @@
 #include <cstdio>
 #include <filesystem>
 #include <fstream>
+#include <optional>
 #include <random>
 #include <sstream>
 #include <string>
@@ -57,6 +58,84 @@ constexpr float CapturedWindInterval = 1.20f;
 constexpr float CapturedExplosionTileRadius = 28.0f;
 constexpr int CapturedExplosionTileDamage = 1;
 constexpr int CapturedExplosionEnemyDamage = 3;
+constexpr float RewardPickupRadius = 24.0f;
+constexpr int RewardNodeCountPerRun = 12;
+constexpr int MoneyNodeCountPerRun = 18;
+constexpr int EnemyNodeCountPerRun = 14;
+constexpr float ExposedEnemyNodeSpawnRadius = 820.0f;
+
+Vec2 tileWorldCenter(DungeonTile tile)
+{
+    return {
+        (static_cast<float>(tile.x) + 0.5f) * static_cast<float>(balance::TileSize),
+        (static_cast<float>(tile.y) + 0.5f) * static_cast<float>(balance::TileSize),
+    };
+}
+
+DungeonTile roundDungeonTile(Vec2 tilePosition)
+{
+    return {
+        static_cast<int>(std::round(tilePosition.x)),
+        static_cast<int>(std::round(tilePosition.y)),
+    };
+}
+
+Vec2 perpendicular(Vec2 value)
+{
+    return {-value.y, value.x};
+}
+
+Vec2 pointAtPathProgress(const std::vector<Vec2>& points, float progress)
+{
+    if (points.empty()) {
+        return {};
+    }
+    if (points.size() == 1) {
+        return points.front();
+    }
+
+    float totalLength = 0.0f;
+    for (std::size_t i = 1; i < points.size(); ++i) {
+        totalLength += length(points[i] - points[i - 1]);
+    }
+    if (totalLength <= 0.0001f) {
+        return points.front();
+    }
+
+    const float target = totalLength * clamp(progress, 0.0f, 1.0f);
+    float traveled = 0.0f;
+    for (std::size_t i = 1; i < points.size(); ++i) {
+        const float segmentLength = length(points[i] - points[i - 1]);
+        if (traveled + segmentLength >= target) {
+            const float t = segmentLength > 0.0001f ? (target - traveled) / segmentLength : 0.0f;
+            return lerp(points[i - 1], points[i], t);
+        }
+        traveled += segmentLength;
+    }
+    return points.back();
+}
+
+Vec2 tangentAtPathProgress(const std::vector<Vec2>& points, float progress)
+{
+    if (points.size() < 2) {
+        return {1.0f, 0.0f};
+    }
+
+    const std::size_t index = std::min(
+        points.size() - 2,
+        static_cast<std::size_t>(clamp(progress, 0.0f, 1.0f) * static_cast<float>(points.size() - 1)));
+    return normalize(points[index + 1] - points[index]);
+}
+
+std::optional<std::string> firstAvailableObjectId(const ObjectCatalog& catalog)
+{
+    for (const ObjectDefinition& object : catalog.objects) {
+        if (!object.id.empty()) {
+            return object.id;
+        }
+    }
+    return std::nullopt;
+}
 
 UiRect basePanelRect()
 {
@@ -812,12 +891,14 @@ void Game::initializeWorld(bool captureRunStartInventory)
     stageClearSelection_ = 0;
     stageClearStatus_.clear();
     retrySnapshot_ = RetrySnapshot{};
-    resetWarpPointRunState();
     inventoryReturnToPause_ = false;
     debugPaused_ = false;
     captureCooldown_ = 0.0f;
     currentStage_ = std::clamp(currentStage_, 0, std::max(0, unlockedStages_ - 1));
     generateDungeonLayoutForRun();
+    resetWarpPointRunState();
+    initializeRewardNodesFromLayout();
+    initializeEnemyNodesFromLayout();
     spellRing_.initialize(balance_);
     applyPermanentUpgrades();
     spellRing_.applyObjectParameters(objectCatalog_);
@@ -2342,28 +2423,38 @@ Vec2 Game::latestWarpPointStartPosition() const
     if (hasLatestWarpPointPosition_) {
         return latestWarpPointPosition_;
     }
-    if (unlockedWarpPointCount_ > 0) {
-        return {static_cast<float>(unlockedWarpPointCount_) * WarpPointSpacing, 0.0f};
+    for (auto it = warpPoints_.rbegin(); it != warpPoints_.rend(); ++it) {
+        if (it->discovered) {
+            return it->position;
+        }
     }
     return {};
 }
 
 void Game::rebuildUnlockedWarpPointsForStart(Vec2 latestPosition)
 {
-    warpPoints_.clear();
-    spawnedWarpPointCount_ = std::clamp(unlockedWarpPointCount_, 0, MaxWarpPointsPerRun);
-    for (int i = 0; i < spawnedWarpPointCount_; ++i) {
-        WarpPoint point;
-        point.index = i;
-        point.unlocked = true;
-        point.snapshotCaptured = i == spawnedWarpPointCount_ - 1;
-        point.position = {static_cast<float>(i + 1) * WarpPointSpacing, 0.0f};
-        if (i == spawnedWarpPointCount_ - 1) {
-            point.position = latestPosition;
+    initializeWarpPointsFromLayout();
+    int discoveredCount = 0;
+    for (WarpPoint& point : warpPoints_) {
+        if (discoveredCount < unlockedWarpPointCount_) {
+            point.discovered = true;
+            point.unlocked = true;
+            point.snapshotCaptured = true;
+            ++discoveredCount;
         }
-        warpPoints_.push_back(point);
     }
-    if (spawnedWarpPointCount_ > BossWarpPointIndex) {
+    if (!warpPoints_.empty()) {
+        WarpPoint& latest = warpPoints_[static_cast<std::size_t>(std::clamp(unlockedWarpPointCount_ - 1, 0, static_cast<int>(warpPoints_.size()) - 1))];
+        latest.position = latestPosition;
+        latest.tilePosition = {
+            tileMap_.worldToTile(latestPosition.x),
+            tileMap_.worldToTile(latestPosition.y),
+        };
+        latest.discovered = true;
+        latest.unlocked = true;
+        latest.snapshotCaptured = true;
+    }
+    if (unlockedWarpPointCount_ > BossWarpPointIndex) {
         configureBossSpawnPointFromWarp(latestPosition);
     }
 }
@@ -2444,11 +2535,75 @@ void Game::returnToBaseFromNormalStage(bool stageCleared, bool died)
 
 void Game::resetWarpPointRunState()
 {
-    warpPoints_.clear();
-    spawnedWarpPointCount_ = 0;
     hasBossSpawnPoint_ = false;
     retrySnapshot_ = RetrySnapshot{};
     warpPointsEnabled_ = !roguelikeDungeon_;
+    initializeWarpPointsFromLayout();
+}
+
+void Game::initializeWarpPointsFromLayout()
+{
+    warpPoints_.clear();
+    spawnedWarpPointCount_ = 0;
+    if (!warpPointsEnabled_) {
+        return;
+    }
+
+    const int previousUnlockedCount = std::clamp(unlockedWarpPointCount_, 0, MaxWarpPointsPerRun);
+    int index = 0;
+    for (Vec2 anchor : dungeonLayout_.warpPointAnchors) {
+        if (index >= MaxWarpPointsPerRun) {
+            break;
+        }
+        const DungeonLayoutMetrics metrics = calculateDungeonLayoutMetrics(dungeonLayout_, anchor);
+        if (metrics.pathProgress < 0.10f || metrics.pathProgress > 0.90f) {
+            continue;
+        }
+
+        WarpPoint point;
+        point.stageId = dungeonLayout_.stageId;
+        point.index = index;
+        point.tilePosition = roundDungeonTile(anchor);
+        point.position = tileWorldCenter(point.tilePosition);
+        point.discovered = index < previousUnlockedCount;
+        point.unlocked = point.discovered;
+        point.snapshotCaptured = point.discovered;
+        warpPoints_.push_back(point);
+        ++index;
+    }
+    spawnedWarpPointCount_ = static_cast<int>(warpPoints_.size());
+}
+
+int Game::discoveredWarpPointCount() const
+{
+    return static_cast<int>(std::count_if(warpPoints_.begin(), warpPoints_.end(), [](const WarpPoint& point) {
+        return point.discovered;
+    }));
+}
+
+std::vector<Game::WarpPoint> Game::discoveredWarpPoints() const
+{
+    std::vector<WarpPoint> discovered;
+    for (const WarpPoint& point : warpPoints_) {
+        if (point.discovered) {
+            discovered.push_back(point);
+        }
+    }
+    return discovered;
+}
+
+int Game::nearestWarpPointIndex(Vec2 position) const
+{
+    int nearest = -1;
+    float nearestDistanceSq = 1.0e30f;
+    for (const WarpPoint& point : warpPoints_) {
+        const float distSq = distanceSquared(position, point.position);
+        if (distSq < nearestDistanceSq) {
+            nearestDistanceSq = distSq;
+            nearest = point.index;
+        }
+    }
+    return nearest;
 }
 
 void Game::updateWarpPoints()
@@ -2457,26 +2612,14 @@ void Game::updateWarpPoints()
         return;
     }
 
-    const float distanceFromStart = length(player_.position);
-    while (spawnedWarpPointCount_ < MaxWarpPointsPerRun &&
-        distanceFromStart >= static_cast<float>(spawnedWarpPointCount_ + 1) * WarpPointSpacing) {
-        WarpPoint point;
-        point.position = player_.position;
-        point.index = spawnedWarpPointCount_;
-        point.unlocked = point.index < unlockedWarpPointCount_;
-        warpPoints_.push_back(point);
-        ++spawnedWarpPointCount_;
-    }
-
     for (WarpPoint& point : warpPoints_) {
-        if (point.snapshotCaptured) {
+        if (point.discovered) {
             continue;
         }
         if (distanceSquared(player_.position, point.position) <= WarpPointTouchRadius * WarpPointTouchRadius) {
-            if (!point.unlocked) {
-                point.unlocked = true;
-                unlockedWarpPointCount_ = std::max(unlockedWarpPointCount_, point.index + 1);
-            }
+            point.discovered = true;
+            point.unlocked = true;
+            unlockedWarpPointCount_ = std::max(unlockedWarpPointCount_, discoveredWarpPointCount());
             latestWarpPointPosition_ = point.position;
             hasLatestWarpPointPosition_ = true;
             point.snapshotCaptured = true;
@@ -2484,10 +2627,403 @@ void Game::updateWarpPoints()
                 configureBossSpawnPointFromWarp(point.position);
             }
             captureRetrySnapshotAtWarpPoint();
-            reloadNotice_ = "ワープポイント解放";
+            reloadNotice_ = "ワープポイント発見";
             reloadNoticeTimer_ = 2.0f;
         }
     }
+}
+
+void Game::initializeRewardNodesFromLayout()
+{
+    rewardNodes_.clear();
+    moneyNodes_.clear();
+    if (dungeonLayout_.mainPathPoints.size() < 2) {
+        return;
+    }
+
+    std::mt19937 rng(dungeonLayout_.seed ^ 0xB77A4C29u);
+    std::uniform_real_distribution<float> progressJitter(-0.018f, 0.018f);
+    std::uniform_real_distribution<float> sideJitter(-1.2f, 1.2f);
+    std::uniform_int_distribution<int> signDist(0, 1);
+    std::uniform_int_distribution<int> moneyDist(2, 8);
+    const std::optional<std::string> fallbackObjectId = firstAvailableObjectId(objectCatalog_);
+
+    for (int i = 0; i < RewardNodeCountPerRun; ++i) {
+        const float progress = clamp(
+            0.10f + 0.80f * (static_cast<float>(i + 1) / static_cast<float>(RewardNodeCountPerRun + 1)) + progressJitter(rng),
+            0.10f,
+            0.90f);
+        const Vec2 anchor = pointAtPathProgress(dungeonLayout_.mainPathPoints, progress);
+        const Vec2 tangent = tangentAtPathProgress(dungeonLayout_.mainPathPoints, progress);
+        Vec2 side = perpendicular(tangent);
+        if (signDist(rng) == 0) {
+            side = side * -1.0f;
+        }
+
+        RewardNode node;
+        node.visibility = i % 3 == 0
+            ? PlacementVisibility::Exposed
+            : (i % 3 == 1 ? PlacementVisibility::BuriedVisible : PlacementVisibility::BuriedHidden);
+        const float offsetTiles = node.visibility == PlacementVisibility::Exposed
+            ? 0.0f
+            : (node.visibility == PlacementVisibility::BuriedVisible ? 7.0f : 9.0f) + sideJitter(rng);
+        node.tile = roundDungeonTile(anchor + side * offsetTiles);
+        node.rewardKind = i % 4 == 0 ? "treasure" : "item";
+        node.objectId = (i % 2 == 0) ? fallbackObjectId : std::nullopt;
+        node.revealed = node.visibility == PlacementVisibility::Exposed;
+        rewardNodes_.push_back(std::move(node));
+    }
+
+    for (int i = 0; i < MoneyNodeCountPerRun; ++i) {
+        const bool useBranch = !dungeonLayout_.branchPathPoints.empty() && i % 5 == 0;
+        const float progress = clamp(
+            0.08f + 0.84f * (static_cast<float>(i + 1) / static_cast<float>(MoneyNodeCountPerRun + 1)) + progressJitter(rng),
+            0.08f,
+            0.92f);
+        Vec2 anchor = pointAtPathProgress(dungeonLayout_.mainPathPoints, progress);
+        Vec2 tangent = tangentAtPathProgress(dungeonLayout_.mainPathPoints, progress);
+        if (useBranch) {
+            const DungeonPath& branch = dungeonLayout_.branchPathPoints[static_cast<std::size_t>(i) % dungeonLayout_.branchPathPoints.size()];
+            anchor = pointAtPathProgress(branch.points, 0.65f);
+            tangent = tangentAtPathProgress(branch.points, 0.65f);
+        }
+        Vec2 side = perpendicular(tangent);
+        if (signDist(rng) == 0) {
+            side = side * -1.0f;
+        }
+
+        MoneyNode node;
+        node.visibility = i % 3 == 0
+            ? PlacementVisibility::Exposed
+            : (i % 3 == 1 ? PlacementVisibility::BuriedVisible : PlacementVisibility::BuriedHidden);
+        const float offsetTiles = node.visibility == PlacementVisibility::Exposed
+            ? 0.0f
+            : (node.visibility == PlacementVisibility::BuriedVisible ? 6.0f : 8.5f) + sideJitter(rng);
+        node.tile = roundDungeonTile(anchor + side * offsetTiles);
+        node.amount = std::max(1, moneyDist(rng) + dungeonLayout_.stageId * 2);
+        moneyNodes_.push_back(node);
+    }
+
+    for (const SpecialRoomAnchor& room : dungeonLayout_.specialRoomAnchors) {
+        const DungeonTile centerTile = roundDungeonTile(room.center);
+        if (room.type == SpecialRoomType::CoinRoom) {
+            for (int i = 0; i < 4; ++i) {
+                const Vec2 offset = fromAngle(static_cast<float>(i) * Pi * 0.5f) * 2.0f;
+                moneyNodes_.push_back(MoneyNode{
+                    .tile = roundDungeonTile(room.center + offset),
+                    .amount = std::max(4, moneyDist(rng) + dungeonLayout_.stageId * 4),
+                    .visibility = i == 0 ? PlacementVisibility::Exposed : (i == 1 ? PlacementVisibility::BuriedVisible : PlacementVisibility::BuriedHidden),
+                    .collected = false,
+                });
+            }
+        } else if (room.type == SpecialRoomType::TreasureRoom) {
+            rewardNodes_.push_back(RewardNode{
+                .tile = centerTile,
+                .visibility = PlacementVisibility::Exposed,
+                .rewardKind = "treasure",
+                .objectId = fallbackObjectId,
+                .revealed = true,
+                .spawned = false,
+                .collected = false,
+            });
+            rewardNodes_.push_back(RewardNode{
+                .tile = roundDungeonTile(room.center + Vec2{room.radius, 0.0f}),
+                .visibility = PlacementVisibility::BuriedVisible,
+                .rewardKind = "treasure",
+                .objectId = std::nullopt,
+                .revealed = false,
+                .spawned = false,
+                .collected = false,
+            });
+            rewardNodes_.push_back(RewardNode{
+                .tile = roundDungeonTile(room.center + Vec2{-room.radius, 0.0f}),
+                .visibility = PlacementVisibility::BuriedHidden,
+                .rewardKind = "treasure",
+                .objectId = std::nullopt,
+                .revealed = false,
+                .spawned = false,
+                .collected = false,
+            });
+        } else if (room.type == SpecialRoomType::EnemyRoom) {
+            rewardNodes_.push_back(RewardNode{
+                .tile = roundDungeonTile(room.center + Vec2{0.0f, room.radius}),
+                .visibility = PlacementVisibility::BuriedHidden,
+                .rewardKind = "enemy_room_reward",
+                .objectId = std::nullopt,
+                .revealed = false,
+                .spawned = false,
+                .collected = false,
+            });
+        } else if (room.type == SpecialRoomType::OreRoom) {
+            rewardNodes_.push_back(RewardNode{
+                .tile = roundDungeonTile(room.center + Vec2{room.radius, 0.0f}),
+                .visibility = PlacementVisibility::BuriedVisible,
+                .rewardKind = "ore_room_reward",
+                .objectId = std::nullopt,
+                .revealed = false,
+                .spawned = false,
+                .collected = false,
+            });
+        }
+    }
+}
+
+void Game::updateExposedRewardNodes()
+{
+    const float pickupRadiusSq = RewardPickupRadius * RewardPickupRadius;
+    for (RewardNode& node : rewardNodes_) {
+        if (node.collected || node.visibility != PlacementVisibility::Exposed) {
+            continue;
+        }
+        if (distanceSquared(player_.position, tileWorldCenter(node.tile)) > pickupRadiusSq) {
+            continue;
+        }
+
+        if (node.objectId.has_value()) {
+            if (!inventory_.addObjectItem(objectCatalog_, *node.objectId)) {
+                continue;
+            }
+        }
+        node.spawned = true;
+        node.collected = true;
+        ++runStats_.acquiredItems;
+        reloadNotice_ = node.objectId.has_value() ? "報酬を拾得" : "仮報酬を拾得";
+        reloadNoticeTimer_ = 1.4f;
+    }
+
+    for (MoneyNode& node : moneyNodes_) {
+        if (node.collected || node.visibility != PlacementVisibility::Exposed) {
+            continue;
+        }
+        if (distanceSquared(player_.position, tileWorldCenter(node.tile)) > pickupRadiusSq) {
+            continue;
+        }
+        money_ += std::max(0, node.amount);
+        node.collected = true;
+        reloadNotice_ = "金貨 +" + std::to_string(std::max(0, node.amount)) + "G";
+        reloadNoticeTimer_ = 1.4f;
+    }
+}
+
+void Game::revealRewardNodesFromOpenedTiles(const std::vector<Vec2>& openedTiles)
+{
+    if (openedTiles.empty()) {
+        return;
+    }
+
+    for (Vec2 openedTile : openedTiles) {
+        const DungeonTile tile{
+            tileMap_.worldToTile(openedTile.x),
+            tileMap_.worldToTile(openedTile.y),
+        };
+        for (RewardNode& node : rewardNodes_) {
+            if (node.collected || node.visibility == PlacementVisibility::Exposed ||
+                node.tile.x != tile.x || node.tile.y != tile.y) {
+                continue;
+            }
+            node.revealed = true;
+            node.spawned = true;
+            bool spawnedObject = false;
+            if (node.objectId.has_value()) {
+                spawnedObject = worldDrops_.spawnObjectDrop(objectCatalog_, *node.objectId, tileWorldCenter(node.tile));
+            }
+            node.collected = true;
+            if (!spawnedObject) {
+                ++runStats_.acquiredItems;
+            }
+            reloadNotice_ = node.objectId.has_value() ? "埋まり報酬を発見" : "隠し報酬を発見";
+            reloadNoticeTimer_ = 1.6f;
+        }
+        for (MoneyNode& node : moneyNodes_) {
+            if (node.collected || node.visibility == PlacementVisibility::Exposed ||
+                node.tile.x != tile.x || node.tile.y != tile.y) {
+                continue;
+            }
+            money_ += std::max(0, node.amount);
+            node.collected = true;
+            reloadNotice_ = "埋まり金貨 +" + std::to_string(std::max(0, node.amount)) + "G";
+            reloadNoticeTimer_ = 1.6f;
+        }
+    }
+}
+
+int Game::rewardNodeCount() const
+{
+    return static_cast<int>(std::count_if(rewardNodes_.begin(), rewardNodes_.end(), [](const RewardNode& node) {
+        return !node.collected;
+    }));
+}
+
+int Game::moneyNodeCount() const
+{
+    return static_cast<int>(std::count_if(moneyNodes_.begin(), moneyNodes_.end(), [](const MoneyNode& node) {
+        return !node.collected;
+    }));
+}
+
+int Game::buriedVisibleNodeCount() const
+{
+    int count = static_cast<int>(std::count_if(rewardNodes_.begin(), rewardNodes_.end(), [](const RewardNode& node) {
+        return !node.collected && node.visibility == PlacementVisibility::BuriedVisible;
+    }));
+    count += static_cast<int>(std::count_if(moneyNodes_.begin(), moneyNodes_.end(), [](const MoneyNode& node) {
+        return !node.collected && node.visibility == PlacementVisibility::BuriedVisible;
+    }));
+    return count;
+}
+
+int Game::buriedHiddenNodeCount() const
+{
+    int count = static_cast<int>(std::count_if(rewardNodes_.begin(), rewardNodes_.end(), [](const RewardNode& node) {
+        return !node.collected && node.visibility == PlacementVisibility::BuriedHidden;
+    }));
+    count += static_cast<int>(std::count_if(moneyNodes_.begin(), moneyNodes_.end(), [](const MoneyNode& node) {
+        return !node.collected && node.visibility == PlacementVisibility::BuriedHidden;
+    }));
+    return count;
+}
+
+void Game::initializeEnemyNodesFromLayout()
+{
+    enemyNodes_.clear();
+    if (dungeonLayout_.mainPathPoints.size() < 2) {
+        return;
+    }
+
+    std::mt19937 rng(dungeonLayout_.seed ^ 0xE14B9D73u);
+    std::uniform_real_distribution<float> progressJitter(-0.022f, 0.022f);
+    std::uniform_real_distribution<float> sideJitter(-1.0f, 1.0f);
+    std::uniform_int_distribution<int> signDist(0, 1);
+
+    for (int i = 0; i < EnemyNodeCountPerRun; ++i) {
+        const float progress = clamp(
+            0.12f + 0.76f * (static_cast<float>(i + 1) / static_cast<float>(EnemyNodeCountPerRun + 1)) + progressJitter(rng),
+            0.12f,
+            0.88f);
+        const Vec2 anchor = pointAtPathProgress(dungeonLayout_.mainPathPoints, progress);
+        const Vec2 tangent = tangentAtPathProgress(dungeonLayout_.mainPathPoints, progress);
+        Vec2 side = perpendicular(tangent);
+        if (signDist(rng) == 0) {
+            side = side * -1.0f;
+        }
+
+        EnemyNode node;
+        node.placementType = i % 3 == 0 ? EnemyPlacementType::BuriedHidden : EnemyPlacementType::Exposed;
+        const float offsetTiles = node.placementType == EnemyPlacementType::Exposed
+            ? (1.0f + sideJitter(rng))
+            : (8.0f + sideJitter(rng));
+        node.tile = roundDungeonTile(anchor + side * offsetTiles);
+        node.dangerTier = std::max(1, dungeonLayout_.stageId + (i % 4 == 0 ? 1 : 0));
+        node.enemySpawnGroup = "default";
+        enemyNodes_.push_back(std::move(node));
+    }
+
+    for (const SpecialRoomAnchor& room : dungeonLayout_.specialRoomAnchors) {
+        if (room.type == SpecialRoomType::SafeCavern) {
+            continue;
+        }
+        if (room.type == SpecialRoomType::EnemyRoom) {
+            for (int i = 0; i < 4; ++i) {
+                const Vec2 offset = fromAngle(static_cast<float>(i) * Pi * 0.5f) * std::max(1.0f, room.radius * 0.45f);
+                enemyNodes_.push_back(EnemyNode{
+                    .tile = roundDungeonTile(room.center + offset),
+                    .placementType = i < 2 ? EnemyPlacementType::Exposed : EnemyPlacementType::BuriedHidden,
+                    .dangerTier = std::max(2, dungeonLayout_.stageId + 1),
+                    .enemySpawnGroup = "enemy_room",
+                    .spawned = false,
+                });
+            }
+        } else if (room.type == SpecialRoomType::TreasureRoom && dungeonLayout_.stageId >= 2) {
+            enemyNodes_.push_back(EnemyNode{
+                .tile = roundDungeonTile(room.center + Vec2{0.0f, -room.radius}),
+                .placementType = EnemyPlacementType::BuriedHidden,
+                .dangerTier = std::max(2, dungeonLayout_.stageId),
+                .enemySpawnGroup = "treasure_guard",
+                .spawned = false,
+            });
+        } else if (room.type == SpecialRoomType::OreRoom && dungeonLayout_.stageId >= 3) {
+            enemyNodes_.push_back(EnemyNode{
+                .tile = roundDungeonTile(room.center),
+                .placementType = EnemyPlacementType::Exposed,
+                .dangerTier = dungeonLayout_.stageId,
+                .enemySpawnGroup = "ore_guard",
+                .spawned = false,
+            });
+        }
+    }
+}
+
+void Game::updateExposedEnemyNodes()
+{
+    const float spawnRadiusSq = ExposedEnemyNodeSpawnRadius * ExposedEnemyNodeSpawnRadius;
+    for (EnemyNode& node : enemyNodes_) {
+        if (node.spawned || node.placementType != EnemyPlacementType::Exposed) {
+            continue;
+        }
+        const Vec2 center = tileWorldCenter(node.tile);
+        if (distanceSquared(center, player_.position) > spawnRadiusSq) {
+            continue;
+        }
+        if (enemies_.spawnNodeEnemy(tileMap_, center, player_.position, balance_, enemyCatalog_, false)) {
+            node.spawned = true;
+        }
+    }
+}
+
+std::vector<Vec2> Game::spawnHiddenEnemyNodesFromOpenedTiles(const std::vector<Vec2>& openedTiles)
+{
+    std::vector<Vec2> randomSpawnTiles;
+    randomSpawnTiles.reserve(openedTiles.size());
+
+    for (Vec2 openedTile : openedTiles) {
+        const DungeonTile tile{
+            tileMap_.worldToTile(openedTile.x),
+            tileMap_.worldToTile(openedTile.y),
+        };
+
+        bool consumedByHiddenNode = false;
+        for (EnemyNode& node : enemyNodes_) {
+            if (node.spawned || node.placementType != EnemyPlacementType::BuriedHidden ||
+                node.tile.x != tile.x || node.tile.y != tile.y) {
+                continue;
+            }
+
+            consumedByHiddenNode = true;
+            if (enemies_.spawnNodeEnemy(tileMap_, tileWorldCenter(node.tile), player_.position, balance_, enemyCatalog_, true)) {
+                node.spawned = true;
+                reloadNotice_ = "隠れ敵が出現";
+                reloadNoticeTimer_ = 1.5f;
+            }
+            break;
+        }
+
+        if (!consumedByHiddenNode) {
+            randomSpawnTiles.push_back(openedTile);
+        }
+    }
+
+    return randomSpawnTiles;
+}
+
+int Game::exposedEnemyNodeCount() const
+{
+    return static_cast<int>(std::count_if(enemyNodes_.begin(), enemyNodes_.end(), [](const EnemyNode& node) {
+        return !node.spawned && node.placementType == EnemyPlacementType::Exposed;
+    }));
+}
+
+int Game::buriedEnemyNodeCount() const
+{
+    return static_cast<int>(std::count_if(enemyNodes_.begin(), enemyNodes_.end(), [](const EnemyNode& node) {
+        return !node.spawned && node.placementType == EnemyPlacementType::BuriedHidden;
+    }));
+}
+
+int Game::spawnedEnemyNodeCount() const
+{
+    return static_cast<int>(std::count_if(enemyNodes_.begin(), enemyNodes_.end(), [](const EnemyNode& node) {
+        return node.spawned;
+    }));
 }
 
 void Game::configureBossSpawnPointFromWarp(Vec2 warpPosition)
@@ -2530,6 +3066,9 @@ void Game::captureRetrySnapshotAtWarpPoint()
     retrySnapshot_.dungeonLayout = dungeonLayout_;
     retrySnapshot_.runStats = runStats_;
     retrySnapshot_.warpPoints = warpPoints_;
+    retrySnapshot_.rewardNodes = rewardNodes_;
+    retrySnapshot_.moneyNodes = moneyNodes_;
+    retrySnapshot_.enemyNodes = enemyNodes_;
     retrySnapshot_.spawnedWarpPointCount = spawnedWarpPointCount_;
     retrySnapshot_.unlockedWarpPointCount = unlockedWarpPointCount_;
     retrySnapshot_.bossSpawnPoint = bossSpawnPoint_;
@@ -2562,6 +3101,9 @@ void Game::restoreRetrySnapshot()
     restoreInventoryCarryState(retrySnapshot_.inventory);
     runStats_ = retrySnapshot_.runStats;
     warpPoints_ = retrySnapshot_.warpPoints;
+    rewardNodes_ = retrySnapshot_.rewardNodes;
+    moneyNodes_ = retrySnapshot_.moneyNodes;
+    enemyNodes_ = retrySnapshot_.enemyNodes;
     spawnedWarpPointCount_ = retrySnapshot_.spawnedWarpPointCount;
     unlockedWarpPointCount_ = retrySnapshot_.unlockedWarpPointCount;
     bossSpawnPoint_ = retrySnapshot_.bossSpawnPoint;
@@ -4348,11 +4890,11 @@ void Game::renderWarpPoints(Renderer& renderer) const
     }
 
     for (const WarpPoint& point : warpPoints_) {
-        const Color core = point.unlocked ? Color{92, 236, 210, 255} : Color{255, 208, 92, 255};
-        const Color ring = point.unlocked ? Color{170, 255, 238, 220} : Color{255, 232, 150, 220};
+        const Color core = point.discovered ? Color{92, 236, 210, 255} : Color{255, 208, 92, 255};
+        const Color ring = point.discovered ? Color{170, 255, 238, 220} : Color{255, 232, 150, 220};
         renderer.fillCircle(point.position, 12.0f, core);
         renderer.drawCircle(point.position, 20.0f, ring);
-        renderer.drawCircle(point.position, 28.0f, {150, 210, 255, 110});
+        renderer.drawCircle(point.position, point.discovered ? 34.0f : 24.0f, {150, 210, 255, 110});
         renderer.drawLine(point.position + Vec2{-18.0f, 0.0f}, point.position + Vec2{18.0f, 0.0f}, ring);
         renderer.drawLine(point.position + Vec2{0.0f, -18.0f}, point.position + Vec2{0.0f, 18.0f}, ring);
     }
@@ -4362,6 +4904,50 @@ void Game::renderWarpPoints(Renderer& renderer) const
         renderer.drawCircle(bossSpawnPoint_, 18.0f, {255, 180, 80, 230});
         renderer.drawLine(bossSpawnPoint_ + Vec2{-22.0f, -22.0f}, bossSpawnPoint_ + Vec2{22.0f, 22.0f}, {255, 120, 90, 210});
         renderer.drawLine(bossSpawnPoint_ + Vec2{-22.0f, 22.0f}, bossSpawnPoint_ + Vec2{22.0f, -22.0f}, {255, 120, 90, 210});
+    }
+}
+
+void Game::renderRewardNodes(Renderer& renderer, const std::vector<LightSource>& extraLights) const
+{
+    const Color exposedReward{255, 222, 94, 255};
+    const Color exposedMoney{246, 190, 64, 255};
+    const Color sparkle{255, 242, 164, 230};
+
+    for (const RewardNode& node : rewardNodes_) {
+        if (node.collected) {
+            continue;
+        }
+        const Vec2 center = tileWorldCenter(node.tile);
+        if (!tileMap_.isLit(center, player_.position, extraLights)) {
+            continue;
+        }
+        if (node.visibility == PlacementVisibility::Exposed) {
+            renderer.fillCircle(center, 7.0f, exposedReward);
+            renderer.drawCircle(center, 12.0f, {255, 246, 180, 210});
+            renderer.drawLine(center + Vec2{-9.0f, 0.0f}, center + Vec2{9.0f, 0.0f}, {255, 250, 210, 220});
+            renderer.drawLine(center + Vec2{0.0f, -9.0f}, center + Vec2{0.0f, 9.0f}, {255, 250, 210, 220});
+        } else if (node.visibility == PlacementVisibility::BuriedVisible) {
+            renderer.drawLine(center + Vec2{-8.0f, 0.0f}, center + Vec2{8.0f, 0.0f}, sparkle);
+            renderer.drawLine(center + Vec2{0.0f, -8.0f}, center + Vec2{0.0f, 8.0f}, sparkle);
+            renderer.fillCircle(center, 2.5f, {255, 255, 210, 240});
+        }
+    }
+
+    for (const MoneyNode& node : moneyNodes_) {
+        if (node.collected) {
+            continue;
+        }
+        const Vec2 center = tileWorldCenter(node.tile);
+        if (!tileMap_.isLit(center, player_.position, extraLights)) {
+            continue;
+        }
+        if (node.visibility == PlacementVisibility::Exposed) {
+            renderer.fillCircle(center, 5.5f, exposedMoney);
+            renderer.drawCircle(center, 8.5f, {255, 230, 120, 210});
+        } else if (node.visibility == PlacementVisibility::BuriedVisible) {
+            renderer.drawLine(center + Vec2{-6.0f, -6.0f}, center + Vec2{6.0f, 6.0f}, sparkle);
+            renderer.drawLine(center + Vec2{-6.0f, 6.0f}, center + Vec2{6.0f, -6.0f}, sparkle);
+        }
     }
 }
 
@@ -4505,6 +5091,8 @@ void Game::update(const Input& input, const Time& time)
             return;
         }
         updateWarpPoints();
+        updateExposedRewardNodes();
+        updateExposedEnemyNodes();
         if (input.capturePressed() && captureCooldown_ <= 0.0f) {
             const CaptureResult capture = enemies_.tryCapture(player_, spellRing_, inventory_);
             captureCooldown_ = capture.type == CaptureResultType::Success ? 0.35f : 0.75f;
@@ -4554,6 +5142,7 @@ void Game::update(const Input& input, const Time& time)
         for (Vec2 tile : digging_.openedTiles()) {
             effects_.spawnTileBreak(tile);
         }
+        revealRewardNodesFromOpenedTiles(digging_.openedTiles());
         for (const DugTile& tile : digging_.dugTiles()) {
             ++runStats_.dugTiles;
             if (tile.type != TileType::Ore) {
@@ -4566,7 +5155,8 @@ void Game::update(const Input& input, const Time& time)
         }
         worldDrops_.spawnFromDugTiles(digging_.dugTiles(), objectCatalog_);
         runStats_.acquiredItems += worldDrops_.update(time.deltaSeconds(), player_, inventory_, objectCatalog_);
-        enemies_.spawnFromDugTiles(digging_.openedTiles(), tileMap_, player_.position, balance_, enemyCatalog_);
+        const std::vector<Vec2> randomEnemySpawnTiles = spawnHiddenEnemyNodesFromOpenedTiles(digging_.openedTiles());
+        enemies_.spawnFromDugTiles(randomEnemySpawnTiles, tileMap_, player_.position, balance_, enemyCatalog_);
         updateBossSpawn();
 
         enemies_.update(
@@ -4820,13 +5410,15 @@ void Game::render(Renderer& renderer, const Time& time)
     }
     if (warpPointsEnabled_) {
         for (const WarpPoint& point : warpPoints_) {
-            itemLights.push_back({point.position, point.unlocked ? 150.0f : 96.0f});
+            const float radiusTiles = point.discovered ? point.discoveredLightRadiusTiles : point.undiscoveredLightRadiusTiles;
+            itemLights.push_back({point.position, radiusTiles * static_cast<float>(balance::TileSize)});
         }
         if (hasBossSpawnPoint_ && !bossSpawned_) {
             itemLights.push_back({bossSpawnPoint_, 120.0f});
         }
     }
     tileMap_.render(renderer, camera_, player_.position, itemLights);
+    renderRewardNodes(renderer, itemLights);
     worldDrops_.render(renderer, tileMap_, objectCatalog_, player_.position, itemLights);
     renderWarpPoints(renderer);
 
@@ -4883,7 +5475,33 @@ void Game::render(Renderer& renderer, const Time& time)
         renderer.fillRect({18.0f, 170.0f}, {430.0f, 26.0f}, {0, 0, 0, 180});
         renderer.drawText({26.0f, 176.0f}, reloadNotice_, {255, 235, 150, 255}, 2);
     }
-    debug_.render(renderer, time, enemies_, tileMap_, spellRing_, player_, balance_, dungeonLayout_);
+    const int nearestWarp = nearestWarpPointIndex(player_.position);
+    bool nearestWarpDiscovered = false;
+    for (const WarpPoint& point : warpPoints_) {
+        if (point.index == nearestWarp) {
+            nearestWarpDiscovered = point.discovered;
+            break;
+        }
+    }
+    debug_.render(
+        renderer,
+        time,
+        enemies_,
+        tileMap_,
+        spellRing_,
+        player_,
+        balance_,
+        dungeonLayout_,
+        nearestWarp,
+        nearestWarpDiscovered,
+        discoveredWarpPointCount(),
+        rewardNodeCount(),
+        moneyNodeCount(),
+        buriedVisibleNodeCount(),
+        buriedHiddenNodeCount(),
+        exposedEnemyNodeCount(),
+        buriedEnemyNodeCount(),
+        spawnedEnemyNodeCount());
     if (debugPaused_) {
         renderer.fillRect({18.0f, 202.0f}, {190.0f, 28.0f}, {0, 0, 0, 190});
         renderer.drawText({28.0f, 208.0f}, "DEBUG PAUSED", {255, 230, 150, 255}, 2);

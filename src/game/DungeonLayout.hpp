@@ -16,6 +16,21 @@ struct DungeonPath {
     std::vector<Vec2> points;
 };
 
+enum class SpecialRoomType {
+    None,
+    OreRoom,
+    SafeCavern,
+    CoinRoom,
+    TreasureRoom,
+    EnemyRoom,
+};
+
+struct SpecialRoomAnchor {
+    SpecialRoomType type = SpecialRoomType::None;
+    Vec2 center{};
+    float radius = 5.0f;
+};
+
 struct DungeonGenerationContext {
     int stageId = 1;
     std::uint32_t seed = 0;
@@ -32,7 +47,7 @@ struct DungeonLayout {
     std::vector<Vec2> mainPathPoints;
     std::vector<DungeonPath> branchPathPoints;
     std::vector<Vec2> warpPointAnchors;
-    std::vector<Vec2> specialRoomAnchors;
+    std::vector<SpecialRoomAnchor> specialRoomAnchors;
 };
 
 struct DungeonLayoutMetrics {
@@ -41,7 +56,15 @@ struct DungeonLayoutMetrics {
     float distanceFromMainPath = 0.0f;
 };
 
+struct SpecialRoomMetrics {
+    SpecialRoomType currentRoomType = SpecialRoomType::None;
+    SpecialRoomType nearestRoomType = SpecialRoomType::None;
+    float distanceToNearestRoom = 0.0f;
+};
+
 DungeonLayout generateDungeonLayout(const DungeonGenerationContext& context);
 DungeonLayoutMetrics calculateDungeonLayoutMetrics(const DungeonLayout& layout, Vec2 tilePosition);
+SpecialRoomMetrics calculateSpecialRoomMetrics(const DungeonLayout& layout, Vec2 tilePosition);
+const char* specialRoomTypeName(SpecialRoomType type);
 
 }
