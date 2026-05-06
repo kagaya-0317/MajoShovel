@@ -11,6 +11,7 @@
 #include <cstdio>
 #include <filesystem>
 #include <fstream>
+#include <limits>
 #include <optional>
 #include <random>
 #include <sstream>
@@ -63,6 +64,28 @@ constexpr int RewardNodeCountPerRun = 12;
 constexpr int MoneyNodeCountPerRun = 18;
 constexpr int EnemyNodeCountPerRun = 14;
 constexpr float ExposedEnemyNodeSpawnRadius = 820.0f;
+
+enum class BaseFacilityAction {
+    MineExit,
+    Storage,
+    Bookshelf,
+    Merchant,
+    Processing,
+    Forge,
+    Observatory,
+    Diary,
+    RingWorkshop,
+};
+
+struct BaseFacility {
+    const char* facilityId = "";
+    const char* displayName = "";
+    UiRect rect{};
+    float interactionRange = 56.0f;
+    bool enabled = true;
+    bool unlocked = true;
+    BaseFacilityAction onInteract = BaseFacilityAction::MineExit;
+};
 
 Vec2 tileWorldCenter(DungeonTile tile)
 {
@@ -135,6 +158,59 @@ std::optional<std::string> firstAvailableObjectId(const ObjectCatalog& catalog)
         }
     }
     return std::nullopt;
+}
+
+UiRect baseMapBounds()
+{
+    return {{48.0f, 48.0f}, {1184.0f, 624.0f}};
+}
+
+float distanceToRect(Vec2 point, UiRect rect)
+{
+    const float closestX = clamp(point.x, rect.pos.x, rect.pos.x + rect.size.x);
+    const float closestY = clamp(point.y, rect.pos.y, rect.pos.y + rect.size.y);
+    return length(point - Vec2{closestX, closestY});
+}
+
+bool circleIntersectsRect(Vec2 center, float radius, UiRect rect)
+{
+    return distanceToRect(center, rect) < radius;
+}
+
+const char* screenModeName(ScreenMode mode)
+{
+    switch (mode) {
+    case ScreenMode::Base: return "Base";
+    case ScreenMode::Playing: return "Playing";
+    case ScreenMode::PauseMenu: return "PauseMenu";
+    case ScreenMode::Inventory: return "Inventory";
+    case ScreenMode::Ring: return "Ring";
+    case ScreenMode::LevelUp: return "LevelUp";
+    case ScreenMode::GameOver: return "GameOver";
+    case ScreenMode::StageClear: return "StageClear";
+    }
+    return "Unknown";
+}
+
+std::array<BaseFacility, 10> baseFacilities(bool ringWorkshopUnlocked)
+{
+    return {
+        BaseFacility{"mine_exit", "採掘出口", {{584.0f, 560.0f}, {112.0f, 64.0f}}, 78.0f, true, true, BaseFacilityAction::MineExit},
+        BaseFacility{"storage_chest", "収納箱", {{158.0f, 320.0f}, {98.0f, 72.0f}}, 68.0f, true, true, BaseFacilityAction::Storage},
+        BaseFacility{"bookshelf", "本棚", {{150.0f, 118.0f}, {118.0f, 58.0f}}, 64.0f, true, true, BaseFacilityAction::Bookshelf},
+        BaseFacility{"merchant_wagon", "商人ワゴン", {{982.0f, 302.0f}, {150.0f, 90.0f}}, 78.0f, true, true, BaseFacilityAction::Merchant},
+        BaseFacility{"processing_table", "魔導加工台", {{930.0f, 128.0f}, {130.0f, 68.0f}}, 70.0f, true, true, BaseFacilityAction::Processing},
+        BaseFacility{"upgrade_forge", "強化炉", {{568.0f, 76.0f}, {144.0f, 74.0f}}, 76.0f, true, true, BaseFacilityAction::Forge},
+        BaseFacility{"observatory", "モニカの星見台", {{750.0f, 72.0f}, {164.0f, 68.0f}}, 72.0f, true, true, BaseFacilityAction::Observatory},
+        BaseFacility{"diary", "日記", {{68.0f, 574.0f}, {78.0f, 54.0f}}, 58.0f, true, true, BaseFacilityAction::Diary},
+        BaseFacility{"ring_workshop", "リング工房用スペース", {{902.0f, 520.0f}, {172.0f, 92.0f}}, 82.0f, true, ringWorkshopUnlocked, BaseFacilityAction::RingWorkshop},
+        BaseFacility{"home", "主人公の家", {{332.0f, 74.0f}, {150.0f, 96.0f}}, 48.0f, false, true, BaseFacilityAction::Observatory},
+    };
+}
+
+bool baseInteractionAvailable(Vec2 playerPosition, const BaseFacility& facility)
+{
+    return facility.enabled && distanceToRect(playerPosition, facility.rect) <= facility.interactionRange;
 }
 
 UiRect basePanelRect()
@@ -224,7 +300,7 @@ UiRect pauseMenuItemRect(int index)
 
 UiRect pauseBackButtonRect()
 {
-    return {{450.0f, 520.0f}, {180.0f, 42.0f}};
+    return uiBottomLeftButtonRect(pausePanelRect(), {180.0f, 42.0f});
 }
 
 UiRect quitConfirmRect()
@@ -234,7 +310,8 @@ UiRect quitConfirmRect()
 
 UiRect quitConfirmButtonRect(int index)
 {
-    return {{470.0f + static_cast<float>(index) * 180.0f, 380.0f}, {150.0f, 42.0f}};
+    const Vec2 size{150.0f, 42.0f};
+    return index == 0 ? uiBottomLeftButtonRect(quitConfirmRect(), size) : uiBottomRightButtonRect(quitConfirmRect(), size);
 }
 
 UiRect gameOverPanelRect()
@@ -720,6 +797,40 @@ float stageHardnessMultiplierForStageId(int stageId)
     }
 }
 
+StageDefinition makeCodeDefaultStageDefinition()
+{
+    StageDefinition stage;
+    stage.id = "stage_01_stardust";
+    stage.name = "星くずの浅坑";
+    stage.type = "ストーリー";
+    stage.displayOrder = 10;
+    stage.implementationState = "code_default";
+    stage.generationProfile = "natural_cave";
+    stage.terrainProfile = "soft_stardust";
+    stage.goalDistanceTiles = 320;
+    stage.detourRate = 0.30;
+    stage.branchDensity = 0.25;
+    stage.cavernWidthMultiplier = 1.00;
+    stage.terrainHardnessMultiplier = 1.00;
+    stage.warpPointCount = 3;
+    stage.specialRoomCount = 1;
+    return stage;
+}
+
+void logCurrentStageDefinition(const StageDefinition& stage, std::string_view reason)
+{
+    logError(std::string("Current stage resolved") + (reason.empty() ? std::string{} : ": " + std::string(reason)));
+    logError("  currentStageId=\"" + stage.id +
+        "\" name=\"" + stage.name +
+        "\" type=\"" + stage.type +
+        "\" generation_profile=\"" + stage.generationProfile +
+        "\" terrain_profile=\"" + stage.terrainProfile + "\"");
+    logError("  goal_distance_tiles=" + std::to_string(stage.goalDistanceTiles) +
+        " terrain_hardness_multiplier=" + std::to_string(stage.terrainHardnessMultiplier) +
+        " warp_point_count=" + std::to_string(stage.warpPointCount) +
+        " special_room_count=" + std::to_string(stage.specialRoomCount));
+}
+
 void logDbValidationReport(const ObjectCatalog& catalog)
 {
     if (!dbDebugLogEnabled()) {
@@ -800,6 +911,26 @@ void logEnemyDbValidationReport(const EnemyCatalog& catalog)
     logError("=== End Enemy DB validation report ===");
 }
 
+void logStageCatalogReport(const StageCatalog& catalog, bool loadedFromSheet, bool usedFallback, std::string_view error)
+{
+    logError("Stages sheet load " + std::string(loadedFromSheet ? "succeeded" : "failed"));
+    if (!loadedFromSheet && !error.empty()) {
+        logError("Stages sheet error: " + std::string(error));
+    }
+    logError("Stages fallback " + std::string(usedFallback ? "used" : "not used"));
+    logError("Stages loaded: " + std::to_string(catalog.stages.size()));
+    for (const StageDefinition& stage : catalog.getStagesSortedByDisplayOrder()) {
+        logError("  stage id=\"" + stage.id +
+            "\" name=\"" + stage.name +
+            "\" generation_profile=\"" + stage.generationProfile +
+            "\" terrain_profile=\"" + stage.terrainProfile + "\"");
+    }
+    logError("Stage validation warnings: " + std::to_string(catalog.validationWarnings.size()));
+    for (const std::string& warning : catalog.validationWarnings) {
+        logError("  [warning] " + warning);
+    }
+}
+
 void logEffectDispatcherSmoke(const ObjectCatalog& catalog, const EffectDispatcher& dispatcher)
 {
     if (!effectDebugLogEnabled()) {
@@ -825,6 +956,8 @@ void Game::initialize(int width, int height)
     std::string message;
     loadBalanceFromSources(message);
     loadObjectsFromSheet();
+    loadStagesFromSheet();
+    resolveCurrentStageDefinition();
     loadEnemiesFromSheet();
     configureWatcher();
     initializeWorld(false);
@@ -877,8 +1010,9 @@ void Game::initializeWorld(bool captureRunStartInventory)
     bookshelfSelection_ = 0;
     baseStatus_.clear();
     pausePage_ = PauseMenuPage::Main;
+    pauseReturnMode_ = ScreenMode::Playing;
     pauseMenuSelection_ = 0;
-    pauseConfirmSelection_ = 1;
+    pauseConfirmSelection_ = 0;
     ringSlotSelection_ = 0;
     ringGrabActive_ = false;
     ringGrabOrigin_ = -1;
@@ -904,6 +1038,8 @@ void Game::initializeWorld(bool captureRunStartInventory)
     spellRing_.applyObjectParameters(objectCatalog_);
     spellRing_.resetBaseWeightToCurrent();
     refreshOrbitEffects();
+    // Future connection: TileMap chunk initialization will consult
+    // currentStageDefinition().terrainProfile and terrainHardnessMultiplier.
     tileMap_.updateAround(player_.position, 0.0f, balance_, dungeonLayout_);
     logDungeonGenerationAudit();
     if (captureRunStartInventory) {
@@ -921,6 +1057,7 @@ void Game::enterBase()
     }
     mode_ = ScreenMode::Base;
     pausePage_ = PauseMenuPage::Main;
+    pauseReturnMode_ = ScreenMode::Base;
     inventoryReturnToPause_ = false;
     baseMiningStartChoiceActive_ = false;
     baseStorageActive_ = false;
@@ -1128,6 +1265,62 @@ bool Game::loadObjectsFromSheet()
         logError(line.str());
     }
     return true;
+}
+
+bool Game::loadStagesFromSheet()
+{
+    if (!sheetSource_.enabled) {
+        stageCatalog_.loadDefaultStages();
+        stageCatalog_.validationWarnings.push_back("Google Sheet source is disabled; using default stages");
+        logStageCatalogReport(stageCatalog_, false, true, "Google Sheet source is disabled");
+        return false;
+    }
+
+    StageCatalog loaded;
+    std::string error;
+    if (!loadStageCatalogFromGoogleSheet(sheetSource_, loaded, error)) {
+        std::vector<std::string> warnings = std::move(loaded.validationWarnings);
+        stageCatalog_.loadDefaultStages();
+        stageCatalog_.validationWarnings = std::move(warnings);
+        stageCatalog_.validationWarnings.push_back("Stages sheet fallback used: " + error);
+        std::fprintf(stderr, "Stages sheet load failed: %s\n", error.c_str());
+        logStageCatalogReport(stageCatalog_, false, true, error);
+        return false;
+    }
+
+    stageCatalog_ = std::move(loaded);
+    logStageCatalogReport(stageCatalog_, true, false, {});
+    return true;
+}
+
+const StageDefinition& Game::currentStageDefinition() const
+{
+    return currentStageDefinition_;
+}
+
+void Game::resolveCurrentStageDefinition()
+{
+    if (const StageDefinition* stage = stageCatalog_.getStageById(currentStageId_)) {
+        currentStageDefinition_ = *stage;
+        logCurrentStageDefinition(currentStageDefinition_, {});
+        return;
+    }
+
+    if (!stageCatalog_.stages.empty()) {
+        std::vector<StageDefinition> sorted = stageCatalog_.getStagesSortedByDisplayOrder();
+        currentStageDefinition_ = sorted.front();
+        logError("[warning] currentStageId=\"" + currentStageId_ +
+            "\" was not found in StageCatalog; using first display-order stage \"" +
+            currentStageDefinition_.id + "\"");
+        currentStageId_ = currentStageDefinition_.id;
+        logCurrentStageDefinition(currentStageDefinition_, "fallback_to_catalog_first");
+        return;
+    }
+
+    logError("[warning] StageCatalog is empty; using code default stage_01_stardust");
+    currentStageDefinition_ = makeCodeDefaultStageDefinition();
+    currentStageId_ = currentStageDefinition_.id;
+    logCurrentStageDefinition(currentStageDefinition_, "fallback_to_code_default");
 }
 
 bool Game::loadEnemiesFromSheet()
@@ -2144,6 +2337,8 @@ void Game::updateBookshelfScreen(const Input& input, UiContext& ui)
 DungeonGenerationContext Game::makeDungeonGenerationContext() const
 {
     const int stageId = currentStage_ + 1;
+    // Future connection: pass currentStageDefinition() into DungeonLayout generation.
+    // This pass keeps the existing one-stage vertical slice parameters unchanged.
     return DungeonGenerationContext{
         .stageId = stageId,
         .seed = makeDungeonSeed(stageId, roguelikeDungeon_),
@@ -2154,6 +2349,8 @@ DungeonGenerationContext Game::makeDungeonGenerationContext() const
 
 void Game::generateDungeonLayoutForRun()
 {
+    // Future connection: currentStageDefinition().goalDistanceTiles,
+    // generationProfile, warpPointCount, and specialRoomCount become layout inputs here.
     dungeonLayout_ = generateDungeonLayout(makeDungeonGenerationContext());
 }
 
@@ -2333,7 +2530,7 @@ void Game::choosePauseMenuItem(int item)
         break;
     case 4:
         pausePage_ = PauseMenuPage::QuitConfirm;
-        pauseConfirmSelection_ = 1;
+        pauseConfirmSelection_ = 0;
         break;
     default:
         break;
@@ -2343,7 +2540,7 @@ void Game::choosePauseMenuItem(int item)
 void Game::leavePausePage()
 {
     if (pausePage_ == PauseMenuPage::Main) {
-        mode_ = ScreenMode::Playing;
+        mode_ = pauseReturnMode_;
         return;
     }
 
@@ -2543,6 +2740,8 @@ void Game::resetWarpPointRunState()
 
 void Game::initializeWarpPointsFromLayout()
 {
+    // Future connection: currentStageDefinition().warpPointCount will cap or drive
+    // placement. Current placement remains DungeonLayout-anchor based.
     warpPoints_.clear();
     spawnedWarpPointCount_ = 0;
     if (!warpPointsEnabled_) {
@@ -2635,6 +2834,8 @@ void Game::updateWarpPoints()
 
 void Game::initializeRewardNodesFromLayout()
 {
+    // Future connection: currentStageDefinition().specialRoomCount will drive
+    // special-room placement before reward and money nodes are materialized.
     rewardNodes_.clear();
     moneyNodes_.clear();
     if (dungeonLayout_.mainPathPoints.size() < 2) {
@@ -3148,6 +3349,7 @@ bool Game::loadSaveData()
     std::vector<InventoryObjectInstance> loadedWarehouseInstances;
     int loadedMoney = 0;
     int loadedCurrentStage = 0;
+    std::string loadedCurrentStageId = currentStageId_;
     int loadedUnlockedStages = 1;
     int loadedUnlockedWarpPointCount = 0;
     bool loadedHasLatestWarpPointPosition = false;
@@ -3260,6 +3462,8 @@ bool Game::loadSaveData()
             }
         } else if (key == "current_stage") {
             stream >> loadedCurrentStage;
+        } else if (key == "current_stage_id") {
+            stream >> loadedCurrentStageId;
         } else if (key == "unlocked_stages") {
             stream >> loadedUnlockedStages;
         } else if (key == "unlocked_warp_points") {
@@ -3400,6 +3604,10 @@ bool Game::loadSaveData()
         ? loadedLatestWarpPointPosition
         : latestWarpPointStartPosition();
     currentStage_ = std::clamp(loadedCurrentStage, 0, unlockedStages_ - 1);
+    if (!loadedCurrentStageId.empty()) {
+        currentStageId_ = loadedCurrentStageId;
+    }
+    resolveCurrentStageDefinition();
     player_.level = std::max(1, loadedPlayerLevel);
     player_.xp = std::max(0, loadedPlayerXp);
     player_.xpToNext = std::max(1, loadedPlayerXpToNext);
@@ -3497,6 +3705,7 @@ bool Game::saveSaveData(std::string& message) const
         }
     }
     file << "current_stage " << currentStage_ << "\n";
+    file << "current_stage_id " << currentStageId_ << "\n";
     file << "unlocked_stages " << unlockedStages_ << "\n";
     file << "unlocked_warp_points " << unlockedWarpPointCount_ << "\n";
     if (hasLatestWarpPointPosition_) {
@@ -3603,6 +3812,7 @@ void Game::enterGameOver()
     }
     mode_ = ScreenMode::GameOver;
     pausePage_ = PauseMenuPage::Main;
+    pauseReturnMode_ = ScreenMode::Playing;
     inventoryReturnToPause_ = false;
     gameOverSelection_ = 0;
     gameOverStatus_.clear();
@@ -3625,6 +3835,7 @@ void Game::enterStageClear()
     }
     mode_ = ScreenMode::StageClear;
     pausePage_ = PauseMenuPage::Main;
+    pauseReturnMode_ = ScreenMode::Playing;
     inventoryReturnToPause_ = false;
     stageClearSelection_ = 0;
     stageClearStatus_.clear();
@@ -3769,7 +3980,7 @@ void Game::updateRingScreen(const Input& input, UiContext& ui)
     }
 }
 
-void Game::updateBaseScreen(const Input& input, UiContext& ui)
+void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
 {
     if (baseBookshelfActive_) {
         updateBookshelfScreen(input, ui);
@@ -4100,32 +4311,31 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui)
         return;
     }
 
-    if (input.pressed(InputAction::MoveUp)) {
-        baseMenuSelection_ = (baseMenuSelection_ + BaseMenuItemCount - 1) % BaseMenuItemCount;
-    }
-    if (input.pressed(InputAction::MoveDown)) {
-        baseMenuSelection_ = (baseMenuSelection_ + 1) % BaseMenuItemCount;
+    if (input.pausePressed()) {
+        mode_ = ScreenMode::PauseMenu;
+        pauseReturnMode_ = ScreenMode::Base;
+        pausePage_ = PauseMenuPage::Main;
+        return;
     }
 
-    const auto chooseBaseItem = [this](int item) {
-        if (item == 7) {
-            openRingWorkshop();
+    const auto interact = [this](const BaseFacility& facility) {
+        if (!facility.enabled) {
             return;
         }
-        switch (item) {
-        case 0:
+        switch (facility.onInteract) {
+        case BaseFacilityAction::MineExit:
             baseMiningStartChoiceActive_ = true;
             baseMiningStartSelection_ = unlockedWarpPointCount_ > 0 ? 1 : 0;
             baseStatus_.clear();
             break;
-        case 1:
+        case BaseFacilityAction::Storage:
             baseStorageActive_ = true;
             baseStorageWarehousePane_ = false;
             baseStorageBackpackSelection_ = 0;
             baseStorageWarehouseSelection_ = 0;
             baseStatus_.clear();
             break;
-        case 2:
+        case BaseFacilityAction::Merchant:
             if (merchantRefreshPending_) {
                 refreshMerchantStock(true);
                 merchantRefreshPending_ = false;
@@ -4138,49 +4348,103 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui)
             baseMerchantBuySelection_ = 0;
             baseStatus_ = "商人ワゴン";
             break;
-        case 3:
+        case BaseFacilityAction::Forge:
             baseUpgradeActive_ = true;
             baseUpgradeSelection_ = 0;
             baseStatus_.clear();
             break;
-        case 4:
+        case BaseFacilityAction::Processing:
             baseProcessingActive_ = true;
             baseProcessingMode_ = 0;
             baseProcessingSelection_ = 0;
             baseStatus_.clear();
             break;
-        case 5:
+        case BaseFacilityAction::Bookshelf:
             openBookshelf();
             break;
-        case 6: {
+        case BaseFacilityAction::Diary: {
             std::string message;
             saveSaveData(message);
             baseStatus_ = message;
             break;
         }
-        case 7:
-            baseStatus_ = ringWorkshopUnlocked_
-                ? "リング工房: 解禁済みです。リング追加機能は未実装です"
-                : "リング工房用スペース: まだ解禁されていません";
+        case BaseFacilityAction::RingWorkshop:
+            if (facility.unlocked) {
+                openRingWorkshop();
+            } else {
+                baseStatus_ = "リング工房用スペース: まだ解禁されていません";
+            }
             break;
-        default:
+        case BaseFacilityAction::Observatory:
+            baseStatus_ = "モニカの星見台: 星の流れを観測中です";
             break;
         }
     };
 
-    for (int i = 0; i < BaseMenuItemCount; ++i) {
-        if (ui.pressed(baseMenuItemRect(i))) {
-            baseMenuSelection_ = i;
-            chooseBaseItem(i);
+    const std::array<BaseFacility, 10> facilities = baseFacilities(ringWorkshopUnlocked_);
+    const float playerRadius = balance_.playerRadius;
+    const auto baseCollision = [&](Vec2 position) {
+        const UiRect bounds = baseMapBounds();
+        if (position.x - playerRadius < bounds.pos.x ||
+            position.y - playerRadius < bounds.pos.y ||
+            position.x + playerRadius > bounds.pos.x + bounds.size.x ||
+            position.y + playerRadius > bounds.pos.y + bounds.size.y) {
+            return true;
+        }
+        for (const BaseFacility& facility : facilities) {
+            if (circleIntersectsRect(position, playerRadius, facility.rect)) {
+                return true;
+            }
+        }
+        return false;
+    };
+
+    const Vec2 moveAxis = input.moveAxis();
+    if (lengthSquared(moveAxis) > 0.0001f) {
+        basePlayerFacing_ = normalize(moveAxis);
+        const Vec2 delta = moveAxis * balance_.playerSpeed * dt;
+        Vec2 next = basePlayerPosition_ + Vec2{delta.x, 0.0f};
+        if (!baseCollision(next)) {
+            basePlayerPosition_ = next;
+        }
+        next = basePlayerPosition_ + Vec2{0.0f, delta.y};
+        if (!baseCollision(next)) {
+            basePlayerPosition_ = next;
+        }
+    }
+
+    const BaseFacility* nearest = nullptr;
+    float nearestDistance = std::numeric_limits<float>::max();
+    for (const BaseFacility& facility : facilities) {
+        if (!baseInteractionAvailable(basePlayerPosition_, facility)) {
+            continue;
+        }
+        const float dist = distanceToRect(basePlayerPosition_, facility.rect);
+        if (dist < nearestDistance) {
+            nearestDistance = dist;
+            nearest = &facility;
+        }
+    }
+
+    if (input.mouseLeftPressed() && !ui.pointerConsumed()) {
+        for (const BaseFacility& facility : facilities) {
+            if (!facility.rect.contains(ui.mouse())) {
+                continue;
+            }
+            ui.consumePointer();
+            if (baseInteractionAvailable(basePlayerPosition_, facility)) {
+                interact(facility);
+            } else if (facility.enabled) {
+                baseStatus_ = "近くまで移動してください";
+            }
             return;
         }
     }
-    if (input.confirmPressed() || input.useItemPressed()) {
-        chooseBaseItem(baseMenuSelection_);
+
+    if (input.confirmPressed() && nearest != nullptr) {
+        interact(*nearest);
         return;
     }
-
-    ui.block(basePanelRect());
 }
 
 void Game::updatePauseMenu(const Input& input, UiContext& ui)
@@ -4198,18 +4462,18 @@ void Game::updatePauseMenu(const Input& input, UiContext& ui)
             if (ui.pressed(quitConfirmButtonRect(i))) {
                 pauseConfirmSelection_ = i;
                 if (i == 0) {
-                    quitRequested_ = true;
-                } else {
                     pausePage_ = PauseMenuPage::Main;
+                } else {
+                    quitRequested_ = true;
                 }
                 return;
             }
         }
         if (input.confirmPressed() || input.useItemPressed()) {
             if (pauseConfirmSelection_ == 0) {
-                quitRequested_ = true;
-            } else {
                 pausePage_ = PauseMenuPage::Main;
+            } else {
+                quitRequested_ = true;
             }
             return;
         }
@@ -4305,10 +4569,10 @@ void Game::updateStageClearScreen(const Input& input, UiContext& ui)
     ui.block(stageClearPanelRect());
 }
 
-void Game::updateScreenMode(const Input& input, UiContext& ui)
+void Game::updateScreenMode(const Input& input, UiContext& ui, float dt)
 {
     if (mode_ == ScreenMode::Base) {
-        updateBaseScreen(input, ui);
+        updateBaseScreen(input, ui, dt);
         return;
     }
 
@@ -4333,11 +4597,12 @@ void Game::updateScreenMode(const Input& input, UiContext& ui)
 
     switch (mode_) {
     case ScreenMode::Base:
-        updateBaseScreen(input, ui);
+        updateBaseScreen(input, ui, dt);
         break;
     case ScreenMode::Playing:
         if (input.pausePressed()) {
             mode_ = ScreenMode::PauseMenu;
+            pauseReturnMode_ = ScreenMode::Playing;
             pausePage_ = PauseMenuPage::Main;
             return;
         }
@@ -4382,6 +4647,19 @@ void Game::updateScreenMode(const Input& input, UiContext& ui)
 bool Game::gameProgressPaused() const
 {
     return mode_ != ScreenMode::Playing;
+}
+
+bool Game::basePresentationActive() const
+{
+    if (mode_ == ScreenMode::Base) {
+        return true;
+    }
+    if (pauseReturnMode_ != ScreenMode::Base) {
+        return false;
+    }
+    return mode_ == ScreenMode::PauseMenu ||
+        mode_ == ScreenMode::Inventory ||
+        mode_ == ScreenMode::Ring;
 }
 
 void Game::renderBookshelfScreen(Renderer& renderer) const
@@ -4489,7 +4767,7 @@ void Game::renderBookshelfScreen(Renderer& renderer) const
 
 void Game::renderBaseScreen(Renderer& renderer) const
 {
-    if (mode_ != ScreenMode::Base) {
+    if (!basePresentationActive()) {
         return;
     }
 
@@ -4497,10 +4775,7 @@ void Game::renderBaseScreen(Renderer& renderer) const
     if (baseStorageActive_) {
         renderer.fillRect({0.0f, 0.0f}, {static_cast<float>(camera_.width()), static_cast<float>(camera_.height())}, {10, 12, 18, 255});
         const UiRect panel = storagePanelRect();
-        renderer.fillRect(panel.pos, panel.size, {12, 10, 18, 242});
-        renderer.drawRect(panel.pos, panel.size, {210, 184, 255, 255});
-        renderer.drawText(panel.pos + Vec2{34.0f, 28.0f}, "収納箱 / 倉庫", {246, 235, 255, 255}, 4);
-        renderer.drawText(panel.pos + Vec2{330.0f, 34.0f}, "←/→ リュック・倉庫切替  F/Enter 移動  Esc 戻る", {198, 198, 206, 255}, 2);
+        drawUiWindow(renderer, panel, "収納箱 / 倉庫", "←/→ リュック・倉庫切替  F/Enter 移動  Esc 戻る");
 
         const std::vector<StorageEntry> backpackEntries = backpackStorageEntries();
         const std::vector<StorageEntry> warehouseEntries = warehouseStorageEntries();
@@ -4612,15 +4887,60 @@ void Game::renderBaseScreen(Renderer& renderer) const
         return;
     }
 
-    renderer.fillRect({0.0f, 0.0f}, {static_cast<float>(camera_.width()), static_cast<float>(camera_.height())}, {10, 12, 18, 255});
-    renderer.fillRect({0.0f, 0.0f}, {static_cast<float>(camera_.width()), 164.0f}, {28, 22, 38, 255});
-    renderer.fillRect({0.0f, 164.0f}, {static_cast<float>(camera_.width()), 4.0f}, {255, 230, 150, 255});
+    renderer.fillRect({0.0f, 0.0f}, {static_cast<float>(camera_.width()), static_cast<float>(camera_.height())}, {24, 28, 32, 255});
+    const UiRect map = baseMapBounds();
+    renderer.fillRect(map.pos, map.size, {68, 96, 58, 255});
+    renderer.drawRect(map.pos, map.size, {156, 128, 82, 255});
+    renderer.fillRect({62.0f, 456.0f}, {1156.0f, 88.0f}, {98, 84, 58, 255});
+    renderer.fillRect({566.0f, 130.0f}, {132.0f, 430.0f}, {92, 78, 54, 255});
+    renderer.fillRect({330.0f, 72.0f}, {154.0f, 100.0f}, {96, 54, 62, 255});
+    renderer.drawRect({330.0f, 72.0f}, {154.0f, 100.0f}, {216, 184, 130, 255});
+    renderer.drawText({350.0f, 106.0f}, "主人公の家", {246, 235, 255, 255}, 2);
+    renderer.fillRect({600.0f, 586.0f}, {80.0f, 34.0f}, {38, 30, 36, 255});
+    renderer.drawCircle({640.0f, 602.0f}, 42.0f, {160, 122, 80, 255});
 
-    const UiRect panel = basePanelRect();
-    renderer.fillRect(panel.pos, panel.size, {12, 10, 18, 238});
-    renderer.drawRect(panel.pos, panel.size, {210, 184, 255, 255});
-    renderer.drawText(panel.pos + Vec2{142.0f, 34.0f}, "魔女の拠点", {246, 235, 255, 255}, 4);
-    renderer.drawText(panel.pos + Vec2{74.0f, 94.0f}, "W/S または ↑↓  F/Enter 決定  左クリック 決定", {198, 198, 206, 255}, 2);
+    const std::array<BaseFacility, 10> facilities = baseFacilities(ringWorkshopUnlocked_);
+    const BaseFacility* nearest = nullptr;
+    const BaseFacility* hovered = nullptr;
+    float nearestDistance = std::numeric_limits<float>::max();
+    float mouseX = 0.0f;
+    float mouseY = 0.0f;
+    SDL_GetMouseState(&mouseX, &mouseY);
+    const Vec2 mouse{mouseX, mouseY};
+    for (const BaseFacility& facility : facilities) {
+        if (!facility.enabled) {
+            continue;
+        }
+        if (facility.rect.contains(mouse)) {
+            hovered = &facility;
+        }
+        if (!baseInteractionAvailable(basePlayerPosition_, facility)) {
+            continue;
+        }
+        const float dist = distanceToRect(basePlayerPosition_, facility.rect);
+        if (dist < nearestDistance) {
+            nearestDistance = dist;
+            nearest = &facility;
+        }
+    }
+    for (const BaseFacility& facility : facilities) {
+        Color fill = facility.enabled ? Color{96, 82, 82, 255} : Color{84, 62, 56, 255};
+        if (!facility.unlocked) {
+            fill = {58, 58, 64, 255};
+        }
+        if (&facility == nearest) {
+            fill = {118, 98, 58, 255};
+        }
+        if (&facility == hovered) {
+            fill = {124, 104, 72, 255};
+        }
+        renderer.fillRect(facility.rect.pos, facility.rect.size, fill);
+        renderer.drawRect(facility.rect.pos, facility.rect.size, facility.enabled ? Color{220, 200, 150, 255} : Color{120, 108, 98, 255});
+        renderer.drawText(facility.rect.pos + Vec2{8.0f, 8.0f}, facility.displayName, facility.enabled ? Color{248, 238, 214, 255} : Color{154, 146, 138, 255}, 2);
+    }
+
+    renderer.fillCircle(basePlayerPosition_, balance_.playerRadius, {118, 72, 168, 255});
+    renderer.drawLine(basePlayerPosition_, basePlayerPosition_ + basePlayerFacing_ * 22.0f, {235, 210, 255, 255});
 
     char buffer[192];
     std::snprintf(buffer, sizeof(buffer), "Stage %d/%d   Warp %d   Money %dG   商人 %s",
@@ -4629,15 +4949,30 @@ void Game::renderBaseScreen(Renderer& renderer) const
         unlockedWarpPointCount_,
         money_,
         merchantRefreshPending_ ? "更新あり" : "通常");
-    renderer.drawText(panel.pos + Vec2{92.0f, 136.0f}, buffer, {230, 230, 236, 255}, 2);
+    renderer.fillRect({20.0f, 14.0f}, {680.0f, 28.0f}, {0, 0, 0, 150});
+    renderer.drawText({30.0f, 20.0f}, buffer, {230, 230, 236, 255}, 2);
     std::snprintf(buffer, sizeof(buffer), "所持品: 土 %d / 石 %d / 鉱石 %d   リング装着 %d",
         inventory_.itemCount(InventoryItemType::Dirt),
         inventory_.itemCount(InventoryItemType::Stone),
         inventory_.itemCount(InventoryItemType::Ore),
         static_cast<int>(spellRing_.items().size()));
-    renderer.drawText(panel.pos + Vec2{52.0f, 170.0f}, buffer, {198, 198, 206, 255}, 2);
+    renderer.fillRect({720.0f, 14.0f}, {520.0f, 28.0f}, {0, 0, 0, 150});
+    renderer.drawText({730.0f, 20.0f}, buffer, {198, 198, 206, 255}, 2);
 
-    if (baseRingWorkshopActive_) {
+    const bool panelUiActive = baseRingWorkshopActive_ ||
+        baseBookshelfActive_ ||
+        baseProcessingActive_ ||
+        baseSellActive_ ||
+        baseUpgradeActive_ ||
+        baseMiningStartChoiceActive_;
+    const UiRect panel = basePanelRect();
+    if (panelUiActive) {
+        drawUiWindow(renderer, panel, "魔女の拠点", "W/S または ↑↓  F/Enter 決定  左クリック 決定");
+    }
+
+    if (baseBookshelfActive_) {
+        renderBookshelfScreen(renderer);
+    } else if (baseRingWorkshopActive_) {
         renderer.drawText(panel.pos + Vec2{168.0f, 214.0f}, "リング工房", {246, 235, 255, 255}, 3);
         const int totalPoints = ringLevelUpgradePointTotal();
         std::snprintf(buffer, sizeof(buffer), "レベルアップ強化点 %d  現在: 半径%d / 速度%d  配分案: 半径%d / 速度%d",
@@ -4871,15 +5206,36 @@ void Game::renderBaseScreen(Renderer& renderer) const
         }
         renderer.drawText(panel.pos + Vec2{122.0f, 442.0f}, "Esc / 右クリックで戻る", {198, 198, 206, 255}, 2);
     } else {
-        for (int i = 0; i < BaseMenuItemCount; ++i) {
-            drawUiButton(renderer, baseMenuItemRect(i), baseMenuItemName(i), i == baseMenuSelection_);
+        const char* promptName = nearest != nullptr ? nearest->displayName : "";
+        renderer.fillRect({280.0f, 644.0f}, {720.0f, 34.0f}, {0, 0, 0, 170});
+        if (nearest != nullptr) {
+            std::snprintf(buffer, sizeof(buffer), "Enter: %sを調べる / クリック: 近くの施設を調べる / Esc: メニュー", promptName);
+            renderer.drawText({300.0f, 652.0f}, buffer, {255, 230, 150, 255}, 2);
+        } else {
+            renderer.drawText({300.0f, 652.0f}, "WASD / 矢印キー: 移動  Enter: 近くの施設を調べる  Esc: メニュー", {198, 198, 206, 255}, 2);
         }
+        if (!baseStatus_.empty()) {
+            renderer.fillRect({280.0f, 604.0f}, {720.0f, 30.0f}, {0, 0, 0, 160});
+            renderer.drawText({300.0f, 612.0f}, baseStatus_, {255, 230, 150, 255}, 2);
+        }
+        if (debug_.visible()) {
+            char debugBuffer[512];
+            std::snprintf(debugBuffer, sizeof(debugBuffer),
+                "Base map mode\nplayer base position %.1f, %.1f\nnearest facility name %s\nhovered facility name %s\ninteraction available %s\npause menu return mode %s",
+                basePlayerPosition_.x,
+                basePlayerPosition_.y,
+                nearest != nullptr ? nearest->displayName : "-",
+                hovered != nullptr ? hovered->displayName : "-",
+                nearest != nullptr ? "true" : "false",
+                screenModeName(pauseReturnMode_));
+            renderer.fillRect({10.0f, 10.0f}, {380.0f, 158.0f}, {0, 0, 0, 180});
+            renderer.drawText({20.0f, 20.0f}, debugBuffer, {220, 244, 224, 255}, 2);
+        }
+        return;
     }
 
     if (!baseStatus_.empty()) {
         renderer.drawText(panel.pos + Vec2{54.0f, 504.0f}, baseStatus_, {255, 230, 150, 255}, 2);
-    } else {
-        renderer.drawText(panel.pos + Vec2{54.0f, 504.0f}, "日記から拠点セーブを実行できます。", {198, 198, 206, 255}, 2);
     }
 }
 
@@ -4959,11 +5315,7 @@ void Game::renderRingScreen(Renderer& renderer) const
 
     renderer.setScreenSpace();
     const UiRect panel = ringPanelRect();
-    renderer.fillRect(panel.pos, panel.size, {10, 12, 18, 238});
-    renderer.drawRect(panel.pos, panel.size, {184, 210, 255, 255});
-    renderer.drawText(panel.pos + Vec2{42.0f, 30.0f}, "リング管理", {246, 248, 255, 255}, 4);
-    renderer.drawText(panel.pos + Vec2{312.0f, 34.0f}, "Z/X・1-3 リング選択  WASD/矢印・Q/E スロット", {202, 206, 216, 255}, 2);
-    renderer.drawText(panel.pos + Vec2{312.0f, 60.0f}, "F/Enter 詳細  R 外す  G つかむ/置く  P 保護  Esc 戻る", {202, 206, 216, 255}, 2);
+    drawUiWindow(renderer, panel, "リング管理", "Z/X・1-3 リング選択  WASD/矢印・Q/E スロット  F/Enter 詳細  R 外す  G つかむ/置く  P 保護  Esc 戻る");
 
     char buffer[192];
     for (int i = 0; i < RingCount; ++i) {
@@ -5076,7 +5428,7 @@ void Game::update(const Input& input, const Time& time)
 
     UiContext ui(input);
     const bool wasPaused = gameProgressPaused();
-    updateScreenMode(input, ui);
+    updateScreenMode(input, ui, time.deltaSeconds());
     refreshOrbitEffects();
     const bool paused = gameProgressPaused() || (wasPaused && mode_ == ScreenMode::Playing);
 
@@ -5263,13 +5615,10 @@ void Game::renderPauseMenu(Renderer& renderer) const
 
     renderer.setScreenSpace();
     const UiRect panel = pausePanelRect();
-    renderer.fillRect(panel.pos, panel.size, {12, 10, 18, 232});
-    renderer.drawRect(panel.pos, panel.size, {210, 184, 255, 255});
-    renderer.drawText(panel.pos + Vec2{158.0f, 34.0f}, "PAUSED", {246, 235, 255, 255}, 4);
+    drawUiWindow(renderer, panel, "PAUSED", "W/S または ↑↓  F/Enter 決定  Esc/右クリック 戻る");
 
     char buffer[160];
     if (pausePage_ == PauseMenuPage::Main) {
-        renderer.drawText(panel.pos + Vec2{78.0f, 88.0f}, "W/S または ↑↓  F/Enter 決定  Esc/右クリック 戻る", {198, 198, 206, 255}, 2);
         for (int i = 0; i < PauseMenuItemCount; ++i) {
             const bool selected = i == pauseMenuSelection_;
             drawUiButton(renderer, pauseMenuItemRect(i), pauseMenuItemName(i), selected);
@@ -5303,17 +5652,15 @@ void Game::renderPauseMenu(Renderer& renderer) const
         renderer.drawText(panel.pos + Vec2{58.0f, 164.0f}, "仮画面です。設定項目は後続実装で追加します。", {230, 230, 236, 255}, 2);
     } else if (pausePage_ == PauseMenuPage::QuitConfirm) {
         const UiRect confirm = quitConfirmRect();
-        renderer.fillRect(confirm.pos, confirm.size, {8, 8, 14, 245});
-        renderer.drawRect(confirm.pos, confirm.size, {255, 230, 150, 255});
-        renderer.drawText(confirm.pos + Vec2{58.0f, 42.0f}, "ゲームを終了しますか？", {246, 235, 255, 255}, 3);
-        renderer.drawText(confirm.pos + Vec2{62.0f, 92.0f}, "セーブは拠点でのみ実行できます。", {198, 198, 206, 255}, 2);
-        drawUiButton(renderer, quitConfirmButtonRect(0), "終了する", pauseConfirmSelection_ == 0);
-        drawUiButton(renderer, quitConfirmButtonRect(1), "キャンセル", pauseConfirmSelection_ == 1);
+        drawUiWindow(renderer, confirm, "確認", "Esc / 右クリックで戻る");
+        renderer.drawText(confirm.pos + Vec2{58.0f, 82.0f}, "ゲームを終了しますか？", ui::Text, 3);
+        renderer.drawText(confirm.pos + Vec2{62.0f, 126.0f}, "セーブは拠点でのみ実行できます。", ui::TextMuted, 2);
+        drawUiButton(renderer, quitConfirmButtonRect(0), "キャンセル", pauseConfirmSelection_ == 0);
+        drawUiButton(renderer, quitConfirmButtonRect(1), "終了する", pauseConfirmSelection_ == 1);
         return;
     }
 
     drawUiButton(renderer, pauseBackButtonRect(), "戻る", false);
-    renderer.drawText(panel.pos + Vec2{248.0f, 532.0f}, "Esc / 右クリックで戻る", {198, 198, 206, 255}, 2);
 }
 
 void Game::renderGameOverScreen(Renderer& renderer) const
@@ -5325,10 +5672,8 @@ void Game::renderGameOverScreen(Renderer& renderer) const
     renderer.setScreenSpace();
     renderer.fillRect({0.0f, 0.0f}, {static_cast<float>(camera_.width()), static_cast<float>(camera_.height())}, {0, 0, 0, 150});
     const UiRect panel = gameOverPanelRect();
-    renderer.fillRect(panel.pos, panel.size, {12, 8, 16, 242});
-    renderer.drawRect(panel.pos, panel.size, {255, 120, 140, 255});
-    renderer.drawText(panel.pos + Vec2{148.0f, 38.0f}, "GAME OVER", {255, 214, 220, 255}, 4);
-    renderer.drawText(panel.pos + Vec2{118.0f, 92.0f}, "リザルト", {246, 235, 255, 255}, 3);
+    drawUiWindow(renderer, panel, "GAME OVER", "W/S または ↑↓  F/Enter 決定");
+    renderer.drawText(panel.pos + Vec2{118.0f, 92.0f}, "リザルト", ui::Text, 3);
 
     char buffer[160];
     const std::string deathCause = playerDeathCauseText(player_);
@@ -5345,7 +5690,6 @@ void Game::renderGameOverScreen(Renderer& renderer) const
     std::snprintf(buffer, sizeof(buffer), "入手アイテム数  %d", runStats_.acquiredItems);
     renderer.drawText(panel.pos + Vec2{136.0f, 320.0f}, buffer, {230, 230, 236, 255}, 2);
 
-    renderer.drawText(panel.pos + Vec2{98.0f, 382.0f}, "W/S または ↑↓  F/Enter 決定", {198, 198, 206, 255}, 2);
     for (int i = 0; i < GameOverItemCount; ++i) {
         drawUiButton(renderer, gameOverItemRect(i), gameOverItemName(i), i == gameOverSelection_);
     }
@@ -5363,10 +5707,8 @@ void Game::renderStageClearScreen(Renderer& renderer) const
     renderer.setScreenSpace();
     renderer.fillRect({0.0f, 0.0f}, {static_cast<float>(camera_.width()), static_cast<float>(camera_.height())}, {0, 0, 0, 130});
     const UiRect panel = stageClearPanelRect();
-    renderer.fillRect(panel.pos, panel.size, {8, 14, 18, 242});
-    renderer.drawRect(panel.pos, panel.size, {150, 230, 190, 255});
-    renderer.drawText(panel.pos + Vec2{128.0f, 38.0f}, "STAGE CLEAR", {210, 255, 226, 255}, 4);
-    renderer.drawText(panel.pos + Vec2{118.0f, 92.0f}, "シナリオ", {246, 255, 248, 255}, 3);
+    drawUiWindow(renderer, panel, "STAGE CLEAR", "F/Enter 決定");
+    renderer.drawText(panel.pos + Vec2{118.0f, 92.0f}, "シナリオ", ui::Text, 3);
 
     char buffer[160];
     std::snprintf(buffer, sizeof(buffer), "深部の主を退け、落ちた星のかけらが静かに光を取り戻した。");
@@ -5380,7 +5722,6 @@ void Game::renderStageClearScreen(Renderer& renderer) const
         runStats_.defeatedEnemies);
     renderer.drawText(panel.pos + Vec2{136.0f, 292.0f}, buffer, {198, 208, 202, 255}, 2);
 
-    renderer.drawText(panel.pos + Vec2{98.0f, 382.0f}, "F/Enter 決定", {198, 208, 202, 255}, 2);
     for (int i = 0; i < StageClearItemCount; ++i) {
         drawUiButton(renderer, stageClearItemRect(i), stageClearItemName(i), i == stageClearSelection_);
     }
@@ -5392,8 +5733,11 @@ void Game::renderStageClearScreen(Renderer& renderer) const
 void Game::render(Renderer& renderer, const Time& time)
 {
     renderer.clear({5, 5, 8, 255});
-    if (mode_ == ScreenMode::Base) {
+    if (basePresentationActive()) {
         renderBaseScreen(renderer);
+        inventory_.render(renderer, player_, spellRing_);
+        renderPauseMenu(renderer);
+        renderRingScreen(renderer);
         renderer.present();
         return;
     }
@@ -5492,6 +5836,7 @@ void Game::render(Renderer& renderer, const Time& time)
         player_,
         balance_,
         dungeonLayout_,
+        currentStageDefinition(),
         nearestWarp,
         nearestWarpDiscovered,
         discoveredWarpPointCount(),

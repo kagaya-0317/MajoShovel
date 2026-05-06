@@ -4,6 +4,7 @@
 #include <cctype>
 #include <cmath>
 #include <cstring>
+#include <sstream>
 #include <string>
 #include <vector>
 
@@ -55,6 +56,35 @@ bool utf8ToWide(std::string_view text, std::wstring& out)
 
 #endif
 
+std::size_t utf8CodepointLength(unsigned char lead)
+{
+    if ((lead & 0x80U) == 0) {
+        return 1;
+    }
+    if ((lead & 0xe0U) == 0xc0U) {
+        return 2;
+    }
+    if ((lead & 0xf0U) == 0xe0U) {
+        return 3;
+    }
+    if ((lead & 0xf8U) == 0xf0U) {
+        return 4;
+    }
+    return 1;
+}
+
+std::string textCacheKey(std::string_view text, Color color, int scale)
+{
+    std::ostringstream out;
+    out << scale << ':'
+        << static_cast<int>(color.r) << ','
+        << static_cast<int>(color.g) << ','
+        << static_cast<int>(color.b) << ','
+        << static_cast<int>(color.a) << ':'
+        << text;
+    return out.str();
+}
+
 }
 
 struct Renderer::NativeTextFont {
@@ -72,6 +102,7 @@ Renderer::Renderer(SDL_Renderer* renderer) : renderer_(renderer)
 
 Renderer::~Renderer()
 {
+    clearTextCache();
     unloadIconSheet();
 }
 
@@ -235,9 +266,44 @@ void Renderer::drawText(Vec2 pos, std::string_view text, Color color, int scale)
     camera_ = old;
 }
 
+Vec2 Renderer::measureText(std::string_view text, int scale)
+{
+#ifdef _WIN32
+    Vec2 nativeSize{};
+    if (measureNativeText(text, scale, nativeSize)) {
+        return nativeSize;
+    }
+#endif
+
+    float width = 0.0f;
+    float lineWidth = 0.0f;
+    float height = 9.0f * static_cast<float>(std::max(1, scale));
+    for (unsigned char c : text) {
+        if (c == '\n') {
+            width = std::max(width, lineWidth);
+            lineWidth = 0.0f;
+            height += 9.0f * static_cast<float>(std::max(1, scale));
+            continue;
+        }
+        lineWidth += 6.0f * static_cast<float>(std::max(1, scale));
+    }
+    return {std::max(width, lineWidth), height};
+}
+
+void Renderer::drawWrappedText(Vec2 pos, std::string_view text, float maxWidth, Color color, int scale)
+{
+    drawText(pos, wrappedText(text, maxWidth, scale), color, scale);
+}
+
+Vec2 Renderer::measureWrappedText(std::string_view text, float maxWidth, int scale)
+{
+    return measureText(wrappedText(text, maxWidth, scale), scale);
+}
+
 bool Renderer::loadTextFont(std::string_view path)
 {
     lastAssetError_.clear();
+    clearTextCache();
 #ifdef _WIN32
     static GdiPlusSession gdiPlus;
     if (!gdiPlus.initialized()) {
@@ -293,6 +359,41 @@ bool Renderer::drawNativeText(Vec2 pos, std::string_view text, Color color, int 
         return false;
     }
 
+    const std::string key = textCacheKey(text, color, std::max(1, scale));
+    auto it = textCache_.find(key);
+    if (it == textCache_.end()) {
+        if (textCache_.size() > 512) {
+            clearTextCache();
+        }
+        TextTexture texture{};
+        if (!renderNativeTextToTexture(text, color, scale, texture)) {
+            return false;
+        }
+        it = textCache_.emplace(key, texture).first;
+    }
+    if (!it->second.texture) {
+        return false;
+    }
+
+    const SDL_FRect dst{pos.x, pos.y, static_cast<float>(it->second.width), static_cast<float>(it->second.height)};
+    SDL_RenderTexture(renderer_, it->second.texture, nullptr, &dst);
+    return true;
+#else
+    (void)pos;
+    (void)text;
+    (void)color;
+    (void)scale;
+    return false;
+#endif
+}
+
+bool Renderer::measureNativeText(std::string_view text, int scale, Vec2& outSize)
+{
+#ifdef _WIN32
+    if (!nativeTextFont_ || !nativeTextFont_->loaded) {
+        return false;
+    }
+
     std::wstring wideText;
     if (!utf8ToWide(text, wideText)) {
         return false;
@@ -332,8 +433,54 @@ bool Renderer::drawNativeText(Vec2 pos, std::string_view text, Color color, int 
         maxWidth = std::max(maxWidth, std::ceil(bounds.Width + 4.0f));
     }
 
-    const int bitmapWidth = std::max(1, static_cast<int>(maxWidth));
-    const int bitmapHeight = std::max(1, static_cast<int>(lineHeight * static_cast<float>(lines.size()) + 4.0f));
+    outSize = {maxWidth, std::ceil(lineHeight * static_cast<float>(lines.size()) + 4.0f)};
+    return true;
+#else
+    (void)text;
+    (void)scale;
+    (void)outSize;
+    return false;
+#endif
+}
+
+bool Renderer::renderNativeTextToTexture(std::string_view text, Color color, int scale, TextTexture& outTexture)
+{
+#ifdef _WIN32
+    std::wstring wideText;
+    if (!utf8ToWide(text, wideText)) {
+        return false;
+    }
+
+    Gdiplus::FontFamily family(nativeTextFont_->familyName.c_str(), &nativeTextFont_->collection);
+    if (!family.IsAvailable()) {
+        return false;
+    }
+
+    Vec2 measured{};
+    if (!measureNativeText(text, scale, measured)) {
+        return false;
+    }
+
+    const int bitmapWidth = std::max(1, static_cast<int>(std::ceil(measured.x)));
+    const int bitmapHeight = std::max(1, static_cast<int>(std::ceil(measured.y)));
+    const float fontSize = static_cast<float>(std::max(1, scale) * 8);
+    Gdiplus::Font font(&family, fontSize, Gdiplus::FontStyleRegular, Gdiplus::UnitPixel);
+    Gdiplus::Bitmap measureBitmap(1, 1, PixelFormat32bppARGB);
+    Gdiplus::Graphics measureGraphics(&measureBitmap);
+    const float lineHeight = std::ceil(font.GetHeight(&measureGraphics) + 2.0f);
+
+    std::vector<std::wstring> lines;
+    std::wstring current;
+    for (wchar_t ch : wideText) {
+        if (ch == L'\n') {
+            lines.push_back(current);
+            current.clear();
+        } else {
+            current.push_back(ch);
+        }
+    }
+    lines.push_back(current);
+
     Gdiplus::Bitmap bitmap(bitmapWidth, bitmapHeight, PixelFormat32bppARGB);
     Gdiplus::Graphics graphics(&bitmap);
     graphics.Clear(Gdiplus::Color(0, 0, 0, 0));
@@ -384,17 +531,64 @@ bool Renderer::drawNativeText(Vec2 pos, std::string_view text, Color color, int 
 
     SDL_SetTextureBlendMode(texture, SDL_BLENDMODE_BLEND);
     SDL_SetTextureScaleMode(texture, SDL_SCALEMODE_LINEAR);
-    const SDL_FRect dst{pos.x, pos.y, static_cast<float>(bitmapWidth), static_cast<float>(bitmapHeight)};
-    SDL_RenderTexture(renderer_, texture, nullptr, &dst);
-    SDL_DestroyTexture(texture);
+    outTexture.texture = texture;
+    outTexture.width = bitmapWidth;
+    outTexture.height = bitmapHeight;
     return true;
 #else
-    (void)pos;
     (void)text;
     (void)color;
     (void)scale;
+    (void)outTexture;
     return false;
 #endif
+}
+
+void Renderer::clearTextCache()
+{
+    for (auto& [_, cached] : textCache_) {
+        if (cached.texture) {
+            SDL_DestroyTexture(cached.texture);
+            cached.texture = nullptr;
+        }
+    }
+    textCache_.clear();
+}
+
+std::string Renderer::wrappedText(std::string_view text, float maxWidth, int scale)
+{
+    if (maxWidth <= 0.0f || text.empty()) {
+        return std::string(text);
+    }
+
+    std::string output;
+    std::string line;
+    for (std::size_t i = 0; i < text.size();) {
+        const char c = text[i];
+        if (c == '\n') {
+            output += line;
+            output.push_back('\n');
+            line.clear();
+            ++i;
+            continue;
+        }
+
+        const std::size_t charLength = std::min(utf8CodepointLength(static_cast<unsigned char>(c)), text.size() - i);
+        const std::string_view token{text.data() + i, charLength};
+        std::string candidate = line;
+        candidate.append(token);
+        if (!line.empty() && measureText(candidate, scale).x > maxWidth) {
+            output += line;
+            output.push_back('\n');
+            line.assign(token);
+        } else {
+            line = std::move(candidate);
+        }
+        i += charLength;
+    }
+
+    output += line;
+    return output;
 }
 
 void Renderer::unloadIconSheet()

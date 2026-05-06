@@ -189,9 +189,11 @@ double inventoryWeightKg(InventoryItemType type)
 
 void drawDetailLine(Renderer& renderer, float& y, const char* label, std::string_view value)
 {
-    renderer.drawText({DetailX + 20.0f, y}, label, {168, 172, 184, 255}, 2);
-    renderer.drawText({DetailX + 126.0f, y}, value, {235, 235, 240, 255}, 2);
-    y += 31.0f;
+    constexpr float ValueX = DetailX + 126.0f;
+    constexpr float ValueMaxW = DetailX + DetailW - ValueX - 18.0f;
+    renderer.drawText({DetailX + 20.0f, y}, label, ui::TextMuted, 2);
+    renderer.drawWrappedText({ValueX, y}, value, ValueMaxW, ui::Text, 2);
+    y += std::max(31.0f, renderer.measureWrappedText(value, ValueMaxW, 2).y + 4.0f);
 }
 
 bool objectCategoryEquals(const ItemData& item, std::string_view category)
@@ -1367,10 +1369,11 @@ void InventorySystem::render(Renderer& renderer, const Player& player, const Spe
         return;
     }
 
-    renderer.fillRect({ScreenX, ScreenY}, {ScreenW, ScreenH}, {8, 8, 14, 238});
-    renderer.drawRect({ScreenX, ScreenY}, {ScreenW, ScreenH}, {210, 184, 255, 255});
-    renderer.drawText({ScreenX + 28.0f, ScreenY + 24.0f}, "アイテム", {246, 235, 255, 255}, 4);
-    renderer.drawText({ScreenX + 190.0f, ScreenY + 34.0f}, "WASD/矢印 移動  Q/E 左右  F/Enter 使用  R リングへ  P 保護  G つかむ/置く  Esc 戻る", {198, 198, 206, 255}, 2);
+    drawUiWindow(
+        renderer,
+        {{ScreenX, ScreenY}, {ScreenW, ScreenH}},
+        "アイテム",
+        "WASD/矢印 移動  Q/E 左右  F/Enter 使用  R リングへ  P 保護  G つかむ/置く  Esc 戻る");
 
     char buffer[160];
     for (int i = 0; i < ShortcutSlotCount; ++i) {
@@ -1378,12 +1381,12 @@ void InventorySystem::render(Renderer& renderer, const Player& player, const Spe
         const UiRect rect = inventorySlotRect(i);
         const bool selected = i == selectedShortcutIndex();
         const Color fill = selected ? Color{54, 44, 72, 242} : Color{20, 20, 28, 226};
-        const Color outline = selected ? Color{255, 230, 150, 255} : Color{78, 72, 94, 255};
+        const Color outline = selected ? ui::WindowBorder : Color{78, 72, 94, 255};
         renderer.fillRect(rect.pos, rect.size, fill);
         renderer.drawRect(rect.pos, rect.size, outline);
 
         std::snprintf(buffer, sizeof(buffer), "%d", i % ShortcutColumns + 1);
-        renderer.drawText(rect.pos + Vec2{7.0f, 6.0f}, buffer, selected ? Color{255, 230, 150, 255} : Color{150, 150, 160, 255}, 1);
+        renderer.drawText(rect.pos + Vec2{7.0f, 6.0f}, buffer, selected ? ui::Text : ui::TextDisabled, 1);
 
         if (slot.assigned) {
             const InventoryStack& item = stack(slot.type);
@@ -1393,7 +1396,7 @@ void InventorySystem::render(Renderer& renderer, const Player& player, const Spe
                 renderer.fillCircle(rect.pos + Vec2{44.0f, 28.0f}, 13.0f, inventoryItemColor(slot.type));
             }
             std::snprintf(buffer, sizeof(buffer), "%s x%d", inventoryItemName(slot.type), item.count);
-            renderer.drawText(rect.pos + Vec2{10.0f, 50.0f}, buffer, {235, 235, 240, 255}, 2);
+            renderer.drawText(rect.pos + Vec2{10.0f, 50.0f}, buffer, ui::Text, 2);
         } else {
             const InventoryObjectStack* objectStack = objectStackAtScreenIndex(i);
             if (objectStack != nullptr) {
@@ -1401,7 +1404,7 @@ void InventorySystem::render(Renderer& renderer, const Player& player, const Spe
                 renderer.fillCircle(rect.pos + Vec2{44.0f, 28.0f}, 13.0f, objectColor);
                 renderer.drawCircle(rect.pos + Vec2{44.0f, 28.0f}, 16.0f, {255, 230, 150, 180});
                 std::snprintf(buffer, sizeof(buffer), "%s x%d", objectStack->item.name.c_str(), objectStack->count);
-                renderer.drawText(rect.pos + Vec2{10.0f, 50.0f}, buffer, {235, 235, 240, 255}, 2);
+                renderer.drawText(rect.pos + Vec2{10.0f, 50.0f}, buffer, ui::Text, 2);
             } else if (const InventoryObjectInstance* objectInstance = objectInstanceAtScreenIndex(i)) {
                 const Color objectColor = objectInstance->instance.isBroken ? Color{82, 82, 90, 255} : inventoryObjectColor(objectInstance->item);
                 renderer.fillCircle(rect.pos + Vec2{44.0f, 28.0f}, 13.0f, objectColor);
@@ -1410,16 +1413,16 @@ void InventorySystem::render(Renderer& renderer, const Player& player, const Spe
                     16.0f,
                     objectInstance->instance.protectionEnabled ? Color{116, 220, 255, 220} : Color{255, 230, 150, 180});
                 std::snprintf(buffer, sizeof(buffer), "%s", objectInstance->item.name.c_str());
-                renderer.drawText(rect.pos + Vec2{10.0f, 50.0f}, buffer, {235, 235, 240, 255}, 2);
+                renderer.drawText(rect.pos + Vec2{10.0f, 50.0f}, buffer, ui::Text, 2);
             } else {
-                renderer.drawText(rect.pos + Vec2{22.0f, 30.0f}, "空き", {126, 128, 140, 255}, 2);
+                renderer.drawText(rect.pos + Vec2{22.0f, 30.0f}, "空き", ui::TextDisabled, 2);
             }
         }
     }
 
-    renderer.fillRect({DetailX, DetailY}, {DetailW, DetailH}, {14, 14, 22, 230});
-    renderer.drawRect({DetailX, DetailY}, {DetailW, DetailH}, {88, 82, 108, 255});
-    renderer.drawText({DetailX + 20.0f, DetailY + 18.0f}, "詳細", {246, 235, 255, 255}, 3);
+    renderer.fillRect({DetailX, DetailY}, {DetailW, DetailH}, ui::WindowFill);
+    renderer.drawRect({DetailX, DetailY}, {DetailW, DetailH}, ui::WindowBorder);
+    renderer.drawText({DetailX + 20.0f, DetailY + 18.0f}, "詳細", ui::Text, 3);
 
     const ShortcutSlot& selectedSlot = selectedShortcutSlot();
     float detailLineY = DetailY + 68.0f;
@@ -1499,10 +1502,10 @@ void InventorySystem::render(Renderer& renderer, const Player& player, const Spe
     if (grabbedSlotActive_) {
         std::snprintf(buffer, sizeof(buffer), "つかみ中: %s  移動先で G または F / Escでキャンセル",
             grabbedSlot_.assigned ? inventoryItemName(grabbedSlot_.type) : "空き");
-        renderer.fillRect({ScreenGridX, ScreenY + ScreenH - 52.0f}, {720.0f, 32.0f}, {36, 28, 48, 245});
-        renderer.drawText({ScreenGridX + 12.0f, ScreenY + ScreenH - 44.0f}, buffer, {255, 230, 150, 255}, 2);
+        renderer.fillRect({ScreenGridX, ScreenY + ScreenH - 52.0f}, {720.0f, 32.0f}, ui::WindowFillStrong);
+        renderer.drawText({ScreenGridX + 12.0f, ScreenY + ScreenH - 44.0f}, buffer, ui::Text, 2);
     } else {
-        renderer.drawText({ScreenGridX, ScreenY + ScreenH - 42.0f}, status_, {255, 235, 150, 255}, 2);
+        renderer.drawText({ScreenGridX, ScreenY + ScreenH - 42.0f}, status_, ui::Text, 2);
     }
 }
 
@@ -1517,13 +1520,13 @@ void InventorySystem::renderShortcutHud(Renderer& renderer, const SpellRingSyste
     const float slotY = panelY + 42.0f;
     const float slotW = (panelW - 32.0f - HudSlotGap * static_cast<float>(ShortcutColumns - 1)) / static_cast<float>(ShortcutColumns);
 
-    renderer.fillRect({panelX, panelY}, {panelW, HudHeight}, {8, 8, 14, 218});
-    renderer.drawRect({panelX, panelY}, {panelW, HudHeight}, {88, 82, 108, 255});
+    renderer.fillRect({panelX, panelY}, {panelW, HudHeight}, ui::WindowFill);
+    renderer.drawRect({panelX, panelY}, {panelW, HudHeight}, ui::WindowBorder);
 
     char buffer[128];
     std::snprintf(buffer, sizeof(buffer), "Row %d/3   Ring %d", shortcutRow_ + 1, spellRing.activeRingIndex() + 1);
-    renderer.drawText({innerX, panelY + 12.0f}, buffer, {246, 235, 255, 255}, 2);
-    renderer.drawText({innerX + 300.0f, panelY + 12.0f}, "Q/E 選択, Tab 行切替, F 使用, R リングへ, P 保護", {198, 198, 206, 255}, 2);
+    renderer.drawText({innerX, panelY + 12.0f}, buffer, ui::Text, 2);
+    renderer.drawText({innerX + 300.0f, panelY + 12.0f}, "Q/E 選択, Tab 行切替, F 使用, R リングへ, P 保護", ui::TextMuted, 2);
 
     for (int column = 0; column < ShortcutColumns; ++column) {
         const int slotIndex = shortcutRow_ * ShortcutColumns + column;
@@ -1531,22 +1534,22 @@ void InventorySystem::renderShortcutHud(Renderer& renderer, const SpellRingSyste
         const bool selected = column == selectedShortcutColumn_;
         const Vec2 slotPos{innerX + static_cast<float>(column) * (slotW + HudSlotGap), slotY};
         const Color fill = selected ? Color{54, 44, 72, 242} : Color{20, 20, 28, 226};
-        const Color outline = selected ? Color{255, 230, 150, 255} : Color{78, 72, 94, 255};
+        const Color outline = selected ? ui::WindowBorder : Color{78, 72, 94, 255};
         renderer.fillRect(slotPos, {slotW, HudSlotHeight}, fill);
         renderer.drawRect(slotPos, {slotW, HudSlotHeight}, outline);
 
         std::snprintf(buffer, sizeof(buffer), "%d", column + 1);
-        renderer.drawText(slotPos + Vec2{7.0f, 6.0f}, buffer, selected ? Color{255, 230, 150, 255} : Color{150, 150, 160, 255}, 1);
+        renderer.drawText(slotPos + Vec2{7.0f, 6.0f}, buffer, selected ? ui::Text : ui::TextDisabled, 1);
 
         if (slot.assigned) {
             const InventoryStack& item = stack(slot.type);
             std::snprintf(buffer, sizeof(buffer), "%s x%d", inventoryItemName(slot.type), item.count);
-            renderer.drawText(slotPos + Vec2{20.0f, 18.0f}, buffer, {235, 235, 240, 255}, 2);
+            renderer.drawText(slotPos + Vec2{20.0f, 18.0f}, buffer, ui::Text, 2);
         } else {
             const InventoryObjectStack* objectStack = objectStackAtScreenIndex(slotIndex);
             if (objectStack != nullptr) {
                 std::snprintf(buffer, sizeof(buffer), "%s x%d", objectStack->item.name.c_str(), objectStack->count);
-                renderer.drawText(slotPos + Vec2{20.0f, 18.0f}, buffer, {235, 235, 240, 255}, 2);
+                renderer.drawText(slotPos + Vec2{20.0f, 18.0f}, buffer, ui::Text, 2);
             } else if (const InventoryObjectInstance* objectInstance = objectInstanceAtScreenIndex(slotIndex)) {
                 std::snprintf(buffer, sizeof(buffer), "%s%s",
                     objectInstance->instance.protectionEnabled ? "[P] " : "",
@@ -1554,16 +1557,16 @@ void InventorySystem::renderShortcutHud(Renderer& renderer, const SpellRingSyste
                 renderer.drawText(
                     slotPos + Vec2{20.0f, 18.0f},
                     buffer,
-                    objectInstance->instance.isBroken ? Color{150, 150, 160, 255} : Color{235, 235, 240, 255},
+                    objectInstance->instance.isBroken ? ui::TextDisabled : ui::Text,
                     2);
             } else {
-                renderer.drawText(slotPos + Vec2{20.0f, 18.0f}, "空き", {126, 128, 140, 255}, 2);
+                renderer.drawText(slotPos + Vec2{20.0f, 18.0f}, "空き", ui::TextDisabled, 2);
             }
         }
 
         if (selected) {
-            renderer.fillRect({slotPos.x + 8.0f, slotPos.y + HudSlotHeight - 5.0f}, {slotW - 16.0f, 3.0f}, {255, 230, 150, 255});
-            renderer.drawText({slotPos.x + slotW * 0.5f - 4.0f, slotPos.y + HudSlotHeight + 5.0f}, "v", {255, 230, 150, 255}, 2);
+            renderer.fillRect({slotPos.x + 8.0f, slotPos.y + HudSlotHeight - 5.0f}, {slotW - 16.0f, 3.0f}, ui::Text);
+            renderer.drawText({slotPos.x + slotW * 0.5f - 4.0f, slotPos.y + HudSlotHeight + 5.0f}, "v", ui::Text, 2);
         }
     }
 

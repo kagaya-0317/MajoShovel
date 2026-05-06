@@ -34,7 +34,7 @@ bool App::initialize(const char* title, int width, int height)
     if (!renderer_->loadIconSheet("assets/icon.png")) {
         std::fprintf(stderr, "%s\n", renderer_->lastAssetError().c_str());
     }
-    if (!renderer_->loadTextFont("assets/fonts/Nosutaru-dotMPlusH-10-Regular.ttf")) {
+    if (!renderer_->loadTextFont("assets/fonts/craftmincho.otf")) {
         std::fprintf(stderr, "%s\n", renderer_->lastAssetError().c_str());
     }
     game_.initialize(width_, height_);

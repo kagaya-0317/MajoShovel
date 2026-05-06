@@ -6,6 +6,7 @@
 #include <memory>
 #include <string>
 #include <string_view>
+#include <unordered_map>
 
 namespace majo {
 
@@ -33,6 +34,9 @@ public:
     void drawCircle(Vec2 center, float radius, Color color);
     void drawLine(Vec2 a, Vec2 b, Color color);
     void drawText(Vec2 pos, std::string_view text, Color color, int scale = 2);
+    Vec2 measureText(std::string_view text, int scale = 2);
+    Vec2 measureWrappedText(std::string_view text, float maxWidth, int scale = 2);
+    void drawWrappedText(Vec2 pos, std::string_view text, float maxWidth, Color color, int scale = 2);
     bool loadTextFont(std::string_view path);
     bool loadIconSheet(std::string_view path, int iconSize = 32, int columns = 8, int rows = 8);
     void unloadIconSheet();
@@ -50,16 +54,26 @@ private:
     };
 
     struct NativeTextFont;
+    struct TextTexture {
+        SDL_Texture* texture = nullptr;
+        int width = 0;
+        int height = 0;
+    };
 
     Vec2 transform(Vec2 p) const;
     void setColor(Color color);
     void drawGlyph(char c, Vec2 pos, Color color, int scale);
     bool drawNativeText(Vec2 pos, std::string_view text, Color color, int scale);
+    bool measureNativeText(std::string_view text, int scale, Vec2& outSize);
+    bool renderNativeTextToTexture(std::string_view text, Color color, int scale, TextTexture& outTexture);
+    void clearTextCache();
+    std::string wrappedText(std::string_view text, float maxWidth, int scale);
 
     SDL_Renderer* renderer_ = nullptr;
     const Camera* camera_ = nullptr;
     IconSheet iconSheet_;
     std::unique_ptr<NativeTextFont> nativeTextFont_;
+    std::unordered_map<std::string, TextTexture> textCache_;
     std::string lastAssetError_;
 };
 

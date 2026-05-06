@@ -1,5 +1,7 @@
 #include "game/EncyclopediaSystem.hpp"
 
+#include "engine/Ui.hpp"
+
 #include <algorithm>
 #include <cstdio>
 #include <utility>
@@ -83,9 +85,9 @@ void EncyclopediaSystem::renderPopups(Renderer& renderer, const Camera& camera) 
     pos.y = clamp(pos.y, 58.0f, static_cast<float>(camera.height()) - size.y - 14.0f);
 
     renderer.setScreenSpace();
-    renderer.fillRect(pos, size, {18, 14, 28, 232});
-    renderer.drawRect(pos, size, {255, 230, 150, 255});
-    renderer.drawText(pos + Vec2{12.0f, 10.0f}, activePopup_.text, {255, 242, 190, 255}, 2);
+    renderer.fillRect(pos, size, ui::WindowFill);
+    renderer.drawRect(pos, size, ui::WindowBorder);
+    renderer.drawText(pos + Vec2{12.0f, 10.0f}, activePopup_.text, ui::Text, 2);
 }
 
 void EncyclopediaSystem::noteItemDiscovered(const ObjectDefinition& object, Vec2 position)

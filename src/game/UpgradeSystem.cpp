@@ -120,22 +120,19 @@ void UpgradeSystem::render(Renderer& renderer, const LevelSystem& level)
     }
     renderer.setScreenSpace();
     const UiRect panel = panelRect();
-    renderer.fillRect(panel.pos, panel.size, {12, 10, 18, 238});
-    renderer.drawRect(panel.pos, panel.size, {210, 184, 255, 255});
-    renderer.drawText(panel.pos + Vec2{354.0f, 36.0f}, "レベルアップ", {246, 235, 255, 255}, 4);
-    renderer.drawText(panel.pos + Vec2{238.0f, 88.0f}, "A/D・左右・Q/E で選択   F/Enter で決定   1/2/3 で直接決定", {202, 206, 216, 255}, 2);
+    drawUiWindow(renderer, panel, "レベルアップ", "A/D・左右・Q/E で選択   F/Enter で決定   1/2/3 で直接決定");
 
     for (int i = 0; i < 3; ++i) {
         const UiRect card = optionRect(i);
         const bool selected = i == selectedOption_;
         renderer.fillRect(card.pos, card.size, selected ? Color{54, 46, 76, 245} : Color{22, 22, 32, 232});
-        renderer.drawRect(card.pos, card.size, selected ? Color{255, 230, 150, 255} : Color{104, 94, 128, 255});
-        renderer.drawText(card.pos + Vec2{18.0f, 18.0f}, std::to_string(i + 1), {174, 182, 198, 255}, 2);
-        renderer.drawText(card.pos + Vec2{50.0f, 40.0f}, upgradeName(i), {246, 235, 255, 255}, 3);
-        renderer.drawText(card.pos + Vec2{24.0f, 96.0f}, upgradeDescription(i), {226, 228, 236, 255}, 2);
-        renderer.drawText(card.pos + Vec2{24.0f, 146.0f}, upgradeValueText(i), selected ? Color{255, 230, 150, 255} : Color{190, 210, 255, 255}, 2);
+        renderer.drawRect(card.pos, card.size, selected ? ui::WindowBorder : Color{104, 94, 128, 255});
+        renderer.drawText(card.pos + Vec2{18.0f, 18.0f}, std::to_string(i + 1), ui::TextMuted, 2);
+        renderer.drawText(card.pos + Vec2{50.0f, 40.0f}, upgradeName(i), ui::Text, 3);
+        renderer.drawText(card.pos + Vec2{24.0f, 96.0f}, upgradeDescription(i), ui::Text, 2);
+        renderer.drawText(card.pos + Vec2{24.0f, 146.0f}, upgradeValueText(i), selected ? ui::Text : ui::TextMuted, 2);
         if (selected) {
-            renderer.drawText(card.pos + Vec2{88.0f, 182.0f}, "選択中", {255, 230, 150, 255}, 2);
+            renderer.drawText(card.pos + Vec2{88.0f, 182.0f}, "選択中", ui::Text, 2);
         }
     }
 }
