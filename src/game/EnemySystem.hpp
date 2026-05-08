@@ -20,6 +20,8 @@
 
 namespace majo {
 
+class EffectSystem;
+
 enum class EnemyEventType {
     Hit,
     Death,
@@ -33,6 +35,7 @@ struct EnemyEvent {
     Vec2 position{};
     std::string enemyId;
     std::string enemyName;
+    std::string effectId;
 };
 
 enum class CaptureResultType {
@@ -46,6 +49,7 @@ struct CaptureResult {
     CaptureResultType type = CaptureResultType::NoTarget;
     std::string enemyName;
     float chance = 0.0f;
+    Vec2 position{};
 };
 
 class EnemySystem {
@@ -67,6 +71,7 @@ public:
         ProjectileSystem& projectiles,
         std::vector<EffectDiscoveryEvent>* discoveryEvents = nullptr);
     void render(Renderer& renderer, const TileMap& map, Vec2 playerLight, const std::vector<LightSource>& extraLights);
+    void emitStatusParticles(EffectSystem& effects) const;
     int activeCount() const { return enemies_.activeCount(); }
     bool bossActive() const;
     const std::vector<EnemyEvent>& events() const { return events_; }

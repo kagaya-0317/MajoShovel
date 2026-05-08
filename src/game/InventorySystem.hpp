@@ -58,7 +58,7 @@ public:
     void updateShortcuts(const Input& input, Player& player, SpellRingSystem& spellRing, const EffectDispatcher& effectDispatcher);
     void updateScreen(const Input& input, UiContext& ui, Player& player, SpellRingSystem& spellRing, const EffectDispatcher& effectDispatcher);
     void update(const Input& input, UiContext& ui, Player& player, SpellRingSystem& spellRing, const EffectDispatcher& effectDispatcher, bool blocked);
-    void render(Renderer& renderer, const Player& player, const SpellRingSystem& spellRing) const;
+    void render(Renderer& renderer, const Player& player, const SpellRingSystem& spellRing, const ObjectCatalog& catalog) const;
     void renderShortcutHud(Renderer& renderer, const SpellRingSystem& spellRing, int screenWidth, int screenHeight) const;
     bool isOpen() const { return open_; }
     void setOpen(bool open) { open_ = open; }

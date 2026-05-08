@@ -3,6 +3,7 @@
 #include "engine/Renderer.hpp"
 #include "engine/Time.hpp"
 #include "data/RuntimeBalance.hpp"
+#include "data/StageCatalog.hpp"
 #include "game/EnemySystem.hpp"
 #include "game/DungeonLayout.hpp"
 #include "game/SpellRingSystem.hpp"
@@ -24,6 +25,7 @@ public:
         const Player& player,
         const RuntimeBalance& balance,
         const DungeonLayout& dungeonLayout,
+        const StageDefinition& currentStage,
         int nearestWarpIndex,
         bool nearestWarpDiscovered,
         int discoveredWarpCount,

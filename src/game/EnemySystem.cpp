@@ -3,6 +3,7 @@
 #include "data/GameBalance.hpp"
 #include "engine/Log.hpp"
 #include "game/Collision.hpp"
+#include "game/EffectSystem.hpp"
 #include <algorithm>
 #include <array>
 #include <cmath>
@@ -10,6 +11,7 @@
 #include <queue>
 #include <random>
 #include <sstream>
+#include <utility>
 #include <string_view>
 
 namespace majo {
@@ -215,13 +217,28 @@ ItemData makeCapturedItemData(const Enemy& enemy)
     return item;
 }
 
-EnemyEvent makeEnemyEvent(EnemyEventType type, const Enemy& enemy)
+std::string visualEffectIdFor(const std::vector<EffectSpec>& specs)
+{
+    for (const EffectSpec& spec : specs) {
+        for (const std::string& effect : spec.effects) {
+            if (effect == "status_poison" || effect == "status_poison_chance" ||
+                effect == "status_slow" || effect == "status_slow_chance" ||
+                effect == "status_bleed" || effect == "status_bleed_chance") {
+                return effect;
+            }
+        }
+    }
+    return {};
+}
+
+EnemyEvent makeEnemyEvent(EnemyEventType type, const Enemy& enemy, std::string effectId = {})
 {
     return EnemyEvent{
         .type = type,
         .position = enemy.position,
         .enemyId = enemy.enemyId,
         .enemyName = enemy.enemyName,
+        .effectId = std::move(effectId),
     };
 }
 
@@ -1107,9 +1124,11 @@ void EnemySystem::update(
             } else {
                 item.consumeDurability();
             }
+            std::string hitEffectId;
             if (!item.objectId.empty()) {
                 const auto objectIt = objectCatalog.objectsById.find(item.objectId);
                 if (objectIt != objectCatalog.objectsById.end()) {
+                    hitEffectId = visualEffectIdFor(objectIt->second.orbitEffects);
                     EffectContext context;
                     context.sourceObject = &objectIt->second;
                     context.owner = &player;
@@ -1128,6 +1147,9 @@ void EnemySystem::update(
                     }
                 }
             }
+            if (hitEffectId.empty()) {
+                hitEffectId = visualEffectIdFor(item.addedEffects);
+            }
             tryCapturedRewardFromEnemy(item, enemy, totalTime, events_);
             if (item.hasCapturedBehavior("charge_explode") && item.capturedExplodeSleepTimer <= 0.0f) {
                 ++item.capturedExplodeCharge;
@@ -1138,7 +1160,7 @@ void EnemySystem::update(
                 }
             }
             enemy.hitFlash = 0.12f;
-            events_.push_back(makeEnemyEvent(EnemyEventType::Hit, enemy));
+            events_.push_back(makeEnemyEvent(EnemyEventType::Hit, enemy, hitEffectId));
             if (enemy.hp <= 0) {
                 pendingXp_ += enemy.xp;
                 events_.push_back(makeEnemyEvent(enemy.isBoss ? EnemyEventType::BossDeath : EnemyEventType::Death, enemy));
@@ -1198,6 +1220,24 @@ void EnemySystem::render(Renderer& renderer, const TileMap& map, Vec2 playerLigh
     }
 }
 
+void EnemySystem::emitStatusParticles(EffectSystem& effects) const
+{
+    for (const Enemy& enemy : enemies_.items()) {
+        if (!enemy.active || enemy.spawnTimer > 0.0f) {
+            continue;
+        }
+        if (enemy.status.hasState("status_poison")) {
+            effects.spawnStatusAura(enemy.position, "status_poison");
+        }
+        if (enemy.status.hasState("status_slow")) {
+            effects.spawnStatusAura(enemy.position, "status_slow");
+        }
+        if (enemy.status.hasState("status_bleed")) {
+            effects.spawnStatusAura(enemy.position, "status_bleed");
+        }
+    }
+}
+
 bool EnemySystem::hitByPlayerProjectile(
     Projectile& projectile,
     Player& player,
@@ -1235,7 +1275,7 @@ bool EnemySystem::hitByPlayerProjectile(
             effectDispatcher.dispatch(projectile.effects, context);
         }
 
-        events_.push_back(makeEnemyEvent(EnemyEventType::Hit, enemy));
+        events_.push_back(makeEnemyEvent(EnemyEventType::Hit, enemy, visualEffectIdFor(projectile.effects)));
         if (enemy.hp <= 0) {
             pendingXp_ += enemy.xp;
             events_.push_back(makeEnemyEvent(enemy.isBoss ? EnemyEventType::BossDeath : EnemyEventType::Death, enemy));
@@ -1369,6 +1409,7 @@ CaptureResult EnemySystem::tryCapture(Player& player, SpellRingSystem& spellRing
         .type = CaptureResultType::Failed,
         .enemyName = best->enemyName,
         .chance = chance,
+        .position = best->position,
     };
     if (dist(rng_) > chance) {
         return result;

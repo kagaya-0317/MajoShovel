@@ -9,6 +9,7 @@
 #include "data/EnemyCatalog.hpp"
 #include "data/ObjectCatalog.hpp"
 #include "data/RuntimeBalance.hpp"
+#include "data/StageCatalog.hpp"
 #include "game/DebugOverlay.hpp"
 #include "game/DiggingSystem.hpp"
 #include "game/DungeonLayout.hpp"
@@ -42,6 +43,11 @@ enum class ScreenMode {
     LevelUp,
     GameOver,
     StageClear
+};
+
+enum class BaseArea {
+    Outdoor,
+    HomeInterior
 };
 
 enum class PauseMenuPage {
@@ -188,12 +194,16 @@ private:
     bool loadBalanceFromSources(std::string& message);
     bool loadBalanceFromDisk(std::string& message);
     bool loadObjectsFromSheet();
+    bool loadStagesFromSheet();
     bool loadEnemiesFromSheet();
+    const StageDefinition& currentStageDefinition() const;
+    void resolveCurrentStageDefinition();
     void refreshOrbitEffects();
     DungeonGenerationContext makeDungeonGenerationContext() const;
     void generateDungeonLayoutForRun();
     void updateCapturedProjectileBehaviors(float dt);
     void updateCapturedUtilityBehaviors(float dt);
+    void updateAmbientParticleEffects(float dt);
     void handleCapturedExplosion(Vec2 position);
     enum class SellableKind {
         Stack,
@@ -263,8 +273,8 @@ private:
     void applyEffectDiscoveries(const std::vector<EffectDiscoveryEvent>& discoveries);
     void addStoryFlag(std::string flag);
     void updateBookshelfScreen(const Input& input, UiContext& ui);
-    void updateScreenMode(const Input& input, UiContext& ui);
-    void updateBaseScreen(const Input& input, UiContext& ui);
+    void updateScreenMode(const Input& input, UiContext& ui, float dt);
+    void updateBaseScreen(const Input& input, UiContext& ui, float dt);
     void updatePauseMenu(const Input& input, UiContext& ui);
     void choosePauseMenuItem(int item);
     void leavePausePage();
@@ -313,6 +323,7 @@ private:
     bool loadSaveData();
     bool saveSaveData(std::string& message) const;
     bool gameProgressPaused() const;
+    bool basePresentationActive() const;
     void renderBaseScreen(Renderer& renderer) const;
     void renderBookshelfScreen(Renderer& renderer) const;
     void renderPauseMenu(Renderer& renderer) const;
@@ -325,6 +336,7 @@ private:
     GoogleSheetSourceConfig sheetSource_;
     EnemyCatalog enemyCatalog_;
     ObjectCatalog objectCatalog_;
+    StageCatalog stageCatalog_;
     FileWatcher watcher_;
     Player player_;
     DungeonLayout dungeonLayout_;
@@ -342,6 +354,12 @@ private:
     UpgradeSystem upgrades_;
     DebugOverlay debug_;
     ScreenMode mode_ = ScreenMode::Base;
+    BaseArea baseArea_ = BaseArea::Outdoor;
+    Vec2 basePlayerPosition_{640.0f, 360.0f};
+    Vec2 baseOutdoorPlayerPosition_{640.0f, 360.0f};
+    Vec2 basePlayerFacing_{0.0f, 1.0f};
+    float basePlayerSpriteAnimationTime_ = 0.0f;
+    bool basePlayerSpriteWalking_ = false;
     int baseMenuSelection_ = 0;
     bool baseMiningStartChoiceActive_ = false;
     int baseMiningStartSelection_ = 0;
@@ -367,6 +385,7 @@ private:
     int bookshelfSelection_ = 0;
     std::string baseStatus_;
     PauseMenuPage pausePage_ = PauseMenuPage::Main;
+    ScreenMode pauseReturnMode_ = ScreenMode::Playing;
     int pauseMenuSelection_ = 0;
     int pauseConfirmSelection_ = 1;
     int ringSlotSelection_ = 0;
@@ -390,6 +409,8 @@ private:
     Vec2 bossSpawnPoint_{};
     bool hasBossSpawnPoint_ = false;
     int currentStage_ = 0;
+    std::string currentStageId_ = "stage_01_stardust";
+    StageDefinition currentStageDefinition_{};
     int unlockedStages_ = 1;
     int unlockedWarpPointCount_ = 0;
     Vec2 latestWarpPointPosition_{};
@@ -426,6 +447,8 @@ private:
     bool quitRequested_ = false;
     bool debugPaused_ = false;
     float captureCooldown_ = 0.0f;
+    float ringTrailEffectTimer_ = 0.0f;
+    float ambientParticleTimer_ = 0.0f;
     float reloadNoticeTimer_ = 0.0f;
     std::string reloadNotice_;
 };

@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <cctype>
 #include <cstdint>
 #include <cstdlib>
 #include <cstdio>
@@ -27,12 +28,14 @@ namespace {
 constexpr int ShovelIconIndex = 0;
 constexpr int TorchIconIndex = 1;
 constexpr float IconDrawSize = 32.0f;
+constexpr float PlayerSpriteDrawSize = 96.0f;
 constexpr int BaseMenuItemCount = 8;
 constexpr int BaseMiningStartChoiceCount = 2;
 constexpr int BaseUpgradeItemCount = 8;
 constexpr int BaseProcessingModeCount = 4;
 constexpr int BaseRingWorkshopItemCount = 10;
 constexpr int BookshelfMenuItemCount = 3;
+constexpr int BookshelfVisibleRows = 5;
 constexpr int RingWorkshopImplementedUpgradeCount = 3;
 constexpr int MaxItemEnhanceLevel = 5;
 constexpr int MerchantRefreshDugTileThreshold = 10;
@@ -43,6 +46,10 @@ constexpr int StageClearItemCount = 1;
 constexpr int RingCount = 3;
 constexpr int RingSlotCount = 8;
 constexpr int RingSlotColumns = 4;
+constexpr float RingDetailX = 864.0f;
+constexpr float RingDetailY = 108.0f;
+constexpr float RingDetailW = 330.0f;
+constexpr float RingDetailH = 520.0f;
 constexpr float WarpPointSpacing = 320.0f;
 constexpr float WarpPointTouchRadius = 28.0f;
 constexpr int MaxWarpPointsPerRun = 8;
@@ -65,6 +72,19 @@ constexpr int MoneyNodeCountPerRun = 18;
 constexpr int EnemyNodeCountPerRun = 14;
 constexpr float ExposedEnemyNodeSpawnRadius = 820.0f;
 
+std::string lowerAscii(std::string text)
+{
+    std::transform(text.begin(), text.end(), text.begin(), [](unsigned char c) {
+        return static_cast<char>(std::tolower(c));
+    });
+    return text;
+}
+
+std::string filenameOf(const std::string& path)
+{
+    return lowerAscii(std::filesystem::path(path).filename().string());
+}
+
 enum class BaseFacilityAction {
     MineExit,
     Storage,
@@ -72,9 +92,11 @@ enum class BaseFacilityAction {
     Merchant,
     Processing,
     Forge,
-    Observatory,
     Diary,
     RingWorkshop,
+    HomeEntrance,
+    HomeExit,
+    MonicaTalk,
 };
 
 struct BaseFacility {
@@ -106,6 +128,23 @@ DungeonTile roundDungeonTile(Vec2 tilePosition)
 Vec2 perpendicular(Vec2 value)
 {
     return {-value.y, value.x};
+}
+
+std::string_view particleElementForProjectile(std::string_view projectileId)
+{
+    if (projectileId.find("fire") != std::string_view::npos || projectileId.find("explosion") != std::string_view::npos) {
+        return "fire";
+    }
+    if (projectileId.find("water") != std::string_view::npos || projectileId.find("poison") != std::string_view::npos) {
+        return "ice";
+    }
+    if (projectileId.find("wind") != std::string_view::npos) {
+        return "wind";
+    }
+    if (projectileId.find("stone") != std::string_view::npos || projectileId.find("cactus") != std::string_view::npos) {
+        return "earth";
+    }
+    return "magic";
 }
 
 Vec2 pointAtPathProgress(const std::vector<Vec2>& points, float progress)
@@ -192,25 +231,57 @@ const char* screenModeName(ScreenMode mode)
     return "Unknown";
 }
 
-std::array<BaseFacility, 10> baseFacilities(bool ringWorkshopUnlocked)
+const char* baseAreaName(BaseArea area)
 {
+    switch (area) {
+    case BaseArea::Outdoor: return "屋外拠点";
+    case BaseArea::HomeInterior: return "主人公の家";
+    }
+    return "拠点";
+}
+
+std::vector<BaseFacility> baseFacilities(BaseArea area, bool ringWorkshopUnlocked)
+{
+    if (area == BaseArea::HomeInterior) {
+        return {
+            BaseFacility{"bookshelf", "本棚", {{150.0f, 128.0f}, {128.0f, 66.0f}}, 72.0f, true, true, BaseFacilityAction::Bookshelf},
+            BaseFacility{"diary", "日記", {{940.0f, 174.0f}, {88.0f, 58.0f}}, 64.0f, true, true, BaseFacilityAction::Diary},
+            BaseFacility{"home_exit", "屋外へ戻る出口", {{592.0f, 584.0f}, {96.0f, 42.0f}}, 80.0f, true, true, BaseFacilityAction::HomeExit},
+            BaseFacility{"bed", "ベッド", {{156.0f, 452.0f}, {172.0f, 86.0f}}, 0.0f, false, true, BaseFacilityAction::Bookshelf},
+            BaseFacility{"desk", "机", {{898.0f, 360.0f}, {150.0f, 76.0f}}, 0.0f, false, true, BaseFacilityAction::Diary},
+        };
+    }
+
     return {
         BaseFacility{"mine_exit", "採掘出口", {{584.0f, 560.0f}, {112.0f, 64.0f}}, 78.0f, true, true, BaseFacilityAction::MineExit},
         BaseFacility{"storage_chest", "収納箱", {{158.0f, 320.0f}, {98.0f, 72.0f}}, 68.0f, true, true, BaseFacilityAction::Storage},
-        BaseFacility{"bookshelf", "本棚", {{150.0f, 118.0f}, {118.0f, 58.0f}}, 64.0f, true, true, BaseFacilityAction::Bookshelf},
         BaseFacility{"merchant_wagon", "商人ワゴン", {{982.0f, 302.0f}, {150.0f, 90.0f}}, 78.0f, true, true, BaseFacilityAction::Merchant},
-        BaseFacility{"processing_table", "魔導加工台", {{930.0f, 128.0f}, {130.0f, 68.0f}}, 70.0f, true, true, BaseFacilityAction::Processing},
-        BaseFacility{"upgrade_forge", "強化炉", {{568.0f, 76.0f}, {144.0f, 74.0f}}, 76.0f, true, true, BaseFacilityAction::Forge},
-        BaseFacility{"observatory", "モニカの星見台", {{750.0f, 72.0f}, {164.0f, 68.0f}}, 72.0f, true, true, BaseFacilityAction::Observatory},
-        BaseFacility{"diary", "日記", {{68.0f, 574.0f}, {78.0f, 54.0f}}, 58.0f, true, true, BaseFacilityAction::Diary},
+        BaseFacility{"processing_table", "作業台", {{930.0f, 128.0f}, {130.0f, 68.0f}}, 70.0f, true, true, BaseFacilityAction::Processing},
+        BaseFacility{"upgrade_forge", "拠点強化炉", {{568.0f, 76.0f}, {144.0f, 74.0f}}, 76.0f, true, true, BaseFacilityAction::Forge},
         BaseFacility{"ring_workshop", "リング工房用スペース", {{902.0f, 520.0f}, {172.0f, 92.0f}}, 82.0f, true, ringWorkshopUnlocked, BaseFacilityAction::RingWorkshop},
-        BaseFacility{"home", "主人公の家", {{332.0f, 74.0f}, {150.0f, 96.0f}}, 48.0f, false, true, BaseFacilityAction::Observatory},
+        BaseFacility{"monica", "モニカ", {{760.0f, 230.0f}, {74.0f, 86.0f}}, 72.0f, true, true, BaseFacilityAction::MonicaTalk},
+        BaseFacility{"home_entrance", "主人公の家の入口", {{382.0f, 158.0f}, {52.0f, 32.0f}}, 64.0f, true, true, BaseFacilityAction::HomeEntrance},
+        BaseFacility{"home", "主人公の家", {{330.0f, 72.0f}, {154.0f, 100.0f}}, 0.0f, false, true, BaseFacilityAction::HomeEntrance},
     };
 }
 
 bool baseInteractionAvailable(Vec2 playerPosition, const BaseFacility& facility)
 {
     return facility.enabled && distanceToRect(playerPosition, facility.rect) <= facility.interactionRange;
+}
+
+const char* baseInteractionPrompt(const BaseFacility& facility)
+{
+    switch (facility.onInteract) {
+    case BaseFacilityAction::MonicaTalk:
+        return "Enter: モニカと話す / クリック: 近くのNPCと話す / Esc: メニュー";
+    case BaseFacilityAction::HomeEntrance:
+        return "Enter: 主人公の家に入る / クリック: 近くの入口を調べる / Esc: メニュー";
+    case BaseFacilityAction::HomeExit:
+        return "Enter: 屋外へ戻る / クリック: 近くの出口を調べる / Esc: メニュー";
+    default:
+        return nullptr;
+    }
 }
 
 UiRect basePanelRect()
@@ -225,7 +296,7 @@ UiRect baseMenuItemRect(int index)
 
 UiRect baseMiningStartChoiceRect(int index)
 {
-    return {{450.0f, 318.0f + static_cast<float>(index) * 58.0f}, {380.0f, 44.0f}};
+    return {{450.0f, 318.0f + static_cast<float>(index) * 58.0f}, {380.0f, ui::ButtonHeight}};
 }
 
 UiRect baseSellItemRect(int index)
@@ -235,42 +306,46 @@ UiRect baseSellItemRect(int index)
 
 UiRect merchantSellItemRect(int index)
 {
-    return {{390.0f, 278.0f + static_cast<float>(index) * 42.0f}, {250.0f, 34.0f}};
+    return {{390.0f, 278.0f + static_cast<float>(index) * 58.0f}, {250.0f, ui::ButtonHeight}};
 }
 
 UiRect merchantBuyItemRect(int index)
 {
-    return {{660.0f, 278.0f + static_cast<float>(index) * 42.0f}, {230.0f, 34.0f}};
+    return {{660.0f, 278.0f + static_cast<float>(index) * 58.0f}, {230.0f, ui::ButtonHeight}};
 }
 
 UiRect baseUpgradeItemRect(int index)
 {
-    return {{392.0f, 246.0f + static_cast<float>(index) * 34.0f}, {496.0f, 30.0f}};
+    const int column = index / 4;
+    const int row = index % 4;
+    return {{392.0f + static_cast<float>(column) * 252.0f, 214.0f + static_cast<float>(row) * 58.0f}, {240.0f, ui::ButtonHeight}};
 }
 
 UiRect baseProcessingModeRect(int index)
 {
-    return {{386.0f + static_cast<float>(index) * 126.0f, 244.0f}, {118.0f, 34.0f}};
+    return {{386.0f + static_cast<float>(index) * 126.0f, 200.0f}, {118.0f, ui::ButtonHeight}};
 }
 
 UiRect baseProcessingItemRect(int index)
 {
-    return {{390.0f, 298.0f + static_cast<float>(index) * 40.0f}, {500.0f, 34.0f}};
+    return {{390.0f, 270.0f + static_cast<float>(index) * 58.0f}, {500.0f, ui::ButtonHeight}};
 }
 
 UiRect baseRingWorkshopItemRect(int index)
 {
-    return {{390.0f, 252.0f + static_cast<float>(index) * 24.0f}, {500.0f, 22.0f}};
+    const int column = index / 5;
+    const int row = index % 5;
+    return {{390.0f + static_cast<float>(column) * 252.0f, 252.0f + static_cast<float>(row) * 58.0f}, {240.0f, ui::ButtonHeight}};
 }
 
 UiRect ringWorkshopConfirmRect()
 {
-    return {{688.0f, 436.0f}, {190.0f, 34.0f}};
+    return {{688.0f, 552.0f}, {190.0f, ui::ButtonHeight}};
 }
 
 UiRect bookshelfItemRect(int index)
 {
-    return {{402.0f, 250.0f + static_cast<float>(index) * 34.0f}, {474.0f, 30.0f}};
+    return {{402.0f, 250.0f + static_cast<float>(index) * 58.0f}, {474.0f, ui::ButtonHeight}};
 }
 
 UiRect storagePanelRect()
@@ -280,12 +355,12 @@ UiRect storagePanelRect()
 
 UiRect storageBackpackItemRect(int index)
 {
-    return {{72.0f, 154.0f + static_cast<float>(index) * 42.0f}, {332.0f, 34.0f}};
+    return {{72.0f, 154.0f + static_cast<float>(index) * 58.0f}, {332.0f, ui::ButtonHeight}};
 }
 
 UiRect storageWarehouseItemRect(int index)
 {
-    return {{430.0f, 154.0f + static_cast<float>(index) * 42.0f}, {360.0f, 34.0f}};
+    return {{430.0f, 154.0f + static_cast<float>(index) * 58.0f}, {360.0f, ui::ButtonHeight}};
 }
 
 UiRect pausePanelRect()
@@ -295,12 +370,15 @@ UiRect pausePanelRect()
 
 UiRect pauseMenuItemRect(int index)
 {
-    return {{450.0f, 235.0f + static_cast<float>(index) * 56.0f}, {380.0f, 44.0f}};
+    return {{450.0f, 235.0f + static_cast<float>(index) * 58.0f}, {380.0f, ui::ButtonHeight}};
 }
 
 UiRect pauseBackButtonRect()
 {
-    return uiBottomLeftButtonRect(pausePanelRect(), {180.0f, 42.0f});
+    const UiRect panel = pausePanelRect();
+    const Vec2 size{180.0f, ui::ButtonHeight};
+    const float footerTop = panel.pos.y + panel.size.y - uiFooterHeight("x");
+    return {{panel.pos.x + (panel.size.x - size.x) * 0.5f, footerTop - size.y - 12.0f}, size};
 }
 
 UiRect quitConfirmRect()
@@ -393,7 +471,7 @@ std::vector<EffectSpec> capturedProjectileEffects(std::string_view behaviorId, c
 
 UiRect gameOverItemRect(int index)
 {
-    return {{460.0f, 446.0f + static_cast<float>(index) * 54.0f}, {360.0f, 42.0f}};
+    return {{460.0f, 446.0f + static_cast<float>(index) * 58.0f}, {360.0f, ui::ButtonHeight}};
 }
 
 UiRect stageClearPanelRect()
@@ -403,7 +481,7 @@ UiRect stageClearPanelRect()
 
 UiRect stageClearItemRect(int index)
 {
-    return {{460.0f, 446.0f + static_cast<float>(index) * 54.0f}, {360.0f, 42.0f}};
+    return {{460.0f, 446.0f + static_cast<float>(index) * 58.0f}, {360.0f, ui::ButtonHeight}};
 }
 
 const char* pauseMenuItemName(int index)
@@ -424,8 +502,8 @@ const char* baseMenuItemName(int index)
     case 0: return "採掘出口";
     case 1: return "収納箱";
     case 2: return "商人ワゴン";
-    case 3: return "強化炉";
-    case 4: return "魔導加工台";
+    case 3: return "拠点強化炉";
+    case 4: return "作業台";
     case 5: return "本棚";
     case 6: return "日記";
     case 7: return "リング工房用スペース";
@@ -476,7 +554,7 @@ UiRect ringPanelRect()
 
 UiRect ringTabRect(int index)
 {
-    return {{116.0f + static_cast<float>(index) * 174.0f, 132.0f}, {152.0f, 40.0f}};
+    return {{116.0f + static_cast<float>(index) * 174.0f, 132.0f}, {152.0f, ui::ButtonHeight}};
 }
 
 UiRect ringSlotRect(int index)
@@ -525,15 +603,6 @@ std::string ringItemDisplayName(const ObjectCatalog& catalog, const SpellRingIte
         return object->name;
     }
     return spellRingItemName(item.type);
-}
-
-std::string ringItemDisplayCategory(const ObjectCatalog& catalog, const SpellRingItem& item)
-{
-    const ItemData* object = objectForRingItem(catalog, item);
-    if (object != nullptr && !object->category.empty()) {
-        return object->category;
-    }
-    return spellRingItemCategory(item.type);
 }
 
 bool dbDebugLogEnabled()
@@ -966,6 +1035,10 @@ void Game::initialize(int width, int height)
     } else {
         reloadNotice_ = message.empty() ? "データ読込完了" : message;
     }
+    baseArea_ = BaseArea::Outdoor;
+    basePlayerPosition_ = {640.0f, 360.0f};
+    baseOutdoorPlayerPosition_ = basePlayerPosition_;
+    basePlayerFacing_ = {0.0f, 1.0f};
     enterBase();
     reloadNoticeTimer_ = 2.0f;
 }
@@ -978,6 +1051,8 @@ void Game::initializeWorld(bool captureRunStartInventory)
     tileMap_ = TileMap{};
     spellRing_ = SpellRingSystem{};
     effects_ = EffectSystem{};
+    ringTrailEffectTimer_ = 0.0f;
+    ambientParticleTimer_ = 0.0f;
     enemies_ = EnemySystem{};
     projectiles_ = ProjectileSystem{};
     inventory_ = InventorySystem{};
@@ -1133,7 +1208,6 @@ void Game::configureWatcher()
 {
     watcher_ = FileWatcher{};
     watcher_.watchPath("data");
-    watcher_.watchPath("assets");
     watcher_.reset();
 }
 
@@ -1892,7 +1966,7 @@ const char* Game::upgradeName(int index) const
     switch (index) {
     case 0: return "倉庫容量強化";
     case 1: return "商人機能強化";
-    case 2: return "魔導加工台機能解禁";
+    case 2: return "作業台機能解禁";
     case 3: return "リング工房解禁";
     case 4: return "最大HPアップ";
     case 5: return "リング半径アップ";
@@ -2312,11 +2386,16 @@ void Game::updateBookshelfScreen(const Input& input, UiContext& ui)
         bookshelfSelection_ = std::clamp(bookshelfSelection_, 0, itemCount - 1);
     }
 
-    const int visibleCount = std::min(10, itemCount);
+    const int visibleCount = std::min(BookshelfVisibleRows, itemCount);
     const int firstVisibleIndex = std::clamp(bookshelfSelection_ - visibleCount / 2, 0, std::max(0, itemCount - visibleCount));
     for (int i = 0; i < visibleCount; ++i) {
-        if (ui.pressed(bookshelfItemRect(i))) {
-            bookshelfSelection_ = firstVisibleIndex + i;
+        const UiRect rect = bookshelfItemRect(i);
+        const int itemIndex = firstVisibleIndex + i;
+        if (rect.contains(ui.mouse())) {
+            bookshelfSelection_ = itemIndex;
+        }
+        if (ui.pressed(rect)) {
+            bookshelfSelection_ = itemIndex;
             if (bookshelfPage_ == BookshelfPage::Menu) {
                 bookshelfPage_ = static_cast<BookshelfPage>(bookshelfSelection_ + 1);
                 bookshelfSelection_ = 0;
@@ -2443,11 +2522,18 @@ void Game::updateCapturedProjectileBehaviors(float dt)
                 const float angle = Pi * 2.0f * static_cast<float>(i) / static_cast<float>(RadialSpikeProjectileCount);
                 const Vec2 direction = fromAngle(angle);
                 const Vec2 origin = item.worldPosition + direction * (item.hitRadius + 5.0f);
-                fired = projectiles_.spawn(projectileId, origin, direction, ProjectileOwnerType::PlayerOrbit, effects) || fired;
+                const bool spawned = projectiles_.spawn(projectileId, origin, direction, ProjectileOwnerType::PlayerOrbit, effects);
+                if (spawned) {
+                    effects_.spawnMagicCast(origin, direction, particleElementForProjectile(projectileId), 8.0f);
+                }
+                fired = spawned || fired;
             }
         } else {
             const Vec2 origin = item.worldPosition + outward * (item.hitRadius + 5.0f);
             fired = projectiles_.spawn(projectileId, origin, outward, ProjectileOwnerType::PlayerOrbit, effects);
+            if (fired) {
+                effects_.spawnMagicCast(origin, outward, particleElementForProjectile(projectileId), 8.0f);
+            }
         }
 
         item.capturedProjectileTimer = fired ? interval : CapturedProjectileRetryInterval;
@@ -2489,6 +2575,56 @@ void Game::updateCapturedUtilityBehaviors(float dt)
             }
         } else {
             item.capturedWindTimer = 0.0f;
+        }
+    }
+}
+
+void Game::updateAmbientParticleEffects(float dt)
+{
+    if (dt <= 0.0f) {
+        return;
+    }
+
+    ringTrailEffectTimer_ -= dt;
+    if (spellRing_.state() != SpellRingState::Normal && ringTrailEffectTimer_ <= 0.0f) {
+        const Vec2 trailDirection = spellRing_.state() == SpellRingState::Thrown
+            ? player_.facing
+            : player_.position - spellRing_.center();
+        effects_.spawnRingTrail(spellRing_.center(), trailDirection);
+        for (const SpellRingItem& item : spellRing_.items()) {
+            effects_.spawnRingTrail(item.worldPosition, trailDirection);
+        }
+        ringTrailEffectTimer_ = 0.055f;
+    }
+
+    ambientParticleTimer_ -= dt;
+    if (ambientParticleTimer_ > 0.0f) {
+        return;
+    }
+    ambientParticleTimer_ = 0.18f;
+
+    for (const SpellRingItem& item : spellRing_.items()) {
+        if (item.broken()) {
+            continue;
+        }
+        if (item.type == SpellRingItemType::Torch || item.lightRadius > 0.0f) {
+            effects_.spawnTorchFlicker(item.worldPosition);
+        }
+        if (!item.objectId.empty() || !item.addedEffects.empty() || item.hiddenDetectionRadius > 0.0f || item.treasureDetectionRadius > 0.0f) {
+            effects_.spawnSpecialItemGlimmer(item.worldPosition);
+        }
+    }
+
+    enemies_.emitStatusParticles(effects_);
+
+    if (warpPointsEnabled_) {
+        for (const WarpPoint& point : warpPoints_) {
+            if (point.discovered || point.unlocked) {
+                effects_.spawnWarpCircle(point.position, false);
+            }
+        }
+        if (hasBossSpawnPoint_ && !bossSpawned_) {
+            effects_.spawnWarpCircle(bossSpawnPoint_, true);
         }
     }
 }
@@ -2707,6 +2843,8 @@ void Game::returnToBaseFromNormalStage(bool stageCleared, bool died)
     clearTemporaryPlayerState(true);
     enemies_ = EnemySystem{};
     effects_ = EffectSystem{};
+    ringTrailEffectTimer_ = 0.0f;
+    ambientParticleTimer_ = 0.0f;
     projectiles_ = ProjectileSystem{};
     worldDrops_ = WorldDropSystem{};
     levels_ = LevelSystem{};
@@ -3311,6 +3449,8 @@ void Game::restoreRetrySnapshot()
     hasBossSpawnPoint_ = retrySnapshot_.hasBossSpawnPoint;
     enemies_ = EnemySystem{};
     effects_ = EffectSystem{};
+    ringTrailEffectTimer_ = 0.0f;
+    ambientParticleTimer_ = 0.0f;
     worldDrops_ = WorldDropSystem{};
     levels_ = LevelSystem{};
     bossSpawned_ = false;
@@ -3844,7 +3984,12 @@ void Game::enterStageClear()
 void Game::updateRingScreen(const Input& input, UiContext& ui)
 {
     for (int i = 0; i < RingCount; ++i) {
-        if (ui.pressed(ringTabRect(i))) {
+        const UiRect rect = ringTabRect(i);
+        if (rect.contains(ui.mouse()) && i != spellRing_.activeRingIndex()) {
+            spellRing_.switchActiveRing(i - spellRing_.activeRingIndex());
+            ringStatus_.clear();
+        }
+        if (ui.pressed(rect)) {
             spellRing_.switchActiveRing(i - spellRing_.activeRingIndex());
             ringStatus_.clear();
             return;
@@ -3852,7 +3997,11 @@ void Game::updateRingScreen(const Input& input, UiContext& ui)
     }
 
     for (int i = 0; i < RingSlotCount; ++i) {
-        if (ui.pressed(ringSlotRect(i))) {
+        const UiRect rect = ringSlotRect(i);
+        if (rect.contains(ui.mouse())) {
+            ringSlotSelection_ = i;
+        }
+        if (ui.pressed(rect)) {
             ringSlotSelection_ = i;
             return;
         }
@@ -4026,7 +4175,11 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
             baseStatus_ = "この項目は未解禁です";
         };
         for (int i = 0; i < BaseRingWorkshopItemCount; ++i) {
-            if (ui.pressed(baseRingWorkshopItemRect(i))) {
+            const UiRect rect = baseRingWorkshopItemRect(i);
+            if (rect.contains(ui.mouse())) {
+                baseRingWorkshopSelection_ = i;
+            }
+            if (ui.pressed(rect)) {
                 baseRingWorkshopSelection_ = i;
                 chooseWorkshopItem(i);
                 return;
@@ -4081,7 +4234,12 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
         const int backpackVisible = std::min(WarehouseVisibleRows, static_cast<int>(backpackEntries.size()) - backpackOffset);
         const int warehouseVisible = std::min(WarehouseVisibleRows, static_cast<int>(warehouseEntries.size()) - warehouseOffset);
         for (int i = 0; i < backpackVisible; ++i) {
-            if (ui.pressed(storageBackpackItemRect(i))) {
+            const UiRect rect = storageBackpackItemRect(i);
+            if (rect.contains(ui.mouse())) {
+                baseStorageWarehousePane_ = false;
+                baseStorageBackpackSelection_ = backpackOffset + i;
+            }
+            if (ui.pressed(rect)) {
                 baseStorageWarehousePane_ = false;
                 baseStorageBackpackSelection_ = backpackOffset + i;
                 depositBackpackEntry(baseStorageBackpackSelection_);
@@ -4089,7 +4247,12 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
             }
         }
         for (int i = 0; i < warehouseVisible; ++i) {
-            if (ui.pressed(storageWarehouseItemRect(i))) {
+            const UiRect rect = storageWarehouseItemRect(i);
+            if (rect.contains(ui.mouse())) {
+                baseStorageWarehousePane_ = true;
+                baseStorageWarehouseSelection_ = warehouseOffset + i;
+            }
+            if (ui.pressed(rect)) {
                 baseStorageWarehousePane_ = true;
                 baseStorageWarehouseSelection_ = warehouseOffset + i;
                 withdrawWarehouseEntry(baseStorageWarehouseSelection_);
@@ -4134,14 +4297,22 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
             }
         }
         for (int i = 0; i < BaseProcessingModeCount; ++i) {
-            if (ui.pressed(baseProcessingModeRect(i))) {
+            const UiRect rect = baseProcessingModeRect(i);
+            if (rect.contains(ui.mouse())) {
+                baseProcessingMode_ = i;
+            }
+            if (ui.pressed(rect)) {
                 baseProcessingMode_ = i;
                 return;
             }
         }
         const int visibleCount = std::min(5, static_cast<int>(entries.size()));
         for (int i = 0; i < visibleCount; ++i) {
-            if (ui.pressed(baseProcessingItemRect(i))) {
+            const UiRect rect = baseProcessingItemRect(i);
+            if (rect.contains(ui.mouse())) {
+                baseProcessingSelection_ = i;
+            }
+            if (ui.pressed(rect)) {
                 baseProcessingSelection_ = i;
                 applyProcessing(i);
                 return;
@@ -4184,7 +4355,12 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
 
         const int sellVisible = std::min(5, static_cast<int>(sellable.size()));
         for (int i = 0; i < sellVisible; ++i) {
-            if (ui.pressed(merchantSellItemRect(i))) {
+            const UiRect rect = merchantSellItemRect(i);
+            if (rect.contains(ui.mouse())) {
+                baseMerchantBuyPane_ = false;
+                baseSellSelection_ = i;
+            }
+            if (ui.pressed(rect)) {
                 baseMerchantBuyPane_ = false;
                 baseSellSelection_ = i;
                 const SellableEntry entry = sellable[static_cast<std::size_t>(i)];
@@ -4209,7 +4385,12 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
         }
         const int buyVisible = std::min(5, static_cast<int>(merchantStock_.size()));
         for (int i = 0; i < buyVisible; ++i) {
-            if (ui.pressed(merchantBuyItemRect(i))) {
+            const UiRect rect = merchantBuyItemRect(i);
+            if (rect.contains(ui.mouse())) {
+                baseMerchantBuyPane_ = true;
+                baseMerchantBuySelection_ = i;
+            }
+            if (ui.pressed(rect)) {
                 baseMerchantBuyPane_ = true;
                 baseMerchantBuySelection_ = i;
                 buyMerchantProduct(i);
@@ -4262,7 +4443,11 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
             baseUpgradeSelection_ = (baseUpgradeSelection_ + 1) % BaseUpgradeItemCount;
         }
         for (int i = 0; i < BaseUpgradeItemCount; ++i) {
-            if (ui.pressed(baseUpgradeItemRect(i))) {
+            const UiRect rect = baseUpgradeItemRect(i);
+            if (rect.contains(ui.mouse())) {
+                baseUpgradeSelection_ = i;
+            }
+            if (ui.pressed(rect)) {
                 baseUpgradeSelection_ = i;
                 buyUpgrade(i);
                 return;
@@ -4289,7 +4474,11 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
             baseMiningStartSelection_ = (baseMiningStartSelection_ + 1) % BaseMiningStartChoiceCount;
         }
         for (int i = 0; i < BaseMiningStartChoiceCount; ++i) {
-            if (ui.pressed(baseMiningStartChoiceRect(i))) {
+            const UiRect rect = baseMiningStartChoiceRect(i);
+            if (rect.contains(ui.mouse())) {
+                baseMiningStartSelection_ = i;
+            }
+            if (ui.pressed(rect)) {
                 baseMiningStartSelection_ = i;
                 if (i == 1 && unlockedWarpPointCount_ <= 0) {
                     baseStatus_ = "解放済みワープポイントがありません";
@@ -4375,13 +4564,26 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
                 baseStatus_ = "リング工房用スペース: まだ解禁されていません";
             }
             break;
-        case BaseFacilityAction::Observatory:
-            baseStatus_ = "モニカの星見台: 星の流れを観測中です";
+        case BaseFacilityAction::HomeEntrance:
+            baseOutdoorPlayerPosition_ = basePlayerPosition_;
+            baseArea_ = BaseArea::HomeInterior;
+            basePlayerPosition_ = {640.0f, 542.0f};
+            basePlayerFacing_ = {0.0f, -1.0f};
+            baseStatus_ = "主人公の家に入りました";
+            break;
+        case BaseFacilityAction::HomeExit:
+            baseArea_ = BaseArea::Outdoor;
+            basePlayerPosition_ = baseOutdoorPlayerPosition_;
+            basePlayerFacing_ = {0.0f, 1.0f};
+            baseStatus_ = "屋外拠点に戻りました";
+            break;
+        case BaseFacilityAction::MonicaTalk:
+            baseStatus_ = "モニカ: 無理はしないで。準備ができたら採掘出口から向かおう。";
             break;
         }
     };
 
-    const std::array<BaseFacility, 10> facilities = baseFacilities(ringWorkshopUnlocked_);
+    const std::vector<BaseFacility> facilities = baseFacilities(baseArea_, ringWorkshopUnlocked_);
     const float playerRadius = balance_.playerRadius;
     const auto baseCollision = [&](Vec2 position) {
         const UiRect bounds = baseMapBounds();
@@ -4400,6 +4602,13 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
     };
 
     const Vec2 moveAxis = input.moveAxis();
+    const bool walkingNow = lengthSquared(moveAxis) > 0.0001f;
+    if (walkingNow != basePlayerSpriteWalking_) {
+        basePlayerSpriteWalking_ = walkingNow;
+        basePlayerSpriteAnimationTime_ = 0.0f;
+    } else {
+        basePlayerSpriteAnimationTime_ += dt;
+    }
     if (lengthSquared(moveAxis) > 0.0001f) {
         basePlayerFacing_ = normalize(moveAxis);
         const Vec2 delta = moveAxis * balance_.playerSpeed * dt;
@@ -4459,7 +4668,11 @@ void Game::updatePauseMenu(const Input& input, UiContext& ui)
             pauseConfirmSelection_ = 1 - pauseConfirmSelection_;
         }
         for (int i = 0; i < 2; ++i) {
-            if (ui.pressed(quitConfirmButtonRect(i))) {
+            const UiRect rect = quitConfirmButtonRect(i);
+            if (rect.contains(ui.mouse())) {
+                pauseConfirmSelection_ = i;
+            }
+            if (ui.pressed(rect)) {
                 pauseConfirmSelection_ = i;
                 if (i == 0) {
                     pausePage_ = PauseMenuPage::Main;
@@ -4497,7 +4710,11 @@ void Game::updatePauseMenu(const Input& input, UiContext& ui)
         pauseMenuSelection_ = (pauseMenuSelection_ + 1) % PauseMenuItemCount;
     }
     for (int i = 0; i < PauseMenuItemCount; ++i) {
-        if (ui.pressed(pauseMenuItemRect(i))) {
+        const UiRect rect = pauseMenuItemRect(i);
+        if (rect.contains(ui.mouse())) {
+            pauseMenuSelection_ = i;
+        }
+        if (ui.pressed(rect)) {
             pauseMenuSelection_ = i;
             choosePauseMenuItem(i);
             return;
@@ -4521,7 +4738,11 @@ void Game::updateGameOverScreen(const Input& input, UiContext& ui)
     }
 
     for (int i = 0; i < GameOverItemCount; ++i) {
-        if (ui.pressed(gameOverItemRect(i))) {
+        const UiRect rect = gameOverItemRect(i);
+        if (rect.contains(ui.mouse())) {
+            gameOverSelection_ = i;
+        }
+        if (ui.pressed(rect)) {
             gameOverSelection_ = i;
             if (i == 0) {
                 retryAfterGameOver();
@@ -4554,7 +4775,11 @@ void Game::updateStageClearScreen(const Input& input, UiContext& ui)
     }
 
     for (int i = 0; i < StageClearItemCount; ++i) {
-        if (ui.pressed(stageClearItemRect(i))) {
+        const UiRect rect = stageClearItemRect(i);
+        if (rect.contains(ui.mouse())) {
+            stageClearSelection_ = i;
+        }
+        if (ui.pressed(rect)) {
             stageClearSelection_ = i;
             returnToBaseFromNormalStage(true, false);
             return;
@@ -4700,7 +4925,6 @@ void Game::renderBookshelfScreen(Renderer& renderer) const
         for (int i = 0; i < BookshelfMenuItemCount; ++i) {
             drawUiButton(renderer, bookshelfItemRect(i), menuName(i), i == bookshelfSelection_);
         }
-        renderer.drawText(panel.pos + Vec2{112.0f, 474.0f}, "F/Enter 決定  Esc 戻る", {198, 198, 206, 255}, 2);
         return;
     }
 
@@ -4733,7 +4957,7 @@ void Game::renderBookshelfScreen(Renderer& renderer) const
     if (lines.empty()) {
         renderer.drawText(panel.pos + Vec2{94.0f, 276.0f}, "記録対象がありません", {150, 150, 160, 255}, 2);
     } else {
-        const int visibleCount = std::min(10, static_cast<int>(lines.size()));
+        const int visibleCount = std::min(BookshelfVisibleRows, static_cast<int>(lines.size()));
         const int firstVisibleIndex = std::clamp(
             bookshelfSelection_ - visibleCount / 2,
             0,
@@ -4744,14 +4968,16 @@ void Game::renderBookshelfScreen(Renderer& renderer) const
         }
     }
 
-    renderer.fillRect({414.0f, 600.0f}, {452.0f, 42.0f}, {18, 18, 28, 220});
+    const UiRect bookshelfDetailPanel{{414.0f, 586.0f}, {452.0f, 66.0f}};
+    const Vec2 bookshelfDetailContent = uiSubPanelContentPos(bookshelfDetailPanel);
+    drawUiSubPanel(renderer, bookshelfDetailPanel);
     if (bookshelfPage_ == BookshelfPage::Enemies) {
         if (bookshelfSelection_ >= 0 && bookshelfSelection_ < static_cast<int>(enemyCatalog_.enemies.size())) {
             const EnemyDefinition& enemy = enemyCatalog_.enemies[static_cast<std::size_t>(bookshelfSelection_)];
             const EncyclopediaStage stage = encyclopedia_.enemyStage(enemy.id);
             const std::string name = stage == EncyclopediaStage::Undiscovered ? "????" : (enemy.name.empty() ? enemy.id : enemy.name);
             std::snprintf(buffer, sizeof(buffer), "%s / %s", name.c_str(), encyclopediaStageName(stage));
-            renderer.drawText({426.0f, 610.0f}, buffer, {255, 230, 150, 255}, 2);
+            renderer.drawText(bookshelfDetailContent, buffer, {255, 230, 150, 255}, 2);
         }
     } else if (const ObjectDefinition* object = objectAt(bookshelfPage_, bookshelfSelection_)) {
         const bool treasure = object->category == "\xE5\xAE\x9D";
@@ -4760,9 +4986,8 @@ void Game::renderBookshelfScreen(Renderer& renderer) const
         const std::vector<std::string> effects = encyclopedia_.objectEffects(object->id);
         std::string effectText = effects.empty() ? "効果未確認" : "判明効果 " + effects.front();
         std::snprintf(buffer, sizeof(buffer), "%s / %s / %s", name.c_str(), encyclopediaStageName(stage), effectText.c_str());
-        renderer.drawText({426.0f, 610.0f}, buffer, {255, 230, 150, 255}, 2);
+        renderer.drawText(bookshelfDetailContent, buffer, {255, 230, 150, 255}, 2);
     }
-    renderer.drawText(panel.pos + Vec2{112.0f, 474.0f}, "W/S 選択  Esc 一覧へ戻る", {198, 198, 206, 255}, 2);
 }
 
 void Game::renderBaseScreen(Renderer& renderer) const
@@ -4775,7 +5000,12 @@ void Game::renderBaseScreen(Renderer& renderer) const
     if (baseStorageActive_) {
         renderer.fillRect({0.0f, 0.0f}, {static_cast<float>(camera_.width()), static_cast<float>(camera_.height())}, {10, 12, 18, 255});
         const UiRect panel = storagePanelRect();
-        drawUiWindow(renderer, panel, "収納箱 / 倉庫", "←/→ リュック・倉庫切替  F/Enter 移動  Esc 戻る");
+        UiWindowScope storageWindow(
+            renderer,
+            "base.storage",
+            panel,
+            "収納箱 / 倉庫",
+            "←/→ リュック・倉庫切替  F/Enter 移動  Esc 戻る\nリュック側で決定すると預け入れ、倉庫側で決定すると取り出します。素材は表示のみです。");
 
         const std::vector<StorageEntry> backpackEntries = backpackStorageEntries();
         const std::vector<StorageEntry> warehouseEntries = warehouseStorageEntries();
@@ -4815,26 +5045,27 @@ void Game::renderBaseScreen(Renderer& renderer) const
             renderer.drawText({448.0f, 168.0f}, "倉庫は空です", {150, 150, 160, 255}, 2);
         }
 
-        renderer.fillRect({814.0f, 146.0f}, {380.0f, 336.0f}, {18, 18, 28, 230});
-        renderer.drawRect({814.0f, 146.0f}, {380.0f, 336.0f}, {120, 122, 150, 255});
+        const UiRect storageDetailPanel{{814.0f, 146.0f}, {380.0f, 336.0f}};
+        const Vec2 storageDetailContent = uiSubPanelContentPos(storageDetailPanel);
+        drawUiSubPanel(renderer, storageDetailPanel);
 
         const std::vector<StorageEntry>& activeEntries = baseStorageWarehousePane_ ? warehouseEntries : backpackEntries;
         const int activeSelection = baseStorageWarehousePane_ ? baseStorageWarehouseSelection_ : baseStorageBackpackSelection_;
-        float detailY = 166.0f;
+        float detailY = storageDetailContent.y;
         if (!activeEntries.empty() && activeSelection >= 0 && activeSelection < static_cast<int>(activeEntries.size())) {
             const StorageEntry entry = activeEntries[static_cast<std::size_t>(activeSelection)];
             const bool warehouseEntry = baseStorageWarehousePane_;
             const ItemData* item = storageEntryItem(entry, warehouseEntry);
             const ItemInstance* instance = storageEntryInstance(entry, warehouseEntry);
             if (item != nullptr) {
-                renderer.drawText({834.0f, detailY}, item->name, {246, 235, 255, 255}, 3);
+                renderer.drawText({storageDetailContent.x, detailY}, item->name, {246, 235, 255, 255}, 3);
                 detailY += 42.0f;
-                renderer.drawText({834.0f, detailY}, "カテゴリ", {168, 172, 184, 255}, 2);
-                renderer.drawText({948.0f, detailY}, item->category, {235, 235, 240, 255}, 2);
+                renderer.drawText({storageDetailContent.x, detailY}, "カテゴリ", {168, 172, 184, 255}, 2);
+                renderer.drawText({storageDetailContent.x + 114.0f, detailY}, item->category, {235, 235, 240, 255}, 2);
                 detailY += 30.0f;
                 std::snprintf(buffer, sizeof(buffer), "%d", storageEntryStackCount(entry, warehouseEntry));
-                renderer.drawText({834.0f, detailY}, "スタック数", {168, 172, 184, 255}, 2);
-                renderer.drawText({948.0f, detailY}, buffer, {235, 235, 240, 255}, 2);
+                renderer.drawText({storageDetailContent.x, detailY}, "スタック数", {168, 172, 184, 255}, 2);
+                renderer.drawText({storageDetailContent.x + 114.0f, detailY}, buffer, {235, 235, 240, 255}, 2);
                 detailY += 30.0f;
                 if (instance != nullptr) {
                     std::snprintf(buffer, sizeof(buffer), "Lv.%d  攻撃+%d 掘削+%d 耐久+%d",
@@ -4842,64 +5073,77 @@ void Game::renderBaseScreen(Renderer& renderer) const
                         instance->attackBonus,
                         instance->digBonus,
                         instance->durabilityBonus);
-                    renderer.drawText({834.0f, detailY}, "強化値", {168, 172, 184, 255}, 2);
-                    renderer.drawText({948.0f, detailY}, buffer, {235, 235, 240, 255}, 2);
+                    renderer.drawText({storageDetailContent.x, detailY}, "強化値", {168, 172, 184, 255}, 2);
+                    renderer.drawText({storageDetailContent.x + 114.0f, detailY}, buffer, {235, 235, 240, 255}, 2);
                     detailY += 30.0f;
-                    renderer.drawText({834.0f, detailY}, "保護", {168, 172, 184, 255}, 2);
-                    renderer.drawText({948.0f, detailY}, instance->protectionEnabled ? "ON 売却不可" : "OFF", instance->protectionEnabled ? Color{116, 220, 255, 255} : Color{235, 235, 240, 255}, 2);
+                    renderer.drawText({storageDetailContent.x, detailY}, "保護", {168, 172, 184, 255}, 2);
+                    renderer.drawText({storageDetailContent.x + 114.0f, detailY}, instance->protectionEnabled ? "ON 売却不可" : "OFF", instance->protectionEnabled ? Color{116, 220, 255, 255} : Color{235, 235, 240, 255}, 2);
                     detailY += 30.0f;
-                    renderer.drawText({834.0f, detailY}, "状態", {168, 172, 184, 255}, 2);
-                    renderer.drawText({948.0f, detailY}, instance->isBroken ? "破損" : "通常", instance->isBroken ? Color{255, 120, 120, 255} : Color{235, 235, 240, 255}, 2);
+                    renderer.drawText({storageDetailContent.x, detailY}, "状態", {168, 172, 184, 255}, 2);
+                    renderer.drawText({storageDetailContent.x + 114.0f, detailY}, instance->isBroken ? "破損" : "通常", instance->isBroken ? Color{255, 120, 120, 255} : Color{235, 235, 240, 255}, 2);
                     detailY += 30.0f;
                 } else {
-                    renderer.drawText({834.0f, detailY}, "保護", {168, 172, 184, 255}, 2);
-                    renderer.drawText({948.0f, detailY}, "対象外", {150, 150, 160, 255}, 2);
+                    renderer.drawText({storageDetailContent.x, detailY}, "保護", {168, 172, 184, 255}, 2);
+                    renderer.drawText({storageDetailContent.x + 114.0f, detailY}, "対象外", {150, 150, 160, 255}, 2);
                     detailY += 30.0f;
-                    renderer.drawText({834.0f, detailY}, "状態", {168, 172, 184, 255}, 2);
-                    renderer.drawText({948.0f, detailY}, "スタック", {235, 235, 240, 255}, 2);
+                    renderer.drawText({storageDetailContent.x, detailY}, "状態", {168, 172, 184, 255}, 2);
+                    renderer.drawText({storageDetailContent.x + 114.0f, detailY}, "スタック", {235, 235, 240, 255}, 2);
                     detailY += 30.0f;
                 }
-                renderer.drawText({834.0f, detailY}, item->effectText.empty() ? item->description : item->effectText, {198, 198, 206, 255}, 2);
+                renderer.drawText({storageDetailContent.x, detailY}, item->effectText.empty() ? item->description : item->effectText, {198, 198, 206, 255}, 2);
             }
         } else {
-            renderer.drawText({834.0f, detailY}, "アイテム未選択", {150, 150, 160, 255}, 2);
+            renderer.drawText({storageDetailContent.x, detailY}, "アイテム未選択", {150, 150, 160, 255}, 2);
         }
 
-        renderer.fillRect({814.0f, 500.0f}, {380.0f, 118.0f}, {18, 18, 28, 230});
-        renderer.drawRect({814.0f, 500.0f}, {380.0f, 118.0f}, {120, 122, 150, 255});
-        renderer.drawText({834.0f, 516.0f}, "素材所持数", {246, 235, 255, 255}, 2);
+        const UiRect storageMaterialPanel{{814.0f, 500.0f}, {380.0f, 144.0f}};
+        const Vec2 storageMaterialContent = uiSubPanelContentPos(storageMaterialPanel);
+        drawUiSubPanel(renderer, storageMaterialPanel);
+        renderer.drawText(storageMaterialContent, "素材所持数", {246, 235, 255, 255}, 2);
         std::snprintf(buffer, sizeof(buffer), "土 %d / 石 %d / 鉱石 %d",
             inventory_.itemCount(InventoryItemType::Dirt),
             inventory_.itemCount(InventoryItemType::Stone),
             inventory_.itemCount(InventoryItemType::Ore));
-        renderer.drawText({834.0f, 548.0f}, buffer, {198, 198, 206, 255}, 2);
+        renderer.drawText(storageMaterialContent + Vec2{0.0f, 32.0f}, buffer, {198, 198, 206, 255}, 2);
         for (int i = 0; i < static_cast<int>(MaterialType::Count); ++i) {
             const MaterialType type = static_cast<MaterialType>(i);
             std::snprintf(buffer, sizeof(buffer), "%s %d", std::string(materialTypeDisplayName(type)).c_str(), inventory_.materialCount(type));
-            renderer.drawText({834.0f + static_cast<float>(i % 2) * 172.0f, 578.0f + static_cast<float>(i / 2) * 24.0f}, buffer, {198, 198, 206, 255}, 2);
+            renderer.drawText(storageMaterialContent + Vec2{static_cast<float>(i % 2) * 172.0f, 62.0f + static_cast<float>(i / 2) * 24.0f}, buffer, {198, 198, 206, 255}, 2);
         }
 
         if (!baseStatus_.empty()) {
-            renderer.drawText({74.0f, 626.0f}, baseStatus_, {255, 230, 150, 255}, 2);
-        } else {
-            renderer.drawText({74.0f, 626.0f}, "リュック側で決定すると預け入れ、倉庫側で決定すると取り出します。素材は表示のみです。", {198, 198, 206, 255}, 2);
+            const UiRect messageAnchor = baseStorageWarehousePane_
+                ? storageWarehouseItemRect(std::clamp(baseStorageWarehouseSelection_ - warehouseOffset, 0, WarehouseVisibleRows - 1))
+                : storageBackpackItemRect(std::clamp(baseStorageBackpackSelection_ - backpackOffset, 0, WarehouseVisibleRows - 1));
+            drawUiBodyMessageBelow(renderer, messageAnchor, baseStatus_, ui::Text);
         }
         return;
     }
 
     renderer.fillRect({0.0f, 0.0f}, {static_cast<float>(camera_.width()), static_cast<float>(camera_.height())}, {24, 28, 32, 255});
     const UiRect map = baseMapBounds();
-    renderer.fillRect(map.pos, map.size, {68, 96, 58, 255});
-    renderer.drawRect(map.pos, map.size, {156, 128, 82, 255});
-    renderer.fillRect({62.0f, 456.0f}, {1156.0f, 88.0f}, {98, 84, 58, 255});
-    renderer.fillRect({566.0f, 130.0f}, {132.0f, 430.0f}, {92, 78, 54, 255});
-    renderer.fillRect({330.0f, 72.0f}, {154.0f, 100.0f}, {96, 54, 62, 255});
-    renderer.drawRect({330.0f, 72.0f}, {154.0f, 100.0f}, {216, 184, 130, 255});
-    renderer.drawText({350.0f, 106.0f}, "主人公の家", {246, 235, 255, 255}, 2);
-    renderer.fillRect({600.0f, 586.0f}, {80.0f, 34.0f}, {38, 30, 36, 255});
-    renderer.drawCircle({640.0f, 602.0f}, 42.0f, {160, 122, 80, 255});
+    if (baseArea_ == BaseArea::HomeInterior) {
+        renderer.fillRect(map.pos, map.size, {74, 58, 52, 255});
+        renderer.drawRect(map.pos, map.size, {184, 150, 108, 255});
+        renderer.fillRect({76.0f, 72.0f}, {1128.0f, 44.0f}, {96, 68, 62, 255});
+        renderer.fillRect({76.0f, 584.0f}, {1128.0f, 44.0f}, {96, 68, 62, 255});
+        renderer.fillRect({76.0f, 116.0f}, {44.0f, 468.0f}, {96, 68, 62, 255});
+        renderer.fillRect({1160.0f, 116.0f}, {44.0f, 468.0f}, {96, 68, 62, 255});
+        renderer.fillRect({132.0f, 132.0f}, {1016.0f, 436.0f}, {118, 92, 66, 255});
+        renderer.drawText({558.0f, 88.0f}, "主人公の家", {246, 235, 255, 255}, 2);
+    } else {
+        renderer.fillRect(map.pos, map.size, {68, 96, 58, 255});
+        renderer.drawRect(map.pos, map.size, {156, 128, 82, 255});
+        renderer.fillRect({62.0f, 456.0f}, {1156.0f, 88.0f}, {98, 84, 58, 255});
+        renderer.fillRect({566.0f, 130.0f}, {132.0f, 430.0f}, {92, 78, 54, 255});
+        renderer.fillRect({330.0f, 72.0f}, {154.0f, 100.0f}, {96, 54, 62, 255});
+        renderer.drawRect({330.0f, 72.0f}, {154.0f, 100.0f}, {216, 184, 130, 255});
+        renderer.drawText({350.0f, 106.0f}, "主人公の家", {246, 235, 255, 255}, 2);
+        renderer.fillRect({600.0f, 586.0f}, {80.0f, 34.0f}, {38, 30, 36, 255});
+        renderer.drawCircle({640.0f, 602.0f}, 42.0f, {160, 122, 80, 255});
+    }
 
-    const std::array<BaseFacility, 10> facilities = baseFacilities(ringWorkshopUnlocked_);
+    const std::vector<BaseFacility> facilities = baseFacilities(baseArea_, ringWorkshopUnlocked_);
     const BaseFacility* nearest = nullptr;
     const BaseFacility* hovered = nullptr;
     float nearestDistance = std::numeric_limits<float>::max();
@@ -4923,24 +5167,38 @@ void Game::renderBaseScreen(Renderer& renderer) const
             nearest = &facility;
         }
     }
-    for (const BaseFacility& facility : facilities) {
-        Color fill = facility.enabled ? Color{96, 82, 82, 255} : Color{84, 62, 56, 255};
-        if (!facility.unlocked) {
-            fill = {58, 58, 64, 255};
+    for (int pass = 0; pass < 2; ++pass) {
+        const bool drawEnabled = pass == 1;
+        for (const BaseFacility& facility : facilities) {
+            if (facility.enabled != drawEnabled) {
+                continue;
+            }
+            Color fill = facility.enabled ? Color{96, 82, 82, 255} : Color{84, 62, 56, 255};
+            if (!facility.unlocked) {
+                fill = {58, 58, 64, 255};
+            }
+            if (&facility == nearest) {
+                fill = {118, 98, 58, 255};
+            }
+            if (&facility == hovered) {
+                fill = {124, 104, 72, 255};
+            }
+            renderer.fillRect(facility.rect.pos, facility.rect.size, fill);
+            renderer.drawRect(facility.rect.pos, facility.rect.size, facility.enabled ? Color{220, 200, 150, 255} : Color{120, 108, 98, 255});
+            renderer.drawText(facility.rect.pos + Vec2{8.0f, 8.0f}, facility.displayName, facility.enabled ? Color{248, 238, 214, 255} : Color{154, 146, 138, 255}, 2);
         }
-        if (&facility == nearest) {
-            fill = {118, 98, 58, 255};
-        }
-        if (&facility == hovered) {
-            fill = {124, 104, 72, 255};
-        }
-        renderer.fillRect(facility.rect.pos, facility.rect.size, fill);
-        renderer.drawRect(facility.rect.pos, facility.rect.size, facility.enabled ? Color{220, 200, 150, 255} : Color{120, 108, 98, 255});
-        renderer.drawText(facility.rect.pos + Vec2{8.0f, 8.0f}, facility.displayName, facility.enabled ? Color{248, 238, 214, 255} : Color{154, 146, 138, 255}, 2);
     }
 
-    renderer.fillCircle(basePlayerPosition_, balance_.playerRadius, {118, 72, 168, 255});
-    renderer.drawLine(basePlayerPosition_, basePlayerPosition_ + basePlayerFacing_ * 22.0f, {235, 210, 255, 255});
+    if (renderer.hasPlayerSheet()) {
+        renderer.drawPlayerSprite(
+            playerSpriteFrameIndex(basePlayerSpriteAnimationTime_, basePlayerSpriteWalking_),
+            basePlayerPosition_,
+            PlayerSpriteDrawSize,
+            basePlayerFacing_.x > 0.0f);
+    } else {
+        renderer.fillCircle(basePlayerPosition_, balance_.playerRadius, {118, 72, 168, 255});
+        renderer.drawLine(basePlayerPosition_, basePlayerPosition_ + basePlayerFacing_ * 22.0f, {235, 210, 255, 255});
+    }
 
     char buffer[192];
     std::snprintf(buffer, sizeof(buffer), "Stage %d/%d   Warp %d   Money %dG   商人 %s",
@@ -4966,8 +5224,35 @@ void Game::renderBaseScreen(Renderer& renderer) const
         baseUpgradeActive_ ||
         baseMiningStartChoiceActive_;
     const UiRect panel = basePanelRect();
+    std::optional<UiWindowScope> panelWindow;
     if (panelUiActive) {
-        drawUiWindow(renderer, panel, "魔女の拠点", "W/S または ↑↓  F/Enter 決定  左クリック 決定");
+        const char* panelHelp = "F/Enter 決定  左クリック 決定";
+        if (baseBookshelfActive_) {
+            panelHelp = bookshelfPage_ == BookshelfPage::Menu
+                ? "F/Enter 決定  Esc 戻る"
+                : "Esc 一覧へ戻る";
+        } else if (baseSellActive_) {
+            panelHelp = "←/→ 売却・購入切替  F/Enter 実行  Esc / 右クリックで戻る";
+        } else if (baseUpgradeActive_) {
+            panelHelp = "F/Enter 強化  Esc / 右クリックで戻る";
+        } else if (baseMiningStartChoiceActive_) {
+            panelHelp = "Esc / 右クリックで戻る";
+        }
+        const char* panelTitle = "魔女の拠点";
+        if (baseBookshelfActive_) {
+            panelTitle = "本棚";
+        } else if (baseRingWorkshopActive_) {
+            panelTitle = "リング工房";
+        } else if (baseProcessingActive_) {
+            panelTitle = "作業台";
+        } else if (baseSellActive_) {
+            panelTitle = "商人ワゴン";
+        } else if (baseUpgradeActive_) {
+            panelTitle = "拠点強化炉";
+        } else if (baseMiningStartChoiceActive_) {
+            panelTitle = "採掘出口";
+        }
+        panelWindow.emplace(renderer, "base.panel", panel, panelTitle, panelHelp);
     }
 
     if (baseBookshelfActive_) {
@@ -5049,19 +5334,20 @@ void Game::renderBaseScreen(Renderer& renderer) const
                 }
                 std::snprintf(buffer, sizeof(buffer), "%s  未解禁", futureName);
             }
-            drawUiButton(renderer, baseRingWorkshopItemRect(i), buffer, i == baseRingWorkshopSelection_);
+            drawUiButton(renderer, baseRingWorkshopItemRect(i), buffer, i == baseRingWorkshopSelection_, uiActionButtonStyle());
         }
 
         std::snprintf(buffer, sizeof(buffer), "所持 %dG / 月のカケラ %d   F/Enter 実行  左右で配分変更  Esc 戻る",
             money_,
             inventory_.materialCount(MaterialType::MoonFragment));
-        renderer.drawText(panel.pos + Vec2{54.0f, 474.0f}, buffer, {198, 198, 206, 255}, 2);
-        drawUiButton(renderer, ringWorkshopConfirmRect(), "再調整確定", false);
+        renderer.drawText(panel.pos + Vec2{54.0f, 448.0f}, buffer, {198, 198, 206, 255}, 2);
+        drawUiButton(renderer, ringWorkshopConfirmRect(), "再調整確定", false, uiActionButtonStyle());
     } else if (baseProcessingActive_) {
-        renderer.drawText(panel.pos + Vec2{164.0f, 214.0f}, "魔導加工台", {246, 235, 255, 255}, 3);
+        renderer.drawText(panel.pos + Vec2{202.0f, 118.0f}, "作業台", {246, 235, 255, 255}, 3);
+        renderer.drawText(panel.pos + Vec2{54.0f, 146.0f}, "道具の修理・強化", {198, 198, 206, 255}, 2);
         std::snprintf(buffer, sizeof(buffer), "加工解禁 Lv.%d/5  将来枠: 軽量化 / 重量化 / 大型化 / 小型化 / 追加効果付与",
             processingUnlockLevel_);
-        renderer.drawText(panel.pos + Vec2{54.0f, 224.0f}, buffer, {198, 198, 206, 255}, 2);
+        renderer.drawText(panel.pos + Vec2{54.0f, 174.0f}, buffer, {198, 198, 206, 255}, 2);
         for (int i = 0; i < BaseProcessingModeCount; ++i) {
             drawUiButton(renderer, baseProcessingModeRect(i), processingModeName(static_cast<ProcessingMode>(i)), i == baseProcessingMode_);
         }
@@ -5069,7 +5355,7 @@ void Game::renderBaseScreen(Renderer& renderer) const
         const std::vector<StorageEntry> entries = processingEntries();
         const ProcessingMode mode = static_cast<ProcessingMode>(std::clamp(baseProcessingMode_, 0, BaseProcessingModeCount - 1));
         if (entries.empty()) {
-            renderer.drawText(panel.pos + Vec2{96.0f, 314.0f}, "加工できる通常アイテムがありません。", {198, 198, 206, 255}, 2);
+            renderer.drawText(panel.pos + Vec2{96.0f, 300.0f}, "加工できる通常アイテムがありません。", {198, 198, 206, 255}, 2);
         } else {
             const int visibleCount = std::min(5, static_cast<int>(entries.size()));
             const auto& stacks = inventory_.objectStacks();
@@ -5101,7 +5387,7 @@ void Game::renderBaseScreen(Renderer& renderer) const
                             oreCost);
                     }
                 }
-                drawUiButton(renderer, baseProcessingItemRect(i), buffer, i == baseProcessingSelection_);
+                drawUiButton(renderer, baseProcessingItemRect(i), buffer, i == baseProcessingSelection_, uiActionButtonStyle());
             }
         }
         std::snprintf(buffer, sizeof(buffer), "所持金 %dG / 強化鉱石 %d / 最大強化 +%d",
@@ -5139,7 +5425,7 @@ void Game::renderBaseScreen(Renderer& renderer) const
                         std::snprintf(buffer, sizeof(buffer), "%s [%s]", instance.item.name.c_str(), entry.blockedReason.c_str());
                     }
                 }
-                drawUiButton(renderer, merchantSellItemRect(i), buffer, !baseMerchantBuyPane_ && i == baseSellSelection_);
+                drawUiButton(renderer, merchantSellItemRect(i), buffer, !baseMerchantBuyPane_ && i == baseSellSelection_, uiActionButtonStyle());
             }
         }
         if (merchantStock_.empty()) {
@@ -5151,16 +5437,16 @@ void Game::renderBaseScreen(Renderer& renderer) const
                 const ItemData* item = objectCatalog_.registry.findById(product.objectId);
                 const std::string name = item != nullptr ? item->name : product.objectId;
                 std::snprintf(buffer, sizeof(buffer), "%s %dG", name.c_str(), product.price);
-                drawUiButton(renderer, merchantBuyItemRect(i), buffer, baseMerchantBuyPane_ && i == baseMerchantBuySelection_);
+                drawUiButton(renderer, merchantBuyItemRect(i), buffer, baseMerchantBuyPane_ && i == baseMerchantBuySelection_, uiActionButtonStyle());
             }
         }
         std::snprintf(buffer, sizeof(buffer), "商人機能 Lv.%d/7  未実装枠: 高価買取カテゴリ / 珍品販売 / 珍品レア度上昇",
             merchantUpgradeLevel_);
         renderer.drawText(panel.pos + Vec2{54.0f, 422.0f}, buffer, {198, 198, 206, 255}, 2);
         renderer.drawText(panel.pos + Vec2{54.0f, 450.0f}, "保護ONの個体、リング装備中アイテム、素材、ストーリーアイテムは売却不可", {198, 198, 206, 255}, 2);
-        renderer.drawText(panel.pos + Vec2{100.0f, 478.0f}, "←/→ 売却・購入切替  F/Enter 実行  Esc / 右クリックで戻る", {198, 198, 206, 255}, 2);
     } else if (baseUpgradeActive_) {
-        renderer.drawText(panel.pos + Vec2{176.0f, 214.0f}, "強化炉", {246, 235, 255, 255}, 3);
+        renderer.drawText(panel.pos + Vec2{152.0f, 118.0f}, "拠点強化炉", {246, 235, 255, 255}, 3);
+        renderer.drawText(panel.pos + Vec2{54.0f, 146.0f}, "拠点拡張・機能解禁", {198, 198, 206, 255}, 2);
         for (int i = 0; i < BaseUpgradeItemCount; ++i) {
             if (!upgradeImplemented(i)) {
                 std::snprintf(buffer, sizeof(buffer), "%s  未実装", upgradeName(i));
@@ -5176,7 +5462,7 @@ void Game::renderBaseScreen(Renderer& renderer) const
                     std::string(materialTypeDisplayName(materialType)).c_str(),
                     upgradeMaterialCost(i));
             }
-            drawUiButton(renderer, baseUpgradeItemRect(i), buffer, i == baseUpgradeSelection_);
+            drawUiButton(renderer, baseUpgradeItemRect(i), buffer, i == baseUpgradeSelection_, uiActionButtonStyle());
         }
         std::snprintf(buffer, sizeof(buffer), "所持: %dG / 古木 %d / 魔力のしずく %d",
             money_,
@@ -5191,28 +5477,30 @@ void Game::renderBaseScreen(Renderer& renderer) const
             ringRadiusUpgradeLevel_ * 8,
             ringSpeedUpgradeLevel_ * 8);
         renderer.drawText(panel.pos + Vec2{54.0f, 474.0f}, buffer, {198, 198, 206, 255}, 2);
-        renderer.drawText(panel.pos + Vec2{122.0f, 502.0f}, "F/Enter 強化  Esc / 右クリックで戻る", {198, 198, 206, 255}, 2);
     } else if (baseMiningStartChoiceActive_) {
         renderer.drawText(panel.pos + Vec2{178.0f, 238.0f}, "採掘出口", {246, 235, 255, 255}, 3);
         renderer.drawText(panel.pos + Vec2{116.0f, 278.0f}, "開始地点または最新ワープポイントから出発", {198, 198, 206, 255}, 2);
         for (int i = 0; i < BaseMiningStartChoiceCount; ++i) {
             const bool disabled = i == 1 && unlockedWarpPointCount_ <= 0;
-            drawUiButton(renderer, baseMiningStartChoiceRect(i), baseMiningStartChoiceName(i), i == baseMiningStartSelection_ && !disabled);
+            drawUiButton(renderer, baseMiningStartChoiceRect(i), baseMiningStartChoiceName(i), i == baseMiningStartSelection_ && !disabled, uiActionButtonStyle());
             if (disabled) {
                 const UiRect rect = baseMiningStartChoiceRect(i);
                 renderer.fillRect(rect.pos, rect.size, {0, 0, 0, 110});
                 renderer.drawText(rect.pos + Vec2{116.0f, 14.0f}, "未解放", {150, 150, 160, 255}, 2);
             }
         }
-        renderer.drawText(panel.pos + Vec2{122.0f, 442.0f}, "Esc / 右クリックで戻る", {198, 198, 206, 255}, 2);
     } else {
         const char* promptName = nearest != nullptr ? nearest->displayName : "";
-        renderer.fillRect({280.0f, 644.0f}, {720.0f, 34.0f}, {0, 0, 0, 170});
+        renderer.fillRect({280.0f, 644.0f}, {720.0f, 34.0f}, ui::FooterFill);
         if (nearest != nullptr) {
-            std::snprintf(buffer, sizeof(buffer), "Enter: %sを調べる / クリック: 近くの施設を調べる / Esc: メニュー", promptName);
+            if (const char* specialPrompt = baseInteractionPrompt(*nearest)) {
+                std::snprintf(buffer, sizeof(buffer), "%s", specialPrompt);
+            } else {
+                std::snprintf(buffer, sizeof(buffer), "Enter: %sを調べる / クリック: 近くの施設を調べる / Esc: メニュー", promptName);
+            }
             renderer.drawText({300.0f, 652.0f}, buffer, {255, 230, 150, 255}, 2);
         } else {
-            renderer.drawText({300.0f, 652.0f}, "WASD / 矢印キー: 移動  Enter: 近くの施設を調べる  Esc: メニュー", {198, 198, 206, 255}, 2);
+            renderer.drawText({300.0f, 652.0f}, "Enter: 近くの施設を調べる  Esc: メニュー", {198, 198, 206, 255}, 2);
         }
         if (!baseStatus_.empty()) {
             renderer.fillRect({280.0f, 604.0f}, {720.0f, 30.0f}, {0, 0, 0, 160});
@@ -5221,7 +5509,8 @@ void Game::renderBaseScreen(Renderer& renderer) const
         if (debug_.visible()) {
             char debugBuffer[512];
             std::snprintf(debugBuffer, sizeof(debugBuffer),
-                "Base map mode\nplayer base position %.1f, %.1f\nnearest facility name %s\nhovered facility name %s\ninteraction available %s\npause menu return mode %s",
+                "Base map mode\narea %s\nplayer base position %.1f, %.1f\nnearest target name %s\nhovered target name %s\ninteraction available %s\npause menu return mode %s",
+                baseAreaName(baseArea_),
                 basePlayerPosition_.x,
                 basePlayerPosition_.y,
                 nearest != nullptr ? nearest->displayName : "-",
@@ -5315,7 +5604,7 @@ void Game::renderRingScreen(Renderer& renderer) const
 
     renderer.setScreenSpace();
     const UiRect panel = ringPanelRect();
-    drawUiWindow(renderer, panel, "リング管理", "Z/X・1-3 リング選択  WASD/矢印・Q/E スロット  F/Enter 詳細  R 外す  G つかむ/置く  P 保護  Esc 戻る");
+    UiWindowScope ringWindow(renderer, "ring.manage", panel, "リング管理", "Z/X・1-3 リング選択  Q/E スロット  F/Enter 詳細  R 外す  G つかむ/置く  P 保護  Esc 戻る");
 
     char buffer[192];
     for (int i = 0; i < RingCount; ++i) {
@@ -5358,44 +5647,57 @@ void Game::renderRingScreen(Renderer& renderer) const
         }
     }
 
-    const Vec2 detailPos = panel.pos + Vec2{680.0f, 126.0f};
-    renderer.drawText(detailPos, "選択中アイテム詳細", {246, 248, 255, 255}, 3);
-    renderer.fillRect(detailPos + Vec2{0.0f, 46.0f}, {410.0f, 310.0f}, {18, 20, 30, 232});
-    renderer.drawRect(detailPos + Vec2{0.0f, 46.0f}, {410.0f, 310.0f}, {92, 104, 132, 255});
+    std::string ringDetailTitle = "空き";
+    if (!actualRing) {
+        ringDetailTitle = "未実装リング";
+    } else if (ringSlotSelection_ < static_cast<int>(items.size())) {
+        ringDetailTitle = ringItemDisplayName(objectCatalog_, items[ringSlotSelection_]);
+    }
+
+    const UiRect ringDetailPanel{{RingDetailX, RingDetailY}, {RingDetailW, RingDetailH}};
+    drawUiSubPanel(renderer, ringDetailPanel);
+    float detailLineY = drawUiDetailHeader(renderer, ringDetailPanel, ringDetailTitle);
 
     if (!actualRing) {
-        renderer.drawText(detailPos + Vec2{24.0f, 78.0f}, "このリングは未実装です。", {232, 235, 242, 255}, 2);
-        renderer.drawText(detailPos + Vec2{24.0f, 116.0f}, "最大3リング前提の表示枠です。", {202, 206, 216, 255}, 2);
+        drawUiDetailText(renderer, ringDetailPanel, detailLineY, "このリングは未実装です。");
+        drawUiDetailText(renderer, ringDetailPanel, detailLineY, "-");
+        drawUiDetailLine(renderer, ringDetailPanel, detailLineY, "通常効果", "-");
+        drawUiDetailLine(renderer, ringDetailPanel, detailLineY, "軌道効果", "-");
+        drawUiDetailLine(renderer, ringDetailPanel, detailLineY, "攻撃力", "-");
+        drawUiDetailLine(renderer, ringDetailPanel, detailLineY, "ダメージ", "-");
+        drawUiDetailLine(renderer, ringDetailPanel, detailLineY, "掘削力", "-");
+        drawUiDetailLine(renderer, ringDetailPanel, detailLineY, "耐久力", "-");
+        drawUiDetailLine(renderer, ringDetailPanel, detailLineY, "重さ", "-");
     } else if (ringSlotSelection_ < static_cast<int>(items.size())) {
         const SpellRingItem& item = items[ringSlotSelection_];
-        const std::string itemName = ringItemDisplayName(objectCatalog_, item);
-        const std::string itemCategory = ringItemDisplayCategory(objectCatalog_, item);
-        std::snprintf(buffer, sizeof(buffer), "名前: %s", itemName.c_str());
-        renderer.drawText(detailPos + Vec2{24.0f, 72.0f}, buffer, {232, 235, 242, 255}, 2);
-        std::snprintf(buffer, sizeof(buffer), "カテゴリ: %s", itemCategory.c_str());
-        renderer.drawText(detailPos + Vec2{24.0f, 104.0f}, buffer, {232, 235, 242, 255}, 2);
-        std::snprintf(buffer, sizeof(buffer), "装着順: %d", ringSlotSelection_ + 1);
-        renderer.drawText(detailPos + Vec2{24.0f, 136.0f}, buffer, {232, 235, 242, 255}, 2);
-        std::snprintf(buffer, sizeof(buffer), "攻撃力: %d   種別: %s   掘削力: %d", item.damage, item.damageType.c_str(), item.digPower);
-        renderer.drawText(detailPos + Vec2{24.0f, 168.0f}, buffer, {232, 235, 242, 255}, 2);
+        const ItemData* object = objectForRingItem(objectCatalog_, item);
+        drawUiDetailText(renderer, ringDetailPanel, detailLineY, object != nullptr && !object->description.empty() ? object->description : "-");
+        drawUiDetailText(renderer, ringDetailPanel, detailLineY, object != nullptr && !object->effectText.empty() ? object->effectText : "-");
+        drawUiDetailLine(renderer, ringDetailPanel, detailLineY, "通常効果", object != nullptr ? effectSummaryText(objectCatalog_, object->normalEffects) : "-");
+        drawUiDetailLine(renderer, ringDetailPanel, detailLineY, "軌道効果", object != nullptr ? effectSummaryText(objectCatalog_, object->orbitEffects) : effectSummaryText(objectCatalog_, item.addedEffects));
+        std::snprintf(buffer, sizeof(buffer), "%d", item.damage);
+        drawUiDetailLine(renderer, ringDetailPanel, detailLineY, "攻撃力", buffer);
+        drawUiDetailLine(renderer, ringDetailPanel, detailLineY, "ダメージ", item.damageType.empty() ? "-" : item.damageType);
+        std::snprintf(buffer, sizeof(buffer), "%d", item.digPower);
+        drawUiDetailLine(renderer, ringDetailPanel, detailLineY, "掘削力", buffer);
         if (item.durability < 0) {
-            std::snprintf(buffer, sizeof(buffer), "耐久力: 壊れない   重さ: %.1fkg", item.weight);
+            std::snprintf(buffer, sizeof(buffer), "壊れない");
         } else {
-            std::snprintf(buffer, sizeof(buffer), "耐久力: %d/%d   重さ: %.1fkg", item.durability, item.maxDurability, item.weight);
+            std::snprintf(buffer, sizeof(buffer), "%d/%d", item.durability, item.maxDurability);
         }
-        renderer.drawText(detailPos + Vec2{24.0f, 200.0f}, buffer, {232, 235, 242, 255}, 2);
-        std::snprintf(buffer, sizeof(buffer), "保護: %s   状態: %s", item.protectionEnabled ? "ON" : "OFF", item.broken() ? "破損" : "通常");
-        renderer.drawText(detailPos + Vec2{24.0f, 232.0f}, buffer, {232, 235, 242, 255}, 2);
-        std::snprintf(buffer, sizeof(buffer), "強化Lv.%d  攻撃+%d 掘削+%d 耐久+%d",
-            item.enhanceLevel,
-            item.attackBonus,
-            item.digBonus,
-            item.durabilityBonus);
-        renderer.drawText(detailPos + Vec2{24.0f, 264.0f}, buffer, {202, 206, 216, 255}, 2);
-        std::snprintf(buffer, sizeof(buffer), "命中間隔: %.2fs   Pで保護ON/OFF", item.hitInterval);
-        renderer.drawText(detailPos + Vec2{24.0f, 296.0f}, buffer, {202, 206, 216, 255}, 2);
+        drawUiDetailLine(renderer, ringDetailPanel, detailLineY, "耐久力", buffer);
+        std::snprintf(buffer, sizeof(buffer), "%.1fkg", item.weight);
+        drawUiDetailLine(renderer, ringDetailPanel, detailLineY, "重さ", buffer);
     } else {
-        renderer.drawText(detailPos + Vec2{24.0f, 78.0f}, "空きスロットです。", {202, 206, 216, 255}, 2);
+        drawUiDetailText(renderer, ringDetailPanel, detailLineY, "アイテム未配置");
+        drawUiDetailText(renderer, ringDetailPanel, detailLineY, "-");
+        drawUiDetailLine(renderer, ringDetailPanel, detailLineY, "通常効果", "-");
+        drawUiDetailLine(renderer, ringDetailPanel, detailLineY, "軌道効果", "-");
+        drawUiDetailLine(renderer, ringDetailPanel, detailLineY, "攻撃力", "-");
+        drawUiDetailLine(renderer, ringDetailPanel, detailLineY, "ダメージ", "-");
+        drawUiDetailLine(renderer, ringDetailPanel, detailLineY, "掘削力", "-");
+        drawUiDetailLine(renderer, ringDetailPanel, detailLineY, "耐久力", "-");
+        drawUiDetailLine(renderer, ringDetailPanel, detailLineY, "重さ", "-");
     }
 
     if (ringGrabActive_) {
@@ -5451,6 +5753,7 @@ void Game::update(const Input& input, const Time& time)
             if (capture.type == CaptureResultType::Success) {
                 reloadNotice_ = "捕獲: " + capture.enemyName;
                 reloadNoticeTimer_ = 1.6f;
+                effects_.spawnCaptureSuccess(capture.position, player_.position - capture.position);
             } else if (capture.type == CaptureResultType::InventoryFull) {
                 reloadNotice_ = "捕獲失敗: インベントリ満杯";
                 reloadNoticeTimer_ = 1.6f;
@@ -5489,13 +5792,16 @@ void Game::update(const Input& input, const Time& time)
         tileMap_.updateAround(player_.position, time.deltaSeconds(), balance_, dungeonLayout_);
         digging_.update(tileMap_, spellRing_, player_, time.totalSeconds(), objectCatalog_, effectDispatcher_, &effectDiscoveries);
         for (Vec2 tile : digging_.hitTiles()) {
-            effects_.spawnDigHit(tile);
+            effects_.spawnDigHit(tile, tile - spellRing_.center());
         }
-        for (Vec2 tile : digging_.openedTiles()) {
-            effects_.spawnTileBreak(tile);
+        if (digging_.dugTiles().empty()) {
+            for (Vec2 tile : digging_.openedTiles()) {
+                effects_.spawnTileBreak(tile);
+            }
         }
         revealRewardNodesFromOpenedTiles(digging_.openedTiles());
         for (const DugTile& tile : digging_.dugTiles()) {
+            effects_.spawnTileBreak(tile.center, tile.type);
             ++runStats_.dugTiles;
             if (tile.type != TileType::Ore) {
                 inventory_.addFromDugTile(tile.type);
@@ -5506,7 +5812,7 @@ void Game::update(const Input& input, const Time& time)
             worldDrops_.spawnRewardDrop(objectCatalog_, rewardPosition);
         }
         worldDrops_.spawnFromDugTiles(digging_.dugTiles(), objectCatalog_);
-        runStats_.acquiredItems += worldDrops_.update(time.deltaSeconds(), player_, inventory_, objectCatalog_);
+        runStats_.acquiredItems += worldDrops_.update(time.deltaSeconds(), player_, inventory_, objectCatalog_, &effects_);
         const std::vector<Vec2> randomEnemySpawnTiles = spawnHiddenEnemyNodesFromOpenedTiles(digging_.openedTiles());
         enemies_.spawnFromDugTiles(randomEnemySpawnTiles, tileMap_, player_.position, balance_, enemyCatalog_);
         updateBossSpawn();
@@ -5559,11 +5865,12 @@ void Game::update(const Input& input, const Time& time)
             } else if (event.type == EnemyEventType::CapturedExplosion) {
                 continue;
             } else {
-                effects_.spawnEnemyHit(event.position);
+                effects_.spawnEnemyHit(event.position, event.effectId);
             }
         }
         applyEffectDiscoveries(effectDiscoveries);
         syncEncyclopediaFromInventoryAndRing();
+        updateAmbientParticleEffects(time.deltaSeconds());
         effects_.update(time.deltaSeconds());
         levels_.addXp(player_, enemies_.consumePendingXp(), balance_);
         if (bossDefeated) {
@@ -5588,19 +5895,25 @@ void Game::checkHotReload()
     }
 
     std::string message;
-    if (loadBalanceFromDisk(message)) {
-        const bool wasBase = mode_ == ScreenMode::Base;
-        InventoryCarryState retained;
-        if (wasBase) {
-            retained = captureInventoryCarryState();
-        }
-        initializeWorld(!wasBase);
-        if (wasBase) {
-            restoreInventoryCarryState(retained);
-            enterBase();
-        }
+    bool reloaded = false;
+    const std::string fileName = filenameOf(changedPath);
+
+    if (fileName == "google_sheet_source.cfg") {
+        loadSheetSourceConfig();
+        reloaded = loadBalanceFromSources(message);
+    } else if (fileName == "game_balance.cfg") {
+        reloaded = loadBalanceFromDisk(message);
+    } else {
+        reloaded = loadBalanceFromSources(message);
+    }
+
+    if (reloaded) {
+        player_.xpToNext = std::max(1, balance_.xpBase + player_.level * balance_.xpPerLevel);
+        applyPermanentUpgrades();
+        refreshOrbitEffects();
+        tileMap_.updateAround(player_.position, 0.0f, balance_, dungeonLayout_);
         configureWatcher();
-        reloadNotice_ = "再読込: " + changedPath;
+        reloadNotice_ = "Hot reload: " + changedPath;
     } else {
         reloadNotice_ = message;
     }
@@ -5615,7 +5928,16 @@ void Game::renderPauseMenu(Renderer& renderer) const
 
     renderer.setScreenSpace();
     const UiRect panel = pausePanelRect();
-    drawUiWindow(renderer, panel, "PAUSED", "W/S または ↑↓  F/Enter 決定  Esc/右クリック 戻る");
+    const char* pauseTitle = pausePage_ == PauseMenuPage::Status ? "ステータス" : "PAUSED";
+    const char* pauseHelp = pausePage_ == PauseMenuPage::Status
+        ? "Esc/右クリック 戻る"
+        : (pausePage_ == PauseMenuPage::Ring ? "Z/X でアクティブリング切替  Esc/右クリック 戻る" : "F/Enter 決定  Esc/右クリック 戻る");
+    UiWindowScope pauseWindow(
+        renderer,
+        "pause.main",
+        panel,
+        pauseTitle,
+        pauseHelp);
 
     char buffer[160];
     if (pausePage_ == PauseMenuPage::Main) {
@@ -5627,15 +5949,29 @@ void Game::renderPauseMenu(Renderer& renderer) const
     }
 
     if (pausePage_ == PauseMenuPage::Status) {
-        renderer.drawText(panel.pos + Vec2{48.0f, 102.0f}, "ステータス", {246, 235, 255, 255}, 3);
-        std::snprintf(buffer, sizeof(buffer), "HP %02d   Level %02d   XP %02d/%02d", player_.hp, player_.level, player_.xp, player_.xpToNext);
-        renderer.drawText(panel.pos + Vec2{58.0f, 160.0f}, buffer, {230, 230, 236, 255}, 2);
-        std::snprintf(buffer, sizeof(buffer), "Ring %d   Items %02d/08   Radius %.0f   Speed %.1f",
-            spellRing_.activeRingIndex() + 1,
-            static_cast<int>(spellRing_.items().size()),
-            spellRing_.radius(),
-            spellRing_.effectiveAngularSpeed());
-        renderer.drawText(panel.pos + Vec2{58.0f, 202.0f}, buffer, {230, 230, 236, 255}, 2);
+        const Vec2 labelPos = panel.pos + Vec2{74.0f, 110.0f};
+        const Vec2 valuePos = panel.pos + Vec2{236.0f, 110.0f};
+        constexpr float RowHeight = 32.0f;
+        const auto drawStatusRow = [&](int row, std::string_view label, std::string_view value) {
+            const float y = static_cast<float>(row) * RowHeight;
+            renderer.drawText(labelPos + Vec2{0.0f, y}, label, ui::TextMuted, 2);
+            renderer.drawText(valuePos + Vec2{0.0f, y}, value, {230, 230, 236, 255}, 2);
+        };
+
+        std::snprintf(buffer, sizeof(buffer), "%02d", player_.hp);
+        drawStatusRow(0, "HP", buffer);
+        std::snprintf(buffer, sizeof(buffer), "%02d", player_.level);
+        drawStatusRow(1, "Level", buffer);
+        std::snprintf(buffer, sizeof(buffer), "%02d/%02d", player_.xp, player_.xpToNext);
+        drawStatusRow(2, "XP", buffer);
+        std::snprintf(buffer, sizeof(buffer), "%d", spellRing_.activeRingIndex() + 1);
+        drawStatusRow(3, "Ring", buffer);
+        std::snprintf(buffer, sizeof(buffer), "%02d/08", static_cast<int>(spellRing_.items().size()));
+        drawStatusRow(4, "Items", buffer);
+        std::snprintf(buffer, sizeof(buffer), "%.0f", spellRing_.radius());
+        drawStatusRow(5, "Radius", buffer);
+        std::snprintf(buffer, sizeof(buffer), "%.1f", spellRing_.effectiveAngularSpeed());
+        drawStatusRow(6, "Speed", buffer);
     } else if (pausePage_ == PauseMenuPage::Items) {
         renderer.drawText(panel.pos + Vec2{48.0f, 102.0f}, "アイテム", {246, 235, 255, 255}, 3);
         renderer.drawText(panel.pos + Vec2{58.0f, 164.0f}, "通常画面のショートカットHUDとアイテム画面で管理します。", {230, 230, 236, 255}, 2);
@@ -5646,21 +5982,20 @@ void Game::renderPauseMenu(Renderer& renderer) const
         renderer.drawText(panel.pos + Vec2{58.0f, 164.0f}, buffer, {230, 230, 236, 255}, 2);
         std::snprintf(buffer, sizeof(buffer), "装着アイテム %02d/08", static_cast<int>(spellRing_.items().size()));
         renderer.drawText(panel.pos + Vec2{58.0f, 206.0f}, buffer, {230, 230, 236, 255}, 2);
-        renderer.drawText(panel.pos + Vec2{58.0f, 248.0f}, "Z/X でアクティブリング切替", {198, 198, 206, 255}, 2);
     } else if (pausePage_ == PauseMenuPage::Options) {
         renderer.drawText(panel.pos + Vec2{48.0f, 102.0f}, "オプション", {246, 235, 255, 255}, 3);
         renderer.drawText(panel.pos + Vec2{58.0f, 164.0f}, "仮画面です。設定項目は後続実装で追加します。", {230, 230, 236, 255}, 2);
     } else if (pausePage_ == PauseMenuPage::QuitConfirm) {
         const UiRect confirm = quitConfirmRect();
-        drawUiWindow(renderer, confirm, "確認", "Esc / 右クリックで戻る");
+        UiWindowScope confirmWindow(renderer, "pause.quit_confirm", confirm, "確認", "Esc / 右クリックで戻る");
         renderer.drawText(confirm.pos + Vec2{58.0f, 82.0f}, "ゲームを終了しますか？", ui::Text, 3);
         renderer.drawText(confirm.pos + Vec2{62.0f, 126.0f}, "セーブは拠点でのみ実行できます。", ui::TextMuted, 2);
-        drawUiButton(renderer, quitConfirmButtonRect(0), "キャンセル", pauseConfirmSelection_ == 0);
-        drawUiButton(renderer, quitConfirmButtonRect(1), "終了する", pauseConfirmSelection_ == 1);
+        drawUiButton(renderer, quitConfirmButtonRect(0), "キャンセル", pauseConfirmSelection_ == 0, uiCancelButtonStyle());
+        drawUiButton(renderer, quitConfirmButtonRect(1), "終了する", pauseConfirmSelection_ == 1, uiActionButtonStyle());
         return;
     }
 
-    drawUiButton(renderer, pauseBackButtonRect(), "戻る", false);
+    drawUiButton(renderer, pauseBackButtonRect(), "戻る", false, uiCancelButtonStyle());
 }
 
 void Game::renderGameOverScreen(Renderer& renderer) const
@@ -5672,7 +6007,7 @@ void Game::renderGameOverScreen(Renderer& renderer) const
     renderer.setScreenSpace();
     renderer.fillRect({0.0f, 0.0f}, {static_cast<float>(camera_.width()), static_cast<float>(camera_.height())}, {0, 0, 0, 150});
     const UiRect panel = gameOverPanelRect();
-    drawUiWindow(renderer, panel, "GAME OVER", "W/S または ↑↓  F/Enter 決定");
+    UiWindowScope gameOverWindow(renderer, "game_over", panel, "GAME OVER", "F/Enter 決定");
     renderer.drawText(panel.pos + Vec2{118.0f, 92.0f}, "リザルト", ui::Text, 3);
 
     char buffer[160];
@@ -5691,7 +6026,7 @@ void Game::renderGameOverScreen(Renderer& renderer) const
     renderer.drawText(panel.pos + Vec2{136.0f, 320.0f}, buffer, {230, 230, 236, 255}, 2);
 
     for (int i = 0; i < GameOverItemCount; ++i) {
-        drawUiButton(renderer, gameOverItemRect(i), gameOverItemName(i), i == gameOverSelection_);
+        drawUiButton(renderer, gameOverItemRect(i), gameOverItemName(i), i == gameOverSelection_, i == 0 ? uiActionButtonStyle() : uiCancelButtonStyle());
     }
     if (!gameOverStatus_.empty()) {
         renderer.drawText(panel.pos + Vec2{152.0f, 474.0f}, gameOverStatus_, {255, 230, 150, 255}, 2);
@@ -5707,7 +6042,7 @@ void Game::renderStageClearScreen(Renderer& renderer) const
     renderer.setScreenSpace();
     renderer.fillRect({0.0f, 0.0f}, {static_cast<float>(camera_.width()), static_cast<float>(camera_.height())}, {0, 0, 0, 130});
     const UiRect panel = stageClearPanelRect();
-    drawUiWindow(renderer, panel, "STAGE CLEAR", "F/Enter 決定");
+    UiWindowScope stageClearWindow(renderer, "stage_clear", panel, "STAGE CLEAR", "F/Enter 決定");
     renderer.drawText(panel.pos + Vec2{118.0f, 92.0f}, "シナリオ", ui::Text, 3);
 
     char buffer[160];
@@ -5723,7 +6058,7 @@ void Game::renderStageClearScreen(Renderer& renderer) const
     renderer.drawText(panel.pos + Vec2{136.0f, 292.0f}, buffer, {198, 208, 202, 255}, 2);
 
     for (int i = 0; i < StageClearItemCount; ++i) {
-        drawUiButton(renderer, stageClearItemRect(i), stageClearItemName(i), i == stageClearSelection_);
+        drawUiButton(renderer, stageClearItemRect(i), stageClearItemName(i), i == stageClearSelection_, uiActionButtonStyle());
     }
     if (!stageClearStatus_.empty()) {
         renderer.drawText(panel.pos + Vec2{152.0f, 474.0f}, stageClearStatus_, {255, 230, 150, 255}, 2);
@@ -5733,11 +6068,13 @@ void Game::renderStageClearScreen(Renderer& renderer) const
 void Game::render(Renderer& renderer, const Time& time)
 {
     renderer.clear({5, 5, 8, 255});
+    beginUiFrame(time.deltaSeconds());
     if (basePresentationActive()) {
         renderBaseScreen(renderer);
-        inventory_.render(renderer, player_, spellRing_);
+        inventory_.render(renderer, player_, spellRing_, objectCatalog_);
         renderPauseMenu(renderer);
         renderRingScreen(renderer);
+        finishUiFrame(renderer);
         renderer.present();
         return;
     }
@@ -5774,8 +6111,16 @@ void Game::render(Renderer& renderer, const Time& time)
         renderer.drawLine(player_.position, spellRing_.center(), {150, 110, 80, 100});
     }
 
-    renderer.fillCircle(player_.position, balance_.playerRadius, {118, 72, 168, 255});
-    renderer.drawLine(player_.position, player_.position + player_.facing * 22.0f, {235, 210, 255, 255});
+    if (renderer.hasPlayerSheet()) {
+        renderer.drawPlayerSprite(
+            player_.spriteFrameIndex(),
+            player_.position,
+            PlayerSpriteDrawSize,
+            player_.facing.x > 0.0f);
+    } else {
+        renderer.fillCircle(player_.position, balance_.playerRadius, {118, 72, 168, 255});
+        renderer.drawLine(player_.position, player_.position + player_.facing * 22.0f, {235, 210, 255, 255});
+    }
 
     for (const auto& item : spellRing_.items()) {
         if (!tileMap_.isLit(item.worldPosition, player_.position, itemLights)) {
@@ -5852,7 +6197,7 @@ void Game::render(Renderer& renderer, const Time& time)
         renderer.drawText({28.0f, 208.0f}, "DEBUG PAUSED", {255, 230, 150, 255}, 2);
     }
     upgrades_.render(renderer, levels_);
-    inventory_.render(renderer, player_, spellRing_);
+    inventory_.render(renderer, player_, spellRing_, objectCatalog_);
     if (mode_ == ScreenMode::Playing) {
         inventory_.renderShortcutHud(renderer, spellRing_, camera_.width(), camera_.height());
     }
@@ -5863,6 +6208,7 @@ void Game::render(Renderer& renderer, const Time& time)
     if (mode_ == ScreenMode::Playing || mode_ == ScreenMode::Inventory || mode_ == ScreenMode::PauseMenu || mode_ == ScreenMode::Ring) {
         encyclopedia_.renderPopups(renderer, camera_);
     }
+    finishUiFrame(renderer);
     renderer.present();
 }
 

@@ -797,6 +797,29 @@ std::size_t ItemRegistry::size() const
     return items_.size();
 }
 
+std::string effectCodeDisplayName(const ObjectCatalog& catalog, std::string_view code)
+{
+    const auto it = catalog.effectCodes.find(std::string(code));
+    if (it != catalog.effectCodes.end() && !it->second.displayName.empty()) {
+        return it->second.displayName;
+    }
+    return std::string(code);
+}
+
+std::string effectSummaryText(const ObjectCatalog& catalog, const std::vector<EffectSpec>& specs)
+{
+    std::string summary;
+    for (const EffectSpec& spec : specs) {
+        for (const std::string& effect : spec.effects) {
+            if (!summary.empty()) {
+                summary += ", ";
+            }
+            summary += effectCodeDisplayName(catalog, effect);
+        }
+    }
+    return summary.empty() ? "-" : summary;
+}
+
 bool parseEffectSpecs(
     std::string_view text,
     std::vector<EffectSpec>& outEffects,

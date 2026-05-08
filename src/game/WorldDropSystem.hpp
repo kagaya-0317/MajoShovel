@@ -13,6 +13,7 @@
 namespace majo {
 
 class InventorySystem;
+class EffectSystem;
 struct Player;
 
 struct WorldDropItem {
@@ -29,7 +30,7 @@ public:
     bool spawnObjectDrop(const ObjectCatalog& catalog, std::string_view objectId, Vec2 position);
     bool spawnRewardDrop(const ObjectCatalog& catalog, Vec2 position);
     int pullMetalDrops(const ObjectCatalog& catalog, Vec2 center, float dt);
-    int update(float dt, const Player& player, InventorySystem& inventory, const ObjectCatalog& catalog);
+    int update(float dt, const Player& player, InventorySystem& inventory, const ObjectCatalog& catalog, EffectSystem* effects = nullptr);
     void render(
         Renderer& renderer,
         const TileMap& tileMap,

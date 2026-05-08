@@ -3,9 +3,27 @@
 #include "game/TileMap.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 
 namespace majo {
+
+int playerSpriteFrameIndex(float animationTime, bool walking)
+{
+    constexpr float TargetFps = 60.0f;
+    constexpr std::array<int, 4> IdleFrames{0, 1, 2, 1};
+    constexpr int WalkFrameStart = 3;
+    constexpr int WalkFrameCount = 6;
+    constexpr float IdleFrameDuration = 12.0f / TargetFps;
+    constexpr float WalkFrameDuration = 8.0f / TargetFps;
+
+    const float frameDuration = walking ? WalkFrameDuration : IdleFrameDuration;
+    const int step = static_cast<int>(std::floor(std::max(0.0f, animationTime) / frameDuration));
+    if (walking) {
+        return WalkFrameStart + step % WalkFrameCount;
+    }
+    return IdleFrames[static_cast<std::size_t>(step % static_cast<int>(IdleFrames.size()))];
+}
 
 std::string_view deathCauseText(DamageSource source)
 {
@@ -58,7 +76,15 @@ void Player::update(const Input& input, const Camera& camera, TileMap& map, floa
     const float speed = static_cast<float>(
         status.applyModifiers(ModifierStat::Speed, balance.playerSpeed) *
         status.movementMultiplierFromStates());
-    velocity = input.moveAxis() * speed;
+    const Vec2 moveAxis = input.moveAxis();
+    velocity = moveAxis * speed;
+    const bool walkingNow = lengthSquared(moveAxis) > 0.0001f;
+    if (walkingNow != spriteWalking) {
+        spriteWalking = walkingNow;
+        spriteAnimationTime = 0.0f;
+    } else {
+        spriteAnimationTime += dt;
+    }
     const Vec2 delta = velocity * dt;
     Vec2 next = position + Vec2{delta.x, 0.0f};
     if (!map.isCircleBlocked(next, balance.playerRadius)) {
@@ -81,6 +107,11 @@ void Player::update(const Input& input, const Camera& camera, TileMap& map, floa
         : 0.0f;
     spellRingShift = lerp(spellRingShift, targetShift, 1.0f - std::exp(-14.0f * dt));
     throwCooldownRemaining = std::max(0.0f, throwCooldownRemaining - dt);
+}
+
+int Player::spriteFrameIndex() const
+{
+    return playerSpriteFrameIndex(spriteAnimationTime, spriteWalking);
 }
 
 }

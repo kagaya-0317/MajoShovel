@@ -8,7 +8,7 @@ constexpr int TileSize = 48;
 constexpr int ChunkTiles = 32;
 constexpr int ChunkWorldSize = TileSize * ChunkTiles;
 constexpr int ActiveChunkRadius = 2;
-constexpr int MaxEffects = 384;
+constexpr int MaxEffects = 1024;
 constexpr int MaxProjectiles = 256;
 
 constexpr float PlayerSpeed = 150.0f;

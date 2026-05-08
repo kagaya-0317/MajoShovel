@@ -23,6 +23,7 @@ enum class DamageSource {
 };
 
 std::string_view deathCauseText(DamageSource source);
+int playerSpriteFrameIndex(float animationTime, bool walking);
 
 struct Player {
     Vec2 position{0.0f, 0.0f};
@@ -36,6 +37,8 @@ struct Player {
     float spellRingShift = 0.0f;
     float spellRingShiftDistanceBonus = 0.0f;
     float throwCooldownRemaining = 0.0f;
+    float spriteAnimationTime = 0.0f;
+    bool spriteWalking = false;
     double poisonDamageAccumulator = 0.0;
     DamageSource lastDamageSource = DamageSource::Unknown;
     std::string lastDamageEnemyName;
@@ -43,6 +46,7 @@ struct Player {
 
     void applyDamage(int amount, DamageSource source);
     void update(const Input& input, const Camera& camera, TileMap& map, float dt, bool paused, const RuntimeBalance& balance);
+    int spriteFrameIndex() const;
 };
 
 }

@@ -80,14 +80,14 @@ void EncyclopediaSystem::renderPopups(Renderer& renderer, const Camera& camera) 
     }
 
     Vec2 pos = camera.worldToScreen(activePopup_.position) + Vec2{14.0f, -34.0f};
-    const Vec2 size{520.0f, 38.0f};
+    const Vec2 size{520.0f, 72.0f};
     pos.x = clamp(pos.x, 12.0f, static_cast<float>(camera.width()) - size.x - 12.0f);
     pos.y = clamp(pos.y, 58.0f, static_cast<float>(camera.height()) - size.y - 14.0f);
 
     renderer.setScreenSpace();
-    renderer.fillRect(pos, size, ui::WindowFill);
-    renderer.drawRect(pos, size, ui::WindowBorder);
-    renderer.drawText(pos + Vec2{12.0f, 10.0f}, activePopup_.text, ui::Text, 2);
+    const UiRect panel{pos, size};
+    drawUiSubPanel(renderer, panel);
+    renderer.drawText(uiSubPanelContentPos(panel), activePopup_.text, ui::Text, 2);
 }
 
 void EncyclopediaSystem::noteItemDiscovered(const ObjectDefinition& object, Vec2 position)

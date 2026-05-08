@@ -14,6 +14,7 @@ struct GoogleSheetSourceConfig {
     std::string spreadsheetId;
     std::string gid = "0";
     std::string objectsSheet = "Objects";
+    std::string stagesSheet = "Stages";
     std::string enemiesSheet = "Enemies";
     std::string behaviorSheet = "挙動ID一覧";
 };

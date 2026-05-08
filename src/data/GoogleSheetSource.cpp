@@ -85,6 +85,13 @@ std::unordered_map<std::string, std::string> parseKeyValueFile(const std::filesy
     int lineNumber = 0;
     while (std::getline(file, line)) {
         ++lineNumber;
+        if (lineNumber == 1 &&
+            line.size() >= 3 &&
+            static_cast<unsigned char>(line[0]) == 0xEF &&
+            static_cast<unsigned char>(line[1]) == 0xBB &&
+            static_cast<unsigned char>(line[2]) == 0xBF) {
+            line.erase(0, 3);
+        }
         line = trim(line);
         if (line.empty() || line.front() == '#') {
             continue;
@@ -383,6 +390,11 @@ bool loadGoogleSheetSourceConfig(const std::filesystem::path& path, GoogleSheetS
         config.objectsSheet = trim(it->second);
     }
 
+    it = values.find("stages_sheet");
+    if (it != values.end()) {
+        config.stagesSheet = trim(it->second);
+    }
+
     it = values.find("enemies_sheet");
     if (it != values.end()) {
         config.enemiesSheet = trim(it->second);
@@ -400,6 +412,9 @@ bool loadGoogleSheetSourceConfig(const std::filesystem::path& path, GoogleSheetS
     }
     if (config.objectsSheet.empty()) {
         config.objectsSheet = "Objects";
+    }
+    if (config.stagesSheet.empty()) {
+        config.stagesSheet = "Stages";
     }
     if (config.enemiesSheet.empty()) {
         config.enemiesSheet = "Enemies";

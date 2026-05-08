@@ -139,6 +139,8 @@ bool parseObjectCatalog(const GoogleSheetTable& table, ObjectCatalog& outCatalog
 bool parseEffectCodeDefinitions(const GoogleSheetTable& table, std::unordered_map<std::string, EffectCodeDefinition>& outDefinitions, std::string& outError);
 bool parseSpecialTagDefinitions(const GoogleSheetTable& table, std::unordered_map<std::string, SpecialTagDefinition>& outDefinitions, std::string& outError);
 bool loadObjectCatalogFromGoogleSheet(const GoogleSheetSourceConfig& config, ObjectCatalog& outCatalog, std::string& outError);
+std::string effectCodeDisplayName(const ObjectCatalog& catalog, std::string_view code);
+std::string effectSummaryText(const ObjectCatalog& catalog, const std::vector<EffectSpec>& specs);
 std::string_view dbValidationSeverityName(DbValidationSeverity severity);
 std::string_view dbValidationCategoryName(DbValidationCategory category);
 

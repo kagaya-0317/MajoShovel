@@ -44,6 +44,7 @@ add_executable(MajoShovel
     src/data/GoogleSheetSource.cpp
     src/data/EnemyCatalog.cpp
     src/data/ObjectCatalog.cpp
+    src/data/StageCatalog.cpp
     src/data/RuntimeBalance.cpp
     src/game/Game.cpp
     src/game/DungeonLayout.cpp

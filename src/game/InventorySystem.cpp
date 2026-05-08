@@ -36,13 +36,13 @@ constexpr float ScreenSlotW = 88.0f;
 constexpr float ScreenSlotH = 76.0f;
 constexpr float ScreenSlotGap = 8.0f;
 constexpr float DetailX = ScreenX + 820.0f;
-constexpr float DetailY = ScreenY + 84.0f;
+constexpr float DetailY = ScreenY + 50.0f;
 constexpr float DetailW = 330.0f;
-constexpr float DetailH = 480.0f;
+constexpr float DetailH = 520.0f;
 
 UiRect inventoryToggleRect()
 {
-    return {{1122.0f, 18.0f}, {124.0f, 38.0f}};
+    return {{1122.0f, 18.0f}, {124.0f, ui::ButtonHeight}};
 }
 
 UiRect panelRect()
@@ -57,12 +57,12 @@ UiRect rowRect(int index)
 
 UiRect useButtonRect()
 {
-    return {{PanelX + 26.0f, PanelY + 350.0f}, {130.0f, 38.0f}};
+    return {{PanelX + 26.0f, PanelY + 350.0f}, {130.0f, ui::ButtonHeight}};
 }
 
 UiRect ringButtonRect()
 {
-    return {{PanelX + 166.0f, PanelY + 350.0f}, {130.0f, 38.0f}};
+    return {{PanelX + 166.0f, PanelY + 350.0f}, {130.0f, ui::ButtonHeight}};
 }
 
 UiRect closeButtonRect()
@@ -95,17 +95,6 @@ SpellRingItemType ringTypeFor(InventoryItemType type)
     return type == InventoryItemType::Ore ? SpellRingItemType::Ore : SpellRingItemType::Stone;
 }
 
-const char* inventoryItemCategory(InventoryItemType type)
-{
-    switch (type) {
-    case InventoryItemType::Dirt: return "素材";
-    case InventoryItemType::Stone: return "素材";
-    case InventoryItemType::Ore: return "素材";
-    case InventoryItemType::Count: break;
-    }
-    return "";
-}
-
 const char* inventoryItemDescription(InventoryItemType type)
 {
     switch (type) {
@@ -117,23 +106,23 @@ const char* inventoryItemDescription(InventoryItemType type)
     return "";
 }
 
-const char* inventoryNormalEffect(InventoryItemType type)
+std::string inventoryNormalEffect(InventoryItemType type, const ObjectCatalog& catalog)
 {
     switch (type) {
-    case InventoryItemType::Dirt: return "heal +1 (仮)";
-    case InventoryItemType::Stone: return "shovel_power +1 (仮)";
-    case InventoryItemType::Ore: return "damage +1 (仮)";
+    case InventoryItemType::Dirt: return effectCodeDisplayName(catalog, "heal") + " +1 (仮)";
+    case InventoryItemType::Stone: return effectCodeDisplayName(catalog, "shovel_power") + " +1 (仮)";
+    case InventoryItemType::Ore: return effectCodeDisplayName(catalog, "damage") + " +1 (仮)";
     case InventoryItemType::Count: break;
     }
     return "";
 }
 
-const char* inventoryOrbitEffect(InventoryItemType type)
+std::string inventoryOrbitEffect(InventoryItemType type, const ObjectCatalog& catalog)
 {
     switch (type) {
     case InventoryItemType::Dirt: return "なし";
-    case InventoryItemType::Stone: return "stone item";
-    case InventoryItemType::Ore: return "ore item";
+    case InventoryItemType::Stone: return effectCodeDisplayName(catalog, "stone_item");
+    case InventoryItemType::Ore: return effectCodeDisplayName(catalog, "ore_item");
     case InventoryItemType::Count: break;
     }
     return "";
@@ -145,17 +134,6 @@ const char* inventoryDamageType(InventoryItemType type)
     case InventoryItemType::Dirt: return "なし";
     case InventoryItemType::Stone: return "打撃";
     case InventoryItemType::Ore: return "打撃";
-    case InventoryItemType::Count: break;
-    }
-    return "";
-}
-
-const char* inventoryTags(InventoryItemType type)
-{
-    switch (type) {
-    case InventoryItemType::Dirt: return "material, earth";
-    case InventoryItemType::Stone: return "material, ring_add";
-    case InventoryItemType::Ore: return "material, ring_add";
     case InventoryItemType::Count: break;
     }
     return "";
@@ -185,15 +163,6 @@ double inventoryWeightKg(InventoryItemType type)
     case InventoryItemType::Count: break;
     }
     return 0.0;
-}
-
-void drawDetailLine(Renderer& renderer, float& y, const char* label, std::string_view value)
-{
-    constexpr float ValueX = DetailX + 126.0f;
-    constexpr float ValueMaxW = DetailX + DetailW - ValueX - 18.0f;
-    renderer.drawText({DetailX + 20.0f, y}, label, ui::TextMuted, 2);
-    renderer.drawWrappedText({ValueX, y}, value, ValueMaxW, ui::Text, 2);
-    y += std::max(31.0f, renderer.measureWrappedText(value, ValueMaxW, 2).y + 4.0f);
 }
 
 bool objectCategoryEquals(const ItemData& item, std::string_view category)
@@ -281,35 +250,6 @@ Color inventoryObjectColor(const ItemData& item)
     return {188, 152, 236, 255};
 }
 
-std::string joinValues(const std::vector<std::string>& values)
-{
-    if (values.empty()) {
-        return "-";
-    }
-
-    std::string joined;
-    for (const std::string& value : values) {
-        if (!joined.empty()) {
-            joined += ", ";
-        }
-        joined += value;
-    }
-    return joined;
-}
-
-std::string effectSummary(const std::vector<EffectSpec>& specs)
-{
-    std::string summary;
-    for (const EffectSpec& spec : specs) {
-        for (const std::string& effect : spec.effects) {
-            if (!summary.empty()) {
-                summary += ", ";
-            }
-            summary += effect;
-        }
-    }
-    return summary.empty() ? "-" : summary;
-}
 }
 
 const char* inventoryItemName(InventoryItemType type)
@@ -1302,7 +1242,11 @@ void InventorySystem::updateScreen(
     selectShortcutSlot(input.shortcutSlotPressed());
 
     for (int i = 0; i < ShortcutSlotCount; ++i) {
-        if (ui.pressed(inventorySlotRect(i))) {
+        const UiRect rect = inventorySlotRect(i);
+        if (rect.contains(ui.mouse())) {
+            selectShortcutIndex(i);
+        }
+        if (ui.pressed(rect)) {
             selectShortcutIndex(i);
             return;
         }
@@ -1357,7 +1301,7 @@ void InventorySystem::update(
     updateScreen(input, ui, player, spellRing, effectDispatcher);
 }
 
-void InventorySystem::render(Renderer& renderer, const Player& player, const SpellRingSystem& spellRing) const
+void InventorySystem::render(Renderer& renderer, const Player& player, const SpellRingSystem& spellRing, const ObjectCatalog& catalog) const
 {
     (void)player;
     (void)spellRing;
@@ -1369,11 +1313,12 @@ void InventorySystem::render(Renderer& renderer, const Player& player, const Spe
         return;
     }
 
-    drawUiWindow(
+    UiWindowScope inventoryWindow(
         renderer,
+        "inventory.main",
         {{ScreenX, ScreenY}, {ScreenW, ScreenH}},
         "アイテム",
-        "WASD/矢印 移動  Q/E 左右  F/Enter 使用  R リングへ  P 保護  G つかむ/置く  Esc 戻る");
+        "Q/E 左右  F/Enter 使用  R リングへ  P 保護  G つかむ/置く  Esc 戻る");
 
     char buffer[160];
     for (int i = 0; i < ShortcutSlotCount; ++i) {
@@ -1420,92 +1365,88 @@ void InventorySystem::render(Renderer& renderer, const Player& player, const Spe
         }
     }
 
-    renderer.fillRect({DetailX, DetailY}, {DetailW, DetailH}, ui::WindowFill);
-    renderer.drawRect({DetailX, DetailY}, {DetailW, DetailH}, ui::WindowBorder);
-    renderer.drawText({DetailX + 20.0f, DetailY + 18.0f}, "詳細", ui::Text, 3);
-
     const ShortcutSlot& selectedSlot = selectedShortcutSlot();
-    float detailLineY = DetailY + 68.0f;
+    std::string detailTitle = "空き";
     if (selectedSlot.assigned) {
         const InventoryStack& selectedStack = stack(selectedSlot.type);
         std::snprintf(buffer, sizeof(buffer), "%s x%d", inventoryItemName(selectedSlot.type), selectedStack.count);
-        drawDetailLine(renderer, detailLineY, "名前", buffer);
-        drawDetailLine(renderer, detailLineY, "カテゴリ", inventoryItemCategory(selectedSlot.type));
-        drawDetailLine(renderer, detailLineY, "説明文", inventoryItemDescription(selectedSlot.type));
-        drawDetailLine(renderer, detailLineY, "通常効果", inventoryNormalEffect(selectedSlot.type));
-        drawDetailLine(renderer, detailLineY, "軌道効果", inventoryOrbitEffect(selectedSlot.type));
+        detailTitle = buffer;
+    } else if (const InventoryObjectStack* objectStack = selectedObjectStack()) {
+        std::snprintf(buffer, sizeof(buffer), "%s x%d", objectStack->item.name.c_str(), objectStack->count);
+        detailTitle = buffer;
+    } else if (const InventoryObjectInstance* objectInstance = selectedObjectInstance()) {
+        detailTitle = objectInstance->item.name;
+    }
+
+    const UiRect detailPanel{{DetailX, DetailY}, {DetailW, DetailH}};
+    drawUiSubPanel(renderer, detailPanel);
+    float detailLineY = drawUiDetailHeader(renderer, detailPanel, detailTitle);
+
+    if (selectedSlot.assigned) {
+        drawUiDetailText(renderer, detailPanel, detailLineY, inventoryItemDescription(selectedSlot.type));
+        drawUiDetailText(renderer, detailPanel, detailLineY, inventoryItemUseText(selectedSlot.type));
+        drawUiDetailLine(renderer, detailPanel, detailLineY, "通常効果", inventoryNormalEffect(selectedSlot.type, catalog));
+        drawUiDetailLine(renderer, detailPanel, detailLineY, "軌道効果", inventoryOrbitEffect(selectedSlot.type, catalog));
         std::snprintf(buffer, sizeof(buffer), "%d", inventoryAttackPower(selectedSlot.type));
-        drawDetailLine(renderer, detailLineY, "攻撃力", buffer);
-        drawDetailLine(renderer, detailLineY, "ダメージ", inventoryDamageType(selectedSlot.type));
+        drawUiDetailLine(renderer, detailPanel, detailLineY, "攻撃力", buffer);
+        drawUiDetailLine(renderer, detailPanel, detailLineY, "ダメージ", inventoryDamageType(selectedSlot.type));
         std::snprintf(buffer, sizeof(buffer), "%d", inventoryDigPower(selectedSlot.type));
-        drawDetailLine(renderer, detailLineY, "掘削力", buffer);
+        drawUiDetailLine(renderer, detailPanel, detailLineY, "掘削力", buffer);
         std::snprintf(buffer, sizeof(buffer), "%d", inventoryDurability(selectedSlot.type));
-        drawDetailLine(renderer, detailLineY, "耐久力", buffer);
+        drawUiDetailLine(renderer, detailPanel, detailLineY, "耐久力", buffer);
         std::snprintf(buffer, sizeof(buffer), "%.1fkg", inventoryWeightKg(selectedSlot.type));
-        drawDetailLine(renderer, detailLineY, "重さ", buffer);
-        drawDetailLine(renderer, detailLineY, "特殊タグ", inventoryTags(selectedSlot.type));
-        drawDetailLine(renderer, detailLineY, "効果テキスト", inventoryItemUseText(selectedSlot.type));
+        drawUiDetailLine(renderer, detailPanel, detailLineY, "重さ", buffer);
     } else if (const InventoryObjectStack* objectStack = selectedObjectStack()) {
         const ItemData& item = objectStack->item;
-        std::snprintf(buffer, sizeof(buffer), "%s x%d", item.name.c_str(), objectStack->count);
-        drawDetailLine(renderer, detailLineY, "名前", buffer);
-        drawDetailLine(renderer, detailLineY, "カテゴリ", item.category);
-        drawDetailLine(renderer, detailLineY, "説明文", item.description.empty() ? "-" : item.description);
-        drawDetailLine(renderer, detailLineY, "通常効果", effectSummary(item.normalEffects));
-        drawDetailLine(renderer, detailLineY, "軌道効果", effectSummary(item.orbitEffects));
+        drawUiDetailText(renderer, detailPanel, detailLineY, item.description.empty() ? "-" : item.description);
+        drawUiDetailText(renderer, detailPanel, detailLineY, item.effectText.empty() ? "-" : item.effectText);
+        drawUiDetailLine(renderer, detailPanel, detailLineY, "通常効果", effectSummaryText(catalog, item.normalEffects));
+        drawUiDetailLine(renderer, detailPanel, detailLineY, "軌道効果", effectSummaryText(catalog, item.orbitEffects));
         std::snprintf(buffer, sizeof(buffer), "%d", item.attackPower);
-        drawDetailLine(renderer, detailLineY, "攻撃力", buffer);
-        drawDetailLine(renderer, detailLineY, "ダメージ", item.damageType.empty() ? "-" : item.damageType);
+        drawUiDetailLine(renderer, detailPanel, detailLineY, "攻撃力", buffer);
+        drawUiDetailLine(renderer, detailPanel, detailLineY, "ダメージ", item.damageType.empty() ? "-" : item.damageType);
         std::snprintf(buffer, sizeof(buffer), "%d", item.digPower);
-        drawDetailLine(renderer, detailLineY, "掘削力", buffer);
+        drawUiDetailLine(renderer, detailPanel, detailLineY, "掘削力", buffer);
         std::snprintf(buffer, sizeof(buffer), "%d", item.durability);
-        drawDetailLine(renderer, detailLineY, "耐久力", buffer);
+        drawUiDetailLine(renderer, detailPanel, detailLineY, "耐久力", buffer);
         std::snprintf(buffer, sizeof(buffer), "%.1fkg", item.weightKg);
-        drawDetailLine(renderer, detailLineY, "重さ", buffer);
-        drawDetailLine(renderer, detailLineY, "特殊タグ", joinValues(item.tags));
-        drawDetailLine(renderer, detailLineY, "効果テキスト", item.effectText.empty() ? "-" : item.effectText);
+        drawUiDetailLine(renderer, detailPanel, detailLineY, "重さ", buffer);
     } else if (const InventoryObjectInstance* objectInstance = selectedObjectInstance()) {
         const ItemData& item = objectInstance->item;
         const ItemInstance& instance = objectInstance->instance;
-        std::snprintf(buffer, sizeof(buffer), "%s", item.name.c_str());
-        drawDetailLine(renderer, detailLineY, "名前", buffer);
-        drawDetailLine(renderer, detailLineY, "カテゴリ", item.category);
+        drawUiDetailText(renderer, detailPanel, detailLineY, item.description.empty() ? "-" : item.description);
+        drawUiDetailText(renderer, detailPanel, detailLineY, item.effectText.empty() ? "-" : item.effectText);
         std::snprintf(buffer, sizeof(buffer), "%s", instance.instanceId.c_str());
-        drawDetailLine(renderer, detailLineY, "個体ID", buffer);
+        drawUiDetailLine(renderer, detailPanel, detailLineY, "個体ID", buffer);
         std::snprintf(buffer, sizeof(buffer), "%d", instance.enhanceLevel);
-        drawDetailLine(renderer, detailLineY, "強化Lv", buffer);
+        drawUiDetailLine(renderer, detailPanel, detailLineY, "強化Lv", buffer);
         std::snprintf(buffer, sizeof(buffer), "%d/%d", instance.currentDurability, instance.maxDurability);
-        drawDetailLine(renderer, detailLineY, "耐久力", buffer);
-        drawDetailLine(renderer, detailLineY, "保護", instance.protectionEnabled ? "ON" : "OFF");
-        drawDetailLine(renderer, detailLineY, "状態", instance.isBroken ? "破損" : "通常");
+        drawUiDetailLine(renderer, detailPanel, detailLineY, "耐久力", buffer);
+        drawUiDetailLine(renderer, detailPanel, detailLineY, "保護", instance.protectionEnabled ? "ON" : "OFF");
+        drawUiDetailLine(renderer, detailPanel, detailLineY, "状態", instance.isBroken ? "破損" : "通常");
         std::snprintf(buffer, sizeof(buffer), "+%d / +%d / +%d", instance.attackBonus, instance.digBonus, instance.durabilityBonus);
-        drawDetailLine(renderer, detailLineY, "補正", buffer);
-        drawDetailLine(renderer, detailLineY, "通常効果", effectSummary(item.normalEffects));
-        drawDetailLine(renderer, detailLineY, "追加効果", effectSummary(instance.addedEffects));
-        drawDetailLine(renderer, detailLineY, "特殊タグ", joinValues(item.tags));
-        drawDetailLine(renderer, detailLineY, "操作", "P 保護ON/OFF");
+        drawUiDetailLine(renderer, detailPanel, detailLineY, "補正", buffer);
+        drawUiDetailLine(renderer, detailPanel, detailLineY, "通常効果", effectSummaryText(catalog, item.normalEffects));
+        drawUiDetailLine(renderer, detailPanel, detailLineY, "追加効果", effectSummaryText(catalog, instance.addedEffects));
+        drawUiDetailLine(renderer, detailPanel, detailLineY, "操作", "P 保護ON/OFF");
     } else {
-        drawDetailLine(renderer, detailLineY, "名前", "空き");
-        drawDetailLine(renderer, detailLineY, "カテゴリ", "-");
-        drawDetailLine(renderer, detailLineY, "説明文", "アイテム未配置");
-        drawDetailLine(renderer, detailLineY, "通常効果", "-");
-        drawDetailLine(renderer, detailLineY, "軌道効果", "-");
-        drawDetailLine(renderer, detailLineY, "攻撃力", "-");
-        drawDetailLine(renderer, detailLineY, "ダメージ", "-");
-        drawDetailLine(renderer, detailLineY, "掘削力", "-");
-        drawDetailLine(renderer, detailLineY, "耐久力", "-");
-        drawDetailLine(renderer, detailLineY, "重さ", "-");
-        drawDetailLine(renderer, detailLineY, "特殊タグ", "-");
-        drawDetailLine(renderer, detailLineY, "効果テキスト", "-");
+        drawUiDetailText(renderer, detailPanel, detailLineY, "アイテム未配置");
+        drawUiDetailText(renderer, detailPanel, detailLineY, "-");
+        drawUiDetailLine(renderer, detailPanel, detailLineY, "通常効果", "-");
+        drawUiDetailLine(renderer, detailPanel, detailLineY, "軌道効果", "-");
+        drawUiDetailLine(renderer, detailPanel, detailLineY, "攻撃力", "-");
+        drawUiDetailLine(renderer, detailPanel, detailLineY, "ダメージ", "-");
+        drawUiDetailLine(renderer, detailPanel, detailLineY, "掘削力", "-");
+        drawUiDetailLine(renderer, detailPanel, detailLineY, "耐久力", "-");
+        drawUiDetailLine(renderer, detailPanel, detailLineY, "重さ", "-");
     }
 
     if (grabbedSlotActive_) {
         std::snprintf(buffer, sizeof(buffer), "つかみ中: %s  移動先で G または F / Escでキャンセル",
             grabbedSlot_.assigned ? inventoryItemName(grabbedSlot_.type) : "空き");
-        renderer.fillRect({ScreenGridX, ScreenY + ScreenH - 52.0f}, {720.0f, 32.0f}, ui::WindowFillStrong);
-        renderer.drawText({ScreenGridX + 12.0f, ScreenY + ScreenH - 44.0f}, buffer, ui::Text, 2);
-    } else {
-        renderer.drawText({ScreenGridX, ScreenY + ScreenH - 42.0f}, status_, ui::Text, 2);
+        const UiRect grabbedPanel{{ScreenGridX, ScreenY + ScreenH - 72.0f}, {720.0f, 72.0f}};
+        drawUiSubPanel(renderer, grabbedPanel);
+        renderer.drawText(uiSubPanelContentPos(grabbedPanel), buffer, ui::Text, 2);
     }
 }
 
@@ -1516,17 +1457,18 @@ void InventorySystem::renderShortcutHud(Renderer& renderer, const SpellRingSyste
     const float panelW = std::min(1040.0f, std::max(760.0f, static_cast<float>(screenWidth) - HudMargin * 2.0f));
     const float panelX = (static_cast<float>(screenWidth) - panelW) * 0.5f;
     const float panelY = static_cast<float>(screenHeight) - HudHeight - 12.0f;
-    const float innerX = panelX + 16.0f;
-    const float slotY = panelY + 42.0f;
-    const float slotW = (panelW - 32.0f - HudSlotGap * static_cast<float>(ShortcutColumns - 1)) / static_cast<float>(ShortcutColumns);
+    const UiRect hudPanel{{panelX, panelY}, {panelW, HudHeight}};
+    const Vec2 hudContent = uiSubPanelContentPos(hudPanel);
+    const float innerX = hudContent.x;
+    const float slotY = hudContent.y;
+    const float slotW = (panelW - ui::SubPanelPadding.x * 2.0f - HudSlotGap * static_cast<float>(ShortcutColumns - 1)) / static_cast<float>(ShortcutColumns);
 
-    renderer.fillRect({panelX, panelY}, {panelW, HudHeight}, ui::WindowFill);
-    renderer.drawRect({panelX, panelY}, {panelW, HudHeight}, ui::WindowBorder);
+    drawUiSubPanel(renderer, hudPanel);
 
     char buffer[128];
     std::snprintf(buffer, sizeof(buffer), "Row %d/3   Ring %d", shortcutRow_ + 1, spellRing.activeRingIndex() + 1);
-    renderer.drawText({innerX, panelY + 12.0f}, buffer, ui::Text, 2);
-    renderer.drawText({innerX + 300.0f, panelY + 12.0f}, "Q/E 選択, Tab 行切替, F 使用, R リングへ, P 保護", ui::TextMuted, 2);
+    renderer.drawText({innerX, panelY + 74.0f}, buffer, ui::Text, 2);
+    renderer.drawText({innerX + 300.0f, panelY + 74.0f}, "Q/E 選択, Tab 行切替, F 使用, R リングへ, P 保護", ui::TextMuted, 2);
 
     for (int column = 0; column < ShortcutColumns; ++column) {
         const int slotIndex = shortcutRow_ * ShortcutColumns + column;

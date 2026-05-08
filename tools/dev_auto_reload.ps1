@@ -13,6 +13,8 @@ $LastChangeTime = Get-Date
 $IsBuilding = $false
 $IgnoreEventsUntil = Get-Date
 $NeedsConfigure = $false
+$RunRoot = $null
+$GameExePath = $null
 
 function Find-CMake {
     $cmd = Get-Command cmake -ErrorAction SilentlyContinue
@@ -57,6 +59,34 @@ if ($Jobs -le 0) {
 }
 $CMakeCache = Join-Path $BuildPath "CMakeCache.txt"
 $NeedsConfigure = -not (Test-Path $CMakeCache)
+$RunRoot = Join-Path $BuildPath ".dev-run"
+
+function Get-BuildConfigPath {
+    return Join-Path $BuildPath $Config
+}
+
+function Remove-OldRunDirs([string]$KeepPath = "") {
+    if (-not (Test-Path $RunRoot)) {
+        return
+    }
+
+    $runRootFull = [System.IO.Path]::GetFullPath($RunRoot)
+    $keepFull = if ([string]::IsNullOrWhiteSpace($KeepPath)) { "" } else { [System.IO.Path]::GetFullPath($KeepPath) }
+
+    Get-ChildItem -LiteralPath $RunRoot -Directory -ErrorAction SilentlyContinue | ForEach-Object {
+        $dirFull = [System.IO.Path]::GetFullPath($_.FullName)
+        $dirName = $_.FullName
+        $insideRunRoot = $dirFull.StartsWith($runRootFull, [System.StringComparison]::OrdinalIgnoreCase)
+        $isKept = $keepFull -and [System.String]::Equals($dirFull, $keepFull, [System.StringComparison]::OrdinalIgnoreCase)
+        if ($insideRunRoot -and -not $isKept) {
+            try {
+                Remove-Item -LiteralPath $dirName -Recurse -Force -ErrorAction Stop
+            } catch {
+                Write-Host "[dev] could not remove old run directory: $dirName"
+            }
+        }
+    }
+}
 
 function Stop-Game {
     if ($script:GameProcess -and -not $script:GameProcess.HasExited) {
@@ -65,29 +95,55 @@ function Stop-Game {
         $script:GameProcess = $null
     }
 
-    $exe = Join-Path $BuildPath "$Config\$TargetName.exe"
+    $buildConfigPath = Get-BuildConfigPath
+    $exe = Join-Path $buildConfigPath "$TargetName.exe"
+    $runRootFull = [System.IO.Path]::GetFullPath($RunRoot)
+    $buildConfigFull = [System.IO.Path]::GetFullPath($buildConfigPath)
     $running = Get-Process -Name $TargetName -ErrorAction SilentlyContinue |
-        Where-Object { $_.Path -and [System.String]::Equals($_.Path, $exe, [System.StringComparison]::OrdinalIgnoreCase) }
+        Where-Object {
+            if (-not $_.Path) {
+                return $false
+            }
+            $processPath = [System.IO.Path]::GetFullPath($_.Path)
+            return [System.String]::Equals($processPath, $exe, [System.StringComparison]::OrdinalIgnoreCase) -or
+                $processPath.StartsWith($runRootFull, [System.StringComparison]::OrdinalIgnoreCase) -or
+                $processPath.StartsWith($buildConfigFull, [System.StringComparison]::OrdinalIgnoreCase)
+        }
 
     foreach ($process in $running) {
         Write-Host "[dev] stopping existing game process $($process.Id)..."
         Stop-Process -Id $process.Id -Force
     }
+
+    Start-Sleep -Milliseconds 150
+    Remove-OldRunDirs
 }
 
 function Start-Game {
-    $exe = Join-Path $BuildPath "$Config\$TargetName.exe"
+    $buildConfigPath = Get-BuildConfigPath
+    $exe = Join-Path $buildConfigPath "$TargetName.exe"
     if (-not (Test-Path $exe)) {
         Write-Host "[dev] executable not found: $exe"
         return
     }
 
+    New-Item -ItemType Directory -Force -Path $RunRoot | Out-Null
+    $runDir = Join-Path $RunRoot ("run-" + (Get-Date -Format "yyyyMMdd-HHmmss-fff"))
+    New-Item -ItemType Directory -Force -Path $runDir | Out-Null
+    $runExe = Join-Path $runDir "$TargetName.exe"
+    Copy-Item -LiteralPath $exe -Destination $runExe -Force
+    Get-ChildItem -LiteralPath $buildConfigPath -Filter "*.dll" -File -ErrorAction SilentlyContinue |
+        ForEach-Object { Copy-Item -LiteralPath $_.FullName -Destination $runDir -Force }
+
     Write-Host "[dev] starting game..."
-    $script:GameProcess = Start-Process -FilePath $exe -WorkingDirectory $Root -PassThru
+    $script:GameExePath = $runExe
+    $script:GameProcess = Start-Process -FilePath $runExe -ArgumentList "--test-play" -WorkingDirectory $Root -PassThru
+    Remove-OldRunDirs $runDir
     Start-Sleep -Milliseconds 300
     if ($script:GameProcess.HasExited) {
         Write-Host "[dev] game exited immediately with code $($script:GameProcess.ExitCode)."
         $script:GameProcess = $null
+        $script:GameExePath = $null
     }
 }
 
@@ -200,16 +256,17 @@ Add-FileWatcher "CMakeLists.txt"
 
 Write-Host "[dev] watching source and data. Press Ctrl+C to stop."
 Write-Host "[dev] build output: $BuildPath"
+Write-Host "[dev] run copies: $RunRoot"
 Write-Host "[dev] build jobs: $Jobs"
-Write-Host "[dev] code changes rebuild and restart the game process; the window will be recreated."
-Write-Host "[dev] data-only runtime reload keeps the existing game window."
+Write-Host "[dev] code changes rebuild while the current game keeps running; successful builds restart the game copy."
+Write-Host "[dev] data/assets runtime reload keeps the existing game window."
 
 try {
     while ($true) {
         if ($PendingBuild -and ((Get-Date) - $LastChangeTime).TotalMilliseconds -ge 700) {
             $PendingBuild = $false
-            Stop-Game
             if (Invoke-GameBuild) {
+                Stop-Game
                 Start-Game
             }
         }

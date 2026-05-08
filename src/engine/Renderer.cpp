@@ -1,5 +1,6 @@
 #include "engine/Renderer.hpp"
 
+#include <algorithm>
 #include <array>
 #include <cctype>
 #include <cmath>
@@ -56,6 +57,30 @@ bool utf8ToWide(std::string_view text, std::wstring& out)
 
 #endif
 
+bool isUiGuidePixel(unsigned char b, unsigned char g, unsigned char r, unsigned char a)
+{
+    return a <= 8 || (r <= 8 && g <= 8 && b <= 8);
+}
+
+std::vector<int> collapseGuideRuns(const std::vector<int>& guides, int limit)
+{
+    std::vector<int> collapsed;
+    for (std::size_t i = 0; i < guides.size();) {
+        const int start = guides[i];
+        int end = start;
+        ++i;
+        while (i < guides.size() && guides[i] == end + 1) {
+            end = guides[i];
+            ++i;
+        }
+        if (start == 0 || end >= limit - 1) {
+            continue;
+        }
+        collapsed.push_back((start + end) / 2);
+    }
+    return collapsed;
+}
+
 std::size_t utf8CodepointLength(unsigned char lead)
 {
     if ((lead & 0x80U) == 0) {
@@ -85,6 +110,20 @@ std::string textCacheKey(std::string_view text, Color color, int scale)
     return out.str();
 }
 
+std::string textMeasureCacheKey(std::string_view text, int scale)
+{
+    std::ostringstream out;
+    out << scale << ':' << text;
+    return out.str();
+}
+
+std::string wrappedTextCacheKey(std::string_view text, float maxWidth, int scale)
+{
+    std::ostringstream out;
+    out << scale << ':' << static_cast<int>(std::lround(maxWidth * 10.0f)) << ':' << text;
+    return out.str();
+}
+
 }
 
 struct Renderer::NativeTextFont {
@@ -103,17 +142,63 @@ Renderer::Renderer(SDL_Renderer* renderer) : renderer_(renderer)
 Renderer::~Renderer()
 {
     clearTextCache();
-    unloadIconSheet();
+    unloadSpriteSheet(iconSheet_);
+    unloadSpriteSheet(playerSheet_);
+    unloadUiWindowTexture();
+    unloadUiSubWindowTexture();
+    unloadUiButtonTexture();
 }
 
 void Renderer::setColor(Color color)
 {
+    color = transformColor(color);
     SDL_SetRenderDrawColor(renderer_, color.r, color.g, color.b, color.a);
 }
 
 Vec2 Renderer::transform(Vec2 p) const
 {
-    return camera_ ? camera_->worldToScreen(p) : p;
+    p = camera_ ? camera_->worldToScreen(p) : p;
+    for (const ScreenTransform& transform : screenTransforms_) {
+        p = transform.origin + (p - transform.origin) * transform.scale;
+    }
+    return p;
+}
+
+Vec2 Renderer::transformSize(Vec2 size) const
+{
+    const float scale = screenScale();
+    return {size.x * scale, size.y * scale};
+}
+
+Color Renderer::transformColor(Color color) const
+{
+    float alpha = static_cast<float>(color.a);
+    for (const ScreenTransform& transform : screenTransforms_) {
+        alpha *= std::clamp(transform.alpha, 0.0f, 1.0f);
+    }
+    color.a = static_cast<unsigned char>(std::clamp(std::lround(alpha), 0L, 255L));
+    return color;
+}
+
+float Renderer::screenScale() const
+{
+    float scale = 1.0f;
+    for (const ScreenTransform& transform : screenTransforms_) {
+        scale *= transform.scale;
+    }
+    return scale;
+}
+
+void Renderer::pushScreenTransform(Vec2 origin, float scale, float alpha)
+{
+    screenTransforms_.push_back({origin, scale, alpha});
+}
+
+void Renderer::popScreenTransform()
+{
+    if (!screenTransforms_.empty()) {
+        screenTransforms_.pop_back();
+    }
 }
 
 void Renderer::clear(Color color)
@@ -135,7 +220,8 @@ void Renderer::setScreenSpace()
 void Renderer::fillRect(Vec2 pos, Vec2 size, Color color)
 {
     const Vec2 p = transform(pos);
-    SDL_FRect rect{p.x, p.y, size.x, size.y};
+    const Vec2 s = transformSize(size);
+    SDL_FRect rect{p.x, p.y, s.x, s.y};
     setColor(color);
     SDL_RenderFillRect(renderer_, &rect);
 }
@@ -143,7 +229,8 @@ void Renderer::fillRect(Vec2 pos, Vec2 size, Color color)
 void Renderer::drawRect(Vec2 pos, Vec2 size, Color color)
 {
     const Vec2 p = transform(pos);
-    SDL_FRect rect{p.x, p.y, size.x, size.y};
+    const Vec2 s = transformSize(size);
+    SDL_FRect rect{p.x, p.y, s.x, s.y};
     setColor(color);
     SDL_RenderRect(renderer_, &rect);
 }
@@ -151,6 +238,7 @@ void Renderer::drawRect(Vec2 pos, Vec2 size, Color color)
 void Renderer::fillCircle(Vec2 center, float radius, Color color)
 {
     const Vec2 c = transform(center);
+    radius *= screenScale();
     setColor(color);
     for (int y = static_cast<int>(-radius); y <= static_cast<int>(radius); ++y) {
         const float span = std::sqrt(std::max(0.0f, radius * radius - static_cast<float>(y * y)));
@@ -161,6 +249,7 @@ void Renderer::fillCircle(Vec2 center, float radius, Color color)
 void Renderer::drawCircle(Vec2 center, float radius, Color color)
 {
     const Vec2 c = transform(center);
+    radius *= screenScale();
     setColor(color);
     constexpr int Segments = 64;
     Vec2 prev{c.x + radius, c.y};
@@ -236,7 +325,9 @@ void Renderer::drawGlyph(char c, Vec2 pos, Color color, int scale)
     for (int y = 0; y < 7; ++y) {
         for (int x = 0; x < 5; ++x) {
             if ((rows[y] >> (4 - x)) & 1U) {
-                SDL_FRect rect{pos.x + x * static_cast<float>(scale), pos.y + y * static_cast<float>(scale), static_cast<float>(scale), static_cast<float>(scale)};
+                const Vec2 p = transform(pos + Vec2{x * static_cast<float>(scale), y * static_cast<float>(scale)});
+                const Vec2 s = transformSize({static_cast<float>(scale), static_cast<float>(scale)});
+                SDL_FRect rect{p.x, p.y, s.x, s.y};
                 SDL_RenderFillRect(renderer_, &rect);
             }
         }
@@ -268,10 +359,19 @@ void Renderer::drawText(Vec2 pos, std::string_view text, Color color, int scale)
 
 Vec2 Renderer::measureText(std::string_view text, int scale)
 {
+    const std::string key = textMeasureCacheKey(text, std::max(1, scale));
+    if (const auto it = textMeasureCache_.find(key); it != textMeasureCache_.end()) {
+        return it->second;
+    }
+
+    Vec2 measured{};
 #ifdef _WIN32
-    Vec2 nativeSize{};
-    if (measureNativeText(text, scale, nativeSize)) {
-        return nativeSize;
+    if (measureNativeText(text, scale, measured)) {
+        if (textMeasureCache_.size() > 2048) {
+            textMeasureCache_.clear();
+        }
+        textMeasureCache_[key] = measured;
+        return measured;
     }
 #endif
 
@@ -287,7 +387,12 @@ Vec2 Renderer::measureText(std::string_view text, int scale)
         }
         lineWidth += 6.0f * static_cast<float>(std::max(1, scale));
     }
-    return {std::max(width, lineWidth), height};
+    measured = {std::max(width, lineWidth), height};
+    if (textMeasureCache_.size() > 2048) {
+        textMeasureCache_.clear();
+    }
+    textMeasureCache_[key] = measured;
+    return measured;
 }
 
 void Renderer::drawWrappedText(Vec2 pos, std::string_view text, float maxWidth, Color color, int scale)
@@ -359,14 +464,17 @@ bool Renderer::drawNativeText(Vec2 pos, std::string_view text, Color color, int 
         return false;
     }
 
-    const std::string key = textCacheKey(text, color, std::max(1, scale));
+    const Color drawColor = transformColor(color);
+    Color cacheColor = color;
+    cacheColor.a = 255;
+    const std::string key = textCacheKey(text, cacheColor, std::max(1, scale));
     auto it = textCache_.find(key);
     if (it == textCache_.end()) {
-        if (textCache_.size() > 512) {
+        if (textCache_.size() > 2048) {
             clearTextCache();
         }
         TextTexture texture{};
-        if (!renderNativeTextToTexture(text, color, scale, texture)) {
+        if (!renderNativeTextToTexture(text, cacheColor, scale, texture)) {
             return false;
         }
         it = textCache_.emplace(key, texture).first;
@@ -375,7 +483,10 @@ bool Renderer::drawNativeText(Vec2 pos, std::string_view text, Color color, int 
         return false;
     }
 
-    const SDL_FRect dst{pos.x, pos.y, static_cast<float>(it->second.width), static_cast<float>(it->second.height)};
+    const Vec2 p = transform(pos);
+    const Vec2 s = transformSize({static_cast<float>(it->second.width), static_cast<float>(it->second.height)});
+    const SDL_FRect dst{p.x, p.y, s.x, s.y};
+    SDL_SetTextureAlphaMod(it->second.texture, drawColor.a);
     SDL_RenderTexture(renderer_, it->second.texture, nullptr, &dst);
     return true;
 #else
@@ -553,12 +664,19 @@ void Renderer::clearTextCache()
         }
     }
     textCache_.clear();
+    textMeasureCache_.clear();
+    wrappedTextCache_.clear();
 }
 
 std::string Renderer::wrappedText(std::string_view text, float maxWidth, int scale)
 {
     if (maxWidth <= 0.0f || text.empty()) {
         return std::string(text);
+    }
+
+    const std::string key = wrappedTextCacheKey(text, maxWidth, std::max(1, scale));
+    if (const auto it = wrappedTextCache_.find(key); it != wrappedTextCache_.end()) {
+        return it->second;
     }
 
     std::string output;
@@ -588,32 +706,71 @@ std::string Renderer::wrappedText(std::string_view text, float maxWidth, int sca
     }
 
     output += line;
+    if (wrappedTextCache_.size() > 1024) {
+        wrappedTextCache_.clear();
+    }
+    wrappedTextCache_[key] = output;
     return output;
 }
 
 void Renderer::unloadIconSheet()
 {
-    if (iconSheet_.texture) {
-        SDL_DestroyTexture(iconSheet_.texture);
-        iconSheet_.texture = nullptr;
-    }
-    iconSheet_.columns = 0;
-    iconSheet_.rows = 0;
+    unloadSpriteSheet(iconSheet_);
 }
 
 bool Renderer::loadIconSheet(std::string_view path, int iconSize, int columns, int rows)
 {
-    unloadIconSheet();
+    return loadSpriteSheet(path, iconSize, columns, rows, "icon sheet", iconSheet_);
+}
+
+void Renderer::unloadPlayerSheet()
+{
+    unloadSpriteSheet(playerSheet_);
+}
+
+bool Renderer::loadPlayerSheet(std::string_view path, int frameSize, int columns, int rows)
+{
+    return loadSpriteSheet(path, frameSize, columns, rows, "player sheet", playerSheet_);
+}
+
+void Renderer::unloadUiWindowTexture()
+{
+    unloadGuidedTexture(uiWindowTexture_);
+}
+
+void Renderer::unloadUiSubWindowTexture()
+{
+    unloadGuidedTexture(uiSubWindowTexture_);
+}
+
+void Renderer::unloadUiButtonTexture()
+{
+    unloadGuidedTexture(uiButtonTexture_);
+}
+
+void Renderer::unloadSpriteSheet(SpriteSheet& sheet)
+{
+    if (sheet.texture) {
+        SDL_DestroyTexture(sheet.texture);
+        sheet.texture = nullptr;
+    }
+    sheet.columns = 0;
+    sheet.rows = 0;
+}
+
+bool Renderer::loadSpriteSheet(std::string_view path, int frameSize, int columns, int rows, std::string_view label, SpriteSheet& sheet)
+{
     lastAssetError_.clear();
 
-    if (iconSize <= 0 || columns <= 0 || rows <= 0) {
-        lastAssetError_ = "Invalid icon sheet layout";
+    const std::string labelString(label);
+    if (frameSize <= 0 || columns <= 0 || rows <= 0) {
+        lastAssetError_ = "Invalid " + labelString + " layout";
         return false;
     }
 
     const std::string pathString(path);
-    const int expectedWidth = iconSize * columns;
-    const int expectedHeight = iconSize * rows;
+    const int expectedWidth = frameSize * columns;
+    const int expectedHeight = frameSize * rows;
 
 #ifdef _WIN32
     static GdiPlusSession gdiPlus;
@@ -630,14 +787,14 @@ bool Renderer::loadIconSheet(std::string_view path, int iconSize, int columns, i
 
     Gdiplus::Bitmap bitmap(widePath.c_str());
     if (bitmap.GetLastStatus() != Gdiplus::Ok) {
-        lastAssetError_ = "Failed to load icon sheet: " + pathString;
+        lastAssetError_ = "Failed to load " + labelString + ": " + pathString;
         return false;
     }
 
     const int width = static_cast<int>(bitmap.GetWidth());
     const int height = static_cast<int>(bitmap.GetHeight());
     if (width != expectedWidth || height != expectedHeight) {
-        lastAssetError_ = "Icon sheet must be " + std::to_string(expectedWidth) + "x" + std::to_string(expectedHeight) +
+        lastAssetError_ = labelString + " must be " + std::to_string(expectedWidth) + "x" + std::to_string(expectedHeight) +
             " pixels, got " + std::to_string(width) + "x" + std::to_string(height);
         return false;
     }
@@ -645,7 +802,7 @@ bool Renderer::loadIconSheet(std::string_view path, int iconSize, int columns, i
     Gdiplus::Rect rect(0, 0, width, height);
     Gdiplus::BitmapData locked{};
     if (bitmap.LockBits(&rect, Gdiplus::ImageLockModeRead, PixelFormat32bppARGB, &locked) != Gdiplus::Ok) {
-        lastAssetError_ = "Failed to lock icon sheet pixels: " + pathString;
+        lastAssetError_ = "Failed to lock " + labelString + " pixels: " + pathString;
         return false;
     }
 
@@ -677,20 +834,296 @@ bool Renderer::loadIconSheet(std::string_view path, int iconSize, int columns, i
     SDL_SetTextureBlendMode(texture, SDL_BLENDMODE_BLEND);
     SDL_SetTextureScaleMode(texture, SDL_SCALEMODE_NEAREST);
 
-    iconSheet_.texture = texture;
-    iconSheet_.iconSize = iconSize;
-    iconSheet_.columns = columns;
-    iconSheet_.rows = rows;
+    unloadSpriteSheet(sheet);
+    sheet.texture = texture;
+    sheet.frameSize = frameSize;
+    sheet.columns = columns;
+    sheet.rows = rows;
     return true;
 #else
-    lastAssetError_ = "PNG icon sheet loading is only implemented on Windows";
+    lastAssetError_ = "PNG sprite sheet loading is only implemented on Windows";
     return false;
 #endif
 }
 
+void Renderer::unloadGuidedTexture(GuidedTexture& texture)
+{
+    if (texture.texture) {
+        SDL_DestroyTexture(texture.texture);
+    }
+    texture = {};
+}
+
+bool Renderer::loadUiWindowTexture(std::string_view path)
+{
+    return loadGuidedTexture(path, 5, 3, false, "UI window texture", uiWindowTexture_);
+}
+
+bool Renderer::loadUiSubWindowTexture(std::string_view path)
+{
+    return loadGuidedTexture(path, 3, 3, true, "UI sub-window texture", uiSubWindowTexture_);
+}
+
+bool Renderer::loadUiButtonTexture(std::string_view path)
+{
+    return loadGuidedTexture(path, 3, 3, true, "UI button texture", uiButtonTexture_);
+}
+
+bool Renderer::loadGuidedTexture(std::string_view path, int columns, int rows, bool transparentOnly, std::string_view label, GuidedTexture& target)
+{
+    lastAssetError_.clear();
+    const std::string pathString(path);
+    const std::string labelString(label);
+
+#ifdef _WIN32
+    if (columns <= 0 || columns > 5 || rows <= 0 || rows > 3) {
+        lastAssetError_ = "Invalid " + labelString + " layout";
+        return false;
+    }
+
+    static GdiPlusSession gdiPlus;
+    if (!gdiPlus.initialized()) {
+        lastAssetError_ = "GDI+ startup failed";
+        return false;
+    }
+
+    std::wstring widePath;
+    if (!utf8ToWide(pathString, widePath)) {
+        lastAssetError_ = "Invalid UTF-8 asset path: " + pathString;
+        return false;
+    }
+
+    Gdiplus::Bitmap bitmap(widePath.c_str());
+    if (bitmap.GetLastStatus() != Gdiplus::Ok) {
+        lastAssetError_ = "Failed to load " + labelString + ": " + pathString;
+        return false;
+    }
+
+    const int width = static_cast<int>(bitmap.GetWidth());
+    const int height = static_cast<int>(bitmap.GetHeight());
+    if (width <= 0 || height <= 0) {
+        lastAssetError_ = "Invalid " + labelString + " size: " + pathString;
+        return false;
+    }
+
+    Gdiplus::Rect rect(0, 0, width, height);
+    Gdiplus::BitmapData locked{};
+    if (bitmap.LockBits(&rect, Gdiplus::ImageLockModeRead, PixelFormat32bppARGB, &locked) != Gdiplus::Ok) {
+        lastAssetError_ = "Failed to lock " + labelString + " pixels: " + pathString;
+        return false;
+    }
+
+    std::vector<unsigned char> pixels(static_cast<size_t>(width) * static_cast<size_t>(height) * 4U);
+    const auto* source = static_cast<const unsigned char*>(locked.Scan0);
+    const int sourceStride = locked.Stride;
+    const int rowBytes = width * 4;
+    for (int y = 0; y < height; ++y) {
+        const int sourceY = sourceStride < 0 ? height - 1 - y : y;
+        const unsigned char* sourceRow = source + sourceY * std::abs(sourceStride);
+        unsigned char* targetRow = pixels.data() + static_cast<size_t>(y) * static_cast<size_t>(rowBytes);
+        std::memcpy(targetRow, sourceRow, static_cast<size_t>(rowBytes));
+    }
+    bitmap.UnlockBits(&locked);
+
+    auto isGuide = [&](const unsigned char* pixel) {
+        return transparentOnly
+            ? pixel[3] <= 8
+            : isUiGuidePixel(pixel[0], pixel[1], pixel[2], pixel[3]);
+    };
+
+    std::vector<int> verticalGuides;
+    for (int x = 0; x < width; ++x) {
+        int guidePixels = 0;
+        for (int y = 0; y < height; ++y) {
+            const auto* pixel = pixels.data() + (static_cast<size_t>(y) * static_cast<size_t>(width) + static_cast<size_t>(x)) * 4U;
+            if (isGuide(pixel)) {
+                ++guidePixels;
+            }
+        }
+        if (guidePixels >= static_cast<int>(height * 0.95f)) {
+            verticalGuides.push_back(x);
+        }
+    }
+
+    std::vector<int> horizontalGuides;
+    for (int y = 0; y < height; ++y) {
+        int guidePixels = 0;
+        for (int x = 0; x < width; ++x) {
+            const auto* pixel = pixels.data() + (static_cast<size_t>(y) * static_cast<size_t>(width) + static_cast<size_t>(x)) * 4U;
+            if (isGuide(pixel)) {
+                ++guidePixels;
+            }
+        }
+        if (guidePixels >= static_cast<int>(width * 0.95f)) {
+            horizontalGuides.push_back(y);
+        }
+    }
+
+    verticalGuides = collapseGuideRuns(verticalGuides, width);
+    horizontalGuides = collapseGuideRuns(horizontalGuides, height);
+    if (verticalGuides.size() != static_cast<std::size_t>(columns - 1) ||
+        horizontalGuides.size() != static_cast<std::size_t>(rows - 1)) {
+        lastAssetError_ = labelString + " must contain " + std::to_string(columns - 1) +
+            " vertical and " + std::to_string(rows - 1) + " horizontal guide lines: " + pathString;
+        return false;
+    }
+
+    SDL_Surface* surface = SDL_CreateSurfaceFrom(width, height, SDL_PIXELFORMAT_BGRA32, pixels.data(), rowBytes);
+    if (!surface) {
+        lastAssetError_ = std::string("SDL_CreateSurfaceFrom failed: ") + SDL_GetError();
+        return false;
+    }
+
+    SDL_Texture* texture = SDL_CreateTextureFromSurface(renderer_, surface);
+    SDL_DestroySurface(surface);
+    if (!texture) {
+        lastAssetError_ = std::string("SDL_CreateTextureFromSurface failed: ") + SDL_GetError();
+        return false;
+    }
+
+    SDL_SetTextureBlendMode(texture, SDL_BLENDMODE_BLEND);
+    SDL_SetTextureScaleMode(texture, SDL_SCALEMODE_NEAREST);
+
+    GuidedTexture loaded;
+    loaded.texture = texture;
+    loaded.width = width;
+    loaded.height = height;
+    loaded.valid = true;
+    loaded.columns = columns;
+    loaded.rows = rows;
+
+    std::array<int, 6> xEdges{};
+    std::array<int, 5> xSeparators{};
+    xEdges[0] = 0;
+    for (int i = 0; i < columns - 1; ++i) {
+        xSeparators[static_cast<std::size_t>(i)] = verticalGuides[static_cast<std::size_t>(i)];
+        xEdges[static_cast<std::size_t>(i + 1)] = verticalGuides[static_cast<std::size_t>(i)] + 1;
+    }
+    xEdges[static_cast<std::size_t>(columns)] = width;
+
+    std::array<int, 4> yEdges{};
+    std::array<int, 3> ySeparators{};
+    yEdges[0] = 0;
+    for (int i = 0; i < rows - 1; ++i) {
+        ySeparators[static_cast<std::size_t>(i)] = horizontalGuides[static_cast<std::size_t>(i)];
+        yEdges[static_cast<std::size_t>(i + 1)] = horizontalGuides[static_cast<std::size_t>(i)] + 1;
+    }
+    yEdges[static_cast<std::size_t>(rows)] = height;
+
+    for (int col = 0; col < columns; ++col) {
+        const int start = xEdges[static_cast<std::size_t>(col)];
+        const int end = col < columns - 1 ? xSeparators[static_cast<std::size_t>(col)] : width;
+        loaded.columnWidths[static_cast<std::size_t>(col)] = static_cast<float>(end - start);
+    }
+    for (int row = 0; row < rows; ++row) {
+        const int start = yEdges[static_cast<std::size_t>(row)];
+        const int end = row < rows - 1 ? ySeparators[static_cast<std::size_t>(row)] : height;
+        loaded.rowHeights[static_cast<std::size_t>(row)] = static_cast<float>(end - start);
+    }
+    for (int row = 0; row < rows; ++row) {
+        const int y = yEdges[static_cast<std::size_t>(row)];
+        const int bottom = row < rows - 1 ? ySeparators[static_cast<std::size_t>(row)] : height;
+        for (int col = 0; col < columns; ++col) {
+            const int x = xEdges[static_cast<std::size_t>(col)];
+            const int right = col < columns - 1 ? xSeparators[static_cast<std::size_t>(col)] : width;
+            loaded.cells[static_cast<std::size_t>(row * columns + col)] = {
+                static_cast<float>(x),
+                static_cast<float>(y),
+                static_cast<float>(right - x),
+                static_cast<float>(bottom - y),
+            };
+        }
+    }
+    unloadGuidedTexture(target);
+    target = loaded;
+    return true;
+#else
+    lastAssetError_ = "PNG guided texture loading is only implemented on Windows";
+    return false;
+#endif
+}
+
+Vec2 Renderer::uiWindowMinSize() const
+{
+    if (!hasUiWindowTexture()) {
+        return {};
+    }
+    float width = 0.0f;
+    for (float column : uiWindowTexture_.columnWidths) {
+        width += column;
+    }
+    float height = 0.0f;
+    for (float row : uiWindowTexture_.rowHeights) {
+        height += row;
+    }
+    return {width, height};
+}
+
+void Renderer::drawNineSliceFrame(const GuidedTexture& texture, Vec2 pos, Vec2 size, Color tint)
+{
+    if (!texture.texture || !texture.valid || texture.columns != 3 || texture.rows != 3) {
+        return;
+    }
+
+    const auto& cw = texture.columnWidths;
+    const auto& rh = texture.rowHeights;
+    const float fixedWidth = cw[0] + cw[2];
+    const float fixedHeight = rh[0] + rh[2];
+    const float scaleX = fixedWidth > 0.0f ? std::min(1.0f, size.x / fixedWidth) : 1.0f;
+    const float scaleY = fixedHeight > 0.0f ? std::min(1.0f, size.y / fixedHeight) : 1.0f;
+    const float leftWidth = cw[0] * scaleX;
+    const float rightWidth = cw[2] * scaleX;
+    const float topHeight = rh[0] * scaleY;
+    const float bottomHeight = rh[2] * scaleY;
+    const float centerWidth = std::max(0.0f, size.x - leftWidth - rightWidth);
+    const float centerHeight = std::max(0.0f, size.y - topHeight - bottomHeight);
+    const float rightX = pos.x + size.x - rightWidth;
+    const float bottomY = pos.y + size.y - bottomHeight;
+
+    auto cell = [&](int row, int col) -> SDL_FRect {
+        return texture.cells[static_cast<std::size_t>(row * 3 + col)];
+    };
+
+    drawTextureRegion(texture.texture, cell(0, 0), pos, {leftWidth, topHeight}, tint);
+    drawTextureTiled(texture.texture, cell(0, 1), {pos.x + leftWidth, pos.y}, {centerWidth, topHeight}, tint);
+    drawTextureRegion(texture.texture, cell(0, 2), {rightX, pos.y}, {rightWidth, topHeight}, tint);
+
+    drawTextureTiled(texture.texture, cell(1, 0), {pos.x, pos.y + topHeight}, {leftWidth, centerHeight}, tint);
+    drawTextureTiled(texture.texture, cell(1, 1), {pos.x + leftWidth, pos.y + topHeight}, {centerWidth, centerHeight}, tint);
+    drawTextureTiled(texture.texture, cell(1, 2), {rightX, pos.y + topHeight}, {rightWidth, centerHeight}, tint);
+
+    drawTextureRegion(texture.texture, cell(2, 0), {pos.x, bottomY}, {leftWidth, bottomHeight}, tint);
+    drawTextureTiled(texture.texture, cell(2, 1), {pos.x + leftWidth, bottomY}, {centerWidth, bottomHeight}, tint);
+    drawTextureRegion(texture.texture, cell(2, 2), {rightX, bottomY}, {rightWidth, bottomHeight}, tint);
+}
+
+void Renderer::drawHorizontalSliceRow(const GuidedTexture& texture, int row, Vec2 pos, float width, Color tint)
+{
+    if (!texture.texture || !texture.valid || texture.columns != 3 || row < 0 || row >= texture.rows) {
+        return;
+    }
+
+    auto cell = [&](int col) -> SDL_FRect {
+        return texture.cells[static_cast<std::size_t>(row * texture.columns + col)];
+    };
+
+    const float leftWidth = texture.columnWidths[0];
+    const float rightWidth = texture.columnWidths[2];
+    const float height = texture.rowHeights[static_cast<std::size_t>(row)];
+    const float fixedWidth = leftWidth + rightWidth;
+    const float scaleX = fixedWidth > 0.0f && width < fixedWidth ? width / fixedWidth : 1.0f;
+    const float dstLeftWidth = leftWidth * scaleX;
+    const float dstRightWidth = rightWidth * scaleX;
+    const float dstCenterWidth = std::max(0.0f, width - dstLeftWidth - dstRightWidth);
+
+    drawTextureRegion(texture.texture, cell(0), pos, {dstLeftWidth, height}, tint);
+    drawTextureTiled(texture.texture, cell(1), {pos.x + dstLeftWidth, pos.y}, {dstCenterWidth, height}, tint);
+    drawTextureRegion(texture.texture, cell(2), {pos.x + width - dstRightWidth, pos.y}, {dstRightWidth, height}, tint);
+}
+
 void Renderer::drawIcon(int index, Vec2 pos, float scale, Color tint)
 {
-    const float size = static_cast<float>(iconSheet_.iconSize) * scale;
+    const float size = static_cast<float>(iconSheet_.frameSize) * scale;
     drawIcon(index, pos, {size, size}, tint);
 }
 
@@ -700,20 +1133,166 @@ void Renderer::drawIcon(int index, Vec2 pos, Vec2 size, Color tint)
         return;
     }
 
-    const int sourceX = (index % iconSheet_.columns) * iconSheet_.iconSize;
-    const int sourceY = (index / iconSheet_.columns) * iconSheet_.iconSize;
+    const int sourceX = (index % iconSheet_.columns) * iconSheet_.frameSize;
+    const int sourceY = (index / iconSheet_.columns) * iconSheet_.frameSize;
     const SDL_FRect src{
         static_cast<float>(sourceX),
         static_cast<float>(sourceY),
-        static_cast<float>(iconSheet_.iconSize),
-        static_cast<float>(iconSheet_.iconSize)
+        static_cast<float>(iconSheet_.frameSize),
+        static_cast<float>(iconSheet_.frameSize)
     };
     const Vec2 p = transform(pos);
-    const SDL_FRect dst{p.x, p.y, size.x, size.y};
+    const Vec2 s = transformSize(size);
+    const SDL_FRect dst{p.x, p.y, s.x, s.y};
 
+    tint = transformColor(tint);
     SDL_SetTextureColorMod(iconSheet_.texture, tint.r, tint.g, tint.b);
     SDL_SetTextureAlphaMod(iconSheet_.texture, tint.a);
     SDL_RenderTexture(renderer_, iconSheet_.texture, &src, &dst);
+}
+
+void Renderer::drawPlayerSprite(int index, Vec2 center, float size, bool flipHorizontal, Color tint)
+{
+    if (!playerSheet_.texture || index < 0 || index >= playerSheet_.columns * playerSheet_.rows) {
+        return;
+    }
+
+    const int sourceX = (index % playerSheet_.columns) * playerSheet_.frameSize;
+    const int sourceY = (index / playerSheet_.columns) * playerSheet_.frameSize;
+    const SDL_FRect src{
+        static_cast<float>(sourceX),
+        static_cast<float>(sourceY),
+        static_cast<float>(playerSheet_.frameSize),
+        static_cast<float>(playerSheet_.frameSize)
+    };
+    const Vec2 p = transform(center - Vec2{size * 0.5f, size * 0.5f});
+    const Vec2 s = transformSize({size, size});
+    const SDL_FRect dst{p.x, p.y, s.x, s.y};
+
+    tint = transformColor(tint);
+    SDL_SetTextureColorMod(playerSheet_.texture, tint.r, tint.g, tint.b);
+    SDL_SetTextureAlphaMod(playerSheet_.texture, tint.a);
+    SDL_RenderTextureRotated(
+        renderer_,
+        playerSheet_.texture,
+        &src,
+        &dst,
+        0.0,
+        nullptr,
+        flipHorizontal ? SDL_FLIP_HORIZONTAL : SDL_FLIP_NONE);
+}
+
+void Renderer::drawTextureRegion(SDL_Texture* texture, SDL_FRect src, Vec2 pos, Vec2 size, Color tint)
+{
+    if (!texture || src.w <= 0.0f || src.h <= 0.0f || size.x <= 0.0f || size.y <= 0.0f) {
+        return;
+    }
+
+    const Vec2 p = transform(pos);
+    const Vec2 s = transformSize(size);
+    const SDL_FRect dst{p.x, p.y, s.x, s.y};
+    tint = transformColor(tint);
+    SDL_SetTextureColorMod(texture, tint.r, tint.g, tint.b);
+    SDL_SetTextureAlphaMod(texture, tint.a);
+    SDL_RenderTexture(renderer_, texture, &src, &dst);
+}
+
+void Renderer::drawTextureTiled(SDL_Texture* texture, SDL_FRect src, Vec2 pos, Vec2 size, Color tint)
+{
+    if (!texture || src.w <= 0.0f || src.h <= 0.0f || size.x <= 0.0f || size.y <= 0.0f) {
+        return;
+    }
+
+    const bool shrinkX = size.x < src.w;
+    const bool shrinkY = size.y < src.h;
+    for (float y = 0.0f; y < size.y;) {
+        const float dstHeight = shrinkY ? size.y : std::min(src.h, size.y - y);
+        const float srcHeight = shrinkY ? src.h : dstHeight;
+        for (float x = 0.0f; x < size.x;) {
+            const float dstWidth = shrinkX ? size.x : std::min(src.w, size.x - x);
+            const float srcWidth = shrinkX ? src.w : dstWidth;
+            SDL_FRect clippedSrc{src.x, src.y, srcWidth, srcHeight};
+            drawTextureRegion(texture, clippedSrc, pos + Vec2{x, y}, {dstWidth, dstHeight}, tint);
+            x += dstWidth;
+        }
+        y += dstHeight;
+    }
+}
+
+void Renderer::drawUiWindowFrame(Vec2 pos, Vec2 size, Color tint)
+{
+    if (!hasUiWindowTexture()) {
+        return;
+    }
+
+    const auto& window = uiWindowTexture_;
+    const Vec2 minSize = uiWindowMinSize();
+    const float scaleX = minSize.x > 0.0f ? std::min(1.0f, size.x / minSize.x) : 1.0f;
+    const float scaleY = minSize.y > 0.0f ? std::min(1.0f, size.y / minSize.y) : 1.0f;
+    std::array<float, 5> cw{};
+    std::array<float, 3> rh{};
+    for (std::size_t i = 0; i < cw.size(); ++i) {
+        cw[i] = window.columnWidths[i] * scaleX;
+    }
+    for (std::size_t i = 0; i < rh.size(); ++i) {
+        rh[i] = window.rowHeights[i] * scaleY;
+    }
+    const float topHeight = rh[0];
+    const float middleHeight = size.y - rh[0] - rh[2];
+    const float bottomY = pos.y + topHeight + middleHeight;
+    float scaledMinWidth = 0.0f;
+    for (float column : cw) {
+        scaledMinWidth += column;
+    }
+    const float extraWidth = std::max(0.0f, size.x - scaledMinWidth);
+
+    auto cell = [&](int row, int col) -> SDL_FRect {
+        return window.cells[static_cast<std::size_t>(row * 5 + col)];
+    };
+    auto splitExtra = [](float extra, float a, float b) -> Vec2 {
+        const float total = std::max(1.0f, a + b);
+        return {a + extra * (a / total), b + extra * (b / total)};
+    };
+
+    drawTextureTiled(window.texture, cell(1, 2), pos + Vec2{cw[0], topHeight}, {size.x - cw[0] - cw[4], middleHeight}, tint);
+
+    const Vec2 topVariable = splitExtra(extraWidth, cw[1], cw[3]);
+    float x = pos.x;
+    drawTextureRegion(window.texture, cell(0, 0), {x, pos.y}, {cw[0], topHeight}, tint);
+    x += cw[0];
+    drawTextureTiled(window.texture, cell(0, 1), {x, pos.y}, {topVariable.x, topHeight}, tint);
+    x += topVariable.x;
+    drawTextureRegion(window.texture, cell(0, 2), {x, pos.y}, {cw[2], topHeight}, tint);
+    x += cw[2];
+    drawTextureTiled(window.texture, cell(0, 3), {x, pos.y}, {topVariable.y, topHeight}, tint);
+    drawTextureRegion(window.texture, cell(0, 4), {pos.x + size.x - cw[4], pos.y}, {cw[4], topHeight}, tint);
+
+    drawTextureTiled(window.texture, cell(1, 0), {pos.x, pos.y + topHeight}, {cw[0], middleHeight}, tint);
+    drawTextureTiled(window.texture, cell(1, 4), {pos.x + size.x - cw[4], pos.y + topHeight}, {cw[4], middleHeight}, tint);
+
+    const Vec2 bottomVariable = splitExtra(extraWidth, cw[1], cw[2]);
+    x = pos.x;
+    drawTextureRegion(window.texture, cell(2, 0), {x, bottomY}, {cw[0], rh[2]}, tint);
+    x += cw[0];
+    drawTextureTiled(window.texture, cell(2, 1), {x, bottomY}, {bottomVariable.x, rh[2]}, tint);
+    x += bottomVariable.x;
+    drawTextureTiled(window.texture, cell(2, 2), {x, bottomY}, {bottomVariable.y, rh[2]}, tint);
+    x += bottomVariable.y;
+    drawTextureRegion(window.texture, cell(2, 3), {x, bottomY}, {cw[3], rh[2]}, tint);
+    drawTextureRegion(window.texture, cell(2, 4), {pos.x + size.x - cw[4], bottomY}, {cw[4], rh[2]}, tint);
+}
+
+void Renderer::drawUiSubWindowFrame(Vec2 pos, Vec2 size, Color tint)
+{
+    drawNineSliceFrame(uiSubWindowTexture_, pos, size, tint);
+}
+
+void Renderer::drawUiButtonFrame(Vec2 pos, float width, int variant, Color tint)
+{
+    if (!hasUiButtonTexture()) {
+        return;
+    }
+    drawHorizontalSliceRow(uiButtonTexture_, std::clamp(variant, 0, 2), pos, width, tint);
 }
 
 }

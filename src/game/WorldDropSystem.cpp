@@ -2,6 +2,7 @@
 
 #include "data/GameBalance.hpp"
 #include "engine/Log.hpp"
+#include "game/EffectSystem.hpp"
 #include "game/InventorySystem.hpp"
 #include "game/Player.hpp"
 
@@ -196,7 +197,7 @@ int WorldDropSystem::pullMetalDrops(const ObjectCatalog& catalog, Vec2 center, f
     return pulled;
 }
 
-int WorldDropSystem::update(float dt, const Player& player, InventorySystem& inventory, const ObjectCatalog& catalog)
+int WorldDropSystem::update(float dt, const Player& player, InventorySystem& inventory, const ObjectCatalog& catalog, EffectSystem* effects)
 {
     const float pickupRadiusSq = DropPickupRadius * DropPickupRadius;
     int pickedUpCount = 0;
@@ -213,6 +214,9 @@ int WorldDropSystem::update(float dt, const Player& player, InventorySystem& inv
         }
 
         if (inventory.addObjectItem(catalog, drop.objectId)) {
+            if (effects != nullptr) {
+                effects->spawnDropPickup(drop.position, player.position - drop.position);
+            }
             ++pickedUpCount;
             return true;
         }

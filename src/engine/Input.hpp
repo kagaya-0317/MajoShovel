@@ -37,6 +37,7 @@ enum class InputAction {
     OpenInventory,
     ToggleDebug,
     ToggleDebugPause,
+    TestRestart,
     Count
 };
 
@@ -51,6 +52,7 @@ public:
     bool held(InputAction action) const;
     bool debugPressed() const { return pressed(InputAction::ToggleDebug); }
     bool debugPausePressed() const { return pressed(InputAction::ToggleDebugPause); }
+    bool testRestartPressed() const { return pressed(InputAction::TestRestart); }
     bool throwPressed() const { return pressed(InputAction::ThrowActiveRing); }
     bool inventoryPressed() const { return pressed(InputAction::OpenInventory); }
     bool pausePressed() const { return pressed(InputAction::Pause); }

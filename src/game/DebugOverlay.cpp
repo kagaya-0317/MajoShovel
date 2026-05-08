@@ -35,6 +35,7 @@ void DebugOverlay::render(
     const Player& player,
     const RuntimeBalance& balance,
     const DungeonLayout& dungeonLayout,
+    const StageDefinition& currentStage,
     int nearestWarpIndex,
     bool nearestWarpDiscovered,
     int discoveredWarpCount,
@@ -111,10 +112,23 @@ void DebugOverlay::render(
     std::snprintf(
         buffer + std::char_traits<char>::length(buffer),
         sizeof(buffer) - std::char_traits<char>::length(buffer),
+        "\nStageCatalog %s / %s / %s\nProfile gen=%s terrain=%s goal=%d hard=%.2f warp=%d special=%d",
+        currentStage.id.c_str(),
+        currentStage.name.c_str(),
+        currentStage.type.c_str(),
+        currentStage.generationProfile.c_str(),
+        currentStage.terrainProfile.c_str(),
+        currentStage.goalDistanceTiles,
+        currentStage.terrainHardnessMultiplier,
+        currentStage.warpPointCount,
+        currentStage.specialRoomCount);
+    std::snprintf(
+        buffer + std::char_traits<char>::length(buffer),
+        sizeof(buffer) - std::char_traits<char>::length(buffer),
         "\n%s",
         enemySummary.c_str());
     renderer.setScreenSpace();
-    renderer.fillRect({10.0f, 10.0f}, {620.0f, 424.0f}, {0, 0, 0, 180});
+    renderer.fillRect({10.0f, 10.0f}, {620.0f, 492.0f}, {0, 0, 0, 180});
     renderer.drawText({20.0f, 20.0f}, buffer, {220, 244, 224, 255}, 2);
 }
 

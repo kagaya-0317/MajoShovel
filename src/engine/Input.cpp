@@ -41,7 +41,8 @@ constexpr KeyBinding KeyBindings[] = {
     {SDL_SCANCODE_ESCAPE, InputAction::Pause},
     {SDL_SCANCODE_I, InputAction::OpenInventory},
     {SDL_SCANCODE_F1, InputAction::ToggleDebug},
-    {SDL_SCANCODE_F5, InputAction::ToggleDebugPause},
+    {SDL_SCANCODE_F5, InputAction::TestRestart},
+    {SDL_SCANCODE_F6, InputAction::ToggleDebugPause},
 };
 
 constexpr int actionIndex(InputAction action)

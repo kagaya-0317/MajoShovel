@@ -80,7 +80,11 @@ void UpgradeSystem::update(
     }
 
     for (int i = 0; i < 3; ++i) {
-        if (ui.pressed(optionRect(i))) {
+        const UiRect rect = optionRect(i);
+        if (rect.contains(ui.mouse())) {
+            selectedOption_ = i;
+        }
+        if (ui.pressed(rect)) {
             selectedOption_ = i;
             applyUpgrade(i, level, spellRing, levelRingRadiusPoints, levelRingSpeedPoints);
             return;
@@ -120,7 +124,7 @@ void UpgradeSystem::render(Renderer& renderer, const LevelSystem& level)
     }
     renderer.setScreenSpace();
     const UiRect panel = panelRect();
-    drawUiWindow(renderer, panel, "レベルアップ", "A/D・左右・Q/E で選択   F/Enter で決定   1/2/3 で直接決定");
+    UiWindowScope levelUpWindow(renderer, "level_up", panel, "レベルアップ", "Q/E で選択   F/Enter で決定   1/2/3 で直接決定");
 
     for (int i = 0; i < 3; ++i) {
         const UiRect card = optionRect(i);
