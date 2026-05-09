@@ -11,11 +11,9 @@
 namespace majo {
 
 enum class SpellRingItemType {
-    Shovel,
-    Torch,
-    Stone,
-    Ore,
-    Object
+    Shovel = 0,
+    Torch = 1,
+    Object = 4
 };
 
 struct SpellRingItem {
@@ -75,8 +73,6 @@ struct SpellRingItem {
 
 SpellRingItem makeShovel();
 SpellRingItem makeTorch();
-SpellRingItem makeStone();
-SpellRingItem makeOre();
 SpellRingItem makeObjectRingItem(std::string_view objectId);
 
 }

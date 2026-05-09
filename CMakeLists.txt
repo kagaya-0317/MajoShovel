@@ -38,6 +38,8 @@ add_executable(MajoShovel
     src/engine/Input.cpp
     src/engine/FileWatcher.cpp
     src/engine/Log.cpp
+    src/debug/DebugConsole.cpp
+    src/debug/DebugPanel.cpp
     src/engine/Ui.cpp
     src/engine/Renderer.cpp
     src/engine/Camera.cpp
@@ -74,7 +76,7 @@ target_include_directories(MajoShovel PRIVATE src)
 target_link_libraries(MajoShovel PRIVATE SDL3::SDL3)
 
 if(WIN32)
-    target_link_libraries(MajoShovel PRIVATE gdiplus winhttp)
+    target_link_libraries(MajoShovel PRIVATE gdiplus winhttp user32 gdi32 comctl32)
 
     add_custom_command(TARGET MajoShovel POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_if_different

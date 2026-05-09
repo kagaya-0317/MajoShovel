@@ -7,7 +7,10 @@
 namespace majo {
 
 namespace {
-constexpr std::size_t MaxSpellRingItems = 8;
+constexpr std::size_t MaxSpellRingItems = 24;
+constexpr float MaxSpellRingWeight = 24.0f;
+constexpr float PlacementStepRadians = Pi / 36.0f;
+constexpr float ItemAngularSizeRadians = Pi / 12.0f;
 constexpr float CapturedJumpInterval = 2.0f;
 constexpr float CapturedJumpDuration = 0.24f;
 constexpr float CapturedJumpDistance = 18.0f;
@@ -18,11 +21,34 @@ SpellRingItem makeSpellRingItem(SpellRingItemType type)
     switch (type) {
     case SpellRingItemType::Shovel: return makeShovel();
     case SpellRingItemType::Torch: return makeTorch();
-    case SpellRingItemType::Stone: return makeStone();
-    case SpellRingItemType::Ore: return makeOre();
     case SpellRingItemType::Object: return makeObjectRingItem({});
     }
-    return makeStone();
+    return makeObjectRingItem({});
+}
+
+float normalizeAngle(float angle)
+{
+    const float full = Pi * 2.0f;
+    angle = std::fmod(angle, full);
+    if (angle < 0.0f) {
+        angle += full;
+    }
+    return angle;
+}
+
+float quantizeAngle(float angle)
+{
+    return normalizeAngle(std::round(normalizeAngle(angle) / PlacementStepRadians) * PlacementStepRadians);
+}
+
+float angleDistance(float a, float b)
+{
+    const float full = Pi * 2.0f;
+    float diff = std::fabs(normalizeAngle(a) - normalizeAngle(b));
+    if (diff > Pi) {
+        diff = full - diff;
+    }
+    return diff;
 }
 
 void applyObjectDefinition(SpellRingItem& item, const ItemData& object)
@@ -62,8 +88,12 @@ void applyItemInstance(SpellRingItem& item, const ItemInstance& instance)
 void SpellRingSystem::initialize(const RuntimeBalance& balance)
 {
     items_.clear();
-    items_.push_back(makeShovel());
-    items_.push_back(makeTorch());
+    SpellRingItem shovel = makeShovel();
+    shovel.localAngle = 0.0f;
+    SpellRingItem torch = makeTorch();
+    torch.localAngle = Pi;
+    items_.push_back(std::move(shovel));
+    items_.push_back(std::move(torch));
     radius_ = balance.spellRingRadius;
     angularSpeed_ = balance.spellRingSpeed;
     baseEquippedWeight_ = totalEquippedWeight();
@@ -135,10 +165,9 @@ void SpellRingSystem::update(Player& player, const Input& input, float dt, float
         capturedHealTimer_ = CapturedPeriodicHealInterval;
     }
 
-    const float spacing = Pi * 2.0f / static_cast<float>(items_.size());
     for (std::size_t i = 0; i < items_.size(); ++i) {
         SpellRingItem& item = items_[i];
-        const float angle = baseAngle_ + item.localAngle + spacing * static_cast<float>(i);
+        const float angle = baseAngle_ + item.localAngle;
         float itemRadius = radius_;
         if (item.hasCapturedBehavior("jump_outward")) {
             item.capturedBehaviorTimer += dt;
@@ -206,12 +235,27 @@ bool SpellRingSystem::canAddItem() const
     return items_.size() < MaxSpellRingItems;
 }
 
+bool SpellRingSystem::canAddItem(const SpellRingItem& item) const
+{
+    return canAddItem() && totalEquippedWeight() + std::max(0.0f, item.weight) <= MaxSpellRingWeight;
+}
+
 bool SpellRingSystem::addItem(SpellRingItemType type)
 {
-    if (!canAddItem()) {
+    return addItem(makeSpellRingItem(type));
+}
+
+bool SpellRingSystem::addItem(SpellRingItem item)
+{
+    if (!canAddItem(item)) {
         return false;
     }
-    items_.push_back(makeSpellRingItem(type));
+    const std::optional<float> angle = findBestPlacementAngle(item);
+    if (!angle) {
+        return false;
+    }
+    item.localAngle = *angle;
+    items_.push_back(std::move(item));
     return true;
 }
 
@@ -223,8 +267,7 @@ bool SpellRingSystem::addObjectItem(const ItemData& item)
 
     SpellRingItem ringItem = makeObjectRingItem(item.id);
     applyObjectDefinition(ringItem, item);
-    items_.push_back(std::move(ringItem));
-    return true;
+    return addItem(std::move(ringItem));
 }
 
 bool SpellRingSystem::addObjectItem(const ItemData& item, const ItemInstance& instance)
@@ -236,8 +279,7 @@ bool SpellRingSystem::addObjectItem(const ItemData& item, const ItemInstance& in
     SpellRingItem ringItem = makeObjectRingItem(item.id);
     applyItemInstance(ringItem, instance);
     applyObjectDefinition(ringItem, item);
-    items_.push_back(std::move(ringItem));
-    return true;
+    return addItem(std::move(ringItem));
 }
 
 void SpellRingSystem::applyObjectParameters(const ObjectCatalog& catalog)
@@ -266,6 +308,43 @@ void SpellRingSystem::removeBrokenItems()
             return item.broken() && !item.protectionEnabled;
         }),
         items_.end());
+}
+
+bool SpellRingSystem::moveItemAngle(int index, float deltaRadians)
+{
+    if (index < 0 || index >= static_cast<int>(items_.size())) {
+        return false;
+    }
+
+    SpellRingItem& item = items_[static_cast<std::size_t>(index)];
+    const float candidate = quantizeAngle(item.localAngle + deltaRadians);
+    if (!canPlaceItemAtAngle(item, candidate, index)) {
+        return false;
+    }
+
+    item.localAngle = candidate;
+    return true;
+}
+
+void SpellRingSystem::normalizeItemPlacements()
+{
+    std::vector<SpellRingItem> original = std::move(items_);
+    items_.clear();
+    items_.reserve(std::min(original.size(), MaxSpellRingItems));
+    for (SpellRingItem& item : original) {
+        if (items_.size() >= MaxSpellRingItems) {
+            break;
+        }
+        item.localAngle = quantizeAngle(item.localAngle);
+        if (!canPlaceItemAtAngle(item, item.localAngle)) {
+            const std::optional<float> angle = findBestPlacementAngle(item);
+            if (!angle) {
+                continue;
+            }
+            item.localAngle = *angle;
+        }
+        items_.push_back(std::move(item));
+    }
 }
 
 void SpellRingSystem::resetBaseWeightToCurrent()
@@ -304,10 +383,66 @@ float SpellRingSystem::totalEquippedWeight() const
     return total;
 }
 
+float SpellRingSystem::maxEquippedWeight() const
+{
+    return MaxSpellRingWeight;
+}
+
+int SpellRingSystem::maxItemCount() const
+{
+    return static_cast<int>(MaxSpellRingItems);
+}
+
 float SpellRingSystem::weightSpeedMultiplier() const
 {
     const float excessWeight = std::max(0.0f, totalEquippedWeight() - baseEquippedWeight_);
     return 1.0f / (1.0f + excessWeight * 0.035f);
+}
+
+bool SpellRingSystem::canPlaceItemAtAngle(const SpellRingItem&, float angle, int ignoreIndex) const
+{
+    const float candidate = quantizeAngle(angle);
+    for (std::size_t i = 0; i < items_.size(); ++i) {
+        if (static_cast<int>(i) == ignoreIndex) {
+            continue;
+        }
+        if (angleDistance(candidate, items_[i].localAngle) < ItemAngularSizeRadians - 0.0001f) {
+            return false;
+        }
+    }
+    return true;
+}
+
+std::optional<float> SpellRingSystem::findBestPlacementAngle(const SpellRingItem& item, int ignoreIndex) const
+{
+    if (items_.empty() || (items_.size() == 1 && ignoreIndex == 0)) {
+        return 0.0f;
+    }
+
+    std::optional<float> bestAngle;
+    float bestDistance = -1.0f;
+    constexpr int StepCount = 72;
+    for (int step = 0; step < StepCount; ++step) {
+        const float candidate = static_cast<float>(step) * PlacementStepRadians;
+        if (!canPlaceItemAtAngle(item, candidate, ignoreIndex)) {
+            continue;
+        }
+
+        float nearestDistance = Pi * 2.0f;
+        for (std::size_t i = 0; i < items_.size(); ++i) {
+            if (static_cast<int>(i) == ignoreIndex) {
+                continue;
+            }
+            nearestDistance = std::min(nearestDistance, angleDistance(candidate, items_[i].localAngle));
+        }
+
+        if (!bestAngle || nearestDistance > bestDistance + 0.0001f) {
+            bestAngle = candidate;
+            bestDistance = nearestDistance;
+        }
+    }
+
+    return bestAngle;
 }
 
 }

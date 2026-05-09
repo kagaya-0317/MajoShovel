@@ -1,6 +1,7 @@
 #include "engine/Log.hpp"
 
 #include <cstdio>
+#include <mutex>
 #include <string>
 
 #ifdef _WIN32
@@ -16,6 +17,9 @@
 namespace majo {
 
 namespace {
+
+std::mutex SinkMutex;
+LogSink Sink;
 
 #ifdef _WIN32
 std::wstring utf8ToWide(std::string_view text)
@@ -35,10 +39,30 @@ std::wstring utf8ToWide(std::string_view text)
 }
 #endif
 
+void emitToSink(LogLevel level, std::string_view message)
+{
+    LogSink sink;
+    {
+        std::lock_guard<std::mutex> lock(SinkMutex);
+        sink = Sink;
+    }
+    if (sink) {
+        sink(level, message);
+    }
 }
 
-void logError(std::string_view message)
+}
+
+void setLogSink(LogSink sink)
 {
+    std::lock_guard<std::mutex> lock(SinkMutex);
+    Sink = std::move(sink);
+}
+
+void logMessage(LogLevel level, std::string_view message)
+{
+    emitToSink(level, message);
+
 #ifdef _WIN32
     HANDLE handle = GetStdHandle(STD_ERROR_HANDLE);
     DWORD mode = 0;
@@ -53,6 +77,21 @@ void logError(std::string_view message)
 
     std::fwrite(message.data(), 1, message.size(), stderr);
     std::fputc('\n', stderr);
+}
+
+void logInfo(std::string_view message)
+{
+    logMessage(LogLevel::Info, message);
+}
+
+void logWarning(std::string_view message)
+{
+    logMessage(LogLevel::Warning, message);
+}
+
+void logError(std::string_view message)
+{
+    logMessage(LogLevel::Error, message);
 }
 
 }

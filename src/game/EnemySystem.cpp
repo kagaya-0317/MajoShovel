@@ -239,6 +239,7 @@ EnemyEvent makeEnemyEvent(EnemyEventType type, const Enemy& enemy, std::string e
         .enemyId = enemy.enemyId,
         .enemyName = enemy.enemyName,
         .effectId = std::move(effectId),
+        .moneyDrop = enemy.moneyDrop,
     };
 }
 
@@ -442,6 +443,7 @@ void EnemySystem::applyDefinition(Enemy& enemy, const EnemyDefinition* definitio
     enemy.maxHp = balance.enemyHp + std::max(0, activeCount() / 12);
     enemy.hp = enemy.maxHp;
     enemy.xp = balance.enemyXp;
+    enemy.moneyDrop = 0;
     enemy.contactAttackPower = 1;
     enemy.contactDamageType = "physical";
 
@@ -497,6 +499,9 @@ void EnemySystem::applyDefinition(Enemy& enemy, const EnemyDefinition* definitio
     }
     if (definition->xp >= 0) {
         enemy.xp = definition->xp;
+    }
+    if (definition->money > 0) {
+        enemy.moneyDrop = definition->money;
     }
     if (definition->contactAttackPower >= 0) {
         enemy.contactAttackPower = definition->contactAttackPower;
@@ -1353,6 +1358,23 @@ int EnemySystem::consumePendingXp()
     const int xp = pendingXp_;
     pendingXp_ = 0;
     return xp;
+}
+
+void EnemySystem::clearTemporaryState()
+{
+    events_.clear();
+    pendingXp_ = 0;
+    for (Enemy& enemy : enemies_.items()) {
+        if (!enemy.active) {
+            continue;
+        }
+        enemy.status = EntityStatus{};
+        enemy.poisonDamageAccumulator = 0.0;
+        enemy.hitFlash = 0.0f;
+        enemy.knockbackVelocity = {};
+        enemy.knockbackTimer = 0.0f;
+        enemy.contactTimer = 0.0f;
+    }
 }
 
 std::string EnemySystem::debugEnemySummary() const

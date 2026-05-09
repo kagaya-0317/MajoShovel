@@ -10,6 +10,21 @@
 
 namespace majo {
 
+enum class LootChestKind {
+    Common,
+    Rare,
+    SuperRare,
+};
+
+struct ObjectLootWeights {
+    std::unordered_map<std::string, double> byColumn;
+
+    [[nodiscard]] double weightForColumn(std::string_view columnName) const;
+    [[nodiscard]] bool hasPositiveWeight() const;
+
+    bool operator==(const ObjectLootWeights&) const = default;
+};
+
 struct EffectSpec {
     std::string target;
     std::vector<std::string> effects;
@@ -36,6 +51,7 @@ struct ObjectDefinition {
     std::vector<std::string> tags;
     std::string effectText;
     std::vector<std::string> capturedBehaviorIds;
+    ObjectLootWeights lootWeights;
 
     bool operator==(const ObjectDefinition&) const = default;
 };
@@ -97,6 +113,14 @@ struct DbValidationIssue {
     bool operator==(const DbValidationIssue&) const = default;
 };
 
+struct LootWeightLoadStats {
+    std::size_t detectedColumnCount = 0;
+    std::size_t weightedItemCount = 0;
+    std::size_t warningCount = 0;
+
+    bool operator==(const LootWeightLoadStats&) const = default;
+};
+
 class ItemRegistry {
 public:
     void rebuild(std::vector<ItemData> items);
@@ -126,6 +150,7 @@ struct ObjectCatalog {
     std::vector<DbValidationIssue> validationIssues;
     std::vector<std::string> validationWarnings;
     ItemRegistry registry;
+    LootWeightLoadStats lootWeightStats;
 
     bool operator==(const ObjectCatalog&) const = default;
 };
@@ -141,6 +166,9 @@ bool parseSpecialTagDefinitions(const GoogleSheetTable& table, std::unordered_ma
 bool loadObjectCatalogFromGoogleSheet(const GoogleSheetSourceConfig& config, ObjectCatalog& outCatalog, std::string& outError);
 std::string effectCodeDisplayName(const ObjectCatalog& catalog, std::string_view code);
 std::string effectSummaryText(const ObjectCatalog& catalog, const std::vector<EffectSpec>& specs);
+std::string resolveLootWeightColumnName(std::string_view stageId, int depthRank, LootChestKind chestKind);
+std::string resolveLootWeightColumnName(std::string_view stageId, int depthRank, std::string_view chestKind);
+double lootWeightFor(const ObjectDefinition& object, std::string_view stageId, int depthRank, LootChestKind chestKind);
 std::string_view dbValidationSeverityName(DbValidationSeverity severity);
 std::string_view dbValidationCategoryName(DbValidationCategory category);
 

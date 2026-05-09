@@ -79,6 +79,25 @@ constexpr std::array<std::string_view, 9> AllowedDamageTypes = {
     "magic",
 };
 
+struct LootStageSpec {
+    std::string_view stageId;
+    std::string_view prefix;
+    int maxDepth = 0;
+};
+
+constexpr std::array<LootStageSpec, 4> LootStages = {{
+    {"stage_01_stardust", "ST", 3},
+    {"stage_02_junk_magic", "JK", 3},
+    {"stage_03_star_core", "SC", 3},
+    {"stage_04_astral_mine", "AS", 9},
+}};
+
+constexpr std::array<std::string_view, 3> LootChestPrefixes = {
+    "C",
+    "R",
+    "S",
+};
+
 struct DeprecatedName {
     std::string_view name;
     std::string_view replacement;
@@ -176,6 +195,71 @@ bool parseDoubleStrict(std::string_view text, double& value)
     return errno != ERANGE &&
         parsedEnd == copy.c_str() + copy.size() &&
         std::isfinite(value);
+}
+
+std::string_view lootChestPrefix(LootChestKind chestKind)
+{
+    switch (chestKind) {
+    case LootChestKind::Common:
+        return "C";
+    case LootChestKind::Rare:
+        return "R";
+    case LootChestKind::SuperRare:
+        return "S";
+    }
+    return {};
+}
+
+bool parseLootChestKind(std::string_view text, LootChestKind& outKind)
+{
+    const std::string normalized = trim(text);
+    if (equalsIgnoreCase(normalized, "C") ||
+        equalsIgnoreCase(normalized, "common") ||
+        equalsIgnoreCase(normalized, "normal") ||
+        equalsIgnoreCase(normalized, "common_chest") ||
+        equalsIgnoreCase(normalized, "normal_chest") ||
+        normalized == "\xE9\x80\x9A\xE5\xB8\xB8\xE5\xAE\x9D\xE7\xAE\xB1") {
+        outKind = LootChestKind::Common;
+        return true;
+    }
+    if (equalsIgnoreCase(normalized, "R") ||
+        equalsIgnoreCase(normalized, "rare") ||
+        equalsIgnoreCase(normalized, "rare_chest") ||
+        normalized == "\xE3\x83\xAC\xE3\x82\xA2\xE5\xAE\x9D\xE7\xAE\xB1") {
+        outKind = LootChestKind::Rare;
+        return true;
+    }
+    if (equalsIgnoreCase(normalized, "S") ||
+        equalsIgnoreCase(normalized, "super") ||
+        equalsIgnoreCase(normalized, "super_rare") ||
+        equalsIgnoreCase(normalized, "super_rare_chest") ||
+        normalized == "\xE8\xB6\x85\xE3\x83\xAC\xE3\x82\xA2\xE5\xAE\x9D\xE7\xAE\xB1") {
+        outKind = LootChestKind::SuperRare;
+        return true;
+    }
+    return false;
+}
+
+const LootStageSpec* findLootStageSpec(std::string_view stageId)
+{
+    const auto it = std::find_if(LootStages.begin(), LootStages.end(), [stageId](const LootStageSpec& spec) {
+        return spec.stageId == stageId;
+    });
+    return it != LootStages.end() ? &*it : nullptr;
+}
+
+std::vector<std::string> expectedLootWeightColumns()
+{
+    std::vector<std::string> columns;
+    columns.reserve(54);
+    for (const LootStageSpec& stage : LootStages) {
+        for (int depth = 1; depth <= stage.maxDepth; ++depth) {
+            for (std::string_view chest : LootChestPrefixes) {
+                columns.push_back(std::string(stage.prefix) + "_" + std::string(chest) + std::to_string(depth));
+            }
+        }
+    }
+    return columns;
 }
 
 bool headerMatches(std::string_view header, std::initializer_list<std::string_view> candidates)
@@ -542,6 +626,42 @@ double parseDoubleColumnOrDefault(
     return value;
 }
 
+bool isUnsetLootWeightCell(std::string_view text)
+{
+    const std::string value = trim(text);
+    return value.empty() ||
+        equalsIgnoreCase(value, "undefined") ||
+        equalsIgnoreCase(value, "null") ||
+        equalsIgnoreCase(value, "none") ||
+        value == "\xE6\x9C\xAA\xE5\xAE\x9A\xE7\xBE\xA9";
+}
+
+double parseLootWeightOrZero(
+    std::string_view text,
+    std::string_view columnName,
+    std::size_t rowIndex,
+    std::string_view itemId,
+    ObjectCatalog& catalog)
+{
+    if (isUnsetLootWeightCell(text)) {
+        return 0.0;
+    }
+
+    double value = 0.0;
+    if (!parseDoubleStrict(text, value)) {
+        ++catalog.lootWeightStats.warningCount;
+        addValidationIssue(
+            catalog,
+            DbValidationSeverity::Warning,
+            DbValidationCategory::NumericValue,
+            "Objects row " + std::to_string(rowIndex + 1) +
+                " item=\"" + std::string(itemId) + "\" loot weight " + std::string(columnName) +
+                ": invalid number \"" + trim(text) + "\"; using 0");
+        return 0.0;
+    }
+    return value;
+}
+
 struct ObjectColumns {
     int id = -1;
     int name = -1;
@@ -558,6 +678,7 @@ struct ObjectColumns {
     int weight = -1;
     int tags = -1;
     int effectText = -1;
+    std::vector<std::pair<std::string, int>> lootWeightColumns;
 };
 
 bool findObjectColumns(const GoogleSheetRow& headers, ObjectColumns& outColumns, std::string& outError)
@@ -578,6 +699,12 @@ bool findObjectColumns(const GoogleSheetRow& headers, ObjectColumns& outColumns,
     columns.weight = findColumn(headers, {HeaderWeight, "weight_kg", "weightKg", "weight"});
     columns.tags = findColumn(headers, {HeaderTags, "tags"});
     columns.effectText = findColumn(headers, {HeaderEffectText, "effect_text", "effectText", "effect"});
+    for (const std::string& columnName : expectedLootWeightColumns()) {
+        const int column = findColumn(headers, {std::string_view(columnName)});
+        if (column >= 0) {
+            columns.lootWeightColumns.emplace_back(columnName, column);
+        }
+    }
 
     if (columns.id < 0) {
         outError = "Objects sheet is missing the ID column";
@@ -797,6 +924,19 @@ std::size_t ItemRegistry::size() const
     return items_.size();
 }
 
+double ObjectLootWeights::weightForColumn(std::string_view columnName) const
+{
+    const auto it = byColumn.find(std::string(columnName));
+    return it != byColumn.end() && it->second > 0.0 ? it->second : 0.0;
+}
+
+bool ObjectLootWeights::hasPositiveWeight() const
+{
+    return std::any_of(byColumn.begin(), byColumn.end(), [](const auto& entry) {
+        return entry.second > 0.0;
+    });
+}
+
 std::string effectCodeDisplayName(const ObjectCatalog& catalog, std::string_view code)
 {
     const auto it = catalog.effectCodes.find(std::string(code));
@@ -818,6 +958,41 @@ std::string effectSummaryText(const ObjectCatalog& catalog, const std::vector<Ef
         }
     }
     return summary.empty() ? "-" : summary;
+}
+
+std::string resolveLootWeightColumnName(std::string_view stageId, int depthRank, LootChestKind chestKind)
+{
+    const LootStageSpec* stage = findLootStageSpec(stageId);
+    if (stage == nullptr || depthRank < 1) {
+        return {};
+    }
+
+    if (stage->prefix == std::string_view("AS") && depthRank > stage->maxDepth) {
+        depthRank = stage->maxDepth;
+    } else if (depthRank > stage->maxDepth) {
+        return {};
+    }
+
+    const std::string_view chestPrefix = lootChestPrefix(chestKind);
+    if (chestPrefix.empty()) {
+        return {};
+    }
+    return std::string(stage->prefix) + "_" + std::string(chestPrefix) + std::to_string(depthRank);
+}
+
+std::string resolveLootWeightColumnName(std::string_view stageId, int depthRank, std::string_view chestKind)
+{
+    LootChestKind parsedKind = LootChestKind::Common;
+    if (!parseLootChestKind(chestKind, parsedKind)) {
+        return {};
+    }
+    return resolveLootWeightColumnName(stageId, depthRank, parsedKind);
+}
+
+double lootWeightFor(const ObjectDefinition& object, std::string_view stageId, int depthRank, LootChestKind chestKind)
+{
+    const std::string columnName = resolveLootWeightColumnName(stageId, depthRank, chestKind);
+    return columnName.empty() ? 0.0 : object.lootWeights.weightForColumn(columnName);
 }
 
 bool parseEffectSpecs(
@@ -971,6 +1146,7 @@ bool parseObjectCatalog(const GoogleSheetTable& table, ObjectCatalog& outCatalog
         outCatalog = catalog;
         return false;
     }
+    catalog.lootWeightStats.detectedColumnCount = columns.lootWeightColumns.size();
 
     std::unordered_set<std::string> ids;
     for (std::size_t rowIndex = 1; rowIndex < table.rows.size(); ++rowIndex) {
@@ -1032,6 +1208,16 @@ bool parseObjectCatalog(const GoogleSheetTable& table, ObjectCatalog& outCatalog
         item.digPower = parseIntColumnOrDefault(cellAt(row, columns.digPower), 0, "dig power", rowIndex, item.id, catalog, 0, 2'147'483'647);
         item.durability = parseIntColumnOrDefault(cellAt(row, columns.durability), 0, "durability", rowIndex, item.id, catalog, -1, 2'147'483'647);
         item.weightKg = parseDoubleColumnOrDefault(cellAt(row, columns.weight), 0.0, "weight", rowIndex, item.id, catalog, 0.0);
+
+        for (const auto& [columnName, columnIndex] : columns.lootWeightColumns) {
+            const double weight = parseLootWeightOrZero(cellAt(row, columnIndex), columnName, rowIndex, item.id, catalog);
+            if (weight > 0.0) {
+                item.lootWeights.byColumn[columnName] = weight;
+            }
+        }
+        if (item.lootWeights.hasPositiveWeight()) {
+            ++catalog.lootWeightStats.weightedItemCount;
+        }
 
         std::string effectError;
         std::vector<std::string> effectWarnings;

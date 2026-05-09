@@ -20,6 +20,7 @@ struct EnemyDefinition {
     double moveSpeed = 0.0;
     double radius = 0.0;
     int xp = 0;
+    int money = 0;
     std::string enemyAi;
     std::vector<std::string> enemyBehaviorIds;
     std::vector<std::string> enemyTags;

@@ -17,21 +17,8 @@ namespace majo {
 
 class EffectDispatcher;
 
-enum class InventoryItemType {
-    Dirt,
-    Stone,
-    Ore,
-    Count
-};
-
-struct InventoryStack {
-    InventoryItemType type = InventoryItemType::Dirt;
-    int count = 0;
-};
-
 struct ShortcutSlot {
     bool assigned = false;
-    InventoryItemType type = InventoryItemType::Dirt;
 };
 
 struct InventoryObjectStack : StackItem {
@@ -52,7 +39,6 @@ struct InventoryObjectInstance {
 
 class InventorySystem {
 public:
-    void addFromDugTile(TileType type);
     bool addObjectItem(const ObjectCatalog& catalog, std::string_view objectId);
     bool addRuntimeObjectItem(const ItemData& item);
     void updateShortcuts(const Input& input, Player& player, SpellRingSystem& spellRing, const EffectDispatcher& effectDispatcher);
@@ -63,8 +49,6 @@ public:
     bool isOpen() const { return open_; }
     void setOpen(bool open) { open_ = open; }
     void cancelGrab();
-    int itemCount(InventoryItemType type) const;
-    void setItemCount(InventoryItemType type, int count);
     const std::vector<InventoryObjectStack>& objectStacks() const { return objectStacks_; }
     std::vector<StackItem> stackItemsForSave() const;
     const std::vector<InventoryObjectInstance>& objectInstances() const { return objectInstances_; }
@@ -85,14 +69,10 @@ public:
     int materialCount(MaterialType type) const;
 
 private:
-    static constexpr int ItemCount = static_cast<int>(InventoryItemType::Count);
     static constexpr int ShortcutColumns = 8;
     static constexpr int ShortcutRows = 3;
     static constexpr int ShortcutSlotCount = ShortcutColumns * ShortcutRows;
 
-    InventoryStack& stack(InventoryItemType type);
-    const InventoryStack& stack(InventoryItemType type) const;
-    InventoryItemType selectedType() const;
     const ShortcutSlot& selectedShortcutSlot() const;
     ShortcutSlot& selectedShortcutSlot();
     const InventoryObjectStack* objectStackAtScreenIndex(int index) const;
@@ -110,30 +90,17 @@ private:
     void toggleShortcutRow();
     void grabOrPlaceSelected();
     void placeGrabbedAtSelected();
-    bool useItemType(InventoryItemType type, Player& player, SpellRingSystem& spellRing);
-    bool addItemTypeToRing(InventoryItemType type, SpellRingSystem& spellRing);
     bool addObjectSelectionToRing(SpellRingSystem& spellRing);
     bool addObjectInstanceSelectionToRing(SpellRingSystem& spellRing);
     bool useObjectSelection(Player& player, const EffectDispatcher& effectDispatcher);
     bool useObjectInstanceSelection(Player& player, const EffectDispatcher& effectDispatcher);
     bool useShortcutSelection(Player& player, SpellRingSystem& spellRing, const EffectDispatcher& effectDispatcher);
     bool addShortcutSelectionToRing(SpellRingSystem& spellRing);
-    bool useSelected(Player& player, SpellRingSystem& spellRing);
-    bool addSelectedToRing(SpellRingSystem& spellRing);
     std::string allocateInstanceId();
     InventoryObjectInstance createObjectInstance(const ItemData& item);
     void toggleSelectedProtection();
 
-    std::array<InventoryStack, ItemCount> stacks_{{
-        {InventoryItemType::Dirt, 0},
-        {InventoryItemType::Stone, 0},
-        {InventoryItemType::Ore, 0},
-    }};
-    std::array<ShortcutSlot, ShortcutSlotCount> shortcutSlots_{{
-        {true, InventoryItemType::Dirt},
-        {true, InventoryItemType::Stone},
-        {true, InventoryItemType::Ore},
-    }};
+    std::array<ShortcutSlot, ShortcutSlotCount> shortcutSlots_{};
     std::vector<InventoryObjectStack> objectStacks_;
     std::vector<InventoryObjectInstance> objectInstances_;
     MaterialInventory materials_;
@@ -147,10 +114,5 @@ private:
     bool open_ = false;
     std::string status_ = "アイテムなし";
 };
-
-const char* inventoryItemName(InventoryItemType type);
-const char* inventoryItemUseText(InventoryItemType type);
-int inventoryItemIcon(InventoryItemType type);
-Color inventoryItemColor(InventoryItemType type);
 
 }

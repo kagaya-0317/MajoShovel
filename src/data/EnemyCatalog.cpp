@@ -301,6 +301,7 @@ struct EnemyColumns {
     int moveSpeed = -1;
     int radius = -1;
     int xp = -1;
+    int money = -1;
     int enemyAi = -1;
     int enemyBehaviorId = -1;
     int enemyTags = -1;
@@ -331,6 +332,7 @@ bool findEnemyColumns(const GoogleSheetRow& headers, EnemyColumns& outColumns, s
     columns.moveSpeed = findColumn(headers, {"移動速度", "move_speed"});
     columns.radius = findColumn(headers, {"半径", "radius"});
     columns.xp = findColumn(headers, {"経験値", "xp"});
+    columns.money = findColumn(headers, {"お金", "money"});
     columns.enemyAi = findColumn(headers, {"敵AI", "enemy_ai"});
     columns.enemyBehaviorId = findColumn(headers, {"敵挙動ID", "enemy_behavior_id"});
     columns.enemyTags = findColumn(headers, {"敵特殊タグ", "enemy_tags"});
@@ -556,6 +558,7 @@ bool parseEnemies(
         enemy.moveSpeed = parseDoubleColumnOrDefault(cellAt(row, columns.moveSpeed), 0.0, "Enemies", rowIndex, enemy.id, "移動速度", catalog);
         enemy.radius = parseDoubleColumnOrDefault(cellAt(row, columns.radius), 0.0, "Enemies", rowIndex, enemy.id, "半径", catalog);
         enemy.xp = parseIntColumnOrDefault(cellAt(row, columns.xp), 0, "Enemies", rowIndex, enemy.id, "経験値", catalog);
+        enemy.money = parseIntColumnOrDefault(cellAt(row, columns.money), 0, "Enemies", rowIndex, enemy.id, "お金", catalog);
         enemy.enemyAi = cellAt(row, columns.enemyAi);
         enemy.enemyBehaviorIds = parseDelimitedValues(cellAt(row, columns.enemyBehaviorId));
         enemy.enemyTags = parseDelimitedValues(cellAt(row, columns.enemyTags));

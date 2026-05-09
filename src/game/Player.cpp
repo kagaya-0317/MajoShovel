@@ -11,11 +11,11 @@ namespace majo {
 int playerSpriteFrameIndex(float animationTime, bool walking)
 {
     constexpr float TargetFps = 60.0f;
-    constexpr std::array<int, 4> IdleFrames{0, 1, 2, 1};
+    constexpr std::array<int, 3> IdleFrames{0, 1, 2};
     constexpr int WalkFrameStart = 3;
     constexpr int WalkFrameCount = 6;
     constexpr float IdleFrameDuration = 12.0f / TargetFps;
-    constexpr float WalkFrameDuration = 8.0f / TargetFps;
+    constexpr float WalkFrameDuration = 6.0f / TargetFps;
 
     const float frameDuration = walking ? WalkFrameDuration : IdleFrameDuration;
     const int step = static_cast<int>(std::floor(std::max(0.0f, animationTime) / frameDuration));

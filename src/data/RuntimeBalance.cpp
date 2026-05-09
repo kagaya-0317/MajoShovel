@@ -108,6 +108,36 @@ bool applyRuntimeBalanceValues(const std::unordered_map<std::string, std::string
     if (!setFloat("enemy_separation_strength", loaded.enemySeparationStrength)) return false;
     if (!setInt("xp_base", loaded.xpBase)) return false;
     if (!setInt("xp_per_level", loaded.xpPerLevel)) return false;
+    if (!setInt("world_drop_limit_per_stage", loaded.worldDropLimitPerStage)) return false;
+    if (!setFloat("loot_money_chance", loaded.lootMoneyChance)) return false;
+    if (!setFloat("loot_material_chance", loaded.lootMaterialChance)) return false;
+    if (!setFloat("loot_stage_multiplier_ST", loaded.lootStageMultiplierST)) return false;
+    if (!setFloat("loot_stage_multiplier_JK", loaded.lootStageMultiplierJK)) return false;
+    if (!setFloat("loot_stage_multiplier_SC", loaded.lootStageMultiplierSC)) return false;
+    if (!setFloat("loot_stage_multiplier_AS", loaded.lootStageMultiplierAS)) return false;
+    if (!setFloat("loot_depth_multiplier_1", loaded.lootDepthMultiplier[0])) return false;
+    if (!setFloat("loot_depth_multiplier_2", loaded.lootDepthMultiplier[1])) return false;
+    if (!setFloat("loot_depth_multiplier_3", loaded.lootDepthMultiplier[2])) return false;
+    if (!setFloat("loot_depth_multiplier_AS_1", loaded.lootDepthMultiplierAS[0])) return false;
+    if (!setFloat("loot_depth_multiplier_AS_2", loaded.lootDepthMultiplierAS[1])) return false;
+    if (!setFloat("loot_depth_multiplier_AS_3", loaded.lootDepthMultiplierAS[2])) return false;
+    if (!setFloat("loot_depth_multiplier_AS_4", loaded.lootDepthMultiplierAS[3])) return false;
+    if (!setFloat("loot_depth_multiplier_AS_5", loaded.lootDepthMultiplierAS[4])) return false;
+    if (!setFloat("loot_depth_multiplier_AS_6", loaded.lootDepthMultiplierAS[5])) return false;
+    if (!setFloat("loot_depth_multiplier_AS_7", loaded.lootDepthMultiplierAS[6])) return false;
+    if (!setFloat("loot_depth_multiplier_AS_8", loaded.lootDepthMultiplierAS[7])) return false;
+    if (!setFloat("loot_depth_multiplier_AS_9", loaded.lootDepthMultiplierAS[8])) return false;
+    if (!setFloat("loot_grade_multiplier_C", loaded.lootGradeMultiplierC)) return false;
+    if (!setFloat("loot_grade_multiplier_R", loaded.lootGradeMultiplierR)) return false;
+    if (!setFloat("loot_grade_multiplier_S", loaded.lootGradeMultiplierS)) return false;
+    if (!setFloat("crate_money_chance", loaded.crateMoneyChance)) return false;
+    if (!setFloat("crate_bonus_chance", loaded.crateBonusChance)) return false;
+    if (!setFloat("enemy_mana_drop_chance", loaded.enemyManaDropChance)) return false;
+    if (!setFloat("enemy_moon_fragment_chance", loaded.enemyMoonFragmentChance)) return false;
+    if (!setFloat("boss_mana_drop_chance", loaded.bossManaDropChance)) return false;
+    if (!setFloat("boss_moon_fragment_chance", loaded.bossMoonFragmentChance)) return false;
+    if (!setInt("ore_material_min", loaded.oreMaterialMin)) return false;
+    if (!setInt("ore_material_max", loaded.oreMaterialMax)) return false;
 
     loaded.playerSpeed = std::max(1.0f, loaded.playerSpeed);
     loaded.playerRadius = std::max(1.0f, loaded.playerRadius);
@@ -128,6 +158,30 @@ bool applyRuntimeBalanceValues(const std::unordered_map<std::string, std::string
     loaded.enemySeparationStrength = std::max(0.0f, loaded.enemySeparationStrength);
     loaded.xpBase = std::max(1, loaded.xpBase);
     loaded.xpPerLevel = std::max(0, loaded.xpPerLevel);
+    loaded.worldDropLimitPerStage = std::max(0, loaded.worldDropLimitPerStage);
+    loaded.lootMoneyChance = std::clamp(loaded.lootMoneyChance, 0.0f, 1.0f);
+    loaded.lootMaterialChance = std::clamp(loaded.lootMaterialChance, 0.0f, 1.0f);
+    loaded.lootStageMultiplierST = std::max(0.0f, loaded.lootStageMultiplierST);
+    loaded.lootStageMultiplierJK = std::max(0.0f, loaded.lootStageMultiplierJK);
+    loaded.lootStageMultiplierSC = std::max(0.0f, loaded.lootStageMultiplierSC);
+    loaded.lootStageMultiplierAS = std::max(0.0f, loaded.lootStageMultiplierAS);
+    for (float& value : loaded.lootDepthMultiplier) {
+        value = std::max(0.0f, value);
+    }
+    for (float& value : loaded.lootDepthMultiplierAS) {
+        value = std::max(0.0f, value);
+    }
+    loaded.lootGradeMultiplierC = std::max(0.0f, loaded.lootGradeMultiplierC);
+    loaded.lootGradeMultiplierR = std::max(0.0f, loaded.lootGradeMultiplierR);
+    loaded.lootGradeMultiplierS = std::max(0.0f, loaded.lootGradeMultiplierS);
+    loaded.crateMoneyChance = std::clamp(loaded.crateMoneyChance, 0.0f, 1.0f);
+    loaded.crateBonusChance = std::clamp(loaded.crateBonusChance, 0.0f, 1.0f);
+    loaded.enemyManaDropChance = std::clamp(loaded.enemyManaDropChance, 0.0f, 1.0f);
+    loaded.enemyMoonFragmentChance = std::clamp(loaded.enemyMoonFragmentChance, 0.0f, 1.0f);
+    loaded.bossManaDropChance = std::clamp(loaded.bossManaDropChance, 0.0f, 1.0f);
+    loaded.bossMoonFragmentChance = std::clamp(loaded.bossMoonFragmentChance, 0.0f, 1.0f);
+    loaded.oreMaterialMin = std::max(1, loaded.oreMaterialMin);
+    loaded.oreMaterialMax = std::max(loaded.oreMaterialMin, loaded.oreMaterialMax);
 
     outBalance = loaded;
     outError.clear();

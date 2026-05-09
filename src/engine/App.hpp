@@ -4,6 +4,7 @@
 #include "engine/Input.hpp"
 #include "engine/Renderer.hpp"
 #include "engine/Time.hpp"
+#include "debug/DebugConsole.hpp"
 #include "game/Game.hpp"
 #include <SDL3/SDL.h>
 #include <string>
@@ -25,6 +26,7 @@ private:
     void checkAssetHotReload();
     bool reloadAssetForPath(const std::string& changedPath);
     void toggleFullscreen();
+    void executeDebugCommand(const std::string& command);
 
     SDL_Window* window_ = nullptr;
     SDL_Renderer* sdlRenderer_ = nullptr;
@@ -32,6 +34,7 @@ private:
     Input input_;
     Time time_;
     FileWatcher assetWatcher_;
+    DebugConsole debugConsole_;
     Game game_;
     bool running_ = false;
     bool testPlayMode_ = false;

@@ -32,6 +32,7 @@ struct Enemy {
     int hp = 5;
     int maxHp = 5;
     int xp = 5;
+    int moneyDrop = 0;
     int contactAttackPower = 1;
     std::string contactDamageType = "physical";
     float contactTimer = 0.0f;

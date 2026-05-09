@@ -7,6 +7,7 @@
 #include "game/OrbitModifiers.hpp"
 #include "game/SpellRingItem.hpp"
 #include "game/Player.hpp"
+#include <optional>
 #include <vector>
 
 namespace majo {
@@ -31,9 +32,13 @@ public:
     void upgradeShovelPower(int amount);
     void upgradeItemDamage(int amount);
     bool addItem(SpellRingItemType type);
+    bool addItem(SpellRingItem item);
     bool addObjectItem(const ItemData& item);
     bool addObjectItem(const ItemData& item, const ItemInstance& instance);
     bool canAddItem() const;
+    bool canAddItem(const SpellRingItem& item) const;
+    bool moveItemAngle(int index, float deltaRadians);
+    void normalizeItemPlacements();
     void switchActiveRing(int delta);
     void applyObjectParameters(const ObjectCatalog& catalog);
     void removeBrokenItems();
@@ -46,6 +51,8 @@ public:
     float angularSpeed() const { return angularSpeed_; }
     float effectiveAngularSpeed() const;
     float totalEquippedWeight() const;
+    float maxEquippedWeight() const;
+    int maxItemCount() const;
     float weightSpeedMultiplier() const;
     double effectivePowerMultiplier() const { return orbitModifiers_.powerMultiplier; }
     double effectiveGravityMultiplier() const { return orbitModifiers_.gravityMultiplier; }
@@ -72,6 +79,9 @@ private:
     int activeRingIndex_ = 0;
     OrbitModifiers orbitModifiers_{};
     SpellRingState state_ = SpellRingState::Normal;
+
+    bool canPlaceItemAtAngle(const SpellRingItem& item, float angle, int ignoreIndex = -1) const;
+    std::optional<float> findBestPlacementAngle(const SpellRingItem& item, int ignoreIndex = -1) const;
 };
 
 }

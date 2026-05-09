@@ -36,6 +36,7 @@ struct EnemyEvent {
     std::string enemyId;
     std::string enemyName;
     std::string effectId;
+    int moneyDrop = 0;
 };
 
 enum class CaptureResultType {
@@ -87,6 +88,7 @@ public:
     void applyCapturedExplosion(Vec2 position, SpellRingSystem& spellRing, int damage);
     int pullMetalEnemies(Vec2 center, TileMap& map, float dt);
     int consumePendingXp();
+    void clearTemporaryState();
 
 private:
     const EnemyDefinition* chooseEnemyDefinition(const EnemyCatalog& enemyCatalog);

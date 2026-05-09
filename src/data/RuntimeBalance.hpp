@@ -1,6 +1,7 @@
 #pragma once
 
 #include "data/GameBalance.hpp"
+#include <array>
 #include <filesystem>
 #include <string>
 #include <string_view>
@@ -38,6 +39,26 @@ struct RuntimeBalance {
 
     int xpBase = balance::XpBase;
     int xpPerLevel = balance::XpPerLevel;
+    int worldDropLimitPerStage = 300;
+    float lootMoneyChance = 0.30f;
+    float lootMaterialChance = 0.30f;
+    float lootStageMultiplierST = 1.0f;
+    float lootStageMultiplierJK = 1.2f;
+    float lootStageMultiplierSC = 1.5f;
+    float lootStageMultiplierAS = 1.0f;
+    std::array<float, 3> lootDepthMultiplier{1.0f, 1.3f, 1.7f};
+    std::array<float, 9> lootDepthMultiplierAS{1.0f, 1.1f, 1.2f, 1.4f, 1.7f, 2.0f, 2.4f, 2.9f, 3.5f};
+    float lootGradeMultiplierC = 1.0f;
+    float lootGradeMultiplierR = 1.8f;
+    float lootGradeMultiplierS = 3.0f;
+    float crateMoneyChance = 0.30f;
+    float crateBonusChance = 0.30f;
+    float enemyManaDropChance = 0.10f;
+    float enemyMoonFragmentChance = 0.01f;
+    float bossManaDropChance = 0.80f;
+    float bossMoonFragmentChance = 0.15f;
+    int oreMaterialMin = 1;
+    int oreMaterialMax = 3;
 
     bool operator==(const RuntimeBalance&) const = default;
 };

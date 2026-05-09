@@ -27,7 +27,10 @@
 #include "game/WorldDropSystem.hpp"
 
 #include <optional>
+#include <random>
 #include <string>
+#include <string_view>
+#include <unordered_map>
 #include <vector>
 
 namespace majo {
@@ -65,6 +68,7 @@ public:
     void resize(int width, int height);
     void update(const Input& input, const Time& time);
     void render(Renderer& renderer, const Time& time);
+    bool executeDebugCommand(std::string_view command);
     bool quitRequested() const { return quitRequested_; }
 
 private:
@@ -118,6 +122,27 @@ private:
         bool collected = false;
     };
 
+    struct MoonFragmentNode {
+        DungeonTile tile{};
+        PlacementVisibility visibility = PlacementVisibility::Exposed;
+        bool collected = false;
+    };
+
+    struct ChestNode {
+        DungeonTile tile{};
+        PlacementVisibility visibility = PlacementVisibility::Exposed;
+        LootChestKind chestKind = LootChestKind::Common;
+        int depthRank = 1;
+        bool revealed = false;
+        bool opened = false;
+    };
+
+    struct CrateNode {
+        DungeonTile tile{};
+        int depthRank = 1;
+        bool destroyed = false;
+    };
+
     enum class EnemyPlacementType {
         Exposed,
         BuriedHidden,
@@ -146,12 +171,40 @@ private:
         std::vector<WarpPoint> warpPoints;
         std::vector<RewardNode> rewardNodes;
         std::vector<MoneyNode> moneyNodes;
+        std::vector<MoonFragmentNode> moonFragmentNodes;
+        std::vector<ChestNode> chestNodes;
+        std::vector<CrateNode> crateNodes;
         std::vector<EnemyNode> enemyNodes;
+        EnemySystem enemies;
+        WorldDropSystem worldDrops;
         int spawnedWarpPointCount = 0;
         int unlockedWarpPointCount = 0;
         Vec2 bossSpawnPoint{};
         bool hasBossSpawnPoint = false;
+        bool bossSpawned = false;
         bool valid = false;
+    };
+
+    struct DungeonState {
+        bool valid = false;
+        int currentStage = 0;
+        std::string currentStageId;
+        TileMap tileMap;
+        DungeonLayout dungeonLayout;
+        RunStats runStats{};
+        std::vector<WarpPoint> warpPoints;
+        std::vector<RewardNode> rewardNodes;
+        std::vector<MoneyNode> moneyNodes;
+        std::vector<MoonFragmentNode> moonFragmentNodes;
+        std::vector<ChestNode> chestNodes;
+        std::vector<CrateNode> crateNodes;
+        std::vector<EnemyNode> enemyNodes;
+        EnemySystem enemies;
+        WorldDropSystem worldDrops;
+        int spawnedWarpPointCount = 0;
+        Vec2 bossSpawnPoint{};
+        bool hasBossSpawnPoint = false;
+        bool bossSpawned = false;
     };
 
     enum class StorageEntryKind {
@@ -183,7 +236,7 @@ private:
 
     void initializeWorld(bool captureRunStartInventory = true);
     void enterBase();
-    void startMiningFromBase(bool useLatestWarpPoint);
+    void startMiningFromBase(bool useLatestWarpPoint, bool forceRegenerate = false);
     void applyPermanentUpgrades();
     float effectiveInitialRingRadius(int levelRadiusPoints) const;
     float effectiveInitialRingSpeed(int levelSpeedPoints) const;
@@ -294,14 +347,29 @@ private:
     Vec2 latestWarpPointStartPosition() const;
     void rebuildUnlockedWarpPointsForStart(Vec2 latestPosition);
     void resetWarpPointRunState();
+    void captureDungeonState();
+    bool restoreDungeonState(bool useLatestWarpPoint);
+    bool canRegenerateCurrentStage() const;
+    std::size_t retainedWorldDropCountForCurrentStage() const;
     void initializeWarpPointsFromLayout();
     int discoveredWarpPointCount() const;
     std::vector<WarpPoint> discoveredWarpPoints() const;
     int nearestWarpPointIndex(Vec2 position) const;
     void updateWarpPoints();
+    void initializeMoonFragmentNodesFromWarpPoints();
     void initializeRewardNodesFromLayout();
     void updateExposedRewardNodes();
     void revealRewardNodesFromOpenedTiles(const std::vector<Vec2>& openedTiles);
+    void updateExposedMoonFragmentNodes();
+    void revealMoonFragmentNodesFromOpenedTiles(const std::vector<Vec2>& openedTiles);
+    void initializeChestNodesFromLayout();
+    void updateChestNodes(const Input& input);
+    void revealChestNodesFromOpenedTiles(const std::vector<Vec2>& openedTiles);
+    void openChestNode(ChestNode& node);
+    void initializeCrateNodesFromLayout();
+    void updateCrateNodes();
+    void destroyCrateNode(CrateNode& node);
+    bool spawnWeightedObjectLoot(LootChestKind chestKind, int depthRank, Vec2 center, std::mt19937& rng, std::string_view sourceLabel);
     int rewardNodeCount() const;
     int moneyNodeCount() const;
     int buriedVisibleNodeCount() const;
@@ -324,6 +392,8 @@ private:
     bool saveSaveData(std::string& message) const;
     bool gameProgressPaused() const;
     bool basePresentationActive() const;
+    std::string currentMapDisplayName() const;
+    void renderTopInfoBar(Renderer& renderer) const;
     void renderBaseScreen(Renderer& renderer) const;
     void renderBookshelfScreen(Renderer& renderer) const;
     void renderPauseMenu(Renderer& renderer) const;
@@ -401,9 +471,13 @@ private:
     std::string stageClearStatus_;
     InventoryCarryState runStartInventoryState_{};
     RetrySnapshot retrySnapshot_{};
+    std::unordered_map<std::string, DungeonState> dungeonStates_;
     std::vector<WarpPoint> warpPoints_;
     std::vector<RewardNode> rewardNodes_;
     std::vector<MoneyNode> moneyNodes_;
+    std::vector<MoonFragmentNode> moonFragmentNodes_;
+    std::vector<ChestNode> chestNodes_;
+    std::vector<CrateNode> crateNodes_;
     std::vector<EnemyNode> enemyNodes_;
     int spawnedWarpPointCount_ = 0;
     Vec2 bossSpawnPoint_{};
@@ -415,6 +489,7 @@ private:
     int unlockedWarpPointCount_ = 0;
     Vec2 latestWarpPointPosition_{};
     bool hasLatestWarpPointPosition_ = false;
+    bool baseRegenerateConfirmActive_ = false;
     int money_ = 0;
     int maxHpUpgradeLevel_ = 0;
     int ringRadiusUpgradeLevel_ = 0;

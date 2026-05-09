@@ -30,7 +30,7 @@ constexpr int TorchIconIndex = 1;
 constexpr float IconDrawSize = 32.0f;
 constexpr float PlayerSpriteDrawSize = 96.0f;
 constexpr int BaseMenuItemCount = 8;
-constexpr int BaseMiningStartChoiceCount = 2;
+constexpr int BaseMiningStartChoiceCount = 3;
 constexpr int BaseUpgradeItemCount = 8;
 constexpr int BaseProcessingModeCount = 4;
 constexpr int BaseRingWorkshopItemCount = 10;
@@ -44,12 +44,12 @@ constexpr int PauseMenuItemCount = 5;
 constexpr int GameOverItemCount = 2;
 constexpr int StageClearItemCount = 1;
 constexpr int RingCount = 3;
-constexpr int RingSlotCount = 8;
-constexpr int RingSlotColumns = 4;
-constexpr float RingDetailX = 864.0f;
-constexpr float RingDetailY = 108.0f;
+constexpr int UnlockedRingCount = 1;
+constexpr float RingAngleStep = Pi / 36.0f;
 constexpr float RingDetailW = 330.0f;
-constexpr float RingDetailH = 520.0f;
+constexpr float DetailOuterRightMargin = 42.0f;
+constexpr float DetailOuterTopMargin = 50.0f;
+constexpr float DetailOuterBottomMargin = 40.0f;
 constexpr float WarpPointSpacing = 320.0f;
 constexpr float WarpPointTouchRadius = 28.0f;
 constexpr int MaxWarpPointsPerRun = 8;
@@ -67,10 +67,95 @@ constexpr float CapturedExplosionTileRadius = 28.0f;
 constexpr int CapturedExplosionTileDamage = 1;
 constexpr int CapturedExplosionEnemyDamage = 3;
 constexpr float RewardPickupRadius = 24.0f;
+constexpr float MoonFragmentPickupRadius = 24.0f;
+constexpr int MoonFragmentMinPerWarpPoint = 1;
+constexpr int MoonFragmentMaxPerWarpPoint = 3;
 constexpr int RewardNodeCountPerRun = 12;
 constexpr int MoneyNodeCountPerRun = 18;
-constexpr int EnemyNodeCountPerRun = 14;
+constexpr int ChestNodeCountPerRun = 18;
+constexpr int CrateNodeCountPerRun = 30;
+constexpr float ChestInteractRadius = 34.0f;
+constexpr float ChestHitRadius = 20.0f;
+constexpr float CrateHitRadius = 18.0f;
+constexpr int EnemyNodeCountPerRun = 7;
 constexpr float ExposedEnemyNodeSpawnRadius = 820.0f;
+constexpr float TopInfoBarX = 0.0f;
+constexpr float TopInfoBarY = 0.0f;
+constexpr float TopInfoBarHeight = 42.0f;
+constexpr float TopInfoBarPaddingX = 14.0f;
+constexpr float TopInfoBarGroupGap = 22.0f;
+constexpr float TopInfoBarIconSize = 18.0f;
+constexpr float TopInfoBarIconTextGap = 7.0f;
+
+struct TopInfoMaterial {
+    MaterialType type = MaterialType::OldWoodBuildingMaterial;
+};
+
+Color materialCounterFill(MaterialType type)
+{
+    switch (type) {
+    case MaterialType::OldWoodBuildingMaterial:
+        return {154, 104, 58, 255};
+    case MaterialType::EnhancementOre:
+        return {92, 132, 198, 255};
+    case MaterialType::MoonFragment:
+        return {230, 218, 142, 255};
+    case MaterialType::ManaDrop:
+        return {104, 212, 218, 255};
+    case MaterialType::Count:
+        break;
+    }
+    return {180, 180, 188, 255};
+}
+
+Color materialCounterOutline(MaterialType type)
+{
+    switch (type) {
+    case MaterialType::OldWoodBuildingMaterial:
+        return {224, 174, 108, 255};
+    case MaterialType::EnhancementOre:
+        return {166, 202, 255, 255};
+    case MaterialType::MoonFragment:
+        return {255, 246, 184, 255};
+    case MaterialType::ManaDrop:
+        return {174, 252, 255, 255};
+    case MaterialType::Count:
+        break;
+    }
+    return {230, 230, 238, 255};
+}
+
+std::string popUtf8Codepoint(std::string text)
+{
+    if (text.empty()) {
+        return text;
+    }
+    text.pop_back();
+    while (!text.empty() && (static_cast<unsigned char>(text.back()) & 0xc0U) == 0x80U) {
+        text.pop_back();
+    }
+    return text;
+}
+
+std::string fittedSingleLineText(Renderer& renderer, std::string text, float maxWidth, int scale)
+{
+    if (maxWidth <= 0.0f) {
+        return "";
+    }
+    if (renderer.measureText(text, scale).x <= maxWidth) {
+        return text;
+    }
+
+    constexpr std::string_view Ellipsis = "...";
+    while (!text.empty()) {
+        text = popUtf8Codepoint(std::move(text));
+        std::string candidate = text + std::string(Ellipsis);
+        if (renderer.measureText(candidate, scale).x <= maxWidth) {
+            return candidate;
+        }
+    }
+    return renderer.measureText(Ellipsis, scale).x <= maxWidth ? std::string(Ellipsis) : "";
+}
 
 std::string lowerAscii(std::string text)
 {
@@ -83,6 +168,14 @@ std::string lowerAscii(std::string text)
 std::string filenameOf(const std::string& path)
 {
     return lowerAscii(std::filesystem::path(path).filename().string());
+}
+
+std::string trimAscii(std::string text)
+{
+    auto isSpace = [](unsigned char c) { return std::isspace(c) != 0; };
+    text.erase(text.begin(), std::find_if_not(text.begin(), text.end(), isSpace));
+    text.erase(std::find_if_not(text.rbegin(), text.rend(), isSpace).base(), text.end());
+    return text;
 }
 
 enum class BaseFacilityAction {
@@ -199,9 +292,191 @@ std::optional<std::string> firstAvailableObjectId(const ObjectCatalog& catalog)
     return std::nullopt;
 }
 
+const char* chestKindCode(LootChestKind kind)
+{
+    switch (kind) {
+    case LootChestKind::Common: return "C";
+    case LootChestKind::Rare: return "R";
+    case LootChestKind::SuperRare: return "S";
+    }
+    return "C";
+}
+
+LootChestKind rollChestKind(std::mt19937& rng, float pathProgress)
+{
+    const float progress = clamp(pathProgress, 0.0f, 1.0f);
+    const int rareWeight = 18 + static_cast<int>(progress * 10.0f);
+    const int superRareWeight = 4 + static_cast<int>(progress * 4.0f);
+    const int commonWeight = std::max(1, 100 - rareWeight - superRareWeight);
+    std::discrete_distribution<int> distribution({
+        static_cast<double>(commonWeight),
+        static_cast<double>(rareWeight),
+        static_cast<double>(superRareWeight),
+    });
+    const int roll = distribution(rng);
+    if (roll == 1) {
+        return LootChestKind::Rare;
+    }
+    if (roll == 2) {
+        return LootChestKind::SuperRare;
+    }
+    return LootChestKind::Common;
+}
+
+int lootMaxDepthForStage(std::string_view stageId)
+{
+    return stageId == std::string_view("stage_04_astral_mine") ? 9 : 3;
+}
+
+int lootDepthRankForProgress(std::string_view stageId, float pathProgress)
+{
+    const int maxDepth = lootMaxDepthForStage(stageId);
+    const float progress = clamp(pathProgress, 0.0f, 0.9999f);
+    return std::clamp(static_cast<int>(progress * static_cast<float>(maxDepth)) + 1, 1, maxDepth);
+}
+
+float lootStageMultiplier(const RuntimeBalance& balance, std::string_view stageId)
+{
+    if (stageId == std::string_view("stage_02_junk_magic")) {
+        return balance.lootStageMultiplierJK;
+    }
+    if (stageId == std::string_view("stage_03_star_core")) {
+        return balance.lootStageMultiplierSC;
+    }
+    if (stageId == std::string_view("stage_04_astral_mine")) {
+        return balance.lootStageMultiplierAS;
+    }
+    return balance.lootStageMultiplierST;
+}
+
+float lootDepthMultiplier(const RuntimeBalance& balance, std::string_view stageId, int depthRank)
+{
+    if (stageId == std::string_view("stage_04_astral_mine")) {
+        const int index = std::clamp(depthRank, 1, 9) - 1;
+        return balance.lootDepthMultiplierAS[static_cast<std::size_t>(index)];
+    }
+    const int index = std::clamp(depthRank, 1, 3) - 1;
+    return balance.lootDepthMultiplier[static_cast<std::size_t>(index)];
+}
+
+float lootGradeMultiplier(const RuntimeBalance& balance, LootChestKind chestKind)
+{
+    switch (chestKind) {
+    case LootChestKind::Common:
+        return balance.lootGradeMultiplierC;
+    case LootChestKind::Rare:
+        return balance.lootGradeMultiplierR;
+    case LootChestKind::SuperRare:
+        return balance.lootGradeMultiplierS;
+    }
+    return balance.lootGradeMultiplierC;
+}
+
+int lootItemRollCount(LootChestKind kind, std::mt19937& rng)
+{
+    switch (kind) {
+    case LootChestKind::Common: {
+        std::uniform_int_distribution<int> distribution(1, 2);
+        return distribution(rng);
+    }
+    case LootChestKind::Rare: {
+        std::uniform_int_distribution<int> distribution(1, 3);
+        return distribution(rng);
+    }
+    case LootChestKind::SuperRare: {
+        std::uniform_int_distribution<int> distribution(2, 3);
+        return distribution(rng);
+    }
+    }
+    return 1;
+}
+
+std::pair<int, int> lootMoneyBaseRange(LootChestKind kind)
+{
+    switch (kind) {
+    case LootChestKind::Common: return {20, 60};
+    case LootChestKind::Rare: return {60, 160};
+    case LootChestKind::SuperRare: return {150, 400};
+    }
+    return {20, 60};
+}
+
+int scaledLootAmount(int baseAmount, float multiplier)
+{
+    return std::max(1, static_cast<int>(std::ceil(static_cast<float>(std::max(1, baseAmount)) * std::max(0.0f, multiplier))));
+}
+
+std::mt19937& lootRuntimeRng()
+{
+    static std::mt19937 rng{std::random_device{}()};
+    return rng;
+}
+
+bool rollChance(float chance, std::mt19937& rng)
+{
+    if (chance <= 0.0f) {
+        return false;
+    }
+    if (chance >= 1.0f) {
+        return true;
+    }
+    std::bernoulli_distribution distribution(chance);
+    return distribution(rng);
+}
+
+MaterialType rollChestMaterial(std::mt19937& rng)
+{
+    constexpr std::array<MaterialType, 3> Materials{
+        MaterialType::OldWoodBuildingMaterial,
+        MaterialType::EnhancementOre,
+        MaterialType::ManaDrop,
+    };
+    std::uniform_int_distribution<int> distribution(0, static_cast<int>(Materials.size()) - 1);
+    return Materials[static_cast<std::size_t>(distribution(rng))];
+}
+
+Vec2 scatterLootPosition(Vec2 center, std::mt19937& rng)
+{
+    std::uniform_real_distribution<float> angleDistribution(0.0f, Pi * 2.0f);
+    std::uniform_real_distribution<float> radiusDistribution(10.0f, 30.0f);
+    return center + fromAngle(angleDistribution(rng)) * radiusDistribution(rng);
+}
+
+Color chestFillColor(LootChestKind kind, bool opened)
+{
+    if (opened) {
+        return {72, 58, 44, 255};
+    }
+    switch (kind) {
+    case LootChestKind::Common:
+        return {146, 88, 42, 255};
+    case LootChestKind::Rare:
+        return {64, 116, 210, 255};
+    case LootChestKind::SuperRare:
+        return {238, 190, 54, 255};
+    }
+    return {146, 88, 42, 255};
+}
+
+Color chestOutlineColor(LootChestKind kind, bool opened)
+{
+    if (opened) {
+        return {126, 106, 78, 210};
+    }
+    switch (kind) {
+    case LootChestKind::Common:
+        return {226, 170, 94, 255};
+    case LootChestKind::Rare:
+        return {214, 226, 238, 255};
+    case LootChestKind::SuperRare:
+        return {255, 118, 210, 255};
+    }
+    return {226, 170, 94, 255};
+}
+
 UiRect baseMapBounds()
 {
-    return {{48.0f, 48.0f}, {1184.0f, 624.0f}};
+    return {{0.0f, 0.0f}, {1280.0f, 720.0f}};
 }
 
 float distanceToRect(Vec2 point, UiRect rect)
@@ -516,6 +791,7 @@ const char* baseMiningStartChoiceName(int index)
     switch (index) {
     case 0: return "開始地点";
     case 1: return "最新ワープポイント";
+    case 2: return "再生成";
     default: return "";
     }
 }
@@ -554,14 +830,70 @@ UiRect ringPanelRect()
 
 UiRect ringTabRect(int index)
 {
-    return {{116.0f + static_cast<float>(index) * 174.0f, 132.0f}, {152.0f, ui::ButtonHeight}};
+    return {{116.0f + static_cast<float>(index) * 174.0f, 148.0f}, {152.0f, ui::ButtonHeight}};
 }
 
-UiRect ringSlotRect(int index)
+Vec2 ringOrbitCenter()
 {
-    const int column = index % RingSlotColumns;
-    const int row = index / RingSlotColumns;
-    return {{118.0f + static_cast<float>(column) * 146.0f, 250.0f + static_cast<float>(row) * 92.0f}, {128.0f, 70.0f}};
+    return {374.0f, 370.0f};
+}
+
+float ringOrbitRadius()
+{
+    return 138.0f;
+}
+
+Vec2 ringItemUiCenter(const SpellRingItem& item)
+{
+    return ringOrbitCenter() + fromAngle(item.localAngle - Pi * 0.5f) * ringOrbitRadius();
+}
+
+UiRect ringItemUiRect(const SpellRingItem& item)
+{
+    constexpr Vec2 Size{54.0f, 54.0f};
+    const Vec2 center = ringItemUiCenter(item);
+    return {center - Size * 0.5f, Size};
+}
+
+void drawRingItemShape(Renderer& renderer, const SpellRingItem& item, Vec2 center, Vec2 outward, bool selected)
+{
+    const Color outline = selected ? Color{255, 230, 150, 255} : Color{96, 104, 126, 220};
+    if (item.type == SpellRingItemType::Shovel) {
+        if (selected) {
+            renderer.drawCircle(center, 15.0f, outline);
+            renderer.drawLine(center, center + outward * 24.0f, outline);
+            renderer.drawLine(center + Vec2{-3.0f, 0.0f}, center + outward * 24.0f + Vec2{-3.0f, 0.0f}, outline);
+            renderer.drawLine(center + Vec2{3.0f, 0.0f}, center + outward * 24.0f + Vec2{3.0f, 0.0f}, outline);
+        }
+        renderer.fillCircle(center, 11.0f, {178, 184, 190, 255});
+        renderer.drawLine(center, center + outward * 20.0f, {90, 96, 102, 255});
+        return;
+    }
+
+    if (item.type == SpellRingItemType::Torch) {
+        if (selected) {
+            renderer.drawCircle(center, 17.0f, outline);
+            renderer.drawCircle(center + Vec2{3.0f, -4.0f}, 8.0f, outline);
+        }
+        renderer.fillCircle(center, 13.0f, {242, 122, 25, 255});
+        renderer.fillCircle(center + Vec2{3.0f, -4.0f}, 5.0f, {255, 238, 98, 255});
+        return;
+    }
+
+    if (selected) {
+        renderer.drawCircle(center, 17.0f, outline);
+    }
+    renderer.fillCircle(center, 12.0f, {96, 122, 210, 255});
+    renderer.drawCircle(center, 15.0f, {160, 202, 255, 255});
+}
+
+UiRect ringDetailRect()
+{
+    const UiRect panel = ringPanelRect();
+    const float detailX = panel.pos.x + panel.size.x - DetailOuterRightMargin - RingDetailW;
+    const float detailY = panel.pos.y + DetailOuterTopMargin;
+    const float detailH = panel.size.y - DetailOuterTopMargin - DetailOuterBottomMargin;
+    return {{detailX, detailY}, {RingDetailW, detailH}};
 }
 
 const char* spellRingItemName(SpellRingItemType type)
@@ -569,8 +901,6 @@ const char* spellRingItemName(SpellRingItemType type)
     switch (type) {
     case SpellRingItemType::Shovel: return "スコップ";
     case SpellRingItemType::Torch: return "松明";
-    case SpellRingItemType::Stone: return "石";
-    case SpellRingItemType::Ore: return "鉱石";
     case SpellRingItemType::Object: return "Object";
     }
     return "不明";
@@ -581,8 +911,6 @@ const char* spellRingItemCategory(SpellRingItemType type)
     switch (type) {
     case SpellRingItemType::Shovel: return "採掘";
     case SpellRingItemType::Torch: return "照明";
-    case SpellRingItemType::Stone: return "打撃";
-    case SpellRingItemType::Ore: return "素材";
     case SpellRingItemType::Object: return "Objects DB";
     }
     return "不明";
@@ -739,10 +1067,13 @@ int ringTypeToInt(SpellRingItemType type)
 
 SpellRingItemType ringTypeFromInt(int value)
 {
-    if (value < 0 || value > static_cast<int>(SpellRingItemType::Object)) {
-        return SpellRingItemType::Stone;
+    if (value == static_cast<int>(SpellRingItemType::Shovel)) {
+        return SpellRingItemType::Shovel;
     }
-    return static_cast<SpellRingItemType>(value);
+    if (value == static_cast<int>(SpellRingItemType::Torch)) {
+        return SpellRingItemType::Torch;
+    }
+    return SpellRingItemType::Object;
 }
 
 std::size_t countIssues(
@@ -1057,6 +1388,7 @@ void Game::initializeWorld(bool captureRunStartInventory)
     projectiles_ = ProjectileSystem{};
     inventory_ = InventorySystem{};
     worldDrops_ = WorldDropSystem{};
+    worldDrops_.setDropLimit(balance_.worldDropLimitPerStage);
     levels_ = LevelSystem{};
     upgrades_ = UpgradeSystem{};
     mode_ = ScreenMode::Playing;
@@ -1106,7 +1438,10 @@ void Game::initializeWorld(bool captureRunStartInventory)
     currentStage_ = std::clamp(currentStage_, 0, std::max(0, unlockedStages_ - 1));
     generateDungeonLayoutForRun();
     resetWarpPointRunState();
+    initializeMoonFragmentNodesFromWarpPoints();
     initializeRewardNodesFromLayout();
+    initializeChestNodesFromLayout();
+    initializeCrateNodesFromLayout();
     initializeEnemyNodesFromLayout();
     spellRing_.initialize(balance_);
     applyPermanentUpgrades();
@@ -1146,14 +1481,23 @@ void Game::enterBase()
     clearTemporaryPlayerState(true);
 }
 
-void Game::startMiningFromBase(bool useLatestWarpPoint)
+void Game::startMiningFromBase(bool useLatestWarpPoint, bool forceRegenerate)
 {
     useLatestWarpPoint = useLatestWarpPoint && unlockedWarpPointCount_ > 0;
     InventoryCarryState retained = captureInventoryCarryState();
     const int retainedLevel = player_.level;
     const int retainedXp = player_.xp;
     const int retainedXpToNext = player_.xpToNext;
-    initializeWorld(false);
+    const bool restoredDungeon = !forceRegenerate && restoreDungeonState(useLatestWarpPoint);
+    if (!restoredDungeon) {
+        if (forceRegenerate) {
+            dungeonStates_.erase(currentStageId_);
+            unlockedWarpPointCount_ = 0;
+            hasLatestWarpPointPosition_ = false;
+            latestWarpPointPosition_ = {};
+        }
+        initializeWorld(false);
+    }
     restoreInventoryCarryState(retained);
     player_.level = retainedLevel;
     player_.xp = retainedXp;
@@ -1161,13 +1505,18 @@ void Game::startMiningFromBase(bool useLatestWarpPoint)
     applyPermanentUpgrades();
     clearTemporaryPlayerState(true);
     captureRunStartInventoryState();
-    resetWarpPointRunState();
+    if (!restoredDungeon) {
+        resetWarpPointRunState();
+        initializeMoonFragmentNodesFromWarpPoints();
+    }
     if (useLatestWarpPoint) {
         const Vec2 startPosition = latestWarpPointStartPosition();
         latestWarpPointPosition_ = startPosition;
         hasLatestWarpPointPosition_ = true;
         player_.position = startPosition;
-        rebuildUnlockedWarpPointsForStart(startPosition);
+        if (!restoredDungeon) {
+            rebuildUnlockedWarpPointsForStart(startPosition);
+        }
         tileMap_.updateAround(player_.position, 0.0f, balance_, dungeonLayout_);
         captureRetrySnapshotAtWarpPoint();
     }
@@ -1216,7 +1565,7 @@ void Game::loadSheetSourceConfig()
     std::string error;
     if (!loadGoogleSheetSourceConfig("data/google_sheet_source.cfg", sheetSource_, error)) {
         sheetSource_ = GoogleSheetSourceConfig{};
-        std::fprintf(stderr, "Google Sheet source disabled: %s\n", error.c_str());
+        logWarning("Google Sheet source disabled: " + error);
         return;
     }
 }
@@ -1233,7 +1582,7 @@ bool Game::loadBalanceFromDisk(std::string& message)
     } else {
         balance_ = RuntimeBalance{};
         message = "データ読込失敗";
-        std::fprintf(stderr, "Runtime balance load failed: %s\n", error.c_str());
+        logError("Runtime balance load failed: " + error);
     }
 
     return loadedLocal;
@@ -1255,7 +1604,7 @@ bool Game::loadBalanceFromSources(std::string& message)
         return true;
     }
 
-    std::fprintf(stderr, "Google Sheet balance load failed: %s\n", sheetError.c_str());
+    logError("Google Sheet balance load failed: " + sheetError);
     if (loadedLocal) {
         message = "ローカルデータ読込完了";
         return true;
@@ -1275,7 +1624,7 @@ bool Game::loadObjectsFromSheet()
     ObjectCatalog loaded;
     std::string error;
     if (!loadObjectCatalogFromGoogleSheet(sheetSource_, loaded, error)) {
-        std::fprintf(stderr, "Objects sheet load failed: %s\n", error.c_str());
+        logError("Objects sheet load failed: " + error);
         return false;
     }
 
@@ -1285,6 +1634,9 @@ bool Game::loadObjectsFromSheet()
     logDbValidationReport(objectCatalog_);
     logEffectDispatcherSmoke(objectCatalog_, effectDispatcher_);
     logError("Objects sheet loaded: " + std::to_string(objectCatalog_.registry.size()) + " items");
+    logError("Objects loot weight columns detected: " + std::to_string(objectCatalog_.lootWeightStats.detectedColumnCount));
+    logError("Objects loot weighted items: " + std::to_string(objectCatalog_.lootWeightStats.weightedItemCount));
+    logError("Objects loot weight warnings: " + std::to_string(objectCatalog_.lootWeightStats.warningCount));
     const std::vector<const ItemData*> weapons = objectCatalog_.registry.findByCategory("\xE6\xAD\xA6\xE5\x99\xA8");
     const std::vector<const ItemData*> consumables = objectCatalog_.registry.findByTag("consumable");
     logError("Objects registry check: weapons=" + std::to_string(weapons.size()) +
@@ -1335,7 +1687,8 @@ bool Game::loadObjectsFromSheet()
             << " weight_kg=" << object.weightKg
             << " normal_effects=" << object.normalEffects.size()
             << " orbit_effects=" << object.orbitEffects.size()
-            << " tags=" << object.tags.size();
+            << " tags=" << object.tags.size()
+            << " loot_weights=" << object.lootWeights.byColumn.size();
         logError(line.str());
     }
     return true;
@@ -1357,7 +1710,7 @@ bool Game::loadStagesFromSheet()
         stageCatalog_.loadDefaultStages();
         stageCatalog_.validationWarnings = std::move(warnings);
         stageCatalog_.validationWarnings.push_back("Stages sheet fallback used: " + error);
-        std::fprintf(stderr, "Stages sheet load failed: %s\n", error.c_str());
+        logError("Stages sheet load failed: " + error);
         logStageCatalogReport(stageCatalog_, false, true, error);
         return false;
     }
@@ -1407,7 +1760,7 @@ bool Game::loadEnemiesFromSheet()
     EnemyCatalog loaded;
     std::string error;
     if (!loadEnemyCatalogFromGoogleSheet(sheetSource_, objectCatalog_.specialTags, loaded, error)) {
-        std::fprintf(stderr, "Enemies sheet load failed: %s\n", error.c_str());
+        logError("Enemies sheet load failed: " + error);
         return false;
     }
 
@@ -2687,7 +3040,8 @@ void Game::openRingScreen()
 {
     pausePage_ = PauseMenuPage::Main;
     mode_ = ScreenMode::Ring;
-    ringSlotSelection_ = std::clamp(ringSlotSelection_, 0, RingSlotCount - 1);
+    const int maxIndex = std::max(0, static_cast<int>(spellRing_.items().size()) - 1);
+    ringSlotSelection_ = std::clamp(ringSlotSelection_, 0, maxIndex);
     cancelRingGrab();
     ringStatus_.clear();
 }
@@ -2698,9 +3052,10 @@ void Game::cancelRingGrab()
         return;
     }
 
-    auto& items = spellRing_.items();
-    const int insertIndex = std::clamp(ringGrabOrigin_, 0, static_cast<int>(items.size()));
-    items.insert(items.begin() + insertIndex, ringGrabbedItem_);
+    if (!spellRing_.addItem(ringGrabbedItem_)) {
+        spellRing_.items().push_back(ringGrabbedItem_);
+        spellRing_.normalizeItemPlacements();
+    }
     ringGrabActive_ = false;
     ringGrabOrigin_ = -1;
 }
@@ -2726,6 +3081,7 @@ void Game::restoreInventoryCarryState(const InventoryCarryState& state)
     if (!state.ringItems.empty()) {
         spellRing_.items() = state.ringItems;
         spellRing_.applyObjectParameters(objectCatalog_);
+        spellRing_.normalizeItemPlacements();
         spellRing_.resetBaseWeightToCurrent();
         refreshOrbitEffects();
     }
@@ -2812,14 +3168,22 @@ void Game::retryAfterGameOver()
         retained = runStartInventoryState_;
     }
 
-    initializeWorld(false);
+    player_ = Player{};
+    player_.position = tileWorldCenter(dungeonLayout_.startTile);
     restoreInventoryCarryState(retained);
     player_.level = retainedLevel;
     player_.xp = retainedXp;
     player_.xpToNext = retainedXpToNext;
     applyPermanentUpgrades();
     clearTemporaryPlayerState(true);
+    enemies_.clearTemporaryState();
+    effects_ = EffectSystem{};
+    projectiles_ = ProjectileSystem{};
+    levels_ = LevelSystem{};
+    tileMap_.updateAround(player_.position, 0.0f, balance_, dungeonLayout_);
+    camera_.follow(player_.position, 1.0f);
     captureRunStartInventoryState();
+    mode_ = ScreenMode::Playing;
 }
 
 void Game::returnToBaseAfterGameOver()
@@ -2841,12 +3205,14 @@ void Game::returnToBaseFromNormalStage(bool stageCleared, bool died)
     const bool refreshMerchant = shouldRefreshMerchantOnReturn(stageCleared, died);
     merchantRefreshPending_ = merchantRefreshPending_ || refreshMerchant;
     clearTemporaryPlayerState(true);
+    captureDungeonState();
     enemies_ = EnemySystem{};
     effects_ = EffectSystem{};
     ringTrailEffectTimer_ = 0.0f;
     ambientParticleTimer_ = 0.0f;
     projectiles_ = ProjectileSystem{};
     worldDrops_ = WorldDropSystem{};
+    worldDrops_.setDropLimit(balance_.worldDropLimitPerStage);
     levels_ = LevelSystem{};
     inventory_.setOpen(false);
     inventory_.cancelGrab();
@@ -2874,6 +3240,108 @@ void Game::resetWarpPointRunState()
     retrySnapshot_ = RetrySnapshot{};
     warpPointsEnabled_ = !roguelikeDungeon_;
     initializeWarpPointsFromLayout();
+}
+
+void Game::captureDungeonState()
+{
+    if (roguelikeDungeon_ || currentStageId_.empty()) {
+        return;
+    }
+
+    enemies_.clearTemporaryState();
+    DungeonState state;
+    state.valid = true;
+    state.currentStage = currentStage_;
+    state.currentStageId = currentStageId_;
+    state.tileMap = tileMap_;
+    state.dungeonLayout = dungeonLayout_;
+    state.runStats = runStats_;
+    state.warpPoints = warpPoints_;
+    state.rewardNodes = rewardNodes_;
+    state.moneyNodes = moneyNodes_;
+    state.moonFragmentNodes = moonFragmentNodes_;
+    state.chestNodes = chestNodes_;
+    state.crateNodes = crateNodes_;
+    state.enemyNodes = enemyNodes_;
+    state.enemies = enemies_;
+    state.worldDrops = worldDrops_;
+    state.spawnedWarpPointCount = spawnedWarpPointCount_;
+    state.bossSpawnPoint = bossSpawnPoint_;
+    state.hasBossSpawnPoint = hasBossSpawnPoint_;
+    state.bossSpawned = bossSpawned_;
+    dungeonStates_[currentStageId_] = std::move(state);
+}
+
+bool Game::restoreDungeonState(bool useLatestWarpPoint)
+{
+    if (roguelikeDungeon_) {
+        return false;
+    }
+    auto it = dungeonStates_.find(currentStageId_);
+    if (it == dungeonStates_.end() || !it->second.valid) {
+        return false;
+    }
+
+    const DungeonState& state = it->second;
+    currentStage_ = state.currentStage;
+    currentStageId_ = state.currentStageId;
+    resolveCurrentStageDefinition();
+    tileMap_ = state.tileMap;
+    dungeonLayout_ = state.dungeonLayout;
+    runStats_ = state.runStats;
+    warpPoints_ = state.warpPoints;
+    rewardNodes_ = state.rewardNodes;
+    moneyNodes_ = state.moneyNodes;
+    moonFragmentNodes_ = state.moonFragmentNodes;
+    chestNodes_ = state.chestNodes;
+    crateNodes_ = state.crateNodes;
+    enemyNodes_ = state.enemyNodes;
+    enemies_ = state.enemies;
+    enemies_.clearTemporaryState();
+    worldDrops_ = state.worldDrops;
+    worldDrops_.setDropLimit(balance_.worldDropLimitPerStage);
+    spawnedWarpPointCount_ = state.spawnedWarpPointCount;
+    bossSpawnPoint_ = state.bossSpawnPoint;
+    hasBossSpawnPoint_ = state.hasBossSpawnPoint;
+    bossSpawned_ = state.bossSpawned;
+    warpPointsEnabled_ = true;
+    retrySnapshot_ = RetrySnapshot{};
+    effects_ = EffectSystem{};
+    projectiles_ = ProjectileSystem{};
+    levels_ = LevelSystem{};
+    ringTrailEffectTimer_ = 0.0f;
+    ambientParticleTimer_ = 0.0f;
+
+    player_ = Player{};
+    player_.xpToNext = balance_.xpBase + player_.level * balance_.xpPerLevel;
+    player_.position = useLatestWarpPoint ? latestWarpPointStartPosition() : tileWorldCenter(dungeonLayout_.startTile);
+    camera_.follow(player_.position, 1.0f);
+    tileMap_.updateAround(player_.position, 0.0f, balance_, dungeonLayout_);
+    return true;
+}
+
+bool Game::canRegenerateCurrentStage() const
+{
+    if (roguelikeDungeon_) {
+        return false;
+    }
+    auto it = dungeonStates_.find(currentStageId_);
+    const std::vector<WarpPoint>& points = it != dungeonStates_.end() && it->second.valid ? it->second.warpPoints : warpPoints_;
+    if (points.empty()) {
+        return unlockedWarpPointCount_ >= MaxWarpPointsPerRun;
+    }
+    return std::all_of(points.begin(), points.end(), [](const WarpPoint& point) {
+        return point.discovered;
+    });
+}
+
+std::size_t Game::retainedWorldDropCountForCurrentStage() const
+{
+    auto it = dungeonStates_.find(currentStageId_);
+    if (it != dungeonStates_.end() && it->second.valid) {
+        return it->second.worldDrops.size();
+    }
+    return worldDrops_.size();
 }
 
 void Game::initializeWarpPointsFromLayout()
@@ -2966,6 +3434,37 @@ void Game::updateWarpPoints()
             captureRetrySnapshotAtWarpPoint();
             reloadNotice_ = "ワープポイント発見";
             reloadNoticeTimer_ = 2.0f;
+        }
+    }
+}
+
+void Game::initializeMoonFragmentNodesFromWarpPoints()
+{
+    moonFragmentNodes_.clear();
+    if (!warpPointsEnabled_ || warpPoints_.empty()) {
+        return;
+    }
+
+    std::mt19937 rng(dungeonLayout_.seed ^ 0x4D6F6F4Eu);
+    std::uniform_int_distribution<int> countDistribution(MoonFragmentMinPerWarpPoint, MoonFragmentMaxPerWarpPoint);
+    std::uniform_real_distribution<float> angleDistribution(0.0f, Pi * 2.0f);
+    std::uniform_real_distribution<float> floorRadiusDistribution(1.5f, 3.5f);
+    std::uniform_real_distribution<float> buriedRadiusDistribution(2.5f, 4.5f);
+
+    for (const WarpPoint& point : warpPoints_) {
+        const int count = countDistribution(rng);
+        for (int i = 0; i < count; ++i) {
+            const bool buried = i % 2 == 1;
+            const float radiusTiles = buried ? buriedRadiusDistribution(rng) : floorRadiusDistribution(rng);
+            const Vec2 offset = fromAngle(angleDistribution(rng)) * radiusTiles;
+            moonFragmentNodes_.push_back(MoonFragmentNode{
+                .tile = roundDungeonTile(Vec2{
+                    static_cast<float>(point.tilePosition.x),
+                    static_cast<float>(point.tilePosition.y),
+                } + offset),
+                .visibility = buried ? PlacementVisibility::BuriedVisible : PlacementVisibility::Exposed,
+                .collected = false,
+            });
         }
     }
 }
@@ -3118,14 +3617,15 @@ void Game::updateExposedRewardNodes()
             continue;
         }
 
+        bool spawnedObject = false;
         if (node.objectId.has_value()) {
-            if (!inventory_.addObjectItem(objectCatalog_, *node.objectId)) {
-                continue;
-            }
+            spawnedObject = worldDrops_.spawnObjectDrop(objectCatalog_, *node.objectId, tileWorldCenter(node.tile), runStats_.elapsedSeconds);
         }
         node.spawned = true;
         node.collected = true;
-        ++runStats_.acquiredItems;
+        if (!spawnedObject) {
+            ++runStats_.acquiredItems;
+        }
         reloadNotice_ = node.objectId.has_value() ? "報酬を拾得" : "仮報酬を拾得";
         reloadNoticeTimer_ = 1.4f;
     }
@@ -3137,7 +3637,7 @@ void Game::updateExposedRewardNodes()
         if (distanceSquared(player_.position, tileWorldCenter(node.tile)) > pickupRadiusSq) {
             continue;
         }
-        money_ += std::max(0, node.amount);
+        worldDrops_.spawnMoneyDrop(node.amount, tileWorldCenter(node.tile), runStats_.elapsedSeconds);
         node.collected = true;
         reloadNotice_ = "金貨 +" + std::to_string(std::max(0, node.amount)) + "G";
         reloadNoticeTimer_ = 1.4f;
@@ -3164,7 +3664,7 @@ void Game::revealRewardNodesFromOpenedTiles(const std::vector<Vec2>& openedTiles
             node.spawned = true;
             bool spawnedObject = false;
             if (node.objectId.has_value()) {
-                spawnedObject = worldDrops_.spawnObjectDrop(objectCatalog_, *node.objectId, tileWorldCenter(node.tile));
+                spawnedObject = worldDrops_.spawnObjectDrop(objectCatalog_, *node.objectId, tileWorldCenter(node.tile), runStats_.elapsedSeconds);
             }
             node.collected = true;
             if (!spawnedObject) {
@@ -3178,12 +3678,321 @@ void Game::revealRewardNodesFromOpenedTiles(const std::vector<Vec2>& openedTiles
                 node.tile.x != tile.x || node.tile.y != tile.y) {
                 continue;
             }
-            money_ += std::max(0, node.amount);
+            worldDrops_.spawnMoneyDrop(node.amount, tileWorldCenter(node.tile), runStats_.elapsedSeconds);
             node.collected = true;
             reloadNotice_ = "埋まり金貨 +" + std::to_string(std::max(0, node.amount)) + "G";
             reloadNoticeTimer_ = 1.6f;
         }
     }
+}
+
+void Game::updateExposedMoonFragmentNodes()
+{
+    const float pickupRadiusSq = MoonFragmentPickupRadius * MoonFragmentPickupRadius;
+    for (MoonFragmentNode& node : moonFragmentNodes_) {
+        if (node.collected || node.visibility != PlacementVisibility::Exposed) {
+            continue;
+        }
+        if (distanceSquared(player_.position, tileWorldCenter(node.tile)) > pickupRadiusSq) {
+            continue;
+        }
+        worldDrops_.spawnMaterialDrop(MaterialType::MoonFragment, 1, tileWorldCenter(node.tile), runStats_.elapsedSeconds);
+        node.collected = true;
+        reloadNotice_ = "Moon fragment";
+        reloadNoticeTimer_ = 1.4f;
+    }
+}
+
+void Game::revealMoonFragmentNodesFromOpenedTiles(const std::vector<Vec2>& openedTiles)
+{
+    if (openedTiles.empty()) {
+        return;
+    }
+
+    for (Vec2 openedTile : openedTiles) {
+        const DungeonTile tile{
+            tileMap_.worldToTile(openedTile.x),
+            tileMap_.worldToTile(openedTile.y),
+        };
+        for (MoonFragmentNode& node : moonFragmentNodes_) {
+            if (node.collected || node.visibility != PlacementVisibility::BuriedVisible ||
+                node.tile.x != tile.x || node.tile.y != tile.y) {
+                continue;
+            }
+            worldDrops_.spawnMaterialDrop(MaterialType::MoonFragment, 1, tileWorldCenter(node.tile), runStats_.elapsedSeconds);
+            node.collected = true;
+            reloadNotice_ = "Moon fragment";
+            reloadNoticeTimer_ = 1.4f;
+        }
+    }
+}
+
+void Game::initializeChestNodesFromLayout()
+{
+    chestNodes_.clear();
+    if (dungeonLayout_.mainPathPoints.size() < 2) {
+        return;
+    }
+
+    std::mt19937 rng(dungeonLayout_.seed ^ 0xC45E7A91u);
+    std::uniform_real_distribution<float> progressJitter(-0.026f, 0.026f);
+    std::uniform_real_distribution<float> sideJitter(-1.1f, 1.1f);
+    std::uniform_int_distribution<int> signDist(0, 1);
+
+    for (int i = 0; i < ChestNodeCountPerRun; ++i) {
+        const float progress = clamp(
+            0.08f + 0.84f * (static_cast<float>(i + 1) / static_cast<float>(ChestNodeCountPerRun + 1)) + progressJitter(rng),
+            0.08f,
+            0.92f);
+        const Vec2 anchor = pointAtPathProgress(dungeonLayout_.mainPathPoints, progress);
+        const Vec2 tangent = tangentAtPathProgress(dungeonLayout_.mainPathPoints, progress);
+        Vec2 side = perpendicular(tangent);
+        if (signDist(rng) == 0) {
+            side = side * -1.0f;
+        }
+
+        ChestNode node;
+        node.visibility = i % 4 == 0
+            ? PlacementVisibility::Exposed
+            : (i % 4 == 1 ? PlacementVisibility::BuriedVisible : PlacementVisibility::BuriedHidden);
+        const float offsetTiles = node.visibility == PlacementVisibility::Exposed
+            ? (1.0f + sideJitter(rng) * 0.5f)
+            : (node.visibility == PlacementVisibility::BuriedVisible ? 6.5f : 8.5f) + sideJitter(rng);
+        node.tile = roundDungeonTile(anchor + side * offsetTiles);
+        node.chestKind = rollChestKind(rng, progress);
+        node.depthRank = lootDepthRankForProgress(currentStageId_, progress);
+        node.revealed = node.visibility != PlacementVisibility::BuriedHidden;
+        node.opened = false;
+        chestNodes_.push_back(node);
+    }
+}
+
+void Game::updateChestNodes(const Input& input)
+{
+    const bool interact = input.confirmPressed() || input.useItemPressed();
+    const float interactRadiusSq = ChestInteractRadius * ChestInteractRadius;
+
+    for (ChestNode& node : chestNodes_) {
+        if (node.opened || node.visibility != PlacementVisibility::Exposed) {
+            continue;
+        }
+
+        const Vec2 center = tileWorldCenter(node.tile);
+        bool shouldOpen = interact && distanceSquared(player_.position, center) <= interactRadiusSq;
+        if (!shouldOpen) {
+            for (const SpellRingItem& item : spellRing_.items()) {
+                if (item.broken()) {
+                    continue;
+                }
+                const float radius = item.hitRadius + ChestHitRadius;
+                if (distanceSquared(item.worldPosition, center) <= radius * radius) {
+                    shouldOpen = true;
+                    break;
+                }
+            }
+        }
+
+        if (shouldOpen) {
+            openChestNode(node);
+        }
+    }
+}
+
+void Game::revealChestNodesFromOpenedTiles(const std::vector<Vec2>& openedTiles)
+{
+    if (openedTiles.empty()) {
+        return;
+    }
+
+    for (Vec2 openedTile : openedTiles) {
+        const DungeonTile tile{
+            tileMap_.worldToTile(openedTile.x),
+            tileMap_.worldToTile(openedTile.y),
+        };
+        for (ChestNode& node : chestNodes_) {
+            if (node.opened || node.visibility == PlacementVisibility::Exposed ||
+                node.tile.x != tile.x || node.tile.y != tile.y) {
+                continue;
+            }
+            node.revealed = true;
+            openChestNode(node);
+        }
+    }
+}
+
+bool Game::spawnWeightedObjectLoot(LootChestKind chestKind, int depthRank, Vec2 center, std::mt19937& rng, std::string_view sourceLabel)
+{
+    std::vector<const ObjectDefinition*> candidates;
+    std::vector<double> weights;
+    for (const ObjectDefinition& object : objectCatalog_.objects) {
+        const double weight = lootWeightFor(object, currentStageId_, depthRank, chestKind);
+        if (weight >= 1.0) {
+            candidates.push_back(&object);
+            weights.push_back(weight);
+        }
+    }
+
+    if (candidates.empty()) {
+        const std::string columnName = resolveLootWeightColumnName(currentStageId_, depthRank, chestKind);
+        logError("[warning] " + std::string(sourceLabel) + ": no Objects candidates stage=\"" + currentStageId_ +
+            "\" depth=" + std::to_string(depthRank) +
+            " chest=" + chestKindCode(chestKind) +
+            " column=\"" + columnName + "\"");
+        return false;
+    }
+
+    std::discrete_distribution<int> itemDistribution(weights.begin(), weights.end());
+    const int selected = itemDistribution(rng);
+    const ObjectDefinition* object = candidates[static_cast<std::size_t>(selected)];
+    return worldDrops_.spawnObjectDrop(objectCatalog_, object->id, scatterLootPosition(center, rng), runStats_.elapsedSeconds);
+}
+
+void Game::openChestNode(ChestNode& node)
+{
+    if (node.opened) {
+        return;
+    }
+
+    node.opened = true;
+    node.revealed = true;
+
+    const Vec2 center = tileWorldCenter(node.tile);
+    std::mt19937 rng(
+        dungeonLayout_.seed ^
+        (static_cast<std::uint32_t>(node.tile.x) * 0x85EBCA6Bu) ^
+        (static_cast<std::uint32_t>(node.tile.y) * 0xC2B2AE35u) ^
+        (static_cast<std::uint32_t>(runStats_.elapsedSeconds * 1000.0f) * 0x27D4EB2Du));
+
+    const int itemRolls = lootItemRollCount(node.chestKind, rng);
+    for (int i = 0; i < itemRolls; ++i) {
+        if (!spawnWeightedObjectLoot(node.chestKind, node.depthRank, center, rng, "ChestLoot")) {
+            break;
+        }
+    }
+
+    const float totalMultiplier =
+        lootStageMultiplier(balance_, currentStageId_) *
+        lootDepthMultiplier(balance_, currentStageId_, node.depthRank) *
+        lootGradeMultiplier(balance_, node.chestKind);
+
+    std::bernoulli_distribution moneyChance(balance_.lootMoneyChance);
+    if (moneyChance(rng)) {
+        const auto [minMoney, maxMoney] = lootMoneyBaseRange(node.chestKind);
+        std::uniform_int_distribution<int> moneyDistribution(minMoney, maxMoney);
+        const int amount = scaledLootAmount(moneyDistribution(rng), totalMultiplier);
+        worldDrops_.spawnMoneyDrop(amount, scatterLootPosition(center, rng), runStats_.elapsedSeconds);
+    }
+
+    std::bernoulli_distribution materialChance(balance_.lootMaterialChance);
+    if (materialChance(rng)) {
+        std::uniform_int_distribution<int> materialDistribution(1, 3);
+        const int amount = scaledLootAmount(materialDistribution(rng), totalMultiplier);
+        worldDrops_.spawnMaterialDrop(rollChestMaterial(rng), amount, scatterLootPosition(center, rng), runStats_.elapsedSeconds);
+    }
+
+    reloadNotice_ = "Chest opened";
+    reloadNoticeTimer_ = 1.4f;
+}
+
+void Game::initializeCrateNodesFromLayout()
+{
+    crateNodes_.clear();
+    if (dungeonLayout_.mainPathPoints.size() < 2) {
+        return;
+    }
+
+    std::mt19937 rng(dungeonLayout_.seed ^ 0xA31C2F17u);
+    std::uniform_real_distribution<float> progressJitter(-0.030f, 0.030f);
+    std::uniform_real_distribution<float> sideJitter(-1.6f, 1.6f);
+    std::uniform_int_distribution<int> signDist(0, 1);
+
+    for (int i = 0; i < CrateNodeCountPerRun; ++i) {
+        const bool useBranch = !dungeonLayout_.branchPathPoints.empty() && i % 4 == 0;
+        float progress = clamp(
+            0.05f + 0.90f * (static_cast<float>(i + 1) / static_cast<float>(CrateNodeCountPerRun + 1)) + progressJitter(rng),
+            0.05f,
+            0.95f);
+        Vec2 anchor = pointAtPathProgress(dungeonLayout_.mainPathPoints, progress);
+        Vec2 tangent = tangentAtPathProgress(dungeonLayout_.mainPathPoints, progress);
+        if (useBranch) {
+            const DungeonPath& branch = dungeonLayout_.branchPathPoints[static_cast<std::size_t>(i) % dungeonLayout_.branchPathPoints.size()];
+            const float branchProgress = clamp(0.30f + progressJitter(rng) * 4.0f, 0.15f, 0.85f);
+            anchor = pointAtPathProgress(branch.points, branchProgress);
+            tangent = tangentAtPathProgress(branch.points, branchProgress);
+        }
+
+        Vec2 side = perpendicular(tangent);
+        if (signDist(rng) == 0) {
+            side = side * -1.0f;
+        }
+
+        CrateNode node;
+        const float offsetTiles = 1.2f + sideJitter(rng);
+        node.tile = roundDungeonTile(anchor + side * offsetTiles);
+        node.depthRank = lootDepthRankForProgress(currentStageId_, progress);
+        node.destroyed = false;
+        crateNodes_.push_back(node);
+    }
+}
+
+void Game::updateCrateNodes()
+{
+    for (CrateNode& node : crateNodes_) {
+        if (node.destroyed) {
+            continue;
+        }
+
+        const Vec2 center = tileWorldCenter(node.tile);
+        for (const SpellRingItem& item : spellRing_.items()) {
+            if (item.broken()) {
+                continue;
+            }
+            const float radius = item.hitRadius + CrateHitRadius;
+            if (distanceSquared(item.worldPosition, center) <= radius * radius) {
+                destroyCrateNode(node);
+                break;
+            }
+        }
+    }
+}
+
+void Game::destroyCrateNode(CrateNode& node)
+{
+    if (node.destroyed) {
+        return;
+    }
+    node.destroyed = true;
+
+    const Vec2 center = tileWorldCenter(node.tile);
+    std::mt19937 rng(
+        dungeonLayout_.seed ^
+        (static_cast<std::uint32_t>(node.tile.x) * 0x9E3779B9u) ^
+        (static_cast<std::uint32_t>(node.tile.y) * 0x7F4A7C15u) ^
+        (static_cast<std::uint32_t>(runStats_.elapsedSeconds * 1000.0f) * 0x165667B1u));
+
+    const float totalMultiplier =
+        lootStageMultiplier(balance_, currentStageId_) *
+        lootDepthMultiplier(balance_, currentStageId_, node.depthRank) *
+        lootGradeMultiplier(balance_, LootChestKind::Common);
+
+    std::uniform_int_distribution<int> materialDistribution(1, 3);
+    const int materialAmount = scaledLootAmount(materialDistribution(rng), totalMultiplier);
+    worldDrops_.spawnMaterialDrop(MaterialType::OldWoodBuildingMaterial, materialAmount, scatterLootPosition(center, rng), runStats_.elapsedSeconds);
+
+    std::bernoulli_distribution moneyChance(balance_.crateMoneyChance);
+    if (moneyChance(rng)) {
+        std::uniform_int_distribution<int> moneyDistribution(5, 20);
+        const int amount = scaledLootAmount(moneyDistribution(rng), totalMultiplier);
+        worldDrops_.spawnMoneyDrop(amount, scatterLootPosition(center, rng), runStats_.elapsedSeconds);
+    }
+
+    std::bernoulli_distribution bonusChance(balance_.crateBonusChance);
+    if (bonusChance(rng)) {
+        spawnWeightedObjectLoot(LootChestKind::Common, node.depthRank, center, rng, "CrateBonusLoot");
+    }
+
+    reloadNotice_ = "Crate broken";
+    reloadNoticeTimer_ = 1.2f;
 }
 
 int Game::rewardNodeCount() const
@@ -3208,6 +4017,12 @@ int Game::buriedVisibleNodeCount() const
     count += static_cast<int>(std::count_if(moneyNodes_.begin(), moneyNodes_.end(), [](const MoneyNode& node) {
         return !node.collected && node.visibility == PlacementVisibility::BuriedVisible;
     }));
+    count += static_cast<int>(std::count_if(moonFragmentNodes_.begin(), moonFragmentNodes_.end(), [](const MoonFragmentNode& node) {
+        return !node.collected && node.visibility == PlacementVisibility::BuriedVisible;
+    }));
+    count += static_cast<int>(std::count_if(chestNodes_.begin(), chestNodes_.end(), [](const ChestNode& node) {
+        return !node.opened && node.visibility == PlacementVisibility::BuriedVisible;
+    }));
     return count;
 }
 
@@ -3218,6 +4033,9 @@ int Game::buriedHiddenNodeCount() const
     }));
     count += static_cast<int>(std::count_if(moneyNodes_.begin(), moneyNodes_.end(), [](const MoneyNode& node) {
         return !node.collected && node.visibility == PlacementVisibility::BuriedHidden;
+    }));
+    count += static_cast<int>(std::count_if(chestNodes_.begin(), chestNodes_.end(), [](const ChestNode& node) {
+        return !node.opened && node.visibility == PlacementVisibility::BuriedHidden;
     }));
     return count;
 }
@@ -3407,11 +4225,17 @@ void Game::captureRetrySnapshotAtWarpPoint()
     retrySnapshot_.warpPoints = warpPoints_;
     retrySnapshot_.rewardNodes = rewardNodes_;
     retrySnapshot_.moneyNodes = moneyNodes_;
+    retrySnapshot_.moonFragmentNodes = moonFragmentNodes_;
+    retrySnapshot_.chestNodes = chestNodes_;
+    retrySnapshot_.crateNodes = crateNodes_;
     retrySnapshot_.enemyNodes = enemyNodes_;
+    retrySnapshot_.enemies = enemies_;
+    retrySnapshot_.worldDrops = worldDrops_;
     retrySnapshot_.spawnedWarpPointCount = spawnedWarpPointCount_;
     retrySnapshot_.unlockedWarpPointCount = unlockedWarpPointCount_;
     retrySnapshot_.bossSpawnPoint = bossSpawnPoint_;
     retrySnapshot_.hasBossSpawnPoint = hasBossSpawnPoint_;
+    retrySnapshot_.bossSpawned = bossSpawned_;
     retrySnapshot_.valid = true;
 }
 
@@ -3442,18 +4266,23 @@ void Game::restoreRetrySnapshot()
     warpPoints_ = retrySnapshot_.warpPoints;
     rewardNodes_ = retrySnapshot_.rewardNodes;
     moneyNodes_ = retrySnapshot_.moneyNodes;
+    moonFragmentNodes_ = retrySnapshot_.moonFragmentNodes;
+    chestNodes_ = retrySnapshot_.chestNodes;
+    crateNodes_ = retrySnapshot_.crateNodes;
     enemyNodes_ = retrySnapshot_.enemyNodes;
+    enemies_ = retrySnapshot_.enemies;
+    enemies_.clearTemporaryState();
+    worldDrops_ = retrySnapshot_.worldDrops;
+    worldDrops_.setDropLimit(balance_.worldDropLimitPerStage);
     spawnedWarpPointCount_ = retrySnapshot_.spawnedWarpPointCount;
     unlockedWarpPointCount_ = retrySnapshot_.unlockedWarpPointCount;
     bossSpawnPoint_ = retrySnapshot_.bossSpawnPoint;
     hasBossSpawnPoint_ = retrySnapshot_.hasBossSpawnPoint;
-    enemies_ = EnemySystem{};
+    bossSpawned_ = retrySnapshot_.bossSpawned;
     effects_ = EffectSystem{};
     ringTrailEffectTimer_ = 0.0f;
     ambientParticleTimer_ = 0.0f;
-    worldDrops_ = WorldDropSystem{};
     levels_ = LevelSystem{};
-    bossSpawned_ = false;
     inventoryReturnToPause_ = false;
     gameOverStatus_.clear();
     tileMap_.updateAround(player_.position, 0.0f, balance_, dungeonLayout_);
@@ -3611,17 +4440,6 @@ bool Game::loadSaveData()
         } else if (key == "latest_warp") {
             stream >> loadedLatestWarpPointPosition.x >> loadedLatestWarpPointPosition.y;
             loadedHasLatestWarpPointPosition = !stream.fail();
-        } else if (key == "inventory") {
-            std::string type;
-            int count = 0;
-            stream >> type >> count;
-            if (type == "dirt") {
-                loadedInventory.setItemCount(InventoryItemType::Dirt, count);
-            } else if (type == "stone") {
-                loadedInventory.setItemCount(InventoryItemType::Stone, count);
-            } else if (type == "ore") {
-                loadedInventory.setItemCount(InventoryItemType::Ore, count);
-            }
         } else if (key == "object") {
             std::string objectId;
             int count = 0;
@@ -3733,6 +4551,7 @@ bool Game::loadSaveData()
     if (!loadedRingItems.empty()) {
         spellRing_.items() = std::move(loadedRingItems);
         spellRing_.applyObjectParameters(objectCatalog_);
+        spellRing_.normalizeItemPlacements();
         spellRing_.resetBaseWeightToCurrent();
         refreshOrbitEffects();
     }
@@ -3851,9 +4670,6 @@ bool Game::saveSaveData(std::string& message) const
     if (hasLatestWarpPointPosition_) {
         file << "latest_warp " << latestWarpPointPosition_.x << " " << latestWarpPointPosition_.y << "\n";
     }
-    file << "inventory dirt " << inventory_.itemCount(InventoryItemType::Dirt) << "\n";
-    file << "inventory stone " << inventory_.itemCount(InventoryItemType::Stone) << "\n";
-    file << "inventory ore " << inventory_.itemCount(InventoryItemType::Ore) << "\n";
     for (const StackItem& stack : inventory_.stackItemsForSave()) {
         if (!stack.objectId.empty() && stack.count > 0) {
             file << "object " << stack.objectId << " " << stack.count << "\n";
@@ -3937,6 +4753,93 @@ bool Game::saveSaveData(std::string& message) const
     return true;
 }
 
+bool Game::executeDebugCommand(std::string_view command)
+{
+    const std::string normalized = lowerAscii(trimAscii(std::string(command)));
+
+    if (normalized == "game reset-data") {
+        money_ = 0;
+        maxHpUpgradeLevel_ = 0;
+        ringRadiusUpgradeLevel_ = 0;
+        ringSpeedUpgradeLevel_ = 0;
+        levelRingRadiusPoints_ = 0;
+        levelRingSpeedPoints_ = 0;
+        workshopInitialRadiusLevel_ = 0;
+        workshopInitialSpeedLevel_ = 0;
+        workshopShiftDistanceLevel_ = 0;
+        merchantRefreshPending_ = false;
+        merchantUpgradeLevel_ = 1;
+        merchantStockVersion_ = 0;
+        merchantStock_.clear();
+        highValueBuyCategory_.clear();
+        warehouseCapacityLevel_ = 0;
+        processingUnlockLevel_ = 0;
+        ringWorkshopUnlocked_ = false;
+        autoSaveOnReturn_ = false;
+        storyFlags_.clear();
+        warehouseObjectStacks_.clear();
+        warehouseObjectInstances_.clear();
+        unlockedStages_ = 1;
+        unlockedWarpPointCount_ = 0;
+        hasLatestWarpPointPosition_ = false;
+        currentStage_ = 0;
+        currentStageId_ = "stage_01_stardust";
+        resolveCurrentStageDefinition();
+        encyclopedia_ = EncyclopediaSystem{};
+        initializeWorld(false);
+        enterBase();
+        captureRunStartInventoryState();
+
+        std::string saveMessage;
+        if (saveSaveData(saveMessage)) {
+            logInfo("Debug: game data reset and saved.");
+        } else {
+            logWarning("Debug: game data reset in memory, but save failed: " + saveMessage);
+        }
+        return true;
+    }
+
+    if (normalized == "game return-base") {
+        returnToBaseFromNormalStage(false, false);
+        logInfo("Debug: returned to base.");
+        return true;
+    }
+
+    if (normalized == "game money add 10000") {
+        money_ = std::max(0, money_ + 10000);
+        logInfo("Debug: money +10000 => " + std::to_string(money_) + "G");
+        return true;
+    }
+
+    if (normalized == "game materials add 100") {
+        for (int index = 0; index < static_cast<int>(MaterialType::Count); ++index) {
+            inventory_.addMaterial(static_cast<MaterialType>(index), 100);
+        }
+        logInfo("Debug: all upgrade materials +100.");
+        return true;
+    }
+
+    if (normalized == "game hp full") {
+        applyPermanentUpgrades();
+        player_.hp = player_.maxHp;
+        player_.status = EntityStatus{};
+        player_.poisonDamageAccumulator = 0.0;
+        logInfo("Debug: player HP restored to " + std::to_string(player_.maxHp) + ".");
+        return true;
+    }
+
+    if (normalized == "game hp set 1") {
+        applyPermanentUpgrades();
+        player_.hp = std::min(1, std::max(1, player_.maxHp));
+        player_.status = EntityStatus{};
+        player_.poisonDamageAccumulator = 0.0;
+        logInfo("Debug: player HP set to 1.");
+        return true;
+    }
+
+    return false;
+}
+
 void Game::enterGameOver()
 {
     if (mode_ == ScreenMode::GameOver || mode_ == ScreenMode::StageClear) {
@@ -3983,7 +4886,12 @@ void Game::enterStageClear()
 
 void Game::updateRingScreen(const Input& input, UiContext& ui)
 {
-    for (int i = 0; i < RingCount; ++i) {
+    if (spellRing_.activeRingIndex() >= UnlockedRingCount) {
+        spellRing_.switchActiveRing(-spellRing_.activeRingIndex());
+        ringStatus_.clear();
+    }
+
+    for (int i = 0; i < UnlockedRingCount; ++i) {
         const UiRect rect = ringTabRect(i);
         if (rect.contains(ui.mouse()) && i != spellRing_.activeRingIndex()) {
             spellRing_.switchActiveRing(i - spellRing_.activeRingIndex());
@@ -3996,8 +4904,15 @@ void Game::updateRingScreen(const Input& input, UiContext& ui)
         }
     }
 
-    for (int i = 0; i < RingSlotCount; ++i) {
-        const UiRect rect = ringSlotRect(i);
+    auto& items = spellRing_.items();
+    if (!items.empty()) {
+        ringSlotSelection_ = std::clamp(ringSlotSelection_, 0, static_cast<int>(items.size()) - 1);
+    } else {
+        ringSlotSelection_ = 0;
+    }
+
+    for (int i = 0; i < static_cast<int>(items.size()); ++i) {
+        const UiRect rect = ringItemUiRect(items[static_cast<std::size_t>(i)]);
         if (rect.contains(ui.mouse())) {
             ringSlotSelection_ = i;
         }
@@ -4009,34 +4924,30 @@ void Game::updateRingScreen(const Input& input, UiContext& ui)
     ui.block(ringPanelRect());
 
     const int directRing = input.shortcutSlotPressed();
-    if (directRing >= 0 && directRing < RingCount) {
+    if (directRing >= 0 && directRing < UnlockedRingCount) {
         spellRing_.switchActiveRing(directRing - spellRing_.activeRingIndex());
         ringStatus_.clear();
     }
     if (input.activeRingDelta() != 0) {
-        spellRing_.switchActiveRing(input.activeRingDelta());
-        ringStatus_.clear();
+        if constexpr (UnlockedRingCount > 1) {
+            spellRing_.switchActiveRing(input.activeRingDelta());
+            ringStatus_.clear();
+        }
     }
 
-    int moveX = 0;
-    int moveY = 0;
-    if (input.pressed(InputAction::MoveLeft) || input.shortcutCursorDelta() < 0) {
-        --moveX;
+    if (!items.empty() && input.shortcutCursorDelta() != 0) {
+        const int count = static_cast<int>(items.size());
+        ringSlotSelection_ = (ringSlotSelection_ + input.shortcutCursorDelta() + count) % count;
     }
-    if (input.pressed(InputAction::MoveRight) || input.shortcutCursorDelta() > 0) {
-        ++moveX;
+    if (input.pressed(InputAction::MoveLeft)) {
+        if (!spellRing_.moveItemAngle(ringSlotSelection_, -RingAngleStep)) {
+            ringStatus_ = "その位置には移動できません";
+        }
     }
-    if (input.pressed(InputAction::MoveUp)) {
-        --moveY;
-    }
-    if (input.pressed(InputAction::MoveDown)) {
-        ++moveY;
-    }
-    if (moveX != 0) {
-        ringSlotSelection_ = (ringSlotSelection_ + moveX + RingSlotCount) % RingSlotCount;
-    }
-    if (moveY != 0) {
-        ringSlotSelection_ = (ringSlotSelection_ + moveY * RingSlotColumns + RingSlotCount) % RingSlotCount;
+    if (input.pressed(InputAction::MoveRight)) {
+        if (!spellRing_.moveItemAngle(ringSlotSelection_, RingAngleStep)) {
+            ringStatus_ = "その位置には移動できません";
+        }
     }
 
     if (input.pausePressed()) {
@@ -4051,7 +4962,6 @@ void Game::updateRingScreen(const Input& input, UiContext& ui)
     }
 
     const bool actualRing = spellRing_.activeRingIndex() == 0;
-    auto& items = spellRing_.items();
     if (!actualRing) {
         if (input.useItemPressed() || input.confirmPressed() || input.addRingPressed() || input.grabOrPlacePressed()) {
             ringStatus_ = "このリングは未実装です";
@@ -4064,12 +4974,12 @@ void Game::updateRingScreen(const Input& input, UiContext& ui)
             ringStatus_ = "つかみ中は外せません";
         } else if (ringSlotSelection_ < static_cast<int>(items.size()) && items.size() > 1) {
             items.erase(items.begin() + ringSlotSelection_);
-            ringSlotSelection_ = std::min(ringSlotSelection_, RingSlotCount - 1);
-            ringStatus_ = "選択中スロットのアイテムを外しました";
+            ringSlotSelection_ = std::min(ringSlotSelection_, std::max(0, static_cast<int>(items.size()) - 1));
+            ringStatus_ = "選択中アイテムを外しました";
         } else if (ringSlotSelection_ < static_cast<int>(items.size())) {
             ringStatus_ = "最後の1個は外せません";
         } else {
-            ringStatus_ = "空きスロットです";
+            ringStatus_ = "アイテム未選択です";
         }
         return;
     }
@@ -4086,18 +4996,21 @@ void Game::updateRingScreen(const Input& input, UiContext& ui)
                 ringStatus_ = item.protectionEnabled ? "保護ON" : "保護OFF";
             }
         } else {
-            ringStatus_ = "空きスロットです";
+            ringStatus_ = "アイテム未選択です";
         }
         return;
     }
 
     if (input.grabOrPlacePressed()) {
         if (ringGrabActive_) {
-            const int insertIndex = std::clamp(ringSlotSelection_, 0, static_cast<int>(items.size()));
-            items.insert(items.begin() + insertIndex, ringGrabbedItem_);
-            ringGrabActive_ = false;
-            ringGrabOrigin_ = -1;
-            ringStatus_ = "装着順を変更しました";
+            if (spellRing_.addItem(ringGrabbedItem_)) {
+                ringSlotSelection_ = std::max(0, static_cast<int>(items.size()) - 1);
+                ringGrabActive_ = false;
+                ringGrabOrigin_ = -1;
+                ringStatus_ = "最も広い空きに配置しました";
+            } else {
+                ringStatus_ = "配置できる空きがありません";
+            }
         } else if (ringSlotSelection_ < static_cast<int>(items.size())) {
             if (items.size() <= 1) {
                 ringStatus_ = "最後の1個は外せません";
@@ -4109,22 +5022,25 @@ void Game::updateRingScreen(const Input& input, UiContext& ui)
                 ringStatus_ = "装着アイテムをつかみました";
             }
         } else {
-            ringStatus_ = "空きスロットです";
+            ringStatus_ = "アイテム未選択です";
         }
         return;
     }
 
     if (input.useItemPressed() || input.confirmPressed()) {
         if (ringGrabActive_) {
-            const int insertIndex = std::clamp(ringSlotSelection_, 0, static_cast<int>(items.size()));
-            items.insert(items.begin() + insertIndex, ringGrabbedItem_);
-            ringGrabActive_ = false;
-            ringGrabOrigin_ = -1;
-            ringStatus_ = "装着順を変更しました";
+            if (spellRing_.addItem(ringGrabbedItem_)) {
+                ringSlotSelection_ = std::max(0, static_cast<int>(items.size()) - 1);
+                ringGrabActive_ = false;
+                ringGrabOrigin_ = -1;
+                ringStatus_ = "最も広い空きに配置しました";
+            } else {
+                ringStatus_ = "配置できる空きがありません";
+            }
         } else if (ringSlotSelection_ < static_cast<int>(items.size())) {
             ringStatus_ = "詳細を表示中";
         } else {
-            ringStatus_ = "空きスロットです";
+            ringStatus_ = "アイテム未選択です";
         }
     }
 }
@@ -4484,6 +5400,21 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
                     baseStatus_ = "解放済みワープポイントがありません";
                     return;
                 }
+                if (i == 2) {
+                    if (!canRegenerateCurrentStage()) {
+                        baseStatus_ = "全ワープポイント発見後に再生成できます";
+                        return;
+                    }
+                    if (retainedWorldDropCountForCurrentStage() > 0 && !baseRegenerateConfirmActive_) {
+                        baseRegenerateConfirmActive_ = true;
+                        baseStatus_ = "未回収ドロップが消えます。もう一度選ぶと再生成します";
+                        return;
+                    }
+                    baseRegenerateConfirmActive_ = false;
+                    startMiningFromBase(false, true);
+                    return;
+                }
+                baseRegenerateConfirmActive_ = false;
                 startMiningFromBase(i == 1);
                 return;
             }
@@ -4493,6 +5424,21 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
                 baseStatus_ = "解放済みワープポイントがありません";
                 return;
             }
+            if (baseMiningStartSelection_ == 2) {
+                if (!canRegenerateCurrentStage()) {
+                    baseStatus_ = "全ワープポイント発見後に再生成できます";
+                    return;
+                }
+                if (retainedWorldDropCountForCurrentStage() > 0 && !baseRegenerateConfirmActive_) {
+                    baseRegenerateConfirmActive_ = true;
+                    baseStatus_ = "未回収ドロップが消えます。もう一度選ぶと再生成します";
+                    return;
+                }
+                baseRegenerateConfirmActive_ = false;
+                startMiningFromBase(false, true);
+                return;
+            }
+            baseRegenerateConfirmActive_ = false;
             startMiningFromBase(baseMiningStartSelection_ == 1);
             return;
         }
@@ -4887,6 +5833,79 @@ bool Game::basePresentationActive() const
         mode_ == ScreenMode::Ring;
 }
 
+std::string Game::currentMapDisplayName() const
+{
+    if (basePresentationActive()) {
+        return baseAreaName(baseArea_);
+    }
+    if (!currentStageDefinition_.name.empty()) {
+        return currentStageDefinition_.name;
+    }
+    return currentStageId_.empty() ? std::string{"Unknown Map"} : currentStageId_;
+}
+
+void Game::renderTopInfoBar(Renderer& renderer) const
+{
+    renderer.setScreenSpace();
+
+    const float screenWidth = static_cast<float>(camera_.width());
+    const float barWidth = std::max(1.0f, screenWidth - TopInfoBarX * 2.0f);
+    renderer.fillRect({TopInfoBarX, TopInfoBarY}, {barWidth, TopInfoBarHeight}, {8, 10, 18, 210});
+    renderer.drawRect({TopInfoBarX, TopInfoBarY}, {barWidth, TopInfoBarHeight}, {96, 104, 132, 170});
+
+    const int textScale = 2;
+    const Vec2 textMeasure = renderer.measureText("0", textScale);
+    const float textY = TopInfoBarY + std::max(0.0f, (TopInfoBarHeight - textMeasure.y) * 0.5f) + 8.0f;
+    const std::string moneyText = std::to_string(money_) + "G";
+    const Vec2 moneySize = renderer.measureText(moneyText, textScale);
+    constexpr std::array<TopInfoMaterial, 4> Materials{{
+        {MaterialType::OldWoodBuildingMaterial},
+        {MaterialType::EnhancementOre},
+        {MaterialType::MoonFragment},
+        {MaterialType::ManaDrop},
+    }};
+
+    std::array<std::string, Materials.size()> materialTexts{};
+    std::array<Vec2, Materials.size()> materialTextSizes{};
+    float rightGroupWidth = moneySize.x;
+    for (std::size_t i = 0; i < Materials.size(); ++i) {
+        materialTexts[i] = std::to_string(inventory_.materialCount(Materials[i].type));
+        materialTextSizes[i] = renderer.measureText(materialTexts[i], textScale);
+        rightGroupWidth += TopInfoBarGroupGap + TopInfoBarIconSize + TopInfoBarIconTextGap + materialTextSizes[i].x;
+    }
+
+    const float rightEdge = TopInfoBarX + barWidth - TopInfoBarPaddingX;
+    float rightX = rightEdge - rightGroupWidth;
+    rightX = std::max(TopInfoBarX + TopInfoBarPaddingX, rightX);
+
+    const float mapX = TopInfoBarX + TopInfoBarPaddingX;
+    const float mapMaxWidth = std::max(0.0f, rightX - mapX - 18.0f);
+    const std::string mapName = fittedSingleLineText(renderer, currentMapDisplayName(), mapMaxWidth, textScale);
+    renderer.drawText({mapX, textY}, mapName, {246, 246, 252, 255}, textScale);
+
+    float x = rightX;
+    renderer.drawText({x, textY}, moneyText, {246, 230, 174, 255}, textScale);
+    x += moneySize.x;
+
+    for (std::size_t i = 0; i < Materials.size(); ++i) {
+        x += TopInfoBarGroupGap;
+        const MaterialType type = Materials[i].type;
+        const Vec2 iconPos{x, TopInfoBarY + (TopInfoBarHeight - TopInfoBarIconSize) * 0.5f};
+        renderer.fillRect(iconPos, {TopInfoBarIconSize, TopInfoBarIconSize}, {12, 14, 24, 255});
+        renderer.fillCircle(
+            iconPos + Vec2{TopInfoBarIconSize * 0.5f, TopInfoBarIconSize * 0.5f},
+            TopInfoBarIconSize * 0.42f,
+            materialCounterFill(type));
+        renderer.drawCircle(
+            iconPos + Vec2{TopInfoBarIconSize * 0.5f, TopInfoBarIconSize * 0.5f},
+            TopInfoBarIconSize * 0.46f,
+            materialCounterOutline(type));
+        x += TopInfoBarIconSize + TopInfoBarIconTextGap;
+        renderer.drawText({x, textY}, materialTexts[i], {232, 236, 244, 255}, textScale);
+        x += materialTextSizes[i].x;
+    }
+}
+
 void Game::renderBookshelfScreen(Renderer& renderer) const
 {
     const UiRect panel = basePanelRect();
@@ -4999,6 +6018,7 @@ void Game::renderBaseScreen(Renderer& renderer) const
     renderer.setScreenSpace();
     if (baseStorageActive_) {
         renderer.fillRect({0.0f, 0.0f}, {static_cast<float>(camera_.width()), static_cast<float>(camera_.height())}, {10, 12, 18, 255});
+        renderTopInfoBar(renderer);
         const UiRect panel = storagePanelRect();
         UiWindowScope storageWindow(
             renderer,
@@ -5100,11 +6120,6 @@ void Game::renderBaseScreen(Renderer& renderer) const
         const Vec2 storageMaterialContent = uiSubPanelContentPos(storageMaterialPanel);
         drawUiSubPanel(renderer, storageMaterialPanel);
         renderer.drawText(storageMaterialContent, "素材所持数", {246, 235, 255, 255}, 2);
-        std::snprintf(buffer, sizeof(buffer), "土 %d / 石 %d / 鉱石 %d",
-            inventory_.itemCount(InventoryItemType::Dirt),
-            inventory_.itemCount(InventoryItemType::Stone),
-            inventory_.itemCount(InventoryItemType::Ore));
-        renderer.drawText(storageMaterialContent + Vec2{0.0f, 32.0f}, buffer, {198, 198, 206, 255}, 2);
         for (int i = 0; i < static_cast<int>(MaterialType::Count); ++i) {
             const MaterialType type = static_cast<MaterialType>(i);
             std::snprintf(buffer, sizeof(buffer), "%s %d", std::string(materialTypeDisplayName(type)).c_str(), inventory_.materialCount(type));
@@ -5200,23 +6215,9 @@ void Game::renderBaseScreen(Renderer& renderer) const
         renderer.drawLine(basePlayerPosition_, basePlayerPosition_ + basePlayerFacing_ * 22.0f, {235, 210, 255, 255});
     }
 
-    char buffer[192];
-    std::snprintf(buffer, sizeof(buffer), "Stage %d/%d   Warp %d   Money %dG   商人 %s",
-        currentStage_ + 1,
-        unlockedStages_,
-        unlockedWarpPointCount_,
-        money_,
-        merchantRefreshPending_ ? "更新あり" : "通常");
-    renderer.fillRect({20.0f, 14.0f}, {680.0f, 28.0f}, {0, 0, 0, 150});
-    renderer.drawText({30.0f, 20.0f}, buffer, {230, 230, 236, 255}, 2);
-    std::snprintf(buffer, sizeof(buffer), "所持品: 土 %d / 石 %d / 鉱石 %d   リング装着 %d",
-        inventory_.itemCount(InventoryItemType::Dirt),
-        inventory_.itemCount(InventoryItemType::Stone),
-        inventory_.itemCount(InventoryItemType::Ore),
-        static_cast<int>(spellRing_.items().size()));
-    renderer.fillRect({720.0f, 14.0f}, {520.0f, 28.0f}, {0, 0, 0, 150});
-    renderer.drawText({730.0f, 20.0f}, buffer, {198, 198, 206, 255}, 2);
+    renderTopInfoBar(renderer);
 
+    char buffer[256];
     const bool panelUiActive = baseRingWorkshopActive_ ||
         baseBookshelfActive_ ||
         baseProcessingActive_ ||
@@ -5481,7 +6482,7 @@ void Game::renderBaseScreen(Renderer& renderer) const
         renderer.drawText(panel.pos + Vec2{178.0f, 238.0f}, "採掘出口", {246, 235, 255, 255}, 3);
         renderer.drawText(panel.pos + Vec2{116.0f, 278.0f}, "開始地点または最新ワープポイントから出発", {198, 198, 206, 255}, 2);
         for (int i = 0; i < BaseMiningStartChoiceCount; ++i) {
-            const bool disabled = i == 1 && unlockedWarpPointCount_ <= 0;
+            const bool disabled = (i == 1 && unlockedWarpPointCount_ <= 0) || (i == 2 && !canRegenerateCurrentStage());
             drawUiButton(renderer, baseMiningStartChoiceRect(i), baseMiningStartChoiceName(i), i == baseMiningStartSelection_ && !disabled, uiActionButtonStyle());
             if (disabled) {
                 const UiRect rect = baseMiningStartChoiceRect(i);
@@ -5594,6 +6595,72 @@ void Game::renderRewardNodes(Renderer& renderer, const std::vector<LightSource>&
             renderer.drawLine(center + Vec2{-6.0f, 6.0f}, center + Vec2{6.0f, -6.0f}, sparkle);
         }
     }
+
+    for (const MoonFragmentNode& node : moonFragmentNodes_) {
+        if (node.collected) {
+            continue;
+        }
+        const Vec2 center = tileWorldCenter(node.tile);
+        if (!tileMap_.isLit(center, player_.position, extraLights)) {
+            continue;
+        }
+        const Color moonFill{232, 224, 166, node.visibility == PlacementVisibility::Exposed ? 255 : 165};
+        const Color moonGlow{255, 250, 198, node.visibility == PlacementVisibility::Exposed ? 210 : 135};
+        if (node.visibility == PlacementVisibility::Exposed) {
+            renderer.fillCircle(center, 5.5f, moonFill);
+            renderer.drawCircle(center, 9.0f, moonGlow);
+            renderer.drawLine(center + Vec2{-7.0f, 0.0f}, center + Vec2{7.0f, 0.0f}, moonGlow);
+        } else if (node.visibility == PlacementVisibility::BuriedVisible) {
+            renderer.drawCircle(center, 7.0f, moonGlow);
+            renderer.fillCircle(center, 2.0f, moonFill);
+            renderer.drawLine(center + Vec2{-5.0f, -5.0f}, center + Vec2{5.0f, 5.0f}, moonGlow);
+            renderer.drawLine(center + Vec2{-5.0f, 5.0f}, center + Vec2{5.0f, -5.0f}, moonGlow);
+        }
+    }
+
+    for (const CrateNode& node : crateNodes_) {
+        if (node.destroyed) {
+            continue;
+        }
+        const Vec2 center = tileWorldCenter(node.tile);
+        if (!tileMap_.isLit(center, player_.position, extraLights)) {
+            continue;
+        }
+        renderer.fillRect(center + Vec2{-9.0f, -8.0f}, {18.0f, 16.0f}, {132, 88, 48, 255});
+        renderer.drawRect(center + Vec2{-9.0f, -8.0f}, {18.0f, 16.0f}, {218, 160, 92, 255});
+        renderer.drawLine(center + Vec2{-7.0f, -6.0f}, center + Vec2{7.0f, 6.0f}, {92, 58, 34, 230});
+        renderer.drawLine(center + Vec2{7.0f, -6.0f}, center + Vec2{-7.0f, 6.0f}, {92, 58, 34, 230});
+    }
+
+    for (const ChestNode& node : chestNodes_) {
+        if (!node.revealed && !node.opened) {
+            continue;
+        }
+        const Vec2 center = tileWorldCenter(node.tile);
+        if (!tileMap_.isLit(center, player_.position, extraLights)) {
+            continue;
+        }
+        if (node.visibility == PlacementVisibility::BuriedVisible && !node.opened) {
+            const Color outline = chestOutlineColor(node.chestKind, false);
+            renderer.drawLine(center + Vec2{-9.0f, -4.0f}, center + Vec2{9.0f, -4.0f}, outline);
+            renderer.drawLine(center + Vec2{-9.0f, 4.0f}, center + Vec2{9.0f, 4.0f}, outline);
+            renderer.fillCircle(center, 2.5f, outline);
+            continue;
+        }
+        if (node.visibility != PlacementVisibility::Exposed && !node.opened) {
+            continue;
+        }
+
+        const Color fill = chestFillColor(node.chestKind, node.opened);
+        const Color outline = chestOutlineColor(node.chestKind, node.opened);
+        renderer.fillRect(center + Vec2{-10.0f, -6.0f}, {20.0f, 13.0f}, fill);
+        renderer.drawRect(center + Vec2{-10.0f, -6.0f}, {20.0f, 13.0f}, outline);
+        renderer.drawLine(center + Vec2{-8.0f, -2.0f}, center + Vec2{8.0f, -2.0f}, outline);
+        renderer.drawLine(center + Vec2{0.0f, -6.0f}, center + Vec2{0.0f, 7.0f}, outline);
+        if (node.chestKind == LootChestKind::SuperRare && !node.opened) {
+            renderer.drawCircle(center, 15.0f, {255, 242, 164, 170});
+        }
+    }
 }
 
 void Game::renderRingScreen(Renderer& renderer) const
@@ -5604,47 +6671,57 @@ void Game::renderRingScreen(Renderer& renderer) const
 
     renderer.setScreenSpace();
     const UiRect panel = ringPanelRect();
-    UiWindowScope ringWindow(renderer, "ring.manage", panel, "リング管理", "Z/X・1-3 リング選択  Q/E スロット  F/Enter 詳細  R 外す  G つかむ/置く  P 保護  Esc 戻る");
+    constexpr std::string_view RingHelpText = UnlockedRingCount > 1
+        ? "Z/X・1-3 リング選択  Q/E アイテム選択  ←/→ 角度  F/Enter 詳細  R 外す  G つかむ/置く  P 保護  Esc 戻る"
+        : "Q/E アイテム選択  ←/→ 角度  F/Enter 詳細  R 外す  G つかむ/置く  P 保護  Esc 戻る";
+    UiWindowScope ringWindow(renderer, "ring.manage", panel, "リング", RingHelpText);
 
     char buffer[192];
-    for (int i = 0; i < RingCount; ++i) {
-        std::snprintf(buffer, sizeof(buffer), "Ring %d%s", i + 1, i == 0 ? "" : " 未実装");
+    for (int i = 0; i < UnlockedRingCount; ++i) {
+        std::snprintf(buffer, sizeof(buffer), "リング %d", i + 1);
         drawUiButton(renderer, ringTabRect(i), buffer, i == spellRing_.activeRingIndex());
     }
 
     const bool actualRing = spellRing_.activeRingIndex() == 0;
     const auto& items = spellRing_.items();
 
-    renderer.drawText(panel.pos + Vec2{48.0f, 128.0f}, "リング情報", {246, 248, 255, 255}, 3);
-    std::snprintf(buffer, sizeof(buffer), "リング番号: %d / 3", spellRing_.activeRingIndex() + 1);
-    renderer.drawText(panel.pos + Vec2{48.0f, 174.0f}, buffer, {232, 235, 242, 255}, 2);
-    renderer.drawText(panel.pos + Vec2{48.0f, 204.0f}, actualRing ? "リング形状: 円形 (仮)" : "リング形状: 未実装", {232, 235, 242, 255}, 2);
     if (actualRing) {
-        std::snprintf(buffer, sizeof(buffer), "半径 %.0f   速度 %.2f   重量 %.1fkg   重量補正 %.2f",
+        std::snprintf(buffer, sizeof(buffer), "装着 %02d/%02d   半径 %.0f   速度 %.2f   重量 %.1f/%.1fkg   重量補正 %.2f",
+            static_cast<int>(items.size()),
+            spellRing_.maxItemCount(),
             spellRing_.radius(),
             spellRing_.effectiveAngularSpeed(),
             spellRing_.totalEquippedWeight(),
+            spellRing_.maxEquippedWeight(),
             spellRing_.weightSpeedMultiplier());
         renderer.drawText(panel.pos + Vec2{48.0f, 520.0f}, buffer, {202, 206, 216, 255}, 2);
     } else {
         renderer.drawText(panel.pos + Vec2{48.0f, 520.0f}, "半径 -   速度 -   ずらし距離 -   投げクールダウン -", {202, 206, 216, 255}, 2);
     }
 
-    renderer.drawText(panel.pos + Vec2{48.0f, 276.0f}, "装着アイテム一覧", {246, 248, 255, 255}, 3);
-    for (int i = 0; i < RingSlotCount; ++i) {
-        const UiRect slot = ringSlotRect(i);
+    renderer.drawText(panel.pos + Vec2{48.0f, 160.0f}, "リング配置", {246, 248, 255, 255}, 3);
+    const Vec2 orbitCenter = ringOrbitCenter();
+    const float orbitRadius = ringOrbitRadius();
+    renderer.drawCircle(orbitCenter, orbitRadius, {130, 125, 160, 230});
+    renderer.drawCircle(orbitCenter, 8.0f, {198, 190, 220, 210});
+    for (int tick = 0; tick < 72; ++tick) {
+        const float angle = static_cast<float>(tick) * RingAngleStep - Pi * 0.5f;
+        const Vec2 outward = fromAngle(angle);
+        const float tickLength = tick % 6 == 0 ? 10.0f : 5.0f;
+        renderer.drawLine(
+            orbitCenter + outward * (orbitRadius - tickLength),
+            orbitCenter + outward * orbitRadius,
+            tick % 6 == 0 ? Color{120, 128, 154, 180} : Color{90, 98, 120, 120});
+    }
+    for (int i = 0; actualRing && i < static_cast<int>(items.size()); ++i) {
+        const SpellRingItem& item = items[static_cast<std::size_t>(i)];
+        const Vec2 itemCenter = ringItemUiCenter(item);
+        const Vec2 outward = normalize(itemCenter - orbitCenter);
         const bool selected = i == ringSlotSelection_;
-        renderer.fillRect(slot.pos, slot.size, selected ? Color{54, 56, 84, 245} : Color{22, 24, 34, 232});
-        renderer.drawRect(slot.pos, slot.size, selected ? Color{255, 230, 150, 255} : Color{90, 98, 120, 255});
+        renderer.drawLine(orbitCenter, itemCenter, selected ? Color{255, 230, 150, 120} : Color{94, 102, 128, 85});
+        drawRingItemShape(renderer, item, itemCenter, outward, selected);
         std::snprintf(buffer, sizeof(buffer), "%d", i + 1);
-        renderer.drawText(slot.pos + Vec2{8.0f, 8.0f}, buffer, {174, 182, 198, 255}, 2);
-        if (actualRing && i < static_cast<int>(items.size())) {
-            const std::string itemName = ringItemDisplayName(objectCatalog_, items[i]);
-            std::snprintf(buffer, sizeof(buffer), "%02d %s", i + 1, itemName.c_str());
-            renderer.drawText(slot.pos + Vec2{24.0f, 34.0f}, buffer, {238, 240, 246, 255}, 2);
-        } else {
-            renderer.drawText(slot.pos + Vec2{42.0f, 34.0f}, actualRing ? "空き" : "-", {150, 154, 166, 255}, 2);
-        }
+        renderer.drawText(itemCenter + Vec2{-5.0f, 22.0f}, buffer, selected ? Color{255, 230, 150, 255} : Color{174, 182, 198, 255}, 1);
     }
 
     std::string ringDetailTitle = "空き";
@@ -5654,7 +6731,7 @@ void Game::renderRingScreen(Renderer& renderer) const
         ringDetailTitle = ringItemDisplayName(objectCatalog_, items[ringSlotSelection_]);
     }
 
-    const UiRect ringDetailPanel{{RingDetailX, RingDetailY}, {RingDetailW, RingDetailH}};
+    const UiRect ringDetailPanel = ringDetailRect();
     drawUiSubPanel(renderer, ringDetailPanel);
     float detailLineY = drawUiDetailHeader(renderer, ringDetailPanel, ringDetailTitle);
 
@@ -5746,6 +6823,7 @@ void Game::update(const Input& input, const Time& time)
         }
         updateWarpPoints();
         updateExposedRewardNodes();
+        updateExposedMoonFragmentNodes();
         updateExposedEnemyNodes();
         if (input.capturePressed() && captureCooldown_ <= 0.0f) {
             const CaptureResult capture = enemies_.tryCapture(player_, spellRing_, inventory_);
@@ -5772,6 +6850,8 @@ void Game::update(const Input& input, const Time& time)
         } else if (previousSpellRingState == SpellRingState::Returning && spellRing_.state() == SpellRingState::Normal) {
             effects_.spawnReturn(spellRing_.center());
         }
+        updateChestNodes(input);
+        updateCrateNodes();
 
         for (const SpellRingItem& item : spellRing_.items()) {
             if (item.objectId.empty() || item.broken()) {
@@ -5800,19 +6880,33 @@ void Game::update(const Input& input, const Time& time)
             }
         }
         revealRewardNodesFromOpenedTiles(digging_.openedTiles());
+        revealMoonFragmentNodesFromOpenedTiles(digging_.openedTiles());
+        revealChestNodesFromOpenedTiles(digging_.openedTiles());
         for (const DugTile& tile : digging_.dugTiles()) {
             effects_.spawnTileBreak(tile.center, tile.type);
             ++runStats_.dugTiles;
-            if (tile.type != TileType::Ore) {
-                inventory_.addFromDugTile(tile.type);
-                ++runStats_.acquiredItems;
-            }
         }
         for (Vec2 rewardPosition : digging_.rewardDropRequests()) {
-            worldDrops_.spawnRewardDrop(objectCatalog_, rewardPosition);
+            worldDrops_.spawnRewardDrop(objectCatalog_, rewardPosition, runStats_.elapsedSeconds);
         }
-        worldDrops_.spawnFromDugTiles(digging_.dugTiles(), objectCatalog_);
-        runStats_.acquiredItems += worldDrops_.update(time.deltaSeconds(), player_, inventory_, objectCatalog_, &effects_);
+        worldDrops_.spawnFromDugTiles(digging_.dugTiles(), objectCatalog_, runStats_.elapsedSeconds);
+        for (const DugTile& tile : digging_.dugTiles()) {
+            if (tile.type != TileType::Ore) {
+                continue;
+            }
+            const DungeonLayoutMetrics metrics = calculateDungeonLayoutMetrics(dungeonLayout_, {
+                static_cast<float>(tileMap_.worldToTile(tile.center.x)),
+                static_cast<float>(tileMap_.worldToTile(tile.center.y)),
+            });
+            const int depthRank = lootDepthRankForProgress(currentStageId_, metrics.pathProgress);
+            const float multiplier =
+                lootStageMultiplier(balance_, currentStageId_) *
+                lootDepthMultiplier(balance_, currentStageId_, depthRank);
+            std::uniform_int_distribution<int> oreAmountDistribution(balance_.oreMaterialMin, balance_.oreMaterialMax);
+            const int amount = scaledLootAmount(oreAmountDistribution(lootRuntimeRng()), multiplier);
+            worldDrops_.spawnMaterialDrop(MaterialType::EnhancementOre, amount, tile.center, runStats_.elapsedSeconds);
+        }
+        runStats_.acquiredItems += worldDrops_.update(time.deltaSeconds(), player_, inventory_, money_, objectCatalog_, &effects_);
         const std::vector<Vec2> randomEnemySpawnTiles = spawnHiddenEnemyNodesFromOpenedTiles(digging_.openedTiles());
         enemies_.spawnFromDugTiles(randomEnemySpawnTiles, tileMap_, player_.position, balance_, enemyCatalog_);
         updateBossSpawn();
@@ -5854,6 +6948,21 @@ void Game::update(const Input& input, const Time& time)
             if (event.type == EnemyEventType::Death || event.type == EnemyEventType::BossDeath) {
                 ++runStats_.defeatedEnemies;
                 effects_.spawnEnemyDeath(event.position);
+                if (event.moneyDrop > 0) {
+                    worldDrops_.spawnMoneyDrop(event.moneyDrop, event.position, runStats_.elapsedSeconds);
+                }
+                std::mt19937& rng = lootRuntimeRng();
+                const bool bossDeath = event.type == EnemyEventType::BossDeath;
+                const float manaChance = bossDeath ? balance_.bossManaDropChance : balance_.enemyManaDropChance;
+                const float moonChance = bossDeath ? balance_.bossMoonFragmentChance : balance_.enemyMoonFragmentChance;
+                if (rollChance(manaChance, rng)) {
+                    const int amount = bossDeath ? scaledLootAmount(std::uniform_int_distribution<int>(1, 3)(rng), 1.0f) : 1;
+                    worldDrops_.spawnMaterialDrop(MaterialType::ManaDrop, amount, scatterLootPosition(event.position, rng), runStats_.elapsedSeconds);
+                }
+                if (rollChance(moonChance, rng)) {
+                    const int amount = bossDeath ? scaledLootAmount(std::uniform_int_distribution<int>(1, 3)(rng), 1.0f) : 1;
+                    worldDrops_.spawnMaterialDrop(MaterialType::MoonFragment, amount, scatterLootPosition(event.position, rng), runStats_.elapsedSeconds);
+                }
                 if (!event.enemyId.empty()) {
                     encyclopedia_.noteEnemyDefeated(event.enemyId, event.enemyName, event.position);
                 }
@@ -5861,7 +6970,7 @@ void Game::update(const Input& input, const Time& time)
                     bossDefeated = true;
                 }
             } else if (event.type == EnemyEventType::RewardDrop) {
-                worldDrops_.spawnRewardDrop(objectCatalog_, event.position);
+                worldDrops_.spawnRewardDrop(objectCatalog_, event.position, runStats_.elapsedSeconds);
             } else if (event.type == EnemyEventType::CapturedExplosion) {
                 continue;
             } else {
@@ -5909,6 +7018,7 @@ void Game::checkHotReload()
 
     if (reloaded) {
         player_.xpToNext = std::max(1, balance_.xpBase + player_.level * balance_.xpPerLevel);
+        worldDrops_.setDropLimit(balance_.worldDropLimitPerStage);
         applyPermanentUpgrades();
         refreshOrbitEffects();
         tileMap_.updateAround(player_.position, 0.0f, balance_, dungeonLayout_);
@@ -5966,7 +7076,7 @@ void Game::renderPauseMenu(Renderer& renderer) const
         drawStatusRow(2, "XP", buffer);
         std::snprintf(buffer, sizeof(buffer), "%d", spellRing_.activeRingIndex() + 1);
         drawStatusRow(3, "Ring", buffer);
-        std::snprintf(buffer, sizeof(buffer), "%02d/08", static_cast<int>(spellRing_.items().size()));
+        std::snprintf(buffer, sizeof(buffer), "%02d/%02d", static_cast<int>(spellRing_.items().size()), spellRing_.maxItemCount());
         drawStatusRow(4, "Items", buffer);
         std::snprintf(buffer, sizeof(buffer), "%.0f", spellRing_.radius());
         drawStatusRow(5, "Radius", buffer);
@@ -5980,7 +7090,7 @@ void Game::renderPauseMenu(Renderer& renderer) const
         renderer.drawText(panel.pos + Vec2{48.0f, 102.0f}, "リング", {246, 235, 255, 255}, 3);
         std::snprintf(buffer, sizeof(buffer), "アクティブリング %d", spellRing_.activeRingIndex() + 1);
         renderer.drawText(panel.pos + Vec2{58.0f, 164.0f}, buffer, {230, 230, 236, 255}, 2);
-        std::snprintf(buffer, sizeof(buffer), "装着アイテム %02d/08", static_cast<int>(spellRing_.items().size()));
+        std::snprintf(buffer, sizeof(buffer), "装着アイテム %02d/%02d", static_cast<int>(spellRing_.items().size()), spellRing_.maxItemCount());
         renderer.drawText(panel.pos + Vec2{58.0f, 206.0f}, buffer, {230, 230, 236, 255}, 2);
     } else if (pausePage_ == PauseMenuPage::Options) {
         renderer.drawText(panel.pos + Vec2{48.0f, 102.0f}, "オプション", {246, 235, 255, 255}, 3);
@@ -6140,9 +7250,6 @@ void Game::render(Renderer& renderer, const Time& time)
                 renderer.fillCircle(item.worldPosition, item.hitRadius, {242, 122, 25, 255});
                 renderer.fillCircle(item.worldPosition + Vec2{2.0f, -2.0f}, 4.0f, {255, 238, 98, 255});
             }
-        } else if (item.type == SpellRingItemType::Stone) {
-            renderer.fillCircle(item.worldPosition, item.hitRadius, {118, 122, 132, 255});
-            renderer.drawCircle(item.worldPosition, item.hitRadius + 2.0f, {62, 64, 72, 255});
         } else {
             renderer.fillCircle(item.worldPosition, item.hitRadius, {96, 122, 210, 255});
             renderer.drawCircle(item.worldPosition, item.hitRadius + 3.0f, {160, 202, 255, 255});
@@ -6160,6 +7267,7 @@ void Game::render(Renderer& renderer, const Time& time)
     effects_.render(renderer);
 
     renderer.setScreenSpace();
+    renderTopInfoBar(renderer);
     if (reloadNoticeTimer_ > 0.0f) {
         renderer.fillRect({18.0f, 170.0f}, {430.0f, 26.0f}, {0, 0, 0, 180});
         renderer.drawText({26.0f, 176.0f}, reloadNotice_, {255, 235, 150, 255}, 2);

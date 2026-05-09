@@ -21,6 +21,7 @@ constexpr float DropVisualRadius = 8.0f;
 constexpr float CapturedMagnetDropRadius = 170.0f;
 constexpr float CapturedMagnetDropAcceleration = 260.0f;
 constexpr int CapturedMagnetDropLimit = 6;
+constexpr std::string_view MoneyDropId = "money";
 
 constexpr std::array<std::string_view, 6> DropCategories = {
     "\xE6\x8E\x98\xE5\x89\x8A",
@@ -115,6 +116,23 @@ Color colorForDrop(const ObjectDefinition& object)
     return {188, 152, 236, 255};
 }
 
+Color colorForMaterial(MaterialType type)
+{
+    switch (type) {
+    case MaterialType::OldWoodBuildingMaterial:
+        return {184, 126, 70, 255};
+    case MaterialType::EnhancementOre:
+        return {104, 152, 224, 255};
+    case MaterialType::MoonFragment:
+        return {238, 224, 146, 255};
+    case MaterialType::ManaDrop:
+        return {112, 224, 226, 255};
+    case MaterialType::Count:
+        break;
+    }
+    return {188, 188, 196, 255};
+}
+
 void logDropWarning(std::string_view message)
 {
     logError("[warning] WorldDropSystem: " + std::string(message));
@@ -126,7 +144,19 @@ void WorldDropSystem::clear()
     drops_.clear();
 }
 
-void WorldDropSystem::spawnFromDugTiles(const std::vector<DugTile>& dugTiles, const ObjectCatalog& catalog)
+void WorldDropSystem::setDropLimit(int limit)
+{
+    dropLimit_ = std::max(0, limit);
+    if (dropLimit_ > 0 && static_cast<int>(drops_.size()) > dropLimit_) {
+        while (static_cast<int>(drops_.size()) > dropLimit_) {
+            if (!pruneOneDropForLimit()) {
+                break;
+            }
+        }
+    }
+}
+
+void WorldDropSystem::spawnFromDugTiles(const std::vector<DugTile>& dugTiles, const ObjectCatalog& catalog, float spawnedAtSeconds)
 {
     for (const DugTile& dugTile : dugTiles) {
         if (!canDropFromTile(dugTile.type)) {
@@ -134,14 +164,13 @@ void WorldDropSystem::spawnFromDugTiles(const std::vector<DugTile>& dugTiles, co
         }
 
         const ObjectDefinition* object = chooseDropForTile(dugTile.type, catalog);
-        if (object == nullptr) {
-            continue;
+        if (object != nullptr) {
+            spawnDrop(*object, dugTile.center, spawnedAtSeconds);
         }
-        spawnDrop(*object, dugTile.center);
     }
 }
 
-bool WorldDropSystem::spawnObjectDrop(const ObjectCatalog& catalog, std::string_view objectId, Vec2 position)
+bool WorldDropSystem::spawnObjectDrop(const ObjectCatalog& catalog, std::string_view objectId, Vec2 position, float spawnedAtSeconds)
 {
     if (objectId.empty()) {
         logDropWarning("reward node requested an empty object_id; no item drop spawned");
@@ -154,17 +183,59 @@ bool WorldDropSystem::spawnObjectDrop(const ObjectCatalog& catalog, std::string_
         return false;
     }
 
-    spawnDrop(*object, position);
+    spawnDrop(*object, position, spawnedAtSeconds);
     return true;
 }
 
-bool WorldDropSystem::spawnRewardDrop(const ObjectCatalog& catalog, Vec2 position)
+bool WorldDropSystem::spawnMoneyDrop(int amount, Vec2 position, float spawnedAtSeconds)
+{
+    if (amount <= 0) {
+        return false;
+    }
+    if (!canSpawnDrop("money")) {
+        return false;
+    }
+
+    drops_.push_back(WorldDropItem{
+        .kind = WorldDropKind::Money,
+        .id = std::string(MoneyDropId),
+        .quantity = amount,
+        .position = position,
+        .velocity = randomDropVelocity(),
+        .spawnedAtSeconds = spawnedAtSeconds,
+        .ageSeconds = 0.0f,
+    });
+    return true;
+}
+
+bool WorldDropSystem::spawnMaterialDrop(MaterialType type, int count, Vec2 position, float spawnedAtSeconds)
+{
+    if (type == MaterialType::Count || count <= 0) {
+        return false;
+    }
+    if (!canSpawnDrop("material")) {
+        return false;
+    }
+
+    drops_.push_back(WorldDropItem{
+        .kind = WorldDropKind::Material,
+        .id = std::string(materialTypeSaveName(type)),
+        .quantity = count,
+        .position = position,
+        .velocity = randomDropVelocity(),
+        .spawnedAtSeconds = spawnedAtSeconds,
+        .ageSeconds = 0.0f,
+    });
+    return true;
+}
+
+bool WorldDropSystem::spawnRewardDrop(const ObjectCatalog& catalog, Vec2 position, float spawnedAtSeconds)
 {
     const ObjectDefinition* object = chooseDropForTile(TileType::Ore, catalog);
     if (object == nullptr) {
         return false;
     }
-    spawnDrop(*object, position);
+    spawnDrop(*object, position, spawnedAtSeconds);
     return true;
 }
 
@@ -177,7 +248,10 @@ int WorldDropSystem::pullMetalDrops(const ObjectCatalog& catalog, Vec2 center, f
     int pulled = 0;
     const float radiusSq = CapturedMagnetDropRadius * CapturedMagnetDropRadius;
     for (WorldDropItem& drop : drops_) {
-        const ObjectDefinition* object = catalog.registry.findById(drop.objectId);
+        if (drop.kind != WorldDropKind::Object) {
+            continue;
+        }
+        const ObjectDefinition* object = catalog.registry.findById(drop.id);
         if (object == nullptr || !hasObjectTag(*object, "metal")) {
             continue;
         }
@@ -197,7 +271,7 @@ int WorldDropSystem::pullMetalDrops(const ObjectCatalog& catalog, Vec2 center, f
     return pulled;
 }
 
-int WorldDropSystem::update(float dt, const Player& player, InventorySystem& inventory, const ObjectCatalog& catalog, EffectSystem* effects)
+int WorldDropSystem::update(float dt, const Player& player, InventorySystem& inventory, int& money, const ObjectCatalog& catalog, EffectSystem* effects)
 {
     const float pickupRadiusSq = DropPickupRadius * DropPickupRadius;
     int pickedUpCount = 0;
@@ -213,7 +287,24 @@ int WorldDropSystem::update(float dt, const Player& player, InventorySystem& inv
             return false;
         }
 
-        if (inventory.addObjectItem(catalog, drop.objectId)) {
+        bool pickedUp = false;
+        if (drop.kind == WorldDropKind::Object) {
+            pickedUp = inventory.addObjectItem(catalog, drop.id);
+        } else if (drop.kind == WorldDropKind::Money) {
+            money = std::max(0, money + std::max(0, drop.quantity));
+            pickedUp = true;
+        } else if (drop.kind == WorldDropKind::Material) {
+            MaterialType materialType = MaterialType::Count;
+            if (materialTypeFromSaveName(drop.id, materialType)) {
+                inventory.addMaterial(materialType, drop.quantity);
+                pickedUp = true;
+            } else {
+                logDropWarning("unknown material drop id=\"" + drop.id + "\"; removing drop");
+                pickedUp = true;
+            }
+        }
+
+        if (pickedUp) {
             if (effects != nullptr) {
                 effects->spawnDropPickup(drop.position, player.position - drop.position);
             }
@@ -238,15 +329,28 @@ void WorldDropSystem::render(
             continue;
         }
 
-        const ItemData* object = catalog.registry.findById(drop.objectId);
+        const ItemData* object = drop.kind == WorldDropKind::Object ? catalog.registry.findById(drop.id) : nullptr;
         const float bob = std::sin(drop.ageSeconds * 5.5f) * 2.5f;
         const Vec2 center = drop.position + Vec2{0.0f, bob};
-        const Color color = object != nullptr ? colorForDrop(*object) : Color{255, 80, 120, 255};
+        MaterialType materialType = MaterialType::Count;
+        const bool material = drop.kind == WorldDropKind::Material && materialTypeFromSaveName(drop.id, materialType);
+        Color color = {255, 80, 120, 255};
+        if (object != nullptr) {
+            color = colorForDrop(*object);
+        } else if (drop.kind == WorldDropKind::Money) {
+            color = {245, 206, 76, 255};
+        } else if (material) {
+            color = colorForMaterial(materialType);
+        }
         renderer.fillCircle(center, DropVisualRadius, color);
         renderer.drawCircle(center, DropVisualRadius + 3.0f, {255, 246, 190, 210});
 
         if (object != nullptr) {
             renderer.drawText(center + Vec2{-24.0f, -28.0f}, object->name, {245, 238, 210, 235}, 1);
+        } else if (drop.kind == WorldDropKind::Money) {
+            renderer.drawText(center + Vec2{-10.0f, -28.0f}, "G", {255, 245, 180, 235}, 1);
+        } else if (material) {
+            renderer.drawText(center + Vec2{-12.0f, -28.0f}, materialTypeSaveName(materialType), {235, 245, 245, 225}, 1);
         }
     }
 }
@@ -294,21 +398,92 @@ const ObjectDefinition* WorldDropSystem::chooseDropForTile(TileType tileType, co
     return candidates[static_cast<std::size_t>(distribution(dropRng()))];
 }
 
-void WorldDropSystem::spawnDrop(const ObjectDefinition& object, Vec2 position)
+bool WorldDropSystem::canSpawnDrop(std::string_view label)
+{
+    if (dropLimit_ <= 0) {
+        return false;
+    }
+    if (static_cast<int>(drops_.size()) >= dropLimit_) {
+        if (!pruneOneDropForLimit()) {
+            logDropWarning("drop limit reached; skipped " + std::string(label) + " drop");
+            return false;
+        }
+    }
+    return true;
+}
+
+bool WorldDropSystem::pruneOneDropForLimit()
+{
+    if (drops_.empty()) {
+        return false;
+    }
+
+    auto protectedDrop = [](const WorldDropItem& drop) {
+        return drop.kind == WorldDropKind::Material && drop.id == materialTypeSaveName(MaterialType::MoonFragment);
+    };
+    auto valueScore = [](const WorldDropItem& drop) {
+        if (drop.kind == WorldDropKind::Money) {
+            return std::max(1, drop.quantity);
+        }
+        if (drop.kind == WorldDropKind::Material) {
+            MaterialType type = MaterialType::Count;
+            if (materialTypeFromSaveName(drop.id, type)) {
+                switch (type) {
+                case MaterialType::OldWoodBuildingMaterial: return 5;
+                case MaterialType::EnhancementOre: return 15;
+                case MaterialType::ManaDrop: return 20;
+                case MaterialType::MoonFragment: return 1000000;
+                case MaterialType::Count: break;
+                }
+            }
+            return 25;
+        }
+        return 100;
+    };
+
+    auto best = drops_.end();
+    for (auto it = drops_.begin(); it != drops_.end(); ++it) {
+        if (protectedDrop(*it)) {
+            continue;
+        }
+        if (best == drops_.end() ||
+            valueScore(*it) < valueScore(*best) ||
+            (valueScore(*it) == valueScore(*best) && it->spawnedAtSeconds < best->spawnedAtSeconds)) {
+            best = it;
+        }
+    }
+    if (best == drops_.end()) {
+        return false;
+    }
+
+    drops_.erase(best);
+    return true;
+}
+
+Vec2 WorldDropSystem::randomDropVelocity() const
+{
+    std::uniform_real_distribution<float> angleDistribution(0.0f, Pi * 2.0f);
+    std::uniform_real_distribution<float> speedDistribution(16.0f, 42.0f);
+    return fromAngle(angleDistribution(dropRng())) * speedDistribution(dropRng());
+}
+
+void WorldDropSystem::spawnDrop(const ObjectDefinition& object, Vec2 position, float spawnedAtSeconds)
 {
     if (object.id.empty()) {
         logDropWarning("selected drop object has empty ID");
         return;
     }
-
-    std::uniform_real_distribution<float> angleDistribution(0.0f, Pi * 2.0f);
-    std::uniform_real_distribution<float> speedDistribution(16.0f, 42.0f);
-    const Vec2 velocity = fromAngle(angleDistribution(dropRng())) * speedDistribution(dropRng());
+    if (!canSpawnDrop("object")) {
+        return;
+    }
 
     drops_.push_back(WorldDropItem{
-        .objectId = object.id,
+        .kind = WorldDropKind::Object,
+        .id = object.id,
+        .quantity = 1,
         .position = position,
-        .velocity = velocity,
+        .velocity = randomDropVelocity(),
+        .spawnedAtSeconds = spawnedAtSeconds,
         .ageSeconds = 0.0f,
     });
 

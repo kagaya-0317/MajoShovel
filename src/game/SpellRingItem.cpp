@@ -94,38 +94,6 @@ SpellRingItem makeTorch()
     return item;
 }
 
-SpellRingItem makeStone()
-{
-    SpellRingItem item;
-    item.type = SpellRingItemType::Stone;
-    item.objectId = "item_stone";
-    item.hitRadius = 10.0f;
-    item.damage = 2;
-    item.damageType = "physical";
-    item.digPower = 0;
-    item.durability = -1;
-    item.maxDurability = -1;
-    item.weight = 1.25f;
-    item.hitInterval = 0.28f;
-    return item;
-}
-
-SpellRingItem makeOre()
-{
-    SpellRingItem item;
-    item.type = SpellRingItemType::Ore;
-    item.objectId = "item_ore";
-    item.hitRadius = 12.0f;
-    item.damage = 4;
-    item.damageType = "physical";
-    item.digPower = 0;
-    item.durability = -1;
-    item.maxDurability = -1;
-    item.weight = 1.45f;
-    item.hitInterval = 0.32f;
-    return item;
-}
-
 SpellRingItem makeObjectRingItem(std::string_view objectId)
 {
     SpellRingItem item;
