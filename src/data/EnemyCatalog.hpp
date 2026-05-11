@@ -22,6 +22,10 @@ struct EnemyDefinition {
     int xp = 0;
     int money = 0;
     std::string enemyAi;
+    std::string unawareAiId;
+    double visionDistance = 120.0;
+    double visionAngle = 100.0;
+    double loseSightSeconds = 1.5;
     std::vector<std::string> enemyBehaviorIds;
     std::vector<std::string> enemyTags;
     int captureDifficulty = 0;

@@ -9,6 +9,17 @@
 
 namespace majo {
 
+enum class EnemyAwarenessState {
+    Unaware,
+    Detected,
+};
+
+enum class EnemyAwarenessIcon {
+    None,
+    Exclamation,
+    Question,
+};
+
 struct Enemy {
     bool active = false;
     bool isBoss = false;
@@ -23,6 +34,7 @@ struct Enemy {
     float projectileInterval = 0.0f;
     std::vector<EffectSpec> projectileEffects;
     std::string aiId;
+    std::string unawareAiId;
     float behaviorTimer = 0.0f;
     float projectileTimer = 0.0f;
     std::vector<std::string> enemyTags;
@@ -37,6 +49,19 @@ struct Enemy {
     std::string contactDamageType = "physical";
     float contactTimer = 0.0f;
     float hitFlash = 0.0f;
+    float facingAngle = 0.0f;
+    EnemyAwarenessState awareness = EnemyAwarenessState::Unaware;
+    float loseSightTimer = 0.0f;
+    float visionDistance = 120.0f;
+    float visionAngle = 100.0f;
+    float loseSightSeconds = 1.5f;
+    EnemyAwarenessIcon awarenessIcon = EnemyAwarenessIcon::None;
+    float awarenessIconTimer = 0.0f;
+    Vec2 aiMoveDirection{1.0f, 0.0f};
+    Vec2 patrolAnchor{};
+    bool patrolAnchorInitialized = false;
+    float aiDecisionTimer = 0.0f;
+    float aiDigTimer = 0.0f;
     float repathTimer = 0.0f;
     float spawnTimer = 0.0f;
     float spawnDuration = 0.0f;

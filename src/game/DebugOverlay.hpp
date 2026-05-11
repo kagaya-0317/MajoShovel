@@ -35,7 +35,8 @@ public:
         int buriedHiddenNodeCount,
         int exposedEnemyNodeCount,
         int buriedEnemyNodeCount,
-        int spawnedEnemyNodeCount);
+        int spawnedEnemyNodeCount,
+        bool autoReloadBlocked);
 
 private:
     bool visible_ = true;

@@ -15,6 +15,7 @@ $IgnoreEventsUntil = Get-Date
 $NeedsConfigure = $false
 $RunRoot = $null
 $GameExePath = $null
+$AutoReloadBlocked = $false
 
 function Find-CMake {
     $cmd = Get-Command cmake -ErrorAction SilentlyContinue
@@ -52,6 +53,69 @@ function Resolve-BuildPath([string]$Path) {
 
     return Join-Path $Root $Path
 }
+
+function Get-DevBuildConfigPath {
+    $base = $env:LOCALAPPDATA
+    if ([string]::IsNullOrWhiteSpace($base)) {
+        $base = Join-Path $Root ".local"
+    }
+    return Join-Path $base "MajoShovel\dev_build_config.txt"
+}
+
+function Get-AutoReloadBlockPath {
+    $base = $env:LOCALAPPDATA
+    if ([string]::IsNullOrWhiteSpace($base)) {
+        $base = Join-Path $Root ".local"
+    }
+    return Join-Path $base "MajoShovel\dev_auto_reload_blocked.txt"
+}
+
+function Get-AutoReloadBlocked {
+    $path = Get-AutoReloadBlockPath
+    if (-not (Test-Path -LiteralPath $path)) {
+        return $false
+    }
+    $raw = Get-Content -LiteralPath $path -TotalCount 1 -ErrorAction SilentlyContinue
+    if ($null -eq $raw) {
+        return $false
+    }
+    $value = $raw.Trim().ToLowerInvariant()
+    return $value -eq "1" -or $value -eq "true" -or $value -eq "on" -or $value -eq "yes"
+}
+
+function Normalize-BuildConfig([string]$Value) {
+    if ([string]::Equals($Value, "Debug", [System.StringComparison]::OrdinalIgnoreCase)) {
+        return "Debug"
+    }
+    if ([string]::Equals($Value, "Release", [System.StringComparison]::OrdinalIgnoreCase)) {
+        return "Release"
+    }
+    return ""
+}
+
+$ConfigProvided = $PSBoundParameters.ContainsKey("Config")
+$ConfigFilePath = Get-DevBuildConfigPath
+if (-not $ConfigProvided -and (Test-Path -LiteralPath $ConfigFilePath)) {
+    $saved = Get-Content -LiteralPath $ConfigFilePath -TotalCount 1 -ErrorAction SilentlyContinue
+    if ($null -ne $saved) {
+        $savedConfig = Normalize-BuildConfig ($saved.Trim())
+        if (-not [string]::IsNullOrEmpty($savedConfig)) {
+            $Config = $savedConfig
+            Write-Host "[dev] using saved build config: $Config"
+        } elseif (-not [string]::IsNullOrWhiteSpace($saved)) {
+            Write-Host "[dev] ignoring invalid saved build config: $saved"
+        }
+    }
+}
+
+$normalizedConfig = Normalize-BuildConfig $Config
+if ([string]::IsNullOrEmpty($normalizedConfig)) {
+    Write-Host "[dev] unknown build config '$Config'; falling back to Release."
+    $Config = "Release"
+} else {
+    $Config = $normalizedConfig
+}
+$AutoReloadBlocked = Get-AutoReloadBlocked
 
 $BuildPath = Resolve-BuildPath $BuildDir
 if ($Jobs -le 0) {
@@ -258,12 +322,20 @@ Write-Host "[dev] watching source and data. Press Ctrl+C to stop."
 Write-Host "[dev] build output: $BuildPath"
 Write-Host "[dev] run copies: $RunRoot"
 Write-Host "[dev] build jobs: $Jobs"
+Write-Host "[dev] build config: $Config"
+Write-Host "[dev] auto reload block: $AutoReloadBlocked (toggle in game with F2)"
 Write-Host "[dev] code changes rebuild while the current game keeps running; successful builds restart the game copy."
 Write-Host "[dev] data/assets runtime reload keeps the existing game window."
 
 try {
     while ($true) {
-        if ($PendingBuild -and ((Get-Date) - $LastChangeTime).TotalMilliseconds -ge 700) {
+        $blockedNow = Get-AutoReloadBlocked
+        if ($blockedNow -ne $AutoReloadBlocked) {
+            $AutoReloadBlocked = $blockedNow
+            Write-Host "[dev] auto reload block changed: $AutoReloadBlocked"
+        }
+
+        if (-not $AutoReloadBlocked -and $PendingBuild -and ((Get-Date) - $LastChangeTime).TotalMilliseconds -ge 700) {
             $PendingBuild = $false
             if (Invoke-GameBuild) {
                 Stop-Game

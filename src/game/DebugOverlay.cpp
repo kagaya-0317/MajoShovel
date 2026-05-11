@@ -45,7 +45,8 @@ void DebugOverlay::render(
     int buriedHiddenNodeCount,
     int exposedEnemyNodeCount,
     int buriedEnemyNodeCount,
-    int spawnedEnemyNodeCount)
+    int spawnedEnemyNodeCount,
+    bool autoReloadBlocked)
 {
     if (!visible_) {
         return;
@@ -127,6 +128,11 @@ void DebugOverlay::render(
         sizeof(buffer) - std::char_traits<char>::length(buffer),
         "\n%s",
         enemySummary.c_str());
+    std::snprintf(
+        buffer + std::char_traits<char>::length(buffer),
+        sizeof(buffer) - std::char_traits<char>::length(buffer),
+        "\nAuto reload block %s",
+        autoReloadBlocked ? "ON" : "OFF");
     renderer.setScreenSpace();
     renderer.fillRect({10.0f, 10.0f}, {620.0f, 492.0f}, {0, 0, 0, 180});
     renderer.drawText({20.0f, 20.0f}, buffer, {220, 244, 224, 255}, 2);

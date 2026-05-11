@@ -39,6 +39,7 @@ public:
     void setDropLimit(int limit);
     void spawnFromDugTiles(const std::vector<DugTile>& dugTiles, const ObjectCatalog& catalog, float spawnedAtSeconds = 0.0f);
     bool spawnObjectDrop(const ObjectCatalog& catalog, std::string_view objectId, Vec2 position, float spawnedAtSeconds = 0.0f);
+    bool spawnDigItemDrop(const ObjectCatalog& catalog, Vec2 position, float spawnedAtSeconds = 0.0f);
     bool spawnMoneyDrop(int amount, Vec2 position, float spawnedAtSeconds = 0.0f);
     bool spawnMaterialDrop(MaterialType type, int count, Vec2 position, float spawnedAtSeconds = 0.0f);
     bool spawnRewardDrop(const ObjectCatalog& catalog, Vec2 position, float spawnedAtSeconds = 0.0f);
@@ -55,6 +56,7 @@ public:
     [[nodiscard]] const std::vector<WorldDropItem>& drops() const { return drops_; }
 
 private:
+    const ObjectDefinition* chooseDigDrop(const ObjectCatalog& catalog, std::string_view warningContext) const;
     const ObjectDefinition* chooseDropForTile(TileType tileType, const ObjectCatalog& catalog) const;
     bool canSpawnDrop(std::string_view label);
     bool pruneOneDropForLimit();

@@ -98,14 +98,27 @@ float areaRadiusFromValue(double value)
     return static_cast<float>(std::max(0.0, value) * 48.0);
 }
 
-void recordTerrainHit(const EffectInvocation& invocation, int tileX, int tileY, int damage)
+TerrainDigModifier terrainDigModifierForEffect(std::string_view effect)
 {
-    if (invocation.context->tileMap == nullptr || damage <= 0) {
+    return effect == "dig_hard" ? TerrainDigModifier::HardSpecialist : TerrainDigModifier::Normal;
+}
+
+void recordTerrainHit(const EffectInvocation& invocation, int tileX, int tileY, int baseDamage)
+{
+    if (invocation.context->tileMap == nullptr || baseDamage <= 0) {
         return;
     }
 
     TileMap& map = *invocation.context->tileMap;
     if (!map.isTileSolid(tileX, tileY)) {
+        return;
+    }
+
+    const int damage = adjustedTerrainDigDamage(
+        baseDamage,
+        map.terrainAttributeAtTile(tileX, tileY),
+        terrainDigModifierForEffect(invocation.effect));
+    if (damage <= 0) {
         return;
     }
 
@@ -289,10 +302,7 @@ void applyDigInvocation(const EffectInvocation& invocation)
         return;
     }
 
-    int damage = positiveIntPower(invocation.value);
-    if (invocation.effect == "dig_hard") {
-        damage = std::max(damage, static_cast<int>(std::ceil(static_cast<double>(damage) * 1.25)));
-    }
+    const int damage = positiveIntPower(invocation.value);
 
     const int tileX = invocation.context->tileMap->worldToTile(invocation.context->position.x);
     const int tileY = invocation.context->tileMap->worldToTile(invocation.context->position.y);

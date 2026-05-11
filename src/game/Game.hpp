@@ -26,11 +26,15 @@
 #include "game/UpgradeSystem.hpp"
 #include "game/WorldDropSystem.hpp"
 
+#include <array>
+#include <cstdint>
+#include <limits>
 #include <optional>
 #include <random>
 #include <string>
 #include <string_view>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 namespace majo {
@@ -43,6 +47,7 @@ enum class ScreenMode {
     PauseMenu,
     Inventory,
     Ring,
+    ObjectImageScaleEdit,
     LevelUp,
     GameOver,
     StageClear
@@ -62,6 +67,26 @@ enum class PauseMenuPage {
     QuitConfirm
 };
 
+enum class BaseEditMode {
+    None,
+    Facility,
+    Passability,
+};
+
+struct BaseEditRect {
+    float x = 0.0f;
+    float y = 0.0f;
+    float w = 0.0f;
+    float h = 0.0f;
+};
+
+struct BaseEditSnapshot {
+    std::unordered_map<std::string, BaseEditRect> outdoorFacilityRects;
+    std::unordered_map<std::string, BaseEditRect> homeFacilityRects;
+    std::unordered_set<std::int64_t> outdoorBlockedTiles;
+    std::unordered_set<std::int64_t> homeBlockedTiles;
+};
+
 class Game {
 public:
     void initialize(int width, int height);
@@ -70,6 +95,7 @@ public:
     void render(Renderer& renderer, const Time& time);
     bool executeDebugCommand(std::string_view command);
     bool quitRequested() const { return quitRequested_; }
+    void setAutoReloadBlocked(bool blocked) { autoReloadBlocked_ = blocked; }
 
 private:
     struct RunStats {
@@ -77,6 +103,8 @@ private:
         int defeatedEnemies = 0;
         int dugTiles = 0;
         int acquiredItems = 0;
+        int dugTilesSinceMoneyDrop = 0;
+        int dugTilesSinceItemDrop = 0;
     };
 
     struct InventoryCarryState {
@@ -216,6 +244,14 @@ private:
         StorageEntryKind kind = StorageEntryKind::Stack;
         int index = 0;
     };
+    struct FootstepDustPuff {
+        Vec2 startPosition{};
+        Vec2 endPosition{};
+        float age = 0.0f;
+        float lifetime = 0.0f;
+        int shapeIndex = 0;
+        bool active = false;
+    };
     enum class ProcessingMode {
         Repair,
         Attack,
@@ -233,7 +269,6 @@ private:
         Treasures,
         Enemies,
     };
-
     void initializeWorld(bool captureRunStartInventory = true);
     void enterBase();
     void startMiningFromBase(bool useLatestWarpPoint, bool forceRegenerate = false);
@@ -332,7 +367,7 @@ private:
     void choosePauseMenuItem(int item);
     void leavePausePage();
     void openRingScreen();
-    void updateRingScreen(const Input& input, UiContext& ui);
+    void updateRingScreen(const Input& input, UiContext& ui, float dt);
     void cancelRingGrab();
     void enterGameOver();
     void updateGameOverScreen(const Input& input, UiContext& ui);
@@ -388,8 +423,36 @@ private:
     void renderRewardNodes(Renderer& renderer, const std::vector<LightSource>& extraLights) const;
     void enterStageClear();
     void updateStageClearScreen(const Input& input, UiContext& ui);
+    void resetPlayerFootstepDust();
+    void updatePlayerFootstepDust(float dt);
+    void maybeSpawnPlayerFootstepDust(Vec2 footAnchor, Vec2 movementDirection, bool walking, int frameIndex, int& previousFrame);
+    void spawnPlayerFootstepDust(Vec2 footAnchor, Vec2 movementDirection);
+    void renderPlayerFootstepDust(Renderer& renderer) const;
     bool loadSaveData();
     bool saveSaveData(std::string& message) const;
+    void loadBaseEditData();
+    bool saveBaseEditData(std::string& message);
+    bool handleBaseEditCommand(std::string_view normalized);
+    bool loadObjectImageScaleData();
+    bool saveObjectImageScaleData(std::string& message);
+    bool handleObjectImageScaleCommand(std::string_view normalized);
+    void rebuildObjectImageScaleList();
+    void enterObjectImageScaleEditMode();
+    void exitObjectImageScaleEditMode();
+    void updateObjectImageScaleEditScreen(const Input& input, UiContext& ui);
+    void renderObjectImageScaleEditScreen(Renderer& renderer) const;
+    void enterBaseEditMode();
+    void exitBaseEditMode();
+    void resetBaseEditDragState();
+    void pushBaseEditUndoSnapshot();
+    bool undoBaseEdit();
+    bool redoBaseEdit();
+    bool isBasePassabilityBlocked(BaseArea area, int tileX, int tileY) const;
+    void setBasePassabilityBlocked(BaseArea area, int tileX, int tileY, bool blocked);
+    BaseEditRect baseFacilityRectFor(BaseArea area, std::string_view facilityId, BaseEditRect fallback) const;
+    void setBaseFacilityRectFor(BaseArea area, std::string_view facilityId, BaseEditRect rect);
+    void updateBaseEditScreen(const Input& input, UiContext& ui, float dt);
+    void renderBaseEditOverlay(Renderer& renderer) const;
     bool gameProgressPaused() const;
     bool basePresentationActive() const;
     std::string currentMapDisplayName() const;
@@ -397,7 +460,7 @@ private:
     void renderBaseScreen(Renderer& renderer) const;
     void renderBookshelfScreen(Renderer& renderer) const;
     void renderPauseMenu(Renderer& renderer) const;
-    void renderRingScreen(Renderer& renderer) const;
+    void renderRingScreen(Renderer& renderer, float totalTime) const;
     void renderGameOverScreen(Renderer& renderer) const;
     void renderStageClearScreen(Renderer& renderer) const;
 
@@ -453,6 +516,32 @@ private:
     bool baseBookshelfActive_ = false;
     BookshelfPage bookshelfPage_ = BookshelfPage::Menu;
     int bookshelfSelection_ = 0;
+    bool baseEditEnabled_ = false;
+    BaseEditMode baseEditMode_ = BaseEditMode::None;
+    std::unordered_map<std::string, BaseEditRect> baseFacilityRectsOutdoor_;
+    std::unordered_map<std::string, BaseEditRect> baseFacilityRectsHome_;
+    std::unordered_set<std::int64_t> baseBlockedTilesOutdoor_;
+    std::unordered_set<std::int64_t> baseBlockedTilesHome_;
+    std::vector<BaseEditSnapshot> baseEditUndoStack_;
+    std::vector<BaseEditSnapshot> baseEditRedoStack_;
+    int baseEditSelectedFacilityIndex_ = -1;
+    bool baseEditDraggingFacilityMove_ = false;
+    bool baseEditDraggingFacilityResize_ = false;
+    int baseEditResizeMask_ = 0;
+    Vec2 baseEditDragStartMouse_{};
+    BaseEditRect baseEditDragStartRect_{};
+    bool baseEditPassPaintActive_ = false;
+    bool baseEditPassPaintSetBlocked_ = false;
+    int baseEditPassPaintLastTileX_ = std::numeric_limits<int>::min();
+    int baseEditPassPaintLastTileY_ = std::numeric_limits<int>::min();
+    bool baseEditDirty_ = false;
+    std::unordered_map<std::string, float> objectImageScaleById_;
+    std::vector<std::string> objectImageScaleObjectIds_;
+    ScreenMode objectImageScaleReturnMode_ = ScreenMode::Playing;
+    int objectImageScaleSelectedIndex_ = -1;
+    float objectImageScaleScrollOffset_ = 0.0f;
+    bool objectImageScaleDirty_ = false;
+    std::string objectImageScaleStatus_;
     std::string baseStatus_;
     PauseMenuPage pausePage_ = PauseMenuPage::Main;
     ScreenMode pauseReturnMode_ = ScreenMode::Playing;
@@ -462,7 +551,22 @@ private:
     bool ringGrabActive_ = false;
     int ringGrabOrigin_ = -1;
     SpellRingItem ringGrabbedItem_{};
+    bool ringDragPending_ = false;
+    bool ringDragActive_ = false;
+    bool ringSnapActive_ = false;
+    int ringDragItemIndex_ = -1;
+    float ringDragOriginalAngle_ = 0.0f;
+    float ringDragDisplayAngle_ = 0.0f;
+    float ringSnapStartAngle_ = 0.0f;
+    float ringSnapTargetAngle_ = 0.0f;
+    float ringSnapElapsed_ = 0.0f;
+    Vec2 ringDragStartMouse_{};
     std::string ringStatus_;
+    std::array<FootstepDustPuff, 10> playerFootstepDustPuffs_{};
+    int nextPlayerFootstepDustPuff_ = 0;
+    int nextPlayerFootstepDustShape_ = 0;
+    int previousPlayerDustFrame_ = -1;
+    int previousBasePlayerDustFrame_ = -1;
     RunStats runStats_{};
     int gameOverSelection_ = 0;
     std::string gameOverStatus_;
@@ -521,6 +625,7 @@ private:
     bool inventoryReturnToPause_ = false;
     bool quitRequested_ = false;
     bool debugPaused_ = false;
+    bool autoReloadBlocked_ = false;
     float captureCooldown_ = 0.0f;
     float ringTrailEffectTimer_ = 0.0f;
     float ambientParticleTimer_ = 0.0f;

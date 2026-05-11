@@ -231,6 +231,41 @@ double parseDoubleColumnOrDefault(
     return value;
 }
 
+double parseRequiredDoubleColumnOrDefault(
+    std::string_view text,
+    double defaultValue,
+    std::string_view sheet,
+    std::size_t rowIndex,
+    std::string_view id,
+    std::string_view columnName,
+    EnemyCatalog& catalog)
+{
+    const std::string normalized = trim(text);
+    if (normalized.empty()) {
+        addIssue(
+            catalog,
+            DbValidationSeverity::Warning,
+            DbValidationCategory::NumericValue,
+            std::string(sheet) + " row " + std::to_string(rowIndex + 1) +
+                " id=\"" + std::string(id) + "\" " + std::string(columnName) +
+                ": empty; using " + std::to_string(defaultValue));
+        return defaultValue;
+    }
+
+    double value = defaultValue;
+    if (!parseDoubleStrict(normalized, value)) {
+        addIssue(
+            catalog,
+            DbValidationSeverity::Warning,
+            DbValidationCategory::NumericValue,
+            std::string(sheet) + " row " + std::to_string(rowIndex + 1) +
+                " id=\"" + std::string(id) + "\" " + std::string(columnName) +
+                ": invalid number \"" + normalized + "\"; using " + std::to_string(defaultValue));
+        return defaultValue;
+    }
+    return value;
+}
+
 void validateDamageType(
     std::string& value,
     std::string_view sheet,
@@ -303,6 +338,10 @@ struct EnemyColumns {
     int xp = -1;
     int money = -1;
     int enemyAi = -1;
+    int unawareAi = -1;
+    int visionDistance = -1;
+    int visionAngle = -1;
+    int loseSightSeconds = -1;
     int enemyBehaviorId = -1;
     int enemyTags = -1;
     int captureDifficulty = -1;
@@ -334,6 +373,10 @@ bool findEnemyColumns(const GoogleSheetRow& headers, EnemyColumns& outColumns, s
     columns.xp = findColumn(headers, {"経験値", "xp"});
     columns.money = findColumn(headers, {"お金", "money"});
     columns.enemyAi = findColumn(headers, {"敵AI", "enemy_ai"});
+    columns.unawareAi = findColumn(headers, {"未発見AI", "unaware_ai"});
+    columns.visionDistance = findColumn(headers, {"視野距離", "vision_distance"});
+    columns.visionAngle = findColumn(headers, {"視野角", "vision_angle"});
+    columns.loseSightSeconds = findColumn(headers, {"見失い秒数", "lose_sight_seconds"});
     columns.enemyBehaviorId = findColumn(headers, {"敵挙動ID", "enemy_behavior_id"});
     columns.enemyTags = findColumn(headers, {"敵特殊タグ", "enemy_tags"});
     columns.captureDifficulty = findColumn(headers, {"捕獲難度", "capture_difficulty"});
@@ -560,6 +603,59 @@ bool parseEnemies(
         enemy.xp = parseIntColumnOrDefault(cellAt(row, columns.xp), 0, "Enemies", rowIndex, enemy.id, "経験値", catalog);
         enemy.money = parseIntColumnOrDefault(cellAt(row, columns.money), 0, "Enemies", rowIndex, enemy.id, "お金", catalog);
         enemy.enemyAi = cellAt(row, columns.enemyAi);
+        enemy.unawareAiId = "idle";
+        if (columns.unawareAi >= 0) {
+            const std::string unawareAi = cellAt(row, columns.unawareAi);
+            if (unawareAi.empty()) {
+                addIssue(
+                    catalog,
+                    DbValidationSeverity::Warning,
+                    DbValidationCategory::ObjectField,
+                    "Enemies row " + std::to_string(rowIndex + 1) + " id=\"" + enemy.id +
+                        "\" 未発見AI: empty; using idle");
+            } else {
+                enemy.unawareAiId = unawareAi;
+            }
+        }
+        enemy.visionDistance = columns.visionDistance >= 0
+            ? parseRequiredDoubleColumnOrDefault(
+                cellAt(row, columns.visionDistance), 120.0, "Enemies", rowIndex, enemy.id, "視野距離", catalog)
+            : 120.0;
+        enemy.visionAngle = columns.visionAngle >= 0
+            ? parseRequiredDoubleColumnOrDefault(
+                cellAt(row, columns.visionAngle), 100.0, "Enemies", rowIndex, enemy.id, "視野角", catalog)
+            : 100.0;
+        enemy.loseSightSeconds = columns.loseSightSeconds >= 0
+            ? parseRequiredDoubleColumnOrDefault(
+                cellAt(row, columns.loseSightSeconds), 1.5, "Enemies", rowIndex, enemy.id, "見失い秒数", catalog)
+            : 1.5;
+        if (!(enemy.visionDistance > 0.0)) {
+            addIssue(
+                catalog,
+                DbValidationSeverity::Warning,
+                DbValidationCategory::NumericValue,
+                "Enemies row " + std::to_string(rowIndex + 1) + " id=\"" + enemy.id +
+                    "\" 視野距離: must be > 0; using 120");
+            enemy.visionDistance = 120.0;
+        }
+        if (!(enemy.visionAngle > 0.0)) {
+            addIssue(
+                catalog,
+                DbValidationSeverity::Warning,
+                DbValidationCategory::NumericValue,
+                "Enemies row " + std::to_string(rowIndex + 1) + " id=\"" + enemy.id +
+                    "\" 視野角: must be > 0; using 100");
+            enemy.visionAngle = 100.0;
+        }
+        if (enemy.loseSightSeconds < 0.0) {
+            addIssue(
+                catalog,
+                DbValidationSeverity::Warning,
+                DbValidationCategory::NumericValue,
+                "Enemies row " + std::to_string(rowIndex + 1) + " id=\"" + enemy.id +
+                    "\" 見失い秒数: must be >= 0; using 1.5");
+            enemy.loseSightSeconds = 1.5;
+        }
         enemy.enemyBehaviorIds = parseDelimitedValues(cellAt(row, columns.enemyBehaviorId));
         enemy.enemyTags = parseDelimitedValues(cellAt(row, columns.enemyTags));
         enemy.captureDifficulty = parseIntColumnOrDefault(cellAt(row, columns.captureDifficulty), 0, "Enemies", rowIndex, enemy.id, "捕獲難度", catalog);

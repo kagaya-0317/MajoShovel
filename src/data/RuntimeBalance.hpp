@@ -32,14 +32,23 @@ struct RuntimeBalance {
     int enemyHp = balance::EnemyHp;
     int enemyXp = balance::EnemyXp;
     int enemyDugSpawnEvery = balance::EnemyDugSpawnEvery;
+    int enemyMinDugTiles = 16;
+    int enemyGuaranteeDugTiles = 30;
     int enemySoftCap = balance::EnemySoftCap;
     float enemyMinSpawnDistance = balance::EnemyMinSpawnDistance;
     float enemySpawnWarmup = balance::EnemySpawnWarmup;
     float enemySeparationStrength = balance::EnemySeparationStrength;
+    float enemyDetectedVisionMultiplier = 1.8f;
+    float enemyRingSlowBiteMultiplier = 0.65f;
+    float enemyRingSlowBiteDuration = 4.0f;
 
     int xpBase = balance::XpBase;
     int xpPerLevel = balance::XpPerLevel;
     int worldDropLimitPerStage = 300;
+    int digMoneyMinDugTiles = 6;
+    int digMoneyGuaranteeDugTiles = 12;
+    int digItemMinDugTiles = 10;
+    int digItemGuaranteeDugTiles = 30;
     float lootMoneyChance = 0.30f;
     float lootMaterialChance = 0.30f;
     float lootStageMultiplierST = 1.0f;

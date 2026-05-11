@@ -6,10 +6,27 @@
 #include "game/Chunk.hpp"
 #include "game/DungeonLayout.hpp"
 #include <cstddef>
+#include <string_view>
 #include <unordered_map>
 #include <vector>
 
 namespace majo {
+
+enum class TerrainAttribute {
+    None,
+    Soft,
+    Hard,
+    Ore,
+};
+
+enum class TerrainDigModifier {
+    Normal,
+    HardSpecialist,
+};
+
+std::string_view terrainAttributeCode(TerrainAttribute attribute);
+TerrainAttribute terrainAttributeForTileType(TileType type);
+int adjustedTerrainDigDamage(int baseDamage, TerrainAttribute attribute, TerrainDigModifier modifier);
 
 struct LightSource {
     Vec2 position{};
@@ -18,6 +35,7 @@ struct LightSource {
 
 struct TerrainDebugInfo {
     TileType type = TileType::Empty;
+    TerrainAttribute attribute = TerrainAttribute::None;
     int hp = 0;
     int effectiveHp = 0;
     float localHardnessMultiplier = 1.0f;
@@ -32,6 +50,7 @@ public:
     bool damageTile(int tx, int ty, int damage, Vec2& openedTileCenter, TileType* openedTileType = nullptr);
     bool isSolidAt(Vec2 world);
     bool isTileSolid(int tx, int ty);
+    TerrainAttribute terrainAttributeAtTile(int tx, int ty);
     bool isCircleBlocked(Vec2 center, float radius);
     Vec2 tileCenter(int tx, int ty) const;
     int worldToTile(float value) const;

@@ -107,6 +107,56 @@ int baseHpFor(TileType type, const RuntimeBalance& config)
 
 }
 
+std::string_view terrainAttributeCode(TerrainAttribute attribute)
+{
+    switch (attribute) {
+    case TerrainAttribute::None:
+        return "none";
+    case TerrainAttribute::Soft:
+        return "soft";
+    case TerrainAttribute::Hard:
+        return "hard";
+    case TerrainAttribute::Ore:
+        return "ore";
+    }
+    return "none";
+}
+
+TerrainAttribute terrainAttributeForTileType(TileType type)
+{
+    switch (type) {
+    case TileType::Dirt:
+        return TerrainAttribute::Soft;
+    case TileType::Rock:
+    case TileType::HardRock:
+        return TerrainAttribute::Hard;
+    case TileType::Ore:
+        return TerrainAttribute::Ore;
+    case TileType::Empty:
+        return TerrainAttribute::None;
+    }
+    return TerrainAttribute::None;
+}
+
+int adjustedTerrainDigDamage(int baseDamage, TerrainAttribute attribute, TerrainDigModifier modifier)
+{
+    if (baseDamage <= 0 || attribute == TerrainAttribute::None) {
+        return 0;
+    }
+
+    if (modifier == TerrainDigModifier::HardSpecialist) {
+        if (attribute == TerrainAttribute::Hard || attribute == TerrainAttribute::Ore) {
+            return std::max(1, static_cast<int>(std::ceil(static_cast<double>(baseDamage) * 1.25)));
+        }
+        return std::max(1, static_cast<int>(std::floor(static_cast<double>(baseDamage) * 0.75)));
+    }
+
+    if (attribute == TerrainAttribute::Hard || attribute == TerrainAttribute::Ore) {
+        return std::max(1, static_cast<int>(std::floor(static_cast<double>(baseDamage) * 0.50)));
+    }
+    return baseDamage;
+}
+
 long long TileMap::key(int cx, int cy)
 {
     return (static_cast<long long>(cx) << 32) ^ (static_cast<unsigned int>(cy));
@@ -268,6 +318,12 @@ bool TileMap::isTileSolid(int tx, int ty)
     return tile && tile->type != TileType::Empty;
 }
 
+TerrainAttribute TileMap::terrainAttributeAtTile(int tx, int ty)
+{
+    Tile* tile = tileAtWorld(tx, ty);
+    return tile != nullptr ? terrainAttributeForTileType(tile->type) : TerrainAttribute::None;
+}
+
 bool TileMap::isCircleBlocked(Vec2 center, float radius)
 {
     const float sample = radius * 0.55f;
@@ -420,6 +476,7 @@ TerrainDebugInfo TileMap::terrainInfoForTile(int tx, int ty, const Tile* tile) c
     info.localHardnessMultiplier = std::max(0.35f, info.localHardnessMultiplier);
 
     info.type = tile != nullptr ? tile->type : generatedType;
+    info.attribute = terrainAttributeForTileType(info.type);
     info.hp = tile != nullptr ? static_cast<int>(tile->hp) : 0;
     const TileType hpType = tile != nullptr ? tile->type : generatedType;
     info.effectiveHp = hpType == TileType::Empty

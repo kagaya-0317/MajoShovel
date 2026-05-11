@@ -39,6 +39,7 @@ enum class InputAction {
     ToggleDebugPause,
     TestRestart,
     OpenConsole,
+    ToggleAutoReloadBlock,
     Count
 };
 
@@ -55,6 +56,7 @@ public:
     bool debugPausePressed() const { return pressed(InputAction::ToggleDebugPause); }
     bool testRestartPressed() const { return pressed(InputAction::TestRestart); }
     bool openConsolePressed() const { return pressed(InputAction::OpenConsole); }
+    bool toggleAutoReloadBlockPressed() const { return pressed(InputAction::ToggleAutoReloadBlock); }
     bool throwPressed() const { return pressed(InputAction::ThrowActiveRing); }
     bool inventoryPressed() const { return pressed(InputAction::OpenInventory); }
     bool pausePressed() const { return pressed(InputAction::Pause); }
@@ -67,7 +69,11 @@ public:
     bool ringOffsetHeld() const { return held(InputAction::OffsetRingCenter); }
     bool upgradePressed(int option) const;
     bool mouseLeftPressed() const { return pressed(InputAction::ThrowActiveRing); }
+    bool mouseLeftReleased() const { return mouseLeftReleased_; }
     bool mouseLeftHeld() const { return held(InputAction::ThrowActiveRing); }
+    bool saveShortcutPressed() const { return ctrlSavePressed_; }
+    bool undoShortcutPressed() const { return ctrlUndoPressed_; }
+    bool redoShortcutPressed() const { return ctrlRedoPressed_; }
     int shortcutCursorDelta() const { return shortcutCursorDelta_; }
     int shortcutSlotPressed() const { return shortcutSlotPressed_; }
     int activeRingDelta() const { return activeRingDelta_; }
@@ -82,6 +88,10 @@ private:
     void setHeld(InputAction action, bool held);
 
     bool quitRequested_ = false;
+    bool mouseLeftReleased_ = false;
+    bool ctrlSavePressed_ = false;
+    bool ctrlUndoPressed_ = false;
+    bool ctrlRedoPressed_ = false;
     std::array<bool, ActionCount> pressed_{};
     std::array<bool, ActionCount> held_{};
     int shortcutCursorDelta_ = 0;

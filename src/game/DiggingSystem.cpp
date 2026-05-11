@@ -58,10 +58,18 @@ bool damageDigContactTile(
         return false;
     }
 
+    const int damage = adjustedTerrainDigDamage(
+        item.digPower,
+        map.terrainAttributeAtTile(tileX, tileY),
+        TerrainDigModifier::Normal);
+    if (damage <= 0) {
+        return false;
+    }
+
     hitTiles.push_back(map.tileCenter(tileX, tileY));
     Vec2 openedTileCenter{};
     TileType openedTileType = TileType::Dirt;
-    if (map.damageTile(tileX, tileY, item.digPower, openedTileCenter, &openedTileType)) {
+    if (map.damageTile(tileX, tileY, damage, openedTileCenter, &openedTileType)) {
         openedTiles.push_back(openedTileCenter);
         dugTiles.push_back({openedTileCenter, openedTileType});
     }
@@ -125,7 +133,7 @@ void DiggingSystem::update(
                 context.terrainOpenedTiles = &openedTiles_;
                 context.terrainDugTiles = &dugTiles_;
                 context.discoveryEvents = discoveryEvents;
-                context.position = item.worldPosition;
+                context.position = digPosition;
                 context.triggerType = EffectTriggerType::Hit;
                 context.logUnimplementedEffects = false;
                 effectDispatcher.dispatchOrbitEffects(objectIt->second, context);

@@ -10,6 +10,9 @@ namespace majo {
 
 namespace {
 constexpr float PopupSeconds = 2.6f;
+constexpr float PopupWidth = 300.0f;
+constexpr float PopupMinHeight = 72.0f;
+constexpr int PopupTextScale = 2;
 constexpr std::string_view TreasureCategory = "\xE5\xAE\x9D";
 
 int stageValue(EncyclopediaStage stage)
@@ -73,21 +76,28 @@ void EncyclopediaSystem::update(float dt)
     }
 }
 
-void EncyclopediaSystem::renderPopups(Renderer& renderer, const Camera& camera) const
+void EncyclopediaSystem::renderPopups(Renderer& renderer, const Camera& camera)
 {
     if (activePopup_.remaining <= 0.0f || activePopup_.text.empty()) {
         return;
     }
 
-    Vec2 pos = camera.worldToScreen(activePopup_.position) + Vec2{14.0f, -34.0f};
-    const Vec2 size{520.0f, 72.0f};
+    const float contentWidth = std::max(0.0f, PopupWidth - ui::SubPanelPadding.x * 2.0f);
+    const Vec2 textSize = renderer.measureWrappedText(activePopup_.text, contentWidth, PopupTextScale);
+    const Vec2 size{PopupWidth, std::max(PopupMinHeight, textSize.y + ui::SubPanelPadding.y * 2.0f)};
+    if (!activePopup_.screenPositionLocked) {
+        activePopup_.screenPosition = camera.worldToScreen(activePopup_.position) + Vec2{14.0f, -34.0f};
+        activePopup_.screenPositionLocked = true;
+    }
+    Vec2 pos = activePopup_.screenPosition;
     pos.x = clamp(pos.x, 12.0f, static_cast<float>(camera.width()) - size.x - 12.0f);
     pos.y = clamp(pos.y, 58.0f, static_cast<float>(camera.height()) - size.y - 14.0f);
+    activePopup_.screenPosition = pos;
 
     renderer.setScreenSpace();
     const UiRect panel{pos, size};
     drawUiSubPanel(renderer, panel);
-    renderer.drawText(uiSubPanelContentPos(panel), activePopup_.text, ui::Text, 2);
+    renderer.drawWrappedText(uiSubPanelContentPos(panel), activePopup_.text, contentWidth, ui::Text, PopupTextScale);
 }
 
 void EncyclopediaSystem::noteItemDiscovered(const ObjectDefinition& object, Vec2 position)

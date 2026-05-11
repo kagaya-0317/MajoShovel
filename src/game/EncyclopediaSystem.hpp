@@ -52,7 +52,7 @@ class EncyclopediaSystem {
 public:
     void clear();
     void update(float dt);
-    void renderPopups(Renderer& renderer, const Camera& camera) const;
+    void renderPopups(Renderer& renderer, const Camera& camera);
 
     void noteItemDiscovered(const ObjectDefinition& object, Vec2 position);
     void noteItemObtained(const ObjectDefinition& object, Vec2 position);
@@ -78,7 +78,9 @@ private:
     struct Popup {
         std::string text;
         Vec2 position{};
+        Vec2 screenPosition{};
         float remaining = 0.0f;
+        bool screenPositionLocked = false;
     };
 
     static bool isTreasure(const ObjectDefinition& object);

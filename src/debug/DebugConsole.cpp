@@ -46,6 +46,7 @@ std::string trimAscii(std::string text)
 constexpr UINT WM_DEBUG_APPEND_LOG = WM_APP + 1;
 constexpr UINT WM_DEBUG_TOGGLE = WM_APP + 2;
 constexpr UINT WM_DEBUG_SHUTDOWN = WM_APP + 3;
+constexpr UINT WM_DEBUG_SCROLL_TO_BOTTOM = WM_APP + 4;
 
 constexpr int ControlLog = 1001;
 constexpr int ControlCommand = 1002;
@@ -268,7 +269,7 @@ struct DebugConsole::Impl {
             WS_OVERLAPPEDWINDOW,
             CW_USEDEFAULT,
             CW_USEDEFAULT,
-            980,
+            588,
             620,
             nullptr,
             nullptr,
@@ -347,6 +348,10 @@ struct DebugConsole::Impl {
         case WM_DEBUG_SHUTDOWN:
             impl->shuttingDown = true;
             DestroyWindow(hwnd);
+            return 0;
+        case WM_DEBUG_SCROLL_TO_BOTTOM:
+            impl->drainPendingLogs();
+            impl->scrollLogToBottom();
             return 0;
         case WM_CLOSE:
             if (impl->shuttingDown) {
@@ -509,28 +514,28 @@ struct DebugConsole::Impl {
         const int gap = 8;
         const int buttonWidth = 86;
         const int wideButtonWidth = 96;
-        const int commandY = std::max(margin, height - margin - rowHeight);
-        const int panelHeight = std::min(220, std::max(150, height / 3));
+        const int buttonsY = std::max(margin, height - margin - rowHeight);
+        const int commandY = std::max(margin, buttonsY - gap - rowHeight);
+        const int panelHeight = std::min(440, std::max(300, (height * 2) / 3));
         const int panelY = std::max(margin, commandY - gap - panelHeight);
         const int logHeight = std::max(80, panelY - margin - gap);
-        const int controlsRightWidth = buttonWidth * 3 + wideButtonWidth + 130 + gap * 5;
-        const int comboWidth = std::max(180, width - margin * 2 - controlsRightWidth);
+        const int comboWidth = std::max(180, width - margin * 2);
 
         MoveWindow(logEdit, margin, margin, std::max(100, width - margin * 2), logHeight, TRUE);
         MoveWindow(tabControl, margin, panelY, std::max(100, width - margin * 2), panelHeight, TRUE);
         layoutDebugPanel(margin, panelY, std::max(100, width - margin * 2), panelHeight);
         MoveWindow(commandCombo, margin, commandY, comboWidth, 220, TRUE);
 
-        int x = margin + comboWidth + gap;
-        MoveWindow(runButton, x, commandY, buttonWidth, rowHeight, TRUE);
+        int x = margin;
+        MoveWindow(runButton, x, buttonsY, buttonWidth, rowHeight, TRUE);
         x += buttonWidth + gap;
-        MoveWindow(clearButton, x, commandY, buttonWidth, rowHeight, TRUE);
+        MoveWindow(clearButton, x, buttonsY, buttonWidth, rowHeight, TRUE);
         x += buttonWidth + gap;
-        MoveWindow(copyButton, x, commandY, buttonWidth, rowHeight, TRUE);
+        MoveWindow(copyButton, x, buttonsY, buttonWidth, rowHeight, TRUE);
         x += buttonWidth + gap;
-        MoveWindow(pauseButton, x, commandY, wideButtonWidth, rowHeight, TRUE);
+        MoveWindow(pauseButton, x, buttonsY, wideButtonWidth, rowHeight, TRUE);
         x += wideButtonWidth + gap;
-        MoveWindow(autoScrollCheck, x, commandY, 130, rowHeight, TRUE);
+        MoveWindow(autoScrollCheck, x, buttonsY, 130, rowHeight, TRUE);
     }
 
     void handleCommand(int controlId, int notification)
@@ -661,6 +666,8 @@ struct DebugConsole::Impl {
             appendUiLog({LogLevel::Info, "help: show this list"});
             appendUiLog({LogLevel::Info, "clear: clear console logs"});
             appendUiLog({LogLevel::Info, "restart: restart the current test-play run"});
+            appendUiLog({LogLevel::Info, "dev build-config debug: save Debug for next dev_auto_reload start"});
+            appendUiLog({LogLevel::Info, "dev build-config release: save Release for next dev_auto_reload start"});
             appendUiLog({LogLevel::Info, "quit: close the game"});
             return;
         }
@@ -771,10 +778,19 @@ struct DebugConsole::Impl {
             appendLineToEdit(entry);
         }
         if (autoScroll) {
-            const int end = GetWindowTextLengthW(logEdit);
-            SendMessageW(logEdit, EM_SETSEL, end, end);
-            SendMessageW(logEdit, EM_SCROLLCARET, 0, 0);
+            scrollLogToBottom();
         }
+    }
+
+    void scrollLogToBottom()
+    {
+        if (!logEdit) {
+            return;
+        }
+        SendMessageW(logEdit, WM_VSCROLL, SB_BOTTOM, 0);
+        const int end = GetWindowTextLengthW(logEdit);
+        SendMessageW(logEdit, EM_SETSEL, end, end);
+        SendMessageW(logEdit, EM_SCROLLCARET, 0, 0);
     }
 
     void clearLogs()
@@ -822,6 +838,7 @@ struct DebugConsole::Impl {
         }
 
         ShowWindow(hwnd, SW_SHOWNORMAL);
+        PostMessageW(hwnd, WM_DEBUG_SCROLL_TO_BOTTOM, 0, 0);
         SetForegroundWindow(hwnd);
         SetFocus(commandCombo);
     }

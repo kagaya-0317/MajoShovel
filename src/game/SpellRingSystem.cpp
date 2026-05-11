@@ -102,6 +102,8 @@ void SpellRingSystem::initialize(const RuntimeBalance& balance)
     orbitModifiers_ = OrbitModifiers{};
     state_ = SpellRingState::Normal;
     capturedHealTimer_ = CapturedPeriodicHealInterval;
+    enemyOrbitSpeedDebuffMultiplier_ = 1.0f;
+    enemyOrbitSpeedDebuffTimer_ = 0.0f;
     activeRingIndex_ = 0;
 }
 
@@ -109,6 +111,11 @@ void SpellRingSystem::update(Player& player, const Input& input, float dt, float
 {
     if (paused) {
         return;
+    }
+
+    enemyOrbitSpeedDebuffTimer_ = std::max(0.0f, enemyOrbitSpeedDebuffTimer_ - dt);
+    if (enemyOrbitSpeedDebuffTimer_ <= 0.0f) {
+        enemyOrbitSpeedDebuffMultiplier_ = 1.0f;
     }
 
     baseAngle_ += effectiveAngularSpeed() * dt;
@@ -223,6 +230,17 @@ void SpellRingSystem::applyOrbitModifierEffect(std::string_view effect, double v
     orbitModifiers_.sources.insert(orbitModifiers_.sources.end(), incoming.sources.begin(), incoming.sources.end());
 }
 
+void SpellRingSystem::applyEnemyOrbitSpeedDebuff(float multiplier, float durationSeconds)
+{
+    if (durationSeconds <= 0.0f) {
+        return;
+    }
+
+    const float clampedMultiplier = clamp(multiplier, 0.05f, 1.0f);
+    enemyOrbitSpeedDebuffMultiplier_ = std::min(enemyOrbitSpeedDebuffMultiplier_, clampedMultiplier);
+    enemyOrbitSpeedDebuffTimer_ = std::max(enemyOrbitSpeedDebuffTimer_, durationSeconds);
+}
+
 void SpellRingSystem::upgradeItemDamage(int amount)
 {
     for (auto& item : items_) {
@@ -238,6 +256,42 @@ bool SpellRingSystem::canAddItem() const
 bool SpellRingSystem::canAddItem(const SpellRingItem& item) const
 {
     return canAddItem() && totalEquippedWeight() + std::max(0.0f, item.weight) <= MaxSpellRingWeight;
+}
+
+bool SpellRingSystem::canPlaceItemAtAngle(int index, float angle) const
+{
+    if (index < 0 || index >= static_cast<int>(items_.size())) {
+        return false;
+    }
+    return canPlaceItemAtAngle(items_[static_cast<std::size_t>(index)], angle, index);
+}
+
+std::optional<float> SpellRingSystem::nearestPlaceableAngle(int index, float desiredAngle, float maxDeltaRadians) const
+{
+    if (index < 0 || index >= static_cast<int>(items_.size()) || maxDeltaRadians < 0.0f) {
+        return std::nullopt;
+    }
+
+    const SpellRingItem& item = items_[static_cast<std::size_t>(index)];
+    const float desired = quantizeAngle(desiredAngle);
+    if (canPlaceItemAtAngle(item, desired, index)) {
+        return desired;
+    }
+
+    const int maxSteps = static_cast<int>(std::floor(maxDeltaRadians / PlacementStepRadians + 0.0001f));
+    for (int step = 1; step <= maxSteps; ++step) {
+        const float delta = static_cast<float>(step) * PlacementStepRadians;
+        const float clockwise = quantizeAngle(desired + delta);
+        if (canPlaceItemAtAngle(item, clockwise, index)) {
+            return clockwise;
+        }
+        const float counterClockwise = quantizeAngle(desired - delta);
+        if (canPlaceItemAtAngle(item, counterClockwise, index)) {
+            return counterClockwise;
+        }
+    }
+
+    return std::nullopt;
 }
 
 bool SpellRingSystem::addItem(SpellRingItemType type)
@@ -371,7 +425,8 @@ float SpellRingSystem::effectiveAngularSpeed() const
     return static_cast<float>(
         static_cast<double>(angularSpeed_) *
         static_cast<double>(weightSpeedMultiplier()) *
-        orbitModifiers_.speedMultiplier);
+        orbitModifiers_.speedMultiplier *
+        static_cast<double>(enemyOrbitSpeedDebuffMultiplier_));
 }
 
 float SpellRingSystem::totalEquippedWeight() const

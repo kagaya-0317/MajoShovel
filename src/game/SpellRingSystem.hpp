@@ -29,6 +29,7 @@ public:
     void clearOrbitModifiers();
     void setOrbitModifiers(OrbitModifiers modifiers);
     void applyOrbitModifierEffect(std::string_view effect, double value, std::string_view source);
+    void applyEnemyOrbitSpeedDebuff(float multiplier, float durationSeconds);
     void upgradeShovelPower(int amount);
     void upgradeItemDamage(int amount);
     bool addItem(SpellRingItemType type);
@@ -37,6 +38,8 @@ public:
     bool addObjectItem(const ItemData& item, const ItemInstance& instance);
     bool canAddItem() const;
     bool canAddItem(const SpellRingItem& item) const;
+    bool canPlaceItemAtAngle(int index, float angle) const;
+    std::optional<float> nearestPlaceableAngle(int index, float desiredAngle, float maxDeltaRadians) const;
     bool moveItemAngle(int index, float deltaRadians);
     void normalizeItemPlacements();
     void switchActiveRing(int delta);
@@ -76,6 +79,8 @@ private:
     float baseAngle_ = 0.0f;
     float throwTime_ = 0.0f;
     float capturedHealTimer_ = 0.0f;
+    float enemyOrbitSpeedDebuffMultiplier_ = 1.0f;
+    float enemyOrbitSpeedDebuffTimer_ = 0.0f;
     int activeRingIndex_ = 0;
     OrbitModifiers orbitModifiers_{};
     SpellRingState state_ = SpellRingState::Normal;

@@ -21,6 +21,7 @@
 namespace majo {
 
 class EffectSystem;
+class WorldDropSystem;
 
 enum class EnemyEventType {
     Hit,
@@ -56,7 +57,7 @@ struct CaptureResult {
 class EnemySystem {
 public:
     void spawnFromDugTiles(const std::vector<Vec2>& dugTiles, TileMap& map, Vec2 playerPosition, const RuntimeBalance& balance, const EnemyCatalog& enemyCatalog);
-    bool spawnNodeEnemy(TileMap& map, Vec2 desiredPosition, Vec2 playerPosition, const RuntimeBalance& balance, const EnemyCatalog& enemyCatalog, bool allowNearPlayer);
+    bool spawnNodeEnemy(TileMap& map, Vec2 desiredPosition, Vec2 playerPosition, const RuntimeBalance& balance, const EnemyCatalog& enemyCatalog, bool allowNearPlayer, bool detectedOnSpawn = false);
     bool spawnBoss(TileMap& map, Vec2 playerPosition, const RuntimeBalance& balance, const EnemyCatalog& enemyCatalog);
     bool spawnBossNear(TileMap& map, Vec2 desiredPosition, Vec2 playerPosition, const RuntimeBalance& balance, const EnemyCatalog& enemyCatalog);
     void update(
@@ -68,6 +69,7 @@ public:
         bool paused,
         const RuntimeBalance& balance,
         const ObjectCatalog& objectCatalog,
+        const WorldDropSystem& worldDrops,
         const EffectDispatcher& effectDispatcher,
         ProjectileSystem& projectiles,
         std::vector<EffectDiscoveryEvent>* discoveryEvents = nullptr);
@@ -91,10 +93,12 @@ public:
     void clearTemporaryState();
 
 private:
+    void setAwareness(Enemy& enemy, EnemyAwarenessState nextState, bool showIcon);
+    void forceDetectInSight(Enemy& enemy, Vec2 playerPosition, bool showIcon);
     const EnemyDefinition* chooseEnemyDefinition(const EnemyCatalog& enemyCatalog);
     void applyDefinition(Enemy& enemy, const EnemyDefinition* definition, const RuntimeBalance& balance, const EnemyCatalog& enemyCatalog);
-    void spawnAt(Vec2 position, const RuntimeBalance& balance, const EnemyCatalog& enemyCatalog);
-    bool spawnBossAt(Vec2 position, const RuntimeBalance& balance, const EnemyCatalog& enemyCatalog);
+    void spawnAt(Vec2 position, const RuntimeBalance& balance, const EnemyCatalog& enemyCatalog, bool detectedOnSpawn = false, Vec2 detectedTarget = {});
+    bool spawnBossAt(Vec2 position, const RuntimeBalance& balance, const EnemyCatalog& enemyCatalog, bool detectedOnSpawn = false, Vec2 detectedTarget = {});
     bool findSpawnPosition(TileMap& map, Vec2 desiredPosition, Vec2 playerPosition, const RuntimeBalance& balance, Vec2& outPosition) const;
     bool findSpawnPosition(TileMap& map, Vec2 desiredPosition, Vec2 playerPosition, float radius, float minPlayerDistance, Vec2& outPosition) const;
     bool findBossSpawnPosition(TileMap& map, Vec2 playerPosition, const RuntimeBalance& balance, Vec2& outPosition) const;
@@ -111,6 +115,7 @@ private:
     int nextEnemyId_ = 1;
     std::mt19937 rng_{std::random_device{}()};
     std::unordered_set<std::string> loggedUnknownAi_;
+    std::unordered_set<std::string> loggedUnknownUnawareAi_;
     std::unordered_set<std::string> loggedUnsupportedBehavior_;
     int flowMinX_ = 0;
     int flowMinY_ = 0;

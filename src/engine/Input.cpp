@@ -44,6 +44,7 @@ constexpr KeyBinding KeyBindings[] = {
     {SDL_SCANCODE_F5, InputAction::TestRestart},
     {SDL_SCANCODE_F6, InputAction::ToggleDebugPause},
     {SDL_SCANCODE_F8, InputAction::OpenConsole},
+    {SDL_SCANCODE_F2, InputAction::ToggleAutoReloadBlock},
 };
 
 constexpr int actionIndex(InputAction action)
@@ -63,6 +64,10 @@ int shortcutSlotForAction(InputAction action)
 void Input::beginFrame()
 {
     pressed_.fill(false);
+    mouseLeftReleased_ = false;
+    ctrlSavePressed_ = false;
+    ctrlUndoPressed_ = false;
+    ctrlRedoPressed_ = false;
     shortcutCursorDelta_ = 0;
     shortcutSlotPressed_ = -1;
     activeRingDelta_ = 0;
@@ -74,6 +79,22 @@ void Input::handleEvent(const SDL_Event& event)
         quitRequested_ = true;
     }
     if (event.type == SDL_EVENT_KEY_DOWN && !event.key.repeat) {
+        const SDL_Keymod mods = SDL_GetModState();
+        const bool ctrlDown = (mods & SDL_KMOD_CTRL) != 0;
+        if (ctrlDown) {
+            if (event.key.scancode == SDL_SCANCODE_S) {
+                ctrlSavePressed_ = true;
+                return;
+            }
+            if (event.key.scancode == SDL_SCANCODE_Z) {
+                ctrlUndoPressed_ = true;
+                return;
+            }
+            if (event.key.scancode == SDL_SCANCODE_Y) {
+                ctrlRedoPressed_ = true;
+                return;
+            }
+        }
         for (const KeyBinding& binding : KeyBindings) {
             if (event.key.scancode == binding.key) {
                 press(binding.action);
@@ -102,6 +123,7 @@ void Input::handleEvent(const SDL_Event& event)
     if (event.type == SDL_EVENT_MOUSE_BUTTON_UP) {
         if (event.button.button == SDL_BUTTON_LEFT) {
             setHeld(InputAction::ThrowActiveRing, false);
+            mouseLeftReleased_ = true;
         } else if (event.button.button == SDL_BUTTON_RIGHT) {
             setHeld(InputAction::OffsetRingCenter, false);
         }
