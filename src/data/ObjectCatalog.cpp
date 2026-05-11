@@ -32,6 +32,7 @@ constexpr std::string_view HeaderDamageType = "\xE3\x83\x80\xE3\x83\xA1\xE3\x83\
 constexpr std::string_view HeaderDigPower = "\xE6\x8E\x98\xE5\x89\x8A\xE5\x8A\x9B";
 constexpr std::string_view HeaderDurability = "\xE8\x80\x90\xE4\xB9\x85\xE5\x8A\x9B";
 constexpr std::string_view HeaderWeight = "\xE9\x87\x8D\xE3\x81\x95";
+constexpr std::string_view HeaderImageNumber = "\xE7\x94\xBB\xE5\x83\x8F\xE7\x95\xAA\xE5\x8F\xB7";
 constexpr std::string_view HeaderTags = "\xE7\x89\xB9\xE6\xAE\x8A\xE3\x82\xBF\xE3\x82\xB0";
 constexpr std::string_view HeaderEffectText = "\xE5\x8A\xB9\xE6\x9E\x9C\xE3\x83\x86\xE3\x82\xAD\xE3\x82\xB9\xE3\x83\x88";
 constexpr std::string_view EffectCodesSheetName = "\xE5\x8A\xB9\xE6\x9E\x9C\xE3\x82\xB3\xE3\x83\xBC\xE3\x83\x89\xE4\xB8\x80\xE8\xA6\xA7";
@@ -676,6 +677,7 @@ struct ObjectColumns {
     int digPower = -1;
     int durability = -1;
     int weight = -1;
+    int imageNumber = -1;
     int tags = -1;
     int effectText = -1;
     std::vector<std::pair<std::string, int>> lootWeightColumns;
@@ -697,6 +699,7 @@ bool findObjectColumns(const GoogleSheetRow& headers, ObjectColumns& outColumns,
     columns.digPower = findColumn(headers, {HeaderDigPower, "dig_power", "digPower"});
     columns.durability = findColumn(headers, {HeaderDurability, "durability"});
     columns.weight = findColumn(headers, {HeaderWeight, "weight_kg", "weightKg", "weight"});
+    columns.imageNumber = findColumn(headers, {HeaderImageNumber, "image_number", "imageNumber"});
     columns.tags = findColumn(headers, {HeaderTags, "tags"});
     columns.effectText = findColumn(headers, {HeaderEffectText, "effect_text", "effectText", "effect"});
     for (const std::string& columnName : expectedLootWeightColumns()) {
@@ -1208,6 +1211,19 @@ bool parseObjectCatalog(const GoogleSheetTable& table, ObjectCatalog& outCatalog
         item.digPower = parseIntColumnOrDefault(cellAt(row, columns.digPower), 0, "dig power", rowIndex, item.id, catalog, 0, 2'147'483'647);
         item.durability = parseIntColumnOrDefault(cellAt(row, columns.durability), 0, "durability", rowIndex, item.id, catalog, -1, 2'147'483'647);
         item.weightKg = parseDoubleColumnOrDefault(cellAt(row, columns.weight), 0.0, "weight", rowIndex, item.id, catalog, 0.0);
+        if (columns.imageNumber >= 0) {
+            item.imageNumber = parseIntColumnOrDefault(
+                cellAt(row, columns.imageNumber),
+                0,
+                "image number",
+                rowIndex,
+                item.id,
+                catalog,
+                0,
+                2'147'483'647);
+        } else {
+            item.imageNumber = 0;
+        }
 
         for (const auto& [columnName, columnIndex] : columns.lootWeightColumns) {
             const double weight = parseLootWeightOrZero(cellAt(row, columnIndex), columnName, rowIndex, item.id, catalog);

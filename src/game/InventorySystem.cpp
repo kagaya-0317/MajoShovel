@@ -2,6 +2,7 @@
 
 #include "engine/Log.hpp"
 #include "game/EffectDispatcher.hpp"
+#include "game/ObjectImageRenderer.hpp"
 
 #include <algorithm>
 #include <cstdio>
@@ -35,6 +36,8 @@ constexpr float ScreenGridY = ScreenY + 84.0f;
 constexpr float ScreenSlotW = 88.0f;
 constexpr float ScreenSlotH = 76.0f;
 constexpr float ScreenSlotGap = 8.0f;
+constexpr float InventoryObjectImageMaxSize = 48.0f;
+constexpr float ShortcutObjectImageMaxSize = 48.0f;
 constexpr float DetailX = ScreenX + 820.0f;
 constexpr float DetailY = ScreenY + 50.0f;
 constexpr float DetailW = 330.0f;
@@ -1085,16 +1088,35 @@ void InventorySystem::render(Renderer& renderer, const Player& player, const Spe
         const InventoryObjectStack* objectStack = objectStackAtScreenIndex(i);
         if (objectStack != nullptr) {
             const Color objectColor = inventoryObjectColor(objectStack->item);
-            renderer.fillCircle(rect.pos + Vec2{44.0f, 28.0f}, 13.0f, objectColor);
-            renderer.drawCircle(rect.pos + Vec2{44.0f, 28.0f}, 16.0f, {255, 230, 150, 180});
+            const Vec2 iconCenter = rect.pos + Vec2{44.0f, 28.0f};
+            const bool drewImage = drawObjectImage(
+                renderer,
+                objectStack->item,
+                iconCenter,
+                {InventoryObjectImageMaxSize, InventoryObjectImageMaxSize});
+            if (!drewImage) {
+                renderer.fillCircle(iconCenter, 22.0f, objectColor);
+            }
+            renderer.drawCircle(rect.pos + Vec2{44.0f, 28.0f}, 27.0f, {255, 230, 150, 180});
             std::snprintf(buffer, sizeof(buffer), "%s x%d", objectStack->item.name.c_str(), objectStack->count);
             renderer.drawText(rect.pos + Vec2{10.0f, 50.0f}, buffer, ui::Text, 2);
         } else if (const InventoryObjectInstance* objectInstance = objectInstanceAtScreenIndex(i)) {
             const Color objectColor = objectInstance->instance.isBroken ? Color{82, 82, 90, 255} : inventoryObjectColor(objectInstance->item);
-            renderer.fillCircle(rect.pos + Vec2{44.0f, 28.0f}, 13.0f, objectColor);
+            const Vec2 iconCenter = rect.pos + Vec2{44.0f, 28.0f};
+            ObjectImageDrawOptions imageOptions;
+            imageOptions.tint = objectInstance->instance.isBroken ? Color{140, 140, 148, 220} : Color{255, 255, 255, 255};
+            const bool drewImage = drawObjectImage(
+                renderer,
+                objectInstance->item,
+                iconCenter,
+                {InventoryObjectImageMaxSize, InventoryObjectImageMaxSize},
+                imageOptions);
+            if (!drewImage) {
+                renderer.fillCircle(iconCenter, 22.0f, objectColor);
+            }
             renderer.drawCircle(
                 rect.pos + Vec2{44.0f, 28.0f},
-                16.0f,
+                27.0f,
                 objectInstance->instance.protectionEnabled ? Color{116, 220, 255, 220} : Color{255, 230, 150, 180});
             std::snprintf(buffer, sizeof(buffer), "%s", objectInstance->item.name.c_str());
             renderer.drawText(rect.pos + Vec2{10.0f, 50.0f}, buffer, ui::Text, 2);
@@ -1202,14 +1224,36 @@ void InventorySystem::renderShortcutHud(Renderer& renderer, const SpellRingSyste
 
         const InventoryObjectStack* objectStack = objectStackAtScreenIndex(slotIndex);
         if (objectStack != nullptr) {
+            const Vec2 iconCenter = slotPos + Vec2{24.0f, 24.0f};
+            const bool drewImage = drawObjectImage(
+                renderer,
+                objectStack->item,
+                iconCenter,
+                {ShortcutObjectImageMaxSize, ShortcutObjectImageMaxSize});
+            if (!drewImage) {
+                renderer.fillCircle(iconCenter, 20.0f, inventoryObjectColor(objectStack->item));
+            }
             std::snprintf(buffer, sizeof(buffer), "%s x%d", objectStack->item.name.c_str(), objectStack->count);
-            renderer.drawText(slotPos + Vec2{20.0f, 18.0f}, buffer, ui::Text, 2);
+            renderer.drawText(slotPos + Vec2{56.0f, 18.0f}, buffer, ui::Text, 2);
         } else if (const InventoryObjectInstance* objectInstance = objectInstanceAtScreenIndex(slotIndex)) {
+            const Vec2 iconCenter = slotPos + Vec2{24.0f, 24.0f};
+            ObjectImageDrawOptions imageOptions;
+            imageOptions.tint = objectInstance->instance.isBroken ? Color{140, 140, 148, 220} : Color{255, 255, 255, 255};
+            const bool drewImage = drawObjectImage(
+                renderer,
+                objectInstance->item,
+                iconCenter,
+                {ShortcutObjectImageMaxSize, ShortcutObjectImageMaxSize},
+                imageOptions);
+            if (!drewImage) {
+                const Color objectColor = objectInstance->instance.isBroken ? Color{82, 82, 90, 255} : inventoryObjectColor(objectInstance->item);
+                renderer.fillCircle(iconCenter, 20.0f, objectColor);
+            }
             std::snprintf(buffer, sizeof(buffer), "%s%s",
                 objectInstance->instance.protectionEnabled ? "[P] " : "",
                 objectInstance->item.name.c_str());
             renderer.drawText(
-                slotPos + Vec2{20.0f, 18.0f},
+                slotPos + Vec2{56.0f, 18.0f},
                 buffer,
                 objectInstance->instance.isBroken ? ui::TextDisabled : ui::Text,
                 2);

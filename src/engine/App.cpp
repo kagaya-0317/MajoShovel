@@ -5,9 +5,12 @@
 #include <SDL3/SDL.h>
 #include <algorithm>
 #include <cctype>
+#include <cstdlib>
 #include <filesystem>
+#include <fstream>
 #include <optional>
 #include <string>
+#include <string_view>
 
 namespace majo {
 
@@ -31,6 +34,103 @@ std::string trimAscii(std::string text)
     text.erase(text.begin(), std::find_if_not(text.begin(), text.end(), isSpace));
     text.erase(std::find_if_not(text.rbegin(), text.rend(), isSpace).base(), text.end());
     return text;
+}
+
+std::filesystem::path devSettingsRootPath()
+{
+#if defined(_WIN32)
+    char* localAppData = nullptr;
+    std::size_t length = 0;
+    if (_dupenv_s(&localAppData, &length, "LOCALAPPDATA") == 0) {
+        if (localAppData != nullptr && localAppData[0] != '\0') {
+            const std::filesystem::path path = std::filesystem::path(localAppData) / "MajoShovel";
+            std::free(localAppData);
+            return path;
+        }
+        if (localAppData != nullptr) {
+            std::free(localAppData);
+        }
+    }
+#else
+    const char* localAppData = std::getenv("LOCALAPPDATA");
+    if (localAppData != nullptr && localAppData[0] != '\0') {
+        return std::filesystem::path(localAppData) / "MajoShovel";
+    }
+#endif
+    return std::filesystem::path(".local") / "MajoShovel";
+}
+
+std::filesystem::path devBuildConfigPath()
+{
+    return devSettingsRootPath() / "dev_build_config.txt";
+}
+
+std::filesystem::path devAutoReloadBlockPath()
+{
+    return devSettingsRootPath() / "dev_auto_reload_blocked.txt";
+}
+
+bool saveDevBuildConfig(std::string_view configName, std::string& outError)
+{
+    const std::filesystem::path configPath = devBuildConfigPath();
+    std::error_code ec;
+    std::filesystem::create_directories(configPath.parent_path(), ec);
+    if (ec) {
+        outError = "Failed to create config directory: " + ec.message();
+        return false;
+    }
+
+    std::ofstream file(configPath, std::ios::trunc);
+    if (!file) {
+        outError = "Failed to open config file: " + configPath.string();
+        return false;
+    }
+    file << configName << "\n";
+    if (!file) {
+        outError = "Failed to write config file: " + configPath.string();
+        return false;
+    }
+
+    return true;
+}
+
+bool loadDevAutoReloadBlocked()
+{
+    const std::filesystem::path path = devAutoReloadBlockPath();
+    std::ifstream file(path);
+    if (!file) {
+        return false;
+    }
+
+    std::string value;
+    std::getline(file, value);
+    const std::string normalized = lowerAscii(trimAscii(value));
+    return normalized == "1" || normalized == "true" || normalized == "on" || normalized == "yes";
+}
+
+bool saveDevAutoReloadBlocked(bool blocked, std::string& outError)
+{
+    const std::filesystem::path path = devAutoReloadBlockPath();
+    std::error_code ec;
+    std::filesystem::create_directories(path.parent_path(), ec);
+    if (ec) {
+        outError = "Failed to create config directory: " + ec.message();
+        return false;
+    }
+
+    std::ofstream file(path, std::ios::trunc);
+    if (!file) {
+        outError = "Failed to open auto-reload flag file: " + path.string();
+        return false;
+    }
+
+    file << (blocked ? "1" : "0") << "\n";
+    if (!file) {
+        outError = "Failed to write auto-reload flag file: " + path.string();
+        return false;
+    }
+
+    return true;
 }
 }
 
@@ -69,6 +169,11 @@ bool App::initialize(const char* title, int width, int height, bool testPlayMode
         setLogSink([this](LogLevel level, std::string_view message) {
             debugConsole_.appendLog(level, message);
         });
+        std::string error;
+        if (!saveDevAutoReloadBlocked(false, error)) {
+            logError("Auto reload block init failed: " + error);
+        }
+        game_.setAutoReloadBlocked(false);
         logInfo("Test-play debug console enabled. Press F8 to show or hide it.");
     }
     loadAssets();
@@ -87,6 +192,10 @@ bool App::loadAssets()
         ok = false;
     }
     if (!renderer_->loadPlayerSheet("assets/majo.png")) {
+        logError(renderer_->lastAssetError());
+        ok = false;
+    }
+    if (!renderer_->loadBaseMapTexture("assets/map_kyoten.png")) {
         logError(renderer_->lastAssetError());
         ok = false;
     }
@@ -120,12 +229,16 @@ bool App::reloadAssetForPath(const std::string& changedPath)
 {
     const std::string fileName = filenameOf(changedPath);
     const std::string extension = lowerAscii(std::filesystem::path(changedPath).extension().string());
+    const std::string parentPath = lowerAscii(std::filesystem::path(changedPath).parent_path().generic_string());
 
     if (fileName == "icon.png") {
         return renderer_->loadIconSheet("assets/icon.png");
     }
     if (fileName == "majo.png") {
         return renderer_->loadPlayerSheet("assets/majo.png");
+    }
+    if (fileName == "map_kyoten.png") {
+        return renderer_->loadBaseMapTexture("assets/map_kyoten.png");
     }
     if (fileName == "ui_window1.png") {
         return renderer_->loadUiWindowTexture("assets/UI_window1.png");
@@ -138,6 +251,12 @@ bool App::reloadAssetForPath(const std::string& changedPath)
     }
     if (extension == ".otf" || extension == ".ttf") {
         return renderer_->loadTextFont("assets/fonts/craftmincho.otf");
+    }
+    if (extension == ".png" &&
+        fileName.rfind("obj_", 0) == 0 &&
+        parentPath.find("assets/objects") != std::string::npos) {
+        renderer_->invalidateImage(changedPath);
+        return true;
     }
 
     return loadAssets();
@@ -170,6 +289,24 @@ void App::toggleFullscreen()
 void App::executeDebugCommand(const std::string& command)
 {
     const std::string normalized = lowerAscii(trimAscii(command));
+    if (normalized == "dev build-config debug" || normalized == "dev build debug") {
+        std::string error;
+        if (saveDevBuildConfig("Debug", error)) {
+            logInfo("Dev build config saved: Debug (applies on next dev_auto_reload start).");
+        } else {
+            logError("Dev build config save failed: " + error);
+        }
+        return;
+    }
+    if (normalized == "dev build-config release" || normalized == "dev build release") {
+        std::string error;
+        if (saveDevBuildConfig("Release", error)) {
+            logInfo("Dev build config saved: Release (applies on next dev_auto_reload start).");
+        } else {
+            logError("Dev build config save failed: " + error);
+        }
+        return;
+    }
     if (normalized == "restart") {
         logInfo("Debug command: restart");
         restartRequested_ = true;
@@ -215,6 +352,16 @@ void App::run()
         }
         if (testPlayMode_ && input_.openConsolePressed()) {
             debugConsole_.toggleVisible();
+        }
+        if (testPlayMode_ && input_.toggleAutoReloadBlockPressed()) {
+            const bool blocked = !loadDevAutoReloadBlocked();
+            std::string error;
+            if (saveDevAutoReloadBlocked(blocked, error)) {
+                game_.setAutoReloadBlocked(blocked);
+                logInfo(std::string("Auto reload block: ") + (blocked ? "ON (F2)" : "OFF (F2)"));
+            } else {
+                logError("Auto reload block toggle failed: " + error);
+            }
         }
         if (testPlayMode_) {
             while (std::optional<std::string> command = debugConsole_.pollCommand()) {

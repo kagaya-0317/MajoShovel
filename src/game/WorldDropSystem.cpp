@@ -4,6 +4,7 @@
 #include "engine/Log.hpp"
 #include "game/EffectSystem.hpp"
 #include "game/InventorySystem.hpp"
+#include "game/ObjectImageRenderer.hpp"
 #include "game/Player.hpp"
 
 #include <algorithm>
@@ -18,6 +19,7 @@ namespace majo {
 namespace {
 constexpr float DropPickupRadius = 23.0f;
 constexpr float DropVisualRadius = 8.0f;
+constexpr Vec2 DropObjectImageMaxSize = {48.0f, 48.0f};
 constexpr float CapturedMagnetDropRadius = 170.0f;
 constexpr float CapturedMagnetDropAcceleration = 260.0f;
 constexpr int CapturedMagnetDropLimit = 6;
@@ -187,6 +189,16 @@ bool WorldDropSystem::spawnObjectDrop(const ObjectCatalog& catalog, std::string_
     return true;
 }
 
+bool WorldDropSystem::spawnDigItemDrop(const ObjectCatalog& catalog, Vec2 position, float spawnedAtSeconds)
+{
+    const ObjectDefinition* object = chooseDigDrop(catalog, "dig event");
+    if (object == nullptr) {
+        return false;
+    }
+    spawnDrop(*object, position, spawnedAtSeconds);
+    return true;
+}
+
 bool WorldDropSystem::spawnMoneyDrop(int amount, Vec2 position, float spawnedAtSeconds)
 {
     if (amount <= 0) {
@@ -342,7 +354,15 @@ void WorldDropSystem::render(
         } else if (material) {
             color = colorForMaterial(materialType);
         }
-        renderer.fillCircle(center, DropVisualRadius, color);
+
+        bool drewObjectImage = false;
+        if (object != nullptr) {
+            drewObjectImage = drawObjectImage(renderer, *object, center, DropObjectImageMaxSize);
+        }
+
+        if (!drewObjectImage) {
+            renderer.fillCircle(center, DropVisualRadius, color);
+        }
         renderer.drawCircle(center, DropVisualRadius + 3.0f, {255, 246, 190, 210});
 
         if (object != nullptr) {
@@ -355,11 +375,8 @@ void WorldDropSystem::render(
     }
 }
 
-const ObjectDefinition* WorldDropSystem::chooseDropForTile(TileType tileType, const ObjectCatalog& catalog) const
+const ObjectDefinition* WorldDropSystem::chooseDigDrop(const ObjectCatalog& catalog, std::string_view warningContext) const
 {
-    if (!canDropFromTile(tileType)) {
-        return nullptr;
-    }
     if (catalog.registry.empty()) {
         logDropWarning("Objects DB is empty; no item drop spawned");
         return nullptr;
@@ -390,12 +407,20 @@ const ObjectDefinition* WorldDropSystem::chooseDropForTile(TileType tileType, co
     }
 
     if (candidates.empty()) {
-        logDropWarning("no Objects DB drop candidates for dug ore tile");
+        logDropWarning("no Objects DB drop candidates for " + std::string(warningContext));
         return nullptr;
     }
 
     std::discrete_distribution<int> distribution(weights.begin(), weights.end());
     return candidates[static_cast<std::size_t>(distribution(dropRng()))];
+}
+
+const ObjectDefinition* WorldDropSystem::chooseDropForTile(TileType tileType, const ObjectCatalog& catalog) const
+{
+    if (!canDropFromTile(tileType)) {
+        return nullptr;
+    }
+    return chooseDigDrop(catalog, "dug ore tile");
 }
 
 bool WorldDropSystem::canSpawnDrop(std::string_view label)

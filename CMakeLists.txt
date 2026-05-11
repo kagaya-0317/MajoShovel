@@ -64,6 +64,7 @@ add_executable(MajoShovel
     src/game/EncyclopediaSystem.cpp
     src/game/InventorySystem.cpp
     src/game/ItemModel.cpp
+    src/game/ObjectImageRenderer.cpp
     src/game/WorldDropSystem.cpp
     src/game/EffectSystem.cpp
     src/game/Collision.cpp
@@ -99,6 +100,7 @@ add_custom_command(TARGET MajoShovel POST_BUILD
 
 if(MSVC)
     target_compile_options(MajoShovel PRIVATE /W4 /permissive- /utf-8 /MP)
+    target_link_options(MajoShovel PRIVATE $<$<CONFIG:Debug>:/DEBUG:FASTLINK>)
 else()
     target_compile_options(MajoShovel PRIVATE -Wall -Wextra -Wpedantic)
 endif()

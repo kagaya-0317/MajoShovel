@@ -2,6 +2,7 @@
 
 #include "engine/Log.hpp"
 #include "engine/Ui.hpp"
+#include "game/ObjectImageRenderer.hpp"
 
 #include <algorithm>
 #include <array>
@@ -29,6 +30,8 @@ constexpr int ShovelIconIndex = 0;
 constexpr int TorchIconIndex = 1;
 constexpr float IconDrawSize = 32.0f;
 constexpr float PlayerSpriteDrawSize = 96.0f;
+constexpr float PlayerSpriteAnchorX = 0.5f;
+constexpr float PlayerSpriteAnchorY = 0.95f;
 constexpr int BaseMenuItemCount = 8;
 constexpr int BaseMiningStartChoiceCount = 3;
 constexpr int BaseUpgradeItemCount = 8;
@@ -46,6 +49,8 @@ constexpr int StageClearItemCount = 1;
 constexpr int RingCount = 3;
 constexpr int UnlockedRingCount = 1;
 constexpr float RingAngleStep = Pi / 36.0f;
+constexpr float RingDragSnapMaxDelta = Pi / 6.0f;
+constexpr float RingSnapDuration = 0.14f;
 constexpr float RingDetailW = 330.0f;
 constexpr float DetailOuterRightMargin = 42.0f;
 constexpr float DetailOuterTopMargin = 50.0f;
@@ -86,10 +91,52 @@ constexpr float TopInfoBarPaddingX = 14.0f;
 constexpr float TopInfoBarGroupGap = 22.0f;
 constexpr float TopInfoBarIconSize = 18.0f;
 constexpr float TopInfoBarIconTextGap = 7.0f;
+constexpr int BaseEditGridSize = 12;
+constexpr float BaseEditFacilityMinSize = 24.0f;
+constexpr int BaseEditUndoLimit = 100;
+constexpr float BaseEditHandleSize = 12.0f;
+constexpr float BaseEditHandleHitPadding = 8.0f;
+constexpr float RingObjectImageMaxSize = 48.0f;
+constexpr float RingItemBobAmplitude = 3.0f;
+constexpr float RingItemBobSpeed = 4.2f;
+constexpr float ObjectImageScaleMin = 0.25f;
+constexpr float ObjectImageScaleMax = 4.0f;
+constexpr float ObjectImageScaleStep = 0.05f;
+constexpr float ObjectImageScaleCardWidth = 168.0f;
+constexpr float ObjectImageScaleCardHeight = 132.0f;
+constexpr float ObjectImageScaleCardGap = 10.0f;
+constexpr float ObjectImageScalePanelMargin = 20.0f;
+constexpr float ObjectImageScaleHeaderHeight = 94.0f;
+constexpr float ObjectImageScaleFooterHeight = 60.0f;
+constexpr float ObjectImageScalePreviewSize = 48.0f;
+constexpr float FootstepDustLifetime = 0.30f;
+constexpr float FootstepDustStartOffset = 8.0f;
+constexpr float FootstepDustEndOffset = 20.0f;
+constexpr unsigned char FootstepDustBaseAlpha = 255;
+constexpr int FootstepDustCircleCapacity = 5;
 
 struct TopInfoMaterial {
     MaterialType type = MaterialType::OldWoodBuildingMaterial;
 };
+
+struct FootstepDustShape {
+    int circleCount = 0;
+    std::array<Vec2, FootstepDustCircleCapacity> offsets{};
+    std::array<float, FootstepDustCircleCapacity> radii{};
+};
+
+constexpr std::array<FootstepDustShape, 10> FootstepDustShapes{{
+    {4, {{{-6.0f, -1.0f}, {-1.0f, 2.0f}, {5.0f, 0.0f}, {1.0f, -4.0f}, {0.0f, 0.0f}}}, {{4.8f, 5.8f, 4.2f, 3.5f, 0.0f}}},
+    {5, {{{-7.0f, 1.0f}, {-2.0f, -3.0f}, {3.0f, 2.0f}, {8.0f, -1.0f}, {1.0f, 4.0f}}}, {{4.2f, 3.8f, 5.6f, 3.4f, 3.0f}}},
+    {4, {{{-5.0f, 3.0f}, {0.0f, -2.0f}, {6.0f, 1.0f}, {2.0f, 5.0f}, {0.0f, 0.0f}}}, {{5.4f, 4.8f, 4.0f, 3.2f, 0.0f}}},
+    {5, {{{-8.0f, -2.0f}, {-3.0f, 3.0f}, {2.0f, 0.0f}, {7.0f, 2.0f}, {3.0f, -4.0f}}}, {{3.6f, 5.2f, 4.6f, 3.8f, 3.0f}}},
+    {4, {{{-6.0f, 0.0f}, {-1.0f, -4.0f}, {4.0f, 3.0f}, {8.0f, -1.0f}, {0.0f, 0.0f}}}, {{4.0f, 3.4f, 5.4f, 3.6f, 0.0f}}},
+    {5, {{{-7.0f, 2.0f}, {-2.0f, 0.0f}, {2.0f, -4.0f}, {6.0f, 2.0f}, {0.0f, 5.0f}}}, {{4.4f, 5.8f, 3.2f, 4.0f, 3.2f}}},
+    {4, {{{-5.0f, -3.0f}, {1.0f, 1.0f}, {6.0f, -1.0f}, {-1.0f, 5.0f}, {0.0f, 0.0f}}}, {{3.8f, 5.6f, 4.4f, 3.4f, 0.0f}}},
+    {5, {{{-8.0f, 1.0f}, {-3.0f, -2.0f}, {1.0f, 3.0f}, {5.0f, -3.0f}, {8.0f, 1.0f}}}, {{3.6f, 4.8f, 5.4f, 3.4f, 3.0f}}},
+    {4, {{{-6.0f, 4.0f}, {-2.0f, -1.0f}, {3.0f, 2.0f}, {7.0f, -2.0f}, {0.0f, 0.0f}}}, {{3.4f, 5.2f, 4.8f, 3.8f, 0.0f}}},
+    {5, {{{-7.0f, -1.0f}, {-1.0f, 3.0f}, {3.0f, -2.0f}, {7.0f, 2.0f}, {1.0f, -5.0f}}}, {{4.2f, 5.0f, 4.0f, 3.6f, 3.0f}}},
+}};
 
 Color materialCounterFill(MaterialType type)
 {
@@ -135,6 +182,11 @@ std::string popUtf8Codepoint(std::string text)
         text.pop_back();
     }
     return text;
+}
+
+Vec2 playerSpriteFootAnchor(Vec2 actorCenter)
+{
+    return actorCenter + Vec2{0.0f, PlayerSpriteDrawSize * (PlayerSpriteAnchorY - 0.5f)};
 }
 
 std::string fittedSingleLineText(Renderer& renderer, std::string text, float maxWidth, int scale)
@@ -424,6 +476,23 @@ bool rollChance(float chance, std::mt19937& rng)
     return distribution(rng);
 }
 
+bool digEventDue(int& counter, int minDugTiles, int guaranteeDugTiles, std::mt19937& rng)
+{
+    ++counter;
+    const int minTiles = std::max(1, minDugTiles);
+    const int guaranteeTiles = std::max(minTiles, guaranteeDugTiles);
+    if (counter < minTiles) {
+        return false;
+    }
+    if (counter >= guaranteeTiles) {
+        return true;
+    }
+
+    const int randomWindow = std::max(1, guaranteeTiles - minTiles + 1);
+    std::uniform_int_distribution<int> distribution(1, randomWindow);
+    return distribution(rng) == 1;
+}
+
 MaterialType rollChestMaterial(std::mt19937& rng)
 {
     constexpr std::array<MaterialType, 3> Materials{
@@ -479,6 +548,158 @@ UiRect baseMapBounds()
     return {{0.0f, 0.0f}, {1280.0f, 720.0f}};
 }
 
+UiRect baseEditModeButtonRect(int index)
+{
+    return {{898.0f, 52.0f + static_cast<float>(index) * 42.0f}, {174.0f, 34.0f}};
+}
+
+UiRect baseEditSaveButtonRect()
+{
+    return {{1080.0f, 52.0f}, {150.0f, 34.0f}};
+}
+
+std::filesystem::path baseEditDataPath(BaseArea area)
+{
+    const char* fileName = area == BaseArea::Outdoor ? "base_edit_outdoor.cfg" : "base_edit_home.cfg";
+    return std::filesystem::path("data") / fileName;
+}
+
+std::filesystem::path objectImageScaleDataPath()
+{
+    return std::filesystem::path("data") / "object_image_scale.cfg";
+}
+
+float clampObjectImageScale(float scale)
+{
+    return clamp(scale, ObjectImageScaleMin, ObjectImageScaleMax);
+}
+
+float snapObjectImageScale(float scale)
+{
+    const float steps = std::round(scale / ObjectImageScaleStep);
+    return clampObjectImageScale(steps * ObjectImageScaleStep);
+}
+
+struct ObjectImageScaleLayout {
+    UiRect viewport{};
+    UiRect content{};
+    int columns = 1;
+    float rowHeight = 1.0f;
+};
+
+ObjectImageScaleLayout makeObjectImageScaleLayout(int screenWidth, int screenHeight)
+{
+    ObjectImageScaleLayout layout;
+    const float width = static_cast<float>(std::max(1, screenWidth));
+    const float height = static_cast<float>(std::max(1, screenHeight));
+    layout.viewport.pos = {ObjectImageScalePanelMargin, ObjectImageScaleHeaderHeight};
+    layout.viewport.size = {
+        std::max(10.0f, width - ObjectImageScalePanelMargin * 2.0f),
+        std::max(10.0f, height - ObjectImageScaleHeaderHeight - ObjectImageScaleFooterHeight - ObjectImageScalePanelMargin),
+    };
+    layout.content = layout.viewport;
+    const float widthWithGap = ObjectImageScaleCardWidth + ObjectImageScaleCardGap;
+    layout.columns = std::max(1, static_cast<int>((layout.viewport.size.x + ObjectImageScaleCardGap) / widthWithGap));
+    layout.rowHeight = ObjectImageScaleCardHeight + ObjectImageScaleCardGap;
+    return layout;
+}
+
+UiRect objectImageScaleCardRect(const ObjectImageScaleLayout& layout, int index, float scrollOffset)
+{
+    const int safeColumns = std::max(1, layout.columns);
+    const int row = index / safeColumns;
+    const int column = index % safeColumns;
+    const float x = layout.content.pos.x + static_cast<float>(column) * (ObjectImageScaleCardWidth + ObjectImageScaleCardGap);
+    const float y = layout.content.pos.y + static_cast<float>(row) * layout.rowHeight - scrollOffset;
+    return {{x, y}, {ObjectImageScaleCardWidth, ObjectImageScaleCardHeight}};
+}
+
+std::int64_t packBaseEditTile(int tileX, int tileY)
+{
+    return (static_cast<std::int64_t>(tileX) << 32) ^ static_cast<std::uint32_t>(tileY);
+}
+
+int baseEditTileXFromPacked(std::int64_t packed)
+{
+    return static_cast<int>(packed >> 32);
+}
+
+int baseEditTileYFromPacked(std::int64_t packed)
+{
+    return static_cast<int>(packed & 0xffffffffLL);
+}
+
+BaseEditRect toBaseEditRect(UiRect rect)
+{
+    return {rect.pos.x, rect.pos.y, rect.size.x, rect.size.y};
+}
+
+UiRect toUiRect(BaseEditRect rect)
+{
+    return {{rect.x, rect.y}, {rect.w, rect.h}};
+}
+
+bool sameBaseEditRect(BaseEditRect a, BaseEditRect b)
+{
+    return std::abs(a.x - b.x) <= 0.001f &&
+        std::abs(a.y - b.y) <= 0.001f &&
+        std::abs(a.w - b.w) <= 0.001f &&
+        std::abs(a.h - b.h) <= 0.001f;
+}
+
+BaseEditRect normalizeBaseEditRect(BaseEditRect rect)
+{
+    const UiRect bounds = baseMapBounds();
+    const float minSize = BaseEditFacilityMinSize;
+    rect.w = std::max(minSize, rect.w);
+    rect.h = std::max(minSize, rect.h);
+    rect.x = clamp(rect.x, bounds.pos.x, bounds.pos.x + bounds.size.x - rect.w);
+    rect.y = clamp(rect.y, bounds.pos.y, bounds.pos.y + bounds.size.y - rect.h);
+    return rect;
+}
+
+bool pointInExpandedRect(Vec2 point, UiRect rect, float padding)
+{
+    const UiRect expanded{
+        {rect.pos.x - padding, rect.pos.y - padding},
+        {rect.size.x + padding * 2.0f, rect.size.y + padding * 2.0f},
+    };
+    return expanded.contains(point);
+}
+
+int baseEditResizeMaskAtPoint(UiRect rect, Vec2 point)
+{
+    constexpr int Left = 1;
+    constexpr int Right = 2;
+    constexpr int Top = 4;
+    constexpr int Bottom = 8;
+
+    int mask = 0;
+    const float left = rect.pos.x;
+    const float right = rect.pos.x + rect.size.x;
+    const float top = rect.pos.y;
+    const float bottom = rect.pos.y + rect.size.y;
+
+    const UiRect leftRect{{left - BaseEditHandleHitPadding, top}, {BaseEditHandleHitPadding * 2.0f, rect.size.y}};
+    const UiRect rightRect{{right - BaseEditHandleHitPadding, top}, {BaseEditHandleHitPadding * 2.0f, rect.size.y}};
+    const UiRect topRect{{left, top - BaseEditHandleHitPadding}, {rect.size.x, BaseEditHandleHitPadding * 2.0f}};
+    const UiRect bottomRect{{left, bottom - BaseEditHandleHitPadding}, {rect.size.x, BaseEditHandleHitPadding * 2.0f}};
+
+    if (leftRect.contains(point)) {
+        mask |= Left;
+    }
+    if (rightRect.contains(point)) {
+        mask |= Right;
+    }
+    if (topRect.contains(point)) {
+        mask |= Top;
+    }
+    if (bottomRect.contains(point)) {
+        mask |= Bottom;
+    }
+    return mask;
+}
+
 float distanceToRect(Vec2 point, UiRect rect)
 {
     const float closestX = clamp(point.x, rect.pos.x, rect.pos.x + rect.size.x);
@@ -499,6 +720,7 @@ const char* screenModeName(ScreenMode mode)
     case ScreenMode::PauseMenu: return "PauseMenu";
     case ScreenMode::Inventory: return "Inventory";
     case ScreenMode::Ring: return "Ring";
+    case ScreenMode::ObjectImageScaleEdit: return "ObjectImageScaleEdit";
     case ScreenMode::LevelUp: return "LevelUp";
     case ScreenMode::GameOver: return "GameOver";
     case ScreenMode::StageClear: return "StageClear";
@@ -848,6 +1070,11 @@ Vec2 ringItemUiCenter(const SpellRingItem& item)
     return ringOrbitCenter() + fromAngle(item.localAngle - Pi * 0.5f) * ringOrbitRadius();
 }
 
+Vec2 ringItemUiCenterAtAngle(float angle)
+{
+    return ringOrbitCenter() + fromAngle(angle - Pi * 0.5f) * ringOrbitRadius();
+}
+
 UiRect ringItemUiRect(const SpellRingItem& item)
 {
     constexpr Vec2 Size{54.0f, 54.0f};
@@ -855,9 +1082,82 @@ UiRect ringItemUiRect(const SpellRingItem& item)
     return {center - Size * 0.5f, Size};
 }
 
-void drawRingItemShape(Renderer& renderer, const SpellRingItem& item, Vec2 center, Vec2 outward, bool selected)
+float normalizeRingAngle(float angle)
 {
-    const Color outline = selected ? Color{255, 230, 150, 255} : Color{96, 104, 126, 220};
+    const float full = Pi * 2.0f;
+    angle = std::fmod(angle, full);
+    if (angle < 0.0f) {
+        angle += full;
+    }
+    return angle;
+}
+
+float quantizeRingAngle(float angle)
+{
+    return normalizeRingAngle(std::round(normalizeRingAngle(angle) / RingAngleStep) * RingAngleStep);
+}
+
+float shortestRingAngleDelta(float from, float to)
+{
+    float delta = normalizeRingAngle(to) - normalizeRingAngle(from);
+    if (delta > Pi) {
+        delta -= Pi * 2.0f;
+    } else if (delta < -Pi) {
+        delta += Pi * 2.0f;
+    }
+    return delta;
+}
+
+float ringAngleFromPoint(Vec2 point)
+{
+    const Vec2 delta = point - ringOrbitCenter();
+    return quantizeRingAngle(std::atan2(delta.y, delta.x) + Pi * 0.5f);
+}
+
+Vec2 ringItemBobOffset(const SpellRingItem& item, float totalSeconds)
+{
+    const float phase = totalSeconds * RingItemBobSpeed + item.localAngle * 1.7f;
+    return {0.0f, -std::sin(phase) * RingItemBobAmplitude};
+}
+
+float ringItemShadowVisualSize(const SpellRingItem& item)
+{
+    switch (item.type) {
+    case SpellRingItemType::Shovel:
+    case SpellRingItemType::Torch:
+        return IconDrawSize;
+    case SpellRingItemType::Object:
+        return std::max(RingObjectImageMaxSize, item.hitRadius * 2.0f);
+    }
+    return RingObjectImageMaxSize;
+}
+
+void drawRingItemShape(
+    Renderer& renderer,
+    const SpellRingItem& item,
+    const ItemData* object,
+    Vec2 center,
+    Vec2 outward,
+    bool selected,
+    bool invalid = false)
+{
+    const Color outline = selected
+        ? (invalid ? Color{255, 92, 92, 255} : Color{255, 230, 150, 255})
+        : Color{96, 104, 126, 220};
+
+    const bool drewImage = object != nullptr &&
+        drawObjectImage(
+            renderer,
+            *object,
+            center,
+            {RingObjectImageMaxSize, RingObjectImageMaxSize});
+    if (drewImage) {
+        if (selected) {
+            renderer.drawCircle(center, 17.0f, outline);
+        }
+        return;
+    }
+
     if (item.type == SpellRingItemType::Shovel) {
         if (selected) {
             renderer.drawCircle(center, 15.0f, outline);
@@ -1164,9 +1464,9 @@ void logDungeonGenerationAudit()
     logError("[audit] terrain: TileMap::initializeChunk remains chunk-local but samples Game-owned DungeonLayout distance fields for initial terrain.");
     logError("[audit] tile_hp: TileType={Empty,Dirt,Rock,Ore,HardRock}; HP is scaled by stage and local hardness.");
     logError("[audit] digging: DiggingSystem returns hit/opened/dug tiles, rewardDropRequests, and capturedExplosionRequests; opened tiles are the hook for buried rewards or hidden enemies.");
-    logError("[audit] enemies: EnemySystem::spawnFromDugTiles uses openedTiles and enemyDugSpawnEvery; generated hidden enemies should be consumed through a separate per-tile marker before this random spawn path.");
+    logError("[audit] enemies: EnemySystem::spawnFromDugTiles uses dug-event min/guarantee counters; generated hidden enemies should be consumed through a separate per-tile marker before this random spawn path.");
     logError("[audit] lights: Game::render already composes extra LightSource entries for ring items, warp points, and boss spawn markers before TileMap/Drop/Projectile/Enemy rendering.");
-    logError("[audit] drops: WorldDropSystem consumes DugTile entries and Objects DB candidates; pickup is player contact via InventorySystem.");
+    logError("[audit] drops: Game consumes DugTile event counters for dig money/item drops; WorldDropSystem pickup is player contact via InventorySystem.");
     logError("[audit] object_tags: special tags are metadata/filter labels; runtime effects go through EffectSpec and EffectDispatcher, not direct tag execution.");
     logError("[audit] stage_params: StageParams DB is intentionally not present for this pass.");
     logError("=== End dungeon generation extension pre-audit ===");
@@ -1370,6 +1670,9 @@ void Game::initialize(int width, int height)
     basePlayerPosition_ = {640.0f, 360.0f};
     baseOutdoorPlayerPosition_ = basePlayerPosition_;
     basePlayerFacing_ = {0.0f, 1.0f};
+    loadBaseEditData();
+    loadObjectImageScaleData();
+    setObjectImageScaleOverrides(&objectImageScaleById_);
     enterBase();
     reloadNoticeTimer_ = 2.0f;
 }
@@ -1415,6 +1718,17 @@ void Game::initializeWorld(bool captureRunStartInventory)
     baseBookshelfActive_ = false;
     bookshelfPage_ = BookshelfPage::Menu;
     bookshelfSelection_ = 0;
+    baseEditEnabled_ = false;
+    baseEditMode_ = BaseEditMode::None;
+    baseEditDirty_ = false;
+    baseEditUndoStack_.clear();
+    baseEditRedoStack_.clear();
+    resetBaseEditDragState();
+    objectImageScaleReturnMode_ = ScreenMode::Playing;
+    objectImageScaleSelectedIndex_ = -1;
+    objectImageScaleScrollOffset_ = 0.0f;
+    objectImageScaleDirty_ = false;
+    objectImageScaleStatus_.clear();
     baseStatus_.clear();
     pausePage_ = PauseMenuPage::Main;
     pauseReturnMode_ = ScreenMode::Playing;
@@ -1479,6 +1793,11 @@ void Game::enterBase()
     baseBookshelfActive_ = false;
     baseMenuSelection_ = std::clamp(baseMenuSelection_, 0, BaseMenuItemCount - 1);
     clearTemporaryPlayerState(true);
+    resetPlayerFootstepDust();
+    if (baseEditEnabled_) {
+        baseEditMode_ = BaseEditMode::Facility;
+        resetBaseEditDragState();
+    }
 }
 
 void Game::startMiningFromBase(bool useLatestWarpPoint, bool forceRegenerate)
@@ -1520,7 +1839,11 @@ void Game::startMiningFromBase(bool useLatestWarpPoint, bool forceRegenerate)
         tileMap_.updateAround(player_.position, 0.0f, balance_, dungeonLayout_);
         captureRetrySnapshotAtWarpPoint();
     }
+    baseEditEnabled_ = false;
+    baseEditMode_ = BaseEditMode::None;
+    resetBaseEditDragState();
     mode_ = ScreenMode::Playing;
+    resetPlayerFootstepDust();
 }
 
 void Game::applyPermanentUpgrades()
@@ -1618,6 +1941,7 @@ bool Game::loadObjectsFromSheet()
 {
     if (!sheetSource_.enabled) {
         objectCatalog_ = ObjectCatalog{};
+        rebuildObjectImageScaleList();
         return false;
     }
 
@@ -1685,12 +2009,14 @@ bool Game::loadObjectsFromSheet()
             << "\" dig_power=" << object.digPower
             << " durability=" << object.durability
             << " weight_kg=" << object.weightKg
+            << " image_number=" << object.imageNumber
             << " normal_effects=" << object.normalEffects.size()
             << " orbit_effects=" << object.orbitEffects.size()
             << " tags=" << object.tags.size()
             << " loot_weights=" << object.lootWeights.byColumn.size();
         logError(line.str());
     }
+    rebuildObjectImageScaleList();
     return true;
 }
 
@@ -3042,6 +3368,10 @@ void Game::openRingScreen()
     mode_ = ScreenMode::Ring;
     const int maxIndex = std::max(0, static_cast<int>(spellRing_.items().size()) - 1);
     ringSlotSelection_ = std::clamp(ringSlotSelection_, 0, maxIndex);
+    ringDragPending_ = false;
+    ringDragActive_ = false;
+    ringSnapActive_ = false;
+    ringDragItemIndex_ = -1;
     cancelRingGrab();
     ringStatus_.clear();
 }
@@ -3052,6 +3382,10 @@ void Game::cancelRingGrab()
         return;
     }
 
+    ringDragPending_ = false;
+    ringDragActive_ = false;
+    ringSnapActive_ = false;
+    ringDragItemIndex_ = -1;
     if (!spellRing_.addItem(ringGrabbedItem_)) {
         spellRing_.items().push_back(ringGrabbedItem_);
         spellRing_.normalizeItemPlacements();
@@ -4146,7 +4480,7 @@ std::vector<Vec2> Game::spawnHiddenEnemyNodesFromOpenedTiles(const std::vector<V
             }
 
             consumedByHiddenNode = true;
-            if (enemies_.spawnNodeEnemy(tileMap_, tileWorldCenter(node.tile), player_.position, balance_, enemyCatalog_, true)) {
+            if (enemies_.spawnNodeEnemy(tileMap_, tileWorldCenter(node.tile), player_.position, balance_, enemyCatalog_, true, true)) {
                 node.spawned = true;
                 reloadNotice_ = "隠れ敵が出現";
                 reloadNoticeTimer_ = 1.5f;
@@ -4287,6 +4621,1041 @@ void Game::restoreRetrySnapshot()
     gameOverStatus_.clear();
     tileMap_.updateAround(player_.position, 0.0f, balance_, dungeonLayout_);
     camera_.follow(player_.position, 1.0f);
+    resetPlayerFootstepDust();
+}
+
+void Game::resetPlayerFootstepDust()
+{
+    for (FootstepDustPuff& puff : playerFootstepDustPuffs_) {
+        puff = {};
+    }
+    nextPlayerFootstepDustPuff_ = 0;
+    nextPlayerFootstepDustShape_ = 0;
+    previousPlayerDustFrame_ = -1;
+    previousBasePlayerDustFrame_ = -1;
+}
+
+void Game::updatePlayerFootstepDust(float dt)
+{
+    for (FootstepDustPuff& puff : playerFootstepDustPuffs_) {
+        if (!puff.active) {
+            continue;
+        }
+        puff.age += dt;
+        if (puff.age >= puff.lifetime) {
+            puff.active = false;
+        }
+    }
+}
+
+void Game::maybeSpawnPlayerFootstepDust(Vec2 footAnchor, Vec2 movementDirection, bool walking, int frameIndex, int& previousFrame)
+{
+    const bool dustFrame = frameIndex == 3 || frameIndex == 6;
+    if (walking && dustFrame && previousFrame != frameIndex) {
+        spawnPlayerFootstepDust(footAnchor, movementDirection);
+    }
+    previousFrame = frameIndex;
+}
+
+void Game::spawnPlayerFootstepDust(Vec2 footAnchor, Vec2 movementDirection)
+{
+    const Vec2 backward = lengthSquared(movementDirection) > 0.0001f
+        ? normalize(movementDirection) * -1.0f
+        : Vec2{0.0f, 1.0f};
+
+    FootstepDustPuff& puff = playerFootstepDustPuffs_[static_cast<std::size_t>(nextPlayerFootstepDustPuff_)];
+    puff.active = true;
+    puff.age = 0.0f;
+    puff.lifetime = FootstepDustLifetime;
+    puff.shapeIndex = nextPlayerFootstepDustShape_;
+    puff.startPosition = footAnchor + backward * FootstepDustStartOffset;
+    puff.endPosition = footAnchor + backward * FootstepDustEndOffset;
+
+    nextPlayerFootstepDustPuff_ = (nextPlayerFootstepDustPuff_ + 1) % static_cast<int>(playerFootstepDustPuffs_.size());
+    nextPlayerFootstepDustShape_ = (nextPlayerFootstepDustShape_ + 1) % static_cast<int>(FootstepDustShapes.size());
+}
+
+void Game::renderPlayerFootstepDust(Renderer& renderer) const
+{
+    for (const FootstepDustPuff& puff : playerFootstepDustPuffs_) {
+        if (!puff.active || puff.lifetime <= 0.0f) {
+            continue;
+        }
+
+        const float t = clamp(puff.age / puff.lifetime, 0.0f, 1.0f);
+        const float easedMove = 1.0f - (1.0f - t) * (1.0f - t);
+        const float easedScale = 1.0f + t * 0.28f;
+        const unsigned char alpha = static_cast<unsigned char>(
+            std::clamp(std::lround(static_cast<float>(FootstepDustBaseAlpha) * (1.0f - t)), 0L, 255L));
+        if (alpha == 0) {
+            continue;
+        }
+
+        const Vec2 position = lerp(puff.startPosition, puff.endPosition, easedMove);
+        const FootstepDustShape& shape = FootstepDustShapes[static_cast<std::size_t>(
+            std::clamp(puff.shapeIndex, 0, static_cast<int>(FootstepDustShapes.size()) - 1))];
+        for (int i = 0; i < shape.circleCount; ++i) {
+            const Vec2 offset = shape.offsets[static_cast<std::size_t>(i)] * easedScale;
+            const float radius = shape.radii[static_cast<std::size_t>(i)] * easedScale;
+            renderer.fillCircle(position + offset, radius, {222, 200, 200, alpha});
+        }
+    }
+}
+
+BaseEditRect Game::baseFacilityRectFor(BaseArea area, std::string_view facilityId, BaseEditRect fallback) const
+{
+    const auto& table = area == BaseArea::Outdoor ? baseFacilityRectsOutdoor_ : baseFacilityRectsHome_;
+    const auto it = table.find(std::string(facilityId));
+    if (it == table.end()) {
+        return normalizeBaseEditRect(fallback);
+    }
+    return normalizeBaseEditRect(it->second);
+}
+
+void Game::setBaseFacilityRectFor(BaseArea area, std::string_view facilityId, BaseEditRect rect)
+{
+    auto& table = area == BaseArea::Outdoor ? baseFacilityRectsOutdoor_ : baseFacilityRectsHome_;
+    table[std::string(facilityId)] = normalizeBaseEditRect(rect);
+}
+
+bool Game::isBasePassabilityBlocked(BaseArea area, int tileX, int tileY) const
+{
+    const auto& blocked = area == BaseArea::Outdoor ? baseBlockedTilesOutdoor_ : baseBlockedTilesHome_;
+    return blocked.find(packBaseEditTile(tileX, tileY)) != blocked.end();
+}
+
+void Game::setBasePassabilityBlocked(BaseArea area, int tileX, int tileY, bool blocked)
+{
+    auto& table = area == BaseArea::Outdoor ? baseBlockedTilesOutdoor_ : baseBlockedTilesHome_;
+    const std::int64_t key = packBaseEditTile(tileX, tileY);
+    if (blocked) {
+        table.insert(key);
+    } else {
+        table.erase(key);
+    }
+}
+
+void Game::loadBaseEditData()
+{
+    baseFacilityRectsOutdoor_.clear();
+    baseFacilityRectsHome_.clear();
+    baseBlockedTilesOutdoor_.clear();
+    baseBlockedTilesHome_.clear();
+    baseEditDirty_ = false;
+
+    for (BaseArea area : {BaseArea::Outdoor, BaseArea::HomeInterior}) {
+        auto& facilityRects = area == BaseArea::Outdoor ? baseFacilityRectsOutdoor_ : baseFacilityRectsHome_;
+        auto& blockedTiles = area == BaseArea::Outdoor ? baseBlockedTilesOutdoor_ : baseBlockedTilesHome_;
+        const std::filesystem::path path = baseEditDataPath(area);
+        std::ifstream file(path, std::ios::binary);
+        if (!file) {
+            continue;
+        }
+
+        std::string line;
+        while (std::getline(file, line)) {
+            std::istringstream stream(line);
+            std::string key;
+            stream >> key;
+            if (key == "facility") {
+                std::string id;
+                BaseEditRect rect{};
+                stream >> id >> rect.x >> rect.y >> rect.w >> rect.h;
+                if (!stream.fail() && !id.empty()) {
+                    facilityRects[id] = normalizeBaseEditRect(rect);
+                }
+            } else if (key == "blocked") {
+                int tileX = 0;
+                int tileY = 0;
+                stream >> tileX >> tileY;
+                if (!stream.fail()) {
+                    blockedTiles.insert(packBaseEditTile(tileX, tileY));
+                }
+            }
+        }
+    }
+}
+
+bool Game::saveBaseEditData(std::string& message)
+{
+    std::error_code error;
+    std::filesystem::create_directories("data", error);
+    if (error) {
+        message = "Base edit save failed: could not create data directory";
+        return false;
+    }
+
+    for (BaseArea area : {BaseArea::Outdoor, BaseArea::HomeInterior}) {
+        const std::filesystem::path path = baseEditDataPath(area);
+        std::ofstream file(path, std::ios::binary | std::ios::trunc);
+        if (!file) {
+            message = "Base edit save failed: could not open " + path.string();
+            return false;
+        }
+
+        file << "MAJO_BASE_EDIT_V1\n";
+
+        std::vector<BaseFacility> facilities = baseFacilities(area, ringWorkshopUnlocked_);
+        for (BaseFacility& facility : facilities) {
+            const BaseEditRect rect = baseFacilityRectFor(area, facility.facilityId, toBaseEditRect(facility.rect));
+            file << "facility "
+                << facility.facilityId << " "
+                << rect.x << " " << rect.y << " " << rect.w << " " << rect.h << "\n";
+        }
+
+        const auto& blocked = area == BaseArea::Outdoor ? baseBlockedTilesOutdoor_ : baseBlockedTilesHome_;
+        std::vector<std::int64_t> blockedSorted(blocked.begin(), blocked.end());
+        std::sort(blockedSorted.begin(), blockedSorted.end());
+        for (const std::int64_t packed : blockedSorted) {
+            file << "blocked " << baseEditTileXFromPacked(packed) << " " << baseEditTileYFromPacked(packed) << "\n";
+        }
+
+        if (!file) {
+            message = "Base edit save failed while writing " + path.string();
+            return false;
+        }
+    }
+
+    baseEditDirty_ = false;
+    message = "Base edit saved";
+    return true;
+}
+
+bool Game::loadObjectImageScaleData()
+{
+    objectImageScaleById_.clear();
+    objectImageScaleDirty_ = false;
+    objectImageScaleStatus_.clear();
+
+    const std::filesystem::path path = objectImageScaleDataPath();
+    std::ifstream file(path, std::ios::binary);
+    if (!file) {
+        rebuildObjectImageScaleList();
+        return false;
+    }
+
+    std::string line;
+    bool firstLine = true;
+    while (std::getline(file, line)) {
+        if (!line.empty() && line.back() == '\r') {
+            line.pop_back();
+        }
+        if (line.empty()) {
+            continue;
+        }
+        if (firstLine) {
+            firstLine = false;
+            if (line == "MAJO_OBJECT_IMAGE_SCALE_V1") {
+                continue;
+            }
+        }
+
+        std::istringstream stream(line);
+        std::string key;
+        std::string objectId;
+        float scale = 1.0f;
+        stream >> key >> objectId >> scale;
+        if (stream.fail() || key != "scale" || objectId.empty()) {
+            continue;
+        }
+
+        const float snapped = snapObjectImageScale(scale);
+        if (std::abs(snapped - 1.0f) <= 0.0001f) {
+            continue;
+        }
+        objectImageScaleById_[objectId] = snapped;
+    }
+
+    rebuildObjectImageScaleList();
+    return true;
+}
+
+bool Game::saveObjectImageScaleData(std::string& message)
+{
+    std::error_code error;
+    std::filesystem::create_directories("data", error);
+    if (error) {
+        message = "Object image scale save failed: could not create data directory";
+        return false;
+    }
+
+    const std::filesystem::path path = objectImageScaleDataPath();
+    std::ofstream file(path, std::ios::binary | std::ios::trunc);
+    if (!file) {
+        message = "Object image scale save failed: could not open " + path.string();
+        return false;
+    }
+
+    std::vector<std::pair<std::string, float>> entries;
+    entries.reserve(objectImageScaleById_.size());
+    for (const auto& [objectId, scale] : objectImageScaleById_) {
+        if (objectId.empty()) {
+            continue;
+        }
+        const float snapped = snapObjectImageScale(scale);
+        if (std::abs(snapped - 1.0f) <= 0.0001f) {
+            continue;
+        }
+        entries.push_back({objectId, snapped});
+    }
+    std::sort(entries.begin(), entries.end(), [](const auto& a, const auto& b) {
+        return a.first < b.first;
+    });
+
+    file << "MAJO_OBJECT_IMAGE_SCALE_V1\n";
+    for (const auto& [objectId, scale] : entries) {
+        file << "scale " << objectId << " " << scale << "\n";
+    }
+
+    if (!file) {
+        message = "Object image scale save failed while writing " + path.string();
+        return false;
+    }
+
+    objectImageScaleDirty_ = false;
+    message = "Object image scale saved";
+    return true;
+}
+
+void Game::rebuildObjectImageScaleList()
+{
+    objectImageScaleObjectIds_.clear();
+    objectImageScaleObjectIds_.reserve(objectCatalog_.objects.size());
+    std::unordered_set<std::string> seen;
+    seen.reserve(objectCatalog_.objects.size());
+
+    for (const ObjectDefinition& object : objectCatalog_.objects) {
+        if (object.id.empty() || object.imageNumber <= 0) {
+            continue;
+        }
+        if (!seen.insert(object.id).second) {
+            continue;
+        }
+        objectImageScaleObjectIds_.push_back(object.id);
+    }
+
+    std::sort(objectImageScaleObjectIds_.begin(), objectImageScaleObjectIds_.end(), [this](const std::string& left, const std::string& right) {
+        const ObjectDefinition* lhs = objectCatalog_.registry.findById(left);
+        const ObjectDefinition* rhs = objectCatalog_.registry.findById(right);
+        if (lhs == nullptr || rhs == nullptr) {
+            return left < right;
+        }
+        if (lhs->imageNumber != rhs->imageNumber) {
+            return lhs->imageNumber < rhs->imageNumber;
+        }
+        return left < right;
+    });
+
+    if (objectImageScaleObjectIds_.empty()) {
+        objectImageScaleSelectedIndex_ = -1;
+        return;
+    }
+    if (objectImageScaleSelectedIndex_ < 0 || objectImageScaleSelectedIndex_ >= static_cast<int>(objectImageScaleObjectIds_.size())) {
+        objectImageScaleSelectedIndex_ = 0;
+    }
+}
+
+void Game::enterObjectImageScaleEditMode()
+{
+    if (mode_ == ScreenMode::ObjectImageScaleEdit) {
+        return;
+    }
+
+    rebuildObjectImageScaleList();
+    objectImageScaleReturnMode_ = mode_;
+    if (objectImageScaleReturnMode_ == ScreenMode::ObjectImageScaleEdit) {
+        objectImageScaleReturnMode_ = ScreenMode::Playing;
+    }
+
+    inventory_.setOpen(false);
+    inventory_.cancelGrab();
+    cancelRingGrab();
+    objectImageScaleScrollOffset_ = std::max(0.0f, objectImageScaleScrollOffset_);
+    objectImageScaleStatus_ = objectImageScaleObjectIds_.empty()
+        ? "No object images available"
+        : "Object image scale edit";
+    mode_ = ScreenMode::ObjectImageScaleEdit;
+}
+
+void Game::exitObjectImageScaleEditMode()
+{
+    if (mode_ != ScreenMode::ObjectImageScaleEdit) {
+        return;
+    }
+
+    mode_ = objectImageScaleReturnMode_;
+    if (mode_ == ScreenMode::ObjectImageScaleEdit) {
+        mode_ = ScreenMode::Playing;
+    }
+}
+
+void Game::updateObjectImageScaleEditScreen(const Input& input, UiContext& ui)
+{
+    if (mode_ != ScreenMode::ObjectImageScaleEdit) {
+        return;
+    }
+
+    const ObjectImageScaleLayout layout = makeObjectImageScaleLayout(camera_.width(), camera_.height());
+    const int itemCount = static_cast<int>(objectImageScaleObjectIds_.size());
+    const int columns = std::max(1, layout.columns);
+    const int rows = itemCount <= 0 ? 0 : (itemCount + columns - 1) / columns;
+    const float contentHeight = rows <= 0
+        ? 0.0f
+        : static_cast<float>(rows) * ObjectImageScaleCardHeight + static_cast<float>(rows - 1) * ObjectImageScaleCardGap;
+    const float maxScroll = std::max(0.0f, contentHeight - layout.viewport.size.y);
+    objectImageScaleScrollOffset_ = clamp(objectImageScaleScrollOffset_, 0.0f, maxScroll);
+
+    if (input.backPressed()) {
+        exitObjectImageScaleEditMode();
+        return;
+    }
+
+    if (input.saveShortcutPressed()) {
+        std::string message;
+        if (saveObjectImageScaleData(message)) {
+            objectImageScaleStatus_ = message;
+        } else {
+            objectImageScaleStatus_ = message;
+        }
+    }
+
+    for (int i = 0; i < itemCount; ++i) {
+        const UiRect rect = objectImageScaleCardRect(layout, i, objectImageScaleScrollOffset_);
+        if (ui.pressed(rect)) {
+            objectImageScaleSelectedIndex_ = i;
+            break;
+        }
+    }
+
+    auto adjustSelectedScale = [this](int direction) {
+        if (direction == 0 ||
+            objectImageScaleSelectedIndex_ < 0 ||
+            objectImageScaleSelectedIndex_ >= static_cast<int>(objectImageScaleObjectIds_.size())) {
+            return;
+        }
+
+        const std::string& objectId = objectImageScaleObjectIds_[static_cast<std::size_t>(objectImageScaleSelectedIndex_)];
+        float currentScale = 1.0f;
+        if (const auto it = objectImageScaleById_.find(objectId); it != objectImageScaleById_.end()) {
+            currentScale = it->second;
+        }
+        const float nextScale = snapObjectImageScale(currentScale + ObjectImageScaleStep * static_cast<float>(direction));
+        if (std::abs(nextScale - 1.0f) <= 0.0001f) {
+            objectImageScaleById_.erase(objectId);
+        } else {
+            objectImageScaleById_[objectId] = nextScale;
+        }
+        objectImageScaleDirty_ = true;
+
+        char status[128];
+        std::snprintf(status, sizeof(status), "%s scale = %.2f", objectId.c_str(), nextScale);
+        objectImageScaleStatus_ = status;
+    };
+
+    if (input.pressed(InputAction::MoveUp)) {
+        adjustSelectedScale(+1);
+    }
+    if (input.pressed(InputAction::MoveDown)) {
+        adjustSelectedScale(-1);
+    }
+
+    const int wheel = input.shortcutCursorDelta();
+    if (wheel != 0) {
+        int hoveredIndex = -1;
+        for (int i = 0; i < itemCount; ++i) {
+            const UiRect rect = objectImageScaleCardRect(layout, i, objectImageScaleScrollOffset_);
+            if (rect.contains(ui.mouse())) {
+                hoveredIndex = i;
+                break;
+            }
+        }
+
+        if (hoveredIndex == objectImageScaleSelectedIndex_ && objectImageScaleSelectedIndex_ >= 0) {
+            adjustSelectedScale(-wheel);
+        } else {
+            objectImageScaleScrollOffset_ = clamp(
+                objectImageScaleScrollOffset_ + static_cast<float>(wheel) * 36.0f,
+                0.0f,
+                maxScroll);
+        }
+    }
+}
+
+void Game::renderObjectImageScaleEditScreen(Renderer& renderer) const
+{
+    renderer.setScreenSpace();
+    const ObjectImageScaleLayout layout = makeObjectImageScaleLayout(camera_.width(), camera_.height());
+    const int itemCount = static_cast<int>(objectImageScaleObjectIds_.size());
+    const int columns = std::max(1, layout.columns);
+    const int rows = itemCount <= 0 ? 0 : (itemCount + columns - 1) / columns;
+    const float contentHeight = rows <= 0
+        ? 0.0f
+        : static_cast<float>(rows) * ObjectImageScaleCardHeight + static_cast<float>(rows - 1) * ObjectImageScaleCardGap;
+    const float maxScroll = std::max(0.0f, contentHeight - layout.viewport.size.y);
+    const float scrollOffset = clamp(objectImageScaleScrollOffset_, 0.0f, maxScroll);
+
+    renderer.fillRect({0.0f, 0.0f}, {static_cast<float>(camera_.width()), static_cast<float>(camera_.height())}, {10, 12, 18, 255});
+    renderer.fillRect({0.0f, 0.0f}, {static_cast<float>(camera_.width()), ObjectImageScaleHeaderHeight}, {18, 24, 38, 255});
+    renderer.fillRect({0.0f, static_cast<float>(camera_.height()) - ObjectImageScaleFooterHeight}, {static_cast<float>(camera_.width()), ObjectImageScaleFooterHeight}, {18, 24, 38, 255});
+    renderer.drawText({22.0f, 20.0f}, "Obj image scale editor (48px baseline)", {245, 245, 252, 255}, 3);
+    renderer.drawText({22.0f, 56.0f}, "Click to select  Wheel: scroll / selected card wheel: scale  Up/Down: scale  Ctrl+S: save  Esc: exit", {198, 206, 222, 255}, 2);
+    renderer.drawRect(layout.viewport.pos, layout.viewport.size, {96, 108, 132, 255});
+
+    for (int i = 0; i < itemCount; ++i) {
+        const UiRect rect = objectImageScaleCardRect(layout, i, scrollOffset);
+        if (rect.pos.y + rect.size.y < layout.viewport.pos.y || rect.pos.y > layout.viewport.pos.y + layout.viewport.size.y) {
+            continue;
+        }
+
+        const bool selected = i == objectImageScaleSelectedIndex_;
+        renderer.fillRect(rect.pos, rect.size, selected ? Color{44, 58, 92, 255} : Color{24, 30, 44, 255});
+        renderer.drawRect(rect.pos, rect.size, selected ? Color{255, 228, 138, 255} : Color{74, 86, 108, 255});
+
+        const std::string& objectId = objectImageScaleObjectIds_[static_cast<std::size_t>(i)];
+        const ObjectDefinition* object = objectCatalog_.registry.findById(objectId);
+        float scale = 1.0f;
+        if (const auto it = objectImageScaleById_.find(objectId); it != objectImageScaleById_.end()) {
+            scale = it->second;
+        }
+        scale = snapObjectImageScale(scale);
+
+        if (object != nullptr) {
+            ObjectImageDrawOptions options;
+            options.allowUpscale = true;
+            const bool drewImage = drawObjectImage(
+                renderer,
+                *object,
+                rect.pos + Vec2{rect.size.x * 0.5f, 38.0f},
+                {ObjectImageScalePreviewSize, ObjectImageScalePreviewSize},
+                options);
+            if (!drewImage) {
+                renderer.fillCircle(rect.pos + Vec2{rect.size.x * 0.5f, 38.0f}, 22.0f, {92, 102, 120, 255});
+            }
+        } else {
+            renderer.fillCircle(rect.pos + Vec2{rect.size.x * 0.5f, 38.0f}, 22.0f, {92, 102, 120, 255});
+        }
+
+        const std::string name = object != nullptr && !object->name.empty() ? object->name : objectId;
+        const std::string shownName = fittedSingleLineText(renderer, name, rect.size.x - 12.0f, 2);
+        renderer.drawText(rect.pos + Vec2{6.0f, 72.0f}, shownName, {232, 236, 245, 255}, 2);
+
+        char scaleText[64];
+        std::snprintf(scaleText, sizeof(scaleText), "x%.2f", scale);
+        renderer.drawText(rect.pos + Vec2{6.0f, 98.0f}, scaleText, selected ? Color{255, 232, 148, 255} : Color{186, 198, 216, 255}, 2);
+    }
+
+    const char* dirty = objectImageScaleDirty_ ? "Unsaved (*)" : "Saved";
+    renderer.drawText({22.0f, static_cast<float>(camera_.height()) - 40.0f}, dirty, objectImageScaleDirty_ ? Color{255, 230, 150, 255} : Color{170, 220, 170, 255}, 2);
+    if (!objectImageScaleStatus_.empty()) {
+        renderer.drawText({220.0f, static_cast<float>(camera_.height()) - 40.0f}, objectImageScaleStatus_, {198, 206, 222, 255}, 2);
+    }
+}
+
+void Game::resetBaseEditDragState()
+{
+    baseEditDraggingFacilityMove_ = false;
+    baseEditDraggingFacilityResize_ = false;
+    baseEditResizeMask_ = 0;
+    baseEditPassPaintActive_ = false;
+    baseEditPassPaintSetBlocked_ = false;
+    baseEditPassPaintLastTileX_ = std::numeric_limits<int>::min();
+    baseEditPassPaintLastTileY_ = std::numeric_limits<int>::min();
+}
+
+void Game::enterBaseEditMode()
+{
+    if (mode_ != ScreenMode::Base) {
+        return;
+    }
+    baseMiningStartChoiceActive_ = false;
+    baseStorageActive_ = false;
+    baseSellActive_ = false;
+    baseMerchantBuyPane_ = false;
+    baseUpgradeActive_ = false;
+    baseProcessingActive_ = false;
+    baseRingWorkshopActive_ = false;
+    baseBookshelfActive_ = false;
+
+    baseEditEnabled_ = true;
+    baseEditMode_ = BaseEditMode::Facility;
+    baseEditSelectedFacilityIndex_ = -1;
+    resetBaseEditDragState();
+}
+
+void Game::exitBaseEditMode()
+{
+    baseEditEnabled_ = false;
+    baseEditMode_ = BaseEditMode::None;
+    baseEditSelectedFacilityIndex_ = -1;
+    resetBaseEditDragState();
+}
+
+void Game::pushBaseEditUndoSnapshot()
+{
+    BaseEditSnapshot snapshot;
+    snapshot.outdoorFacilityRects = baseFacilityRectsOutdoor_;
+    snapshot.homeFacilityRects = baseFacilityRectsHome_;
+    snapshot.outdoorBlockedTiles = baseBlockedTilesOutdoor_;
+    snapshot.homeBlockedTiles = baseBlockedTilesHome_;
+    baseEditUndoStack_.push_back(std::move(snapshot));
+    if (static_cast<int>(baseEditUndoStack_.size()) > BaseEditUndoLimit) {
+        baseEditUndoStack_.erase(baseEditUndoStack_.begin());
+    }
+    baseEditRedoStack_.clear();
+}
+
+bool Game::undoBaseEdit()
+{
+    if (baseEditUndoStack_.empty()) {
+        return false;
+    }
+
+    BaseEditSnapshot current;
+    current.outdoorFacilityRects = baseFacilityRectsOutdoor_;
+    current.homeFacilityRects = baseFacilityRectsHome_;
+    current.outdoorBlockedTiles = baseBlockedTilesOutdoor_;
+    current.homeBlockedTiles = baseBlockedTilesHome_;
+    baseEditRedoStack_.push_back(std::move(current));
+
+    const BaseEditSnapshot snapshot = std::move(baseEditUndoStack_.back());
+    baseEditUndoStack_.pop_back();
+    baseFacilityRectsOutdoor_ = snapshot.outdoorFacilityRects;
+    baseFacilityRectsHome_ = snapshot.homeFacilityRects;
+    baseBlockedTilesOutdoor_ = snapshot.outdoorBlockedTiles;
+    baseBlockedTilesHome_ = snapshot.homeBlockedTiles;
+    baseEditDirty_ = true;
+    return true;
+}
+
+bool Game::redoBaseEdit()
+{
+    if (baseEditRedoStack_.empty()) {
+        return false;
+    }
+
+    BaseEditSnapshot current;
+    current.outdoorFacilityRects = baseFacilityRectsOutdoor_;
+    current.homeFacilityRects = baseFacilityRectsHome_;
+    current.outdoorBlockedTiles = baseBlockedTilesOutdoor_;
+    current.homeBlockedTiles = baseBlockedTilesHome_;
+    baseEditUndoStack_.push_back(std::move(current));
+    if (static_cast<int>(baseEditUndoStack_.size()) > BaseEditUndoLimit) {
+        baseEditUndoStack_.erase(baseEditUndoStack_.begin());
+    }
+
+    const BaseEditSnapshot snapshot = std::move(baseEditRedoStack_.back());
+    baseEditRedoStack_.pop_back();
+    baseFacilityRectsOutdoor_ = snapshot.outdoorFacilityRects;
+    baseFacilityRectsHome_ = snapshot.homeFacilityRects;
+    baseBlockedTilesOutdoor_ = snapshot.outdoorBlockedTiles;
+    baseBlockedTilesHome_ = snapshot.homeBlockedTiles;
+    baseEditDirty_ = true;
+    return true;
+}
+
+void Game::updateBaseEditScreen(const Input& input, UiContext& ui, float)
+{
+    if (!baseEditEnabled_ || mode_ != ScreenMode::Base) {
+        return;
+    }
+
+    if (input.undoShortcutPressed()) {
+        if (undoBaseEdit()) {
+            baseStatus_ = "Base edit: undo";
+        }
+    }
+    if (input.redoShortcutPressed()) {
+        if (redoBaseEdit()) {
+            baseStatus_ = "Base edit: redo";
+        }
+    }
+    if (input.saveShortcutPressed()) {
+        std::string message;
+        if (saveBaseEditData(message)) {
+            baseStatus_ = message;
+        } else {
+            baseStatus_ = message;
+        }
+    }
+    if (input.backPressed()) {
+        exitBaseEditMode();
+        baseStatus_ = "Base edit: off";
+        return;
+    }
+
+    if (ui.pressed(baseEditModeButtonRect(0))) {
+        baseEditMode_ = BaseEditMode::Facility;
+        resetBaseEditDragState();
+        return;
+    }
+    if (ui.pressed(baseEditModeButtonRect(1))) {
+        baseEditMode_ = BaseEditMode::Passability;
+        resetBaseEditDragState();
+        return;
+    }
+    if (ui.pressed(baseEditSaveButtonRect())) {
+        std::string message;
+        saveBaseEditData(message);
+        baseStatus_ = message;
+        return;
+    }
+
+    std::vector<BaseFacility> facilities = baseFacilities(baseArea_, ringWorkshopUnlocked_);
+    for (BaseFacility& facility : facilities) {
+        facility.rect = toUiRect(baseFacilityRectFor(baseArea_, facility.facilityId, toBaseEditRect(facility.rect)));
+    }
+
+    if (baseEditMode_ == BaseEditMode::Facility) {
+        if (baseEditSelectedFacilityIndex_ < 0 || baseEditSelectedFacilityIndex_ >= static_cast<int>(facilities.size())) {
+            baseEditSelectedFacilityIndex_ = -1;
+        }
+
+        if (input.mouseLeftPressed() && !ui.pointerConsumed()) {
+            const Vec2 mouse = ui.mouse();
+            bool startedDrag = false;
+            if (baseEditSelectedFacilityIndex_ >= 0) {
+                const BaseFacility& selected = facilities[static_cast<std::size_t>(baseEditSelectedFacilityIndex_)];
+                const int resizeMask = baseEditResizeMaskAtPoint(selected.rect, mouse);
+                if (resizeMask != 0) {
+                    pushBaseEditUndoSnapshot();
+                    baseEditDraggingFacilityResize_ = true;
+                    baseEditResizeMask_ = resizeMask;
+                    baseEditDragStartMouse_ = mouse;
+                    baseEditDragStartRect_ = toBaseEditRect(selected.rect);
+                    startedDrag = true;
+                } else if (pointInExpandedRect(mouse, selected.rect, 0.0f)) {
+                    pushBaseEditUndoSnapshot();
+                    baseEditDraggingFacilityMove_ = true;
+                    baseEditDragStartMouse_ = mouse;
+                    baseEditDragStartRect_ = toBaseEditRect(selected.rect);
+                    startedDrag = true;
+                }
+            }
+
+            if (!startedDrag) {
+                for (int i = static_cast<int>(facilities.size()) - 1; i >= 0; --i) {
+                    if (!facilities[static_cast<std::size_t>(i)].rect.contains(mouse)) {
+                        continue;
+                    }
+                    baseEditSelectedFacilityIndex_ = i;
+                    pushBaseEditUndoSnapshot();
+                    baseEditDraggingFacilityMove_ = true;
+                    baseEditDragStartMouse_ = mouse;
+                    baseEditDragStartRect_ = toBaseEditRect(facilities[static_cast<std::size_t>(i)].rect);
+                    startedDrag = true;
+                    break;
+                }
+            }
+
+            if (!startedDrag) {
+                baseEditSelectedFacilityIndex_ = -1;
+            } else {
+                ui.consumePointer();
+            }
+        }
+
+        if ((baseEditDraggingFacilityMove_ || baseEditDraggingFacilityResize_) && input.mouseLeftHeld() && baseEditSelectedFacilityIndex_ >= 0) {
+            const Vec2 mouse = ui.mouse();
+            const Vec2 delta = mouse - baseEditDragStartMouse_;
+            BaseEditRect rect = baseEditDragStartRect_;
+            if (baseEditDraggingFacilityMove_) {
+                rect.x += delta.x;
+                rect.y += delta.y;
+                rect = normalizeBaseEditRect(rect);
+            } else if (baseEditDraggingFacilityResize_) {
+                const float minSize = BaseEditFacilityMinSize;
+                float left = rect.x;
+                float right = rect.x + rect.w;
+                float top = rect.y;
+                float bottom = rect.y + rect.h;
+                if ((baseEditResizeMask_ & 1) != 0) {
+                    left += delta.x;
+                }
+                if ((baseEditResizeMask_ & 2) != 0) {
+                    right += delta.x;
+                }
+                if ((baseEditResizeMask_ & 4) != 0) {
+                    top += delta.y;
+                }
+                if ((baseEditResizeMask_ & 8) != 0) {
+                    bottom += delta.y;
+                }
+                if (right - left < minSize) {
+                    if ((baseEditResizeMask_ & 1) != 0 && (baseEditResizeMask_ & 2) == 0) {
+                        left = right - minSize;
+                    } else {
+                        right = left + minSize;
+                    }
+                }
+                if (bottom - top < minSize) {
+                    if ((baseEditResizeMask_ & 4) != 0 && (baseEditResizeMask_ & 8) == 0) {
+                        top = bottom - minSize;
+                    } else {
+                        bottom = top + minSize;
+                    }
+                }
+                rect = normalizeBaseEditRect({left, top, right - left, bottom - top});
+            }
+            const BaseFacility& facility = facilities[static_cast<std::size_t>(baseEditSelectedFacilityIndex_)];
+            setBaseFacilityRectFor(baseArea_, facility.facilityId, rect);
+            baseEditDirty_ = true;
+        }
+
+        if (input.mouseLeftReleased()) {
+            resetBaseEditDragState();
+        }
+    } else if (baseEditMode_ == BaseEditMode::Passability) {
+        const UiRect map = baseMapBounds();
+        const auto toTile = [](Vec2 position) {
+            return std::pair<int, int>{
+                static_cast<int>(std::floor(position.x / static_cast<float>(BaseEditGridSize))),
+                static_cast<int>(std::floor(position.y / static_cast<float>(BaseEditGridSize))),
+            };
+        };
+        const auto validTile = [](int tileX, int tileY) {
+            return tileX >= 0 && tileY >= 0 &&
+                tileX * BaseEditGridSize < static_cast<int>(baseMapBounds().size.x) &&
+                tileY * BaseEditGridSize < static_cast<int>(baseMapBounds().size.y);
+        };
+        const auto floodFillBlocked = [this, &validTile](int startTileX, int startTileY) {
+            if (!validTile(startTileX, startTileY) || isBasePassabilityBlocked(baseArea_, startTileX, startTileY)) {
+                return false;
+            }
+
+            std::vector<std::pair<int, int>> queue;
+            queue.reserve(512);
+            queue.push_back({startTileX, startTileY});
+            std::size_t head = 0;
+            bool changed = false;
+
+            while (head < queue.size()) {
+                const auto [tileX, tileY] = queue[head++];
+                if (!validTile(tileX, tileY) || isBasePassabilityBlocked(baseArea_, tileX, tileY)) {
+                    continue;
+                }
+
+                setBasePassabilityBlocked(baseArea_, tileX, tileY, true);
+                changed = true;
+                queue.push_back({tileX - 1, tileY});
+                queue.push_back({tileX + 1, tileY});
+                queue.push_back({tileX, tileY - 1});
+                queue.push_back({tileX, tileY + 1});
+            }
+
+            return changed;
+        };
+
+        if (input.mouseLeftPressed() && !ui.pointerConsumed() && map.contains(ui.mouse())) {
+            const auto [tileX, tileY] = toTile(ui.mouse());
+            if (validTile(tileX, tileY)) {
+                const bool shiftDown = []() {
+                    const bool* keys = SDL_GetKeyboardState(nullptr);
+                    return keys[SDL_SCANCODE_LSHIFT] || keys[SDL_SCANCODE_RSHIFT];
+                }();
+                if (shiftDown) {
+                    pushBaseEditUndoSnapshot();
+                    const bool changed = floodFillBlocked(tileX, tileY);
+                    if (!changed && !baseEditUndoStack_.empty()) {
+                        baseEditUndoStack_.pop_back();
+                    } else if (changed) {
+                        baseEditDirty_ = true;
+                        baseStatus_ = "Passability fill: blocked";
+                    }
+                    ui.consumePointer();
+                    return;
+                }
+                pushBaseEditUndoSnapshot();
+                baseEditPassPaintActive_ = true;
+                baseEditPassPaintSetBlocked_ = !isBasePassabilityBlocked(baseArea_, tileX, tileY);
+                setBasePassabilityBlocked(baseArea_, tileX, tileY, baseEditPassPaintSetBlocked_);
+                baseEditPassPaintLastTileX_ = tileX;
+                baseEditPassPaintLastTileY_ = tileY;
+                baseEditDirty_ = true;
+                ui.consumePointer();
+            }
+        }
+        if (baseEditPassPaintActive_ && input.mouseLeftHeld() && map.contains(ui.mouse())) {
+            const auto [tileX, tileY] = toTile(ui.mouse());
+            if (validTile(tileX, tileY) &&
+                (tileX != baseEditPassPaintLastTileX_ || tileY != baseEditPassPaintLastTileY_)) {
+                setBasePassabilityBlocked(baseArea_, tileX, tileY, baseEditPassPaintSetBlocked_);
+                baseEditPassPaintLastTileX_ = tileX;
+                baseEditPassPaintLastTileY_ = tileY;
+                baseEditDirty_ = true;
+            }
+        }
+        if (input.mouseLeftReleased()) {
+            resetBaseEditDragState();
+        }
+    }
+
+    ui.block(baseMapBounds());
+}
+
+void Game::renderBaseEditOverlay(Renderer& renderer) const
+{
+    if (!baseEditEnabled_ || !basePresentationActive()) {
+        return;
+    }
+
+    const bool facilityMode = baseEditMode_ == BaseEditMode::Facility;
+    const bool passabilityMode = baseEditMode_ == BaseEditMode::Passability;
+
+    if (passabilityMode) {
+        const auto& blocked = baseArea_ == BaseArea::Outdoor ? baseBlockedTilesOutdoor_ : baseBlockedTilesHome_;
+        for (const std::int64_t packed : blocked) {
+            const float x = static_cast<float>(baseEditTileXFromPacked(packed) * BaseEditGridSize);
+            const float y = static_cast<float>(baseEditTileYFromPacked(packed) * BaseEditGridSize);
+            renderer.fillRect({x, y}, {static_cast<float>(BaseEditGridSize), static_cast<float>(BaseEditGridSize)}, {220, 50, 50, 120});
+        }
+    }
+
+    if (facilityMode) {
+        std::vector<BaseFacility> facilities = baseFacilities(baseArea_, ringWorkshopUnlocked_);
+        for (BaseFacility& facility : facilities) {
+            facility.rect = toUiRect(baseFacilityRectFor(baseArea_, facility.facilityId, toBaseEditRect(facility.rect)));
+        }
+        if (baseEditSelectedFacilityIndex_ >= 0 && baseEditSelectedFacilityIndex_ < static_cast<int>(facilities.size())) {
+            const UiRect rect = facilities[static_cast<std::size_t>(baseEditSelectedFacilityIndex_)].rect;
+            renderer.drawRect(rect.pos, rect.size, {70, 220, 255, 255});
+            const Vec2 center = rect.pos + rect.size * 0.5f;
+            const std::array<Vec2, 8> handles{
+                Vec2{rect.pos.x, rect.pos.y},
+                Vec2{center.x, rect.pos.y},
+                Vec2{rect.pos.x + rect.size.x, rect.pos.y},
+                Vec2{rect.pos.x, center.y},
+                Vec2{rect.pos.x + rect.size.x, center.y},
+                Vec2{rect.pos.x, rect.pos.y + rect.size.y},
+                Vec2{center.x, rect.pos.y + rect.size.y},
+                Vec2{rect.pos.x + rect.size.x, rect.pos.y + rect.size.y},
+            };
+            for (Vec2 handle : handles) {
+                renderer.fillRect(
+                    {handle.x - BaseEditHandleSize * 0.5f, handle.y - BaseEditHandleSize * 0.5f},
+                    {BaseEditHandleSize, BaseEditHandleSize},
+                    {70, 220, 255, 255});
+            }
+        }
+    }
+
+    renderer.fillRect({884.0f, 38.0f}, {360.0f, 112.0f}, {10, 16, 28, 210});
+    renderer.drawRect({884.0f, 38.0f}, {360.0f, 112.0f}, {130, 168, 232, 255});
+    drawUiButton(renderer, baseEditModeButtonRect(0), "Facility", facilityMode);
+    drawUiButton(renderer, baseEditModeButtonRect(1), "Passability", passabilityMode);
+    drawUiButton(renderer, baseEditSaveButtonRect(), "Save", false, uiActionButtonStyle());
+    renderer.drawText({898.0f, 132.0f}, baseEditDirty_ ? "Unsaved changes (*)" : "Saved", {255, 230, 150, 255}, 2);
+    renderer.drawText({898.0f, 158.0f}, "Ctrl+S save / Ctrl+Z undo / Shift+Click fill / Esc exit", {198, 198, 206, 255}, 2);
+}
+
+bool Game::handleBaseEditCommand(std::string_view normalized)
+{
+    const auto ensureBaseMode = [this]() {
+        if (mode_ == ScreenMode::Base) {
+            return true;
+        }
+        logWarning("Debug: base edit is available only while in base.");
+        return false;
+    };
+
+    if (normalized == "game base-edit toggle") {
+        if (!baseEditEnabled_) {
+            if (!ensureBaseMode()) {
+                return true;
+            }
+            enterBaseEditMode();
+            logInfo("Debug: base edit enabled.");
+        } else {
+            exitBaseEditMode();
+            logInfo("Debug: base edit disabled.");
+        }
+        return true;
+    }
+    if (normalized == "game base-edit on") {
+        if (!ensureBaseMode()) {
+            return true;
+        }
+        enterBaseEditMode();
+        logInfo("Debug: base edit enabled.");
+        return true;
+    }
+    if (normalized == "game base-edit off") {
+        exitBaseEditMode();
+        logInfo("Debug: base edit disabled.");
+        return true;
+    }
+    if (normalized == "game base-edit facility") {
+        if (!ensureBaseMode()) {
+            return true;
+        }
+        if (!baseEditEnabled_) {
+            enterBaseEditMode();
+        }
+        baseEditMode_ = BaseEditMode::Facility;
+        logInfo("Debug: base edit mode = facility.");
+        return true;
+    }
+    if (normalized == "game base-edit passability") {
+        if (!ensureBaseMode()) {
+            return true;
+        }
+        if (!baseEditEnabled_) {
+            enterBaseEditMode();
+        }
+        baseEditMode_ = BaseEditMode::Passability;
+        logInfo("Debug: base edit mode = passability.");
+        return true;
+    }
+    if (normalized == "game base-edit save") {
+        if (!ensureBaseMode()) {
+            return true;
+        }
+        std::string message;
+        if (saveBaseEditData(message)) {
+            logInfo("Debug: " + message);
+        } else {
+            logWarning("Debug: " + message);
+        }
+        return true;
+    }
+
+    return false;
+}
+
+bool Game::handleObjectImageScaleCommand(std::string_view normalized)
+{
+    if (normalized == "game obj-image-scale toggle") {
+        if (mode_ == ScreenMode::ObjectImageScaleEdit) {
+            exitObjectImageScaleEditMode();
+            logInfo("Debug: object image scale edit disabled.");
+        } else {
+            enterObjectImageScaleEditMode();
+            logInfo("Debug: object image scale edit enabled.");
+        }
+        return true;
+    }
+    if (normalized == "game obj-image-scale on") {
+        enterObjectImageScaleEditMode();
+        logInfo("Debug: object image scale edit enabled.");
+        return true;
+    }
+    if (normalized == "game obj-image-scale off") {
+        exitObjectImageScaleEditMode();
+        logInfo("Debug: object image scale edit disabled.");
+        return true;
+    }
+    if (normalized == "game obj-image-scale save") {
+        std::string message;
+        if (saveObjectImageScaleData(message)) {
+            objectImageScaleStatus_ = message;
+            logInfo("Debug: " + message);
+        } else {
+            objectImageScaleStatus_ = message;
+            logWarning("Debug: " + message);
+        }
+        return true;
+    }
+
+    return false;
 }
 
 bool Game::loadSaveData()
@@ -4757,6 +6126,13 @@ bool Game::executeDebugCommand(std::string_view command)
 {
     const std::string normalized = lowerAscii(trimAscii(std::string(command)));
 
+    if (handleBaseEditCommand(normalized)) {
+        return true;
+    }
+    if (handleObjectImageScaleCommand(normalized)) {
+        return true;
+    }
+
     if (normalized == "game reset-data") {
         money_ = 0;
         maxHpUpgradeLevel_ = 0;
@@ -4802,6 +6178,16 @@ bool Game::executeDebugCommand(std::string_view command)
     if (normalized == "game return-base") {
         returnToBaseFromNormalStage(false, false);
         logInfo("Debug: returned to base.");
+        return true;
+    }
+
+    if (normalized == "game save") {
+        std::string message;
+        if (saveSaveData(message)) {
+            logInfo("Debug: " + message);
+        } else {
+            logWarning("Debug: " + message);
+        }
         return true;
     }
 
@@ -4884,8 +6270,28 @@ void Game::enterStageClear()
     stageClearStatus_.clear();
 }
 
-void Game::updateRingScreen(const Input& input, UiContext& ui)
+void Game::updateRingScreen(const Input& input, UiContext& ui, float dt)
 {
+    auto& items = spellRing_.items();
+    if (ringSnapActive_) {
+        if (ringDragItemIndex_ < 0 || ringDragItemIndex_ >= static_cast<int>(items.size())) {
+            ringSnapActive_ = false;
+            ringDragItemIndex_ = -1;
+        } else {
+            ringSnapElapsed_ = std::min(RingSnapDuration, ringSnapElapsed_ + dt);
+            const float t = RingSnapDuration <= 0.0f ? 1.0f : clamp(ringSnapElapsed_ / RingSnapDuration, 0.0f, 1.0f);
+            const float eased = 1.0f - (1.0f - t) * (1.0f - t) * (1.0f - t);
+            ringDragDisplayAngle_ = normalizeRingAngle(ringSnapStartAngle_ + shortestRingAngleDelta(ringSnapStartAngle_, ringSnapTargetAngle_) * eased);
+            if (t >= 1.0f) {
+                items[static_cast<std::size_t>(ringDragItemIndex_)].localAngle = ringSnapTargetAngle_;
+                ringSnapActive_ = false;
+                ringDragItemIndex_ = -1;
+            }
+        }
+        ui.block(ringPanelRect());
+        return;
+    }
+
     if (spellRing_.activeRingIndex() >= UnlockedRingCount) {
         spellRing_.switchActiveRing(-spellRing_.activeRingIndex());
         ringStatus_.clear();
@@ -4904,11 +6310,60 @@ void Game::updateRingScreen(const Input& input, UiContext& ui)
         }
     }
 
-    auto& items = spellRing_.items();
     if (!items.empty()) {
         ringSlotSelection_ = std::clamp(ringSlotSelection_, 0, static_cast<int>(items.size()) - 1);
     } else {
         ringSlotSelection_ = 0;
+    }
+    const bool actualRing = spellRing_.activeRingIndex() == 0;
+
+    if ((ringDragPending_ || ringDragActive_) && input.pausePressed()) {
+        ringDragPending_ = false;
+        ringDragActive_ = false;
+        ringDragItemIndex_ = -1;
+        ringStatus_ = "ドラッグをキャンセルしました";
+        ui.block(ringPanelRect());
+        return;
+    }
+
+    if (ringDragPending_ || ringDragActive_) {
+        if (ringDragItemIndex_ < 0 || ringDragItemIndex_ >= static_cast<int>(items.size())) {
+            ringDragPending_ = false;
+            ringDragActive_ = false;
+            ringDragItemIndex_ = -1;
+            ui.block(ringPanelRect());
+            return;
+        }
+
+        if (input.mouseLeftHeld()) {
+            if (!ringDragActive_ && distanceSquared(input.mouseScreen(), ringDragStartMouse_) >= 36.0f) {
+                ringDragActive_ = true;
+                ringDragPending_ = false;
+            }
+            if (ringDragActive_) {
+                ringDragDisplayAngle_ = ringAngleFromPoint(input.mouseScreen());
+            }
+        }
+
+        if (input.mouseLeftReleased()) {
+            if (ringDragActive_) {
+                const float desired = ringAngleFromPoint(input.mouseScreen());
+                const std::optional<float> snapAngle = spellRing_.nearestPlaceableAngle(ringDragItemIndex_, desired, RingDragSnapMaxDelta);
+                ringSnapStartAngle_ = desired;
+                ringSnapTargetAngle_ = snapAngle.value_or(ringDragOriginalAngle_);
+                ringDragDisplayAngle_ = ringSnapStartAngle_;
+                ringSnapElapsed_ = 0.0f;
+                ringSnapActive_ = true;
+                ringStatus_ = snapAngle ? "近い空き位置へ補正しました" : "近くに空きがないため元の位置へ戻しました";
+            }
+            ringDragPending_ = false;
+            ringDragActive_ = false;
+            ui.block(ringPanelRect());
+            return;
+        }
+
+        ui.block(ringPanelRect());
+        return;
     }
 
     for (int i = 0; i < static_cast<int>(items.size()); ++i) {
@@ -4916,8 +6371,14 @@ void Game::updateRingScreen(const Input& input, UiContext& ui)
         if (rect.contains(ui.mouse())) {
             ringSlotSelection_ = i;
         }
-        if (ui.pressed(rect)) {
+        if (actualRing && ui.pressed(rect)) {
             ringSlotSelection_ = i;
+            ringDragPending_ = true;
+            ringDragActive_ = false;
+            ringDragItemIndex_ = i;
+            ringDragOriginalAngle_ = items[static_cast<std::size_t>(i)].localAngle;
+            ringDragDisplayAngle_ = ringDragOriginalAngle_;
+            ringDragStartMouse_ = input.mouseScreen();
             return;
         }
     }
@@ -4961,7 +6422,6 @@ void Game::updateRingScreen(const Input& input, UiContext& ui)
         return;
     }
 
-    const bool actualRing = spellRing_.activeRingIndex() == 0;
     if (!actualRing) {
         if (input.useItemPressed() || input.confirmPressed() || input.addRingPressed() || input.grabOrPlacePressed()) {
             ringStatus_ = "このリングは未実装です";
@@ -5047,6 +6507,13 @@ void Game::updateRingScreen(const Input& input, UiContext& ui)
 
 void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
 {
+    updatePlayerFootstepDust(dt);
+
+    if (baseEditEnabled_) {
+        updateBaseEditScreen(input, ui, dt);
+        return;
+    }
+
     if (baseBookshelfActive_) {
         updateBookshelfScreen(input, ui);
         return;
@@ -5515,12 +6982,14 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
             baseArea_ = BaseArea::HomeInterior;
             basePlayerPosition_ = {640.0f, 542.0f};
             basePlayerFacing_ = {0.0f, -1.0f};
+            resetPlayerFootstepDust();
             baseStatus_ = "主人公の家に入りました";
             break;
         case BaseFacilityAction::HomeExit:
             baseArea_ = BaseArea::Outdoor;
             basePlayerPosition_ = baseOutdoorPlayerPosition_;
             basePlayerFacing_ = {0.0f, 1.0f};
+            resetPlayerFootstepDust();
             baseStatus_ = "屋外拠点に戻りました";
             break;
         case BaseFacilityAction::MonicaTalk:
@@ -5529,7 +6998,10 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
         }
     };
 
-    const std::vector<BaseFacility> facilities = baseFacilities(baseArea_, ringWorkshopUnlocked_);
+    std::vector<BaseFacility> facilities = baseFacilities(baseArea_, ringWorkshopUnlocked_);
+    for (BaseFacility& facility : facilities) {
+        facility.rect = toUiRect(baseFacilityRectFor(baseArea_, facility.facilityId, toBaseEditRect(facility.rect)));
+    }
     const float playerRadius = balance_.playerRadius;
     const auto baseCollision = [&](Vec2 position) {
         const UiRect bounds = baseMapBounds();
@@ -5539,9 +7011,23 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
             position.y + playerRadius > bounds.pos.y + bounds.size.y) {
             return true;
         }
-        for (const BaseFacility& facility : facilities) {
-            if (circleIntersectsRect(position, playerRadius, facility.rect)) {
-                return true;
+        const Vec2 passabilityProbe = playerSpriteFootAnchor(position);
+        const int minTileX = static_cast<int>(std::floor((passabilityProbe.x - playerRadius) / static_cast<float>(BaseEditGridSize)));
+        const int maxTileX = static_cast<int>(std::floor((passabilityProbe.x + playerRadius) / static_cast<float>(BaseEditGridSize)));
+        const int minTileY = static_cast<int>(std::floor((passabilityProbe.y - playerRadius) / static_cast<float>(BaseEditGridSize)));
+        const int maxTileY = static_cast<int>(std::floor((passabilityProbe.y + playerRadius) / static_cast<float>(BaseEditGridSize)));
+        for (int tileY = minTileY; tileY <= maxTileY; ++tileY) {
+            for (int tileX = minTileX; tileX <= maxTileX; ++tileX) {
+                if (!isBasePassabilityBlocked(baseArea_, tileX, tileY)) {
+                    continue;
+                }
+                const UiRect tileRect{
+                    {static_cast<float>(tileX * BaseEditGridSize), static_cast<float>(tileY * BaseEditGridSize)},
+                    {static_cast<float>(BaseEditGridSize), static_cast<float>(BaseEditGridSize)},
+                };
+                if (circleIntersectsRect(passabilityProbe, playerRadius, tileRect)) {
+                    return true;
+                }
             }
         }
         return false;
@@ -5555,6 +7041,12 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
     } else {
         basePlayerSpriteAnimationTime_ += dt;
     }
+    maybeSpawnPlayerFootstepDust(
+        playerSpriteFootAnchor(basePlayerPosition_),
+        lengthSquared(moveAxis) > 0.0001f ? moveAxis : basePlayerFacing_,
+        basePlayerSpriteWalking_,
+        playerSpriteFrameIndex(basePlayerSpriteAnimationTime_, basePlayerSpriteWalking_),
+        previousBasePlayerDustFrame_);
     if (lengthSquared(moveAxis) > 0.0001f) {
         basePlayerFacing_ = normalize(moveAxis);
         const Vec2 delta = moveAxis * balance_.playerSpeed * dt;
@@ -5742,6 +7234,11 @@ void Game::updateStageClearScreen(const Input& input, UiContext& ui)
 
 void Game::updateScreenMode(const Input& input, UiContext& ui, float dt)
 {
+    if (mode_ == ScreenMode::ObjectImageScaleEdit) {
+        updateObjectImageScaleEditScreen(input, ui);
+        return;
+    }
+
     if (mode_ == ScreenMode::Base) {
         updateBaseScreen(input, ui, dt);
         return;
@@ -5800,7 +7297,10 @@ void Game::updateScreenMode(const Input& input, UiContext& ui, float dt)
         }
         break;
     case ScreenMode::Ring:
-        updateRingScreen(input, ui);
+        updateRingScreen(input, ui, dt);
+        break;
+    case ScreenMode::ObjectImageScaleEdit:
+        updateObjectImageScaleEditScreen(input, ui);
         break;
     case ScreenMode::LevelUp:
         upgrades_.update(input, ui, levels_, spellRing_, levelRingRadiusPoints_, levelRingSpeedPoints_);
@@ -6147,18 +7647,25 @@ void Game::renderBaseScreen(Renderer& renderer) const
         renderer.fillRect({132.0f, 132.0f}, {1016.0f, 436.0f}, {118, 92, 66, 255});
         renderer.drawText({558.0f, 88.0f}, "主人公の家", {246, 235, 255, 255}, 2);
     } else {
-        renderer.fillRect(map.pos, map.size, {68, 96, 58, 255});
-        renderer.drawRect(map.pos, map.size, {156, 128, 82, 255});
+        if (renderer.hasBaseMapTexture()) {
+            renderer.drawBaseMapTexture(map.pos, map.size);
+        } else {
+            renderer.fillRect(map.pos, map.size, {68, 96, 58, 255});
+            renderer.drawRect(map.pos, map.size, {156, 128, 82, 255});
         renderer.fillRect({62.0f, 456.0f}, {1156.0f, 88.0f}, {98, 84, 58, 255});
         renderer.fillRect({566.0f, 130.0f}, {132.0f, 430.0f}, {92, 78, 54, 255});
         renderer.fillRect({330.0f, 72.0f}, {154.0f, 100.0f}, {96, 54, 62, 255});
         renderer.drawRect({330.0f, 72.0f}, {154.0f, 100.0f}, {216, 184, 130, 255});
         renderer.drawText({350.0f, 106.0f}, "主人公の家", {246, 235, 255, 255}, 2);
         renderer.fillRect({600.0f, 586.0f}, {80.0f, 34.0f}, {38, 30, 36, 255});
-        renderer.drawCircle({640.0f, 602.0f}, 42.0f, {160, 122, 80, 255});
+            renderer.drawCircle({640.0f, 602.0f}, 42.0f, {160, 122, 80, 255});
+        }
     }
 
-    const std::vector<BaseFacility> facilities = baseFacilities(baseArea_, ringWorkshopUnlocked_);
+    std::vector<BaseFacility> facilities = baseFacilities(baseArea_, ringWorkshopUnlocked_);
+    for (BaseFacility& facility : facilities) {
+        facility.rect = toUiRect(baseFacilityRectFor(baseArea_, facility.facilityId, toBaseEditRect(facility.rect)));
+    }
     const BaseFacility* nearest = nullptr;
     const BaseFacility* hovered = nullptr;
     float nearestDistance = std::numeric_limits<float>::max();
@@ -6188,28 +7695,41 @@ void Game::renderBaseScreen(Renderer& renderer) const
             if (facility.enabled != drawEnabled) {
                 continue;
             }
+            const bool texturedOutdoorBase = baseArea_ == BaseArea::Outdoor && renderer.hasBaseMapTexture();
             Color fill = facility.enabled ? Color{96, 82, 82, 255} : Color{84, 62, 56, 255};
+            if (texturedOutdoorBase) {
+                fill.a = facility.enabled ? 120 : 80;
+            }
             if (!facility.unlocked) {
                 fill = {58, 58, 64, 255};
+                if (texturedOutdoorBase) {
+                    fill.a = 120;
+                }
             }
             if (&facility == nearest) {
-                fill = {118, 98, 58, 255};
+                fill = {118, 98, 58, static_cast<unsigned char>(texturedOutdoorBase ? 170 : 255)};
             }
             if (&facility == hovered) {
-                fill = {124, 104, 72, 255};
+                fill = {124, 104, 72, static_cast<unsigned char>(texturedOutdoorBase ? 170 : 255)};
             }
             renderer.fillRect(facility.rect.pos, facility.rect.size, fill);
             renderer.drawRect(facility.rect.pos, facility.rect.size, facility.enabled ? Color{220, 200, 150, 255} : Color{120, 108, 98, 255});
             renderer.drawText(facility.rect.pos + Vec2{8.0f, 8.0f}, facility.displayName, facility.enabled ? Color{248, 238, 214, 255} : Color{154, 146, 138, 255}, 2);
         }
     }
+    renderBaseEditOverlay(renderer);
 
+    const Vec2 basePlayerFootAnchor = playerSpriteFootAnchor(basePlayerPosition_);
+    renderer.drawActorShadow(basePlayerFootAnchor, PlayerSpriteDrawSize);
+    renderPlayerFootstepDust(renderer);
     if (renderer.hasPlayerSheet()) {
         renderer.drawPlayerSprite(
             playerSpriteFrameIndex(basePlayerSpriteAnimationTime_, basePlayerSpriteWalking_),
-            basePlayerPosition_,
+            basePlayerFootAnchor,
             PlayerSpriteDrawSize,
-            basePlayerFacing_.x > 0.0f);
+            basePlayerFacing_.x > 0.0f,
+            {255, 255, 255, 255},
+            {PlayerSpriteAnchorX, PlayerSpriteAnchorY});
     } else {
         renderer.fillCircle(basePlayerPosition_, balance_.playerRadius, {118, 72, 168, 255});
         renderer.drawLine(basePlayerPosition_, basePlayerPosition_ + basePlayerFacing_ * 22.0f, {235, 210, 255, 255});
@@ -6510,15 +8030,16 @@ void Game::renderBaseScreen(Renderer& renderer) const
         if (debug_.visible()) {
             char debugBuffer[512];
             std::snprintf(debugBuffer, sizeof(debugBuffer),
-                "Base map mode\narea %s\nplayer base position %.1f, %.1f\nnearest target name %s\nhovered target name %s\ninteraction available %s\npause menu return mode %s",
+                "Base map mode\narea %s\nplayer base position %.1f, %.1f\nnearest target name %s\nhovered target name %s\ninteraction available %s\npause menu return mode %s\nauto reload block %s",
                 baseAreaName(baseArea_),
                 basePlayerPosition_.x,
                 basePlayerPosition_.y,
                 nearest != nullptr ? nearest->displayName : "-",
                 hovered != nullptr ? hovered->displayName : "-",
                 nearest != nullptr ? "true" : "false",
-                screenModeName(pauseReturnMode_));
-            renderer.fillRect({10.0f, 10.0f}, {380.0f, 158.0f}, {0, 0, 0, 180});
+                screenModeName(pauseReturnMode_),
+                autoReloadBlocked_ ? "ON" : "OFF");
+            renderer.fillRect({10.0f, 10.0f}, {380.0f, 178.0f}, {0, 0, 0, 180});
             renderer.drawText({20.0f, 20.0f}, debugBuffer, {220, 244, 224, 255}, 2);
         }
         return;
@@ -6604,8 +8125,8 @@ void Game::renderRewardNodes(Renderer& renderer, const std::vector<LightSource>&
         if (!tileMap_.isLit(center, player_.position, extraLights)) {
             continue;
         }
-        const Color moonFill{232, 224, 166, node.visibility == PlacementVisibility::Exposed ? 255 : 165};
-        const Color moonGlow{255, 250, 198, node.visibility == PlacementVisibility::Exposed ? 210 : 135};
+        const Color moonFill{232, 224, 166, static_cast<unsigned char>(node.visibility == PlacementVisibility::Exposed ? 255 : 165)};
+        const Color moonGlow{255, 250, 198, static_cast<unsigned char>(node.visibility == PlacementVisibility::Exposed ? 210 : 135)};
         if (node.visibility == PlacementVisibility::Exposed) {
             renderer.fillCircle(center, 5.5f, moonFill);
             renderer.drawCircle(center, 9.0f, moonGlow);
@@ -6663,7 +8184,7 @@ void Game::renderRewardNodes(Renderer& renderer, const std::vector<LightSource>&
     }
 }
 
-void Game::renderRingScreen(Renderer& renderer) const
+void Game::renderRingScreen(Renderer& renderer, float totalTime) const
 {
     if (mode_ != ScreenMode::Ring) {
         return;
@@ -6715,11 +8236,17 @@ void Game::renderRingScreen(Renderer& renderer) const
     }
     for (int i = 0; actualRing && i < static_cast<int>(items.size()); ++i) {
         const SpellRingItem& item = items[static_cast<std::size_t>(i)];
-        const Vec2 itemCenter = ringItemUiCenter(item);
+        float displayAngle = item.localAngle;
+        if (i == ringDragItemIndex_ && (ringDragActive_ || ringSnapActive_)) {
+            displayAngle = ringDragDisplayAngle_;
+        }
+        const Vec2 itemCenter = ringItemUiCenterAtAngle(displayAngle) + ringItemBobOffset(item, totalTime);
         const Vec2 outward = normalize(itemCenter - orbitCenter);
         const bool selected = i == ringSlotSelection_;
+        const bool invalidDragPosition = selected && ringDragActive_ && !spellRing_.canPlaceItemAtAngle(i, displayAngle);
+        const ItemData* object = objectForRingItem(objectCatalog_, item);
         renderer.drawLine(orbitCenter, itemCenter, selected ? Color{255, 230, 150, 120} : Color{94, 102, 128, 85});
-        drawRingItemShape(renderer, item, itemCenter, outward, selected);
+        drawRingItemShape(renderer, item, object, itemCenter, outward, selected, invalidDragPosition);
         std::snprintf(buffer, sizeof(buffer), "%d", i + 1);
         renderer.drawText(itemCenter + Vec2{-5.0f, 22.0f}, buffer, selected ? Color{255, 230, 150, 255} : Color{174, 182, 198, 255}, 1);
     }
@@ -6814,8 +8341,15 @@ void Game::update(const Input& input, const Time& time)
     if (!paused) {
         std::vector<EffectDiscoveryEvent> effectDiscoveries;
         runStats_.elapsedSeconds += time.deltaSeconds();
+        updatePlayerFootstepDust(time.deltaSeconds());
         tileMap_.updateAround(player_.position, time.deltaSeconds(), balance_, dungeonLayout_);
         player_.update(input, camera_, tileMap_, time.deltaSeconds(), false, balance_);
+        maybeSpawnPlayerFootstepDust(
+            playerSpriteFootAnchor(player_.position),
+            lengthSquared(player_.velocity) > 0.0001f ? player_.velocity : player_.facing,
+            player_.spriteWalking,
+            player_.spriteFrameIndex(),
+            previousPlayerDustFrame_);
         if (player_.hp <= 0) {
             enterGameOver();
             refreshOrbitEffects();
@@ -6885,11 +8419,41 @@ void Game::update(const Input& input, const Time& time)
         for (const DugTile& tile : digging_.dugTiles()) {
             effects_.spawnTileBreak(tile.center, tile.type);
             ++runStats_.dugTiles;
+
+            std::mt19937& rng = lootRuntimeRng();
+            if (digEventDue(
+                    runStats_.dugTilesSinceMoneyDrop,
+                    balance_.digMoneyMinDugTiles,
+                    balance_.digMoneyGuaranteeDugTiles,
+                    rng)) {
+                const DungeonLayoutMetrics metrics = calculateDungeonLayoutMetrics(dungeonLayout_, {
+                    static_cast<float>(tileMap_.worldToTile(tile.center.x)),
+                    static_cast<float>(tileMap_.worldToTile(tile.center.y)),
+                });
+                const int depthRank = lootDepthRankForProgress(currentStageId_, metrics.pathProgress);
+                const float multiplier =
+                    lootStageMultiplier(balance_, currentStageId_) *
+                    lootDepthMultiplier(balance_, currentStageId_, depthRank);
+                std::uniform_int_distribution<int> moneyDistribution(2, 6);
+                const int amount = scaledLootAmount(moneyDistribution(rng), multiplier);
+                if (worldDrops_.spawnMoneyDrop(amount, scatterLootPosition(tile.center, rng), runStats_.elapsedSeconds)) {
+                    runStats_.dugTilesSinceMoneyDrop = 0;
+                }
+            }
+
+            if (digEventDue(
+                    runStats_.dugTilesSinceItemDrop,
+                    balance_.digItemMinDugTiles,
+                    balance_.digItemGuaranteeDugTiles,
+                    rng)) {
+                if (worldDrops_.spawnDigItemDrop(objectCatalog_, scatterLootPosition(tile.center, rng), runStats_.elapsedSeconds)) {
+                    runStats_.dugTilesSinceItemDrop = 0;
+                }
+            }
         }
         for (Vec2 rewardPosition : digging_.rewardDropRequests()) {
             worldDrops_.spawnRewardDrop(objectCatalog_, rewardPosition, runStats_.elapsedSeconds);
         }
-        worldDrops_.spawnFromDugTiles(digging_.dugTiles(), objectCatalog_, runStats_.elapsedSeconds);
         for (const DugTile& tile : digging_.dugTiles()) {
             if (tile.type != TileType::Ore) {
                 continue;
@@ -6920,6 +8484,7 @@ void Game::update(const Input& input, const Time& time)
             false,
             balance_,
             objectCatalog_,
+            worldDrops_,
             effectDispatcher_,
             projectiles_,
             &effectDiscoveries);
@@ -7179,11 +8744,17 @@ void Game::render(Renderer& renderer, const Time& time)
 {
     renderer.clear({5, 5, 8, 255});
     beginUiFrame(time.deltaSeconds());
+    if (mode_ == ScreenMode::ObjectImageScaleEdit) {
+        renderObjectImageScaleEditScreen(renderer);
+        finishUiFrame(renderer);
+        renderer.present();
+        return;
+    }
     if (basePresentationActive()) {
         renderBaseScreen(renderer);
         inventory_.render(renderer, player_, spellRing_, objectCatalog_);
         renderPauseMenu(renderer);
-        renderRingScreen(renderer);
+        renderRingScreen(renderer, time.totalSeconds());
         finishUiFrame(renderer);
         renderer.present();
         return;
@@ -7221,12 +8792,17 @@ void Game::render(Renderer& renderer, const Time& time)
         renderer.drawLine(player_.position, spellRing_.center(), {150, 110, 80, 100});
     }
 
+    const Vec2 playerFootAnchor = playerSpriteFootAnchor(player_.position);
+    renderer.drawActorShadow(playerFootAnchor, PlayerSpriteDrawSize);
+    renderPlayerFootstepDust(renderer);
     if (renderer.hasPlayerSheet()) {
         renderer.drawPlayerSprite(
             player_.spriteFrameIndex(),
-            player_.position,
+            playerFootAnchor,
             PlayerSpriteDrawSize,
-            player_.facing.x > 0.0f);
+            player_.facing.x > 0.0f,
+            {255, 255, 255, 255},
+            {PlayerSpriteAnchorX, PlayerSpriteAnchorY});
     } else {
         renderer.fillCircle(player_.position, balance_.playerRadius, {118, 72, 168, 255});
         renderer.drawLine(player_.position, player_.position + player_.facing * 22.0f, {235, 210, 255, 255});
@@ -7236,29 +8812,57 @@ void Game::render(Renderer& renderer, const Time& time)
         if (!tileMap_.isLit(item.worldPosition, player_.position, itemLights)) {
             continue;
         }
+        const Vec2 drawPosition = item.worldPosition + ringItemBobOffset(item, time.totalSeconds());
+        renderer.drawActorShadow(item.worldPosition, ringItemShadowVisualSize(item));
+        const ItemData* object = objectForRingItem(objectCatalog_, item);
         if (item.type == SpellRingItemType::Shovel) {
             if (renderer.hasIconSheet()) {
-                renderer.drawIcon(ShovelIconIndex, item.worldPosition - Vec2{IconDrawSize * 0.5f, IconDrawSize * 0.5f});
+                renderer.drawIcon(ShovelIconIndex, drawPosition - Vec2{IconDrawSize * 0.5f, IconDrawSize * 0.5f});
             } else {
-                renderer.fillCircle(item.worldPosition, item.hitRadius, {178, 184, 190, 255});
-                renderer.drawLine(item.worldPosition, item.worldPosition + normalize(item.worldPosition - spellRing_.center()) * 15.0f, {90, 96, 102, 255});
+                const bool drewImage = object != nullptr &&
+                    drawObjectImage(
+                        renderer,
+                        *object,
+                        drawPosition,
+                        {RingObjectImageMaxSize, RingObjectImageMaxSize});
+                if (!drewImage) {
+                    renderer.fillCircle(drawPosition, item.hitRadius, {178, 184, 190, 255});
+                    const Vec2 outward = normalize(item.worldPosition - spellRing_.center());
+                    renderer.drawLine(drawPosition, drawPosition + outward * 15.0f, {90, 96, 102, 255});
+                }
             }
         } else if (item.type == SpellRingItemType::Torch) {
             if (renderer.hasIconSheet()) {
-                renderer.drawIcon(TorchIconIndex, item.worldPosition - Vec2{IconDrawSize * 0.5f, IconDrawSize * 0.5f});
+                renderer.drawIcon(TorchIconIndex, drawPosition - Vec2{IconDrawSize * 0.5f, IconDrawSize * 0.5f});
             } else {
-                renderer.fillCircle(item.worldPosition, item.hitRadius, {242, 122, 25, 255});
-                renderer.fillCircle(item.worldPosition + Vec2{2.0f, -2.0f}, 4.0f, {255, 238, 98, 255});
+                const bool drewImage = object != nullptr &&
+                    drawObjectImage(
+                        renderer,
+                        *object,
+                        drawPosition,
+                        {RingObjectImageMaxSize, RingObjectImageMaxSize});
+                if (!drewImage) {
+                    renderer.fillCircle(drawPosition, item.hitRadius, {242, 122, 25, 255});
+                    renderer.fillCircle(drawPosition + Vec2{2.0f, -2.0f}, 4.0f, {255, 238, 98, 255});
+                }
             }
         } else {
-            renderer.fillCircle(item.worldPosition, item.hitRadius, {96, 122, 210, 255});
-            renderer.drawCircle(item.worldPosition, item.hitRadius + 3.0f, {160, 202, 255, 255});
+            const bool drewImage = object != nullptr &&
+                drawObjectImage(
+                    renderer,
+                    *object,
+                    drawPosition,
+                    {RingObjectImageMaxSize, RingObjectImageMaxSize});
+            if (!drewImage) {
+                renderer.fillCircle(drawPosition, item.hitRadius, {96, 122, 210, 255});
+                renderer.drawCircle(drawPosition, item.hitRadius + 3.0f, {160, 202, 255, 255});
+            }
         }
         if (item.hiddenDetectionRadius > 0.0f) {
-            renderer.drawCircle(item.worldPosition, item.hiddenDetectionRadius, {126, 208, 255, 90});
+            renderer.drawCircle(drawPosition, item.hiddenDetectionRadius, {126, 208, 255, 90});
         }
         if (item.treasureDetectionRadius > 0.0f) {
-            renderer.drawCircle(item.worldPosition, item.treasureDetectionRadius, {255, 220, 92, 90});
+            renderer.drawCircle(drawPosition, item.treasureDetectionRadius, {255, 220, 92, 90});
         }
     }
 
@@ -7299,7 +8903,8 @@ void Game::render(Renderer& renderer, const Time& time)
         buriedHiddenNodeCount(),
         exposedEnemyNodeCount(),
         buriedEnemyNodeCount(),
-        spawnedEnemyNodeCount());
+        spawnedEnemyNodeCount(),
+        autoReloadBlocked_);
     if (debugPaused_) {
         renderer.fillRect({18.0f, 202.0f}, {190.0f, 28.0f}, {0, 0, 0, 190});
         renderer.drawText({28.0f, 208.0f}, "DEBUG PAUSED", {255, 230, 150, 255}, 2);
@@ -7310,7 +8915,7 @@ void Game::render(Renderer& renderer, const Time& time)
         inventory_.renderShortcutHud(renderer, spellRing_, camera_.width(), camera_.height());
     }
     renderPauseMenu(renderer);
-    renderRingScreen(renderer);
+    renderRingScreen(renderer, time.totalSeconds());
     renderGameOverScreen(renderer);
     renderStageClearScreen(renderer);
     if (mode_ == ScreenMode::Playing || mode_ == ScreenMode::Inventory || mode_ == ScreenMode::PauseMenu || mode_ == ScreenMode::Ring) {

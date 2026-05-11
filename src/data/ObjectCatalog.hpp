@@ -48,6 +48,7 @@ struct ObjectDefinition {
     int digPower = 0;
     int durability = 0;
     double weightKg = 0.0;
+    int imageNumber = 0;
     std::vector<std::string> tags;
     std::string effectText;
     std::vector<std::string> capturedBehaviorIds;

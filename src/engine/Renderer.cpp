@@ -5,6 +5,9 @@
 #include <cctype>
 #include <cmath>
 #include <cstring>
+#include <exception>
+#include <filesystem>
+#include <limits>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -124,6 +127,64 @@ std::string wrappedTextCacheKey(std::string_view text, float maxWidth, int scale
     return out.str();
 }
 
+std::string toUtf8String(const std::filesystem::path& path)
+{
+#if defined(__cpp_char8_t) && __cpp_char8_t >= 201811L
+    const auto encoded = path.generic_u8string();
+    return std::string(reinterpret_cast<const char*>(encoded.data()), encoded.size());
+#else
+    return path.generic_u8string();
+#endif
+}
+
+std::string normalizedImagePathKey(std::string_view path)
+{
+    if (path.empty()) {
+        return {};
+    }
+
+    try {
+        std::error_code ec;
+        std::filesystem::path normalized = std::filesystem::u8path(path.begin(), path.end()).lexically_normal();
+        const std::filesystem::path absolute = std::filesystem::absolute(normalized, ec);
+        if (!ec) {
+            normalized = absolute.lexically_normal();
+        }
+        return toUtf8String(normalized);
+    } catch (const std::exception&) {
+        return std::string(path);
+    }
+}
+
+std::string imageCacheKey(std::string_view normalizedPath, TextureFilter filter)
+{
+    const char filterSuffix = filter == TextureFilter::Linear ? 'L' : 'N';
+    return std::string(normalizedPath) + "|" + filterSuffix;
+}
+
+SDL_FlipMode imageFlipMode(bool flipX, bool flipY)
+{
+    if (flipX && flipY) {
+        return static_cast<SDL_FlipMode>(SDL_FLIP_HORIZONTAL | SDL_FLIP_VERTICAL);
+    }
+    if (flipX) {
+        return SDL_FLIP_HORIZONTAL;
+    }
+    if (flipY) {
+        return SDL_FLIP_VERTICAL;
+    }
+    return SDL_FLIP_NONE;
+}
+
+std::uint64_t currentTicks()
+{
+    return static_cast<std::uint64_t>(SDL_GetTicks());
+}
+
+constexpr float ActorShadowOffsetYRatio = 0.02f;
+constexpr float ActorShadowRadiusXRatio = 0.24f;
+constexpr float ActorShadowRadiusYRatio = 0.10f;
+
 }
 
 struct Renderer::NativeTextFont {
@@ -141,9 +202,11 @@ Renderer::Renderer(SDL_Renderer* renderer) : renderer_(renderer)
 
 Renderer::~Renderer()
 {
+    invalidateAllImages();
     clearTextCache();
     unloadSpriteSheet(iconSheet_);
     unloadSpriteSheet(playerSheet_);
+    unloadBaseMapTexture();
     unloadUiWindowTexture();
     unloadUiSubWindowTexture();
     unloadUiButtonTexture();
@@ -210,6 +273,9 @@ void Renderer::clear(Color color)
 void Renderer::present()
 {
     SDL_RenderPresent(renderer_);
+    if (frameCounter_ < std::numeric_limits<std::uint64_t>::max()) {
+        ++frameCounter_;
+    }
 }
 
 void Renderer::setScreenSpace()
@@ -261,6 +327,33 @@ void Renderer::drawCircle(Vec2 center, float radius, Color color)
     }
 }
 
+void Renderer::fillEllipse(Vec2 center, Vec2 radius, Color color)
+{
+    if (radius.x <= 0.0f || radius.y <= 0.0f) {
+        return;
+    }
+
+    const Vec2 c = transform(center);
+    const float scale = screenScale();
+    const float rx = radius.x * scale;
+    const float ry = radius.y * scale;
+    setColor(color);
+    for (int y = static_cast<int>(-ry); y <= static_cast<int>(ry); ++y) {
+        const float normalizedY = static_cast<float>(y) / ry;
+        const float span = rx * std::sqrt(std::max(0.0f, 1.0f - normalizedY * normalizedY));
+        SDL_RenderLine(renderer_, c.x - span, c.y + y, c.x + span, c.y + y);
+    }
+}
+
+void Renderer::drawActorShadow(Vec2 actorAnchor, float visualSize, Color color)
+{
+    const float size = std::max(1.0f, visualSize);
+    fillEllipse(
+        actorAnchor + Vec2{0.0f, size * ActorShadowOffsetYRatio},
+        {size * ActorShadowRadiusXRatio, size * ActorShadowRadiusYRatio},
+        color);
+}
+
 void Renderer::drawLine(Vec2 a, Vec2 b, Color color)
 {
     const Vec2 aa = transform(a);
@@ -310,6 +403,8 @@ static std::array<unsigned char, 7> glyphRows(char c)
     case 'Z': return {0x1f,0x01,0x02,0x04,0x08,0x10,0x1f};
     case '+': return {0x00,0x04,0x04,0x1f,0x04,0x04,0x00};
     case '-': return {0x00,0x00,0x00,0x1f,0x00,0x00,0x00};
+    case '!': return {0x04,0x04,0x04,0x04,0x04,0x00,0x04};
+    case '?': return {0x0e,0x11,0x01,0x02,0x04,0x00,0x04};
     case '.': return {0x00,0x00,0x00,0x00,0x00,0x0c,0x0c};
     case ':': return {0x00,0x0c,0x0c,0x00,0x0c,0x0c,0x00};
     case '/': return {0x01,0x01,0x02,0x04,0x08,0x10,0x10};
@@ -854,6 +949,24 @@ void Renderer::unloadGuidedTexture(GuidedTexture& texture)
     texture = {};
 }
 
+void Renderer::unloadImageTexture(ImageTexture& texture)
+{
+    if (texture.texture) {
+        SDL_DestroyTexture(texture.texture);
+    }
+    texture = {};
+}
+
+bool Renderer::loadBaseMapTexture(std::string_view path)
+{
+    return loadImageTexture(path, "base map texture", baseMapTexture_);
+}
+
+void Renderer::unloadBaseMapTexture()
+{
+    unloadImageTexture(baseMapTexture_);
+}
+
 bool Renderer::loadUiWindowTexture(std::string_view path)
 {
     return loadGuidedTexture(path, 5, 3, false, "UI window texture", uiWindowTexture_);
@@ -867,6 +980,386 @@ bool Renderer::loadUiSubWindowTexture(std::string_view path)
 bool Renderer::loadUiButtonTexture(std::string_view path)
 {
     return loadGuidedTexture(path, 3, 3, true, "UI button texture", uiButtonTexture_);
+}
+
+Renderer::CachedImageEntry* Renderer::findImageEntry(ImageHandle handle)
+{
+    if (!handle.valid()) {
+        return nullptr;
+    }
+    const auto it = imageEntries_.find(handle.value);
+    return it != imageEntries_.end() ? &it->second : nullptr;
+}
+
+const Renderer::CachedImageEntry* Renderer::findImageEntry(ImageHandle handle) const
+{
+    if (!handle.valid()) {
+        return nullptr;
+    }
+    const auto it = imageEntries_.find(handle.value);
+    return it != imageEntries_.end() ? &it->second : nullptr;
+}
+
+void Renderer::touchImage(CachedImageEntry& entry)
+{
+    entry.lastUsedFrame = frameCounter_;
+}
+
+void Renderer::destroyCachedImageTexture(CachedImageEntry& entry)
+{
+    const std::size_t bytes = entry.approxBytes;
+    unloadImageTexture(entry.texture);
+    entry.approxBytes = 0;
+    if (imageCacheBytes_ >= bytes) {
+        imageCacheBytes_ -= bytes;
+    } else {
+        imageCacheBytes_ = 0;
+    }
+}
+
+bool Renderer::ensureImageReady(CachedImageEntry& entry)
+{
+    if (entry.texture.texture != nullptr) {
+        return true;
+    }
+
+    const std::uint64_t now = currentTicks();
+    if (entry.failed && now < entry.nextRetryTicks) {
+        return false;
+    }
+
+    ImageTexture loaded;
+    if (!loadImageTexture(entry.normalizedPath, "cached image", loaded)) {
+        entry.failed = true;
+        entry.failureCount = std::min<std::uint32_t>(entry.failureCount + 1, 16);
+        const std::uint32_t cappedShift = std::min<std::uint32_t>(entry.failureCount - 1, 6);
+        const std::uint64_t retryDelay = static_cast<std::uint64_t>(250U << cappedShift);
+        entry.nextRetryTicks = now + retryDelay;
+        ++imageCacheLoadFailCount_;
+        return false;
+    }
+
+    const SDL_ScaleMode scaleMode = entry.filter == TextureFilter::Linear ? SDL_SCALEMODE_LINEAR : SDL_SCALEMODE_NEAREST;
+    SDL_SetTextureScaleMode(loaded.texture, scaleMode);
+    const std::size_t loadedBytes = static_cast<std::size_t>(std::max(0, loaded.width)) *
+        static_cast<std::size_t>(std::max(0, loaded.height)) * 4U;
+
+    destroyCachedImageTexture(entry);
+    entry.texture = loaded;
+    entry.approxBytes = loadedBytes;
+    imageCacheBytes_ += loadedBytes;
+    entry.failed = false;
+    entry.failureCount = 0;
+    entry.nextRetryTicks = 0;
+    evictImageCacheIfNeeded();
+    return true;
+}
+
+void Renderer::evictImageCacheIfNeeded()
+{
+    if (imageCacheBudgetBytes_ == 0) {
+        for (auto& [_, entry] : imageEntries_) {
+            destroyCachedImageTexture(entry);
+        }
+        return;
+    }
+
+    while (imageCacheBytes_ > imageCacheBudgetBytes_) {
+        auto candidate = imageEntries_.end();
+        for (auto it = imageEntries_.begin(); it != imageEntries_.end(); ++it) {
+            if (it->second.texture.texture == nullptr) {
+                continue;
+            }
+            if (candidate == imageEntries_.end() || it->second.lastUsedFrame < candidate->second.lastUsedFrame) {
+                candidate = it;
+            }
+        }
+        if (candidate == imageEntries_.end()) {
+            break;
+        }
+        destroyCachedImageTexture(candidate->second);
+    }
+}
+
+void Renderer::eraseImageHandle(ImageHandle handle)
+{
+    if (!handle.valid()) {
+        return;
+    }
+    const auto it = imageEntries_.find(handle.value);
+    if (it == imageEntries_.end()) {
+        return;
+    }
+
+    const std::string key = imageCacheKey(it->second.normalizedPath, it->second.filter);
+    const auto keyIt = imageHandleByKey_.find(key);
+    if (keyIt != imageHandleByKey_.end() && keyIt->second == handle) {
+        imageHandleByKey_.erase(keyIt);
+    }
+    destroyCachedImageTexture(it->second);
+    imageEntries_.erase(it);
+}
+
+ImageHandle Renderer::acquireImage(std::string_view path, TextureFilter filter)
+{
+    const std::string normalizedPath = normalizedImagePathKey(path);
+    if (normalizedPath.empty()) {
+        return {};
+    }
+
+    const std::string key = imageCacheKey(normalizedPath, filter);
+    const auto existing = imageHandleByKey_.find(key);
+    if (existing != imageHandleByKey_.end()) {
+        ++imageCacheHitCount_;
+        if (CachedImageEntry* entry = findImageEntry(existing->second)) {
+            touchImage(*entry);
+            ensureImageReady(*entry);
+        }
+        return existing->second;
+    }
+
+    ++imageCacheMissCount_;
+    if (nextImageHandleValue_ == 0) {
+        nextImageHandleValue_ = 1;
+    }
+    const ImageHandle handle{nextImageHandleValue_++};
+    CachedImageEntry entry;
+    entry.normalizedPath = normalizedPath;
+    entry.filter = filter;
+    entry.lastUsedFrame = frameCounter_;
+    auto inserted = imageEntries_.emplace(handle.value, std::move(entry));
+    if (!inserted.second) {
+        return {};
+    }
+    imageHandleByKey_[key] = handle;
+    ensureImageReady(inserted.first->second);
+    return handle;
+}
+
+bool Renderer::drawImage(ImageHandle handle, Vec2 center, Vec2 size, const ImageDrawOptions& options)
+{
+    if (size.x <= 0.0f || size.y <= 0.0f) {
+        return false;
+    }
+
+    CachedImageEntry* entry = findImageEntry(handle);
+    if (entry == nullptr) {
+        return false;
+    }
+    touchImage(*entry);
+    if (!ensureImageReady(*entry) || entry->texture.texture == nullptr) {
+        return false;
+    }
+
+    const Vec2 topLeft = center - Vec2{size.x * options.anchor.x, size.y * options.anchor.y};
+    const Vec2 p = transform(topLeft);
+    const Vec2 s = transformSize(size);
+    const SDL_FRect dst{p.x, p.y, s.x, s.y};
+    const Color tint = transformColor(options.tint);
+    const SDL_FlipMode flipMode = imageFlipMode(options.flipX, options.flipY);
+
+    if (options.outlineEnabled && options.outlinePx > 0) {
+        Color outline = transformColor(options.outlineColor);
+        if (outline.a > 0) {
+            // Keep outline thickness fixed in screen pixels, independent from world scale.
+            const float px = static_cast<float>(options.outlinePx);
+            SDL_SetTextureColorMod(entry->texture.texture, outline.r, outline.g, outline.b);
+            SDL_SetTextureAlphaMod(entry->texture.texture, outline.a);
+            for (int dy = -1; dy <= 1; ++dy) {
+                for (int dx = -1; dx <= 1; ++dx) {
+                    if (dx == 0 && dy == 0) {
+                        continue;
+                    }
+                    SDL_FRect outlineDst = dst;
+                    outlineDst.x += static_cast<float>(dx) * px;
+                    outlineDst.y += static_cast<float>(dy) * px;
+                    SDL_RenderTextureRotated(
+                        renderer_,
+                        entry->texture.texture,
+                        nullptr,
+                        &outlineDst,
+                        static_cast<double>(options.rotationDegrees),
+                        nullptr,
+                        flipMode);
+                }
+            }
+        }
+    }
+
+    SDL_SetTextureColorMod(entry->texture.texture, tint.r, tint.g, tint.b);
+    SDL_SetTextureAlphaMod(entry->texture.texture, tint.a);
+    SDL_RenderTextureRotated(
+        renderer_,
+        entry->texture.texture,
+        nullptr,
+        &dst,
+        static_cast<double>(options.rotationDegrees),
+        nullptr,
+        flipMode);
+    return true;
+}
+
+bool Renderer::drawImage(
+    std::string_view path,
+    Vec2 center,
+    Vec2 size,
+    const ImageDrawOptions& options,
+    TextureFilter filter)
+{
+    const ImageHandle handle = acquireImage(path, filter);
+    if (!handle.valid()) {
+        return false;
+    }
+    return drawImage(handle, center, size, options);
+}
+
+bool Renderer::getImageSize(ImageHandle handle, Vec2& outSize) const
+{
+    const CachedImageEntry* entry = findImageEntry(handle);
+    if (entry == nullptr || entry->texture.width <= 0 || entry->texture.height <= 0) {
+        return false;
+    }
+    outSize = {static_cast<float>(entry->texture.width), static_cast<float>(entry->texture.height)};
+    return true;
+}
+
+bool Renderer::getImageSize(std::string_view path, Vec2& outSize, TextureFilter filter)
+{
+    const ImageHandle handle = acquireImage(path, filter);
+    if (!handle.valid()) {
+        return false;
+    }
+    return getImageSize(handle, outSize);
+}
+
+void Renderer::invalidateImage(std::string_view path)
+{
+    const std::string normalizedPath = normalizedImagePathKey(path);
+    if (normalizedPath.empty()) {
+        return;
+    }
+
+    for (TextureFilter filter : {TextureFilter::Nearest, TextureFilter::Linear}) {
+        const std::string key = imageCacheKey(normalizedPath, filter);
+        const auto it = imageHandleByKey_.find(key);
+        if (it != imageHandleByKey_.end()) {
+            eraseImageHandle(it->second);
+        }
+    }
+}
+
+void Renderer::invalidateAllImages()
+{
+    for (auto& [_, entry] : imageEntries_) {
+        destroyCachedImageTexture(entry);
+    }
+    imageEntries_.clear();
+    imageHandleByKey_.clear();
+    imageCacheBytes_ = 0;
+    nextImageHandleValue_ = 1;
+}
+
+void Renderer::setImageCacheBudgetBytes(std::size_t bytes)
+{
+    imageCacheBudgetBytes_ = bytes;
+    evictImageCacheIfNeeded();
+}
+
+ImageCacheStats Renderer::imageCacheStats() const
+{
+    ImageCacheStats stats;
+    stats.totalBytes = imageCacheBytes_;
+    stats.hitCount = imageCacheHitCount_;
+    stats.missCount = imageCacheMissCount_;
+    stats.loadFailCount = imageCacheLoadFailCount_;
+    stats.textureCount = static_cast<std::size_t>(std::count_if(
+        imageEntries_.begin(),
+        imageEntries_.end(),
+        [](const auto& pair) {
+            return pair.second.texture.texture != nullptr;
+        }));
+    return stats;
+}
+
+bool Renderer::loadImageTexture(std::string_view path, std::string_view label, ImageTexture& target)
+{
+    lastAssetError_.clear();
+    const std::string pathString(path);
+    const std::string labelString(label);
+
+#ifdef _WIN32
+    static GdiPlusSession gdiPlus;
+    if (!gdiPlus.initialized()) {
+        lastAssetError_ = "GDI+ startup failed";
+        return false;
+    }
+
+    std::wstring widePath;
+    if (!utf8ToWide(pathString, widePath)) {
+        lastAssetError_ = "Invalid UTF-8 asset path: " + pathString;
+        return false;
+    }
+
+    Gdiplus::Bitmap bitmap(widePath.c_str());
+    if (bitmap.GetLastStatus() != Gdiplus::Ok) {
+        lastAssetError_ = "Failed to load " + labelString + ": " + pathString;
+        return false;
+    }
+
+    const int width = static_cast<int>(bitmap.GetWidth());
+    const int height = static_cast<int>(bitmap.GetHeight());
+    if (width <= 0 || height <= 0) {
+        lastAssetError_ = "Invalid " + labelString + " size: " + pathString;
+        return false;
+    }
+
+    Gdiplus::Rect rect(0, 0, width, height);
+    Gdiplus::BitmapData locked{};
+    if (bitmap.LockBits(&rect, Gdiplus::ImageLockModeRead, PixelFormat32bppARGB, &locked) != Gdiplus::Ok) {
+        lastAssetError_ = "Failed to lock " + labelString + " pixels: " + pathString;
+        return false;
+    }
+
+    std::vector<unsigned char> pixels(static_cast<size_t>(width) * static_cast<size_t>(height) * 4U);
+    const auto* source = static_cast<const unsigned char*>(locked.Scan0);
+    const int sourceStride = locked.Stride;
+    const int rowBytes = width * 4;
+    for (int y = 0; y < height; ++y) {
+        const int sourceY = sourceStride < 0 ? height - 1 - y : y;
+        const unsigned char* sourceRow = source + sourceY * std::abs(sourceStride);
+        unsigned char* targetRow = pixels.data() + static_cast<size_t>(y) * static_cast<size_t>(rowBytes);
+        std::memcpy(targetRow, sourceRow, static_cast<size_t>(rowBytes));
+    }
+    bitmap.UnlockBits(&locked);
+
+    SDL_Surface* surface = SDL_CreateSurfaceFrom(width, height, SDL_PIXELFORMAT_BGRA32, pixels.data(), rowBytes);
+    if (!surface) {
+        lastAssetError_ = std::string("SDL_CreateSurfaceFrom failed: ") + SDL_GetError();
+        return false;
+    }
+
+    SDL_Texture* texture = SDL_CreateTextureFromSurface(renderer_, surface);
+    SDL_DestroySurface(surface);
+    if (!texture) {
+        lastAssetError_ = std::string("SDL_CreateTextureFromSurface failed: ") + SDL_GetError();
+        return false;
+    }
+
+    SDL_SetTextureBlendMode(texture, SDL_BLENDMODE_BLEND);
+    SDL_SetTextureScaleMode(texture, SDL_SCALEMODE_NEAREST);
+
+    ImageTexture loaded;
+    loaded.texture = texture;
+    loaded.width = width;
+    loaded.height = height;
+
+    unloadImageTexture(target);
+    target = loaded;
+    return true;
+#else
+    lastAssetError_ = "PNG image loading is only implemented on Windows";
+    return false;
+#endif
 }
 
 bool Renderer::loadGuidedTexture(std::string_view path, int columns, int rows, bool transparentOnly, std::string_view label, GuidedTexture& target)
@@ -1151,7 +1644,7 @@ void Renderer::drawIcon(int index, Vec2 pos, Vec2 size, Color tint)
     SDL_RenderTexture(renderer_, iconSheet_.texture, &src, &dst);
 }
 
-void Renderer::drawPlayerSprite(int index, Vec2 center, float size, bool flipHorizontal, Color tint)
+void Renderer::drawPlayerSprite(int index, Vec2 anchorPosition, float size, bool flipHorizontal, Color tint, Vec2 anchor)
 {
     if (!playerSheet_.texture || index < 0 || index >= playerSheet_.columns * playerSheet_.rows) {
         return;
@@ -1165,7 +1658,7 @@ void Renderer::drawPlayerSprite(int index, Vec2 center, float size, bool flipHor
         static_cast<float>(playerSheet_.frameSize),
         static_cast<float>(playerSheet_.frameSize)
     };
-    const Vec2 p = transform(center - Vec2{size * 0.5f, size * 0.5f});
+    const Vec2 p = transform(anchorPosition - Vec2{size * anchor.x, size * anchor.y});
     const Vec2 s = transformSize({size, size});
     const SDL_FRect dst{p.x, p.y, s.x, s.y};
 
@@ -1180,6 +1673,21 @@ void Renderer::drawPlayerSprite(int index, Vec2 center, float size, bool flipHor
         0.0,
         nullptr,
         flipHorizontal ? SDL_FLIP_HORIZONTAL : SDL_FLIP_NONE);
+}
+
+void Renderer::drawBaseMapTexture(Vec2 pos, Vec2 size, Color tint)
+{
+    if (!baseMapTexture_.texture || size.x <= 0.0f || size.y <= 0.0f) {
+        return;
+    }
+
+    const Vec2 p = transform(pos);
+    const Vec2 s = transformSize(size);
+    const SDL_FRect dst{p.x, p.y, s.x, s.y};
+    tint = transformColor(tint);
+    SDL_SetTextureColorMod(baseMapTexture_.texture, tint.r, tint.g, tint.b);
+    SDL_SetTextureAlphaMod(baseMapTexture_.texture, tint.a);
+    SDL_RenderTexture(renderer_, baseMapTexture_.texture, nullptr, &dst);
 }
 
 void Renderer::drawTextureRegion(SDL_Texture* texture, SDL_FRect src, Vec2 pos, Vec2 size, Color tint)
