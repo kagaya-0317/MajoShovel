@@ -7,8 +7,11 @@
 #include "game/WorldDropSystem.hpp"
 #include <algorithm>
 #include <array>
+#include <cctype>
+#include <charconv>
 #include <cmath>
 #include <cstdint>
+#include <cstdlib>
 #include <queue>
 #include <random>
 #include <sstream>
@@ -59,6 +62,83 @@ constexpr float PatrolRadius = 120.0f;
 constexpr float ItemSeekRadius = 240.0f;
 constexpr float DigActionInterval = 0.11f;
 constexpr float SwarmAlertRadius = 180.0f;
+constexpr float JumpLandingBuffSeconds = 0.24f;
+constexpr float MudZoneTickSeconds = 0.20f;
+constexpr float MudZoneMaxDurationSeconds = 30.0f;
+constexpr float MagnetDisturbMaxRadius = 320.0f;
+constexpr int SwarmSpawnCountMax = 6;
+
+constexpr std::array<std::string_view, 5> BoxCommonDropCandidates = {
+    "potion",
+    "small_potion",
+    "bandage",
+    "ore_chunk",
+    "knife",
+};
+
+constexpr std::array<std::string_view, 5> BoxRareDropCandidates = {
+    "hi_potion",
+    "repair_kit",
+    "silver_dagger",
+    "moon_fragment_bundle",
+    "mana_ampoule",
+};
+
+constexpr std::array<std::string_view, 5> BoxSuperDropCandidates = {
+    "elixir",
+    "mythic_repair_kit",
+    "golden_pickaxe",
+    "moon_fragment_crystal",
+    "mana_core",
+};
+
+bool parseIntStrict(std::string_view text, int& value)
+{
+    if (text.empty()) {
+        return false;
+    }
+    const char* begin = text.data();
+    const char* end = text.data() + text.size();
+    const auto result = std::from_chars(begin, end, value);
+    return result.ec == std::errc{} && result.ptr == end;
+}
+
+bool parseDoubleStrict(std::string_view text, double& value)
+{
+    if (text.empty()) {
+        return false;
+    }
+    std::string copy(text);
+    char* parsedEnd = nullptr;
+    value = std::strtod(copy.c_str(), &parsedEnd);
+    return parsedEnd == copy.c_str() + copy.size();
+}
+
+std::string trimAscii(std::string_view text)
+{
+    std::size_t begin = 0;
+    std::size_t end = text.size();
+    while (begin < end && std::isspace(static_cast<unsigned char>(text[begin]))) {
+        ++begin;
+    }
+    while (end > begin && std::isspace(static_cast<unsigned char>(text[end - 1]))) {
+        --end;
+    }
+    return std::string(text.substr(begin, end - begin));
+}
+
+bool equalsIgnoreCaseAscii(std::string_view left, std::string_view right)
+{
+    if (left.size() != right.size()) {
+        return false;
+    }
+    for (std::size_t i = 0; i < left.size(); ++i) {
+        if (std::tolower(static_cast<unsigned char>(left[i])) != std::tolower(static_cast<unsigned char>(right[i]))) {
+            return false;
+        }
+    }
+    return true;
+}
 
 int applyDefenseModifier(const EntityStatus& status, int damage)
 {
@@ -129,13 +209,24 @@ bool isSupportedBehavior(std::string_view behaviorId)
         behaviorId == "magic_body" ||
         behaviorId == "front_guard" ||
         behaviorId == "spike_contact" ||
+        behaviorId == "jump_attack" ||
         behaviorId == "ring_slow_bite" ||
         behaviorId == "swarm_alert" ||
+        behaviorId == "swarm_spawn" ||
         behaviorId == "dig_move" ||
+        behaviorId == "light_slow" ||
+        behaviorId == "magnet_disturb" ||
+        behaviorId == "rust_touch" ||
+        behaviorId == "steal_item" ||
+        behaviorId == "chest_bite" ||
+        behaviorId == "drop_item" ||
+        behaviorId == "throw_object" ||
         behaviorId == "throw_stone" ||
         behaviorId == "shoot_poison" ||
         behaviorId == "shoot_web" ||
         behaviorId == "shoot_fire" ||
+        behaviorId == "shoot_paralyze" ||
+        behaviorId == "shoot_mud" ||
         behaviorId == "radial_spike" ||
         behaviorId == "shoot_water" ||
         behaviorId == "wind_blow" ||
@@ -150,6 +241,69 @@ bool hasBehavior(const Enemy& enemy, std::string_view behaviorId)
     });
 }
 
+const EnemyBehaviorSpec* findEnemyBehaviorSpec(const Enemy& enemy, std::string_view behaviorId)
+{
+    if (enemy.definition == nullptr) {
+        return nullptr;
+    }
+    for (const EnemyBehaviorSpec& spec : enemy.definition->enemyBehaviorSpecs) {
+        if (spec.behavior == behaviorId) {
+            return &spec;
+        }
+        if (behaviorId == "throw_stone" && spec.behavior == "throw_object") {
+            return &spec;
+        }
+    }
+    return nullptr;
+}
+
+double behaviorParamDouble(const Enemy& enemy, std::string_view behaviorId, std::string_view key, double fallbackValue)
+{
+    const EnemyBehaviorSpec* spec = findEnemyBehaviorSpec(enemy, behaviorId);
+    if (spec == nullptr) {
+        return fallbackValue;
+    }
+    const auto it = spec->params.find(std::string(key));
+    if (it == spec->params.end()) {
+        return fallbackValue;
+    }
+    double value = fallbackValue;
+    if (!parseDoubleStrict(it->second, value) || !std::isfinite(value)) {
+        return fallbackValue;
+    }
+    return value;
+}
+
+int behaviorParamInt(const Enemy& enemy, std::string_view behaviorId, std::string_view key, int fallbackValue)
+{
+    const EnemyBehaviorSpec* spec = findEnemyBehaviorSpec(enemy, behaviorId);
+    if (spec == nullptr) {
+        return fallbackValue;
+    }
+    const auto it = spec->params.find(std::string(key));
+    if (it == spec->params.end()) {
+        return fallbackValue;
+    }
+    int value = fallbackValue;
+    if (!parseIntStrict(it->second, value)) {
+        return fallbackValue;
+    }
+    return value;
+}
+
+std::string behaviorParamString(const Enemy& enemy, std::string_view behaviorId, std::string_view key, std::string_view fallbackValue)
+{
+    const EnemyBehaviorSpec* spec = findEnemyBehaviorSpec(enemy, behaviorId);
+    if (spec == nullptr) {
+        return std::string(fallbackValue);
+    }
+    const auto it = spec->params.find(std::string(key));
+    if (it == spec->params.end()) {
+        return std::string(fallbackValue);
+    }
+    return it->second;
+}
+
 bool hasEnemyTag(const Enemy& enemy, std::string_view tag)
 {
     return std::any_of(enemy.enemyTags.begin(), enemy.enemyTags.end(), [tag](const std::string& value) {
@@ -157,12 +311,35 @@ bool hasEnemyTag(const Enemy& enemy, std::string_view tag)
     });
 }
 
+bool pipeListContains(std::string_view text, std::string_view token)
+{
+    std::string current;
+    auto flush = [&]() {
+        const std::string trimmed = trimAscii(current);
+        current.clear();
+        return trimmed;
+    };
+    for (char ch : text) {
+        if (ch == '|') {
+            if (equalsIgnoreCaseAscii(flush(), token)) {
+                return true;
+            }
+            continue;
+        }
+        current.push_back(ch);
+    }
+    return equalsIgnoreCaseAscii(flush(), token);
+}
+
 bool isRangedBehavior(std::string_view behaviorId)
 {
     return behaviorId == "throw_stone" ||
+        behaviorId == "throw_object" ||
         behaviorId == "shoot_poison" ||
         behaviorId == "shoot_web" ||
         behaviorId == "shoot_fire" ||
+        behaviorId == "shoot_paralyze" ||
+        behaviorId == "shoot_mud" ||
         behaviorId == "radial_spike" ||
         behaviorId == "shoot_water" ||
         behaviorId == "wind_blow";
@@ -170,7 +347,7 @@ bool isRangedBehavior(std::string_view behaviorId)
 
 std::string_view fallbackProjectileForBehavior(std::string_view behaviorId)
 {
-    if (behaviorId == "throw_stone") {
+    if (behaviorId == "throw_stone" || behaviorId == "throw_object") {
         return "stone_bullet";
     }
     if (behaviorId == "shoot_poison") {
@@ -181,6 +358,12 @@ std::string_view fallbackProjectileForBehavior(std::string_view behaviorId)
     }
     if (behaviorId == "shoot_fire") {
         return "fire_breath";
+    }
+    if (behaviorId == "shoot_paralyze") {
+        return "paralyze_shot";
+    }
+    if (behaviorId == "shoot_mud") {
+        return "mud_blob";
     }
     if (behaviorId == "radial_spike") {
         return "cactus_needle";
@@ -258,11 +441,14 @@ bool hasClearSightLine(TileMap& map, Vec2 from, Vec2 to)
     return true;
 }
 
-bool frontGuardApplies(const Enemy& enemy, Vec2 hitPosition)
+bool frontGuardApplies(const Enemy& enemy, Vec2 hitPosition, float arcDegrees)
 {
     const Vec2 facing = facingVector(enemy.facingAngle);
     const Vec2 hitDirection = normalize(hitPosition - enemy.position);
-    return dot(facing, hitDirection) > 0.35f;
+    const float clampedArc = clamp(arcDegrees, 10.0f, 360.0f);
+    const float halfArcRadians = (clampedArc * 0.5f) * (Pi / 180.0f);
+    const float threshold = std::cos(halfArcRadians);
+    return dot(facing, hitDirection) >= threshold;
 }
 
 float captureChanceFor(const Enemy& enemy)
@@ -305,6 +491,15 @@ ItemData makeCapturedItemData(const Enemy& enemy)
     item.tags = definition.capturedTags;
     item.effectText = definition.capturedEffectText;
     item.capturedBehaviorIds = definition.capturedBehaviorIds;
+    item.capturedBehaviorSpecs.reserve(definition.capturedBehaviorSpecs.size());
+    for (const EnemyBehaviorSpec& spec : definition.capturedBehaviorSpecs) {
+        CapturedBehaviorSpec runtimeSpec;
+        runtimeSpec.trigger = spec.trigger;
+        runtimeSpec.behavior = spec.behavior;
+        runtimeSpec.params = spec.params;
+        runtimeSpec.intervalSeconds = spec.intervalSeconds;
+        item.capturedBehaviorSpecs.push_back(std::move(runtimeSpec));
+    }
     return item;
 }
 
@@ -332,6 +527,24 @@ EnemyEvent makeEnemyEvent(EnemyEventType type, const Enemy& enemy, std::string e
         .effectId = std::move(effectId),
         .moneyDrop = enemy.moneyDrop,
     };
+}
+
+std::string chooseObjectDropIdForProfile(std::string_view profile, std::mt19937& rng)
+{
+    const auto pickFrom = [&](const auto& candidates) -> std::string {
+        std::uniform_int_distribution<std::size_t> dist(0, candidates.size() - 1);
+        return std::string(candidates[dist(rng)]);
+    };
+    if (profile == "box_common") {
+        return pickFrom(BoxCommonDropCandidates);
+    }
+    if (profile == "box_rare") {
+        return pickFrom(BoxRareDropCandidates);
+    }
+    if (profile == "box_super") {
+        return pickFrom(BoxSuperDropCandidates);
+    }
+    return {};
 }
 
 void recordObjectEffectDiscovery(
@@ -387,20 +600,24 @@ void dispatchCapturedContactEffect(
     context.logUnimplementedEffects = false;
 
     if (item.hasCapturedBehavior("contact_slow") && !effectSpecsContain(object.orbitEffects, "status_slow")) {
+        const double slowMultiplier = clamp(item.capturedBehaviorParamDouble("contact_slow", "speedMultiplier", 0.85), 0.05, 1.0);
+        const double slowDuration = std::max(0.1, item.capturedBehaviorParamDouble("contact_slow", "duration", 1.5));
         EffectSpec slow;
         slow.target = "enemy";
         slow.effects = {"status_slow"};
-        slow.values = {0.85};
-        slow.duration = 1.5;
+        slow.values = {slowMultiplier};
+        slow.duration = slowDuration;
         effectDispatcher.dispatch({slow}, context);
     }
 
     if (item.hasCapturedBehavior("rust_debuff") && !effectSpecsContain(object.orbitEffects, "debuff_defense")) {
+        const double defenseMultiplier = clamp(item.capturedBehaviorParamDouble("rust_debuff", "defenseMultiplier", 0.8), 0.05, 1.0);
+        const double debuffDuration = std::max(0.1, item.capturedBehaviorParamDouble("rust_debuff", "duration", 4.0));
         EffectSpec rust;
         rust.target = "enemy";
         rust.effects = {"debuff_defense"};
-        rust.values = {0.8};
-        rust.duration = 4.0;
+        rust.values = {defenseMultiplier};
+        rust.duration = debuffDuration;
         effectDispatcher.dispatch({rust}, context);
     }
 }
@@ -410,7 +627,14 @@ bool capturedRewardAllowed(SpellRingItem& item, const Enemy& enemy, float totalT
     if (enemy.isBoss && item.capturedBossRewardCount >= CapturedBossRewardLimit) {
         return false;
     }
-    if (totalTime - item.capturedRewardLastTime < CapturedRewardCooldown) {
+    float interval = CapturedRewardCooldown;
+    if (item.hasCapturedBehavior("reward_drop")) {
+        interval = std::max(interval, static_cast<float>(item.capturedBehaviorInterval("reward_drop", CapturedRewardCooldown)));
+    }
+    if (item.hasCapturedBehavior("steal_or_dig")) {
+        interval = std::max(interval, static_cast<float>(item.capturedBehaviorInterval("steal_or_dig", CapturedRewardCooldown)));
+    }
+    if (totalTime - item.capturedRewardLastTime < interval) {
         return false;
     }
     if (totalTime - item.capturedRewardWindowStart > CapturedRewardWindowSeconds) {
@@ -448,9 +672,9 @@ void tryCapturedRewardFromEnemy(SpellRingItem& item, const Enemy& enemy, float t
 {
     float chance = 0.0f;
     if (item.hasCapturedBehavior("steal_or_dig")) {
-        chance = CapturedStealChanceEnemy;
+        chance = static_cast<float>(std::clamp(item.capturedBehaviorParamDouble("steal_or_dig", "chance", CapturedStealChanceEnemy), 0.0, 1.0));
     } else if (item.hasCapturedBehavior("reward_drop")) {
-        chance = CapturedRewardChanceEnemy;
+        chance = static_cast<float>(std::clamp(item.capturedBehaviorParamDouble("reward_drop", "chance", CapturedRewardChanceEnemy), 0.0, 1.0));
     } else {
         return;
     }
@@ -515,6 +739,46 @@ const EnemyDefinition* EnemySystem::chooseEnemyDefinition(const EnemyCatalog& en
     return &enemyCatalog.enemies[dist(rng_)];
 }
 
+void EnemySystem::queueEnemyObjectDrops(Enemy& enemy)
+{
+    if (!enemy.dropItemEnabled || enemy.dropItemConsumed) {
+        return;
+    }
+    enemy.dropItemConsumed = true;
+    const std::string objectDropId = chooseObjectDropIdForProfile(enemy.dropItemProfile, rng_);
+    if (objectDropId.empty()) {
+        static std::unordered_set<std::string> loggedUnknownProfiles;
+        if (loggedUnknownProfiles.insert(enemy.dropItemProfile).second) {
+            logError("[warning] EnemySystem: drop_item unknown profile \"" + enemy.dropItemProfile + "\"; no item drop");
+        }
+        return;
+    }
+    std::uniform_real_distribution<float> chanceDist(0.0f, 1.0f);
+    if (chanceDist(rng_) > clamp(enemy.dropItemChance, 0.0f, 1.0f)) {
+        return;
+    }
+    const int count = std::max(1, enemy.dropItemCount);
+    const float scatterRadius = std::max(0.0f, enemy.dropItemScatterRadius);
+    std::uniform_real_distribution<float> angleDist(0.0f, Pi * 2.0f);
+    std::uniform_real_distribution<float> radiusDist(0.0f, scatterRadius);
+    for (int i = 0; i < count; ++i) {
+        EnemyEvent event;
+        event.type = EnemyEventType::ObjectDrop;
+        event.enemyId = enemy.enemyId;
+        event.enemyName = enemy.enemyName;
+        event.objectDropId = objectDropId;
+        event.objectDropCount = 1;
+        if (scatterRadius > 0.0f) {
+            const float angle = angleDist(rng_);
+            const float radius = radiusDist(rng_);
+            event.position = enemy.position + fromAngle(angle) * radius;
+        } else {
+            event.position = enemy.position;
+        }
+        events_.push_back(std::move(event));
+    }
+}
+
 void EnemySystem::setAwareness(Enemy& enemy, EnemyAwarenessState nextState, bool showIcon)
 {
     if (enemy.awareness == nextState) {
@@ -550,6 +814,14 @@ void EnemySystem::applyDefinition(Enemy& enemy, const EnemyDefinition* definitio
     enemy.projectileId.clear();
     enemy.rangedBehaviorId.clear();
     enemy.projectileInterval = 0.0f;
+    enemy.projectileSpeedMultiplier = 1.0f;
+    enemy.projectileDamageOverride = -1;
+    enemy.projectileRadiusScale = 1.0f;
+    enemy.projectileBurstCount = 1;
+    enemy.projectileBurstRemaining = 0;
+    enemy.projectileBurstInterval = 0.12f;
+    enemy.fireVolleyCount = 1;
+    enemy.fireSpreadDegrees = 8.0f;
     enemy.projectileEffects.clear();
     enemy.aiId.clear();
     enemy.unawareAiId = "idle";
@@ -564,6 +836,58 @@ void EnemySystem::applyDefinition(Enemy& enemy, const EnemyDefinition* definitio
     enemy.contactAttackPower = 1;
     enemy.contactDamageType = "physical";
     enemy.facingAngle = 0.0f;
+    enemy.contactDamageMultiplier = 1.0f;
+    enemy.frontGuardArcDegrees = 140.0f;
+    enemy.frontGuardDamageMultiplier = 0.35f;
+    enemy.physicalDamageMultiplier = 0.55f;
+    enemy.magicBodyPhysicalMultiplier = 0.35f;
+    enemy.magicBodyMagicMultiplier = 1.0f;
+    enemy.ringSlowMultiplier = -1.0f;
+    enemy.ringSlowDurationSeconds = -1.0f;
+    enemy.digMovePower = 1;
+    enemy.digMoveIntervalSeconds = DigActionInterval;
+    enemy.enemyHealRadius = 0.0f;
+    enemy.enemyHealAmount = 0.0f;
+    enemy.enemyHealIntervalSeconds = 0.0f;
+    enemy.enemyHealTimer = 0.0f;
+    enemy.countdownExplodeRadius = 0.0f;
+    enemy.countdownExplodeDelay = 0.0f;
+    enemy.countdownExplodeDamage = 0;
+    enemy.countdownExplodeTerrainDamage = 0;
+    enemy.countdownExplodeOnce = false;
+    enemy.countdownExploded = false;
+    enemy.jumpAttackDistance = 0.0f;
+    enemy.jumpLandingRadius = 0.0f;
+    enemy.jumpLandingDamageMultiplier = 1.0f;
+    enemy.jumpAttackIntervalSeconds = 0.0f;
+    enemy.jumpAttackTimer = 0.0f;
+    enemy.jumpLandingBuffTimer = 0.0f;
+    enemy.lightSpeedMultiplier = 1.0f;
+    enemy.magnetRadius = 0.0f;
+    enemy.magnetStrength = 0.0f;
+    enemy.magnetTargetTag.clear();
+    enemy.rustDefenseMultiplier = 1.0f;
+    enemy.rustDurationSeconds = 0.0f;
+    enemy.rustTargetTag.clear();
+    enemy.chestBiteKnockback = 0.0f;
+    enemy.swarmSpawnEnabled = false;
+    enemy.swarmSpawnExecuted = false;
+    enemy.swarmSpawnCount = 0;
+    enemy.swarmSpawnRadius = 0.0f;
+    enemy.dropItemEnabled = false;
+    enemy.dropItemProfile.clear();
+    enemy.dropItemChance = 0.0f;
+    enemy.dropItemCount = 0;
+    enemy.dropItemScatterRadius = 0.0f;
+    enemy.dropItemConsumed = false;
+    enemy.stealItemEnabled = false;
+    enemy.stealTarget.clear();
+    enemy.stealRadius = 0.0f;
+    enemy.stealEscapeDistance = 0.0f;
+    enemy.stealMaxCarry = 0;
+    enemy.stolenMoney = 0;
+    enemy.stolenObjectIds.clear();
+    enemy.pendingDeath = false;
     enemy.awareness = EnemyAwarenessState::Unaware;
     enemy.loseSightTimer = 0.0f;
     enemy.visionDistance = DefaultVisionDistance;
@@ -623,6 +947,203 @@ void EnemySystem::applyDefinition(Enemy& enemy, const EnemyDefinition* definitio
                 enemy.projectileEffects = behaviorIt->second.enemyDefaultEffects;
             }
             break;
+        }
+    }
+    if (hasBehavior(enemy, "contact_basic")) {
+        enemy.contactDamageMultiplier = static_cast<float>(std::max(0.0, behaviorParamDouble(enemy, "contact_basic", "multiplier", 1.0)));
+    }
+    if (hasBehavior(enemy, "jump_attack")) {
+        enemy.jumpAttackDistance = static_cast<float>(std::max(4.0, behaviorParamDouble(enemy, "jump_attack", "jumpDistance", 42.0)));
+        enemy.jumpLandingRadius = static_cast<float>(std::max(8.0, behaviorParamDouble(enemy, "jump_attack", "landingRadius", 28.0)));
+        enemy.jumpLandingDamageMultiplier = static_cast<float>(std::max(1.0, behaviorParamDouble(enemy, "jump_attack", "landingDamageMultiplier", 1.45)));
+        const EnemyBehaviorSpec* spec = findEnemyBehaviorSpec(enemy, "jump_attack");
+        enemy.jumpAttackIntervalSeconds = static_cast<float>(std::max(0.2, spec != nullptr ? spec->intervalSeconds : 1.8));
+        enemy.jumpAttackTimer = enemy.jumpAttackIntervalSeconds * 0.65f;
+    }
+    if (hasBehavior(enemy, "spike_contact")) {
+        const double spikeMultiplier = behaviorParamDouble(enemy, "spike_contact", "multiplier", 1.35);
+        enemy.contactDamageMultiplier *= static_cast<float>(std::max(0.0, spikeMultiplier));
+    }
+    if (hasBehavior(enemy, "chest_bite")) {
+        const double biteMultiplier = behaviorParamDouble(enemy, "chest_bite", "damageMultiplier", 1.4);
+        enemy.contactDamageMultiplier *= static_cast<float>(std::max(0.0, biteMultiplier));
+        enemy.chestBiteKnockback = static_cast<float>(std::max(0.0, behaviorParamDouble(enemy, "chest_bite", "knockback", 52.0)));
+    }
+    if (hasBehavior(enemy, "front_guard")) {
+        enemy.frontGuardArcDegrees = static_cast<float>(clamp(behaviorParamDouble(enemy, "front_guard", "arc", 140.0), 10.0, 360.0));
+        enemy.frontGuardDamageMultiplier = static_cast<float>(clamp(behaviorParamDouble(enemy, "front_guard", "damageMultiplier", 0.35), 0.0, 1.0));
+    }
+    if (hasBehavior(enemy, "physical_resist")) {
+        enemy.physicalDamageMultiplier = static_cast<float>(clamp(behaviorParamDouble(enemy, "physical_resist", "physicalMultiplier", 0.55), 0.0, 1.0));
+    }
+    if (hasBehavior(enemy, "magic_body")) {
+        enemy.magicBodyPhysicalMultiplier = static_cast<float>(clamp(behaviorParamDouble(enemy, "magic_body", "physicalMultiplier", 0.35), 0.0, 1.0));
+        enemy.magicBodyMagicMultiplier = static_cast<float>(clamp(behaviorParamDouble(enemy, "magic_body", "magicMultiplier", 1.0), 0.0, 2.0));
+    }
+    if (hasBehavior(enemy, "ring_slow_bite")) {
+        constexpr double NoParam = -99999.0;
+        const double configuredMultiplier = behaviorParamDouble(enemy, "ring_slow_bite", "multiplier", NoParam);
+        if (configuredMultiplier != NoParam) {
+            enemy.ringSlowMultiplier = static_cast<float>(clamp(configuredMultiplier, 0.05, 1.0));
+        }
+        const double configuredDuration = behaviorParamDouble(enemy, "ring_slow_bite", "duration", NoParam);
+        if (configuredDuration != NoParam) {
+            enemy.ringSlowDurationSeconds = static_cast<float>(std::max(0.0, configuredDuration));
+        }
+    }
+    if (hasBehavior(enemy, "dig_move")) {
+        enemy.digMovePower = std::max(1, behaviorParamInt(enemy, "dig_move", "digPower", 1));
+        enemy.digMoveIntervalSeconds = static_cast<float>(std::max(0.02, behaviorParamDouble(enemy, "dig_move", "interval", DigActionInterval)));
+    }
+    if (hasBehavior(enemy, "light_slow")) {
+        enemy.lightSpeedMultiplier = static_cast<float>(clamp(behaviorParamDouble(enemy, "light_slow", "lightSpeedMultiplier", 0.72), 0.05, 1.0));
+    }
+    if (hasBehavior(enemy, "magnet_disturb")) {
+        enemy.magnetRadius = static_cast<float>(clamp(behaviorParamDouble(enemy, "magnet_disturb", "radius", 120.0), 8.0, static_cast<double>(MagnetDisturbMaxRadius)));
+        enemy.magnetStrength = static_cast<float>(std::max(0.0, behaviorParamDouble(enemy, "magnet_disturb", "strength", 0.6)));
+        enemy.magnetTargetTag = behaviorParamString(enemy, "magnet_disturb", "targetTag", "metal");
+    }
+    if (hasBehavior(enemy, "rust_touch")) {
+        enemy.rustDefenseMultiplier = static_cast<float>(clamp(behaviorParamDouble(enemy, "rust_touch", "defenseMultiplier", 0.8), 0.05, 1.0));
+        enemy.rustDurationSeconds = static_cast<float>(std::max(0.1, behaviorParamDouble(enemy, "rust_touch", "duration", 4.0)));
+        enemy.rustTargetTag = behaviorParamString(enemy, "rust_touch", "targetTag", "metal");
+    }
+    if (hasBehavior(enemy, "steal_item")) {
+        enemy.stealItemEnabled = true;
+        enemy.stealTarget = behaviorParamString(enemy, "steal_item", "target", "money|treasure|drop");
+        enemy.stealRadius = static_cast<float>(std::max(12.0, behaviorParamDouble(enemy, "steal_item", "radius", 120.0)));
+        enemy.stealEscapeDistance = static_cast<float>(std::max(16.0, behaviorParamDouble(enemy, "steal_item", "escapeDistance", 120.0)));
+        enemy.stealMaxCarry = std::max(1, behaviorParamInt(enemy, "steal_item", "maxCarry", 2));
+    }
+    if (hasBehavior(enemy, "drop_item")) {
+        enemy.dropItemProfile = behaviorParamString(enemy, "drop_item", "profile", "");
+        enemy.dropItemChance = static_cast<float>(clamp(behaviorParamDouble(enemy, "drop_item", "chance", 1.0), 0.0, 1.0));
+        enemy.dropItemCount = std::max(1, behaviorParamInt(enemy, "drop_item", "count", 1));
+        enemy.dropItemScatterRadius = static_cast<float>(std::max(0.0, behaviorParamDouble(enemy, "drop_item", "scatterRadius", 28.0)));
+        enemy.dropItemEnabled = !enemy.dropItemProfile.empty();
+        enemy.dropItemConsumed = false;
+        if (!enemy.dropItemEnabled) {
+            logError("[warning] EnemySystem: drop_item profile is empty for enemy id=\"" + enemy.enemyId + "\"; behavior disabled");
+        }
+    }
+    if (hasBehavior(enemy, "swarm_spawn")) {
+        enemy.swarmSpawnEnabled = true;
+        enemy.swarmSpawnExecuted = false;
+        enemy.swarmSpawnCount = std::clamp(behaviorParamInt(enemy, "swarm_spawn", "count", 2), 1, SwarmSpawnCountMax);
+        enemy.swarmSpawnRadius = std::max(
+            enemy.radius + 6.0f,
+            static_cast<float>(behaviorParamDouble(enemy, "swarm_spawn", "radius", 36.0)));
+    }
+    if (hasBehavior(enemy, "enemy_heal")) {
+        enemy.enemyHealRadius = static_cast<float>(std::max(0.0, behaviorParamDouble(enemy, "enemy_heal", "radius", 120.0)));
+        enemy.enemyHealAmount = static_cast<float>(std::max(0.0, behaviorParamDouble(enemy, "enemy_heal", "amount", 1.0)));
+        enemy.enemyHealIntervalSeconds = static_cast<float>(std::max(0.1, behaviorParamDouble(enemy, "enemy_heal", "interval", 3.0)));
+        enemy.enemyHealTimer = enemy.enemyHealIntervalSeconds;
+    }
+    if (hasBehavior(enemy, "countdown_explode")) {
+        enemy.countdownExplodeRadius = static_cast<float>(std::max(8.0, behaviorParamDouble(enemy, "countdown_explode", "radius", 44.0)));
+        enemy.countdownExplodeDelay = static_cast<float>(std::max(0.0, behaviorParamDouble(enemy, "countdown_explode", "delay", 2.0)));
+        enemy.countdownExplodeDamage = std::max(0, behaviorParamInt(enemy, "countdown_explode", "damage", 3));
+        enemy.countdownExplodeTerrainDamage = std::max(0, behaviorParamInt(enemy, "countdown_explode", "terrainDamage", 1));
+        enemy.countdownExplodeOnce = behaviorParamInt(enemy, "countdown_explode", "once", 1) != 0;
+        enemy.countdownExploded = false;
+    }
+    if (!enemy.rangedBehaviorId.empty()) {
+        constexpr int NoDamageOverride = -99999;
+        const std::string rangedId = (enemy.rangedBehaviorId == "throw_stone" || enemy.rangedBehaviorId == "throw_object")
+            ? std::string("throw_object")
+            : enemy.rangedBehaviorId;
+        enemy.projectileSpeedMultiplier = static_cast<float>(std::max(0.05, behaviorParamDouble(enemy, rangedId, "projectileSpeed", 1.0)));
+        if (enemy.rangedBehaviorId == "throw_stone" || enemy.rangedBehaviorId == "throw_object") {
+            const std::string projectileId = behaviorParamString(enemy, "throw_object", "projectile", enemy.projectileId);
+            if (!projectileId.empty()) {
+                enemy.projectileId = projectileId;
+            }
+        }
+        if (enemy.rangedBehaviorId == "shoot_poison") {
+            const int overrideDamage = behaviorParamInt(enemy, "shoot_poison", "damage", NoDamageOverride);
+            if (overrideDamage != NoDamageOverride) {
+                enemy.projectileDamageOverride = std::max(0, overrideDamage);
+            }
+            const double poisonDuration = std::max(0.1, behaviorParamDouble(enemy, "shoot_poison", "duration", 2.0));
+            const double poisonDps = std::max(0.1, behaviorParamDouble(enemy, "shoot_poison", "damagePerSecond", 1.0));
+            if (enemy.projectileEffects.empty()) {
+                EffectSpec poison;
+                poison.target = "player";
+                poison.effects = {"status_poison"};
+                poison.values = {poisonDps};
+                poison.duration = poisonDuration;
+                enemy.projectileEffects.push_back(std::move(poison));
+            }
+        } else if (enemy.rangedBehaviorId == "shoot_web") {
+            const int overrideDamage = behaviorParamInt(enemy, "shoot_web", "damage", NoDamageOverride);
+            if (overrideDamage != NoDamageOverride) {
+                enemy.projectileDamageOverride = std::max(0, overrideDamage);
+            }
+            const double slowDuration = std::max(0.1, behaviorParamDouble(enemy, "shoot_web", "duration", 2.0));
+            const double slowMultiplier = clamp(behaviorParamDouble(enemy, "shoot_web", "speedMultiplier", 0.70), 0.0, 1.0);
+            if (enemy.projectileEffects.empty()) {
+                EffectSpec slow;
+                slow.target = "player";
+                slow.effects = {"status_slow"};
+                slow.values = {slowMultiplier};
+                slow.duration = slowDuration;
+                enemy.projectileEffects.push_back(std::move(slow));
+            }
+        } else if (enemy.rangedBehaviorId == "shoot_fire") {
+            enemy.projectileRadiusScale = static_cast<float>(std::max(0.2, behaviorParamDouble(enemy, "shoot_fire", "scale", 1.0)));
+            enemy.fireVolleyCount = std::clamp(behaviorParamInt(enemy, "shoot_fire", "count", 1), 1, 5);
+            enemy.fireSpreadDegrees = static_cast<float>(std::max(0.0, behaviorParamDouble(enemy, "shoot_fire", "spread", 12.0)));
+            const int overrideDamage = behaviorParamInt(enemy, "shoot_fire", "damage", NoDamageOverride);
+            if (overrideDamage != NoDamageOverride) {
+                enemy.projectileDamageOverride = std::max(0, overrideDamage);
+            }
+        } else if (enemy.rangedBehaviorId == "shoot_paralyze") {
+            const double paralyzeDuration = std::max(0.1, behaviorParamDouble(enemy, "shoot_paralyze", "duration", 1.5));
+            if (enemy.projectileEffects.empty()) {
+                EffectSpec paralyze;
+                paralyze.target = "player";
+                paralyze.effects = {"status_paralyze"};
+                paralyze.values = {1.0};
+                paralyze.duration = paralyzeDuration;
+                enemy.projectileEffects.push_back(std::move(paralyze));
+            }
+        } else if (enemy.rangedBehaviorId == "shoot_mud") {
+            const double mudRadius = std::max(8.0, behaviorParamDouble(enemy, "shoot_mud", "radius", 38.0));
+            const double mudDuration = clamp(behaviorParamDouble(enemy, "shoot_mud", "duration", 3.8), 0.2, static_cast<double>(MudZoneMaxDurationSeconds));
+            const double mudSlow = clamp(behaviorParamDouble(enemy, "shoot_mud", "speedMultiplier", 0.65), 0.05, 1.0);
+            const double mudDps = std::max(0.0, behaviorParamDouble(enemy, "shoot_mud", "damagePerSecond", 1.0));
+            const std::string mudDamageType = behaviorParamString(enemy, "shoot_mud", "damageType", "poison");
+            if (enemy.projectileEffects.empty()) {
+                EffectSpec mudZone;
+                mudZone.target = "area";
+                mudZone.effects = {"mud_zone"};
+                mudZone.values = {mudRadius, mudSlow, mudDps};
+                mudZone.duration = mudDuration;
+                enemy.projectileEffects.push_back(std::move(mudZone));
+            }
+            if (enemy.projectileEffects.size() == 1) {
+                EffectSpec mudKind;
+                mudKind.target = "area";
+                mudKind.effects = {"mud_damage_type_" + mudDamageType};
+                mudKind.values = {0.0};
+                mudKind.duration = mudDuration;
+                enemy.projectileEffects.push_back(std::move(mudKind));
+            }
+        } else if (enemy.rangedBehaviorId == "shoot_water") {
+            enemy.projectileBurstCount = std::clamp(behaviorParamInt(enemy, "shoot_water", "burstCount", 1), 1, 6);
+            enemy.projectileBurstRemaining = enemy.projectileBurstCount;
+            enemy.projectileBurstInterval = static_cast<float>(std::max(0.02, behaviorParamDouble(enemy, "shoot_water", "burstInterval", 0.14)));
+            const int overrideDamage = behaviorParamInt(enemy, "shoot_water", "damage", NoDamageOverride);
+            if (overrideDamage != NoDamageOverride) {
+                enemy.projectileDamageOverride = std::max(0, overrideDamage);
+            }
+        } else if (enemy.rangedBehaviorId == "radial_spike") {
+            enemy.fireVolleyCount = std::clamp(behaviorParamInt(enemy, "radial_spike", "count", 8), 1, 24);
+            const int overrideDamage = behaviorParamInt(enemy, "radial_spike", "damage", NoDamageOverride);
+            if (overrideDamage != NoDamageOverride) {
+                enemy.projectileDamageOverride = std::max(0, overrideDamage);
+            }
         }
     }
     enemy.enemyTags = definition->enemyTags;
@@ -1073,18 +1594,43 @@ void fireEnemyProjectile(Enemy& enemy, ProjectileSystem& projectiles, Vec2 playe
         return;
     }
 
+    ProjectileSpawnTuning tuning;
+    tuning.speedMultiplier = std::max(0.05f, enemy.projectileSpeedMultiplier);
+    tuning.damageOverride = enemy.projectileDamageOverride;
+    tuning.radiusScale = std::max(0.1f, enemy.projectileRadiusScale);
+
     const Vec2 toPlayer = normalize(playerPosition - enemy.position);
     const Vec2 origin = enemy.position + toPlayer * (enemy.radius + 6.0f);
     if (enemy.rangedBehaviorId == "radial_spike") {
-        constexpr int Count = 8;
-        for (int i = 0; i < Count; ++i) {
-            const float angle = (static_cast<float>(i) / static_cast<float>(Count)) * Pi * 2.0f;
-            projectiles.spawn(enemy.projectileId, enemy.position + fromAngle(angle) * (enemy.radius + 5.0f), fromAngle(angle), ProjectileOwnerType::Enemy, enemy.projectileEffects);
+        const int count = std::clamp(enemy.fireVolleyCount, 1, 24);
+        for (int i = 0; i < count; ++i) {
+            const float angle = (static_cast<float>(i) / static_cast<float>(count)) * Pi * 2.0f;
+            projectiles.spawn(
+                enemy.projectileId,
+                enemy.position + fromAngle(angle) * (enemy.radius + 5.0f),
+                fromAngle(angle),
+                ProjectileOwnerType::Enemy,
+                enemy.projectileEffects,
+                tuning);
         }
         return;
     }
 
-    projectiles.spawn(enemy.projectileId, origin, toPlayer, ProjectileOwnerType::Enemy, enemy.projectileEffects);
+    if (enemy.rangedBehaviorId == "shoot_fire" && enemy.fireVolleyCount > 1) {
+        const int count = std::clamp(enemy.fireVolleyCount, 1, 8);
+        const float spreadRadians = clamp(enemy.fireSpreadDegrees, 0.0f, 90.0f) * (Pi / 180.0f);
+        const float start = -spreadRadians * 0.5f;
+        const float step = count > 1 ? spreadRadians / static_cast<float>(count - 1) : 0.0f;
+        const float baseAngle = std::atan2(toPlayer.y, toPlayer.x);
+        for (int i = 0; i < count; ++i) {
+            const float angle = baseAngle + start + step * static_cast<float>(i);
+            const Vec2 dir = fromAngle(angle);
+            projectiles.spawn(enemy.projectileId, enemy.position + dir * (enemy.radius + 6.0f), dir, ProjectileOwnerType::Enemy, enemy.projectileEffects, tuning);
+        }
+        return;
+    }
+
+    projectiles.spawn(enemy.projectileId, origin, toPlayer, ProjectileOwnerType::Enemy, enemy.projectileEffects, tuning);
 }
 
 bool EnemySystem::resolvePlayerOverlap(Player& player, Enemy& enemy, TileMap& map, const RuntimeBalance& balance)
@@ -1130,7 +1676,9 @@ void EnemySystem::update(
     bool paused,
     const RuntimeBalance& balance,
     const ObjectCatalog& objectCatalog,
-    const WorldDropSystem& worldDrops,
+    WorldDropSystem& worldDrops,
+    Vec2 playerLight,
+    const std::vector<LightSource>& extraLights,
     const EffectDispatcher& effectDispatcher,
     ProjectileSystem& projectiles,
     std::vector<EffectDiscoveryEvent>* discoveryEvents)
@@ -1145,6 +1693,76 @@ void EnemySystem::update(
         rebuildFlowField(map, player.position);
         flowTimer_ = 0.20f;
     }
+
+    mudZones_.erase(
+        std::remove_if(mudZones_.begin(), mudZones_.end(), [dt](MudZone& zone) {
+            zone.remainingSeconds = std::max(0.0f, zone.remainingSeconds - dt);
+            return zone.remainingSeconds <= 0.0f || zone.radius <= 0.0f;
+        }),
+        mudZones_.end());
+
+    float mudSlowMultiplier = 1.0f;
+    double mudDamagePerSecond = 0.0;
+    for (const MudZone& zone : mudZones_) {
+        if (distanceSquared(player.position, zone.position) > zone.radius * zone.radius) {
+            continue;
+        }
+        mudSlowMultiplier = std::min(mudSlowMultiplier, clamp(zone.speedMultiplier, 0.05f, 1.0f));
+        mudDamagePerSecond += std::max(0.0f, zone.damagePerSecond);
+    }
+    if (mudSlowMultiplier < 1.0f) {
+        player.status.applyState("status_slow", mudSlowMultiplier, 0.25, "enemy:mud_zone", StateApplyMode::KeepLonger);
+    }
+    if (mudDamagePerSecond > 0.0) {
+        mudDamageAccumulator_ += mudDamagePerSecond * static_cast<double>(dt);
+        const int mudDamage = static_cast<int>(std::floor(mudDamageAccumulator_));
+        if (mudDamage > 0) {
+            player.applyDamage(mudDamage, DamageSource::Poison);
+            mudDamageAccumulator_ -= static_cast<double>(mudDamage);
+        }
+    } else {
+        mudDamageAccumulator_ = 0.0;
+    }
+
+    const auto processEnemyDeath = [&](Enemy& enemy) {
+        if (!enemy.active) {
+            return;
+        }
+        pendingXp_ += enemy.xp;
+        if (!enemy.dropItemConsumed) {
+            queueEnemyObjectDrops(enemy);
+        }
+        if (enemy.stolenMoney > 0) {
+            EnemyEvent dropMoney = makeEnemyEvent(enemy.isBoss ? EnemyEventType::BossDeath : EnemyEventType::Death, enemy);
+            dropMoney.moneyDrop += enemy.stolenMoney;
+            enemy.stolenMoney = 0;
+            events_.push_back(std::move(dropMoney));
+        } else {
+            events_.push_back(makeEnemyEvent(enemy.isBoss ? EnemyEventType::BossDeath : EnemyEventType::Death, enemy));
+        }
+        for (const std::string& objectId : enemy.stolenObjectIds) {
+            if (objectId.empty()) {
+                continue;
+            }
+            EnemyEvent objectDrop;
+            objectDrop.type = EnemyEventType::ObjectDrop;
+            objectDrop.position = enemy.position;
+            objectDrop.enemyId = enemy.enemyId;
+            objectDrop.enemyName = enemy.enemyName;
+            objectDrop.objectDropId = objectId;
+            objectDrop.objectDropCount = 1;
+            events_.push_back(std::move(objectDrop));
+        }
+        enemy.stolenObjectIds.clear();
+        std::vector<SpellRingItem*> clearItems = spellRing.runtimeItemsMutable();
+        for (SpellRingItem* clearItemPtr : clearItems) {
+            if (clearItemPtr == nullptr) {
+                continue;
+            }
+            clearItemPtr->unlatchEnemy(enemy.id);
+        }
+        enemy.active = false;
+    };
 
     for (Enemy& enemy : enemies_.items()) {
         if (!enemy.active) {
@@ -1161,12 +1779,7 @@ void EnemySystem::update(
                 enemy.hitFlash = 0.12f;
                 events_.push_back(makeEnemyEvent(EnemyEventType::Hit, enemy));
                 if (enemy.hp <= 0) {
-                    pendingXp_ += enemy.xp;
-                    events_.push_back(makeEnemyEvent(enemy.isBoss ? EnemyEventType::BossDeath : EnemyEventType::Death, enemy));
-                    for (auto& clearItem : spellRing.items()) {
-                        clearItem.unlatchEnemy(enemy.id);
-                    }
-                    enemy.active = false;
+                    processEnemyDeath(enemy);
                     continue;
                 }
             }
@@ -1176,6 +1789,31 @@ void EnemySystem::update(
         enemy.hitFlash = std::max(0.0f, enemy.hitFlash - dt);
         if (enemy.spawnTimer > 0.0f) {
             enemy.spawnTimer = std::max(0.0f, enemy.spawnTimer - dt);
+            if (enemy.spawnTimer <= 0.0f && enemy.swarmSpawnEnabled && !enemy.swarmSpawnExecuted) {
+                enemy.swarmSpawnExecuted = true;
+                const int count = std::clamp(enemy.swarmSpawnCount, 1, SwarmSpawnCountMax);
+                for (int i = 0; i < count; ++i) {
+                    Enemy* child = enemies_.acquire();
+                    if (child == nullptr) {
+                        break;
+                    }
+                    const float angle = (Pi * 2.0f) * (static_cast<float>(i) / static_cast<float>(count));
+                    const Vec2 spawnPos = enemy.position + fromAngle(angle) * enemy.swarmSpawnRadius;
+                    if (map.isCircleBlocked(spawnPos, enemy.radius)) {
+                        child->active = false;
+                        continue;
+                    }
+                    *child = Enemy{};
+                    child->active = true;
+                    child->id = nextEnemyId_++;
+                    child->position = spawnPos;
+                    applyDefinition(*child, enemy.definition, balance, EnemyCatalog{});
+                    child->spawnTimer = 0.4f;
+                    child->spawnDuration = 0.4f;
+                    child->swarmSpawnEnabled = false;
+                    child->swarmSpawnExecuted = true;
+                }
+            }
             continue;
         }
         if (enemy.knockbackTimer > 0.0f) {
@@ -1254,6 +1892,25 @@ void EnemySystem::update(
         const std::string_view aiId = enemy.awareness == EnemyAwarenessState::Detected
             ? (enemy.aiId.empty() ? std::string_view("chase") : std::string_view(enemy.aiId))
             : (enemy.unawareAiId.empty() ? std::string_view("idle") : std::string_view(enemy.unawareAiId));
+        const auto carriedCount = [&]() {
+            return static_cast<int>(enemy.stolenObjectIds.size()) + (enemy.stolenMoney > 0 ? 1 : 0);
+        };
+        if (enemy.stealItemEnabled && carriedCount() < std::max(1, enemy.stealMaxCarry)) {
+            WorldDropItem stolenDrop;
+            if (worldDrops.stealNearestDrop(
+                    objectCatalog,
+                    enemy.position,
+                    std::max(8.0f, enemy.stealRadius),
+                    enemy.stealTarget,
+                    stolenDrop)) {
+                if (stolenDrop.kind == WorldDropKind::Money) {
+                    enemy.stolenMoney += std::max(0, stolenDrop.quantity);
+                } else if (stolenDrop.kind == WorldDropKind::Object && !stolenDrop.id.empty()) {
+                    enemy.stolenObjectIds.push_back(stolenDrop.id);
+                }
+                setAwareness(enemy, EnemyAwarenessState::Detected, false);
+            }
+        }
         const auto chooseWanderDirection = [&]() {
             if (enemy.aiDecisionTimer <= 0.0f || lengthSquared(enemy.aiMoveDirection) <= 0.0001f) {
                 enemy.aiMoveDirection = randomDirection(rng_);
@@ -1367,12 +2024,18 @@ void EnemySystem::update(
         } else {
             direction = flowDirectionFor(map, enemy.position, player.position);
         }
+        if (enemy.stealItemEnabled && carriedCount() > 0 && distanceToPlayer < enemy.stealEscapeDistance) {
+            direction = directToPlayer * -1.0f;
+        }
         double baseSpeed = balance.enemySpeed;
         if (enemy.definition != nullptr && enemy.definition->moveSpeed > 0.0 && std::isfinite(enemy.definition->moveSpeed)) {
             baseSpeed = enemy.definition->moveSpeed;
         }
         if (enemy.enemyId == "mana_leech") {
             baseSpeed *= 0.72;
+        }
+        if (hasBehavior(enemy, "light_slow") && map.isLit(enemy.position, playerLight, extraLights)) {
+            baseSpeed *= clamp(enemy.lightSpeedMultiplier, 0.05f, 1.0f);
         }
         if (aiId == "jump_chase") {
             const float phase = std::fmod(enemy.behaviorTimer, 1.05f);
@@ -1395,6 +2058,17 @@ void EnemySystem::update(
         if (aiId != "stationary" && aiId != "idle" && aiId != "buried") {
             enemy.velocity += separationFor(enemy) * balance.enemySeparationStrength;
         }
+        enemy.jumpLandingBuffTimer = std::max(0.0f, enemy.jumpLandingBuffTimer - dt);
+        if (hasBehavior(enemy, "jump_attack") && enemy.awareness == EnemyAwarenessState::Detected) {
+            enemy.jumpAttackTimer = std::max(0.0f, enemy.jumpAttackTimer - dt);
+            if (enemy.jumpAttackTimer <= 0.0f && lengthSquared(directToPlayer) > 0.0001f) {
+                const Vec2 jumpDelta = directToPlayer * std::max(4.0f, enemy.jumpAttackDistance);
+                tryMoveCircle(map, enemy.position, enemy.radius, jumpDelta);
+                enemy.jumpAttackTimer = std::max(0.2f, enemy.jumpAttackIntervalSeconds);
+                enemy.jumpLandingBuffTimer = JumpLandingBuffSeconds;
+                events_.push_back(makeEnemyEvent(EnemyEventType::Hit, enemy));
+            }
+        }
         const float maxSpeed = enemySpeed * 1.75f;
         if (lengthSquared(enemy.velocity) > maxSpeed * maxSpeed) {
             enemy.velocity = normalize(enemy.velocity) * maxSpeed;
@@ -1413,10 +2087,10 @@ void EnemySystem::update(
                 const int tx = map.worldToTile(ahead.x);
                 const int ty = map.worldToTile(ahead.y);
                 Vec2 opened{};
-                if (map.damageTile(tx, ty, 1, opened)) {
+                if (map.damageTile(tx, ty, std::max(1, enemy.digMovePower), opened)) {
                     events_.push_back(makeEnemyEvent(EnemyEventType::Hit, enemy));
                 }
-                enemy.aiDigTimer = DigActionInterval;
+                enemy.aiDigTimer = std::max(0.02f, enemy.digMoveIntervalSeconds);
             }
         } else {
             moveWithCollision(enemy, map, enemy.velocity, dt);
@@ -1437,32 +2111,168 @@ void EnemySystem::update(
             enemy.projectileTimer = std::max(0.0f, enemy.projectileTimer - dt);
             if (enemy.projectileTimer <= 0.0f) {
                 fireEnemyProjectile(enemy, projectiles, player.position);
-                enemy.projectileTimer = enemy.projectileInterval > 0.0f ? enemy.projectileInterval : 2.4f;
+                if (enemy.projectileBurstCount > 1 && enemy.rangedBehaviorId == "shoot_water") {
+                    if (enemy.projectileBurstRemaining <= 1) {
+                        enemy.projectileBurstRemaining = enemy.projectileBurstCount;
+                        enemy.projectileTimer = enemy.projectileInterval > 0.0f ? enemy.projectileInterval : 2.4f;
+                    } else {
+                        --enemy.projectileBurstRemaining;
+                        enemy.projectileTimer = std::max(0.02f, enemy.projectileBurstInterval);
+                    }
+                } else {
+                    enemy.projectileTimer = enemy.projectileInterval > 0.0f ? enemy.projectileInterval : 2.4f;
+                }
             }
         }
+
+        if (hasBehavior(enemy, "magnet_disturb") &&
+            enemy.magnetStrength > 0.0f &&
+            enemy.magnetRadius > 0.0f) {
+            const float radius = std::max(8.0f, enemy.magnetRadius);
+            const float radiusSq = radius * radius;
+            const float force = enemy.magnetStrength * 120.0f * dt;
+            for (Enemy& other : enemies_.items()) {
+                if (!other.active || other.id == enemy.id) {
+                    continue;
+                }
+                if (!enemy.magnetTargetTag.empty()) {
+                    bool matchedTag = false;
+                    for (const std::string& tag : other.enemyTags) {
+                        if (pipeListContains(enemy.magnetTargetTag, tag)) {
+                            matchedTag = true;
+                            break;
+                        }
+                    }
+                    if (!matchedTag) {
+                        continue;
+                    }
+                }
+                const Vec2 toCenter = enemy.position - other.position;
+                const float d2 = lengthSquared(toCenter);
+                if (d2 <= 1.0f || d2 > radiusSq) {
+                    continue;
+                }
+                other.velocity += normalize(toCenter) * force;
+            }
+            if (pipeListContains(enemy.magnetTargetTag, "metal")) {
+                projectiles.pullMetalProjectiles(enemy.position, dt * std::max(0.1f, enemy.magnetStrength));
+            } else {
+                projectiles.deflectEnemyProjectiles(enemy.position, dt * std::max(0.1f, enemy.magnetStrength));
+            }
+        }
+
+        if (hasBehavior(enemy, "enemy_heal") &&
+            enemy.enemyHealRadius > 0.0f &&
+            enemy.enemyHealAmount > 0.0f &&
+            enemy.enemyHealIntervalSeconds > 0.0f) {
+            enemy.enemyHealTimer = std::max(0.0f, enemy.enemyHealTimer - dt);
+            if (enemy.enemyHealTimer <= 0.0f) {
+                const float radiusSq = enemy.enemyHealRadius * enemy.enemyHealRadius;
+                const int healAmount = std::max(1, static_cast<int>(std::round(enemy.enemyHealAmount)));
+                for (Enemy& ally : enemies_.items()) {
+                    if (!ally.active || ally.hp >= ally.maxHp) {
+                        continue;
+                    }
+                    if (distanceSquared(ally.position, enemy.position) > radiusSq) {
+                        continue;
+                    }
+                    ally.hp = std::min(ally.maxHp, ally.hp + healAmount);
+                }
+                enemy.enemyHealTimer = enemy.enemyHealIntervalSeconds;
+            }
+        }
+
+        if (hasBehavior(enemy, "countdown_explode") && (!enemy.countdownExploded || !enemy.countdownExplodeOnce)) {
+            enemy.countdownExplodeDelay = std::max(0.0f, enemy.countdownExplodeDelay - dt);
+            if (enemy.countdownExplodeDelay <= 0.0f) {
+                const float radius = std::max(8.0f, enemy.countdownExplodeRadius);
+                const float radiusSq = radius * radius;
+                if (enemy.countdownExplodeDamage > 0 &&
+                    distanceSquared(player.position, enemy.position) <= radiusSq) {
+                    player.lastDamageEnemyName = enemy.enemyName.empty() ? std::string(DefaultEnemyName) : enemy.enemyName;
+                    player.applyDamage(
+                        applyDefenseModifier(player.status, enemy.countdownExplodeDamage),
+                        DamageSource::Trap);
+                }
+                if (enemy.countdownExplodeTerrainDamage > 0) {
+                    const int centerTx = map.worldToTile(enemy.position.x);
+                    const int centerTy = map.worldToTile(enemy.position.y);
+                    const int tileRadius = std::max(1, static_cast<int>(std::ceil(radius / static_cast<float>(balance::TileSize))));
+                    for (int dy = -tileRadius; dy <= tileRadius; ++dy) {
+                        for (int dx = -tileRadius; dx <= tileRadius; ++dx) {
+                            const Vec2 tileCenter = map.tileCenter(centerTx + dx, centerTy + dy);
+                            if (distanceSquared(tileCenter, enemy.position) > radiusSq) {
+                                continue;
+                            }
+                            Vec2 opened{};
+                            map.damageTile(centerTx + dx, centerTy + dy, enemy.countdownExplodeTerrainDamage, opened);
+                        }
+                    }
+                }
+                enemy.countdownExploded = true;
+                processEnemyDeath(enemy);
+                continue;
+            }
+        }
+
         enemy.contactTimer = std::max(0.0f, enemy.contactTimer - dt);
-        const bool touchedPlayer = resolvePlayerOverlap(player, enemy, map, balance);
+        bool touchedPlayer = resolvePlayerOverlap(player, enemy, map, balance);
+        if (!touchedPlayer &&
+            enemy.jumpLandingBuffTimer > 0.0f &&
+            enemy.jumpLandingRadius > 0.0f &&
+            distanceSquared(player.position, enemy.position) <= enemy.jumpLandingRadius * enemy.jumpLandingRadius) {
+            touchedPlayer = true;
+        }
         if (touchedPlayer && enemy.contactTimer <= 0.0f) {
-            const int contactDamage = enemy.isBoss
+            int contactDamage = enemy.isBoss
                 ? std::max(1, static_cast<int>(std::ceil(static_cast<double>(enemy.contactAttackPower * 2) * damageTypeMultiplier(enemy.contactDamageType))))
                 : std::max(0, static_cast<int>(std::ceil(static_cast<double>(enemy.contactAttackPower) * damageTypeMultiplier(enemy.contactDamageType))));
+            float contactMultiplier = std::max(0.0f, enemy.contactDamageMultiplier);
+            if (enemy.jumpLandingBuffTimer > 0.0f) {
+                contactMultiplier *= std::max(1.0f, enemy.jumpLandingDamageMultiplier);
+            }
+            contactDamage = std::max(0, static_cast<int>(std::ceil(static_cast<double>(contactDamage) * contactMultiplier)));
             player.lastDamageEnemyName = enemy.enemyName.empty() ? std::string(DefaultEnemyName) : enemy.enemyName;
             player.applyDamage(
                 applyDefenseModifier(player.status, contactDamage),
                 enemy.isBoss ? DamageSource::SlimeAttack : DamageSource::SlimeContact);
+            if (hasBehavior(enemy, "rust_touch")) {
+                player.status.applyModifier(
+                    "rust_touch",
+                    ModifierStat::Defense,
+                    clamp(enemy.rustDefenseMultiplier, 0.05f, 1.0f),
+                    0.0,
+                    std::max(0.1f, enemy.rustDurationSeconds),
+                    "enemy:rust_touch:" + enemy.enemyId,
+                    StateApplyMode::KeepLonger);
+            }
             if (hasBehavior(enemy, "ring_slow_bite")) {
                 spellRing.applyEnemyOrbitSpeedDebuff(
-                    balance.enemyRingSlowBiteMultiplier,
-                    balance.enemyRingSlowBiteDuration);
+                    enemy.ringSlowMultiplier > 0.0f ? enemy.ringSlowMultiplier : balance.enemyRingSlowBiteMultiplier,
+                    enemy.ringSlowDurationSeconds >= 0.0f ? enemy.ringSlowDurationSeconds : balance.enemyRingSlowBiteDuration);
+            }
+            if (hasBehavior(enemy, "chest_bite") && enemy.chestBiteKnockback > 0.0f) {
+                const Vec2 push = normalize(player.position - enemy.position) * enemy.chestBiteKnockback;
+                tryMoveCircle(map, player.position, balance.playerRadius, push);
             }
             enemy.contactTimer = enemy.isBoss ? 1.0f : 0.8f;
         }
 
-        for (auto& item : spellRing.items()) {
+        std::vector<SpellRingItem*> runtimeItems = spellRing.runtimeItemsMutable();
+        for (SpellRingItem* itemPtr : runtimeItems) {
+            if (itemPtr == nullptr) {
+                continue;
+            }
+            SpellRingItem& item = *itemPtr;
             if (item.broken()) {
                 continue;
             }
-            const bool overlappingItem = circlesOverlap(enemy.position, enemy.radius, item.worldPosition, item.hitRadius);
+            float capturedHitRadius = item.hitRadius;
+            if (item.hasCapturedBehavior("jump_outward") && item.capturedJumpTimer > 0.0f) {
+                const float bonusRadius = static_cast<float>(std::max(2.0, item.capturedBehaviorParamDouble("jump_outward", "landingRadius", 5.0)));
+                capturedHitRadius += bonusRadius;
+            }
+            const bool overlappingItem = circlesOverlap(enemy.position, enemy.radius, item.worldPosition, capturedHitRadius);
             if (item.type == SpellRingItemType::Shovel && !overlappingItem) {
                 item.unlatchEnemy(enemy.id);
                 continue;
@@ -1480,7 +2290,7 @@ void EnemySystem::update(
             }
             item.lastEnemyHitTime = totalTime;
             const int speedBonus = static_cast<int>(
-                spellRing.effectiveAngularSpeed() * 0.25f * static_cast<float>(spellRing.speedDamageMultiplier()));
+                item.orbitMotionSpeed * 0.25f * static_cast<float>(spellRing.speedDamageMultiplier()));
             const int modifiedDamage = static_cast<int>(
                 player.status.applyModifiers(
                     ModifierStat::Attack,
@@ -1490,13 +2300,15 @@ void EnemySystem::update(
             const int rawDamage = modifiedDamage + (item.type == SpellRingItemType::Shovel ? speedBonus : 0);
             int adjustedDamage = rawDamage;
             if (item.damageType == "physical" && hasBehavior(enemy, "physical_resist")) {
-                adjustedDamage = static_cast<int>(std::ceil(static_cast<double>(adjustedDamage) * 0.55));
+                adjustedDamage = static_cast<int>(std::ceil(static_cast<double>(adjustedDamage) * enemy.physicalDamageMultiplier));
             }
             if (item.damageType == "physical" && hasBehavior(enemy, "magic_body")) {
-                adjustedDamage = static_cast<int>(std::ceil(static_cast<double>(adjustedDamage) * 0.35));
+                adjustedDamage = static_cast<int>(std::ceil(static_cast<double>(adjustedDamage) * enemy.magicBodyPhysicalMultiplier));
+            } else if (item.damageType == "magic" && hasBehavior(enemy, "magic_body")) {
+                adjustedDamage = static_cast<int>(std::ceil(static_cast<double>(adjustedDamage) * enemy.magicBodyMagicMultiplier));
             }
-            if (hasBehavior(enemy, "front_guard") && frontGuardApplies(enemy, item.worldPosition)) {
-                adjustedDamage = static_cast<int>(std::ceil(static_cast<double>(adjustedDamage) * 0.35));
+            if (hasBehavior(enemy, "front_guard") && frontGuardApplies(enemy, item.worldPosition, enemy.frontGuardArcDegrees)) {
+                adjustedDamage = static_cast<int>(std::ceil(static_cast<double>(adjustedDamage) * enemy.frontGuardDamageMultiplier));
             }
             const int damageDealt = applyDefenseModifier(enemy.status, adjustedDamage);
             enemy.hp -= damageDealt;
@@ -1534,22 +2346,19 @@ void EnemySystem::update(
             }
             tryCapturedRewardFromEnemy(item, enemy, totalTime, events_);
             if (item.hasCapturedBehavior("charge_explode") && item.capturedExplodeSleepTimer <= 0.0f) {
+                const int requiredHits = std::max(1, item.capturedBehaviorParamInt("charge_explode", "count", CapturedExplosionChargeLimit));
+                const float restSeconds = static_cast<float>(std::max(0.1, item.capturedBehaviorParamDouble("charge_explode", "rest", CapturedExplosionSleepSeconds)));
                 ++item.capturedExplodeCharge;
-                if (item.capturedExplodeCharge >= CapturedExplosionChargeLimit) {
+                if (item.capturedExplodeCharge >= requiredHits) {
                     item.capturedExplodeCharge = 0;
-                    item.capturedExplodeSleepTimer = CapturedExplosionSleepSeconds;
+                    item.capturedExplodeSleepTimer = restSeconds;
                     events_.push_back({EnemyEventType::CapturedExplosion, item.worldPosition});
                 }
             }
             enemy.hitFlash = 0.12f;
             events_.push_back(makeEnemyEvent(EnemyEventType::Hit, enemy, hitEffectId));
             if (enemy.hp <= 0) {
-                pendingXp_ += enemy.xp;
-                events_.push_back(makeEnemyEvent(enemy.isBoss ? EnemyEventType::BossDeath : EnemyEventType::Death, enemy));
-                for (auto& clearItem : spellRing.items()) {
-                    clearItem.unlatchEnemy(enemy.id);
-                }
-                enemy.active = false;
+                processEnemyDeath(enemy);
                 break;
             }
         }
@@ -1677,9 +2486,37 @@ bool EnemySystem::hitByPlayerProjectile(
         events_.push_back(makeEnemyEvent(EnemyEventType::Hit, enemy, visualEffectIdFor(projectile.effects)));
         if (enemy.hp <= 0) {
             pendingXp_ += enemy.xp;
-            events_.push_back(makeEnemyEvent(enemy.isBoss ? EnemyEventType::BossDeath : EnemyEventType::Death, enemy));
-            for (auto& item : spellRing.items()) {
-                item.unlatchEnemy(enemy.id);
+            if (!enemy.dropItemConsumed) {
+                queueEnemyObjectDrops(enemy);
+            }
+            if (enemy.stolenMoney > 0) {
+                EnemyEvent death = makeEnemyEvent(enemy.isBoss ? EnemyEventType::BossDeath : EnemyEventType::Death, enemy);
+                death.moneyDrop += enemy.stolenMoney;
+                enemy.stolenMoney = 0;
+                events_.push_back(std::move(death));
+            } else {
+                events_.push_back(makeEnemyEvent(enemy.isBoss ? EnemyEventType::BossDeath : EnemyEventType::Death, enemy));
+            }
+            for (const std::string& objectId : enemy.stolenObjectIds) {
+                if (objectId.empty()) {
+                    continue;
+                }
+                EnemyEvent objectDrop;
+                objectDrop.type = EnemyEventType::ObjectDrop;
+                objectDrop.position = enemy.position;
+                objectDrop.enemyId = enemy.enemyId;
+                objectDrop.enemyName = enemy.enemyName;
+                objectDrop.objectDropId = objectId;
+                objectDrop.objectDropCount = 1;
+                events_.push_back(std::move(objectDrop));
+            }
+            enemy.stolenObjectIds.clear();
+            std::vector<SpellRingItem*> runtimeItems = spellRing.runtimeItemsMutable();
+            for (SpellRingItem* itemPtr : runtimeItems) {
+                if (itemPtr == nullptr) {
+                    continue;
+                }
+                itemPtr->unlatchEnemy(enemy.id);
             }
             enemy.active = false;
         }
@@ -1707,23 +2544,67 @@ void EnemySystem::applyCapturedExplosion(Vec2 position, SpellRingSystem& spellRi
         events_.push_back(makeEnemyEvent(EnemyEventType::Hit, enemy));
         if (enemy.hp <= 0) {
             pendingXp_ += enemy.xp;
-            events_.push_back(makeEnemyEvent(enemy.isBoss ? EnemyEventType::BossDeath : EnemyEventType::Death, enemy));
-            for (auto& item : spellRing.items()) {
-                item.unlatchEnemy(enemy.id);
+            if (!enemy.dropItemConsumed) {
+                queueEnemyObjectDrops(enemy);
+            }
+            if (enemy.stolenMoney > 0) {
+                EnemyEvent death = makeEnemyEvent(enemy.isBoss ? EnemyEventType::BossDeath : EnemyEventType::Death, enemy);
+                death.moneyDrop += enemy.stolenMoney;
+                enemy.stolenMoney = 0;
+                events_.push_back(std::move(death));
+            } else {
+                events_.push_back(makeEnemyEvent(enemy.isBoss ? EnemyEventType::BossDeath : EnemyEventType::Death, enemy));
+            }
+            for (const std::string& objectId : enemy.stolenObjectIds) {
+                if (objectId.empty()) {
+                    continue;
+                }
+                EnemyEvent objectDrop;
+                objectDrop.type = EnemyEventType::ObjectDrop;
+                objectDrop.position = enemy.position;
+                objectDrop.enemyId = enemy.enemyId;
+                objectDrop.enemyName = enemy.enemyName;
+                objectDrop.objectDropId = objectId;
+                objectDrop.objectDropCount = 1;
+                events_.push_back(std::move(objectDrop));
+            }
+            enemy.stolenObjectIds.clear();
+            std::vector<SpellRingItem*> runtimeItems = spellRing.runtimeItemsMutable();
+            for (SpellRingItem* itemPtr : runtimeItems) {
+                if (itemPtr == nullptr) {
+                    continue;
+                }
+                itemPtr->unlatchEnemy(enemy.id);
             }
             enemy.active = false;
         }
     }
 }
 
-int EnemySystem::pullMetalEnemies(Vec2 center, TileMap& map, float dt)
+void EnemySystem::addMudZone(Vec2 position, float radius, float duration, float speedMultiplier, float damagePerSecond, std::string damageType)
+{
+    if (!(radius > 0.0f) || !(duration > 0.0f)) {
+        return;
+    }
+    MudZone zone;
+    zone.position = position;
+    zone.radius = std::max(8.0f, radius);
+    zone.remainingSeconds = std::clamp(duration, 0.1f, MudZoneMaxDurationSeconds);
+    zone.speedMultiplier = clamp(speedMultiplier, 0.05f, 1.0f);
+    zone.damagePerSecond = std::max(0.0f, damagePerSecond);
+    zone.damageType = std::move(damageType);
+    mudZones_.push_back(std::move(zone));
+}
+
+int EnemySystem::pullMetalEnemies(Vec2 center, TileMap& map, float dt, float radius)
 {
     if (dt <= 0.0f) {
         return 0;
     }
 
     int pulled = 0;
-    const float radiusSq = CapturedMagnetEnemyRadius * CapturedMagnetEnemyRadius;
+    const float effectiveRadius = std::max(8.0f, radius);
+    const float radiusSq = effectiveRadius * effectiveRadius;
     for (Enemy& enemy : enemies_.items()) {
         if (!enemy.active || enemy.spawnTimer > 0.0f || !hasEnemyTag(enemy, "metal")) {
             continue;
@@ -1735,7 +2616,7 @@ int EnemySystem::pullMetalEnemies(Vec2 center, TileMap& map, float dt)
         }
 
         const float distance = std::sqrt(distanceSq);
-        const float falloff = 1.0f - clamp(distance / CapturedMagnetEnemyRadius, 0.0f, 1.0f);
+        const float falloff = 1.0f - clamp(distance / effectiveRadius, 0.0f, 1.0f);
         const Vec2 delta = normalize(toCenter) * (CapturedMagnetEnemyPullSpeed * falloff * dt);
         if (tryMoveCircle(map, enemy.position, enemy.radius, delta)) {
             ++pulled;
@@ -1758,6 +2639,8 @@ void EnemySystem::clearTemporaryState()
 {
     events_.clear();
     pendingXp_ = 0;
+    mudZones_.clear();
+    mudDamageAccumulator_ = 0.0;
     for (Enemy& enemy : enemies_.items()) {
         if (!enemy.active) {
             continue;
@@ -1787,6 +2670,9 @@ std::string EnemySystem::debugEnemySummary() const
             << " hp=" << enemy.hp << "/" << enemy.maxHp
             << " r=" << enemy.radius
             << " ai=" << enemy.aiId
+            << " unaware_ai=" << enemy.unawareAiId
+            << " enemy_code=" << (enemy.definition != nullptr ? enemy.definition->enemyBehaviorCode : std::string{})
+            << " captured_code=" << (enemy.definition != nullptr ? enemy.definition->capturedBehaviorCode : std::string{})
             << " behavior=" << enemy.behaviorId;
         ++shown;
         if (shown >= 4) {
@@ -1836,8 +2722,12 @@ CaptureResult EnemySystem::tryCapture(Player& player, SpellRingSystem& spellRing
         return result;
     }
 
-    for (auto& item : spellRing.items()) {
-        item.unlatchEnemy(best->id);
+    std::vector<SpellRingItem*> runtimeItems = spellRing.runtimeItemsMutable();
+    for (SpellRingItem* itemPtr : runtimeItems) {
+        if (itemPtr == nullptr) {
+            continue;
+        }
+        itemPtr->unlatchEnemy(best->id);
     }
     best->active = false;
     result.type = CaptureResultType::Success;

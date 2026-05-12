@@ -1,5 +1,6 @@
 #include "game/DiggingSystem.hpp"
 
+#include <algorithm>
 #include <random>
 
 namespace majo {
@@ -14,7 +15,14 @@ constexpr int CapturedExplosionChargeLimit = 4;
 
 bool capturedRewardAllowed(SpellRingItem& item, float totalTime)
 {
-    if (totalTime - item.capturedRewardLastTime < CapturedRewardCooldown) {
+    float interval = CapturedRewardCooldown;
+    if (item.hasCapturedBehavior("reward_drop")) {
+        interval = std::max(interval, static_cast<float>(item.capturedBehaviorInterval("reward_drop", CapturedRewardCooldown)));
+    }
+    if (item.hasCapturedBehavior("steal_or_dig")) {
+        interval = std::max(interval, static_cast<float>(item.capturedBehaviorInterval("steal_or_dig", CapturedRewardCooldown)));
+    }
+    if (totalTime - item.capturedRewardLastTime < interval) {
         return false;
     }
     if (totalTime - item.capturedRewardWindowStart > CapturedRewardWindowSeconds) {
@@ -92,7 +100,12 @@ void DiggingSystem::update(
     dugTiles_.clear();
     rewardDropRequests_.clear();
     capturedExplosionRequests_.clear();
-    for (auto& item : spellRing.items()) {
+    std::vector<SpellRingItem*> runtimeItems = spellRing.runtimeItemsMutable();
+    for (SpellRingItem* itemPtr : runtimeItems) {
+        if (itemPtr == nullptr) {
+            continue;
+        }
+        SpellRingItem& item = *itemPtr;
         if (item.broken()) {
             continue;
         }
@@ -102,7 +115,8 @@ void DiggingSystem::update(
         Vec2 digPosition = item.worldPosition;
         if (item.hasCapturedBehavior("dig_contact")) {
             const Vec2 outward = normalize(item.worldPosition - spellRing.center());
-            const Vec2 probe = item.worldPosition + outward * (item.hitRadius + 4.0f);
+            const float probeDistance = static_cast<float>(std::max(4.0, item.capturedBehaviorParamDouble("dig_contact", "probeDistance", 4.0)));
+            const Vec2 probe = item.worldPosition + outward * (item.hitRadius + probeDistance);
             if (map.isTileSolid(map.worldToTile(probe.x), map.worldToTile(probe.y))) {
                 digPosition = probe;
             }
@@ -144,7 +158,8 @@ void DiggingSystem::update(
             damageDigContactTile(map, item, tileX, tileY, hitTiles_, openedTiles_, dugTiles_);
             if (item.hasCapturedBehavior("dig_contact")) {
                 const Vec2 outward = normalize(item.worldPosition - spellRing.center());
-                const Vec2 extra = item.worldPosition + outward * (item.hitRadius + 12.0f);
+                const float extraProbeDistance = static_cast<float>(std::max(8.0, item.capturedBehaviorParamDouble("dig_contact", "extraProbeDistance", 12.0)));
+                const Vec2 extra = item.worldPosition + outward * (item.hitRadius + extraProbeDistance);
                 const int extraTileX = map.worldToTile(extra.x);
                 const int extraTileY = map.worldToTile(extra.y);
                 if (extraTileX != tileX || extraTileY != tileY) {
@@ -166,14 +181,21 @@ void DiggingSystem::update(
         }
         if ((item.hasCapturedBehavior("reward_drop") || item.hasCapturedBehavior("steal_or_dig")) &&
             capturedRewardAllowed(item, totalTime) &&
-            rollCapturedReward(CapturedRewardChanceWall)) {
+            rollCapturedReward(static_cast<float>(std::clamp(
+                item.hasCapturedBehavior("steal_or_dig")
+                    ? item.capturedBehaviorParamDouble("steal_or_dig", "chance", CapturedRewardChanceWall)
+                    : item.capturedBehaviorParamDouble("reward_drop", "chance", CapturedRewardChanceWall),
+                0.0,
+                1.0)))) {
             recordCapturedReward(item, totalTime, digPosition, rewardDropRequests_);
         }
         if (item.hasCapturedBehavior("charge_explode") && item.capturedExplodeSleepTimer <= 0.0f) {
+            const int requiredHits = std::max(1, item.capturedBehaviorParamInt("charge_explode", "count", CapturedExplosionChargeLimit));
+            const float restSeconds = static_cast<float>(std::max(0.1, item.capturedBehaviorParamDouble("charge_explode", "rest", 2.4)));
             ++item.capturedExplodeCharge;
-            if (item.capturedExplodeCharge >= CapturedExplosionChargeLimit) {
+            if (item.capturedExplodeCharge >= requiredHits) {
                 item.capturedExplodeCharge = 0;
-                item.capturedExplodeSleepTimer = 2.4f;
+                item.capturedExplodeSleepTimer = restSeconds;
                 capturedExplosionRequests_.push_back(digPosition);
             }
         }

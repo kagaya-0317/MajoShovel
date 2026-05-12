@@ -61,13 +61,16 @@ void DebugOverlay::render(
     const TerrainDebugInfo terrain = map.terrainDebugAtWorld(player.position);
     char buffer[1536];
     std::snprintf(buffer, sizeof(buffer),
-        "FPS: %03d\n敵: %03d\nチャンク: %02d/%02zu\nリング半径: %03d\nリング速度: %.2f\nレベル: %02d 経験値: %02d/%02d\n投げ待ち: %02d%%\nStage %d Seed %u\nStart (%d,%d) Goal (%d,%d)\n距離 %.1f 進捗 %.2f 主道距離 %.1f\n地形 %s HP %d/%d 硬さ %.2f\nWarp nearest %d %s discovered %d",
+        "FPS: %03d\n敵: %03d\nチャンク: %02d/%02zu\nリング半径: %03d\nリング速度: %.2f\nリング %d/%d 形状 %s\nレベル: %02d 経験値: %02d/%02d\n投げ待ち: %02d%%\nStage %d Seed %u\nStart (%d,%d) Goal (%d,%d)\n距離 %.1f 進捗 %.2f 主道距離 %.1f\n地形 %s HP %d/%d 硬さ %.2f\nWarp nearest %d %s discovered %d",
         static_cast<int>(time.fps()),
         enemies.activeCount(),
         map.activeChunkCount(),
         map.generatedChunkCount(),
         static_cast<int>(spellRing.radius()),
         spellRing.angularSpeed(),
+        spellRing.activeRingIndex() + 1,
+        spellRing.runtimeRingCount(),
+        ringShapeName(spellRing.activeRingShape()),
         player.level,
         player.xp,
         player.xpToNext,

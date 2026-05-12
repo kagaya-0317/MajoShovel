@@ -109,7 +109,7 @@ private:
 
     struct InventoryCarryState {
         InventorySystem inventory;
-        std::vector<SpellRingItem> ringItems;
+        std::array<std::vector<SpellRingItem>, SpellRingCount> ringItemsByRing;
         bool valid = false;
     };
 

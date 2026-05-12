@@ -47,7 +47,7 @@ constexpr int PauseMenuItemCount = 5;
 constexpr int GameOverItemCount = 2;
 constexpr int StageClearItemCount = 1;
 constexpr int RingCount = 3;
-constexpr int UnlockedRingCount = 1;
+constexpr int UnlockedRingCount = SpellRingCount;
 constexpr float RingAngleStep = Pi / 36.0f;
 constexpr float RingDragSnapMaxDelta = Pi / 6.0f;
 constexpr float RingSnapDuration = 0.14f;
@@ -897,6 +897,7 @@ UiRect gameOverPanelRect()
 bool isCapturedProjectileBehavior(std::string_view behaviorId)
 {
     return behaviorId == "shoot_web" ||
+        behaviorId == "throw_object" ||
         behaviorId == "throw_stone" ||
         behaviorId == "shoot_poison" ||
         behaviorId == "radial_spike" ||
@@ -909,7 +910,7 @@ std::string_view fallbackCapturedProjectileId(std::string_view behaviorId)
     if (behaviorId == "shoot_web") {
         return "web_thread";
     }
-    if (behaviorId == "throw_stone") {
+    if (behaviorId == "throw_stone" || behaviorId == "throw_object") {
         return "stone_bullet";
     }
     if (behaviorId == "shoot_poison") {
@@ -927,17 +928,37 @@ std::string_view fallbackCapturedProjectileId(std::string_view behaviorId)
     return "stone_bullet";
 }
 
-const std::string* capturedProjectileBehaviorId(const SpellRingItem& item)
+struct CapturedProjectileBehaviorPlan {
+    std::string behaviorId;
+    const CapturedBehaviorSpec* spec = nullptr;
+};
+
+std::optional<CapturedProjectileBehaviorPlan> capturedProjectileBehaviorPlan(const SpellRingItem& item)
 {
+    for (const CapturedBehaviorSpec& spec : item.capturedBehaviorSpecs) {
+        if (!isCapturedProjectileBehavior(spec.behavior)) {
+            continue;
+        }
+        return CapturedProjectileBehaviorPlan{
+            .behaviorId = spec.behavior,
+            .spec = &spec,
+        };
+    }
     if (isCapturedProjectileBehavior(item.capturedBehaviorId)) {
-        return &item.capturedBehaviorId;
+        return CapturedProjectileBehaviorPlan{
+            .behaviorId = item.capturedBehaviorId,
+            .spec = item.capturedBehaviorSpec(item.capturedBehaviorId),
+        };
     }
     for (const std::string& behaviorId : item.capturedBehaviorIds) {
         if (isCapturedProjectileBehavior(behaviorId)) {
-            return &behaviorId;
+            return CapturedProjectileBehaviorPlan{
+                .behaviorId = behaviorId,
+                .spec = item.capturedBehaviorSpec(behaviorId),
+            };
         }
     }
-    return nullptr;
+    return std::nullopt;
 }
 
 bool effectSpecsContain(const std::vector<EffectSpec>& specs, std::string_view effectId)
@@ -952,16 +973,27 @@ bool effectSpecsContain(const std::vector<EffectSpec>& specs, std::string_view e
     return false;
 }
 
-std::vector<EffectSpec> capturedProjectileEffects(std::string_view behaviorId, const BehaviorDefinition* behavior)
+std::vector<EffectSpec> capturedProjectileEffects(const SpellRingItem& item, std::string_view behaviorId, const BehaviorDefinition* behavior)
 {
     std::vector<EffectSpec> effects = behavior != nullptr ? behavior->capturedDefaultEffects : std::vector<EffectSpec>{};
     if (behaviorId == "shoot_web" && !effectSpecsContain(effects, "status_slow")) {
+        const double slowDuration = std::max(0.1, item.capturedBehaviorParamDouble("shoot_web", "duration", 2.0));
+        const double slowMultiplier = std::clamp(item.capturedBehaviorParamDouble("shoot_web", "speedMultiplier", 0.70), 0.05, 1.0);
         EffectSpec slow;
         slow.target = "enemy";
         slow.effects = {"status_slow"};
-        slow.values = {0.70};
-        slow.duration = 2.0;
+        slow.values = {slowMultiplier};
+        slow.duration = slowDuration;
         effects.push_back(std::move(slow));
+    } else if (behaviorId == "shoot_poison" && !effectSpecsContain(effects, "status_poison")) {
+        const double poisonDuration = std::max(0.1, item.capturedBehaviorParamDouble("shoot_poison", "duration", 2.0));
+        const double poisonDps = std::max(0.1, item.capturedBehaviorParamDouble("shoot_poison", "damagePerSecond", 1.0));
+        EffectSpec poison;
+        poison.target = "enemy";
+        poison.effects = {"status_poison"};
+        poison.values = {poisonDps};
+        poison.duration = poisonDuration;
+        effects.push_back(std::move(poison));
     }
     return effects;
 }
@@ -1065,20 +1097,64 @@ float ringOrbitRadius()
     return 138.0f;
 }
 
-Vec2 ringItemUiCenter(const SpellRingItem& item)
+float ringUiRadiusScale(const SpellRingSystem& spellRing)
 {
-    return ringOrbitCenter() + fromAngle(item.localAngle - Pi * 0.5f) * ringOrbitRadius();
+    return ringOrbitRadius() / std::max(1.0f, spellRing.radius());
 }
 
-Vec2 ringItemUiCenterAtAngle(float angle)
+Vec2 ringWorldToUi(const SpellRingSystem& spellRing, Vec2 worldPosition)
 {
-    return ringOrbitCenter() + fromAngle(angle - Pi * 0.5f) * ringOrbitRadius();
+    return worldPosition - spellRing.center() + ringOrbitCenter();
 }
 
-UiRect ringItemUiRect(const SpellRingItem& item)
+Vec2 ringUiToWorld(const SpellRingSystem& spellRing, Vec2 uiPosition)
+{
+    return uiPosition - ringOrbitCenter() + spellRing.center();
+}
+
+Vec2 ringItemUiCenter(
+    const SpellRingItem& item,
+    const SpellRingSystem& spellRing,
+    const RuntimeBalance& balance,
+    int itemIndex,
+    int itemCount)
+{
+    const Vec2 runtimeWorld = spellRing.sampleItemWorldPositionForRing(
+        spellRing.activeRingIndex(),
+        item.localAngle,
+        itemIndex,
+        itemCount,
+        ringUiRadiusScale(spellRing),
+        balance);
+    return ringWorldToUi(spellRing, runtimeWorld);
+}
+
+Vec2 ringItemUiCenterAtAngle(
+    float angle,
+    const SpellRingSystem& spellRing,
+    const RuntimeBalance& balance,
+    int itemIndex,
+    int itemCount)
+{
+    const Vec2 runtimeWorld = spellRing.sampleItemWorldPositionForRing(
+        spellRing.activeRingIndex(),
+        angle,
+        itemIndex,
+        itemCount,
+        ringUiRadiusScale(spellRing),
+        balance);
+    return ringWorldToUi(spellRing, runtimeWorld);
+}
+
+UiRect ringItemUiRect(
+    const SpellRingItem& item,
+    const SpellRingSystem& spellRing,
+    const RuntimeBalance& balance,
+    int itemIndex,
+    int itemCount)
 {
     constexpr Vec2 Size{54.0f, 54.0f};
-    const Vec2 center = ringItemUiCenter(item);
+    const Vec2 center = ringItemUiCenter(item, spellRing, balance, itemIndex, itemCount);
     return {center - Size * 0.5f, Size};
 }
 
@@ -1092,13 +1168,15 @@ float normalizeRingAngle(float angle)
     return angle;
 }
 
-float quantizeRingAngle(float angle)
+float shortestRingAngleDelta(float from, float to, RingShape shape, const RuntimeBalance& balance)
 {
-    return normalizeRingAngle(std::round(normalizeRingAngle(angle) / RingAngleStep) * RingAngleStep);
-}
+    if (shape == RingShape::Comet) {
+        const RingOrbitTuning tuning = makeRingOrbitTuning(balance);
+        const float arc = std::clamp(std::abs(tuning.cometArcDegrees), 10.0f, std::max(10.0f, tuning.cometMaxArcDegrees)) * (Pi / 180.0f);
+        const float raw = to - from;
+        return std::clamp(raw, -arc, arc);
+    }
 
-float shortestRingAngleDelta(float from, float to)
-{
     float delta = normalizeRingAngle(to) - normalizeRingAngle(from);
     if (delta > Pi) {
         delta -= Pi * 2.0f;
@@ -1108,10 +1186,22 @@ float shortestRingAngleDelta(float from, float to)
     return delta;
 }
 
-float ringAngleFromPoint(Vec2 point)
+float ringAngleFromPoint(Vec2 point, const SpellRingSystem& spellRing, const RuntimeBalance& balance)
 {
-    const Vec2 delta = point - ringOrbitCenter();
-    return quantizeRingAngle(std::atan2(delta.y, delta.x) + Pi * 0.5f);
+    const int ringIndex = spellRing.activeRingIndex();
+    const Vec2 worldPoint = ringUiToWorld(spellRing, point);
+    const float param = spellRing.nearestPathParamForRing(
+        ringIndex,
+        worldPoint,
+        spellRing.center(),
+        ringUiRadiusScale(spellRing),
+        balance,
+        320);
+    const RingShape shape = spellRing.ringShapeForIndex(ringIndex);
+    if (shape == RingShape::Comet) {
+        return spellRing.quantizeLocalAngle(param, balance);
+    }
+    return spellRing.quantizeLocalAngle(param - spellRing.ringBaseAngleForIndex(ringIndex), balance);
 }
 
 Vec2 ringItemBobOffset(const SpellRingItem& item, float totalSeconds)
@@ -1214,6 +1304,16 @@ const char* spellRingItemCategory(SpellRingItemType type)
     case SpellRingItemType::Object: return "Objects DB";
     }
     return "不明";
+}
+
+const char* ringShapeDisplayName(RingShape shape)
+{
+    switch (shape) {
+    case RingShape::Circle: return "円";
+    case RingShape::FigureEight: return "8の字";
+    case RingShape::Comet: return "彗星";
+    }
+    return "円";
 }
 
 const ItemData* objectForRingItem(const ObjectCatalog& catalog, const SpellRingItem& item)
@@ -1337,6 +1437,15 @@ ObjectDefinition makeCapturedObjectDefinition(const EnemyDefinition& enemy)
     item.tags = enemy.capturedTags;
     item.effectText = enemy.capturedEffectText;
     item.capturedBehaviorIds = enemy.capturedBehaviorIds;
+    item.capturedBehaviorSpecs.reserve(enemy.capturedBehaviorSpecs.size());
+    for (const EnemyBehaviorSpec& spec : enemy.capturedBehaviorSpecs) {
+        CapturedBehaviorSpec runtimeSpec;
+        runtimeSpec.trigger = spec.trigger;
+        runtimeSpec.behavior = spec.behavior;
+        runtimeSpec.params = spec.params;
+        runtimeSpec.intervalSeconds = spec.intervalSeconds;
+        item.capturedBehaviorSpecs.push_back(std::move(runtimeSpec));
+    }
     return item;
 }
 
@@ -1374,6 +1483,31 @@ SpellRingItemType ringTypeFromInt(int value)
         return SpellRingItemType::Torch;
     }
     return SpellRingItemType::Object;
+}
+
+const char* saveRingShapeName(RingShape shape)
+{
+    switch (shape) {
+    case RingShape::Circle: return "Circle";
+    case RingShape::FigureEight: return "FigureEight";
+    case RingShape::Comet: return "Comet";
+    }
+    return "Circle";
+}
+
+RingShape parseRingShapeValue(std::string_view value, RingShape fallback)
+{
+    const std::string lowered = lowerAscii(std::string(value));
+    if (lowered == "circle" || lowered == "0") {
+        return RingShape::Circle;
+    }
+    if (lowered == "figureeight" || lowered == "figure_eight" || lowered == "figure8" || lowered == "1") {
+        return RingShape::FigureEight;
+    }
+    if (lowered == "comet" || lowered == "2") {
+        return RingShape::Comet;
+    }
+    return fallback;
 }
 
 std::size_t countIssues(
@@ -1470,6 +1604,26 @@ void logDungeonGenerationAudit()
     logError("[audit] object_tags: special tags are metadata/filter labels; runtime effects go through EffectSpec and EffectDispatcher, not direct tag execution.");
     logError("[audit] stage_params: StageParams DB is intentionally not present for this pass.");
     logError("=== End dungeon generation extension pre-audit ===");
+}
+
+void logSpellRingShapeExtensionAudit()
+{
+    static bool logged = false;
+    if (logged) {
+        return;
+    }
+    logged = true;
+
+    logError("=== Spell ring shape extension pre-audit ===");
+    logError("[audit] orbit_calc: SpellRingSystem::update computes SpellRingItem::worldPosition via getRingItemWorldPosition().");
+    logError("[audit] render/dig/hit/light/projectile: Game::render, DiggingSystem, EnemySystem, ProjectileSystem consume SpellRingItem::worldPosition.");
+    logError("[audit] throw/offset: SpellRingSystem::center is driven by Player::spellRingShift (Input::ringOffsetHeld) and throw state transitions.");
+    logError("[audit] ring_ui: Ring screen placement uses localAngle and findNearestRingPathParam()/getRingItemWorldPosition().");
+    logError("[audit] save_load: ring lines persist item type/objectId/localAngle/instance data; load normalizes angles and falls back invalid item type to Object.");
+    logError("[audit] ring_shape_save: ring_shape_1..3 keys persist RingShape; unknown/invalid values fall back to Circle.");
+    logError("[audit] ring_slots: active ring index exists (0..2), ring runtime iterates all 3 slots via runtimeItems().");
+    logError("[audit] orbit_data: radius/speed/weight/orbit modifiers are in SpellRingSystem; per-item orbit effects are applied in Game::refreshOrbitEffects.");
+    logError("=== End spell ring shape extension pre-audit ===");
 }
 
 std::uint32_t makeDungeonSeed(int stageId, bool roguelike)
@@ -1766,6 +1920,7 @@ void Game::initializeWorld(bool captureRunStartInventory)
     // currentStageDefinition().terrainProfile and terrainHardnessMultiplier.
     tileMap_.updateAround(player_.position, 0.0f, balance_, dungeonLayout_);
     logDungeonGenerationAudit();
+    logSpellRingShapeExtensionAudit();
     if (captureRunStartInventory) {
         captureRunStartInventoryState();
     }
@@ -2124,6 +2279,9 @@ bool Game::loadEnemiesFromSheet()
 
     if (!enemyCatalog_.validationWarnings.empty()) {
         logError("Enemy DB warnings: " + std::to_string(enemyCatalog_.validationWarnings.size()));
+        for (const std::string& warning : enemyCatalog_.validationWarnings) {
+            logError("  [warning] " + warning);
+        }
     }
     return true;
 }
@@ -2997,13 +3155,14 @@ void Game::syncEncyclopediaFromInventoryAndRing()
             encyclopedia_.noteItemObtained(objectInstance.item, player_.position);
         }
     }
-    for (const SpellRingItem& item : spellRing_.items()) {
-        if (item.objectId.empty()) {
+    const std::vector<const SpellRingItem*> runtimeItems = spellRing_.runtimeItems();
+    for (const SpellRingItem* itemPtr : runtimeItems) {
+        if (itemPtr == nullptr || itemPtr->objectId.empty()) {
             continue;
         }
-        const ObjectDefinition* object = objectCatalog_.registry.findById(item.objectId);
+        const ObjectDefinition* object = objectCatalog_.registry.findById(itemPtr->objectId);
         if (object != nullptr) {
-            encyclopedia_.noteItemEquipped(*object, item.worldPosition);
+            encyclopedia_.noteItemEquipped(*object, itemPtr->worldPosition);
         }
     }
 }
@@ -3121,8 +3280,12 @@ void Game::refreshOrbitEffects()
         return;
     }
 
-    auto& ringItems = spellRing_.items();
-    for (SpellRingItem& item : ringItems) {
+    std::vector<SpellRingItem*> runtimeItems = spellRing_.runtimeItemsMutable();
+    for (SpellRingItem* itemPtr : runtimeItems) {
+        if (itemPtr == nullptr) {
+            continue;
+        }
+        SpellRingItem& item = *itemPtr;
         item.lightRadius = 0.0f;
         item.hiddenDetectionRadius = 0.0f;
         item.treasureDetectionRadius = 0.0f;
@@ -3157,29 +3320,40 @@ void Game::updateCapturedProjectileBehaviors(float dt)
         return;
     }
 
-    for (SpellRingItem& item : spellRing_.items()) {
+    std::vector<SpellRingItem*> runtimeItems = spellRing_.runtimeItemsMutable();
+    for (SpellRingItem* itemPtr : runtimeItems) {
+        if (itemPtr == nullptr) {
+            continue;
+        }
+        SpellRingItem& item = *itemPtr;
         if (item.broken()) {
             continue;
         }
 
-        const std::string* behaviorId = capturedProjectileBehaviorId(item);
-        if (behaviorId == nullptr) {
+        const std::optional<CapturedProjectileBehaviorPlan> plan = capturedProjectileBehaviorPlan(item);
+        if (!plan.has_value()) {
             item.capturedProjectileTimer = 0.0f;
+            item.capturedProjectileBurstRemaining = 0;
             continue;
         }
 
-        const auto behaviorIt = enemyCatalog_.behaviorsById.find(*behaviorId);
+        const std::string& behaviorId = plan->behaviorId;
+        const auto behaviorIt = enemyCatalog_.behaviorsById.find(behaviorId);
         const BehaviorDefinition* behavior = behaviorIt != enemyCatalog_.behaviorsById.end() ? &behaviorIt->second : nullptr;
-        std::string_view projectileId = fallbackCapturedProjectileId(*behaviorId);
+        std::string projectileId = std::string(fallbackCapturedProjectileId(behaviorId));
         if (behavior != nullptr && !behavior->defaultProjectileId.empty() && behavior->defaultProjectileId != "none") {
             projectileId = behavior->defaultProjectileId;
         }
+        if (behaviorId == "throw_object" || behaviorId == "throw_stone") {
+            projectileId = item.capturedBehaviorParamString("throw_object", "projectile", projectileId);
+        }
 
-        const float intervalFloor = *behaviorId == "radial_spike" ? CapturedRadialSpikeMinInterval : CapturedProjectileMinInterval;
+        const float intervalFloor = behaviorId == "radial_spike" ? CapturedRadialSpikeMinInterval : CapturedProjectileMinInterval;
         const float configuredInterval = behavior != nullptr && behavior->defaultIntervalSeconds > 0.0 && std::isfinite(behavior->defaultIntervalSeconds)
             ? static_cast<float>(behavior->defaultIntervalSeconds)
             : intervalFloor;
-        const float interval = std::max(intervalFloor, configuredInterval);
+        const float codedInterval = static_cast<float>(std::max(0.0, item.capturedBehaviorInterval(behaviorId, configuredInterval)));
+        const float interval = std::max(intervalFloor, codedInterval > 0.0f ? codedInterval : configuredInterval);
 
         item.capturedProjectileTimer = std::max(0.0f, item.capturedProjectileTimer - dt);
         if (item.capturedProjectileTimer > 0.0f) {
@@ -3187,35 +3361,93 @@ void Game::updateCapturedProjectileBehaviors(float dt)
         }
 
         const int activePlayerProjectiles = projectiles_.activeCount(ProjectileOwnerType::PlayerOrbit);
-        const int requestedProjectiles = *behaviorId == "radial_spike" ? RadialSpikeProjectileCount : 1;
+        const int radialCount = std::clamp(item.capturedBehaviorParamInt("radial_spike", "count", RadialSpikeProjectileCount), 1, 16);
+        const int requestedProjectiles = behaviorId == "radial_spike" ? radialCount : 1;
         if (activePlayerProjectiles + requestedProjectiles > MaxPlayerOrbitProjectiles) {
             item.capturedProjectileTimer = CapturedProjectileRetryInterval;
             continue;
         }
 
-        const std::vector<EffectSpec> effects = capturedProjectileEffects(*behaviorId, behavior);
+        ProjectileSpawnTuning tuning;
+        tuning.speedMultiplier = static_cast<float>(std::max(0.05, item.capturedBehaviorParamDouble(behaviorId, "projectileSpeed", 1.0)));
+        if (behaviorId == "shoot_fire") {
+            tuning.radiusScale = static_cast<float>(std::max(0.2, item.capturedBehaviorParamDouble("shoot_fire", "scale", 1.0)));
+        }
+        const int damageOverride = item.capturedBehaviorParamInt(behaviorId, "damage", -1);
+        if (damageOverride >= 0) {
+            tuning.damageOverride = damageOverride;
+        }
+
+        const std::vector<EffectSpec> effects = capturedProjectileEffects(item, behaviorId, behavior);
         const Vec2 outward = normalize(item.worldPosition - spellRing_.center());
         bool fired = false;
-        if (*behaviorId == "radial_spike") {
-            for (int i = 0; i < RadialSpikeProjectileCount; ++i) {
-                const float angle = Pi * 2.0f * static_cast<float>(i) / static_cast<float>(RadialSpikeProjectileCount);
+        if (behaviorId == "radial_spike") {
+            for (int i = 0; i < radialCount; ++i) {
+                const float angle = Pi * 2.0f * static_cast<float>(i) / static_cast<float>(radialCount);
                 const Vec2 direction = fromAngle(angle);
                 const Vec2 origin = item.worldPosition + direction * (item.hitRadius + 5.0f);
-                const bool spawned = projectiles_.spawn(projectileId, origin, direction, ProjectileOwnerType::PlayerOrbit, effects);
+                const bool spawned = projectiles_.spawn(projectileId, origin, direction, ProjectileOwnerType::PlayerOrbit, effects, tuning);
                 if (spawned) {
                     effects_.spawnMagicCast(origin, direction, particleElementForProjectile(projectileId), 8.0f);
                 }
                 fired = spawned || fired;
             }
-        } else {
+        } else if (behaviorId == "shoot_fire") {
+            const int volleyCount = std::clamp(item.capturedBehaviorParamInt("shoot_fire", "count", 1), 1, 5);
+            const float spreadDegrees = static_cast<float>(std::max(0.0, item.capturedBehaviorParamDouble("shoot_fire", "spread", 12.0)));
+            if (volleyCount > 1) {
+                const float spreadRadians = clamp(spreadDegrees, 0.0f, 90.0f) * (Pi / 180.0f);
+                const float start = -spreadRadians * 0.5f;
+                const float step = spreadRadians / static_cast<float>(volleyCount - 1);
+                const float baseAngle = std::atan2(outward.y, outward.x);
+                for (int i = 0; i < volleyCount; ++i) {
+                    const float angle = baseAngle + start + step * static_cast<float>(i);
+                    const Vec2 direction = fromAngle(angle);
+                    const Vec2 origin = item.worldPosition + direction * (item.hitRadius + 5.0f);
+                    const bool spawned = projectiles_.spawn(projectileId, origin, direction, ProjectileOwnerType::PlayerOrbit, effects, tuning);
+                    if (spawned) {
+                        effects_.spawnMagicCast(origin, direction, particleElementForProjectile(projectileId), 8.0f);
+                    }
+                    fired = spawned || fired;
+                }
+            }
+        }
+
+        if (!fired) {
             const Vec2 origin = item.worldPosition + outward * (item.hitRadius + 5.0f);
-            fired = projectiles_.spawn(projectileId, origin, outward, ProjectileOwnerType::PlayerOrbit, effects);
+            fired = projectiles_.spawn(projectileId, origin, outward, ProjectileOwnerType::PlayerOrbit, effects, tuning);
             if (fired) {
                 effects_.spawnMagicCast(origin, outward, particleElementForProjectile(projectileId), 8.0f);
             }
         }
 
-        item.capturedProjectileTimer = fired ? interval : CapturedProjectileRetryInterval;
+        if (!fired) {
+            item.capturedProjectileTimer = CapturedProjectileRetryInterval;
+            continue;
+        }
+
+        if (behaviorId == "shoot_water") {
+            const int burstCount = std::clamp(item.capturedBehaviorParamInt("shoot_water", "burstCount", 1), 1, 6);
+            const float burstInterval = static_cast<float>(std::max(0.02, item.capturedBehaviorParamDouble("shoot_water", "burstInterval", 0.14)));
+            if (burstCount > 1) {
+                if (item.capturedProjectileBurstRemaining <= 0) {
+                    item.capturedProjectileBurstRemaining = burstCount;
+                }
+                if (item.capturedProjectileBurstRemaining > 1) {
+                    --item.capturedProjectileBurstRemaining;
+                    item.capturedProjectileTimer = burstInterval;
+                } else {
+                    item.capturedProjectileBurstRemaining = burstCount;
+                    item.capturedProjectileTimer = interval;
+                }
+            } else {
+                item.capturedProjectileBurstRemaining = 0;
+                item.capturedProjectileTimer = interval;
+            }
+        } else {
+            item.capturedProjectileBurstRemaining = 0;
+            item.capturedProjectileTimer = interval;
+        }
     }
 }
 
@@ -3225,7 +3457,12 @@ void Game::updateCapturedUtilityBehaviors(float dt)
         return;
     }
 
-    for (SpellRingItem& item : spellRing_.items()) {
+    std::vector<SpellRingItem*> runtimeItems = spellRing_.runtimeItemsMutable();
+    for (SpellRingItem* itemPtr : runtimeItems) {
+        if (itemPtr == nullptr) {
+            continue;
+        }
+        SpellRingItem& item = *itemPtr;
         item.capturedExplodeSleepTimer = std::max(0.0f, item.capturedExplodeSleepTimer - dt);
         item.capturedMagnetVisualTimer = std::max(0.0f, item.capturedMagnetVisualTimer - dt);
 
@@ -3234,9 +3471,13 @@ void Game::updateCapturedUtilityBehaviors(float dt)
         }
 
         if (item.hasCapturedBehavior("magnet_pull")) {
-            const int pulledDrops = worldDrops_.pullMetalDrops(objectCatalog_, item.worldPosition, dt);
-            const int pulledEnemies = enemies_.pullMetalEnemies(item.worldPosition, tileMap_, dt);
-            const int pulledProjectiles = projectiles_.pullMetalProjectiles(item.worldPosition, dt);
+            const float radius = static_cast<float>(std::max(32.0, item.capturedBehaviorParamDouble("magnet_pull", "radius", 170.0)));
+            const float strength = static_cast<float>(std::max(0.05, item.capturedBehaviorParamDouble("magnet_pull", "strength", 1.0)));
+            const std::string targetTag = item.capturedBehaviorParamString("magnet_pull", "targetTag", "metal");
+            const bool affectMetal = targetTag.empty() || targetTag.find("metal") != std::string::npos;
+            const int pulledDrops = affectMetal ? worldDrops_.pullMetalDrops(objectCatalog_, item.worldPosition, dt * strength, radius) : 0;
+            const int pulledEnemies = affectMetal ? enemies_.pullMetalEnemies(item.worldPosition, tileMap_, dt * strength, radius) : 0;
+            const int pulledProjectiles = affectMetal ? projectiles_.pullMetalProjectiles(item.worldPosition, dt * strength, radius) : 0;
             if (pulledDrops + pulledEnemies + pulledProjectiles > 0 && item.capturedMagnetVisualTimer <= 0.0f) {
                 effects_.spawnAreaPulse(item.worldPosition, 42.0f, {120, 190, 245, 150});
                 item.capturedMagnetVisualTimer = CapturedMagnetVisualInterval;
@@ -3244,13 +3485,16 @@ void Game::updateCapturedUtilityBehaviors(float dt)
         }
 
         if (item.hasCapturedBehavior("wind_deflect")) {
+            const float interval = static_cast<float>(std::max(0.2, item.capturedBehaviorInterval("wind_deflect", CapturedWindInterval)));
+            const float radius = static_cast<float>(std::max(24.0, item.capturedBehaviorParamDouble("wind_deflect", "radius", 150.0)));
+            const float strength = static_cast<float>(std::max(0.1, item.capturedBehaviorParamDouble("wind_deflect", "strength", 1.0)));
             item.capturedWindTimer = std::max(0.0f, item.capturedWindTimer - dt);
             if (item.capturedWindTimer <= 0.0f) {
-                const int deflected = projectiles_.deflectEnemyProjectiles(item.worldPosition, 1.0f);
+                const int deflected = projectiles_.deflectEnemyProjectiles(item.worldPosition, strength, radius);
                 if (deflected > 0) {
                     effects_.spawnAreaPulse(item.worldPosition, 66.0f, {150, 235, 205, 155});
                 }
-                item.capturedWindTimer = CapturedWindInterval;
+                item.capturedWindTimer = interval;
             }
         } else {
             item.capturedWindTimer = 0.0f;
@@ -3270,8 +3514,12 @@ void Game::updateAmbientParticleEffects(float dt)
             ? player_.facing
             : player_.position - spellRing_.center();
         effects_.spawnRingTrail(spellRing_.center(), trailDirection);
-        for (const SpellRingItem& item : spellRing_.items()) {
-            effects_.spawnRingTrail(item.worldPosition, trailDirection);
+        const std::vector<const SpellRingItem*> runtimeItems = spellRing_.runtimeItems();
+        for (const SpellRingItem* itemPtr : runtimeItems) {
+            if (itemPtr == nullptr) {
+                continue;
+            }
+            effects_.spawnRingTrail(itemPtr->worldPosition, trailDirection);
         }
         ringTrailEffectTimer_ = 0.055f;
     }
@@ -3282,15 +3530,16 @@ void Game::updateAmbientParticleEffects(float dt)
     }
     ambientParticleTimer_ = 0.18f;
 
-    for (const SpellRingItem& item : spellRing_.items()) {
-        if (item.broken()) {
+    const std::vector<const SpellRingItem*> runtimeItems = spellRing_.runtimeItems();
+    for (const SpellRingItem* itemPtr : runtimeItems) {
+        if (itemPtr == nullptr || itemPtr->broken()) {
             continue;
         }
-        if (item.type == SpellRingItemType::Torch || item.lightRadius > 0.0f) {
-            effects_.spawnTorchFlicker(item.worldPosition);
+        if (itemPtr->type == SpellRingItemType::Torch || itemPtr->lightRadius > 0.0f) {
+            effects_.spawnTorchFlicker(itemPtr->worldPosition);
         }
-        if (!item.objectId.empty() || !item.addedEffects.empty() || item.hiddenDetectionRadius > 0.0f || item.treasureDetectionRadius > 0.0f) {
-            effects_.spawnSpecialItemGlimmer(item.worldPosition);
+        if (!itemPtr->objectId.empty() || !itemPtr->addedEffects.empty() || itemPtr->hiddenDetectionRadius > 0.0f || itemPtr->treasureDetectionRadius > 0.0f) {
+            effects_.spawnSpecialItemGlimmer(itemPtr->worldPosition);
         }
     }
 
@@ -3387,6 +3636,7 @@ void Game::cancelRingGrab()
     ringSnapActive_ = false;
     ringDragItemIndex_ = -1;
     if (!spellRing_.addItem(ringGrabbedItem_)) {
+        ringGrabbedItem_.ringIndex = spellRing_.activeRingIndex();
         spellRing_.items().push_back(ringGrabbedItem_);
         spellRing_.normalizeItemPlacements();
     }
@@ -3398,7 +3648,7 @@ Game::InventoryCarryState Game::captureInventoryCarryState() const
 {
     InventoryCarryState state;
     state.inventory = inventory_;
-    state.ringItems = spellRing_.items();
+    state.ringItemsByRing = spellRing_.ringItems();
     state.valid = true;
     return state;
 }
@@ -3412,13 +3662,11 @@ void Game::restoreInventoryCarryState(const InventoryCarryState& state)
     inventory_ = state.inventory;
     inventory_.setOpen(false);
     inventory_.cancelGrab();
-    if (!state.ringItems.empty()) {
-        spellRing_.items() = state.ringItems;
-        spellRing_.applyObjectParameters(objectCatalog_);
-        spellRing_.normalizeItemPlacements();
-        spellRing_.resetBaseWeightToCurrent();
-        refreshOrbitEffects();
-    }
+    spellRing_.ringItems() = state.ringItemsByRing;
+    spellRing_.applyObjectParameters(objectCatalog_);
+    spellRing_.normalizeItemPlacements();
+    spellRing_.resetBaseWeightToCurrent();
+    refreshOrbitEffects();
 }
 
 void Game::captureRunStartInventoryState()
@@ -4114,12 +4362,13 @@ void Game::updateChestNodes(const Input& input)
         const Vec2 center = tileWorldCenter(node.tile);
         bool shouldOpen = interact && distanceSquared(player_.position, center) <= interactRadiusSq;
         if (!shouldOpen) {
-            for (const SpellRingItem& item : spellRing_.items()) {
-                if (item.broken()) {
+            const std::vector<const SpellRingItem*> runtimeItems = spellRing_.runtimeItems();
+            for (const SpellRingItem* itemPtr : runtimeItems) {
+                if (itemPtr == nullptr || itemPtr->broken()) {
                     continue;
                 }
-                const float radius = item.hitRadius + ChestHitRadius;
-                if (distanceSquared(item.worldPosition, center) <= radius * radius) {
+                const float radius = itemPtr->hitRadius + ChestHitRadius;
+                if (distanceSquared(itemPtr->worldPosition, center) <= radius * radius) {
                     shouldOpen = true;
                     break;
                 }
@@ -4277,12 +4526,13 @@ void Game::updateCrateNodes()
         }
 
         const Vec2 center = tileWorldCenter(node.tile);
-        for (const SpellRingItem& item : spellRing_.items()) {
-            if (item.broken()) {
+        const std::vector<const SpellRingItem*> runtimeItems = spellRing_.runtimeItems();
+        for (const SpellRingItem* itemPtr : runtimeItems) {
+            if (itemPtr == nullptr || itemPtr->broken()) {
                 continue;
             }
-            const float radius = item.hitRadius + CrateHitRadius;
-            if (distanceSquared(item.worldPosition, center) <= radius * radius) {
+            const float radius = itemPtr->hitRadius + CrateHitRadius;
+            if (distanceSquared(itemPtr->worldPosition, center) <= radius * radius) {
                 destroyCrateNode(node);
                 break;
             }
@@ -5682,7 +5932,7 @@ bool Game::loadSaveData()
 
     InventorySystem loadedInventory;
     EncyclopediaSystem loadedEncyclopedia;
-    std::vector<SpellRingItem> loadedRingItems;
+    std::array<std::vector<SpellRingItem>, SpellRingCount> loadedRingItemsByRing{};
     std::vector<InventoryObjectStack> loadedWarehouseStacks;
     std::vector<InventoryObjectInstance> loadedWarehouseInstances;
     int loadedMoney = 0;
@@ -5714,6 +5964,10 @@ bool Game::loadSaveData()
     bool loadedAutoSaveOnReturn = false;
     std::vector<std::string> loadedStoryFlags;
     int warningCount = 0;
+    std::array<RingShape, SpellRingCount> loadedRingShapes{};
+    for (int i = 0; i < SpellRingCount; ++i) {
+        loadedRingShapes[static_cast<std::size_t>(i)] = RingShape::Circle;
+    }
 
     while (std::getline(file, line)) {
         std::istringstream stream(line);
@@ -5884,7 +6138,28 @@ bool Game::loadSaveData()
             if (!stream.fail() && materialTypeFromSaveName(materialId, materialType)) {
                 loadedInventory.setMaterialCount(materialType, count);
             }
+        } else if (key == "ring_shape_1" || key == "ring_shape_2" || key == "ring_shape_3") {
+            std::string shapeValue;
+            stream >> shapeValue;
+            if (!stream.fail()) {
+                int index = 0;
+                if (key == "ring_shape_2") {
+                    index = 1;
+                } else if (key == "ring_shape_3") {
+                    index = 2;
+                }
+                loadedRingShapes[static_cast<std::size_t>(index)] = parseRingShapeValue(shapeValue, RingShape::Circle);
+            }
+        } else if (key == "ring_shape") {
+            int index = 0;
+            std::string shapeValue;
+            stream >> index >> shapeValue;
+            if (!stream.fail() && index >= 1 && index <= SpellRingCount) {
+                const int ringIndex = index - 1;
+                loadedRingShapes[static_cast<std::size_t>(ringIndex)] = parseRingShapeValue(shapeValue, RingShape::Circle);
+            }
         } else if (key == "ring") {
+            // Legacy per-item record. Ring shape is stored separately in ring_shape_1..3.
             int type = 0;
             std::string objectId;
             std::string damageType;
@@ -5909,7 +6184,15 @@ bool Game::loadSaveData()
                 if (item.instanceId == "-") {
                     item.instanceId.clear();
                 }
-                loadedRingItems.push_back(item);
+                int loadedRingIndex = 0;
+                stream >> loadedRingIndex;
+                if (stream.fail()) {
+                    loadedRingIndex = 0;
+                    stream.clear();
+                }
+                loadedRingIndex = std::clamp(loadedRingIndex, 0, SpellRingCount - 1);
+                item.ringIndex = loadedRingIndex;
+                loadedRingItemsByRing[static_cast<std::size_t>(loadedRingIndex)].push_back(item);
             }
         }
     }
@@ -5917,13 +6200,14 @@ bool Game::loadSaveData()
     inventory_ = loadedInventory;
     inventory_.setOpen(false);
     inventory_.cancelGrab();
-    if (!loadedRingItems.empty()) {
-        spellRing_.items() = std::move(loadedRingItems);
-        spellRing_.applyObjectParameters(objectCatalog_);
-        spellRing_.normalizeItemPlacements();
-        spellRing_.resetBaseWeightToCurrent();
-        refreshOrbitEffects();
+    for (int i = 0; i < SpellRingCount; ++i) {
+        spellRing_.setRingShapeForIndex(i, loadedRingShapes[static_cast<std::size_t>(i)]);
     }
+    spellRing_.ringItems() = std::move(loadedRingItemsByRing);
+    spellRing_.applyObjectParameters(objectCatalog_);
+    spellRing_.normalizeItemPlacements();
+    spellRing_.resetBaseWeightToCurrent();
+    refreshOrbitEffects();
     money_ = std::max(0, loadedMoney);
     unlockedStages_ = std::max(1, loadedUnlockedStages);
     unlockedWarpPointCount_ = std::max(0, loadedUnlockedWarpPointCount);
@@ -6014,6 +6298,9 @@ bool Game::saveSaveData(std::string& message) const
     file << "processing_unlock_level " << processingUnlockLevel_ << "\n";
     file << "ring_workshop_unlocked " << ringWorkshopUnlocked_ << "\n";
     file << "auto_save_on_return " << autoSaveOnReturn_ << "\n";
+    for (int i = 0; i < SpellRingCount; ++i) {
+        file << "ring_shape_" << (i + 1) << " " << saveRingShapeName(spellRing_.ringShapeForIndex(i)) << "\n";
+    }
     for (const std::string& flag : storyFlags_) {
         if (!flag.empty()) {
             file << "story_flag " << flag << "\n";
@@ -6089,28 +6376,31 @@ bool Game::saveSaveData(std::string& message) const
         const MaterialType type = static_cast<MaterialType>(index);
         file << "material " << materialTypeSaveName(type) << " " << inventory_.materialCount(type) << "\n";
     }
-    for (const SpellRingItem& item : spellRing_.items()) {
-        file << "ring "
-            << ringTypeToInt(item.type) << " "
-            << saveRingObjectId(item) << " "
-            << item.damage << " "
-            << item.damageType << " "
-            << item.digPower << " "
-            << item.durability << " "
-            << item.maxDurability << " "
-            << item.weight << " "
-            << item.hitRadius << " "
-            << item.hitInterval << " "
-            << item.localAngle << " "
-            << (item.instanceId.empty() ? "-" : item.instanceId) << " "
-            << item.enhanceLevel << " "
-            << item.attackBonus << " "
-            << item.digBonus << " "
-            << item.durabilityBonus << " "
-            << item.weightModifier << " "
-            << item.sizeModifier << " "
-            << item.protectionEnabled << " "
-            << item.isBroken << "\n";
+    for (int ringIndex = 0; ringIndex < SpellRingCount; ++ringIndex) {
+        for (const SpellRingItem& item : spellRing_.itemsForRing(ringIndex)) {
+            file << "ring "
+                << ringTypeToInt(item.type) << " "
+                << saveRingObjectId(item) << " "
+                << item.damage << " "
+                << item.damageType << " "
+                << item.digPower << " "
+                << item.durability << " "
+                << item.maxDurability << " "
+                << item.weight << " "
+                << item.hitRadius << " "
+                << item.hitInterval << " "
+                << item.localAngle << " "
+                << (item.instanceId.empty() ? "-" : item.instanceId) << " "
+                << item.enhanceLevel << " "
+                << item.attackBonus << " "
+                << item.digBonus << " "
+                << item.durabilityBonus << " "
+                << item.weightModifier << " "
+                << item.sizeModifier << " "
+                << item.protectionEnabled << " "
+                << item.isBroken << " "
+                << ringIndex << "\n";
+        }
     }
 
     if (!file) {
@@ -6281,7 +6571,9 @@ void Game::updateRingScreen(const Input& input, UiContext& ui, float dt)
             ringSnapElapsed_ = std::min(RingSnapDuration, ringSnapElapsed_ + dt);
             const float t = RingSnapDuration <= 0.0f ? 1.0f : clamp(ringSnapElapsed_ / RingSnapDuration, 0.0f, 1.0f);
             const float eased = 1.0f - (1.0f - t) * (1.0f - t) * (1.0f - t);
-            ringDragDisplayAngle_ = normalizeRingAngle(ringSnapStartAngle_ + shortestRingAngleDelta(ringSnapStartAngle_, ringSnapTargetAngle_) * eased);
+            ringDragDisplayAngle_ = spellRing_.normalizeLocalAngle(
+                ringSnapStartAngle_ + shortestRingAngleDelta(ringSnapStartAngle_, ringSnapTargetAngle_, spellRing_.runtimeRingShape(), balance_) * eased,
+                balance_);
             if (t >= 1.0f) {
                 items[static_cast<std::size_t>(ringDragItemIndex_)].localAngle = ringSnapTargetAngle_;
                 ringSnapActive_ = false;
@@ -6315,7 +6607,7 @@ void Game::updateRingScreen(const Input& input, UiContext& ui, float dt)
     } else {
         ringSlotSelection_ = 0;
     }
-    const bool actualRing = spellRing_.activeRingIndex() == 0;
+    const bool actualRing = true;
 
     if ((ringDragPending_ || ringDragActive_) && input.pausePressed()) {
         ringDragPending_ = false;
@@ -6341,13 +6633,13 @@ void Game::updateRingScreen(const Input& input, UiContext& ui, float dt)
                 ringDragPending_ = false;
             }
             if (ringDragActive_) {
-                ringDragDisplayAngle_ = ringAngleFromPoint(input.mouseScreen());
+                ringDragDisplayAngle_ = ringAngleFromPoint(input.mouseScreen(), spellRing_, balance_);
             }
         }
 
         if (input.mouseLeftReleased()) {
             if (ringDragActive_) {
-                const float desired = ringAngleFromPoint(input.mouseScreen());
+                const float desired = ringAngleFromPoint(input.mouseScreen(), spellRing_, balance_);
                 const std::optional<float> snapAngle = spellRing_.nearestPlaceableAngle(ringDragItemIndex_, desired, RingDragSnapMaxDelta);
                 ringSnapStartAngle_ = desired;
                 ringSnapTargetAngle_ = snapAngle.value_or(ringDragOriginalAngle_);
@@ -6367,11 +6659,11 @@ void Game::updateRingScreen(const Input& input, UiContext& ui, float dt)
     }
 
     for (int i = 0; i < static_cast<int>(items.size()); ++i) {
-        const UiRect rect = ringItemUiRect(items[static_cast<std::size_t>(i)]);
+        const UiRect rect = ringItemUiRect(items[static_cast<std::size_t>(i)], spellRing_, balance_, i, static_cast<int>(items.size()));
         if (rect.contains(ui.mouse())) {
             ringSlotSelection_ = i;
         }
-        if (actualRing && ui.pressed(rect)) {
+        if (ui.pressed(rect)) {
             ringSlotSelection_ = i;
             ringDragPending_ = true;
             ringDragActive_ = false;
@@ -6422,12 +6714,7 @@ void Game::updateRingScreen(const Input& input, UiContext& ui, float dt)
         return;
     }
 
-    if (!actualRing) {
-        if (input.useItemPressed() || input.confirmPressed() || input.addRingPressed() || input.grabOrPlacePressed()) {
-            ringStatus_ = "このリングは未実装です";
-        }
-        return;
-    }
+    (void)actualRing;
 
     if (input.addRingPressed()) {
         if (ringGrabActive_) {
@@ -8193,8 +8480,8 @@ void Game::renderRingScreen(Renderer& renderer, float totalTime) const
     renderer.setScreenSpace();
     const UiRect panel = ringPanelRect();
     constexpr std::string_view RingHelpText = UnlockedRingCount > 1
-        ? "Z/X・1-3 リング選択  Q/E アイテム選択  ←/→ 角度  F/Enter 詳細  R 外す  G つかむ/置く  P 保護  Esc 戻る"
-        : "Q/E アイテム選択  ←/→ 角度  F/Enter 詳細  R 外す  G つかむ/置く  P 保護  Esc 戻る";
+        ? "Z/X・1-3 リング選択  Q/E アイテム選択  A/D・←/→ 位置  F/Enter 詳細  R 外す  G つかむ/置く  P 保護  Esc 戻る"
+        : "Q/E アイテム選択  A/D・←/→ 位置  F/Enter 詳細  R 外す  G つかむ/置く  P 保護  Esc 戻る";
     UiWindowScope ringWindow(renderer, "ring.manage", panel, "リング", RingHelpText);
 
     char buffer[192];
@@ -8203,44 +8490,49 @@ void Game::renderRingScreen(Renderer& renderer, float totalTime) const
         drawUiButton(renderer, ringTabRect(i), buffer, i == spellRing_.activeRingIndex());
     }
 
-    const bool actualRing = spellRing_.activeRingIndex() == 0;
+    const bool actualRing = true;
     const auto& items = spellRing_.items();
+    (void)actualRing;
+    const RingShape activeShape = spellRing_.activeRingShape();
 
-    if (actualRing) {
-        std::snprintf(buffer, sizeof(buffer), "装着 %02d/%02d   半径 %.0f   速度 %.2f   重量 %.1f/%.1fkg   重量補正 %.2f",
-            static_cast<int>(items.size()),
-            spellRing_.maxItemCount(),
-            spellRing_.radius(),
-            spellRing_.effectiveAngularSpeed(),
-            spellRing_.totalEquippedWeight(),
-            spellRing_.maxEquippedWeight(),
-            spellRing_.weightSpeedMultiplier());
-        renderer.drawText(panel.pos + Vec2{48.0f, 520.0f}, buffer, {202, 206, 216, 255}, 2);
-    } else {
-        renderer.drawText(panel.pos + Vec2{48.0f, 520.0f}, "半径 -   速度 -   ずらし距離 -   投げクールダウン -", {202, 206, 216, 255}, 2);
-    }
+    std::snprintf(buffer, sizeof(buffer), "形状 %s   装着 %02d/%02d   半径 %.0f   速度 %.2f   重量 %.1f/%.1fkg   重量補正 %.2f",
+        ringShapeDisplayName(activeShape),
+        static_cast<int>(items.size()),
+        spellRing_.maxItemCount(),
+        spellRing_.radius(),
+        spellRing_.effectiveAngularSpeed(),
+        spellRing_.totalEquippedWeight(),
+        spellRing_.maxEquippedWeight(),
+        spellRing_.weightSpeedMultiplier());
+    renderer.drawText(panel.pos + Vec2{48.0f, 520.0f}, buffer, {202, 206, 216, 255}, 2);
 
     renderer.drawText(panel.pos + Vec2{48.0f, 160.0f}, "リング配置", {246, 248, 255, 255}, 3);
     const Vec2 orbitCenter = ringOrbitCenter();
-    const float orbitRadius = ringOrbitRadius();
-    renderer.drawCircle(orbitCenter, orbitRadius, {130, 125, 160, 230});
-    renderer.drawCircle(orbitCenter, 8.0f, {198, 190, 220, 210});
-    for (int tick = 0; tick < 72; ++tick) {
-        const float angle = static_cast<float>(tick) * RingAngleStep - Pi * 0.5f;
-        const Vec2 outward = fromAngle(angle);
-        const float tickLength = tick % 6 == 0 ? 10.0f : 5.0f;
-        renderer.drawLine(
-            orbitCenter + outward * (orbitRadius - tickLength),
-            orbitCenter + outward * orbitRadius,
-            tick % 6 == 0 ? Color{120, 128, 154, 180} : Color{90, 98, 120, 120});
+    std::vector<Vec2> orbitPath = spellRing_.pathSamplePointsForRing(
+        spellRing_.activeRingIndex(),
+        spellRing_.center(),
+        ringUiRadiusScale(spellRing_),
+        balance_,
+        160);
+    for (Vec2& point : orbitPath) {
+        point = ringWorldToUi(spellRing_, point);
     }
-    for (int i = 0; actualRing && i < static_cast<int>(items.size()); ++i) {
+    for (std::size_t i = 1; i < orbitPath.size(); ++i) {
+        renderer.drawLine(orbitPath[i - 1], orbitPath[i], {130, 125, 160, 230});
+    }
+    renderer.drawCircle(orbitCenter, 8.0f, {198, 190, 220, 210});
+    for (int i = 0; i < static_cast<int>(items.size()); ++i) {
         const SpellRingItem& item = items[static_cast<std::size_t>(i)];
         float displayAngle = item.localAngle;
         if (i == ringDragItemIndex_ && (ringDragActive_ || ringSnapActive_)) {
             displayAngle = ringDragDisplayAngle_;
         }
-        const Vec2 itemCenter = ringItemUiCenterAtAngle(displayAngle) + ringItemBobOffset(item, totalTime);
+        const Vec2 itemCenter = ringItemUiCenterAtAngle(
+            displayAngle,
+            spellRing_,
+            balance_,
+            i,
+            static_cast<int>(items.size())) + ringItemBobOffset(item, totalTime);
         const Vec2 outward = normalize(itemCenter - orbitCenter);
         const bool selected = i == ringSlotSelection_;
         const bool invalidDragPosition = selected && ringDragActive_ && !spellRing_.canPlaceItemAtAngle(i, displayAngle);
@@ -8252,9 +8544,7 @@ void Game::renderRingScreen(Renderer& renderer, float totalTime) const
     }
 
     std::string ringDetailTitle = "空き";
-    if (!actualRing) {
-        ringDetailTitle = "未実装リング";
-    } else if (ringSlotSelection_ < static_cast<int>(items.size())) {
+    if (ringSlotSelection_ < static_cast<int>(items.size())) {
         ringDetailTitle = ringItemDisplayName(objectCatalog_, items[ringSlotSelection_]);
     }
 
@@ -8262,21 +8552,12 @@ void Game::renderRingScreen(Renderer& renderer, float totalTime) const
     drawUiSubPanel(renderer, ringDetailPanel);
     float detailLineY = drawUiDetailHeader(renderer, ringDetailPanel, ringDetailTitle);
 
-    if (!actualRing) {
-        drawUiDetailText(renderer, ringDetailPanel, detailLineY, "このリングは未実装です。");
-        drawUiDetailText(renderer, ringDetailPanel, detailLineY, "-");
-        drawUiDetailLine(renderer, ringDetailPanel, detailLineY, "通常効果", "-");
-        drawUiDetailLine(renderer, ringDetailPanel, detailLineY, "軌道効果", "-");
-        drawUiDetailLine(renderer, ringDetailPanel, detailLineY, "攻撃力", "-");
-        drawUiDetailLine(renderer, ringDetailPanel, detailLineY, "ダメージ", "-");
-        drawUiDetailLine(renderer, ringDetailPanel, detailLineY, "掘削力", "-");
-        drawUiDetailLine(renderer, ringDetailPanel, detailLineY, "耐久力", "-");
-        drawUiDetailLine(renderer, ringDetailPanel, detailLineY, "重さ", "-");
-    } else if (ringSlotSelection_ < static_cast<int>(items.size())) {
+    if (ringSlotSelection_ < static_cast<int>(items.size())) {
         const SpellRingItem& item = items[ringSlotSelection_];
         const ItemData* object = objectForRingItem(objectCatalog_, item);
         drawUiDetailText(renderer, ringDetailPanel, detailLineY, object != nullptr && !object->description.empty() ? object->description : "-");
         drawUiDetailText(renderer, ringDetailPanel, detailLineY, object != nullptr && !object->effectText.empty() ? object->effectText : "-");
+        drawUiDetailLine(renderer, ringDetailPanel, detailLineY, "形状", ringShapeDisplayName(activeShape));
         drawUiDetailLine(renderer, ringDetailPanel, detailLineY, "通常効果", object != nullptr ? effectSummaryText(objectCatalog_, object->normalEffects) : "-");
         drawUiDetailLine(renderer, ringDetailPanel, detailLineY, "軌道効果", object != nullptr ? effectSummaryText(objectCatalog_, object->orbitEffects) : effectSummaryText(objectCatalog_, item.addedEffects));
         std::snprintf(buffer, sizeof(buffer), "%d", item.damage);
@@ -8295,6 +8576,7 @@ void Game::renderRingScreen(Renderer& renderer, float totalTime) const
     } else {
         drawUiDetailText(renderer, ringDetailPanel, detailLineY, "アイテム未配置");
         drawUiDetailText(renderer, ringDetailPanel, detailLineY, "-");
+        drawUiDetailLine(renderer, ringDetailPanel, detailLineY, "形状", ringShapeDisplayName(activeShape));
         drawUiDetailLine(renderer, ringDetailPanel, detailLineY, "通常効果", "-");
         drawUiDetailLine(renderer, ringDetailPanel, detailLineY, "軌道効果", "-");
         drawUiDetailLine(renderer, ringDetailPanel, detailLineY, "攻撃力", "-");
@@ -8387,19 +8669,20 @@ void Game::update(const Input& input, const Time& time)
         updateChestNodes(input);
         updateCrateNodes();
 
-        for (const SpellRingItem& item : spellRing_.items()) {
-            if (item.objectId.empty() || item.broken()) {
+        const std::vector<const SpellRingItem*> runtimeItems = spellRing_.runtimeItems();
+        for (const SpellRingItem* itemPtr : runtimeItems) {
+            if (itemPtr == nullptr || itemPtr->objectId.empty() || itemPtr->broken()) {
                 continue;
             }
-            const ObjectDefinition* object = objectCatalog_.registry.findById(item.objectId);
+            const ObjectDefinition* object = objectCatalog_.registry.findById(itemPtr->objectId);
             if (object == nullptr) {
                 continue;
             }
-            if (item.lightRadius > 0.0f) {
-                encyclopedia_.noteItemEffect(*object, "light", "リング上で周囲を照らす", item.worldPosition);
+            if (itemPtr->lightRadius > 0.0f) {
+                encyclopedia_.noteItemEffect(*object, "light", "リング上で周囲を照らす", itemPtr->worldPosition);
             }
-            if (item.hiddenDetectionRadius > 0.0f || item.treasureDetectionRadius > 0.0f) {
-                encyclopedia_.noteItemEffect(*object, "detect", "探知効果を発揮する", item.worldPosition);
+            if (itemPtr->hiddenDetectionRadius > 0.0f || itemPtr->treasureDetectionRadius > 0.0f) {
+                encyclopedia_.noteItemEffect(*object, "detect", "探知効果を発揮する", itemPtr->worldPosition);
             }
         }
 
@@ -8485,6 +8768,8 @@ void Game::update(const Input& input, const Time& time)
             balance_,
             objectCatalog_,
             worldDrops_,
+            player_.position,
+            std::vector<LightSource>{},
             effectDispatcher_,
             projectiles_,
             &effectDiscoveries);
@@ -8536,6 +8821,11 @@ void Game::update(const Input& input, const Time& time)
                 }
             } else if (event.type == EnemyEventType::RewardDrop) {
                 worldDrops_.spawnRewardDrop(objectCatalog_, event.position, runStats_.elapsedSeconds);
+            } else if (event.type == EnemyEventType::ObjectDrop) {
+                const int dropCount = std::max(1, event.objectDropCount);
+                for (int i = 0; i < dropCount; ++i) {
+                    worldDrops_.spawnObjectDrop(objectCatalog_, event.objectDropId, event.position, runStats_.elapsedSeconds);
+                }
             } else if (event.type == EnemyEventType::CapturedExplosion) {
                 continue;
             } else {
@@ -8762,12 +9052,16 @@ void Game::render(Renderer& renderer, const Time& time)
 
     renderer.setWorldSpace(&camera_);
 
+    const std::vector<const SpellRingItem*> runtimeItems = spellRing_.runtimeItems();
     std::vector<LightSource> itemLights;
-    for (const auto& item : spellRing_.items()) {
-        if (item.lightRadius > 0.0f) {
-            itemLights.push_back({item.worldPosition, item.lightRadius});
-        } else if (item.type == SpellRingItemType::Torch) {
-            itemLights.push_back({item.worldPosition, balance_.lightRadius});
+    for (const SpellRingItem* itemPtr : runtimeItems) {
+        if (itemPtr == nullptr) {
+            continue;
+        }
+        if (itemPtr->lightRadius > 0.0f) {
+            itemLights.push_back({itemPtr->worldPosition, itemPtr->lightRadius});
+        } else if (itemPtr->type == SpellRingItemType::Torch) {
+            itemLights.push_back({itemPtr->worldPosition, balance_.lightRadius});
         }
     }
     if (warpPointsEnabled_) {
@@ -8786,7 +9080,79 @@ void Game::render(Renderer& renderer, const Time& time)
 
     const bool ringCenterVisible = tileMap_.isLit(spellRing_.center(), player_.position, itemLights);
     if (ringCenterVisible) {
-        renderer.drawCircle(spellRing_.center(), spellRing_.radius(), spellRing_.state() == SpellRingState::Normal ? Color{130, 125, 160, 255} : Color{220, 185, 90, 255});
+        constexpr std::array<RingShape, 3> ShapeRenderOrder{
+            RingShape::Circle,
+            RingShape::FigureEight,
+            RingShape::Comet,
+        };
+        const Color orbitColorBase = spellRing_.state() == SpellRingState::Normal ? Color{130, 125, 160, 255} : Color{220, 185, 90, 255};
+        const auto ringOrbitColor = [&](int ringIndex, Color activeColor, int inactiveAlpha) -> Color {
+            if (ringIndex == spellRing_.activeRingIndex()) {
+                return activeColor;
+            }
+            return Color{activeColor.r, activeColor.g, activeColor.b, static_cast<std::uint8_t>(std::clamp(inactiveAlpha, 0, 255))};
+        };
+
+        for (RingShape shapePass : ShapeRenderOrder) {
+            for (int ringIndex = 0; ringIndex < SpellRingCount; ++ringIndex) {
+                const auto& ringItems = spellRing_.itemsForRing(ringIndex);
+                if (ringItems.empty() || spellRing_.ringShapeForIndex(ringIndex) != shapePass) {
+                    continue;
+                }
+
+                if (shapePass == RingShape::Circle) {
+                    const Color circleColor = ringOrbitColor(ringIndex, {orbitColorBase.r, orbitColorBase.g, orbitColorBase.b, 110}, 58);
+                    renderer.drawCircle(spellRing_.center(), spellRing_.radius(), circleColor);
+                    continue;
+                }
+
+                const std::vector<Vec2> orbitPath = spellRing_.pathSamplePointsForRing(ringIndex, spellRing_.center(), 1.0f, balance_, 160);
+                if (orbitPath.size() < 2) {
+                    continue;
+                }
+
+                if (shapePass == RingShape::FigureEight) {
+                    const Color eightColor = ringOrbitColor(ringIndex, {154, 190, 232, 132}, 74);
+                    for (std::size_t i = 1; i < orbitPath.size(); ++i) {
+                        // Sparse segment rendering keeps the 8-shape readable when multiple rings overlap.
+                        if ((i % 4) == 0) {
+                            continue;
+                        }
+                        renderer.drawLine(orbitPath[i - 1], orbitPath[i], eightColor);
+                    }
+                    renderer.fillCircle(spellRing_.center(), ringIndex == spellRing_.activeRingIndex() ? 2.6f : 2.0f, {182, 210, 240, eightColor.a});
+                    continue;
+                }
+
+                const Color cometCore = ringOrbitColor(ringIndex, {250, 228, 164, 138}, 74);
+                const Color cometTail = ringOrbitColor(ringIndex, {178, 206, 255, 96}, 48);
+                const std::size_t headIndex = orbitPath.size() - 1;
+                const std::size_t trailStart = static_cast<std::size_t>(std::max<int>(1, static_cast<int>(orbitPath.size()) - 44));
+                Vec2 previousTrailPoint = orbitPath[trailStart];
+                bool hasPreviousTrailPoint = false;
+                for (std::size_t i = trailStart; i <= headIndex; ++i) {
+                    const float t = static_cast<float>(i - trailStart) / static_cast<float>(std::max<std::size_t>(1, headIndex - trailStart));
+                    const float tailRadius = 1.1f + 1.9f * t;
+                    const std::uint8_t tailAlpha = static_cast<std::uint8_t>(clamp(24.0f + 88.0f * t, 18.0f, 160.0f));
+                    const Color tailColor{
+                        static_cast<std::uint8_t>(clamp(static_cast<float>(cometTail.r) + 42.0f * t, 0.0f, 255.0f)),
+                        static_cast<std::uint8_t>(clamp(static_cast<float>(cometTail.g) + 28.0f * t, 0.0f, 255.0f)),
+                        cometTail.b,
+                        tailAlpha,
+                    };
+                    if ((i % 2) == 0) {
+                        renderer.fillCircle(orbitPath[i], tailRadius, tailColor);
+                    }
+                    if (hasPreviousTrailPoint && (i % 3) != 0) {
+                        renderer.drawLine(previousTrailPoint, orbitPath[i], {tailColor.r, tailColor.g, tailColor.b, static_cast<std::uint8_t>(tailAlpha / 2)});
+                    }
+                    previousTrailPoint = orbitPath[i];
+                    hasPreviousTrailPoint = true;
+                }
+                renderer.fillCircle(orbitPath[headIndex], ringIndex == spellRing_.activeRingIndex() ? 4.2f : 3.3f, cometCore);
+                renderer.fillCircle(orbitPath[headIndex], ringIndex == spellRing_.activeRingIndex() ? 2.1f : 1.7f, {255, 248, 220, static_cast<std::uint8_t>(std::min(255, cometCore.a + 40))});
+            }
+        }
     }
     if (spellRing_.state() != SpellRingState::Normal && ringCenterVisible) {
         renderer.drawLine(player_.position, spellRing_.center(), {150, 110, 80, 100});
@@ -8808,42 +9174,51 @@ void Game::render(Renderer& renderer, const Time& time)
         renderer.drawLine(player_.position, player_.position + player_.facing * 22.0f, {235, 210, 255, 255});
     }
 
-    for (const auto& item : spellRing_.items()) {
-        if (!tileMap_.isLit(item.worldPosition, player_.position, itemLights)) {
+    for (const SpellRingItem* itemPtr : runtimeItems) {
+        if (itemPtr == nullptr || !tileMap_.isLit(itemPtr->worldPosition, player_.position, itemLights)) {
             continue;
         }
+        const SpellRingItem& item = *itemPtr;
+        const int ringIndex = std::clamp(item.ringIndex, 0, SpellRingCount - 1);
+        const RingShape ringShape = spellRing_.ringShapeForIndex(ringIndex);
+        const int ringItemCount = static_cast<int>(spellRing_.itemsForRing(ringIndex).size());
+        const float cometVisualScale = ringShape == RingShape::Comet
+            ? std::clamp(1.0f - std::max(0, ringItemCount - 10) * 0.014f, 0.76f, 1.0f)
+            : 1.0f;
         const Vec2 drawPosition = item.worldPosition + ringItemBobOffset(item, time.totalSeconds());
-        renderer.drawActorShadow(item.worldPosition, ringItemShadowVisualSize(item));
+        renderer.drawActorShadow(item.worldPosition, ringItemShadowVisualSize(item) * cometVisualScale);
         const ItemData* object = objectForRingItem(objectCatalog_, item);
         if (item.type == SpellRingItemType::Shovel) {
             if (renderer.hasIconSheet()) {
-                renderer.drawIcon(ShovelIconIndex, drawPosition - Vec2{IconDrawSize * 0.5f, IconDrawSize * 0.5f});
+                const float iconSize = IconDrawSize * cometVisualScale;
+                renderer.drawIcon(ShovelIconIndex, drawPosition - Vec2{iconSize * 0.5f, iconSize * 0.5f}, {iconSize, iconSize});
             } else {
                 const bool drewImage = object != nullptr &&
                     drawObjectImage(
                         renderer,
                         *object,
                         drawPosition,
-                        {RingObjectImageMaxSize, RingObjectImageMaxSize});
+                        {RingObjectImageMaxSize * cometVisualScale, RingObjectImageMaxSize * cometVisualScale});
                 if (!drewImage) {
-                    renderer.fillCircle(drawPosition, item.hitRadius, {178, 184, 190, 255});
+                    renderer.fillCircle(drawPosition, item.hitRadius * cometVisualScale, {178, 184, 190, 255});
                     const Vec2 outward = normalize(item.worldPosition - spellRing_.center());
-                    renderer.drawLine(drawPosition, drawPosition + outward * 15.0f, {90, 96, 102, 255});
+                    renderer.drawLine(drawPosition, drawPosition + outward * (15.0f * cometVisualScale), {90, 96, 102, 255});
                 }
             }
         } else if (item.type == SpellRingItemType::Torch) {
             if (renderer.hasIconSheet()) {
-                renderer.drawIcon(TorchIconIndex, drawPosition - Vec2{IconDrawSize * 0.5f, IconDrawSize * 0.5f});
+                const float iconSize = IconDrawSize * cometVisualScale;
+                renderer.drawIcon(TorchIconIndex, drawPosition - Vec2{iconSize * 0.5f, iconSize * 0.5f}, {iconSize, iconSize});
             } else {
                 const bool drewImage = object != nullptr &&
                     drawObjectImage(
                         renderer,
                         *object,
                         drawPosition,
-                        {RingObjectImageMaxSize, RingObjectImageMaxSize});
+                        {RingObjectImageMaxSize * cometVisualScale, RingObjectImageMaxSize * cometVisualScale});
                 if (!drewImage) {
-                    renderer.fillCircle(drawPosition, item.hitRadius, {242, 122, 25, 255});
-                    renderer.fillCircle(drawPosition + Vec2{2.0f, -2.0f}, 4.0f, {255, 238, 98, 255});
+                    renderer.fillCircle(drawPosition, item.hitRadius * cometVisualScale, {242, 122, 25, 255});
+                    renderer.fillCircle(drawPosition + Vec2{2.0f, -2.0f} * cometVisualScale, 4.0f * cometVisualScale, {255, 238, 98, 255});
                 }
             }
         } else {
@@ -8852,10 +9227,10 @@ void Game::render(Renderer& renderer, const Time& time)
                     renderer,
                     *object,
                     drawPosition,
-                    {RingObjectImageMaxSize, RingObjectImageMaxSize});
+                    {RingObjectImageMaxSize * cometVisualScale, RingObjectImageMaxSize * cometVisualScale});
             if (!drewImage) {
-                renderer.fillCircle(drawPosition, item.hitRadius, {96, 122, 210, 255});
-                renderer.drawCircle(drawPosition, item.hitRadius + 3.0f, {160, 202, 255, 255});
+                renderer.fillCircle(drawPosition, item.hitRadius * cometVisualScale, {96, 122, 210, 255});
+                renderer.drawCircle(drawPosition, item.hitRadius * cometVisualScale + 3.0f, {160, 202, 255, 255});
             }
         }
         if (item.hiddenDetectionRadius > 0.0f) {

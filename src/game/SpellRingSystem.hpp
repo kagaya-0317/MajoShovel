@@ -7,16 +7,65 @@
 #include "game/OrbitModifiers.hpp"
 #include "game/SpellRingItem.hpp"
 #include "game/Player.hpp"
+#include <array>
 #include <optional>
 #include <vector>
 
 namespace majo {
+
+enum class RingShape {
+    Circle = 0,
+    FigureEight = 1,
+    Comet = 2
+};
 
 enum class SpellRingState {
     Normal,
     Thrown,
     Returning
 };
+
+constexpr int SpellRingCount = 3;
+
+RingShape defaultRingShapeForIndex(int ringIndex);
+const char* ringShapeName(RingShape shape);
+float ringShapeOrbitSpeedMultiplier(RingShape shape, const RuntimeBalance& balance);
+
+struct RingOrbitTuning {
+    float figure8WidthMultiplier = 1.20f;
+    float figure8HeightMultiplier = 0.70f;
+    float figure8ShapeRotationSpeed = 0.25f;
+
+    float cometRadiusMultiplier = 1.25f;
+    float cometArcDegrees = 100.0f;
+    float cometSpeedMultiplier = 1.10f;
+    float cometTrailLength = 0.20f;
+    float cometLaneSpacing = 10.0f;
+    float cometMaxArcDegrees = 130.0f;
+};
+
+RingOrbitTuning makeRingOrbitTuning(const RuntimeBalance& balance);
+
+struct RingOrbitContext {
+    RingShape shape = RingShape::Circle;
+    float radius = 0.0f;
+    float shapeRotation = 0.0f;
+    int itemIndex = 0;
+    int itemCount = 1;
+    RingOrbitTuning tuning{};
+};
+
+Vec2 getRingCenterWorldPosition(Vec2 playerPosition, Vec2 playerFacing, float spellRingShift);
+Vec2 getRingItemLocalPosition(float localAngle, const RingOrbitContext& context);
+Vec2 getRingItemWorldPosition(Vec2 center, float localAngle, const RingOrbitContext& context);
+Vec2 getRingItemVelocity(
+    float localAngle,
+    float localAngularSpeed,
+    float shapeRotationSpeed,
+    Vec2 centerVelocity,
+    const RingOrbitContext& context);
+std::vector<Vec2> getRingPathSamplePoints(Vec2 center, const RingOrbitContext& context, int sampleCount = 96);
+float findNearestRingPathParam(Vec2 worldPoint, Vec2 center, const RingOrbitContext& context, int sampleCount = 256);
 
 class SpellRingSystem {
 public:
@@ -46,9 +95,33 @@ public:
     void applyObjectParameters(const ObjectCatalog& catalog);
     void removeBrokenItems();
     void resetBaseWeightToCurrent();
+    void setRingShapeForIndex(int ringIndex, RingShape shape);
+    RingShape ringShapeForIndex(int ringIndex) const;
+    RingShape activeRingShape() const;
+    RingShape runtimeRingShape() const;
+    float ringBaseAngleForIndex(int ringIndex) const;
+    float shapeRotationForRing(int ringIndex) const;
+    float ringAngularSpeedForIndex(int ringIndex, const RuntimeBalance& balance) const;
+    RingOrbitContext makeOrbitContext(int itemIndex, int itemCount, float radiusScale, const RuntimeBalance& balance) const;
+    RingOrbitContext makeOrbitContextForRing(int ringIndex, int itemIndex, int itemCount, float radiusScale, const RuntimeBalance& balance) const;
+    Vec2 sampleItemWorldPosition(float localAngle, int itemIndex, int itemCount, float radiusScale, const RuntimeBalance& balance) const;
+    Vec2 sampleItemWorldPositionForRing(int ringIndex, float localAngle, int itemIndex, int itemCount, float radiusScale, const RuntimeBalance& balance) const;
+    float nearestPathParam(Vec2 worldPoint, Vec2 center, float radiusScale, const RuntimeBalance& balance, int sampleCount = 256) const;
+    float nearestPathParamForRing(int ringIndex, Vec2 worldPoint, Vec2 center, float radiusScale, const RuntimeBalance& balance, int sampleCount = 256) const;
+    std::vector<Vec2> pathSamplePoints(Vec2 center, float radiusScale, const RuntimeBalance& balance, int sampleCount = 96) const;
+    std::vector<Vec2> pathSamplePointsForRing(int ringIndex, Vec2 center, float radiusScale, const RuntimeBalance& balance, int sampleCount = 96) const;
+    float normalizeLocalAngle(float angle, const RuntimeBalance& balance) const;
+    float quantizeLocalAngle(float angle, const RuntimeBalance& balance) const;
 
-    const std::vector<SpellRingItem>& items() const { return items_; }
-    std::vector<SpellRingItem>& items() { return items_; }
+    const std::vector<SpellRingItem>& items() const { return itemsByRing_[static_cast<std::size_t>(activeRingIndex_)]; }
+    std::vector<SpellRingItem>& items() { return itemsByRing_[static_cast<std::size_t>(activeRingIndex_)]; }
+    const std::vector<SpellRingItem>& itemsForRing(int ringIndex) const;
+    std::vector<SpellRingItem>& itemsForRing(int ringIndex);
+    const std::array<std::vector<SpellRingItem>, SpellRingCount>& ringItems() const { return itemsByRing_; }
+    std::array<std::vector<SpellRingItem>, SpellRingCount>& ringItems() { return itemsByRing_; }
+    std::vector<const SpellRingItem*> runtimeItems() const;
+    std::vector<SpellRingItem*> runtimeItemsMutable();
+    int runtimeRingCount() const { return SpellRingCount; }
     Vec2 center() const { return center_; }
     float radius() const { return radius_; }
     float angularSpeed() const { return angularSpeed_; }
@@ -66,27 +139,37 @@ public:
     const OrbitModifiers& orbitModifiers() const { return orbitModifiers_; }
     SpellRingState state() const { return state_; }
     int activeRingIndex() const { return activeRingIndex_; }
+    float shapeRotation() const { return shapeRotationForRing(activeRingIndex_); }
     float cooldownRatio(const Player& player, const RuntimeBalance& balance) const;
 
 private:
-    std::vector<SpellRingItem> items_;
+    std::array<std::vector<SpellRingItem>, SpellRingCount> itemsByRing_{};
+    std::array<RingShape, SpellRingCount> ringShapes_{
+        RingShape::Circle,
+        RingShape::FigureEight,
+        RingShape::Comet,
+    };
     Vec2 center_{};
     Vec2 throwDirection_{1.0f, 0.0f};
     Vec2 throwStart_{};
     float radius_ = 54.0f;
     float angularSpeed_ = 3.4f;
     float baseEquippedWeight_ = 0.0f;
-    float baseAngle_ = 0.0f;
+    std::array<float, SpellRingCount> baseAngles_{};
+    std::array<float, SpellRingCount> shapeRotations_{};
     float throwTime_ = 0.0f;
     float capturedHealTimer_ = 0.0f;
     float enemyOrbitSpeedDebuffMultiplier_ = 1.0f;
     float enemyOrbitSpeedDebuffTimer_ = 0.0f;
     int activeRingIndex_ = 0;
     OrbitModifiers orbitModifiers_{};
+    RingOrbitTuning orbitTuning_{};
     SpellRingState state_ = SpellRingState::Normal;
 
-    bool canPlaceItemAtAngle(const SpellRingItem& item, float angle, int ignoreIndex = -1) const;
-    std::optional<float> findBestPlacementAngle(const SpellRingItem& item, int ignoreIndex = -1) const;
+    std::vector<SpellRingItem>& activeItems();
+    const std::vector<SpellRingItem>& activeItems() const;
+    bool canPlaceItemAtAngle(const SpellRingItem& item, float angle, int ignoreIndex, const RingOrbitTuning& tuning) const;
+    std::optional<float> findBestPlacementAngle(const SpellRingItem& item, int ignoreIndex, const RingOrbitTuning& tuning) const;
 };
 
 }

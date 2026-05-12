@@ -1,12 +1,15 @@
 #include "game/ProjectileSystem.hpp"
 
+#include "engine/Log.hpp"
 #include "game/Collision.hpp"
 #include "game/EnemySystem.hpp"
 
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <string>
 #include <string_view>
+#include <unordered_set>
 
 namespace majo {
 
@@ -22,9 +25,13 @@ struct ProjectilePrototype {
     std::initializer_list<std::string_view> tags;
 };
 
-constexpr std::array<ProjectilePrototype, 8> Prototypes{{
+constexpr std::array<ProjectilePrototype, 12> Prototypes{{
     {"stone_bullet", 190.0f, 4.5f, 2.4f, 1, "physical", {"small", "stone"}},
+    {"big_stone_bullet", 150.0f, 7.5f, 2.6f, 3, "physical", {"stone"}},
+    {"weapon_throw", 220.0f, 4.8f, 2.0f, 2, "physical", {"metal", "small"}},
     {"poison_spit", 155.0f, 5.0f, 2.8f, 1, "water", {"small", "poison"}},
+    {"paralyze_shot", 170.0f, 4.4f, 2.4f, 0, "none", {"small", "paralyze"}},
+    {"mud_blob", 150.0f, 5.8f, 2.6f, 0, "earth", {"mud", "poison"}},
     {"cactus_needle", 260.0f, 2.5f, 1.8f, 1, "physical", {"small", "needle"}},
     {"water_shot", 210.0f, 4.0f, 2.2f, 1, "water", {"small", "water"}},
     {"fire_breath", 145.0f, 7.0f, 1.2f, 2, "fire", {"fire", "short_range"}},
@@ -49,6 +56,13 @@ const ProjectilePrototype& prototypeFor(std::string_view id)
         return *it;
     }
     return Prototypes.front();
+}
+
+bool hasPrototype(std::string_view id)
+{
+    return std::any_of(Prototypes.begin(), Prototypes.end(), [id](const ProjectilePrototype& prototype) {
+        return prototype.id == id;
+    });
 }
 
 Color colorFor(std::string_view damageType)
@@ -96,6 +110,14 @@ bool isSmallProjectile(const Projectile& projectile)
     return projectile.radius <= 5.0f || hasProjectileTag(projectile, "small");
 }
 
+bool isHeavyProjectile(const Projectile& projectile)
+{
+    return projectile.radius >= 6.0f ||
+        projectile.damage >= 2 ||
+        hasProjectileTag(projectile, "stone") ||
+        hasProjectileTag(projectile, "metal");
+}
+
 bool blocksProjectile(const SpellRingItem& item, const SpellRingSystem& spellRing, const Projectile& projectile)
 {
     if (item.broken()) {
@@ -108,7 +130,7 @@ bool blocksProjectile(const SpellRingItem& item, const SpellRingSystem& spellRin
     }
 
     if (item.hasCapturedBehavior("heavy_guard") &&
-        (projectile.damageType == "physical" || isSmallProjectile(projectile)) &&
+        (projectile.damageType == "physical" || isHeavyProjectile(projectile)) &&
         circlesOverlap(projectile.position, projectile.radius, item.worldPosition, item.hitRadius + 10.0f)) {
         return true;
     }
@@ -145,6 +167,25 @@ bool ProjectileSystem::spawn(std::string_view projectileId, Vec2 position, Vec2 
 
 bool ProjectileSystem::spawn(std::string_view projectileId, Vec2 position, Vec2 direction, ProjectileOwnerType ownerType, const std::vector<EffectSpec>& effects)
 {
+    return spawn(projectileId, position, direction, ownerType, effects, ProjectileSpawnTuning{});
+}
+
+bool ProjectileSystem::spawn(
+    std::string_view projectileId,
+    Vec2 position,
+    Vec2 direction,
+    ProjectileOwnerType ownerType,
+    const std::vector<EffectSpec>& effects,
+    const ProjectileSpawnTuning& tuning)
+{
+    if (!hasPrototype(projectileId)) {
+        static std::unordered_set<std::string> loggedUnknownProjectileIds;
+        if (loggedUnknownProjectileIds.insert(std::string(projectileId)).second) {
+            logError("[warning] ProjectileSystem: undefined projectile id \"" + std::string(projectileId) + "\"; spawn ignored");
+        }
+        return false;
+    }
+
     Projectile* projectile = projectiles_.acquire();
     if (projectile == nullptr) {
         return false;
@@ -154,12 +195,13 @@ bool ProjectileSystem::spawn(std::string_view projectileId, Vec2 position, Vec2 
     *projectile = Projectile{};
     projectile->active = true;
     projectile->position = position;
-    projectile->velocity = normalize(direction) * prototype.speed;
-    projectile->radius = prototype.radius;
+    const float speedMultiplier = std::max(0.05f, tuning.speedMultiplier);
+    projectile->velocity = normalize(direction) * (prototype.speed * speedMultiplier);
+    projectile->radius = std::max(0.5f, prototype.radius * std::max(0.1f, tuning.radiusScale));
     projectile->lifetime = prototype.lifetime;
     projectile->ownerType = ownerType;
     projectile->projectileId = std::string(prototype.id);
-    projectile->damage = prototype.damage;
+    projectile->damage = tuning.damageOverride >= 0 ? tuning.damageOverride : prototype.damage;
     projectile->damageType = std::string(prototype.damageType);
     for (std::string_view tag : prototype.tags) {
         projectile->tags.emplace_back(tag);
@@ -191,6 +233,38 @@ void ProjectileSystem::update(
 
         projectile.position += projectile.velocity * dt;
         if (map.isCircleBlocked(projectile.position, projectile.radius)) {
+            double mudRadius = 0.0;
+            double mudSlow = 1.0;
+            double mudDamagePerSecond = 0.0;
+            double mudDuration = 0.0;
+            std::string mudDamageType = "poison";
+            for (const EffectSpec& spec : projectile.effects) {
+                for (const std::string& effect : spec.effects) {
+                    if (effect == "mud_zone") {
+                        if (spec.values.size() >= 1) {
+                            mudRadius = spec.values[0];
+                        }
+                        if (spec.values.size() >= 2) {
+                            mudSlow = spec.values[1];
+                        }
+                        if (spec.values.size() >= 3) {
+                            mudDamagePerSecond = spec.values[2];
+                        }
+                        mudDuration = spec.duration;
+                    } else if (effect.rfind("mud_damage_type_", 0) == 0) {
+                        mudDamageType = effect.substr(std::string("mud_damage_type_").size());
+                    }
+                }
+            }
+            if (mudDuration > 0.0 && mudRadius > 0.0) {
+                enemies.addMudZone(
+                    projectile.position,
+                    static_cast<float>(mudRadius),
+                    static_cast<float>(mudDuration),
+                    static_cast<float>(mudSlow),
+                    static_cast<float>(mudDamagePerSecond),
+                    mudDamageType);
+            }
             projectile.active = false;
             continue;
         }
@@ -198,10 +272,15 @@ void ProjectileSystem::update(
         if (projectile.ownerType == ProjectileOwnerType::Enemy) {
             bool consumedByRing = false;
             const SpellRingItem* blockingItem = nullptr;
-            for (const SpellRingItem& item : spellRing.items()) {
+            const std::vector<const SpellRingItem*> runtimeItems = spellRing.runtimeItems();
+            for (const SpellRingItem* itemPtr : runtimeItems) {
+                if (itemPtr == nullptr) {
+                    continue;
+                }
+                const SpellRingItem& item = *itemPtr;
                 if (blocksProjectile(item, spellRing, projectile)) {
                     consumedByRing = true;
-                    blockingItem = &item;
+                    blockingItem = itemPtr;
                     break;
                 }
             }
@@ -229,13 +308,62 @@ void ProjectileSystem::update(
             if (projectile.projectileId == "wind_wave") {
                 pushPlayer(player, map, projectile.velocity, 18.0f);
             }
-            if (!projectile.effects.empty()) {
+            std::vector<EffectSpec> dispatchEffects;
+            dispatchEffects.reserve(projectile.effects.size());
+            double mudRadius = 0.0;
+            double mudSlow = 1.0;
+            double mudDamagePerSecond = 0.0;
+            double mudDuration = 0.0;
+            std::string mudDamageType = "poison";
+            for (const EffectSpec& spec : projectile.effects) {
+                bool customOnly = false;
+                for (const std::string& effect : spec.effects) {
+                    if (effect == "status_paralyze") {
+                        const double paralyzeDuration = spec.duration > 0.0 ? spec.duration : 1.5;
+                        player.status.applyState(
+                            "status_paralyze",
+                            1.0,
+                            paralyzeDuration,
+                            "enemy:shoot_paralyze",
+                            StateApplyMode::KeepLonger);
+                        customOnly = true;
+                    } else if (effect == "mud_zone") {
+                        if (spec.values.size() >= 1) {
+                            mudRadius = spec.values[0];
+                        }
+                        if (spec.values.size() >= 2) {
+                            mudSlow = spec.values[1];
+                        }
+                        if (spec.values.size() >= 3) {
+                            mudDamagePerSecond = spec.values[2];
+                        }
+                        mudDuration = spec.duration;
+                        customOnly = true;
+                    } else if (effect.rfind("mud_damage_type_", 0) == 0) {
+                        mudDamageType = effect.substr(std::string("mud_damage_type_").size());
+                        customOnly = true;
+                    }
+                }
+                if (!customOnly) {
+                    dispatchEffects.push_back(spec);
+                }
+            }
+            if (mudDuration > 0.0 && mudRadius > 0.0) {
+                enemies.addMudZone(
+                    projectile.position,
+                    static_cast<float>(mudRadius),
+                    static_cast<float>(mudDuration),
+                    static_cast<float>(mudSlow),
+                    static_cast<float>(mudDamagePerSecond),
+                    mudDamageType);
+            }
+            if (!dispatchEffects.empty()) {
                 EffectContext context;
                 context.owner = &player;
                 context.position = projectile.position;
                 context.triggerType = EffectTriggerType::Hit;
                 context.logUnimplementedEffects = false;
-                effectDispatcher.dispatch(projectile.effects, context);
+                effectDispatcher.dispatch(dispatchEffects, context);
             }
             projectile.active = false;
             continue;
@@ -259,14 +387,15 @@ int ProjectileSystem::activeCount(ProjectileOwnerType ownerType) const
     return count;
 }
 
-int ProjectileSystem::pullMetalProjectiles(Vec2 center, float dt)
+int ProjectileSystem::pullMetalProjectiles(Vec2 center, float dt, float radius)
 {
     if (dt <= 0.0f) {
         return 0;
     }
 
     int pulled = 0;
-    const float radiusSq = CapturedMagnetProjectileRadius * CapturedMagnetProjectileRadius;
+    const float effectiveRadius = std::max(8.0f, radius);
+    const float radiusSq = effectiveRadius * effectiveRadius;
     for (Projectile& projectile : projectiles_.items()) {
         if (!projectile.active || !hasProjectileTag(projectile, "metal")) {
             continue;
@@ -277,7 +406,7 @@ int ProjectileSystem::pullMetalProjectiles(Vec2 center, float dt)
             continue;
         }
         const float distance = std::sqrt(distanceSq);
-        const float falloff = 1.0f - clamp(distance / CapturedMagnetProjectileRadius, 0.0f, 1.0f);
+        const float falloff = 1.0f - clamp(distance / effectiveRadius, 0.0f, 1.0f);
         projectile.velocity += normalize(toCenter) * (CapturedMagnetProjectileAcceleration * falloff * dt);
         ++pulled;
         if (pulled >= CapturedMagnetProjectileLimit) {
@@ -287,14 +416,15 @@ int ProjectileSystem::pullMetalProjectiles(Vec2 center, float dt)
     return pulled;
 }
 
-int ProjectileSystem::deflectEnemyProjectiles(Vec2 center, float dt)
+int ProjectileSystem::deflectEnemyProjectiles(Vec2 center, float dt, float radius)
 {
     if (dt <= 0.0f) {
         return 0;
     }
 
     int deflected = 0;
-    const float radiusSq = CapturedWindDeflectRadius * CapturedWindDeflectRadius;
+    const float effectiveRadius = std::max(8.0f, radius);
+    const float radiusSq = effectiveRadius * effectiveRadius;
     for (Projectile& projectile : projectiles_.items()) {
         if (!projectile.active || projectile.ownerType != ProjectileOwnerType::Enemy) {
             continue;
