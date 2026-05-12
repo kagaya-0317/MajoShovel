@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 #include "data/EnemyCatalog.hpp"
 #include "data/ObjectCatalog.hpp"
@@ -45,7 +45,14 @@ struct EffectDiscoveryEvent {
     std::string objectName;
     std::string effectKey;
     std::string description;
+    std::string note;
     Vec2 position{};
+};
+
+enum class EffectRevealMode {
+    RevealedOnly,
+    WithUnknown,
+    DebugAll,
 };
 
 class EncyclopediaSystem {
@@ -59,6 +66,12 @@ public:
     void noteItemEquipped(const ObjectDefinition& object, Vec2 position);
     void noteItemEffect(const ObjectDefinition& object, std::string_view effectKey, std::string_view description, Vec2 position);
     void noteEffectEvent(const EffectDiscoveryEvent& event, const ObjectCatalog& catalog);
+    bool discoverObjectEffect(
+        std::string_view objectId,
+        std::string_view effectKey,
+        const ObjectCatalog& catalog,
+        Vec2 worldPosition,
+        std::string_view optionalNote = {});
     void noteEnemyDiscovered(std::string_view enemyId, std::string_view enemyName, Vec2 position);
     void noteEnemyDefeated(std::string_view enemyId, std::string_view enemyName, Vec2 position);
 
@@ -66,6 +79,7 @@ public:
     EncyclopediaStage enemyStage(std::string_view enemyId) const;
     bool hasObjectEffect(std::string_view objectId, std::string_view effectKey) const;
     std::vector<std::string> objectEffects(std::string_view objectId) const;
+    std::vector<std::string> getObjectEffectDisplayLines(std::string_view objectId, const ObjectCatalog& catalog, EffectRevealMode revealMode) const;
 
     void loadEntry(EncyclopediaKind kind, std::string id, EncyclopediaStage stage);
     void loadEffect(std::string objectId, std::string effectKey);
@@ -84,6 +98,9 @@ private:
     };
 
     static bool isTreasure(const ObjectDefinition& object);
+    static std::string canonicalEffectKey(std::string_view effectKey);
+    static const DiscoveryEffectLine* findEffectLineByKey(const ObjectDefinition& object, std::string_view effectKey);
+    static std::size_t findEffectLineIndexByKey(const ObjectDefinition& object, std::string_view effectKey);
     static std::string makeEffectText(const ObjectDefinition& object, std::string_view description);
     bool raiseObjectStage(const ObjectDefinition& object, EncyclopediaStage stage, Vec2 position, bool popup);
     bool raiseEnemyStage(std::string_view enemyId, std::string_view enemyName, EncyclopediaStage stage, Vec2 position, bool popup);

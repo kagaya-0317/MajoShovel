@@ -1,4 +1,4 @@
-#include "data/ObjectCatalog.hpp"
+﻿#include "data/ObjectCatalog.hpp"
 
 #include <algorithm>
 #include <array>
@@ -6,6 +6,7 @@
 #include <cerrno>
 #include <charconv>
 #include <cmath>
+#include <cstdio>
 #include <cstdlib>
 #include <initializer_list>
 #include <string>
@@ -68,9 +69,11 @@ constexpr std::array<std::string_view, 10> AllowedCategories = {
     "\xE7\x9B\xBE",
 };
 
-constexpr std::array<std::string_view, 9> AllowedDamageTypes = {
+constexpr std::array<std::string_view, 11> AllowedDamageTypes = {
     "none",
-    "physical",
+    "slash",
+    "blunt",
+    "pierce",
     "fire",
     "ice",
     "thunder",
@@ -304,6 +307,221 @@ bool isAllowed(std::string_view value, const auto& allowedValues)
     return std::any_of(allowedValues.begin(), allowedValues.end(), [value](std::string_view allowed) {
         return value == allowed;
     });
+}
+
+bool isLegacyPhysicalDamageType(std::string_view value)
+{
+    return equalsIgnoreCase(trim(value), "physical");
+}
+
+std::string lowerAscii(std::string_view text)
+{
+    std::string value(text);
+    for (char& ch : value) {
+        ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+    }
+    return value;
+}
+
+std::string formatDiscoveryNumber(double value)
+{
+    if (std::fabs(value - std::round(value)) < 0.001) {
+        return std::to_string(static_cast<int>(std::lround(value)));
+    }
+    char buffer[64];
+    std::snprintf(buffer, sizeof(buffer), "%.1f", value);
+    return buffer;
+}
+
+std::string formatDiscoveryPercent(double value)
+{
+    if (std::fabs(value - std::round(value)) < 0.001) {
+        return std::to_string(static_cast<int>(std::lround(value))) + "%";
+    }
+    char buffer[64];
+    std::snprintf(buffer, sizeof(buffer), "%.1f%%", value);
+    return buffer;
+}
+
+std::string statusNameJa(std::string_view effect)
+{
+    if (effect.find("paralyze") != std::string_view::npos) {
+        return "麻痺";
+    }
+    if (effect.find("poison") != std::string_view::npos) {
+        return "毒";
+    }
+    if (effect.find("slow") != std::string_view::npos) {
+        return "鈍足";
+    }
+    if (effect.find("bleed") != std::string_view::npos) {
+        return "出血";
+    }
+    return "状態異常";
+}
+
+std::string normalizeEffectKey(std::string_view effect)
+{
+    if (effect == "guard") {
+        return "guard_projectile";
+    }
+    return std::string(effect);
+}
+
+bool hasEffectCode(const std::vector<EffectSpec>& specs, std::string_view effect)
+{
+    for (const EffectSpec& spec : specs) {
+        for (const std::string& code : spec.effects) {
+            if (code == effect) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+std::vector<std::string> splitEffectTextLines(std::string_view text)
+{
+    std::vector<std::string> lines;
+    std::string current;
+    const auto flush = [&]() {
+        std::string line = trim(current);
+        if (!line.empty()) {
+            lines.push_back(std::move(line));
+        }
+        current.clear();
+    };
+
+    for (std::size_t i = 0; i < text.size(); ++i) {
+        const unsigned char ch = static_cast<unsigned char>(text[i]);
+        if (ch == '\n' || ch == '\r') {
+            flush();
+            continue;
+        }
+        if (i + 2 < text.size() &&
+            ch == 0xEF &&
+            static_cast<unsigned char>(text[i + 1]) == 0xBD &&
+            static_cast<unsigned char>(text[i + 2]) == 0x9C) {
+            flush();
+            i += 2;
+            continue;
+        }
+        current.push_back(text[i]);
+    }
+    flush();
+    return lines;
+}
+
+void pushDiscoveryLine(
+    std::vector<DiscoveryEffectLine>& lines,
+    const ObjectDefinition& object,
+    std::string effectKey,
+    std::string text,
+    DiscoveryTrigger trigger)
+{
+    if (effectKey.empty() || text.empty()) {
+        return;
+    }
+    const auto it = std::find_if(lines.begin(), lines.end(), [&effectKey](const DiscoveryEffectLine& line) {
+        return line.effectKey == effectKey;
+    });
+    if (it != lines.end()) {
+        return;
+    }
+    lines.push_back(DiscoveryEffectLine{
+        .objectId = object.id,
+        .effectKey = std::move(effectKey),
+        .text = std::move(text),
+        .trigger = trigger,
+    });
+}
+
+bool autoTextForEffectCode(
+    std::string_view effectCode,
+    double value,
+    double duration,
+    std::string& outText)
+{
+    if (effectCode == "heal") {
+        outText = value > 0.0
+            ? "HPを回復する（" + formatDiscoveryNumber(value) + "）"
+            : "HPを回復する";
+        return true;
+    }
+    if (effectCode == "light") {
+        outText = "周囲を照らす";
+        return true;
+    }
+    if (effectCode == "detect_treasure" || effectCode == "detect") {
+        outText = "宝を探知する";
+        return true;
+    }
+    if (effectCode == "detect_hidden") {
+        outText = "隠れたものを探知する";
+        return true;
+    }
+    if (effectCode == "guard") {
+        outText = "弾を防ぐ";
+        return true;
+    }
+    if (effectCode == "reflect_physical") {
+        outText = "物理弾を反射する";
+        return true;
+    }
+    if (effectCode == "reflect_physical_chance") {
+        outText = "物理弾を確率で反射（" + formatDiscoveryPercent(std::max(0.0, value)) + "）";
+        return true;
+    }
+    if (effectCode.rfind("status_", 0) == 0) {
+        const bool chance = effectCode.size() > 7 && effectCode.rfind("_chance") == effectCode.size() - 7;
+        const std::string name = statusNameJa(effectCode);
+        if (chance) {
+            outText = "敵を" + name + "させる（" + formatDiscoveryPercent(std::max(0.0, value)) + "）";
+        } else if (duration > 0.0) {
+            outText = "敵を" + name + "させる（" + formatDiscoveryNumber(duration) + "秒）";
+        } else {
+            outText = "敵を" + name + "させる";
+        }
+        return true;
+    }
+    if (effectCode == "buff_attack" || effectCode == "debuff_attack") {
+        outText = (effectCode == "buff_attack" ? "攻撃力を上げる" : "攻撃力を下げる");
+        if (duration > 0.0) {
+            outText += "（" + formatDiscoveryNumber(duration) + "秒）";
+        }
+        return true;
+    }
+    if (effectCode == "buff_speed" || effectCode == "debuff_speed") {
+        outText = (effectCode == "buff_speed" ? "移動速度を上げる" : "移動速度を下げる");
+        if (duration > 0.0) {
+            outText += "（" + formatDiscoveryNumber(duration) + "秒）";
+        }
+        return true;
+    }
+    if (effectCode == "buff_defense" || effectCode == "debuff_defense") {
+        outText = (effectCode == "buff_defense" ? "防御力を上げる" : "防御力を下げる");
+        if (duration > 0.0) {
+            outText += "（" + formatDiscoveryNumber(duration) + "秒）";
+        }
+        return true;
+    }
+    if (effectCode == "knockback") {
+        outText = "敵をノックバックさせる";
+        return true;
+    }
+    if (effectCode == "orbit_speed") {
+        outText = "リング回転速度を変化させる";
+        return true;
+    }
+    if (effectCode == "orbit_power") {
+        outText = "リング攻撃力を変化させる";
+        return true;
+    }
+    if (effectCode == "damage_speed") {
+        outText = "攻撃間隔を変化させる";
+        return true;
+    }
+    return false;
 }
 
 const DeprecatedName* findDeprecated(std::string_view name, const auto& deprecatedNames)
@@ -850,6 +1068,146 @@ bool findSpecialTagColumns(const GoogleSheetRow& headers, SpecialTagColumns& out
 
 }
 
+bool isDamageTypeAllowed(std::string_view value)
+{
+    const std::string normalized = lowerAscii(trim(value));
+    return isAllowed(normalized, AllowedDamageTypes);
+}
+
+bool isPhysicalDamageType(std::string_view value)
+{
+    const std::string normalized = lowerAscii(trim(value));
+    return normalized == "slash" ||
+        normalized == "blunt" ||
+        normalized == "pierce" ||
+        normalized == "physical";
+}
+
+std::string normalizeDamageType(std::string_view value)
+{
+    const std::string normalized = lowerAscii(trim(value));
+    if (normalized.empty()) {
+        return {};
+    }
+    if (normalized == "physical") {
+        return "blunt";
+    }
+    if (!isAllowed(normalized, AllowedDamageTypes)) {
+        return {};
+    }
+    return normalized;
+}
+
+std::string_view damageTypeDisplayName(std::string_view value)
+{
+    const std::string normalized = lowerAscii(trim(value));
+    if (normalized == "slash") {
+        return "\xE6\x96\xAC\xE6\x92\x83";
+    }
+    if (normalized == "blunt") {
+        return "\xE6\x89\x93\xE6\x92\x83";
+    }
+    if (normalized == "pierce") {
+        return "\xE5\x88\xBA\xE7\xAA\x81";
+    }
+    if (normalized == "fire") {
+        return "\xE7\x81\xAB";
+    }
+    if (normalized == "ice") {
+        return "\xE6\xB0\xB7";
+    }
+    if (normalized == "thunder") {
+        return "\xE9\x9B\xB7";
+    }
+    if (normalized == "wind") {
+        return "\xE9\xA2\xA8";
+    }
+    if (normalized == "earth") {
+        return "\xE5\x9C\x9F";
+    }
+    if (normalized == "water") {
+        return "\xE6\xB0\xB4";
+    }
+    if (normalized == "magic") {
+        return "\xE9\xAD\x94\xE6\xB3\x95";
+    }
+    return normalized == "none" ? "\xE3\x81\xAA\xE3\x81\x97" : "\xE3\x81\xAA\xE3\x81\x97";
+}
+
+std::vector<DiscoveryEffectLine> buildDiscoveryEffectLines(const ObjectDefinition& object, std::vector<std::string>* debugWarnings)
+{
+    std::vector<DiscoveryEffectLine> lines;
+
+    if (object.attackPower > 0 && !object.damageType.empty() && object.damageType != "none") {
+        pushDiscoveryLine(
+            lines,
+            object,
+            "basic_attack",
+            "\xE6\x95\xB5\xE3\x81\xAB" + std::string(damageTypeDisplayName(object.damageType)) +
+                "\xE3\x83\x80\xE3\x83\xA1\xE3\x83\xBC\xE3\x82\xB8\xEF\xBC\x88\xE6\x94\xBB\xE6\x92\x83\xE5\x8A\x9B" +
+                std::to_string(object.attackPower) + "\xEF\xBC\x89",
+            DiscoveryTrigger::Attack);
+    }
+
+    const bool hasDig = hasEffectCode(object.normalEffects, "dig") ||
+        hasEffectCode(object.normalEffects, "dig_multi") ||
+        hasEffectCode(object.normalEffects, "dig_hard") ||
+        hasEffectCode(object.orbitEffects, "dig") ||
+        hasEffectCode(object.orbitEffects, "dig_multi") ||
+        hasEffectCode(object.orbitEffects, "dig_hard");
+    const bool hasDigHard = hasEffectCode(object.normalEffects, "dig_hard") ||
+        hasEffectCode(object.orbitEffects, "dig_hard");
+    const bool isDigCategory = object.category == "\xE6\x8E\x98\xE5\x89\x8A";
+    const bool meaningfulDig = hasDig || isDigCategory || object.digPower >= 10;
+    if (meaningfulDig && object.digPower > 0) {
+        const std::string key = hasDigHard ? "dig_hard" : "dig";
+        const std::string text = hasDigHard
+            ? "\xE7\xA1\xAC\xE3\x81\x84\xE5\x9C\x9F\xE3\x82\x92\xE6\x8E\x98\xE3\x82\x8C\xE3\x82\x8B\xEF\xBC\x88\xE6\x8E\x98\xE5\x89\x8A\xE5\x8A\x9B" + std::to_string(object.digPower) + "\xEF\xBC\x89"
+            : "\xE5\x9C\x9F\xE3\x82\x92\xE6\x8E\x98\xE3\x82\x8C\xE3\x82\x8B\xEF\xBC\x88\xE6\x8E\x98\xE5\x89\x8A\xE5\x8A\x9B" + std::to_string(object.digPower) + "\xEF\xBC\x89";
+        pushDiscoveryLine(lines, object, key, text, DiscoveryTrigger::Dig);
+    }
+
+    const auto appendFromSpecs = [&](const std::vector<EffectSpec>& specs, DiscoveryTrigger trigger) {
+        for (const EffectSpec& spec : specs) {
+            const std::size_t count = std::min(spec.effects.size(), spec.values.size());
+            for (std::size_t i = 0; i < count; ++i) {
+                const std::string& effect = spec.effects[i];
+                if (effect.empty() || effect == "none" || effect == "dig" || effect == "dig_hard" || effect == "dig_multi") {
+                    continue;
+                }
+                std::string text;
+                if (!autoTextForEffectCode(effect, spec.values[i], spec.duration, text)) {
+                    if (debugWarnings != nullptr) {
+                        debugWarnings->push_back(
+                            "object=\"" + object.id + "\" discovery effect line skipped: unsupported effect code \"" + effect + "\"");
+                    }
+                    continue;
+                }
+                pushDiscoveryLine(lines, object, normalizeEffectKey(effect), std::move(text), trigger);
+            }
+        }
+    };
+
+    appendFromSpecs(object.normalEffects, DiscoveryTrigger::NormalEffect);
+    appendFromSpecs(object.orbitEffects, DiscoveryTrigger::OrbitEffect);
+
+    const std::vector<std::string> manualLines = splitEffectTextLines(object.effectText);
+    if (!manualLines.empty()) {
+        if (manualLines.size() == lines.size()) {
+            for (std::size_t i = 0; i < lines.size(); ++i) {
+                lines[i].text = manualLines[i];
+            }
+        } else if (debugWarnings != nullptr) {
+            debugWarnings->push_back(
+                "object=\"" + object.id + "\" effectText line count mismatch: generated=" +
+                std::to_string(lines.size()) + ", manual=" + std::to_string(manualLines.size()) +
+                "; generated text is used");
+        }
+    }
+
+    return lines;
+}
+
 void ItemRegistry::rebuild(std::vector<ItemData> items)
 {
     items_ = std::move(items);
@@ -1200,13 +1558,21 @@ bool parseObjectCatalog(const GoogleSheetTable& table, ObjectCatalog& outCatalog
         item.rarity = parseIntColumnOrDefault(cellAt(row, columns.rarity), 1, "rarity", rowIndex, item.id, catalog, 1, 10);
         item.price = parseIntColumnOrDefault(cellAt(row, columns.price), 0, "price", rowIndex, item.id, catalog, 0, 2'147'483'647);
         item.attackPower = parseIntColumnOrDefault(cellAt(row, columns.attackPower), 0, "attack power", rowIndex, item.id, catalog, 0, 2'147'483'647);
-        if (!isAllowed(item.damageType, AllowedDamageTypes)) {
+        const std::string rawDamageType = item.damageType;
+        item.damageType = normalizeDamageType(item.damageType);
+        if (item.damageType.empty()) {
             addValidationIssue(
                 catalog,
                 DbValidationSeverity::Warning,
                 DbValidationCategory::ObjectField,
-                rowError(rowIndex, "damage type is not allowed: " + item.damageType + "; using none"));
+                rowError(rowIndex, "damage type is not allowed: " + rawDamageType + "; using none"));
             item.damageType = "none";
+        } else if (isLegacyPhysicalDamageType(rawDamageType)) {
+            addValidationIssue(
+                catalog,
+                DbValidationSeverity::Warning,
+                DbValidationCategory::DeprecatedEntry,
+                rowError(rowIndex, "damage type physical is deprecated; using blunt"));
         }
         item.digPower = parseIntColumnOrDefault(cellAt(row, columns.digPower), 0, "dig power", rowIndex, item.id, catalog, 0, 2'147'483'647);
         item.durability = parseIntColumnOrDefault(cellAt(row, columns.durability), 0, "durability", rowIndex, item.id, catalog, -1, 2'147'483'647);
@@ -1257,6 +1623,10 @@ bool parseObjectCatalog(const GoogleSheetTable& table, ObjectCatalog& outCatalog
             item.orbitEffects.clear();
         }
         appendRowIssues(catalog, rowIndex, item.id, "orbit effects", DbValidationCategory::EffectSpecSyntax, effectWarnings);
+
+        std::vector<std::string> discoveryWarnings;
+        item.discoveryEffectLines = buildDiscoveryEffectLines(item, &discoveryWarnings);
+        appendRowIssues(catalog, rowIndex, item.id, "discovery effect lines", DbValidationCategory::DeprecatedEntry, discoveryWarnings);
 
         catalog.objects.push_back(std::move(item));
     }

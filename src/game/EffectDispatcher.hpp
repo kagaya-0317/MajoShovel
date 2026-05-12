@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 #include "data/ObjectCatalog.hpp"
 #include "engine/Math.hpp"
@@ -19,6 +19,7 @@ struct SpellRingItem;
 class EffectSystem;
 class SpellRingSystem;
 class TileMap;
+class EncyclopediaSystem;
 
 enum class EffectTriggerType {
     Unknown,
@@ -59,6 +60,7 @@ struct EffectContext {
     std::vector<Vec2>* terrainOpenedTiles = nullptr;
     std::vector<DugTile>* terrainDugTiles = nullptr;
     std::vector<EffectDiscoveryEvent>* discoveryEvents = nullptr;
+    const EncyclopediaSystem* encyclopedia = nullptr;
     Vec2 position{};
     EffectTriggerType triggerType = EffectTriggerType::Unknown;
     bool logUnimplementedEffects = true;

@@ -9,6 +9,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cctype>
 #include <cmath>
 #include <random>
 #include <sstream>
@@ -61,6 +62,19 @@ std::mt19937& dropRng()
     return rng;
 }
 
+std::string trim(std::string_view text)
+{
+    std::size_t begin = 0;
+    std::size_t end = text.size();
+    while (begin < end && std::isspace(static_cast<unsigned char>(text[begin]))) {
+        ++begin;
+    }
+    while (end > begin && std::isspace(static_cast<unsigned char>(text[end - 1]))) {
+        --end;
+    }
+    return std::string(text.substr(begin, end - begin));
+}
+
 bool containsValue(const auto& values, std::string_view value)
 {
     return std::any_of(values.begin(), values.end(), [value](std::string_view candidate) {
@@ -80,6 +94,59 @@ bool hasObjectTag(const ObjectDefinition& object, std::string_view tag)
     return std::any_of(object.tags.begin(), object.tags.end(), [tag](const std::string& objectTag) {
         return objectTag == tag;
     });
+}
+
+bool filterContainsToken(std::string_view filterText, std::string_view token)
+{
+    std::string current;
+    auto flush = [&]() {
+        const std::string trimmed = trim(current);
+        current.clear();
+        return trimmed;
+    };
+    for (char ch : filterText) {
+        if (ch == '|') {
+            if (flush() == token) {
+                return true;
+            }
+            continue;
+        }
+        current.push_back(ch);
+    }
+    return flush() == token;
+}
+
+bool isTreasureDrop(const WorldDropItem& drop, const ObjectCatalog& catalog)
+{
+    if (drop.kind != WorldDropKind::Object) {
+        return false;
+    }
+    const ObjectDefinition* object = catalog.registry.findById(drop.id);
+    if (object == nullptr) {
+        return false;
+    }
+    return object->category == "\xE5\xAE\x9D" || hasObjectTag(*object, "treasure");
+}
+
+bool isDropStealTarget(const WorldDropItem& drop, const ObjectCatalog& catalog, std::string_view targetFilter)
+{
+    if (targetFilter.empty()) {
+        return true;
+    }
+
+    const bool allowAny = filterContainsToken(targetFilter, "drop");
+    const bool allowMoney = filterContainsToken(targetFilter, "money");
+    const bool allowTreasure = filterContainsToken(targetFilter, "treasure");
+    if (allowAny) {
+        return true;
+    }
+    if (allowMoney && drop.kind == WorldDropKind::Money) {
+        return true;
+    }
+    if (allowTreasure && isTreasureDrop(drop, catalog)) {
+        return true;
+    }
+    return false;
 }
 
 bool hasAllowedCategory(const ObjectDefinition& object)
@@ -251,14 +318,45 @@ bool WorldDropSystem::spawnRewardDrop(const ObjectCatalog& catalog, Vec2 positio
     return true;
 }
 
-int WorldDropSystem::pullMetalDrops(const ObjectCatalog& catalog, Vec2 center, float dt)
+bool WorldDropSystem::stealNearestDrop(const ObjectCatalog& catalog, Vec2 center, float radius, std::string_view targetFilter, WorldDropItem& outDrop)
+{
+    if (drops_.empty() || radius <= 0.0f) {
+        return false;
+    }
+
+    std::size_t nearestIndex = drops_.size();
+    float nearestDistanceSq = radius * radius;
+    for (std::size_t i = 0; i < drops_.size(); ++i) {
+        const WorldDropItem& drop = drops_[i];
+        if (!isDropStealTarget(drop, catalog, targetFilter)) {
+            continue;
+        }
+        const float distanceSq = lengthSquared(drop.position - center);
+        if (distanceSq > nearestDistanceSq) {
+            continue;
+        }
+        nearestDistanceSq = distanceSq;
+        nearestIndex = i;
+    }
+
+    if (nearestIndex >= drops_.size()) {
+        return false;
+    }
+
+    outDrop = drops_[nearestIndex];
+    drops_.erase(drops_.begin() + static_cast<std::ptrdiff_t>(nearestIndex));
+    return true;
+}
+
+int WorldDropSystem::pullMetalDrops(const ObjectCatalog& catalog, Vec2 center, float dt, float radius)
 {
     if (dt <= 0.0f) {
         return 0;
     }
 
     int pulled = 0;
-    const float radiusSq = CapturedMagnetDropRadius * CapturedMagnetDropRadius;
+    const float effectiveRadius = std::max(8.0f, radius);
+    const float radiusSq = effectiveRadius * effectiveRadius;
     for (WorldDropItem& drop : drops_) {
         if (drop.kind != WorldDropKind::Object) {
             continue;
@@ -273,7 +371,7 @@ int WorldDropSystem::pullMetalDrops(const ObjectCatalog& catalog, Vec2 center, f
             continue;
         }
         const float distance = std::sqrt(distanceSq);
-        const float falloff = 1.0f - clamp(distance / CapturedMagnetDropRadius, 0.0f, 1.0f);
+        const float falloff = 1.0f - clamp(distance / effectiveRadius, 0.0f, 1.0f);
         drop.velocity += normalize(toCenter) * (CapturedMagnetDropAcceleration * falloff * dt);
         ++pulled;
         if (pulled >= CapturedMagnetDropLimit) {

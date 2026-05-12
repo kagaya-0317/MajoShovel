@@ -1,6 +1,7 @@
 #include "game/ObjectImageRenderer.hpp"
 
 #include <algorithm>
+#include <cmath>
 
 namespace majo {
 
@@ -11,6 +12,19 @@ constexpr std::string_view ObjectImageExtension = ".png";
 constexpr float ObjectImageScaleMin = 0.05f;
 constexpr float ObjectImageScaleMax = 8.0f;
 const std::unordered_map<std::string, float>* gObjectImageScaleOverrides = nullptr;
+}
+
+ObjectImageDrawOptions withSelectedItemOutline(
+    const ObjectImageDrawOptions& base,
+    Color outlineColor,
+    int outlinePx)
+{
+    ObjectImageDrawOptions options = base;
+    options.outlineEnabled = true;
+    options.outlineColor = outlineColor;
+    options.outlineColor.a = 255;
+    options.outlinePx = std::max(1, outlinePx);
+    return options;
 }
 
 void setObjectImageScaleOverrides(const std::unordered_map<std::string, float>* scaleByObjectId)
@@ -83,7 +97,10 @@ bool drawObjectImage(
         return false;
     }
 
-    const Vec2 drawSize{sourceSize.x * finalScale, sourceSize.y * finalScale};
+    const Vec2 drawSize{
+        std::max(1.0f, static_cast<float>(std::round(sourceSize.x * finalScale))),
+        std::max(1.0f, static_cast<float>(std::round(sourceSize.y * finalScale))),
+    };
     ImageDrawOptions drawOptions;
     drawOptions.anchor = options.anchor;
     drawOptions.tint = options.tint;

@@ -1,5 +1,6 @@
-#include "engine/Ui.hpp"
+﻿#include "engine/Ui.hpp"
 
+#include <SDL3/SDL.h>
 #include <algorithm>
 #include <cmath>
 #include <string>
@@ -66,6 +67,53 @@ Color scaledColor(Color color, float scale)
     color.g = static_cast<unsigned char>(std::clamp(std::lround(static_cast<float>(color.g) * scale), 0L, 255L));
     color.b = static_cast<unsigned char>(std::clamp(std::lround(static_cast<float>(color.b) * scale), 0L, 255L));
     return color;
+}
+
+constexpr float CommandMenuItemHeight = 36.0f;
+constexpr float CommandMenuPaddingX = 28.0f;
+constexpr float CommandMenuPaddingY = 24.0f;
+constexpr float CommandMenuItemGap = 10.0f;
+constexpr float CommandMenuExtraWidth = 40.0f;
+constexpr float CommandMenuOpenSpeed = 1.7f;
+constexpr float CommandMenuCloseSpeed = 1.15f;
+
+int utf8CodepointCount(std::string_view text)
+{
+    int count = 0;
+    for (unsigned char c : text) {
+        if ((c & 0xC0u) != 0x80u) {
+            ++count;
+        }
+    }
+    return count;
+}
+
+UiRect commandMenuItemRect(const UiCommandMenuState& state, int index)
+{
+    const float x = state.panel.pos.x + CommandMenuPaddingX;
+    const float y = state.panel.pos.y + CommandMenuPaddingY + static_cast<float>(index) * (CommandMenuItemHeight + CommandMenuItemGap);
+    const float w = std::max(0.0f, state.panel.size.x - CommandMenuPaddingX * 2.0f);
+    return {{x, y}, {w, CommandMenuItemHeight}};
+}
+
+void fillRoundedRect(Renderer& renderer, UiRect rect, float radius, Color color)
+{
+    const float r = clamp(radius, 0.0f, std::min(rect.size.x, rect.size.y) * 0.5f);
+    if (r <= 0.0f) {
+        renderer.fillRect(rect.pos, rect.size, color);
+        return;
+    }
+
+    const float centerW = std::max(0.0f, rect.size.x - r * 2.0f);
+    const float sideH = std::max(0.0f, rect.size.y - r * 2.0f);
+    renderer.fillRect({rect.pos.x + r, rect.pos.y}, {centerW, rect.size.y}, color);
+    renderer.fillRect({rect.pos.x, rect.pos.y + r}, {r, sideH}, color);
+    renderer.fillRect({rect.pos.x + rect.size.x - r, rect.pos.y + r}, {r, sideH}, color);
+
+    renderer.fillCircle({rect.pos.x + r, rect.pos.y + r}, r, color);
+    renderer.fillCircle({rect.pos.x + rect.size.x - r, rect.pos.y + r}, r, color);
+    renderer.fillCircle({rect.pos.x + r, rect.pos.y + rect.size.y - r}, r, color);
+    renderer.fillCircle({rect.pos.x + rect.size.x - r, rect.pos.y + rect.size.y - r}, r, color);
 }
 
 }
@@ -401,6 +449,181 @@ void drawUiDetailLine(Renderer& renderer, UiRect panel, float& y, std::string_vi
     renderer.drawText({labelX, y}, label, ui::TextMuted, 2);
     renderer.drawWrappedText({valueX, y}, value, valueMaxWidth, ui::Text, 2);
     y += std::max(MinLineHeight, renderer.measureWrappedText(value, valueMaxWidth, 2).y + LineGap);
+}
+
+void openUiCommandMenu(
+    UiCommandMenuState& state,
+    Vec2 anchor,
+    UiRect bounds,
+    int itemCount,
+    const UiCommandMenuItem* items,
+    float minWidth,
+    int textScale)
+{
+    const int effectiveScale = std::max(1, textScale);
+    const int count = std::max(1, itemCount);
+    int maxCodepoints = 0;
+    if (items != nullptr && itemCount > 0) {
+        for (int i = 0; i < itemCount; ++i) {
+            maxCodepoints = std::max(maxCodepoints, utf8CodepointCount(items[i].label));
+        }
+    }
+    if (maxCodepoints <= 0) {
+        maxCodepoints = 6;
+    }
+    const float estimatedCharWidth = static_cast<float>(effectiveScale) * 8.0f;
+    const float contentWidth = static_cast<float>(maxCodepoints) * estimatedCharWidth;
+    const float menuWidth = std::max(minWidth, contentWidth + CommandMenuPaddingX * 2.0f + CommandMenuExtraWidth);
+    const float menuHeight = CommandMenuPaddingY * 2.0f +
+        static_cast<float>(count) * CommandMenuItemHeight +
+        static_cast<float>(count - 1) * CommandMenuItemGap;
+    Vec2 pos = anchor + Vec2{12.0f, 12.0f};
+    const float minX = bounds.pos.x;
+    const float minY = bounds.pos.y;
+    const float maxX = bounds.pos.x + bounds.size.x - menuWidth;
+    const float maxY = bounds.pos.y + bounds.size.y - menuHeight;
+    pos.x = clamp(pos.x, minX, std::max(minX, maxX));
+    pos.y = clamp(pos.y, minY, std::max(minY, maxY));
+    state.open = true;
+    state.visible = true;
+    state.closing = false;
+    state.panel = {pos, {menuWidth, menuHeight}};
+    state.textScale = effectiveScale;
+    state.hoveredIndex = 0;
+    state.animation = 0.0f;
+}
+
+void closeUiCommandMenu(UiCommandMenuState& state)
+{
+    state.open = false;
+    state.closing = state.visible;
+    if (!state.visible) {
+        state.hoveredIndex = -1;
+        state.animation = 0.0f;
+    }
+}
+
+int updateUiCommandMenu(UiCommandMenuState& state, UiContext& ui, const Input& input, const UiCommandMenuItem* items, int itemCount)
+{
+    const float openStep = clamp(windowAnimationStep * CommandMenuOpenSpeed, 0.0f, 1.0f);
+    const float closeStep = clamp(windowAnimationStep * CommandMenuCloseSpeed, 0.0f, 1.0f);
+    if (state.closing) {
+        state.animation = std::max(0.0f, state.animation - closeStep);
+        if (state.animation <= 0.0f) {
+            state.visible = false;
+            state.closing = false;
+            state.hoveredIndex = -1;
+        }
+        return -1;
+    }
+    if (!state.visible) {
+        return -1;
+    }
+    state.animation = std::min(1.0f, state.animation + openStep);
+    if (!state.open) {
+        return -1;
+    }
+    if (items == nullptr || itemCount <= 0) {
+        closeUiCommandMenu(state);
+        return -1;
+    }
+
+    if (input.pausePressed() || input.pressed(InputAction::OffsetRingCenter)) {
+        closeUiCommandMenu(state);
+        return -1;
+    }
+
+    if (state.hoveredIndex < 0 || state.hoveredIndex >= itemCount) {
+        state.hoveredIndex = 0;
+    }
+
+    const int delta = (input.pressed(InputAction::MoveDown) || input.pressed(InputAction::MoveRight) ? 1 : 0) -
+        (input.pressed(InputAction::MoveUp) || input.pressed(InputAction::MoveLeft) ? 1 : 0);
+    if (delta != 0) {
+        state.hoveredIndex = (state.hoveredIndex + delta + itemCount) % itemCount;
+    }
+
+    bool hoveredByMouse = false;
+    for (int i = 0; i < itemCount; ++i) {
+        if (commandMenuItemRect(state, i).contains(ui.mouse())) {
+            state.hoveredIndex = i;
+            hoveredByMouse = true;
+            break;
+        }
+    }
+    if (!hoveredByMouse && (state.hoveredIndex < 0 || state.hoveredIndex >= itemCount)) {
+        state.hoveredIndex = 0;
+    }
+
+    if (input.confirmPressed() || input.useItemPressed()) {
+        if (state.hoveredIndex < 0 || state.hoveredIndex >= itemCount || !items[state.hoveredIndex].enabled) {
+            return -1;
+        }
+        const int selected = state.hoveredIndex;
+        closeUiCommandMenu(state);
+        return selected;
+    }
+
+    if (!input.mouseLeftPressed()) {
+        return -1;
+    }
+
+    const bool insidePanel = state.panel.contains(ui.mouse());
+    if (!insidePanel) {
+        ui.consumePointer();
+        closeUiCommandMenu(state);
+        return -1;
+    }
+
+    if (state.hoveredIndex < 0 || state.hoveredIndex >= itemCount) {
+        return -1;
+    }
+    ui.consumePointer();
+    if (!items[state.hoveredIndex].enabled) {
+        return -1;
+    }
+    const int selected = state.hoveredIndex;
+    closeUiCommandMenu(state);
+    return selected;
+}
+
+void drawUiCommandMenu(Renderer& renderer, const UiCommandMenuState& state, const UiCommandMenuItem* items, int itemCount)
+{
+    if (!state.visible || items == nullptr || itemCount <= 0) {
+        return;
+    }
+
+    const float t = easeOut(state.animation);
+    const Vec2 center = panelCenter(state.panel);
+    renderer.pushScreenTransform(center, lerp(0.92f, 1.0f, t), t);
+    drawUiSubPanel(renderer, state.panel);
+    const float elapsed = static_cast<float>(SDL_GetTicks()) / 1000.0f;
+    const float pulse = 0.5f + 0.5f * std::sin(elapsed * 6.283185307f);
+    const unsigned char alpha = static_cast<unsigned char>(std::lround(96.0f + 140.0f * pulse));
+    for (int i = 0; i < itemCount; ++i) {
+        const UiRect rect = commandMenuItemRect(state, i);
+        const bool hot = i == state.hoveredIndex;
+        const Color fill = Color{48, 68, 138, alpha};
+        Color text = items[i].enabled ? ui::Text : ui::TextDisabled;
+        if (!items[i].enabled) {
+            text.a = 128;
+        }
+        if (hot) {
+            const UiRect cursorRect{
+                {rect.pos.x + 2.0f, rect.pos.y + 2.0f},
+                {std::max(0.0f, rect.size.x - 4.0f), std::max(0.0f, rect.size.y - 4.0f)},
+            };
+            fillRoundedRect(renderer, cursorRect, 8.0f, fill);
+        }
+        const int textScale = std::max(1, state.textScale);
+        const Vec2 textSize = renderer.measureText(items[i].label, textScale);
+        const Vec2 textPos{
+            rect.pos.x + std::max(0.0f, (rect.size.x - textSize.x) * 0.5f),
+            rect.pos.y + std::max(0.0f, (rect.size.y - textSize.y) * 0.5f),
+        };
+        renderer.drawText(textPos, items[i].label, text, textScale);
+    }
+    renderer.popScreenTransform();
 }
 
 }

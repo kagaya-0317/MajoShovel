@@ -1,4 +1,4 @@
-#include "game/EnemySystem.hpp"
+﻿#include "game/EnemySystem.hpp"
 
 #include "data/GameBalance.hpp"
 #include "engine/Log.hpp"
@@ -162,19 +162,6 @@ double damageTypeMultiplier(std::string_view damageType)
         return 0.95;
     }
     return 1.0;
-}
-
-bool allowedDamageType(std::string_view damageType)
-{
-    return damageType == "none" ||
-        damageType == "physical" ||
-        damageType == "fire" ||
-        damageType == "ice" ||
-        damageType == "thunder" ||
-        damageType == "wind" ||
-        damageType == "earth" ||
-        damageType == "water" ||
-        damageType == "magic";
 }
 
 bool isKnownAi(std::string_view aiId)
@@ -485,6 +472,21 @@ ItemData makeCapturedItemData(const Enemy& enemy)
     item.orbitEffects = definition.capturedOrbitEffects;
     item.attackPower = definition.capturedAttackPower;
     item.damageType = definition.capturedDamageType.empty() ? "none" : definition.capturedDamageType;
+    const std::string normalizedDamageType = normalizeDamageType(item.damageType);
+    if (normalizedDamageType.empty()) {
+        if (item.damageType == "physical") {
+            logError("[warning] EnemySystem: captured damage type physical is deprecated; using blunt");
+            item.damageType = "blunt";
+        } else {
+            logError("[warning] EnemySystem: captured damage type \"" + item.damageType + "\" is invalid; using none");
+            item.damageType = "none";
+        }
+    } else {
+        if (item.damageType == "physical" && normalizedDamageType == "blunt") {
+            logError("[warning] EnemySystem: captured damage type physical is deprecated; using blunt");
+        }
+        item.damageType = normalizedDamageType;
+    }
     item.digPower = definition.capturedDigPower;
     item.durability = definition.capturedDurability;
     item.weightKg = definition.capturedWeight;
@@ -562,6 +564,7 @@ void recordObjectEffectDiscovery(
         .objectName = object.name,
         .effectKey = std::string(effectKey),
         .description = std::string(description),
+        .note = {},
         .position = position,
     });
 }
@@ -586,7 +589,8 @@ void dispatchCapturedContactEffect(
     SpellRingSystem& spellRing,
     const EffectDispatcher& effectDispatcher,
     Vec2 hitPosition,
-    std::vector<EffectDiscoveryEvent>* discoveryEvents)
+    std::vector<EffectDiscoveryEvent>* discoveryEvents,
+    const EncyclopediaSystem* encyclopedia)
 {
     EffectContext context;
     context.sourceObject = &object;
@@ -595,6 +599,7 @@ void dispatchCapturedContactEffect(
     context.hitTarget = &enemy;
     context.orbit = &spellRing;
     context.discoveryEvents = discoveryEvents;
+    context.encyclopedia = encyclopedia;
     context.position = hitPosition;
     context.triggerType = EffectTriggerType::Hit;
     context.logUnimplementedEffects = false;
@@ -834,7 +839,7 @@ void EnemySystem::applyDefinition(Enemy& enemy, const EnemyDefinition* definitio
     enemy.xp = balance.enemyXp;
     enemy.moneyDrop = 0;
     enemy.contactAttackPower = 1;
-    enemy.contactDamageType = "physical";
+    enemy.contactDamageType = "blunt";
     enemy.facingAngle = 0.0f;
     enemy.contactDamageMultiplier = 1.0f;
     enemy.frontGuardArcDegrees = 140.0f;
@@ -1164,8 +1169,12 @@ void EnemySystem::applyDefinition(Enemy& enemy, const EnemyDefinition* definitio
     if (definition->contactAttackPower >= 0) {
         enemy.contactAttackPower = definition->contactAttackPower;
     }
-    if (allowedDamageType(definition->contactDamageType)) {
-        enemy.contactDamageType = definition->contactDamageType;
+    const std::string normalizedContactDamageType = normalizeDamageType(definition->contactDamageType);
+    if (!normalizedContactDamageType.empty()) {
+        if (definition->contactDamageType == "physical") {
+            logError("[warning] EnemySystem: enemy_id=\"" + enemy.enemyId + "\" contactDamageType physical is deprecated; using blunt");
+        }
+        enemy.contactDamageType = normalizedContactDamageType;
     }
     if (definition->visionDistance > 0.0 && std::isfinite(definition->visionDistance)) {
         enemy.visionDistance = static_cast<float>(definition->visionDistance);
@@ -1681,7 +1690,8 @@ void EnemySystem::update(
     const std::vector<LightSource>& extraLights,
     const EffectDispatcher& effectDispatcher,
     ProjectileSystem& projectiles,
-    std::vector<EffectDiscoveryEvent>* discoveryEvents)
+    std::vector<EffectDiscoveryEvent>* discoveryEvents,
+    const EncyclopediaSystem* encyclopedia)
 {
     events_.clear();
     if (paused) {
@@ -2299,10 +2309,10 @@ void EnemySystem::update(
                         spellRing.effectivePowerMultiplier()));
             const int rawDamage = modifiedDamage + (item.type == SpellRingItemType::Shovel ? speedBonus : 0);
             int adjustedDamage = rawDamage;
-            if (item.damageType == "physical" && hasBehavior(enemy, "physical_resist")) {
+            if (isPhysicalDamageType(item.damageType) && hasBehavior(enemy, "physical_resist")) {
                 adjustedDamage = static_cast<int>(std::ceil(static_cast<double>(adjustedDamage) * enemy.physicalDamageMultiplier));
             }
-            if (item.damageType == "physical" && hasBehavior(enemy, "magic_body")) {
+            if (isPhysicalDamageType(item.damageType) && hasBehavior(enemy, "magic_body")) {
                 adjustedDamage = static_cast<int>(std::ceil(static_cast<double>(adjustedDamage) * enemy.magicBodyPhysicalMultiplier));
             } else if (item.damageType == "magic" && hasBehavior(enemy, "magic_body")) {
                 adjustedDamage = static_cast<int>(std::ceil(static_cast<double>(adjustedDamage) * enemy.magicBodyMagicMultiplier));
@@ -2331,13 +2341,23 @@ void EnemySystem::update(
                     context.orbit = &spellRing;
                     context.orbitItem = &item;
                     context.discoveryEvents = discoveryEvents;
+                    context.encyclopedia = encyclopedia;
                     context.position = enemy.position;
                     context.triggerType = EffectTriggerType::Hit;
                     context.logUnimplementedEffects = false;
                     effectDispatcher.dispatchOrbitEffects(objectIt->second, context);
-                    dispatchCapturedContactEffect(item, objectIt->second, enemy, player, spellRing, effectDispatcher, enemy.position, discoveryEvents);
+                    dispatchCapturedContactEffect(
+                        item,
+                        objectIt->second,
+                        enemy,
+                        player,
+                        spellRing,
+                        effectDispatcher,
+                        enemy.position,
+                        discoveryEvents,
+                        encyclopedia);
                     if (damageDealt > 0) {
-                        recordObjectEffectDiscovery(discoveryEvents, objectIt->second, "enemy_damage", "敵にダメージを与える", enemy.position);
+                        recordObjectEffectDiscovery(discoveryEvents, objectIt->second, "basic_attack", "", enemy.position);
                     }
                 }
             }
@@ -2452,7 +2472,8 @@ bool EnemySystem::hitByPlayerProjectile(
     SpellRingSystem& spellRing,
     int damage,
     const EffectDispatcher& effectDispatcher,
-    std::vector<EffectDiscoveryEvent>* discoveryEvents)
+    std::vector<EffectDiscoveryEvent>* discoveryEvents,
+    const EncyclopediaSystem* encyclopedia)
 {
     if (!projectile.active || projectile.ownerType != ProjectileOwnerType::PlayerOrbit) {
         return false;
@@ -2477,6 +2498,7 @@ bool EnemySystem::hitByPlayerProjectile(
             context.hitTarget = &enemy;
             context.orbit = &spellRing;
             context.discoveryEvents = discoveryEvents;
+            context.encyclopedia = encyclopedia;
             context.position = projectile.position;
             context.triggerType = EffectTriggerType::Hit;
             context.logUnimplementedEffects = false;

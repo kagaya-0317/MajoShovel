@@ -10,6 +10,15 @@
 
 namespace majo {
 
+struct EnemyBehaviorSpec {
+    std::string trigger;
+    std::string behavior;
+    std::unordered_map<std::string, std::string> params;
+    double intervalSeconds = 0.0;
+
+    bool operator==(const EnemyBehaviorSpec&) const = default;
+};
+
 struct EnemyDefinition {
     std::string id;
     std::string name;
@@ -26,7 +35,10 @@ struct EnemyDefinition {
     double visionDistance = 120.0;
     double visionAngle = 100.0;
     double loseSightSeconds = 1.5;
+    std::string enemyBehaviorCode;
+    std::string capturedBehaviorCode;
     std::vector<std::string> enemyBehaviorIds;
+    std::vector<std::string> capturedBehaviorIds;
     std::vector<std::string> enemyTags;
     int captureDifficulty = 0;
     std::string capturedDescription;
@@ -39,7 +51,8 @@ struct EnemyDefinition {
     std::vector<EffectSpec> capturedNormalEffects;
     std::vector<EffectSpec> capturedOrbitEffects;
     std::vector<std::string> capturedTags;
-    std::vector<std::string> capturedBehaviorIds;
+    std::vector<EnemyBehaviorSpec> enemyBehaviorSpecs;
+    std::vector<EnemyBehaviorSpec> capturedBehaviorSpecs;
     std::string note;
 
     bool operator==(const EnemyDefinition&) const = default;
@@ -48,23 +61,28 @@ struct EnemyDefinition {
 struct BehaviorDefinition {
     std::string id;
     std::string displayName;
-    std::string usableField;
     std::string classification;
-    std::string triggerCondition;
-    std::string baseProcess;
-    double defaultIntervalSeconds = 0.0;
+    std::string usableField;
+    std::vector<std::string> supportedTriggers;
+    std::string primaryParams;
+    std::string defaultParams;
     std::string defaultProjectileId;
-    std::string enemyTarget;
-    std::string capturedTarget;
-    std::vector<EffectSpec> enemyDefaultEffects;
-    std::vector<EffectSpec> capturedDefaultEffects;
+    std::string baseProcess;
     std::vector<std::string> relatedTags;
-    std::string enemyFacingControl;
-    std::string capturedFacingControl;
+    std::string facingControl;
     std::string movementControl;
     std::string duplicateRule;
     std::string implementationState;
     std::string note;
+
+    // Backward compatibility fields for old behavior sheets and existing runtime usage.
+    double defaultIntervalSeconds = 0.0;
+    std::string enemyTarget;
+    std::string capturedTarget;
+    std::vector<EffectSpec> enemyDefaultEffects;
+    std::vector<EffectSpec> capturedDefaultEffects;
+    std::string enemyFacingControl;
+    std::string capturedFacingControl;
 
     bool operator==(const BehaviorDefinition&) const = default;
 };

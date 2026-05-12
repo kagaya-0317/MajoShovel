@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 #include "engine/ObjectPool.hpp"
 #include "engine/Renderer.hpp"
@@ -22,12 +22,14 @@ namespace majo {
 
 class EffectSystem;
 class WorldDropSystem;
+class EncyclopediaSystem;
 
 enum class EnemyEventType {
     Hit,
     Death,
     BossDeath,
     RewardDrop,
+    ObjectDrop,
     CapturedExplosion
 };
 
@@ -38,6 +40,8 @@ struct EnemyEvent {
     std::string enemyName;
     std::string effectId;
     int moneyDrop = 0;
+    std::string objectDropId;
+    int objectDropCount = 0;
 };
 
 enum class CaptureResultType {
@@ -69,10 +73,13 @@ public:
         bool paused,
         const RuntimeBalance& balance,
         const ObjectCatalog& objectCatalog,
-        const WorldDropSystem& worldDrops,
+        WorldDropSystem& worldDrops,
+        Vec2 playerLight,
+        const std::vector<LightSource>& extraLights,
         const EffectDispatcher& effectDispatcher,
         ProjectileSystem& projectiles,
-        std::vector<EffectDiscoveryEvent>* discoveryEvents = nullptr);
+        std::vector<EffectDiscoveryEvent>* discoveryEvents = nullptr,
+        const EncyclopediaSystem* encyclopedia = nullptr);
     void render(Renderer& renderer, const TileMap& map, Vec2 playerLight, const std::vector<LightSource>& extraLights);
     void emitStatusParticles(EffectSystem& effects) const;
     int activeCount() const { return enemies_.activeCount(); }
@@ -86,13 +93,26 @@ public:
         SpellRingSystem& spellRing,
         int damage,
         const EffectDispatcher& effectDispatcher,
-        std::vector<EffectDiscoveryEvent>* discoveryEvents = nullptr);
+        std::vector<EffectDiscoveryEvent>* discoveryEvents = nullptr,
+        const EncyclopediaSystem* encyclopedia = nullptr);
     void applyCapturedExplosion(Vec2 position, SpellRingSystem& spellRing, int damage);
-    int pullMetalEnemies(Vec2 center, TileMap& map, float dt);
+    void addMudZone(Vec2 position, float radius, float duration, float speedMultiplier, float damagePerSecond, std::string damageType);
+    int pullMetalEnemies(Vec2 center, TileMap& map, float dt, float radius = 160.0f);
     int consumePendingXp();
     void clearTemporaryState();
 
 private:
+    struct MudZone {
+        Vec2 position{};
+        float radius = 0.0f;
+        float remainingSeconds = 0.0f;
+        float speedMultiplier = 1.0f;
+        float damagePerSecond = 0.0f;
+        std::string damageType = "poison";
+    };
+
+    void queueEnemyObjectDrops(Enemy& enemy);
+
     void setAwareness(Enemy& enemy, EnemyAwarenessState nextState, bool showIcon);
     void forceDetectInSight(Enemy& enemy, Vec2 playerPosition, bool showIcon);
     const EnemyDefinition* chooseEnemyDefinition(const EnemyCatalog& enemyCatalog);
@@ -123,6 +143,8 @@ private:
     int flowHeight_ = 0;
     float flowTimer_ = 0.0f;
     std::vector<int> flowDistance_;
+    std::vector<MudZone> mudZones_;
+    double mudDamageAccumulator_ = 0.0;
 };
 
 }

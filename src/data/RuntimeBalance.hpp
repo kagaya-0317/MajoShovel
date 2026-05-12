@@ -22,6 +22,15 @@ struct RuntimeBalance {
     float spellRingThrowDistance = balance::SpellRingThrowDistance;
     float spellRingThrowMaxTime = balance::SpellRingThrowMaxTime;
     float spellRingReturnSpeed = balance::SpellRingReturnSpeed;
+    float figure8WidthMultiplier = 1.20f;
+    float figure8HeightMultiplier = 0.70f;
+    float figure8ShapeRotationSpeed = 0.25f;
+    float cometRadiusMultiplier = 1.25f;
+    float cometArcDegrees = 100.0f;
+    float cometSpeedMultiplier = 1.10f;
+    float cometTrailLength = 0.20f;
+    float cometLaneSpacing = 10.0f;
+    float cometMaxArcDegrees = 130.0f;
 
     int dirtHp = balance::DirtHp;
     int rockHp = balance::RockHp;

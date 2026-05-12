@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 #include "data/GoogleSheetSource.hpp"
 
@@ -34,6 +34,31 @@ struct EffectSpec {
     bool operator==(const EffectSpec&) const = default;
 };
 
+enum class DiscoveryTrigger {
+    Attack,
+    Dig,
+    NormalEffect,
+    OrbitEffect,
+};
+
+struct DiscoveryEffectLine {
+    std::string objectId;
+    std::string effectKey;
+    std::string text;
+    DiscoveryTrigger trigger = DiscoveryTrigger::NormalEffect;
+
+    bool operator==(const DiscoveryEffectLine&) const = default;
+};
+
+struct CapturedBehaviorSpec {
+    std::string trigger;
+    std::string behavior;
+    std::unordered_map<std::string, std::string> params;
+    double intervalSeconds = 0.0;
+
+    bool operator==(const CapturedBehaviorSpec&) const = default;
+};
+
 struct ObjectDefinition {
     std::string id;
     std::string name;
@@ -51,7 +76,9 @@ struct ObjectDefinition {
     int imageNumber = 0;
     std::vector<std::string> tags;
     std::string effectText;
+    std::vector<DiscoveryEffectLine> discoveryEffectLines;
     std::vector<std::string> capturedBehaviorIds;
+    std::vector<CapturedBehaviorSpec> capturedBehaviorSpecs;
     ObjectLootWeights lootWeights;
 
     bool operator==(const ObjectDefinition&) const = default;
@@ -170,6 +197,11 @@ std::string effectSummaryText(const ObjectCatalog& catalog, const std::vector<Ef
 std::string resolveLootWeightColumnName(std::string_view stageId, int depthRank, LootChestKind chestKind);
 std::string resolveLootWeightColumnName(std::string_view stageId, int depthRank, std::string_view chestKind);
 double lootWeightFor(const ObjectDefinition& object, std::string_view stageId, int depthRank, LootChestKind chestKind);
+bool isDamageTypeAllowed(std::string_view value);
+bool isPhysicalDamageType(std::string_view value);
+std::string normalizeDamageType(std::string_view value);
+std::string_view damageTypeDisplayName(std::string_view value);
+std::vector<DiscoveryEffectLine> buildDiscoveryEffectLines(const ObjectDefinition& object, std::vector<std::string>* debugWarnings = nullptr);
 std::string_view dbValidationSeverityName(DbValidationSeverity severity);
 std::string_view dbValidationCategoryName(DbValidationCategory category);
 

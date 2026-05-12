@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 #include "data/ObjectCatalog.hpp"
 #include "game/EffectDispatcher.hpp"
@@ -13,6 +13,7 @@ struct DugTile {
     Vec2 center{};
     TileType type = TileType::Dirt;
 };
+class EncyclopediaSystem;
 
 class DiggingSystem {
 public:
@@ -23,7 +24,8 @@ public:
         float totalTime,
         const ObjectCatalog& objectCatalog,
         const EffectDispatcher& effectDispatcher,
-        std::vector<EffectDiscoveryEvent>* discoveryEvents = nullptr);
+        std::vector<EffectDiscoveryEvent>* discoveryEvents = nullptr,
+        const EncyclopediaSystem* encyclopedia = nullptr);
     const std::vector<Vec2>& openedTiles() const { return openedTiles_; }
     const std::vector<Vec2>& hitTiles() const { return hitTiles_; }
     const std::vector<DugTile>& dugTiles() const { return dugTiles_; }

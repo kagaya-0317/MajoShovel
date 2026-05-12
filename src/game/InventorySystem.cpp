@@ -1,10 +1,12 @@
-#include "game/InventorySystem.hpp"
+﻿#include "game/InventorySystem.hpp"
 
 #include "engine/Log.hpp"
 #include "game/EffectDispatcher.hpp"
+#include "game/EncyclopediaSystem.hpp"
 #include "game/ObjectImageRenderer.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cstdio>
 #include <cstdlib>
 #include <string>
@@ -38,11 +40,11 @@ constexpr float ScreenSlotH = 76.0f;
 constexpr float ScreenSlotGap = 8.0f;
 constexpr float InventoryObjectImageMaxSize = 48.0f;
 constexpr float ShortcutObjectImageMaxSize = 48.0f;
+constexpr float SlotDragStartDistanceSq = 36.0f;
 constexpr float DetailX = ScreenX + 820.0f;
 constexpr float DetailY = ScreenY + 50.0f;
 constexpr float DetailW = 330.0f;
 constexpr float DetailH = 520.0f;
-
 UiRect panelRect()
 {
     return {{PanelX, PanelY}, {PanelW, PanelH}};
@@ -81,6 +83,24 @@ UiRect inventorySlotRect(int index)
         ScreenGridX + static_cast<float>(column) * (ScreenSlotW + ScreenSlotGap),
         ScreenGridY + static_cast<float>(row) * (ScreenSlotH + ScreenSlotGap)
     }, {ScreenSlotW, ScreenSlotH}};
+}
+
+Vec2 uiRectCenter(const UiRect& rect)
+{
+    return rect.pos + rect.size * 0.5f;
+}
+
+float inventorySlotFrameRadius(const UiRect& rect)
+{
+    return std::min(rect.size.x, rect.size.y) * 0.5f;
+}
+
+void drawSelectedItemCircleOutline(Renderer& renderer, Vec2 center, float radius)
+{
+    const Color outline = selectedItemOutlineColor();
+    for (int i = 0; i < 6; ++i) {
+        renderer.drawCircle(center, radius + static_cast<float>(i), outline);
+    }
 }
 
 bool objectCategoryEquals(const ItemData& item, std::string_view category)
@@ -166,6 +186,22 @@ Color inventoryObjectColor(const ItemData& item)
         return {136, 214, 214, 255};
     }
     return {188, 152, 236, 255};
+}
+
+std::string joinEffectLines(const std::vector<std::string>& lines)
+{
+    if (lines.empty()) {
+        return "-";
+    }
+    std::string text;
+    for (std::size_t i = 0; i < lines.size(); ++i) {
+        if (!text.empty()) {
+            text += '\n';
+        }
+        text += "\xE3\x83\xBB";
+        text += lines[i];
+    }
+    return text;
 }
 
 }
@@ -271,6 +307,8 @@ bool InventorySystem::removeObjectItemCount(std::string_view objectId, int count
 
         it->count -= count;
         if (it->count <= 0) {
+            const int stackIndex = static_cast<int>(std::distance(objectStacks_.begin(), it));
+            removePackedSlotAtPackedIndex(stackIndex);
             objectStacks_.erase(it);
         }
         status_ = "売却しました";
@@ -295,6 +333,8 @@ bool InventorySystem::removeObjectInstance(std::string_view instanceId)
         status_ = "保護中は売却不可";
         return false;
     }
+    const int instanceIndex = static_cast<int>(std::distance(objectInstances_.begin(), it));
+    removePackedSlotAtPackedIndex(static_cast<int>(objectStacks_.size()) + instanceIndex);
     objectInstances_.erase(it);
     status_ = "売却しました";
     return true;
@@ -312,6 +352,8 @@ bool InventorySystem::takeObjectInstance(std::string_view instanceId, InventoryO
         return false;
     }
     outInstance = std::move(*it);
+    const int instanceIndex = static_cast<int>(std::distance(objectInstances_.begin(), it));
+    removePackedSlotAtPackedIndex(static_cast<int>(objectStacks_.size()) + instanceIndex);
     objectInstances_.erase(it);
     status_ = "倉庫へ預けました";
     return true;
@@ -401,6 +443,8 @@ bool InventorySystem::enhanceObjectStackItem(std::string_view objectId, int atta
 
     --it->count;
     if (it->count <= 0) {
+        const int stackIndex = static_cast<int>(std::distance(objectStacks_.begin(), it));
+        removePackedSlotAtPackedIndex(stackIndex);
         objectStacks_.erase(it);
     }
     status_ = "個体化して強化しました";
@@ -423,7 +467,8 @@ bool InventorySystem::enhanceSelectedObjectInstance(int attackBonus, int digBonu
         createObjectInstance(selectedStack->item);
         --selectedStack->count;
         if (selectedStack->count <= 0) {
-            const int objectIndex = selectedShortcutIndex();
+            const int objectIndex = stackIndexAtScreenIndex(selectedShortcutIndex());
+            removePackedSlotAtPackedIndex(objectIndex);
             objectStacks_.erase(objectStacks_.begin() + objectIndex);
         }
         selectedInstance = &objectInstances_.back();
@@ -454,8 +499,8 @@ ShortcutSlot& InventorySystem::selectedShortcutSlot()
 
 const InventoryObjectStack* InventorySystem::objectStackAtScreenIndex(int index) const
 {
-    const int objectIndex = index;
-    if (objectIndex < 0 || objectIndex >= static_cast<int>(objectStacks_.size())) {
+    const int objectIndex = stackIndexAtScreenIndex(index);
+    if (objectIndex < 0) {
         return nullptr;
     }
     return &objectStacks_[static_cast<std::size_t>(objectIndex)];
@@ -463,8 +508,8 @@ const InventoryObjectStack* InventorySystem::objectStackAtScreenIndex(int index)
 
 InventoryObjectStack* InventorySystem::objectStackAtScreenIndex(int index)
 {
-    const int objectIndex = index;
-    if (objectIndex < 0 || objectIndex >= static_cast<int>(objectStacks_.size())) {
+    const int objectIndex = stackIndexAtScreenIndex(index);
+    if (objectIndex < 0) {
         return nullptr;
     }
     return &objectStacks_[static_cast<std::size_t>(objectIndex)];
@@ -472,8 +517,8 @@ InventoryObjectStack* InventorySystem::objectStackAtScreenIndex(int index)
 
 const InventoryObjectInstance* InventorySystem::objectInstanceAtScreenIndex(int index) const
 {
-    const int instanceIndex = index - static_cast<int>(objectStacks_.size());
-    if (instanceIndex < 0 || instanceIndex >= static_cast<int>(objectInstances_.size())) {
+    const int instanceIndex = instanceIndexAtScreenIndex(index);
+    if (instanceIndex < 0) {
         return nullptr;
     }
     return &objectInstances_[static_cast<std::size_t>(instanceIndex)];
@@ -481,8 +526,8 @@ const InventoryObjectInstance* InventorySystem::objectInstanceAtScreenIndex(int 
 
 InventoryObjectInstance* InventorySystem::objectInstanceAtScreenIndex(int index)
 {
-    const int instanceIndex = index - static_cast<int>(objectStacks_.size());
-    if (instanceIndex < 0 || instanceIndex >= static_cast<int>(objectInstances_.size())) {
+    const int instanceIndex = instanceIndexAtScreenIndex(index);
+    if (instanceIndex < 0) {
         return nullptr;
     }
     return &objectInstances_[static_cast<std::size_t>(instanceIndex)];
@@ -666,6 +711,133 @@ void InventorySystem::selectShortcutIndex(int index)
     selectedShortcutColumn_ = index % ShortcutColumns;
 }
 
+void InventorySystem::syncPackedItemSlots() const
+{
+    const int totalCount = static_cast<int>(objectStacks_.size() + objectInstances_.size());
+    if (totalCount <= 0) {
+        packedItemSlots_.clear();
+        return;
+    }
+
+    std::vector<int> nextSlots(static_cast<std::size_t>(totalCount), -1);
+    std::array<bool, ShortcutSlotCount> used{};
+    const int copyCount = std::min(totalCount, static_cast<int>(packedItemSlots_.size()));
+    for (int i = 0; i < copyCount; ++i) {
+        const int slot = packedItemSlots_[static_cast<std::size_t>(i)];
+        if (slot >= 0 && slot < ShortcutSlotCount && !used[static_cast<std::size_t>(slot)]) {
+            nextSlots[static_cast<std::size_t>(i)] = slot;
+            used[static_cast<std::size_t>(slot)] = true;
+        }
+    }
+
+    int cursor = 0;
+    for (int i = 0; i < totalCount; ++i) {
+        if (nextSlots[static_cast<std::size_t>(i)] >= 0) {
+            continue;
+        }
+        while (cursor < ShortcutSlotCount && used[static_cast<std::size_t>(cursor)]) {
+            ++cursor;
+        }
+        if (cursor >= ShortcutSlotCount) {
+            nextSlots[static_cast<std::size_t>(i)] = i % ShortcutSlotCount;
+        } else {
+            nextSlots[static_cast<std::size_t>(i)] = cursor;
+            used[static_cast<std::size_t>(cursor)] = true;
+            ++cursor;
+        }
+    }
+    packedItemSlots_ = std::move(nextSlots);
+}
+
+int InventorySystem::packedItemIndexAtScreenIndex(int index) const
+{
+    syncPackedItemSlots();
+    for (int i = 0; i < static_cast<int>(packedItemSlots_.size()); ++i) {
+        if (packedItemSlots_[static_cast<std::size_t>(i)] == index) {
+            return i;
+        }
+    }
+    return -1;
+}
+
+int InventorySystem::stackIndexAtScreenIndex(int index) const
+{
+    const int packedIndex = packedItemIndexAtScreenIndex(index);
+    const int stackCount = static_cast<int>(objectStacks_.size());
+    if (packedIndex < 0 || packedIndex >= stackCount) {
+        return -1;
+    }
+    return packedIndex;
+}
+
+int InventorySystem::instanceIndexAtScreenIndex(int index) const
+{
+    const int packedIndex = packedItemIndexAtScreenIndex(index);
+    const int stackCount = static_cast<int>(objectStacks_.size());
+    const int instanceIndex = packedIndex - stackCount;
+    if (instanceIndex < 0 || instanceIndex >= static_cast<int>(objectInstances_.size())) {
+        return -1;
+    }
+    return instanceIndex;
+}
+
+void InventorySystem::removePackedSlotAtPackedIndex(int packedIndex) const
+{
+    syncPackedItemSlots();
+    if (packedIndex < 0 || packedIndex >= static_cast<int>(packedItemSlots_.size())) {
+        return;
+    }
+    packedItemSlots_.erase(packedItemSlots_.begin() + packedIndex);
+}
+
+bool InventorySystem::hasScreenItem(int index) const
+{
+    return objectStackAtScreenIndex(index) != nullptr || objectInstanceAtScreenIndex(index) != nullptr;
+}
+
+bool InventorySystem::canUseScreenItem(int index) const
+{
+    if (const InventoryObjectStack* objectStack = objectStackAtScreenIndex(index)) {
+        return !objectStack->item.normalEffects.empty();
+    }
+    if (const InventoryObjectInstance* objectInstance = objectInstanceAtScreenIndex(index)) {
+        return !objectInstance->instance.isBroken && !objectInstance->item.normalEffects.empty();
+    }
+    return false;
+}
+
+std::array<UiCommandMenuItem, 3> InventorySystem::buildSlotCommandItems(int slotIndex) const
+{
+    const bool hasItem = hasScreenItem(slotIndex);
+    std::array<UiCommandMenuItem, 3> items{{
+        {"使用する", canUseScreenItem(slotIndex)},
+        {"リングへ", hasItem},
+        {"保護", objectInstanceAtScreenIndex(slotIndex) != nullptr},
+    }};
+    return items;
+}
+
+bool InventorySystem::moveScreenItem(int fromIndex, int toIndex)
+{
+    if (fromIndex < 0 || fromIndex >= ShortcutSlotCount || toIndex < 0 || toIndex >= ShortcutSlotCount) {
+        return false;
+    }
+    const int fromPacked = packedItemIndexAtScreenIndex(fromIndex);
+    if (fromPacked < 0) {
+        return false;
+    }
+    const int toPacked = packedItemIndexAtScreenIndex(toIndex);
+    syncPackedItemSlots();
+    if (toPacked < 0) {
+        packedItemSlots_[static_cast<std::size_t>(fromPacked)] = toIndex;
+        return true;
+    }
+    std::swap(
+        packedItemSlots_[static_cast<std::size_t>(fromPacked)],
+        packedItemSlots_[static_cast<std::size_t>(toPacked)]);
+    return true;
+}
+
 void InventorySystem::toggleShortcutRow()
 {
     shortcutRow_ = (shortcutRow_ + 1) % ShortcutRows;
@@ -673,20 +845,17 @@ void InventorySystem::toggleShortcutRow()
 
 void InventorySystem::grabOrPlaceSelected()
 {
-    ShortcutSlot& selected = selectedShortcutSlot();
     if (grabbedSlotActive_) {
         placeGrabbedAtSelected();
         return;
     }
-    if (!selected.assigned) {
-        status_ = "空き枠";
+    const int index = selectedShortcutIndex();
+    if (!hasScreenItem(index)) {
+        status_ = "アイテム未選択";
         return;
     }
-
-    grabbedSlot_ = selected;
-    grabbedSlotOrigin_ = selectedShortcutIndex();
+    grabbedSlotOrigin_ = index;
     grabbedSlotActive_ = true;
-    selected = ShortcutSlot{};
     status_ = "つかみ中";
 }
 
@@ -695,18 +864,12 @@ void InventorySystem::placeGrabbedAtSelected()
     if (!grabbedSlotActive_) {
         return;
     }
-
-    ShortcutSlot& selected = selectedShortcutSlot();
     const int targetIndex = selectedShortcutIndex();
-    const ShortcutSlot displaced = selected;
-    selected = grabbedSlot_;
-    if (displaced.assigned && grabbedSlotOrigin_ >= 0 && grabbedSlotOrigin_ < ShortcutSlotCount && grabbedSlotOrigin_ != targetIndex) {
-        shortcutSlots_[grabbedSlotOrigin_] = displaced;
+    if (moveScreenItem(grabbedSlotOrigin_, targetIndex)) {
+        status_ = grabbedSlotOrigin_ == targetIndex ? "配置" : "入れ替え";
     }
     grabbedSlotActive_ = false;
-    grabbedSlot_ = ShortcutSlot{};
     grabbedSlotOrigin_ = -1;
-    status_ = displaced.assigned ? "入れ替え" : "配置";
 }
 
 void InventorySystem::cancelGrab()
@@ -714,33 +877,37 @@ void InventorySystem::cancelGrab()
     if (!grabbedSlotActive_) {
         return;
     }
+    grabbedSlotActive_ = false;
+    grabbedSlotOrigin_ = -1;
+    status_ = "キャンセル";
+}
 
-    if (grabbedSlotOrigin_ >= 0 && grabbedSlotOrigin_ < ShortcutSlotCount && !shortcutSlots_[grabbedSlotOrigin_].assigned) {
-        shortcutSlots_[grabbedSlotOrigin_] = grabbedSlot_;
-        grabbedSlot_ = ShortcutSlot{};
-        grabbedSlotOrigin_ = -1;
-        grabbedSlotActive_ = false;
-        status_ = "キャンセル";
+void InventorySystem::openSlotCommandMenu(int slotIndex)
+{
+    if (!hasScreenItem(slotIndex)) {
+        closeUiCommandMenu(slotCommandMenu_);
+        slotCommandMenuIndex_ = -1;
         return;
     }
+    const std::array<UiCommandMenuItem, 3> commandItems = buildSlotCommandItems(slotIndex);
+    slotCommandMenuIndex_ = slotIndex;
+    const UiRect slotRect = inventorySlotRect(slotIndex);
+    openUiCommandMenu(
+        slotCommandMenu_,
+        slotRect.pos + Vec2{slotRect.size.x - 20.0f, 0.0f},
+        inventoryScreenRect(),
+        static_cast<int>(commandItems.size()),
+        commandItems.data(),
+        120.0f,
+        2);
+}
 
-    for (ShortcutSlot& slot : shortcutSlots_) {
-        if (!slot.assigned) {
-            slot = grabbedSlot_;
-            grabbedSlot_ = ShortcutSlot{};
-            grabbedSlotOrigin_ = -1;
-            grabbedSlotActive_ = false;
-            status_ = "キャンセル";
-            return;
-        }
-    }
-
-    ShortcutSlot& selected = selectedShortcutSlot();
-    std::swap(selected, grabbedSlot_);
-    grabbedSlot_ = ShortcutSlot{};
-    grabbedSlotOrigin_ = -1;
-    grabbedSlotActive_ = false;
-    status_ = "キャンセル";
+void InventorySystem::resetSlotPointerPress()
+{
+    slotPointerPressIndex_ = -1;
+    slotPointerPressMouse_ = {};
+    slotPointerPressCanOpenMenu_ = false;
+    slotPointerDragTriggered_ = false;
 }
 
 bool InventorySystem::addObjectSelectionToRing(SpellRingSystem& spellRing)
@@ -766,7 +933,8 @@ bool InventorySystem::addObjectSelectionToRing(SpellRingSystem& spellRing)
     status_ = "リングに追加: " + selected->item.name;
     --selected->count;
     if (selected->count <= 0) {
-        const int objectIndex = index;
+        const int objectIndex = stackIndexAtScreenIndex(index);
+        removePackedSlotAtPackedIndex(objectIndex);
         objectStacks_.erase(objectStacks_.begin() + objectIndex);
     }
     return true;
@@ -789,12 +957,17 @@ bool InventorySystem::addObjectInstanceSelectionToRing(SpellRingSystem& spellRin
         return false;
     }
     status_ = "リングに追加: " + selected->item.name;
-    const int instanceIndex = index - static_cast<int>(objectStacks_.size());
+    const int instanceIndex = instanceIndexAtScreenIndex(index);
+    removePackedSlotAtPackedIndex(static_cast<int>(objectStacks_.size()) + instanceIndex);
     objectInstances_.erase(objectInstances_.begin() + instanceIndex);
     return true;
 }
 
-bool InventorySystem::useObjectSelection(Player& player, const EffectDispatcher& effectDispatcher)
+bool InventorySystem::useObjectSelection(
+    Player& player,
+    const EffectDispatcher& effectDispatcher,
+    std::vector<EffectDiscoveryEvent>* discoveryEvents,
+    const EncyclopediaSystem* encyclopedia)
 {
     const int index = selectedShortcutIndex();
     InventoryObjectStack* selected = objectStackAtScreenIndex(index);
@@ -823,6 +996,8 @@ bool InventorySystem::useObjectSelection(Player& player, const EffectDispatcher&
     if (!hasImplementedEffect) {
         EffectContext context;
         context.owner = &player;
+        context.discoveryEvents = discoveryEvents;
+        context.encyclopedia = encyclopedia;
         context.position = player.position;
         context.triggerType = EffectTriggerType::NormalUse;
         context.logUnimplementedEffects = true;
@@ -834,6 +1009,8 @@ bool InventorySystem::useObjectSelection(Player& player, const EffectDispatcher&
     const int beforeHp = player.hp;
     EffectContext context;
     context.owner = &player;
+    context.discoveryEvents = discoveryEvents;
+    context.encyclopedia = encyclopedia;
     context.position = player.position;
     context.triggerType = EffectTriggerType::NormalUse;
     context.logUnimplementedEffects = true;
@@ -861,13 +1038,18 @@ bool InventorySystem::useObjectSelection(Player& player, const EffectDispatcher&
     status_ = "使用: " + selected->item.name;
     --selected->count;
     if (selected->count <= 0) {
-        const int objectIndex = index;
+        const int objectIndex = stackIndexAtScreenIndex(index);
+        removePackedSlotAtPackedIndex(objectIndex);
         objectStacks_.erase(objectStacks_.begin() + objectIndex);
     }
     return true;
 }
 
-bool InventorySystem::useObjectInstanceSelection(Player& player, const EffectDispatcher& effectDispatcher)
+bool InventorySystem::useObjectInstanceSelection(
+    Player& player,
+    const EffectDispatcher& effectDispatcher,
+    std::vector<EffectDiscoveryEvent>* discoveryEvents,
+    const EncyclopediaSystem* encyclopedia)
 {
     InventoryObjectInstance* selected = selectedObjectInstance();
     if (selected == nullptr) {
@@ -885,6 +1067,8 @@ bool InventorySystem::useObjectInstanceSelection(Player& player, const EffectDis
 
     EffectContext context;
     context.owner = &player;
+    context.discoveryEvents = discoveryEvents;
+    context.encyclopedia = encyclopedia;
     context.position = player.position;
     context.triggerType = EffectTriggerType::NormalUse;
     context.logUnimplementedEffects = true;
@@ -897,14 +1081,16 @@ bool InventorySystem::useObjectInstanceSelection(Player& player, const EffectDis
 bool InventorySystem::useShortcutSelection(
     Player& player,
     SpellRingSystem& spellRing,
-    const EffectDispatcher& effectDispatcher)
+    const EffectDispatcher& effectDispatcher,
+    std::vector<EffectDiscoveryEvent>* discoveryEvents,
+    const EncyclopediaSystem* encyclopedia)
 {
     (void)spellRing;
     if (selectedObjectStack() != nullptr) {
-        return useObjectSelection(player, effectDispatcher);
+        return useObjectSelection(player, effectDispatcher, discoveryEvents, encyclopedia);
     }
     if (selectedObjectInstance() != nullptr) {
-        return useObjectInstanceSelection(player, effectDispatcher);
+        return useObjectInstanceSelection(player, effectDispatcher, discoveryEvents, encyclopedia);
     }
 
     status_ = "ショートカット空き";
@@ -939,7 +1125,9 @@ void InventorySystem::updateShortcuts(
     const Input& input,
     Player& player,
     SpellRingSystem& spellRing,
-    const EffectDispatcher& effectDispatcher)
+    const EffectDispatcher& effectDispatcher,
+    std::vector<EffectDiscoveryEvent>* discoveryEvents,
+    const EncyclopediaSystem* encyclopedia)
 {
     if (input.shortcutCursorDelta() != 0) {
         moveShortcutCursor(input.shortcutCursorDelta());
@@ -952,7 +1140,7 @@ void InventorySystem::updateShortcuts(
     }
 
     if (input.useItemPressed()) {
-        useShortcutSelection(player, spellRing, effectDispatcher);
+        useShortcutSelection(player, spellRing, effectDispatcher, discoveryEvents, encyclopedia);
     }
     if (input.addRingPressed()) {
         addShortcutSelectionToRing(spellRing);
@@ -967,18 +1155,78 @@ void InventorySystem::updateScreen(
     UiContext& ui,
     Player& player,
     SpellRingSystem& spellRing,
-    const EffectDispatcher& effectDispatcher)
+    const EffectDispatcher& effectDispatcher,
+    std::vector<EffectDiscoveryEvent>* discoveryEvents,
+    const EncyclopediaSystem* encyclopedia)
 {
     if (!open_) {
         return;
     }
 
+    const bool commandOpenBeforeUpdate = slotCommandMenu_.open;
+    const int commandSlotIndex = slotCommandMenuIndex_ >= 0 ? slotCommandMenuIndex_ : selectedShortcutIndex();
+    const std::array<UiCommandMenuItem, 3> commandItems = buildSlotCommandItems(commandSlotIndex);
+    const int commandSelection = updateUiCommandMenu(
+        slotCommandMenu_,
+        ui,
+        input,
+        commandItems.data(),
+        static_cast<int>(commandItems.size()));
+    if (commandSelection >= 0 && slotCommandMenuIndex_ >= 0) {
+        selectShortcutIndex(slotCommandMenuIndex_);
+        if (commandSelection == 0) {
+            if (grabbedSlotActive_) {
+                status_ = "つかみ中は使用できません";
+            } else {
+                useShortcutSelection(player, spellRing, effectDispatcher, discoveryEvents, encyclopedia);
+            }
+        } else if (commandSelection == 1) {
+            if (grabbedSlotActive_) {
+                status_ = "つかみ中はリング移動できません";
+            } else {
+                addShortcutSelectionToRing(spellRing);
+            }
+        } else if (commandSelection == 2) {
+            if (grabbedSlotActive_) {
+                status_ = "つかみ中は保護変更できません";
+            } else {
+                toggleSelectedProtection();
+            }
+        }
+        slotCommandMenuIndex_ = -1;
+        resetSlotPointerPress();
+        ui.block(inventoryScreenRect());
+        return;
+    } else if (!slotCommandMenu_.open) {
+        if (commandOpenBeforeUpdate && input.backPressed()) {
+            slotCommandMenuIndex_ = -1;
+            resetSlotPointerPress();
+            ui.block(inventoryScreenRect());
+            return;
+        }
+        slotCommandMenuIndex_ = -1;
+    }
+
     if (input.pausePressed()) {
+        if (slotCommandMenu_.open) {
+            closeUiCommandMenu(slotCommandMenu_);
+            slotCommandMenuIndex_ = -1;
+            resetSlotPointerPress();
+            return;
+        }
         if (grabbedSlotActive_) {
             cancelGrab();
         } else {
+            closeUiCommandMenu(slotCommandMenu_);
+            slotCommandMenuIndex_ = -1;
+            resetSlotPointerPress();
             open_ = false;
         }
+        return;
+    }
+
+    if (slotCommandMenu_.open) {
+        ui.block(inventoryScreenRect());
         return;
     }
 
@@ -999,25 +1247,60 @@ void InventorySystem::updateScreen(
     }
     selectShortcutSlot(input.shortcutSlotPressed());
 
+    int hoveredSlotIndex = -1;
     for (int i = 0; i < ShortcutSlotCount; ++i) {
         const UiRect rect = inventorySlotRect(i);
         if (rect.contains(ui.mouse())) {
+            hoveredSlotIndex = i;
             selectShortcutIndex(i);
-        }
-        if (ui.pressed(rect)) {
-            selectShortcutIndex(i);
-            return;
+            break;
         }
     }
 
+    if (input.mouseLeftPressed() && hoveredSlotIndex >= 0 && !ui.pointerConsumed()) {
+        slotPointerPressIndex_ = hoveredSlotIndex;
+        slotPointerPressMouse_ = input.mouseScreen();
+        slotPointerPressCanOpenMenu_ = hasScreenItem(hoveredSlotIndex);
+        slotPointerDragTriggered_ = false;
+        ui.consumePointer();
+    }
+
+    if (slotPointerPressIndex_ >= 0 &&
+        input.mouseLeftHeld() &&
+        !slotPointerDragTriggered_ &&
+        !grabbedSlotActive_ &&
+        hasScreenItem(slotPointerPressIndex_) &&
+        lengthSquared(input.mouseScreen() - slotPointerPressMouse_) >= SlotDragStartDistanceSq) {
+        selectShortcutIndex(slotPointerPressIndex_);
+        grabOrPlaceSelected();
+        slotPointerDragTriggered_ = grabbedSlotActive_;
+        slotPointerPressCanOpenMenu_ = false;
+        closeUiCommandMenu(slotCommandMenu_);
+        slotCommandMenuIndex_ = -1;
+    }
+
+    if (slotPointerPressIndex_ >= 0 && input.mouseLeftReleased()) {
+        if (slotPointerDragTriggered_ && grabbedSlotActive_) {
+            if (hoveredSlotIndex >= 0) {
+                selectShortcutIndex(hoveredSlotIndex);
+            }
+            placeGrabbedAtSelected();
+        } else if (slotPointerPressCanOpenMenu_ && hoveredSlotIndex == slotPointerPressIndex_) {
+            openSlotCommandMenu(slotPointerPressIndex_);
+        }
+        resetSlotPointerPress();
+    }
+
     if (input.grabOrPlacePressed()) {
+        closeUiCommandMenu(slotCommandMenu_);
+        slotCommandMenuIndex_ = -1;
         grabOrPlaceSelected();
     }
     if (input.useItemPressed() || input.confirmPressed()) {
         if (grabbedSlotActive_) {
             placeGrabbedAtSelected();
-        } else {
-            useShortcutSelection(player, spellRing, effectDispatcher);
+        } else if (hasScreenItem(selectedShortcutIndex())) {
+            openSlotCommandMenu(selectedShortcutIndex());
         }
     }
     if (input.addRingPressed()) {
@@ -1044,18 +1327,33 @@ void InventorySystem::update(
     Player& player,
     SpellRingSystem& spellRing,
     const EffectDispatcher& effectDispatcher,
-    bool blocked)
+    bool blocked,
+    std::vector<EffectDiscoveryEvent>* discoveryEvents,
+    const EncyclopediaSystem* encyclopedia)
 {
     if (input.inventoryPressed() && !blocked) {
+        if (open_) {
+            closeUiCommandMenu(slotCommandMenu_);
+            slotCommandMenuIndex_ = -1;
+            resetSlotPointerPress();
+            if (grabbedSlotActive_) {
+                cancelGrab();
+            }
+        }
         open_ = !open_;
     }
     if (!open_ || blocked) {
         return;
     }
-    updateScreen(input, ui, player, spellRing, effectDispatcher);
+    updateScreen(input, ui, player, spellRing, effectDispatcher, discoveryEvents, encyclopedia);
 }
 
-void InventorySystem::render(Renderer& renderer, const Player& player, const SpellRingSystem& spellRing, const ObjectCatalog& catalog) const
+void InventorySystem::render(
+    Renderer& renderer,
+    const Player& player,
+    const SpellRingSystem& spellRing,
+    const ObjectCatalog& catalog,
+    const EncyclopediaSystem& encyclopedia) const
 {
     (void)player;
     (void)spellRing;
@@ -1071,40 +1369,43 @@ void InventorySystem::render(Renderer& renderer, const Player& player, const Spe
         "inventory.main",
         {{ScreenX, ScreenY}, {ScreenW, ScreenH}},
         "アイテム",
-        "Q/E 左右  F/Enter 使用  R リングへ  P 保護  G つかむ/置く  Esc 戻る");
+        "F/Enter 決定  R リングへ  P 保護  G つかむ/置く  Esc 戻る");
 
     char buffer[160];
     for (int i = 0; i < ShortcutSlotCount; ++i) {
         const UiRect rect = inventorySlotRect(i);
         const bool selected = i == selectedShortcutIndex();
         const Color fill = selected ? Color{54, 44, 72, 242} : Color{20, 20, 28, 226};
-        const Color outline = selected ? ui::WindowBorder : Color{78, 72, 94, 255};
-        renderer.fillRect(rect.pos, rect.size, fill);
-        renderer.drawRect(rect.pos, rect.size, outline);
-
-        std::snprintf(buffer, sizeof(buffer), "%d", i % ShortcutColumns + 1);
-        renderer.drawText(rect.pos + Vec2{7.0f, 6.0f}, buffer, selected ? ui::Text : ui::TextDisabled, 1);
+        const Vec2 slotCenter = uiRectCenter(rect);
+        renderer.fillCircle(slotCenter, inventorySlotFrameRadius(rect), fill);
 
         const InventoryObjectStack* objectStack = objectStackAtScreenIndex(i);
         if (objectStack != nullptr) {
             const Color objectColor = inventoryObjectColor(objectStack->item);
-            const Vec2 iconCenter = rect.pos + Vec2{44.0f, 28.0f};
+            const Vec2 iconCenter = slotCenter;
+            const ObjectImageDrawOptions imageOptions = selected
+                ? withSelectedItemOutline()
+                : ObjectImageDrawOptions{};
             const bool drewImage = drawObjectImage(
                 renderer,
                 objectStack->item,
                 iconCenter,
-                {InventoryObjectImageMaxSize, InventoryObjectImageMaxSize});
+                {InventoryObjectImageMaxSize, InventoryObjectImageMaxSize},
+                imageOptions);
             if (!drewImage) {
                 renderer.fillCircle(iconCenter, 22.0f, objectColor);
+                if (selected) {
+                    drawSelectedItemCircleOutline(renderer, iconCenter, 22.0f);
+                }
             }
-            renderer.drawCircle(rect.pos + Vec2{44.0f, 28.0f}, 27.0f, {255, 230, 150, 180});
-            std::snprintf(buffer, sizeof(buffer), "%s x%d", objectStack->item.name.c_str(), objectStack->count);
-            renderer.drawText(rect.pos + Vec2{10.0f, 50.0f}, buffer, ui::Text, 2);
         } else if (const InventoryObjectInstance* objectInstance = objectInstanceAtScreenIndex(i)) {
             const Color objectColor = objectInstance->instance.isBroken ? Color{82, 82, 90, 255} : inventoryObjectColor(objectInstance->item);
-            const Vec2 iconCenter = rect.pos + Vec2{44.0f, 28.0f};
+            const Vec2 iconCenter = slotCenter;
             ObjectImageDrawOptions imageOptions;
             imageOptions.tint = objectInstance->instance.isBroken ? Color{140, 140, 148, 220} : Color{255, 255, 255, 255};
+            if (selected) {
+                imageOptions = withSelectedItemOutline(imageOptions);
+            }
             const bool drewImage = drawObjectImage(
                 renderer,
                 objectInstance->item,
@@ -1113,23 +1414,25 @@ void InventorySystem::render(Renderer& renderer, const Player& player, const Spe
                 imageOptions);
             if (!drewImage) {
                 renderer.fillCircle(iconCenter, 22.0f, objectColor);
+                if (selected) {
+                    drawSelectedItemCircleOutline(renderer, iconCenter, 22.0f);
+                }
             }
-            renderer.drawCircle(
-                rect.pos + Vec2{44.0f, 28.0f},
-                27.0f,
-                objectInstance->instance.protectionEnabled ? Color{116, 220, 255, 220} : Color{255, 230, 150, 180});
-            std::snprintf(buffer, sizeof(buffer), "%s", objectInstance->item.name.c_str());
-            renderer.drawText(rect.pos + Vec2{10.0f, 50.0f}, buffer, ui::Text, 2);
-        } else {
-            renderer.drawText(rect.pos + Vec2{22.0f, 30.0f}, "Empty", ui::TextDisabled, 2);
         }
     }
+    const int detailIndex = (slotCommandMenu_.open && slotCommandMenuIndex_ >= 0)
+        ? slotCommandMenuIndex_
+        : selectedShortcutIndex();
+    const InventoryObjectStack* detailStack = objectStackAtScreenIndex(detailIndex);
+    const InventoryObjectInstance* detailInstance = objectInstanceAtScreenIndex(detailIndex);
 
     std::string detailTitle = "Empty";
-    if (const InventoryObjectStack* objectStack = selectedObjectStack()) {
+    if (detailStack != nullptr) {
+        const InventoryObjectStack* objectStack = detailStack;
         std::snprintf(buffer, sizeof(buffer), "%s x%d", objectStack->item.name.c_str(), objectStack->count);
         detailTitle = buffer;
-    } else if (const InventoryObjectInstance* objectInstance = selectedObjectInstance()) {
+    } else if (detailInstance != nullptr) {
+        const InventoryObjectInstance* objectInstance = detailInstance;
         detailTitle = objectInstance->item.name;
     }
 
@@ -1137,26 +1440,39 @@ void InventorySystem::render(Renderer& renderer, const Player& player, const Spe
     drawUiSubPanel(renderer, detailPanel);
     float detailLineY = drawUiDetailHeader(renderer, detailPanel, detailTitle);
 
-    if (const InventoryObjectStack* objectStack = selectedObjectStack()) {
+    if (detailStack != nullptr) {
+        const InventoryObjectStack* objectStack = detailStack;
         const ItemData& item = objectStack->item;
+        const std::vector<std::string> effectLines =
+            encyclopedia.getObjectEffectDisplayLines(item.id, catalog, EffectRevealMode::WithUnknown);
+        const std::string effectText = joinEffectLines(effectLines);
         drawUiDetailText(renderer, detailPanel, detailLineY, item.description.empty() ? "-" : item.description);
-        drawUiDetailText(renderer, detailPanel, detailLineY, item.effectText.empty() ? "-" : item.effectText);
-        drawUiDetailLine(renderer, detailPanel, detailLineY, "通常効果", effectSummaryText(catalog, item.normalEffects));
-        drawUiDetailLine(renderer, detailPanel, detailLineY, "軌道効果", effectSummaryText(catalog, item.orbitEffects));
+        std::snprintf(buffer, sizeof(buffer), "%d", static_cast<int>(effectLines.size()));
+        drawUiDetailLine(renderer, detailPanel, detailLineY, "効果数", buffer);
+        drawUiDetailText(renderer, detailPanel, detailLineY, "効果");
+        drawUiDetailText(renderer, detailPanel, detailLineY, effectText);
         std::snprintf(buffer, sizeof(buffer), "%d", item.attackPower);
         drawUiDetailLine(renderer, detailPanel, detailLineY, "攻撃力", buffer);
-        drawUiDetailLine(renderer, detailPanel, detailLineY, "ダメージ", item.damageType.empty() ? "-" : item.damageType);
+        const std::string damageTypeText = item.damageType.empty() ? "-" : std::string(damageTypeDisplayName(item.damageType));
+        drawUiDetailLine(renderer, detailPanel, detailLineY, "ダメージ", damageTypeText);
         std::snprintf(buffer, sizeof(buffer), "%d", item.digPower);
         drawUiDetailLine(renderer, detailPanel, detailLineY, "掘削力", buffer);
         std::snprintf(buffer, sizeof(buffer), "%d", item.durability);
         drawUiDetailLine(renderer, detailPanel, detailLineY, "耐久力", buffer);
         std::snprintf(buffer, sizeof(buffer), "%.1fkg", item.weightKg);
         drawUiDetailLine(renderer, detailPanel, detailLineY, "重さ", buffer);
-    } else if (const InventoryObjectInstance* objectInstance = selectedObjectInstance()) {
+    } else if (detailInstance != nullptr) {
+        const InventoryObjectInstance* objectInstance = detailInstance;
         const ItemData& item = objectInstance->item;
         const ItemInstance& instance = objectInstance->instance;
+        const std::vector<std::string> effectLines =
+            encyclopedia.getObjectEffectDisplayLines(item.id, catalog, EffectRevealMode::WithUnknown);
+        const std::string effectText = joinEffectLines(effectLines);
         drawUiDetailText(renderer, detailPanel, detailLineY, item.description.empty() ? "-" : item.description);
-        drawUiDetailText(renderer, detailPanel, detailLineY, item.effectText.empty() ? "-" : item.effectText);
+        std::snprintf(buffer, sizeof(buffer), "%d", static_cast<int>(effectLines.size()));
+        drawUiDetailLine(renderer, detailPanel, detailLineY, "効果数", buffer);
+        drawUiDetailText(renderer, detailPanel, detailLineY, "効果");
+        drawUiDetailText(renderer, detailPanel, detailLineY, effectText);
         std::snprintf(buffer, sizeof(buffer), "%s", instance.instanceId.c_str());
         drawUiDetailLine(renderer, detailPanel, detailLineY, "個体ID", buffer);
         std::snprintf(buffer, sizeof(buffer), "%d", instance.enhanceLevel);
@@ -1167,14 +1483,13 @@ void InventorySystem::render(Renderer& renderer, const Player& player, const Spe
         drawUiDetailLine(renderer, detailPanel, detailLineY, "状態", instance.isBroken ? "破損" : "通常");
         std::snprintf(buffer, sizeof(buffer), "+%d / +%d / +%d", instance.attackBonus, instance.digBonus, instance.durabilityBonus);
         drawUiDetailLine(renderer, detailPanel, detailLineY, "補正", buffer);
-        drawUiDetailLine(renderer, detailPanel, detailLineY, "通常効果", effectSummaryText(catalog, item.normalEffects));
-        drawUiDetailLine(renderer, detailPanel, detailLineY, "追加効果", effectSummaryText(catalog, instance.addedEffects));
         drawUiDetailLine(renderer, detailPanel, detailLineY, "操作", "P 保護ON/OFF");
     } else {
         drawUiDetailText(renderer, detailPanel, detailLineY, "アイテム未配置");
         drawUiDetailText(renderer, detailPanel, detailLineY, "-");
-        drawUiDetailLine(renderer, detailPanel, detailLineY, "通常効果", "-");
-        drawUiDetailLine(renderer, detailPanel, detailLineY, "軌道効果", "-");
+        drawUiDetailLine(renderer, detailPanel, detailLineY, "効果数", "0");
+        drawUiDetailText(renderer, detailPanel, detailLineY, "効果");
+        drawUiDetailText(renderer, detailPanel, detailLineY, "-");
         drawUiDetailLine(renderer, detailPanel, detailLineY, "攻撃力", "-");
         drawUiDetailLine(renderer, detailPanel, detailLineY, "ダメージ", "-");
         drawUiDetailLine(renderer, detailPanel, detailLineY, "掘削力", "-");
@@ -1182,12 +1497,10 @@ void InventorySystem::render(Renderer& renderer, const Player& player, const Spe
         drawUiDetailLine(renderer, detailPanel, detailLineY, "重さ", "-");
     }
 
-    if (grabbedSlotActive_) {
-        std::snprintf(buffer, sizeof(buffer), "Grabbed: Empty");
-        const UiRect grabbedPanel{{ScreenGridX, ScreenY + ScreenH - 72.0f}, {720.0f, 72.0f}};
-        drawUiSubPanel(renderer, grabbedPanel);
-        renderer.drawText(uiSubPanelContentPos(grabbedPanel), buffer, ui::Text, 2);
-    }
+    const int commandSlotIndex = slotCommandMenuIndex_ >= 0 ? slotCommandMenuIndex_ : selectedShortcutIndex();
+    const std::array<UiCommandMenuItem, 3> commandItems = buildSlotCommandItems(commandSlotIndex);
+    drawUiCommandMenu(renderer, slotCommandMenu_, commandItems.data(), static_cast<int>(commandItems.size()));
+
 }
 
 void InventorySystem::renderShortcutHud(Renderer& renderer, const SpellRingSystem& spellRing, int screenWidth, int screenHeight) const
@@ -1208,7 +1521,7 @@ void InventorySystem::renderShortcutHud(Renderer& renderer, const SpellRingSyste
     char buffer[128];
     std::snprintf(buffer, sizeof(buffer), "Row %d/3   Ring %d", shortcutRow_ + 1, spellRing.activeRingIndex() + 1);
     renderer.drawText({innerX, panelY + 74.0f}, buffer, ui::Text, 2);
-    renderer.drawText({innerX + 300.0f, panelY + 74.0f}, "Q/E 選択, Tab 行切替, F 使用, R リングへ, P 保護", ui::TextMuted, 2);
+    renderer.drawText({innerX + 300.0f, panelY + 74.0f}, "Tab 行切替, F 決定, R リングへ, P 保護", ui::TextMuted, 2);
 
     for (int column = 0; column < ShortcutColumns; ++column) {
         const int slotIndex = shortcutRow_ * ShortcutColumns + column;

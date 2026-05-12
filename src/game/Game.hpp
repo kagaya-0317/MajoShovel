@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 #include "engine/Camera.hpp"
 #include "engine/FileWatcher.hpp"
@@ -361,7 +361,11 @@ private:
     void applyEffectDiscoveries(const std::vector<EffectDiscoveryEvent>& discoveries);
     void addStoryFlag(std::string flag);
     void updateBookshelfScreen(const Input& input, UiContext& ui);
-    void updateScreenMode(const Input& input, UiContext& ui, float dt);
+    void updateScreenMode(
+        const Input& input,
+        UiContext& ui,
+        float dt,
+        std::vector<EffectDiscoveryEvent>* discoveryEvents);
     void updateBaseScreen(const Input& input, UiContext& ui, float dt);
     void updatePauseMenu(const Input& input, UiContext& ui);
     void choosePauseMenuItem(int item);
@@ -411,6 +415,7 @@ private:
     int buriedHiddenNodeCount() const;
     void initializeEnemyNodesFromLayout();
     void updateExposedEnemyNodes();
+    void updateRingEffectDiscoveries(std::vector<EffectDiscoveryEvent>& discoveryEvents);
     std::vector<Vec2> spawnHiddenEnemyNodesFromOpenedTiles(const std::vector<Vec2>& openedTiles);
     int exposedEnemyNodeCount() const;
     int buriedEnemyNodeCount() const;

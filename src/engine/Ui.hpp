@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 #include "engine/Input.hpp"
 #include "engine/Math.hpp"
@@ -68,6 +68,21 @@ struct UiButtonStyle {
     int imageVariant = 0;
 };
 
+struct UiCommandMenuItem {
+    std::string_view label;
+    bool enabled = true;
+};
+
+struct UiCommandMenuState {
+    bool open = false;
+    bool visible = false;
+    bool closing = false;
+    UiRect panel{};
+    int hoveredIndex = -1;
+    int textScale = 2;
+    float animation = 0.0f;
+};
+
 inline UiButtonStyle uiActionButtonStyle()
 {
     UiButtonStyle style;
@@ -125,5 +140,16 @@ void drawUiBodyMessageBelow(Renderer& renderer, UiRect anchor, std::string_view 
 float drawUiDetailHeader(Renderer& renderer, UiRect panel, std::string_view text);
 void drawUiDetailText(Renderer& renderer, UiRect panel, float& y, std::string_view text);
 void drawUiDetailLine(Renderer& renderer, UiRect panel, float& y, std::string_view label, std::string_view value);
+void openUiCommandMenu(
+    UiCommandMenuState& state,
+    Vec2 anchor,
+    UiRect bounds,
+    int itemCount,
+    const UiCommandMenuItem* items = nullptr,
+    float minWidth = 120.0f,
+    int textScale = 2);
+void closeUiCommandMenu(UiCommandMenuState& state);
+int updateUiCommandMenu(UiCommandMenuState& state, UiContext& ui, const Input& input, const UiCommandMenuItem* items, int itemCount);
+void drawUiCommandMenu(Renderer& renderer, const UiCommandMenuState& state, const UiCommandMenuItem* items, int itemCount);
 
 }

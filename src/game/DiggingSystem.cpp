@@ -1,4 +1,4 @@
-#include "game/DiggingSystem.hpp"
+﻿#include "game/DiggingSystem.hpp"
 
 #include <algorithm>
 #include <random>
@@ -93,7 +93,8 @@ void DiggingSystem::update(
     float totalTime,
     const ObjectCatalog& objectCatalog,
     const EffectDispatcher& effectDispatcher,
-    std::vector<EffectDiscoveryEvent>* discoveryEvents)
+    std::vector<EffectDiscoveryEvent>* discoveryEvents,
+    const EncyclopediaSystem* encyclopedia)
 {
     openedTiles_.clear();
     hitTiles_.clear();
@@ -147,6 +148,7 @@ void DiggingSystem::update(
                 context.terrainOpenedTiles = &openedTiles_;
                 context.terrainDugTiles = &dugTiles_;
                 context.discoveryEvents = discoveryEvents;
+                context.encyclopedia = encyclopedia;
                 context.position = digPosition;
                 context.triggerType = EffectTriggerType::Hit;
                 context.logUnimplementedEffects = false;
@@ -170,11 +172,21 @@ void DiggingSystem::update(
         if (hitTiles_.size() != hitCountBefore && discoveryEvents != nullptr && !item.objectId.empty()) {
             const auto objectIt = objectCatalog.objectsById.find(item.objectId);
             if (objectIt != objectCatalog.objectsById.end()) {
+                std::string effectKey = "dig";
+                if (std::any_of(
+                        objectIt->second.discoveryEffectLines.begin(),
+                        objectIt->second.discoveryEffectLines.end(),
+                        [](const DiscoveryEffectLine& line) {
+                            return line.effectKey == "dig_hard";
+                        })) {
+                    effectKey = "dig_hard";
+                }
                 discoveryEvents->push_back(EffectDiscoveryEvent{
                     .objectId = objectIt->second.id,
                     .objectName = objectIt->second.name,
-                    .effectKey = "terrain_dig",
-                    .description = "地形を掘削できる",
+                    .effectKey = effectKey,
+                    .description = "",
+                    .note = {},
                     .position = digPosition,
                 });
             }

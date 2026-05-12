@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 #include "data/GameBalance.hpp"
 #include "engine/Math.hpp"
@@ -22,7 +22,7 @@ struct SpellRingItem {
     float localAngle = 0.0f;
     float hitRadius = 10.0f;
     int damage = 1;
-    std::string damageType = "physical";
+    std::string damageType = "blunt";
     int digPower = 0;
     int durability = -1;
     int maxDurability = -1;

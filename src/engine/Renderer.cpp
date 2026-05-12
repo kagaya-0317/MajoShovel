@@ -176,6 +176,15 @@ SDL_FlipMode imageFlipMode(bool flipX, bool flipY)
     return SDL_FLIP_NONE;
 }
 
+SDL_FRect pixelSnappedRect(SDL_FRect rect)
+{
+    const float left = std::round(rect.x);
+    const float top = std::round(rect.y);
+    const float width = std::max(1.0f, static_cast<float>(std::round(rect.w)));
+    const float height = std::max(1.0f, static_cast<float>(std::round(rect.h)));
+    return {left, top, width, height};
+}
+
 std::uint64_t currentTicks()
 {
     return static_cast<std::uint64_t>(SDL_GetTicks());
@@ -954,6 +963,9 @@ void Renderer::unloadImageTexture(ImageTexture& texture)
     if (texture.texture) {
         SDL_DestroyTexture(texture.texture);
     }
+    if (texture.outlineTexture) {
+        SDL_DestroyTexture(texture.outlineTexture);
+    }
     texture = {};
 }
 
@@ -1041,6 +1053,9 @@ bool Renderer::ensureImageReady(CachedImageEntry& entry)
 
     const SDL_ScaleMode scaleMode = entry.filter == TextureFilter::Linear ? SDL_SCALEMODE_LINEAR : SDL_SCALEMODE_NEAREST;
     SDL_SetTextureScaleMode(loaded.texture, scaleMode);
+    if (loaded.outlineTexture != nullptr) {
+        SDL_SetTextureScaleMode(loaded.outlineTexture, scaleMode);
+    }
     const std::size_t loadedBytes = static_cast<std::size_t>(std::max(0, loaded.width)) *
         static_cast<std::size_t>(std::max(0, loaded.height)) * 4U;
 
@@ -1154,28 +1169,37 @@ bool Renderer::drawImage(ImageHandle handle, Vec2 center, Vec2 size, const Image
     const Vec2 topLeft = center - Vec2{size.x * options.anchor.x, size.y * options.anchor.y};
     const Vec2 p = transform(topLeft);
     const Vec2 s = transformSize(size);
-    const SDL_FRect dst{p.x, p.y, s.x, s.y};
+    SDL_FRect dst{p.x, p.y, s.x, s.y};
+    if (entry->filter == TextureFilter::Nearest) {
+        dst = pixelSnappedRect(dst);
+    }
     const Color tint = transformColor(options.tint);
     const SDL_FlipMode flipMode = imageFlipMode(options.flipX, options.flipY);
 
     if (options.outlineEnabled && options.outlinePx > 0) {
         Color outline = transformColor(options.outlineColor);
         if (outline.a > 0) {
+            SDL_Texture* outlineTexture = entry->texture.outlineTexture != nullptr
+                ? entry->texture.outlineTexture
+                : entry->texture.texture;
             // Keep outline thickness fixed in screen pixels, independent from world scale.
-            const float px = static_cast<float>(options.outlinePx);
-            SDL_SetTextureColorMod(entry->texture.texture, outline.r, outline.g, outline.b);
-            SDL_SetTextureAlphaMod(entry->texture.texture, outline.a);
-            for (int dy = -1; dy <= 1; ++dy) {
-                for (int dx = -1; dx <= 1; ++dx) {
+            const int radiusPx = std::max(1, options.outlinePx);
+            SDL_SetTextureColorMod(outlineTexture, outline.r, outline.g, outline.b);
+            SDL_SetTextureAlphaMod(outlineTexture, outline.a);
+            for (int dy = -radiusPx; dy <= radiusPx; ++dy) {
+                for (int dx = -radiusPx; dx <= radiusPx; ++dx) {
                     if (dx == 0 && dy == 0) {
                         continue;
                     }
+                    if (dx * dx + dy * dy > radiusPx * radiusPx) {
+                        continue;
+                    }
                     SDL_FRect outlineDst = dst;
-                    outlineDst.x += static_cast<float>(dx) * px;
-                    outlineDst.y += static_cast<float>(dy) * px;
+                    outlineDst.x += static_cast<float>(dx);
+                    outlineDst.y += static_cast<float>(dy);
                     SDL_RenderTextureRotated(
                         renderer_,
-                        entry->texture.texture,
+                        outlineTexture,
                         nullptr,
                         &outlineDst,
                         static_cast<double>(options.rotationDegrees),
@@ -1345,11 +1369,30 @@ bool Renderer::loadImageTexture(std::string_view path, std::string_view label, I
         return false;
     }
 
+    std::vector<unsigned char> outlinePixels = pixels;
+    for (std::size_t i = 0; i + 3 < outlinePixels.size(); i += 4) {
+        // Keep source alpha shape but flatten RGB to white so outline tint stays stable.
+        outlinePixels[i + 0] = 255;
+        outlinePixels[i + 1] = 255;
+        outlinePixels[i + 2] = 255;
+    }
+    SDL_Surface* outlineSurface = SDL_CreateSurfaceFrom(width, height, SDL_PIXELFORMAT_BGRA32, outlinePixels.data(), rowBytes);
+    SDL_Texture* outlineTexture = nullptr;
+    if (outlineSurface != nullptr) {
+        outlineTexture = SDL_CreateTextureFromSurface(renderer_, outlineSurface);
+        SDL_DestroySurface(outlineSurface);
+    }
+
     SDL_SetTextureBlendMode(texture, SDL_BLENDMODE_BLEND);
     SDL_SetTextureScaleMode(texture, SDL_SCALEMODE_NEAREST);
+    if (outlineTexture != nullptr) {
+        SDL_SetTextureBlendMode(outlineTexture, SDL_BLENDMODE_BLEND);
+        SDL_SetTextureScaleMode(outlineTexture, SDL_SCALEMODE_NEAREST);
+    }
 
     ImageTexture loaded;
     loaded.texture = texture;
+    loaded.outlineTexture = outlineTexture;
     loaded.width = width;
     loaded.height = height;
 
@@ -1636,7 +1679,8 @@ void Renderer::drawIcon(int index, Vec2 pos, Vec2 size, Color tint)
     };
     const Vec2 p = transform(pos);
     const Vec2 s = transformSize(size);
-    const SDL_FRect dst{p.x, p.y, s.x, s.y};
+    SDL_FRect dst{p.x, p.y, s.x, s.y};
+    dst = pixelSnappedRect(dst);
 
     tint = transformColor(tint);
     SDL_SetTextureColorMod(iconSheet_.texture, tint.r, tint.g, tint.b);

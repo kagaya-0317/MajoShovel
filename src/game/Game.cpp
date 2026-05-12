@@ -1,4 +1,4 @@
-#include "game/Game.hpp"
+﻿#include "game/Game.hpp"
 
 #include "engine/Log.hpp"
 #include "engine/Ui.hpp"
@@ -342,6 +342,22 @@ std::optional<std::string> firstAvailableObjectId(const ObjectCatalog& catalog)
         }
     }
     return std::nullopt;
+}
+
+std::string joinEffectLines(const std::vector<std::string>& lines)
+{
+    if (lines.empty()) {
+        return "-";
+    }
+    std::string text;
+    for (std::size_t i = 0; i < lines.size(); ++i) {
+        if (!text.empty()) {
+            text += '\n';
+        }
+        text += "\xE3\x83\xBB";
+        text += lines[i];
+    }
+    return text;
 }
 
 const char* chestKindCode(LootChestKind kind)
@@ -1431,12 +1447,25 @@ ObjectDefinition makeCapturedObjectDefinition(const EnemyDefinition& enemy)
     item.orbitEffects = enemy.capturedOrbitEffects;
     item.attackPower = enemy.capturedAttackPower;
     item.damageType = enemy.capturedDamageType.empty() ? "none" : enemy.capturedDamageType;
+    const std::string normalizedDamageType = normalizeDamageType(item.damageType);
+    if (normalizedDamageType.empty()) {
+        if (item.damageType == "physical") {
+            logError("[warning] Game: captured object damage type physical is deprecated; using blunt");
+            item.damageType = "blunt";
+        } else {
+            logError("[warning] Game: captured object damage type \"" + item.damageType + "\" is invalid; using none");
+            item.damageType = "none";
+        }
+    } else {
+        item.damageType = normalizedDamageType;
+    }
     item.digPower = enemy.capturedDigPower;
     item.durability = enemy.capturedDurability;
     item.weightKg = enemy.capturedWeight;
     item.tags = enemy.capturedTags;
     item.effectText = enemy.capturedEffectText;
     item.capturedBehaviorIds = enemy.capturedBehaviorIds;
+    item.discoveryEffectLines = buildDiscoveryEffectLines(item);
     item.capturedBehaviorSpecs.reserve(enemy.capturedBehaviorSpecs.size());
     for (const EnemyBehaviorSpec& spec : enemy.capturedBehaviorSpecs) {
         CapturedBehaviorSpec runtimeSpec;
@@ -3170,7 +3199,14 @@ void Game::syncEncyclopediaFromInventoryAndRing()
 void Game::applyEffectDiscoveries(const std::vector<EffectDiscoveryEvent>& discoveries)
 {
     for (const EffectDiscoveryEvent& discovery : discoveries) {
-        encyclopedia_.noteEffectEvent(discovery, objectCatalog_);
+        if (!encyclopedia_.discoverObjectEffect(
+                discovery.objectId,
+                discovery.effectKey,
+                objectCatalog_,
+                discovery.position,
+                discovery.note)) {
+            encyclopedia_.noteEffectEvent(discovery, objectCatalog_);
+        }
     }
 }
 
@@ -3307,6 +3343,7 @@ void Game::refreshOrbitEffects()
         context.orbit = &spellRing_;
         context.orbitItem = &item;
         context.effects = &effects_;
+        context.encyclopedia = &encyclopedia_;
         context.position = item.worldPosition;
         context.triggerType = EffectTriggerType::Orbit;
         context.logUnimplementedEffects = false;
@@ -4707,6 +4744,155 @@ void Game::updateExposedEnemyNodes()
         }
         if (enemies_.spawnNodeEnemy(tileMap_, center, player_.position, balance_, enemyCatalog_, false)) {
             node.spawned = true;
+        }
+    }
+}
+
+void Game::updateRingEffectDiscoveries(std::vector<EffectDiscoveryEvent>& discoveryEvents)
+{
+    const std::vector<const SpellRingItem*> runtimeItems = spellRing_.runtimeItems();
+    for (const SpellRingItem* itemPtr : runtimeItems) {
+        if (itemPtr == nullptr || itemPtr->objectId.empty() || itemPtr->broken()) {
+            continue;
+        }
+        const ObjectDefinition* object = objectCatalog_.registry.findById(itemPtr->objectId);
+        if (object == nullptr) {
+            continue;
+        }
+        const auto hasOrbitEffect = [object](std::string_view effectCode) {
+            for (const EffectSpec& spec : object->orbitEffects) {
+                for (const std::string& effect : spec.effects) {
+                    if (effect == effectCode) {
+                        return true;
+                    }
+                }
+            }
+            return false;
+        };
+
+        for (std::string_view orbitEffectKey : {"orbit_speed", "orbit_power", "damage_speed"}) {
+            if (hasOrbitEffect(orbitEffectKey) && !encyclopedia_.hasObjectEffect(object->id, orbitEffectKey)) {
+                discoveryEvents.push_back(EffectDiscoveryEvent{
+                    .objectId = object->id,
+                    .objectName = object->name,
+                    .effectKey = std::string(orbitEffectKey),
+                    .description = {},
+                    .note = {},
+                    .position = itemPtr->worldPosition,
+                });
+            }
+        }
+
+        if (itemPtr->lightRadius > 0.0f && !encyclopedia_.hasObjectEffect(object->id, "light")) {
+            discoveryEvents.push_back(EffectDiscoveryEvent{
+                .objectId = object->id,
+                .objectName = object->name,
+                .effectKey = "light",
+                .description = {},
+                .note = {},
+                .position = itemPtr->worldPosition,
+            });
+        }
+
+        bool detectedHidden = false;
+        if (itemPtr->hiddenDetectionRadius > 0.0f && !encyclopedia_.hasObjectEffect(object->id, "detect_hidden")) {
+            const float radiusSq = itemPtr->hiddenDetectionRadius * itemPtr->hiddenDetectionRadius;
+            for (RewardNode& node : rewardNodes_) {
+                if (node.collected || node.visibility != PlacementVisibility::BuriedHidden) {
+                    continue;
+                }
+                if (distanceSquared(tileWorldCenter(node.tile), itemPtr->worldPosition) > radiusSq) {
+                    continue;
+                }
+                node.visibility = PlacementVisibility::BuriedVisible;
+                node.revealed = true;
+                detectedHidden = true;
+            }
+            for (MoneyNode& node : moneyNodes_) {
+                if (node.collected || node.visibility != PlacementVisibility::BuriedHidden) {
+                    continue;
+                }
+                if (distanceSquared(tileWorldCenter(node.tile), itemPtr->worldPosition) > radiusSq) {
+                    continue;
+                }
+                node.visibility = PlacementVisibility::BuriedVisible;
+                detectedHidden = true;
+            }
+            for (ChestNode& node : chestNodes_) {
+                if (node.opened || node.visibility != PlacementVisibility::BuriedHidden) {
+                    continue;
+                }
+                if (distanceSquared(tileWorldCenter(node.tile), itemPtr->worldPosition) > radiusSq) {
+                    continue;
+                }
+                node.visibility = PlacementVisibility::BuriedVisible;
+                node.revealed = true;
+                detectedHidden = true;
+            }
+            for (const EnemyNode& node : enemyNodes_) {
+                if (node.spawned || node.placementType != EnemyPlacementType::BuriedHidden) {
+                    continue;
+                }
+                if (distanceSquared(tileWorldCenter(node.tile), itemPtr->worldPosition) > radiusSq) {
+                    continue;
+                }
+                detectedHidden = true;
+            }
+            if (detectedHidden) {
+                discoveryEvents.push_back(EffectDiscoveryEvent{
+                    .objectId = object->id,
+                    .objectName = object->name,
+                    .effectKey = "detect_hidden",
+                    .description = {},
+                    .note = {},
+                    .position = itemPtr->worldPosition,
+                });
+            }
+        }
+
+        if (itemPtr->treasureDetectionRadius > 0.0f && !encyclopedia_.hasObjectEffect(object->id, "detect_treasure")) {
+            bool detectedTreasure = false;
+            const float radiusSq = itemPtr->treasureDetectionRadius * itemPtr->treasureDetectionRadius;
+            for (RewardNode& node : rewardNodes_) {
+                if (node.collected) {
+                    continue;
+                }
+                const bool treasureNode = node.rewardKind.find("treasure") != std::string::npos;
+                if (!treasureNode) {
+                    continue;
+                }
+                if (distanceSquared(tileWorldCenter(node.tile), itemPtr->worldPosition) > radiusSq) {
+                    continue;
+                }
+                if (node.visibility == PlacementVisibility::BuriedHidden) {
+                    node.visibility = PlacementVisibility::BuriedVisible;
+                    node.revealed = true;
+                }
+                detectedTreasure = true;
+            }
+            for (ChestNode& node : chestNodes_) {
+                if (node.opened) {
+                    continue;
+                }
+                if (distanceSquared(tileWorldCenter(node.tile), itemPtr->worldPosition) > radiusSq) {
+                    continue;
+                }
+                if (node.visibility == PlacementVisibility::BuriedHidden) {
+                    node.visibility = PlacementVisibility::BuriedVisible;
+                    node.revealed = true;
+                }
+                detectedTreasure = true;
+            }
+            if (detectedTreasure) {
+                discoveryEvents.push_back(EffectDiscoveryEvent{
+                    .objectId = object->id,
+                    .objectName = object->name,
+                    .effectKey = "detect_treasure",
+                    .description = {},
+                    .note = {},
+                    .position = itemPtr->worldPosition,
+                });
+            }
         }
     }
 }
@@ -6171,6 +6357,24 @@ bool Game::loadSaveData()
                 item.type = ringTypeFromInt(type);
                 item.objectId = loadRingObjectId(objectId);
                 item.damageType = damageType;
+                const std::string normalizedDamageType = normalizeDamageType(item.damageType);
+                if (normalizedDamageType.empty()) {
+                    if (item.damageType == "physical") {
+                        ++warningCount;
+                        logError("[warning] SaveData: ring damageType physical is deprecated; using blunt");
+                        item.damageType = "blunt";
+                    } else {
+                        ++warningCount;
+                        logError("[warning] SaveData: ring damageType \"" + item.damageType + "\" is invalid; using none");
+                        item.damageType = "none";
+                    }
+                } else {
+                    if (item.damageType == "physical" && normalizedDamageType == "blunt") {
+                        ++warningCount;
+                        logError("[warning] SaveData: ring damageType physical is deprecated; using blunt");
+                    }
+                    item.damageType = normalizedDamageType;
+                }
                 item.objectStatsApplied = false;
                 stream >> item.instanceId
                     >> item.enhanceLevel
@@ -7519,7 +7723,11 @@ void Game::updateStageClearScreen(const Input& input, UiContext& ui)
     ui.block(stageClearPanelRect());
 }
 
-void Game::updateScreenMode(const Input& input, UiContext& ui, float dt)
+void Game::updateScreenMode(
+    const Input& input,
+    UiContext& ui,
+    float dt,
+    std::vector<EffectDiscoveryEvent>* discoveryEvents)
 {
     if (mode_ == ScreenMode::ObjectImageScaleEdit) {
         updateObjectImageScaleEditScreen(input, ui);
@@ -7561,7 +7769,7 @@ void Game::updateScreenMode(const Input& input, UiContext& ui, float dt)
             pausePage_ = PauseMenuPage::Main;
             return;
         }
-        inventory_.update(input, ui, player_, spellRing_, effectDispatcher_, false);
+        inventory_.update(input, ui, player_, spellRing_, effectDispatcher_, false, discoveryEvents, &encyclopedia_);
         if (inventory_.isOpen()) {
             inventoryReturnToPause_ = false;
             mode_ = ScreenMode::Inventory;
@@ -7570,13 +7778,13 @@ void Game::updateScreenMode(const Input& input, UiContext& ui, float dt)
         if (input.activeRingDelta() != 0) {
             spellRing_.switchActiveRing(input.activeRingDelta());
         }
-        inventory_.updateShortcuts(input, player_, spellRing_, effectDispatcher_);
+        inventory_.updateShortcuts(input, player_, spellRing_, effectDispatcher_, discoveryEvents, &encyclopedia_);
         break;
     case ScreenMode::PauseMenu:
         updatePauseMenu(input, ui);
         break;
     case ScreenMode::Inventory:
-        inventory_.updateScreen(input, ui, player_, spellRing_, effectDispatcher_);
+        inventory_.updateScreen(input, ui, player_, spellRing_, effectDispatcher_, discoveryEvents, &encyclopedia_);
         if (!inventory_.isOpen()) {
             mode_ = inventoryReturnToPause_ ? ScreenMode::PauseMenu : ScreenMode::Playing;
             pausePage_ = PauseMenuPage::Main;
@@ -7774,7 +7982,7 @@ void Game::renderBookshelfScreen(Renderer& renderer) const
         }
     }
 
-    const UiRect bookshelfDetailPanel{{414.0f, 586.0f}, {452.0f, 66.0f}};
+    const UiRect bookshelfDetailPanel{{414.0f, 548.0f}, {452.0f, 144.0f}};
     const Vec2 bookshelfDetailContent = uiSubPanelContentPos(bookshelfDetailPanel);
     drawUiSubPanel(renderer, bookshelfDetailPanel);
     if (bookshelfPage_ == BookshelfPage::Enemies) {
@@ -7789,10 +7997,19 @@ void Game::renderBookshelfScreen(Renderer& renderer) const
         const bool treasure = object->category == "\xE5\xAE\x9D";
         const EncyclopediaStage stage = encyclopedia_.objectStage(object->id, treasure);
         const std::string name = stage == EncyclopediaStage::Undiscovered ? "????" : (object->name.empty() ? object->id : object->name);
-        const std::vector<std::string> effects = encyclopedia_.objectEffects(object->id);
-        std::string effectText = effects.empty() ? "効果未確認" : "判明効果 " + effects.front();
-        std::snprintf(buffer, sizeof(buffer), "%s / %s / %s", name.c_str(), encyclopediaStageName(stage), effectText.c_str());
+        std::snprintf(buffer, sizeof(buffer), "%s / %s", name.c_str(), encyclopediaStageName(stage));
         renderer.drawText(bookshelfDetailContent, buffer, {255, 230, 150, 255}, 2);
+        const std::vector<std::string> effects = encyclopedia_.getObjectEffectDisplayLines(
+            object->id,
+            objectCatalog_,
+            EffectRevealMode::WithUnknown);
+        const std::string effectText = joinEffectLines(effects);
+        renderer.drawWrappedText(
+            bookshelfDetailContent + Vec2{0.0f, 34.0f},
+            effectText,
+            bookshelfDetailPanel.size.x - ui::SubPanelPadding.x * 2.0f,
+            {232, 234, 242, 255},
+            2);
     }
 }
 
@@ -7897,7 +8114,14 @@ void Game::renderBaseScreen(Renderer& renderer) const
                     renderer.drawText({storageDetailContent.x + 114.0f, detailY}, "スタック", {235, 235, 240, 255}, 2);
                     detailY += 30.0f;
                 }
-                renderer.drawText({storageDetailContent.x, detailY}, item->effectText.empty() ? item->description : item->effectText, {198, 198, 206, 255}, 2);
+                const std::string effectText = joinEffectLines(
+                    encyclopedia_.getObjectEffectDisplayLines(item->id, objectCatalog_, EffectRevealMode::WithUnknown));
+                renderer.drawWrappedText(
+                    {storageDetailContent.x, detailY},
+                    effectText,
+                    storageDetailPanel.size.x - ui::SubPanelPadding.x * 2.0f,
+                    {198, 198, 206, 255},
+                    2);
             }
         } else {
             renderer.drawText({storageDetailContent.x, detailY}, "アイテム未選択", {150, 150, 160, 255}, 2);
@@ -8555,16 +8779,16 @@ void Game::renderRingScreen(Renderer& renderer, float totalTime) const
     if (ringSlotSelection_ < static_cast<int>(items.size())) {
         const SpellRingItem& item = items[ringSlotSelection_];
         const ItemData* object = objectForRingItem(objectCatalog_, item);
+        const std::vector<std::string> effectLines = object != nullptr
+            ? encyclopedia_.getObjectEffectDisplayLines(object->id, objectCatalog_, EffectRevealMode::WithUnknown)
+            : std::vector<std::string>{};
+        const std::string effectText = joinEffectLines(effectLines);
         drawUiDetailText(renderer, ringDetailPanel, detailLineY, object != nullptr && !object->description.empty() ? object->description : "-");
-        drawUiDetailText(renderer, ringDetailPanel, detailLineY, object != nullptr && !object->effectText.empty() ? object->effectText : "-");
+        std::snprintf(buffer, sizeof(buffer), "%d", static_cast<int>(effectLines.size()));
+        drawUiDetailLine(renderer, ringDetailPanel, detailLineY, "効果数", buffer);
+        drawUiDetailText(renderer, ringDetailPanel, detailLineY, "効果");
+        drawUiDetailText(renderer, ringDetailPanel, detailLineY, effectText);
         drawUiDetailLine(renderer, ringDetailPanel, detailLineY, "形状", ringShapeDisplayName(activeShape));
-        drawUiDetailLine(renderer, ringDetailPanel, detailLineY, "通常効果", object != nullptr ? effectSummaryText(objectCatalog_, object->normalEffects) : "-");
-        drawUiDetailLine(renderer, ringDetailPanel, detailLineY, "軌道効果", object != nullptr ? effectSummaryText(objectCatalog_, object->orbitEffects) : effectSummaryText(objectCatalog_, item.addedEffects));
-        std::snprintf(buffer, sizeof(buffer), "%d", item.damage);
-        drawUiDetailLine(renderer, ringDetailPanel, detailLineY, "攻撃力", buffer);
-        drawUiDetailLine(renderer, ringDetailPanel, detailLineY, "ダメージ", item.damageType.empty() ? "-" : item.damageType);
-        std::snprintf(buffer, sizeof(buffer), "%d", item.digPower);
-        drawUiDetailLine(renderer, ringDetailPanel, detailLineY, "掘削力", buffer);
         if (item.durability < 0) {
             std::snprintf(buffer, sizeof(buffer), "壊れない");
         } else {
@@ -8576,12 +8800,10 @@ void Game::renderRingScreen(Renderer& renderer, float totalTime) const
     } else {
         drawUiDetailText(renderer, ringDetailPanel, detailLineY, "アイテム未配置");
         drawUiDetailText(renderer, ringDetailPanel, detailLineY, "-");
+        drawUiDetailLine(renderer, ringDetailPanel, detailLineY, "効果数", "0");
+        drawUiDetailText(renderer, ringDetailPanel, detailLineY, "効果");
+        drawUiDetailText(renderer, ringDetailPanel, detailLineY, "-");
         drawUiDetailLine(renderer, ringDetailPanel, detailLineY, "形状", ringShapeDisplayName(activeShape));
-        drawUiDetailLine(renderer, ringDetailPanel, detailLineY, "通常効果", "-");
-        drawUiDetailLine(renderer, ringDetailPanel, detailLineY, "軌道効果", "-");
-        drawUiDetailLine(renderer, ringDetailPanel, detailLineY, "攻撃力", "-");
-        drawUiDetailLine(renderer, ringDetailPanel, detailLineY, "ダメージ", "-");
-        drawUiDetailLine(renderer, ringDetailPanel, detailLineY, "掘削力", "-");
         drawUiDetailLine(renderer, ringDetailPanel, detailLineY, "耐久力", "-");
         drawUiDetailLine(renderer, ringDetailPanel, detailLineY, "重さ", "-");
     }
@@ -8614,14 +8836,17 @@ void Game::update(const Input& input, const Time& time)
     }
     captureCooldown_ = std::max(0.0f, captureCooldown_ - time.deltaSeconds());
 
+    std::vector<EffectDiscoveryEvent> effectDiscoveries;
     UiContext ui(input);
     const bool wasPaused = gameProgressPaused();
-    updateScreenMode(input, ui, time.deltaSeconds());
+    updateScreenMode(input, ui, time.deltaSeconds(), &effectDiscoveries);
     refreshOrbitEffects();
     const bool paused = gameProgressPaused() || (wasPaused && mode_ == ScreenMode::Playing);
+    if (paused && !effectDiscoveries.empty()) {
+        applyEffectDiscoveries(effectDiscoveries);
+    }
 
     if (!paused) {
-        std::vector<EffectDiscoveryEvent> effectDiscoveries;
         runStats_.elapsedSeconds += time.deltaSeconds();
         updatePlayerFootstepDust(time.deltaSeconds());
         tileMap_.updateAround(player_.position, time.deltaSeconds(), balance_, dungeonLayout_);
@@ -8641,6 +8866,7 @@ void Game::update(const Input& input, const Time& time)
         updateExposedRewardNodes();
         updateExposedMoonFragmentNodes();
         updateExposedEnemyNodes();
+        updateRingEffectDiscoveries(effectDiscoveries);
         if (input.capturePressed() && captureCooldown_ <= 0.0f) {
             const CaptureResult capture = enemies_.tryCapture(player_, spellRing_, inventory_);
             captureCooldown_ = capture.type == CaptureResultType::Success ? 0.35f : 0.75f;
@@ -8669,25 +8895,16 @@ void Game::update(const Input& input, const Time& time)
         updateChestNodes(input);
         updateCrateNodes();
 
-        const std::vector<const SpellRingItem*> runtimeItems = spellRing_.runtimeItems();
-        for (const SpellRingItem* itemPtr : runtimeItems) {
-            if (itemPtr == nullptr || itemPtr->objectId.empty() || itemPtr->broken()) {
-                continue;
-            }
-            const ObjectDefinition* object = objectCatalog_.registry.findById(itemPtr->objectId);
-            if (object == nullptr) {
-                continue;
-            }
-            if (itemPtr->lightRadius > 0.0f) {
-                encyclopedia_.noteItemEffect(*object, "light", "リング上で周囲を照らす", itemPtr->worldPosition);
-            }
-            if (itemPtr->hiddenDetectionRadius > 0.0f || itemPtr->treasureDetectionRadius > 0.0f) {
-                encyclopedia_.noteItemEffect(*object, "detect", "探知効果を発揮する", itemPtr->worldPosition);
-            }
-        }
-
         tileMap_.updateAround(player_.position, time.deltaSeconds(), balance_, dungeonLayout_);
-        digging_.update(tileMap_, spellRing_, player_, time.totalSeconds(), objectCatalog_, effectDispatcher_, &effectDiscoveries);
+        digging_.update(
+            tileMap_,
+            spellRing_,
+            player_,
+            time.totalSeconds(),
+            objectCatalog_,
+            effectDispatcher_,
+            &effectDiscoveries,
+            &encyclopedia_);
         for (Vec2 tile : digging_.hitTiles()) {
             effects_.spawnDigHit(tile, tile - spellRing_.center());
         }
@@ -8772,13 +8989,23 @@ void Game::update(const Input& input, const Time& time)
             std::vector<LightSource>{},
             effectDispatcher_,
             projectiles_,
-            &effectDiscoveries);
+            &effectDiscoveries,
+            &encyclopedia_);
         for (Vec2 explosionPosition : digging_.capturedExplosionRequests()) {
             handleCapturedExplosion(explosionPosition);
         }
         updateCapturedUtilityBehaviors(time.deltaSeconds());
         updateCapturedProjectileBehaviors(time.deltaSeconds());
-        projectiles_.update(player_, spellRing_, enemies_, tileMap_, time.deltaSeconds(), effectDispatcher_, objectCatalog_, &effectDiscoveries);
+        projectiles_.update(
+            player_,
+            spellRing_,
+            enemies_,
+            tileMap_,
+            time.deltaSeconds(),
+            effectDispatcher_,
+            objectCatalog_,
+            &effectDiscoveries,
+            &encyclopedia_);
 
         std::vector<Vec2> capturedExplosionPositions;
         for (const EnemyEvent& event : enemies_.events()) {
@@ -9042,7 +9269,7 @@ void Game::render(Renderer& renderer, const Time& time)
     }
     if (basePresentationActive()) {
         renderBaseScreen(renderer);
-        inventory_.render(renderer, player_, spellRing_, objectCatalog_);
+        inventory_.render(renderer, player_, spellRing_, objectCatalog_, encyclopedia_);
         renderPauseMenu(renderer);
         renderRingScreen(renderer, time.totalSeconds());
         finishUiFrame(renderer);
@@ -9285,7 +9512,7 @@ void Game::render(Renderer& renderer, const Time& time)
         renderer.drawText({28.0f, 208.0f}, "DEBUG PAUSED", {255, 230, 150, 255}, 2);
     }
     upgrades_.render(renderer, levels_);
-    inventory_.render(renderer, player_, spellRing_, objectCatalog_);
+    inventory_.render(renderer, player_, spellRing_, objectCatalog_, encyclopedia_);
     if (mode_ == ScreenMode::Playing) {
         inventory_.renderShortcutHud(renderer, spellRing_, camera_.width(), camera_.height());
     }

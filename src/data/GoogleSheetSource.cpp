@@ -403,6 +403,7 @@ bool loadGoogleSheetSourceConfig(const std::filesystem::path& path, GoogleSheetS
     it = values.find("behavior_sheet");
     if (it != values.end()) {
         config.behaviorSheet = trim(it->second);
+        config.behaviorSheetExplicit = !config.behaviorSheet.empty();
     }
 
     if (config.enabled && config.spreadsheetId.empty()) {
@@ -420,7 +421,8 @@ bool loadGoogleSheetSourceConfig(const std::filesystem::path& path, GoogleSheetS
         config.enemiesSheet = "Enemies";
     }
     if (config.behaviorSheet.empty()) {
-        config.behaviorSheet = "挙動ID一覧";
+        config.behaviorSheet = "#敵挙動コード";
+        config.behaviorSheetExplicit = false;
     }
 
     outConfig = config;

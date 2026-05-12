@@ -1,4 +1,4 @@
-#include "game/EffectDispatcher.hpp"
+﻿#include "game/EffectDispatcher.hpp"
 
 #include "engine/Log.hpp"
 #include "game/Enemy.hpp"
@@ -41,17 +41,71 @@ std::string sourceIdFor(const EffectInvocation& invocation)
     return invocation.context->sourceObject->id;
 }
 
+bool eventQueueContainsEffect(
+    const std::vector<EffectDiscoveryEvent>* discoveryEvents,
+    std::string_view objectId,
+    std::string_view effectKey)
+{
+    if (discoveryEvents == nullptr || objectId.empty() || effectKey.empty()) {
+        return false;
+    }
+    for (const EffectDiscoveryEvent& event : *discoveryEvents) {
+        if (event.objectId == objectId && event.effectKey == effectKey) {
+            return true;
+        }
+    }
+    return false;
+}
+
+bool isEffectDiscovered(const EffectContext& context, std::string_view effectKey)
+{
+    if (context.sourceObject == nullptr || context.sourceObject->id.empty() || effectKey.empty()) {
+        return false;
+    }
+    if (context.encyclopedia != nullptr && context.encyclopedia->hasObjectEffect(context.sourceObject->id, effectKey)) {
+        return true;
+    }
+    return eventQueueContainsEffect(context.discoveryEvents, context.sourceObject->id, effectKey);
+}
+
 void recordEffectDiscovery(const EffectInvocation& invocation, std::string_view description = {})
 {
     const EffectContext& context = *invocation.context;
     if (context.discoveryEvents == nullptr || context.sourceObject == nullptr || context.sourceObject->id.empty()) {
         return;
     }
+    std::string effectKey = std::string(invocation.effect);
+    if (effectKey == "guard") {
+        effectKey = "guard_projectile";
+    }
     context.discoveryEvents->push_back(EffectDiscoveryEvent{
         .objectId = context.sourceObject->id,
         .objectName = context.sourceObject->name,
-        .effectKey = std::string(invocation.effect),
+        .effectKey = std::move(effectKey),
         .description = description.empty() ? std::string{} : std::string(description),
+        .note = {},
+        .position = context.position,
+    });
+}
+
+void recordEffectDiscoveryWithNote(
+    const EffectInvocation& invocation,
+    std::string_view effectKey,
+    std::string_view note)
+{
+    const EffectContext& context = *invocation.context;
+    if (context.discoveryEvents == nullptr || context.sourceObject == nullptr || context.sourceObject->id.empty()) {
+        return;
+    }
+    if (effectKey.empty()) {
+        return;
+    }
+    context.discoveryEvents->push_back(EffectDiscoveryEvent{
+        .objectId = context.sourceObject->id,
+        .objectName = context.sourceObject->name,
+        .effectKey = std::string(effectKey),
+        .description = {},
+        .note = std::string(note),
         .position = context.position,
     });
 }
@@ -142,7 +196,7 @@ void recordTerrainHit(const EffectInvocation& invocation, int tileX, int tileY, 
             invocation.context->effects->spawnTileBreak(openedTileCenter);
         }
     }
-    recordEffectDiscovery(invocation, invocation.effect == "dig_hard" ? "硬い地形に強い" : "地形を掘削できる");
+    recordEffectDiscovery(invocation, invocation.effect == "dig_hard" ? "硬い土を掘れる" : "土を掘れる");
 }
 
 struct StatusDefinition {
@@ -203,7 +257,7 @@ void applyHealInvocation(const EffectInvocation& invocation)
         const int beforeHp = context.owner->hp;
         context.owner->hp = std::min(context.owner->maxHp, context.owner->hp + amount);
         if (context.owner->hp > beforeHp) {
-            recordEffectDiscovery(invocation, "使うとHPを回復する");
+            recordEffectDiscovery(invocation, "菴ｿ縺・→HP繧貞屓蠕ｩ縺吶ｋ");
         }
         return;
     }
@@ -219,7 +273,7 @@ void applyHealInvocation(const EffectInvocation& invocation)
         const int beforeHp = enemy->hp;
         enemy->hp = std::min(enemy->maxHp, enemy->hp + amount);
         if (enemy->hp > beforeHp) {
-            recordEffectDiscovery(invocation, "対象を回復する");
+            recordEffectDiscovery(invocation, "蟇ｾ雎｡繧貞屓蠕ｩ縺吶ｋ");
         }
     }
 }
@@ -233,12 +287,6 @@ void applyStateInvocation(const EffectInvocation& invocation)
 void applyChanceStateInvocation(const EffectInvocation& invocation)
 {
     static std::mt19937 rng{std::random_device{}()};
-    const double chance = std::clamp(invocation.value, 0.0, 100.0);
-    std::uniform_real_distribution<double> dist(0.0, 100.0);
-    if (dist(rng) > chance) {
-        return;
-    }
-
     std::string_view statusEffect;
     if (invocation.effect == "status_poison_chance") {
         statusEffect = "status_poison";
@@ -248,6 +296,38 @@ void applyChanceStateInvocation(const EffectInvocation& invocation)
         statusEffect = "status_bleed";
     } else {
         return;
+    }
+
+    Enemy* enemy = nullptr;
+    if (invocation.target == "enemy" || invocation.target == "target") {
+        enemy = invocation.context->hitTarget != nullptr
+            ? invocation.context->hitTarget
+            : invocation.context->targetEntity;
+    }
+
+    const std::string sourceId = invocation.context->sourceObject != nullptr
+        ? invocation.context->sourceObject->id
+        : "<none>";
+    const bool firstDiscoveryGuarantee = invocation.context->sourceObject != nullptr &&
+        !isEffectDiscovered(*invocation.context, invocation.effect);
+    if (enemy != nullptr && enemy->isBoss) {
+        recordEffectDiscoveryWithNote(invocation, invocation.effect, "※ただし、この敵には効かなかった");
+        if (firstDiscoveryGuarantee) {
+            logError("[debug] discovery first-trigger guarantee noted for \"" + std::string(invocation.effect) +
+                "\" source=\"" + sourceId + "\" (status immune target)");
+        }
+        return;
+    }
+
+    if (!firstDiscoveryGuarantee) {
+        const double chance = std::clamp(invocation.value, 0.0, 100.0);
+        std::uniform_real_distribution<double> dist(0.0, 100.0);
+        if (dist(rng) > chance) {
+            return;
+        }
+    } else {
+        logError("[debug] discovery first-trigger guarantee applied for \"" + std::string(invocation.effect) +
+            "\" source=\"" + sourceId + "\"");
     }
 
     applyStatus(invocation, statusEffect, 1.0);
@@ -294,6 +374,7 @@ void applyOrbitModifierInvocation(const EffectInvocation& invocation)
         invocation.effect,
         invocation.value,
         sourceIdFor(invocation));
+    recordEffectDiscovery(invocation);
 }
 
 void applyDigInvocation(const EffectInvocation& invocation)
@@ -336,6 +417,17 @@ void applyAreaInvocation(const EffectInvocation& invocation)
         if (invocation.context->orbitItem->lightRadius > beforeRadius) {
             recordEffectDiscovery(invocation, "リング上で周囲を照らす");
         }
+        return;
+    }
+    if (invocation.effect == "detect_hidden") {
+        invocation.context->orbitItem->hiddenDetectionRadius =
+            std::max(invocation.context->orbitItem->hiddenDetectionRadius, radius);
+        return;
+    }
+    if (invocation.effect == "detect_treasure" || invocation.effect == "detect") {
+        invocation.context->orbitItem->treasureDetectionRadius =
+            std::max(invocation.context->orbitItem->treasureDetectionRadius, radius);
+        return;
     }
 }
 
@@ -398,8 +490,10 @@ void EffectDispatcher::registerFoundationHandlers(const ObjectCatalog& catalog)
         }
     }
 
-    if (catalog.effectCodes.find("light") != catalog.effectCodes.end()) {
-        registerHandler("light", applyAreaInvocation);
+    for (std::string_view effect : {"light", "detect_hidden", "detect_treasure", "detect"}) {
+        if (catalog.effectCodes.find(std::string(effect)) != catalog.effectCodes.end()) {
+            registerHandler(std::string(effect), applyAreaInvocation);
+        }
     }
 
     for (std::string_view effect : {"orbit_speed", "orbit_power", "damage_speed"}) {

@@ -16,7 +16,8 @@ struct GoogleSheetSourceConfig {
     std::string objectsSheet = "Objects";
     std::string stagesSheet = "Stages";
     std::string enemiesSheet = "Enemies";
-    std::string behaviorSheet = "挙動ID一覧";
+    std::string behaviorSheet = "#敵挙動コード";
+    bool behaviorSheetExplicit = false;
 };
 
 using GoogleSheetRow = std::vector<std::string>;

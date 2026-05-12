@@ -94,6 +94,15 @@ bool applyRuntimeBalanceValues(const std::unordered_map<std::string, std::string
     if (!setFloatAlias("spell_ring_throw_distance", "orbit_throw_distance", loaded.spellRingThrowDistance)) return false;
     if (!setFloatAlias("spell_ring_throw_max_time", "orbit_throw_max_time", loaded.spellRingThrowMaxTime)) return false;
     if (!setFloatAlias("spell_ring_return_speed", "orbit_return_speed", loaded.spellRingReturnSpeed)) return false;
+    if (!setFloat("figure8_width_multiplier", loaded.figure8WidthMultiplier)) return false;
+    if (!setFloat("figure8_height_multiplier", loaded.figure8HeightMultiplier)) return false;
+    if (!setFloat("figure8_shape_rotation_speed", loaded.figure8ShapeRotationSpeed)) return false;
+    if (!setFloat("comet_radius_multiplier", loaded.cometRadiusMultiplier)) return false;
+    if (!setFloat("comet_arc_degrees", loaded.cometArcDegrees)) return false;
+    if (!setFloat("comet_speed_multiplier", loaded.cometSpeedMultiplier)) return false;
+    if (!setFloat("comet_trail_length", loaded.cometTrailLength)) return false;
+    if (!setFloat("comet_lane_spacing", loaded.cometLaneSpacing)) return false;
+    if (!setFloat("comet_max_arc_degrees", loaded.cometMaxArcDegrees)) return false;
     if (!setInt("dirt_hp", loaded.dirtHp)) return false;
     if (!setInt("rock_hp", loaded.rockHp)) return false;
     if (!setInt("ore_hp", loaded.oreHp)) return false;
@@ -154,6 +163,18 @@ bool applyRuntimeBalanceValues(const std::unordered_map<std::string, std::string
     loaded.lightRadius = std::max(16.0f, loaded.lightRadius);
     loaded.spellRingRadius = std::max(1.0f, loaded.spellRingRadius);
     loaded.spellRingThrowCooldown = std::max(0.1f, loaded.spellRingThrowCooldown);
+    loaded.figure8WidthMultiplier = std::max(0.1f, loaded.figure8WidthMultiplier);
+    loaded.figure8HeightMultiplier = std::max(0.1f, loaded.figure8HeightMultiplier);
+    loaded.figure8ShapeRotationSpeed = std::max(0.0f, loaded.figure8ShapeRotationSpeed);
+    loaded.cometRadiusMultiplier = std::max(0.1f, loaded.cometRadiusMultiplier);
+    loaded.cometArcDegrees = std::clamp(loaded.cometArcDegrees, 10.0f, 360.0f);
+    loaded.cometSpeedMultiplier = std::max(0.05f, loaded.cometSpeedMultiplier);
+    loaded.cometTrailLength = std::clamp(loaded.cometTrailLength, 0.0f, 1.0f);
+    loaded.cometLaneSpacing = std::max(0.0f, loaded.cometLaneSpacing);
+    loaded.cometMaxArcDegrees = std::clamp(loaded.cometMaxArcDegrees, 10.0f, 360.0f);
+    if (loaded.cometArcDegrees > loaded.cometMaxArcDegrees) {
+        loaded.cometArcDegrees = loaded.cometMaxArcDegrees;
+    }
     loaded.dirtHp = std::max(1, loaded.dirtHp);
     loaded.rockHp = std::max(1, loaded.rockHp);
     loaded.oreHp = std::max(1, loaded.oreHp);

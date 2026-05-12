@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 #include "engine/Input.hpp"
 #include "engine/Renderer.hpp"
@@ -16,6 +16,8 @@
 namespace majo {
 
 class EffectDispatcher;
+class EncyclopediaSystem;
+struct EffectDiscoveryEvent;
 
 struct ShortcutSlot {
     bool assigned = false;
@@ -41,10 +43,36 @@ class InventorySystem {
 public:
     bool addObjectItem(const ObjectCatalog& catalog, std::string_view objectId);
     bool addRuntimeObjectItem(const ItemData& item);
-    void updateShortcuts(const Input& input, Player& player, SpellRingSystem& spellRing, const EffectDispatcher& effectDispatcher);
-    void updateScreen(const Input& input, UiContext& ui, Player& player, SpellRingSystem& spellRing, const EffectDispatcher& effectDispatcher);
-    void update(const Input& input, UiContext& ui, Player& player, SpellRingSystem& spellRing, const EffectDispatcher& effectDispatcher, bool blocked);
-    void render(Renderer& renderer, const Player& player, const SpellRingSystem& spellRing, const ObjectCatalog& catalog) const;
+    void updateShortcuts(
+        const Input& input,
+        Player& player,
+        SpellRingSystem& spellRing,
+        const EffectDispatcher& effectDispatcher,
+        std::vector<EffectDiscoveryEvent>* discoveryEvents = nullptr,
+        const EncyclopediaSystem* encyclopedia = nullptr);
+    void updateScreen(
+        const Input& input,
+        UiContext& ui,
+        Player& player,
+        SpellRingSystem& spellRing,
+        const EffectDispatcher& effectDispatcher,
+        std::vector<EffectDiscoveryEvent>* discoveryEvents = nullptr,
+        const EncyclopediaSystem* encyclopedia = nullptr);
+    void update(
+        const Input& input,
+        UiContext& ui,
+        Player& player,
+        SpellRingSystem& spellRing,
+        const EffectDispatcher& effectDispatcher,
+        bool blocked,
+        std::vector<EffectDiscoveryEvent>* discoveryEvents = nullptr,
+        const EncyclopediaSystem* encyclopedia = nullptr);
+    void render(
+        Renderer& renderer,
+        const Player& player,
+        const SpellRingSystem& spellRing,
+        const ObjectCatalog& catalog,
+        const EncyclopediaSystem& encyclopedia) const;
     void renderShortcutHud(Renderer& renderer, const SpellRingSystem& spellRing, int screenWidth, int screenHeight) const;
     bool isOpen() const { return open_; }
     void setOpen(bool open) { open_ = open; }
@@ -92,13 +120,37 @@ private:
     void placeGrabbedAtSelected();
     bool addObjectSelectionToRing(SpellRingSystem& spellRing);
     bool addObjectInstanceSelectionToRing(SpellRingSystem& spellRing);
-    bool useObjectSelection(Player& player, const EffectDispatcher& effectDispatcher);
-    bool useObjectInstanceSelection(Player& player, const EffectDispatcher& effectDispatcher);
-    bool useShortcutSelection(Player& player, SpellRingSystem& spellRing, const EffectDispatcher& effectDispatcher);
+    bool useObjectSelection(
+        Player& player,
+        const EffectDispatcher& effectDispatcher,
+        std::vector<EffectDiscoveryEvent>* discoveryEvents,
+        const EncyclopediaSystem* encyclopedia);
+    bool useObjectInstanceSelection(
+        Player& player,
+        const EffectDispatcher& effectDispatcher,
+        std::vector<EffectDiscoveryEvent>* discoveryEvents,
+        const EncyclopediaSystem* encyclopedia);
+    bool useShortcutSelection(
+        Player& player,
+        SpellRingSystem& spellRing,
+        const EffectDispatcher& effectDispatcher,
+        std::vector<EffectDiscoveryEvent>* discoveryEvents,
+        const EncyclopediaSystem* encyclopedia);
     bool addShortcutSelectionToRing(SpellRingSystem& spellRing);
+    bool canUseScreenItem(int index) const;
+    std::array<UiCommandMenuItem, 3> buildSlotCommandItems(int slotIndex) const;
+    bool hasScreenItem(int index) const;
+    bool moveScreenItem(int fromIndex, int toIndex);
+    void syncPackedItemSlots() const;
+    int packedItemIndexAtScreenIndex(int index) const;
+    int stackIndexAtScreenIndex(int index) const;
+    int instanceIndexAtScreenIndex(int index) const;
+    void removePackedSlotAtPackedIndex(int packedIndex) const;
     std::string allocateInstanceId();
     InventoryObjectInstance createObjectInstance(const ItemData& item);
     void toggleSelectedProtection();
+    void openSlotCommandMenu(int slotIndex);
+    void resetSlotPointerPress();
 
     std::array<ShortcutSlot, ShortcutSlotCount> shortcutSlots_{};
     std::vector<InventoryObjectStack> objectStacks_;
@@ -111,6 +163,13 @@ private:
     bool grabbedSlotActive_ = false;
     ShortcutSlot grabbedSlot_{};
     int grabbedSlotOrigin_ = -1;
+    UiCommandMenuState slotCommandMenu_{};
+    int slotCommandMenuIndex_ = -1;
+    int slotPointerPressIndex_ = -1;
+    Vec2 slotPointerPressMouse_{};
+    bool slotPointerPressCanOpenMenu_ = false;
+    bool slotPointerDragTriggered_ = false;
+    mutable std::vector<int> packedItemSlots_;
     bool open_ = false;
     std::string status_ = "アイテムなし";
 };

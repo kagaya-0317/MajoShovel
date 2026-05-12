@@ -1,4 +1,4 @@
-#include "game/EncyclopediaSystem.hpp"
+﻿#include "game/EncyclopediaSystem.hpp"
 
 #include "engine/Ui.hpp"
 
@@ -22,16 +22,16 @@ int stageValue(EncyclopediaStage stage)
 
 std::string fallbackEffectDescription(std::string_view effectKey)
 {
-    if (effectKey == "enemy_damage") {
+    if (effectKey == "basic_attack") {
         return "敵にダメージを与える";
     }
-    if (effectKey == "terrain_dig") {
+    if (effectKey == "dig" || effectKey == "dig_hard") {
         return "地形を掘削できる";
     }
     if (effectKey == "light") {
         return "リング上で周囲を照らす";
     }
-    if (effectKey == "projectile_guard") {
+    if (effectKey == "guard_projectile") {
         return "飛んできた弾を防ぐ";
     }
     if (effectKey == "detect") {
@@ -117,18 +117,24 @@ void EncyclopediaSystem::noteItemEquipped(const ObjectDefinition& object, Vec2 p
 
 void EncyclopediaSystem::noteItemEffect(const ObjectDefinition& object, std::string_view effectKey, std::string_view description, Vec2 position)
 {
-    if (object.id.empty() || effectKey.empty()) {
+    const std::string key = canonicalEffectKey(effectKey);
+    if (object.id.empty() || key.empty()) {
         return;
     }
     auto& effects = objectEffects_[object.id];
-    const bool newEffect = effects.insert(std::string(effectKey)).second;
+    const bool newEffect = effects.insert(key).second;
     raiseObjectStage(object, EncyclopediaStage::EffectTriggered, position, false);
     if (!newEffect) {
         return;
     }
 
-    const std::string text = makeEffectText(object, description.empty() ? fallbackEffectDescription(effectKey) : std::string(description));
-    enqueuePopup("効果判明 " + text, position);
+    const DiscoveryEffectLine* effectLine = findEffectLineByKey(object, key);
+    const std::string resolvedDescription = effectLine != nullptr
+        ? effectLine->text
+        : (description.empty() ? fallbackEffectDescription(key) : std::string(description));
+    const std::string itemName = object.name.empty() ? object.id : object.name;
+    std::string popup = "効果判明：" + itemName + "\n・" + resolvedDescription;
+    enqueuePopup(std::move(popup), position);
 }
 
 void EncyclopediaSystem::noteEffectEvent(const EffectDiscoveryEvent& event, const ObjectCatalog& catalog)
@@ -136,16 +142,58 @@ void EncyclopediaSystem::noteEffectEvent(const EffectDiscoveryEvent& event, cons
     if (event.objectId.empty() || event.effectKey.empty()) {
         return;
     }
-    const ObjectDefinition* object = catalog.registry.findById(event.objectId);
-    if (object != nullptr) {
-        noteItemEffect(*object, event.effectKey, event.description, event.position);
+    if (discoverObjectEffect(event.objectId, event.effectKey, catalog, event.position, event.note)) {
         return;
     }
+    const ObjectDefinition* object = catalog.registry.findById(event.objectId);
+    if (object != nullptr && !event.description.empty()) {
+        noteItemEffect(*object, event.effectKey, event.description, event.position);
+    }
+}
 
-    ObjectDefinition runtimeObject;
-    runtimeObject.id = event.objectId;
-    runtimeObject.name = event.objectName.empty() ? event.objectId : event.objectName;
-    noteItemEffect(runtimeObject, event.effectKey, event.description, event.position);
+bool EncyclopediaSystem::discoverObjectEffect(
+    std::string_view objectId,
+    std::string_view effectKey,
+    const ObjectCatalog& catalog,
+    Vec2 worldPosition,
+    std::string_view optionalNote)
+{
+    const std::string canonicalKey = canonicalEffectKey(effectKey);
+    if (objectId.empty() || canonicalKey.empty()) {
+        return false;
+    }
+
+    const ObjectDefinition* object = catalog.registry.findById(objectId);
+    if (object == nullptr) {
+        return false;
+    }
+    const std::size_t lineIndex = findEffectLineIndexByKey(*object, canonicalKey);
+    if (lineIndex == object->discoveryEffectLines.size()) {
+        return false;
+    }
+
+    auto& effects = objectEffects_[object->id];
+    if (!effects.insert(canonicalKey).second) {
+        return false;
+    }
+
+    raiseObjectStage(*object, EncyclopediaStage::EffectTriggered, worldPosition, false);
+    const std::vector<std::string> allLines = getObjectEffectDisplayLines(object->id, catalog, EffectRevealMode::DebugAll);
+    std::string lineText = lineIndex < allLines.size()
+        ? allLines[lineIndex]
+        : object->discoveryEffectLines[lineIndex].text;
+    if (lineText.empty()) {
+        lineText = fallbackEffectDescription(canonicalKey);
+    }
+
+    const std::string itemName = object->name.empty() ? object->id : object->name;
+    std::string popup = "効果判明：" + itemName + "\n・" + lineText;
+    if (!optionalNote.empty()) {
+        popup += "\n";
+        popup += std::string(optionalNote);
+    }
+    enqueuePopup(std::move(popup), worldPosition);
+    return true;
 }
 
 void EncyclopediaSystem::noteEnemyDiscovered(std::string_view enemyId, std::string_view enemyName, Vec2 position)
@@ -177,7 +225,7 @@ bool EncyclopediaSystem::hasObjectEffect(std::string_view objectId, std::string_
     if (it == objectEffects_.end()) {
         return false;
     }
-    return it->second.find(std::string(effectKey)) != it->second.end();
+    return it->second.find(canonicalEffectKey(effectKey)) != it->second.end();
 }
 
 std::vector<std::string> EncyclopediaSystem::objectEffects(std::string_view objectId) const
@@ -214,10 +262,44 @@ void EncyclopediaSystem::loadEntry(EncyclopediaKind kind, std::string id, Encycl
 
 void EncyclopediaSystem::loadEffect(std::string objectId, std::string effectKey)
 {
+    effectKey = canonicalEffectKey(effectKey);
     if (objectId.empty() || effectKey.empty()) {
         return;
     }
     objectEffects_[std::move(objectId)].insert(std::move(effectKey));
+}
+
+std::vector<std::string> EncyclopediaSystem::getObjectEffectDisplayLines(
+    std::string_view objectId,
+    const ObjectCatalog& catalog,
+    EffectRevealMode revealMode) const
+{
+    std::vector<std::string> lines;
+    const ObjectDefinition* object = catalog.registry.findById(objectId);
+    if (object == nullptr) {
+        return lines;
+    }
+    if (object->discoveryEffectLines.empty()) {
+        return lines;
+    }
+
+    const auto discoveredIt = objectEffects_.find(std::string(objectId));
+    const std::unordered_set<std::string>* discovered = discoveredIt != objectEffects_.end()
+        ? &discoveredIt->second
+        : nullptr;
+    for (const DiscoveryEffectLine& line : object->discoveryEffectLines) {
+        bool visible = false;
+        if (discovered != nullptr) {
+            const std::string canonical = canonicalEffectKey(line.effectKey);
+            visible = discovered->contains(line.effectKey) || discovered->contains(canonical);
+        }
+        if (revealMode == EffectRevealMode::DebugAll || visible) {
+            lines.push_back(line.text);
+        } else if (revealMode == EffectRevealMode::WithUnknown) {
+            lines.push_back("？？？");
+        }
+    }
+    return lines;
 }
 
 std::vector<EncyclopediaEntrySave> EncyclopediaSystem::saveEntries() const
@@ -249,6 +331,49 @@ std::vector<EncyclopediaEffectSave> EncyclopediaSystem::saveEffects() const
 bool EncyclopediaSystem::isTreasure(const ObjectDefinition& object)
 {
     return object.category == TreasureCategory;
+}
+
+std::string EncyclopediaSystem::canonicalEffectKey(std::string_view effectKey)
+{
+    if (effectKey == "enemy_damage") {
+        return "basic_attack";
+    }
+    if (effectKey == "terrain_dig") {
+        return "dig";
+    }
+    if (effectKey == "projectile_guard" || effectKey == "guard") {
+        return "guard_projectile";
+    }
+    if (effectKey == "detect") {
+        return "detect_treasure";
+    }
+    return std::string(effectKey);
+}
+
+const DiscoveryEffectLine* EncyclopediaSystem::findEffectLineByKey(const ObjectDefinition& object, std::string_view effectKey)
+{
+    const auto it = std::find_if(
+        object.discoveryEffectLines.begin(),
+        object.discoveryEffectLines.end(),
+        [effectKey](const DiscoveryEffectLine& line) {
+            return line.effectKey == effectKey;
+        });
+    return it != object.discoveryEffectLines.end() ? &*it : nullptr;
+}
+
+std::size_t EncyclopediaSystem::findEffectLineIndexByKey(const ObjectDefinition& object, std::string_view effectKey)
+{
+    const std::string canonical = canonicalEffectKey(effectKey);
+    const auto it = std::find_if(
+        object.discoveryEffectLines.begin(),
+        object.discoveryEffectLines.end(),
+        [&canonical](const DiscoveryEffectLine& line) {
+            return line.effectKey == canonical || canonicalEffectKey(line.effectKey) == canonical;
+        });
+    if (it == object.discoveryEffectLines.end()) {
+        return object.discoveryEffectLines.size();
+    }
+    return static_cast<std::size_t>(std::distance(object.discoveryEffectLines.begin(), it));
 }
 
 std::string EncyclopediaSystem::makeEffectText(const ObjectDefinition& object, std::string_view description)

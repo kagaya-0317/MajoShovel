@@ -43,7 +43,8 @@ public:
     bool spawnMoneyDrop(int amount, Vec2 position, float spawnedAtSeconds = 0.0f);
     bool spawnMaterialDrop(MaterialType type, int count, Vec2 position, float spawnedAtSeconds = 0.0f);
     bool spawnRewardDrop(const ObjectCatalog& catalog, Vec2 position, float spawnedAtSeconds = 0.0f);
-    int pullMetalDrops(const ObjectCatalog& catalog, Vec2 center, float dt);
+    bool stealNearestDrop(const ObjectCatalog& catalog, Vec2 center, float radius, std::string_view targetFilter, WorldDropItem& outDrop);
+    int pullMetalDrops(const ObjectCatalog& catalog, Vec2 center, float dt, float radius = 170.0f);
     int update(float dt, const Player& player, InventorySystem& inventory, int& money, const ObjectCatalog& catalog, EffectSystem* effects = nullptr);
     void render(
         Renderer& renderer,

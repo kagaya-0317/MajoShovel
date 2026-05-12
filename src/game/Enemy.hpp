@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 #include "engine/Math.hpp"
 #include "data/EnemyCatalog.hpp"
@@ -32,6 +32,14 @@ struct Enemy {
     std::string projectileId;
     std::string rangedBehaviorId;
     float projectileInterval = 0.0f;
+    float projectileSpeedMultiplier = 1.0f;
+    int projectileDamageOverride = -1;
+    float projectileRadiusScale = 1.0f;
+    int projectileBurstCount = 1;
+    int projectileBurstRemaining = 0;
+    float projectileBurstInterval = 0.12f;
+    int fireVolleyCount = 1;
+    float fireSpreadDegrees = 8.0f;
     std::vector<EffectSpec> projectileEffects;
     std::string aiId;
     std::string unawareAiId;
@@ -46,8 +54,60 @@ struct Enemy {
     int xp = 5;
     int moneyDrop = 0;
     int contactAttackPower = 1;
-    std::string contactDamageType = "physical";
+    std::string contactDamageType = "blunt";
     float contactTimer = 0.0f;
+    float contactDamageMultiplier = 1.0f;
+    float frontGuardArcDegrees = 140.0f;
+    float frontGuardDamageMultiplier = 0.35f;
+    float physicalDamageMultiplier = 0.55f;
+    float magicBodyPhysicalMultiplier = 0.35f;
+    float magicBodyMagicMultiplier = 1.0f;
+    float ringSlowMultiplier = -1.0f;
+    float ringSlowDurationSeconds = -1.0f;
+    int digMovePower = 1;
+    float digMoveIntervalSeconds = 0.11f;
+    float enemyHealRadius = 0.0f;
+    float enemyHealAmount = 0.0f;
+    float enemyHealIntervalSeconds = 0.0f;
+    float enemyHealTimer = 0.0f;
+    float countdownExplodeRadius = 0.0f;
+    float countdownExplodeDelay = 0.0f;
+    int countdownExplodeDamage = 0;
+    int countdownExplodeTerrainDamage = 0;
+    bool countdownExplodeOnce = false;
+    bool countdownExploded = false;
+    float jumpAttackDistance = 0.0f;
+    float jumpLandingRadius = 0.0f;
+    float jumpLandingDamageMultiplier = 1.0f;
+    float jumpAttackIntervalSeconds = 0.0f;
+    float jumpAttackTimer = 0.0f;
+    float jumpLandingBuffTimer = 0.0f;
+    float lightSpeedMultiplier = 1.0f;
+    float magnetRadius = 0.0f;
+    float magnetStrength = 0.0f;
+    std::string magnetTargetTag;
+    float rustDefenseMultiplier = 1.0f;
+    float rustDurationSeconds = 0.0f;
+    std::string rustTargetTag;
+    float chestBiteKnockback = 0.0f;
+    bool swarmSpawnEnabled = false;
+    bool swarmSpawnExecuted = false;
+    int swarmSpawnCount = 0;
+    float swarmSpawnRadius = 0.0f;
+    bool dropItemEnabled = false;
+    std::string dropItemProfile;
+    float dropItemChance = 0.0f;
+    int dropItemCount = 0;
+    float dropItemScatterRadius = 0.0f;
+    bool dropItemConsumed = false;
+    bool stealItemEnabled = false;
+    std::string stealTarget;
+    float stealRadius = 0.0f;
+    float stealEscapeDistance = 0.0f;
+    int stealMaxCarry = 0;
+    int stolenMoney = 0;
+    std::vector<std::string> stolenObjectIds;
+    bool pendingDeath = false;
     float hitFlash = 0.0f;
     float facingAngle = 0.0f;
     EnemyAwarenessState awareness = EnemyAwarenessState::Unaware;

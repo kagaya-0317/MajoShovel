@@ -24,6 +24,16 @@ struct ObjectImageDrawOptions {
     bool flipY = false;
 };
 
+[[nodiscard]] constexpr Color selectedItemOutlineColor()
+{
+    return {255, 230, 150, 255};
+}
+
+[[nodiscard]] ObjectImageDrawOptions withSelectedItemOutline(
+    const ObjectImageDrawOptions& base = {},
+    Color outlineColor = selectedItemOutlineColor(),
+    int outlinePx = 6);
+
 void setObjectImageScaleOverrides(const std::unordered_map<std::string, float>* scaleByObjectId);
 
 [[nodiscard]] std::string objectImagePathFromNumber(int imageNumber);

@@ -148,6 +148,7 @@ private:
 
     struct ImageTexture {
         SDL_Texture* texture = nullptr;
+        SDL_Texture* outlineTexture = nullptr;
         int width = 0;
         int height = 0;
     };

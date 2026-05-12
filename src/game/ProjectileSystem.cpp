@@ -1,7 +1,8 @@
-#include "game/ProjectileSystem.hpp"
+﻿#include "game/ProjectileSystem.hpp"
 
 #include "engine/Log.hpp"
 #include "game/Collision.hpp"
+#include "game/EncyclopediaSystem.hpp"
 #include "game/EnemySystem.hpp"
 
 #include <algorithm>
@@ -21,18 +22,18 @@ struct ProjectilePrototype {
     float radius = 4.0f;
     float lifetime = 2.0f;
     int damage = 1;
-    std::string_view damageType = "physical";
+    std::string_view damageType = "blunt";
     std::initializer_list<std::string_view> tags;
 };
 
 constexpr std::array<ProjectilePrototype, 12> Prototypes{{
-    {"stone_bullet", 190.0f, 4.5f, 2.4f, 1, "physical", {"small", "stone"}},
-    {"big_stone_bullet", 150.0f, 7.5f, 2.6f, 3, "physical", {"stone"}},
-    {"weapon_throw", 220.0f, 4.8f, 2.0f, 2, "physical", {"metal", "small"}},
+    {"stone_bullet", 190.0f, 4.5f, 2.4f, 1, "blunt", {"small", "stone"}},
+    {"big_stone_bullet", 150.0f, 7.5f, 2.6f, 3, "blunt", {"stone"}},
+    {"weapon_throw", 220.0f, 4.8f, 2.0f, 2, "blunt", {"metal", "small"}},
     {"poison_spit", 155.0f, 5.0f, 2.8f, 1, "water", {"small", "poison"}},
     {"paralyze_shot", 170.0f, 4.4f, 2.4f, 0, "none", {"small", "paralyze"}},
     {"mud_blob", 150.0f, 5.8f, 2.6f, 0, "earth", {"mud", "poison"}},
-    {"cactus_needle", 260.0f, 2.5f, 1.8f, 1, "physical", {"small", "needle"}},
+    {"cactus_needle", 260.0f, 2.5f, 1.8f, 1, "pierce", {"small", "needle"}},
     {"water_shot", 210.0f, 4.0f, 2.2f, 1, "water", {"small", "water"}},
     {"fire_breath", 145.0f, 7.0f, 1.2f, 2, "fire", {"fire", "short_range"}},
     {"web_thread", 135.0f, 3.5f, 2.4f, 0, "none", {"small", "web"}},
@@ -130,7 +131,7 @@ bool blocksProjectile(const SpellRingItem& item, const SpellRingSystem& spellRin
     }
 
     if (item.hasCapturedBehavior("heavy_guard") &&
-        (projectile.damageType == "physical" || isHeavyProjectile(projectile)) &&
+        (isPhysicalDamageType(projectile.damageType) || isHeavyProjectile(projectile)) &&
         circlesOverlap(projectile.position, projectile.radius, item.worldPosition, item.hitRadius + 10.0f)) {
         return true;
     }
@@ -146,6 +147,195 @@ bool blocksProjectile(const SpellRingItem& item, const SpellRingSystem& spellRin
 
     return isSmallProjectile(projectile) &&
         circlesOverlap(projectile.position, projectile.radius, item.worldPosition, item.hitRadius);
+}
+
+bool orbitEffectContains(const ObjectDefinition& object, std::string_view effectCode)
+{
+    for (const EffectSpec& spec : object.orbitEffects) {
+        for (const std::string& effect : spec.effects) {
+            if (effect == effectCode) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+double orbitEffectValue(const ObjectDefinition& object, std::string_view effectCode, double fallbackValue)
+{
+    for (const EffectSpec& spec : object.orbitEffects) {
+        for (std::size_t i = 0; i < spec.effects.size(); ++i) {
+            if (spec.effects[i] != effectCode) {
+                continue;
+            }
+            if (i < spec.values.size()) {
+                return spec.values[i];
+            }
+            return fallbackValue;
+        }
+    }
+    return fallbackValue;
+}
+
+bool objectHasEffectLineKey(const ObjectDefinition& object, std::string_view effectKey)
+{
+    return std::any_of(
+        object.discoveryEffectLines.begin(),
+        object.discoveryEffectLines.end(),
+        [effectKey](const DiscoveryEffectLine& line) {
+            return line.effectKey == effectKey;
+        });
+}
+
+bool discoveryQueueContains(
+    const std::vector<EffectDiscoveryEvent>* discoveryEvents,
+    std::string_view objectId,
+    std::string_view effectKey)
+{
+    if (discoveryEvents == nullptr || objectId.empty() || effectKey.empty()) {
+        return false;
+    }
+    for (const EffectDiscoveryEvent& event : *discoveryEvents) {
+        if (event.objectId == objectId && event.effectKey == effectKey) {
+            return true;
+        }
+    }
+    return false;
+}
+
+bool isEffectDiscovered(
+    const EncyclopediaSystem* encyclopedia,
+    const std::vector<EffectDiscoveryEvent>* discoveryEvents,
+    std::string_view objectId,
+    std::string_view effectKey)
+{
+    if (objectId.empty() || effectKey.empty()) {
+        return false;
+    }
+    if (encyclopedia != nullptr && encyclopedia->hasObjectEffect(objectId, effectKey)) {
+        return true;
+    }
+    return discoveryQueueContains(discoveryEvents, objectId, effectKey);
+}
+
+bool rollChancePercent(double chancePercent)
+{
+    static std::mt19937 rng{std::random_device{}()};
+    std::uniform_real_distribution<double> dist(0.0, 100.0);
+    return dist(rng) <= std::clamp(chancePercent, 0.0, 100.0);
+}
+
+bool projectileIsReflectImmune(const Projectile& projectile)
+{
+    if (projectile.projectileId == "explosion_small") {
+        return true;
+    }
+    return hasProjectileTag(projectile, "unreflectable");
+}
+
+void pushDiscoveryEvent(
+    std::vector<EffectDiscoveryEvent>* discoveryEvents,
+    const ObjectDefinition& object,
+    std::string_view effectKey,
+    Vec2 position,
+    std::string_view note = {})
+{
+    if (discoveryEvents == nullptr || object.id.empty() || effectKey.empty()) {
+        return;
+    }
+    discoveryEvents->push_back(EffectDiscoveryEvent{
+        .objectId = object.id,
+        .objectName = object.name,
+        .effectKey = std::string(effectKey),
+        .description = {},
+        .note = std::string(note),
+        .position = position,
+    });
+}
+
+std::string chooseGuardEffectKey(const ObjectDefinition* object, const Projectile& projectile)
+{
+    if (object == nullptr) {
+        return "guard_projectile";
+    }
+    if (isHeavyProjectile(projectile) && objectHasEffectLineKey(*object, "guard_large")) {
+        return "guard_large";
+    }
+    if (objectHasEffectLineKey(*object, "guard_projectile")) {
+        return "guard_projectile";
+    }
+    if (objectHasEffectLineKey(*object, "guard")) {
+        return "guard";
+    }
+    return "guard_projectile";
+}
+
+struct ReflectAttemptResult {
+    bool reflected = false;
+    std::string discoveredEffectKey;
+    std::string note;
+};
+
+ReflectAttemptResult tryReflectProjectile(
+    const Projectile& projectile,
+    const ObjectDefinition& object,
+    const EncyclopediaSystem* encyclopedia,
+    const std::vector<EffectDiscoveryEvent>* discoveryEvents)
+{
+    struct ReflectRule {
+        std::string_view normalKey;
+        std::string_view chanceKey;
+    };
+
+    ReflectRule rule{};
+    if (isPhysicalDamageType(projectile.damageType)) {
+        rule = {"reflect_physical", "reflect_physical_chance"};
+    } else if (projectile.damageType == "magic") {
+        rule = {"reflect_magic", "reflect_magic_chance"};
+    } else if (projectile.damageType == "water") {
+        rule = {"reflect_water", "reflect_water_chance"};
+    } else {
+        return {};
+    }
+
+    const bool hasNormal = orbitEffectContains(object, rule.normalKey);
+    const bool hasChance = orbitEffectContains(object, rule.chanceKey);
+    if (!hasNormal && !hasChance) {
+        return {};
+    }
+
+    ReflectAttemptResult result;
+    if (hasChance) {
+        const bool firstGuarantee = !isEffectDiscovered(encyclopedia, discoveryEvents, object.id, rule.chanceKey);
+        bool passed = firstGuarantee;
+        if (!firstGuarantee) {
+            passed = rollChancePercent(orbitEffectValue(object, rule.chanceKey, 0.0));
+        } else {
+            logError("[debug] discovery first-trigger guarantee applied for \"" + std::string(rule.chanceKey) +
+                "\" source=\"" + object.id + "\"");
+        }
+        if (passed) {
+            result.discoveredEffectKey = std::string(rule.chanceKey);
+            if (projectileIsReflectImmune(projectile)) {
+                result.note = "※ただし、この弾には効かなかった";
+                return result;
+            }
+            result.reflected = true;
+            return result;
+        }
+    }
+
+    if (!hasNormal) {
+        return result;
+    }
+
+    result.discoveredEffectKey = std::string(rule.normalKey);
+    if (projectileIsReflectImmune(projectile)) {
+        result.note = "※ただし、この弾には効かなかった";
+        return result;
+    }
+    result.reflected = true;
+    return result;
 }
 
 void pushPlayer(Player& player, TileMap& map, Vec2 direction, float distance)
@@ -218,7 +408,8 @@ void ProjectileSystem::update(
     float dt,
     const EffectDispatcher& effectDispatcher,
     const ObjectCatalog& objectCatalog,
-    std::vector<EffectDiscoveryEvent>* discoveryEvents)
+    std::vector<EffectDiscoveryEvent>* discoveryEvents,
+    const EncyclopediaSystem* encyclopedia)
 {
     for (Projectile& projectile : projectiles_.items()) {
         if (!projectile.active) {
@@ -272,6 +463,9 @@ void ProjectileSystem::update(
         if (projectile.ownerType == ProjectileOwnerType::Enemy) {
             bool consumedByRing = false;
             const SpellRingItem* blockingItem = nullptr;
+            const ObjectDefinition* blockingObject = nullptr;
+            std::string guardEffectKey = "guard_projectile";
+            bool reflectedByRing = false;
             const std::vector<const SpellRingItem*> runtimeItems = spellRing.runtimeItems();
             for (const SpellRingItem* itemPtr : runtimeItems) {
                 if (itemPtr == nullptr) {
@@ -279,23 +473,50 @@ void ProjectileSystem::update(
                 }
                 const SpellRingItem& item = *itemPtr;
                 if (blocksProjectile(item, spellRing, projectile)) {
-                    consumedByRing = true;
                     blockingItem = itemPtr;
+                    consumedByRing = true;
+                    if (!item.objectId.empty()) {
+                        blockingObject = objectCatalog.registry.findById(item.objectId);
+                    }
+                    guardEffectKey = chooseGuardEffectKey(blockingObject, projectile);
+                    if (blockingObject != nullptr) {
+                        const ReflectAttemptResult reflect = tryReflectProjectile(
+                            projectile,
+                            *blockingObject,
+                            encyclopedia,
+                            discoveryEvents);
+                        if (!reflect.discoveredEffectKey.empty()) {
+                            pushDiscoveryEvent(
+                                discoveryEvents,
+                                *blockingObject,
+                                reflect.discoveredEffectKey,
+                                item.worldPosition,
+                                reflect.note);
+                        }
+                        if (reflect.reflected) {
+                            reflectedByRing = true;
+                        }
+                    }
                     break;
                 }
             }
             if (consumedByRing) {
-                if (discoveryEvents != nullptr && blockingItem != nullptr && !blockingItem->objectId.empty()) {
-                    const ObjectDefinition* object = objectCatalog.registry.findById(blockingItem->objectId);
-                    if (object != nullptr) {
-                        discoveryEvents->push_back(EffectDiscoveryEvent{
-                            .objectId = object->id,
-                            .objectName = object->name,
-                            .effectKey = "projectile_guard",
-                            .description = "飛んできた弾を防ぐ",
-                            .position = blockingItem->worldPosition,
-                        });
-                    }
+                if (reflectedByRing && blockingItem != nullptr) {
+                    projectile.ownerType = ProjectileOwnerType::PlayerOrbit;
+                    const Vec2 fromRing = projectile.position - blockingItem->worldPosition;
+                    const Vec2 reflectDirection = lengthSquared(fromRing) > 0.0001f
+                        ? normalize(fromRing)
+                        : normalize(projectile.velocity * -1.0f);
+                    const float speed = std::max(40.0f, length(projectile.velocity));
+                    projectile.velocity = reflectDirection * speed;
+                    continue;
+                }
+                if (blockingItem != nullptr && blockingObject != nullptr) {
+                    pushDiscoveryEvent(
+                        discoveryEvents,
+                        *blockingObject,
+                        guardEffectKey,
+                        blockingItem->worldPosition);
                 }
                 projectile.active = false;
                 continue;
@@ -360,6 +581,7 @@ void ProjectileSystem::update(
             if (!dispatchEffects.empty()) {
                 EffectContext context;
                 context.owner = &player;
+                context.encyclopedia = encyclopedia;
                 context.position = projectile.position;
                 context.triggerType = EffectTriggerType::Hit;
                 context.logUnimplementedEffects = false;
@@ -370,7 +592,14 @@ void ProjectileSystem::update(
         }
 
         if (projectile.ownerType == ProjectileOwnerType::PlayerOrbit &&
-            enemies.hitByPlayerProjectile(projectile, player, spellRing, projectileDamage(projectile), effectDispatcher, discoveryEvents)) {
+            enemies.hitByPlayerProjectile(
+                projectile,
+                player,
+                spellRing,
+                projectileDamage(projectile),
+                effectDispatcher,
+                discoveryEvents,
+                encyclopedia)) {
             projectile.active = false;
         }
     }
