@@ -169,11 +169,9 @@ bool App::initialize(const char* title, int width, int height, bool testPlayMode
         setLogSink([this](LogLevel level, std::string_view message) {
             debugConsole_.appendLog(level, message);
         });
-        std::string error;
-        if (!saveDevAutoReloadBlocked(false, error)) {
-            logError("Auto reload block init failed: " + error);
-        }
-        game_.setAutoReloadBlocked(false);
+        const bool autoReloadBlocked = loadDevAutoReloadBlocked();
+        game_.setAutoReloadBlocked(autoReloadBlocked);
+        logInfo(std::string("Auto reload block: ") + (autoReloadBlocked ? "ON" : "OFF"));
         logInfo("Test-play debug console enabled. Press F8 to show or hide it.");
     }
     loadAssets();
@@ -208,6 +206,10 @@ bool App::loadAssets()
         ok = false;
     }
     if (!renderer_->loadUiButtonTexture("assets/UI_buttons.png")) {
+        logError(renderer_->lastAssetError());
+        ok = false;
+    }
+    if (!renderer_->loadUiLineTexture("assets/UI_line.png")) {
         logError(renderer_->lastAssetError());
         ok = false;
     }
@@ -248,6 +250,9 @@ bool App::reloadAssetForPath(const std::string& changedPath)
     }
     if (fileName == "ui_buttons.png") {
         return renderer_->loadUiButtonTexture("assets/UI_buttons.png");
+    }
+    if (fileName == "ui_line.png") {
+        return renderer_->loadUiLineTexture("assets/UI_line.png");
     }
     if (extension == ".otf" || extension == ".ttf") {
         return renderer_->loadTextFont("assets/fonts/craftmincho.otf");

@@ -73,6 +73,13 @@ public:
     void drawActorShadow(Vec2 actorAnchor, float visualSize, Color color = {0, 0, 0, 82});
     void drawLine(Vec2 a, Vec2 b, Color color);
     void drawText(Vec2 pos, std::string_view text, Color color, int scale = 2);
+    void drawOutlinedText(
+        Vec2 pos,
+        std::string_view text,
+        Color color,
+        Color outline,
+        int outlinePx,
+        int scale = 2);
     Vec2 measureText(std::string_view text, int scale = 2);
     Vec2 measureWrappedText(std::string_view text, float maxWidth, int scale = 2);
     void drawWrappedText(Vec2 pos, std::string_view text, float maxWidth, Color color, int scale = 2);
@@ -93,6 +100,9 @@ public:
     bool loadUiButtonTexture(std::string_view path);
     void unloadUiButtonTexture();
     bool hasUiButtonTexture() const { return uiButtonTexture_.texture != nullptr && uiButtonTexture_.valid; }
+    bool loadUiLineTexture(std::string_view path);
+    void unloadUiLineTexture();
+    bool hasUiLineTexture() const { return uiLineTexture_.texture != nullptr; }
     bool loadBaseMapTexture(std::string_view path);
     void unloadBaseMapTexture();
     bool hasBaseMapTexture() const { return baseMapTexture_.texture != nullptr; }
@@ -104,6 +114,7 @@ public:
     void drawUiWindowFrame(Vec2 pos, Vec2 size, Color tint = {255, 255, 255, 255});
     void drawUiSubWindowFrame(Vec2 pos, Vec2 size, Color tint = {255, 255, 255, 255});
     void drawUiButtonFrame(Vec2 pos, float width, int variant, Color tint = {255, 255, 255, 255});
+    void drawUiLine(Vec2 pos, float width, Color tint = {255, 255, 255, 255});
     ImageHandle acquireImage(std::string_view path, TextureFilter filter = TextureFilter::Nearest);
     bool drawImage(ImageHandle handle, Vec2 center, Vec2 size, const ImageDrawOptions& options = {});
     bool drawImage(
@@ -171,8 +182,16 @@ private:
     void setColor(Color color);
     void drawGlyph(char c, Vec2 pos, Color color, int scale);
     bool drawNativeText(Vec2 pos, std::string_view text, Color color, int scale);
+    bool drawNativeOutlinedText(Vec2 pos, std::string_view text, Color color, Color outline, int outlinePx, int scale);
     bool measureNativeText(std::string_view text, int scale, Vec2& outSize);
     bool renderNativeTextToTexture(std::string_view text, Color color, int scale, TextTexture& outTexture);
+    bool renderNativeOutlinedTextToTexture(
+        std::string_view text,
+        Color color,
+        Color outline,
+        int scale,
+        int outlinePx,
+        TextTexture& outTexture);
     void clearTextCache();
     std::string wrappedText(std::string_view text, float maxWidth, int scale);
     bool loadSpriteSheet(std::string_view path, int frameSize, int columns, int rows, std::string_view label, SpriteSheet& sheet);
@@ -207,6 +226,7 @@ private:
     GuidedTexture uiWindowTexture_;
     GuidedTexture uiSubWindowTexture_;
     GuidedTexture uiButtonTexture_;
+    ImageTexture uiLineTexture_;
     std::unique_ptr<NativeTextFont> nativeTextFont_;
     std::unordered_map<std::string, TextTexture> textCache_;
     std::unordered_map<std::string, Vec2> textMeasureCache_;

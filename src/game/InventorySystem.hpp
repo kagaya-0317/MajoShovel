@@ -95,6 +95,12 @@ public:
     void addMaterial(MaterialType type, int count);
     void setMaterialCount(MaterialType type, int count);
     int materialCount(MaterialType type) const;
+    int screenSlotCount() const { return ShortcutSlotCount; }
+    const InventoryObjectStack* screenObjectStackAt(int index) const { return objectStackAtScreenIndex(index); }
+    const InventoryObjectInstance* screenObjectInstanceAt(int index) const { return objectInstanceAtScreenIndex(index); }
+    bool hasScreenItemAt(int index) const { return hasScreenItem(index); }
+    bool moveObjectStackToScreenSlot(std::string_view objectId, int slotIndex);
+    bool moveObjectInstanceToScreenSlot(std::string_view instanceId, int slotIndex);
 
 private:
     static constexpr int ShortcutColumns = 8;
@@ -170,6 +176,7 @@ private:
     bool slotPointerPressCanOpenMenu_ = false;
     bool slotPointerDragTriggered_ = false;
     mutable std::vector<int> packedItemSlots_;
+    mutable UiCancelControlState cancelState_{};
     bool open_ = false;
     std::string status_ = "アイテムなし";
 };

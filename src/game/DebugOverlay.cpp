@@ -59,42 +59,60 @@ void DebugOverlay::render(
         dungeonLayout,
         {static_cast<float>(map.worldToTile(player.position.x)), static_cast<float>(map.worldToTile(player.position.y))});
     const TerrainDebugInfo terrain = map.terrainDebugAtWorld(player.position);
-    char buffer[1536];
+    const int playerTileX = map.worldToTile(player.position.x);
+    const int playerTileY = map.worldToTile(player.position.y);
+
+    char buffer[2048];
     std::snprintf(buffer, sizeof(buffer),
-        "FPS: %03d\n敵: %03d\nチャンク: %02d/%02zu\nリング半径: %03d\nリング速度: %.2f\nリング %d/%d 形状 %s\nレベル: %02d 経験値: %02d/%02d\n投げ待ち: %02d%%\nStage %d Seed %u\nStart (%d,%d) Goal (%d,%d)\n距離 %.1f 進捗 %.2f 主道距離 %.1f\n地形 %s HP %d/%d 硬さ %.2f\nWarp nearest %d %s discovered %d",
+        "FPS: %03d   Auto reload block: %s\n"
+        "Stage: %d %s / %s   Seed: %u\n"
+        "Progress: %.1f%%   Dist: %.1f   Start(%d,%d) Goal(%d,%d)\n"
+        "Player: HP %d/%d   Lv %02d XP %02d/%02d   Tile(%d,%d)\n"
+        "Terrain: %s HP %d/%d Hard %.2f   MainPathDist %.1f\n"
+        "Ring: %d/%d %s   R %03d Speed %.2f Throw %02d%%\n"
+        "Warp: nearest %d %s   found %d/%d\n"
+        "Chunks: active %02d generated %02zu   Enemies: active %03d",
         static_cast<int>(time.fps()),
-        enemies.activeCount(),
-        map.activeChunkCount(),
-        map.generatedChunkCount(),
-        static_cast<int>(spellRing.radius()),
-        spellRing.angularSpeed(),
-        spellRing.activeRingIndex() + 1,
-        spellRing.runtimeRingCount(),
-        ringShapeName(spellRing.activeRingShape()),
-        player.level,
-        player.xp,
-        player.xpToNext,
-        static_cast<int>(spellRing.cooldownRatio(player, balance) * 100.0f),
+        autoReloadBlocked ? "ON" : "OFF",
         dungeonLayout.stageId,
+        currentStage.name.c_str(),
+        currentStage.type.c_str(),
         dungeonLayout.seed,
+        dungeonMetrics.pathProgress * 100.0f,
+        dungeonMetrics.distanceFromStart,
         dungeonLayout.startTile.x,
         dungeonLayout.startTile.y,
         dungeonLayout.goalTile.x,
         dungeonLayout.goalTile.y,
-        dungeonMetrics.distanceFromStart,
-        dungeonMetrics.pathProgress,
-        terrain.distanceFromMainPath,
+        player.hp,
+        player.maxHp,
+        player.level,
+        player.xp,
+        player.xpToNext,
+        playerTileX,
+        playerTileY,
         tileTypeName(terrain.type),
         terrain.hp,
         terrain.effectiveHp,
         terrain.localHardnessMultiplier,
+        terrain.distanceFromMainPath,
+        spellRing.activeRingIndex() + 1,
+        spellRing.runtimeRingCount(),
+        ringShapeName(spellRing.activeRingShape()),
+        static_cast<int>(spellRing.radius()),
+        spellRing.angularSpeed(),
+        static_cast<int>(spellRing.cooldownRatio(player, balance) * 100.0f),
         nearestWarpIndex,
         nearestWarpDiscovered ? "found" : "hidden",
-        discoveredWarpCount);
+        discoveredWarpCount,
+        currentStage.warpPointCount,
+        map.activeChunkCount(),
+        map.generatedChunkCount(),
+        enemies.activeCount());
     std::snprintf(
         buffer + std::char_traits<char>::length(buffer),
         sizeof(buffer) - std::char_traits<char>::length(buffer),
-        "\nReward nodes %d Money nodes %d Buried visible %d hidden %d",
+        "\nNodes: reward %d money %d buried visible %d hidden %d",
         rewardNodeCount,
         moneyNodeCount,
         buriedVisibleNodeCount,
@@ -102,43 +120,44 @@ void DebugOverlay::render(
     std::snprintf(
         buffer + std::char_traits<char>::length(buffer),
         sizeof(buffer) - std::char_traits<char>::length(buffer),
-        "\nEnemy nodes exposed %d buried %d spawned %d",
+        "\nEnemyNodes: exposed %d buried %d spawned %d",
         exposedEnemyNodeCount,
         buriedEnemyNodeCount,
         spawnedEnemyNodeCount);
     std::snprintf(
         buffer + std::char_traits<char>::length(buffer),
         sizeof(buffer) - std::char_traits<char>::length(buffer),
-        "\nSpecial rooms %zu current %s nearest %s",
+        "\nSpecialRoom: total %zu current %s nearest %s dist %.1f",
         dungeonLayout.specialRoomAnchors.size(),
         specialRoomTypeName(roomMetrics.currentRoomType),
-        specialRoomTypeName(roomMetrics.nearestRoomType));
+        specialRoomTypeName(roomMetrics.nearestRoomType),
+        roomMetrics.distanceToNearestRoom);
     std::snprintf(
         buffer + std::char_traits<char>::length(buffer),
         sizeof(buffer) - std::char_traits<char>::length(buffer),
-        "\nStageCatalog %s / %s / %s\nProfile gen=%s terrain=%s goal=%d hard=%.2f warp=%d special=%d",
-        currentStage.id.c_str(),
-        currentStage.name.c_str(),
-        currentStage.type.c_str(),
+        "\nProfile: gen=%s terrain=%s goal=%d hard=%.2f special=%d\nEnemies:\n%s",
         currentStage.generationProfile.c_str(),
         currentStage.terrainProfile.c_str(),
         currentStage.goalDistanceTiles,
         currentStage.terrainHardnessMultiplier,
-        currentStage.warpPointCount,
-        currentStage.specialRoomCount);
-    std::snprintf(
-        buffer + std::char_traits<char>::length(buffer),
-        sizeof(buffer) - std::char_traits<char>::length(buffer),
-        "\n%s",
+        currentStage.specialRoomCount,
         enemySummary.c_str());
-    std::snprintf(
-        buffer + std::char_traits<char>::length(buffer),
-        sizeof(buffer) - std::char_traits<char>::length(buffer),
-        "\nAuto reload block %s",
-        autoReloadBlocked ? "ON" : "OFF");
     renderer.setScreenSpace();
-    renderer.fillRect({10.0f, 10.0f}, {620.0f, 492.0f}, {0, 0, 0, 180});
-    renderer.drawText({20.0f, 20.0f}, buffer, {220, 244, 224, 255}, 2);
+    constexpr Vec2 PanelPos{10.0f, 10.0f};
+    constexpr float PanelWidth = 570.0f;
+    constexpr float PanelPadding = 10.0f;
+    constexpr int TextScale = 2;
+    constexpr float MinPanelHeight = 40.0f;
+    const float textWidth = PanelWidth - PanelPadding * 2.0f;
+    const Vec2 textSize = renderer.measureWrappedText(buffer, textWidth, TextScale);
+    const float panelHeight = std::max(MinPanelHeight, textSize.y + PanelPadding * 2.0f);
+    renderer.fillRect(PanelPos, {PanelWidth, panelHeight}, {0, 0, 0, 125});
+    renderer.drawWrappedText(
+        PanelPos + Vec2{PanelPadding, PanelPadding},
+        buffer,
+        textWidth,
+        {220, 244, 224, 255},
+        TextScale);
 }
 
 }

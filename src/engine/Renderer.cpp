@@ -25,6 +25,18 @@ namespace majo {
 
 namespace {
 
+constexpr float UiLineSourceWidth = 463.0f;
+constexpr float UiLineSourceHeight = 36.0f;
+constexpr float UiLineLeftCapWidth = 37.0f;
+constexpr float UiLineLeftLineX = 37.0f;
+constexpr float UiLineLeftLineWidth = 162.0f;
+constexpr float UiLineCenterX = 199.0f;
+constexpr float UiLineCenterWidth = 76.0f;
+constexpr float UiLineRightLineX = 275.0f;
+constexpr float UiLineRightLineWidth = 151.0f;
+constexpr float UiLineRightCapX = 426.0f;
+constexpr float UiLineRightCapWidth = 37.0f;
+
 #ifdef _WIN32
 class GdiPlusSession {
 public:
@@ -109,6 +121,22 @@ std::string textCacheKey(std::string_view text, Color color, int scale)
         << static_cast<int>(color.g) << ','
         << static_cast<int>(color.b) << ','
         << static_cast<int>(color.a) << ':'
+        << text;
+    return out.str();
+}
+
+std::string outlinedTextCacheKey(std::string_view text, Color color, Color outline, int outlinePx, int scale)
+{
+    std::ostringstream out;
+    out << "outline:" << scale << ':' << outlinePx << ':'
+        << static_cast<int>(color.r) << ','
+        << static_cast<int>(color.g) << ','
+        << static_cast<int>(color.b) << ','
+        << static_cast<int>(color.a) << ':'
+        << static_cast<int>(outline.r) << ','
+        << static_cast<int>(outline.g) << ','
+        << static_cast<int>(outline.b) << ','
+        << static_cast<int>(outline.a) << ':'
         << text;
     return out.str();
 }
@@ -219,6 +247,7 @@ Renderer::~Renderer()
     unloadUiWindowTexture();
     unloadUiSubWindowTexture();
     unloadUiButtonTexture();
+    unloadUiLineTexture();
 }
 
 void Renderer::setColor(Color color)
@@ -461,6 +490,34 @@ void Renderer::drawText(Vec2 pos, std::string_view text, Color color, int scale)
     camera_ = old;
 }
 
+void Renderer::drawOutlinedText(Vec2 pos, std::string_view text, Color color, Color outline, int outlinePx, int scale)
+{
+    if (text.empty()) {
+        return;
+    }
+#ifdef _WIN32
+    if (drawNativeOutlinedText(pos, text, color, outline, outlinePx, scale)) {
+        return;
+    }
+#endif
+
+    constexpr Vec2 fallbackOffsets[] = {
+        {-6.0f, 0.0f},
+        {6.0f, 0.0f},
+        {0.0f, -6.0f},
+        {0.0f, 6.0f},
+        {-4.0f, -4.0f},
+        {4.0f, -4.0f},
+        {-4.0f, 4.0f},
+        {4.0f, 4.0f},
+    };
+    const float radiusScale = static_cast<float>(std::max(0, outlinePx)) / 6.0f;
+    for (const Vec2 offset : fallbackOffsets) {
+        drawText(pos + offset * radiusScale, text, outline, scale);
+    }
+    drawText(pos, text, color, scale);
+}
+
 Vec2 Renderer::measureText(std::string_view text, int scale)
 {
     const std::string key = textMeasureCacheKey(text, std::max(1, scale));
@@ -597,6 +654,54 @@ bool Renderer::drawNativeText(Vec2 pos, std::string_view text, Color color, int 
     (void)pos;
     (void)text;
     (void)color;
+    (void)scale;
+    return false;
+#endif
+}
+
+bool Renderer::drawNativeOutlinedText(Vec2 pos, std::string_view text, Color color, Color outline, int outlinePx, int scale)
+{
+#ifdef _WIN32
+    if (!nativeTextFont_ || !nativeTextFont_->loaded) {
+        return false;
+    }
+
+    const int normalizedScale = std::max(1, scale);
+    const int normalizedOutlinePx = std::max(0, outlinePx);
+    const std::string key = outlinedTextCacheKey(text, color, outline, normalizedOutlinePx, normalizedScale);
+    auto it = textCache_.find(key);
+    if (it == textCache_.end()) {
+        if (textCache_.size() > 2048) {
+            clearTextCache();
+        }
+        TextTexture texture{};
+        if (!renderNativeOutlinedTextToTexture(text, color, outline, normalizedScale, normalizedOutlinePx, texture)) {
+            return false;
+        }
+        it = textCache_.emplace(key, texture).first;
+    }
+    if (!it->second.texture) {
+        return false;
+    }
+
+    float alpha = 255.0f;
+    for (const ScreenTransform& transform : screenTransforms_) {
+        alpha *= std::clamp(transform.alpha, 0.0f, 1.0f);
+    }
+
+    const float margin = static_cast<float>(normalizedOutlinePx + 2);
+    const Vec2 p = transform(pos - Vec2{margin, margin});
+    const Vec2 s = transformSize({static_cast<float>(it->second.width), static_cast<float>(it->second.height)});
+    const SDL_FRect dst{p.x, p.y, s.x, s.y};
+    SDL_SetTextureAlphaMod(it->second.texture, static_cast<unsigned char>(std::clamp(std::lround(alpha), 0L, 255L)));
+    SDL_RenderTexture(renderer_, it->second.texture, nullptr, &dst);
+    return true;
+#else
+    (void)pos;
+    (void)text;
+    (void)color;
+    (void)outline;
+    (void)outlinePx;
     (void)scale;
     return false;
 #endif
@@ -759,6 +864,135 @@ bool Renderer::renderNativeTextToTexture(std::string_view text, Color color, int
 #endif
 }
 
+bool Renderer::renderNativeOutlinedTextToTexture(
+    std::string_view text,
+    Color color,
+    Color outline,
+    int scale,
+    int outlinePx,
+    TextTexture& outTexture)
+{
+#ifdef _WIN32
+    std::wstring wideText;
+    if (!utf8ToWide(text, wideText)) {
+        return false;
+    }
+
+    Gdiplus::FontFamily family(nativeTextFont_->familyName.c_str(), &nativeTextFont_->collection);
+    if (!family.IsAvailable()) {
+        return false;
+    }
+
+    Vec2 measured{};
+    if (!measureNativeText(text, scale, measured)) {
+        return false;
+    }
+
+    const int margin = std::max(0, outlinePx) + 2;
+    const int bitmapWidth = std::max(1, static_cast<int>(std::ceil(measured.x)) + margin * 2);
+    const int bitmapHeight = std::max(1, static_cast<int>(std::ceil(measured.y)) + margin * 2);
+    const float fontSize = static_cast<float>(std::max(1, scale) * 8);
+    Gdiplus::Font font(&family, fontSize, Gdiplus::FontStyleRegular, Gdiplus::UnitPixel);
+    Gdiplus::Bitmap measureBitmap(1, 1, PixelFormat32bppARGB);
+    Gdiplus::Graphics measureGraphics(&measureBitmap);
+    const float lineHeight = std::ceil(font.GetHeight(&measureGraphics) + 2.0f);
+
+    std::vector<std::wstring> lines;
+    std::wstring current;
+    for (wchar_t ch : wideText) {
+        if (ch == L'\n') {
+            lines.push_back(current);
+            current.clear();
+        } else {
+            current.push_back(ch);
+        }
+    }
+    lines.push_back(current);
+
+    Gdiplus::GraphicsPath path;
+    Gdiplus::StringFormat format;
+    format.SetFormatFlags(Gdiplus::StringFormatFlagsNoWrap | Gdiplus::StringFormatFlagsMeasureTrailingSpaces);
+    for (std::size_t i = 0; i < lines.size(); ++i) {
+        if (lines[i].empty()) {
+            continue;
+        }
+        if (path.AddString(
+                lines[i].c_str(),
+                static_cast<INT>(lines[i].size()),
+                &family,
+                Gdiplus::FontStyleRegular,
+                fontSize,
+                Gdiplus::PointF{static_cast<Gdiplus::REAL>(margin), static_cast<Gdiplus::REAL>(margin) + static_cast<float>(i) * lineHeight},
+                &format)
+            != Gdiplus::Ok) {
+            return false;
+        }
+    }
+
+    Gdiplus::Bitmap bitmap(bitmapWidth, bitmapHeight, PixelFormat32bppARGB);
+    Gdiplus::Graphics graphics(&bitmap);
+    graphics.Clear(Gdiplus::Color(0, 0, 0, 0));
+    graphics.SetSmoothingMode(Gdiplus::SmoothingModeAntiAlias);
+    graphics.SetPixelOffsetMode(Gdiplus::PixelOffsetModeHalf);
+
+    if (outline.a > 0 && outlinePx > 0) {
+        Gdiplus::Pen pen(
+            Gdiplus::Color(outline.a, outline.r, outline.g, outline.b),
+            static_cast<Gdiplus::REAL>(outlinePx * 2));
+        pen.SetLineJoin(Gdiplus::LineJoinRound);
+        graphics.DrawPath(&pen, &path);
+    }
+    if (color.a > 0) {
+        Gdiplus::SolidBrush brush(Gdiplus::Color(color.a, color.r, color.g, color.b));
+        graphics.FillPath(&brush, &path);
+    }
+
+    Gdiplus::Rect lockRect(0, 0, bitmapWidth, bitmapHeight);
+    Gdiplus::BitmapData locked{};
+    if (bitmap.LockBits(&lockRect, Gdiplus::ImageLockModeRead, PixelFormat32bppARGB, &locked) != Gdiplus::Ok) {
+        return false;
+    }
+
+    const int rowBytes = bitmapWidth * 4;
+    std::vector<unsigned char> pixels(static_cast<std::size_t>(rowBytes) * static_cast<std::size_t>(bitmapHeight));
+    const auto* source = static_cast<const unsigned char*>(locked.Scan0);
+    const int sourceStride = locked.Stride;
+    for (int y = 0; y < bitmapHeight; ++y) {
+        const int sourceY = sourceStride < 0 ? bitmapHeight - 1 - y : y;
+        const unsigned char* sourceRow = source + sourceY * std::abs(sourceStride);
+        unsigned char* targetRow = pixels.data() + static_cast<std::size_t>(y) * static_cast<std::size_t>(rowBytes);
+        std::memcpy(targetRow, sourceRow, static_cast<std::size_t>(rowBytes));
+    }
+    bitmap.UnlockBits(&locked);
+
+    SDL_Surface* surface = SDL_CreateSurfaceFrom(bitmapWidth, bitmapHeight, SDL_PIXELFORMAT_BGRA32, pixels.data(), rowBytes);
+    if (!surface) {
+        return false;
+    }
+
+    SDL_Texture* texture = SDL_CreateTextureFromSurface(renderer_, surface);
+    SDL_DestroySurface(surface);
+    if (!texture) {
+        return false;
+    }
+
+    SDL_SetTextureBlendMode(texture, SDL_BLENDMODE_BLEND);
+    SDL_SetTextureScaleMode(texture, SDL_SCALEMODE_LINEAR);
+    outTexture.texture = texture;
+    outTexture.width = bitmapWidth;
+    outTexture.height = bitmapHeight;
+    return true;
+#else
+    (void)text;
+    (void)color;
+    (void)outline;
+    (void)scale;
+    (void)outlinePx;
+    (void)outTexture;
+    return false;
+#endif
+}
+
 void Renderer::clearTextCache()
 {
     for (auto& [_, cached] : textCache_) {
@@ -850,6 +1084,11 @@ void Renderer::unloadUiSubWindowTexture()
 void Renderer::unloadUiButtonTexture()
 {
     unloadGuidedTexture(uiButtonTexture_);
+}
+
+void Renderer::unloadUiLineTexture()
+{
+    unloadImageTexture(uiLineTexture_);
 }
 
 void Renderer::unloadSpriteSheet(SpriteSheet& sheet)
@@ -992,6 +1231,11 @@ bool Renderer::loadUiSubWindowTexture(std::string_view path)
 bool Renderer::loadUiButtonTexture(std::string_view path)
 {
     return loadGuidedTexture(path, 3, 3, true, "UI button texture", uiButtonTexture_);
+}
+
+bool Renderer::loadUiLineTexture(std::string_view path)
+{
+    return loadImageTexture(path, "UI line texture", uiLineTexture_);
 }
 
 Renderer::CachedImageEntry* Renderer::findImageEntry(ImageHandle handle)
@@ -1621,15 +1865,15 @@ void Renderer::drawNineSliceFrame(const GuidedTexture& texture, Vec2 pos, Vec2 s
     };
 
     drawTextureRegion(texture.texture, cell(0, 0), pos, {leftWidth, topHeight}, tint);
-    drawTextureTiled(texture.texture, cell(0, 1), {pos.x + leftWidth, pos.y}, {centerWidth, topHeight}, tint);
+    drawTextureRegion(texture.texture, cell(0, 1), {pos.x + leftWidth, pos.y}, {centerWidth, topHeight}, tint);
     drawTextureRegion(texture.texture, cell(0, 2), {rightX, pos.y}, {rightWidth, topHeight}, tint);
 
-    drawTextureTiled(texture.texture, cell(1, 0), {pos.x, pos.y + topHeight}, {leftWidth, centerHeight}, tint);
-    drawTextureTiled(texture.texture, cell(1, 1), {pos.x + leftWidth, pos.y + topHeight}, {centerWidth, centerHeight}, tint);
-    drawTextureTiled(texture.texture, cell(1, 2), {rightX, pos.y + topHeight}, {rightWidth, centerHeight}, tint);
+    drawTextureRegion(texture.texture, cell(1, 0), {pos.x, pos.y + topHeight}, {leftWidth, centerHeight}, tint);
+    drawTextureRegion(texture.texture, cell(1, 1), {pos.x + leftWidth, pos.y + topHeight}, {centerWidth, centerHeight}, tint);
+    drawTextureRegion(texture.texture, cell(1, 2), {rightX, pos.y + topHeight}, {rightWidth, centerHeight}, tint);
 
     drawTextureRegion(texture.texture, cell(2, 0), {pos.x, bottomY}, {leftWidth, bottomHeight}, tint);
-    drawTextureTiled(texture.texture, cell(2, 1), {pos.x + leftWidth, bottomY}, {centerWidth, bottomHeight}, tint);
+    drawTextureRegion(texture.texture, cell(2, 1), {pos.x + leftWidth, bottomY}, {centerWidth, bottomHeight}, tint);
     drawTextureRegion(texture.texture, cell(2, 2), {rightX, bottomY}, {rightWidth, bottomHeight}, tint);
 }
 
@@ -1806,29 +2050,29 @@ void Renderer::drawUiWindowFrame(Vec2 pos, Vec2 size, Color tint)
         return {a + extra * (a / total), b + extra * (b / total)};
     };
 
-    drawTextureTiled(window.texture, cell(1, 2), pos + Vec2{cw[0], topHeight}, {size.x - cw[0] - cw[4], middleHeight}, tint);
+    drawTextureRegion(window.texture, cell(1, 2), pos + Vec2{cw[0], topHeight}, {size.x - cw[0] - cw[4], middleHeight}, tint);
 
     const Vec2 topVariable = splitExtra(extraWidth, cw[1], cw[3]);
     float x = pos.x;
     drawTextureRegion(window.texture, cell(0, 0), {x, pos.y}, {cw[0], topHeight}, tint);
     x += cw[0];
-    drawTextureTiled(window.texture, cell(0, 1), {x, pos.y}, {topVariable.x, topHeight}, tint);
+    drawTextureRegion(window.texture, cell(0, 1), {x, pos.y}, {topVariable.x, topHeight}, tint);
     x += topVariable.x;
     drawTextureRegion(window.texture, cell(0, 2), {x, pos.y}, {cw[2], topHeight}, tint);
     x += cw[2];
-    drawTextureTiled(window.texture, cell(0, 3), {x, pos.y}, {topVariable.y, topHeight}, tint);
+    drawTextureRegion(window.texture, cell(0, 3), {x, pos.y}, {topVariable.y, topHeight}, tint);
     drawTextureRegion(window.texture, cell(0, 4), {pos.x + size.x - cw[4], pos.y}, {cw[4], topHeight}, tint);
 
-    drawTextureTiled(window.texture, cell(1, 0), {pos.x, pos.y + topHeight}, {cw[0], middleHeight}, tint);
-    drawTextureTiled(window.texture, cell(1, 4), {pos.x + size.x - cw[4], pos.y + topHeight}, {cw[4], middleHeight}, tint);
+    drawTextureRegion(window.texture, cell(1, 0), {pos.x, pos.y + topHeight}, {cw[0], middleHeight}, tint);
+    drawTextureRegion(window.texture, cell(1, 4), {pos.x + size.x - cw[4], pos.y + topHeight}, {cw[4], middleHeight}, tint);
 
     const Vec2 bottomVariable = splitExtra(extraWidth, cw[1], cw[2]);
     x = pos.x;
     drawTextureRegion(window.texture, cell(2, 0), {x, bottomY}, {cw[0], rh[2]}, tint);
     x += cw[0];
-    drawTextureTiled(window.texture, cell(2, 1), {x, bottomY}, {bottomVariable.x, rh[2]}, tint);
+    drawTextureRegion(window.texture, cell(2, 1), {x, bottomY}, {bottomVariable.x, rh[2]}, tint);
     x += bottomVariable.x;
-    drawTextureTiled(window.texture, cell(2, 2), {x, bottomY}, {bottomVariable.y, rh[2]}, tint);
+    drawTextureRegion(window.texture, cell(2, 2), {x, bottomY}, {bottomVariable.y, rh[2]}, tint);
     x += bottomVariable.y;
     drawTextureRegion(window.texture, cell(2, 3), {x, bottomY}, {cw[3], rh[2]}, tint);
     drawTextureRegion(window.texture, cell(2, 4), {pos.x + size.x - cw[4], bottomY}, {cw[4], rh[2]}, tint);
@@ -1845,6 +2089,57 @@ void Renderer::drawUiButtonFrame(Vec2 pos, float width, int variant, Color tint)
         return;
     }
     drawHorizontalSliceRow(uiButtonTexture_, std::clamp(variant, 0, 2), pos, width, tint);
+}
+
+void Renderer::drawUiLine(Vec2 pos, float width, Color tint)
+{
+    if (!hasUiLineTexture() || width <= 0.0f) {
+        return;
+    }
+
+    const SDL_FRect fullSource{0.0f, 0.0f, UiLineSourceWidth, UiLineSourceHeight};
+    const float fixedWidth = UiLineLeftCapWidth + UiLineCenterWidth + UiLineRightCapWidth;
+    if (width <= fixedWidth) {
+        const float scale = width / UiLineSourceWidth;
+        drawTextureRegion(uiLineTexture_.texture, fullSource, pos, {width, UiLineSourceHeight * scale}, tint);
+        return;
+    }
+
+    const float centerX = pos.x + (width - UiLineCenterWidth) * 0.5f;
+    const float rightCapX = pos.x + width - UiLineRightCapWidth;
+    const float leftLineWidth = std::max(0.0f, centerX - (pos.x + UiLineLeftCapWidth));
+    const float rightLineWidth = std::max(0.0f, rightCapX - (centerX + UiLineCenterWidth));
+
+    drawTextureRegion(
+        uiLineTexture_.texture,
+        {0.0f, 0.0f, UiLineLeftCapWidth, UiLineSourceHeight},
+        pos,
+        {UiLineLeftCapWidth, UiLineSourceHeight},
+        tint);
+    drawTextureTiled(
+        uiLineTexture_.texture,
+        {UiLineLeftLineX, 0.0f, UiLineLeftLineWidth, UiLineSourceHeight},
+        {pos.x + UiLineLeftCapWidth, pos.y},
+        {leftLineWidth, UiLineSourceHeight},
+        tint);
+    drawTextureRegion(
+        uiLineTexture_.texture,
+        {UiLineCenterX, 0.0f, UiLineCenterWidth, UiLineSourceHeight},
+        {centerX, pos.y},
+        {UiLineCenterWidth, UiLineSourceHeight},
+        tint);
+    drawTextureTiled(
+        uiLineTexture_.texture,
+        {UiLineRightLineX, 0.0f, UiLineRightLineWidth, UiLineSourceHeight},
+        {centerX + UiLineCenterWidth, pos.y},
+        {rightLineWidth, UiLineSourceHeight},
+        tint);
+    drawTextureRegion(
+        uiLineTexture_.texture,
+        {UiLineRightCapX, 0.0f, UiLineRightCapWidth, UiLineSourceHeight},
+        {rightCapX, pos.y},
+        {UiLineRightCapWidth, UiLineSourceHeight},
+        tint);
 }
 
 }

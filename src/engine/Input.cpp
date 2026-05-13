@@ -64,6 +64,7 @@ int shortcutSlotForAction(InputAction action)
 void Input::beginFrame()
 {
     pressed_.fill(false);
+    released_.fill(false);
     mouseLeftReleased_ = false;
     ctrlSavePressed_ = false;
     ctrlUndoPressed_ = false;
@@ -106,6 +107,7 @@ void Input::handleEvent(const SDL_Event& event)
     if (event.type == SDL_EVENT_KEY_UP) {
         for (const KeyBinding& binding : KeyBindings) {
             if (event.key.scancode == binding.key) {
+                release(binding.action);
                 setHeld(binding.action, false);
                 break;
             }
@@ -122,9 +124,11 @@ void Input::handleEvent(const SDL_Event& event)
     }
     if (event.type == SDL_EVENT_MOUSE_BUTTON_UP) {
         if (event.button.button == SDL_BUTTON_LEFT) {
+            release(InputAction::ThrowActiveRing);
             setHeld(InputAction::ThrowActiveRing, false);
             mouseLeftReleased_ = true;
         } else if (event.button.button == SDL_BUTTON_RIGHT) {
+            release(InputAction::OffsetRingCenter);
             setHeld(InputAction::OffsetRingCenter, false);
         }
     }
@@ -165,6 +169,11 @@ bool Input::pressed(InputAction action) const
     return pressed_[actionIndex(action)];
 }
 
+bool Input::released(InputAction action) const
+{
+    return released_[actionIndex(action)];
+}
+
 bool Input::held(InputAction action) const
 {
     return held_[actionIndex(action)];
@@ -192,6 +201,11 @@ void Input::press(InputAction action)
     if (shortcutSlot >= 0) {
         shortcutSlotPressed_ = shortcutSlot;
     }
+}
+
+void Input::release(InputAction action)
+{
+    released_[actionIndex(action)] = true;
 }
 
 void Input::setHeld(InputAction action, bool held)

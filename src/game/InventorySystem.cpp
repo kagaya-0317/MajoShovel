@@ -3,6 +3,7 @@
 #include "engine/Log.hpp"
 #include "game/EffectDispatcher.hpp"
 #include "game/EncyclopediaSystem.hpp"
+#include "game/InventoryUiCommon.hpp"
 #include "game/ObjectImageRenderer.hpp"
 
 #include <algorithm>
@@ -33,7 +34,6 @@ constexpr float ScreenX = 44.0f;
 constexpr float ScreenY = 58.0f;
 constexpr float ScreenW = 1192.0f;
 constexpr float ScreenH = 610.0f;
-constexpr float ScreenGridX = ScreenX + 28.0f;
 constexpr float ScreenGridY = ScreenY + 84.0f;
 constexpr float ScreenSlotW = 88.0f;
 constexpr float ScreenSlotH = 76.0f;
@@ -45,6 +45,8 @@ constexpr float DetailX = ScreenX + 820.0f;
 constexpr float DetailY = ScreenY + 50.0f;
 constexpr float DetailW = 330.0f;
 constexpr float DetailH = 520.0f;
+constexpr float ScreenGridW = static_cast<float>(InventoryColumns) * ScreenSlotW + static_cast<float>(InventoryColumns - 1) * ScreenSlotGap;
+constexpr float ScreenGridX = ScreenX + (DetailX - ScreenX - ScreenGridW) * 0.5f;
 UiRect panelRect()
 {
     return {{PanelX, PanelY}, {PanelW, PanelH}};
@@ -88,19 +90,6 @@ UiRect inventorySlotRect(int index)
 Vec2 uiRectCenter(const UiRect& rect)
 {
     return rect.pos + rect.size * 0.5f;
-}
-
-float inventorySlotFrameRadius(const UiRect& rect)
-{
-    return std::min(rect.size.x, rect.size.y) * 0.5f;
-}
-
-void drawSelectedItemCircleOutline(Renderer& renderer, Vec2 center, float radius)
-{
-    const Color outline = selectedItemOutlineColor();
-    for (int i = 0; i < 6; ++i) {
-        renderer.drawCircle(center, radius + static_cast<float>(i), outline);
-    }
 }
 
 bool objectCategoryEquals(const ItemData& item, std::string_view category)
@@ -166,42 +155,6 @@ bool isStackableObject(const ItemData& item)
     return objectHasTag(item, "consumable") ||
         objectHasTag(item, "food") ||
         objectHasTag(item, "potion");
-}
-
-Color inventoryObjectColor(const ItemData& item)
-{
-    if (objectCategoryEquals(item, "\xE5\x9B\x9E\xE5\xBE\xA9")) {
-        return {116, 220, 144, 255};
-    }
-    if (objectCategoryEquals(item, "\xE6\xAD\xA6\xE5\x99\xA8")) {
-        return {224, 96, 86, 255};
-    }
-    if (objectCategoryEquals(item, "\xE7\x9B\xBE")) {
-        return {104, 168, 226, 255};
-    }
-    if (objectCategoryEquals(item, "\xE5\xAE\x9D")) {
-        return {244, 206, 78, 255};
-    }
-    if (objectCategoryEquals(item, "\xE6\x8E\xA2\xE7\xB4\xA2")) {
-        return {136, 214, 214, 255};
-    }
-    return {188, 152, 236, 255};
-}
-
-std::string joinEffectLines(const std::vector<std::string>& lines)
-{
-    if (lines.empty()) {
-        return "-";
-    }
-    std::string text;
-    for (std::size_t i = 0; i < lines.size(); ++i) {
-        if (!text.empty()) {
-            text += '\n';
-        }
-        text += "\xE3\x83\xBB";
-        text += lines[i];
-    }
-    return text;
 }
 
 }
@@ -838,6 +791,36 @@ bool InventorySystem::moveScreenItem(int fromIndex, int toIndex)
     return true;
 }
 
+bool InventorySystem::moveObjectStackToScreenSlot(std::string_view objectId, int slotIndex)
+{
+    if (objectId.empty() || slotIndex < 0 || slotIndex >= ShortcutSlotCount) {
+        return false;
+    }
+    syncPackedItemSlots();
+    for (int i = 0; i < static_cast<int>(objectStacks_.size()); ++i) {
+        if (objectStacks_[static_cast<std::size_t>(i)].objectId == objectId) {
+            return moveScreenItem(packedItemSlots_[static_cast<std::size_t>(i)], slotIndex);
+        }
+    }
+    return false;
+}
+
+bool InventorySystem::moveObjectInstanceToScreenSlot(std::string_view instanceId, int slotIndex)
+{
+    if (instanceId.empty() || slotIndex < 0 || slotIndex >= ShortcutSlotCount) {
+        return false;
+    }
+    syncPackedItemSlots();
+    const int stackCount = static_cast<int>(objectStacks_.size());
+    for (int i = 0; i < static_cast<int>(objectInstances_.size()); ++i) {
+        if (objectInstances_[static_cast<std::size_t>(i)].instance.instanceId == instanceId) {
+            const int packedIndex = stackCount + i;
+            return moveScreenItem(packedItemSlots_[static_cast<std::size_t>(packedIndex)], slotIndex);
+        }
+    }
+    return false;
+}
+
 void InventorySystem::toggleShortcutRow()
 {
     shortcutRow_ = (shortcutRow_ + 1) % ShortcutRows;
@@ -1207,7 +1190,7 @@ void InventorySystem::updateScreen(
         slotCommandMenuIndex_ = -1;
     }
 
-    if (input.pausePressed()) {
+    if (uiCancelRequested(cancelState_, input, ui, inventoryScreenRect())) {
         if (slotCommandMenu_.open) {
             closeUiCommandMenu(slotCommandMenu_);
             slotCommandMenuIndex_ = -1;
@@ -1364,138 +1347,48 @@ void InventorySystem::render(
         return;
     }
 
+    UiCancelControlScope cancelScope(cancelState_);
     UiWindowScope inventoryWindow(
         renderer,
         "inventory.main",
         {{ScreenX, ScreenY}, {ScreenW, ScreenH}},
         "アイテム",
-        "F/Enter 決定  R リングへ  P 保護  G つかむ/置く  Esc 戻る");
+        "F/Enter 決定  R リングへ  P 保護  G つかむ/置く  Esc/右クリック 戻る",
+        UiWindowOptions{true, true});
 
-    char buffer[160];
     for (int i = 0; i < ShortcutSlotCount; ++i) {
         const UiRect rect = inventorySlotRect(i);
-        const bool selected = i == selectedShortcutIndex();
-        const Color fill = selected ? Color{54, 44, 72, 242} : Color{20, 20, 28, 226};
-        const Vec2 slotCenter = uiRectCenter(rect);
-        renderer.fillCircle(slotCenter, inventorySlotFrameRadius(rect), fill);
-
+        InventoryUiEntryView entry{};
         const InventoryObjectStack* objectStack = objectStackAtScreenIndex(i);
         if (objectStack != nullptr) {
-            const Color objectColor = inventoryObjectColor(objectStack->item);
-            const Vec2 iconCenter = slotCenter;
-            const ObjectImageDrawOptions imageOptions = selected
-                ? withSelectedItemOutline()
-                : ObjectImageDrawOptions{};
-            const bool drewImage = drawObjectImage(
-                renderer,
-                objectStack->item,
-                iconCenter,
-                {InventoryObjectImageMaxSize, InventoryObjectImageMaxSize},
-                imageOptions);
-            if (!drewImage) {
-                renderer.fillCircle(iconCenter, 22.0f, objectColor);
-                if (selected) {
-                    drawSelectedItemCircleOutline(renderer, iconCenter, 22.0f);
-                }
-            }
+            entry.item = &objectStack->item;
+            entry.stackCount = objectStack->count;
         } else if (const InventoryObjectInstance* objectInstance = objectInstanceAtScreenIndex(i)) {
-            const Color objectColor = objectInstance->instance.isBroken ? Color{82, 82, 90, 255} : inventoryObjectColor(objectInstance->item);
-            const Vec2 iconCenter = slotCenter;
-            ObjectImageDrawOptions imageOptions;
-            imageOptions.tint = objectInstance->instance.isBroken ? Color{140, 140, 148, 220} : Color{255, 255, 255, 255};
-            if (selected) {
-                imageOptions = withSelectedItemOutline(imageOptions);
-            }
-            const bool drewImage = drawObjectImage(
-                renderer,
-                objectInstance->item,
-                iconCenter,
-                {InventoryObjectImageMaxSize, InventoryObjectImageMaxSize},
-                imageOptions);
-            if (!drewImage) {
-                renderer.fillCircle(iconCenter, 22.0f, objectColor);
-                if (selected) {
-                    drawSelectedItemCircleOutline(renderer, iconCenter, 22.0f);
-                }
-            }
+            entry.item = &objectInstance->item;
+            entry.instance = &objectInstance->instance;
+            entry.stackCount = 1;
         }
+        drawInventoryUiSlot(renderer, rect, entry, i == selectedShortcutIndex(), InventoryObjectImageMaxSize);
     }
+
     const int detailIndex = (slotCommandMenu_.open && slotCommandMenuIndex_ >= 0)
         ? slotCommandMenuIndex_
         : selectedShortcutIndex();
     const InventoryObjectStack* detailStack = objectStackAtScreenIndex(detailIndex);
     const InventoryObjectInstance* detailInstance = objectInstanceAtScreenIndex(detailIndex);
 
-    std::string detailTitle = "Empty";
+    InventoryUiEntryView detailEntry{};
     if (detailStack != nullptr) {
-        const InventoryObjectStack* objectStack = detailStack;
-        std::snprintf(buffer, sizeof(buffer), "%s x%d", objectStack->item.name.c_str(), objectStack->count);
-        detailTitle = buffer;
+        detailEntry.item = &detailStack->item;
+        detailEntry.stackCount = detailStack->count;
     } else if (detailInstance != nullptr) {
-        const InventoryObjectInstance* objectInstance = detailInstance;
-        detailTitle = objectInstance->item.name;
+        detailEntry.item = &detailInstance->item;
+        detailEntry.instance = &detailInstance->instance;
+        detailEntry.stackCount = 1;
     }
 
     const UiRect detailPanel{{DetailX, DetailY}, {DetailW, DetailH}};
-    drawUiSubPanel(renderer, detailPanel);
-    float detailLineY = drawUiDetailHeader(renderer, detailPanel, detailTitle);
-
-    if (detailStack != nullptr) {
-        const InventoryObjectStack* objectStack = detailStack;
-        const ItemData& item = objectStack->item;
-        const std::vector<std::string> effectLines =
-            encyclopedia.getObjectEffectDisplayLines(item.id, catalog, EffectRevealMode::WithUnknown);
-        const std::string effectText = joinEffectLines(effectLines);
-        drawUiDetailText(renderer, detailPanel, detailLineY, item.description.empty() ? "-" : item.description);
-        std::snprintf(buffer, sizeof(buffer), "%d", static_cast<int>(effectLines.size()));
-        drawUiDetailLine(renderer, detailPanel, detailLineY, "効果数", buffer);
-        drawUiDetailText(renderer, detailPanel, detailLineY, "効果");
-        drawUiDetailText(renderer, detailPanel, detailLineY, effectText);
-        std::snprintf(buffer, sizeof(buffer), "%d", item.attackPower);
-        drawUiDetailLine(renderer, detailPanel, detailLineY, "攻撃力", buffer);
-        const std::string damageTypeText = item.damageType.empty() ? "-" : std::string(damageTypeDisplayName(item.damageType));
-        drawUiDetailLine(renderer, detailPanel, detailLineY, "ダメージ", damageTypeText);
-        std::snprintf(buffer, sizeof(buffer), "%d", item.digPower);
-        drawUiDetailLine(renderer, detailPanel, detailLineY, "掘削力", buffer);
-        std::snprintf(buffer, sizeof(buffer), "%d", item.durability);
-        drawUiDetailLine(renderer, detailPanel, detailLineY, "耐久力", buffer);
-        std::snprintf(buffer, sizeof(buffer), "%.1fkg", item.weightKg);
-        drawUiDetailLine(renderer, detailPanel, detailLineY, "重さ", buffer);
-    } else if (detailInstance != nullptr) {
-        const InventoryObjectInstance* objectInstance = detailInstance;
-        const ItemData& item = objectInstance->item;
-        const ItemInstance& instance = objectInstance->instance;
-        const std::vector<std::string> effectLines =
-            encyclopedia.getObjectEffectDisplayLines(item.id, catalog, EffectRevealMode::WithUnknown);
-        const std::string effectText = joinEffectLines(effectLines);
-        drawUiDetailText(renderer, detailPanel, detailLineY, item.description.empty() ? "-" : item.description);
-        std::snprintf(buffer, sizeof(buffer), "%d", static_cast<int>(effectLines.size()));
-        drawUiDetailLine(renderer, detailPanel, detailLineY, "効果数", buffer);
-        drawUiDetailText(renderer, detailPanel, detailLineY, "効果");
-        drawUiDetailText(renderer, detailPanel, detailLineY, effectText);
-        std::snprintf(buffer, sizeof(buffer), "%s", instance.instanceId.c_str());
-        drawUiDetailLine(renderer, detailPanel, detailLineY, "個体ID", buffer);
-        std::snprintf(buffer, sizeof(buffer), "%d", instance.enhanceLevel);
-        drawUiDetailLine(renderer, detailPanel, detailLineY, "強化Lv", buffer);
-        std::snprintf(buffer, sizeof(buffer), "%d/%d", instance.currentDurability, instance.maxDurability);
-        drawUiDetailLine(renderer, detailPanel, detailLineY, "耐久力", buffer);
-        drawUiDetailLine(renderer, detailPanel, detailLineY, "保護", instance.protectionEnabled ? "ON" : "OFF");
-        drawUiDetailLine(renderer, detailPanel, detailLineY, "状態", instance.isBroken ? "破損" : "通常");
-        std::snprintf(buffer, sizeof(buffer), "+%d / +%d / +%d", instance.attackBonus, instance.digBonus, instance.durabilityBonus);
-        drawUiDetailLine(renderer, detailPanel, detailLineY, "補正", buffer);
-        drawUiDetailLine(renderer, detailPanel, detailLineY, "操作", "P 保護ON/OFF");
-    } else {
-        drawUiDetailText(renderer, detailPanel, detailLineY, "アイテム未配置");
-        drawUiDetailText(renderer, detailPanel, detailLineY, "-");
-        drawUiDetailLine(renderer, detailPanel, detailLineY, "効果数", "0");
-        drawUiDetailText(renderer, detailPanel, detailLineY, "効果");
-        drawUiDetailText(renderer, detailPanel, detailLineY, "-");
-        drawUiDetailLine(renderer, detailPanel, detailLineY, "攻撃力", "-");
-        drawUiDetailLine(renderer, detailPanel, detailLineY, "ダメージ", "-");
-        drawUiDetailLine(renderer, detailPanel, detailLineY, "掘削力", "-");
-        drawUiDetailLine(renderer, detailPanel, detailLineY, "耐久力", "-");
-        drawUiDetailLine(renderer, detailPanel, detailLineY, "重さ", "-");
-    }
+    drawInventoryUiDetailPanel(renderer, detailPanel, detailEntry, catalog, encyclopedia, true);
 
     const int commandSlotIndex = slotCommandMenuIndex_ >= 0 ? slotCommandMenuIndex_ : selectedShortcutIndex();
     const std::array<UiCommandMenuItem, 3> commandItems = buildSlotCommandItems(commandSlotIndex);
@@ -1544,7 +1437,7 @@ void InventorySystem::renderShortcutHud(Renderer& renderer, const SpellRingSyste
                 iconCenter,
                 {ShortcutObjectImageMaxSize, ShortcutObjectImageMaxSize});
             if (!drewImage) {
-                renderer.fillCircle(iconCenter, 20.0f, inventoryObjectColor(objectStack->item));
+                renderer.fillCircle(iconCenter, 20.0f, inventoryUiObjectColor(objectStack->item));
             }
             std::snprintf(buffer, sizeof(buffer), "%s x%d", objectStack->item.name.c_str(), objectStack->count);
             renderer.drawText(slotPos + Vec2{56.0f, 18.0f}, buffer, ui::Text, 2);
@@ -1559,7 +1452,7 @@ void InventorySystem::renderShortcutHud(Renderer& renderer, const SpellRingSyste
                 {ShortcutObjectImageMaxSize, ShortcutObjectImageMaxSize},
                 imageOptions);
             if (!drewImage) {
-                const Color objectColor = objectInstance->instance.isBroken ? Color{82, 82, 90, 255} : inventoryObjectColor(objectInstance->item);
+                const Color objectColor = objectInstance->instance.isBroken ? Color{82, 82, 90, 255} : inventoryUiObjectColor(objectInstance->item);
                 renderer.fillCircle(iconCenter, 20.0f, objectColor);
             }
             std::snprintf(buffer, sizeof(buffer), "%s%s",

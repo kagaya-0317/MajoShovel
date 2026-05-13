@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.22)
+﻿cmake_minimum_required(VERSION 3.22)
 project(MajoShovel LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
@@ -63,6 +63,7 @@ add_executable(MajoShovel
     src/game/EnemySystem.cpp
     src/game/EncyclopediaSystem.cpp
     src/game/InventorySystem.cpp
+    src/game/InventoryUiCommon.cpp
     src/game/ItemModel.cpp
     src/game/ObjectImageRenderer.cpp
     src/game/WorldDropSystem.cpp

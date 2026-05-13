@@ -24,6 +24,7 @@ DebugConsoleLayout makeDefaultDebugConsoleLayout()
                     {
                         {DebugControlKind::Button, "money_10000", "所持金 +10000", "game money add 10000"},
                         {DebugControlKind::Button, "materials_100", "強化素材 +100", "game materials add 100"},
+                        {DebugControlKind::Button, "random_items_8", "ランダムアイテム +8", "game items random8"},
                     },
                 },
                 DebugGroupDefinition{

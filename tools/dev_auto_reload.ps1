@@ -16,6 +16,30 @@ $NeedsConfigure = $false
 $RunRoot = $null
 $GameExePath = $null
 $AutoReloadBlocked = $false
+$RebuildRestartExitCode = 85
+
+try {
+    Add-Type -TypeDefinition @"
+using System;
+using System.Runtime.InteropServices;
+
+public static class MajoShovelDevWin32 {
+    [DllImport("user32.dll")]
+    public static extern IntPtr GetForegroundWindow();
+
+    [DllImport("user32.dll")]
+    public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint lpdwProcessId);
+
+    [DllImport("user32.dll")]
+    public static extern bool SetForegroundWindow(IntPtr hWnd);
+
+    [DllImport("user32.dll")]
+    public static extern bool IsWindow(IntPtr hWnd);
+}
+"@
+} catch {
+    Write-Host "[dev] foreground preservation disabled: Win32 helper could not be loaded."
+}
 
 function Find-CMake {
     $cmd = Get-Command cmake -ErrorAction SilentlyContinue
@@ -81,6 +105,61 @@ function Get-AutoReloadBlocked {
     }
     $value = $raw.Trim().ToLowerInvariant()
     return $value -eq "1" -or $value -eq "true" -or $value -eq "on" -or $value -eq "yes"
+}
+
+function Get-ForegroundWindowHandle {
+    if (-not ("MajoShovelDevWin32" -as [type])) {
+        return [IntPtr]::Zero
+    }
+    return [MajoShovelDevWin32]::GetForegroundWindow()
+}
+
+function Get-WindowProcessId([IntPtr]$Handle) {
+    if ($Handle -eq [IntPtr]::Zero -or -not ("MajoShovelDevWin32" -as [type])) {
+        return 0
+    }
+
+    [uint32]$processId = 0
+    [void][MajoShovelDevWin32]::GetWindowThreadProcessId($Handle, [ref]$processId)
+    return [int]$processId
+}
+
+function Test-GameIsForeground {
+    if (-not $script:GameProcess -or $script:GameProcess.HasExited) {
+        return $false
+    }
+
+    $foregroundHandle = Get-ForegroundWindowHandle
+    return (Get-WindowProcessId $foregroundHandle) -eq $script:GameProcess.Id
+}
+
+function Restore-ForegroundWindow([IntPtr]$Handle) {
+    if ($Handle -eq [IntPtr]::Zero -or -not ("MajoShovelDevWin32" -as [type])) {
+        return
+    }
+    if (-not [MajoShovelDevWin32]::IsWindow($Handle)) {
+        return
+    }
+
+    [void][MajoShovelDevWin32]::SetForegroundWindow($Handle)
+}
+
+function Wait-ProcessMainWindow([System.Diagnostics.Process]$Process, [int]$TimeoutMs = 2000) {
+    $deadline = (Get-Date).AddMilliseconds($TimeoutMs)
+    while ((Get-Date) -lt $deadline) {
+        if (-not $Process -or $Process.HasExited) {
+            return [IntPtr]::Zero
+        }
+
+        $Process.Refresh()
+        if ($Process.MainWindowHandle -ne [IntPtr]::Zero) {
+            return $Process.MainWindowHandle
+        }
+
+        Start-Sleep -Milliseconds 50
+    }
+
+    return [IntPtr]::Zero
 }
 
 function Normalize-BuildConfig([string]$Value) {
@@ -183,7 +262,7 @@ function Stop-Game {
     Remove-OldRunDirs
 }
 
-function Start-Game {
+function Start-Game([bool]$ActivateGame = $true, [IntPtr]$PreviousForegroundWindow = [IntPtr]::Zero) {
     $buildConfigPath = Get-BuildConfigPath
     $exe = Join-Path $buildConfigPath "$TargetName.exe"
     if (-not (Test-Path $exe)) {
@@ -201,7 +280,11 @@ function Start-Game {
 
     Write-Host "[dev] starting game..."
     $script:GameExePath = $runExe
-    $script:GameProcess = Start-Process -FilePath $runExe -ArgumentList "--test-play" -WorkingDirectory $Root -PassThru
+    $script:GameProcess = Start-Process -FilePath $runExe -ArgumentList @("--test-play", "--dev-auto-reload") -WorkingDirectory $Root -PassThru
+    if (-not $ActivateGame) {
+        [void](Wait-ProcessMainWindow $script:GameProcess)
+        Restore-ForegroundWindow $PreviousForegroundWindow
+    }
     Remove-OldRunDirs $runDir
     Start-Sleep -Milliseconds 300
     if ($script:GameProcess.HasExited) {
@@ -335,16 +418,28 @@ try {
             Write-Host "[dev] auto reload block changed: $AutoReloadBlocked"
         }
 
-        if (-not $AutoReloadBlocked -and $PendingBuild -and ((Get-Date) - $LastChangeTime).TotalMilliseconds -ge 700) {
+        $hasRunningGame = $GameProcess -and -not $GameProcess.HasExited
+        $canRunPendingBuild = -not $AutoReloadBlocked -or -not $hasRunningGame
+        if ($canRunPendingBuild -and $PendingBuild -and ((Get-Date) - $LastChangeTime).TotalMilliseconds -ge 700) {
             $PendingBuild = $false
             if (Invoke-GameBuild) {
+                $foregroundBeforeRestart = Get-ForegroundWindowHandle
+                $hadRunningGame = $hasRunningGame
+                $activateRestartedGame = -not $hadRunningGame -or (Test-GameIsForeground)
                 Stop-Game
-                Start-Game
+                Start-Game $activateRestartedGame $foregroundBeforeRestart
             }
         }
 
         if ($GameProcess -and $GameProcess.HasExited) {
+            $exitCode = $GameProcess.ExitCode
             $GameProcess = $null
+            if ($exitCode -eq $RebuildRestartExitCode) {
+                Write-Host "[dev] F5 restart requested: rebuilding before restart..."
+                if (Invoke-GameBuild) {
+                    Start-Game $true
+                }
+            }
         }
 
         Start-Sleep -Milliseconds 150

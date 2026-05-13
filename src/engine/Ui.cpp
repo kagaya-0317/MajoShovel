@@ -19,7 +19,10 @@ struct UiWindowState {
     float closeProgress = 0.0f;
     bool seen = false;
     bool closing = false;
+    bool cancelButton = false;
 };
+
+UiCancelControlState* activeCancelState = nullptr;
 
 std::unordered_map<std::string, UiWindowState> windowStates;
 float windowAnimationStep = 1.0f / ui::WindowAnimationFrames;
@@ -54,11 +57,14 @@ void applyWindowTransform(Renderer& renderer, UiRect panel, float scale, float a
     renderer.pushScreenTransform(panelCenter(panel), scale, alpha);
 }
 
-void drawUiWindowChrome(Renderer& renderer, UiRect panel, std::string_view title, std::string_view helpText)
+void drawUiWindowChrome(Renderer& renderer, UiRect panel, std::string_view title, std::string_view helpText, bool cancelButton)
 {
     drawUiPanel(renderer, panel);
     drawUiHeader(renderer, panel, title);
     drawUiFooter(renderer, panel, helpText);
+    if (cancelButton) {
+        drawUiCancelButton(renderer, panel);
+    }
 }
 
 Color scaledColor(Color color, float scale)
@@ -156,7 +162,7 @@ void finishUiFrame(Renderer& renderer)
         const float scale = lerp(1.0f, 1.1f, t);
         const float alpha = 1.0f - t;
         applyWindowTransform(renderer, state.panel, scale, alpha);
-        drawUiWindowChrome(renderer, state.panel, state.title, state.helpText);
+        drawUiWindowChrome(renderer, state.panel, state.title, state.helpText, state.cancelButton);
         renderer.popScreenTransform();
         if (state.closeProgress >= 1.0f) {
             finished.push_back(entry.first);
@@ -174,10 +180,21 @@ UiWindowScope::UiWindowScope(
     std::string_view title,
     std::string_view helpText,
     bool animated)
+    : UiWindowScope(renderer, id, panel, title, helpText, UiWindowOptions{animated, false})
+{
+}
+
+UiWindowScope::UiWindowScope(
+    Renderer& renderer,
+    std::string_view id,
+    UiRect panel,
+    std::string_view title,
+    std::string_view helpText,
+    UiWindowOptions options)
     : renderer_(&renderer)
 {
-    if (!animated) {
-        drawUiWindowChrome(renderer, panel, title, helpText);
+    if (!options.animated) {
+        drawUiWindowChrome(renderer, panel, title, helpText, options.cancelButton);
         return;
     }
 
@@ -190,13 +207,14 @@ UiWindowScope::UiWindowScope(
     state.panel = panel;
     state.title = std::string(title);
     state.helpText = std::string(helpText);
+    state.cancelButton = options.cancelButton;
     state.seen = true;
     state.openProgress = std::min(1.0f, state.openProgress + windowAnimationStep);
 
     const float t = easeOut(state.openProgress);
     applyWindowTransform(renderer, panel, lerp(0.9f, 1.0f, t), t);
     transformed_ = true;
-    drawUiWindowChrome(renderer, panel, title, helpText);
+    drawUiWindowChrome(renderer, panel, title, helpText, options.cancelButton);
 }
 
 UiWindowScope::~UiWindowScope()
@@ -227,6 +245,17 @@ UiWindowScope& UiWindowScope::operator=(UiWindowScope&& other) noexcept
     other.renderer_ = nullptr;
     other.transformed_ = false;
     return *this;
+}
+
+UiCancelControlScope::UiCancelControlScope(UiCancelControlState& state)
+    : previous_(activeCancelState)
+{
+    activeCancelState = &state;
+}
+
+UiCancelControlScope::~UiCancelControlScope()
+{
+    activeCancelState = previous_;
 }
 
 bool UiContext::hovered(UiRect rect) const
@@ -322,6 +351,46 @@ UiRect uiBottomRightButtonRect(UiRect panel, Vec2 size)
     return {{body.pos.x + body.size.x - size.x, body.pos.y + body.size.y - size.y}, size};
 }
 
+UiRect uiCancelButtonRect(UiRect panel)
+{
+    return {{
+        panel.pos.x + panel.size.x - ui::CancelButtonSize.x - ui::CancelButtonOffset.x,
+        panel.pos.y + ui::CancelButtonOffset.y,
+    }, ui::CancelButtonSize};
+}
+
+bool uiCancelRequested(UiCancelControlState& state, const Input& input, UiContext& ui, UiRect panel)
+{
+    if (input.backPressed()) {
+        state.backArmed = true;
+    }
+
+    if (!input.backHeld() && !input.backReleased()) {
+        state.backArmed = false;
+    }
+
+    if (ui.pressed(uiCancelButtonRect(panel))) {
+        state.pointerArmed = true;
+    }
+
+    if (!input.mouseLeftHeld() && !input.mouseLeftReleased()) {
+        state.pointerArmed = false;
+    }
+
+    if (input.backReleased() && state.backArmed) {
+        state.backArmed = false;
+        return true;
+    }
+
+    if (input.mouseLeftReleased()) {
+        const bool requested = state.pointerArmed && uiCancelButtonRect(panel).contains(ui.mouse());
+        state.pointerArmed = false;
+        return requested;
+    }
+
+    return false;
+}
+
 void drawUiPanel(Renderer& renderer, UiRect panel)
 {
     if (renderer.hasUiWindowTexture()) {
@@ -377,7 +446,52 @@ void drawUiFooter(Renderer& renderer, UiRect panel, std::string_view helpText)
 
 void drawUiWindow(Renderer& renderer, UiRect panel, std::string_view title, std::string_view helpText)
 {
-    drawUiWindowChrome(renderer, panel, title, helpText);
+    drawUiWindowChrome(renderer, panel, title, helpText, false);
+}
+
+void drawUiCancelButton(Renderer& renderer, UiRect panel)
+{
+    const UiRect rect = uiCancelButtonRect(panel);
+    float mouseX = 0.0f;
+    float mouseY = 0.0f;
+    const SDL_MouseButtonFlags buttons = SDL_GetMouseState(&mouseX, &mouseY);
+    const bool pointerActive = activeCancelState != nullptr &&
+        activeCancelState->pointerArmed &&
+        (buttons & SDL_BUTTON_LMASK) != 0 &&
+        rect.contains({mouseX, mouseY});
+    const bool backActive = activeCancelState != nullptr && activeCancelState->backArmed;
+    const bool active = pointerActive || backActive;
+    const Vec2 drawSize = active ? rect.size * 0.92f : rect.size;
+    ImageDrawOptions options;
+    options.anchor = {0.5f, 0.5f};
+    if (active) {
+        options.tint = {210, 210, 210, 235};
+    }
+    if (renderer.drawImage("assets/UI_cancelButton.png", rect.pos + rect.size * 0.5f, drawSize, options)) {
+        return;
+    }
+
+    const Vec2 drawPos = rect.pos + (rect.size - drawSize) * 0.5f;
+    renderer.fillRect(drawPos, drawSize, active ? Color{22, 18, 34, 220} : Color{30, 24, 42, 230});
+    renderer.drawRect(drawPos, drawSize, ui::WindowBorder);
+    renderer.drawLine(drawPos + Vec2{15.0f, 16.0f}, drawPos + drawSize - Vec2{15.0f, 16.0f}, ui::Text);
+    renderer.drawLine({drawPos.x + drawSize.x - 15.0f, drawPos.y + 16.0f}, {drawPos.x + 15.0f, drawPos.y + drawSize.y - 16.0f}, ui::Text);
+}
+
+void drawUiSeparator(Renderer& renderer, UiRect rect, Color tint)
+{
+    if (rect.size.x <= 0.0f || rect.size.y <= 0.0f) {
+        return;
+    }
+
+    if (renderer.hasUiLineTexture()) {
+        const float y = rect.pos.y + (rect.size.y - ui::SeparatorHeight) * 0.5f;
+        renderer.drawUiLine({rect.pos.x, y}, rect.size.x, tint);
+        return;
+    }
+
+    const float y = rect.pos.y + rect.size.y * 0.5f;
+    renderer.drawLine({rect.pos.x, y}, {rect.pos.x + rect.size.x, y}, tint);
 }
 
 void drawUiButton(Renderer& renderer, UiRect rect, std::string_view label, bool hot, const UiButtonStyle& style)
@@ -397,6 +511,27 @@ void drawUiButton(Renderer& renderer, UiRect rect, std::string_view label, bool 
         renderer.fillRect(rect.pos, rect.size, fill);
         renderer.drawRect(rect.pos, rect.size, outline);
     }
+
+    const Vec2 textSize = renderer.measureText(label, 2);
+    const Vec2 textPos{
+        rect.pos.x + std::max(0.0f, (rect.size.x - textSize.x) * 0.5f),
+        rect.pos.y + std::max(0.0f, (rect.size.y - textSize.y) * 0.5f),
+    };
+    renderer.drawText(textPos, label, style.text, 2);
+    renderer.popScreenTransform();
+}
+
+void drawUiRectButton(Renderer& renderer, UiRect rect, std::string_view label, bool hot, const UiButtonStyle& style)
+{
+    const bool selected = hot;
+    const float scale = selected ? 1.035f : 1.0f;
+    const Vec2 center = rect.pos + rect.size * 0.5f;
+    renderer.pushScreenTransform(center, scale, 1.0f);
+
+    const Color fill = selected ? style.fillHot : style.fill;
+    const Color outline = selected ? scaledColor(style.outlineHot, 1.04f) : style.outline;
+    renderer.fillRect(rect.pos, rect.size, fill);
+    renderer.drawRect(rect.pos, rect.size, outline);
 
     const Vec2 textSize = renderer.measureText(label, 2);
     const Vec2 textPos{
@@ -438,7 +573,7 @@ void drawUiDetailText(Renderer& renderer, UiRect panel, float& y, std::string_vi
     y += renderer.measureWrappedText(text, content.size.x, 2).y + TextGap;
 }
 
-void drawUiDetailLine(Renderer& renderer, UiRect panel, float& y, std::string_view label, std::string_view value)
+void drawUiDetailLine(Renderer& renderer, UiRect panel, float& y, std::string_view label, std::string_view value, Color valueColor)
 {
     constexpr float LabelWidth = 106.0f;
     constexpr float MinLineHeight = 31.0f;
@@ -447,7 +582,7 @@ void drawUiDetailLine(Renderer& renderer, UiRect panel, float& y, std::string_vi
     const float valueX = labelX + LabelWidth;
     const float valueMaxWidth = panel.pos.x + panel.size.x - valueX - ui::SubPanelPadding.x;
     renderer.drawText({labelX, y}, label, ui::TextMuted, 2);
-    renderer.drawWrappedText({valueX, y}, value, valueMaxWidth, ui::Text, 2);
+    renderer.drawWrappedText({valueX, y}, value, valueMaxWidth, valueColor, 2);
     y += std::max(MinLineHeight, renderer.measureWrappedText(value, valueMaxWidth, 2).y + LineGap);
 }
 

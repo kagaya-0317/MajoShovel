@@ -51,6 +51,7 @@ public:
 
     bool quitRequested() const { return quitRequested_; }
     bool pressed(InputAction action) const;
+    bool released(InputAction action) const;
     bool held(InputAction action) const;
     bool debugPressed() const { return pressed(InputAction::ToggleDebug); }
     bool debugPausePressed() const { return pressed(InputAction::ToggleDebugPause); }
@@ -66,6 +67,8 @@ public:
     bool grabOrPlacePressed() const { return pressed(InputAction::GrabOrPlaceItem); }
     bool capturePressed() const { return pressed(InputAction::CaptureNet); }
     bool backPressed() const { return pressed(InputAction::Pause) || pressed(InputAction::OffsetRingCenter); }
+    bool backReleased() const { return released(InputAction::Pause) || released(InputAction::OffsetRingCenter); }
+    bool backHeld() const { return held(InputAction::Pause) || held(InputAction::OffsetRingCenter); }
     bool ringOffsetHeld() const { return held(InputAction::OffsetRingCenter); }
     bool upgradePressed(int option) const;
     bool mouseLeftPressed() const { return pressed(InputAction::ThrowActiveRing); }
@@ -85,6 +88,7 @@ private:
     static constexpr int ActionCount = static_cast<int>(InputAction::Count);
 
     void press(InputAction action);
+    void release(InputAction action);
     void setHeld(InputAction action, bool held);
 
     bool quitRequested_ = false;
@@ -93,6 +97,7 @@ private:
     bool ctrlUndoPressed_ = false;
     bool ctrlRedoPressed_ = false;
     std::array<bool, ActionCount> pressed_{};
+    std::array<bool, ActionCount> released_{};
     std::array<bool, ActionCount> held_{};
     int shortcutCursorDelta_ = 0;
     int shortcutSlotPressed_ = -1;

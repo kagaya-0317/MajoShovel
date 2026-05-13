@@ -307,24 +307,43 @@ private:
     struct MerchantProduct {
         std::string objectId;
         int price = 0;
+        int quantity = 0;
+    };
+    enum class MerchantUiMode {
+        Closed,
+        ChooseAction,
+        Buy,
+        Sell,
     };
     std::vector<SellableEntry> sellableObjects() const;
     bool isSellableObject(const ItemData& item) const;
     bool isStoryObject(const ItemData& item) const;
     int sellPrice(const ItemData& item, const ItemInstance* instance = nullptr) const;
+    bool merchantProductCanFit(const ItemData* item) const;
+    bool canBuyMerchantProduct(const MerchantProduct& product) const;
     void refreshMerchantStock(bool force);
     void buyMerchantProduct(int index);
+    void sellMerchantEntry(int index, int count);
+    void sellMerchantScreenSlot(int slotIndex, int count);
     std::vector<StorageEntry> processingEntries() const;
+    std::optional<StorageEntry> processingEntryForScreenSlot(int slotIndex) const;
     const char* processingModeName(ProcessingMode mode) const;
     bool processingEntryAvailable(StorageEntry entry) const;
+    bool processingScreenSlotAvailable(int slotIndex) const;
     int processingMoneyCost(StorageEntry entry, ProcessingMode mode) const;
     int processingOreCost(StorageEntry entry, ProcessingMode mode) const;
     void applyProcessing(int entryIndex);
+    void applyProcessingScreenSlot(int slotIndex);
+    void applyProcessingEntry(StorageEntry entry);
     int warehouseCapacity() const;
     int warehouseUsedSlots() const;
     int backpackUsedSlots() const;
     std::vector<StorageEntry> backpackStorageEntries() const;
     std::vector<StorageEntry> warehouseStorageEntries() const;
+    void syncWarehouseDisplaySlots() const;
+    int warehouseEntryIndexAtStorageSlot(int slot) const;
+    void assignWarehouseEntryToStorageSlot(int entryIndex, int slot);
+    void removeWarehouseDisplaySlotAtEntryIndex(int entryIndex);
     void depositBackpackEntry(int entryIndex);
     void withdrawWarehouseEntry(int entryIndex);
     std::string storageEntryLabel(StorageEntry entry, bool warehouseEntry) const;
@@ -462,12 +481,15 @@ private:
     bool basePresentationActive() const;
     std::string currentMapDisplayName() const;
     void renderTopInfoBar(Renderer& renderer) const;
+    void renderBaseBackdrop(Renderer& renderer) const;
     void renderBaseScreen(Renderer& renderer) const;
     void renderBookshelfScreen(Renderer& renderer) const;
     void renderPauseMenu(Renderer& renderer) const;
     void renderRingScreen(Renderer& renderer, float totalTime) const;
     void renderGameOverScreen(Renderer& renderer) const;
     void renderStageClearScreen(Renderer& renderer) const;
+    void renderBaseDebugOverlay(Renderer& renderer, const Time& time) const;
+    void renderDebugOverlay(Renderer& renderer, const Time& time);
 
     Camera camera_;
     RuntimeBalance balance_;
@@ -502,18 +524,34 @@ private:
     bool baseMiningStartChoiceActive_ = false;
     int baseMiningStartSelection_ = 0;
     bool baseStorageActive_ = false;
-    bool baseStorageWarehousePane_ = false;
-    int baseStorageBackpackSelection_ = 0;
-    int baseStorageWarehouseSelection_ = 0;
+    bool baseStorageFocusWarehouse_ = false;
+    int baseStorageBackpackCursor_ = 0;
+    int baseStorageWarehouseCursor_ = 0;
+    int baseStorageWarehousePage_ = 0;
+    UiCommandMenuState baseStorageCommandMenu_{};
+    int baseStorageCommandSlot_ = -1;
+    int baseStoragePointerPressSlot_ = -1;
+    Vec2 baseStoragePointerPressMouse_{};
+    bool baseStoragePointerPressCanOpenMenu_ = false;
+    bool baseStoragePointerDragTriggered_ = false;
+    bool baseStorageGrabbedActive_ = false;
+    int baseStorageGrabbedFromSlot_ = -1;
     bool baseSellActive_ = false;
-    bool baseMerchantBuyPane_ = false;
+    MerchantUiMode baseMerchantMode_ = MerchantUiMode::Closed;
+    int baseMerchantActionSelection_ = 0;
     int baseSellSelection_ = 0;
     int baseMerchantBuySelection_ = 0;
+    UiCommandMenuState baseMerchantSellCommandMenu_{};
+    int baseMerchantSellCommandIndex_ = -1;
+    UiCommandMenuState baseMerchantBuyCommandMenu_{};
+    int baseMerchantBuyCommandIndex_ = -1;
     bool baseUpgradeActive_ = false;
     int baseUpgradeSelection_ = 0;
     bool baseProcessingActive_ = false;
     int baseProcessingMode_ = 0;
     int baseProcessingSelection_ = 0;
+    UiCommandMenuState baseProcessingCommandMenu_{};
+    int baseProcessingCommandSlot_ = -1;
     bool baseRingWorkshopActive_ = false;
     int baseRingWorkshopSelection_ = 0;
     int ringWorkshopDraftRadiusPoints_ = 0;
@@ -552,6 +590,9 @@ private:
     ScreenMode pauseReturnMode_ = ScreenMode::Playing;
     int pauseMenuSelection_ = 0;
     int pauseConfirmSelection_ = 1;
+    mutable UiCancelControlState pauseCancelState_{};
+    mutable UiCancelControlState baseCancelState_{};
+    mutable UiCancelControlState ringCancelState_{};
     int ringSlotSelection_ = 0;
     bool ringGrabActive_ = false;
     int ringGrabOrigin_ = -1;
@@ -620,6 +661,7 @@ private:
     std::vector<std::string> storyFlags_;
     std::vector<InventoryObjectStack> warehouseObjectStacks_;
     std::vector<InventoryObjectInstance> warehouseObjectInstances_;
+    mutable std::vector<int> warehouseDisplaySlots_;
     bool roguelikeDungeon_ = false;
     bool warpPointsEnabled_ = true;
     // Normal stages keep current inventory on death. Future roguelike runs can

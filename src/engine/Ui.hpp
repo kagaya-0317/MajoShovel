@@ -30,6 +30,9 @@ inline constexpr Vec2 FooterTextPadding{24.0f, 8.0f};
 inline constexpr Vec2 ImageWindowHeaderTitlePadding{48.0f, 40.0f};
 inline constexpr Vec2 ImageWindowFooterTextPadding{48.0f, 0.0f};
 inline constexpr Vec2 SubPanelPadding{24.0f, 24.0f};
+inline constexpr Vec2 CancelButtonSize{58.0f, 60.0f};
+inline constexpr Vec2 CancelButtonOffset{-6.0f, 4.0f};
+inline constexpr float SeparatorHeight = 36.0f;
 inline constexpr float BodyMessageGap = 8.0f;
 inline constexpr float WindowAnimationFrames = 20.0f;
 inline constexpr float WindowAnimationSeconds = WindowAnimationFrames / 60.0f;
@@ -83,6 +86,27 @@ struct UiCommandMenuState {
     float animation = 0.0f;
 };
 
+struct UiWindowOptions {
+    bool animated = true;
+    bool cancelButton = false;
+};
+
+struct UiCancelControlState {
+    bool backArmed = false;
+    bool pointerArmed = false;
+};
+
+class UiCancelControlScope {
+public:
+    explicit UiCancelControlScope(UiCancelControlState& state);
+    ~UiCancelControlScope();
+    UiCancelControlScope(const UiCancelControlScope&) = delete;
+    UiCancelControlScope& operator=(const UiCancelControlScope&) = delete;
+
+private:
+    UiCancelControlState* previous_ = nullptr;
+};
+
 inline UiButtonStyle uiActionButtonStyle()
 {
     UiButtonStyle style;
@@ -109,6 +133,13 @@ public:
         std::string_view title,
         std::string_view helpText = {},
         bool animated = true);
+    UiWindowScope(
+        Renderer& renderer,
+        std::string_view id,
+        UiRect panel,
+        std::string_view title,
+        std::string_view helpText,
+        UiWindowOptions options);
     ~UiWindowScope();
     UiWindowScope(const UiWindowScope&) = delete;
     UiWindowScope& operator=(const UiWindowScope&) = delete;
@@ -129,17 +160,22 @@ UiRect uiSubPanelContentRect(UiRect panel);
 UiRect uiBottomLeftButtonRect(UiRect panel, Vec2 size);
 UiRect uiBottomCenterButtonRect(UiRect panel, Vec2 size);
 UiRect uiBottomRightButtonRect(UiRect panel, Vec2 size);
+UiRect uiCancelButtonRect(UiRect panel);
+bool uiCancelRequested(UiCancelControlState& state, const Input& input, UiContext& ui, UiRect panel);
 
 void drawUiPanel(Renderer& renderer, UiRect panel);
 void drawUiSubPanel(Renderer& renderer, UiRect panel);
 void drawUiHeader(Renderer& renderer, UiRect panel, std::string_view title);
 void drawUiFooter(Renderer& renderer, UiRect panel, std::string_view helpText);
 void drawUiWindow(Renderer& renderer, UiRect panel, std::string_view title, std::string_view helpText = {});
+void drawUiCancelButton(Renderer& renderer, UiRect panel);
+void drawUiSeparator(Renderer& renderer, UiRect rect, Color tint = {255, 255, 255, 255});
 void drawUiButton(Renderer& renderer, UiRect rect, std::string_view label, bool hot, const UiButtonStyle& style = {});
+void drawUiRectButton(Renderer& renderer, UiRect rect, std::string_view label, bool hot, const UiButtonStyle& style = {});
 void drawUiBodyMessageBelow(Renderer& renderer, UiRect anchor, std::string_view message, Color color = ui::TextMuted);
 float drawUiDetailHeader(Renderer& renderer, UiRect panel, std::string_view text);
 void drawUiDetailText(Renderer& renderer, UiRect panel, float& y, std::string_view text);
-void drawUiDetailLine(Renderer& renderer, UiRect panel, float& y, std::string_view label, std::string_view value);
+void drawUiDetailLine(Renderer& renderer, UiRect panel, float& y, std::string_view label, std::string_view value, Color valueColor = ui::Text);
 void openUiCommandMenu(
     UiCommandMenuState& state,
     Vec2 anchor,
