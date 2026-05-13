@@ -86,6 +86,13 @@ Color colorFor(std::string_view damageType)
     return {220, 205, 160, 245};
 }
 
+void drawProjectile(Renderer& renderer, const Projectile& projectile)
+{
+    const Color color = colorFor(projectile.damageType);
+    renderer.fillCircle(projectile.position, projectile.radius, color);
+    renderer.drawCircle(projectile.position, projectile.radius + 2.0f, {30, 30, 38, 210});
+}
+
 int projectileDamage(const Projectile& projectile)
 {
     if (projectile.damageType == "fire" || projectile.damageType == "magic") {
@@ -675,13 +682,33 @@ int ProjectileSystem::deflectEnemyProjectiles(Vec2 center, float dt, float radiu
 
 void ProjectileSystem::render(Renderer& renderer, const TileMap& map, Vec2 playerLight, const std::vector<LightSource>& extraLights) const
 {
+    std::vector<DepthRenderEntry> entries;
+    appendRenderEntries(entries, renderer, map, playerLight, extraLights);
+    std::stable_sort(entries.begin(), entries.end(), [](const DepthRenderEntry& left, const DepthRenderEntry& right) {
+        return left.sortY < right.sortY;
+    });
+    for (const DepthRenderEntry& entry : entries) {
+        entry.draw();
+    }
+}
+
+void ProjectileSystem::appendRenderEntries(
+    std::vector<DepthRenderEntry>& entries,
+    Renderer& renderer,
+    const TileMap& map,
+    Vec2 playerLight,
+    const std::vector<LightSource>& extraLights) const
+{
     for (const Projectile& projectile : projectiles_.items()) {
         if (!projectile.active || !map.isLit(projectile.position, playerLight, extraLights)) {
             continue;
         }
-        const Color color = colorFor(projectile.damageType);
-        renderer.fillCircle(projectile.position, projectile.radius, color);
-        renderer.drawCircle(projectile.position, projectile.radius + 2.0f, {30, 30, 38, 210});
+        entries.push_back(DepthRenderEntry{
+            projectile.position.y,
+            [&renderer, &projectile]() {
+                drawProjectile(renderer, projectile);
+            },
+        });
     }
 }
 

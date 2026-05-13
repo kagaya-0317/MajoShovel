@@ -1,4 +1,4 @@
-#include "game/SpellRingSystem.hpp"
+﻿#include "game/SpellRingSystem.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -571,7 +571,7 @@ bool SpellRingSystem::addItem(SpellRingItemType type)
     return addItem(makeSpellRingItem(type));
 }
 
-bool SpellRingSystem::addItem(SpellRingItem item)
+bool SpellRingSystem::addItem(SpellRingItem item, SpellRingAddResult* outResult)
 {
     if (!canAddItem(item)) {
         return false;
@@ -582,11 +582,21 @@ bool SpellRingSystem::addItem(SpellRingItem item)
     }
     item.ringIndex = activeRingIndex_;
     item.localAngle = *angle;
+    const SpellRingAddResult result{
+        .ringIndex = activeRingIndex_,
+        .itemIndex = static_cast<int>(activeItems().size()),
+        .localAngle = item.localAngle,
+        .objectId = item.objectId,
+        .instanceId = item.instanceId,
+    };
     activeItems().push_back(std::move(item));
+    if (outResult != nullptr) {
+        *outResult = result;
+    }
     return true;
 }
 
-bool SpellRingSystem::addObjectItem(const ItemData& item)
+bool SpellRingSystem::addObjectItem(const ItemData& item, SpellRingAddResult* outResult)
 {
     if (!canAddItem() || item.id.empty()) {
         return false;
@@ -594,10 +604,10 @@ bool SpellRingSystem::addObjectItem(const ItemData& item)
 
     SpellRingItem ringItem = makeObjectRingItem(item.id);
     applyObjectDefinition(ringItem, item);
-    return addItem(std::move(ringItem));
+    return addItem(std::move(ringItem), outResult);
 }
 
-bool SpellRingSystem::addObjectItem(const ItemData& item, const ItemInstance& instance)
+bool SpellRingSystem::addObjectItem(const ItemData& item, const ItemInstance& instance, SpellRingAddResult* outResult)
 {
     if (!canAddItem() || item.id.empty() || instance.objectId != item.id) {
         return false;
@@ -606,7 +616,7 @@ bool SpellRingSystem::addObjectItem(const ItemData& item, const ItemInstance& in
     SpellRingItem ringItem = makeObjectRingItem(item.id);
     applyItemInstance(ringItem, instance);
     applyObjectDefinition(ringItem, item);
-    return addItem(std::move(ringItem));
+    return addItem(std::move(ringItem), outResult);
 }
 
 void SpellRingSystem::applyObjectParameters(const ObjectCatalog& catalog)

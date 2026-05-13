@@ -23,6 +23,15 @@ struct ShortcutSlot {
     bool assigned = false;
 };
 
+struct RingEquipFxRequest {
+    Vec2 sourceScreen{};
+    int ringIndex = 0;
+    int itemIndex = -1;
+    float localAngle = 0.0f;
+    std::string objectId;
+    std::string instanceId;
+};
+
 struct InventoryObjectStack : StackItem {
     ItemData item;
 
@@ -45,9 +54,12 @@ public:
     bool addRuntimeObjectItem(const ItemData& item);
     void updateShortcuts(
         const Input& input,
+        UiContext& ui,
         Player& player,
         SpellRingSystem& spellRing,
         const EffectDispatcher& effectDispatcher,
+        int screenWidth,
+        int screenHeight,
         std::vector<EffectDiscoveryEvent>* discoveryEvents = nullptr,
         const EncyclopediaSystem* encyclopedia = nullptr);
     void updateScreen(
@@ -82,6 +94,7 @@ public:
     const std::vector<InventoryObjectInstance>& objectInstances() const { return objectInstances_; }
     const MaterialInventory& materials() const { return materials_; }
     MaterialInventory& materials() { return materials_; }
+    std::vector<RingEquipFxRequest> consumeRingEquipFxRequests();
     void clearObjectStacks();
     bool setObjectItemCount(const ObjectCatalog& catalog, std::string_view objectId, int count);
     bool addObjectInstance(const ObjectCatalog& catalog, ItemInstance instance);
@@ -124,8 +137,8 @@ private:
     void toggleShortcutRow();
     void grabOrPlaceSelected();
     void placeGrabbedAtSelected();
-    bool addObjectSelectionToRing(SpellRingSystem& spellRing);
-    bool addObjectInstanceSelectionToRing(SpellRingSystem& spellRing);
+    bool addObjectSelectionToRing(SpellRingSystem& spellRing, SpellRingAddResult* outResult = nullptr);
+    bool addObjectInstanceSelectionToRing(SpellRingSystem& spellRing, SpellRingAddResult* outResult = nullptr);
     bool useObjectSelection(
         Player& player,
         const EffectDispatcher& effectDispatcher,
@@ -142,7 +155,7 @@ private:
         const EffectDispatcher& effectDispatcher,
         std::vector<EffectDiscoveryEvent>* discoveryEvents,
         const EncyclopediaSystem* encyclopedia);
-    bool addShortcutSelectionToRing(SpellRingSystem& spellRing);
+    bool addShortcutSelectionToRing(SpellRingSystem& spellRing, SpellRingAddResult* outResult = nullptr);
     bool canUseScreenItem(int index) const;
     std::array<UiCommandMenuItem, 3> buildSlotCommandItems(int slotIndex) const;
     bool hasScreenItem(int index) const;
@@ -157,6 +170,7 @@ private:
     void toggleSelectedProtection();
     void openSlotCommandMenu(int slotIndex);
     void resetSlotPointerPress();
+    void queueRingEquipFx(Vec2 sourceScreen, const SpellRingAddResult& result);
 
     std::array<ShortcutSlot, ShortcutSlotCount> shortcutSlots_{};
     std::vector<InventoryObjectStack> objectStacks_;
@@ -176,6 +190,7 @@ private:
     bool slotPointerPressCanOpenMenu_ = false;
     bool slotPointerDragTriggered_ = false;
     mutable std::vector<int> packedItemSlots_;
+    std::vector<RingEquipFxRequest> ringEquipFxRequests_;
     mutable UiCancelControlState cancelState_{};
     bool open_ = false;
     std::string status_ = "アイテムなし";

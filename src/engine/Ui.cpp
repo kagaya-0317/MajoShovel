@@ -82,6 +82,14 @@ constexpr float CommandMenuItemGap = 10.0f;
 constexpr float CommandMenuExtraWidth = 40.0f;
 constexpr float CommandMenuOpenSpeed = 1.7f;
 constexpr float CommandMenuCloseSpeed = 1.15f;
+constexpr float DropdownGap = 6.0f;
+constexpr float DropdownPadding = 4.0f;
+constexpr float DropdownTextPaddingX = 12.0f;
+constexpr float DropdownArrowWidth = 22.0f;
+constexpr float DropdownScrollbarWidth = 8.0f;
+constexpr float DropdownScrollbarGap = 6.0f;
+constexpr float DropdownScrollbarPaddingY = 5.0f;
+constexpr float DropdownScrollbarMinThumbHeight = 22.0f;
 
 int utf8CodepointCount(std::string_view text)
 {
@@ -100,6 +108,110 @@ UiRect commandMenuItemRect(const UiCommandMenuState& state, int index)
     const float y = state.panel.pos.y + CommandMenuPaddingY + static_cast<float>(index) * (CommandMenuItemHeight + CommandMenuItemGap);
     const float w = std::max(0.0f, state.panel.size.x - CommandMenuPaddingX * 2.0f);
     return {{x, y}, {w, CommandMenuItemHeight}};
+}
+
+int dropdownVisibleCount(int itemCount, const UiDropdownStyle& style)
+{
+    const int maxRows = std::max(1, style.visibleRows);
+    return std::min(maxRows, std::max(1, itemCount));
+}
+
+int dropdownMaxScrollOffset(int itemCount, const UiDropdownStyle& style)
+{
+    return std::max(0, itemCount - dropdownVisibleCount(itemCount, style));
+}
+
+bool dropdownNeedsScrollbar(int itemCount, const UiDropdownStyle& style)
+{
+    return itemCount > dropdownVisibleCount(itemCount, style);
+}
+
+float dropdownScrollbarReserve(int itemCount, const UiDropdownStyle& style)
+{
+    return dropdownNeedsScrollbar(itemCount, style) ? DropdownScrollbarWidth + DropdownScrollbarGap : 0.0f;
+}
+
+void clampDropdownState(UiDropdownState& state, int itemCount, int selectedIndex, const UiDropdownStyle& style)
+{
+    if (itemCount <= 0) {
+        state.highlightedIndex = -1;
+        state.scrollOffset = 0;
+        return;
+    }
+
+    if (state.highlightedIndex < 0 || state.highlightedIndex >= itemCount) {
+        state.highlightedIndex = std::clamp(selectedIndex, 0, itemCount - 1);
+    }
+    state.scrollOffset = std::clamp(state.scrollOffset, 0, dropdownMaxScrollOffset(itemCount, style));
+}
+
+void keepDropdownHighlightVisible(UiDropdownState& state, int itemCount, const UiDropdownStyle& style)
+{
+    if (itemCount <= 0 || state.highlightedIndex < 0) {
+        state.scrollOffset = 0;
+        return;
+    }
+    const int visibleCount = dropdownVisibleCount(itemCount, style);
+    if (state.highlightedIndex < state.scrollOffset) {
+        state.scrollOffset = state.highlightedIndex;
+    } else if (state.highlightedIndex >= state.scrollOffset + visibleCount) {
+        state.scrollOffset = state.highlightedIndex - visibleCount + 1;
+    }
+    state.scrollOffset = std::clamp(state.scrollOffset, 0, dropdownMaxScrollOffset(itemCount, style));
+}
+
+void moveDropdownHighlight(UiDropdownState& state, int delta, int itemCount, const UiDropdownStyle& style)
+{
+    if (itemCount <= 0 || delta == 0) {
+        return;
+    }
+    if (state.highlightedIndex < 0 || state.highlightedIndex >= itemCount) {
+        state.highlightedIndex = delta > 0 ? 0 : itemCount - 1;
+    } else {
+        state.highlightedIndex = std::clamp(state.highlightedIndex + delta, 0, itemCount - 1);
+    }
+    keepDropdownHighlightVisible(state, itemCount, style);
+}
+
+void scrollDropdown(UiDropdownState& state, int delta, int itemCount, const UiDropdownStyle& style)
+{
+    if (itemCount <= 0 || delta == 0) {
+        return;
+    }
+
+    state.scrollOffset = std::clamp(state.scrollOffset + delta, 0, dropdownMaxScrollOffset(itemCount, style));
+    const int visibleCount = dropdownVisibleCount(itemCount, style);
+    if (state.highlightedIndex >= 0) {
+        state.highlightedIndex = std::clamp(
+            state.highlightedIndex,
+            state.scrollOffset,
+            std::min(itemCount - 1, state.scrollOffset + visibleCount - 1));
+    }
+}
+
+void removeUtf8LastCodepoint(std::string& text)
+{
+    if (text.empty()) {
+        return;
+    }
+    text.pop_back();
+    while (!text.empty() && (static_cast<unsigned char>(text.back()) & 0xC0u) == 0x80u) {
+        text.pop_back();
+    }
+}
+
+std::string fittedUiText(Renderer& renderer, std::string_view text, float maxWidth, int scale)
+{
+    if (text.empty() || renderer.measureText(text, scale).x <= maxWidth) {
+        return std::string(text);
+    }
+
+    std::string result{text};
+    constexpr std::string_view Ellipsis = "...";
+    while (!result.empty() && renderer.measureText(result + std::string(Ellipsis), scale).x > maxWidth) {
+        removeUtf8LastCodepoint(result);
+    }
+    return result.empty() ? std::string(Ellipsis) : result + std::string(Ellipsis);
 }
 
 void fillRoundedRect(Renderer& renderer, UiRect rect, float radius, Color color)
@@ -759,6 +871,213 @@ void drawUiCommandMenu(Renderer& renderer, const UiCommandMenuState& state, cons
         renderer.drawText(textPos, items[i].label, text, textScale);
     }
     renderer.popScreenTransform();
+}
+
+UiRect uiDropdownListRect(UiRect buttonRect, int itemCount, const UiDropdownStyle& style)
+{
+    const int visibleCount = dropdownVisibleCount(itemCount, style);
+    const float rowHeight = std::max(1.0f, style.rowHeight);
+    return {
+        {buttonRect.pos.x, buttonRect.pos.y + buttonRect.size.y + DropdownGap},
+        {buttonRect.size.x, static_cast<float>(visibleCount) * rowHeight + DropdownPadding * 2.0f},
+    };
+}
+
+UiRect uiDropdownItemRect(UiRect buttonRect, int visibleIndex, const UiDropdownStyle& style)
+{
+    const UiRect list = uiDropdownListRect(buttonRect, visibleIndex + 1, style);
+    const float rowHeight = std::max(1.0f, style.rowHeight);
+    return {
+        {
+            list.pos.x + DropdownPadding,
+            list.pos.y + DropdownPadding + static_cast<float>(std::max(0, visibleIndex)) * rowHeight,
+        },
+        {std::max(0.0f, list.size.x - DropdownPadding * 2.0f), std::max(1.0f, rowHeight - 4.0f)},
+    };
+}
+
+int updateUiDropdown(
+    UiDropdownState& state,
+    UiContext& ui,
+    const Input& input,
+    UiRect buttonRect,
+    int selectedIndex,
+    const UiDropdownItem* items,
+    int itemCount,
+    const UiDropdownStyle& style)
+{
+    const int count = std::max(0, itemCount);
+    int selected = -1;
+
+    if (ui.pressed(buttonRect)) {
+        state.open = !state.open;
+        if (state.open) {
+            state.highlightedIndex = count > 0 ? std::clamp(selectedIndex, 0, count - 1) : -1;
+            keepDropdownHighlightVisible(state, count, style);
+        }
+        return -1;
+    }
+
+    if (!state.open) {
+        return -1;
+    }
+
+    clampDropdownState(state, count, selectedIndex, style);
+    const UiRect listRect = uiDropdownListRect(buttonRect, count, style);
+
+    if (count > 0) {
+        int move = 0;
+        if (input.pressed(InputAction::MoveDown) || input.pressed(InputAction::MoveRight)) {
+            ++move;
+        }
+        if (input.pressed(InputAction::MoveUp) || input.pressed(InputAction::MoveLeft)) {
+            --move;
+        }
+        moveDropdownHighlight(state, move, count, style);
+
+        const int wheel = input.shortcutCursorDelta();
+        if (wheel != 0 && listRect.contains(ui.mouse())) {
+            scrollDropdown(state, wheel, count, style);
+        }
+
+        const int visibleCount = dropdownVisibleCount(count, style);
+        for (int i = 0; i < visibleCount; ++i) {
+            const int itemIndex = state.scrollOffset + i;
+            if (itemIndex < 0 || itemIndex >= count) {
+                continue;
+            }
+            const UiRect itemRect = uiDropdownItemRect(buttonRect, i, style);
+            UiRect itemHotRect = itemRect;
+            itemHotRect.size.x = std::max(0.0f, itemHotRect.size.x - dropdownScrollbarReserve(count, style));
+            if (itemHotRect.contains(ui.mouse())) {
+                state.highlightedIndex = itemIndex;
+            }
+            if (ui.pressed(itemHotRect)) {
+                if (items != nullptr && items[itemIndex].enabled) {
+                    selected = itemIndex;
+                    state.open = false;
+                }
+                return selected;
+            }
+        }
+
+        if (input.confirmPressed() || input.useItemPressed()) {
+            const int index = state.highlightedIndex;
+            if (items != nullptr && index >= 0 && index < count && items[index].enabled) {
+                selected = index;
+                state.open = false;
+                return selected;
+            }
+        }
+    }
+
+    if (input.backPressed()) {
+        state.open = false;
+        return -1;
+    }
+
+    if (input.mouseLeftPressed() && !ui.pointerConsumed() && !buttonRect.contains(ui.mouse()) && !listRect.contains(ui.mouse())) {
+        ui.consumePointer();
+        state.open = false;
+        return -1;
+    }
+
+    ui.block(listRect);
+    return -1;
+}
+
+void drawUiDropdown(
+    Renderer& renderer,
+    const UiDropdownState& state,
+    UiRect buttonRect,
+    std::string_view selectedLabel,
+    const UiDropdownItem* items,
+    int itemCount,
+    const UiDropdownStyle& style)
+{
+    UiButtonStyle buttonStyle;
+    buttonStyle.fill = style.fill;
+    buttonStyle.fillHot = style.fillHot;
+    buttonStyle.outline = style.outline;
+    buttonStyle.outlineHot = style.outline;
+    buttonStyle.text = style.text;
+    const int textScale = std::max(1, style.textScale);
+    const std::string buttonText = fittedUiText(
+        renderer,
+        selectedLabel,
+        std::max(0.0f, buttonRect.size.x - DropdownTextPaddingX * 2.0f - DropdownArrowWidth),
+        textScale);
+    drawUiRectButton(renderer, buttonRect, buttonText, state.open, buttonStyle);
+
+    const Vec2 arrowCenter{buttonRect.pos.x + buttonRect.size.x - 17.0f, buttonRect.pos.y + buttonRect.size.y * 0.5f};
+    const float arrowY = state.open ? -1.0f : 1.0f;
+    renderer.drawLine(arrowCenter + Vec2{-5.0f, -2.0f * arrowY}, arrowCenter + Vec2{0.0f, 4.0f * arrowY}, style.arrow);
+    renderer.drawLine(arrowCenter + Vec2{5.0f, -2.0f * arrowY}, arrowCenter + Vec2{0.0f, 4.0f * arrowY}, style.arrow);
+
+    if (!state.open) {
+        return;
+    }
+
+    const int count = std::max(0, itemCount);
+    const UiRect listRect = uiDropdownListRect(buttonRect, count, style);
+    renderer.fillRect(listRect.pos, listRect.size, style.fill);
+    renderer.drawRect(listRect.pos, listRect.size, style.outline);
+
+    if (items == nullptr || count <= 0) {
+        const UiRect row = uiDropdownItemRect(buttonRect, 0, style);
+        const Vec2 textSize = renderer.measureText(style.emptyLabel, textScale);
+        const Vec2 textPos{
+            row.pos.x + DropdownTextPaddingX,
+            row.pos.y + std::max(0.0f, (row.size.y - textSize.y) * 0.5f),
+        };
+        renderer.drawText(textPos, style.emptyLabel, style.textDisabled, textScale);
+        return;
+    }
+
+    const int visibleCount = dropdownVisibleCount(count, style);
+    const float scrollbarReserve = dropdownScrollbarReserve(count, style);
+    for (int i = 0; i < visibleCount; ++i) {
+        const int itemIndex = state.scrollOffset + i;
+        if (itemIndex < 0 || itemIndex >= count) {
+            continue;
+        }
+        const UiRect row = uiDropdownItemRect(buttonRect, i, style);
+        UiRect rowBody = row;
+        rowBody.size.x = std::max(0.0f, rowBody.size.x - scrollbarReserve);
+        const bool highlighted = itemIndex == state.highlightedIndex;
+        if (highlighted) {
+            renderer.fillRect(rowBody.pos, rowBody.size, style.fillHot);
+        }
+        const Color textColor = items[itemIndex].enabled ? style.text : style.textDisabled;
+        const std::string label = fittedUiText(
+            renderer,
+            items[itemIndex].label,
+            std::max(0.0f, rowBody.size.x - DropdownTextPaddingX * 2.0f),
+            textScale);
+        const Vec2 textSize = renderer.measureText(label, textScale);
+        const Vec2 textPos{
+            rowBody.pos.x + DropdownTextPaddingX,
+            rowBody.pos.y + std::max(0.0f, (rowBody.size.y - textSize.y) * 0.5f),
+        };
+        renderer.drawText(textPos, label, textColor, textScale);
+    }
+
+    if (dropdownNeedsScrollbar(count, style)) {
+        const float trackX = listRect.pos.x + listRect.size.x - DropdownPadding - DropdownScrollbarWidth;
+        const float trackY = listRect.pos.y + DropdownScrollbarPaddingY;
+        const float trackHeight = std::max(1.0f, listRect.size.y - DropdownScrollbarPaddingY * 2.0f);
+        renderer.fillRect({trackX, trackY}, {DropdownScrollbarWidth, trackHeight}, style.scrollbarTrack);
+
+        const float visibleRatio = static_cast<float>(visibleCount) / static_cast<float>(count);
+        const float thumbHeight = std::clamp(
+            trackHeight * visibleRatio,
+            std::min(trackHeight, DropdownScrollbarMinThumbHeight),
+            trackHeight);
+        const int maxScroll = dropdownMaxScrollOffset(count, style);
+        const float scrollRatio = maxScroll > 0 ? static_cast<float>(state.scrollOffset) / static_cast<float>(maxScroll) : 0.0f;
+        const float thumbY = trackY + (trackHeight - thumbHeight) * scrollRatio;
+        renderer.fillRect({trackX, thumbY}, {DropdownScrollbarWidth, thumbHeight}, style.scrollbarThumb);
+    }
 }
 
 }

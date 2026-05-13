@@ -845,6 +845,7 @@ struct EnemyColumns {
     int id = -1;
     int name = -1;
     int description = -1;
+    int imageNumber = -1;
     int hp = -1;
     int contactAttackPower = -1;
     int contactDamageType = -1;
@@ -882,6 +883,7 @@ bool findEnemyColumns(const GoogleSheetRow& headers, EnemyColumns& outColumns, s
     columns.id = findColumn(headers, {"ID", "id"});
     columns.name = findColumn(headers, {"名前", "name"});
     columns.description = findColumn(headers, {"説明文", "description"});
+    columns.imageNumber = findColumn(headers, {"画像番号", "image_number", "imageNumber"});
     columns.hp = findColumn(headers, {"HP", "hp"});
     columns.contactAttackPower = findColumn(headers, {"接触攻撃力", "contact_attack_power"});
     columns.contactDamageType = findColumn(headers, {"接触ダメージ種別", "contact_damage_type"});
@@ -1113,6 +1115,7 @@ bool parseEnemies(
         enemy.id = cellAt(row, columns.id);
         enemy.name = cellAt(row, columns.name);
         enemy.description = cellAt(row, columns.description);
+        enemy.imageNumber = parseIntColumnOrDefault(cellAt(row, columns.imageNumber), 0, "Enemies", rowIndex, enemy.id, "画像番号", catalog);
         enemy.hp = parseIntColumnOrDefault(cellAt(row, columns.hp), 1, "Enemies", rowIndex, enemy.id, "HP", catalog);
         enemy.contactAttackPower = parseIntColumnOrDefault(cellAt(row, columns.contactAttackPower), 0, "Enemies", rowIndex, enemy.id, "接触攻撃力", catalog);
         enemy.contactDamageType = cellAt(row, columns.contactDamageType);

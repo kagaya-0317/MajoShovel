@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 #include "engine/Input.hpp"
 #include "engine/Math.hpp"
@@ -9,6 +9,7 @@
 #include "game/Player.hpp"
 #include <array>
 #include <optional>
+#include <string>
 #include <vector>
 
 namespace majo {
@@ -55,6 +56,14 @@ struct RingOrbitContext {
     RingOrbitTuning tuning{};
 };
 
+struct SpellRingAddResult {
+    int ringIndex = 0;
+    int itemIndex = -1;
+    float localAngle = 0.0f;
+    std::string objectId;
+    std::string instanceId;
+};
+
 Vec2 getRingCenterWorldPosition(Vec2 playerPosition, Vec2 playerFacing, float spellRingShift);
 Vec2 getRingItemLocalPosition(float localAngle, const RingOrbitContext& context);
 Vec2 getRingItemWorldPosition(Vec2 center, float localAngle, const RingOrbitContext& context);
@@ -82,9 +91,9 @@ public:
     void upgradeShovelPower(int amount);
     void upgradeItemDamage(int amount);
     bool addItem(SpellRingItemType type);
-    bool addItem(SpellRingItem item);
-    bool addObjectItem(const ItemData& item);
-    bool addObjectItem(const ItemData& item, const ItemInstance& instance);
+    bool addItem(SpellRingItem item, SpellRingAddResult* outResult = nullptr);
+    bool addObjectItem(const ItemData& item, SpellRingAddResult* outResult = nullptr);
+    bool addObjectItem(const ItemData& item, const ItemInstance& instance, SpellRingAddResult* outResult = nullptr);
     bool canAddItem() const;
     bool canAddItem(const SpellRingItem& item) const;
     bool canPlaceItemAtAngle(int index, float angle) const;

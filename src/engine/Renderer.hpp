@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 #include "engine/Camera.hpp"
 #include "engine/Math.hpp"
@@ -69,9 +69,13 @@ public:
     void drawRect(Vec2 pos, Vec2 size, Color color);
     void fillCircle(Vec2 center, float radius, Color color);
     void drawCircle(Vec2 center, float radius, Color color);
+    void fillSoftCircle(Vec2 center, float radius, Color color);
+    void drawSoftRing(Vec2 center, float radius, float width, Color color);
     void fillEllipse(Vec2 center, Vec2 radius, Color color);
     void drawActorShadow(Vec2 actorAnchor, float visualSize, Color color = {0, 0, 0, 82});
     void drawLine(Vec2 a, Vec2 b, Color color);
+    void drawSoftLine(Vec2 a, Vec2 b, float width, Color color);
+    void drawSoftPolyline(const std::vector<Vec2>& points, float width, Color color);
     void drawText(Vec2 pos, std::string_view text, Color color, int scale = 2);
     void drawOutlinedText(
         Vec2 pos,
@@ -117,6 +121,7 @@ public:
     void drawUiLine(Vec2 pos, float width, Color tint = {255, 255, 255, 255});
     ImageHandle acquireImage(std::string_view path, TextureFilter filter = TextureFilter::Nearest);
     bool drawImage(ImageHandle handle, Vec2 center, Vec2 size, const ImageDrawOptions& options = {});
+    bool drawImageRegion(ImageHandle handle, SDL_FRect sourceRect, Vec2 center, Vec2 size, const ImageDrawOptions& options = {});
     bool drawImage(
         std::string_view path,
         Vec2 center,

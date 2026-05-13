@@ -1,4 +1,4 @@
-#include "game/ObjectImageRenderer.hpp"
+﻿#include "game/ObjectImageRenderer.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -20,10 +20,10 @@ ObjectImageDrawOptions withSelectedItemOutline(
     int outlinePx)
 {
     ObjectImageDrawOptions options = base;
-    options.outlineEnabled = true;
-    options.outlineColor = outlineColor;
-    options.outlineColor.a = 255;
-    options.outlinePx = std::max(1, outlinePx);
+    options.selectedOutlineEnabled = true;
+    options.selectedOutlineColor = outlineColor;
+    options.selectedOutlineColor.a = 255;
+    options.selectedOutlinePx = std::max(1, outlinePx);
     return options;
 }
 
@@ -110,6 +110,16 @@ bool drawObjectImage(
     drawOptions.rotationDegrees = options.rotationDegrees;
     drawOptions.flipX = options.flipX;
     drawOptions.flipY = options.flipY;
+    if (options.selectedOutlineEnabled && options.selectedOutlinePx > 0 && options.selectedOutlineColor.a > 0) {
+        ImageDrawOptions selectedOutlineOptions = drawOptions;
+        selectedOutlineOptions.tint.a = 0;
+        selectedOutlineOptions.outlineEnabled = true;
+        selectedOutlineOptions.outlineColor = options.selectedOutlineColor;
+        selectedOutlineOptions.outlinePx = options.selectedOutlinePx;
+        if (!renderer.drawImage(handle, center, drawSize, selectedOutlineOptions)) {
+            return false;
+        }
+    }
     return renderer.drawImage(handle, center, drawSize, drawOptions);
 }
 

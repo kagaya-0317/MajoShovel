@@ -126,6 +126,19 @@ void drawInventoryUiSlot(
         };
         renderer.drawOutlinedText(textPos, text, style.topRightCountColor, {0, 0, 0, 120}, 6, CountScale);
     };
+    const auto drawProtectionLabel = [&]() {
+        if (!style.showProtectionLabel || entry.instance == nullptr || !entry.instance->protectionEnabled) {
+            return;
+        }
+        constexpr int LabelScale = 2;
+        renderer.drawOutlinedText(
+            rect.pos + Vec2{5.0f, 3.0f},
+            "保護",
+            style.protectionLabelColor,
+            {0, 0, 0, 120},
+            6,
+            LabelScale);
+    };
 
     if (entry.item == nullptr) {
         drawBottomLabel();
@@ -178,6 +191,7 @@ void drawInventoryUiSlot(
             drawSelectedItemCircleOutline(renderer, slotCenter, 22.0f);
         }
     }
+    drawProtectionLabel();
     drawBottomLabel();
     drawTopRightCount();
 }

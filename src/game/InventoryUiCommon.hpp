@@ -26,6 +26,8 @@ struct InventoryUiSlotStyle {
     bool showTopRightCount = false;
     int topRightCount = 0;
     Color topRightCountColor = ui::Text;
+    bool showProtectionLabel = true;
+    Color protectionLabelColor = ui::Text;
 };
 
 struct InventoryUiDetailExtraLine {

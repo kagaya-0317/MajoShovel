@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 #include "data/GoogleSheetSource.hpp"
 #include "data/ObjectCatalog.hpp"
@@ -23,6 +23,7 @@ struct EnemyDefinition {
     std::string id;
     std::string name;
     std::string description;
+    int imageNumber = 0;
     int hp = 1;
     int contactAttackPower = 0;
     std::string contactDamageType = "none";

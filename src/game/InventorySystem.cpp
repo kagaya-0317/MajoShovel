@@ -19,6 +19,7 @@ namespace majo {
 namespace {
 constexpr int InventoryColumns = 8;
 constexpr int InventoryRows = 3;
+constexpr int ShortcutHudColumns = 8;
 constexpr float PanelX = 790.0f;
 constexpr float PanelY = 70.0f;
 constexpr float PanelW = 430.0f;
@@ -27,9 +28,11 @@ constexpr float RowX = PanelX + 24.0f;
 constexpr float RowW = PanelW - 48.0f;
 constexpr float RowH = 58.0f;
 constexpr float HudMargin = 16.0f;
-constexpr float HudHeight = 112.0f;
-constexpr float HudSlotGap = 6.0f;
-constexpr float HudSlotHeight = 48.0f;
+constexpr float HudHeight = 118.0f;
+constexpr float HudSlotGap = 12.0f;
+constexpr float HudSlotSize = 64.0f;
+constexpr float HudSlotY = 42.0f;
+constexpr float HudSelectedNameY = 19.0f;
 constexpr float ScreenX = 44.0f;
 constexpr float ScreenY = 58.0f;
 constexpr float ScreenW = 1192.0f;
@@ -85,6 +88,32 @@ UiRect inventorySlotRect(int index)
         ScreenGridX + static_cast<float>(column) * (ScreenSlotW + ScreenSlotGap),
         ScreenGridY + static_cast<float>(row) * (ScreenSlotH + ScreenSlotGap)
     }, {ScreenSlotW, ScreenSlotH}};
+}
+
+UiRect shortcutHudPanelRect(int screenWidth, int screenHeight)
+{
+    const float panelW = std::min(1040.0f, std::max(760.0f, static_cast<float>(screenWidth) - HudMargin * 2.0f));
+    const float panelX = (static_cast<float>(screenWidth) - panelW) * 0.5f;
+    const float panelY = static_cast<float>(screenHeight) - HudHeight - 12.0f;
+    return {{panelX, panelY}, {panelW, HudHeight}};
+}
+
+UiRect shortcutHudSlotRect(int column, int screenWidth, int screenHeight)
+{
+    const UiRect panel = shortcutHudPanelRect(screenWidth, screenHeight);
+    const float totalW = HudSlotSize * static_cast<float>(ShortcutHudColumns) +
+        HudSlotGap * static_cast<float>(ShortcutHudColumns - 1);
+    const float startX = panel.pos.x + (panel.size.x - totalW) * 0.5f;
+    return {{
+        startX + static_cast<float>(column) * (HudSlotSize + HudSlotGap),
+        panel.pos.y + HudSlotY,
+    }, {HudSlotSize, HudSlotSize}};
+}
+
+Vec2 shortcutHudSlotCenter(int column, int screenWidth, int screenHeight)
+{
+    const UiRect rect = shortcutHudSlotRect(column, screenWidth, screenHeight);
+    return rect.pos + rect.size * 0.5f;
 }
 
 Vec2 uiRectCenter(const UiRect& rect)
@@ -163,6 +192,13 @@ void InventorySystem::clearObjectStacks()
 {
     objectStacks_.clear();
     objectInstances_.clear();
+}
+
+std::vector<RingEquipFxRequest> InventorySystem::consumeRingEquipFxRequests()
+{
+    std::vector<RingEquipFxRequest> requests = std::move(ringEquipFxRequests_);
+    ringEquipFxRequests_.clear();
+    return requests;
 }
 
 std::vector<StackItem> InventorySystem::stackItemsForSave() const
@@ -893,7 +929,7 @@ void InventorySystem::resetSlotPointerPress()
     slotPointerDragTriggered_ = false;
 }
 
-bool InventorySystem::addObjectSelectionToRing(SpellRingSystem& spellRing)
+bool InventorySystem::addObjectSelectionToRing(SpellRingSystem& spellRing, SpellRingAddResult* outResult)
 {
     const int index = selectedShortcutIndex();
     InventoryObjectStack* selected = objectStackAtScreenIndex(index);
@@ -906,7 +942,7 @@ bool InventorySystem::addObjectSelectionToRing(SpellRingSystem& spellRing)
         return false;
     }
     InventoryObjectInstance objectInstance = createObjectInstance(selected->item);
-    if (!spellRing.addObjectItem(selected->item, objectInstance.instance)) {
+    if (!spellRing.addObjectItem(selected->item, objectInstance.instance, outResult)) {
         status_ = "リング満杯";
         objectInstances_.pop_back();
         return false;
@@ -923,7 +959,7 @@ bool InventorySystem::addObjectSelectionToRing(SpellRingSystem& spellRing)
     return true;
 }
 
-bool InventorySystem::addObjectInstanceSelectionToRing(SpellRingSystem& spellRing)
+bool InventorySystem::addObjectInstanceSelectionToRing(SpellRingSystem& spellRing, SpellRingAddResult* outResult)
 {
     const int index = selectedShortcutIndex();
     InventoryObjectInstance* selected = objectInstanceAtScreenIndex(index);
@@ -935,7 +971,7 @@ bool InventorySystem::addObjectInstanceSelectionToRing(SpellRingSystem& spellRin
         status_ = "壊れています";
         return false;
     }
-    if (!spellRing.addObjectItem(selected->item, selected->instance)) {
+    if (!spellRing.addObjectItem(selected->item, selected->instance, outResult)) {
         status_ = "リング満杯";
         return false;
     }
@@ -1080,13 +1116,13 @@ bool InventorySystem::useShortcutSelection(
     return false;
 }
 
-bool InventorySystem::addShortcutSelectionToRing(SpellRingSystem& spellRing)
+bool InventorySystem::addShortcutSelectionToRing(SpellRingSystem& spellRing, SpellRingAddResult* outResult)
 {
     if (selectedObjectStack() != nullptr) {
-        return addObjectSelectionToRing(spellRing);
+        return addObjectSelectionToRing(spellRing, outResult);
     }
     if (selectedObjectInstance() != nullptr) {
-        return addObjectInstanceSelectionToRing(spellRing);
+        return addObjectInstanceSelectionToRing(spellRing, outResult);
     }
 
     status_ = "ショートカット空き";
@@ -1104,19 +1140,52 @@ void InventorySystem::toggleSelectedProtection()
     status_ = selected->instance.protectionEnabled ? "保護ON" : "保護OFF";
 }
 
+void InventorySystem::queueRingEquipFx(Vec2 sourceScreen, const SpellRingAddResult& result)
+{
+    ringEquipFxRequests_.push_back(RingEquipFxRequest{
+        .sourceScreen = sourceScreen,
+        .ringIndex = result.ringIndex,
+        .itemIndex = result.itemIndex,
+        .localAngle = result.localAngle,
+        .objectId = result.objectId,
+        .instanceId = result.instanceId,
+    });
+}
+
 void InventorySystem::updateShortcuts(
     const Input& input,
+    UiContext& ui,
     Player& player,
     SpellRingSystem& spellRing,
     const EffectDispatcher& effectDispatcher,
+    int screenWidth,
+    int screenHeight,
     std::vector<EffectDiscoveryEvent>* discoveryEvents,
     const EncyclopediaSystem* encyclopedia)
 {
+    int hoveredSlotIndex = -1;
+    if (!ui.pointerConsumed()) {
+        for (int column = 0; column < ShortcutColumns; ++column) {
+            const UiRect rect = shortcutHudSlotRect(column, screenWidth, screenHeight);
+            if (rect.contains(ui.mouse())) {
+                hoveredSlotIndex = shortcutRow_ * ShortcutColumns + column;
+                selectShortcutIndex(hoveredSlotIndex);
+                break;
+            }
+        }
+    }
+
+    if (hoveredSlotIndex >= 0 && input.mouseLeftPressed() && !ui.pointerConsumed()) {
+        if (canUseScreenItem(hoveredSlotIndex)) {
+            useShortcutSelection(player, spellRing, effectDispatcher, discoveryEvents, encyclopedia);
+        }
+        ui.consumePointer();
+        return;
+    }
+
     if (input.shortcutCursorDelta() != 0) {
         moveShortcutCursor(input.shortcutCursorDelta());
     }
-
-    selectShortcutSlot(input.shortcutSlotPressed());
 
     if (input.toggleShortcutRowPressed()) {
         toggleShortcutRow();
@@ -1126,7 +1195,10 @@ void InventorySystem::updateShortcuts(
         useShortcutSelection(player, spellRing, effectDispatcher, discoveryEvents, encyclopedia);
     }
     if (input.addRingPressed()) {
-        addShortcutSelectionToRing(spellRing);
+        SpellRingAddResult result{};
+        if (addShortcutSelectionToRing(spellRing, &result)) {
+            queueRingEquipFx(shortcutHudSlotCenter(selectedShortcutColumn_, screenWidth, screenHeight), result);
+        }
     }
     if (input.pressed(InputAction::ToggleProtection)) {
         toggleSelectedProtection();
@@ -1400,77 +1472,61 @@ void InventorySystem::renderShortcutHud(Renderer& renderer, const SpellRingSyste
 {
     renderer.setScreenSpace();
 
-    const float panelW = std::min(1040.0f, std::max(760.0f, static_cast<float>(screenWidth) - HudMargin * 2.0f));
-    const float panelX = (static_cast<float>(screenWidth) - panelW) * 0.5f;
-    const float panelY = static_cast<float>(screenHeight) - HudHeight - 12.0f;
-    const UiRect hudPanel{{panelX, panelY}, {panelW, HudHeight}};
-    const Vec2 hudContent = uiSubPanelContentPos(hudPanel);
-    const float innerX = hudContent.x;
-    const float slotY = hudContent.y;
-    const float slotW = (panelW - ui::SubPanelPadding.x * 2.0f - HudSlotGap * static_cast<float>(ShortcutColumns - 1)) / static_cast<float>(ShortcutColumns);
+    const UiRect hudPanel = shortcutHudPanelRect(screenWidth, screenHeight);
 
-    drawUiSubPanel(renderer, hudPanel);
+    const auto entryViewForSlot = [this](int slotIndex) {
+        InventoryUiEntryView entry{};
+        if (const InventoryObjectStack* objectStack = objectStackAtScreenIndex(slotIndex)) {
+            entry.item = &objectStack->item;
+            entry.stackCount = objectStack->count;
+        } else if (const InventoryObjectInstance* objectInstance = objectInstanceAtScreenIndex(slotIndex)) {
+            entry.item = &objectInstance->item;
+            entry.instance = &objectInstance->instance;
+            entry.stackCount = 1;
+        }
+        return entry;
+    };
 
-    char buffer[128];
-    std::snprintf(buffer, sizeof(buffer), "Row %d/3   Ring %d", shortcutRow_ + 1, spellRing.activeRingIndex() + 1);
-    renderer.drawText({innerX, panelY + 74.0f}, buffer, ui::Text, 2);
-    renderer.drawText({innerX + 300.0f, panelY + 74.0f}, "Tab 行切替, F 決定, R リングへ, P 保護", ui::TextMuted, 2);
+    const auto selectedItemName = [this]() {
+        char buffer[128];
+        const int selectedIndex = selectedShortcutIndex();
+        if (const InventoryObjectStack* objectStack = objectStackAtScreenIndex(selectedIndex)) {
+            std::snprintf(buffer, sizeof(buffer), "%s x%d", objectStack->item.name.c_str(), objectStack->count);
+            return std::string(buffer);
+        }
+        if (const InventoryObjectInstance* objectInstance = objectInstanceAtScreenIndex(selectedIndex)) {
+            return objectInstance->item.name;
+        }
+        return std::string{};
+    }();
+
+    if (!selectedItemName.empty()) {
+        constexpr int NameScale = 2;
+        const Vec2 nameSize = renderer.measureText(selectedItemName, NameScale);
+        const UiRect selectedRect = shortcutHudSlotRect(selectedShortcutColumn_, screenWidth, screenHeight);
+        const float minX = hudPanel.pos.x + 18.0f;
+        const float maxX = hudPanel.pos.x + hudPanel.size.x - 18.0f - nameSize.x;
+        const float centeredX = selectedRect.pos.x + (selectedRect.size.x - nameSize.x) * 0.5f;
+        const Vec2 namePos{
+            std::clamp(centeredX, minX, std::max(minX, maxX)),
+            hudPanel.pos.y + HudSelectedNameY,
+        };
+        renderer.drawOutlinedText(namePos, selectedItemName, ui::Text, {0, 0, 0, 120}, 6, NameScale);
+    }
+
+    (void)spellRing;
 
     for (int column = 0; column < ShortcutColumns; ++column) {
         const int slotIndex = shortcutRow_ * ShortcutColumns + column;
         const bool selected = column == selectedShortcutColumn_;
-        const Vec2 slotPos{innerX + static_cast<float>(column) * (slotW + HudSlotGap), slotY};
-        const Color fill = selected ? Color{54, 44, 72, 242} : Color{20, 20, 28, 226};
-        const Color outline = selected ? ui::WindowBorder : Color{78, 72, 94, 255};
-        renderer.fillRect(slotPos, {slotW, HudSlotHeight}, fill);
-        renderer.drawRect(slotPos, {slotW, HudSlotHeight}, outline);
-
-        std::snprintf(buffer, sizeof(buffer), "%d", column + 1);
-        renderer.drawText(slotPos + Vec2{7.0f, 6.0f}, buffer, selected ? ui::Text : ui::TextDisabled, 1);
-
-        const InventoryObjectStack* objectStack = objectStackAtScreenIndex(slotIndex);
-        if (objectStack != nullptr) {
-            const Vec2 iconCenter = slotPos + Vec2{24.0f, 24.0f};
-            const bool drewImage = drawObjectImage(
-                renderer,
-                objectStack->item,
-                iconCenter,
-                {ShortcutObjectImageMaxSize, ShortcutObjectImageMaxSize});
-            if (!drewImage) {
-                renderer.fillCircle(iconCenter, 20.0f, inventoryUiObjectColor(objectStack->item));
-            }
-            std::snprintf(buffer, sizeof(buffer), "%s x%d", objectStack->item.name.c_str(), objectStack->count);
-            renderer.drawText(slotPos + Vec2{56.0f, 18.0f}, buffer, ui::Text, 2);
-        } else if (const InventoryObjectInstance* objectInstance = objectInstanceAtScreenIndex(slotIndex)) {
-            const Vec2 iconCenter = slotPos + Vec2{24.0f, 24.0f};
-            ObjectImageDrawOptions imageOptions;
-            imageOptions.tint = objectInstance->instance.isBroken ? Color{140, 140, 148, 220} : Color{255, 255, 255, 255};
-            const bool drewImage = drawObjectImage(
-                renderer,
-                objectInstance->item,
-                iconCenter,
-                {ShortcutObjectImageMaxSize, ShortcutObjectImageMaxSize},
-                imageOptions);
-            if (!drewImage) {
-                const Color objectColor = objectInstance->instance.isBroken ? Color{82, 82, 90, 255} : inventoryUiObjectColor(objectInstance->item);
-                renderer.fillCircle(iconCenter, 20.0f, objectColor);
-            }
-            std::snprintf(buffer, sizeof(buffer), "%s%s",
-                objectInstance->instance.protectionEnabled ? "[P] " : "",
-                objectInstance->item.name.c_str());
-            renderer.drawText(
-                slotPos + Vec2{56.0f, 18.0f},
-                buffer,
-                objectInstance->instance.isBroken ? ui::TextDisabled : ui::Text,
-                2);
-        } else {
-            renderer.drawText(slotPos + Vec2{20.0f, 18.0f}, "Empty", ui::TextDisabled, 2);
+        const UiRect slotRect = shortcutHudSlotRect(column, screenWidth, screenHeight);
+        const InventoryUiEntryView entry = entryViewForSlot(slotIndex);
+        InventoryUiSlotStyle style{selected, false, ShortcutObjectImageMaxSize};
+        if (entry.item != nullptr && entry.instance == nullptr && entry.stackCount > 1) {
+            style.showTopRightCount = true;
+            style.topRightCount = entry.stackCount;
         }
-
-        if (selected) {
-            renderer.fillRect({slotPos.x + 8.0f, slotPos.y + HudSlotHeight - 5.0f}, {slotW - 16.0f, 3.0f}, ui::Text);
-            renderer.drawText({slotPos.x + slotW * 0.5f - 4.0f, slotPos.y + HudSlotHeight + 5.0f}, "v", ui::Text, 2);
-        }
+        drawInventoryUiSlot(renderer, slotRect, entry, style);
     }
 
 }

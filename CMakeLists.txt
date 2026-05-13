@@ -60,6 +60,7 @@ add_executable(MajoShovel
     src/game/DiggingSystem.cpp
     src/game/TileMap.cpp
     src/game/Enemy.cpp
+    src/game/EnemyImageRenderer.cpp
     src/game/EnemySystem.cpp
     src/game/EncyclopediaSystem.cpp
     src/game/InventorySystem.cpp

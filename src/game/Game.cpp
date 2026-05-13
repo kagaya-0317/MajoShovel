@@ -120,6 +120,12 @@ constexpr float TopInfoBarPaddingX = 14.0f;
 constexpr float TopInfoBarGroupGap = 22.0f;
 constexpr float TopInfoBarIconSize = 18.0f;
 constexpr float TopInfoBarIconTextGap = 7.0f;
+constexpr float DungeonStatusHudWidth = 206.0f;
+constexpr float DungeonStatusHudHeight = 134.0f;
+constexpr float DungeonStatusHudRightMargin = 18.0f;
+constexpr float DungeonStatusHudBottomMargin = 24.0f;
+constexpr float DungeonStatusHudPadding = 14.0f;
+constexpr float DungeonStatusHudBarHeight = 8.0f;
 constexpr int BaseEditGridSize = 12;
 constexpr float BaseEditFacilityMinSize = 24.0f;
 constexpr int BaseEditUndoLimit = 100;
@@ -138,6 +144,7 @@ constexpr float ObjectImageScalePanelMargin = 20.0f;
 constexpr float ObjectImageScaleHeaderHeight = 94.0f;
 constexpr float ObjectImageScaleFooterHeight = 60.0f;
 constexpr float ObjectImageScalePreviewSize = 48.0f;
+constexpr int EnemyTestVisibleRows = 8;
 constexpr float FootstepDustLifetime = 0.30f;
 constexpr float FootstepDustStartOffset = 8.0f;
 constexpr float FootstepDustEndOffset = 20.0f;
@@ -657,6 +664,70 @@ UiRect objectImageScaleCardRect(const ObjectImageScaleLayout& layout, int index,
     const float x = layout.content.pos.x + static_cast<float>(column) * (ObjectImageScaleCardWidth + ObjectImageScaleCardGap);
     const float y = layout.content.pos.y + static_cast<float>(row) * layout.rowHeight - scrollOffset;
     return {{x, y}, {ObjectImageScaleCardWidth, ObjectImageScaleCardHeight}};
+}
+
+UiRect enemyTestToolbarRect()
+{
+    return {{18.0f, 52.0f}, {1016.0f, 86.0f}};
+}
+
+UiRect enemyTestRestoreButtonRect()
+{
+    return {{18.0f, 52.0f}, {124.0f, 38.0f}};
+}
+
+UiRect enemyTestSelectButtonRect()
+{
+    const UiRect panel = enemyTestToolbarRect();
+    return {{panel.pos.x + 108.0f, panel.pos.y + 18.0f}, {342.0f, ui::ButtonHeight}};
+}
+
+UiRect enemyTestSummonButtonRect()
+{
+    const UiRect select = enemyTestSelectButtonRect();
+    return {{select.pos.x + select.size.x + 12.0f, select.pos.y}, {124.0f, ui::ButtonHeight}};
+}
+
+UiRect enemyTestClearButtonRect()
+{
+    const UiRect summon = enemyTestSummonButtonRect();
+    return {{summon.pos.x + summon.size.x + 12.0f, summon.pos.y}, {124.0f, ui::ButtonHeight}};
+}
+
+UiRect enemyTestHideButtonRect()
+{
+    const UiRect clear = enemyTestClearButtonRect();
+    return {{clear.pos.x + clear.size.x + 12.0f, clear.pos.y}, {144.0f, ui::ButtonHeight}};
+}
+
+UiRect enemyTestExitButtonRect()
+{
+    const UiRect hide = enemyTestHideButtonRect();
+    return {{hide.pos.x + hide.size.x + 12.0f, hide.pos.y}, {136.0f, ui::ButtonHeight}};
+}
+
+UiDropdownStyle enemyTestDropdownStyle()
+{
+    UiDropdownStyle style;
+    style.visibleRows = EnemyTestVisibleRows;
+    style.rowHeight = 38.0f;
+    style.fill = {12, 18, 34, 238};
+    style.fillHot = {38, 52, 82, 248};
+    style.outline = {255, 255, 255, 220};
+    style.emptyLabel = "敵データがありません";
+    return style;
+}
+
+std::string enemyTestEnemyLabel(const EnemyDefinition& enemy)
+{
+    return (enemy.name.empty() ? enemy.id : enemy.name) + " (" + enemy.id + ")";
+}
+
+std::string enemyTestDropdownItemLabel(const EnemyDefinition& enemy, int index)
+{
+    char prefix[16];
+    std::snprintf(prefix, sizeof(prefix), "%03d  ", index + 1);
+    return std::string(prefix) + (enemy.name.empty() ? enemy.id : enemy.name) + "  (" + enemy.id + ")";
 }
 
 std::int64_t packBaseEditTile(int tileX, int tileY)
@@ -2134,6 +2205,11 @@ void Game::initializeWorld(bool captureRunStartInventory)
     objectImageScaleScrollOffset_ = 0.0f;
     objectImageScaleDirty_ = false;
     objectImageScaleStatus_.clear();
+    enemyTestActive_ = false;
+    enemyTestUiVisible_ = true;
+    enemyTestDropdown_ = {};
+    enemyTestSelectedIndex_ = 0;
+    enemyTestStatus_.clear();
     baseStatus_.clear();
     pausePage_ = PauseMenuPage::Main;
     pauseReturnMode_ = ScreenMode::Playing;
@@ -4275,6 +4351,11 @@ bool Game::shouldRefreshMerchantOnReturn(bool stageCleared, bool died) const
 
 void Game::returnToBaseFromNormalStage(bool stageCleared, bool died)
 {
+    if (enemyTestActive_) {
+        exitEnemyTestToBase();
+        return;
+    }
+
     const bool refreshMerchant = shouldRefreshMerchantOnReturn(stageCleared, died);
     merchantRefreshPending_ = merchantRefreshPending_ || refreshMerchant;
     clearTemporaryPlayerState(true);
@@ -4317,7 +4398,7 @@ void Game::resetWarpPointRunState()
 
 void Game::captureDungeonState()
 {
-    if (roguelikeDungeon_ || currentStageId_.empty()) {
+    if (enemyTestActive_ || roguelikeDungeon_ || currentStageId_.empty()) {
         return;
     }
 
@@ -5592,6 +5673,137 @@ void Game::renderPlayerFootstepDust(Renderer& renderer) const
     }
 }
 
+void Game::spawnRingEquipFx(const RingEquipFxRequest& request)
+{
+    RingEquipFx fx;
+    fx.sourceScreen = request.sourceScreen;
+    fx.ringIndex = request.ringIndex;
+    fx.itemIndex = request.itemIndex;
+    fx.localAngle = request.localAngle;
+    fx.objectId = request.objectId;
+    fx.instanceId = request.instanceId;
+    fx.duration = 0.26f;
+    fx.arcSign = ((request.itemIndex + request.ringIndex) % 2 == 0) ? 1.0f : -1.0f;
+    ringEquipFx_.push_back(std::move(fx));
+    if (ringEquipFx_.size() > 8) {
+        ringEquipFx_.erase(ringEquipFx_.begin());
+    }
+}
+
+void Game::updateRingEquipFx(float dt)
+{
+    for (RingEquipFx& fx : ringEquipFx_) {
+        fx.age += dt;
+    }
+    ringEquipFx_.erase(
+        std::remove_if(ringEquipFx_.begin(), ringEquipFx_.end(), [](const RingEquipFx& fx) {
+            return fx.age >= fx.duration;
+        }),
+        ringEquipFx_.end());
+}
+
+Vec2 Game::ringEquipFxTargetScreen(const RingEquipFx& fx) const
+{
+    const int ringIndex = std::clamp(fx.ringIndex, 0, SpellRingCount - 1);
+    const std::vector<SpellRingItem>& items = spellRing_.itemsForRing(ringIndex);
+    const auto matchesFx = [&fx](const SpellRingItem& item) {
+        if (!fx.instanceId.empty()) {
+            return item.instanceId == fx.instanceId;
+        }
+        return fx.objectId.empty() || item.objectId == fx.objectId;
+    };
+
+    if (fx.itemIndex >= 0 && fx.itemIndex < static_cast<int>(items.size())) {
+        const SpellRingItem& item = items[static_cast<std::size_t>(fx.itemIndex)];
+        if (matchesFx(item)) {
+            return camera_.worldToScreen(item.worldPosition);
+        }
+    }
+    for (const SpellRingItem& item : items) {
+        if (matchesFx(item)) {
+            return camera_.worldToScreen(item.worldPosition);
+        }
+    }
+
+    const int itemCount = std::max(1, static_cast<int>(items.size()));
+    const int itemIndex = std::clamp(fx.itemIndex, 0, itemCount - 1);
+    const Vec2 fallbackWorld = spellRing_.sampleItemWorldPositionForRing(
+        ringIndex,
+        fx.localAngle,
+        itemIndex,
+        itemCount,
+        1.0f,
+        balance_);
+    return camera_.worldToScreen(fallbackWorld);
+}
+
+void Game::renderRingEquipFx(Renderer& renderer) const
+{
+    if (ringEquipFx_.empty() || mode_ != ScreenMode::Playing) {
+        return;
+    }
+
+    renderer.setScreenSpace();
+    const auto easeOutCubic = [](float t) {
+        const float inv = 1.0f - clamp(t, 0.0f, 1.0f);
+        return 1.0f - inv * inv * inv;
+    };
+    const auto bezier = [](Vec2 a, Vec2 b, Vec2 c, Vec2 d, float t) {
+        const float u = 1.0f - t;
+        return a * (u * u * u) + b * (3.0f * u * u * t) + c * (3.0f * u * t * t) + d * (t * t * t);
+    };
+
+    for (const RingEquipFx& fx : ringEquipFx_) {
+        if (fx.duration <= 0.0f) {
+            continue;
+        }
+        const float t = clamp(fx.age / fx.duration, 0.0f, 1.0f);
+        const float progress = easeOutCubic(t);
+        const float fade = std::sin(clamp(t, 0.0f, 1.0f) * Pi);
+        if (fade <= 0.001f) {
+            continue;
+        }
+
+        const Vec2 p0 = fx.sourceScreen;
+        const Vec2 p3 = ringEquipFxTargetScreen(fx);
+        const Vec2 delta = p3 - p0;
+        const float dist = std::max(1.0f, length(delta));
+        const Vec2 side = Vec2{-delta.y / dist, delta.x / dist} * fx.arcSign;
+        const float arc = std::clamp(dist * 0.16f, 24.0f, 86.0f);
+        const Vec2 p1 = p0 + delta * 0.28f + side * arc;
+        const Vec2 p2 = p0 + delta * 0.76f + side * (arc * 0.42f);
+        const float tail = 0.24f;
+        const float start = std::max(0.0f, progress - tail);
+        constexpr int SampleCount = 12;
+        std::array<Vec2, SampleCount> points{};
+        for (int i = 0; i < SampleCount; ++i) {
+            const float u = static_cast<float>(i) / static_cast<float>(SampleCount - 1);
+            points[static_cast<std::size_t>(i)] = bezier(p0, p1, p2, p3, lerp(start, progress, u));
+        }
+
+        for (int i = 1; i < SampleCount; ++i) {
+            const float u = static_cast<float>(i) / static_cast<float>(SampleCount - 1);
+            const unsigned char glowAlpha = static_cast<unsigned char>(std::clamp(std::lround(82.0f * fade * u), 0L, 255L));
+            const unsigned char coreAlpha = static_cast<unsigned char>(std::clamp(std::lround(220.0f * fade * u), 0L, 255L));
+            renderer.drawSoftLine(points[static_cast<std::size_t>(i - 1)], points[static_cast<std::size_t>(i)], 18.0f, {132, 204, 255, glowAlpha});
+            renderer.drawSoftLine(points[static_cast<std::size_t>(i - 1)], points[static_cast<std::size_t>(i)], 7.0f, {255, 228, 128, coreAlpha});
+            renderer.drawSoftLine(points[static_cast<std::size_t>(i - 1)], points[static_cast<std::size_t>(i)], 2.5f, {255, 255, 245, coreAlpha});
+        }
+
+        const Vec2 head = points.back();
+        const unsigned char headAlpha = static_cast<unsigned char>(std::clamp(std::lround(235.0f * fade), 0L, 255L));
+        renderer.fillSoftCircle(head, 13.0f, {126, 214, 255, static_cast<unsigned char>(headAlpha / 2)});
+        renderer.fillSoftCircle(head, 6.5f, {255, 240, 154, headAlpha});
+        renderer.fillSoftCircle(head, 2.2f, {255, 255, 255, headAlpha});
+
+        if (t > 0.62f) {
+            const float hitT = clamp((t - 0.62f) / 0.38f, 0.0f, 1.0f);
+            const unsigned char ringAlpha = static_cast<unsigned char>(std::clamp(std::lround(190.0f * (1.0f - hitT)), 0L, 255L));
+            renderer.drawSoftRing(p3, lerp(7.0f, 24.0f, hitT), 5.0f, {255, 232, 136, ringAlpha});
+        }
+    }
+}
+
 BaseEditRect Game::baseFacilityRectFor(BaseArea area, std::string_view facilityId, BaseEditRect fallback) const
 {
     const auto& table = area == BaseArea::Outdoor ? baseFacilityRectsOutdoor_ : baseFacilityRectsHome_;
@@ -6039,6 +6251,236 @@ void Game::renderObjectImageScaleEditScreen(Renderer& renderer) const
     if (!objectImageScaleStatus_.empty()) {
         renderer.drawText({220.0f, static_cast<float>(camera_.height()) - 40.0f}, objectImageScaleStatus_, {198, 206, 222, 255}, 2);
     }
+}
+
+void Game::enterEnemyTestMode()
+{
+    if (!enemyTestActive_ && mode_ == ScreenMode::Playing) {
+        captureDungeonState();
+    }
+
+    inventory_.setOpen(false);
+    inventory_.cancelGrab();
+    cancelRingGrab();
+    if (levels_.isChoosing()) {
+        levels_ = LevelSystem{};
+    }
+
+    enemyTestActive_ = true;
+    enemyTestUiVisible_ = true;
+    enemyTestDropdown_ = {};
+    enemyTestSelectedIndex_ = std::clamp(enemyTestSelectedIndex_, 0, std::max(0, static_cast<int>(enemyCatalog_.enemies.size()) - 1));
+    enemyTestStatus_ = enemyCatalog_.enemies.empty() ? "敵データがありません" : "敵を選んで召喚できます";
+
+    mode_ = ScreenMode::Playing;
+    pausePage_ = PauseMenuPage::Main;
+    pauseReturnMode_ = ScreenMode::Playing;
+    inventoryReturnToPause_ = false;
+    tileMap_ = TileMap{};
+    digging_ = DiggingSystem{};
+    effects_ = EffectSystem{};
+    enemies_ = EnemySystem{};
+    projectiles_ = ProjectileSystem{};
+    worldDrops_ = WorldDropSystem{};
+    worldDrops_.setDropLimit(balance_.worldDropLimitPerStage);
+    runStats_ = RunStats{};
+    warpPoints_.clear();
+    rewardNodes_.clear();
+    moneyNodes_.clear();
+    moonFragmentNodes_.clear();
+    chestNodes_.clear();
+    crateNodes_.clear();
+    enemyNodes_.clear();
+    spawnedWarpPointCount_ = 0;
+    bossSpawnPoint_ = {};
+    hasBossSpawnPoint_ = false;
+    bossSpawned_ = false;
+
+    dungeonLayout_ = generateDungeonLayout(DungeonGenerationContext{
+        .stageId = 1,
+        .seed = 0xE17E57u,
+        .stageHardnessMultiplier = 1.0f,
+        .roguelike = false,
+    });
+    player_.position = tileWorldCenter(dungeonLayout_.startTile);
+    player_.velocity = {};
+    player_.facing = {1.0f, 0.0f};
+    applyPermanentUpgrades();
+    clearTemporaryPlayerState(true);
+    resetPlayerFootstepDust();
+    tileMap_.updateAround(player_.position, 0.0f, balance_, dungeonLayout_);
+    camera_.follow(player_.position, 1.0f);
+}
+
+void Game::exitEnemyTestToBase()
+{
+    enemyTestActive_ = false;
+    enemyTestUiVisible_ = true;
+    enemyTestDropdown_ = {};
+    enemyTestStatus_.clear();
+    enemies_ = EnemySystem{};
+    projectiles_ = ProjectileSystem{};
+    worldDrops_ = WorldDropSystem{};
+    worldDrops_.setDropLimit(balance_.worldDropLimitPerStage);
+    clearTemporaryPlayerState(true);
+    enterBase();
+}
+
+void Game::spawnSelectedEnemyTestEnemy()
+{
+    if (enemyCatalog_.enemies.empty()) {
+        enemyTestStatus_ = "敵データがありません";
+        return;
+    }
+    enemyTestSelectedIndex_ = std::clamp(enemyTestSelectedIndex_, 0, static_cast<int>(enemyCatalog_.enemies.size()) - 1);
+    const EnemyDefinition& enemy = enemyCatalog_.enemies[static_cast<std::size_t>(enemyTestSelectedIndex_)];
+    Vec2 facing = lengthSquared(player_.facing) > 0.0001f ? normalize(player_.facing) : Vec2{1.0f, 0.0f};
+    const Vec2 desiredPosition = player_.position + facing * 120.0f;
+    if (enemies_.spawnSpecificEnemy(tileMap_, enemy.id, desiredPosition, player_.position, balance_, enemyCatalog_, true, true)) {
+        enemyTestStatus_ = "召喚: " + (enemy.name.empty() ? enemy.id : enemy.name);
+    } else {
+        enemyTestStatus_ = "召喚できませんでした: " + (enemy.name.empty() ? enemy.id : enemy.name);
+    }
+}
+
+void Game::clearEnemyTestArena()
+{
+    enemies_ = EnemySystem{};
+    projectiles_ = ProjectileSystem{};
+    effects_ = EffectSystem{};
+    enemyTestStatus_ = "敵と弾を消去しました";
+}
+
+void Game::updateEnemyTestUi(const Input& input, UiContext& ui)
+{
+    if (!enemyTestActive_) {
+        return;
+    }
+
+    const int itemCount = static_cast<int>(enemyCatalog_.enemies.size());
+    if (!enemyTestUiVisible_) {
+        if (ui.pressed(enemyTestRestoreButtonRect())) {
+            enemyTestUiVisible_ = true;
+        }
+        return;
+    }
+
+    if (itemCount > 0) {
+        enemyTestSelectedIndex_ = std::clamp(enemyTestSelectedIndex_, 0, itemCount - 1);
+    } else {
+        enemyTestSelectedIndex_ = 0;
+    }
+
+    std::vector<std::string> labels;
+    std::vector<UiDropdownItem> items;
+    labels.reserve(enemyCatalog_.enemies.size());
+    items.reserve(enemyCatalog_.enemies.size());
+    for (std::size_t i = 0; i < enemyCatalog_.enemies.size(); ++i) {
+        labels.push_back(enemyTestDropdownItemLabel(enemyCatalog_.enemies[i], static_cast<int>(i)));
+        items.push_back(UiDropdownItem{labels.back(), true});
+    }
+
+    const bool dropdownWasOpen = enemyTestDropdown_.open;
+    const int dropdownSelection = updateUiDropdown(
+        enemyTestDropdown_,
+        ui,
+        input,
+        enemyTestSelectButtonRect(),
+        enemyTestSelectedIndex_,
+        items.empty() ? nullptr : items.data(),
+        itemCount,
+        enemyTestDropdownStyle());
+    if (dropdownSelection >= 0) {
+        enemyTestSelectedIndex_ = dropdownSelection;
+    }
+
+    if (!dropdownWasOpen && !enemyTestDropdown_.open && (input.confirmPressed() || input.useItemPressed())) {
+        spawnSelectedEnemyTestEnemy();
+    }
+
+    if (ui.pressed(enemyTestSummonButtonRect())) {
+        enemyTestDropdown_.open = false;
+        spawnSelectedEnemyTestEnemy();
+    }
+    if (ui.pressed(enemyTestClearButtonRect())) {
+        enemyTestDropdown_.open = false;
+        clearEnemyTestArena();
+    }
+    if (ui.pressed(enemyTestHideButtonRect())) {
+        enemyTestUiVisible_ = false;
+        enemyTestDropdown_.open = false;
+        return;
+    }
+    if (ui.pressed(enemyTestExitButtonRect())) {
+        exitEnemyTestToBase();
+        return;
+    }
+    if (input.backPressed()) {
+        if (dropdownWasOpen || enemyTestDropdown_.open) {
+            enemyTestDropdown_.open = false;
+        } else {
+            exitEnemyTestToBase();
+        }
+        return;
+    }
+
+    ui.block(enemyTestToolbarRect());
+}
+
+void Game::renderEnemyTestUi(Renderer& renderer) const
+{
+    if (!enemyTestActive_ || mode_ != ScreenMode::Playing) {
+        return;
+    }
+
+    renderer.setScreenSpace();
+    const int itemCount = static_cast<int>(enemyCatalog_.enemies.size());
+    const int selected = itemCount > 0 ? std::clamp(enemyTestSelectedIndex_, 0, itemCount - 1) : 0;
+
+    if (!enemyTestUiVisible_) {
+        drawUiRectButton(renderer, enemyTestRestoreButtonRect(), "敵UI", false, uiActionButtonStyle());
+        return;
+    }
+
+    const UiRect panel = enemyTestToolbarRect();
+    renderer.fillRect(panel.pos, panel.size, {12, 18, 34, 218});
+    renderer.drawRect(panel.pos, panel.size, {255, 255, 255, 210});
+    renderer.drawText(panel.pos + Vec2{18.0f, 31.0f}, "敵テスト", {255, 230, 150, 255}, 2);
+
+    std::string selectedLabel = "敵データなし";
+    if (itemCount > 0) {
+        const EnemyDefinition& enemy = enemyCatalog_.enemies[static_cast<std::size_t>(selected)];
+        selectedLabel = enemyTestEnemyLabel(enemy);
+    }
+
+    std::vector<std::string> labels;
+    std::vector<UiDropdownItem> items;
+    labels.reserve(enemyCatalog_.enemies.size());
+    items.reserve(enemyCatalog_.enemies.size());
+    for (std::size_t i = 0; i < enemyCatalog_.enemies.size(); ++i) {
+        labels.push_back(enemyTestDropdownItemLabel(enemyCatalog_.enemies[i], static_cast<int>(i)));
+        items.push_back(UiDropdownItem{labels.back(), true});
+    }
+
+    const UiRect selectRect = enemyTestSelectButtonRect();
+    drawUiRectButton(renderer, enemyTestSummonButtonRect(), "召喚", false, uiActionButtonStyle());
+    drawUiRectButton(renderer, enemyTestClearButtonRect(), "全消去", false, uiCancelButtonStyle());
+    drawUiRectButton(renderer, enemyTestHideButtonRect(), "UI非表示", false);
+    drawUiRectButton(renderer, enemyTestExitButtonRect(), "終了", false, uiCancelButtonStyle());
+
+    if (!enemyTestStatus_.empty()) {
+        renderer.fillRect({18.0f, 144.0f}, {430.0f, 26.0f}, {0, 0, 0, 160});
+        renderer.drawText({26.0f, 150.0f}, fittedSingleLineText(renderer, enemyTestStatus_, 410.0f, 2), {255, 230, 150, 255}, 2);
+    }
+
+    drawUiDropdown(
+        renderer,
+        enemyTestDropdown_,
+        selectRect,
+        selectedLabel,
+        items.empty() ? nullptr : items.data(),
+        itemCount,
+        enemyTestDropdownStyle());
 }
 
 void Game::resetBaseEditDragState()
@@ -7141,8 +7583,19 @@ bool Game::executeDebugCommand(std::string_view command)
     }
 
     if (normalized == "game return-base") {
+        if (enemyTestActive_) {
+            exitEnemyTestToBase();
+            logInfo("Debug: enemy test exited to base.");
+            return true;
+        }
         returnToBaseFromNormalStage(false, false);
         logInfo("Debug: returned to base.");
+        return true;
+    }
+
+    if (normalized == "game enemy-test") {
+        enterEnemyTestMode();
+        logInfo("Debug: enemy test mode started.");
         return true;
     }
 
@@ -8735,6 +9188,12 @@ void Game::updateScreenMode(
         updateBaseScreen(input, ui, dt);
         break;
     case ScreenMode::Playing:
+        if (enemyTestActive_) {
+            updateEnemyTestUi(input, ui);
+            if (mode_ != ScreenMode::Playing || (enemyTestUiVisible_ && input.pausePressed())) {
+                return;
+            }
+        }
         if (input.pausePressed()) {
             mode_ = ScreenMode::PauseMenu;
             pauseReturnMode_ = ScreenMode::Playing;
@@ -8750,7 +9209,16 @@ void Game::updateScreenMode(
         if (input.activeRingDelta() != 0) {
             spellRing_.switchActiveRing(input.activeRingDelta());
         }
-        inventory_.updateShortcuts(input, player_, spellRing_, effectDispatcher_, discoveryEvents, &encyclopedia_);
+        inventory_.updateShortcuts(
+            input,
+            ui,
+            player_,
+            spellRing_,
+            effectDispatcher_,
+            camera_.width(),
+            camera_.height(),
+            discoveryEvents,
+            &encyclopedia_);
         break;
     case ScreenMode::PauseMenu:
         updatePauseMenu(input, ui);
@@ -8804,6 +9272,9 @@ std::string Game::currentMapDisplayName() const
 {
     if (basePresentationActive()) {
         return baseAreaName(baseArea_);
+    }
+    if (enemyTestActive_) {
+        return "敵テスト";
     }
     if (!currentStageDefinition_.name.empty()) {
         return currentStageDefinition_.name;
@@ -8871,6 +9342,48 @@ void Game::renderTopInfoBar(Renderer& renderer) const
         renderer.drawText({x, textY}, materialTexts[i], {232, 236, 244, 255}, textScale);
         x += materialTextSizes[i].x;
     }
+}
+
+void Game::renderDungeonStatusHud(Renderer& renderer) const
+{
+    renderer.setScreenSpace();
+
+    const float screenWidth = static_cast<float>(camera_.width());
+    const float screenHeight = static_cast<float>(camera_.height());
+    const UiRect panel{{
+        std::max(8.0f, screenWidth - DungeonStatusHudRightMargin - DungeonStatusHudWidth),
+        std::max(TopInfoBarY + TopInfoBarHeight + 8.0f, screenHeight - DungeonStatusHudBottomMargin - DungeonStatusHudHeight),
+    }, {DungeonStatusHudWidth, DungeonStatusHudHeight}};
+
+    drawUiSubPanel(renderer, panel);
+
+    const Vec2 content = panel.pos + Vec2{DungeonStatusHudPadding, DungeonStatusHudPadding};
+    constexpr int TextScale = 2;
+    char buffer[64];
+
+    renderer.drawText(content, "STATUS", {246, 246, 252, 255}, TextScale);
+
+    const int hpMax = std::max(1, player_.maxHp);
+    const int hp = std::clamp(player_.hp, 0, hpMax);
+    std::snprintf(buffer, sizeof(buffer), "HP %02d/%02d", hp, hpMax);
+    renderer.drawText(content + Vec2{0.0f, 28.0f}, buffer, {255, 232, 232, 255}, TextScale);
+
+    const float barWidth = panel.size.x - DungeonStatusHudPadding * 2.0f;
+    const Vec2 hpBarPos = content + Vec2{0.0f, 52.0f};
+    renderer.fillRect(hpBarPos, {barWidth, DungeonStatusHudBarHeight}, {42, 18, 24, 230});
+    renderer.fillRect(
+        hpBarPos,
+        {barWidth * (static_cast<float>(hp) / static_cast<float>(hpMax)), DungeonStatusHudBarHeight},
+        {224, 74, 84, 255});
+    renderer.drawRect(hpBarPos, {barWidth, DungeonStatusHudBarHeight}, {255, 220, 224, 180});
+
+    std::snprintf(buffer, sizeof(buffer), "Lv %02d", std::max(1, player_.level));
+    renderer.drawText(content + Vec2{0.0f, 70.0f}, buffer, {232, 236, 244, 255}, TextScale);
+
+    const int xpToNext = std::max(1, player_.xpToNext);
+    const int xp = std::clamp(player_.xp, 0, xpToNext);
+    std::snprintf(buffer, sizeof(buffer), "EXP %02d/%02d", xp, xpToNext);
+    renderer.drawText(content + Vec2{0.0f, 94.0f}, buffer, {222, 236, 255, 255}, TextScale);
 }
 
 void Game::renderBookshelfScreen(Renderer& renderer) const
@@ -9859,7 +10372,10 @@ void Game::renderWarpPoints(Renderer& renderer) const
     }
 }
 
-void Game::renderRewardNodes(Renderer& renderer, const std::vector<LightSource>& extraLights) const
+void Game::appendRewardNodeRenderEntries(
+    std::vector<DepthRenderEntry>& entries,
+    Renderer& renderer,
+    const std::vector<LightSource>& extraLights) const
 {
     const Color exposedReward{255, 222, 94, 255};
     const Color exposedMoney{246, 190, 64, 255};
@@ -9873,16 +10389,24 @@ void Game::renderRewardNodes(Renderer& renderer, const std::vector<LightSource>&
         if (!tileMap_.isLit(center, player_.position, extraLights)) {
             continue;
         }
-        if (node.visibility == PlacementVisibility::Exposed) {
-            renderer.fillCircle(center, 7.0f, exposedReward);
-            renderer.drawCircle(center, 12.0f, {255, 246, 180, 210});
-            renderer.drawLine(center + Vec2{-9.0f, 0.0f}, center + Vec2{9.0f, 0.0f}, {255, 250, 210, 220});
-            renderer.drawLine(center + Vec2{0.0f, -9.0f}, center + Vec2{0.0f, 9.0f}, {255, 250, 210, 220});
-        } else if (node.visibility == PlacementVisibility::BuriedVisible) {
-            renderer.drawLine(center + Vec2{-8.0f, 0.0f}, center + Vec2{8.0f, 0.0f}, sparkle);
-            renderer.drawLine(center + Vec2{0.0f, -8.0f}, center + Vec2{0.0f, 8.0f}, sparkle);
-            renderer.fillCircle(center, 2.5f, {255, 255, 210, 240});
+        if (node.visibility != PlacementVisibility::Exposed && node.visibility != PlacementVisibility::BuriedVisible) {
+            continue;
         }
+        entries.push_back(DepthRenderEntry{
+            center.y,
+            [&renderer, center, visibility = node.visibility, exposedReward, sparkle]() {
+                if (visibility == PlacementVisibility::Exposed) {
+                    renderer.fillCircle(center, 7.0f, exposedReward);
+                    renderer.drawCircle(center, 12.0f, {255, 246, 180, 210});
+                    renderer.drawLine(center + Vec2{-9.0f, 0.0f}, center + Vec2{9.0f, 0.0f}, {255, 250, 210, 220});
+                    renderer.drawLine(center + Vec2{0.0f, -9.0f}, center + Vec2{0.0f, 9.0f}, {255, 250, 210, 220});
+                } else if (visibility == PlacementVisibility::BuriedVisible) {
+                    renderer.drawLine(center + Vec2{-8.0f, 0.0f}, center + Vec2{8.0f, 0.0f}, sparkle);
+                    renderer.drawLine(center + Vec2{0.0f, -8.0f}, center + Vec2{0.0f, 8.0f}, sparkle);
+                    renderer.fillCircle(center, 2.5f, {255, 255, 210, 240});
+                }
+            },
+        });
     }
 
     for (const MoneyNode& node : moneyNodes_) {
@@ -9893,13 +10417,21 @@ void Game::renderRewardNodes(Renderer& renderer, const std::vector<LightSource>&
         if (!tileMap_.isLit(center, player_.position, extraLights)) {
             continue;
         }
-        if (node.visibility == PlacementVisibility::Exposed) {
-            renderer.fillCircle(center, 5.5f, exposedMoney);
-            renderer.drawCircle(center, 8.5f, {255, 230, 120, 210});
-        } else if (node.visibility == PlacementVisibility::BuriedVisible) {
-            renderer.drawLine(center + Vec2{-6.0f, -6.0f}, center + Vec2{6.0f, 6.0f}, sparkle);
-            renderer.drawLine(center + Vec2{-6.0f, 6.0f}, center + Vec2{6.0f, -6.0f}, sparkle);
+        if (node.visibility != PlacementVisibility::Exposed && node.visibility != PlacementVisibility::BuriedVisible) {
+            continue;
         }
+        entries.push_back(DepthRenderEntry{
+            center.y,
+            [&renderer, center, visibility = node.visibility, exposedMoney, sparkle]() {
+                if (visibility == PlacementVisibility::Exposed) {
+                    renderer.fillCircle(center, 5.5f, exposedMoney);
+                    renderer.drawCircle(center, 8.5f, {255, 230, 120, 210});
+                } else if (visibility == PlacementVisibility::BuriedVisible) {
+                    renderer.drawLine(center + Vec2{-6.0f, -6.0f}, center + Vec2{6.0f, 6.0f}, sparkle);
+                    renderer.drawLine(center + Vec2{-6.0f, 6.0f}, center + Vec2{6.0f, -6.0f}, sparkle);
+                }
+            },
+        });
     }
 
     for (const MoonFragmentNode& node : moonFragmentNodes_) {
@@ -9910,18 +10442,26 @@ void Game::renderRewardNodes(Renderer& renderer, const std::vector<LightSource>&
         if (!tileMap_.isLit(center, player_.position, extraLights)) {
             continue;
         }
-        const Color moonFill{232, 224, 166, static_cast<unsigned char>(node.visibility == PlacementVisibility::Exposed ? 255 : 165)};
-        const Color moonGlow{255, 250, 198, static_cast<unsigned char>(node.visibility == PlacementVisibility::Exposed ? 210 : 135)};
-        if (node.visibility == PlacementVisibility::Exposed) {
-            renderer.fillCircle(center, 5.5f, moonFill);
-            renderer.drawCircle(center, 9.0f, moonGlow);
-            renderer.drawLine(center + Vec2{-7.0f, 0.0f}, center + Vec2{7.0f, 0.0f}, moonGlow);
-        } else if (node.visibility == PlacementVisibility::BuriedVisible) {
-            renderer.drawCircle(center, 7.0f, moonGlow);
-            renderer.fillCircle(center, 2.0f, moonFill);
-            renderer.drawLine(center + Vec2{-5.0f, -5.0f}, center + Vec2{5.0f, 5.0f}, moonGlow);
-            renderer.drawLine(center + Vec2{-5.0f, 5.0f}, center + Vec2{5.0f, -5.0f}, moonGlow);
+        if (node.visibility != PlacementVisibility::Exposed && node.visibility != PlacementVisibility::BuriedVisible) {
+            continue;
         }
+        entries.push_back(DepthRenderEntry{
+            center.y,
+            [&renderer, center, visibility = node.visibility]() {
+                const Color moonFill{232, 224, 166, static_cast<unsigned char>(visibility == PlacementVisibility::Exposed ? 255 : 165)};
+                const Color moonGlow{255, 250, 198, static_cast<unsigned char>(visibility == PlacementVisibility::Exposed ? 210 : 135)};
+                if (visibility == PlacementVisibility::Exposed) {
+                    renderer.fillCircle(center, 5.5f, moonFill);
+                    renderer.drawCircle(center, 9.0f, moonGlow);
+                    renderer.drawLine(center + Vec2{-7.0f, 0.0f}, center + Vec2{7.0f, 0.0f}, moonGlow);
+                } else if (visibility == PlacementVisibility::BuriedVisible) {
+                    renderer.drawCircle(center, 7.0f, moonGlow);
+                    renderer.fillCircle(center, 2.0f, moonFill);
+                    renderer.drawLine(center + Vec2{-5.0f, -5.0f}, center + Vec2{5.0f, 5.0f}, moonGlow);
+                    renderer.drawLine(center + Vec2{-5.0f, 5.0f}, center + Vec2{5.0f, -5.0f}, moonGlow);
+                }
+            },
+        });
     }
 
     for (const CrateNode& node : crateNodes_) {
@@ -9932,10 +10472,15 @@ void Game::renderRewardNodes(Renderer& renderer, const std::vector<LightSource>&
         if (!tileMap_.isLit(center, player_.position, extraLights)) {
             continue;
         }
-        renderer.fillRect(center + Vec2{-9.0f, -8.0f}, {18.0f, 16.0f}, {132, 88, 48, 255});
-        renderer.drawRect(center + Vec2{-9.0f, -8.0f}, {18.0f, 16.0f}, {218, 160, 92, 255});
-        renderer.drawLine(center + Vec2{-7.0f, -6.0f}, center + Vec2{7.0f, 6.0f}, {92, 58, 34, 230});
-        renderer.drawLine(center + Vec2{7.0f, -6.0f}, center + Vec2{-7.0f, 6.0f}, {92, 58, 34, 230});
+        entries.push_back(DepthRenderEntry{
+            center.y,
+            [&renderer, center]() {
+                renderer.fillRect(center + Vec2{-9.0f, -8.0f}, {18.0f, 16.0f}, {132, 88, 48, 255});
+                renderer.drawRect(center + Vec2{-9.0f, -8.0f}, {18.0f, 16.0f}, {218, 160, 92, 255});
+                renderer.drawLine(center + Vec2{-7.0f, -6.0f}, center + Vec2{7.0f, 6.0f}, {92, 58, 34, 230});
+                renderer.drawLine(center + Vec2{7.0f, -6.0f}, center + Vec2{-7.0f, 6.0f}, {92, 58, 34, 230});
+            },
+        });
     }
 
     for (const ChestNode& node : chestNodes_) {
@@ -9947,25 +10492,47 @@ void Game::renderRewardNodes(Renderer& renderer, const std::vector<LightSource>&
             continue;
         }
         if (node.visibility == PlacementVisibility::BuriedVisible && !node.opened) {
-            const Color outline = chestOutlineColor(node.chestKind, false);
-            renderer.drawLine(center + Vec2{-9.0f, -4.0f}, center + Vec2{9.0f, -4.0f}, outline);
-            renderer.drawLine(center + Vec2{-9.0f, 4.0f}, center + Vec2{9.0f, 4.0f}, outline);
-            renderer.fillCircle(center, 2.5f, outline);
+            entries.push_back(DepthRenderEntry{
+                center.y,
+                [&renderer, center, chestKind = node.chestKind]() {
+                    const Color outline = chestOutlineColor(chestKind, false);
+                    renderer.drawLine(center + Vec2{-9.0f, -4.0f}, center + Vec2{9.0f, -4.0f}, outline);
+                    renderer.drawLine(center + Vec2{-9.0f, 4.0f}, center + Vec2{9.0f, 4.0f}, outline);
+                    renderer.fillCircle(center, 2.5f, outline);
+                },
+            });
             continue;
         }
         if (node.visibility != PlacementVisibility::Exposed && !node.opened) {
             continue;
         }
 
-        const Color fill = chestFillColor(node.chestKind, node.opened);
-        const Color outline = chestOutlineColor(node.chestKind, node.opened);
-        renderer.fillRect(center + Vec2{-10.0f, -6.0f}, {20.0f, 13.0f}, fill);
-        renderer.drawRect(center + Vec2{-10.0f, -6.0f}, {20.0f, 13.0f}, outline);
-        renderer.drawLine(center + Vec2{-8.0f, -2.0f}, center + Vec2{8.0f, -2.0f}, outline);
-        renderer.drawLine(center + Vec2{0.0f, -6.0f}, center + Vec2{0.0f, 7.0f}, outline);
-        if (node.chestKind == LootChestKind::SuperRare && !node.opened) {
-            renderer.drawCircle(center, 15.0f, {255, 242, 164, 170});
-        }
+        entries.push_back(DepthRenderEntry{
+            center.y,
+            [&renderer, center, chestKind = node.chestKind, opened = node.opened]() {
+                const Color fill = chestFillColor(chestKind, opened);
+                const Color outline = chestOutlineColor(chestKind, opened);
+                renderer.fillRect(center + Vec2{-10.0f, -6.0f}, {20.0f, 13.0f}, fill);
+                renderer.drawRect(center + Vec2{-10.0f, -6.0f}, {20.0f, 13.0f}, outline);
+                renderer.drawLine(center + Vec2{-8.0f, -2.0f}, center + Vec2{8.0f, -2.0f}, outline);
+                renderer.drawLine(center + Vec2{0.0f, -6.0f}, center + Vec2{0.0f, 7.0f}, outline);
+                if (chestKind == LootChestKind::SuperRare && !opened) {
+                    renderer.drawCircle(center, 15.0f, {255, 242, 164, 170});
+                }
+            },
+        });
+    }
+}
+
+void Game::renderRewardNodes(Renderer& renderer, const std::vector<LightSource>& extraLights) const
+{
+    std::vector<DepthRenderEntry> entries;
+    appendRewardNodeRenderEntries(entries, renderer, extraLights);
+    std::stable_sort(entries.begin(), entries.end(), [](const DepthRenderEntry& left, const DepthRenderEntry& right) {
+        return left.sortY < right.sortY;
+    });
+    for (const DepthRenderEntry& entry : entries) {
+        entry.draw();
     }
 }
 
@@ -10122,6 +10689,10 @@ void Game::update(const Input& input, const Time& time)
     UiContext ui(input);
     const bool wasPaused = gameProgressPaused();
     updateScreenMode(input, ui, time.deltaSeconds(), &effectDiscoveries);
+    for (const RingEquipFxRequest& request : inventory_.consumeRingEquipFxRequests()) {
+        spawnRingEquipFx(request);
+    }
+    updateRingEquipFx(time.deltaSeconds());
     refreshOrbitEffects();
     const bool paused = gameProgressPaused() || (wasPaused && mode_ == ScreenMode::Playing);
     if (paused && !effectDiscoveries.empty()) {
@@ -10144,10 +10715,12 @@ void Game::update(const Input& input, const Time& time)
             refreshOrbitEffects();
             return;
         }
-        updateWarpPoints();
-        updateExposedRewardNodes();
-        updateExposedMoonFragmentNodes();
-        updateExposedEnemyNodes();
+        if (!enemyTestActive_) {
+            updateWarpPoints();
+            updateExposedRewardNodes();
+            updateExposedMoonFragmentNodes();
+            updateExposedEnemyNodes();
+        }
         updateRingEffectDiscoveries(effectDiscoveries);
         if (input.capturePressed() && captureCooldown_ <= 0.0f) {
             const CaptureResult capture = enemies_.tryCapture(player_, spellRing_, inventory_);
@@ -10174,8 +10747,10 @@ void Game::update(const Input& input, const Time& time)
         } else if (previousSpellRingState == SpellRingState::Returning && spellRing_.state() == SpellRingState::Normal) {
             effects_.spawnReturn(spellRing_.center());
         }
-        updateChestNodes(input);
-        updateCrateNodes();
+        if (!enemyTestActive_) {
+            updateChestNodes(input);
+            updateCrateNodes();
+        }
 
         tileMap_.updateAround(player_.position, time.deltaSeconds(), balance_, dungeonLayout_);
         digging_.update(
@@ -10195,9 +10770,11 @@ void Game::update(const Input& input, const Time& time)
                 effects_.spawnTileBreak(tile);
             }
         }
-        revealRewardNodesFromOpenedTiles(digging_.openedTiles());
-        revealMoonFragmentNodesFromOpenedTiles(digging_.openedTiles());
-        revealChestNodesFromOpenedTiles(digging_.openedTiles());
+        if (!enemyTestActive_) {
+            revealRewardNodesFromOpenedTiles(digging_.openedTiles());
+            revealMoonFragmentNodesFromOpenedTiles(digging_.openedTiles());
+            revealChestNodesFromOpenedTiles(digging_.openedTiles());
+        }
         for (const DugTile& tile : digging_.dugTiles()) {
             effects_.spawnTileBreak(tile.center, tile.type);
             ++runStats_.dugTiles;
@@ -10253,9 +10830,11 @@ void Game::update(const Input& input, const Time& time)
             worldDrops_.spawnMaterialDrop(MaterialType::EnhancementOre, amount, tile.center, runStats_.elapsedSeconds);
         }
         runStats_.acquiredItems += worldDrops_.update(time.deltaSeconds(), player_, inventory_, money_, objectCatalog_, &effects_);
-        const std::vector<Vec2> randomEnemySpawnTiles = spawnHiddenEnemyNodesFromOpenedTiles(digging_.openedTiles());
-        enemies_.spawnFromDugTiles(randomEnemySpawnTiles, tileMap_, player_.position, balance_, enemyCatalog_);
-        updateBossSpawn();
+        if (!enemyTestActive_) {
+            const std::vector<Vec2> randomEnemySpawnTiles = spawnHiddenEnemyNodesFromOpenedTiles(digging_.openedTiles());
+            enemies_.spawnFromDugTiles(randomEnemySpawnTiles, tileMap_, player_.position, balance_, enemyCatalog_);
+            updateBossSpawn();
+        }
 
         enemies_.update(
             player_,
@@ -10690,9 +11269,14 @@ void Game::render(Renderer& renderer, const Time& time)
         }
     }
     tileMap_.render(renderer, camera_, player_.position, itemLights);
-    renderRewardNodes(renderer, itemLights);
-    worldDrops_.render(renderer, tileMap_, objectCatalog_, player_.position, itemLights);
-    renderWarpPoints(renderer);
+    std::vector<DepthRenderEntry> worldDepthEntries;
+    if (!enemyTestActive_) {
+        appendRewardNodeRenderEntries(worldDepthEntries, renderer, itemLights);
+    }
+    worldDrops_.appendRenderEntries(worldDepthEntries, renderer, tileMap_, objectCatalog_, player_.position, itemLights);
+    if (!enemyTestActive_) {
+        renderWarpPoints(renderer);
+    }
 
     const bool ringCenterVisible = tileMap_.isLit(spellRing_.center(), player_.position, itemLights);
     if (ringCenterVisible) {
@@ -10776,93 +11360,116 @@ void Game::render(Renderer& renderer, const Time& time)
 
     const Vec2 playerFootAnchor = playerSpriteFootAnchor(player_.position);
     renderer.drawActorShadow(playerFootAnchor, PlayerSpriteDrawSize);
+    enemies_.renderShadows(renderer, tileMap_, player_.position, itemLights);
     renderPlayerFootstepDust(renderer);
-    if (renderer.hasPlayerSheet()) {
-        renderer.drawPlayerSprite(
-            player_.spriteFrameIndex(),
-            playerFootAnchor,
-            PlayerSpriteDrawSize,
-            player_.facing.x > 0.0f,
-            {255, 255, 255, 255},
-            {PlayerSpriteAnchorX, PlayerSpriteAnchorY});
-    } else {
-        renderer.fillCircle(player_.position, balance_.playerRadius, {118, 72, 168, 255});
-        renderer.drawLine(player_.position, player_.position + player_.facing * 22.0f, {235, 210, 255, 255});
-    }
-
-    for (const SpellRingItem* itemPtr : runtimeItems) {
-        if (itemPtr == nullptr || !tileMap_.isLit(itemPtr->worldPosition, player_.position, itemLights)) {
-            continue;
-        }
-        const SpellRingItem& item = *itemPtr;
-        const int ringIndex = std::clamp(item.ringIndex, 0, SpellRingCount - 1);
-        const RingShape ringShape = spellRing_.ringShapeForIndex(ringIndex);
-        const int ringItemCount = static_cast<int>(spellRing_.itemsForRing(ringIndex).size());
-        const float cometVisualScale = ringShape == RingShape::Comet
-            ? std::clamp(1.0f - std::max(0, ringItemCount - 10) * 0.014f, 0.76f, 1.0f)
-            : 1.0f;
-        const Vec2 drawPosition = item.worldPosition + ringItemBobOffset(item, time.totalSeconds());
-        renderer.drawActorShadow(item.worldPosition, ringItemShadowVisualSize(item) * cometVisualScale);
-        const ItemData* object = objectForRingItem(objectCatalog_, item);
-        if (item.type == SpellRingItemType::Shovel) {
-            if (renderer.hasIconSheet()) {
-                const float iconSize = IconDrawSize * cometVisualScale;
-                renderer.drawIcon(ShovelIconIndex, drawPosition - Vec2{iconSize * 0.5f, iconSize * 0.5f}, {iconSize, iconSize});
+    worldDepthEntries.push_back(DepthRenderEntry{
+        player_.position.y,
+        [&]() {
+            if (renderer.hasPlayerSheet()) {
+                renderer.drawPlayerSprite(
+                    player_.spriteFrameIndex(),
+                    playerFootAnchor,
+                    PlayerSpriteDrawSize,
+                    player_.facing.x > 0.0f,
+                    {255, 255, 255, 255},
+                    {PlayerSpriteAnchorX, PlayerSpriteAnchorY});
             } else {
-                const bool drewImage = object != nullptr &&
-                    drawObjectImage(
-                        renderer,
-                        *object,
-                        drawPosition,
-                        {RingObjectImageMaxSize * cometVisualScale, RingObjectImageMaxSize * cometVisualScale});
-                if (!drewImage) {
-                    renderer.fillCircle(drawPosition, item.hitRadius * cometVisualScale, {178, 184, 190, 255});
-                    const Vec2 outward = normalize(item.worldPosition - spellRing_.center());
-                    renderer.drawLine(drawPosition, drawPosition + outward * (15.0f * cometVisualScale), {90, 96, 102, 255});
+                renderer.fillCircle(player_.position, balance_.playerRadius, {118, 72, 168, 255});
+                renderer.drawLine(player_.position, player_.position + player_.facing * 22.0f, {235, 210, 255, 255});
+            }
+
+            for (const SpellRingItem* itemPtr : runtimeItems) {
+                if (itemPtr == nullptr || !tileMap_.isLit(itemPtr->worldPosition, player_.position, itemLights)) {
+                    continue;
+                }
+                const SpellRingItem& item = *itemPtr;
+                const int ringIndex = std::clamp(item.ringIndex, 0, SpellRingCount - 1);
+                const RingShape ringShape = spellRing_.ringShapeForIndex(ringIndex);
+                const int ringItemCount = static_cast<int>(spellRing_.itemsForRing(ringIndex).size());
+                const float cometVisualScale = ringShape == RingShape::Comet
+                    ? std::clamp(1.0f - std::max(0, ringItemCount - 10) * 0.014f, 0.76f, 1.0f)
+                    : 1.0f;
+                const Vec2 drawPosition = item.worldPosition + ringItemBobOffset(item, time.totalSeconds());
+                renderer.drawActorShadow(item.worldPosition, ringItemShadowVisualSize(item) * cometVisualScale);
+                const ItemData* object = objectForRingItem(objectCatalog_, item);
+                if (item.type == SpellRingItemType::Shovel) {
+                    if (renderer.hasIconSheet()) {
+                        const float iconSize = IconDrawSize * cometVisualScale;
+                        renderer.drawIcon(ShovelIconIndex, drawPosition - Vec2{iconSize * 0.5f, iconSize * 0.5f}, {iconSize, iconSize});
+                    } else {
+                        const bool drewImage = object != nullptr &&
+                            drawObjectImage(
+                                renderer,
+                                *object,
+                                drawPosition,
+                                {RingObjectImageMaxSize * cometVisualScale, RingObjectImageMaxSize * cometVisualScale});
+                        if (!drewImage) {
+                            renderer.fillCircle(drawPosition, item.hitRadius * cometVisualScale, {178, 184, 190, 255});
+                            const Vec2 outward = normalize(item.worldPosition - spellRing_.center());
+                            renderer.drawLine(drawPosition, drawPosition + outward * (15.0f * cometVisualScale), {90, 96, 102, 255});
+                        }
+                    }
+                } else if (item.type == SpellRingItemType::Torch) {
+                    if (renderer.hasIconSheet()) {
+                        const float iconSize = IconDrawSize * cometVisualScale;
+                        renderer.drawIcon(TorchIconIndex, drawPosition - Vec2{iconSize * 0.5f, iconSize * 0.5f}, {iconSize, iconSize});
+                    } else {
+                        const bool drewImage = object != nullptr &&
+                            drawObjectImage(
+                                renderer,
+                                *object,
+                                drawPosition,
+                                {RingObjectImageMaxSize * cometVisualScale, RingObjectImageMaxSize * cometVisualScale});
+                        if (!drewImage) {
+                            renderer.fillCircle(drawPosition, item.hitRadius * cometVisualScale, {242, 122, 25, 255});
+                            renderer.fillCircle(drawPosition + Vec2{2.0f, -2.0f} * cometVisualScale, 4.0f * cometVisualScale, {255, 238, 98, 255});
+                        }
+                    }
+                } else {
+                    const bool drewImage = object != nullptr &&
+                        drawObjectImage(
+                            renderer,
+                            *object,
+                            drawPosition,
+                            {RingObjectImageMaxSize * cometVisualScale, RingObjectImageMaxSize * cometVisualScale});
+                    if (!drewImage) {
+                        renderer.fillCircle(drawPosition, item.hitRadius * cometVisualScale, {96, 122, 210, 255});
+                        renderer.drawCircle(drawPosition, item.hitRadius * cometVisualScale + 3.0f, {160, 202, 255, 255});
+                    }
+                }
+                if (item.hiddenDetectionRadius > 0.0f) {
+                    renderer.drawCircle(drawPosition, item.hiddenDetectionRadius, {126, 208, 255, 90});
+                }
+                if (item.treasureDetectionRadius > 0.0f) {
+                    renderer.drawCircle(drawPosition, item.treasureDetectionRadius, {255, 220, 92, 90});
                 }
             }
-        } else if (item.type == SpellRingItemType::Torch) {
-            if (renderer.hasIconSheet()) {
-                const float iconSize = IconDrawSize * cometVisualScale;
-                renderer.drawIcon(TorchIconIndex, drawPosition - Vec2{iconSize * 0.5f, iconSize * 0.5f}, {iconSize, iconSize});
-            } else {
-                const bool drewImage = object != nullptr &&
-                    drawObjectImage(
-                        renderer,
-                        *object,
-                        drawPosition,
-                        {RingObjectImageMaxSize * cometVisualScale, RingObjectImageMaxSize * cometVisualScale});
-                if (!drewImage) {
-                    renderer.fillCircle(drawPosition, item.hitRadius * cometVisualScale, {242, 122, 25, 255});
-                    renderer.fillCircle(drawPosition + Vec2{2.0f, -2.0f} * cometVisualScale, 4.0f * cometVisualScale, {255, 238, 98, 255});
-                }
-            }
-        } else {
-            const bool drewImage = object != nullptr &&
-                drawObjectImage(
-                    renderer,
-                    *object,
-                    drawPosition,
-                    {RingObjectImageMaxSize * cometVisualScale, RingObjectImageMaxSize * cometVisualScale});
-            if (!drewImage) {
-                renderer.fillCircle(drawPosition, item.hitRadius * cometVisualScale, {96, 122, 210, 255});
-                renderer.drawCircle(drawPosition, item.hitRadius * cometVisualScale + 3.0f, {160, 202, 255, 255});
-            }
-        }
-        if (item.hiddenDetectionRadius > 0.0f) {
-            renderer.drawCircle(drawPosition, item.hiddenDetectionRadius, {126, 208, 255, 90});
-        }
-        if (item.treasureDetectionRadius > 0.0f) {
-            renderer.drawCircle(drawPosition, item.treasureDetectionRadius, {255, 220, 92, 90});
-        }
+        },
+    });
+    enemies_.appendRenderEntries(worldDepthEntries, renderer, tileMap_, player_.position, itemLights);
+    std::stable_sort(worldDepthEntries.begin(), worldDepthEntries.end(), [](const DepthRenderEntry& left, const DepthRenderEntry& right) {
+        return left.sortY < right.sortY;
+    });
+    for (const DepthRenderEntry& entry : worldDepthEntries) {
+        entry.draw();
     }
 
-    projectiles_.render(renderer, tileMap_, player_.position, itemLights);
-    enemies_.render(renderer, tileMap_, player_.position, itemLights);
+    std::vector<DepthRenderEntry> projectileDepthEntries;
+    projectiles_.appendRenderEntries(projectileDepthEntries, renderer, tileMap_, player_.position, itemLights);
+    std::stable_sort(projectileDepthEntries.begin(), projectileDepthEntries.end(), [](const DepthRenderEntry& left, const DepthRenderEntry& right) {
+        return left.sortY < right.sortY;
+    });
+    for (const DepthRenderEntry& entry : projectileDepthEntries) {
+        entry.draw();
+    }
     effects_.render(renderer);
+    tileMap_.renderDarknessOverlay(renderer, camera_, player_.position, itemLights);
 
     renderer.setScreenSpace();
     renderTopInfoBar(renderer);
+    if (mode_ == ScreenMode::Playing) {
+        renderDungeonStatusHud(renderer);
+    }
     if (reloadNoticeTimer_ > 0.0f) {
         renderer.fillRect({18.0f, 170.0f}, {430.0f, 26.0f}, {0, 0, 0, 180});
         renderer.drawText({26.0f, 176.0f}, reloadNotice_, {255, 235, 150, 255}, 2);
@@ -10875,11 +11482,13 @@ void Game::render(Renderer& renderer, const Time& time)
     inventory_.render(renderer, player_, spellRing_, objectCatalog_, encyclopedia_);
     if (mode_ == ScreenMode::Playing) {
         inventory_.renderShortcutHud(renderer, spellRing_, camera_.width(), camera_.height());
+        renderRingEquipFx(renderer);
     }
     renderPauseMenu(renderer);
     renderRingScreen(renderer, time.totalSeconds());
     renderGameOverScreen(renderer);
     renderStageClearScreen(renderer);
+    renderEnemyTestUi(renderer);
     if (mode_ == ScreenMode::Playing || mode_ == ScreenMode::Inventory || mode_ == ScreenMode::PauseMenu || mode_ == ScreenMode::Ring) {
         encyclopedia_.renderPopups(renderer, camera_);
     }

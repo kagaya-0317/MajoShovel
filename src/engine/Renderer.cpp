@@ -1,4 +1,4 @@
-#include "engine/Renderer.hpp"
+﻿#include "engine/Renderer.hpp"
 
 #include <algorithm>
 #include <array>
@@ -36,6 +36,16 @@ constexpr float UiLineRightLineX = 275.0f;
 constexpr float UiLineRightLineWidth = 151.0f;
 constexpr float UiLineRightCapX = 426.0f;
 constexpr float UiLineRightCapWidth = 37.0f;
+
+SDL_FColor vertexColor(Color color)
+{
+    return {
+        static_cast<float>(color.r) / 255.0f,
+        static_cast<float>(color.g) / 255.0f,
+        static_cast<float>(color.b) / 255.0f,
+        static_cast<float>(color.a) / 255.0f,
+    };
+}
 
 #ifdef _WIN32
 class GdiPlusSession {
@@ -365,6 +375,100 @@ void Renderer::drawCircle(Vec2 center, float radius, Color color)
     }
 }
 
+void Renderer::fillSoftCircle(Vec2 center, float radius, Color color)
+{
+    if (radius <= 0.0f || color.a == 0) {
+        return;
+    }
+
+    const Vec2 c = transform(center);
+    const float r = radius * screenScale();
+    if (r <= 0.0f) {
+        return;
+    }
+
+    constexpr int Segments = 48;
+    Color transformed = transformColor(color);
+    Color transparent = transformed;
+    transparent.a = 0;
+    const float innerR = std::max(0.0f, r - 1.25f);
+
+    std::vector<SDL_Vertex> vertices;
+    std::vector<int> indices;
+    vertices.reserve(1 + Segments * 2);
+    indices.reserve(Segments * 6);
+    vertices.push_back(SDL_Vertex{{c.x, c.y}, vertexColor(transformed), {0.0f, 0.0f}});
+    for (int i = 0; i < Segments; ++i) {
+        const float a = (static_cast<float>(i) / static_cast<float>(Segments)) * Pi * 2.0f;
+        const Vec2 dir{std::cos(a), std::sin(a)};
+        vertices.push_back(SDL_Vertex{{c.x + dir.x * innerR, c.y + dir.y * innerR}, vertexColor(transformed), {0.0f, 0.0f}});
+        vertices.push_back(SDL_Vertex{{c.x + dir.x * r, c.y + dir.y * r}, vertexColor(transparent), {0.0f, 0.0f}});
+    }
+    for (int i = 0; i < Segments; ++i) {
+        const int innerA = 1 + i * 2;
+        const int outerA = innerA + 1;
+        const int innerB = 1 + ((i + 1) % Segments) * 2;
+        const int outerB = innerB + 1;
+        indices.push_back(0);
+        indices.push_back(innerA);
+        indices.push_back(innerB);
+        indices.push_back(innerA);
+        indices.push_back(outerA);
+        indices.push_back(outerB);
+        indices.push_back(innerA);
+        indices.push_back(outerB);
+        indices.push_back(innerB);
+    }
+    SDL_RenderGeometry(renderer_, nullptr, vertices.data(), static_cast<int>(vertices.size()), indices.data(), static_cast<int>(indices.size()));
+}
+
+void Renderer::drawSoftRing(Vec2 center, float radius, float width, Color color)
+{
+    if (radius <= 0.0f || width <= 0.0f || color.a == 0) {
+        return;
+    }
+
+    const Vec2 c = transform(center);
+    const float scale = screenScale();
+    const float midR = radius * scale;
+    const float halfW = std::max(0.5f, width * scale * 0.5f);
+    const float innerR = std::max(0.0f, midR - halfW);
+    const float outerR = midR + halfW;
+    const float coreInnerR = std::max(0.0f, midR - halfW * 0.42f);
+    const float coreOuterR = midR + halfW * 0.42f;
+
+    constexpr int Segments = 64;
+    Color transformed = transformColor(color);
+    Color transparent = transformed;
+    transparent.a = 0;
+
+    std::vector<SDL_Vertex> vertices;
+    std::vector<int> indices;
+    vertices.reserve(Segments * 4);
+    indices.reserve(Segments * 18);
+    for (int i = 0; i < Segments; ++i) {
+        const float a = (static_cast<float>(i) / static_cast<float>(Segments)) * Pi * 2.0f;
+        const Vec2 dir{std::cos(a), std::sin(a)};
+        vertices.push_back(SDL_Vertex{{c.x + dir.x * innerR, c.y + dir.y * innerR}, vertexColor(transparent), {0.0f, 0.0f}});
+        vertices.push_back(SDL_Vertex{{c.x + dir.x * coreInnerR, c.y + dir.y * coreInnerR}, vertexColor(transformed), {0.0f, 0.0f}});
+        vertices.push_back(SDL_Vertex{{c.x + dir.x * coreOuterR, c.y + dir.y * coreOuterR}, vertexColor(transformed), {0.0f, 0.0f}});
+        vertices.push_back(SDL_Vertex{{c.x + dir.x * outerR, c.y + dir.y * outerR}, vertexColor(transparent), {0.0f, 0.0f}});
+    }
+    for (int i = 0; i < Segments; ++i) {
+        const int a = i * 4;
+        const int b = ((i + 1) % Segments) * 4;
+        for (int lane = 0; lane < 3; ++lane) {
+            indices.push_back(a + lane);
+            indices.push_back(b + lane);
+            indices.push_back(b + lane + 1);
+            indices.push_back(a + lane);
+            indices.push_back(b + lane + 1);
+            indices.push_back(a + lane + 1);
+        }
+    }
+    SDL_RenderGeometry(renderer_, nullptr, vertices.data(), static_cast<int>(vertices.size()), indices.data(), static_cast<int>(indices.size()));
+}
+
 void Renderer::fillEllipse(Vec2 center, Vec2 radius, Color color)
 {
     if (radius.x <= 0.0f || radius.y <= 0.0f) {
@@ -398,6 +502,65 @@ void Renderer::drawLine(Vec2 a, Vec2 b, Color color)
     const Vec2 bb = transform(b);
     setColor(color);
     SDL_RenderLine(renderer_, aa.x, aa.y, bb.x, bb.y);
+}
+
+void Renderer::drawSoftLine(Vec2 a, Vec2 b, float width, Color color)
+{
+    if (width <= 0.0f || color.a == 0 || distanceSquared(a, b) <= 0.0001f) {
+        return;
+    }
+
+    const Vec2 aa = transform(a);
+    const Vec2 bb = transform(b);
+    const Vec2 delta = bb - aa;
+    const float len = length(delta);
+    if (len <= 0.001f) {
+        return;
+    }
+
+    const Vec2 normal{-delta.y / len, delta.x / len};
+    const float half = std::max(0.5f, width * screenScale() * 0.5f);
+    const float coreHalf = std::max(0.25f, half * 0.42f);
+    Color transformed = transformColor(color);
+    Color transparent = transformed;
+    transparent.a = 0;
+
+    const std::array<float, 4> offsets{-half, -coreHalf, coreHalf, half};
+    const std::array<Color, 4> colors{transparent, transformed, transformed, transparent};
+    std::array<SDL_Vertex, 8> vertices{};
+    for (int side = 0; side < 2; ++side) {
+        const Vec2 base = side == 0 ? aa : bb;
+        for (int i = 0; i < 4; ++i) {
+            const Vec2 p = base + normal * offsets[static_cast<std::size_t>(i)];
+            vertices[static_cast<std::size_t>(side * 4 + i)] = SDL_Vertex{
+                {p.x, p.y},
+                vertexColor(colors[static_cast<std::size_t>(i)]),
+                {0.0f, 0.0f},
+            };
+        }
+    }
+
+    std::array<int, 18> indices{};
+    int cursor = 0;
+    for (int lane = 0; lane < 3; ++lane) {
+        indices[static_cast<std::size_t>(cursor++)] = lane;
+        indices[static_cast<std::size_t>(cursor++)] = 4 + lane;
+        indices[static_cast<std::size_t>(cursor++)] = 4 + lane + 1;
+        indices[static_cast<std::size_t>(cursor++)] = lane;
+        indices[static_cast<std::size_t>(cursor++)] = 4 + lane + 1;
+        indices[static_cast<std::size_t>(cursor++)] = lane + 1;
+    }
+    SDL_RenderGeometry(renderer_, nullptr, vertices.data(), static_cast<int>(vertices.size()), indices.data(), static_cast<int>(indices.size()));
+}
+
+void Renderer::drawSoftPolyline(const std::vector<Vec2>& points, float width, Color color)
+{
+    if (points.size() < 2) {
+        return;
+    }
+    for (std::size_t i = 1; i < points.size(); ++i) {
+        drawSoftLine(points[i - 1], points[i], width, color);
+    }
 }
 
 static std::array<unsigned char, 7> glyphRows(char c)
@@ -1397,6 +1560,11 @@ ImageHandle Renderer::acquireImage(std::string_view path, TextureFilter filter)
 
 bool Renderer::drawImage(ImageHandle handle, Vec2 center, Vec2 size, const ImageDrawOptions& options)
 {
+    return drawImageRegion(handle, {}, center, size, options);
+}
+
+bool Renderer::drawImageRegion(ImageHandle handle, SDL_FRect sourceRect, Vec2 center, Vec2 size, const ImageDrawOptions& options)
+{
     if (size.x <= 0.0f || size.y <= 0.0f) {
         return false;
     }
@@ -1419,6 +1587,7 @@ bool Renderer::drawImage(ImageHandle handle, Vec2 center, Vec2 size, const Image
     }
     const Color tint = transformColor(options.tint);
     const SDL_FlipMode flipMode = imageFlipMode(options.flipX, options.flipY);
+    const SDL_FRect* source = sourceRect.w > 0.0f && sourceRect.h > 0.0f ? &sourceRect : nullptr;
 
     if (options.outlineEnabled && options.outlinePx > 0) {
         Color outline = transformColor(options.outlineColor);
@@ -1444,7 +1613,7 @@ bool Renderer::drawImage(ImageHandle handle, Vec2 center, Vec2 size, const Image
                     SDL_RenderTextureRotated(
                         renderer_,
                         outlineTexture,
-                        nullptr,
+                        source,
                         &outlineDst,
                         static_cast<double>(options.rotationDegrees),
                         nullptr,
@@ -1459,7 +1628,7 @@ bool Renderer::drawImage(ImageHandle handle, Vec2 center, Vec2 size, const Image
     SDL_RenderTextureRotated(
         renderer_,
         entry->texture.texture,
-        nullptr,
+        source,
         &dst,
         static_cast<double>(options.rotationDegrees),
         nullptr,

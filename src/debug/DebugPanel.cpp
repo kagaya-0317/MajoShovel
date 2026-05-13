@@ -1,4 +1,4 @@
-#include "debug/DebugPanel.hpp"
+﻿#include "debug/DebugPanel.hpp"
 
 namespace majo {
 
@@ -33,6 +33,7 @@ DebugConsoleLayout makeDefaultDebugConsoleLayout()
                     {
                         {DebugControlKind::Button, "hp_full", "HP最大", "game hp full"},
                         {DebugControlKind::Button, "hp_one", "HP1", "game hp set 1"},
+                        {DebugControlKind::Button, "enemy_test", "敵テスト", "game enemy-test"},
                     },
                 },
             },

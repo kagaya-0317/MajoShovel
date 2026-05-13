@@ -4,6 +4,7 @@
 #include "data/ObjectCatalog.hpp"
 #include "engine/ObjectPool.hpp"
 #include "engine/Renderer.hpp"
+#include "game/DepthRender.hpp"
 #include "game/EffectDispatcher.hpp"
 #include "game/Player.hpp"
 #include "game/SpellRingSystem.hpp"
@@ -65,6 +66,12 @@ public:
         std::vector<EffectDiscoveryEvent>* discoveryEvents = nullptr,
         const EncyclopediaSystem* encyclopedia = nullptr);
     void render(Renderer& renderer, const TileMap& map, Vec2 playerLight, const std::vector<LightSource>& extraLights) const;
+    void appendRenderEntries(
+        std::vector<DepthRenderEntry>& entries,
+        Renderer& renderer,
+        const TileMap& map,
+        Vec2 playerLight,
+        const std::vector<LightSource>& extraLights) const;
     void clear();
     int activeCount() const { return projectiles_.activeCount(); }
     int activeCount(ProjectileOwnerType ownerType) const;

@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 #include "data/ObjectCatalog.hpp"
 #include "engine/Math.hpp"
@@ -19,6 +19,9 @@ struct ObjectImageDrawOptions {
     bool outlineEnabled = true;
     Color outlineColor{0, 0, 0, 255};
     int outlinePx = 1;
+    bool selectedOutlineEnabled = false;
+    Color selectedOutlineColor{255, 230, 150, 255};
+    int selectedOutlinePx = 6;
     float rotationDegrees = 0.0f;
     bool flipX = false;
     bool flipY = false;

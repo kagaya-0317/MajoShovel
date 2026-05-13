@@ -6,6 +6,7 @@
 #include "data/GameBalance.hpp"
 #include "data/ObjectCatalog.hpp"
 #include "data/RuntimeBalance.hpp"
+#include "game/DepthRender.hpp"
 #include "game/EffectDispatcher.hpp"
 #include "game/Enemy.hpp"
 #include "game/InventorySystem.hpp"
@@ -62,6 +63,7 @@ class EnemySystem {
 public:
     void spawnFromDugTiles(const std::vector<Vec2>& dugTiles, TileMap& map, Vec2 playerPosition, const RuntimeBalance& balance, const EnemyCatalog& enemyCatalog);
     bool spawnNodeEnemy(TileMap& map, Vec2 desiredPosition, Vec2 playerPosition, const RuntimeBalance& balance, const EnemyCatalog& enemyCatalog, bool allowNearPlayer, bool detectedOnSpawn = false);
+    bool spawnSpecificEnemy(TileMap& map, std::string_view enemyId, Vec2 desiredPosition, Vec2 playerPosition, const RuntimeBalance& balance, const EnemyCatalog& enemyCatalog, bool allowNearPlayer, bool detectedOnSpawn = false);
     bool spawnBoss(TileMap& map, Vec2 playerPosition, const RuntimeBalance& balance, const EnemyCatalog& enemyCatalog);
     bool spawnBossNear(TileMap& map, Vec2 desiredPosition, Vec2 playerPosition, const RuntimeBalance& balance, const EnemyCatalog& enemyCatalog);
     void update(
@@ -81,6 +83,13 @@ public:
         std::vector<EffectDiscoveryEvent>* discoveryEvents = nullptr,
         const EncyclopediaSystem* encyclopedia = nullptr);
     void render(Renderer& renderer, const TileMap& map, Vec2 playerLight, const std::vector<LightSource>& extraLights);
+    void renderShadows(Renderer& renderer, const TileMap& map, Vec2 playerLight, const std::vector<LightSource>& extraLights) const;
+    void appendRenderEntries(
+        std::vector<DepthRenderEntry>& entries,
+        Renderer& renderer,
+        const TileMap& map,
+        Vec2 playerLight,
+        const std::vector<LightSource>& extraLights) const;
     void emitStatusParticles(EffectSystem& effects) const;
     int activeCount() const { return enemies_.activeCount(); }
     bool bossActive() const;
@@ -117,6 +126,7 @@ private:
     void forceDetectInSight(Enemy& enemy, Vec2 playerPosition, bool showIcon);
     const EnemyDefinition* chooseEnemyDefinition(const EnemyCatalog& enemyCatalog);
     void applyDefinition(Enemy& enemy, const EnemyDefinition* definition, const RuntimeBalance& balance, const EnemyCatalog& enemyCatalog);
+    bool spawnDefinitionAt(Vec2 position, const EnemyDefinition* definition, const RuntimeBalance& balance, const EnemyCatalog& enemyCatalog, bool detectedOnSpawn = false, Vec2 detectedTarget = {});
     void spawnAt(Vec2 position, const RuntimeBalance& balance, const EnemyCatalog& enemyCatalog, bool detectedOnSpawn = false, Vec2 detectedTarget = {});
     bool spawnBossAt(Vec2 position, const RuntimeBalance& balance, const EnemyCatalog& enemyCatalog, bool detectedOnSpawn = false, Vec2 detectedTarget = {});
     bool findSpawnPosition(TileMap& map, Vec2 desiredPosition, Vec2 playerPosition, const RuntimeBalance& balance, Vec2& outPosition) const;

@@ -1,4 +1,4 @@
-#include "game/WorldDropSystem.hpp"
+﻿#include "game/WorldDropSystem.hpp"
 
 #include "data/GameBalance.hpp"
 #include "engine/Log.hpp"
@@ -126,6 +126,44 @@ bool isTreasureDrop(const WorldDropItem& drop, const ObjectCatalog& catalog)
         return false;
     }
     return object->category == "\xE5\xAE\x9D" || hasObjectTag(*object, "treasure");
+}
+
+Color colorForDrop(const ObjectDefinition& object);
+Color colorForMaterial(MaterialType type);
+
+void drawWorldDrop(Renderer& renderer, const WorldDropItem& drop, const ObjectCatalog& catalog)
+{
+    const ItemData* object = drop.kind == WorldDropKind::Object ? catalog.registry.findById(drop.id) : nullptr;
+    const float bob = std::sin(drop.ageSeconds * 5.5f) * 2.5f;
+    const Vec2 center = drop.position + Vec2{0.0f, bob};
+    MaterialType materialType = MaterialType::Count;
+    const bool material = drop.kind == WorldDropKind::Material && materialTypeFromSaveName(drop.id, materialType);
+    Color color = {255, 80, 120, 255};
+    if (object != nullptr) {
+        color = colorForDrop(*object);
+    } else if (drop.kind == WorldDropKind::Money) {
+        color = {245, 206, 76, 255};
+    } else if (material) {
+        color = colorForMaterial(materialType);
+    }
+
+    bool drewObjectImage = false;
+    if (object != nullptr) {
+        drewObjectImage = drawObjectImage(renderer, *object, center, DropObjectImageMaxSize);
+    }
+
+    if (!drewObjectImage) {
+        renderer.fillCircle(center, DropVisualRadius, color);
+    }
+    renderer.drawCircle(center, DropVisualRadius + 3.0f, {255, 246, 190, 210});
+
+    if (object != nullptr) {
+        renderer.drawText(center + Vec2{-24.0f, -28.0f}, object->name, {245, 238, 210, 235}, 1);
+    } else if (drop.kind == WorldDropKind::Money) {
+        renderer.drawText(center + Vec2{-10.0f, -28.0f}, "G", {255, 245, 180, 235}, 1);
+    } else if (material) {
+        renderer.drawText(center + Vec2{-12.0f, -28.0f}, materialTypeSaveName(materialType), {235, 245, 245, 225}, 1);
+    }
 }
 
 bool isDropStealTarget(const WorldDropItem& drop, const ObjectCatalog& catalog, std::string_view targetFilter)
@@ -434,42 +472,35 @@ void WorldDropSystem::render(
     Vec2 playerLight,
     const std::vector<LightSource>& extraLights) const
 {
+    std::vector<DepthRenderEntry> entries;
+    appendRenderEntries(entries, renderer, tileMap, catalog, playerLight, extraLights);
+    std::stable_sort(entries.begin(), entries.end(), [](const DepthRenderEntry& left, const DepthRenderEntry& right) {
+        return left.sortY < right.sortY;
+    });
+    for (const DepthRenderEntry& entry : entries) {
+        entry.draw();
+    }
+}
+
+void WorldDropSystem::appendRenderEntries(
+    std::vector<DepthRenderEntry>& entries,
+    Renderer& renderer,
+    const TileMap& tileMap,
+    const ObjectCatalog& catalog,
+    Vec2 playerLight,
+    const std::vector<LightSource>& extraLights) const
+{
     for (const WorldDropItem& drop : drops_) {
         if (!tileMap.isLit(drop.position, playerLight, extraLights)) {
             continue;
         }
 
-        const ItemData* object = drop.kind == WorldDropKind::Object ? catalog.registry.findById(drop.id) : nullptr;
-        const float bob = std::sin(drop.ageSeconds * 5.5f) * 2.5f;
-        const Vec2 center = drop.position + Vec2{0.0f, bob};
-        MaterialType materialType = MaterialType::Count;
-        const bool material = drop.kind == WorldDropKind::Material && materialTypeFromSaveName(drop.id, materialType);
-        Color color = {255, 80, 120, 255};
-        if (object != nullptr) {
-            color = colorForDrop(*object);
-        } else if (drop.kind == WorldDropKind::Money) {
-            color = {245, 206, 76, 255};
-        } else if (material) {
-            color = colorForMaterial(materialType);
-        }
-
-        bool drewObjectImage = false;
-        if (object != nullptr) {
-            drewObjectImage = drawObjectImage(renderer, *object, center, DropObjectImageMaxSize);
-        }
-
-        if (!drewObjectImage) {
-            renderer.fillCircle(center, DropVisualRadius, color);
-        }
-        renderer.drawCircle(center, DropVisualRadius + 3.0f, {255, 246, 190, 210});
-
-        if (object != nullptr) {
-            renderer.drawText(center + Vec2{-24.0f, -28.0f}, object->name, {245, 238, 210, 235}, 1);
-        } else if (drop.kind == WorldDropKind::Money) {
-            renderer.drawText(center + Vec2{-10.0f, -28.0f}, "G", {255, 245, 180, 235}, 1);
-        } else if (material) {
-            renderer.drawText(center + Vec2{-12.0f, -28.0f}, materialTypeSaveName(materialType), {235, 245, 245, 225}, 1);
-        }
+        entries.push_back(DepthRenderEntry{
+            drop.position.y,
+            [&renderer, &catalog, &drop]() {
+                drawWorldDrop(renderer, drop, catalog);
+            },
+        });
     }
 }
 

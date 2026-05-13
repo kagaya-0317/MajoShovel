@@ -1,8 +1,9 @@
-#pragma once
+﻿#pragma once
 
 #include "data/ObjectCatalog.hpp"
 #include "engine/Math.hpp"
 #include "engine/Renderer.hpp"
+#include "game/DepthRender.hpp"
 #include "game/DiggingSystem.hpp"
 #include "game/ItemModel.hpp"
 #include "game/TileMap.hpp"
@@ -47,6 +48,13 @@ public:
     int pullMetalDrops(const ObjectCatalog& catalog, Vec2 center, float dt, float radius = 170.0f);
     int update(float dt, const Player& player, InventorySystem& inventory, int& money, const ObjectCatalog& catalog, EffectSystem* effects = nullptr);
     void render(
+        Renderer& renderer,
+        const TileMap& tileMap,
+        const ObjectCatalog& catalog,
+        Vec2 playerLight,
+        const std::vector<LightSource>& extraLights) const;
+    void appendRenderEntries(
+        std::vector<DepthRenderEntry>& entries,
         Renderer& renderer,
         const TileMap& tileMap,
         const ObjectCatalog& catalog,

@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 #include "engine/Math.hpp"
 #include "engine/Renderer.hpp"
@@ -46,6 +46,7 @@ class TileMap {
 public:
     void updateAround(Vec2 worldCenter, float dt, const RuntimeBalance& config, const DungeonLayout& dungeonLayout);
     void render(Renderer& renderer, const Camera& camera, Vec2 lightCenter, const std::vector<LightSource>& extraLights);
+    void renderDarknessOverlay(Renderer& renderer, const Camera& camera, Vec2 lightCenter, const std::vector<LightSource>& extraLights) const;
     std::vector<Vec2> damageCircle(Vec2 center, float radius, int damage);
     bool damageTile(int tx, int ty, int damage, Vec2& openedTileCenter, TileType* openedTileType = nullptr);
     bool isSolidAt(Vec2 world);
@@ -55,6 +56,7 @@ public:
     Vec2 tileCenter(int tx, int ty) const;
     int worldToTile(float value) const;
     bool isLit(Vec2 world, Vec2 playerLight, const std::vector<LightSource>& extraLights) const;
+    bool isRectLit(Vec2 center, Vec2 size, Vec2 playerLight, const std::vector<LightSource>& extraLights) const;
     TerrainDebugInfo terrainDebugAtWorld(Vec2 world) const;
     int activeChunkCount() const { return activeChunkCount_; }
     std::size_t generatedChunkCount() const { return chunks_.size(); }
@@ -71,6 +73,7 @@ private:
     DungeonLayout dungeonLayoutSnapshot_;
     TerrainDebugInfo terrainInfoForTile(int tx, int ty, const Tile* tile) const;
     Color tileColor(const Tile& tile) const;
+    bool isTileRectLit(Vec2 pos, Vec2 playerLight, const std::vector<LightSource>& extraLights) const;
     void drawTileLitByCircles(Renderer& renderer, Vec2 pos, Color color, Vec2 playerLight, const std::vector<LightSource>& extraLights) const;
 
     std::unordered_map<long long, Chunk> chunks_;

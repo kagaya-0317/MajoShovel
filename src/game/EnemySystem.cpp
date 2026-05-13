@@ -3,6 +3,7 @@
 #include "data/GameBalance.hpp"
 #include "engine/Log.hpp"
 #include "game/Collision.hpp"
+#include "game/EnemyImageRenderer.hpp"
 #include "game/EffectSystem.hpp"
 #include "game/WorldDropSystem.hpp"
 #include <algorithm>
@@ -63,10 +64,56 @@ constexpr float ItemSeekRadius = 240.0f;
 constexpr float DigActionInterval = 0.11f;
 constexpr float SwarmAlertRadius = 180.0f;
 constexpr float JumpLandingBuffSeconds = 0.24f;
+constexpr float JumpAttackDurationMin = 0.12f;
+constexpr float JumpAttackDurationMax = 0.65f;
+constexpr float JumpAttackDefaultDuration = 0.28f;
+constexpr float JumpAttackDefaultArcHeight = 24.0f;
+constexpr float JumpTargetMinDistance = 4.0f;
+constexpr float HoverChaseAltitude = 18.0f;
+constexpr float HoverKeepDistanceAltitude = 20.0f;
+constexpr float PhaseAltitude = 12.0f;
+constexpr float HoverBobAmplitude = 3.0f;
+constexpr float PhaseBobAmplitude = 2.0f;
+constexpr float HoverBobSpeed = 4.0f;
+constexpr float PhaseBobSpeed = 5.0f;
+constexpr float EnemyShadowAltitudeScaleDistance = 128.0f;
+constexpr float EnemyShadowMinScale = 0.55f;
 constexpr float MudZoneTickSeconds = 0.20f;
 constexpr float MudZoneMaxDurationSeconds = 30.0f;
 constexpr float MagnetDisturbMaxRadius = 320.0f;
 constexpr int SwarmSpawnCountMax = 6;
+constexpr int FlowOrthogonalCost = 10;
+constexpr int FlowDiagonalCost = 14;
+
+struct FlowStep {
+    int dx = 0;
+    int dy = 0;
+    int cost = 0;
+};
+
+constexpr std::array<FlowStep, 8> FlowDirections{{
+    {1, 0, FlowOrthogonalCost},
+    {-1, 0, FlowOrthogonalCost},
+    {0, 1, FlowOrthogonalCost},
+    {0, -1, FlowOrthogonalCost},
+    {1, 1, FlowDiagonalCost},
+    {-1, 1, FlowDiagonalCost},
+    {1, -1, FlowDiagonalCost},
+    {-1, -1, FlowDiagonalCost},
+}};
+
+struct FlowNode {
+    int distance = 0;
+    int tx = 0;
+    int ty = 0;
+};
+
+struct FlowNodeGreater {
+    bool operator()(const FlowNode& left, const FlowNode& right) const
+    {
+        return left.distance > right.distance;
+    }
+};
 
 constexpr std::array<std::string_view, 5> BoxCommonDropCandidates = {
     "potion",
@@ -428,6 +475,111 @@ bool hasClearSightLine(TileMap& map, Vec2 from, Vec2 to)
     return true;
 }
 
+bool canUseFlowStep(TileMap& map, int tx, int ty, const FlowStep& step)
+{
+    if (step.dx == 0 || step.dy == 0) {
+        return true;
+    }
+    return !map.isTileSolid(tx + step.dx, ty) && !map.isTileSolid(tx, ty + step.dy);
+}
+
+struct EnemyAltitudeProfile {
+    float altitude = 0.0f;
+    float bobAmplitude = 0.0f;
+    float bobSpeed = 0.0f;
+};
+
+EnemyAltitudeProfile altitudeProfileForAi(std::string_view aiId)
+{
+    if (aiId == "hover_chase") {
+        return {HoverChaseAltitude, HoverBobAmplitude, HoverBobSpeed};
+    }
+    if (aiId == "hover_keep_distance") {
+        return {HoverKeepDistanceAltitude, HoverBobAmplitude, HoverBobSpeed};
+    }
+    if (aiId == "phase_wander" || aiId == "phase_chase") {
+        return {PhaseAltitude, PhaseBobAmplitude, PhaseBobSpeed};
+    }
+    return {};
+}
+
+void configureEnemyAltitudeFromAi(Enemy& enemy)
+{
+    EnemyAltitudeProfile profile = altitudeProfileForAi(enemy.aiId);
+    if (profile.altitude <= 0.0f && profile.bobAmplitude <= 0.0f) {
+        profile = altitudeProfileForAi(enemy.unawareAiId);
+    }
+    enemy.hoverAltitude = profile.altitude;
+    enemy.hoverBobAmplitude = profile.bobAmplitude;
+    enemy.hoverBobSpeed = profile.bobSpeed;
+    enemy.altitude = profile.altitude;
+}
+
+float jumpProgress(const Enemy& enemy)
+{
+    if (!enemy.jumpActive || enemy.jumpDurationSeconds <= 0.0f) {
+        return 1.0f;
+    }
+    return clamp(enemy.jumpElapsedSeconds / enemy.jumpDurationSeconds, 0.0f, 1.0f);
+}
+
+float enemyJumpAltitude(const Enemy& enemy)
+{
+    if (!enemy.jumpActive) {
+        return 0.0f;
+    }
+    return std::sin(jumpProgress(enemy) * Pi) * std::max(0.0f, enemy.jumpArcHeight);
+}
+
+float enemyHoverAltitude(const Enemy& enemy)
+{
+    const float base = std::max(0.0f, enemy.hoverAltitude);
+    const float bob = enemy.hoverBobAmplitude > 0.0f && enemy.hoverBobSpeed > 0.0f
+        ? std::sin(enemy.behaviorTimer * enemy.hoverBobSpeed) * enemy.hoverBobAmplitude
+        : 0.0f;
+    return std::max(0.0f, base + bob);
+}
+
+void updateEnemyAltitude(Enemy& enemy)
+{
+    enemy.altitude = std::max(0.0f, enemyHoverAltitude(enemy) + enemyJumpAltitude(enemy));
+}
+
+bool findJumpLandingPosition(TileMap& map, const Enemy& enemy, Vec2 direction, float distance, Vec2& outPosition)
+{
+    if (lengthSquared(direction) <= 0.0001f || distance < JumpTargetMinDistance) {
+        return false;
+    }
+
+    const Vec2 normalizedDirection = normalize(direction);
+    constexpr std::array<float, 8> DistanceFactors{{1.0f, 0.88f, 0.76f, 0.64f, 0.52f, 0.40f, 0.28f, 0.16f}};
+    for (float factor : DistanceFactors) {
+        const Vec2 candidate = enemy.position + normalizedDirection * (distance * factor);
+        if (!map.isCircleBlocked(candidate, enemy.radius)) {
+            outPosition = candidate;
+            return true;
+        }
+    }
+    return false;
+}
+
+bool beginEnemyJump(Enemy& enemy, TileMap& map, Vec2 direction, float distance, float durationSeconds, float arcHeight)
+{
+    Vec2 target{};
+    if (!findJumpLandingPosition(map, enemy, direction, distance, target)) {
+        return false;
+    }
+
+    enemy.jumpActive = true;
+    enemy.jumpStartPosition = enemy.position;
+    enemy.jumpTargetPosition = target;
+    enemy.jumpElapsedSeconds = 0.0f;
+    enemy.jumpDurationSeconds = clamp(durationSeconds, JumpAttackDurationMin, JumpAttackDurationMax);
+    enemy.jumpArcHeight = std::max(0.0f, arcHeight);
+    enemy.velocity = {};
+    return true;
+}
+
 bool frontGuardApplies(const Enemy& enemy, Vec2 hitPosition, float arcDegrees)
 {
     const Vec2 facing = facingVector(enemy.facingAngle);
@@ -706,6 +858,115 @@ Color colorForEnemy(const Enemy& enemy)
     return Color{channel(0), channel(8), channel(16), 255};
 }
 
+Vec2 enemyDrawPosition(const Enemy& enemy)
+{
+    Vec2 drawPosition = enemy.position;
+    drawPosition.y -= enemy.altitude;
+    return drawPosition;
+}
+
+EnemyImageDrawOptions enemyImageOptionsFor(const Enemy& enemy)
+{
+    EnemyImageDrawOptions imageOptions;
+    imageOptions.tint = enemy.hitFlash > 0.0f ? Color{255, 220, 220, 255} : Color{255, 255, 255, 255};
+    if (enemy.hitFlash <= 0.0f && enemy.status.hasState("status_poison")) {
+        imageOptions.tint = {160, 255, 160, 255};
+    } else if (enemy.hitFlash <= 0.0f && enemy.status.hasState("status_slow")) {
+        imageOptions.tint = {160, 190, 255, 255};
+    }
+    imageOptions.outlineColor = enemy.isBoss ? Color{255, 210, 96, 255} : Color{80, 18, 28, 255};
+    return imageOptions;
+}
+
+Vec2 enemyVisualBoundsSize(Renderer& renderer, const Enemy& enemy)
+{
+    if (enemy.spawnTimer > 0.0f) {
+        const float ratio = enemy.spawnDuration > 0.0f ? enemy.spawnTimer / enemy.spawnDuration : 0.0f;
+        const float pulse = 1.0f + (1.0f - ratio) * 0.9f;
+        const float visualRadius = enemy.isBoss ? enemy.radius * BossVisualRadiusMultiplier : enemy.radius;
+        const float diameter = (visualRadius * pulse + 4.0f) * 2.0f;
+        return {diameter, diameter};
+    }
+
+    Vec2 imageSize{};
+    if (enemyImageDrawSize(renderer, enemy, enemyImageOptionsFor(enemy), imageSize)) {
+        return imageSize;
+    }
+
+    const float visualRadius = enemy.isBoss ? enemy.radius * BossVisualRadiusMultiplier : enemy.radius;
+    const float diameter = (visualRadius + 3.0f) * 2.0f;
+    return {diameter, diameter};
+}
+
+float enemyShadowVisualSize(Renderer& renderer, const Enemy& enemy)
+{
+    const Vec2 visualSize = enemyVisualBoundsSize(renderer, enemy);
+    const float baseSize = std::max(1.0f, std::max(visualSize.x, visualSize.y));
+    const float altitudeScale = clamp(
+        1.0f - std::max(0.0f, enemy.altitude) / EnemyShadowAltitudeScaleDistance,
+        EnemyShadowMinScale,
+        1.0f);
+    return baseSize * altitudeScale;
+}
+
+Vec2 enemyShadowBoundsSize(Renderer& renderer, const Enemy& enemy)
+{
+    const float visualSize = enemyShadowVisualSize(renderer, enemy);
+    return {visualSize * 0.55f, visualSize * 0.25f};
+}
+
+void drawEnemyShadow(Renderer& renderer, const Enemy& enemy)
+{
+    renderer.drawActorShadow(enemy.position, enemyShadowVisualSize(renderer, enemy));
+}
+
+void drawEnemyVisual(Renderer& renderer, const Enemy& enemy)
+{
+    const Vec2 drawPosition = enemyDrawPosition(enemy);
+    const auto drawAwarenessIcon = [&](float visualRadius) {
+        if (enemy.awarenessIcon == EnemyAwarenessIcon::None || enemy.awarenessIconTimer <= 0.0f) {
+            return;
+        }
+        const char* iconText = enemy.awarenessIcon == EnemyAwarenessIcon::Exclamation ? "!" : "?";
+        const Color iconColor = enemy.awarenessIcon == EnemyAwarenessIcon::Exclamation
+            ? Color{255, 236, 118, 255}
+            : Color{180, 228, 255, 255};
+        renderer.drawText(drawPosition + Vec2{-4.0f, -visualRadius - 28.0f}, iconText, iconColor, 2);
+    };
+    if (enemy.spawnTimer > 0.0f) {
+        const float ratio = enemy.spawnDuration > 0.0f ? enemy.spawnTimer / enemy.spawnDuration : 0.0f;
+        const float pulse = 1.0f + (1.0f - ratio) * 0.9f;
+        const float visualRadius = enemy.isBoss ? enemy.radius * BossVisualRadiusMultiplier : enemy.radius;
+        const Color spawnColor = enemy.isBoss ? Color{255, 180, 80, 230} : colorForEnemy(enemy);
+        renderer.drawCircle(drawPosition, visualRadius * pulse + 4.0f, spawnColor);
+        renderer.drawCircle(drawPosition, visualRadius * 0.55f, enemy.isBoss ? Color{255, 232, 140, 210} : Color{255, 160, 110, 190});
+        drawAwarenessIcon(visualRadius);
+        return;
+    }
+    Color color = enemy.hitFlash > 0.0f ? Color{255, 220, 220, 255} : (enemy.isBoss ? Color{142, 46, 160, 255} : colorForEnemy(enemy));
+    if (enemy.hitFlash <= 0.0f && enemy.status.hasState("status_poison")) {
+        color = {92, 184, 88, 255};
+    } else if (enemy.hitFlash <= 0.0f && enemy.status.hasState("status_slow")) {
+        color = {76, 132, 218, 255};
+    }
+    const float visualRadius = enemy.isBoss ? enemy.radius * BossVisualRadiusMultiplier : enemy.radius;
+    const EnemyImageDrawOptions imageOptions = enemyImageOptionsFor(enemy);
+    Vec2 enemyImageDrawSize{};
+    const bool drewImage = drawEnemyImage(renderer, enemy, drawPosition, enemy.behaviorTimer, imageOptions, &enemyImageDrawSize);
+    const float uiVisualRadius = drewImage ? std::max(visualRadius, enemyImageDrawSize.y * 0.5f) : visualRadius;
+    if (!drewImage) {
+        renderer.fillCircle(drawPosition, visualRadius, color);
+        renderer.drawCircle(drawPosition, visualRadius + 3.0f, enemy.isBoss ? Color{255, 210, 96, 255} : Color{80, 18, 28, 255});
+    }
+    drawAwarenessIcon(uiVisualRadius);
+    if (enemy.isBoss) {
+        const float hpRatio = enemy.maxHp > 0 ? clamp(static_cast<float>(enemy.hp) / static_cast<float>(enemy.maxHp), 0.0f, 1.0f) : 0.0f;
+        const Vec2 barPos = drawPosition + Vec2{-28.0f, -uiVisualRadius - 14.0f};
+        renderer.fillRect(barPos, {56.0f, 5.0f}, {18, 10, 22, 220});
+        renderer.fillRect(barPos, {56.0f * hpRatio, 5.0f}, {255, 190, 80, 255});
+    }
+}
+
 bool tryMoveCircle(TileMap& map, Vec2& position, float radius, Vec2 delta)
 {
     if (lengthSquared(delta) <= 0.0001f) {
@@ -866,7 +1127,19 @@ void EnemySystem::applyDefinition(Enemy& enemy, const EnemyDefinition* definitio
     enemy.jumpLandingDamageMultiplier = 1.0f;
     enemy.jumpAttackIntervalSeconds = 0.0f;
     enemy.jumpAttackTimer = 0.0f;
+    enemy.jumpAttackDurationSeconds = JumpAttackDefaultDuration;
+    enemy.jumpAttackArcHeight = JumpAttackDefaultArcHeight;
     enemy.jumpLandingBuffTimer = 0.0f;
+    enemy.jumpActive = false;
+    enemy.jumpStartPosition = {};
+    enemy.jumpTargetPosition = {};
+    enemy.jumpElapsedSeconds = 0.0f;
+    enemy.jumpDurationSeconds = 0.0f;
+    enemy.jumpArcHeight = 0.0f;
+    enemy.altitude = 0.0f;
+    enemy.hoverAltitude = 0.0f;
+    enemy.hoverBobAmplitude = 0.0f;
+    enemy.hoverBobSpeed = 0.0f;
     enemy.lightSpeedMultiplier = 1.0f;
     enemy.magnetRadius = 0.0f;
     enemy.magnetStrength = 0.0f;
@@ -926,6 +1199,7 @@ void EnemySystem::applyDefinition(Enemy& enemy, const EnemyDefinition* definitio
         }
         enemy.unawareAiId = "idle";
     }
+    configureEnemyAltitudeFromAi(enemy);
     if (!definition->enemyBehaviorIds.empty()) {
         enemy.behaviorId = definition->enemyBehaviorIds.front();
     }
@@ -961,6 +1235,13 @@ void EnemySystem::applyDefinition(Enemy& enemy, const EnemyDefinition* definitio
         enemy.jumpAttackDistance = static_cast<float>(std::max(4.0, behaviorParamDouble(enemy, "jump_attack", "jumpDistance", 42.0)));
         enemy.jumpLandingRadius = static_cast<float>(std::max(8.0, behaviorParamDouble(enemy, "jump_attack", "landingRadius", 28.0)));
         enemy.jumpLandingDamageMultiplier = static_cast<float>(std::max(1.0, behaviorParamDouble(enemy, "jump_attack", "landingDamageMultiplier", 1.45)));
+        enemy.jumpAttackDurationSeconds = static_cast<float>(std::clamp(
+            behaviorParamDouble(enemy, "jump_attack", "jumpDuration", JumpAttackDefaultDuration),
+            static_cast<double>(JumpAttackDurationMin),
+            static_cast<double>(JumpAttackDurationMax)));
+        enemy.jumpAttackArcHeight = static_cast<float>(std::max(
+            0.0,
+            behaviorParamDouble(enemy, "jump_attack", "jumpHeight", JumpAttackDefaultArcHeight)));
         const EnemyBehaviorSpec* spec = findEnemyBehaviorSpec(enemy, "jump_attack");
         enemy.jumpAttackIntervalSeconds = static_cast<float>(std::max(0.2, spec != nullptr ? spec->intervalSeconds : 1.8));
         enemy.jumpAttackTimer = enemy.jumpAttackIntervalSeconds * 0.65f;
@@ -1187,23 +1468,29 @@ void EnemySystem::applyDefinition(Enemy& enemy, const EnemyDefinition* definitio
     }
 }
 
-void EnemySystem::spawnAt(Vec2 position, const RuntimeBalance& balance, const EnemyCatalog& enemyCatalog, bool detectedOnSpawn, Vec2 detectedTarget)
+bool EnemySystem::spawnDefinitionAt(Vec2 position, const EnemyDefinition* definition, const RuntimeBalance& balance, const EnemyCatalog& enemyCatalog, bool detectedOnSpawn, Vec2 detectedTarget)
 {
     Enemy* enemy = enemies_.acquire();
     if (!enemy) {
-        return;
+        return false;
     }
     *enemy = Enemy{};
     enemy->active = true;
     enemy->id = nextEnemyId_++;
     enemy->isBoss = false;
     enemy->position = position;
-    applyDefinition(*enemy, chooseEnemyDefinition(enemyCatalog), balance, enemyCatalog);
+    applyDefinition(*enemy, definition, balance, enemyCatalog);
     enemy->spawnTimer = balance.enemySpawnWarmup;
     enemy->spawnDuration = balance.enemySpawnWarmup;
     if (detectedOnSpawn) {
         forceDetectInSight(*enemy, detectedTarget, true);
     }
+    return true;
+}
+
+void EnemySystem::spawnAt(Vec2 position, const RuntimeBalance& balance, const EnemyCatalog& enemyCatalog, bool detectedOnSpawn, Vec2 detectedTarget)
+{
+    spawnDefinitionAt(position, chooseEnemyDefinition(enemyCatalog), balance, enemyCatalog, detectedOnSpawn, detectedTarget);
 }
 
 bool EnemySystem::spawnBossAt(Vec2 position, const RuntimeBalance& balance, const EnemyCatalog& enemyCatalog, bool detectedOnSpawn, Vec2 detectedTarget)
@@ -1392,6 +1679,34 @@ bool EnemySystem::spawnNodeEnemy(
     return true;
 }
 
+bool EnemySystem::spawnSpecificEnemy(
+    TileMap& map,
+    std::string_view enemyId,
+    Vec2 desiredPosition,
+    Vec2 playerPosition,
+    const RuntimeBalance& balance,
+    const EnemyCatalog& enemyCatalog,
+    bool allowNearPlayer,
+    bool detectedOnSpawn)
+{
+    if (activeCount() >= balance.enemySoftCap) {
+        return false;
+    }
+
+    const auto it = enemyCatalog.enemiesById.find(std::string(enemyId));
+    if (it == enemyCatalog.enemiesById.end()) {
+        return false;
+    }
+
+    Vec2 spawnPosition{};
+    const float minPlayerDistance = allowNearPlayer ? 0.0f : balance.enemyMinSpawnDistance;
+    if (!findSpawnPosition(map, desiredPosition, playerPosition, balance.enemyRadius, minPlayerDistance, spawnPosition)) {
+        return false;
+    }
+
+    return spawnDefinitionAt(spawnPosition, &it->second, balance, enemyCatalog, detectedOnSpawn, playerPosition);
+}
+
 bool EnemySystem::spawnBoss(TileMap& map, Vec2 playerPosition, const RuntimeBalance& balance, const EnemyCatalog& enemyCatalog)
 {
     if (bossActive()) {
@@ -1457,36 +1772,49 @@ void EnemySystem::rebuildFlowField(TileMap& map, Vec2 playerPosition)
         return;
     }
 
-    std::queue<std::pair<int, int>> open;
+    std::priority_queue<FlowNode, std::vector<FlowNode>, FlowNodeGreater> open;
     flowDistance_[static_cast<std::size_t>(index(playerTileX, playerTileY))] = 0;
-    open.emplace(playerTileX, playerTileY);
-
-    constexpr std::array<std::pair<int, int>, 4> Directions{{
-        {1, 0}, {-1, 0}, {0, 1}, {0, -1}
-    }};
+    open.push({0, playerTileX, playerTileY});
 
     while (!open.empty()) {
-        const auto [tx, ty] = open.front();
+        const FlowNode node = open.top();
         open.pop();
+        const int tx = node.tx;
+        const int ty = node.ty;
         const int current = flowDistance_[static_cast<std::size_t>(index(tx, ty))];
-        for (const auto [dx, dy] : Directions) {
-            const int nx = tx + dx;
-            const int ny = ty + dy;
+        if (current < 0 || node.distance != current) {
+            continue;
+        }
+        for (const FlowStep& step : FlowDirections) {
+            const int nx = tx + step.dx;
+            const int ny = ty + step.dy;
             if (!inBounds(nx, ny) || map.isTileSolid(nx, ny)) {
                 continue;
             }
-            int& next = flowDistance_[static_cast<std::size_t>(index(nx, ny))];
-            if (next >= 0) {
+            if (!canUseFlowStep(map, tx, ty, step)) {
                 continue;
             }
-            next = current + 1;
-            open.emplace(nx, ny);
+            int& next = flowDistance_[static_cast<std::size_t>(index(nx, ny))];
+            const int nextDistance = current + step.cost;
+            if (next >= 0 && next <= nextDistance) {
+                continue;
+            }
+            next = nextDistance;
+            open.push({nextDistance, nx, ny});
         }
     }
 }
 
 Vec2 EnemySystem::flowDirectionFor(TileMap& map, Vec2 enemyPosition, Vec2 playerPosition) const
 {
+    const Vec2 toPlayer = playerPosition - enemyPosition;
+    if (lengthSquared(toPlayer) <= 0.0001f) {
+        return {};
+    }
+    if (hasClearSightLine(map, enemyPosition, playerPosition)) {
+        return normalize(toPlayer);
+    }
+
     const int enemyTileX = map.worldToTile(enemyPosition.x);
     const int enemyTileY = map.worldToTile(enemyPosition.y);
     auto inBounds = [&](int tx, int ty) {
@@ -1507,13 +1835,14 @@ Vec2 EnemySystem::flowDirectionFor(TileMap& map, Vec2 enemyPosition, Vec2 player
 
     Vec2 bestTarget = map.tileCenter(enemyTileX, enemyTileY);
     int bestDistance = current;
-    constexpr std::array<std::pair<int, int>, 4> Directions{{
-        {1, 0}, {-1, 0}, {0, 1}, {0, -1}
-    }};
-    for (const auto [dx, dy] : Directions) {
-        const int nx = enemyTileX + dx;
-        const int ny = enemyTileY + dy;
+    Vec2 blendedDirection{};
+    for (const FlowStep& step : FlowDirections) {
+        const int nx = enemyTileX + step.dx;
+        const int ny = enemyTileY + step.dy;
         if (!inBounds(nx, ny)) {
+            continue;
+        }
+        if (!canUseFlowStep(map, enemyTileX, enemyTileY, step)) {
             continue;
         }
         const int candidate = flowDistance_[static_cast<std::size_t>(index(nx, ny))];
@@ -1521,8 +1850,15 @@ Vec2 EnemySystem::flowDirectionFor(TileMap& map, Vec2 enemyPosition, Vec2 player
             bestDistance = candidate;
             bestTarget = map.tileCenter(nx, ny);
         }
+        if (candidate >= 0 && candidate < current) {
+            const Vec2 targetDirection = normalize(map.tileCenter(nx, ny) - enemyPosition);
+            blendedDirection += targetDirection * static_cast<float>(std::max(1, current - candidate));
+        }
     }
 
+    if (lengthSquared(blendedDirection) > 0.0001f) {
+        return normalize(blendedDirection);
+    }
     if (bestDistance == current) {
         bestTarget = playerPosition;
     }
@@ -1827,16 +2163,44 @@ void EnemySystem::update(
             continue;
         }
         if (enemy.knockbackTimer > 0.0f) {
+            enemy.jumpActive = false;
             moveWithCollision(enemy, map, enemy.knockbackVelocity, dt);
             enemy.knockbackTimer = std::max(0.0f, enemy.knockbackTimer - dt);
             enemy.knockbackVelocity = enemy.knockbackVelocity * std::max(0.0f, 1.0f - 6.0f * dt);
+            updateEnemyAltitude(enemy);
             continue;
         }
 
         enemy.behaviorTimer += dt;
+        updateEnemyAltitude(enemy);
         enemy.awarenessIconTimer = std::max(0.0f, enemy.awarenessIconTimer - dt);
         if (enemy.awarenessIconTimer <= 0.0f) {
             enemy.awarenessIcon = EnemyAwarenessIcon::None;
+        }
+        if (enemy.jumpActive) {
+            enemy.jumpElapsedSeconds = std::min(enemy.jumpDurationSeconds, enemy.jumpElapsedSeconds + dt);
+            const float t = jumpProgress(enemy);
+            const Vec2 previousPosition = enemy.position;
+            enemy.position = lerp(enemy.jumpStartPosition, enemy.jumpTargetPosition, t);
+            enemy.velocity = t < 1.0f && enemy.jumpDurationSeconds > 0.0f
+                ? (enemy.jumpTargetPosition - enemy.jumpStartPosition) / enemy.jumpDurationSeconds
+                : Vec2{};
+            if (lengthSquared(enemy.position - previousPosition) > 0.0001f) {
+                enemy.facingAngle = std::atan2(enemy.position.y - previousPosition.y, enemy.position.x - previousPosition.x);
+            }
+            updateEnemyAltitude(enemy);
+            if (t >= 1.0f) {
+                enemy.position = enemy.jumpTargetPosition;
+                enemy.velocity = {};
+                enemy.jumpActive = false;
+                enemy.jumpElapsedSeconds = 0.0f;
+                enemy.jumpDurationSeconds = 0.0f;
+                enemy.jumpArcHeight = 0.0f;
+                enemy.jumpLandingBuffTimer = JumpLandingBuffSeconds;
+                updateEnemyAltitude(enemy);
+                events_.push_back(makeEnemyEvent(EnemyEventType::Hit, enemy));
+            }
+            continue;
         }
 
         Vec2 direction{};
@@ -2069,14 +2433,17 @@ void EnemySystem::update(
             enemy.velocity += separationFor(enemy) * balance.enemySeparationStrength;
         }
         enemy.jumpLandingBuffTimer = std::max(0.0f, enemy.jumpLandingBuffTimer - dt);
-        if (hasBehavior(enemy, "jump_attack") && enemy.awareness == EnemyAwarenessState::Detected) {
+        if (!enemy.jumpActive && hasBehavior(enemy, "jump_attack") && enemy.awareness == EnemyAwarenessState::Detected) {
             enemy.jumpAttackTimer = std::max(0.0f, enemy.jumpAttackTimer - dt);
             if (enemy.jumpAttackTimer <= 0.0f && lengthSquared(directToPlayer) > 0.0001f) {
-                const Vec2 jumpDelta = directToPlayer * std::max(4.0f, enemy.jumpAttackDistance);
-                tryMoveCircle(map, enemy.position, enemy.radius, jumpDelta);
+                beginEnemyJump(
+                    enemy,
+                    map,
+                    directToPlayer,
+                    std::max(JumpTargetMinDistance, enemy.jumpAttackDistance),
+                    enemy.jumpAttackDurationSeconds,
+                    enemy.jumpAttackArcHeight);
                 enemy.jumpAttackTimer = std::max(0.2f, enemy.jumpAttackIntervalSeconds);
-                enemy.jumpLandingBuffTimer = JumpLandingBuffSeconds;
-                events_.push_back(makeEnemyEvent(EnemyEventType::Hit, enemy));
             }
         }
         const float maxSpeed = enemySpeed * 1.75f;
@@ -2388,63 +2755,53 @@ void EnemySystem::update(
 
 void EnemySystem::render(Renderer& renderer, const TileMap& map, Vec2 playerLight, const std::vector<LightSource>& extraLights)
 {
+    std::vector<DepthRenderEntry> entries;
+    renderShadows(renderer, map, playerLight, extraLights);
+    appendRenderEntries(entries, renderer, map, playerLight, extraLights);
+    std::stable_sort(entries.begin(), entries.end(), [](const DepthRenderEntry& left, const DepthRenderEntry& right) {
+        return left.sortY < right.sortY;
+    });
+    for (const DepthRenderEntry& entry : entries) {
+        entry.draw();
+    }
+}
+
+void EnemySystem::renderShadows(Renderer& renderer, const TileMap& map, Vec2 playerLight, const std::vector<LightSource>& extraLights) const
+{
     for (const Enemy& enemy : enemies_.items()) {
         if (!enemy.active) {
             continue;
         }
-        if (!map.isLit(enemy.position, playerLight, extraLights)) {
+        const Vec2 shadowBounds = enemyShadowBoundsSize(renderer, enemy);
+        if (!map.isRectLit(enemy.position, shadowBounds, playerLight, extraLights)) {
             continue;
         }
-        const std::string_view renderAiId = enemy.awareness == EnemyAwarenessState::Detected
-            ? (enemy.aiId.empty() ? std::string_view("chase") : std::string_view(enemy.aiId))
-            : (enemy.unawareAiId.empty() ? std::string_view("idle") : std::string_view(enemy.unawareAiId));
-        Vec2 drawPosition = enemy.position;
-        if (renderAiId == "hover_chase" || renderAiId == "hover_keep_distance") {
-            drawPosition.y -= 4.0f + std::sin(enemy.behaviorTimer * 4.0f) * 3.0f;
-        } else if (renderAiId == "phase_wander" || renderAiId == "phase_chase") {
-            drawPosition.y -= 4.5f + std::sin(enemy.behaviorTimer * 5.0f) * 3.6f;
-        } else if (renderAiId == "jump_chase") {
-            const float phase = std::fmod(enemy.behaviorTimer, 1.05f);
-            if (phase < 0.25f) {
-                drawPosition.y -= std::sin((phase / 0.25f) * Pi) * 5.0f;
-            }
-        }
-        const auto drawAwarenessIcon = [&](float visualRadius) {
-            if (enemy.awarenessIcon == EnemyAwarenessIcon::None || enemy.awarenessIconTimer <= 0.0f) {
-                return;
-            }
-            const char* iconText = enemy.awarenessIcon == EnemyAwarenessIcon::Exclamation ? "!" : "?";
-            const Color iconColor = enemy.awarenessIcon == EnemyAwarenessIcon::Exclamation
-                ? Color{255, 236, 118, 255}
-                : Color{180, 228, 255, 255};
-            renderer.drawText(drawPosition + Vec2{-4.0f, -visualRadius - 28.0f}, iconText, iconColor, 2);
-        };
-        if (enemy.spawnTimer > 0.0f) {
-            const float ratio = enemy.spawnDuration > 0.0f ? enemy.spawnTimer / enemy.spawnDuration : 0.0f;
-            const float pulse = 1.0f + (1.0f - ratio) * 0.9f;
-            const float visualRadius = enemy.isBoss ? enemy.radius * BossVisualRadiusMultiplier : enemy.radius;
-            const Color spawnColor = enemy.isBoss ? Color{255, 180, 80, 230} : colorForEnemy(enemy);
-            renderer.drawCircle(drawPosition, visualRadius * pulse + 4.0f, spawnColor);
-            renderer.drawCircle(drawPosition, visualRadius * 0.55f, enemy.isBoss ? Color{255, 232, 140, 210} : Color{255, 160, 110, 190});
-            drawAwarenessIcon(visualRadius);
+        drawEnemyShadow(renderer, enemy);
+    }
+}
+
+void EnemySystem::appendRenderEntries(
+    std::vector<DepthRenderEntry>& entries,
+    Renderer& renderer,
+    const TileMap& map,
+    Vec2 playerLight,
+    const std::vector<LightSource>& extraLights) const
+{
+    for (const Enemy& enemy : enemies_.items()) {
+        if (!enemy.active) {
             continue;
         }
-        Color color = enemy.hitFlash > 0.0f ? Color{255, 220, 220, 255} : (enemy.isBoss ? Color{142, 46, 160, 255} : colorForEnemy(enemy));
-        if (enemy.hitFlash <= 0.0f && enemy.status.hasState("status_poison")) {
-            color = {92, 184, 88, 255};
-        } else if (enemy.hitFlash <= 0.0f && enemy.status.hasState("status_slow")) {
-            color = {76, 132, 218, 255};
+        const Vec2 drawPosition = enemyDrawPosition(enemy);
+        const Vec2 visualSize = enemyVisualBoundsSize(renderer, enemy);
+        if (!map.isRectLit(drawPosition, visualSize, playerLight, extraLights)) {
+            continue;
         }
-        const float visualRadius = enemy.isBoss ? enemy.radius * BossVisualRadiusMultiplier : enemy.radius;
-        renderer.fillCircle(drawPosition, visualRadius, color);
-        renderer.drawCircle(drawPosition, visualRadius + 3.0f, enemy.isBoss ? Color{255, 210, 96, 255} : Color{80, 18, 28, 255});
-        drawAwarenessIcon(visualRadius);
-        if (enemy.isBoss) {
-            const float hpRatio = enemy.maxHp > 0 ? clamp(static_cast<float>(enemy.hp) / static_cast<float>(enemy.maxHp), 0.0f, 1.0f) : 0.0f;
-            const Vec2 barPos = drawPosition + Vec2{-28.0f, -visualRadius - 14.0f};
-            renderer.fillRect(barPos, {56.0f, 5.0f}, {18, 10, 22, 220});
-            renderer.fillRect(barPos, {56.0f * hpRatio, 5.0f}, {255, 190, 80, 255});
-        }
+        entries.push_back(DepthRenderEntry{
+            enemy.position.y,
+            [&renderer, &enemy]() {
+                drawEnemyVisual(renderer, enemy);
+            },
+        });
     }
 }
 

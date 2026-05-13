@@ -86,6 +86,32 @@ struct UiCommandMenuState {
     float animation = 0.0f;
 };
 
+struct UiDropdownItem {
+    std::string_view label;
+    bool enabled = true;
+};
+
+struct UiDropdownState {
+    bool open = false;
+    int highlightedIndex = -1;
+    int scrollOffset = 0;
+};
+
+struct UiDropdownStyle {
+    int visibleRows = 8;
+    float rowHeight = 38.0f;
+    int textScale = 2;
+    Color fill{18, 24, 40, 238};
+    Color fillHot{36, 48, 74, 244};
+    Color outline{255, 255, 255, 220};
+    Color text{255, 255, 255, 255};
+    Color textDisabled{150, 150, 160, 255};
+    Color arrow{255, 255, 255, 230};
+    Color scrollbarTrack{255, 255, 255, 48};
+    Color scrollbarThumb{255, 255, 255, 170};
+    std::string_view emptyLabel = "項目がありません";
+};
+
 struct UiWindowOptions {
     bool animated = true;
     bool cancelButton = false;
@@ -187,5 +213,24 @@ void openUiCommandMenu(
 void closeUiCommandMenu(UiCommandMenuState& state);
 int updateUiCommandMenu(UiCommandMenuState& state, UiContext& ui, const Input& input, const UiCommandMenuItem* items, int itemCount);
 void drawUiCommandMenu(Renderer& renderer, const UiCommandMenuState& state, const UiCommandMenuItem* items, int itemCount);
+UiRect uiDropdownListRect(UiRect buttonRect, int itemCount, const UiDropdownStyle& style = {});
+UiRect uiDropdownItemRect(UiRect buttonRect, int visibleIndex, const UiDropdownStyle& style = {});
+int updateUiDropdown(
+    UiDropdownState& state,
+    UiContext& ui,
+    const Input& input,
+    UiRect buttonRect,
+    int selectedIndex,
+    const UiDropdownItem* items,
+    int itemCount,
+    const UiDropdownStyle& style = {});
+void drawUiDropdown(
+    Renderer& renderer,
+    const UiDropdownState& state,
+    UiRect buttonRect,
+    std::string_view selectedLabel,
+    const UiDropdownItem* items,
+    int itemCount,
+    const UiDropdownStyle& style = {});
 
 }

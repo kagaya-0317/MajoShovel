@@ -5,12 +5,14 @@
 #include "engine/Input.hpp"
 #include "engine/Renderer.hpp"
 #include "engine/Time.hpp"
+#include "engine/Ui.hpp"
 #include "data/GoogleSheetSource.hpp"
 #include "data/EnemyCatalog.hpp"
 #include "data/ObjectCatalog.hpp"
 #include "data/RuntimeBalance.hpp"
 #include "data/StageCatalog.hpp"
 #include "game/DebugOverlay.hpp"
+#include "game/DepthRender.hpp"
 #include "game/DiggingSystem.hpp"
 #include "game/DungeonLayout.hpp"
 #include "game/EffectDispatcher.hpp"
@@ -252,6 +254,17 @@ private:
         int shapeIndex = 0;
         bool active = false;
     };
+    struct RingEquipFx {
+        Vec2 sourceScreen{};
+        int ringIndex = 0;
+        int itemIndex = -1;
+        float localAngle = 0.0f;
+        std::string objectId;
+        std::string instanceId;
+        float age = 0.0f;
+        float duration = 0.26f;
+        float arcSign = 1.0f;
+    };
     enum class ProcessingMode {
         Repair,
         Attack,
@@ -444,6 +457,10 @@ private:
     void captureRetrySnapshotAtWarpPoint();
     void restoreRetrySnapshot();
     void renderWarpPoints(Renderer& renderer) const;
+    void appendRewardNodeRenderEntries(
+        std::vector<DepthRenderEntry>& entries,
+        Renderer& renderer,
+        const std::vector<LightSource>& extraLights) const;
     void renderRewardNodes(Renderer& renderer, const std::vector<LightSource>& extraLights) const;
     void enterStageClear();
     void updateStageClearScreen(const Input& input, UiContext& ui);
@@ -452,6 +469,10 @@ private:
     void maybeSpawnPlayerFootstepDust(Vec2 footAnchor, Vec2 movementDirection, bool walking, int frameIndex, int& previousFrame);
     void spawnPlayerFootstepDust(Vec2 footAnchor, Vec2 movementDirection);
     void renderPlayerFootstepDust(Renderer& renderer) const;
+    void spawnRingEquipFx(const RingEquipFxRequest& request);
+    void updateRingEquipFx(float dt);
+    Vec2 ringEquipFxTargetScreen(const RingEquipFx& fx) const;
+    void renderRingEquipFx(Renderer& renderer) const;
     bool loadSaveData();
     bool saveSaveData(std::string& message) const;
     void loadBaseEditData();
@@ -465,6 +486,12 @@ private:
     void exitObjectImageScaleEditMode();
     void updateObjectImageScaleEditScreen(const Input& input, UiContext& ui);
     void renderObjectImageScaleEditScreen(Renderer& renderer) const;
+    void enterEnemyTestMode();
+    void exitEnemyTestToBase();
+    void spawnSelectedEnemyTestEnemy();
+    void clearEnemyTestArena();
+    void updateEnemyTestUi(const Input& input, UiContext& ui);
+    void renderEnemyTestUi(Renderer& renderer) const;
     void enterBaseEditMode();
     void exitBaseEditMode();
     void resetBaseEditDragState();
@@ -486,6 +513,7 @@ private:
     void renderBookshelfScreen(Renderer& renderer) const;
     void renderPauseMenu(Renderer& renderer) const;
     void renderRingScreen(Renderer& renderer, float totalTime) const;
+    void renderDungeonStatusHud(Renderer& renderer) const;
     void renderGameOverScreen(Renderer& renderer) const;
     void renderStageClearScreen(Renderer& renderer) const;
     void renderBaseDebugOverlay(Renderer& renderer, const Time& time) const;
@@ -585,6 +613,11 @@ private:
     float objectImageScaleScrollOffset_ = 0.0f;
     bool objectImageScaleDirty_ = false;
     std::string objectImageScaleStatus_;
+    bool enemyTestActive_ = false;
+    bool enemyTestUiVisible_ = true;
+    UiDropdownState enemyTestDropdown_{};
+    int enemyTestSelectedIndex_ = 0;
+    std::string enemyTestStatus_;
     std::string baseStatus_;
     PauseMenuPage pausePage_ = PauseMenuPage::Main;
     ScreenMode pauseReturnMode_ = ScreenMode::Playing;
@@ -609,6 +642,7 @@ private:
     Vec2 ringDragStartMouse_{};
     std::string ringStatus_;
     std::array<FootstepDustPuff, 10> playerFootstepDustPuffs_{};
+    std::vector<RingEquipFx> ringEquipFx_;
     int nextPlayerFootstepDustPuff_ = 0;
     int nextPlayerFootstepDustShape_ = 0;
     int previousPlayerDustFrame_ = -1;

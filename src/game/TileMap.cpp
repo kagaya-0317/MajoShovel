@@ -1,4 +1,4 @@
-#include "game/TileMap.hpp"
+﻿#include "game/TileMap.hpp"
 
 #include "data/GameBalance.hpp"
 #include "game/Collision.hpp"
@@ -374,6 +374,50 @@ bool TileMap::isLit(Vec2 world, Vec2 playerLight, const std::vector<LightSource>
     return false;
 }
 
+bool TileMap::isRectLit(Vec2 center, Vec2 size, Vec2 playerLight, const std::vector<LightSource>& extraLights) const
+{
+    const Vec2 halfSize{std::max(0.0f, size.x) * 0.5f, std::max(0.0f, size.y) * 0.5f};
+    const Vec2 min{center.x - halfSize.x, center.y - halfSize.y};
+    const Vec2 max{center.x + halfSize.x, center.y + halfSize.y};
+    const auto circleIntersectsRect = [&](const LightSource& light) {
+        const float radius = light.radius > 0.0f ? light.radius : balanceSnapshot_.lightRadius;
+        const float nearestX = std::clamp(light.position.x, min.x, max.x);
+        const float nearestY = std::clamp(light.position.y, min.y, max.y);
+        return distanceSquared({nearestX, nearestY}, light.position) <= radius * radius;
+    };
+
+    if (circleIntersectsRect({playerLight, balanceSnapshot_.playerLightRadius})) {
+        return true;
+    }
+    for (const LightSource& light : extraLights) {
+        if (circleIntersectsRect(light)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+bool TileMap::isTileRectLit(Vec2 pos, Vec2 playerLight, const std::vector<LightSource>& extraLights) const
+{
+    const float tileSize = static_cast<float>(balance::TileSize);
+    const auto circleIntersectsTile = [&](const LightSource& light) {
+        const float radius = light.radius > 0.0f ? light.radius : balanceSnapshot_.lightRadius;
+        const float nearestX = std::clamp(light.position.x, pos.x, pos.x + tileSize);
+        const float nearestY = std::clamp(light.position.y, pos.y, pos.y + tileSize);
+        return distanceSquared({nearestX, nearestY}, light.position) <= radius * radius;
+    };
+
+    if (circleIntersectsTile({playerLight, balanceSnapshot_.playerLightRadius})) {
+        return true;
+    }
+    for (const LightSource& light : extraLights) {
+        if (circleIntersectsTile(light)) {
+            return true;
+        }
+    }
+    return false;
+}
+
 TerrainDebugInfo TileMap::terrainInfoForTile(int tx, int ty, const Tile* tile) const
 {
     TerrainDebugInfo info;
@@ -500,7 +544,7 @@ Color TileMap::tileColor(const Tile& tile) const
 {
     Color base{9, 9, 13, 255};
     switch (tile.type) {
-    case TileType::Empty: base = {14, 14, 20, 255}; break;
+    case TileType::Empty: base = {54, 55, 60, 255}; break;
     case TileType::Dirt: base = {105, 68, 37, 255}; break;
     case TileType::Rock: base = {64, 66, 72, 255}; break;
     case TileType::Ore: base = {70, 76, 130, 255}; break;
@@ -592,13 +636,80 @@ void TileMap::render(Renderer& renderer, const Camera&, Vec2 lightCenter, const 
                     const int tx = cx * balance::ChunkTiles + x;
                     const int ty = cy * balance::ChunkTiles + y;
                     const Vec2 pos{static_cast<float>(tx * balance::TileSize), static_cast<float>(ty * balance::TileSize)};
-                    const Vec2 center = pos + Vec2{balance::TileSize * 0.5f, balance::TileSize * 0.5f};
-                    if (!isLit(center, lightCenter, extraLights)) {
+                    if (!isTileRectLit(pos, lightCenter, extraLights)) {
                         continue;
                     }
                     drawTileLitByCircles(renderer, pos, tileColor(chunk.at(x, y)), lightCenter, extraLights);
                 }
             }
+        }
+    }
+}
+
+void TileMap::renderDarknessOverlay(Renderer& renderer, const Camera& camera, Vec2 lightCenter, const std::vector<LightSource>& extraLights) const
+{
+    const Vec2 viewTopLeft = camera.screenToWorld({0.0f, 0.0f});
+    const float viewWidth = static_cast<float>(camera.width());
+    const float viewHeight = static_cast<float>(camera.height());
+    const float viewLeft = viewTopLeft.x;
+    const float viewRight = viewTopLeft.x + viewWidth;
+    const float viewTop = viewTopLeft.y;
+
+    std::vector<LightSource> lights;
+    lights.reserve(extraLights.size() + 1);
+    lights.push_back({lightCenter, balanceSnapshot_.playerLightRadius});
+    lights.insert(lights.end(), extraLights.begin(), extraLights.end());
+
+    constexpr Color DarknessColor{5, 5, 8, 255};
+    for (int row = 0; row < static_cast<int>(viewHeight); ++row) {
+        const float y = viewTop + static_cast<float>(row) + 0.5f;
+        std::vector<Vec2> spans;
+        spans.reserve(lights.size());
+        for (const LightSource& light : lights) {
+            const float radius = light.radius > 0.0f ? light.radius : balanceSnapshot_.lightRadius;
+            const float radiusSq = radius * radius;
+            const float dy = y - light.position.y;
+            const float remaining = radiusSq - dy * dy;
+            if (remaining <= 0.0f) {
+                continue;
+            }
+            const float dx = std::sqrt(remaining);
+            const float x0 = std::max(viewLeft, light.position.x - dx);
+            const float x1 = std::min(viewRight, light.position.x + dx);
+            if (x1 > x0) {
+                spans.push_back({x0, x1});
+            }
+        }
+
+        if (spans.empty()) {
+            renderer.fillRect({viewLeft, viewTop + static_cast<float>(row)}, {viewWidth, 1.0f}, DarknessColor);
+            continue;
+        }
+
+        std::sort(spans.begin(), spans.end(), [](Vec2 a, Vec2 b) {
+            return a.x < b.x;
+        });
+
+        float litStart = spans[0].x;
+        float litEnd = spans[0].y;
+        float darkStart = viewLeft;
+        for (std::size_t i = 1; i < spans.size(); ++i) {
+            if (spans[i].x <= litEnd) {
+                litEnd = std::max(litEnd, spans[i].y);
+                continue;
+            }
+            if (litStart > darkStart) {
+                renderer.fillRect({darkStart, viewTop + static_cast<float>(row)}, {litStart - darkStart, 1.0f}, DarknessColor);
+            }
+            darkStart = litEnd;
+            litStart = spans[i].x;
+            litEnd = spans[i].y;
+        }
+        if (litStart > darkStart) {
+            renderer.fillRect({darkStart, viewTop + static_cast<float>(row)}, {litStart - darkStart, 1.0f}, DarknessColor);
+        }
+        if (litEnd < viewRight) {
+            renderer.fillRect({litEnd, viewTop + static_cast<float>(row)}, {viewRight - litEnd, 1.0f}, DarknessColor);
         }
     }
 }
