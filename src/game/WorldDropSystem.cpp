@@ -21,6 +21,7 @@ namespace {
 constexpr float DropPickupRadius = 23.0f;
 constexpr float DropVisualRadius = 8.0f;
 constexpr Vec2 DropObjectImageMaxSize = {48.0f, 48.0f};
+constexpr float DropFallbackShadowVisualSize = DropVisualRadius * 2.5f;
 constexpr float CapturedMagnetDropRadius = 170.0f;
 constexpr float CapturedMagnetDropAcceleration = 260.0f;
 constexpr int CapturedMagnetDropLimit = 6;
@@ -164,6 +165,19 @@ void drawWorldDrop(Renderer& renderer, const WorldDropItem& drop, const ObjectCa
     } else if (material) {
         renderer.drawText(center + Vec2{-12.0f, -28.0f}, materialTypeSaveName(materialType), {235, 245, 245, 225}, 1);
     }
+}
+
+float dropShadowVisualSize(const WorldDropItem& drop, const ObjectCatalog& catalog)
+{
+    if (drop.kind == WorldDropKind::Object && catalog.registry.findById(drop.id) != nullptr) {
+        return std::max(DropObjectImageMaxSize.x, DropObjectImageMaxSize.y);
+    }
+    return DropFallbackShadowVisualSize;
+}
+
+void drawWorldDropShadow(Renderer& renderer, const WorldDropItem& drop, const ObjectCatalog& catalog)
+{
+    renderer.drawActorShadow(drop.position, dropShadowVisualSize(drop, catalog));
 }
 
 bool isDropStealTarget(const WorldDropItem& drop, const ObjectCatalog& catalog, std::string_view targetFilter)
@@ -473,12 +487,28 @@ void WorldDropSystem::render(
     const std::vector<LightSource>& extraLights) const
 {
     std::vector<DepthRenderEntry> entries;
+    renderShadows(renderer, tileMap, catalog, playerLight, extraLights);
     appendRenderEntries(entries, renderer, tileMap, catalog, playerLight, extraLights);
     std::stable_sort(entries.begin(), entries.end(), [](const DepthRenderEntry& left, const DepthRenderEntry& right) {
         return left.sortY < right.sortY;
     });
     for (const DepthRenderEntry& entry : entries) {
         entry.draw();
+    }
+}
+
+void WorldDropSystem::renderShadows(
+    Renderer& renderer,
+    const TileMap& tileMap,
+    const ObjectCatalog& catalog,
+    Vec2 playerLight,
+    const std::vector<LightSource>& extraLights) const
+{
+    for (const WorldDropItem& drop : drops_) {
+        if (!tileMap.isLit(drop.position, playerLight, extraLights)) {
+            continue;
+        }
+        drawWorldDropShadow(renderer, drop, catalog);
     }
 }
 

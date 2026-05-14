@@ -2,6 +2,7 @@
 
 #include "engine/Log.hpp"
 #include "engine/Ui.hpp"
+#include "game/ActorVisual.hpp"
 #include "game/InventoryUiCommon.hpp"
 #include "game/ObjectImageRenderer.hpp"
 
@@ -132,6 +133,7 @@ constexpr int BaseEditUndoLimit = 100;
 constexpr float BaseEditHandleSize = 12.0f;
 constexpr float BaseEditHandleHitPadding = 8.0f;
 constexpr float RingObjectImageMaxSize = 48.0f;
+constexpr float RingItemBaseAltitude = 8.0f;
 constexpr float RingItemBobAmplitude = 3.0f;
 constexpr float RingItemBobSpeed = 4.2f;
 constexpr float ObjectImageScaleMin = 0.25f;
@@ -1482,13 +1484,18 @@ float ringAngleFromPoint(Vec2 point, const SpellRingSystem& spellRing, const Run
     return spellRing.quantizeLocalAngle(param - spellRing.ringBaseAngleForIndex(spellRing.activeRingIndex()), balance);
 }
 
-Vec2 ringItemBobOffset(const SpellRingItem& item, float totalSeconds)
+float ringItemAltitude(const SpellRingItem& item, float totalSeconds)
 {
     const float phase = totalSeconds * RingItemBobSpeed + item.localAngle * 1.7f;
-    return {0.0f, -std::sin(phase) * RingItemBobAmplitude};
+    return RingItemBaseAltitude + std::sin(phase) * RingItemBobAmplitude;
 }
 
-float ringItemShadowVisualSize(const SpellRingItem& item)
+Vec2 ringItemDrawPosition(const SpellRingItem& item, float totalSeconds)
+{
+    return elevatedDrawPosition(item.worldPosition, ringItemAltitude(item, totalSeconds));
+}
+
+float ringItemBaseShadowVisualSize(const SpellRingItem& item)
 {
     switch (item.type) {
     case SpellRingItemType::Shovel:
@@ -1498,6 +1505,11 @@ float ringItemShadowVisualSize(const SpellRingItem& item)
         return std::max(RingObjectImageMaxSize, item.hitRadius * 2.0f);
     }
     return RingObjectImageMaxSize;
+}
+
+float ringItemShadowVisualSize(const SpellRingItem& item, float totalSeconds)
+{
+    return actorShadowVisualSizeForAltitude(ringItemBaseShadowVisualSize(item), ringItemAltitude(item, totalSeconds));
 }
 
 void drawRingItemShape(
@@ -10597,7 +10609,9 @@ void Game::renderRingScreen(Renderer& renderer, float totalTime) const
             balance_,
             i,
             static_cast<int>(items.size()));
-        const Vec2 itemCenter = itemAnchor + ringItemBobOffset(item, totalTime);
+        SpellRingItem displayItem = item;
+        displayItem.worldPosition = itemAnchor;
+        const Vec2 itemCenter = ringItemDrawPosition(displayItem, totalTime);
         const Vec2 outward = normalize(itemAnchor - orbitCenter);
         const bool selected = i == ringSlotSelection_;
         const bool invalidDragPosition = selected && ringDragActive_ && !spellRing_.canPlaceItemAtAngle(i, displayAngle);
@@ -11360,6 +11374,7 @@ void Game::render(Renderer& renderer, const Time& time)
 
     const Vec2 playerFootAnchor = playerSpriteFootAnchor(player_.position);
     renderer.drawActorShadow(playerFootAnchor, PlayerSpriteDrawSize);
+    worldDrops_.renderShadows(renderer, tileMap_, objectCatalog_, player_.position, itemLights);
     enemies_.renderShadows(renderer, tileMap_, player_.position, itemLights);
     renderPlayerFootstepDust(renderer);
     worldDepthEntries.push_back(DepthRenderEntry{
@@ -11389,8 +11404,8 @@ void Game::render(Renderer& renderer, const Time& time)
                 const float cometVisualScale = ringShape == RingShape::Comet
                     ? std::clamp(1.0f - std::max(0, ringItemCount - 10) * 0.014f, 0.76f, 1.0f)
                     : 1.0f;
-                const Vec2 drawPosition = item.worldPosition + ringItemBobOffset(item, time.totalSeconds());
-                renderer.drawActorShadow(item.worldPosition, ringItemShadowVisualSize(item) * cometVisualScale);
+                const Vec2 drawPosition = ringItemDrawPosition(item, time.totalSeconds());
+                renderer.drawActorShadow(item.worldPosition, ringItemShadowVisualSize(item, time.totalSeconds()) * cometVisualScale);
                 const ItemData* object = objectForRingItem(objectCatalog_, item);
                 if (item.type == SpellRingItemType::Shovel) {
                     if (renderer.hasIconSheet()) {

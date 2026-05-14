@@ -2,6 +2,7 @@
 
 #include "data/GameBalance.hpp"
 #include "engine/Log.hpp"
+#include "game/ActorVisual.hpp"
 #include "game/Collision.hpp"
 #include "game/EnemyImageRenderer.hpp"
 #include "game/EffectSystem.hpp"
@@ -76,8 +77,6 @@ constexpr float HoverBobAmplitude = 3.0f;
 constexpr float PhaseBobAmplitude = 2.0f;
 constexpr float HoverBobSpeed = 4.0f;
 constexpr float PhaseBobSpeed = 5.0f;
-constexpr float EnemyShadowAltitudeScaleDistance = 128.0f;
-constexpr float EnemyShadowMinScale = 0.55f;
 constexpr float MudZoneTickSeconds = 0.20f;
 constexpr float MudZoneMaxDurationSeconds = 30.0f;
 constexpr float MagnetDisturbMaxRadius = 320.0f;
@@ -860,9 +859,7 @@ Color colorForEnemy(const Enemy& enemy)
 
 Vec2 enemyDrawPosition(const Enemy& enemy)
 {
-    Vec2 drawPosition = enemy.position;
-    drawPosition.y -= enemy.altitude;
-    return drawPosition;
+    return elevatedDrawPosition(enemy.position, enemy.altitude);
 }
 
 EnemyImageDrawOptions enemyImageOptionsFor(const Enemy& enemy)
@@ -902,11 +899,7 @@ float enemyShadowVisualSize(Renderer& renderer, const Enemy& enemy)
 {
     const Vec2 visualSize = enemyVisualBoundsSize(renderer, enemy);
     const float baseSize = std::max(1.0f, std::max(visualSize.x, visualSize.y));
-    const float altitudeScale = clamp(
-        1.0f - std::max(0.0f, enemy.altitude) / EnemyShadowAltitudeScaleDistance,
-        EnemyShadowMinScale,
-        1.0f);
-    return baseSize * altitudeScale;
+    return actorShadowVisualSizeForAltitude(baseSize, enemy.altitude);
 }
 
 Vec2 enemyShadowBoundsSize(Renderer& renderer, const Enemy& enemy)

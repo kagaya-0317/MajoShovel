@@ -53,6 +53,12 @@ public:
         const ObjectCatalog& catalog,
         Vec2 playerLight,
         const std::vector<LightSource>& extraLights) const;
+    void renderShadows(
+        Renderer& renderer,
+        const TileMap& tileMap,
+        const ObjectCatalog& catalog,
+        Vec2 playerLight,
+        const std::vector<LightSource>& extraLights) const;
     void appendRenderEntries(
         std::vector<DepthRenderEntry>& entries,
         Renderer& renderer,
