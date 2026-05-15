@@ -143,7 +143,7 @@ bool drawWorldIcon(
     }
 
     WorldIconDrawOptions scaledOptions = options;
-    if (gWorldIconScaleOverrides != nullptr && !definition->key.empty()) {
+    if (scaledOptions.applyScaleOverride && gWorldIconScaleOverrides != nullptr && !definition->key.empty()) {
         const auto it = gWorldIconScaleOverrides->find(std::string(definition->key));
         if (it != gWorldIconScaleOverrides->end()) {
             scaledOptions.scaleMultiplier *= it->second;

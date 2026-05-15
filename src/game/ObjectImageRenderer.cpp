@@ -63,7 +63,7 @@ bool drawObjectImage(
     }
 
     float objectScale = 1.0f;
-    if (gObjectImageScaleOverrides != nullptr && !object.id.empty()) {
+    if (options.applyScaleOverride && gObjectImageScaleOverrides != nullptr && !object.id.empty()) {
         const auto it = gObjectImageScaleOverrides->find(object.id);
         if (it != gObjectImageScaleOverrides->end()) {
             objectScale = it->second;

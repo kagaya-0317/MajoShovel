@@ -60,7 +60,14 @@ void Player::applyDamage(int amount, DamageSource source)
     }
 }
 
-void Player::update(const Input& input, const Camera& camera, TileMap& map, float dt, bool paused, const RuntimeBalance& balance)
+void Player::update(
+    const Input& input,
+    const Camera& camera,
+    TileMap& map,
+    float dt,
+    bool paused,
+    const RuntimeBalance& balance,
+    std::span<const CollisionRect> objectBlockers)
 {
     damageFlash = std::max(0.0f, damageFlash - dt);
     if (paused) {
@@ -93,12 +100,16 @@ void Player::update(const Input& input, const Camera& camera, TileMap& map, floa
         spriteAnimationTime += dt;
     }
     const Vec2 delta = velocity * dt;
+    const auto blocked = [&](Vec2 center) {
+        return map.isCircleBlocked(center, balance.playerRadius) ||
+            circleIntersectsAnyRect(center, balance.playerRadius, objectBlockers);
+    };
     Vec2 next = position + Vec2{delta.x, 0.0f};
-    if (!map.isCircleBlocked(next, balance.playerRadius)) {
+    if (!blocked(next)) {
         position = next;
     }
     next = position + Vec2{0.0f, delta.y};
-    if (!map.isCircleBlocked(next, balance.playerRadius)) {
+    if (!blocked(next)) {
         position = next;
     }
 

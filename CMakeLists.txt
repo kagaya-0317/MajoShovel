@@ -49,6 +49,9 @@ add_executable(MajoShovel
     src/data/StageCatalog.cpp
     src/data/RuntimeBalance.cpp
     src/game/Game.cpp
+    src/game/Kamishibai.cpp
+    src/game/DialogueSystem.cpp
+    src/game/OpeningMetaSave.cpp
     src/game/DungeonLayout.cpp
     src/game/EntityStatus.cpp
     src/game/EffectDispatcher.cpp
@@ -91,13 +94,13 @@ if(WIN32)
 endif()
 
 add_custom_command(TARGET MajoShovel POST_BUILD
-    COMMAND ${CMAKE_COMMAND} -E copy_directory
+    COMMAND ${CMAKE_COMMAND} -E copy_directory_if_different
         ${CMAKE_CURRENT_SOURCE_DIR}/data
         $<TARGET_FILE_DIR:MajoShovel>/data
 )
 
 add_custom_command(TARGET MajoShovel POST_BUILD
-    COMMAND ${CMAKE_COMMAND} -E copy_directory
+    COMMAND ${CMAKE_COMMAND} -E copy_directory_if_different
         ${CMAKE_CURRENT_SOURCE_DIR}/assets
         $<TARGET_FILE_DIR:MajoShovel>/assets
 )

@@ -706,13 +706,41 @@ void TileMap::drawTileLitByCircles(Renderer& renderer, Vec2 pos, Color color, Ve
     }
 }
 
-void TileMap::render(Renderer& renderer, const Camera&, Vec2 lightCenter, const std::vector<LightSource>& extraLights)
+void TileMap::render(Renderer& renderer, const Camera& camera, Vec2 lightCenter, const std::vector<LightSource>& extraLights)
 {
+    constexpr int ViewTileMargin = 1;
+    const Vec2 viewTopLeft = camera.screenToWorld({0.0f, 0.0f});
+    const Vec2 viewBottomRight = camera.screenToWorld({
+        static_cast<float>(camera.width()),
+        static_cast<float>(camera.height()),
+    });
+    const int minTileX = worldToTile(std::min(viewTopLeft.x, viewBottomRight.x)) - ViewTileMargin;
+    const int maxTileX = worldToTile(std::max(viewTopLeft.x, viewBottomRight.x)) + ViewTileMargin;
+    const int minTileY = worldToTile(std::min(viewTopLeft.y, viewBottomRight.y)) - ViewTileMargin;
+    const int maxTileY = worldToTile(std::max(viewTopLeft.y, viewBottomRight.y)) + ViewTileMargin;
+
     for (int cy = centerChunkY_ - balance::ActiveChunkRadius; cy <= centerChunkY_ + balance::ActiveChunkRadius; ++cy) {
+        const int chunkMinTileY = cy * balance::ChunkTiles;
+        const int chunkMaxTileY = chunkMinTileY + balance::ChunkTiles - 1;
+        if (chunkMaxTileY < minTileY || chunkMinTileY > maxTileY) {
+            continue;
+        }
+
         for (int cx = centerChunkX_ - balance::ActiveChunkRadius; cx <= centerChunkX_ + balance::ActiveChunkRadius; ++cx) {
+            const int chunkMinTileX = cx * balance::ChunkTiles;
+            const int chunkMaxTileX = chunkMinTileX + balance::ChunkTiles - 1;
+            if (chunkMaxTileX < minTileX || chunkMinTileX > maxTileX) {
+                continue;
+            }
+
             Chunk& chunk = getOrCreateChunk(cx, cy, balanceSnapshot_);
-            for (int y = 0; y < balance::ChunkTiles; ++y) {
-                for (int x = 0; x < balance::ChunkTiles; ++x) {
+            const int startY = std::max(0, minTileY - chunkMinTileY);
+            const int endY = std::min(balance::ChunkTiles - 1, maxTileY - chunkMinTileY);
+            const int startX = std::max(0, minTileX - chunkMinTileX);
+            const int endX = std::min(balance::ChunkTiles - 1, maxTileX - chunkMinTileX);
+
+            for (int y = startY; y <= endY; ++y) {
+                for (int x = startX; x <= endX; ++x) {
                     const int tx = cx * balance::ChunkTiles + x;
                     const int ty = cy * balance::ChunkTiles + y;
                     const Vec2 pos{static_cast<float>(tx * balance::TileSize), static_cast<float>(ty * balance::TileSize)};

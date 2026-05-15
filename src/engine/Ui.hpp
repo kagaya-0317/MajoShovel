@@ -71,6 +71,33 @@ struct UiButtonStyle {
     int imageVariant = 0;
 };
 
+struct UiGaugeGradient {
+    Color start{108, 206, 236, 230};
+    Color end{132, 230, 250, 230};
+    GradientDirection direction = GradientDirection::LeftToRight;
+};
+
+struct UiGaugeStyle {
+    UiGaugeGradient fill{};
+    Color track{12, 16, 24, 190};
+    Color trackInner{30, 38, 52, 220};
+    Color trackOuter{218, 228, 244, 78};
+    Color shadow{0, 0, 0, 105};
+    Color tick{255, 255, 255, 0};
+    Color highlight{255, 255, 255, 96};
+    Color capGlow{132, 230, 250, 78};
+    Color capCore{246, 252, 255, 225};
+    Color shimmer{255, 255, 255, 0};
+    float cornerRadius = -1.0f;
+    float trackOuterExtra = 2.0f;
+    float trackInnerInset = 5.0f;
+    float shadowOffsetY = 3.0f;
+    float shadowExtra = 8.0f;
+    int tickCount = 0;
+    float shimmerPhase = -1.0f;
+    float shimmerWidth = 56.0f;
+};
+
 struct UiCommandMenuItem {
     std::string_view label;
     bool enabled = true;
@@ -196,6 +223,7 @@ void drawUiFooter(Renderer& renderer, UiRect panel, std::string_view helpText);
 void drawUiWindow(Renderer& renderer, UiRect panel, std::string_view title, std::string_view helpText = {});
 void drawUiCancelButton(Renderer& renderer, UiRect panel);
 void drawUiSeparator(Renderer& renderer, UiRect rect, Color tint = {255, 255, 255, 255});
+void drawUiGauge(Renderer& renderer, UiRect rect, float progress, const UiGaugeStyle& style = {});
 void drawUiButton(Renderer& renderer, UiRect rect, std::string_view label, bool hot, const UiButtonStyle& style = {});
 void drawUiRectButton(Renderer& renderer, UiRect rect, std::string_view label, bool hot, const UiButtonStyle& style = {});
 void drawUiBodyMessageBelow(Renderer& renderer, UiRect anchor, std::string_view message, Color color = ui::TextMuted);

@@ -38,7 +38,9 @@ struct WorldIconDefinition {
     int imageNumber = 0;
 };
 
-using WorldIconDrawOptions = ScaledImageDrawOptions;
+struct WorldIconDrawOptions : ScaledImageDrawOptions {
+    bool applyScaleOverride = true;
+};
 
 void setWorldIconScaleOverrides(const std::unordered_map<std::string, float>* scaleByIconKey);
 

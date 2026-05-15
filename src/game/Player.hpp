@@ -4,8 +4,10 @@
 #include "engine/Camera.hpp"
 #include "engine/Math.hpp"
 #include "data/RuntimeBalance.hpp"
+#include "game/Collision.hpp"
 #include "game/EntityStatus.hpp"
 
+#include <span>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -53,7 +55,14 @@ struct Player {
     EntityStatus status;
 
     void applyDamage(int amount, DamageSource source);
-    void update(const Input& input, const Camera& camera, TileMap& map, float dt, bool paused, const RuntimeBalance& balance);
+    void update(
+        const Input& input,
+        const Camera& camera,
+        TileMap& map,
+        float dt,
+        bool paused,
+        const RuntimeBalance& balance,
+        std::span<const CollisionRect> objectBlockers = {});
     int spriteFrameIndex() const;
 };
 

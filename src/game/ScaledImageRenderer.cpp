@@ -48,9 +48,13 @@ bool drawScaledImage(
         return false;
     }
 
+    const Vec2 sizeMultiplier{
+        std::clamp(std::isfinite(options.sizeMultiplier.x) ? options.sizeMultiplier.x : 1.0f, ScaledImageScaleMin, ScaledImageScaleMax),
+        std::clamp(std::isfinite(options.sizeMultiplier.y) ? options.sizeMultiplier.y : 1.0f, ScaledImageScaleMin, ScaledImageScaleMax),
+    };
     const Vec2 drawSize{
-        std::max(1.0f, static_cast<float>(std::round(sourceSize.x * finalScale))),
-        std::max(1.0f, static_cast<float>(std::round(sourceSize.y * finalScale))),
+        std::max(1.0f, static_cast<float>(std::round(sourceSize.x * finalScale * sizeMultiplier.x))),
+        std::max(1.0f, static_cast<float>(std::round(sourceSize.y * finalScale * sizeMultiplier.y))),
     };
 
     ImageDrawOptions drawOptions;

@@ -33,10 +33,10 @@ struct ParticlePreset {
 };
 
 constexpr std::array<ParticlePreset, 25> ParticlePresets{{
-    {ParticleEffectId::DigDust, 4, {142, 104, 66, 220}, {102, 78, 54, 190}, 76.0f, 26.0f, Pi * 2.0f, 5.5f, 1.4f, 0.76f, 0.08f, {0.0f, 330.0f}, 1.45f, false, true, 4.0f, 14.0f, {184, 136, 76, 140}, ParticleVisual::RockShard},
-    {ParticleEffectId::DirtBreak, 18, {154, 110, 66, 235}, {214, 150, 82, 205}, 126.0f, 58.0f, Pi * 2.0f, 7.4f, 2.4f, 0.84f, 0.10f, {0.0f, 390.0f}, 1.55f, false, true, 8.0f, 34.0f, {218, 164, 88, 205}, ParticleVisual::RockShard},
-    {ParticleEffectId::RockBreak, 18, {122, 126, 132, 235}, {86, 88, 96, 205}, 118.0f, 48.0f, Pi * 2.0f, 8.4f, 2.6f, 0.92f, 0.12f, {0.0f, 420.0f}, 1.45f, false, true, 8.0f, 32.0f, {170, 174, 180, 190}, ParticleVisual::RockShard},
-    {ParticleEffectId::OreBreak, 22, {244, 204, 84, 238}, {126, 218, 236, 215}, 142.0f, 62.0f, Pi * 2.0f, 7.6f, 2.7f, 0.88f, 0.12f, {0.0f, 380.0f}, 1.35f, false, true, 10.0f, 38.0f, {255, 222, 110, 220}, ParticleVisual::RockShard},
+    {ParticleEffectId::DigDust, 4, {142, 104, 66, 220}, {102, 78, 54, 190}, 76.0f, 26.0f, Pi * 2.0f, 5.5f, 1.4f, 0.76f, 0.08f, {0.0f, 330.0f}, 1.45f, false, false, 4.0f, 14.0f, {184, 136, 76, 140}, ParticleVisual::RockShard},
+    {ParticleEffectId::DirtBreak, 18, {154, 110, 66, 235}, {214, 150, 82, 205}, 126.0f, 58.0f, Pi * 2.0f, 7.4f, 2.4f, 0.84f, 0.10f, {0.0f, 390.0f}, 1.55f, false, false, 8.0f, 34.0f, {218, 164, 88, 205}, ParticleVisual::RockShard},
+    {ParticleEffectId::RockBreak, 18, {122, 126, 132, 235}, {86, 88, 96, 205}, 118.0f, 48.0f, Pi * 2.0f, 8.4f, 2.6f, 0.92f, 0.12f, {0.0f, 420.0f}, 1.45f, false, false, 8.0f, 32.0f, {170, 174, 180, 190}, ParticleVisual::RockShard},
+    {ParticleEffectId::OreBreak, 22, {244, 204, 84, 238}, {126, 218, 236, 215}, 142.0f, 62.0f, Pi * 2.0f, 7.6f, 2.7f, 0.88f, 0.12f, {0.0f, 380.0f}, 1.35f, false, false, 10.0f, 38.0f, {255, 222, 110, 220}, ParticleVisual::RockShard},
     {ParticleEffectId::RingTrail, 4, {196, 172, 255, 135}, {244, 212, 116, 120}, 26.0f, 18.0f, 1.25f, 2.2f, 0.7f, 0.24f, 0.06f, {}, 1.5f, true, false},
     {ParticleEffectId::EnemyHit, 7, {235, 62, 72, 220}, {255, 184, 158, 190}, 88.0f, 34.0f, Pi * 2.0f, 2.6f, 0.8f, 0.34f, 0.08f, {}, 3.0f, false, true, 5.0f, 18.0f, {255, 170, 170, 205}},
     {ParticleEffectId::EnemyPoisonHit, 8, {82, 226, 92, 215}, {168, 78, 214, 180}, 68.0f, 34.0f, Pi * 2.0f, 2.4f, 0.9f, 0.46f, 0.12f, {0.0f, -12.0f}, 2.2f, false, true, 5.0f, 20.0f, {126, 240, 112, 185}},
@@ -148,6 +148,63 @@ Color applyColorOverride(Color color, Color overrideColor)
     return {overrideColor.r, overrideColor.g, overrideColor.b, color.a};
 }
 
+float smooth01(float value)
+{
+    value = clamp(value, 0.0f, 1.0f);
+    return value * value * (3.0f - 2.0f * value);
+}
+
+float smokePuffScale(const SmokePuff& smoke, float t)
+{
+    const float growEnd = clamp(smoke.growEnd, 0.12f, 0.36f);
+    const float shrinkStart = clamp(std::max(smoke.shrinkStart, growEnd + 0.16f), growEnd + 0.16f, 0.78f);
+    const float peakScale = clamp(smoke.peakScale, 1.08f, 1.30f);
+
+    if (t < growEnd) {
+        return lerp(0.30f, 1.02f, smooth01(t / growEnd));
+    }
+    if (t < shrinkStart) {
+        return lerp(1.02f, peakScale, smooth01((t - growEnd) / (shrinkStart - growEnd)));
+    }
+    return lerp(peakScale, 0.0f, smooth01((t - shrinkStart) / (1.0f - shrinkStart)));
+}
+
+unsigned char colorTowardWhite(unsigned char channel, float amount)
+{
+    return static_cast<unsigned char>(
+        std::clamp(std::lround(lerp(static_cast<float>(channel), 255.0f, amount)), 0L, 255L));
+}
+
+Color smokeHighlightColor(Color color)
+{
+    return {
+        colorTowardWhite(color.r, 0.48f),
+        colorTowardWhite(color.g, 0.48f),
+        colorTowardWhite(color.b, 0.48f),
+        color.a,
+    };
+}
+
+void renderSmokePuff(Renderer& renderer, const SmokePuff& smoke)
+{
+    const float t = smoke.duration > 0.0f ? clamp(smoke.age / smoke.duration, 0.0f, 1.0f) : 1.0f;
+    const float scale = smokePuffScale(smoke, t);
+    const float radius = smoke.radius * scale;
+    if (radius <= 0.35f) {
+        return;
+    }
+
+    const float angle = smoke.phase + smoke.age * 1.2f;
+    const Vec2 major = fromAngle(angle) * (radius * smoke.lobeSpread);
+    const Vec2 minor{-major.y * 0.56f, major.x * 0.56f};
+    const Color highlight = smokeHighlightColor(smoke.color);
+
+    renderer.fillSoftCircle(smoke.position - major * 0.52f + minor * 0.24f, radius * 0.76f, smoke.color);
+    renderer.fillSoftCircle(smoke.position + major * 0.42f, radius * 0.70f, smoke.color);
+    renderer.fillSoftCircle(smoke.position - minor * 0.44f, radius * 0.58f, smoke.color);
+    renderer.fillSoftCircle(smoke.position + Vec2{-radius * 0.16f, -radius * 0.18f}, radius * 0.40f, highlight);
+}
+
 Vec2 rotatePoint(Vec2 point, float radians)
 {
     const float c = std::cos(radians);
@@ -235,6 +292,19 @@ void EffectSystem::update(float dt)
         effect.rotation += effect.angularVelocity * dt;
     }
 
+    for (SmokePuff& smoke : smokePuffs_.items()) {
+        if (!smoke.active) {
+            continue;
+        }
+        smoke.age += dt;
+        if (smoke.age >= smoke.duration) {
+            smoke.active = false;
+            continue;
+        }
+        smoke.position += smoke.velocity * dt;
+        smoke.velocity = smoke.velocity * std::max(0.0f, 1.0f - 2.2f * dt);
+    }
+
     for (DamagePopup& popup : damagePopups_.items()) {
         if (!popup.active) {
             continue;
@@ -249,11 +319,13 @@ void EffectSystem::update(float dt)
 
 void EffectSystem::render(Renderer& renderer)
 {
+    renderSmokeLayer(renderer, EffectLayer::World);
     renderLayer(renderer, EffectLayer::World);
 }
 
 void EffectSystem::renderForeground(Renderer& renderer)
 {
+    renderSmokeLayer(renderer, EffectLayer::Foreground);
     renderLayer(renderer, EffectLayer::Foreground);
 }
 
@@ -274,6 +346,16 @@ void EffectSystem::renderLayer(Renderer& renderer, EffectLayer layer)
         } else {
             renderer.fillCircle(effect.position, std::max(0.8f, radius), color);
         }
+    }
+}
+
+void EffectSystem::renderSmokeLayer(Renderer& renderer, EffectLayer layer)
+{
+    for (const SmokePuff& smoke : smokePuffs_.items()) {
+        if (!smoke.active || smoke.layer != layer) {
+            continue;
+        }
+        renderSmokePuff(renderer, smoke);
     }
 }
 
@@ -312,6 +394,46 @@ void EffectSystem::renderDamagePopups(Renderer& renderer)
 
         renderer.drawText(pos + Vec2{2.0f, 2.0f}, buffer, shadowColor, textScale, TextStyle::Italic);
         renderer.drawText(pos, buffer, textColor, textScale, TextStyle::Italic);
+    }
+}
+
+void EffectSystem::spawnSmokeBurst(Vec2 position, SmokeBurstOptions options)
+{
+    const int count = std::clamp(options.count, 0, 96);
+    const float size = std::max(0.1f, options.size);
+    const float sizeJitter = clamp(options.sizeJitter, 0.0f, 0.95f);
+    const float spreadRadius = std::max(0.0f, options.spreadRadius);
+    const float speed = std::max(0.0f, options.speed);
+    const float riseSpeed = std::max(0.0f, options.riseSpeed);
+    const float baseDuration = std::max(0.06f, options.duration);
+    const float durationJitter = std::max(0.0f, options.durationJitter);
+
+    for (int i = 0; i < count; ++i) {
+        SmokePuff* smoke = smokePuffs_.acquire();
+        if (!smoke) {
+            return;
+        }
+
+        const float angle = seedAngle(position) +
+            (static_cast<float>(i) / std::max(1.0f, static_cast<float>(count))) * Pi * 2.0f +
+            randomRange(-0.46f, 0.46f);
+        const Vec2 direction = fromAngle(angle);
+        const float distance = spreadRadius * std::sqrt(randomRange(0.0f, 1.0f));
+        const float radiusScale = randomRange(1.0f - sizeJitter, 1.0f + sizeJitter);
+        const float duration = std::max(0.08f, baseDuration + randomRange(-durationJitter, durationJitter));
+        const float outwardSpeed = randomRange(speed * 0.35f, speed * 1.10f);
+
+        smoke->layer = options.layer;
+        smoke->position = position + direction * distance + Vec2{randomRange(-2.0f, 2.0f), randomRange(-2.0f, 2.0f)};
+        smoke->velocity = direction * outwardSpeed + Vec2{randomRange(-5.0f, 5.0f), -randomRange(riseSpeed * 0.45f, riseSpeed * 1.10f)};
+        smoke->color = mixColor(options.colorA, options.colorB, randomRange(0.0f, 1.0f));
+        smoke->duration = duration;
+        smoke->radius = size * radiusScale;
+        smoke->growEnd = randomRange(0.18f, 0.28f);
+        smoke->shrinkStart = randomRange(0.52f, 0.68f);
+        smoke->peakScale = randomRange(1.14f, 1.26f);
+        smoke->lobeSpread = randomRange(0.24f, 0.52f);
+        smoke->phase = randomRange(0.0f, Pi * 2.0f);
     }
 }
 
@@ -404,7 +526,7 @@ void EffectSystem::spawn(ParticleEffectId id, Vec2 position, Vec2 direction, flo
             position,
             preset.ringStart * scale,
             preset.ringEnd * scale,
-            preset.ringColor,
+            applyColorOverride(preset.ringColor, colorOverride),
             std::max(0.05f, preset.duration * 0.75f),
             layer);
     }
@@ -461,6 +583,7 @@ void EffectSystem::spawnTileBreak(Vec2 position, TileType tileType, Color colorO
     } else if (tileType == TileType::Ore) {
         id = ParticleEffectId::OreBreak;
     }
+    spawnSmokeBurst(position);
     spawn(id, position, {1.0f, 0.0f}, 1.0f, EffectLayer::Foreground, colorOverride);
 }
 
@@ -528,6 +651,20 @@ void EffectSystem::spawnCaptureSuccess(Vec2 position, Vec2 direction)
 void EffectSystem::spawnDropPickup(Vec2 position, Vec2 direction)
 {
     spawn(ParticleEffectId::DropPickup, position, direction);
+}
+
+void EffectSystem::spawnMaterialFloat(Vec2 position, Color color)
+{
+    color.a = static_cast<unsigned char>(std::clamp(static_cast<int>(color.a), 40, 220));
+    spawnParticle(
+        position + Vec2{randomRange(-8.0f, 8.0f), randomRange(-3.0f, 3.0f)},
+        {randomRange(-9.0f, 9.0f), randomRange(-34.0f, -20.0f)},
+        randomRange(1.2f, 2.3f),
+        color,
+        randomRange(0.55f, 0.82f),
+        {0.0f, -8.0f},
+        0.65f,
+        EffectLayer::World);
 }
 
 void EffectSystem::spawnTorchFlicker(Vec2 position)

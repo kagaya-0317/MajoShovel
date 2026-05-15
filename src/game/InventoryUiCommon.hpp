@@ -58,6 +58,8 @@ struct InlineItemTextStyle {
     float maxWidth,
     const InlineItemTextStyle& style = {});
 [[nodiscard]] std::string inlineItemTag(std::string_view objectId);
+[[nodiscard]] std::string inlineWorldIconTag(std::string_view worldIconKey);
+[[nodiscard]] std::string inlineMaterialIconTag(MaterialType type);
 
 void drawInlineItemText(
     Renderer& renderer,

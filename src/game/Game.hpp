@@ -12,7 +12,9 @@
 #include "data/RuntimeBalance.hpp"
 #include "data/StageCatalog.hpp"
 #include "game/DebugOverlay.hpp"
+#include "game/Collision.hpp"
 #include "game/DepthRender.hpp"
+#include "game/DialogueSystem.hpp"
 #include "game/DiggingSystem.hpp"
 #include "game/DungeonLayout.hpp"
 #include "game/EffectDispatcher.hpp"
@@ -20,7 +22,9 @@
 #include "game/EnemySystem.hpp"
 #include "game/EncyclopediaSystem.hpp"
 #include "game/InventorySystem.hpp"
+#include "game/Kamishibai.hpp"
 #include "game/LevelSystem.hpp"
+#include "game/OpeningMetaSave.hpp"
 #include "game/SpellRingSystem.hpp"
 #include "game/Player.hpp"
 #include "game/ProjectileSystem.hpp"
@@ -44,6 +48,8 @@ namespace majo {
 class UiContext;
 
 enum class ScreenMode {
+    OpeningKamishibai,
+    Title,
     Base,
     WorldLoading,
     Playing,
@@ -213,6 +219,8 @@ private:
         int depthRank = 1;
         bool revealed = false;
         bool opened = false;
+        bool lootSpawned = false;
+        float openingSeconds = 0.0f;
     };
 
     struct CrateNode {
@@ -330,6 +338,34 @@ private:
         Treasures,
         Enemies,
     };
+    enum class ScreenTransitionTarget {
+        None,
+        Base,
+        MiningStart,
+        BaseArea,
+    };
+    enum class ScreenTransitionPhase {
+        Idle,
+        CrossFadeCapture,
+        CrossFading,
+        FadingOut,
+        HoldBlack,
+        FadingIn,
+    };
+    struct ScreenTransitionState {
+        ScreenTransitionTarget target = ScreenTransitionTarget::None;
+        ScreenTransitionPhase phase = ScreenTransitionPhase::Idle;
+        float elapsed = 0.0f;
+        bool applied = false;
+        bool useLatestWarpPoint = false;
+        bool forceRegenerate = false;
+        BaseArea targetBaseArea = BaseArea::Outdoor;
+        Vec2 targetBasePlayerPosition{};
+        Vec2 targetBasePlayerFacing{0.0f, 1.0f};
+        std::string targetBaseStatus;
+
+        [[nodiscard]] bool active() const { return phase != ScreenTransitionPhase::Idle; }
+    };
     void initializeWorld(bool captureRunStartInventory = true);
     void resetWorldSimulationState();
     void resetWorldPlayerState();
@@ -360,6 +396,16 @@ private:
     std::string worldBuildStatusText() const;
     void enterBase();
     void startMiningFromBase(bool useLatestWarpPoint, bool forceRegenerate = false);
+    void loadOpeningKamishibaiData();
+    void startOpeningKamishibai();
+    void finishOpeningKamishibai(bool completedPlayback);
+    void updateOpeningKamishibai(const Input& input, float dt);
+    void updateTitleScreen(const Input& input, UiContext& ui);
+    void requestScreenTransition(ScreenTransitionTarget target);
+    void requestMiningStartTransition(bool useLatestWarpPoint, bool forceRegenerate);
+    void requestBaseAreaCrossfade(BaseArea targetArea, Vec2 playerPosition, Vec2 playerFacing, std::string status);
+    void updateScreenTransition(float dt);
+    void applyScreenTransitionTarget(ScreenTransitionTarget target);
     void applyPermanentUpgrades();
     float effectiveInitialRingRadius(int levelRadiusPoints) const;
     float effectiveInitialRingSpeed(int levelSpeedPoints) const;
@@ -509,13 +555,21 @@ private:
     void updateExposedMoonFragmentNodes();
     void revealMoonFragmentNodesFromOpenedTiles(const std::vector<Vec2>& openedTiles);
     void initializeChestNodesFromLayout();
-    void updateChestNodes(const Input& input);
+    void updateChestNodes(float dt, const Input& input);
     void revealChestNodesFromOpenedTiles(const std::vector<Vec2>& openedTiles);
     void openChestNode(ChestNode& node);
+    void spawnChestLoot(ChestNode& node);
     void initializeCrateNodesFromLayout();
     void updateCrateNodes();
     void destroyCrateNode(CrateNode& node);
-    bool spawnWeightedObjectLoot(LootChestKind chestKind, int depthRank, Vec2 center, std::mt19937& rng, std::string_view sourceLabel);
+    std::vector<CollisionRect> solidObjectCollisionRects() const;
+    bool spawnWeightedObjectLoot(
+        LootChestKind chestKind,
+        int depthRank,
+        Vec2 center,
+        std::mt19937& rng,
+        std::string_view sourceLabel,
+        bool launchFromCenter = false);
     int rewardNodeCount() const;
     int moneyNodeCount() const;
     int buriedVisibleNodeCount() const;
@@ -581,6 +635,8 @@ private:
     void renderBaseEditOverlay(Renderer& renderer) const;
     bool gameProgressPaused() const;
     bool basePresentationActive() const;
+    void startBaseMonicaDialogue();
+    void maybeStartFirstDungeonDialogue();
     void pushDungeonLog(std::string message, std::string mergeKey = {});
     void pushCountedDungeonLog(std::string label, int amount, std::string suffix, std::string mergeKey);
     void updateDungeonLogs(float dt);
@@ -591,6 +647,9 @@ private:
     void updateRingStatusHud(UiContext& ui);
     std::string currentMapDisplayName() const;
     void renderTopInfoBar(Renderer& renderer) const;
+    void renderOpeningKamishibai(Renderer& renderer) const;
+    void renderTitleScreen(Renderer& renderer) const;
+    void renderScreenTransitionOverlay(Renderer& renderer);
     void renderBaseBackdrop(Renderer& renderer) const;
     void renderBaseScreen(Renderer& renderer) const;
     void renderBookshelfScreen(Renderer& renderer) const;
@@ -631,7 +690,15 @@ private:
     EncyclopediaSystem encyclopedia_;
     LevelSystem levels_;
     UpgradeSystem upgrades_;
+    DialoguePlayer dialogue_;
     DebugOverlay debug_;
+    OpeningMetaSave openingMetaSave_;
+    OpeningMetaData openingMeta_;
+    std::vector<KamishibaiPage> openingPages_;
+    KamishibaiPlayer openingPlayer_;
+    KamishibaiRenderer openingRenderer_;
+    ScreenTransitionState screenTransition_;
+    FrameSnapshot screenTransitionSnapshot_;
     ScreenMode mode_ = ScreenMode::Base;
     BaseArea baseArea_ = BaseArea::Outdoor;
     Vec2 basePlayerPosition_{640.0f, 360.0f};

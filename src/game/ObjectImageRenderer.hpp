@@ -16,6 +16,7 @@ struct ObjectImageDrawOptions {
     TextureFilter filter = TextureFilter::Nearest;
     bool allowUpscale = false;
     float scaleMultiplier = 1.0f;
+    bool applyScaleOverride = true;
     bool outlineEnabled = true;
     Color outlineColor{0, 0, 0, 255};
     int outlinePx = 1;

@@ -2,6 +2,7 @@
 
 #include "data/GameBalance.hpp"
 #include "engine/Log.hpp"
+#include "engine/Ui.hpp"
 #include "game/ActorVisual.hpp"
 #include "game/Collision.hpp"
 #include "game/EnemyImageRenderer.hpp"
@@ -964,8 +965,21 @@ void drawEnemyVisual(Renderer& renderer, const Enemy& enemy)
     if (enemy.isBoss) {
         const float hpRatio = enemy.maxHp > 0 ? clamp(static_cast<float>(enemy.hp) / static_cast<float>(enemy.maxHp), 0.0f, 1.0f) : 0.0f;
         const Vec2 barPos = drawPosition + Vec2{-28.0f, -uiVisualRadius - 14.0f};
-        renderer.fillRect(barPos, {56.0f, 5.0f}, {18, 10, 22, 220});
-        renderer.fillRect(barPos, {56.0f * hpRatio, 5.0f}, {255, 190, 80, 255});
+        UiGaugeStyle bossHpGaugeStyle;
+        bossHpGaugeStyle.fill.start = {255, 146, 72, 255};
+        bossHpGaugeStyle.fill.end = {255, 222, 104, 255};
+        bossHpGaugeStyle.track = {18, 10, 22, 220};
+        bossHpGaugeStyle.trackInner = {32, 16, 30, 220};
+        bossHpGaugeStyle.trackOuter = {255, 210, 96, 62};
+        bossHpGaugeStyle.shadow = {0, 0, 0, 92};
+        bossHpGaugeStyle.highlight = {255, 248, 214, 72};
+        bossHpGaugeStyle.capGlow = {255, 190, 80, 46};
+        bossHpGaugeStyle.capCore = {255, 248, 210, 0};
+        bossHpGaugeStyle.trackOuterExtra = 1.0f;
+        bossHpGaugeStyle.trackInnerInset = 2.0f;
+        bossHpGaugeStyle.shadowOffsetY = 1.0f;
+        bossHpGaugeStyle.shadowExtra = 3.0f;
+        drawUiGauge(renderer, {barPos, {56.0f, 5.0f}}, hpRatio, bossHpGaugeStyle);
     }
 }
 

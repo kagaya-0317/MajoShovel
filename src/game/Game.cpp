@@ -22,6 +22,7 @@
 #include <optional>
 #include <random>
 #include <sstream>
+#include <span>
 #include <string>
 #include <string_view>
 #include <system_error>
@@ -124,7 +125,15 @@ constexpr int ChestNodeCountPerRun = 18;
 constexpr int CrateNodeCountPerRun = 30;
 constexpr float ChestInteractRadius = 34.0f;
 constexpr float ChestHitRadius = 20.0f;
+constexpr Vec2 ChestCollisionSize{34.0f, 24.0f};
+constexpr float ChestHorizontalStretchSeconds = 0.10f;
+constexpr float ChestVerticalStretchSeconds = 0.16f;
+constexpr float ChestReturnSeconds = 0.12f;
+constexpr float ChestOpenVisualSeconds = ChestHorizontalStretchSeconds + 0.08f;
+constexpr float ChestLootReleaseSeconds = ChestHorizontalStretchSeconds + ChestVerticalStretchSeconds + ChestReturnSeconds;
 constexpr float CrateHitRadius = 18.0f;
+constexpr Vec2 CrateCollisionSize{36.0f, 30.0f};
+constexpr Color CrateBreakParticleColor{132, 88, 48, 255};
 constexpr int EnemyNodeCountPerRun = 7;
 constexpr float ExposedEnemyNodeSpawnRadius = 820.0f;
 constexpr float TopInfoBarX = 0.0f;
@@ -132,7 +141,7 @@ constexpr float TopInfoBarY = 0.0f;
 constexpr float TopInfoBarHeight = 42.0f;
 constexpr float TopInfoBarPaddingX = 14.0f;
 constexpr float TopInfoBarGroupGap = 22.0f;
-constexpr float TopInfoBarIconSize = 18.0f;
+constexpr float TopInfoBarIconSize = 36.0f;
 constexpr float TopInfoBarIconTextGap = 7.0f;
 constexpr float DungeonStatusHudWidth = 206.0f;
 constexpr float DungeonStatusHudHeight = 134.0f;
@@ -176,6 +185,10 @@ constexpr float ObjectImageScaleHeaderHeight = 94.0f;
 constexpr float ObjectImageScaleFooterHeight = 60.0f;
 constexpr float ObjectImageScalePreviewSize = 48.0f;
 constexpr int EnemyTestVisibleRows = 8;
+constexpr float ScreenTransitionFadeOutSeconds = 0.45f;
+constexpr float ScreenTransitionBlackHoldSeconds = 0.08f;
+constexpr float ScreenTransitionFadeInSeconds = 0.45f;
+constexpr float ScreenTransitionCrossFadeSeconds = 0.35f;
 constexpr float FootstepDustLifetime = 0.30f;
 constexpr float FootstepDustStartOffset = 8.0f;
 constexpr float FootstepDustEndOffset = 20.0f;
@@ -230,38 +243,10 @@ Vec2 flickeredLightPosition(Vec2 position, float totalSeconds, float phase)
     };
 }
 
-Color materialCounterFill(MaterialType type)
+float smoothStep01(float value)
 {
-    switch (type) {
-    case MaterialType::OldWoodBuildingMaterial:
-        return {154, 104, 58, 255};
-    case MaterialType::EnhancementOre:
-        return {92, 132, 198, 255};
-    case MaterialType::MoonFragment:
-        return {230, 218, 142, 255};
-    case MaterialType::ManaDrop:
-        return {104, 212, 218, 255};
-    case MaterialType::Count:
-        break;
-    }
-    return {180, 180, 188, 255};
-}
-
-Color materialCounterOutline(MaterialType type)
-{
-    switch (type) {
-    case MaterialType::OldWoodBuildingMaterial:
-        return {224, 174, 108, 255};
-    case MaterialType::EnhancementOre:
-        return {166, 202, 255, 255};
-    case MaterialType::MoonFragment:
-        return {255, 246, 184, 255};
-    case MaterialType::ManaDrop:
-        return {174, 252, 255, 255};
-    case MaterialType::Count:
-        break;
-    }
-    return {230, 230, 238, 255};
+    value = std::clamp(value, 0.0f, 1.0f);
+    return value * value * (3.0f - 2.0f * value);
 }
 
 std::string popUtf8Codepoint(std::string text)
@@ -619,6 +604,61 @@ Vec2 scatterLootPosition(Vec2 center, std::mt19937& rng)
     return center + fromAngle(angleDistribution(rng)) * radiusDistribution(rng);
 }
 
+WorldDropSpawnMotion makeWorldLootJumpMotion(Vec2 center, std::mt19937& rng)
+{
+    std::uniform_real_distribution<float> durationDistribution(0.34f, 0.48f);
+    std::uniform_real_distribution<float> heightDistribution(24.0f, 40.0f);
+    const float duration = durationDistribution(rng);
+    return {
+        .jump = true,
+        .startPosition = center,
+        .jumpDurationSeconds = duration,
+        .jumpArcHeight = heightDistribution(rng),
+        .pickupDelaySeconds = duration * 0.75f,
+    };
+}
+
+float smooth01(float value)
+{
+    const float t = clamp(value, 0.0f, 1.0f);
+    return t * t * (3.0f - 2.0f * t);
+}
+
+Vec2 chestOpeningScale(float openingSeconds)
+{
+    if (openingSeconds <= 0.0f || openingSeconds >= ChestLootReleaseSeconds) {
+        return {1.0f, 1.0f};
+    }
+
+    if (openingSeconds < ChestHorizontalStretchSeconds) {
+        const float t = smooth01(openingSeconds / ChestHorizontalStretchSeconds);
+        return {
+            lerp(1.0f, 1.24f, t),
+            lerp(1.0f, 0.82f, t),
+        };
+    }
+
+    if (openingSeconds < ChestHorizontalStretchSeconds + ChestVerticalStretchSeconds) {
+        const float t = smooth01((openingSeconds - ChestHorizontalStretchSeconds) / ChestVerticalStretchSeconds);
+        return {
+            lerp(1.24f, 0.92f, t),
+            lerp(0.82f, 1.30f, t),
+        };
+    }
+
+    const float t = smooth01(
+        (openingSeconds - ChestHorizontalStretchSeconds - ChestVerticalStretchSeconds) / ChestReturnSeconds);
+    return {
+        lerp(0.92f, 1.0f, t),
+        lerp(1.30f, 1.0f, t),
+    };
+}
+
+bool chestVisualOpened(bool opened, bool lootSpawned, float openingSeconds)
+{
+    return opened && (lootSpawned || openingSeconds >= ChestOpenVisualSeconds);
+}
+
 Color chestFillColor(LootChestKind kind, bool opened)
 {
     if (opened) {
@@ -670,6 +710,26 @@ std::filesystem::path baseEditDataPath(BaseArea area)
 {
     const char* fileName = area == BaseArea::Outdoor ? "base_edit_outdoor.cfg" : "base_edit_home.cfg";
     return std::filesystem::path("data") / fileName;
+}
+
+std::filesystem::path openingKamishibaiDataPath()
+{
+    return std::filesystem::path("data") / "opening_kamishibai.tsv";
+}
+
+std::string openingTitleImagePath(const std::vector<KamishibaiPage>& pages)
+{
+    for (auto it = pages.rbegin(); it != pages.rend(); ++it) {
+        if (it->effect == KamishibaiEffect::TitleFade && !it->imagePath.empty()) {
+            return it->imagePath;
+        }
+    }
+    for (auto it = pages.rbegin(); it != pages.rend(); ++it) {
+        if (!it->imagePath.empty()) {
+            return it->imagePath;
+        }
+    }
+    return "assets/opening/op_8.png";
 }
 
 std::filesystem::path objectImageScaleDataPath()
@@ -892,6 +952,8 @@ bool circleIntersectsRect(Vec2 center, float radius, UiRect rect)
 const char* screenModeName(ScreenMode mode)
 {
     switch (mode) {
+    case ScreenMode::OpeningKamishibai: return "OpeningKamishibai";
+    case ScreenMode::Title: return "Title";
     case ScreenMode::Base: return "Base";
     case ScreenMode::WorldLoading: return "WorldLoading";
     case ScreenMode::Playing: return "Playing";
@@ -957,6 +1019,48 @@ const char* baseInteractionPrompt(const BaseFacility& facility)
     default:
         return nullptr;
     }
+}
+
+DialogueSequence baseMonicaDialogue()
+{
+    DialogueSequence sequence;
+    sequence.id = "base_monica_default";
+    sequence.lines.push_back(DialogueLine{
+        "monica",
+        "モニカ",
+        "",
+        "無理はしないで。準備ができたら、採掘出口から向かおう。",
+        false,
+    });
+    sequence.lines.push_back(DialogueLine{
+        "monica",
+        "モニカ",
+        "",
+        "チコリが反応したら、近くに星くずか古い魔導具があるかも。壁の色も見てみて。",
+        false,
+    });
+    return sequence;
+}
+
+DialogueSequence firstDungeonDialogue()
+{
+    DialogueSequence sequence;
+    sequence.id = "dungeon_first_monica";
+    sequence.lines.push_back(DialogueLine{
+        "monica",
+        "モニカ",
+        "",
+        "通信はつながってる。暗い場所では、松明の光から離れすぎないで。",
+        false,
+    });
+    sequence.lines.push_back(DialogueLine{
+        "monica",
+        "モニカ",
+        "",
+        "答えを全部は見通せないけど、異変の気配なら拾える。気になる壁は少し掘ってみよう。",
+        false,
+    });
+    return sequence;
 }
 
 UiRect basePanelRect()
@@ -2529,7 +2633,14 @@ void Game::initialize(int width, int height)
     loadObjectImageScaleData();
     setObjectImageScaleOverrides(&objectImageScaleById_);
     setWorldIconScaleOverrides(&otherImageScaleByKey_);
+    loadOpeningKamishibaiData();
+    std::string openingMetaMessage;
+    openingMeta_ = openingMetaSave_.load(&openingMetaMessage);
+    logInfo(
+        "[opening] " + openingMetaMessage +
+        " openingEverWatched=" + (openingMeta_.openingEverWatched ? std::string("true") : std::string("false")));
     enterBase();
+    startOpeningKamishibai();
     reloadNoticeTimer_ = 2.0f;
 }
 
@@ -2740,7 +2851,7 @@ void Game::beginWorldBuildFromBase(
     }
     baseMiningStartChoiceActive_ = false;
     baseRegenerateConfirmActive_ = false;
-    baseStatus_ = "採掘準備中...";
+    baseStatus_.clear();
     pausePage_ = PauseMenuPage::Main;
     pauseReturnMode_ = ScreenMode::Base;
     inventoryReturnToPause_ = false;
@@ -2860,6 +2971,7 @@ void Game::finishWorldBuild()
     pauseReturnMode_ = ScreenMode::Playing;
     resetPlayerFootstepDust();
     camera_.follow(player_.position, 1.0f);
+    maybeStartFirstDungeonDialogue();
 }
 
 int Game::worldBuildStepIndex() const
@@ -2972,6 +3084,182 @@ void Game::enterBase()
     }
 }
 
+void Game::loadOpeningKamishibaiData()
+{
+    KamishibaiLoader loader;
+    KamishibaiLoadResult result = loader.load(openingKamishibaiDataPath());
+    openingPages_ = std::move(result.pages);
+    logInfo("[opening] kamishibai pages loaded: " + std::to_string(openingPages_.size()));
+    for (const std::string& warning : result.warnings) {
+        logWarning("[opening] " + warning);
+    }
+}
+
+void Game::startOpeningKamishibai()
+{
+    if (openingPages_.empty()) {
+        loadOpeningKamishibaiData();
+    }
+    openingPlayer_.start(openingPages_, openingMeta_.openingEverWatched);
+    mode_ = ScreenMode::OpeningKamishibai;
+    pausePage_ = PauseMenuPage::Main;
+    pauseReturnMode_ = ScreenMode::Base;
+    inventoryReturnToPause_ = false;
+}
+
+void Game::finishOpeningKamishibai(bool completedPlayback)
+{
+    if (completedPlayback && !openingMeta_.openingEverWatched) {
+        openingMeta_.openingEverWatched = true;
+        std::string error;
+        if (openingMetaSave_.save(openingMeta_, &error)) {
+            logInfo("[opening] openingEverWatched saved: " + openingMetaSave_.path().generic_string());
+        } else {
+            logError("[opening] " + error);
+        }
+    }
+    mode_ = ScreenMode::Title;
+    pausePage_ = PauseMenuPage::Main;
+    pauseReturnMode_ = ScreenMode::Base;
+    inventoryReturnToPause_ = false;
+}
+
+void Game::updateOpeningKamishibai(const Input& input, float dt)
+{
+    bool skipped = false;
+    if (openingPlayer_.canSkipImmediately() &&
+        (input.mouseLeftPressed() || input.confirmPressed() || input.useItemPressed())) {
+        openingPlayer_.finishImmediately();
+        skipped = true;
+    }
+
+    openingPlayer_.update(dt);
+    if (openingPlayer_.finished()) {
+        finishOpeningKamishibai(!skipped);
+    }
+}
+
+void Game::updateTitleScreen(const Input& input, UiContext& ui)
+{
+    if (input.mouseLeftPressed() || input.confirmPressed() || input.useItemPressed()) {
+        if (input.mouseLeftPressed()) {
+            ui.consumePointer();
+        }
+        requestScreenTransition(ScreenTransitionTarget::Base);
+    }
+}
+
+void Game::requestScreenTransition(ScreenTransitionTarget target)
+{
+    if (target == ScreenTransitionTarget::None || screenTransition_.active()) {
+        return;
+    }
+
+    screenTransition_.target = target;
+    screenTransition_.phase = ScreenTransitionPhase::FadingOut;
+    screenTransition_.elapsed = 0.0f;
+    screenTransition_.applied = false;
+}
+
+void Game::requestMiningStartTransition(bool useLatestWarpPoint, bool forceRegenerate)
+{
+    if (screenTransition_.active()) {
+        return;
+    }
+
+    screenTransition_.target = ScreenTransitionTarget::MiningStart;
+    screenTransition_.phase = ScreenTransitionPhase::FadingOut;
+    screenTransition_.elapsed = 0.0f;
+    screenTransition_.applied = false;
+    screenTransition_.useLatestWarpPoint = useLatestWarpPoint;
+    screenTransition_.forceRegenerate = forceRegenerate;
+}
+
+void Game::requestBaseAreaCrossfade(BaseArea targetArea, Vec2 playerPosition, Vec2 playerFacing, std::string status)
+{
+    if (screenTransition_.active()) {
+        return;
+    }
+
+    screenTransition_.target = ScreenTransitionTarget::BaseArea;
+    screenTransition_.phase = ScreenTransitionPhase::CrossFadeCapture;
+    screenTransition_.elapsed = 0.0f;
+    screenTransition_.applied = false;
+    screenTransition_.targetBaseArea = targetArea;
+    screenTransition_.targetBasePlayerPosition = playerPosition;
+    screenTransition_.targetBasePlayerFacing = playerFacing;
+    screenTransition_.targetBaseStatus = std::move(status);
+}
+
+void Game::updateScreenTransition(float dt)
+{
+    if (!screenTransition_.active()) {
+        return;
+    }
+
+    const float safeDt = std::max(0.0f, dt);
+    switch (screenTransition_.phase) {
+    case ScreenTransitionPhase::Idle:
+        break;
+    case ScreenTransitionPhase::CrossFadeCapture:
+        break;
+    case ScreenTransitionPhase::CrossFading:
+        screenTransition_.elapsed += safeDt;
+        if (screenTransition_.elapsed >= ScreenTransitionCrossFadeSeconds) {
+            screenTransition_ = ScreenTransitionState{};
+        }
+        break;
+    case ScreenTransitionPhase::FadingOut:
+        screenTransition_.elapsed += safeDt;
+        if (screenTransition_.elapsed >= ScreenTransitionFadeOutSeconds) {
+            screenTransition_.elapsed = 0.0f;
+            if (!screenTransition_.applied) {
+                applyScreenTransitionTarget(screenTransition_.target);
+                screenTransition_.applied = true;
+            }
+            screenTransition_.phase = ScreenTransitionPhase::HoldBlack;
+        }
+        break;
+    case ScreenTransitionPhase::HoldBlack:
+        screenTransition_.elapsed += safeDt;
+        if (screenTransition_.target == ScreenTransitionTarget::MiningStart && worldBuildActive()) {
+            updateWorldBuild(safeDt);
+        }
+        if (screenTransition_.elapsed >= ScreenTransitionBlackHoldSeconds && !worldBuildActive()) {
+            screenTransition_.elapsed = 0.0f;
+            screenTransition_.phase = ScreenTransitionPhase::FadingIn;
+        }
+        break;
+    case ScreenTransitionPhase::FadingIn:
+        screenTransition_.elapsed += safeDt;
+        if (screenTransition_.elapsed >= ScreenTransitionFadeInSeconds) {
+            screenTransition_ = ScreenTransitionState{};
+        }
+        break;
+    }
+}
+
+void Game::applyScreenTransitionTarget(ScreenTransitionTarget target)
+{
+    switch (target) {
+    case ScreenTransitionTarget::None:
+        break;
+    case ScreenTransitionTarget::Base:
+        enterBase();
+        break;
+    case ScreenTransitionTarget::MiningStart:
+        startMiningFromBase(screenTransition_.useLatestWarpPoint, screenTransition_.forceRegenerate);
+        break;
+    case ScreenTransitionTarget::BaseArea:
+        baseArea_ = screenTransition_.targetBaseArea;
+        basePlayerPosition_ = screenTransition_.targetBasePlayerPosition;
+        basePlayerFacing_ = screenTransition_.targetBasePlayerFacing;
+        resetPlayerFootstepDust();
+        baseStatus_ = std::move(screenTransition_.targetBaseStatus);
+        break;
+    }
+}
+
 void Game::startMiningFromBase(bool useLatestWarpPoint, bool forceRegenerate)
 {
     useLatestWarpPoint = useLatestWarpPoint && unlockedWarpPointCount_ > 0;
@@ -3017,6 +3305,7 @@ void Game::startMiningFromBase(bool useLatestWarpPoint, bool forceRegenerate)
     pauseReturnMode_ = ScreenMode::Playing;
     resetPlayerFootstepDust();
     camera_.follow(player_.position, 1.0f);
+    maybeStartFirstDungeonDialogue();
 }
 
 void Game::applyPermanentUpgrades()
@@ -4435,6 +4724,24 @@ void Game::addStoryFlag(std::string flag)
     }
 }
 
+void Game::startBaseMonicaDialogue()
+{
+    baseStatus_.clear();
+    dialogue_.start(baseMonicaDialogue());
+}
+
+void Game::maybeStartFirstDungeonDialogue()
+{
+    constexpr std::string_view Flag = "dialogue_first_dungeon";
+    const bool alreadySeen = std::find(storyFlags_.begin(), storyFlags_.end(), std::string(Flag)) != storyFlags_.end();
+    if (alreadySeen) {
+        return;
+    }
+
+    addStoryFlag(std::string(Flag));
+    dialogue_.start(firstDungeonDialogue());
+}
+
 void Game::updateBookshelfScreen(const Input& input, UiContext& ui)
 {
     const auto objectCountForPage = [this](BookshelfPage page) {
@@ -5614,17 +5921,30 @@ void Game::initializeChestNodesFromLayout()
         node.depthRank = lootDepthRankForProgress(currentStageId_, progress);
         node.revealed = node.visibility != PlacementVisibility::BuriedHidden;
         node.opened = false;
+        node.lootSpawned = false;
+        node.openingSeconds = 0.0f;
         chestNodes_.push_back(node);
     }
 }
 
-void Game::updateChestNodes(const Input& input)
+void Game::updateChestNodes(float dt, const Input& input)
 {
     const bool interact = input.confirmPressed() || input.useItemPressed();
     const float interactRadiusSq = ChestInteractRadius * ChestInteractRadius;
 
     for (ChestNode& node : chestNodes_) {
-        if (node.opened || node.visibility != PlacementVisibility::Exposed) {
+        if (node.opened) {
+            if (!node.lootSpawned) {
+                node.openingSeconds += dt;
+                if (node.openingSeconds >= ChestLootReleaseSeconds) {
+                    node.openingSeconds = ChestLootReleaseSeconds;
+                    spawnChestLoot(node);
+                }
+            }
+            continue;
+        }
+
+        if (node.visibility != PlacementVisibility::Exposed) {
             continue;
         }
 
@@ -5672,7 +5992,13 @@ void Game::revealChestNodesFromOpenedTiles(const std::vector<Vec2>& openedTiles)
     }
 }
 
-bool Game::spawnWeightedObjectLoot(LootChestKind chestKind, int depthRank, Vec2 center, std::mt19937& rng, std::string_view sourceLabel)
+bool Game::spawnWeightedObjectLoot(
+    LootChestKind chestKind,
+    int depthRank,
+    Vec2 center,
+    std::mt19937& rng,
+    std::string_view sourceLabel,
+    bool launchFromCenter)
 {
     std::vector<const ObjectDefinition*> candidates;
     std::vector<double> weights;
@@ -5696,7 +6022,13 @@ bool Game::spawnWeightedObjectLoot(LootChestKind chestKind, int depthRank, Vec2 
     std::discrete_distribution<int> itemDistribution(weights.begin(), weights.end());
     const int selected = itemDistribution(rng);
     const ObjectDefinition* object = candidates[static_cast<std::size_t>(selected)];
-    return worldDrops_.spawnObjectDrop(objectCatalog_, object->id, scatterLootPosition(center, rng), runStats_.elapsedSeconds);
+    const Vec2 target = scatterLootPosition(center, rng);
+    return worldDrops_.spawnObjectDrop(
+        objectCatalog_,
+        object->id,
+        target,
+        runStats_.elapsedSeconds,
+        launchFromCenter ? makeWorldLootJumpMotion(center, rng) : WorldDropSpawnMotion{});
 }
 
 void Game::openChestNode(ChestNode& node)
@@ -5707,7 +6039,20 @@ void Game::openChestNode(ChestNode& node)
 
     node.opened = true;
     node.revealed = true;
+    node.lootSpawned = false;
+    node.openingSeconds = 0.0f;
 
+    reloadNotice_ = "Chest opened";
+    reloadNoticeTimer_ = 1.4f;
+}
+
+void Game::spawnChestLoot(ChestNode& node)
+{
+    if (node.lootSpawned) {
+        return;
+    }
+
+    node.lootSpawned = true;
     const Vec2 center = tileWorldCenter(node.tile);
     std::mt19937 rng(
         dungeonLayout_.seed ^
@@ -5717,7 +6062,7 @@ void Game::openChestNode(ChestNode& node)
 
     const int itemRolls = lootItemRollCount(node.chestKind, rng);
     for (int i = 0; i < itemRolls; ++i) {
-        if (!spawnWeightedObjectLoot(node.chestKind, node.depthRank, center, rng, "ChestLoot")) {
+        if (!spawnWeightedObjectLoot(node.chestKind, node.depthRank, center, rng, "ChestLoot", true)) {
             break;
         }
     }
@@ -5732,18 +6077,23 @@ void Game::openChestNode(ChestNode& node)
         const auto [minMoney, maxMoney] = lootMoneyBaseRange(node.chestKind);
         std::uniform_int_distribution<int> moneyDistribution(minMoney, maxMoney);
         const int amount = scaledLootAmount(moneyDistribution(rng), totalMultiplier);
-        worldDrops_.spawnMoneyDrop(amount, scatterLootPosition(center, rng), runStats_.elapsedSeconds);
+        const Vec2 target = scatterLootPosition(center, rng);
+        worldDrops_.spawnMoneyDrop(amount, target, runStats_.elapsedSeconds, makeWorldLootJumpMotion(center, rng));
     }
 
     std::bernoulli_distribution materialChance(balance_.lootMaterialChance);
     if (materialChance(rng)) {
         std::uniform_int_distribution<int> materialDistribution(1, 3);
         const int amount = scaledLootAmount(materialDistribution(rng), totalMultiplier);
-        worldDrops_.spawnMaterialDrop(rollChestMaterial(rng), amount, scatterLootPosition(center, rng), runStats_.elapsedSeconds);
+        const Vec2 target = scatterLootPosition(center, rng);
+        const MaterialType materialType = rollChestMaterial(rng);
+        worldDrops_.spawnMaterialDrop(
+            materialType,
+            amount,
+            target,
+            runStats_.elapsedSeconds,
+            makeWorldLootJumpMotion(center, rng));
     }
-
-    reloadNotice_ = "Chest opened";
-    reloadNoticeTimer_ = 1.4f;
 }
 
 void Game::initializeCrateNodesFromLayout()
@@ -5817,6 +6167,8 @@ void Game::destroyCrateNode(CrateNode& node)
     node.destroyed = true;
 
     const Vec2 center = tileWorldCenter(node.tile);
+    effects_.spawnTileBreak(center, TileType::Dirt, CrateBreakParticleColor);
+
     std::mt19937 rng(
         dungeonLayout_.seed ^
         (static_cast<std::uint32_t>(node.tile.x) * 0x9E3779B9u) ^
@@ -5830,22 +6182,55 @@ void Game::destroyCrateNode(CrateNode& node)
 
     std::uniform_int_distribution<int> materialDistribution(1, 3);
     const int materialAmount = scaledLootAmount(materialDistribution(rng), totalMultiplier);
-    worldDrops_.spawnMaterialDrop(MaterialType::OldWoodBuildingMaterial, materialAmount, scatterLootPosition(center, rng), runStats_.elapsedSeconds);
+    const Vec2 materialTarget = scatterLootPosition(center, rng);
+    worldDrops_.spawnMaterialDrop(
+        MaterialType::OldWoodBuildingMaterial,
+        materialAmount,
+        materialTarget,
+        runStats_.elapsedSeconds,
+        makeWorldLootJumpMotion(center, rng));
 
     std::bernoulli_distribution moneyChance(balance_.crateMoneyChance);
     if (moneyChance(rng)) {
         std::uniform_int_distribution<int> moneyDistribution(5, 20);
         const int amount = scaledLootAmount(moneyDistribution(rng), totalMultiplier);
-        worldDrops_.spawnMoneyDrop(amount, scatterLootPosition(center, rng), runStats_.elapsedSeconds);
+        const Vec2 moneyTarget = scatterLootPosition(center, rng);
+        worldDrops_.spawnMoneyDrop(
+            amount,
+            moneyTarget,
+            runStats_.elapsedSeconds,
+            makeWorldLootJumpMotion(center, rng));
     }
 
     std::bernoulli_distribution bonusChance(balance_.crateBonusChance);
     if (bonusChance(rng)) {
-        spawnWeightedObjectLoot(LootChestKind::Common, node.depthRank, center, rng, "CrateBonusLoot");
+        spawnWeightedObjectLoot(LootChestKind::Common, node.depthRank, center, rng, "CrateBonusLoot", true);
     }
 
     reloadNotice_ = "Crate broken";
     reloadNoticeTimer_ = 1.2f;
+}
+
+std::vector<CollisionRect> Game::solidObjectCollisionRects() const
+{
+    std::vector<CollisionRect> rects;
+    rects.reserve(chestNodes_.size() + crateNodes_.size());
+
+    for (const ChestNode& node : chestNodes_) {
+        if (!node.opened && (node.visibility != PlacementVisibility::Exposed || !node.revealed)) {
+            continue;
+        }
+        rects.push_back(collisionRectFromCenter(tileWorldCenter(node.tile), ChestCollisionSize));
+    }
+
+    for (const CrateNode& node : crateNodes_) {
+        if (node.destroyed) {
+            continue;
+        }
+        rects.push_back(collisionRectFromCenter(tileWorldCenter(node.tile), CrateCollisionSize));
+    }
+
+    return rects;
 }
 
 int Game::rewardNodeCount() const
@@ -8391,10 +8776,25 @@ bool Game::executeDebugCommand(std::string_view command)
         return true;
     }
 
+    if (normalized == "game launch-mode pre-title" ||
+        normalized == "game launch-mode before-title" ||
+        normalized == "game launch-mode opening") {
+        if (enemyTestActive_) {
+            exitEnemyTestToBase();
+        } else if (!basePresentationActive() && mode_ != ScreenMode::OpeningKamishibai && mode_ != ScreenMode::Title) {
+            returnToBaseFromNormalStage(false, false);
+        } else {
+            enterBase();
+        }
+        startOpeningKamishibai();
+        logInfo("Debug: launch mode set to pre-title opening.");
+        return true;
+    }
+
     if (normalized == "game launch-mode base") {
         if (enemyTestActive_) {
             exitEnemyTestToBase();
-        } else if (mode_ == ScreenMode::Base) {
+        } else if (basePresentationActive() || mode_ == ScreenMode::OpeningKamishibai || mode_ == ScreenMode::Title) {
             enterBase();
         } else {
             returnToBaseFromNormalStage(false, false);
@@ -9622,11 +10022,11 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
                         return;
                     }
                     baseRegenerateConfirmActive_ = false;
-                    startMiningFromBase(false, true);
+                    requestMiningStartTransition(false, true);
                     return;
                 }
                 baseRegenerateConfirmActive_ = false;
-                startMiningFromBase(i == 1);
+                requestMiningStartTransition(i == 1, false);
                 return;
             }
         }
@@ -9646,11 +10046,11 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
                     return;
                 }
                 baseRegenerateConfirmActive_ = false;
-                startMiningFromBase(false, true);
+                requestMiningStartTransition(false, true);
                 return;
             }
             baseRegenerateConfirmActive_ = false;
-            startMiningFromBase(baseMiningStartSelection_ == 1);
+            requestMiningStartTransition(baseMiningStartSelection_ == 1, false);
             return;
         }
         ui.block(basePanelRect());
@@ -9739,21 +10139,21 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
             break;
         case BaseFacilityAction::HomeEntrance:
             baseOutdoorPlayerPosition_ = basePlayerPosition_;
-            baseArea_ = BaseArea::HomeInterior;
-            basePlayerPosition_ = {640.0f, 542.0f};
-            basePlayerFacing_ = {0.0f, -1.0f};
-            resetPlayerFootstepDust();
-            baseStatus_ = "主人公の家に入りました";
+            requestBaseAreaCrossfade(
+                BaseArea::HomeInterior,
+                {640.0f, 542.0f},
+                {0.0f, -1.0f},
+                "主人公の家に入りました");
             break;
         case BaseFacilityAction::HomeExit:
-            baseArea_ = BaseArea::Outdoor;
-            basePlayerPosition_ = baseOutdoorPlayerPosition_;
-            basePlayerFacing_ = {0.0f, 1.0f};
-            resetPlayerFootstepDust();
-            baseStatus_ = "屋外拠点に戻りました";
+            requestBaseAreaCrossfade(
+                BaseArea::Outdoor,
+                baseOutdoorPlayerPosition_,
+                {0.0f, 1.0f},
+                "屋外拠点に戻りました");
             break;
         case BaseFacilityAction::MonicaTalk:
-            baseStatus_ = "モニカ: 無理はしないで。準備ができたら採掘出口から向かおう。";
+            startBaseMonicaDialogue();
             break;
         }
     };
@@ -9979,12 +10379,28 @@ void Game::updateScreenMode(
     float dt,
     std::vector<EffectDiscoveryEvent>* discoveryEvents)
 {
+    if (mode_ == ScreenMode::OpeningKamishibai) {
+        updateOpeningKamishibai(input, dt);
+        return;
+    }
+
+    if (mode_ == ScreenMode::Title) {
+        updateTitleScreen(input, ui);
+        return;
+    }
+
     if (mode_ == ScreenMode::WorldLoading) {
         return;
     }
 
     if (mode_ == ScreenMode::ObjectImageScaleEdit) {
         updateObjectImageScaleEditScreen(input, ui);
+        return;
+    }
+
+    if (dialogue_.active()) {
+        dialogue_.update(input, dt);
+        ui.consumePointer();
         return;
     }
 
@@ -10013,6 +10429,12 @@ void Game::updateScreenMode(
     }
 
     switch (mode_) {
+    case ScreenMode::OpeningKamishibai:
+        updateOpeningKamishibai(input, dt);
+        break;
+    case ScreenMode::Title:
+        updateTitleScreen(input, ui);
+        break;
     case ScreenMode::Base:
         updateBaseScreen(input, ui, dt);
         break;
@@ -10084,7 +10506,7 @@ void Game::updateScreenMode(
 
 bool Game::gameProgressPaused() const
 {
-    return mode_ != ScreenMode::Playing;
+    return dialogue_.active() || mode_ != ScreenMode::Playing;
 }
 
 bool Game::basePresentationActive() const
@@ -10170,16 +10592,36 @@ void Game::updateDungeonLogs(float dt)
 
 void Game::appendPickupLogs(const std::vector<WorldDropPickupEvent>& pickupEvents)
 {
+    const auto moneyLogLabel = [](int amount) {
+        return inlineWorldIconTag(worldIconKey(moneyWorldIconForAmount(amount))) + " お金";
+    };
+
     for (const WorldDropPickupEvent& event : pickupEvents) {
         const int quantity = std::max(1, event.quantity);
         if (event.kind == WorldDropKind::Money) {
-            pushCountedDungeonLog("お金", quantity, " を入手", "money");
+            bool merged = false;
+            for (DungeonLogEntry& entry : dungeonLogs_) {
+                if (entry.mergeKey == "money" && entry.count > 0 && entry.age <= DungeonLogMergeSeconds) {
+                    entry.count += quantity;
+                    entry.label = moneyLogLabel(entry.count);
+                    entry.suffix = " を入手";
+                    entry.age = 0.0f;
+                    entry.lifetime = DungeonLogLifetime;
+                    merged = true;
+                    break;
+                }
+            }
+            if (!merged) {
+                pushCountedDungeonLog(moneyLogLabel(quantity), quantity, " を入手", "money");
+            }
         } else if (event.kind == WorldDropKind::Material) {
             MaterialType materialType = MaterialType::Count;
-            const std::string label = materialTypeFromSaveName(event.id, materialType)
+            const bool knownMaterial = materialTypeFromSaveName(event.id, materialType);
+            const std::string label = knownMaterial
                 ? std::string(materialTypeDisplayName(materialType))
                 : (event.name.empty() ? event.id : event.name);
-            const std::string iconPrefix = objectCatalog_.registry.findById(event.id) != nullptr ? inlineItemTag(event.id) + " " : "";
+            const std::string iconTag = knownMaterial ? inlineMaterialIconTag(materialType) : "";
+            const std::string iconPrefix = iconTag.empty() ? "" : iconTag + " ";
             pushCountedDungeonLog(iconPrefix + label, quantity, " を入手", "material:" + event.id);
         } else if (event.kind == WorldDropKind::Object) {
             const std::string label = event.name.empty() ? event.id : event.name;
@@ -10260,8 +10702,17 @@ void Game::renderTopInfoBar(Renderer& renderer) const
     const int textScale = 2;
     const Vec2 textMeasure = renderer.measureText("0", textScale);
     const float textY = TopInfoBarY + std::max(0.0f, (TopInfoBarHeight - textMeasure.y) * 0.5f) + 8.0f;
-    const std::string moneyText = std::to_string(money_) + "G";
-    const Vec2 moneySize = renderer.measureText(moneyText, textScale);
+    InlineItemTextStyle moneyStyle;
+    moneyStyle.text = {246, 230, 174, 255};
+    moneyStyle.scale = textScale;
+    moneyStyle.iconTextGap = TopInfoBarIconTextGap;
+    moneyStyle.iconScale = TopInfoBarIconSize / std::max(1.0f, textMeasure.y);
+
+    InlineItemTextStyle materialStyle = moneyStyle;
+    materialStyle.text = {232, 236, 244, 255};
+
+    const std::string moneyEntry = inlineWorldIconTag(worldIconKey(WorldIconId::MoneyLarge)) + std::to_string(money_) + "G";
+    const Vec2 moneyEntrySize = measureInlineItemText(renderer, moneyEntry, moneyStyle);
     constexpr std::array<TopInfoMaterial, 4> Materials{{
         {MaterialType::OldWoodBuildingMaterial},
         {MaterialType::EnhancementOre},
@@ -10269,13 +10720,13 @@ void Game::renderTopInfoBar(Renderer& renderer) const
         {MaterialType::ManaDrop},
     }};
 
-    std::array<std::string, Materials.size()> materialTexts{};
-    std::array<Vec2, Materials.size()> materialTextSizes{};
-    float rightGroupWidth = TopInfoBarIconSize + TopInfoBarIconTextGap + moneySize.x;
+    std::array<std::string, Materials.size()> materialEntries{};
+    std::array<Vec2, Materials.size()> materialEntrySizes{};
+    float rightGroupWidth = moneyEntrySize.x;
     for (std::size_t i = 0; i < Materials.size(); ++i) {
-        materialTexts[i] = std::to_string(inventory_.materialCount(Materials[i].type));
-        materialTextSizes[i] = renderer.measureText(materialTexts[i], textScale);
-        rightGroupWidth += TopInfoBarGroupGap + TopInfoBarIconSize + TopInfoBarIconTextGap + materialTextSizes[i].x;
+        materialEntries[i] = inlineMaterialIconTag(Materials[i].type) + std::to_string(inventory_.materialCount(Materials[i].type));
+        materialEntrySizes[i] = measureInlineItemText(renderer, materialEntries[i], materialStyle);
+        rightGroupWidth += TopInfoBarGroupGap + materialEntrySizes[i].x;
     }
 
     const float rightEdge = TopInfoBarX + barWidth - TopInfoBarPaddingX;
@@ -10288,55 +10739,81 @@ void Game::renderTopInfoBar(Renderer& renderer) const
     renderer.drawText({mapX, textY}, mapName, {246, 246, 252, 255}, textScale);
 
     float x = rightX;
-    const auto drawMoneyCounterIconFallback = [&](Vec2 iconPos) {
-        renderer.fillRect(iconPos, {TopInfoBarIconSize, TopInfoBarIconSize}, {12, 14, 24, 255});
-        renderer.fillCircle(
-            iconPos + Vec2{TopInfoBarIconSize * 0.5f, TopInfoBarIconSize * 0.5f},
-            TopInfoBarIconSize * 0.42f,
-            {236, 188, 58, 255});
-        renderer.drawCircle(
-            iconPos + Vec2{TopInfoBarIconSize * 0.5f, TopInfoBarIconSize * 0.5f},
-            TopInfoBarIconSize * 0.46f,
-            {255, 232, 132, 255});
-    };
-    const auto drawCounterIconFallback = [&](Vec2 iconPos, MaterialType type) {
-        renderer.fillRect(iconPos, {TopInfoBarIconSize, TopInfoBarIconSize}, {12, 14, 24, 255});
-        renderer.fillCircle(
-            iconPos + Vec2{TopInfoBarIconSize * 0.5f, TopInfoBarIconSize * 0.5f},
-            TopInfoBarIconSize * 0.42f,
-            materialCounterFill(type));
-        renderer.drawCircle(
-            iconPos + Vec2{TopInfoBarIconSize * 0.5f, TopInfoBarIconSize * 0.5f},
-            TopInfoBarIconSize * 0.46f,
-            materialCounterOutline(type));
-    };
-    const Vec2 moneyIconPos{x, TopInfoBarY + (TopInfoBarHeight - TopInfoBarIconSize) * 0.5f};
-    if (!drawWorldIcon(
-            renderer,
-            WorldIconId::MoneyLarge,
-            moneyIconPos + Vec2{TopInfoBarIconSize * 0.5f, TopInfoBarIconSize * 0.5f},
-            {TopInfoBarIconSize, TopInfoBarIconSize})) {
-        drawMoneyCounterIconFallback(moneyIconPos);
-    }
-    x += TopInfoBarIconSize + TopInfoBarIconTextGap;
-    renderer.drawText({x, textY}, moneyText, {246, 230, 174, 255}, textScale);
-    x += moneySize.x;
+    drawInlineItemText(renderer, objectCatalog_, {x, textY}, moneyEntry, moneyStyle);
+    x += moneyEntrySize.x;
 
     for (std::size_t i = 0; i < Materials.size(); ++i) {
         x += TopInfoBarGroupGap;
-        const MaterialType type = Materials[i].type;
-        const Vec2 iconPos{x, TopInfoBarY + (TopInfoBarHeight - TopInfoBarIconSize) * 0.5f};
-        if (!drawWorldIcon(
-                renderer,
-                materialWorldIcon(type),
-                iconPos + Vec2{TopInfoBarIconSize * 0.5f, TopInfoBarIconSize * 0.5f},
-                {TopInfoBarIconSize, TopInfoBarIconSize})) {
-            drawCounterIconFallback(iconPos, type);
-        }
-        x += TopInfoBarIconSize + TopInfoBarIconTextGap;
-        renderer.drawText({x, textY}, materialTexts[i], {232, 236, 244, 255}, textScale);
-        x += materialTextSizes[i].x;
+        drawInlineItemText(renderer, objectCatalog_, {x, textY}, materialEntries[i], materialStyle);
+        x += materialEntrySizes[i].x;
     }
+}
+
+void Game::renderOpeningKamishibai(Renderer& renderer) const
+{
+    openingRenderer_.render(renderer, openingPlayer_, camera_.width(), camera_.height());
+}
+
+void Game::renderTitleScreen(Renderer& renderer) const
+{
+    openingRenderer_.renderTitleScreen(renderer, openingTitleImagePath(openingPages_), camera_.width(), camera_.height());
+}
+
+void Game::renderScreenTransitionOverlay(Renderer& renderer)
+{
+    if (!screenTransition_.active()) {
+        renderer.destroyFrameSnapshot(screenTransitionSnapshot_);
+        return;
+    }
+
+    if (screenTransition_.phase == ScreenTransitionPhase::CrossFadeCapture) {
+        renderer.destroyFrameSnapshot(screenTransitionSnapshot_);
+        screenTransitionSnapshot_ = renderer.captureFrameSnapshot();
+        if (!screenTransition_.applied) {
+            applyScreenTransitionTarget(screenTransition_.target);
+            screenTransition_.applied = true;
+        }
+        screenTransition_.elapsed = 0.0f;
+        screenTransition_.phase = ScreenTransitionPhase::CrossFading;
+    }
+
+    float alpha = 0.0f;
+    switch (screenTransition_.phase) {
+    case ScreenTransitionPhase::Idle:
+        break;
+    case ScreenTransitionPhase::CrossFadeCapture:
+        break;
+    case ScreenTransitionPhase::CrossFading:
+        alpha = 1.0f - smoothStep01(screenTransition_.elapsed / std::max(0.001f, ScreenTransitionCrossFadeSeconds));
+        if (alpha > 0.0f) {
+            renderer.setScreenSpace();
+            renderer.drawFrameSnapshot(
+                screenTransitionSnapshot_,
+                {0.0f, 0.0f},
+                {static_cast<float>(camera_.width()), static_cast<float>(camera_.height())},
+                {255, 255, 255, alphaByte(255.0f * alpha)});
+        }
+        return;
+    case ScreenTransitionPhase::FadingOut:
+        alpha = smoothStep01(screenTransition_.elapsed / std::max(0.001f, ScreenTransitionFadeOutSeconds));
+        break;
+    case ScreenTransitionPhase::HoldBlack:
+        alpha = 1.0f;
+        break;
+    case ScreenTransitionPhase::FadingIn:
+        alpha = 1.0f - smoothStep01(screenTransition_.elapsed / std::max(0.001f, ScreenTransitionFadeInSeconds));
+        break;
+    }
+
+    if (alpha <= 0.0f) {
+        return;
+    }
+
+    renderer.setScreenSpace();
+    renderer.fillRect(
+        {0.0f, 0.0f},
+        {static_cast<float>(camera_.width()), static_cast<float>(camera_.height())},
+        {0, 0, 0, alphaByte(255.0f * alpha)});
 }
 
 void Game::renderDungeonStatusHud(Renderer& renderer) const
@@ -10365,12 +10842,24 @@ void Game::renderDungeonStatusHud(Renderer& renderer) const
 
     const float barWidth = panel.size.x - DungeonStatusHudPadding * 2.0f;
     const Vec2 hpBarPos = content + Vec2{0.0f, 52.0f};
-    renderer.fillRect(hpBarPos, {barWidth, DungeonStatusHudBarHeight}, {42, 18, 24, 230});
-    renderer.fillRect(
-        hpBarPos,
-        {barWidth * (static_cast<float>(hp) / static_cast<float>(hpMax)), DungeonStatusHudBarHeight},
-        {224, 74, 84, 255});
-    renderer.drawRect(hpBarPos, {barWidth, DungeonStatusHudBarHeight}, {255, 220, 224, 180});
+    UiGaugeStyle hpGaugeStyle;
+    hpGaugeStyle.fill.start = {224, 74, 84, 255};
+    hpGaugeStyle.fill.end = {255, 126, 116, 255};
+    hpGaugeStyle.track = {42, 18, 24, 230};
+    hpGaugeStyle.trackInner = {58, 24, 32, 220};
+    hpGaugeStyle.trackOuter = {255, 220, 224, 82};
+    hpGaugeStyle.shadow = {0, 0, 0, 90};
+    hpGaugeStyle.highlight = {255, 244, 244, 92};
+    hpGaugeStyle.capGlow = {255, 116, 128, 58};
+    hpGaugeStyle.capCore = {255, 244, 244, 210};
+    hpGaugeStyle.trackInnerInset = 4.0f;
+    hpGaugeStyle.shadowOffsetY = 2.0f;
+    hpGaugeStyle.shadowExtra = 5.0f;
+    drawUiGauge(
+        renderer,
+        {hpBarPos, {barWidth, DungeonStatusHudBarHeight}},
+        static_cast<float>(hp) / static_cast<float>(hpMax),
+        hpGaugeStyle);
 
     std::snprintf(buffer, sizeof(buffer), "Lv %02d", std::max(1, player_.level));
     renderer.drawText(content + Vec2{0.0f, 70.0f}, buffer, {232, 236, 244, 255}, TextScale);
@@ -10474,6 +10963,7 @@ void Game::renderDungeonLogs(Renderer& renderer) const
         textStyle.text = {246, 246, 252, textAlpha};
         textStyle.scale = TextScale;
         textStyle.iconTextGap = 4.0f;
+        textStyle.iconScale = TopInfoBarIconSize / std::max(1.0f, textMeasure.y);
         textStyle.outlineEnabled = true;
         textStyle.outline = {0, 0, 0, textAlpha};
         textStyle.outlinePx = 2;
@@ -10495,55 +10985,39 @@ void Game::renderWorldLoadingScreen(Renderer& renderer, float totalSeconds) cons
     renderer.setScreenSpace();
     const float screenW = static_cast<float>(camera_.width());
     const float screenH = static_cast<float>(camera_.height());
-    renderer.fillRect({0.0f, 0.0f}, {screenW, screenH}, {0, 0, 0, 138});
 
-    const Vec2 panelSize{520.0f, 170.0f};
-    const float panelMaxY = std::max(32.0f, screenH - panelSize.y - 32.0f);
-    const Vec2 panelPos{
-        (screenW - panelSize.x) * 0.5f,
-        std::clamp(screenH * 0.62f, 32.0f, panelMaxY),
-    };
-    renderer.fillRect(panelPos, panelSize, {12, 16, 24, 228});
-    renderer.drawRect(panelPos, panelSize, {180, 198, 232, 255});
-
-    const std::string title = "採掘準備中";
-    const Vec2 titleSize = renderer.measureText(title, 3);
-    renderer.drawText(
-        {panelPos.x + (panelSize.x - titleSize.x) * 0.5f, panelPos.y + 30.0f},
-        title,
-        {246, 235, 255, 255},
-        3);
-
-    std::string status = worldBuildStatusText();
-    const int dotCount = static_cast<int>(std::fmod(std::max(0.0f, totalSeconds) * 2.0f, 4.0f));
-    status.append(static_cast<std::size_t>(dotCount), '.');
-    const Vec2 statusSize = renderer.measureText(status, 2);
-    renderer.drawText(
-        {panelPos.x + (panelSize.x - statusSize.x) * 0.5f, panelPos.y + 76.0f},
-        status,
-        {214, 224, 238, 255},
-        2);
-
-    constexpr float BarW = 392.0f;
-    constexpr float BarH = 14.0f;
-    const Vec2 barPos{panelPos.x + (panelSize.x - BarW) * 0.5f, panelPos.y + 116.0f};
-    renderer.fillRect(barPos, {BarW, BarH}, {30, 36, 48, 255});
-    renderer.drawRect(barPos, {BarW, BarH}, {100, 124, 154, 255});
-    const float progress = worldBuildProgress();
+    constexpr float BarW = 280.0f;
+    constexpr float TrackH = 16.0f;
+    constexpr float MarginRight = 28.0f;
+    constexpr float MarginBottom = 28.0f;
+    const float barLeft = std::max(12.0f, screenW - MarginRight - BarW);
+    const float barCenterY = std::max(20.0f, screenH - MarginBottom - TrackH * 0.5f);
+    const UiRect bar{{barLeft, barCenterY - TrackH * 0.5f}, {BarW, TrackH}};
+    const float progress = std::clamp(worldBuildProgress(), 0.0f, 1.0f);
     const float pulse = 0.76f + 0.24f * std::sin(totalSeconds * 5.0f);
-    renderer.fillRect(
-        barPos + Vec2{2.0f, 2.0f},
-        {std::max(0.0f, (BarW - 4.0f) * progress), BarH - 4.0f},
-        {static_cast<unsigned char>(126.0f + 42.0f * pulse), 204, 232, 255});
+    UiGaugeStyle loadingGaugeStyle;
+    loadingGaugeStyle.fill.start = {static_cast<unsigned char>(108.0f + 48.0f * pulse), 206, 236, 230};
+    loadingGaugeStyle.fill.end = {132, 230, 250, 230};
+    loadingGaugeStyle.track = {12, 16, 24, 190};
+    loadingGaugeStyle.trackInner = {30, 38, 52, 220};
+    loadingGaugeStyle.trackOuter = {218, 228, 244, 78};
+    loadingGaugeStyle.shadow = {0, 0, 0, 105};
+    loadingGaugeStyle.tick = {255, 255, 255, 32};
+    loadingGaugeStyle.highlight = {255, 255, 255, 118};
+    loadingGaugeStyle.capGlow = {132, 230, 250, 78};
+    loadingGaugeStyle.capCore = {246, 252, 255, 225};
+    loadingGaugeStyle.tickCount = 8;
+    loadingGaugeStyle.shimmer = {255, 255, 255, 76};
+    loadingGaugeStyle.shimmerPhase =
+        std::fmod(std::max(0.0f, totalSeconds) * 116.0f, BarW + loadingGaugeStyle.shimmerWidth) /
+        (BarW + loadingGaugeStyle.shimmerWidth);
+    drawUiGauge(renderer, bar, progress, loadingGaugeStyle);
 
-    char progressText[64];
-    std::snprintf(
-        progressText,
-        sizeof(progressText),
-        "%d/%d",
-        std::min(worldBuildStepCount(), worldBuildStepIndex() + 1),
-        worldBuildStepCount());
-    renderer.drawText(barPos + Vec2{BarW + 14.0f, -2.0f}, progressText, {198, 206, 222, 255}, 2);
+    const std::string label = "LOADING";
+    const Vec2 labelSize = renderer.measureText(label, 2);
+    const Vec2 labelPos{bar.pos.x + bar.size.x - labelSize.x, bar.pos.y - labelSize.y - 9.0f};
+    renderer.drawText(labelPos + Vec2{1.0f, 1.0f}, label, {0, 0, 0, 170}, 2);
+    renderer.drawText(labelPos, label, {246, 246, 252, 230}, 2);
 }
 
 void Game::renderBookshelfScreen(Renderer& renderer) const
@@ -11683,17 +12157,31 @@ void Game::appendRewardNodeRenderEntries(
 
         entries.push_back(DepthRenderEntry{
             center.y,
-            [&renderer, center, chestKind = node.chestKind, opened = node.opened]() {
-                if (chestKind == LootChestKind::SuperRare && !opened) {
+            [&renderer,
+                center,
+                chestKind = node.chestKind,
+                visualOpened = chestVisualOpened(node.opened, node.lootSpawned, node.openingSeconds),
+                openingScale = chestOpeningScale(node.openingSeconds)]() {
+                if (chestKind == LootChestKind::SuperRare && !visualOpened) {
                     renderer.drawCircle(center, 20.0f, {255, 242, 164, 170});
                 }
-                if (!drawWorldIcon(renderer, chestWorldIcon(chestKind, opened), center, {42.0f, 42.0f})) {
-                    const Color fill = chestFillColor(chestKind, opened);
-                    const Color outline = chestOutlineColor(chestKind, opened);
-                    renderer.fillRect(center + Vec2{-10.0f, -6.0f}, {20.0f, 13.0f}, fill);
-                    renderer.drawRect(center + Vec2{-10.0f, -6.0f}, {20.0f, 13.0f}, outline);
-                    renderer.drawLine(center + Vec2{-8.0f, -2.0f}, center + Vec2{8.0f, -2.0f}, outline);
-                    renderer.drawLine(center + Vec2{0.0f, -6.0f}, center + Vec2{0.0f, 7.0f}, outline);
+                WorldIconDrawOptions options;
+                options.sizeMultiplier = openingScale;
+                if (!drawWorldIcon(renderer, chestWorldIcon(chestKind, visualOpened), center, {42.0f, 42.0f}, options)) {
+                    const Color fill = chestFillColor(chestKind, visualOpened);
+                    const Color outline = chestOutlineColor(chestKind, visualOpened);
+                    const Vec2 bodySize{20.0f * openingScale.x, 13.0f * openingScale.y};
+                    const Vec2 bodyPos = center - bodySize * 0.5f;
+                    renderer.fillRect(bodyPos, bodySize, fill);
+                    renderer.drawRect(bodyPos, bodySize, outline);
+                    renderer.drawLine(
+                        center + Vec2{-8.0f * openingScale.x, -2.0f * openingScale.y},
+                        center + Vec2{8.0f * openingScale.x, -2.0f * openingScale.y},
+                        outline);
+                    renderer.drawLine(
+                        center + Vec2{0.0f, -6.0f * openingScale.y},
+                        center + Vec2{0.0f, 7.0f * openingScale.y},
+                        outline);
                 }
             },
         });
@@ -11874,6 +12362,11 @@ void Game::update(const Input& input, const Time& time)
     if (debugPaused_) {
         return;
     }
+    const bool transitionWasActive = screenTransition_.active();
+    updateScreenTransition(time.deltaSeconds());
+    if (transitionWasActive || screenTransition_.active()) {
+        return;
+    }
     if (worldBuildActive()) {
         updateWorldBuild(time.deltaSeconds());
         return;
@@ -11898,9 +12391,20 @@ void Game::update(const Input& input, const Time& time)
         runStats_.elapsedSeconds += time.deltaSeconds();
         updatePlayerFootstepDust(time.deltaSeconds());
         tileMap_.updateAround(player_.position, time.deltaSeconds(), balance_, dungeonLayout_);
-        player_.update(input, camera_, tileMap_, time.deltaSeconds(), false, balance_);
+        std::vector<CollisionRect> objectBlockers;
+        if (!enemyTestActive_) {
+            objectBlockers = solidObjectCollisionRects();
+        }
+        player_.update(
+            input,
+            camera_,
+            tileMap_,
+            time.deltaSeconds(),
+            false,
+            balance_,
+            std::span<const CollisionRect>{objectBlockers.data(), objectBlockers.size()});
         maybeSpawnPlayerFootstepDust(
-            playerSpriteFootAnchor(player_.position),
+            player_.position,
             lengthSquared(player_.velocity) > 0.0001f ? player_.velocity : player_.facing,
             player_.spriteWalking,
             player_.spriteFrameIndex(),
@@ -11943,7 +12447,7 @@ void Game::update(const Input& input, const Time& time)
             effects_.spawnReturn(spellRing_.center());
         }
         if (!enemyTestActive_) {
-            updateChestNodes(input);
+            updateChestNodes(time.deltaSeconds(), input);
             updateCrateNodes();
         }
 
@@ -12168,6 +12672,15 @@ void Game::checkHotReload()
         reloaded = loadBalanceFromSources(message);
     } else if (fileName == "game_balance.cfg") {
         reloaded = loadBalanceFromDisk(message);
+    } else if (fileName == "opening_kamishibai.tsv") {
+        loadOpeningKamishibaiData();
+        if (mode_ == ScreenMode::OpeningKamishibai) {
+            openingPlayer_.start(openingPages_, openingMeta_.openingEverWatched);
+        }
+        reloadNotice_ = "Hot reload: " + changedPath;
+        reloadNoticeTimer_ = 3.0f;
+        configureWatcher();
+        return;
     } else {
         reloaded = loadBalanceFromSources(message);
     }
@@ -12519,10 +13032,27 @@ void Game::render(Renderer& renderer, const Time& time)
 {
     renderer.clear({5, 5, 8, 255});
     beginUiFrame(time.deltaSeconds());
+    if (mode_ == ScreenMode::OpeningKamishibai) {
+        renderOpeningKamishibai(renderer);
+        finishUiFrame(renderer);
+        renderDebugOverlay(renderer, time);
+        renderScreenTransitionOverlay(renderer);
+        renderer.present();
+        return;
+    }
+    if (mode_ == ScreenMode::Title) {
+        renderTitleScreen(renderer);
+        finishUiFrame(renderer);
+        renderDebugOverlay(renderer, time);
+        renderScreenTransitionOverlay(renderer);
+        renderer.present();
+        return;
+    }
     if (mode_ == ScreenMode::ObjectImageScaleEdit) {
         renderObjectImageScaleEditScreen(renderer);
         finishUiFrame(renderer);
         renderDebugOverlay(renderer, time);
+        renderScreenTransitionOverlay(renderer);
         renderer.present();
         return;
     }
@@ -12531,9 +13061,11 @@ void Game::render(Renderer& renderer, const Time& time)
         inventory_.render(renderer, player_, spellRing_, objectCatalog_, encyclopedia_);
         renderPauseMenu(renderer);
         renderRingScreen(renderer, time.totalSeconds());
-        renderWorldLoadingScreen(renderer, time.totalSeconds());
+        dialogue_.render(renderer, camera_.width(), camera_.height());
         finishUiFrame(renderer);
         renderBaseDebugOverlay(renderer, time);
+        renderScreenTransitionOverlay(renderer);
+        renderWorldLoadingScreen(renderer, time.totalSeconds());
         renderer.present();
         return;
     }
@@ -12602,7 +13134,7 @@ void Game::render(Renderer& renderer, const Time& time)
         renderer.drawLine(player_.position, spellRing_.center(), {150, 110, 80, 100});
     }
 
-    const Vec2 playerFootAnchor = playerSpriteFootAnchor(player_.position);
+    const Vec2 playerFootAnchor = player_.position;
     renderer.drawActorShadow(playerFootAnchor, PlayerSpriteDrawSize);
     worldDrops_.renderShadows(renderer, tileMap_, objectCatalog_, player_.position, itemLights);
     enemies_.renderShadows(renderer, tileMap_, player_.position, itemLights);
@@ -12760,8 +13292,10 @@ void Game::render(Renderer& renderer, const Time& time)
     if (mode_ == ScreenMode::Playing || mode_ == ScreenMode::Inventory || mode_ == ScreenMode::PauseMenu || mode_ == ScreenMode::Ring) {
         encyclopedia_.renderPopups(renderer, camera_);
     }
+    dialogue_.render(renderer, camera_.width(), camera_.height());
     finishUiFrame(renderer);
     renderDebugOverlay(renderer, time);
+    renderScreenTransitionOverlay(renderer);
     renderer.present();
 }
 

@@ -75,6 +75,28 @@ Color scaledColor(Color color, float scale)
     return color;
 }
 
+bool colorVisible(Color color)
+{
+    return color.a != 0;
+}
+
+Color alphaScaledColor(Color color, float scale)
+{
+    color.a = static_cast<unsigned char>(std::clamp(std::lround(static_cast<float>(color.a) * scale), 0L, 255L));
+    return color;
+}
+
+Color lerpColor(Color a, Color b, float t)
+{
+    t = clamp(t, 0.0f, 1.0f);
+    return {
+        static_cast<unsigned char>(std::clamp(std::lround(static_cast<float>(a.r) + (static_cast<float>(b.r) - static_cast<float>(a.r)) * t), 0L, 255L)),
+        static_cast<unsigned char>(std::clamp(std::lround(static_cast<float>(a.g) + (static_cast<float>(b.g) - static_cast<float>(a.g)) * t), 0L, 255L)),
+        static_cast<unsigned char>(std::clamp(std::lround(static_cast<float>(a.b) + (static_cast<float>(b.b) - static_cast<float>(a.b)) * t), 0L, 255L)),
+        static_cast<unsigned char>(std::clamp(std::lround(static_cast<float>(a.a) + (static_cast<float>(b.a) - static_cast<float>(a.a)) * t), 0L, 255L)),
+    };
+}
+
 constexpr float CommandMenuItemHeight = 36.0f;
 constexpr float CommandMenuPaddingX = 28.0f;
 constexpr float CommandMenuPaddingY = 24.0f;
@@ -604,6 +626,129 @@ void drawUiSeparator(Renderer& renderer, UiRect rect, Color tint)
 
     const float y = rect.pos.y + rect.size.y * 0.5f;
     renderer.drawLine({rect.pos.x, y}, {rect.pos.x + rect.size.x, y}, tint);
+}
+
+void drawUiGauge(Renderer& renderer, UiRect rect, float progress, const UiGaugeStyle& style)
+{
+    if (rect.size.x <= 0.0f || rect.size.y <= 0.0f) {
+        return;
+    }
+
+    progress = clamp(progress, 0.0f, 1.0f);
+    const float radiusLimit = std::min(rect.size.x, rect.size.y) * 0.5f;
+    const float radius = style.cornerRadius >= 0.0f
+        ? clamp(style.cornerRadius, 0.0f, radiusLimit)
+        : radiusLimit;
+    const float centerY = rect.pos.y + rect.size.y * 0.5f;
+    const Vec2 lineStart{rect.pos.x + radius, centerY};
+    const Vec2 lineEnd{rect.pos.x + rect.size.x - radius, centerY};
+
+    if (lineEnd.x <= lineStart.x) {
+        const Vec2 center = rect.pos + rect.size * 0.5f;
+        if (colorVisible(style.shadow)) {
+            renderer.fillSoftCircle(center + Vec2{0.0f, style.shadowOffsetY}, radius + style.shadowExtra * 0.5f, style.shadow);
+        }
+        if (colorVisible(style.trackOuter)) {
+            renderer.fillSoftCircle(center, radius + style.trackOuterExtra * 0.5f, style.trackOuter);
+        }
+        if (colorVisible(style.track)) {
+            renderer.fillCircle(center, radius, style.track);
+        }
+        if (colorVisible(style.trackInner)) {
+            renderer.fillCircle(center, std::max(0.0f, radius - style.trackInnerInset * 0.5f), style.trackInner);
+        }
+        if (progress > 0.0f) {
+            renderer.fillCircle(center, radius, lerpColor(style.fill.start, style.fill.end, 0.5f));
+        }
+        return;
+    }
+
+    if (colorVisible(style.shadow)) {
+        renderer.drawSoftLine(
+            lineStart + Vec2{0.0f, style.shadowOffsetY},
+            lineEnd + Vec2{0.0f, style.shadowOffsetY},
+            std::max(1.0f, rect.size.y + style.shadowExtra),
+            style.shadow);
+    }
+    if (colorVisible(style.trackOuter)) {
+        renderer.drawSoftLine(lineStart, lineEnd, std::max(1.0f, rect.size.y + style.trackOuterExtra), style.trackOuter);
+    }
+    if (colorVisible(style.track)) {
+        renderer.drawSoftLine(lineStart, lineEnd, rect.size.y, style.track);
+    }
+    if (colorVisible(style.trackInner)) {
+        const float innerWidth = rect.size.y - style.trackInnerInset;
+        if (innerWidth > 0.0f) {
+            renderer.drawSoftLine(lineStart, lineEnd, innerWidth, style.trackInner);
+        }
+    }
+
+    if (style.tickCount > 1 && colorVisible(style.tick)) {
+        const float tickHalf = std::max(1.0f, rect.size.y * 0.28f);
+        for (int i = 1; i < style.tickCount; ++i) {
+            const float x = rect.pos.x + rect.size.x * static_cast<float>(i) / static_cast<float>(style.tickCount);
+            renderer.drawLine({x, centerY - tickHalf}, {x, centerY + tickHalf}, style.tick);
+        }
+    }
+
+    const float filledW = rect.size.x * progress;
+    if (filledW <= 0.0f) {
+        return;
+    }
+
+    const float fillRight = rect.pos.x + filledW;
+    const float fillRadius = std::min(radius, filledW * 0.5f);
+    const float fillLeftCenterX = rect.pos.x + fillRadius;
+    const float fillRightCenterX = fillRight - fillRadius;
+    if (fillRightCenterX > fillLeftCenterX) {
+        renderer.fillCircle({fillLeftCenterX, centerY}, fillRadius, style.fill.start);
+        renderer.fillGradientRect(
+            {fillLeftCenterX, rect.pos.y},
+            {fillRightCenterX - fillLeftCenterX, rect.size.y},
+            style.fill.start,
+            style.fill.end,
+            style.fill.direction);
+        renderer.fillCircle({fillRightCenterX, centerY}, fillRadius, style.fill.end);
+    } else {
+        renderer.fillCircle({rect.pos.x + filledW * 0.5f, centerY}, fillRadius, lerpColor(style.fill.start, style.fill.end, 0.5f));
+    }
+
+    const float highlightLeft = rect.pos.x + fillRadius;
+    const float highlightRight = fillRight - fillRadius;
+    if (colorVisible(style.highlight) && highlightRight > highlightLeft + 1.0f) {
+        renderer.fillGradientRect(
+            {highlightLeft, rect.pos.y + std::max(1.0f, rect.size.y * 0.18f)},
+            {highlightRight - highlightLeft, std::max(1.0f, rect.size.y * 0.25f)},
+            style.highlight,
+            alphaScaledColor(style.highlight, 0.15f),
+            GradientDirection::TopToBottom);
+    }
+
+    if (style.shimmerPhase >= 0.0f && colorVisible(style.shimmer) && filledW > radius * 2.0f) {
+        const float sweepW = std::max(1.0f, style.shimmerWidth);
+        const float phase = style.shimmerPhase - std::floor(style.shimmerPhase);
+        const float sweepX = rect.pos.x + phase * (rect.size.x + sweepW) - sweepW;
+        const float sweepLeft = std::max(rect.pos.x + radius, sweepX);
+        const float sweepRight = std::min(fillRight - radius, sweepX + sweepW);
+        if (sweepRight > sweepLeft) {
+            const Color transparent = alphaScaledColor(style.shimmer, 0.0f);
+            renderer.fillGradientRect(
+                {sweepLeft, rect.pos.y + rect.size.y * 0.2f},
+                {sweepRight - sweepLeft, rect.size.y * 0.6f},
+                transparent,
+                style.shimmer,
+                transparent,
+                transparent);
+        }
+    }
+
+    const Vec2 capCenter{std::clamp(fillRight, lineStart.x, lineEnd.x), centerY};
+    if (colorVisible(style.capGlow)) {
+        renderer.fillSoftCircle(capCenter, rect.size.y * 0.72f, style.capGlow);
+    }
+    if (colorVisible(style.capCore)) {
+        renderer.fillCircle(capCenter, std::max(1.0f, rect.size.y * 0.14f), style.capCore);
+    }
 }
 
 void drawUiButton(Renderer& renderer, UiRect rect, std::string_view label, bool hot, const UiButtonStyle& style)

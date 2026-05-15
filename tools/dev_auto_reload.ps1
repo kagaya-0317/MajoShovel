@@ -78,6 +78,26 @@ function Resolve-BuildPath([string]$Path) {
     return Join-Path $Root $Path
 }
 
+function Test-ConfigureNeeded([string]$Path) {
+    $cache = Join-Path $Path "CMakeCache.txt"
+    if (-not (Test-Path -LiteralPath $cache)) {
+        return $true
+    }
+
+    $stamp = Join-Path $Path "CMakeFiles\generate.stamp"
+    if (-not (Test-Path -LiteralPath $stamp)) {
+        return $true
+    }
+
+    $cmakeLists = Join-Path $Root "CMakeLists.txt"
+    if ((Test-Path -LiteralPath $cmakeLists) -and
+        ((Get-Item -LiteralPath $cmakeLists).LastWriteTimeUtc -gt (Get-Item -LiteralPath $stamp).LastWriteTimeUtc)) {
+        return $true
+    }
+
+    return $false
+}
+
 function Get-DevBuildConfigPath {
     $base = $env:LOCALAPPDATA
     if ([string]::IsNullOrWhiteSpace($base)) {
@@ -200,8 +220,7 @@ $BuildPath = Resolve-BuildPath $BuildDir
 if ($Jobs -le 0) {
     $Jobs = [Math]::Max(1, [Environment]::ProcessorCount)
 }
-$CMakeCache = Join-Path $BuildPath "CMakeCache.txt"
-$NeedsConfigure = -not (Test-Path $CMakeCache)
+$NeedsConfigure = Test-ConfigureNeeded $BuildPath
 $RunRoot = Join-Path $BuildPath ".dev-run"
 
 function Get-BuildConfigPath {

@@ -24,6 +24,14 @@ enum class WorldDropKind {
     Material,
 };
 
+struct WorldDropSpawnMotion {
+    bool jump = false;
+    Vec2 startPosition{};
+    float jumpDurationSeconds = 0.0f;
+    float jumpArcHeight = 0.0f;
+    float pickupDelaySeconds = 0.0f;
+};
+
 struct WorldDropItem {
     WorldDropKind kind = WorldDropKind::Object;
     std::string id;
@@ -32,6 +40,19 @@ struct WorldDropItem {
     Vec2 velocity{};
     float spawnedAtSeconds = 0.0f;
     float ageSeconds = 0.0f;
+    float altitude = 0.0f;
+    float hoverBaseAltitude = 0.0f;
+    float hoverAmplitude = 0.0f;
+    float hoverSpeed = 0.0f;
+    float hoverPhase = 0.0f;
+    bool jumpActive = false;
+    Vec2 jumpStartPosition{};
+    Vec2 jumpTargetPosition{};
+    float jumpElapsedSeconds = 0.0f;
+    float jumpDurationSeconds = 0.0f;
+    float jumpArcHeight = 0.0f;
+    float pickupDelaySeconds = 0.0f;
+    float materialParticleTimer = 0.0f;
 };
 
 struct WorldDropPickupEvent {
@@ -46,10 +67,15 @@ public:
     void clear();
     void setDropLimit(int limit);
     void spawnFromDugTiles(const std::vector<DugTile>& dugTiles, const ObjectCatalog& catalog, float spawnedAtSeconds = 0.0f);
-    bool spawnObjectDrop(const ObjectCatalog& catalog, std::string_view objectId, Vec2 position, float spawnedAtSeconds = 0.0f);
+    bool spawnObjectDrop(
+        const ObjectCatalog& catalog,
+        std::string_view objectId,
+        Vec2 position,
+        float spawnedAtSeconds = 0.0f,
+        WorldDropSpawnMotion motion = {});
     bool spawnDigItemDrop(const ObjectCatalog& catalog, Vec2 position, float spawnedAtSeconds = 0.0f);
-    bool spawnMoneyDrop(int amount, Vec2 position, float spawnedAtSeconds = 0.0f);
-    bool spawnMaterialDrop(MaterialType type, int count, Vec2 position, float spawnedAtSeconds = 0.0f);
+    bool spawnMoneyDrop(int amount, Vec2 position, float spawnedAtSeconds = 0.0f, WorldDropSpawnMotion motion = {});
+    bool spawnMaterialDrop(MaterialType type, int count, Vec2 position, float spawnedAtSeconds = 0.0f, WorldDropSpawnMotion motion = {});
     bool spawnRewardDrop(const ObjectCatalog& catalog, Vec2 position, float spawnedAtSeconds = 0.0f);
     bool stealNearestDrop(const ObjectCatalog& catalog, Vec2 center, float radius, std::string_view targetFilter, WorldDropItem& outDrop);
     int pullMetalDrops(const ObjectCatalog& catalog, Vec2 center, float dt, float radius = 170.0f);
@@ -90,7 +116,7 @@ private:
     bool canSpawnDrop(std::string_view label);
     bool pruneOneDropForLimit();
     Vec2 randomDropVelocity() const;
-    void spawnDrop(const ObjectDefinition& object, Vec2 position, float spawnedAtSeconds);
+    void spawnDrop(const ObjectDefinition& object, Vec2 position, float spawnedAtSeconds, WorldDropSpawnMotion motion = {});
 
     std::vector<WorldDropItem> drops_;
     int dropLimit_ = 300;

@@ -1,5 +1,6 @@
 ﻿#include "engine/Renderer.hpp"
 
+#include <SDL3/SDL.h>
 #include <algorithm>
 #include <array>
 #include <cctype>
@@ -45,6 +46,11 @@ SDL_FColor vertexColor(Color color)
         static_cast<float>(color.b) / 255.0f,
         static_cast<float>(color.a) / 255.0f,
     };
+}
+
+SDL_FRect toSdlRect(RectF rect)
+{
+    return {rect.x, rect.y, rect.w, rect.h};
 }
 
 Color lerpColor(Color from, Color to, float t)
@@ -1697,7 +1703,7 @@ bool Renderer::drawImage(ImageHandle handle, Vec2 center, Vec2 size, const Image
     return drawImageRegion(handle, {}, center, size, options);
 }
 
-bool Renderer::drawImageRegion(ImageHandle handle, SDL_FRect sourceRect, Vec2 center, Vec2 size, const ImageDrawOptions& options)
+bool Renderer::drawImageRegion(ImageHandle handle, RectF sourceRect, Vec2 center, Vec2 size, const ImageDrawOptions& options)
 {
     if (size.x <= 0.0f || size.y <= 0.0f) {
         return false;
@@ -1721,7 +1727,8 @@ bool Renderer::drawImageRegion(ImageHandle handle, SDL_FRect sourceRect, Vec2 ce
     }
     const Color tint = transformColor(options.tint);
     const SDL_FlipMode flipMode = imageFlipMode(options.flipX, options.flipY);
-    const SDL_FRect* source = sourceRect.w > 0.0f && sourceRect.h > 0.0f ? &sourceRect : nullptr;
+    const SDL_FRect sourceSdlRect = toSdlRect(sourceRect);
+    const SDL_FRect* source = sourceRect.w > 0.0f && sourceRect.h > 0.0f ? &sourceSdlRect : nullptr;
 
     if (options.outlineEnabled && options.outlinePx > 0) {
         Color outline = transformColor(options.outlineColor);
@@ -2296,6 +2303,60 @@ void Renderer::drawBaseMapTexture(Vec2 pos, Vec2 size, Color tint)
     SDL_SetTextureColorMod(baseMapTexture_.texture, tint.r, tint.g, tint.b);
     SDL_SetTextureAlphaMod(baseMapTexture_.texture, tint.a);
     SDL_RenderTexture(renderer_, baseMapTexture_.texture, nullptr, &dst);
+}
+
+FrameSnapshot Renderer::captureFrameSnapshot()
+{
+    FrameSnapshot snapshot;
+    if (renderer_ == nullptr) {
+        return snapshot;
+    }
+
+    int width = 0;
+    int height = 0;
+    if (!SDL_GetRenderOutputSize(renderer_, &width, &height) || width <= 0 || height <= 0) {
+        return snapshot;
+    }
+
+    SDL_Surface* surface = SDL_RenderReadPixels(renderer_, nullptr);
+    if (surface == nullptr) {
+        return snapshot;
+    }
+
+    SDL_Texture* texture = SDL_CreateTextureFromSurface(renderer_, surface);
+    SDL_DestroySurface(surface);
+    if (texture == nullptr) {
+        return snapshot;
+    }
+
+    SDL_SetTextureBlendMode(texture, SDL_BLENDMODE_BLEND);
+    snapshot.texture = texture;
+    snapshot.width = width;
+    snapshot.height = height;
+    return snapshot;
+}
+
+void Renderer::destroyFrameSnapshot(FrameSnapshot& snapshot)
+{
+    if (snapshot.texture != nullptr) {
+        SDL_DestroyTexture(snapshot.texture);
+    }
+    snapshot = FrameSnapshot{};
+}
+
+bool Renderer::drawFrameSnapshot(const FrameSnapshot& snapshot, Vec2 pos, Vec2 size, Color tint)
+{
+    if (snapshot.texture == nullptr || size.x <= 0.0f || size.y <= 0.0f) {
+        return false;
+    }
+
+    const Vec2 p = transform(pos);
+    const Vec2 s = transformSize(size);
+    const SDL_FRect dst{p.x, p.y, s.x, s.y};
+    tint = transformColor(tint);
+    SDL_SetTextureColorMod(snapshot.texture, tint.r, tint.g, tint.b);
+    SDL_SetTextureAlphaMod(snapshot.texture, tint.a);
+    return SDL_RenderTexture(renderer_, snapshot.texture, nullptr, &dst);
 }
 
 void Renderer::drawTextureRegion(SDL_Texture* texture, SDL_FRect src, Vec2 pos, Vec2 size, Color tint)

@@ -2,6 +2,7 @@
 
 #include "game/EncyclopediaSystem.hpp"
 #include "game/ObjectImageRenderer.hpp"
+#include "game/WorldIconRenderer.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -12,6 +13,16 @@
 namespace majo {
 
 namespace {
+
+enum class InlineIconKind {
+    Item,
+    World,
+};
+
+struct InlineIconTag {
+    InlineIconKind kind = InlineIconKind::Item;
+    std::string_view key;
+};
 
 bool objectCategoryEquals(const ItemData& item, std::string_view category)
 {
@@ -34,25 +45,49 @@ float inlineItemIconSize(Renderer& renderer, const InlineItemTextStyle& style)
     return std::max(1.0f, textSize.y * std::max(0.1f, style.iconScale));
 }
 
-bool inlineItemTagAt(std::string_view text, std::size_t offset, std::size_t& outEnd, std::string_view& outObjectId)
+bool inlineIconTagAt(std::string_view text, std::size_t offset, std::size_t& outEnd, InlineIconTag& outTag)
 {
-    constexpr std::string_view Prefix = "{item:";
-    if (offset + Prefix.size() >= text.size() || text.substr(offset, Prefix.size()) != Prefix) {
+    constexpr std::string_view ItemPrefix = "{item:";
+    constexpr std::string_view WorldPrefix = "{world:";
+
+    std::string_view prefix;
+    InlineIconKind kind = InlineIconKind::Item;
+    if (offset + ItemPrefix.size() < text.size() && text.substr(offset, ItemPrefix.size()) == ItemPrefix) {
+        prefix = ItemPrefix;
+        kind = InlineIconKind::Item;
+    } else if (offset + WorldPrefix.size() < text.size() && text.substr(offset, WorldPrefix.size()) == WorldPrefix) {
+        prefix = WorldPrefix;
+        kind = InlineIconKind::World;
+    } else {
         return false;
     }
 
-    const std::size_t close = text.find('}', offset + Prefix.size());
+    const std::size_t close = text.find('}', offset + prefix.size());
     if (close == std::string_view::npos) {
         return false;
     }
 
-    outObjectId = text.substr(offset + Prefix.size(), close - offset - Prefix.size());
-    if (outObjectId.empty()) {
+    outTag.key = text.substr(offset + prefix.size(), close - offset - prefix.size());
+    if (outTag.key.empty()) {
         return false;
     }
 
+    outTag.kind = kind;
     outEnd = close + 1;
     return true;
+}
+
+std::size_t findNextInlineIconTag(std::string_view text, std::size_t offset)
+{
+    const std::size_t item = text.find("{item:", offset);
+    const std::size_t world = text.find("{world:", offset);
+    if (item == std::string_view::npos) {
+        return world;
+    }
+    if (world == std::string_view::npos) {
+        return item;
+    }
+    return std::min(item, world);
 }
 
 std::string popInlineItemTextUnit(std::string text)
@@ -62,10 +97,15 @@ std::string popInlineItemTextUnit(std::string text)
     }
 
     if (text.back() == '}') {
-        const std::size_t open = text.rfind("{item:");
+        const std::size_t itemOpen = text.rfind("{item:");
+        const std::size_t worldOpen = text.rfind("{world:");
+        const std::size_t open = itemOpen == std::string::npos
+            ? worldOpen
+            : (worldOpen == std::string::npos ? itemOpen : std::max(itemOpen, worldOpen));
         if (open != std::string::npos) {
-            const std::size_t close = text.find('}', open);
-            if (close == text.size() - 1) {
+            std::size_t tagEnd = 0;
+            InlineIconTag tag;
+            if (inlineIconTagAt(text, open, tagEnd, tag) && tagEnd == text.size()) {
                 text.erase(open);
                 return text;
             }
@@ -151,15 +191,15 @@ Vec2 measureInlineItemText(Renderer& renderer, std::string_view text, const Inli
     std::size_t cursor = 0;
     while (cursor < text.size()) {
         std::size_t tagEnd = 0;
-        std::string_view objectId;
-        if (inlineItemTagAt(text, cursor, tagEnd, objectId)) {
-            (void)objectId;
+        InlineIconTag tag;
+        if (inlineIconTagAt(text, cursor, tagEnd, tag)) {
+            (void)tag;
             width += iconSize + style.iconTextGap;
             cursor = tagEnd;
             continue;
         }
 
-        const std::size_t nextTag = text.find("{item:", cursor);
+        const std::size_t nextTag = findNextInlineIconTag(text, cursor + 1);
         const std::size_t end = nextTag == std::string_view::npos ? text.size() : nextTag;
         const std::string_view chunk = text.substr(cursor, end - cursor);
         const Vec2 chunkSize = renderer.measureText(chunk, style.scale);
@@ -199,6 +239,22 @@ std::string inlineItemTag(std::string_view objectId)
     return "{item:" + std::string(objectId) + "}";
 }
 
+std::string inlineWorldIconTag(std::string_view worldIconKey)
+{
+    if (worldIconKey.empty()) {
+        return {};
+    }
+    return "{world:" + std::string(worldIconKey) + "}";
+}
+
+std::string inlineMaterialIconTag(MaterialType type)
+{
+    if (type == MaterialType::Count) {
+        return {};
+    }
+    return inlineWorldIconTag(materialTypeSaveName(type));
+}
+
 void drawInlineItemText(
     Renderer& renderer,
     const ObjectCatalog& catalog,
@@ -208,21 +264,33 @@ void drawInlineItemText(
 {
     const float iconSize = inlineItemIconSize(renderer, style);
     const Vec2 lineMeasure = renderer.measureText("0", style.scale);
-    const float iconTopOffset = std::max(0.0f, (lineMeasure.y - iconSize) * 0.5f);
+    constexpr float InlineIconVisualYOffset = -2.0f;
+    const float iconTopOffset = (lineMeasure.y - iconSize) * 0.5f + InlineIconVisualYOffset;
     Vec2 cursor = pos;
 
     std::size_t offset = 0;
     while (offset < text.size()) {
         std::size_t tagEnd = 0;
-        std::string_view objectId;
-        if (inlineItemTagAt(text, offset, tagEnd, objectId)) {
-            const bool drewIcon = drawObjectImageById(
-                renderer,
-                catalog,
-                objectId,
-                {cursor.x + iconSize * 0.5f, cursor.y + iconTopOffset + iconSize * 0.5f},
-                {iconSize, iconSize},
-                ObjectImageDrawOptions{});
+        InlineIconTag tag;
+        if (inlineIconTagAt(text, offset, tagEnd, tag)) {
+            const Vec2 center{cursor.x + iconSize * 0.5f, cursor.y + iconTopOffset + iconSize * 0.5f};
+            bool drewIcon = false;
+            if (tag.kind == InlineIconKind::Item) {
+                ObjectImageDrawOptions options;
+                options.applyScaleOverride = false;
+                drewIcon = drawObjectImageById(
+                    renderer,
+                    catalog,
+                    tag.key,
+                    center,
+                    {iconSize, iconSize},
+                    options);
+            } else {
+                const WorldIconDefinition* definition = worldIconDefinitionByKey(tag.key);
+                WorldIconDrawOptions options;
+                options.applyScaleOverride = false;
+                drewIcon = definition != nullptr && drawWorldIcon(renderer, definition->iconId, center, {iconSize, iconSize}, options);
+            }
             if (drewIcon) {
                 cursor.x += iconSize + style.iconTextGap;
                 offset = tagEnd;
@@ -230,7 +298,7 @@ void drawInlineItemText(
             }
         }
 
-        const std::size_t nextTag = text.find("{item:", offset + 1);
+        const std::size_t nextTag = findNextInlineIconTag(text, offset + 1);
         const std::size_t end = nextTag == std::string_view::npos ? text.size() : nextTag;
         const std::string_view chunk = text.substr(offset, end - offset);
         if (style.outlineEnabled) {

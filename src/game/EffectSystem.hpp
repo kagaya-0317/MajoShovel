@@ -87,6 +87,36 @@ struct DamagePopup {
     DamagePopupStyle style = DamagePopupStyle::Enemy;
 };
 
+struct SmokeBurstOptions {
+    int count = 10;
+    float size = 22.0f;
+    float sizeJitter = 0.35f;
+    float spreadRadius = 11.0f;
+    float speed = 28.0f;
+    float riseSpeed = 18.0f;
+    float duration = 0.64f;
+    float durationJitter = 0.10f;
+    Color colorA{226, 226, 224, 178};
+    Color colorB{142, 146, 150, 172};
+    EffectLayer layer = EffectLayer::Foreground;
+};
+
+struct SmokePuff {
+    bool active = false;
+    EffectLayer layer = EffectLayer::Foreground;
+    Vec2 position{};
+    Vec2 velocity{};
+    Color color{};
+    float age = 0.0f;
+    float duration = 0.64f;
+    float radius = 18.0f;
+    float growEnd = 0.22f;
+    float shrinkStart = 0.58f;
+    float peakScale = 1.20f;
+    float lobeSpread = 0.35f;
+    float phase = 0.0f;
+};
+
 class EffectSystem {
 public:
     void update(float dt);
@@ -104,6 +134,7 @@ public:
     void spawnDamagePopup(Vec2 position, int amount, DamagePopupStyle style = DamagePopupStyle::Enemy);
     void spawnDigHit(Vec2 position, Vec2 direction = {1.0f, 0.0f}, Color colorOverride = {0, 0, 0, 0});
     void spawnTileBreak(Vec2 position, TileType tileType = TileType::Dirt, Color colorOverride = {0, 0, 0, 0});
+    void spawnSmokeBurst(Vec2 position, SmokeBurstOptions options = {});
     void spawnEnemyHit(Vec2 position, std::string_view effect = {});
     void spawnEnemyDeath(Vec2 position);
     void spawnThrowStart(Vec2 position, Vec2 direction);
@@ -112,6 +143,7 @@ public:
     void spawnForegroundRingTrail(Vec2 position, Vec2 direction);
     void spawnCaptureSuccess(Vec2 position, Vec2 direction);
     void spawnDropPickup(Vec2 position, Vec2 direction);
+    void spawnMaterialFloat(Vec2 position, Color color);
     void spawnTorchFlicker(Vec2 position);
     void spawnForegroundTorchFlicker(Vec2 position);
     void spawnStatusAura(Vec2 position, std::string_view stateId);
@@ -123,6 +155,7 @@ public:
 
 private:
     void renderLayer(Renderer& renderer, EffectLayer layer);
+    void renderSmokeLayer(Renderer& renderer, EffectLayer layer);
     void spawnRing(Vec2 position, float startRadius, float endRadius, Color color, float duration, EffectLayer layer = EffectLayer::World);
     void spawnParticle(
         Vec2 position,
@@ -141,6 +174,7 @@ private:
     void spawnBurst(Vec2 position, int count, Color color, float speed, float radius, float duration, EffectLayer layer = EffectLayer::World);
 
     ObjectPool<Effect, balance::MaxEffects> effects_;
+    ObjectPool<SmokePuff, 192> smokePuffs_;
     ObjectPool<DamagePopup, 128> damagePopups_;
 };
 

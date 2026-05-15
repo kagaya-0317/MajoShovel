@@ -13,6 +13,7 @@ struct ScaledImageDrawOptions {
     TextureFilter filter = TextureFilter::Nearest;
     bool allowUpscale = false;
     float scaleMultiplier = 1.0f;
+    Vec2 sizeMultiplier{1.0f, 1.0f};
     bool outlineEnabled = true;
     Color outlineColor{0, 0, 0, 255};
     int outlinePx = 1;

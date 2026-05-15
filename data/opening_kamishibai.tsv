@@ -1,0 +1,9 @@
+﻿id	image	text	duration	effect	note
+op_1	assets/opening/op_1.png	その夜、村では守護星祭が行われていました。|空に浮かぶ「守護星」へ、|一年分の感謝を伝える日です。	6.0	none	守護星祭
+op_2	assets/opening/op_2.png	見習い魔女の仕事は、儀式の雑用係。|松明を並べて、飾り付けをして、|余計なものを回さないことでした。	6.0	none	雑用係
+op_3	assets/opening/op_3.png		3.0	none	星飾りが落ちそうになる
+op_4	assets/opening/op_4.png	見習い魔女が、落ちそうな星飾りを拾おうとすると、|いろんなものが、ぐるぐる回りはじめました。||スコップも、松明も、鍋も、椅子も、なぜか村長の帽子まで。	7.0	none	スペルリング暴走
+op_5	assets/opening/op_5.png		2.5	flash	スコップが守護星制御装置に当たる
+op_6	assets/opening/op_6.png		4.0	shake_dark	守護星落下
+op_7	assets/opening/op_7.png	村を守る「守護星」は、|大地に穴を開け、地の底へ落ちてしまいました。||こうして、回すのだけは大得意な見習い魔女の|星を掘り出す旅が、幕を開けたのです。	7.0	none	旅の始まり
+op_8	assets/opening/op_8.png		4.0	title_fade	タイトル画像

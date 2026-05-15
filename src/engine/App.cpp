@@ -71,6 +71,7 @@ std::filesystem::path devAutoReloadBlockPath()
 }
 
 enum class DevLaunchMode {
+    PreTitle,
     Base,
     Dungeon,
     EnemyTest,
@@ -84,6 +85,9 @@ std::filesystem::path devLaunchModePath()
 std::optional<DevLaunchMode> parseDevLaunchMode(std::string_view value)
 {
     const std::string normalized = lowerAscii(trimAscii(std::string(value)));
+    if (normalized == "pre-title" || normalized == "before-title" || normalized == "opening") {
+        return DevLaunchMode::PreTitle;
+    }
     if (normalized == "base") {
         return DevLaunchMode::Base;
     }
@@ -109,29 +113,32 @@ std::optional<DevLaunchMode> parseDevLaunchModeCommand(const std::string& normal
 const char* devLaunchModeSaveName(DevLaunchMode mode)
 {
     switch (mode) {
+    case DevLaunchMode::PreTitle: return "pre-title";
     case DevLaunchMode::Base: return "base";
     case DevLaunchMode::Dungeon: return "dungeon";
     case DevLaunchMode::EnemyTest: return "enemy-test";
     }
-    return "base";
+    return "pre-title";
 }
 
 const char* devLaunchModeLogName(DevLaunchMode mode)
 {
     switch (mode) {
+    case DevLaunchMode::PreTitle: return "pre-title";
     case DevLaunchMode::Base: return "base";
     case DevLaunchMode::Dungeon: return "dungeon";
     case DevLaunchMode::EnemyTest: return "enemy test";
     }
-    return "base";
+    return "pre-title";
 }
 
 int devLaunchModeDropdownIndex(DevLaunchMode mode)
 {
     switch (mode) {
-    case DevLaunchMode::Base: return 0;
-    case DevLaunchMode::Dungeon: return 1;
-    case DevLaunchMode::EnemyTest: return 2;
+    case DevLaunchMode::PreTitle: return 0;
+    case DevLaunchMode::Base: return 1;
+    case DevLaunchMode::Dungeon: return 2;
+    case DevLaunchMode::EnemyTest: return 3;
     }
     return 0;
 }
@@ -146,7 +153,7 @@ DevLaunchMode loadDevLaunchMode()
     const std::filesystem::path path = devLaunchModePath();
     std::ifstream file(path);
     if (!file) {
-        return DevLaunchMode::Base;
+        return DevLaunchMode::PreTitle;
     }
 
     std::string value;
@@ -154,7 +161,7 @@ DevLaunchMode loadDevLaunchMode()
     if (std::optional<DevLaunchMode> mode = parseDevLaunchMode(value)) {
         return *mode;
     }
-    return DevLaunchMode::Base;
+    return DevLaunchMode::PreTitle;
 }
 
 bool saveDevLaunchMode(DevLaunchMode mode, std::string& outError)
@@ -276,7 +283,7 @@ bool App::initialize(const char* title, int width, int height, bool testPlayMode
     }
     SDL_SetRenderVSync(sdlRenderer_, 1);
     renderer_ = new Renderer(sdlRenderer_);
-    DevLaunchMode launchMode = DevLaunchMode::Base;
+    DevLaunchMode launchMode = DevLaunchMode::PreTitle;
     if (testPlayMode_) {
         debugConsole_.initialize();
         setLogSink([this](LogLevel level, std::string_view message) {
@@ -293,7 +300,7 @@ bool App::initialize(const char* title, int width, int height, bool testPlayMode
     loadAssets();
     configureAssetWatcher();
     game_.initialize(width_, height_);
-    if (testPlayMode_ && launchMode != DevLaunchMode::Base) {
+    if (testPlayMode_ && launchMode != DevLaunchMode::PreTitle) {
         game_.executeDebugCommand(devLaunchModeCommand(launchMode));
     }
     time_.reset();
@@ -385,6 +392,12 @@ bool App::reloadAssetForPath(const std::string& changedPath)
     if (extension == ".png" &&
         fileName.rfind("img_", 0) == 0 &&
         parentPath.find("assets/others") != std::string::npos) {
+        renderer_->invalidateImage(changedPath);
+        return true;
+    }
+    if (extension == ".png" &&
+        fileName.rfind("op_", 0) == 0 &&
+        parentPath.find("assets/opening") != std::string::npos) {
         renderer_->invalidateImage(changedPath);
         return true;
     }

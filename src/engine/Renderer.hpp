@@ -2,7 +2,7 @@
 
 #include "engine/Camera.hpp"
 #include "engine/Math.hpp"
-#include <SDL3/SDL.h>
+#include "engine/RendererTypes.hpp"
 #include <array>
 #include <cstdint>
 #include <memory>
@@ -13,57 +13,6 @@
 #include <vector>
 
 namespace majo {
-
-struct Color {
-    unsigned char r = 255;
-    unsigned char g = 255;
-    unsigned char b = 255;
-    unsigned char a = 255;
-};
-
-enum class TextureFilter {
-    Nearest,
-    Linear,
-};
-
-enum class TextStyle {
-    Regular,
-    Italic,
-};
-
-enum class GradientDirection {
-    LeftToRight,
-    TopToBottom,
-    TopLeftToBottomRight,
-    BottomLeftToTopRight,
-};
-
-struct ImageHandle {
-    std::uint32_t value = 0;
-
-    [[nodiscard]] bool valid() const { return value != 0; }
-    bool operator==(const ImageHandle&) const = default;
-};
-
-struct ImageDrawOptions {
-    Vec2 anchor{0.5f, 0.5f};
-    Color tint{255, 255, 255, 255};
-    bool outlineEnabled = false;
-    Color outlineColor{0, 0, 0, 255};
-    int outlinePx = 1;
-    Color maskOverlayColor{255, 255, 255, 0};
-    float rotationDegrees = 0.0f;
-    bool flipX = false;
-    bool flipY = false;
-};
-
-struct ImageCacheStats {
-    std::size_t textureCount = 0;
-    std::size_t totalBytes = 0;
-    std::size_t hitCount = 0;
-    std::size_t missCount = 0;
-    std::size_t loadFailCount = 0;
-};
 
 class Renderer {
 public:
@@ -137,13 +86,16 @@ public:
     void drawIcon(int index, Vec2 pos, Vec2 size, Color tint = {255, 255, 255, 255});
     void drawPlayerSprite(int index, Vec2 anchorPosition, float size, bool flipHorizontal, Color tint = {255, 255, 255, 255}, Vec2 anchor = {0.5f, 0.82f});
     void drawBaseMapTexture(Vec2 pos, Vec2 size, Color tint = {255, 255, 255, 255});
+    FrameSnapshot captureFrameSnapshot();
+    void destroyFrameSnapshot(FrameSnapshot& snapshot);
+    bool drawFrameSnapshot(const FrameSnapshot& snapshot, Vec2 pos, Vec2 size, Color tint = {255, 255, 255, 255});
     void drawUiWindowFrame(Vec2 pos, Vec2 size, Color tint = {255, 255, 255, 255});
     void drawUiSubWindowFrame(Vec2 pos, Vec2 size, Color tint = {255, 255, 255, 255});
     void drawUiButtonFrame(Vec2 pos, float width, int variant, Color tint = {255, 255, 255, 255});
     void drawUiLine(Vec2 pos, float width, Color tint = {255, 255, 255, 255});
     ImageHandle acquireImage(std::string_view path, TextureFilter filter = TextureFilter::Nearest);
     bool drawImage(ImageHandle handle, Vec2 center, Vec2 size, const ImageDrawOptions& options = {});
-    bool drawImageRegion(ImageHandle handle, SDL_FRect sourceRect, Vec2 center, Vec2 size, const ImageDrawOptions& options = {});
+    bool drawImageRegion(ImageHandle handle, RectF sourceRect, Vec2 center, Vec2 size, const ImageDrawOptions& options = {});
     bool drawImage(
         std::string_view path,
         Vec2 center,
@@ -179,7 +131,7 @@ private:
         bool valid = false;
         int columns = 0;
         int rows = 0;
-        std::array<SDL_FRect, 15> cells{};
+        std::array<RectF, 15> cells{};
         std::array<float, 5> columnWidths{};
         std::array<float, 3> rowHeights{};
     };
@@ -235,8 +187,8 @@ private:
     void destroyCachedImageTexture(CachedImageEntry& entry);
     void evictImageCacheIfNeeded();
     void eraseImageHandle(ImageHandle handle);
-    void drawTextureRegion(SDL_Texture* texture, SDL_FRect src, Vec2 pos, Vec2 size, Color tint);
-    void drawTextureTiled(SDL_Texture* texture, SDL_FRect src, Vec2 pos, Vec2 size, Color tint);
+    void drawTextureRegion(SDL_Texture* texture, RectF src, Vec2 pos, Vec2 size, Color tint);
+    void drawTextureTiled(SDL_Texture* texture, RectF src, Vec2 pos, Vec2 size, Color tint);
     void drawNineSliceFrame(const GuidedTexture& texture, Vec2 pos, Vec2 size, Color tint);
     void drawHorizontalSliceRow(const GuidedTexture& texture, int row, Vec2 pos, float width, Color tint);
 
