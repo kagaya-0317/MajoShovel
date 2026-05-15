@@ -45,6 +45,7 @@ class UiContext;
 
 enum class ScreenMode {
     Base,
+    WorldLoading,
     Playing,
     PauseMenu,
     Inventory,
@@ -73,6 +74,11 @@ enum class BaseEditMode {
     None,
     Facility,
     Passability,
+};
+
+enum class ImageScaleEditTab {
+    Objects,
+    Others,
 };
 
 struct BaseEditRect {
@@ -109,10 +115,49 @@ private:
         int dugTilesSinceItemDrop = 0;
     };
 
+    struct DungeonLogEntry {
+        std::string message;
+        std::string label;
+        std::string suffix;
+        std::string mergeKey;
+        int count = 0;
+        float age = 0.0f;
+        float lifetime = 3.4f;
+    };
+
     struct InventoryCarryState {
         InventorySystem inventory;
         std::array<std::vector<SpellRingItem>, SpellRingCount> ringItemsByRing;
         bool valid = false;
+    };
+
+    enum class WorldBuildStep {
+        None,
+        ResetSimulation,
+        ResetUi,
+        ResetRun,
+        GenerateLayout,
+        ResetWarpPoints,
+        InitializeMoonFragments,
+        InitializeRewards,
+        InitializeChests,
+        InitializeCrates,
+        InitializeEnemies,
+        InitializeRing,
+        WarmInitialTiles,
+        Finalize,
+        Done,
+    };
+
+    struct WorldBuildJob {
+        bool active = false;
+        bool useLatestWarpPoint = false;
+        InventoryCarryState retainedInventory;
+        int retainedLevel = 1;
+        int retainedXp = 0;
+        int retainedXpToNext = 1;
+        float elapsedSeconds = 0.0f;
+        WorldBuildStep step = WorldBuildStep::None;
     };
 
     struct WarpPoint {
@@ -127,6 +172,9 @@ private:
         // should prefer discovered/discoveredWarpPoints().
         bool unlocked = false;
         bool snapshotCaptured = false;
+        float lightRevealTimer = 0.0f;
+        float lightRevealDuration = 0.55f;
+        bool lightRevealAnimating = false;
     };
 
     enum class PlacementVisibility {
@@ -262,7 +310,7 @@ private:
         std::string objectId;
         std::string instanceId;
         float age = 0.0f;
-        float duration = 0.26f;
+        float duration = 0.36f;
         float arcSign = 1.0f;
     };
     enum class ProcessingMode {
@@ -283,6 +331,33 @@ private:
         Enemies,
     };
     void initializeWorld(bool captureRunStartInventory = true);
+    void resetWorldSimulationState();
+    void resetWorldPlayerState();
+    void resetWorldMapAndRingState();
+    void resetWorldActionSystems();
+    void resetWorldEffectState();
+    void resetWorldEnemyState();
+    void resetWorldProjectileState();
+    void resetWorldDropState();
+    void resetWorldProgressionState();
+    void resetWorldInventoryState();
+    void resetWorldUiState();
+    void resetWorldRunState();
+    void buildWorldForRun(bool captureRunStartInventory);
+    void beginWorldBuildFromBase(
+        bool useLatestWarpPoint,
+        InventoryCarryState retainedInventory,
+        int retainedLevel,
+        int retainedXp,
+        int retainedXpToNext);
+    void updateWorldBuild(float dt);
+    void advanceWorldBuildOneStep();
+    void finishWorldBuild();
+    bool worldBuildActive() const { return worldBuildJob_.active; }
+    int worldBuildStepIndex() const;
+    int worldBuildStepCount() const;
+    float worldBuildProgress() const;
+    std::string worldBuildStatusText() const;
     void enterBase();
     void startMiningFromBase(bool useLatestWarpPoint, bool forceRegenerate = false);
     void applyPermanentUpgrades();
@@ -426,7 +501,7 @@ private:
     int discoveredWarpPointCount() const;
     std::vector<WarpPoint> discoveredWarpPoints() const;
     int nearestWarpPointIndex(Vec2 position) const;
-    void updateWarpPoints();
+    void updateWarpPoints(float dt);
     void initializeMoonFragmentNodesFromWarpPoints();
     void initializeRewardNodesFromLayout();
     void updateExposedRewardNodes();
@@ -506,6 +581,14 @@ private:
     void renderBaseEditOverlay(Renderer& renderer) const;
     bool gameProgressPaused() const;
     bool basePresentationActive() const;
+    void pushDungeonLog(std::string message, std::string mergeKey = {});
+    void pushCountedDungeonLog(std::string label, int amount, std::string suffix, std::string mergeKey);
+    void updateDungeonLogs(float dt);
+    void appendPickupLogs(const std::vector<WorldDropPickupEvent>& pickupEvents);
+    void switchActiveRingWithLog(int delta);
+    int unlockedRingHudCount() const;
+    UiRect ringStatusHudRect(int ringIndex, int unlockedRingCount) const;
+    void updateRingStatusHud(UiContext& ui);
     std::string currentMapDisplayName() const;
     void renderTopInfoBar(Renderer& renderer) const;
     void renderBaseBackdrop(Renderer& renderer) const;
@@ -513,11 +596,19 @@ private:
     void renderBookshelfScreen(Renderer& renderer) const;
     void renderPauseMenu(Renderer& renderer) const;
     void renderRingScreen(Renderer& renderer, float totalTime) const;
+    void renderRingStatusHud(Renderer& renderer) const;
     void renderDungeonStatusHud(Renderer& renderer) const;
+    void renderDungeonLogs(Renderer& renderer) const;
+    void renderWorldLoadingScreen(Renderer& renderer, float totalSeconds) const;
     void renderGameOverScreen(Renderer& renderer) const;
     void renderStageClearScreen(Renderer& renderer) const;
     void renderBaseDebugOverlay(Renderer& renderer, const Time& time) const;
     void renderDebugOverlay(Renderer& renderer, const Time& time);
+    void renderSpellRingForeground(
+        Renderer& renderer,
+        const std::vector<const SpellRingItem*>& runtimeItems,
+        const std::vector<LightSource>& itemLights,
+        float totalSeconds) const;
 
     Camera camera_;
     RuntimeBalance balance_;
@@ -607,10 +698,15 @@ private:
     int baseEditPassPaintLastTileY_ = std::numeric_limits<int>::min();
     bool baseEditDirty_ = false;
     std::unordered_map<std::string, float> objectImageScaleById_;
+    std::unordered_map<std::string, float> otherImageScaleByKey_;
     std::vector<std::string> objectImageScaleObjectIds_;
+    std::vector<std::string> otherImageScaleKeys_;
     ScreenMode objectImageScaleReturnMode_ = ScreenMode::Playing;
+    ImageScaleEditTab imageScaleEditTab_ = ImageScaleEditTab::Objects;
     int objectImageScaleSelectedIndex_ = -1;
+    int otherImageScaleSelectedIndex_ = -1;
     float objectImageScaleScrollOffset_ = 0.0f;
+    float otherImageScaleScrollOffset_ = 0.0f;
     bool objectImageScaleDirty_ = false;
     std::string objectImageScaleStatus_;
     bool enemyTestActive_ = false;
@@ -641,6 +737,8 @@ private:
     float ringSnapElapsed_ = 0.0f;
     Vec2 ringDragStartMouse_{};
     std::string ringStatus_;
+    std::vector<DungeonLogEntry> dungeonLogs_;
+    WorldBuildJob worldBuildJob_;
     std::array<FootstepDustPuff, 10> playerFootstepDustPuffs_{};
     std::vector<RingEquipFx> ringEquipFx_;
     int nextPlayerFootstepDustPuff_ = 0;

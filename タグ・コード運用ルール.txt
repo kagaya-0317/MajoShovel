@@ -1,0 +1,1137 @@
+﻿魔女が掘るゲーム：効果コード・特殊タグ仕様メモ 改訂版
+目的：Objects DB の「通常効果」「軌道効果」「特殊タグ」を、実装・調整・翻訳・デバッグしやすくするための仕様メモ。
+前提：効果コードや特殊タグの実際の反映処理はまだ未実装。ここでは、後で実装しやすい命名・切り分け・検証ルールを定義する。
+
+============================================================
+0. この改訂版で修正した主な点
+============================================================
+
+1. 状態異常の命名を完全に統一した。
+   確定付与：status_状態名
+   確率付与：status_状態名_chance
+   例：status_stun、status_stun_chance
+   旧 stun_chance は使わない。
+
+2. 特殊タグは絶対に「直接効果を発動しない」と明記した。
+   poison タグがあるだけで毒を付与しない。
+   毒付与は status_poison または status_poison_chance で行う。
+
+3. light / detect_hidden / detect_treasure は効果コード側に残し、タグ側では light_source / hidden_detector / treasure_detector に分けた。
+   同名衝突を避けるため。
+
+4. orbit_anchor / orbit_shift は効果コード側に寄せ、特殊タグとしては原則使わない。
+
+5. reflect_water を採用するなら、属性タグ側にも water を追加する。
+   効果コードだけに water があり、タグ側に water がない状態は不整合。
+
+6. duration=0 の意味は効果コードごとに違うため、グローバルに固定しない。
+   例：heal の duration=0 は即時。
+   例：orbit_speed の duration=0 は装備中・軌道搭載中の常時効果として扱う可能性がある。
+   そのため、効果コード一覧シートの「duration意味」列で必ず定義する。
+
+7. 複数効果の duration は同一パケット内で共有する仕様とする。
+   効果ごとに duration を変えたい場合は、; 区切りで別パケットに分ける。
+
+============================================================
+1. 基本方針
+============================================================
+
+効果コードと特殊タグは、必ず役割を分ける。
+
+効果コード：
+  実際にゲーム処理を動かす命令。
+  Objects DB の「通常効果」「軌道効果」の effect 部分に入る。
+  EffectSpec.effects[] に格納される値。
+  例：heal、status_poison、orbit_speed、guard、reflect_physical_chance
+
+特殊タグ：
+  アイテムの性質・分類・判定条件を表すラベル。
+  Objects DB の「特殊タグ」に入る。
+  タグ単体では処理を発動しない。
+  例：metal、wood、food、shield、light_source、fragile
+
+最重要ルール：
+  効果コード = 行動・処理・数値変化
+  特殊タグ = 性質・分類・検索条件・相性判定
+
+判断基準：
+  value が必要なら効果コード
+  duration が必要なら効果コード
+  確率が必要なら効果コード
+  倍率が必要なら効果コード
+  状態変化を発生させるなら効果コード
+  軌道性能を変えるなら効果コード
+  採掘・回復・反射・防御・魔法発動などの処理なら効果コード
+
+  素材なら特殊タグ
+  種別なら特殊タグ
+  属性なら特殊タグ
+  サイズ・重量なら特殊タグ
+  形状なら特殊タグ
+  検索条件なら特殊タグ
+  相性判定なら特殊タグ
+  装備タイプなら特殊タグ
+
+禁止に近い運用：
+  特殊タグを見ただけで直接効果を発動しない。
+
+悪い例：
+  tag == "poison" だから敵を毒にする
+  tag == "reflect_physical" だから物理反射する
+  tag == "speed_damage" だから速度ダメージ補正する
+
+良い例：
+  effect == "status_poison" だから敵を毒にする
+  effect == "reflect_physical_chance" だから物理反射確率を付与する
+  effect == "damage_speed" だから速度依存ダメージ補正を強める
+
+タグの正しい使い方：
+  tag == "poison" は毒属性・毒系アイテムの判定に使う
+  tag == "metal" は磁石系の吸引対象判定に使う
+  tag == "wood" は火属性との相性判定に使う
+  tag == "shield" は盾カテゴリとして検索・UI分類に使う
+
+============================================================
+2. 現在の効果文字列仕様
+============================================================
+
+効果なし：
+  none
+
+単一効果：
+  target:effect:value:duration
+
+例：
+  player:heal:30:0
+
+複数効果：
+  target:[effect1,effect2]:[value1,value2]:duration
+
+例：
+  orbit:[orbit_gravity,orbit_power]:[0.85,1.15]:0
+
+複数パケット：
+  ; 区切り
+
+例：
+  projectile:guard:1:0;projectile:reflect_physical_chance:40:0
+
+内部構造：
+  EffectSpec {
+    target: string,
+    effects: string[],
+    values: number[],
+    duration: number
+  }
+
+重要：
+  target は対象・適用先・起点を表す。
+  effect 名に player/enemy/orbit/projectile などの対象名を混ぜない。
+  複数効果では effects[] と values[] の個数を必ず一致させる。
+  同一パケット内の duration は、そのパケット内の全 effects に共有される。
+  効果ごとに duration を変えたい場合は、; 区切りで別パケットに分ける。
+
+悪い例：
+  heal_enemy
+  buff_enemy
+  player_heal
+  enemy_damage
+
+良い例：
+  enemy:heal:30:0
+  enemy:buff_attack:1.2:10
+  player:heal:30:0
+
+none の扱い：
+  none は効果なしを表す疑似コード。
+  パーサーやバリデーション上は許可する。
+  実際の効果処理には渡さない。
+
+============================================================
+3. target の基本方針
+============================================================
+
+基本target：
+  player      プレイヤーに作用する。またはプレイヤーを起点にする
+  enemy       敵に作用する
+  orbit       軌道そのもの、または軌道上アイテム群に作用する
+  projectile  飛び道具・弾に作用する
+
+必要になった場合に追加検討するtarget：
+  terrain     地形・壁・鉱石・掘削対象に作用する
+  area        周囲範囲・探索範囲・照明範囲に作用する
+
+現時点の運用方針：
+  target は文字列として柔軟に扱えるが、効果コード一覧シートの「対応target」にない組み合わせは警告対象にする。
+  dig 系は terrain を追加するまで、実装側で「接触先の掘削対象」に作用する処理として扱ってもよい。
+  light / detect 系は player または orbit を起点として周囲に作用する処理として扱ってもよい。
+
+原則：
+  接触ダメージは Objects DB の「攻撃力」と「ダメージ種別」を正とする。
+  軌道効果に enemy:damage は原則書かない。
+  物理ダメージはゲーム基本仕様として速度が速いほど強くなる。
+  damage_speed は「速度依存をさらに強める補正」として扱う。
+  アイテム個別の「投げ専用効果」は作らない。
+  杖で軌道を投げた時の挙動は、杖側・軌道側の仕様として管理する。
+
+============================================================
+4. 効果コードの命名ルール
+============================================================
+
+4-1. 状態異常・状態付与は status_ に統一する
+
+確定付与：
+  status_状態名
+
+確率付与：
+  status_状態名_chance
+
+採用する標準形：
+  status_giant
+  status_poison
+  status_slow
+  status_paralyze
+  status_sleep
+  status_bleed
+  status_stun
+
+  status_poison_chance
+  status_slow_chance
+  status_paralyze_chance
+  status_sleep_chance
+  status_bleed_chance
+  status_stun_chance
+
+必要になった場合のみ追加する候補：
+  status_giant_chance
+
+旧コード・旧タグの扱い：
+  stun_chance は status_stun_chance に変更する。
+  stun は効果として使うなら status_stun に変更する。
+  poison / slow / paralyze / sleep / bleed は、状態付与処理としては使わない。
+  それらをタグにする場合は、属性・分類としてのみ使う。
+
+4-2. 属性魔法は cast_属性名 に統一する
+
+採用コード：
+  cast_fire
+  cast_ice
+  cast_thunder
+  cast_wind
+  cast_earth
+
+必要になった場合のみ追加する候補：
+  cast_water
+
+対応する属性タグ：
+  fire
+  ice
+  thunder
+  wind
+  earth
+  water
+
+意味の違い：
+  cast_fire = 火魔法を発動する処理
+  fire = 火属性・火系であるという性質
+
+4-3. 採掘処理は dig 系に統一する
+
+採用コード：
+  dig
+  dig_hard
+  dig_multi
+
+意味：
+  dig       通常採掘処理
+  dig_hard  硬い地形・硬い鉱石などへの採掘処理
+  dig_multi 複数箇所・複数回の採掘処理
+
+対応するタグ：
+  dig_tool
+  hard_dig_tool
+  magic_dig_tool
+
+注意：
+  hard_dig というタグ名は dig_hard と紛らわしいため使わない。
+  タグとしては hard_dig_tool を使う。
+
+地形耐久：
+  dirt_hp = 8
+  rock_hp = 24
+  ore_hp = 32
+  HardRock は実装側で rock_hp * 2 を基準にする。
+
+採掘演出：
+  採掘ヒット時に壁タイルを発光させない。
+  壁タイルの残りHPに応じてヒビ段階を 1〜4 で表示する。
+  ヒビ画像は assets/crack.png を使う。
+  画像仕様は 48x48px の4フレーム横並び、全体 192x48px、背景透明PNG。
+  左から順にヒビ段階 1, 2, 3, 4 として扱う。
+  ヒビ画像は Renderer の画像キャッシュ経由で読み込み、タイル上にオーバーレイ表示する。
+
+4-4. 探知・照明
+
+効果コード：
+  light
+  detect_hidden
+  detect_treasure
+
+タグ：
+  light_source
+  hidden_detector
+  treasure_detector
+
+注意：
+  light / detect_hidden / detect_treasure を特殊タグとして使わない。
+  効果コード名とタグ名が衝突すると実装時に誤解が起きる。
+
+4-5. 軌道補正
+
+効果コード：
+  orbit_gravity
+  orbit_power
+  orbit_antigravity
+  orbit_speed
+  orbit_anchor
+  orbit_shift
+
+意味：
+  orbit_gravity      軌道上の吸着・まとまり・重力的補正
+  orbit_power        軌道上アイテムの攻撃・掘削などの出力補正
+  orbit_antigravity  外へ広がる・反重力的な補正
+  orbit_speed        軌道速度補正
+  orbit_anchor       軌道位置を固定・安定させる処理
+  orbit_shift        軌道ずらし性能を変える処理
+
+タグ：
+  orbit_inner
+  orbit_outer
+
+注意：
+  orbit_anchor / orbit_shift を特殊タグとして使わない。
+  処理を動かすものとして効果コード側に寄せる。
+
+4-6. 防御・反射
+
+効果コード：
+  guard
+  guard_large
+  reflect_physical
+  reflect_physical_chance
+  reflect_magic
+  reflect_magic_chance
+  reflect_water
+  reflect_water_chance
+
+意味：
+  guard                    通常防御
+  guard_large              大型弾・大型攻撃に対する防御
+  reflect_physical          物理反射。基本は確定反射
+  reflect_physical_chance   物理反射確率
+  reflect_magic             魔法反射。基本は確定反射
+  reflect_magic_chance      魔法反射確率
+  reflect_water             水属性・水系攻撃の反射。基本は確定反射
+  reflect_water_chance      水属性・水系攻撃の反射確率
+
+タグ：
+  shield
+  guard_contact
+  guard_projectile
+  guard_large_projectile
+  projectile_counter
+
+注意：
+  reflect_physical / reflect_magic / reflect_water を特殊タグとして使わない。
+  実際に反射処理を発生させるなら効果コードで定義する。
+  reflect_water を使うなら、属性タグ water も定義する。
+
+4-7. 報酬・ドロップ
+
+効果コード：
+  coin_drop_chance
+
+タグ：
+  money
+  treasure
+
+意味：
+  coin_drop_chance = コインドロップ率を変える処理
+  money = お金カテゴリ
+  treasure = 宝カテゴリ
+
+4-8. ノックバック・速度ダメージ
+
+効果コード：
+  knockback
+  damage_speed
+
+意味：
+  knockback    対象を押し戻す処理
+  damage_speed 速度依存ダメージを強化・補正する処理
+
+注意：
+  speed_damage というタグ名は使わない。
+  効果として使うなら damage_speed に統一する。
+
+============================================================
+5. 採用する効果コード一覧
+============================================================
+
+疑似コード：
+  none
+
+回復・バフ・デバフ：
+  heal
+  buff_attack
+  buff_speed
+  buff_defense
+  debuff_defense
+
+状態付与：
+  status_giant
+  status_poison
+  status_slow
+  status_paralyze
+  status_sleep
+  status_bleed
+  status_stun
+
+状態確率付与：
+  status_poison_chance
+  status_slow_chance
+  status_paralyze_chance
+  status_sleep_chance
+  status_bleed_chance
+  status_stun_chance
+
+魔法発動：
+  cast_fire
+  cast_ice
+  cast_thunder
+  cast_wind
+  cast_earth
+
+採掘：
+  dig
+  dig_hard
+  dig_multi
+
+照明・探知：
+  light
+  detect_hidden
+  detect_treasure
+
+軌道補正：
+  orbit_gravity
+  orbit_power
+  orbit_antigravity
+  orbit_speed
+  orbit_anchor
+  orbit_shift
+
+報酬：
+  coin_drop_chance
+
+妨害・制御：
+  knockback
+
+防御・反射：
+  guard
+  guard_large
+  reflect_physical
+  reflect_physical_chance
+  reflect_magic
+  reflect_magic_chance
+  reflect_water
+  reflect_water_chance
+
+ダメージ補正：
+  damage_speed
+
+追加候補。必要になるまで採用しない：
+  status_giant_chance
+  cast_water
+
+============================================================
+6. 特殊タグの命名ルール
+============================================================
+
+特殊タグは、原則として名詞・性質名にする。
+処理を想起させる動詞的な名前は避ける。
+
+良いタグ例：
+  metal
+  wood
+  shield
+  food
+  fragile
+  light_source
+  hidden_detector
+  treasure_detector
+
+悪いタグ例：
+  heal_enemy
+  buff_enemy
+  reflect_physical
+  speed_damage
+  detect_hidden
+  orbit_shift
+
+タグは複数付与してよいが、排他グループに属するものは同時付与しない。
+
+排他グループ例：
+  size: small / medium / large
+  orbit_position: orbit_inner / orbit_outer
+
+============================================================
+7. 採用する特殊タグ一覧
+============================================================
+
+装備・アイテム種別：
+  dig_tool
+  weapon
+  shield
+  book
+  magic
+  food
+  consumable
+  treasure
+  money
+
+素材・材質：
+  metal
+  wood
+  glass
+  stone
+  cloth
+  paper
+
+サイズ・重量：
+  small
+  medium
+  large
+  heavy
+
+属性・元素：
+  fire
+  ice
+  thunder
+  wind
+  earth
+  water
+  poison
+
+食べ物・消耗品の細分類：
+  apple
+  candy
+  cookie
+  potion
+
+武器形状・攻撃性質：
+  blade
+  pierce
+  long_reach
+  round
+  spike
+  multi_hit
+
+採掘系の性質：
+  hard_dig_tool
+  magic_dig_tool
+
+光源・探知系の性質：
+  light_source
+  hidden_detector
+  treasure_detector
+
+軌道位置・軌道向き：
+  orbit_inner
+  orbit_outer
+
+防御・弾対策系：
+  guard_contact
+  guard_projectile
+  guard_large_projectile
+  projectile_counter
+
+接触・破損系：
+  contact_damage
+  fragile
+
+============================================================
+8. 旧タグ・旧コードからの移行方針
+============================================================
+
+旧名称	新しい扱い
+hard_dig	hard_dig_tool に変更
+light	効果コード light に寄せる。タグは light_source
+detect_hidden	効果コード detect_hidden に寄せる。タグは hidden_detector
+detect_treasure	効果コード detect_treasure に寄せる。タグは treasure_detector
+orbit_anchor	効果コード orbit_anchor に寄せる。タグとしては削除
+orbit_shift	効果コード orbit_shift に寄せる。タグとしては削除
+heal_enemy	target で表現。enemy:heal を使う
+buff_enemy	target で表現。enemy:buff_attack などを使う
+giant	状態付与なら status_giant。タグとしては原則使わない
+slow	状態付与なら status_slow。タグとしては原則使わない
+paralyze	状態付与なら status_paralyze。タグとしては原則使わない
+sleep	状態付与なら status_sleep。タグとしては原則使わない
+bleed	状態付与なら status_bleed。タグとしては原則使わない
+stun	状態付与なら status_stun。確率なら status_stun_chance
+stun_chance	status_stun_chance に変更
+debuff_defense	効果コード debuff_defense に寄せる。タグとしては削除
+armor_break	効果としては debuff_defense に統合推奨
+reflect_physical	効果コード reflect_physical に寄せる。タグとしては削除
+reflect_magic	効果コード reflect_magic に寄せる。タグとしては削除
+reflect_water	効果コード reflect_water に寄せる。タグとしては削除
+speed_damage	damage_speed に変更
+
+gurad_projectile などの誤字が出た場合：
+  guard_projectile に修正する。
+
+注意：
+  poison は属性タグとして残す。
+  ただし、毒状態を付与する処理には status_poison または status_poison_chance を使う。
+
+============================================================
+9. 効果コード一覧シートの推奨列
+============================================================
+
+TSVヘッダー：
+効果コード	表示名	分類	使用可能欄	対応target	value意味	duration意味	重複ルール	実装状態	備考
+
+列の意味：
+  効果コード：実装用キー。EffectSpec.effects[] に入る値。
+  表示名：開発者向けの日本語名。
+  分類：回復、バフ、状態異常、採掘、探知、軌道補正、防御、反射など。
+  使用可能欄：通常効果、軌道効果、両方、非推奨など。
+  対応target：player、enemy、orbit、projectile など。
+  value意味：value が何を意味するか。量、倍率、確率%、フラグなど。
+  duration意味：duration が何を意味するか。即時、秒数、常時、装備中、効果時間なしなど。
+  重複ルール：上書き、加算、最大値採用、時間延長、重複不可など。
+  実装状態：未実装、仮実装、実装済、廃止予定など。
+  備考：例外・注意点・実装メモ。
+
+必須の検証：
+  効果コード一覧にない effect が Objects DB に存在する場合は警告。
+  対応targetにない target/effect の組み合わせは警告。
+  chance 系の value は原則 0〜100 の%として扱う。
+  倍率系の value は原則 1.0 を基準値として扱う。
+  フラグ系の value は原則 1 を有効として扱う。
+  ただし最終的な解釈は効果コード一覧シートの value意味 に従う。
+
+============================================================
+10. 特殊タグ一覧シートの推奨列
+============================================================
+
+TSVヘッダー：
+特殊タグ	表示名	分類	用途	対象カテゴリ	排他グループ	関連効果コード	実装状態	備考
+
+列の意味：
+  特殊タグ：実装用キー。Objects DB の特殊タグ欄に入る値。
+  表示名：開発者向けの日本語名。
+  分類：素材、重量、サイズ、属性、装備種別、挙動、軌道位置など。
+  用途：何の判定に使うか。
+  対象カテゴリ：武器、盾、食べ物、魔導書、採掘道具、敵、宝など。
+  排他グループ：size、orbit_position など。同時付与禁止の管理に使う。
+  関連効果コード：関連する効果コードがある場合に記載。
+  実装状態：未使用、使用中、予定、廃止予定など。
+  備考：例外・注意点。
+
+必須の検証：
+  特殊タグ一覧にない tag が Objects DB に存在する場合は警告。
+  排他グループ内のタグが同一アイテムに複数存在する場合は警告。
+  効果コードと同名の特殊タグは原則禁止。
+  タグ名に enemy/player/orbit/projectile などの対象名を混ぜるのは原則禁止。
+
+============================================================
+11. 実装時の注意
+============================================================
+
+1. 効果コードの未定義チェックを行う。
+   Objects DB の通常効果・軌道効果に存在する effect が効果コード一覧にない場合、警告を出す。
+
+2. 特殊タグの未定義チェックを行う。
+   Objects DB の特殊タグに存在する tag が特殊タグ一覧にない場合、警告を出す。
+
+3. target と effect の対応チェックを行う。
+   例：orbit:heal は基本的に不自然。
+   例：player:orbit_speed も基本的に不自然。
+
+4. value と effects の数をチェックする。
+   複数効果の場合、effects[] と values[] の長さが一致しない場合はエラー。
+
+5. none は効果なしの疑似コードとして扱う。
+   実際の effect 処理には渡さない。
+
+6. 接触ダメージは攻撃力・ダメージ種別・速度から計算する。
+   軌道効果に enemy:damage を書く設計にはしない。
+
+7. アイテム個別の投げ専用効果は作らない。
+   杖や軌道投げの挙動は、杖側・軌道側の仕様として管理する。
+
+8. タグから直接状態異常や反射などを発動しない。
+   タグは条件判定・分類・検索・相性判定に使う。
+   実際の効果発動は必ず効果コードで行う。
+
+9. 実装状態は必ず管理する。
+   効果コードや特殊タグだけが増えて、処理が未実装のまま放置されるのを防ぐ。
+
+============================================================
+12. 具体例
+============================================================
+
+毒属性の短剣：
+  特殊タグ：weapon, blade, poison
+  通常効果：enemy:status_poison_chance:30:0
+  備考：poison タグは毒属性の分類。毒付与は status_poison_chance が行う。
+
+回復ポーション：
+  特殊タグ：potion, consumable
+  通常効果：player:heal:30:0
+  備考：potion タグだけでは回復しない。
+
+松明：
+  特殊タグ：wood, fire, light_source
+  通常効果または軌道効果：player:light:1:0 または orbit:light:1:0
+  備考：light_source タグは光源分類。照明処理は light が行う。
+
+盾：
+  特殊タグ：shield, guard_contact, guard_projectile
+  軌道効果：projectile:guard:1:0;projectile:reflect_physical_chance:40:0
+  備考：guard_projectile タグは弾対策系アイテムの分類。実際の防御・反射は guard / reflect_physical_chance が行う。
+
+重い鉄球：
+  特殊タグ：weapon, metal, heavy, round, contact_damage
+  通常効果：none
+  備考：接触ダメージは攻撃力・ダメージ種別・速度から計算する。contact_damage タグは分類。
+
+============================================================
+13. 敵挙動コード仕様
+============================================================
+
+目的：Enemies DB の「敵挙動ID」「捕獲後挙動ID」を、上位種・上々位種の差分、撃破時ドロップ、毒沼、連射、光源反応、磁力、錆、盗みなどを列追加なしで扱えるように拡張する。
+
+重要：この章は Objects DB の「通常効果」「軌道効果」とは別体系である。
+Objects DB の効果コードは、アイテム使用・軌道効果・Projectile 防御・状態付与などを扱う。
+敵挙動コードは、EnemyCatalog / EnemySystem / 捕獲後敵アイテム側の特殊行動を扱う。
+
+この章でも、特殊タグは直接処理を発動しない。
+metal、treasure、poison、light_source などのタグは、分類・検索・相性・対象判定にだけ使う。
+磁力、ドロップ、毒沼、錆、盗みなどの処理を発動するのは、必ず敵挙動コード側である。
+
+------------------------------------------------------------
+13-1. Enemies タブの列名
+------------------------------------------------------------
+
+変更前：
+  敵挙動ID
+  捕獲後挙動ID
+
+変更後：
+  敵挙動コード
+  捕獲後挙動コード
+
+後方互換：
+  当面は旧列「敵挙動ID」「捕獲後挙動ID」も読む。
+  新列が存在し、値が空でない場合は新列を優先する。
+  新列がない、または空の場合だけ旧列を読む。
+
+優先順位：
+  敵挙動コード > 敵挙動ID
+  捕獲後挙動コード > 捕獲後挙動ID
+
+旧ID互換変換例：
+  front_guard      -> always:front_guard:none:0
+  shoot_fire       -> attack:shoot_fire:none:2.0
+  shoot_water      -> attack:shoot_water:none:2.0
+  shoot_poison     -> attack:shoot_poison:none:2.3
+  shoot_web        -> attack:shoot_web:none:2.3
+  throw_stone      -> attack:throw_object:projectile=stone_bullet:2.0
+  radial_spike     -> attack:radial_spike:none:2.4
+  wind_blow        -> attack:wind_blow:none:2.5
+  countdown_explode -> timer:countdown_explode:none:0
+  dig_move         -> always:dig_move:none:0
+  ring_slow_bite   -> contact:ring_slow_bite:none:1.0
+  swarm_alert      -> detect:swarm_alert:none:0
+  dig_contact      -> hit:dig_contact:none:0.2
+  none / 空欄      -> none
+
+------------------------------------------------------------
+13-2. 基本文法
+------------------------------------------------------------
+
+基本形：
+  trigger:behavior:params:interval
+
+複数指定：
+  trigger:behavior:params:interval;trigger:behavior:params:interval
+
+挙動なし：
+  none
+
+各要素：
+  trigger   いつ発動するか
+  behavior  何をするか
+  params    挙動ごとのパラメータ
+  interval  発動間隔、再接触間隔、判定間隔
+
+例：
+  attack:shoot_fire:scale=1.5:2.0
+  attack:shoot_fire:count=3,spread=18:2.2
+  attack:shoot_water:burstCount=5,burstInterval=0.10:2.5
+  on_death:drop_item:profile=box_rare,chance=1.0,count=1:0
+  aura:light_slow:lightSpeedMultiplier=0.65:0
+
+------------------------------------------------------------
+13-3. trigger 一覧
+------------------------------------------------------------
+
+always：
+  常時有効。
+  防御、耐性、特殊移動などに使う。
+  interval は通常 0。
+
+attack：
+  攻撃タイミングで発動。
+  弾発射、ブレス、投擲などに使う。
+  interval は攻撃間隔。
+
+contact：
+  敵側ではプレイヤーへの接触時に発動。
+  interval は同一対象への再発動間隔。
+
+hit：
+  捕獲後、リング上の捕獲敵が敵・地形・弾などに当たった時に発動。
+  敵側挙動コードでは原則使わない。
+  interval は同一対象への再発動間隔。
+
+interval：
+  捕獲後、リング上で一定間隔ごとに発動。
+  敵側挙動コードでは原則使わない。
+  interval は発動間隔。
+
+上記のように、敵側か捕獲後かは trigger 名ではなく、どの列に書かれているかで判定する。
+つまり、敵挙動コード欄の contact は敵がプレイヤーに接触した時、捕獲後挙動コード欄の hit はリング上の捕獲敵が対象に当たった時を意味する。
+
+その他の trigger：
+  aura      周囲に継続作用。interval は判定間隔。0なら毎フレーム相当。
+  on_death  撃破時。interval は無視し、通常 0。
+  spawn     生成時。interval は無視し、通常 0。
+  detect    未発見から発見状態へ移行した時。interval は無視し、通常 0。
+  timer     個体タイマーで発動。interval は再発動間隔。単発なら params 側で once=1 を使う。
+
+------------------------------------------------------------
+13-4. params 書式
+------------------------------------------------------------
+
+基本形：
+  key=value,key=value
+
+値なし：
+  none
+
+使用可能な値型：
+  数値    1, 1.5, 0.65
+  文字列  stone_bullet, box_rare
+  真偽値  1, 0
+  リスト  money|treasure
+
+params 内では、原則として次の文字を値に含めない。
+  :
+  ;
+  ,
+  =
+
+リストが必要な場合は | 区切りを使う。
+例：
+  target=money|treasure
+
+JSON 形式は使わない。
+理由：GoogleスプレッドシートとTSV運用で、ダブルクォートやカンマの扱いが壊れやすいため。
+
+------------------------------------------------------------
+13-5. interval の意味
+------------------------------------------------------------
+
+interval は秒数として扱う。
+ただし trigger によって意味が異なる。
+
+attack：
+  攻撃間隔。
+
+contact：
+  同一対象への再発動間隔。
+
+hit：
+  捕獲後リング接触時、同一対象への再発動間隔。
+
+aura：
+  判定間隔。
+  0なら毎フレーム相当。
+
+interval：
+  捕獲後の定期発動間隔。
+
+on_death / spawn / detect：
+  基本的に無視する。
+  通常は 0 を入れる。
+
+timer：
+  再発動間隔。
+  単発化したい場合は params に once=1 を入れる。
+
+------------------------------------------------------------
+13-6. 敵AI・敵挙動コード・敵特殊タグの役割分担
+------------------------------------------------------------
+
+敵AI：
+  移動方針、索敵、逃走、待機、追跡などの基本行動を表す。
+  例：chase、flee、wander、dig_chase など。
+
+敵挙動コード：
+  攻撃、支援、妨害、撃破時ドロップ、光源反応、磁力、錆、盗み、毒沼など、処理を実際に発動する。
+
+敵特殊タグ：
+  性質、分類、相性、対象判定を表す。
+  例：metal、treasure、poison、shield、light_source など。
+  タグ単体で効果を発動しない。
+
+良い例：
+  敵挙動コード = aura:magnet_disturb:radius=90,strength=0.2,targetTag=metal:0
+  敵特殊タグ = flying, bat
+  metal タグは対象判定にだけ使う。
+
+悪い例：
+  敵特殊タグ = magnet_disturb
+  タグを見ただけで磁力処理を発動する運用はしない。
+
+------------------------------------------------------------
+13-7. 発射物IDの扱い
+------------------------------------------------------------
+
+敵挙動コードは projectile などの params で発射物IDを指定できる。
+ただし、Projectile 専用DBタブは現時点では作らない。
+発射物IDごとの仮パラメータはコード内テーブルで管理してよい。
+
+既存または想定する発射物ID：
+  stone_bullet
+  big_stone_bullet
+  weapon_throw
+  poison_spit
+  paralyze_spit
+  mud_spit
+  web_thread
+  fire_breath
+  water_shot
+  cactus_needle
+  wind_wave
+  explosion_small
+
+新規追加が必要なもの：
+  big_stone_bullet  ゴブリンエース用の大岩
+  weapon_throw      ゴブリン長用の斧・剣などの武器投げ
+  paralyze_spit     麻痺ゲコ用の麻痺弾
+  mud_spit          沼ゲコ用の毒沼弾
+
+発射物IDが未定義の場合：
+  クラッシュさせず、警告を出して該当挙動を無効化する。
+
+------------------------------------------------------------
+13-8. 検証ルール
+------------------------------------------------------------
+
+敵挙動コードのパース時に以下を検証する。
+
+1. 形式が trigger:behavior:params:interval になっているか。
+2. trigger が定義済みか。
+3. behavior が #敵挙動コード タブに存在するか。
+4. params が key=value 形式として読めるか。
+5. interval が数値として読めるか。
+6. 使用欄が一致しているか。
+   例：敵側専用の shoot_mud を捕獲後挙動コードに入れた場合は警告。
+7. 使用可能triggerが一致しているか。
+8. projectile 指定がある場合、発射物IDが定義済みか。
+9. targetTag 指定がある場合、特殊タグ一覧に存在するか。
+10. profile 指定がある場合、実装側のドロッププロファイルに存在するか。
+
+警告はログと validationWarnings に残し、可能な範囲で読み込みを継続する。
+未定義挙動は安全に無効化する。
+
+------------------------------------------------------------
+13-9. #敵挙動コード タブの推奨列
+------------------------------------------------------------
+
+TSVヘッダー：
+敵挙動コード	表示名	分類	使用欄	使用可能trigger	主なparams	デフォルトparams	既定発射物ID	基本処理	関連特殊タグ	向き制御	移動制御	重複ルール	実装状態	備考
+
+列の意味：
+  敵挙動コード：behavior に入る実装用キー。
+  表示名：開発者向け日本語名。
+  分類：接触、遠距離攻撃、防御、支援、妨害、報酬、群れ、捕獲後など。
+  使用欄：敵側、捕獲後、または両方。
+  使用可能trigger：使える trigger の一覧。
+  主なparams：代表的な params 名。
+  デフォルトparams：省略時に使う値。
+  既定発射物ID：Projectileを使う場合の既定ID。
+  基本処理：何を行うか。
+  関連特殊タグ：対象判定や相性判定に関係するタグ。
+  向き制御：対象方向、外向き、全方向など。
+  移動制御：速度倍率、逃走AI補助、地形破壊など。
+  重複ルール：同じ挙動が複数ある場合の扱い。
+  実装状態：既存仕様維持、実装対象、要拡張、新規実装、要調整など。
+  備考：注意点。
+
+------------------------------------------------------------
+13-10. #敵挙動コード TSV
+------------------------------------------------------------
+
+敵挙動コード	表示名	分類	使用欄	使用可能trigger	主なparams	デフォルトparams	既定発射物ID	基本処理	関連特殊タグ	向き制御	移動制御	重複ルール	実装状態	備考
+none	挙動なし	疑似コード	敵側,捕獲後	always	なし	none	none	何もしない。空欄互換用。実処理には渡さない	なし	なし	なし	重複不可	実装対象	noneまたは空欄は挙動なしとして扱う
+contact_basic	基本接触	接触	敵側	contact	damageMultiplier,knockback	damageMultiplier=1.0,knockback=0	none	プレイヤー接触時にEnemiesの接触攻撃力と接触ダメージ種別でダメージを与える	なし	接触方向	なし	同一対象は接触間隔で制御	既存仕様維持	通常の接触ダメージは基本処理として常時発生してよい
+front_guard	正面防御	防御	敵側	always	arc,damageMultiplier	arc=120,damageMultiplier=0.35	none	敵の正面方向から受けるリング接触ダメージを軽減する	shield,guard_contact	敵の向き	なし	同種は最小倍率を採用	実装対象	盾カブト系。側面や背面からの攻撃余地を残す
+physical_resist	物理耐性	耐性	敵側	always	physicalMultiplier	physicalMultiplier=0.5	none	physical系リング接触ダメージを軽減する	stone,heavy	なし	なし	同種は最小倍率を採用	実装対象	鉱石ガニ系。魔法弱点まで入れるならmagicMultiplierを追加
+magic_body	魔法体	耐性	敵側	always	physicalMultiplier,magicMultiplier	physicalMultiplier=0.7,magicMultiplier=1.0	none	物理をやや軽減し、魔法系は通常通り受ける	magic	なし	なし	同種は最小倍率を採用	実装対象	ゴースト系に使えるが、今回必須ではない
+spike_contact	トゲ接触	接触	敵側	contact	damageMultiplier	damageMultiplier=1.25	none	接触ダメージを高める。リング攻撃への反撃はしない	spike,contact_damage	接触方向	なし	同種は最大倍率を採用	実装対象	トゲスライム系。「近接リングで殴ると痛い」は不採用
+throw_object	物投げ	遠距離攻撃	敵側,捕獲後	attack,interval	projectile,scale,speed,damage	projectile=stone_bullet,scale=1.0,speed=1.0,damage=1	stone_bullet	指定projectileを対象方向へ投げる。捕獲後はリング位置から外側へ発射する	stone,metal,weapon	対象方向または外向き	なし	intervalごとに発動	要拡張	throw_stoneの後継。ゴブリン系はprojectile差分で表現
+shoot_poison	毒弾	遠距離攻撃	敵側,捕獲後	attack,interval	duration,damagePerSecond,projectileSpeed	duration=3.0,damagePerSecond=1.0,projectileSpeed=1.0	poison_spit	毒弾を撃ち、命中時に毒ダメージ状態を付与する	poison	対象方向または外向き	なし	再付与時は残り時間更新	要拡張	毒ゲコ用。毒状態処理とProjectile命中処理が必要
+shoot_web	糸弾	遠距離妨害	敵側,捕獲後	attack,interval	duration,speedMultiplier,projectileSpeed	duration=2.0,speedMultiplier=0.65,projectileSpeed=1.0	web_thread	糸弾を撃ち、命中時に短時間鈍足を付与する	なし	対象方向または外向き	なし	再付与時は残り時間更新	要拡張	からまりクモ系
+shoot_fire	火炎発射	遠距離攻撃	敵側,捕獲後	attack,interval	scale,count,spread,projectileSpeed	scale=1.0,count=1,spread=0,projectileSpeed=1.0	fire_breath	火炎を撃つ。countが2以上ならspread角で複数発射する	fire	対象方向または外向き	なし	intervalごとに発動	要拡張	火吹きトカゲ系。火炎トカゲはscale、丸焦げトカゲはcount
+shoot_water	水弾発射	遠距離攻撃	敵側,捕獲後	attack,interval	burstCount,burstInterval,projectileSpeed,damage	burstCount=1,burstInterval=0.12,projectileSpeed=1.0,damage=1	water_shot	水弾を撃つ。burstCountで短間隔連射する	water	対象方向または外向き	なし	intervalごとに発動	要拡張	水玉くらげ系。噴射くらげ3連射、大噴射くらげ5連射
+shoot_paralyze	麻痺弾	遠距離妨害	敵側	attack	duration,projectileSpeed	duration=1.0,projectileSpeed=1.0	paralyze_spit	麻痺弾を撃つ。命中時にプレイヤー移動を1秒止める。リング回転は止めない	なし	対象方向	なし	再付与時は残り時間を最大値更新	新規実装	麻痺ゲコ用。効果時間は加算しない
+shoot_mud	毒沼弾	遠距離妨害	敵側	attack	radius,duration,speedMultiplier,damagePerSecond,damageType,projectileSpeed	radius=36,duration=3.0,speedMultiplier=0.55,damagePerSecond=1.0,damageType=poison,projectileSpeed=1.0	mud_spit	泥弾を撃ち、着弾地点に毒沼を生成する。毒沼内は鈍足かつ継続ダメージ	poison,water,earth	対象方向	なし	毒沼は個別管理	新規実装	沼ゲコ用。毒沼なのでダメージあり
+radial_spike	放射針	遠距離攻撃	敵側,捕獲後	attack,interval	count,damage,projectileSpeed	count=8,damage=1,projectileSpeed=1.0	cactus_needle	周囲方向へ針を発射する	spike	全方向	なし	intervalごとに発動	要調整	サボン系。上位種はcountやintervalで調整可能
+wind_blow	逆風	妨害	敵側	attack,aura	radius,strength,duration	radius=120,strength=1.0,duration=0.4	wind_wave	風波を出し、プレイヤーや弾を軽く押す/逸らす。操作不能にはしない	wind	対象方向または全方向	なし	intervalごとに発動	要調整	逆風フクロウ系。上位種も能力自体は同じ
+enemy_heal	敵回復	支援	敵側	aura	radius,amount,interval	radius=120,amount=3,interval=2.0	none	周囲の敵を回復する	なし	なし	なし	同一対象への過剰回復は内部intervalで制御	実装対象	癒しのナメクジ系
+countdown_explode	時限爆発	爆発	敵側	timer	radius,delay,damage,terrainDamage,once	radius=48,delay=1.2,damage=6,terrainDamage=1,once=1	explosion_small	発見後または接近後にカウントし、delay後に爆発する	fire,heavy	なし	爆発後死亡または消滅	once=1なら1個体1回	要拡張	爆弾ツチノコ系。ツチノコボマーはradiusを上げる
+chest_bite	箱噛みつき	接触攻撃	敵側	contact	damageMultiplier,knockback	damageMultiplier=1.2,knockback=20	none	箱系の近距離噛みつき攻撃。妨害ばら撒きはしない	treasure	対象方向	なし	同一対象はintervalで制御	新規実装	びっくり箱・ミミック・パンドラの箱用
+drop_item	撃破時アイテムドロップ	報酬	敵側	on_death	profile,chance,count,scatterRadius	profile=box_common,chance=1.0,count=1,scatterRadius=32	none	撃破時にObjects DB由来アイテムを指定プロファイルからドロップする	treasure	なし	なし	on_deathで1回のみ	新規実装	箱系用。特殊タグではなく挙動コードで発動
+light_slow	光源内減速	光源反応	敵側	aura	lightSpeedMultiplier	lightSpeedMultiplier=0.65	none	敵が光源内にいる間だけ移動速度を倍率補正する。暗闇では通常速度	light_source	なし	速度倍率補正	同種は最小倍率を採用	新規実装	ゴースト系。暗闇加速はしない
+magnet_disturb	磁力妨害	妨害	敵側	aura	radius,strength,targetTag	radius=90,strength=0.2,targetTag=metal	none	周囲のtargetTag対象を軽く吸引または軌道干渉する。リング全体やプレイヤー操作は乱さない	metal	なし	対象位置補正	同種は加算せず最大strength採用	新規実装	磁力コウモリ系。磁場コウモリはradiusを上げる
+rust_touch	錆接触	デバフ	敵側	contact	defenseMultiplier,duration,targetTag	defenseMultiplier=0.85,duration=3.0,targetTag=metal	none	接触時に短時間の防御低下または金属系性能低下を付与する	metal	なし	なし	再付与時は残り時間更新	新規実装	錆ナメクジ系。赤錆ナメクジでも効果自体は同じ
+steal_item	盗み	報酬妨害	敵側	always	target,radius,escapeDistance,maxCarry	target=money,radius=140,escapeDistance=260,maxCarry=1	none	近くのmoney/treasure/dropを拾って逃げる。撃破時に保持中ドロップを吐き出す	money,treasure	なし	逃走AI補助	保持上限まで	新規実装	金食いネズミ系。宝食いネズミはtarget=money|treasure
+dig_move	掘削移動	移動補助	敵側	always	digPower,interval	digPower=1,interval=0.4	none	dig_wander/dig_chase中、壁に塞がれた場合に地形を掘って進む	dig_tool	なし	地形破壊	同一個体で通常更新	既存仕様維持	削岩ヤドカリ系。上位種でも掘削能力自体は同じ
+ring_slow_bite	リング鈍化噛みつき	妨害	敵側	contact	multiplier,duration	multiplier=0.65,duration=4.0	none	接触時にリング実効速度を短時間低下させる	なし	なし	リング速度補正	再付与時は残り時間更新	既存仕様維持	魔力ヒル系。上位種でも効果自体は同じ
+swarm_alert	群れ起動	群れ	敵側	detect	radius,sameEnemyOnly	radius=120,sameEnemyOnly=1	none	発見時、近くの同一enemyIdの未発見個体を発見状態へ移行する	なし	なし	なし	発見時1回	既存仕様維持	うじウジ系
+swarm_spawn	群れ追加生成	群れ	敵側	spawn	groupMin,groupMax,radius	groupMin=2,groupMax=4,radius=48	none	生成時に周囲へ同系統の追加個体を出す。死体分裂ではない	なし	なし	なし	生成時1回	新規実装	うじうじウジ用
+outward_guard	外向きガード	捕獲後防御	捕獲後	hit	guardArc,projectileOnly	guardArc=90,projectileOnly=1	none	リング上で外側から来た小型Projectileを消す	shield,guard_projectile	外向き	なし	同一弾1回	既存仕様維持	捕獲後盾系
+heavy_guard	重ガード	捕獲後防御	捕獲後	hit	guardLarge,projectileOnly	guardLarge=1,projectileOnly=1	none	大型弾または重い接触を防ぐ	shield,guard_large_projectile	外向き	なし	同一弾1回	既存仕様維持	捕獲後重盾系
+magic_guard	魔法ガード	捕獲後防御	捕獲後	hit	projectileOnly,magicOnly	projectileOnly=1,magicOnly=1	none	魔法Projectileを防ぐ	shield,magic	外向き	なし	同一弾1回	既存仕様維持	捕獲後魔法盾系
+reward_drop	報酬発生	捕獲後報酬	捕獲後	hit	chance,profile	chance=0.08,profile=common	none	敵または壁に当たった時、低確率でワールドドロップ候補から報酬生成	treasure,money	接触方向	なし	対象ごとにinterval制御	要調整	捕獲後ミミック・宝系
+steal_or_dig	盗み/掘り出し	捕獲後特殊	捕獲後	hit	stealChance,digChance	stealChance=0.05,digChance=0.05	none	敵命中時に低確率で盗み、壁/鉱石命中時に低確率で掘り出し	treasure,money,dig_tool	接触方向	なし	対象ごとにinterval制御	要調整	捕獲後ネズミ・ヤドカリ系候補
+charge_explode	蓄積爆発	捕獲後爆発	捕獲後	hit	charges,radius,damage,rest	charges=4,radius=50,damage=2,rest=2.4	explosion_small	敵または地形への接触を蓄積し、規定回数で小爆発	fire	接触方向	休眠あり	蓄積式	要調整	捕獲後爆弾ツチノコ系
+magnet_pull	磁力吸引	捕獲後補助	捕獲後	interval	radius,strength,targetTag,maxDrops,maxEnemies,maxProjectiles	radius=165,strength=0.2,targetTag=metal,maxDrops=6,maxEnemies=4,maxProjectiles=6	none	metal対象のワールドドロップ、敵、Projectileをゆるく吸い寄せる	metal	なし	対象位置補正	最大strength採用	要調整	捕獲後磁力コウモリ系
+wind_deflect	風逸らし	捕獲後防御	捕獲後	interval	radius,maxProjectiles,strength	radius=120,maxProjectiles=5,strength=1.0	wind_wave	近くの敵Projectileを少し横へ逸らす。完全無効化ではない	wind	なし	Projectile方向補正	intervalごと	要調整	捕獲後フクロウ系
+dig_contact	接触掘削補助	捕獲後掘削	捕獲後	hit	digPower	digPower=1	none	リング上で地形に当たった時、捕獲後掘削力に加えて補助的に掘削	dig_tool,hard_dig_tool	接触方向	地形破壊	通常掘削と合算	既存仕様維持	捕獲後削岩ヤドカリ系
+
+------------------------------------------------------------
+13-11. 今回の敵に使う代表コード例
+------------------------------------------------------------
+
+火吹きトカゲ：
+  attack:shoot_fire:none:2.0
+
+火炎トカゲ：
+  attack:shoot_fire:scale=1.5:2.0
+
+丸焦げトカゲ：
+  attack:shoot_fire:count=3,spread=18:2.2
+
+水玉くらげ：
+  attack:shoot_water:none:2.0
+
+噴射くらげ：
+  attack:shoot_water:burstCount=3,burstInterval=0.12:2.2
+
+大噴射くらげ：
+  attack:shoot_water:burstCount=5,burstInterval=0.10:2.5
+
+毒ゲコ：
+  attack:shoot_poison:duration=3.0,damagePerSecond=1.0:2.3
+
+麻痺ゲコ：
+  attack:shoot_paralyze:duration=1.0:2.6
+
+沼ゲコ：
+  attack:shoot_mud:radius=36,duration=3.0,speedMultiplier=0.55,damagePerSecond=1.0,damageType=poison:2.8
+
+ゴースト系：
+  aura:light_slow:lightSpeedMultiplier=0.65:0
+
+箱系：
+  contact:chest_bite:none:0.9;on_death:drop_item:profile=box_common,chance=1.0,count=1:0
+
+金食いネズミ：
+  always:steal_item:target=money,radius=140,escapeDistance=260,maxCarry=1:0
+
+宝食いネズミ：
+  always:steal_item:target=money|treasure,radius=180,escapeDistance=320,maxCarry=1:0
+
+磁力コウモリ：
+  aura:magnet_disturb:radius=90,strength=0.2,targetTag=metal:0
+
+磁場コウモリ：
+  aura:magnet_disturb:radius=120,strength=0.25,targetTag=metal:0
+
+錆ナメクジ系：
+  contact:rust_touch:defenseMultiplier=0.85,duration=3.0,targetTag=metal:1.0
+
+うじうじウジ：
+  detect:swarm_alert:none:0;spawn:swarm_spawn:groupMin=4,groupMax=7,radius=56:0
+
+------------------------------------------------------------
+13-12. 実装時の注意
+------------------------------------------------------------
+
+1. 敵挙動コードは、Objects DB の EffectSpec とは別パーサーにする。
+   形式が似ていても target/effect/value/duration とは意味が違う。
+
+2. 敵挙動コードの behavior は #敵挙動コード タブに存在する必要がある。
+   存在しない場合は警告し、安全に無効化する。
+
+3. 特殊タグから直接処理を発動しない。
+   targetTag=metal のように、挙動コード側が対象判定としてタグを参照するのはよい。
+
+4. 敵AIと敵挙動コードを混同しない。
+   敵AIは移動・索敵方針、敵挙動コードは特殊攻撃・特殊処理である。
+
+5. 捕獲後挙動コードは、敵挙動コードと同じ文法を使う。
+   ただし使用できる trigger / behavior は #敵挙動コード タブの「使用欄」「使用可能trigger」で制限する。
+
+6. Projectile 専用DBはまだ作らない。
+   発射物IDごとの仮設定はコード内テーブルでよい。
+
+7. 毒沼はダメージありにする。
+   沼ゲコの毒沼は speedMultiplier による鈍足と damagePerSecond による継続ダメージを両方持つ。
+
+8. 麻痺はプレイヤー移動のみ止める。
+   スペルリング回転、リング接触判定、UI操作は止めない。
+   再付与時は時間を加算せず、残り時間を最大 duration に更新する。
+
+9. ゴーストは暗闇で加速しない。
+   DB上の移動速度を通常速度とし、光源内だけ lightSpeedMultiplier で減速する。
+
+10. 撃破時アイテムドロップは drop_item で発動する。
+    treasure タグや box タグから直接ドロップ処理を発動しない。
+
+11. うじうじウジの強化は死体分裂ではなく、spawn 時の群れ追加生成で表現する。
+
+12. 旧「敵挙動ID」「捕獲後挙動ID」列と旧 #挙動ID タブは、移行期間中は読み取り互換を保つ。
+
+============================================================
+14. まとめ
+============================================================
+
+効果コードは、ゲーム内で実際に処理を発火させる命令。
+特殊タグは、アイテムの性質・分類・相性・検索条件を表すラベル。
+
+状態異常は status_状態名 に統一する。
+確率付与は status_状態名_chance に統一する。
+
+target は対象・適用先・起点を表す。
+effect 名に player/enemy/orbit/projectile などの対象名を混ぜない。
+
+効果コードと特殊タグを同名にしない。
+特殊タグから直接効果を発動しない。
+
+この分離を守ることで、Objects DB、効果処理、タグ検索、敵AI、捕獲効果、相性判定、デバッグ表示を整理しやすくなる。

@@ -1,4 +1,4 @@
-#include "debug/DebugConsole.hpp"
+﻿#include "debug/DebugConsole.hpp"
 
 #include "debug/DebugPanel.hpp"
 
@@ -133,9 +133,17 @@ struct DebugConsole::Impl {
 
 #ifdef _WIN32
     struct DebugControlUi {
+        DebugControlKind kind = DebugControlKind::Button;
         HWND hwnd = nullptr;
+        HWND labelHwnd = nullptr;
         int controlId = 0;
+        std::string id;
         std::string command;
+    };
+
+    struct DebugDropdownCommand {
+        std::string command;
+        std::vector<std::string> optionCommands;
     };
 
     struct DebugGroupUi {
@@ -228,6 +236,35 @@ struct DebugConsole::Impl {
 #else
         (void)level;
         (void)message;
+#endif
+    }
+
+    void setDropdownSelection(std::string_view controlId, int selectedIndex)
+    {
+#ifdef _WIN32
+        if (selectedIndex < 0) {
+            return;
+        }
+
+        auto it = debugDropdownControlIdByDebugId.find(std::string(controlId));
+        if (it == debugDropdownControlIdByDebugId.end()) {
+            return;
+        }
+
+        HWND combo = GetDlgItem(hwnd, it->second);
+        if (!combo) {
+            return;
+        }
+
+        const int count = static_cast<int>(SendMessageW(combo, CB_GETCOUNT, 0, 0));
+        if (selectedIndex >= count) {
+            return;
+        }
+
+        SendMessageW(combo, CB_SETCURSEL, selectedIndex, 0);
+#else
+        (void)controlId;
+        (void)selectedIndex;
 #endif
     }
 
@@ -473,15 +510,28 @@ struct DebugConsole::Impl {
                 SendMessageW(groupUi.box, WM_SETFONT, reinterpret_cast<WPARAM>(uiFont), TRUE);
 
                 for (const DebugControlDefinition& control : group.controls) {
-                    if (control.kind != DebugControlKind::Button) {
-                        continue;
-                    }
-
                     const int controlId = nextControlId++;
-                    HWND button = createButton(parent, utf8ToWide(control.label).c_str(), controlId);
-                    ShowWindow(button, SW_HIDE);
-                    groupUi.controls.push_back({button, controlId, control.command});
-                    debugCommandByControlId[controlId] = control.command;
+                    if (control.kind == DebugControlKind::Button) {
+                        HWND button = createButton(parent, utf8ToWide(control.label).c_str(), controlId);
+                        ShowWindow(button, SW_HIDE);
+                        groupUi.controls.push_back({control.kind, button, nullptr, controlId, control.id, control.command});
+                        debugCommandByControlId[controlId] = control.command;
+                    } else if (control.kind == DebugControlKind::Dropdown) {
+                        HWND label = createStatic(parent, utf8ToWide(control.label).c_str());
+                        HWND combo = createDropdown(parent, controlId);
+                        for (const std::string& option : control.options) {
+                            std::wstring wide = utf8ToWide(option);
+                            SendMessageW(combo, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(wide.c_str()));
+                        }
+                        if (!control.options.empty()) {
+                            SendMessageW(combo, CB_SETCURSEL, std::clamp(control.minValue, 0, static_cast<int>(control.options.size()) - 1), 0);
+                        }
+                        ShowWindow(label, SW_HIDE);
+                        ShowWindow(combo, SW_HIDE);
+                        groupUi.controls.push_back({control.kind, combo, label, controlId, control.id, control.command});
+                        debugDropdownByControlId[controlId] = {control.command, control.optionCommands};
+                        debugDropdownControlIdByDebugId[control.id] = controlId;
+                    }
                 }
 
                 ShowWindow(groupUi.box, SW_HIDE);
@@ -505,6 +555,38 @@ struct DebugConsole::Impl {
             nullptr);
         SendMessageW(button, WM_SETFONT, reinterpret_cast<WPARAM>(uiFont), TRUE);
         return button;
+    }
+
+    HWND createStatic(HWND parent, const wchar_t* text)
+    {
+        HWND label = CreateWindowExW(
+            0,
+            L"STATIC",
+            text,
+            WS_CHILD | WS_VISIBLE,
+            0, 0, 0, 0,
+            parent,
+            nullptr,
+            GetModuleHandleW(nullptr),
+            nullptr);
+        SendMessageW(label, WM_SETFONT, reinterpret_cast<WPARAM>(uiFont), TRUE);
+        return label;
+    }
+
+    HWND createDropdown(HWND parent, int controlId)
+    {
+        HWND combo = CreateWindowExW(
+            0,
+            L"COMBOBOX",
+            L"",
+            WS_CHILD | WS_VISIBLE | WS_VSCROLL | CBS_DROPDOWNLIST | CBS_HASSTRINGS,
+            0, 0, 0, 0,
+            parent,
+            reinterpret_cast<HMENU>(static_cast<INT_PTR>(controlId)),
+            GetModuleHandleW(nullptr),
+            nullptr);
+        SendMessageW(combo, WM_SETFONT, reinterpret_cast<WPARAM>(uiFont), TRUE);
+        return combo;
     }
 
     void layoutControls(int width, int height)
@@ -548,6 +630,12 @@ struct DebugConsole::Impl {
             auto it = debugCommandByControlId.find(controlId);
             if (it != debugCommandByControlId.end()) {
                 queueCommand(it->second);
+                return;
+            }
+        } else if (notification == CBN_SELENDOK) {
+            auto it = debugDropdownByControlId.find(controlId);
+            if (it != debugDropdownByControlId.end()) {
+                queueDropdownCommand(controlId, it->second);
                 return;
             }
         }
@@ -630,13 +718,58 @@ struct DebugConsole::Impl {
             int buttonY = y + 28;
             const int buttonW = std::max(80, actualGroupWidth - 24);
             constexpr int ButtonH = 28;
+            constexpr int LabelH = 20;
+            constexpr int DropdownH = 30;
             constexpr int ButtonGap = 8;
             for (DebugControlUi& control : group.controls) {
+                if (control.kind == DebugControlKind::Dropdown) {
+                    MoveWindow(control.labelHwnd, buttonX, buttonY, buttonW, LabelH, TRUE);
+                    ShowWindow(control.labelHwnd, visible ? SW_SHOW : SW_HIDE);
+                    buttonY += LabelH;
+                    MoveWindow(control.hwnd, buttonX, buttonY, buttonW, 180, TRUE);
+                    ShowWindow(control.hwnd, visible ? SW_SHOW : SW_HIDE);
+                    buttonY += DropdownH + ButtonGap;
+                    continue;
+                }
+
                 MoveWindow(control.hwnd, buttonX, buttonY, buttonW, ButtonH, TRUE);
                 ShowWindow(control.hwnd, visible ? SW_SHOW : SW_HIDE);
                 buttonY += ButtonH + ButtonGap;
             }
         }
+    }
+
+    void queueDropdownCommand(int controlId, const DebugDropdownCommand& dropdown)
+    {
+        HWND control = GetDlgItem(hwnd, controlId);
+        if (!control) {
+            return;
+        }
+
+        const int selected = static_cast<int>(SendMessageW(control, CB_GETCURSEL, 0, 0));
+        if (selected < 0) {
+            return;
+        }
+
+        std::string command = dropdown.command;
+        std::string suffix;
+        if (selected < static_cast<int>(dropdown.optionCommands.size())) {
+            suffix = dropdown.optionCommands[static_cast<std::size_t>(selected)];
+        } else {
+            const int length = static_cast<int>(SendMessageW(control, CB_GETLBTEXTLEN, selected, 0));
+            if (length > 0) {
+                std::wstring text(static_cast<std::size_t>(length) + 1, L'\0');
+                SendMessageW(control, CB_GETLBTEXT, selected, reinterpret_cast<LPARAM>(text.data()));
+                text.resize(static_cast<std::size_t>(length));
+                suffix = wideToUtf8(text);
+            }
+        }
+
+        if (!suffix.empty()) {
+            command += " ";
+            command += suffix;
+        }
+        queueCommand(command);
     }
 
     void submitCommand()
@@ -886,6 +1019,8 @@ struct DebugConsole::Impl {
     DebugConsoleLayout layoutDefinition;
     std::vector<DebugTabUi> debugTabs;
     std::unordered_map<int, std::string> debugCommandByControlId;
+    std::unordered_map<int, DebugDropdownCommand> debugDropdownByControlId;
+    std::unordered_map<std::string, int> debugDropdownControlIdByDebugId;
     std::deque<LogEntry> pendingLogs;
     std::deque<LogEntry> logLines;
     std::deque<std::string> commandQueue;
@@ -927,6 +1062,11 @@ void DebugConsole::toggleVisible()
 void DebugConsole::appendLog(LogLevel level, std::string_view message)
 {
     impl_->appendLog(level, message);
+}
+
+void DebugConsole::setDropdownSelection(std::string_view controlId, int selectedIndex)
+{
+    impl_->setDropdownSelection(controlId, selectedIndex);
 }
 
 std::optional<std::string> DebugConsole::pollCommand()

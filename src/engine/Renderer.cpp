@@ -47,6 +47,23 @@ SDL_FColor vertexColor(Color color)
     };
 }
 
+Color lerpColor(Color from, Color to, float t)
+{
+    t = std::clamp(t, 0.0f, 1.0f);
+    const auto mix = [t](unsigned char a, unsigned char b) {
+        return static_cast<unsigned char>(std::clamp(
+            std::lround(static_cast<float>(a) + (static_cast<float>(b) - static_cast<float>(a)) * t),
+            0L,
+            255L));
+    };
+    return {
+        mix(from.r, to.r),
+        mix(from.g, to.g),
+        mix(from.b, to.b),
+        mix(from.a, to.a),
+    };
+}
+
 #ifdef _WIN32
 class GdiPlusSession {
 public:
@@ -123,10 +140,22 @@ std::size_t utf8CodepointLength(unsigned char lead)
     return 1;
 }
 
-std::string textCacheKey(std::string_view text, Color color, int scale)
+int textStyleCacheValue(TextStyle style)
+{
+    return style == TextStyle::Italic ? 1 : 0;
+}
+
+#ifdef _WIN32
+Gdiplus::FontStyle gdiplusFontStyle(TextStyle style)
+{
+    return style == TextStyle::Italic ? Gdiplus::FontStyleItalic : Gdiplus::FontStyleRegular;
+}
+#endif
+
+std::string textCacheKey(std::string_view text, Color color, int scale, TextStyle style)
 {
     std::ostringstream out;
-    out << scale << ':'
+    out << scale << ':' << textStyleCacheValue(style) << ':'
         << static_cast<int>(color.r) << ','
         << static_cast<int>(color.g) << ','
         << static_cast<int>(color.b) << ','
@@ -135,10 +164,10 @@ std::string textCacheKey(std::string_view text, Color color, int scale)
     return out.str();
 }
 
-std::string outlinedTextCacheKey(std::string_view text, Color color, Color outline, int outlinePx, int scale)
+std::string outlinedTextCacheKey(std::string_view text, Color color, Color outline, int outlinePx, int scale, TextStyle style)
 {
     std::ostringstream out;
-    out << "outline:" << scale << ':' << outlinePx << ':'
+    out << "outline:" << scale << ':' << textStyleCacheValue(style) << ':' << outlinePx << ':'
         << static_cast<int>(color.r) << ','
         << static_cast<int>(color.g) << ','
         << static_cast<int>(color.b) << ','
@@ -151,17 +180,17 @@ std::string outlinedTextCacheKey(std::string_view text, Color color, Color outli
     return out.str();
 }
 
-std::string textMeasureCacheKey(std::string_view text, int scale)
+std::string textMeasureCacheKey(std::string_view text, int scale, TextStyle style)
 {
     std::ostringstream out;
-    out << scale << ':' << text;
+    out << scale << ':' << textStyleCacheValue(style) << ':' << text;
     return out.str();
 }
 
-std::string wrappedTextCacheKey(std::string_view text, float maxWidth, int scale)
+std::string wrappedTextCacheKey(std::string_view text, float maxWidth, int scale, TextStyle style)
 {
     std::ostringstream out;
-    out << scale << ':' << static_cast<int>(std::lround(maxWidth * 10.0f)) << ':' << text;
+    out << scale << ':' << textStyleCacheValue(style) << ':' << static_cast<int>(std::lround(maxWidth * 10.0f)) << ':' << text;
     return out.str();
 }
 
@@ -340,6 +369,70 @@ void Renderer::fillRect(Vec2 pos, Vec2 size, Color color)
     SDL_RenderFillRect(renderer_, &rect);
 }
 
+void Renderer::fillGradientRect(Vec2 pos, Vec2 size, Color startColor, Color endColor, GradientDirection direction)
+{
+    Color topLeft = startColor;
+    Color topRight = endColor;
+    Color bottomRight = endColor;
+    Color bottomLeft = startColor;
+
+    switch (direction) {
+    case GradientDirection::LeftToRight:
+        break;
+    case GradientDirection::TopToBottom:
+        topLeft = startColor;
+        topRight = startColor;
+        bottomRight = endColor;
+        bottomLeft = endColor;
+        break;
+    case GradientDirection::TopLeftToBottomRight: {
+        const Color middle = lerpColor(startColor, endColor, 0.5f);
+        topLeft = startColor;
+        topRight = middle;
+        bottomRight = endColor;
+        bottomLeft = middle;
+        break;
+    }
+    case GradientDirection::BottomLeftToTopRight: {
+        const Color middle = lerpColor(startColor, endColor, 0.5f);
+        topLeft = middle;
+        topRight = endColor;
+        bottomRight = middle;
+        bottomLeft = startColor;
+        break;
+    }
+    }
+
+    fillGradientRect(pos, size, topLeft, topRight, bottomRight, bottomLeft);
+}
+
+void Renderer::fillGradientRect(Vec2 pos, Vec2 size, Color topLeft, Color topRight, Color bottomRight, Color bottomLeft)
+{
+    if (size.x <= 0.0f || size.y <= 0.0f) {
+        return;
+    }
+
+    const Vec2 p = transform(pos);
+    const Vec2 s = transformSize(size);
+    if (s.x <= 0.0f || s.y <= 0.0f) {
+        return;
+    }
+
+    topLeft = transformColor(topLeft);
+    topRight = transformColor(topRight);
+    bottomRight = transformColor(bottomRight);
+    bottomLeft = transformColor(bottomLeft);
+
+    const std::array<SDL_Vertex, 4> vertices{{
+        SDL_Vertex{{p.x, p.y}, vertexColor(topLeft), {0.0f, 0.0f}},
+        SDL_Vertex{{p.x + s.x, p.y}, vertexColor(topRight), {1.0f, 0.0f}},
+        SDL_Vertex{{p.x + s.x, p.y + s.y}, vertexColor(bottomRight), {1.0f, 1.0f}},
+        SDL_Vertex{{p.x, p.y + s.y}, vertexColor(bottomLeft), {0.0f, 1.0f}},
+    }};
+    constexpr std::array<int, 6> indices{{0, 1, 2, 0, 2, 3}};
+    SDL_RenderGeometry(renderer_, nullptr, vertices.data(), static_cast<int>(vertices.size()), indices.data(), static_cast<int>(indices.size()));
+}
+
 void Renderer::drawRect(Vec2 pos, Vec2 size, Color color)
 {
     const Vec2 p = transform(pos);
@@ -373,6 +466,39 @@ void Renderer::drawCircle(Vec2 center, float radius, Color color)
         SDL_RenderLine(renderer_, prev.x, prev.y, next.x, next.y);
         prev = next;
     }
+}
+
+void Renderer::fillPolygon(const Vec2* points, std::size_t count, Color color)
+{
+    if (points == nullptr || count < 3 || color.a == 0) {
+        return;
+    }
+
+    constexpr std::size_t MaxVertices = 8;
+    const std::size_t vertexCount = std::min(count, MaxVertices);
+    Color transformed = transformColor(color);
+
+    std::array<SDL_Vertex, MaxVertices> vertices{};
+    for (std::size_t i = 0; i < vertexCount; ++i) {
+        const Vec2 p = transform(points[i]);
+        vertices[i] = SDL_Vertex{{p.x, p.y}, vertexColor(transformed), {0.0f, 0.0f}};
+    }
+
+    std::array<int, (MaxVertices - 2) * 3> indices{};
+    int indexCount = 0;
+    for (std::size_t i = 1; i + 1 < vertexCount; ++i) {
+        indices[static_cast<std::size_t>(indexCount++)] = 0;
+        indices[static_cast<std::size_t>(indexCount++)] = static_cast<int>(i);
+        indices[static_cast<std::size_t>(indexCount++)] = static_cast<int>(i + 1);
+    }
+
+    SDL_RenderGeometry(
+        renderer_,
+        nullptr,
+        vertices.data(),
+        static_cast<int>(vertexCount),
+        indices.data(),
+        indexCount);
 }
 
 void Renderer::fillSoftCircle(Vec2 center, float radius, Color color)
@@ -630,10 +756,10 @@ void Renderer::drawGlyph(char c, Vec2 pos, Color color, int scale)
     }
 }
 
-void Renderer::drawText(Vec2 pos, std::string_view text, Color color, int scale)
+void Renderer::drawText(Vec2 pos, std::string_view text, Color color, int scale, TextStyle style)
 {
 #ifdef _WIN32
-    if (drawNativeText(pos, text, color, scale)) {
+    if (drawNativeText(pos, text, color, scale, style)) {
         return;
     }
 #endif
@@ -653,13 +779,13 @@ void Renderer::drawText(Vec2 pos, std::string_view text, Color color, int scale)
     camera_ = old;
 }
 
-void Renderer::drawOutlinedText(Vec2 pos, std::string_view text, Color color, Color outline, int outlinePx, int scale)
+void Renderer::drawOutlinedText(Vec2 pos, std::string_view text, Color color, Color outline, int outlinePx, int scale, TextStyle style)
 {
     if (text.empty()) {
         return;
     }
 #ifdef _WIN32
-    if (drawNativeOutlinedText(pos, text, color, outline, outlinePx, scale)) {
+    if (drawNativeOutlinedText(pos, text, color, outline, outlinePx, scale, style)) {
         return;
     }
 #endif
@@ -676,21 +802,21 @@ void Renderer::drawOutlinedText(Vec2 pos, std::string_view text, Color color, Co
     };
     const float radiusScale = static_cast<float>(std::max(0, outlinePx)) / 6.0f;
     for (const Vec2 offset : fallbackOffsets) {
-        drawText(pos + offset * radiusScale, text, outline, scale);
+        drawText(pos + offset * radiusScale, text, outline, scale, style);
     }
-    drawText(pos, text, color, scale);
+    drawText(pos, text, color, scale, style);
 }
 
-Vec2 Renderer::measureText(std::string_view text, int scale)
+Vec2 Renderer::measureText(std::string_view text, int scale, TextStyle style)
 {
-    const std::string key = textMeasureCacheKey(text, std::max(1, scale));
+    const std::string key = textMeasureCacheKey(text, std::max(1, scale), style);
     if (const auto it = textMeasureCache_.find(key); it != textMeasureCache_.end()) {
         return it->second;
     }
 
     Vec2 measured{};
 #ifdef _WIN32
-    if (measureNativeText(text, scale, measured)) {
+    if (measureNativeText(text, scale, style, measured)) {
         if (textMeasureCache_.size() > 2048) {
             textMeasureCache_.clear();
         }
@@ -719,14 +845,14 @@ Vec2 Renderer::measureText(std::string_view text, int scale)
     return measured;
 }
 
-void Renderer::drawWrappedText(Vec2 pos, std::string_view text, float maxWidth, Color color, int scale)
+void Renderer::drawWrappedText(Vec2 pos, std::string_view text, float maxWidth, Color color, int scale, TextStyle style)
 {
-    drawText(pos, wrappedText(text, maxWidth, scale), color, scale);
+    drawText(pos, wrappedText(text, maxWidth, scale, style), color, scale, style);
 }
 
-Vec2 Renderer::measureWrappedText(std::string_view text, float maxWidth, int scale)
+Vec2 Renderer::measureWrappedText(std::string_view text, float maxWidth, int scale, TextStyle style)
 {
-    return measureText(wrappedText(text, maxWidth, scale), scale);
+    return measureText(wrappedText(text, maxWidth, scale, style), scale, style);
 }
 
 bool Renderer::loadTextFont(std::string_view path)
@@ -781,7 +907,7 @@ bool Renderer::loadTextFont(std::string_view path)
 #endif
 }
 
-bool Renderer::drawNativeText(Vec2 pos, std::string_view text, Color color, int scale)
+bool Renderer::drawNativeText(Vec2 pos, std::string_view text, Color color, int scale, TextStyle style)
 {
 #ifdef _WIN32
     if (!nativeTextFont_ || !nativeTextFont_->loaded) {
@@ -791,14 +917,14 @@ bool Renderer::drawNativeText(Vec2 pos, std::string_view text, Color color, int 
     const Color drawColor = transformColor(color);
     Color cacheColor = color;
     cacheColor.a = 255;
-    const std::string key = textCacheKey(text, cacheColor, std::max(1, scale));
+    const std::string key = textCacheKey(text, cacheColor, std::max(1, scale), style);
     auto it = textCache_.find(key);
     if (it == textCache_.end()) {
         if (textCache_.size() > 2048) {
             clearTextCache();
         }
         TextTexture texture{};
-        if (!renderNativeTextToTexture(text, cacheColor, scale, texture)) {
+        if (!renderNativeTextToTexture(text, cacheColor, scale, style, texture)) {
             return false;
         }
         it = textCache_.emplace(key, texture).first;
@@ -818,11 +944,12 @@ bool Renderer::drawNativeText(Vec2 pos, std::string_view text, Color color, int 
     (void)text;
     (void)color;
     (void)scale;
+    (void)style;
     return false;
 #endif
 }
 
-bool Renderer::drawNativeOutlinedText(Vec2 pos, std::string_view text, Color color, Color outline, int outlinePx, int scale)
+bool Renderer::drawNativeOutlinedText(Vec2 pos, std::string_view text, Color color, Color outline, int outlinePx, int scale, TextStyle style)
 {
 #ifdef _WIN32
     if (!nativeTextFont_ || !nativeTextFont_->loaded) {
@@ -831,14 +958,14 @@ bool Renderer::drawNativeOutlinedText(Vec2 pos, std::string_view text, Color col
 
     const int normalizedScale = std::max(1, scale);
     const int normalizedOutlinePx = std::max(0, outlinePx);
-    const std::string key = outlinedTextCacheKey(text, color, outline, normalizedOutlinePx, normalizedScale);
+    const std::string key = outlinedTextCacheKey(text, color, outline, normalizedOutlinePx, normalizedScale, style);
     auto it = textCache_.find(key);
     if (it == textCache_.end()) {
         if (textCache_.size() > 2048) {
             clearTextCache();
         }
         TextTexture texture{};
-        if (!renderNativeOutlinedTextToTexture(text, color, outline, normalizedScale, normalizedOutlinePx, texture)) {
+        if (!renderNativeOutlinedTextToTexture(text, color, outline, normalizedScale, normalizedOutlinePx, style, texture)) {
             return false;
         }
         it = textCache_.emplace(key, texture).first;
@@ -866,11 +993,12 @@ bool Renderer::drawNativeOutlinedText(Vec2 pos, std::string_view text, Color col
     (void)outline;
     (void)outlinePx;
     (void)scale;
+    (void)style;
     return false;
 #endif
 }
 
-bool Renderer::measureNativeText(std::string_view text, int scale, Vec2& outSize)
+bool Renderer::measureNativeText(std::string_view text, int scale, TextStyle style, Vec2& outSize)
 {
 #ifdef _WIN32
     if (!nativeTextFont_ || !nativeTextFont_->loaded) {
@@ -888,7 +1016,7 @@ bool Renderer::measureNativeText(std::string_view text, int scale, Vec2& outSize
     }
 
     const float fontSize = static_cast<float>(std::max(1, scale) * 8);
-    Gdiplus::Font font(&family, fontSize, Gdiplus::FontStyleRegular, Gdiplus::UnitPixel);
+    Gdiplus::Font font(&family, fontSize, gdiplusFontStyle(style), Gdiplus::UnitPixel);
     Gdiplus::Bitmap measureBitmap(1, 1, PixelFormat32bppARGB);
     Gdiplus::Graphics measureGraphics(&measureBitmap);
     measureGraphics.SetTextRenderingHint(Gdiplus::TextRenderingHintAntiAliasGridFit);
@@ -913,7 +1041,8 @@ bool Renderer::measureNativeText(std::string_view text, int scale, Vec2& outSize
         }
         Gdiplus::RectF bounds{};
         measureGraphics.MeasureString(line.c_str(), static_cast<INT>(line.size()), &font, Gdiplus::PointF{0.0f, 0.0f}, &bounds);
-        maxWidth = std::max(maxWidth, std::ceil(bounds.Width + 4.0f));
+        const float italicPadding = style == TextStyle::Italic ? std::ceil(fontSize * 0.22f) : 0.0f;
+        maxWidth = std::max(maxWidth, std::ceil(bounds.Width + 4.0f + italicPadding));
     }
 
     outSize = {maxWidth, std::ceil(lineHeight * static_cast<float>(lines.size()) + 4.0f)};
@@ -921,12 +1050,13 @@ bool Renderer::measureNativeText(std::string_view text, int scale, Vec2& outSize
 #else
     (void)text;
     (void)scale;
+    (void)style;
     (void)outSize;
     return false;
 #endif
 }
 
-bool Renderer::renderNativeTextToTexture(std::string_view text, Color color, int scale, TextTexture& outTexture)
+bool Renderer::renderNativeTextToTexture(std::string_view text, Color color, int scale, TextStyle style, TextTexture& outTexture)
 {
 #ifdef _WIN32
     std::wstring wideText;
@@ -940,14 +1070,14 @@ bool Renderer::renderNativeTextToTexture(std::string_view text, Color color, int
     }
 
     Vec2 measured{};
-    if (!measureNativeText(text, scale, measured)) {
+    if (!measureNativeText(text, scale, style, measured)) {
         return false;
     }
 
     const int bitmapWidth = std::max(1, static_cast<int>(std::ceil(measured.x)));
     const int bitmapHeight = std::max(1, static_cast<int>(std::ceil(measured.y)));
     const float fontSize = static_cast<float>(std::max(1, scale) * 8);
-    Gdiplus::Font font(&family, fontSize, Gdiplus::FontStyleRegular, Gdiplus::UnitPixel);
+    Gdiplus::Font font(&family, fontSize, gdiplusFontStyle(style), Gdiplus::UnitPixel);
     Gdiplus::Bitmap measureBitmap(1, 1, PixelFormat32bppARGB);
     Gdiplus::Graphics measureGraphics(&measureBitmap);
     const float lineHeight = std::ceil(font.GetHeight(&measureGraphics) + 2.0f);
@@ -1022,6 +1152,7 @@ bool Renderer::renderNativeTextToTexture(std::string_view text, Color color, int
     (void)text;
     (void)color;
     (void)scale;
+    (void)style;
     (void)outTexture;
     return false;
 #endif
@@ -1033,6 +1164,7 @@ bool Renderer::renderNativeOutlinedTextToTexture(
     Color outline,
     int scale,
     int outlinePx,
+    TextStyle style,
     TextTexture& outTexture)
 {
 #ifdef _WIN32
@@ -1047,7 +1179,7 @@ bool Renderer::renderNativeOutlinedTextToTexture(
     }
 
     Vec2 measured{};
-    if (!measureNativeText(text, scale, measured)) {
+    if (!measureNativeText(text, scale, style, measured)) {
         return false;
     }
 
@@ -1055,7 +1187,8 @@ bool Renderer::renderNativeOutlinedTextToTexture(
     const int bitmapWidth = std::max(1, static_cast<int>(std::ceil(measured.x)) + margin * 2);
     const int bitmapHeight = std::max(1, static_cast<int>(std::ceil(measured.y)) + margin * 2);
     const float fontSize = static_cast<float>(std::max(1, scale) * 8);
-    Gdiplus::Font font(&family, fontSize, Gdiplus::FontStyleRegular, Gdiplus::UnitPixel);
+    const Gdiplus::FontStyle fontStyle = gdiplusFontStyle(style);
+    Gdiplus::Font font(&family, fontSize, fontStyle, Gdiplus::UnitPixel);
     Gdiplus::Bitmap measureBitmap(1, 1, PixelFormat32bppARGB);
     Gdiplus::Graphics measureGraphics(&measureBitmap);
     const float lineHeight = std::ceil(font.GetHeight(&measureGraphics) + 2.0f);
@@ -1083,7 +1216,7 @@ bool Renderer::renderNativeOutlinedTextToTexture(
                 lines[i].c_str(),
                 static_cast<INT>(lines[i].size()),
                 &family,
-                Gdiplus::FontStyleRegular,
+                fontStyle,
                 fontSize,
                 Gdiplus::PointF{static_cast<Gdiplus::REAL>(margin), static_cast<Gdiplus::REAL>(margin) + static_cast<float>(i) * lineHeight},
                 &format)
@@ -1151,6 +1284,7 @@ bool Renderer::renderNativeOutlinedTextToTexture(
     (void)outline;
     (void)scale;
     (void)outlinePx;
+    (void)style;
     (void)outTexture;
     return false;
 #endif
@@ -1169,13 +1303,13 @@ void Renderer::clearTextCache()
     wrappedTextCache_.clear();
 }
 
-std::string Renderer::wrappedText(std::string_view text, float maxWidth, int scale)
+std::string Renderer::wrappedText(std::string_view text, float maxWidth, int scale, TextStyle style)
 {
     if (maxWidth <= 0.0f || text.empty()) {
         return std::string(text);
     }
 
-    const std::string key = wrappedTextCacheKey(text, maxWidth, std::max(1, scale));
+    const std::string key = wrappedTextCacheKey(text, maxWidth, std::max(1, scale), style);
     if (const auto it = wrappedTextCache_.find(key); it != wrappedTextCache_.end()) {
         return it->second;
     }
@@ -1196,7 +1330,7 @@ std::string Renderer::wrappedText(std::string_view text, float maxWidth, int sca
         const std::string_view token{text.data() + i, charLength};
         std::string candidate = line;
         candidate.append(token);
-        if (!line.empty() && measureText(candidate, scale).x > maxWidth) {
+        if (!line.empty() && measureText(candidate, scale, style).x > maxWidth) {
             output += line;
             output.push_back('\n');
             line.assign(token);
@@ -1633,6 +1767,23 @@ bool Renderer::drawImageRegion(ImageHandle handle, SDL_FRect sourceRect, Vec2 ce
         static_cast<double>(options.rotationDegrees),
         nullptr,
         flipMode);
+
+    Color maskOverlay = transformColor(options.maskOverlayColor);
+    if (maskOverlay.a > 0) {
+        SDL_Texture* maskTexture = entry->texture.outlineTexture != nullptr
+            ? entry->texture.outlineTexture
+            : entry->texture.texture;
+        SDL_SetTextureColorMod(maskTexture, maskOverlay.r, maskOverlay.g, maskOverlay.b);
+        SDL_SetTextureAlphaMod(maskTexture, maskOverlay.a);
+        SDL_RenderTextureRotated(
+            renderer_,
+            maskTexture,
+            source,
+            &dst,
+            static_cast<double>(options.rotationDegrees),
+            nullptr,
+            flipMode);
+    }
     return true;
 }
 

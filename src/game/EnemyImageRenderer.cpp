@@ -162,6 +162,7 @@ bool drawEnemyImage(
     drawOptions.outlineEnabled = options.outlineEnabled;
     drawOptions.outlineColor = options.outlineColor;
     drawOptions.outlinePx = options.outlinePx;
+    drawOptions.maskOverlayColor = options.maskOverlayColor;
     return renderer.drawImageRegion(handle, sourceRect, center, drawSize, drawOptions);
 }
 

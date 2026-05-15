@@ -162,7 +162,7 @@ private:
     Vec2 throwDirection_{1.0f, 0.0f};
     Vec2 throwStart_{};
     float radius_ = 54.0f;
-    float angularSpeed_ = 3.4f;
+    float angularSpeed_ = 2.72f;
     float baseEquippedWeight_ = 0.0f;
     std::array<float, SpellRingCount> baseAngles_{};
     std::array<float, SpellRingCount> shapeRotations_{};

@@ -12,6 +12,12 @@ namespace majo {
 struct DugTile {
     Vec2 center{};
     TileType type = TileType::Dirt;
+    Color color{105, 68, 37, 255};
+};
+
+struct TerrainHitTile {
+    Vec2 center{};
+    Color color{105, 68, 37, 255};
 };
 class EncyclopediaSystem;
 
@@ -27,14 +33,14 @@ public:
         std::vector<EffectDiscoveryEvent>* discoveryEvents = nullptr,
         const EncyclopediaSystem* encyclopedia = nullptr);
     const std::vector<Vec2>& openedTiles() const { return openedTiles_; }
-    const std::vector<Vec2>& hitTiles() const { return hitTiles_; }
+    const std::vector<TerrainHitTile>& hitTiles() const { return hitTiles_; }
     const std::vector<DugTile>& dugTiles() const { return dugTiles_; }
     const std::vector<Vec2>& rewardDropRequests() const { return rewardDropRequests_; }
     const std::vector<Vec2>& capturedExplosionRequests() const { return capturedExplosionRequests_; }
 
 private:
     std::vector<Vec2> openedTiles_;
-    std::vector<Vec2> hitTiles_;
+    std::vector<TerrainHitTile> hitTiles_;
     std::vector<DugTile> dugTiles_;
     std::vector<Vec2> rewardDropRequests_;
     std::vector<Vec2> capturedExplosionRequests_;

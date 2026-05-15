@@ -1,4 +1,4 @@
-#include "game/Player.hpp"
+﻿#include "game/Player.hpp"
 
 #include "game/TileMap.hpp"
 
@@ -51,11 +51,18 @@ void Player::applyDamage(int amount, DamageSource source)
     }
 
     lastDamageSource = source;
+    const int beforeHp = hp;
     hp = std::max(0, hp - amount);
+    const int damageTaken = beforeHp - hp;
+    if (damageTaken > 0) {
+        damageFlash = 0.16f;
+        damageEvents.push_back({damageTaken, position});
+    }
 }
 
 void Player::update(const Input& input, const Camera& camera, TileMap& map, float dt, bool paused, const RuntimeBalance& balance)
 {
+    damageFlash = std::max(0.0f, damageFlash - dt);
     if (paused) {
         return;
     }

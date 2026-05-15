@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 #include "engine/Log.hpp"
 
@@ -21,6 +21,7 @@ public:
     void shutdown();
     void toggleVisible();
     void appendLog(LogLevel level, std::string_view message);
+    void setDropdownSelection(std::string_view controlId, int selectedIndex);
     std::optional<std::string> pollCommand();
 
 private:

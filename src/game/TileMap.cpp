@@ -11,6 +11,8 @@ namespace majo {
 namespace {
 
 constexpr float GoalCavernRadius = 9.0f;
+constexpr std::string_view CrackTexturePath = "assets/crack.png";
+constexpr int CrackTextureFrames = 4;
 
 std::uint32_t hashTile(int x, int y, std::uint32_t seed)
 {
@@ -177,6 +179,75 @@ int TileMap::floorMod(int a, int b)
     return m;
 }
 
+void TileMap::rememberDamagedTileMaxHp(int tx, int ty, const Tile& tile)
+{
+    if (tile.type == TileType::Empty || tile.hp == 0) {
+        return;
+    }
+    damagedTileMaxHp_.try_emplace(key(tx, ty), std::max(1, static_cast<int>(tile.hp)));
+}
+
+void TileMap::clearCrackCacheForTile(int tx, int ty)
+{
+    damagedTileMaxHp_.erase(key(tx, ty));
+}
+
+int TileMap::crackLevelForTile(int tx, int ty, const Tile& tile) const
+{
+    if (tile.type == TileType::Empty || tile.hp == 0) {
+        return 0;
+    }
+
+    const auto it = damagedTileMaxHp_.find(key(tx, ty));
+    if (it == damagedTileMaxHp_.end()) {
+        return 0;
+    }
+
+    const int maxHp = std::max(1, it->second);
+    const int hp = std::clamp(static_cast<int>(tile.hp), 0, maxHp);
+    const float damageRatio = 1.0f - static_cast<float>(hp) / static_cast<float>(maxHp);
+    if (damageRatio < 0.10f) {
+        return 0;
+    }
+    if (damageRatio < 0.30f) {
+        return 1;
+    }
+    if (damageRatio < 0.50f) {
+        return 2;
+    }
+    if (damageRatio < 0.72f) {
+        return 3;
+    }
+    return 4;
+}
+
+void TileMap::drawTileCracks(Renderer& renderer, Vec2 pos, int tx, int ty, const Tile& tile)
+{
+    const int level = crackLevelForTile(tx, ty, tile);
+    if (level <= 0) {
+        return;
+    }
+
+    const ImageHandle crackImage = renderer.acquireImage(CrackTexturePath, TextureFilter::Nearest);
+    Vec2 imageSize{};
+    if (!renderer.getImageSize(crackImage, imageSize) || imageSize.x <= 0.0f || imageSize.y <= 0.0f) {
+        return;
+    }
+
+    const float frameWidth = imageSize.x / static_cast<float>(CrackTextureFrames);
+    const SDL_FRect source{
+        frameWidth * static_cast<float>(std::clamp(level, 1, CrackTextureFrames) - 1),
+        0.0f,
+        frameWidth,
+        imageSize.y
+    };
+    renderer.drawImageRegion(
+        crackImage,
+        source,
+        pos + Vec2{static_cast<float>(balance::TileSize) * 0.5f, static_cast<float>(balance::TileSize) * 0.5f},
+        {static_cast<float>(balance::TileSize), static_cast<float>(balance::TileSize)});
+}
+
 Chunk& TileMap::getOrCreateChunk(int cx, int cy, const RuntimeBalance& config)
 {
     const long long k = key(cx, cy);
@@ -225,14 +296,6 @@ void TileMap::updateAround(Vec2 worldCenter, float, const RuntimeBalance& config
             ++activeChunkCount_;
         }
     }
-    for (int cy = centerChunkY_ - balance::ActiveChunkRadius; cy <= centerChunkY_ + balance::ActiveChunkRadius; ++cy) {
-        for (int cx = centerChunkX_ - balance::ActiveChunkRadius; cx <= centerChunkX_ + balance::ActiveChunkRadius; ++cx) {
-            Chunk& chunk = getOrCreateChunk(cx, cy, balanceSnapshot_);
-            for (auto& tile : chunk.tiles) {
-                if (tile.flash > 0) --tile.flash;
-            }
-        }
-    }
 }
 
 Tile* TileMap::tileAtWorld(int tx, int ty)
@@ -258,9 +321,9 @@ const Tile* TileMap::tileAtWorldIfGenerated(int tx, int ty) const
     return &it->second.at(lx, ly);
 }
 
-std::vector<Vec2> TileMap::damageCircle(Vec2 center, float radius, int damage)
+std::vector<DamagedTile> TileMap::damageCircle(Vec2 center, float radius, int damage)
 {
-    std::vector<Vec2> openedTiles;
+    std::vector<DamagedTile> openedTiles;
     const int minX = static_cast<int>(std::floor((center.x - radius) / balance::TileSize));
     const int maxX = static_cast<int>(std::floor((center.x + radius) / balance::TileSize));
     const int minY = static_cast<int>(std::floor((center.y - radius) / balance::TileSize));
@@ -275,11 +338,14 @@ std::vector<Vec2> TileMap::damageCircle(Vec2 center, float radius, int damage)
             if (!circleIntersectsAabb(center, radius, rectPos, {static_cast<float>(balance::TileSize), static_cast<float>(balance::TileSize)})) {
                 continue;
             }
+            const TileType destroyedType = tile->type;
+            const Color destroyedColor = tileColor(*tile);
+            rememberDamagedTileMaxHp(tx, ty, *tile);
             tile->hp = static_cast<unsigned char>(std::max(0, static_cast<int>(tile->hp) - damage));
-            tile->flash = 8;
             if (tile->hp == 0) {
                 tile->type = TileType::Empty;
-                openedTiles.push_back(tileCenter(tx, ty));
+                clearCrackCacheForTile(tx, ty);
+                openedTiles.push_back({tileCenter(tx, ty), destroyedType, destroyedColor});
             }
         }
     }
@@ -294,10 +360,11 @@ bool TileMap::damageTile(int tx, int ty, int damage, Vec2& openedTileCenter, Til
     }
 
     const TileType destroyedType = tile->type;
+    rememberDamagedTileMaxHp(tx, ty, *tile);
     tile->hp = static_cast<unsigned char>(std::max(0, static_cast<int>(tile->hp) - damage));
-    tile->flash = 8;
     if (tile->hp == 0) {
         tile->type = TileType::Empty;
+        clearCrackCacheForTile(tx, ty);
         openedTileCenter = tileCenter(tx, ty);
         if (openedTileType) {
             *openedTileType = destroyedType;
@@ -540,6 +607,22 @@ TerrainDebugInfo TileMap::terrainDebugAtWorld(Vec2 world) const
     return terrainInfoForTile(tx, ty, tile);
 }
 
+Color TileMap::tileColorAtTile(int tx, int ty) const
+{
+    if (const Tile* tile = tileAtWorldIfGenerated(tx, ty)) {
+        return tileColor(*tile);
+    }
+
+    Tile generated{};
+    generated.type = terrainInfoForTile(tx, ty, nullptr).type;
+    return tileColor(generated);
+}
+
+Color TileMap::tileColorAtWorld(Vec2 world) const
+{
+    return tileColorAtTile(worldToTile(world.x), worldToTile(world.y));
+}
+
 Color TileMap::tileColor(const Tile& tile) const
 {
     Color base{9, 9, 13, 255};
@@ -549,9 +632,6 @@ Color TileMap::tileColor(const Tile& tile) const
     case TileType::Rock: base = {64, 66, 72, 255}; break;
     case TileType::Ore: base = {70, 76, 130, 255}; break;
     case TileType::HardRock: base = {38, 40, 48, 255}; break;
-    }
-    if (tile.flash > 0) {
-        base = {static_cast<unsigned char>(std::min(255, base.r + 70)), static_cast<unsigned char>(std::min(255, base.g + 55)), base.b, 255};
     }
     return base;
 }
@@ -639,7 +719,9 @@ void TileMap::render(Renderer& renderer, const Camera&, Vec2 lightCenter, const 
                     if (!isTileRectLit(pos, lightCenter, extraLights)) {
                         continue;
                     }
-                    drawTileLitByCircles(renderer, pos, tileColor(chunk.at(x, y)), lightCenter, extraLights);
+                    const Tile& tile = chunk.at(x, y);
+                    drawTileLitByCircles(renderer, pos, tileColor(tile), lightCenter, extraLights);
+                    drawTileCracks(renderer, pos, tx, ty, tile);
                 }
             }
         }

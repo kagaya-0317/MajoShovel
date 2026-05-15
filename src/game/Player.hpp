@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 #include "engine/Input.hpp"
 #include "engine/Camera.hpp"
@@ -8,6 +8,7 @@
 
 #include <string>
 #include <string_view>
+#include <vector>
 
 namespace majo {
 
@@ -25,6 +26,11 @@ enum class DamageSource {
 std::string_view deathCauseText(DamageSource source);
 int playerSpriteFrameIndex(float animationTime, bool walking);
 
+struct PlayerDamageEvent {
+    int amount = 0;
+    Vec2 position{};
+};
+
 struct Player {
     Vec2 position{0.0f, 0.0f};
     Vec2 velocity{};
@@ -39,9 +45,11 @@ struct Player {
     float throwCooldownRemaining = 0.0f;
     float spriteAnimationTime = 0.0f;
     bool spriteWalking = false;
+    float damageFlash = 0.0f;
     double poisonDamageAccumulator = 0.0;
     DamageSource lastDamageSource = DamageSource::Unknown;
     std::string lastDamageEnemyName;
+    std::vector<PlayerDamageEvent> damageEvents;
     EntityStatus status;
 
     void applyDamage(int amount, DamageSource source);

@@ -36,8 +36,42 @@ struct InventoryUiDetailExtraLine {
     Color valueColor = ui::Text;
 };
 
+struct InlineItemTextStyle {
+    Color text{255, 255, 255, 255};
+    int scale = 2;
+    float iconTextGap = 4.0f;
+    float iconScale = 1.0f;
+    bool outlineEnabled = false;
+    Color outline{0, 0, 0, 160};
+    int outlinePx = 2;
+};
+
 [[nodiscard]] Color inventoryUiObjectColor(const ItemData& item);
 [[nodiscard]] std::string joinInventoryUiEffectLines(const std::vector<std::string>& lines);
+[[nodiscard]] Vec2 measureInlineItemText(
+    Renderer& renderer,
+    std::string_view text,
+    const InlineItemTextStyle& style = {});
+[[nodiscard]] std::string fittedInlineItemText(
+    Renderer& renderer,
+    std::string text,
+    float maxWidth,
+    const InlineItemTextStyle& style = {});
+[[nodiscard]] std::string inlineItemTag(std::string_view objectId);
+
+void drawInlineItemText(
+    Renderer& renderer,
+    const ObjectCatalog& catalog,
+    Vec2 pos,
+    std::string_view text,
+    const InlineItemTextStyle& style = {});
+
+void drawInlineItemTextRightAligned(
+    Renderer& renderer,
+    const ObjectCatalog& catalog,
+    Vec2 rightTop,
+    std::string_view text,
+    const InlineItemTextStyle& style = {});
 
 void drawInventoryUiSlot(
     Renderer& renderer,

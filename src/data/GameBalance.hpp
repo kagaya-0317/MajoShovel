@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 namespace majo::balance {
 
@@ -16,7 +16,7 @@ constexpr float PlayerRadius = 9.0f;
 constexpr float PlayerLightRadius = 48.0f;
 constexpr float LightRadius = 200.0f;
 constexpr float SpellRingRadius = static_cast<float>(TileSize);
-constexpr float SpellRingSpeed = 3.4f;
+constexpr float SpellRingSpeed = 2.72f;
 constexpr float SpellRingShiftDistance = 40.0f;
 constexpr float SpellRingThrowCooldown = 3.0f;
 constexpr float SpellRingThrowSpeed = 430.0f;
@@ -24,9 +24,9 @@ constexpr float SpellRingThrowDistance = 250.0f;
 constexpr float SpellRingThrowMaxTime = 0.75f;
 constexpr float SpellRingReturnSpeed = 540.0f;
 
-constexpr int DirtHp = 1;
-constexpr int RockHp = 6;
-constexpr int OreHp = 8;
+constexpr int DirtHp = 8;
+constexpr int RockHp = 24;
+constexpr int OreHp = 32;
 
 constexpr int MaxEnemies = 192;
 constexpr float EnemySpeed = 54.0f;

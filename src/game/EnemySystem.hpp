@@ -27,6 +27,7 @@ class EncyclopediaSystem;
 
 enum class EnemyEventType {
     Hit,
+    AttackHit,
     Death,
     BossDeath,
     RewardDrop,
@@ -40,6 +41,7 @@ struct EnemyEvent {
     std::string enemyId;
     std::string enemyName;
     std::string effectId;
+    int damageAmount = -1;
     int moneyDrop = 0;
     std::string objectDropId;
     int objectDropCount = 0;

@@ -1,4 +1,4 @@
-#include "engine/App.hpp"
+﻿#include "engine/App.hpp"
 
 #include "engine/Log.hpp"
 
@@ -68,6 +68,118 @@ std::filesystem::path devBuildConfigPath()
 std::filesystem::path devAutoReloadBlockPath()
 {
     return devSettingsRootPath() / "dev_auto_reload_blocked.txt";
+}
+
+enum class DevLaunchMode {
+    Base,
+    Dungeon,
+    EnemyTest,
+};
+
+std::filesystem::path devLaunchModePath()
+{
+    return devSettingsRootPath() / "dev_launch_mode.txt";
+}
+
+std::optional<DevLaunchMode> parseDevLaunchMode(std::string_view value)
+{
+    const std::string normalized = lowerAscii(trimAscii(std::string(value)));
+    if (normalized == "base") {
+        return DevLaunchMode::Base;
+    }
+    if (normalized == "dungeon") {
+        return DevLaunchMode::Dungeon;
+    }
+    if (normalized == "enemy-test") {
+        return DevLaunchMode::EnemyTest;
+    }
+    return std::nullopt;
+}
+
+std::optional<DevLaunchMode> parseDevLaunchModeCommand(const std::string& normalized)
+{
+    constexpr const char* Prefix = "game launch-mode ";
+    constexpr std::size_t PrefixLength = std::char_traits<char>::length(Prefix);
+    if (normalized.compare(0, PrefixLength, Prefix) != 0) {
+        return std::nullopt;
+    }
+    return parseDevLaunchMode(std::string_view(normalized).substr(PrefixLength));
+}
+
+const char* devLaunchModeSaveName(DevLaunchMode mode)
+{
+    switch (mode) {
+    case DevLaunchMode::Base: return "base";
+    case DevLaunchMode::Dungeon: return "dungeon";
+    case DevLaunchMode::EnemyTest: return "enemy-test";
+    }
+    return "base";
+}
+
+const char* devLaunchModeLogName(DevLaunchMode mode)
+{
+    switch (mode) {
+    case DevLaunchMode::Base: return "base";
+    case DevLaunchMode::Dungeon: return "dungeon";
+    case DevLaunchMode::EnemyTest: return "enemy test";
+    }
+    return "base";
+}
+
+int devLaunchModeDropdownIndex(DevLaunchMode mode)
+{
+    switch (mode) {
+    case DevLaunchMode::Base: return 0;
+    case DevLaunchMode::Dungeon: return 1;
+    case DevLaunchMode::EnemyTest: return 2;
+    }
+    return 0;
+}
+
+std::string devLaunchModeCommand(DevLaunchMode mode)
+{
+    return std::string("game launch-mode ") + devLaunchModeSaveName(mode);
+}
+
+DevLaunchMode loadDevLaunchMode()
+{
+    const std::filesystem::path path = devLaunchModePath();
+    std::ifstream file(path);
+    if (!file) {
+        return DevLaunchMode::Base;
+    }
+
+    std::string value;
+    std::getline(file, value);
+    if (std::optional<DevLaunchMode> mode = parseDevLaunchMode(value)) {
+        return *mode;
+    }
+    return DevLaunchMode::Base;
+}
+
+bool saveDevLaunchMode(DevLaunchMode mode, std::string& outError)
+{
+    const std::filesystem::path path = devLaunchModePath();
+    std::error_code ec;
+    std::filesystem::create_directories(path.parent_path(), ec);
+    if (ec) {
+        outError = "Failed to create config directory: " + ec.message();
+        return false;
+    }
+
+    std::ofstream file(path, std::ios::trunc);
+    if (!file) {
+        outError = "Failed to open launch mode file: " + path.string();
+        return false;
+    }
+
+    file << devLaunchModeSaveName(mode) << "\n";
+    if (!file) {
+        outError = "Failed to write launch mode file: " + path.string();
+        return false;
+    }
+
+    return true;
 }
 
 bool saveDevBuildConfig(std::string_view configName, std::string& outError)
@@ -164,6 +276,7 @@ bool App::initialize(const char* title, int width, int height, bool testPlayMode
     }
     SDL_SetRenderVSync(sdlRenderer_, 1);
     renderer_ = new Renderer(sdlRenderer_);
+    DevLaunchMode launchMode = DevLaunchMode::Base;
     if (testPlayMode_) {
         debugConsole_.initialize();
         setLogSink([this](LogLevel level, std::string_view message) {
@@ -171,12 +284,18 @@ bool App::initialize(const char* title, int width, int height, bool testPlayMode
         });
         const bool autoReloadBlocked = loadDevAutoReloadBlocked();
         game_.setAutoReloadBlocked(autoReloadBlocked);
+        launchMode = loadDevLaunchMode();
+        debugConsole_.setDropdownSelection("launch_mode", devLaunchModeDropdownIndex(launchMode));
         logInfo(std::string("Auto reload block: ") + (autoReloadBlocked ? "ON" : "OFF"));
+        logInfo(std::string("Launch mode: ") + devLaunchModeLogName(launchMode));
         logInfo("Test-play debug console enabled. Press F8 to show or hide it.");
     }
     loadAssets();
     configureAssetWatcher();
     game_.initialize(width_, height_);
+    if (testPlayMode_ && launchMode != DevLaunchMode::Base) {
+        game_.executeDebugCommand(devLaunchModeCommand(launchMode));
+    }
     time_.reset();
     running_ = true;
     return true;
@@ -263,6 +382,12 @@ bool App::reloadAssetForPath(const std::string& changedPath)
         renderer_->invalidateImage(changedPath);
         return true;
     }
+    if (extension == ".png" &&
+        fileName.rfind("img_", 0) == 0 &&
+        parentPath.find("assets/others") != std::string::npos) {
+        renderer_->invalidateImage(changedPath);
+        return true;
+    }
 
     return loadAssets();
 }
@@ -294,6 +419,20 @@ void App::toggleFullscreen()
 void App::executeDebugCommand(const std::string& command)
 {
     const std::string normalized = lowerAscii(trimAscii(command));
+    if (std::optional<DevLaunchMode> launchMode = parseDevLaunchModeCommand(normalized)) {
+        std::string error;
+        if (saveDevLaunchMode(*launchMode, error)) {
+            debugConsole_.setDropdownSelection("launch_mode", devLaunchModeDropdownIndex(*launchMode));
+            logInfo(std::string("Launch mode saved: ") + devLaunchModeLogName(*launchMode));
+        } else {
+            logError("Launch mode save failed: " + error);
+        }
+        if (game_.executeDebugCommand(command)) {
+            return;
+        }
+        logWarning("Unknown debug command: " + command);
+        return;
+    }
     if (normalized == "dev build-config debug" || normalized == "dev build debug") {
         std::string error;
         if (saveDevBuildConfig("Debug", error)) {

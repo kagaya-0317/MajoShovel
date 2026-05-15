@@ -11,9 +11,18 @@ struct ActorAltitudeShadowTuning {
     float minScale = 0.55f;
 };
 
+constexpr float EnemyShadowGroundOffsetY = 22.0f;
+constexpr float ItemShadowGroundOffsetY = 14.0f;
+
 [[nodiscard]] inline Vec2 elevatedDrawPosition(Vec2 groundPosition, float altitude)
 {
     groundPosition.y -= std::max(0.0f, altitude);
+    return groundPosition;
+}
+
+[[nodiscard]] inline Vec2 actorShadowAnchor(Vec2 groundPosition, float offsetY)
+{
+    groundPosition.y += offsetY;
     return groundPosition;
 }
 

@@ -1,8 +1,9 @@
-#include "game/EffectSystem.hpp"
+﻿#include "game/EffectSystem.hpp"
 
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <cstdio>
 #include <random>
 
 namespace majo {
@@ -28,13 +29,14 @@ struct ParticlePreset {
     float ringStart = 4.0f;
     float ringEnd = 20.0f;
     Color ringColor{};
+    ParticleVisual visual = ParticleVisual::Circle;
 };
 
 constexpr std::array<ParticlePreset, 25> ParticlePresets{{
-    {ParticleEffectId::DigDust, 8, {142, 104, 66, 195}, {102, 78, 54, 150}, 82.0f, 34.0f, 1.55f, 2.8f, 1.0f, 0.38f, 0.10f, {0.0f, 72.0f}, 2.2f, true, true, 4.0f, 12.0f, {184, 136, 76, 140}},
-    {ParticleEffectId::DirtBreak, 14, {154, 110, 66, 220}, {214, 150, 82, 185}, 92.0f, 42.0f, Pi * 2.0f, 3.0f, 1.1f, 0.48f, 0.12f, {0.0f, 92.0f}, 2.8f, false, true, 8.0f, 28.0f, {218, 164, 88, 205}},
-    {ParticleEffectId::RockBreak, 12, {122, 126, 132, 220}, {86, 88, 96, 185}, 82.0f, 28.0f, Pi * 2.0f, 3.5f, 1.0f, 0.58f, 0.14f, {0.0f, 116.0f}, 2.4f, false, true, 7.0f, 24.0f, {170, 174, 180, 190}},
-    {ParticleEffectId::OreBreak, 18, {244, 204, 84, 230}, {126, 218, 236, 205}, 104.0f, 48.0f, Pi * 2.0f, 2.6f, 1.1f, 0.56f, 0.16f, {0.0f, 72.0f}, 2.2f, false, true, 9.0f, 32.0f, {255, 222, 110, 220}},
+    {ParticleEffectId::DigDust, 4, {142, 104, 66, 220}, {102, 78, 54, 190}, 76.0f, 26.0f, Pi * 2.0f, 5.5f, 1.4f, 0.76f, 0.08f, {0.0f, 330.0f}, 1.45f, false, true, 4.0f, 14.0f, {184, 136, 76, 140}, ParticleVisual::RockShard},
+    {ParticleEffectId::DirtBreak, 18, {154, 110, 66, 235}, {214, 150, 82, 205}, 126.0f, 58.0f, Pi * 2.0f, 7.4f, 2.4f, 0.84f, 0.10f, {0.0f, 390.0f}, 1.55f, false, true, 8.0f, 34.0f, {218, 164, 88, 205}, ParticleVisual::RockShard},
+    {ParticleEffectId::RockBreak, 18, {122, 126, 132, 235}, {86, 88, 96, 205}, 118.0f, 48.0f, Pi * 2.0f, 8.4f, 2.6f, 0.92f, 0.12f, {0.0f, 420.0f}, 1.45f, false, true, 8.0f, 32.0f, {170, 174, 180, 190}, ParticleVisual::RockShard},
+    {ParticleEffectId::OreBreak, 22, {244, 204, 84, 238}, {126, 218, 236, 215}, 142.0f, 62.0f, Pi * 2.0f, 7.6f, 2.7f, 0.88f, 0.12f, {0.0f, 380.0f}, 1.35f, false, true, 10.0f, 38.0f, {255, 222, 110, 220}, ParticleVisual::RockShard},
     {ParticleEffectId::RingTrail, 4, {196, 172, 255, 135}, {244, 212, 116, 120}, 26.0f, 18.0f, 1.25f, 2.2f, 0.7f, 0.24f, 0.06f, {}, 1.5f, true, false},
     {ParticleEffectId::EnemyHit, 7, {235, 62, 72, 220}, {255, 184, 158, 190}, 88.0f, 34.0f, Pi * 2.0f, 2.6f, 0.8f, 0.34f, 0.08f, {}, 3.0f, false, true, 5.0f, 18.0f, {255, 170, 170, 205}},
     {ParticleEffectId::EnemyPoisonHit, 8, {82, 226, 92, 215}, {168, 78, 214, 180}, 68.0f, 34.0f, Pi * 2.0f, 2.4f, 0.9f, 0.46f, 0.12f, {0.0f, -12.0f}, 2.2f, false, true, 5.0f, 20.0f, {126, 240, 112, 185}},
@@ -58,9 +60,45 @@ constexpr std::array<ParticlePreset, 25> ParticlePresets{{
     {ParticleEffectId::BossCircle, 24, {255, 96, 120, 210}, {255, 210, 96, 190}, 74.0f, 28.0f, Pi * 2.0f, 2.7f, 0.9f, 0.82f, 0.22f, {0.0f, -18.0f}, 1.4f, false, true, 24.0f, 90.0f, {255, 176, 84, 180}},
 }};
 
+constexpr std::size_t MaxShardPoints = 6;
+
+struct ShardShape {
+    std::size_t count = 0;
+    std::array<Vec2, MaxShardPoints> points{};
+};
+
+constexpr std::array<ShardShape, 8> RockShardShapes{{
+    {4, std::array<Vec2, MaxShardPoints>{{{-0.70f, -0.42f}, {0.18f, -0.74f}, {0.78f, 0.08f}, {-0.22f, 0.66f}}}},
+    {5, std::array<Vec2, MaxShardPoints>{{{-0.62f, -0.58f}, {0.38f, -0.50f}, {0.72f, 0.18f}, {0.06f, 0.72f}, {-0.72f, 0.20f}}}},
+    {3, std::array<Vec2, MaxShardPoints>{{{-0.76f, -0.34f}, {0.64f, -0.64f}, {0.24f, 0.76f}}}},
+    {5, std::array<Vec2, MaxShardPoints>{{{-0.48f, -0.70f}, {0.72f, -0.24f}, {0.60f, 0.44f}, {-0.12f, 0.76f}, {-0.76f, 0.02f}}}},
+    {4, std::array<Vec2, MaxShardPoints>{{{-0.34f, -0.78f}, {0.76f, -0.18f}, {0.30f, 0.72f}, {-0.78f, 0.26f}}}},
+    {6, std::array<Vec2, MaxShardPoints>{{{-0.66f, -0.28f}, {-0.26f, -0.72f}, {0.54f, -0.54f}, {0.80f, 0.10f}, {0.16f, 0.70f}, {-0.58f, 0.48f}}}},
+    {4, std::array<Vec2, MaxShardPoints>{{{-0.80f, -0.08f}, {-0.10f, -0.64f}, {0.78f, -0.02f}, {0.12f, 0.76f}}}},
+    {5, std::array<Vec2, MaxShardPoints>{{{-0.54f, -0.66f}, {0.28f, -0.72f}, {0.78f, -0.06f}, {0.34f, 0.66f}, {-0.72f, 0.34f}}}},
+}};
+
 unsigned char fadeAlpha(Color color, float t)
 {
     return static_cast<unsigned char>(static_cast<float>(color.a) * (1.0f - clamp(t, 0.0f, 1.0f)));
+}
+
+unsigned char effectAlpha(const Effect& effect, Color color, float t)
+{
+    if (effect.visual != ParticleVisual::RockShard) {
+        return fadeAlpha(color, t);
+    }
+
+    constexpr float HoldSeconds = 0.50f;
+    const float hold = std::min(HoldSeconds, std::max(0.0f, effect.duration - 0.08f));
+    if (effect.age <= hold) {
+        return color.a;
+    }
+
+    const float fadeDuration = std::max(0.06f, effect.duration - hold);
+    const float u = clamp((effect.age - hold) / fadeDuration, 0.0f, 1.0f);
+    const float eased = u * u * (3.0f - 2.0f * u);
+    return static_cast<unsigned char>(static_cast<float>(color.a) * (1.0f - eased));
 }
 
 float seedAngle(Vec2 position)
@@ -88,12 +126,74 @@ float randomRange(float minValue, float maxValue)
     return dist(particleRng());
 }
 
+int randomInt(int minValue, int maxValue)
+{
+    std::uniform_int_distribution<int> dist(minValue, maxValue);
+    return dist(particleRng());
+}
+
 Color mixColor(Color a, Color b, float t)
 {
     const auto mix = [t](unsigned char x, unsigned char y) {
         return static_cast<unsigned char>(std::round(lerp(static_cast<float>(x), static_cast<float>(y), t)));
     };
     return {mix(a.r, b.r), mix(a.g, b.g), mix(a.b, b.b), mix(a.a, b.a)};
+}
+
+Color applyColorOverride(Color color, Color overrideColor)
+{
+    if (overrideColor.a == 0) {
+        return color;
+    }
+    return {overrideColor.r, overrideColor.g, overrideColor.b, color.a};
+}
+
+Vec2 rotatePoint(Vec2 point, float radians)
+{
+    const float c = std::cos(radians);
+    const float s = std::sin(radians);
+    return {point.x * c - point.y * s, point.x * s + point.y * c};
+}
+
+Vec2 snapPoint(Vec2 point)
+{
+    return {std::round(point.x), std::round(point.y)};
+}
+
+Color shardOutlineColor(Color color)
+{
+    const auto darken = [](unsigned char value) {
+        return static_cast<unsigned char>(std::clamp(std::lround(static_cast<float>(value) * 0.18f), 0L, 255L));
+    };
+    return {
+        darken(color.r),
+        darken(color.g),
+        darken(color.b),
+        static_cast<unsigned char>(std::clamp(std::lround(static_cast<float>(color.a) * 0.95f), 0L, 255L)),
+    };
+}
+
+void renderRockShard(Renderer& renderer, const Effect& effect, Color color, float radius)
+{
+    if (radius <= 0.0f || color.a == 0) {
+        return;
+    }
+
+    const ShardShape& shape = RockShardShapes[static_cast<std::size_t>(std::abs(effect.shardVariant)) % RockShardShapes.size()];
+    const std::size_t count = std::clamp(shape.count, std::size_t{3}, MaxShardPoints);
+    const float outlineRadius = radius + std::max(1.35f, radius * 0.22f);
+
+    std::array<Vec2, MaxShardPoints> outlinePoints{};
+    std::array<Vec2, MaxShardPoints> fillPoints{};
+    for (std::size_t i = 0; i < count; ++i) {
+        const Vec2 base{shape.points[i].x * effect.shardAspect, shape.points[i].y};
+        const Vec2 rotated = rotatePoint(base, effect.rotation);
+        outlinePoints[i] = snapPoint(effect.position + rotated * outlineRadius);
+        fillPoints[i] = snapPoint(effect.position + rotated * radius);
+    }
+
+    renderer.fillPolygon(outlinePoints.data(), count, shardOutlineColor(color));
+    renderer.fillPolygon(fillPoints.data(), count, color);
 }
 
 ParticleEffectId magicEffectFor(std::string_view element)
@@ -132,34 +232,115 @@ void EffectSystem::update(float dt)
         effect.velocity += effect.acceleration * dt;
         effect.position += effect.velocity * dt;
         effect.velocity = effect.velocity * std::max(0.0f, 1.0f - effect.drag * dt);
+        effect.rotation += effect.angularVelocity * dt;
+    }
+
+    for (DamagePopup& popup : damagePopups_.items()) {
+        if (!popup.active) {
+            continue;
+        }
+        popup.age += dt;
+        if (popup.age >= popup.duration) {
+            popup.active = false;
+            continue;
+        }
     }
 }
 
 void EffectSystem::render(Renderer& renderer)
 {
+    renderLayer(renderer, EffectLayer::World);
+}
+
+void EffectSystem::renderForeground(Renderer& renderer)
+{
+    renderLayer(renderer, EffectLayer::Foreground);
+}
+
+void EffectSystem::renderLayer(Renderer& renderer, EffectLayer layer)
+{
     for (const Effect& effect : effects_.items()) {
-        if (!effect.active) {
+        if (!effect.active || effect.layer != layer) {
             continue;
         }
         const float t = effect.duration > 0.0f ? effect.age / effect.duration : 1.0f;
         Color color = effect.color;
-        color.a = fadeAlpha(color, t);
+        color.a = effectAlpha(effect, color, t);
         const float radius = lerp(effect.startRadius, effect.endRadius, t);
         if (effect.type == EffectType::Ring) {
             renderer.drawCircle(effect.position, radius, color);
+        } else if (effect.visual == ParticleVisual::RockShard) {
+            renderRockShard(renderer, effect, color, std::max(1.0f, radius));
         } else {
             renderer.fillCircle(effect.position, std::max(0.8f, radius), color);
         }
     }
 }
 
-void EffectSystem::spawnRing(Vec2 position, float startRadius, float endRadius, Color color, float duration)
+void EffectSystem::renderDamagePopups(Renderer& renderer)
+{
+    char buffer[16]{};
+    for (const DamagePopup& popup : damagePopups_.items()) {
+        if (!popup.active || popup.amount < 0) {
+            continue;
+        }
+
+        const float t = popup.duration > 0.0f ? clamp(popup.age / popup.duration, 0.0f, 1.0f) : 1.0f;
+        const float fade = t < 0.78f ? 1.0f : 1.0f - clamp((t - 0.78f) / 0.22f, 0.0f, 1.0f);
+        const unsigned char alpha = static_cast<unsigned char>(std::clamp(std::lround(255.0f * fade), 0L, 255L));
+        if (alpha == 0) {
+            continue;
+        }
+
+        std::snprintf(buffer, sizeof(buffer), "%d", popup.amount);
+        const int textScale = t < 0.10f ? 4 : 3;
+        const Vec2 size = renderer.measureText(buffer, textScale, TextStyle::Italic);
+        float hopHeight = 0.0f;
+        if (t < 0.58f) {
+            const float u = t / 0.58f;
+            hopHeight = std::sin(u * Pi) * 34.0f;
+        } else {
+            const float u = (t - 0.58f) / 0.42f;
+            hopHeight = std::sin(u * Pi) * 13.0f;
+        }
+        const Vec2 center = popup.position + popup.velocity * popup.age - Vec2{0.0f, hopHeight};
+        const Vec2 pos = center - Vec2{size.x * 0.5f, size.y * 0.5f};
+        const Color textColor = popup.style == DamagePopupStyle::Player
+            ? Color{255, 72, 64, alpha}
+            : Color{255, 255, 255, alpha};
+        const Color shadowColor{0, 0, 0, static_cast<unsigned char>(std::clamp(std::lround(190.0f * fade), 0L, 255L))};
+
+        renderer.drawText(pos + Vec2{2.0f, 2.0f}, buffer, shadowColor, textScale, TextStyle::Italic);
+        renderer.drawText(pos, buffer, textColor, textScale, TextStyle::Italic);
+    }
+}
+
+void EffectSystem::spawnDamagePopup(Vec2 position, int amount, DamagePopupStyle style)
+{
+    if (amount < 0) {
+        return;
+    }
+
+    DamagePopup* popup = damagePopups_.acquire();
+    if (!popup) {
+        return;
+    }
+
+    popup->position = position + Vec2{randomRange(-12.0f, 12.0f), randomRange(-34.0f, -26.0f)};
+    popup->velocity = {randomRange(-10.0f, 10.0f), 0.0f};
+    popup->duration = 0.92f + randomRange(-0.04f, 0.04f);
+    popup->amount = amount;
+    popup->style = style;
+}
+
+void EffectSystem::spawnRing(Vec2 position, float startRadius, float endRadius, Color color, float duration, EffectLayer layer)
 {
     Effect* effect = effects_.acquire();
     if (!effect) {
         return;
     }
     effect->type = EffectType::Ring;
+    effect->layer = layer;
     effect->position = position;
     effect->color = color;
     effect->duration = duration;
@@ -167,34 +348,53 @@ void EffectSystem::spawnRing(Vec2 position, float startRadius, float endRadius, 
     effect->endRadius = endRadius;
 }
 
-void EffectSystem::spawnParticle(Vec2 position, Vec2 velocity, float radius, Color color, float duration, Vec2 acceleration, float drag)
+void EffectSystem::spawnParticle(
+    Vec2 position,
+    Vec2 velocity,
+    float radius,
+    Color color,
+    float duration,
+    Vec2 acceleration,
+    float drag,
+    EffectLayer layer,
+    ParticleVisual visual,
+    int shardVariant,
+    float rotation,
+    float angularVelocity,
+    float shardAspect)
 {
     Effect* effect = effects_.acquire();
     if (!effect) {
         return;
     }
     effect->type = EffectType::Particle;
+    effect->layer = layer;
     effect->position = position;
     effect->velocity = velocity;
     effect->acceleration = acceleration;
     effect->color = color;
+    effect->visual = visual;
     effect->duration = duration;
     effect->startRadius = radius;
     effect->endRadius = radius * 0.35f;
     effect->drag = drag;
+    effect->rotation = rotation;
+    effect->angularVelocity = angularVelocity;
+    effect->shardAspect = shardAspect;
+    effect->shardVariant = shardVariant;
 }
 
-void EffectSystem::spawnBurst(Vec2 position, int count, Color color, float speed, float radius, float duration)
+void EffectSystem::spawnBurst(Vec2 position, int count, Color color, float speed, float radius, float duration, EffectLayer layer)
 {
     const float offset = seedAngle(position);
     for (int i = 0; i < count; ++i) {
         const float angle = offset + (static_cast<float>(i) / static_cast<float>(count)) * Pi * 2.0f;
         const float speedScale = 0.65f + 0.35f * std::sin(angle * 2.7f + position.x * 0.01f);
-        spawnParticle(position, fromAngle(angle) * (speed * speedScale), radius, color, duration);
+        spawnParticle(position, fromAngle(angle) * (speed * speedScale), radius, color, duration, {}, 3.5f, layer);
     }
 }
 
-void EffectSystem::spawn(ParticleEffectId id, Vec2 position, Vec2 direction, float scale)
+void EffectSystem::spawn(ParticleEffectId id, Vec2 position, Vec2 direction, float scale, EffectLayer layer, Color colorOverride)
 {
     const ParticlePreset& preset = presetFor(id);
     const Vec2 forward = normalize(direction);
@@ -205,7 +405,8 @@ void EffectSystem::spawn(ParticleEffectId id, Vec2 position, Vec2 direction, flo
             preset.ringStart * scale,
             preset.ringEnd * scale,
             preset.ringColor,
-            std::max(0.05f, preset.duration * 0.75f));
+            std::max(0.05f, preset.duration * 0.75f),
+            layer);
     }
 
     for (int i = 0; i < preset.count; ++i) {
@@ -214,32 +415,53 @@ void EffectSystem::spawn(ParticleEffectId id, Vec2 position, Vec2 direction, flo
         const float speed = std::max(0.0f, preset.speed + randomRange(-preset.speedJitter, preset.speedJitter)) * scale;
         const float radius = std::max(0.6f, preset.radius + randomRange(-preset.radiusJitter, preset.radiusJitter)) * scale;
         const float duration = std::max(0.06f, preset.duration + randomRange(-preset.durationJitter, preset.durationJitter));
-        const Vec2 offset = fromAngle(angle) * randomRange(0.0f, 4.0f * scale);
+        const bool rockShard = preset.visual == ParticleVisual::RockShard;
+        const bool digHitShard = preset.id == ParticleEffectId::DigDust;
+        const Vec2 shardScatterVelocity = rockShard
+            ? Vec2{
+                randomRange(digHitShard ? -22.0f : -42.0f, digHitShard ? 22.0f : 42.0f) * scale,
+                randomRange(0.0f, digHitShard ? 18.0f : 34.0f) * scale}
+            : Vec2{};
+        const float offsetRange = rockShard ? (digHitShard ? 5.0f : 9.0f) : 4.0f;
+        const Vec2 offset = fromAngle(angle) * randomRange(0.0f, offsetRange * scale);
+        const int shardVariant = rockShard ? randomInt(0, static_cast<int>(RockShardShapes.size() - 1)) : 0;
+        const float rotation = rockShard ? angle + randomRange(-Pi * 0.65f, Pi * 0.65f) : 0.0f;
+        const float angularVelocity = rockShard ? randomRange(-8.0f, 8.0f) : 0.0f;
+        const float shardAspect = rockShard ? randomRange(0.78f, 1.32f) : 1.0f;
+        const Color particleColor = applyColorOverride(
+            mixColor(preset.colorA, preset.colorB, randomRange(0.0f, 1.0f)),
+            colorOverride);
         spawnParticle(
             position + offset,
-            fromAngle(angle) * speed,
+            fromAngle(angle) * speed + shardScatterVelocity,
             radius,
-            mixColor(preset.colorA, preset.colorB, randomRange(0.0f, 1.0f)),
+            particleColor,
             duration,
             preset.acceleration * scale,
-            preset.drag);
+            preset.drag,
+            layer,
+            preset.visual,
+            shardVariant,
+            rotation,
+            angularVelocity,
+            shardAspect);
     }
 }
 
-void EffectSystem::spawnDigHit(Vec2 position, Vec2 direction)
+void EffectSystem::spawnDigHit(Vec2 position, Vec2 direction, Color colorOverride)
 {
-    spawn(ParticleEffectId::DigDust, position, normalize(direction) * -1.0f);
+    spawn(ParticleEffectId::DigDust, position, normalize(direction) * -1.0f, 1.0f, EffectLayer::Foreground, colorOverride);
 }
 
-void EffectSystem::spawnTileBreak(Vec2 position, TileType tileType)
+void EffectSystem::spawnTileBreak(Vec2 position, TileType tileType, Color colorOverride)
 {
     ParticleEffectId id = ParticleEffectId::DirtBreak;
-    if (tileType == TileType::Rock) {
+    if (tileType == TileType::Rock || tileType == TileType::HardRock) {
         id = ParticleEffectId::RockBreak;
     } else if (tileType == TileType::Ore) {
         id = ParticleEffectId::OreBreak;
     }
-    spawn(id, position);
+    spawn(id, position, {1.0f, 0.0f}, 1.0f, EffectLayer::Foreground, colorOverride);
 }
 
 void EffectSystem::spawnEnemyHit(Vec2 position, std::string_view effect)
@@ -251,6 +473,18 @@ void EffectSystem::spawnEnemyHit(Vec2 position, std::string_view effect)
         id = ParticleEffectId::EnemySlowHit;
     } else if (effect == "status_bleed" || effect == "status_bleed_chance") {
         id = ParticleEffectId::EnemyBleedHit;
+    } else if (effect == "fire") {
+        id = ParticleEffectId::MagicFire;
+    } else if (effect == "ice" || effect == "water") {
+        id = ParticleEffectId::MagicIce;
+    } else if (effect == "thunder" || effect == "status_paralyze" || effect == "status_paralyze_chance") {
+        id = ParticleEffectId::MagicThunder;
+    } else if (effect == "wind") {
+        id = ParticleEffectId::MagicWind;
+    } else if (effect == "earth") {
+        id = ParticleEffectId::MagicEarth;
+    } else if (effect == "magic") {
+        id = ParticleEffectId::MagicDefault;
     }
     spawn(id, position);
 }
@@ -281,6 +515,11 @@ void EffectSystem::spawnRingTrail(Vec2 position, Vec2 direction)
     spawn(ParticleEffectId::RingTrail, position, normalize(direction) * -1.0f);
 }
 
+void EffectSystem::spawnForegroundRingTrail(Vec2 position, Vec2 direction)
+{
+    spawn(ParticleEffectId::RingTrail, position, normalize(direction) * -1.0f, 1.0f, EffectLayer::Foreground);
+}
+
 void EffectSystem::spawnCaptureSuccess(Vec2 position, Vec2 direction)
 {
     spawn(ParticleEffectId::CaptureSuccess, position, direction);
@@ -294,6 +533,11 @@ void EffectSystem::spawnDropPickup(Vec2 position, Vec2 direction)
 void EffectSystem::spawnTorchFlicker(Vec2 position)
 {
     spawn(ParticleEffectId::TorchFlicker, position, {0.0f, -1.0f});
+}
+
+void EffectSystem::spawnForegroundTorchFlicker(Vec2 position)
+{
+    spawn(ParticleEffectId::TorchFlicker, position, {0.0f, -1.0f}, 1.0f, EffectLayer::Foreground);
 }
 
 void EffectSystem::spawnStatusAura(Vec2 position, std::string_view stateId)
@@ -310,6 +554,11 @@ void EffectSystem::spawnStatusAura(Vec2 position, std::string_view stateId)
 void EffectSystem::spawnSpecialItemGlimmer(Vec2 position)
 {
     spawn(ParticleEffectId::SpecialItemGlimmer, position);
+}
+
+void EffectSystem::spawnForegroundSpecialItemGlimmer(Vec2 position)
+{
+    spawn(ParticleEffectId::SpecialItemGlimmer, position, {1.0f, 0.0f}, 1.0f, EffectLayer::Foreground);
 }
 
 void EffectSystem::spawnWarpCircle(Vec2 position, bool boss)

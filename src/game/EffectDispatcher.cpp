@@ -177,10 +177,11 @@ void recordTerrainHit(const EffectInvocation& invocation, int tileX, int tileY, 
     }
 
     const Vec2 tileCenter = map.tileCenter(tileX, tileY);
+    const Color tileColor = map.tileColorAtTile(tileX, tileY);
     if (invocation.context->terrainHitTiles != nullptr) {
-        invocation.context->terrainHitTiles->push_back(tileCenter);
+        invocation.context->terrainHitTiles->push_back({tileCenter, tileColor});
     } else if (invocation.context->effects != nullptr) {
-        invocation.context->effects->spawnDigHit(tileCenter);
+        invocation.context->effects->spawnDigHit(tileCenter, {1.0f, 0.0f}, tileColor);
     }
 
     Vec2 openedTileCenter{};
@@ -190,10 +191,10 @@ void recordTerrainHit(const EffectInvocation& invocation, int tileX, int tileY, 
             invocation.context->terrainOpenedTiles->push_back(openedTileCenter);
         }
         if (invocation.context->terrainDugTiles != nullptr) {
-            invocation.context->terrainDugTiles->push_back({openedTileCenter, openedTileType});
+            invocation.context->terrainDugTiles->push_back({openedTileCenter, openedTileType, tileColor});
         }
         if (invocation.context->terrainOpenedTiles == nullptr && invocation.context->effects != nullptr) {
-            invocation.context->effects->spawnTileBreak(openedTileCenter);
+            invocation.context->effects->spawnTileBreak(openedTileCenter, openedTileType, tileColor);
         }
     }
     recordEffectDiscovery(invocation, invocation.effect == "dig_hard" ? "硬い土を掘れる" : "土を掘れる");

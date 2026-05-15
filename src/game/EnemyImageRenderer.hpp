@@ -14,6 +14,7 @@ struct EnemyImageDrawOptions {
     bool outlineEnabled = true;
     Color outlineColor{80, 18, 28, 255};
     int outlinePx = 1;
+    Color maskOverlayColor{255, 255, 255, 0};
     float scaleMultiplier = 1.0f;
 };
 

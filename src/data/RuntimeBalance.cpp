@@ -1,4 +1,4 @@
-#include "data/RuntimeBalance.hpp"
+﻿#include "data/RuntimeBalance.hpp"
 
 #include <algorithm>
 #include <cctype>
@@ -20,6 +20,12 @@ std::string trim(std::string_view text)
     auto end = text.end();
     while (begin != end && std::isspace(static_cast<unsigned char>(*begin))) {
         ++begin;
+    }
+    if (end - begin >= 3 &&
+        static_cast<unsigned char>(*begin) == 0xEF &&
+        static_cast<unsigned char>(*(begin + 1)) == 0xBB &&
+        static_cast<unsigned char>(*(begin + 2)) == 0xBF) {
+        begin += 3;
     }
     while (begin != end && std::isspace(static_cast<unsigned char>(*(end - 1)))) {
         --end;

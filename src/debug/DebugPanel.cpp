@@ -13,6 +13,7 @@ DebugConsoleLayout makeDefaultDebugConsoleLayout()
                     "progress",
                     "ゲーム進行",
                     {
+                        {DebugControlKind::Dropdown, "launch_mode", "起動モード", "game launch-mode", 0, 0, {"拠点から", "ダンジョンから", "敵テスト"}, {"base", "dungeon", "enemy-test"}},
                         {DebugControlKind::Button, "reset_data", "データ初期化", "game reset-data"},
                         {DebugControlKind::Button, "return_base", "拠点へ", "game return-base"},
                         {DebugControlKind::Button, "save_data", "セーブ", "game save"},

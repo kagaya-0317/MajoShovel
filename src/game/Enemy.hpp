@@ -121,6 +121,7 @@ struct Enemy {
     std::vector<std::string> stolenObjectIds;
     bool pendingDeath = false;
     float hitFlash = 0.0f;
+    float hpBarTimer = 0.0f;
     float facingAngle = 0.0f;
     EnemyAwarenessState awareness = EnemyAwarenessState::Unaware;
     float loseSightTimer = 0.0f;

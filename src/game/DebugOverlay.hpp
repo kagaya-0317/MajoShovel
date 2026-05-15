@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 #include "engine/Renderer.hpp"
 #include "engine/Time.hpp"
@@ -39,7 +39,7 @@ public:
         bool autoReloadBlocked);
 
 private:
-    bool visible_ = true;
+    bool visible_ = false;
 };
 
 }

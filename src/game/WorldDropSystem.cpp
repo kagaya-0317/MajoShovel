@@ -3,9 +3,11 @@
 #include "data/GameBalance.hpp"
 #include "engine/Log.hpp"
 #include "game/EffectSystem.hpp"
+#include "game/ActorVisual.hpp"
 #include "game/InventorySystem.hpp"
 #include "game/ObjectImageRenderer.hpp"
 #include "game/Player.hpp"
+#include "game/WorldIconRenderer.hpp"
 
 #include <algorithm>
 #include <array>
@@ -14,6 +16,7 @@
 #include <random>
 #include <sstream>
 #include <string_view>
+#include <utility>
 
 namespace majo {
 
@@ -148,12 +151,16 @@ void drawWorldDrop(Renderer& renderer, const WorldDropItem& drop, const ObjectCa
         color = colorForMaterial(materialType);
     }
 
-    bool drewObjectImage = false;
+    bool drewImage = false;
     if (object != nullptr) {
-        drewObjectImage = drawObjectImage(renderer, *object, center, DropObjectImageMaxSize);
+        drewImage = drawObjectImage(renderer, *object, center, DropObjectImageMaxSize);
+    } else if (drop.kind == WorldDropKind::Money) {
+        drewImage = drawWorldIcon(renderer, moneyWorldIconForAmount(drop.quantity), center, DropObjectImageMaxSize);
+    } else if (material) {
+        drewImage = drawWorldIcon(renderer, materialWorldIcon(materialType), center, DropObjectImageMaxSize);
     }
 
-    if (!drewObjectImage) {
+    if (!drewImage) {
         renderer.fillCircle(center, DropVisualRadius, color);
     }
     renderer.drawCircle(center, DropVisualRadius + 3.0f, {255, 246, 190, 210});
@@ -172,12 +179,19 @@ float dropShadowVisualSize(const WorldDropItem& drop, const ObjectCatalog& catal
     if (drop.kind == WorldDropKind::Object && catalog.registry.findById(drop.id) != nullptr) {
         return std::max(DropObjectImageMaxSize.x, DropObjectImageMaxSize.y);
     }
+    if (drop.kind == WorldDropKind::Money) {
+        return std::max(DropObjectImageMaxSize.x, DropObjectImageMaxSize.y);
+    }
+    MaterialType materialType = MaterialType::Count;
+    if (drop.kind == WorldDropKind::Material && materialTypeFromSaveName(drop.id, materialType)) {
+        return std::max(DropObjectImageMaxSize.x, DropObjectImageMaxSize.y);
+    }
     return DropFallbackShadowVisualSize;
 }
 
 void drawWorldDropShadow(Renderer& renderer, const WorldDropItem& drop, const ObjectCatalog& catalog)
 {
-    renderer.drawActorShadow(drop.position, dropShadowVisualSize(drop, catalog));
+    renderer.drawActorShadow(actorShadowAnchor(drop.position, ItemShadowGroundOffsetY), dropShadowVisualSize(drop, catalog));
 }
 
 bool isDropStealTarget(const WorldDropItem& drop, const ObjectCatalog& catalog, std::string_view targetFilter)
@@ -433,7 +447,14 @@ int WorldDropSystem::pullMetalDrops(const ObjectCatalog& catalog, Vec2 center, f
     return pulled;
 }
 
-int WorldDropSystem::update(float dt, const Player& player, InventorySystem& inventory, int& money, const ObjectCatalog& catalog, EffectSystem* effects)
+int WorldDropSystem::update(
+    float dt,
+    const Player& player,
+    InventorySystem& inventory,
+    int& money,
+    const ObjectCatalog& catalog,
+    EffectSystem* effects,
+    std::vector<WorldDropPickupEvent>* pickupEvents)
 {
     const float pickupRadiusSq = DropPickupRadius * DropPickupRadius;
     int pickedUpCount = 0;
@@ -450,16 +471,35 @@ int WorldDropSystem::update(float dt, const Player& player, InventorySystem& inv
         }
 
         bool pickedUp = false;
+        WorldDropPickupEvent pickupEvent;
+        bool hasPickupEvent = false;
         if (drop.kind == WorldDropKind::Object) {
             pickedUp = inventory.addObjectItem(catalog, drop.id);
+            if (pickedUp) {
+                const ObjectDefinition* object = catalog.registry.findById(drop.id);
+                pickupEvent.kind = drop.kind;
+                pickupEvent.id = drop.id;
+                pickupEvent.name = object != nullptr ? object->name : drop.id;
+                pickupEvent.quantity = 1;
+                hasPickupEvent = true;
+            }
         } else if (drop.kind == WorldDropKind::Money) {
             money = std::max(0, money + std::max(0, drop.quantity));
             pickedUp = true;
+            pickupEvent.kind = drop.kind;
+            pickupEvent.id = drop.id;
+            pickupEvent.quantity = std::max(0, drop.quantity);
+            hasPickupEvent = true;
         } else if (drop.kind == WorldDropKind::Material) {
             MaterialType materialType = MaterialType::Count;
             if (materialTypeFromSaveName(drop.id, materialType)) {
                 inventory.addMaterial(materialType, drop.quantity);
                 pickedUp = true;
+                pickupEvent.kind = drop.kind;
+                pickupEvent.id = drop.id;
+                pickupEvent.name = std::string(materialTypeDisplayName(materialType));
+                pickupEvent.quantity = std::max(0, drop.quantity);
+                hasPickupEvent = true;
             } else {
                 logDropWarning("unknown material drop id=\"" + drop.id + "\"; removing drop");
                 pickedUp = true;
@@ -469,6 +509,9 @@ int WorldDropSystem::update(float dt, const Player& player, InventorySystem& inv
         if (pickedUp) {
             if (effects != nullptr) {
                 effects->spawnDropPickup(drop.position, player.position - drop.position);
+            }
+            if (pickupEvents != nullptr && hasPickupEvent && pickupEvent.quantity > 0) {
+                pickupEvents->push_back(std::move(pickupEvent));
             }
             ++pickedUpCount;
             return true;

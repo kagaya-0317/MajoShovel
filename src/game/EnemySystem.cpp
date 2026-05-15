@@ -77,6 +77,7 @@ constexpr float HoverBobAmplitude = 3.0f;
 constexpr float PhaseBobAmplitude = 2.0f;
 constexpr float HoverBobSpeed = 4.0f;
 constexpr float PhaseBobSpeed = 5.0f;
+constexpr float EnemyHpBarDisplaySeconds = 2.0f;
 constexpr float MudZoneTickSeconds = 0.20f;
 constexpr float MudZoneMaxDurationSeconds = 30.0f;
 constexpr float MagnetDisturbMaxRadius = 320.0f;
@@ -656,7 +657,7 @@ ItemData makeCapturedItemData(const Enemy& enemy)
     return item;
 }
 
-std::string visualEffectIdFor(const std::vector<EffectSpec>& specs)
+std::string visualEffectIdFor(const std::vector<EffectSpec>& specs, std::string_view damageType = {})
 {
     for (const EffectSpec& spec : specs) {
         for (const std::string& effect : spec.effects) {
@@ -667,10 +668,13 @@ std::string visualEffectIdFor(const std::vector<EffectSpec>& specs)
             }
         }
     }
+    if (!damageType.empty() && damageType != "none") {
+        return std::string(damageType);
+    }
     return {};
 }
 
-EnemyEvent makeEnemyEvent(EnemyEventType type, const Enemy& enemy, std::string effectId = {})
+EnemyEvent makeEnemyEvent(EnemyEventType type, const Enemy& enemy, std::string effectId = {}, int damageAmount = -1)
 {
     return EnemyEvent{
         .type = type,
@@ -678,6 +682,7 @@ EnemyEvent makeEnemyEvent(EnemyEventType type, const Enemy& enemy, std::string e
         .enemyId = enemy.enemyId,
         .enemyName = enemy.enemyName,
         .effectId = std::move(effectId),
+        .damageAmount = damageAmount,
         .moneyDrop = enemy.moneyDrop,
     };
 }
@@ -865,7 +870,11 @@ Vec2 enemyDrawPosition(const Enemy& enemy)
 EnemyImageDrawOptions enemyImageOptionsFor(const Enemy& enemy)
 {
     EnemyImageDrawOptions imageOptions;
-    imageOptions.tint = enemy.hitFlash > 0.0f ? Color{255, 220, 220, 255} : Color{255, 255, 255, 255};
+    imageOptions.tint = {255, 255, 255, 255};
+    if (enemy.hitFlash > 0.0f) {
+        const float flash = clamp(enemy.hitFlash / 0.12f, 0.0f, 1.0f);
+        imageOptions.maskOverlayColor = {255, 255, 255, static_cast<unsigned char>(std::round(220.0f * flash))};
+    }
     if (enemy.hitFlash <= 0.0f && enemy.status.hasState("status_poison")) {
         imageOptions.tint = {160, 255, 160, 255};
     } else if (enemy.hitFlash <= 0.0f && enemy.status.hasState("status_slow")) {
@@ -910,7 +919,7 @@ Vec2 enemyShadowBoundsSize(Renderer& renderer, const Enemy& enemy)
 
 void drawEnemyShadow(Renderer& renderer, const Enemy& enemy)
 {
-    renderer.drawActorShadow(enemy.position, enemyShadowVisualSize(renderer, enemy));
+    renderer.drawActorShadow(actorShadowAnchor(enemy.position, EnemyShadowGroundOffsetY), enemyShadowVisualSize(renderer, enemy));
 }
 
 void drawEnemyVisual(Renderer& renderer, const Enemy& enemy)
@@ -936,7 +945,7 @@ void drawEnemyVisual(Renderer& renderer, const Enemy& enemy)
         drawAwarenessIcon(visualRadius);
         return;
     }
-    Color color = enemy.hitFlash > 0.0f ? Color{255, 220, 220, 255} : (enemy.isBoss ? Color{142, 46, 160, 255} : colorForEnemy(enemy));
+    Color color = enemy.hitFlash > 0.0f ? Color{255, 255, 255, 255} : (enemy.isBoss ? Color{142, 46, 160, 255} : colorForEnemy(enemy));
     if (enemy.hitFlash <= 0.0f && enemy.status.hasState("status_poison")) {
         color = {92, 184, 88, 255};
     } else if (enemy.hitFlash <= 0.0f && enemy.status.hasState("status_slow")) {
@@ -2116,7 +2125,7 @@ void EnemySystem::update(
                 enemy.hp -= poisonDamage;
                 enemy.poisonDamageAccumulator -= static_cast<double>(poisonDamage);
                 enemy.hitFlash = 0.12f;
-                events_.push_back(makeEnemyEvent(EnemyEventType::Hit, enemy));
+                events_.push_back(makeEnemyEvent(EnemyEventType::Hit, enemy, {}, poisonDamage));
                 if (enemy.hp <= 0) {
                     processEnemyDeath(enemy);
                     continue;
@@ -2724,6 +2733,9 @@ void EnemySystem::update(
             if (hitEffectId.empty()) {
                 hitEffectId = visualEffectIdFor(item.addedEffects);
             }
+            if (hitEffectId.empty() && !item.damageType.empty() && item.damageType != "none") {
+                hitEffectId = item.damageType;
+            }
             tryCapturedRewardFromEnemy(item, enemy, totalTime, events_);
             if (item.hasCapturedBehavior("charge_explode") && item.capturedExplodeSleepTimer <= 0.0f) {
                 const int requiredHits = std::max(1, item.capturedBehaviorParamInt("charge_explode", "count", CapturedExplosionChargeLimit));
@@ -2736,7 +2748,7 @@ void EnemySystem::update(
                 }
             }
             enemy.hitFlash = 0.12f;
-            events_.push_back(makeEnemyEvent(EnemyEventType::Hit, enemy, hitEffectId));
+            events_.push_back(makeEnemyEvent(EnemyEventType::AttackHit, enemy, hitEffectId, damageDealt));
             if (enemy.hp <= 0) {
                 processEnemyDeath(enemy);
                 break;
@@ -2855,7 +2867,7 @@ bool EnemySystem::hitByPlayerProjectile(
             effectDispatcher.dispatch(projectile.effects, context);
         }
 
-        events_.push_back(makeEnemyEvent(EnemyEventType::Hit, enemy, visualEffectIdFor(projectile.effects)));
+        events_.push_back(makeEnemyEvent(EnemyEventType::AttackHit, enemy, visualEffectIdFor(projectile.effects, projectile.damageType), adjustedDamage));
         if (enemy.hp <= 0) {
             pendingXp_ += enemy.xp;
             if (!enemy.dropItemConsumed) {
@@ -2909,11 +2921,12 @@ void EnemySystem::applyCapturedExplosion(Vec2 position, SpellRingSystem& spellRi
             continue;
         }
 
-        enemy.hp -= applyDefenseModifier(enemy.status, std::max(0, damage));
+        const int damageDealt = applyDefenseModifier(enemy.status, std::max(0, damage));
+        enemy.hp -= damageDealt;
         enemy.hitFlash = 0.18f;
         enemy.knockbackVelocity = normalize(enemy.position - position) * 110.0f;
         enemy.knockbackTimer = std::max(enemy.knockbackTimer, 0.14f);
-        events_.push_back(makeEnemyEvent(EnemyEventType::Hit, enemy));
+        events_.push_back(makeEnemyEvent(EnemyEventType::AttackHit, enemy, "fire", damageDealt));
         if (enemy.hp <= 0) {
             pendingXp_ += enemy.xp;
             if (!enemy.dropItemConsumed) {

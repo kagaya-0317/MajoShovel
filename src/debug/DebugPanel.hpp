@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 #include <string>
 #include <vector>
@@ -24,6 +24,7 @@ struct DebugControlDefinition {
     int minValue = 0;
     int maxValue = 100;
     std::vector<std::string> options;
+    std::vector<std::string> optionCommands;
 };
 
 struct DebugGroupDefinition {

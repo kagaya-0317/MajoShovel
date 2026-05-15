@@ -5,17 +5,20 @@
 #include "game/ActorVisual.hpp"
 #include "game/InventoryUiCommon.hpp"
 #include "game/ObjectImageRenderer.hpp"
+#include "game/WorldIconRenderer.hpp"
 
 #include <algorithm>
 #include <array>
 #include <cmath>
 #include <cctype>
+#include <cstddef>
 #include <cstdint>
 #include <cstdlib>
 #include <cstdio>
 #include <filesystem>
 #include <fstream>
 #include <limits>
+#include <memory>
 #include <optional>
 #include <random>
 #include <sstream>
@@ -28,6 +31,14 @@
 namespace majo {
 
 namespace {
+template <typename T>
+void resetInPlace(T& value)
+{
+    // Avoid materializing large reset temporaries on the startup stack.
+    std::destroy_at(std::addressof(value));
+    std::construct_at(std::addressof(value));
+}
+
 constexpr int ShovelIconIndex = 0;
 constexpr int TorchIconIndex = 1;
 constexpr float IconDrawSize = 32.0f;
@@ -83,7 +94,9 @@ constexpr float RingDetailW = 330.0f;
 constexpr float DetailOuterRightMargin = 42.0f;
 constexpr float DetailOuterTopMargin = 50.0f;
 constexpr float DetailOuterBottomMargin = 40.0f;
-constexpr float RingUiFigureEightScale = 1.5f;
+constexpr float RingUiFigureEightRadius = 230.0f;
+constexpr float RingUiCometRadius = 210.0f;
+constexpr float RingUiCometCenterYOffset = 104.0f;
 constexpr float RingUiCometArcRotation = Pi * 1.5f;
 constexpr float WarpPointSpacing = 320.0f;
 constexpr float WarpPointTouchRadius = 28.0f;
@@ -127,6 +140,22 @@ constexpr float DungeonStatusHudRightMargin = 18.0f;
 constexpr float DungeonStatusHudBottomMargin = 24.0f;
 constexpr float DungeonStatusHudPadding = 14.0f;
 constexpr float DungeonStatusHudBarHeight = 8.0f;
+constexpr float RingStatusHudWidth = 206.0f;
+constexpr float RingStatusHudHeight = 82.0f;
+constexpr float RingStatusHudLeftMargin = 18.0f;
+constexpr float RingStatusHudBottomMargin = 24.0f;
+constexpr float RingStatusHudGap = 8.0f;
+constexpr float RingStatusHudPadding = 12.0f;
+constexpr float DungeonLogWidth = 360.0f;
+constexpr float DungeonLogRowHeight = 30.0f;
+constexpr float DungeonLogGap = 6.0f;
+constexpr float DungeonLogRightMargin = 18.0f;
+constexpr float DungeonLogTargetYRatio = 0.48f;
+constexpr float DungeonLogStatusGap = 12.0f;
+constexpr int DungeonLogMaxVisible = 6;
+constexpr float DungeonLogLifetime = 3.4f;
+constexpr float DungeonLogFadeStart = 2.5f;
+constexpr float DungeonLogMergeSeconds = 0.8f;
 constexpr int BaseEditGridSize = 12;
 constexpr float BaseEditFacilityMinSize = 24.0f;
 constexpr int BaseEditUndoLimit = 100;
@@ -175,6 +204,31 @@ constexpr std::array<FootstepDustShape, 10> FootstepDustShapes{{
     {4, {{{-6.0f, 4.0f}, {-2.0f, -1.0f}, {3.0f, 2.0f}, {7.0f, -2.0f}, {0.0f, 0.0f}}}, {{3.4f, 5.2f, 4.8f, 3.8f, 0.0f}}},
     {5, {{{-7.0f, -1.0f}, {-1.0f, 3.0f}, {3.0f, -2.0f}, {7.0f, 2.0f}, {1.0f, -5.0f}}}, {{4.2f, 5.0f, 4.0f, 3.6f, 3.0f}}},
 }};
+
+float flickeredLightRadius(float radius, float totalSeconds, float phase)
+{
+    if (radius <= 0.0f) {
+        return radius;
+    }
+    const float waveA = std::sin(totalSeconds * 13.4f + phase);
+    const float waveB = std::sin(totalSeconds * 34.7f + phase * 2.3f + 0.6f);
+    const float offsetPx = std::clamp(waveA * 1.35f + waveB * 0.95f, -2.0f, 2.0f);
+    return std::max(0.0f, radius + offsetPx);
+}
+
+Vec2 flickeredLightPosition(Vec2 position, float totalSeconds, float phase)
+{
+    const float x =
+        std::sin(totalSeconds * 7.1f + phase * 1.37f) * 1.15f +
+        std::sin(totalSeconds * 17.3f + phase * 2.11f + 1.2f) * 0.55f;
+    const float y =
+        std::sin(totalSeconds * 6.4f + phase * 1.83f + 2.0f) * 1.10f +
+        std::sin(totalSeconds * 19.1f + phase * 2.47f + 0.4f) * 0.60f;
+    return position + Vec2{
+        std::clamp(x, -1.7f, 1.7f),
+        std::clamp(y, -1.7f, 1.7f),
+    };
+}
 
 Color materialCounterFill(MaterialType type)
 {
@@ -668,6 +722,11 @@ UiRect objectImageScaleCardRect(const ObjectImageScaleLayout& layout, int index,
     return {{x, y}, {ObjectImageScaleCardWidth, ObjectImageScaleCardHeight}};
 }
 
+UiRect objectImageScaleTabRect(int index)
+{
+    return {{420.0f + static_cast<float>(index) * 118.0f, 16.0f}, {108.0f, 32.0f}};
+}
+
 UiRect enemyTestToolbarRect()
 {
     return {{18.0f, 52.0f}, {1016.0f, 86.0f}};
@@ -834,6 +893,7 @@ const char* screenModeName(ScreenMode mode)
 {
     switch (mode) {
     case ScreenMode::Base: return "Base";
+    case ScreenMode::WorldLoading: return "WorldLoading";
     case ScreenMode::Playing: return "Playing";
     case ScreenMode::PauseMenu: return "PauseMenu";
     case ScreenMode::Inventory: return "Inventory";
@@ -1324,30 +1384,44 @@ Vec2 ringOrbitCenter()
     return {panel.pos.x + (detailLeft - panel.pos.x) * 0.5f, 418.0f};
 }
 
+Vec2 ringUiOrbitCenter(const SpellRingSystem& spellRing)
+{
+    Vec2 center = ringOrbitCenter();
+    if (spellRing.activeRingShape() == RingShape::Comet) {
+        center.y += RingUiCometCenterYOffset;
+    }
+    return center;
+}
+
 float ringOrbitRadius()
 {
     return 138.0f;
 }
 
-float ringUiRadiusScale(const SpellRingSystem& spellRing)
+float ringUiShapeRadius(RingShape shape)
 {
-    const float shapeScale = spellRing.activeRingShape() == RingShape::FigureEight ? RingUiFigureEightScale : 1.0f;
-    return (ringOrbitRadius() * shapeScale) / std::max(1.0f, spellRing.radius());
+    if (shape == RingShape::FigureEight) {
+        return RingUiFigureEightRadius;
+    }
+    if (shape == RingShape::Comet) {
+        return RingUiCometRadius;
+    }
+    return ringOrbitRadius();
 }
 
 Vec2 ringWorldToUi(const SpellRingSystem& spellRing, Vec2 worldPosition)
 {
-    return worldPosition - spellRing.center() + ringOrbitCenter();
+    return worldPosition - spellRing.center() + ringUiOrbitCenter(spellRing);
 }
 
 Vec2 ringUiToWorld(const SpellRingSystem& spellRing, Vec2 uiPosition)
 {
-    return uiPosition - ringOrbitCenter() + spellRing.center();
+    return uiPosition - ringUiOrbitCenter(spellRing) + spellRing.center();
 }
 
-Vec2 rotateRingUiPoint(Vec2 point, float radians)
+Vec2 rotateRingUiPoint(const SpellRingSystem& spellRing, Vec2 point, float radians)
 {
-    const Vec2 center = ringOrbitCenter();
+    const Vec2 center = ringUiOrbitCenter(spellRing);
     const Vec2 local = point - center;
     const float c = std::cos(radians);
     const float s = std::sin(radians);
@@ -1360,7 +1434,7 @@ Vec2 rotateRingUiPoint(Vec2 point, float radians)
 Vec2 applyRingUiShapeRotation(const SpellRingSystem& spellRing, Vec2 point)
 {
     if (spellRing.activeRingShape() == RingShape::Comet) {
-        return rotateRingUiPoint(point, RingUiCometArcRotation);
+        return rotateRingUiPoint(spellRing, point, RingUiCometArcRotation);
     }
     return point;
 }
@@ -1368,7 +1442,7 @@ Vec2 applyRingUiShapeRotation(const SpellRingSystem& spellRing, Vec2 point)
 Vec2 removeRingUiShapeRotation(const SpellRingSystem& spellRing, Vec2 point)
 {
     if (spellRing.activeRingShape() == RingShape::Comet) {
-        return rotateRingUiPoint(point, -RingUiCometArcRotation);
+        return rotateRingUiPoint(spellRing, point, -RingUiCometArcRotation);
     }
     return point;
 }
@@ -1379,24 +1453,23 @@ RingOrbitContext ringUiOrbitContext(
     int itemIndex,
     int itemCount)
 {
-    RingOrbitContext context = spellRing.makeOrbitContextForRing(
-        spellRing.activeRingIndex(),
-        itemIndex,
-        itemCount,
-        ringUiRadiusScale(spellRing),
-        balance);
-    if (context.shape == RingShape::Comet) {
-        context.shapeRotation = 0.0f;
-    }
+    RingOrbitContext context;
+    context.shape = spellRing.activeRingShape();
+    context.radius = ringUiShapeRadius(context.shape);
+    context.shapeRotation = 0.0f;
+    context.itemIndex = std::max(0, itemIndex);
+    context.itemCount = std::max(1, itemCount);
+    context.tuning = makeRingOrbitTuning(balance);
     return context;
 }
 
 float ringUiPathParam(const SpellRingSystem& spellRing, float localAngle, const RingOrbitContext& context)
 {
+    (void)spellRing;
     if (context.shape == RingShape::Comet) {
         return localAngle;
     }
-    return spellRing.ringBaseAngleForIndex(spellRing.activeRingIndex()) + localAngle;
+    return localAngle;
 }
 
 Vec2 ringItemUiCenter(
@@ -1482,6 +1555,309 @@ float ringAngleFromPoint(Vec2 point, const SpellRingSystem& spellRing, const Run
         return spellRing.quantizeLocalAngle(param, balance);
     }
     return spellRing.quantizeLocalAngle(param - spellRing.ringBaseAngleForIndex(spellRing.activeRingIndex()), balance);
+}
+
+struct MagicOrbitDrawOptions {
+    RingShape shape = RingShape::Circle;
+    bool active = false;
+    bool energized = false;
+    bool screenPresentation = false;
+    bool centerSigil = false;
+    int ringIndex = 0;
+    float totalSeconds = 0.0f;
+    float alphaScale = 1.0f;
+};
+
+constexpr std::array<RingShape, 3> MagicRingShapeRenderOrder{{
+    RingShape::Circle,
+    RingShape::FigureEight,
+    RingShape::Comet,
+}};
+
+float wrap01(float value)
+{
+    value = std::fmod(value, 1.0f);
+    if (value < 0.0f) {
+        value += 1.0f;
+    }
+    return value;
+}
+
+std::uint8_t alphaByte(float alpha)
+{
+    return static_cast<std::uint8_t>(std::clamp(std::lround(alpha), 0L, 255L));
+}
+
+Color withAlpha(Color color, float alpha)
+{
+    color.a = alphaByte(alpha);
+    return color;
+}
+
+Color scaledAlpha(Color color, float scale)
+{
+    color.a = alphaByte(static_cast<float>(color.a) * std::max(0.0f, scale));
+    return color;
+}
+
+std::vector<Vec2> makeCirclePath(Vec2 center, float radius, int sampleCount)
+{
+    const int count = std::max(16, sampleCount);
+    std::vector<Vec2> points;
+    points.reserve(static_cast<std::size_t>(count));
+    for (int i = 0; i < count; ++i) {
+        const float t01 = static_cast<float>(i) / static_cast<float>(count - 1);
+        points.push_back(center + fromAngle(t01 * Pi * 2.0f) * radius);
+    }
+    return points;
+}
+
+Vec2 pathPointAt(const std::vector<Vec2>& points, float t01, bool wrap)
+{
+    if (points.empty()) {
+        return {};
+    }
+    if (points.size() == 1) {
+        return points.front();
+    }
+
+    const float t = wrap ? wrap01(t01) : clamp(t01, 0.0f, 1.0f);
+    const float scaled = t * static_cast<float>(points.size() - 1);
+    const std::size_t index = std::min<std::size_t>(
+        points.size() - 2,
+        static_cast<std::size_t>(std::max(0.0f, std::floor(scaled))));
+    const float localT = scaled - static_cast<float>(index);
+    return lerp(points[index], points[index + 1], localT);
+}
+
+Vec2 pathTangentAt(const std::vector<Vec2>& points, float t01, bool wrap)
+{
+    constexpr float SampleOffset = 0.006f;
+    const Vec2 before = pathPointAt(points, t01 - SampleOffset, wrap);
+    const Vec2 after = pathPointAt(points, t01 + SampleOffset, wrap);
+    return normalize(after - before);
+}
+
+void drawMagicStar(Renderer& renderer, Vec2 center, float radius, Color color, float rotation)
+{
+    if (radius <= 0.0f || color.a == 0) {
+        return;
+    }
+
+    const Vec2 primary = fromAngle(rotation) * radius;
+    const Vec2 secondary = fromAngle(rotation + Pi * 0.5f) * (radius * 0.68f);
+    renderer.drawLine(center - primary, center + primary, color);
+    renderer.drawLine(center - secondary, center + secondary, color);
+    renderer.fillCircle(center, std::max(0.8f, radius * 0.18f), withAlpha(color, std::min(255.0f, static_cast<float>(color.a) + 45.0f)));
+}
+
+void drawMagicOrbitRunes(Renderer& renderer, const std::vector<Vec2>& orbitPath, const MagicOrbitDrawOptions& options)
+{
+    if (orbitPath.size() < 2) {
+        return;
+    }
+
+    const int runeCount = options.screenPresentation ? 18 : 11;
+    const bool wrap = options.shape != RingShape::Comet;
+    const float lengthScale = options.screenPresentation ? 1.25f : 1.0f;
+    for (int i = 0; i < runeCount; ++i) {
+        if (!options.active && ((i + options.ringIndex) % 3) != 0) {
+            continue;
+        }
+
+        const float t01 = (static_cast<float>(i) + 0.5f) / static_cast<float>(runeCount);
+        const float pulse = 0.62f + 0.38f * std::sin(options.totalSeconds * 2.2f + static_cast<float>(i) * 0.83f + static_cast<float>(options.ringIndex));
+        const float alpha = (options.active ? 64.0f : 28.0f) * options.alphaScale * pulse;
+        const Vec2 point = pathPointAt(orbitPath, t01, wrap);
+        const Vec2 tangent = pathTangentAt(orbitPath, t01, wrap);
+        const Vec2 normal{-tangent.y, tangent.x};
+        const float halfLength = (options.active ? 2.8f : 1.9f) * lengthScale;
+        const Color runeColor = withAlpha(options.energized ? Color{255, 204, 100, 255} : Color{232, 236, 255, 255}, alpha);
+        renderer.drawLine(point - normal * halfLength, point + normal * halfLength, runeColor);
+    }
+}
+
+void drawMagicOrbitFlow(Renderer& renderer, const std::vector<Vec2>& orbitPath, const MagicOrbitDrawOptions& options)
+{
+    if (orbitPath.size() < 2) {
+        return;
+    }
+
+    const bool wrap = options.shape != RingShape::Comet;
+    const int beadCount = options.screenPresentation
+        ? (options.active ? 6 : 4)
+        : (options.active ? 3 : 2);
+    const float speed = options.shape == RingShape::Comet ? 0.18f : 0.085f;
+    const float radiusScale = options.screenPresentation ? 1.25f : 1.0f;
+    for (int i = 0; i < beadCount; ++i) {
+        const float t01 = wrap01(options.totalSeconds * speed + static_cast<float>(i) / static_cast<float>(beadCount) + static_cast<float>(options.ringIndex) * 0.173f);
+        const float pulse = 0.70f + 0.30f * std::sin(options.totalSeconds * 5.8f + static_cast<float>(i) * 1.7f);
+        const Vec2 point = pathPointAt(orbitPath, t01, wrap);
+        const float radius = (options.active ? 1.8f : 1.3f) * radiusScale * pulse;
+        const Color outer = withAlpha(options.energized ? Color{255, 198, 92, 255} : Color{120, 226, 255, 255}, (options.active ? 54.0f : 30.0f) * options.alphaScale);
+        const Color inner = withAlpha(options.energized ? Color{255, 244, 176, 255} : Color{255, 250, 202, 255}, (options.active ? 154.0f : 86.0f) * options.alphaScale);
+        renderer.fillCircle(point, radius * 2.1f, outer);
+        renderer.fillCircle(point, radius, inner);
+    }
+}
+
+void drawMagicOrbitSparkles(Renderer& renderer, const std::vector<Vec2>& orbitPath, const MagicOrbitDrawOptions& options)
+{
+    if (orbitPath.size() < 2) {
+        return;
+    }
+
+    const bool wrap = options.shape != RingShape::Comet;
+    const int sparkleCount = options.screenPresentation
+        ? (options.active ? 7 : 4)
+        : (options.active ? 3 : 1);
+    const float radiusScale = options.screenPresentation ? 1.28f : 1.0f;
+    for (int i = 0; i < sparkleCount; ++i) {
+        const float seed = static_cast<float>(options.ringIndex) * 1.91f + static_cast<float>(i) * 2.37f;
+        const float twinkle = 0.5f + 0.5f * std::sin(options.totalSeconds * (2.6f + static_cast<float>(i) * 0.11f) + seed);
+        const float alpha = (options.active ? 112.0f : 52.0f) * options.alphaScale * twinkle;
+        if (alpha < 18.0f) {
+            continue;
+        }
+
+        const float t01 = wrap01(static_cast<float>(i) * 0.618f + static_cast<float>(options.ringIndex) * 0.117f + options.totalSeconds * 0.025f);
+        const Vec2 tangent = pathTangentAt(orbitPath, t01, wrap);
+        const Vec2 normal{-tangent.y, tangent.x};
+        const float offset = std::sin(seed * 1.7f) * (options.screenPresentation ? 5.0f : 3.0f);
+        const Vec2 point = pathPointAt(orbitPath, t01, wrap) + normal * offset;
+        const Color sparkle = withAlpha(options.energized ? Color{255, 226, 126, 255} : Color{214, 240, 255, 255}, alpha);
+        drawMagicStar(renderer, point, (1.6f + twinkle * 2.0f) * radiusScale, sparkle, seed + options.totalSeconds * 0.7f);
+    }
+}
+
+void drawMagicOrbitCenter(Renderer& renderer, Vec2 center, const MagicOrbitDrawOptions& options)
+{
+    const float alpha = (options.active ? 118.0f : 62.0f) * options.alphaScale;
+    const Color glow = withAlpha(options.energized ? Color{255, 210, 104, 255} : Color{150, 220, 255, 255}, alpha * 0.55f);
+    const Color core = withAlpha(Color{255, 248, 196, 255}, alpha);
+    renderer.fillCircle(center, options.screenPresentation ? 4.6f : 2.4f, glow);
+    renderer.drawCircle(center, options.screenPresentation ? 7.6f : 4.4f, withAlpha(core, alpha * 0.64f));
+    drawMagicStar(renderer, center, options.screenPresentation ? 5.8f : 3.3f, withAlpha(core, alpha), options.totalSeconds * 0.8f);
+}
+
+void drawTaperedMagicPolyline(Renderer& renderer, const std::vector<Vec2>& points, float tailWidth, float headWidth, Color color)
+{
+    if (points.size() < 2 || color.a == 0) {
+        return;
+    }
+
+    const float baseAlpha = static_cast<float>(color.a);
+    for (std::size_t i = 1; i < points.size(); ++i) {
+        const float t = static_cast<float>(i) / static_cast<float>(points.size() - 1);
+        const float eased = t * t;
+        const float width = lerp(tailWidth, headWidth, eased);
+        const float alpha = baseAlpha * lerp(0.28f, 1.0f, eased);
+        renderer.drawSoftLine(points[i - 1], points[i], width, withAlpha(color, alpha));
+    }
+}
+
+void drawMagicOrbitPath(Renderer& renderer, const std::vector<Vec2>& orbitPath, Vec2 center, const MagicOrbitDrawOptions& options)
+{
+    if (orbitPath.size() < 2) {
+        return;
+    }
+
+    const float widthScale = options.screenPresentation ? 1.35f : 1.0f;
+    const Color auraColor = options.energized
+        ? Color{255, 178, 74, 62}
+        : (options.active ? Color{90, 200, 255, 64} : Color{116, 150, 210, 36});
+    const Color coreColor = options.energized
+        ? Color{255, 230, 142, 132}
+        : (options.active ? Color{236, 242, 255, 124} : Color{178, 196, 238, 62});
+
+    if (options.shape == RingShape::Comet) {
+        drawTaperedMagicPolyline(
+            renderer,
+            orbitPath,
+            (options.active ? 1.6f : 1.1f) * widthScale,
+            (options.active ? 5.4f : 3.5f) * widthScale,
+            scaledAlpha(auraColor, options.alphaScale));
+        const std::size_t tailCount = std::min<std::size_t>(orbitPath.size(), options.screenPresentation ? 74 : 44);
+        std::vector<Vec2> tailPath(orbitPath.end() - static_cast<std::ptrdiff_t>(tailCount), orbitPath.end());
+        drawTaperedMagicPolyline(
+            renderer,
+            tailPath,
+            (options.active ? 1.2f : 0.9f) * widthScale,
+            (options.active ? 6.8f : 4.4f) * widthScale,
+            scaledAlpha(Color{255, 216, 112, 64}, options.alphaScale));
+    } else {
+        renderer.drawSoftPolyline(orbitPath, (options.active ? 5.4f : 3.5f) * widthScale, scaledAlpha(auraColor, options.alphaScale));
+    }
+
+    if (options.shape == RingShape::Comet) {
+        drawTaperedMagicPolyline(
+            renderer,
+            orbitPath,
+            (options.active ? 0.7f : 0.5f) * widthScale,
+            (options.active ? 1.8f : 1.2f) * widthScale,
+            scaledAlpha(coreColor, options.alphaScale));
+    } else {
+        renderer.drawSoftPolyline(orbitPath, (options.active ? 1.8f : 1.2f) * widthScale, scaledAlpha(coreColor, options.alphaScale));
+    }
+    for (std::size_t i = 1; i < orbitPath.size(); ++i) {
+        if (options.shape == RingShape::FigureEight && !options.screenPresentation && (i % 4) == 0) {
+            continue;
+        }
+        const float lineAlphaScale = options.shape == RingShape::Comet
+            ? options.alphaScale * 0.54f * lerp(0.22f, 1.0f, std::pow(static_cast<float>(i) / static_cast<float>(orbitPath.size() - 1), 2.0f))
+            : options.alphaScale * 0.54f;
+        renderer.drawLine(orbitPath[i - 1], orbitPath[i], scaledAlpha(coreColor, lineAlphaScale));
+    }
+
+    drawMagicOrbitRunes(renderer, orbitPath, options);
+    drawMagicOrbitFlow(renderer, orbitPath, options);
+    drawMagicOrbitSparkles(renderer, orbitPath, options);
+
+    if (options.shape == RingShape::Comet) {
+        const Vec2 head = orbitPath.back();
+        renderer.fillCircle(head, (options.active ? 4.8f : 3.2f) * widthScale, withAlpha(Color{255, 218, 112, 255}, (options.active ? 98.0f : 54.0f) * options.alphaScale));
+        renderer.fillCircle(head, (options.active ? 2.2f : 1.5f) * widthScale, withAlpha(Color{255, 252, 210, 255}, (options.active ? 172.0f : 100.0f) * options.alphaScale));
+    }
+
+    if (options.centerSigil || options.shape == RingShape::FigureEight) {
+        drawMagicOrbitCenter(renderer, center, options);
+    }
+}
+
+void drawSpellRingOrbitLayer(
+    Renderer& renderer,
+    const SpellRingSystem& spellRing,
+    const RuntimeBalance& balance,
+    float totalSeconds,
+    float alphaScale)
+{
+    const bool energized = spellRing.state() != SpellRingState::Normal;
+    for (RingShape shapePass : MagicRingShapeRenderOrder) {
+        for (int ringIndex = 0; ringIndex < SpellRingCount; ++ringIndex) {
+            const auto& ringItems = spellRing.itemsForRing(ringIndex);
+            if (ringItems.empty() || spellRing.ringShapeForIndex(ringIndex) != shapePass) {
+                continue;
+            }
+
+            std::vector<Vec2> orbitPath = shapePass == RingShape::Circle
+                ? makeCirclePath(spellRing.center(), spellRing.radius(), 160)
+                : spellRing.pathSamplePointsForRing(ringIndex, spellRing.center(), 1.0f, balance, 160);
+            drawMagicOrbitPath(
+                renderer,
+                orbitPath,
+                spellRing.center(),
+                MagicOrbitDrawOptions{
+                    shapePass,
+                    ringIndex == spellRing.activeRingIndex(),
+                    energized,
+                    false,
+                    false,
+                    ringIndex,
+                    totalSeconds,
+                    alphaScale,
+                });
+        }
+    }
 }
 
 float ringItemAltitude(const SpellRingItem& item, float totalSeconds)
@@ -2132,7 +2508,14 @@ void Game::initialize(int width, int height)
     resolveCurrentStageDefinition();
     loadEnemiesFromSheet();
     configureWatcher();
-    initializeWorld(false);
+    resetWorldSimulationState();
+    resetWorldUiState();
+    resetWorldRunState();
+    spellRing_.initialize(balance_);
+    applyPermanentUpgrades();
+    spellRing_.applyObjectParameters(objectCatalog_);
+    spellRing_.resetBaseWeightToCurrent();
+    refreshOrbitEffects();
     if (loadSaveData()) {
         reloadNotice_ = "セーブ読込完了";
     } else {
@@ -2145,27 +2528,85 @@ void Game::initialize(int width, int height)
     loadBaseEditData();
     loadObjectImageScaleData();
     setObjectImageScaleOverrides(&objectImageScaleById_);
+    setWorldIconScaleOverrides(&otherImageScaleByKey_);
     enterBase();
     reloadNoticeTimer_ = 2.0f;
 }
 
 void Game::initializeWorld(bool captureRunStartInventory)
 {
-    player_ = Player{};
+    resetWorldSimulationState();
+    resetWorldUiState();
+    resetWorldRunState();
+    buildWorldForRun(captureRunStartInventory);
+}
+
+void Game::resetWorldSimulationState()
+{
+    resetWorldPlayerState();
+    resetWorldMapAndRingState();
+    resetWorldActionSystems();
+    resetWorldInventoryState();
+}
+
+void Game::resetWorldPlayerState()
+{
+    resetInPlace(player_);
     player_.position = {0.0f, 0.0f};
     player_.xpToNext = balance_.xpBase + player_.level * balance_.xpPerLevel;
-    tileMap_ = TileMap{};
-    spellRing_ = SpellRingSystem{};
-    effects_ = EffectSystem{};
+}
+
+void Game::resetWorldMapAndRingState()
+{
+    resetInPlace(tileMap_);
+    resetInPlace(spellRing_);
+}
+
+void Game::resetWorldActionSystems()
+{
+    resetWorldEffectState();
+    resetWorldEnemyState();
+    resetWorldProjectileState();
+    resetWorldDropState();
+    resetWorldProgressionState();
+}
+
+void Game::resetWorldEffectState()
+{
+    resetInPlace(effects_);
     ringTrailEffectTimer_ = 0.0f;
     ambientParticleTimer_ = 0.0f;
-    enemies_ = EnemySystem{};
-    projectiles_ = ProjectileSystem{};
-    inventory_ = InventorySystem{};
-    worldDrops_ = WorldDropSystem{};
+}
+
+void Game::resetWorldEnemyState()
+{
+    resetInPlace(enemies_);
+}
+
+void Game::resetWorldProjectileState()
+{
+    resetInPlace(projectiles_);
+}
+
+void Game::resetWorldDropState()
+{
+    resetInPlace(worldDrops_);
     worldDrops_.setDropLimit(balance_.worldDropLimitPerStage);
-    levels_ = LevelSystem{};
-    upgrades_ = UpgradeSystem{};
+}
+
+void Game::resetWorldProgressionState()
+{
+    resetInPlace(levels_);
+    resetInPlace(upgrades_);
+}
+
+void Game::resetWorldInventoryState()
+{
+    resetInPlace(inventory_);
+}
+
+void Game::resetWorldUiState()
+{
     mode_ = ScreenMode::Playing;
     baseMenuSelection_ = 0;
     baseMiningStartChoiceActive_ = false;
@@ -2213,8 +2654,11 @@ void Game::initializeWorld(bool captureRunStartInventory)
     baseEditRedoStack_.clear();
     resetBaseEditDragState();
     objectImageScaleReturnMode_ = ScreenMode::Playing;
+    imageScaleEditTab_ = ImageScaleEditTab::Objects;
     objectImageScaleSelectedIndex_ = -1;
+    otherImageScaleSelectedIndex_ = -1;
     objectImageScaleScrollOffset_ = 0.0f;
+    otherImageScaleScrollOffset_ = 0.0f;
     objectImageScaleDirty_ = false;
     objectImageScaleStatus_.clear();
     enemyTestActive_ = false;
@@ -2223,6 +2667,10 @@ void Game::initializeWorld(bool captureRunStartInventory)
     enemyTestSelectedIndex_ = 0;
     enemyTestStatus_.clear();
     baseStatus_.clear();
+}
+
+void Game::resetWorldRunState()
+{
     pausePage_ = PauseMenuPage::Main;
     pauseReturnMode_ = ScreenMode::Playing;
     pauseMenuSelection_ = 0;
@@ -2238,11 +2686,14 @@ void Game::initializeWorld(bool captureRunStartInventory)
     hasBossSpawnPoint_ = false;
     stageClearSelection_ = 0;
     stageClearStatus_.clear();
-    retrySnapshot_ = RetrySnapshot{};
     inventoryReturnToPause_ = false;
     debugPaused_ = false;
     captureCooldown_ = 0.0f;
     currentStage_ = std::clamp(currentStage_, 0, std::max(0, unlockedStages_ - 1));
+}
+
+void Game::buildWorldForRun(bool captureRunStartInventory)
+{
     generateDungeonLayoutForRun();
     resetWarpPointRunState();
     initializeMoonFragmentNodesFromWarpPoints();
@@ -2265,8 +2716,229 @@ void Game::initializeWorld(bool captureRunStartInventory)
     }
 }
 
+void Game::beginWorldBuildFromBase(
+    bool useLatestWarpPoint,
+    InventoryCarryState retainedInventory,
+    int retainedLevel,
+    int retainedXp,
+    int retainedXpToNext)
+{
+    worldBuildJob_ = WorldBuildJob{};
+    worldBuildJob_.active = true;
+    worldBuildJob_.useLatestWarpPoint = useLatestWarpPoint;
+    worldBuildJob_.retainedInventory = std::move(retainedInventory);
+    worldBuildJob_.retainedLevel = retainedLevel;
+    worldBuildJob_.retainedXp = retainedXp;
+    worldBuildJob_.retainedXpToNext = retainedXpToNext;
+    worldBuildJob_.step = WorldBuildStep::ResetSimulation;
+
+    inventory_.setOpen(false);
+    inventory_.cancelGrab();
+    cancelRingGrab();
+    if (levels_.isChoosing()) {
+        levels_ = LevelSystem{};
+    }
+    baseMiningStartChoiceActive_ = false;
+    baseRegenerateConfirmActive_ = false;
+    baseStatus_ = "採掘準備中...";
+    pausePage_ = PauseMenuPage::Main;
+    pauseReturnMode_ = ScreenMode::Base;
+    inventoryReturnToPause_ = false;
+    mode_ = ScreenMode::WorldLoading;
+}
+
+void Game::updateWorldBuild(float dt)
+{
+    if (!worldBuildJob_.active) {
+        return;
+    }
+
+    worldBuildJob_.elapsedSeconds += dt;
+    advanceWorldBuildOneStep();
+}
+
+void Game::advanceWorldBuildOneStep()
+{
+    switch (worldBuildJob_.step) {
+    case WorldBuildStep::None:
+        worldBuildJob_.step = WorldBuildStep::ResetSimulation;
+        break;
+    case WorldBuildStep::ResetSimulation:
+        resetWorldSimulationState();
+        worldBuildJob_.step = WorldBuildStep::ResetUi;
+        break;
+    case WorldBuildStep::ResetUi:
+        resetWorldUiState();
+        mode_ = ScreenMode::WorldLoading;
+        pauseReturnMode_ = ScreenMode::Base;
+        worldBuildJob_.step = WorldBuildStep::ResetRun;
+        break;
+    case WorldBuildStep::ResetRun:
+        resetWorldRunState();
+        worldBuildJob_.step = WorldBuildStep::GenerateLayout;
+        break;
+    case WorldBuildStep::GenerateLayout:
+        generateDungeonLayoutForRun();
+        worldBuildJob_.step = WorldBuildStep::ResetWarpPoints;
+        break;
+    case WorldBuildStep::ResetWarpPoints:
+        resetWarpPointRunState();
+        worldBuildJob_.step = WorldBuildStep::InitializeMoonFragments;
+        break;
+    case WorldBuildStep::InitializeMoonFragments:
+        initializeMoonFragmentNodesFromWarpPoints();
+        worldBuildJob_.step = WorldBuildStep::InitializeRewards;
+        break;
+    case WorldBuildStep::InitializeRewards:
+        initializeRewardNodesFromLayout();
+        worldBuildJob_.step = WorldBuildStep::InitializeChests;
+        break;
+    case WorldBuildStep::InitializeChests:
+        initializeChestNodesFromLayout();
+        worldBuildJob_.step = WorldBuildStep::InitializeCrates;
+        break;
+    case WorldBuildStep::InitializeCrates:
+        initializeCrateNodesFromLayout();
+        worldBuildJob_.step = WorldBuildStep::InitializeEnemies;
+        break;
+    case WorldBuildStep::InitializeEnemies:
+        initializeEnemyNodesFromLayout();
+        worldBuildJob_.step = WorldBuildStep::InitializeRing;
+        break;
+    case WorldBuildStep::InitializeRing:
+        spellRing_.initialize(balance_);
+        applyPermanentUpgrades();
+        spellRing_.applyObjectParameters(objectCatalog_);
+        spellRing_.resetBaseWeightToCurrent();
+        refreshOrbitEffects();
+        worldBuildJob_.step = WorldBuildStep::WarmInitialTiles;
+        break;
+    case WorldBuildStep::WarmInitialTiles:
+        tileMap_.updateAround(player_.position, 0.0f, balance_, dungeonLayout_);
+        logDungeonGenerationAudit();
+        logSpellRingShapeExtensionAudit();
+        worldBuildJob_.step = WorldBuildStep::Finalize;
+        break;
+    case WorldBuildStep::Finalize:
+        finishWorldBuild();
+        break;
+    case WorldBuildStep::Done:
+        worldBuildJob_.active = false;
+        break;
+    }
+}
+
+void Game::finishWorldBuild()
+{
+    WorldBuildJob job = std::move(worldBuildJob_);
+    worldBuildJob_ = WorldBuildJob{};
+
+    restoreInventoryCarryState(job.retainedInventory);
+    player_.level = job.retainedLevel;
+    player_.xp = job.retainedXp;
+    player_.xpToNext = job.retainedXpToNext;
+    applyPermanentUpgrades();
+    clearTemporaryPlayerState(true);
+    captureRunStartInventoryState();
+
+    resetWarpPointRunState();
+    initializeMoonFragmentNodesFromWarpPoints();
+    if (job.useLatestWarpPoint) {
+        const Vec2 startPosition = latestWarpPointStartPosition();
+        latestWarpPointPosition_ = startPosition;
+        hasLatestWarpPointPosition_ = true;
+        player_.position = startPosition;
+        rebuildUnlockedWarpPointsForStart(startPosition);
+        tileMap_.updateAround(player_.position, 0.0f, balance_, dungeonLayout_);
+        captureRetrySnapshotAtWarpPoint();
+    }
+
+    baseEditEnabled_ = false;
+    baseEditMode_ = BaseEditMode::None;
+    resetBaseEditDragState();
+    mode_ = ScreenMode::Playing;
+    pauseReturnMode_ = ScreenMode::Playing;
+    resetPlayerFootstepDust();
+    camera_.follow(player_.position, 1.0f);
+}
+
+int Game::worldBuildStepIndex() const
+{
+    switch (worldBuildJob_.step) {
+    case WorldBuildStep::None: return 0;
+    case WorldBuildStep::ResetSimulation: return 0;
+    case WorldBuildStep::ResetUi: return 1;
+    case WorldBuildStep::ResetRun: return 2;
+    case WorldBuildStep::GenerateLayout: return 3;
+    case WorldBuildStep::ResetWarpPoints: return 4;
+    case WorldBuildStep::InitializeMoonFragments: return 5;
+    case WorldBuildStep::InitializeRewards: return 6;
+    case WorldBuildStep::InitializeChests: return 7;
+    case WorldBuildStep::InitializeCrates: return 8;
+    case WorldBuildStep::InitializeEnemies: return 9;
+    case WorldBuildStep::InitializeRing: return 10;
+    case WorldBuildStep::WarmInitialTiles: return 11;
+    case WorldBuildStep::Finalize: return 12;
+    case WorldBuildStep::Done: return worldBuildStepCount();
+    }
+    return 0;
+}
+
+int Game::worldBuildStepCount() const
+{
+    return 13;
+}
+
+float Game::worldBuildProgress() const
+{
+    if (!worldBuildJob_.active) {
+        return 1.0f;
+    }
+    return std::clamp(
+        static_cast<float>(worldBuildStepIndex()) / static_cast<float>(std::max(1, worldBuildStepCount())),
+        0.0f,
+        1.0f);
+}
+
+std::string Game::worldBuildStatusText() const
+{
+    switch (worldBuildJob_.step) {
+    case WorldBuildStep::None:
+    case WorldBuildStep::ResetSimulation:
+        return "採掘状態を初期化中";
+    case WorldBuildStep::ResetUi:
+        return "画面状態を整理中";
+    case WorldBuildStep::ResetRun:
+        return "ラン情報を初期化中";
+    case WorldBuildStep::GenerateLayout:
+        return "ダンジョン形状を生成中";
+    case WorldBuildStep::ResetWarpPoints:
+        return "ワープポイントを配置中";
+    case WorldBuildStep::InitializeMoonFragments:
+        return "月のカケラを配置中";
+    case WorldBuildStep::InitializeRewards:
+        return "報酬を配置中";
+    case WorldBuildStep::InitializeChests:
+        return "宝箱を配置中";
+    case WorldBuildStep::InitializeCrates:
+        return "木箱を配置中";
+    case WorldBuildStep::InitializeEnemies:
+        return "敵の配置を準備中";
+    case WorldBuildStep::InitializeRing:
+        return "スペルリングを準備中";
+    case WorldBuildStep::WarmInitialTiles:
+        return "開始地点を読み込み中";
+    case WorldBuildStep::Finalize:
+        return "採掘へ移行中";
+    case WorldBuildStep::Done:
+        return "完了";
+    }
+    return "採掘準備中";
+}
+
 void Game::enterBase()
 {
+    worldBuildJob_ = WorldBuildJob{};
     inventory_.setOpen(false);
     inventory_.cancelGrab();
     cancelRingGrab();
@@ -2315,7 +2987,13 @@ void Game::startMiningFromBase(bool useLatestWarpPoint, bool forceRegenerate)
             hasLatestWarpPointPosition_ = false;
             latestWarpPointPosition_ = {};
         }
-        initializeWorld(false);
+        beginWorldBuildFromBase(
+            useLatestWarpPoint,
+            std::move(retained),
+            retainedLevel,
+            retainedXp,
+            retainedXpToNext);
+        return;
     }
     restoreInventoryCarryState(retained);
     player_.level = retainedLevel;
@@ -2324,18 +3002,11 @@ void Game::startMiningFromBase(bool useLatestWarpPoint, bool forceRegenerate)
     applyPermanentUpgrades();
     clearTemporaryPlayerState(true);
     captureRunStartInventoryState();
-    if (!restoredDungeon) {
-        resetWarpPointRunState();
-        initializeMoonFragmentNodesFromWarpPoints();
-    }
     if (useLatestWarpPoint) {
         const Vec2 startPosition = latestWarpPointStartPosition();
         latestWarpPointPosition_ = startPosition;
         hasLatestWarpPointPosition_ = true;
         player_.position = startPosition;
-        if (!restoredDungeon) {
-            rebuildUnlockedWarpPointsForStart(startPosition);
-        }
         tileMap_.updateAround(player_.position, 0.0f, balance_, dungeonLayout_);
         captureRetrySnapshotAtWarpPoint();
     }
@@ -2343,7 +3014,9 @@ void Game::startMiningFromBase(bool useLatestWarpPoint, bool forceRegenerate)
     baseEditMode_ = BaseEditMode::None;
     resetBaseEditDragState();
     mode_ = ScreenMode::Playing;
+    pauseReturnMode_ = ScreenMode::Playing;
     resetPlayerFootstepDust();
+    camera_.follow(player_.position, 1.0f);
 }
 
 void Game::applyPermanentUpgrades()
@@ -4092,13 +4765,13 @@ void Game::updateAmbientParticleEffects(float dt)
         const Vec2 trailDirection = spellRing_.state() == SpellRingState::Thrown
             ? player_.facing
             : player_.position - spellRing_.center();
-        effects_.spawnRingTrail(spellRing_.center(), trailDirection);
+        effects_.spawnForegroundRingTrail(spellRing_.center(), trailDirection);
         const std::vector<const SpellRingItem*> runtimeItems = spellRing_.runtimeItems();
         for (const SpellRingItem* itemPtr : runtimeItems) {
             if (itemPtr == nullptr) {
                 continue;
             }
-            effects_.spawnRingTrail(itemPtr->worldPosition, trailDirection);
+            effects_.spawnForegroundRingTrail(itemPtr->worldPosition, trailDirection);
         }
         ringTrailEffectTimer_ = 0.055f;
     }
@@ -4115,10 +4788,10 @@ void Game::updateAmbientParticleEffects(float dt)
             continue;
         }
         if (itemPtr->type == SpellRingItemType::Torch || itemPtr->lightRadius > 0.0f) {
-            effects_.spawnTorchFlicker(itemPtr->worldPosition);
+            effects_.spawnForegroundTorchFlicker(itemPtr->worldPosition);
         }
         if (!itemPtr->objectId.empty() || !itemPtr->addedEffects.empty() || itemPtr->hiddenDetectionRadius > 0.0f || itemPtr->treasureDetectionRadius > 0.0f) {
-            effects_.spawnSpecialItemGlimmer(itemPtr->worldPosition);
+            effects_.spawnForegroundSpecialItemGlimmer(itemPtr->worldPosition);
         }
     }
 
@@ -4139,9 +4812,9 @@ void Game::updateAmbientParticleEffects(float dt)
 void Game::handleCapturedExplosion(Vec2 position)
 {
     effects_.spawnAreaPulse(position, 50.0f, {255, 128, 54, 190});
-    const std::vector<Vec2> openedTiles = tileMap_.damageCircle(position, CapturedExplosionTileRadius, CapturedExplosionTileDamage);
-    for (Vec2 tile : openedTiles) {
-        effects_.spawnTileBreak(tile);
+    const std::vector<DamagedTile> openedTiles = tileMap_.damageCircle(position, CapturedExplosionTileRadius, CapturedExplosionTileDamage);
+    for (const DamagedTile& tile : openedTiles) {
+        effects_.spawnTileBreak(tile.center, tile.type, tile.color);
         ++runStats_.dugTiles;
     }
     enemies_.applyCapturedExplosion(position, spellRing_, CapturedExplosionEnemyDamage);
@@ -4265,6 +4938,8 @@ void Game::clearTemporaryPlayerState(bool fullHeal)
     player_.poisonDamageAccumulator = 0.0;
     player_.lastDamageSource = DamageSource::Unknown;
     player_.lastDamageEnemyName.clear();
+    player_.damageFlash = 0.0f;
+    player_.damageEvents.clear();
     player_.status = EntityStatus{};
 }
 
@@ -4577,13 +5252,20 @@ int Game::nearestWarpPointIndex(Vec2 position) const
     return nearest;
 }
 
-void Game::updateWarpPoints()
+void Game::updateWarpPoints(float dt)
 {
     if (!warpPointsEnabled_) {
         return;
     }
 
     for (WarpPoint& point : warpPoints_) {
+        if (point.lightRevealAnimating) {
+            point.lightRevealTimer += dt;
+            if (point.lightRevealTimer >= point.lightRevealDuration) {
+                point.lightRevealTimer = point.lightRevealDuration;
+                point.lightRevealAnimating = false;
+            }
+        }
         if (point.discovered) {
             continue;
         }
@@ -4598,8 +5280,11 @@ void Game::updateWarpPoints()
                 configureBossSpawnPointFromWarp(point.position);
             }
             captureRetrySnapshotAtWarpPoint();
+            point.lightRevealTimer = 0.0f;
+            point.lightRevealAnimating = true;
             reloadNotice_ = "ワープポイント発見";
             reloadNoticeTimer_ = 2.0f;
+            pushDungeonLog("ワープポイントを発見", "warp_point");
         }
     }
 }
@@ -5694,7 +6379,7 @@ void Game::spawnRingEquipFx(const RingEquipFxRequest& request)
     fx.localAngle = request.localAngle;
     fx.objectId = request.objectId;
     fx.instanceId = request.instanceId;
-    fx.duration = 0.26f;
+    fx.duration = 0.36f;
     fx.arcSign = ((request.itemIndex + request.ringIndex) % 2 == 0) ? 1.0f : -1.0f;
     ringEquipFx_.push_back(std::move(fx));
     if (ringEquipFx_.size() > 8) {
@@ -5784,7 +6469,7 @@ void Game::renderRingEquipFx(Renderer& renderer) const
         const float arc = std::clamp(dist * 0.16f, 24.0f, 86.0f);
         const Vec2 p1 = p0 + delta * 0.28f + side * arc;
         const Vec2 p2 = p0 + delta * 0.76f + side * (arc * 0.42f);
-        const float tail = 0.24f;
+        const float tail = 0.34f;
         const float start = std::max(0.0f, progress - tail);
         constexpr int SampleCount = 12;
         std::array<Vec2, SampleCount> points{};
@@ -5938,6 +6623,7 @@ bool Game::saveBaseEditData(std::string& message)
 bool Game::loadObjectImageScaleData()
 {
     objectImageScaleById_.clear();
+    otherImageScaleByKey_.clear();
     objectImageScaleDirty_ = false;
     objectImageScaleStatus_.clear();
 
@@ -5959,17 +6645,26 @@ bool Game::loadObjectImageScaleData()
         }
         if (firstLine) {
             firstLine = false;
-            if (line == "MAJO_OBJECT_IMAGE_SCALE_V1") {
+            if (line == "MAJO_OBJECT_IMAGE_SCALE_V1" || line == "MAJO_IMAGE_SCALE_V2") {
                 continue;
             }
         }
 
         std::istringstream stream(line);
-        std::string key;
-        std::string objectId;
+        std::string kind;
+        std::string id;
         float scale = 1.0f;
-        stream >> key >> objectId >> scale;
-        if (stream.fail() || key != "scale" || objectId.empty()) {
+        stream >> kind >> id >> scale;
+        if (stream.fail() || id.empty()) {
+            continue;
+        }
+
+        std::unordered_map<std::string, float>* target = nullptr;
+        if (kind == "scale" || kind == "object") {
+            target = &objectImageScaleById_;
+        } else if (kind == "other") {
+            target = &otherImageScaleByKey_;
+        } else {
             continue;
         }
 
@@ -5977,7 +6672,7 @@ bool Game::loadObjectImageScaleData()
         if (std::abs(snapped - 1.0f) <= 0.0001f) {
             continue;
         }
-        objectImageScaleById_[objectId] = snapped;
+        (*target)[id] = snapped;
     }
 
     rebuildObjectImageScaleList();
@@ -5989,19 +6684,19 @@ bool Game::saveObjectImageScaleData(std::string& message)
     std::error_code error;
     std::filesystem::create_directories("data", error);
     if (error) {
-        message = "Object image scale save failed: could not create data directory";
+        message = "Image scale save failed: could not create data directory";
         return false;
     }
 
     const std::filesystem::path path = objectImageScaleDataPath();
     std::ofstream file(path, std::ios::binary | std::ios::trunc);
     if (!file) {
-        message = "Object image scale save failed: could not open " + path.string();
+        message = "Image scale save failed: could not open " + path.string();
         return false;
     }
 
-    std::vector<std::pair<std::string, float>> entries;
-    entries.reserve(objectImageScaleById_.size());
+    std::vector<std::pair<std::string, float>> objectEntries;
+    objectEntries.reserve(objectImageScaleById_.size());
     for (const auto& [objectId, scale] : objectImageScaleById_) {
         if (objectId.empty()) {
             continue;
@@ -6010,24 +6705,43 @@ bool Game::saveObjectImageScaleData(std::string& message)
         if (std::abs(snapped - 1.0f) <= 0.0001f) {
             continue;
         }
-        entries.push_back({objectId, snapped});
+        objectEntries.push_back({objectId, snapped});
     }
-    std::sort(entries.begin(), entries.end(), [](const auto& a, const auto& b) {
+    std::sort(objectEntries.begin(), objectEntries.end(), [](const auto& a, const auto& b) {
         return a.first < b.first;
     });
 
-    file << "MAJO_OBJECT_IMAGE_SCALE_V1\n";
-    for (const auto& [objectId, scale] : entries) {
-        file << "scale " << objectId << " " << scale << "\n";
+    std::vector<std::pair<std::string, float>> otherEntries;
+    otherEntries.reserve(otherImageScaleByKey_.size());
+    for (const auto& [key, scale] : otherImageScaleByKey_) {
+        if (key.empty() || worldIconDefinitionByKey(key) == nullptr) {
+            continue;
+        }
+        const float snapped = snapObjectImageScale(scale);
+        if (std::abs(snapped - 1.0f) <= 0.0001f) {
+            continue;
+        }
+        otherEntries.push_back({key, snapped});
+    }
+    std::sort(otherEntries.begin(), otherEntries.end(), [](const auto& a, const auto& b) {
+        return a.first < b.first;
+    });
+
+    file << "MAJO_IMAGE_SCALE_V2\n";
+    for (const auto& [objectId, scale] : objectEntries) {
+        file << "object " << objectId << " " << scale << "\n";
+    }
+    for (const auto& [key, scale] : otherEntries) {
+        file << "other " << key << " " << scale << "\n";
     }
 
     if (!file) {
-        message = "Object image scale save failed while writing " + path.string();
+        message = "Image scale save failed while writing " + path.string();
         return false;
     }
 
     objectImageScaleDirty_ = false;
-    message = "Object image scale saved";
+    message = "Image scale saved";
     return true;
 }
 
@@ -6062,10 +6776,21 @@ void Game::rebuildObjectImageScaleList()
 
     if (objectImageScaleObjectIds_.empty()) {
         objectImageScaleSelectedIndex_ = -1;
-        return;
-    }
-    if (objectImageScaleSelectedIndex_ < 0 || objectImageScaleSelectedIndex_ >= static_cast<int>(objectImageScaleObjectIds_.size())) {
+    } else if (objectImageScaleSelectedIndex_ < 0 || objectImageScaleSelectedIndex_ >= static_cast<int>(objectImageScaleObjectIds_.size())) {
         objectImageScaleSelectedIndex_ = 0;
+    }
+
+    otherImageScaleKeys_.clear();
+    for (const WorldIconDefinition& definition : worldIconDefinitions()) {
+        if (!definition.key.empty() && definition.imageNumber > 0) {
+            otherImageScaleKeys_.push_back(std::string(definition.key));
+        }
+    }
+
+    if (otherImageScaleKeys_.empty()) {
+        otherImageScaleSelectedIndex_ = -1;
+    } else if (otherImageScaleSelectedIndex_ < 0 || otherImageScaleSelectedIndex_ >= static_cast<int>(otherImageScaleKeys_.size())) {
+        otherImageScaleSelectedIndex_ = 0;
     }
 }
 
@@ -6085,9 +6810,10 @@ void Game::enterObjectImageScaleEditMode()
     inventory_.cancelGrab();
     cancelRingGrab();
     objectImageScaleScrollOffset_ = std::max(0.0f, objectImageScaleScrollOffset_);
-    objectImageScaleStatus_ = objectImageScaleObjectIds_.empty()
-        ? "No object images available"
-        : "Object image scale edit";
+    otherImageScaleScrollOffset_ = std::max(0.0f, otherImageScaleScrollOffset_);
+    objectImageScaleStatus_ = objectImageScaleObjectIds_.empty() && otherImageScaleKeys_.empty()
+        ? "No images available"
+        : "画像サイズ編集";
     mode_ = ScreenMode::ObjectImageScaleEdit;
 }
 
@@ -6109,20 +6835,43 @@ void Game::updateObjectImageScaleEditScreen(const Input& input, UiContext& ui)
         return;
     }
 
+    if (input.backPressed()) {
+        exitObjectImageScaleEditMode();
+        return;
+    }
+
+    if (ui.pressed(objectImageScaleTabRect(0))) {
+        imageScaleEditTab_ = ImageScaleEditTab::Objects;
+        objectImageScaleStatus_ = "Objects";
+    }
+    if (ui.pressed(objectImageScaleTabRect(1))) {
+        imageScaleEditTab_ = ImageScaleEditTab::Others;
+        objectImageScaleStatus_ = "Others";
+    }
+
+    std::vector<std::string>& itemKeys = imageScaleEditTab_ == ImageScaleEditTab::Others
+        ? otherImageScaleKeys_
+        : objectImageScaleObjectIds_;
+    std::unordered_map<std::string, float>& scaleMap = imageScaleEditTab_ == ImageScaleEditTab::Others
+        ? otherImageScaleByKey_
+        : objectImageScaleById_;
+    int& selectedIndex = imageScaleEditTab_ == ImageScaleEditTab::Others
+        ? otherImageScaleSelectedIndex_
+        : objectImageScaleSelectedIndex_;
+    float& scrollOffset = imageScaleEditTab_ == ImageScaleEditTab::Others
+        ? otherImageScaleScrollOffset_
+        : objectImageScaleScrollOffset_;
+    const bool editingOthers = imageScaleEditTab_ == ImageScaleEditTab::Others;
+
     const ObjectImageScaleLayout layout = makeObjectImageScaleLayout(camera_.width(), camera_.height());
-    const int itemCount = static_cast<int>(objectImageScaleObjectIds_.size());
+    const int itemCount = static_cast<int>(itemKeys.size());
     const int columns = std::max(1, layout.columns);
     const int rows = itemCount <= 0 ? 0 : (itemCount + columns - 1) / columns;
     const float contentHeight = rows <= 0
         ? 0.0f
         : static_cast<float>(rows) * ObjectImageScaleCardHeight + static_cast<float>(rows - 1) * ObjectImageScaleCardGap;
     const float maxScroll = std::max(0.0f, contentHeight - layout.viewport.size.y);
-    objectImageScaleScrollOffset_ = clamp(objectImageScaleScrollOffset_, 0.0f, maxScroll);
-
-    if (input.backPressed()) {
-        exitObjectImageScaleEditMode();
-        return;
-    }
+    scrollOffset = clamp(scrollOffset, 0.0f, maxScroll);
 
     if (input.saveShortcutPressed()) {
         std::string message;
@@ -6134,35 +6883,33 @@ void Game::updateObjectImageScaleEditScreen(const Input& input, UiContext& ui)
     }
 
     for (int i = 0; i < itemCount; ++i) {
-        const UiRect rect = objectImageScaleCardRect(layout, i, objectImageScaleScrollOffset_);
+        const UiRect rect = objectImageScaleCardRect(layout, i, scrollOffset);
         if (ui.pressed(rect)) {
-            objectImageScaleSelectedIndex_ = i;
+            selectedIndex = i;
             break;
         }
     }
 
-    auto adjustSelectedScale = [this](int direction) {
-        if (direction == 0 ||
-            objectImageScaleSelectedIndex_ < 0 ||
-            objectImageScaleSelectedIndex_ >= static_cast<int>(objectImageScaleObjectIds_.size())) {
+    auto adjustSelectedScale = [this, &itemKeys, &scaleMap, &selectedIndex, editingOthers](int direction) {
+        if (direction == 0 || selectedIndex < 0 || selectedIndex >= static_cast<int>(itemKeys.size())) {
             return;
         }
 
-        const std::string& objectId = objectImageScaleObjectIds_[static_cast<std::size_t>(objectImageScaleSelectedIndex_)];
+        const std::string& key = itemKeys[static_cast<std::size_t>(selectedIndex)];
         float currentScale = 1.0f;
-        if (const auto it = objectImageScaleById_.find(objectId); it != objectImageScaleById_.end()) {
+        if (const auto it = scaleMap.find(key); it != scaleMap.end()) {
             currentScale = it->second;
         }
         const float nextScale = snapObjectImageScale(currentScale + ObjectImageScaleStep * static_cast<float>(direction));
         if (std::abs(nextScale - 1.0f) <= 0.0001f) {
-            objectImageScaleById_.erase(objectId);
+            scaleMap.erase(key);
         } else {
-            objectImageScaleById_[objectId] = nextScale;
+            scaleMap[key] = nextScale;
         }
         objectImageScaleDirty_ = true;
 
-        char status[128];
-        std::snprintf(status, sizeof(status), "%s scale = %.2f", objectId.c_str(), nextScale);
+        char status[160];
+        std::snprintf(status, sizeof(status), "%s %s scale = %.2f", editingOthers ? "other" : "object", key.c_str(), nextScale);
         objectImageScaleStatus_ = status;
     };
 
@@ -6177,18 +6924,18 @@ void Game::updateObjectImageScaleEditScreen(const Input& input, UiContext& ui)
     if (wheel != 0) {
         int hoveredIndex = -1;
         for (int i = 0; i < itemCount; ++i) {
-            const UiRect rect = objectImageScaleCardRect(layout, i, objectImageScaleScrollOffset_);
+            const UiRect rect = objectImageScaleCardRect(layout, i, scrollOffset);
             if (rect.contains(ui.mouse())) {
                 hoveredIndex = i;
                 break;
             }
         }
 
-        if (hoveredIndex == objectImageScaleSelectedIndex_ && objectImageScaleSelectedIndex_ >= 0) {
+        if (hoveredIndex == selectedIndex && selectedIndex >= 0) {
             adjustSelectedScale(-wheel);
         } else {
-            objectImageScaleScrollOffset_ = clamp(
-                objectImageScaleScrollOffset_ + static_cast<float>(wheel) * 36.0f,
+            scrollOffset = clamp(
+                scrollOffset + static_cast<float>(wheel) * 36.0f,
                 0.0f,
                 maxScroll);
         }
@@ -7602,6 +8349,33 @@ bool Game::executeDebugCommand(std::string_view command)
         }
         returnToBaseFromNormalStage(false, false);
         logInfo("Debug: returned to base.");
+        return true;
+    }
+
+    if (normalized == "game launch-mode base") {
+        if (enemyTestActive_) {
+            exitEnemyTestToBase();
+        } else if (mode_ == ScreenMode::Base) {
+            enterBase();
+        } else {
+            returnToBaseFromNormalStage(false, false);
+        }
+        logInfo("Debug: launch mode set to base.");
+        return true;
+    }
+
+    if (normalized == "game launch-mode dungeon") {
+        if (enemyTestActive_) {
+            exitEnemyTestToBase();
+        }
+        startMiningFromBase(false, false);
+        logInfo("Debug: launch mode set to dungeon start.");
+        return true;
+    }
+
+    if (normalized == "game launch-mode enemy-test") {
+        enterEnemyTestMode();
+        logInfo("Debug: launch mode set to enemy test.");
         return true;
     }
 
@@ -9166,6 +9940,10 @@ void Game::updateScreenMode(
     float dt,
     std::vector<EffectDiscoveryEvent>* discoveryEvents)
 {
+    if (mode_ == ScreenMode::WorldLoading) {
+        return;
+    }
+
     if (mode_ == ScreenMode::ObjectImageScaleEdit) {
         updateObjectImageScaleEditScreen(input, ui);
         return;
@@ -9199,6 +9977,8 @@ void Game::updateScreenMode(
     case ScreenMode::Base:
         updateBaseScreen(input, ui, dt);
         break;
+    case ScreenMode::WorldLoading:
+        break;
     case ScreenMode::Playing:
         if (enemyTestActive_) {
             updateEnemyTestUi(input, ui);
@@ -9212,6 +9992,7 @@ void Game::updateScreenMode(
             pausePage_ = PauseMenuPage::Main;
             return;
         }
+        updateRingStatusHud(ui);
         inventory_.update(input, ui, player_, spellRing_, effectDispatcher_, false, discoveryEvents, &encyclopedia_);
         if (inventory_.isOpen()) {
             inventoryReturnToPause_ = false;
@@ -9219,7 +10000,7 @@ void Game::updateScreenMode(
             return;
         }
         if (input.activeRingDelta() != 0) {
-            spellRing_.switchActiveRing(input.activeRingDelta());
+            switchActiveRingWithLog(input.activeRingDelta());
         }
         inventory_.updateShortcuts(
             input,
@@ -9269,7 +10050,7 @@ bool Game::gameProgressPaused() const
 
 bool Game::basePresentationActive() const
 {
-    if (mode_ == ScreenMode::Base) {
+    if (mode_ == ScreenMode::Base || mode_ == ScreenMode::WorldLoading) {
         return true;
     }
     if (pauseReturnMode_ != ScreenMode::Base) {
@@ -9278,6 +10059,140 @@ bool Game::basePresentationActive() const
     return mode_ == ScreenMode::PauseMenu ||
         mode_ == ScreenMode::Inventory ||
         mode_ == ScreenMode::Ring;
+}
+
+void Game::pushDungeonLog(std::string message, std::string mergeKey)
+{
+    if (message.empty()) {
+        return;
+    }
+
+    if (!mergeKey.empty()) {
+        for (DungeonLogEntry& entry : dungeonLogs_) {
+            if (entry.mergeKey == mergeKey && entry.count == 0 && entry.age <= DungeonLogMergeSeconds) {
+                entry.message = std::move(message);
+                entry.age = 0.0f;
+                entry.lifetime = DungeonLogLifetime;
+                return;
+            }
+        }
+    }
+
+    DungeonLogEntry entry;
+    entry.message = std::move(message);
+    entry.mergeKey = std::move(mergeKey);
+    entry.lifetime = DungeonLogLifetime;
+    dungeonLogs_.push_back(std::move(entry));
+    while (static_cast<int>(dungeonLogs_.size()) > DungeonLogMaxVisible) {
+        dungeonLogs_.erase(dungeonLogs_.begin());
+    }
+}
+
+void Game::pushCountedDungeonLog(std::string label, int amount, std::string suffix, std::string mergeKey)
+{
+    if (amount <= 0 || label.empty()) {
+        return;
+    }
+
+    if (!mergeKey.empty()) {
+        for (DungeonLogEntry& entry : dungeonLogs_) {
+            if (entry.mergeKey == mergeKey && entry.count > 0 && entry.age <= DungeonLogMergeSeconds) {
+                entry.count += amount;
+                entry.age = 0.0f;
+                entry.lifetime = DungeonLogLifetime;
+                return;
+            }
+        }
+    }
+
+    DungeonLogEntry entry;
+    entry.label = std::move(label);
+    entry.suffix = std::move(suffix);
+    entry.mergeKey = std::move(mergeKey);
+    entry.count = amount;
+    entry.lifetime = DungeonLogLifetime;
+    dungeonLogs_.push_back(std::move(entry));
+    while (static_cast<int>(dungeonLogs_.size()) > DungeonLogMaxVisible) {
+        dungeonLogs_.erase(dungeonLogs_.begin());
+    }
+}
+
+void Game::updateDungeonLogs(float dt)
+{
+    for (DungeonLogEntry& entry : dungeonLogs_) {
+        entry.age += dt;
+    }
+    dungeonLogs_.erase(
+        std::remove_if(dungeonLogs_.begin(), dungeonLogs_.end(), [](const DungeonLogEntry& entry) {
+            return entry.age >= entry.lifetime;
+        }),
+        dungeonLogs_.end());
+}
+
+void Game::appendPickupLogs(const std::vector<WorldDropPickupEvent>& pickupEvents)
+{
+    for (const WorldDropPickupEvent& event : pickupEvents) {
+        const int quantity = std::max(1, event.quantity);
+        if (event.kind == WorldDropKind::Money) {
+            pushCountedDungeonLog("お金", quantity, " を入手", "money");
+        } else if (event.kind == WorldDropKind::Material) {
+            MaterialType materialType = MaterialType::Count;
+            const std::string label = materialTypeFromSaveName(event.id, materialType)
+                ? std::string(materialTypeDisplayName(materialType))
+                : (event.name.empty() ? event.id : event.name);
+            const std::string iconPrefix = objectCatalog_.registry.findById(event.id) != nullptr ? inlineItemTag(event.id) + " " : "";
+            pushCountedDungeonLog(iconPrefix + label, quantity, " を入手", "material:" + event.id);
+        } else if (event.kind == WorldDropKind::Object) {
+            const std::string label = event.name.empty() ? event.id : event.name;
+            const std::string iconPrefix = objectCatalog_.registry.findById(event.id) != nullptr ? inlineItemTag(event.id) + " " : "";
+            pushCountedDungeonLog(iconPrefix + label, quantity, " を入手", "object:" + event.id);
+        }
+    }
+}
+
+void Game::switchActiveRingWithLog(int delta)
+{
+    if (delta == 0) {
+        return;
+    }
+
+    const int previousRing = spellRing_.activeRingIndex();
+    spellRing_.switchActiveRing(delta);
+    const int currentRing = spellRing_.activeRingIndex();
+    if (currentRing != previousRing && mode_ == ScreenMode::Playing) {
+        pushDungeonLog("Ring " + std::to_string(currentRing + 1) + " に切替", "ring_switch");
+    }
+}
+
+int Game::unlockedRingHudCount() const
+{
+    return std::clamp(UnlockedRingCount, 0, SpellRingCount);
+}
+
+UiRect Game::ringStatusHudRect(int ringIndex, int unlockedRingCount) const
+{
+    const float screenHeight = static_cast<float>(camera_.height());
+    const float totalHeight = static_cast<float>(unlockedRingCount) * RingStatusHudHeight +
+        static_cast<float>(std::max(0, unlockedRingCount - 1)) * RingStatusHudGap;
+    const float startY = std::max(
+        TopInfoBarY + TopInfoBarHeight + 8.0f,
+        screenHeight - RingStatusHudBottomMargin - totalHeight);
+    return {{
+        RingStatusHudLeftMargin,
+        startY + static_cast<float>(ringIndex) * (RingStatusHudHeight + RingStatusHudGap),
+    }, {RingStatusHudWidth, RingStatusHudHeight}};
+}
+
+void Game::updateRingStatusHud(UiContext& ui)
+{
+    const int unlockedRingCount = unlockedRingHudCount();
+    for (int ringIndex = 0; ringIndex < unlockedRingCount; ++ringIndex) {
+        if (!ui.pressed(ringStatusHudRect(ringIndex, unlockedRingCount))) {
+            continue;
+        }
+        switchActiveRingWithLog(ringIndex - spellRing_.activeRingIndex());
+        return;
+    }
 }
 
 std::string Game::currentMapDisplayName() const
@@ -9317,7 +10232,7 @@ void Game::renderTopInfoBar(Renderer& renderer) const
 
     std::array<std::string, Materials.size()> materialTexts{};
     std::array<Vec2, Materials.size()> materialTextSizes{};
-    float rightGroupWidth = moneySize.x;
+    float rightGroupWidth = TopInfoBarIconSize + TopInfoBarIconTextGap + moneySize.x;
     for (std::size_t i = 0; i < Materials.size(); ++i) {
         materialTexts[i] = std::to_string(inventory_.materialCount(Materials[i].type));
         materialTextSizes[i] = renderer.measureText(materialTexts[i], textScale);
@@ -9334,13 +10249,18 @@ void Game::renderTopInfoBar(Renderer& renderer) const
     renderer.drawText({mapX, textY}, mapName, {246, 246, 252, 255}, textScale);
 
     float x = rightX;
-    renderer.drawText({x, textY}, moneyText, {246, 230, 174, 255}, textScale);
-    x += moneySize.x;
-
-    for (std::size_t i = 0; i < Materials.size(); ++i) {
-        x += TopInfoBarGroupGap;
-        const MaterialType type = Materials[i].type;
-        const Vec2 iconPos{x, TopInfoBarY + (TopInfoBarHeight - TopInfoBarIconSize) * 0.5f};
+    const auto drawMoneyCounterIconFallback = [&](Vec2 iconPos) {
+        renderer.fillRect(iconPos, {TopInfoBarIconSize, TopInfoBarIconSize}, {12, 14, 24, 255});
+        renderer.fillCircle(
+            iconPos + Vec2{TopInfoBarIconSize * 0.5f, TopInfoBarIconSize * 0.5f},
+            TopInfoBarIconSize * 0.42f,
+            {236, 188, 58, 255});
+        renderer.drawCircle(
+            iconPos + Vec2{TopInfoBarIconSize * 0.5f, TopInfoBarIconSize * 0.5f},
+            TopInfoBarIconSize * 0.46f,
+            {255, 232, 132, 255});
+    };
+    const auto drawCounterIconFallback = [&](Vec2 iconPos, MaterialType type) {
         renderer.fillRect(iconPos, {TopInfoBarIconSize, TopInfoBarIconSize}, {12, 14, 24, 255});
         renderer.fillCircle(
             iconPos + Vec2{TopInfoBarIconSize * 0.5f, TopInfoBarIconSize * 0.5f},
@@ -9350,6 +10270,30 @@ void Game::renderTopInfoBar(Renderer& renderer) const
             iconPos + Vec2{TopInfoBarIconSize * 0.5f, TopInfoBarIconSize * 0.5f},
             TopInfoBarIconSize * 0.46f,
             materialCounterOutline(type));
+    };
+    const Vec2 moneyIconPos{x, TopInfoBarY + (TopInfoBarHeight - TopInfoBarIconSize) * 0.5f};
+    if (!drawWorldIcon(
+            renderer,
+            WorldIconId::MoneyLarge,
+            moneyIconPos + Vec2{TopInfoBarIconSize * 0.5f, TopInfoBarIconSize * 0.5f},
+            {TopInfoBarIconSize, TopInfoBarIconSize})) {
+        drawMoneyCounterIconFallback(moneyIconPos);
+    }
+    x += TopInfoBarIconSize + TopInfoBarIconTextGap;
+    renderer.drawText({x, textY}, moneyText, {246, 230, 174, 255}, textScale);
+    x += moneySize.x;
+
+    for (std::size_t i = 0; i < Materials.size(); ++i) {
+        x += TopInfoBarGroupGap;
+        const MaterialType type = Materials[i].type;
+        const Vec2 iconPos{x, TopInfoBarY + (TopInfoBarHeight - TopInfoBarIconSize) * 0.5f};
+        if (!drawWorldIcon(
+                renderer,
+                materialWorldIcon(type),
+                iconPos + Vec2{TopInfoBarIconSize * 0.5f, TopInfoBarIconSize * 0.5f},
+                {TopInfoBarIconSize, TopInfoBarIconSize})) {
+            drawCounterIconFallback(iconPos, type);
+        }
         x += TopInfoBarIconSize + TopInfoBarIconTextGap;
         renderer.drawText({x, textY}, materialTexts[i], {232, 236, 244, 255}, textScale);
         x += materialTextSizes[i].x;
@@ -9396,6 +10340,171 @@ void Game::renderDungeonStatusHud(Renderer& renderer) const
     const int xp = std::clamp(player_.xp, 0, xpToNext);
     std::snprintf(buffer, sizeof(buffer), "EXP %02d/%02d", xp, xpToNext);
     renderer.drawText(content + Vec2{0.0f, 94.0f}, buffer, {222, 236, 255, 255}, TextScale);
+}
+
+void Game::renderRingStatusHud(Renderer& renderer) const
+{
+    renderer.setScreenSpace();
+
+    const int unlockedRingCount = unlockedRingHudCount();
+
+    char buffer[96];
+    for (int ringIndex = 0; ringIndex < unlockedRingCount; ++ringIndex) {
+        const UiRect panel = ringStatusHudRect(ringIndex, unlockedRingCount);
+        const bool active = ringIndex == spellRing_.activeRingIndex();
+
+        drawUiSubPanel(renderer, panel);
+        if (active) {
+            renderer.drawRect(panel.pos, panel.size, {255, 236, 158, 255});
+            renderer.drawRect(panel.pos + Vec2{1.0f, 1.0f}, panel.size - Vec2{2.0f, 2.0f}, {255, 236, 158, 190});
+        }
+
+        const Vec2 content = panel.pos + Vec2{RingStatusHudPadding, RingStatusHudPadding};
+        const auto& items = spellRing_.itemsForRing(ringIndex);
+        float ringWeight = 0.0f;
+        for (const SpellRingItem& item : items) {
+            ringWeight += std::max(0.0f, item.weight);
+        }
+
+        std::snprintf(buffer, sizeof(buffer), "%sRing %d", active ? "> " : "", ringIndex + 1);
+        renderer.drawText(content, buffer, active ? Color{255, 236, 158, 255} : ui::Text, 2);
+
+        std::snprintf(buffer, sizeof(buffer), "アイテム数 %02d / %02d", static_cast<int>(items.size()), spellRing_.maxItemCount());
+        renderer.drawText(content + Vec2{0.0f, 24.0f}, buffer, {232, 236, 244, 255}, 2);
+
+        std::snprintf(buffer, sizeof(buffer), "重量 %.1f / %.1f", ringWeight, spellRing_.maxEquippedWeight());
+        renderer.drawText(content + Vec2{0.0f, 48.0f}, buffer, {222, 236, 255, 255}, 2);
+    }
+}
+
+void Game::renderDungeonLogs(Renderer& renderer) const
+{
+    if (dungeonLogs_.empty()) {
+        return;
+    }
+
+    renderer.setScreenSpace();
+
+    const float screenWidth = static_cast<float>(camera_.width());
+    const float screenHeight = static_cast<float>(camera_.height());
+    const float topLimit = TopInfoBarY + TopInfoBarHeight + 8.0f;
+    const float statusTopY = screenHeight - DungeonStatusHudBottomMargin - DungeonStatusHudHeight;
+    const float maxBottomY = std::max(topLimit + DungeonLogRowHeight, statusTopY - DungeonLogStatusGap);
+
+    int visibleCount = std::min(static_cast<int>(dungeonLogs_.size()), DungeonLogMaxVisible);
+    const auto blockHeight = [](int count) {
+        return static_cast<float>(count) * DungeonLogRowHeight +
+            static_cast<float>(std::max(0, count - 1)) * DungeonLogGap;
+    };
+    while (visibleCount > 0 && blockHeight(visibleCount) > maxBottomY - topLimit) {
+        --visibleCount;
+    }
+    if (visibleCount <= 0) {
+        return;
+    }
+
+    const float totalHeight = blockHeight(visibleCount);
+    const float x = std::max(8.0f, screenWidth - DungeonLogRightMargin - DungeonLogWidth);
+    const float y = std::clamp(screenHeight * DungeonLogTargetYRatio, topLimit, maxBottomY - totalHeight);
+    const int firstIndex = static_cast<int>(dungeonLogs_.size()) - visibleCount;
+
+    constexpr int TextScale = 2;
+    const Vec2 textMeasure = renderer.measureText("0", TextScale);
+    for (int i = 0; i < visibleCount; ++i) {
+        const DungeonLogEntry& entry = dungeonLogs_[static_cast<std::size_t>(firstIndex + i)];
+        const float rowY = y + static_cast<float>(i) * (DungeonLogRowHeight + DungeonLogGap);
+        const float fadeDenom = std::max(0.01f, entry.lifetime - DungeonLogFadeStart);
+        const float fade = entry.age <= DungeonLogFadeStart
+            ? 1.0f
+            : std::clamp(1.0f - (entry.age - DungeonLogFadeStart) / fadeDenom, 0.0f, 1.0f);
+
+        const unsigned char rightAlpha = static_cast<unsigned char>(std::clamp(210.0f * fade, 0.0f, 210.0f));
+        renderer.fillGradientRect(
+            {x, rowY},
+            {DungeonLogWidth, DungeonLogRowHeight},
+            {0, 0, 0, 0},
+            {0, 0, 0, rightAlpha},
+            GradientDirection::LeftToRight);
+
+        std::string message = entry.message;
+        if (entry.count > 0) {
+            message = entry.label + " x" + std::to_string(entry.count) + entry.suffix;
+        }
+        const unsigned char textAlpha = static_cast<unsigned char>(std::clamp(255.0f * fade, 0.0f, 255.0f));
+        InlineItemTextStyle textStyle;
+        textStyle.text = {246, 246, 252, textAlpha};
+        textStyle.scale = TextScale;
+        textStyle.iconTextGap = 4.0f;
+        textStyle.outlineEnabled = true;
+        textStyle.outline = {0, 0, 0, textAlpha};
+        textStyle.outlinePx = 2;
+        message = fittedInlineItemText(renderer, std::move(message), DungeonLogWidth - 26.0f, textStyle);
+        const Vec2 textPos{
+            x + DungeonLogWidth - 14.0f,
+            rowY + std::max(0.0f, (DungeonLogRowHeight - textMeasure.y) * 0.5f) + 6.0f,
+        };
+        drawInlineItemTextRightAligned(renderer, objectCatalog_, textPos, message, textStyle);
+    }
+}
+
+void Game::renderWorldLoadingScreen(Renderer& renderer, float totalSeconds) const
+{
+    if (mode_ != ScreenMode::WorldLoading) {
+        return;
+    }
+
+    renderer.setScreenSpace();
+    const float screenW = static_cast<float>(camera_.width());
+    const float screenH = static_cast<float>(camera_.height());
+    renderer.fillRect({0.0f, 0.0f}, {screenW, screenH}, {0, 0, 0, 138});
+
+    const Vec2 panelSize{520.0f, 170.0f};
+    const float panelMaxY = std::max(32.0f, screenH - panelSize.y - 32.0f);
+    const Vec2 panelPos{
+        (screenW - panelSize.x) * 0.5f,
+        std::clamp(screenH * 0.62f, 32.0f, panelMaxY),
+    };
+    renderer.fillRect(panelPos, panelSize, {12, 16, 24, 228});
+    renderer.drawRect(panelPos, panelSize, {180, 198, 232, 255});
+
+    const std::string title = "採掘準備中";
+    const Vec2 titleSize = renderer.measureText(title, 3);
+    renderer.drawText(
+        {panelPos.x + (panelSize.x - titleSize.x) * 0.5f, panelPos.y + 30.0f},
+        title,
+        {246, 235, 255, 255},
+        3);
+
+    std::string status = worldBuildStatusText();
+    const int dotCount = static_cast<int>(std::fmod(std::max(0.0f, totalSeconds) * 2.0f, 4.0f));
+    status.append(static_cast<std::size_t>(dotCount), '.');
+    const Vec2 statusSize = renderer.measureText(status, 2);
+    renderer.drawText(
+        {panelPos.x + (panelSize.x - statusSize.x) * 0.5f, panelPos.y + 76.0f},
+        status,
+        {214, 224, 238, 255},
+        2);
+
+    constexpr float BarW = 392.0f;
+    constexpr float BarH = 14.0f;
+    const Vec2 barPos{panelPos.x + (panelSize.x - BarW) * 0.5f, panelPos.y + 116.0f};
+    renderer.fillRect(barPos, {BarW, BarH}, {30, 36, 48, 255});
+    renderer.drawRect(barPos, {BarW, BarH}, {100, 124, 154, 255});
+    const float progress = worldBuildProgress();
+    const float pulse = 0.76f + 0.24f * std::sin(totalSeconds * 5.0f);
+    renderer.fillRect(
+        barPos + Vec2{2.0f, 2.0f},
+        {std::max(0.0f, (BarW - 4.0f) * progress), BarH - 4.0f},
+        {static_cast<unsigned char>(126.0f + 42.0f * pulse), 204, 232, 255});
+
+    char progressText[64];
+    std::snprintf(
+        progressText,
+        sizeof(progressText),
+        "%d/%d",
+        std::min(worldBuildStepCount(), worldBuildStepIndex() + 1),
+        worldBuildStepCount());
+    renderer.drawText(barPos + Vec2{BarW + 14.0f, -2.0f}, progressText, {198, 206, 222, 255}, 2);
 }
 
 void Game::renderBookshelfScreen(Renderer& renderer) const
@@ -10369,11 +11478,13 @@ void Game::renderWarpPoints(Renderer& renderer) const
     for (const WarpPoint& point : warpPoints_) {
         const Color core = point.discovered ? Color{92, 236, 210, 255} : Color{255, 208, 92, 255};
         const Color ring = point.discovered ? Color{170, 255, 238, 220} : Color{255, 232, 150, 220};
-        renderer.fillCircle(point.position, 12.0f, core);
-        renderer.drawCircle(point.position, 20.0f, ring);
         renderer.drawCircle(point.position, point.discovered ? 34.0f : 24.0f, {150, 210, 255, 110});
-        renderer.drawLine(point.position + Vec2{-18.0f, 0.0f}, point.position + Vec2{18.0f, 0.0f}, ring);
-        renderer.drawLine(point.position + Vec2{0.0f, -18.0f}, point.position + Vec2{0.0f, 18.0f}, ring);
+        renderer.drawCircle(point.position, 20.0f, ring);
+        if (!drawWorldIcon(renderer, WorldIconId::WarpPoint, point.position, {42.0f, 42.0f})) {
+            renderer.fillCircle(point.position, 12.0f, core);
+            renderer.drawLine(point.position + Vec2{-18.0f, 0.0f}, point.position + Vec2{18.0f, 0.0f}, ring);
+            renderer.drawLine(point.position + Vec2{0.0f, -18.0f}, point.position + Vec2{0.0f, 18.0f}, ring);
+        }
     }
 
     if (hasBossSpawnPoint_ && !bossSpawned_) {
@@ -10434,10 +11545,12 @@ void Game::appendRewardNodeRenderEntries(
         }
         entries.push_back(DepthRenderEntry{
             center.y,
-            [&renderer, center, visibility = node.visibility, exposedMoney, sparkle]() {
+            [&renderer, center, visibility = node.visibility, amount = node.amount, exposedMoney, sparkle]() {
                 if (visibility == PlacementVisibility::Exposed) {
-                    renderer.fillCircle(center, 5.5f, exposedMoney);
-                    renderer.drawCircle(center, 8.5f, {255, 230, 120, 210});
+                    if (!drawWorldIcon(renderer, moneyWorldIconForAmount(amount), center, {30.0f, 30.0f})) {
+                        renderer.fillCircle(center, 5.5f, exposedMoney);
+                        renderer.drawCircle(center, 8.5f, {255, 230, 120, 210});
+                    }
                 } else if (visibility == PlacementVisibility::BuriedVisible) {
                     renderer.drawLine(center + Vec2{-6.0f, -6.0f}, center + Vec2{6.0f, 6.0f}, sparkle);
                     renderer.drawLine(center + Vec2{-6.0f, 6.0f}, center + Vec2{6.0f, -6.0f}, sparkle);
@@ -10463,9 +11576,13 @@ void Game::appendRewardNodeRenderEntries(
                 const Color moonFill{232, 224, 166, static_cast<unsigned char>(visibility == PlacementVisibility::Exposed ? 255 : 165)};
                 const Color moonGlow{255, 250, 198, static_cast<unsigned char>(visibility == PlacementVisibility::Exposed ? 210 : 135)};
                 if (visibility == PlacementVisibility::Exposed) {
-                    renderer.fillCircle(center, 5.5f, moonFill);
-                    renderer.drawCircle(center, 9.0f, moonGlow);
-                    renderer.drawLine(center + Vec2{-7.0f, 0.0f}, center + Vec2{7.0f, 0.0f}, moonGlow);
+                    if (drawWorldIcon(renderer, materialWorldIcon(MaterialType::MoonFragment), center, {30.0f, 30.0f})) {
+                        renderer.drawCircle(center, 11.0f, moonGlow);
+                    } else {
+                        renderer.fillCircle(center, 5.5f, moonFill);
+                        renderer.drawCircle(center, 9.0f, moonGlow);
+                        renderer.drawLine(center + Vec2{-7.0f, 0.0f}, center + Vec2{7.0f, 0.0f}, moonGlow);
+                    }
                 } else if (visibility == PlacementVisibility::BuriedVisible) {
                     renderer.drawCircle(center, 7.0f, moonGlow);
                     renderer.fillCircle(center, 2.0f, moonFill);
@@ -10487,10 +11604,12 @@ void Game::appendRewardNodeRenderEntries(
         entries.push_back(DepthRenderEntry{
             center.y,
             [&renderer, center]() {
-                renderer.fillRect(center + Vec2{-9.0f, -8.0f}, {18.0f, 16.0f}, {132, 88, 48, 255});
-                renderer.drawRect(center + Vec2{-9.0f, -8.0f}, {18.0f, 16.0f}, {218, 160, 92, 255});
-                renderer.drawLine(center + Vec2{-7.0f, -6.0f}, center + Vec2{7.0f, 6.0f}, {92, 58, 34, 230});
-                renderer.drawLine(center + Vec2{7.0f, -6.0f}, center + Vec2{-7.0f, 6.0f}, {92, 58, 34, 230});
+                if (!drawWorldIcon(renderer, WorldIconId::Crate, center, {38.0f, 38.0f})) {
+                    renderer.fillRect(center + Vec2{-9.0f, -8.0f}, {18.0f, 16.0f}, {132, 88, 48, 255});
+                    renderer.drawRect(center + Vec2{-9.0f, -8.0f}, {18.0f, 16.0f}, {218, 160, 92, 255});
+                    renderer.drawLine(center + Vec2{-7.0f, -6.0f}, center + Vec2{7.0f, 6.0f}, {92, 58, 34, 230});
+                    renderer.drawLine(center + Vec2{7.0f, -6.0f}, center + Vec2{-7.0f, 6.0f}, {92, 58, 34, 230});
+                }
             },
         });
     }
@@ -10507,10 +11626,14 @@ void Game::appendRewardNodeRenderEntries(
             entries.push_back(DepthRenderEntry{
                 center.y,
                 [&renderer, center, chestKind = node.chestKind]() {
-                    const Color outline = chestOutlineColor(chestKind, false);
-                    renderer.drawLine(center + Vec2{-9.0f, -4.0f}, center + Vec2{9.0f, -4.0f}, outline);
-                    renderer.drawLine(center + Vec2{-9.0f, 4.0f}, center + Vec2{9.0f, 4.0f}, outline);
-                    renderer.fillCircle(center, 2.5f, outline);
+                    WorldIconDrawOptions options;
+                    options.tint = {255, 255, 255, 165};
+                    if (!drawWorldIcon(renderer, chestWorldIcon(chestKind, false), center, {30.0f, 30.0f}, options)) {
+                        const Color outline = chestOutlineColor(chestKind, false);
+                        renderer.drawLine(center + Vec2{-9.0f, -4.0f}, center + Vec2{9.0f, -4.0f}, outline);
+                        renderer.drawLine(center + Vec2{-9.0f, 4.0f}, center + Vec2{9.0f, 4.0f}, outline);
+                        renderer.fillCircle(center, 2.5f, outline);
+                    }
                 },
             });
             continue;
@@ -10522,14 +11645,16 @@ void Game::appendRewardNodeRenderEntries(
         entries.push_back(DepthRenderEntry{
             center.y,
             [&renderer, center, chestKind = node.chestKind, opened = node.opened]() {
-                const Color fill = chestFillColor(chestKind, opened);
-                const Color outline = chestOutlineColor(chestKind, opened);
-                renderer.fillRect(center + Vec2{-10.0f, -6.0f}, {20.0f, 13.0f}, fill);
-                renderer.drawRect(center + Vec2{-10.0f, -6.0f}, {20.0f, 13.0f}, outline);
-                renderer.drawLine(center + Vec2{-8.0f, -2.0f}, center + Vec2{8.0f, -2.0f}, outline);
-                renderer.drawLine(center + Vec2{0.0f, -6.0f}, center + Vec2{0.0f, 7.0f}, outline);
                 if (chestKind == LootChestKind::SuperRare && !opened) {
-                    renderer.drawCircle(center, 15.0f, {255, 242, 164, 170});
+                    renderer.drawCircle(center, 20.0f, {255, 242, 164, 170});
+                }
+                if (!drawWorldIcon(renderer, chestWorldIcon(chestKind, opened), center, {42.0f, 42.0f})) {
+                    const Color fill = chestFillColor(chestKind, opened);
+                    const Color outline = chestOutlineColor(chestKind, opened);
+                    renderer.fillRect(center + Vec2{-10.0f, -6.0f}, {20.0f, 13.0f}, fill);
+                    renderer.drawRect(center + Vec2{-10.0f, -6.0f}, {20.0f, 13.0f}, outline);
+                    renderer.drawLine(center + Vec2{-8.0f, -2.0f}, center + Vec2{8.0f, -2.0f}, outline);
+                    renderer.drawLine(center + Vec2{0.0f, -6.0f}, center + Vec2{0.0f, 7.0f}, outline);
                 }
             },
         });
@@ -10585,7 +11710,7 @@ void Game::renderRingScreen(Renderer& renderer, float totalTime) const
     renderer.drawText(panel.pos + Vec2{48.0f, 520.0f}, buffer, {202, 206, 216, 255}, 2);
 
     renderer.drawText(panel.pos + Vec2{48.0f, 160.0f}, "リング配置", {246, 248, 255, 255}, 3);
-    const Vec2 orbitCenter = ringOrbitCenter();
+    const Vec2 orbitCenter = ringUiOrbitCenter(spellRing_);
     std::vector<Vec2> orbitPath = getRingPathSamplePoints(
         spellRing_.center(),
         ringUiOrbitContext(spellRing_, balance_, 0, 1),
@@ -10593,10 +11718,20 @@ void Game::renderRingScreen(Renderer& renderer, float totalTime) const
     for (Vec2& point : orbitPath) {
         point = applyRingUiShapeRotation(spellRing_, ringWorldToUi(spellRing_, point));
     }
-    for (std::size_t i = 1; i < orbitPath.size(); ++i) {
-        renderer.drawLine(orbitPath[i - 1], orbitPath[i], {130, 125, 160, 230});
-    }
-    renderer.drawCircle(orbitCenter, 8.0f, {198, 190, 220, 210});
+    drawMagicOrbitPath(
+        renderer,
+        orbitPath,
+        orbitCenter,
+        MagicOrbitDrawOptions{
+            activeShape,
+            true,
+            false,
+            true,
+            true,
+            spellRing_.activeRingIndex(),
+            totalTime,
+            1.0f,
+        });
     for (int i = 0; i < static_cast<int>(items.size()); ++i) {
         const SpellRingItem& item = items[static_cast<std::size_t>(i)];
         float displayAngle = item.localAngle;
@@ -10616,15 +11751,17 @@ void Game::renderRingScreen(Renderer& renderer, float totalTime) const
         const bool selected = i == ringSlotSelection_;
         const bool invalidDragPosition = selected && ringDragActive_ && !spellRing_.canPlaceItemAtAngle(i, displayAngle);
         const ItemData* object = objectForRingItem(objectCatalog_, item);
-        const Color angleLineColor = selected ? Color{255, 230, 150, 120} : Color{94, 102, 128, 85};
-        const Vec2 radial = itemAnchor - orbitCenter;
-        Vec2 tangent = normalize(Vec2{-radial.y, radial.x});
-        if (lengthSquared(tangent) <= 0.0001f) {
-            tangent = {0.0f, 1.0f};
+        if (activeShape != RingShape::FigureEight) {
+            const Color angleLineColor = selected ? Color{255, 230, 150, 120} : Color{94, 102, 128, 85};
+            const Vec2 radial = itemAnchor - orbitCenter;
+            Vec2 tangent = normalize(Vec2{-radial.y, radial.x});
+            if (lengthSquared(tangent) <= 0.0001f) {
+                tangent = {0.0f, 1.0f};
+            }
+            constexpr float AngleLineHalfWidthPx = 0.5f;
+            renderer.drawLine(orbitCenter + tangent * AngleLineHalfWidthPx, itemAnchor + tangent * AngleLineHalfWidthPx, angleLineColor);
+            renderer.drawLine(orbitCenter - tangent * AngleLineHalfWidthPx, itemAnchor - tangent * AngleLineHalfWidthPx, angleLineColor);
         }
-        constexpr float AngleLineHalfWidthPx = 0.5f;
-        renderer.drawLine(orbitCenter + tangent * AngleLineHalfWidthPx, itemAnchor + tangent * AngleLineHalfWidthPx, angleLineColor);
-        renderer.drawLine(orbitCenter - tangent * AngleLineHalfWidthPx, itemAnchor - tangent * AngleLineHalfWidthPx, angleLineColor);
         drawRingItemShape(renderer, item, object, itemCenter, outward, selected, invalidDragPosition);
         std::snprintf(buffer, sizeof(buffer), "%d", i + 1);
         renderer.drawText(itemCenter + Vec2{-5.0f, 22.0f}, buffer, selected ? Color{255, 230, 150, 255} : Color{174, 182, 198, 255}, 1);
@@ -10685,6 +11822,7 @@ void Game::update(const Input& input, const Time& time)
     checkHotReload();
     reloadNoticeTimer_ = std::max(0.0f, reloadNoticeTimer_ - time.deltaSeconds());
     encyclopedia_.update(time.deltaSeconds());
+    updateDungeonLogs(time.deltaSeconds());
 
     if (input.debugPressed()) {
         debug_.toggle();
@@ -10695,6 +11833,10 @@ void Game::update(const Input& input, const Time& time)
         debugPaused_ = !debugPaused_;
     }
     if (debugPaused_) {
+        return;
+    }
+    if (worldBuildActive()) {
+        updateWorldBuild(time.deltaSeconds());
         return;
     }
     captureCooldown_ = std::max(0.0f, captureCooldown_ - time.deltaSeconds());
@@ -10730,7 +11872,7 @@ void Game::update(const Input& input, const Time& time)
             return;
         }
         if (!enemyTestActive_) {
-            updateWarpPoints();
+            updateWarpPoints(time.deltaSeconds());
             updateExposedRewardNodes();
             updateExposedMoonFragmentNodes();
             updateExposedEnemyNodes();
@@ -10776,12 +11918,12 @@ void Game::update(const Input& input, const Time& time)
             effectDispatcher_,
             &effectDiscoveries,
             &encyclopedia_);
-        for (Vec2 tile : digging_.hitTiles()) {
-            effects_.spawnDigHit(tile, tile - spellRing_.center());
+        for (const TerrainHitTile& tile : digging_.hitTiles()) {
+            effects_.spawnDigHit(tile.center, tile.center - spellRing_.center(), tile.color);
         }
         if (digging_.dugTiles().empty()) {
             for (Vec2 tile : digging_.openedTiles()) {
-                effects_.spawnTileBreak(tile);
+                effects_.spawnTileBreak(tile, TileType::Dirt, tileMap_.tileColorAtWorld(tile));
             }
         }
         if (!enemyTestActive_) {
@@ -10790,7 +11932,7 @@ void Game::update(const Input& input, const Time& time)
             revealChestNodesFromOpenedTiles(digging_.openedTiles());
         }
         for (const DugTile& tile : digging_.dugTiles()) {
-            effects_.spawnTileBreak(tile.center, tile.type);
+            effects_.spawnTileBreak(tile.center, tile.type, tile.color);
             ++runStats_.dugTiles;
 
             std::mt19937& rng = lootRuntimeRng();
@@ -10843,7 +11985,16 @@ void Game::update(const Input& input, const Time& time)
             const int amount = scaledLootAmount(oreAmountDistribution(lootRuntimeRng()), multiplier);
             worldDrops_.spawnMaterialDrop(MaterialType::EnhancementOre, amount, tile.center, runStats_.elapsedSeconds);
         }
-        runStats_.acquiredItems += worldDrops_.update(time.deltaSeconds(), player_, inventory_, money_, objectCatalog_, &effects_);
+        std::vector<WorldDropPickupEvent> pickupEvents;
+        runStats_.acquiredItems += worldDrops_.update(
+            time.deltaSeconds(),
+            player_,
+            inventory_,
+            money_,
+            objectCatalog_,
+            &effects_,
+            &pickupEvents);
+        appendPickupLogs(pickupEvents);
         if (!enemyTestActive_) {
             const std::vector<Vec2> randomEnemySpawnTiles = spawnHiddenEnemyNodesFromOpenedTiles(digging_.openedTiles());
             enemies_.spawnFromDugTiles(randomEnemySpawnTiles, tileMap_, player_.position, balance_, enemyCatalog_);
@@ -10930,10 +12081,19 @@ void Game::update(const Input& input, const Time& time)
                 }
             } else if (event.type == EnemyEventType::CapturedExplosion) {
                 continue;
-            } else {
+            } else if (event.type == EnemyEventType::AttackHit) {
                 effects_.spawnEnemyHit(event.position, event.effectId);
+                if (event.damageAmount >= 0) {
+                    effects_.spawnDamagePopup(event.position, event.damageAmount, DamagePopupStyle::Enemy);
+                }
+            } else if (event.damageAmount >= 0) {
+                effects_.spawnDamagePopup(event.position, event.damageAmount, DamagePopupStyle::Enemy);
             }
         }
+        for (const PlayerDamageEvent& event : player_.damageEvents) {
+            effects_.spawnDamagePopup(event.position, event.amount, DamagePopupStyle::Player);
+        }
+        player_.damageEvents.clear();
         applyEffectDiscoveries(effectDiscoveries);
         syncEncyclopediaFromInventoryAndRing();
         updateAmbientParticleEffects(time.deltaSeconds());
@@ -11237,6 +12397,85 @@ void Game::renderDebugOverlay(Renderer& renderer, const Time& time)
         autoReloadBlocked_);
 }
 
+void Game::renderSpellRingForeground(
+    Renderer& renderer,
+    const std::vector<const SpellRingItem*>& runtimeItems,
+    const std::vector<LightSource>&,
+    float totalSeconds) const
+{
+    drawSpellRingOrbitLayer(renderer, spellRing_, balance_, totalSeconds, 0.78f);
+
+    if (spellRing_.state() != SpellRingState::Normal) {
+        renderer.drawLine(player_.position, spellRing_.center(), {150, 110, 80, 100});
+    }
+
+    for (const SpellRingItem* itemPtr : runtimeItems) {
+        if (itemPtr == nullptr) {
+            continue;
+        }
+        const SpellRingItem& item = *itemPtr;
+        const int ringIndex = std::clamp(item.ringIndex, 0, SpellRingCount - 1);
+        const RingShape ringShape = spellRing_.ringShapeForIndex(ringIndex);
+        const int ringItemCount = static_cast<int>(spellRing_.itemsForRing(ringIndex).size());
+        const float cometVisualScale = ringShape == RingShape::Comet
+            ? std::clamp(1.0f - std::max(0, ringItemCount - 10) * 0.014f, 0.76f, 1.0f)
+            : 1.0f;
+        const Vec2 drawPosition = ringItemDrawPosition(item, totalSeconds);
+        const ItemData* object = objectForRingItem(objectCatalog_, item);
+        if (item.type == SpellRingItemType::Shovel) {
+            if (renderer.hasIconSheet()) {
+                const float iconSize = IconDrawSize * cometVisualScale;
+                renderer.drawIcon(ShovelIconIndex, drawPosition - Vec2{iconSize * 0.5f, iconSize * 0.5f}, {iconSize, iconSize});
+            } else {
+                const bool drewImage = object != nullptr &&
+                    drawObjectImage(
+                        renderer,
+                        *object,
+                        drawPosition,
+                        {RingObjectImageMaxSize * cometVisualScale, RingObjectImageMaxSize * cometVisualScale});
+                if (!drewImage) {
+                    renderer.fillCircle(drawPosition, item.hitRadius * cometVisualScale, {178, 184, 190, 255});
+                    const Vec2 outward = normalize(item.worldPosition - spellRing_.center());
+                    renderer.drawLine(drawPosition, drawPosition + outward * (15.0f * cometVisualScale), {90, 96, 102, 255});
+                }
+            }
+        } else if (item.type == SpellRingItemType::Torch) {
+            if (renderer.hasIconSheet()) {
+                const float iconSize = IconDrawSize * cometVisualScale;
+                renderer.drawIcon(TorchIconIndex, drawPosition - Vec2{iconSize * 0.5f, iconSize * 0.5f}, {iconSize, iconSize});
+            } else {
+                const bool drewImage = object != nullptr &&
+                    drawObjectImage(
+                        renderer,
+                        *object,
+                        drawPosition,
+                        {RingObjectImageMaxSize * cometVisualScale, RingObjectImageMaxSize * cometVisualScale});
+                if (!drewImage) {
+                    renderer.fillCircle(drawPosition, item.hitRadius * cometVisualScale, {242, 122, 25, 255});
+                    renderer.fillCircle(drawPosition + Vec2{2.0f, -2.0f} * cometVisualScale, 4.0f * cometVisualScale, {255, 238, 98, 255});
+                }
+            }
+        } else {
+            const bool drewImage = object != nullptr &&
+                drawObjectImage(
+                    renderer,
+                    *object,
+                    drawPosition,
+                    {RingObjectImageMaxSize * cometVisualScale, RingObjectImageMaxSize * cometVisualScale});
+            if (!drewImage) {
+                renderer.fillCircle(drawPosition, item.hitRadius * cometVisualScale, {96, 122, 210, 255});
+                renderer.drawCircle(drawPosition, item.hitRadius * cometVisualScale + 3.0f, {160, 202, 255, 255});
+            }
+        }
+        if (item.hiddenDetectionRadius > 0.0f) {
+            renderer.drawCircle(drawPosition, item.hiddenDetectionRadius, {126, 208, 255, 90});
+        }
+        if (item.treasureDetectionRadius > 0.0f) {
+            renderer.drawCircle(drawPosition, item.treasureDetectionRadius, {255, 220, 92, 90});
+        }
+    }
+}
+
 void Game::render(Renderer& renderer, const Time& time)
 {
     renderer.clear({5, 5, 8, 255});
@@ -11253,6 +12492,7 @@ void Game::render(Renderer& renderer, const Time& time)
         inventory_.render(renderer, player_, spellRing_, objectCatalog_, encyclopedia_);
         renderPauseMenu(renderer);
         renderRingScreen(renderer, time.totalSeconds());
+        renderWorldLoadingScreen(renderer, time.totalSeconds());
         finishUiFrame(renderer);
         renderBaseDebugOverlay(renderer, time);
         renderer.present();
@@ -11267,19 +12507,42 @@ void Game::render(Renderer& renderer, const Time& time)
         if (itemPtr == nullptr) {
             continue;
         }
+        const float phase = itemPtr->localAngle * 1.7f + static_cast<float>(itemPtr->ringIndex) * 2.3f;
         if (itemPtr->lightRadius > 0.0f) {
-            itemLights.push_back({itemPtr->worldPosition, itemPtr->lightRadius});
+            itemLights.push_back({
+                flickeredLightPosition(itemPtr->worldPosition, time.totalSeconds(), phase),
+                flickeredLightRadius(itemPtr->lightRadius, time.totalSeconds(), phase),
+            });
         } else if (itemPtr->type == SpellRingItemType::Torch) {
-            itemLights.push_back({itemPtr->worldPosition, balance_.lightRadius});
+            const float torchPhase = phase + 0.47f;
+            itemLights.push_back({
+                flickeredLightPosition(itemPtr->worldPosition, time.totalSeconds(), torchPhase),
+                flickeredLightRadius(balance_.lightRadius, time.totalSeconds(), torchPhase),
+            });
         }
     }
     if (warpPointsEnabled_) {
         for (const WarpPoint& point : warpPoints_) {
-            const float radiusTiles = point.discovered ? point.discoveredLightRadiusTiles : point.undiscoveredLightRadiusTiles;
-            itemLights.push_back({point.position, radiusTiles * static_cast<float>(balance::TileSize)});
+            float radiusTiles = point.discovered ? point.discoveredLightRadiusTiles : point.undiscoveredLightRadiusTiles;
+            if (point.lightRevealAnimating && point.lightRevealDuration > 0.0f) {
+                const float t = std::clamp(point.lightRevealTimer / point.lightRevealDuration, 0.0f, 1.0f);
+                const float inv = 1.0f - t;
+                const float eased = 1.0f - inv * inv * inv;
+                radiusTiles = point.undiscoveredLightRadiusTiles +
+                    (point.discoveredLightRadiusTiles - point.undiscoveredLightRadiusTiles) * eased;
+            }
+            const float radiusPx = radiusTiles * static_cast<float>(balance::TileSize);
+            const float phase = static_cast<float>(point.index) * 1.73f;
+            itemLights.push_back({
+                flickeredLightPosition(point.position, time.totalSeconds(), phase),
+                flickeredLightRadius(radiusPx, time.totalSeconds(), phase),
+            });
         }
         if (hasBossSpawnPoint_ && !bossSpawned_) {
-            itemLights.push_back({bossSpawnPoint_, 120.0f});
+            itemLights.push_back({
+                flickeredLightPosition(bossSpawnPoint_, time.totalSeconds(), 4.8f),
+                flickeredLightRadius(120.0f, time.totalSeconds(), 4.8f),
+            });
         }
     }
     tileMap_.render(renderer, camera_, player_.position, itemLights);
@@ -11294,79 +12557,7 @@ void Game::render(Renderer& renderer, const Time& time)
 
     const bool ringCenterVisible = tileMap_.isLit(spellRing_.center(), player_.position, itemLights);
     if (ringCenterVisible) {
-        constexpr std::array<RingShape, 3> ShapeRenderOrder{
-            RingShape::Circle,
-            RingShape::FigureEight,
-            RingShape::Comet,
-        };
-        const Color orbitColorBase = spellRing_.state() == SpellRingState::Normal ? Color{130, 125, 160, 255} : Color{220, 185, 90, 255};
-        const auto ringOrbitColor = [&](int ringIndex, Color activeColor, int inactiveAlpha) -> Color {
-            if (ringIndex == spellRing_.activeRingIndex()) {
-                return activeColor;
-            }
-            return Color{activeColor.r, activeColor.g, activeColor.b, static_cast<std::uint8_t>(std::clamp(inactiveAlpha, 0, 255))};
-        };
-
-        for (RingShape shapePass : ShapeRenderOrder) {
-            for (int ringIndex = 0; ringIndex < SpellRingCount; ++ringIndex) {
-                const auto& ringItems = spellRing_.itemsForRing(ringIndex);
-                if (ringItems.empty() || spellRing_.ringShapeForIndex(ringIndex) != shapePass) {
-                    continue;
-                }
-
-                if (shapePass == RingShape::Circle) {
-                    const Color circleColor = ringOrbitColor(ringIndex, {orbitColorBase.r, orbitColorBase.g, orbitColorBase.b, 110}, 58);
-                    renderer.drawCircle(spellRing_.center(), spellRing_.radius(), circleColor);
-                    continue;
-                }
-
-                const std::vector<Vec2> orbitPath = spellRing_.pathSamplePointsForRing(ringIndex, spellRing_.center(), 1.0f, balance_, 160);
-                if (orbitPath.size() < 2) {
-                    continue;
-                }
-
-                if (shapePass == RingShape::FigureEight) {
-                    const Color eightColor = ringOrbitColor(ringIndex, {154, 190, 232, 132}, 74);
-                    for (std::size_t i = 1; i < orbitPath.size(); ++i) {
-                        // Sparse segment rendering keeps the 8-shape readable when multiple rings overlap.
-                        if ((i % 4) == 0) {
-                            continue;
-                        }
-                        renderer.drawLine(orbitPath[i - 1], orbitPath[i], eightColor);
-                    }
-                    renderer.fillCircle(spellRing_.center(), ringIndex == spellRing_.activeRingIndex() ? 2.6f : 2.0f, {182, 210, 240, eightColor.a});
-                    continue;
-                }
-
-                const Color cometCore = ringOrbitColor(ringIndex, {250, 228, 164, 138}, 74);
-                const Color cometTail = ringOrbitColor(ringIndex, {178, 206, 255, 96}, 48);
-                const std::size_t headIndex = orbitPath.size() - 1;
-                const std::size_t trailStart = static_cast<std::size_t>(std::max<int>(1, static_cast<int>(orbitPath.size()) - 44));
-                Vec2 previousTrailPoint = orbitPath[trailStart];
-                bool hasPreviousTrailPoint = false;
-                for (std::size_t i = trailStart; i <= headIndex; ++i) {
-                    const float t = static_cast<float>(i - trailStart) / static_cast<float>(std::max<std::size_t>(1, headIndex - trailStart));
-                    const float tailRadius = 1.1f + 1.9f * t;
-                    const std::uint8_t tailAlpha = static_cast<std::uint8_t>(clamp(24.0f + 88.0f * t, 18.0f, 160.0f));
-                    const Color tailColor{
-                        static_cast<std::uint8_t>(clamp(static_cast<float>(cometTail.r) + 42.0f * t, 0.0f, 255.0f)),
-                        static_cast<std::uint8_t>(clamp(static_cast<float>(cometTail.g) + 28.0f * t, 0.0f, 255.0f)),
-                        cometTail.b,
-                        tailAlpha,
-                    };
-                    if ((i % 2) == 0) {
-                        renderer.fillCircle(orbitPath[i], tailRadius, tailColor);
-                    }
-                    if (hasPreviousTrailPoint && (i % 3) != 0) {
-                        renderer.drawLine(previousTrailPoint, orbitPath[i], {tailColor.r, tailColor.g, tailColor.b, static_cast<std::uint8_t>(tailAlpha / 2)});
-                    }
-                    previousTrailPoint = orbitPath[i];
-                    hasPreviousTrailPoint = true;
-                }
-                renderer.fillCircle(orbitPath[headIndex], ringIndex == spellRing_.activeRingIndex() ? 4.2f : 3.3f, cometCore);
-                renderer.fillCircle(orbitPath[headIndex], ringIndex == spellRing_.activeRingIndex() ? 2.1f : 1.7f, {255, 248, 220, static_cast<std::uint8_t>(std::min(255, cometCore.a + 40))});
-            }
-        }
+        drawSpellRingOrbitLayer(renderer, spellRing_, balance_, time.totalSeconds(), 0.46f);
     }
     if (spellRing_.state() != SpellRingState::Normal && ringCenterVisible) {
         renderer.drawLine(player_.position, spellRing_.center(), {150, 110, 80, 100});
@@ -11381,15 +12572,31 @@ void Game::render(Renderer& renderer, const Time& time)
         player_.position.y,
         [&]() {
             if (renderer.hasPlayerSheet()) {
+                const int playerFrame = player_.spriteFrameIndex();
+                const bool playerFlip = player_.facing.x > 0.0f;
                 renderer.drawPlayerSprite(
-                    player_.spriteFrameIndex(),
+                    playerFrame,
                     playerFootAnchor,
                     PlayerSpriteDrawSize,
-                    player_.facing.x > 0.0f,
+                    playerFlip,
                     {255, 255, 255, 255},
                     {PlayerSpriteAnchorX, PlayerSpriteAnchorY});
+                if (player_.damageFlash > 0.0f) {
+                    const float flash = clamp(player_.damageFlash / 0.16f, 0.0f, 1.0f);
+                    const unsigned char alpha = static_cast<unsigned char>(std::round(185.0f * flash));
+                    renderer.drawPlayerSprite(
+                        playerFrame,
+                        playerFootAnchor,
+                        PlayerSpriteDrawSize,
+                        playerFlip,
+                        {255, 52, 52, alpha},
+                        {PlayerSpriteAnchorX, PlayerSpriteAnchorY});
+                }
             } else {
-                renderer.fillCircle(player_.position, balance_.playerRadius, {118, 72, 168, 255});
+                const Color playerColor = player_.damageFlash > 0.0f
+                    ? Color{255, 72, 72, 255}
+                    : Color{118, 72, 168, 255};
+                renderer.fillCircle(player_.position, balance_.playerRadius, playerColor);
                 renderer.drawLine(player_.position, player_.position + player_.facing * 22.0f, {235, 210, 255, 255});
             }
 
@@ -11405,7 +12612,9 @@ void Game::render(Renderer& renderer, const Time& time)
                     ? std::clamp(1.0f - std::max(0, ringItemCount - 10) * 0.014f, 0.76f, 1.0f)
                     : 1.0f;
                 const Vec2 drawPosition = ringItemDrawPosition(item, time.totalSeconds());
-                renderer.drawActorShadow(item.worldPosition, ringItemShadowVisualSize(item, time.totalSeconds()) * cometVisualScale);
+                renderer.drawActorShadow(
+                    actorShadowAnchor(item.worldPosition, ItemShadowGroundOffsetY),
+                    ringItemShadowVisualSize(item, time.totalSeconds()) * cometVisualScale);
                 const ItemData* object = objectForRingItem(objectCatalog_, item);
                 if (item.type == SpellRingItemType::Shovel) {
                     if (renderer.hasIconSheet()) {
@@ -11479,10 +12688,15 @@ void Game::render(Renderer& renderer, const Time& time)
     }
     effects_.render(renderer);
     tileMap_.renderDarknessOverlay(renderer, camera_, player_.position, itemLights);
+    renderSpellRingForeground(renderer, runtimeItems, itemLights, time.totalSeconds());
+    effects_.renderForeground(renderer);
+    effects_.renderDamagePopups(renderer);
 
     renderer.setScreenSpace();
     renderTopInfoBar(renderer);
     if (mode_ == ScreenMode::Playing) {
+        renderRingStatusHud(renderer);
+        renderDungeonLogs(renderer);
         renderDungeonStatusHud(renderer);
     }
     if (reloadNoticeTimer_ > 0.0f) {

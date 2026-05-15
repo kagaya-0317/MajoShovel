@@ -58,7 +58,7 @@ bool damageDigContactTile(
     SpellRingItem& item,
     int tileX,
     int tileY,
-    std::vector<Vec2>& hitTiles,
+    std::vector<TerrainHitTile>& hitTiles,
     std::vector<Vec2>& openedTiles,
     std::vector<DugTile>& dugTiles)
 {
@@ -74,12 +74,13 @@ bool damageDigContactTile(
         return false;
     }
 
-    hitTiles.push_back(map.tileCenter(tileX, tileY));
+    const Color tileColor = map.tileColorAtTile(tileX, tileY);
+    hitTiles.push_back({map.tileCenter(tileX, tileY), tileColor});
     Vec2 openedTileCenter{};
     TileType openedTileType = TileType::Dirt;
     if (map.damageTile(tileX, tileY, damage, openedTileCenter, &openedTileType)) {
         openedTiles.push_back(openedTileCenter);
-        dugTiles.push_back({openedTileCenter, openedTileType});
+        dugTiles.push_back({openedTileCenter, openedTileType, tileColor});
     }
     return true;
 }
@@ -135,6 +136,7 @@ void DiggingSystem::update(
         }
 
         const std::size_t hitCountBefore = hitTiles_.size();
+        const std::size_t openedCountBefore = openedTiles_.size();
         if (!item.objectId.empty()) {
             const auto objectIt = objectCatalog.objectsById.find(item.objectId);
             if (objectIt != objectCatalog.objectsById.end()) {
@@ -211,7 +213,7 @@ void DiggingSystem::update(
                 capturedExplosionRequests_.push_back(digPosition);
             }
         }
-        if (hitTiles_.size() != hitCountBefore) {
+        if (openedTiles_.size() != openedCountBefore) {
             item.consumeDurability();
         }
         item.lastTerrainHitTime = totalTime;

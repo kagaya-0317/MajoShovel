@@ -1,6 +1,7 @@
-#include "engine/App.hpp"
+﻿#include "engine/App.hpp"
 
 #include <cstring>
+#include <memory>
 
 int main(int argc, char** argv)
 {
@@ -17,12 +18,12 @@ int main(int argc, char** argv)
 
     bool restart = false;
     do {
-        majo::App app;
-        if (!app.initialize("Majo Shovel", 1280, 720, testPlayMode)) {
+        auto app = std::make_unique<majo::App>();
+        if (!app->initialize("Majo Shovel", 1280, 720, testPlayMode)) {
             return 1;
         }
-        app.run();
-        restart = app.restartRequested();
+        app->run();
+        restart = app->restartRequested();
         if (restart && devAutoReloadMode) {
             return DevAutoReloadRebuildRestartExitCode;
         }

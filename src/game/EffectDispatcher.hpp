@@ -15,6 +15,7 @@ namespace majo {
 struct Enemy;
 struct Player;
 struct DugTile;
+struct TerrainHitTile;
 struct SpellRingItem;
 class EffectSystem;
 class SpellRingSystem;
@@ -56,7 +57,7 @@ struct EffectContext {
     SpellRingItem* orbitItem = nullptr;
     TileMap* tileMap = nullptr;
     EffectSystem* effects = nullptr;
-    std::vector<Vec2>* terrainHitTiles = nullptr;
+    std::vector<TerrainHitTile>* terrainHitTiles = nullptr;
     std::vector<Vec2>* terrainOpenedTiles = nullptr;
     std::vector<DugTile>* terrainDugTiles = nullptr;
     std::vector<EffectDiscoveryEvent>* discoveryEvents = nullptr;

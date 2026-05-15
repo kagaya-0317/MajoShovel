@@ -34,6 +34,13 @@ struct WorldDropItem {
     float ageSeconds = 0.0f;
 };
 
+struct WorldDropPickupEvent {
+    WorldDropKind kind = WorldDropKind::Object;
+    std::string id;
+    std::string name;
+    int quantity = 1;
+};
+
 class WorldDropSystem {
 public:
     void clear();
@@ -46,7 +53,14 @@ public:
     bool spawnRewardDrop(const ObjectCatalog& catalog, Vec2 position, float spawnedAtSeconds = 0.0f);
     bool stealNearestDrop(const ObjectCatalog& catalog, Vec2 center, float radius, std::string_view targetFilter, WorldDropItem& outDrop);
     int pullMetalDrops(const ObjectCatalog& catalog, Vec2 center, float dt, float radius = 170.0f);
-    int update(float dt, const Player& player, InventorySystem& inventory, int& money, const ObjectCatalog& catalog, EffectSystem* effects = nullptr);
+    int update(
+        float dt,
+        const Player& player,
+        InventorySystem& inventory,
+        int& money,
+        const ObjectCatalog& catalog,
+        EffectSystem* effects = nullptr,
+        std::vector<WorldDropPickupEvent>* pickupEvents = nullptr);
     void render(
         Renderer& renderer,
         const TileMap& tileMap,

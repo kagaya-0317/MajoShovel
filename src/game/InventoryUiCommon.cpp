@@ -28,6 +28,57 @@ Vec2 uiRectCenter(const UiRect& rect)
     return rect.pos + rect.size * 0.5f;
 }
 
+float inlineItemIconSize(Renderer& renderer, const InlineItemTextStyle& style)
+{
+    const Vec2 textSize = renderer.measureText("0", style.scale);
+    return std::max(1.0f, textSize.y * std::max(0.1f, style.iconScale));
+}
+
+bool inlineItemTagAt(std::string_view text, std::size_t offset, std::size_t& outEnd, std::string_view& outObjectId)
+{
+    constexpr std::string_view Prefix = "{item:";
+    if (offset + Prefix.size() >= text.size() || text.substr(offset, Prefix.size()) != Prefix) {
+        return false;
+    }
+
+    const std::size_t close = text.find('}', offset + Prefix.size());
+    if (close == std::string_view::npos) {
+        return false;
+    }
+
+    outObjectId = text.substr(offset + Prefix.size(), close - offset - Prefix.size());
+    if (outObjectId.empty()) {
+        return false;
+    }
+
+    outEnd = close + 1;
+    return true;
+}
+
+std::string popInlineItemTextUnit(std::string text)
+{
+    if (text.empty()) {
+        return text;
+    }
+
+    if (text.back() == '}') {
+        const std::size_t open = text.rfind("{item:");
+        if (open != std::string::npos) {
+            const std::size_t close = text.find('}', open);
+            if (close == text.size() - 1) {
+                text.erase(open);
+                return text;
+            }
+        }
+    }
+
+    text.pop_back();
+    while (!text.empty() && (static_cast<unsigned char>(text.back()) & 0xc0U) == 0x80U) {
+        text.pop_back();
+    }
+    return text;
+}
+
 void drawSelectedItemCircleOutline(Renderer& renderer, Vec2 center, float radius)
 {
     const Color outline = selectedItemOutlineColor();
@@ -88,6 +139,119 @@ std::string joinInventoryUiEffectLines(const std::vector<std::string>& lines)
         text += lines[i];
     }
     return text;
+}
+
+Vec2 measureInlineItemText(Renderer& renderer, std::string_view text, const InlineItemTextStyle& style)
+{
+    const float iconSize = inlineItemIconSize(renderer, style);
+    const Vec2 lineMeasure = renderer.measureText("0", style.scale);
+    float width = 0.0f;
+    float height = std::max(lineMeasure.y, iconSize);
+
+    std::size_t cursor = 0;
+    while (cursor < text.size()) {
+        std::size_t tagEnd = 0;
+        std::string_view objectId;
+        if (inlineItemTagAt(text, cursor, tagEnd, objectId)) {
+            (void)objectId;
+            width += iconSize + style.iconTextGap;
+            cursor = tagEnd;
+            continue;
+        }
+
+        const std::size_t nextTag = text.find("{item:", cursor);
+        const std::size_t end = nextTag == std::string_view::npos ? text.size() : nextTag;
+        const std::string_view chunk = text.substr(cursor, end - cursor);
+        const Vec2 chunkSize = renderer.measureText(chunk, style.scale);
+        width += chunkSize.x;
+        height = std::max(height, chunkSize.y);
+        cursor = end;
+    }
+
+    return {width, height};
+}
+
+std::string fittedInlineItemText(Renderer& renderer, std::string text, float maxWidth, const InlineItemTextStyle& style)
+{
+    if (maxWidth <= 0.0f) {
+        return "";
+    }
+    if (measureInlineItemText(renderer, text, style).x <= maxWidth) {
+        return text;
+    }
+
+    constexpr std::string_view Ellipsis = "...";
+    while (!text.empty()) {
+        text = popInlineItemTextUnit(std::move(text));
+        std::string candidate = text + std::string(Ellipsis);
+        if (measureInlineItemText(renderer, candidate, style).x <= maxWidth) {
+            return candidate;
+        }
+    }
+    return measureInlineItemText(renderer, Ellipsis, style).x <= maxWidth ? std::string(Ellipsis) : "";
+}
+
+std::string inlineItemTag(std::string_view objectId)
+{
+    if (objectId.empty()) {
+        return {};
+    }
+    return "{item:" + std::string(objectId) + "}";
+}
+
+void drawInlineItemText(
+    Renderer& renderer,
+    const ObjectCatalog& catalog,
+    Vec2 pos,
+    std::string_view text,
+    const InlineItemTextStyle& style)
+{
+    const float iconSize = inlineItemIconSize(renderer, style);
+    const Vec2 lineMeasure = renderer.measureText("0", style.scale);
+    const float iconTopOffset = std::max(0.0f, (lineMeasure.y - iconSize) * 0.5f);
+    Vec2 cursor = pos;
+
+    std::size_t offset = 0;
+    while (offset < text.size()) {
+        std::size_t tagEnd = 0;
+        std::string_view objectId;
+        if (inlineItemTagAt(text, offset, tagEnd, objectId)) {
+            const bool drewIcon = drawObjectImageById(
+                renderer,
+                catalog,
+                objectId,
+                {cursor.x + iconSize * 0.5f, cursor.y + iconTopOffset + iconSize * 0.5f},
+                {iconSize, iconSize},
+                ObjectImageDrawOptions{});
+            if (drewIcon) {
+                cursor.x += iconSize + style.iconTextGap;
+                offset = tagEnd;
+                continue;
+            }
+        }
+
+        const std::size_t nextTag = text.find("{item:", offset + 1);
+        const std::size_t end = nextTag == std::string_view::npos ? text.size() : nextTag;
+        const std::string_view chunk = text.substr(offset, end - offset);
+        if (style.outlineEnabled) {
+            renderer.drawOutlinedText(cursor, chunk, style.text, style.outline, style.outlinePx, style.scale);
+        } else {
+            renderer.drawText(cursor, chunk, style.text, style.scale);
+        }
+        cursor.x += renderer.measureText(chunk, style.scale).x;
+        offset = end;
+    }
+}
+
+void drawInlineItemTextRightAligned(
+    Renderer& renderer,
+    const ObjectCatalog& catalog,
+    Vec2 rightTop,
+    std::string_view text,
+    const InlineItemTextStyle& style)
+{
+    const Vec2 size = measureInlineItemText(renderer, text, style);
+    drawInlineItemText(renderer, catalog, {rightTop.x - size.x, rightTop.y}, text, style);
 }
 
 void drawInventoryUiSlot(

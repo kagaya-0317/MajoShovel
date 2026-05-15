@@ -1,6 +1,7 @@
 ﻿#include "game/SpellRingSystem.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <limits>
 #include <utility>
@@ -18,6 +19,16 @@ constexpr float CapturedJumpDistance = 18.0f;
 constexpr float CapturedPeriodicHealInterval = 8.0f;
 constexpr int CapturedPeriodicHealMaxPerPulse = 2;
 constexpr float FullCircleRadians = Pi * 2.0f;
+constexpr std::array<float, SpellRingCount> RingBaseRadiusMultipliers{{
+    1.2f,
+    1.8f,
+    2.4f,
+}};
+constexpr std::array<float, SpellRingCount> RingBaseSpeedMultipliers{{
+    1.0f,
+    1.0f,
+    0.8f,
+}};
 
 SpellRingItem makeSpellRingItem(SpellRingItemType type)
 {
@@ -174,6 +185,22 @@ float ringShapeOrbitSpeedMultiplier(RingShape shape, const RuntimeBalance& balan
         return std::max(0.05f, balance.cometSpeedMultiplier);
     }
     return 1.0f;
+}
+
+float ringBaseRadiusMultiplierForIndex(int ringIndex)
+{
+    if (ringIndex < 0 || ringIndex >= SpellRingCount) {
+        return 1.0f;
+    }
+    return std::max(0.1f, RingBaseRadiusMultipliers[static_cast<std::size_t>(ringIndex)]);
+}
+
+float ringBaseSpeedMultiplierForIndex(int ringIndex)
+{
+    if (ringIndex < 0 || ringIndex >= SpellRingCount) {
+        return 1.0f;
+    }
+    return std::max(0.05f, RingBaseSpeedMultipliers[static_cast<std::size_t>(ringIndex)]);
 }
 
 RingOrbitTuning makeRingOrbitTuning(const RuntimeBalance& balance)
@@ -755,7 +782,9 @@ float SpellRingSystem::shapeRotationForRing(int ringIndex) const
 
 float SpellRingSystem::ringAngularSpeedForIndex(int ringIndex, const RuntimeBalance& balance) const
 {
-    return effectiveAngularSpeed() * ringShapeOrbitSpeedMultiplier(ringShapeForIndex(ringIndex), balance);
+    return effectiveAngularSpeed() *
+        ringShapeOrbitSpeedMultiplier(ringShapeForIndex(ringIndex), balance) *
+        ringBaseSpeedMultiplierForIndex(ringIndex);
 }
 
 RingOrbitContext SpellRingSystem::makeOrbitContext(int itemIndex, int itemCount, float radiusScale, const RuntimeBalance& balance) const
@@ -768,7 +797,7 @@ RingOrbitContext SpellRingSystem::makeOrbitContextForRing(int ringIndex, int ite
     const int clampedRingIndex = std::clamp(ringIndex, 0, SpellRingCount - 1);
     RingOrbitContext context;
     context.shape = ringShapeForIndex(clampedRingIndex);
-    context.radius = std::max(1.0f, radius_ * std::max(0.1f, radiusScale));
+    context.radius = std::max(1.0f, radius_ * ringBaseRadiusMultiplierForIndex(clampedRingIndex) * std::max(0.1f, radiusScale));
     context.shapeRotation = context.shape == RingShape::FigureEight
         ? shapeRotations_[static_cast<std::size_t>(clampedRingIndex)]
         : (context.shape == RingShape::Comet ? baseAngles_[static_cast<std::size_t>(clampedRingIndex)] : 0.0f);

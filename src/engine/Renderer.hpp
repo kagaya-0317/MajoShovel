@@ -26,6 +26,18 @@ enum class TextureFilter {
     Linear,
 };
 
+enum class TextStyle {
+    Regular,
+    Italic,
+};
+
+enum class GradientDirection {
+    LeftToRight,
+    TopToBottom,
+    TopLeftToBottomRight,
+    BottomLeftToTopRight,
+};
+
 struct ImageHandle {
     std::uint32_t value = 0;
 
@@ -39,6 +51,7 @@ struct ImageDrawOptions {
     bool outlineEnabled = false;
     Color outlineColor{0, 0, 0, 255};
     int outlinePx = 1;
+    Color maskOverlayColor{255, 255, 255, 0};
     float rotationDegrees = 0.0f;
     bool flipX = false;
     bool flipY = false;
@@ -66,9 +79,17 @@ public:
     void popScreenTransform();
 
     void fillRect(Vec2 pos, Vec2 size, Color color);
+    void fillGradientRect(
+        Vec2 pos,
+        Vec2 size,
+        Color startColor,
+        Color endColor,
+        GradientDirection direction = GradientDirection::LeftToRight);
+    void fillGradientRect(Vec2 pos, Vec2 size, Color topLeft, Color topRight, Color bottomRight, Color bottomLeft);
     void drawRect(Vec2 pos, Vec2 size, Color color);
     void fillCircle(Vec2 center, float radius, Color color);
     void drawCircle(Vec2 center, float radius, Color color);
+    void fillPolygon(const Vec2* points, std::size_t count, Color color);
     void fillSoftCircle(Vec2 center, float radius, Color color);
     void drawSoftRing(Vec2 center, float radius, float width, Color color);
     void fillEllipse(Vec2 center, Vec2 radius, Color color);
@@ -76,17 +97,18 @@ public:
     void drawLine(Vec2 a, Vec2 b, Color color);
     void drawSoftLine(Vec2 a, Vec2 b, float width, Color color);
     void drawSoftPolyline(const std::vector<Vec2>& points, float width, Color color);
-    void drawText(Vec2 pos, std::string_view text, Color color, int scale = 2);
+    void drawText(Vec2 pos, std::string_view text, Color color, int scale = 2, TextStyle style = TextStyle::Regular);
     void drawOutlinedText(
         Vec2 pos,
         std::string_view text,
         Color color,
         Color outline,
         int outlinePx,
-        int scale = 2);
-    Vec2 measureText(std::string_view text, int scale = 2);
-    Vec2 measureWrappedText(std::string_view text, float maxWidth, int scale = 2);
-    void drawWrappedText(Vec2 pos, std::string_view text, float maxWidth, Color color, int scale = 2);
+        int scale = 2,
+        TextStyle style = TextStyle::Regular);
+    Vec2 measureText(std::string_view text, int scale = 2, TextStyle style = TextStyle::Regular);
+    Vec2 measureWrappedText(std::string_view text, float maxWidth, int scale = 2, TextStyle style = TextStyle::Regular);
+    void drawWrappedText(Vec2 pos, std::string_view text, float maxWidth, Color color, int scale = 2, TextStyle style = TextStyle::Regular);
     bool loadTextFont(std::string_view path);
     bool loadIconSheet(std::string_view path, int iconSize = 32, int columns = 8, int rows = 8);
     void unloadIconSheet();
@@ -186,19 +208,20 @@ private:
     float screenScale() const;
     void setColor(Color color);
     void drawGlyph(char c, Vec2 pos, Color color, int scale);
-    bool drawNativeText(Vec2 pos, std::string_view text, Color color, int scale);
-    bool drawNativeOutlinedText(Vec2 pos, std::string_view text, Color color, Color outline, int outlinePx, int scale);
-    bool measureNativeText(std::string_view text, int scale, Vec2& outSize);
-    bool renderNativeTextToTexture(std::string_view text, Color color, int scale, TextTexture& outTexture);
+    bool drawNativeText(Vec2 pos, std::string_view text, Color color, int scale, TextStyle style);
+    bool drawNativeOutlinedText(Vec2 pos, std::string_view text, Color color, Color outline, int outlinePx, int scale, TextStyle style);
+    bool measureNativeText(std::string_view text, int scale, TextStyle style, Vec2& outSize);
+    bool renderNativeTextToTexture(std::string_view text, Color color, int scale, TextStyle style, TextTexture& outTexture);
     bool renderNativeOutlinedTextToTexture(
         std::string_view text,
         Color color,
         Color outline,
         int scale,
         int outlinePx,
+        TextStyle style,
         TextTexture& outTexture);
     void clearTextCache();
-    std::string wrappedText(std::string_view text, float maxWidth, int scale);
+    std::string wrappedText(std::string_view text, float maxWidth, int scale, TextStyle style);
     bool loadSpriteSheet(std::string_view path, int frameSize, int columns, int rows, std::string_view label, SpriteSheet& sheet);
     void unloadSpriteSheet(SpriteSheet& sheet);
     bool loadImageTexture(std::string_view path, std::string_view label, ImageTexture& target);
