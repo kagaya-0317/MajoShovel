@@ -48,7 +48,7 @@ DebugConsoleLayout makeDefaultDebugConsoleLayout()
                     "編集ツール",
                     {
                         {DebugControlKind::Button, "base_edit_toggle", "拠点編集", "game base-edit toggle"},
-                        {DebugControlKind::Button, "obj_image_scale_toggle", "Obj画像サイズ編集", "game obj-image-scale toggle"},
+                        {DebugControlKind::Button, "obj_image_scale_toggle", "画像サイズ編集", "game obj-image-scale toggle"},
                     },
                 },
                 DebugGroupDefinition{

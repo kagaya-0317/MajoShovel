@@ -6945,21 +6945,37 @@ void Game::updateObjectImageScaleEditScreen(const Input& input, UiContext& ui)
 void Game::renderObjectImageScaleEditScreen(Renderer& renderer) const
 {
     renderer.setScreenSpace();
+
+    const bool editingOthers = imageScaleEditTab_ == ImageScaleEditTab::Others;
+    const std::vector<std::string>& itemKeys = editingOthers ? otherImageScaleKeys_ : objectImageScaleObjectIds_;
+    const std::unordered_map<std::string, float>& scaleMap = editingOthers ? otherImageScaleByKey_ : objectImageScaleById_;
+    const int selectedIndex = editingOthers ? otherImageScaleSelectedIndex_ : objectImageScaleSelectedIndex_;
+    const float activeScrollOffset = editingOthers ? otherImageScaleScrollOffset_ : objectImageScaleScrollOffset_;
+
     const ObjectImageScaleLayout layout = makeObjectImageScaleLayout(camera_.width(), camera_.height());
-    const int itemCount = static_cast<int>(objectImageScaleObjectIds_.size());
+    const int itemCount = static_cast<int>(itemKeys.size());
     const int columns = std::max(1, layout.columns);
     const int rows = itemCount <= 0 ? 0 : (itemCount + columns - 1) / columns;
     const float contentHeight = rows <= 0
         ? 0.0f
         : static_cast<float>(rows) * ObjectImageScaleCardHeight + static_cast<float>(rows - 1) * ObjectImageScaleCardGap;
     const float maxScroll = std::max(0.0f, contentHeight - layout.viewport.size.y);
-    const float scrollOffset = clamp(objectImageScaleScrollOffset_, 0.0f, maxScroll);
+    const float scrollOffset = clamp(activeScrollOffset, 0.0f, maxScroll);
 
     renderer.fillRect({0.0f, 0.0f}, {static_cast<float>(camera_.width()), static_cast<float>(camera_.height())}, {10, 12, 18, 255});
     renderer.fillRect({0.0f, 0.0f}, {static_cast<float>(camera_.width()), ObjectImageScaleHeaderHeight}, {18, 24, 38, 255});
     renderer.fillRect({0.0f, static_cast<float>(camera_.height()) - ObjectImageScaleFooterHeight}, {static_cast<float>(camera_.width()), ObjectImageScaleFooterHeight}, {18, 24, 38, 255});
-    renderer.drawText({22.0f, 20.0f}, "Obj image scale editor (48px baseline)", {245, 245, 252, 255}, 3);
-    renderer.drawText({22.0f, 56.0f}, "Click to select  Wheel: scroll / selected card wheel: scale  Up/Down: scale  Ctrl+S: save  Esc: exit", {198, 206, 222, 255}, 2);
+    renderer.drawText({22.0f, 18.0f}, "画像サイズ編集 (48px baseline)", {245, 245, 252, 255}, 3);
+
+    for (int tab = 0; tab < 2; ++tab) {
+        const bool active = (tab == 0 && !editingOthers) || (tab == 1 && editingOthers);
+        const UiRect rect = objectImageScaleTabRect(tab);
+        renderer.fillRect(rect.pos, rect.size, active ? Color{58, 76, 118, 255} : Color{26, 34, 50, 255});
+        renderer.drawRect(rect.pos, rect.size, active ? Color{255, 228, 138, 255} : Color{92, 104, 126, 255});
+        renderer.drawText(rect.pos + Vec2{14.0f, 8.0f}, tab == 0 ? "Objects" : "Others", active ? Color{255, 236, 166, 255} : Color{198, 206, 222, 255}, 2);
+    }
+
+    renderer.drawText({22.0f, 58.0f}, "Click to select  Wheel: scroll / selected card wheel: scale  Up/Down: scale  Ctrl+S: save  Esc: exit", {198, 206, 222, 255}, 2);
     renderer.drawRect(layout.viewport.pos, layout.viewport.size, {96, 108, 132, 255});
 
     for (int i = 0; i < itemCount; ++i) {
@@ -6968,41 +6984,59 @@ void Game::renderObjectImageScaleEditScreen(Renderer& renderer) const
             continue;
         }
 
-        const bool selected = i == objectImageScaleSelectedIndex_;
+        const bool selected = i == selectedIndex;
         renderer.fillRect(rect.pos, rect.size, selected ? Color{44, 58, 92, 255} : Color{24, 30, 44, 255});
         renderer.drawRect(rect.pos, rect.size, selected ? Color{255, 228, 138, 255} : Color{74, 86, 108, 255});
 
-        const std::string& objectId = objectImageScaleObjectIds_[static_cast<std::size_t>(i)];
-        const ObjectDefinition* object = objectCatalog_.registry.findById(objectId);
+        const std::string& key = itemKeys[static_cast<std::size_t>(i)];
         float scale = 1.0f;
-        if (const auto it = objectImageScaleById_.find(objectId); it != objectImageScaleById_.end()) {
+        if (const auto it = scaleMap.find(key); it != scaleMap.end()) {
             scale = it->second;
         }
         scale = snapObjectImageScale(scale);
 
-        if (object != nullptr) {
-            ObjectImageDrawOptions options;
-            options.allowUpscale = true;
-            const bool drewImage = drawObjectImage(
-                renderer,
-                *object,
-                rect.pos + Vec2{rect.size.x * 0.5f, 38.0f},
-                {ObjectImageScalePreviewSize, ObjectImageScalePreviewSize},
-                options);
-            if (!drewImage) {
-                renderer.fillCircle(rect.pos + Vec2{rect.size.x * 0.5f, 38.0f}, 22.0f, {92, 102, 120, 255});
+        std::string name;
+        std::string subtitle;
+        bool drewImage = false;
+        const Vec2 previewCenter = rect.pos + Vec2{rect.size.x * 0.5f, 38.0f};
+        if (editingOthers) {
+            const WorldIconDefinition* definition = worldIconDefinitionByKey(key);
+            if (definition != nullptr) {
+                WorldIconDrawOptions options;
+                options.allowUpscale = true;
+                drewImage = drawWorldIcon(renderer, definition->iconId, previewCenter, {ObjectImageScalePreviewSize, ObjectImageScalePreviewSize}, options);
+                name = std::string(definition->displayName);
+                subtitle = "img_" + std::to_string(definition->imageNumber) + " / " + key;
+            } else {
+                name = key;
+                subtitle = "missing icon";
             }
         } else {
-            renderer.fillCircle(rect.pos + Vec2{rect.size.x * 0.5f, 38.0f}, 22.0f, {92, 102, 120, 255});
+            const ObjectDefinition* object = objectCatalog_.registry.findById(key);
+            if (object != nullptr) {
+                ObjectImageDrawOptions options;
+                options.allowUpscale = true;
+                drewImage = drawObjectImage(renderer, *object, previewCenter, {ObjectImageScalePreviewSize, ObjectImageScalePreviewSize}, options);
+                name = !object->name.empty() ? object->name : key;
+                subtitle = key;
+            } else {
+                name = key;
+                subtitle = "missing object";
+            }
         }
 
-        const std::string name = object != nullptr && !object->name.empty() ? object->name : objectId;
+        if (!drewImage) {
+            renderer.fillCircle(previewCenter, 22.0f, {92, 102, 120, 255});
+        }
+
         const std::string shownName = fittedSingleLineText(renderer, name, rect.size.x - 12.0f, 2);
-        renderer.drawText(rect.pos + Vec2{6.0f, 72.0f}, shownName, {232, 236, 245, 255}, 2);
+        renderer.drawText(rect.pos + Vec2{6.0f, 68.0f}, shownName, {232, 236, 245, 255}, 2);
+        const std::string shownSubtitle = fittedSingleLineText(renderer, subtitle, rect.size.x - 12.0f, 1);
+        renderer.drawText(rect.pos + Vec2{6.0f, 92.0f}, shownSubtitle, {146, 158, 178, 255}, 1);
 
         char scaleText[64];
         std::snprintf(scaleText, sizeof(scaleText), "x%.2f", scale);
-        renderer.drawText(rect.pos + Vec2{6.0f, 98.0f}, scaleText, selected ? Color{255, 232, 148, 255} : Color{186, 198, 216, 255}, 2);
+        renderer.drawText(rect.pos + Vec2{6.0f, 108.0f}, scaleText, selected ? Color{255, 232, 148, 255} : Color{186, 198, 216, 255}, 2);
     }
 
     const char* dirty = objectImageScaleDirty_ ? "Unsaved (*)" : "Saved";
@@ -7720,27 +7754,32 @@ bool Game::handleBaseEditCommand(std::string_view normalized)
 
 bool Game::handleObjectImageScaleCommand(std::string_view normalized)
 {
-    if (normalized == "game obj-image-scale toggle") {
+    const bool toggle = normalized == "game obj-image-scale toggle" || normalized == "game image-scale toggle";
+    const bool enable = normalized == "game obj-image-scale on" || normalized == "game image-scale on";
+    const bool disable = normalized == "game obj-image-scale off" || normalized == "game image-scale off";
+    const bool save = normalized == "game obj-image-scale save" || normalized == "game image-scale save";
+
+    if (toggle) {
         if (mode_ == ScreenMode::ObjectImageScaleEdit) {
             exitObjectImageScaleEditMode();
-            logInfo("Debug: object image scale edit disabled.");
+            logInfo("Debug: image scale edit disabled.");
         } else {
             enterObjectImageScaleEditMode();
-            logInfo("Debug: object image scale edit enabled.");
+            logInfo("Debug: image scale edit enabled.");
         }
         return true;
     }
-    if (normalized == "game obj-image-scale on") {
+    if (enable) {
         enterObjectImageScaleEditMode();
-        logInfo("Debug: object image scale edit enabled.");
+        logInfo("Debug: image scale edit enabled.");
         return true;
     }
-    if (normalized == "game obj-image-scale off") {
+    if (disable) {
         exitObjectImageScaleEditMode();
-        logInfo("Debug: object image scale edit disabled.");
+        logInfo("Debug: image scale edit disabled.");
         return true;
     }
-    if (normalized == "game obj-image-scale save") {
+    if (save) {
         std::string message;
         if (saveObjectImageScaleData(message)) {
             objectImageScaleStatus_ = message;
