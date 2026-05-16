@@ -1154,6 +1154,61 @@ void Game::maybeStartFirstDungeonDialogue()
     dialogue_.start(firstDungeonDialogue());
 }
 
+const StoryEvent* Game::findStoryEvent(std::string_view id) const
+{
+    const auto it = std::find_if(storyEvents_.begin(), storyEvents_.end(), [id](const StoryEvent& event) {
+        return event.id == id;
+    });
+    return it == storyEvents_.end() ? nullptr : &*it;
+}
+
+const StoryEvent* Game::findStoryEventForTrigger(std::string_view trigger) const
+{
+    const auto it = std::find_if(storyEvents_.begin(), storyEvents_.end(), [this, trigger](const StoryEvent& event) {
+        if (event.trigger != trigger) {
+            return false;
+        }
+        return event.onceFlag.empty() ||
+            std::find(storyFlags_.begin(), storyFlags_.end(), event.onceFlag) == storyFlags_.end();
+    });
+    return it == storyEvents_.end() ? nullptr : &*it;
+}
+
+bool Game::startStoryEvent(std::string_view id)
+{
+    const StoryEvent* event = findStoryEvent(id);
+    if (event == nullptr) {
+        logWarning("[story] event not found: " + std::string(id));
+        return false;
+    }
+
+    if (!event->onceFlag.empty()) {
+        const bool alreadySeen = std::find(storyFlags_.begin(), storyFlags_.end(), event->onceFlag) != storyFlags_.end();
+        if (alreadySeen) {
+            return false;
+        }
+        addStoryFlag(event->onceFlag);
+    }
+
+    baseStatus_.clear();
+    dialogue_.start(event->dialogue);
+    return true;
+}
+
+bool Game::startStoryEventForTrigger(std::string_view trigger)
+{
+    const StoryEvent* event = findStoryEventForTrigger(trigger);
+    if (event == nullptr) {
+        return false;
+    }
+    return startStoryEvent(event->id);
+}
+
+void Game::maybeStartOpeningBaseIntroEvent()
+{
+    startStoryEventForTrigger("title_base_enter");
+}
+
 void Game::updateBookshelfScreen(const Input& input, UiContext& ui)
 {
     const auto objectCountForPage = [this](BookshelfPage page) {
@@ -1695,10 +1750,6 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
             }
             return;
         }
-        if (input.toggleShortcutRowPressed()) {
-            closeProcessingCommand();
-            baseProcessingMode_ = (baseProcessingMode_ + 1) % BaseProcessingModeCount;
-        }
         const ProcessingMode currentProcessingMode = static_cast<ProcessingMode>(std::clamp(baseProcessingMode_, 0, BaseProcessingModeCount - 1));
         const std::array<UiCommandMenuItem, 1> commandItems{{{currentProcessingMode == ProcessingMode::Repair ? "修理する" : "強化する", true}}};
         const bool commandOpenBeforeUpdate = baseProcessingCommandMenu_.open;
@@ -1720,6 +1771,29 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
             ui.block(merchantPanelRect());
             return;
         }
+
+        std::array<UiTabItem, BaseProcessingModeCount> processingTabs{};
+        std::array<UiRect, BaseProcessingModeCount> processingTabRects{};
+        for (int i = 0; i < BaseProcessingModeCount; ++i) {
+            processingTabs[static_cast<std::size_t>(i)] = {processingModeName(static_cast<ProcessingMode>(i)), true};
+            processingTabRects[static_cast<std::size_t>(i)] = baseProcessingModeRect(i);
+        }
+        UiTabsInput processingTabsInput{};
+        processingTabsInput.focusDelta = input.toggleShortcutRowPressed() ? 1 : 0;
+        processingTabsInput.commit = input.confirmPressed() || input.useItemPressed();
+        const int processingTabSelection = updateUiTabs(
+            baseProcessingTabs_,
+            ui,
+            processingTabsInput,
+            baseProcessingMode_,
+            processingTabs.data(),
+            static_cast<int>(processingTabs.size()),
+            processingTabRects.data());
+        if (processingTabSelection >= 0) {
+            baseProcessingMode_ = processingTabSelection;
+            return;
+        }
+
         constexpr int Columns = 8;
         const int slotCount = inventory_.screenSlotCount();
         baseProcessingSelection_ = std::clamp(baseProcessingSelection_, 0, std::max(0, slotCount - 1));
@@ -1734,16 +1808,6 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
         }
         if (input.pressed(InputAction::MoveDown)) {
             baseProcessingSelection_ = std::min(slotCount - 1, baseProcessingSelection_ + Columns);
-        }
-        for (int i = 0; i < BaseProcessingModeCount; ++i) {
-            const UiRect rect = baseProcessingModeRect(i);
-            if (rect.contains(ui.mouse())) {
-                baseProcessingMode_ = i;
-            }
-            if (ui.pressed(rect)) {
-                baseProcessingMode_ = i;
-                return;
-            }
         }
         for (int i = 0; i < slotCount; ++i) {
             const UiRect rect = baseProcessingGridSlotRect(i);
@@ -2000,8 +2064,11 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
         returnToMerchantMenu();
         ui.block(merchantBounds);
         return;
-    }    if (baseUpgradeActive_) {
-        if (uiCancelRequested(baseCancelState_, input, ui, basePanelRect())) {
+    }
+
+    if (baseUpgradeActive_) {
+        const UiRect upgradePanel = baseUpgradePanelRect();
+        if (uiCancelRequested(baseCancelState_, input, ui, upgradePanel)) {
             baseUpgradeActive_ = false;
             baseStatus_.clear();
             return;
@@ -2019,23 +2086,123 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
             }
             if (ui.pressed(rect)) {
                 baseUpgradeSelection_ = i;
-                buyUpgrade(i);
+                ui.block(upgradePanel);
                 return;
             }
         }
-        if (input.confirmPressed() || input.useItemPressed()) {
+        if (ui.pressed(baseUpgradeConfirmRect())) {
             buyUpgrade(baseUpgradeSelection_);
+            ui.block(upgradePanel);
             return;
         }
-        ui.block(basePanelRect());
+        if (input.confirmPressed() || input.useItemPressed()) {
+            buyUpgrade(baseUpgradeSelection_);
+            ui.block(upgradePanel);
+            return;
+        }
+        ui.block(upgradePanel);
         return;
     }
 
     if (baseMiningStartChoiceActive_) {
-        if (input.backPressed()) {
+        const auto openRegenerateConfirm = [this]() {
+            baseRegenerateConfirmActive_ = true;
+            baseStatus_.clear();
+        };
+        const auto confirmRegenerate = [this]() {
+            baseRegenerateConfirmActive_ = false;
+            requestMiningStartTransition(false, true);
+        };
+
+        if (baseRegenerateConfirmActive_) {
+            if (ui.pressed(baseMiningRegenerateConfirmButtonRect(0)) || input.confirmPressed() || input.useItemPressed()) {
+                confirmRegenerate();
+                ui.block(baseMiningRegenerateConfirmRect());
+                return;
+            }
+            if (ui.pressed(baseMiningRegenerateConfirmButtonRect(1)) || input.backPressed()) {
+                baseRegenerateConfirmActive_ = false;
+                baseStatus_.clear();
+                ui.block(baseMiningRegenerateConfirmRect());
+                return;
+            }
+            ui.block(baseMiningRegenerateConfirmRect());
+            return;
+        }
+
+        if (uiCancelRequested(baseCancelState_, input, ui, basePanelRect())) {
             baseMiningStartChoiceActive_ = false;
+            baseRegenerateConfirmActive_ = false;
             baseStatus_.clear();
             return;
+        }
+
+        const std::vector<StageDefinition> selectableStages = stageCatalog_.getStagesSortedByDisplayOrder();
+        const int selectableStageCount = std::clamp(unlockedStages_, 0, static_cast<int>(selectableStages.size()));
+        const auto selectedStageIndex = [&]() {
+            for (int i = 0; i < selectableStageCount; ++i) {
+                if (selectableStages[static_cast<std::size_t>(i)].id == currentStageId_) {
+                    return i;
+                }
+            }
+            return std::clamp(currentStage_, 0, std::max(0, selectableStageCount - 1));
+        };
+        const auto syncWarpStateForSelectedStage = [this]() {
+            auto stateIt = dungeonStates_.find(currentStageId_);
+            if (stateIt == dungeonStates_.end() || !stateIt->second.valid) {
+                unlockedWarpPointCount_ = 0;
+                hasLatestWarpPointPosition_ = false;
+                latestWarpPointPosition_ = {};
+                return;
+            }
+
+            int discoveredCount = 0;
+            Vec2 latestPosition{};
+            bool hasLatest = false;
+            for (const WarpPoint& point : stateIt->second.warpPoints) {
+                if (!point.discovered) {
+                    continue;
+                }
+                ++discoveredCount;
+                latestPosition = point.position;
+                hasLatest = true;
+            }
+            unlockedWarpPointCount_ = discoveredCount;
+            hasLatestWarpPointPosition_ = hasLatest;
+            latestWarpPointPosition_ = hasLatest ? latestPosition : Vec2{};
+        };
+        const auto changeSelectedStage = [&](int delta) {
+            if (selectableStageCount <= 1) {
+                return false;
+            }
+            const int currentIndex = selectedStageIndex();
+            const int nextIndex = wrapStoragePageIndex(currentIndex, delta, selectableStageCount);
+            if (nextIndex == currentIndex) {
+                return false;
+            }
+            const StageDefinition& stage = selectableStages[static_cast<std::size_t>(nextIndex)];
+            currentStage_ = nextIndex;
+            currentStageId_ = stage.id;
+            resolveCurrentStageDefinition();
+            syncWarpStateForSelectedStage();
+            baseMiningStartSelection_ = unlockedWarpPointCount_ > 0 ? 1 : 0;
+            baseRegenerateConfirmActive_ = false;
+            baseStatus_.clear();
+            return true;
+        };
+
+        const UiPageSelectorRects stageSelector = baseMiningStageSelectorRects();
+        if (input.pressed(InputAction::MoveLeft) || ui.pressed(stageSelector.prev)) {
+            if (changeSelectedStage(-1)) {
+                ui.block(basePanelRect());
+                return;
+            }
+        }
+        if (input.pressed(InputAction::MoveRight) || ui.pressed(stageSelector.next)) {
+            if (changeSelectedStage(1)) {
+                ui.block(basePanelRect());
+                return;
+            }
         }
         if (input.pressed(InputAction::MoveUp)) {
             baseMiningStartSelection_ = (baseMiningStartSelection_ + BaseMiningStartChoiceCount - 1) % BaseMiningStartChoiceCount;
@@ -2059,13 +2226,7 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
                         baseStatus_ = "全ワープポイント発見後に再生成できます";
                         return;
                     }
-                    if (retainedWorldDropCountForCurrentStage() > 0 && !baseRegenerateConfirmActive_) {
-                        baseRegenerateConfirmActive_ = true;
-                        baseStatus_ = "未回収ドロップが消えます。もう一度選ぶと再生成します";
-                        return;
-                    }
-                    baseRegenerateConfirmActive_ = false;
-                    requestMiningStartTransition(false, true);
+                    openRegenerateConfirm();
                     return;
                 }
                 baseRegenerateConfirmActive_ = false;
@@ -2083,13 +2244,7 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
                     baseStatus_ = "全ワープポイント発見後に再生成できます";
                     return;
                 }
-                if (retainedWorldDropCountForCurrentStage() > 0 && !baseRegenerateConfirmActive_) {
-                    baseRegenerateConfirmActive_ = true;
-                    baseStatus_ = "未回収ドロップが消えます。もう一度選ぶと再生成します";
-                    return;
-                }
-                baseRegenerateConfirmActive_ = false;
-                requestMiningStartTransition(false, true);
+                openRegenerateConfirm();
                 return;
             }
             baseRegenerateConfirmActive_ = false;
@@ -2115,6 +2270,7 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
         case BaseFacilityAction::MineExit:
             baseMiningStartChoiceActive_ = true;
             baseMiningStartSelection_ = unlockedWarpPointCount_ > 0 ? 1 : 0;
+            baseRegenerateConfirmActive_ = false;
             baseStatus_.clear();
             break;
         case BaseFacilityAction::Storage:
@@ -2159,6 +2315,7 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
         case BaseFacilityAction::Processing:
             baseProcessingActive_ = true;
             baseProcessingMode_ = 0;
+            baseProcessingTabs_.focusedIndex = baseProcessingMode_;
             baseProcessingSelection_ = 0;
             closeUiCommandMenu(baseProcessingCommandMenu_);
             baseProcessingCommandSlot_ = -1;
@@ -2761,7 +2918,7 @@ void Game::renderBaseScreen(Renderer& renderer) const
         baseMiningStartChoiceActive_;
     const UiRect panel = (baseProcessingActive_ || (baseSellActive_ && baseMerchantMode_ != MerchantUiMode::ChooseAction))
         ? merchantPanelRect()
-        : basePanelRect();
+        : (baseUpgradeActive_ ? baseUpgradePanelRect() : basePanelRect());
     std::optional<UiWindowScope> panelWindow;
     std::optional<UiCancelControlScope> panelCancelScope;
     if (panelUiActive) {
@@ -2775,11 +2932,11 @@ void Game::renderBaseScreen(Renderer& renderer) const
                 ? "F/Enter 買う  Esc/右クリック 戻る"
                 : (baseMerchantMode_ == MerchantUiMode::Sell ? "F/Enter 売る  Esc/右クリック 戻る" : "F/Enter 決定  Esc/右クリック 戻る");
         } else if (baseProcessingActive_) {
-            panelHelp = "F/Enter 実行  Tab 作業切替  Esc/右クリック 戻る";
+            panelHelp = "F/Enter 確定/実行  Tab 作業選択  Esc/右クリック 戻る";
         } else if (baseUpgradeActive_) {
             panelHelp = "F/Enter 強化  Esc/右クリック 戻る";
         } else if (baseMiningStartChoiceActive_) {
-            panelHelp = "Esc/右クリック 戻る";
+            panelHelp = "F/Enter 出発  左クリック 決定  Esc/右クリック 戻る";
         }
         const char* panelTitle = "魔女の拠点";
         if (baseBookshelfActive_) {
@@ -2801,7 +2958,7 @@ void Game::renderBaseScreen(Renderer& renderer) const
         } else if (baseMiningStartChoiceActive_) {
             panelTitle = "採掘出口";
         }
-        const bool panelCancelButton = !baseMiningStartChoiceActive_;
+        const bool panelCancelButton = true;
         if (panelCancelButton) {
             panelCancelScope.emplace(baseCancelState_);
         }
@@ -2896,9 +3053,19 @@ void Game::renderBaseScreen(Renderer& renderer) const
         renderer.drawText(panel.pos + Vec2{54.0f, 448.0f}, buffer, {198, 198, 206, 255}, 2);
         drawUiButton(renderer, ringWorkshopConfirmRect(), "再調整確定", false, uiActionButtonStyle());
     } else if (baseProcessingActive_) {
+        std::array<UiTabItem, BaseProcessingModeCount> processingTabs{};
+        std::array<UiRect, BaseProcessingModeCount> processingTabRects{};
         for (int i = 0; i < BaseProcessingModeCount; ++i) {
-            drawUiButton(renderer, baseProcessingModeRect(i), processingModeName(static_cast<ProcessingMode>(i)), i == baseProcessingMode_);
+            processingTabs[static_cast<std::size_t>(i)] = {processingModeName(static_cast<ProcessingMode>(i)), true};
+            processingTabRects[static_cast<std::size_t>(i)] = baseProcessingModeRect(i);
         }
+        drawUiTabs(
+            renderer,
+            baseProcessingTabs_,
+            baseProcessingMode_,
+            processingTabs.data(),
+            static_cast<int>(processingTabs.size()),
+            processingTabRects.data());
 
         const ProcessingMode mode = static_cast<ProcessingMode>(std::clamp(baseProcessingMode_, 0, BaseProcessingModeCount - 1));
         const auto entryViewForScreenSlot = [this](int slot) {
@@ -3190,49 +3357,314 @@ void Game::renderBaseScreen(Renderer& renderer) const
             }
         }
     } else if (baseUpgradeActive_) {
-        renderer.drawText(panel.pos + Vec2{152.0f, 118.0f}, "拠点強化炉", {246, 235, 255, 255}, 3);
-        renderer.drawText(panel.pos + Vec2{54.0f, 146.0f}, "拠点拡張・機能解禁", {198, 198, 206, 255}, 2);
-        for (int i = 0; i < BaseUpgradeItemCount; ++i) {
-            if (!upgradeImplemented(i)) {
-                std::snprintf(buffer, sizeof(buffer), "%s  未実装", upgradeName(i));
-            } else if (upgradeMaxed(i)) {
-                std::snprintf(buffer, sizeof(buffer), "%s Lv.%d/%d  上限", upgradeName(i), upgradeLevel(i), upgradeMaxLevel(i));
-            } else {
-                const MaterialType materialType = upgradeMaterialType(i);
-                std::snprintf(buffer, sizeof(buffer), "%s Lv.%d/%d  %dG %s%d",
-                    upgradeName(i),
-                    upgradeLevel(i),
-                    upgradeMaxLevel(i),
-                    upgradeCost(i),
-                    std::string(materialTypeDisplayName(materialType)).c_str(),
-                    upgradeMaterialCost(i));
+        const int selected = std::clamp(baseUpgradeSelection_, 0, BaseUpgradeItemCount - 1);
+        const auto shortName = [](int index) -> const char* {
+            switch (index) {
+            case 0: return "倉庫容量";
+            case 1: return "商人機能";
+            case 2: return "作業台機能";
+            case 3: return "リング工房";
+            case 4: return "最大HP";
+            case 5: return "リング半径";
+            case 6: return "リング速度";
+            case 7: return "性能枠";
+            default: return "";
             }
-            drawUiButton(renderer, baseUpgradeItemRect(i), buffer, i == baseUpgradeSelection_, uiActionButtonStyle());
+        };
+        const auto warehouseCapacityForUiLevel = [](int level) {
+            constexpr std::array<int, 5> Capacities{{48, 72, 100, 140, 200}};
+            const int index = std::clamp(level - 1, 0, static_cast<int>(Capacities.size()) - 1);
+            return Capacities[static_cast<std::size_t>(index)];
+        };
+        const auto merchantFeature = [](int level) -> const char* {
+            switch (level) {
+            case 1: return "通常売買";
+            case 2: return "品揃え増加";
+            case 3: return "買取基本価格+10%";
+            case 4: return "高価買取カテゴリ";
+            case 5: return "珍品販売";
+            case 6: return "買取基本価格+20%";
+            case 7: return "珍品レア度上昇";
+            default: return "未解禁";
+            }
+        };
+        const auto processingFeature = [](int level) -> const char* {
+            switch (level) {
+            case 1: return "軽量化";
+            case 2: return "重量化";
+            case 3: return "大型化";
+            case 4: return "小型化";
+            case 5: return "追加効果付与";
+            default: return "未解禁";
+            }
+        };
+        const float listLabelX = panel.pos.x + 40.0f;
+        renderer.drawText({listLabelX, 148.0f}, "拠点機能", {198, 198, 206, 255}, 2);
+        renderer.drawText({listLabelX, 270.0f}, "施設解禁", {198, 198, 206, 255}, 2);
+        renderer.drawText({listLabelX, 392.0f}, "プレイ性能", {198, 198, 206, 255}, 2);
+        for (int i = 0; i < BaseUpgradeItemCount; ++i) {
+            const UiRect rect = baseUpgradeItemRect(i);
+            const bool implemented = upgradeImplemented(i);
+            const bool maxed = implemented && upgradeMaxed(i);
+            const bool hot = i == selected;
+            if (!implemented) {
+                std::snprintf(buffer, sizeof(buffer), "未実装");
+            } else if (maxed) {
+                std::snprintf(buffer, sizeof(buffer), "上限");
+            } else {
+                std::snprintf(buffer, sizeof(buffer), "Lv.%d/%d", upgradeLevel(i), upgradeMaxLevel(i));
+            }
+            UiSmallSelectButtonStyle selectStyle;
+            selectStyle.valueText = maxed ? Color{160, 220, 190, 255} : ui::TextMuted;
+            drawUiSmallSelectButton(renderer, rect, shortName(i), buffer, hot, !implemented, selectStyle);
         }
-        std::snprintf(buffer, sizeof(buffer), "所持: %dG / 古木 %d / 魔力のしずく %d",
-            money_,
-            inventory_.materialCount(MaterialType::OldWoodBuildingMaterial),
-            inventory_.materialCount(MaterialType::ManaDrop));
-        renderer.drawText(panel.pos + Vec2{54.0f, 448.0f}, buffer, {198, 198, 206, 255}, 2);
-        std::snprintf(buffer, sizeof(buffer), "効果: 倉庫%d枠 / 商人Lv.%d / 加工解禁Lv.%d / HP+%d 半径+%d%% 速度+%d%%",
-            warehouseCapacity(),
-            merchantUpgradeLevel_,
-            processingUnlockLevel_,
-            maxHpUpgradeLevel_ * 2,
-            ringRadiusUpgradeLevel_ * 8,
-            ringSpeedUpgradeLevel_ * 8);
-        renderer.drawText(panel.pos + Vec2{54.0f, 474.0f}, buffer, {198, 198, 206, 255}, 2);
+
+        const UiRect detailPanel = baseUpgradeDetailPanelRect();
+        drawUiSubPanel(renderer, detailPanel);
+
+        const auto drawTextRun = [&renderer](Vec2& pos, std::string_view text, Color color, int scale) {
+            renderer.drawText(pos, text, color, scale);
+            pos.x += renderer.measureText(text, scale).x;
+        };
+        const auto beginDetailRow = [&renderer, detailPanel](float& y, std::string_view label) {
+            constexpr float LabelWidth = 118.0f;
+            const UiRect content = uiSubPanelContentRect(detailPanel);
+            renderer.drawText({content.pos.x, y}, label, ui::TextMuted, 2);
+            return Vec2{content.pos.x + LabelWidth, y};
+        };
+        const auto drawDetailTextRow = [&](float& y, std::string_view label, std::string_view text, Color color) {
+            constexpr float LabelWidth = 118.0f;
+            constexpr float MinLineHeight = 31.0f;
+            constexpr float LineGap = 4.0f;
+            const UiRect content = uiSubPanelContentRect(detailPanel);
+            const Vec2 pos = beginDetailRow(y, label);
+            const float valueMaxWidth = std::max(0.0f, content.size.x - LabelWidth);
+            renderer.drawWrappedText(pos, text, valueMaxWidth, color, 2);
+            y += std::max(MinLineHeight, renderer.measureWrappedText(text, valueMaxWidth, 2).y + LineGap);
+        };
+        const auto drawMoneyCostLine = [&](float& y, std::string_view label, int cost) {
+            Vec2 pos = beginDetailRow(y, label);
+            const Color numberColor = money_ >= cost ? ui::Text : Color{238, 82, 82, 255};
+            drawTextRun(pos, std::to_string(cost), numberColor, 2);
+            drawTextRun(pos, "G", ui::Text, 2);
+            y += 31.0f;
+        };
+        const auto drawMaterialCostLine = [&](float& y, std::string_view label, MaterialType type, int cost) {
+            const int owned = inventory_.materialCount(type);
+            const bool enough = owned >= cost;
+            const Color numberColor = enough ? ui::Text : Color{238, 82, 82, 255};
+            Vec2 pos = beginDetailRow(y, label);
+            drawTextRun(pos, std::string(materialTypeDisplayName(type)) + " ×", ui::Text, 2);
+            drawTextRun(pos, std::to_string(cost), numberColor, 2);
+            drawTextRun(pos, " (", ui::Text, 2);
+            drawTextRun(pos, std::to_string(owned), numberColor, 2);
+            drawTextRun(pos, ")", ui::Text, 2);
+            y += 31.0f;
+        };
+        const auto drawEffectChangeLine = [&](float& y, std::string_view label, std::string_view prefix, std::string_view current, std::string_view next) {
+            constexpr Color UpgradeValueColor{255, 230, 150, 255};
+            Vec2 pos = beginDetailRow(y, label);
+            drawTextRun(pos, prefix, ui::Text, 2);
+            drawTextRun(pos, current, ui::Text, 2);
+            drawTextRun(pos, " -> ", ui::TextMuted, 2);
+            drawTextRun(pos, next, UpgradeValueColor, 2);
+            y += 31.0f;
+        };
+
+        float detailY = drawUiDetailHeader(renderer, detailPanel, upgradeName(selected));
+
+        const bool implemented = upgradeImplemented(selected);
+        const bool maxed = implemented && upgradeMaxed(selected);
+        const MaterialType materialType = upgradeMaterialType(selected);
+        const int materialCost = upgradeMaterialCost(selected);
+        const int moneyCost = upgradeCost(selected);
+
+        if (implemented && !maxed) {
+            drawMoneyCostLine(detailY, "必要素材", moneyCost);
+            if (materialCost > 0) {
+                drawMaterialCostLine(detailY, "", materialType, materialCost);
+            }
+        } else {
+            drawDetailTextRow(detailY, "必要素材", "なし", ui::Text);
+        }
+
+        char currentValue[64];
+        char nextValue[64];
+        const int level = upgradeLevel(selected);
+        const int maxLevel = upgradeMaxLevel(selected);
+        const int nextLevel = std::min(maxLevel, level + 1);
+        if (maxed) {
+            drawDetailTextRow(detailY, "効果", "上限到達済み", ui::TextMuted);
+        } else {
+            switch (selected) {
+            case 0:
+                std::snprintf(currentValue, sizeof(currentValue), "%d枠", warehouseCapacityForUiLevel(level));
+                std::snprintf(nextValue, sizeof(nextValue), "%d枠", warehouseCapacityForUiLevel(nextLevel));
+                drawEffectChangeLine(detailY, "効果", "倉庫容量: ", currentValue, nextValue);
+                break;
+            case 1:
+                drawEffectChangeLine(detailY, "効果", "商人機能: ", merchantFeature(level), merchantFeature(nextLevel));
+                break;
+            case 2:
+                drawEffectChangeLine(detailY, "効果", "加工解禁: ", processingFeature(level), processingFeature(nextLevel));
+                drawDetailTextRow(detailY, "", "現時点では保存と表示のみです。", ui::TextMuted);
+                break;
+            case 3:
+                drawDetailTextRow(detailY, "効果", "リング工房スペースを解禁", Color{255, 230, 150, 255});
+                break;
+            case 4:
+                std::snprintf(currentValue, sizeof(currentValue), "+%d", level * 2);
+                std::snprintf(nextValue, sizeof(nextValue), "+%d", nextLevel * 2);
+                drawEffectChangeLine(detailY, "効果", "最大HP: ", currentValue, nextValue);
+                break;
+            case 5:
+                std::snprintf(currentValue, sizeof(currentValue), "+%d%%", level * 8);
+                std::snprintf(nextValue, sizeof(nextValue), "+%d%%", nextLevel * 8);
+                drawEffectChangeLine(detailY, "効果", "初期リング半径: ", currentValue, nextValue);
+                break;
+            case 6:
+                std::snprintf(currentValue, sizeof(currentValue), "+%d%%", level * 8);
+                std::snprintf(nextValue, sizeof(nextValue), "+%d%%", nextLevel * 8);
+                drawEffectChangeLine(detailY, "効果", "初期リング速度: ", currentValue, nextValue);
+                break;
+            case 7:
+                drawDetailTextRow(detailY, "効果", "将来用のプレイ性能カテゴリです。", ui::TextMuted);
+                drawDetailTextRow(detailY, "", "現在は最大HP、リング半径、リング速度を個別に強化します。", ui::TextMuted);
+                break;
+            default:
+                break;
+            }
+        }
+
+        UiButtonStyle confirmStyle = uiActionButtonStyle();
+        const char* confirmLabel = "強化する";
+        if (!implemented) {
+            confirmLabel = "未実装";
+            confirmStyle.fill = {20, 24, 38, 190};
+            confirmStyle.fillHot = confirmStyle.fill;
+            confirmStyle.text = ui::TextDisabled;
+        } else if (maxed) {
+            confirmLabel = "上限";
+            confirmStyle.fill = {26, 42, 62, 204};
+            confirmStyle.fillHot = confirmStyle.fill;
+            confirmStyle.text = ui::TextMuted;
+        }
+        drawUiButton(renderer, baseUpgradeConfirmRect(), confirmLabel, false, confirmStyle);
     } else if (baseMiningStartChoiceActive_) {
-        renderer.drawText(panel.pos + Vec2{178.0f, 238.0f}, "採掘出口", {246, 235, 255, 255}, 3);
-        renderer.drawText(panel.pos + Vec2{116.0f, 278.0f}, "開始地点または最新ワープポイントから出発", {198, 198, 206, 255}, 2);
+        const UiRect body = uiBodyRect(panel);
+        const float contentLeft = baseMiningContentLeft();
+        const std::string stageName = currentStageDefinition().name.empty()
+            ? currentStageId_
+            : currentStageDefinition().name;
+        const auto retainedStage = dungeonStates_.find(currentStageId_);
+        const bool hasRetainedDungeon = retainedStage != dungeonStates_.end() && retainedStage->second.valid;
+        int totalWarpPoints = MaxWarpPointsPerRun;
+        if (hasRetainedDungeon && !retainedStage->second.warpPoints.empty()) {
+            totalWarpPoints = static_cast<int>(retainedStage->second.warpPoints.size());
+        } else if (!warpPoints_.empty()) {
+            totalWarpPoints = static_cast<int>(warpPoints_.size());
+        }
+        totalWarpPoints = std::max(1, totalWarpPoints);
+        const int discoveredWarpPoints = std::clamp(unlockedWarpPointCount_, 0, totalWarpPoints);
+
+        const auto drawCenteredTextInRect = [&](UiRect rect, std::string_view text, Color color, int scale) {
+            const Vec2 textSize = renderer.measureText(text, scale);
+            renderer.drawText(
+                rect.pos + Vec2{
+                    std::max(0.0f, (rect.size.x - textSize.x) * 0.5f),
+                    std::max(0.0f, (rect.size.y - textSize.y) * 0.5f),
+                },
+                text,
+                color,
+                scale);
+        };
+
+        const std::vector<StageDefinition> selectableStages = stageCatalog_.getStagesSortedByDisplayOrder();
+        const int selectableStageCount = std::clamp(unlockedStages_, 0, static_cast<int>(selectableStages.size()));
+        const bool canSelectDestination = selectableStageCount > 1;
+        const UiPageSelectorRects stageSelector = baseMiningStageSelectorRects();
+
+        renderer.drawText({contentLeft, body.pos.y}, "行き先", {198, 198, 206, 255}, 2);
+        drawUiRectButton(renderer, stageSelector.prev, "<", false);
+        drawUiRectButton(renderer, stageSelector.next, ">", false);
+        if (!canSelectDestination) {
+            renderer.fillRect(stageSelector.prev.pos, stageSelector.prev.size, {0, 0, 0, 118});
+            renderer.fillRect(stageSelector.next.pos, stageSelector.next.size, {0, 0, 0, 118});
+        }
+        const int stageNameScale = renderer.measureText(stageName, 3).x <= stageSelector.text.size.x ? 3 : 2;
+        drawCenteredTextInRect(stageSelector.text, stageName, {246, 235, 255, 255}, stageNameScale);
+
+        WorldIconDrawOptions progressIconOptions;
+        progressIconOptions.applyScaleOverride = false;
+        std::snprintf(buffer, sizeof(buffer), "ワープポイント %d/%d", discoveredWarpPoints, totalWarpPoints);
+        (void)drawWorldIcon(renderer, WorldIconId::WarpPoint, {contentLeft, body.pos.y + 38.0f}, {28.0f, 28.0f}, progressIconOptions);
+        renderer.drawText({contentLeft + 36.0f, body.pos.y + 44.0f}, buffer, {198, 198, 206, 255}, 2);
+        renderer.drawText({contentLeft, body.pos.y + 78.0f}, "出発地点を選んでください", {198, 198, 206, 255}, 2);
+
         for (int i = 0; i < BaseMiningStartChoiceCount; ++i) {
             const bool disabled = (i == 1 && unlockedWarpPointCount_ <= 0) || (i == 2 && !canRegenerateCurrentStage());
-            drawUiButton(renderer, baseMiningStartChoiceRect(i), baseMiningStartChoiceName(i), i == baseMiningStartSelection_ && !disabled, uiActionButtonStyle());
-            if (disabled) {
-                const UiRect rect = baseMiningStartChoiceRect(i);
-                renderer.fillRect(rect.pos, rect.size, {0, 0, 0, 110});
-                renderer.drawText(rect.pos + Vec2{116.0f, 14.0f}, "未解放", {150, 150, 160, 255}, 2);
+            const char* description = "";
+            switch (i) {
+            case 0:
+                description = hasRetainedDungeon ? "現在の坑道を入口から再開" : "新しい坑道を生成して入口から出発";
+                break;
+            case 1:
+                description = disabled ? "ワープポイントを見つけると使えます" : "最後に発見した地点から再開";
+                break;
+            case 2:
+                description = disabled ? "全発見後に坑道を作り直せます" : "地形・敵・宝箱・ワープ配置を作り直す";
+                break;
+            default:
+                break;
             }
+
+            const UiRect rect = baseMiningStartChoiceRect(i);
+            drawUiButton(renderer, rect, disabled ? "" : baseMiningStartChoiceName(i), i == baseMiningStartSelection_ && !disabled, uiActionButtonStyle());
+            if (i == 1) {
+                WorldIconDrawOptions iconOptions;
+                iconOptions.applyScaleOverride = false;
+                iconOptions.tint = disabled ? Color{112, 112, 122, 210} : Color{255, 255, 255, 255};
+                (void)drawWorldIcon(renderer, WorldIconId::WarpPoint, rect.pos + Vec2{38.0f, 26.0f}, {30.0f, 30.0f}, iconOptions);
+            }
+            if (disabled) {
+                UiRect disabledRect = rect;
+                disabledRect.size.y = ui::ButtonHeight;
+                renderer.fillRect(disabledRect.pos, disabledRect.size, {0, 0, 0, 110});
+                std::array<std::string_view, 2> reasonLines{{"未解放", ""}};
+                int reasonLineCount = 1;
+                if (i == 1) {
+                    reasonLines = {{"ワープポイント", "未発見"}};
+                    reasonLineCount = 2;
+                } else if (i == 2) {
+                    reasonLines = {{"全ワープポイント発見後", "解放"}};
+                    reasonLineCount = 2;
+                }
+                constexpr int ReasonScale = 2;
+                constexpr float ReasonLineGap = 2.0f;
+                const float reasonLineHeight = renderer.measureText(reasonLines[0], ReasonScale).y;
+                const float reasonBlockHeight =
+                    reasonLineHeight * static_cast<float>(reasonLineCount) +
+                    ReasonLineGap * static_cast<float>(std::max(0, reasonLineCount - 1));
+                float reasonY = disabledRect.pos.y + std::max(0.0f, (disabledRect.size.y - reasonBlockHeight) * 0.5f);
+                for (int lineIndex = 0; lineIndex < reasonLineCount; ++lineIndex) {
+                    const Vec2 reasonSize = renderer.measureText(reasonLines[static_cast<std::size_t>(lineIndex)], ReasonScale);
+                    renderer.drawText(
+                        {disabledRect.pos.x + std::max(0.0f, (disabledRect.size.x - reasonSize.x) * 0.5f), reasonY},
+                        reasonLines[static_cast<std::size_t>(lineIndex)],
+                        {150, 150, 160, 255},
+                        ReasonScale);
+                    reasonY += reasonLineHeight + ReasonLineGap;
+                }
+            }
+            const Vec2 descriptionSize = renderer.measureText(description, 2);
+            renderer.drawText(
+                rect.pos + Vec2{
+                    std::max(0.0f, (rect.size.x - descriptionSize.x) * 0.5f),
+                    ui::ButtonHeight + 4.0f,
+                },
+                description,
+                disabled ? Color{150, 150, 160, 255} : Color{198, 198, 206, 255},
+                2);
         }
     } else {
         const char* promptName = nearest != nullptr ? nearest->displayName : "";
@@ -3255,7 +3687,34 @@ void Game::renderBaseScreen(Renderer& renderer) const
     }
 
     if (!baseStatus_.empty()) {
-        renderer.drawText(panel.pos + Vec2{54.0f, 504.0f}, baseStatus_, {255, 230, 150, 255}, 2);
+        const Vec2 statusPos = baseUpgradeActive_ ? baseUpgradePanelRect().pos + Vec2{32.0f, 468.0f} : panel.pos + Vec2{54.0f, 504.0f};
+        renderer.drawText(statusPos, baseStatus_, {255, 230, 150, 255}, 2);
+    }
+    if (baseRegenerateConfirmActive_) {
+        panelCancelScope.reset();
+        panelWindow.reset();
+
+        renderer.fillRect(
+            {0.0f, 0.0f},
+            {static_cast<float>(camera_.width()), static_cast<float>(camera_.height())},
+            {0, 0, 0, 96});
+
+        const UiRect confirmPanel = baseMiningRegenerateConfirmRect();
+        UiWindowScope confirmWindow(
+            renderer,
+            "base.mining.regenerate.confirm",
+            confirmPanel,
+            "再生成確認",
+            "F/Enter 再生成  Esc/右クリック 戻る",
+            UiWindowOptions{true, false});
+        renderer.drawWrappedText(
+            confirmPanel.pos + Vec2{40.0f, 112.0f},
+            "現在の坑道状態を破棄して、地形・敵・宝箱・ワープポイントを作り直します。\n拾っていないドロップがある場合は消えます。",
+            confirmPanel.size.x - 80.0f,
+            {246, 235, 255, 255},
+            2);
+        drawUiButton(renderer, baseMiningRegenerateConfirmButtonRect(0), "再生成する", true, uiActionButtonStyle());
+        drawUiButton(renderer, baseMiningRegenerateConfirmButtonRect(1), "戻る", false, uiCancelButtonStyle());
     }
 }
 

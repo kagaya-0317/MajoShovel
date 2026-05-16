@@ -4,8 +4,10 @@
 #include "engine/Math.hpp"
 #include "engine/ObjectPool.hpp"
 #include "engine/Renderer.hpp"
+#include "game/DepthRender.hpp"
 #include "game/TileMap.hpp"
 #include <string_view>
+#include <vector>
 
 namespace majo {
 
@@ -75,6 +77,14 @@ struct Effect {
     float angularVelocity = 0.0f;
     float shardAspect = 1.0f;
     int shardVariant = 0;
+    bool physicsShard = false;
+    float altitude = 0.0f;
+    float verticalVelocity = 0.0f;
+    float gravity = 0.0f;
+    float bounceRestitution = 0.0f;
+    float groundFriction = 0.0f;
+    float shadowVisualSize = 0.0f;
+    int bouncesRemaining = 0;
 };
 
 struct DamagePopup {
@@ -121,6 +131,8 @@ class EffectSystem {
 public:
     void update(float dt);
     void render(Renderer& renderer);
+    void renderShadows(Renderer& renderer);
+    void appendRenderEntries(std::vector<DepthRenderEntry>& entries, Renderer& renderer);
     void renderForeground(Renderer& renderer);
     void renderDamagePopups(Renderer& renderer);
 
@@ -157,7 +169,7 @@ private:
     void renderLayer(Renderer& renderer, EffectLayer layer);
     void renderSmokeLayer(Renderer& renderer, EffectLayer layer);
     void spawnRing(Vec2 position, float startRadius, float endRadius, Color color, float duration, EffectLayer layer = EffectLayer::World);
-    void spawnParticle(
+    Effect* spawnParticle(
         Vec2 position,
         Vec2 velocity,
         float radius,

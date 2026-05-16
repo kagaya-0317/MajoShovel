@@ -10,7 +10,10 @@ namespace majo {
 
 namespace {
 
+constexpr float StartCavernRadius = 3.2f;
 constexpr float GoalCavernRadius = 9.0f;
+constexpr float WarpCavernRadius = 4.1f;
+constexpr float SoftPathMargin = 3.4f;
 constexpr std::string_view CrackTexturePath = "assets/crack.png";
 constexpr int CrackTextureFrames = 4;
 
@@ -105,6 +108,82 @@ int baseHpFor(TileType type, const RuntimeBalance& config)
         return 0;
     }
     return config.dirtHp;
+}
+
+TileType mixedSoftPathTile(float fineNoise, float broadNoise)
+{
+    if (fineNoise < 0.14f) {
+        return TileType::Empty;
+    }
+    if (fineNoise > 0.92f) {
+        return TileType::Ore;
+    }
+    if (fineNoise > 0.72f) {
+        return TileType::Rock;
+    }
+    if (broadNoise > 0.80f && fineNoise < 0.24f) {
+        return TileType::Rock;
+    }
+    return TileType::Dirt;
+}
+
+TileType mixedRockBandTile(float fineNoise, float broadNoise)
+{
+    if (fineNoise < 0.10f) {
+        return TileType::Empty;
+    }
+    if (fineNoise < 0.22f) {
+        return TileType::Dirt;
+    }
+    if (fineNoise > 0.84f) {
+        return TileType::Ore;
+    }
+    if (broadNoise > 0.66f && fineNoise > 0.38f) {
+        return TileType::HardRock;
+    }
+    return TileType::Rock;
+}
+
+TileType mixedDeepWallTile(float fineNoise, float broadNoise)
+{
+    if (fineNoise < 0.07f) {
+        return TileType::Empty;
+    }
+    if (fineNoise < 0.16f) {
+        return TileType::Dirt;
+    }
+    if (fineNoise > 0.88f) {
+        return TileType::Ore;
+    }
+    return broadNoise > 0.52f ? TileType::HardRock : TileType::Rock;
+}
+
+TileType mixedOreRoomWallTile(float fineNoise, float broadNoise)
+{
+    if (fineNoise < 0.08f) {
+        return TileType::Empty;
+    }
+    if (fineNoise < 0.18f) {
+        return TileType::Dirt;
+    }
+    if (fineNoise > 0.34f) {
+        return TileType::Ore;
+    }
+    return broadNoise > 0.70f ? TileType::HardRock : TileType::Rock;
+}
+
+TileType mixedTreasureWallTile(float fineNoise, float broadNoise)
+{
+    if (fineNoise < 0.06f) {
+        return TileType::Empty;
+    }
+    if (fineNoise < 0.14f) {
+        return TileType::Dirt;
+    }
+    if (fineNoise > 0.90f) {
+        return TileType::Ore;
+    }
+    return broadNoise > 0.36f ? TileType::HardRock : TileType::Rock;
 }
 
 }
@@ -279,6 +358,29 @@ void TileMap::initializeChunk(Chunk& chunk, const RuntimeBalance& config)
             }
         }
     }
+}
+
+void TileMap::setTileOverride(DungeonTile tile, TileType type)
+{
+    tileOverrides_[key(tile.x, tile.y)] = type;
+
+    const int cx = floorDiv(tile.x, balance::ChunkTiles);
+    const int cy = floorDiv(tile.y, balance::ChunkTiles);
+    auto chunkIt = chunks_.find(key(cx, cy));
+    if (chunkIt == chunks_.end()) {
+        return;
+    }
+
+    Tile& target = chunkIt->second.at(floorMod(tile.x, balance::ChunkTiles), floorMod(tile.y, balance::ChunkTiles));
+    target.type = type;
+    clearCrackCacheForTile(tile.x, tile.y);
+    if (type == TileType::Empty) {
+        target.hp = 0;
+        return;
+    }
+
+    const TerrainDebugInfo info = terrainInfoForTile(tile.x, tile.y, nullptr);
+    target.hp = static_cast<unsigned char>(clampTileHp(info.effectiveHp));
 }
 
 void TileMap::updateAround(Vec2 worldCenter, float, const RuntimeBalance& config, const DungeonLayout& dungeonLayout)
@@ -542,36 +644,40 @@ TerrainDebugInfo TileMap::terrainInfoForTile(int tx, int ty, const Tile* tile) c
     } else if (currentRoomType == SpecialRoomType::CoinRoom && distanceFromSpecialRoomCenter <= specialRoomRadius) {
         generatedType = distanceFromSpecialRoomCenter <= specialRoomRadius * 0.88f ? TileType::Empty : TileType::Dirt;
     } else if (currentRoomType == SpecialRoomType::EnemyRoom && distanceFromSpecialRoomCenter <= specialRoomRadius) {
-        generatedType = distanceFromSpecialRoomCenter <= specialRoomRadius * 0.78f ? TileType::Empty : TileType::Rock;
+        generatedType = distanceFromSpecialRoomCenter <= specialRoomRadius * 0.78f
+            ? TileType::Empty
+            : mixedRockBandTile(fineNoise, broadNoise);
     } else if (currentRoomType == SpecialRoomType::OreRoom && distanceFromSpecialRoomCenter <= specialRoomRadius + 1.5f) {
         if (distanceFromSpecialRoomCenter <= specialRoomRadius * 0.50f) {
             generatedType = TileType::Empty;
         } else if (distanceFromSpecialRoomCenter <= specialRoomRadius) {
-            generatedType = fineNoise > 0.28f ? TileType::Ore : TileType::Rock;
+            generatedType = mixedOreRoomWallTile(fineNoise, broadNoise);
         } else {
-            generatedType = fineNoise > 0.45f ? TileType::Ore : TileType::Rock;
+            generatedType = mixedOreRoomWallTile(fineNoise, broadNoise);
         }
     } else if (currentRoomType == SpecialRoomType::TreasureRoom && distanceFromSpecialRoomCenter <= specialRoomRadius + 2.0f) {
         if (distanceFromSpecialRoomCenter <= specialRoomRadius * 0.58f) {
             generatedType = TileType::Empty;
         } else {
-            generatedType = TileType::HardRock;
+            generatedType = mixedTreasureWallTile(fineNoise, broadNoise);
         }
-    } else if (distanceFromWarp <= 2.35f) {
+    } else if (metrics.distanceFromStart <= StartCavernRadius + (widthNoise - 0.5f) * 0.8f) {
+        generatedType = TileType::Empty;
+    } else if (distanceFromWarp <= WarpCavernRadius) {
         generatedType = TileType::Empty;
     } else if (distanceFromGoal <= GoalCavernRadius + (widthNoise - 0.5f) * 2.0f) {
         generatedType = TileType::Empty;
-    } else if (shapedDistance <= caveWidth) {
-        generatedType = TileType::Empty;
-    } else if (shapedDistance <= caveWidth + 3.4f) {
-        generatedType = TileType::Dirt;
+    } else if (shapedDistance <= caveWidth + SoftPathMargin) {
+        generatedType = mixedSoftPathTile(fineNoise, broadNoise);
     } else if (shapedDistance <= caveWidth + 10.0f) {
-        generatedType = fineNoise > 0.82f ? TileType::Ore : TileType::Rock;
+        generatedType = mixedRockBandTile(fineNoise, broadNoise);
     } else {
-        generatedType = broadNoise > 0.62f ? TileType::HardRock : TileType::Rock;
-        if (fineNoise > 0.92f) {
-            generatedType = TileType::Ore;
-        }
+        generatedType = mixedDeepWallTile(fineNoise, broadNoise);
+    }
+
+    const auto overrideIt = tileOverrides_.find(key(tx, ty));
+    if (overrideIt != tileOverrides_.end()) {
+        generatedType = overrideIt->second;
     }
 
     const float distanceHardness = clamp((carvedDistance - caveWidth) / 22.0f, 0.0f, 1.0f);

@@ -97,6 +97,41 @@ Color lerpColor(Color a, Color b, float t)
     };
 }
 
+void drawCapsuleOutline(Renderer& renderer, UiRect rect, float radius, Color color)
+{
+    if (!colorVisible(color) || rect.size.x <= 0.0f || rect.size.y <= 0.0f) {
+        return;
+    }
+
+    const float centerY = rect.pos.y + rect.size.y * 0.5f;
+    const float leftX = rect.pos.x + radius;
+    const float rightX = rect.pos.x + rect.size.x - radius;
+    if (rightX <= leftX) {
+        renderer.drawCircle(rect.pos + rect.size * 0.5f, radius, color);
+        return;
+    }
+
+    renderer.drawLine({leftX, rect.pos.y}, {rightX, rect.pos.y}, color);
+    renderer.drawLine({leftX, rect.pos.y + rect.size.y}, {rightX, rect.pos.y + rect.size.y}, color);
+
+    constexpr int ArcSegments = 8;
+    const Vec2 leftCenter{leftX, centerY};
+    const Vec2 rightCenter{rightX, centerY};
+    const auto pointOnCircle = [radius](Vec2 center, float angle) {
+        return center + Vec2{std::cos(angle) * radius, std::sin(angle) * radius};
+    };
+    for (int i = 0; i < ArcSegments; ++i) {
+        const float t0 = static_cast<float>(i) / static_cast<float>(ArcSegments);
+        const float t1 = static_cast<float>(i + 1) / static_cast<float>(ArcSegments);
+        const float leftA0 = Pi * 0.5f + Pi * t0;
+        const float leftA1 = Pi * 0.5f + Pi * t1;
+        const float rightA0 = -Pi * 0.5f + Pi * t0;
+        const float rightA1 = -Pi * 0.5f + Pi * t1;
+        renderer.drawLine(pointOnCircle(leftCenter, leftA0), pointOnCircle(leftCenter, leftA1), color);
+        renderer.drawLine(pointOnCircle(rightCenter, rightA0), pointOnCircle(rightCenter, rightA1), color);
+    }
+}
+
 constexpr float CommandMenuItemHeight = 36.0f;
 constexpr float CommandMenuPaddingX = 28.0f;
 constexpr float CommandMenuPaddingY = 24.0f;
@@ -208,6 +243,70 @@ void scrollDropdown(UiDropdownState& state, int delta, int itemCount, const UiDr
             state.highlightedIndex,
             state.scrollOffset,
             std::min(itemCount - 1, state.scrollOffset + visibleCount - 1));
+    }
+}
+
+bool tabItemEnabled(const UiTabItem* items, int index)
+{
+    return items != nullptr && index >= 0 && items[index].enabled;
+}
+
+int firstEnabledTab(const UiTabItem* items, int itemCount)
+{
+    if (items == nullptr) {
+        return -1;
+    }
+    for (int i = 0; i < itemCount; ++i) {
+        if (items[i].enabled) {
+            return i;
+        }
+    }
+    return -1;
+}
+
+void clampTabFocus(UiTabsState& state, int selectedIndex, const UiTabItem* items, int itemCount)
+{
+    if (itemCount <= 0 || items == nullptr) {
+        state.focusedIndex = -1;
+        return;
+    }
+    if (!tabItemEnabled(items, state.focusedIndex)) {
+        state.focusedIndex = tabItemEnabled(items, selectedIndex) ? selectedIndex : firstEnabledTab(items, itemCount);
+    }
+}
+
+int nextEnabledTab(int start, int direction, const UiTabItem* items, int itemCount, bool wrap)
+{
+    if (items == nullptr || itemCount <= 0 || direction == 0) {
+        return start;
+    }
+
+    int current = start;
+    if (current < 0 || current >= itemCount) {
+        current = direction > 0 ? -1 : itemCount;
+    }
+    for (int step = 0; step < itemCount; ++step) {
+        int candidate = current + direction;
+        if (candidate < 0 || candidate >= itemCount) {
+            if (!wrap) {
+                return start;
+            }
+            candidate = direction > 0 ? 0 : itemCount - 1;
+        }
+        if (items[candidate].enabled) {
+            return candidate;
+        }
+        current = candidate;
+    }
+    return start;
+}
+
+void moveTabFocus(UiTabsState& state, int delta, const UiTabItem* items, int itemCount, const UiTabsStyle& style)
+{
+    const int direction = delta > 0 ? 1 : -1;
+    const int steps = delta > 0 ? delta : -delta;
+    for (int step = 0; step < steps; ++step) {
+        state.focusedIndex = nextEnabledTab(state.focusedIndex, direction, items, itemCount, style.wrapKeyboard);
     }
 }
 
@@ -660,6 +759,7 @@ void drawUiGauge(Renderer& renderer, UiRect rect, float progress, const UiGaugeS
         if (progress > 0.0f) {
             renderer.fillCircle(center, radius, lerpColor(style.fill.start, style.fill.end, 0.5f));
         }
+        drawCapsuleOutline(renderer, rect, radius, style.outline);
         return;
     }
 
@@ -693,6 +793,7 @@ void drawUiGauge(Renderer& renderer, UiRect rect, float progress, const UiGaugeS
 
     const float filledW = rect.size.x * progress;
     if (filledW <= 0.0f) {
+        drawCapsuleOutline(renderer, rect, radius, style.outline);
         return;
     }
 
@@ -749,6 +850,7 @@ void drawUiGauge(Renderer& renderer, UiRect rect, float progress, const UiGaugeS
     if (colorVisible(style.capCore)) {
         renderer.fillCircle(capCenter, std::max(1.0f, rect.size.y * 0.14f), style.capCore);
     }
+    drawCapsuleOutline(renderer, rect, radius, style.outline);
 }
 
 void drawUiButton(Renderer& renderer, UiRect rect, std::string_view label, bool hot, const UiButtonStyle& style)
@@ -760,7 +862,7 @@ void drawUiButton(Renderer& renderer, UiRect rect, std::string_view label, bool 
     renderer.pushScreenTransform(center, scale, 1.0f);
 
     if (renderer.hasUiButtonTexture()) {
-        Color tint = selected ? Color{255, 255, 235, 255} : Color{232, 232, 238, 255};
+        Color tint = selected ? style.imageTintHot : style.imageTint;
         renderer.drawUiButtonFrame(rect.pos, rect.size.x, style.imageVariant, tint);
     } else {
         Color fill = selected ? style.fillHot : style.fill;
@@ -797,6 +899,34 @@ void drawUiRectButton(Renderer& renderer, UiRect rect, std::string_view label, b
     };
     renderer.drawText(textPos, label, style.text, 2);
     renderer.popScreenTransform();
+}
+
+void drawUiSmallSelectButton(
+    Renderer& renderer,
+    UiRect rect,
+    std::string_view label,
+    std::string_view value,
+    bool hot,
+    bool disabled,
+    const UiSmallSelectButtonStyle& style)
+{
+    const Color fill = disabled ? style.fillDisabled : (hot ? style.fillHot : style.fill);
+    const Color outline = disabled ? style.outlineDisabled : (hot ? style.outlineHot : style.outline);
+    const Color labelColor = disabled ? style.disabledText : style.text;
+    const Color valueColor = disabled ? style.disabledText : style.valueText;
+    renderer.fillRect(rect.pos, rect.size, fill);
+    renderer.drawRect(rect.pos, rect.size, outline);
+    if (hot && !disabled) {
+        renderer.fillRect(rect.pos + Vec2{2.0f, 4.0f}, {5.0f, std::max(0.0f, rect.size.y - 8.0f)}, style.accent);
+    }
+
+    const int scale = std::max(1, style.textScale);
+    constexpr float PaddingX = 12.0f;
+    const Vec2 labelSize = renderer.measureText(label, scale);
+    const Vec2 valueSize = renderer.measureText(value, scale);
+    const float textY = rect.pos.y + std::max(0.0f, (rect.size.y - std::max(labelSize.y, valueSize.y)) * 0.5f);
+    renderer.drawText({rect.pos.x + PaddingX, textY}, label, labelColor, scale);
+    renderer.drawText({rect.pos.x + rect.size.x - valueSize.x - PaddingX, textY}, value, valueColor, scale);
 }
 
 void drawUiBodyMessageBelow(Renderer& renderer, UiRect anchor, std::string_view message, Color color)
@@ -1222,6 +1352,91 @@ void drawUiDropdown(
         const float scrollRatio = maxScroll > 0 ? static_cast<float>(state.scrollOffset) / static_cast<float>(maxScroll) : 0.0f;
         const float thumbY = trackY + (trackHeight - thumbHeight) * scrollRatio;
         renderer.fillRect({trackX, thumbY}, {DropdownScrollbarWidth, thumbHeight}, style.scrollbarThumb);
+    }
+}
+
+int updateUiTabs(
+    UiTabsState& state,
+    UiContext& ui,
+    const UiTabsInput& input,
+    int selectedIndex,
+    const UiTabItem* items,
+    int itemCount,
+    const UiRect* rects,
+    const UiTabsStyle& style)
+{
+    if (items == nullptr || rects == nullptr || itemCount <= 0) {
+        state.focusedIndex = -1;
+        return -1;
+    }
+
+    clampTabFocus(state, selectedIndex, items, itemCount);
+
+    for (int i = 0; i < itemCount; ++i) {
+        if (tabItemEnabled(items, i) && ui.hovered(rects[i])) {
+            state.focusedIndex = i;
+        }
+        if (ui.pressed(rects[i])) {
+            if (!tabItemEnabled(items, i)) {
+                return -1;
+            }
+            state.focusedIndex = i;
+            return i;
+        }
+    }
+
+    if (input.directFocusIndex >= 0 && input.directFocusIndex < itemCount && tabItemEnabled(items, input.directFocusIndex)) {
+        state.focusedIndex = input.directFocusIndex;
+    }
+    if (input.focusDelta != 0) {
+        moveTabFocus(state, input.focusDelta, items, itemCount, style);
+    }
+
+    if (input.commit && state.focusedIndex >= 0 && state.focusedIndex < itemCount &&
+        state.focusedIndex != selectedIndex && tabItemEnabled(items, state.focusedIndex)) {
+        return state.focusedIndex;
+    }
+
+    return -1;
+}
+
+void drawUiTabs(
+    Renderer& renderer,
+    const UiTabsState& state,
+    int selectedIndex,
+    const UiTabItem* items,
+    int itemCount,
+    const UiRect* rects,
+    const UiTabsStyle& style)
+{
+    if (items == nullptr || rects == nullptr || itemCount <= 0) {
+        return;
+    }
+
+    for (int i = 0; i < itemCount; ++i) {
+        UiButtonStyle buttonStyle = style.buttonStyle;
+        if (i == selectedIndex) {
+            buttonStyle.fillHot = style.selectedFillHot;
+            buttonStyle.outlineHot = style.selectedOutlineHot;
+            buttonStyle.text = style.selectedText;
+            buttonStyle.imageTintHot = style.selectedImageTint;
+        }
+        if (!tabItemEnabled(items, i)) {
+            buttonStyle.text = ui::TextDisabled;
+        }
+        drawUiButton(renderer, rects[i], items[i].label, i == selectedIndex, buttonStyle);
+        if (i == state.focusedIndex && i != selectedIndex && tabItemEnabled(items, i) && style.focusOutline.a > 0) {
+            UiRect focusRect = rects[i];
+            focusRect.size.y = ui::ButtonHeight;
+            constexpr float Inset = 3.0f;
+            renderer.drawRect(
+                focusRect.pos + Vec2{Inset, Inset},
+                {
+                    std::max(0.0f, focusRect.size.x - Inset * 2.0f),
+                    std::max(0.0f, focusRect.size.y - Inset * 2.0f),
+                },
+                style.focusOutline);
+        }
     }
 }
 

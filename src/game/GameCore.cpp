@@ -2,6 +2,40 @@
 
 namespace majo {
 
+namespace {
+
+bool lootChestKindForDropProfile(std::string_view profile, LootChestKind& outKind)
+{
+    if (profile == "box_common") {
+        outKind = LootChestKind::Common;
+        return true;
+    }
+    if (profile == "box_rare") {
+        outKind = LootChestKind::Rare;
+        return true;
+    }
+    if (profile == "box_super") {
+        outKind = LootChestKind::SuperRare;
+        return true;
+    }
+    return false;
+}
+
+int lootDepthRankForWorldPosition(
+    const TileMap& tileMap,
+    const DungeonLayout& dungeonLayout,
+    std::string_view stageId,
+    Vec2 position)
+{
+    const DungeonLayoutMetrics metrics = calculateDungeonLayoutMetrics(dungeonLayout, {
+        static_cast<float>(tileMap.worldToTile(position.x)),
+        static_cast<float>(tileMap.worldToTile(position.y)),
+    });
+    return lootDepthRankForProgress(stageId, metrics.pathProgress);
+}
+
+}
+
 void Game::initialize(int width, int height)
 {
     camera_.setViewport(width, height);
@@ -35,6 +69,7 @@ void Game::initialize(int width, int height)
     setObjectImageScaleOverrides(&objectImageScaleById_);
     setWorldIconScaleOverrides(&otherImageScaleByKey_);
     loadOpeningKamishibaiData();
+    loadStoryEvents();
     std::string openingMetaMessage;
     openingMeta_ = openingMetaSave_.load(&openingMetaMessage);
     logInfo(
@@ -149,6 +184,7 @@ void Game::resetWorldUiState()
     baseUpgradeSelection_ = 0;
     baseProcessingActive_ = false;
     baseProcessingMode_ = 0;
+    baseProcessingTabs_ = {};
     baseProcessingSelection_ = 0;
     closeUiCommandMenu(baseProcessingCommandMenu_);
     baseProcessingCommandSlot_ = -1;
@@ -187,6 +223,7 @@ void Game::resetWorldRunState()
     pauseReturnMode_ = ScreenMode::Playing;
     pauseMenuSelection_ = 0;
     pauseConfirmSelection_ = 0;
+    ringTabs_ = {};
     ringSlotSelection_ = 0;
     ringGrabActive_ = false;
     ringGrabOrigin_ = -1;
@@ -213,6 +250,7 @@ void Game::buildWorldForRun(bool captureRunStartInventory)
     initializeChestNodesFromLayout();
     initializeCrateNodesFromLayout();
     initializeEnemyNodesFromLayout();
+    applyPlacementTerrainOverrides();
     spellRing_.initialize(balance_);
     applyPermanentUpgrades();
     spellRing_.applyObjectParameters(objectCatalog_);
@@ -315,6 +353,7 @@ void Game::advanceWorldBuildOneStep()
         break;
     case WorldBuildStep::InitializeEnemies:
         initializeEnemyNodesFromLayout();
+        applyPlacementTerrainOverrides();
         worldBuildJob_.step = WorldBuildStep::InitializeRing;
         break;
     case WorldBuildStep::InitializeRing:
@@ -355,12 +394,13 @@ void Game::finishWorldBuild()
 
     resetWarpPointRunState();
     initializeMoonFragmentNodesFromWarpPoints();
+    applyPlacementTerrainOverrides();
     if (job.useLatestWarpPoint) {
-        const Vec2 startPosition = latestWarpPointStartPosition();
-        latestWarpPointPosition_ = startPosition;
+        const Vec2 warpStartPosition = latestWarpPointStartPosition();
+        latestWarpPointPosition_ = warpStartPosition;
         hasLatestWarpPointPosition_ = true;
-        player_.position = startPosition;
-        rebuildUnlockedWarpPointsForStart(startPosition);
+        rebuildUnlockedWarpPointsForStart(warpStartPosition);
+        player_.position = safePlayerStartPosition(warpStartPosition);
         tileMap_.updateAround(player_.position, 0.0f, balance_, dungeonLayout_);
         captureRetrySnapshotAtWarpPoint();
     }
@@ -496,6 +536,17 @@ void Game::loadOpeningKamishibaiData()
     }
 }
 
+void Game::loadStoryEvents()
+{
+    StoryEventLoader loader;
+    StoryEventLoadResult result = loader.loadDirectory(storyEventDataDirectory());
+    storyEvents_ = std::move(result.events);
+    logInfo("[story] events loaded: " + std::to_string(storyEvents_.size()));
+    for (const std::string& warning : result.warnings) {
+        logWarning("[story] " + warning);
+    }
+}
+
 void Game::startOpeningKamishibai()
 {
     if (openingPages_.empty()) {
@@ -546,7 +597,7 @@ void Game::updateTitleScreen(const Input& input, UiContext& ui)
         if (input.mouseLeftPressed()) {
             ui.consumePointer();
         }
-        requestScreenTransition(ScreenTransitionTarget::Base);
+        requestScreenTransition(ScreenTransitionTarget::TitleToBase);
     }
 }
 
@@ -635,6 +686,11 @@ void Game::updateScreenTransition(float dt)
         screenTransition_.elapsed += safeDt;
         if (screenTransition_.elapsed >= ScreenTransitionFadeInSeconds) {
             screenTransition_ = ScreenTransitionState{};
+            if (!pendingStoryTrigger_.empty()) {
+                std::string trigger = std::move(pendingStoryTrigger_);
+                pendingStoryTrigger_.clear();
+                startStoryEventForTrigger(trigger);
+            }
         }
         break;
     }
@@ -647,6 +703,10 @@ void Game::applyScreenTransitionTarget(ScreenTransitionTarget target)
         break;
     case ScreenTransitionTarget::Base:
         enterBase();
+        break;
+    case ScreenTransitionTarget::TitleToBase:
+        enterBase();
+        pendingStoryTrigger_ = "title_base_enter";
         break;
     case ScreenTransitionTarget::MiningStart:
         startMiningFromBase(screenTransition_.useLatestWarpPoint, screenTransition_.forceRegenerate);
@@ -960,6 +1020,9 @@ bool Game::loadEnemiesFromSheet()
     logEnemyDbValidationReport(enemyCatalog_);
     logError("Enemies sheet loaded: " + std::to_string(enemyCatalog_.enemies.size()) +
         " enemies, " + std::to_string(enemyCatalog_.enemiesById.size()) + " unique IDs");
+    logError("Enemies spawn weight columns detected: " + std::to_string(enemyCatalog_.spawnWeightStats.detectedColumnCount));
+    logError("Enemies spawn weighted enemies: " + std::to_string(enemyCatalog_.spawnWeightStats.weightedEnemyCount));
+    logError("Enemies spawn weight warnings: " + std::to_string(enemyCatalog_.spawnWeightStats.warningCount));
     logError("Behavior sheet loaded: " + std::to_string(enemyCatalog_.behaviors.size()) +
         " behaviors, " + std::to_string(enemyCatalog_.behaviorsById.size()) + " unique IDs");
 
@@ -980,7 +1043,8 @@ bool Game::loadEnemiesFromSheet()
             << " enemy_behaviors=" << enemy.enemyBehaviorIds.size()
             << " captured_behaviors=" << enemy.capturedBehaviorIds.size()
             << " tags=" << enemy.enemyTags.size()
-            << " captured_tags=" << enemy.capturedTags.size();
+            << " captured_tags=" << enemy.capturedTags.size()
+            << " spawn_weights=" << enemy.spawnWeights.size();
         logError(line.str());
         ++enemyLogCount;
     }
@@ -1361,13 +1425,30 @@ void Game::update(const Input& input, const Time& time)
                     balance_.digItemMinDugTiles,
                     balance_.digItemGuaranteeDugTiles,
                     rng)) {
-                if (worldDrops_.spawnDigItemDrop(objectCatalog_, scatterLootPosition(tile.center, rng), runStats_.elapsedSeconds)) {
+                const int depthRank = lootDepthRankForWorldPosition(tileMap_, dungeonLayout_, currentStageId_, tile.center);
+                if (spawnWeightedObjectLoot(
+                        LootChestKind::Common,
+                        depthRank,
+                        tile.center,
+                        rng,
+                        "DigItemLoot",
+                        false,
+                        LootSourceKind::DigItem)) {
                     runStats_.dugTilesSinceItemDrop = 0;
                 }
             }
         }
         for (Vec2 rewardPosition : digging_.rewardDropRequests()) {
-            worldDrops_.spawnRewardDrop(objectCatalog_, rewardPosition, runStats_.elapsedSeconds);
+            std::mt19937& rng = lootRuntimeRng();
+            const int depthRank = lootDepthRankForWorldPosition(tileMap_, dungeonLayout_, currentStageId_, rewardPosition);
+            spawnWeightedObjectLoot(
+                LootChestKind::Common,
+                depthRank,
+                rewardPosition,
+                rng,
+                "CapturedRewardLoot",
+                true,
+                LootSourceKind::CapturedReward);
         }
         for (const DugTile& tile : digging_.dugTiles()) {
             if (tile.type != TileType::Ore) {
@@ -1397,7 +1478,15 @@ void Game::update(const Input& input, const Time& time)
         appendPickupLogs(pickupEvents);
         if (!enemyTestActive_) {
             const std::vector<Vec2> randomEnemySpawnTiles = spawnHiddenEnemyNodesFromOpenedTiles(digging_.openedTiles());
-            enemies_.spawnFromDugTiles(randomEnemySpawnTiles, tileMap_, player_.position, balance_, enemyCatalog_);
+            std::vector<DugEnemySpawnPoint> randomEnemySpawnPoints;
+            randomEnemySpawnPoints.reserve(randomEnemySpawnTiles.size());
+            for (Vec2 spawnTile : randomEnemySpawnTiles) {
+                randomEnemySpawnPoints.push_back(DugEnemySpawnPoint{
+                    .tileCenter = spawnTile,
+                    .depthRank = lootDepthRankForWorldPosition(tileMap_, dungeonLayout_, currentStageId_, spawnTile),
+                });
+            }
+            enemies_.spawnFromDugTiles(randomEnemySpawnPoints, tileMap_, player_.position, balance_, enemyCatalog_, currentStageId_);
             updateBossSpawn();
         }
 
@@ -1451,20 +1540,34 @@ void Game::update(const Input& input, const Time& time)
             if (event.type == EnemyEventType::Death || event.type == EnemyEventType::BossDeath) {
                 ++runStats_.defeatedEnemies;
                 effects_.spawnEnemyDeath(event.position);
-                if (event.moneyDrop > 0) {
-                    worldDrops_.spawnMoneyDrop(event.moneyDrop, event.position, runStats_.elapsedSeconds);
-                }
                 std::mt19937& rng = lootRuntimeRng();
+                if (event.moneyDrop > 0) {
+                    worldDrops_.spawnMoneyDrop(
+                        event.moneyDrop,
+                        scatterLootPosition(event.position, rng),
+                        runStats_.elapsedSeconds,
+                        makeWorldLootJumpMotion(event.position, rng));
+                }
                 const bool bossDeath = event.type == EnemyEventType::BossDeath;
                 const float manaChance = bossDeath ? balance_.bossManaDropChance : balance_.enemyManaDropChance;
                 const float moonChance = bossDeath ? balance_.bossMoonFragmentChance : balance_.enemyMoonFragmentChance;
                 if (rollChance(manaChance, rng)) {
                     const int amount = bossDeath ? scaledLootAmount(std::uniform_int_distribution<int>(1, 3)(rng), 1.0f) : 1;
-                    worldDrops_.spawnMaterialDrop(MaterialType::ManaDrop, amount, scatterLootPosition(event.position, rng), runStats_.elapsedSeconds);
+                    worldDrops_.spawnMaterialDrop(
+                        MaterialType::ManaDrop,
+                        amount,
+                        scatterLootPosition(event.position, rng),
+                        runStats_.elapsedSeconds,
+                        makeWorldLootJumpMotion(event.position, rng));
                 }
                 if (rollChance(moonChance, rng)) {
                     const int amount = bossDeath ? scaledLootAmount(std::uniform_int_distribution<int>(1, 3)(rng), 1.0f) : 1;
-                    worldDrops_.spawnMaterialDrop(MaterialType::MoonFragment, amount, scatterLootPosition(event.position, rng), runStats_.elapsedSeconds);
+                    worldDrops_.spawnMaterialDrop(
+                        MaterialType::MoonFragment,
+                        amount,
+                        scatterLootPosition(event.position, rng),
+                        runStats_.elapsedSeconds,
+                        makeWorldLootJumpMotion(event.position, rng));
                 }
                 if (!event.enemyId.empty()) {
                     encyclopedia_.noteEnemyDefeated(event.enemyId, event.enemyName, event.position);
@@ -1473,11 +1576,45 @@ void Game::update(const Input& input, const Time& time)
                     bossDefeated = true;
                 }
             } else if (event.type == EnemyEventType::RewardDrop) {
-                worldDrops_.spawnRewardDrop(objectCatalog_, event.position, runStats_.elapsedSeconds);
+                std::mt19937& rng = lootRuntimeRng();
+                const int depthRank = lootDepthRankForWorldPosition(tileMap_, dungeonLayout_, currentStageId_, event.position);
+                spawnWeightedObjectLoot(
+                    LootChestKind::Common,
+                    depthRank,
+                    event.position,
+                    rng,
+                    "CapturedRewardLoot",
+                    true,
+                    LootSourceKind::CapturedReward);
             } else if (event.type == EnemyEventType::ObjectDrop) {
+                std::mt19937& rng = lootRuntimeRng();
                 const int dropCount = std::max(1, event.objectDropCount);
-                for (int i = 0; i < dropCount; ++i) {
-                    worldDrops_.spawnObjectDrop(objectCatalog_, event.objectDropId, event.position, runStats_.elapsedSeconds);
+                if (!event.objectDropProfile.empty()) {
+                    LootChestKind chestKind = LootChestKind::Common;
+                    if (!lootChestKindForDropProfile(event.objectDropProfile, chestKind)) {
+                        logError("[warning] EnemyDropLoot: unknown drop profile \"" + event.objectDropProfile + "\"; no item drop");
+                    } else {
+                        const int depthRank = lootDepthRankForWorldPosition(tileMap_, dungeonLayout_, currentStageId_, event.position);
+                        for (int i = 0; i < dropCount; ++i) {
+                            spawnWeightedObjectLoot(
+                                chestKind,
+                                depthRank,
+                                event.position,
+                                rng,
+                                "EnemyDropLoot",
+                                true,
+                                LootSourceKind::EnemyDrop);
+                        }
+                    }
+                } else if (!event.objectDropId.empty()) {
+                    for (int i = 0; i < dropCount; ++i) {
+                        worldDrops_.spawnObjectDrop(
+                            objectCatalog_,
+                            event.objectDropId,
+                            scatterLootPosition(event.position, rng),
+                            runStats_.elapsedSeconds,
+                            makeWorldLootJumpMotion(event.position, rng));
+                    }
                 }
             } else if (event.type == EnemyEventType::CapturedExplosion) {
                 continue;
@@ -1534,6 +1671,12 @@ void Game::checkHotReload()
         if (mode_ == ScreenMode::OpeningKamishibai) {
             openingPlayer_.start(openingPages_, openingMeta_.openingEverWatched);
         }
+        reloadNotice_ = "Hot reload: " + changedPath;
+        reloadNoticeTimer_ = 3.0f;
+        configureWatcher();
+        return;
+    } else if (std::filesystem::path(changedPath).extension() == ".story") {
+        loadStoryEvents();
         reloadNotice_ = "Hot reload: " + changedPath;
         reloadNoticeTimer_ = 3.0f;
         configureWatcher();

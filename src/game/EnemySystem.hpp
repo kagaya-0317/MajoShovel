@@ -44,6 +44,7 @@ struct EnemyEvent {
     int damageAmount = -1;
     int moneyDrop = 0;
     std::string objectDropId;
+    std::string objectDropProfile;
     int objectDropCount = 0;
 };
 
@@ -61,9 +62,20 @@ struct CaptureResult {
     Vec2 position{};
 };
 
+struct DugEnemySpawnPoint {
+    Vec2 tileCenter{};
+    int depthRank = 1;
+};
+
 class EnemySystem {
 public:
-    void spawnFromDugTiles(const std::vector<Vec2>& dugTiles, TileMap& map, Vec2 playerPosition, const RuntimeBalance& balance, const EnemyCatalog& enemyCatalog);
+    void spawnFromDugTiles(
+        const std::vector<DugEnemySpawnPoint>& dugTiles,
+        TileMap& map,
+        Vec2 playerPosition,
+        const RuntimeBalance& balance,
+        const EnemyCatalog& enemyCatalog,
+        std::string_view stageId);
     bool spawnNodeEnemy(TileMap& map, Vec2 desiredPosition, Vec2 playerPosition, const RuntimeBalance& balance, const EnemyCatalog& enemyCatalog, bool allowNearPlayer, bool detectedOnSpawn = false);
     bool spawnSpecificEnemy(TileMap& map, std::string_view enemyId, Vec2 desiredPosition, Vec2 playerPosition, const RuntimeBalance& balance, const EnemyCatalog& enemyCatalog, bool allowNearPlayer, bool detectedOnSpawn = false);
     bool spawnBoss(TileMap& map, Vec2 playerPosition, const RuntimeBalance& balance, const EnemyCatalog& enemyCatalog);
@@ -127,6 +139,9 @@ private:
     void setAwareness(Enemy& enemy, EnemyAwarenessState nextState, bool showIcon);
     void forceDetectInSight(Enemy& enemy, Vec2 playerPosition, bool showIcon);
     const EnemyDefinition* chooseEnemyDefinition(const EnemyCatalog& enemyCatalog);
+    const EnemyDefinition* chooseNormalRandomEnemyDefinition(const EnemyCatalog& enemyCatalog);
+    const EnemyDefinition* chooseDugSpawnEnemyDefinition(const EnemyCatalog& enemyCatalog, std::string_view stageId, int depthRank);
+    void logSpawnWeightFallbackOnce(std::string key, std::string message);
     void applyDefinition(Enemy& enemy, const EnemyDefinition* definition, const RuntimeBalance& balance, const EnemyCatalog& enemyCatalog);
     bool spawnDefinitionAt(Vec2 position, const EnemyDefinition* definition, const RuntimeBalance& balance, const EnemyCatalog& enemyCatalog, bool detectedOnSpawn = false, Vec2 detectedTarget = {});
     void spawnAt(Vec2 position, const RuntimeBalance& balance, const EnemyCatalog& enemyCatalog, bool detectedOnSpawn = false, Vec2 detectedTarget = {});
@@ -149,6 +164,7 @@ private:
     std::unordered_set<std::string> loggedUnknownAi_;
     std::unordered_set<std::string> loggedUnknownUnawareAi_;
     std::unordered_set<std::string> loggedUnsupportedBehavior_;
+    std::unordered_set<std::string> loggedSpawnWeightFallbacks_;
     int flowMinX_ = 0;
     int flowMinY_ = 0;
     int flowWidth_ = 0;

@@ -66,6 +66,7 @@ public:
     TerrainDebugInfo terrainDebugAtWorld(Vec2 world) const;
     Color tileColorAtTile(int tx, int ty) const;
     Color tileColorAtWorld(Vec2 world) const;
+    void setTileOverride(DungeonTile tile, TileType type);
     int activeChunkCount() const { return activeChunkCount_; }
     std::size_t generatedChunkCount() const { return chunks_.size(); }
 
@@ -89,6 +90,7 @@ private:
     void drawTileLitByCircles(Renderer& renderer, Vec2 pos, Color color, Vec2 playerLight, const std::vector<LightSource>& extraLights) const;
 
     std::unordered_map<long long, Chunk> chunks_;
+    std::unordered_map<long long, TileType> tileOverrides_;
     std::unordered_map<long long, int> damagedTileMaxHp_;
     int centerChunkX_ = 0;
     int centerChunkY_ = 0;

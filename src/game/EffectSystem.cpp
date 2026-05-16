@@ -1,5 +1,7 @@
 ﻿#include "game/EffectSystem.hpp"
 
+#include "game/ActorVisual.hpp"
+
 #include <algorithm>
 #include <array>
 #include <cmath>
@@ -78,6 +80,9 @@ constexpr std::array<ShardShape, 8> RockShardShapes{{
     {5, std::array<Vec2, MaxShardPoints>{{{-0.54f, -0.66f}, {0.28f, -0.72f}, {0.78f, -0.06f}, {0.34f, 0.66f}, {-0.72f, 0.34f}}}},
 }};
 
+constexpr float ShardShadowGroundOffsetY = 3.0f;
+constexpr float ShardBounceStopSpeed = 34.0f;
+
 unsigned char fadeAlpha(Color color, float t)
 {
     return static_cast<unsigned char>(static_cast<float>(color.a) * (1.0f - clamp(t, 0.0f, 1.0f)));
@@ -130,6 +135,48 @@ int randomInt(int minValue, int maxValue)
 {
     std::uniform_int_distribution<int> dist(minValue, maxValue);
     return dist(particleRng());
+}
+
+void configureShardPhysics(Effect& effect, bool digHitShard, float scale)
+{
+    const float safeScale = std::max(0.1f, scale);
+    effect.physicsShard = true;
+    effect.altitude = randomRange(digHitShard ? 1.5f : 4.0f, digHitShard ? 8.0f : 18.0f) * safeScale;
+    effect.verticalVelocity = randomRange(digHitShard ? -45.0f : -95.0f, digHitShard ? 140.0f : 270.0f) * safeScale;
+    effect.gravity = randomRange(digHitShard ? 560.0f : 640.0f, digHitShard ? 720.0f : 820.0f) * safeScale;
+    effect.bounceRestitution = randomRange(digHitShard ? 0.28f : 0.34f, digHitShard ? 0.42f : 0.52f);
+    effect.groundFriction = randomRange(digHitShard ? 9.0f : 7.5f, digHitShard ? 13.0f : 11.5f);
+    effect.bouncesRemaining = digHitShard ? 1 : randomInt(1, 2);
+    effect.shadowVisualSize = std::max(5.0f, effect.startRadius * randomRange(2.2f, 3.1f));
+    effect.duration += randomRange(digHitShard ? 0.00f : 0.08f, digHitShard ? 0.08f : 0.22f);
+}
+
+void updateShardPhysics(Effect& effect, float dt)
+{
+    if (!effect.physicsShard) {
+        return;
+    }
+
+    effect.verticalVelocity -= effect.gravity * dt;
+    effect.altitude += effect.verticalVelocity * dt;
+    if (effect.altitude > 0.0f) {
+        return;
+    }
+
+    effect.altitude = 0.0f;
+    if (effect.verticalVelocity < 0.0f && effect.bouncesRemaining > 0) {
+        effect.verticalVelocity = -effect.verticalVelocity * effect.bounceRestitution;
+        --effect.bouncesRemaining;
+        effect.velocity = effect.velocity * 0.62f;
+        effect.angularVelocity *= -0.58f;
+        if (effect.verticalVelocity < ShardBounceStopSpeed) {
+            effect.verticalVelocity = 0.0f;
+            effect.bouncesRemaining = 0;
+        }
+    } else {
+        effect.verticalVelocity = 0.0f;
+        effect.bouncesRemaining = 0;
+    }
 }
 
 Color mixColor(Color a, Color b, float t)
@@ -217,6 +264,11 @@ Vec2 snapPoint(Vec2 point)
     return {std::round(point.x), std::round(point.y)};
 }
 
+Vec2 effectDrawPosition(const Effect& effect)
+{
+    return effect.physicsShard ? elevatedDrawPosition(effect.position, effect.altitude) : effect.position;
+}
+
 Color shardOutlineColor(Color color)
 {
     const auto darken = [](unsigned char value) {
@@ -230,7 +282,7 @@ Color shardOutlineColor(Color color)
     };
 }
 
-void renderRockShard(Renderer& renderer, const Effect& effect, Color color, float radius)
+void renderRockShard(Renderer& renderer, const Effect& effect, Vec2 center, Color color, float radius)
 {
     if (radius <= 0.0f || color.a == 0) {
         return;
@@ -245,12 +297,38 @@ void renderRockShard(Renderer& renderer, const Effect& effect, Color color, floa
     for (std::size_t i = 0; i < count; ++i) {
         const Vec2 base{shape.points[i].x * effect.shardAspect, shape.points[i].y};
         const Vec2 rotated = rotatePoint(base, effect.rotation);
-        outlinePoints[i] = snapPoint(effect.position + rotated * outlineRadius);
-        fillPoints[i] = snapPoint(effect.position + rotated * radius);
+        outlinePoints[i] = snapPoint(center + rotated * outlineRadius);
+        fillPoints[i] = snapPoint(center + rotated * radius);
     }
 
     renderer.fillPolygon(outlinePoints.data(), count, shardOutlineColor(color));
     renderer.fillPolygon(fillPoints.data(), count, color);
+}
+
+bool isDepthSortedEffect(const Effect& effect)
+{
+    return effect.type == EffectType::Particle && effect.visual == ParticleVisual::RockShard;
+}
+
+bool isDepthSortedSmoke(const SmokePuff&)
+{
+    return true;
+}
+
+void renderEffectVisual(Renderer& renderer, const Effect& effect)
+{
+    const float t = effect.duration > 0.0f ? effect.age / effect.duration : 1.0f;
+    Color color = effect.color;
+    color.a = effectAlpha(effect, color, t);
+    const float radius = lerp(effect.startRadius, effect.endRadius, t);
+    const Vec2 drawPosition = effectDrawPosition(effect);
+    if (effect.type == EffectType::Ring) {
+        renderer.drawCircle(drawPosition, radius, color);
+    } else if (effect.visual == ParticleVisual::RockShard) {
+        renderRockShard(renderer, effect, drawPosition, color, std::max(1.0f, radius));
+    } else {
+        renderer.fillCircle(drawPosition, std::max(0.8f, radius), color);
+    }
 }
 
 ParticleEffectId magicEffectFor(std::string_view element)
@@ -286,9 +364,13 @@ void EffectSystem::update(float dt)
             effect.active = false;
             continue;
         }
+        updateShardPhysics(effect, dt);
         effect.velocity += effect.acceleration * dt;
         effect.position += effect.velocity * dt;
         effect.velocity = effect.velocity * std::max(0.0f, 1.0f - effect.drag * dt);
+        if (effect.physicsShard && effect.altitude <= 0.0f && effect.verticalVelocity <= 0.0f) {
+            effect.velocity = effect.velocity * std::max(0.0f, 1.0f - effect.groundFriction * dt);
+        }
         effect.rotation += effect.angularVelocity * dt;
     }
 
@@ -323,6 +405,55 @@ void EffectSystem::render(Renderer& renderer)
     renderLayer(renderer, EffectLayer::World);
 }
 
+void EffectSystem::renderShadows(Renderer& renderer)
+{
+    for (const Effect& effect : effects_.items()) {
+        if (!effect.active || !effect.physicsShard || !isDepthSortedEffect(effect)) {
+            continue;
+        }
+
+        const float t = effect.duration > 0.0f ? effect.age / effect.duration : 1.0f;
+        const unsigned char alpha = effectAlpha(effect, {0, 0, 0, 58}, t);
+        if (alpha == 0) {
+            continue;
+        }
+
+        renderer.drawActorShadow(
+            actorShadowAnchor(effect.position, ShardShadowGroundOffsetY),
+            actorShadowVisualSizeForAltitude(effect.shadowVisualSize, effect.altitude),
+            {0, 0, 0, alpha});
+    }
+}
+
+void EffectSystem::appendRenderEntries(std::vector<DepthRenderEntry>& entries, Renderer& renderer)
+{
+    for (const SmokePuff& smoke : smokePuffs_.items()) {
+        if (!smoke.active || !isDepthSortedSmoke(smoke)) {
+            continue;
+        }
+
+        entries.push_back(DepthRenderEntry{
+            smoke.position.y,
+            [&renderer, &smoke]() {
+                renderSmokePuff(renderer, smoke);
+            },
+        });
+    }
+
+    for (const Effect& effect : effects_.items()) {
+        if (!effect.active || !isDepthSortedEffect(effect)) {
+            continue;
+        }
+
+        entries.push_back(DepthRenderEntry{
+            effect.position.y,
+            [&renderer, &effect]() {
+                renderEffectVisual(renderer, effect);
+            },
+        });
+    }
+}
+
 void EffectSystem::renderForeground(Renderer& renderer)
 {
     renderSmokeLayer(renderer, EffectLayer::Foreground);
@@ -335,17 +466,10 @@ void EffectSystem::renderLayer(Renderer& renderer, EffectLayer layer)
         if (!effect.active || effect.layer != layer) {
             continue;
         }
-        const float t = effect.duration > 0.0f ? effect.age / effect.duration : 1.0f;
-        Color color = effect.color;
-        color.a = effectAlpha(effect, color, t);
-        const float radius = lerp(effect.startRadius, effect.endRadius, t);
-        if (effect.type == EffectType::Ring) {
-            renderer.drawCircle(effect.position, radius, color);
-        } else if (effect.visual == ParticleVisual::RockShard) {
-            renderRockShard(renderer, effect, color, std::max(1.0f, radius));
-        } else {
-            renderer.fillCircle(effect.position, std::max(0.8f, radius), color);
+        if (isDepthSortedEffect(effect)) {
+            continue;
         }
+        renderEffectVisual(renderer, effect);
     }
 }
 
@@ -353,6 +477,9 @@ void EffectSystem::renderSmokeLayer(Renderer& renderer, EffectLayer layer)
 {
     for (const SmokePuff& smoke : smokePuffs_.items()) {
         if (!smoke.active || smoke.layer != layer) {
+            continue;
+        }
+        if (isDepthSortedSmoke(smoke)) {
             continue;
         }
         renderSmokePuff(renderer, smoke);
@@ -470,7 +597,7 @@ void EffectSystem::spawnRing(Vec2 position, float startRadius, float endRadius, 
     effect->endRadius = endRadius;
 }
 
-void EffectSystem::spawnParticle(
+Effect* EffectSystem::spawnParticle(
     Vec2 position,
     Vec2 velocity,
     float radius,
@@ -487,7 +614,7 @@ void EffectSystem::spawnParticle(
 {
     Effect* effect = effects_.acquire();
     if (!effect) {
-        return;
+        return nullptr;
     }
     effect->type = EffectType::Particle;
     effect->layer = layer;
@@ -504,6 +631,7 @@ void EffectSystem::spawnParticle(
     effect->angularVelocity = angularVelocity;
     effect->shardAspect = shardAspect;
     effect->shardVariant = shardVariant;
+    return effect;
 }
 
 void EffectSystem::spawnBurst(Vec2 position, int count, Color color, float speed, float radius, float duration, EffectLayer layer)
@@ -542,7 +670,7 @@ void EffectSystem::spawn(ParticleEffectId id, Vec2 position, Vec2 direction, flo
         const Vec2 shardScatterVelocity = rockShard
             ? Vec2{
                 randomRange(digHitShard ? -22.0f : -42.0f, digHitShard ? 22.0f : 42.0f) * scale,
-                randomRange(0.0f, digHitShard ? 18.0f : 34.0f) * scale}
+                randomRange(digHitShard ? -26.0f : -54.0f, digHitShard ? 26.0f : 54.0f) * scale}
             : Vec2{};
         const float offsetRange = rockShard ? (digHitShard ? 5.0f : 9.0f) : 4.0f;
         const Vec2 offset = fromAngle(angle) * randomRange(0.0f, offsetRange * scale);
@@ -553,13 +681,13 @@ void EffectSystem::spawn(ParticleEffectId id, Vec2 position, Vec2 direction, flo
         const Color particleColor = applyColorOverride(
             mixColor(preset.colorA, preset.colorB, randomRange(0.0f, 1.0f)),
             colorOverride);
-        spawnParticle(
+        Effect* spawned = spawnParticle(
             position + offset,
             fromAngle(angle) * speed + shardScatterVelocity,
             radius,
             particleColor,
             duration,
-            preset.acceleration * scale,
+            rockShard ? Vec2{} : preset.acceleration * scale,
             preset.drag,
             layer,
             preset.visual,
@@ -567,6 +695,9 @@ void EffectSystem::spawn(ParticleEffectId id, Vec2 position, Vec2 direction, flo
             rotation,
             angularVelocity,
             shardAspect);
+        if (spawned != nullptr && rockShard) {
+            configureShardPhysics(*spawned, digHitShard, scale);
+        }
     }
 }
 
@@ -614,7 +745,19 @@ void EffectSystem::spawnEnemyHit(Vec2 position, std::string_view effect)
 
 void EffectSystem::spawnEnemyDeath(Vec2 position)
 {
-    spawn(ParticleEffectId::EnemyDeathSoul, position);
+    SmokeBurstOptions options;
+    options.count = 12;
+    options.size = 18.0f;
+    options.sizeJitter = 0.42f;
+    options.spreadRadius = 9.0f;
+    options.speed = 22.0f;
+    options.riseSpeed = 24.0f;
+    options.duration = 0.72f;
+    options.durationJitter = 0.14f;
+    options.colorA = {188, 146, 232, 86};
+    options.colorB = {92, 74, 132, 72};
+    options.layer = EffectLayer::Foreground;
+    spawnSmokeBurst(position, options);
 }
 
 void EffectSystem::spawnThrowStart(Vec2 position, Vec2 direction)

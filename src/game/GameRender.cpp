@@ -31,17 +31,35 @@ void Game::updateRingScreen(const Input& input, UiContext& ui, float dt)
         ringStatus_.clear();
     }
 
+    std::array<UiTabItem, UnlockedRingCount> ringTabs{};
+    std::array<UiRect, UnlockedRingCount> ringTabRects{};
+    std::array<std::string, UnlockedRingCount> ringTabLabels{};
     for (int i = 0; i < UnlockedRingCount; ++i) {
-        const UiRect rect = ringTabRect(i);
-        if (rect.contains(ui.mouse()) && i != spellRing_.activeRingIndex()) {
-            spellRing_.switchActiveRing(i - spellRing_.activeRingIndex());
+        ringTabLabels[static_cast<std::size_t>(i)] = "リング " + std::to_string(i + 1);
+        ringTabs[static_cast<std::size_t>(i)] = {ringTabLabels[static_cast<std::size_t>(i)], true};
+        ringTabRects[static_cast<std::size_t>(i)] = ringTabRect(i);
+    }
+    UiTabsInput ringTabsInput{};
+    const int directRingFocus = input.shortcutSlotPressed();
+    if (directRingFocus >= 0 && directRingFocus < UnlockedRingCount) {
+        ringTabsInput.directFocusIndex = directRingFocus;
+    }
+    ringTabsInput.focusDelta = input.activeRingDelta();
+    ringTabsInput.commit = input.confirmPressed() || input.useItemPressed();
+    const int ringTabSelection = updateUiTabs(
+        ringTabs_,
+        ui,
+        ringTabsInput,
+        spellRing_.activeRingIndex(),
+        ringTabs.data(),
+        static_cast<int>(ringTabs.size()),
+        ringTabRects.data());
+    if (ringTabSelection >= 0) {
+        if (ringTabSelection != spellRing_.activeRingIndex()) {
+            spellRing_.switchActiveRing(ringTabSelection - spellRing_.activeRingIndex());
             ringStatus_.clear();
         }
-        if (ui.pressed(rect)) {
-            spellRing_.switchActiveRing(i - spellRing_.activeRingIndex());
-            ringStatus_.clear();
-            return;
-        }
+        return;
     }
 
     if (!items.empty()) {
@@ -128,18 +146,6 @@ void Game::updateRingScreen(const Input& input, UiContext& ui, float dt)
         }
     }
     ui.block(ringPanelRect());
-
-    const int directRing = input.shortcutSlotPressed();
-    if (directRing >= 0 && directRing < UnlockedRingCount) {
-        spellRing_.switchActiveRing(directRing - spellRing_.activeRingIndex());
-        ringStatus_.clear();
-    }
-    if (input.activeRingDelta() != 0) {
-        if constexpr (UnlockedRingCount > 1) {
-            spellRing_.switchActiveRing(input.activeRingDelta());
-            ringStatus_.clear();
-        }
-    }
 
     if (!items.empty() && input.shortcutCursorDelta() != 0) {
         const int count = static_cast<int>(items.size());
@@ -409,7 +415,7 @@ void Game::renderTopInfoBar(Renderer& renderer) const
 
     const int textScale = 2;
     const Vec2 textMeasure = renderer.measureText("0", textScale);
-    const float textY = TopInfoBarY + std::max(0.0f, (TopInfoBarHeight - textMeasure.y) * 0.5f) + 8.0f;
+    const float textY = TopInfoBarY + std::max(0.0f, (TopInfoBarHeight - textMeasure.y) * 0.5f) + 6.0f;
     InlineItemTextStyle moneyStyle;
     moneyStyle.text = {246, 230, 174, 255};
     moneyStyle.scale = textScale;
@@ -738,15 +744,26 @@ void Game::renderRingScreen(Renderer& renderer, float totalTime) const
     const UiRect panel = ringPanelRect();
     UiCancelControlScope cancelScope(ringCancelState_);
     constexpr std::string_view RingHelpText = UnlockedRingCount > 1
-        ? "Z/X・1-3 リング選択  Q/E アイテム選択  A/D・←/→ 位置  F/Enter 詳細  R 外す  G つかむ/置く  P 保護  Esc/右クリック 戻る"
+        ? "Z/X・1-3 リング選択  F/Enter 確定/詳細  Q/E アイテム選択  A/D・←/→ 位置  R 外す  G つかむ/置く  P 保護  Esc/右クリック 戻る"
         : "Q/E アイテム選択  A/D・←/→ 位置  F/Enter 詳細  R 外す  G つかむ/置く  P 保護  Esc/右クリック 戻る";
     UiWindowScope ringWindow(renderer, "ring.manage", panel, "リング", RingHelpText, UiWindowOptions{true, true});
 
     char buffer[192];
+    std::array<UiTabItem, UnlockedRingCount> ringTabs{};
+    std::array<UiRect, UnlockedRingCount> ringTabRects{};
+    std::array<std::string, UnlockedRingCount> ringTabLabels{};
     for (int i = 0; i < UnlockedRingCount; ++i) {
-        std::snprintf(buffer, sizeof(buffer), "リング %d", i + 1);
-        drawUiButton(renderer, ringTabRect(i), buffer, i == spellRing_.activeRingIndex());
+        ringTabLabels[static_cast<std::size_t>(i)] = "リング " + std::to_string(i + 1);
+        ringTabs[static_cast<std::size_t>(i)] = {ringTabLabels[static_cast<std::size_t>(i)], true};
+        ringTabRects[static_cast<std::size_t>(i)] = ringTabRect(i);
     }
+    drawUiTabs(
+        renderer,
+        ringTabs_,
+        spellRing_.activeRingIndex(),
+        ringTabs.data(),
+        static_cast<int>(ringTabs.size()),
+        ringTabRects.data());
 
     const bool actualRing = true;
     const auto& items = spellRing_.items();
@@ -1189,6 +1206,7 @@ void Game::render(Renderer& renderer, const Time& time)
         appendRewardNodeRenderEntries(worldDepthEntries, renderer, itemLights);
     }
     worldDrops_.appendRenderEntries(worldDepthEntries, renderer, tileMap_, objectCatalog_, player_.position, itemLights);
+    effects_.appendRenderEntries(worldDepthEntries, renderer);
     if (!enemyTestActive_) {
         renderWarpPoints(renderer);
     }
@@ -1205,6 +1223,7 @@ void Game::render(Renderer& renderer, const Time& time)
     renderer.drawActorShadow(playerFootAnchor, PlayerSpriteDrawSize);
     worldDrops_.renderShadows(renderer, tileMap_, objectCatalog_, player_.position, itemLights);
     enemies_.renderShadows(renderer, tileMap_, player_.position, itemLights);
+    effects_.renderShadows(renderer);
     renderPlayerFootstepDust(renderer);
     worldDepthEntries.push_back(DepthRenderEntry{
         player_.position.y,

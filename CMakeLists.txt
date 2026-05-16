@@ -44,6 +44,7 @@ add_executable(MajoShovel
     src/engine/Renderer.cpp
     src/engine/Camera.cpp
     src/data/GoogleSheetSource.cpp
+    src/data/StageWeight.cpp
     src/data/EnemyCatalog.cpp
     src/data/ObjectCatalog.cpp
     src/data/StageCatalog.cpp
@@ -57,6 +58,7 @@ add_executable(MajoShovel
     src/game/GameDevTools.cpp
     src/game/Kamishibai.cpp
     src/game/DialogueSystem.cpp
+    src/game/StoryEvent.cpp
     src/game/OpeningMetaSave.cpp
     src/game/DungeonLayout.cpp
     src/game/EntityStatus.cpp

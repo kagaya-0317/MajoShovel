@@ -1,6 +1,230 @@
 ﻿#include "game/GameInternal.hpp"
 
+#include "data/StageWeight.hpp"
+
 namespace majo {
+
+namespace {
+
+struct FloorCavernAnchor {
+    Vec2 center{};
+    float radius = 2.0f;
+};
+
+constexpr int WallPocketRewardNodeCount = 6;
+constexpr int WallPocketMoneyNodeCount = 8;
+constexpr int WallPocketChestNodeCount = 4;
+constexpr float WallPocketProgressStart = 0.12f;
+constexpr float WallPocketProgressSpan = 0.76f;
+constexpr float WallPocketMinOffsetTiles = 6.5f;
+constexpr float WallPocketMaxOffsetTiles = 11.5f;
+constexpr int StartReservationRadiusTiles = 2;
+constexpr int GoalReservationRadiusTiles = 3;
+constexpr int WarpReservationRadiusTiles = 2;
+constexpr int ExposedPlacementReservationRadiusTiles = 1;
+constexpr int SolidPlacementReservationRadiusTiles = 1;
+constexpr int PlacementSearchRadiusTiles = 8;
+constexpr int SolidPlacementSearchRadiusTiles = 10;
+constexpr float LootLandingCollisionRadius = 14.0f;
+constexpr float LootLandingDropSpacing = 28.0f;
+constexpr float LootLandingWarpClearance = 42.0f;
+constexpr int LootLandingRingCount = 12;
+constexpr int LootLandingSamplesPerRing = 16;
+constexpr float LootLandingFirstRadius = 18.0f;
+constexpr float LootLandingRadiusStep = 18.0f;
+
+struct PlacementReservation {
+    DungeonTile tile{};
+    int radiusTiles = 0;
+};
+
+struct PlacementReservations {
+    std::vector<PlacementReservation> entries;
+
+    void reserve(DungeonTile tile, int radiusTiles)
+    {
+        entries.push_back(PlacementReservation{
+            .tile = tile,
+            .radiusTiles = std::max(0, radiusTiles),
+        });
+    }
+
+    bool blocked(DungeonTile tile, int radiusTiles) const
+    {
+        const int candidateRadius = std::max(0, radiusTiles);
+        for (const PlacementReservation& entry : entries) {
+            const int minDistance = candidateRadius + entry.radiusTiles;
+            const int dx = tile.x - entry.tile.x;
+            const int dy = tile.y - entry.tile.y;
+            if (dx * dx + dy * dy <= minDistance * minDistance) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    bool tryReserve(DungeonTile tile, int radiusTiles)
+    {
+        if (blocked(tile, radiusTiles)) {
+            return false;
+        }
+        reserve(tile, radiusTiles);
+        return true;
+    }
+
+    bool reserveNearest(DungeonTile preferred, int radiusTiles, int maxSearchTiles, DungeonTile& outTile)
+    {
+        if (tryReserve(preferred, radiusTiles)) {
+            outTile = preferred;
+            return true;
+        }
+
+        for (int ring = 1; ring <= maxSearchTiles; ++ring) {
+            bool found = false;
+            DungeonTile best{};
+            int bestDistanceSq = std::numeric_limits<int>::max();
+            for (int dy = -ring; dy <= ring; ++dy) {
+                for (int dx = -ring; dx <= ring; ++dx) {
+                    if (std::max(std::abs(dx), std::abs(dy)) != ring) {
+                        continue;
+                    }
+                    const DungeonTile candidate{preferred.x + dx, preferred.y + dy};
+                    if (blocked(candidate, radiusTiles)) {
+                        continue;
+                    }
+                    const int distanceSq = dx * dx + dy * dy;
+                    if (!found || distanceSq < bestDistanceSq) {
+                        found = true;
+                        best = candidate;
+                        bestDistanceSq = distanceSq;
+                    }
+                }
+            }
+            if (found) {
+                reserve(best, radiusTiles);
+                outTile = best;
+                return true;
+            }
+        }
+
+        return false;
+    }
+};
+
+void reserveLayoutAnchors(PlacementReservations& reservations, const DungeonLayout& layout)
+{
+    reservations.reserve(layout.startTile, StartReservationRadiusTiles);
+    reservations.reserve(layout.goalTile, GoalReservationRadiusTiles);
+}
+
+float floorRadiusForRoom(const SpecialRoomAnchor& room)
+{
+    switch (room.type) {
+    case SpecialRoomType::SafeCavern:
+        return room.radius * 0.70f;
+    case SpecialRoomType::CoinRoom:
+        return room.radius * 0.64f;
+    case SpecialRoomType::EnemyRoom:
+        return room.radius * 0.56f;
+    case SpecialRoomType::OreRoom:
+        return room.radius * 0.34f;
+    case SpecialRoomType::TreasureRoom:
+        return room.radius * 0.40f;
+    case SpecialRoomType::None:
+        break;
+    }
+    return 0.0f;
+}
+
+std::vector<FloorCavernAnchor> collectFloorCavernAnchors(const DungeonLayout& layout)
+{
+    std::vector<FloorCavernAnchor> anchors;
+    anchors.reserve(layout.warpPointAnchors.size() + layout.specialRoomAnchors.size() + 1);
+    for (Vec2 anchor : layout.warpPointAnchors) {
+        anchors.push_back(FloorCavernAnchor{
+            .center = anchor,
+            .radius = 2.4f,
+        });
+    }
+    for (const SpecialRoomAnchor& room : layout.specialRoomAnchors) {
+        const float radius = floorRadiusForRoom(room);
+        if (radius <= 0.5f) {
+            continue;
+        }
+        anchors.push_back(FloorCavernAnchor{
+            .center = room.center,
+            .radius = radius,
+        });
+    }
+    anchors.push_back(FloorCavernAnchor{
+        .center = {static_cast<float>(layout.goalTile.x), static_cast<float>(layout.goalTile.y)},
+        .radius = 5.2f,
+    });
+    return anchors;
+}
+
+std::uint32_t placementTileHash(DungeonTile tile, std::uint32_t seed)
+{
+    std::uint32_t h = seed ^ 0xC2B2AE35u;
+    h ^= static_cast<std::uint32_t>(tile.x) + 0x9E3779B9u + (h << 6) + (h >> 2);
+    h ^= static_cast<std::uint32_t>(tile.y) + 0x85EBCA6Bu + (h << 6) + (h >> 2);
+    h ^= h >> 16;
+    h *= 0x7FEB352Du;
+    h ^= h >> 15;
+    h *= 0x846CA68Bu;
+    h ^= h >> 16;
+    return h;
+}
+
+TileType buriedPlacementTileType(DungeonTile tile, std::uint32_t seed, bool hidden, bool treasure)
+{
+    const std::uint32_t roll = placementTileHash(tile, seed) % 100u;
+    if (treasure) {
+        if (roll < 10u) {
+            return TileType::Dirt;
+        }
+        if (roll < 20u) {
+            return TileType::Ore;
+        }
+        return roll < 68u ? TileType::HardRock : TileType::Rock;
+    }
+    if (hidden) {
+        if (roll < 35u) {
+            return TileType::Dirt;
+        }
+        if (roll < 68u) {
+            return TileType::Rock;
+        }
+        return roll < 88u ? TileType::HardRock : TileType::Ore;
+    }
+    if (roll < 70u) {
+        return TileType::Dirt;
+    }
+    return roll < 90u ? TileType::Rock : TileType::Ore;
+}
+
+float wallPocketProgressForIndex(int index, int count, float jitter)
+{
+    return clamp(
+        WallPocketProgressStart +
+            WallPocketProgressSpan * (static_cast<float>(index + 1) / static_cast<float>(count + 1)) +
+            jitter,
+        0.08f,
+        0.92f);
+}
+
+DungeonTile wallPocketTileAtProgress(const DungeonLayout& layout, float progress, float offsetTiles, bool positiveSide)
+{
+    const Vec2 anchor = pointAtPathProgress(layout.mainPathPoints, progress);
+    const Vec2 tangent = tangentAtPathProgress(layout.mainPathPoints, progress);
+    Vec2 side = perpendicular(tangent);
+    if (!positiveSide) {
+        side = side * -1.0f;
+    }
+    return roundDungeonTile(anchor + side * offsetTiles);
+}
+
+}
 
 DungeonGenerationContext Game::makeDungeonGenerationContext() const
 {
@@ -368,6 +592,7 @@ void Game::openRingScreen()
     pausePage_ = PauseMenuPage::Main;
     mode_ = ScreenMode::Ring;
     const int maxIndex = std::max(0, static_cast<int>(spellRing_.items().size()) - 1);
+    ringTabs_.focusedIndex = spellRing_.activeRingIndex();
     ringSlotSelection_ = std::clamp(ringSlotSelection_, 0, maxIndex);
     ringDragPending_ = false;
     ringDragActive_ = false;
@@ -655,7 +880,10 @@ bool Game::restoreDungeonState(bool useLatestWarpPoint)
 
     player_ = Player{};
     player_.xpToNext = balance_.xpBase + player_.level * balance_.xpPerLevel;
-    player_.position = useLatestWarpPoint ? latestWarpPointStartPosition() : tileWorldCenter(dungeonLayout_.startTile);
+    const Vec2 preferredStartPosition = useLatestWarpPoint
+        ? latestWarpPointStartPosition()
+        : tileWorldCenter(dungeonLayout_.startTile);
+    player_.position = safePlayerStartPosition(preferredStartPosition);
     camera_.follow(player_.position, 1.0f);
     tileMap_.updateAround(player_.position, 0.0f, balance_, dungeonLayout_);
     return true;
@@ -752,6 +980,47 @@ int Game::nearestWarpPointIndex(Vec2 position) const
     return nearest;
 }
 
+Vec2 Game::safePlayerStartPosition(Vec2 preferredPosition)
+{
+    const std::vector<CollisionRect> objectBlockers = solidObjectCollisionRects();
+    const auto blocked = [&](Vec2 position) {
+        if (tileMap_.isCircleBlocked(position, balance_.playerRadius)) {
+            return true;
+        }
+        return circleIntersectsAnyRect(
+            position,
+            balance_.playerRadius,
+            std::span<const CollisionRect>{objectBlockers.data(), objectBlockers.size()});
+    };
+
+    if (!blocked(preferredPosition)) {
+        return preferredPosition;
+    }
+
+    const DungeonTile preferredTile{
+        tileMap_.worldToTile(preferredPosition.x),
+        tileMap_.worldToTile(preferredPosition.y),
+    };
+    for (int ring = 1; ring <= SolidPlacementSearchRadiusTiles; ++ring) {
+        for (int dy = -ring; dy <= ring; ++dy) {
+            for (int dx = -ring; dx <= ring; ++dx) {
+                if (std::max(std::abs(dx), std::abs(dy)) != ring) {
+                    continue;
+                }
+                const Vec2 candidate = tileWorldCenter(DungeonTile{
+                    preferredTile.x + dx,
+                    preferredTile.y + dy,
+                });
+                if (!blocked(candidate)) {
+                    return candidate;
+                }
+            }
+        }
+    }
+
+    return preferredPosition;
+}
+
 void Game::updateWarpPoints(float dt)
 {
     if (!warpPointsEnabled_) {
@@ -802,20 +1071,56 @@ void Game::initializeMoonFragmentNodesFromWarpPoints()
     std::uniform_real_distribution<float> floorRadiusDistribution(1.5f, 3.5f);
     std::uniform_real_distribution<float> buriedRadiusDistribution(2.5f, 4.5f);
 
+    PlacementReservations reservations;
+    reserveLayoutAnchors(reservations, dungeonLayout_);
+    for (const WarpPoint& point : warpPoints_) {
+        reservations.reserve(point.tilePosition, WarpReservationRadiusTiles);
+    }
+    const auto nodeRadius = [](PlacementVisibility visibility) {
+        return visibility == PlacementVisibility::Exposed ? ExposedPlacementReservationRadiusTiles : 0;
+    };
+    for (const RewardNode& node : rewardNodes_) {
+        if (!node.collected) {
+            reservations.reserve(node.tile, nodeRadius(node.visibility));
+        }
+    }
+    for (const MoneyNode& node : moneyNodes_) {
+        if (!node.collected) {
+            reservations.reserve(node.tile, nodeRadius(node.visibility));
+        }
+    }
+    for (const ChestNode& node : chestNodes_) {
+        if (!node.opened) {
+            reservations.reserve(node.tile, nodeRadius(node.visibility));
+        }
+    }
+    for (const CrateNode& node : crateNodes_) {
+        if (!node.destroyed) {
+            reservations.reserve(node.tile, SolidPlacementReservationRadiusTiles);
+        }
+    }
+
     for (const WarpPoint& point : warpPoints_) {
         const int count = countDistribution(rng);
         for (int i = 0; i < count; ++i) {
             const bool buried = i % 2 == 1;
             const float radiusTiles = buried ? buriedRadiusDistribution(rng) : floorRadiusDistribution(rng);
             const Vec2 offset = fromAngle(angleDistribution(rng)) * radiusTiles;
-            moonFragmentNodes_.push_back(MoonFragmentNode{
+            MoonFragmentNode node{
                 .tile = roundDungeonTile(Vec2{
                     static_cast<float>(point.tilePosition.x),
                     static_cast<float>(point.tilePosition.y),
                 } + offset),
                 .visibility = buried ? PlacementVisibility::BuriedVisible : PlacementVisibility::Exposed,
                 .collected = false,
-            });
+            };
+            if (reservations.reserveNearest(
+                    node.tile,
+                    nodeRadius(node.visibility),
+                    PlacementSearchRadiusTiles,
+                    node.tile)) {
+                moonFragmentNodes_.push_back(node);
+            }
         }
     }
 }
@@ -833,9 +1138,35 @@ void Game::initializeRewardNodesFromLayout()
     std::mt19937 rng(dungeonLayout_.seed ^ 0xB77A4C29u);
     std::uniform_real_distribution<float> progressJitter(-0.018f, 0.018f);
     std::uniform_real_distribution<float> sideJitter(-1.2f, 1.2f);
+    std::uniform_real_distribution<float> pocketProgressJitter(-0.030f, 0.030f);
+    std::uniform_real_distribution<float> pocketOffsetDist(WallPocketMinOffsetTiles, WallPocketMaxOffsetTiles);
     std::uniform_int_distribution<int> signDist(0, 1);
     std::uniform_int_distribution<int> moneyDist(2, 8);
     const std::optional<std::string> fallbackObjectId = firstAvailableObjectId(objectCatalog_);
+
+    PlacementReservations reservations;
+    reserveLayoutAnchors(reservations, dungeonLayout_);
+    for (const WarpPoint& point : warpPoints_) {
+        reservations.reserve(point.tilePosition, WarpReservationRadiusTiles);
+    }
+    const auto nodeRadius = [](PlacementVisibility visibility) {
+        return visibility == PlacementVisibility::Exposed ? ExposedPlacementReservationRadiusTiles : 0;
+    };
+    for (const MoonFragmentNode& node : moonFragmentNodes_) {
+        if (!node.collected) {
+            reservations.reserve(node.tile, nodeRadius(node.visibility));
+        }
+    }
+    for (const ChestNode& node : chestNodes_) {
+        if (!node.opened) {
+            reservations.reserve(node.tile, nodeRadius(node.visibility));
+        }
+    }
+    for (const CrateNode& node : crateNodes_) {
+        if (!node.destroyed) {
+            reservations.reserve(node.tile, SolidPlacementReservationRadiusTiles);
+        }
+    }
 
     for (int i = 0; i < RewardNodeCountPerRun; ++i) {
         const float progress = clamp(
@@ -849,18 +1180,25 @@ void Game::initializeRewardNodesFromLayout()
             side = side * -1.0f;
         }
 
+        const bool pathHint = i % 3 == 0;
         RewardNode node;
-        node.visibility = i % 3 == 0
-            ? PlacementVisibility::Exposed
-            : (i % 3 == 1 ? PlacementVisibility::BuriedVisible : PlacementVisibility::BuriedHidden);
-        const float offsetTiles = node.visibility == PlacementVisibility::Exposed
+        node.visibility = pathHint || i % 3 == 1
+            ? PlacementVisibility::BuriedVisible
+            : PlacementVisibility::BuriedHidden;
+        const float offsetTiles = pathHint
             ? 0.0f
             : (node.visibility == PlacementVisibility::BuriedVisible ? 7.0f : 9.0f) + sideJitter(rng);
         node.tile = roundDungeonTile(anchor + side * offsetTiles);
         node.rewardKind = i % 4 == 0 ? "treasure" : "item";
         node.objectId = (i % 2 == 0) ? fallbackObjectId : std::nullopt;
-        node.revealed = node.visibility == PlacementVisibility::Exposed;
-        rewardNodes_.push_back(std::move(node));
+        node.revealed = false;
+        if (reservations.reserveNearest(
+                node.tile,
+                nodeRadius(node.visibility),
+                PlacementSearchRadiusTiles,
+                node.tile)) {
+            rewardNodes_.push_back(std::move(node));
+        }
     }
 
     for (int i = 0; i < MoneyNodeCountPerRun; ++i) {
@@ -881,32 +1219,101 @@ void Game::initializeRewardNodesFromLayout()
             side = side * -1.0f;
         }
 
+        const bool pathHint = i % 3 == 0;
         MoneyNode node;
-        node.visibility = i % 3 == 0
-            ? PlacementVisibility::Exposed
-            : (i % 3 == 1 ? PlacementVisibility::BuriedVisible : PlacementVisibility::BuriedHidden);
-        const float offsetTiles = node.visibility == PlacementVisibility::Exposed
+        node.visibility = pathHint || i % 3 == 1
+            ? PlacementVisibility::BuriedVisible
+            : PlacementVisibility::BuriedHidden;
+        const float offsetTiles = pathHint
             ? 0.0f
             : (node.visibility == PlacementVisibility::BuriedVisible ? 6.0f : 8.5f) + sideJitter(rng);
         node.tile = roundDungeonTile(anchor + side * offsetTiles);
         node.amount = std::max(1, moneyDist(rng) + dungeonLayout_.stageId * 2);
-        moneyNodes_.push_back(node);
+        if (reservations.reserveNearest(
+                node.tile,
+                nodeRadius(node.visibility),
+                PlacementSearchRadiusTiles,
+                node.tile)) {
+            moneyNodes_.push_back(node);
+        }
     }
+
+    for (int i = 0; i < WallPocketRewardNodeCount; ++i) {
+        const float progress = wallPocketProgressForIndex(i, WallPocketRewardNodeCount, pocketProgressJitter(rng));
+        RewardNode node{
+            .tile = wallPocketTileAtProgress(dungeonLayout_, progress, pocketOffsetDist(rng), signDist(rng) == 1),
+            .visibility = PlacementVisibility::Exposed,
+            .rewardKind = i % 3 == 0 ? "wall_pocket_treasure" : "wall_pocket_item",
+            .objectId = (i % 2 == 0) ? fallbackObjectId : std::nullopt,
+            .revealed = true,
+            .spawned = false,
+            .collected = false,
+        };
+        if (reservations.reserveNearest(
+                node.tile,
+                nodeRadius(node.visibility),
+                PlacementSearchRadiusTiles,
+                node.tile)) {
+            rewardNodes_.push_back(std::move(node));
+        }
+    }
+
+    for (int i = 0; i < WallPocketMoneyNodeCount; ++i) {
+        const float progress = wallPocketProgressForIndex(i, WallPocketMoneyNodeCount, pocketProgressJitter(rng));
+        MoneyNode node{
+            .tile = wallPocketTileAtProgress(dungeonLayout_, progress, pocketOffsetDist(rng), signDist(rng) == 1),
+            .amount = std::max(2, moneyDist(rng) + dungeonLayout_.stageId * 3),
+            .visibility = PlacementVisibility::Exposed,
+            .collected = false,
+        };
+        if (reservations.reserveNearest(
+                node.tile,
+                nodeRadius(node.visibility),
+                PlacementSearchRadiusTiles,
+                node.tile)) {
+            moneyNodes_.push_back(node);
+        }
+    }
+
+    const auto placeRewardNode = [&](RewardNode node) {
+        if (reservations.reserveNearest(
+                node.tile,
+                nodeRadius(node.visibility),
+                PlacementSearchRadiusTiles,
+                node.tile)) {
+            rewardNodes_.push_back(std::move(node));
+        }
+    };
+    const auto placeMoneyNode = [&](MoneyNode node) {
+        if (reservations.reserveNearest(
+                node.tile,
+                nodeRadius(node.visibility),
+                PlacementSearchRadiusTiles,
+                node.tile)) {
+            moneyNodes_.push_back(node);
+        }
+    };
 
     for (const SpecialRoomAnchor& room : dungeonLayout_.specialRoomAnchors) {
         const DungeonTile centerTile = roundDungeonTile(room.center);
         if (room.type == SpecialRoomType::CoinRoom) {
             for (int i = 0; i < 4; ++i) {
-                const Vec2 offset = fromAngle(static_cast<float>(i) * Pi * 0.5f) * 2.0f;
-                moneyNodes_.push_back(MoneyNode{
+                const PlacementVisibility visibility = i == 0
+                    ? PlacementVisibility::Exposed
+                    : (i == 1 ? PlacementVisibility::BuriedVisible : PlacementVisibility::BuriedHidden);
+                const float radiusTiles = visibility == PlacementVisibility::Exposed
+                    ? std::max(1.0f, room.radius * 0.28f)
+                    : (visibility == PlacementVisibility::BuriedVisible ? room.radius * 0.82f : room.radius * (i == 2 ? 1.00f : 1.12f));
+                const Vec2 offset = fromAngle(static_cast<float>(i) * Pi * 0.5f) * radiusTiles;
+                placeMoneyNode(MoneyNode{
                     .tile = roundDungeonTile(room.center + offset),
                     .amount = std::max(4, moneyDist(rng) + dungeonLayout_.stageId * 4),
-                    .visibility = i == 0 ? PlacementVisibility::Exposed : (i == 1 ? PlacementVisibility::BuriedVisible : PlacementVisibility::BuriedHidden),
+                    .visibility = visibility,
                     .collected = false,
                 });
             }
         } else if (room.type == SpecialRoomType::TreasureRoom) {
-            rewardNodes_.push_back(RewardNode{
+            placeRewardNode(RewardNode{
                 .tile = centerTile,
                 .visibility = PlacementVisibility::Exposed,
                 .rewardKind = "treasure",
@@ -915,7 +1322,7 @@ void Game::initializeRewardNodesFromLayout()
                 .spawned = false,
                 .collected = false,
             });
-            rewardNodes_.push_back(RewardNode{
+            placeRewardNode(RewardNode{
                 .tile = roundDungeonTile(room.center + Vec2{room.radius, 0.0f}),
                 .visibility = PlacementVisibility::BuriedVisible,
                 .rewardKind = "treasure",
@@ -924,7 +1331,7 @@ void Game::initializeRewardNodesFromLayout()
                 .spawned = false,
                 .collected = false,
             });
-            rewardNodes_.push_back(RewardNode{
+            placeRewardNode(RewardNode{
                 .tile = roundDungeonTile(room.center + Vec2{-room.radius, 0.0f}),
                 .visibility = PlacementVisibility::BuriedHidden,
                 .rewardKind = "treasure",
@@ -934,7 +1341,7 @@ void Game::initializeRewardNodesFromLayout()
                 .collected = false,
             });
         } else if (room.type == SpecialRoomType::EnemyRoom) {
-            rewardNodes_.push_back(RewardNode{
+            placeRewardNode(RewardNode{
                 .tile = roundDungeonTile(room.center + Vec2{0.0f, room.radius}),
                 .visibility = PlacementVisibility::BuriedHidden,
                 .rewardKind = "enemy_room_reward",
@@ -944,7 +1351,7 @@ void Game::initializeRewardNodesFromLayout()
                 .collected = false,
             });
         } else if (room.type == SpecialRoomType::OreRoom) {
-            rewardNodes_.push_back(RewardNode{
+            placeRewardNode(RewardNode{
                 .tile = roundDungeonTile(room.center + Vec2{room.radius, 0.0f}),
                 .visibility = PlacementVisibility::BuriedVisible,
                 .rewardKind = "ore_room_reward",
@@ -1088,7 +1495,38 @@ void Game::initializeChestNodesFromLayout()
     std::mt19937 rng(dungeonLayout_.seed ^ 0xC45E7A91u);
     std::uniform_real_distribution<float> progressJitter(-0.026f, 0.026f);
     std::uniform_real_distribution<float> sideJitter(-1.1f, 1.1f);
+    std::uniform_real_distribution<float> pocketProgressJitter(-0.028f, 0.028f);
+    std::uniform_real_distribution<float> pocketOffsetDist(WallPocketMinOffsetTiles + 0.5f, WallPocketMaxOffsetTiles + 1.0f);
     std::uniform_int_distribution<int> signDist(0, 1);
+
+    PlacementReservations reservations;
+    reserveLayoutAnchors(reservations, dungeonLayout_);
+    for (const WarpPoint& point : warpPoints_) {
+        reservations.reserve(point.tilePosition, WarpReservationRadiusTiles);
+    }
+    const auto nodeRadius = [](PlacementVisibility visibility) {
+        return visibility == PlacementVisibility::Exposed ? ExposedPlacementReservationRadiusTiles : 0;
+    };
+    for (const MoonFragmentNode& node : moonFragmentNodes_) {
+        if (!node.collected) {
+            reservations.reserve(node.tile, nodeRadius(node.visibility));
+        }
+    }
+    for (const RewardNode& node : rewardNodes_) {
+        if (!node.collected) {
+            reservations.reserve(node.tile, nodeRadius(node.visibility));
+        }
+    }
+    for (const MoneyNode& node : moneyNodes_) {
+        if (!node.collected) {
+            reservations.reserve(node.tile, nodeRadius(node.visibility));
+        }
+    }
+    for (const CrateNode& node : crateNodes_) {
+        if (!node.destroyed) {
+            reservations.reserve(node.tile, SolidPlacementReservationRadiusTiles);
+        }
+    }
 
     for (int i = 0; i < ChestNodeCountPerRun; ++i) {
         const float progress = clamp(
@@ -1102,11 +1540,12 @@ void Game::initializeChestNodesFromLayout()
             side = side * -1.0f;
         }
 
+        const bool pathHint = i % 4 == 0;
         ChestNode node;
-        node.visibility = i % 4 == 0
-            ? PlacementVisibility::Exposed
-            : (i % 4 == 1 ? PlacementVisibility::BuriedVisible : PlacementVisibility::BuriedHidden);
-        const float offsetTiles = node.visibility == PlacementVisibility::Exposed
+        node.visibility = pathHint || i % 4 == 1
+            ? PlacementVisibility::BuriedVisible
+            : PlacementVisibility::BuriedHidden;
+        const float offsetTiles = pathHint
             ? (1.0f + sideJitter(rng) * 0.5f)
             : (node.visibility == PlacementVisibility::BuriedVisible ? 6.5f : 8.5f) + sideJitter(rng);
         node.tile = roundDungeonTile(anchor + side * offsetTiles);
@@ -1116,7 +1555,33 @@ void Game::initializeChestNodesFromLayout()
         node.opened = false;
         node.lootSpawned = false;
         node.openingSeconds = 0.0f;
-        chestNodes_.push_back(node);
+        if (reservations.reserveNearest(
+                node.tile,
+                nodeRadius(node.visibility),
+                SolidPlacementSearchRadiusTiles,
+                node.tile)) {
+            chestNodes_.push_back(node);
+        }
+    }
+
+    for (int i = 0; i < WallPocketChestNodeCount; ++i) {
+        const float progress = wallPocketProgressForIndex(i, WallPocketChestNodeCount, pocketProgressJitter(rng));
+        ChestNode node;
+        node.visibility = PlacementVisibility::Exposed;
+        node.tile = wallPocketTileAtProgress(dungeonLayout_, progress, pocketOffsetDist(rng), signDist(rng) == 1);
+        node.chestKind = rollChestKind(rng, progress);
+        node.depthRank = lootDepthRankForProgress(currentStageId_, progress);
+        node.revealed = true;
+        node.opened = false;
+        node.lootSpawned = false;
+        node.openingSeconds = 0.0f;
+        if (reservations.reserveNearest(
+                node.tile,
+                nodeRadius(node.visibility),
+                SolidPlacementSearchRadiusTiles,
+                node.tile)) {
+            chestNodes_.push_back(node);
+        }
     }
 }
 
@@ -1191,13 +1656,52 @@ bool Game::spawnWeightedObjectLoot(
     Vec2 center,
     std::mt19937& rng,
     std::string_view sourceLabel,
-    bool launchFromCenter)
+    bool launchFromCenter,
+    LootSourceKind sourceKind)
 {
+    const auto sourceWeightMultiplier = [sourceKind](const ObjectDefinition& object) {
+        constexpr std::string_view RecoveryCategory = "\xE5\x9B\x9E\xE5\xBE\xA9";
+        constexpr std::string_view WeaponCategory = "\xE6\xAD\xA6\xE5\x99\xA8";
+        constexpr std::string_view ShieldCategory = "\xE7\x9B\xBE";
+        constexpr std::string_view TreasureCategory = "\xE5\xAE\x9D";
+
+        switch (sourceKind) {
+        case LootSourceKind::Chest:
+        case LootSourceKind::CrateBonus:
+            return 1.0;
+        case LootSourceKind::DigItem:
+        case LootSourceKind::CapturedReward:
+            if (object.category == RecoveryCategory) {
+                return 1.35;
+            }
+            if (object.category == TreasureCategory) {
+                return 1.0;
+            }
+            return 0.75;
+        case LootSourceKind::EnemyDrop:
+            if (object.category == RecoveryCategory) {
+                return 1.35;
+            }
+            if (object.category == WeaponCategory || object.category == ShieldCategory) {
+                return 1.0;
+            }
+            if (object.category == TreasureCategory) {
+                return 0.25;
+            }
+            return 0.75;
+        }
+        return 1.0;
+    };
+
     std::vector<const ObjectDefinition*> candidates;
     std::vector<double> weights;
     for (const ObjectDefinition& object : objectCatalog_.objects) {
-        const double weight = lootWeightFor(object, currentStageId_, depthRank, chestKind);
-        if (weight >= 1.0) {
+        const double baseWeight = lootWeightFor(object, currentStageId_, depthRank, chestKind);
+        if (baseWeight >= 1.0) {
+            const double weight = baseWeight * sourceWeightMultiplier(object);
+            if (weight <= 0.0) {
+                continue;
+            }
             candidates.push_back(&object);
             weights.push_back(weight);
         }
@@ -1212,16 +1716,91 @@ bool Game::spawnWeightedObjectLoot(
         return false;
     }
 
-    std::discrete_distribution<int> itemDistribution(weights.begin(), weights.end());
-    const int selected = itemDistribution(rng);
-    const ObjectDefinition* object = candidates[static_cast<std::size_t>(selected)];
-    const Vec2 target = scatterLootPosition(center, rng);
+    const std::optional<std::size_t> selected = selectWeightedIndex(weights, rng);
+    if (!selected || *selected >= candidates.size()) {
+        logError("[warning] " + std::string(sourceLabel) + ": failed Objects weighted selection");
+        return false;
+    }
+    const ObjectDefinition* object = candidates[*selected];
+    const bool safeLanding = sourceKind == LootSourceKind::Chest || sourceKind == LootSourceKind::CrateBonus;
+    const Vec2 target = safeLanding
+        ? safeLootLandingPosition(center, rng)
+        : scatterLootPosition(center, rng);
     return worldDrops_.spawnObjectDrop(
         objectCatalog_,
         object->id,
         target,
         runStats_.elapsedSeconds,
         launchFromCenter ? makeWorldLootJumpMotion(center, rng) : WorldDropSpawnMotion{});
+}
+
+Vec2 Game::safeLootLandingPosition(Vec2 center, std::mt19937& rng)
+{
+    const auto blockedByTerrain = [&](Vec2 candidate) {
+        return tileMap_.isCircleBlocked(candidate, LootLandingCollisionRadius);
+    };
+    const auto blockedByWarp = [&](Vec2 candidate) {
+        const float radiusSq = LootLandingWarpClearance * LootLandingWarpClearance;
+        for (const WarpPoint& point : warpPoints_) {
+            if (distanceSquared(candidate, point.position) <= radiusSq) {
+                return true;
+            }
+        }
+        return false;
+    };
+    const auto blockedByObject = [&](Vec2 candidate) {
+        for (const ChestNode& node : chestNodes_) {
+            if (!node.revealed && !node.opened && node.visibility != PlacementVisibility::Exposed) {
+                continue;
+            }
+            const CollisionRect rect = collisionRectFromCenter(tileWorldCenter(node.tile), ChestCollisionSize);
+            if (circleIntersectsRect(candidate, LootLandingCollisionRadius, rect)) {
+                return true;
+            }
+        }
+        for (const CrateNode& node : crateNodes_) {
+            if (node.destroyed) {
+                continue;
+            }
+            const CollisionRect rect = collisionRectFromCenter(tileWorldCenter(node.tile), CrateCollisionSize);
+            if (circleIntersectsRect(candidate, LootLandingCollisionRadius, rect)) {
+                return true;
+            }
+        }
+        return false;
+    };
+    const auto blockedByDrop = [&](Vec2 candidate) {
+        const float spacingSq = LootLandingDropSpacing * LootLandingDropSpacing;
+        for (const WorldDropItem& drop : worldDrops_.drops()) {
+            const Vec2 occupiedPosition = drop.jumpActive ? drop.jumpTargetPosition : drop.position;
+            if (distanceSquared(candidate, occupiedPosition) <= spacingSq) {
+                return true;
+            }
+        }
+        return false;
+    };
+    const auto safe = [&](Vec2 candidate) {
+        return !blockedByTerrain(candidate) &&
+            !blockedByWarp(candidate) &&
+            !blockedByObject(candidate) &&
+            !blockedByDrop(candidate);
+    };
+
+    std::uniform_real_distribution<float> angleDistribution(0.0f, Pi * 2.0f);
+    const float baseAngle = angleDistribution(rng);
+    for (int ring = 0; ring < LootLandingRingCount; ++ring) {
+        const float radius = LootLandingFirstRadius + LootLandingRadiusStep * static_cast<float>(ring);
+        const int samples = LootLandingSamplesPerRing + ring * 4;
+        for (int i = 0; i < samples; ++i) {
+            const float angle = baseAngle + (Pi * 2.0f) * (static_cast<float>(i) / static_cast<float>(samples));
+            const Vec2 candidate = center + fromAngle(angle) * radius;
+            if (safe(candidate)) {
+                return candidate;
+            }
+        }
+    }
+
+    return scatterLootPosition(center, rng);
 }
 
 void Game::openChestNode(ChestNode& node)
@@ -1270,7 +1849,7 @@ void Game::spawnChestLoot(ChestNode& node)
         const auto [minMoney, maxMoney] = lootMoneyBaseRange(node.chestKind);
         std::uniform_int_distribution<int> moneyDistribution(minMoney, maxMoney);
         const int amount = scaledLootAmount(moneyDistribution(rng), totalMultiplier);
-        const Vec2 target = scatterLootPosition(center, rng);
+        const Vec2 target = safeLootLandingPosition(center, rng);
         worldDrops_.spawnMoneyDrop(amount, target, runStats_.elapsedSeconds, makeWorldLootJumpMotion(center, rng));
     }
 
@@ -1278,7 +1857,7 @@ void Game::spawnChestLoot(ChestNode& node)
     if (materialChance(rng)) {
         std::uniform_int_distribution<int> materialDistribution(1, 3);
         const int amount = scaledLootAmount(materialDistribution(rng), totalMultiplier);
-        const Vec2 target = scatterLootPosition(center, rng);
+        const Vec2 target = safeLootLandingPosition(center, rng);
         const MaterialType materialType = rollChestMaterial(rng);
         worldDrops_.spawnMaterialDrop(
             materialType,
@@ -1297,11 +1876,63 @@ void Game::initializeCrateNodesFromLayout()
     }
 
     std::mt19937 rng(dungeonLayout_.seed ^ 0xA31C2F17u);
+    std::uniform_real_distribution<float> angleDistribution(0.0f, Pi * 2.0f);
+    std::uniform_real_distribution<float> unitDistribution(0.0f, 1.0f);
     std::uniform_real_distribution<float> progressJitter(-0.030f, 0.030f);
     std::uniform_real_distribution<float> sideJitter(-1.6f, 1.6f);
     std::uniform_int_distribution<int> signDist(0, 1);
+    const std::vector<FloorCavernAnchor> floorAnchors = collectFloorCavernAnchors(dungeonLayout_);
+
+    PlacementReservations reservations;
+    reserveLayoutAnchors(reservations, dungeonLayout_);
+    for (const WarpPoint& point : warpPoints_) {
+        reservations.reserve(point.tilePosition, WarpReservationRadiusTiles);
+    }
+    const auto nodeRadius = [](PlacementVisibility visibility) {
+        return visibility == PlacementVisibility::Exposed ? ExposedPlacementReservationRadiusTiles : 0;
+    };
+    for (const MoonFragmentNode& node : moonFragmentNodes_) {
+        if (!node.collected) {
+            reservations.reserve(node.tile, nodeRadius(node.visibility));
+        }
+    }
+    for (const RewardNode& node : rewardNodes_) {
+        if (!node.collected) {
+            reservations.reserve(node.tile, nodeRadius(node.visibility));
+        }
+    }
+    for (const MoneyNode& node : moneyNodes_) {
+        if (!node.collected) {
+            reservations.reserve(node.tile, nodeRadius(node.visibility));
+        }
+    }
+    for (const ChestNode& node : chestNodes_) {
+        if (!node.opened) {
+            reservations.reserve(node.tile, nodeRadius(node.visibility));
+        }
+    }
 
     for (int i = 0; i < CrateNodeCountPerRun; ++i) {
+        if (!floorAnchors.empty()) {
+            const FloorCavernAnchor& floor = floorAnchors[static_cast<std::size_t>(i) % floorAnchors.size()];
+            const float offsetRadius = 1.1f + unitDistribution(rng) * std::max(0.1f, floor.radius - 1.2f);
+            const Vec2 offset = fromAngle(angleDistribution(rng)) * offsetRadius;
+            const DungeonLayoutMetrics metrics = calculateDungeonLayoutMetrics(dungeonLayout_, floor.center);
+
+            CrateNode node;
+            node.tile = roundDungeonTile(floor.center + offset);
+            node.depthRank = lootDepthRankForProgress(currentStageId_, metrics.pathProgress);
+            node.destroyed = false;
+            if (reservations.reserveNearest(
+                    node.tile,
+                    SolidPlacementReservationRadiusTiles,
+                    SolidPlacementSearchRadiusTiles,
+                    node.tile)) {
+                crateNodes_.push_back(node);
+            }
+            continue;
+        }
+
         const bool useBranch = !dungeonLayout_.branchPathPoints.empty() && i % 4 == 0;
         float progress = clamp(
             0.05f + 0.90f * (static_cast<float>(i + 1) / static_cast<float>(CrateNodeCountPerRun + 1)) + progressJitter(rng),
@@ -1326,7 +1957,13 @@ void Game::initializeCrateNodesFromLayout()
         node.tile = roundDungeonTile(anchor + side * offsetTiles);
         node.depthRank = lootDepthRankForProgress(currentStageId_, progress);
         node.destroyed = false;
-        crateNodes_.push_back(node);
+        if (reservations.reserveNearest(
+                node.tile,
+                SolidPlacementReservationRadiusTiles,
+                SolidPlacementSearchRadiusTiles,
+                node.tile)) {
+            crateNodes_.push_back(node);
+        }
     }
 }
 
@@ -1375,7 +2012,7 @@ void Game::destroyCrateNode(CrateNode& node)
 
     std::uniform_int_distribution<int> materialDistribution(1, 3);
     const int materialAmount = scaledLootAmount(materialDistribution(rng), totalMultiplier);
-    const Vec2 materialTarget = scatterLootPosition(center, rng);
+    const Vec2 materialTarget = safeLootLandingPosition(center, rng);
     worldDrops_.spawnMaterialDrop(
         MaterialType::OldWoodBuildingMaterial,
         materialAmount,
@@ -1387,7 +2024,7 @@ void Game::destroyCrateNode(CrateNode& node)
     if (moneyChance(rng)) {
         std::uniform_int_distribution<int> moneyDistribution(5, 20);
         const int amount = scaledLootAmount(moneyDistribution(rng), totalMultiplier);
-        const Vec2 moneyTarget = scatterLootPosition(center, rng);
+        const Vec2 moneyTarget = safeLootLandingPosition(center, rng);
         worldDrops_.spawnMoneyDrop(
             amount,
             moneyTarget,
@@ -1397,7 +2034,7 @@ void Game::destroyCrateNode(CrateNode& node)
 
     std::bernoulli_distribution bonusChance(balance_.crateBonusChance);
     if (bonusChance(rng)) {
-        spawnWeightedObjectLoot(LootChestKind::Common, node.depthRank, center, rng, "CrateBonusLoot", true);
+        spawnWeightedObjectLoot(LootChestKind::Common, node.depthRank, center, rng, "CrateBonusLoot", true, LootSourceKind::CrateBonus);
     }
 
     reloadNotice_ = "Crate broken";
@@ -1495,9 +2132,10 @@ void Game::initializeEnemyNodesFromLayout()
             side = side * -1.0f;
         }
 
+        const bool pathAmbush = i % 3 != 0;
         EnemyNode node;
-        node.placementType = i % 3 == 0 ? EnemyPlacementType::BuriedHidden : EnemyPlacementType::Exposed;
-        const float offsetTiles = node.placementType == EnemyPlacementType::Exposed
+        node.placementType = EnemyPlacementType::BuriedHidden;
+        const float offsetTiles = pathAmbush
             ? (1.0f + sideJitter(rng))
             : (8.0f + sideJitter(rng));
         node.tile = roundDungeonTile(anchor + side * offsetTiles);
@@ -1538,6 +2176,123 @@ void Game::initializeEnemyNodesFromLayout()
                 .spawned = false,
             });
         }
+    }
+}
+
+void Game::applyPlacementTerrainOverrides()
+{
+    const auto applyExposedPocket = [this](DungeonTile tile, int radius) {
+        for (int y = -radius; y <= radius; ++y) {
+            for (int x = -radius; x <= radius; ++x) {
+                tileMap_.setTileOverride(
+                    DungeonTile{tile.x + x, tile.y + y},
+                    TileType::Empty);
+            }
+        }
+    };
+    const auto applyExposedCenter = [this](DungeonTile tile) {
+        tileMap_.setTileOverride(tile, TileType::Empty);
+    };
+    const auto applyBuriedWall = [this](DungeonTile tile, PlacementVisibility visibility, bool treasureWall) {
+        tileMap_.setTileOverride(
+            tile,
+            buriedPlacementTileType(
+                tile,
+                dungeonLayout_.seed,
+                visibility == PlacementVisibility::BuriedHidden,
+                treasureWall));
+    };
+
+    for (const RewardNode& node : rewardNodes_) {
+        if (node.visibility == PlacementVisibility::Exposed) {
+            applyExposedPocket(node.tile, 1);
+        }
+    }
+    for (const MoneyNode& node : moneyNodes_) {
+        if (node.visibility == PlacementVisibility::Exposed) {
+            applyExposedPocket(node.tile, 1);
+        }
+    }
+    for (const MoonFragmentNode& node : moonFragmentNodes_) {
+        if (node.visibility == PlacementVisibility::Exposed) {
+            applyExposedPocket(node.tile, 1);
+        }
+    }
+    for (const ChestNode& node : chestNodes_) {
+        if (node.visibility == PlacementVisibility::Exposed) {
+            applyExposedPocket(node.tile, 1);
+        }
+    }
+    for (const EnemyNode& node : enemyNodes_) {
+        if (node.placementType == EnemyPlacementType::Exposed) {
+            applyExposedPocket(node.tile, 1);
+        }
+    }
+    for (const CrateNode& node : crateNodes_) {
+        applyExposedPocket(node.tile, 1);
+    }
+
+    for (const RewardNode& node : rewardNodes_) {
+        if (node.visibility == PlacementVisibility::Exposed) {
+            continue;
+        }
+        const bool treasureWall = node.rewardKind.find("treasure") != std::string::npos;
+        applyBuriedWall(node.tile, node.visibility, treasureWall);
+    }
+    for (const MoneyNode& node : moneyNodes_) {
+        if (node.visibility == PlacementVisibility::Exposed) {
+            continue;
+        }
+        applyBuriedWall(node.tile, node.visibility, false);
+    }
+    for (const MoonFragmentNode& node : moonFragmentNodes_) {
+        if (node.visibility == PlacementVisibility::Exposed) {
+            continue;
+        }
+        applyBuriedWall(node.tile, node.visibility, false);
+    }
+    for (const ChestNode& node : chestNodes_) {
+        if (node.visibility == PlacementVisibility::Exposed) {
+            continue;
+        }
+        applyBuriedWall(node.tile, node.visibility, true);
+    }
+    for (const EnemyNode& node : enemyNodes_) {
+        if (node.placementType == EnemyPlacementType::Exposed) {
+            continue;
+        }
+        tileMap_.setTileOverride(
+            node.tile,
+            buriedPlacementTileType(node.tile, dungeonLayout_.seed, true, false));
+    }
+
+    for (const RewardNode& node : rewardNodes_) {
+        if (node.visibility == PlacementVisibility::Exposed) {
+            applyExposedCenter(node.tile);
+        }
+    }
+    for (const MoneyNode& node : moneyNodes_) {
+        if (node.visibility == PlacementVisibility::Exposed) {
+            applyExposedCenter(node.tile);
+        }
+    }
+    for (const MoonFragmentNode& node : moonFragmentNodes_) {
+        if (node.visibility == PlacementVisibility::Exposed) {
+            applyExposedCenter(node.tile);
+        }
+    }
+    for (const ChestNode& node : chestNodes_) {
+        if (node.visibility == PlacementVisibility::Exposed) {
+            applyExposedCenter(node.tile);
+        }
+    }
+    for (const EnemyNode& node : enemyNodes_) {
+        if (node.placementType == EnemyPlacementType::Exposed) {
+            applyExposedCenter(node.tile);
+        }
+    }
+    for (const CrateNode& node : crateNodes_) {
+        applyExposedCenter(node.tile);
     }
 }
 

@@ -722,6 +722,11 @@ std::filesystem::path openingKamishibaiDataPath()
     return std::filesystem::path("data") / "opening_kamishibai.tsv";
 }
 
+std::filesystem::path storyEventDataDirectory()
+{
+    return std::filesystem::path("data") / "story_events";
+}
+
 std::string openingTitleImagePath(const std::vector<KamishibaiPage>& pages)
 {
     for (auto it = pages.rbegin(); it != pages.rend(); ++it) {
@@ -1035,14 +1040,12 @@ DialogueSequence baseMonicaDialogue()
         "モニカ",
         "",
         "無理はしないで。準備ができたら、採掘出口から向かおう。",
-        false,
     });
     sequence.lines.push_back(DialogueLine{
         "monica",
         "モニカ",
         "",
         "チコリが反応したら、近くに星くずか古い魔導具があるかも。壁の色も見てみて。",
-        false,
     });
     return sequence;
 }
@@ -1056,14 +1059,12 @@ DialogueSequence firstDungeonDialogue()
         "モニカ",
         "",
         "通信はつながってる。暗い場所では、松明の光から離れすぎないで。",
-        false,
     });
     sequence.lines.push_back(DialogueLine{
         "monica",
         "モニカ",
         "",
         "答えを全部は見通せないけど、異変の気配なら拾える。気になる壁は少し掘ってみよう。",
-        false,
     });
     return sequence;
 }
@@ -1073,14 +1074,69 @@ UiRect basePanelRect()
     return {{360.0f, 92.0f}, {560.0f, 536.0f}};
 }
 
+UiRect baseUpgradePanelRect()
+{
+    return {{220.0f, 42.0f}, {840.0f, 628.0f}};
+}
+
 UiRect baseMenuItemRect(int index)
 {
     return {{450.0f, 296.0f + static_cast<float>(index) * 36.0f}, {380.0f, 30.0f}};
 }
 
+float baseMiningContentLeft()
+{
+    return basePanelRect().pos.x + ui::ImageWindowHeaderTitlePadding.x;
+}
+
+struct UiPageSelectorRects {
+    UiRect prev{};
+    UiRect text{};
+    UiRect next{};
+};
+
+UiPageSelectorRects uiPageSelectorRectsFromNextButton(Vec2 nextButtonPos, float textWidth, float buttonSize = StoragePageButtonSize, float gap = StoragePageButtonGap)
+{
+    const Vec2 buttonSizeVec{buttonSize, buttonSize};
+    UiPageSelectorRects rects{};
+    rects.next = {nextButtonPos, buttonSizeVec};
+    rects.text = {{
+        rects.next.pos.x - gap - textWidth,
+        rects.next.pos.y,
+    }, {textWidth, buttonSize}};
+    rects.prev = {{
+        rects.text.pos.x - gap - buttonSize,
+        rects.text.pos.y,
+    }, buttonSizeVec};
+    return rects;
+}
+
+UiPageSelectorRects baseMiningStageSelectorRects()
+{
+    constexpr float StageSelectorTextWidth = 252.0f;
+    const UiRect body = uiBodyRect(basePanelRect());
+    const float textLeft = baseMiningContentLeft() + 132.0f;
+    return uiPageSelectorRectsFromNextButton(
+        {textLeft + StageSelectorTextWidth + StoragePageButtonGap, body.pos.y - 4.0f},
+        StageSelectorTextWidth);
+}
+
 UiRect baseMiningStartChoiceRect(int index)
 {
-    return {{450.0f, 318.0f + static_cast<float>(index) * 58.0f}, {380.0f, ui::ButtonHeight}};
+    return {{450.0f, 322.0f + static_cast<float>(index) * 80.0f}, {380.0f, ui::ButtonHeight}};
+}
+
+UiRect baseMiningRegenerateConfirmRect()
+{
+    return {{430.0f, 232.0f}, {420.0f, 238.0f}};
+}
+
+UiRect baseMiningRegenerateConfirmButtonRect(int index)
+{
+    const Vec2 size{164.0f, ui::ButtonHeight};
+    return index == 0
+        ? uiBottomLeftButtonRect(baseMiningRegenerateConfirmRect(), size)
+        : uiBottomRightButtonRect(baseMiningRegenerateConfirmRect(), size);
 }
 
 UiRect baseSellItemRect(int index)
@@ -1148,9 +1204,33 @@ void drawMoneySummaryText(Renderer& renderer, Vec2 topRight, int money)
 
 UiRect baseUpgradeItemRect(int index)
 {
-    const int column = index / 4;
-    const int row = index % 4;
-    return {{392.0f + static_cast<float>(column) * 252.0f, 214.0f + static_cast<float>(row) * 58.0f}, {240.0f, ui::ButtonHeight}};
+    constexpr float x = 260.0f;
+    constexpr float w = 292.0f;
+    constexpr float h = 42.0f;
+    constexpr std::array<float, BaseUpgradeItemCount> RowY{{
+        176.0f,
+        222.0f,
+        298.0f,
+        344.0f,
+        420.0f,
+        466.0f,
+        512.0f,
+        558.0f,
+    }};
+    const int clampedIndex = std::clamp(index, 0, BaseUpgradeItemCount - 1);
+    return {{x, RowY[static_cast<std::size_t>(clampedIndex)]}, {w, h}};
+}
+
+UiRect baseUpgradeDetailPanelRect()
+{
+    return {{580.0f, 150.0f}, {432.0f, 396.0f}};
+}
+
+UiRect baseUpgradeConfirmRect()
+{
+    const UiRect detail = baseUpgradeDetailPanelRect();
+    const Vec2 size{208.0f, ui::ButtonHeight};
+    return {{detail.pos.x + (detail.size.x - size.x) * 0.5f, 568.0f}, size};
 }
 
 UiRect baseProcessingModeRect(int index)
@@ -1207,28 +1287,23 @@ UiRect storageWarehouseSlotRect(int index)
 
 UiRect storageNextPageButtonRect()
 {
-    return {{
-        StorageGridRightX - StoragePageButtonSize,
-        StorageBottomHeaderY - 2.0f
-    }, {StoragePageButtonSize, StoragePageButtonSize}};
+    return uiPageSelectorRectsFromNextButton(
+        {StorageGridRightX - StoragePageButtonSize, StorageBottomHeaderY - 2.0f},
+        StoragePageTextWidth).next;
 }
 
 UiRect storagePageTextRect()
 {
-    const UiRect next = storageNextPageButtonRect();
-    return {{
-        next.pos.x - StoragePageButtonGap - StoragePageTextWidth,
-        StorageBottomHeaderY - 2.0f
-    }, {StoragePageTextWidth, StoragePageButtonSize}};
+    return uiPageSelectorRectsFromNextButton(
+        {StorageGridRightX - StoragePageButtonSize, StorageBottomHeaderY - 2.0f},
+        StoragePageTextWidth).text;
 }
 
 UiRect storagePrevPageButtonRect()
 {
-    const UiRect page = storagePageTextRect();
-    return {{
-        page.pos.x - StoragePageButtonGap - StoragePageButtonSize,
-        page.pos.y
-    }, {StoragePageButtonSize, StoragePageButtonSize}};
+    return uiPageSelectorRectsFromNextButton(
+        {StorageGridRightX - StoragePageButtonSize, StorageBottomHeaderY - 2.0f},
+        StoragePageTextWidth).prev;
 }
 
 int wrapStoragePageIndex(int page, int delta, int pageCount)

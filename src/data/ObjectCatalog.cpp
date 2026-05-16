@@ -1,5 +1,7 @@
 ﻿#include "data/ObjectCatalog.hpp"
 
+#include "data/StageWeight.hpp"
+
 #include <algorithm>
 #include <array>
 #include <cctype>
@@ -82,19 +84,6 @@ constexpr std::array<std::string_view, 11> AllowedDamageTypes = {
     "water",
     "magic",
 };
-
-struct LootStageSpec {
-    std::string_view stageId;
-    std::string_view prefix;
-    int maxDepth = 0;
-};
-
-constexpr std::array<LootStageSpec, 4> LootStages = {{
-    {"stage_01_stardust", "ST", 3},
-    {"stage_02_junk_magic", "JK", 3},
-    {"stage_03_star_core", "SC", 3},
-    {"stage_04_astral_mine", "AS", 9},
-}};
 
 constexpr std::array<std::string_view, 3> LootChestPrefixes = {
     "C",
@@ -244,26 +233,9 @@ bool parseLootChestKind(std::string_view text, LootChestKind& outKind)
     return false;
 }
 
-const LootStageSpec* findLootStageSpec(std::string_view stageId)
-{
-    const auto it = std::find_if(LootStages.begin(), LootStages.end(), [stageId](const LootStageSpec& spec) {
-        return spec.stageId == stageId;
-    });
-    return it != LootStages.end() ? &*it : nullptr;
-}
-
 std::vector<std::string> expectedLootWeightColumns()
 {
-    std::vector<std::string> columns;
-    columns.reserve(54);
-    for (const LootStageSpec& stage : LootStages) {
-        for (int depth = 1; depth <= stage.maxDepth; ++depth) {
-            for (std::string_view chest : LootChestPrefixes) {
-                columns.push_back(std::string(stage.prefix) + "_" + std::string(chest) + std::to_string(depth));
-            }
-        }
-    }
-    return columns;
+    return expectedStageWeightColumnNames(LootChestPrefixes);
 }
 
 bool headerMatches(std::string_view header, std::initializer_list<std::string_view> candidates)
@@ -1323,22 +1295,11 @@ std::string effectSummaryText(const ObjectCatalog& catalog, const std::vector<Ef
 
 std::string resolveLootWeightColumnName(std::string_view stageId, int depthRank, LootChestKind chestKind)
 {
-    const LootStageSpec* stage = findLootStageSpec(stageId);
-    if (stage == nullptr || depthRank < 1) {
-        return {};
-    }
-
-    if (stage->prefix == std::string_view("AS") && depthRank > stage->maxDepth) {
-        depthRank = stage->maxDepth;
-    } else if (depthRank > stage->maxDepth) {
-        return {};
-    }
-
     const std::string_view chestPrefix = lootChestPrefix(chestKind);
     if (chestPrefix.empty()) {
         return {};
     }
-    return std::string(stage->prefix) + "_" + std::string(chestPrefix) + std::to_string(depthRank);
+    return makeStageWeightColumnName(stageId, depthRank, chestPrefix);
 }
 
 std::string resolveLootWeightColumnName(std::string_view stageId, int depthRank, std::string_view chestKind)

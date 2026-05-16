@@ -20,13 +20,16 @@ constexpr float DialogueCharacterDelay = 0.035f;
 constexpr float DialogueCharacterFadeSeconds = 0.12f;
 constexpr float DialoguePortraitFadeSeconds = 0.18f;
 constexpr float DialoguePortraitSlidePixels = 24.0f;
+constexpr float DialogueAdvanceRepeatInterval = 0.28f;
 constexpr float DialogueContentStartLeadFrames = 10.0f;
 constexpr float DialoguePanelWidthRatio = 0.75f;
 constexpr float DialoguePanelBottomMargin = 24.0f;
 constexpr float DialoguePortraitWidth = 164.0f;
+constexpr float DialoguePortraitInsetX = 48.0f;
 constexpr float DialogueTextPaddingX = 48.0f;
 constexpr float DialogueTextPaddingTop = 44.0f;
 constexpr float DialogueTextPaddingBottom = 18.0f;
+constexpr float DialogueInactivePortraitBrightness = 0.68f;
 constexpr int DialogueTextScale = 3;
 constexpr std::string_view DialogueWindowId = "dialogue.message";
 constexpr std::string_view DialogueHelpText = "F/Enter/Click/Esc 文字送り";
@@ -103,8 +106,8 @@ UiRect portraitRectFor(UiRect panel, DialoguePortraitSide side, int, int screenH
 {
     const float portraitHeight = std::clamp(static_cast<float>(std::max(1, screenHeight)) * 0.36f, 190.0f, 274.0f);
     const float x = side == DialoguePortraitSide::Right
-        ? panel.pos.x + panel.size.x - DialoguePortraitWidth
-        : panel.pos.x;
+        ? panel.pos.x + panel.size.x - DialoguePortraitWidth - DialoguePortraitInsetX
+        : panel.pos.x + DialoguePortraitInsetX;
     return {{x, std::max(8.0f, panel.pos.y - portraitHeight + 18.0f)}, {DialoguePortraitWidth, portraitHeight}};
 }
 
@@ -221,6 +224,16 @@ Color fadeColor(Color color, float alphaScale)
     return color;
 }
 
+Color portraitToneColor(Color color, float alphaScale, float brightness)
+{
+    brightness = std::clamp(brightness, 0.0f, 1.0f);
+    color.r = static_cast<unsigned char>(std::clamp(std::round(static_cast<float>(color.r) * brightness), 0.0f, 255.0f));
+    color.g = static_cast<unsigned char>(std::clamp(std::round(static_cast<float>(color.g) * brightness), 0.0f, 255.0f));
+    color.b = static_cast<unsigned char>(std::clamp(std::round(static_cast<float>(color.b) * brightness), 0.0f, 255.0f));
+    color.a = static_cast<unsigned char>(std::clamp(std::round(static_cast<float>(color.a) * alphaScale), 0.0f, 255.0f));
+    return color;
+}
+
 unsigned char fadedAlpha(float lineElapsed, int revealIndex)
 {
     const float age = lineElapsed - static_cast<float>(revealIndex) * DialogueCharacterDelay;
@@ -240,6 +253,9 @@ Color portraitColorFor(std::string_view speakerId)
     if (speakerId == "chicory") {
         return {230, 212, 112, 255};
     }
+    if (speakerId == "elder") {
+        return {126, 154, 116, 255};
+    }
     if (speakerId == "player") {
         return {132, 86, 178, 255};
     }
@@ -256,6 +272,9 @@ std::string speakerNameForId(std::string_view speakerId)
     }
     if (speakerId == "chicory") {
         return "チコリ";
+    }
+    if (speakerId == "elder") {
+        return "村長";
     }
     return std::string(speakerId);
 }
@@ -289,58 +308,33 @@ DialoguePortraitSlot portraitSlotFor(const DialogueSequence& sequence, std::stri
     return slot;
 }
 
-std::string rightPortraitSpeakerId(const DialogueSequence& sequence, const DialogueLine* currentLine)
-{
-    if (currentLine != nullptr && currentLine->speakerId != "player") {
-        return currentLine->speakerId;
-    }
-    for (const DialogueLine& line : sequence.lines) {
-        if (!line.speakerId.empty() && line.speakerId != "player") {
-            return line.speakerId;
-        }
-    }
-    return {};
-}
-
-std::vector<DialoguePortraitSlot> portraitSlotsFor(const DialogueSequence& sequence, const DialogueLine* currentLine)
-{
-    std::vector<DialoguePortraitSlot> slots;
-    slots.push_back(portraitSlotFor(sequence, "player", DialoguePortraitSide::Left));
-
-    const std::string rightSpeaker = rightPortraitSpeakerId(sequence, currentLine);
-    if (!rightSpeaker.empty()) {
-        slots.push_back(portraitSlotFor(sequence, rightSpeaker, DialoguePortraitSide::Right));
-    }
-    return slots;
-}
-
-void drawPortraitPlaceholder(Renderer& renderer, UiRect rect, const DialoguePortraitSlot& slot, float alpha)
+void drawPortraitPlaceholder(Renderer& renderer, UiRect rect, const DialoguePortraitSlot& slot, float alpha, float brightness)
 {
     const Color base = portraitColorFor(slot.speakerId);
     const Vec2 center = rect.pos + rect.size * 0.5f;
-    renderer.fillEllipse(center + Vec2{0.0f, 58.0f}, {50.0f, 82.0f}, fadeColor(withAlpha(base, 218), alpha));
-    renderer.fillCircle(center + Vec2{0.0f, -12.0f}, 36.0f, fadeColor({240, 218, 188, 255}, alpha));
-    renderer.fillCircle(center + Vec2{-12.0f, -16.0f}, 4.0f, fadeColor({42, 34, 44, 255}, alpha));
-    renderer.fillCircle(center + Vec2{12.0f, -16.0f}, 4.0f, fadeColor({42, 34, 44, 255}, alpha));
-    renderer.drawLine(center + Vec2{-8.0f, 2.0f}, center + Vec2{8.0f, 2.0f}, fadeColor({116, 72, 84, 255}, alpha));
+    renderer.fillEllipse(center + Vec2{0.0f, 58.0f}, {50.0f, 82.0f}, portraitToneColor(withAlpha(base, 218), alpha, brightness));
+    renderer.fillCircle(center + Vec2{0.0f, -12.0f}, 36.0f, portraitToneColor({240, 218, 188, 255}, alpha, brightness));
+    renderer.fillCircle(center + Vec2{-12.0f, -16.0f}, 4.0f, portraitToneColor({42, 34, 44, 255}, alpha, brightness));
+    renderer.fillCircle(center + Vec2{12.0f, -16.0f}, 4.0f, portraitToneColor({42, 34, 44, 255}, alpha, brightness));
+    renderer.drawLine(center + Vec2{-8.0f, 2.0f}, center + Vec2{8.0f, 2.0f}, portraitToneColor({116, 72, 84, 255}, alpha, brightness));
 
     const Vec2 hatPoints[3] = {
         center + Vec2{-54.0f, -36.0f},
         center + Vec2{54.0f, -36.0f},
         center + Vec2{4.0f, -104.0f},
     };
-    renderer.fillPolygon(hatPoints, 3, fadeColor(withAlpha(base, 230), alpha));
-    renderer.drawLine(hatPoints[0], hatPoints[1], fadeColor({236, 242, 255, 210}, alpha));
-    renderer.drawLine(hatPoints[1], hatPoints[2], fadeColor({236, 242, 255, 150}, alpha));
-    renderer.drawLine(hatPoints[2], hatPoints[0], fadeColor({236, 242, 255, 150}, alpha));
+    renderer.fillPolygon(hatPoints, 3, portraitToneColor(withAlpha(base, 230), alpha, brightness));
+    renderer.drawLine(hatPoints[0], hatPoints[1], portraitToneColor({236, 242, 255, 210}, alpha, brightness));
+    renderer.drawLine(hatPoints[1], hatPoints[2], portraitToneColor({236, 242, 255, 150}, alpha, brightness));
+    renderer.drawLine(hatPoints[2], hatPoints[0], portraitToneColor({236, 242, 255, 150}, alpha, brightness));
 }
 
-void drawPortrait(Renderer& renderer, UiRect rect, const DialoguePortraitSlot& slot, float alpha)
+void drawPortrait(Renderer& renderer, UiRect rect, const DialoguePortraitSlot& slot, float alpha, float brightness = 1.0f)
 {
     if (!slot.portraitPath.empty()) {
         ImageDrawOptions options;
         options.anchor = {0.5f, 1.0f};
-        options.tint = fadeColor(options.tint, alpha);
+        options.tint = portraitToneColor(options.tint, alpha, brightness);
         const bool drew = renderer.drawImage(
             slot.portraitPath,
             {rect.pos.x + rect.size.x * 0.5f, rect.pos.y + rect.size.y - 6.0f},
@@ -351,7 +345,7 @@ void drawPortrait(Renderer& renderer, UiRect rect, const DialoguePortraitSlot& s
             return;
         }
     }
-    drawPortraitPlaceholder(renderer, rect, slot, alpha);
+    drawPortraitPlaceholder(renderer, rect, slot, alpha, brightness);
 }
 
 void drawSpeakerName(Renderer& renderer, UiRect panel, const DialogueLine& line, float alpha)
@@ -382,26 +376,59 @@ bool advancePressed(const Input& input)
         input.backPressed();
 }
 
+bool advanceHeld(const Input& input)
+{
+    return input.held(InputAction::Confirm) ||
+        input.held(InputAction::UseSelectedItem) ||
+        input.mouseLeftHeld() ||
+        input.backHeld();
+}
+
 }
 
 void DialoguePlayer::start(DialogueSequence sequence)
 {
+    if (sequence.steps.empty()) {
+        sequence.steps.reserve(sequence.lines.size());
+        for (const DialogueLine& line : sequence.lines) {
+            sequence.steps.push_back(DialogueStep{DialogueStepKind::Line, line, 0.0f});
+        }
+    }
+    if (sequence.lines.empty()) {
+        for (const DialogueStep& step : sequence.steps) {
+            if (step.kind == DialogueStepKind::Line) {
+                sequence.lines.push_back(step.line);
+            }
+        }
+    }
+
     sequence_ = std::move(sequence);
-    lineIndex_ = 0;
+    stepIndex_ = 0;
     openElapsed_ = 0.0f;
     lineElapsed_ = 0.0f;
     contentFade_ = 0.0f;
-    active_ = !sequence_.lines.empty();
+    resetAdvanceHoldRepeat();
+    rightSpeakerId_.clear();
+    pendingRightSpeakerId_.clear();
+    rightPortraitFade_ = 0.0f;
+    rightPortraitTransition_ = RightPortraitTransition::Stable;
+    active_ = !sequence_.steps.empty();
     closing_ = false;
+    syncRightPortraitForCurrentLine(false);
 }
 
 void DialoguePlayer::clear()
 {
     sequence_ = DialogueSequence{};
-    lineIndex_ = 0;
+    stepIndex_ = 0;
     openElapsed_ = 0.0f;
     lineElapsed_ = 0.0f;
     contentFade_ = 0.0f;
+    resetAdvanceHoldRepeat();
+    rightSpeakerId_.clear();
+    pendingRightSpeakerId_.clear();
+    rightPortraitFade_ = 0.0f;
+    rightPortraitTransition_ = RightPortraitTransition::Stable;
     active_ = false;
     closing_ = false;
 }
@@ -412,14 +439,17 @@ void DialoguePlayer::update(const Input& input, float dt)
         return;
     }
 
+    const float safeDt = std::max(0.0f, dt);
     const float contentStartDelay = dialogueContentStartDelaySeconds();
     if (openElapsed_ < contentStartDelay) {
-        openElapsed_ = std::min(contentStartDelay, openElapsed_ + std::max(0.0f, dt));
+        resetAdvanceHoldRepeat();
+        openElapsed_ = std::min(contentStartDelay, openElapsed_ + safeDt);
         return;
     }
 
-    const float fadeStep = dt / std::max(0.001f, DialoguePortraitFadeSeconds);
+    const float fadeStep = safeDt / std::max(0.001f, DialoguePortraitFadeSeconds);
     if (closing_) {
+        resetAdvanceHoldRepeat();
         contentFade_ = std::max(0.0f, contentFade_ - fadeStep);
         if (contentFade_ <= 0.0f) {
             clear();
@@ -428,8 +458,19 @@ void DialoguePlayer::update(const Input& input, float dt)
     }
 
     contentFade_ = std::min(1.0f, contentFade_ + fadeStep);
-    lineElapsed_ += std::max(0.0f, dt);
-    if (advancePressed(input)) {
+    updateRightPortrait(safeDt);
+    lineElapsed_ += safeDt;
+
+    const DialogueStep* step = currentStep();
+    if (step != nullptr && step->kind == DialogueStepKind::Wait) {
+        resetAdvanceHoldRepeat();
+        if (lineComplete()) {
+            advanceLine();
+        }
+        return;
+    }
+
+    if (advanceRequested(input, safeDt)) {
         if (lineComplete()) {
             advanceLine();
         } else {
@@ -444,9 +485,6 @@ void DialoguePlayer::render(Renderer& renderer, int screenWidth, int screenHeigh
         return;
     }
     const DialogueLine* line = currentLine();
-    if (line == nullptr) {
-        return;
-    }
 
     renderer.setScreenSpace();
     const UiRect panel = dialoguePanelRect(screenWidth, screenHeight);
@@ -455,23 +493,40 @@ void DialoguePlayer::render(Renderer& renderer, int screenWidth, int screenHeigh
     const float contentStartDelay = dialogueContentStartDelaySeconds();
     const bool contentVisible = closing_ || openElapsed_ >= contentStartDelay;
     if (!contentVisible) {
-        UiWindowScope dialogueWindow(
-            renderer,
-            DialogueWindowId,
-            panel,
-            "",
-            DialogueHelpText,
-            UiWindowOptions{true, false});
         return;
     }
 
-    for (const DialoguePortraitSlot& slot : portraitSlotsFor(sequence_, line)) {
-        UiRect portrait = portraitRectFor(panel, slot.side, screenWidth, screenHeight);
-        portrait.pos += portraitSlideOffset(slot.side, contentFade_);
-        drawPortrait(renderer, portrait, slot, contentFade_);
+    const std::string_view currentSpeaker = line != nullptr ? std::string_view(line->speakerId) : std::string_view{};
+    const auto portraitBrightness = [currentSpeaker](std::string_view speakerId) {
+        if (currentSpeaker.empty() || speakerId == currentSpeaker) {
+            return 1.0f;
+        }
+        return DialogueInactivePortraitBrightness;
+    };
+
+    if (spokenLineSeen()) {
+        const DialoguePortraitSlot leftSlot = portraitSlotFor(sequence_, "player", DialoguePortraitSide::Left);
+        UiRect leftPortrait = portraitRectFor(panel, DialoguePortraitSide::Left, screenWidth, screenHeight);
+        leftPortrait.pos += portraitSlideOffset(DialoguePortraitSide::Left, contentFade_);
+        drawPortrait(renderer, leftPortrait, leftSlot, contentFade_, portraitBrightness("player"));
+    }
+
+    if (!rightSpeakerId_.empty() && rightPortraitFade_ > 0.0f) {
+        const float rightAlpha = std::min(contentFade_, rightPortraitFade_);
+        if (rightAlpha > 0.0f) {
+            const DialoguePortraitSlot rightSlot = portraitSlotFor(sequence_, rightSpeakerId_, DialoguePortraitSide::Right);
+            UiRect rightPortrait = portraitRectFor(panel, DialoguePortraitSide::Right, screenWidth, screenHeight);
+            if (rightPortraitTransition_ == RightPortraitTransition::FadingIn || closing_) {
+                rightPortrait.pos += portraitSlideOffset(DialoguePortraitSide::Right, rightAlpha);
+            }
+            drawPortrait(renderer, rightPortrait, rightSlot, rightAlpha, portraitBrightness(rightSpeakerId_));
+        }
     }
 
     if (closing_) {
+        return;
+    }
+    if (line == nullptr) {
         return;
     }
 
@@ -501,18 +556,28 @@ bool DialoguePlayer::lineComplete() const
     if (!active_ || closing_) {
         return true;
     }
+    const DialogueStep* step = currentStep();
+    if (step != nullptr && step->kind == DialogueStepKind::Wait) {
+        return lineElapsed_ >= std::max(0.0f, step->waitSeconds);
+    }
     return lineElapsed_ >= currentLineCompletionTime();
+}
+
+const DialogueStep* DialoguePlayer::currentStep() const
+{
+    if (!active_ || stepIndex_ < 0 || stepIndex_ >= static_cast<int>(sequence_.steps.size())) {
+        return nullptr;
+    }
+    return &sequence_.steps[static_cast<std::size_t>(stepIndex_)];
 }
 
 const DialogueLine* DialoguePlayer::currentLine() const
 {
-    if (!active_ || lineIndex_ < 0 || lineIndex_ >= static_cast<int>(sequence_.lines.size())) {
-        if (closing_ && !sequence_.lines.empty()) {
-            return &sequence_.lines.back();
-        }
+    const DialogueStep* step = currentStep();
+    if (step == nullptr || step->kind != DialogueStepKind::Line) {
         return nullptr;
     }
-    return &sequence_.lines[static_cast<std::size_t>(lineIndex_)];
+    return &step->line;
 }
 
 int DialoguePlayer::currentLineGlyphCount() const
@@ -530,9 +595,56 @@ float DialoguePlayer::currentLineCompletionTime() const
     return static_cast<float>(count - 1) * DialogueCharacterDelay + DialogueCharacterFadeSeconds;
 }
 
+bool DialoguePlayer::spokenLineSeen() const
+{
+    if (!active_) {
+        return false;
+    }
+    const int last = std::min(stepIndex_, static_cast<int>(sequence_.steps.size()) - 1);
+    for (int i = 0; i <= last; ++i) {
+        const DialogueStep& step = sequence_.steps[static_cast<std::size_t>(i)];
+        if (step.kind == DialogueStepKind::Line && !step.line.speakerId.empty()) {
+            return true;
+        }
+    }
+    return false;
+}
+
+bool DialoguePlayer::advanceRequested(const Input& input, float dt)
+{
+    const bool pressed = advancePressed(input);
+    if (!advanceHeld(input)) {
+        resetAdvanceHoldRepeat();
+        return pressed;
+    }
+
+    if (!advanceHoldActive_) {
+        advanceHoldActive_ = true;
+        advanceRepeatTimer_ = DialogueAdvanceRepeatInterval;
+        return pressed;
+    }
+
+    const float safeDt = std::max(0.0f, dt);
+    advanceRepeatTimer_ -= safeDt;
+    if (advanceRepeatTimer_ > 0.0f) {
+        return pressed;
+    }
+
+    do {
+        advanceRepeatTimer_ += DialogueAdvanceRepeatInterval;
+    } while (advanceRepeatTimer_ <= 0.0f);
+    return true;
+}
+
 void DialoguePlayer::revealCurrentLine()
 {
     lineElapsed_ = currentLineCompletionTime();
+}
+
+void DialoguePlayer::resetAdvanceHoldRepeat()
+{
+    advanceHoldActive_ = false;
+    advanceRepeatTimer_ = 0.0f;
 }
 
 void DialoguePlayer::advanceLine()
@@ -541,14 +653,79 @@ void DialoguePlayer::advanceLine()
         return;
     }
 
-    if (lineIndex_ + 1 >= static_cast<int>(sequence_.lines.size())) {
+    if (stepIndex_ + 1 >= static_cast<int>(sequence_.steps.size())) {
         closing_ = true;
         revealCurrentLine();
         return;
     }
 
-    ++lineIndex_;
+    ++stepIndex_;
     lineElapsed_ = 0.0f;
+    syncRightPortraitForCurrentLine(false);
+}
+
+void DialoguePlayer::syncRightPortraitForCurrentLine(bool immediate)
+{
+    const DialogueLine* line = currentLine();
+    if (line == nullptr || line->speakerId.empty() || line->speakerId == "player") {
+        return;
+    }
+    setRightPortraitTarget(line->speakerId, immediate);
+}
+
+void DialoguePlayer::setRightPortraitTarget(std::string speakerId, bool immediate)
+{
+    if (speakerId.empty()) {
+        return;
+    }
+    if (speakerId == rightSpeakerId_) {
+        pendingRightSpeakerId_.clear();
+        rightPortraitTransition_ = rightPortraitFade_ >= 1.0f
+            ? RightPortraitTransition::Stable
+            : RightPortraitTransition::FadingIn;
+        return;
+    }
+    if (!pendingRightSpeakerId_.empty() && speakerId == pendingRightSpeakerId_) {
+        return;
+    }
+
+    if (rightSpeakerId_.empty() || immediate) {
+        rightSpeakerId_ = std::move(speakerId);
+        pendingRightSpeakerId_.clear();
+        rightPortraitFade_ = immediate ? 1.0f : 0.0f;
+        rightPortraitTransition_ = immediate
+            ? RightPortraitTransition::Stable
+            : RightPortraitTransition::FadingIn;
+        return;
+    }
+
+    pendingRightSpeakerId_ = std::move(speakerId);
+    rightPortraitTransition_ = RightPortraitTransition::FadingOut;
+}
+
+void DialoguePlayer::updateRightPortrait(float dt)
+{
+    const float fadeStep = std::max(0.0f, dt) / std::max(0.001f, DialoguePortraitFadeSeconds);
+    switch (rightPortraitTransition_) {
+    case RightPortraitTransition::Stable:
+        return;
+    case RightPortraitTransition::FadingOut:
+        rightPortraitFade_ = std::max(0.0f, rightPortraitFade_ - fadeStep);
+        if (rightPortraitFade_ <= 0.0f) {
+            rightSpeakerId_ = std::move(pendingRightSpeakerId_);
+            pendingRightSpeakerId_.clear();
+            rightPortraitTransition_ = rightSpeakerId_.empty()
+                ? RightPortraitTransition::Stable
+                : RightPortraitTransition::FadingIn;
+        }
+        return;
+    case RightPortraitTransition::FadingIn:
+        rightPortraitFade_ = std::min(1.0f, rightPortraitFade_ + fadeStep);
+        if (rightPortraitFade_ >= 1.0f) {
+            rightPortraitTransition_ = RightPortraitTransition::Stable;
+        }
+        return;
+    }
 }
 
 }

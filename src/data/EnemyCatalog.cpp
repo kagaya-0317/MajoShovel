@@ -1,5 +1,7 @@
 ﻿#include "data/EnemyCatalog.hpp"
 
+#include "data/StageWeight.hpp"
+
 #include <algorithm>
 #include <array>
 #include <cerrno>
@@ -136,6 +138,44 @@ void addIssue(
         .category = category,
         .message = std::move(message),
     });
+}
+
+double parseEnemySpawnWeightOrZero(
+    std::string_view text,
+    std::string_view columnName,
+    std::size_t rowIndex,
+    std::string_view enemyId,
+    EnemyCatalog& catalog)
+{
+    const std::string normalized = trim(text);
+    if (normalized.empty()) {
+        return 0.0;
+    }
+
+    double value = 0.0;
+    if (!parseDoubleStrict(normalized, value)) {
+        ++catalog.spawnWeightStats.warningCount;
+        addIssue(
+            catalog,
+            DbValidationSeverity::Warning,
+            DbValidationCategory::NumericValue,
+            "Enemies row " + std::to_string(rowIndex + 1) +
+                " id=\"" + std::string(enemyId) + "\" spawn weight " + std::string(columnName) +
+                ": invalid number \"" + normalized + "\"; using 0");
+        return 0.0;
+    }
+    if (value < 0.0) {
+        ++catalog.spawnWeightStats.warningCount;
+        addIssue(
+            catalog,
+            DbValidationSeverity::Warning,
+            DbValidationCategory::NumericValue,
+            "Enemies row " + std::to_string(rowIndex + 1) +
+                " id=\"" + std::string(enemyId) + "\" spawn weight " + std::string(columnName) +
+                ": negative value " + std::to_string(value) + "; using 0");
+        return 0.0;
+    }
+    return value;
 }
 
 std::vector<std::string> parseDelimitedValues(std::string_view text)
@@ -357,6 +397,10 @@ constexpr std::array<std::string_view, 5> KnownDropProfiles = {
     "box_common",
     "box_rare",
     "box_super",
+};
+
+constexpr std::array<std::string_view, 1> EnemySpawnWeightCodes = {
+    "E",
 };
 
 enum class BehaviorUsageField {
@@ -875,6 +919,7 @@ struct EnemyColumns {
     int capturedBehaviorCode = -1;
     int capturedBehaviorIdLegacy = -1;
     int note = -1;
+    std::vector<std::pair<std::string, int>> spawnWeightColumns;
 };
 
 bool findEnemyColumns(const GoogleSheetRow& headers, EnemyColumns& outColumns, std::string& outError)
@@ -913,6 +958,12 @@ bool findEnemyColumns(const GoogleSheetRow& headers, EnemyColumns& outColumns, s
     columns.capturedBehaviorCode = findColumn(headers, {"捕獲後挙動コード", "captured_behavior_code"});
     columns.capturedBehaviorIdLegacy = findColumn(headers, {"捕獲後挙動ID", "captured_behavior_id"});
     columns.note = findColumn(headers, {"備考", "note"});
+    for (const std::string& columnName : expectedStageWeightColumnNames(EnemySpawnWeightCodes)) {
+        const int column = findColumn(headers, {std::string_view(columnName)});
+        if (column >= 0) {
+            columns.spawnWeightColumns.emplace_back(columnName, column);
+        }
+    }
 
     if (columns.id < 0) {
         outError = "Enemies sheet is missing the ID column";
@@ -1103,6 +1154,7 @@ bool parseEnemies(
     if (!findEnemyColumns(table.rows.front(), columns, outError)) {
         return false;
     }
+    catalog.spawnWeightStats.detectedColumnCount = columns.spawnWeightColumns.size();
 
     std::unordered_set<std::string> ids;
     for (std::size_t rowIndex = 1; rowIndex < table.rows.size(); ++rowIndex) {
@@ -1231,6 +1283,16 @@ bool parseEnemies(
 
         enemy.note = cellAt(row, columns.note);
 
+        for (const auto& [columnName, columnIndex] : columns.spawnWeightColumns) {
+            const double weight = parseEnemySpawnWeightOrZero(cellAt(row, columnIndex), columnName, rowIndex, enemy.id, catalog);
+            if (weight > 0.0) {
+                enemy.spawnWeights[columnName] = weight;
+            }
+        }
+        if (!enemy.spawnWeights.empty()) {
+            ++catalog.spawnWeightStats.weightedEnemyCount;
+        }
+
         if (enemy.id.empty()) {
             addIssue(catalog, DbValidationSeverity::Warning, DbValidationCategory::ObjectField,
                 "Enemies row " + std::to_string(rowIndex + 1) + ": ID is empty; row skipped");
@@ -1279,6 +1341,18 @@ bool parseEnemyCatalog(
     outCatalog = std::move(catalog);
     outError.clear();
     return true;
+}
+
+std::string resolveEnemySpawnWeightColumnName(std::string_view stageId, int depthRank)
+{
+    return makeStageWeightColumnName(stageId, depthRank, "E");
+}
+
+double enemySpawnWeightFor(const EnemyDefinition& enemy, std::string_view stageId, int depthRank)
+{
+    const std::string columnName = resolveEnemySpawnWeightColumnName(stageId, depthRank);
+    const auto it = enemy.spawnWeights.find(columnName);
+    return it != enemy.spawnWeights.end() && it->second > 0.0 ? it->second : 0.0;
 }
 
 bool loadEnemyCatalogFromGoogleSheet(

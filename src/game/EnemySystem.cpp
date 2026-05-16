@@ -8,6 +8,7 @@
 #include "game/EnemyImageRenderer.hpp"
 #include "game/EffectSystem.hpp"
 #include "game/WorldDropSystem.hpp"
+#include "data/StageWeight.hpp"
 #include <algorithm>
 #include <array>
 #include <cctype>
@@ -15,6 +16,7 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdlib>
+#include <initializer_list>
 #include <queue>
 #include <random>
 #include <sstream>
@@ -79,6 +81,10 @@ constexpr float PhaseBobAmplitude = 2.0f;
 constexpr float HoverBobSpeed = 4.0f;
 constexpr float PhaseBobSpeed = 5.0f;
 constexpr float EnemyHpBarDisplaySeconds = 2.0f;
+constexpr float EnemyHpBarFadeSeconds = 0.35f;
+constexpr float EnemyHpBarHeight = 4.0f;
+constexpr float EnemyHpBarMinWidth = 24.0f;
+constexpr float EnemyHpBarMaxWidth = 42.0f;
 constexpr float MudZoneTickSeconds = 0.20f;
 constexpr float MudZoneMaxDurationSeconds = 30.0f;
 constexpr float MagnetDisturbMaxRadius = 320.0f;
@@ -114,30 +120,6 @@ struct FlowNodeGreater {
     {
         return left.distance > right.distance;
     }
-};
-
-constexpr std::array<std::string_view, 5> BoxCommonDropCandidates = {
-    "potion",
-    "small_potion",
-    "bandage",
-    "ore_chunk",
-    "knife",
-};
-
-constexpr std::array<std::string_view, 5> BoxRareDropCandidates = {
-    "hi_potion",
-    "repair_kit",
-    "silver_dagger",
-    "moon_fragment_bundle",
-    "mana_ampoule",
-};
-
-constexpr std::array<std::string_view, 5> BoxSuperDropCandidates = {
-    "elixir",
-    "mythic_repair_kit",
-    "golden_pickaxe",
-    "moon_fragment_crystal",
-    "mana_core",
 };
 
 bool parseIntStrict(std::string_view text, int& value)
@@ -186,6 +168,65 @@ bool equalsIgnoreCaseAscii(std::string_view left, std::string_view right)
         }
     }
     return true;
+}
+
+std::string lowerAscii(std::string_view text)
+{
+    std::string lowered(text);
+    for (char& ch : lowered) {
+        ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+    }
+    return lowered;
+}
+
+bool containsAnyAscii(std::string_view text, std::initializer_list<std::string_view> needles)
+{
+    const std::string lowered = lowerAscii(text);
+    for (std::string_view needle : needles) {
+        if (lowered.find(needle) != std::string::npos) {
+            return true;
+        }
+    }
+    return false;
+}
+
+bool hasTagAscii(const EnemyDefinition& definition, std::initializer_list<std::string_view> tags)
+{
+    for (const std::string& tag : definition.enemyTags) {
+        for (std::string_view expected : tags) {
+            if (equalsIgnoreCaseAscii(tag, expected)) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+bool isExcludedFromNormalDugSpawn(const EnemyDefinition& definition)
+{
+    if (hasTagAscii(definition, {"boss", "boss_only", "no_normal_spawn", "event_only", "fixed_only"})) {
+        return true;
+    }
+    for (const std::string& tag : definition.enemyTags) {
+        if (tag == "ボス" || tag == "通常スポーン除外" || tag == "固定配置専用" || tag == "イベント専用") {
+            return true;
+        }
+    }
+    if (containsAnyAscii(definition.id, {
+            "boss",
+            "stardust_mole",
+            "junk_crab",
+            "junkrab",
+            "astragna",
+            "star_vein_dragon",
+            "starvein_dragon",
+        })) {
+        return true;
+    }
+    return definition.name.find("星くずモグラ") != std::string::npos ||
+        definition.name.find("ジャンクラブ") != std::string::npos ||
+        definition.name.find("アストラグナ") != std::string::npos ||
+        definition.name.find("星脈竜") != std::string::npos;
 }
 
 int applyDefenseModifier(const EntityStatus& status, int damage)
@@ -688,24 +729,6 @@ EnemyEvent makeEnemyEvent(EnemyEventType type, const Enemy& enemy, std::string e
     };
 }
 
-std::string chooseObjectDropIdForProfile(std::string_view profile, std::mt19937& rng)
-{
-    const auto pickFrom = [&](const auto& candidates) -> std::string {
-        std::uniform_int_distribution<std::size_t> dist(0, candidates.size() - 1);
-        return std::string(candidates[dist(rng)]);
-    };
-    if (profile == "box_common") {
-        return pickFrom(BoxCommonDropCandidates);
-    }
-    if (profile == "box_rare") {
-        return pickFrom(BoxRareDropCandidates);
-    }
-    if (profile == "box_super") {
-        return pickFrom(BoxSuperDropCandidates);
-    }
-    return {};
-}
-
 void recordObjectEffectDiscovery(
     std::vector<EffectDiscoveryEvent>* discoveryEvents,
     const ObjectDefinition& object,
@@ -863,6 +886,21 @@ Color colorForEnemy(const Enemy& enemy)
     return Color{channel(0), channel(8), channel(16), 255};
 }
 
+Color scaleColorAlpha(Color color, float scale)
+{
+    const float alpha = static_cast<float>(color.a) * std::max(0.0f, scale);
+    color.a = static_cast<unsigned char>(std::clamp(std::lround(alpha), 0L, 255L));
+    return color;
+}
+
+void revealEnemyHpBar(Enemy& enemy, int damage)
+{
+    if (damage <= 0 || enemy.isBoss || enemy.maxHp <= 0 || enemy.hp <= 0 || enemy.hp >= enemy.maxHp) {
+        return;
+    }
+    enemy.hpBarTimer = EnemyHpBarDisplaySeconds;
+}
+
 Vec2 enemyDrawPosition(const Enemy& enemy)
 {
     return elevatedDrawPosition(enemy.position, enemy.altitude);
@@ -923,6 +961,40 @@ void drawEnemyShadow(Renderer& renderer, const Enemy& enemy)
     renderer.drawActorShadow(actorShadowAnchor(enemy.position, EnemyShadowGroundOffsetY), enemyShadowVisualSize(renderer, enemy));
 }
 
+void drawEnemyHpBar(Renderer& renderer, const Enemy& enemy, Vec2 drawPosition, float uiVisualRadius)
+{
+    if (enemy.isBoss || enemy.hpBarTimer <= 0.0f || enemy.maxHp <= 0 || enemy.hp <= 0 || enemy.hp >= enemy.maxHp) {
+        return;
+    }
+
+    const float fade = clamp(enemy.hpBarTimer / EnemyHpBarFadeSeconds, 0.0f, 1.0f);
+    if (fade <= 0.0f) {
+        return;
+    }
+
+    const float hpRatio = clamp(static_cast<float>(enemy.hp) / static_cast<float>(enemy.maxHp), 0.0f, 1.0f);
+    const float barWidth = std::clamp(uiVisualRadius * 1.65f, EnemyHpBarMinWidth, EnemyHpBarMaxWidth);
+    const Vec2 barPos = drawPosition + Vec2{-barWidth * 0.5f, -uiVisualRadius - 12.0f};
+
+    UiGaugeStyle hpGaugeStyle;
+    hpGaugeStyle.fill.start = scaleColorAlpha({230, 58, 82, 255}, fade);
+    hpGaugeStyle.fill.end = scaleColorAlpha({255, 124, 96, 255}, fade);
+    hpGaugeStyle.track = scaleColorAlpha({14, 8, 16, 215}, fade);
+    hpGaugeStyle.trackInner = scaleColorAlpha({44, 18, 28, 205}, fade);
+    hpGaugeStyle.trackOuter = scaleColorAlpha({255, 220, 220, 54}, fade);
+    hpGaugeStyle.shadow = scaleColorAlpha({0, 0, 0, 92}, fade);
+    hpGaugeStyle.highlight = scaleColorAlpha({255, 238, 220, 62}, fade);
+    hpGaugeStyle.capGlow = scaleColorAlpha({255, 112, 112, 44}, fade);
+    hpGaugeStyle.capCore = {255, 240, 220, 0};
+    hpGaugeStyle.outline = scaleColorAlpha({255, 255, 255, 255}, fade);
+    hpGaugeStyle.trackOuterExtra = 1.0f;
+    hpGaugeStyle.trackInnerInset = 1.5f;
+    hpGaugeStyle.shadowOffsetY = 1.0f;
+    hpGaugeStyle.shadowExtra = 2.0f;
+
+    drawUiGauge(renderer, {barPos, {barWidth, EnemyHpBarHeight}}, hpRatio, hpGaugeStyle);
+}
+
 void drawEnemyVisual(Renderer& renderer, const Enemy& enemy)
 {
     const Vec2 drawPosition = enemyDrawPosition(enemy);
@@ -961,7 +1033,7 @@ void drawEnemyVisual(Renderer& renderer, const Enemy& enemy)
         renderer.fillCircle(drawPosition, visualRadius, color);
         renderer.drawCircle(drawPosition, visualRadius + 3.0f, enemy.isBoss ? Color{255, 210, 96, 255} : Color{80, 18, 28, 255});
     }
-    drawAwarenessIcon(uiVisualRadius);
+    drawEnemyHpBar(renderer, enemy, drawPosition, uiVisualRadius);
     if (enemy.isBoss) {
         const float hpRatio = enemy.maxHp > 0 ? clamp(static_cast<float>(enemy.hp) / static_cast<float>(enemy.maxHp), 0.0f, 1.0f) : 0.0f;
         const Vec2 barPos = drawPosition + Vec2{-28.0f, -uiVisualRadius - 14.0f};
@@ -981,6 +1053,7 @@ void drawEnemyVisual(Renderer& renderer, const Enemy& enemy)
         bossHpGaugeStyle.shadowExtra = 3.0f;
         drawUiGauge(renderer, {barPos, {56.0f, 5.0f}}, hpRatio, bossHpGaugeStyle);
     }
+    drawAwarenessIcon(uiVisualRadius);
 }
 
 bool tryMoveCircle(TileMap& map, Vec2& position, float radius, Vec2 delta)
@@ -1021,18 +1094,91 @@ const EnemyDefinition* EnemySystem::chooseEnemyDefinition(const EnemyCatalog& en
     return &enemyCatalog.enemies[dist(rng_)];
 }
 
+const EnemyDefinition* EnemySystem::chooseNormalRandomEnemyDefinition(const EnemyCatalog& enemyCatalog)
+{
+    std::vector<const EnemyDefinition*> candidates;
+    candidates.reserve(enemyCatalog.enemies.size());
+    for (const EnemyDefinition& definition : enemyCatalog.enemies) {
+        if (!isExcludedFromNormalDugSpawn(definition)) {
+            candidates.push_back(&definition);
+        }
+    }
+
+    if (candidates.empty()) {
+        logSpawnWeightFallbackOnce(
+            "normal_random_no_candidates",
+            "Enemy spawn weight fallback: no non-boss Enemies candidates; using legacy all-enemies random");
+        return chooseEnemyDefinition(enemyCatalog);
+    }
+
+    std::uniform_int_distribution<std::size_t> dist(0, candidates.size() - 1);
+    return candidates[dist(rng_)];
+}
+
+const EnemyDefinition* EnemySystem::chooseDugSpawnEnemyDefinition(const EnemyCatalog& enemyCatalog, std::string_view stageId, int depthRank)
+{
+    if (enemyCatalog.enemies.empty()) {
+        logSpawnWeightFallbackOnce(
+            "empty_catalog",
+            "Enemy spawn weight fallback: EnemyCatalog is empty; using default runtime enemy");
+        return nullptr;
+    }
+
+    const std::string columnName = resolveEnemySpawnWeightColumnName(stageId, depthRank);
+    if (columnName.empty()) {
+        logSpawnWeightFallbackOnce(
+            "unknown_stage:" + std::string(stageId),
+            "Enemy spawn weight fallback: unknown stageId=\"" + std::string(stageId) + "\"; using simple random");
+        return chooseNormalRandomEnemyDefinition(enemyCatalog);
+    }
+
+    std::vector<const EnemyDefinition*> candidates;
+    std::vector<double> weights;
+    candidates.reserve(enemyCatalog.enemies.size());
+    weights.reserve(enemyCatalog.enemies.size());
+    for (const EnemyDefinition& definition : enemyCatalog.enemies) {
+        if (isExcludedFromNormalDugSpawn(definition)) {
+            continue;
+        }
+        const auto weightIt = definition.spawnWeights.find(columnName);
+        if (weightIt == definition.spawnWeights.end() || weightIt->second < 1.0) {
+            continue;
+        }
+        candidates.push_back(&definition);
+        weights.push_back(weightIt->second);
+    }
+
+    if (candidates.empty()) {
+        logSpawnWeightFallbackOnce(
+            "no_candidates:" + columnName,
+            "Enemy spawn weight fallback: no candidates for column=\"" + columnName + "\"; using simple random");
+        return chooseNormalRandomEnemyDefinition(enemyCatalog);
+    }
+
+    const auto selected = selectWeightedIndex(weights, rng_);
+    if (!selected || *selected >= candidates.size()) {
+        logSpawnWeightFallbackOnce(
+            "select_failed:" + columnName,
+            "Enemy spawn weight fallback: weighted selection failed for column=\"" + columnName + "\"; using simple random");
+        return chooseNormalRandomEnemyDefinition(enemyCatalog);
+    }
+    return candidates[*selected];
+}
+
+void EnemySystem::logSpawnWeightFallbackOnce(std::string key, std::string message)
+{
+    if (loggedSpawnWeightFallbacks_.insert(std::move(key)).second) {
+        logError("[warning] " + std::move(message));
+    }
+}
+
 void EnemySystem::queueEnemyObjectDrops(Enemy& enemy)
 {
     if (!enemy.dropItemEnabled || enemy.dropItemConsumed) {
         return;
     }
     enemy.dropItemConsumed = true;
-    const std::string objectDropId = chooseObjectDropIdForProfile(enemy.dropItemProfile, rng_);
-    if (objectDropId.empty()) {
-        static std::unordered_set<std::string> loggedUnknownProfiles;
-        if (loggedUnknownProfiles.insert(enemy.dropItemProfile).second) {
-            logError("[warning] EnemySystem: drop_item unknown profile \"" + enemy.dropItemProfile + "\"; no item drop");
-        }
+    if (enemy.dropItemProfile.empty()) {
         return;
     }
     std::uniform_real_distribution<float> chanceDist(0.0f, 1.0f);
@@ -1048,7 +1194,7 @@ void EnemySystem::queueEnemyObjectDrops(Enemy& enemy)
         event.type = EnemyEventType::ObjectDrop;
         event.enemyId = enemy.enemyId;
         event.enemyName = enemy.enemyName;
-        event.objectDropId = objectDropId;
+        event.objectDropProfile = enemy.dropItemProfile;
         event.objectDropCount = 1;
         if (scatterRadius > 0.0f) {
             const float angle = angleDist(rng_);
@@ -1641,7 +1787,13 @@ bool EnemySystem::findBossSpawnPosition(TileMap& map, Vec2 playerPosition, const
         outPosition);
 }
 
-void EnemySystem::spawnFromDugTiles(const std::vector<Vec2>& dugTiles, TileMap& map, Vec2 playerPosition, const RuntimeBalance& balance, const EnemyCatalog& enemyCatalog)
+void EnemySystem::spawnFromDugTiles(
+    const std::vector<DugEnemySpawnPoint>& dugTiles,
+    TileMap& map,
+    Vec2 playerPosition,
+    const RuntimeBalance& balance,
+    const EnemyCatalog& enemyCatalog,
+    std::string_view stageId)
 {
     if (activeCount() >= balance.enemySoftCap) {
         return;
@@ -1650,7 +1802,7 @@ void EnemySystem::spawnFromDugTiles(const std::vector<Vec2>& dugTiles, TileMap& 
     const int guaranteeDugTiles = std::max(minDugTiles, balance.enemyGuaranteeDugTiles);
     const int randomWindow = std::max(1, guaranteeDugTiles - minDugTiles + 1);
     std::uniform_int_distribution<int> randomTrigger(1, randomWindow);
-    for (Vec2 tileCenter : dugTiles) {
+    for (const DugEnemySpawnPoint& spawnPoint : dugTiles) {
         ++dugSpawnCounter_;
         if (dugSpawnCounter_ < minDugTiles) {
             continue;
@@ -1661,10 +1813,16 @@ void EnemySystem::spawnFromDugTiles(const std::vector<Vec2>& dugTiles, TileMap& 
             continue;
         }
         Vec2 spawnPosition{};
-        if (!findSpawnPosition(map, tileCenter, playerPosition, balance, spawnPosition)) {
+        if (!findSpawnPosition(map, spawnPoint.tileCenter, playerPosition, balance, spawnPosition)) {
             continue;
         }
-        spawnAt(spawnPosition, balance, enemyCatalog, true, playerPosition);
+        spawnDefinitionAt(
+            spawnPosition,
+            chooseDugSpawnEnemyDefinition(enemyCatalog, stageId, spawnPoint.depthRank),
+            balance,
+            enemyCatalog,
+            true,
+            playerPosition);
         dugSpawnCounter_ = 0;
         if (activeCount() >= balance.enemySoftCap) {
             return;
@@ -2138,6 +2296,7 @@ void EnemySystem::update(
             if (poisonDamage > 0) {
                 enemy.hp -= poisonDamage;
                 enemy.poisonDamageAccumulator -= static_cast<double>(poisonDamage);
+                revealEnemyHpBar(enemy, poisonDamage);
                 enemy.hitFlash = 0.12f;
                 events_.push_back(makeEnemyEvent(EnemyEventType::Hit, enemy, {}, poisonDamage));
                 if (enemy.hp <= 0) {
@@ -2149,6 +2308,7 @@ void EnemySystem::update(
             enemy.poisonDamageAccumulator = 0.0;
         }
         enemy.hitFlash = std::max(0.0f, enemy.hitFlash - dt);
+        enemy.hpBarTimer = std::max(0.0f, enemy.hpBarTimer - dt);
         if (enemy.spawnTimer > 0.0f) {
             enemy.spawnTimer = std::max(0.0f, enemy.spawnTimer - dt);
             if (enemy.spawnTimer <= 0.0f && enemy.swarmSpawnEnabled && !enemy.swarmSpawnExecuted) {
@@ -2705,6 +2865,7 @@ void EnemySystem::update(
             }
             const int damageDealt = applyDefenseModifier(enemy.status, adjustedDamage);
             enemy.hp -= damageDealt;
+            revealEnemyHpBar(enemy, damageDealt);
             if (item.hasCapturedBehavior("heavy_guard")) {
                 enemy.knockbackVelocity = normalize(enemy.position - item.worldPosition) * 90.0f;
                 enemy.knockbackTimer = std::max(enemy.knockbackTimer, 0.10f);
@@ -2865,6 +3026,7 @@ bool EnemySystem::hitByPlayerProjectile(
 
         const int adjustedDamage = applyDefenseModifier(enemy.status, std::max(0, damage));
         enemy.hp -= adjustedDamage;
+        revealEnemyHpBar(enemy, adjustedDamage);
         enemy.hitFlash = 0.12f;
 
         if (!projectile.effects.empty()) {
@@ -2937,6 +3099,7 @@ void EnemySystem::applyCapturedExplosion(Vec2 position, SpellRingSystem& spellRi
 
         const int damageDealt = applyDefenseModifier(enemy.status, std::max(0, damage));
         enemy.hp -= damageDealt;
+        revealEnemyHpBar(enemy, damageDealt);
         enemy.hitFlash = 0.18f;
         enemy.knockbackVelocity = normalize(enemy.position - position) * 110.0f;
         enemy.knockbackTimer = std::max(enemy.knockbackTimer, 0.14f);
@@ -3047,6 +3210,7 @@ void EnemySystem::clearTemporaryState()
         enemy.status = EntityStatus{};
         enemy.poisonDamageAccumulator = 0.0;
         enemy.hitFlash = 0.0f;
+        enemy.hpBarTimer = 0.0f;
         enemy.knockbackVelocity = {};
         enemy.knockbackTimer = 0.0f;
         enemy.contactTimer = 0.0f;

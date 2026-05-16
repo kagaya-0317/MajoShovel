@@ -69,6 +69,22 @@ struct UiButtonStyle {
     Color outlineHot{255, 255, 255, 255};
     Color text{255, 255, 255, 255};
     int imageVariant = 0;
+    Color imageTint{232, 232, 238, 255};
+    Color imageTintHot{255, 255, 235, 255};
+};
+
+struct UiSmallSelectButtonStyle {
+    Color fill{24, 36, 78, 196};
+    Color fillHot{52, 70, 128, 228};
+    Color fillDisabled{18, 24, 42, 170};
+    Color outline{118, 104, 136, 220};
+    Color outlineHot{255, 230, 150, 255};
+    Color outlineDisabled{90, 84, 108, 170};
+    Color text{255, 255, 255, 255};
+    Color valueText{198, 198, 206, 255};
+    Color disabledText{150, 150, 160, 255};
+    Color accent{255, 230, 150, 255};
+    int textScale = 3;
 };
 
 struct UiGaugeGradient {
@@ -88,6 +104,7 @@ struct UiGaugeStyle {
     Color capGlow{132, 230, 250, 78};
     Color capCore{246, 252, 255, 225};
     Color shimmer{255, 255, 255, 0};
+    Color outline{255, 255, 255, 255};
     float cornerRadius = -1.0f;
     float trackOuterExtra = 2.0f;
     float trackInnerInset = 5.0f;
@@ -137,6 +154,31 @@ struct UiDropdownStyle {
     Color scrollbarTrack{255, 255, 255, 48};
     Color scrollbarThumb{255, 255, 255, 170};
     std::string_view emptyLabel = "項目がありません";
+};
+
+struct UiTabItem {
+    std::string_view label;
+    bool enabled = true;
+};
+
+struct UiTabsInput {
+    int focusDelta = 0;
+    int directFocusIndex = -1;
+    bool commit = false;
+};
+
+struct UiTabsState {
+    int focusedIndex = -1;
+};
+
+struct UiTabsStyle {
+    UiButtonStyle buttonStyle{};
+    Color selectedFillHot{62, 84, 166, 244};
+    Color selectedOutlineHot{255, 246, 190, 255};
+    Color selectedText{255, 250, 224, 255};
+    Color selectedImageTint{255, 255, 255, 255};
+    Color focusOutline{255, 228, 138, 210};
+    bool wrapKeyboard = true;
 };
 
 struct UiWindowOptions {
@@ -226,6 +268,14 @@ void drawUiSeparator(Renderer& renderer, UiRect rect, Color tint = {255, 255, 25
 void drawUiGauge(Renderer& renderer, UiRect rect, float progress, const UiGaugeStyle& style = {});
 void drawUiButton(Renderer& renderer, UiRect rect, std::string_view label, bool hot, const UiButtonStyle& style = {});
 void drawUiRectButton(Renderer& renderer, UiRect rect, std::string_view label, bool hot, const UiButtonStyle& style = {});
+void drawUiSmallSelectButton(
+    Renderer& renderer,
+    UiRect rect,
+    std::string_view label,
+    std::string_view value,
+    bool hot,
+    bool disabled = false,
+    const UiSmallSelectButtonStyle& style = {});
 void drawUiBodyMessageBelow(Renderer& renderer, UiRect anchor, std::string_view message, Color color = ui::TextMuted);
 float drawUiDetailHeader(Renderer& renderer, UiRect panel, std::string_view text);
 void drawUiDetailText(Renderer& renderer, UiRect panel, float& y, std::string_view text);
@@ -260,5 +310,22 @@ void drawUiDropdown(
     const UiDropdownItem* items,
     int itemCount,
     const UiDropdownStyle& style = {});
+int updateUiTabs(
+    UiTabsState& state,
+    UiContext& ui,
+    const UiTabsInput& input,
+    int selectedIndex,
+    const UiTabItem* items,
+    int itemCount,
+    const UiRect* rects,
+    const UiTabsStyle& style = {});
+void drawUiTabs(
+    Renderer& renderer,
+    const UiTabsState& state,
+    int selectedIndex,
+    const UiTabItem* items,
+    int itemCount,
+    const UiRect* rects,
+    const UiTabsStyle& style = {});
 
 }

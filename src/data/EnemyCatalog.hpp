@@ -3,6 +3,7 @@
 #include "data/GoogleSheetSource.hpp"
 #include "data/ObjectCatalog.hpp"
 
+#include <cstddef>
 #include <string>
 #include <string_view>
 #include <unordered_map>
@@ -52,6 +53,7 @@ struct EnemyDefinition {
     std::vector<EffectSpec> capturedNormalEffects;
     std::vector<EffectSpec> capturedOrbitEffects;
     std::vector<std::string> capturedTags;
+    std::unordered_map<std::string, double> spawnWeights;
     std::vector<EnemyBehaviorSpec> enemyBehaviorSpecs;
     std::vector<EnemyBehaviorSpec> capturedBehaviorSpecs;
     std::string note;
@@ -88,6 +90,14 @@ struct BehaviorDefinition {
     bool operator==(const BehaviorDefinition&) const = default;
 };
 
+struct EnemySpawnWeightLoadStats {
+    std::size_t detectedColumnCount = 0;
+    std::size_t weightedEnemyCount = 0;
+    std::size_t warningCount = 0;
+
+    bool operator==(const EnemySpawnWeightLoadStats&) const = default;
+};
+
 struct EnemyCatalog {
     std::vector<EnemyDefinition> enemies;
     std::unordered_map<std::string, EnemyDefinition> enemiesById;
@@ -95,6 +105,7 @@ struct EnemyCatalog {
     std::unordered_map<std::string, BehaviorDefinition> behaviorsById;
     std::vector<DbValidationIssue> validationIssues;
     std::vector<std::string> validationWarnings;
+    EnemySpawnWeightLoadStats spawnWeightStats;
 
     bool operator==(const EnemyCatalog&) const = default;
 };
@@ -110,5 +121,7 @@ bool loadEnemyCatalogFromGoogleSheet(
     const std::unordered_map<std::string, SpecialTagDefinition>& specialTags,
     EnemyCatalog& outCatalog,
     std::string& outError);
+std::string resolveEnemySpawnWeightColumnName(std::string_view stageId, int depthRank);
+double enemySpawnWeightFor(const EnemyDefinition& enemy, std::string_view stageId, int depthRank);
 
 }

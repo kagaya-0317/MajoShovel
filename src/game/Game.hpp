@@ -26,6 +26,7 @@
 #include "game/LevelSystem.hpp"
 #include "game/OpeningMetaSave.hpp"
 #include "game/SpellRingSystem.hpp"
+#include "game/StoryEvent.hpp"
 #include "game/Player.hpp"
 #include "game/ProjectileSystem.hpp"
 #include "game/TileMap.hpp"
@@ -230,6 +231,14 @@ private:
         bool destroyed = false;
     };
 
+    enum class LootSourceKind {
+        Chest,
+        CrateBonus,
+        DigItem,
+        EnemyDrop,
+        CapturedReward,
+    };
+
     enum class EnemyPlacementType {
         Exposed,
         BuriedHidden,
@@ -342,6 +351,7 @@ private:
     enum class ScreenTransitionTarget {
         None,
         Base,
+        TitleToBase,
         MiningStart,
         BaseArea,
     };
@@ -398,6 +408,7 @@ private:
     void enterBase();
     void startMiningFromBase(bool useLatestWarpPoint, bool forceRegenerate = false);
     void loadOpeningKamishibaiData();
+    void loadStoryEvents();
     void startOpeningKamishibai();
     void finishOpeningKamishibai(bool completedPlayback);
     void updateOpeningKamishibai(const Input& input, float dt);
@@ -548,6 +559,7 @@ private:
     int discoveredWarpPointCount() const;
     std::vector<WarpPoint> discoveredWarpPoints() const;
     int nearestWarpPointIndex(Vec2 position) const;
+    Vec2 safePlayerStartPosition(Vec2 preferredPosition);
     void updateWarpPoints(float dt);
     void initializeMoonFragmentNodesFromWarpPoints();
     void initializeRewardNodesFromLayout();
@@ -570,12 +582,15 @@ private:
         Vec2 center,
         std::mt19937& rng,
         std::string_view sourceLabel,
-        bool launchFromCenter = false);
+        bool launchFromCenter = false,
+        LootSourceKind sourceKind = LootSourceKind::Chest);
+    Vec2 safeLootLandingPosition(Vec2 center, std::mt19937& rng);
     int rewardNodeCount() const;
     int moneyNodeCount() const;
     int buriedVisibleNodeCount() const;
     int buriedHiddenNodeCount() const;
     void initializeEnemyNodesFromLayout();
+    void applyPlacementTerrainOverrides();
     void updateExposedEnemyNodes();
     void updateRingEffectDiscoveries(std::vector<EffectDiscoveryEvent>& discoveryEvents);
     std::vector<Vec2> spawnHiddenEnemyNodesFromOpenedTiles(const std::vector<Vec2>& openedTiles);
@@ -638,6 +653,11 @@ private:
     bool basePresentationActive() const;
     void startBaseMonicaDialogue();
     void maybeStartFirstDungeonDialogue();
+    const StoryEvent* findStoryEvent(std::string_view id) const;
+    const StoryEvent* findStoryEventForTrigger(std::string_view trigger) const;
+    bool startStoryEvent(std::string_view id);
+    bool startStoryEventForTrigger(std::string_view trigger);
+    void maybeStartOpeningBaseIntroEvent();
     void pushDungeonLog(std::string message, std::string mergeKey = {});
     void pushCountedDungeonLog(std::string label, int amount, std::string suffix, std::string mergeKey);
     void updateDungeonLogs(float dt);
@@ -698,6 +718,8 @@ private:
     std::vector<KamishibaiPage> openingPages_;
     KamishibaiPlayer openingPlayer_;
     KamishibaiRenderer openingRenderer_;
+    std::vector<StoryEvent> storyEvents_;
+    std::string pendingStoryTrigger_;
     ScreenTransitionState screenTransition_;
     FrameSnapshot screenTransitionSnapshot_;
     ScreenMode mode_ = ScreenMode::Base;
@@ -736,6 +758,7 @@ private:
     int baseUpgradeSelection_ = 0;
     bool baseProcessingActive_ = false;
     int baseProcessingMode_ = 0;
+    UiTabsState baseProcessingTabs_{};
     int baseProcessingSelection_ = 0;
     UiCommandMenuState baseProcessingCommandMenu_{};
     int baseProcessingCommandSlot_ = -1;
@@ -790,6 +813,7 @@ private:
     mutable UiCancelControlState pauseCancelState_{};
     mutable UiCancelControlState baseCancelState_{};
     mutable UiCancelControlState ringCancelState_{};
+    UiTabsState ringTabs_{};
     int ringSlotSelection_ = 0;
     bool ringGrabActive_ = false;
     int ringGrabOrigin_ = -1;
