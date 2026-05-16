@@ -580,7 +580,7 @@ void KamishibaiRenderer::drawCoverImage(
         if (handle.valid() && renderer.getImageSize(handle, imageSize) && imageSize.x > 0.0f && imageSize.y > 0.0f) {
             const float imageAspect = imageSize.x / imageSize.y;
             const float targetAspect = drawWidth / drawHeight;
-            SDL_FRect source{0.0f, 0.0f, imageSize.x, imageSize.y};
+            RectF source{0.0f, 0.0f, imageSize.x, imageSize.y};
             if (imageAspect > targetAspect) {
                 source.w = imageSize.y * targetAspect;
                 source.x = (imageSize.x - source.w) * 0.5f;

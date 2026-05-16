@@ -3,7 +3,7 @@
 #include "engine/Camera.hpp"
 #include "engine/FileWatcher.hpp"
 #include "engine/Input.hpp"
-#include "engine/Renderer.hpp"
+#include "engine/RendererTypes.hpp"
 #include "engine/Time.hpp"
 #include "engine/Ui.hpp"
 #include "data/GoogleSheetSource.hpp"
@@ -46,6 +46,7 @@
 namespace majo {
 
 class UiContext;
+class Renderer;
 
 enum class ScreenMode {
     OpeningKamishibai,

@@ -235,7 +235,7 @@ void TileMap::drawTileCracks(Renderer& renderer, Vec2 pos, int tx, int ty, const
     }
 
     const float frameWidth = imageSize.x / static_cast<float>(CrackTextureFrames);
-    const SDL_FRect source{
+    const RectF source{
         frameWidth * static_cast<float>(std::clamp(level, 1, CrackTextureFrames) - 1),
         0.0f,
         frameWidth,
@@ -636,74 +636,10 @@ Color TileMap::tileColor(const Tile& tile) const
     return base;
 }
 
-void TileMap::drawTileLitByCircles(Renderer& renderer, Vec2 pos, Color color, Vec2 playerLight, const std::vector<LightSource>& extraLights) const
+void TileMap::drawTileLitByCircles(Renderer& renderer, Vec2 pos, Color color, Vec2, const std::vector<LightSource>&) const
 {
     const float tileSize = static_cast<float>(balance::TileSize);
-    std::vector<LightSource> lights;
-    lights.reserve(extraLights.size() + 1);
-    lights.push_back({playerLight, balanceSnapshot_.playerLightRadius});
-    lights.insert(lights.end(), extraLights.begin(), extraLights.end());
-
-    for (const LightSource& light : lights) {
-        const float radius = light.radius > 0.0f ? light.radius : balanceSnapshot_.lightRadius;
-        const float radiusSq = radius * radius;
-        const Vec2 corners[] = {
-            pos,
-            pos + Vec2{tileSize, 0.0f},
-            pos + Vec2{0.0f, tileSize},
-            pos + Vec2{tileSize, tileSize},
-        };
-        bool fullyInside = true;
-        for (Vec2 corner : corners) {
-            if (distanceSquared(corner, light.position) > radiusSq) {
-                fullyInside = false;
-                break;
-            }
-        }
-        if (fullyInside) {
-            renderer.fillRect(pos, {tileSize, tileSize}, color);
-            return;
-        }
-    }
-
-    for (int row = 0; row < balance::TileSize; ++row) {
-        const float y = pos.y + static_cast<float>(row) + 0.5f;
-        std::vector<Vec2> spans;
-        spans.reserve(lights.size());
-        for (const LightSource& light : lights) {
-            const float radius = light.radius > 0.0f ? light.radius : balanceSnapshot_.lightRadius;
-            const float radiusSq = radius * radius;
-            const float dy = y - light.position.y;
-            const float remaining = radiusSq - dy * dy;
-            if (remaining <= 0.0f) {
-                continue;
-            }
-            const float dx = std::sqrt(remaining);
-            const float x0 = std::max(pos.x, light.position.x - dx);
-            const float x1 = std::min(pos.x + tileSize, light.position.x + dx);
-            if (x1 > x0) {
-                spans.push_back({x0, x1});
-            }
-        }
-        if (spans.empty()) {
-            continue;
-        }
-        std::sort(spans.begin(), spans.end(), [](Vec2 a, Vec2 b) {
-            return a.x < b.x;
-        });
-        float start = spans[0].x;
-        float end = spans[0].y;
-        for (std::size_t i = 1; i < spans.size(); ++i) {
-            if (spans[i].x <= end) {
-                end = std::max(end, spans[i].y);
-                continue;
-            }
-            renderer.fillRect({start, pos.y + static_cast<float>(row)}, {end - start, 1.0f}, color);
-            start = spans[i].x;
-            end = spans[i].y;
-        }
-        renderer.fillRect({start, pos.y + static_cast<float>(row)}, {end - start, 1.0f}, color);
-    }
+    renderer.fillRect(pos, {tileSize, tileSize}, color);
 }
 
 void TileMap::render(Renderer& renderer, const Camera& camera, Vec2 lightCenter, const std::vector<LightSource>& extraLights)
@@ -771,10 +707,11 @@ void TileMap::renderDarknessOverlay(Renderer& renderer, const Camera& camera, Ve
     lights.insert(lights.end(), extraLights.begin(), extraLights.end());
 
     constexpr Color DarknessColor{5, 5, 8, 255};
+    std::vector<Vec2> spans;
+    spans.reserve(lights.size());
     for (int row = 0; row < static_cast<int>(viewHeight); ++row) {
         const float y = viewTop + static_cast<float>(row) + 0.5f;
-        std::vector<Vec2> spans;
-        spans.reserve(lights.size());
+        spans.clear();
         for (const LightSource& light : lights) {
             const float radius = light.radius > 0.0f ? light.radius : balanceSnapshot_.lightRadius;
             const float radiusSq = radius * radius;

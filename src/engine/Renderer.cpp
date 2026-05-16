@@ -2187,7 +2187,7 @@ void Renderer::drawNineSliceFrame(const GuidedTexture& texture, Vec2 pos, Vec2 s
     const float rightX = pos.x + size.x - rightWidth;
     const float bottomY = pos.y + size.y - bottomHeight;
 
-    auto cell = [&](int row, int col) -> SDL_FRect {
+    auto cell = [&](int row, int col) -> RectF {
         return texture.cells[static_cast<std::size_t>(row * 3 + col)];
     };
 
@@ -2210,7 +2210,7 @@ void Renderer::drawHorizontalSliceRow(const GuidedTexture& texture, int row, Vec
         return;
     }
 
-    auto cell = [&](int col) -> SDL_FRect {
+    auto cell = [&](int col) -> RectF {
         return texture.cells[static_cast<std::size_t>(row * texture.columns + col)];
     };
 
@@ -2359,7 +2359,7 @@ bool Renderer::drawFrameSnapshot(const FrameSnapshot& snapshot, Vec2 pos, Vec2 s
     return SDL_RenderTexture(renderer_, snapshot.texture, nullptr, &dst);
 }
 
-void Renderer::drawTextureRegion(SDL_Texture* texture, SDL_FRect src, Vec2 pos, Vec2 size, Color tint)
+void Renderer::drawTextureRegion(SDL_Texture* texture, RectF src, Vec2 pos, Vec2 size, Color tint)
 {
     if (!texture || src.w <= 0.0f || src.h <= 0.0f || size.x <= 0.0f || size.y <= 0.0f) {
         return;
@@ -2371,10 +2371,11 @@ void Renderer::drawTextureRegion(SDL_Texture* texture, SDL_FRect src, Vec2 pos, 
     tint = transformColor(tint);
     SDL_SetTextureColorMod(texture, tint.r, tint.g, tint.b);
     SDL_SetTextureAlphaMod(texture, tint.a);
-    SDL_RenderTexture(renderer_, texture, &src, &dst);
+    const SDL_FRect srcRect = toSdlRect(src);
+    SDL_RenderTexture(renderer_, texture, &srcRect, &dst);
 }
 
-void Renderer::drawTextureTiled(SDL_Texture* texture, SDL_FRect src, Vec2 pos, Vec2 size, Color tint)
+void Renderer::drawTextureTiled(SDL_Texture* texture, RectF src, Vec2 pos, Vec2 size, Color tint)
 {
     if (!texture || src.w <= 0.0f || src.h <= 0.0f || size.x <= 0.0f || size.y <= 0.0f) {
         return;
@@ -2388,7 +2389,7 @@ void Renderer::drawTextureTiled(SDL_Texture* texture, SDL_FRect src, Vec2 pos, V
         for (float x = 0.0f; x < size.x;) {
             const float dstWidth = shrinkX ? size.x : std::min(src.w, size.x - x);
             const float srcWidth = shrinkX ? src.w : dstWidth;
-            SDL_FRect clippedSrc{src.x, src.y, srcWidth, srcHeight};
+            RectF clippedSrc{src.x, src.y, srcWidth, srcHeight};
             drawTextureRegion(texture, clippedSrc, pos + Vec2{x, y}, {dstWidth, dstHeight}, tint);
             x += dstWidth;
         }
@@ -2423,7 +2424,7 @@ void Renderer::drawUiWindowFrame(Vec2 pos, Vec2 size, Color tint)
     }
     const float extraWidth = std::max(0.0f, size.x - scaledMinWidth);
 
-    auto cell = [&](int row, int col) -> SDL_FRect {
+    auto cell = [&](int row, int col) -> RectF {
         return window.cells[static_cast<std::size_t>(row * 5 + col)];
     };
     auto splitExtra = [](float extra, float a, float b) -> Vec2 {
@@ -2478,7 +2479,7 @@ void Renderer::drawUiLine(Vec2 pos, float width, Color tint)
         return;
     }
 
-    const SDL_FRect fullSource{0.0f, 0.0f, UiLineSourceWidth, UiLineSourceHeight};
+    const RectF fullSource{0.0f, 0.0f, UiLineSourceWidth, UiLineSourceHeight};
     const float fixedWidth = UiLineLeftCapWidth + UiLineCenterWidth + UiLineRightCapWidth;
     if (width <= fixedWidth) {
         const float scale = width / UiLineSourceWidth;

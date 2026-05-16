@@ -146,7 +146,7 @@ bool drawEnemyImage(
     const int animationTick = static_cast<int>(std::floor(std::max(0.0f, animationTimeSeconds) * EnemyAnimationFps));
     const int frameColumn = (animationTick / EnemyAnimationFrameInterval) % EnemySpriteColumns;
     const int frameRow = rowForDirection(directionFromFacing(enemy.facingAngle));
-    const SDL_FRect sourceRect{
+    const RectF sourceRect{
         static_cast<float>(frameColumn * frameWidth),
         static_cast<float>(frameRow * frameHeight),
         static_cast<float>(frameWidth),

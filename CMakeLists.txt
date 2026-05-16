@@ -49,6 +49,12 @@ add_executable(MajoShovel
     src/data/StageCatalog.cpp
     src/data/RuntimeBalance.cpp
     src/game/Game.cpp
+    src/game/GameCore.cpp
+    src/game/GameBase.cpp
+    src/game/GameDungeon.cpp
+    src/game/GameSave.cpp
+    src/game/GameRender.cpp
+    src/game/GameDevTools.cpp
     src/game/Kamishibai.cpp
     src/game/DialogueSystem.cpp
     src/game/OpeningMetaSave.cpp
