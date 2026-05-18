@@ -63,15 +63,163 @@ Vec2 dungeonRingIntroItemGroundPosition(
     return spellRing.center() + direction * radial;
 }
 
-std::array<UiCommandMenuItem, 1> ringCommandItems(bool canRemove)
+constexpr int RingPlaceColumns = 8;
+constexpr int RingPlaceRows = 3;
+constexpr int RingPlaceSlotCount = RingPlaceColumns * RingPlaceRows;
+constexpr float RingPlaceSlotSize = 64.0f;
+constexpr float RingPlaceSlotGap = 12.0f;
+constexpr float RingPlaceSlotImageMaxSize = 48.0f;
+
+std::array<UiCommandMenuItem, 1> ringCommandItems(bool placeCommand, bool enabled)
 {
-    return {{{"リングから外す", canRemove}}};
+    return {{{placeCommand ? "アイテムを配置" : "リングから外す", enabled}}};
 }
 
 UiRect ringArrangeButtonRect()
 {
     const UiRect panel = ringPanelRect();
     return {{panel.pos.x + 48.0f, panel.pos.y + 196.0f}, {118.0f, ui::ButtonHeight}};
+}
+
+UiRect ringPlaceWindowRect()
+{
+    const UiRect panel = ringPanelRect();
+    return {{panel.pos.x + 120.0f, panel.pos.y + 84.0f}, {900.0f, 438.0f}};
+}
+
+UiRect ringPlaceSlotRect(int index)
+{
+    const UiRect panel = ringPlaceWindowRect();
+    const int row = index / RingPlaceColumns;
+    const int column = index % RingPlaceColumns;
+    return {{
+        panel.pos.x + 32.0f + static_cast<float>(column) * (RingPlaceSlotSize + RingPlaceSlotGap),
+        panel.pos.y + 94.0f + static_cast<float>(row) * (RingPlaceSlotSize + RingPlaceSlotGap),
+    }, {RingPlaceSlotSize, RingPlaceSlotSize}};
+}
+
+UiRect ringPlaceDetailRect()
+{
+    const UiRect panel = ringPlaceWindowRect();
+    return {{panel.pos.x + 648.0f, panel.pos.y + 94.0f}, {220.0f, 256.0f}};
+}
+
+InventoryUiEntryView ringPlaceEntryView(const InventorySystem& inventory, int slotIndex)
+{
+    InventoryUiEntryView entry{};
+    if (const InventoryObjectStack* stack = inventory.screenObjectStackAt(slotIndex)) {
+        entry.item = &stack->item;
+        entry.stackCount = stack->count;
+    } else if (const InventoryObjectInstance* instance = inventory.screenObjectInstanceAt(slotIndex)) {
+        entry.item = &instance->item;
+        entry.instance = &instance->instance;
+        entry.stackCount = 1;
+    }
+    return entry;
+}
+
+bool ringPlaceSlotEnabled(
+    const InventorySystem& inventory,
+    const SpellRingSystem& spellRing,
+    int slotIndex,
+    float localAngle)
+{
+    return inventory.hasScreenItemAt(slotIndex) &&
+        inventory.screenItemCanAddToRing(slotIndex, spellRing, localAngle);
+}
+
+int firstRingPlaceableSlot(
+    const InventorySystem& inventory,
+    const SpellRingSystem& spellRing,
+    float localAngle)
+{
+    const int count = std::min(inventory.screenSlotCount(), RingPlaceSlotCount);
+    for (int i = 0; i < count; ++i) {
+        if (ringPlaceSlotEnabled(inventory, spellRing, i, localAngle)) {
+            return i;
+        }
+    }
+    return -1;
+}
+
+int movedRingPlaceSelection(
+    const InventorySystem& inventory,
+    const SpellRingSystem& spellRing,
+    float localAngle,
+    int current,
+    int delta)
+{
+    const int count = std::min(inventory.screenSlotCount(), RingPlaceSlotCount);
+    if (count <= 0 || delta == 0) {
+        return current;
+    }
+
+    int cursor = std::clamp(current, 0, count - 1);
+    for (int step = 0; step < count; ++step) {
+        cursor = (cursor + delta) % count;
+        if (cursor < 0) {
+            cursor += count;
+        }
+        if (ringPlaceSlotEnabled(inventory, spellRing, cursor, localAngle)) {
+            return cursor;
+        }
+    }
+    return current;
+}
+
+bool ringInventoryHasAnyItem(const InventorySystem& inventory)
+{
+    const int count = std::min(inventory.screenSlotCount(), RingPlaceSlotCount);
+    for (int i = 0; i < count; ++i) {
+        if (inventory.hasScreenItemAt(i)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+bool ringInventoryHasAnyAutoPlaceableItem(const InventorySystem& inventory, const SpellRingSystem& spellRing)
+{
+    const int count = std::min(inventory.screenSlotCount(), RingPlaceSlotCount);
+    for (int i = 0; i < count; ++i) {
+        if (inventory.screenItemCanAddToRing(i, spellRing, std::nullopt)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+std::string ringPlacementUnavailableStatus(const InventorySystem& inventory, const SpellRingSystem& spellRing)
+{
+    if (!ringInventoryHasAnyItem(inventory)) {
+        return "配置できるアイテムがありません";
+    }
+    if (!spellRing.canAddItem()) {
+        return "リング満杯です";
+    }
+    if (!ringInventoryHasAnyAutoPlaceableItem(inventory, spellRing)) {
+        return "重量上限のため配置できません";
+    }
+    return "この位置には配置できません";
+}
+
+bool ringPlacementHitAreaContains(Vec2 point, const SpellRingSystem& spellRing, const RuntimeBalance& balance)
+{
+    if (!ringPanelRect().contains(point) || ringDetailRect().contains(point)) {
+        return false;
+    }
+
+    std::vector<Vec2> orbitPath = getRingPathSamplePoints(
+        spellRing.center(),
+        ringUiOrbitContext(spellRing, balance, 0, 1),
+        160);
+    float nearestDistanceSq = std::numeric_limits<float>::max();
+    for (Vec2 pathPoint : orbitPath) {
+        pathPoint = applyRingUiShapeRotation(spellRing, ringWorldToUi(spellRing, pathPoint));
+        nearestDistanceSq = std::min(nearestDistanceSq, distanceSquared(point, pathPoint));
+    }
+    constexpr float HitDistance = 72.0f;
+    return nearestDistanceSq <= HitDistance * HitDistance;
 }
 
 float cometArrangeArcRadians(const RingOrbitTuning& tuning)
