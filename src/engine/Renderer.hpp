@@ -39,6 +39,7 @@ public:
     void fillCircle(Vec2 center, float radius, Color color);
     void drawCircle(Vec2 center, float radius, Color color);
     void fillPolygon(const Vec2* points, std::size_t count, Color color);
+    void fillTriangleList(const Vec2* vertices, std::size_t vertexCount, const int* indices, std::size_t indexCount, Color color);
     void fillSoftCircle(Vec2 center, float radius, Color color);
     void drawSoftRing(Vec2 center, float radius, float width, Color color);
     void fillEllipse(Vec2 center, Vec2 radius, Color color);
@@ -59,9 +60,6 @@ public:
     Vec2 measureWrappedText(std::string_view text, float maxWidth, int scale = 2, TextStyle style = TextStyle::Regular);
     void drawWrappedText(Vec2 pos, std::string_view text, float maxWidth, Color color, int scale = 2, TextStyle style = TextStyle::Regular);
     bool loadTextFont(std::string_view path);
-    bool loadIconSheet(std::string_view path, int iconSize = 32, int columns = 8, int rows = 8);
-    void unloadIconSheet();
-    bool hasIconSheet() const { return iconSheet_.texture != nullptr; }
     bool loadPlayerSheet(std::string_view path, int frameSize = 96, int columns = 3, int rows = 3);
     void unloadPlayerSheet();
     bool hasPlayerSheet() const { return playerSheet_.texture != nullptr; }
@@ -82,9 +80,14 @@ public:
     void unloadBaseMapTexture();
     bool hasBaseMapTexture() const { return baseMapTexture_.texture != nullptr; }
     const std::string& lastAssetError() const { return lastAssetError_; }
-    void drawIcon(int index, Vec2 pos, float scale = 1.0f, Color tint = {255, 255, 255, 255});
-    void drawIcon(int index, Vec2 pos, Vec2 size, Color tint = {255, 255, 255, 255});
-    void drawPlayerSprite(int index, Vec2 anchorPosition, float size, bool flipHorizontal, Color tint = {255, 255, 255, 255}, Vec2 anchor = {0.5f, 0.82f});
+    void drawPlayerSprite(
+        int index,
+        Vec2 anchorPosition,
+        float size,
+        bool flipHorizontal,
+        Color tint = {255, 255, 255, 255},
+        Vec2 anchor = {0.5f, 0.82f},
+        bool flipVertical = false);
     void drawBaseMapTexture(Vec2 pos, Vec2 size, Color tint = {255, 255, 255, 255});
     FrameSnapshot captureFrameSnapshot();
     void destroyFrameSnapshot(FrameSnapshot& snapshot);
@@ -200,7 +203,6 @@ private:
         float alpha = 1.0f;
     };
     std::vector<ScreenTransform> screenTransforms_;
-    SpriteSheet iconSheet_;
     SpriteSheet playerSheet_;
     ImageTexture baseMapTexture_;
     GuidedTexture uiWindowTexture_;

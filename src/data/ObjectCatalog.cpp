@@ -36,6 +36,8 @@ constexpr std::string_view HeaderDigPower = "\xE6\x8E\x98\xE5\x89\x8A\xE5\x8A\x9
 constexpr std::string_view HeaderDurability = "\xE8\x80\x90\xE4\xB9\x85\xE5\x8A\x9B";
 constexpr std::string_view HeaderWeight = "\xE9\x87\x8D\xE3\x81\x95";
 constexpr std::string_view HeaderImageNumber = "\xE7\x94\xBB\xE5\x83\x8F\xE7\x95\xAA\xE5\x8F\xB7";
+constexpr std::string_view HeaderGroundRotation = "\xE5\x9C\xB0\xE9\x9D\xA2\xE8\xA7\x92\xE5\xBA\xA6";
+constexpr std::string_view HeaderRingRotation = "\xE3\x83\xAA\xE3\x83\xB3\xE3\x82\xB0\xE8\xA7\x92\xE5\xBA\xA6";
 constexpr std::string_view HeaderTags = "\xE7\x89\xB9\xE6\xAE\x8A\xE3\x82\xBF\xE3\x82\xB0";
 constexpr std::string_view HeaderEffectText = "\xE5\x8A\xB9\xE6\x9E\x9C\xE3\x83\x86\xE3\x82\xAD\xE3\x82\xB9\xE3\x83\x88";
 constexpr std::string_view EffectCodesSheetName = "\xE5\x8A\xB9\xE6\x9E\x9C\xE3\x82\xB3\xE3\x83\xBC\xE3\x83\x89\xE4\xB8\x80\xE8\xA6\xA7";
@@ -817,6 +819,125 @@ double parseDoubleColumnOrDefault(
     return value;
 }
 
+float parseOptionalFloatColumnOrDefault(
+    std::string_view text,
+    float defaultValue,
+    std::string_view columnName,
+    std::size_t rowIndex,
+    std::string_view itemId,
+    ObjectCatalog& catalog)
+{
+    const std::string normalized = trim(text);
+    if (normalized.empty()) {
+        return defaultValue;
+    }
+
+    double value = static_cast<double>(defaultValue);
+    if (!parseDoubleStrict(normalized, value)) {
+        addValidationIssue(
+            catalog,
+            DbValidationSeverity::Warning,
+            DbValidationCategory::NumericValue,
+            "Objects row " + std::to_string(rowIndex + 1) +
+                " item=\"" + std::string(itemId) + "\" " + std::string(columnName) +
+                ": invalid number \"" + normalized + "\"; using " + std::to_string(defaultValue));
+        return defaultValue;
+    }
+    return static_cast<float>(value);
+}
+
+std::vector<std::string> splitColonTokens(std::string_view text)
+{
+    std::vector<std::string> tokens;
+    std::string current;
+    for (char ch : text) {
+        if (ch == ':') {
+            tokens.push_back(trim(current));
+            current.clear();
+            continue;
+        }
+        current.push_back(ch);
+    }
+    tokens.push_back(trim(current));
+    return tokens;
+}
+
+bool parseRotationFloatToken(std::string_view text, float& outValue)
+{
+    double value = 0.0;
+    if (!parseDoubleStrict(text, value)) {
+        return false;
+    }
+    outValue = static_cast<float>(value);
+    return true;
+}
+
+ObjectRingRotation parseObjectRingRotation(
+    std::string_view text,
+    std::size_t rowIndex,
+    std::string_view itemId,
+    ObjectCatalog& catalog)
+{
+    ObjectRingRotation rotation;
+    const std::string normalizedText = trim(text);
+    if (normalizedText.empty()) {
+        return rotation;
+    }
+
+    float numericOffset = 0.0f;
+    if (parseRotationFloatToken(normalizedText, numericOffset)) {
+        rotation.offsetDegrees = numericOffset;
+        return rotation;
+    }
+
+    const std::vector<std::string> tokens = splitColonTokens(normalizedText);
+    const std::string mode = tokens.empty() ? std::string{} : lowerAscii(tokens.front());
+    auto addWarning = [&](std::string message) {
+        addValidationIssue(
+            catalog,
+            DbValidationSeverity::Warning,
+            DbValidationCategory::ObjectField,
+            "Objects row " + std::to_string(rowIndex + 1) +
+                " item=\"" + std::string(itemId) + "\" ring rotation: " + std::move(message) +
+                "; using fixed");
+    };
+
+    if (mode == "fixed" || mode == "none" || mode == "0") {
+        rotation.mode = ObjectRingRotationMode::Fixed;
+    } else if (mode == "outward" || mode == "outer") {
+        rotation.mode = ObjectRingRotationMode::Outward;
+    } else if (mode == "forward" || mode == "tangent") {
+        rotation.mode = ObjectRingRotationMode::Forward;
+    } else if (mode == "spin" || mode == "rotate") {
+        rotation.mode = ObjectRingRotationMode::Spin;
+    } else {
+        addWarning("unknown mode \"" + normalizedText + "\"");
+        return {};
+    }
+
+    if (rotation.mode == ObjectRingRotationMode::Spin) {
+        if (tokens.size() >= 2 && !tokens[1].empty()) {
+            if (!parseRotationFloatToken(tokens[1], rotation.spinDegreesPerSecond)) {
+                addWarning("invalid spin speed \"" + tokens[1] + "\"");
+                return {};
+            }
+        }
+        if (tokens.size() >= 3 && !tokens[2].empty()) {
+            if (!parseRotationFloatToken(tokens[2], rotation.offsetDegrees)) {
+                addWarning("invalid spin offset \"" + tokens[2] + "\"");
+                return {};
+            }
+        }
+    } else if (tokens.size() >= 2 && !tokens[1].empty()) {
+        if (!parseRotationFloatToken(tokens[1], rotation.offsetDegrees)) {
+            addWarning("invalid offset \"" + tokens[1] + "\"");
+            return {};
+        }
+    }
+
+    return rotation;
+}
+
 bool isUnsetLootWeightCell(std::string_view text)
 {
     const std::string value = trim(text);
@@ -868,6 +989,8 @@ struct ObjectColumns {
     int durability = -1;
     int weight = -1;
     int imageNumber = -1;
+    int groundRotation = -1;
+    int ringRotation = -1;
     int tags = -1;
     int effectText = -1;
     std::vector<std::pair<std::string, int>> lootWeightColumns;
@@ -890,6 +1013,8 @@ bool findObjectColumns(const GoogleSheetRow& headers, ObjectColumns& outColumns,
     columns.durability = findColumn(headers, {HeaderDurability, "durability"});
     columns.weight = findColumn(headers, {HeaderWeight, "weight_kg", "weightKg", "weight"});
     columns.imageNumber = findColumn(headers, {HeaderImageNumber, "image_number", "imageNumber"});
+    columns.groundRotation = findColumn(headers, {HeaderGroundRotation, "ground_rotation", "ground_rotation_deg", "ground_angle"});
+    columns.ringRotation = findColumn(headers, {HeaderRingRotation, "ring_rotation", "orbit_rotation", "ring_angle", "orbit_angle"});
     columns.tags = findColumn(headers, {HeaderTags, "tags"});
     columns.effectText = findColumn(headers, {HeaderEffectText, "effect_text", "effectText", "effect"});
     for (const std::string& columnName : expectedLootWeightColumns()) {
@@ -1129,9 +1254,7 @@ std::vector<DiscoveryEffectLine> buildDiscoveryEffectLines(const ObjectDefinitio
         hasEffectCode(object.orbitEffects, "dig_hard");
     const bool hasDigHard = hasEffectCode(object.normalEffects, "dig_hard") ||
         hasEffectCode(object.orbitEffects, "dig_hard");
-    const bool isDigCategory = object.category == "\xE6\x8E\x98\xE5\x89\x8A";
-    const bool meaningfulDig = hasDig || isDigCategory || object.digPower >= 10;
-    if (meaningfulDig && object.digPower > 0) {
+    if (hasDig && object.digPower > 0) {
         const std::string key = hasDigHard ? "dig_hard" : "dig";
         const std::string text = hasDigHard
             ? "\xE7\xA1\xAC\xE3\x81\x84\xE5\x9C\x9F\xE3\x82\x92\xE6\x8E\x98\xE3\x82\x8C\xE3\x82\x8B\xEF\xBC\x88\xE6\x8E\x98\xE5\x89\x8A\xE5\x8A\x9B" + std::to_string(object.digPower) + "\xEF\xBC\x89"
@@ -1550,6 +1673,22 @@ bool parseObjectCatalog(const GoogleSheetTable& table, ObjectCatalog& outCatalog
                 2'147'483'647);
         } else {
             item.imageNumber = 0;
+        }
+        if (columns.groundRotation >= 0) {
+            item.visualRotation.groundDegrees = parseOptionalFloatColumnOrDefault(
+                cellAt(row, columns.groundRotation),
+                0.0f,
+                "ground rotation",
+                rowIndex,
+                item.id,
+                catalog);
+        }
+        if (columns.ringRotation >= 0) {
+            item.visualRotation.ring = parseObjectRingRotation(
+                cellAt(row, columns.ringRotation),
+                rowIndex,
+                item.id,
+                catalog);
         }
 
         for (const auto& [columnName, columnIndex] : columns.lootWeightColumns) {

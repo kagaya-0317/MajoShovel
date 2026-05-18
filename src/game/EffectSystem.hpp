@@ -28,7 +28,8 @@ enum class EffectLayer {
 
 enum class DamagePopupStyle {
     Enemy,
-    Player
+    Player,
+    Heal
 };
 
 enum class ParticleEffectId {

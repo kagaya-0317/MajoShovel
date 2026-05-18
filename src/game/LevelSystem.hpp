@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 #include "game/Player.hpp"
 #include "data/RuntimeBalance.hpp"
@@ -8,7 +8,7 @@ namespace majo {
 enum class UpgradeChoice {
     Radius,
     Speed,
-    ShovelPower
+    WeightLimit
 };
 
 class LevelSystem {

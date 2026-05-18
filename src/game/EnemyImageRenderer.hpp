@@ -16,6 +16,7 @@ struct EnemyImageDrawOptions {
     int outlinePx = 1;
     Color maskOverlayColor{255, 255, 255, 0};
     float scaleMultiplier = 1.0f;
+    bool flipY = false;
 };
 
 [[nodiscard]] std::string enemyImagePathFromNumber(int imageNumber);

@@ -311,10 +311,6 @@ bool App::initialize(const char* title, int width, int height, bool testPlayMode
 bool App::loadAssets()
 {
     bool ok = true;
-    if (!renderer_->loadIconSheet("assets/icon.png")) {
-        logError(renderer_->lastAssetError());
-        ok = false;
-    }
     if (!renderer_->loadPlayerSheet("assets/majo.png")) {
         logError(renderer_->lastAssetError());
         ok = false;
@@ -359,9 +355,6 @@ bool App::reloadAssetForPath(const std::string& changedPath)
     const std::string extension = lowerAscii(std::filesystem::path(changedPath).extension().string());
     const std::string parentPath = lowerAscii(std::filesystem::path(changedPath).parent_path().generic_string());
 
-    if (fileName == "icon.png") {
-        return renderer_->loadIconSheet("assets/icon.png");
-    }
     if (fileName == "majo.png") {
         return renderer_->loadPlayerSheet("assets/majo.png");
     }

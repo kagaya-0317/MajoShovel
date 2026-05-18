@@ -8,6 +8,7 @@
 #include "game/ActorVisual.hpp"
 #include "game/InventoryUiCommon.hpp"
 #include "game/ObjectImageRenderer.hpp"
+#include "game/ObjectVisualPose.hpp"
 #include "game/WorldIconRenderer.hpp"
 
 #include <SDL3/SDL.h>
@@ -51,16 +52,13 @@ void resetInPlace(T& value)
     std::construct_at(std::addressof(value));
 }
 
-constexpr int ShovelIconIndex = 0;
-constexpr int TorchIconIndex = 1;
-constexpr float IconDrawSize = 32.0f;
 constexpr float PlayerSpriteDrawSize = 96.0f;
 constexpr float PlayerSpriteAnchorX = 0.5f;
 constexpr float PlayerSpriteAnchorY = 0.95f;
 constexpr int BaseMenuItemCount = 8;
 constexpr int BaseMiningStartChoiceCount = 3;
 constexpr int BaseUpgradeItemCount = 8;
-constexpr int BaseProcessingModeCount = 4;
+constexpr int BaseProcessingModeCount = 7;
 constexpr int BaseWarehouseSourceIndex = 1;
 constexpr int BaseRingSourceOffset = 2;
 constexpr int BaseItemSourceCount = BaseRingSourceOffset + SpellRingCount;
@@ -68,7 +66,7 @@ constexpr int BaseProcessingSourceCount = BaseItemSourceCount;
 constexpr float BaseItemSourceTabX = 44.0f;
 constexpr float BaseItemSourceTabWidth = 152.0f;
 constexpr float BaseItemSourceTabPitch = 165.0f;
-constexpr int BaseRingWorkshopItemCount = 10;
+constexpr int BaseRingWorkshopItemCount = 14;
 constexpr int BookshelfMenuItemCount = 3;
 constexpr int BookshelfVisibleRows = 5;
 constexpr int RingWorkshopImplementedUpgradeCount = 3;
@@ -115,6 +113,7 @@ constexpr float DetailOuterTopMargin = 50.0f;
 constexpr float DetailOuterBottomMargin = 40.0f;
 constexpr float RingUiFigureEightRadius = 230.0f;
 constexpr float RingUiCometRadius = 210.0f;
+constexpr float RingUiThirdRingCenterYOffset = 24.0f;
 constexpr float RingUiCometCenterYOffset = 104.0f;
 constexpr float RingUiCometArcRotation = Pi * 1.5f;
 constexpr float WarpPointSpacing = 320.0f;
@@ -196,6 +195,7 @@ constexpr float RingObjectImageMaxSize = 48.0f;
 constexpr float RingItemBaseAltitude = 8.0f;
 constexpr float RingItemBobAmplitude = 3.0f;
 constexpr float RingItemBobSpeed = 4.2f;
+constexpr float RingItemRotationWobbleDegrees = 4.0f;
 constexpr float ObjectImageScaleMin = 0.25f;
 constexpr float ObjectImageScaleMax = 4.0f;
 constexpr float ObjectImageScaleStep = 0.05f;
@@ -1092,7 +1092,12 @@ UiRect baseUpgradePanelRect()
 
 UiRect baseResultDialogRect()
 {
-    return {{410.0f, 200.0f}, {460.0f, 320.0f}};
+    return {{410.0f, 200.0f}, {460.0f, 260.0f}};
+}
+
+UiRect levelUpResultDialogRect()
+{
+    return baseResultDialogRect();
 }
 
 UiRect baseMenuItemRect(int index)
@@ -1156,19 +1161,26 @@ UiRect baseMiningStartChoiceRect(int index)
     return {{left, 322.0f + static_cast<float>(index) * 80.0f}, {width, ui::ButtonHeight}};
 }
 
-UiRect baseMiningWarpPointChoiceRect(int index)
+UiRect baseMiningWarpPointSelectRect()
+{
+    return {{360.0f, 174.0f}, {560.0f, 400.0f}};
+}
+
+UiRect baseMiningWarpPointSelectChoiceRect(int index)
 {
     constexpr int Columns = 2;
-    constexpr float Gap = 10.0f;
-    constexpr float RowGap = 10.0f;
-    constexpr float Height = 44.0f;
-    const UiRect start = baseMiningStartChoiceRect(0);
+    constexpr float Gap = 12.0f;
+    constexpr float RowGap = 12.0f;
+    constexpr float Height = 48.0f;
+    const UiRect panel = baseMiningWarpPointSelectRect();
+    const float left = panel.pos.x + 46.0f;
+    const float top = panel.pos.y + 126.0f;
+    const float width = (panel.size.x - 92.0f - Gap) / static_cast<float>(Columns);
     const int column = index % Columns;
     const int row = index / Columns;
-    const float width = (start.size.x - Gap) / static_cast<float>(Columns);
     return {{
-        start.pos.x + static_cast<float>(column) * (width + Gap),
-        start.pos.y + static_cast<float>(row) * (Height + RowGap),
+        left + static_cast<float>(column) * (width + Gap),
+        top + static_cast<float>(row) * (Height + RowGap),
     }, {width, Height}};
 }
 
@@ -1637,6 +1649,9 @@ Vec2 ringOrbitCenter()
 Vec2 ringUiOrbitCenter(const SpellRingSystem& spellRing)
 {
     Vec2 center = ringOrbitCenter();
+    if (spellRing.activeRingIndex() == 2) {
+        center.y += RingUiThirdRingCenterYOffset;
+    }
     if (spellRing.activeRingShape() == RingShape::Comet) {
         center.y += RingUiCometCenterYOffset;
     }
@@ -2110,10 +2125,19 @@ void drawSpellRingOrbitLayer(
     }
 }
 
+float ringItemBobPhase(const SpellRingItem& item, float totalSeconds)
+{
+    return totalSeconds * RingItemBobSpeed + item.localAngle * 1.7f;
+}
+
 float ringItemAltitude(const SpellRingItem& item, float totalSeconds)
 {
-    const float phase = totalSeconds * RingItemBobSpeed + item.localAngle * 1.7f;
-    return RingItemBaseAltitude + std::sin(phase) * RingItemBobAmplitude;
+    return RingItemBaseAltitude + std::sin(ringItemBobPhase(item, totalSeconds)) * RingItemBobAmplitude;
+}
+
+float ringItemRotationWobbleDegrees(const SpellRingItem& item, float totalSeconds)
+{
+    return std::cos(ringItemBobPhase(item, totalSeconds)) * RingItemRotationWobbleDegrees;
 }
 
 Vec2 ringItemDrawPosition(const SpellRingItem& item, float totalSeconds)
@@ -2126,7 +2150,6 @@ float ringItemBaseShadowVisualSize(const SpellRingItem& item)
     switch (item.type) {
     case SpellRingItemType::Shovel:
     case SpellRingItemType::Torch:
-        return IconDrawSize;
     case SpellRingItemType::Object:
         return std::max(RingObjectImageMaxSize, item.hitRadius * 2.0f);
     }
@@ -2144,6 +2167,8 @@ void drawRingItemShape(
     const ItemData* object,
     Vec2 center,
     Vec2 outward,
+    Vec2 forward,
+    float totalSeconds,
     bool selected,
     bool invalid = false)
 {
@@ -2152,8 +2177,16 @@ void drawRingItemShape(
         : Color{96, 104, 126, 220};
 
     if (object != nullptr) {
+        ObjectImageDrawOptions baseImageOptions;
+        baseImageOptions.rotationDegrees = ringItemRotationWobbleDegrees(item, totalSeconds);
+        const ObjectImageDrawOptions imageOptions = objectRingImageOptions(
+            *object,
+            outward,
+            forward,
+            totalSeconds,
+            baseImageOptions);
         if (selected) {
-            const ObjectImageDrawOptions selectedOutlineOptions = withSelectedItemOutline({}, outline, 6);
+            const ObjectImageDrawOptions selectedOutlineOptions = withSelectedItemOutline(imageOptions, outline, 6);
             if (drawObjectImage(
                     renderer,
                     *object,
@@ -2166,7 +2199,7 @@ void drawRingItemShape(
                     *object,
                     center,
                     {RingObjectImageMaxSize, RingObjectImageMaxSize},
-                    {});
+                    imageOptions);
                 return;
             }
         } else if (drawObjectImage(
@@ -2174,7 +2207,7 @@ void drawRingItemShape(
                        *object,
                        center,
                        {RingObjectImageMaxSize, RingObjectImageMaxSize},
-                       {})) {
+                       imageOptions)) {
             return;
         }
     }
@@ -2206,6 +2239,35 @@ void drawRingItemShape(
     }
     renderer.fillCircle(center, 12.0f, {96, 122, 210, 255});
     renderer.drawCircle(center, 15.0f, {160, 202, 255, 255});
+}
+
+bool drawRingItemObjectImage(
+    Renderer& renderer,
+    const SpellRingItem& item,
+    const ItemData* object,
+    Vec2 center,
+    Vec2 maxSize,
+    Vec2 outward,
+    Vec2 forward,
+    float totalSeconds,
+    const ObjectImageDrawOptions& baseOptions = {})
+{
+    if (object == nullptr) {
+        return false;
+    }
+    ObjectImageDrawOptions options = baseOptions;
+    options.rotationDegrees += ringItemRotationWobbleDegrees(item, totalSeconds);
+    return drawObjectImage(
+        renderer,
+        *object,
+        center,
+        maxSize,
+        objectRingImageOptions(
+            *object,
+            outward,
+            forward,
+            totalSeconds,
+            options));
 }
 
 UiRect ringDetailRect()
@@ -2262,6 +2324,37 @@ std::string ringItemDisplayName(const ObjectCatalog& catalog, const SpellRingIte
         return object->name;
     }
     return spellRingItemName(item.type);
+}
+
+ItemInstance inventoryInstanceFromRingItem(
+    InventorySystem& inventory,
+    const ObjectCatalog& objectCatalog,
+    const SpellRingItem& item)
+{
+    ItemInstance instance;
+    if (item.instanceId.empty()) {
+        const ItemData* object = objectCatalog.registry.findById(item.objectId);
+        const ItemData missingObject = object == nullptr ? makeMissingItemData(item.objectId) : ItemData{};
+        instance = inventory.createDetachedObjectInstance(object != nullptr ? *object : missingObject);
+    } else {
+        instance.instanceId = item.instanceId;
+        instance.objectId = item.objectId;
+    }
+
+    instance.objectId = item.objectId;
+    instance.currentDurability = item.durability;
+    instance.maxDurability = item.maxDurability;
+    instance.enhanceLevel = item.enhanceLevel;
+    instance.attackBonus = item.attackBonus;
+    instance.digBonus = item.digBonus;
+    instance.durabilityBonus = item.durabilityBonus;
+    instance.weightModifier = item.weightModifier;
+    instance.sizeModifier = item.sizeModifier;
+    instance.protectionEnabled = item.protectionEnabled;
+    instance.isBroken = item.broken();
+    instance.addedEffects = item.addedEffects;
+    instance.addedTags = item.addedTags;
+    return instance;
 }
 
 bool dbDebugLogEnabled()

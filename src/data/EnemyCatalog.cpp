@@ -367,13 +367,17 @@ void parseEffectField(
     }
 }
 
-constexpr std::array<std::string_view, 6> DefinedBehaviorTriggers = {
+constexpr std::array<std::string_view, 10> DefinedBehaviorTriggers = {
     "always",
     "attack",
     "timer",
     "contact",
     "detect",
     "hit",
+    "aura",
+    "spawn",
+    "on_death",
+    "interval",
 };
 
 constexpr std::array<std::string_view, 12> KnownProjectileIds = {

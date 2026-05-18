@@ -25,6 +25,8 @@
 #include "game/InventoryUiCommon.hpp"
 #include "game/Kamishibai.hpp"
 #include "game/LevelSystem.hpp"
+#include "game/MagicFxSystem.hpp"
+#include "game/MagicSystem.hpp"
 #include "game/OpeningMetaSave.hpp"
 #include "game/SpellRingSystem.hpp"
 #include "game/StoryEvent.hpp"
@@ -340,6 +342,9 @@ private:
         Attack,
         Dig,
         Durability,
+        ResetEnhancement,
+        Lighten,
+        Enlarge,
     };
     enum class BaseItemSource {
         Backpack,
@@ -347,6 +352,12 @@ private:
         Ring0,
         Ring1,
         Ring2,
+    };
+    enum class StorageUiMode {
+        Closed,
+        ChooseAction,
+        Deposit,
+        Withdraw,
     };
     struct ProcessingTarget {
         BaseItemSource source = BaseItemSource::Backpack;
@@ -356,6 +367,24 @@ private:
         int ringIndex = -1;
         int ringItemIndex = -1;
         bool valid = false;
+    };
+    struct StorageTransferTarget {
+        BaseItemSource source = BaseItemSource::Backpack;
+        int slotIndex = -1;
+        StorageEntry storageEntry{};
+        bool warehouseEntry = false;
+        int ringIndex = -1;
+        int ringItemIndex = -1;
+        bool valid = false;
+    };
+    enum class StorageQuantityOperation {
+        None,
+        Deposit,
+        Withdraw,
+    };
+    struct StorageQuantityPending {
+        StorageQuantityOperation operation = StorageQuantityOperation::None;
+        StorageTransferTarget target{};
     };
     enum class RingWorkshopUpgrade {
         InitialRadius,
@@ -447,6 +476,7 @@ private:
     void applyPermanentUpgrades();
     float effectiveInitialRingRadius(int levelRadiusPoints) const;
     float effectiveInitialRingSpeed(int levelSpeedPoints) const;
+    float effectiveInitialRingWeightLimit(int levelWeightLimitPoints) const;
     float effectiveRingShiftDistance() const;
     float effectiveCollectionPullRadius(int collectionLevel) const;
     void configureWatcher();
@@ -506,8 +536,11 @@ private:
     bool isSellableObject(const ItemData& item) const;
     bool isStoryObject(const ItemData& item) const;
     int sellPrice(const ItemData& item, const ItemInstance* instance = nullptr) const;
+    int sellPrice(const ItemData& item, const SpellRingItem* ringItem) const;
+    bool isHighValueBuyObject(const ItemData& item) const;
     bool merchantProductCanFit(const ItemData* item) const;
     bool canBuyMerchantProduct(const MerchantProduct& product) const;
+    void refreshHighValueBuyObjects(bool force);
     void refreshMerchantStock(bool force);
     void buyMerchantProduct(int index);
     void sellMerchantEntry(int index, int count);
@@ -523,6 +556,8 @@ private:
     InventoryUiEntryView storageEntryView(StorageEntry entry, bool warehouseEntry) const;
     ProcessingTarget processingTargetForScreenSlot(int slotIndex) const;
     const char* processingModeName(ProcessingMode mode) const;
+    const char* processingActionName(ProcessingMode mode) const;
+    bool processingModeUnlocked(ProcessingMode mode) const;
     bool processingEntryAvailable(StorageEntry entry, bool warehouseEntry = false) const;
     bool processingScreenSlotAvailable(int slotIndex) const;
     bool processingTargetAvailable(ProcessingTarget target) const;
@@ -540,11 +575,19 @@ private:
     std::vector<StorageEntry> backpackStorageEntries() const;
     std::vector<StorageEntry> warehouseStorageEntries() const;
     void syncWarehouseDisplaySlots() const;
+    void sortWarehouseByCatalogOrder();
     int warehouseEntryIndexAtStorageSlot(int slot) const;
     void assignWarehouseEntryToStorageSlot(int entryIndex, int slot);
     void removeWarehouseDisplaySlotAtEntryIndex(int entryIndex);
-    void depositBackpackEntry(int entryIndex);
-    void withdrawWarehouseEntry(int entryIndex);
+    StorageTransferTarget storageDepositTargetForSourceSlot(int source, int slotIndex) const;
+    StorageTransferTarget storageDepositTargetForScreenSlot(int slotIndex) const;
+    StorageTransferTarget storageWithdrawTargetForSlot(int slotIndex) const;
+    bool storageTransferTargetAvailable(StorageTransferTarget target) const;
+    bool storageTransferTargetIsStack(StorageTransferTarget target) const;
+    int storageTransferTargetStackCount(StorageTransferTarget target) const;
+    InventoryUiEntryView storageTransferTargetView(StorageTransferTarget target) const;
+    void depositStorageTarget(StorageTransferTarget target, int count);
+    void withdrawStorageTarget(StorageTransferTarget target, int count);
     std::string storageEntryLabel(StorageEntry entry, bool warehouseEntry) const;
     const ItemData* storageEntryItem(StorageEntry entry, bool warehouseEntry) const;
     const ItemInstance* storageEntryInstance(StorageEntry entry, bool warehouseEntry) const;
@@ -564,7 +607,7 @@ private:
     bool ringWorkshopRespecChanged() const;
     int ringWorkshopRespecMoneyCost() const;
     int ringWorkshopRespecMoonCost() const;
-    bool adjustRingWorkshopRespec(int direction);
+    bool adjustRingWorkshopRespec(int fromIndex, int toIndex);
     void confirmRingWorkshopRespec();
     const char* ringWorkshopUpgradeName(RingWorkshopUpgrade upgrade) const;
     int ringWorkshopUpgradeLevel(RingWorkshopUpgrade upgrade) const;
@@ -694,6 +737,13 @@ private:
     void exitObjectImageScaleEditMode();
     void updateObjectImageScaleEditScreen(const Input& input, UiContext& ui);
     void renderObjectImageScaleEditScreen(Renderer& renderer) const;
+    bool handleDebugItemPickerCommand(std::string_view normalized);
+    void rebuildDebugItemPickerList();
+    void openDebugItemPicker();
+    void closeDebugItemPicker();
+    void addSelectedDebugItem();
+    void updateDebugItemPicker(const Input& input, UiContext& ui);
+    void renderDebugItemPicker(Renderer& renderer) const;
     void enterEnemyTestMode();
     void exitEnemyTestToBase();
     void spawnSelectedEnemyTestEnemy();
@@ -775,11 +825,14 @@ private:
     EffectSystem effects_;
     EnemySystem enemies_;
     ProjectileSystem projectiles_;
+    MagicSystem magic_;
+    MagicFxSystem magicFx_;
     InventorySystem inventory_;
     WorldDropSystem worldDrops_;
     EncyclopediaSystem encyclopedia_;
     LevelSystem levels_;
     UpgradeSystem upgrades_;
+    UiResultDialogState levelUpResultDialog_{};
     DialoguePlayer dialogue_;
     DebugOverlay debug_;
     OpeningMetaSave openingMetaSave_;
@@ -805,18 +858,23 @@ private:
     bool baseWarpPointSelectActive_ = false;
     int baseWarpPointSelection_ = 0;
     bool baseStorageActive_ = false;
-    bool baseStorageFocusWarehouse_ = false;
-    int baseStorageBackpackCursor_ = 0;
-    int baseStorageWarehouseCursor_ = 0;
+    StorageUiMode baseStorageMode_ = StorageUiMode::Closed;
+    int baseStorageActionSelection_ = 0;
+    int baseStorageDepositSource_ = 0;
+    UiTabsState baseStorageDepositSourceTabs_{};
+    int baseStorageDepositSelection_ = 0;
+    int baseStorageWithdrawSelection_ = 0;
     int baseStorageWarehousePage_ = 0;
+    UiQuantityDialogState baseStorageQuantityDialog_{};
+    StorageQuantityPending baseStorageQuantityPending_{};
     UiCommandMenuState baseStorageCommandMenu_{};
-    int baseStorageCommandSlot_ = -1;
-    int baseStoragePointerPressSlot_ = -1;
+    StorageQuantityOperation baseStorageCommandOperation_ = StorageQuantityOperation::None;
+    StorageTransferTarget baseStorageCommandTarget_{};
+    StorageQuantityOperation baseStoragePointerOperation_ = StorageQuantityOperation::None;
+    StorageTransferTarget baseStoragePointerTarget_{};
     Vec2 baseStoragePointerPressMouse_{};
     bool baseStoragePointerPressCanOpenMenu_ = false;
     bool baseStoragePointerDragTriggered_ = false;
-    bool baseStorageGrabbedActive_ = false;
-    int baseStorageGrabbedFromSlot_ = -1;
     bool baseSellActive_ = false;
     MerchantUiMode baseMerchantMode_ = MerchantUiMode::Closed;
     int baseMerchantActionSelection_ = 0;
@@ -844,6 +902,7 @@ private:
     int baseRingWorkshopSelection_ = 0;
     int ringWorkshopDraftRadiusPoints_ = 0;
     int ringWorkshopDraftSpeedPoints_ = 0;
+    int ringWorkshopDraftWeightLimitPoints_ = 0;
     bool baseBookshelfActive_ = false;
     BookshelfPage bookshelfPage_ = BookshelfPage::Menu;
     int bookshelfSelection_ = 0;
@@ -878,6 +937,12 @@ private:
     float otherImageScaleScrollOffset_ = 0.0f;
     bool objectImageScaleDirty_ = false;
     std::string objectImageScaleStatus_;
+    bool debugItemPickerActive_ = false;
+    std::vector<std::string> debugItemPickerObjectIds_;
+    int debugItemPickerSelectedIndex_ = -1;
+    float debugItemPickerScrollOffset_ = 0.0f;
+    std::string debugItemPickerStatus_;
+    mutable UiCancelControlState debugItemPickerCancelState_{};
     bool enemyTestActive_ = false;
     bool enemyTestUiVisible_ = true;
     UiDropdownState enemyTestDropdown_{};
@@ -966,6 +1031,7 @@ private:
     int collectionRangeUpgradeLevel_ = 0;
     int levelRingRadiusPoints_ = 0;
     int levelRingSpeedPoints_ = 0;
+    int levelRingWeightLimitPoints_ = 0;
     int workshopInitialRadiusLevel_ = 0;
     int workshopInitialSpeedLevel_ = 0;
     int workshopShiftDistanceLevel_ = 0;
@@ -974,6 +1040,7 @@ private:
     int merchantStockVersion_ = 0;
     std::vector<MerchantProduct> merchantStock_;
     std::string highValueBuyCategory_;
+    std::vector<std::string> highValueBuyObjectIds_;
     int warehouseCapacityLevel_ = 0;
     int processingUnlockLevel_ = 0;
     bool ringWorkshopUnlocked_ = false;

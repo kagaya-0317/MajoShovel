@@ -77,6 +77,7 @@ bool Game::loadSaveData()
     int loadedCollectionRangeUpgradeLevel = 0;
     int loadedLevelRingRadiusPoints = 0;
     int loadedLevelRingSpeedPoints = 0;
+    int loadedLevelRingWeightLimitPoints = 0;
     int loadedWorkshopInitialRadiusLevel = 0;
     int loadedWorkshopInitialSpeedLevel = 0;
     int loadedWorkshopShiftDistanceLevel = 0;
@@ -85,6 +86,7 @@ bool Game::loadSaveData()
     int loadedMerchantStockVersion = 0;
     std::vector<MerchantProduct> loadedMerchantStock;
     std::string loadedHighValueBuyCategory;
+    std::vector<std::string> loadedHighValueBuyObjectIds;
     int loadedWarehouseCapacityLevel = 0;
     int loadedProcessingUnlockLevel = 0;
     bool loadedRingWorkshopUnlocked = false;
@@ -124,6 +126,8 @@ bool Game::loadSaveData()
             stream >> loadedLevelRingRadiusPoints;
         } else if (key == "level_ring_speed_points") {
             stream >> loadedLevelRingSpeedPoints;
+        } else if (key == "level_ring_weight_limit_points") {
+            stream >> loadedLevelRingWeightLimitPoints;
         } else if (key == "workshop_initial_radius_level") {
             stream >> loadedWorkshopInitialRadiusLevel;
         } else if (key == "workshop_initial_speed_level") {
@@ -155,6 +159,16 @@ bool Game::loadSaveData()
             stream >> loadedHighValueBuyCategory;
             if (loadedHighValueBuyCategory == "-") {
                 loadedHighValueBuyCategory.clear();
+            }
+        } else if (key == "high_value_buy_object") {
+            std::string objectId;
+            stream >> objectId;
+            if (!stream.fail() && !objectId.empty()) {
+                if (objectCatalog_.registry.findById(objectId) == nullptr) {
+                    ++warningCount;
+                    logError("[warning] SaveData: high_value_buy_object object_id=\"" + objectId + "\" is missing from Objects DB; keeping ID");
+                }
+                loadedHighValueBuyObjectIds.push_back(std::move(objectId));
             }
         } else if (key == "warehouse_capacity_level") {
             stream >> loadedWarehouseCapacityLevel;
@@ -491,6 +505,7 @@ bool Game::loadSaveData()
     collectionRangeUpgradeLevel_ = std::clamp(loadedCollectionRangeUpgradeLevel, 0, 5);
     levelRingRadiusPoints_ = std::max(0, loadedLevelRingRadiusPoints);
     levelRingSpeedPoints_ = std::max(0, loadedLevelRingSpeedPoints);
+    levelRingWeightLimitPoints_ = std::max(0, loadedLevelRingWeightLimitPoints);
     workshopInitialRadiusLevel_ = std::clamp(loadedWorkshopInitialRadiusLevel, 0, 5);
     workshopInitialSpeedLevel_ = std::clamp(loadedWorkshopInitialSpeedLevel, 0, 5);
     workshopShiftDistanceLevel_ = std::clamp(loadedWorkshopShiftDistanceLevel, 0, 5);
@@ -499,6 +514,7 @@ bool Game::loadSaveData()
     merchantStockVersion_ = std::max(0, loadedMerchantStockVersion);
     merchantStock_ = std::move(loadedMerchantStock);
     highValueBuyCategory_ = std::move(loadedHighValueBuyCategory);
+    highValueBuyObjectIds_ = std::move(loadedHighValueBuyObjectIds);
     warehouseCapacityLevel_ = std::clamp(loadedWarehouseCapacityLevel, 0, 4);
     processingUnlockLevel_ = std::clamp(loadedProcessingUnlockLevel, 0, 5);
     ringWorkshopUnlocked_ = loadedRingWorkshopUnlocked;
@@ -546,16 +562,21 @@ bool Game::saveSaveData(std::string& message) const
     file << "upgrade_collection_range " << collectionRangeUpgradeLevel_ << "\n";
     file << "level_ring_radius_points " << levelRingRadiusPoints_ << "\n";
     file << "level_ring_speed_points " << levelRingSpeedPoints_ << "\n";
+    file << "level_ring_weight_limit_points " << levelRingWeightLimitPoints_ << "\n";
     file << "workshop_initial_radius_level " << workshopInitialRadiusLevel_ << "\n";
     file << "workshop_initial_speed_level " << workshopInitialSpeedLevel_ << "\n";
     file << "workshop_shift_distance_level " << workshopShiftDistanceLevel_ << "\n";
     file << "merchant_refresh_pending " << merchantRefreshPending_ << "\n";
     file << "merchant_upgrade_level " << merchantUpgradeLevel_ << "\n";
     file << "merchant_stock_version " << merchantStockVersion_ << "\n";
-    file << "high_value_buy_category " << (highValueBuyCategory_.empty() ? "-" : highValueBuyCategory_) << "\n";
     for (const MerchantProduct& product : merchantStock_) {
         if (!product.objectId.empty()) {
             file << "merchant_stock " << product.objectId << " " << product.price << " " << product.quantity << "\n";
+        }
+    }
+    for (const std::string& objectId : highValueBuyObjectIds_) {
+        if (!objectId.empty()) {
+            file << "high_value_buy_object " << objectId << "\n";
         }
     }
     file << "warehouse_capacity_level " << warehouseCapacityLevel_ << "\n";

@@ -28,6 +28,7 @@ DebugConsoleLayout makeDefaultDebugConsoleLayout()
                         {DebugControlKind::Button, "money_10000", "所持金 +10000", "game money add 10000"},
                         {DebugControlKind::Button, "materials_100", "強化素材 +100", "game materials add 100"},
                         {DebugControlKind::Button, "random_items_8", "ランダムアイテム +8", "game items random8"},
+                        {DebugControlKind::Button, "item_picker", "任意アイテム追加", "game items picker"},
                     },
                 },
                 DebugGroupDefinition{
@@ -36,6 +37,7 @@ DebugConsoleLayout makeDefaultDebugConsoleLayout()
                     {
                         {DebugControlKind::Button, "hp_full", "HP最大", "game hp full"},
                         {DebugControlKind::Button, "hp_one", "HP1", "game hp set 1"},
+                        {DebugControlKind::Button, "level_up", "レベルアップ", "game level-up"},
                         {DebugControlKind::Button, "enemy_test", "敵テスト", "game enemy-test"},
                     },
                 },

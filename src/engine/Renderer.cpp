@@ -286,7 +286,6 @@ Renderer::~Renderer()
 {
     invalidateAllImages();
     clearTextCache();
-    unloadSpriteSheet(iconSheet_);
     unloadSpriteSheet(playerSheet_);
     unloadBaseMapTexture();
     unloadUiWindowTexture();
@@ -505,6 +504,29 @@ void Renderer::fillPolygon(const Vec2* points, std::size_t count, Color color)
         static_cast<int>(vertexCount),
         indices.data(),
         indexCount);
+}
+
+void Renderer::fillTriangleList(const Vec2* vertices, std::size_t vertexCount, const int* indices, std::size_t indexCount, Color color)
+{
+    if (vertices == nullptr || indices == nullptr || vertexCount < 3 || indexCount < 3 || color.a == 0) {
+        return;
+    }
+
+    Color transformed = transformColor(color);
+    std::vector<SDL_Vertex> sdlVertices(vertexCount);
+    for (std::size_t i = 0; i < vertexCount; ++i) {
+        const Vec2 p = transform(vertices[i]);
+        sdlVertices[i] = SDL_Vertex{{p.x, p.y}, vertexColor(transformed), {0.0f, 0.0f}};
+    }
+
+    std::vector<int> sdlIndices(indices, indices + indexCount);
+    SDL_RenderGeometry(
+        renderer_,
+        nullptr,
+        sdlVertices.data(),
+        static_cast<int>(sdlVertices.size()),
+        sdlIndices.data(),
+        static_cast<int>(sdlIndices.size()));
 }
 
 void Renderer::fillSoftCircle(Vec2 center, float radius, Color color)
@@ -1352,16 +1374,6 @@ std::string Renderer::wrappedText(std::string_view text, float maxWidth, int sca
     }
     wrappedTextCache_[key] = output;
     return output;
-}
-
-void Renderer::unloadIconSheet()
-{
-    unloadSpriteSheet(iconSheet_);
-}
-
-bool Renderer::loadIconSheet(std::string_view path, int iconSize, int columns, int rows)
-{
-    return loadSpriteSheet(path, iconSize, columns, rows, "icon sheet", iconSheet_);
 }
 
 void Renderer::unloadPlayerSheet()
@@ -2228,38 +2240,7 @@ void Renderer::drawHorizontalSliceRow(const GuidedTexture& texture, int row, Vec
     drawTextureRegion(texture.texture, cell(2), {pos.x + width - dstRightWidth, pos.y}, {dstRightWidth, height}, tint);
 }
 
-void Renderer::drawIcon(int index, Vec2 pos, float scale, Color tint)
-{
-    const float size = static_cast<float>(iconSheet_.frameSize) * scale;
-    drawIcon(index, pos, {size, size}, tint);
-}
-
-void Renderer::drawIcon(int index, Vec2 pos, Vec2 size, Color tint)
-{
-    if (!iconSheet_.texture || index < 0 || index >= iconSheet_.columns * iconSheet_.rows) {
-        return;
-    }
-
-    const int sourceX = (index % iconSheet_.columns) * iconSheet_.frameSize;
-    const int sourceY = (index / iconSheet_.columns) * iconSheet_.frameSize;
-    const SDL_FRect src{
-        static_cast<float>(sourceX),
-        static_cast<float>(sourceY),
-        static_cast<float>(iconSheet_.frameSize),
-        static_cast<float>(iconSheet_.frameSize)
-    };
-    const Vec2 p = transform(pos);
-    const Vec2 s = transformSize(size);
-    SDL_FRect dst{p.x, p.y, s.x, s.y};
-    dst = pixelSnappedRect(dst);
-
-    tint = transformColor(tint);
-    SDL_SetTextureColorMod(iconSheet_.texture, tint.r, tint.g, tint.b);
-    SDL_SetTextureAlphaMod(iconSheet_.texture, tint.a);
-    SDL_RenderTexture(renderer_, iconSheet_.texture, &src, &dst);
-}
-
-void Renderer::drawPlayerSprite(int index, Vec2 anchorPosition, float size, bool flipHorizontal, Color tint, Vec2 anchor)
+void Renderer::drawPlayerSprite(int index, Vec2 anchorPosition, float size, bool flipHorizontal, Color tint, Vec2 anchor, bool flipVertical)
 {
     if (!playerSheet_.texture || index < 0 || index >= playerSheet_.columns * playerSheet_.rows) {
         return;
@@ -2287,7 +2268,7 @@ void Renderer::drawPlayerSprite(int index, Vec2 anchorPosition, float size, bool
         &dst,
         0.0,
         nullptr,
-        flipHorizontal ? SDL_FLIP_HORIZONTAL : SDL_FLIP_NONE);
+        imageFlipMode(flipHorizontal, flipVertical));
 }
 
 void Renderer::drawBaseMapTexture(Vec2 pos, Vec2 size, Color tint)

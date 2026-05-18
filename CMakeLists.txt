@@ -65,6 +65,8 @@ add_executable(MajoShovel
     src/game/EffectDispatcher.cpp
     src/game/OrbitModifiers.cpp
     src/game/Player.cpp
+    src/game/MagicSystem.cpp
+    src/game/MagicFxSystem.cpp
     src/game/ProjectileSystem.cpp
     src/game/SpellRingSystem.cpp
     src/game/SpellRingItem.cpp
@@ -78,6 +80,7 @@ add_executable(MajoShovel
     src/game/InventoryUiCommon.cpp
     src/game/ItemModel.cpp
     src/game/ObjectImageRenderer.cpp
+    src/game/ObjectVisualPose.cpp
     src/game/ScaledImageRenderer.cpp
     src/game/WorldIconRenderer.cpp
     src/game/WorldDropSystem.cpp

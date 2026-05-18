@@ -1,5 +1,5 @@
-# Assets
+﻿# Assets
 
-The current vertical slice intentionally uses primitive SDL drawing only. Put future original or properly licensed image/audio assets here, and document source/license information beside them.
+Put original or properly licensed image/audio assets here, and document source/license information beside them.
 
-- `icon.png`: User-provided 8x8 icon sprite sheet. Each icon is 32x32 px.
+The renderer does not load a shared icon sprite sheet. Object images are drawn from `assets/objects/obj_*.png`.

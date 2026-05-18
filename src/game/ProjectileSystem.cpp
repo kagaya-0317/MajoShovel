@@ -101,6 +101,16 @@ int projectileDamage(const Projectile& projectile)
     return std::max(0, projectile.damage);
 }
 
+int applyDefenseModifier(const EntityStatus& status, int damage)
+{
+    if (damage <= 0) {
+        return 0;
+    }
+
+    const double defense = std::max(0.05, status.multiplierFor(ModifierStat::Defense));
+    return std::max(0, static_cast<int>(std::ceil(static_cast<double>(damage) / defense)));
+}
+
 float dot(Vec2 a, Vec2 b)
 {
     return a.x * b.x + a.y * b.y;
@@ -313,13 +323,11 @@ ReflectAttemptResult tryReflectProjectile(
 
     ReflectAttemptResult result;
     if (hasChance) {
-        const bool firstGuarantee = !isEffectDiscovered(encyclopedia, discoveryEvents, object.id, rule.chanceKey);
+        const bool firstGuarantee = discoveryEvents != nullptr &&
+            !isEffectDiscovered(encyclopedia, discoveryEvents, object.id, rule.chanceKey);
         bool passed = firstGuarantee;
         if (!firstGuarantee) {
             passed = rollChancePercent(orbitEffectValue(object, rule.chanceKey, 0.0));
-        } else {
-            logError("[debug] discovery first-trigger guarantee applied for \"" + std::string(rule.chanceKey) +
-                "\" source=\"" + object.id + "\"");
         }
         if (passed) {
             result.discoveredEffectKey = std::string(rule.chanceKey);
@@ -349,7 +357,7 @@ void pushPlayer(Player& player, TileMap& map, Vec2 direction, float distance)
 {
     const Vec2 delta = normalize(direction) * distance;
     const Vec2 next = player.position + delta;
-    if (!map.isCircleBlocked(next, balance::PlayerRadius)) {
+    if (!map.isCircleBlocked(next, player.effectiveRadius(balance::PlayerRadius))) {
         player.position = next;
     }
 }
@@ -398,7 +406,8 @@ bool ProjectileSystem::spawn(
     projectile->lifetime = prototype.lifetime;
     projectile->ownerType = ownerType;
     projectile->projectileId = std::string(prototype.id);
-    projectile->damage = tuning.damageOverride >= 0 ? tuning.damageOverride : prototype.damage;
+    const double baseDamage = static_cast<double>(tuning.damageOverride >= 0 ? tuning.damageOverride : prototype.damage);
+    projectile->damage = std::max(0, static_cast<int>(std::ceil(baseDamage * std::max(0.0, tuning.damageMultiplier))));
     projectile->damageType = std::string(prototype.damageType);
     for (std::string_view tag : prototype.tags) {
         projectile->tags.emplace_back(tag);
@@ -531,8 +540,10 @@ void ProjectileSystem::update(
         }
 
         if (projectile.ownerType == ProjectileOwnerType::Enemy &&
-            circlesOverlap(projectile.position, projectile.radius, player.position, balance::PlayerRadius)) {
-            player.applyDamage(projectileDamage(projectile), DamageSource::Projectile);
+            circlesOverlap(projectile.position, projectile.radius, player.position, player.effectiveRadius(balance::PlayerRadius))) {
+            player.applyDamage(
+                applyDefenseModifier(player.status, projectileDamage(projectile)),
+                DamageSource::Projectile);
             if (projectile.projectileId == "wind_wave") {
                 pushPlayer(player, map, projectile.velocity, 18.0f);
             }

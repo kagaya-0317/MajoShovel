@@ -86,6 +86,9 @@ float findNearestRingPathParam(Vec2 worldPoint, Vec2 center, const RingOrbitCont
 
 class SpellRingSystem {
 public:
+    static constexpr float InitialMaxEquippedWeight = 10.0f;
+    static constexpr float LevelWeightLimitUpgradeAmount = 2.0f;
+
     void initialize(const RuntimeBalance& balance);
     void update(Player& player, const Input& input, float dt, float totalTime, bool paused, bool blockPointerThrow, const RuntimeBalance& balance);
     void updatePresentation(const Player& player, float dt, const RuntimeBalance& balance);
@@ -98,8 +101,9 @@ public:
     void setOrbitModifiers(OrbitModifiers modifiers);
     void applyOrbitModifierEffect(std::string_view effect, double value, std::string_view source);
     void applyEnemyOrbitSpeedDebuff(float multiplier, float durationSeconds);
-    void upgradeShovelPower(int amount);
     void upgradeItemDamage(int amount);
+    void upgradeMaxEquippedWeightForAllRings(float amount);
+    void setMaxEquippedWeightForAllRings(float maxWeight);
     bool addItem(SpellRingItemType type);
     bool addItem(SpellRingItem item, SpellRingAddResult* outResult = nullptr);
     bool addObjectItem(const ItemData& item, SpellRingAddResult* outResult = nullptr);
@@ -166,10 +170,14 @@ public:
     float radius() const { return radius_; }
     float angularSpeed() const { return angularSpeed_; }
     float effectiveAngularSpeed() const;
+    float effectiveAngularSpeedForRing(int ringIndex) const;
     float totalEquippedWeight() const;
+    float totalEquippedWeightForRing(int ringIndex) const;
     float maxEquippedWeight() const;
+    float maxEquippedWeightForRing(int ringIndex) const;
     int maxItemCount() const;
     float weightSpeedMultiplier() const;
+    float weightSpeedMultiplierForRing(int ringIndex) const;
     double effectivePowerMultiplier() const { return orbitModifiers_.powerMultiplier; }
     double effectiveGravityMultiplier() const { return orbitModifiers_.gravityMultiplier; }
     double effectiveAntigravityMultiplier() const { return orbitModifiers_.antigravityMultiplier; }
@@ -194,7 +202,12 @@ private:
     Vec2 throwStart_{};
     float radius_ = 54.0f;
     float angularSpeed_ = 2.72f;
-    float baseEquippedWeight_ = 0.0f;
+    std::array<float, SpellRingCount> maxEquippedWeights_{{
+        InitialMaxEquippedWeight,
+        InitialMaxEquippedWeight,
+        InitialMaxEquippedWeight,
+    }};
+    std::array<float, SpellRingCount> baseEquippedWeights_{};
     std::array<float, SpellRingCount> baseAngles_{};
     std::array<float, SpellRingCount> shapeRotations_{};
     float throwTime_ = 0.0f;

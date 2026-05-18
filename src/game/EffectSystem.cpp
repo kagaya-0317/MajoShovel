@@ -515,9 +515,12 @@ void EffectSystem::renderDamagePopups(Renderer& renderer)
         }
         const Vec2 center = popup.position + popup.velocity * popup.age - Vec2{0.0f, hopHeight};
         const Vec2 pos = center - Vec2{size.x * 0.5f, size.y * 0.5f};
-        const Color textColor = popup.style == DamagePopupStyle::Player
-            ? Color{255, 72, 64, alpha}
-            : Color{255, 255, 255, alpha};
+        Color textColor{255, 255, 255, alpha};
+        if (popup.style == DamagePopupStyle::Player) {
+            textColor = {255, 72, 64, alpha};
+        } else if (popup.style == DamagePopupStyle::Heal) {
+            textColor = {72, 238, 132, alpha};
+        }
         const Color shadowColor{0, 0, 0, static_cast<unsigned char>(std::clamp(std::lround(190.0f * fade), 0L, 255L))};
 
         renderer.drawText(pos + Vec2{2.0f, 2.0f}, buffer, shadowColor, textScale, TextStyle::Italic);
@@ -728,6 +731,12 @@ void EffectSystem::spawnEnemyHit(Vec2 position, std::string_view effect)
         id = ParticleEffectId::EnemySlowHit;
     } else if (effect == "status_bleed" || effect == "status_bleed_chance") {
         id = ParticleEffectId::EnemyBleedHit;
+    } else if (effect == "status_giant") {
+        id = ParticleEffectId::MagicDefault;
+    } else if (effect == "status_sleep" || effect == "status_sleep_chance") {
+        id = ParticleEffectId::MagicDefault;
+    } else if (effect == "status_stun" || effect == "status_stun_chance") {
+        id = ParticleEffectId::EnemyHit;
     } else if (effect == "fire") {
         id = ParticleEffectId::MagicFire;
     } else if (effect == "ice" || effect == "water") {

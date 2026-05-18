@@ -4,6 +4,7 @@
 #include "engine/Math.hpp"
 #include "game/ItemModel.hpp"
 #include <array>
+#include <cstdint>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -68,6 +69,10 @@ struct SpellRingItem {
     float capturedRewardWindowStart = -100.0f;
     int capturedRewardWindowCount = 0;
     int capturedBossRewardCount = 0;
+    std::string magicAuraDamageType;
+    float magicAuraTimer = 0.0f;
+    float magicCastCooldownTimer = 0.0f;
+    std::uint32_t magicAuraFxEmitterId = 0;
 
     bool hasCapturedBehavior(std::string_view behaviorId) const;
     const CapturedBehaviorSpec* capturedBehaviorSpec(std::string_view behaviorId) const;

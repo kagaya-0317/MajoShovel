@@ -22,6 +22,7 @@
 namespace majo {
 
 class EffectSystem;
+class MagicSystem;
 class WorldDropSystem;
 class EncyclopediaSystem;
 
@@ -67,6 +68,21 @@ struct DugEnemySpawnPoint {
     int depthRank = 1;
 };
 
+struct EnemyMagicHitSpec {
+    Vec2 position{};
+    float radius = 0.0f;
+    int damage = 0;
+    std::string damageType;
+    std::string effectId;
+    std::string statusEffect;
+    double statusValue = 1.0;
+    double statusDuration = 0.0;
+    double statusChance = 100.0;
+    Vec2 knockbackDirection{};
+    float knockbackStrength = 0.0f;
+    int maxHits = 0;
+};
+
 class EnemySystem {
 public:
     void spawnFromDugTiles(
@@ -95,6 +111,7 @@ public:
         const std::vector<LightSource>& extraLights,
         const EffectDispatcher& effectDispatcher,
         ProjectileSystem& projectiles,
+        MagicSystem& magic,
         std::vector<EffectDiscoveryEvent>* discoveryEvents = nullptr,
         const EncyclopediaSystem* encyclopedia = nullptr);
     void render(Renderer& renderer, const TileMap& map, Vec2 playerLight, const std::vector<LightSource>& extraLights);
@@ -119,6 +136,8 @@ public:
         const EffectDispatcher& effectDispatcher,
         std::vector<EffectDiscoveryEvent>* discoveryEvents = nullptr,
         const EncyclopediaSystem* encyclopedia = nullptr);
+    int applyMagicArea(const EnemyMagicHitSpec& spec, SpellRingSystem& spellRing);
+    bool applyMagicNearest(Vec2 origin, float range, EnemyMagicHitSpec spec, SpellRingSystem& spellRing, Vec2* outTargetPosition = nullptr);
     void applyCapturedExplosion(Vec2 position, SpellRingSystem& spellRing, int damage);
     void addMudZone(Vec2 position, float radius, float duration, float speedMultiplier, float damagePerSecond, std::string damageType);
     int pullMetalEnemies(Vec2 center, TileMap& map, float dt, float radius = 160.0f);
@@ -155,6 +174,7 @@ private:
     Vec2 separationFor(const Enemy& enemy) const;
     void moveWithCollision(Enemy& enemy, TileMap& map, Vec2 desiredVelocity, float dt);
     bool resolvePlayerOverlap(Player& player, Enemy& enemy, TileMap& map, const RuntimeBalance& balance);
+    void finishEnemyDeath(Enemy& enemy, SpellRingSystem& spellRing);
 
     ObjectPool<Enemy, balance::MaxEnemies> enemies_;
     std::vector<EnemyEvent> events_;

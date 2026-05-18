@@ -6,6 +6,7 @@
 #include "game/ActorVisual.hpp"
 #include "game/InventorySystem.hpp"
 #include "game/ObjectImageRenderer.hpp"
+#include "game/ObjectVisualPose.hpp"
 #include "game/Player.hpp"
 #include "game/WorldIconRenderer.hpp"
 
@@ -165,7 +166,12 @@ void drawWorldDrop(Renderer& renderer, const WorldDropItem& drop, const ObjectCa
 
     bool drewImage = false;
     if (object != nullptr) {
-        drewImage = drawObjectImage(renderer, *object, center, DropObjectImageMaxSize);
+        drewImage = drawObjectImage(
+            renderer,
+            *object,
+            center,
+            DropObjectImageMaxSize,
+            objectGroundImageOptions(*object));
     } else if (drop.kind == WorldDropKind::Money) {
         drewImage = drawWorldIcon(renderer, moneyWorldIconForAmount(drop.quantity), center, DropObjectImageMaxSize);
     } else if (material) {

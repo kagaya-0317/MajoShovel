@@ -18,6 +18,7 @@ struct DugTile;
 struct TerrainHitTile;
 struct SpellRingItem;
 class EffectSystem;
+class MagicSystem;
 class SpellRingSystem;
 class TileMap;
 class EncyclopediaSystem;
@@ -57,6 +58,7 @@ struct EffectContext {
     SpellRingItem* orbitItem = nullptr;
     TileMap* tileMap = nullptr;
     EffectSystem* effects = nullptr;
+    MagicSystem* magic = nullptr;
     std::vector<TerrainHitTile>* terrainHitTiles = nullptr;
     std::vector<Vec2>* terrainOpenedTiles = nullptr;
     std::vector<DugTile>* terrainDugTiles = nullptr;

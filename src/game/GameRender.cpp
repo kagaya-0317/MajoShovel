@@ -26,6 +26,90 @@ float smootherStep(float t)
     return t * t * t * (t * (t * 6.0f - 15.0f) + 10.0f);
 }
 
+Vec2 paralyzeJitterOffset(const EntityStatus& status, double totalSeconds)
+{
+    if (!status.hasState("status_paralyze")) {
+        return {};
+    }
+    const int phase = static_cast<int>(std::floor(std::max(0.0, totalSeconds) * 36.0));
+    return {phase % 2 == 0 ? -1.0f : 1.0f, 0.0f};
+}
+
+float stunWakeHopOffset(float stunWakeTimer)
+{
+    if (stunWakeTimer <= 0.0f) {
+        return 0.0f;
+    }
+    constexpr float StunWakeHopSeconds = 0.18f;
+    constexpr float StunWakeHopPixels = 8.0f;
+    const float t = clamp(stunWakeTimer / StunWakeHopSeconds, 0.0f, 1.0f);
+    return std::sin(t * Pi) * StunWakeHopPixels;
+}
+
+Color magicAuraColor(std::string_view damageType)
+{
+    if (damageType == "fire") {
+        return {255, 116, 32, 210};
+    }
+    if (damageType == "ice") {
+        return {116, 214, 255, 210};
+    }
+    if (damageType == "thunder") {
+        return {255, 232, 80, 220};
+    }
+    if (damageType == "wind") {
+        return {138, 238, 178, 190};
+    }
+    if (damageType == "earth") {
+        return {164, 120, 70, 215};
+    }
+    return {220, 220, 255, 190};
+}
+
+void drawMagicAura(Renderer& renderer, Vec2 center, float radius, std::string_view damageType, float totalSeconds)
+{
+    const Color color = magicAuraColor(damageType);
+    const float pulse = 0.5f + 0.5f * std::sin(totalSeconds * 16.0f);
+    renderer.drawCircle(center, radius + 4.0f + pulse * 2.0f, withAlpha(color, 125.0f));
+    if (damageType == "fire") {
+        renderer.fillSoftCircle(center, radius + 8.0f, withAlpha(color, 54.0f));
+        renderer.fillCircle(center + Vec2{2.0f, -4.0f}, std::max(2.0f, radius * 0.28f), {255, 224, 84, 180});
+    } else if (damageType == "ice") {
+        renderer.drawLine(center + Vec2{-radius, 0.0f}, center + Vec2{radius, 0.0f}, withAlpha(color, 170.0f));
+        renderer.drawLine(center + Vec2{0.0f, -radius}, center + Vec2{0.0f, radius}, withAlpha(color, 140.0f));
+    } else if (damageType == "thunder") {
+        renderer.drawLine(center + Vec2{-radius, -radius * 0.5f}, center + Vec2{0.0f, radius * 0.1f}, {255, 250, 180, 210});
+        renderer.drawLine(center + Vec2{0.0f, radius * 0.1f}, center + Vec2{radius, radius * 0.45f}, {255, 250, 180, 210});
+    } else if (damageType == "wind") {
+        renderer.drawSoftRing(center, radius + 6.0f, 3.0f, withAlpha(color, 72.0f));
+    } else if (damageType == "earth") {
+        for (int i = 0; i < 3; ++i) {
+            const float angle = totalSeconds * 3.2f + static_cast<float>(i) * (Pi * 2.0f / 3.0f);
+            renderer.fillCircle(center + fromAngle(angle) * (radius + 7.0f), 2.4f, withAlpha(color, 190.0f));
+        }
+    }
+}
+
+float magicAuraLightRadius(std::string_view damageType, float hitRadius)
+{
+    const float base = std::max(8.0f, hitRadius) * 2.0f;
+    if (damageType == "fire") {
+        return 42.0f + base * 0.75f;
+    }
+    if (damageType == "thunder") {
+        return 92.0f + base;
+    }
+    if (damageType == "ice") {
+        return 62.0f + base;
+    }
+    if (damageType == "wind") {
+        return 68.0f + base;
+    }
+    if (damageType == "earth") {
+        return 70.0f + base;
+    }
+    return 58.0f + base;
+}
 
 float dungeonRingIntroItemLocalProgress(float introProgress, int itemIndex, int ringIndex)
 {
@@ -66,9 +150,23 @@ Vec2 dungeonRingIntroItemGroundPosition(
 constexpr int RingPlaceColumns = 8;
 constexpr int RingPlaceRows = 3;
 constexpr int RingPlaceSlotCount = RingPlaceColumns * RingPlaceRows;
-constexpr float RingPlaceSlotSize = 64.0f;
-constexpr float RingPlaceSlotGap = 12.0f;
+constexpr float RingPlaceScreenX = 44.0f;
+constexpr float RingPlaceScreenY = 58.0f;
+constexpr float RingPlaceScreenW = 1192.0f;
+constexpr float RingPlaceScreenH = 610.0f;
+constexpr float RingPlaceGridY = RingPlaceScreenY + 84.0f;
+constexpr float RingPlaceSlotW = 88.0f;
+constexpr float RingPlaceSlotH = 76.0f;
+constexpr float RingPlaceSlotGap = 8.0f;
 constexpr float RingPlaceSlotImageMaxSize = 48.0f;
+constexpr float RingPlaceDetailX = RingPlaceScreenX + 820.0f;
+constexpr float RingPlaceDetailY = RingPlaceScreenY + 50.0f;
+constexpr float RingPlaceDetailW = 330.0f;
+constexpr float RingPlaceDetailH = 520.0f;
+constexpr float RingPlaceGridW =
+    static_cast<float>(RingPlaceColumns) * RingPlaceSlotW +
+    static_cast<float>(RingPlaceColumns - 1) * RingPlaceSlotGap;
+constexpr float RingPlaceGridX = RingPlaceScreenX + (RingPlaceDetailX - RingPlaceScreenX - RingPlaceGridW) * 0.5f;
 
 std::array<UiCommandMenuItem, 1> ringCommandItems(bool placeCommand, bool enabled)
 {
@@ -83,25 +181,22 @@ UiRect ringArrangeButtonRect()
 
 UiRect ringPlaceWindowRect()
 {
-    const UiRect panel = ringPanelRect();
-    return {{panel.pos.x + 120.0f, panel.pos.y + 84.0f}, {900.0f, 438.0f}};
+    return {{RingPlaceScreenX, RingPlaceScreenY}, {RingPlaceScreenW, RingPlaceScreenH}};
 }
 
 UiRect ringPlaceSlotRect(int index)
 {
-    const UiRect panel = ringPlaceWindowRect();
     const int row = index / RingPlaceColumns;
     const int column = index % RingPlaceColumns;
     return {{
-        panel.pos.x + 32.0f + static_cast<float>(column) * (RingPlaceSlotSize + RingPlaceSlotGap),
-        panel.pos.y + 94.0f + static_cast<float>(row) * (RingPlaceSlotSize + RingPlaceSlotGap),
-    }, {RingPlaceSlotSize, RingPlaceSlotSize}};
+        RingPlaceGridX + static_cast<float>(column) * (RingPlaceSlotW + RingPlaceSlotGap),
+        RingPlaceGridY + static_cast<float>(row) * (RingPlaceSlotH + RingPlaceSlotGap),
+    }, {RingPlaceSlotW, RingPlaceSlotH}};
 }
 
 UiRect ringPlaceDetailRect()
 {
-    const UiRect panel = ringPlaceWindowRect();
-    return {{panel.pos.x + 648.0f, panel.pos.y + 94.0f}, {220.0f, 256.0f}};
+    return {{RingPlaceDetailX, RingPlaceDetailY}, {RingPlaceDetailW, RingPlaceDetailH}};
 }
 
 InventoryUiEntryView ringPlaceEntryView(const InventorySystem& inventory, int slotIndex)
@@ -300,37 +395,6 @@ bool arrangeActiveRingItemsEvenly(SpellRingSystem& spellRing, const RuntimeBalan
     return true;
 }
 
-ItemInstance inventoryInstanceFromRingItem(
-    InventorySystem& inventory,
-    const ObjectCatalog& objectCatalog,
-    const SpellRingItem& item)
-{
-    ItemInstance instance;
-    if (item.instanceId.empty()) {
-        const ItemData* object = objectCatalog.registry.findById(item.objectId);
-        const ItemData missingObject = object == nullptr ? makeMissingItemData(item.objectId) : ItemData{};
-        instance = inventory.createDetachedObjectInstance(object != nullptr ? *object : missingObject);
-    } else {
-        instance.instanceId = item.instanceId;
-        instance.objectId = item.objectId;
-    }
-
-    instance.objectId = item.objectId;
-    instance.currentDurability = item.durability;
-    instance.maxDurability = item.maxDurability;
-    instance.enhanceLevel = item.enhanceLevel;
-    instance.attackBonus = item.attackBonus;
-    instance.digBonus = item.digBonus;
-    instance.durabilityBonus = item.durabilityBonus;
-    instance.weightModifier = item.weightModifier;
-    instance.sizeModifier = item.sizeModifier;
-    instance.protectionEnabled = item.protectionEnabled;
-    instance.isBroken = item.broken();
-    instance.addedEffects = item.addedEffects;
-    instance.addedTags = item.addedTags;
-    return instance;
-}
-
 bool returnRingItemToInventory(
     InventorySystem& inventory,
     const ObjectCatalog& objectCatalog,
@@ -450,6 +514,11 @@ void drawDungeonRingIntroItem(
     const float reveal = smootherStep(local);
     const Vec2 introGround = dungeonRingIntroItemGroundPosition(spellRing, item, introProgress, itemIndex, ringIndex);
     const Vec2 toItem = introGround - spellRing.center();
+    Vec2 outward = lengthSquared(toItem) > 0.0001f ? normalize(toItem) : fromAngle(item.localAngle);
+    Vec2 forward{-outward.y, outward.x};
+    if (lengthSquared(forward) <= 0.0001f) {
+        forward = {1.0f, 0.0f};
+    }
     const float lift = (1.0f - reveal) * 22.0f + std::sin(local * Pi) * 10.0f;
     const Vec2 drawPosition = elevatedDrawPosition(introGround, ringItemAltitude(item, totalSeconds) + lift);
     const RingShape ringShape = spellRing.ringShapeForIndex(ringIndex);
@@ -475,28 +544,25 @@ void drawDungeonRingIntroItem(
         options.tint = tint;
         options.outlineColor.a = alpha;
         options.scaleMultiplier = popScale / std::max(0.001f, cometVisualScale);
-        return drawObjectImage(
+        return drawRingItemObjectImage(
             renderer,
-            *object,
+            item,
+            object,
             drawPosition,
             {RingObjectImageMaxSize * cometVisualScale, RingObjectImageMaxSize * cometVisualScale},
+            outward,
+            forward,
+            totalSeconds,
             options);
     };
 
     if (item.type == SpellRingItemType::Shovel) {
-        if (renderer.hasIconSheet()) {
-            const float iconSize = IconDrawSize * popScale;
-            renderer.drawIcon(ShovelIconIndex, drawPosition - Vec2{iconSize * 0.5f, iconSize * 0.5f}, {iconSize, iconSize}, tint);
-        } else if (!drawObject()) {
+        if (!drawObject()) {
             renderer.fillCircle(drawPosition, item.hitRadius * popScale, withAlpha({178, 184, 190, 255}, 255.0f * reveal));
-            const Vec2 outward = normalize(introGround - spellRing.center());
             renderer.drawLine(drawPosition, drawPosition + outward * (15.0f * popScale), withAlpha({90, 96, 102, 255}, 255.0f * reveal));
         }
     } else if (item.type == SpellRingItemType::Torch) {
-        if (renderer.hasIconSheet()) {
-            const float iconSize = IconDrawSize * popScale;
-            renderer.drawIcon(TorchIconIndex, drawPosition - Vec2{iconSize * 0.5f, iconSize * 0.5f}, {iconSize, iconSize}, tint);
-        } else if (!drawObject()) {
+        if (!drawObject()) {
             renderer.fillCircle(drawPosition, item.hitRadius * popScale, withAlpha({242, 122, 25, 255}, 255.0f * reveal));
             renderer.fillCircle(drawPosition + Vec2{2.0f, -2.0f} * popScale, 4.0f * popScale, withAlpha({255, 238, 98, 255}, 255.0f * reveal));
         }
@@ -508,10 +574,10 @@ void drawDungeonRingIntroItem(
     const float sparkle = std::sin(local * Pi);
     if (sparkle > 0.05f) {
         const Vec2 introOffset = introGround - spellRing.center();
-        const Vec2 outward = lengthSquared(introOffset) > 0.0001f ? normalize(introOffset) : Vec2{0.0f, -1.0f};
+        const Vec2 sparkleOutward = lengthSquared(introOffset) > 0.0001f ? normalize(introOffset) : Vec2{0.0f, -1.0f};
         drawMagicStar(
             renderer,
-            drawPosition - outward * (10.0f + 12.0f * sparkle),
+            drawPosition - sparkleOutward * (10.0f + 12.0f * sparkle),
             3.0f + sparkle * 5.0f,
             withAlpha({255, 246, 190, 255}, 160.0f * sparkle * reveal),
             totalSeconds * 2.0f + static_cast<float>(itemIndex));
@@ -1367,10 +1433,6 @@ void Game::renderRingStatusHud(Renderer& renderer) const
 
         const Vec2 content = panel.pos + Vec2{RingStatusHudPadding, RingStatusHudPadding};
         const auto& items = spellRing_.itemsForRing(ringIndex);
-        float ringWeight = 0.0f;
-        for (const SpellRingItem& item : items) {
-            ringWeight += std::max(0.0f, item.weight);
-        }
 
         std::snprintf(buffer, sizeof(buffer), "%sRing %d", active ? "> " : "", ringIndex + 1);
         renderer.drawText(content, buffer, active ? Color{255, 236, 158, 255} : ui::Text, 2);
@@ -1378,7 +1440,12 @@ void Game::renderRingStatusHud(Renderer& renderer) const
         std::snprintf(buffer, sizeof(buffer), "アイテム数 %02d / %02d", static_cast<int>(items.size()), spellRing_.maxItemCount());
         renderer.drawText(content + Vec2{0.0f, 24.0f}, buffer, {232, 236, 244, 255}, 2);
 
-        std::snprintf(buffer, sizeof(buffer), "重量 %.1f / %.1f", ringWeight, spellRing_.maxEquippedWeight());
+        std::snprintf(
+            buffer,
+            sizeof(buffer),
+            "重量 %.1f / %.1f",
+            spellRing_.totalEquippedWeightForRing(ringIndex),
+            spellRing_.maxEquippedWeightForRing(ringIndex));
         renderer.drawText(content + Vec2{0.0f, 48.0f}, buffer, {222, 236, 255, 255}, 2);
     }
 }
@@ -1675,6 +1742,10 @@ void Game::renderRingScreen(Renderer& renderer, float totalTime) const
         displayItem.worldPosition = itemAnchor;
         const Vec2 itemCenter = ringItemDrawPosition(displayItem, totalTime);
         const Vec2 outward = normalize(itemAnchor - orbitCenter);
+        Vec2 forward{-outward.y, outward.x};
+        if (lengthSquared(forward) <= 0.0001f) {
+            forward = {1.0f, 0.0f};
+        }
         const bool selected = i == ringSlotSelection_;
         const bool invalidDragPosition = selected && ringDragActive_ && !spellRing_.canPlaceItemAtAngle(i, displayAngle);
         const ItemData* object = objectForRingItem(objectCatalog_, item);
@@ -1689,7 +1760,7 @@ void Game::renderRingScreen(Renderer& renderer, float totalTime) const
             renderer.drawLine(orbitCenter + tangent * AngleLineHalfWidthPx, itemAnchor + tangent * AngleLineHalfWidthPx, angleLineColor);
             renderer.drawLine(orbitCenter - tangent * AngleLineHalfWidthPx, itemAnchor - tangent * AngleLineHalfWidthPx, angleLineColor);
         }
-        drawRingItemShape(renderer, item, object, itemCenter, outward, selected, invalidDragPosition);
+        drawRingItemShape(renderer, item, object, itemCenter, outward, forward, totalTime, selected, invalidDragPosition);
         std::snprintf(buffer, sizeof(buffer), "%d", i + 1);
         renderer.drawText(itemCenter + Vec2{-5.0f, 22.0f}, buffer, selected ? Color{255, 230, 150, 255} : Color{174, 182, 198, 255}, 1);
     }
@@ -1755,6 +1826,9 @@ void Game::renderRingScreen(Renderer& renderer, float totalTime) const
     drawUiCommandMenu(renderer, ringCommandMenu_, commandItems.data(), static_cast<int>(commandItems.size()));
 
     if (ringPlaceModeActive_) {
+        drawUiModalBackdrop(
+            renderer,
+            {{0.0f, 0.0f}, {static_cast<float>(camera_.width()), static_cast<float>(camera_.height())}});
         drawRingPlaceWindow(
             renderer,
             inventory_,
@@ -1957,46 +2031,46 @@ void Game::renderSpellRingForeground(
             : 1.0f;
         const Vec2 drawPosition = ringItemDrawPosition(item, totalSeconds);
         const ItemData* object = objectForRingItem(objectCatalog_, item);
+        const Vec2 outward = normalize(item.worldPosition - spellRing_.center());
+        const Vec2 maxImageSize{RingObjectImageMaxSize * cometVisualScale, RingObjectImageMaxSize * cometVisualScale};
         if (item.type == SpellRingItemType::Shovel) {
-            if (renderer.hasIconSheet()) {
-                const float iconSize = IconDrawSize * cometVisualScale;
-                renderer.drawIcon(ShovelIconIndex, drawPosition - Vec2{iconSize * 0.5f, iconSize * 0.5f}, {iconSize, iconSize});
-            } else {
-                const bool drewImage = object != nullptr &&
-                    drawObjectImage(
-                        renderer,
-                        *object,
-                        drawPosition,
-                        {RingObjectImageMaxSize * cometVisualScale, RingObjectImageMaxSize * cometVisualScale});
-                if (!drewImage) {
-                    renderer.fillCircle(drawPosition, item.hitRadius * cometVisualScale, {178, 184, 190, 255});
-                    const Vec2 outward = normalize(item.worldPosition - spellRing_.center());
-                    renderer.drawLine(drawPosition, drawPosition + outward * (15.0f * cometVisualScale), {90, 96, 102, 255});
-                }
+            const bool drewImage = drawRingItemObjectImage(
+                renderer,
+                item,
+                object,
+                drawPosition,
+                maxImageSize,
+                outward,
+                item.worldVelocity,
+                totalSeconds);
+            if (!drewImage) {
+                renderer.fillCircle(drawPosition, item.hitRadius * cometVisualScale, {178, 184, 190, 255});
+                renderer.drawLine(drawPosition, drawPosition + outward * (15.0f * cometVisualScale), {90, 96, 102, 255});
             }
         } else if (item.type == SpellRingItemType::Torch) {
-            if (renderer.hasIconSheet()) {
-                const float iconSize = IconDrawSize * cometVisualScale;
-                renderer.drawIcon(TorchIconIndex, drawPosition - Vec2{iconSize * 0.5f, iconSize * 0.5f}, {iconSize, iconSize});
-            } else {
-                const bool drewImage = object != nullptr &&
-                    drawObjectImage(
-                        renderer,
-                        *object,
-                        drawPosition,
-                        {RingObjectImageMaxSize * cometVisualScale, RingObjectImageMaxSize * cometVisualScale});
-                if (!drewImage) {
-                    renderer.fillCircle(drawPosition, item.hitRadius * cometVisualScale, {242, 122, 25, 255});
-                    renderer.fillCircle(drawPosition + Vec2{2.0f, -2.0f} * cometVisualScale, 4.0f * cometVisualScale, {255, 238, 98, 255});
-                }
+            const bool drewImage = drawRingItemObjectImage(
+                renderer,
+                item,
+                object,
+                drawPosition,
+                maxImageSize,
+                outward,
+                item.worldVelocity,
+                totalSeconds);
+            if (!drewImage) {
+                renderer.fillCircle(drawPosition, item.hitRadius * cometVisualScale, {242, 122, 25, 255});
+                renderer.fillCircle(drawPosition + Vec2{2.0f, -2.0f} * cometVisualScale, 4.0f * cometVisualScale, {255, 238, 98, 255});
             }
         } else {
-            const bool drewImage = object != nullptr &&
-                drawObjectImage(
-                    renderer,
-                    *object,
-                    drawPosition,
-                    {RingObjectImageMaxSize * cometVisualScale, RingObjectImageMaxSize * cometVisualScale});
+            const bool drewImage = drawRingItemObjectImage(
+                renderer,
+                item,
+                object,
+                drawPosition,
+                maxImageSize,
+                outward,
+                item.worldVelocity,
+                totalSeconds);
             if (!drewImage) {
                 renderer.fillCircle(drawPosition, item.hitRadius * cometVisualScale, {96, 122, 210, 255});
                 renderer.drawCircle(drawPosition, item.hitRadius * cometVisualScale + 3.0f, {160, 202, 255, 255});
@@ -2045,6 +2119,7 @@ void Game::render(Renderer& renderer, const Time& time)
         renderPauseMenu(renderer);
         renderRingScreen(renderer, time.totalSeconds());
         dialogue_.render(renderer, camera_.width(), camera_.height());
+        renderDebugItemPicker(renderer);
         finishUiFrame(renderer);
         renderBaseDebugOverlay(renderer, time);
         renderScreenTransitionOverlay(renderer);
@@ -2092,6 +2167,16 @@ void Game::render(Renderer& renderer, const Time& time)
                 flickeredLightRadius(balance_.lightRadius, time.totalSeconds(), torchPhase) * introLightScale,
             });
         }
+        if (itemPtr->magicAuraTimer > 0.0f && !itemPtr->magicAuraDamageType.empty()) {
+            const float auraPhase = phase + 0.83f;
+            itemLights.push_back({
+                flickeredLightPosition(lightPosition, time.totalSeconds(), auraPhase),
+                flickeredLightRadius(
+                    magicAuraLightRadius(itemPtr->magicAuraDamageType, itemPtr->hitRadius),
+                    time.totalSeconds(),
+                    auraPhase) * introLightScale,
+            });
+        }
         ++runtimeItemIndex;
     }
     if (warpPointsEnabled_) {
@@ -2125,6 +2210,7 @@ void Game::render(Renderer& renderer, const Time& time)
             flickeredLightRadius(entranceLightRadius, time.totalSeconds(), 2.9f),
         });
     }
+    magic_.appendLightSources(itemLights);
     tileMap_.render(renderer, camera_, player_.position, itemLights);
     std::vector<DepthRenderEntry> worldDepthEntries;
     if (!enemyTestActive_) {
@@ -2132,6 +2218,7 @@ void Game::render(Renderer& renderer, const Time& time)
     }
     worldDrops_.appendRenderEntries(worldDepthEntries, renderer, tileMap_, objectCatalog_, player_.position, itemLights);
     effects_.appendRenderEntries(worldDepthEntries, renderer);
+    magicFx_.appendRenderEntries(worldDepthEntries, renderer);
     if (!enemyTestActive_) {
         renderDungeonEntrance(renderer);
         renderWarpPoints(renderer);
@@ -2146,7 +2233,13 @@ void Game::render(Renderer& renderer, const Time& time)
     }
 
     const Vec2 playerFootAnchor = player_.position;
-    renderer.drawActorShadow(playerFootAnchor, PlayerSpriteDrawSize);
+    const bool playerStunned = player_.status.hasState("status_stun");
+    const Vec2 playerVisualFootAnchor = playerFootAnchor +
+        paralyzeJitterOffset(player_.status, time.totalSeconds()) +
+        Vec2{0.0f, -stunWakeHopOffset(player_.stunWakeTimer)};
+    const float playerSizeMultiplier = static_cast<float>(player_.status.sizeMultiplierFromStates());
+    const float playerSpriteDrawSize = PlayerSpriteDrawSize * playerSizeMultiplier;
+    renderer.drawActorShadow(playerFootAnchor, playerSpriteDrawSize);
     worldDrops_.renderShadows(renderer, tileMap_, objectCatalog_, player_.position, itemLights);
     enemies_.renderShadows(renderer, tileMap_, player_.position, itemLights);
     effects_.renderShadows(renderer);
@@ -2159,28 +2252,30 @@ void Game::render(Renderer& renderer, const Time& time)
                 const bool playerFlip = player_.facing.x > 0.0f;
                 renderer.drawPlayerSprite(
                     playerFrame,
-                    playerFootAnchor,
-                    PlayerSpriteDrawSize,
+                    playerVisualFootAnchor,
+                    playerSpriteDrawSize,
                     playerFlip,
                     {255, 255, 255, 255},
-                    {PlayerSpriteAnchorX, PlayerSpriteAnchorY});
+                    {PlayerSpriteAnchorX, PlayerSpriteAnchorY},
+                    playerStunned);
                 if (player_.damageFlash > 0.0f) {
                     const float flash = clamp(player_.damageFlash / 0.16f, 0.0f, 1.0f);
                     const unsigned char alpha = static_cast<unsigned char>(std::round(185.0f * flash));
                     renderer.drawPlayerSprite(
                         playerFrame,
-                        playerFootAnchor,
-                        PlayerSpriteDrawSize,
+                        playerVisualFootAnchor,
+                        playerSpriteDrawSize,
                         playerFlip,
                         {255, 52, 52, alpha},
-                        {PlayerSpriteAnchorX, PlayerSpriteAnchorY});
+                        {PlayerSpriteAnchorX, PlayerSpriteAnchorY},
+                        playerStunned);
                 }
             } else {
                 const Color playerColor = player_.damageFlash > 0.0f
                     ? Color{255, 72, 72, 255}
                     : Color{118, 72, 168, 255};
-                renderer.fillCircle(player_.position, balance_.playerRadius, playerColor);
-                renderer.drawLine(player_.position, player_.position + player_.facing * 22.0f, {235, 210, 255, 255});
+                renderer.fillCircle(playerVisualFootAnchor, player_.effectiveRadius(balance_.playerRadius), playerColor);
+                renderer.drawLine(playerVisualFootAnchor, playerVisualFootAnchor + player_.facing * (22.0f * playerSizeMultiplier), {235, 210, 255, 255});
             }
 
             if (ringIntroActive) {
@@ -2202,46 +2297,50 @@ void Game::render(Renderer& renderer, const Time& time)
                     actorShadowAnchor(item.worldPosition, ItemShadowGroundOffsetY),
                     ringItemShadowVisualSize(item, time.totalSeconds()) * cometVisualScale);
                 const ItemData* object = objectForRingItem(objectCatalog_, item);
+                const Vec2 offset = item.worldPosition - spellRing_.center();
+                const Vec2 outward = lengthSquared(offset) > 0.0001f ? normalize(offset) : fromAngle(item.localAngle);
+                const Vec2 maxImageSize{
+                    RingObjectImageMaxSize * cometVisualScale,
+                    RingObjectImageMaxSize * cometVisualScale};
+                const float totalSeconds = static_cast<float>(time.totalSeconds());
                 if (item.type == SpellRingItemType::Shovel) {
-                    if (renderer.hasIconSheet()) {
-                        const float iconSize = IconDrawSize * cometVisualScale;
-                        renderer.drawIcon(ShovelIconIndex, drawPosition - Vec2{iconSize * 0.5f, iconSize * 0.5f}, {iconSize, iconSize});
-                    } else {
-                        const bool drewImage = object != nullptr &&
-                            drawObjectImage(
-                                renderer,
-                                *object,
-                                drawPosition,
-                                {RingObjectImageMaxSize * cometVisualScale, RingObjectImageMaxSize * cometVisualScale});
-                        if (!drewImage) {
-                            renderer.fillCircle(drawPosition, item.hitRadius * cometVisualScale, {178, 184, 190, 255});
-                            const Vec2 outward = normalize(item.worldPosition - spellRing_.center());
-                            renderer.drawLine(drawPosition, drawPosition + outward * (15.0f * cometVisualScale), {90, 96, 102, 255});
-                        }
+                    const bool drewImage = drawRingItemObjectImage(
+                        renderer,
+                        item,
+                        object,
+                        drawPosition,
+                        maxImageSize,
+                        outward,
+                        item.worldVelocity,
+                        totalSeconds);
+                    if (!drewImage) {
+                        renderer.fillCircle(drawPosition, item.hitRadius * cometVisualScale, {178, 184, 190, 255});
+                        renderer.drawLine(drawPosition, drawPosition + outward * (15.0f * cometVisualScale), {90, 96, 102, 255});
                     }
                 } else if (item.type == SpellRingItemType::Torch) {
-                    if (renderer.hasIconSheet()) {
-                        const float iconSize = IconDrawSize * cometVisualScale;
-                        renderer.drawIcon(TorchIconIndex, drawPosition - Vec2{iconSize * 0.5f, iconSize * 0.5f}, {iconSize, iconSize});
-                    } else {
-                        const bool drewImage = object != nullptr &&
-                            drawObjectImage(
-                                renderer,
-                                *object,
-                                drawPosition,
-                                {RingObjectImageMaxSize * cometVisualScale, RingObjectImageMaxSize * cometVisualScale});
-                        if (!drewImage) {
-                            renderer.fillCircle(drawPosition, item.hitRadius * cometVisualScale, {242, 122, 25, 255});
-                            renderer.fillCircle(drawPosition + Vec2{2.0f, -2.0f} * cometVisualScale, 4.0f * cometVisualScale, {255, 238, 98, 255});
-                        }
+                    const bool drewImage = drawRingItemObjectImage(
+                        renderer,
+                        item,
+                        object,
+                        drawPosition,
+                        maxImageSize,
+                        outward,
+                        item.worldVelocity,
+                        totalSeconds);
+                    if (!drewImage) {
+                        renderer.fillCircle(drawPosition, item.hitRadius * cometVisualScale, {242, 122, 25, 255});
+                        renderer.fillCircle(drawPosition + Vec2{2.0f, -2.0f} * cometVisualScale, 4.0f * cometVisualScale, {255, 238, 98, 255});
                     }
                 } else {
-                    const bool drewImage = object != nullptr &&
-                        drawObjectImage(
-                            renderer,
-                            *object,
-                            drawPosition,
-                            {RingObjectImageMaxSize * cometVisualScale, RingObjectImageMaxSize * cometVisualScale});
+                    const bool drewImage = drawRingItemObjectImage(
+                        renderer,
+                        item,
+                        object,
+                        drawPosition,
+                        maxImageSize,
+                        outward,
+                        item.worldVelocity,
+                        totalSeconds);
                     if (!drewImage) {
                         renderer.fillCircle(drawPosition, item.hitRadius * cometVisualScale, {96, 122, 210, 255});
                         renderer.drawCircle(drawPosition, item.hitRadius * cometVisualScale + 3.0f, {160, 202, 255, 255});
@@ -2252,6 +2351,14 @@ void Game::render(Renderer& renderer, const Time& time)
                 }
                 if (item.treasureDetectionRadius > 0.0f) {
                     renderer.drawCircle(drawPosition, item.treasureDetectionRadius, {255, 220, 92, 90});
+                }
+                if (item.magicAuraTimer > 0.0f && !item.magicAuraDamageType.empty() && item.magicAuraFxEmitterId == 0) {
+                    drawMagicAura(
+                        renderer,
+                        drawPosition,
+                        std::max(8.0f, item.hitRadius * cometVisualScale),
+                        item.magicAuraDamageType,
+                        static_cast<float>(time.totalSeconds()));
                 }
             }
         },
@@ -2298,8 +2405,15 @@ void Game::render(Renderer& renderer, const Time& time)
         renderer.fillRect({18.0f, 202.0f}, {190.0f, 28.0f}, {0, 0, 0, 190});
         renderer.drawText({28.0f, 208.0f}, "DEBUG PAUSED", {255, 230, 150, 255}, 2);
     }
-    upgrades_.render(renderer, levels_);
+    upgrades_.render(renderer, levels_, spellRing_, levelRingRadiusPoints_, levelRingSpeedPoints_, levelRingWeightLimitPoints_);
     inventory_.render(renderer, player_, spellRing_, objectCatalog_, encyclopedia_);
+    if (levelUpResultDialog_.open) {
+        renderer.fillRect(
+            {0.0f, 0.0f},
+            {static_cast<float>(camera_.width()), static_cast<float>(camera_.height())},
+            {0, 0, 0, 96});
+        drawUiResultDialog(renderer, levelUpResultDialog_, levelUpResultDialogRect(), "level_up.result");
+    }
     if (mode_ == ScreenMode::Playing) {
         inventory_.renderShortcutHud(renderer, spellRing_, camera_.width(), camera_.height());
         renderRingEquipFx(renderer);
@@ -2314,6 +2428,7 @@ void Game::render(Renderer& renderer, const Time& time)
         encyclopedia_.renderPopups(renderer, camera_);
     }
     dialogue_.render(renderer, camera_.width(), camera_.height());
+    renderDebugItemPicker(renderer);
     finishUiFrame(renderer);
     renderDebugOverlay(renderer, time);
     renderScreenTransitionOverlay(renderer);

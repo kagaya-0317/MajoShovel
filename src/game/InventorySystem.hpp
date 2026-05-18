@@ -18,6 +18,7 @@ namespace majo {
 
 class EffectDispatcher;
 class EncyclopediaSystem;
+class MagicSystem;
 struct EffectDiscoveryEvent;
 
 struct ShortcutSlot {
@@ -54,6 +55,7 @@ public:
     bool canAddObjectItem(const ObjectCatalog& catalog, std::string_view objectId) const;
     bool addObjectItem(const ObjectCatalog& catalog, std::string_view objectId);
     bool addRuntimeObjectItem(const ItemData& item);
+    bool sortByCatalogOrder(const ObjectCatalog& catalog);
     void updateShortcuts(
         const Input& input,
         UiContext& ui,
@@ -62,6 +64,7 @@ public:
         const EffectDispatcher& effectDispatcher,
         int screenWidth,
         int screenHeight,
+        MagicSystem* magic = nullptr,
         std::vector<EffectDiscoveryEvent>* discoveryEvents = nullptr,
         const EncyclopediaSystem* encyclopedia = nullptr);
     void updateScreen(
@@ -70,6 +73,8 @@ public:
         Player& player,
         SpellRingSystem& spellRing,
         const EffectDispatcher& effectDispatcher,
+        const ObjectCatalog& catalog,
+        MagicSystem* magic = nullptr,
         std::vector<EffectDiscoveryEvent>* discoveryEvents = nullptr,
         const EncyclopediaSystem* encyclopedia = nullptr);
     void update(
@@ -79,6 +84,8 @@ public:
         SpellRingSystem& spellRing,
         const EffectDispatcher& effectDispatcher,
         bool blocked,
+        const ObjectCatalog& catalog,
+        MagicSystem* magic = nullptr,
         std::vector<EffectDiscoveryEvent>* discoveryEvents = nullptr,
         const EncyclopediaSystem* encyclopedia = nullptr);
     void render(
@@ -106,8 +113,11 @@ public:
     bool removeObjectInstance(std::string_view instanceId);
     bool takeObjectInstance(std::string_view instanceId, InventoryObjectInstance& outInstance);
     bool repairObjectInstance(std::string_view instanceId);
+    bool resetObjectInstanceEnhancement(std::string_view instanceId, const ObjectCatalog& catalog);
     bool enhanceObjectInstance(std::string_view instanceId, int attackBonus, int digBonus, int durabilityBonus, int maxEnhanceLevel);
     bool enhanceObjectStackItem(std::string_view objectId, int attackBonus, int digBonus, int durabilityBonus, int maxEnhanceLevel);
+    bool modifyObjectInstanceShape(std::string_view instanceId, double weightMultiplier, double sizeMultiplier);
+    bool modifyObjectStackItemShape(std::string_view objectId, double weightMultiplier, double sizeMultiplier);
     bool enhanceSelectedObjectInstance(int attackBonus, int digBonus, int durabilityBonus);
     void addMaterial(MaterialType type, int count);
     void setMaterialCount(MaterialType type, int count);
@@ -152,17 +162,20 @@ private:
     bool useObjectSelection(
         Player& player,
         const EffectDispatcher& effectDispatcher,
+        MagicSystem* magic,
         std::vector<EffectDiscoveryEvent>* discoveryEvents,
         const EncyclopediaSystem* encyclopedia);
     bool useObjectInstanceSelection(
         Player& player,
         const EffectDispatcher& effectDispatcher,
+        MagicSystem* magic,
         std::vector<EffectDiscoveryEvent>* discoveryEvents,
         const EncyclopediaSystem* encyclopedia);
     bool useShortcutSelection(
         Player& player,
         SpellRingSystem& spellRing,
         const EffectDispatcher& effectDispatcher,
+        MagicSystem* magic,
         std::vector<EffectDiscoveryEvent>* discoveryEvents,
         const EncyclopediaSystem* encyclopedia);
     bool addShortcutSelectionToRing(SpellRingSystem& spellRing, SpellRingAddResult* outResult = nullptr);

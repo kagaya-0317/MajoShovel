@@ -75,6 +75,14 @@ struct UiButtonStyle {
     Color imageTintHot{255, 255, 235, 255};
 };
 
+struct UiSystemMessageStyle {
+    Color text{255, 230, 150, 255};
+    Color fill{0, 0, 0, 0};
+    Vec2 padding{0.0f, 0.0f};
+    float maxWidth = 0.0f;
+    int textScale = 2;
+};
+
 struct UiSmallSelectButtonStyle {
     Color fill{24, 36, 78, 196};
     Color fillHot{52, 70, 128, 228};
@@ -133,10 +141,36 @@ struct UiCommandMenuState {
     float animation = 0.0f;
 };
 
+struct UiResultDialogSegment {
+    std::string text;
+    Color color{ui::Text};
+};
+
+struct UiResultDialogLine {
+    std::vector<UiResultDialogSegment> segments;
+};
+
 struct UiResultDialogState {
     bool open = false;
     std::string title;
-    std::vector<std::string> lines;
+    std::vector<UiResultDialogLine> lines;
+};
+
+struct UiQuantityDialogState {
+    bool open = false;
+    std::string title;
+    std::string message;
+    std::string unitLabel;
+    int value = 1;
+    int minValue = 1;
+    int maxValue = 1;
+    int largeStep = 10;
+};
+
+enum class UiQuantityDialogResult {
+    None,
+    Confirmed,
+    Cancelled,
 };
 
 struct UiDropdownItem {
@@ -272,6 +306,7 @@ void drawUiSubPanel(Renderer& renderer, UiRect panel);
 void drawUiHeader(Renderer& renderer, UiRect panel, std::string_view title);
 void drawUiFooter(Renderer& renderer, UiRect panel, std::string_view helpText);
 void drawUiWindow(Renderer& renderer, UiRect panel, std::string_view title, std::string_view helpText = {});
+void drawUiModalBackdrop(Renderer& renderer, UiRect bounds, Color color = {0, 0, 0, 150});
 void drawUiCancelButton(Renderer& renderer, UiRect panel);
 void drawUiSeparator(Renderer& renderer, UiRect rect, Color tint = {255, 255, 255, 255});
 void drawUiGauge(Renderer& renderer, UiRect rect, float progress, const UiGaugeStyle& style = {});
@@ -286,13 +321,25 @@ void drawUiSmallSelectButton(
     bool disabled = false,
     const UiSmallSelectButtonStyle& style = {});
 void drawUiBodyMessageBelow(Renderer& renderer, UiRect anchor, std::string_view message, Color color = ui::TextMuted);
+void drawUiSystemMessage(Renderer& renderer, std::string_view message, Vec2 pos, const UiSystemMessageStyle& style = {});
 float drawUiDetailHeader(Renderer& renderer, UiRect panel, std::string_view text);
 void drawUiDetailText(Renderer& renderer, UiRect panel, float& y, std::string_view text);
 void drawUiDetailLine(Renderer& renderer, UiRect panel, float& y, std::string_view label, std::string_view value, Color valueColor = ui::Text);
 void openUiResultDialog(UiResultDialogState& state, std::string title, std::vector<std::string> lines);
+void openUiResultDialog(UiResultDialogState& state, std::string title, std::vector<UiResultDialogLine> lines);
 bool updateUiResultDialog(UiResultDialogState& state, UiContext& ui, const Input& input, UiRect panel);
 void drawUiResultDialog(Renderer& renderer, const UiResultDialogState& state, UiRect panel, std::string_view id);
 UiRect uiResultDialogOkButtonRect(UiRect panel);
+void openUiQuantityDialog(
+    UiQuantityDialogState& state,
+    std::string title,
+    std::string message,
+    int minValue,
+    int maxValue,
+    int initialValue,
+    std::string unitLabel = {});
+UiQuantityDialogResult updateUiQuantityDialog(UiQuantityDialogState& state, UiContext& ui, const Input& input, UiRect panel);
+void drawUiQuantityDialog(Renderer& renderer, const UiQuantityDialogState& state, UiRect panel, std::string_view id);
 void openUiCommandMenu(
     UiCommandMenuState& state,
     Vec2 anchor,

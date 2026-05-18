@@ -477,6 +477,7 @@ void Game::refreshOrbitEffects()
         context.orbit = &spellRing_;
         context.orbitItem = &item;
         context.effects = &effects_;
+        context.magic = &magic_;
         context.encyclopedia = &encyclopedia_;
         context.position = item.worldPosition;
         context.triggerType = EffectTriggerType::Orbit;
@@ -795,6 +796,9 @@ void Game::openRingScreen()
     ringDragItemIndex_ = -1;
     closeUiCommandMenu(ringCommandMenu_);
     ringCommandItemIndex_ = -1;
+    ringCommandPlaceActive_ = false;
+    ringPlaceModeActive_ = false;
+    ringEmptyPressActive_ = false;
     cancelRingGrab();
     ringStatus_.clear();
 }
@@ -811,6 +815,9 @@ void Game::cancelRingGrab()
     ringDragItemIndex_ = -1;
     closeUiCommandMenu(ringCommandMenu_);
     ringCommandItemIndex_ = -1;
+    ringCommandPlaceActive_ = false;
+    ringPlaceModeActive_ = false;
+    ringEmptyPressActive_ = false;
     if (!spellRing_.addItem(ringGrabbedItem_)) {
         ringGrabbedItem_.ringIndex = spellRing_.activeRingIndex();
         spellRing_.items().push_back(ringGrabbedItem_);
@@ -861,10 +868,13 @@ void Game::clearTemporaryPlayerState(bool fullHeal)
     player_.velocity = {};
     player_.throwCooldownRemaining = 0.0f;
     player_.poisonDamageAccumulator = 0.0;
+    player_.bleedDamageAccumulator = 0.0;
+    player_.stunWakeTimer = 0.0f;
     player_.lastDamageSource = DamageSource::Unknown;
     player_.lastDamageEnemyName.clear();
     player_.damageFlash = 0.0f;
     player_.damageEvents.clear();
+    player_.healEvents.clear();
     player_.status = EntityStatus{};
 }
 
@@ -949,6 +959,8 @@ void Game::retryAfterGameOver()
     enemies_.clearTemporaryState();
     effects_ = EffectSystem{};
     projectiles_ = ProjectileSystem{};
+    magic_ = MagicSystem{};
+    magicFx_ = MagicFxSystem{};
     levels_ = LevelSystem{};
     tileMap_.updateAround(player_.position, 0.0f, balance_, dungeonLayout_);
     normalizeOpenBuriedPlacementNodes();
@@ -988,6 +1000,8 @@ void Game::returnToBaseFromNormalStage(bool stageCleared, bool died)
     ringTrailEffectTimer_ = 0.0f;
     ambientParticleTimer_ = 0.0f;
     projectiles_ = ProjectileSystem{};
+    magic_ = MagicSystem{};
+    magicFx_ = MagicFxSystem{};
     worldDrops_ = WorldDropSystem{};
     worldDrops_.setDropLimit(balance_.worldDropLimitPerStage);
     levels_ = LevelSystem{};
@@ -1101,6 +1115,8 @@ bool Game::restoreDungeonState(bool useLatestWarpPoint)
     retrySnapshot_ = RetrySnapshot{};
     effects_ = EffectSystem{};
     projectiles_ = ProjectileSystem{};
+    magic_ = MagicSystem{};
+    magicFx_ = MagicFxSystem{};
     levels_ = LevelSystem{};
     ringTrailEffectTimer_ = 0.0f;
     ambientParticleTimer_ = 0.0f;
@@ -3148,6 +3164,8 @@ void Game::restoreRetrySnapshot()
     player_.velocity = {};
     player_.throwCooldownRemaining = 0.0f;
     player_.poisonDamageAccumulator = 0.0;
+    player_.bleedDamageAccumulator = 0.0;
+    player_.stunWakeTimer = 0.0f;
     player_.lastDamageSource = DamageSource::Unknown;
     player_.lastDamageEnemyName.clear();
     player_.status = EntityStatus{};
@@ -3173,6 +3191,8 @@ void Game::restoreRetrySnapshot()
     hasBossSpawnPoint_ = retrySnapshot_.hasBossSpawnPoint;
     bossSpawned_ = retrySnapshot_.bossSpawned;
     effects_ = EffectSystem{};
+    magic_ = MagicSystem{};
+    magicFx_ = MagicFxSystem{};
     ringTrailEffectTimer_ = 0.0f;
     ambientParticleTimer_ = 0.0f;
     levels_ = LevelSystem{};

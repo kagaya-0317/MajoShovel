@@ -163,6 +163,7 @@ bool drawEnemyImage(
     drawOptions.outlineColor = options.outlineColor;
     drawOptions.outlinePx = options.outlinePx;
     drawOptions.maskOverlayColor = options.maskOverlayColor;
+    drawOptions.flipY = options.flipY;
     return renderer.drawImageRegion(handle, sourceRect, center, drawSize, drawOptions);
 }
 

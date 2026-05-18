@@ -2,6 +2,132 @@
 
 namespace majo {
 
+namespace {
+
+constexpr float DebugItemPickerPanelMaxWidth = 1200.0f;
+constexpr float DebugItemPickerPanelMaxHeight = 660.0f;
+constexpr float DebugItemPickerPanelMargin = 24.0f;
+constexpr float DebugItemPickerDetailWidth = 332.0f;
+constexpr float DebugItemPickerPaneGap = 18.0f;
+constexpr float DebugItemPickerButtonAreaHeight = 66.0f;
+constexpr float DebugItemPickerCardWidth = 118.0f;
+constexpr float DebugItemPickerCardHeight = 106.0f;
+constexpr float DebugItemPickerCardGap = 10.0f;
+constexpr float DebugItemPickerIconSize = 58.0f;
+
+struct DebugItemPickerLayout {
+    UiRect panel{};
+    UiRect grid{};
+    UiRect detail{};
+    int columns = 1;
+    float rowHeight = DebugItemPickerCardHeight + DebugItemPickerCardGap;
+};
+
+DebugItemPickerLayout makeDebugItemPickerLayout(int screenWidth, int screenHeight)
+{
+    const float width = std::min(
+        DebugItemPickerPanelMaxWidth,
+        std::max(760.0f, static_cast<float>(screenWidth) - DebugItemPickerPanelMargin * 2.0f));
+    const float height = std::min(
+        DebugItemPickerPanelMaxHeight,
+        std::max(520.0f, static_cast<float>(screenHeight) - DebugItemPickerPanelMargin * 1.5f));
+
+    DebugItemPickerLayout layout;
+    layout.panel = {{
+        (static_cast<float>(screenWidth) - width) * 0.5f,
+        (static_cast<float>(screenHeight) - height) * 0.5f,
+    }, {width, height}};
+
+    const UiRect body = uiBodyRect(layout.panel);
+    const float contentHeight = std::max(80.0f, body.size.y - DebugItemPickerButtonAreaHeight);
+    layout.detail = {{
+        body.pos.x + body.size.x - DebugItemPickerDetailWidth,
+        body.pos.y,
+    }, {DebugItemPickerDetailWidth, contentHeight}};
+    layout.grid = {{
+        body.pos.x,
+        body.pos.y,
+    }, {
+        std::max(120.0f, layout.detail.pos.x - body.pos.x - DebugItemPickerPaneGap),
+        contentHeight,
+    }};
+
+    const float pitch = DebugItemPickerCardWidth + DebugItemPickerCardGap;
+    layout.columns = std::max(1, static_cast<int>((layout.grid.size.x + DebugItemPickerCardGap) / pitch));
+    return layout;
+}
+
+UiRect debugItemPickerCardRect(const DebugItemPickerLayout& layout, int index, float scrollOffset)
+{
+    const int columns = std::max(1, layout.columns);
+    const int row = index / columns;
+    const int column = index % columns;
+    return {{
+        layout.grid.pos.x + static_cast<float>(column) * (DebugItemPickerCardWidth + DebugItemPickerCardGap),
+        layout.grid.pos.y + static_cast<float>(row) * layout.rowHeight - scrollOffset,
+    }, {DebugItemPickerCardWidth, DebugItemPickerCardHeight}};
+}
+
+float debugItemPickerMaxScroll(const DebugItemPickerLayout& layout, int itemCount)
+{
+    const int columns = std::max(1, layout.columns);
+    const int rows = itemCount <= 0 ? 0 : (itemCount + columns - 1) / columns;
+    const float contentHeight = rows <= 0
+        ? 0.0f
+        : static_cast<float>(rows) * DebugItemPickerCardHeight +
+            static_cast<float>(rows - 1) * DebugItemPickerCardGap;
+    return std::max(0.0f, contentHeight - layout.grid.size.y);
+}
+
+void keepDebugItemPickerSelectionVisible(
+    const DebugItemPickerLayout& layout,
+    int selectedIndex,
+    int itemCount,
+    float& scrollOffset)
+{
+    if (selectedIndex < 0 || selectedIndex >= itemCount) {
+        scrollOffset = clamp(scrollOffset, 0.0f, debugItemPickerMaxScroll(layout, itemCount));
+        return;
+    }
+
+    const UiRect rect = debugItemPickerCardRect(layout, selectedIndex, scrollOffset);
+    const float top = layout.grid.pos.y;
+    const float bottom = layout.grid.pos.y + layout.grid.size.y;
+    if (rect.pos.y < top) {
+        scrollOffset -= top - rect.pos.y;
+    } else if (rect.pos.y + rect.size.y > bottom) {
+        scrollOffset += rect.pos.y + rect.size.y - bottom;
+    }
+    scrollOffset = clamp(scrollOffset, 0.0f, debugItemPickerMaxScroll(layout, itemCount));
+}
+
+UiRect debugItemPickerAddButtonRect(UiRect panel)
+{
+    return uiBottomRightButtonRect(panel, {180.0f, ui::ButtonHeight});
+}
+
+UiRect debugItemPickerCloseButtonRect(UiRect panel)
+{
+    return uiBottomLeftButtonRect(panel, {150.0f, ui::ButtonHeight});
+}
+
+std::string debugItemPickerDisplayName(const ItemData& item)
+{
+    return item.name.empty() ? item.id : item.name;
+}
+
+std::string debugItemPickerSubtitle(const ItemData& item)
+{
+    std::string text = item.category.empty() ? std::string("未分類") : item.category;
+    if (item.rarity > 0) {
+        text += " / R";
+        text += std::to_string(item.rarity);
+    }
+    return text;
+}
+
+} // namespace
+
 BaseEditRect Game::baseFacilityRectFor(BaseArea area, std::string_view facilityId, BaseEditRect fallback) const
 {
     const auto& table = area == BaseArea::Outdoor ? baseFacilityRectsOutdoor_ : baseFacilityRectsHome_;
@@ -517,7 +643,12 @@ void Game::renderObjectImageScaleEditScreen(Renderer& renderer) const
             if (object != nullptr) {
                 ObjectImageDrawOptions options;
                 options.allowUpscale = true;
-                drewImage = drawObjectImage(renderer, *object, previewCenter, {ObjectImageScalePreviewSize, ObjectImageScalePreviewSize}, options);
+                drewImage = drawObjectImage(
+                    renderer,
+                    *object,
+                    previewCenter,
+                    {ObjectImageScalePreviewSize, ObjectImageScalePreviewSize},
+                    objectGroundImageOptions(*object, options));
                 name = !object->name.empty() ? object->name : key;
                 subtitle = key;
             } else {
@@ -544,6 +675,280 @@ void Game::renderObjectImageScaleEditScreen(Renderer& renderer) const
     renderer.drawText({22.0f, static_cast<float>(camera_.height()) - 40.0f}, dirty, objectImageScaleDirty_ ? Color{255, 230, 150, 255} : Color{170, 220, 170, 255}, 2);
     if (!objectImageScaleStatus_.empty()) {
         renderer.drawText({220.0f, static_cast<float>(camera_.height()) - 40.0f}, objectImageScaleStatus_, {198, 206, 222, 255}, 2);
+    }
+}
+
+void Game::rebuildDebugItemPickerList()
+{
+    std::string previousSelection;
+    if (debugItemPickerSelectedIndex_ >= 0 &&
+        debugItemPickerSelectedIndex_ < static_cast<int>(debugItemPickerObjectIds_.size())) {
+        previousSelection = debugItemPickerObjectIds_[static_cast<std::size_t>(debugItemPickerSelectedIndex_)];
+    }
+
+    debugItemPickerObjectIds_.clear();
+    debugItemPickerObjectIds_.reserve(objectCatalog_.registry.size());
+    for (const ItemData& item : objectCatalog_.registry.items()) {
+        if (!item.id.empty()) {
+            debugItemPickerObjectIds_.push_back(item.id);
+        }
+    }
+
+    std::sort(debugItemPickerObjectIds_.begin(), debugItemPickerObjectIds_.end(), [this](const std::string& left, const std::string& right) {
+        const ItemData* lhs = objectCatalog_.registry.findById(left);
+        const ItemData* rhs = objectCatalog_.registry.findById(right);
+        if (lhs == nullptr || rhs == nullptr) {
+            return left < right;
+        }
+        if (lhs->category != rhs->category) {
+            return lhs->category < rhs->category;
+        }
+        if (lhs->rarity != rhs->rarity) {
+            return lhs->rarity < rhs->rarity;
+        }
+        const std::string lhsName = debugItemPickerDisplayName(*lhs);
+        const std::string rhsName = debugItemPickerDisplayName(*rhs);
+        if (lhsName != rhsName) {
+            return lhsName < rhsName;
+        }
+        return left < right;
+    });
+
+    debugItemPickerSelectedIndex_ = -1;
+    if (!previousSelection.empty()) {
+        const auto it = std::find(debugItemPickerObjectIds_.begin(), debugItemPickerObjectIds_.end(), previousSelection);
+        if (it != debugItemPickerObjectIds_.end()) {
+            debugItemPickerSelectedIndex_ = static_cast<int>(std::distance(debugItemPickerObjectIds_.begin(), it));
+        }
+    }
+    if (debugItemPickerSelectedIndex_ < 0 && !debugItemPickerObjectIds_.empty()) {
+        debugItemPickerSelectedIndex_ = 0;
+    }
+}
+
+void Game::openDebugItemPicker()
+{
+    if (mode_ == ScreenMode::OpeningKamishibai || mode_ == ScreenMode::Title || mode_ == ScreenMode::WorldLoading) {
+        logWarning("Debug: item picker requires an active game screen.");
+        return;
+    }
+    if (mode_ == ScreenMode::ObjectImageScaleEdit) {
+        exitObjectImageScaleEditMode();
+    }
+
+    rebuildDebugItemPickerList();
+    inventory_.cancelGrab();
+    cancelRingGrab();
+    debugItemPickerScrollOffset_ = std::max(0.0f, debugItemPickerScrollOffset_);
+    debugItemPickerStatus_ = debugItemPickerObjectIds_.empty()
+        ? "Objects DBにアイテムがありません"
+        : "アイテムを選んで追加できます";
+    debugItemPickerCancelState_ = {};
+    debugItemPickerActive_ = true;
+}
+
+void Game::closeDebugItemPicker()
+{
+    debugItemPickerActive_ = false;
+    debugItemPickerCancelState_ = {};
+}
+
+void Game::addSelectedDebugItem()
+{
+    if (debugItemPickerSelectedIndex_ < 0 ||
+        debugItemPickerSelectedIndex_ >= static_cast<int>(debugItemPickerObjectIds_.size())) {
+        debugItemPickerStatus_ = "追加するアイテムが選択されていません";
+        return;
+    }
+
+    const std::string& objectId = debugItemPickerObjectIds_[static_cast<std::size_t>(debugItemPickerSelectedIndex_)];
+    const ItemData* item = objectCatalog_.registry.findById(objectId);
+    if (item == nullptr) {
+        debugItemPickerStatus_ = "Objects DBに見つかりません: " + objectId;
+        return;
+    }
+
+    const std::string itemName = debugItemPickerDisplayName(*item);
+    if (!inventory_.addObjectItem(objectCatalog_, objectId)) {
+        debugItemPickerStatus_ = "追加できません: " + itemName;
+        reloadNotice_ = debugItemPickerStatus_;
+        reloadNoticeTimer_ = 1.4f;
+        logWarning("Debug: failed to add object_id=\"" + objectId + "\".");
+        return;
+    }
+
+    debugItemPickerStatus_ = "追加: " + itemName;
+    reloadNotice_ = "Debug add: " + inlineItemTag(objectId) + " " + itemName;
+    reloadNoticeTimer_ = 1.6f;
+    syncEncyclopediaFromInventoryAndRing();
+    logInfo("Debug: added object_id=\"" + objectId + "\".");
+}
+
+void Game::updateDebugItemPicker(const Input& input, UiContext& ui)
+{
+    if (!debugItemPickerActive_) {
+        return;
+    }
+
+    const DebugItemPickerLayout layout = makeDebugItemPickerLayout(camera_.width(), camera_.height());
+    const int itemCount = static_cast<int>(debugItemPickerObjectIds_.size());
+    if (itemCount > 0) {
+        debugItemPickerSelectedIndex_ = std::clamp(debugItemPickerSelectedIndex_, 0, itemCount - 1);
+    } else {
+        debugItemPickerSelectedIndex_ = -1;
+    }
+
+    const float maxScroll = debugItemPickerMaxScroll(layout, itemCount);
+    debugItemPickerScrollOffset_ = clamp(debugItemPickerScrollOffset_, 0.0f, maxScroll);
+
+    if (uiCancelRequested(debugItemPickerCancelState_, input, ui, layout.panel) ||
+        ui.pressed(debugItemPickerCloseButtonRect(layout.panel))) {
+        closeDebugItemPicker();
+        return;
+    }
+
+    if (itemCount > 0) {
+        const int moveX =
+            (input.pressed(InputAction::MoveRight) ? 1 : 0) -
+            (input.pressed(InputAction::MoveLeft) ? 1 : 0);
+        const int moveY =
+            (input.pressed(InputAction::MoveDown) ? 1 : 0) -
+            (input.pressed(InputAction::MoveUp) ? 1 : 0);
+        const int moveDelta = moveX + moveY * std::max(1, layout.columns);
+        if (moveDelta != 0) {
+            debugItemPickerSelectedIndex_ = std::clamp(debugItemPickerSelectedIndex_ + moveDelta, 0, itemCount - 1);
+            keepDebugItemPickerSelectionVisible(layout, debugItemPickerSelectedIndex_, itemCount, debugItemPickerScrollOffset_);
+        }
+    }
+
+    const int wheel = input.shortcutCursorDelta();
+    if (wheel != 0) {
+        debugItemPickerScrollOffset_ = clamp(
+            debugItemPickerScrollOffset_ + static_cast<float>(wheel) * 48.0f,
+            0.0f,
+            maxScroll);
+    }
+
+    for (int i = 0; i < itemCount; ++i) {
+        const UiRect rect = debugItemPickerCardRect(layout, i, debugItemPickerScrollOffset_);
+        if (rect.pos.y + rect.size.y < layout.grid.pos.y ||
+            rect.pos.y > layout.grid.pos.y + layout.grid.size.y) {
+            continue;
+        }
+        if (ui.pressed(rect)) {
+            debugItemPickerSelectedIndex_ = i;
+            keepDebugItemPickerSelectionVisible(layout, debugItemPickerSelectedIndex_, itemCount, debugItemPickerScrollOffset_);
+            break;
+        }
+    }
+
+    if (ui.pressed(debugItemPickerAddButtonRect(layout.panel)) || input.confirmPressed() || input.useItemPressed()) {
+        addSelectedDebugItem();
+    }
+
+    ui.block({{0.0f, 0.0f}, {static_cast<float>(camera_.width()), static_cast<float>(camera_.height())}});
+}
+
+void Game::renderDebugItemPicker(Renderer& renderer) const
+{
+    if (!debugItemPickerActive_) {
+        return;
+    }
+
+    renderer.setScreenSpace();
+    const DebugItemPickerLayout layout = makeDebugItemPickerLayout(camera_.width(), camera_.height());
+    const int itemCount = static_cast<int>(debugItemPickerObjectIds_.size());
+    const float scrollOffset = clamp(
+        debugItemPickerScrollOffset_,
+        0.0f,
+        debugItemPickerMaxScroll(layout, itemCount));
+
+    drawUiModalBackdrop(
+        renderer,
+        {{0.0f, 0.0f}, {static_cast<float>(camera_.width()), static_cast<float>(camera_.height())}},
+        {0, 0, 0, 142});
+
+    UiCancelControlScope cancelScope(debugItemPickerCancelState_);
+    UiWindowScope pickerWindow(
+        renderer,
+        "debug.item_picker",
+        layout.panel,
+        "デバッグ: 任意アイテム追加",
+        "クリック/方向キー 選択  F/Enter 追加  Esc/右クリック 戻る",
+        UiWindowOptions{true, true});
+
+    drawUiSubPanel(renderer, layout.grid);
+    drawUiSubPanel(renderer, layout.detail);
+
+    if (itemCount <= 0) {
+        renderer.drawText(layout.grid.pos + Vec2{22.0f, 24.0f}, "Objects DBにアイテムがありません", ui::TextMuted, 2);
+    }
+
+    for (int i = 0; i < itemCount; ++i) {
+        const UiRect rect = debugItemPickerCardRect(layout, i, scrollOffset);
+        if (rect.pos.y + rect.size.y < layout.grid.pos.y ||
+            rect.pos.y > layout.grid.pos.y + layout.grid.size.y) {
+            continue;
+        }
+
+        const std::string& objectId = debugItemPickerObjectIds_[static_cast<std::size_t>(i)];
+        const ItemData* item = objectCatalog_.registry.findById(objectId);
+        const bool selected = i == debugItemPickerSelectedIndex_;
+        renderer.fillRect(rect.pos, rect.size, selected ? Color{54, 44, 72, 232} : Color{18, 20, 30, 218});
+        renderer.drawRect(rect.pos, rect.size, selected ? Color{255, 230, 150, 255} : Color{92, 100, 126, 210});
+
+        if (item == nullptr) {
+            renderer.drawText(rect.pos + Vec2{8.0f, 36.0f}, "missing", ui::TextDisabled, 2);
+            continue;
+        }
+
+        InventoryUiEntryView entry{};
+        entry.item = item;
+        entry.stackCount = 1;
+        InventoryUiSlotStyle style;
+        style.selected = selected;
+        style.imageMaxSize = 46.0f;
+        style.showProtectionLabel = false;
+        const UiRect iconRect{{
+            rect.pos.x + (rect.size.x - DebugItemPickerIconSize) * 0.5f,
+            rect.pos.y + 7.0f,
+        }, {DebugItemPickerIconSize, DebugItemPickerIconSize}};
+        drawInventoryUiSlot(renderer, iconRect, entry, style);
+
+        const std::string name = fittedSingleLineText(renderer, debugItemPickerDisplayName(*item), rect.size.x - 12.0f, 2);
+        renderer.drawText(rect.pos + Vec2{6.0f, 68.0f}, name, ui::Text, 2);
+        const std::string subtitle = fittedSingleLineText(renderer, debugItemPickerSubtitle(*item), rect.size.x - 12.0f, 1);
+        renderer.drawText(rect.pos + Vec2{6.0f, 91.0f}, subtitle, ui::TextMuted, 1);
+    }
+
+    InventoryUiEntryView detailEntry{};
+    std::vector<InventoryUiDetailExtraLine> detailLines;
+    if (debugItemPickerSelectedIndex_ >= 0 &&
+        debugItemPickerSelectedIndex_ < itemCount) {
+        const std::string& objectId = debugItemPickerObjectIds_[static_cast<std::size_t>(debugItemPickerSelectedIndex_)];
+        if (const ItemData* item = objectCatalog_.registry.findById(objectId)) {
+            detailEntry.item = item;
+            detailEntry.stackCount = 1;
+            detailLines.push_back({"ID", item->id, ui::TextMuted});
+            if (!item->category.empty()) {
+                detailLines.push_back({"カテゴリ", item->category, ui::Text});
+            }
+        }
+    }
+    drawInventoryUiDetailPanel(renderer, layout.detail, detailEntry, objectCatalog_, encyclopedia_, false, detailLines);
+
+    drawUiButton(renderer, debugItemPickerCloseButtonRect(layout.panel), "閉じる", false, uiCancelButtonStyle());
+    drawUiButton(renderer, debugItemPickerAddButtonRect(layout.panel), "追加", detailEntry.item != nullptr, uiActionButtonStyle());
+    if (!debugItemPickerStatus_.empty()) {
+        const UiRect closeRect = debugItemPickerCloseButtonRect(layout.panel);
+        const UiRect addRect = debugItemPickerAddButtonRect(layout.panel);
+        const float statusX = closeRect.pos.x + closeRect.size.x + 22.0f;
+        const float statusW = std::max(40.0f, addRect.pos.x - statusX - 18.0f);
+        renderer.drawText(
+            {statusX, closeRect.pos.y + 17.0f},
+            fittedSingleLineText(renderer, debugItemPickerStatus_, statusW, 2),
+            {255, 230, 150, 255},
+            2);
     }
 }
 
@@ -575,6 +980,8 @@ void Game::enterEnemyTestMode()
     effects_ = EffectSystem{};
     enemies_ = EnemySystem{};
     projectiles_ = ProjectileSystem{};
+    magic_ = MagicSystem{};
+    magicFx_ = MagicFxSystem{};
     worldDrops_ = WorldDropSystem{};
     worldDrops_.setDropLimit(balance_.worldDropLimitPerStage);
     runStats_ = RunStats{};
@@ -614,6 +1021,8 @@ void Game::exitEnemyTestToBase()
     enemyTestStatus_.clear();
     enemies_ = EnemySystem{};
     projectiles_ = ProjectileSystem{};
+    magic_ = MagicSystem{};
+    magicFx_ = MagicFxSystem{};
     worldDrops_ = WorldDropSystem{};
     worldDrops_.setDropLimit(balance_.worldDropLimitPerStage);
     clearTemporaryPlayerState(true);
@@ -642,6 +1051,8 @@ void Game::clearEnemyTestArena()
     enemies_ = EnemySystem{};
     projectiles_ = ProjectileSystem{};
     effects_ = EffectSystem{};
+    magic_ = MagicSystem{};
+    magicFx_ = MagicFxSystem{};
     enemyTestStatus_ = "敵と弾を消去しました";
 }
 
@@ -796,6 +1207,9 @@ void Game::enterBaseEditMode()
     baseMiningStartChoiceActive_ = false;
     baseWarpPointSelectActive_ = false;
     baseStorageActive_ = false;
+    baseStorageMode_ = StorageUiMode::Closed;
+    baseStorageQuantityDialog_ = {};
+    baseStorageQuantityPending_ = {};
     baseSellActive_ = false;
     baseMerchantMode_ = MerchantUiMode::Closed;
     baseMerchantSellSource_ = 0;
@@ -1299,6 +1713,47 @@ bool Game::handleObjectImageScaleCommand(std::string_view normalized)
     return false;
 }
 
+bool Game::handleDebugItemPickerCommand(std::string_view normalized)
+{
+    const bool toggle = normalized == "game items picker" ||
+        normalized == "game item picker" ||
+        normalized == "game item-picker toggle" ||
+        normalized == "game items-picker toggle";
+    const bool open = normalized == "game items picker on" ||
+        normalized == "game item-picker on" ||
+        normalized == "game items add-select";
+    const bool close = normalized == "game items picker off" ||
+        normalized == "game item-picker off" ||
+        normalized == "game item-picker close";
+
+    if (toggle) {
+        if (debugItemPickerActive_) {
+            closeDebugItemPicker();
+            logInfo("Debug: item picker closed.");
+        } else {
+            openDebugItemPicker();
+            if (debugItemPickerActive_) {
+                logInfo("Debug: item picker opened.");
+            }
+        }
+        return true;
+    }
+    if (open) {
+        openDebugItemPicker();
+        if (debugItemPickerActive_) {
+            logInfo("Debug: item picker opened.");
+        }
+        return true;
+    }
+    if (close) {
+        closeDebugItemPicker();
+        logInfo("Debug: item picker closed.");
+        return true;
+    }
+
+    return false;
+}
+
 bool Game::executeDebugCommand(std::string_view command)
 {
     const std::string normalized = lowerAscii(trimAscii(std::string(command)));
@@ -1307,6 +1762,9 @@ bool Game::executeDebugCommand(std::string_view command)
         return true;
     }
     if (handleObjectImageScaleCommand(normalized)) {
+        return true;
+    }
+    if (handleDebugItemPickerCommand(normalized)) {
         return true;
     }
 
@@ -1335,6 +1793,7 @@ bool Game::executeDebugCommand(std::string_view command)
         collectionRangeUpgradeLevel_ = 0;
         levelRingRadiusPoints_ = 0;
         levelRingSpeedPoints_ = 0;
+        levelRingWeightLimitPoints_ = 0;
         workshopInitialRadiusLevel_ = 0;
         workshopInitialSpeedLevel_ = 0;
         workshopShiftDistanceLevel_ = 0;
@@ -1343,6 +1802,7 @@ bool Game::executeDebugCommand(std::string_view command)
         merchantStockVersion_ = 0;
         merchantStock_.clear();
         highValueBuyCategory_.clear();
+        highValueBuyObjectIds_.clear();
         warehouseCapacityLevel_ = 0;
         processingUnlockLevel_ = 0;
         ringWorkshopUnlocked_ = false;
@@ -1531,6 +1991,39 @@ bool Game::executeDebugCommand(std::string_view command)
         player_.status = EntityStatus{};
         player_.poisonDamageAccumulator = 0.0;
         logInfo("Debug: player HP set to 1.");
+        return true;
+    }
+
+    if (normalized == "game level-up" || normalized == "game levelup") {
+        if (basePresentationActive()) {
+            if (levels_.isChoosing()) {
+                levels_ = LevelSystem{};
+            }
+            levelUpResultDialog_ = {};
+            logWarning("Debug: level-up requires an active dungeon run.");
+            return true;
+        }
+        if (levels_.isChoosing() || levelUpResultDialog_.open) {
+            logWarning("Debug: level-up choice is already active.");
+            return true;
+        }
+        const bool dungeonRunMode =
+            mode_ == ScreenMode::Playing ||
+            (pauseReturnMode_ == ScreenMode::Playing &&
+                (mode_ == ScreenMode::PauseMenu || mode_ == ScreenMode::Inventory || mode_ == ScreenMode::Ring));
+        if (!dungeonRunMode) {
+            logWarning("Debug: level-up requires an active dungeon run.");
+            return true;
+        }
+
+        player_.xpToNext = std::max(1, player_.xpToNext);
+        const int xpNeeded = std::max(0, player_.xpToNext - player_.xp);
+        levels_.addXp(player_, xpNeeded, balance_);
+        inventory_.setOpen(false);
+        inventoryReturnToPause_ = false;
+        levelUpResultDialog_ = {};
+        mode_ = ScreenMode::LevelUp;
+        logInfo("Debug: forced level up to Lv " + std::to_string(player_.level) + ".");
         return true;
     }
 

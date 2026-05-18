@@ -140,7 +140,9 @@ struct Enemy {
     float spawnDuration = 0.0f;
     Vec2 knockbackVelocity{};
     float knockbackTimer = 0.0f;
+    float stunWakeTimer = 0.0f;
     double poisonDamageAccumulator = 0.0;
+    double bleedDamageAccumulator = 0.0;
     EntityStatus status;
 };
 

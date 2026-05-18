@@ -20,6 +20,7 @@ struct TerrainHitTile {
     Color color{105, 68, 37, 255};
 };
 class EncyclopediaSystem;
+class MagicSystem;
 
 class DiggingSystem {
 public:
@@ -30,6 +31,7 @@ public:
         float totalTime,
         const ObjectCatalog& objectCatalog,
         const EffectDispatcher& effectDispatcher,
+        MagicSystem* magic = nullptr,
         std::vector<EffectDiscoveryEvent>* discoveryEvents = nullptr,
         const EncyclopediaSystem* encyclopedia = nullptr);
     const std::vector<Vec2>& openedTiles() const { return openedTiles_; }

@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 #include "data/ObjectCatalog.hpp"
 
@@ -65,7 +65,9 @@ public:
     [[nodiscard]] double flatBonusFor(ModifierStat stat) const;
     [[nodiscard]] double applyModifiers(ModifierStat stat, double baseValue) const;
     [[nodiscard]] double movementMultiplierFromStates() const;
+    [[nodiscard]] double sizeMultiplierFromStates() const;
     [[nodiscard]] double poisonDamagePerSecond() const;
+    [[nodiscard]] double bleedDamagePerSecond() const;
     [[nodiscard]] const std::vector<EntityModifier>& modifiers() const;
 
 private:

@@ -1,4 +1,4 @@
-#include "game/EntityStatus.hpp"
+﻿#include "game/EntityStatus.hpp"
 
 #include <algorithm>
 #include <array>
@@ -246,11 +246,34 @@ double EntityStatus::movementMultiplierFromStates() const
     return result;
 }
 
+double EntityStatus::sizeMultiplierFromStates() const
+{
+    double result = 1.0;
+    for (const EntityState& state : states_) {
+        if (state.stateId == "status_giant") {
+            const double strength = state.value > 0.0 ? state.value : 1.0;
+            result = std::max(result, std::clamp(1.0 + strength * 0.5, 1.0, 2.0));
+        }
+    }
+    return result;
+}
+
 double EntityStatus::poisonDamagePerSecond() const
 {
     double result = 0.0;
     for (const EntityState& state : states_) {
         if (state.stateId == "status_poison") {
+            result += state.value > 0.0 ? state.value : 1.0;
+        }
+    }
+    return result;
+}
+
+double EntityStatus::bleedDamagePerSecond() const
+{
+    double result = 0.0;
+    for (const EntityState& state : states_) {
+        if (state.stateId == "status_bleed") {
             result += state.value > 0.0 ? state.value : 1.0;
         }
     }

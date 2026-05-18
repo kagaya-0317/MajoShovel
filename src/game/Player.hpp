@@ -19,6 +19,7 @@ class TileMap;
 enum class DamageSource {
     Unknown,
     Poison,
+    Bleed,
     SlimeAttack,
     SlimeContact,
     Projectile,
@@ -29,6 +30,11 @@ std::string_view deathCauseText(DamageSource source);
 int playerSpriteFrameIndex(float animationTime, bool walking);
 
 struct PlayerDamageEvent {
+    int amount = 0;
+    Vec2 position{};
+};
+
+struct PlayerHealEvent {
     int amount = 0;
     Vec2 position{};
 };
@@ -48,13 +54,18 @@ struct Player {
     float spriteAnimationTime = 0.0f;
     bool spriteWalking = false;
     float damageFlash = 0.0f;
+    float stunWakeTimer = 0.0f;
     double poisonDamageAccumulator = 0.0;
+    double bleedDamageAccumulator = 0.0;
     DamageSource lastDamageSource = DamageSource::Unknown;
     std::string lastDamageEnemyName;
     std::vector<PlayerDamageEvent> damageEvents;
+    std::vector<PlayerHealEvent> healEvents;
     EntityStatus status;
 
     void applyDamage(int amount, DamageSource source);
+    int heal(int amount);
+    [[nodiscard]] float effectiveRadius(float baseRadius) const;
     void update(
         const Input& input,
         const Camera& camera,

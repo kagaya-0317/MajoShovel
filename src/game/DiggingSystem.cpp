@@ -53,38 +53,6 @@ void recordCapturedReward(SpellRingItem& item, float totalTime, Vec2 position, s
     rewardDropRequests.push_back(position);
 }
 
-bool damageDigContactTile(
-    TileMap& map,
-    SpellRingItem& item,
-    int tileX,
-    int tileY,
-    std::vector<TerrainHitTile>& hitTiles,
-    std::vector<Vec2>& openedTiles,
-    std::vector<DugTile>& dugTiles)
-{
-    if (item.digPower <= 0 || !map.isTileSolid(tileX, tileY)) {
-        return false;
-    }
-
-    const int damage = adjustedTerrainDigDamage(
-        item.digPower,
-        map.terrainAttributeAtTile(tileX, tileY),
-        TerrainDigModifier::Normal);
-    if (damage <= 0) {
-        return false;
-    }
-
-    const Color tileColor = map.tileColorAtTile(tileX, tileY);
-    hitTiles.push_back({map.tileCenter(tileX, tileY), tileColor});
-    Vec2 openedTileCenter{};
-    TileType openedTileType = TileType::Dirt;
-    if (map.damageTile(tileX, tileY, damage, openedTileCenter, &openedTileType)) {
-        openedTiles.push_back(openedTileCenter);
-        dugTiles.push_back({openedTileCenter, openedTileType, tileColor});
-    }
-    return true;
-}
-
 }
 
 void DiggingSystem::update(
@@ -94,6 +62,7 @@ void DiggingSystem::update(
     float totalTime,
     const ObjectCatalog& objectCatalog,
     const EffectDispatcher& effectDispatcher,
+    MagicSystem* magic,
     std::vector<EffectDiscoveryEvent>* discoveryEvents,
     const EncyclopediaSystem* encyclopedia)
 {
@@ -111,7 +80,7 @@ void DiggingSystem::update(
         if (item.broken()) {
             continue;
         }
-        if (item.type != SpellRingItemType::Shovel && item.digPower <= 0 && item.objectId.empty()) {
+        if (item.objectId.empty()) {
             continue;
         }
         Vec2 digPosition = item.worldPosition;
@@ -146,6 +115,7 @@ void DiggingSystem::update(
                 context.orbit = &spellRing;
                 context.orbitItem = &item;
                 context.tileMap = &map;
+                context.magic = magic;
                 context.terrainHitTiles = &hitTiles_;
                 context.terrainOpenedTiles = &openedTiles_;
                 context.terrainDugTiles = &dugTiles_;
@@ -158,19 +128,6 @@ void DiggingSystem::update(
             }
         }
 
-        if (hitTiles_.size() == hitCountBefore && item.digPower > 0) {
-            damageDigContactTile(map, item, tileX, tileY, hitTiles_, openedTiles_, dugTiles_);
-            if (item.hasCapturedBehavior("dig_contact")) {
-                const Vec2 outward = normalize(item.worldPosition - spellRing.center());
-                const float extraProbeDistance = static_cast<float>(std::max(8.0, item.capturedBehaviorParamDouble("dig_contact", "extraProbeDistance", 12.0)));
-                const Vec2 extra = item.worldPosition + outward * (item.hitRadius + extraProbeDistance);
-                const int extraTileX = map.worldToTile(extra.x);
-                const int extraTileY = map.worldToTile(extra.y);
-                if (extraTileX != tileX || extraTileY != tileY) {
-                    damageDigContactTile(map, item, extraTileX, extraTileY, hitTiles_, openedTiles_, dugTiles_);
-                }
-            }
-        }
         if (hitTiles_.size() != hitCountBefore && discoveryEvents != nullptr && !item.objectId.empty()) {
             const auto objectIt = objectCatalog.objectsById.find(item.objectId);
             if (objectIt != objectCatalog.objectsById.end()) {

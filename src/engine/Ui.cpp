@@ -3,6 +3,7 @@
 #include <SDL3/SDL.h>
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
 #include <string>
 #include <unordered_map>
 #include <utility>
@@ -683,6 +684,11 @@ void drawUiWindow(Renderer& renderer, UiRect panel, std::string_view title, std:
     drawUiWindowChrome(renderer, panel, title, helpText, false);
 }
 
+void drawUiModalBackdrop(Renderer& renderer, UiRect bounds, Color color)
+{
+    renderer.fillRect(bounds.pos, bounds.size, color);
+}
+
 void drawUiCancelButton(Renderer& renderer, UiRect panel)
 {
     const UiRect rect = uiCancelButtonRect(panel);
@@ -945,6 +951,26 @@ void drawUiBodyMessageBelow(Renderer& renderer, UiRect anchor, std::string_view 
     renderer.drawText(pos, message, color, 2);
 }
 
+void drawUiSystemMessage(Renderer& renderer, std::string_view message, Vec2 pos, const UiSystemMessageStyle& style)
+{
+    if (message.empty()) {
+        return;
+    }
+
+    const int textScale = std::max(1, style.textScale);
+    const Vec2 textSize = style.maxWidth > 0.0f
+        ? renderer.measureWrappedText(message, style.maxWidth, textScale)
+        : renderer.measureText(message, textScale);
+    if (style.fill.a > 0) {
+        renderer.fillRect(pos - style.padding, textSize + style.padding * 2.0f, style.fill);
+    }
+    if (style.maxWidth > 0.0f) {
+        renderer.drawWrappedText(pos, message, style.maxWidth, style.text, textScale);
+    } else {
+        renderer.drawText(pos, message, style.text, textScale);
+    }
+}
+
 float drawUiDetailHeader(Renderer& renderer, UiRect panel, std::string_view text)
 {
     constexpr float MinHeaderHeight = 50.0f;
@@ -978,14 +1004,137 @@ void drawUiDetailLine(Renderer& renderer, UiRect panel, float& y, std::string_vi
 
 UiRect uiResultDialogOkButtonRect(UiRect panel)
 {
-    return uiBottomCenterButtonRect(panel, {180.0f, ui::ButtonHeight});
+    UiRect rect = uiBottomCenterButtonRect(panel, {180.0f, ui::ButtonHeight});
+    rect.pos.y += 30.0f;
+    return rect;
+}
+
+UiRect uiResultDialogTextRect(UiRect panel)
+{
+    const UiRect ok = uiResultDialogOkButtonRect(panel);
+    const float top = panel.pos.y + 72.0f;
+    return {{
+        panel.pos.x + ui::PanelPadding,
+        top,
+    }, {
+        panel.size.x - ui::PanelPadding * 2.0f,
+        std::max(0.0f, ok.pos.y - top - 28.0f),
+    }};
+}
+
+UiResultDialogLine uiResultDialogPlainLine(std::string text)
+{
+    UiResultDialogLine line;
+    line.segments.push_back({std::move(text), ui::Text});
+    return line;
+}
+
+std::vector<UiResultDialogLine> uiResultDialogLinesFromText(std::vector<std::string> lines)
+{
+    std::vector<UiResultDialogLine> result;
+    result.reserve(lines.size());
+    for (std::string& line : lines) {
+        result.push_back(uiResultDialogPlainLine(std::move(line)));
+    }
+    return result;
+}
+
+Vec2 measureUiResultDialogLine(Renderer& renderer, const UiResultDialogLine& line, int scale)
+{
+    Vec2 size{};
+    for (const UiResultDialogSegment& segment : line.segments) {
+        const Vec2 segmentSize = renderer.measureText(segment.text, scale);
+        size.x += segmentSize.x;
+        size.y = std::max(size.y, segmentSize.y);
+    }
+    if (line.segments.empty()) {
+        size.y = renderer.measureText(" ", scale).y;
+    }
+    return size;
+}
+
+void drawCenteredUiResultDialogLine(Renderer& renderer, UiRect rect, float y, const UiResultDialogLine& line, int scale)
+{
+    const Vec2 size = measureUiResultDialogLine(renderer, line, scale);
+    Vec2 pos{rect.pos.x + (rect.size.x - size.x) * 0.5f, y};
+    for (const UiResultDialogSegment& segment : line.segments) {
+        renderer.drawText(pos, segment.text, segment.color, scale);
+        pos.x += renderer.measureText(segment.text, scale).x;
+    }
+}
+
+UiRect uiQuantityValueRect(UiRect panel)
+{
+    const UiRect body = uiBodyRect(panel);
+    return {{body.pos.x + 28.0f, body.pos.y + 10.0f}, {body.size.x - 56.0f, 132.0f}};
+}
+
+UiRect uiQuantityDownButtonRect(UiRect panel)
+{
+    const UiRect value = uiQuantityValueRect(panel);
+    constexpr Vec2 ButtonSize{72.0f, 30.0f};
+    return {
+        {
+            value.pos.x + (value.size.x - ButtonSize.x) * 0.5f,
+            value.pos.y + value.size.y - ButtonSize.y - 10.0f,
+        },
+        ButtonSize,
+    };
+}
+
+UiRect uiQuantityUpButtonRect(UiRect panel)
+{
+    const UiRect value = uiQuantityValueRect(panel);
+    constexpr Vec2 ButtonSize{72.0f, 30.0f};
+    return {
+        {value.pos.x + (value.size.x - ButtonSize.x) * 0.5f, value.pos.y + 10.0f},
+        ButtonSize,
+    };
+}
+
+UiRect uiQuantityConfirmButtonRect(UiRect panel)
+{
+    const UiRect body = uiBodyRect(panel);
+    constexpr Vec2 Size{150.0f, ui::ButtonHeight};
+    return {{
+        body.pos.x + (body.size.x - Size.x) * 0.5f,
+        panel.pos.y + panel.size.y - ui::FooterMaxHeight - Size.y - 8.0f,
+    }, Size};
+}
+
+UiButtonStyle uiQuantityStepButtonStyle(bool enabled)
+{
+    UiButtonStyle style;
+    if (enabled) {
+        return style;
+    }
+    style.fill = alphaScaledColor(style.fill, 0.45f);
+    style.fillHot = alphaScaledColor(style.fillHot, 0.45f);
+    style.outline = alphaScaledColor(style.outline, 0.38f);
+    style.outlineHot = alphaScaledColor(style.outlineHot, 0.38f);
+    style.text = alphaScaledColor(style.text, 0.42f);
+    return style;
+}
+
+void closeUiQuantityDialog(UiQuantityDialogState& state)
+{
+    state.open = false;
+    state.title.clear();
+    state.message.clear();
+    state.unitLabel.clear();
 }
 
 void openUiResultDialog(UiResultDialogState& state, std::string title, std::vector<std::string> lines)
 {
+    openUiResultDialog(state, std::move(title), uiResultDialogLinesFromText(std::move(lines)));
+}
+
+void openUiResultDialog(UiResultDialogState& state, std::string title, std::vector<UiResultDialogLine> lines)
+{
     state.open = true;
-    state.title = std::move(title);
+    state.title.clear();
     state.lines = std::move(lines);
+    (void)title;
 }
 
 bool updateUiResultDialog(UiResultDialogState& state, UiContext& ui, const Input& input, UiRect panel)
@@ -1008,15 +1157,123 @@ void drawUiResultDialog(Renderer& renderer, const UiResultDialogState& state, Ui
         return;
     }
 
-    UiWindowScope window(renderer, id, panel, state.title, "F/Enter OK", UiWindowOptions{true, false});
-    const UiRect body = uiBodyRect(panel);
+    UiWindowScope window(renderer, id, panel, "", "F/Enter OK", UiWindowOptions{true, false});
+    const UiRect body = uiResultDialogTextRect(panel);
     float y = body.pos.y;
-    const float textWidth = body.size.x;
-    for (const std::string& line : state.lines) {
-        renderer.drawWrappedText({body.pos.x, y}, line, textWidth, ui::Text, 2);
-        y += renderer.measureWrappedText(line, textWidth, 2).y + 10.0f;
+    constexpr int TextScale = 2;
+    for (const UiResultDialogLine& line : state.lines) {
+        drawCenteredUiResultDialogLine(renderer, body, y, line, TextScale);
+        y += measureUiResultDialogLine(renderer, line, TextScale).y + 10.0f;
     }
     drawUiButton(renderer, uiResultDialogOkButtonRect(panel), "OK", true, uiActionButtonStyle());
+}
+
+void openUiQuantityDialog(
+    UiQuantityDialogState& state,
+    std::string title,
+    std::string message,
+    int minValue,
+    int maxValue,
+    int initialValue,
+    std::string unitLabel)
+{
+    state.open = true;
+    state.title = std::move(title);
+    state.message = std::move(message);
+    state.unitLabel = std::move(unitLabel);
+    state.minValue = std::min(minValue, maxValue);
+    state.maxValue = std::max(minValue, maxValue);
+    state.value = std::clamp(initialValue, state.minValue, state.maxValue);
+    state.largeStep = 10;
+}
+
+UiQuantityDialogResult updateUiQuantityDialog(UiQuantityDialogState& state, UiContext& ui, const Input& input, UiRect panel)
+{
+    if (!state.open) {
+        return UiQuantityDialogResult::None;
+    }
+
+    const auto adjust = [&state](int delta) {
+        if (delta == 0) {
+            return;
+        }
+        state.value = std::clamp(state.value + delta, state.minValue, state.maxValue);
+    };
+
+    if (input.pressed(InputAction::MoveUp) || input.pressed(InputAction::MoveRight)) {
+        adjust(1);
+    }
+    if (input.pressed(InputAction::MoveDown) || input.pressed(InputAction::MoveLeft)) {
+        adjust(-1);
+    }
+    if (input.shortcutCursorDelta() != 0) {
+        adjust(input.shortcutCursorDelta() * state.largeStep);
+    }
+    if (input.activeRingDelta() != 0) {
+        adjust(input.activeRingDelta() * state.largeStep);
+    }
+    const int directSlot = input.shortcutSlotPressed();
+    if (directSlot >= 0) {
+        const int directValue = directSlot + 1;
+        if (directValue >= state.minValue && directValue <= state.maxValue) {
+            state.value = directValue;
+        }
+    }
+
+    if (state.value > state.minValue && ui.pressed(uiQuantityDownButtonRect(panel))) {
+        adjust(-1);
+    }
+    if (state.value < state.maxValue && ui.pressed(uiQuantityUpButtonRect(panel))) {
+        adjust(1);
+    }
+    if (ui.pressed(uiQuantityConfirmButtonRect(panel)) || input.confirmPressed() || input.useItemPressed()) {
+        closeUiQuantityDialog(state);
+        return UiQuantityDialogResult::Confirmed;
+    }
+    if (ui.pressed(uiCancelButtonRect(panel)) || input.backPressed()) {
+        closeUiQuantityDialog(state);
+        return UiQuantityDialogResult::Cancelled;
+    }
+
+    return UiQuantityDialogResult::None;
+}
+
+void drawUiQuantityDialog(Renderer& renderer, const UiQuantityDialogState& state, UiRect panel, std::string_view id)
+{
+    if (!state.open) {
+        return;
+    }
+
+    UiWindowScope window(renderer, id, panel, state.title, "↑/↓　+1/-1　Z/X　+10/-10　F/Enter　決定", UiWindowOptions{true, true});
+    const UiRect body = uiBodyRect(panel);
+    const UiRect valueRect = uiQuantityValueRect(panel);
+    if (!state.message.empty()) {
+        renderer.drawWrappedText({valueRect.pos.x, body.pos.y - 24.0f}, state.message, valueRect.size.x, ui::Text, 2);
+    }
+
+    drawUiSubPanel(renderer, valueRect);
+    std::string valueText = std::to_string(state.value);
+    if (!state.unitLabel.empty()) {
+        valueText += state.unitLabel;
+    }
+    const UiRect upButton = uiQuantityUpButtonRect(panel);
+    const UiRect downButton = uiQuantityDownButtonRect(panel);
+    const Vec2 valueSize = renderer.measureText(valueText, 4);
+    const float textBandTop = upButton.pos.y + upButton.size.y;
+    const float textBandBottom = downButton.pos.y;
+    renderer.drawText(
+        {
+            valueRect.pos.x + (valueRect.size.x - valueSize.x) * 0.5f,
+            textBandTop + std::max(0.0f, (textBandBottom - textBandTop - valueSize.y) * 0.5f),
+        },
+        valueText,
+        ui::Text,
+        4);
+
+    drawUiRectButton(renderer, upButton, "▲", false, uiQuantityStepButtonStyle(state.value < state.maxValue));
+    drawUiRectButton(renderer, downButton, "▼", false, uiQuantityStepButtonStyle(state.value > state.minValue));
+
+    drawUiButton(renderer, uiQuantityConfirmButtonRect(panel), "決定", true, uiActionButtonStyle());
 }
 
 void openUiCommandMenu(

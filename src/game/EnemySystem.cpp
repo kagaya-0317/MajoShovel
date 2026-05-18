@@ -85,6 +85,8 @@ constexpr float EnemyHpBarFadeSeconds = 0.35f;
 constexpr float EnemyHpBarHeight = 4.0f;
 constexpr float EnemyHpBarMinWidth = 24.0f;
 constexpr float EnemyHpBarMaxWidth = 42.0f;
+constexpr float StunWakeHopSeconds = 0.18f;
+constexpr float StunWakeHopPixels = 8.0f;
 constexpr float MudZoneTickSeconds = 0.20f;
 constexpr float MudZoneMaxDurationSeconds = 30.0f;
 constexpr float MagnetDisturbMaxRadius = 320.0f;
@@ -237,6 +239,22 @@ int applyDefenseModifier(const EntityStatus& status, int damage)
 
     const double defense = std::max(0.05, status.multiplierFor(ModifierStat::Defense));
     return std::max(0, static_cast<int>(std::ceil(static_cast<double>(damage) / defense)));
+}
+
+float effectiveEnemyRadius(const Enemy& enemy)
+{
+    return std::max(0.0f, enemy.radius * static_cast<float>(enemy.status.sizeMultiplierFromStates()));
+}
+
+float enemyVisualRadius(const Enemy& enemy)
+{
+    const float radius = effectiveEnemyRadius(enemy);
+    return enemy.isBoss ? radius * BossVisualRadiusMultiplier : radius;
+}
+
+float effectivePlayerRadius(const Player& player, const RuntimeBalance& balance)
+{
+    return player.effectiveRadius(balance.playerRadius);
 }
 
 double damageTypeMultiplier(std::string_view damageType)
@@ -453,6 +471,48 @@ std::string_view fallbackProjectileForBehavior(std::string_view behaviorId)
     return "stone_bullet";
 }
 
+struct RangedEngagementRange {
+    float minDistance = 0.0f;
+    float maxDistance = 0.0f;
+};
+
+RangedEngagementRange rangedEngagementRange(std::string_view behaviorId)
+{
+    if (behaviorId == "shoot_fire") {
+        return {60.0f, 170.0f};
+    }
+    if (behaviorId == "shoot_web" ||
+        behaviorId == "shoot_poison" ||
+        behaviorId == "shoot_paralyze" ||
+        behaviorId == "shoot_mud") {
+        return {80.0f, 230.0f};
+    }
+    if (behaviorId == "throw_stone" || behaviorId == "throw_object") {
+        return {90.0f, 260.0f};
+    }
+    if (behaviorId == "shoot_water") {
+        return {90.0f, 250.0f};
+    }
+    if (behaviorId == "wind_blow") {
+        return {70.0f, 220.0f};
+    }
+    if (behaviorId == "radial_spike") {
+        return {0.0f, 260.0f};
+    }
+    return {};
+}
+
+bool hasRangedEngagementRange(const RangedEngagementRange& range)
+{
+    return range.maxDistance > 0.0f && range.maxDistance >= range.minDistance;
+}
+
+bool isWithinRangedEngagementRange(const RangedEngagementRange& range, float distance)
+{
+    return !hasRangedEngagementRange(range) ||
+        (distance >= range.minDistance && distance <= range.maxDistance);
+}
+
 float dot(Vec2 a, Vec2 b)
 {
     return a.x * b.x + a.y * b.y;
@@ -515,6 +575,21 @@ bool hasClearSightLine(TileMap& map, Vec2 from, Vec2 to)
         }
     }
     return true;
+}
+
+bool canFireEnemyProjectile(const Enemy& enemy, TileMap& map, float distanceToPlayer, Vec2 playerPosition)
+{
+    if (enemy.projectileId.empty() || enemy.rangedBehaviorId.empty()) {
+        return false;
+    }
+    if (enemy.awareness != EnemyAwarenessState::Detected) {
+        return false;
+    }
+    const RangedEngagementRange range = rangedEngagementRange(enemy.rangedBehaviorId);
+    if (!isWithinRangedEngagementRange(range, distanceToPlayer)) {
+        return false;
+    }
+    return hasClearSightLine(map, enemy.position, playerPosition);
 }
 
 bool canUseFlowStep(TileMap& map, int tx, int ty, const FlowStep& step)
@@ -594,10 +669,11 @@ bool findJumpLandingPosition(TileMap& map, const Enemy& enemy, Vec2 direction, f
     }
 
     const Vec2 normalizedDirection = normalize(direction);
+    const float radius = effectiveEnemyRadius(enemy);
     constexpr std::array<float, 8> DistanceFactors{{1.0f, 0.88f, 0.76f, 0.64f, 0.52f, 0.40f, 0.28f, 0.16f}};
     for (float factor : DistanceFactors) {
         const Vec2 candidate = enemy.position + normalizedDirection * (distance * factor);
-        if (!map.isCircleBlocked(candidate, enemy.radius)) {
+        if (!map.isCircleBlocked(candidate, radius)) {
             outPosition = candidate;
             return true;
         }
@@ -705,7 +781,11 @@ std::string visualEffectIdFor(const std::vector<EffectSpec>& specs, std::string_
         for (const std::string& effect : spec.effects) {
             if (effect == "status_poison" || effect == "status_poison_chance" ||
                 effect == "status_slow" || effect == "status_slow_chance" ||
-                effect == "status_bleed" || effect == "status_bleed_chance") {
+                effect == "status_paralyze" || effect == "status_paralyze_chance" ||
+                effect == "status_bleed" || effect == "status_bleed_chance" ||
+                effect == "status_sleep" || effect == "status_sleep_chance" ||
+                effect == "status_stun" || effect == "status_stun_chance" ||
+                effect == "status_giant") {
                 return effect;
             }
         }
@@ -901,15 +981,46 @@ void revealEnemyHpBar(Enemy& enemy, int damage)
     enemy.hpBarTimer = EnemyHpBarDisplaySeconds;
 }
 
+void applyEnemyDamage(Enemy& enemy, int damage)
+{
+    if (damage <= 0) {
+        return;
+    }
+    enemy.hp -= damage;
+    enemy.status.removeState("status_sleep");
+}
+
+Vec2 paralyzeJitterOffset(const EntityStatus& status, float timeSeconds)
+{
+    if (!status.hasState("status_paralyze")) {
+        return {};
+    }
+    const int phase = static_cast<int>(std::floor(std::max(0.0f, timeSeconds) * 36.0f));
+    return {phase % 2 == 0 ? -1.0f : 1.0f, 0.0f};
+}
+
+float stunWakeHopOffset(float stunWakeTimer)
+{
+    if (stunWakeTimer <= 0.0f) {
+        return 0.0f;
+    }
+    const float t = clamp(stunWakeTimer / StunWakeHopSeconds, 0.0f, 1.0f);
+    return std::sin(t * Pi) * StunWakeHopPixels;
+}
+
 Vec2 enemyDrawPosition(const Enemy& enemy)
 {
-    return elevatedDrawPosition(enemy.position, enemy.altitude);
+    return elevatedDrawPosition(enemy.position, enemy.altitude) +
+        paralyzeJitterOffset(enemy.status, enemy.behaviorTimer) +
+        Vec2{0.0f, -stunWakeHopOffset(enemy.stunWakeTimer)};
 }
 
 EnemyImageDrawOptions enemyImageOptionsFor(const Enemy& enemy)
 {
     EnemyImageDrawOptions imageOptions;
     imageOptions.tint = {255, 255, 255, 255};
+    imageOptions.scaleMultiplier = static_cast<float>(enemy.status.sizeMultiplierFromStates());
+    imageOptions.flipY = enemy.status.hasState("status_stun");
     if (enemy.hitFlash > 0.0f) {
         const float flash = clamp(enemy.hitFlash / 0.12f, 0.0f, 1.0f);
         imageOptions.maskOverlayColor = {255, 255, 255, static_cast<unsigned char>(std::round(220.0f * flash))};
@@ -928,7 +1039,7 @@ Vec2 enemyVisualBoundsSize(Renderer& renderer, const Enemy& enemy)
     if (enemy.spawnTimer > 0.0f) {
         const float ratio = enemy.spawnDuration > 0.0f ? enemy.spawnTimer / enemy.spawnDuration : 0.0f;
         const float pulse = 1.0f + (1.0f - ratio) * 0.9f;
-        const float visualRadius = enemy.isBoss ? enemy.radius * BossVisualRadiusMultiplier : enemy.radius;
+        const float visualRadius = enemyVisualRadius(enemy);
         const float diameter = (visualRadius * pulse + 4.0f) * 2.0f;
         return {diameter, diameter};
     }
@@ -938,7 +1049,7 @@ Vec2 enemyVisualBoundsSize(Renderer& renderer, const Enemy& enemy)
         return imageSize;
     }
 
-    const float visualRadius = enemy.isBoss ? enemy.radius * BossVisualRadiusMultiplier : enemy.radius;
+    const float visualRadius = enemyVisualRadius(enemy);
     const float diameter = (visualRadius + 3.0f) * 2.0f;
     return {diameter, diameter};
 }
@@ -1011,7 +1122,7 @@ void drawEnemyVisual(Renderer& renderer, const Enemy& enemy)
     if (enemy.spawnTimer > 0.0f) {
         const float ratio = enemy.spawnDuration > 0.0f ? enemy.spawnTimer / enemy.spawnDuration : 0.0f;
         const float pulse = 1.0f + (1.0f - ratio) * 0.9f;
-        const float visualRadius = enemy.isBoss ? enemy.radius * BossVisualRadiusMultiplier : enemy.radius;
+        const float visualRadius = enemyVisualRadius(enemy);
         const Color spawnColor = enemy.isBoss ? Color{255, 180, 80, 230} : colorForEnemy(enemy);
         renderer.drawCircle(drawPosition, visualRadius * pulse + 4.0f, spawnColor);
         renderer.drawCircle(drawPosition, visualRadius * 0.55f, enemy.isBoss ? Color{255, 232, 140, 210} : Color{255, 160, 110, 190});
@@ -1024,7 +1135,7 @@ void drawEnemyVisual(Renderer& renderer, const Enemy& enemy)
     } else if (enemy.hitFlash <= 0.0f && enemy.status.hasState("status_slow")) {
         color = {76, 132, 218, 255};
     }
-    const float visualRadius = enemy.isBoss ? enemy.radius * BossVisualRadiusMultiplier : enemy.radius;
+    const float visualRadius = enemyVisualRadius(enemy);
     const EnemyImageDrawOptions imageOptions = enemyImageOptionsFor(enemy);
     Vec2 enemyImageDrawSize{};
     const bool drewImage = drawEnemyImage(renderer, enemy, drawPosition, enemy.behaviorTimer, imageOptions, &enemyImageDrawSize);
@@ -1729,7 +1840,7 @@ bool EnemySystem::findSpawnPosition(
             if (!enemy.active) {
                 continue;
             }
-            const float minDistance = enemy.radius + radius + SpawnAvoidancePadding;
+            const float minDistance = effectiveEnemyRadius(enemy) + radius + SpawnAvoidancePadding;
             if (distanceSquared(candidate, enemy.position) < minDistance * minDistance) {
                 overlapsEnemy = true;
                 break;
@@ -1774,7 +1885,7 @@ bool EnemySystem::findBossSpawnPosition(TileMap& map, Vec2 playerPosition, const
                     if (!enemy.active) {
                         continue;
                     }
-                    const float minDistance = enemy.radius + radius + SpawnAvoidancePadding;
+                    const float minDistance = effectiveEnemyRadius(enemy) + radius + SpawnAvoidancePadding;
                     if (distanceSquared(candidate, enemy.position) < minDistance * minDistance) {
                         overlapsEnemy = true;
                         break;
@@ -1885,7 +1996,7 @@ bool EnemySystem::spawnFixedNodeEnemy(
         if (!enemy.active) {
             continue;
         }
-        const float minDistance = enemy.radius + radius + SpawnAvoidancePadding;
+        const float minDistance = effectiveEnemyRadius(enemy) + radius + SpawnAvoidancePadding;
         if (distanceSquared(desiredPosition, enemy.position) < minDistance * minDistance) {
             return false;
         }
@@ -2090,6 +2201,7 @@ Vec2 EnemySystem::flowDirectionFor(TileMap& map, Vec2 enemyPosition, Vec2 player
 Vec2 EnemySystem::separationFor(const Enemy& enemy) const
 {
     Vec2 separation{};
+    const float enemyRadius = effectiveEnemyRadius(enemy);
     for (std::size_t i = 0; i < enemies_.items().size(); ++i) {
         const Enemy& other = enemies_.items()[i];
         if (!other.active || &other == &enemy || other.spawnTimer > 0.0f) {
@@ -2097,7 +2209,7 @@ Vec2 EnemySystem::separationFor(const Enemy& enemy) const
         }
 
         Vec2 away = enemy.position - other.position;
-        const float minDistance = enemy.radius + other.radius + SpawnAvoidancePadding;
+        const float minDistance = enemyRadius + effectiveEnemyRadius(other) + SpawnAvoidancePadding;
         const float minDistanceSq = minDistance * minDistance;
         const float distSq = lengthSquared(away);
         if (distSq >= minDistanceSq) {
@@ -2120,19 +2232,20 @@ void EnemySystem::moveWithCollision(Enemy& enemy, TileMap& map, Vec2 desiredVelo
         return;
     }
 
+    const float radius = effectiveEnemyRadius(enemy);
     Vec2 next = enemy.position + delta;
-    if (!map.isCircleBlocked(next, enemy.radius)) {
+    if (!map.isCircleBlocked(next, radius)) {
         enemy.position = next;
         return;
     }
 
     next = enemy.position + Vec2{delta.x, 0.0f};
-    if (!map.isCircleBlocked(next, enemy.radius)) {
+    if (!map.isCircleBlocked(next, radius)) {
         enemy.position = next;
         return;
     }
     next = enemy.position + Vec2{0.0f, delta.y};
-    if (!map.isCircleBlocked(next, enemy.radius)) {
+    if (!map.isCircleBlocked(next, radius)) {
         enemy.position = next;
         return;
     }
@@ -2148,7 +2261,7 @@ void EnemySystem::moveWithCollision(Enemy& enemy, TileMap& map, Vec2 desiredVelo
     }};
     for (Vec2 fallback : fallbackDirections) {
         next = enemy.position + fallback * step;
-        if (!map.isCircleBlocked(next, enemy.radius)) {
+        if (!map.isCircleBlocked(next, radius)) {
             enemy.position = next;
             return;
         }
@@ -2164,17 +2277,19 @@ void fireEnemyProjectile(Enemy& enemy, ProjectileSystem& projectiles, Vec2 playe
     ProjectileSpawnTuning tuning;
     tuning.speedMultiplier = std::max(0.05f, enemy.projectileSpeedMultiplier);
     tuning.damageOverride = enemy.projectileDamageOverride;
+    tuning.damageMultiplier = std::max(0.0, enemy.status.multiplierFor(ModifierStat::Attack));
     tuning.radiusScale = std::max(0.1f, enemy.projectileRadiusScale);
 
     const Vec2 toPlayer = normalize(playerPosition - enemy.position);
-    const Vec2 origin = enemy.position + toPlayer * (enemy.radius + 6.0f);
+    const float radius = effectiveEnemyRadius(enemy);
+    const Vec2 origin = enemy.position + toPlayer * (radius + 6.0f);
     if (enemy.rangedBehaviorId == "radial_spike") {
         const int count = std::clamp(enemy.fireVolleyCount, 1, 24);
         for (int i = 0; i < count; ++i) {
             const float angle = (static_cast<float>(i) / static_cast<float>(count)) * Pi * 2.0f;
             projectiles.spawn(
                 enemy.projectileId,
-                enemy.position + fromAngle(angle) * (enemy.radius + 5.0f),
+                enemy.position + fromAngle(angle) * (radius + 5.0f),
                 fromAngle(angle),
                 ProjectileOwnerType::Enemy,
                 enemy.projectileEffects,
@@ -2192,7 +2307,7 @@ void fireEnemyProjectile(Enemy& enemy, ProjectileSystem& projectiles, Vec2 playe
         for (int i = 0; i < count; ++i) {
             const float angle = baseAngle + start + step * static_cast<float>(i);
             const Vec2 dir = fromAngle(angle);
-            projectiles.spawn(enemy.projectileId, enemy.position + dir * (enemy.radius + 6.0f), dir, ProjectileOwnerType::Enemy, enemy.projectileEffects, tuning);
+            projectiles.spawn(enemy.projectileId, enemy.position + dir * (radius + 6.0f), dir, ProjectileOwnerType::Enemy, enemy.projectileEffects, tuning);
         }
         return;
     }
@@ -2203,7 +2318,9 @@ void fireEnemyProjectile(Enemy& enemy, ProjectileSystem& projectiles, Vec2 playe
 bool EnemySystem::resolvePlayerOverlap(Player& player, Enemy& enemy, TileMap& map, const RuntimeBalance& balance)
 {
     Vec2 fromPlayer = enemy.position - player.position;
-    const float minimumDistance = enemy.radius + balance.playerRadius;
+    const float enemyRadius = effectiveEnemyRadius(enemy);
+    const float playerRadius = effectivePlayerRadius(player, balance);
+    const float minimumDistance = enemyRadius + playerRadius;
     float distSq = lengthSquared(fromPlayer);
     if (distSq >= minimumDistance * minimumDistance) {
         return false;
@@ -2220,15 +2337,15 @@ bool EnemySystem::resolvePlayerOverlap(Player& player, Enemy& enemy, TileMap& ma
 
     float playerShare = PlayerPushShare;
     float enemyShare = EnemyPushShare;
-    bool movedPlayer = tryMoveCircle(map, player.position, balance.playerRadius, normal * (-overlap * playerShare));
-    bool movedEnemy = tryMoveCircle(map, enemy.position, enemy.radius, normal * (overlap * enemyShare));
+    bool movedPlayer = tryMoveCircle(map, player.position, playerRadius, normal * (-overlap * playerShare));
+    bool movedEnemy = tryMoveCircle(map, enemy.position, enemyRadius, normal * (overlap * enemyShare));
 
     if (!movedPlayer && movedEnemy) {
-        tryMoveCircle(map, enemy.position, enemy.radius, normal * (overlap * playerShare));
+        tryMoveCircle(map, enemy.position, enemyRadius, normal * (overlap * playerShare));
     } else if (!movedEnemy && movedPlayer) {
-        tryMoveCircle(map, player.position, balance.playerRadius, normal * (-overlap * enemyShare));
+        tryMoveCircle(map, player.position, playerRadius, normal * (-overlap * enemyShare));
     } else if (!movedEnemy && !movedPlayer) {
-        tryMoveCircle(map, enemy.position, enemy.radius, normal * overlap);
+        tryMoveCircle(map, enemy.position, enemyRadius, normal * overlap);
     }
 
     return true;
@@ -2248,6 +2365,7 @@ void EnemySystem::update(
     const std::vector<LightSource>& extraLights,
     const EffectDispatcher& effectDispatcher,
     ProjectileSystem& projectiles,
+    MagicSystem& magic,
     std::vector<EffectDiscoveryEvent>* discoveryEvents,
     const EncyclopediaSystem* encyclopedia)
 {
@@ -2336,13 +2454,18 @@ void EnemySystem::update(
         if (!enemy.active) {
             continue;
         }
+        enemy.stunWakeTimer = std::max(0.0f, enemy.stunWakeTimer - dt);
+        const bool wasStunned = enemy.status.hasState("status_stun");
         enemy.status.update(dt);
+        if (wasStunned && !enemy.status.hasState("status_stun")) {
+            enemy.stunWakeTimer = StunWakeHopSeconds;
+        }
         const double poisonDps = enemy.status.poisonDamagePerSecond();
         if (poisonDps > 0.0) {
             enemy.poisonDamageAccumulator += poisonDps * static_cast<double>(dt);
             const int poisonDamage = static_cast<int>(std::floor(enemy.poisonDamageAccumulator));
             if (poisonDamage > 0) {
-                enemy.hp -= poisonDamage;
+                applyEnemyDamage(enemy, poisonDamage);
                 enemy.poisonDamageAccumulator -= static_cast<double>(poisonDamage);
                 revealEnemyHpBar(enemy, poisonDamage);
                 enemy.hitFlash = 0.12f;
@@ -2354,6 +2477,29 @@ void EnemySystem::update(
             }
         } else {
             enemy.poisonDamageAccumulator = 0.0;
+        }
+        const double bleedDps = enemy.status.bleedDamagePerSecond();
+        if (bleedDps > 0.0) {
+            const bool movementStopped =
+                enemy.status.hasState("status_sleep") ||
+                enemy.status.hasState("status_stun") ||
+                enemy.status.hasState("status_paralyze");
+            const double movementScale = !movementStopped && lengthSquared(enemy.velocity) > 1.0f ? 1.5 : 0.5;
+            enemy.bleedDamageAccumulator += bleedDps * movementScale * static_cast<double>(dt);
+            const int bleedDamage = static_cast<int>(std::floor(enemy.bleedDamageAccumulator));
+            if (bleedDamage > 0) {
+                applyEnemyDamage(enemy, bleedDamage);
+                enemy.bleedDamageAccumulator -= static_cast<double>(bleedDamage);
+                revealEnemyHpBar(enemy, bleedDamage);
+                enemy.hitFlash = 0.12f;
+                events_.push_back(makeEnemyEvent(EnemyEventType::Hit, enemy, "status_bleed", bleedDamage));
+                if (enemy.hp <= 0) {
+                    processEnemyDeath(enemy);
+                    continue;
+                }
+            }
+        } else {
+            enemy.bleedDamageAccumulator = 0.0;
         }
         enemy.hitFlash = std::max(0.0f, enemy.hitFlash - dt);
         enemy.hpBarTimer = std::max(0.0f, enemy.hpBarTimer - dt);
@@ -2431,6 +2577,12 @@ void EnemySystem::update(
         const Vec2 toPlayer = player.position - enemy.position;
         const float distanceToPlayer = length(toPlayer);
         const Vec2 directToPlayer = distanceToPlayer > 0.0001f ? toPlayer / distanceToPlayer : Vec2{};
+        const float enemyRadius = effectiveEnemyRadius(enemy);
+        const float playerRadius = effectivePlayerRadius(player, balance);
+        const bool actionBlocked =
+            enemy.status.hasState("status_sleep") ||
+            enemy.status.hasState("status_stun") ||
+            enemy.status.hasState("status_paralyze");
         const float detectedMultiplier = std::max(1.0f, balance.enemyDetectedVisionMultiplier);
         const float unawareVisionDistance = std::max(0.0f, enemy.visionDistance);
         const float unawareVisionAngle = std::max(0.0f, enemy.visionAngle);
@@ -2447,7 +2599,7 @@ void EnemySystem::update(
             return hasClearSightLine(map, enemy.position, player.position);
         };
         const auto isAmbushTriggerDistance = [&]() {
-            const float triggerDistance = enemy.radius + balance.playerRadius + 18.0f;
+            const float triggerDistance = enemyRadius + playerRadius + 18.0f;
             return distanceToPlayer <= triggerDistance;
         };
         const auto alertNearbySwarm = [&](const Enemy& source) {
@@ -2490,6 +2642,10 @@ void EnemySystem::update(
         const std::string_view aiId = enemy.awareness == EnemyAwarenessState::Detected
             ? (enemy.aiId.empty() ? std::string_view("chase") : std::string_view(enemy.aiId))
             : (enemy.unawareAiId.empty() ? std::string_view("idle") : std::string_view(enemy.unawareAiId));
+        const RangedEngagementRange rangedRange = rangedEngagementRange(enemy.rangedBehaviorId);
+        const bool usesRangedEngagementRange =
+            enemy.awareness == EnemyAwarenessState::Detected &&
+            hasRangedEngagementRange(rangedRange);
         const auto carriedCount = [&]() {
             return static_cast<int>(enemy.stolenObjectIds.size()) + (enemy.stolenMoney > 0 ? 1 : 0);
         };
@@ -2614,9 +2770,11 @@ void EnemySystem::update(
         } else if (aiId == "burrow_ambush" || aiId == "ambush") {
             direction = directToPlayer;
         } else if (aiId == "keep_distance" || aiId == "hover_keep_distance") {
-            if (distanceToPlayer < KeepDistanceMin) {
+            const float keepMinDistance = usesRangedEngagementRange ? rangedRange.minDistance : KeepDistanceMin;
+            const float keepMaxDistance = usesRangedEngagementRange ? rangedRange.maxDistance : KeepDistanceMax;
+            if (distanceToPlayer < keepMinDistance) {
                 direction = directToPlayer * -1.0f;
-            } else if (distanceToPlayer > KeepDistanceMax) {
+            } else if (distanceToPlayer > keepMaxDistance) {
                 direction = flowDirectionFor(map, enemy.position, player.position);
             }
         } else {
@@ -2684,7 +2842,7 @@ void EnemySystem::update(
             if (distanceSquared(enemy.position, previousPosition) <= 0.0004f &&
                 enemy.aiDigTimer <= 0.0f &&
                 lengthSquared(enemy.velocity) > 0.0001f) {
-                const Vec2 ahead = enemy.position + normalize(enemy.velocity) * (enemy.radius + static_cast<float>(balance::TileSize) * 0.6f);
+                const Vec2 ahead = enemy.position + normalize(enemy.velocity) * (enemyRadius + static_cast<float>(balance::TileSize) * 0.6f);
                 const int tx = map.worldToTile(ahead.x);
                 const int ty = map.worldToTile(ahead.y);
                 Vec2 opened{};
@@ -2708,7 +2866,7 @@ void EnemySystem::update(
         } else if (aiId != "stationary" && aiId != "idle" && aiId != "buried" && lengthSquared(enemy.velocity) > 0.0001f) {
             enemy.facingAngle = std::atan2(enemy.velocity.y, enemy.velocity.x);
         }
-        if (!enemy.projectileId.empty()) {
+        if (!actionBlocked && canFireEnemyProjectile(enemy, map, distanceToPlayer, player.position)) {
             enemy.projectileTimer = std::max(0.0f, enemy.projectileTimer - dt);
             if (enemy.projectileTimer <= 0.0f) {
                 fireEnemyProjectile(enemy, projectiles, player.position);
@@ -2824,10 +2982,12 @@ void EnemySystem::update(
             distanceSquared(player.position, enemy.position) <= enemy.jumpLandingRadius * enemy.jumpLandingRadius) {
             touchedPlayer = true;
         }
-        if (touchedPlayer && enemy.contactTimer <= 0.0f) {
+        if (!actionBlocked && touchedPlayer && enemy.contactTimer <= 0.0f) {
+            const double baseAttackPower = static_cast<double>(enemy.contactAttackPower) * (enemy.isBoss ? 2.0 : 1.0);
+            const double modifiedAttackPower = enemy.status.applyModifiers(ModifierStat::Attack, baseAttackPower);
             int contactDamage = enemy.isBoss
-                ? std::max(1, static_cast<int>(std::ceil(static_cast<double>(enemy.contactAttackPower * 2) * damageTypeMultiplier(enemy.contactDamageType))))
-                : std::max(0, static_cast<int>(std::ceil(static_cast<double>(enemy.contactAttackPower) * damageTypeMultiplier(enemy.contactDamageType))));
+                ? std::max(1, static_cast<int>(std::ceil(std::max(0.0, modifiedAttackPower) * damageTypeMultiplier(enemy.contactDamageType))))
+                : std::max(0, static_cast<int>(std::ceil(std::max(0.0, modifiedAttackPower) * damageTypeMultiplier(enemy.contactDamageType))));
             float contactMultiplier = std::max(0.0f, enemy.contactDamageMultiplier);
             if (enemy.jumpLandingBuffTimer > 0.0f) {
                 contactMultiplier *= std::max(1.0f, enemy.jumpLandingDamageMultiplier);
@@ -2854,7 +3014,7 @@ void EnemySystem::update(
             }
             if (hasBehavior(enemy, "chest_bite") && enemy.chestBiteKnockback > 0.0f) {
                 const Vec2 push = normalize(player.position - enemy.position) * enemy.chestBiteKnockback;
-                tryMoveCircle(map, player.position, balance.playerRadius, push);
+                tryMoveCircle(map, player.position, playerRadius, push);
             }
             enemy.contactTimer = enemy.isBoss ? 1.0f : 0.8f;
         }
@@ -2873,7 +3033,7 @@ void EnemySystem::update(
                 const float bonusRadius = static_cast<float>(std::max(2.0, item.capturedBehaviorParamDouble("jump_outward", "landingRadius", 5.0)));
                 capturedHitRadius += bonusRadius;
             }
-            const bool overlappingItem = circlesOverlap(enemy.position, enemy.radius, item.worldPosition, capturedHitRadius);
+            const bool overlappingItem = circlesOverlap(enemy.position, effectiveEnemyRadius(enemy), item.worldPosition, capturedHitRadius);
             if (item.type == SpellRingItemType::Shovel && !overlappingItem) {
                 item.unlatchEnemy(enemy.id);
                 continue;
@@ -2890,29 +3050,33 @@ void EnemySystem::update(
                 continue;
             }
             item.lastEnemyHitTime = totalTime;
+            std::string_view contactDamageType = item.damageType;
+            if (item.magicAuraTimer > 0.0f && !item.magicAuraDamageType.empty()) {
+                contactDamageType = item.magicAuraDamageType;
+            }
             const int speedBonus = static_cast<int>(
                 item.orbitMotionSpeed * 0.25f * static_cast<float>(spellRing.speedDamageMultiplier()));
             const int modifiedDamage = static_cast<int>(
                 player.status.applyModifiers(
                     ModifierStat::Attack,
                     static_cast<double>(item.damage) *
-                        damageTypeMultiplier(item.damageType) *
+                        damageTypeMultiplier(contactDamageType) *
                         spellRing.effectivePowerMultiplier()));
             const int rawDamage = modifiedDamage + (item.type == SpellRingItemType::Shovel ? speedBonus : 0);
             int adjustedDamage = rawDamage;
-            if (isPhysicalDamageType(item.damageType) && hasBehavior(enemy, "physical_resist")) {
+            if (isPhysicalDamageType(contactDamageType) && hasBehavior(enemy, "physical_resist")) {
                 adjustedDamage = static_cast<int>(std::ceil(static_cast<double>(adjustedDamage) * enemy.physicalDamageMultiplier));
             }
-            if (isPhysicalDamageType(item.damageType) && hasBehavior(enemy, "magic_body")) {
+            if (isPhysicalDamageType(contactDamageType) && hasBehavior(enemy, "magic_body")) {
                 adjustedDamage = static_cast<int>(std::ceil(static_cast<double>(adjustedDamage) * enemy.magicBodyPhysicalMultiplier));
-            } else if (item.damageType == "magic" && hasBehavior(enemy, "magic_body")) {
+            } else if (contactDamageType == "magic" && hasBehavior(enemy, "magic_body")) {
                 adjustedDamage = static_cast<int>(std::ceil(static_cast<double>(adjustedDamage) * enemy.magicBodyMagicMultiplier));
             }
             if (hasBehavior(enemy, "front_guard") && frontGuardApplies(enemy, item.worldPosition, enemy.frontGuardArcDegrees)) {
                 adjustedDamage = static_cast<int>(std::ceil(static_cast<double>(adjustedDamage) * enemy.frontGuardDamageMultiplier));
             }
             const int damageDealt = applyDefenseModifier(enemy.status, adjustedDamage);
-            enemy.hp -= damageDealt;
+            applyEnemyDamage(enemy, damageDealt);
             revealEnemyHpBar(enemy, damageDealt);
             if (item.hasCapturedBehavior("heavy_guard")) {
                 enemy.knockbackVelocity = normalize(enemy.position - item.worldPosition) * 90.0f;
@@ -2932,6 +3096,7 @@ void EnemySystem::update(
                     context.hitTarget = &enemy;
                     context.orbit = &spellRing;
                     context.orbitItem = &item;
+                    context.magic = &magic;
                     context.discoveryEvents = discoveryEvents;
                     context.encyclopedia = encyclopedia;
                     context.position = enemy.position;
@@ -2956,8 +3121,8 @@ void EnemySystem::update(
             if (hitEffectId.empty()) {
                 hitEffectId = visualEffectIdFor(item.addedEffects);
             }
-            if (hitEffectId.empty() && !item.damageType.empty() && item.damageType != "none") {
-                hitEffectId = item.damageType;
+            if (hitEffectId.empty() && !contactDamageType.empty() && contactDamageType != "none") {
+                hitEffectId = std::string(contactDamageType);
             }
             tryCapturedRewardFromEnemy(item, enemy, totalTime, events_);
             if (item.hasCapturedBehavior("charge_explode") && item.capturedExplodeSleepTimer <= 0.0f) {
@@ -3068,12 +3233,12 @@ bool EnemySystem::hitByPlayerProjectile(
         if (!enemy.active || enemy.spawnTimer > 0.0f) {
             continue;
         }
-        if (!circlesOverlap(projectile.position, projectile.radius, enemy.position, enemy.radius)) {
+        if (!circlesOverlap(projectile.position, projectile.radius, enemy.position, effectiveEnemyRadius(enemy))) {
             continue;
         }
 
         const int adjustedDamage = applyDefenseModifier(enemy.status, std::max(0, damage));
-        enemy.hp -= adjustedDamage;
+        applyEnemyDamage(enemy, adjustedDamage);
         revealEnemyHpBar(enemy, adjustedDamage);
         enemy.hitFlash = 0.12f;
 
@@ -3134,6 +3299,141 @@ bool EnemySystem::hitByPlayerProjectile(
     return false;
 }
 
+void EnemySystem::finishEnemyDeath(Enemy& enemy, SpellRingSystem& spellRing)
+{
+    if (!enemy.active) {
+        return;
+    }
+
+    pendingXp_ += enemy.xp;
+    if (!enemy.dropItemConsumed) {
+        queueEnemyObjectDrops(enemy);
+    }
+    if (enemy.stolenMoney > 0) {
+        EnemyEvent death = makeEnemyEvent(enemy.isBoss ? EnemyEventType::BossDeath : EnemyEventType::Death, enemy);
+        death.moneyDrop += enemy.stolenMoney;
+        enemy.stolenMoney = 0;
+        events_.push_back(std::move(death));
+    } else {
+        events_.push_back(makeEnemyEvent(enemy.isBoss ? EnemyEventType::BossDeath : EnemyEventType::Death, enemy));
+    }
+    for (const std::string& objectId : enemy.stolenObjectIds) {
+        if (objectId.empty()) {
+            continue;
+        }
+        EnemyEvent objectDrop;
+        objectDrop.type = EnemyEventType::ObjectDrop;
+        objectDrop.position = enemy.position;
+        objectDrop.enemyId = enemy.enemyId;
+        objectDrop.enemyName = enemy.enemyName;
+        objectDrop.objectDropId = objectId;
+        objectDrop.objectDropCount = 1;
+        events_.push_back(std::move(objectDrop));
+    }
+    enemy.stolenObjectIds.clear();
+    std::vector<SpellRingItem*> runtimeItems = spellRing.runtimeItemsMutable();
+    for (SpellRingItem* itemPtr : runtimeItems) {
+        if (itemPtr == nullptr) {
+            continue;
+        }
+        itemPtr->unlatchEnemy(enemy.id);
+    }
+    enemy.active = false;
+}
+
+int EnemySystem::applyMagicArea(const EnemyMagicHitSpec& spec, SpellRingSystem& spellRing)
+{
+    if (spec.damage <= 0 && spec.statusEffect.empty() && spec.knockbackStrength <= 0.0f) {
+        return 0;
+    }
+
+    int hits = 0;
+    const float radius = std::max(0.0f, spec.radius);
+    std::uniform_real_distribution<double> chanceDist(0.0, 100.0);
+    for (Enemy& enemy : enemies_.items()) {
+        if (!enemy.active || enemy.spawnTimer > 0.0f) {
+            continue;
+        }
+        const float hitRadius = radius + effectiveEnemyRadius(enemy);
+        if (distanceSquared(enemy.position, spec.position) > hitRadius * hitRadius) {
+            continue;
+        }
+
+        if (spec.damage > 0) {
+            const int typedDamage = std::max(
+                0,
+                static_cast<int>(std::ceil(static_cast<double>(spec.damage) * damageTypeMultiplier(spec.damageType))));
+            const int damageDealt = applyDefenseModifier(enemy.status, typedDamage);
+            applyEnemyDamage(enemy, damageDealt);
+            revealEnemyHpBar(enemy, damageDealt);
+            enemy.hitFlash = 0.12f;
+            events_.push_back(makeEnemyEvent(
+                EnemyEventType::AttackHit,
+                enemy,
+                spec.effectId.empty() ? spec.damageType : spec.effectId,
+                damageDealt));
+        }
+
+        if (!spec.statusEffect.empty() && !enemy.isBoss && chanceDist(rng_) <= std::clamp(spec.statusChance, 0.0, 100.0)) {
+            enemy.status.applyState(
+                spec.statusEffect,
+                spec.statusValue,
+                spec.statusDuration,
+                spec.damageType.empty() ? "magic" : "magic:" + spec.damageType,
+                StateApplyMode::KeepLonger);
+        }
+        if (spec.knockbackStrength > 0.0f) {
+            Vec2 direction = spec.knockbackDirection;
+            if (lengthSquared(direction) <= 0.0001f) {
+                direction = enemy.position - spec.position;
+            }
+            enemy.knockbackVelocity = normalize(direction) * spec.knockbackStrength;
+            enemy.knockbackTimer = std::max(enemy.knockbackTimer, 0.14f);
+        }
+
+        ++hits;
+        if (enemy.hp <= 0) {
+            finishEnemyDeath(enemy, spellRing);
+        }
+        if (spec.maxHits > 0 && hits >= spec.maxHits) {
+            break;
+        }
+    }
+    return hits;
+}
+
+bool EnemySystem::applyMagicNearest(Vec2 origin, float range, EnemyMagicHitSpec spec, SpellRingSystem& spellRing, Vec2* outTargetPosition)
+{
+    Enemy* best = nullptr;
+    float bestDistanceSq = std::max(0.0f, range) * std::max(0.0f, range);
+    for (Enemy& enemy : enemies_.items()) {
+        if (!enemy.active || enemy.spawnTimer > 0.0f) {
+            continue;
+        }
+        const float distanceSq = distanceSquared(enemy.position, origin);
+        if (distanceSq <= bestDistanceSq) {
+            best = &enemy;
+            bestDistanceSq = distanceSq;
+        }
+    }
+
+    if (best == nullptr) {
+        return false;
+    }
+
+    spec.position = best->position;
+    spec.radius = std::max(spec.radius, effectiveEnemyRadius(*best) + 2.0f);
+    spec.maxHits = 1;
+    const int hitCount = applyMagicArea(spec, spellRing);
+    if (hitCount <= 0) {
+        return false;
+    }
+    if (outTargetPosition != nullptr) {
+        *outTargetPosition = spec.position;
+    }
+    return true;
+}
+
 void EnemySystem::applyCapturedExplosion(Vec2 position, SpellRingSystem& spellRing, int damage)
 {
     const float radiusSq = CapturedExplosionRadius * CapturedExplosionRadius;
@@ -3146,7 +3446,7 @@ void EnemySystem::applyCapturedExplosion(Vec2 position, SpellRingSystem& spellRi
         }
 
         const int damageDealt = applyDefenseModifier(enemy.status, std::max(0, damage));
-        enemy.hp -= damageDealt;
+        applyEnemyDamage(enemy, damageDealt);
         revealEnemyHpBar(enemy, damageDealt);
         enemy.hitFlash = 0.18f;
         enemy.knockbackVelocity = normalize(enemy.position - position) * 110.0f;
@@ -3228,7 +3528,7 @@ int EnemySystem::pullMetalEnemies(Vec2 center, TileMap& map, float dt, float rad
         const float distance = std::sqrt(distanceSq);
         const float falloff = 1.0f - clamp(distance / effectiveRadius, 0.0f, 1.0f);
         const Vec2 delta = normalize(toCenter) * (CapturedMagnetEnemyPullSpeed * falloff * dt);
-        if (tryMoveCircle(map, enemy.position, enemy.radius, delta)) {
+        if (tryMoveCircle(map, enemy.position, effectiveEnemyRadius(enemy), delta)) {
             ++pulled;
             if (pulled >= CapturedMagnetEnemyLimit) {
                 break;
@@ -3257,6 +3557,8 @@ void EnemySystem::clearTemporaryState()
         }
         enemy.status = EntityStatus{};
         enemy.poisonDamageAccumulator = 0.0;
+        enemy.bleedDamageAccumulator = 0.0;
+        enemy.stunWakeTimer = 0.0f;
         enemy.hitFlash = 0.0f;
         enemy.hpBarTimer = 0.0f;
         enemy.knockbackVelocity = {};

@@ -30,6 +30,8 @@ std::string_view deathCauseText(DamageSource source)
     switch (source) {
     case DamageSource::Poison:
         return "毒で死亡";
+    case DamageSource::Bleed:
+        return "出血で死亡";
     case DamageSource::SlimeAttack:
         return "スライムの攻撃で死亡";
     case DamageSource::SlimeContact:
@@ -56,8 +58,29 @@ void Player::applyDamage(int amount, DamageSource source)
     const int damageTaken = beforeHp - hp;
     if (damageTaken > 0) {
         damageFlash = 0.16f;
+        status.removeState("status_sleep");
         damageEvents.push_back({damageTaken, position});
     }
+}
+
+int Player::heal(int amount)
+{
+    if (amount <= 0 || hp <= 0) {
+        return 0;
+    }
+
+    const int beforeHp = hp;
+    hp = std::min(maxHp, hp + amount);
+    const int healed = hp - beforeHp;
+    if (healed > 0) {
+        healEvents.push_back({healed, position});
+    }
+    return healed;
+}
+
+float Player::effectiveRadius(float baseRadius) const
+{
+    return std::max(0.0f, baseRadius * static_cast<float>(status.sizeMultiplierFromStates()));
 }
 
 void Player::update(
@@ -74,7 +97,12 @@ void Player::update(
         return;
     }
 
+    stunWakeTimer = std::max(0.0f, stunWakeTimer - dt);
+    const bool wasStunned = status.hasState("status_stun");
     status.update(dt);
+    if (wasStunned && !status.hasState("status_stun")) {
+        stunWakeTimer = 0.18f;
+    }
     const double poisonDps = status.poisonDamagePerSecond();
     if (poisonDps > 0.0) {
         poisonDamageAccumulator += poisonDps * static_cast<double>(dt);
@@ -92,6 +120,18 @@ void Player::update(
         status.movementMultiplierFromStates());
     const Vec2 moveAxis = input.moveAxis();
     velocity = moveAxis * speed;
+    const double bleedDps = status.bleedDamagePerSecond();
+    if (bleedDps > 0.0) {
+        const double movementScale = lengthSquared(velocity) > 1.0f ? 1.5 : 0.5;
+        bleedDamageAccumulator += bleedDps * movementScale * static_cast<double>(dt);
+        const int bleedDamage = static_cast<int>(std::floor(bleedDamageAccumulator));
+        if (bleedDamage > 0) {
+            applyDamage(bleedDamage, DamageSource::Bleed);
+            bleedDamageAccumulator -= static_cast<double>(bleedDamage);
+        }
+    } else {
+        bleedDamageAccumulator = 0.0;
+    }
     const bool walkingNow = lengthSquared(moveAxis) > 0.0001f;
     if (walkingNow != spriteWalking) {
         spriteWalking = walkingNow;
@@ -100,9 +140,10 @@ void Player::update(
         spriteAnimationTime += dt;
     }
     const Vec2 delta = velocity * dt;
+    const float playerRadius = effectiveRadius(balance.playerRadius);
     const auto blocked = [&](Vec2 center) {
-        return map.isCircleBlocked(center, balance.playerRadius) ||
-            circleIntersectsAnyRect(center, balance.playerRadius, objectBlockers);
+        return map.isCircleBlocked(center, playerRadius) ||
+            circleIntersectsAnyRect(center, playerRadius, objectBlockers);
     };
     Vec2 next = position + Vec2{delta.x, 0.0f};
     if (!blocked(next)) {

@@ -41,6 +41,7 @@ struct Projectile {
 struct ProjectileSpawnTuning {
     float speedMultiplier = 1.0f;
     int damageOverride = -1;
+    double damageMultiplier = 1.0;
     float radiusScale = 1.0f;
 };
 

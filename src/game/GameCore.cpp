@@ -25,6 +25,49 @@ bool lootChestKindForDropProfile(std::string_view profile, LootChestKind& outKin
     return false;
 }
 
+UiResultDialogLine levelUpResultTextLine(std::string text)
+{
+    UiResultDialogLine line;
+    line.segments.push_back({std::move(text), ui::Text});
+    return line;
+}
+
+UiResultDialogLine levelUpResultChangeLine(std::string prefix, std::string afterValueText)
+{
+    UiResultDialogLine line;
+    line.segments.push_back({std::move(prefix), ui::Text});
+    line.segments.push_back({std::move(afterValueText), Color{255, 230, 150, 255}});
+    return line;
+}
+
+std::vector<UiResultDialogLine> levelUpResultLines(UpgradeChoice choice, float beforeValue, float afterValue)
+{
+    std::vector<UiResultDialogLine> lines;
+    char prefix[128];
+    char after[64];
+    switch (choice) {
+    case UpgradeChoice::Radius:
+        lines.push_back(levelUpResultTextLine("リングのサイズが大きくなった！"));
+        std::snprintf(prefix, sizeof(prefix), "リング半径: %.0f → ", beforeValue);
+        std::snprintf(after, sizeof(after), "%.0f", afterValue);
+        lines.push_back(levelUpResultChangeLine(prefix, after));
+        break;
+    case UpgradeChoice::Speed:
+        lines.push_back(levelUpResultTextLine("リングの回転速度が速くなった！"));
+        std::snprintf(prefix, sizeof(prefix), "回転速度: %.2f → ", beforeValue);
+        std::snprintf(after, sizeof(after), "%.2f", afterValue);
+        lines.push_back(levelUpResultChangeLine(prefix, after));
+        break;
+    case UpgradeChoice::WeightLimit:
+        lines.push_back(levelUpResultTextLine("リングの重量上限が拡張された！"));
+        std::snprintf(prefix, sizeof(prefix), "重量上限: %.1fkg → ", beforeValue);
+        std::snprintf(after, sizeof(after), "%.1fkg", afterValue);
+        lines.push_back(levelUpResultChangeLine(prefix, after));
+        break;
+    }
+    return lines;
+}
+
 int lootDepthRankForWorldPosition(
     const TileMap& tileMap,
     const DungeonLayout& dungeonLayout,
@@ -135,6 +178,8 @@ void Game::resetWorldActionSystems()
     resetWorldEffectState();
     resetWorldEnemyState();
     resetWorldProjectileState();
+    resetInPlace(magic_);
+    resetInPlace(magicFx_);
     resetWorldDropState();
     resetWorldProgressionState();
 }
@@ -185,18 +230,15 @@ void Game::resetWorldUiState()
     warpReturnConfirmSelection_ = 0;
     focusedWarpReturnPointIndex_ = -1;
     baseStorageActive_ = false;
-    baseStorageFocusWarehouse_ = false;
-    baseStorageBackpackCursor_ = 0;
-    baseStorageWarehouseCursor_ = 0;
+    baseStorageMode_ = StorageUiMode::Closed;
+    baseStorageActionSelection_ = 0;
+    baseStorageDepositSource_ = static_cast<int>(BaseItemSource::Backpack);
+    baseStorageDepositSourceTabs_ = {};
+    baseStorageDepositSelection_ = 0;
+    baseStorageWithdrawSelection_ = 0;
     baseStorageWarehousePage_ = 0;
-    closeUiCommandMenu(baseStorageCommandMenu_);
-    baseStorageCommandSlot_ = -1;
-    baseStoragePointerPressSlot_ = -1;
-    baseStoragePointerPressMouse_ = {};
-    baseStoragePointerPressCanOpenMenu_ = false;
-    baseStoragePointerDragTriggered_ = false;
-    baseStorageGrabbedActive_ = false;
-    baseStorageGrabbedFromSlot_ = -1;
+    baseStorageQuantityDialog_ = {};
+    baseStorageQuantityPending_ = {};
     baseSellActive_ = false;
     baseMerchantMode_ = MerchantUiMode::Closed;
     baseMerchantActionSelection_ = 0;
@@ -224,10 +266,12 @@ void Game::resetWorldUiState()
     ringCommandPlaceActive_ = false;
     ringPlaceModeActive_ = false;
     ringEmptyPressActive_ = false;
+    levelUpResultDialog_ = {};
     baseRingWorkshopActive_ = false;
     baseRingWorkshopSelection_ = 0;
     ringWorkshopDraftRadiusPoints_ = levelRingRadiusPoints_;
     ringWorkshopDraftSpeedPoints_ = levelRingSpeedPoints_;
+    ringWorkshopDraftWeightLimitPoints_ = levelRingWeightLimitPoints_;
     baseBookshelfActive_ = false;
     bookshelfPage_ = BookshelfPage::Menu;
     bookshelfSelection_ = 0;
@@ -245,6 +289,12 @@ void Game::resetWorldUiState()
     otherImageScaleScrollOffset_ = 0.0f;
     objectImageScaleDirty_ = false;
     objectImageScaleStatus_.clear();
+    debugItemPickerActive_ = false;
+    debugItemPickerObjectIds_.clear();
+    debugItemPickerSelectedIndex_ = -1;
+    debugItemPickerScrollOffset_ = 0.0f;
+    debugItemPickerStatus_.clear();
+    debugItemPickerCancelState_ = {};
     enemyTestActive_ = false;
     enemyTestUiVisible_ = true;
     enemyTestDropdown_ = {};
@@ -540,6 +590,7 @@ void Game::enterBase()
     inventory_.setOpen(false);
     inventory_.cancelGrab();
     cancelRingGrab();
+    closeDebugItemPicker();
     if (levels_.isChoosing()) {
         levels_ = LevelSystem{};
     }
@@ -553,6 +604,15 @@ void Game::enterBase()
     warpReturnConfirmSelection_ = 0;
     focusedWarpReturnPointIndex_ = -1;
     baseStorageActive_ = false;
+    baseStorageMode_ = StorageUiMode::Closed;
+    baseStorageActionSelection_ = 0;
+    baseStorageDepositSource_ = static_cast<int>(BaseItemSource::Backpack);
+    baseStorageDepositSourceTabs_ = {};
+    baseStorageDepositSelection_ = 0;
+    baseStorageWithdrawSelection_ = 0;
+    baseStorageWarehousePage_ = 0;
+    baseStorageQuantityDialog_ = {};
+    baseStorageQuantityPending_ = {};
     baseSellActive_ = false;
     baseMerchantMode_ = MerchantUiMode::Closed;
     baseMerchantSellSource_ = 0;
@@ -858,6 +918,7 @@ void Game::applyPermanentUpgrades()
     player_.spellRingShiftDistanceBonus = effectiveRingShiftDistance() - balance_.spellRingShiftDistance;
     spellRing_.setRadius(effectiveInitialRingRadius(levelRingRadiusPoints_));
     spellRing_.setAngularSpeed(effectiveInitialRingSpeed(levelRingSpeedPoints_));
+    spellRing_.setMaxEquippedWeightForAllRings(effectiveInitialRingWeightLimit(levelRingWeightLimitPoints_));
 }
 
 float Game::effectiveInitialRingRadius(int levelRadiusPoints) const
@@ -874,6 +935,12 @@ float Game::effectiveInitialRingSpeed(int levelSpeedPoints) const
     const float workshopMultiplier = 1.0f + static_cast<float>(workshopInitialSpeedLevel_) * 0.05f;
     const float levelMultiplier = static_cast<float>(std::pow(1.1, std::max(0, levelSpeedPoints)));
     return balance_.spellRingSpeed * baseUpgradeMultiplier * workshopMultiplier * levelMultiplier;
+}
+
+float Game::effectiveInitialRingWeightLimit(int levelWeightLimitPoints) const
+{
+    return SpellRingSystem::InitialMaxEquippedWeight +
+        SpellRingSystem::LevelWeightLimitUpgradeAmount * static_cast<float>(std::max(0, levelWeightLimitPoints));
 }
 
 float Game::effectiveRingShiftDistance() const
@@ -1320,9 +1387,11 @@ void Game::enterGameOver()
     inventory_.setOpen(false);
     inventory_.cancelGrab();
     cancelRingGrab();
+    closeDebugItemPicker();
     if (levels_.isChoosing()) {
         levels_ = LevelSystem{};
     }
+    levelUpResultDialog_ = {};
     mode_ = ScreenMode::GameOver;
     pausePage_ = PauseMenuPage::Main;
     pauseReturnMode_ = ScreenMode::Playing;
@@ -1343,9 +1412,11 @@ void Game::enterStageClear()
     inventory_.setOpen(false);
     inventory_.cancelGrab();
     cancelRingGrab();
+    closeDebugItemPicker();
     if (levels_.isChoosing()) {
         levels_ = LevelSystem{};
     }
+    levelUpResultDialog_ = {};
     mode_ = ScreenMode::StageClear;
     pausePage_ = PauseMenuPage::Main;
     pauseReturnMode_ = ScreenMode::Playing;
@@ -1371,6 +1442,11 @@ void Game::updateScreenMode(
     }
 
     if (mode_ == ScreenMode::WorldLoading) {
+        return;
+    }
+
+    if (debugItemPickerActive_) {
+        updateDebugItemPicker(input, ui);
         return;
     }
 
@@ -1405,7 +1481,7 @@ void Game::updateScreenMode(
     if (levels_.isChoosing()) {
         inventory_.setOpen(false);
         mode_ = ScreenMode::LevelUp;
-    } else if (mode_ == ScreenMode::LevelUp) {
+    } else if (mode_ == ScreenMode::LevelUp && !levelUpResultDialog_.open) {
         mode_ = ScreenMode::Playing;
     }
 
@@ -1438,7 +1514,7 @@ void Game::updateScreenMode(
             return;
         }
         updateRingStatusHud(ui);
-        inventory_.update(input, ui, player_, spellRing_, effectDispatcher_, false, discoveryEvents, &encyclopedia_);
+        inventory_.update(input, ui, player_, spellRing_, effectDispatcher_, false, objectCatalog_, &magic_, discoveryEvents, &encyclopedia_);
         if (inventory_.isOpen()) {
             inventoryReturnToPause_ = false;
             mode_ = ScreenMode::Inventory;
@@ -1455,6 +1531,7 @@ void Game::updateScreenMode(
             effectDispatcher_,
             camera_.width(),
             camera_.height(),
+            &magic_,
             discoveryEvents,
             &encyclopedia_);
         break;
@@ -1462,7 +1539,7 @@ void Game::updateScreenMode(
         updatePauseMenu(input, ui);
         break;
     case ScreenMode::Inventory:
-        inventory_.updateScreen(input, ui, player_, spellRing_, effectDispatcher_, discoveryEvents, &encyclopedia_);
+        inventory_.updateScreen(input, ui, player_, spellRing_, effectDispatcher_, objectCatalog_, &magic_, discoveryEvents, &encyclopedia_);
         if (!inventory_.isOpen()) {
             mode_ = inventoryReturnToPause_ ? ScreenMode::PauseMenu : ScreenMode::Playing;
             pausePage_ = PauseMenuPage::Main;
@@ -1476,8 +1553,39 @@ void Game::updateScreenMode(
         updateObjectImageScaleEditScreen(input, ui);
         break;
     case ScreenMode::LevelUp:
-        upgrades_.update(input, ui, levels_, spellRing_, levelRingRadiusPoints_, levelRingSpeedPoints_);
-        if (!levels_.isChoosing()) {
+        if (levelUpResultDialog_.open) {
+            const UiRect resultPanel = levelUpResultDialogRect();
+            if (updateUiResultDialog(levelUpResultDialog_, ui, input, resultPanel)) {
+                mode_ = ScreenMode::Playing;
+            }
+            ui.block(resultPanel);
+            break;
+        }
+        if (levels_.isChoosing()) {
+            const float beforeRadius = spellRing_.radius();
+            const float beforeSpeed = spellRing_.angularSpeed();
+            const float beforeWeightLimit = spellRing_.maxEquippedWeight();
+            const std::optional<UpgradeChoice> choice = upgrades_.update(
+                input,
+                ui,
+                levels_,
+                spellRing_,
+                levelRingRadiusPoints_,
+                levelRingSpeedPoints_,
+                levelRingWeightLimitPoints_);
+            if (choice) {
+                float beforeValue = beforeRadius;
+                float afterValue = spellRing_.radius();
+                if (*choice == UpgradeChoice::Speed) {
+                    beforeValue = beforeSpeed;
+                    afterValue = spellRing_.angularSpeed();
+                } else if (*choice == UpgradeChoice::WeightLimit) {
+                    beforeValue = beforeWeightLimit;
+                    afterValue = spellRing_.maxEquippedWeight();
+                }
+                openUiResultDialog(levelUpResultDialog_, "レベルアップ", levelUpResultLines(*choice, beforeValue, afterValue));
+            }
+        } else {
             mode_ = ScreenMode::Playing;
         }
         break;
@@ -1490,7 +1598,7 @@ void Game::updateScreenMode(
 
 bool Game::gameProgressPaused() const
 {
-    return dialogue_.active() || warpReturnConfirmActive_ || mode_ != ScreenMode::Playing;
+    return debugItemPickerActive_ || dialogue_.active() || warpReturnConfirmActive_ || mode_ != ScreenMode::Playing;
 }
 
 bool Game::basePresentationActive() const
@@ -1592,6 +1700,7 @@ void Game::update(const Input& input, const Time& time)
     }
     updateDungeonRingIntro(time.deltaSeconds());
     captureCooldown_ = std::max(0.0f, captureCooldown_ - time.deltaSeconds());
+    magic_.setFxSystem(&magicFx_);
 
     std::vector<EffectDiscoveryEvent> effectDiscoveries;
     UiContext ui(input);
@@ -1684,6 +1793,7 @@ void Game::update(const Input& input, const Time& time)
             time.totalSeconds(),
             objectCatalog_,
             effectDispatcher_,
+            &magic_,
             &effectDiscoveries,
             &encyclopedia_);
         for (const TerrainHitTile& tile : digging_.hitTiles()) {
@@ -1824,6 +1934,7 @@ void Game::update(const Input& input, const Time& time)
             std::vector<LightSource>{},
             effectDispatcher_,
             projectiles_,
+            magic_,
             &effectDiscoveries,
             &encyclopedia_);
         for (Vec2 explosionPosition : digging_.capturedExplosionRequests()) {
@@ -1841,6 +1952,7 @@ void Game::update(const Input& input, const Time& time)
             objectCatalog_,
             &effectDiscoveries,
             &encyclopedia_);
+        magic_.update(player_, spellRing_, enemies_, tileMap_, time.deltaSeconds());
         handleRingItemBreakEvents();
 
         std::vector<Vec2> capturedExplosionPositions;
@@ -1952,9 +2064,14 @@ void Game::update(const Input& input, const Time& time)
             effects_.spawnDamagePopup(event.position, event.amount, DamagePopupStyle::Player);
         }
         player_.damageEvents.clear();
+        for (const PlayerHealEvent& event : player_.healEvents) {
+            effects_.spawnDamagePopup(event.position, event.amount, DamagePopupStyle::Heal);
+        }
+        player_.healEvents.clear();
         applyEffectDiscoveries(effectDiscoveries);
         syncEncyclopediaFromInventoryAndRing();
         updateAmbientParticleEffects(time.deltaSeconds());
+        magicFx_.update(time.deltaSeconds());
         effects_.update(time.deltaSeconds());
         levels_.addXp(player_, enemies_.consumePendingXp(), balance_);
         if (bossDefeated) {

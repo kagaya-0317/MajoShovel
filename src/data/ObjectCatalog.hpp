@@ -59,6 +59,28 @@ struct CapturedBehaviorSpec {
     bool operator==(const CapturedBehaviorSpec&) const = default;
 };
 
+enum class ObjectRingRotationMode {
+    Fixed,
+    Outward,
+    Forward,
+    Spin,
+};
+
+struct ObjectRingRotation {
+    ObjectRingRotationMode mode = ObjectRingRotationMode::Fixed;
+    float offsetDegrees = 0.0f;
+    float spinDegreesPerSecond = 0.0f;
+
+    bool operator==(const ObjectRingRotation&) const = default;
+};
+
+struct ObjectVisualRotation {
+    float groundDegrees = 0.0f;
+    ObjectRingRotation ring;
+
+    bool operator==(const ObjectVisualRotation&) const = default;
+};
+
 struct ObjectDefinition {
     std::string id;
     std::string name;
@@ -74,6 +96,7 @@ struct ObjectDefinition {
     int durability = 0;
     double weightKg = 0.0;
     int imageNumber = 0;
+    ObjectVisualRotation visualRotation;
     std::vector<std::string> tags;
     std::string effectText;
     std::vector<DiscoveryEffectLine> discoveryEffectLines;

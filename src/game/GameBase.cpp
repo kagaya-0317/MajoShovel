@@ -15,12 +15,12 @@ const char* baseUpgradeMerchantFeature(int level)
 {
     switch (level) {
     case 1: return "通常売買";
-    case 2: return "品揃え増加";
-    case 3: return "買取基本価格+10%";
-    case 4: return "高価買取カテゴリ";
-    case 5: return "珍品販売";
-    case 6: return "買取基本価格+20%";
-    case 7: return "珍品レア度上昇";
+    case 2: return "品揃え5枠";
+    case 3: return "品揃え6枠/買取+10%";
+    case 4: return "宝の高価買取";
+    case 5: return "品揃え8枠/レア増加";
+    case 6: return "品揃え9枠/買取+20%";
+    case 7: return "品揃え10枠/高レア増加";
     default: return "未解禁";
     }
 }
@@ -29,12 +29,54 @@ const char* baseUpgradeProcessingFeature(int level)
 {
     switch (level) {
     case 1: return "軽量化";
-    case 2: return "重量化";
+    case 2: return "作業台費用-10%";
     case 3: return "大型化";
-    case 4: return "小型化";
-    case 5: return "追加効果付与";
+    case 4: return "作業台費用-20%";
+    case 5: return "作業台費用-30%";
     default: return "未解禁";
     }
+}
+
+std::unordered_map<std::string, int> buildObjectSortOrder(const ObjectCatalog& catalog)
+{
+    std::unordered_map<std::string, int> order;
+    order.reserve(catalog.objects.size());
+    for (int i = 0; i < static_cast<int>(catalog.objects.size()); ++i) {
+        const ObjectDefinition& object = catalog.objects[static_cast<std::size_t>(i)];
+        if (!object.id.empty() && order.find(object.id) == order.end()) {
+            order.emplace(object.id, i);
+        }
+    }
+    return order;
+}
+
+int objectSortOrder(const std::unordered_map<std::string, int>& order, const std::string& objectId)
+{
+    constexpr int MissingOrder = 1'000'000'000;
+    const auto it = order.find(objectId);
+    return it != order.end() ? it->second : MissingOrder;
+}
+
+const std::string& objectSortId(const InventoryObjectInstance& instance)
+{
+    return !instance.item.id.empty() ? instance.item.id : instance.instance.objectId;
+}
+
+const std::string& warehouseEntrySortId(
+    int entryIndex,
+    const std::vector<InventoryObjectStack>& stacks,
+    const std::vector<InventoryObjectInstance>& instances)
+{
+    const int stackCount = static_cast<int>(stacks.size());
+    if (entryIndex >= 0 && entryIndex < stackCount) {
+        return stacks[static_cast<std::size_t>(entryIndex)].objectId;
+    }
+    const int instanceIndex = entryIndex - stackCount;
+    if (instanceIndex >= 0 && instanceIndex < static_cast<int>(instances.size())) {
+        return objectSortId(instances[static_cast<std::size_t>(instanceIndex)]);
+    }
+    static const std::string Empty;
+    return Empty;
 }
 
 const char* baseUpgradeResultSubject(int index)
@@ -90,6 +132,40 @@ std::string baseUpgradeResultChangeLine(int index, int beforeLevel, int afterLev
     }
 }
 
+enum RingLevelUpgradePointIndex {
+    RingLevelUpgradeRadius = 0,
+    RingLevelUpgradeSpeed = 1,
+    RingLevelUpgradeWeightLimit = 2,
+};
+
+struct RingWorkshopRespecTransfer {
+    int from = 0;
+    int to = 0;
+};
+
+constexpr int RingWorkshopRespecTransferCount = 6;
+constexpr int RingWorkshopConfirmItemIndex = RingWorkshopRespecTransferCount;
+constexpr int RingWorkshopUpgradeStartIndex = RingWorkshopConfirmItemIndex + 1;
+constexpr int BaseBackpackSourceIndex = 0;
+constexpr std::array<RingWorkshopRespecTransfer, RingWorkshopRespecTransferCount> RingWorkshopRespecTransfers{{
+    {RingLevelUpgradeSpeed, RingLevelUpgradeRadius},
+    {RingLevelUpgradeWeightLimit, RingLevelUpgradeRadius},
+    {RingLevelUpgradeRadius, RingLevelUpgradeSpeed},
+    {RingLevelUpgradeWeightLimit, RingLevelUpgradeSpeed},
+    {RingLevelUpgradeRadius, RingLevelUpgradeWeightLimit},
+    {RingLevelUpgradeSpeed, RingLevelUpgradeWeightLimit},
+}};
+
+const char* ringLevelUpgradePointName(int index)
+{
+    switch (index) {
+    case RingLevelUpgradeRadius: return "半径";
+    case RingLevelUpgradeSpeed: return "速度";
+    case RingLevelUpgradeWeightLimit: return "重量";
+    default: return "強化";
+    }
+}
+
 constexpr std::array<std::string_view, BaseItemSourceCount> BaseItemSourceLabels{{
     "リュック",
     "収納箱",
@@ -98,11 +174,14 @@ constexpr std::array<std::string_view, BaseItemSourceCount> BaseItemSourceLabels
     "リング3",
 }};
 
+constexpr int StorageDepositSourceCount = 1 + SpellRingCount;
 constexpr float MerchantSellSourceYOffset = 44.0f;
 constexpr float MerchantSellItemYOffset = MerchantSellSourceYOffset + 16.0f;
 constexpr float MerchantSellRingYOffset = MerchantSellSourceYOffset + 40.0f + 40.0f;
+constexpr float StorageTransferLayoutYOffset = 24.0f;
 constexpr float BaseRingPreviewScale = 0.8f;
 constexpr float MerchantSellRingPreviewScale = 0.9f;
+constexpr float StorageRingPreviewScale = 1.0f;
 constexpr float MerchantSellRingItemLabelExtraHeight = 30.0f;
 constexpr float ExternalWarehouseGridYOffset = 44.0f;
 constexpr float ExternalWarehousePageSelectorGap = 10.0f;
@@ -149,6 +228,13 @@ UiRect merchantSellSourceRect(int index)
     return {{BaseItemSourceTabX + static_cast<float>(index) * BaseItemSourceTabPitch, 116.0f + MerchantSellSourceYOffset}, {BaseItemSourceTabWidth, ui::ButtonHeight}};
 }
 
+float storageItemCircleLeftX()
+{
+    const UiRect first = merchantGridSlotRect(0);
+    const float radius = std::min(first.size.x, first.size.y) * 0.5f;
+    return first.pos.x + first.size.x * 0.5f - radius;
+}
+
 bool baseItemSourceIsWarehouse(int source)
 {
     return source == BaseWarehouseSourceIndex;
@@ -162,6 +248,112 @@ bool baseItemSourceIsRing(int source)
 int ringIndexFromBaseItemSource(int source)
 {
     return source - BaseRingSourceOffset;
+}
+
+int storageDepositSourceValue(int tabIndex)
+{
+    if (tabIndex <= 0) {
+        return BaseBackpackSourceIndex;
+    }
+    return BaseRingSourceOffset + std::clamp(tabIndex - 1, 0, SpellRingCount - 1);
+}
+
+int storageDepositSourceTabIndex(int source)
+{
+    if (source == BaseBackpackSourceIndex) {
+        return 0;
+    }
+    if (baseItemSourceIsRing(source)) {
+        return 1 + ringIndexFromBaseItemSource(source);
+    }
+    return 0;
+}
+
+UiRect storageDepositSourceRect(int tabIndex)
+{
+    UiRect rect = merchantSellSourceRect(tabIndex);
+    rect.pos.x = storageItemCircleLeftX() + static_cast<float>(tabIndex) * BaseItemSourceTabPitch;
+    rect.pos.y += StorageTransferLayoutYOffset;
+    return rect;
+}
+
+UiRect storageTransferGridSlotRect(int index)
+{
+    UiRect rect = merchantGridSlotRect(index);
+    rect.pos.y += MerchantSellItemYOffset + StorageTransferLayoutYOffset;
+    return rect;
+}
+
+Vec2 storageTransferCountTextPos()
+{
+    return {storageItemCircleLeftX(), 116.0f + StorageTransferLayoutYOffset};
+}
+
+UiRect storageQuantityDialogRect()
+{
+    return {{430.0f, 130.0f}, {420.0f, 396.0f}};
+}
+
+UiRect smallActionDialogRect()
+{
+    return {{410.0f, 170.0f}, {460.0f, 330.0f}};
+}
+
+UiRect smallActionChoiceRect(int index)
+{
+    constexpr float ChoiceGap = 16.0f;
+    const UiRect body = uiBodyRect(smallActionDialogRect());
+    const float left = body.pos.x + 8.0f;
+    const float right = body.pos.x + body.size.x - 36.0f;
+    return {
+        {left, body.pos.y + 20.0f + static_cast<float>(index) * (ui::ButtonHeight + ChoiceGap)},
+        {right - left, ui::ButtonHeight},
+    };
+}
+
+Vec2 smallActionInfoTextPos(UiRect panel)
+{
+    const UiRect body = uiBodyRect(panel);
+    return body.pos + Vec2{8.0f, -18.0f};
+}
+
+UiRect storageActionDialogRect()
+{
+    return smallActionDialogRect();
+}
+
+UiRect storageActionChoiceRect(int index)
+{
+    return smallActionChoiceRect(index);
+}
+
+UiRect merchantActionDialogRect()
+{
+    return smallActionDialogRect();
+}
+
+UiRect merchantActionChoiceRect(int index)
+{
+    return smallActionChoiceRect(index);
+}
+
+Vec2 baseSystemMessagePos(
+    UiRect panel,
+    bool storageActive,
+    bool merchantActive,
+    bool processingActive,
+    bool upgradeActive)
+{
+    if (upgradeActive) {
+        return baseUpgradePanelRect().pos + Vec2{32.0f, 468.0f};
+    }
+    if (storageActive || merchantActive) {
+        return {80.0f, 500.0f};
+    }
+    if (processingActive) {
+        return panel.pos + Vec2{54.0f, 504.0f};
+    }
+    return panel.pos + Vec2{54.0f, 454.0f};
 }
 
 void drawTextCentered(Renderer& renderer, UiRect rect, float y, std::string_view text, Color color, int scale)
@@ -250,6 +442,11 @@ Vec2 merchantSellRingPreviewCenter()
     return baseRingPreviewCenterFromGrid(merchantGridSlotRect, MerchantSellRingYOffset);
 }
 
+Vec2 storageRingPreviewCenter()
+{
+    return baseRingPreviewCenterFromGrid(storageTransferGridSlotRect, MerchantSellRingYOffset) + Vec2{0.0f, -60.0f};
+}
+
 Vec2 baseRingPreviewCenterForShape(Vec2 center, RingShape shape)
 {
     if (shape == RingShape::Comet) {
@@ -270,6 +467,13 @@ Vec2 merchantSellRingPreviewCenter(const SpellRingSystem& spellRing, int ringInd
 {
     return baseRingPreviewCenterForShape(
         merchantSellRingPreviewCenter(),
+        spellRing.ringShapeForIndex(ringIndex));
+}
+
+Vec2 storageRingPreviewCenter(const SpellRingSystem& spellRing, int ringIndex)
+{
+    return baseRingPreviewCenterForShape(
+        storageRingPreviewCenter(),
         spellRing.ringShapeForIndex(ringIndex));
 }
 
@@ -400,6 +604,27 @@ UiRect merchantSellRingItemRect(
         ringIndex,
         itemIndex,
         itemCount,
+        StorageRingPreviewScale,
+        totalSeconds);
+}
+
+UiRect storageRingItemRect(
+    const SpellRingItem& item,
+    const SpellRingSystem& spellRing,
+    const RuntimeBalance& balance,
+    int ringIndex,
+    int itemIndex,
+    int itemCount,
+    float totalSeconds)
+{
+    return baseRingPreviewItemRect(
+        storageRingPreviewCenter(spellRing, ringIndex),
+        item,
+        spellRing,
+        balance,
+        ringIndex,
+        itemIndex,
+        itemCount,
         MerchantSellRingPreviewScale,
         totalSeconds);
 }
@@ -445,6 +670,10 @@ void drawBaseRingPreview(
         if (lengthSquared(outward) <= 0.0001f) {
             outward = {0.0f, -1.0f};
         }
+        Vec2 forward{-outward.y, outward.x};
+        if (lengthSquared(forward) <= 0.0001f) {
+            forward = {1.0f, 0.0f};
+        }
         const bool selected = i == selectedIndex;
         const ItemData* object = objectForRingItem(objectCatalog, item);
         if (shape != RingShape::FigureEight) {
@@ -457,7 +686,7 @@ void drawBaseRingPreview(
             renderer.drawLine(center + tangent * AngleLineHalfWidthPx, itemAnchor + tangent * AngleLineHalfWidthPx, angleLineColor);
             renderer.drawLine(center - tangent * AngleLineHalfWidthPx, itemAnchor - tangent * AngleLineHalfWidthPx, angleLineColor);
         }
-        drawRingItemShape(renderer, item, object, itemCenter, outward, selected);
+        drawRingItemShape(renderer, item, object, itemCenter, outward, forward, totalSeconds, selected);
         char label[16];
         std::snprintf(label, sizeof(label), "%d", i + 1);
         renderer.drawText(itemCenter + Vec2{-5.0f, 22.0f}, label, selected ? Color{255, 230, 150, 255} : Color{174, 182, 198, 255}, 1);
@@ -506,6 +735,27 @@ void drawMerchantSellRingPreview(
         totalSeconds);
 }
 
+void drawStorageRingPreview(
+    Renderer& renderer,
+    const SpellRingSystem& spellRing,
+    const ObjectCatalog& objectCatalog,
+    const RuntimeBalance& balance,
+    int ringIndex,
+    int selectedIndex,
+    float totalSeconds)
+{
+    drawBaseRingPreview(
+        renderer,
+        spellRing,
+        objectCatalog,
+        balance,
+        storageRingPreviewCenter(spellRing, ringIndex),
+        ringIndex,
+        selectedIndex,
+        StorageRingPreviewScale,
+        totalSeconds);
+}
+
 struct ProcessingResultSnapshot {
     std::string name;
     int stackCount = 1;
@@ -517,6 +767,8 @@ struct ProcessingResultSnapshot {
     int attackBonus = 0;
     int digBonus = 0;
     int durabilityBonus = 0;
+    double weightModifier = 1.0;
+    double sizeModifier = 1.0;
 };
 
 std::string nonEmptyItemName(std::string_view name)
@@ -548,6 +800,8 @@ ProcessingResultSnapshot processingSnapshotFromInstance(const InventoryObjectIns
     snapshot.attackBonus = entry.instance.attackBonus;
     snapshot.digBonus = entry.instance.digBonus;
     snapshot.durabilityBonus = entry.instance.durabilityBonus;
+    snapshot.weightModifier = entry.instance.weightModifier;
+    snapshot.sizeModifier = entry.instance.sizeModifier;
     return snapshot;
 }
 
@@ -563,6 +817,8 @@ ProcessingResultSnapshot processingSnapshotFromRingItem(const ObjectCatalog& cat
     snapshot.attackBonus = item.attackBonus;
     snapshot.digBonus = item.digBonus;
     snapshot.durabilityBonus = item.durabilityBonus;
+    snapshot.weightModifier = item.weightModifier;
+    snapshot.sizeModifier = item.sizeModifier;
     return snapshot;
 }
 
@@ -582,6 +838,24 @@ ProcessingResultSnapshot processingEnhancedSnapshot(
         snapshot.maxDurability += durabilityBonus;
         snapshot.currentDurability = std::min(snapshot.maxDurability, std::max(0, snapshot.currentDurability + durabilityBonus));
     }
+    return snapshot;
+}
+
+ProcessingResultSnapshot processingResetSnapshot(ProcessingResultSnapshot snapshot)
+{
+    snapshot.enhanceLevel = 0;
+    snapshot.attackBonus = 0;
+    snapshot.digBonus = 0;
+    snapshot.durabilityBonus = 0;
+    return snapshot;
+}
+
+ProcessingResultSnapshot processingShapeSnapshot(ProcessingResultSnapshot snapshot, double weightMultiplier, double sizeMultiplier)
+{
+    snapshot.stackCount = 1;
+    snapshot.stackSource = false;
+    snapshot.weightModifier = std::clamp(snapshot.weightModifier * weightMultiplier, 0.25, 4.0);
+    snapshot.sizeModifier = std::clamp(snapshot.sizeModifier * sizeMultiplier, 0.50, 3.0);
     return snapshot;
 }
 
@@ -605,6 +879,16 @@ std::string processingDurabilityChangeLine(std::string_view label, int beforeVal
         return std::string(label) + ": 壊れない";
     }
     return processingChangeLine(label, beforeValue, afterValue);
+}
+
+std::string processingPercentChangeLine(std::string_view label, double beforeValue, double afterValue)
+{
+    char buffer[192];
+    std::snprintf(buffer, sizeof(buffer), "%s: %.0f%% → %.0f%%",
+        std::string(label).c_str(),
+        beforeValue * 100.0,
+        afterValue * 100.0);
+    return buffer;
 }
 
 std::string processingRepairDurabilityLine(const ProcessingResultSnapshot& before, const ProcessingResultSnapshot& after)
@@ -658,6 +942,36 @@ std::vector<std::string> processingEnhanceResultLines(
     return lines;
 }
 
+std::vector<std::string> processingResetResultLines(
+    const ProcessingResultSnapshot& before,
+    const ProcessingResultSnapshot& after)
+{
+    std::vector<std::string> lines;
+    lines.push_back(before.name + "の強化をリセットしました");
+    lines.push_back(processingChangeLine("強化Lv", before.enhanceLevel, after.enhanceLevel));
+    lines.push_back(processingSignedChangeLine("攻撃力", before.attackBonus, after.attackBonus));
+    lines.push_back(processingSignedChangeLine("抑制力", before.digBonus, after.digBonus));
+    lines.push_back(processingSignedChangeLine("耐久補正", before.durabilityBonus, after.durabilityBonus));
+    return lines;
+}
+
+std::vector<std::string> processingShapeResultLines(
+    const ProcessingResultSnapshot& before,
+    const ProcessingResultSnapshot& after,
+    bool lightMode)
+{
+    std::vector<std::string> lines;
+    const char* verb = lightMode ? "軽量化しました" : "大型化しました";
+    if (before.stackSource && before.stackCount > 1) {
+        lines.push_back(before.name + "1個を" + verb);
+    } else {
+        lines.push_back(before.name + "を" + verb);
+    }
+    lines.push_back(processingPercentChangeLine("重量", before.weightModifier, after.weightModifier));
+    lines.push_back(processingPercentChangeLine("大きさ", before.sizeModifier, after.sizeModifier));
+    return lines;
+}
+
 } // namespace
 
 bool Game::isSellableObject(const ItemData& item) const
@@ -678,16 +992,114 @@ bool Game::isStoryObject(const ItemData& item) const
     return false;
 }
 
-int Game::sellPrice(const ItemData& item, const ItemInstance* /*instance*/) const
+namespace {
+
+constexpr double LightenWeightMultiplier = 0.85;
+constexpr double EnlargeWeightMultiplier = 1.15;
+constexpr double EnlargeSizeMultiplier = 1.18;
+
+bool isTreasureObject(const ItemData& item)
 {
-    // Future hooks: enhancement bonus, broken penalty, category multiplier, merchant buy-rate.
+    return item.category == "\xE5\xAE\x9D";
+}
+
+double itemInstanceSellValueMultiplier(
+    int currentDurability,
+    int maxDurability,
+    int enhanceLevel,
+    int attackBonus,
+    int digBonus,
+    int durabilityBonus,
+    double weightModifier,
+    double sizeModifier,
+    bool broken)
+{
+    double multiplier = 1.0;
+    multiplier += static_cast<double>(std::max(0, enhanceLevel)) * 0.10;
+    multiplier += static_cast<double>(std::max(0, attackBonus) + std::max(0, digBonus)) * 0.035;
+    multiplier += static_cast<double>(std::max(0, durabilityBonus)) * 0.018;
+
+    if (weightModifier < 0.999) {
+        multiplier += std::min(0.35, (1.0 - weightModifier) * 1.5);
+    }
+    if (sizeModifier > 1.001) {
+        multiplier += std::min(0.35, (sizeModifier - 1.0) * 1.2);
+    }
+
+    if (broken || currentDurability == 0) {
+        multiplier *= 0.45;
+    } else if (maxDurability > 0 && currentDurability >= 0) {
+        const double durabilityRatio = std::clamp(
+            static_cast<double>(currentDurability) / static_cast<double>(maxDurability),
+            0.0,
+            1.0);
+        multiplier *= 0.75 + durabilityRatio * 0.25;
+    }
+
+    return std::max(0.1, multiplier);
+}
+
+} // namespace
+
+int Game::sellPrice(const ItemData& item, const ItemInstance* instance) const
+{
     double multiplier = 1.0;
     if (merchantUpgradeLevel_ >= 6) {
         multiplier = 1.2;
     } else if (merchantUpgradeLevel_ >= 3) {
         multiplier = 1.1;
     }
+    if (isHighValueBuyObject(item)) {
+        multiplier *= merchantUpgradeLevel_ >= 6 ? 1.8 : 1.5;
+    }
+    if (instance != nullptr) {
+        multiplier *= itemInstanceSellValueMultiplier(
+            instance->currentDurability,
+            instance->maxDurability,
+            instance->enhanceLevel,
+            instance->attackBonus,
+            instance->digBonus,
+            instance->durabilityBonus,
+            instance->weightModifier,
+            instance->sizeModifier,
+            instance->isBroken);
+    }
     return std::max(0, static_cast<int>(std::ceil(static_cast<double>(item.price) * multiplier)));
+}
+
+int Game::sellPrice(const ItemData& item, const SpellRingItem* ringItem) const
+{
+    if (ringItem == nullptr) {
+        return sellPrice(item, static_cast<const ItemInstance*>(nullptr));
+    }
+    double multiplier = 1.0;
+    if (merchantUpgradeLevel_ >= 6) {
+        multiplier = 1.2;
+    } else if (merchantUpgradeLevel_ >= 3) {
+        multiplier = 1.1;
+    }
+    if (isHighValueBuyObject(item)) {
+        multiplier *= merchantUpgradeLevel_ >= 6 ? 1.8 : 1.5;
+    }
+    multiplier *= itemInstanceSellValueMultiplier(
+        ringItem->durability,
+        ringItem->maxDurability,
+        ringItem->enhanceLevel,
+        ringItem->attackBonus,
+        ringItem->digBonus,
+        ringItem->durabilityBonus,
+        ringItem->weightModifier,
+        ringItem->sizeModifier,
+        ringItem->broken());
+    return std::max(0, static_cast<int>(std::ceil(static_cast<double>(item.price) * multiplier)));
+}
+
+bool Game::isHighValueBuyObject(const ItemData& item) const
+{
+    if (merchantUpgradeLevel_ < 4 || !isTreasureObject(item)) {
+        return false;
+    }
+    return std::find(highValueBuyObjectIds_.begin(), highValueBuyObjectIds_.end(), item.id) != highValueBuyObjectIds_.end();
 }
 
 bool Game::merchantProductCanFit(const ItemData* item) const
@@ -706,6 +1118,39 @@ bool Game::canBuyMerchantProduct(const MerchantProduct& product) const
 {
     const ItemData* item = objectCatalog_.registry.findById(product.objectId);
     return product.quantity > 0 && item != nullptr && money_ >= product.price && merchantProductCanFit(item);
+}
+
+void Game::refreshHighValueBuyObjects(bool force)
+{
+    if (merchantUpgradeLevel_ < 4) {
+        highValueBuyObjectIds_.clear();
+        return;
+    }
+    if (!force && !highValueBuyObjectIds_.empty()) {
+        return;
+    }
+
+    std::vector<const ItemData*> candidates;
+    for (const ObjectDefinition& object : objectCatalog_.objects) {
+        const ItemData* item = objectCatalog_.registry.findById(object.id);
+        if (item == nullptr || item->id.empty() || item->price <= 0 || !isTreasureObject(*item) || !isSellableObject(*item)) {
+            continue;
+        }
+        candidates.push_back(item);
+    }
+
+    highValueBuyObjectIds_.clear();
+    if (candidates.empty()) {
+        return;
+    }
+
+    std::mt19937& rng = lootRuntimeRng();
+    std::shuffle(candidates.begin(), candidates.end(), rng);
+    const int pickCount = std::min(4, static_cast<int>(candidates.size()));
+    highValueBuyObjectIds_.reserve(static_cast<std::size_t>(pickCount));
+    for (int i = 0; i < pickCount; ++i) {
+        highValueBuyObjectIds_.push_back(candidates[static_cast<std::size_t>(i)]->id);
+    }
 }
 
 std::vector<Game::SellableEntry> Game::sellableObjects() const
@@ -738,24 +1183,38 @@ std::vector<Game::SellableEntry> Game::sellableObjects() const
 
 void Game::refreshMerchantStock(bool force)
 {
+    refreshHighValueBuyObjects(force);
     if (!force && !merchantStock_.empty()) {
         return;
     }
 
     std::vector<const ItemData*> candidates;
+    const int maxRarity = merchantUpgradeLevel_ >= 7 ? 10 :
+        (merchantUpgradeLevel_ >= 5 ? 7 :
+            (merchantUpgradeLevel_ >= 4 ? 5 :
+                (merchantUpgradeLevel_ >= 2 ? 4 : 2)));
     for (const ObjectDefinition& object : objectCatalog_.objects) {
         const ItemData* item = objectCatalog_.registry.findById(object.id);
-        if (item == nullptr || item->id.empty() || isStoryObject(*item)) {
+        if (item == nullptr || item->id.empty() || item->price <= 0 || isStoryObject(*item) || isTreasureObject(*item)) {
+            continue;
+        }
+        if (item->rarity > maxRarity) {
             continue;
         }
         const bool basicCategory =
             item->category == "\xE5\x9B\x9E\xE5\xBE\xA9" ||
+            item->category == "\xE5\xBC\xB1\xE4\xBD\x93" ||
             item->category == "\xE6\x8E\xA2\xE7\xB4\xA2" ||
             item->category == "\xE5\xBC\xB7\xE5\x8C\x96";
+        const bool equipmentCategory =
+            item->category == "\xE6\x8E\x98\xE5\x89\x8A" ||
+            item->category == "\xE6\xAD\xA6\xE5\x99\xA8" ||
+            item->category == "\xE7\x9B\xBE" ||
+            item->category == "\xE9\xAD\x94\xE5\xB0\x8E\xE6\x9B\xB8";
         const bool basicTag = std::any_of(item->tags.begin(), item->tags.end(), [](const std::string& tag) {
             return tag == "consumable" || tag == "potion" || tag == "food";
         });
-        if ((basicCategory || basicTag) && item->price > 0) {
+        if (basicCategory || basicTag || (merchantUpgradeLevel_ >= 4 && equipmentCategory)) {
             candidates.push_back(item);
         }
     }
@@ -773,13 +1232,25 @@ void Game::refreshMerchantStock(bool force)
     }
 
     ++merchantStockVersion_;
-    const int stockCount = std::min(merchantUpgradeLevel_ >= 2 ? 5 : 4, static_cast<int>(candidates.size()));
-    const int start = merchantStockVersion_ % static_cast<int>(candidates.size());
+    const int stockCount = std::min(3 + std::clamp(merchantUpgradeLevel_, 1, 7), static_cast<int>(candidates.size()));
     std::mt19937& rng = lootRuntimeRng();
     std::uniform_int_distribution<int> quantityDistribution(1, 5);
     for (int i = 0; i < stockCount; ++i) {
-        const ItemData* item = candidates[static_cast<std::size_t>((start + i) % static_cast<int>(candidates.size()))];
-        merchantStock_.push_back(MerchantProduct{item->id, std::max(1, item->price), quantityDistribution(rng)});
+        std::vector<double> weights;
+        weights.reserve(candidates.size());
+        for (const ItemData* candidate : candidates) {
+            const double commonWeight = static_cast<double>(std::max(1, 12 - std::clamp(candidate->rarity, 1, 10)));
+            const double rareWeight = merchantUpgradeLevel_ >= 7
+                ? static_cast<double>(std::clamp(candidate->rarity, 1, 10)) * 1.4
+                : (merchantUpgradeLevel_ >= 5 ? static_cast<double>(std::clamp(candidate->rarity, 1, 10)) * 0.65 : 0.0);
+            weights.push_back(commonWeight + rareWeight);
+        }
+        std::discrete_distribution<int> distribution(weights.begin(), weights.end());
+        const int pickedIndex = distribution(rng);
+        const ItemData* item = candidates[static_cast<std::size_t>(pickedIndex)];
+        const int quantity = item->rarity >= 6 ? std::uniform_int_distribution<int>(1, 2)(rng) : quantityDistribution(rng);
+        merchantStock_.push_back(MerchantProduct{item->id, std::max(1, item->price), quantity});
+        candidates.erase(candidates.begin() + pickedIndex);
     }
 }
 
@@ -943,8 +1414,9 @@ int Game::merchantSellTargetPrice(MerchantSellTarget target) const
     if (target.ringItemIndex < 0 || target.ringItemIndex >= static_cast<int>(ringItems.size())) {
         return 0;
     }
-    const ItemData* item = objectForRingItem(objectCatalog_, ringItems[static_cast<std::size_t>(target.ringItemIndex)]);
-    return item != nullptr ? sellPrice(*item) : 0;
+    const SpellRingItem& ringItem = ringItems[static_cast<std::size_t>(target.ringItemIndex)];
+    const ItemData* item = objectForRingItem(objectCatalog_, ringItem);
+    return item != nullptr ? sellPrice(*item, &ringItem) : 0;
 }
 
 void Game::sellMerchantTarget(MerchantSellTarget target, int count)
@@ -1050,7 +1522,7 @@ void Game::sellMerchantTarget(MerchantSellTarget target, int count)
         return;
     }
 
-    money_ += sellPrice(*item);
+    money_ += sellPrice(*item, &ringItems[static_cast<std::size_t>(target.ringItemIndex)]);
     ringItems.erase(ringItems.begin() + target.ringItemIndex);
     spellRing_.resetBaseWeightToCurrent();
     refreshOrbitEffects();
@@ -1213,17 +1685,58 @@ const char* Game::processingModeName(ProcessingMode mode) const
     switch (mode) {
     case ProcessingMode::Repair: return "修理";
     case ProcessingMode::Attack: return "攻撃力強化";
-    case ProcessingMode::Dig: return "抑制力強化";
+    case ProcessingMode::Dig: return "掘削力強化";
     case ProcessingMode::Durability: return "耐久力強化";
+    case ProcessingMode::ResetEnhancement: return "強化リセット";
+    case ProcessingMode::Lighten: return "軽量化";
+    case ProcessingMode::Enlarge: return "大型化";
     }
     return "";
+}
+
+const char* Game::processingActionName(ProcessingMode mode) const
+{
+    switch (mode) {
+    case ProcessingMode::Repair:
+        return "修理する";
+    case ProcessingMode::ResetEnhancement:
+        return "リセットする";
+    case ProcessingMode::Lighten:
+    case ProcessingMode::Enlarge:
+        return "加工する";
+    case ProcessingMode::Attack:
+    case ProcessingMode::Dig:
+    case ProcessingMode::Durability:
+        return "強化する";
+    }
+    return "実行する";
+}
+
+bool Game::processingModeUnlocked(ProcessingMode mode) const
+{
+    switch (mode) {
+    case ProcessingMode::Lighten:
+        return processingUnlockLevel_ >= 1;
+    case ProcessingMode::Enlarge:
+        return processingUnlockLevel_ >= 3;
+    case ProcessingMode::Repair:
+    case ProcessingMode::Attack:
+    case ProcessingMode::Dig:
+    case ProcessingMode::Durability:
+    case ProcessingMode::ResetEnhancement:
+        return true;
+    }
+    return true;
 }
 
 bool Game::processingEntryAvailable(StorageEntry entry, bool warehouseEntry) const
 {
     const ProcessingMode mode = static_cast<ProcessingMode>(std::clamp(baseProcessingMode_, 0, BaseProcessingModeCount - 1));
+    if (!processingModeUnlocked(mode)) {
+        return false;
+    }
     if (entry.kind == StorageEntryKind::Stack) {
-        return mode != ProcessingMode::Repair;
+        return mode != ProcessingMode::Repair && mode != ProcessingMode::ResetEnhancement;
     }
     const ItemInstance* instance = storageEntryInstance(entry, warehouseEntry);
     if (instance == nullptr) {
@@ -1231,6 +1744,18 @@ bool Game::processingEntryAvailable(StorageEntry entry, bool warehouseEntry) con
     }
     if (mode == ProcessingMode::Repair) {
         return instance->maxDurability >= 0 && (instance->isBroken || instance->currentDurability < instance->maxDurability);
+    }
+    if (mode == ProcessingMode::ResetEnhancement) {
+        return instance->enhanceLevel > 0 ||
+            instance->attackBonus != 0 ||
+            instance->digBonus != 0 ||
+            instance->durabilityBonus != 0;
+    }
+    if (mode == ProcessingMode::Lighten) {
+        return instance->weightModifier >= 0.999;
+    }
+    if (mode == ProcessingMode::Enlarge) {
+        return instance->sizeModifier <= 1.001;
     }
     return instance->enhanceLevel < MaxItemEnhanceLevel;
 }
@@ -1258,9 +1783,24 @@ bool Game::processingTargetAvailable(ProcessingTarget target) const
     }
 
     const ProcessingMode mode = static_cast<ProcessingMode>(std::clamp(baseProcessingMode_, 0, BaseProcessingModeCount - 1));
+    if (!processingModeUnlocked(mode)) {
+        return false;
+    }
     const SpellRingItem& item = ringItems[static_cast<std::size_t>(target.ringItemIndex)];
     if (mode == ProcessingMode::Repair) {
         return item.maxDurability >= 0 && (item.broken() || item.durability < item.maxDurability);
+    }
+    if (mode == ProcessingMode::ResetEnhancement) {
+        return item.enhanceLevel > 0 ||
+            item.attackBonus != 0 ||
+            item.digBonus != 0 ||
+            item.durabilityBonus != 0;
+    }
+    if (mode == ProcessingMode::Lighten) {
+        return item.weightModifier >= 0.999;
+    }
+    if (mode == ProcessingMode::Enlarge) {
+        return item.sizeModifier <= 1.001;
     }
     return item.enhanceLevel < MaxItemEnhanceLevel;
 }
@@ -1269,33 +1809,59 @@ int Game::processingMoneyCost(StorageEntry entry, ProcessingMode mode, bool ware
 {
     const ItemData* item = storageEntryItem(entry, warehouseEntry);
     const int basePrice = std::max(1, item != nullptr ? item->price : 0);
+    const auto discountCost = [this](int rawCost) {
+        double multiplier = 1.0;
+        if (processingUnlockLevel_ >= 5) {
+            multiplier = 0.70;
+        } else if (processingUnlockLevel_ >= 4) {
+            multiplier = 0.80;
+        } else if (processingUnlockLevel_ >= 2) {
+            multiplier = 0.90;
+        }
+        return std::max(1, static_cast<int>(std::ceil(static_cast<double>(std::max(1, rawCost)) * multiplier)));
+    };
     if (mode == ProcessingMode::Repair) {
         const ItemInstance* instance = storageEntryInstance(entry, warehouseEntry);
         if (instance == nullptr || instance->maxDurability <= 0) {
             return 0;
         }
         if (instance->isBroken) {
-            return std::max(1, static_cast<int>(std::ceil(static_cast<double>(basePrice) * 0.6)));
+            return discountCost(static_cast<int>(std::ceil(static_cast<double>(basePrice) * 0.6)));
         }
         const int missing = std::max(0, instance->maxDurability - instance->currentDurability);
         if (missing <= 0) {
             return 0;
         }
         const double ratio = static_cast<double>(missing) / static_cast<double>(instance->maxDurability);
-        return std::max(1, static_cast<int>(std::ceil(static_cast<double>(basePrice) * ratio * 0.4)));
+        return discountCost(static_cast<int>(std::ceil(static_cast<double>(basePrice) * ratio * 0.4)));
+    }
+    if (mode == ProcessingMode::ResetEnhancement) {
+        return discountCost(std::max(20, basePrice / 4));
+    }
+    if (mode == ProcessingMode::Lighten) {
+        return discountCost(std::max(80, basePrice / 2 + 90));
+    }
+    if (mode == ProcessingMode::Enlarge) {
+        return discountCost(std::max(120, basePrice / 2 + 140));
     }
 
     int enhanceLevel = 0;
     if (const ItemInstance* instance = storageEntryInstance(entry, warehouseEntry)) {
         enhanceLevel = instance->enhanceLevel;
     }
-    return std::max(20, basePrice / 2 + (enhanceLevel + 1) * 50);
+    return discountCost(std::max(20, basePrice / 2 + (enhanceLevel + 1) * 50));
 }
 
 int Game::processingOreCost(StorageEntry entry, ProcessingMode mode, bool warehouseEntry) const
 {
-    if (mode == ProcessingMode::Repair) {
+    if (mode == ProcessingMode::Repair || mode == ProcessingMode::ResetEnhancement) {
         return 0;
+    }
+    if (mode == ProcessingMode::Lighten) {
+        return 2;
+    }
+    if (mode == ProcessingMode::Enlarge) {
+        return 3;
     }
     int enhanceLevel = 0;
     if (const ItemInstance* instance = storageEntryInstance(entry, warehouseEntry)) {
@@ -1320,28 +1886,54 @@ int Game::processingMoneyCost(ProcessingTarget target, ProcessingMode mode) cons
     const SpellRingItem& ringItem = ringItems[static_cast<std::size_t>(target.ringItemIndex)];
     const ItemData* item = objectForRingItem(objectCatalog_, ringItem);
     const int basePrice = std::max(1, item != nullptr ? item->price : 0);
+    const auto discountCost = [this](int rawCost) {
+        double multiplier = 1.0;
+        if (processingUnlockLevel_ >= 5) {
+            multiplier = 0.70;
+        } else if (processingUnlockLevel_ >= 4) {
+            multiplier = 0.80;
+        } else if (processingUnlockLevel_ >= 2) {
+            multiplier = 0.90;
+        }
+        return std::max(1, static_cast<int>(std::ceil(static_cast<double>(std::max(1, rawCost)) * multiplier)));
+    };
     if (mode == ProcessingMode::Repair) {
         if (ringItem.maxDurability <= 0) {
             return 0;
         }
         if (ringItem.broken()) {
-            return std::max(1, static_cast<int>(std::ceil(static_cast<double>(basePrice) * 0.6)));
+            return discountCost(static_cast<int>(std::ceil(static_cast<double>(basePrice) * 0.6)));
         }
         const int missing = std::max(0, ringItem.maxDurability - ringItem.durability);
         if (missing <= 0) {
             return 0;
         }
         const double ratio = static_cast<double>(missing) / static_cast<double>(ringItem.maxDurability);
-        return std::max(1, static_cast<int>(std::ceil(static_cast<double>(basePrice) * ratio * 0.4)));
+        return discountCost(static_cast<int>(std::ceil(static_cast<double>(basePrice) * ratio * 0.4)));
+    }
+    if (mode == ProcessingMode::ResetEnhancement) {
+        return discountCost(std::max(20, basePrice / 4));
+    }
+    if (mode == ProcessingMode::Lighten) {
+        return discountCost(std::max(80, basePrice / 2 + 90));
+    }
+    if (mode == ProcessingMode::Enlarge) {
+        return discountCost(std::max(120, basePrice / 2 + 140));
     }
 
-    return std::max(20, basePrice / 2 + (ringItem.enhanceLevel + 1) * 50);
+    return discountCost(std::max(20, basePrice / 2 + (ringItem.enhanceLevel + 1) * 50));
 }
 
 int Game::processingOreCost(ProcessingTarget target, ProcessingMode mode) const
 {
-    if (mode == ProcessingMode::Repair || !target.valid) {
+    if (mode == ProcessingMode::Repair || mode == ProcessingMode::ResetEnhancement || !target.valid) {
         return 0;
+    }
+    if (mode == ProcessingMode::Lighten) {
+        return 2;
+    }
+    if (mode == ProcessingMode::Enlarge) {
+        return 3;
     }
     if (target.source == BaseItemSource::Backpack || target.source == BaseItemSource::Warehouse) {
         return processingOreCost(target.backpackEntry, mode, target.warehouseEntry);
@@ -1380,8 +1972,14 @@ void Game::applyProcessingEntry(StorageEntry entry, bool warehouseEntry)
 {
     const ProcessingMode mode = static_cast<ProcessingMode>(std::clamp(baseProcessingMode_, 0, BaseProcessingModeCount - 1));
     if (!processingEntryAvailable(entry, warehouseEntry)) {
-        if (mode == ProcessingMode::Repair && entry.kind == StorageEntryKind::Stack) {
+        if (!processingModeUnlocked(mode)) {
+            baseStatus_ = "この作業は未解禁です";
+        } else if ((mode == ProcessingMode::Repair || mode == ProcessingMode::ResetEnhancement) && entry.kind == StorageEntryKind::Stack) {
             baseStatus_ = "この作業はできません";
+        } else if (mode == ProcessingMode::ResetEnhancement) {
+            baseStatus_ = "リセット不要です";
+        } else if (mode == ProcessingMode::Lighten || mode == ProcessingMode::Enlarge) {
+            baseStatus_ = "加工済みです";
         } else {
             baseStatus_ = mode == ProcessingMode::Repair ? "修理不要です" : "強化上限です";
         }
@@ -1437,6 +2035,46 @@ void Game::applyProcessingEntry(StorageEntry entry, bool warehouseEntry)
         }
         return true;
     };
+    const auto resetEnhancement = [this](ItemInstance& instance) {
+        if (instance.enhanceLevel <= 0 &&
+            instance.attackBonus == 0 &&
+            instance.digBonus == 0 &&
+            instance.durabilityBonus == 0) {
+            return false;
+        }
+        const ItemData* item = objectCatalog_.registry.findById(instance.objectId);
+        const int baseDurability = item != nullptr ? item->durability : std::max(-1, instance.maxDurability - instance.durabilityBonus);
+        instance.enhanceLevel = 0;
+        instance.attackBonus = 0;
+        instance.digBonus = 0;
+        instance.durabilityBonus = 0;
+        instance.maxDurability = baseDurability;
+        if (instance.maxDurability >= 0) {
+            instance.currentDurability = std::clamp(instance.currentDurability, 0, instance.maxDurability);
+            instance.isBroken = instance.currentDurability == 0;
+        } else {
+            instance.isBroken = false;
+        }
+        return true;
+    };
+    const auto applyShapeProcessing = [](ItemInstance& instance, ProcessingMode shapeMode) {
+        if (shapeMode == ProcessingMode::Lighten) {
+            if (instance.weightModifier < 0.999) {
+                return false;
+            }
+            instance.weightModifier = std::clamp(instance.weightModifier * LightenWeightMultiplier, 0.25, 4.0);
+            return true;
+        }
+        if (shapeMode == ProcessingMode::Enlarge) {
+            if (instance.sizeModifier > 1.001) {
+                return false;
+            }
+            instance.weightModifier = std::clamp(instance.weightModifier * EnlargeWeightMultiplier, 0.25, 4.0);
+            instance.sizeModifier = std::clamp(instance.sizeModifier * EnlargeSizeMultiplier, 0.50, 3.0);
+            return true;
+        }
+        return false;
+    };
     const auto allocateWarehouseInstanceId = [this]() {
         constexpr std::string_view Prefix = "warehouseinst_";
         unsigned long long nextId = 1;
@@ -1464,6 +2102,23 @@ void Game::applyProcessingEntry(StorageEntry entry, bool warehouseEntry)
     if (!warehouseEntry && mode == ProcessingMode::Repair) {
         const InventoryObjectInstance& instance = inventory_.objectInstances()[static_cast<std::size_t>(entry.index)];
         processed = inventory_.repairObjectInstance(instance.instance.instanceId);
+    } else if (!warehouseEntry && mode == ProcessingMode::ResetEnhancement) {
+        const InventoryObjectInstance& instance = inventory_.objectInstances()[static_cast<std::size_t>(entry.index)];
+        processed = inventory_.resetObjectInstanceEnhancement(instance.instance.instanceId, objectCatalog_);
+    } else if (!warehouseEntry && (mode == ProcessingMode::Lighten || mode == ProcessingMode::Enlarge)) {
+        if (entry.kind == StorageEntryKind::Stack) {
+            const InventoryObjectStack& stack = inventory_.objectStacks()[static_cast<std::size_t>(entry.index)];
+            processed = inventory_.modifyObjectStackItemShape(
+                stack.objectId,
+                mode == ProcessingMode::Lighten ? LightenWeightMultiplier : EnlargeWeightMultiplier,
+                mode == ProcessingMode::Lighten ? 1.0 : EnlargeSizeMultiplier);
+        } else {
+            const InventoryObjectInstance& instance = inventory_.objectInstances()[static_cast<std::size_t>(entry.index)];
+            processed = inventory_.modifyObjectInstanceShape(
+                instance.instance.instanceId,
+                mode == ProcessingMode::Lighten ? LightenWeightMultiplier : EnlargeWeightMultiplier,
+                mode == ProcessingMode::Lighten ? 1.0 : EnlargeSizeMultiplier);
+        }
     } else if (!warehouseEntry) {
         if (entry.kind == StorageEntryKind::Stack) {
             const InventoryObjectStack& stack = inventory_.objectStacks()[static_cast<std::size_t>(entry.index)];
@@ -1479,6 +2134,9 @@ void Game::applyProcessingEntry(StorageEntry entry, bool warehouseEntry)
             instance.isBroken = false;
             processed = true;
         }
+    } else if (mode == ProcessingMode::ResetEnhancement) {
+        ItemInstance& instance = warehouseObjectInstances_[static_cast<std::size_t>(entry.index)].instance;
+        processed = resetEnhancement(instance);
     } else if (entry.kind == StorageEntryKind::Stack) {
         InventoryObjectStack& stack = warehouseObjectStacks_[static_cast<std::size_t>(entry.index)];
         const bool stackSlotWillRemain = stack.count > 1;
@@ -1492,7 +2150,9 @@ void Game::applyProcessingEntry(StorageEntry entry, bool warehouseEntry)
             : -1;
         const ItemData item = stack.item;
         ItemInstance instance = makeItemInstanceFromDefinition(allocateWarehouseInstanceId(), item);
-        processed = applyEnhancement(instance);
+        processed = (mode == ProcessingMode::Lighten || mode == ProcessingMode::Enlarge)
+            ? applyShapeProcessing(instance, mode)
+            : applyEnhancement(instance);
         if (processed) {
             --stack.count;
             if (stack.count <= 0) {
@@ -1505,7 +2165,9 @@ void Game::applyProcessingEntry(StorageEntry entry, bool warehouseEntry)
         }
     } else {
         ItemInstance& instance = warehouseObjectInstances_[static_cast<std::size_t>(entry.index)].instance;
-        processed = applyEnhancement(instance);
+        processed = (mode == ProcessingMode::Lighten || mode == ProcessingMode::Enlarge)
+            ? applyShapeProcessing(instance, mode)
+            : applyEnhancement(instance);
     }
     if (!processed) {
         baseStatus_ = "加工できません";
@@ -1521,6 +2183,15 @@ void Game::applyProcessingEntry(StorageEntry entry, bool warehouseEntry)
     if (mode == ProcessingMode::Repair) {
         const ProcessingResultSnapshot afterSnapshot = entrySnapshot(entry);
         openUiResultDialog(baseResultDialog_, "作業完了", processingRepairResultLines(beforeSnapshot, afterSnapshot));
+    } else if (mode == ProcessingMode::ResetEnhancement) {
+        const ProcessingResultSnapshot afterSnapshot = entrySnapshot(entry);
+        openUiResultDialog(baseResultDialog_, "作業完了", processingResetResultLines(beforeSnapshot, afterSnapshot));
+    } else if (mode == ProcessingMode::Lighten || mode == ProcessingMode::Enlarge) {
+        const ProcessingResultSnapshot afterSnapshot = processingShapeSnapshot(
+            beforeSnapshot,
+            mode == ProcessingMode::Lighten ? LightenWeightMultiplier : EnlargeWeightMultiplier,
+            mode == ProcessingMode::Lighten ? 1.0 : EnlargeSizeMultiplier);
+        openUiResultDialog(baseResultDialog_, "作業完了", processingShapeResultLines(beforeSnapshot, afterSnapshot, mode == ProcessingMode::Lighten));
     } else {
         const ProcessingResultSnapshot afterSnapshot = entry.kind == StorageEntryKind::Stack
             ? processingEnhancedSnapshot(beforeSnapshot, attackBonus, digBonus, durabilityBonus)
@@ -1552,7 +2223,15 @@ void Game::applyProcessingTarget(ProcessingTarget target)
     }
 
     if (!processingTargetAvailable(target)) {
-        baseStatus_ = mode == ProcessingMode::Repair ? "修理不要です" : "強化上限です";
+        if (!processingModeUnlocked(mode)) {
+            baseStatus_ = "この作業は未解禁です";
+        } else if (mode == ProcessingMode::ResetEnhancement) {
+            baseStatus_ = "リセット不要です";
+        } else if (mode == ProcessingMode::Lighten || mode == ProcessingMode::Enlarge) {
+            baseStatus_ = "加工済みです";
+        } else {
+            baseStatus_ = mode == ProcessingMode::Repair ? "修理不要です" : "強化上限です";
+        }
         return;
     }
 
@@ -1584,6 +2263,46 @@ void Game::applyProcessingTarget(ProcessingTarget target)
     bool processed = false;
     if (mode == ProcessingMode::Repair) {
         processed = spellRing_.repairItem(target.ringIndex, target.ringItemIndex);
+    } else if (mode == ProcessingMode::ResetEnhancement ||
+        mode == ProcessingMode::Lighten ||
+        mode == ProcessingMode::Enlarge) {
+        std::vector<SpellRingItem>& ringItems = spellRing_.itemsForRing(target.ringIndex);
+        if (target.ringItemIndex >= 0 && target.ringItemIndex < static_cast<int>(ringItems.size())) {
+            SpellRingItem& item = ringItems[static_cast<std::size_t>(target.ringItemIndex)];
+            if (mode == ProcessingMode::ResetEnhancement) {
+                const ItemData* object = objectCatalog_.registry.findById(item.objectId);
+                const int baseDurability = object != nullptr ? object->durability : std::max(-1, item.maxDurability - item.durabilityBonus);
+                item.enhanceLevel = 0;
+                item.attackBonus = 0;
+                item.digBonus = 0;
+                item.durabilityBonus = 0;
+                item.maxDurability = baseDurability;
+                if (item.maxDurability >= 0) {
+                    item.durability = std::clamp(item.durability, 0, item.maxDurability);
+                    item.isBroken = item.durability == 0;
+                } else {
+                    item.isBroken = false;
+                }
+                item.objectStatsApplied = false;
+                spellRing_.applyObjectParameters(objectCatalog_);
+                processed = true;
+            } else if (mode == ProcessingMode::Lighten) {
+                if (item.weightModifier >= 0.999) {
+                    item.weightModifier = std::clamp(item.weightModifier * LightenWeightMultiplier, 0.25, 4.0);
+                    item.objectStatsApplied = false;
+                    spellRing_.applyObjectParameters(objectCatalog_);
+                    processed = true;
+                }
+            } else if (mode == ProcessingMode::Enlarge) {
+                if (item.sizeModifier <= 1.001) {
+                    item.weightModifier = std::clamp(item.weightModifier * EnlargeWeightMultiplier, 0.25, 4.0);
+                    item.sizeModifier = std::clamp(item.sizeModifier * EnlargeSizeMultiplier, 0.50, 3.0);
+                    item.objectStatsApplied = false;
+                    spellRing_.applyObjectParameters(objectCatalog_);
+                    processed = true;
+                }
+            }
+        }
     } else {
         processed = spellRing_.enhanceItem(
             target.ringIndex,
@@ -1612,6 +2331,10 @@ void Game::applyProcessingTarget(ProcessingTarget target)
     baseStatus_.clear();
     if (mode == ProcessingMode::Repair) {
         openUiResultDialog(baseResultDialog_, "作業完了", processingRepairResultLines(beforeSnapshot, afterSnapshot));
+    } else if (mode == ProcessingMode::ResetEnhancement) {
+        openUiResultDialog(baseResultDialog_, "作業完了", processingResetResultLines(beforeSnapshot, afterSnapshot));
+    } else if (mode == ProcessingMode::Lighten || mode == ProcessingMode::Enlarge) {
+        openUiResultDialog(baseResultDialog_, "作業完了", processingShapeResultLines(beforeSnapshot, afterSnapshot, mode == ProcessingMode::Lighten));
     } else {
         openUiResultDialog(
             baseResultDialog_,
@@ -1714,6 +2437,77 @@ void Game::syncWarehouseDisplaySlots() const
     warehouseDisplaySlots_ = std::move(nextSlots);
 }
 
+void Game::sortWarehouseByCatalogOrder()
+{
+    closeUiCommandMenu(baseStorageCommandMenu_);
+    baseStorageCommandOperation_ = StorageQuantityOperation::None;
+    baseStorageCommandTarget_ = {};
+    baseStoragePointerOperation_ = StorageQuantityOperation::None;
+    baseStoragePointerTarget_ = {};
+    baseStoragePointerPressMouse_ = {};
+    baseStoragePointerPressCanOpenMenu_ = false;
+    baseStoragePointerDragTriggered_ = false;
+
+    const int totalCount = warehouseUsedSlots();
+    if (totalCount <= 0) {
+        warehouseDisplaySlots_.clear();
+        baseStorageWarehousePage_ = 0;
+        baseStorageWithdrawSelection_ = 0;
+        baseStatus_ = "収納箱は空です";
+        return;
+    }
+
+    const auto order = buildObjectSortOrder(objectCatalog_);
+    std::stable_sort(warehouseObjectStacks_.begin(), warehouseObjectStacks_.end(), [&order](const InventoryObjectStack& a, const InventoryObjectStack& b) {
+        const int orderA = objectSortOrder(order, a.objectId);
+        const int orderB = objectSortOrder(order, b.objectId);
+        if (orderA != orderB) {
+            return orderA < orderB;
+        }
+        return a.objectId < b.objectId;
+    });
+    std::stable_sort(warehouseObjectInstances_.begin(), warehouseObjectInstances_.end(), [&order](const InventoryObjectInstance& a, const InventoryObjectInstance& b) {
+        const std::string& idA = objectSortId(a);
+        const std::string& idB = objectSortId(b);
+        const int orderA = objectSortOrder(order, idA);
+        const int orderB = objectSortOrder(order, idB);
+        if (orderA != orderB) {
+            return orderA < orderB;
+        }
+        return idA < idB;
+    });
+
+    std::vector<int> entryIndices;
+    entryIndices.reserve(static_cast<std::size_t>(totalCount));
+    for (int i = 0; i < totalCount; ++i) {
+        entryIndices.push_back(i);
+    }
+    std::stable_sort(entryIndices.begin(), entryIndices.end(), [this, &order](int a, int b) {
+        const std::string& idA = warehouseEntrySortId(a, warehouseObjectStacks_, warehouseObjectInstances_);
+        const std::string& idB = warehouseEntrySortId(b, warehouseObjectStacks_, warehouseObjectInstances_);
+        const int orderA = objectSortOrder(order, idA);
+        const int orderB = objectSortOrder(order, idB);
+        if (orderA != orderB) {
+            return orderA < orderB;
+        }
+        if (idA != idB) {
+            return idA < idB;
+        }
+        return a < b;
+    });
+
+    const int capacity = warehouseCapacity();
+    warehouseDisplaySlots_.assign(static_cast<std::size_t>(totalCount), -1);
+    for (int slot = 0; slot < static_cast<int>(entryIndices.size()); ++slot) {
+        const int entryIndex = entryIndices[static_cast<std::size_t>(slot)];
+        warehouseDisplaySlots_[static_cast<std::size_t>(entryIndex)] = capacity > 0 ? slot % capacity : -1;
+    }
+
+    baseStorageWarehousePage_ = 0;
+    baseStorageWithdrawSelection_ = 0;
+    baseStatus_ = "収納箱を並び替えました";
+}
+
 int Game::warehouseEntryIndexAtStorageSlot(int slot) const
 {
     syncWarehouseDisplaySlots();
@@ -1750,94 +2544,6 @@ void Game::removeWarehouseDisplaySlotAtEntryIndex(int entryIndex)
         return;
     }
     warehouseDisplaySlots_.erase(warehouseDisplaySlots_.begin() + entryIndex);
-}
-
-void Game::depositBackpackEntry(int entryIndex)
-{
-    const std::vector<StorageEntry> entries = backpackStorageEntries();
-    if (entryIndex < 0 || entryIndex >= static_cast<int>(entries.size())) {
-        baseStatus_ = "預けるアイテムがありません";
-        return;
-    }
-
-    const StorageEntry entry = entries[static_cast<std::size_t>(entryIndex)];
-    if (entry.kind == StorageEntryKind::Stack) {
-        const InventoryObjectStack& source = inventory_.objectStacks()[static_cast<std::size_t>(entry.index)];
-        auto it = std::find_if(warehouseObjectStacks_.begin(), warehouseObjectStacks_.end(), [&source](const InventoryObjectStack& stack) {
-            return stack.objectId == source.objectId;
-        });
-        if (it == warehouseObjectStacks_.end()) {
-            if (warehouseUsedSlots() >= warehouseCapacity()) {
-                baseStatus_ = "倉庫がいっぱいです";
-                return;
-            }
-            syncWarehouseDisplaySlots();
-            const int newStackIndex = static_cast<int>(warehouseObjectStacks_.size());
-            warehouseDisplaySlots_.insert(warehouseDisplaySlots_.begin() + newStackIndex, -1);
-            warehouseObjectStacks_.push_back(InventoryObjectStack{source.item, 0});
-            it = warehouseObjectStacks_.end() - 1;
-        }
-        const std::string objectId = source.objectId;
-        if (!inventory_.removeObjectItemCount(objectId, 1)) {
-            baseStatus_ = "預け入れに失敗しました";
-            return;
-        }
-        ++it->count;
-        baseStatus_.clear();
-        baseStorageBackpackCursor_ = std::clamp(baseStorageBackpackCursor_, 0, StoragePaneSlotCount - 1);
-        return;
-    }
-
-    if (warehouseUsedSlots() >= warehouseCapacity()) {
-        baseStatus_ = "倉庫がいっぱいです";
-        return;
-    }
-    const InventoryObjectInstance& source = inventory_.objectInstances()[static_cast<std::size_t>(entry.index)];
-    InventoryObjectInstance moved;
-    if (!inventory_.takeObjectInstance(source.instance.instanceId, moved)) {
-        baseStatus_ = "預け入れに失敗しました";
-        return;
-    }
-    warehouseObjectInstances_.push_back(std::move(moved));
-    baseStatus_.clear();
-    baseStorageBackpackCursor_ = std::clamp(baseStorageBackpackCursor_, 0, StoragePaneSlotCount - 1);
-}
-
-void Game::withdrawWarehouseEntry(int entryIndex)
-{
-    const std::vector<StorageEntry> entries = warehouseStorageEntries();
-    if (entryIndex < 0 || entryIndex >= static_cast<int>(entries.size())) {
-        baseStatus_ = "取り出すアイテムがありません";
-        return;
-    }
-
-    const StorageEntry entry = entries[static_cast<std::size_t>(entryIndex)];
-    if (entry.kind == StorageEntryKind::Stack) {
-        InventoryObjectStack& stack = warehouseObjectStacks_[static_cast<std::size_t>(entry.index)];
-        const std::string objectId = stack.objectId;
-        if (!inventory_.addObjectItem(objectCatalog_, objectId)) {
-            baseStatus_ = "リュックがいっぱいです";
-            return;
-        }
-        --stack.count;
-        if (stack.count <= 0) {
-            removeWarehouseDisplaySlotAtEntryIndex(entry.index);
-            warehouseObjectStacks_.erase(warehouseObjectStacks_.begin() + entry.index);
-        }
-        baseStatus_.clear();
-        baseStorageWarehouseCursor_ = std::clamp(baseStorageWarehouseCursor_, 0, StoragePaneSlotCount - 1);
-        return;
-    }
-
-    InventoryObjectInstance moved = warehouseObjectInstances_[static_cast<std::size_t>(entry.index)];
-    if (!inventory_.addObjectInstance(objectCatalog_, moved.instance)) {
-        baseStatus_ = "リュックがいっぱいです";
-        return;
-    }
-    removeWarehouseDisplaySlotAtEntryIndex(static_cast<int>(warehouseObjectStacks_.size()) + entry.index);
-    warehouseObjectInstances_.erase(warehouseObjectInstances_.begin() + entry.index);
-    baseStatus_.clear();
-    baseStorageWarehouseCursor_ = std::clamp(baseStorageWarehouseCursor_, 0, StoragePaneSlotCount - 1);
 }
 
 std::string Game::storageEntryLabel(StorageEntry entry, bool warehouseEntry) const
@@ -1892,6 +2598,289 @@ int Game::storageEntryStackCount(StorageEntry entry, bool warehouseEntry) const
     return warehouseEntry
         ? warehouseObjectStacks_[static_cast<std::size_t>(entry.index)].count
         : inventory_.objectStacks()[static_cast<std::size_t>(entry.index)].count;
+}
+
+Game::StorageTransferTarget Game::storageDepositTargetForSourceSlot(int source, int slotIndex) const
+{
+    StorageTransferTarget target{};
+    target.slotIndex = slotIndex;
+    const int clampedSource = std::clamp(source, 0, BaseItemSourceCount - 1);
+    target.source = static_cast<BaseItemSource>(clampedSource);
+
+    if (target.source == BaseItemSource::Backpack) {
+        if (slotIndex < 0 || slotIndex >= inventory_.screenSlotCount()) {
+            return target;
+        }
+        if (inventory_.screenObjectStackAt(slotIndex) != nullptr ||
+            inventory_.screenObjectInstanceAt(slotIndex) != nullptr) {
+            target.valid = true;
+        }
+        return target;
+    }
+
+    if (!baseItemSourceIsRing(clampedSource)) {
+        return target;
+    }
+
+    target.ringIndex = ringIndexFromBaseItemSource(clampedSource);
+    if (target.ringIndex < 0 || target.ringIndex >= SpellRingCount) {
+        return target;
+    }
+    const std::vector<SpellRingItem>& ringItems = spellRing_.itemsForRing(target.ringIndex);
+    if (slotIndex < 0 || slotIndex >= static_cast<int>(ringItems.size())) {
+        return target;
+    }
+    target.ringItemIndex = slotIndex;
+    target.valid = true;
+    return target;
+}
+
+Game::StorageTransferTarget Game::storageDepositTargetForScreenSlot(int slotIndex) const
+{
+    return storageDepositTargetForSourceSlot(baseStorageDepositSource_, slotIndex);
+}
+
+Game::StorageTransferTarget Game::storageWithdrawTargetForSlot(int slotIndex) const
+{
+    StorageTransferTarget target{};
+    target.source = BaseItemSource::Warehouse;
+    target.slotIndex = slotIndex;
+    const std::optional<StorageEntry> entry = warehouseEntryForPageSlot(slotIndex, baseStorageWarehousePage_);
+    if (!entry) {
+        return target;
+    }
+    target.storageEntry = *entry;
+    target.warehouseEntry = true;
+    target.valid = true;
+    return target;
+}
+
+bool Game::storageTransferTargetAvailable(StorageTransferTarget target) const
+{
+    if (!target.valid) {
+        return false;
+    }
+    if (target.source == BaseItemSource::Backpack) {
+        return inventory_.screenObjectStackAt(target.slotIndex) != nullptr ||
+            inventory_.screenObjectInstanceAt(target.slotIndex) != nullptr;
+    }
+    if (target.source == BaseItemSource::Warehouse) {
+        if (target.storageEntry.kind == StorageEntryKind::Stack) {
+            return storageEntryStackCount(target.storageEntry, true) > 0;
+        }
+        return storageEntryInstance(target.storageEntry, true) != nullptr;
+    }
+    if (target.ringIndex < 0 || target.ringIndex >= SpellRingCount) {
+        return false;
+    }
+    const std::vector<SpellRingItem>& ringItems = spellRing_.itemsForRing(target.ringIndex);
+    if (target.ringItemIndex < 0 || target.ringItemIndex >= static_cast<int>(ringItems.size())) {
+        return false;
+    }
+    return !ringItems[static_cast<std::size_t>(target.ringItemIndex)].objectId.empty();
+}
+
+bool Game::storageTransferTargetIsStack(StorageTransferTarget target) const
+{
+    if (!target.valid) {
+        return false;
+    }
+    if (target.source == BaseItemSource::Backpack) {
+        return inventory_.screenObjectStackAt(target.slotIndex) != nullptr;
+    }
+    if (target.source == BaseItemSource::Warehouse) {
+        return target.storageEntry.kind == StorageEntryKind::Stack;
+    }
+    return false;
+}
+
+int Game::storageTransferTargetStackCount(StorageTransferTarget target) const
+{
+    if (!storageTransferTargetIsStack(target)) {
+        return 1;
+    }
+    if (target.source == BaseItemSource::Backpack) {
+        const InventoryObjectStack* stack = inventory_.screenObjectStackAt(target.slotIndex);
+        return stack != nullptr ? stack->count : 0;
+    }
+    if (target.source == BaseItemSource::Warehouse) {
+        return storageEntryStackCount(target.storageEntry, true);
+    }
+    return 1;
+}
+
+InventoryUiEntryView Game::storageTransferTargetView(StorageTransferTarget target) const
+{
+    InventoryUiEntryView view{};
+    if (!target.valid) {
+        return view;
+    }
+    if (target.source == BaseItemSource::Backpack) {
+        if (const InventoryObjectStack* stack = inventory_.screenObjectStackAt(target.slotIndex)) {
+            view.item = &stack->item;
+            view.stackCount = stack->count;
+            return view;
+        }
+        if (const InventoryObjectInstance* instance = inventory_.screenObjectInstanceAt(target.slotIndex)) {
+            view.item = &instance->item;
+            view.instance = &instance->instance;
+            view.stackCount = 1;
+        }
+        return view;
+    }
+    if (target.source == BaseItemSource::Warehouse) {
+        return storageEntryView(target.storageEntry, true);
+    }
+    if (target.ringIndex < 0 || target.ringIndex >= SpellRingCount) {
+        return view;
+    }
+    const std::vector<SpellRingItem>& ringItems = spellRing_.itemsForRing(target.ringIndex);
+    if (target.ringItemIndex < 0 || target.ringItemIndex >= static_cast<int>(ringItems.size())) {
+        return view;
+    }
+    const SpellRingItem& ringItem = ringItems[static_cast<std::size_t>(target.ringItemIndex)];
+    view.item = objectForRingItem(objectCatalog_, ringItem);
+    view.stats = inventoryUiStatsFromRingItem(ringItem);
+    view.stackCount = 1;
+    return view;
+}
+
+void Game::depositStorageTarget(StorageTransferTarget target, int count)
+{
+    if (!target.valid) {
+        baseStatus_ = "しまうアイテムがありません";
+        return;
+    }
+
+    if (target.source == BaseItemSource::Backpack) {
+        if (const InventoryObjectStack* source = inventory_.screenObjectStackAt(target.slotIndex)) {
+            const int moveCount = std::clamp(count, 1, std::max(1, source->count));
+            auto it = std::find_if(warehouseObjectStacks_.begin(), warehouseObjectStacks_.end(), [source](const InventoryObjectStack& stack) {
+                return stack.objectId == source->objectId;
+            });
+            if (it == warehouseObjectStacks_.end()) {
+                if (warehouseUsedSlots() >= warehouseCapacity()) {
+                    baseStatus_ = "収納箱がいっぱいです";
+                    return;
+                }
+                syncWarehouseDisplaySlots();
+                const int newStackIndex = static_cast<int>(warehouseObjectStacks_.size());
+                warehouseDisplaySlots_.insert(warehouseDisplaySlots_.begin() + newStackIndex, -1);
+                warehouseObjectStacks_.push_back(InventoryObjectStack{source->item, 0});
+                it = warehouseObjectStacks_.end() - 1;
+            }
+            const std::string objectId = source->objectId;
+            if (!inventory_.removeObjectItemCount(objectId, moveCount)) {
+                baseStatus_ = "しまえませんでした";
+                return;
+            }
+            it->count += moveCount;
+            baseStorageDepositSelection_ = std::clamp(baseStorageDepositSelection_, 0, std::max(0, inventory_.screenSlotCount() - 1));
+            baseStatus_ = "収納箱にしまいました";
+            return;
+        }
+
+        const InventoryObjectInstance* source = inventory_.screenObjectInstanceAt(target.slotIndex);
+        if (source == nullptr) {
+            baseStatus_ = "しまうアイテムがありません";
+            return;
+        }
+        if (warehouseUsedSlots() >= warehouseCapacity()) {
+            baseStatus_ = "収納箱がいっぱいです";
+            return;
+        }
+        InventoryObjectInstance moved;
+        if (!inventory_.takeObjectInstance(source->instance.instanceId, moved)) {
+            baseStatus_ = "しまえませんでした";
+            return;
+        }
+        warehouseObjectInstances_.push_back(std::move(moved));
+        baseStorageDepositSelection_ = std::clamp(baseStorageDepositSelection_, 0, std::max(0, inventory_.screenSlotCount() - 1));
+        baseStatus_ = "収納箱にしまいました";
+        return;
+    }
+
+    if (target.ringIndex < 0 || target.ringIndex >= SpellRingCount) {
+        baseStatus_ = "しまうアイテムがありません";
+        return;
+    }
+    std::vector<SpellRingItem>& ringItems = spellRing_.itemsForRing(target.ringIndex);
+    if (target.ringItemIndex < 0 || target.ringItemIndex >= static_cast<int>(ringItems.size())) {
+        baseStatus_ = "しまうアイテムがありません";
+        return;
+    }
+    const SpellRingItem& ringItem = ringItems[static_cast<std::size_t>(target.ringItemIndex)];
+    if (ringItem.objectId.empty()) {
+        baseStatus_ = "このアイテムはしまえません";
+        return;
+    }
+    if (warehouseUsedSlots() >= warehouseCapacity()) {
+        baseStatus_ = "収納箱がいっぱいです";
+        return;
+    }
+
+    const ItemData* object = objectForRingItem(objectCatalog_, ringItem);
+    const ItemData missingObject = object == nullptr ? makeMissingItemData(ringItem.objectId) : ItemData{};
+    ItemInstance instance = inventoryInstanceFromRingItem(inventory_, objectCatalog_, ringItem);
+    warehouseObjectInstances_.push_back(InventoryObjectInstance{
+        object != nullptr ? *object : missingObject,
+        std::move(instance),
+    });
+    ringItems.erase(ringItems.begin() + target.ringItemIndex);
+    spellRing_.resetBaseWeightToCurrent();
+    refreshOrbitEffects();
+    baseStorageDepositSelection_ = std::clamp(baseStorageDepositSelection_, 0, std::max(0, static_cast<int>(ringItems.size()) - 1));
+    baseStatus_ = "収納箱にしまいました";
+}
+
+void Game::withdrawStorageTarget(StorageTransferTarget target, int count)
+{
+    if (!target.valid || target.source != BaseItemSource::Warehouse) {
+        baseStatus_ = "取り出すアイテムがありません";
+        return;
+    }
+
+    if (target.storageEntry.kind == StorageEntryKind::Stack) {
+        if (target.storageEntry.index < 0 || target.storageEntry.index >= static_cast<int>(warehouseObjectStacks_.size())) {
+            baseStatus_ = "取り出すアイテムがありません";
+            return;
+        }
+        InventoryObjectStack& stack = warehouseObjectStacks_[static_cast<std::size_t>(target.storageEntry.index)];
+        const int moveCount = std::clamp(count, 1, std::max(1, stack.count));
+        const std::string objectId = stack.objectId;
+        if (!inventory_.canAddObjectItem(objectCatalog_, objectId)) {
+            baseStatus_ = "リュックがいっぱいです";
+            return;
+        }
+        for (int i = 0; i < moveCount; ++i) {
+            if (!inventory_.addObjectItem(objectCatalog_, objectId)) {
+                baseStatus_ = "リュックがいっぱいです";
+                return;
+            }
+        }
+        stack.count -= moveCount;
+        if (stack.count <= 0) {
+            removeWarehouseDisplaySlotAtEntryIndex(target.storageEntry.index);
+            warehouseObjectStacks_.erase(warehouseObjectStacks_.begin() + target.storageEntry.index);
+        }
+        baseStorageWithdrawSelection_ = std::clamp(baseStorageWithdrawSelection_, 0, StoragePaneSlotCount - 1);
+        baseStatus_ = "リュックに取り出しました";
+        return;
+    }
+
+    if (target.storageEntry.index < 0 || target.storageEntry.index >= static_cast<int>(warehouseObjectInstances_.size())) {
+        baseStatus_ = "取り出すアイテムがありません";
+        return;
+    }
+    InventoryObjectInstance moved = warehouseObjectInstances_[static_cast<std::size_t>(target.storageEntry.index)];
+    if (!inventory_.addObjectInstance(objectCatalog_, moved.instance)) {
+        baseStatus_ = "リュックがいっぱいです";
+        return;
+    }
+    removeWarehouseDisplaySlotAtEntryIndex(static_cast<int>(warehouseObjectStacks_.size()) + target.storageEntry.index);
+    warehouseObjectInstances_.erase(warehouseObjectInstances_.begin() + target.storageEntry.index);
+    baseStorageWithdrawSelection_ = std::clamp(baseStorageWithdrawSelection_, 0, StoragePaneSlotCount - 1);
+    baseStatus_ = "リュックに取り出しました";
 }
 
 int Game::upgradeCost(int index) const
@@ -2090,17 +3079,21 @@ void Game::resetRingWorkshopDraft()
 {
     ringWorkshopDraftRadiusPoints_ = levelRingRadiusPoints_;
     ringWorkshopDraftSpeedPoints_ = levelRingSpeedPoints_;
+    ringWorkshopDraftWeightLimitPoints_ = levelRingWeightLimitPoints_;
 }
 
 int Game::ringLevelUpgradePointTotal() const
 {
-    return std::max(0, levelRingRadiusPoints_) + std::max(0, levelRingSpeedPoints_);
+    return std::max(0, levelRingRadiusPoints_) +
+        std::max(0, levelRingSpeedPoints_) +
+        std::max(0, levelRingWeightLimitPoints_);
 }
 
 bool Game::ringWorkshopRespecChanged() const
 {
     return ringWorkshopDraftRadiusPoints_ != levelRingRadiusPoints_ ||
-        ringWorkshopDraftSpeedPoints_ != levelRingSpeedPoints_;
+        ringWorkshopDraftSpeedPoints_ != levelRingSpeedPoints_ ||
+        ringWorkshopDraftWeightLimitPoints_ != levelRingWeightLimitPoints_;
 }
 
 int Game::ringWorkshopRespecMoneyCost() const
@@ -2119,27 +3112,36 @@ int Game::ringWorkshopRespecMoonCost() const
     return 1 + ringLevelUpgradePointTotal() / 3;
 }
 
-bool Game::adjustRingWorkshopRespec(int direction)
+bool Game::adjustRingWorkshopRespec(int fromIndex, int toIndex)
 {
     if (ringLevelUpgradePointTotal() <= 0) {
         baseStatus_ = "再調整できるリング強化ポイントがありません";
         return false;
     }
-    if (direction > 0) {
-        if (ringWorkshopDraftSpeedPoints_ <= 0) {
-            baseStatus_ = "速度から移せるポイントがありません";
-            return false;
-        }
-        --ringWorkshopDraftSpeedPoints_;
-        ++ringWorkshopDraftRadiusPoints_;
-    } else {
-        if (ringWorkshopDraftRadiusPoints_ <= 0) {
-            baseStatus_ = "半径から移せるポイントがありません";
-            return false;
-        }
-        --ringWorkshopDraftRadiusPoints_;
-        ++ringWorkshopDraftSpeedPoints_;
+    if (fromIndex == toIndex) {
+        return false;
     }
+
+    const auto pointRef = [this](int index) -> int& {
+        switch (index) {
+        case RingLevelUpgradeSpeed:
+            return ringWorkshopDraftSpeedPoints_;
+        case RingLevelUpgradeWeightLimit:
+            return ringWorkshopDraftWeightLimitPoints_;
+        case RingLevelUpgradeRadius:
+        default:
+            return ringWorkshopDraftRadiusPoints_;
+        }
+    };
+
+    int& fromPoints = pointRef(fromIndex);
+    int& toPoints = pointRef(toIndex);
+    if (fromPoints <= 0) {
+        baseStatus_ = std::string(ringLevelUpgradePointName(fromIndex)) + "から移せるポイントがありません";
+        return false;
+    }
+    --fromPoints;
+    ++toPoints;
     baseStatus_ = "配分案を変更しました。確定で支払います";
     return true;
 }
@@ -2165,6 +3167,7 @@ void Game::confirmRingWorkshopRespec()
     (void)spent;
     levelRingRadiusPoints_ = std::max(0, ringWorkshopDraftRadiusPoints_);
     levelRingSpeedPoints_ = std::max(0, ringWorkshopDraftSpeedPoints_);
+    levelRingWeightLimitPoints_ = std::max(0, ringWorkshopDraftWeightLimitPoints_);
     applyPermanentUpgrades();
     baseStatus_ = "リング強化の配分を再調整しました";
 }
@@ -2577,6 +3580,25 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
         return;
     }
 
+    if (baseStorageQuantityDialog_.open) {
+        const UiRect quantityPanel = storageQuantityDialogRect();
+        const UiQuantityDialogResult quantityResult = updateUiQuantityDialog(baseStorageQuantityDialog_, ui, input, quantityPanel);
+        if (quantityResult == UiQuantityDialogResult::Confirmed) {
+            const int quantity = baseStorageQuantityDialog_.value;
+            const StorageQuantityPending pending = baseStorageQuantityPending_;
+            baseStorageQuantityPending_ = {};
+            if (pending.operation == StorageQuantityOperation::Deposit) {
+                depositStorageTarget(pending.target, quantity);
+            } else if (pending.operation == StorageQuantityOperation::Withdraw) {
+                withdrawStorageTarget(pending.target, quantity);
+            }
+        } else if (quantityResult == UiQuantityDialogResult::Cancelled) {
+            baseStorageQuantityPending_ = {};
+        }
+        ui.block(quantityPanel);
+        return;
+    }
+
     if (baseBookshelfActive_) {
         updateBookshelfScreen(input, ui);
         return;
@@ -2595,27 +3617,19 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
         if (input.pressed(InputAction::MoveDown)) {
             baseRingWorkshopSelection_ = (baseRingWorkshopSelection_ + 1) % BaseRingWorkshopItemCount;
         }
-        if (input.pressed(InputAction::MoveLeft)) {
-            adjustRingWorkshopRespec(-1);
-        }
-        if (input.pressed(InputAction::MoveRight)) {
-            adjustRingWorkshopRespec(1);
-        }
         const auto chooseWorkshopItem = [this](int item) {
-            if (item == 0) {
-                adjustRingWorkshopRespec(1);
+            if (item >= 0 && item < RingWorkshopRespecTransferCount) {
+                const RingWorkshopRespecTransfer transfer = RingWorkshopRespecTransfers[static_cast<std::size_t>(item)];
+                adjustRingWorkshopRespec(transfer.from, transfer.to);
                 return;
             }
-            if (item == 1) {
-                adjustRingWorkshopRespec(-1);
-                return;
-            }
-            if (item == 2) {
+            if (item == RingWorkshopConfirmItemIndex) {
                 confirmRingWorkshopRespec();
                 return;
             }
-            if (item >= 3 && item < 3 + RingWorkshopImplementedUpgradeCount) {
-                buyRingWorkshopUpgrade(static_cast<RingWorkshopUpgrade>(item - 3));
+            if (item >= RingWorkshopUpgradeStartIndex &&
+                item < RingWorkshopUpgradeStartIndex + RingWorkshopImplementedUpgradeCount) {
+                buyRingWorkshopUpgrade(static_cast<RingWorkshopUpgrade>(item - RingWorkshopUpgradeStartIndex));
                 return;
             }
             baseStatus_ = "この項目は未解禁です";
@@ -2644,174 +3658,138 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
     }
 
     if (baseStorageActive_) {
-        const std::vector<StorageEntry> warehouseEntries = warehouseStorageEntries();
-        const int warehousePageCount = std::max(1, (warehouseCapacity() + StoragePaneSlotCount - 1) / StoragePaneSlotCount);
-        baseStorageWarehousePage_ = std::clamp(baseStorageWarehousePage_, 0, warehousePageCount - 1);
-        baseStorageBackpackCursor_ = std::clamp(baseStorageBackpackCursor_, 0, StoragePaneSlotCount - 1);
-        baseStorageWarehouseCursor_ = std::clamp(baseStorageWarehouseCursor_, 0, StoragePaneSlotCount - 1);
-
-        const auto hasBackpackItemAt = [this](int localSlot) {
-            return inventory_.hasScreenItemAt(localSlot);
+        const UiRect storageBounds = baseStorageMode_ == StorageUiMode::ChooseAction
+            ? storageActionDialogRect()
+            : merchantPanelRect();
+        const auto resetStoragePointerPress = [this]() {
+            baseStoragePointerOperation_ = StorageQuantityOperation::None;
+            baseStoragePointerTarget_ = {};
+            baseStoragePointerPressMouse_ = {};
+            baseStoragePointerPressCanOpenMenu_ = false;
+            baseStoragePointerDragTriggered_ = false;
         };
-        const auto warehouseStorageSlotFromLocal = [this](int localSlot) {
-            return baseStorageWarehousePage_ * StoragePaneSlotCount + localSlot;
+        const auto closeStorageCommand = [this]() {
+            closeUiCommandMenu(baseStorageCommandMenu_);
+            baseStorageCommandOperation_ = StorageQuantityOperation::None;
+            baseStorageCommandTarget_ = {};
         };
-        const auto hasWarehouseItemAt = [this, &warehouseStorageSlotFromLocal](int localSlot) {
-            return warehouseEntryIndexAtStorageSlot(warehouseStorageSlotFromLocal(localSlot)) >= 0;
+        const auto closeStorage = [this, &closeStorageCommand, &resetStoragePointerPress]() {
+            closeStorageCommand();
+            resetStoragePointerPress();
+            baseStorageActive_ = false;
+            baseStorageMode_ = StorageUiMode::Closed;
+            baseStorageQuantityDialog_ = {};
+            baseStorageQuantityPending_ = {};
+            baseStatus_.clear();
         };
-        const auto depositBackpackSlot = [this, &warehouseStorageSlotFromLocal](int localSlot, int targetWarehouseLocalSlot = -1) {
-            const int targetWarehouseSlot = targetWarehouseLocalSlot >= 0 ? warehouseStorageSlotFromLocal(targetWarehouseLocalSlot) : -1;
-            const InventoryObjectStack* stack = inventory_.screenObjectStackAt(localSlot);
-            if (stack != nullptr) {
-                const std::string objectId = stack->objectId;
-                auto it = std::find_if(warehouseObjectStacks_.begin(), warehouseObjectStacks_.end(), [stack](const InventoryObjectStack& candidate) {
-                    return candidate.objectId == stack->objectId;
-                });
-                int warehouseEntryIndex = -1;
-                if (it == warehouseObjectStacks_.end()) {
-                    if (warehouseUsedSlots() >= warehouseCapacity()) {
-                        baseStatus_ = "倉庫がいっぱいです";
-                        return;
-                    }
-                    syncWarehouseDisplaySlots();
-                    const int newStackIndex = static_cast<int>(warehouseObjectStacks_.size());
-                    warehouseDisplaySlots_.insert(warehouseDisplaySlots_.begin() + newStackIndex, -1);
-                    warehouseObjectStacks_.push_back(InventoryObjectStack{stack->item, 0});
-                    it = warehouseObjectStacks_.end() - 1;
-                    warehouseEntryIndex = newStackIndex;
+        const auto returnToStorageMenu = [this, &closeStorageCommand, &resetStoragePointerPress]() {
+            closeStorageCommand();
+            resetStoragePointerPress();
+            baseStorageMode_ = StorageUiMode::ChooseAction;
+            baseStorageActionSelection_ = 0;
+            baseStorageQuantityDialog_ = {};
+            baseStorageQuantityPending_ = {};
+            baseStatus_.clear();
+        };
+        const auto openQuantityDialog = [this](StorageQuantityOperation operation, StorageTransferTarget target, int maxCount) {
+            InventoryUiEntryView view = storageTransferTargetView(target);
+            const std::string itemName = view.item != nullptr && !view.item->name.empty() ? view.item->name : std::string("アイテム");
+            baseStorageQuantityPending_ = StorageQuantityPending{operation, target};
+            openUiQuantityDialog(
+                baseStorageQuantityDialog_,
+                operation == StorageQuantityOperation::Deposit ? "しまう個数" : "取り出す個数",
+                itemName,
+                1,
+                std::max(1, maxCount),
+                std::max(1, maxCount),
+                "個");
+            baseStatus_.clear();
+        };
+        const auto applyStorageTarget = [this, &openQuantityDialog](StorageQuantityOperation operation, StorageTransferTarget target) {
+            if (!storageTransferTargetAvailable(target)) {
+                if (operation == StorageQuantityOperation::Deposit &&
+                    target.valid &&
+                    target.source != BaseItemSource::Backpack &&
+                    target.source != BaseItemSource::Warehouse) {
+                    baseStatus_ = "このアイテムはしまえません";
                 } else {
-                    warehouseEntryIndex = static_cast<int>(std::distance(warehouseObjectStacks_.begin(), it));
+                    baseStatus_ = operation == StorageQuantityOperation::Deposit
+                        ? "しまうアイテムがありません"
+                        : "取り出すアイテムがありません";
                 }
-                if (!inventory_.removeObjectItemCount(objectId, 1)) {
-                    baseStatus_ = "預け入れに失敗しました";
+                return;
+            }
+            if (storageTransferTargetIsStack(target)) {
+                const int stackCount = storageTransferTargetStackCount(target);
+                if (stackCount > 1) {
+                    openQuantityDialog(operation, target, stackCount);
                     return;
                 }
-                ++it->count;
-                if (targetWarehouseSlot >= 0) {
-                    assignWarehouseEntryToStorageSlot(warehouseEntryIndex, targetWarehouseSlot);
-                }
-                baseStatus_.clear();
-                return;
             }
-            const InventoryObjectInstance* instance = inventory_.screenObjectInstanceAt(localSlot);
-            if (instance == nullptr) {
-                baseStatus_ = "預けるアイテムがありません";
-                return;
+            if (operation == StorageQuantityOperation::Deposit) {
+                depositStorageTarget(target, 1);
+            } else {
+                withdrawStorageTarget(target, 1);
             }
-            if (warehouseUsedSlots() >= warehouseCapacity()) {
-                baseStatus_ = "倉庫がいっぱいです";
-                return;
-            }
-            InventoryObjectInstance moved;
-            if (!inventory_.takeObjectInstance(instance->instance.instanceId, moved)) {
-                baseStatus_ = "預け入れに失敗しました";
-                return;
-            }
-            warehouseObjectInstances_.push_back(std::move(moved));
-            if (targetWarehouseSlot >= 0) {
-                assignWarehouseEntryToStorageSlot(warehouseUsedSlots() - 1, targetWarehouseSlot);
-            }
-            baseStatus_.clear();
         };
-        const auto withdrawWarehouseSlot = [&warehouseEntries, this, &warehouseStorageSlotFromLocal](int localSlot, int targetBackpackSlot = -1) {
-            const int entryIndex = warehouseEntryIndexAtStorageSlot(warehouseStorageSlotFromLocal(localSlot));
-            if (entryIndex < 0 || entryIndex >= static_cast<int>(warehouseEntries.size())) {
-                baseStatus_ = "取り出すアイテムがありません";
-                return;
-            }
-            const StorageEntry entry = warehouseEntries[static_cast<std::size_t>(entryIndex)];
-            if (entry.kind == StorageEntryKind::Stack) {
-                InventoryObjectStack& stack = warehouseObjectStacks_[static_cast<std::size_t>(entry.index)];
-                const std::string objectId = stack.objectId;
-                if (!inventory_.addObjectItem(objectCatalog_, objectId)) {
-                    baseStatus_ = "リュックがいっぱいです";
-                    return;
+        const auto storageCommandItems = [this]() {
+            const bool available = storageTransferTargetAvailable(baseStorageCommandTarget_);
+            const char* label = baseStorageCommandOperation_ == StorageQuantityOperation::Withdraw
+                ? "取り出す"
+                : "しまう";
+            return std::array<UiCommandMenuItem, 1>{{{label, available}}};
+        };
+        const auto openStorageCommand = [&](StorageQuantityOperation operation, StorageTransferTarget target, Vec2 anchor) {
+            if (!storageTransferTargetAvailable(target)) {
+                if (operation == StorageQuantityOperation::Deposit &&
+                    target.valid &&
+                    target.source != BaseItemSource::Backpack &&
+                    target.source != BaseItemSource::Warehouse) {
+                    baseStatus_ = "このアイテムはしまえません";
+                } else {
+                    baseStatus_ = operation == StorageQuantityOperation::Deposit
+                        ? "しまうアイテムがありません"
+                        : "取り出すアイテムがありません";
                 }
-                if (targetBackpackSlot >= 0) {
-                    (void)inventory_.moveObjectStackToScreenSlot(objectId, targetBackpackSlot);
-                }
-                --stack.count;
-                if (stack.count <= 0) {
-                    removeWarehouseDisplaySlotAtEntryIndex(entry.index);
-                    warehouseObjectStacks_.erase(warehouseObjectStacks_.begin() + entry.index);
-                }
-                baseStatus_.clear();
+                closeStorageCommand();
                 return;
             }
 
-            InventoryObjectInstance moved = warehouseObjectInstances_[static_cast<std::size_t>(entry.index)];
-            const std::string instanceId = moved.instance.instanceId;
-            if (!inventory_.addObjectInstance(objectCatalog_, moved.instance)) {
-                baseStatus_ = "リュックがいっぱいです";
-                return;
-            }
-            if (targetBackpackSlot >= 0) {
-                (void)inventory_.moveObjectInstanceToScreenSlot(instanceId, targetBackpackSlot);
-            }
-            removeWarehouseDisplaySlotAtEntryIndex(static_cast<int>(warehouseObjectStacks_.size()) + entry.index);
-            warehouseObjectInstances_.erase(warehouseObjectInstances_.begin() + entry.index);
-            baseStatus_.clear();
-        };
-        const auto openStorageCommandMenuAt = [this, &hasBackpackItemAt, &hasWarehouseItemAt](int globalSlot) {
-            const bool warehouse = storageGlobalSlotIsWarehouse(globalSlot);
-            const int localSlot = storageLocalSlot(globalSlot);
-            if (warehouse ? !hasWarehouseItemAt(localSlot) : !hasBackpackItemAt(localSlot)) {
-                closeUiCommandMenu(baseStorageCommandMenu_);
-                baseStorageCommandSlot_ = -1;
-                return;
-            }
-            const char* label = warehouse ? "取り出す" : "倉庫へしまう";
-            const std::array<UiCommandMenuItem, 1> items{{{label, true}}};
-            baseStorageCommandSlot_ = globalSlot;
-            const UiRect slotRect = storageSlotRectByGlobal(globalSlot);
+            baseStorageCommandOperation_ = operation;
+            baseStorageCommandTarget_ = target;
+            const std::array<UiCommandMenuItem, 1> items = storageCommandItems();
             openUiCommandMenu(
                 baseStorageCommandMenu_,
-                slotRect.pos + Vec2{slotRect.size.x - 20.0f, 0.0f},
-                storagePanelRect(),
+                anchor,
+                storageBounds,
                 static_cast<int>(items.size()),
                 items.data(),
-                160.0f,
+                140.0f,
                 2);
+            baseStatus_.clear();
         };
-        const auto tryTransferBySlots = [this, &depositBackpackSlot, &withdrawWarehouseSlot](int fromGlobalSlot, int toGlobalSlot) {
-            if (fromGlobalSlot < 0 || toGlobalSlot < 0) {
-                return false;
+        const auto moveGridSelection = [&input](int& selection, int slotCount) {
+            const int count = std::max(1, slotCount);
+            selection = std::clamp(selection, 0, count - 1);
+            const int columns = StorageColumns;
+            if (input.pressed(InputAction::MoveLeft)) {
+                selection = std::max(0, selection - 1);
             }
-            const bool fromWarehouse = storageGlobalSlotIsWarehouse(fromGlobalSlot);
-            const bool toWarehouse = storageGlobalSlotIsWarehouse(toGlobalSlot);
-            if (fromWarehouse == toWarehouse) {
-                return false;
+            if (input.pressed(InputAction::MoveRight)) {
+                selection = std::min(count - 1, selection + 1);
             }
-            if (fromWarehouse) {
-                withdrawWarehouseSlot(storageLocalSlot(fromGlobalSlot), storageLocalSlot(toGlobalSlot));
-            } else {
-                depositBackpackSlot(storageLocalSlot(fromGlobalSlot), storageLocalSlot(toGlobalSlot));
+            if (input.pressed(InputAction::MoveUp)) {
+                selection = std::max(0, selection - columns);
             }
-            return true;
-        };
-        const auto selectedGlobalSlot = [this]() {
-            return storageGlobalSlotFromLocal(
-                baseStorageFocusWarehouse_,
-                baseStorageFocusWarehouse_ ? baseStorageWarehouseCursor_ : baseStorageBackpackCursor_);
-        };
-        const auto setSelectedGlobalSlot = [this](int globalSlot) {
-            const int clamped = std::clamp(globalSlot, 0, StoragePaneSlotCount * 2 - 1);
-            if (storageGlobalSlotIsWarehouse(clamped)) {
-                baseStorageFocusWarehouse_ = true;
-                baseStorageWarehouseCursor_ = storageLocalSlot(clamped);
-            } else {
-                baseStorageFocusWarehouse_ = false;
-                baseStorageBackpackCursor_ = storageLocalSlot(clamped);
+            if (input.pressed(InputAction::MoveDown)) {
+                selection = std::min(count - 1, selection + columns);
+            }
+            if (input.shortcutCursorDelta() != 0) {
+                selection = std::clamp(selection + input.shortcutCursorDelta(), 0, count - 1);
             }
         };
 
-        const int commandSlotIndex = baseStorageCommandSlot_ >= 0 ? baseStorageCommandSlot_ : selectedGlobalSlot();
-        const bool commandWarehouse = storageGlobalSlotIsWarehouse(commandSlotIndex);
-        const char* commandLabel = commandWarehouse ? "取り出す" : "倉庫へしまう";
-        const bool commandEnabled = commandWarehouse
-            ? hasWarehouseItemAt(storageLocalSlot(commandSlotIndex))
-            : hasBackpackItemAt(storageLocalSlot(commandSlotIndex));
-        const std::array<UiCommandMenuItem, 1> commandItems{{{commandLabel, commandEnabled}}};
+        const std::array<UiCommandMenuItem, 1> commandItems = storageCommandItems();
         const bool commandOpenBeforeUpdate = baseStorageCommandMenu_.open;
         const int commandSelection = updateUiCommandMenu(
             baseStorageCommandMenu_,
@@ -2819,194 +3797,404 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
             input,
             commandItems.data(),
             static_cast<int>(commandItems.size()));
-        if (commandSelection >= 0 && baseStorageCommandSlot_ >= 0) {
-            if (storageGlobalSlotIsWarehouse(baseStorageCommandSlot_)) {
-                withdrawWarehouseSlot(storageLocalSlot(baseStorageCommandSlot_));
-            } else {
-                depositBackpackSlot(storageLocalSlot(baseStorageCommandSlot_));
+        if (commandSelection >= 0) {
+            const StorageQuantityOperation operation = baseStorageCommandOperation_;
+            const StorageTransferTarget target = baseStorageCommandTarget_;
+            closeStorageCommand();
+            resetStoragePointerPress();
+            if (operation == StorageQuantityOperation::Deposit ||
+                operation == StorageQuantityOperation::Withdraw) {
+                applyStorageTarget(operation, target);
             }
-            baseStorageCommandSlot_ = -1;
-            baseStoragePointerPressSlot_ = -1;
-            baseStoragePointerPressCanOpenMenu_ = false;
-            baseStoragePointerDragTriggered_ = false;
-            ui.block(storagePanelRect());
+            ui.block(storageBounds);
             return;
-        }
-        if (!baseStorageCommandMenu_.open) {
+        } else if (!baseStorageCommandMenu_.open) {
             if (commandOpenBeforeUpdate && input.backPressed()) {
-                baseStorageCommandSlot_ = -1;
-                baseStoragePointerPressSlot_ = -1;
-                baseStoragePointerPressCanOpenMenu_ = false;
-                baseStoragePointerDragTriggered_ = false;
-                ui.block(storagePanelRect());
+                closeStorageCommand();
+                resetStoragePointerPress();
+                ui.block(storageBounds);
                 return;
             }
-            baseStorageCommandSlot_ = -1;
+            baseStorageCommandOperation_ = StorageQuantityOperation::None;
+            baseStorageCommandTarget_ = {};
         }
 
-        if (uiCancelRequested(baseCancelState_, input, ui, storagePanelRect())) {
+        if (uiCancelRequested(baseCancelState_, input, ui, storageBounds)) {
             if (baseStorageCommandMenu_.open) {
-                closeUiCommandMenu(baseStorageCommandMenu_);
-                baseStorageCommandSlot_ = -1;
-                baseStoragePointerPressSlot_ = -1;
-                baseStoragePointerPressCanOpenMenu_ = false;
-                baseStoragePointerDragTriggered_ = false;
-                ui.block(storagePanelRect());
-                return;
+                closeStorageCommand();
+                resetStoragePointerPress();
+            } else if (baseStorageMode_ == StorageUiMode::ChooseAction) {
+                closeStorage();
+            } else {
+                returnToStorageMenu();
             }
-            baseStorageActive_ = false;
-            baseStatus_.clear();
-            baseStorageGrabbedActive_ = false;
-            baseStorageGrabbedFromSlot_ = -1;
-            ui.block(storagePanelRect());
+            ui.block(storageBounds);
             return;
         }
 
         if (baseStorageCommandMenu_.open) {
-            ui.block(storagePanelRect());
+            ui.block(storageBounds);
             return;
         }
 
-        if (input.pressed(InputAction::MoveLeft) || input.pressed(InputAction::MoveRight) ||
-            input.pressed(InputAction::MoveUp) || input.pressed(InputAction::MoveDown)) {
-            const int current = selectedGlobalSlot();
-            int row = current / StorageColumns;
-            int column = current % StorageColumns;
-            if (input.pressed(InputAction::MoveLeft)) {
-                column = (column + StorageColumns - 1) % StorageColumns;
-            }
-            if (input.pressed(InputAction::MoveRight)) {
-                column = (column + 1) % StorageColumns;
-            }
-            const int totalRows = StorageRowsPerPane * 2;
+        if (baseStorageMode_ == StorageUiMode::ChooseAction) {
+            constexpr int ChoiceCount = 3;
+            baseStorageActionSelection_ = std::clamp(baseStorageActionSelection_, 0, ChoiceCount - 1);
             if (input.pressed(InputAction::MoveUp)) {
-                row = (row + totalRows - 1) % totalRows;
+                baseStorageActionSelection_ = (baseStorageActionSelection_ + ChoiceCount - 1) % ChoiceCount;
             }
             if (input.pressed(InputAction::MoveDown)) {
-                row = (row + 1) % totalRows;
+                baseStorageActionSelection_ = (baseStorageActionSelection_ + 1) % ChoiceCount;
             }
-            setSelectedGlobalSlot(row * StorageColumns + column);
-        }
-        if (input.shortcutCursorDelta() != 0) {
-            const int current = selectedGlobalSlot();
-            const int next = (current + input.shortcutCursorDelta() + StoragePaneSlotCount * 2) % (StoragePaneSlotCount * 2);
-            setSelectedGlobalSlot(next);
-        }
-        const int directSlot = input.shortcutSlotPressed();
-        if (directSlot >= 0 && directSlot < StorageColumns) {
-            const int current = selectedGlobalSlot();
-            const int row = current / StorageColumns;
-            setSelectedGlobalSlot(row * StorageColumns + directSlot);
-        }
-
-        if (input.activeRingDelta() != 0) {
-            baseStorageWarehousePage_ = wrapStoragePageIndex(
-                baseStorageWarehousePage_,
-                input.activeRingDelta(),
-                warehousePageCount);
-        }
-
-        const UiRect prevPageRect = storagePrevPageButtonRect();
-        const UiRect nextPageRect = storageNextPageButtonRect();
-        if (ui.pressed(prevPageRect)) {
-            baseStorageWarehousePage_ = wrapStoragePageIndex(baseStorageWarehousePage_, -1, warehousePageCount);
-        }
-        if (ui.pressed(nextPageRect)) {
-            baseStorageWarehousePage_ = wrapStoragePageIndex(baseStorageWarehousePage_, 1, warehousePageCount);
-        }
-
-        int hoveredSlot = -1;
-        for (int i = 0; i < StoragePaneSlotCount * 2; ++i) {
-            if (storageSlotRectByGlobal(i).contains(ui.mouse())) {
-                hoveredSlot = i;
-                setSelectedGlobalSlot(i);
-                break;
-            }
-        }
-
-        if (input.mouseLeftPressed() && hoveredSlot >= 0 && !ui.pointerConsumed()) {
-            baseStoragePointerPressSlot_ = hoveredSlot;
-            baseStoragePointerPressMouse_ = input.mouseScreen();
-            baseStoragePointerPressCanOpenMenu_ = storageGlobalSlotIsWarehouse(hoveredSlot)
-                ? hasWarehouseItemAt(storageLocalSlot(hoveredSlot))
-                : hasBackpackItemAt(storageLocalSlot(hoveredSlot));
-            baseStoragePointerDragTriggered_ = false;
-            ui.consumePointer();
-        }
-
-        if (baseStoragePointerPressSlot_ >= 0 &&
-            input.mouseLeftHeld() &&
-            !baseStoragePointerDragTriggered_ &&
-            !baseStorageGrabbedActive_ &&
-            lengthSquared(input.mouseScreen() - baseStoragePointerPressMouse_) >= StorageDragStartDistanceSq) {
-            const bool sourceWarehouse = storageGlobalSlotIsWarehouse(baseStoragePointerPressSlot_);
-            const bool hasSourceItem = sourceWarehouse
-                ? hasWarehouseItemAt(storageLocalSlot(baseStoragePointerPressSlot_))
-                : hasBackpackItemAt(storageLocalSlot(baseStoragePointerPressSlot_));
-            if (hasSourceItem) {
-                baseStorageGrabbedActive_ = true;
-                baseStorageGrabbedFromSlot_ = baseStoragePointerPressSlot_;
-                baseStoragePointerDragTriggered_ = true;
-                baseStoragePointerPressCanOpenMenu_ = false;
-                closeUiCommandMenu(baseStorageCommandMenu_);
-                baseStorageCommandSlot_ = -1;
-            }
-        }
-
-        if (baseStoragePointerPressSlot_ >= 0 && input.mouseLeftReleased()) {
-            if (baseStoragePointerDragTriggered_ && baseStorageGrabbedActive_) {
-                if (hoveredSlot >= 0) {
-                    setSelectedGlobalSlot(hoveredSlot);
-                    (void)tryTransferBySlots(baseStorageGrabbedFromSlot_, hoveredSlot);
+            for (int i = 0; i < ChoiceCount; ++i) {
+                const UiRect rect = storageActionChoiceRect(i);
+                if (rect.contains(ui.mouse())) {
+                    baseStorageActionSelection_ = i;
                 }
-                baseStorageGrabbedActive_ = false;
-                baseStorageGrabbedFromSlot_ = -1;
-            } else if (baseStoragePointerPressCanOpenMenu_ && hoveredSlot == baseStoragePointerPressSlot_) {
-                openStorageCommandMenuAt(baseStoragePointerPressSlot_);
+                if (ui.pressed(rect)) {
+                    baseStorageActionSelection_ = i;
+                    if (i == 2) {
+                        sortWarehouseByCatalogOrder();
+                    } else {
+                        baseStorageMode_ = i == 0 ? StorageUiMode::Deposit : StorageUiMode::Withdraw;
+                    }
+                    ui.block(storageBounds);
+                    return;
+                }
             }
-            baseStoragePointerPressSlot_ = -1;
-            baseStoragePointerPressCanOpenMenu_ = false;
-            baseStoragePointerDragTriggered_ = false;
-        }
-
-        if (input.grabOrPlacePressed()) {
-            closeUiCommandMenu(baseStorageCommandMenu_);
-            baseStorageCommandSlot_ = -1;
-            const int current = selectedGlobalSlot();
-            if (!baseStorageGrabbedActive_) {
-                const bool hasCurrent = storageGlobalSlotIsWarehouse(current)
-                    ? hasWarehouseItemAt(storageLocalSlot(current))
-                    : hasBackpackItemAt(storageLocalSlot(current));
-                if (hasCurrent) {
-                    baseStorageGrabbedActive_ = true;
-                    baseStorageGrabbedFromSlot_ = current;
-                    baseStatus_ = "つかみ中";
+            if (input.confirmPressed() || input.useItemPressed()) {
+                if (baseStorageActionSelection_ == 2) {
+                    sortWarehouseByCatalogOrder();
                 } else {
-                    baseStatus_ = "アイテム未選択";
+                    baseStorageMode_ = baseStorageActionSelection_ == 0 ? StorageUiMode::Deposit : StorageUiMode::Withdraw;
                 }
-            } else {
-                if (!tryTransferBySlots(baseStorageGrabbedFromSlot_, current)) {
-                    baseStatus_ = "移動先を反対側にしてください";
-                }
-                baseStorageGrabbedActive_ = false;
-                baseStorageGrabbedFromSlot_ = -1;
+                ui.block(storageBounds);
+                return;
             }
+            ui.block(storageBounds);
+            return;
         }
 
-        if (input.useItemPressed() || input.confirmPressed()) {
-            if (baseStorageGrabbedActive_) {
-                const int current = selectedGlobalSlot();
-                if (!tryTransferBySlots(baseStorageGrabbedFromSlot_, current)) {
-                    baseStatus_ = "移動先を反対側にしてください";
-                }
-                baseStorageGrabbedActive_ = false;
-                baseStorageGrabbedFromSlot_ = -1;
-            } else {
-                openStorageCommandMenuAt(selectedGlobalSlot());
+        if (baseStorageMode_ == StorageUiMode::Deposit) {
+            const int currentTab = storageDepositSourceTabIndex(baseStorageDepositSource_);
+            std::array<UiTabItem, StorageDepositSourceCount> sourceTabs{};
+            std::array<UiRect, StorageDepositSourceCount> sourceTabRects{};
+            for (int i = 0; i < StorageDepositSourceCount; ++i) {
+                const int source = storageDepositSourceValue(i);
+                sourceTabs[static_cast<std::size_t>(i)] = {BaseItemSourceLabels[static_cast<std::size_t>(source)], true};
+                sourceTabRects[static_cast<std::size_t>(i)] = storageDepositSourceRect(i);
             }
+            UiTabsInput sourceTabsInput{};
+            sourceTabsInput.focusDelta = input.activeRingDelta();
+            const int directSourceFocus = input.shortcutSlotPressed();
+            if (directSourceFocus >= 0 && directSourceFocus < StorageDepositSourceCount) {
+                sourceTabsInput.directFocusIndex = directSourceFocus;
+            }
+            sourceTabsInput.commit =
+                sourceTabsInput.focusDelta != 0 ||
+                sourceTabsInput.directFocusIndex >= 0 ||
+                input.confirmPressed() ||
+                input.useItemPressed();
+            const int sourceSelection = updateUiTabs(
+                baseStorageDepositSourceTabs_,
+                ui,
+                sourceTabsInput,
+                currentTab,
+                sourceTabs.data(),
+                static_cast<int>(sourceTabs.size()),
+                sourceTabRects.data());
+            if (sourceSelection >= 0) {
+                closeStorageCommand();
+                resetStoragePointerPress();
+                baseStorageDepositSource_ = storageDepositSourceValue(sourceSelection);
+                if (baseItemSourceIsRing(baseStorageDepositSource_)) {
+                    const int ringIndex = std::clamp(ringIndexFromBaseItemSource(baseStorageDepositSource_), 0, SpellRingCount - 1);
+                    baseStorageDepositSelection_ = std::clamp(
+                        baseStorageDepositSelection_,
+                        0,
+                        std::max(0, static_cast<int>(spellRing_.itemsForRing(ringIndex).size()) - 1));
+                } else {
+                    baseStorageDepositSelection_ = std::clamp(baseStorageDepositSelection_, 0, std::max(0, inventory_.screenSlotCount() - 1));
+                }
+                ui.block(storageBounds);
+                return;
+            }
+
+            if (baseItemSourceIsRing(baseStorageDepositSource_)) {
+                const int ringIndex = std::clamp(ringIndexFromBaseItemSource(baseStorageDepositSource_), 0, SpellRingCount - 1);
+                const std::vector<SpellRingItem>& ringItems = spellRing_.itemsForRing(ringIndex);
+                const int itemCount = static_cast<int>(ringItems.size());
+                if (itemCount <= 0) {
+                    baseStorageDepositSelection_ = 0;
+                } else {
+                    baseStorageDepositSelection_ = std::clamp(baseStorageDepositSelection_, 0, itemCount - 1);
+                    const auto moveRingSelection = [&](int delta) {
+                        if (delta == 0 || itemCount <= 0) {
+                            return;
+                        }
+                        baseStorageDepositSelection_ = (baseStorageDepositSelection_ + delta) % itemCount;
+                        if (baseStorageDepositSelection_ < 0) {
+                            baseStorageDepositSelection_ += itemCount;
+                        }
+                    };
+                    moveRingSelection(input.shortcutCursorDelta());
+                    if (input.pressed(InputAction::MoveLeft) || input.pressed(InputAction::MoveUp)) {
+                        moveRingSelection(-1);
+                    }
+                    if (input.pressed(InputAction::MoveRight) || input.pressed(InputAction::MoveDown)) {
+                        moveRingSelection(1);
+                    }
+                }
+                int hoveredRingItem = -1;
+                for (int i = 0; i < itemCount; ++i) {
+                    const UiRect rect = storageRingItemRect(
+                        ringItems[static_cast<std::size_t>(i)],
+                        spellRing_,
+                        balance_,
+                        ringIndex,
+                        i,
+                        itemCount,
+                        ringPreviewSeconds);
+                    if (rect.contains(ui.mouse())) {
+                        baseStorageDepositSelection_ = i;
+                        hoveredRingItem = i;
+                    }
+                }
+                if (input.mouseLeftPressed() && hoveredRingItem >= 0 && !ui.pointerConsumed()) {
+                    baseStorageDepositSelection_ = hoveredRingItem;
+                    const StorageTransferTarget target = storageDepositTargetForScreenSlot(hoveredRingItem);
+                    baseStoragePointerOperation_ = StorageQuantityOperation::Deposit;
+                    baseStoragePointerTarget_ = target;
+                    baseStoragePointerPressMouse_ = input.mouseScreen();
+                    baseStoragePointerPressCanOpenMenu_ = storageTransferTargetAvailable(target);
+                    baseStoragePointerDragTriggered_ = false;
+                    ui.consumePointer();
+                    return;
+                }
+                if (baseStoragePointerOperation_ == StorageQuantityOperation::Deposit &&
+                    baseStoragePointerTarget_.source != BaseItemSource::Backpack &&
+                    baseStoragePointerTarget_.source != BaseItemSource::Warehouse &&
+                    baseStoragePointerTarget_.ringIndex == ringIndex) {
+                    if (input.mouseLeftHeld() &&
+                        baseStoragePointerPressCanOpenMenu_ &&
+                        !baseStoragePointerDragTriggered_ &&
+                        lengthSquared(input.mouseScreen() - baseStoragePointerPressMouse_) >= StorageDragStartDistanceSq) {
+                        baseStoragePointerDragTriggered_ = true;
+                        baseStoragePointerPressCanOpenMenu_ = false;
+                    }
+                    if (input.mouseLeftReleased()) {
+                        if (!baseStoragePointerDragTriggered_ &&
+                            baseStoragePointerPressCanOpenMenu_ &&
+                            hoveredRingItem == baseStoragePointerTarget_.ringItemIndex) {
+                            baseStorageDepositSelection_ = hoveredRingItem;
+                            openStorageCommand(
+                                StorageQuantityOperation::Deposit,
+                                baseStoragePointerTarget_,
+                                input.mouseScreen());
+                        }
+                        resetStoragePointerPress();
+                        ui.block(storageBounds);
+                        return;
+                    }
+                }
+                if (input.confirmPressed() || input.useItemPressed()) {
+                    const UiRect rect = baseStorageDepositSelection_ >= 0 && baseStorageDepositSelection_ < itemCount
+                        ? storageRingItemRect(
+                            ringItems[static_cast<std::size_t>(baseStorageDepositSelection_)],
+                            spellRing_,
+                            balance_,
+                            ringIndex,
+                            baseStorageDepositSelection_,
+                            itemCount,
+                            ringPreviewSeconds)
+                        : storageTransferGridSlotRect(0);
+                    openStorageCommand(
+                        StorageQuantityOperation::Deposit,
+                        storageDepositTargetForScreenSlot(baseStorageDepositSelection_),
+                        rect.pos + Vec2{rect.size.x - 20.0f, 0.0f});
+                    ui.block(storageBounds);
+                    return;
+                }
+                ui.block(storageBounds);
+                return;
+            }
+
+            moveGridSelection(baseStorageDepositSelection_, inventory_.screenSlotCount());
+            int hoveredBackpackSlot = -1;
+            for (int i = 0; i < inventory_.screenSlotCount(); ++i) {
+                const UiRect rect = storageTransferGridSlotRect(i);
+                if (rect.contains(ui.mouse())) {
+                    baseStorageDepositSelection_ = i;
+                    hoveredBackpackSlot = i;
+                }
+            }
+            const auto moveBackpackStorageItem = [this](StorageTransferTarget target, int toSlot) {
+                if (target.source != BaseItemSource::Backpack || toSlot < 0 || toSlot >= inventory_.screenSlotCount()) {
+                    return false;
+                }
+                if (const InventoryObjectStack* stack = inventory_.screenObjectStackAt(target.slotIndex)) {
+                    return inventory_.moveObjectStackToScreenSlot(stack->objectId, toSlot);
+                }
+                if (const InventoryObjectInstance* instance = inventory_.screenObjectInstanceAt(target.slotIndex)) {
+                    return inventory_.moveObjectInstanceToScreenSlot(instance->instance.instanceId, toSlot);
+                }
+                return false;
+            };
+            if (input.mouseLeftPressed() && hoveredBackpackSlot >= 0 && !ui.pointerConsumed()) {
+                baseStorageDepositSelection_ = hoveredBackpackSlot;
+                const StorageTransferTarget target = storageDepositTargetForScreenSlot(hoveredBackpackSlot);
+                baseStoragePointerOperation_ = StorageQuantityOperation::Deposit;
+                baseStoragePointerTarget_ = target;
+                baseStoragePointerPressMouse_ = input.mouseScreen();
+                baseStoragePointerPressCanOpenMenu_ = storageTransferTargetAvailable(target);
+                baseStoragePointerDragTriggered_ = false;
+                ui.consumePointer();
+                return;
+            }
+            if (baseStoragePointerOperation_ == StorageQuantityOperation::Deposit &&
+                baseStoragePointerTarget_.source == BaseItemSource::Backpack) {
+                if (input.mouseLeftHeld() &&
+                    baseStoragePointerPressCanOpenMenu_ &&
+                    !baseStoragePointerDragTriggered_ &&
+                    lengthSquared(input.mouseScreen() - baseStoragePointerPressMouse_) >= StorageDragStartDistanceSq) {
+                    baseStoragePointerDragTriggered_ = true;
+                    baseStoragePointerPressCanOpenMenu_ = false;
+                    closeStorageCommand();
+                    baseStatus_.clear();
+                }
+                if (input.mouseLeftReleased()) {
+                    if (baseStoragePointerDragTriggered_) {
+                        if (hoveredBackpackSlot >= 0 &&
+                            moveBackpackStorageItem(baseStoragePointerTarget_, hoveredBackpackSlot)) {
+                            baseStorageDepositSelection_ = hoveredBackpackSlot;
+                            baseStatus_.clear();
+                        }
+                    } else if (baseStoragePointerPressCanOpenMenu_ &&
+                        hoveredBackpackSlot == baseStoragePointerTarget_.slotIndex) {
+                        const UiRect rect = storageTransferGridSlotRect(hoveredBackpackSlot);
+                        openStorageCommand(
+                            StorageQuantityOperation::Deposit,
+                            baseStoragePointerTarget_,
+                            rect.pos + Vec2{rect.size.x - 20.0f, 0.0f});
+                    }
+                    resetStoragePointerPress();
+                    ui.block(storageBounds);
+                    return;
+                }
+            }
+            if (input.confirmPressed() || input.useItemPressed()) {
+                const UiRect rect = storageTransferGridSlotRect(baseStorageDepositSelection_);
+                openStorageCommand(
+                    StorageQuantityOperation::Deposit,
+                    storageDepositTargetForScreenSlot(baseStorageDepositSelection_),
+                    rect.pos + Vec2{rect.size.x - 20.0f, 0.0f});
+                ui.block(storageBounds);
+                return;
+            }
+            ui.block(storageBounds);
+            return;
         }
 
-        ui.block(storagePanelRect());
+        if (baseStorageMode_ == StorageUiMode::Withdraw) {
+            const int warehousePageCount = std::max(1, (warehouseCapacity() + StoragePaneSlotCount - 1) / StoragePaneSlotCount);
+            baseStorageWarehousePage_ = std::clamp(baseStorageWarehousePage_, 0, warehousePageCount - 1);
+            const UiPageSelectorRects pageRects = externalWarehousePageSelectorRects(storageTransferGridSlotRect);
+            if (input.activeRingDelta() != 0) {
+                closeStorageCommand();
+                resetStoragePointerPress();
+                baseStorageWarehousePage_ = wrapStoragePageIndex(baseStorageWarehousePage_, input.activeRingDelta(), warehousePageCount);
+            }
+            if (ui.pressed(pageRects.prev)) {
+                closeStorageCommand();
+                resetStoragePointerPress();
+                baseStorageWarehousePage_ = wrapStoragePageIndex(baseStorageWarehousePage_, -1, warehousePageCount);
+            }
+            if (ui.pressed(pageRects.next)) {
+                closeStorageCommand();
+                resetStoragePointerPress();
+                baseStorageWarehousePage_ = wrapStoragePageIndex(baseStorageWarehousePage_, 1, warehousePageCount);
+            }
+
+            moveGridSelection(baseStorageWithdrawSelection_, StoragePaneSlotCount);
+            int hoveredWarehouseSlot = -1;
+            for (int i = 0; i < StoragePaneSlotCount; ++i) {
+                const UiRect rect = externalWarehouseSourceSlotRect(storageTransferGridSlotRect, i);
+                if (rect.contains(ui.mouse())) {
+                    baseStorageWithdrawSelection_ = i;
+                    hoveredWarehouseSlot = i;
+                }
+            }
+            const auto moveWarehouseStorageItem = [this](StorageTransferTarget target, int toSlot) {
+                if (target.source != BaseItemSource::Warehouse ||
+                    !target.valid ||
+                    toSlot < 0 ||
+                    toSlot >= StoragePaneSlotCount) {
+                    return false;
+                }
+                const int entryIndex = target.storageEntry.kind == StorageEntryKind::Stack
+                    ? target.storageEntry.index
+                    : static_cast<int>(warehouseObjectStacks_.size()) + target.storageEntry.index;
+                const int storageSlot = baseStorageWarehousePage_ * StoragePaneSlotCount + toSlot;
+                assignWarehouseEntryToStorageSlot(entryIndex, storageSlot);
+                return true;
+            };
+            if (input.mouseLeftPressed() && hoveredWarehouseSlot >= 0 && !ui.pointerConsumed()) {
+                baseStorageWithdrawSelection_ = hoveredWarehouseSlot;
+                const StorageTransferTarget target = storageWithdrawTargetForSlot(hoveredWarehouseSlot);
+                baseStoragePointerOperation_ = StorageQuantityOperation::Withdraw;
+                baseStoragePointerTarget_ = target;
+                baseStoragePointerPressMouse_ = input.mouseScreen();
+                baseStoragePointerPressCanOpenMenu_ = storageTransferTargetAvailable(target);
+                baseStoragePointerDragTriggered_ = false;
+                ui.consumePointer();
+                return;
+            }
+            if (baseStoragePointerOperation_ == StorageQuantityOperation::Withdraw &&
+                baseStoragePointerTarget_.source == BaseItemSource::Warehouse) {
+                if (input.mouseLeftHeld() &&
+                    baseStoragePointerPressCanOpenMenu_ &&
+                    !baseStoragePointerDragTriggered_ &&
+                    lengthSquared(input.mouseScreen() - baseStoragePointerPressMouse_) >= StorageDragStartDistanceSq) {
+                    baseStoragePointerDragTriggered_ = true;
+                    baseStoragePointerPressCanOpenMenu_ = false;
+                    closeStorageCommand();
+                    baseStatus_.clear();
+                }
+                if (input.mouseLeftReleased()) {
+                    if (baseStoragePointerDragTriggered_) {
+                        if (hoveredWarehouseSlot >= 0 &&
+                            moveWarehouseStorageItem(baseStoragePointerTarget_, hoveredWarehouseSlot)) {
+                            baseStorageWithdrawSelection_ = hoveredWarehouseSlot;
+                            baseStatus_.clear();
+                        }
+                    } else if (baseStoragePointerPressCanOpenMenu_ &&
+                        hoveredWarehouseSlot == baseStoragePointerTarget_.slotIndex) {
+                        const UiRect rect = externalWarehouseSourceSlotRect(storageTransferGridSlotRect, hoveredWarehouseSlot);
+                        openStorageCommand(
+                            StorageQuantityOperation::Withdraw,
+                            baseStoragePointerTarget_,
+                            rect.pos + Vec2{rect.size.x - 20.0f, 0.0f});
+                    }
+                    resetStoragePointerPress();
+                    ui.block(storageBounds);
+                    return;
+                }
+            }
+            if (input.confirmPressed() || input.useItemPressed()) {
+                const UiRect rect = externalWarehouseSourceSlotRect(storageTransferGridSlotRect, baseStorageWithdrawSelection_);
+                openStorageCommand(
+                    StorageQuantityOperation::Withdraw,
+                    storageWithdrawTargetForSlot(baseStorageWithdrawSelection_),
+                    rect.pos + Vec2{rect.size.x - 20.0f, 0.0f});
+                ui.block(storageBounds);
+                return;
+            }
+            ui.block(storageBounds);
+            return;
+        }
+
+        returnToStorageMenu();
+        ui.block(storageBounds);
         return;
     }
 
@@ -3022,7 +4210,7 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
                 return false;
             }
             const ProcessingMode mode = static_cast<ProcessingMode>(std::clamp(baseProcessingMode_, 0, BaseProcessingModeCount - 1));
-            const std::array<UiCommandMenuItem, 1> items{{{mode == ProcessingMode::Repair ? "修理する" : "強化する", true}}};
+            const std::array<UiCommandMenuItem, 1> items{{{processingActionName(mode), true}}};
             baseProcessingCommandSlot_ = slotIndex;
             Vec2 commandAnchor = baseProcessingGridSlotRect(slotIndex).pos;
             if (target.source == BaseItemSource::Warehouse) {
@@ -3062,7 +4250,7 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
             return;
         }
         const ProcessingMode currentProcessingMode = static_cast<ProcessingMode>(std::clamp(baseProcessingMode_, 0, BaseProcessingModeCount - 1));
-        const std::array<UiCommandMenuItem, 1> commandItems{{{currentProcessingMode == ProcessingMode::Repair ? "修理する" : "強化する", true}}};
+        const std::array<UiCommandMenuItem, 1> commandItems{{{processingActionName(currentProcessingMode), true}}};
         const bool commandOpenBeforeUpdate = baseProcessingCommandMenu_.open;
         const int commandSelection = updateUiCommandMenu(
             baseProcessingCommandMenu_,
@@ -3086,7 +4274,8 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
         std::array<UiTabItem, BaseProcessingModeCount> processingTabs{};
         std::array<UiRect, BaseProcessingModeCount> processingTabRects{};
         for (int i = 0; i < BaseProcessingModeCount; ++i) {
-            processingTabs[static_cast<std::size_t>(i)] = {processingModeName(static_cast<ProcessingMode>(i)), true};
+            const auto mode = static_cast<ProcessingMode>(i);
+            processingTabs[static_cast<std::size_t>(i)] = {processingModeName(mode), processingModeUnlocked(mode)};
             processingTabRects[static_cast<std::size_t>(i)] = baseProcessingModeRect(i);
         }
         UiTabsInput processingTabsInput{};
@@ -3278,7 +4467,7 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
 
     if (baseSellActive_) {
         refreshMerchantStock(false);
-        const UiRect merchantBounds = baseMerchantMode_ == MerchantUiMode::ChooseAction ? basePanelRect() : merchantPanelRect();
+        const UiRect merchantBounds = baseMerchantMode_ == MerchantUiMode::ChooseAction ? merchantActionDialogRect() : merchantPanelRect();
         const auto closeMerchantCommands = [this]() {
             closeUiCommandMenu(baseMerchantSellCommandMenu_);
             baseMerchantSellCommandSource_ = 0;
@@ -3411,7 +4600,7 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
                 baseMerchantActionSelection_ = (baseMerchantActionSelection_ + 1) % ChoiceCount;
             }
             for (int i = 0; i < ChoiceCount; ++i) {
-                const UiRect rect = merchantChoiceRect(i);
+                const UiRect rect = merchantActionChoiceRect(i);
                 if (rect.contains(ui.mouse())) {
                     baseMerchantActionSelection_ = i;
                 }
@@ -3810,7 +4999,7 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
             if (selectableWarpPoints.empty()) {
                 baseWarpPointSelectActive_ = false;
                 baseStatus_ = "解放済みワープポイントがありません";
-                ui.block(basePanelRect());
+                ui.block(baseMiningWarpPointSelectRect());
                 return;
             }
 
@@ -3824,7 +5013,7 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
                 baseWarpPointSelection_ = wrapStoragePageIndex(baseWarpPointSelection_, warpDelta, warpPointCount);
             }
             for (int i = 0; i < warpPointCount; ++i) {
-                const UiRect rect = baseMiningWarpPointChoiceRect(i);
+                const UiRect rect = baseMiningWarpPointSelectChoiceRect(i);
                 if (rect.contains(ui.mouse())) {
                     baseWarpPointSelection_ = i;
                 }
@@ -3840,7 +5029,7 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
                     return;
                 }
             }
-            ui.block(basePanelRect());
+            ui.block(baseMiningWarpPointSelectRect());
             return;
         }
 
@@ -3959,18 +5148,23 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
             break;
         case BaseFacilityAction::Storage:
             baseStorageActive_ = true;
-            baseStorageFocusWarehouse_ = false;
-            baseStorageBackpackCursor_ = 0;
-            baseStorageWarehouseCursor_ = 0;
+            baseStorageMode_ = StorageUiMode::ChooseAction;
+            baseStorageActionSelection_ = 0;
+            baseStorageDepositSource_ = static_cast<int>(BaseItemSource::Backpack);
+            baseStorageDepositSourceTabs_.focusedIndex = 0;
+            baseStorageDepositSelection_ = 0;
+            baseStorageWithdrawSelection_ = 0;
             baseStorageWarehousePage_ = 0;
+            baseStorageQuantityDialog_ = {};
+            baseStorageQuantityPending_ = {};
             closeUiCommandMenu(baseStorageCommandMenu_);
-            baseStorageCommandSlot_ = -1;
-            baseStoragePointerPressSlot_ = -1;
+            baseStorageCommandOperation_ = StorageQuantityOperation::None;
+            baseStorageCommandTarget_ = {};
+            baseStoragePointerOperation_ = StorageQuantityOperation::None;
+            baseStoragePointerTarget_ = {};
             baseStoragePointerPressMouse_ = {};
             baseStoragePointerPressCanOpenMenu_ = false;
             baseStoragePointerDragTriggered_ = false;
-            baseStorageGrabbedActive_ = false;
-            baseStorageGrabbedFromSlot_ = -1;
             baseStatus_.clear();
             break;
         case BaseFacilityAction::Merchant:
@@ -4368,115 +5562,6 @@ void Game::renderBaseScreen(Renderer& renderer) const
 
     renderer.setScreenSpace();
     const float ringPreviewSeconds = baseRingPreviewAnimationTime_;
-    if (baseStorageActive_) {
-        renderBaseBackdrop(renderer);
-        const UiRect panel = storagePanelRect();
-        UiCancelControlScope cancelScope(baseCancelState_);
-        UiWindowScope storageWindow(
-            renderer,
-            "base.storage",
-            panel,
-            "収納箱",
-            "F/Enter コマンド  G つかむ/置く  Z/X 倉庫ページ  Esc/右クリック 戻る",
-            UiWindowOptions{true, true});
-
-        const std::vector<StorageEntry> warehouseEntries = warehouseStorageEntries();
-        const int warehousePageCount = std::max(1, (warehouseCapacity() + StoragePaneSlotCount - 1) / StoragePaneSlotCount);
-        const int warehousePage = std::clamp(baseStorageWarehousePage_, 0, warehousePageCount - 1);
-
-        const auto selectedGlobalSlot = [this]() {
-            return storageGlobalSlotFromLocal(
-                baseStorageFocusWarehouse_,
-                baseStorageFocusWarehouse_ ? baseStorageWarehouseCursor_ : baseStorageBackpackCursor_);
-        };
-        const auto entryViewForBackpackSlot = [this](int slot) {
-            InventoryUiEntryView entry{};
-            if (const InventoryObjectStack* stack = inventory_.screenObjectStackAt(slot)) {
-                entry.item = &stack->item;
-                entry.stackCount = stack->count;
-                return entry;
-            }
-            if (const InventoryObjectInstance* instance = inventory_.screenObjectInstanceAt(slot)) {
-                entry.item = &instance->item;
-                entry.instance = &instance->instance;
-                entry.stackCount = 1;
-            }
-            return entry;
-        };
-        const auto entryViewForWarehouseSlot = [this, &warehouseEntries, warehousePage](int slot) {
-            InventoryUiEntryView entry{};
-            const int entryIndex = warehouseEntryIndexAtStorageSlot(warehousePage * StoragePaneSlotCount + slot);
-            if (entryIndex < 0 || entryIndex >= static_cast<int>(warehouseEntries.size())) {
-                return entry;
-            }
-            const StorageEntry storageEntry = warehouseEntries[static_cast<std::size_t>(entryIndex)];
-            entry.item = storageEntryItem(storageEntry, true);
-            entry.instance = storageEntryInstance(storageEntry, true);
-            entry.stackCount = storageEntryStackCount(storageEntry, true);
-            return entry;
-        };
-
-        char buffer[256];
-        const Color backpackHeaderColor = baseStorageFocusWarehouse_ ? Color{198, 198, 206, 255} : Color{255, 230, 150, 255};
-        std::snprintf(buffer, sizeof(buffer), "\xEF\xBC\x88%d/24\xEF\xBC\x89", backpackUsedSlots());
-        drawStorageHeader(renderer, StorageHeaderTextX, StorageBackpackHeaderY, "リュック", buffer, backpackHeaderColor);
-
-        drawUiSeparator(
-            renderer,
-            {{StorageGridX, StorageDividerY - ui::SeparatorHeight * 0.5f}, {StorageGridW, ui::SeparatorHeight}},
-            {255, 255, 255, 220});
-        const Color warehouseHeaderColor = baseStorageFocusWarehouse_ ? Color{255, 230, 150, 255} : Color{198, 198, 206, 255};
-        std::snprintf(buffer, sizeof(buffer), "\xEF\xBC\x88%d/%d\xEF\xBC\x89", warehouseUsedSlots(), warehouseCapacity());
-        drawStorageHeader(renderer, StorageHeaderTextX, StorageBottomHeaderY, "倉庫", buffer, warehouseHeaderColor);
-
-        drawStoragePageSelector(renderer, warehousePage, warehousePageCount);
-
-        for (int i = 0; i < StoragePaneSlotCount; ++i) {
-            const int backpackGlobalSlot = storageGlobalSlotFromLocal(false, i);
-            drawInventoryUiSlot(
-                renderer,
-                storageBackpackSlotRect(i),
-                entryViewForBackpackSlot(i),
-                selectedGlobalSlot() == backpackGlobalSlot,
-                40.0f);
-        }
-        for (int i = 0; i < StoragePaneSlotCount; ++i) {
-            const int warehouseGlobalSlot = storageGlobalSlotFromLocal(true, i);
-            drawInventoryUiSlot(
-                renderer,
-                storageWarehouseSlotRect(i),
-                entryViewForWarehouseSlot(i),
-                selectedGlobalSlot() == warehouseGlobalSlot,
-                40.0f);
-        }
-
-        const int detailSlot = (baseStorageCommandMenu_.open && baseStorageCommandSlot_ >= 0)
-            ? baseStorageCommandSlot_
-            : selectedGlobalSlot();
-        InventoryUiEntryView detailEntry{};
-        if (storageGlobalSlotIsWarehouse(detailSlot)) {
-            detailEntry = entryViewForWarehouseSlot(storageLocalSlot(detailSlot));
-        } else {
-            detailEntry = entryViewForBackpackSlot(storageLocalSlot(detailSlot));
-        }
-        const UiRect detailPanel{{StorageDetailX, StorageDetailY}, {330.0f, 520.0f}};
-        drawInventoryUiDetailPanel(renderer, detailPanel, detailEntry, objectCatalog_, encyclopedia_, false);
-
-        const int commandSlotIndex = baseStorageCommandSlot_ >= 0 ? baseStorageCommandSlot_ : selectedGlobalSlot();
-        const bool commandWarehouse = storageGlobalSlotIsWarehouse(commandSlotIndex);
-        const char* commandLabel = commandWarehouse ? "取り出す" : "倉庫へしまう";
-        const bool hasCommandItem = commandWarehouse
-            ? (entryViewForWarehouseSlot(storageLocalSlot(commandSlotIndex)).item != nullptr)
-            : (entryViewForBackpackSlot(storageLocalSlot(commandSlotIndex)).item != nullptr);
-        const std::array<UiCommandMenuItem, 1> commandItems{{{commandLabel, hasCommandItem}}};
-        drawUiCommandMenu(renderer, baseStorageCommandMenu_, commandItems.data(), static_cast<int>(commandItems.size()));
-
-        if (!baseStatus_.empty()) {
-            drawUiBodyMessageBelow(renderer, storageSlotRectByGlobal(selectedGlobalSlot()), baseStatus_, ui::Text);
-        }
-        return;
-    }
-
     renderer.fillRect({0.0f, 0.0f}, {static_cast<float>(camera_.width()), static_cast<float>(camera_.height())}, {24, 28, 32, 255});
     const UiRect map = baseMapBounds();
     if (baseArea_ == BaseArea::HomeInterior) {
@@ -4582,13 +5667,22 @@ void Game::renderBaseScreen(Renderer& renderer) const
     char buffer[256];
     const bool panelUiActive = baseRingWorkshopActive_ ||
         baseBookshelfActive_ ||
+        baseStorageActive_ ||
         baseProcessingActive_ ||
         baseSellActive_ ||
         baseUpgradeActive_ ||
         baseMiningStartChoiceActive_;
-    const UiRect panel = (baseProcessingActive_ || (baseSellActive_ && baseMerchantMode_ != MerchantUiMode::ChooseAction))
+    const bool storageActionDialogActive = baseStorageActive_ && baseStorageMode_ == StorageUiMode::ChooseAction;
+    const bool merchantActionDialogActive = baseSellActive_ && baseMerchantMode_ == MerchantUiMode::ChooseAction;
+    const UiRect panel = storageActionDialogActive
+        ? storageActionDialogRect()
+        : (merchantActionDialogActive
+        ? merchantActionDialogRect()
+        : ((baseProcessingActive_ ||
+        (baseStorageActive_ && baseStorageMode_ != StorageUiMode::ChooseAction) ||
+        (baseSellActive_ && baseMerchantMode_ != MerchantUiMode::ChooseAction))
         ? merchantPanelRect()
-        : (baseUpgradeActive_ ? baseUpgradePanelRect() : basePanelRect());
+        : (baseUpgradeActive_ ? baseUpgradePanelRect() : basePanelRect())));
     std::optional<UiWindowScope> panelWindow;
     std::optional<UiCancelControlScope> panelCancelScope;
     if (panelUiActive) {
@@ -4601,6 +5695,10 @@ void Game::renderBaseScreen(Renderer& renderer) const
             panelHelp = baseMerchantMode_ == MerchantUiMode::Buy
                 ? "F/Enter 買う  Esc/右クリック 戻る"
                 : (baseMerchantMode_ == MerchantUiMode::Sell ? "F/Enter 売る  Z/X・1-5 対象/ページ切替  Esc/右クリック 戻る" : "F/Enter 決定  Esc/右クリック 戻る");
+        } else if (baseStorageActive_) {
+            panelHelp = baseStorageMode_ == StorageUiMode::Deposit
+                ? "F/Enter コマンド  Z/X・1-4 対象切替  Esc/右クリック 戻る"
+                : (baseStorageMode_ == StorageUiMode::Withdraw ? "F/Enter コマンド  Z/X 倉庫ページ  Esc/右クリック 戻る" : "F/Enter 決定  Esc/右クリック 戻る");
         } else if (baseProcessingActive_) {
             panelHelp = "F/Enter 確定/実行  Tab 作業選択  Z/X・1-5 対象/ページ切替  Esc/右クリック 戻る";
         } else if (baseUpgradeActive_) {
@@ -4625,6 +5723,14 @@ void Game::renderBaseScreen(Renderer& renderer) const
             } else {
                 panelTitle = "商人ワゴン";
             }
+        } else if (baseStorageActive_) {
+            if (baseStorageMode_ == StorageUiMode::Deposit) {
+                panelTitle = "収納箱にしまう";
+            } else if (baseStorageMode_ == StorageUiMode::Withdraw) {
+                panelTitle = "収納箱 取り出す";
+            } else {
+                panelTitle = "収納箱";
+            }
         } else if (baseUpgradeActive_) {
             panelTitle = "拠点強化炉";
         } else if (baseMiningStartChoiceActive_) {
@@ -4637,47 +5743,190 @@ void Game::renderBaseScreen(Renderer& renderer) const
         panelWindow.emplace(renderer, "base.panel", panel, panelTitle, panelHelp, UiWindowOptions{true, panelCancelButton});
     }
 
-    if (baseBookshelfActive_) {
+    if (baseStorageActive_) {
+        if (baseStorageMode_ == StorageUiMode::ChooseAction) {
+            std::snprintf(buffer, sizeof(buffer), "収納数：%d/%d", warehouseUsedSlots(), warehouseCapacity());
+            renderer.drawText(smallActionInfoTextPos(panel), buffer, {198, 198, 206, 255}, 2);
+            constexpr std::array<std::string_view, 3> Choices{"しまう", "取り出す", "並び替え"};
+            for (int i = 0; i < static_cast<int>(Choices.size()); ++i) {
+                drawUiButton(renderer, storageActionChoiceRect(i), Choices[static_cast<std::size_t>(i)], i == baseStorageActionSelection_, uiActionButtonStyle());
+            }
+        } else {
+            const UiRect detailPanel = merchantDetailPanelRect();
+            InventoryUiEntryView detailEntry{};
+            const SpellRingItem* selectedRingItem = nullptr;
+            if (baseStorageMode_ == StorageUiMode::Deposit) {
+                std::array<UiTabItem, StorageDepositSourceCount> sourceTabs{};
+                std::array<UiRect, StorageDepositSourceCount> sourceTabRects{};
+                for (int i = 0; i < StorageDepositSourceCount; ++i) {
+                    const int source = storageDepositSourceValue(i);
+                    sourceTabs[static_cast<std::size_t>(i)] = {BaseItemSourceLabels[static_cast<std::size_t>(source)], true};
+                    sourceTabRects[static_cast<std::size_t>(i)] = storageDepositSourceRect(i);
+                }
+                const int currentTab = storageDepositSourceTabIndex(baseStorageDepositSource_);
+                drawUiTabs(
+                    renderer,
+                    baseStorageDepositSourceTabs_,
+                    currentTab,
+                    sourceTabs.data(),
+                    static_cast<int>(sourceTabs.size()),
+                    sourceTabRects.data());
+
+                std::snprintf(buffer, sizeof(buffer), "収納箱 %d/%d", warehouseUsedSlots(), warehouseCapacity());
+                renderer.drawText(storageTransferCountTextPos(), buffer, ui::TextMuted, 2);
+
+                if (baseItemSourceIsRing(baseStorageDepositSource_)) {
+                    const int ringIndex = std::clamp(ringIndexFromBaseItemSource(baseStorageDepositSource_), 0, SpellRingCount - 1);
+                    const std::vector<SpellRingItem>& ringItems = spellRing_.itemsForRing(ringIndex);
+                    const int selectedRingIndex = ringItems.empty()
+                        ? -1
+                        : std::clamp(baseStorageDepositSelection_, 0, static_cast<int>(ringItems.size()) - 1);
+                    drawStorageRingPreview(
+                        renderer,
+                        spellRing_,
+                        objectCatalog_,
+                        balance_,
+                        ringIndex,
+                        selectedRingIndex,
+                        ringPreviewSeconds);
+                    for (int i = 0; i < static_cast<int>(ringItems.size()); ++i) {
+                        const SpellRingItem& item = ringItems[static_cast<std::size_t>(i)];
+                        if (!item.objectId.empty()) {
+                            continue;
+                        }
+                        UiRect labelRect = storageRingItemRect(
+                            item,
+                            spellRing_,
+                            balance_,
+                            ringIndex,
+                            i,
+                            static_cast<int>(ringItems.size()),
+                            ringPreviewSeconds);
+                        labelRect.size.y += MerchantSellRingItemLabelExtraHeight;
+                        drawInventoryUiSlotBottomLabel(renderer, labelRect, "収納不可", ui::TextDisabled);
+                    }
+                    if (ringItems.empty()) {
+                        const Vec2 emptySize = renderer.measureText("アイテム未配置", 2);
+                        renderer.drawText(
+                            storageRingPreviewCenter(spellRing_, ringIndex) - emptySize * 0.5f,
+                            "アイテム未配置",
+                            ui::TextMuted,
+                            2);
+                    } else if (selectedRingIndex >= 0) {
+                        selectedRingItem = &ringItems[static_cast<std::size_t>(selectedRingIndex)];
+                        detailEntry = storageTransferTargetView(storageDepositTargetForSourceSlot(baseStorageDepositSource_, selectedRingIndex));
+                    }
+                } else {
+                    for (int i = 0; i < inventory_.screenSlotCount(); ++i) {
+                        const StorageTransferTarget target = storageDepositTargetForSourceSlot(baseStorageDepositSource_, i);
+                        const InventoryUiEntryView view = storageTransferTargetView(target);
+                        const bool draggingThis =
+                            baseStoragePointerDragTriggered_ &&
+                            baseStoragePointerOperation_ == StorageQuantityOperation::Deposit &&
+                            baseStoragePointerTarget_.source == BaseItemSource::Backpack &&
+                            baseStoragePointerTarget_.slotIndex == i;
+                        InventoryUiSlotStyle style{i == baseStorageDepositSelection_, draggingThis, 48.0f};
+                        if (view.item != nullptr && view.instance == nullptr && view.stackCount > 1) {
+                            style.showTopRightCount = true;
+                            style.topRightCount = view.stackCount;
+                        }
+                        drawInventoryUiSlot(renderer, storageTransferGridSlotRect(i), view, style);
+                    }
+                    detailEntry = storageTransferTargetView(storageDepositTargetForScreenSlot(
+                        std::clamp(baseStorageDepositSelection_, 0, std::max(0, inventory_.screenSlotCount() - 1))));
+                }
+            } else if (baseStorageMode_ == StorageUiMode::Withdraw) {
+                const int warehousePageCount = std::max(1, (warehouseCapacity() + StoragePaneSlotCount - 1) / StoragePaneSlotCount);
+                const int warehousePage = std::clamp(baseStorageWarehousePage_, 0, warehousePageCount - 1);
+                std::snprintf(buffer, sizeof(buffer), "収納箱 %d/%d", warehouseUsedSlots(), warehouseCapacity());
+                renderer.drawText(storageTransferCountTextPos(), buffer, ui::TextMuted, 2);
+                drawExternalWarehouseSourceHeader(
+                    renderer,
+                    storageTransferGridSlotRect,
+                    warehousePage,
+                    warehousePageCount);
+                for (int i = 0; i < StoragePaneSlotCount; ++i) {
+                    const StorageTransferTarget target = storageWithdrawTargetForSlot(i);
+                    const InventoryUiEntryView view = storageTransferTargetView(target);
+                    const bool draggingThis =
+                        baseStoragePointerDragTriggered_ &&
+                        baseStoragePointerOperation_ == StorageQuantityOperation::Withdraw &&
+                        baseStoragePointerTarget_.source == BaseItemSource::Warehouse &&
+                        baseStoragePointerTarget_.slotIndex == i;
+                    InventoryUiSlotStyle style{i == baseStorageWithdrawSelection_, draggingThis, 48.0f};
+                    if (view.item != nullptr && view.instance == nullptr && view.stackCount > 1) {
+                        style.showTopRightCount = true;
+                        style.topRightCount = view.stackCount;
+                    }
+                    drawInventoryUiSlot(renderer, externalWarehouseSourceSlotRect(storageTransferGridSlotRect, i), view, style);
+                }
+                detailEntry = storageTransferTargetView(storageWithdrawTargetForSlot(
+                    std::clamp(baseStorageWithdrawSelection_, 0, StoragePaneSlotCount - 1)));
+            }
+
+            if (detailEntry.item == nullptr && selectedRingItem != nullptr) {
+                drawUiSubPanel(renderer, detailPanel);
+                float detailLineY = drawUiDetailHeader(renderer, detailPanel, ringItemDisplayName(objectCatalog_, *selectedRingItem));
+                drawUiDetailText(renderer, detailPanel, detailLineY, "このアイテムは収納箱にしまえません。");
+            } else {
+                drawInventoryUiDetailPanel(renderer, detailPanel, detailEntry, objectCatalog_, encyclopedia_, false);
+            }
+            const char* commandLabel = baseStorageCommandOperation_ == StorageQuantityOperation::Withdraw
+                ? "取り出す"
+                : "しまう";
+            const std::array<UiCommandMenuItem, 1> commandItems{{
+                {commandLabel, storageTransferTargetAvailable(baseStorageCommandTarget_)},
+            }};
+            drawUiCommandMenu(renderer, baseStorageCommandMenu_, commandItems.data(), static_cast<int>(commandItems.size()));
+        }
+    } else if (baseBookshelfActive_) {
         renderBookshelfScreen(renderer);
     } else if (baseRingWorkshopActive_) {
         renderer.drawText(panel.pos + Vec2{168.0f, 214.0f}, "リング工房", {246, 235, 255, 255}, 3);
         const int totalPoints = ringLevelUpgradePointTotal();
-        std::snprintf(buffer, sizeof(buffer), "レベルアップ強化点 %d  現在: 半径%d / 速度%d  配分案: 半径%d / 速度%d",
+        std::snprintf(buffer, sizeof(buffer), "強化点 %d  現在: 半径%d / 速度%d / 重量%d  案: 半径%d / 速度%d / 重量%d",
             totalPoints,
             levelRingRadiusPoints_,
             levelRingSpeedPoints_,
+            levelRingWeightLimitPoints_,
             ringWorkshopDraftRadiusPoints_,
-            ringWorkshopDraftSpeedPoints_);
+            ringWorkshopDraftSpeedPoints_,
+            ringWorkshopDraftWeightLimitPoints_);
         renderer.drawText(panel.pos + Vec2{54.0f, 224.0f}, buffer, {198, 198, 206, 255}, 2);
 
         const float currentRadius = effectiveInitialRingRadius(levelRingRadiusPoints_);
         const float currentSpeed = effectiveInitialRingSpeed(levelRingSpeedPoints_);
+        const float currentWeightLimit = effectiveInitialRingWeightLimit(levelRingWeightLimitPoints_);
         const float draftRadius = effectiveInitialRingRadius(ringWorkshopDraftRadiusPoints_);
         const float draftSpeed = effectiveInitialRingSpeed(ringWorkshopDraftSpeedPoints_);
-        std::snprintf(buffer, sizeof(buffer), "再調整後: 半径 %.0f -> %.0f / 速度 %.2f -> %.2f  費用 %dG 月のカケラ%d",
+        const float draftWeightLimit = effectiveInitialRingWeightLimit(ringWorkshopDraftWeightLimitPoints_);
+        std::snprintf(buffer, sizeof(buffer), "案: 半径 %.0f->%.0f / 速度 %.2f->%.2f / 重量 %.1f->%.1fkg  費用 %dG 月のカケラ%d",
             currentRadius,
             draftRadius,
             currentSpeed,
             draftSpeed,
+            currentWeightLimit,
+            draftWeightLimit,
             ringWorkshopRespecMoneyCost(),
             ringWorkshopRespecMoonCost());
-        renderer.drawText(panel.pos + Vec2{54.0f, 448.0f}, buffer, {198, 198, 206, 255}, 2);
+        renderer.drawText(panel.pos + Vec2{54.0f, 532.0f}, buffer, {198, 198, 206, 255}, 2);
 
         for (int i = 0; i < BaseRingWorkshopItemCount; ++i) {
-            if (i == 0) {
-                std::snprintf(buffer, sizeof(buffer), "再調整: 速度から半径へ  半径%d / 速度%d",
+            if (i >= 0 && i < RingWorkshopRespecTransferCount) {
+                const RingWorkshopRespecTransfer transfer = RingWorkshopRespecTransfers[static_cast<std::size_t>(i)];
+                std::snprintf(buffer, sizeof(buffer), "%s→%s  半%d 速%d 重%d",
+                    ringLevelUpgradePointName(transfer.from),
+                    ringLevelUpgradePointName(transfer.to),
                     ringWorkshopDraftRadiusPoints_,
-                    ringWorkshopDraftSpeedPoints_);
-            } else if (i == 1) {
-                std::snprintf(buffer, sizeof(buffer), "再調整: 半径から速度へ  半径%d / 速度%d",
-                    ringWorkshopDraftRadiusPoints_,
-                    ringWorkshopDraftSpeedPoints_);
-            } else if (i == 2) {
+                    ringWorkshopDraftSpeedPoints_,
+                    ringWorkshopDraftWeightLimitPoints_);
+            } else if (i == RingWorkshopConfirmItemIndex) {
                 std::snprintf(buffer, sizeof(buffer), "再調整確定  %dG 月のカケラ%d",
                     ringWorkshopRespecMoneyCost(),
                     ringWorkshopRespecMoonCost());
-            } else if (i >= 3 && i < 3 + RingWorkshopImplementedUpgradeCount) {
-                const auto upgrade = static_cast<RingWorkshopUpgrade>(i - 3);
+            } else if (i >= RingWorkshopUpgradeStartIndex &&
+                i < RingWorkshopUpgradeStartIndex + RingWorkshopImplementedUpgradeCount) {
+                const auto upgrade = static_cast<RingWorkshopUpgrade>(i - RingWorkshopUpgradeStartIndex);
                 const int level = ringWorkshopUpgradeLevel(upgrade);
                 const int maxLevel = ringWorkshopUpgradeMaxLevel(upgrade);
                 if (level >= maxLevel) {
@@ -4698,16 +5947,16 @@ void Game::renderBaseScreen(Renderer& renderer) const
             } else {
                 const char* futureName = "";
                 switch (i) {
-                case 6:
+                case RingWorkshopUpgradeStartIndex + RingWorkshopImplementedUpgradeCount:
                     futureName = "リング投げ距離強化";
                     break;
-                case 7:
+                case RingWorkshopUpgradeStartIndex + RingWorkshopImplementedUpgradeCount + 1:
                     futureName = "リング投げクールダウン短縮";
                     break;
-                case 8:
+                case RingWorkshopUpgradeStartIndex + RingWorkshopImplementedUpgradeCount + 2:
                     futureName = "リング重量ペナルティ軽減";
                     break;
-                case 9:
+                case RingWorkshopUpgradeStartIndex + RingWorkshopImplementedUpgradeCount + 3:
                     futureName = "リング装着枠増加";
                     break;
                 default:
@@ -4719,16 +5968,17 @@ void Game::renderBaseScreen(Renderer& renderer) const
             drawUiButton(renderer, baseRingWorkshopItemRect(i), buffer, i == baseRingWorkshopSelection_, uiActionButtonStyle());
         }
 
-        std::snprintf(buffer, sizeof(buffer), "所持 %dG / 月のカケラ %d   F/Enter 実行  左右で配分変更  Esc/右クリック 戻る",
+        std::snprintf(buffer, sizeof(buffer), "所持 %dG / 月のカケラ %d   F/Enter 実行  Esc/右クリック 戻る",
             money_,
             inventory_.materialCount(MaterialType::MoonFragment));
-        renderer.drawText(panel.pos + Vec2{54.0f, 448.0f}, buffer, {198, 198, 206, 255}, 2);
+        renderer.drawText(panel.pos + Vec2{54.0f, 558.0f}, buffer, {198, 198, 206, 255}, 2);
         drawUiButton(renderer, ringWorkshopConfirmRect(), "再調整確定", false, uiActionButtonStyle());
     } else if (baseProcessingActive_) {
         std::array<UiTabItem, BaseProcessingModeCount> processingTabs{};
         std::array<UiRect, BaseProcessingModeCount> processingTabRects{};
         for (int i = 0; i < BaseProcessingModeCount; ++i) {
-            processingTabs[static_cast<std::size_t>(i)] = {processingModeName(static_cast<ProcessingMode>(i)), true};
+            const auto processingTabMode = static_cast<ProcessingMode>(i);
+            processingTabs[static_cast<std::size_t>(i)] = {processingModeName(processingTabMode), processingModeUnlocked(processingTabMode)};
             processingTabRects[static_cast<std::size_t>(i)] = baseProcessingModeRect(i);
         }
         const ProcessingMode mode = static_cast<ProcessingMode>(std::clamp(baseProcessingMode_, 0, BaseProcessingModeCount - 1));
@@ -4746,6 +5996,9 @@ void Game::renderBaseScreen(Renderer& renderer) const
             case ProcessingMode::Attack: return "強化鉱石と所持金を使い、攻撃力補正を上げます。";
             case ProcessingMode::Dig: return "強化鉱石と所持金を使い、抑制力補正を上げます。";
             case ProcessingMode::Durability: return "強化鉱石と所持金を使い、最大耐久力を上げます。";
+            case ProcessingMode::ResetEnhancement: return "強化値と補正を初期化します。加工状態は残ります。";
+            case ProcessingMode::Lighten: return "強化鉱石と所持金を使い、重量を軽くします。";
+            case ProcessingMode::Enlarge: return "強化鉱石と所持金を使い、当たり判定を大きくします。重量も増えます。";
             }
             return "";
         };
@@ -4926,6 +6179,15 @@ void Game::renderBaseScreen(Renderer& renderer) const
             const int durabilityBonus = stats ? stats->durabilityBonus : 0;
             const int currentDurability = stats ? stats->currentDurability : (item != nullptr ? item->durability : -1);
             const int maxDurability = stats ? stats->maxDurability : (item != nullptr ? item->durability : -1);
+            double weightModifier = 1.0;
+            double sizeModifier = 1.0;
+            if (detailEntry.instance != nullptr) {
+                weightModifier = detailEntry.instance->weightModifier;
+                sizeModifier = detailEntry.instance->sizeModifier;
+            } else if (selectedRingItem != nullptr) {
+                weightModifier = selectedRingItem->weightModifier;
+                sizeModifier = selectedRingItem->sizeModifier;
+            }
 
             drawSectionLabel(detailPanel, detailLineY, "現在");
             std::snprintf(buffer, sizeof(buffer), "%d / %d", enhanceLevel, MaxItemEnhanceLevel);
@@ -4938,14 +6200,22 @@ void Game::renderBaseScreen(Renderer& renderer) const
             drawUiDetailLine(renderer, detailPanel, detailLineY, "耐久力", buffer);
             std::snprintf(buffer, sizeof(buffer), "+%d / +%d / +%d", attackBonus, digBonus, durabilityBonus);
             drawUiDetailLine(renderer, detailPanel, detailLineY, "補正", buffer);
+            std::snprintf(buffer, sizeof(buffer), "重量%.0f%% / 大きさ%.0f%%", weightModifier * 100.0, sizeModifier * 100.0);
+            drawUiDetailLine(renderer, detailPanel, detailLineY, "加工", buffer);
 
             const bool available = processingTargetAvailable(selectedTarget);
             std::string blockedReason;
             if (!available) {
-                if (mode == ProcessingMode::Repair &&
+                if (!processingModeUnlocked(mode)) {
+                    blockedReason = "この作業は未解禁です";
+                } else if ((mode == ProcessingMode::Repair || mode == ProcessingMode::ResetEnhancement) &&
                     (selectedTarget.source == BaseItemSource::Backpack || selectedTarget.source == BaseItemSource::Warehouse) &&
                     selectedTarget.backpackEntry.kind == StorageEntryKind::Stack) {
                     blockedReason = "この作業はできません";
+                } else if (mode == ProcessingMode::ResetEnhancement) {
+                    blockedReason = "リセット不要です";
+                } else if (mode == ProcessingMode::Lighten || mode == ProcessingMode::Enlarge) {
+                    blockedReason = "加工済みです";
                 } else {
                     blockedReason = mode == ProcessingMode::Repair ? "修理不要です" : "強化上限です";
                 }
@@ -4965,6 +6235,22 @@ void Game::renderBaseScreen(Renderer& renderer) const
                         maxDurability);
                     drawUiDetailLine(renderer, detailPanel, detailLineY, "耐久力", buffer);
                 }
+            } else if (mode == ProcessingMode::ResetEnhancement) {
+                drawSectionLabel(detailPanel, detailLineY, "リセット後");
+                drawUiDetailLine(renderer, detailPanel, detailLineY, "強化Lv", "0");
+                drawUiDetailLine(renderer, detailPanel, detailLineY, "補正", "+0 / +0 / +0");
+            } else if (mode == ProcessingMode::Lighten) {
+                drawSectionLabel(detailPanel, detailLineY, "加工後");
+                std::snprintf(buffer, sizeof(buffer), "%.0f%% -> %.0f%%", weightModifier * 100.0, weightModifier * LightenWeightMultiplier * 100.0);
+                drawUiDetailLine(renderer, detailPanel, detailLineY, "重量", buffer);
+                std::snprintf(buffer, sizeof(buffer), "%.0f%%", sizeModifier * 100.0);
+                drawUiDetailLine(renderer, detailPanel, detailLineY, "大きさ", buffer);
+            } else if (mode == ProcessingMode::Enlarge) {
+                drawSectionLabel(detailPanel, detailLineY, "加工後");
+                std::snprintf(buffer, sizeof(buffer), "%.0f%% -> %.0f%%", sizeModifier * 100.0, sizeModifier * EnlargeSizeMultiplier * 100.0);
+                drawUiDetailLine(renderer, detailPanel, detailLineY, "大きさ", buffer);
+                std::snprintf(buffer, sizeof(buffer), "%.0f%% -> %.0f%%", weightModifier * 100.0, weightModifier * EnlargeWeightMultiplier * 100.0);
+                drawUiDetailLine(renderer, detailPanel, detailLineY, "重量", buffer);
             } else {
                 drawSectionLabel(detailPanel, detailLineY, "強化後");
                 std::snprintf(buffer, sizeof(buffer), "%d -> %d", enhanceLevel, std::min(MaxItemEnhanceLevel, enhanceLevel + 1));
@@ -5003,12 +6289,12 @@ void Game::renderBaseScreen(Renderer& renderer) const
             }
 
             if (blockedReason.empty()) {
-                drawUiDetailText(renderer, detailPanel, detailLineY, mode == ProcessingMode::Repair ? "Enter 修理コマンド" : "Enter 強化コマンド");
+                drawUiDetailText(renderer, detailPanel, detailLineY, std::string("Enter ") + processingActionName(mode));
             } else {
                 drawUiDetailText(renderer, detailPanel, detailLineY, blockedReason);
             }
         }
-        const std::array<UiCommandMenuItem, 1> processingCommandItems{{{mode == ProcessingMode::Repair ? "修理する" : "強化する", true}}};
+        const std::array<UiCommandMenuItem, 1> processingCommandItems{{{processingActionName(mode), true}}};
         drawUiCommandMenu(
             renderer,
             baseProcessingCommandMenu_,
@@ -5016,11 +6302,10 @@ void Game::renderBaseScreen(Renderer& renderer) const
             static_cast<int>(processingCommandItems.size()));
     } else if (baseSellActive_) {
         if (baseMerchantMode_ == MerchantUiMode::ChooseAction) {
-            renderer.drawText(panel.pos + Vec2{176.0f, 214.0f}, "商人ワゴン", {246, 235, 255, 255}, 3);
-            renderer.drawText(panel.pos + Vec2{88.0f, 250.0f}, "何を見ていくんだい？", {198, 198, 206, 255}, 2);
+            renderer.drawText(smallActionInfoTextPos(panel), "何を見ていくんだい？", {198, 198, 206, 255}, 2);
             constexpr std::array<std::string_view, 2> Choices{"買う", "売る"};
             for (int i = 0; i < static_cast<int>(Choices.size()); ++i) {
-                drawUiButton(renderer, merchantChoiceRect(i), Choices[static_cast<std::size_t>(i)], i == baseMerchantActionSelection_, uiActionButtonStyle());
+                drawUiButton(renderer, merchantActionChoiceRect(i), Choices[static_cast<std::size_t>(i)], i == baseMerchantActionSelection_, uiActionButtonStyle());
             }
         } else {
             const bool buyMode = baseMerchantMode_ == MerchantUiMode::Buy;
@@ -5196,6 +6481,19 @@ void Game::renderBaseScreen(Renderer& renderer) const
                         style.bottomLabelColor = labelColor;
                     }
                 };
+                const auto targetHighValue = [this, &entryViewForSellTarget](MerchantSellTarget target) {
+                    const InventoryUiEntryView view = entryViewForSellTarget(target);
+                    return view.item != nullptr && isHighValueBuyObject(*view.item);
+                };
+                const auto drawHighValueLabel = [&renderer](UiRect rect) {
+                    const std::string label = "高価買取中!";
+                    const Vec2 size = renderer.measureText(label, 1, TextStyle::Italic);
+                    const Vec2 pos{
+                        rect.pos.x + (rect.size.x - size.x) * 0.5f,
+                        rect.pos.y + rect.size.y - 40.0f,
+                    };
+                    renderer.drawOutlinedText(pos, label, Color{255, 64, 64, 255}, Color{44, 0, 0, 210}, 2, 1, TextStyle::Italic);
+                };
                 if (ringSource) {
                     const int ringIndex = std::clamp(ringIndexFromBaseItemSource(baseMerchantSellSource_), 0, SpellRingCount - 1);
                     const std::vector<SpellRingItem>& ringItems = spellRing_.itemsForRing(ringIndex);
@@ -5227,6 +6525,9 @@ void Game::renderBaseScreen(Renderer& renderer) const
                             ringPreviewSeconds);
                         labelRect.size.y += MerchantSellRingItemLabelExtraHeight;
                         drawInventoryUiSlotBottomLabel(renderer, labelRect, label, labelColor);
+                        if (targetHighValue(target)) {
+                            drawHighValueLabel(labelRect);
+                        }
                     }
                     if (ringItems.empty()) {
                         const Vec2 emptySize = renderer.measureText("アイテム未配置", 2);
@@ -5260,6 +6561,9 @@ void Game::renderBaseScreen(Renderer& renderer) const
                             style.topRightCount = view.stackCount;
                         }
                         drawInventoryUiSlot(renderer, externalWarehouseSourceSlotRect(merchantSellGridSlotRect, i), view, style);
+                        if (targetHighValue(target)) {
+                            drawHighValueLabel(externalWarehouseSourceSlotRect(merchantSellGridSlotRect, i));
+                        }
                     }
                 } else {
                     for (int i = 0; i < inventory_.screenSlotCount(); ++i) {
@@ -5277,6 +6581,9 @@ void Game::renderBaseScreen(Renderer& renderer) const
                             style.topRightCount = view.stackCount;
                         }
                         drawInventoryUiSlot(renderer, rect, view, style);
+                        if (targetHighValue(target)) {
+                            drawHighValueLabel(rect);
+                        }
                     }
                 }
 
@@ -5295,6 +6602,9 @@ void Game::renderBaseScreen(Renderer& renderer) const
                     if (!blockedLabel.empty()) {
                         extraLines.push_back({"売値", std::string(blockedLabel), ui::TextDisabled});
                     } else {
+                        if (detailEntry.item != nullptr && isHighValueBuyObject(*detailEntry.item)) {
+                            extraLines.push_back({"", "高価買取中!", Color{255, 64, 64, 255}});
+                        }
                         std::snprintf(buffer, sizeof(buffer), "%dG", merchantSellTargetPrice(selectedTarget));
                         extraLines.push_back({"売値", buffer, ui::Text});
                     }
@@ -5328,9 +6638,6 @@ void Game::renderBaseScreen(Renderer& renderer) const
                 const std::array<UiCommandMenuItem, 2> sellItems{{{stackCommand ? "1個売る" : "売る", true}, {"すべて売る", stackCommand}}};
                 drawUiCommandMenu(renderer, baseMerchantSellCommandMenu_, sellItems.data(), stackCommand ? 2 : 1);
             }
-            if (!baseStatus_.empty()) {
-                renderer.drawText({80.0f, 626.0f}, baseStatus_, {255, 230, 150, 255}, 2);
-            }
         }
     } else if (baseUpgradeActive_) {
         const int selected = std::clamp(baseUpgradeSelection_, 0, BaseUpgradeItemCount - 1);
@@ -5355,22 +6662,22 @@ void Game::renderBaseScreen(Renderer& renderer) const
         const auto merchantFeature = [](int level) -> const char* {
             switch (level) {
             case 1: return "通常売買";
-            case 2: return "品揃え増加";
-            case 3: return "買取基本価格+10%";
-            case 4: return "高価買取カテゴリ";
-            case 5: return "珍品販売";
-            case 6: return "買取基本価格+20%";
-            case 7: return "珍品レア度上昇";
+            case 2: return "品揃え5枠";
+            case 3: return "品揃え6枠/買取+10%";
+            case 4: return "宝の高価買取";
+            case 5: return "品揃え8枠/レア増加";
+            case 6: return "品揃え9枠/買取+20%";
+            case 7: return "品揃え10枠/高レア増加";
             default: return "未解禁";
             }
         };
         const auto processingFeature = [](int level) -> const char* {
             switch (level) {
             case 1: return "軽量化";
-            case 2: return "重量化";
+            case 2: return "作業台費用-10%";
             case 3: return "大型化";
-            case 4: return "小型化";
-            case 5: return "追加効果付与";
+            case 4: return "作業台費用-20%";
+            case 5: return "作業台費用-30%";
             default: return "未解禁";
             }
         };
@@ -5493,7 +6800,6 @@ void Game::renderBaseScreen(Renderer& renderer) const
                 break;
             case 2:
                 drawEffectChangeLine(detailY, "効果", "加工解禁: ", processingFeature(level), processingFeature(nextLevel));
-                drawDetailTextRow(detailY, "", "現時点では保存と表示のみです。", ui::TextMuted);
                 break;
             case 3:
                 drawDetailTextRow(detailY, "効果", "リング工房スペースを解禁", Color{255, 230, 150, 255});
@@ -5601,14 +6907,93 @@ void Game::renderBaseScreen(Renderer& renderer) const
             warpProgressText,
             warpProgressStyle);
 
+        renderer.drawText({contentLeft, body.pos.y + 78.0f}, "出発地点を選んでください", {198, 198, 206, 255}, 2);
+        for (int i = 0; i < BaseMiningStartChoiceCount; ++i) {
+            const bool disabled = (i == 1 && selectableWarpPoints.empty()) || (i == 2 && !canRegenerateCurrentStage());
+            const char* description = "";
+            switch (i) {
+            case 0:
+                description = "入口から出発";
+                break;
+            case 1:
+                description = disabled ? "ワープポイントを解放すると可能" : "解放済み地点から選んで出発";
+                break;
+            case 2:
+                description = disabled ? "全ワープポイントを解放すると可能" : "地形・敵・宝箱・ワープ配置を作り直す";
+                break;
+            default:
+                break;
+            }
+
+            const UiRect rect = baseMiningStartChoiceRect(i);
+            UiButtonStyle buttonStyle = uiActionButtonStyle();
+            if (disabled) {
+                buttonStyle.text = ui::TextDisabled;
+                buttonStyle.imageTint = {128, 128, 140, 210};
+                buttonStyle.imageTintHot = buttonStyle.imageTint;
+                buttonStyle.fill = {18, 22, 34, 190};
+                buttonStyle.fillHot = buttonStyle.fill;
+                buttonStyle.outline = {98, 88, 112, 190};
+                buttonStyle.outlineHot = buttonStyle.outline;
+            }
+            const bool hot = i == baseMiningStartSelection_ && !disabled && !baseWarpPointSelectActive_;
+            if (i == 1) {
+                drawUiButton(renderer, rect, "", hot, buttonStyle);
+                InlineItemTextStyle buttonTextStyle;
+                buttonTextStyle.text = buttonStyle.text;
+                buttonTextStyle.scale = 2;
+                buttonTextStyle.iconTextGap = 6.0f;
+                buttonTextStyle.iconScale = 26.0f / std::max(1.0f, renderer.measureText("0", buttonTextStyle.scale).y);
+                const std::string buttonText = inlineWorldIconTag(worldIconKey(WorldIconId::WarpPoint)) + std::string(baseMiningStartChoiceName(i));
+                const Vec2 buttonTextSize = measureInlineItemText(renderer, buttonText, buttonTextStyle);
+                drawInlineItemText(
+                    renderer,
+                    objectCatalog_,
+                    rect.pos + Vec2{
+                        std::max(0.0f, (rect.size.x - buttonTextSize.x) * 0.5f),
+                        std::max(0.0f, (rect.size.y - buttonTextSize.y) * 0.5f),
+                    },
+                    buttonText,
+                    buttonTextStyle);
+            } else {
+                drawUiButton(renderer, rect, baseMiningStartChoiceName(i), hot, buttonStyle);
+            }
+            const Vec2 descriptionSize = renderer.measureText(description, 2);
+            renderer.drawText(
+                rect.pos + Vec2{
+                    std::max(0.0f, (rect.size.x - descriptionSize.x) * 0.5f),
+                    ui::ButtonHeight + 4.0f,
+                },
+                description,
+                disabled ? Color{150, 150, 160, 255} : Color{198, 198, 206, 255},
+                2);
+        }
+
         if (baseWarpPointSelectActive_) {
-            renderer.drawText({contentLeft, body.pos.y + 78.0f}, "ワープポイントを選んでください", {198, 198, 206, 255}, 2);
+            panelCancelScope.reset();
+            panelWindow.reset();
+
+            renderer.fillRect(
+                {0.0f, 0.0f},
+                {static_cast<float>(camera_.width()), static_cast<float>(camera_.height())},
+                {0, 0, 0, 82});
+
+            const UiRect warpPanel = baseMiningWarpPointSelectRect();
+            UiWindowScope warpWindow(
+                renderer,
+                "base.warp_select",
+                warpPanel,
+                "ワープポイント選択",
+                "F/Enter 出発  Z/X・方向キー 選択  Esc/右クリック 戻る",
+                UiWindowOptions{true, false});
+
+            renderer.drawText(warpPanel.pos + Vec2{48.0f, 74.0f}, "出発地点を選んでください", {198, 198, 206, 255}, 2);
             if (selectableWarpPoints.empty()) {
-                renderer.drawText({contentLeft, body.pos.y + 140.0f}, "解放済みワープポイントがありません", ui::TextDisabled, 2);
+                renderer.drawText(warpPanel.pos + Vec2{48.0f, 142.0f}, "解放済みワープポイントがありません", ui::TextDisabled, 2);
             }
             for (int i = 0; i < static_cast<int>(selectableWarpPoints.size()); ++i) {
                 const WarpPoint& point = selectableWarpPoints[static_cast<std::size_t>(i)];
-                const UiRect rect = baseMiningWarpPointChoiceRect(i);
+                const UiRect rect = baseMiningWarpPointSelectChoiceRect(i);
                 const bool hot = i == baseWarpPointSelection_;
                 UiButtonStyle buttonStyle = uiActionButtonStyle();
                 drawUiButton(renderer, rect, "", hot, buttonStyle);
@@ -5643,68 +7028,6 @@ void Game::renderBaseScreen(Renderer& renderer) const
                     hot ? Color{255, 230, 150, 255} : Color{198, 198, 206, 255},
                     2);
             }
-        } else {
-            renderer.drawText({contentLeft, body.pos.y + 78.0f}, "出発地点を選んでください", {198, 198, 206, 255}, 2);
-            for (int i = 0; i < BaseMiningStartChoiceCount; ++i) {
-            const bool disabled = (i == 1 && selectableWarpPoints.empty()) || (i == 2 && !canRegenerateCurrentStage());
-            const char* description = "";
-            switch (i) {
-            case 0:
-                description = "入口から出発";
-                break;
-            case 1:
-                description = disabled ? "ワープポイントを解放すると可能" : "解放済み地点から選んで出発";
-                break;
-            case 2:
-                description = disabled ? "全ワープポイントを解放すると可能" : "地形・敵・宝箱・ワープ配置を作り直す";
-                break;
-            default:
-                break;
-            }
-
-            const UiRect rect = baseMiningStartChoiceRect(i);
-            UiButtonStyle buttonStyle = uiActionButtonStyle();
-            if (disabled) {
-                buttonStyle.text = ui::TextDisabled;
-                buttonStyle.imageTint = {128, 128, 140, 210};
-                buttonStyle.imageTintHot = buttonStyle.imageTint;
-                buttonStyle.fill = {18, 22, 34, 190};
-                buttonStyle.fillHot = buttonStyle.fill;
-                buttonStyle.outline = {98, 88, 112, 190};
-                buttonStyle.outlineHot = buttonStyle.outline;
-            }
-            const bool hot = i == baseMiningStartSelection_ && !disabled;
-            if (i == 1) {
-                drawUiButton(renderer, rect, "", hot, buttonStyle);
-                InlineItemTextStyle buttonTextStyle;
-                buttonTextStyle.text = buttonStyle.text;
-                buttonTextStyle.scale = 2;
-                buttonTextStyle.iconTextGap = 6.0f;
-                buttonTextStyle.iconScale = 26.0f / std::max(1.0f, renderer.measureText("0", buttonTextStyle.scale).y);
-                const std::string buttonText = inlineWorldIconTag(worldIconKey(WorldIconId::WarpPoint)) + std::string(baseMiningStartChoiceName(i));
-                const Vec2 buttonTextSize = measureInlineItemText(renderer, buttonText, buttonTextStyle);
-                drawInlineItemText(
-                    renderer,
-                    objectCatalog_,
-                    rect.pos + Vec2{
-                        std::max(0.0f, (rect.size.x - buttonTextSize.x) * 0.5f),
-                        std::max(0.0f, (rect.size.y - buttonTextSize.y) * 0.5f),
-                    },
-                    buttonText,
-                    buttonTextStyle);
-            } else {
-                drawUiButton(renderer, rect, baseMiningStartChoiceName(i), hot, buttonStyle);
-            }
-            const Vec2 descriptionSize = renderer.measureText(description, 2);
-            renderer.drawText(
-                rect.pos + Vec2{
-                    std::max(0.0f, (rect.size.x - descriptionSize.x) * 0.5f),
-                    ui::ButtonHeight + 4.0f,
-                },
-                description,
-                disabled ? Color{150, 150, 160, 255} : Color{198, 198, 206, 255},
-                2);
-            }
         }
     } else {
         const char* promptName = nearest != nullptr ? nearest->displayName : "";
@@ -5720,15 +7043,19 @@ void Game::renderBaseScreen(Renderer& renderer) const
             renderer.drawText({300.0f, 652.0f}, "Enter: 近くの施設を調べる  Esc: メニュー", {198, 198, 206, 255}, 2);
         }
         if (!baseStatus_.empty()) {
-            renderer.fillRect({280.0f, 604.0f}, {720.0f, 30.0f}, {0, 0, 0, 160});
-            renderer.drawText({300.0f, 612.0f}, baseStatus_, {255, 230, 150, 255}, 2);
+            UiSystemMessageStyle statusStyle;
+            statusStyle.fill = {0, 0, 0, 160};
+            statusStyle.padding = {20.0f, 3.0f};
+            drawUiSystemMessage(renderer, baseStatus_, {300.0f, 612.0f}, statusStyle);
         }
         return;
     }
 
     if (!baseStatus_.empty()) {
-        const Vec2 statusPos = baseUpgradeActive_ ? baseUpgradePanelRect().pos + Vec2{32.0f, 468.0f} : panel.pos + Vec2{54.0f, 504.0f};
-        renderer.drawText(statusPos, baseStatus_, {255, 230, 150, 255}, 2);
+        drawUiSystemMessage(
+            renderer,
+            baseStatus_,
+            baseSystemMessagePos(panel, baseStorageActive_, baseSellActive_, baseProcessingActive_, baseUpgradeActive_));
     }
     if (baseRegenerateConfirmActive_) {
         panelCancelScope.reset();
@@ -5764,6 +7091,15 @@ void Game::renderBaseScreen(Renderer& renderer) const
             {static_cast<float>(camera_.width()), static_cast<float>(camera_.height())},
             {0, 0, 0, 96});
         drawUiResultDialog(renderer, baseResultDialog_, baseResultDialogRect(), "base.result");
+    }
+    if (baseStorageQuantityDialog_.open) {
+        panelCancelScope.reset();
+        panelWindow.reset();
+        drawUiModalBackdrop(
+            renderer,
+            {{0.0f, 0.0f}, {static_cast<float>(camera_.width()), static_cast<float>(camera_.height())}},
+            {0, 0, 0, 96});
+        drawUiQuantityDialog(renderer, baseStorageQuantityDialog_, storageQuantityDialogRect(), "base.storage.quantity");
     }
 }
 

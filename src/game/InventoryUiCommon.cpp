@@ -2,6 +2,7 @@
 
 #include "game/EncyclopediaSystem.hpp"
 #include "game/ObjectImageRenderer.hpp"
+#include "game/ObjectVisualPose.hpp"
 #include "game/WorldIconRenderer.hpp"
 
 #include <algorithm>
@@ -317,15 +318,16 @@ void drawInlineItemText(
             const Vec2 center{cursor.x + iconSize * 0.5f, cursor.y + iconTopOffset + iconSize * 0.5f};
             bool drewIcon = false;
             if (tag.kind == InlineIconKind::Item) {
-                ObjectImageDrawOptions options;
-                options.applyScaleOverride = false;
-                drewIcon = drawObjectImageById(
-                    renderer,
-                    catalog,
-                    tag.key,
-                    center,
-                    {iconSize, iconSize},
-                    options);
+                if (const ObjectDefinition* object = catalog.registry.findById(tag.key)) {
+                    ObjectImageDrawOptions options;
+                    options.applyScaleOverride = false;
+                    drewIcon = drawObjectImage(
+                        renderer,
+                        *object,
+                        center,
+                        {iconSize, iconSize},
+                        objectGroundImageOptions(*object, options));
+                }
             } else {
                 const WorldIconDefinition* definition = worldIconDefinitionByKey(tag.key);
                 WorldIconDrawOptions options;
@@ -436,7 +438,7 @@ void drawInventoryUiSlot(
             *entry.item,
             slotCenter,
             {style.imageMaxSize, style.imageMaxSize},
-            imageOptions);
+            objectGroundImageOptions(*entry.item, imageOptions));
         if (!drewImage) {
             renderer.fillCircle(slotCenter, 22.0f, style.disabled ? darkenColor(objectColor, 0.5f) : objectColor);
             if (style.selected) {
@@ -461,8 +463,8 @@ void drawInventoryUiSlot(
         renderer,
         *entry.item,
         slotCenter,
-            {style.imageMaxSize, style.imageMaxSize},
-            imageOptions);
+        {style.imageMaxSize, style.imageMaxSize},
+        objectGroundImageOptions(*entry.item, imageOptions));
     if (!drewImage) {
         renderer.fillCircle(slotCenter, 22.0f, style.disabled ? darkenColor(objectColor, 0.5f) : objectColor);
         if (style.selected) {

@@ -8,6 +8,7 @@
 #include "game/SpellRingSystem.hpp"
 #include "game/DiggingSystem.hpp"
 #include "game/EffectSystem.hpp"
+#include "game/MagicSystem.hpp"
 #include "game/TileMap.hpp"
 
 #include <sstream>
@@ -203,12 +204,17 @@ void recordTerrainHit(const EffectInvocation& invocation, int tileX, int tileY, 
 struct StatusDefinition {
     std::string_view effect;
     double defaultDuration = 0.0;
+    double defaultValue = 1.0;
 };
 
-constexpr std::array<StatusDefinition, 3> StatusDefinitions{{
-    {"status_poison", 8.0},
-    {"status_slow", 8.0},
-    {"status_bleed", 8.0},
+constexpr std::array<StatusDefinition, 7> StatusDefinitions{{
+    {"status_poison", 8.0, 1.0},
+    {"status_slow", 8.0, 0.65},
+    {"status_bleed", 8.0, 1.0},
+    {"status_giant", 8.0, 1.0},
+    {"status_paralyze", 1.5, 1.0},
+    {"status_sleep", 4.0, 1.0},
+    {"status_stun", 0.6, 1.0},
 }};
 
 const StatusDefinition* findStatusDefinition(std::string_view effect)
@@ -243,7 +249,7 @@ void applyStatus(
         duration,
         sourceIdFor(invocation),
         StateApplyMode::KeepLonger);
-    recordEffectDiscovery(invocation, "状態異常を付与する");
+    recordEffectDiscovery(invocation, statusEffect == "status_giant" ? "巨大化状態を付与する" : "状態異常を付与する");
 }
 
 void applyHealInvocation(const EffectInvocation& invocation)
@@ -255,10 +261,8 @@ void applyHealInvocation(const EffectInvocation& invocation)
 
     const EffectContext& context = *invocation.context;
     if ((invocation.target == "player" || invocation.target == "owner" || invocation.target == "self") && context.owner != nullptr) {
-        const int beforeHp = context.owner->hp;
-        context.owner->hp = std::min(context.owner->maxHp, context.owner->hp + amount);
-        if (context.owner->hp > beforeHp) {
-            recordEffectDiscovery(invocation, "菴ｿ縺・→HP繧貞屓蠕ｩ縺吶ｋ");
+        if (context.owner->heal(amount) > 0) {
+            recordEffectDiscovery(invocation, "HPを回復する");
         }
         return;
     }
@@ -273,15 +277,21 @@ void applyHealInvocation(const EffectInvocation& invocation)
     if (enemy != nullptr) {
         const int beforeHp = enemy->hp;
         enemy->hp = std::min(enemy->maxHp, enemy->hp + amount);
-        if (enemy->hp > beforeHp) {
-            recordEffectDiscovery(invocation, "蟇ｾ雎｡繧貞屓蠕ｩ縺吶ｋ");
+        const int healed = enemy->hp - beforeHp;
+        if (healed > 0) {
+            if (context.effects != nullptr) {
+                context.effects->spawnDamagePopup(enemy->position, healed, DamagePopupStyle::Heal);
+            }
+            recordEffectDiscovery(invocation, "対象を回復する");
         }
     }
 }
 
 void applyStateInvocation(const EffectInvocation& invocation)
 {
-    const double stateValue = invocation.value == 0.0 ? 1.0 : invocation.value;
+    const StatusDefinition* definition = findStatusDefinition(invocation.effect);
+    const double defaultValue = definition != nullptr ? definition->defaultValue : 1.0;
+    const double stateValue = invocation.value == 0.0 ? defaultValue : invocation.value;
     applyStatus(invocation, invocation.effect, stateValue);
 }
 
@@ -293,9 +303,19 @@ void applyChanceStateInvocation(const EffectInvocation& invocation)
         statusEffect = "status_poison";
     } else if (invocation.effect == "status_slow_chance") {
         statusEffect = "status_slow";
+    } else if (invocation.effect == "status_paralyze_chance") {
+        statusEffect = "status_paralyze";
     } else if (invocation.effect == "status_bleed_chance") {
         statusEffect = "status_bleed";
+    } else if (invocation.effect == "status_sleep_chance") {
+        statusEffect = "status_sleep";
+    } else if (invocation.effect == "status_stun_chance") {
+        statusEffect = "status_stun";
     } else {
+        return;
+    }
+
+    if (statusForInvocation(invocation) == nullptr) {
         return;
     }
 
@@ -306,17 +326,11 @@ void applyChanceStateInvocation(const EffectInvocation& invocation)
             : invocation.context->targetEntity;
     }
 
-    const std::string sourceId = invocation.context->sourceObject != nullptr
-        ? invocation.context->sourceObject->id
-        : "<none>";
-    const bool firstDiscoveryGuarantee = invocation.context->sourceObject != nullptr &&
+    const bool firstDiscoveryGuarantee = invocation.context->discoveryEvents != nullptr &&
+        invocation.context->sourceObject != nullptr &&
         !isEffectDiscovered(*invocation.context, invocation.effect);
     if (enemy != nullptr && enemy->isBoss) {
         recordEffectDiscoveryWithNote(invocation, invocation.effect, "※ただし、この敵には効かなかった");
-        if (firstDiscoveryGuarantee) {
-            logError("[debug] discovery first-trigger guarantee noted for \"" + std::string(invocation.effect) +
-                "\" source=\"" + sourceId + "\" (status immune target)");
-        }
         return;
     }
 
@@ -326,12 +340,10 @@ void applyChanceStateInvocation(const EffectInvocation& invocation)
         if (dist(rng) > chance) {
             return;
         }
-    } else {
-        logError("[debug] discovery first-trigger guarantee applied for \"" + std::string(invocation.effect) +
-            "\" source=\"" + sourceId + "\"");
     }
 
-    applyStatus(invocation, statusEffect, 1.0);
+    const StatusDefinition* definition = findStatusDefinition(statusEffect);
+    applyStatus(invocation, statusEffect, definition != nullptr ? definition->defaultValue : 1.0);
 }
 
 void applyModifierInvocation(const EffectInvocation& invocation)
@@ -454,6 +466,40 @@ void applyKnockbackInvocation(const EffectInvocation& invocation)
     recordEffectDiscovery(invocation, "敵をノックバックさせる");
 }
 
+void applyCastMagicInvocation(const EffectInvocation& invocation)
+{
+    const EffectContext& context = *invocation.context;
+    if (context.magic == nullptr) {
+        return;
+    }
+
+    MagicElement element = MagicElement::Fire;
+    if (!magicElementFromCastEffect(invocation.effect, element)) {
+        return;
+    }
+
+    Vec2 origin = context.position;
+    Vec2 direction{1.0f, 0.0f};
+    if (context.orbitItem != nullptr) {
+        origin = context.orbitItem->worldPosition;
+        if (context.orbit != nullptr) {
+            direction = origin - context.orbit->center();
+        } else if (context.owner != nullptr) {
+            direction = origin - context.owner->position;
+        }
+    } else if (context.owner != nullptr) {
+        direction = context.owner->facing;
+        origin = context.owner->position + normalize(direction) * 20.0f;
+    }
+    if (lengthSquared(direction) <= 0.0001f && context.owner != nullptr) {
+        direction = context.owner->facing;
+    }
+
+    const int power = positiveIntPower(invocation.value, 1);
+    context.magic->cast(element, origin, direction, power, context.orbitItem);
+    recordEffectDiscovery(invocation, "属性魔法を発動する");
+}
+
 }
 
 void EffectDispatcher::registerHandler(std::string effect, Handler handler)
@@ -503,11 +549,11 @@ void EffectDispatcher::registerFoundationHandlers(const ObjectCatalog& catalog)
         }
     }
 
-    for (std::string_view effect : {"status_poison", "status_slow"}) {
+    for (std::string_view effect : {"status_poison", "status_slow", "status_giant", "status_paralyze", "status_sleep", "status_bleed", "status_stun"}) {
         registerHandler(std::string(effect), applyStateInvocation);
     }
 
-    for (std::string_view effect : {"status_poison_chance", "status_slow_chance", "status_bleed_chance"}) {
+    for (std::string_view effect : {"status_poison_chance", "status_slow_chance", "status_paralyze_chance", "status_bleed_chance", "status_sleep_chance", "status_stun_chance"}) {
         registerHandler(std::string(effect), applyChanceStateInvocation);
     }
 
@@ -517,6 +563,10 @@ void EffectDispatcher::registerFoundationHandlers(const ObjectCatalog& catalog)
 
     if (catalog.effectCodes.find("knockback") != catalog.effectCodes.end()) {
         registerHandler("knockback", applyKnockbackInvocation);
+    }
+
+    for (std::string_view effect : {"cast_fire", "cast_ice", "cast_thunder", "cast_wind", "cast_earth"}) {
+        registerHandler(std::string(effect), applyCastMagicInvocation);
     }
 }
 
