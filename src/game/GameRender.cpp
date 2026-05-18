@@ -814,8 +814,9 @@ void Game::updateRingScreen(const Input& input, UiContext& ui, float dt)
             } else {
                 ringSlotSelection_ = ringDragItemIndex_;
                 ringCommandItemIndex_ = ringDragItemIndex_;
+                ringCommandPlaceActive_ = false;
                 const bool canRemove = !items[static_cast<std::size_t>(ringDragItemIndex_)].objectId.empty();
-                const std::array<UiCommandMenuItem, 1> menuItems = ringCommandItems(canRemove);
+                const std::array<UiCommandMenuItem, 1> menuItems = ringCommandItems(false, canRemove);
                 openUiCommandMenu(
                     ringCommandMenu_,
                     input.mouseScreen(),
@@ -890,6 +891,8 @@ void Game::updateRingScreen(const Input& input, UiContext& ui, float dt)
         if (ui.pressed(rect)) {
             closeUiCommandMenu(ringCommandMenu_);
             ringCommandItemIndex_ = -1;
+            ringCommandPlaceActive_ = false;
+            ringEmptyPressActive_ = false;
             ringSlotSelection_ = i;
             ringDragPending_ = true;
             ringDragActive_ = false;
@@ -900,6 +903,20 @@ void Game::updateRingScreen(const Input& input, UiContext& ui, float dt)
             return;
         }
     }
+
+    if (input.mouseLeftPressed() &&
+        !ui.pointerConsumed() &&
+        ringPlacementHitAreaContains(ui.mouse(), spellRing_, balance_)) {
+        closeUiCommandMenu(ringCommandMenu_);
+        ringCommandItemIndex_ = -1;
+        ringCommandPlaceActive_ = false;
+        ringEmptyPressActive_ = true;
+        ringEmptyPressMouse_ = input.mouseScreen();
+        ringEmptyPressAngle_ = ringAngleFromPoint(input.mouseScreen(), spellRing_, balance_);
+        ui.consumePointer();
+        return;
+    }
+
     ui.block(ringPanelRect());
 
     if (!items.empty() && input.shortcutCursorDelta() != 0) {
