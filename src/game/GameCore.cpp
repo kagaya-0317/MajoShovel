@@ -221,6 +221,9 @@ void Game::resetWorldUiState()
     baseProcessingCommandSlot_ = -1;
     closeUiCommandMenu(ringCommandMenu_);
     ringCommandItemIndex_ = -1;
+    ringCommandPlaceActive_ = false;
+    ringPlaceModeActive_ = false;
+    ringEmptyPressActive_ = false;
     baseRingWorkshopActive_ = false;
     baseRingWorkshopSelection_ = 0;
     ringWorkshopDraftRadiusPoints_ = levelRingRadiusPoints_;

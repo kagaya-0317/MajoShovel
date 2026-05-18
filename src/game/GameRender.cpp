@@ -1747,8 +1747,24 @@ void Game::renderRingScreen(Renderer& renderer, float totalTime) const
     const bool commandCanRemove = commandItemIndex >= 0 &&
         commandItemIndex < static_cast<int>(items.size()) &&
         !items[static_cast<std::size_t>(commandItemIndex)].objectId.empty();
-    const std::array<UiCommandMenuItem, 1> commandItems = ringCommandItems(commandCanRemove);
+    const bool commandCanPlace = ringCommandPlaceActive_ &&
+        firstRingPlaceableSlot(inventory_, spellRing_, ringCommandPlaceAngle_) >= 0;
+    const std::array<UiCommandMenuItem, 1> commandItems = ringCommandItems(
+        ringCommandPlaceActive_,
+        ringCommandPlaceActive_ ? commandCanPlace : commandCanRemove);
     drawUiCommandMenu(renderer, ringCommandMenu_, commandItems.data(), static_cast<int>(commandItems.size()));
+
+    if (ringPlaceModeActive_) {
+        drawRingPlaceWindow(
+            renderer,
+            inventory_,
+            objectCatalog_,
+            encyclopedia_,
+            spellRing_,
+            ringPlaceSelection_,
+            ringPlaceTargetAngle_,
+            ringStatus_);
+    }
 }
 
 void Game::renderPauseMenu(Renderer& renderer) const
