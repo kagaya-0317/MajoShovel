@@ -66,7 +66,7 @@ constexpr int BaseRingSourceOffset = 2;
 constexpr int BaseItemSourceCount = BaseRingSourceOffset + SpellRingCount;
 constexpr int BaseProcessingSourceCount = BaseItemSourceCount;
 constexpr float BaseItemSourceTabX = 44.0f;
-constexpr float BaseItemSourceTabWidth = 160.0f;
+constexpr float BaseItemSourceTabWidth = 152.0f;
 constexpr float BaseItemSourceTabPitch = 165.0f;
 constexpr int BaseRingWorkshopItemCount = 10;
 constexpr int BookshelfMenuItemCount = 3;
@@ -119,6 +119,10 @@ constexpr float RingUiCometCenterYOffset = 104.0f;
 constexpr float RingUiCometArcRotation = Pi * 1.5f;
 constexpr float WarpPointSpacing = 320.0f;
 constexpr float WarpPointTouchRadius = 28.0f;
+constexpr float WarpPointReturnRadius = 64.0f;
+constexpr float DungeonEntranceYOffset = -36.0f;
+constexpr float DungeonEntranceLightRadiusTiles = 4.0f;
+constexpr int DungeonEntranceReturnFocusIndex = -2;
 constexpr int MaxWarpPointsPerRun = 8;
 constexpr int BossWarpPointIndex = 7;
 constexpr int BossOffsetTiles = 20;
@@ -1007,7 +1011,7 @@ std::vector<BaseFacility> baseFacilities(BaseArea area, bool ringWorkshopUnlocke
     }
 
     return {
-        BaseFacility{"mine_exit", "採掘出口", {{584.0f, 560.0f}, {112.0f, 64.0f}}, 78.0f, true, true, BaseFacilityAction::MineExit},
+        BaseFacility{"mine_exit", "ダンジョン入口", {{584.0f, 560.0f}, {112.0f, 64.0f}}, 78.0f, true, true, BaseFacilityAction::MineExit},
         BaseFacility{"storage_chest", "収納箱", {{158.0f, 320.0f}, {98.0f, 72.0f}}, 68.0f, true, true, BaseFacilityAction::Storage},
         BaseFacility{"merchant_wagon", "商人ワゴン", {{982.0f, 302.0f}, {150.0f, 90.0f}}, 78.0f, true, true, BaseFacilityAction::Merchant},
         BaseFacility{"processing_table", "作業台", {{930.0f, 128.0f}, {130.0f, 68.0f}}, 70.0f, true, true, BaseFacilityAction::Processing},
@@ -1046,7 +1050,7 @@ DialogueSequence baseMonicaDialogue()
         "monica",
         "モニカ",
         "",
-        "無理はしないで。準備ができたら、採掘出口から向かおう。",
+        "無理はしないで。準備ができたら、ダンジョン入口から向かおう。",
     });
     sequence.lines.push_back(DialogueLine{
         "monica",
@@ -1146,7 +1150,26 @@ UiPageSelectorRects baseMiningStageSelectorRects()
 
 UiRect baseMiningStartChoiceRect(int index)
 {
-    return {{450.0f, 322.0f + static_cast<float>(index) * 80.0f}, {380.0f, ui::ButtonHeight}};
+    const float left = baseMiningContentLeft();
+    const float panelCenterX = basePanelRect().pos.x + basePanelRect().size.x * 0.5f;
+    const float width = (panelCenterX - left) * 2.0f;
+    return {{left, 322.0f + static_cast<float>(index) * 80.0f}, {width, ui::ButtonHeight}};
+}
+
+UiRect baseMiningWarpPointChoiceRect(int index)
+{
+    constexpr int Columns = 2;
+    constexpr float Gap = 10.0f;
+    constexpr float RowGap = 10.0f;
+    constexpr float Height = 44.0f;
+    const UiRect start = baseMiningStartChoiceRect(0);
+    const int column = index % Columns;
+    const int row = index / Columns;
+    const float width = (start.size.x - Gap) / static_cast<float>(Columns);
+    return {{
+        start.pos.x + static_cast<float>(column) * (width + Gap),
+        start.pos.y + static_cast<float>(row) * (Height + RowGap),
+    }, {width, Height}};
 }
 
 UiRect baseMiningRegenerateConfirmRect()
@@ -1391,6 +1414,21 @@ UiRect quitConfirmButtonRect(int index)
     return index == 0 ? uiBottomLeftButtonRect(quitConfirmRect(), size) : uiBottomRightButtonRect(quitConfirmRect(), size);
 }
 
+UiRect warpReturnConfirmRect()
+{
+    return {{410.0f, 220.0f}, {460.0f, 280.0f}};
+}
+
+UiRect warpReturnConfirmButtonRect(int index)
+{
+    const Vec2 size{172.0f, ui::ButtonHeight};
+    UiRect rect = index == 0
+        ? uiBottomLeftButtonRect(warpReturnConfirmRect(), size)
+        : uiBottomRightButtonRect(warpReturnConfirmRect(), size);
+    rect.pos.y += 28.0f;
+    return rect;
+}
+
 UiRect gameOverPanelRect()
 {
     return {{350.0f, 92.0f}, {580.0f, 520.0f}};
@@ -1530,7 +1568,7 @@ const char* pauseMenuItemName(int index)
 const char* baseMenuItemName(int index)
 {
     switch (index) {
-    case 0: return "採掘出口";
+    case 0: return "ダンジョン入口";
     case 1: return "収納箱";
     case 2: return "商人ワゴン";
     case 3: return "拠点強化炉";
@@ -1545,9 +1583,9 @@ const char* baseMenuItemName(int index)
 const char* baseMiningStartChoiceName(int index)
 {
     switch (index) {
-    case 0: return "開始地点";
-    case 1: return "最新ワープポイント";
-    case 2: return "再生成";
+    case 0: return "入口";
+    case 1: return "ワープポイント";
+    case 2: return "ダンジョンを再生成する";
     default: return "";
     }
 }
@@ -1766,7 +1804,7 @@ float ringAngleFromPoint(Vec2 point, const SpellRingSystem& spellRing, const Run
     if (context.shape == RingShape::Comet) {
         return spellRing.quantizeLocalAngle(param, balance);
     }
-    return spellRing.quantizeLocalAngle(param - spellRing.ringBaseAngleForIndex(spellRing.activeRingIndex()), balance);
+    return spellRing.quantizeLocalAngle(param, balance);
 }
 
 struct MagicOrbitDrawOptions {

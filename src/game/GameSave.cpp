@@ -2,6 +2,38 @@
 
 namespace majo {
 
+namespace {
+
+struct LoadedDungeonWarpPointSave {
+    int index = 0;
+    Vec2 position{};
+    bool discovered = false;
+    bool unlocked = false;
+    bool snapshotCaptured = false;
+};
+
+struct LoadedDungeonStateSave {
+    bool hasSeed = false;
+    std::string stageId;
+    int currentStage = 0;
+    std::uint32_t seed = 0;
+    std::vector<LoadedDungeonWarpPointSave> warpPoints;
+};
+
+bool isRoguelikeSaveStage(const StageDefinition& stage)
+{
+    return stage.id == "stage_04_astral_mine" ||
+        stage.type == "ローグライク" ||
+        stage.generationProfile == "astral_rogue";
+}
+
+bool hasSaveableDungeonLayout(const DungeonLayout& layout)
+{
+    return !layout.mainPathPoints.empty();
+}
+
+}
+
 bool Game::loadSaveData()
 {
     const std::filesystem::path path = saveDataPath();
@@ -59,6 +91,7 @@ bool Game::loadSaveData()
     bool loadedAutoSaveOnReturn = false;
     std::vector<std::string> loadedStoryFlags;
     int warningCount = 0;
+    LoadedDungeonStateSave loadedDungeonState;
     std::array<RingShape, SpellRingCount> loadedRingShapes{};
     for (int i = 0; i < SpellRingCount; ++i) {
         loadedRingShapes[static_cast<std::size_t>(i)] = defaultRingShapeForIndex(i);
@@ -164,6 +197,33 @@ bool Game::loadSaveData()
         } else if (key == "latest_warp") {
             stream >> loadedLatestWarpPointPosition.x >> loadedLatestWarpPointPosition.y;
             loadedHasLatestWarpPointPosition = !stream.fail();
+        } else if (key == "dungeon_seed") {
+            std::string stageId;
+            int currentStage = 0;
+            std::uint32_t seed = 0;
+            stream >> stageId >> currentStage >> seed;
+            if (!stream.fail() && !stageId.empty()) {
+                loadedDungeonState.hasSeed = true;
+                loadedDungeonState.stageId = std::move(stageId);
+                loadedDungeonState.currentStage = std::max(0, currentStage);
+                loadedDungeonState.seed = seed;
+            }
+        } else if (key == "dungeon_warp_point") {
+            std::string stageId;
+            LoadedDungeonWarpPointSave point;
+            stream >> stageId
+                >> point.index
+                >> point.position.x
+                >> point.position.y
+                >> point.discovered
+                >> point.unlocked
+                >> point.snapshotCaptured;
+            if (!stream.fail() && !stageId.empty()) {
+                if (!loadedDungeonState.hasSeed || loadedDungeonState.stageId.empty() || loadedDungeonState.stageId == stageId) {
+                    loadedDungeonState.stageId = std::move(stageId);
+                    loadedDungeonState.warpPoints.push_back(point);
+                }
+            }
         } else if (key == "object") {
             std::string objectId;
             int count = 0;
@@ -332,6 +392,7 @@ bool Game::loadSaveData()
     spellRing_.ringItems() = std::move(loadedRingItemsByRing);
     spellRing_.applyObjectParameters(objectCatalog_);
     spellRing_.normalizeItemPlacements();
+    observeRingItemInstanceIds();
     spellRing_.resetBaseWeightToCurrent();
     refreshOrbitEffects();
     money_ = std::max(0, loadedMoney);
@@ -341,11 +402,86 @@ bool Game::loadSaveData()
     latestWarpPointPosition_ = loadedHasLatestWarpPointPosition
         ? loadedLatestWarpPointPosition
         : latestWarpPointStartPosition();
-    currentStage_ = std::clamp(loadedCurrentStage, 0, unlockedStages_ - 1);
+    currentStage_ = std::max(0, loadedCurrentStage);
     if (!loadedCurrentStageId.empty()) {
         currentStageId_ = loadedCurrentStageId;
     }
-    resolveCurrentStageDefinition();
+    const std::string loadedStageIdForWarpState = currentStageId_;
+    clampCurrentStageToSelectableStages();
+    bool restoredDungeonStateFromSave = false;
+    if (loadedDungeonState.hasSeed &&
+        !loadedDungeonState.stageId.empty() &&
+        loadedDungeonState.stageId == currentStageId_ &&
+        !isRoguelikeSaveStage(currentStageDefinition())) {
+        DungeonGenerationContext context = makeDungeonGenerationContext();
+        context.seed = loadedDungeonState.seed;
+        dungeonLayout_ = generateDungeonLayout(context);
+        tileMap_ = TileMap{};
+        runStats_ = RunStats{};
+        enemies_ = EnemySystem{};
+        worldDrops_ = WorldDropSystem{};
+        worldDrops_.setDropLimit(balance_.worldDropLimitPerStage);
+        rewardNodes_.clear();
+        moneyNodes_.clear();
+        moonFragmentNodes_.clear();
+        chestNodes_.clear();
+        crateNodes_.clear();
+        enemyNodes_.clear();
+        spawnedWarpPointCount_ = 0;
+        bossSpawnPoint_ = {};
+        hasBossSpawnPoint_ = false;
+        bossSpawned_ = false;
+
+        resetWarpPointRunState();
+        if (!loadedDungeonState.warpPoints.empty()) {
+            for (WarpPoint& point : warpPoints_) {
+                point.discovered = false;
+                point.unlocked = false;
+                point.snapshotCaptured = false;
+            }
+            for (const LoadedDungeonWarpPointSave& savedPoint : loadedDungeonState.warpPoints) {
+                auto pointIt = std::find_if(warpPoints_.begin(), warpPoints_.end(), [&](const WarpPoint& point) {
+                    return point.index == savedPoint.index;
+                });
+                if (pointIt == warpPoints_.end()) {
+                    continue;
+                }
+                pointIt->discovered = savedPoint.discovered;
+                pointIt->unlocked = savedPoint.unlocked || savedPoint.discovered;
+                pointIt->snapshotCaptured = savedPoint.snapshotCaptured || savedPoint.discovered;
+            }
+            unlockedWarpPointCount_ = discoveredWarpPointCount();
+        }
+
+        if (loadedHasLatestWarpPointPosition) {
+            hasLatestWarpPointPosition_ = true;
+            latestWarpPointPosition_ = loadedLatestWarpPointPosition;
+        } else {
+            hasLatestWarpPointPosition_ = false;
+            latestWarpPointPosition_ = {};
+            for (const WarpPoint& point : warpPoints_) {
+                if (point.discovered) {
+                    hasLatestWarpPointPosition_ = true;
+                    latestWarpPointPosition_ = point.position;
+                }
+            }
+        }
+
+        initializeMoonFragmentNodesFromWarpPoints();
+        initializeRewardNodesFromLayout();
+        initializeChestNodesFromLayout();
+        initializeCrateNodesFromLayout();
+        initializeEnemyNodesFromLayout();
+        applyPlacementTerrainOverrides();
+        captureDungeonState();
+        syncWarpStateForCurrentStage();
+        restoredDungeonStateFromSave = true;
+    }
+    if (!restoredDungeonStateFromSave && currentStageId_ != loadedStageIdForWarpState) {
+        unlockedWarpPointCount_ = 0;
+        hasLatestWarpPointPosition_ = false;
+        latestWarpPointPosition_ = {};
+    }
     player_.level = std::max(1, loadedPlayerLevel);
     player_.xp = std::max(0, loadedPlayerXp);
     player_.xpToNext = std::max(1, loadedPlayerXpToNext);
@@ -453,6 +589,44 @@ bool Game::saveSaveData(std::string& message) const
     file << "unlocked_warp_points " << unlockedWarpPointCount_ << "\n";
     if (hasLatestWarpPointPosition_) {
         file << "latest_warp " << latestWarpPointPosition_.x << " " << latestWarpPointPosition_.y << "\n";
+    }
+    const DungeonLayout* saveDungeonLayout = nullptr;
+    const std::vector<WarpPoint>* saveDungeonWarpPoints = nullptr;
+    std::string saveDungeonStageId = currentStageId_;
+    int saveDungeonCurrentStage = currentStage_;
+    if (mode_ == ScreenMode::Playing &&
+        !enemyTestActive_ &&
+        hasSaveableDungeonLayout(dungeonLayout_) &&
+        !isRoguelikeSaveStage(currentStageDefinition())) {
+        saveDungeonLayout = &dungeonLayout_;
+        saveDungeonWarpPoints = &warpPoints_;
+    } else {
+        const auto retainedStage = dungeonStates_.find(currentStageId_);
+        if (retainedStage != dungeonStates_.end() &&
+            retainedStage->second.valid &&
+            hasSaveableDungeonLayout(retainedStage->second.dungeonLayout) &&
+            !isRoguelikeSaveStage(currentStageDefinition())) {
+            saveDungeonLayout = &retainedStage->second.dungeonLayout;
+            saveDungeonWarpPoints = &retainedStage->second.warpPoints;
+            saveDungeonStageId = retainedStage->second.currentStageId;
+            saveDungeonCurrentStage = retainedStage->second.currentStage;
+        }
+    }
+    if (saveDungeonLayout != nullptr && saveDungeonWarpPoints != nullptr && !saveDungeonStageId.empty()) {
+        file << "dungeon_seed "
+            << saveDungeonStageId << " "
+            << saveDungeonCurrentStage << " "
+            << saveDungeonLayout->seed << "\n";
+        for (const WarpPoint& point : *saveDungeonWarpPoints) {
+            file << "dungeon_warp_point "
+                << saveDungeonStageId << " "
+                << point.index << " "
+                << point.position.x << " "
+                << point.position.y << " "
+                << point.discovered << " "
+                << point.unlocked << " "
+                << point.snapshotCaptured << "\n";
+        }
     }
     for (const StackItem& stack : inventory_.stackItemsForSave()) {
         if (!stack.objectId.empty() && stack.count > 0) {

@@ -46,6 +46,142 @@ float dungeonRingIntroOrbitScale(float introProgress)
     return lerp(1.16f, 1.0f, easeOutCubic((introProgress - 0.56f) / 0.44f));
 }
 
+Vec2 dungeonRingIntroItemGroundPosition(
+    const SpellRingSystem& spellRing,
+    const SpellRingItem& item,
+    float introProgress,
+    int itemIndex,
+    int ringIndex)
+{
+    const Vec2 targetOffset = item.worldPosition - spellRing.center();
+    const float targetDistance = length(targetOffset);
+    const Vec2 direction = targetDistance > 0.001f
+        ? targetOffset * (1.0f / targetDistance)
+        : fromAngle(item.localAngle);
+    const float local = dungeonRingIntroItemLocalProgress(introProgress, itemIndex, ringIndex);
+    const float radial = targetDistance * lerp(0.08f, 1.0f, easeOutBack(local));
+    return spellRing.center() + direction * radial;
+}
+
+std::array<UiCommandMenuItem, 1> ringCommandItems(bool canRemove)
+{
+    return {{{"リングから外す", canRemove}}};
+}
+
+UiRect ringArrangeButtonRect()
+{
+    const UiRect panel = ringPanelRect();
+    return {{panel.pos.x + 48.0f, panel.pos.y + 196.0f}, {118.0f, ui::ButtonHeight}};
+}
+
+float cometArrangeArcRadians(const RingOrbitTuning& tuning)
+{
+    const float maxArcDegrees = std::clamp(tuning.cometMaxArcDegrees, 10.0f, 360.0f);
+    return std::clamp(std::abs(tuning.cometArcDegrees), 10.0f, maxArcDegrees) * (Pi / 180.0f);
+}
+
+bool arrangeActiveRingItemsEvenly(SpellRingSystem& spellRing, const RuntimeBalance& balance)
+{
+    std::vector<SpellRingItem>& items = spellRing.items();
+    const int count = static_cast<int>(items.size());
+    if (count <= 0) {
+        return false;
+    }
+
+    const RingShape shape = spellRing.activeRingShape();
+    const RingOrbitTuning tuning = makeRingOrbitTuning(balance);
+    const float full = Pi * 2.0f;
+    const int ringIndex = spellRing.activeRingIndex();
+    for (int i = 0; i < count; ++i) {
+        float angle = 0.0f;
+        if (shape == RingShape::Comet) {
+            const float arc = cometArrangeArcRadians(tuning);
+            angle = -arc * 0.5f + arc * (static_cast<float>(i) + 0.5f) / static_cast<float>(count);
+        } else if (shape == RingShape::FigureEight) {
+            angle = full * (static_cast<float>(i) + 0.25f) / static_cast<float>(count);
+        } else {
+            angle = -Pi * 0.5f + full * static_cast<float>(i) / static_cast<float>(count);
+        }
+
+        items[static_cast<std::size_t>(i)].ringIndex = ringIndex;
+        items[static_cast<std::size_t>(i)].localAngle = spellRing.quantizeLocalAngle(angle, balance);
+    }
+    return true;
+}
+
+ItemInstance inventoryInstanceFromRingItem(
+    InventorySystem& inventory,
+    const ObjectCatalog& objectCatalog,
+    const SpellRingItem& item)
+{
+    ItemInstance instance;
+    if (item.instanceId.empty()) {
+        const ItemData* object = objectCatalog.registry.findById(item.objectId);
+        const ItemData missingObject = object == nullptr ? makeMissingItemData(item.objectId) : ItemData{};
+        instance = inventory.createDetachedObjectInstance(object != nullptr ? *object : missingObject);
+    } else {
+        instance.instanceId = item.instanceId;
+        instance.objectId = item.objectId;
+    }
+
+    instance.objectId = item.objectId;
+    instance.currentDurability = item.durability;
+    instance.maxDurability = item.maxDurability;
+    instance.enhanceLevel = item.enhanceLevel;
+    instance.attackBonus = item.attackBonus;
+    instance.digBonus = item.digBonus;
+    instance.durabilityBonus = item.durabilityBonus;
+    instance.weightModifier = item.weightModifier;
+    instance.sizeModifier = item.sizeModifier;
+    instance.protectionEnabled = item.protectionEnabled;
+    instance.isBroken = item.broken();
+    instance.addedEffects = item.addedEffects;
+    instance.addedTags = item.addedTags;
+    return instance;
+}
+
+bool returnRingItemToInventory(
+    InventorySystem& inventory,
+    const ObjectCatalog& objectCatalog,
+    const SpellRingItem& item)
+{
+    if (item.objectId.empty()) {
+        return false;
+    }
+
+    return inventory.addObjectInstance(
+        objectCatalog,
+        inventoryInstanceFromRingItem(inventory, objectCatalog, item));
+}
+
+bool removeRingItemToInventory(
+    std::vector<SpellRingItem>& items,
+    int& selection,
+    InventorySystem& inventory,
+    const ObjectCatalog& objectCatalog,
+    std::string& status)
+{
+    if (selection < 0 || selection >= static_cast<int>(items.size())) {
+        status = "アイテム未選択です";
+        return false;
+    }
+
+    const SpellRingItem& selectedItem = items[static_cast<std::size_t>(selection)];
+    if (selectedItem.objectId.empty()) {
+        status = "このアイテムは外せません";
+        return false;
+    }
+    if (!returnRingItemToInventory(inventory, objectCatalog, selectedItem)) {
+        status = "インベントリ満杯のため外せません";
+        return false;
+    }
+
+    items.erase(items.begin() + selection);
+    selection = std::min(selection, std::max(0, static_cast<int>(items.size()) - 1));
+    status = "インベントリへ戻しました";
+    return true;
+}
+
 void drawDungeonRingIntroOrbit(
     Renderer& renderer,
     const SpellRingSystem& spellRing,
@@ -68,7 +204,7 @@ void drawDungeonRingIntroOrbit(
         center,
         spellRing.radius() * lerp(0.10f, 0.94f, easeOutBack(clamp(introProgress / 0.48f, 0.0f, 1.0f))),
         8.0f + 10.0f * burstFade,
-        withAlpha({255, 236, 154, 255}, 92.0f * burstFade));
+        withAlpha({214, 240, 255, 255}, 92.0f * burstFade));
 
     for (RingShape shapePass : MagicRingShapeRenderOrder) {
         for (int ringIndex = 0; ringIndex < SpellRingCount; ++ringIndex) {
@@ -87,7 +223,7 @@ void drawDungeonRingIntroOrbit(
                 MagicOrbitDrawOptions{
                     shapePass,
                     ringIndex == spellRing.activeRingIndex(),
-                    true,
+                    false,
                     true,
                     false,
                     ringIndex,
@@ -101,7 +237,7 @@ void drawDungeonRingIntroOrbit(
         renderer,
         center,
         11.0f + 8.0f * burstFade,
-        withAlpha({255, 248, 196, 255}, 168.0f * std::max(appear, burstFade)),
+        withAlpha({214, 240, 255, 255}, 168.0f * std::max(appear, burstFade)),
         totalSeconds * 1.2f);
 }
 
@@ -121,9 +257,8 @@ void drawDungeonRingIntroItem(
     }
 
     const float reveal = smootherStep(local);
-    const Vec2 toItem = item.worldPosition - spellRing.center();
-    const float radial = lerp(0.08f, 1.0f, easeOutBack(local));
-    const Vec2 introGround = spellRing.center() + toItem * radial;
+    const Vec2 introGround = dungeonRingIntroItemGroundPosition(spellRing, item, introProgress, itemIndex, ringIndex);
+    const Vec2 toItem = introGround - spellRing.center();
     const float lift = (1.0f - reveal) * 22.0f + std::sin(local * Pi) * 10.0f;
     const Vec2 drawPosition = elevatedDrawPosition(introGround, ringItemAltitude(item, totalSeconds) + lift);
     const RingShape ringShape = spellRing.ringShapeForIndex(ringIndex);
@@ -181,7 +316,8 @@ void drawDungeonRingIntroItem(
 
     const float sparkle = std::sin(local * Pi);
     if (sparkle > 0.05f) {
-        const Vec2 outward = lengthSquared(toItem) > 0.0001f ? normalize(toItem) : Vec2{0.0f, -1.0f};
+        const Vec2 introOffset = introGround - spellRing.center();
+        const Vec2 outward = lengthSquared(introOffset) > 0.0001f ? normalize(introOffset) : Vec2{0.0f, -1.0f};
         drawMagicStar(
             renderer,
             drawPosition - outward * (10.0f + 12.0f * sparkle),
@@ -225,7 +361,50 @@ void Game::updateRingScreen(const Input& input, UiContext& ui, float dt)
 
     if (spellRing_.activeRingIndex() >= UnlockedRingCount) {
         spellRing_.switchActiveRing(-spellRing_.activeRingIndex());
+        closeUiCommandMenu(ringCommandMenu_);
+        ringCommandItemIndex_ = -1;
         ringStatus_.clear();
+    }
+
+    if (!items.empty()) {
+        ringSlotSelection_ = std::clamp(ringSlotSelection_, 0, static_cast<int>(items.size()) - 1);
+    } else {
+        ringSlotSelection_ = 0;
+    }
+
+    if (ringCommandMenu_.open && uiCancelRequested(ringCancelState_, input, ui, ringPanelRect())) {
+        closeUiCommandMenu(ringCommandMenu_);
+        ringCommandItemIndex_ = -1;
+        ui.block(ringPanelRect());
+        return;
+    }
+
+    const int commandItemIndex = ringCommandItemIndex_ >= 0 ? ringCommandItemIndex_ : ringSlotSelection_;
+    const bool commandCanRemove = commandItemIndex >= 0 &&
+        commandItemIndex < static_cast<int>(items.size()) &&
+        !items[static_cast<std::size_t>(commandItemIndex)].objectId.empty();
+    const std::array<UiCommandMenuItem, 1> commandItems = ringCommandItems(commandCanRemove);
+    const int commandSelection = updateUiCommandMenu(
+        ringCommandMenu_,
+        ui,
+        input,
+        commandItems.data(),
+        static_cast<int>(commandItems.size()));
+    if (commandSelection >= 0 && ringCommandItemIndex_ >= 0) {
+        ringSlotSelection_ = ringCommandItemIndex_;
+        if (commandSelection == 0) {
+            removeRingItemToInventory(items, ringSlotSelection_, inventory_, objectCatalog_, ringStatus_);
+        }
+        ringCommandItemIndex_ = -1;
+        ui.block(ringPanelRect());
+        return;
+    }
+    if (ringCommandMenu_.open) {
+        ui.block(ringPanelRect());
+        return;
+    }
+    if (!ringCommandMenu_.visible) {
+        ringCommandItemIndex_ = -1;
     }
 
     std::array<UiTabItem, UnlockedRingCount> ringTabs{};
@@ -254,17 +433,29 @@ void Game::updateRingScreen(const Input& input, UiContext& ui, float dt)
     if (ringTabSelection >= 0) {
         if (ringTabSelection != spellRing_.activeRingIndex()) {
             spellRing_.switchActiveRing(ringTabSelection - spellRing_.activeRingIndex());
+            closeUiCommandMenu(ringCommandMenu_);
+            ringCommandItemIndex_ = -1;
             ringStatus_.clear();
         }
         return;
     }
 
-    if (!items.empty()) {
-        ringSlotSelection_ = std::clamp(ringSlotSelection_, 0, static_cast<int>(items.size()) - 1);
-    } else {
-        ringSlotSelection_ = 0;
-    }
     const bool actualRing = true;
+
+    if (ui.pressed(ringArrangeButtonRect())) {
+        closeUiCommandMenu(ringCommandMenu_);
+        ringCommandItemIndex_ = -1;
+        if (ringGrabActive_) {
+            ringStatus_ = "つかみ中は整列できません";
+        } else if (arrangeActiveRingItemsEvenly(spellRing_, balance_)) {
+            ringSlotSelection_ = std::clamp(ringSlotSelection_, 0, static_cast<int>(items.size()) - 1);
+            ringStatus_ = "等間隔に整列しました";
+        } else {
+            ringStatus_ = "アイテム未配置です";
+        }
+        ui.block(ringPanelRect());
+        return;
+    }
 
     if ((ringDragPending_ || ringDragActive_) && uiCancelRequested(ringCancelState_, input, ui, ringPanelRect())) {
         ringDragPending_ = false;
@@ -304,6 +495,20 @@ void Game::updateRingScreen(const Input& input, UiContext& ui, float dt)
                 ringSnapElapsed_ = 0.0f;
                 ringSnapActive_ = true;
                 ringStatus_ = snapAngle ? "近い空き位置へ補正しました" : "近くに空きがないため元の位置へ戻しました";
+            } else {
+                ringSlotSelection_ = ringDragItemIndex_;
+                ringCommandItemIndex_ = ringDragItemIndex_;
+                const bool canRemove = !items[static_cast<std::size_t>(ringDragItemIndex_)].objectId.empty();
+                const std::array<UiCommandMenuItem, 1> menuItems = ringCommandItems(canRemove);
+                openUiCommandMenu(
+                    ringCommandMenu_,
+                    input.mouseScreen(),
+                    ringPanelRect(),
+                    static_cast<int>(menuItems.size()),
+                    menuItems.data(),
+                    180.0f,
+                    2);
+                ringStatus_.clear();
             }
             ringDragPending_ = false;
             ringDragActive_ = false;
@@ -332,6 +537,8 @@ void Game::updateRingScreen(const Input& input, UiContext& ui, float dt)
             ringSlotSelection_ = i;
         }
         if (ui.pressed(rect)) {
+            closeUiCommandMenu(ringCommandMenu_);
+            ringCommandItemIndex_ = -1;
             ringSlotSelection_ = i;
             ringDragPending_ = true;
             ringDragActive_ = false;
@@ -364,12 +571,8 @@ void Game::updateRingScreen(const Input& input, UiContext& ui, float dt)
     if (input.addRingPressed()) {
         if (ringGrabActive_) {
             ringStatus_ = "つかみ中は外せません";
-        } else if (ringSlotSelection_ < static_cast<int>(items.size()) && items.size() > 1) {
-            items.erase(items.begin() + ringSlotSelection_);
-            ringSlotSelection_ = std::min(ringSlotSelection_, std::max(0, static_cast<int>(items.size()) - 1));
-            ringStatus_ = "選択中アイテムを外しました";
         } else if (ringSlotSelection_ < static_cast<int>(items.size())) {
-            ringStatus_ = "最後の1個は外せません";
+            removeRingItemToInventory(items, ringSlotSelection_, inventory_, objectCatalog_, ringStatus_);
         } else {
             ringStatus_ = "アイテム未選択です";
         }
@@ -404,15 +607,11 @@ void Game::updateRingScreen(const Input& input, UiContext& ui, float dt)
                 ringStatus_ = "配置できる空きがありません";
             }
         } else if (ringSlotSelection_ < static_cast<int>(items.size())) {
-            if (items.size() <= 1) {
-                ringStatus_ = "最後の1個は外せません";
-            } else {
-                ringGrabbedItem_ = items[ringSlotSelection_];
-                ringGrabOrigin_ = ringSlotSelection_;
-                items.erase(items.begin() + ringSlotSelection_);
-                ringGrabActive_ = true;
-                ringStatus_ = "装着アイテムをつかみました";
-            }
+            ringGrabbedItem_ = items[ringSlotSelection_];
+            ringGrabOrigin_ = ringSlotSelection_;
+            items.erase(items.begin() + ringSlotSelection_);
+            ringGrabActive_ = true;
+            ringStatus_ = "装着アイテムをつかみました";
         } else {
             ringStatus_ = "アイテム未選択です";
         }
@@ -887,6 +1086,96 @@ void Game::renderDungeonLogs(Renderer& renderer) const
     }
 }
 
+void Game::renderWarpReturnUi(Renderer& renderer) const
+{
+    if (mode_ != ScreenMode::Playing || enemyTestActive_ || !warpPointsEnabled_) {
+        return;
+    }
+
+    renderer.setScreenSpace();
+    const float screenWidth = static_cast<float>(camera_.width());
+    const float screenHeight = static_cast<float>(camera_.height());
+
+    if (warpReturnConfirmActive_) {
+        renderer.fillRect({0.0f, 0.0f}, {screenWidth, screenHeight}, {0, 0, 0, 118});
+        const UiRect panel = warpReturnConfirmRect();
+        UiWindowScope confirmWindow(renderer, "warp.return_confirm", panel, "", "F/Enter 決定  Esc/右クリック 戻る", UiWindowOptions{true, true});
+
+        const std::string title = "拠点へ帰還しますか？";
+        const Vec2 titleSize = renderer.measureText(title, 3);
+        renderer.drawText(
+            {panel.pos.x + (panel.size.x - titleSize.x) * 0.5f, panel.pos.y + 66.0f},
+            title,
+            ui::Text,
+            3);
+
+        constexpr float BodyWidth = 330.0f;
+        const Vec2 bodyPos{panel.pos.x + (panel.size.x - BodyWidth) * 0.5f, panel.pos.y + 112.0f};
+        renderer.drawWrappedText(
+            bodyPos,
+            "現在のダンジョン状態を保持したまま、ダンジョン入口へ戻ります。",
+            BodyWidth,
+            ui::TextMuted,
+            2);
+
+        drawUiButton(
+            renderer,
+            warpReturnConfirmButtonRect(0),
+            "帰還する",
+            warpReturnConfirmSelection_ == 0,
+            uiActionButtonStyle());
+        drawUiButton(
+            renderer,
+            warpReturnConfirmButtonRect(1),
+            "戻る",
+            warpReturnConfirmSelection_ == 1,
+            uiCancelButtonStyle());
+        return;
+    }
+
+    if (focusedWarpReturnPointIndex_ == DungeonEntranceReturnFocusIndex) {
+        const std::string prompt = "ダンジョン入口  F/Enter 拠点へ帰還";
+        constexpr int TextScale = 2;
+        const Vec2 textSize = renderer.measureText(prompt, TextScale);
+        const Vec2 padding{22.0f, 10.0f};
+        const Vec2 size{textSize.x + padding.x * 2.0f, textSize.y + padding.y * 2.0f};
+        const Vec2 pos{
+            (screenWidth - size.x) * 0.5f,
+            std::max(96.0f, screenHeight - 174.0f),
+        };
+        renderer.fillRect(pos, size, {12, 18, 34, 218});
+        renderer.drawRect(pos, size, {154, 230, 246, 210});
+        renderer.drawText(pos + padding + Vec2{1.0f, 1.0f}, prompt, {0, 0, 0, 180}, TextScale);
+        renderer.drawText(pos + padding, prompt, {232, 250, 255, 255}, TextScale);
+        return;
+    }
+
+    if (focusedWarpReturnPointIndex_ < 0 ||
+        focusedWarpReturnPointIndex_ >= static_cast<int>(warpPoints_.size())) {
+        return;
+    }
+
+    const WarpPoint& point = warpPoints_[static_cast<std::size_t>(focusedWarpReturnPointIndex_)];
+    if (!point.discovered) {
+        return;
+    }
+
+    char buffer[96];
+    std::snprintf(buffer, sizeof(buffer), "ワープポイント %d  F/Enter 拠点へ帰還", point.index + 1);
+    constexpr int TextScale = 2;
+    const Vec2 textSize = renderer.measureText(buffer, TextScale);
+    const Vec2 padding{22.0f, 10.0f};
+    const Vec2 size{textSize.x + padding.x * 2.0f, textSize.y + padding.y * 2.0f};
+    const Vec2 pos{
+        (screenWidth - size.x) * 0.5f,
+        std::max(96.0f, screenHeight - 174.0f),
+    };
+    renderer.fillRect(pos, size, {12, 18, 34, 218});
+    renderer.drawRect(pos, size, {154, 230, 246, 210});
+    renderer.drawText(pos + padding + Vec2{1.0f, 1.0f}, buffer, {0, 0, 0, 180}, TextScale);
+    renderer.drawText(pos + padding, buffer, {232, 250, 255, 255}, TextScale);
+}
+
 void Game::renderWorldLoadingScreen(Renderer& renderer, float totalSeconds) const
 {
     if (mode_ != ScreenMode::WorldLoading) {
@@ -961,6 +1250,7 @@ void Game::renderRingScreen(Renderer& renderer, float totalTime) const
         ringTabs.data(),
         static_cast<int>(ringTabs.size()),
         ringTabRects.data());
+    drawUiButton(renderer, ringArrangeButtonRect(), "整列", false, uiActionButtonStyle());
 
     const bool actualRing = true;
     const auto& items = spellRing_.items();
@@ -1084,6 +1374,13 @@ void Game::renderRingScreen(Renderer& renderer, float totalTime) const
     } else if (!ringStatus_.empty()) {
         renderer.drawText(panel.pos + Vec2{48.0f, 556.0f}, ringStatus_, {255, 230, 150, 255}, 2);
     }
+
+    const int commandItemIndex = ringCommandItemIndex_ >= 0 ? ringCommandItemIndex_ : ringSlotSelection_;
+    const bool commandCanRemove = commandItemIndex >= 0 &&
+        commandItemIndex < static_cast<int>(items.size()) &&
+        !items[static_cast<std::size_t>(commandItemIndex)].objectId.empty();
+    const std::array<UiCommandMenuItem, 1> commandItems = ringCommandItems(commandCanRemove);
+    drawUiCommandMenu(renderer, ringCommandMenu_, commandItems.data(), static_cast<int>(commandItems.size()));
 }
 
 void Game::renderPauseMenu(Renderer& renderer) const
@@ -1376,6 +1673,10 @@ void Game::render(Renderer& renderer, const Time& time)
 
     const std::vector<const SpellRingItem*> runtimeItems = spellRing_.runtimeItems();
     const bool ringIntroActive = dungeonRingIntroActive();
+    const bool miningStartTransitionInDungeon =
+        mode_ == ScreenMode::Playing &&
+        screenTransition_.active() &&
+        screenTransition_.target == ScreenTransitionTarget::MiningStart;
     const float ringIntroProgress = dungeonRingIntroProgress();
     std::vector<LightSource> itemLights;
     int runtimeItemIndex = 0;
@@ -1384,18 +1685,26 @@ void Game::render(Renderer& renderer, const Time& time)
             continue;
         }
         const float introLightScale = ringIntroActive
-            ? lerp(0.18f, 1.0f, dungeonRingIntroItemReveal(ringIntroProgress, runtimeItemIndex, itemPtr->ringIndex))
-            : 1.0f;
+            ? dungeonRingIntroItemReveal(ringIntroProgress, runtimeItemIndex, itemPtr->ringIndex)
+            : (miningStartTransitionInDungeon ? 0.0f : 1.0f);
+        if (introLightScale <= 0.001f) {
+            ++runtimeItemIndex;
+            continue;
+        }
+        const int ringIndex = std::clamp(itemPtr->ringIndex, 0, SpellRingCount - 1);
+        const Vec2 lightPosition = ringIntroActive
+            ? dungeonRingIntroItemGroundPosition(spellRing_, *itemPtr, ringIntroProgress, runtimeItemIndex, ringIndex)
+            : itemPtr->worldPosition;
         const float phase = itemPtr->localAngle * 1.7f + static_cast<float>(itemPtr->ringIndex) * 2.3f;
         if (itemPtr->lightRadius > 0.0f) {
             itemLights.push_back({
-                flickeredLightPosition(itemPtr->worldPosition, time.totalSeconds(), phase),
+                flickeredLightPosition(lightPosition, time.totalSeconds(), phase),
                 flickeredLightRadius(itemPtr->lightRadius, time.totalSeconds(), phase) * introLightScale,
             });
         } else if (itemPtr->type == SpellRingItemType::Torch) {
             const float torchPhase = phase + 0.47f;
             itemLights.push_back({
-                flickeredLightPosition(itemPtr->worldPosition, time.totalSeconds(), torchPhase),
+                flickeredLightPosition(lightPosition, time.totalSeconds(), torchPhase),
                 flickeredLightRadius(balance_.lightRadius, time.totalSeconds(), torchPhase) * introLightScale,
             });
         }
@@ -1425,6 +1734,13 @@ void Game::render(Renderer& renderer, const Time& time)
             });
         }
     }
+    if (mode_ == ScreenMode::Playing && !enemyTestActive_) {
+        const float entranceLightRadius = DungeonEntranceLightRadiusTiles * static_cast<float>(balance::TileSize);
+        itemLights.push_back({
+            flickeredLightPosition(dungeonEntrancePosition(), time.totalSeconds(), 2.9f),
+            flickeredLightRadius(entranceLightRadius, time.totalSeconds(), 2.9f),
+        });
+    }
     tileMap_.render(renderer, camera_, player_.position, itemLights);
     std::vector<DepthRenderEntry> worldDepthEntries;
     if (!enemyTestActive_) {
@@ -1433,6 +1749,7 @@ void Game::render(Renderer& renderer, const Time& time)
     worldDrops_.appendRenderEntries(worldDepthEntries, renderer, tileMap_, objectCatalog_, player_.position, itemLights);
     effects_.appendRenderEntries(worldDepthEntries, renderer);
     if (!enemyTestActive_) {
+        renderDungeonEntrance(renderer);
         renderWarpPoints(renderer);
     }
 
@@ -1603,6 +1920,7 @@ void Game::render(Renderer& renderer, const Time& time)
         inventory_.renderShortcutHud(renderer, spellRing_, camera_.width(), camera_.height());
         renderRingEquipFx(renderer);
     }
+    renderWarpReturnUi(renderer);
     renderPauseMenu(renderer);
     renderRingScreen(renderer, time.totalSeconds());
     renderGameOverScreen(renderer);

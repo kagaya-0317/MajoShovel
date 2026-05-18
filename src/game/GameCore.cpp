@@ -5,6 +5,8 @@ namespace majo {
 namespace {
 
 constexpr float DungeonRingIntroDuration = 1.18f;
+constexpr std::string_view DefaultShovelObjectId = "item_shovel";
+constexpr std::string_view DefaultTorchObjectId = "item_torch";
 
 bool lootChestKindForDropProfile(std::string_view profile, LootChestKind& outKind)
 {
@@ -36,6 +38,18 @@ int lootDepthRankForWorldPosition(
     return lootDepthRankForProgress(stageId, metrics.pathProgress);
 }
 
+bool isRoguelikeStageDefinition(const StageDefinition& stage)
+{
+    return stage.id == "stage_04_astral_mine" ||
+        stage.type == "ローグライク" ||
+        stage.generationProfile == "astral_rogue";
+}
+
+bool isStageClearStoryFlag(const std::string& flag)
+{
+    return flag.rfind("stage_clear_", 0) == 0;
+}
+
 }
 
 void Game::initialize(int width, int height)
@@ -52,7 +66,7 @@ void Game::initialize(int width, int height)
     resetWorldSimulationState();
     resetWorldUiState();
     resetWorldRunState();
-    spellRing_.initialize(balance_);
+    initializeDefaultSpellRing();
     applyPermanentUpgrades();
     spellRing_.applyObjectParameters(objectCatalog_);
     spellRing_.resetBaseWeightToCurrent();
@@ -165,6 +179,11 @@ void Game::resetWorldUiState()
     baseMenuSelection_ = 0;
     baseMiningStartChoiceActive_ = false;
     baseMiningStartSelection_ = 0;
+    baseWarpPointSelectActive_ = false;
+    baseWarpPointSelection_ = 0;
+    warpReturnConfirmActive_ = false;
+    warpReturnConfirmSelection_ = 0;
+    focusedWarpReturnPointIndex_ = -1;
     baseStorageActive_ = false;
     baseStorageFocusWarehouse_ = false;
     baseStorageBackpackCursor_ = 0;
@@ -200,6 +219,8 @@ void Game::resetWorldUiState()
     baseProcessingSelection_ = 0;
     closeUiCommandMenu(baseProcessingCommandMenu_);
     baseProcessingCommandSlot_ = -1;
+    closeUiCommandMenu(ringCommandMenu_);
+    ringCommandItemIndex_ = -1;
     baseRingWorkshopActive_ = false;
     baseRingWorkshopSelection_ = 0;
     ringWorkshopDraftRadiusPoints_ = levelRingRadiusPoints_;
@@ -250,7 +271,7 @@ void Game::resetWorldRunState()
     inventoryReturnToPause_ = false;
     debugPaused_ = false;
     captureCooldown_ = 0.0f;
-    currentStage_ = std::clamp(currentStage_, 0, std::max(0, unlockedStages_ - 1));
+    clampCurrentStageToSelectableStages();
 }
 
 void Game::buildWorldForRun(bool captureRunStartInventory)
@@ -263,7 +284,7 @@ void Game::buildWorldForRun(bool captureRunStartInventory)
     initializeCrateNodesFromLayout();
     initializeEnemyNodesFromLayout();
     applyPlacementTerrainOverrides();
-    spellRing_.initialize(balance_);
+    initializeDefaultSpellRing();
     applyPermanentUpgrades();
     spellRing_.applyObjectParameters(objectCatalog_);
     spellRing_.resetBaseWeightToCurrent();
@@ -302,7 +323,11 @@ void Game::beginWorldBuildFromBase(
         levels_ = LevelSystem{};
     }
     baseMiningStartChoiceActive_ = false;
+    baseWarpPointSelectActive_ = false;
     baseRegenerateConfirmActive_ = false;
+    warpReturnConfirmActive_ = false;
+    warpReturnConfirmSelection_ = 0;
+    focusedWarpReturnPointIndex_ = -1;
     baseStatus_.clear();
     pausePage_ = PauseMenuPage::Main;
     pauseReturnMode_ = ScreenMode::Base;
@@ -370,7 +395,7 @@ void Game::advanceWorldBuildOneStep()
         worldBuildJob_.step = WorldBuildStep::InitializeRing;
         break;
     case WorldBuildStep::InitializeRing:
-        spellRing_.initialize(balance_);
+        initializeDefaultSpellRing();
         applyPermanentUpgrades();
         spellRing_.applyObjectParameters(objectCatalog_);
         spellRing_.resetBaseWeightToCurrent();
@@ -410,9 +435,7 @@ void Game::finishWorldBuild()
     initializeMoonFragmentNodesFromWarpPoints();
     applyPlacementTerrainOverrides();
     if (job.useLatestWarpPoint) {
-        const Vec2 warpStartPosition = latestWarpPointStartPosition();
-        latestWarpPointPosition_ = warpStartPosition;
-        hasLatestWarpPointPosition_ = true;
+        const Vec2 warpStartPosition = warpPointStartPositionForCurrentRequest();
         rebuildUnlockedWarpPointsForStart(warpStartPosition);
         player_.position = safePlayerStartPosition(warpStartPosition);
         tileMap_.updateAround(player_.position, 0.0f, balance_, dungeonLayout_);
@@ -421,6 +444,7 @@ void Game::finishWorldBuild()
     if (job.useLatestWarpPoint) {
         captureRetrySnapshotAtWarpPoint();
     }
+    requestedWarpPointStartPosition_.reset();
 
     baseEditEnabled_ = false;
     baseEditMode_ = BaseEditMode::None;
@@ -498,7 +522,7 @@ std::string Game::worldBuildStatusText() const
     case WorldBuildStep::InitializeRing:
         return "スペルリングを準備中";
     case WorldBuildStep::WarmInitialTiles:
-        return "開始地点を読み込み中";
+        return "入口を読み込み中";
     case WorldBuildStep::Finalize:
         return "採掘へ移行中";
     case WorldBuildStep::Done:
@@ -521,6 +545,10 @@ void Game::enterBase()
     pauseReturnMode_ = ScreenMode::Base;
     inventoryReturnToPause_ = false;
     baseMiningStartChoiceActive_ = false;
+    baseWarpPointSelectActive_ = false;
+    warpReturnConfirmActive_ = false;
+    warpReturnConfirmSelection_ = 0;
+    focusedWarpReturnPointIndex_ = -1;
     baseStorageActive_ = false;
     baseSellActive_ = false;
     baseMerchantMode_ = MerchantUiMode::Closed;
@@ -636,6 +664,9 @@ void Game::requestScreenTransition(ScreenTransitionTarget target)
 
 void Game::requestMiningStartTransition(bool useLatestWarpPoint, bool forceRegenerate)
 {
+    if (!useLatestWarpPoint || forceRegenerate) {
+        requestedWarpPointStartPosition_.reset();
+    }
     if (screenTransition_.active()) {
         return;
     }
@@ -646,6 +677,20 @@ void Game::requestMiningStartTransition(bool useLatestWarpPoint, bool forceRegen
     screenTransition_.applied = false;
     screenTransition_.useLatestWarpPoint = useLatestWarpPoint;
     screenTransition_.forceRegenerate = forceRegenerate;
+}
+
+void Game::requestReturnToBaseTransition(bool stageCleared, bool died)
+{
+    if (screenTransition_.active()) {
+        return;
+    }
+
+    screenTransition_.target = ScreenTransitionTarget::ReturnToBase;
+    screenTransition_.phase = ScreenTransitionPhase::FadingOut;
+    screenTransition_.elapsed = 0.0f;
+    screenTransition_.applied = false;
+    screenTransition_.returnStageCleared = stageCleared;
+    screenTransition_.returnDied = died;
 }
 
 void Game::requestBaseAreaCrossfade(BaseArea targetArea, Vec2 playerPosition, Vec2 playerFacing, std::string status)
@@ -738,6 +783,9 @@ void Game::applyScreenTransitionTarget(ScreenTransitionTarget target)
     case ScreenTransitionTarget::MiningStart:
         startMiningFromBase(screenTransition_.useLatestWarpPoint, screenTransition_.forceRegenerate);
         break;
+    case ScreenTransitionTarget::ReturnToBase:
+        returnToBaseFromNormalStage(screenTransition_.returnStageCleared, screenTransition_.returnDied);
+        break;
     case ScreenTransitionTarget::BaseArea:
         baseArea_ = screenTransition_.targetBaseArea;
         basePlayerPosition_ = screenTransition_.targetBasePlayerPosition;
@@ -751,6 +799,9 @@ void Game::applyScreenTransitionTarget(ScreenTransitionTarget target)
 void Game::startMiningFromBase(bool useLatestWarpPoint, bool forceRegenerate)
 {
     useLatestWarpPoint = useLatestWarpPoint && unlockedWarpPointCount_ > 0;
+    if (!useLatestWarpPoint || forceRegenerate) {
+        requestedWarpPointStartPosition_.reset();
+    }
     InventoryCarryState retained = captureInventoryCarryState();
     const int retainedLevel = player_.level;
     const int retainedXp = player_.xp;
@@ -779,14 +830,13 @@ void Game::startMiningFromBase(bool useLatestWarpPoint, bool forceRegenerate)
     clearTemporaryPlayerState(true);
     captureRunStartInventoryState();
     if (useLatestWarpPoint) {
-        const Vec2 startPosition = latestWarpPointStartPosition();
-        latestWarpPointPosition_ = startPosition;
-        hasLatestWarpPointPosition_ = true;
+        const Vec2 startPosition = warpPointStartPositionForCurrentRequest();
         player_.position = startPosition;
         tileMap_.updateAround(player_.position, 0.0f, balance_, dungeonLayout_);
         normalizeOpenBuriedPlacementNodes();
         captureRetrySnapshotAtWarpPoint();
     }
+    requestedWarpPointStartPosition_.reset();
     baseEditEnabled_ = false;
     baseEditMode_ = BaseEditMode::None;
     resetBaseEditDragState();
@@ -826,6 +876,44 @@ float Game::effectiveInitialRingSpeed(int levelSpeedPoints) const
 float Game::effectiveRingShiftDistance() const
 {
     return balance_.spellRingShiftDistance + static_cast<float>(workshopShiftDistanceLevel_) * 8.0f;
+}
+
+void Game::initializeDefaultSpellRing()
+{
+    spellRing_.initialize(balance_);
+
+    const ItemData* shovel = objectCatalog_.registry.findById(DefaultShovelObjectId);
+    const ItemData* torch = objectCatalog_.registry.findById(DefaultTorchObjectId);
+    if (shovel == nullptr || torch == nullptr) {
+        return;
+    }
+
+    std::vector<SpellRingItem>& ringItems = spellRing_.itemsForRing(0);
+    ringItems.clear();
+
+    const ItemInstance shovelInstance = inventory_.createDetachedObjectInstance(*shovel);
+    const ItemInstance torchInstance = inventory_.createDetachedObjectInstance(*torch);
+    if (!spellRing_.addObjectItem(*shovel, shovelInstance) ||
+        !spellRing_.addObjectItem(*torch, torchInstance)) {
+        spellRing_.initialize(balance_);
+        return;
+    }
+
+    if (!ringItems.empty()) {
+        ringItems[0].localAngle = 0.0f;
+    }
+    if (ringItems.size() >= 2) {
+        ringItems[1].localAngle = Pi;
+    }
+}
+
+void Game::observeRingItemInstanceIds()
+{
+    for (int ringIndex = 0; ringIndex < SpellRingCount; ++ringIndex) {
+        for (const SpellRingItem& item : spellRing_.itemsForRing(ringIndex)) {
+            inventory_.observeObjectInstanceId(item.instanceId);
+        }
+    }
 }
 
 float Game::effectiveCollectionPullRadius(int collectionLevel) const
@@ -1009,10 +1097,134 @@ const StageDefinition& Game::currentStageDefinition() const
     return currentStageDefinition_;
 }
 
+std::vector<StageDefinition> Game::selectableStageDefinitionsForCurrentUnlockState() const
+{
+    const std::vector<StageDefinition> sorted = stageCatalog_.getStagesSortedByDisplayOrder();
+    std::vector<StageDefinition> selectable;
+    const int unlockedStoryStages = std::max(0, unlockedStages_);
+    int storyStageIndex = 0;
+
+    for (const StageDefinition& stage : sorted) {
+        if (isRoguelikeStageDefinition(stage)) {
+            if (unlockedStoryStages >= 2) {
+                selectable.push_back(stage);
+            }
+            continue;
+        }
+
+        ++storyStageIndex;
+        if (storyStageIndex <= unlockedStoryStages) {
+            selectable.push_back(stage);
+        }
+    }
+
+    if (selectable.empty() && !sorted.empty()) {
+        selectable.push_back(sorted.front());
+    }
+    return selectable;
+}
+
+int Game::stageCatalogIndexForId(std::string_view stageId) const
+{
+    const std::vector<StageDefinition> sorted = stageCatalog_.getStagesSortedByDisplayOrder();
+    for (std::size_t i = 0; i < sorted.size(); ++i) {
+        if (sorted[i].id == stageId) {
+            return static_cast<int>(i);
+        }
+    }
+    return std::clamp(currentStage_, 0, std::max(0, static_cast<int>(sorted.size()) - 1));
+}
+
+void Game::clampCurrentStageToSelectableStages()
+{
+    const std::vector<StageDefinition> selectable = selectableStageDefinitionsForCurrentUnlockState();
+    if (selectable.empty()) {
+        currentStage_ = 0;
+        resolveCurrentStageDefinition();
+        return;
+    }
+
+    bool currentStageSelectable = false;
+    for (const StageDefinition& stage : selectable) {
+        if (stage.id == currentStageId_) {
+            currentStageSelectable = true;
+            break;
+        }
+    }
+    if (!currentStageSelectable) {
+        currentStageId_ = selectable.front().id;
+    }
+
+    currentStage_ = stageCatalogIndexForId(currentStageId_);
+    resolveCurrentStageDefinition();
+}
+
+void Game::syncWarpStateForCurrentStage()
+{
+    auto stateIt = dungeonStates_.find(currentStageId_);
+    if (stateIt == dungeonStates_.end() || !stateIt->second.valid) {
+        unlockedWarpPointCount_ = 0;
+        hasLatestWarpPointPosition_ = false;
+        latestWarpPointPosition_ = {};
+        return;
+    }
+
+    int discoveredCount = 0;
+    Vec2 latestPosition{};
+    bool hasLatest = false;
+    for (const WarpPoint& point : stateIt->second.warpPoints) {
+        if (!point.discovered) {
+            continue;
+        }
+        ++discoveredCount;
+        latestPosition = point.position;
+        hasLatest = true;
+    }
+
+    const DungeonState& state = stateIt->second;
+    unlockedWarpPointCount_ = std::max(std::max(0, state.unlockedWarpPointCount), discoveredCount);
+    hasLatestWarpPointPosition_ = state.hasLatestWarpPointPosition || hasLatest;
+    latestWarpPointPosition_ = state.hasLatestWarpPointPosition
+        ? state.latestWarpPointPosition
+        : (hasLatest ? latestPosition : Vec2{});
+}
+
+void Game::applyDebugStageUnlockState(int unlockedStoryStages)
+{
+    int maxStoryStageCount = 0;
+    for (const StageDefinition& stage : stageCatalog_.getStagesSortedByDisplayOrder()) {
+        if (!isRoguelikeStageDefinition(stage)) {
+            ++maxStoryStageCount;
+        }
+    }
+    if (maxStoryStageCount <= 0) {
+        maxStoryStageCount = 3;
+    }
+
+    unlockedStages_ = std::clamp(unlockedStoryStages, 1, maxStoryStageCount);
+    storyFlags_.erase(
+        std::remove_if(storyFlags_.begin(), storyFlags_.end(), isStageClearStoryFlag),
+        storyFlags_.end());
+
+    const int clearedStoryStages = std::max(0, unlockedStages_ - 1);
+    for (int stage = 1; stage <= clearedStoryStages; ++stage) {
+        addStoryFlag("stage_clear_" + std::to_string(stage));
+    }
+
+    clampCurrentStageToSelectableStages();
+    syncWarpStateForCurrentStage();
+    baseMiningStartSelection_ = unlockedWarpPointCount_ > 0 ? 1 : 0;
+    baseWarpPointSelectActive_ = false;
+    baseWarpPointSelection_ = 0;
+    baseRegenerateConfirmActive_ = false;
+    baseStatus_.clear();
+}
+
 void Game::resolveCurrentStageDefinition()
 {
     if (const StageDefinition* stage = stageCatalog_.getStageById(currentStageId_)) {
         currentStageDefinition_ = *stage;
+        currentStage_ = stageCatalogIndexForId(currentStageId_);
         logCurrentStageDefinition(currentStageDefinition_, {});
         return;
     }
@@ -1024,6 +1236,7 @@ void Game::resolveCurrentStageDefinition()
             "\" was not found in StageCatalog; using first display-order stage \"" +
             currentStageDefinition_.id + "\"");
         currentStageId_ = currentStageDefinition_.id;
+        currentStage_ = 0;
         logCurrentStageDefinition(currentStageDefinition_, "fallback_to_catalog_first");
         return;
     }
@@ -1031,6 +1244,7 @@ void Game::resolveCurrentStageDefinition()
     logError("[warning] StageCatalog is empty; using code default stage_01_stardust");
     currentStageDefinition_ = makeCodeDefaultStageDefinition();
     currentStageId_ = currentStageDefinition_.id;
+    currentStage_ = 0;
     logCurrentStageDefinition(currentStageDefinition_, "fallback_to_code_default");
 }
 
@@ -1211,6 +1425,9 @@ void Game::updateScreenMode(
                 return;
             }
         }
+        if (updateWarpReturnUi(input, ui)) {
+            return;
+        }
         if (input.pausePressed()) {
             mode_ = ScreenMode::PauseMenu;
             pauseReturnMode_ = ScreenMode::Playing;
@@ -1270,7 +1487,7 @@ void Game::updateScreenMode(
 
 bool Game::gameProgressPaused() const
 {
-    return dialogue_.active() || mode_ != ScreenMode::Playing;
+    return dialogue_.active() || warpReturnConfirmActive_ || mode_ != ScreenMode::Playing;
 }
 
 bool Game::basePresentationActive() const
@@ -1288,8 +1505,7 @@ bool Game::basePresentationActive() const
 
 void Game::beginDungeonRingIntro()
 {
-    Input introInput;
-    spellRing_.update(player_, introInput, 0.0f, 0.0f, false, true, balance_);
+    spellRing_.resetRuntimeStateAtPlayer(player_, balance_);
 
     if (screenTransition_.active()) {
         dungeonRingIntroStartPending_ = true;
@@ -1306,7 +1522,12 @@ void Game::updateDungeonRingIntro(float dt)
     if (mode_ != ScreenMode::Playing || dialogue_.active() || dungeonRingIntroTimer_ <= 0.0f) {
         return;
     }
+    const bool wasActive = dungeonRingIntroTimer_ > 0.0f;
     dungeonRingIntroTimer_ = std::max(0.0f, dungeonRingIntroTimer_ - std::max(0.0f, dt));
+    if (wasActive && dungeonRingIntroTimer_ <= 0.0f && firstDungeonDialoguePendingAfterRingIntro_) {
+        firstDungeonDialoguePendingAfterRingIntro_ = false;
+        maybeStartFirstDungeonDialogue();
+    }
 }
 
 bool Game::dungeonRingIntroActive() const
@@ -1381,6 +1602,9 @@ void Game::update(const Input& input, const Time& time)
     const bool paused = gameProgressPaused() || (wasPaused && mode_ == ScreenMode::Playing);
     if (paused && !effectDiscoveries.empty()) {
         applyEffectDiscoveries(effectDiscoveries);
+    }
+    if (dialogue_.active() && mode_ == ScreenMode::Playing) {
+        spellRing_.updatePresentation(player_, time.deltaSeconds(), balance_);
     }
 
     if (!paused) {
@@ -1544,6 +1768,7 @@ void Game::update(const Input& input, const Time& time)
             worldDrops_.spawnMaterialDrop(MaterialType::EnhancementOre, amount, tile.center, runStats_.elapsedSeconds);
         }
         std::vector<WorldDropPickupEvent> pickupEvents;
+        int blockedObjectPickupCount = 0;
         const float collectionPullRadius = effectiveCollectionPullRadius(collectionRangeUpgradeLevel_);
         if (collectionPullRadius > 0.0f) {
             worldDrops_.pullNearbyDrops(
@@ -1551,7 +1776,9 @@ void Game::update(const Input& input, const Time& time)
                 time.deltaSeconds(),
                 collectionPullRadius,
                 balance_.collectionPullAcceleration,
-                balance_.collectionPullLimit);
+                balance_.collectionPullLimit,
+                &inventory_,
+                &objectCatalog_);
         }
         runStats_.acquiredItems += worldDrops_.update(
             time.deltaSeconds(),
@@ -1560,8 +1787,12 @@ void Game::update(const Input& input, const Time& time)
             money_,
             objectCatalog_,
             &effects_,
-            &pickupEvents);
+            &pickupEvents,
+            &blockedObjectPickupCount);
         appendPickupLogs(pickupEvents);
+        if (blockedObjectPickupCount > 0) {
+            pushDungeonLog("リュックがいっぱいで拾えません", "pickup_inventory_full");
+        }
         if (!enemyTestActive_) {
             const std::vector<Vec2> randomEnemySpawnTiles = spawnHiddenEnemyNodesFromOpenedTiles(digging_.openedTiles());
             std::vector<DugEnemySpawnPoint> randomEnemySpawnPoints;

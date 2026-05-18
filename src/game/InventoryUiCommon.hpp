@@ -93,6 +93,12 @@ void drawInlineItemTextRightAligned(
     std::string_view text,
     const InlineItemTextStyle& style = {});
 
+void drawInventoryUiSlotBottomLabel(
+    Renderer& renderer,
+    UiRect rect,
+    std::string_view label,
+    Color color = ui::Text);
+
 void drawInventoryUiSlot(
     Renderer& renderer,
     UiRect rect,

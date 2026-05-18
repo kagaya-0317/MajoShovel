@@ -299,6 +299,9 @@ private:
         EnemySystem enemies;
         WorldDropSystem worldDrops;
         int spawnedWarpPointCount = 0;
+        int unlockedWarpPointCount = 0;
+        Vec2 latestWarpPointPosition{};
+        bool hasLatestWarpPointPosition = false;
         Vec2 bossSpawnPoint{};
         bool hasBossSpawnPoint = false;
         bool bossSpawned = false;
@@ -370,6 +373,7 @@ private:
         Base,
         TitleToBase,
         MiningStart,
+        ReturnToBase,
         BaseArea,
     };
     enum class ScreenTransitionPhase {
@@ -387,6 +391,8 @@ private:
         bool applied = false;
         bool useLatestWarpPoint = false;
         bool forceRegenerate = false;
+        bool returnStageCleared = false;
+        bool returnDied = false;
         BaseArea targetBaseArea = BaseArea::Outdoor;
         Vec2 targetBasePlayerPosition{};
         Vec2 targetBasePlayerFacing{0.0f, 1.0f};
@@ -434,6 +440,7 @@ private:
     void updateTitleScreen(const Input& input, UiContext& ui);
     void requestScreenTransition(ScreenTransitionTarget target);
     void requestMiningStartTransition(bool useLatestWarpPoint, bool forceRegenerate);
+    void requestReturnToBaseTransition(bool stageCleared, bool died);
     void requestBaseAreaCrossfade(BaseArea targetArea, Vec2 playerPosition, Vec2 playerFacing, std::string status);
     void updateScreenTransition(float dt);
     void applyScreenTransitionTarget(ScreenTransitionTarget target);
@@ -451,6 +458,11 @@ private:
     bool loadStagesFromSheet();
     bool loadEnemiesFromSheet();
     const StageDefinition& currentStageDefinition() const;
+    std::vector<StageDefinition> selectableStageDefinitionsForCurrentUnlockState() const;
+    int stageCatalogIndexForId(std::string_view stageId) const;
+    void clampCurrentStageToSelectableStages();
+    void syncWarpStateForCurrentStage();
+    void applyDebugStageUnlockState(int unlockedStoryStages);
     void resolveCurrentStageDefinition();
     void refreshOrbitEffects();
     DungeonGenerationContext makeDungeonGenerationContext() const;
@@ -590,6 +602,8 @@ private:
     void captureRunStartInventoryState();
     void clearTemporaryPlayerState(bool fullHeal);
     Vec2 latestWarpPointStartPosition() const;
+    Vec2 warpPointStartPositionForCurrentRequest() const;
+    std::vector<WarpPoint> selectableWarpPointsForCurrentStageStart() const;
     void rebuildUnlockedWarpPointsForStart(Vec2 latestPosition);
     void resetWarpPointRunState();
     void captureDungeonState();
@@ -601,6 +615,10 @@ private:
     std::vector<WarpPoint> discoveredWarpPoints() const;
     int nearestWarpPointIndex(Vec2 position) const;
     Vec2 safePlayerStartPosition(Vec2 preferredPosition);
+    Vec2 dungeonEntrancePosition() const;
+    int nearbyDiscoveredWarpPointIndex() const;
+    bool updateWarpReturnUi(const Input& input, UiContext& ui);
+    bool unlockAllWarpPointsForCurrentDungeon();
     void updateWarpPoints(float dt);
     void initializeMoonFragmentNodesFromWarpPoints();
     void initializeRewardNodesFromLayout();
@@ -643,6 +661,7 @@ private:
     void updateBossSpawn();
     void captureRetrySnapshotAtWarpPoint();
     void restoreRetrySnapshot();
+    void renderDungeonEntrance(Renderer& renderer) const;
     void renderWarpPoints(Renderer& renderer) const;
     void appendRewardNodeRenderEntries(
         std::vector<DepthRenderEntry>& entries,
@@ -660,6 +679,8 @@ private:
     void updateRingEquipFx(float dt);
     Vec2 ringEquipFxTargetScreen(const RingEquipFx& fx) const;
     void renderRingEquipFx(Renderer& renderer) const;
+    void initializeDefaultSpellRing();
+    void observeRingItemInstanceIds();
     bool loadSaveData();
     bool saveSaveData(std::string& message) const;
     void loadBaseEditData();
@@ -722,6 +743,7 @@ private:
     void renderRingStatusHud(Renderer& renderer) const;
     void renderDungeonStatusHud(Renderer& renderer) const;
     void renderDungeonLogs(Renderer& renderer) const;
+    void renderWarpReturnUi(Renderer& renderer) const;
     void renderWorldLoadingScreen(Renderer& renderer, float totalSeconds) const;
     void renderGameOverScreen(Renderer& renderer) const;
     void renderStageClearScreen(Renderer& renderer) const;
@@ -780,6 +802,8 @@ private:
     int baseMenuSelection_ = 0;
     bool baseMiningStartChoiceActive_ = false;
     int baseMiningStartSelection_ = 0;
+    bool baseWarpPointSelectActive_ = false;
+    int baseWarpPointSelection_ = 0;
     bool baseStorageActive_ = false;
     bool baseStorageFocusWarehouse_ = false;
     int baseStorageBackpackCursor_ = 0;
@@ -868,6 +892,16 @@ private:
     mutable UiCancelControlState baseCancelState_{};
     mutable UiCancelControlState ringCancelState_{};
     UiTabsState ringTabs_{};
+    UiCommandMenuState ringCommandMenu_{};
+    int ringCommandItemIndex_ = -1;
+    bool ringCommandPlaceActive_ = false;
+    float ringCommandPlaceAngle_ = 0.0f;
+    bool ringPlaceModeActive_ = false;
+    int ringPlaceSelection_ = 0;
+    float ringPlaceTargetAngle_ = 0.0f;
+    bool ringEmptyPressActive_ = false;
+    Vec2 ringEmptyPressMouse_{};
+    float ringEmptyPressAngle_ = 0.0f;
     int ringSlotSelection_ = 0;
     bool ringGrabActive_ = false;
     int ringGrabOrigin_ = -1;
@@ -885,6 +919,7 @@ private:
     std::string ringStatus_;
     float dungeonRingIntroTimer_ = 0.0f;
     bool dungeonRingIntroStartPending_ = false;
+    bool firstDungeonDialoguePendingAfterRingIntro_ = false;
     std::vector<DungeonLogEntry> dungeonLogs_;
     WorldBuildJob worldBuildJob_;
     std::array<FootstepDustPuff, 10> playerFootstepDustPuffs_{};
@@ -919,6 +954,10 @@ private:
     int unlockedWarpPointCount_ = 0;
     Vec2 latestWarpPointPosition_{};
     bool hasLatestWarpPointPosition_ = false;
+    std::optional<Vec2> requestedWarpPointStartPosition_;
+    bool warpReturnConfirmActive_ = false;
+    int warpReturnConfirmSelection_ = 0;
+    int focusedWarpReturnPointIndex_ = -1;
     bool baseRegenerateConfirmActive_ = false;
     int money_ = 0;
     int maxHpUpgradeLevel_ = 0;

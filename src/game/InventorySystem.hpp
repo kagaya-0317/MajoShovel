@@ -9,6 +9,7 @@
 #include "game/Player.hpp"
 #include "game/TileMap.hpp"
 #include <array>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -50,6 +51,7 @@ struct InventoryObjectInstance {
 
 class InventorySystem {
 public:
+    bool canAddObjectItem(const ObjectCatalog& catalog, std::string_view objectId) const;
     bool addObjectItem(const ObjectCatalog& catalog, std::string_view objectId);
     bool addRuntimeObjectItem(const ItemData& item);
     void updateShortcuts(
@@ -98,6 +100,8 @@ public:
     void clearObjectStacks();
     bool setObjectItemCount(const ObjectCatalog& catalog, std::string_view objectId, int count);
     bool addObjectInstance(const ObjectCatalog& catalog, ItemInstance instance);
+    ItemInstance createDetachedObjectInstance(const ItemData& item);
+    void observeObjectInstanceId(std::string_view instanceId);
     bool removeObjectItemCount(std::string_view objectId, int count);
     bool removeObjectInstance(std::string_view instanceId);
     bool takeObjectInstance(std::string_view instanceId, InventoryObjectInstance& outInstance);
@@ -112,6 +116,12 @@ public:
     const InventoryObjectStack* screenObjectStackAt(int index) const { return objectStackAtScreenIndex(index); }
     const InventoryObjectInstance* screenObjectInstanceAt(int index) const { return objectInstanceAtScreenIndex(index); }
     bool hasScreenItemAt(int index) const { return hasScreenItem(index); }
+    bool screenItemCanAddToRing(int index, const SpellRingSystem& spellRing, std::optional<float> preferredAngle = std::nullopt) const;
+    bool addScreenItemToRing(
+        int index,
+        SpellRingSystem& spellRing,
+        std::optional<float> preferredAngle = std::nullopt,
+        SpellRingAddResult* outResult = nullptr);
     bool moveObjectStackToScreenSlot(std::string_view objectId, int slotIndex);
     bool moveObjectInstanceToScreenSlot(std::string_view instanceId, int slotIndex);
 

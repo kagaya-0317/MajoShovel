@@ -646,7 +646,7 @@ void Game::updateCapturedUtilityBehaviors(float dt)
             const float strength = static_cast<float>(std::max(0.05, item.capturedBehaviorParamDouble("magnet_pull", "strength", 1.0)));
             const std::string targetTag = item.capturedBehaviorParamString("magnet_pull", "targetTag", "metal");
             const bool affectMetal = targetTag.empty() || targetTag.find("metal") != std::string::npos;
-            const int pulledDrops = affectMetal ? worldDrops_.pullMetalDrops(objectCatalog_, item.worldPosition, dt * strength, radius) : 0;
+            const int pulledDrops = affectMetal ? worldDrops_.pullMetalDrops(objectCatalog_, item.worldPosition, dt * strength, radius, &inventory_) : 0;
             const int pulledEnemies = affectMetal ? enemies_.pullMetalEnemies(item.worldPosition, tileMap_, dt * strength, radius) : 0;
             const int pulledProjectiles = affectMetal ? projectiles_.pullMetalProjectiles(item.worldPosition, dt * strength, radius) : 0;
             if (pulledDrops + pulledEnemies + pulledProjectiles > 0 && item.capturedMagnetVisualTimer <= 0.0f) {
@@ -793,6 +793,8 @@ void Game::openRingScreen()
     ringDragActive_ = false;
     ringSnapActive_ = false;
     ringDragItemIndex_ = -1;
+    closeUiCommandMenu(ringCommandMenu_);
+    ringCommandItemIndex_ = -1;
     cancelRingGrab();
     ringStatus_.clear();
 }
@@ -807,6 +809,8 @@ void Game::cancelRingGrab()
     ringDragActive_ = false;
     ringSnapActive_ = false;
     ringDragItemIndex_ = -1;
+    closeUiCommandMenu(ringCommandMenu_);
+    ringCommandItemIndex_ = -1;
     if (!spellRing_.addItem(ringGrabbedItem_)) {
         ringGrabbedItem_.ringIndex = spellRing_.activeRingIndex();
         spellRing_.items().push_back(ringGrabbedItem_);
@@ -837,6 +841,7 @@ void Game::restoreInventoryCarryState(const InventoryCarryState& state)
     spellRing_.ringItems() = state.ringItemsByRing;
     spellRing_.applyObjectParameters(objectCatalog_);
     spellRing_.normalizeItemPlacements();
+    observeRingItemInstanceIds();
     spellRing_.resetBaseWeightToCurrent();
     refreshOrbitEffects();
 }
@@ -874,6 +879,14 @@ Vec2 Game::latestWarpPointStartPosition() const
         }
     }
     return {};
+}
+
+Vec2 Game::warpPointStartPositionForCurrentRequest() const
+{
+    if (requestedWarpPointStartPosition_.has_value()) {
+        return *requestedWarpPointStartPosition_;
+    }
+    return latestWarpPointStartPosition();
 }
 
 void Game::rebuildUnlockedWarpPointsForStart(Vec2 latestPosition)
@@ -981,6 +994,9 @@ void Game::returnToBaseFromNormalStage(bool stageCleared, bool died)
     inventory_.setOpen(false);
     inventory_.cancelGrab();
     cancelRingGrab();
+    warpReturnConfirmActive_ = false;
+    warpReturnConfirmSelection_ = 0;
+    focusedWarpReturnPointIndex_ = -1;
     bossSpawned_ = false;
     hasBossSpawnPoint_ = false;
     retrySnapshot_ = RetrySnapshot{};
@@ -1035,6 +1051,9 @@ void Game::captureDungeonState()
     state.enemies = enemies_;
     state.worldDrops = worldDrops_;
     state.spawnedWarpPointCount = spawnedWarpPointCount_;
+    state.unlockedWarpPointCount = unlockedWarpPointCount_;
+    state.latestWarpPointPosition = latestWarpPointPosition_;
+    state.hasLatestWarpPointPosition = hasLatestWarpPointPosition_;
     state.bossSpawnPoint = bossSpawnPoint_;
     state.hasBossSpawnPoint = hasBossSpawnPoint_;
     state.bossSpawned = bossSpawned_;
@@ -1072,6 +1091,9 @@ bool Game::restoreDungeonState(bool useLatestWarpPoint)
     worldDrops_ = state.worldDrops;
     worldDrops_.setDropLimit(balance_.worldDropLimitPerStage);
     spawnedWarpPointCount_ = state.spawnedWarpPointCount;
+    unlockedWarpPointCount_ = state.unlockedWarpPointCount;
+    latestWarpPointPosition_ = state.latestWarpPointPosition;
+    hasLatestWarpPointPosition_ = state.hasLatestWarpPointPosition;
     bossSpawnPoint_ = state.bossSpawnPoint;
     hasBossSpawnPoint_ = state.hasBossSpawnPoint;
     bossSpawned_ = state.bossSpawned;
@@ -1086,7 +1108,7 @@ bool Game::restoreDungeonState(bool useLatestWarpPoint)
     player_ = Player{};
     player_.xpToNext = balance_.xpBase + player_.level * balance_.xpPerLevel;
     const Vec2 preferredStartPosition = useLatestWarpPoint
-        ? latestWarpPointStartPosition()
+        ? warpPointStartPositionForCurrentRequest()
         : tileWorldCenter(dungeonLayout_.startTile);
     player_.position = safePlayerStartPosition(preferredStartPosition);
     camera_.follow(player_.position, 1.0f);
@@ -1230,6 +1252,148 @@ Vec2 Game::safePlayerStartPosition(Vec2 preferredPosition)
     }
 
     return preferredPosition;
+}
+
+Vec2 Game::dungeonEntrancePosition() const
+{
+    return tileWorldCenter(dungeonLayout_.startTile) + Vec2{0.0f, DungeonEntranceYOffset};
+}
+
+int Game::nearbyDiscoveredWarpPointIndex() const
+{
+    if (!warpPointsEnabled_) {
+        return -1;
+    }
+
+    int nearest = -1;
+    float nearestDistanceSq = WarpPointReturnRadius * WarpPointReturnRadius;
+    for (int i = 0; i < static_cast<int>(warpPoints_.size()); ++i) {
+        const WarpPoint& point = warpPoints_[static_cast<std::size_t>(i)];
+        if (!point.discovered) {
+            continue;
+        }
+        const float distSq = distanceSquared(player_.position, point.position);
+        if (distSq <= nearestDistanceSq) {
+            nearestDistanceSq = distSq;
+            nearest = i;
+        }
+    }
+    return nearest;
+}
+
+bool Game::updateWarpReturnUi(const Input& input, UiContext& ui)
+{
+    if (mode_ != ScreenMode::Playing || enemyTestActive_) {
+        warpReturnConfirmActive_ = false;
+        warpReturnConfirmSelection_ = 0;
+        focusedWarpReturnPointIndex_ = -1;
+        return false;
+    }
+
+    if (warpReturnConfirmActive_) {
+        if (ui.hovered(warpReturnConfirmButtonRect(0))) {
+            warpReturnConfirmSelection_ = 0;
+        } else if (ui.hovered(warpReturnConfirmButtonRect(1))) {
+            warpReturnConfirmSelection_ = 1;
+        }
+        if (input.pressed(InputAction::MoveLeft) || input.pressed(InputAction::MoveUp)) {
+            warpReturnConfirmSelection_ = 0;
+        }
+        if (input.pressed(InputAction::MoveRight) || input.pressed(InputAction::MoveDown)) {
+            warpReturnConfirmSelection_ = 1;
+        }
+
+        const bool returnRequested =
+            ui.pressed(warpReturnConfirmButtonRect(0)) ||
+            ((input.confirmPressed() || input.useItemPressed()) && warpReturnConfirmSelection_ == 0);
+        const bool cancelRequested =
+            ui.pressed(warpReturnConfirmButtonRect(1)) ||
+            input.backPressed() ||
+            ((input.confirmPressed() || input.useItemPressed()) && warpReturnConfirmSelection_ == 1);
+
+        if (returnRequested) {
+            warpReturnConfirmActive_ = false;
+            warpReturnConfirmSelection_ = 0;
+            focusedWarpReturnPointIndex_ = -1;
+            requestReturnToBaseTransition(false, false);
+            return true;
+        }
+        if (cancelRequested) {
+            warpReturnConfirmActive_ = false;
+            warpReturnConfirmSelection_ = 0;
+            const bool entranceNearby =
+                distanceSquared(player_.position, dungeonEntrancePosition()) <= WarpPointReturnRadius * WarpPointReturnRadius;
+            focusedWarpReturnPointIndex_ = entranceNearby
+                ? DungeonEntranceReturnFocusIndex
+                : nearbyDiscoveredWarpPointIndex();
+            return true;
+        }
+
+        ui.block(warpReturnConfirmRect());
+        return true;
+    }
+
+    const bool entranceNearby =
+        distanceSquared(player_.position, dungeonEntrancePosition()) <= WarpPointReturnRadius * WarpPointReturnRadius;
+    focusedWarpReturnPointIndex_ = entranceNearby
+        ? DungeonEntranceReturnFocusIndex
+        : nearbyDiscoveredWarpPointIndex();
+    if (focusedWarpReturnPointIndex_ >= 0 && (input.confirmPressed() || input.useItemPressed())) {
+        warpReturnConfirmActive_ = true;
+        warpReturnConfirmSelection_ = 0;
+        ui.block(warpReturnConfirmRect());
+        return true;
+    }
+    if (focusedWarpReturnPointIndex_ == DungeonEntranceReturnFocusIndex && (input.confirmPressed() || input.useItemPressed())) {
+        warpReturnConfirmActive_ = true;
+        warpReturnConfirmSelection_ = 0;
+        ui.block(warpReturnConfirmRect());
+        return true;
+    }
+    return false;
+}
+
+bool Game::unlockAllWarpPointsForCurrentDungeon()
+{
+    if (mode_ != ScreenMode::Playing || enemyTestActive_ || !warpPointsEnabled_ || warpPoints_.empty()) {
+        return false;
+    }
+
+    int newlyDiscovered = 0;
+    Vec2 latestPosition{};
+    bool hasLatest = false;
+    for (WarpPoint& point : warpPoints_) {
+        const bool wasDiscovered = point.discovered;
+        point.discovered = true;
+        point.unlocked = true;
+        point.snapshotCaptured = true;
+        if (!wasDiscovered) {
+            ++newlyDiscovered;
+            point.lightRevealTimer = 0.0f;
+            point.lightRevealAnimating = true;
+        }
+        latestPosition = point.position;
+        hasLatest = true;
+    }
+
+    unlockedWarpPointCount_ = discoveredWarpPointCount();
+    latestWarpPointPosition_ = latestPosition;
+    hasLatestWarpPointPosition_ = hasLatest;
+
+    const int bossWarpPointIndex = std::max(0, static_cast<int>(warpPoints_.size()) - 1);
+    for (const WarpPoint& point : warpPoints_) {
+        if (point.index == bossWarpPointIndex) {
+            configureBossSpawnPointFromWarp(point.position);
+            break;
+        }
+    }
+
+    captureRetrySnapshotAtWarpPoint();
+    captureDungeonState();
+    reloadNotice_ = newlyDiscovered > 0 ? "ワープポイント全開放" : "ワープポイントは全開放済み";
+    reloadNoticeTimer_ = 2.0f;
+    pushDungeonLog(reloadNotice_, "warp_point_all");
+    return true;
 }
 
 void Game::updateWarpPoints(float dt)
@@ -3356,6 +3520,34 @@ void Game::handleRingItemBreakEvents()
         reloadNotice_ = message;
         reloadNoticeTimer_ = 1.8f;
     }
+}
+
+void Game::renderDungeonEntrance(Renderer& renderer) const
+{
+    if (enemyTestActive_) {
+        return;
+    }
+
+    const Vec2 center = dungeonEntrancePosition();
+    renderer.fillEllipse(center + Vec2{0.0f, 44.0f}, {54.0f, 15.0f}, {0, 0, 0, 110});
+    renderer.fillSoftCircle(center + Vec2{0.0f, 10.0f}, 68.0f, {96, 190, 220, 44});
+
+    renderer.fillCircle(center + Vec2{0.0f, 6.0f}, 48.0f, {58, 62, 78, 245});
+    renderer.fillRect(center + Vec2{-48.0f, 4.0f}, {96.0f, 54.0f}, {58, 62, 78, 245});
+    renderer.drawCircle(center + Vec2{0.0f, 6.0f}, 48.0f, {170, 186, 204, 210});
+    renderer.drawRect(center + Vec2{-48.0f, 4.0f}, {96.0f, 54.0f}, {170, 186, 204, 210});
+
+    renderer.fillCircle(center + Vec2{0.0f, 13.0f}, 32.0f, {8, 12, 22, 252});
+    renderer.fillRect(center + Vec2{-32.0f, 13.0f}, {64.0f, 45.0f}, {8, 12, 22, 252});
+    renderer.drawCircle(center + Vec2{0.0f, 13.0f}, 32.0f, {64, 180, 218, 150});
+    renderer.drawRect(center + Vec2{-32.0f, 13.0f}, {64.0f, 45.0f}, {64, 180, 218, 150});
+
+    renderer.fillRect(center + Vec2{-42.0f, 52.0f}, {84.0f, 10.0f}, {122, 92, 62, 240});
+    renderer.drawLine(center + Vec2{-38.0f, 52.0f}, center + Vec2{38.0f, 52.0f}, {234, 202, 132, 210});
+    renderer.fillCircle(center + Vec2{-39.0f, 8.0f}, 6.0f, {134, 140, 154, 235});
+    renderer.fillCircle(center + Vec2{37.0f, 11.0f}, 5.0f, {134, 140, 154, 235});
+    renderer.fillCircle(center + Vec2{-24.0f, -24.0f}, 5.0f, {128, 134, 150, 225});
+    renderer.fillCircle(center + Vec2{22.0f, -27.0f}, 5.0f, {128, 134, 150, 225});
 }
 
 void Game::renderWarpPoints(Renderer& renderer) const

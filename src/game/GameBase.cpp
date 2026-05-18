@@ -103,7 +103,11 @@ constexpr float MerchantSellItemYOffset = MerchantSellSourceYOffset + 16.0f;
 constexpr float MerchantSellRingYOffset = MerchantSellSourceYOffset + 40.0f + 40.0f;
 constexpr float BaseRingPreviewScale = 0.8f;
 constexpr float MerchantSellRingPreviewScale = 0.9f;
+constexpr float MerchantSellRingItemLabelExtraHeight = 30.0f;
+constexpr float ExternalWarehouseGridYOffset = 44.0f;
+constexpr float ExternalWarehousePageSelectorGap = 10.0f;
 constexpr float BaseFacilitySpawnGap = 18.0f;
+constexpr float BaseMineExitReturnUpOffset = 40.0f;
 
 enum class BaseFacilitySpawnSide {
     Above,
@@ -194,6 +198,36 @@ UiRect merchantSellGridSlotRect(int index)
     UiRect rect = merchantGridSlotRect(index);
     rect.pos.y += MerchantSellItemYOffset;
     return rect;
+}
+
+UiRect externalWarehouseSourceSlotRect(UiRect(*sourceSlotRect)(int), int index)
+{
+    UiRect rect = sourceSlotRect(index);
+    rect.pos.y += ExternalWarehouseGridYOffset;
+    return rect;
+}
+
+UiPageSelectorRects externalWarehousePageSelectorRects(UiRect(*sourceSlotRect)(int))
+{
+    const UiRect first = externalWarehouseSourceSlotRect(sourceSlotRect, 0);
+    const UiRect last = externalWarehouseSourceSlotRect(sourceSlotRect, StorageColumns - 1);
+    return uiPageSelectorRectsFromNextButton(
+        {last.pos.x + last.size.x - StoragePageButtonSize, first.pos.y - StoragePageButtonSize - ExternalWarehousePageSelectorGap},
+        StoragePageTextWidth);
+}
+
+void drawExternalWarehouseSourceHeader(
+    Renderer& renderer,
+    UiRect(*sourceSlotRect)(int),
+    int page,
+    int pageCount)
+{
+    const UiPageSelectorRects pageRects = externalWarehousePageSelectorRects(sourceSlotRect);
+    char buffer[64];
+    std::snprintf(buffer, sizeof(buffer), "%d/%d", page + 1, pageCount);
+    drawTextCentered(renderer, pageRects.text, pageRects.text.pos.y + StoragePageTextYOffset, buffer, {198, 198, 206, 255}, StoragePageTextScale);
+    drawUiRectButton(renderer, pageRects.prev, "<", false);
+    drawUiRectButton(renderer, pageRects.next, ">", false);
 }
 
 Vec2 baseRingPreviewCenterFromGrid(UiRect(*slotRect)(int), float yOffset)
@@ -2327,7 +2361,12 @@ void Game::maybeStartFirstDungeonDialogue()
     if (alreadySeen) {
         return;
     }
+    if (dungeonRingIntroActive()) {
+        firstDungeonDialoguePendingAfterRingIntro_ = true;
+        return;
+    }
 
+    firstDungeonDialoguePendingAfterRingIntro_ = false;
     addStoryFlag(std::string(Flag));
     dialogue_.start(firstDungeonDialogue());
 }
@@ -2338,8 +2377,53 @@ void Game::placeBasePlayerAtMineExitReturnPoint()
     const UiRect mineExitRect = toUiRect(baseFacilityRectFor(BaseArea::Outdoor, "mine_exit", toBaseEditRect(fallback)));
     baseArea_ = BaseArea::Outdoor;
     basePlayerPosition_ = baseFacilitySpawnPosition(mineExitRect, BaseFacilitySpawnSide::Above, balance_.playerRadius);
+    const UiRect bounds = baseMapBounds();
+    basePlayerPosition_.y = std::clamp(
+        basePlayerPosition_.y - BaseMineExitReturnUpOffset,
+        bounds.pos.y + balance_.playerRadius,
+        bounds.pos.y + bounds.size.y - balance_.playerRadius);
     baseOutdoorPlayerPosition_ = basePlayerPosition_;
     basePlayerFacing_ = {0.0f, 1.0f};
+}
+
+std::vector<Game::WarpPoint> Game::selectableWarpPointsForCurrentStageStart() const
+{
+    std::vector<WarpPoint> points;
+    const std::vector<WarpPoint>* source = nullptr;
+    const auto retainedStage = dungeonStates_.find(currentStageId_);
+    if (retainedStage != dungeonStates_.end() && retainedStage->second.valid) {
+        source = &retainedStage->second.warpPoints;
+    } else if (!warpPoints_.empty()) {
+        source = &warpPoints_;
+    }
+
+    if (source != nullptr) {
+        for (const WarpPoint& point : *source) {
+            if (point.discovered) {
+                points.push_back(point);
+            }
+        }
+    }
+
+    if (points.empty() && unlockedWarpPointCount_ > 0 && hasLatestWarpPointPosition_) {
+        WarpPoint fallback;
+        fallback.stageId = currentStage_ + 1;
+        fallback.index = std::max(0, unlockedWarpPointCount_ - 1);
+        fallback.position = latestWarpPointPosition_;
+        fallback.tilePosition = {
+            tileMap_.worldToTile(latestWarpPointPosition_.x),
+            tileMap_.worldToTile(latestWarpPointPosition_.y),
+        };
+        fallback.discovered = true;
+        fallback.unlocked = true;
+        fallback.snapshotCaptured = true;
+        points.push_back(fallback);
+    }
+
+    std::sort(points.begin(), points.end(), [](const WarpPoint& left, const WarpPoint& right) {
+        return left.index < right.index;
+    });
+    return points;
 }
 
 void Game::placeBasePlayerAtHomeDoorResumePoint()
@@ -2942,7 +3026,7 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
             baseProcessingCommandSlot_ = slotIndex;
             Vec2 commandAnchor = baseProcessingGridSlotRect(slotIndex).pos;
             if (target.source == BaseItemSource::Warehouse) {
-                commandAnchor = storageWarehouseSlotRect(slotIndex).pos;
+                commandAnchor = externalWarehouseSourceSlotRect(baseProcessingGridSlotRect, slotIndex).pos;
             } else if (target.source != BaseItemSource::Backpack &&
                 target.ringIndex >= 0 &&
                 target.ringIndex < SpellRingCount) {
@@ -3063,13 +3147,14 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
         if (baseItemSourceIsWarehouse(baseProcessingSource_)) {
             const int warehousePageCount = std::max(1, (warehouseCapacity() + StoragePaneSlotCount - 1) / StoragePaneSlotCount);
             baseStorageWarehousePage_ = std::clamp(baseStorageWarehousePage_, 0, warehousePageCount - 1);
+            const UiPageSelectorRects pageRects = externalWarehousePageSelectorRects(baseProcessingGridSlotRect);
             if (input.activeRingDelta() != 0) {
                 baseStorageWarehousePage_ = wrapStoragePageIndex(baseStorageWarehousePage_, input.activeRingDelta(), warehousePageCount);
             }
-            if (ui.pressed(storagePrevPageButtonRect())) {
+            if (ui.pressed(pageRects.prev)) {
                 baseStorageWarehousePage_ = wrapStoragePageIndex(baseStorageWarehousePage_, -1, warehousePageCount);
             }
-            if (ui.pressed(storageNextPageButtonRect())) {
+            if (ui.pressed(pageRects.next)) {
                 baseStorageWarehousePage_ = wrapStoragePageIndex(baseStorageWarehousePage_, 1, warehousePageCount);
             }
 
@@ -3087,7 +3172,7 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
                 baseProcessingSelection_ = std::min(StoragePaneSlotCount - 1, baseProcessingSelection_ + StorageColumns);
             }
             for (int i = 0; i < StoragePaneSlotCount; ++i) {
-                const UiRect rect = storageWarehouseSlotRect(i);
+                const UiRect rect = externalWarehouseSourceSlotRect(baseProcessingGridSlotRect, i);
                 if (rect.contains(ui.mouse())) {
                     baseProcessingSelection_ = i;
                 }
@@ -3260,7 +3345,7 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
             baseMerchantSellCommandSource_ = baseMerchantSellSource_;
             Vec2 commandAnchor = merchantSellGridSlotRect(slotIndex).pos;
             if (target.source == BaseItemSource::Warehouse) {
-                commandAnchor = storageWarehouseSlotRect(slotIndex).pos;
+                commandAnchor = externalWarehouseSourceSlotRect(merchantSellGridSlotRect, slotIndex).pos;
             } else if (target.source != BaseItemSource::Backpack &&
                 target.ringIndex >= 0 &&
                 target.ringIndex < SpellRingCount) {
@@ -3425,19 +3510,20 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
             if (baseItemSourceIsWarehouse(baseMerchantSellSource_)) {
                 const int warehousePageCount = std::max(1, (warehouseCapacity() + StoragePaneSlotCount - 1) / StoragePaneSlotCount);
                 baseStorageWarehousePage_ = std::clamp(baseStorageWarehousePage_, 0, warehousePageCount - 1);
+                const UiPageSelectorRects pageRects = externalWarehousePageSelectorRects(merchantSellGridSlotRect);
                 if (input.activeRingDelta() != 0) {
                     baseStorageWarehousePage_ = wrapStoragePageIndex(baseStorageWarehousePage_, input.activeRingDelta(), warehousePageCount);
                 }
-                if (ui.pressed(storagePrevPageButtonRect())) {
+                if (ui.pressed(pageRects.prev)) {
                     baseStorageWarehousePage_ = wrapStoragePageIndex(baseStorageWarehousePage_, -1, warehousePageCount);
                 }
-                if (ui.pressed(storageNextPageButtonRect())) {
+                if (ui.pressed(pageRects.next)) {
                     baseStorageWarehousePage_ = wrapStoragePageIndex(baseStorageWarehousePage_, 1, warehousePageCount);
                 }
 
                 moveGridSelection(baseSellSelection_, StoragePaneSlotCount);
                 for (int i = 0; i < StoragePaneSlotCount; ++i) {
-                    const UiRect rect = storageWarehouseSlotRect(i);
+                    const UiRect rect = externalWarehouseSourceSlotRect(merchantSellGridSlotRect, i);
                     if (rect.contains(ui.mouse())) {
                         baseSellSelection_ = i;
                     }
@@ -3653,45 +3739,32 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
         }
 
         if (uiCancelRequested(baseCancelState_, input, ui, basePanelRect())) {
-            baseMiningStartChoiceActive_ = false;
+            if (baseWarpPointSelectActive_) {
+                baseWarpPointSelectActive_ = false;
+            } else {
+                baseMiningStartChoiceActive_ = false;
+            }
             baseRegenerateConfirmActive_ = false;
             baseStatus_.clear();
             return;
         }
 
-        const std::vector<StageDefinition> selectableStages = stageCatalog_.getStagesSortedByDisplayOrder();
-        const int selectableStageCount = std::clamp(unlockedStages_, 0, static_cast<int>(selectableStages.size()));
+        const std::vector<StageDefinition> selectableStages = selectableStageDefinitionsForCurrentUnlockState();
+        const int selectableStageCount = static_cast<int>(selectableStages.size());
         const auto selectedStageIndex = [&]() {
             for (int i = 0; i < selectableStageCount; ++i) {
                 if (selectableStages[static_cast<std::size_t>(i)].id == currentStageId_) {
                     return i;
                 }
             }
-            return std::clamp(currentStage_, 0, std::max(0, selectableStageCount - 1));
+            return 0;
         };
-        const auto syncWarpStateForSelectedStage = [this]() {
-            auto stateIt = dungeonStates_.find(currentStageId_);
-            if (stateIt == dungeonStates_.end() || !stateIt->second.valid) {
-                unlockedWarpPointCount_ = 0;
-                hasLatestWarpPointPosition_ = false;
-                latestWarpPointPosition_ = {};
-                return;
-            }
-
-            int discoveredCount = 0;
-            Vec2 latestPosition{};
-            bool hasLatest = false;
-            for (const WarpPoint& point : stateIt->second.warpPoints) {
-                if (!point.discovered) {
-                    continue;
-                }
-                ++discoveredCount;
-                latestPosition = point.position;
-                hasLatest = true;
-            }
-            unlockedWarpPointCount_ = discoveredCount;
-            hasLatestWarpPointPosition_ = hasLatest;
-            latestWarpPointPosition_ = hasLatest ? latestPosition : Vec2{};
+        const auto stageSelectorHitRect = [](UiRect rect) {
+            constexpr float Padding = 12.0f;
+            return UiRect{
+                {rect.pos.x - Padding, rect.pos.y - Padding},
+                {rect.size.x + Padding * 2.0f, rect.size.y + Padding * 2.0f},
+            };
         };
         const auto changeSelectedStage = [&](int delta) {
             if (selectableStageCount <= 1) {
@@ -3703,24 +3776,91 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
                 return false;
             }
             const StageDefinition& stage = selectableStages[static_cast<std::size_t>(nextIndex)];
-            currentStage_ = nextIndex;
             currentStageId_ = stage.id;
+            currentStage_ = stageCatalogIndexForId(currentStageId_);
             resolveCurrentStageDefinition();
-            syncWarpStateForSelectedStage();
+            syncWarpStateForCurrentStage();
             baseMiningStartSelection_ = unlockedWarpPointCount_ > 0 ? 1 : 0;
+            baseWarpPointSelectActive_ = false;
+            baseWarpPointSelection_ = 0;
             baseRegenerateConfirmActive_ = false;
             baseStatus_.clear();
             return true;
         };
 
+        const std::vector<WarpPoint> selectableWarpPoints = selectableWarpPointsForCurrentStageStart();
+        const auto startFromSelectedWarpPoint = [&]() {
+            if (selectableWarpPoints.empty()) {
+                baseStatus_ = "解放済みワープポイントがありません";
+                return false;
+            }
+            baseWarpPointSelection_ = std::clamp(
+                baseWarpPointSelection_,
+                0,
+                static_cast<int>(selectableWarpPoints.size()) - 1);
+            requestedWarpPointStartPosition_ = selectableWarpPoints[static_cast<std::size_t>(baseWarpPointSelection_)].position;
+            baseWarpPointSelectActive_ = false;
+            baseRegenerateConfirmActive_ = false;
+            baseStatus_.clear();
+            requestMiningStartTransition(true, false);
+            return true;
+        };
+
+        if (baseWarpPointSelectActive_) {
+            if (selectableWarpPoints.empty()) {
+                baseWarpPointSelectActive_ = false;
+                baseStatus_ = "解放済みワープポイントがありません";
+                ui.block(basePanelRect());
+                return;
+            }
+
+            const int warpPointCount = static_cast<int>(selectableWarpPoints.size());
+            baseWarpPointSelection_ = std::clamp(baseWarpPointSelection_, 0, warpPointCount - 1);
+            const int warpDelta =
+                (input.pressed(InputAction::MoveLeft) || input.pressed(InputAction::MoveUp) ? -1 : 0) +
+                (input.pressed(InputAction::MoveRight) || input.pressed(InputAction::MoveDown) ? 1 : 0) +
+                input.activeRingDelta();
+            if (warpDelta != 0) {
+                baseWarpPointSelection_ = wrapStoragePageIndex(baseWarpPointSelection_, warpDelta, warpPointCount);
+            }
+            for (int i = 0; i < warpPointCount; ++i) {
+                const UiRect rect = baseMiningWarpPointChoiceRect(i);
+                if (rect.contains(ui.mouse())) {
+                    baseWarpPointSelection_ = i;
+                }
+                if (ui.pressed(rect)) {
+                    baseWarpPointSelection_ = i;
+                    if (startFromSelectedWarpPoint()) {
+                        return;
+                    }
+                }
+            }
+            if (input.confirmPressed() || input.useItemPressed()) {
+                if (startFromSelectedWarpPoint()) {
+                    return;
+                }
+            }
+            ui.block(basePanelRect());
+            return;
+        }
+
         const UiPageSelectorRects stageSelector = baseMiningStageSelectorRects();
-        if (input.pressed(InputAction::MoveLeft) || ui.pressed(stageSelector.prev)) {
+        const int pageDelta = input.activeRingDelta();
+        if (pageDelta < 0 && changeSelectedStage(pageDelta)) {
+            ui.block(basePanelRect());
+            return;
+        }
+        if (pageDelta > 0 && changeSelectedStage(pageDelta)) {
+            ui.block(basePanelRect());
+            return;
+        }
+        if (input.pressed(InputAction::MoveLeft) || ui.pressed(stageSelectorHitRect(stageSelector.prev))) {
             if (changeSelectedStage(-1)) {
                 ui.block(basePanelRect());
                 return;
             }
         }
-        if (input.pressed(InputAction::MoveRight) || ui.pressed(stageSelector.next)) {
+        if (input.pressed(InputAction::MoveRight) || ui.pressed(stageSelectorHitRect(stageSelector.next))) {
             if (changeSelectedStage(1)) {
                 ui.block(basePanelRect());
                 return;
@@ -3739,38 +3879,56 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
             }
             if (ui.pressed(rect)) {
                 baseMiningStartSelection_ = i;
-                if (i == 1 && unlockedWarpPointCount_ <= 0) {
+                if (i == 1 && selectableWarpPoints.empty()) {
                     baseStatus_ = "解放済みワープポイントがありません";
+                    return;
+                }
+                if (i == 1) {
+                    baseWarpPointSelectActive_ = true;
+                    baseWarpPointSelection_ = std::clamp(
+                        baseWarpPointSelection_,
+                        0,
+                        static_cast<int>(selectableWarpPoints.size()) - 1);
+                    baseStatus_.clear();
                     return;
                 }
                 if (i == 2) {
                     if (!canRegenerateCurrentStage()) {
-                        baseStatus_ = "全ワープポイント発見後に再生成できます";
+                        baseStatus_ = "全ワープポイントを解放すると可能";
                         return;
                     }
                     openRegenerateConfirm();
                     return;
                 }
                 baseRegenerateConfirmActive_ = false;
-                requestMiningStartTransition(i == 1, false);
+                requestMiningStartTransition(false, false);
                 return;
             }
         }
         if (input.confirmPressed() || input.useItemPressed()) {
-            if (baseMiningStartSelection_ == 1 && unlockedWarpPointCount_ <= 0) {
+            if (baseMiningStartSelection_ == 1 && selectableWarpPoints.empty()) {
                 baseStatus_ = "解放済みワープポイントがありません";
+                return;
+            }
+            if (baseMiningStartSelection_ == 1) {
+                baseWarpPointSelectActive_ = true;
+                baseWarpPointSelection_ = std::clamp(
+                    baseWarpPointSelection_,
+                    0,
+                    static_cast<int>(selectableWarpPoints.size()) - 1);
+                baseStatus_.clear();
                 return;
             }
             if (baseMiningStartSelection_ == 2) {
                 if (!canRegenerateCurrentStage()) {
-                    baseStatus_ = "全ワープポイント発見後に再生成できます";
+                    baseStatus_ = "全ワープポイントを解放すると可能";
                     return;
                 }
                 openRegenerateConfirm();
                 return;
             }
             baseRegenerateConfirmActive_ = false;
-            requestMiningStartTransition(baseMiningStartSelection_ == 1, false);
+            requestMiningStartTransition(false, false);
             return;
         }
         ui.block(basePanelRect());
@@ -3790,8 +3948,12 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
         }
         switch (facility.onInteract) {
         case BaseFacilityAction::MineExit:
+            clampCurrentStageToSelectableStages();
+            syncWarpStateForCurrentStage();
             baseMiningStartChoiceActive_ = true;
             baseMiningStartSelection_ = unlockedWarpPointCount_ > 0 ? 1 : 0;
+            baseWarpPointSelectActive_ = false;
+            baseWarpPointSelection_ = 0;
             baseRegenerateConfirmActive_ = false;
             baseStatus_.clear();
             break;
@@ -4444,7 +4606,9 @@ void Game::renderBaseScreen(Renderer& renderer) const
         } else if (baseUpgradeActive_) {
             panelHelp = "F/Enter 強化  Esc/右クリック 戻る";
         } else if (baseMiningStartChoiceActive_) {
-            panelHelp = "F/Enter 出発  左クリック 決定  Esc/右クリック 戻る";
+            panelHelp = baseWarpPointSelectActive_
+                ? "F/Enter 出発  Z/X・方向キー 選択  Esc/右クリック 戻る"
+                : "F/Enter 決定  左クリック 決定  Esc/右クリック 戻る";
         }
         const char* panelTitle = "魔女の拠点";
         if (baseBookshelfActive_) {
@@ -4464,7 +4628,7 @@ void Game::renderBaseScreen(Renderer& renderer) const
         } else if (baseUpgradeActive_) {
             panelTitle = "拠点強化炉";
         } else if (baseMiningStartChoiceActive_) {
-            panelTitle = "採掘出口";
+            panelTitle = "ダンジョン入口";
         }
         const bool panelCancelButton = true;
         if (panelCancelButton) {
@@ -4652,18 +4816,20 @@ void Game::renderBaseScreen(Renderer& renderer) const
         } else if (warehouseSource) {
             const int warehousePageCount = std::max(1, (warehouseCapacity() + StoragePaneSlotCount - 1) / StoragePaneSlotCount);
             const int warehousePage = std::clamp(baseStorageWarehousePage_, 0, warehousePageCount - 1);
-            std::snprintf(buffer, sizeof(buffer), "\xEF\xBC\x88%d/%d\xEF\xBC\x89", warehouseUsedSlots(), warehouseCapacity());
-            drawStorageHeader(renderer, StorageHeaderTextX, StorageBottomHeaderY, "収納箱", buffer, {255, 230, 150, 255});
-            drawStoragePageSelector(renderer, warehousePage, warehousePageCount);
+            drawExternalWarehouseSourceHeader(
+                renderer,
+                baseProcessingGridSlotRect,
+                warehousePage,
+                warehousePageCount);
             for (int i = 0; i < StoragePaneSlotCount; ++i) {
                 const InventoryUiEntryView view = entryViewForScreenSlot(i);
                 const bool unavailable = view.item != nullptr && !processingTargetAvailable(processingTargetForScreenSlot(i));
-                InventoryUiSlotStyle style{i == baseProcessingSelection_, unavailable, 40.0f};
+                InventoryUiSlotStyle style{i == baseProcessingSelection_, unavailable, 48.0f};
                 if (view.item != nullptr && view.instance == nullptr && view.stackCount > 1) {
                     style.showTopRightCount = true;
                     style.topRightCount = view.stackCount;
                 }
-                drawInventoryUiSlot(renderer, storageWarehouseSlotRect(i), view, style);
+                drawInventoryUiSlot(renderer, externalWarehouseSourceSlotRect(baseProcessingGridSlotRect, i), view, style);
             }
         } else {
             for (int i = 0; i < inventory_.screenSlotCount(); ++i) {
@@ -4999,6 +5165,37 @@ void Game::renderBaseScreen(Renderer& renderer) const
 
                 const bool warehouseSource = baseItemSourceIsWarehouse(baseMerchantSellSource_);
                 const bool ringSource = baseItemSourceIsRing(baseMerchantSellSource_);
+                const auto sellTargetBottomLabel = [this, &blockedSellLabel](
+                    MerchantSellTarget target,
+                    std::string& outLabel,
+                    Color& outColor) {
+                    outLabel.clear();
+                    if (!target.valid) {
+                        return false;
+                    }
+                    const std::string_view blockedLabel = blockedSellLabel(target);
+                    if (!blockedLabel.empty()) {
+                        outLabel = std::string(blockedLabel);
+                        outColor = ui::TextDisabled;
+                        return true;
+                    }
+
+                    char priceBuffer[32];
+                    std::snprintf(priceBuffer, sizeof(priceBuffer), "%dG", merchantSellTargetPrice(target));
+                    outLabel = priceBuffer;
+                    outColor = ui::Text;
+                    return true;
+                };
+                const auto applySellTargetBottomLabel = [&sellTargetBottomLabel](
+                    InventoryUiSlotStyle& style,
+                    MerchantSellTarget target) {
+                    std::string label;
+                    Color labelColor = ui::Text;
+                    if (sellTargetBottomLabel(target, label, labelColor)) {
+                        style.bottomLabel = label;
+                        style.bottomLabelColor = labelColor;
+                    }
+                };
                 if (ringSource) {
                     const int ringIndex = std::clamp(ringIndexFromBaseItemSource(baseMerchantSellSource_), 0, SpellRingCount - 1);
                     const std::vector<SpellRingItem>& ringItems = spellRing_.itemsForRing(ringIndex);
@@ -5013,6 +5210,24 @@ void Game::renderBaseScreen(Renderer& renderer) const
                         ringIndex,
                         selectedRingIndex,
                         ringPreviewSeconds);
+                    for (int i = 0; i < static_cast<int>(ringItems.size()); ++i) {
+                        const MerchantSellTarget target = merchantSellTargetForSourceSlot(baseMerchantSellSource_, i);
+                        std::string label;
+                        Color labelColor = ui::Text;
+                        if (!sellTargetBottomLabel(target, label, labelColor)) {
+                            continue;
+                        }
+                        UiRect labelRect = merchantSellRingItemRect(
+                            ringItems[static_cast<std::size_t>(i)],
+                            spellRing_,
+                            balance_,
+                            ringIndex,
+                            i,
+                            static_cast<int>(ringItems.size()),
+                            ringPreviewSeconds);
+                        labelRect.size.y += MerchantSellRingItemLabelExtraHeight;
+                        drawInventoryUiSlotBottomLabel(renderer, labelRect, label, labelColor);
+                    }
                     if (ringItems.empty()) {
                         const Vec2 emptySize = renderer.measureText("アイテム未配置", 2);
                         renderer.drawText(
@@ -5026,29 +5241,25 @@ void Game::renderBaseScreen(Renderer& renderer) const
                 } else if (warehouseSource) {
                     const int warehousePageCount = std::max(1, (warehouseCapacity() + StoragePaneSlotCount - 1) / StoragePaneSlotCount);
                     const int warehousePage = std::clamp(baseStorageWarehousePage_, 0, warehousePageCount - 1);
-                    std::snprintf(buffer, sizeof(buffer), "\xEF\xBC\x88%d/%d\xEF\xBC\x89", warehouseUsedSlots(), warehouseCapacity());
-                    drawStorageHeader(renderer, StorageHeaderTextX, StorageBottomHeaderY, "収納箱", buffer, {255, 230, 150, 255});
-                    drawStoragePageSelector(renderer, warehousePage, warehousePageCount);
+                    drawExternalWarehouseSourceHeader(
+                        renderer,
+                        merchantSellGridSlotRect,
+                        warehousePage,
+                        warehousePageCount);
                     for (int i = 0; i < StoragePaneSlotCount; ++i) {
                         const MerchantSellTarget target = merchantSellTargetForSourceSlot(baseMerchantSellSource_, i);
                         const InventoryUiEntryView view = entryViewForSellTarget(target);
                         const std::string_view blockedLabel = blockedSellLabel(target);
                         const bool disabled = view.item != nullptr && !blockedLabel.empty();
-                        InventoryUiSlotStyle style{i == baseSellSelection_, disabled, 40.0f};
+                        InventoryUiSlotStyle style{i == baseSellSelection_, disabled, 48.0f};
                         if (view.item != nullptr) {
-                            if (!blockedLabel.empty()) {
-                                style.bottomLabel = std::string(blockedLabel);
-                                style.bottomLabelColor = ui::TextDisabled;
-                            } else {
-                                std::snprintf(buffer, sizeof(buffer), "%dG", merchantSellTargetPrice(target));
-                                style.bottomLabel = buffer;
-                            }
+                            applySellTargetBottomLabel(style, target);
                         }
                         if (view.item != nullptr && view.instance == nullptr && view.stackCount > 1) {
                             style.showTopRightCount = true;
                             style.topRightCount = view.stackCount;
                         }
-                        drawInventoryUiSlot(renderer, storageWarehouseSlotRect(i), view, style);
+                        drawInventoryUiSlot(renderer, externalWarehouseSourceSlotRect(merchantSellGridSlotRect, i), view, style);
                     }
                 } else {
                     for (int i = 0; i < inventory_.screenSlotCount(); ++i) {
@@ -5059,13 +5270,7 @@ void Game::renderBaseScreen(Renderer& renderer) const
                         const UiRect rect = merchantSellGridSlotRect(i);
                         InventoryUiSlotStyle style{i == baseSellSelection_, disabled, 48.0f};
                         if (view.item != nullptr) {
-                            if (!blockedLabel.empty()) {
-                                style.bottomLabel = std::string(blockedLabel);
-                                style.bottomLabelColor = ui::TextDisabled;
-                            } else {
-                                std::snprintf(buffer, sizeof(buffer), "%dG", merchantSellTargetPrice(target));
-                                style.bottomLabel = buffer;
-                            }
+                            applySellTargetBottomLabel(style, target);
                         }
                         if (view.item != nullptr && view.instance == nullptr && view.stackCount > 1) {
                             style.showTopRightCount = true;
@@ -5362,10 +5567,11 @@ void Game::renderBaseScreen(Renderer& renderer) const
                 scale);
         };
 
-        const std::vector<StageDefinition> selectableStages = stageCatalog_.getStagesSortedByDisplayOrder();
-        const int selectableStageCount = std::clamp(unlockedStages_, 0, static_cast<int>(selectableStages.size()));
+        const std::vector<StageDefinition> selectableStages = selectableStageDefinitionsForCurrentUnlockState();
+        const int selectableStageCount = static_cast<int>(selectableStages.size());
         const bool canSelectDestination = selectableStageCount > 1;
         const UiPageSelectorRects stageSelector = baseMiningStageSelectorRects();
+        const std::vector<WarpPoint> selectableWarpPoints = selectableWarpPointsForCurrentStageStart();
 
         renderer.drawText({contentLeft, body.pos.y}, "行き先", {198, 198, 206, 255}, 2);
         drawUiRectButton(renderer, stageSelector.prev, "<", false);
@@ -5384,21 +5590,73 @@ void Game::renderBaseScreen(Renderer& renderer) const
         warpProgressStyle.iconTextGap = 8.0f;
         warpProgressStyle.iconScale = 28.0f / std::max(1.0f, renderer.measureText("0", warpProgressStyle.scale).y);
         const std::string warpProgressText = inlineWorldIconTag(worldIconKey(WorldIconId::WarpPoint)) + std::string(buffer);
-        drawInlineItemText(renderer, objectCatalog_, {contentLeft, body.pos.y + 44.0f}, warpProgressText, warpProgressStyle);
-        renderer.drawText({contentLeft, body.pos.y + 78.0f}, "出発地点を選んでください", {198, 198, 206, 255}, 2);
+        const Vec2 warpProgressSize = measureInlineItemText(renderer, warpProgressText, warpProgressStyle);
+        drawInlineItemText(
+            renderer,
+            objectCatalog_,
+            {
+                panel.pos.x + std::max(0.0f, (panel.size.x - warpProgressSize.x) * 0.5f),
+                body.pos.y + 44.0f,
+            },
+            warpProgressText,
+            warpProgressStyle);
 
-        for (int i = 0; i < BaseMiningStartChoiceCount; ++i) {
-            const bool disabled = (i == 1 && unlockedWarpPointCount_ <= 0) || (i == 2 && !canRegenerateCurrentStage());
+        if (baseWarpPointSelectActive_) {
+            renderer.drawText({contentLeft, body.pos.y + 78.0f}, "ワープポイントを選んでください", {198, 198, 206, 255}, 2);
+            if (selectableWarpPoints.empty()) {
+                renderer.drawText({contentLeft, body.pos.y + 140.0f}, "解放済みワープポイントがありません", ui::TextDisabled, 2);
+            }
+            for (int i = 0; i < static_cast<int>(selectableWarpPoints.size()); ++i) {
+                const WarpPoint& point = selectableWarpPoints[static_cast<std::size_t>(i)];
+                const UiRect rect = baseMiningWarpPointChoiceRect(i);
+                const bool hot = i == baseWarpPointSelection_;
+                UiButtonStyle buttonStyle = uiActionButtonStyle();
+                drawUiButton(renderer, rect, "", hot, buttonStyle);
+
+                InlineItemTextStyle pointTextStyle;
+                pointTextStyle.text = buttonStyle.text;
+                pointTextStyle.scale = 2;
+                pointTextStyle.iconTextGap = 6.0f;
+                pointTextStyle.iconScale = 24.0f / std::max(1.0f, renderer.measureText("0", pointTextStyle.scale).y);
+                const std::string pointText =
+                    inlineWorldIconTag(worldIconKey(WorldIconId::WarpPoint)) +
+                    "ワープ " + std::to_string(point.index + 1);
+                const Vec2 pointTextSize = measureInlineItemText(renderer, pointText, pointTextStyle);
+                drawInlineItemText(
+                    renderer,
+                    objectCatalog_,
+                    {
+                        rect.pos.x + 14.0f,
+                        rect.pos.y + std::max(0.0f, (rect.size.y - pointTextSize.y) * 0.5f),
+                    },
+                    pointText,
+                    pointTextStyle);
+
+                std::snprintf(buffer, sizeof(buffer), "%d/%d", point.index + 1, totalWarpPoints);
+                const Vec2 progressSize = renderer.measureText(buffer, 2);
+                renderer.drawText(
+                    {
+                        rect.pos.x + rect.size.x - progressSize.x - 14.0f,
+                        rect.pos.y + std::max(0.0f, (rect.size.y - progressSize.y) * 0.5f),
+                    },
+                    buffer,
+                    hot ? Color{255, 230, 150, 255} : Color{198, 198, 206, 255},
+                    2);
+            }
+        } else {
+            renderer.drawText({contentLeft, body.pos.y + 78.0f}, "出発地点を選んでください", {198, 198, 206, 255}, 2);
+            for (int i = 0; i < BaseMiningStartChoiceCount; ++i) {
+            const bool disabled = (i == 1 && selectableWarpPoints.empty()) || (i == 2 && !canRegenerateCurrentStage());
             const char* description = "";
             switch (i) {
             case 0:
-                description = hasRetainedDungeon ? "現在の坑道を入口から再開" : "新しい坑道を生成して入口から出発";
+                description = "入口から出発";
                 break;
             case 1:
-                description = disabled ? "ワープポイントを見つけると使えます" : "最後に発見した地点から再開";
+                description = disabled ? "ワープポイントを解放すると可能" : "解放済み地点から選んで出発";
                 break;
             case 2:
-                description = disabled ? "全発見後に坑道を作り直せます" : "地形・敵・宝箱・ワープ配置を作り直す";
+                description = disabled ? "全ワープポイントを解放すると可能" : "地形・敵・宝箱・ワープ配置を作り直す";
                 break;
             default:
                 break;
@@ -5446,6 +5704,7 @@ void Game::renderBaseScreen(Renderer& renderer) const
                 description,
                 disabled ? Color{150, 150, 160, 255} : Color{198, 198, 206, 255},
                 2);
+            }
         }
     } else {
         const char* promptName = nearest != nullptr ? nearest->displayName : "";

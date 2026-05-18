@@ -14,8 +14,10 @@ DebugConsoleLayout makeDefaultDebugConsoleLayout()
                     "ゲーム進行",
                     {
                         {DebugControlKind::Dropdown, "launch_mode", "起動モード", "game launch-mode", 0, 0, {"タイトル前から", "拠点から", "ダンジョンから", "敵テスト"}, {"pre-title", "base", "dungeon", "enemy-test"}},
+                        {DebugControlKind::Dropdown, "stage_unlock", "ステージ解放状態", "game stage-unlock", 0, 0, {"初期状態", "ステージ2解放", "ステージ3解放"}, {"initial", "stage2", "stage3"}},
                         {DebugControlKind::Button, "reset_data", "データ初期化", "game reset-data"},
                         {DebugControlKind::Button, "return_base", "拠点へ", "game return-base"},
+                        {DebugControlKind::Button, "unlock_all_warps", "ワープポイント全開放", "game warp-points unlock-all"},
                         {DebugControlKind::Button, "save_data", "セーブ", "game save"},
                     },
                 },

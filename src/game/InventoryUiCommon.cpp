@@ -363,6 +363,21 @@ void drawInlineItemTextRightAligned(
     drawInlineItemText(renderer, catalog, {rightTop.x - size.x, rightTop.y}, text, style);
 }
 
+void drawInventoryUiSlotBottomLabel(Renderer& renderer, UiRect rect, std::string_view label, Color color)
+{
+    if (label.empty()) {
+        return;
+    }
+    constexpr int LabelScale = 2;
+    const Vec2 labelSize = renderer.measureText(label, LabelScale);
+    constexpr float VisualCenterCorrectionX = 3.0f;
+    const Vec2 labelPos{
+        rect.pos.x + (rect.size.x - labelSize.x) * 0.5f + VisualCenterCorrectionX,
+        rect.pos.y + rect.size.y - labelSize.y - 4.0f,
+    };
+    renderer.drawOutlinedText(labelPos, label, color, {0, 0, 0, 120}, 6, LabelScale);
+}
+
 void drawInventoryUiSlot(
     Renderer& renderer,
     UiRect rect,
@@ -374,18 +389,7 @@ void drawInventoryUiSlot(
     const std::optional<InventoryUiItemStats> stats = inventoryUiEntryStats(entry);
     renderer.fillCircle(slotCenter, slotFrameRadius(rect), fill);
     const auto drawBottomLabel = [&]() {
-        if (style.bottomLabel.empty()) {
-            return;
-        }
-        constexpr int LabelScale = 2;
-        const Vec2 labelSize = renderer.measureText(style.bottomLabel, LabelScale);
-        // Native text measurement includes a small right-side safety margin.
-        constexpr float VisualCenterCorrectionX = 3.0f;
-        const Vec2 labelPos{
-            rect.pos.x + (rect.size.x - labelSize.x) * 0.5f + VisualCenterCorrectionX,
-            rect.pos.y + rect.size.y - labelSize.y - 4.0f,
-        };
-        renderer.drawOutlinedText(labelPos, style.bottomLabel, style.bottomLabelColor, {0, 0, 0, 120}, 6, LabelScale);
+        drawInventoryUiSlotBottomLabel(renderer, rect, style.bottomLabel, style.bottomLabelColor);
     };
     const auto drawTopRightCount = [&]() {
         if (!style.showTopRightCount) {

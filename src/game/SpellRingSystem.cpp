@@ -157,6 +157,16 @@ void applyItemInstance(SpellRingItem& item, const ItemInstance& instance)
     item.isBroken = instance.isBroken || item.durability == 0;
 }
 
+SpellRingItem makeObjectRingItemForAdd(const ItemData& item, const ItemInstance* instance)
+{
+    SpellRingItem ringItem = makeObjectRingItem(item.id);
+    if (instance != nullptr) {
+        applyItemInstance(ringItem, *instance);
+    }
+    applyObjectDefinition(ringItem, item);
+    return ringItem;
+}
+
 }
 
 RingShape defaultRingShapeForIndex(int ringIndex)
@@ -350,28 +360,110 @@ void SpellRingSystem::initialize(const RuntimeBalance& balance)
     itemBreakEvents_.clear();
 }
 
+void SpellRingSystem::advanceOrbitAngles(float dt, const RuntimeBalance& balance)
+{
+    const float safeDt = std::max(0.0f, dt);
+    const RingOrbitTuning tuning = makeRingOrbitTuning(balance);
+    orbitTuning_ = tuning;
+    for (int ringIndex = 0; ringIndex < SpellRingCount; ++ringIndex) {
+        const RingShape ringShape = ringShapeForIndex(ringIndex);
+        baseAngles_[static_cast<std::size_t>(ringIndex)] = normalizeAngle(
+            baseAngles_[static_cast<std::size_t>(ringIndex)] + ringAngularSpeedForIndex(ringIndex, balance) * safeDt);
+        if (ringShape == RingShape::FigureEight) {
+            shapeRotations_[static_cast<std::size_t>(ringIndex)] = normalizeAngle(
+                shapeRotations_[static_cast<std::size_t>(ringIndex)] + std::max(0.0f, tuning.figure8ShapeRotationSpeed) * safeDt);
+        }
+    }
+}
+
+void SpellRingSystem::refreshItemWorldPositions(float dt, Vec2 previousCenter, const RuntimeBalance& balance, bool advanceCapturedBehaviors)
+{
+    const float safeDt = std::max(0.0f, dt);
+    const RingOrbitTuning tuning = orbitTuning_;
+    const Vec2 centerVelocity = safeDt > 0.0f ? (center_ - previousCenter) / safeDt : Vec2{};
+    for (int ringIndex = 0; ringIndex < SpellRingCount; ++ringIndex) {
+        std::vector<SpellRingItem>& ringItems = itemsByRing_[static_cast<std::size_t>(ringIndex)];
+        const RingShape ringShape = ringShapeForIndex(ringIndex);
+        const float ringAngularSpeed = ringAngularSpeedForIndex(ringIndex, balance);
+        const float shapeRotationSpeed = ringShape == RingShape::FigureEight
+            ? std::max(0.0f, tuning.figure8ShapeRotationSpeed)
+            : (ringShape == RingShape::Comet ? ringAngularSpeed : 0.0f);
+        const int ringItemCount = static_cast<int>(ringItems.size());
+        for (int itemIndex = 0; itemIndex < ringItemCount; ++itemIndex) {
+            SpellRingItem& item = ringItems[static_cast<std::size_t>(itemIndex)];
+            item.ringIndex = ringIndex;
+            float itemRadiusScale = 1.0f;
+            if (item.hasCapturedBehavior("jump_outward")) {
+                const float jumpInterval = static_cast<float>(std::max(0.2, item.capturedBehaviorInterval("jump_outward", CapturedJumpInterval)));
+                const float jumpDuration = static_cast<float>(std::max(0.05, item.capturedBehaviorParamDouble("jump_outward", "duration", CapturedJumpDuration)));
+                const float jumpDistance = static_cast<float>(std::max(2.0, item.capturedBehaviorParamDouble("jump_outward", "distance", CapturedJumpDistance)));
+                if (advanceCapturedBehaviors) {
+                    item.capturedBehaviorTimer += safeDt;
+                    item.capturedJumpTimer = std::max(0.0f, item.capturedJumpTimer - safeDt);
+                    if (item.capturedBehaviorTimer >= jumpInterval) {
+                        item.capturedBehaviorTimer = 0.0f;
+                        item.capturedJumpTimer = jumpDuration;
+                    }
+                }
+                if (item.capturedJumpTimer > 0.0f) {
+                    const float phase = 1.0f - item.capturedJumpTimer / jumpDuration;
+                    itemRadiusScale += (std::sin(phase * Pi) * jumpDistance) / std::max(1.0f, radius_);
+                }
+            } else if (advanceCapturedBehaviors) {
+                item.capturedJumpTimer = 0.0f;
+            }
+
+            RingOrbitContext context = makeOrbitContextForRing(ringIndex, itemIndex, ringItemCount, itemRadiusScale, balance);
+            const float param = ringShape == RingShape::Comet
+                ? normalizeLocalParam(ringShape, item.localAngle, context.tuning)
+                : normalizeAngle(baseAngles_[static_cast<std::size_t>(ringIndex)] + item.localAngle);
+            item.worldPosition = getRingItemWorldPosition(center_, param, context);
+            item.worldVelocity = getRingItemVelocity(
+                param,
+                ringShape == RingShape::Comet ? 0.0f : ringAngularSpeed,
+                shapeRotationSpeed,
+                centerVelocity,
+                context);
+            item.orbitMotionSpeed = length(item.worldVelocity) / std::max(1.0f, radius_);
+        }
+    }
+}
+
+void SpellRingSystem::updatePresentation(const Player& player, float dt, const RuntimeBalance& balance)
+{
+    advanceOrbitAngles(dt, balance);
+    const Vec2 previousCenter = center_;
+    if (state_ == SpellRingState::Normal) {
+        center_ = getRingCenterWorldPosition(player.position, player.facing, player.spellRingShift);
+    }
+    refreshItemWorldPositions(dt, previousCenter, balance, false);
+}
+
+void SpellRingSystem::resetRuntimeStateAtPlayer(const Player& player, const RuntimeBalance& balance)
+{
+    center_ = getRingCenterWorldPosition(player.position, player.facing, player.spellRingShift);
+    throwDirection_ = player.facing;
+    throwStart_ = center_;
+    throwTime_ = 0.0f;
+    state_ = SpellRingState::Normal;
+    enemyOrbitSpeedDebuffMultiplier_ = 1.0f;
+    enemyOrbitSpeedDebuffTimer_ = 0.0f;
+    refreshItemWorldPositions(0.0f, center_, balance, false);
+}
+
 void SpellRingSystem::update(Player& player, const Input& input, float dt, float, bool paused, bool blockPointerThrow, const RuntimeBalance& balance)
 {
     if (paused) {
         return;
     }
 
-    enemyOrbitSpeedDebuffTimer_ = std::max(0.0f, enemyOrbitSpeedDebuffTimer_ - dt);
+    const float safeDt = std::max(0.0f, dt);
+    enemyOrbitSpeedDebuffTimer_ = std::max(0.0f, enemyOrbitSpeedDebuffTimer_ - safeDt);
     if (enemyOrbitSpeedDebuffTimer_ <= 0.0f) {
         enemyOrbitSpeedDebuffMultiplier_ = 1.0f;
     }
 
-    const RingOrbitTuning tuning = makeRingOrbitTuning(balance);
-    orbitTuning_ = tuning;
-    for (int ringIndex = 0; ringIndex < SpellRingCount; ++ringIndex) {
-        const RingShape ringShape = ringShapeForIndex(ringIndex);
-        baseAngles_[static_cast<std::size_t>(ringIndex)] = normalizeAngle(
-            baseAngles_[static_cast<std::size_t>(ringIndex)] + ringAngularSpeedForIndex(ringIndex, balance) * dt);
-        if (ringShape == RingShape::FigureEight) {
-            shapeRotations_[static_cast<std::size_t>(ringIndex)] = normalizeAngle(
-                shapeRotations_[static_cast<std::size_t>(ringIndex)] + std::max(0.0f, tuning.figure8ShapeRotationSpeed) * dt);
-        }
-    }
+    advanceOrbitAngles(safeDt, balance);
 
     const Vec2 normalCenter = getRingCenterWorldPosition(player.position, player.facing, player.spellRingShift);
     const Vec2 previousCenter = center_;
@@ -387,8 +479,8 @@ void SpellRingSystem::update(Player& player, const Input& input, float dt, float
             player.throwCooldownRemaining = balance.spellRingThrowCooldown;
         }
     } else if (state_ == SpellRingState::Thrown) {
-        throwTime_ += dt;
-        center_ += throwDirection_ * balance.spellRingThrowSpeed * dt;
+        throwTime_ += safeDt;
+        center_ += throwDirection_ * balance.spellRingThrowSpeed * safeDt;
         if (distanceSquared(center_, throwStart_) >= balance.spellRingThrowDistance * balance.spellRingThrowDistance ||
             throwTime_ >= balance.spellRingThrowMaxTime) {
             state_ = SpellRingState::Returning;
@@ -400,7 +492,7 @@ void SpellRingSystem::update(Player& player, const Input& input, float dt, float
             center_ = normalCenter;
             state_ = SpellRingState::Normal;
         } else {
-            center_ += normalize(toPlayer) * balance.spellRingReturnSpeed * dt;
+            center_ += normalize(toPlayer) * balance.spellRingReturnSpeed * safeDt;
         }
     }
 
@@ -424,7 +516,7 @@ void SpellRingSystem::update(Player& player, const Input& input, float dt, float
     }
     if (periodicHealCount > 0) {
         const float stackedRate = std::min(1.0f, 0.65f + 0.12f * static_cast<float>(periodicHealCount));
-        capturedHealTimer_ -= dt * stackedRate;
+        capturedHealTimer_ -= safeDt * stackedRate;
         if (capturedHealTimer_ <= 0.0f) {
             if (player.hp > 0 && player.hp < player.maxHp) {
                 const int pulseHeal = std::clamp(static_cast<int>(std::round(std::max(1.0f, periodicHealAmountAccumulator))), 1, CapturedPeriodicHealMaxPerPulse);
@@ -436,51 +528,7 @@ void SpellRingSystem::update(Player& player, const Input& input, float dt, float
         capturedHealTimer_ = CapturedPeriodicHealInterval;
     }
 
-    const Vec2 centerVelocity = dt > 0.0f ? (center_ - previousCenter) / dt : Vec2{};
-    for (int ringIndex = 0; ringIndex < SpellRingCount; ++ringIndex) {
-        std::vector<SpellRingItem>& ringItems = itemsByRing_[static_cast<std::size_t>(ringIndex)];
-        const RingShape ringShape = ringShapeForIndex(ringIndex);
-        const float ringAngularSpeed = ringAngularSpeedForIndex(ringIndex, balance);
-        const float shapeRotationSpeed = ringShape == RingShape::FigureEight
-            ? std::max(0.0f, tuning.figure8ShapeRotationSpeed)
-            : (ringShape == RingShape::Comet ? ringAngularSpeed : 0.0f);
-        const int ringItemCount = static_cast<int>(ringItems.size());
-        for (int itemIndex = 0; itemIndex < ringItemCount; ++itemIndex) {
-            SpellRingItem& item = ringItems[static_cast<std::size_t>(itemIndex)];
-            item.ringIndex = ringIndex;
-            float itemRadiusScale = 1.0f;
-            if (item.hasCapturedBehavior("jump_outward")) {
-                const float jumpInterval = static_cast<float>(std::max(0.2, item.capturedBehaviorInterval("jump_outward", CapturedJumpInterval)));
-                const float jumpDuration = static_cast<float>(std::max(0.05, item.capturedBehaviorParamDouble("jump_outward", "duration", CapturedJumpDuration)));
-                const float jumpDistance = static_cast<float>(std::max(2.0, item.capturedBehaviorParamDouble("jump_outward", "distance", CapturedJumpDistance)));
-                item.capturedBehaviorTimer += dt;
-                item.capturedJumpTimer = std::max(0.0f, item.capturedJumpTimer - dt);
-                if (item.capturedBehaviorTimer >= jumpInterval) {
-                    item.capturedBehaviorTimer = 0.0f;
-                    item.capturedJumpTimer = jumpDuration;
-                }
-                if (item.capturedJumpTimer > 0.0f) {
-                    const float phase = 1.0f - item.capturedJumpTimer / jumpDuration;
-                    itemRadiusScale += (std::sin(phase * Pi) * jumpDistance) / std::max(1.0f, radius_);
-                }
-            } else {
-                item.capturedJumpTimer = 0.0f;
-            }
-
-            RingOrbitContext context = makeOrbitContextForRing(ringIndex, itemIndex, ringItemCount, itemRadiusScale, balance);
-            const float param = ringShape == RingShape::Comet
-                ? normalizeLocalParam(ringShape, item.localAngle, context.tuning)
-                : normalizeAngle(baseAngles_[static_cast<std::size_t>(ringIndex)] + item.localAngle);
-            item.worldPosition = getRingItemWorldPosition(center_, param, context);
-            item.worldVelocity = getRingItemVelocity(
-                param,
-                ringShape == RingShape::Comet ? 0.0f : ringAngularSpeed,
-                shapeRotationSpeed,
-                centerVelocity,
-                context);
-            item.orbitMotionSpeed = length(item.worldVelocity) / std::max(1.0f, radius_);
-        }
-    }
+    refreshItemWorldPositions(safeDt, previousCenter, balance, true);
 }
 
 void SpellRingSystem::upgradeShovelPower(int amount)
@@ -645,6 +693,124 @@ bool SpellRingSystem::addObjectItem(const ItemData& item, const ItemInstance& in
     applyItemInstance(ringItem, instance);
     applyObjectDefinition(ringItem, item);
     return addItem(std::move(ringItem), outResult);
+}
+
+bool SpellRingSystem::canAddObjectItem(const ItemData& item) const
+{
+    if (item.id.empty()) {
+        return false;
+    }
+
+    const SpellRingItem ringItem = makeObjectRingItemForAdd(item, nullptr);
+    return canAddItem(ringItem) && findBestPlacementAngle(ringItem, -1, orbitTuning_).has_value();
+}
+
+bool SpellRingSystem::canAddObjectItem(const ItemData& item, const ItemInstance& instance) const
+{
+    if (item.id.empty() || instance.objectId != item.id) {
+        return false;
+    }
+
+    const SpellRingItem ringItem = makeObjectRingItemForAdd(item, &instance);
+    return canAddItem(ringItem) && findBestPlacementAngle(ringItem, -1, orbitTuning_).has_value();
+}
+
+bool SpellRingSystem::canAddObjectItemAtAngle(const ItemData& item, float localAngle) const
+{
+    if (item.id.empty()) {
+        return false;
+    }
+
+    const SpellRingItem ringItem = makeObjectRingItemForAdd(item, nullptr);
+    if (!canAddItem(ringItem)) {
+        return false;
+    }
+
+    const float angle = quantizeLocalParam(runtimeRingShape(), localAngle, orbitTuning_);
+    return canPlaceItemAtAngle(ringItem, angle, -1, orbitTuning_);
+}
+
+bool SpellRingSystem::canAddObjectItemAtAngle(const ItemData& item, const ItemInstance& instance, float localAngle) const
+{
+    if (item.id.empty() || instance.objectId != item.id) {
+        return false;
+    }
+
+    const SpellRingItem ringItem = makeObjectRingItemForAdd(item, &instance);
+    if (!canAddItem(ringItem)) {
+        return false;
+    }
+
+    const float angle = quantizeLocalParam(runtimeRingShape(), localAngle, orbitTuning_);
+    return canPlaceItemAtAngle(ringItem, angle, -1, orbitTuning_);
+}
+
+bool SpellRingSystem::addObjectItemAtAngle(const ItemData& item, float localAngle, SpellRingAddResult* outResult)
+{
+    if (item.id.empty()) {
+        return false;
+    }
+
+    SpellRingItem ringItem = makeObjectRingItemForAdd(item, nullptr);
+    if (!canAddItem(ringItem)) {
+        return false;
+    }
+
+    const float angle = quantizeLocalParam(runtimeRingShape(), localAngle, orbitTuning_);
+    if (!canPlaceItemAtAngle(ringItem, angle, -1, orbitTuning_)) {
+        return false;
+    }
+
+    ringItem.ringIndex = activeRingIndex_;
+    ringItem.localAngle = angle;
+    const SpellRingAddResult result{
+        .ringIndex = activeRingIndex_,
+        .itemIndex = static_cast<int>(activeItems().size()),
+        .localAngle = ringItem.localAngle,
+        .objectId = ringItem.objectId,
+        .instanceId = ringItem.instanceId,
+    };
+    activeItems().push_back(std::move(ringItem));
+    if (outResult != nullptr) {
+        *outResult = result;
+    }
+    return true;
+}
+
+bool SpellRingSystem::addObjectItemAtAngle(
+    const ItemData& item,
+    const ItemInstance& instance,
+    float localAngle,
+    SpellRingAddResult* outResult)
+{
+    if (item.id.empty() || (!instance.objectId.empty() && instance.objectId != item.id)) {
+        return false;
+    }
+
+    SpellRingItem ringItem = makeObjectRingItemForAdd(item, instance.objectId.empty() ? nullptr : &instance);
+    if (!canAddItem(ringItem)) {
+        return false;
+    }
+
+    const float angle = quantizeLocalParam(runtimeRingShape(), localAngle, orbitTuning_);
+    if (!canPlaceItemAtAngle(ringItem, angle, -1, orbitTuning_)) {
+        return false;
+    }
+
+    ringItem.ringIndex = activeRingIndex_;
+    ringItem.localAngle = angle;
+    const SpellRingAddResult result{
+        .ringIndex = activeRingIndex_,
+        .itemIndex = static_cast<int>(activeItems().size()),
+        .localAngle = ringItem.localAngle,
+        .objectId = ringItem.objectId,
+        .instanceId = ringItem.instanceId,
+    };
+    activeItems().push_back(std::move(ringItem));
+    if (outResult != nullptr) {
+        *outResult = result;
+    }
+    return true;
 }
 
 bool SpellRingSystem::consumeItemDurability(SpellRingItem& item, int amount)

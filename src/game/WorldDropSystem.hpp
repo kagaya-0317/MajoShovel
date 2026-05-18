@@ -78,8 +78,20 @@ public:
     bool spawnMaterialDrop(MaterialType type, int count, Vec2 position, float spawnedAtSeconds = 0.0f, WorldDropSpawnMotion motion = {});
     bool spawnRewardDrop(const ObjectCatalog& catalog, Vec2 position, float spawnedAtSeconds = 0.0f);
     bool stealNearestDrop(const ObjectCatalog& catalog, Vec2 center, float radius, std::string_view targetFilter, WorldDropItem& outDrop);
-    int pullNearbyDrops(Vec2 center, float dt, float radius, float acceleration, int limit = 0);
-    int pullMetalDrops(const ObjectCatalog& catalog, Vec2 center, float dt, float radius = 170.0f);
+    int pullNearbyDrops(
+        Vec2 center,
+        float dt,
+        float radius,
+        float acceleration,
+        int limit = 0,
+        const InventorySystem* inventory = nullptr,
+        const ObjectCatalog* catalog = nullptr);
+    int pullMetalDrops(
+        const ObjectCatalog& catalog,
+        Vec2 center,
+        float dt,
+        float radius = 170.0f,
+        const InventorySystem* inventory = nullptr);
     int update(
         float dt,
         const Player& player,
@@ -87,7 +99,8 @@ public:
         int& money,
         const ObjectCatalog& catalog,
         EffectSystem* effects = nullptr,
-        std::vector<WorldDropPickupEvent>* pickupEvents = nullptr);
+        std::vector<WorldDropPickupEvent>* pickupEvents = nullptr,
+        int* blockedObjectPickupCount = nullptr);
     void render(
         Renderer& renderer,
         const TileMap& tileMap,

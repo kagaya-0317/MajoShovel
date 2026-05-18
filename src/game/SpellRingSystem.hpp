@@ -88,6 +88,8 @@ class SpellRingSystem {
 public:
     void initialize(const RuntimeBalance& balance);
     void update(Player& player, const Input& input, float dt, float totalTime, bool paused, bool blockPointerThrow, const RuntimeBalance& balance);
+    void updatePresentation(const Player& player, float dt, const RuntimeBalance& balance);
+    void resetRuntimeStateAtPlayer(const Player& player, const RuntimeBalance& balance);
     void upgradeRadius(float factor) { radius_ *= factor; }
     void upgradeSpeed(float factor) { angularSpeed_ *= factor; }
     void setRadius(float radius) { radius_ = radius; }
@@ -102,6 +104,16 @@ public:
     bool addItem(SpellRingItem item, SpellRingAddResult* outResult = nullptr);
     bool addObjectItem(const ItemData& item, SpellRingAddResult* outResult = nullptr);
     bool addObjectItem(const ItemData& item, const ItemInstance& instance, SpellRingAddResult* outResult = nullptr);
+    bool canAddObjectItem(const ItemData& item) const;
+    bool canAddObjectItem(const ItemData& item, const ItemInstance& instance) const;
+    bool canAddObjectItemAtAngle(const ItemData& item, float localAngle) const;
+    bool canAddObjectItemAtAngle(const ItemData& item, const ItemInstance& instance, float localAngle) const;
+    bool addObjectItemAtAngle(const ItemData& item, float localAngle, SpellRingAddResult* outResult = nullptr);
+    bool addObjectItemAtAngle(
+        const ItemData& item,
+        const ItemInstance& instance,
+        float localAngle,
+        SpellRingAddResult* outResult = nullptr);
     bool repairItem(int ringIndex, int itemIndex);
     bool enhanceItem(
         int ringIndex,
@@ -197,6 +209,8 @@ private:
 
     std::vector<SpellRingItem>& activeItems();
     const std::vector<SpellRingItem>& activeItems() const;
+    void advanceOrbitAngles(float dt, const RuntimeBalance& balance);
+    void refreshItemWorldPositions(float dt, Vec2 previousCenter, const RuntimeBalance& balance, bool advanceCapturedBehaviors);
     bool canPlaceItemAtAngle(const SpellRingItem& item, float angle, int ignoreIndex, const RingOrbitTuning& tuning) const;
     std::optional<float> findBestPlacementAngle(const SpellRingItem& item, int ignoreIndex, const RingOrbitTuning& tuning) const;
 };

@@ -794,6 +794,7 @@ void Game::enterBaseEditMode()
         return;
     }
     baseMiningStartChoiceActive_ = false;
+    baseWarpPointSelectActive_ = false;
     baseStorageActive_ = false;
     baseSellActive_ = false;
     baseMerchantMode_ = MerchantUiMode::Closed;
@@ -1309,6 +1310,23 @@ bool Game::executeDebugCommand(std::string_view command)
         return true;
     }
 
+    const auto applyStageUnlockDebugCommand = [&](int unlockedStoryStages, std::string_view label) {
+        if (enemyTestActive_) {
+            exitEnemyTestToBase();
+        } else if (!basePresentationActive() && mode_ != ScreenMode::OpeningKamishibai && mode_ != ScreenMode::Title) {
+            returnToBaseFromNormalStage(false, false);
+        }
+        applyDebugStageUnlockState(unlockedStoryStages);
+        logInfo("Debug: stage unlock state set to " + std::string(label) + ".");
+        std::string saveMessage;
+        if (saveSaveData(saveMessage)) {
+            logInfo("Debug: stage unlock state saved.");
+        } else {
+            logWarning("Debug: stage unlock state changed in memory, but save failed: " + saveMessage);
+        }
+        return true;
+    };
+
     if (normalized == "game reset-data") {
         money_ = 0;
         maxHpUpgradeLevel_ = 0;
@@ -1352,6 +1370,25 @@ bool Game::executeDebugCommand(std::string_view command)
         return true;
     }
 
+    if (normalized == "game stage-unlock initial" ||
+        normalized == "game stage-unlock reset" ||
+        normalized == "game stage-unlock stage1" ||
+        normalized == "game stage-unlock 初期状態") {
+        return applyStageUnlockDebugCommand(1, "initial");
+    }
+
+    if (normalized == "game stage-unlock stage2" ||
+        normalized == "game stage-unlock 2" ||
+        normalized == "game stage-unlock ステージ2解放") {
+        return applyStageUnlockDebugCommand(2, "stage2");
+    }
+
+    if (normalized == "game stage-unlock stage3" ||
+        normalized == "game stage-unlock 3" ||
+        normalized == "game stage-unlock ステージ3解放") {
+        return applyStageUnlockDebugCommand(3, "stage3");
+    }
+
     if (normalized == "game return-base") {
         if (enemyTestActive_) {
             exitEnemyTestToBase();
@@ -1360,6 +1397,17 @@ bool Game::executeDebugCommand(std::string_view command)
         }
         returnToBaseFromNormalStage(false, false);
         logInfo("Debug: returned to base.");
+        return true;
+    }
+
+    if (normalized == "game warp-points unlock-all" ||
+        normalized == "game warp-point unlock-all" ||
+        normalized == "game unlock-warps") {
+        if (unlockAllWarpPointsForCurrentDungeon()) {
+            logInfo("Debug: all warp points unlocked for current dungeon.");
+        } else {
+            logWarning("Debug: warp point unlock-all requires an active dungeon with warp points.");
+        }
         return true;
     }
 

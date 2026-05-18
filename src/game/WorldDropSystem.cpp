@@ -222,6 +222,11 @@ bool isDropStealTarget(const WorldDropItem& drop, const ObjectCatalog& catalog, 
     return false;
 }
 
+bool objectDropCanEnterInventory(const WorldDropItem& drop, const ObjectCatalog& catalog, const InventorySystem* inventory)
+{
+    return drop.kind != WorldDropKind::Object || inventory == nullptr || inventory->canAddObjectItem(catalog, drop.id);
+}
+
 bool hasAllowedCategory(const ObjectDefinition& object)
 {
     return containsValue(DropCategories, object.category);
@@ -488,7 +493,14 @@ bool WorldDropSystem::stealNearestDrop(const ObjectCatalog& catalog, Vec2 center
     return true;
 }
 
-int WorldDropSystem::pullNearbyDrops(Vec2 center, float dt, float radius, float acceleration, int limit)
+int WorldDropSystem::pullNearbyDrops(
+    Vec2 center,
+    float dt,
+    float radius,
+    float acceleration,
+    int limit,
+    const InventorySystem* inventory,
+    const ObjectCatalog* catalog)
 {
     if (dt <= 0.0f || radius <= 0.0f || acceleration <= 0.0f) {
         return 0;
@@ -499,6 +511,9 @@ int WorldDropSystem::pullNearbyDrops(Vec2 center, float dt, float radius, float 
     const float radiusSq = effectiveRadius * effectiveRadius;
     for (WorldDropItem& drop : drops_) {
         if (drop.jumpActive || drop.pickupDelaySeconds > 0.0f) {
+            continue;
+        }
+        if (catalog != nullptr && !objectDropCanEnterInventory(drop, *catalog, inventory)) {
             continue;
         }
         const Vec2 toCenter = center - drop.position;
@@ -517,7 +532,7 @@ int WorldDropSystem::pullNearbyDrops(Vec2 center, float dt, float radius, float 
     return pulled;
 }
 
-int WorldDropSystem::pullMetalDrops(const ObjectCatalog& catalog, Vec2 center, float dt, float radius)
+int WorldDropSystem::pullMetalDrops(const ObjectCatalog& catalog, Vec2 center, float dt, float radius, const InventorySystem* inventory)
 {
     if (dt <= 0.0f) {
         return 0;
@@ -535,6 +550,9 @@ int WorldDropSystem::pullMetalDrops(const ObjectCatalog& catalog, Vec2 center, f
         }
         const ObjectDefinition* object = catalog.registry.findById(drop.id);
         if (object == nullptr || !hasObjectTag(*object, "metal")) {
+            continue;
+        }
+        if (!objectDropCanEnterInventory(drop, catalog, inventory)) {
             continue;
         }
         const Vec2 toCenter = center - drop.position;
@@ -560,7 +578,8 @@ int WorldDropSystem::update(
     int& money,
     const ObjectCatalog& catalog,
     EffectSystem* effects,
-    std::vector<WorldDropPickupEvent>* pickupEvents)
+    std::vector<WorldDropPickupEvent>* pickupEvents,
+    int* blockedObjectPickupCount)
 {
     const float pickupRadiusSq = DropPickupRadius * DropPickupRadius;
     int pickedUpCount = 0;
@@ -615,6 +634,12 @@ int WorldDropSystem::update(
         WorldDropPickupEvent pickupEvent;
         bool hasPickupEvent = false;
         if (drop.kind == WorldDropKind::Object) {
+            if (!inventory.canAddObjectItem(catalog, drop.id)) {
+                if (blockedObjectPickupCount != nullptr && catalog.registry.findById(drop.id) != nullptr) {
+                    ++*blockedObjectPickupCount;
+                }
+                return false;
+            }
             pickedUp = inventory.addObjectItem(catalog, drop.id);
             if (pickedUp) {
                 const ObjectDefinition* object = catalog.registry.findById(drop.id);

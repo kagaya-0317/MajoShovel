@@ -274,13 +274,32 @@ bool InventorySystem::addObjectInstance(const ObjectCatalog& catalog, ItemInstan
         .item = resolvedItem,
         .instance = std::move(instance),
     });
-    const std::string& storedId = objectInstances_.back().instance.instanceId;
-    constexpr std::string_view Prefix = "iteminst_";
-    if (storedId.rfind(Prefix, 0) == 0) {
-        const unsigned long long parsed = std::strtoull(storedId.c_str() + Prefix.size(), nullptr, 10);
-        nextInstanceId_ = std::max(nextInstanceId_, parsed + 1);
-    }
+    observeObjectInstanceId(objectInstances_.back().instance.instanceId);
     return true;
+}
+
+ItemInstance InventorySystem::createDetachedObjectInstance(const ItemData& item)
+{
+    return makeItemInstanceFromDefinition(allocateInstanceId(), item);
+}
+
+void InventorySystem::observeObjectInstanceId(std::string_view instanceId)
+{
+    constexpr std::string_view Prefix = "iteminst_";
+    if (instanceId.rfind(Prefix, 0) != 0) {
+        return;
+    }
+
+    const std::string suffix(instanceId.substr(Prefix.size()));
+    if (suffix.empty()) {
+        return;
+    }
+    char* parseEnd = nullptr;
+    const unsigned long long parsed = std::strtoull(suffix.c_str(), &parseEnd, 10);
+    if (parseEnd == suffix.c_str() || parseEnd == nullptr || *parseEnd != '\0') {
+        return;
+    }
+    nextInstanceId_ = std::max(nextInstanceId_, parsed + 1);
 }
 
 bool InventorySystem::removeObjectItemCount(std::string_view objectId, int count)
@@ -565,6 +584,34 @@ const InventoryObjectInstance* InventorySystem::selectedObjectInstance() const
 int InventorySystem::selectedShortcutIndex() const
 {
     return shortcutRow_ * ShortcutColumns + selectedShortcutColumn_;
+}
+
+bool InventorySystem::canAddObjectItem(const ObjectCatalog& catalog, std::string_view objectId) const
+{
+    if (objectId.empty() || catalog.registry.empty()) {
+        return false;
+    }
+
+    const ItemData* item = catalog.registry.findById(objectId);
+    if (item == nullptr) {
+        return false;
+    }
+
+    MaterialType materialType = MaterialType::Count;
+    if (materialTypeForObject(*item, materialType)) {
+        return true;
+    }
+
+    if (isStackableObject(*item)) {
+        const auto stackIt = std::find_if(objectStacks_.begin(), objectStacks_.end(), [item](const InventoryObjectStack& stack) {
+            return stack.objectId == item->id;
+        });
+        if (stackIt != objectStacks_.end()) {
+            return true;
+        }
+    }
+
+    return static_cast<int>(objectStacks_.size() + objectInstances_.size()) < ShortcutSlotCount;
 }
 
 bool InventorySystem::addObjectItem(const ObjectCatalog& catalog, std::string_view objectId)
@@ -929,6 +976,91 @@ void InventorySystem::resetSlotPointerPress()
     slotPointerDragTriggered_ = false;
 }
 
+bool InventorySystem::screenItemCanAddToRing(
+    int index,
+    const SpellRingSystem& spellRing,
+    std::optional<float> preferredAngle) const
+{
+    if (const InventoryObjectStack* stack = objectStackAtScreenIndex(index)) {
+        if (stack->count <= 0) {
+            return false;
+        }
+        return preferredAngle
+            ? spellRing.canAddObjectItemAtAngle(stack->item, *preferredAngle)
+            : spellRing.canAddObjectItem(stack->item);
+    }
+    if (const InventoryObjectInstance* instance = objectInstanceAtScreenIndex(index)) {
+        return preferredAngle
+            ? spellRing.canAddObjectItemAtAngle(instance->item, instance->instance, *preferredAngle)
+            : spellRing.canAddObjectItem(instance->item, instance->instance);
+    }
+    return false;
+}
+
+bool InventorySystem::addScreenItemToRing(
+    int index,
+    SpellRingSystem& spellRing,
+    std::optional<float> preferredAngle,
+    SpellRingAddResult* outResult)
+{
+    if (InventoryObjectStack* stack = objectStackAtScreenIndex(index)) {
+        if (stack->count <= 0) {
+            status_ = "ショートカット空き";
+            return false;
+        }
+        if (!screenItemCanAddToRing(index, spellRing, preferredAngle)) {
+            status_ = spellRing.canAddItem() ? "リングへ配置できません" : "リング満杯";
+            return false;
+        }
+
+        ItemInstance instance = createDetachedObjectInstance(stack->item);
+        const bool added = preferredAngle
+            ? spellRing.addObjectItemAtAngle(stack->item, instance, *preferredAngle, outResult)
+            : spellRing.addObjectItem(stack->item, instance, outResult);
+        if (!added) {
+            status_ = "リングへ配置できません";
+            return false;
+        }
+
+        status_ = "リングに追加: " + stack->item.name;
+        --stack->count;
+        if (stack->count <= 0) {
+            const int objectIndex = stackIndexAtScreenIndex(index);
+            if (objectIndex >= 0) {
+                removePackedSlotAtPackedIndex(objectIndex);
+                objectStacks_.erase(objectStacks_.begin() + objectIndex);
+            }
+        }
+        return true;
+    }
+
+    if (InventoryObjectInstance* instance = objectInstanceAtScreenIndex(index)) {
+        if (!screenItemCanAddToRing(index, spellRing, preferredAngle)) {
+            status_ = spellRing.canAddItem() ? "リングへ配置できません" : "リング満杯";
+            return false;
+        }
+
+        const bool added = preferredAngle
+            ? spellRing.addObjectItemAtAngle(instance->item, instance->instance, *preferredAngle, outResult)
+            : spellRing.addObjectItem(instance->item, instance->instance, outResult);
+        if (!added) {
+            status_ = "リングへ配置できません";
+            return false;
+        }
+
+        status_ = "リングに追加: " + instance->item.name;
+        const int instanceIndex = instanceIndexAtScreenIndex(index);
+        if (instanceIndex >= 0) {
+            removePackedSlotAtPackedIndex(static_cast<int>(objectStacks_.size()) + instanceIndex);
+            objectInstances_.erase(objectInstances_.begin() + instanceIndex);
+        }
+        return true;
+    }
+
+    status_ = "ショートカット空き";
+    return false;
+}
+
 bool InventorySystem::addObjectSelectionToRing(SpellRingSystem& spellRing, SpellRingAddResult* outResult)
 {
     const int index = selectedShortcutIndex();
@@ -1118,15 +1250,7 @@ bool InventorySystem::useShortcutSelection(
 
 bool InventorySystem::addShortcutSelectionToRing(SpellRingSystem& spellRing, SpellRingAddResult* outResult)
 {
-    if (selectedObjectStack() != nullptr) {
-        return addObjectSelectionToRing(spellRing, outResult);
-    }
-    if (selectedObjectInstance() != nullptr) {
-        return addObjectInstanceSelectionToRing(spellRing, outResult);
-    }
-
-    status_ = "ショートカット空き";
-    return false;
+    return addScreenItemToRing(selectedShortcutIndex(), spellRing, std::nullopt, outResult);
 }
 
 void InventorySystem::toggleSelectedProtection()
