@@ -618,6 +618,107 @@ void Game::updateRingScreen(const Input& input, UiContext& ui, float dt)
         ringCommandPlaceActive_ = false;
     }
 
+    if (ringPlaceModeActive_) {
+        const int slotCount = std::min(inventory_.screenSlotCount(), RingPlaceSlotCount);
+        const int firstSlot = firstRingPlaceableSlot(inventory_, spellRing_, ringPlaceTargetAngle_);
+        if (firstSlot < 0) {
+            ringPlaceModeActive_ = false;
+            ringStatus_ = ringPlacementUnavailableStatus(inventory_, spellRing_);
+            ui.block(ringPanelRect());
+            return;
+        }
+        ringPlaceSelection_ = std::clamp(ringPlaceSelection_, 0, std::max(0, slotCount - 1));
+        if (!ringPlaceSlotEnabled(inventory_, spellRing_, ringPlaceSelection_, ringPlaceTargetAngle_)) {
+            ringPlaceSelection_ = firstSlot;
+        }
+
+        if (uiCancelRequested(ringCancelState_, input, ui, ringPlaceWindowRect())) {
+            ringPlaceModeActive_ = false;
+            ringStatus_ = "配置をキャンセルしました";
+            ui.block(ringPanelRect());
+            return;
+        }
+
+        const auto tryPlaceSelection = [&]() {
+            if (!ringPlaceSlotEnabled(inventory_, spellRing_, ringPlaceSelection_, ringPlaceTargetAngle_)) {
+                ringStatus_ = "このアイテムは配置できません";
+                return;
+            }
+
+            SpellRingAddResult result{};
+            if (inventory_.addScreenItemToRing(
+                    ringPlaceSelection_,
+                    spellRing_,
+                    std::optional<float>{ringPlaceTargetAngle_},
+                    &result)) {
+                ringSlotSelection_ = std::max(0, result.itemIndex);
+                ringPlaceModeActive_ = false;
+                ringStatus_ = "リングに配置しました";
+            } else {
+                ringStatus_ = ringPlacementUnavailableStatus(inventory_, spellRing_);
+            }
+        };
+
+        if (input.pressed(InputAction::MoveLeft)) {
+            ringPlaceSelection_ = movedRingPlaceSelection(inventory_, spellRing_, ringPlaceTargetAngle_, ringPlaceSelection_, -1);
+        }
+        if (input.pressed(InputAction::MoveRight)) {
+            ringPlaceSelection_ = movedRingPlaceSelection(inventory_, spellRing_, ringPlaceTargetAngle_, ringPlaceSelection_, 1);
+        }
+        if (input.pressed(InputAction::MoveUp)) {
+            ringPlaceSelection_ = movedRingPlaceSelection(
+                inventory_,
+                spellRing_,
+                ringPlaceTargetAngle_,
+                ringPlaceSelection_,
+                -RingPlaceColumns);
+        }
+        if (input.pressed(InputAction::MoveDown)) {
+            ringPlaceSelection_ = movedRingPlaceSelection(
+                inventory_,
+                spellRing_,
+                ringPlaceTargetAngle_,
+                ringPlaceSelection_,
+                RingPlaceColumns);
+        }
+        if (input.shortcutCursorDelta() != 0) {
+            ringPlaceSelection_ = movedRingPlaceSelection(
+                inventory_,
+                spellRing_,
+                ringPlaceTargetAngle_,
+                ringPlaceSelection_,
+                input.shortcutCursorDelta());
+        }
+
+        for (int i = 0; i < slotCount; ++i) {
+            const UiRect rect = ringPlaceSlotRect(i);
+            const bool enabled = ringPlaceSlotEnabled(inventory_, spellRing_, i, ringPlaceTargetAngle_);
+            if (enabled && rect.contains(ui.mouse())) {
+                ringPlaceSelection_ = i;
+            }
+            if (input.mouseLeftPressed() && rect.contains(ui.mouse()) && !ui.pointerConsumed()) {
+                ui.consumePointer();
+                if (enabled) {
+                    ringPlaceSelection_ = i;
+                    tryPlaceSelection();
+                } else if (inventory_.hasScreenItemAt(i)) {
+                    ringStatus_ = "このアイテムは配置できません";
+                }
+                ui.block(ringPanelRect());
+                return;
+            }
+        }
+
+        if (input.confirmPressed() || input.useItemPressed()) {
+            tryPlaceSelection();
+            ui.block(ringPanelRect());
+            return;
+        }
+
+        ui.block(ringPanelRect());
+        return;
+    }
+
     std::array<UiTabItem, UnlockedRingCount> ringTabs{};
     std::array<UiRect, UnlockedRingCount> ringTabRects{};
     std::array<std::string, UnlockedRingCount> ringTabLabels{};
@@ -646,6 +747,9 @@ void Game::updateRingScreen(const Input& input, UiContext& ui, float dt)
             spellRing_.switchActiveRing(ringTabSelection - spellRing_.activeRingIndex());
             closeUiCommandMenu(ringCommandMenu_);
             ringCommandItemIndex_ = -1;
+            ringCommandPlaceActive_ = false;
+            ringPlaceModeActive_ = false;
+            ringEmptyPressActive_ = false;
             ringStatus_.clear();
         }
         return;
@@ -656,6 +760,7 @@ void Game::updateRingScreen(const Input& input, UiContext& ui, float dt)
     if (ui.pressed(ringArrangeButtonRect())) {
         closeUiCommandMenu(ringCommandMenu_);
         ringCommandItemIndex_ = -1;
+        ringCommandPlaceActive_ = false;
         if (ringGrabActive_) {
             ringStatus_ = "つかみ中は整列できません";
         } else if (arrangeActiveRingItemsEvenly(spellRing_, balance_)) {
@@ -729,6 +834,41 @@ void Game::updateRingScreen(const Input& input, UiContext& ui, float dt)
 
         ui.block(ringPanelRect());
         return;
+    }
+
+    if (ringEmptyPressActive_) {
+        if (input.mouseLeftHeld() &&
+            distanceSquared(input.mouseScreen(), ringEmptyPressMouse_) >= 36.0f) {
+            ringEmptyPressActive_ = false;
+        }
+
+        if (input.mouseLeftReleased()) {
+            if (ringEmptyPressActive_) {
+                const float placeAngle = ringEmptyPressAngle_;
+                if (ringGrabActive_) {
+                    ringStatus_ = "つかみ中は配置できません";
+                } else if (firstRingPlaceableSlot(inventory_, spellRing_, placeAngle) < 0) {
+                    ringStatus_ = ringPlacementUnavailableStatus(inventory_, spellRing_);
+                } else {
+                    ringCommandItemIndex_ = -1;
+                    ringCommandPlaceActive_ = true;
+                    ringCommandPlaceAngle_ = placeAngle;
+                    const std::array<UiCommandMenuItem, 1> menuItems = ringCommandItems(true, true);
+                    openUiCommandMenu(
+                        ringCommandMenu_,
+                        input.mouseScreen(),
+                        ringPanelRect(),
+                        static_cast<int>(menuItems.size()),
+                        menuItems.data(),
+                        190.0f,
+                        2);
+                    ringStatus_.clear();
+                }
+            }
+            ringEmptyPressActive_ = false;
+            ui.block(ringPanelRect());
+            return;
+        }
     }
 
     if (uiCancelRequested(ringCancelState_, input, ui, ringPanelRect())) {
