@@ -5,6 +5,7 @@
 #include <cmath>
 #include <string>
 #include <unordered_map>
+#include <utility>
 #include <vector>
 
 namespace majo {
@@ -921,12 +922,14 @@ void drawUiSmallSelectButton(
     }
 
     const int scale = std::max(1, style.textScale);
+    const int valueScale = std::max(1, style.valueTextScale);
     constexpr float PaddingX = 12.0f;
     const Vec2 labelSize = renderer.measureText(label, scale);
-    const Vec2 valueSize = renderer.measureText(value, scale);
+    const Vec2 valueSize = renderer.measureText(value, valueScale);
     const float textY = rect.pos.y + std::max(0.0f, (rect.size.y - std::max(labelSize.y, valueSize.y)) * 0.5f);
+    const float valueY = rect.pos.y + std::max(0.0f, (rect.size.y - valueSize.y) * 0.5f);
     renderer.drawText({rect.pos.x + PaddingX, textY}, label, labelColor, scale);
-    renderer.drawText({rect.pos.x + rect.size.x - valueSize.x - PaddingX, textY}, value, valueColor, scale);
+    renderer.drawText({rect.pos.x + rect.size.x - valueSize.x - PaddingX, valueY}, value, valueColor, valueScale);
 }
 
 void drawUiBodyMessageBelow(Renderer& renderer, UiRect anchor, std::string_view message, Color color)
@@ -971,6 +974,49 @@ void drawUiDetailLine(Renderer& renderer, UiRect panel, float& y, std::string_vi
     renderer.drawText({labelX, y}, label, ui::TextMuted, 2);
     renderer.drawWrappedText({valueX, y}, value, valueMaxWidth, valueColor, 2);
     y += std::max(MinLineHeight, renderer.measureWrappedText(value, valueMaxWidth, 2).y + LineGap);
+}
+
+UiRect uiResultDialogOkButtonRect(UiRect panel)
+{
+    return uiBottomCenterButtonRect(panel, {180.0f, ui::ButtonHeight});
+}
+
+void openUiResultDialog(UiResultDialogState& state, std::string title, std::vector<std::string> lines)
+{
+    state.open = true;
+    state.title = std::move(title);
+    state.lines = std::move(lines);
+}
+
+bool updateUiResultDialog(UiResultDialogState& state, UiContext& ui, const Input& input, UiRect panel)
+{
+    if (!state.open) {
+        return false;
+    }
+    if (ui.pressed(uiResultDialogOkButtonRect(panel)) || input.confirmPressed() || input.useItemPressed()) {
+        state.open = false;
+        state.title.clear();
+        state.lines.clear();
+        return true;
+    }
+    return false;
+}
+
+void drawUiResultDialog(Renderer& renderer, const UiResultDialogState& state, UiRect panel, std::string_view id)
+{
+    if (!state.open) {
+        return;
+    }
+
+    UiWindowScope window(renderer, id, panel, state.title, "F/Enter OK", UiWindowOptions{true, false});
+    const UiRect body = uiBodyRect(panel);
+    float y = body.pos.y;
+    const float textWidth = body.size.x;
+    for (const std::string& line : state.lines) {
+        renderer.drawWrappedText({body.pos.x, y}, line, textWidth, ui::Text, 2);
+        y += renderer.measureWrappedText(line, textWidth, 2).y + 10.0f;
+    }
+    drawUiButton(renderer, uiResultDialogOkButtonRect(panel), "OK", true, uiActionButtonStyle());
 }
 
 void openUiCommandMenu(

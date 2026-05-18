@@ -2,6 +2,630 @@
 
 namespace majo {
 
+namespace {
+
+int baseUpgradeWarehouseCapacityForLevel(int level)
+{
+    constexpr std::array<int, 5> Capacities{{48, 72, 100, 140, 200}};
+    const int index = std::clamp(level - 1, 0, static_cast<int>(Capacities.size()) - 1);
+    return Capacities[static_cast<std::size_t>(index)];
+}
+
+const char* baseUpgradeMerchantFeature(int level)
+{
+    switch (level) {
+    case 1: return "通常売買";
+    case 2: return "品揃え増加";
+    case 3: return "買取基本価格+10%";
+    case 4: return "高価買取カテゴリ";
+    case 5: return "珍品販売";
+    case 6: return "買取基本価格+20%";
+    case 7: return "珍品レア度上昇";
+    default: return "未解禁";
+    }
+}
+
+const char* baseUpgradeProcessingFeature(int level)
+{
+    switch (level) {
+    case 1: return "軽量化";
+    case 2: return "重量化";
+    case 3: return "大型化";
+    case 4: return "小型化";
+    case 5: return "追加効果付与";
+    default: return "未解禁";
+    }
+}
+
+const char* baseUpgradeResultSubject(int index)
+{
+    switch (index) {
+    case 0: return "倉庫容量";
+    case 1: return "商人機能";
+    case 2: return "作業台機能";
+    case 3: return "リング工房";
+    case 4: return "最大HP";
+    case 5: return "リング半径";
+    case 6: return "リング速度";
+    case 7: return "収集術式";
+    default: return "強化項目";
+    }
+}
+
+std::string baseUpgradeResultChangeLine(int index, int beforeLevel, int afterLevel)
+{
+    char buffer[192];
+    switch (index) {
+    case 0:
+        std::snprintf(buffer, sizeof(buffer), "倉庫容量: %d枠 → %d枠",
+            baseUpgradeWarehouseCapacityForLevel(beforeLevel),
+            baseUpgradeWarehouseCapacityForLevel(afterLevel));
+        return buffer;
+    case 1:
+        std::snprintf(buffer, sizeof(buffer), "商人機能: %s → %s",
+            baseUpgradeMerchantFeature(beforeLevel),
+            baseUpgradeMerchantFeature(afterLevel));
+        return buffer;
+    case 2:
+        std::snprintf(buffer, sizeof(buffer), "加工解禁: %s → %s",
+            baseUpgradeProcessingFeature(beforeLevel),
+            baseUpgradeProcessingFeature(afterLevel));
+        return buffer;
+    case 3:
+        return "リング工房: 未解禁 → 解禁";
+    case 4:
+        std::snprintf(buffer, sizeof(buffer), "最大HP: +%d → +%d", beforeLevel * 2, afterLevel * 2);
+        return buffer;
+    case 5:
+        std::snprintf(buffer, sizeof(buffer), "初期リング半径: +%d%% → +%d%%", beforeLevel * 8, afterLevel * 8);
+        return buffer;
+    case 6:
+        std::snprintf(buffer, sizeof(buffer), "初期リング速度: +%d%% → +%d%%", beforeLevel * 8, afterLevel * 8);
+        return buffer;
+    case 7:
+        std::snprintf(buffer, sizeof(buffer), "収集術式: Lv.%d → Lv.%d", beforeLevel, afterLevel);
+        return buffer;
+    default:
+        return {};
+    }
+}
+
+constexpr std::array<std::string_view, BaseItemSourceCount> BaseItemSourceLabels{{
+    "リュック",
+    "収納箱",
+    "リング1",
+    "リング2",
+    "リング3",
+}};
+
+constexpr float MerchantSellSourceYOffset = 44.0f;
+constexpr float MerchantSellItemYOffset = MerchantSellSourceYOffset + 16.0f;
+constexpr float MerchantSellRingYOffset = MerchantSellSourceYOffset + 40.0f + 40.0f;
+constexpr float BaseRingPreviewScale = 0.8f;
+constexpr float MerchantSellRingPreviewScale = 0.9f;
+constexpr float BaseFacilitySpawnGap = 18.0f;
+
+enum class BaseFacilitySpawnSide {
+    Above,
+    Below,
+};
+
+UiRect defaultBaseFacilityRect(BaseArea area, bool ringWorkshopUnlocked, std::string_view facilityId)
+{
+    const std::vector<BaseFacility> facilities = baseFacilities(area, ringWorkshopUnlocked);
+    const auto it = std::find_if(facilities.begin(), facilities.end(), [facilityId](const BaseFacility& facility) {
+        return facility.facilityId == facilityId;
+    });
+    return it == facilities.end() ? UiRect{{0.0f, 0.0f}, {0.0f, 0.0f}} : it->rect;
+}
+
+Vec2 baseFacilitySpawnPosition(UiRect facilityRect, BaseFacilitySpawnSide side, float playerRadius)
+{
+    Vec2 position{facilityRect.pos.x + facilityRect.size.x * 0.5f, facilityRect.pos.y};
+    if (side == BaseFacilitySpawnSide::Above) {
+        position.y = facilityRect.pos.y - playerRadius - BaseFacilitySpawnGap;
+    } else {
+        position.y = facilityRect.pos.y + facilityRect.size.y + playerRadius + BaseFacilitySpawnGap;
+    }
+
+    const UiRect bounds = baseMapBounds();
+    position.x = std::clamp(
+        position.x,
+        bounds.pos.x + playerRadius,
+        bounds.pos.x + bounds.size.x - playerRadius);
+    position.y = std::clamp(
+        position.y,
+        bounds.pos.y + playerRadius,
+        bounds.pos.y + bounds.size.y - playerRadius);
+    return position;
+}
+
+UiRect merchantSellSourceRect(int index)
+{
+    return {{BaseItemSourceTabX + static_cast<float>(index) * BaseItemSourceTabPitch, 116.0f + MerchantSellSourceYOffset}, {BaseItemSourceTabWidth, ui::ButtonHeight}};
+}
+
+bool baseItemSourceIsWarehouse(int source)
+{
+    return source == BaseWarehouseSourceIndex;
+}
+
+bool baseItemSourceIsRing(int source)
+{
+    return source >= BaseRingSourceOffset && source < BaseItemSourceCount;
+}
+
+int ringIndexFromBaseItemSource(int source)
+{
+    return source - BaseRingSourceOffset;
+}
+
+void drawTextCentered(Renderer& renderer, UiRect rect, float y, std::string_view text, Color color, int scale)
+{
+    const Vec2 size = renderer.measureText(text, scale);
+    renderer.drawText({rect.pos.x + (rect.size.x - size.x) * 0.5f, y}, text, color, scale);
+}
+
+void drawStorageHeader(Renderer& renderer, float x, float y, std::string_view title, std::string_view count, Color color)
+{
+    renderer.drawText({x, y}, title, color, 3);
+    const Vec2 titleSize = renderer.measureText(title, 3);
+    renderer.drawText(
+        {x + titleSize.x + StorageHeaderCountGap, y + StorageHeaderCountYOffset},
+        count,
+        color,
+        StorageHeaderCountScale);
+}
+
+void drawStoragePageSelector(Renderer& renderer, int page, int pageCount)
+{
+    char buffer[64];
+    const UiRect prevPageRect = storagePrevPageButtonRect();
+    const UiRect pageTextRect = storagePageTextRect();
+    const UiRect nextPageRect = storageNextPageButtonRect();
+    std::snprintf(buffer, sizeof(buffer), "%d/%d", page + 1, pageCount);
+    drawTextCentered(renderer, pageTextRect, StorageBottomHeaderY + StoragePageTextYOffset, buffer, {198, 198, 206, 255}, StoragePageTextScale);
+    drawUiRectButton(renderer, prevPageRect, "<", false);
+    drawUiRectButton(renderer, nextPageRect, ">", false);
+}
+
+UiRect merchantSellGridSlotRect(int index)
+{
+    UiRect rect = merchantGridSlotRect(index);
+    rect.pos.y += MerchantSellItemYOffset;
+    return rect;
+}
+
+Vec2 baseRingPreviewCenterFromGrid(UiRect(*slotRect)(int), float yOffset)
+{
+    const UiRect first = slotRect(0);
+    const UiRect last = slotRect(StoragePaneSlotCount - 1);
+    return {
+        first.pos.x + (slotRect(StorageColumns - 1).pos.x + first.size.x - first.pos.x) * 0.5f,
+        first.pos.y + (last.pos.y + last.size.y - first.pos.y) * 0.5f + yOffset,
+    };
+}
+
+Vec2 baseProcessingRingPreviewCenter()
+{
+    return baseRingPreviewCenterFromGrid(baseProcessingGridSlotRect, 28.0f);
+}
+
+Vec2 merchantSellRingPreviewCenter()
+{
+    return baseRingPreviewCenterFromGrid(merchantGridSlotRect, MerchantSellRingYOffset);
+}
+
+Vec2 baseRingPreviewCenterForShape(Vec2 center, RingShape shape)
+{
+    if (shape == RingShape::Comet) {
+        constexpr float CometPreviewYOffset = 120.0f;
+        center.y += CometPreviewYOffset;
+    }
+    return center;
+}
+
+Vec2 baseProcessingRingPreviewCenter(const SpellRingSystem& spellRing, int ringIndex)
+{
+    return baseRingPreviewCenterForShape(
+        baseProcessingRingPreviewCenter(),
+        spellRing.ringShapeForIndex(ringIndex));
+}
+
+Vec2 merchantSellRingPreviewCenter(const SpellRingSystem& spellRing, int ringIndex)
+{
+    return baseRingPreviewCenterForShape(
+        merchantSellRingPreviewCenter(),
+        spellRing.ringShapeForIndex(ringIndex));
+}
+
+float baseRingPreviewRadius(RingShape shape, float previewScale)
+{
+    return ringUiShapeRadius(shape) * previewScale;
+}
+
+Vec2 rotateAround(Vec2 point, Vec2 center, float radians)
+{
+    const Vec2 local = point - center;
+    const float c = std::cos(radians);
+    const float s = std::sin(radians);
+    return center + Vec2{
+        local.x * c - local.y * s,
+        local.x * s + local.y * c,
+    };
+}
+
+RingOrbitContext baseRingPreviewOrbitContext(
+    const SpellRingSystem& spellRing,
+    const RuntimeBalance& balance,
+    int ringIndex,
+    int itemIndex,
+    int itemCount,
+    float previewScale)
+{
+    RingOrbitContext context;
+    context.shape = spellRing.ringShapeForIndex(ringIndex);
+    context.radius = baseRingPreviewRadius(context.shape, previewScale);
+    context.shapeRotation = 0.0f;
+    context.itemIndex = std::max(0, itemIndex);
+    context.itemCount = std::max(1, itemCount);
+    context.tuning = makeRingOrbitTuning(balance);
+    return context;
+}
+
+Vec2 baseRingPreviewPoint(Vec2 center, RingShape shape, Vec2 point)
+{
+    if (shape == RingShape::Comet) {
+        return rotateAround(point, center, RingUiCometArcRotation);
+    }
+    return point;
+}
+
+Vec2 baseRingPreviewItemAnchor(
+    Vec2 center,
+    const SpellRingItem& item,
+    const SpellRingSystem& spellRing,
+    const RuntimeBalance& balance,
+    int ringIndex,
+    int itemIndex,
+    int itemCount,
+    float previewScale)
+{
+    const RingOrbitContext context = baseRingPreviewOrbitContext(spellRing, balance, ringIndex, itemIndex, itemCount, previewScale);
+    const Vec2 point = getRingItemWorldPosition(center, item.localAngle, context);
+    return baseRingPreviewPoint(center, context.shape, point);
+}
+
+Vec2 baseRingPreviewItemDrawCenter(
+    Vec2 center,
+    const SpellRingItem& item,
+    const SpellRingSystem& spellRing,
+    const RuntimeBalance& balance,
+    int ringIndex,
+    int itemIndex,
+    int itemCount,
+    float previewScale,
+    float totalSeconds)
+{
+    SpellRingItem displayItem = item;
+    displayItem.worldPosition = baseRingPreviewItemAnchor(center, item, spellRing, balance, ringIndex, itemIndex, itemCount, previewScale);
+    return ringItemDrawPosition(displayItem, totalSeconds);
+}
+
+UiRect baseRingPreviewItemRect(
+    Vec2 previewCenter,
+    const SpellRingItem& item,
+    const SpellRingSystem& spellRing,
+    const RuntimeBalance& balance,
+    int ringIndex,
+    int itemIndex,
+    int itemCount,
+    float previewScale,
+    float totalSeconds)
+{
+    constexpr Vec2 Size{54.0f, 54.0f};
+    const Vec2 center = baseRingPreviewItemDrawCenter(previewCenter, item, spellRing, balance, ringIndex, itemIndex, itemCount, previewScale, totalSeconds);
+    return {center - Size * 0.5f, Size};
+}
+
+UiRect baseProcessingRingItemRect(
+    const SpellRingItem& item,
+    const SpellRingSystem& spellRing,
+    const RuntimeBalance& balance,
+    int ringIndex,
+    int itemIndex,
+    int itemCount,
+    float totalSeconds)
+{
+    return baseRingPreviewItemRect(
+        baseProcessingRingPreviewCenter(spellRing, ringIndex),
+        item,
+        spellRing,
+        balance,
+        ringIndex,
+        itemIndex,
+        itemCount,
+        BaseRingPreviewScale,
+        totalSeconds);
+}
+
+UiRect merchantSellRingItemRect(
+    const SpellRingItem& item,
+    const SpellRingSystem& spellRing,
+    const RuntimeBalance& balance,
+    int ringIndex,
+    int itemIndex,
+    int itemCount,
+    float totalSeconds)
+{
+    return baseRingPreviewItemRect(
+        merchantSellRingPreviewCenter(spellRing, ringIndex),
+        item,
+        spellRing,
+        balance,
+        ringIndex,
+        itemIndex,
+        itemCount,
+        MerchantSellRingPreviewScale,
+        totalSeconds);
+}
+
+void drawBaseRingPreview(
+    Renderer& renderer,
+    const SpellRingSystem& spellRing,
+    const ObjectCatalog& objectCatalog,
+    const RuntimeBalance& balance,
+    Vec2 center,
+    int ringIndex,
+    int selectedIndex,
+    float previewScale,
+    float totalSeconds)
+{
+    const std::vector<SpellRingItem>& items = spellRing.itemsForRing(ringIndex);
+    const RingShape shape = spellRing.ringShapeForIndex(ringIndex);
+    RingOrbitContext context = baseRingPreviewOrbitContext(spellRing, balance, ringIndex, 0, static_cast<int>(items.size()), previewScale);
+    std::vector<Vec2> orbitPath = getRingPathSamplePoints(center, context, 160);
+    for (Vec2& point : orbitPath) {
+        point = baseRingPreviewPoint(center, shape, point);
+    }
+    drawMagicOrbitPath(
+        renderer,
+        orbitPath,
+        center,
+        MagicOrbitDrawOptions{
+            shape,
+            true,
+            false,
+            true,
+            true,
+            ringIndex,
+            totalSeconds,
+            0.92f,
+        });
+
+    for (int i = 0; i < static_cast<int>(items.size()); ++i) {
+        const SpellRingItem& item = items[static_cast<std::size_t>(i)];
+        const Vec2 itemAnchor = baseRingPreviewItemAnchor(center, item, spellRing, balance, ringIndex, i, static_cast<int>(items.size()), previewScale);
+        const Vec2 itemCenter = baseRingPreviewItemDrawCenter(center, item, spellRing, balance, ringIndex, i, static_cast<int>(items.size()), previewScale, totalSeconds);
+        Vec2 outward = normalize(itemAnchor - center);
+        if (lengthSquared(outward) <= 0.0001f) {
+            outward = {0.0f, -1.0f};
+        }
+        const bool selected = i == selectedIndex;
+        const ItemData* object = objectForRingItem(objectCatalog, item);
+        if (shape != RingShape::FigureEight) {
+            const Color angleLineColor = selected ? Color{255, 230, 150, 120} : Color{94, 102, 128, 85};
+            Vec2 tangent = normalize(Vec2{-outward.y, outward.x});
+            if (lengthSquared(tangent) <= 0.0001f) {
+                tangent = {0.0f, 1.0f};
+            }
+            constexpr float AngleLineHalfWidthPx = 0.5f;
+            renderer.drawLine(center + tangent * AngleLineHalfWidthPx, itemAnchor + tangent * AngleLineHalfWidthPx, angleLineColor);
+            renderer.drawLine(center - tangent * AngleLineHalfWidthPx, itemAnchor - tangent * AngleLineHalfWidthPx, angleLineColor);
+        }
+        drawRingItemShape(renderer, item, object, itemCenter, outward, selected);
+        char label[16];
+        std::snprintf(label, sizeof(label), "%d", i + 1);
+        renderer.drawText(itemCenter + Vec2{-5.0f, 22.0f}, label, selected ? Color{255, 230, 150, 255} : Color{174, 182, 198, 255}, 1);
+    }
+}
+
+void drawBaseProcessingRingPreview(
+    Renderer& renderer,
+    const SpellRingSystem& spellRing,
+    const ObjectCatalog& objectCatalog,
+    const RuntimeBalance& balance,
+    int ringIndex,
+    int selectedIndex,
+    float totalSeconds)
+{
+    drawBaseRingPreview(
+        renderer,
+        spellRing,
+        objectCatalog,
+        balance,
+        baseProcessingRingPreviewCenter(spellRing, ringIndex),
+        ringIndex,
+        selectedIndex,
+        BaseRingPreviewScale,
+        totalSeconds);
+}
+
+void drawMerchantSellRingPreview(
+    Renderer& renderer,
+    const SpellRingSystem& spellRing,
+    const ObjectCatalog& objectCatalog,
+    const RuntimeBalance& balance,
+    int ringIndex,
+    int selectedIndex,
+    float totalSeconds)
+{
+    drawBaseRingPreview(
+        renderer,
+        spellRing,
+        objectCatalog,
+        balance,
+        merchantSellRingPreviewCenter(spellRing, ringIndex),
+        ringIndex,
+        selectedIndex,
+        MerchantSellRingPreviewScale,
+        totalSeconds);
+}
+
+struct ProcessingResultSnapshot {
+    std::string name;
+    int stackCount = 1;
+    bool stackSource = false;
+    bool isBroken = false;
+    int currentDurability = -1;
+    int maxDurability = -1;
+    int enhanceLevel = 0;
+    int attackBonus = 0;
+    int digBonus = 0;
+    int durabilityBonus = 0;
+};
+
+std::string nonEmptyItemName(std::string_view name)
+{
+    return name.empty() ? std::string{"アイテム"} : std::string{name};
+}
+
+ProcessingResultSnapshot processingSnapshotFromStack(const InventoryObjectStack& stack)
+{
+    ProcessingResultSnapshot snapshot{};
+    snapshot.name = nonEmptyItemName(stack.item.name);
+    snapshot.stackCount = stack.count;
+    snapshot.stackSource = true;
+    snapshot.currentDurability = stack.item.durability;
+    snapshot.maxDurability = stack.item.durability;
+    snapshot.isBroken = stack.item.durability == 0;
+    return snapshot;
+}
+
+ProcessingResultSnapshot processingSnapshotFromInstance(const InventoryObjectInstance& entry)
+{
+    ProcessingResultSnapshot snapshot{};
+    snapshot.name = nonEmptyItemName(entry.item.name);
+    snapshot.stackCount = 1;
+    snapshot.currentDurability = entry.instance.currentDurability;
+    snapshot.maxDurability = entry.instance.maxDurability;
+    snapshot.isBroken = entry.instance.isBroken;
+    snapshot.enhanceLevel = entry.instance.enhanceLevel;
+    snapshot.attackBonus = entry.instance.attackBonus;
+    snapshot.digBonus = entry.instance.digBonus;
+    snapshot.durabilityBonus = entry.instance.durabilityBonus;
+    return snapshot;
+}
+
+ProcessingResultSnapshot processingSnapshotFromRingItem(const ObjectCatalog& catalog, const SpellRingItem& item)
+{
+    ProcessingResultSnapshot snapshot{};
+    snapshot.name = nonEmptyItemName(ringItemDisplayName(catalog, item));
+    snapshot.stackCount = 1;
+    snapshot.currentDurability = item.durability;
+    snapshot.maxDurability = item.maxDurability;
+    snapshot.isBroken = item.broken();
+    snapshot.enhanceLevel = item.enhanceLevel;
+    snapshot.attackBonus = item.attackBonus;
+    snapshot.digBonus = item.digBonus;
+    snapshot.durabilityBonus = item.durabilityBonus;
+    return snapshot;
+}
+
+ProcessingResultSnapshot processingEnhancedSnapshot(
+    ProcessingResultSnapshot snapshot,
+    int attackBonus,
+    int digBonus,
+    int durabilityBonus)
+{
+    snapshot.stackCount = 1;
+    snapshot.stackSource = false;
+    snapshot.enhanceLevel = std::min(MaxItemEnhanceLevel, snapshot.enhanceLevel + 1);
+    snapshot.attackBonus += attackBonus;
+    snapshot.digBonus += digBonus;
+    snapshot.durabilityBonus += durabilityBonus;
+    if (durabilityBonus > 0 && snapshot.maxDurability >= 0) {
+        snapshot.maxDurability += durabilityBonus;
+        snapshot.currentDurability = std::min(snapshot.maxDurability, std::max(0, snapshot.currentDurability + durabilityBonus));
+    }
+    return snapshot;
+}
+
+std::string processingChangeLine(std::string_view label, int beforeValue, int afterValue)
+{
+    char buffer[192];
+    std::snprintf(buffer, sizeof(buffer), "%s: %d → %d", std::string(label).c_str(), beforeValue, afterValue);
+    return buffer;
+}
+
+std::string processingSignedChangeLine(std::string_view label, int beforeValue, int afterValue)
+{
+    char buffer[192];
+    std::snprintf(buffer, sizeof(buffer), "%s: +%d → +%d", std::string(label).c_str(), beforeValue, afterValue);
+    return buffer;
+}
+
+std::string processingDurabilityChangeLine(std::string_view label, int beforeValue, int afterValue)
+{
+    if (beforeValue < 0 || afterValue < 0) {
+        return std::string(label) + ": 壊れない";
+    }
+    return processingChangeLine(label, beforeValue, afterValue);
+}
+
+std::string processingRepairDurabilityLine(const ProcessingResultSnapshot& before, const ProcessingResultSnapshot& after)
+{
+    if (before.maxDurability < 0 || after.maxDurability < 0) {
+        return "耐久力: 壊れない";
+    }
+    char buffer[192];
+    std::snprintf(buffer, sizeof(buffer), "耐久力: %d/%d → %d/%d",
+        before.currentDurability,
+        before.maxDurability,
+        after.currentDurability,
+        after.maxDurability);
+    return buffer;
+}
+
+std::vector<std::string> processingRepairResultLines(
+    const ProcessingResultSnapshot& before,
+    const ProcessingResultSnapshot& after)
+{
+    std::vector<std::string> lines;
+    lines.push_back(before.name + "を修理しました");
+    if (before.isBroken && !after.isBroken) {
+        lines.push_back("状態: 破損 → 通常");
+    }
+    lines.push_back(processingRepairDurabilityLine(before, after));
+    return lines;
+}
+
+std::vector<std::string> processingEnhanceResultLines(
+    const ProcessingResultSnapshot& before,
+    const ProcessingResultSnapshot& after,
+    bool attackMode,
+    bool digMode,
+    bool durabilityMode)
+{
+    std::vector<std::string> lines;
+    if (before.stackSource && before.stackCount > 1) {
+        lines.push_back(before.name + "1個を強化しました");
+    } else {
+        lines.push_back(before.name + "を強化しました");
+    }
+    lines.push_back(processingChangeLine("強化Lv", before.enhanceLevel, after.enhanceLevel));
+    if (attackMode) {
+        lines.push_back(processingSignedChangeLine("攻撃力", before.attackBonus, after.attackBonus));
+    } else if (digMode) {
+        lines.push_back(processingSignedChangeLine("抑制力", before.digBonus, after.digBonus));
+    } else if (durabilityMode) {
+        lines.push_back(processingDurabilityChangeLine("最大耐久力", before.maxDurability, after.maxDurability));
+    }
+    return lines;
+}
+
+} // namespace
+
 bool Game::isSellableObject(const ItemData& item) const
 {
     return !isStoryObject(item);
@@ -167,39 +791,242 @@ void Game::sellMerchantEntry(int index, int count)
     }
 }
 
-void Game::sellMerchantScreenSlot(int slotIndex, int count)
+Game::MerchantSellTarget Game::merchantSellTargetForSourceSlot(int source, int slotIndex) const
 {
-    if (slotIndex < 0 || slotIndex >= inventory_.screenSlotCount()) {
+    MerchantSellTarget target{};
+    target.slotIndex = slotIndex;
+    const int clampedSource = std::clamp(source, 0, BaseItemSourceCount - 1);
+    target.source = static_cast<BaseItemSource>(clampedSource);
+
+    if (target.source == BaseItemSource::Backpack) {
+        if (slotIndex < 0 || slotIndex >= inventory_.screenSlotCount()) {
+            return target;
+        }
+        if (inventory_.screenObjectStackAt(slotIndex) != nullptr ||
+            inventory_.screenObjectInstanceAt(slotIndex) != nullptr) {
+            target.valid = true;
+        }
+        return target;
+    }
+
+    if (target.source == BaseItemSource::Warehouse) {
+        const std::optional<StorageEntry> entry = warehouseEntryForPageSlot(slotIndex, baseStorageWarehousePage_);
+        if (!entry) {
+            return target;
+        }
+        target.storageEntry = *entry;
+        target.warehouseEntry = true;
+        target.valid = true;
+        return target;
+    }
+
+    target.ringIndex = ringIndexFromBaseItemSource(clampedSource);
+    if (target.ringIndex < 0 || target.ringIndex >= SpellRingCount) {
+        return target;
+    }
+    const std::vector<SpellRingItem>& ringItems = spellRing_.itemsForRing(target.ringIndex);
+    if (slotIndex < 0 || slotIndex >= static_cast<int>(ringItems.size())) {
+        return target;
+    }
+    target.ringItemIndex = slotIndex;
+    target.valid = true;
+    return target;
+}
+
+Game::MerchantSellTarget Game::merchantSellTargetForScreenSlot(int slotIndex) const
+{
+    return merchantSellTargetForSourceSlot(baseMerchantSellSource_, slotIndex);
+}
+
+bool Game::merchantSellTargetAvailable(MerchantSellTarget target) const
+{
+    if (!target.valid) {
+        return false;
+    }
+
+    if (target.source == BaseItemSource::Backpack) {
+        if (const InventoryObjectStack* stack = inventory_.screenObjectStackAt(target.slotIndex)) {
+            return stack->count > 0 && isSellableObject(stack->item);
+        }
+        if (const InventoryObjectInstance* instance = inventory_.screenObjectInstanceAt(target.slotIndex)) {
+            return !instance->instance.protectionEnabled && isSellableObject(instance->item);
+        }
+        return false;
+    }
+
+    if (target.source == BaseItemSource::Warehouse) {
+        const ItemData* item = storageEntryItem(target.storageEntry, true);
+        if (item == nullptr || !isSellableObject(*item)) {
+            return false;
+        }
+        if (target.storageEntry.kind == StorageEntryKind::Stack) {
+            return storageEntryStackCount(target.storageEntry, true) > 0;
+        }
+        const ItemInstance* instance = storageEntryInstance(target.storageEntry, true);
+        return instance != nullptr && !instance->protectionEnabled;
+    }
+
+    if (target.ringIndex < 0 || target.ringIndex >= SpellRingCount) {
+        return false;
+    }
+    const std::vector<SpellRingItem>& ringItems = spellRing_.itemsForRing(target.ringIndex);
+    if (target.ringItemIndex < 0 || target.ringItemIndex >= static_cast<int>(ringItems.size())) {
+        return false;
+    }
+    const SpellRingItem& ringItem = ringItems[static_cast<std::size_t>(target.ringItemIndex)];
+    if (ringItem.protectionEnabled) {
+        return false;
+    }
+    const ItemData* item = objectForRingItem(objectCatalog_, ringItem);
+    return item != nullptr && isSellableObject(*item);
+}
+
+int Game::merchantSellTargetPrice(MerchantSellTarget target) const
+{
+    if (!target.valid) {
+        return 0;
+    }
+
+    if (target.source == BaseItemSource::Backpack) {
+        if (const InventoryObjectStack* stack = inventory_.screenObjectStackAt(target.slotIndex)) {
+            return sellPrice(stack->item);
+        }
+        if (const InventoryObjectInstance* instance = inventory_.screenObjectInstanceAt(target.slotIndex)) {
+            return sellPrice(instance->item, &instance->instance);
+        }
+        return 0;
+    }
+
+    if (target.source == BaseItemSource::Warehouse) {
+        const ItemData* item = storageEntryItem(target.storageEntry, true);
+        return item != nullptr ? sellPrice(*item, storageEntryInstance(target.storageEntry, true)) : 0;
+    }
+
+    if (target.ringIndex < 0 || target.ringIndex >= SpellRingCount) {
+        return 0;
+    }
+    const std::vector<SpellRingItem>& ringItems = spellRing_.itemsForRing(target.ringIndex);
+    if (target.ringItemIndex < 0 || target.ringItemIndex >= static_cast<int>(ringItems.size())) {
+        return 0;
+    }
+    const ItemData* item = objectForRingItem(objectCatalog_, ringItems[static_cast<std::size_t>(target.ringItemIndex)]);
+    return item != nullptr ? sellPrice(*item) : 0;
+}
+
+void Game::sellMerchantTarget(MerchantSellTarget target, int count)
+{
+    if (!target.valid) {
+        baseStatus_ = "売却対象がありません";
+        return;
+    }
+    if (!merchantSellTargetAvailable(target)) {
+        baseStatus_ = "売れません";
+        if (target.source == BaseItemSource::Backpack) {
+            if (const InventoryObjectInstance* instance = inventory_.screenObjectInstanceAt(target.slotIndex)) {
+                if (instance->instance.protectionEnabled) {
+                    baseStatus_ = "保護中";
+                }
+            }
+        } else if (target.source == BaseItemSource::Warehouse) {
+            if (const ItemInstance* instance = storageEntryInstance(target.storageEntry, true)) {
+                if (instance->protectionEnabled) {
+                    baseStatus_ = "保護中";
+                }
+            }
+        } else if (target.ringIndex >= 0 && target.ringIndex < SpellRingCount) {
+            const std::vector<SpellRingItem>& ringItems = spellRing_.itemsForRing(target.ringIndex);
+            if (target.ringItemIndex >= 0 && target.ringItemIndex < static_cast<int>(ringItems.size()) &&
+                ringItems[static_cast<std::size_t>(target.ringItemIndex)].protectionEnabled) {
+                baseStatus_ = "保護中";
+            }
+        }
+        return;
+    }
+
+    if (target.source == BaseItemSource::Backpack) {
+        if (const InventoryObjectStack* stack = inventory_.screenObjectStackAt(target.slotIndex)) {
+            const int soldCount = count <= 0 ? stack->count : std::min(count, stack->count);
+            const std::string objectId = stack->objectId;
+            const int price = sellPrice(stack->item) * std::max(1, soldCount);
+            if (inventory_.removeObjectItemCount(objectId, soldCount)) {
+                money_ += price;
+                baseStatus_ = "売却しました";
+            }
+            return;
+        }
+
+        if (const InventoryObjectInstance* instance = inventory_.screenObjectInstanceAt(target.slotIndex)) {
+            const std::string instanceId = instance->instance.instanceId;
+            const int price = sellPrice(instance->item, &instance->instance);
+            if (inventory_.removeObjectInstance(instanceId)) {
+                money_ += price;
+                baseStatus_ = "売却しました";
+            }
+            return;
+        }
+
         baseStatus_ = "売却対象がありません";
         return;
     }
 
-    if (const InventoryObjectStack* stack = inventory_.screenObjectStackAt(slotIndex)) {
-        const int soldCount = count <= 0 ? stack->count : std::min(count, stack->count);
-        const std::string objectId = stack->objectId;
-        const int price = sellPrice(stack->item) * std::max(1, soldCount);
-        if (inventory_.removeObjectItemCount(objectId, soldCount)) {
-            money_ += price;
+    if (target.source == BaseItemSource::Warehouse) {
+        if (target.storageEntry.kind == StorageEntryKind::Stack) {
+            if (target.storageEntry.index < 0 || target.storageEntry.index >= static_cast<int>(warehouseObjectStacks_.size())) {
+                baseStatus_ = "売却対象がありません";
+                return;
+            }
+            InventoryObjectStack& stack = warehouseObjectStacks_[static_cast<std::size_t>(target.storageEntry.index)];
+            const int soldCount = count <= 0 ? stack.count : std::min(count, stack.count);
+            money_ += sellPrice(stack.item) * std::max(1, soldCount);
+            stack.count -= soldCount;
+            if (stack.count <= 0) {
+                removeWarehouseDisplaySlotAtEntryIndex(target.storageEntry.index);
+                warehouseObjectStacks_.erase(warehouseObjectStacks_.begin() + target.storageEntry.index);
+            }
+            baseSellSelection_ = std::clamp(baseSellSelection_, 0, StoragePaneSlotCount - 1);
             baseStatus_ = "売却しました";
-        }
-        return;
-    }
-
-    if (const InventoryObjectInstance* instance = inventory_.screenObjectInstanceAt(slotIndex)) {
-        if (instance->instance.protectionEnabled) {
-            baseStatus_ = "保護中";
             return;
         }
-        const std::string instanceId = instance->instance.instanceId;
-        const int price = sellPrice(instance->item, &instance->instance);
-        if (inventory_.removeObjectInstance(instanceId)) {
-            money_ += price;
-            baseStatus_ = "売却しました";
+
+        if (target.storageEntry.index < 0 || target.storageEntry.index >= static_cast<int>(warehouseObjectInstances_.size())) {
+            baseStatus_ = "売却対象がありません";
+            return;
         }
+        const InventoryObjectInstance& instance = warehouseObjectInstances_[static_cast<std::size_t>(target.storageEntry.index)];
+        money_ += sellPrice(instance.item, &instance.instance);
+        removeWarehouseDisplaySlotAtEntryIndex(static_cast<int>(warehouseObjectStacks_.size()) + target.storageEntry.index);
+        warehouseObjectInstances_.erase(warehouseObjectInstances_.begin() + target.storageEntry.index);
+        baseSellSelection_ = std::clamp(baseSellSelection_, 0, StoragePaneSlotCount - 1);
+        baseStatus_ = "売却しました";
         return;
     }
 
-    baseStatus_ = "売却対象がありません";
+    if (target.ringIndex < 0 || target.ringIndex >= SpellRingCount) {
+        baseStatus_ = "売却対象がありません";
+        return;
+    }
+    std::vector<SpellRingItem>& ringItems = spellRing_.itemsForRing(target.ringIndex);
+    if (target.ringItemIndex < 0 || target.ringItemIndex >= static_cast<int>(ringItems.size())) {
+        baseStatus_ = "売却対象がありません";
+        return;
+    }
+    const ItemData* item = objectForRingItem(objectCatalog_, ringItems[static_cast<std::size_t>(target.ringItemIndex)]);
+    if (item == nullptr) {
+        baseStatus_ = "売れません";
+        return;
+    }
+
+    money_ += sellPrice(*item);
+    ringItems.erase(ringItems.begin() + target.ringItemIndex);
+    spellRing_.resetBaseWeightToCurrent();
+    refreshOrbitEffects();
+    baseSellSelection_ = std::clamp(baseSellSelection_, 0, std::max(0, static_cast<int>(ringItems.size()) - 1));
+    baseStatus_ = "売却しました";
+}
+
+void Game::sellMerchantScreenSlot(int slotIndex, int count)
+{
+    sellMerchantTarget(merchantSellTargetForSourceSlot(0, slotIndex), count);
 }
 
 void Game::buyMerchantProduct(int index)
@@ -278,6 +1105,75 @@ std::optional<Game::StorageEntry> Game::processingEntryForScreenSlot(int slotInd
     return std::nullopt;
 }
 
+std::optional<Game::StorageEntry> Game::warehouseEntryForPageSlot(int slotIndex, int page) const
+{
+    if (slotIndex < 0 || slotIndex >= StoragePaneSlotCount) {
+        return std::nullopt;
+    }
+
+    const std::vector<StorageEntry> entries = warehouseStorageEntries();
+    const int pageCount = std::max(1, (warehouseCapacity() + StoragePaneSlotCount - 1) / StoragePaneSlotCount);
+    const int warehousePage = std::clamp(page, 0, pageCount - 1);
+    const int entryIndex = warehouseEntryIndexAtStorageSlot(warehousePage * StoragePaneSlotCount + slotIndex);
+    if (entryIndex < 0 || entryIndex >= static_cast<int>(entries.size())) {
+        return std::nullopt;
+    }
+    return entries[static_cast<std::size_t>(entryIndex)];
+}
+
+InventoryUiEntryView Game::storageEntryView(StorageEntry entry, bool warehouseEntry) const
+{
+    InventoryUiEntryView view{};
+    view.item = storageEntryItem(entry, warehouseEntry);
+    view.instance = storageEntryInstance(entry, warehouseEntry);
+    view.stackCount = storageEntryStackCount(entry, warehouseEntry);
+    return view;
+}
+
+Game::ProcessingTarget Game::processingTargetForScreenSlot(int slotIndex) const
+{
+    ProcessingTarget target{};
+    target.slotIndex = slotIndex;
+    if (slotIndex < 0 || slotIndex >= inventory_.screenSlotCount()) {
+        return target;
+    }
+
+    const int source = std::clamp(baseProcessingSource_, 0, BaseProcessingSourceCount - 1);
+    target.source = static_cast<BaseItemSource>(source);
+    if (target.source == BaseItemSource::Backpack) {
+        const std::optional<StorageEntry> entry = processingEntryForScreenSlot(slotIndex);
+        if (!entry) {
+            return target;
+        }
+        target.backpackEntry = *entry;
+        target.valid = true;
+        return target;
+    }
+
+    if (target.source == BaseItemSource::Warehouse) {
+        const std::optional<StorageEntry> entry = warehouseEntryForPageSlot(slotIndex, baseStorageWarehousePage_);
+        if (!entry) {
+            return target;
+        }
+        target.backpackEntry = *entry;
+        target.warehouseEntry = true;
+        target.valid = true;
+        return target;
+    }
+
+    target.ringIndex = ringIndexFromBaseItemSource(source);
+    if (target.ringIndex < 0 || target.ringIndex >= SpellRingCount) {
+        return target;
+    }
+    const std::vector<SpellRingItem>& ringItems = spellRing_.itemsForRing(target.ringIndex);
+    if (slotIndex < 0 || slotIndex >= static_cast<int>(ringItems.size())) {
+        return target;
+    }
+    target.ringItemIndex = slotIndex;
+    target.valid = true;
+    return target;
+}
+
 const char* Game::processingModeName(ProcessingMode mode) const
 {
     switch (mode) {
@@ -289,32 +1185,58 @@ const char* Game::processingModeName(ProcessingMode mode) const
     return "";
 }
 
-bool Game::processingEntryAvailable(StorageEntry entry) const
+bool Game::processingEntryAvailable(StorageEntry entry, bool warehouseEntry) const
 {
     const ProcessingMode mode = static_cast<ProcessingMode>(std::clamp(baseProcessingMode_, 0, BaseProcessingModeCount - 1));
     if (entry.kind == StorageEntryKind::Stack) {
         return mode != ProcessingMode::Repair;
     }
-    const InventoryObjectInstance& object = inventory_.objectInstances()[static_cast<std::size_t>(entry.index)];
-    if (mode == ProcessingMode::Repair) {
-        const ItemInstance& instance = object.instance;
-        return instance.maxDurability >= 0 && (instance.isBroken || instance.currentDurability < instance.maxDurability);
+    const ItemInstance* instance = storageEntryInstance(entry, warehouseEntry);
+    if (instance == nullptr) {
+        return false;
     }
-    return object.instance.enhanceLevel < MaxItemEnhanceLevel;
+    if (mode == ProcessingMode::Repair) {
+        return instance->maxDurability >= 0 && (instance->isBroken || instance->currentDurability < instance->maxDurability);
+    }
+    return instance->enhanceLevel < MaxItemEnhanceLevel;
 }
 
 bool Game::processingScreenSlotAvailable(int slotIndex) const
 {
-    const std::optional<StorageEntry> entry = processingEntryForScreenSlot(slotIndex);
-    return entry.has_value() && processingEntryAvailable(*entry);
+    return processingTargetAvailable(processingTargetForScreenSlot(slotIndex));
 }
 
-int Game::processingMoneyCost(StorageEntry entry, ProcessingMode mode) const
+bool Game::processingTargetAvailable(ProcessingTarget target) const
 {
-    const ItemData* item = storageEntryItem(entry, false);
+    if (!target.valid) {
+        return false;
+    }
+    if (target.source == BaseItemSource::Backpack || target.source == BaseItemSource::Warehouse) {
+        return processingEntryAvailable(target.backpackEntry, target.warehouseEntry);
+    }
+
+    if (target.ringIndex < 0 || target.ringIndex >= SpellRingCount) {
+        return false;
+    }
+    const std::vector<SpellRingItem>& ringItems = spellRing_.itemsForRing(target.ringIndex);
+    if (target.ringItemIndex < 0 || target.ringItemIndex >= static_cast<int>(ringItems.size())) {
+        return false;
+    }
+
+    const ProcessingMode mode = static_cast<ProcessingMode>(std::clamp(baseProcessingMode_, 0, BaseProcessingModeCount - 1));
+    const SpellRingItem& item = ringItems[static_cast<std::size_t>(target.ringItemIndex)];
+    if (mode == ProcessingMode::Repair) {
+        return item.maxDurability >= 0 && (item.broken() || item.durability < item.maxDurability);
+    }
+    return item.enhanceLevel < MaxItemEnhanceLevel;
+}
+
+int Game::processingMoneyCost(StorageEntry entry, ProcessingMode mode, bool warehouseEntry) const
+{
+    const ItemData* item = storageEntryItem(entry, warehouseEntry);
     const int basePrice = std::max(1, item != nullptr ? item->price : 0);
     if (mode == ProcessingMode::Repair) {
-        const ItemInstance* instance = storageEntryInstance(entry, false);
+        const ItemInstance* instance = storageEntryInstance(entry, warehouseEntry);
         if (instance == nullptr || instance->maxDurability <= 0) {
             return 0;
         }
@@ -330,22 +1252,73 @@ int Game::processingMoneyCost(StorageEntry entry, ProcessingMode mode) const
     }
 
     int enhanceLevel = 0;
-    if (const ItemInstance* instance = storageEntryInstance(entry, false)) {
+    if (const ItemInstance* instance = storageEntryInstance(entry, warehouseEntry)) {
         enhanceLevel = instance->enhanceLevel;
     }
     return std::max(20, basePrice / 2 + (enhanceLevel + 1) * 50);
 }
 
-int Game::processingOreCost(StorageEntry entry, ProcessingMode mode) const
+int Game::processingOreCost(StorageEntry entry, ProcessingMode mode, bool warehouseEntry) const
 {
     if (mode == ProcessingMode::Repair) {
         return 0;
     }
     int enhanceLevel = 0;
-    if (const ItemInstance* instance = storageEntryInstance(entry, false)) {
+    if (const ItemInstance* instance = storageEntryInstance(entry, warehouseEntry)) {
         enhanceLevel = instance->enhanceLevel;
     }
     return enhanceLevel + 1;
+}
+
+int Game::processingMoneyCost(ProcessingTarget target, ProcessingMode mode) const
+{
+    if (!target.valid) {
+        return 0;
+    }
+    if (target.source == BaseItemSource::Backpack || target.source == BaseItemSource::Warehouse) {
+        return processingMoneyCost(target.backpackEntry, mode, target.warehouseEntry);
+    }
+
+    const std::vector<SpellRingItem>& ringItems = spellRing_.itemsForRing(target.ringIndex);
+    if (target.ringItemIndex < 0 || target.ringItemIndex >= static_cast<int>(ringItems.size())) {
+        return 0;
+    }
+    const SpellRingItem& ringItem = ringItems[static_cast<std::size_t>(target.ringItemIndex)];
+    const ItemData* item = objectForRingItem(objectCatalog_, ringItem);
+    const int basePrice = std::max(1, item != nullptr ? item->price : 0);
+    if (mode == ProcessingMode::Repair) {
+        if (ringItem.maxDurability <= 0) {
+            return 0;
+        }
+        if (ringItem.broken()) {
+            return std::max(1, static_cast<int>(std::ceil(static_cast<double>(basePrice) * 0.6)));
+        }
+        const int missing = std::max(0, ringItem.maxDurability - ringItem.durability);
+        if (missing <= 0) {
+            return 0;
+        }
+        const double ratio = static_cast<double>(missing) / static_cast<double>(ringItem.maxDurability);
+        return std::max(1, static_cast<int>(std::ceil(static_cast<double>(basePrice) * ratio * 0.4)));
+    }
+
+    return std::max(20, basePrice / 2 + (ringItem.enhanceLevel + 1) * 50);
+}
+
+int Game::processingOreCost(ProcessingTarget target, ProcessingMode mode) const
+{
+    if (mode == ProcessingMode::Repair || !target.valid) {
+        return 0;
+    }
+    if (target.source == BaseItemSource::Backpack || target.source == BaseItemSource::Warehouse) {
+        return processingOreCost(target.backpackEntry, mode, target.warehouseEntry);
+    }
+
+    const std::vector<SpellRingItem>& ringItems = spellRing_.itemsForRing(target.ringIndex);
+    if (target.ringItemIndex < 0 || target.ringItemIndex >= static_cast<int>(ringItems.size())) {
+        return 0;
+    }
+    const SpellRingItem& ringItem = ringItems[static_cast<std::size_t>(target.ringItemIndex)];
+    return ringItem.enhanceLevel + 1;
 }
 
 void Game::applyProcessing(int entryIndex)
@@ -361,18 +1334,18 @@ void Game::applyProcessing(int entryIndex)
 
 void Game::applyProcessingScreenSlot(int slotIndex)
 {
-    const std::optional<StorageEntry> entry = processingEntryForScreenSlot(slotIndex);
-    if (!entry) {
+    const ProcessingTarget target = processingTargetForScreenSlot(slotIndex);
+    if (!target.valid) {
         baseStatus_ = "加工対象がありません";
         return;
     }
-    applyProcessingEntry(*entry);
+    applyProcessingTarget(target);
 }
 
-void Game::applyProcessingEntry(StorageEntry entry)
+void Game::applyProcessingEntry(StorageEntry entry, bool warehouseEntry)
 {
     const ProcessingMode mode = static_cast<ProcessingMode>(std::clamp(baseProcessingMode_, 0, BaseProcessingModeCount - 1));
-    if (!processingEntryAvailable(entry)) {
+    if (!processingEntryAvailable(entry, warehouseEntry)) {
         if (mode == ProcessingMode::Repair && entry.kind == StorageEntryKind::Stack) {
             baseStatus_ = "この作業はできません";
         } else {
@@ -381,8 +1354,8 @@ void Game::applyProcessingEntry(StorageEntry entry)
         return;
     }
 
-    const int moneyCost = processingMoneyCost(entry, mode);
-    const int oreCost = processingOreCost(entry, mode);
+    const int moneyCost = processingMoneyCost(entry, mode, warehouseEntry);
+    const int oreCost = processingOreCost(entry, mode, warehouseEntry);
     if (money_ < moneyCost) {
         baseStatus_ = "所持金が足りません";
         return;
@@ -392,21 +1365,72 @@ void Game::applyProcessingEntry(StorageEntry entry)
         return;
     }
 
+    const auto entrySnapshot = [this, warehouseEntry](StorageEntry snapshotEntry) {
+        if (snapshotEntry.kind == StorageEntryKind::Stack) {
+            const InventoryObjectStack& stack = warehouseEntry
+                ? warehouseObjectStacks_[static_cast<std::size_t>(snapshotEntry.index)]
+                : inventory_.objectStacks()[static_cast<std::size_t>(snapshotEntry.index)];
+            return processingSnapshotFromStack(stack);
+        }
+        const InventoryObjectInstance& instance = warehouseEntry
+            ? warehouseObjectInstances_[static_cast<std::size_t>(snapshotEntry.index)]
+            : inventory_.objectInstances()[static_cast<std::size_t>(snapshotEntry.index)];
+        return processingSnapshotFromInstance(instance);
+    };
+    const ProcessingResultSnapshot beforeSnapshot = entrySnapshot(entry);
+    int attackBonus = 0;
+    int digBonus = 0;
+    int durabilityBonus = 0;
+    if (mode == ProcessingMode::Attack) {
+        attackBonus = 1;
+    } else if (mode == ProcessingMode::Dig) {
+        digBonus = 1;
+    } else if (mode == ProcessingMode::Durability) {
+        durabilityBonus = 2;
+    }
+
+    const auto applyEnhancement = [&](ItemInstance& instance) {
+        if (instance.enhanceLevel >= MaxItemEnhanceLevel) {
+            return false;
+        }
+        ++instance.enhanceLevel;
+        instance.attackBonus += attackBonus;
+        instance.digBonus += digBonus;
+        instance.durabilityBonus += durabilityBonus;
+        if (durabilityBonus > 0 && instance.maxDurability >= 0) {
+            instance.maxDurability += durabilityBonus;
+            instance.currentDurability = std::min(instance.maxDurability, std::max(0, instance.currentDurability + durabilityBonus));
+        }
+        return true;
+    };
+    const auto allocateWarehouseInstanceId = [this]() {
+        constexpr std::string_view Prefix = "warehouseinst_";
+        unsigned long long nextId = 1;
+        const auto scanId = [&nextId, Prefix](const std::string& id) {
+            if (id.rfind(Prefix, 0) == 0) {
+                const unsigned long long parsed = std::strtoull(id.c_str() + Prefix.size(), nullptr, 10);
+                nextId = std::max(nextId, parsed + 1);
+            }
+        };
+        for (const InventoryObjectInstance& instance : inventory_.objectInstances()) {
+            scanId(instance.instance.instanceId);
+        }
+        for (const InventoryObjectInstance& instance : warehouseObjectInstances_) {
+            scanId(instance.instance.instanceId);
+        }
+        for (int ringIndex = 0; ringIndex < SpellRingCount; ++ringIndex) {
+            for (const SpellRingItem& item : spellRing_.itemsForRing(ringIndex)) {
+                scanId(item.instanceId);
+            }
+        }
+        return std::string(Prefix) + std::to_string(nextId);
+    };
+
     bool processed = false;
-    if (mode == ProcessingMode::Repair) {
+    if (!warehouseEntry && mode == ProcessingMode::Repair) {
         const InventoryObjectInstance& instance = inventory_.objectInstances()[static_cast<std::size_t>(entry.index)];
         processed = inventory_.repairObjectInstance(instance.instance.instanceId);
-    } else {
-        int attackBonus = 0;
-        int digBonus = 0;
-        int durabilityBonus = 0;
-        if (mode == ProcessingMode::Attack) {
-            attackBonus = 1;
-        } else if (mode == ProcessingMode::Dig) {
-            digBonus = 1;
-        } else if (mode == ProcessingMode::Durability) {
-            durabilityBonus = 2;
-        }
+    } else if (!warehouseEntry) {
         if (entry.kind == StorageEntryKind::Stack) {
             const InventoryObjectStack& stack = inventory_.objectStacks()[static_cast<std::size_t>(entry.index)];
             processed = inventory_.enhanceObjectStackItem(stack.objectId, attackBonus, digBonus, durabilityBonus, MaxItemEnhanceLevel);
@@ -414,6 +1438,40 @@ void Game::applyProcessingEntry(StorageEntry entry)
             const InventoryObjectInstance& instance = inventory_.objectInstances()[static_cast<std::size_t>(entry.index)];
             processed = inventory_.enhanceObjectInstance(instance.instance.instanceId, attackBonus, digBonus, durabilityBonus, MaxItemEnhanceLevel);
         }
+    } else if (mode == ProcessingMode::Repair) {
+        ItemInstance& instance = warehouseObjectInstances_[static_cast<std::size_t>(entry.index)].instance;
+        if (instance.maxDurability >= 0) {
+            instance.currentDurability = instance.maxDurability;
+            instance.isBroken = false;
+            processed = true;
+        }
+    } else if (entry.kind == StorageEntryKind::Stack) {
+        InventoryObjectStack& stack = warehouseObjectStacks_[static_cast<std::size_t>(entry.index)];
+        const bool stackSlotWillRemain = stack.count > 1;
+        if (stackSlotWillRemain && warehouseUsedSlots() >= warehouseCapacity()) {
+            baseStatus_ = "倉庫がいっぱいです";
+            return;
+        }
+        syncWarehouseDisplaySlots();
+        const int originalSlot = entry.index >= 0 && entry.index < static_cast<int>(warehouseDisplaySlots_.size())
+            ? warehouseDisplaySlots_[static_cast<std::size_t>(entry.index)]
+            : -1;
+        const ItemData item = stack.item;
+        ItemInstance instance = makeItemInstanceFromDefinition(allocateWarehouseInstanceId(), item);
+        processed = applyEnhancement(instance);
+        if (processed) {
+            --stack.count;
+            if (stack.count <= 0) {
+                removeWarehouseDisplaySlotAtEntryIndex(entry.index);
+                warehouseObjectStacks_.erase(warehouseObjectStacks_.begin() + entry.index);
+            }
+            warehouseObjectInstances_.push_back(InventoryObjectInstance{item, std::move(instance)});
+            warehouseDisplaySlots_.push_back(stackSlotWillRemain ? -1 : originalSlot);
+            syncWarehouseDisplaySlots();
+        }
+    } else {
+        ItemInstance& instance = warehouseObjectInstances_[static_cast<std::size_t>(entry.index)].instance;
+        processed = applyEnhancement(instance);
     }
     if (!processed) {
         baseStatus_ = "加工できません";
@@ -425,7 +1483,112 @@ void Game::applyProcessingEntry(StorageEntry entry)
         const bool spentOre = inventory_.materials().spend(MaterialType::EnhancementOre, oreCost);
         (void)spentOre;
     }
-    baseStatus_ = mode == ProcessingMode::Repair ? "修理しました" : "強化しました";
+    baseStatus_.clear();
+    if (mode == ProcessingMode::Repair) {
+        const ProcessingResultSnapshot afterSnapshot = entrySnapshot(entry);
+        openUiResultDialog(baseResultDialog_, "作業完了", processingRepairResultLines(beforeSnapshot, afterSnapshot));
+    } else {
+        const ProcessingResultSnapshot afterSnapshot = entry.kind == StorageEntryKind::Stack
+            ? processingEnhancedSnapshot(beforeSnapshot, attackBonus, digBonus, durabilityBonus)
+            : entrySnapshot(entry);
+        openUiResultDialog(
+            baseResultDialog_,
+            "作業完了",
+            processingEnhanceResultLines(
+                beforeSnapshot,
+                afterSnapshot,
+                mode == ProcessingMode::Attack,
+                mode == ProcessingMode::Dig,
+                mode == ProcessingMode::Durability));
+    }
+    const int selectionCount = warehouseEntry ? StoragePaneSlotCount : inventory_.screenSlotCount();
+    baseProcessingSelection_ = std::clamp(baseProcessingSelection_, 0, std::max(0, selectionCount - 1));
+}
+
+void Game::applyProcessingTarget(ProcessingTarget target)
+{
+    const ProcessingMode mode = static_cast<ProcessingMode>(std::clamp(baseProcessingMode_, 0, BaseProcessingModeCount - 1));
+    if (!target.valid) {
+        baseStatus_ = "加工対象がありません";
+        return;
+    }
+    if (target.source == BaseItemSource::Backpack || target.source == BaseItemSource::Warehouse) {
+        applyProcessingEntry(target.backpackEntry, target.warehouseEntry);
+        return;
+    }
+
+    if (!processingTargetAvailable(target)) {
+        baseStatus_ = mode == ProcessingMode::Repair ? "修理不要です" : "強化上限です";
+        return;
+    }
+
+    const int moneyCost = processingMoneyCost(target, mode);
+    const int oreCost = processingOreCost(target, mode);
+    if (money_ < moneyCost) {
+        baseStatus_ = "所持金が足りません";
+        return;
+    }
+    if (inventory_.materialCount(MaterialType::EnhancementOre) < oreCost) {
+        baseStatus_ = "強化鉱石が足りません";
+        return;
+    }
+
+    const std::vector<SpellRingItem>& ringItemsBefore = spellRing_.itemsForRing(target.ringIndex);
+    const ProcessingResultSnapshot beforeSnapshot =
+        processingSnapshotFromRingItem(objectCatalog_, ringItemsBefore[static_cast<std::size_t>(target.ringItemIndex)]);
+    int attackBonus = 0;
+    int digBonus = 0;
+    int durabilityBonus = 0;
+    if (mode == ProcessingMode::Attack) {
+        attackBonus = 1;
+    } else if (mode == ProcessingMode::Dig) {
+        digBonus = 1;
+    } else if (mode == ProcessingMode::Durability) {
+        durabilityBonus = 2;
+    }
+
+    bool processed = false;
+    if (mode == ProcessingMode::Repair) {
+        processed = spellRing_.repairItem(target.ringIndex, target.ringItemIndex);
+    } else {
+        processed = spellRing_.enhanceItem(
+            target.ringIndex,
+            target.ringItemIndex,
+            attackBonus,
+            digBonus,
+            durabilityBonus,
+            MaxItemEnhanceLevel,
+            objectCatalog_);
+    }
+    if (!processed) {
+        baseStatus_ = "加工できません";
+        return;
+    }
+
+    money_ -= moneyCost;
+    if (oreCost > 0) {
+        const bool spentOre = inventory_.materials().spend(MaterialType::EnhancementOre, oreCost);
+        (void)spentOre;
+    }
+    spellRing_.resetBaseWeightToCurrent();
+    refreshOrbitEffects();
+    const std::vector<SpellRingItem>& ringItemsAfter = spellRing_.itemsForRing(target.ringIndex);
+    const ProcessingResultSnapshot afterSnapshot =
+        processingSnapshotFromRingItem(objectCatalog_, ringItemsAfter[static_cast<std::size_t>(target.ringItemIndex)]);
+    baseStatus_.clear();
+    if (mode == ProcessingMode::Repair) {
+        openUiResultDialog(baseResultDialog_, "作業完了", processingRepairResultLines(beforeSnapshot, afterSnapshot));
+    } else {
+        openUiResultDialog(
+            baseResultDialog_,
+            "作業完了",
+            processingEnhanceResultLines(
+                beforeSnapshot,
+                afterSnapshot,
+                mode == ProcessingMode::Attack,
+                mode == ProcessingMode::Dig,
+                mode == ProcessingMode::Durability));
+    }
     baseProcessingSelection_ = std::clamp(baseProcessingSelection_, 0, std::max(0, inventory_.screenSlotCount() - 1));
 }
 
@@ -707,6 +1870,7 @@ int Game::upgradeCost(int index) const
     case 4: return 100 + maxHpUpgradeLevel_ * 50;
     case 5: return 150 + ringRadiusUpgradeLevel_ * 75;
     case 6: return 150 + ringSpeedUpgradeLevel_ * 75;
+    case 7: return 120 + collectionRangeUpgradeLevel_ * 80;
     default: return 0;
     }
 }
@@ -739,6 +1903,7 @@ int Game::upgradeMaterialCost(int index) const
     case 4: return maxHpUpgradeLevel_ + 1;
     case 5: return ringRadiusUpgradeLevel_ + 1;
     case 6: return ringSpeedUpgradeLevel_ + 1;
+    case 7: return collectionRangeUpgradeLevel_ + 1;
     default: return 0;
     }
 }
@@ -753,7 +1918,7 @@ const char* Game::upgradeName(int index) const
     case 4: return "最大HPアップ";
     case 5: return "リング半径アップ";
     case 6: return "リング速度アップ";
-    case 7: return "プレイ性能強化枠";
+    case 7: return "収集術式";
     default: return "";
     }
 }
@@ -768,7 +1933,7 @@ int Game::upgradeLevel(int index) const
     case 4: return maxHpUpgradeLevel_;
     case 5: return ringRadiusUpgradeLevel_;
     case 6: return ringSpeedUpgradeLevel_;
-    case 7: return 0;
+    case 7: return collectionRangeUpgradeLevel_;
     default: return 0;
     }
 }
@@ -783,6 +1948,7 @@ int Game::upgradeMaxLevel(int index) const
     case 4:
     case 5:
     case 6:
+    case 7:
         return 5;
     default:
         return 0;
@@ -791,7 +1957,7 @@ int Game::upgradeMaxLevel(int index) const
 
 bool Game::upgradeImplemented(int index) const
 {
-    return index >= 0 && index <= 6;
+    return index >= 0 && index <= 7;
 }
 
 bool Game::upgradeMaxed(int index) const
@@ -825,6 +1991,7 @@ void Game::buyUpgrade(int index)
         return;
     }
 
+    const int beforeLevel = upgradeLevel(index);
     money_ -= cost;
     if (materialCost > 0) {
         const bool spent = inventory_.materials().spend(materialType, materialCost);
@@ -856,10 +2023,21 @@ void Game::buyUpgrade(int index)
         ++ringSpeedUpgradeLevel_;
         applyPermanentUpgrades();
         break;
+    case 7:
+        ++collectionRangeUpgradeLevel_;
+        break;
     default:
         break;
     }
-    baseStatus_ = "強化しました";
+    const int afterLevel = upgradeLevel(index);
+    baseStatus_.clear();
+    openUiResultDialog(
+        baseResultDialog_,
+        "強化完了",
+        {
+            std::string(baseUpgradeResultSubject(index)) + "を強化しました",
+            baseUpgradeResultChangeLine(index, beforeLevel, afterLevel),
+        });
 }
 
 void Game::openRingWorkshop()
@@ -1154,6 +2332,26 @@ void Game::maybeStartFirstDungeonDialogue()
     dialogue_.start(firstDungeonDialogue());
 }
 
+void Game::placeBasePlayerAtMineExitReturnPoint()
+{
+    const UiRect fallback = defaultBaseFacilityRect(BaseArea::Outdoor, ringWorkshopUnlocked_, "mine_exit");
+    const UiRect mineExitRect = toUiRect(baseFacilityRectFor(BaseArea::Outdoor, "mine_exit", toBaseEditRect(fallback)));
+    baseArea_ = BaseArea::Outdoor;
+    basePlayerPosition_ = baseFacilitySpawnPosition(mineExitRect, BaseFacilitySpawnSide::Above, balance_.playerRadius);
+    baseOutdoorPlayerPosition_ = basePlayerPosition_;
+    basePlayerFacing_ = {0.0f, 1.0f};
+}
+
+void Game::placeBasePlayerAtHomeDoorResumePoint()
+{
+    const UiRect fallback = defaultBaseFacilityRect(BaseArea::Outdoor, ringWorkshopUnlocked_, "home_entrance");
+    const UiRect homeEntranceRect = toUiRect(baseFacilityRectFor(BaseArea::Outdoor, "home_entrance", toBaseEditRect(fallback)));
+    baseArea_ = BaseArea::Outdoor;
+    basePlayerPosition_ = baseFacilitySpawnPosition(homeEntranceRect, BaseFacilitySpawnSide::Below, balance_.playerRadius);
+    baseOutdoorPlayerPosition_ = basePlayerPosition_;
+    basePlayerFacing_ = {0.0f, -1.0f};
+}
+
 const StoryEvent* Game::findStoryEvent(std::string_view id) const
 {
     const auto it = std::find_if(storyEvents_.begin(), storyEvents_.end(), [id](const StoryEvent& event) {
@@ -1278,10 +2476,20 @@ void Game::updateBookshelfScreen(const Input& input, UiContext& ui)
 
 void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
 {
+    baseRingPreviewAnimationTime_ = std::fmod(baseRingPreviewAnimationTime_ + std::max(0.0f, dt), 3600.0f);
+    const float ringPreviewSeconds = baseRingPreviewAnimationTime_;
+
     updatePlayerFootstepDust(dt);
 
     if (baseEditEnabled_) {
         updateBaseEditScreen(input, ui, dt);
+        return;
+    }
+
+    if (baseResultDialog_.open) {
+        const UiRect resultPanel = baseResultDialogRect();
+        updateUiResultDialog(baseResultDialog_, ui, input, resultPanel);
+        ui.block(resultPanel);
         return;
     }
 
@@ -1724,16 +2932,35 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
             baseProcessingCommandSlot_ = -1;
         };
         const auto openProcessingCommand = [&](int slotIndex) {
-            if (!processingScreenSlotAvailable(slotIndex)) {
+            const ProcessingTarget target = processingTargetForScreenSlot(slotIndex);
+            if (!processingTargetAvailable(target)) {
                 baseStatus_ = "この作業はできません";
                 return false;
             }
             const ProcessingMode mode = static_cast<ProcessingMode>(std::clamp(baseProcessingMode_, 0, BaseProcessingModeCount - 1));
             const std::array<UiCommandMenuItem, 1> items{{{mode == ProcessingMode::Repair ? "修理する" : "強化する", true}}};
             baseProcessingCommandSlot_ = slotIndex;
+            Vec2 commandAnchor = baseProcessingGridSlotRect(slotIndex).pos;
+            if (target.source == BaseItemSource::Warehouse) {
+                commandAnchor = storageWarehouseSlotRect(slotIndex).pos;
+            } else if (target.source != BaseItemSource::Backpack &&
+                target.ringIndex >= 0 &&
+                target.ringIndex < SpellRingCount) {
+                const std::vector<SpellRingItem>& ringItems = spellRing_.itemsForRing(target.ringIndex);
+                if (target.ringItemIndex >= 0 && target.ringItemIndex < static_cast<int>(ringItems.size())) {
+                    commandAnchor = baseProcessingRingItemRect(
+                        ringItems[static_cast<std::size_t>(target.ringItemIndex)],
+                        spellRing_,
+                        balance_,
+                        target.ringIndex,
+                        target.ringItemIndex,
+                        static_cast<int>(ringItems.size()),
+                        ringPreviewSeconds).pos;
+                }
+            }
             openUiCommandMenu(
                 baseProcessingCommandMenu_,
-                baseProcessingGridSlotRect(slotIndex).pos,
+                commandAnchor,
                 merchantPanelRect(),
                 static_cast<int>(items.size()),
                 items.data(),
@@ -1760,7 +2987,7 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
             commandItems.data(),
             static_cast<int>(commandItems.size()));
         if (commandSelection >= 0 && baseProcessingCommandSlot_ >= 0) {
-            applyProcessingScreenSlot(baseProcessingCommandSlot_);
+            applyProcessingTarget(processingTargetForScreenSlot(baseProcessingCommandSlot_));
             closeProcessingCommand();
             ui.block(merchantPanelRect());
             return;
@@ -1791,6 +3018,142 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
             processingTabRects.data());
         if (processingTabSelection >= 0) {
             baseProcessingMode_ = processingTabSelection;
+            return;
+        }
+
+        std::array<UiTabItem, BaseProcessingSourceCount> sourceTabs{};
+        std::array<UiRect, BaseProcessingSourceCount> sourceTabRects{};
+        for (int i = 0; i < BaseProcessingSourceCount; ++i) {
+            sourceTabs[static_cast<std::size_t>(i)] = {BaseItemSourceLabels[static_cast<std::size_t>(i)], true};
+            sourceTabRects[static_cast<std::size_t>(i)] = baseProcessingSourceRect(i);
+        }
+        UiTabsInput sourceTabsInput{};
+        sourceTabsInput.focusDelta = baseItemSourceIsWarehouse(baseProcessingSource_) ? 0 : input.activeRingDelta();
+        const int directSourceFocus = input.shortcutSlotPressed();
+        if (directSourceFocus >= 0 && directSourceFocus < BaseProcessingSourceCount) {
+            sourceTabsInput.directFocusIndex = directSourceFocus;
+        }
+        sourceTabsInput.commit =
+            sourceTabsInput.focusDelta != 0 ||
+            sourceTabsInput.directFocusIndex >= 0 ||
+            input.confirmPressed() ||
+            input.useItemPressed();
+        const int sourceSelection = updateUiTabs(
+            baseProcessingSourceTabs_,
+            ui,
+            sourceTabsInput,
+            baseProcessingSource_,
+            sourceTabs.data(),
+                static_cast<int>(sourceTabs.size()),
+                sourceTabRects.data());
+        if (sourceSelection >= 0) {
+            baseProcessingSource_ = sourceSelection;
+            int sourceSlotCount = inventory_.screenSlotCount();
+            if (baseItemSourceIsWarehouse(baseProcessingSource_)) {
+                sourceSlotCount = StoragePaneSlotCount;
+            } else if (baseItemSourceIsRing(baseProcessingSource_)) {
+                const int ringIndex = std::clamp(ringIndexFromBaseItemSource(baseProcessingSource_), 0, SpellRingCount - 1);
+                sourceSlotCount = std::max(1, static_cast<int>(spellRing_.itemsForRing(ringIndex).size()));
+            }
+            baseProcessingSelection_ = std::clamp(baseProcessingSelection_, 0, std::max(0, sourceSlotCount - 1));
+            closeProcessingCommand();
+            return;
+        }
+
+        if (baseItemSourceIsWarehouse(baseProcessingSource_)) {
+            const int warehousePageCount = std::max(1, (warehouseCapacity() + StoragePaneSlotCount - 1) / StoragePaneSlotCount);
+            baseStorageWarehousePage_ = std::clamp(baseStorageWarehousePage_, 0, warehousePageCount - 1);
+            if (input.activeRingDelta() != 0) {
+                baseStorageWarehousePage_ = wrapStoragePageIndex(baseStorageWarehousePage_, input.activeRingDelta(), warehousePageCount);
+            }
+            if (ui.pressed(storagePrevPageButtonRect())) {
+                baseStorageWarehousePage_ = wrapStoragePageIndex(baseStorageWarehousePage_, -1, warehousePageCount);
+            }
+            if (ui.pressed(storageNextPageButtonRect())) {
+                baseStorageWarehousePage_ = wrapStoragePageIndex(baseStorageWarehousePage_, 1, warehousePageCount);
+            }
+
+            baseProcessingSelection_ = std::clamp(baseProcessingSelection_, 0, StoragePaneSlotCount - 1);
+            if (input.pressed(InputAction::MoveLeft)) {
+                baseProcessingSelection_ = std::max(0, baseProcessingSelection_ - 1);
+            }
+            if (input.pressed(InputAction::MoveRight)) {
+                baseProcessingSelection_ = std::min(StoragePaneSlotCount - 1, baseProcessingSelection_ + 1);
+            }
+            if (input.pressed(InputAction::MoveUp)) {
+                baseProcessingSelection_ = std::max(0, baseProcessingSelection_ - StorageColumns);
+            }
+            if (input.pressed(InputAction::MoveDown)) {
+                baseProcessingSelection_ = std::min(StoragePaneSlotCount - 1, baseProcessingSelection_ + StorageColumns);
+            }
+            for (int i = 0; i < StoragePaneSlotCount; ++i) {
+                const UiRect rect = storageWarehouseSlotRect(i);
+                if (rect.contains(ui.mouse())) {
+                    baseProcessingSelection_ = i;
+                }
+                if (ui.pressed(rect)) {
+                    baseProcessingSelection_ = i;
+                    openProcessingCommand(i);
+                    return;
+                }
+            }
+            if (input.confirmPressed() || input.useItemPressed()) {
+                openProcessingCommand(baseProcessingSelection_);
+                return;
+            }
+            ui.block(merchantPanelRect());
+            return;
+        }
+
+        if (baseItemSourceIsRing(baseProcessingSource_)) {
+            const int ringIndex = std::clamp(ringIndexFromBaseItemSource(baseProcessingSource_), 0, SpellRingCount - 1);
+            const std::vector<SpellRingItem>& ringItems = spellRing_.itemsForRing(ringIndex);
+            const int itemCount = static_cast<int>(ringItems.size());
+            if (itemCount <= 0) {
+                baseProcessingSelection_ = 0;
+            } else {
+                baseProcessingSelection_ = std::clamp(baseProcessingSelection_, 0, itemCount - 1);
+                const auto moveRingSelection = [&](int delta) {
+                    if (delta == 0 || itemCount <= 0) {
+                        return;
+                    }
+                    baseProcessingSelection_ = (baseProcessingSelection_ + delta) % itemCount;
+                    if (baseProcessingSelection_ < 0) {
+                        baseProcessingSelection_ += itemCount;
+                    }
+                };
+                moveRingSelection(input.shortcutCursorDelta());
+                if (input.pressed(InputAction::MoveLeft) || input.pressed(InputAction::MoveUp)) {
+                    moveRingSelection(-1);
+                }
+                if (input.pressed(InputAction::MoveRight) || input.pressed(InputAction::MoveDown)) {
+                    moveRingSelection(1);
+                }
+            }
+
+            for (int i = 0; i < itemCount; ++i) {
+                const UiRect rect = baseProcessingRingItemRect(
+                    ringItems[static_cast<std::size_t>(i)],
+                    spellRing_,
+                    balance_,
+                    ringIndex,
+                    i,
+                    itemCount,
+                    ringPreviewSeconds);
+                if (rect.contains(ui.mouse())) {
+                    baseProcessingSelection_ = i;
+                }
+                if (ui.pressed(rect)) {
+                    baseProcessingSelection_ = i;
+                    openProcessingCommand(i);
+                    return;
+                }
+            }
+            if (input.confirmPressed() || input.useItemPressed()) {
+                openProcessingCommand(baseProcessingSelection_);
+                return;
+            }
+            ui.block(merchantPanelRect());
             return;
         }
 
@@ -1833,6 +3196,7 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
         const UiRect merchantBounds = baseMerchantMode_ == MerchantUiMode::ChooseAction ? basePanelRect() : merchantPanelRect();
         const auto closeMerchantCommands = [this]() {
             closeUiCommandMenu(baseMerchantSellCommandMenu_);
+            baseMerchantSellCommandSource_ = 0;
             baseMerchantSellCommandIndex_ = -1;
             closeUiCommandMenu(baseMerchantBuyCommandMenu_);
             baseMerchantBuyCommandIndex_ = -1;
@@ -1869,27 +3233,53 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
                 selection = std::min(count - 1, selection + Columns);
             }
         };
+        const auto merchantSellSourceSlotCount = [&]() {
+            if (baseMerchantSellSource_ == 0) {
+                return inventory_.screenSlotCount();
+            }
+            if (baseItemSourceIsWarehouse(baseMerchantSellSource_)) {
+                return StoragePaneSlotCount;
+            }
+            const int ringIndex = std::clamp(ringIndexFromBaseItemSource(baseMerchantSellSource_), 0, SpellRingCount - 1);
+            return static_cast<int>(spellRing_.itemsForRing(ringIndex).size());
+        };
         const auto openSellCommand = [&](int slotIndex) {
-            if (slotIndex < 0 || slotIndex >= inventory_.screenSlotCount()) {
+            const MerchantSellTarget target = merchantSellTargetForScreenSlot(slotIndex);
+            if (!target.valid) {
                 baseStatus_ = "売却対象がありません";
                 return;
             }
-            const InventoryObjectStack* stack = inventory_.screenObjectStackAt(slotIndex);
-            const InventoryObjectInstance* instance = inventory_.screenObjectInstanceAt(slotIndex);
-            if (stack == nullptr && instance == nullptr) {
-                baseStatus_ = "売却対象がありません";
+            if (!merchantSellTargetAvailable(target)) {
+                sellMerchantTarget(target, 1);
                 return;
             }
-            if (instance != nullptr && instance->instance.protectionEnabled) {
-                baseStatus_ = "保護中";
-                return;
-            }
+            const bool stackItem =
+                (target.source == BaseItemSource::Backpack && inventory_.screenObjectStackAt(slotIndex) != nullptr) ||
+                (target.source == BaseItemSource::Warehouse && target.storageEntry.kind == StorageEntryKind::Stack);
             baseMerchantSellCommandIndex_ = slotIndex;
-            const bool stackItem = stack != nullptr;
+            baseMerchantSellCommandSource_ = baseMerchantSellSource_;
+            Vec2 commandAnchor = merchantSellGridSlotRect(slotIndex).pos;
+            if (target.source == BaseItemSource::Warehouse) {
+                commandAnchor = storageWarehouseSlotRect(slotIndex).pos;
+            } else if (target.source != BaseItemSource::Backpack &&
+                target.ringIndex >= 0 &&
+                target.ringIndex < SpellRingCount) {
+                const std::vector<SpellRingItem>& ringItems = spellRing_.itemsForRing(target.ringIndex);
+                if (target.ringItemIndex >= 0 && target.ringItemIndex < static_cast<int>(ringItems.size())) {
+                    commandAnchor = merchantSellRingItemRect(
+                        ringItems[static_cast<std::size_t>(target.ringItemIndex)],
+                        spellRing_,
+                        balance_,
+                        target.ringIndex,
+                        target.ringItemIndex,
+                        static_cast<int>(ringItems.size()),
+                        ringPreviewSeconds).pos;
+                }
+            }
             const std::array<UiCommandMenuItem, 2> items{{{stackItem ? "1個売る" : "売る", true}, {"すべて売る", stackItem}}};
             openUiCommandMenu(
                 baseMerchantSellCommandMenu_,
-                merchantGridSlotRect(slotIndex).pos,
+                commandAnchor,
                 merchantPanelRect(),
                 stackItem ? 2 : 1,
                 items.data(),
@@ -1967,7 +3357,15 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
         if (baseMerchantMode_ == MerchantUiMode::Sell) {
             closeUiCommandMenu(baseMerchantBuyCommandMenu_);
             baseMerchantBuyCommandIndex_ = -1;
-            const bool stackCommand = baseMerchantSellCommandIndex_ >= 0 && inventory_.screenObjectStackAt(baseMerchantSellCommandIndex_) != nullptr;
+            const MerchantSellTarget commandTarget = merchantSellTargetForSourceSlot(
+                baseMerchantSellCommandSource_,
+                baseMerchantSellCommandIndex_);
+            const bool stackCommand =
+                (commandTarget.source == BaseItemSource::Backpack &&
+                    baseMerchantSellCommandIndex_ >= 0 &&
+                    inventory_.screenObjectStackAt(baseMerchantSellCommandIndex_) != nullptr) ||
+                (commandTarget.source == BaseItemSource::Warehouse &&
+                    commandTarget.storageEntry.kind == StorageEntryKind::Stack);
             const std::array<UiCommandMenuItem, 2> commandItems{{{stackCommand ? "1個売る" : "売る", true}, {"すべて売る", stackCommand}}};
             const int commandItemCount = stackCommand ? 2 : 1;
             const bool commandOpenBeforeUpdate = baseMerchantSellCommandMenu_.open;
@@ -1978,11 +3376,12 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
                 commandItems.data(),
                 commandItemCount);
             if (commandSelection >= 0 && baseMerchantSellCommandIndex_ >= 0) {
-                sellMerchantScreenSlot(baseMerchantSellCommandIndex_, commandSelection == 1 && stackCommand ? 0 : 1);
+                sellMerchantTarget(commandTarget, commandSelection == 1 && stackCommand ? 0 : 1);
                 closeMerchantCommands();
                 ui.block(merchantBounds);
                 return;
             } else if (!baseMerchantSellCommandMenu_.open && commandOpenBeforeUpdate) {
+                baseMerchantSellCommandSource_ = 0;
                 baseMerchantSellCommandIndex_ = -1;
             }
             if (baseMerchantSellCommandMenu_.open) {
@@ -1990,9 +3389,131 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
                 return;
             }
 
+            std::array<UiTabItem, BaseItemSourceCount> sourceTabs{};
+            std::array<UiRect, BaseItemSourceCount> sourceTabRects{};
+            for (int i = 0; i < BaseItemSourceCount; ++i) {
+                sourceTabs[static_cast<std::size_t>(i)] = {BaseItemSourceLabels[static_cast<std::size_t>(i)], true};
+                sourceTabRects[static_cast<std::size_t>(i)] = merchantSellSourceRect(i);
+            }
+            UiTabsInput sourceTabsInput{};
+            sourceTabsInput.focusDelta = baseItemSourceIsWarehouse(baseMerchantSellSource_) ? 0 : input.activeRingDelta();
+            const int directSourceFocus = input.shortcutSlotPressed();
+            if (directSourceFocus >= 0 && directSourceFocus < BaseItemSourceCount) {
+                sourceTabsInput.directFocusIndex = directSourceFocus;
+            }
+            sourceTabsInput.commit =
+                sourceTabsInput.focusDelta != 0 ||
+                sourceTabsInput.directFocusIndex >= 0 ||
+                input.confirmPressed() ||
+                input.useItemPressed();
+            const int sourceSelection = updateUiTabs(
+                baseMerchantSellSourceTabs_,
+                ui,
+                sourceTabsInput,
+                baseMerchantSellSource_,
+                sourceTabs.data(),
+                static_cast<int>(sourceTabs.size()),
+                sourceTabRects.data());
+            if (sourceSelection >= 0) {
+                baseMerchantSellSource_ = sourceSelection;
+                baseSellSelection_ = std::clamp(baseSellSelection_, 0, std::max(0, merchantSellSourceSlotCount() - 1));
+                closeMerchantCommands();
+                ui.block(merchantBounds);
+                return;
+            }
+
+            if (baseItemSourceIsWarehouse(baseMerchantSellSource_)) {
+                const int warehousePageCount = std::max(1, (warehouseCapacity() + StoragePaneSlotCount - 1) / StoragePaneSlotCount);
+                baseStorageWarehousePage_ = std::clamp(baseStorageWarehousePage_, 0, warehousePageCount - 1);
+                if (input.activeRingDelta() != 0) {
+                    baseStorageWarehousePage_ = wrapStoragePageIndex(baseStorageWarehousePage_, input.activeRingDelta(), warehousePageCount);
+                }
+                if (ui.pressed(storagePrevPageButtonRect())) {
+                    baseStorageWarehousePage_ = wrapStoragePageIndex(baseStorageWarehousePage_, -1, warehousePageCount);
+                }
+                if (ui.pressed(storageNextPageButtonRect())) {
+                    baseStorageWarehousePage_ = wrapStoragePageIndex(baseStorageWarehousePage_, 1, warehousePageCount);
+                }
+
+                moveGridSelection(baseSellSelection_, StoragePaneSlotCount);
+                for (int i = 0; i < StoragePaneSlotCount; ++i) {
+                    const UiRect rect = storageWarehouseSlotRect(i);
+                    if (rect.contains(ui.mouse())) {
+                        baseSellSelection_ = i;
+                    }
+                    if (ui.pressed(rect)) {
+                        baseSellSelection_ = i;
+                        openSellCommand(i);
+                        ui.block(merchantBounds);
+                        return;
+                    }
+                }
+                if (input.confirmPressed() || input.useItemPressed()) {
+                    openSellCommand(baseSellSelection_);
+                    ui.block(merchantBounds);
+                    return;
+                }
+                ui.block(merchantBounds);
+                return;
+            }
+
+            if (baseItemSourceIsRing(baseMerchantSellSource_)) {
+                const int ringIndex = std::clamp(ringIndexFromBaseItemSource(baseMerchantSellSource_), 0, SpellRingCount - 1);
+                const std::vector<SpellRingItem>& ringItems = spellRing_.itemsForRing(ringIndex);
+                const int itemCount = static_cast<int>(ringItems.size());
+                if (itemCount <= 0) {
+                    baseSellSelection_ = 0;
+                } else {
+                    baseSellSelection_ = std::clamp(baseSellSelection_, 0, itemCount - 1);
+                    const auto moveRingSelection = [&](int delta) {
+                        if (delta == 0 || itemCount <= 0) {
+                            return;
+                        }
+                        baseSellSelection_ = (baseSellSelection_ + delta) % itemCount;
+                        if (baseSellSelection_ < 0) {
+                            baseSellSelection_ += itemCount;
+                        }
+                    };
+                    moveRingSelection(input.shortcutCursorDelta());
+                    if (input.pressed(InputAction::MoveLeft) || input.pressed(InputAction::MoveUp)) {
+                        moveRingSelection(-1);
+                    }
+                    if (input.pressed(InputAction::MoveRight) || input.pressed(InputAction::MoveDown)) {
+                        moveRingSelection(1);
+                    }
+                }
+
+                for (int i = 0; i < itemCount; ++i) {
+                    const UiRect rect = merchantSellRingItemRect(
+                        ringItems[static_cast<std::size_t>(i)],
+                        spellRing_,
+                        balance_,
+                        ringIndex,
+                        i,
+                        itemCount,
+                        ringPreviewSeconds);
+                    if (rect.contains(ui.mouse())) {
+                        baseSellSelection_ = i;
+                    }
+                    if (ui.pressed(rect)) {
+                        baseSellSelection_ = i;
+                        openSellCommand(i);
+                        ui.block(merchantBounds);
+                        return;
+                    }
+                }
+                if (input.confirmPressed() || input.useItemPressed()) {
+                    openSellCommand(baseSellSelection_);
+                    ui.block(merchantBounds);
+                    return;
+                }
+                ui.block(merchantBounds);
+                return;
+            }
+
             moveGridSelection(baseSellSelection_, inventory_.screenSlotCount());
             for (int i = 0; i < inventory_.screenSlotCount(); ++i) {
-                const UiRect rect = merchantGridSlotRect(i);
+                const UiRect rect = merchantSellGridSlotRect(i);
                 if (rect.contains(ui.mouse())) {
                     baseSellSelection_ = i;
                 }
@@ -2014,6 +3535,7 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
 
         if (baseMerchantMode_ == MerchantUiMode::Buy) {
             closeUiCommandMenu(baseMerchantSellCommandMenu_);
+            baseMerchantSellCommandSource_ = 0;
             baseMerchantSellCommandIndex_ = -1;
             const bool commandEnabled = baseMerchantBuyCommandIndex_ >= 0 &&
                 baseMerchantBuyCommandIndex_ < static_cast<int>(merchantStock_.size()) &&
@@ -2299,9 +3821,12 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
             baseSellActive_ = true;
             baseMerchantMode_ = MerchantUiMode::ChooseAction;
             baseMerchantActionSelection_ = 0;
+            baseMerchantSellSource_ = 0;
+            baseMerchantSellSourceTabs_.focusedIndex = baseMerchantSellSource_;
             baseSellSelection_ = 0;
             baseMerchantBuySelection_ = 0;
             closeUiCommandMenu(baseMerchantSellCommandMenu_);
+            baseMerchantSellCommandSource_ = 0;
             baseMerchantSellCommandIndex_ = -1;
             closeUiCommandMenu(baseMerchantBuyCommandMenu_);
             baseMerchantBuyCommandIndex_ = -1;
@@ -2316,6 +3841,8 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
             baseProcessingActive_ = true;
             baseProcessingMode_ = 0;
             baseProcessingTabs_.focusedIndex = baseProcessingMode_;
+            baseProcessingSource_ = 0;
+            baseProcessingSourceTabs_.focusedIndex = baseProcessingSource_;
             baseProcessingSelection_ = 0;
             closeUiCommandMenu(baseProcessingCommandMenu_);
             baseProcessingCommandSlot_ = -1;
@@ -2678,6 +4205,7 @@ void Game::renderBaseScreen(Renderer& renderer) const
     }
 
     renderer.setScreenSpace();
+    const float ringPreviewSeconds = baseRingPreviewAnimationTime_;
     if (baseStorageActive_) {
         renderBaseBackdrop(renderer);
         const UiRect panel = storagePanelRect();
@@ -2726,24 +4254,10 @@ void Game::renderBaseScreen(Renderer& renderer) const
             return entry;
         };
 
-        const auto drawTextCentered = [&renderer](UiRect rect, float y, std::string_view text, Color color, int scale) {
-            const Vec2 size = renderer.measureText(text, scale);
-            renderer.drawText({rect.pos.x + (rect.size.x - size.x) * 0.5f, y}, text, color, scale);
-        };
-        const auto drawStorageHeader = [&renderer](float x, float y, std::string_view title, std::string_view count, Color color) {
-            renderer.drawText({x, y}, title, color, 3);
-            const Vec2 titleSize = renderer.measureText(title, 3);
-            renderer.drawText(
-                {x + titleSize.x + StorageHeaderCountGap, y + StorageHeaderCountYOffset},
-                count,
-                color,
-                StorageHeaderCountScale);
-        };
-
         char buffer[256];
         const Color backpackHeaderColor = baseStorageFocusWarehouse_ ? Color{198, 198, 206, 255} : Color{255, 230, 150, 255};
         std::snprintf(buffer, sizeof(buffer), "\xEF\xBC\x88%d/24\xEF\xBC\x89", backpackUsedSlots());
-        drawStorageHeader(StorageHeaderTextX, StorageBackpackHeaderY, "リュック", buffer, backpackHeaderColor);
+        drawStorageHeader(renderer, StorageHeaderTextX, StorageBackpackHeaderY, "リュック", buffer, backpackHeaderColor);
 
         drawUiSeparator(
             renderer,
@@ -2751,15 +4265,9 @@ void Game::renderBaseScreen(Renderer& renderer) const
             {255, 255, 255, 220});
         const Color warehouseHeaderColor = baseStorageFocusWarehouse_ ? Color{255, 230, 150, 255} : Color{198, 198, 206, 255};
         std::snprintf(buffer, sizeof(buffer), "\xEF\xBC\x88%d/%d\xEF\xBC\x89", warehouseUsedSlots(), warehouseCapacity());
-        drawStorageHeader(StorageHeaderTextX, StorageBottomHeaderY, "倉庫", buffer, warehouseHeaderColor);
+        drawStorageHeader(renderer, StorageHeaderTextX, StorageBottomHeaderY, "倉庫", buffer, warehouseHeaderColor);
 
-        const UiRect prevPageRect = storagePrevPageButtonRect();
-        const UiRect pageTextRect = storagePageTextRect();
-        const UiRect nextPageRect = storageNextPageButtonRect();
-        std::snprintf(buffer, sizeof(buffer), "%d/%d", warehousePage + 1, warehousePageCount);
-        drawTextCentered(pageTextRect, StorageBottomHeaderY + StoragePageTextYOffset, buffer, {198, 198, 206, 255}, StoragePageTextScale);
-        drawUiRectButton(renderer, prevPageRect, "<", false);
-        drawUiRectButton(renderer, nextPageRect, ">", false);
+        drawStoragePageSelector(renderer, warehousePage, warehousePageCount);
 
         for (int i = 0; i < StoragePaneSlotCount; ++i) {
             const int backpackGlobalSlot = storageGlobalSlotFromLocal(false, i);
@@ -2930,9 +4438,9 @@ void Game::renderBaseScreen(Renderer& renderer) const
         } else if (baseSellActive_) {
             panelHelp = baseMerchantMode_ == MerchantUiMode::Buy
                 ? "F/Enter 買う  Esc/右クリック 戻る"
-                : (baseMerchantMode_ == MerchantUiMode::Sell ? "F/Enter 売る  Esc/右クリック 戻る" : "F/Enter 決定  Esc/右クリック 戻る");
+                : (baseMerchantMode_ == MerchantUiMode::Sell ? "F/Enter 売る  Z/X・1-5 対象/ページ切替  Esc/右クリック 戻る" : "F/Enter 決定  Esc/右クリック 戻る");
         } else if (baseProcessingActive_) {
-            panelHelp = "F/Enter 確定/実行  Tab 作業選択  Esc/右クリック 戻る";
+            panelHelp = "F/Enter 確定/実行  Tab 作業選択  Z/X・1-5 対象/ページ切替  Esc/右クリック 戻る";
         } else if (baseUpgradeActive_) {
             panelHelp = "F/Enter 強化  Esc/右クリック 戻る";
         } else if (baseMiningStartChoiceActive_) {
@@ -3059,6 +4567,7 @@ void Game::renderBaseScreen(Renderer& renderer) const
             processingTabs[static_cast<std::size_t>(i)] = {processingModeName(static_cast<ProcessingMode>(i)), true};
             processingTabRects[static_cast<std::size_t>(i)] = baseProcessingModeRect(i);
         }
+        const ProcessingMode mode = static_cast<ProcessingMode>(std::clamp(baseProcessingMode_, 0, BaseProcessingModeCount - 1));
         drawUiTabs(
             renderer,
             baseProcessingTabs_,
@@ -3067,40 +4576,122 @@ void Game::renderBaseScreen(Renderer& renderer) const
             static_cast<int>(processingTabs.size()),
             processingTabRects.data());
 
-        const ProcessingMode mode = static_cast<ProcessingMode>(std::clamp(baseProcessingMode_, 0, BaseProcessingModeCount - 1));
+        const auto processingModeDescription = [](ProcessingMode descriptionMode) -> std::string_view {
+            switch (descriptionMode) {
+            case ProcessingMode::Repair: return "耐久力が減った道具を所持金で修理します。";
+            case ProcessingMode::Attack: return "強化鉱石と所持金を使い、攻撃力補正を上げます。";
+            case ProcessingMode::Dig: return "強化鉱石と所持金を使い、抑制力補正を上げます。";
+            case ProcessingMode::Durability: return "強化鉱石と所持金を使い、最大耐久力を上げます。";
+            }
+            return "";
+        };
+        const UiRect firstTabRect = processingTabRects.front();
+        const UiRect lastGridSlotRect = baseProcessingGridSlotRect(7);
+        const Vec2 descriptionPos{firstTabRect.pos.x, firstTabRect.pos.y + firstTabRect.size.y + 10.0f};
+        const float descriptionWidth = std::max(0.0f, lastGridSlotRect.pos.x + lastGridSlotRect.size.x - descriptionPos.x);
+        renderer.drawWrappedText(descriptionPos, processingModeDescription(mode), descriptionWidth, ui::TextMuted, 2);
+
+        std::array<UiTabItem, BaseProcessingSourceCount> sourceTabs{};
+        std::array<UiRect, BaseProcessingSourceCount> sourceTabRects{};
+        for (int i = 0; i < BaseProcessingSourceCount; ++i) {
+            sourceTabs[static_cast<std::size_t>(i)] = {BaseItemSourceLabels[static_cast<std::size_t>(i)], true};
+            sourceTabRects[static_cast<std::size_t>(i)] = baseProcessingSourceRect(i);
+        }
+        drawUiTabs(
+            renderer,
+            baseProcessingSourceTabs_,
+            baseProcessingSource_,
+            sourceTabs.data(),
+            static_cast<int>(sourceTabs.size()),
+            sourceTabRects.data());
+
         const auto entryViewForScreenSlot = [this](int slot) {
             InventoryUiEntryView view{};
-            if (const InventoryObjectStack* stack = inventory_.screenObjectStackAt(slot)) {
-                view.item = &stack->item;
-                view.stackCount = stack->count;
+            const ProcessingTarget target = processingTargetForScreenSlot(slot);
+            if (!target.valid) {
                 return view;
             }
-            if (const InventoryObjectInstance* instance = inventory_.screenObjectInstanceAt(slot)) {
-                view.item = &instance->item;
-                view.instance = &instance->instance;
+            if (target.source == BaseItemSource::Backpack || target.source == BaseItemSource::Warehouse) {
+                return storageEntryView(target.backpackEntry, target.warehouseEntry);
+            }
+
+            const std::vector<SpellRingItem>& ringItems = spellRing_.itemsForRing(target.ringIndex);
+            if (target.ringItemIndex >= 0 && target.ringItemIndex < static_cast<int>(ringItems.size())) {
+                const SpellRingItem& ringItem = ringItems[static_cast<std::size_t>(target.ringItemIndex)];
+                view.item = objectForRingItem(objectCatalog_, ringItem);
+                view.stats = inventoryUiStatsFromRingItem(ringItem);
                 view.stackCount = 1;
             }
             return view;
         };
 
-        for (int i = 0; i < inventory_.screenSlotCount(); ++i) {
-            const InventoryUiEntryView view = entryViewForScreenSlot(i);
-            const bool unavailable = view.item != nullptr && !processingScreenSlotAvailable(i);
-            InventoryUiSlotStyle style{i == baseProcessingSelection_, unavailable, 48.0f};
-            if (view.item != nullptr && view.instance == nullptr && view.stackCount > 1) {
-                style.showTopRightCount = true;
-                style.topRightCount = view.stackCount;
+        const bool warehouseSource = baseItemSourceIsWarehouse(baseProcessingSource_);
+        const bool ringSource = baseItemSourceIsRing(baseProcessingSource_);
+        if (ringSource) {
+            const int ringIndex = std::clamp(ringIndexFromBaseItemSource(baseProcessingSource_), 0, SpellRingCount - 1);
+            const std::vector<SpellRingItem>& ringItems = spellRing_.itemsForRing(ringIndex);
+            const int selectedRingItem = ringItems.empty()
+                ? -1
+                : std::clamp(baseProcessingSelection_, 0, static_cast<int>(ringItems.size()) - 1);
+            drawBaseProcessingRingPreview(
+                renderer,
+                spellRing_,
+                objectCatalog_,
+                balance_,
+                ringIndex,
+                selectedRingItem,
+                ringPreviewSeconds);
+            if (ringItems.empty()) {
+                const Vec2 emptySize = renderer.measureText("アイテム未配置", 2);
+                renderer.drawText(
+                    baseProcessingRingPreviewCenter(spellRing_, ringIndex) - emptySize * 0.5f,
+                    "アイテム未配置",
+                    ui::TextMuted,
+                    2);
             }
-            drawInventoryUiSlot(renderer, baseProcessingGridSlotRect(i), view, style);
+        } else if (warehouseSource) {
+            const int warehousePageCount = std::max(1, (warehouseCapacity() + StoragePaneSlotCount - 1) / StoragePaneSlotCount);
+            const int warehousePage = std::clamp(baseStorageWarehousePage_, 0, warehousePageCount - 1);
+            std::snprintf(buffer, sizeof(buffer), "\xEF\xBC\x88%d/%d\xEF\xBC\x89", warehouseUsedSlots(), warehouseCapacity());
+            drawStorageHeader(renderer, StorageHeaderTextX, StorageBottomHeaderY, "収納箱", buffer, {255, 230, 150, 255});
+            drawStoragePageSelector(renderer, warehousePage, warehousePageCount);
+            for (int i = 0; i < StoragePaneSlotCount; ++i) {
+                const InventoryUiEntryView view = entryViewForScreenSlot(i);
+                const bool unavailable = view.item != nullptr && !processingTargetAvailable(processingTargetForScreenSlot(i));
+                InventoryUiSlotStyle style{i == baseProcessingSelection_, unavailable, 40.0f};
+                if (view.item != nullptr && view.instance == nullptr && view.stackCount > 1) {
+                    style.showTopRightCount = true;
+                    style.topRightCount = view.stackCount;
+                }
+                drawInventoryUiSlot(renderer, storageWarehouseSlotRect(i), view, style);
+            }
+        } else {
+            for (int i = 0; i < inventory_.screenSlotCount(); ++i) {
+                const InventoryUiEntryView view = entryViewForScreenSlot(i);
+                const bool unavailable = view.item != nullptr && !processingTargetAvailable(processingTargetForScreenSlot(i));
+                InventoryUiSlotStyle style{i == baseProcessingSelection_, unavailable, 48.0f};
+                if (view.item != nullptr && view.instance == nullptr && view.stackCount > 1) {
+                    style.showTopRightCount = true;
+                    style.topRightCount = view.stackCount;
+                }
+                drawInventoryUiSlot(renderer, baseProcessingGridSlotRect(i), view, style);
+            }
         }
 
         const UiRect detailPanel = merchantDetailPanelRect();
         const float moneyRight = detailPanel.pos.x;
         drawMoneySummaryText(renderer, {moneyRight, detailPanel.pos.y + 12.0f}, money_);
 
-        const int selected = std::clamp(baseProcessingSelection_, 0, inventory_.screenSlotCount() - 1);
+        int selected = std::clamp(baseProcessingSelection_, 0, inventory_.screenSlotCount() - 1);
+        if (warehouseSource) {
+            selected = std::clamp(baseProcessingSelection_, 0, StoragePaneSlotCount - 1);
+        } else if (ringSource) {
+            const int ringIndex = std::clamp(ringIndexFromBaseItemSource(baseProcessingSource_), 0, SpellRingCount - 1);
+            const int itemCount = static_cast<int>(spellRing_.itemsForRing(ringIndex).size());
+            selected = itemCount <= 0 ? 0 : std::clamp(baseProcessingSelection_, 0, itemCount - 1);
+        }
         const InventoryUiEntryView detailEntry = entryViewForScreenSlot(selected);
-        const std::optional<StorageEntry> selectedEntry = processingEntryForScreenSlot(selected);
+        const ProcessingTarget selectedTarget = processingTargetForScreenSlot(selected);
         drawUiSubPanel(renderer, detailPanel);
 
         const auto drawSectionLabel = [&renderer](UiRect targetPanel, float& y, std::string_view text) {
@@ -3135,26 +4726,40 @@ void Game::renderBaseScreen(Renderer& renderer) const
             y += 31.0f;
         };
 
-        if (detailEntry.item == nullptr || !selectedEntry) {
+        const bool selectedRingTarget = selectedTarget.valid && baseItemSourceIsRing(static_cast<int>(selectedTarget.source));
+        const SpellRingItem* selectedRingItem = nullptr;
+        if (selectedRingTarget &&
+            selectedTarget.ringIndex >= 0 &&
+            selectedTarget.ringIndex < SpellRingCount) {
+            const std::vector<SpellRingItem>& ringItems = spellRing_.itemsForRing(selectedTarget.ringIndex);
+            if (selectedTarget.ringItemIndex >= 0 && selectedTarget.ringItemIndex < static_cast<int>(ringItems.size())) {
+                selectedRingItem = &ringItems[static_cast<std::size_t>(selectedTarget.ringItemIndex)];
+            }
+        }
+
+        if (!selectedTarget.valid || (detailEntry.item == nullptr && selectedRingItem == nullptr)) {
             float detailLineY = drawUiDetailHeader(renderer, detailPanel, "アイテム未選択");
             drawUiDetailText(renderer, detailPanel, detailLineY, "加工するアイテムを選択してください。");
         } else {
-            const ItemData& item = *detailEntry.item;
-            const ItemInstance* instance = detailEntry.instance;
-            std::string detailTitle = item.name;
-            if (instance == nullptr) {
-                std::snprintf(buffer, sizeof(buffer), "%s x%d", item.name.c_str(), detailEntry.stackCount);
+            const ItemData* item = detailEntry.item;
+            std::optional<InventoryUiItemStats> stats = inventoryUiEntryStats(detailEntry);
+            if (!stats && selectedRingItem != nullptr) {
+                stats = inventoryUiStatsFromRingItem(*selectedRingItem);
+            }
+            std::string detailTitle = item != nullptr ? item->name : ringItemDisplayName(objectCatalog_, *selectedRingItem);
+            if (item != nullptr && !stats && detailEntry.stackCount > 1) {
+                std::snprintf(buffer, sizeof(buffer), "%s x%d", item->name.c_str(), detailEntry.stackCount);
                 detailTitle = buffer;
             }
             float detailLineY = drawUiDetailHeader(renderer, detailPanel, detailTitle);
-            drawUiDetailText(renderer, detailPanel, detailLineY, item.description.empty() ? "-" : item.description);
+            drawUiDetailText(renderer, detailPanel, detailLineY, item != nullptr && !item->description.empty() ? item->description : "-");
 
-            const int enhanceLevel = instance != nullptr ? instance->enhanceLevel : 0;
-            const int attackBonus = instance != nullptr ? instance->attackBonus : 0;
-            const int digBonus = instance != nullptr ? instance->digBonus : 0;
-            const int durabilityBonus = instance != nullptr ? instance->durabilityBonus : 0;
-            const int currentDurability = instance != nullptr ? instance->currentDurability : item.durability;
-            const int maxDurability = instance != nullptr ? instance->maxDurability : item.durability;
+            const int enhanceLevel = stats ? stats->enhanceLevel : 0;
+            const int attackBonus = stats ? stats->attackBonus : 0;
+            const int digBonus = stats ? stats->digBonus : 0;
+            const int durabilityBonus = stats ? stats->durabilityBonus : 0;
+            const int currentDurability = stats ? stats->currentDurability : (item != nullptr ? item->durability : -1);
+            const int maxDurability = stats ? stats->maxDurability : (item != nullptr ? item->durability : -1);
 
             drawSectionLabel(detailPanel, detailLineY, "現在");
             std::snprintf(buffer, sizeof(buffer), "%d / %d", enhanceLevel, MaxItemEnhanceLevel);
@@ -3168,10 +4773,12 @@ void Game::renderBaseScreen(Renderer& renderer) const
             std::snprintf(buffer, sizeof(buffer), "+%d / +%d / +%d", attackBonus, digBonus, durabilityBonus);
             drawUiDetailLine(renderer, detailPanel, detailLineY, "補正", buffer);
 
-            const bool available = processingEntryAvailable(*selectedEntry);
+            const bool available = processingTargetAvailable(selectedTarget);
             std::string blockedReason;
             if (!available) {
-                if (mode == ProcessingMode::Repair && selectedEntry->kind == StorageEntryKind::Stack) {
+                if (mode == ProcessingMode::Repair &&
+                    (selectedTarget.source == BaseItemSource::Backpack || selectedTarget.source == BaseItemSource::Warehouse) &&
+                    selectedTarget.backpackEntry.kind == StorageEntryKind::Stack) {
                     blockedReason = "この作業はできません";
                 } else {
                     blockedReason = mode == ProcessingMode::Repair ? "修理不要です" : "強化上限です";
@@ -3180,7 +4787,9 @@ void Game::renderBaseScreen(Renderer& renderer) const
 
             if (mode == ProcessingMode::Repair) {
                 drawSectionLabel(detailPanel, detailLineY, "修理後");
-                if (maxDurability < 0 || selectedEntry->kind == StorageEntryKind::Stack) {
+                if (maxDurability < 0 ||
+                    ((selectedTarget.source == BaseItemSource::Backpack || selectedTarget.source == BaseItemSource::Warehouse) &&
+                        selectedTarget.backpackEntry.kind == StorageEntryKind::Stack)) {
                     drawUiDetailLine(renderer, detailPanel, detailLineY, "耐久力", "-");
                 } else {
                     std::snprintf(buffer, sizeof(buffer), "%d/%d -> %d/%d",
@@ -3211,8 +4820,8 @@ void Game::renderBaseScreen(Renderer& renderer) const
             }
 
             if (available) {
-                const int moneyCost = processingMoneyCost(*selectedEntry, mode);
-                const int oreCost = processingOreCost(*selectedEntry, mode);
+                const int moneyCost = processingMoneyCost(selectedTarget, mode);
+                const int oreCost = processingOreCost(selectedTarget, mode);
                 drawSectionLabel(detailPanel, detailLineY, "強化素材");
                 drawMoneyCostLine(detailPanel, detailLineY, moneyCost);
                 if (oreCost > 0) {
@@ -3263,12 +4872,86 @@ void Game::renderBaseScreen(Renderer& renderer) const
                 }
                 return view;
             };
+            const auto entryViewForSellTarget = [this, &entryViewForScreenSlot](MerchantSellTarget target) {
+                if (!target.valid) {
+                    return InventoryUiEntryView{};
+                }
+                if (target.source == BaseItemSource::Backpack) {
+                    return entryViewForScreenSlot(target.slotIndex);
+                }
+                if (target.source == BaseItemSource::Warehouse) {
+                    return storageEntryView(target.storageEntry, true);
+                }
+
+                InventoryUiEntryView view{};
+                if (target.ringIndex < 0 || target.ringIndex >= SpellRingCount) {
+                    return view;
+                }
+                const std::vector<SpellRingItem>& ringItems = spellRing_.itemsForRing(target.ringIndex);
+                if (target.ringItemIndex < 0 || target.ringItemIndex >= static_cast<int>(ringItems.size())) {
+                    return view;
+                }
+                const SpellRingItem& ringItem = ringItems[static_cast<std::size_t>(target.ringItemIndex)];
+                view.item = objectForRingItem(objectCatalog_, ringItem);
+                view.stats = inventoryUiStatsFromRingItem(ringItem);
+                view.stackCount = 1;
+                return view;
+            };
+            const auto blockedSellLabel = [this](MerchantSellTarget target) -> std::string_view {
+                if (!target.valid) {
+                    return {};
+                }
+                if (target.source == BaseItemSource::Backpack) {
+                    if (const InventoryObjectInstance* instance = inventory_.screenObjectInstanceAt(target.slotIndex)) {
+                        if (instance->instance.protectionEnabled) {
+                            return "保護中";
+                        }
+                        if (!isSellableObject(instance->item)) {
+                            return "売却不可";
+                        }
+                    }
+                    if (const InventoryObjectStack* stack = inventory_.screenObjectStackAt(target.slotIndex)) {
+                        if (!isSellableObject(stack->item)) {
+                            return "売却不可";
+                        }
+                    }
+                    return {};
+                }
+
+                if (target.source == BaseItemSource::Warehouse) {
+                    const ItemData* item = storageEntryItem(target.storageEntry, true);
+                    if (item == nullptr || !isSellableObject(*item)) {
+                        return "売却不可";
+                    }
+                    if (const ItemInstance* instance = storageEntryInstance(target.storageEntry, true)) {
+                        if (instance->protectionEnabled) {
+                            return "保護中";
+                        }
+                    }
+                    return {};
+                }
+
+                if (target.ringIndex < 0 || target.ringIndex >= SpellRingCount) {
+                    return "売却不可";
+                }
+                const std::vector<SpellRingItem>& ringItems = spellRing_.itemsForRing(target.ringIndex);
+                if (target.ringItemIndex < 0 || target.ringItemIndex >= static_cast<int>(ringItems.size())) {
+                    return "売却不可";
+                }
+                const SpellRingItem& ringItem = ringItems[static_cast<std::size_t>(target.ringItemIndex)];
+                if (ringItem.protectionEnabled) {
+                    return "保護中";
+                }
+                const ItemData* item = objectForRingItem(objectCatalog_, ringItem);
+                return item != nullptr && isSellableObject(*item) ? std::string_view{} : std::string_view{"売却不可"};
+            };
 
             const UiRect detailPanel = merchantDetailPanelRect();
             drawMoneySummaryText(renderer, {detailPanel.pos.x, detailPanel.pos.y + 12.0f}, money_);
 
             InventoryUiEntryView detailEntry{};
             std::vector<InventoryUiDetailExtraLine> extraLines;
+            const SpellRingItem* selectedRingItem = nullptr;
             if (buyMode) {
                 if (merchantStock_.empty()) {
                     renderer.drawText({92.0f, 210.0f}, "商品がありません", {198, 198, 206, 255}, 2);
@@ -3300,47 +4983,127 @@ void Game::renderBaseScreen(Renderer& renderer) const
                     extraLines.push_back({"在庫", buffer, product.quantity > 0 ? ui::Text : ui::TextDisabled});
                 }
             } else {
-                for (int i = 0; i < inventory_.screenSlotCount(); ++i) {
-                    const InventoryUiEntryView view = entryViewForScreenSlot(i);
-                    const InventoryObjectInstance* instance = inventory_.screenObjectInstanceAt(i);
-                    const InventoryObjectStack* stack = inventory_.screenObjectStackAt(i);
-                    const bool protectedItem = instance != nullptr && instance->instance.protectionEnabled;
-                    const UiRect rect = merchantGridSlotRect(i);
-                    InventoryUiSlotStyle style{i == baseSellSelection_, protectedItem, 48.0f};
-                    if (instance != nullptr) {
-                        if (instance->instance.protectionEnabled) {
-                            style.bottomLabel = "保護中";
-                            style.bottomLabelColor = ui::TextDisabled;
-                        } else {
-                            std::snprintf(buffer, sizeof(buffer), "%dG", sellPrice(instance->item, &instance->instance));
-                            style.bottomLabel = buffer;
-                        }
-                    } else if (stack != nullptr) {
-                        std::snprintf(buffer, sizeof(buffer), "%dG", sellPrice(stack->item));
-                        style.bottomLabel = buffer;
+                std::array<UiTabItem, BaseItemSourceCount> sourceTabs{};
+                std::array<UiRect, BaseItemSourceCount> sourceTabRects{};
+                for (int i = 0; i < BaseItemSourceCount; ++i) {
+                    sourceTabs[static_cast<std::size_t>(i)] = {BaseItemSourceLabels[static_cast<std::size_t>(i)], true};
+                    sourceTabRects[static_cast<std::size_t>(i)] = merchantSellSourceRect(i);
+                }
+                drawUiTabs(
+                    renderer,
+                    baseMerchantSellSourceTabs_,
+                    baseMerchantSellSource_,
+                    sourceTabs.data(),
+                    static_cast<int>(sourceTabs.size()),
+                    sourceTabRects.data());
+
+                const bool warehouseSource = baseItemSourceIsWarehouse(baseMerchantSellSource_);
+                const bool ringSource = baseItemSourceIsRing(baseMerchantSellSource_);
+                if (ringSource) {
+                    const int ringIndex = std::clamp(ringIndexFromBaseItemSource(baseMerchantSellSource_), 0, SpellRingCount - 1);
+                    const std::vector<SpellRingItem>& ringItems = spellRing_.itemsForRing(ringIndex);
+                    const int selectedRingIndex = ringItems.empty()
+                        ? -1
+                        : std::clamp(baseSellSelection_, 0, static_cast<int>(ringItems.size()) - 1);
+                    drawMerchantSellRingPreview(
+                        renderer,
+                        spellRing_,
+                        objectCatalog_,
+                        balance_,
+                        ringIndex,
+                        selectedRingIndex,
+                        ringPreviewSeconds);
+                    if (ringItems.empty()) {
+                        const Vec2 emptySize = renderer.measureText("アイテム未配置", 2);
+                        renderer.drawText(
+                            merchantSellRingPreviewCenter(spellRing_, ringIndex) - emptySize * 0.5f,
+                            "アイテム未配置",
+                            ui::TextMuted,
+                            2);
+                    } else if (selectedRingIndex >= 0) {
+                        selectedRingItem = &ringItems[static_cast<std::size_t>(selectedRingIndex)];
                     }
-                    drawInventoryUiSlot(renderer, rect, view, style);
-                    if (view.item != nullptr && view.instance == nullptr && view.stackCount > 1) {
-                        std::snprintf(buffer, sizeof(buffer), "x%d", view.stackCount);
-                        renderer.drawText(rect.pos + Vec2{rect.size.x - 36.0f, 8.0f}, buffer, {255, 255, 255, 230}, 2);
+                } else if (warehouseSource) {
+                    const int warehousePageCount = std::max(1, (warehouseCapacity() + StoragePaneSlotCount - 1) / StoragePaneSlotCount);
+                    const int warehousePage = std::clamp(baseStorageWarehousePage_, 0, warehousePageCount - 1);
+                    std::snprintf(buffer, sizeof(buffer), "\xEF\xBC\x88%d/%d\xEF\xBC\x89", warehouseUsedSlots(), warehouseCapacity());
+                    drawStorageHeader(renderer, StorageHeaderTextX, StorageBottomHeaderY, "収納箱", buffer, {255, 230, 150, 255});
+                    drawStoragePageSelector(renderer, warehousePage, warehousePageCount);
+                    for (int i = 0; i < StoragePaneSlotCount; ++i) {
+                        const MerchantSellTarget target = merchantSellTargetForSourceSlot(baseMerchantSellSource_, i);
+                        const InventoryUiEntryView view = entryViewForSellTarget(target);
+                        const std::string_view blockedLabel = blockedSellLabel(target);
+                        const bool disabled = view.item != nullptr && !blockedLabel.empty();
+                        InventoryUiSlotStyle style{i == baseSellSelection_, disabled, 40.0f};
+                        if (view.item != nullptr) {
+                            if (!blockedLabel.empty()) {
+                                style.bottomLabel = std::string(blockedLabel);
+                                style.bottomLabelColor = ui::TextDisabled;
+                            } else {
+                                std::snprintf(buffer, sizeof(buffer), "%dG", merchantSellTargetPrice(target));
+                                style.bottomLabel = buffer;
+                            }
+                        }
+                        if (view.item != nullptr && view.instance == nullptr && view.stackCount > 1) {
+                            style.showTopRightCount = true;
+                            style.topRightCount = view.stackCount;
+                        }
+                        drawInventoryUiSlot(renderer, storageWarehouseSlotRect(i), view, style);
+                    }
+                } else {
+                    for (int i = 0; i < inventory_.screenSlotCount(); ++i) {
+                        const MerchantSellTarget target = merchantSellTargetForSourceSlot(baseMerchantSellSource_, i);
+                        const InventoryUiEntryView view = entryViewForSellTarget(target);
+                        const std::string_view blockedLabel = blockedSellLabel(target);
+                        const bool disabled = view.item != nullptr && !blockedLabel.empty();
+                        const UiRect rect = merchantSellGridSlotRect(i);
+                        InventoryUiSlotStyle style{i == baseSellSelection_, disabled, 48.0f};
+                        if (view.item != nullptr) {
+                            if (!blockedLabel.empty()) {
+                                style.bottomLabel = std::string(blockedLabel);
+                                style.bottomLabelColor = ui::TextDisabled;
+                            } else {
+                                std::snprintf(buffer, sizeof(buffer), "%dG", merchantSellTargetPrice(target));
+                                style.bottomLabel = buffer;
+                            }
+                        }
+                        if (view.item != nullptr && view.instance == nullptr && view.stackCount > 1) {
+                            style.showTopRightCount = true;
+                            style.topRightCount = view.stackCount;
+                        }
+                        drawInventoryUiSlot(renderer, rect, view, style);
                     }
                 }
-                const int selected = std::clamp(baseSellSelection_, 0, inventory_.screenSlotCount() - 1);
-                detailEntry = entryViewForScreenSlot(selected);
-                if (const InventoryObjectInstance* instance = inventory_.screenObjectInstanceAt(selected)) {
-                    if (instance->instance.protectionEnabled) {
-                        extraLines.push_back({"売値", "保護中", ui::TextDisabled});
+
+                int selected = std::clamp(baseSellSelection_, 0, inventory_.screenSlotCount() - 1);
+                if (warehouseSource) {
+                    selected = std::clamp(baseSellSelection_, 0, StoragePaneSlotCount - 1);
+                } else if (ringSource) {
+                    const int ringIndex = std::clamp(ringIndexFromBaseItemSource(baseMerchantSellSource_), 0, SpellRingCount - 1);
+                    const int itemCount = static_cast<int>(spellRing_.itemsForRing(ringIndex).size());
+                    selected = itemCount <= 0 ? 0 : std::clamp(baseSellSelection_, 0, itemCount - 1);
+                }
+                const MerchantSellTarget selectedTarget = merchantSellTargetForScreenSlot(selected);
+                detailEntry = entryViewForSellTarget(selectedTarget);
+                if (selectedTarget.valid) {
+                    const std::string_view blockedLabel = blockedSellLabel(selectedTarget);
+                    if (!blockedLabel.empty()) {
+                        extraLines.push_back({"売値", std::string(blockedLabel), ui::TextDisabled});
                     } else {
-                        std::snprintf(buffer, sizeof(buffer), "%dG", sellPrice(instance->item, &instance->instance));
+                        std::snprintf(buffer, sizeof(buffer), "%dG", merchantSellTargetPrice(selectedTarget));
                         extraLines.push_back({"売値", buffer, ui::Text});
                     }
-                } else if (const InventoryObjectStack* stack = inventory_.screenObjectStackAt(selected)) {
-                    std::snprintf(buffer, sizeof(buffer), "%dG", sellPrice(stack->item));
-                    extraLines.push_back({"売値", buffer, ui::Text});
                 }
             }
 
-            drawInventoryUiDetailPanel(renderer, detailPanel, detailEntry, objectCatalog_, encyclopedia_, false, extraLines);
+            if (!buyMode && detailEntry.item == nullptr && selectedRingItem != nullptr) {
+                drawUiSubPanel(renderer, detailPanel);
+                float detailLineY = drawUiDetailHeader(renderer, detailPanel, ringItemDisplayName(objectCatalog_, *selectedRingItem));
+                drawUiDetailText(renderer, detailPanel, detailLineY, "売却できません。");
+                drawUiDetailLine(renderer, detailPanel, detailLineY, "売値", "売却不可");
+            } else {
+                drawInventoryUiDetailPanel(renderer, detailPanel, detailEntry, objectCatalog_, encyclopedia_, false, extraLines);
+            }
             if (buyMode) {
                 const bool buyCommandEnabled = baseMerchantBuyCommandIndex_ >= 0 &&
                     baseMerchantBuyCommandIndex_ < static_cast<int>(merchantStock_.size()) &&
@@ -3348,7 +5111,15 @@ void Game::renderBaseScreen(Renderer& renderer) const
                 const std::array<UiCommandMenuItem, 1> buyItems{{{"買う", buyCommandEnabled}}};
                 drawUiCommandMenu(renderer, baseMerchantBuyCommandMenu_, buyItems.data(), static_cast<int>(buyItems.size()));
             } else {
-                const bool stackCommand = baseMerchantSellCommandIndex_ >= 0 && inventory_.screenObjectStackAt(baseMerchantSellCommandIndex_) != nullptr;
+                const MerchantSellTarget commandTarget = merchantSellTargetForSourceSlot(
+                    baseMerchantSellCommandSource_,
+                    baseMerchantSellCommandIndex_);
+                const bool stackCommand =
+                    (commandTarget.source == BaseItemSource::Backpack &&
+                        baseMerchantSellCommandIndex_ >= 0 &&
+                        inventory_.screenObjectStackAt(baseMerchantSellCommandIndex_) != nullptr) ||
+                    (commandTarget.source == BaseItemSource::Warehouse &&
+                        commandTarget.storageEntry.kind == StorageEntryKind::Stack);
                 const std::array<UiCommandMenuItem, 2> sellItems{{{stackCommand ? "1個売る" : "売る", true}, {"すべて売る", stackCommand}}};
                 drawUiCommandMenu(renderer, baseMerchantSellCommandMenu_, sellItems.data(), stackCommand ? 2 : 1);
             }
@@ -3367,7 +5138,7 @@ void Game::renderBaseScreen(Renderer& renderer) const
             case 4: return "最大HP";
             case 5: return "リング半径";
             case 6: return "リング速度";
-            case 7: return "性能枠";
+            case 7: return "収集術式";
             default: return "";
             }
         };
@@ -3426,14 +5197,23 @@ void Game::renderBaseScreen(Renderer& renderer) const
             renderer.drawText(pos, text, color, scale);
             pos.x += renderer.measureText(text, scale).x;
         };
+        InlineItemTextStyle inlineStyle;
+        inlineStyle.scale = 2;
+        inlineStyle.iconTextGap = 4.0f;
+        inlineStyle.iconScale = 1.15f;
+        const auto drawInlineTextRun = [&](Vec2& pos, std::string_view text, Color color) {
+            inlineStyle.text = color;
+            drawInlineItemText(renderer, objectCatalog_, pos, text, inlineStyle);
+            pos.x += measureInlineItemText(renderer, text, inlineStyle).x;
+        };
         const auto beginDetailRow = [&renderer, detailPanel](float& y, std::string_view label) {
-            constexpr float LabelWidth = 118.0f;
+            constexpr float LabelWidth = 96.0f;
             const UiRect content = uiSubPanelContentRect(detailPanel);
             renderer.drawText({content.pos.x, y}, label, ui::TextMuted, 2);
             return Vec2{content.pos.x + LabelWidth, y};
         };
         const auto drawDetailTextRow = [&](float& y, std::string_view label, std::string_view text, Color color) {
-            constexpr float LabelWidth = 118.0f;
+            constexpr float LabelWidth = 96.0f;
             constexpr float MinLineHeight = 31.0f;
             constexpr float LineGap = 4.0f;
             const UiRect content = uiSubPanelContentRect(detailPanel);
@@ -3445,6 +5225,7 @@ void Game::renderBaseScreen(Renderer& renderer) const
         const auto drawMoneyCostLine = [&](float& y, std::string_view label, int cost) {
             Vec2 pos = beginDetailRow(y, label);
             const Color numberColor = money_ >= cost ? ui::Text : Color{238, 82, 82, 255};
+            drawInlineTextRun(pos, inlineWorldIconTag(worldIconKey(WorldIconId::MoneyLarge)) + " ", ui::Text);
             drawTextRun(pos, std::to_string(cost), numberColor, 2);
             drawTextRun(pos, "G", ui::Text, 2);
             y += 31.0f;
@@ -3454,7 +5235,7 @@ void Game::renderBaseScreen(Renderer& renderer) const
             const bool enough = owned >= cost;
             const Color numberColor = enough ? ui::Text : Color{238, 82, 82, 255};
             Vec2 pos = beginDetailRow(y, label);
-            drawTextRun(pos, std::string(materialTypeDisplayName(type)) + " ×", ui::Text, 2);
+            drawInlineTextRun(pos, inlineMaterialIconTag(type) + std::string(materialTypeDisplayName(type)) + " ×", ui::Text);
             drawTextRun(pos, std::to_string(cost), numberColor, 2);
             drawTextRun(pos, " (", ui::Text, 2);
             drawTextRun(pos, std::to_string(owned), numberColor, 2);
@@ -3466,7 +5247,7 @@ void Game::renderBaseScreen(Renderer& renderer) const
             Vec2 pos = beginDetailRow(y, label);
             drawTextRun(pos, prefix, ui::Text, 2);
             drawTextRun(pos, current, ui::Text, 2);
-            drawTextRun(pos, " -> ", ui::TextMuted, 2);
+            drawTextRun(pos, " → ", ui::TextMuted, 2);
             drawTextRun(pos, next, UpgradeValueColor, 2);
             y += 31.0f;
         };
@@ -3528,8 +5309,10 @@ void Game::renderBaseScreen(Renderer& renderer) const
                 drawEffectChangeLine(detailY, "効果", "初期リング速度: ", currentValue, nextValue);
                 break;
             case 7:
-                drawDetailTextRow(detailY, "効果", "将来用のプレイ性能カテゴリです。", ui::TextMuted);
-                drawDetailTextRow(detailY, "", "現在は最大HP、リング半径、リング速度を個別に強化します。", ui::TextMuted);
+                std::snprintf(currentValue, sizeof(currentValue), "%.0fpx", effectiveCollectionPullRadius(level));
+                std::snprintf(nextValue, sizeof(nextValue), "%.0fpx", effectiveCollectionPullRadius(nextLevel));
+                drawEffectChangeLine(detailY, "効果", "吸引半径: ", currentValue, nextValue);
+                drawDetailTextRow(detailY, "", "近くのドロップをプレイヤーへ吸い寄せます。", ui::TextMuted);
                 break;
             default:
                 break;
@@ -3594,11 +5377,14 @@ void Game::renderBaseScreen(Renderer& renderer) const
         const int stageNameScale = renderer.measureText(stageName, 3).x <= stageSelector.text.size.x ? 3 : 2;
         drawCenteredTextInRect(stageSelector.text, stageName, {246, 235, 255, 255}, stageNameScale);
 
-        WorldIconDrawOptions progressIconOptions;
-        progressIconOptions.applyScaleOverride = false;
-        std::snprintf(buffer, sizeof(buffer), "ワープポイント %d/%d", discoveredWarpPoints, totalWarpPoints);
-        (void)drawWorldIcon(renderer, WorldIconId::WarpPoint, {contentLeft, body.pos.y + 38.0f}, {28.0f, 28.0f}, progressIconOptions);
-        renderer.drawText({contentLeft + 36.0f, body.pos.y + 44.0f}, buffer, {198, 198, 206, 255}, 2);
+        std::snprintf(buffer, sizeof(buffer), "発見済みワープポイント  %d/%d", discoveredWarpPoints, totalWarpPoints);
+        InlineItemTextStyle warpProgressStyle;
+        warpProgressStyle.text = {198, 198, 206, 255};
+        warpProgressStyle.scale = 2;
+        warpProgressStyle.iconTextGap = 8.0f;
+        warpProgressStyle.iconScale = 28.0f / std::max(1.0f, renderer.measureText("0", warpProgressStyle.scale).y);
+        const std::string warpProgressText = inlineWorldIconTag(worldIconKey(WorldIconId::WarpPoint)) + std::string(buffer);
+        drawInlineItemText(renderer, objectCatalog_, {contentLeft, body.pos.y + 44.0f}, warpProgressText, warpProgressStyle);
         renderer.drawText({contentLeft, body.pos.y + 78.0f}, "出発地点を選んでください", {198, 198, 206, 255}, 2);
 
         for (int i = 0; i < BaseMiningStartChoiceCount; ++i) {
@@ -3619,42 +5405,37 @@ void Game::renderBaseScreen(Renderer& renderer) const
             }
 
             const UiRect rect = baseMiningStartChoiceRect(i);
-            drawUiButton(renderer, rect, disabled ? "" : baseMiningStartChoiceName(i), i == baseMiningStartSelection_ && !disabled, uiActionButtonStyle());
-            if (i == 1) {
-                WorldIconDrawOptions iconOptions;
-                iconOptions.applyScaleOverride = false;
-                iconOptions.tint = disabled ? Color{112, 112, 122, 210} : Color{255, 255, 255, 255};
-                (void)drawWorldIcon(renderer, WorldIconId::WarpPoint, rect.pos + Vec2{38.0f, 26.0f}, {30.0f, 30.0f}, iconOptions);
-            }
+            UiButtonStyle buttonStyle = uiActionButtonStyle();
             if (disabled) {
-                UiRect disabledRect = rect;
-                disabledRect.size.y = ui::ButtonHeight;
-                renderer.fillRect(disabledRect.pos, disabledRect.size, {0, 0, 0, 110});
-                std::array<std::string_view, 2> reasonLines{{"未解放", ""}};
-                int reasonLineCount = 1;
-                if (i == 1) {
-                    reasonLines = {{"ワープポイント", "未発見"}};
-                    reasonLineCount = 2;
-                } else if (i == 2) {
-                    reasonLines = {{"全ワープポイント発見後", "解放"}};
-                    reasonLineCount = 2;
-                }
-                constexpr int ReasonScale = 2;
-                constexpr float ReasonLineGap = 2.0f;
-                const float reasonLineHeight = renderer.measureText(reasonLines[0], ReasonScale).y;
-                const float reasonBlockHeight =
-                    reasonLineHeight * static_cast<float>(reasonLineCount) +
-                    ReasonLineGap * static_cast<float>(std::max(0, reasonLineCount - 1));
-                float reasonY = disabledRect.pos.y + std::max(0.0f, (disabledRect.size.y - reasonBlockHeight) * 0.5f);
-                for (int lineIndex = 0; lineIndex < reasonLineCount; ++lineIndex) {
-                    const Vec2 reasonSize = renderer.measureText(reasonLines[static_cast<std::size_t>(lineIndex)], ReasonScale);
-                    renderer.drawText(
-                        {disabledRect.pos.x + std::max(0.0f, (disabledRect.size.x - reasonSize.x) * 0.5f), reasonY},
-                        reasonLines[static_cast<std::size_t>(lineIndex)],
-                        {150, 150, 160, 255},
-                        ReasonScale);
-                    reasonY += reasonLineHeight + ReasonLineGap;
-                }
+                buttonStyle.text = ui::TextDisabled;
+                buttonStyle.imageTint = {128, 128, 140, 210};
+                buttonStyle.imageTintHot = buttonStyle.imageTint;
+                buttonStyle.fill = {18, 22, 34, 190};
+                buttonStyle.fillHot = buttonStyle.fill;
+                buttonStyle.outline = {98, 88, 112, 190};
+                buttonStyle.outlineHot = buttonStyle.outline;
+            }
+            const bool hot = i == baseMiningStartSelection_ && !disabled;
+            if (i == 1) {
+                drawUiButton(renderer, rect, "", hot, buttonStyle);
+                InlineItemTextStyle buttonTextStyle;
+                buttonTextStyle.text = buttonStyle.text;
+                buttonTextStyle.scale = 2;
+                buttonTextStyle.iconTextGap = 6.0f;
+                buttonTextStyle.iconScale = 26.0f / std::max(1.0f, renderer.measureText("0", buttonTextStyle.scale).y);
+                const std::string buttonText = inlineWorldIconTag(worldIconKey(WorldIconId::WarpPoint)) + std::string(baseMiningStartChoiceName(i));
+                const Vec2 buttonTextSize = measureInlineItemText(renderer, buttonText, buttonTextStyle);
+                drawInlineItemText(
+                    renderer,
+                    objectCatalog_,
+                    rect.pos + Vec2{
+                        std::max(0.0f, (rect.size.x - buttonTextSize.x) * 0.5f),
+                        std::max(0.0f, (rect.size.y - buttonTextSize.y) * 0.5f),
+                    },
+                    buttonText,
+                    buttonTextStyle);
+            } else {
+                drawUiButton(renderer, rect, baseMiningStartChoiceName(i), hot, buttonStyle);
             }
             const Vec2 descriptionSize = renderer.measureText(description, 2);
             renderer.drawText(
@@ -3715,6 +5496,15 @@ void Game::renderBaseScreen(Renderer& renderer) const
             2);
         drawUiButton(renderer, baseMiningRegenerateConfirmButtonRect(0), "再生成する", true, uiActionButtonStyle());
         drawUiButton(renderer, baseMiningRegenerateConfirmButtonRect(1), "戻る", false, uiCancelButtonStyle());
+    }
+    if (baseResultDialog_.open) {
+        panelCancelScope.reset();
+        panelWindow.reset();
+        renderer.fillRect(
+            {0.0f, 0.0f},
+            {static_cast<float>(camera_.width()), static_cast<float>(camera_.height())},
+            {0, 0, 0, 96});
+        drawUiResultDialog(renderer, baseResultDialog_, baseResultDialogRect(), "base.result");
     }
 }
 

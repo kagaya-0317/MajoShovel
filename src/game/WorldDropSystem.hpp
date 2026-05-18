@@ -78,6 +78,7 @@ public:
     bool spawnMaterialDrop(MaterialType type, int count, Vec2 position, float spawnedAtSeconds = 0.0f, WorldDropSpawnMotion motion = {});
     bool spawnRewardDrop(const ObjectCatalog& catalog, Vec2 position, float spawnedAtSeconds = 0.0f);
     bool stealNearestDrop(const ObjectCatalog& catalog, Vec2 center, float radius, std::string_view targetFilter, WorldDropItem& outDrop);
+    int pullNearbyDrops(Vec2 center, float dt, float radius, float acceleration, int limit = 0);
     int pullMetalDrops(const ObjectCatalog& catalog, Vec2 center, float dt, float radius = 170.0f);
     int update(
         float dt,

@@ -32,6 +32,11 @@ constexpr int LootLandingRingCount = 12;
 constexpr int LootLandingSamplesPerRing = 16;
 constexpr float LootLandingFirstRadius = 18.0f;
 constexpr float LootLandingRadiusStep = 18.0f;
+constexpr float MicroFeatureProgressStart = 0.08f;
+constexpr float MicroFeatureProgressSpan = 0.84f;
+constexpr float MicroFeatureSpacingTiles = 9.5f;
+constexpr int MicroFeatureMinCount = 10;
+constexpr int MicroFeatureMaxCount = 30;
 
 struct PlacementReservation {
     DungeonTile tile{};
@@ -224,25 +229,215 @@ DungeonTile wallPocketTileAtProgress(const DungeonLayout& layout, float progress
     return roundDungeonTile(anchor + side * offsetTiles);
 }
 
+enum class MicroFeatureKind {
+    OreNeedle,
+    DoublePocketTreasure,
+    BaitAndAmbush,
+    CrateAlcove,
+    OreVein,
+};
+
+enum class DoublePocketLootKind {
+    Chest,
+    Money,
+    MoonFragment,
+};
+
+struct MicroFeature {
+    MicroFeatureKind kind = MicroFeatureKind::OreNeedle;
+    float progress = 0.0f;
+    DungeonTile center{};
+    DungeonTile entry{};
+    DungeonTile second{};
+    DungeonTile back{};
+    DungeonTile tangentStep{};
+    DungeonTile sideStep{};
+};
+
+float pathLengthTiles(const std::vector<Vec2>& points)
+{
+    float total = 0.0f;
+    for (std::size_t i = 1; i < points.size(); ++i) {
+        total += length(points[i] - points[i - 1]);
+    }
+    return total;
+}
+
+int signStep(float value)
+{
+    return value < 0.0f ? -1 : 1;
+}
+
+DungeonTile cardinalStep(Vec2 direction)
+{
+    if (std::abs(direction.x) >= std::abs(direction.y)) {
+        return {signStep(direction.x), 0};
+    }
+    return {0, signStep(direction.y)};
+}
+
+DungeonTile addTile(DungeonTile tile, DungeonTile step, int scale = 1)
+{
+    return {tile.x + step.x * scale, tile.y + step.y * scale};
+}
+
+MicroFeatureKind chooseMicroFeatureKind(int index, std::mt19937& rng)
+{
+    if (index % 7 == 0) {
+        return MicroFeatureKind::DoublePocketTreasure;
+    }
+    if (index % 5 == 0) {
+        return MicroFeatureKind::OreVein;
+    }
+
+    std::discrete_distribution<int> distribution({
+        4.0,
+        3.0,
+        3.0,
+        2.0,
+        4.0,
+    });
+    return static_cast<MicroFeatureKind>(distribution(rng));
+}
+
+float microFeatureOffsetTiles(MicroFeatureKind kind, float unit)
+{
+    switch (kind) {
+    case MicroFeatureKind::OreNeedle:
+        return 4.0f + unit * 2.6f;
+    case MicroFeatureKind::DoublePocketTreasure:
+        return 4.8f + unit * 2.8f;
+    case MicroFeatureKind::BaitAndAmbush:
+        return 4.6f + unit * 3.2f;
+    case MicroFeatureKind::CrateAlcove:
+        return 3.8f + unit * 2.4f;
+    case MicroFeatureKind::OreVein:
+        return 4.4f + unit * 3.4f;
+    }
+    return 5.0f;
+}
+
+std::vector<MicroFeature> microFeaturesForLayout(const DungeonLayout& layout)
+{
+    std::vector<MicroFeature> features;
+    if (layout.mainPathPoints.size() < 2) {
+        return features;
+    }
+
+    const int count = std::clamp(
+        static_cast<int>(std::round(pathLengthTiles(layout.mainPathPoints) / MicroFeatureSpacingTiles)) + std::max(0, layout.stageId - 1),
+        MicroFeatureMinCount,
+        MicroFeatureMaxCount);
+    features.reserve(static_cast<std::size_t>(count));
+
+    std::mt19937 rng(layout.seed ^ 0x6D2B79F5u);
+    std::uniform_real_distribution<float> progressJitter(-0.024f, 0.024f);
+    std::uniform_real_distribution<float> unitDist(0.0f, 1.0f);
+    std::uniform_real_distribution<float> tangentDrift(-0.85f, 0.85f);
+    std::uniform_int_distribution<int> signDist(0, 1);
+
+    for (int i = 0; i < count; ++i) {
+        const MicroFeatureKind kind = chooseMicroFeatureKind(i, rng);
+        const float progress = clamp(
+            MicroFeatureProgressStart +
+                MicroFeatureProgressSpan * (static_cast<float>(i) + 0.5f) / static_cast<float>(count) +
+                progressJitter(rng),
+            0.06f,
+            0.94f);
+        const Vec2 anchor = pointAtPathProgress(layout.mainPathPoints, progress);
+        const Vec2 tangent = tangentAtPathProgress(layout.mainPathPoints, progress);
+        Vec2 side = perpendicular(tangent);
+        if (signDist(rng) == 0) {
+            side = side * -1.0f;
+        }
+
+        const DungeonTile tangentStep = cardinalStep(tangent);
+        const DungeonTile sideStep = cardinalStep(side);
+        const DungeonTile center = roundDungeonTile(
+            anchor +
+            side * microFeatureOffsetTiles(kind, unitDist(rng)) +
+            tangent * tangentDrift(rng));
+
+        features.push_back(MicroFeature{
+            .kind = kind,
+            .progress = progress,
+            .center = center,
+            .entry = addTile(center, sideStep, -1),
+            .second = addTile(center, tangentStep),
+            .back = addTile(center, sideStep),
+            .tangentStep = tangentStep,
+            .sideStep = sideStep,
+        });
+    }
+
+    return features;
+}
+
+std::uint32_t microFeatureRoll(const MicroFeature& feature, std::uint32_t seed, std::uint32_t salt)
+{
+    return placementTileHash(feature.center, seed ^ salt);
+}
+
+DoublePocketLootKind doublePocketLootKind(const MicroFeature& feature, std::uint32_t seed)
+{
+    return static_cast<DoublePocketLootKind>(microFeatureRoll(feature, seed, 0xA92D4F17u) % 3u);
+}
+
+bool doublePocketUsesCrate(const MicroFeature& feature, std::uint32_t seed)
+{
+    return (microFeatureRoll(feature, seed, 0x3C7A6E21u) & 1u) != 0u;
+}
+
+bool baitUsesOreWall(const MicroFeature& feature, std::uint32_t seed)
+{
+    return (microFeatureRoll(feature, seed, 0x8F132B95u) & 1u) != 0u;
+}
+
+DungeonTile baitEnemyTile(const MicroFeature& feature)
+{
+    return addTile(feature.center, feature.sideStep, 2);
+}
+
+std::vector<DungeonTile> oreTilesForMicroFeature(const MicroFeature& feature)
+{
+    std::vector<DungeonTile> tiles;
+    if (feature.kind == MicroFeatureKind::OreNeedle) {
+        tiles.push_back(feature.center);
+    } else if (feature.kind == MicroFeatureKind::OreVein) {
+        tiles.push_back(feature.center);
+        tiles.push_back(feature.second);
+        tiles.push_back(addTile(feature.center, feature.tangentStep, -1));
+        tiles.push_back(feature.back);
+        tiles.push_back(addTile(feature.second, feature.sideStep));
+    }
+    return tiles;
+}
+
 }
 
 DungeonGenerationContext Game::makeDungeonGenerationContext() const
 {
     const int stageId = currentStage_ + 1;
-    // Future connection: pass currentStageDefinition() into DungeonLayout generation.
-    // This pass keeps the existing one-stage vertical slice parameters unchanged.
+    const StageDefinition& stage = currentStageDefinition();
+    const bool stageIsRoguelike = stage.type == "ローグライク" || stage.generationProfile == "astral_rogue";
     return DungeonGenerationContext{
         .stageId = stageId,
-        .seed = makeDungeonSeed(stageId, roguelikeDungeon_),
-        .stageHardnessMultiplier = stageHardnessMultiplierForStageId(stageId),
-        .roguelike = roguelikeDungeon_,
+        .seed = makeDungeonSeed(stageId, roguelikeDungeon_ || stageIsRoguelike),
+        .stageHardnessMultiplier = static_cast<float>(std::max(0.25, stage.terrainHardnessMultiplier)),
+        .goalDistanceTiles = stage.goalDistanceTiles,
+        .detourRate = static_cast<float>(stage.detourRate),
+        .branchDensity = static_cast<float>(stage.branchDensity),
+        .cavernWidthMultiplier = static_cast<float>(stage.cavernWidthMultiplier),
+        .warpPointCount = stage.warpPointCount,
+        .specialRoomCount = stage.specialRoomCount,
+        .generationProfile = stage.generationProfile,
+        .terrainProfile = stage.terrainProfile,
+        .roguelike = roguelikeDungeon_ || stageIsRoguelike,
     };
 }
 
 void Game::generateDungeonLayoutForRun()
 {
-    // Future connection: currentStageDefinition().goalDistanceTiles,
-    // generationProfile, warpPointCount, and specialRoomCount become layout inputs here.
     dungeonLayout_ = generateDungeonLayout(makeDungeonGenerationContext());
 }
 
@@ -704,7 +899,7 @@ void Game::rebuildUnlockedWarpPointsForStart(Vec2 latestPosition)
         latest.unlocked = true;
         latest.snapshotCaptured = true;
     }
-    if (unlockedWarpPointCount_ > BossWarpPointIndex) {
+    if (!warpPoints_.empty() && unlockedWarpPointCount_ >= static_cast<int>(warpPoints_.size())) {
         configureBossSpawnPointFromWarp(latestPosition);
     }
 }
@@ -718,6 +913,7 @@ void Game::retryAfterGameOver()
         restoreRetrySnapshot();
         clearTemporaryPlayerState(true);
         mode_ = ScreenMode::Playing;
+        beginDungeonRingIntro();
         return;
     }
 
@@ -742,9 +938,11 @@ void Game::retryAfterGameOver()
     projectiles_ = ProjectileSystem{};
     levels_ = LevelSystem{};
     tileMap_.updateAround(player_.position, 0.0f, balance_, dungeonLayout_);
+    normalizeOpenBuriedPlacementNodes();
     camera_.follow(player_.position, 1.0f);
     captureRunStartInventoryState();
     mode_ = ScreenMode::Playing;
+    beginDungeonRingIntro();
 }
 
 void Game::returnToBaseAfterGameOver()
@@ -788,6 +986,7 @@ void Game::returnToBaseFromNormalStage(bool stageCleared, bool died)
     retrySnapshot_ = RetrySnapshot{};
     warpPoints_.clear();
     spawnedWarpPointCount_ = 0;
+    placeBasePlayerAtMineExitReturnPoint();
     enterBase();
     baseStatus_ = refreshMerchant ? "帰還しました。商人ワゴン更新あり" : "帰還しました";
     if (autoSaveOnReturn_) {
@@ -804,13 +1003,17 @@ void Game::resetWarpPointRunState()
 {
     hasBossSpawnPoint_ = false;
     retrySnapshot_ = RetrySnapshot{};
-    warpPointsEnabled_ = !roguelikeDungeon_;
+    const bool stageIsRoguelike = currentStageDefinition_.type == "ローグライク" ||
+        currentStageDefinition_.generationProfile == "astral_rogue";
+    warpPointsEnabled_ = !(roguelikeDungeon_ || stageIsRoguelike);
     initializeWarpPointsFromLayout();
 }
 
 void Game::captureDungeonState()
 {
-    if (enemyTestActive_ || roguelikeDungeon_ || currentStageId_.empty()) {
+    const bool stageIsRoguelike = currentStageDefinition_.type == "ローグライク" ||
+        currentStageDefinition_.generationProfile == "astral_rogue";
+    if (enemyTestActive_ || roguelikeDungeon_ || stageIsRoguelike || currentStageId_.empty()) {
         return;
     }
 
@@ -840,7 +1043,9 @@ void Game::captureDungeonState()
 
 bool Game::restoreDungeonState(bool useLatestWarpPoint)
 {
-    if (roguelikeDungeon_) {
+    const bool stageIsRoguelike = currentStageDefinition_.type == "ローグライク" ||
+        currentStageDefinition_.generationProfile == "astral_rogue";
+    if (roguelikeDungeon_ || stageIsRoguelike) {
         return false;
     }
     auto it = dungeonStates_.find(currentStageId_);
@@ -886,18 +1091,24 @@ bool Game::restoreDungeonState(bool useLatestWarpPoint)
     player_.position = safePlayerStartPosition(preferredStartPosition);
     camera_.follow(player_.position, 1.0f);
     tileMap_.updateAround(player_.position, 0.0f, balance_, dungeonLayout_);
+    normalizeOpenBuriedPlacementNodes();
     return true;
 }
 
 bool Game::canRegenerateCurrentStage() const
 {
-    if (roguelikeDungeon_) {
+    const bool stageIsRoguelike = currentStageDefinition_.type == "ローグライク" ||
+        currentStageDefinition_.generationProfile == "astral_rogue";
+    if (roguelikeDungeon_ || stageIsRoguelike) {
         return false;
     }
     auto it = dungeonStates_.find(currentStageId_);
     const std::vector<WarpPoint>& points = it != dungeonStates_.end() && it->second.valid ? it->second.warpPoints : warpPoints_;
     if (points.empty()) {
-        return unlockedWarpPointCount_ >= MaxWarpPointsPerRun;
+        const int requiredWarpPoints = currentStageDefinition_.warpPointCount > 0
+            ? std::min(currentStageDefinition_.warpPointCount, MaxWarpPointsPerRun)
+            : MaxWarpPointsPerRun;
+        return unlockedWarpPointCount_ >= requiredWarpPoints;
     }
     return std::all_of(points.begin(), points.end(), [](const WarpPoint& point) {
         return point.discovered;
@@ -1045,7 +1256,8 @@ void Game::updateWarpPoints(float dt)
             latestWarpPointPosition_ = point.position;
             hasLatestWarpPointPosition_ = true;
             point.snapshotCaptured = true;
-            if (point.index == BossWarpPointIndex) {
+            const int bossWarpPointIndex = std::max(0, static_cast<int>(warpPoints_.size()) - 1);
+            if (point.index == bossWarpPointIndex) {
                 configureBossSpawnPointFromWarp(point.position);
             }
             captureRetrySnapshotAtWarpPoint();
@@ -1185,9 +1397,8 @@ void Game::initializeRewardNodesFromLayout()
         node.visibility = pathHint || i % 3 == 1
             ? PlacementVisibility::BuriedVisible
             : PlacementVisibility::BuriedHidden;
-        const float offsetTiles = pathHint
-            ? 0.0f
-            : (node.visibility == PlacementVisibility::BuriedVisible ? 7.0f : 9.0f) + sideJitter(rng);
+        const float offsetTiles =
+            (node.visibility == PlacementVisibility::BuriedVisible ? 7.0f : 9.0f) + sideJitter(rng);
         node.tile = roundDungeonTile(anchor + side * offsetTiles);
         node.rewardKind = i % 4 == 0 ? "treasure" : "item";
         node.objectId = (i % 2 == 0) ? fallbackObjectId : std::nullopt;
@@ -1224,9 +1435,8 @@ void Game::initializeRewardNodesFromLayout()
         node.visibility = pathHint || i % 3 == 1
             ? PlacementVisibility::BuriedVisible
             : PlacementVisibility::BuriedHidden;
-        const float offsetTiles = pathHint
-            ? 0.0f
-            : (node.visibility == PlacementVisibility::BuriedVisible ? 6.0f : 8.5f) + sideJitter(rng);
+        const float offsetTiles =
+            (node.visibility == PlacementVisibility::BuriedVisible ? 6.0f : 8.5f) + sideJitter(rng);
         node.tile = roundDungeonTile(anchor + side * offsetTiles);
         node.amount = std::max(1, moneyDist(rng) + dungeonLayout_.stageId * 2);
         if (reservations.reserveNearest(
@@ -1272,6 +1482,53 @@ void Game::initializeRewardNodesFromLayout()
                 PlacementSearchRadiusTiles,
                 node.tile)) {
             moneyNodes_.push_back(node);
+        }
+    }
+
+    for (const MicroFeature& feature : microFeaturesForLayout(dungeonLayout_)) {
+        if (feature.kind == MicroFeatureKind::DoublePocketTreasure) {
+            if (doublePocketLootKind(feature, dungeonLayout_.seed) == DoublePocketLootKind::Money) {
+                MoneyNode node{
+                    .tile = feature.center,
+                    .amount = std::max(3, moneyDist(rng) + dungeonLayout_.stageId),
+                    .visibility = PlacementVisibility::Exposed,
+                    .collected = false,
+                };
+                if (reservations.tryReserve(node.tile, nodeRadius(node.visibility))) {
+                    moneyNodes_.push_back(node);
+                }
+            } else if (doublePocketLootKind(feature, dungeonLayout_.seed) == DoublePocketLootKind::MoonFragment) {
+                MoonFragmentNode node{
+                    .tile = feature.center,
+                    .visibility = PlacementVisibility::Exposed,
+                    .collected = false,
+                };
+                if (reservations.tryReserve(node.tile, nodeRadius(node.visibility))) {
+                    moonFragmentNodes_.push_back(node);
+                }
+            }
+        } else if (feature.kind == MicroFeatureKind::BaitAndAmbush) {
+            if (!baitUsesOreWall(feature, dungeonLayout_.seed)) {
+                MoneyNode node{
+                    .tile = feature.center,
+                    .amount = std::max(2, dungeonLayout_.stageId + 2),
+                    .visibility = PlacementVisibility::BuriedVisible,
+                    .collected = false,
+                };
+                if (reservations.tryReserve(node.tile, nodeRadius(node.visibility))) {
+                    moneyNodes_.push_back(node);
+                }
+            }
+        } else if (feature.kind == MicroFeatureKind::CrateAlcove) {
+            MoneyNode node{
+                .tile = feature.second,
+                .amount = std::max(2, moneyDist(rng) + dungeonLayout_.stageId),
+                .visibility = PlacementVisibility::Exposed,
+                .collected = false,
+            };
+            if (reservations.tryReserve(node.tile, 0)) {
+                moneyNodes_.push_back(node);
+            }
         }
     }
 
@@ -1485,6 +1742,43 @@ void Game::revealMoonFragmentNodesFromOpenedTiles(const std::vector<Vec2>& opene
     }
 }
 
+void Game::normalizeOpenBuriedPlacementNodes()
+{
+    const auto tileIsOpen = [this](DungeonTile tile) {
+        return tileMap_.terrainDebugAtWorld(tileWorldCenter(tile)).type == TileType::Empty;
+    };
+
+    for (RewardNode& node : rewardNodes_) {
+        if (node.collected || node.visibility == PlacementVisibility::Exposed || !tileIsOpen(node.tile)) {
+            continue;
+        }
+        node.visibility = PlacementVisibility::Exposed;
+        node.revealed = true;
+    }
+
+    for (MoneyNode& node : moneyNodes_) {
+        if (node.collected || node.visibility == PlacementVisibility::Exposed || !tileIsOpen(node.tile)) {
+            continue;
+        }
+        node.visibility = PlacementVisibility::Exposed;
+    }
+
+    for (MoonFragmentNode& node : moonFragmentNodes_) {
+        if (node.collected || node.visibility == PlacementVisibility::Exposed || !tileIsOpen(node.tile)) {
+            continue;
+        }
+        node.visibility = PlacementVisibility::Exposed;
+    }
+
+    for (ChestNode& node : chestNodes_) {
+        if (node.opened || node.visibility == PlacementVisibility::Exposed || !tileIsOpen(node.tile)) {
+            continue;
+        }
+        node.visibility = PlacementVisibility::Exposed;
+        node.revealed = true;
+    }
+}
+
 void Game::initializeChestNodesFromLayout()
 {
     chestNodes_.clear();
@@ -1528,6 +1822,28 @@ void Game::initializeChestNodesFromLayout()
         }
     }
 
+    for (const MicroFeature& feature : microFeaturesForLayout(dungeonLayout_)) {
+        if (feature.kind != MicroFeatureKind::DoublePocketTreasure) {
+            continue;
+        }
+        if (doublePocketLootKind(feature, dungeonLayout_.seed) != DoublePocketLootKind::Chest) {
+            continue;
+        }
+
+        ChestNode node;
+        node.visibility = PlacementVisibility::Exposed;
+        node.tile = feature.center;
+        node.chestKind = rollChestKind(rng, feature.progress);
+        node.depthRank = lootDepthRankForProgress(currentStageId_, feature.progress);
+        node.revealed = true;
+        node.opened = false;
+        node.lootSpawned = false;
+        node.openingSeconds = 0.0f;
+        if (reservations.tryReserve(node.tile, ExposedPlacementReservationRadiusTiles)) {
+            chestNodes_.push_back(node);
+        }
+    }
+
     for (int i = 0; i < ChestNodeCountPerRun; ++i) {
         const float progress = clamp(
             0.08f + 0.84f * (static_cast<float>(i + 1) / static_cast<float>(ChestNodeCountPerRun + 1)) + progressJitter(rng),
@@ -1545,9 +1861,8 @@ void Game::initializeChestNodesFromLayout()
         node.visibility = pathHint || i % 4 == 1
             ? PlacementVisibility::BuriedVisible
             : PlacementVisibility::BuriedHidden;
-        const float offsetTiles = pathHint
-            ? (1.0f + sideJitter(rng) * 0.5f)
-            : (node.visibility == PlacementVisibility::BuriedVisible ? 6.5f : 8.5f) + sideJitter(rng);
+        const float offsetTiles =
+            (node.visibility == PlacementVisibility::BuriedVisible ? 6.5f : 8.5f) + sideJitter(rng);
         node.tile = roundDungeonTile(anchor + side * offsetTiles);
         node.chestKind = rollChestKind(rng, progress);
         node.depthRank = lootDepthRankForProgress(currentStageId_, progress);
@@ -1912,6 +2227,23 @@ void Game::initializeCrateNodesFromLayout()
         }
     }
 
+    for (const MicroFeature& feature : microFeaturesForLayout(dungeonLayout_)) {
+        if (feature.kind == MicroFeatureKind::CrateAlcove) {
+            CrateNode node;
+            node.tile = feature.center;
+            node.depthRank = lootDepthRankForProgress(currentStageId_, feature.progress);
+            node.destroyed = false;
+            crateNodes_.push_back(node);
+        } else if (feature.kind == MicroFeatureKind::DoublePocketTreasure &&
+            doublePocketUsesCrate(feature, dungeonLayout_.seed)) {
+            CrateNode node;
+            node.tile = feature.second;
+            node.depthRank = lootDepthRankForProgress(currentStageId_, feature.progress);
+            node.destroyed = false;
+            crateNodes_.push_back(node);
+        }
+    }
+
     for (int i = 0; i < CrateNodeCountPerRun; ++i) {
         if (!floorAnchors.empty()) {
             const FloorCavernAnchor& floor = floorAnchors[static_cast<std::size_t>(i) % floorAnchors.size()];
@@ -2144,6 +2476,26 @@ void Game::initializeEnemyNodesFromLayout()
         enemyNodes_.push_back(std::move(node));
     }
 
+    for (const MicroFeature& feature : microFeaturesForLayout(dungeonLayout_)) {
+        if (feature.kind == MicroFeatureKind::DoublePocketTreasure && !doublePocketUsesCrate(feature, dungeonLayout_.seed)) {
+            enemyNodes_.push_back(EnemyNode{
+                .tile = feature.second,
+                .placementType = EnemyPlacementType::Exposed,
+                .dangerTier = std::max(1, dungeonLayout_.stageId),
+                .enemySpawnGroup = "micro_pocket_guard",
+                .spawned = false,
+            });
+        } else if (feature.kind == MicroFeatureKind::BaitAndAmbush) {
+            enemyNodes_.push_back(EnemyNode{
+                .tile = baitEnemyTile(feature),
+                .placementType = EnemyPlacementType::Exposed,
+                .dangerTier = std::max(1, dungeonLayout_.stageId),
+                .enemySpawnGroup = "micro_bait_guard",
+                .spawned = false,
+            });
+        }
+    }
+
     for (const SpecialRoomAnchor& room : dungeonLayout_.specialRoomAnchors) {
         if (room.type == SpecialRoomType::SafeCavern) {
             continue;
@@ -2202,6 +2554,46 @@ void Game::applyPlacementTerrainOverrides()
                 visibility == PlacementVisibility::BuriedHidden,
                 treasureWall));
     };
+
+    for (const MicroFeature& feature : microFeaturesForLayout(dungeonLayout_)) {
+        switch (feature.kind) {
+        case MicroFeatureKind::OreNeedle:
+            tileMap_.setTileOverride(feature.entry, TileType::Dirt);
+            tileMap_.setTileOverride(feature.center, TileType::Ore);
+            tileMap_.setTileOverride(feature.second, TileType::Dirt);
+            tileMap_.setTileOverride(addTile(feature.center, feature.tangentStep, -1), TileType::Rock);
+            tileMap_.setTileOverride(feature.back, TileType::Rock);
+            break;
+        case MicroFeatureKind::DoublePocketTreasure:
+            tileMap_.setTileOverride(feature.entry, TileType::Dirt);
+            tileMap_.setTileOverride(feature.center, TileType::Empty);
+            tileMap_.setTileOverride(feature.second, TileType::Empty);
+            tileMap_.setTileOverride(feature.back, TileType::Rock);
+            tileMap_.setTileOverride(addTile(feature.second, feature.sideStep), TileType::Rock);
+            break;
+        case MicroFeatureKind::BaitAndAmbush:
+            tileMap_.setTileOverride(feature.entry, TileType::Dirt);
+            tileMap_.setTileOverride(feature.center, baitUsesOreWall(feature, dungeonLayout_.seed) ? TileType::Ore : TileType::Rock);
+            tileMap_.setTileOverride(feature.back, TileType::Empty);
+            tileMap_.setTileOverride(baitEnemyTile(feature), TileType::Empty);
+            tileMap_.setTileOverride(addTile(baitEnemyTile(feature), feature.tangentStep), TileType::Rock);
+            break;
+        case MicroFeatureKind::CrateAlcove:
+            tileMap_.setTileOverride(feature.entry, TileType::Empty);
+            tileMap_.setTileOverride(feature.center, TileType::Empty);
+            tileMap_.setTileOverride(feature.second, TileType::Empty);
+            tileMap_.setTileOverride(feature.back, TileType::Dirt);
+            break;
+        case MicroFeatureKind::OreVein:
+            tileMap_.setTileOverride(feature.entry, TileType::Dirt);
+            for (DungeonTile tile : oreTilesForMicroFeature(feature)) {
+                tileMap_.setTileOverride(tile, TileType::Ore);
+            }
+            tileMap_.setTileOverride(addTile(feature.center, feature.sideStep, 2), TileType::Rock);
+            tileMap_.setTileOverride(addTile(feature.second, feature.tangentStep), TileType::Rock);
+            break;
+        }
+    }
 
     for (const RewardNode& node : rewardNodes_) {
         if (node.visibility == PlacementVisibility::Exposed) {
@@ -2298,7 +2690,9 @@ void Game::applyPlacementTerrainOverrides()
 
 void Game::updateExposedEnemyNodes()
 {
-    const float spawnRadiusSq = ExposedEnemyNodeSpawnRadius * ExposedEnemyNodeSpawnRadius;
+    const float spawnRadius =
+        std::max(balance_.playerLightRadius, balance_.lightRadius) + ExposedEnemyNodeSpawnPadding;
+    const float spawnRadiusSq = spawnRadius * spawnRadius;
     for (EnemyNode& node : enemyNodes_) {
         if (node.spawned || node.placementType != EnemyPlacementType::Exposed) {
             continue;
@@ -2307,7 +2701,7 @@ void Game::updateExposedEnemyNodes()
         if (distanceSquared(center, player_.position) > spawnRadiusSq) {
             continue;
         }
-        if (enemies_.spawnNodeEnemy(tileMap_, center, player_.position, balance_, enemyCatalog_, false)) {
+        if (enemies_.spawnFixedNodeEnemy(tileMap_, center, player_.position, balance_, enemyCatalog_)) {
             node.spawned = true;
         }
     }
@@ -2621,6 +3015,7 @@ void Game::restoreRetrySnapshot()
     inventoryReturnToPause_ = false;
     gameOverStatus_.clear();
     tileMap_.updateAround(player_.position, 0.0f, balance_, dungeonLayout_);
+    normalizeOpenBuriedPlacementNodes();
     camera_.follow(player_.position, 1.0f);
     resetPlayerFootstepDust();
 }
@@ -2940,6 +3335,26 @@ void Game::appendPickupLogs(const std::vector<WorldDropPickupEvent>& pickupEvent
             const std::string iconPrefix = objectCatalog_.registry.findById(event.id) != nullptr ? inlineItemTag(event.id) + " " : "";
             pushCountedDungeonLog(iconPrefix + label, quantity, " を入手", "object:" + event.id);
         }
+    }
+}
+
+void Game::handleRingItemBreakEvents()
+{
+    for (const RingItemBreakEvent& event : spellRing_.consumeItemBreakEvents()) {
+        const ItemData* object = objectCatalog_.registry.findById(event.objectId);
+        const std::string name = object != nullptr && !object->name.empty()
+            ? object->name
+            : std::string(spellRingItemName(event.type));
+        const std::string iconPrefix = object != nullptr ? inlineItemTag(event.objectId) + " " : "";
+        const std::string message = iconPrefix + name + " が壊れた";
+        const std::string mergeKey = event.instanceId.empty()
+            ? "item_break:" + event.objectId
+            : "item_break:" + event.instanceId;
+
+        effects_.spawnItemBreak(event.position);
+        pushDungeonLog(message, mergeKey);
+        reloadNotice_ = message;
+        reloadNoticeTimer_ = 1.8f;
     }
 }
 

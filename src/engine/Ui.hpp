@@ -4,7 +4,9 @@
 #include "engine/Math.hpp"
 #include "engine/Renderer.hpp"
 
+#include <string>
 #include <string_view>
+#include <vector>
 
 namespace majo {
 
@@ -85,6 +87,7 @@ struct UiSmallSelectButtonStyle {
     Color disabledText{150, 150, 160, 255};
     Color accent{255, 230, 150, 255};
     int textScale = 3;
+    int valueTextScale = 2;
 };
 
 struct UiGaugeGradient {
@@ -128,6 +131,12 @@ struct UiCommandMenuState {
     int hoveredIndex = -1;
     int textScale = 2;
     float animation = 0.0f;
+};
+
+struct UiResultDialogState {
+    bool open = false;
+    std::string title;
+    std::vector<std::string> lines;
 };
 
 struct UiDropdownItem {
@@ -280,6 +289,10 @@ void drawUiBodyMessageBelow(Renderer& renderer, UiRect anchor, std::string_view 
 float drawUiDetailHeader(Renderer& renderer, UiRect panel, std::string_view text);
 void drawUiDetailText(Renderer& renderer, UiRect panel, float& y, std::string_view text);
 void drawUiDetailLine(Renderer& renderer, UiRect panel, float& y, std::string_view label, std::string_view value, Color valueColor = ui::Text);
+void openUiResultDialog(UiResultDialogState& state, std::string title, std::vector<std::string> lines);
+bool updateUiResultDialog(UiResultDialogState& state, UiContext& ui, const Input& input, UiRect panel);
+void drawUiResultDialog(Renderer& renderer, const UiResultDialogState& state, UiRect panel, std::string_view id);
+UiRect uiResultDialogOkButtonRect(UiRect panel);
 void openUiCommandMenu(
     UiCommandMenuState& state,
     Vec2 anchor,

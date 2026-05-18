@@ -488,6 +488,35 @@ bool WorldDropSystem::stealNearestDrop(const ObjectCatalog& catalog, Vec2 center
     return true;
 }
 
+int WorldDropSystem::pullNearbyDrops(Vec2 center, float dt, float radius, float acceleration, int limit)
+{
+    if (dt <= 0.0f || radius <= 0.0f || acceleration <= 0.0f) {
+        return 0;
+    }
+
+    int pulled = 0;
+    const float effectiveRadius = std::max(DropPickupRadius, radius);
+    const float radiusSq = effectiveRadius * effectiveRadius;
+    for (WorldDropItem& drop : drops_) {
+        if (drop.jumpActive || drop.pickupDelaySeconds > 0.0f) {
+            continue;
+        }
+        const Vec2 toCenter = center - drop.position;
+        const float distanceSq = lengthSquared(toCenter);
+        if (distanceSq <= 1.0f || distanceSq > radiusSq) {
+            continue;
+        }
+        const float distance = std::sqrt(distanceSq);
+        const float falloff = 0.55f + (1.0f - clamp(distance / effectiveRadius, 0.0f, 1.0f)) * 0.45f;
+        drop.velocity += normalize(toCenter) * (acceleration * falloff * dt);
+        ++pulled;
+        if (limit > 0 && pulled >= limit) {
+            break;
+        }
+    }
+    return pulled;
+}
+
 int WorldDropSystem::pullMetalDrops(const ObjectCatalog& catalog, Vec2 center, float dt, float radius)
 {
     if (dt <= 0.0f) {

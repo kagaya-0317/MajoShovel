@@ -1630,7 +1630,14 @@ void EnemySystem::applyDefinition(Enemy& enemy, const EnemyDefinition* definitio
     }
 }
 
-bool EnemySystem::spawnDefinitionAt(Vec2 position, const EnemyDefinition* definition, const RuntimeBalance& balance, const EnemyCatalog& enemyCatalog, bool detectedOnSpawn, Vec2 detectedTarget)
+bool EnemySystem::spawnDefinitionAt(
+    Vec2 position,
+    const EnemyDefinition* definition,
+    const RuntimeBalance& balance,
+    const EnemyCatalog& enemyCatalog,
+    bool detectedOnSpawn,
+    Vec2 detectedTarget,
+    float spawnWarmupOverride)
 {
     Enemy* enemy = enemies_.acquire();
     if (!enemy) {
@@ -1642,8 +1649,11 @@ bool EnemySystem::spawnDefinitionAt(Vec2 position, const EnemyDefinition* defini
     enemy->isBoss = false;
     enemy->position = position;
     applyDefinition(*enemy, definition, balance, enemyCatalog);
-    enemy->spawnTimer = balance.enemySpawnWarmup;
-    enemy->spawnDuration = balance.enemySpawnWarmup;
+    const float spawnWarmup = spawnWarmupOverride >= 0.0f
+        ? spawnWarmupOverride
+        : balance.enemySpawnWarmup;
+    enemy->spawnTimer = spawnWarmup;
+    enemy->spawnDuration = spawnWarmup;
     if (detectedOnSpawn) {
         forceDetectInSight(*enemy, detectedTarget, true);
     }
@@ -1851,6 +1861,44 @@ bool EnemySystem::spawnNodeEnemy(
 
     spawnAt(spawnPosition, balance, enemyCatalog, detectedOnSpawn, playerPosition);
     return true;
+}
+
+bool EnemySystem::spawnFixedNodeEnemy(
+    TileMap& map,
+    Vec2 desiredPosition,
+    Vec2 playerPosition,
+    const RuntimeBalance& balance,
+    const EnemyCatalog& enemyCatalog,
+    bool detectedOnSpawn)
+{
+    const EnemyDefinition* definition = chooseEnemyDefinition(enemyCatalog);
+    float radius = balance.enemyRadius;
+    if (definition != nullptr && definition->radius > 0.0 && std::isfinite(definition->radius)) {
+        radius = static_cast<float>(definition->radius);
+    }
+
+    if (map.isCircleBlocked(desiredPosition, radius)) {
+        return false;
+    }
+
+    for (const Enemy& enemy : enemies_.items()) {
+        if (!enemy.active) {
+            continue;
+        }
+        const float minDistance = enemy.radius + radius + SpawnAvoidancePadding;
+        if (distanceSquared(desiredPosition, enemy.position) < minDistance * minDistance) {
+            return false;
+        }
+    }
+
+    return spawnDefinitionAt(
+        desiredPosition,
+        definition,
+        balance,
+        enemyCatalog,
+        detectedOnSpawn,
+        playerPosition,
+        0.0f);
 }
 
 bool EnemySystem::spawnSpecificEnemy(
@@ -2870,7 +2918,7 @@ void EnemySystem::update(
                 enemy.knockbackVelocity = normalize(enemy.position - item.worldPosition) * 90.0f;
                 enemy.knockbackTimer = std::max(enemy.knockbackTimer, 0.10f);
             } else {
-                item.consumeDurability();
+                spellRing.consumeItemDurability(item);
             }
             std::string hitEffectId;
             if (!item.objectId.empty()) {

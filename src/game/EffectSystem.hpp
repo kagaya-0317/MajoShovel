@@ -57,6 +57,7 @@ enum class ParticleEffectId {
     SpecialItemGlimmer,
     WarpCircle,
     BossCircle,
+    ItemBreak,
 };
 
 struct Effect {
@@ -155,6 +156,7 @@ public:
     void spawnForegroundRingTrail(Vec2 position, Vec2 direction);
     void spawnCaptureSuccess(Vec2 position, Vec2 direction);
     void spawnDropPickup(Vec2 position, Vec2 direction);
+    void spawnItemBreak(Vec2 position);
     void spawnMaterialFloat(Vec2 position, Color color);
     void spawnTorchFlicker(Vec2 position);
     void spawnForegroundTorchFlicker(Vec2 position);

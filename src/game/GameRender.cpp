@@ -2,6 +2,203 @@
 
 namespace majo {
 
+namespace {
+
+float easeOutCubic(float t)
+{
+    t = clamp(t, 0.0f, 1.0f);
+    const float inv = 1.0f - t;
+    return 1.0f - inv * inv * inv;
+}
+
+float easeOutBack(float t)
+{
+    t = clamp(t, 0.0f, 1.0f);
+    constexpr float C1 = 1.70158f;
+    constexpr float C3 = C1 + 1.0f;
+    const float shifted = t - 1.0f;
+    return 1.0f + C3 * shifted * shifted * shifted + C1 * shifted * shifted;
+}
+
+float smootherStep(float t)
+{
+    t = clamp(t, 0.0f, 1.0f);
+    return t * t * t * (t * (t * 6.0f - 15.0f) + 10.0f);
+}
+
+
+float dungeonRingIntroItemLocalProgress(float introProgress, int itemIndex, int ringIndex)
+{
+    const float delay = std::min(0.38f, static_cast<float>(itemIndex) * 0.045f + static_cast<float>(ringIndex) * 0.07f);
+    return clamp((introProgress - delay) / 0.46f, 0.0f, 1.0f);
+}
+
+float dungeonRingIntroItemReveal(float introProgress, int itemIndex, int ringIndex)
+{
+    return smootherStep(dungeonRingIntroItemLocalProgress(introProgress, itemIndex, ringIndex));
+}
+
+float dungeonRingIntroOrbitScale(float introProgress)
+{
+    if (introProgress < 0.56f) {
+        return lerp(0.12f, 1.16f, easeOutBack(introProgress / 0.56f));
+    }
+    return lerp(1.16f, 1.0f, easeOutCubic((introProgress - 0.56f) / 0.44f));
+}
+
+void drawDungeonRingIntroOrbit(
+    Renderer& renderer,
+    const SpellRingSystem& spellRing,
+    const RuntimeBalance& balance,
+    float introProgress,
+    float totalSeconds)
+{
+    const Vec2 center = spellRing.center();
+    const float appear = smootherStep(introProgress / 0.24f);
+    const float burstFade = 1.0f - smootherStep((introProgress - 0.08f) / 0.62f);
+    const float orbitScale = dungeonRingIntroOrbitScale(introProgress);
+
+    renderer.fillSoftCircle(center, 26.0f + 54.0f * appear, withAlpha({150, 220, 255, 255}, 86.0f * burstFade));
+    renderer.drawSoftRing(
+        center,
+        spellRing.radius() * lerp(0.24f, 1.34f, easeOutCubic(introProgress)),
+        18.0f * burstFade,
+        withAlpha({128, 224, 255, 255}, 118.0f * burstFade));
+    renderer.drawSoftRing(
+        center,
+        spellRing.radius() * lerp(0.10f, 0.94f, easeOutBack(clamp(introProgress / 0.48f, 0.0f, 1.0f))),
+        8.0f + 10.0f * burstFade,
+        withAlpha({255, 236, 154, 255}, 92.0f * burstFade));
+
+    for (RingShape shapePass : MagicRingShapeRenderOrder) {
+        for (int ringIndex = 0; ringIndex < SpellRingCount; ++ringIndex) {
+            const auto& ringItems = spellRing.itemsForRing(ringIndex);
+            if (ringItems.empty() || spellRing.ringShapeForIndex(ringIndex) != shapePass) {
+                continue;
+            }
+
+            std::vector<Vec2> orbitPath = shapePass == RingShape::Circle
+                ? makeCirclePath(center, spellRing.radius() * orbitScale, 176)
+                : spellRing.pathSamplePointsForRing(ringIndex, center, orbitScale, balance, 176);
+            drawMagicOrbitPath(
+                renderer,
+                orbitPath,
+                center,
+                MagicOrbitDrawOptions{
+                    shapePass,
+                    ringIndex == spellRing.activeRingIndex(),
+                    true,
+                    true,
+                    false,
+                    ringIndex,
+                    totalSeconds + introProgress * 2.6f,
+                    (0.16f + 1.18f * appear) * (ringIndex == spellRing.activeRingIndex() ? 1.0f : 0.72f),
+                });
+        }
+    }
+
+    drawMagicStar(
+        renderer,
+        center,
+        11.0f + 8.0f * burstFade,
+        withAlpha({255, 248, 196, 255}, 168.0f * std::max(appear, burstFade)),
+        totalSeconds * 1.2f);
+}
+
+void drawDungeonRingIntroItem(
+    Renderer& renderer,
+    const SpellRingSystem& spellRing,
+    const ObjectCatalog& objectCatalog,
+    const SpellRingItem& item,
+    int itemIndex,
+    float introProgress,
+    float totalSeconds)
+{
+    const int ringIndex = std::clamp(item.ringIndex, 0, SpellRingCount - 1);
+    const float local = dungeonRingIntroItemLocalProgress(introProgress, itemIndex, ringIndex);
+    if (local <= 0.0f) {
+        return;
+    }
+
+    const float reveal = smootherStep(local);
+    const Vec2 toItem = item.worldPosition - spellRing.center();
+    const float radial = lerp(0.08f, 1.0f, easeOutBack(local));
+    const Vec2 introGround = spellRing.center() + toItem * radial;
+    const float lift = (1.0f - reveal) * 22.0f + std::sin(local * Pi) * 10.0f;
+    const Vec2 drawPosition = elevatedDrawPosition(introGround, ringItemAltitude(item, totalSeconds) + lift);
+    const RingShape ringShape = spellRing.ringShapeForIndex(ringIndex);
+    const int ringItemCount = static_cast<int>(spellRing.itemsForRing(ringIndex).size());
+    const float cometVisualScale = ringShape == RingShape::Comet
+        ? std::clamp(1.0f - std::max(0, ringItemCount - 10) * 0.014f, 0.76f, 1.0f)
+        : 1.0f;
+    const float popScale = cometVisualScale * (lerp(0.56f, 1.0f, reveal) + std::sin(local * Pi) * 0.16f * (1.0f - local));
+    const unsigned char alpha = alphaByte(255.0f * reveal);
+    const Color tint{255, 255, 255, alpha};
+
+    renderer.drawActorShadow(
+        actorShadowAnchor(introGround, ItemShadowGroundOffsetY),
+        ringItemShadowVisualSize(item, totalSeconds) * popScale,
+        {0, 0, 0, static_cast<unsigned char>(std::clamp(std::lround(74.0f * reveal), 0L, 255L))});
+
+    const ItemData* object = objectForRingItem(objectCatalog, item);
+    const auto drawObject = [&]() {
+        if (object == nullptr) {
+            return false;
+        }
+        ObjectImageDrawOptions options;
+        options.tint = tint;
+        options.outlineColor.a = alpha;
+        options.scaleMultiplier = popScale / std::max(0.001f, cometVisualScale);
+        return drawObjectImage(
+            renderer,
+            *object,
+            drawPosition,
+            {RingObjectImageMaxSize * cometVisualScale, RingObjectImageMaxSize * cometVisualScale},
+            options);
+    };
+
+    if (item.type == SpellRingItemType::Shovel) {
+        if (renderer.hasIconSheet()) {
+            const float iconSize = IconDrawSize * popScale;
+            renderer.drawIcon(ShovelIconIndex, drawPosition - Vec2{iconSize * 0.5f, iconSize * 0.5f}, {iconSize, iconSize}, tint);
+        } else if (!drawObject()) {
+            renderer.fillCircle(drawPosition, item.hitRadius * popScale, withAlpha({178, 184, 190, 255}, 255.0f * reveal));
+            const Vec2 outward = normalize(introGround - spellRing.center());
+            renderer.drawLine(drawPosition, drawPosition + outward * (15.0f * popScale), withAlpha({90, 96, 102, 255}, 255.0f * reveal));
+        }
+    } else if (item.type == SpellRingItemType::Torch) {
+        if (renderer.hasIconSheet()) {
+            const float iconSize = IconDrawSize * popScale;
+            renderer.drawIcon(TorchIconIndex, drawPosition - Vec2{iconSize * 0.5f, iconSize * 0.5f}, {iconSize, iconSize}, tint);
+        } else if (!drawObject()) {
+            renderer.fillCircle(drawPosition, item.hitRadius * popScale, withAlpha({242, 122, 25, 255}, 255.0f * reveal));
+            renderer.fillCircle(drawPosition + Vec2{2.0f, -2.0f} * popScale, 4.0f * popScale, withAlpha({255, 238, 98, 255}, 255.0f * reveal));
+        }
+    } else if (!drawObject()) {
+        renderer.fillCircle(drawPosition, item.hitRadius * popScale, withAlpha({96, 122, 210, 255}, 255.0f * reveal));
+        renderer.drawCircle(drawPosition, item.hitRadius * popScale + 3.0f, withAlpha({160, 202, 255, 255}, 255.0f * reveal));
+    }
+
+    const float sparkle = std::sin(local * Pi);
+    if (sparkle > 0.05f) {
+        const Vec2 outward = lengthSquared(toItem) > 0.0001f ? normalize(toItem) : Vec2{0.0f, -1.0f};
+        drawMagicStar(
+            renderer,
+            drawPosition - outward * (10.0f + 12.0f * sparkle),
+            3.0f + sparkle * 5.0f,
+            withAlpha({255, 246, 190, 255}, 160.0f * sparkle * reveal),
+            totalSeconds * 2.0f + static_cast<float>(itemIndex));
+    }
+
+    if (item.hiddenDetectionRadius > 0.0f) {
+        renderer.drawCircle(drawPosition, item.hiddenDetectionRadius * lerp(0.75f, 1.0f, reveal), withAlpha({126, 208, 255, 255}, 90.0f * reveal));
+    }
+    if (item.treasureDetectionRadius > 0.0f) {
+        renderer.drawCircle(drawPosition, item.treasureDetectionRadius * lerp(0.75f, 1.0f, reveal), withAlpha({255, 220, 92, 255}, 90.0f * reveal));
+    }
+}
+
+} // namespace
 void Game::updateRingScreen(const Input& input, UiContext& ui, float dt)
 {
     auto& items = spellRing_.items();
@@ -1039,6 +1236,27 @@ void Game::renderSpellRingForeground(
     const std::vector<LightSource>&,
     float totalSeconds) const
 {
+    if (dungeonRingIntroActive()) {
+        const float introProgress = dungeonRingIntroProgress();
+        drawDungeonRingIntroOrbit(renderer, spellRing_, balance_, introProgress, totalSeconds);
+        int itemIndex = 0;
+        for (const SpellRingItem* itemPtr : runtimeItems) {
+            if (itemPtr == nullptr) {
+                continue;
+            }
+            drawDungeonRingIntroItem(
+                renderer,
+                spellRing_,
+                objectCatalog_,
+                *itemPtr,
+                itemIndex,
+                introProgress,
+                totalSeconds);
+            ++itemIndex;
+        }
+        return;
+    }
+
     drawSpellRingOrbitLayer(renderer, spellRing_, balance_, totalSeconds, 0.78f);
 
     if (spellRing_.state() != SpellRingState::Normal) {
@@ -1157,24 +1375,31 @@ void Game::render(Renderer& renderer, const Time& time)
     renderer.setWorldSpace(&camera_);
 
     const std::vector<const SpellRingItem*> runtimeItems = spellRing_.runtimeItems();
+    const bool ringIntroActive = dungeonRingIntroActive();
+    const float ringIntroProgress = dungeonRingIntroProgress();
     std::vector<LightSource> itemLights;
+    int runtimeItemIndex = 0;
     for (const SpellRingItem* itemPtr : runtimeItems) {
         if (itemPtr == nullptr) {
             continue;
         }
+        const float introLightScale = ringIntroActive
+            ? lerp(0.18f, 1.0f, dungeonRingIntroItemReveal(ringIntroProgress, runtimeItemIndex, itemPtr->ringIndex))
+            : 1.0f;
         const float phase = itemPtr->localAngle * 1.7f + static_cast<float>(itemPtr->ringIndex) * 2.3f;
         if (itemPtr->lightRadius > 0.0f) {
             itemLights.push_back({
                 flickeredLightPosition(itemPtr->worldPosition, time.totalSeconds(), phase),
-                flickeredLightRadius(itemPtr->lightRadius, time.totalSeconds(), phase),
+                flickeredLightRadius(itemPtr->lightRadius, time.totalSeconds(), phase) * introLightScale,
             });
         } else if (itemPtr->type == SpellRingItemType::Torch) {
             const float torchPhase = phase + 0.47f;
             itemLights.push_back({
                 flickeredLightPosition(itemPtr->worldPosition, time.totalSeconds(), torchPhase),
-                flickeredLightRadius(balance_.lightRadius, time.totalSeconds(), torchPhase),
+                flickeredLightRadius(balance_.lightRadius, time.totalSeconds(), torchPhase) * introLightScale,
             });
         }
+        ++runtimeItemIndex;
     }
     if (warpPointsEnabled_) {
         for (const WarpPoint& point : warpPoints_) {
@@ -1212,7 +1437,7 @@ void Game::render(Renderer& renderer, const Time& time)
     }
 
     const bool ringCenterVisible = tileMap_.isLit(spellRing_.center(), player_.position, itemLights);
-    if (ringCenterVisible) {
+    if (ringCenterVisible && !ringIntroActive) {
         drawSpellRingOrbitLayer(renderer, spellRing_, balance_, time.totalSeconds(), 0.46f);
     }
     if (spellRing_.state() != SpellRingState::Normal && ringCenterVisible) {
@@ -1257,6 +1482,9 @@ void Game::render(Renderer& renderer, const Time& time)
                 renderer.drawLine(player_.position, player_.position + player_.facing * 22.0f, {235, 210, 255, 255});
             }
 
+            if (ringIntroActive) {
+                return;
+            }
             for (const SpellRingItem* itemPtr : runtimeItems) {
                 if (itemPtr == nullptr || !tileMap_.isLit(itemPtr->worldPosition, player_.position, itemLights)) {
                     continue;
@@ -1358,7 +1586,12 @@ void Game::render(Renderer& renderer, const Time& time)
     }
     if (reloadNoticeTimer_ > 0.0f) {
         renderer.fillRect({18.0f, 170.0f}, {430.0f, 26.0f}, {0, 0, 0, 180});
-        renderer.drawText({26.0f, 176.0f}, reloadNotice_, {255, 235, 150, 255}, 2);
+        InlineItemTextStyle noticeStyle;
+        noticeStyle.text = {255, 235, 150, 255};
+        noticeStyle.scale = 2;
+        noticeStyle.iconTextGap = 4.0f;
+        noticeStyle.iconScale = 1.15f;
+        drawInlineItemText(renderer, objectCatalog_, {26.0f, 176.0f}, reloadNotice_, noticeStyle);
     }
     if (debugPaused_) {
         renderer.fillRect({18.0f, 202.0f}, {190.0f, 28.0f}, {0, 0, 0, 190});

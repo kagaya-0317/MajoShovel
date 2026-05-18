@@ -22,6 +22,7 @@
 #include "game/EnemySystem.hpp"
 #include "game/EncyclopediaSystem.hpp"
 #include "game/InventorySystem.hpp"
+#include "game/InventoryUiCommon.hpp"
 #include "game/Kamishibai.hpp"
 #include "game/LevelSystem.hpp"
 #include "game/OpeningMetaSave.hpp"
@@ -337,6 +338,22 @@ private:
         Dig,
         Durability,
     };
+    enum class BaseItemSource {
+        Backpack,
+        Warehouse,
+        Ring0,
+        Ring1,
+        Ring2,
+    };
+    struct ProcessingTarget {
+        BaseItemSource source = BaseItemSource::Backpack;
+        int slotIndex = -1;
+        StorageEntry backpackEntry{};
+        bool warehouseEntry = false;
+        int ringIndex = -1;
+        int ringItemIndex = -1;
+        bool valid = false;
+    };
     enum class RingWorkshopUpgrade {
         InitialRadius,
         InitialSpeed,
@@ -406,6 +423,8 @@ private:
     float worldBuildProgress() const;
     std::string worldBuildStatusText() const;
     void enterBase();
+    void placeBasePlayerAtMineExitReturnPoint();
+    void placeBasePlayerAtHomeDoorResumePoint();
     void startMiningFromBase(bool useLatestWarpPoint, bool forceRegenerate = false);
     void loadOpeningKamishibaiData();
     void loadStoryEvents();
@@ -422,6 +441,7 @@ private:
     float effectiveInitialRingRadius(int levelRadiusPoints) const;
     float effectiveInitialRingSpeed(int levelSpeedPoints) const;
     float effectiveRingShiftDistance() const;
+    float effectiveCollectionPullRadius(int collectionLevel) const;
     void configureWatcher();
     void checkHotReload();
     void loadSheetSourceConfig();
@@ -455,6 +475,15 @@ private:
         int price = 0;
         int quantity = 0;
     };
+    struct MerchantSellTarget {
+        BaseItemSource source = BaseItemSource::Backpack;
+        int slotIndex = -1;
+        StorageEntry storageEntry{};
+        bool warehouseEntry = false;
+        int ringIndex = -1;
+        int ringItemIndex = -1;
+        bool valid = false;
+    };
     enum class MerchantUiMode {
         Closed,
         ChooseAction,
@@ -470,17 +499,29 @@ private:
     void refreshMerchantStock(bool force);
     void buyMerchantProduct(int index);
     void sellMerchantEntry(int index, int count);
+    MerchantSellTarget merchantSellTargetForSourceSlot(int source, int slotIndex) const;
+    MerchantSellTarget merchantSellTargetForScreenSlot(int slotIndex) const;
+    bool merchantSellTargetAvailable(MerchantSellTarget target) const;
+    int merchantSellTargetPrice(MerchantSellTarget target) const;
+    void sellMerchantTarget(MerchantSellTarget target, int count);
     void sellMerchantScreenSlot(int slotIndex, int count);
     std::vector<StorageEntry> processingEntries() const;
     std::optional<StorageEntry> processingEntryForScreenSlot(int slotIndex) const;
+    std::optional<StorageEntry> warehouseEntryForPageSlot(int slotIndex, int page) const;
+    InventoryUiEntryView storageEntryView(StorageEntry entry, bool warehouseEntry) const;
+    ProcessingTarget processingTargetForScreenSlot(int slotIndex) const;
     const char* processingModeName(ProcessingMode mode) const;
-    bool processingEntryAvailable(StorageEntry entry) const;
+    bool processingEntryAvailable(StorageEntry entry, bool warehouseEntry = false) const;
     bool processingScreenSlotAvailable(int slotIndex) const;
-    int processingMoneyCost(StorageEntry entry, ProcessingMode mode) const;
-    int processingOreCost(StorageEntry entry, ProcessingMode mode) const;
+    bool processingTargetAvailable(ProcessingTarget target) const;
+    int processingMoneyCost(StorageEntry entry, ProcessingMode mode, bool warehouseEntry = false) const;
+    int processingOreCost(StorageEntry entry, ProcessingMode mode, bool warehouseEntry = false) const;
+    int processingMoneyCost(ProcessingTarget target, ProcessingMode mode) const;
+    int processingOreCost(ProcessingTarget target, ProcessingMode mode) const;
     void applyProcessing(int entryIndex);
     void applyProcessingScreenSlot(int slotIndex);
-    void applyProcessingEntry(StorageEntry entry);
+    void applyProcessingEntry(StorageEntry entry, bool warehouseEntry = false);
+    void applyProcessingTarget(ProcessingTarget target);
     int warehouseCapacity() const;
     int warehouseUsedSlots() const;
     int backpackUsedSlots() const;
@@ -567,6 +608,7 @@ private:
     void revealRewardNodesFromOpenedTiles(const std::vector<Vec2>& openedTiles);
     void updateExposedMoonFragmentNodes();
     void revealMoonFragmentNodesFromOpenedTiles(const std::vector<Vec2>& openedTiles);
+    void normalizeOpenBuriedPlacementNodes();
     void initializeChestNodesFromLayout();
     void updateChestNodes(float dt, const Input& input);
     void revealChestNodesFromOpenedTiles(const std::vector<Vec2>& openedTiles);
@@ -662,6 +704,7 @@ private:
     void pushCountedDungeonLog(std::string label, int amount, std::string suffix, std::string mergeKey);
     void updateDungeonLogs(float dt);
     void appendPickupLogs(const std::vector<WorldDropPickupEvent>& pickupEvents);
+    void handleRingItemBreakEvents();
     void switchActiveRingWithLog(int delta);
     int unlockedRingHudCount() const;
     UiRect ringStatusHudRect(int ringIndex, int unlockedRingCount) const;
@@ -684,6 +727,10 @@ private:
     void renderStageClearScreen(Renderer& renderer) const;
     void renderBaseDebugOverlay(Renderer& renderer, const Time& time) const;
     void renderDebugOverlay(Renderer& renderer, const Time& time);
+    void beginDungeonRingIntro();
+    void updateDungeonRingIntro(float dt);
+    bool dungeonRingIntroActive() const;
+    float dungeonRingIntroProgress() const;
     void renderSpellRingForeground(
         Renderer& renderer,
         const std::vector<const SpellRingItem*>& runtimeItems,
@@ -728,6 +775,7 @@ private:
     Vec2 baseOutdoorPlayerPosition_{640.0f, 360.0f};
     Vec2 basePlayerFacing_{0.0f, 1.0f};
     float basePlayerSpriteAnimationTime_ = 0.0f;
+    float baseRingPreviewAnimationTime_ = 0.0f;
     bool basePlayerSpriteWalking_ = false;
     int baseMenuSelection_ = 0;
     bool baseMiningStartChoiceActive_ = false;
@@ -748,17 +796,23 @@ private:
     bool baseSellActive_ = false;
     MerchantUiMode baseMerchantMode_ = MerchantUiMode::Closed;
     int baseMerchantActionSelection_ = 0;
+    int baseMerchantSellSource_ = 0;
+    UiTabsState baseMerchantSellSourceTabs_{};
     int baseSellSelection_ = 0;
     int baseMerchantBuySelection_ = 0;
     UiCommandMenuState baseMerchantSellCommandMenu_{};
+    int baseMerchantSellCommandSource_ = 0;
     int baseMerchantSellCommandIndex_ = -1;
     UiCommandMenuState baseMerchantBuyCommandMenu_{};
     int baseMerchantBuyCommandIndex_ = -1;
     bool baseUpgradeActive_ = false;
     int baseUpgradeSelection_ = 0;
+    UiResultDialogState baseResultDialog_{};
     bool baseProcessingActive_ = false;
     int baseProcessingMode_ = 0;
     UiTabsState baseProcessingTabs_{};
+    int baseProcessingSource_ = 0;
+    UiTabsState baseProcessingSourceTabs_{};
     int baseProcessingSelection_ = 0;
     UiCommandMenuState baseProcessingCommandMenu_{};
     int baseProcessingCommandSlot_ = -1;
@@ -829,6 +883,8 @@ private:
     float ringSnapElapsed_ = 0.0f;
     Vec2 ringDragStartMouse_{};
     std::string ringStatus_;
+    float dungeonRingIntroTimer_ = 0.0f;
+    bool dungeonRingIntroStartPending_ = false;
     std::vector<DungeonLogEntry> dungeonLogs_;
     WorldBuildJob worldBuildJob_;
     std::array<FootstepDustPuff, 10> playerFootstepDustPuffs_{};
@@ -868,6 +924,7 @@ private:
     int maxHpUpgradeLevel_ = 0;
     int ringRadiusUpgradeLevel_ = 0;
     int ringSpeedUpgradeLevel_ = 0;
+    int collectionRangeUpgradeLevel_ = 0;
     int levelRingRadiusPoints_ = 0;
     int levelRingSpeedPoints_ = 0;
     int workshopInitialRadiusLevel_ = 0;

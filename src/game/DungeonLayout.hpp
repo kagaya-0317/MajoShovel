@@ -1,8 +1,9 @@
-#pragma once
+﻿#pragma once
 
 #include "engine/Math.hpp"
 
 #include <cstdint>
+#include <string>
 #include <vector>
 
 namespace majo {
@@ -35,6 +36,14 @@ struct DungeonGenerationContext {
     int stageId = 1;
     std::uint32_t seed = 0;
     float stageHardnessMultiplier = 1.0f;
+    int goalDistanceTiles = 320;
+    float detourRate = 0.30f;
+    float branchDensity = 0.25f;
+    float cavernWidthMultiplier = 1.0f;
+    int warpPointCount = 8;
+    int specialRoomCount = 6;
+    std::string generationProfile = "natural_cave";
+    std::string terrainProfile = "soft_stardust";
     bool roguelike = false;
 };
 
@@ -42,6 +51,9 @@ struct DungeonLayout {
     int stageId = 1;
     std::uint32_t seed = 0;
     float stageHardnessMultiplier = 1.0f;
+    float cavernWidthMultiplier = 1.0f;
+    std::string generationProfile = "natural_cave";
+    std::string terrainProfile = "soft_stardust";
     DungeonTile startTile{};
     DungeonTile goalTile{};
     std::vector<Vec2> mainPathPoints;

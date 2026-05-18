@@ -129,6 +129,10 @@ bool applyRuntimeBalanceValues(const std::unordered_map<std::string, std::string
     if (!setInt("xp_base", loaded.xpBase)) return false;
     if (!setInt("xp_per_level", loaded.xpPerLevel)) return false;
     if (!setInt("world_drop_limit_per_stage", loaded.worldDropLimitPerStage)) return false;
+    if (!setFloatAlias("collection_pull_radius_base", "collection_pull_radius_level1", loaded.collectionPullRadiusBase)) return false;
+    if (!setFloat("collection_pull_radius_per_level", loaded.collectionPullRadiusPerLevel)) return false;
+    if (!setFloat("collection_pull_acceleration", loaded.collectionPullAcceleration)) return false;
+    if (!setInt("collection_pull_limit", loaded.collectionPullLimit)) return false;
     if (!setInt("dig_money_min_dug_tiles", loaded.digMoneyMinDugTiles)) return false;
     if (!setInt("dig_money_guarantee_dug_tiles", loaded.digMoneyGuaranteeDugTiles)) return false;
     if (!setInt("dig_item_min_dug_tiles", loaded.digItemMinDugTiles)) return false;
@@ -200,6 +204,10 @@ bool applyRuntimeBalanceValues(const std::unordered_map<std::string, std::string
     loaded.xpBase = std::max(1, loaded.xpBase);
     loaded.xpPerLevel = std::max(0, loaded.xpPerLevel);
     loaded.worldDropLimitPerStage = std::max(0, loaded.worldDropLimitPerStage);
+    loaded.collectionPullRadiusBase = std::max(0.0f, loaded.collectionPullRadiusBase);
+    loaded.collectionPullRadiusPerLevel = std::max(0.0f, loaded.collectionPullRadiusPerLevel);
+    loaded.collectionPullAcceleration = std::max(0.0f, loaded.collectionPullAcceleration);
+    loaded.collectionPullLimit = std::max(0, loaded.collectionPullLimit);
     loaded.digMoneyMinDugTiles = std::max(1, loaded.digMoneyMinDugTiles);
     loaded.digMoneyGuaranteeDugTiles = std::max(loaded.digMoneyMinDugTiles, loaded.digMoneyGuaranteeDugTiles);
     loaded.digItemMinDugTiles = std::max(1, loaded.digItemMinDugTiles);

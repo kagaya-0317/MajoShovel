@@ -34,7 +34,7 @@ struct ParticlePreset {
     ParticleVisual visual = ParticleVisual::Circle;
 };
 
-constexpr std::array<ParticlePreset, 25> ParticlePresets{{
+constexpr std::array<ParticlePreset, 26> ParticlePresets{{
     {ParticleEffectId::DigDust, 4, {142, 104, 66, 220}, {102, 78, 54, 190}, 76.0f, 26.0f, Pi * 2.0f, 5.5f, 1.4f, 0.76f, 0.08f, {0.0f, 330.0f}, 1.45f, false, false, 4.0f, 14.0f, {184, 136, 76, 140}, ParticleVisual::RockShard},
     {ParticleEffectId::DirtBreak, 18, {154, 110, 66, 235}, {214, 150, 82, 205}, 126.0f, 58.0f, Pi * 2.0f, 7.4f, 2.4f, 0.84f, 0.10f, {0.0f, 390.0f}, 1.55f, false, false, 8.0f, 34.0f, {218, 164, 88, 205}, ParticleVisual::RockShard},
     {ParticleEffectId::RockBreak, 18, {122, 126, 132, 235}, {86, 88, 96, 205}, 118.0f, 48.0f, Pi * 2.0f, 8.4f, 2.6f, 0.92f, 0.12f, {0.0f, 420.0f}, 1.45f, false, false, 8.0f, 32.0f, {170, 174, 180, 190}, ParticleVisual::RockShard},
@@ -60,6 +60,7 @@ constexpr std::array<ParticlePreset, 25> ParticlePresets{{
     {ParticleEffectId::SpecialItemGlimmer, 3, {180, 224, 255, 125}, {255, 224, 128, 115}, 16.0f, 10.0f, Pi * 2.0f, 1.7f, 0.5f, 0.44f, 0.10f, {0.0f, -18.0f}, 1.2f, false, false},
     {ParticleEffectId::WarpCircle, 18, {112, 208, 255, 190}, {255, 224, 112, 170}, 62.0f, 24.0f, Pi * 2.0f, 2.4f, 0.8f, 0.72f, 0.18f, {0.0f, -24.0f}, 1.5f, false, true, 18.0f, 64.0f, {126, 208, 255, 150}},
     {ParticleEffectId::BossCircle, 24, {255, 96, 120, 210}, {255, 210, 96, 190}, 74.0f, 28.0f, Pi * 2.0f, 2.7f, 0.9f, 0.82f, 0.22f, {0.0f, -18.0f}, 1.4f, false, true, 24.0f, 90.0f, {255, 176, 84, 180}},
+    {ParticleEffectId::ItemBreak, 14, {226, 220, 198, 232}, {118, 128, 148, 210}, 104.0f, 42.0f, Pi * 2.0f, 4.0f, 1.2f, 0.54f, 0.10f, {0.0f, 220.0f}, 1.7f, false, true, 8.0f, 30.0f, {255, 226, 142, 185}, ParticleVisual::RockShard},
 }};
 
 constexpr std::size_t MaxShardPoints = 6;
@@ -794,6 +795,22 @@ void EffectSystem::spawnCaptureSuccess(Vec2 position, Vec2 direction)
 void EffectSystem::spawnDropPickup(Vec2 position, Vec2 direction)
 {
     spawn(ParticleEffectId::DropPickup, position, direction);
+}
+
+void EffectSystem::spawnItemBreak(Vec2 position)
+{
+    SmokeBurstOptions options;
+    options.count = 7;
+    options.size = 16.0f;
+    options.spreadRadius = 7.0f;
+    options.speed = 20.0f;
+    options.riseSpeed = 12.0f;
+    options.duration = 0.46f;
+    options.colorA = {230, 226, 214, 150};
+    options.colorB = {116, 122, 138, 135};
+    options.layer = EffectLayer::Foreground;
+    spawnSmokeBurst(position, options);
+    spawn(ParticleEffectId::ItemBreak, position, {1.0f, 0.0f}, 1.0f, EffectLayer::Foreground);
 }
 
 void EffectSystem::spawnMaterialFloat(Vec2 position, Color color)

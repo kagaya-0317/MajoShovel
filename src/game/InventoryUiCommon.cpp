@@ -165,6 +165,47 @@ Color inventoryUiObjectColor(const ItemData& item)
     return {188, 152, 236, 255};
 }
 
+InventoryUiItemStats inventoryUiStatsFromInstance(const ItemInstance& instance)
+{
+    return {
+        instance.instanceId,
+        instance.currentDurability,
+        instance.maxDurability,
+        instance.enhanceLevel,
+        instance.attackBonus,
+        instance.digBonus,
+        instance.durabilityBonus,
+        instance.protectionEnabled,
+        instance.isBroken,
+    };
+}
+
+InventoryUiItemStats inventoryUiStatsFromRingItem(const SpellRingItem& item)
+{
+    return {
+        item.instanceId,
+        item.durability,
+        item.maxDurability,
+        item.enhanceLevel,
+        item.attackBonus,
+        item.digBonus,
+        item.durabilityBonus,
+        item.protectionEnabled,
+        item.broken(),
+    };
+}
+
+std::optional<InventoryUiItemStats> inventoryUiEntryStats(const InventoryUiEntryView& entry)
+{
+    if (entry.stats) {
+        return entry.stats;
+    }
+    if (entry.instance != nullptr) {
+        return inventoryUiStatsFromInstance(*entry.instance);
+    }
+    return std::nullopt;
+}
+
 std::string joinInventoryUiEffectLines(const std::vector<std::string>& lines)
 {
     if (lines.empty()) {
@@ -330,6 +371,7 @@ void drawInventoryUiSlot(
 {
     Color fill = style.selected ? Color{54, 44, 72, 242} : Color{20, 20, 28, 226};
     const Vec2 slotCenter = uiRectCenter(rect);
+    const std::optional<InventoryUiItemStats> stats = inventoryUiEntryStats(entry);
     renderer.fillCircle(slotCenter, slotFrameRadius(rect), fill);
     const auto drawBottomLabel = [&]() {
         if (style.bottomLabel.empty()) {
@@ -359,7 +401,7 @@ void drawInventoryUiSlot(
         renderer.drawOutlinedText(textPos, text, style.topRightCountColor, {0, 0, 0, 120}, 6, CountScale);
     };
     const auto drawProtectionLabel = [&]() {
-        if (!style.showProtectionLabel || entry.instance == nullptr || !entry.instance->protectionEnabled) {
+        if (!style.showProtectionLabel || !stats || !stats->protectionEnabled) {
             return;
         }
         constexpr int LabelScale = 2;
@@ -378,7 +420,7 @@ void drawInventoryUiSlot(
         return;
     }
 
-    if (entry.instance == nullptr) {
+    if (!stats) {
         const Color objectColor = inventoryUiObjectColor(*entry.item);
         ObjectImageDrawOptions imageOptions;
         imageOptions.tint = style.disabled ? Color{128, 128, 128, 255} : Color{255, 255, 255, 255};
@@ -402,9 +444,9 @@ void drawInventoryUiSlot(
         return;
     }
 
-    const Color objectColor = entry.instance->isBroken ? Color{82, 82, 90, 255} : inventoryUiObjectColor(*entry.item);
+    const Color objectColor = stats->broken ? Color{82, 82, 90, 255} : inventoryUiObjectColor(*entry.item);
     ObjectImageDrawOptions imageOptions;
-    imageOptions.tint = entry.instance->isBroken ? Color{140, 140, 148, 220} : Color{255, 255, 255, 255};
+    imageOptions.tint = stats->broken ? Color{140, 140, 148, 220} : Color{255, 255, 255, 255};
     if (style.disabled) {
         imageOptions.tint = darkenColor(imageOptions.tint, 0.5f);
     }
@@ -448,9 +490,10 @@ void drawInventoryUiDetailPanel(
     const std::vector<InventoryUiDetailExtraLine>& extraLines)
 {
     char buffer[160];
+    const std::optional<InventoryUiItemStats> stats = inventoryUiEntryStats(entry);
     std::string detailTitle = "Empty";
     if (entry.item != nullptr) {
-        if (entry.instance == nullptr) {
+        if (!stats && entry.stackCount > 1) {
             std::snprintf(buffer, sizeof(buffer), "%s x%d", entry.item->name.c_str(), entry.stackCount);
             detailTitle = buffer;
         } else {
@@ -475,7 +518,7 @@ void drawInventoryUiDetailPanel(
     drawUiDetailText(renderer, panel, detailLineY, "効果");
     drawUiDetailText(renderer, panel, detailLineY, effectText);
 
-    if (entry.instance == nullptr) {
+    if (!stats) {
         std::snprintf(buffer, sizeof(buffer), "%d", entry.item->attackPower);
         drawUiDetailLine(renderer, panel, detailLineY, "攻撃力", buffer);
         const std::string damageTypeText = entry.item->damageType.empty() ? "-" : std::string(damageTypeDisplayName(entry.item->damageType));
@@ -490,16 +533,21 @@ void drawInventoryUiDetailPanel(
         return;
     }
 
-    const ItemInstance& instance = *entry.instance;
-    std::snprintf(buffer, sizeof(buffer), "%s", instance.instanceId.c_str());
-    drawUiDetailLine(renderer, panel, detailLineY, "個体ID", buffer);
-    std::snprintf(buffer, sizeof(buffer), "%d", instance.enhanceLevel);
+    if (!stats->instanceId.empty()) {
+        std::snprintf(buffer, sizeof(buffer), "%s", stats->instanceId.c_str());
+        drawUiDetailLine(renderer, panel, detailLineY, "個体ID", buffer);
+    }
+    std::snprintf(buffer, sizeof(buffer), "%d", stats->enhanceLevel);
     drawUiDetailLine(renderer, panel, detailLineY, "強化Lv", buffer);
-    std::snprintf(buffer, sizeof(buffer), "%d/%d", instance.currentDurability, instance.maxDurability);
+    if (stats->maxDurability < 0) {
+        std::snprintf(buffer, sizeof(buffer), "壊れない");
+    } else {
+        std::snprintf(buffer, sizeof(buffer), "%d/%d", stats->currentDurability, stats->maxDurability);
+    }
     drawUiDetailLine(renderer, panel, detailLineY, "耐久力", buffer);
-    drawUiDetailLine(renderer, panel, detailLineY, "保護", instance.protectionEnabled ? "ON" : "OFF");
-    drawUiDetailLine(renderer, panel, detailLineY, "状態", instance.isBroken ? "破損" : "通常");
-    std::snprintf(buffer, sizeof(buffer), "+%d / +%d / +%d", instance.attackBonus, instance.digBonus, instance.durabilityBonus);
+    drawUiDetailLine(renderer, panel, detailLineY, "保護", stats->protectionEnabled ? "ON" : "OFF");
+    drawUiDetailLine(renderer, panel, detailLineY, "状態", stats->broken ? "破損" : "通常");
+    std::snprintf(buffer, sizeof(buffer), "+%d / +%d / +%d", stats->attackBonus, stats->digBonus, stats->durabilityBonus);
     drawUiDetailLine(renderer, panel, detailLineY, "補正", buffer);
     if (showProtectionOperation) {
         drawUiDetailLine(renderer, panel, detailLineY, "操作", "P 保護ON/OFF");

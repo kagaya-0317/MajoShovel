@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 #include "data/GameBalance.hpp"
 #include <array>
@@ -54,6 +54,10 @@ struct RuntimeBalance {
     int xpBase = balance::XpBase;
     int xpPerLevel = balance::XpPerLevel;
     int worldDropLimitPerStage = 300;
+    float collectionPullRadiusBase = 56.0f;
+    float collectionPullRadiusPerLevel = 32.0f;
+    float collectionPullAcceleration = 1800.0f;
+    int collectionPullLimit = 24;
     int digMoneyMinDugTiles = 6;
     int digMoneyGuaranteeDugTiles = 12;
     int digItemMinDugTiles = 10;

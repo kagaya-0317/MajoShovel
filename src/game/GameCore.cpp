@@ -4,6 +4,8 @@ namespace majo {
 
 namespace {
 
+constexpr float DungeonRingIntroDuration = 1.18f;
+
 bool lootChestKindForDropProfile(std::string_view profile, LootChestKind& outKind)
 {
     if (profile == "box_common") {
@@ -55,16 +57,21 @@ void Game::initialize(int width, int height)
     spellRing_.applyObjectParameters(objectCatalog_);
     spellRing_.resetBaseWeightToCurrent();
     refreshOrbitEffects();
-    if (loadSaveData()) {
+    const bool loadedSave = loadSaveData();
+    if (loadedSave) {
         reloadNotice_ = "セーブ読込完了";
     } else {
         reloadNotice_ = message.empty() ? "データ読込完了" : message;
     }
-    baseArea_ = BaseArea::Outdoor;
-    basePlayerPosition_ = {640.0f, 360.0f};
-    baseOutdoorPlayerPosition_ = basePlayerPosition_;
-    basePlayerFacing_ = {0.0f, 1.0f};
     loadBaseEditData();
+    if (loadedSave) {
+        placeBasePlayerAtHomeDoorResumePoint();
+    } else {
+        baseArea_ = BaseArea::Outdoor;
+        basePlayerPosition_ = {640.0f, 360.0f};
+        baseOutdoorPlayerPosition_ = basePlayerPosition_;
+        basePlayerFacing_ = {0.0f, 1.0f};
+    }
     loadObjectImageScaleData();
     setObjectImageScaleOverrides(&objectImageScaleById_);
     setWorldIconScaleOverrides(&otherImageScaleByKey_);
@@ -174,9 +181,12 @@ void Game::resetWorldUiState()
     baseSellActive_ = false;
     baseMerchantMode_ = MerchantUiMode::Closed;
     baseMerchantActionSelection_ = 0;
+    baseMerchantSellSource_ = 0;
+    baseMerchantSellSourceTabs_ = {};
     baseSellSelection_ = 0;
     baseMerchantBuySelection_ = 0;
     closeUiCommandMenu(baseMerchantSellCommandMenu_);
+    baseMerchantSellCommandSource_ = 0;
     baseMerchantSellCommandIndex_ = -1;
     closeUiCommandMenu(baseMerchantBuyCommandMenu_);
     baseMerchantBuyCommandIndex_ = -1;
@@ -185,6 +195,8 @@ void Game::resetWorldUiState()
     baseProcessingActive_ = false;
     baseProcessingMode_ = 0;
     baseProcessingTabs_ = {};
+    baseProcessingSource_ = 0;
+    baseProcessingSourceTabs_ = {};
     baseProcessingSelection_ = 0;
     closeUiCommandMenu(baseProcessingCommandMenu_);
     baseProcessingCommandSlot_ = -1;
@@ -259,6 +271,7 @@ void Game::buildWorldForRun(bool captureRunStartInventory)
     // Future connection: TileMap chunk initialization will consult
     // currentStageDefinition().terrainProfile and terrainHardnessMultiplier.
     tileMap_.updateAround(player_.position, 0.0f, balance_, dungeonLayout_);
+    normalizeOpenBuriedPlacementNodes();
     logDungeonGenerationAudit();
     logSpellRingShapeExtensionAudit();
     if (captureRunStartInventory) {
@@ -366,6 +379,7 @@ void Game::advanceWorldBuildOneStep()
         break;
     case WorldBuildStep::WarmInitialTiles:
         tileMap_.updateAround(player_.position, 0.0f, balance_, dungeonLayout_);
+        normalizeOpenBuriedPlacementNodes();
         logDungeonGenerationAudit();
         logSpellRingShapeExtensionAudit();
         worldBuildJob_.step = WorldBuildStep::Finalize;
@@ -402,6 +416,9 @@ void Game::finishWorldBuild()
         rebuildUnlockedWarpPointsForStart(warpStartPosition);
         player_.position = safePlayerStartPosition(warpStartPosition);
         tileMap_.updateAround(player_.position, 0.0f, balance_, dungeonLayout_);
+        normalizeOpenBuriedPlacementNodes();
+    }
+    if (job.useLatestWarpPoint) {
         captureRetrySnapshotAtWarpPoint();
     }
 
@@ -412,6 +429,7 @@ void Game::finishWorldBuild()
     pauseReturnMode_ = ScreenMode::Playing;
     resetPlayerFootstepDust();
     camera_.follow(player_.position, 1.0f);
+    beginDungeonRingIntro();
     maybeStartFirstDungeonDialogue();
 }
 
@@ -506,7 +524,10 @@ void Game::enterBase()
     baseStorageActive_ = false;
     baseSellActive_ = false;
     baseMerchantMode_ = MerchantUiMode::Closed;
+    baseMerchantSellSource_ = 0;
+    baseMerchantSellSourceTabs_ = {};
     closeUiCommandMenu(baseMerchantSellCommandMenu_);
+    baseMerchantSellCommandSource_ = 0;
     baseMerchantSellCommandIndex_ = -1;
     closeUiCommandMenu(baseMerchantBuyCommandMenu_);
     baseMerchantBuyCommandIndex_ = -1;
@@ -685,7 +706,13 @@ void Game::updateScreenTransition(float dt)
     case ScreenTransitionPhase::FadingIn:
         screenTransition_.elapsed += safeDt;
         if (screenTransition_.elapsed >= ScreenTransitionFadeInSeconds) {
+            const bool startDungeonRingIntro = dungeonRingIntroStartPending_ &&
+                screenTransition_.target == ScreenTransitionTarget::MiningStart;
             screenTransition_ = ScreenTransitionState{};
+            if (startDungeonRingIntro) {
+                dungeonRingIntroStartPending_ = false;
+                dungeonRingIntroTimer_ = DungeonRingIntroDuration;
+            }
             if (!pendingStoryTrigger_.empty()) {
                 std::string trigger = std::move(pendingStoryTrigger_);
                 pendingStoryTrigger_.clear();
@@ -757,6 +784,7 @@ void Game::startMiningFromBase(bool useLatestWarpPoint, bool forceRegenerate)
         hasLatestWarpPointPosition_ = true;
         player_.position = startPosition;
         tileMap_.updateAround(player_.position, 0.0f, balance_, dungeonLayout_);
+        normalizeOpenBuriedPlacementNodes();
         captureRetrySnapshotAtWarpPoint();
     }
     baseEditEnabled_ = false;
@@ -766,6 +794,7 @@ void Game::startMiningFromBase(bool useLatestWarpPoint, bool forceRegenerate)
     pauseReturnMode_ = ScreenMode::Playing;
     resetPlayerFootstepDust();
     camera_.follow(player_.position, 1.0f);
+    beginDungeonRingIntro();
     maybeStartFirstDungeonDialogue();
 }
 
@@ -797,6 +826,12 @@ float Game::effectiveInitialRingSpeed(int levelSpeedPoints) const
 float Game::effectiveRingShiftDistance() const
 {
     return balance_.spellRingShiftDistance + static_cast<float>(workshopShiftDistanceLevel_) * 8.0f;
+}
+
+float Game::effectiveCollectionPullRadius(int collectionLevel) const
+{
+    return balance_.collectionPullRadiusBase +
+        balance_.collectionPullRadiusPerLevel * static_cast<float>(std::max(0, collectionLevel));
 }
 
 void Game::configureWatcher()
@@ -1251,6 +1286,45 @@ bool Game::basePresentationActive() const
         mode_ == ScreenMode::Ring;
 }
 
+void Game::beginDungeonRingIntro()
+{
+    Input introInput;
+    spellRing_.update(player_, introInput, 0.0f, 0.0f, false, true, balance_);
+
+    if (screenTransition_.active()) {
+        dungeonRingIntroStartPending_ = true;
+        dungeonRingIntroTimer_ = 0.0f;
+        return;
+    }
+
+    dungeonRingIntroStartPending_ = false;
+    dungeonRingIntroTimer_ = DungeonRingIntroDuration;
+}
+
+void Game::updateDungeonRingIntro(float dt)
+{
+    if (mode_ != ScreenMode::Playing || dialogue_.active() || dungeonRingIntroTimer_ <= 0.0f) {
+        return;
+    }
+    dungeonRingIntroTimer_ = std::max(0.0f, dungeonRingIntroTimer_ - std::max(0.0f, dt));
+}
+
+bool Game::dungeonRingIntroActive() const
+{
+    return mode_ == ScreenMode::Playing && (dungeonRingIntroStartPending_ || dungeonRingIntroTimer_ > 0.0f);
+}
+
+float Game::dungeonRingIntroProgress() const
+{
+    if (dungeonRingIntroStartPending_) {
+        return 0.0f;
+    }
+    if (dungeonRingIntroTimer_ <= 0.0f) {
+        return 1.0f;
+    }
+    return clamp(1.0f - dungeonRingIntroTimer_ / DungeonRingIntroDuration, 0.0f, 1.0f);
+}
+
 void Game::switchActiveRingWithLog(int delta)
 {
     if (delta == 0) {
@@ -1292,6 +1366,7 @@ void Game::update(const Input& input, const Time& time)
         updateWorldBuild(time.deltaSeconds());
         return;
     }
+    updateDungeonRingIntro(time.deltaSeconds());
     captureCooldown_ = std::max(0.0f, captureCooldown_ - time.deltaSeconds());
 
     std::vector<EffectDiscoveryEvent> effectDiscoveries;
@@ -1312,6 +1387,7 @@ void Game::update(const Input& input, const Time& time)
         runStats_.elapsedSeconds += time.deltaSeconds();
         updatePlayerFootstepDust(time.deltaSeconds());
         tileMap_.updateAround(player_.position, time.deltaSeconds(), balance_, dungeonLayout_);
+        normalizeOpenBuriedPlacementNodes();
         std::vector<CollisionRect> objectBlockers;
         if (!enemyTestActive_) {
             objectBlockers = solidObjectCollisionRects();
@@ -1342,6 +1418,7 @@ void Game::update(const Input& input, const Time& time)
             updateExposedEnemyNodes();
         }
         updateRingEffectDiscoveries(effectDiscoveries);
+        normalizeOpenBuriedPlacementNodes();
         if (input.capturePressed() && captureCooldown_ <= 0.0f) {
             const CaptureResult capture = enemies_.tryCapture(player_, spellRing_, inventory_);
             captureCooldown_ = capture.type == CaptureResultType::Success ? 0.35f : 0.75f;
@@ -1467,6 +1544,15 @@ void Game::update(const Input& input, const Time& time)
             worldDrops_.spawnMaterialDrop(MaterialType::EnhancementOre, amount, tile.center, runStats_.elapsedSeconds);
         }
         std::vector<WorldDropPickupEvent> pickupEvents;
+        const float collectionPullRadius = effectiveCollectionPullRadius(collectionRangeUpgradeLevel_);
+        if (collectionPullRadius > 0.0f) {
+            worldDrops_.pullNearbyDrops(
+                player_.position,
+                time.deltaSeconds(),
+                collectionPullRadius,
+                balance_.collectionPullAcceleration,
+                balance_.collectionPullLimit);
+        }
         runStats_.acquiredItems += worldDrops_.update(
             time.deltaSeconds(),
             player_,
@@ -1521,6 +1607,7 @@ void Game::update(const Input& input, const Time& time)
             objectCatalog_,
             &effectDiscoveries,
             &encyclopedia_);
+        handleRingItemBreakEvents();
 
         std::vector<Vec2> capturedExplosionPositions;
         for (const EnemyEvent& event : enemies_.events()) {
@@ -1691,6 +1778,7 @@ void Game::checkHotReload()
         applyPermanentUpgrades();
         refreshOrbitEffects();
         tileMap_.updateAround(player_.position, 0.0f, balance_, dungeonLayout_);
+        normalizeOpenBuriedPlacementNodes();
         configureWatcher();
         reloadNotice_ = "Hot reload: " + changedPath;
     } else {

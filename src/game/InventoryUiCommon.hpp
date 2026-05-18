@@ -3,7 +3,9 @@
 #include "data/ObjectCatalog.hpp"
 #include "engine/Ui.hpp"
 #include "game/ItemModel.hpp"
+#include "game/SpellRingItem.hpp"
 
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -11,9 +13,22 @@ namespace majo {
 
 class EncyclopediaSystem;
 
+struct InventoryUiItemStats {
+    std::string instanceId;
+    int currentDurability = -1;
+    int maxDurability = -1;
+    int enhanceLevel = 0;
+    int attackBonus = 0;
+    int digBonus = 0;
+    int durabilityBonus = 0;
+    bool protectionEnabled = false;
+    bool broken = false;
+};
+
 struct InventoryUiEntryView {
     const ItemData* item = nullptr;
     const ItemInstance* instance = nullptr;
+    std::optional<InventoryUiItemStats> stats;
     int stackCount = 0;
 };
 
@@ -47,6 +62,9 @@ struct InlineItemTextStyle {
 };
 
 [[nodiscard]] Color inventoryUiObjectColor(const ItemData& item);
+[[nodiscard]] InventoryUiItemStats inventoryUiStatsFromInstance(const ItemInstance& instance);
+[[nodiscard]] InventoryUiItemStats inventoryUiStatsFromRingItem(const SpellRingItem& item);
+[[nodiscard]] std::optional<InventoryUiItemStats> inventoryUiEntryStats(const InventoryUiEntryView& entry);
 [[nodiscard]] std::string joinInventoryUiEffectLines(const std::vector<std::string>& lines);
 [[nodiscard]] Vec2 measureInlineItemText(
     Renderer& renderer,

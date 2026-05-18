@@ -61,6 +61,13 @@ constexpr int BaseMenuItemCount = 8;
 constexpr int BaseMiningStartChoiceCount = 3;
 constexpr int BaseUpgradeItemCount = 8;
 constexpr int BaseProcessingModeCount = 4;
+constexpr int BaseWarehouseSourceIndex = 1;
+constexpr int BaseRingSourceOffset = 2;
+constexpr int BaseItemSourceCount = BaseRingSourceOffset + SpellRingCount;
+constexpr int BaseProcessingSourceCount = BaseItemSourceCount;
+constexpr float BaseItemSourceTabX = 44.0f;
+constexpr float BaseItemSourceTabWidth = 160.0f;
+constexpr float BaseItemSourceTabPitch = 165.0f;
 constexpr int BaseRingWorkshopItemCount = 10;
 constexpr int BookshelfMenuItemCount = 3;
 constexpr int BookshelfVisibleRows = 5;
@@ -146,7 +153,7 @@ constexpr float CrateHitRadius = 18.0f;
 constexpr Vec2 CrateCollisionSize{36.0f, 30.0f};
 constexpr Color CrateBreakParticleColor{132, 88, 48, 255};
 constexpr int EnemyNodeCountPerRun = 7;
-constexpr float ExposedEnemyNodeSpawnRadius = 820.0f;
+constexpr float ExposedEnemyNodeSpawnPadding = static_cast<float>(balance::TileSize);
 constexpr float TopInfoBarX = 0.0f;
 constexpr float TopInfoBarY = 0.0f;
 constexpr float TopInfoBarHeight = 42.0f;
@@ -1079,6 +1086,11 @@ UiRect baseUpgradePanelRect()
     return {{220.0f, 42.0f}, {840.0f, 628.0f}};
 }
 
+UiRect baseResultDialogRect()
+{
+    return {{410.0f, 200.0f}, {460.0f, 320.0f}};
+}
+
 UiRect baseMenuItemRect(int index)
 {
     return {{450.0f, 296.0f + static_cast<float>(index) * 36.0f}, {380.0f, 30.0f}};
@@ -1111,13 +1123,24 @@ UiPageSelectorRects uiPageSelectorRectsFromNextButton(Vec2 nextButtonPos, float 
     return rects;
 }
 
+UiPageSelectorRects uiPageSelectorRectsCentered(Vec2 groupCenter, float textWidth, float buttonSize = StoragePageButtonSize, float gap = StoragePageButtonGap)
+{
+    const float groupWidth = buttonSize * 2.0f + gap * 2.0f + textWidth;
+    const float left = groupCenter.x - groupWidth * 0.5f;
+    return uiPageSelectorRectsFromNextButton(
+        {left + buttonSize + gap + textWidth + gap, groupCenter.y - buttonSize * 0.5f},
+        textWidth,
+        buttonSize,
+        gap);
+}
+
 UiPageSelectorRects baseMiningStageSelectorRects()
 {
     constexpr float StageSelectorTextWidth = 252.0f;
     const UiRect body = uiBodyRect(basePanelRect());
-    const float textLeft = baseMiningContentLeft() + 132.0f;
-    return uiPageSelectorRectsFromNextButton(
-        {textLeft + StageSelectorTextWidth + StoragePageButtonGap, body.pos.y - 4.0f},
+    const UiRect panel = basePanelRect();
+    return uiPageSelectorRectsCentered(
+        {panel.pos.x + panel.size.x * 0.5f, body.pos.y + StoragePageButtonSize * 0.5f - 4.0f},
         StageSelectorTextWidth);
 }
 
@@ -1178,7 +1201,7 @@ UiRect baseProcessingGridSlotRect(int index)
 {
     UiRect rect = merchantGridSlotRect(index);
     rect.pos.x += 2.0f;
-    rect.pos.y += 48.0f;
+    rect.pos.y += 130.0f;
     return rect;
 }
 
@@ -1236,6 +1259,11 @@ UiRect baseUpgradeConfirmRect()
 UiRect baseProcessingModeRect(int index)
 {
     return {{96.0f + static_cast<float>(index) * 150.0f, 148.0f}, {142.0f, ui::ButtonHeight}};
+}
+
+UiRect baseProcessingSourceRect(int index)
+{
+    return {{BaseItemSourceTabX + static_cast<float>(index) * BaseItemSourceTabPitch, 238.0f}, {BaseItemSourceTabWidth, ui::ButtonHeight}};
 }
 
 UiRect baseProcessingItemRect(int index)

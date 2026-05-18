@@ -1,9 +1,10 @@
-#include "game/DungeonLayout.hpp"
+﻿#include "game/DungeonLayout.hpp"
 
 #include <algorithm>
 #include <array>
 #include <cmath>
 #include <random>
+#include <string_view>
 #include <utility>
 
 namespace majo {
@@ -123,7 +124,26 @@ Vec2 tangentAtProgress(const std::vector<Vec2>& points, float progress)
     return normalize(points[index + 1] - points[index]);
 }
 
-SpecialRoomType chooseExtraRoomType(int stageId, int index, float progress)
+bool isProfile(std::string_view value, std::string_view expected)
+{
+    return value == expected;
+}
+
+int branchCountForContext(const DungeonGenerationContext& context)
+{
+    const float density = clamp(context.branchDensity, 0.0f, 1.0f);
+    float branchCount = 2.0f + density * 10.0f;
+    if (context.roguelike || isProfile(context.generationProfile, "astral_rogue")) {
+        branchCount += 2.0f;
+    } else if (isProfile(context.generationProfile, "junk_layer")) {
+        branchCount += 1.0f;
+    } else if (isProfile(context.generationProfile, "star_core")) {
+        branchCount -= 0.5f;
+    }
+    return std::clamp(static_cast<int>(std::round(branchCount)), 1, 12);
+}
+
+SpecialRoomType chooseExtraRoomType(int stageId, std::string_view generationProfile, int index, float progress)
 {
     const std::array<SpecialRoomType, 5> stageOne{
         SpecialRoomType::SafeCavern,
@@ -153,9 +173,39 @@ SpecialRoomType chooseExtraRoomType(int stageId, int index, float progress)
         SpecialRoomType::TreasureRoom,
         SpecialRoomType::EnemyRoom,
     };
+    const std::array<SpecialRoomType, 5> junkLayer{
+        SpecialRoomType::EnemyRoom,
+        SpecialRoomType::TreasureRoom,
+        SpecialRoomType::CoinRoom,
+        SpecialRoomType::OreRoom,
+        SpecialRoomType::SafeCavern,
+    };
+    const std::array<SpecialRoomType, 5> starCore{
+        SpecialRoomType::TreasureRoom,
+        SpecialRoomType::EnemyRoom,
+        SpecialRoomType::OreRoom,
+        SpecialRoomType::SafeCavern,
+        SpecialRoomType::CoinRoom,
+    };
+    const std::array<SpecialRoomType, 5> astralRogue{
+        SpecialRoomType::OreRoom,
+        SpecialRoomType::EnemyRoom,
+        SpecialRoomType::TreasureRoom,
+        SpecialRoomType::SafeCavern,
+        SpecialRoomType::CoinRoom,
+    };
 
     if (progress > 0.78f && index % 2 == 0) {
         return index % 4 == 0 ? SpecialRoomType::TreasureRoom : SpecialRoomType::EnemyRoom;
+    }
+    if (isProfile(generationProfile, "junk_layer")) {
+        return junkLayer[static_cast<std::size_t>(index) % junkLayer.size()];
+    }
+    if (isProfile(generationProfile, "star_core")) {
+        return starCore[static_cast<std::size_t>(index) % starCore.size()];
+    }
+    if (isProfile(generationProfile, "astral_rogue")) {
+        return astralRogue[static_cast<std::size_t>(index) % astralRogue.size()];
     }
     if (stageId <= 1) {
         return stageOne[static_cast<std::size_t>(index) % stageOne.size()];
@@ -180,6 +230,20 @@ bool overlapsExistingRoom(const std::vector<SpecialRoomAnchor>& rooms, Vec2 cent
     return false;
 }
 
+float roomRadiusBonusForProfile(std::string_view generationProfile)
+{
+    if (isProfile(generationProfile, "junk_layer")) {
+        return 0.4f;
+    }
+    if (isProfile(generationProfile, "star_core")) {
+        return -0.2f;
+    }
+    if (isProfile(generationProfile, "astral_rogue")) {
+        return 0.8f;
+    }
+    return 0.0f;
+}
+
 }
 
 DungeonLayout generateDungeonLayout(const DungeonGenerationContext& context)
@@ -188,16 +252,18 @@ DungeonLayout generateDungeonLayout(const DungeonGenerationContext& context)
     std::uniform_real_distribution<float> angleDist(0.0f, Pi * 2.0f);
     std::uniform_real_distribution<float> unitDist(0.0f, 1.0f);
     std::uniform_real_distribution<float> branchJitter(-0.35f, 0.35f);
-    std::uniform_int_distribution<int> branchCountDist(3, context.roguelike ? 7 : 5);
 
     DungeonLayout layout;
     layout.stageId = std::max(1, context.stageId);
     layout.seed = context.seed;
     layout.stageHardnessMultiplier = std::max(0.25f, context.stageHardnessMultiplier);
+    layout.cavernWidthMultiplier = std::max(0.35f, context.cavernWidthMultiplier);
+    layout.generationProfile = context.generationProfile.empty() ? "natural_cave" : context.generationProfile;
+    layout.terrainProfile = context.terrainProfile.empty() ? "soft_stardust" : context.terrainProfile;
     layout.startTile = {0, 0};
 
-    const float hardness = layout.stageHardnessMultiplier;
-    const float goalDistance = (context.roguelike ? 150.0f : 105.0f) + 18.0f * static_cast<float>(layout.stageId - 1) * hardness + unitDist(rng) * 35.0f;
+    const float goalDistance = static_cast<float>(std::clamp(context.goalDistanceTiles, 48, 1200)) *
+        (0.96f + unitDist(rng) * 0.08f);
     const float goalAngle = angleDist(rng);
     const Vec2 goal = fromAngle(goalAngle) * goalDistance;
     layout.goalTile = {
@@ -209,11 +275,15 @@ DungeonLayout generateDungeonLayout(const DungeonGenerationContext& context)
         tileToVec(layout.startTile),
         tileToVec(layout.goalTile),
         rng,
-        36,
-        0.10f,
-        0.035f);
+        std::clamp(static_cast<int>(std::round(goalDistance / 9.0f)), 32, 96),
+        0.06f + clamp(context.detourRate, 0.0f, 1.0f) * 0.20f,
+        0.02f + clamp(context.detourRate, 0.0f, 1.0f) * 0.06f);
 
     std::vector<Vec2> roomCandidates;
+    const int targetBranchCount = branchCountForContext(context);
+    std::uniform_int_distribution<int> branchCountDist(
+        std::max(1, targetBranchCount - 1),
+        std::max(1, targetBranchCount + 1));
     const int branchCount = branchCountDist(rng);
     for (int i = 0; i < branchCount; ++i) {
         const float progress = (static_cast<float>(i + 1) / static_cast<float>(branchCount + 1)) + branchJitter(rng) * 0.18f;
@@ -223,7 +293,8 @@ DungeonLayout generateDungeonLayout(const DungeonGenerationContext& context)
         if (unitDist(rng) < 0.5f) {
             side = side * -1.0f;
         }
-        const float branchLength = 18.0f + unitDist(rng) * 30.0f;
+        const float branchLength = (18.0f + unitDist(rng) * 30.0f) *
+            (0.85f + clamp(context.detourRate, 0.0f, 1.0f) * 0.55f);
         const Vec2 end = anchor + normalize(side + tangent * branchJitter(rng)) * branchLength;
 
         DungeonPath branch;
@@ -232,12 +303,12 @@ DungeonLayout generateDungeonLayout(const DungeonGenerationContext& context)
         layout.branchPathPoints.push_back(std::move(branch));
     }
 
-    constexpr int WarpAnchorCount = 8;
-    layout.warpPointAnchors.reserve(WarpAnchorCount);
-    for (int i = 0; i < WarpAnchorCount; ++i) {
+    const int warpAnchorCount = context.roguelike ? 0 : std::clamp(context.warpPointCount, 0, 8);
+    layout.warpPointAnchors.reserve(static_cast<std::size_t>(warpAnchorCount));
+    for (int i = 0; i < warpAnchorCount; ++i) {
         layout.warpPointAnchors.push_back(pointAtProgress(
             layout.mainPathPoints,
-            static_cast<float>(i + 1) / static_cast<float>(WarpAnchorCount + 1)));
+            static_cast<float>(i + 1) / static_cast<float>(warpAnchorCount + 1)));
     }
 
     std::vector<std::pair<Vec2, float>> typedCandidates;
@@ -253,35 +324,49 @@ DungeonLayout generateDungeonLayout(const DungeonGenerationContext& context)
         typedCandidates.push_back({anchor + side * (8.0f + unitDist(rng) * 8.0f), progress});
     }
 
-    const std::array<SpecialRoomType, 5> requiredRooms{
+    const std::array<SpecialRoomType, 5> roomSequence{
         SpecialRoomType::OreRoom,
         SpecialRoomType::SafeCavern,
         SpecialRoomType::CoinRoom,
         SpecialRoomType::TreasureRoom,
         SpecialRoomType::EnemyRoom,
     };
-    for (std::size_t i = 0; i < requiredRooms.size() && i < typedCandidates.size(); ++i) {
-        const float progress = typedCandidates[i].second;
-        SpecialRoomAnchor room;
-        room.type = requiredRooms[i];
-        room.center = typedCandidates[i].first;
-        room.radius = 5.5f + unitDist(rng) * 2.0f + (progress > 0.75f ? 1.2f : 0.0f);
-        layout.specialRoomAnchors.push_back(room);
-    }
-
-    const int extraRoomCount = std::clamp(layout.stageId, 1, 4);
-    for (int i = 0; i < extraRoomCount && !typedCandidates.empty(); ++i) {
-        const std::size_t candidateIndex = static_cast<std::size_t>(requiredRooms.size() + i) % typedCandidates.size();
+    const int specialRoomCount = std::clamp(context.specialRoomCount, 0, 24);
+    const float roomRadiusBonus = roomRadiusBonusForProfile(layout.generationProfile);
+    for (int roomIndex = 0; roomIndex < specialRoomCount && !typedCandidates.empty(); ++roomIndex) {
+        const std::size_t candidateIndex = static_cast<std::size_t>(roomIndex) % typedCandidates.size();
+        const std::size_t roomTypeIndex = static_cast<std::size_t>(roomIndex) % roomSequence.size();
         const Vec2 center = typedCandidates[candidateIndex].first;
         const float progress = typedCandidates[candidateIndex].second;
-        const float radius = 5.0f + unitDist(rng) * 3.0f + static_cast<float>(layout.stageId) * 0.25f;
+        const float radius = 5.2f + unitDist(rng) * 2.3f + roomRadiusBonus + (progress > 0.75f ? 1.0f : 0.0f);
+        if (roomIndex >= static_cast<int>(roomSequence.size()) && overlapsExistingRoom(layout.specialRoomAnchors, center, radius)) {
+            continue;
+        }
+        SpecialRoomAnchor room;
+        room.type = roomIndex < static_cast<int>(roomSequence.size())
+            ? roomSequence[roomTypeIndex]
+            : chooseExtraRoomType(layout.stageId, layout.generationProfile, roomIndex, progress);
+        room.center = center;
+        room.radius = std::max(3.2f, radius);
+        layout.specialRoomAnchors.push_back(room);
+    }
+    for (int retry = 0; static_cast<int>(layout.specialRoomAnchors.size()) < specialRoomCount && retry < specialRoomCount * 2; ++retry) {
+        const float progress = clamp(
+            static_cast<float>(layout.specialRoomAnchors.size() + 1) / static_cast<float>(specialRoomCount + 1),
+            0.12f,
+            0.90f);
+        const Vec2 anchor = pointAtProgress(layout.mainPathPoints, progress);
+        const Vec2 tangent = tangentAtProgress(layout.mainPathPoints, progress);
+        const Vec2 side = perpendicular(tangent) * (unitDist(rng) < 0.5f ? -1.0f : 1.0f);
+        const Vec2 center = anchor + side * (9.0f + unitDist(rng) * 12.0f);
+        const float radius = 4.8f + unitDist(rng) * 2.6f + roomRadiusBonus;
         if (overlapsExistingRoom(layout.specialRoomAnchors, center, radius)) {
             continue;
         }
         layout.specialRoomAnchors.push_back(SpecialRoomAnchor{
-            .type = chooseExtraRoomType(layout.stageId, i, progress),
+            .type = chooseExtraRoomType(layout.stageId, layout.generationProfile, retry, progress),
             .center = center,
-            .radius = radius,
+            .radius = std::max(3.2f, radius),
         });
     }
 

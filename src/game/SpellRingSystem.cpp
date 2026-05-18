@@ -347,6 +347,7 @@ void SpellRingSystem::initialize(const RuntimeBalance& balance)
     enemyOrbitSpeedDebuffMultiplier_ = 1.0f;
     enemyOrbitSpeedDebuffTimer_ = 0.0f;
     activeRingIndex_ = 0;
+    itemBreakEvents_.clear();
 }
 
 void SpellRingSystem::update(Player& player, const Input& input, float dt, float, bool paused, bool blockPointerThrow, const RuntimeBalance& balance)
@@ -644,6 +645,93 @@ bool SpellRingSystem::addObjectItem(const ItemData& item, const ItemInstance& in
     applyItemInstance(ringItem, instance);
     applyObjectDefinition(ringItem, item);
     return addItem(std::move(ringItem), outResult);
+}
+
+bool SpellRingSystem::consumeItemDurability(SpellRingItem& item, int amount)
+{
+    const bool wasBroken = item.broken();
+    const bool becameBroken = item.consumeDurability(amount);
+    if (!wasBroken && becameBroken) {
+        itemBreakEvents_.push_back(RingItemBreakEvent{
+            .position = item.worldPosition,
+            .type = item.type,
+            .objectId = item.objectId,
+            .instanceId = item.instanceId,
+            .protectionEnabled = item.protectionEnabled,
+        });
+    }
+    return becameBroken;
+}
+
+std::vector<RingItemBreakEvent> SpellRingSystem::consumeItemBreakEvents()
+{
+    std::vector<RingItemBreakEvent> events = std::move(itemBreakEvents_);
+    itemBreakEvents_.clear();
+    return events;
+}
+
+bool SpellRingSystem::repairItem(int ringIndex, int itemIndex)
+{
+    if (ringIndex < 0 || ringIndex >= SpellRingCount) {
+        return false;
+    }
+    std::vector<SpellRingItem>& ringItems = itemsByRing_[static_cast<std::size_t>(ringIndex)];
+    if (itemIndex < 0 || itemIndex >= static_cast<int>(ringItems.size())) {
+        return false;
+    }
+
+    SpellRingItem& item = ringItems[static_cast<std::size_t>(itemIndex)];
+    if (item.maxDurability < 0 || (!item.broken() && item.durability >= item.maxDurability)) {
+        return false;
+    }
+
+    item.durability = item.maxDurability;
+    item.isBroken = false;
+    return true;
+}
+
+bool SpellRingSystem::enhanceItem(
+    int ringIndex,
+    int itemIndex,
+    int attackBonus,
+    int digBonus,
+    int durabilityBonus,
+    int maxEnhanceLevel,
+    const ObjectCatalog& catalog)
+{
+    if (ringIndex < 0 || ringIndex >= SpellRingCount) {
+        return false;
+    }
+    std::vector<SpellRingItem>& ringItems = itemsByRing_[static_cast<std::size_t>(ringIndex)];
+    if (itemIndex < 0 || itemIndex >= static_cast<int>(ringItems.size())) {
+        return false;
+    }
+
+    SpellRingItem& item = ringItems[static_cast<std::size_t>(itemIndex)];
+    if (item.enhanceLevel >= maxEnhanceLevel) {
+        return false;
+    }
+
+    ++item.enhanceLevel;
+    item.attackBonus += attackBonus;
+    item.digBonus += digBonus;
+    item.durabilityBonus += durabilityBonus;
+    if (durabilityBonus > 0 && item.maxDurability >= 0) {
+        item.durability = std::min(item.maxDurability + durabilityBonus, std::max(0, item.durability + durabilityBonus));
+    }
+
+    if (const ItemData* object = catalog.registry.findById(item.objectId)) {
+        item.objectStatsApplied = false;
+        applyObjectDefinition(item, *object);
+    } else {
+        item.damage += attackBonus;
+        item.digPower += digBonus;
+        if (durabilityBonus > 0 && item.maxDurability >= 0) {
+            item.maxDurability += durabilityBonus;
+        }
+    }
+    item.isBroken = item.durability == 0;
+    return true;
 }
 
 void SpellRingSystem::applyObjectParameters(const ObjectCatalog& catalog)

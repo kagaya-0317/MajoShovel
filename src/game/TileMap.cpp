@@ -186,6 +186,133 @@ TileType mixedTreasureWallTile(float fineNoise, float broadNoise)
     return broadNoise > 0.36f ? TileType::HardRock : TileType::Rock;
 }
 
+TileType interleavedWallTile(TileType base, float detailNoise, float scatterNoise, float veinNoise, bool nearPathWall)
+{
+    if (base == TileType::Empty) {
+        return base;
+    }
+
+    const bool oreFleck = detailNoise > (nearPathWall ? 0.982f : 0.962f);
+    const bool oreVein = veinNoise > (nearPathWall ? 0.900f : 0.820f) && scatterNoise > 0.720f;
+
+    switch (base) {
+    case TileType::Dirt:
+        if (detailNoise < 0.040f) {
+            return TileType::Empty;
+        }
+        if (oreFleck || (veinNoise > 0.890f && scatterNoise > 0.800f)) {
+            return TileType::Ore;
+        }
+        if (detailNoise > 0.820f || (veinNoise > 0.760f && scatterNoise > 0.660f)) {
+            return TileType::Rock;
+        }
+        return TileType::Dirt;
+    case TileType::Rock:
+        if (detailNoise < 0.055f) {
+            return TileType::Empty;
+        }
+        if (detailNoise < 0.180f) {
+            return TileType::Dirt;
+        }
+        if (oreFleck || oreVein) {
+            return TileType::Ore;
+        }
+        if (detailNoise > 0.905f && veinNoise > 0.560f) {
+            return TileType::HardRock;
+        }
+        return TileType::Rock;
+    case TileType::HardRock:
+        if (detailNoise < 0.025f) {
+            return TileType::Empty;
+        }
+        if (detailNoise < 0.130f) {
+            return TileType::Rock;
+        }
+        if (oreFleck || (oreVein && scatterNoise > 0.860f)) {
+            return TileType::Ore;
+        }
+        return TileType::HardRock;
+    case TileType::Ore:
+        if (detailNoise < 0.030f) {
+            return TileType::Rock;
+        }
+        return TileType::Ore;
+    case TileType::Empty:
+        return TileType::Empty;
+    }
+    return base;
+}
+
+TileType applyTerrainProfile(
+    TileType base,
+    std::string_view terrainProfile,
+    float detailNoise,
+    float scatterNoise,
+    float veinNoise,
+    float broadNoise,
+    bool nearPathWall)
+{
+    if (base == TileType::Empty) {
+        return base;
+    }
+
+    if (terrainProfile == "soft_stardust") {
+        if (base == TileType::HardRock && detailNoise < 0.72f) {
+            return TileType::Rock;
+        }
+        if (base == TileType::Rock && detailNoise < (nearPathWall ? 0.42f : 0.30f)) {
+            return TileType::Dirt;
+        }
+        if (base == TileType::Dirt && detailNoise < 0.070f) {
+            return TileType::Empty;
+        }
+        return base;
+    }
+
+    if (terrainProfile == "junk_mixed") {
+        if (base == TileType::Dirt && detailNoise > 0.760f) {
+            return TileType::Rock;
+        }
+        if (base == TileType::Rock && veinNoise > 0.740f && scatterNoise > 0.560f) {
+            return TileType::Ore;
+        }
+        if (base == TileType::Rock && broadNoise > 0.760f && detailNoise > 0.540f) {
+            return TileType::HardRock;
+        }
+        return base;
+    }
+
+    if (terrainProfile == "hard_star_core") {
+        if (base == TileType::Dirt && detailNoise > 0.520f) {
+            return TileType::Rock;
+        }
+        if (base == TileType::Rock && (detailNoise > 0.610f || broadNoise > 0.720f)) {
+            return TileType::HardRock;
+        }
+        if (base == TileType::Ore && detailNoise < 0.080f) {
+            return TileType::HardRock;
+        }
+        return base;
+    }
+
+    if (terrainProfile == "chaos_astral") {
+        if (detailNoise < 0.050f) {
+            return TileType::Empty;
+        }
+        if (veinNoise > 0.800f && scatterNoise > 0.540f) {
+            return TileType::Ore;
+        }
+        if (detailNoise > 0.780f && broadNoise > 0.520f) {
+            return TileType::HardRock;
+        }
+        if (detailNoise < 0.220f) {
+            return TileType::Dirt;
+        }
+    }
+
+    return base;
+}
+
 }
 
 std::string_view terrainAttributeCode(TerrainAttribute attribute)
@@ -604,7 +731,11 @@ TerrainDebugInfo TileMap::terrainInfoForTile(int tx, int ty, const Tile* tile) c
     const float broadNoise = smoothNoise(tx / 3, ty / 3, dungeonLayoutSnapshot_.seed);
     const float fineNoise = smoothNoise(tx, ty, dungeonLayoutSnapshot_.seed ^ 0xA511E9B3u);
     const float widthNoise = smoothNoise(tx / 8, ty / 8, dungeonLayoutSnapshot_.seed ^ 0x63D83595u);
-    const float caveWidth = 3.9f + (widthNoise - 0.5f) * 2.2f;
+    const float detailNoise = noise01(tx, ty, dungeonLayoutSnapshot_.seed ^ 0x1B56C4E9u);
+    const float scatterNoise = noise01(tx * 3 + 17, ty * 5 - 11, dungeonLayoutSnapshot_.seed ^ 0x91E10DA5u);
+    const float veinNoise = smoothNoise(tx / 2, ty / 2, dungeonLayoutSnapshot_.seed ^ 0x4F1BBCDCu);
+    const float caveWidth = (3.9f + (widthNoise - 0.5f) * 2.2f) *
+        std::max(0.35f, dungeonLayoutSnapshot_.cavernWidthMultiplier);
     const float edgeJitter = (broadNoise - 0.5f) * 2.8f + (fineNoise - 0.5f) * 0.9f;
     const float shapedDistance = carvedDistance + edgeJitter;
     const Vec2 goal = {
@@ -674,6 +805,21 @@ TerrainDebugInfo TileMap::terrainInfoForTile(int tx, int ty, const Tile* tile) c
     } else {
         generatedType = mixedDeepWallTile(fineNoise, broadNoise);
     }
+
+    generatedType = interleavedWallTile(
+        generatedType,
+        detailNoise,
+        scatterNoise,
+        veinNoise,
+        shapedDistance <= caveWidth + SoftPathMargin + 2.0f);
+    generatedType = applyTerrainProfile(
+        generatedType,
+        dungeonLayoutSnapshot_.terrainProfile,
+        detailNoise,
+        scatterNoise,
+        veinNoise,
+        broadNoise,
+        shapedDistance <= caveWidth + SoftPathMargin + 2.0f);
 
     const auto overrideIt = tileOverrides_.find(key(tx, ty));
     if (overrideIt != tileOverrides_.end()) {

@@ -42,6 +42,7 @@ bool Game::loadSaveData()
     int loadedMaxHpUpgradeLevel = 0;
     int loadedRingRadiusUpgradeLevel = 0;
     int loadedRingSpeedUpgradeLevel = 0;
+    int loadedCollectionRangeUpgradeLevel = 0;
     int loadedLevelRingRadiusPoints = 0;
     int loadedLevelRingSpeedPoints = 0;
     int loadedWorkshopInitialRadiusLevel = 0;
@@ -84,6 +85,8 @@ bool Game::loadSaveData()
             stream >> loadedRingRadiusUpgradeLevel;
         } else if (key == "upgrade_ring_speed") {
             stream >> loadedRingSpeedUpgradeLevel;
+        } else if (key == "upgrade_collection_range") {
+            stream >> loadedCollectionRangeUpgradeLevel;
         } else if (key == "level_ring_radius_points") {
             stream >> loadedLevelRingRadiusPoints;
         } else if (key == "level_ring_speed_points") {
@@ -349,6 +352,7 @@ bool Game::loadSaveData()
     maxHpUpgradeLevel_ = std::max(0, loadedMaxHpUpgradeLevel);
     ringRadiusUpgradeLevel_ = std::max(0, loadedRingRadiusUpgradeLevel);
     ringSpeedUpgradeLevel_ = std::max(0, loadedRingSpeedUpgradeLevel);
+    collectionRangeUpgradeLevel_ = std::clamp(loadedCollectionRangeUpgradeLevel, 0, 5);
     levelRingRadiusPoints_ = std::max(0, loadedLevelRingRadiusPoints);
     levelRingSpeedPoints_ = std::max(0, loadedLevelRingSpeedPoints);
     workshopInitialRadiusLevel_ = std::clamp(loadedWorkshopInitialRadiusLevel, 0, 5);
@@ -403,6 +407,7 @@ bool Game::saveSaveData(std::string& message) const
     file << "upgrade_max_hp " << maxHpUpgradeLevel_ << "\n";
     file << "upgrade_ring_radius " << ringRadiusUpgradeLevel_ << "\n";
     file << "upgrade_ring_speed " << ringSpeedUpgradeLevel_ << "\n";
+    file << "upgrade_collection_range " << collectionRangeUpgradeLevel_ << "\n";
     file << "level_ring_radius_points " << levelRingRadiusPoints_ << "\n";
     file << "level_ring_speed_points " << levelRingSpeedPoints_ << "\n";
     file << "workshop_initial_radius_level " << workshopInitialRadiusLevel_ << "\n";

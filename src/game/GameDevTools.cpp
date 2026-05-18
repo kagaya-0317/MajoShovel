@@ -797,7 +797,10 @@ void Game::enterBaseEditMode()
     baseStorageActive_ = false;
     baseSellActive_ = false;
     baseMerchantMode_ = MerchantUiMode::Closed;
+    baseMerchantSellSource_ = 0;
+    baseMerchantSellSourceTabs_ = {};
     closeUiCommandMenu(baseMerchantSellCommandMenu_);
+    baseMerchantSellCommandSource_ = 0;
     baseMerchantSellCommandIndex_ = -1;
     closeUiCommandMenu(baseMerchantBuyCommandMenu_);
     baseMerchantBuyCommandIndex_ = -1;
@@ -1311,6 +1314,7 @@ bool Game::executeDebugCommand(std::string_view command)
         maxHpUpgradeLevel_ = 0;
         ringRadiusUpgradeLevel_ = 0;
         ringSpeedUpgradeLevel_ = 0;
+        collectionRangeUpgradeLevel_ = 0;
         levelRingRadiusPoints_ = 0;
         levelRingSpeedPoints_ = 0;
         workshopInitialRadiusLevel_ = 0;

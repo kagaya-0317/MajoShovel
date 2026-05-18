@@ -214,7 +214,7 @@ void DiggingSystem::update(
             }
         }
         if (openedTiles_.size() != openedCountBefore) {
-            item.consumeDurability();
+            spellRing.consumeItemDurability(item);
         }
         item.lastTerrainHitTime = totalTime;
     }

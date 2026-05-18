@@ -64,6 +64,14 @@ struct SpellRingAddResult {
     std::string instanceId;
 };
 
+struct RingItemBreakEvent {
+    Vec2 position{};
+    SpellRingItemType type = SpellRingItemType::Object;
+    std::string objectId;
+    std::string instanceId;
+    bool protectionEnabled = false;
+};
+
 Vec2 getRingCenterWorldPosition(Vec2 playerPosition, Vec2 playerFacing, float spellRingShift);
 Vec2 getRingItemLocalPosition(float localAngle, const RingOrbitContext& context);
 Vec2 getRingItemWorldPosition(Vec2 center, float localAngle, const RingOrbitContext& context);
@@ -94,7 +102,18 @@ public:
     bool addItem(SpellRingItem item, SpellRingAddResult* outResult = nullptr);
     bool addObjectItem(const ItemData& item, SpellRingAddResult* outResult = nullptr);
     bool addObjectItem(const ItemData& item, const ItemInstance& instance, SpellRingAddResult* outResult = nullptr);
+    bool repairItem(int ringIndex, int itemIndex);
+    bool enhanceItem(
+        int ringIndex,
+        int itemIndex,
+        int attackBonus,
+        int digBonus,
+        int durabilityBonus,
+        int maxEnhanceLevel,
+        const ObjectCatalog& catalog);
     bool canAddItem() const;
+    bool consumeItemDurability(SpellRingItem& item, int amount = 1);
+    std::vector<RingItemBreakEvent> consumeItemBreakEvents();
     bool canAddItem(const SpellRingItem& item) const;
     bool canPlaceItemAtAngle(int index, float angle) const;
     std::optional<float> nearestPlaceableAngle(int index, float desiredAngle, float maxDeltaRadians) const;
@@ -174,6 +193,7 @@ private:
     OrbitModifiers orbitModifiers_{};
     RingOrbitTuning orbitTuning_{};
     SpellRingState state_ = SpellRingState::Normal;
+    std::vector<RingItemBreakEvent> itemBreakEvents_;
 
     std::vector<SpellRingItem>& activeItems();
     const std::vector<SpellRingItem>& activeItems() const;
