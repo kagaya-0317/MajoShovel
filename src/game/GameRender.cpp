@@ -222,6 +222,49 @@ bool ringPlacementHitAreaContains(Vec2 point, const SpellRingSystem& spellRing, 
     return nearestDistanceSq <= HitDistance * HitDistance;
 }
 
+void drawRingPlaceWindow(
+    Renderer& renderer,
+    const InventorySystem& inventory,
+    const ObjectCatalog& objectCatalog,
+    const EncyclopediaSystem& encyclopedia,
+    const SpellRingSystem& spellRing,
+    int selection,
+    float localAngle,
+    std::string_view status)
+{
+    const UiRect panel = ringPlaceWindowRect();
+    UiWindowScope placeWindow(
+        renderer,
+        "ring.place",
+        panel,
+        "アイテム配置",
+        "WASD/矢印 選択  F/Enter 配置  Esc/右クリック 戻る",
+        UiWindowOptions{true, true});
+
+    const int slotCount = std::min(inventory.screenSlotCount(), RingPlaceSlotCount);
+    for (int i = 0; i < slotCount; ++i) {
+        const InventoryUiEntryView entry = ringPlaceEntryView(inventory, i);
+        const bool hasItem = entry.item != nullptr;
+        const bool enabled = ringPlaceSlotEnabled(inventory, spellRing, i, localAngle);
+        InventoryUiSlotStyle style{i == selection && enabled, hasItem && !enabled, RingPlaceSlotImageMaxSize};
+        if (entry.item != nullptr && entry.instance == nullptr && entry.stackCount > 1) {
+            style.showTopRightCount = true;
+            style.topRightCount = entry.stackCount;
+        }
+        drawInventoryUiSlot(renderer, ringPlaceSlotRect(i), entry, style);
+    }
+
+    InventoryUiEntryView detailEntry{};
+    if (selection >= 0 && selection < slotCount) {
+        detailEntry = ringPlaceEntryView(inventory, selection);
+    }
+    drawInventoryUiDetailPanel(renderer, ringPlaceDetailRect(), detailEntry, objectCatalog, encyclopedia, true);
+
+    if (!status.empty()) {
+        renderer.drawText(panel.pos + Vec2{32.0f, panel.size.y - 66.0f}, status, {255, 230, 150, 255}, 2);
+    }
+}
+
 float cometArrangeArcRadians(const RingOrbitTuning& tuning)
 {
     const float maxArcDegrees = std::clamp(tuning.cometMaxArcDegrees, 10.0f, 360.0f);
@@ -511,6 +554,9 @@ void Game::updateRingScreen(const Input& input, UiContext& ui, float dt)
         spellRing_.switchActiveRing(-spellRing_.activeRingIndex());
         closeUiCommandMenu(ringCommandMenu_);
         ringCommandItemIndex_ = -1;
+        ringCommandPlaceActive_ = false;
+        ringPlaceModeActive_ = false;
+        ringEmptyPressActive_ = false;
         ringStatus_.clear();
     }
 
@@ -523,6 +569,7 @@ void Game::updateRingScreen(const Input& input, UiContext& ui, float dt)
     if (ringCommandMenu_.open && uiCancelRequested(ringCancelState_, input, ui, ringPanelRect())) {
         closeUiCommandMenu(ringCommandMenu_);
         ringCommandItemIndex_ = -1;
+        ringCommandPlaceActive_ = false;
         ui.block(ringPanelRect());
         return;
     }
@@ -531,19 +578,34 @@ void Game::updateRingScreen(const Input& input, UiContext& ui, float dt)
     const bool commandCanRemove = commandItemIndex >= 0 &&
         commandItemIndex < static_cast<int>(items.size()) &&
         !items[static_cast<std::size_t>(commandItemIndex)].objectId.empty();
-    const std::array<UiCommandMenuItem, 1> commandItems = ringCommandItems(commandCanRemove);
+    const bool commandCanPlace = ringCommandPlaceActive_ &&
+        firstRingPlaceableSlot(inventory_, spellRing_, ringCommandPlaceAngle_) >= 0;
+    const std::array<UiCommandMenuItem, 1> commandItems = ringCommandItems(
+        ringCommandPlaceActive_,
+        ringCommandPlaceActive_ ? commandCanPlace : commandCanRemove);
     const int commandSelection = updateUiCommandMenu(
         ringCommandMenu_,
         ui,
         input,
         commandItems.data(),
         static_cast<int>(commandItems.size()));
-    if (commandSelection >= 0 && ringCommandItemIndex_ >= 0) {
-        ringSlotSelection_ = ringCommandItemIndex_;
-        if (commandSelection == 0) {
+    if (commandSelection >= 0) {
+        if (ringCommandPlaceActive_) {
+            const int firstSlot = firstRingPlaceableSlot(inventory_, spellRing_, ringCommandPlaceAngle_);
+            if (firstSlot >= 0) {
+                ringPlaceModeActive_ = true;
+                ringPlaceTargetAngle_ = ringCommandPlaceAngle_;
+                ringPlaceSelection_ = firstSlot;
+                ringStatus_.clear();
+            } else {
+                ringStatus_ = ringPlacementUnavailableStatus(inventory_, spellRing_);
+            }
+        } else if (ringCommandItemIndex_ >= 0) {
+            ringSlotSelection_ = ringCommandItemIndex_;
             removeRingItemToInventory(items, ringSlotSelection_, inventory_, objectCatalog_, ringStatus_);
         }
         ringCommandItemIndex_ = -1;
+        ringCommandPlaceActive_ = false;
         ui.block(ringPanelRect());
         return;
     }
@@ -553,6 +615,7 @@ void Game::updateRingScreen(const Input& input, UiContext& ui, float dt)
     }
     if (!ringCommandMenu_.visible) {
         ringCommandItemIndex_ = -1;
+        ringCommandPlaceActive_ = false;
     }
 
     std::array<UiTabItem, UnlockedRingCount> ringTabs{};
