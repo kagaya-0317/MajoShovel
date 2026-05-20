@@ -5,12 +5,6 @@
 
 namespace majo {
 
-enum class UpgradeChoice {
-    Radius,
-    Speed,
-    WeightLimit
-};
-
 inline constexpr int PlayerMaxLevel = 100;
 
 struct LevelGainResult {

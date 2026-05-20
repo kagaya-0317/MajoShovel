@@ -69,6 +69,10 @@ public:
     void unloadUiWindowTexture();
     bool hasUiWindowTexture() const { return uiWindowTexture_.texture != nullptr && uiWindowTexture_.valid; }
     Vec2 uiWindowMinSize() const;
+    bool loadUiMessageWindowTexture(std::string_view path);
+    void unloadUiMessageWindowTexture();
+    bool hasUiMessageWindowTexture() const { return uiMessageWindowTexture_.texture != nullptr; }
+    Vec2 uiMessageWindowSize() const;
     bool loadUiSubWindowTexture(std::string_view path);
     void unloadUiSubWindowTexture();
     bool hasUiSubWindowTexture() const { return uiSubWindowTexture_.texture != nullptr && uiSubWindowTexture_.valid; }
@@ -95,6 +99,7 @@ public:
     void destroyFrameSnapshot(FrameSnapshot& snapshot);
     bool drawFrameSnapshot(const FrameSnapshot& snapshot, Vec2 pos, Vec2 size, Color tint = {255, 255, 255, 255});
     void drawUiWindowFrame(Vec2 pos, Vec2 size, Color tint = {255, 255, 255, 255});
+    void drawUiMessageWindowFrame(Vec2 pos, Vec2 size, Color tint = {255, 255, 255, 255});
     void drawUiSubWindowFrame(Vec2 pos, Vec2 size, Color tint = {255, 255, 255, 255});
     void drawUiButtonFrame(Vec2 pos, float width, int variant, Color tint = {255, 255, 255, 255});
     void drawUiLine(Vec2 pos, float width, Color tint = {255, 255, 255, 255});
@@ -210,6 +215,7 @@ private:
     SpriteSheet playerSheet_;
     ImageTexture baseMapTexture_;
     GuidedTexture uiWindowTexture_;
+    ImageTexture uiMessageWindowTexture_;
     GuidedTexture uiSubWindowTexture_;
     GuidedTexture uiButtonTexture_;
     ImageTexture uiLineTexture_;

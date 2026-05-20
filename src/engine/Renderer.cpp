@@ -289,6 +289,7 @@ Renderer::~Renderer()
     unloadSpriteSheet(playerSheet_);
     unloadBaseMapTexture();
     unloadUiWindowTexture();
+    unloadUiMessageWindowTexture();
     unloadUiSubWindowTexture();
     unloadUiButtonTexture();
     unloadUiLineTexture();
@@ -1437,6 +1438,11 @@ void Renderer::unloadUiWindowTexture()
     unloadGuidedTexture(uiWindowTexture_);
 }
 
+void Renderer::unloadUiMessageWindowTexture()
+{
+    unloadImageTexture(uiMessageWindowTexture_);
+}
+
 void Renderer::unloadUiSubWindowTexture()
 {
     unloadGuidedTexture(uiSubWindowTexture_);
@@ -1582,6 +1588,20 @@ void Renderer::unloadBaseMapTexture()
 bool Renderer::loadUiWindowTexture(std::string_view path)
 {
     return loadGuidedTexture(path, 5, 3, false, "UI window texture", uiWindowTexture_);
+}
+
+bool Renderer::loadUiMessageWindowTexture(std::string_view path)
+{
+    const bool loaded = loadImageTexture(path, "UI message window texture", uiMessageWindowTexture_);
+    if (loaded) {
+        if (uiMessageWindowTexture_.texture != nullptr) {
+            SDL_SetTextureScaleMode(uiMessageWindowTexture_.texture, SDL_SCALEMODE_LINEAR);
+        }
+        if (uiMessageWindowTexture_.outlineTexture != nullptr) {
+            SDL_SetTextureScaleMode(uiMessageWindowTexture_.outlineTexture, SDL_SCALEMODE_LINEAR);
+        }
+    }
+    return loaded;
 }
 
 bool Renderer::loadUiSubWindowTexture(std::string_view path)
@@ -2224,6 +2244,17 @@ Vec2 Renderer::uiWindowMinSize() const
     return {width, height};
 }
 
+Vec2 Renderer::uiMessageWindowSize() const
+{
+    if (!hasUiMessageWindowTexture()) {
+        return {};
+    }
+    return {
+        static_cast<float>(uiMessageWindowTexture_.width),
+        static_cast<float>(uiMessageWindowTexture_.height),
+    };
+}
+
 void Renderer::drawNineSliceFrame(const GuidedTexture& texture, Vec2 pos, Vec2 size, Color tint)
 {
     if (!texture.texture || !texture.valid || texture.columns != 3 || texture.rows != 3) {
@@ -2485,6 +2516,24 @@ void Renderer::drawUiWindowFrame(Vec2 pos, Vec2 size, Color tint)
     x += bottomVariable.y;
     drawTextureRegion(window.texture, cell(2, 3), {x, bottomY}, {cw[3], rh[2]}, tint);
     drawTextureRegion(window.texture, cell(2, 4), {pos.x + size.x - cw[4], bottomY}, {cw[4], rh[2]}, tint);
+}
+
+void Renderer::drawUiMessageWindowFrame(Vec2 pos, Vec2 size, Color tint)
+{
+    if (!hasUiMessageWindowTexture()) {
+        return;
+    }
+    drawTextureRegion(
+        uiMessageWindowTexture_.texture,
+        {
+            0.0f,
+            0.0f,
+            static_cast<float>(uiMessageWindowTexture_.width),
+            static_cast<float>(uiMessageWindowTexture_.height),
+        },
+        pos,
+        size,
+        tint);
 }
 
 void Renderer::drawUiSubWindowFrame(Vec2 pos, Vec2 size, Color tint)

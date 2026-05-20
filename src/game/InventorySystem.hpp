@@ -149,6 +149,12 @@ public:
         SpellRingSystem& spellRing,
         std::optional<float> preferredAngle = std::nullopt,
         SpellRingAddResult* outResult = nullptr);
+    bool addObjectToRing(
+        std::string_view objectId,
+        std::string_view instanceId,
+        SpellRingSystem& spellRing,
+        SpellRingAddResult* outResult = nullptr,
+        std::string* outStatus = nullptr);
     bool moveObjectStackToScreenSlot(std::string_view objectId, int slotIndex);
     bool moveObjectInstanceToScreenSlot(std::string_view instanceId, int slotIndex);
 

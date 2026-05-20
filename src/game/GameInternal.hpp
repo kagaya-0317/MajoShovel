@@ -1106,6 +1106,25 @@ UiRect levelUpResultDialogRect()
     return baseResultDialogRect();
 }
 
+UiRect firstItemAcquisitionNoticeRect(int screenWidth, int screenHeight)
+{
+    const Vec2 size{608.0f, 360.0f};
+    return {{
+        std::max(16.0f, (static_cast<float>(screenWidth) - size.x) * 0.5f),
+        std::max(16.0f, (static_cast<float>(screenHeight) - size.y) * 0.5f),
+    }, size};
+}
+
+UiRect firstItemAcquisitionOkButtonRect(UiRect panel)
+{
+    constexpr Vec2 Size{180.0f, ui::ButtonHeight};
+    constexpr float BottomGap = 52.0f;
+    return {{
+        panel.pos.x + (panel.size.x - Size.x) * 0.5f,
+        panel.pos.y + panel.size.y - BottomGap - Size.y,
+    }, Size};
+}
+
 UiRect baseMenuItemRect(int index)
 {
     return {{450.0f, 296.0f + static_cast<float>(index) * 36.0f}, {380.0f, 30.0f}};
@@ -2110,9 +2129,7 @@ void drawSpellRingOrbitLayer(
                 continue;
             }
 
-            std::vector<Vec2> orbitPath = shapePass == RingShape::Circle
-                ? makeCirclePath(spellRing.center(), spellRing.radius(), 160)
-                : spellRing.pathSamplePointsForRing(ringIndex, spellRing.center(), 1.0f, balance, 160);
+            std::vector<Vec2> orbitPath = spellRing.pathSamplePointsForRing(ringIndex, spellRing.center(), 1.0f, balance, 160);
             drawMagicOrbitPath(
                 renderer,
                 orbitPath,
@@ -2215,10 +2232,18 @@ ItemImageDrawOptions ringWorldItemImageOptions(
     const ObjectImageDrawOptions& options)
 {
     ItemImageDrawOptions itemOptions = itemImageOptionsFromObjectOptions(options);
+    itemOptions.enemy.fitToMaxSize = false;
     itemOptions.enemyAnimationTimeSeconds = totalSeconds;
     itemOptions.enemy.directionOverrideEnabled = true;
     itemOptions.enemy.directionOverride = ringItemOutwardDirection(item, outward);
     itemOptions.enemy.rotationDegrees = 0.0f;
+    return itemOptions;
+}
+
+ItemImageDrawOptions ringScreenItemImageOptions(const ObjectImageDrawOptions& options)
+{
+    ItemImageDrawOptions itemOptions = itemImageOptionsFromObjectOptions(options);
+    itemOptions.enemy.fitToMaxSize = false;
     return itemOptions;
 }
 
@@ -2254,7 +2279,7 @@ void drawRingItemShape(
                 *object,
                 center,
                 {RingObjectImageMaxSize, RingObjectImageMaxSize},
-                imageOptions)) {
+                ringScreenItemImageOptions(imageOptions))) {
             return;
         }
     } else if (item.objectVisual.imageNumber > 0) {
@@ -2268,7 +2293,7 @@ void drawRingItemShape(
                 item.objectVisual,
                 center,
                 {RingObjectImageMaxSize, RingObjectImageMaxSize},
-                itemImageOptionsFromObjectOptions(imageOptions))) {
+                ringScreenItemImageOptions(imageOptions))) {
             return;
         }
     }

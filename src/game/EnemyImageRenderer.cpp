@@ -271,7 +271,9 @@ bool drawEnemyImageIcon(
         return false;
     }
 
-    float scale = std::min(maxSize.x / static_cast<float>(frameWidth), maxSize.y / static_cast<float>(frameHeight));
+    float scale = options.fitToMaxSize
+        ? std::min(maxSize.x / static_cast<float>(frameWidth), maxSize.y / static_cast<float>(frameHeight))
+        : 1.0f;
     if (!options.allowUpscale) {
         scale = std::min(scale, 1.0f);
     }

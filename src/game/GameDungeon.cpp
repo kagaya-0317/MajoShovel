@@ -864,6 +864,7 @@ void Game::refreshOrbitEffects()
 {
     spellRing_.applyObjectParameters(objectCatalog_);
     spellRing_.clearOrbitModifiers();
+    enemies_.clearSpawnBiases();
     player_.status.removeModifiersBySourcePrefix("orbit:");
     playerRegenPerSecond_ = 0.0;
     playerRegenSources_.clear();
@@ -888,6 +889,8 @@ void Game::refreshOrbitEffects()
         item.hotAirStrength = 0.0f;
         item.windPushRadius = 0.0f;
         item.windPushStrength = 0.0f;
+        item.conductWaterPuddleRadius = 0.0f;
+        item.conductWaterPuddleStrength = 0.0f;
         item.dryWetBonusDamage = 0;
         if (item.broken()) {
             continue;
@@ -929,6 +932,7 @@ void Game::refreshOrbitEffects()
         context.orbit = &spellRing_;
         context.orbitItem = &item;
         context.effects = &effects_;
+        context.enemies = &enemies_;
         context.magic = &magic_;
         context.encyclopedia = &encyclopedia_;
         context.position = item.worldPosition;

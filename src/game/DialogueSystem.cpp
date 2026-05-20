@@ -24,11 +24,20 @@ constexpr float DialogueAdvanceRepeatInterval = 0.28f;
 constexpr float DialogueContentStartLeadFrames = 10.0f;
 constexpr float DialoguePanelWidthRatio = 0.75f;
 constexpr float DialoguePanelBottomMargin = 24.0f;
+constexpr float DialogueMessageWindowFallbackWidth = 970.0f;
+constexpr float DialogueMessageWindowFallbackHeight = 232.0f;
+constexpr float DialogueMessageWindowSideMargin = 24.0f;
 constexpr float DialoguePortraitWidth = 164.0f;
 constexpr float DialoguePortraitInsetX = 48.0f;
 constexpr float DialogueTextPaddingX = 48.0f;
 constexpr float DialogueTextPaddingTop = 44.0f;
 constexpr float DialogueTextPaddingBottom = 18.0f;
+constexpr float DialogueMessageTextPaddingX = 88.0f;
+constexpr float DialogueMessageTextPaddingTop = 62.0f;
+constexpr float DialogueMessageTextOffsetY = 8.0f;
+constexpr float DialogueMessageNamePlateCenterX = 144.0f;
+constexpr float DialogueMessageNameShiftX = 0.0f;
+constexpr float DialogueMessageNameCenterY = 31.0f;
 constexpr float DialogueInactivePortraitBrightness = 0.68f;
 constexpr int DialogueTextScale = 3;
 constexpr std::string_view DialogueWindowId = "dialogue.message";
@@ -91,10 +100,44 @@ int visibleGlyphCount(std::string_view text)
     return count;
 }
 
-UiRect dialoguePanelRect(int screenWidth, int screenHeight)
+Vec2 dialogueMessageWindowSize(const Renderer& renderer)
+{
+    Vec2 size = renderer.uiMessageWindowSize();
+    if (size.x <= 0.0f || size.y <= 0.0f) {
+        size = {DialogueMessageWindowFallbackWidth, DialogueMessageWindowFallbackHeight};
+    }
+    return size;
+}
+
+float dialogueMessageWindowScale(const Renderer& renderer, UiRect panel)
+{
+    const Vec2 textureSize = dialogueMessageWindowSize(renderer);
+    if (textureSize.x <= 0.0f) {
+        return 1.0f;
+    }
+    return panel.size.x / textureSize.x;
+}
+
+UiRect dialoguePanelRect(const Renderer& renderer, int screenWidth, int screenHeight)
 {
     const float width = static_cast<float>(std::max(1, screenWidth));
     const float height = static_cast<float>(std::max(1, screenHeight));
+    if (renderer.hasUiMessageWindowTexture()) {
+        Vec2 panelSize = dialogueMessageWindowSize(renderer);
+        const float maxPanelWidth = std::max(320.0f, width - DialogueMessageWindowSideMargin * 2.0f);
+        const float maxPanelHeight = std::max(1.0f, height - DialoguePanelBottomMargin - 16.0f);
+        const float panelScale = std::min({
+            1.0f,
+            maxPanelWidth / std::max(1.0f, panelSize.x),
+            maxPanelHeight / std::max(1.0f, panelSize.y),
+        });
+        panelSize = panelSize * panelScale;
+        return {
+            {std::max(0.0f, (width - panelSize.x) * 0.5f), std::max(0.0f, height - DialoguePanelBottomMargin - panelSize.y)},
+            panelSize,
+        };
+    }
+
     const float panelHeight = std::clamp(height * 0.30f, 190.0f, 252.0f);
     const float panelWidth = std::max(320.0f, width * DialoguePanelWidthRatio);
     return {
@@ -105,11 +148,12 @@ UiRect dialoguePanelRect(int screenWidth, int screenHeight)
 
 UiRect portraitRectFor(UiRect panel, DialoguePortraitSide side, int, int screenHeight)
 {
-    const float portraitHeight = std::clamp(static_cast<float>(std::max(1, screenHeight)) * 0.36f, 190.0f, 274.0f);
+    const float height = static_cast<float>(std::max(1, screenHeight));
+    const float portraitHeight = std::max(1.0f, height * 0.96f);
     const float x = side == DialoguePortraitSide::Right
         ? panel.pos.x + panel.size.x - DialoguePortraitWidth - DialoguePortraitInsetX
         : panel.pos.x + DialoguePortraitInsetX;
-    return {{x, std::max(8.0f, panel.pos.y - portraitHeight + 18.0f)}, {DialoguePortraitWidth, portraitHeight}};
+    return {{x, height - portraitHeight}, {DialoguePortraitWidth, portraitHeight}};
 }
 
 float easeOutSoft(float t)
@@ -133,15 +177,21 @@ Vec2 portraitSlideOffset(DialoguePortraitSide side, float fade)
     return {hiddenOffset * (1.0f - easeOutSoft(fade)), 0.0f};
 }
 
-UiRect textRectFor(UiRect panel)
+UiRect textRectFor(const Renderer& renderer, UiRect panel)
 {
     const float footerHeight = uiFooterHeight(DialogueHelpText);
-    const float x = panel.pos.x + DialogueTextPaddingX;
+    const bool messageWindow = renderer.hasUiMessageWindowTexture();
+    const float messageScale = messageWindow ? dialogueMessageWindowScale(renderer, panel) : 1.0f;
+    const float paddingX = messageWindow ? DialogueMessageTextPaddingX * messageScale : DialogueTextPaddingX;
+    const float paddingTop = messageWindow
+        ? (DialogueMessageTextPaddingTop + DialogueMessageTextOffsetY) * messageScale
+        : DialogueTextPaddingTop;
+    const float x = panel.pos.x + paddingX;
     return {
-        {x, panel.pos.y + DialogueTextPaddingTop},
+        {x, panel.pos.y + paddingTop},
         {
-            std::max(1.0f, panel.size.x - DialogueTextPaddingX * 2.0f),
-            std::max(1.0f, panel.size.y - DialogueTextPaddingTop - DialogueTextPaddingBottom - footerHeight),
+            std::max(1.0f, panel.size.x - paddingX * 2.0f),
+            std::max(1.0f, panel.size.y - paddingTop - DialogueTextPaddingBottom - footerHeight),
         },
     };
 }
@@ -313,6 +363,12 @@ Color portraitColorFor(std::string_view speakerId)
     if (speakerId == "player") {
         return {132, 86, 178, 255};
     }
+    if (speakerId == "merchant") {
+        return {196, 134, 86, 255};
+    }
+    if (speakerId == "processor") {
+        return {108, 148, 166, 255};
+    }
     return {156, 168, 184, 255};
 }
 
@@ -330,11 +386,35 @@ std::string speakerNameForId(std::string_view speakerId)
     if (speakerId == "elder") {
         return "村長";
     }
+    if (speakerId == "merchant") {
+        return "商人";
+    }
+    if (speakerId == "processor") {
+        return "加工職人";
+    }
     return std::string(speakerId);
 }
 
-std::string portraitPathForId(std::string_view)
+std::string portraitPathForId(std::string_view speakerId)
 {
+    if (speakerId == "player") {
+        return "assets/taties/tatie_1.png";
+    }
+    if (speakerId == "chicory") {
+        return "assets/taties/tatie_2.png";
+    }
+    if (speakerId == "monica") {
+        return "assets/taties/tatie_3.png";
+    }
+    if (speakerId == "elder") {
+        return "assets/taties/tatie_4.png";
+    }
+    if (speakerId == "merchant") {
+        return "assets/taties/tatie_5.png";
+    }
+    if (speakerId == "processor") {
+        return "assets/taties/tatie_6.png";
+    }
     return {};
 }
 
@@ -360,6 +440,18 @@ DialoguePortraitSlot portraitSlotFor(const DialogueSequence& sequence, std::stri
         break;
     }
     return slot;
+}
+
+Vec2 portraitDrawSizeFor(Renderer& renderer, std::string_view path, UiRect rect)
+{
+    Vec2 imageSize;
+    if (renderer.getImageSize(path, imageSize, TextureFilter::Linear) &&
+        imageSize.x > 0.0f &&
+        imageSize.y > 0.0f) {
+        const float aspect = imageSize.x / imageSize.y;
+        return {rect.size.y * aspect, rect.size.y};
+    }
+    return rect.size;
 }
 
 void drawPortraitPlaceholder(Renderer& renderer, UiRect rect, const DialoguePortraitSlot& slot, float alpha, float brightness)
@@ -389,10 +481,11 @@ void drawPortrait(Renderer& renderer, UiRect rect, const DialoguePortraitSlot& s
         ImageDrawOptions options;
         options.anchor = {0.5f, 1.0f};
         options.tint = portraitToneColor(options.tint, alpha, brightness);
+        const Vec2 drawSize = portraitDrawSizeFor(renderer, slot.portraitPath, rect);
         const bool drew = renderer.drawImage(
             slot.portraitPath,
-            {rect.pos.x + rect.size.x * 0.5f, rect.pos.y + rect.size.y - 6.0f},
-            {rect.size.x, rect.size.y},
+            {rect.pos.x + rect.size.x * 0.5f, rect.pos.y + rect.size.y},
+            drawSize,
             options,
             TextureFilter::Linear);
         if (drew) {
@@ -409,6 +502,21 @@ void drawSpeakerName(Renderer& renderer, UiRect panel, const DialogueLine& line,
     }
     constexpr int NameScale = 3;
     const Vec2 nameSize = renderer.measureText(line.speakerName, NameScale);
+    if (renderer.hasUiMessageWindowTexture()) {
+        const float messageScale = dialogueMessageWindowScale(renderer, panel);
+        const float nameCenterX = (DialogueMessageNamePlateCenterX + DialogueMessageNameShiftX) * messageScale;
+        const Vec2 namePos{
+            panel.pos.x + nameCenterX - nameSize.x * 0.5f,
+            panel.pos.y + DialogueMessageNameCenterY * messageScale - nameSize.y * 0.5f,
+        };
+        renderer.drawText(
+            namePos,
+            line.speakerName,
+            fadeColor({255, 255, 255, 255}, alpha),
+            NameScale);
+        return;
+    }
+
     const Vec2 namePos{
         panel.pos.x + DialogueTextPaddingX - 48.0f,
         panel.pos.y - nameSize.y + 14.0f,
@@ -546,8 +654,8 @@ void DialoguePlayer::render(Renderer& renderer, int screenWidth, int screenHeigh
     }
 
     renderer.setScreenSpace();
-    const UiRect panel = dialoguePanelRect(screenWidth, screenHeight);
-    const UiRect textRect = textRectFor(panel);
+    const UiRect panel = dialoguePanelRect(renderer, screenWidth, screenHeight);
+    const UiRect textRect = textRectFor(renderer, panel);
 
     const float contentStartDelay = dialogueContentStartDelaySeconds();
     const bool contentVisible = closing_ || openElapsed_ >= contentStartDelay;
@@ -595,7 +703,7 @@ void DialoguePlayer::render(Renderer& renderer, int screenWidth, int screenHeigh
         panel,
         "",
         DialogueHelpText,
-        UiWindowOptions{true, false});
+        UiWindowOptions{true, false, UiWindowFrame::Message});
     drawSpeakerName(renderer, panel, *line, contentFade_);
 
     const std::vector<DialogueGlyph> glyphs = layoutDialogueGlyphs(renderer, line->text, textRect);

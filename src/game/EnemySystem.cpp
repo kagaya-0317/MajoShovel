@@ -82,6 +82,17 @@ constexpr float JumpAttackDurationMax = 0.65f;
 constexpr float JumpAttackDefaultDuration = 0.28f;
 constexpr float JumpAttackDefaultArcHeight = 24.0f;
 constexpr float JumpTargetMinDistance = 4.0f;
+constexpr float ExternalBounceGroundedAltitudeEpsilon = 1.5f;
+constexpr float ExternalBounceMinDuration = 0.34f;
+constexpr float ExternalBounceMaxDuration = 0.62f;
+constexpr float ExternalBounceMinArcHeight = 28.0f;
+constexpr float ExternalBounceMaxArcHeight = 86.0f;
+constexpr float ExternalBounceMinDistance = 8.0f;
+constexpr float ExternalBounceMaxDistance = 30.0f;
+constexpr double ExternalBounceMaxStrength = 3.0;
+constexpr double FallDamageSynergyMaxMultiplier = 5.0;
+constexpr double ShockedDefaultDurationSeconds = 1.2;
+constexpr double ShockedContactTransferDurationSeconds = 0.8;
 constexpr float HoverChaseAltitude = 18.0f;
 constexpr float HoverKeepDistanceAltitude = 20.0f;
 constexpr float PhaseAltitude = 12.0f;
@@ -98,6 +109,7 @@ constexpr float StunWakeHopSeconds = 0.18f;
 constexpr float StunWakeHopPixels = 8.0f;
 constexpr double DefaultCriticalDamageMultiplier = 2.0;
 constexpr double MaxCriticalDamageMultiplier = 5.0;
+constexpr double MaxSleepingBonusDamageMultiplier = 8.0;
 constexpr float ConfusedRetargetMinSeconds = 0.25f;
 constexpr float ConfusedRetargetMaxSeconds = 0.65f;
 constexpr double ConfusedSpeedMultiplier = 0.75;
@@ -112,6 +124,9 @@ constexpr float BlindProjectileMaxSpreadDegrees = 70.0f;
 constexpr int SwarmSpawnCountMax = 6;
 constexpr int FlowOrthogonalCost = 10;
 constexpr int FlowDiagonalCost = 14;
+constexpr double SpawnBiasDefaultMultiplier = 1.0;
+constexpr double SpawnBiasMinMultiplier = 0.10;
+constexpr double SpawnBiasMaxMultiplier = 5.0;
 
 struct FlowStep {
     int dx = 0;
@@ -155,6 +170,25 @@ struct CriticalDamageSpec {
     bool hasPowerOverride = false;
     bool forced = false;
     std::vector<CriticalEffectSource> sources;
+};
+
+struct BounceGroundedHitSpec {
+    bool active = false;
+    double strength = 1.0;
+    bool fallDamageActive = false;
+    double fallDamageMultiplier = 1.0;
+};
+
+struct ShockWetHitSpec {
+    bool active = false;
+    double value = 1.0;
+    double duration = ShockedDefaultDurationSeconds;
+};
+
+struct FlameBurstHitSpec {
+    bool active = false;
+    float radius = 0.0f;
+    int damage = 0;
 };
 
 bool parseIntStrict(std::string_view text, int& value)
@@ -232,6 +266,25 @@ bool hasTagAscii(const EnemyDefinition& definition, std::initializer_list<std::s
             if (equalsIgnoreCaseAscii(tag, expected)) {
                 return true;
             }
+        }
+    }
+    return false;
+}
+
+bool enemyDefinitionMatchesSpawnBiasGroup(const EnemyDefinition& definition, std::string_view group)
+{
+    if (group.empty()) {
+        return false;
+    }
+
+    const std::string groupString(group);
+    const std::string groupTag = "spawn_group_" + groupString;
+    const std::string biasTag = "spawn_bias_" + groupString;
+    for (const std::string& tag : definition.enemyTags) {
+        if (equalsIgnoreCaseAscii(tag, group) ||
+            equalsIgnoreCaseAscii(tag, groupTag) ||
+            equalsIgnoreCaseAscii(tag, biasTag)) {
+            return true;
         }
     }
     return false;
@@ -738,13 +791,8 @@ bool findJumpLandingPosition(TileMap& map, const Enemy& enemy, Vec2 direction, f
     return false;
 }
 
-bool beginEnemyJump(Enemy& enemy, TileMap& map, Vec2 direction, float distance, float durationSeconds, float arcHeight)
+void startEnemyJumpToTarget(Enemy& enemy, Vec2 target, float durationSeconds, float arcHeight)
 {
-    Vec2 target{};
-    if (!findJumpLandingPosition(map, enemy, direction, distance, target)) {
-        return false;
-    }
-
     enemy.jumpActive = true;
     enemy.jumpStartPosition = enemy.position;
     enemy.jumpTargetPosition = target;
@@ -752,6 +800,16 @@ bool beginEnemyJump(Enemy& enemy, TileMap& map, Vec2 direction, float distance, 
     enemy.jumpDurationSeconds = clamp(durationSeconds, JumpAttackDurationMin, JumpAttackDurationMax);
     enemy.jumpArcHeight = std::max(0.0f, arcHeight);
     enemy.velocity = {};
+}
+
+bool beginEnemyJump(Enemy& enemy, TileMap& map, Vec2 direction, float distance, float durationSeconds, float arcHeight)
+{
+    Vec2 target{};
+    if (!findJumpLandingPosition(map, enemy, direction, distance, target)) {
+        return false;
+    }
+
+    startEnemyJumpToTarget(enemy, target, durationSeconds, arcHeight);
     return true;
 }
 
@@ -841,6 +899,7 @@ std::string visualEffectIdFor(const std::vector<EffectSpec>& specs, std::string_
         for (const std::string& effect : spec.effects) {
             if (effect == "status_poison" || effect == "status_poison_chance" ||
                 effect == "status_slow" || effect == "status_slow_chance" ||
+                effect == "status_glued" ||
                 effect == "status_paralyze" || effect == "status_paralyze_chance" ||
                 effect == "status_bleed" || effect == "status_bleed_chance" ||
                 effect == "status_sleep" || effect == "status_sleep_chance" ||
@@ -850,7 +909,13 @@ std::string visualEffectIdFor(const std::vector<EffectSpec>& specs, std::string_
                 effect == "status_wet" ||
                 effect == "status_hot" ||
                 effect == "status_frozen" ||
-                effect == "status_giant") {
+                effect == "status_shocked" ||
+                effect == "status_giant" ||
+                effect == "flame_burst" ||
+                effect == "bounce_grounded" ||
+                effect == "fall_damage_synergy" ||
+                effect == "shock_wet" ||
+                effect == "conduct_water_puddle") {
                 return effect;
             }
         }
@@ -930,6 +995,23 @@ bool criticalSpecTargetMatches(std::string_view target, std::string_view expecte
     return target == expected;
 }
 
+bool contactEnemyEffectTargetMatches(std::string_view target)
+{
+    return target == "enemy" || target == "target";
+}
+
+float flameBurstRadiusFromValue(double value)
+{
+    const double amount = std::max(1.0, value);
+    return std::clamp(static_cast<float>(48.0 + (amount - 1.0) * 10.0), 42.0f, 84.0f);
+}
+
+int flameBurstDamageFromValue(double value)
+{
+    const double amount = std::max(1.0, value);
+    return std::clamp(static_cast<int>(std::ceil(2.0 + amount * 2.0)), 1, 12);
+}
+
 void applyCriticalDamageMultiplier(CriticalDamageSpec& outSpec, double value)
 {
     if (value <= 0.0) {
@@ -1004,6 +1086,201 @@ CriticalDamageSpec collectCriticalDamageSpec(
         spec.damageMultiplier = DefaultCriticalDamageMultiplier;
     }
     return spec;
+}
+
+FlameBurstHitSpec collectFlameBurstHitSpec(const ObjectDefinition* hitObject)
+{
+    FlameBurstHitSpec result;
+    if (hitObject == nullptr) {
+        return result;
+    }
+    for (const EffectSpec& spec : hitObject->orbitEffects) {
+        if (spec.target != "area") {
+            continue;
+        }
+        for (std::size_t index = 0; index < spec.effects.size(); ++index) {
+            if (spec.effects[index] != "flame_burst") {
+                continue;
+            }
+            const double value = index < spec.values.size() ? spec.values[index] : 1.0;
+            result.active = true;
+            result.radius = std::max(result.radius, flameBurstRadiusFromValue(value));
+            result.damage = std::min(24, result.damage + flameBurstDamageFromValue(value));
+        }
+    }
+    return result;
+}
+
+double sleepingBonusDamageMultiplierFor(const ObjectDefinition* hitObject)
+{
+    double multiplier = 1.0;
+    if (hitObject == nullptr) {
+        return multiplier;
+    }
+    for (const EffectSpec& spec : hitObject->orbitEffects) {
+        if (!contactEnemyEffectTargetMatches(spec.target)) {
+            continue;
+        }
+        for (std::size_t index = 0; index < spec.effects.size(); ++index) {
+            if (spec.effects[index] != "sleeping_bonus_damage") {
+                continue;
+            }
+            const double value = index < spec.values.size() ? spec.values[index] : 1.0;
+            multiplier = std::max(multiplier, std::clamp(value, 1.0, MaxSleepingBonusDamageMultiplier));
+        }
+    }
+    return multiplier;
+}
+
+BounceGroundedHitSpec collectBounceGroundedHitSpec(const ObjectDefinition* hitObject)
+{
+    BounceGroundedHitSpec result;
+    if (hitObject == nullptr) {
+        return result;
+    }
+    for (const EffectSpec& spec : hitObject->orbitEffects) {
+        if (!contactEnemyEffectTargetMatches(spec.target)) {
+            continue;
+        }
+        for (std::size_t index = 0; index < spec.effects.size(); ++index) {
+            const double value = index < spec.values.size() ? spec.values[index] : 1.0;
+            if (spec.effects[index] == "bounce_grounded") {
+                result.active = true;
+                result.strength = std::max(result.strength, std::max(0.0, value));
+            } else if (spec.effects[index] == "fall_damage_synergy") {
+                result.fallDamageActive = true;
+                result.fallDamageMultiplier = std::max(
+                    result.fallDamageMultiplier,
+                    value > 0.0 ? value : 1.0);
+            }
+        }
+    }
+    result.strength = std::clamp(result.strength, 0.0, ExternalBounceMaxStrength);
+    result.fallDamageMultiplier = std::clamp(result.fallDamageMultiplier, 1.0, FallDamageSynergyMaxMultiplier);
+    return result;
+}
+
+ShockWetHitSpec collectShockWetHitSpec(const ObjectDefinition* hitObject)
+{
+    ShockWetHitSpec result;
+    if (hitObject == nullptr) {
+        return result;
+    }
+    for (const EffectSpec& spec : hitObject->orbitEffects) {
+        if (!contactEnemyEffectTargetMatches(spec.target)) {
+            continue;
+        }
+        for (std::size_t index = 0; index < spec.effects.size(); ++index) {
+            if (spec.effects[index] != "shock_wet") {
+                continue;
+            }
+            const double value = index < spec.values.size() ? spec.values[index] : 1.0;
+            result.active = true;
+            result.value = std::max(result.value, value > 0.0 ? value : 1.0);
+            result.duration = std::max(
+                result.duration,
+                spec.duration > 0.0 ? spec.duration : ShockedDefaultDurationSeconds);
+        }
+    }
+    result.value = std::clamp(result.value, 0.25, 5.0);
+    result.duration = std::clamp(result.duration, 0.1, 6.0);
+    return result;
+}
+
+bool applyShockedStateToEnemy(Enemy& enemy, double value, double duration, std::string_view source)
+{
+    if (enemy.isBoss) {
+        return false;
+    }
+    enemy.status.applyState(
+        "status_shocked",
+        std::clamp(value, 0.25, 5.0),
+        std::clamp(duration, 0.1, 6.0),
+        std::string(source),
+        StateApplyMode::KeepLonger);
+    enemy.hitFlash = 0.12f;
+    return true;
+}
+
+void clearExternalBounceState(Enemy& enemy)
+{
+    enemy.externalBounceActive = false;
+    enemy.externalBounceFallDamage = 0.0f;
+    enemy.externalBounceFallDamageMultiplier = 1.0f;
+}
+
+bool canExternalBounceGroundedEnemy(const Enemy& enemy)
+{
+    if (enemy.isBoss ||
+        enemy.jumpActive ||
+        enemy.knockbackTimer > 0.0f ||
+        enemy.hoverAltitude > 0.0f ||
+        enemy.altitude > ExternalBounceGroundedAltitudeEpsilon ||
+        enemy.status.hasState("status_frozen")) {
+        return false;
+    }
+    if (hasEnemyTagAny(enemy, {"boss", "boss_only", "flying", "hover", "airborne", "floating", "phase"})) {
+        return false;
+    }
+    return true;
+}
+
+int externalBounceFallDamage(double strength, float arcHeight)
+{
+    const double rawDamage = 3.0 + strength * 3.0 + static_cast<double>(arcHeight) * 0.08;
+    return std::clamp(static_cast<int>(std::ceil(rawDamage)), 3, 16);
+}
+
+bool beginExternalGroundBounce(Enemy& enemy, TileMap& map, Vec2 hitOrigin, const BounceGroundedHitSpec& spec)
+{
+    if (!spec.active || !canExternalBounceGroundedEnemy(enemy)) {
+        return false;
+    }
+
+    const double strength = std::clamp(spec.strength <= 0.0 ? 1.0 : spec.strength, 0.25, ExternalBounceMaxStrength);
+    Vec2 direction = enemy.position - hitOrigin;
+    if (lengthSquared(direction) <= 0.0001f) {
+        direction = facingVector(enemy.facingAngle);
+    }
+    if (lengthSquared(direction) <= 0.0001f) {
+        direction = Vec2{0.0f, -1.0f};
+    }
+
+    const float radiusLift = effectiveEnemyRadius(enemy) * 0.35f;
+    const float arcHeight = std::clamp(
+        static_cast<float>(34.0 + strength * 18.0) + radiusLift,
+        ExternalBounceMinArcHeight,
+        ExternalBounceMaxArcHeight);
+    const float duration = std::clamp(
+        static_cast<float>(0.42 + strength * 0.05),
+        ExternalBounceMinDuration,
+        ExternalBounceMaxDuration);
+    const float distance = std::clamp(
+        static_cast<float>(10.0 + strength * 8.0),
+        ExternalBounceMinDistance,
+        ExternalBounceMaxDistance);
+
+    Vec2 target = enemy.position;
+    (void)findJumpLandingPosition(map, enemy, direction, distance, target);
+    startEnemyJumpToTarget(enemy, target, duration, arcHeight);
+    enemy.knockbackVelocity = {};
+    enemy.knockbackTimer = 0.0f;
+    enemy.externalBounceActive = true;
+    enemy.externalBounceFallDamage = spec.fallDamageActive
+        ? static_cast<float>(externalBounceFallDamage(strength, arcHeight))
+        : 0.0f;
+    enemy.externalBounceFallDamageMultiplier = static_cast<float>(spec.fallDamageMultiplier);
+    updateEnemyAltitude(enemy);
+    return true;
+}
+
+float externalBounceRotationDegrees(const Enemy& enemy)
+{
+    if (!enemy.externalBounceActive || !enemy.jumpActive) {
+        return 0.0f;
+    }
+    const float direction = enemy.id % 2 == 0 ? -1.0f : 1.0f;
+    return direction * jumpProgress(enemy) * 720.0f;
 }
 
 bool criticalRollSucceeds(double chancePercent, std::mt19937& rng)
@@ -1219,6 +1496,7 @@ bool fireDamageRemovesFrozen(std::string_view damageType)
         damageType == "flame" ||
         damageType == "burn" ||
         damageType == "break_fire_burst" ||
+        damageType == "flame_burst" ||
         damageType == "hot_air" ||
         damageType == "status_hot" ||
         damageType == "dry_wet_bonus_damage";
@@ -1236,7 +1514,7 @@ void applyEnemyDamageTyped(Enemy& enemy, int damage, std::string_view damageType
 
 Vec2 paralyzeJitterOffset(const EntityStatus& status, float timeSeconds)
 {
-    if (!status.hasState("status_paralyze")) {
+    if (!status.hasState("status_paralyze") && !status.hasState("status_shocked")) {
         return {};
     }
     const int phase = static_cast<int>(std::floor(std::max(0.0f, timeSeconds) * 36.0f));
@@ -1265,16 +1543,21 @@ EnemyImageDrawOptions enemyImageOptionsFor(const Enemy& enemy)
     imageOptions.tint = {255, 255, 255, 255};
     imageOptions.scaleMultiplier = static_cast<float>(enemy.status.sizeMultiplierFromStates());
     imageOptions.flipY = enemy.status.hasState("status_stun");
+    imageOptions.rotationDegrees = externalBounceRotationDegrees(enemy);
     if (enemy.hitFlash > 0.0f) {
         const float flash = clamp(enemy.hitFlash / 0.12f, 0.0f, 1.0f);
         imageOptions.maskOverlayColor = {255, 255, 255, static_cast<unsigned char>(std::round(220.0f * flash))};
     }
     if (enemy.hitFlash <= 0.0f && enemy.status.hasState("status_poison")) {
         imageOptions.tint = {160, 255, 160, 255};
+    } else if (enemy.hitFlash <= 0.0f && enemy.status.hasState("status_shocked")) {
+        imageOptions.tint = {255, 238, 118, 255};
     } else if (enemy.hitFlash <= 0.0f && enemy.status.hasState("status_hot")) {
         imageOptions.tint = {255, 178, 132, 255};
     } else if (enemy.hitFlash <= 0.0f && enemy.status.hasState("status_frozen")) {
         imageOptions.tint = {170, 232, 255, 255};
+    } else if (enemy.hitFlash <= 0.0f && enemy.status.hasState("status_glued")) {
+        imageOptions.tint = {226, 214, 166, 255};
     } else if (enemy.hitFlash <= 0.0f && enemy.status.hasState("status_slow")) {
         imageOptions.tint = {160, 190, 255, 255};
     } else if (enemy.hitFlash <= 0.0f && enemy.status.hasState("status_blind")) {
@@ -1386,6 +1669,8 @@ void drawEnemyVisual(Renderer& renderer, const Enemy& enemy, bool captureHighlig
         color = {92, 184, 88, 255};
     } else if (enemy.hitFlash <= 0.0f && enemy.status.hasState("status_frozen")) {
         color = {112, 198, 238, 255};
+    } else if (enemy.hitFlash <= 0.0f && enemy.status.hasState("status_glued")) {
+        color = {178, 150, 82, 255};
     } else if (enemy.hitFlash <= 0.0f && enemy.status.hasState("status_slow")) {
         color = {76, 132, 218, 255};
     } else if (enemy.hitFlash <= 0.0f && enemy.status.hasState("status_blind")) {
@@ -1405,6 +1690,11 @@ void drawEnemyVisual(Renderer& renderer, const Enemy& enemy, bool captureHighlig
     const float uiVisualRadius = drewImage ? std::max(visualRadius, enemyImageDrawSize.y * 0.5f) : visualRadius;
     if (!drewImage) {
         renderer.fillCircle(drawPosition, visualRadius, color);
+        if (enemy.externalBounceActive && enemy.jumpActive) {
+            const float spinRadians = externalBounceRotationDegrees(enemy) * (Pi / 180.0f);
+            const Vec2 axis = fromAngle(spinRadians) * (visualRadius * 0.72f);
+            renderer.drawLine(drawPosition - axis, drawPosition + axis, Color{255, 255, 255, 210});
+        }
         renderer.drawCircle(drawPosition, visualRadius + 3.0f, enemy.isBoss ? Color{255, 210, 96, 255} : Color{80, 18, 28, 255});
         if (captureHighlighted) {
             renderer.drawCircle(drawPosition, visualRadius + 6.0f, {255, 255, 255, 245});
@@ -1474,10 +1764,17 @@ const EnemyDefinition* EnemySystem::chooseEnemyDefinition(const EnemyCatalog& en
 const EnemyDefinition* EnemySystem::chooseNormalRandomEnemyDefinition(const EnemyCatalog& enemyCatalog)
 {
     std::vector<const EnemyDefinition*> candidates;
+    std::vector<double> weights;
     candidates.reserve(enemyCatalog.enemies.size());
+    weights.reserve(enemyCatalog.enemies.size());
     for (const EnemyDefinition& definition : enemyCatalog.enemies) {
         if (!isExcludedFromNormalDugSpawn(definition)) {
+            const double weight = spawnBiasMultiplierFor(definition);
+            if (weight <= 0.0) {
+                continue;
+            }
             candidates.push_back(&definition);
+            weights.push_back(weight);
         }
     }
 
@@ -1488,8 +1785,14 @@ const EnemyDefinition* EnemySystem::chooseNormalRandomEnemyDefinition(const Enem
         return chooseEnemyDefinition(enemyCatalog);
     }
 
-    std::uniform_int_distribution<std::size_t> dist(0, candidates.size() - 1);
-    return candidates[dist(rng_)];
+    const auto selected = selectWeightedIndex(weights, rng_);
+    if (!selected || *selected >= candidates.size()) {
+        logSpawnWeightFallbackOnce(
+            "normal_random_select_failed",
+            "Enemy spawn weight fallback: simple weighted selection failed; using legacy all-enemies random");
+        return chooseEnemyDefinition(enemyCatalog);
+    }
+    return candidates[*selected];
 }
 
 const EnemyDefinition* EnemySystem::chooseDugSpawnEnemyDefinition(const EnemyCatalog& enemyCatalog, std::string_view stageId, int depthRank)
@@ -1521,8 +1824,12 @@ const EnemyDefinition* EnemySystem::chooseDugSpawnEnemyDefinition(const EnemyCat
         if (weightIt == definition.spawnWeights.end() || weightIt->second < 1.0) {
             continue;
         }
+        const double weight = weightIt->second * spawnBiasMultiplierFor(definition);
+        if (weight <= 0.0) {
+            continue;
+        }
         candidates.push_back(&definition);
-        weights.push_back(weightIt->second);
+        weights.push_back(weight);
     }
 
     if (candidates.empty()) {
@@ -1540,6 +1847,17 @@ const EnemyDefinition* EnemySystem::chooseDugSpawnEnemyDefinition(const EnemyCat
         return chooseNormalRandomEnemyDefinition(enemyCatalog);
     }
     return candidates[*selected];
+}
+
+double EnemySystem::spawnBiasMultiplierFor(const EnemyDefinition& definition) const
+{
+    double result = SpawnBiasDefaultMultiplier;
+    for (const auto& [group, multiplier] : spawnBiasMultipliers_) {
+        if (enemyDefinitionMatchesSpawnBiasGroup(definition, group)) {
+            result *= multiplier;
+        }
+    }
+    return std::clamp(result, SpawnBiasMinMultiplier, SpawnBiasMaxMultiplier);
 }
 
 void EnemySystem::logSpawnWeightFallbackOnce(std::string key, std::string message)
@@ -1678,6 +1996,7 @@ void EnemySystem::applyDefinition(Enemy& enemy, const EnemyDefinition* definitio
     enemy.jumpElapsedSeconds = 0.0f;
     enemy.jumpDurationSeconds = 0.0f;
     enemy.jumpArcHeight = 0.0f;
+    clearExternalBounceState(enemy);
     enemy.altitude = 0.0f;
     enemy.hoverAltitude = 0.0f;
     enemy.hoverBobAmplitude = 0.0f;
@@ -2808,6 +3127,7 @@ void EnemySystem::update(
                 enemy.status.hasState("status_sleep") ||
                 enemy.status.hasState("status_stun") ||
                 enemy.status.hasState("status_paralyze") ||
+                enemy.status.hasState("status_shocked") ||
                 enemy.status.hasState("status_frozen");
             const double movementScale = !movementStopped && lengthSquared(enemy.velocity) > 1.0f ? 1.5 : 0.5;
             enemy.bleedDamageAccumulator += bleedDps * movementScale * static_cast<double>(dt);
@@ -2864,6 +3184,7 @@ void EnemySystem::update(
         }
         if (enemy.knockbackTimer > 0.0f) {
             enemy.jumpActive = false;
+            clearExternalBounceState(enemy);
             moveWithCollision(enemy, map, enemy.knockbackVelocity, dt);
             enemy.knockbackTimer = std::max(0.0f, enemy.knockbackTimer - dt);
             enemy.knockbackVelocity = enemy.knockbackVelocity * std::max(0.0f, 1.0f - 6.0f * dt);
@@ -2890,15 +3211,39 @@ void EnemySystem::update(
             }
             updateEnemyAltitude(enemy);
             if (t >= 1.0f) {
+                const bool externalBounceLanding = enemy.externalBounceActive;
+                const int queuedFallDamage = externalBounceLanding
+                    ? std::max(0, static_cast<int>(std::ceil(
+                        static_cast<double>(enemy.externalBounceFallDamage) *
+                        static_cast<double>(enemy.externalBounceFallDamageMultiplier))))
+                    : 0;
                 enemy.position = enemy.jumpTargetPosition;
                 enemy.velocity = {};
                 enemy.jumpActive = false;
                 enemy.jumpElapsedSeconds = 0.0f;
                 enemy.jumpDurationSeconds = 0.0f;
                 enemy.jumpArcHeight = 0.0f;
-                enemy.jumpLandingBuffTimer = JumpLandingBuffSeconds;
+                enemy.jumpLandingBuffTimer = externalBounceLanding ? 0.0f : JumpLandingBuffSeconds;
+                clearExternalBounceState(enemy);
                 updateEnemyAltitude(enemy);
                 events_.push_back(makeEnemyEvent(EnemyEventType::Hit, enemy));
+                if (queuedFallDamage > 0 && enemy.hp > 0) {
+                    const int damageDealt = applyDefenseModifier(enemy.status, queuedFallDamage);
+                    applyEnemyDamageTyped(enemy, damageDealt, "blunt");
+                    revealEnemyHpBar(enemy, damageDealt);
+                    if (damageDealt > 0) {
+                        enemy.hitFlash = 0.12f;
+                    }
+                    events_.push_back(makeEnemyEvent(
+                        EnemyEventType::AttackHit,
+                        enemy,
+                        "fall_damage_synergy",
+                        damageDealt));
+                    if (enemy.hp <= 0) {
+                        processEnemyDeath(enemy);
+                        continue;
+                    }
+                }
             }
             continue;
         }
@@ -2914,6 +3259,7 @@ void EnemySystem::update(
             enemy.status.hasState("status_sleep") ||
             enemy.status.hasState("status_stun") ||
             enemy.status.hasState("status_paralyze") ||
+            enemy.status.hasState("status_shocked") ||
             enemy.status.hasState("status_frozen");
         const bool attackBlocked = actionBlocked || confused;
         const float detectedMultiplier = std::max(1.0f, balance.enemyDetectedVisionMultiplier);
@@ -3334,6 +3680,14 @@ void EnemySystem::update(
             distanceSquared(player.position, enemy.position) <= enemy.jumpLandingRadius * enemy.jumpLandingRadius) {
             touchedPlayer = true;
         }
+        if (touchedPlayer && enemy.status.hasState("status_shocked")) {
+            player.status.applyState(
+                "status_shocked",
+                1.0,
+                ShockedContactTransferDurationSeconds,
+                "enemy:status_shocked:" + enemy.enemyId,
+                StateApplyMode::KeepLonger);
+        }
         if (!attackBlocked && touchedPlayer && enemy.contactTimer <= 0.0f) {
             bool attackHit = true;
             const double accuracy = enemy.status.attackAccuracyMultiplierFromStates();
@@ -3418,6 +3772,9 @@ void EnemySystem::update(
                     hitObject = &objectIt->second;
                 }
             }
+            const FlameBurstHitSpec flameBurstSpec = collectFlameBurstHitSpec(hitObject);
+            const BounceGroundedHitSpec bounceGroundedSpec = collectBounceGroundedHitSpec(hitObject);
+            const ShockWetHitSpec shockWetSpec = collectShockWetHitSpec(hitObject);
             std::string_view contactDamageType = item.damageType;
             if (item.magicAuraTimer > 0.0f && !item.magicAuraDamageType.empty()) {
                 contactDamageType = item.magicAuraDamageType;
@@ -3440,6 +3797,14 @@ void EnemySystem::update(
                 adjustedDamage = static_cast<int>(
                     std::ceil(static_cast<double>(adjustedDamage) * criticalSpec.damageMultiplier));
                 recordCriticalEffectDiscoveries(discoveryEvents, encyclopedia, criticalSpec.sources, enemy.position);
+            }
+            const double sleepingBonusMultiplier = sleepingBonusDamageMultiplierFor(hitObject);
+            const bool sleepingBonusApplied = adjustedDamage > 0 &&
+                sleepingBonusMultiplier > 1.0 &&
+                enemy.status.hasState("status_sleep");
+            if (sleepingBonusApplied) {
+                adjustedDamage = static_cast<int>(
+                    std::ceil(static_cast<double>(adjustedDamage) * sleepingBonusMultiplier));
             }
             if (isPhysicalDamageType(contactDamageType) && hasBehavior(enemy, "physical_resist")) {
                 adjustedDamage = static_cast<int>(std::ceil(static_cast<double>(adjustedDamage) * enemy.physicalDamageMultiplier));
@@ -3493,10 +3858,67 @@ void EnemySystem::update(
                     enemy.position,
                     discoveryEvents,
                     encyclopedia);
+                if (shockWetSpec.active && enemy.status.hasState("status_wet")) {
+                    const std::string shockSource = hitObject->id.empty()
+                        ? std::string("orbit:shock_wet")
+                        : "orbit:" + hitObject->id;
+                    if (applyShockedStateToEnemy(enemy, shockWetSpec.value, shockWetSpec.duration, shockSource)) {
+                        if (hitEffectId.empty()) {
+                            hitEffectId = "shock_wet";
+                        }
+                        recordObjectEffectDiscovery(discoveryEvents, *hitObject, "shock_wet", "", enemy.position);
+                        if (item.conductWaterPuddleRadius > 0.0f && item.conductWaterPuddleStrength > 0.0f) {
+                            const int conducted = applyConductiveShock(
+                                enemy.position,
+                                item.conductWaterPuddleRadius,
+                                shockWetSpec.value,
+                                shockWetSpec.duration,
+                                enemy.id,
+                                shockSource);
+                            if (conducted > 0) {
+                                recordObjectEffectDiscovery(discoveryEvents, *hitObject, "conduct_water_puddle", "", enemy.position);
+                            }
+                        }
+                    }
+                }
+                if (flameBurstSpec.active && flameBurstSpec.damage > 0 && flameBurstSpec.radius > 0.0f) {
+                    EnemyMagicHitSpec burst;
+                    burst.position = enemy.position;
+                    burst.radius = flameBurstSpec.radius;
+                    burst.damage = flameBurstSpec.damage;
+                    burst.damageType = "fire";
+                    burst.effectId = "flame_burst";
+                    burst.excludedRuntimeId = enemy.id;
+                    int driedWetCount = 0;
+                    if (item.dryWetBonusDamage > 0) {
+                        burst.consumeStateForBonus = "status_wet";
+                        burst.consumeStateBonusDamage = item.dryWetBonusDamage;
+                        burst.consumeStateBonusDamageType = "fire";
+                        burst.consumeStateBonusEffectId = "dry_wet_bonus_damage";
+                        burst.outConsumedStateCount = &driedWetCount;
+                    }
+                    applyMagicArea(burst, spellRing);
+                    recordObjectEffectDiscovery(discoveryEvents, *hitObject, "flame_burst", "", enemy.position);
+                    if (driedWetCount > 0) {
+                        recordObjectEffectDiscovery(discoveryEvents, *hitObject, "dry_wet_bonus_damage", "", enemy.position);
+                    }
+                }
                 if (damageDealt > 0) {
                     recordObjectEffectDiscovery(discoveryEvents, *hitObject, "basic_attack", "", enemy.position);
                     if (effectSpecsContainForTarget(hitObject->orbitEffects, "item", "slash_power")) {
                         recordObjectEffectDiscovery(discoveryEvents, *hitObject, "slash_power", "", enemy.position);
+                    }
+                    if (sleepingBonusApplied) {
+                        recordObjectEffectDiscovery(discoveryEvents, *hitObject, "sleeping_bonus_damage", "", enemy.position);
+                    }
+                }
+                if (enemy.hp > 0 && beginExternalGroundBounce(enemy, map, item.worldPosition, bounceGroundedSpec)) {
+                    if (hitEffectId.empty()) {
+                        hitEffectId = "bounce_grounded";
+                    }
+                    recordObjectEffectDiscovery(discoveryEvents, *hitObject, "bounce_grounded", "", enemy.position);
+                    if (bounceGroundedSpec.fallDamageActive) {
+                        recordObjectEffectDiscovery(discoveryEvents, *hitObject, "fall_damage_synergy", "", enemy.position);
                     }
                 }
             }
@@ -3594,8 +4016,14 @@ void EnemySystem::emitStatusParticles(EffectSystem& effects) const
         if (enemy.status.hasState("status_slow")) {
             effects.spawnStatusAura(enemy.position, "status_slow");
         }
+        if (enemy.status.hasState("status_glued")) {
+            effects.spawnStatusAura(enemy.position, "status_glued");
+        }
         if (enemy.status.hasState("status_frozen")) {
             effects.spawnStatusAura(enemy.position, "status_frozen");
+        }
+        if (enemy.status.hasState("status_shocked")) {
+            effects.spawnStatusAura(enemy.position, "status_shocked");
         }
         if (enemy.status.hasState("status_bleed")) {
             effects.spawnStatusAura(enemy.position, "status_bleed");
@@ -3775,6 +4203,37 @@ int EnemySystem::applyColdAirAura(
     return touched;
 }
 
+int EnemySystem::applyConductiveShock(Vec2 position, float radius, double value, double duration, int excludedEnemyId, std::string_view source)
+{
+    if (radius <= 0.0f) {
+        return 0;
+    }
+
+    int shocked = 0;
+    const double shockValue = std::clamp(value, 0.25, 5.0);
+    const double shockDuration = std::clamp(duration, 0.1, 6.0);
+    for (Enemy& enemy : enemies_.items()) {
+        if (!enemy.active || enemy.spawnTimer > 0.0f || enemy.id == excludedEnemyId) {
+            continue;
+        }
+        if (!enemy.status.hasState("status_wet")) {
+            continue;
+        }
+
+        const float hitRadius = radius + effectiveEnemyRadius(enemy);
+        if (distanceSquared(enemy.position, position) > hitRadius * hitRadius) {
+            continue;
+        }
+        if (!applyShockedStateToEnemy(enemy, shockValue, shockDuration, source)) {
+            continue;
+        }
+
+        ++shocked;
+        events_.push_back(makeEnemyEvent(EnemyEventType::AttackHit, enemy, "conduct_water_puddle"));
+    }
+    return shocked;
+}
+
 int EnemySystem::applyHotAir(
     Vec2 position,
     float radius,
@@ -3917,6 +4376,9 @@ int EnemySystem::applyMagicArea(const EnemyMagicHitSpec& spec, SpellRingSystem& 
         if (!enemy.active || enemy.spawnTimer > 0.0f) {
             continue;
         }
+        if (spec.excludedRuntimeId != 0 && enemy.id == spec.excludedRuntimeId) {
+            continue;
+        }
         const float hitRadius = radius + effectiveEnemyRadius(enemy);
         if (distanceSquared(enemy.position, spec.position) > hitRadius * hitRadius) {
             continue;
@@ -3999,6 +4461,9 @@ bool EnemySystem::applyMagicNearest(Vec2 origin, float range, EnemyMagicHitSpec 
     float bestDistanceSq = std::max(0.0f, range) * std::max(0.0f, range);
     for (Enemy& enemy : enemies_.items()) {
         if (!enemy.active || enemy.spawnTimer > 0.0f) {
+            continue;
+        }
+        if (spec.excludedRuntimeId != 0 && enemy.id == spec.excludedRuntimeId) {
             continue;
         }
         const float distanceSq = distanceSquared(enemy.position, origin);
@@ -4195,6 +4660,30 @@ int EnemySystem::pushLightEnemies(Vec2 center, TileMap& map, float dt, float rad
     return pushed;
 }
 
+void EnemySystem::clearSpawnBiases()
+{
+    spawnBiasMultipliers_.clear();
+}
+
+void EnemySystem::applySpawnBias(std::string_view group, double multiplier)
+{
+    if (group.empty()) {
+        return;
+    }
+
+    const double sanitizedMultiplier = std::isfinite(multiplier) && multiplier > 0.0
+        ? multiplier
+        : SpawnBiasDefaultMultiplier;
+    auto& current = spawnBiasMultipliers_[std::string(group)];
+    if (current <= 0.0 || !std::isfinite(current)) {
+        current = SpawnBiasDefaultMultiplier;
+    }
+    current = std::clamp(
+        current * std::clamp(sanitizedMultiplier, SpawnBiasMinMultiplier, SpawnBiasMaxMultiplier),
+        SpawnBiasMinMultiplier,
+        SpawnBiasMaxMultiplier);
+}
+
 int EnemySystem::consumePendingXp()
 {
     const int xp = pendingXp_;
@@ -4221,6 +4710,7 @@ void EnemySystem::clearTemporaryState()
         enemy.hpBarTimer = 0.0f;
         enemy.knockbackVelocity = {};
         enemy.knockbackTimer = 0.0f;
+        clearExternalBounceState(enemy);
         enemy.contactTimer = 0.0f;
     }
 }
@@ -4369,7 +4859,8 @@ CaptureResult EnemySystem::tryCaptureAt(
         capturedItem.tags.push_back("captured_boss");
     }
 
-    if (!inventory.addRuntimeObjectItem(capturedItem)) {
+    InventoryAddResult addResult;
+    if (!inventory.addRuntimeObjectItem(capturedItem, &addResult)) {
         result.type = CaptureResultType::InventoryFull;
         return result;
     }
@@ -4387,6 +4878,9 @@ CaptureResult EnemySystem::tryCaptureAt(
         best->active = false;
     }
     result.type = CaptureResultType::Success;
+    result.objectId = capturedItem.id;
+    result.instanceId = addResult.instanceId;
+    result.protectable = addResult.kind == InventoryAddKind::Instance && !addResult.instanceId.empty();
     return result;
 }
 

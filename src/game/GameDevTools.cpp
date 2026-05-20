@@ -1869,7 +1869,8 @@ void Game::addSelectedDebugItem()
     }
 
     const std::string itemName = debugItemPickerDisplayName(*item);
-    if (!inventory_.addObjectItem(objectCatalog_, objectId)) {
+    InventoryAddResult addResult;
+    if (!inventory_.addObjectItem(objectCatalog_, objectId, &addResult)) {
         debugItemPickerStatus_ = "追加できません: " + itemName;
         reloadNotice_ = debugItemPickerStatus_;
         reloadNoticeTimer_ = 1.4f;
@@ -1880,6 +1881,11 @@ void Game::addSelectedDebugItem()
     debugItemPickerStatus_ = "追加: " + itemName;
     reloadNotice_ = "Debug add: " + inlineItemTag(objectId) + " " + itemName;
     reloadNoticeTimer_ = 1.6f;
+    recordObjectObtainedForFirstNotice(
+        objectId,
+        addResult.instanceId,
+        addResult.kind == InventoryAddKind::Instance && !addResult.instanceId.empty(),
+        player_.position);
     syncEncyclopediaFromInventoryAndRing();
     logInfo("Debug: added object_id=\"" + objectId + "\".");
 }
@@ -3911,9 +3917,7 @@ bool Game::executeDebugCommand(std::string_view command)
         ringRadiusUpgradeLevel_ = 0;
         ringSpeedUpgradeLevel_ = 0;
         collectionRangeUpgradeLevel_ = 0;
-        levelRingRadiusPoints_ = 0;
-        levelRingSpeedPoints_ = 0;
-        levelRingWeightLimitPoints_ = 0;
+        levelRingUpgradePoints_ = {};
         workshopInitialRadiusLevel_ = 0;
         workshopInitialSpeedLevel_ = 0;
         workshopShiftDistanceLevel_ = 0;

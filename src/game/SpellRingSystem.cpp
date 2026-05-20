@@ -250,6 +250,11 @@ float ringBaseSpeedMultiplierForIndex(int ringIndex)
     return std::max(0.05f, RingBaseSpeedMultipliers[static_cast<std::size_t>(ringIndex)]);
 }
 
+float levelRingScaleMultiplierForPoints(int points)
+{
+    return 1.0f + SpellRingSystem::LevelRingScaleUpgradeAmount * static_cast<float>(std::max(0, points));
+}
+
 RingOrbitTuning makeRingOrbitTuning(const RuntimeBalance& balance)
 {
     RingOrbitTuning tuning;
@@ -428,8 +433,8 @@ void SpellRingSystem::initialize(const RuntimeBalance& balance)
         ringShapes_[static_cast<std::size_t>(i)] = defaultRingShapeForIndex(i);
     }
 
-    radius_ = balance.spellRingRadius;
-    angularSpeed_ = balance.spellRingSpeed;
+    radii_.fill(balance.spellRingRadius);
+    angularSpeeds_.fill(balance.spellRingSpeed);
     orbitTuning_ = makeRingOrbitTuning(balance);
     maxEquippedWeights_.fill(SpellRingSystem::InitialMaxEquippedWeight);
     resetBaseWeightToCurrent();
@@ -443,6 +448,61 @@ void SpellRingSystem::initialize(const RuntimeBalance& balance)
     enemyOrbitSpeedDebuffTimer_ = 0.0f;
     activeRingIndex_ = 0;
     itemBreakEvents_.clear();
+}
+
+float SpellRingSystem::levelScaleMultiplierForPoints(int points)
+{
+    return levelRingScaleMultiplierForPoints(points);
+}
+
+void SpellRingSystem::upgradeRadius(float factor)
+{
+    upgradeRadiusForRing(activeRingIndex_, factor);
+}
+
+void SpellRingSystem::upgradeSpeed(float factor)
+{
+    upgradeSpeedForRing(activeRingIndex_, factor);
+}
+
+void SpellRingSystem::upgradeRadiusForRing(int ringIndex, float factor)
+{
+    const int clampedRingIndex = std::clamp(ringIndex, 0, SpellRingCount - 1);
+    radii_[static_cast<std::size_t>(clampedRingIndex)] =
+        std::max(0.0f, radii_[static_cast<std::size_t>(clampedRingIndex)] * factor);
+}
+
+void SpellRingSystem::upgradeSpeedForRing(int ringIndex, float factor)
+{
+    const int clampedRingIndex = std::clamp(ringIndex, 0, SpellRingCount - 1);
+    angularSpeeds_[static_cast<std::size_t>(clampedRingIndex)] =
+        std::max(0.0f, angularSpeeds_[static_cast<std::size_t>(clampedRingIndex)] * factor);
+}
+
+void SpellRingSystem::setRadius(float radius)
+{
+    radii_.fill(std::max(0.0f, radius));
+}
+
+void SpellRingSystem::setAngularSpeed(float angularSpeed)
+{
+    angularSpeeds_.fill(std::max(0.0f, angularSpeed));
+}
+
+void SpellRingSystem::setRadiusForRing(int ringIndex, float radius)
+{
+    if (ringIndex < 0 || ringIndex >= SpellRingCount) {
+        return;
+    }
+    radii_[static_cast<std::size_t>(ringIndex)] = std::max(0.0f, radius);
+}
+
+void SpellRingSystem::setAngularSpeedForRing(int ringIndex, float angularSpeed)
+{
+    if (ringIndex < 0 || ringIndex >= SpellRingCount) {
+        return;
+    }
+    angularSpeeds_[static_cast<std::size_t>(ringIndex)] = std::max(0.0f, angularSpeed);
 }
 
 void SpellRingSystem::advanceOrbitAngles(float dt, const RuntimeBalance& balance)
@@ -492,7 +552,7 @@ void SpellRingSystem::refreshItemWorldPositions(float dt, Vec2 previousCenter, c
                 }
                 if (item.capturedJumpTimer > 0.0f) {
                     const float phase = 1.0f - item.capturedJumpTimer / jumpDuration;
-                    itemRadiusScale += (std::sin(phase * Pi) * jumpDistance) / std::max(1.0f, radius_);
+                    itemRadiusScale += (std::sin(phase * Pi) * jumpDistance) / std::max(1.0f, radiusForRing(ringIndex));
                 }
             } else if (advanceCapturedBehaviors) {
                 item.capturedJumpTimer = 0.0f;
@@ -514,7 +574,7 @@ void SpellRingSystem::refreshItemWorldPositions(float dt, Vec2 previousCenter, c
                 centerVelocity,
                 context,
                 item.orbitDistanceOffset);
-            item.orbitMotionSpeed = length(item.worldVelocity) / std::max(1.0f, radius_);
+            item.orbitMotionSpeed = length(item.worldVelocity) / std::max(1.0f, radiusForRing(ringIndex));
         }
     }
 }
@@ -696,6 +756,23 @@ void SpellRingSystem::upgradeMaxEquippedWeightForAllRings(float amount)
 void SpellRingSystem::setMaxEquippedWeightForAllRings(float maxWeight)
 {
     maxEquippedWeights_.fill(std::max(0.0f, maxWeight));
+}
+
+void SpellRingSystem::upgradeMaxEquippedWeightForRing(int ringIndex, float amount)
+{
+    if (ringIndex < 0 || ringIndex >= SpellRingCount) {
+        return;
+    }
+    float& maxWeight = maxEquippedWeights_[static_cast<std::size_t>(ringIndex)];
+    maxWeight = std::max(0.0f, maxWeight + amount);
+}
+
+void SpellRingSystem::setMaxEquippedWeightForRing(int ringIndex, float maxWeight)
+{
+    if (ringIndex < 0 || ringIndex >= SpellRingCount) {
+        return;
+    }
+    maxEquippedWeights_[static_cast<std::size_t>(ringIndex)] = std::max(0.0f, maxWeight);
 }
 
 bool SpellRingSystem::canAddItem() const
@@ -1168,7 +1245,7 @@ RingOrbitContext SpellRingSystem::makeOrbitContextForRing(int ringIndex, int ite
     context.shape = ringShapeForIndex(clampedRingIndex);
     context.radius = std::max(
         1.0f,
-        radius_ * ringBaseRadiusMultiplierForIndex(clampedRingIndex) *
+        radiusForRing(clampedRingIndex) * ringBaseRadiusMultiplierForIndex(clampedRingIndex) *
             std::max(0.1f, radiusScale) *
             static_cast<float>(orbitRadiusMultiplier));
     context.shapeRotation = context.shape == RingShape::FigureEight
@@ -1260,10 +1337,26 @@ float SpellRingSystem::effectiveAngularSpeed() const
 float SpellRingSystem::effectiveAngularSpeedForRing(int ringIndex) const
 {
     return static_cast<float>(
-        static_cast<double>(angularSpeed_) *
+        static_cast<double>(angularSpeedForRing(ringIndex)) *
         static_cast<double>(weightSpeedMultiplierForRing(ringIndex)) *
         orbitModifiers_.speedMultiplier *
         static_cast<double>(enemyOrbitSpeedDebuffMultiplier_));
+}
+
+float SpellRingSystem::radiusForRing(int ringIndex) const
+{
+    if (ringIndex < 0 || ringIndex >= SpellRingCount) {
+        return radii_[0];
+    }
+    return radii_[static_cast<std::size_t>(ringIndex)];
+}
+
+float SpellRingSystem::angularSpeedForRing(int ringIndex) const
+{
+    if (ringIndex < 0 || ringIndex >= SpellRingCount) {
+        return angularSpeeds_[0];
+    }
+    return angularSpeeds_[static_cast<std::size_t>(ringIndex)];
 }
 
 const std::vector<SpellRingItem>& SpellRingSystem::itemsForRing(int ringIndex) const

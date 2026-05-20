@@ -212,6 +212,8 @@ bool Game::loadSaveData()
     int loadedLevelRingRadiusPoints = 0;
     int loadedLevelRingSpeedPoints = 0;
     int loadedLevelRingWeightLimitPoints = 0;
+    bool loadedLevelRingPointTable = false;
+    RingLevelUpgradePointTable loadedLevelRingUpgradePoints{};
     int loadedWorkshopInitialRadiusLevel = 0;
     int loadedWorkshopInitialSpeedLevel = 0;
     int loadedWorkshopShiftDistanceLevel = 0;
@@ -264,6 +266,15 @@ bool Game::loadSaveData()
             stream >> loadedLevelRingSpeedPoints;
         } else if (key == "level_ring_weight_limit_points") {
             stream >> loadedLevelRingWeightLimitPoints;
+        } else if (key == "level_ring_points") {
+            int ringNumber = 0;
+            RingLevelUpgradePoints points;
+            stream >> ringNumber >> points.radius >> points.speed >> points.weightLimit;
+            if (!stream.fail() && ringNumber >= 1 && ringNumber <= SpellRingCount) {
+                loadedLevelRingUpgradePoints[static_cast<std::size_t>(ringNumber - 1)] =
+                    clampedRingLevelUpgradePoints(points);
+                loadedLevelRingPointTable = true;
+            }
         } else if (key == "workshop_initial_radius_level") {
             stream >> loadedWorkshopInitialRadiusLevel;
         } else if (key == "workshop_initial_speed_level") {
@@ -890,9 +901,18 @@ bool Game::loadSaveData()
     ringRadiusUpgradeLevel_ = std::max(0, loadedRingRadiusUpgradeLevel);
     ringSpeedUpgradeLevel_ = std::max(0, loadedRingSpeedUpgradeLevel);
     collectionRangeUpgradeLevel_ = std::clamp(loadedCollectionRangeUpgradeLevel, 0, 5);
-    levelRingRadiusPoints_ = std::max(0, loadedLevelRingRadiusPoints);
-    levelRingSpeedPoints_ = std::max(0, loadedLevelRingSpeedPoints);
-    levelRingWeightLimitPoints_ = std::max(0, loadedLevelRingWeightLimitPoints);
+    if (!loadedLevelRingPointTable) {
+        const RingLevelUpgradePoints legacyPoints{
+            std::max(0, loadedLevelRingRadiusPoints),
+            std::max(0, loadedLevelRingSpeedPoints),
+            std::max(0, loadedLevelRingWeightLimitPoints),
+        };
+        loadedLevelRingUpgradePoints.fill(legacyPoints);
+    }
+    for (RingLevelUpgradePoints& points : loadedLevelRingUpgradePoints) {
+        points = clampedRingLevelUpgradePoints(points);
+    }
+    levelRingUpgradePoints_ = loadedLevelRingUpgradePoints;
     workshopInitialRadiusLevel_ = std::clamp(loadedWorkshopInitialRadiusLevel, 0, 5);
     workshopInitialSpeedLevel_ = std::clamp(loadedWorkshopInitialSpeedLevel, 0, 5);
     workshopShiftDistanceLevel_ = std::clamp(loadedWorkshopShiftDistanceLevel, 0, 5);
@@ -950,9 +970,14 @@ bool Game::saveSaveData(std::string& message) const
     file << "upgrade_ring_radius " << ringRadiusUpgradeLevel_ << "\n";
     file << "upgrade_ring_speed " << ringSpeedUpgradeLevel_ << "\n";
     file << "upgrade_collection_range " << collectionRangeUpgradeLevel_ << "\n";
-    file << "level_ring_radius_points " << levelRingRadiusPoints_ << "\n";
-    file << "level_ring_speed_points " << levelRingSpeedPoints_ << "\n";
-    file << "level_ring_weight_limit_points " << levelRingWeightLimitPoints_ << "\n";
+    for (int ringIndex = 0; ringIndex < SpellRingCount; ++ringIndex) {
+        const RingLevelUpgradePoints points = clampedRingLevelUpgradePoints(
+            levelRingUpgradePoints_[static_cast<std::size_t>(ringIndex)]);
+        file << "level_ring_points " << (ringIndex + 1) << " "
+            << points.radius << " "
+            << points.speed << " "
+            << points.weightLimit << "\n";
+    }
     file << "workshop_initial_radius_level " << workshopInitialRadiusLevel_ << "\n";
     file << "workshop_initial_speed_level " << workshopInitialSpeedLevel_ << "\n";
     file << "workshop_shift_distance_level " << workshopShiftDistanceLevel_ << "\n";

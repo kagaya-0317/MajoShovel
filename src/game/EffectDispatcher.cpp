@@ -263,12 +263,14 @@ struct StatusDefinition {
     double defaultValue = 1.0;
 };
 
-constexpr std::array<StatusDefinition, 12> StatusDefinitions{{
+constexpr std::array<StatusDefinition, 14> StatusDefinitions{{
     {"status_poison", 8.0, 1.0},
     {"status_slow", 8.0, 0.65},
+    {"status_glued", 4.0, 0.45},
     {"status_bleed", 8.0, 1.0},
     {"status_giant", 8.0, 1.0},
     {"status_paralyze", 1.5, 1.0},
+    {"status_shocked", 1.2, 1.0},
     {"status_sleep", 4.0, 1.0},
     {"status_stun", 0.6, 1.0},
     {"status_confuse", 3.0, 1.0},
@@ -453,6 +455,36 @@ void applyOrbitModifierInvocation(const EffectInvocation& invocation)
     recordEffectDiscovery(invocation);
 }
 
+std::string spawnBiasGroupFromEffect(std::string_view effect)
+{
+    constexpr std::string_view Prefix = "spawn_bias_";
+    if (effect.rfind(Prefix, 0) != 0 || effect.size() <= Prefix.size()) {
+        return {};
+    }
+    return std::string(effect.substr(Prefix.size()));
+}
+
+void applySpawnBiasInvocation(const EffectInvocation& invocation)
+{
+    if (invocation.context->triggerType != EffectTriggerType::Orbit) {
+        return;
+    }
+    if (invocation.target != "ring") {
+        return;
+    }
+    if (invocation.context->enemies == nullptr) {
+        return;
+    }
+
+    const std::string group = spawnBiasGroupFromEffect(invocation.effect);
+    if (group.empty()) {
+        return;
+    }
+
+    invocation.context->enemies->applySpawnBias(group, invocation.value);
+    recordEffectDiscovery(invocation);
+}
+
 void applyItemParameterInvocation(const EffectInvocation& invocation)
 {
     if (invocation.context->triggerType != EffectTriggerType::Orbit ||
@@ -541,6 +573,12 @@ void applyAreaInvocation(const EffectInvocation& invocation)
         invocation.context->orbitItem->windPushRadius =
             std::max(invocation.context->orbitItem->windPushRadius, std::max(radius, invocation.context->orbitItem->hitRadius + 36.0f));
         invocation.context->orbitItem->windPushStrength += static_cast<float>(std::max(1.0, invocation.value));
+        return;
+    }
+    if (invocation.effect == "conduct_water_puddle") {
+        invocation.context->orbitItem->conductWaterPuddleRadius =
+            std::max(invocation.context->orbitItem->conductWaterPuddleRadius, std::max(radius, invocation.context->orbitItem->hitRadius + 36.0f));
+        invocation.context->orbitItem->conductWaterPuddleStrength += static_cast<float>(std::max(1.0, invocation.value));
         return;
     }
 }
@@ -728,7 +766,7 @@ void EffectDispatcher::registerFoundationHandlers(const ObjectCatalog& catalog)
         }
     }
 
-    for (std::string_view effect : {"light", "detect_hidden", "detect_treasure", "detect", "cold_air_aura", "vacuum_pull_light", "hot_air", "wind_push_light"}) {
+    for (std::string_view effect : {"light", "detect_hidden", "detect_treasure", "detect", "cold_air_aura", "vacuum_pull_light", "hot_air", "wind_push_light", "conduct_water_puddle"}) {
         if (catalog.effectCodes.find(std::string(effect)) != catalog.effectCodes.end()) {
             registerHandler(std::string(effect), applyAreaInvocation);
         }
@@ -752,7 +790,7 @@ void EffectDispatcher::registerFoundationHandlers(const ObjectCatalog& catalog)
         }
     }
 
-    for (std::string_view effect : {"status_poison", "status_slow", "status_giant", "status_paralyze", "status_sleep", "status_bleed", "status_stun", "status_confuse", "status_blind", "status_wet", "status_hot", "status_frozen"}) {
+    for (std::string_view effect : {"status_poison", "status_slow", "status_glued", "status_giant", "status_paralyze", "status_shocked", "status_sleep", "status_bleed", "status_stun", "status_confuse", "status_blind", "status_wet", "status_hot", "status_frozen"}) {
         registerHandler(std::string(effect), applyStateInvocation);
     }
 
@@ -776,6 +814,13 @@ void EffectDispatcher::registerFoundationHandlers(const ObjectCatalog& catalog)
 
     for (std::string_view effect : {"cast_fire", "cast_ice", "cast_thunder", "cast_wind", "cast_earth"}) {
         registerHandler(std::string(effect), applyCastMagicInvocation);
+    }
+
+    for (const auto& [effect, definition] : catalog.effectCodes) {
+        (void)definition;
+        if (effect.rfind("spawn_bias_", 0) == 0) {
+            registerHandler(effect, applySpawnBiasInvocation);
+        }
     }
 }
 

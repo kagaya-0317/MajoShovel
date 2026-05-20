@@ -232,7 +232,7 @@ double EntityStatus::applyModifiers(ModifierStat stat, double baseValue) const
 
 double EntityStatus::movementMultiplierFromStates() const
 {
-    if (hasState("status_paralyze") || hasState("status_sleep") || hasState("status_stun") || hasState("status_frozen")) {
+    if (hasState("status_paralyze") || hasState("status_shocked") || hasState("status_sleep") || hasState("status_stun") || hasState("status_frozen")) {
         return 0.0;
     }
 
@@ -241,6 +241,9 @@ double EntityStatus::movementMultiplierFromStates() const
         if (state.stateId == "status_slow") {
             const double slowMultiplier = state.value > 0.0 ? state.value : 0.65;
             result *= std::clamp(slowMultiplier, 0.0, 1.0);
+        } else if (state.stateId == "status_glued") {
+            const double gluedMultiplier = state.value > 0.0 ? state.value : 0.45;
+            result *= std::clamp(gluedMultiplier, 0.05, 1.0);
         }
     }
     return result;

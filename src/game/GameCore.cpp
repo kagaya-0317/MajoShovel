@@ -78,27 +78,28 @@ UiResultDialogLine levelUpResultChangeLine(std::string prefix, std::string after
     return line;
 }
 
-std::vector<UiResultDialogLine> levelUpResultLines(UpgradeChoice choice, float beforeValue, float afterValue)
+std::vector<UiResultDialogLine> levelUpResultLines(RingLevelUpgradeSelection selection, float beforeValue, float afterValue)
 {
     std::vector<UiResultDialogLine> lines;
     char prefix[128];
     char after[64];
-    switch (choice) {
-    case UpgradeChoice::Radius:
-        lines.push_back(levelUpResultTextLine("リングのサイズが大きくなった！"));
-        std::snprintf(prefix, sizeof(prefix), "リング半径: %.0f → ", beforeValue);
+    const int displayRingIndex = std::clamp(selection.ringIndex, 0, SpellRingCount - 1) + 1;
+    switch (selection.kind) {
+    case RingLevelUpgradeKind::Radius:
+        lines.push_back(levelUpResultTextLine("リング" + std::to_string(displayRingIndex) + "のサイズが大きくなった！"));
+        std::snprintf(prefix, sizeof(prefix), "リング%d 半径: %.0f → ", displayRingIndex, beforeValue);
         std::snprintf(after, sizeof(after), "%.0f", afterValue);
         lines.push_back(levelUpResultChangeLine(prefix, after));
         break;
-    case UpgradeChoice::Speed:
-        lines.push_back(levelUpResultTextLine("リングの回転速度が速くなった！"));
-        std::snprintf(prefix, sizeof(prefix), "回転速度: %.2f → ", beforeValue);
+    case RingLevelUpgradeKind::Speed:
+        lines.push_back(levelUpResultTextLine("リング" + std::to_string(displayRingIndex) + "の回転速度が速くなった！"));
+        std::snprintf(prefix, sizeof(prefix), "リング%d 回転速度: %.2f → ", displayRingIndex, beforeValue);
         std::snprintf(after, sizeof(after), "%.2f", afterValue);
         lines.push_back(levelUpResultChangeLine(prefix, after));
         break;
-    case UpgradeChoice::WeightLimit:
-        lines.push_back(levelUpResultTextLine("リングの重量上限が拡張された！"));
-        std::snprintf(prefix, sizeof(prefix), "重量上限: %.1fkg → ", beforeValue);
+    case RingLevelUpgradeKind::WeightLimit:
+        lines.push_back(levelUpResultTextLine("リング" + std::to_string(displayRingIndex) + "の重量上限が拡張された！"));
+        std::snprintf(prefix, sizeof(prefix), "リング%d 重量上限: %.1fkg → ", displayRingIndex, beforeValue);
         std::snprintf(after, sizeof(after), "%.1fkg", afterValue);
         lines.push_back(levelUpResultChangeLine(prefix, after));
         break;
@@ -358,9 +359,7 @@ void Game::resetWorldUiState()
     levelUpResultDialog_ = {};
     baseRingWorkshopActive_ = false;
     baseRingWorkshopSelection_ = 0;
-    ringWorkshopDraftRadiusPoints_ = levelRingRadiusPoints_;
-    ringWorkshopDraftSpeedPoints_ = levelRingSpeedPoints_;
-    ringWorkshopDraftWeightLimitPoints_ = levelRingWeightLimitPoints_;
+    ringWorkshopDraftUpgradePoints_ = levelRingUpgradePoints_;
     baseBookshelfActive_ = false;
     bookshelfPage_ = BookshelfPage::Menu;
     bookshelfSelection_ = 0;
@@ -1102,9 +1101,13 @@ void Game::applyPermanentUpgrades()
     player_.maxHp = playerMaxHpForLevel(player_.level) + maxHpUpgradeLevel_ * 2;
     player_.hp = std::min(player_.hp, player_.maxHp);
     player_.spellRingShiftDistanceBonus = effectiveRingShiftDistance() - balance_.spellRingShiftDistance;
-    spellRing_.setRadius(effectiveInitialRingRadius(levelRingRadiusPoints_));
-    spellRing_.setAngularSpeed(effectiveInitialRingSpeed(levelRingSpeedPoints_));
-    spellRing_.setMaxEquippedWeightForAllRings(effectiveInitialRingWeightLimit(levelRingWeightLimitPoints_));
+    for (int ringIndex = 0; ringIndex < SpellRingCount; ++ringIndex) {
+        const RingLevelUpgradePoints points = clampedRingLevelUpgradePoints(
+            levelRingUpgradePoints_[static_cast<std::size_t>(ringIndex)]);
+        spellRing_.setRadiusForRing(ringIndex, effectiveInitialRingRadiusForRing(ringIndex, points.radius));
+        spellRing_.setAngularSpeedForRing(ringIndex, effectiveInitialRingSpeedForRing(ringIndex, points.speed));
+        spellRing_.setMaxEquippedWeightForRing(ringIndex, effectiveInitialRingWeightLimitForRing(ringIndex, points.weightLimit));
+    }
 }
 
 LevelGainResult Game::gainPlayerXp(int amount)
@@ -1128,24 +1131,27 @@ LevelGainResult Game::gainPlayerXp(int amount)
     return result;
 }
 
-float Game::effectiveInitialRingRadius(int levelRadiusPoints) const
+float Game::effectiveInitialRingRadiusForRing(int ringIndex, int levelRadiusPoints) const
 {
+    (void)ringIndex;
     const float baseUpgradeMultiplier = 1.0f + static_cast<float>(ringRadiusUpgradeLevel_) * 0.08f;
     const float workshopMultiplier = 1.0f + static_cast<float>(workshopInitialRadiusLevel_) * 0.05f;
-    const float levelMultiplier = static_cast<float>(std::pow(1.1, std::max(0, levelRadiusPoints)));
+    const float levelMultiplier = SpellRingSystem::levelScaleMultiplierForPoints(levelRadiusPoints);
     return balance_.spellRingRadius * baseUpgradeMultiplier * workshopMultiplier * levelMultiplier;
 }
 
-float Game::effectiveInitialRingSpeed(int levelSpeedPoints) const
+float Game::effectiveInitialRingSpeedForRing(int ringIndex, int levelSpeedPoints) const
 {
+    (void)ringIndex;
     const float baseUpgradeMultiplier = 1.0f + static_cast<float>(ringSpeedUpgradeLevel_) * 0.08f;
     const float workshopMultiplier = 1.0f + static_cast<float>(workshopInitialSpeedLevel_) * 0.05f;
-    const float levelMultiplier = static_cast<float>(std::pow(1.1, std::max(0, levelSpeedPoints)));
+    const float levelMultiplier = SpellRingSystem::levelScaleMultiplierForPoints(levelSpeedPoints);
     return balance_.spellRingSpeed * baseUpgradeMultiplier * workshopMultiplier * levelMultiplier;
 }
 
-float Game::effectiveInitialRingWeightLimit(int levelWeightLimitPoints) const
+float Game::effectiveInitialRingWeightLimitForRing(int ringIndex, int levelWeightLimitPoints) const
 {
+    (void)ringIndex;
     return SpellRingSystem::InitialMaxEquippedWeight +
         SpellRingSystem::LevelWeightLimitUpgradeAmount * static_cast<float>(std::max(0, levelWeightLimitPoints));
 }
@@ -1778,6 +1784,11 @@ void Game::updateScreenMode(
         return;
     }
 
+    if (firstItemAcquisitionNoticeActive()) {
+        updateFirstItemAcquisitionNotice(input, ui);
+        return;
+    }
+
     if (debugItemPickerActive_) {
         updateDebugItemPicker(input, ui);
         return;
@@ -1937,28 +1948,31 @@ void Game::updateScreenMode(
             break;
         }
         if (levels_.isChoosing()) {
-            const float beforeRadius = spellRing_.radius();
-            const float beforeSpeed = spellRing_.angularSpeed();
-            const float beforeWeightLimit = spellRing_.maxEquippedWeight();
-            const std::optional<UpgradeChoice> choice = upgrades_.update(
+            const std::optional<RingLevelUpgradeSelection> selection = upgrades_.update(
                 input,
                 ui,
-                levels_,
-                spellRing_,
-                levelRingRadiusPoints_,
-                levelRingSpeedPoints_,
-                levelRingWeightLimitPoints_);
-            if (choice) {
-                float beforeValue = beforeRadius;
-                float afterValue = spellRing_.radius();
-                if (*choice == UpgradeChoice::Speed) {
-                    beforeValue = beforeSpeed;
-                    afterValue = spellRing_.angularSpeed();
-                } else if (*choice == UpgradeChoice::WeightLimit) {
-                    beforeValue = beforeWeightLimit;
-                    afterValue = spellRing_.maxEquippedWeight();
+                spellRing_);
+            if (selection) {
+                const int ringIndex = std::clamp(selection->ringIndex, 0, SpellRingCount - 1);
+                float beforeValue = spellRing_.radiusForRing(ringIndex);
+                if (selection->kind == RingLevelUpgradeKind::Speed) {
+                    beforeValue = spellRing_.angularSpeedForRing(ringIndex);
+                } else if (selection->kind == RingLevelUpgradeKind::WeightLimit) {
+                    beforeValue = spellRing_.maxEquippedWeightForRing(ringIndex);
                 }
-                openUiResultDialog(levelUpResultDialog_, "レベルアップ", levelUpResultLines(*choice, beforeValue, afterValue));
+
+                RingLevelUpgradePoints& points = levelRingUpgradePoints_[static_cast<std::size_t>(ringIndex)];
+                ++ringLevelUpgradePointRef(points, selection->kind);
+                levels_.finishChoice();
+                applyPermanentUpgrades();
+
+                float afterValue = spellRing_.radiusForRing(ringIndex);
+                if (selection->kind == RingLevelUpgradeKind::Speed) {
+                    afterValue = spellRing_.angularSpeedForRing(ringIndex);
+                } else if (selection->kind == RingLevelUpgradeKind::WeightLimit) {
+                    afterValue = spellRing_.maxEquippedWeightForRing(ringIndex);
+                }
+                openUiResultDialog(levelUpResultDialog_, "レベルアップ", levelUpResultLines(*selection, beforeValue, afterValue));
             }
         } else {
             mode_ = ScreenMode::Playing;
@@ -1977,6 +1991,7 @@ bool Game::gameProgressPaused() const
 {
     return debugItemPickerActive_ ||
         debugStoryTestActive_ ||
+        firstItemAcquisitionNoticeActive() ||
         dialogue_.active() ||
         bossEncounterBlocksProgress() ||
         endingKamishibaiPending_ ||
@@ -2311,6 +2326,7 @@ void Game::update(const Input& input, const Time& time)
         for (const WorldDropPickupEvent& event : pickupEvents) {
             if (event.kind == WorldDropKind::Object) {
                 runStats_.acquiredObjectItems += std::max(1, event.quantity);
+                recordObjectObtainedForFirstNotice(event.id, event.instanceId, event.protectable, player_.position);
             }
         }
         appendPickupLogs(pickupEvents);
@@ -2450,6 +2466,7 @@ void Game::update(const Input& input, const Time& time)
             }
             if (capture.type == CaptureResultType::Success) {
                 capturedEnemyThisFrame = true;
+                recordObjectObtainedForFirstNotice(capture.objectId, capture.instanceId, capture.protectable, capture.position);
                 playAudioSe(AudioSeCaptureSuccess);
                 pushDungeonLog(capture.enemyName + " を捕まえた", "capture_success:" + capture.enemyName);
                 effects_.spawnCaptureSuccess(capture.position, player_.position - capture.position);

@@ -90,6 +90,9 @@ struct Enemy {
     float jumpElapsedSeconds = 0.0f;
     float jumpDurationSeconds = 0.0f;
     float jumpArcHeight = 0.0f;
+    bool externalBounceActive = false;
+    float externalBounceFallDamage = 0.0f;
+    float externalBounceFallDamageMultiplier = 1.0f;
     float altitude = 0.0f;
     float hoverAltitude = 0.0f;
     float hoverBobAmplitude = 0.0f;

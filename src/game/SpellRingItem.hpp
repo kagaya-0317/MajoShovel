@@ -65,6 +65,8 @@ struct SpellRingItem {
     float windPushRadius = 0.0f;
     float windPushStrength = 0.0f;
     float windPushFxTimer = 0.0f;
+    float conductWaterPuddleRadius = 0.0f;
+    float conductWaterPuddleStrength = 0.0f;
     int dryWetBonusDamage = 0;
     double slashDamageMultiplier = 1.0;
     float orbitDistanceOffset = 0.0f;

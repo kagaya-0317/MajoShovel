@@ -748,6 +748,8 @@ void EffectSystem::spawnEnemyHit(Vec2 position, std::string_view effect)
         id = ParticleEffectId::EnemyPoisonHit;
     } else if (effect == "status_slow" || effect == "status_slow_chance") {
         id = ParticleEffectId::EnemySlowHit;
+    } else if (effect == "status_glued") {
+        id = ParticleEffectId::EnemySlowHit;
     } else if (effect == "status_bleed" || effect == "status_bleed_chance") {
         id = ParticleEffectId::EnemyBleedHit;
     } else if (effect == "status_giant") {
@@ -766,17 +768,17 @@ void EffectSystem::spawnEnemyHit(Vec2 position, std::string_view effect)
         id = ParticleEffectId::MagicIce;
     } else if (effect == "status_stun" || effect == "status_stun_chance") {
         id = ParticleEffectId::EnemyHit;
-    } else if (effect == "fire" || effect == "break_fire_burst" || effect == "hot_air" || effect == "dry_wet_bonus_damage") {
+    } else if (effect == "fire" || effect == "break_fire_burst" || effect == "flame_burst" || effect == "hot_air" || effect == "dry_wet_bonus_damage") {
         id = ParticleEffectId::MagicFire;
     } else if (effect == "ice" || effect == "water" || effect == "water_spray") {
         id = ParticleEffectId::MagicIce;
-    } else if (effect == "thunder" || effect == "status_paralyze" || effect == "status_paralyze_chance") {
+    } else if (effect == "thunder" || effect == "status_paralyze" || effect == "status_paralyze_chance" || effect == "status_shocked" || effect == "shock_wet" || effect == "conduct_water_puddle") {
         id = ParticleEffectId::MagicThunder;
-    } else if (effect == "wind" || effect == "wind_push_light") {
+    } else if (effect == "wind" || effect == "wind_push_light" || effect == "bounce_grounded") {
         id = ParticleEffectId::MagicWind;
-    } else if (effect == "earth") {
+    } else if (effect == "earth" || effect == "fall_damage_synergy") {
         id = ParticleEffectId::MagicEarth;
-    } else if (effect == "magic" || effect == "complete_magic_circle") {
+    } else if (effect == "magic" || effect == "complete_magic_circle" || effect == "sleeping_bonus_damage") {
         id = ParticleEffectId::MagicDefault;
     }
     spawn(id, position);
@@ -905,6 +907,8 @@ void EffectSystem::spawnStatusAura(Vec2 position, std::string_view stateId)
         spawn(ParticleEffectId::PoisonAura, position);
     } else if (stateId == "status_slow") {
         spawn(ParticleEffectId::SlowAura, position);
+    } else if (stateId == "status_glued") {
+        spawn(ParticleEffectId::SlowAura, position);
     } else if (stateId == "status_bleed") {
         spawn(ParticleEffectId::BleedAura, position);
     } else if (stateId == "status_blind") {
@@ -915,6 +919,8 @@ void EffectSystem::spawnStatusAura(Vec2 position, std::string_view stateId)
         spawn(ParticleEffectId::MagicFire, position);
     } else if (stateId == "status_frozen") {
         spawn(ParticleEffectId::MagicIce, position);
+    } else if (stateId == "status_shocked") {
+        spawn(ParticleEffectId::MagicThunder, position);
     } else if (stateId == "status_confuse") {
         spawn(ParticleEffectId::MagicDefault, position);
     }

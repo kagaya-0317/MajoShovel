@@ -16,6 +16,7 @@
 #include "game/TileMap.hpp"
 #include <random>
 #include <string>
+#include <unordered_map>
 #include <unordered_set>
 #include <vector>
 
@@ -69,8 +70,11 @@ enum class CaptureResultType {
 struct CaptureResult {
     CaptureResultType type = CaptureResultType::NoTarget;
     std::string enemyName;
+    std::string objectId;
+    std::string instanceId;
     float chance = 0.0f;
     Vec2 position{};
+    bool protectable = false;
 };
 
 struct CaptureTargetPreview {
@@ -103,6 +107,7 @@ struct EnemyMagicHitSpec {
     Vec2 knockbackDirection{};
     float knockbackStrength = 0.0f;
     int maxHits = 0;
+    int excludedRuntimeId = 0;
 };
 
 struct EnemyMinimapMarker {
@@ -207,6 +212,8 @@ public:
     int pullMetalEnemies(Vec2 center, TileMap& map, float dt, float radius = 160.0f);
     int pullLightEnemies(Vec2 center, TileMap& map, float dt, float radius, float strength = 1.0f);
     int pushLightEnemies(Vec2 center, TileMap& map, float dt, float radius, float strength = 1.0f);
+    void clearSpawnBiases();
+    void applySpawnBias(std::string_view group, double multiplier);
     int consumePendingXp();
     void clearTemporaryState();
 
@@ -229,6 +236,7 @@ private:
     const EnemyDefinition* chooseEnemyDefinition(const EnemyCatalog& enemyCatalog);
     const EnemyDefinition* chooseNormalRandomEnemyDefinition(const EnemyCatalog& enemyCatalog);
     const EnemyDefinition* chooseDugSpawnEnemyDefinition(const EnemyCatalog& enemyCatalog, std::string_view stageId, int depthRank);
+    double spawnBiasMultiplierFor(const EnemyDefinition& definition) const;
     void logSpawnWeightFallbackOnce(std::string key, std::string message);
     void applyDefinition(Enemy& enemy, const EnemyDefinition* definition, const RuntimeBalance& balance, const EnemyCatalog& enemyCatalog);
     bool spawnDefinitionAt(Vec2 position, const EnemyDefinition* definition, const RuntimeBalance& balance, const EnemyCatalog& enemyCatalog, bool detectedOnSpawn = false, Vec2 detectedTarget = {}, float spawnWarmupOverride = -1.0f);
@@ -243,6 +251,7 @@ private:
     void moveWithCollision(Enemy& enemy, TileMap& map, Vec2 desiredVelocity, float dt);
     bool resolvePlayerOverlap(Player& player, Enemy& enemy, TileMap& map, const RuntimeBalance& balance);
     void finishEnemyDeath(Enemy& enemy, SpellRingSystem& spellRing);
+    int applyConductiveShock(Vec2 position, float radius, double value, double duration, int excludedEnemyId, std::string_view source);
 
     ObjectPool<Enemy, balance::MaxEnemies> enemies_;
     std::vector<EnemyEvent> events_;
@@ -254,6 +263,7 @@ private:
     std::unordered_set<std::string> loggedUnknownUnawareAi_;
     std::unordered_set<std::string> loggedUnsupportedBehavior_;
     std::unordered_set<std::string> loggedSpawnWeightFallbacks_;
+    std::unordered_map<std::string, double> spawnBiasMultipliers_;
     int flowMinX_ = 0;
     int flowMinY_ = 0;
     int flowWidth_ = 0;

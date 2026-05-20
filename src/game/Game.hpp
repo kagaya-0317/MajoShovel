@@ -29,6 +29,7 @@
 #include "game/MagicFxSystem.hpp"
 #include "game/MagicSystem.hpp"
 #include "game/OpeningMetaSave.hpp"
+#include "game/RingLevelUpgrade.hpp"
 #include "game/SpellRingSystem.hpp"
 #include "game/StoryEvent.hpp"
 #include "game/Player.hpp"
@@ -39,6 +40,7 @@
 
 #include <array>
 #include <cstdint>
+#include <deque>
 #include <limits>
 #include <optional>
 #include <random>
@@ -597,9 +599,9 @@ private:
     void applyScreenTransitionTarget(ScreenTransitionTarget target);
     void applyPermanentUpgrades();
     LevelGainResult gainPlayerXp(int amount);
-    float effectiveInitialRingRadius(int levelRadiusPoints) const;
-    float effectiveInitialRingSpeed(int levelSpeedPoints) const;
-    float effectiveInitialRingWeightLimit(int levelWeightLimitPoints) const;
+    float effectiveInitialRingRadiusForRing(int ringIndex, int levelRadiusPoints) const;
+    float effectiveInitialRingSpeedForRing(int ringIndex, int levelSpeedPoints) const;
+    float effectiveInitialRingWeightLimitForRing(int ringIndex, int levelWeightLimitPoints) const;
     float effectiveRingShiftDistance() const;
     float effectiveCollectionPullRadius(int collectionLevel) const;
     void configureWatcher();
@@ -641,6 +643,12 @@ private:
         int price = 0;
         int quantity = 0;
     };
+    struct FirstItemAcquisitionNotice {
+        std::string objectId;
+        std::string instanceId;
+        std::string statusText;
+        bool protectable = false;
+    };
     struct MerchantSellTarget {
         BaseItemSource source = BaseItemSource::Backpack;
         int slotIndex = -1;
@@ -677,6 +685,7 @@ private:
     std::vector<StorageEntry> processingEntries() const;
     std::optional<StorageEntry> processingEntryForScreenSlot(int slotIndex) const;
     std::optional<StorageEntry> warehouseEntryForPageSlot(int slotIndex, int page) const;
+    std::optional<StorageEntry> warehouseEntryForPageSlot(int slotIndex, int page, int slotsPerPage) const;
     InventoryUiEntryView storageEntryView(StorageEntry entry, bool warehouseEntry) const;
     ProcessingTarget processingTargetForScreenSlot(int slotIndex) const;
     const char* processingModeName(ProcessingMode mode) const;
@@ -731,7 +740,7 @@ private:
     bool ringWorkshopRespecChanged() const;
     int ringWorkshopRespecMoneyCost() const;
     int ringWorkshopRespecMoonCost() const;
-    bool adjustRingWorkshopRespec(int fromIndex, int toIndex);
+    bool adjustRingWorkshopRespec(RingLevelUpgradeSelection from, RingLevelUpgradeSelection to);
     void confirmRingWorkshopRespec();
     const char* ringWorkshopUpgradeName(RingWorkshopUpgrade upgrade) const;
     int ringWorkshopUpgradeLevel(RingWorkshopUpgrade upgrade) const;
@@ -745,6 +754,14 @@ private:
     void syncEncyclopediaFromInventoryAndRing();
     void captureEncyclopediaSyncSuppressState();
     void applyEffectDiscoveries(const std::vector<EffectDiscoveryEvent>& discoveries);
+    void recordObjectObtainedForFirstNotice(
+        std::string_view objectId,
+        std::string_view instanceId,
+        bool protectable,
+        Vec2 position);
+    bool firstItemAcquisitionNoticeActive() const;
+    void closeFirstItemAcquisitionNotice();
+    void updateFirstItemAcquisitionNotice(const Input& input, UiContext& ui);
     void addStoryFlag(std::string flag);
     void updateBookshelfScreen(const Input& input, UiContext& ui);
     void updateScreenMode(
@@ -982,6 +999,7 @@ private:
     void renderPauseMenu(Renderer& renderer) const;
     void renderRingScreen(Renderer& renderer, float totalTime) const;
     void renderRingStatusHud(Renderer& renderer) const;
+    void renderFirstItemAcquisitionNotice(Renderer& renderer) const;
     void renderDungeonMinimap(Renderer& renderer, const std::vector<LightSource>& itemLights) const;
     void renderDungeonStatusHud(Renderer& renderer) const;
     void renderDungeonLogs(Renderer& renderer) const;
@@ -1025,6 +1043,7 @@ private:
     InventorySystem inventory_;
     WorldDropSystem worldDrops_;
     EncyclopediaSystem encyclopedia_;
+    std::deque<FirstItemAcquisitionNotice> firstItemAcquisitionNotices_;
     std::unordered_map<std::string, int> encyclopediaOwnedSyncSuppressCounts_;
     std::unordered_map<std::string, int> encyclopediaRingSyncSuppressCounts_;
     LevelSystem levels_;
@@ -1101,9 +1120,8 @@ private:
     int baseProcessingCommandSlot_ = -1;
     bool baseRingWorkshopActive_ = false;
     int baseRingWorkshopSelection_ = 0;
-    int ringWorkshopDraftRadiusPoints_ = 0;
-    int ringWorkshopDraftSpeedPoints_ = 0;
-    int ringWorkshopDraftWeightLimitPoints_ = 0;
+    std::optional<RingLevelUpgradeSelection> ringWorkshopRespecSource_;
+    RingLevelUpgradePointTable ringWorkshopDraftUpgradePoints_{};
     bool baseBookshelfActive_ = false;
     BookshelfPage bookshelfPage_ = BookshelfPage::Menu;
     int bookshelfSelection_ = 0;
@@ -1278,9 +1296,7 @@ private:
     int ringRadiusUpgradeLevel_ = 0;
     int ringSpeedUpgradeLevel_ = 0;
     int collectionRangeUpgradeLevel_ = 0;
-    int levelRingRadiusPoints_ = 0;
-    int levelRingSpeedPoints_ = 0;
-    int levelRingWeightLimitPoints_ = 0;
+    RingLevelUpgradePointTable levelRingUpgradePoints_{};
     int workshopInitialRadiusLevel_ = 0;
     int workshopInitialSpeedLevel_ = 0;
     int workshopShiftDistanceLevel_ = 0;

@@ -4,6 +4,7 @@
 #include "engine/Renderer.hpp"
 #include "engine/Ui.hpp"
 #include "game/LevelSystem.hpp"
+#include "game/RingLevelUpgrade.hpp"
 #include "game/SpellRingSystem.hpp"
 
 #include <optional>
@@ -12,24 +13,20 @@ namespace majo {
 
 class UpgradeSystem {
 public:
-    std::optional<UpgradeChoice> update(
+    std::optional<RingLevelUpgradeSelection> update(
         const Input& input,
         UiContext& ui,
-        LevelSystem& level,
-        SpellRingSystem& spellRing,
-        int& levelRingRadiusPoints,
-        int& levelRingSpeedPoints,
-        int& levelRingWeightLimitPoints);
+        SpellRingSystem& spellRing);
     void render(
         Renderer& renderer,
         const LevelSystem& level,
         const SpellRingSystem& spellRing,
-        int levelRingRadiusPoints,
-        int levelRingSpeedPoints,
-        int levelRingWeightLimitPoints);
+        const RingLevelUpgradePointTable& levelRingUpgradePoints);
 
 private:
     int selectedOption_ = 0;
+    int selectedRingIndex_ = 0;
+    bool ringSelectionInitialized_ = false;
 };
 
 }

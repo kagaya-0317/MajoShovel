@@ -783,13 +783,16 @@ int WorldDropSystem::update(
                 }
                 return false;
             }
-            pickedUp = inventory.addObjectItem(catalog, drop.id);
+            InventoryAddResult addResult;
+            pickedUp = inventory.addObjectItem(catalog, drop.id, &addResult);
             if (pickedUp) {
                 const ObjectDefinition* object = catalog.registry.findById(drop.id);
                 pickupEvent.kind = drop.kind;
                 pickupEvent.id = drop.id;
+                pickupEvent.instanceId = addResult.instanceId;
                 pickupEvent.name = object != nullptr ? object->name : drop.id;
                 pickupEvent.quantity = 1;
+                pickupEvent.protectable = addResult.kind == InventoryAddKind::Instance && !addResult.instanceId.empty();
                 hasPickupEvent = true;
             }
         } else if (drop.kind == WorldDropKind::Money) {

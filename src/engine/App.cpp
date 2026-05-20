@@ -357,6 +357,10 @@ bool App::loadAssets()
         logError(renderer_->lastAssetError());
         ok = false;
     }
+    if (!renderer_->loadUiMessageWindowTexture("assets/UI_messageWindow.png")) {
+        logError(renderer_->lastAssetError());
+        ok = false;
+    }
     if (!renderer_->loadUiSubWindowTexture("assets/UI_window2.png")) {
         logError(renderer_->lastAssetError());
         ok = false;
@@ -397,6 +401,9 @@ bool App::reloadAssetForPath(const std::string& changedPath)
     }
     if (fileName == "ui_window1.png") {
         return renderer_->loadUiWindowTexture("assets/UI_window1.png");
+    }
+    if (fileName == "ui_messagewindow.png") {
+        return renderer_->loadUiMessageWindowTexture("assets/UI_messageWindow.png");
     }
     if (fileName == "ui_window2.png") {
         return renderer_->loadUiSubWindowTexture("assets/UI_window2.png");
@@ -439,6 +446,12 @@ bool App::reloadAssetForPath(const std::string& changedPath)
     if (extension == ".png" &&
         fileName.rfind("op_", 0) == 0 &&
         parentPath.find("assets/opening") != std::string::npos) {
+        renderer_->invalidateImage(changedPath);
+        return true;
+    }
+    if (extension == ".png" &&
+        fileName.rfind("tatie_", 0) == 0 &&
+        parentPath.find("assets/taties") != std::string::npos) {
         renderer_->invalidateImage(changedPath);
         return true;
     }

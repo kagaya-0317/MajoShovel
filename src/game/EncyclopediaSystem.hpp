@@ -70,7 +70,7 @@ public:
         std::span<const UiRect> avoidRects = {});
 
     void noteItemDiscovered(const ObjectDefinition& object, Vec2 position);
-    void noteItemObtained(const ObjectDefinition& object, Vec2 position);
+    bool noteItemObtained(const ObjectDefinition& object, Vec2 position);
     void noteItemEquipped(const ObjectDefinition& object, Vec2 position);
     void noteItemEffect(const ObjectDefinition& object, std::string_view effectKey, std::string_view description, Vec2 position);
     void noteEffectEvent(const EffectDiscoveryEvent& event, const ObjectCatalog& catalog);

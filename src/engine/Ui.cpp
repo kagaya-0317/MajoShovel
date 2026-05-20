@@ -22,6 +22,7 @@ struct UiWindowState {
     bool seen = false;
     bool closing = false;
     bool cancelButton = false;
+    UiWindowFrame frame = UiWindowFrame::Default;
 };
 
 UiCancelControlState* activeCancelState = nullptr;
@@ -59,11 +60,25 @@ void applyWindowTransform(Renderer& renderer, UiRect panel, float scale, float a
     renderer.pushScreenTransform(panelCenter(panel), scale, alpha);
 }
 
-void drawUiWindowChrome(Renderer& renderer, UiRect panel, std::string_view title, std::string_view helpText, bool cancelButton)
+bool uiWindowFrameHasImageTexture(Renderer& renderer, UiWindowFrame frame)
 {
-    drawUiPanel(renderer, panel);
-    drawUiHeader(renderer, panel, title);
-    drawUiFooter(renderer, panel, helpText);
+    if (frame == UiWindowFrame::Message && renderer.hasUiMessageWindowTexture()) {
+        return true;
+    }
+    return renderer.hasUiWindowTexture();
+}
+
+void drawUiWindowChrome(
+    Renderer& renderer,
+    UiRect panel,
+    std::string_view title,
+    std::string_view helpText,
+    bool cancelButton,
+    UiWindowFrame frame)
+{
+    drawUiPanel(renderer, panel, frame);
+    drawUiHeader(renderer, panel, title, frame);
+    drawUiFooter(renderer, panel, helpText, frame);
     if (cancelButton) {
         drawUiCancelButton(renderer, panel);
     }
@@ -425,7 +440,7 @@ void finishUiFrame(Renderer& renderer)
         const float scale = lerp(1.0f, 1.1f, t);
         const float alpha = 1.0f - t;
         applyWindowTransform(renderer, state.panel, scale, alpha);
-        drawUiWindowChrome(renderer, state.panel, state.title, state.helpText, state.cancelButton);
+        drawUiWindowChrome(renderer, state.panel, state.title, state.helpText, state.cancelButton, state.frame);
         renderer.popScreenTransform();
         if (state.closeProgress >= 1.0f) {
             finished.push_back(entry.first);
@@ -457,7 +472,7 @@ UiWindowScope::UiWindowScope(
     : renderer_(&renderer)
 {
     if (!options.animated) {
-        drawUiWindowChrome(renderer, panel, title, helpText, options.cancelButton);
+        drawUiWindowChrome(renderer, panel, title, helpText, options.cancelButton, options.frame);
         return;
     }
 
@@ -471,13 +486,14 @@ UiWindowScope::UiWindowScope(
     state.title = std::string(title);
     state.helpText = std::string(helpText);
     state.cancelButton = options.cancelButton;
+    state.frame = options.frame;
     state.seen = true;
     state.openProgress = std::min(1.0f, state.openProgress + windowAnimationStep);
 
     const float t = easeOut(state.openProgress);
     applyWindowTransform(renderer, panel, lerp(0.9f, 1.0f, t), t);
     transformed_ = true;
-    drawUiWindowChrome(renderer, panel, title, helpText, options.cancelButton);
+    drawUiWindowChrome(renderer, panel, title, helpText, options.cancelButton, options.frame);
 }
 
 UiWindowScope::~UiWindowScope()
@@ -658,8 +674,12 @@ bool uiCancelRequested(UiCancelControlState& state, const Input& input, UiContex
     return false;
 }
 
-void drawUiPanel(Renderer& renderer, UiRect panel)
+void drawUiPanel(Renderer& renderer, UiRect panel, UiWindowFrame frame)
 {
+    if (frame == UiWindowFrame::Message && renderer.hasUiMessageWindowTexture()) {
+        renderer.drawUiMessageWindowFrame(panel.pos, panel.size);
+        return;
+    }
     if (renderer.hasUiWindowTexture()) {
         renderer.drawUiWindowFrame(panel.pos, panel.size);
         return;
@@ -678,11 +698,11 @@ void drawUiSubPanel(Renderer& renderer, UiRect panel)
     renderer.drawRect(panel.pos, panel.size, ui::WindowBorder);
 }
 
-void drawUiHeader(Renderer& renderer, UiRect panel, std::string_view title)
+void drawUiHeader(Renderer& renderer, UiRect panel, std::string_view title, UiWindowFrame frame)
 {
     const UiRect header = uiHeaderRect(panel);
     Vec2 titlePadding = ui::HeaderTitlePadding;
-    if (!renderer.hasUiWindowTexture()) {
+    if (!uiWindowFrameHasImageTexture(renderer, frame)) {
         renderer.fillRect(header.pos, header.size, ui::HeaderFill);
     } else {
         titlePadding = ui::ImageWindowHeaderTitlePadding;
@@ -691,17 +711,20 @@ void drawUiHeader(Renderer& renderer, UiRect panel, std::string_view title)
     renderer.drawText(header.pos + titlePadding + Vec2{1.0f, 0.0f}, title, ui::Text, 3);
 }
 
-void drawUiFooter(Renderer& renderer, UiRect panel, std::string_view helpText)
+void drawUiFooter(Renderer& renderer, UiRect panel, std::string_view helpText, UiWindowFrame frame)
 {
     if (helpText.empty()) {
         return;
     }
     const UiRect footer = uiFooterRect(panel, helpText);
     Vec2 textPadding = ui::FooterTextPadding;
-    if (!renderer.hasUiWindowTexture()) {
+    if (!uiWindowFrameHasImageTexture(renderer, frame)) {
         renderer.fillRect(footer.pos, footer.size, ui::FooterFill);
     } else {
         textPadding = ui::ImageWindowFooterTextPadding;
+        if (frame == UiWindowFrame::Message && renderer.hasUiMessageWindowTexture()) {
+            textPadding.x = std::max(0.0f, textPadding.x + 50.0f);
+        }
     }
     renderer.drawWrappedText(
         footer.pos + textPadding,
@@ -713,7 +736,7 @@ void drawUiFooter(Renderer& renderer, UiRect panel, std::string_view helpText)
 
 void drawUiWindow(Renderer& renderer, UiRect panel, std::string_view title, std::string_view helpText)
 {
-    drawUiWindowChrome(renderer, panel, title, helpText, false);
+    drawUiWindowChrome(renderer, panel, title, helpText, false, UiWindowFrame::Default);
 }
 
 void drawUiModalBackdrop(Renderer& renderer, UiRect bounds, Color color)

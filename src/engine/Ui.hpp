@@ -278,9 +278,15 @@ struct UiTabsStyle {
     bool wrapKeyboard = true;
 };
 
+enum class UiWindowFrame {
+    Default,
+    Message,
+};
+
 struct UiWindowOptions {
     bool animated = true;
     bool cancelButton = false;
+    UiWindowFrame frame = UiWindowFrame::Default;
 };
 
 struct UiCancelControlState {
@@ -355,10 +361,10 @@ UiRect uiBottomRightButtonRect(UiRect panel, Vec2 size);
 UiRect uiCancelButtonRect(UiRect panel);
 bool uiCancelRequested(UiCancelControlState& state, const Input& input, UiContext& ui, UiRect panel);
 
-void drawUiPanel(Renderer& renderer, UiRect panel);
+void drawUiPanel(Renderer& renderer, UiRect panel, UiWindowFrame frame = UiWindowFrame::Default);
 void drawUiSubPanel(Renderer& renderer, UiRect panel);
-void drawUiHeader(Renderer& renderer, UiRect panel, std::string_view title);
-void drawUiFooter(Renderer& renderer, UiRect panel, std::string_view helpText);
+void drawUiHeader(Renderer& renderer, UiRect panel, std::string_view title, UiWindowFrame frame = UiWindowFrame::Default);
+void drawUiFooter(Renderer& renderer, UiRect panel, std::string_view helpText, UiWindowFrame frame = UiWindowFrame::Default);
 void drawUiWindow(Renderer& renderer, UiRect panel, std::string_view title, std::string_view helpText = {});
 void drawUiModalBackdrop(Renderer& renderer, UiRect bounds, Color color = {0, 0, 0, 150});
 void drawUiCancelButton(Renderer& renderer, UiRect panel);

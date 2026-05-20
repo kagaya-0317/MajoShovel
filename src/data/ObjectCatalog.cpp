@@ -322,11 +322,17 @@ std::string statusNameJa(std::string_view effect)
     if (effect.find("paralyze") != std::string_view::npos) {
         return "麻痺";
     }
+    if (effect.find("shocked") != std::string_view::npos) {
+        return "感電";
+    }
     if (effect.find("poison") != std::string_view::npos) {
         return "毒";
     }
     if (effect.find("slow") != std::string_view::npos) {
         return "鈍足";
+    }
+    if (effect.find("glued") != std::string_view::npos) {
+        return "接着";
     }
     if (effect.find("bleed") != std::string_view::npos) {
         return "出血";
@@ -525,6 +531,10 @@ bool autoTextForEffectCode(
         outText = "壊れると火が弾け、周囲の敵に火ダメージを与える";
         return true;
     }
+    if (effectCode == "flame_burst") {
+        outText = "敵に当たると火が弾け、周囲の敵に火ダメージを与える";
+        return true;
+    }
     if (effectCode == "water_spray") {
         outText = "壊れると水をまき散らし、周囲の敵を濡らす";
         return true;
@@ -537,6 +547,32 @@ bool autoTextForEffectCode(
         outText = value > 0.0
             ? "濡れた敵を乾かすと追加ダメージを与える（+" + formatDiscoveryNumber(value) + "）"
             : "濡れた敵を乾かすと追加ダメージを与える";
+        return true;
+    }
+    if (effectCode == "sleeping_bonus_damage") {
+        outText = value > 0.0
+            ? "眠っている敵への接触ダメージを強める（" + formatDiscoveryNumber(value) + "倍）"
+            : "眠っている敵への接触ダメージを強める";
+        return true;
+    }
+    if (effectCode == "bounce_grounded") {
+        outText = "地上の敵に当たると跳ね上げる";
+        return true;
+    }
+    if (effectCode == "fall_damage_synergy") {
+        outText = value > 0.0
+            ? "跳ね上げた敵の着地ダメージを強める（" + formatDiscoveryNumber(value) + "倍）"
+            : "跳ね上げた敵に着地ダメージを与える";
+        return true;
+    }
+    if (effectCode == "shock_wet") {
+        outText = duration > 0.0
+            ? "濡れた敵だけを感電させる（" + formatDiscoveryNumber(duration) + "秒）"
+            : "濡れた敵だけを感電させる";
+        return true;
+    }
+    if (effectCode == "conduct_water_puddle") {
+        outText = "感電を周囲の濡れた敵へ伝導させる";
         return true;
     }
     if (effectCode == "cold_air_aura") {
@@ -583,6 +619,14 @@ bool autoTextForEffectCode(
     }
     if (effectCode == "reflect_water_chance") {
         outText = "水弾を確率で反射（" + formatDiscoveryPercent(std::max(0.0, value)) + "）";
+        return true;
+    }
+    if (effectCode == "spawn_bias_maggot") {
+        outText = "リングに入れていると、うじウジ系が出現しやすくなる";
+        return true;
+    }
+    if (effectCode == "spawn_bias_ghost") {
+        outText = "リングに入れていると、ゴースト系が出現しやすくなる";
         return true;
     }
     if (effectCode.rfind("status_", 0) == 0) {

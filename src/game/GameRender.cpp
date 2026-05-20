@@ -28,7 +28,7 @@ float smootherStep(float t)
 
 Vec2 paralyzeJitterOffset(const EntityStatus& status, double totalSeconds)
 {
-    if (!status.hasState("status_paralyze")) {
+    if (!status.hasState("status_paralyze") && !status.hasState("status_shocked")) {
         return {};
     }
     const int phase = static_cast<int>(std::floor(std::max(0.0, totalSeconds) * 36.0));
@@ -109,6 +109,59 @@ float magicAuraLightRadius(std::string_view damageType, float hitRadius)
         return 70.0f + base;
     }
     return 58.0f + base;
+}
+
+std::string firstItemAcquisitionUseEffectSummary(const ObjectDefinition& object)
+{
+    std::vector<std::string> lines;
+    for (const DiscoveryEffectLine& line : object.discoveryEffectLines) {
+        if (line.trigger == DiscoveryTrigger::NormalEffect && !line.text.empty()) {
+            lines.push_back(line.text);
+        }
+    }
+    if (lines.empty()) {
+        return {};
+    }
+
+    std::string text;
+    constexpr std::size_t MaxLines = 3;
+    const std::size_t count = std::min(lines.size(), MaxLines);
+    for (std::size_t i = 0; i < count; ++i) {
+        if (!text.empty()) {
+            text += " / ";
+        }
+        text += lines[i];
+    }
+    if (lines.size() > MaxLines) {
+        text += " / ...";
+    }
+    return text;
+}
+
+UiRect firstItemAcquisitionNoticeBodyRect(UiRect panel)
+{
+    constexpr float BodyMarginX = 30.0f;
+    constexpr float BodyTopOffset = 94.0f;
+    constexpr float BodyBottomGap = 20.0f;
+    const float y = panel.pos.y + BodyTopOffset;
+    return {{
+        panel.pos.x + BodyMarginX,
+        y,
+    }, {
+        panel.size.x - BodyMarginX * 2.0f,
+        std::max(0.0f, firstItemAcquisitionOkButtonRect(panel).pos.y - y - BodyBottomGap),
+    }};
+}
+
+UiRect firstItemAcquisitionNoticeImagePanelRect(UiRect panel)
+{
+    constexpr Vec2 ImagePanelSize{136.0f, 136.0f};
+    return {firstItemAcquisitionNoticeBodyRect(panel).pos, ImagePanelSize};
+}
+
+Vec2 firstItemAcquisitionNoticeImageCenter(UiRect imagePanel)
+{
+    return imagePanel.pos + imagePanel.size * 0.5f + Vec2{0.0f, -3.0f};
 }
 
 void drawDetectionBadge(Renderer& renderer, Vec2 anchor, Color color, int index, float visualScale, float alphaScale)
@@ -570,9 +623,7 @@ void drawDungeonRingIntroOrbit(
                 continue;
             }
 
-            std::vector<Vec2> orbitPath = shapePass == RingShape::Circle
-                ? makeCirclePath(center, spellRing.radius() * orbitScale, 176)
-                : spellRing.pathSamplePointsForRing(ringIndex, center, orbitScale, balance, 176);
+            std::vector<Vec2> orbitPath = spellRing.pathSamplePointsForRing(ringIndex, center, orbitScale, balance, 176);
             drawMagicOrbitPath(
                 renderer,
                 orbitPath,
@@ -1366,6 +1417,61 @@ void Game::updateAstralResultScreen(const Input& input, UiContext& ui)
     ui.block(stageClearPanelRect());
 }
 
+void Game::updateFirstItemAcquisitionNotice(const Input& input, UiContext& ui)
+{
+    if (firstItemAcquisitionNotices_.empty()) {
+        return;
+    }
+
+    FirstItemAcquisitionNotice& notice = firstItemAcquisitionNotices_.front();
+    const UiRect panel = firstItemAcquisitionNoticeRect(camera_.width(), camera_.height());
+    const UiRect okButton = firstItemAcquisitionOkButtonRect(panel);
+    const bool instanceProtectable =
+        notice.protectable &&
+        inventory_.objectInstanceProtectionEnabled(notice.instanceId).has_value();
+
+    if (input.pressed(InputAction::ToggleProtection)) {
+        if (instanceProtectable) {
+            const bool protectedNow = inventory_.objectInstanceProtectionEnabled(notice.instanceId).value_or(false);
+            if (inventory_.setObjectInstanceProtection(notice.instanceId, !protectedNow)) {
+                ui.emitSound(UiSoundEvent::Confirm);
+                notice.statusText.clear();
+            }
+        } else {
+            ui.emitSound(UiSoundEvent::Cancel);
+            notice.statusText = "個体アイテムのみ保護できます";
+        }
+    }
+
+    if (input.addRingPressed()) {
+        SpellRingAddResult result{};
+        std::string status;
+        if (inventory_.addObjectToRing(notice.objectId, notice.instanceId, spellRing_, &result, &status)) {
+            ui.emitSound(UiSoundEvent::RingPlace);
+            const UiRect imagePanel = firstItemAcquisitionNoticeImagePanelRect(panel);
+            spawnRingEquipFx(RingEquipFxRequest{
+                .sourceScreen = firstItemAcquisitionNoticeImageCenter(imagePanel),
+                .ringIndex = result.ringIndex,
+                .itemIndex = result.itemIndex,
+                .localAngle = result.localAngle,
+                .objectId = result.objectId,
+                .instanceId = result.instanceId,
+            });
+            closeFirstItemAcquisitionNotice();
+            return;
+        }
+        ui.emitSound(UiSoundEvent::Cancel);
+        notice.statusText = status.empty() ? "リングへ配置できません" : status;
+    }
+
+    if (ui.pressed(okButton) || input.confirmPressed() || input.useItemPressed()) {
+        ui.emitSound(UiSoundEvent::Confirm);
+        closeFirstItemAcquisitionNotice();
+    }
+
+    ui.block({{0.0f, 0.0f}, {static_cast<float>(camera_.width()), static_cast<float>(camera_.height())}});
+}
+
 int Game::unlockedRingHudCount() const
 {
     return std::clamp(UnlockedRingCount, 0, SpellRingCount);
@@ -1637,6 +1743,114 @@ void Game::renderRingStatusHud(Renderer& renderer) const
             spellRing_.maxEquippedWeightForRing(ringIndex));
         renderer.drawText(content + Vec2{0.0f, 48.0f}, buffer, {222, 236, 255, 255}, 2);
     }
+}
+
+void Game::renderFirstItemAcquisitionNotice(Renderer& renderer) const
+{
+    if (firstItemAcquisitionNotices_.empty()) {
+        return;
+    }
+
+    const FirstItemAcquisitionNotice& notice = firstItemAcquisitionNotices_.front();
+    const ObjectDefinition* object = objectCatalog_.registry.findById(notice.objectId);
+    if (object == nullptr) {
+        return;
+    }
+
+    renderer.setScreenSpace();
+    const UiRect screen{{0.0f, 0.0f}, {static_cast<float>(camera_.width()), static_cast<float>(camera_.height())}};
+    const UiRect panel = firstItemAcquisitionNoticeRect(camera_.width(), camera_.height());
+    const std::optional<bool> protection =
+        notice.protectable ? inventory_.objectInstanceProtectionEnabled(notice.instanceId) : std::nullopt;
+    const bool canProtect = protection.has_value();
+    const char* helpText = canProtect
+        ? "F/Enter OK   R リングへ   P 保護ON/OFF"
+        : "F/Enter OK   R リングへ   P 保護不可";
+
+    drawUiModalBackdrop(renderer, screen, {0, 0, 0, 132});
+    UiWindowScope window(
+        renderer,
+        "first_item_acquisition",
+        panel,
+        "はじめて入手した！",
+        helpText,
+        UiWindowOptions{true, false});
+
+    const UiRect body = firstItemAcquisitionNoticeBodyRect(panel);
+    constexpr float TopPanelGap = 16.0f;
+    const UiRect imagePanel = firstItemAcquisitionNoticeImagePanelRect(panel);
+    const UiRect detailPanel{{
+        imagePanel.pos.x + imagePanel.size.x + TopPanelGap,
+        body.pos.y,
+    }, {
+        std::max(240.0f, body.size.x - imagePanel.size.x - TopPanelGap),
+        imagePanel.size.y,
+    }};
+    drawUiSubPanel(renderer, imagePanel);
+
+    ObjectImageDrawOptions imageOptions;
+    imageOptions.allowUpscale = true;
+    imageOptions.selectedOutlineEnabled = protection.value_or(false);
+    const Vec2 imageCenter = firstItemAcquisitionNoticeImageCenter(imagePanel);
+    if (!drawItemImage(renderer, *object, imageCenter, {100.0f, 100.0f}, imageOptions)) {
+        renderer.fillCircle(imageCenter, 38.0f, inventoryUiObjectColor(*object));
+        renderer.drawCircle(imageCenter, 42.0f, {255, 255, 255, 210});
+    }
+
+    const float detailX = detailPanel.pos.x + 4.0f;
+    const float detailWidth = detailPanel.size.x - 8.0f;
+    const std::string nameText = fittedSingleLineText(renderer, object->name, detailWidth, 3);
+    const std::string descriptionText = object->description.empty() ? "-" : object->description;
+    const Vec2 nameSize = renderer.measureText(nameText, 3);
+
+    char buffer[192];
+    std::snprintf(buffer, sizeof(buffer), "レア度%d", object->rarity);
+    const std::string rarityText = fittedSingleLineText(renderer, buffer, detailWidth, 2);
+    const Vec2 raritySize = renderer.measureText(rarityText, 2);
+    const Vec2 descriptionSize = renderer.measureWrappedText(descriptionText, detailWidth, 2);
+
+    constexpr float NameRarityGap = 8.0f;
+    constexpr float RarityDescriptionGap = 12.0f;
+    const float detailBlockHeight =
+        nameSize.y + NameRarityGap + raritySize.y + RarityDescriptionGap + descriptionSize.y;
+    const float detailTop = imagePanel.pos.y + std::max(0.0f, (imagePanel.size.y - detailBlockHeight) * 0.5f);
+    const Vec2 detail{detailX, detailTop};
+    const Vec2 rarityPos{detailX, detail.y + nameSize.y + NameRarityGap};
+    const Vec2 descriptionPos{detailX, rarityPos.y + raritySize.y + RarityDescriptionGap};
+
+    renderer.drawText(detail, nameText, ui::Text, 3);
+    renderer.drawText(rarityPos, rarityText, ui::TextMuted, 2);
+    renderer.drawWrappedText(
+        descriptionPos,
+        descriptionText,
+        detailWidth,
+        {232, 236, 244, 255},
+        2);
+
+    const std::string useEffectText = firstItemAcquisitionUseEffectSummary(*object);
+    if (!useEffectText.empty()) {
+        const float effectY = descriptionPos.y + descriptionSize.y + 10.0f;
+        renderer.drawText(
+            {detailX, effectY},
+            fittedSingleLineText(renderer, useEffectText, detailWidth, 2),
+            {232, 236, 244, 255},
+            2);
+    }
+
+    const UiRect okButton = firstItemAcquisitionOkButtonRect(panel);
+    if (!notice.statusText.empty()) {
+        const std::string statusText = fittedSingleLineText(renderer, notice.statusText, body.size.x, 2);
+        const Vec2 statusSize = renderer.measureText(statusText, 2);
+        renderer.drawText(
+            {
+                panel.pos.x + std::max(0.0f, (panel.size.x - statusSize.x) * 0.5f),
+                okButton.pos.y - 28.0f,
+            },
+            statusText,
+            {255, 210, 160, 255},
+            2);
+    }
+    drawUiButton(renderer, okButton, "OK", true, uiActionButtonStyle());
 }
 
 void Game::renderDungeonMinimap(Renderer& renderer, const std::vector<LightSource>& itemLights) const
@@ -2603,6 +2817,7 @@ void Game::render(Renderer& renderer, const Time& time)
         dialogue_.render(renderer, camera_.width(), camera_.height());
         renderDebugItemPicker(renderer);
         renderDebugStoryTest(renderer);
+        renderFirstItemAcquisitionNotice(renderer);
         finishUiFrame(renderer);
         renderBaseDebugOverlay(renderer, time);
         renderScreenTransitionOverlay(renderer);
@@ -2815,7 +3030,7 @@ void Game::render(Renderer& renderer, const Time& time)
         renderer.fillRect({18.0f, 202.0f}, {190.0f, 28.0f}, {0, 0, 0, 190});
         renderer.drawText({28.0f, 208.0f}, "DEBUG PAUSED", {255, 230, 150, 255}, 2);
     }
-    upgrades_.render(renderer, levels_, spellRing_, levelRingRadiusPoints_, levelRingSpeedPoints_, levelRingWeightLimitPoints_);
+    upgrades_.render(renderer, levels_, spellRing_, levelRingUpgradePoints_);
     inventory_.render(renderer, player_, spellRing_, objectCatalog_, encyclopedia_);
     if (levelUpResultDialog_.open) {
         renderer.fillRect(
@@ -2886,6 +3101,7 @@ void Game::render(Renderer& renderer, const Time& time)
     dialogue_.render(renderer, camera_.width(), camera_.height());
     renderDebugItemPicker(renderer);
     renderDebugStoryTest(renderer);
+    renderFirstItemAcquisitionNotice(renderer);
     finishUiFrame(renderer);
     renderDebugOverlay(renderer, time);
     renderScreenTransitionOverlay(renderer);

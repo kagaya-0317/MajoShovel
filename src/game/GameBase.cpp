@@ -137,38 +137,36 @@ std::string baseUpgradeResultChangeLine(int index, int beforeLevel, int afterLev
     }
 }
 
-enum RingLevelUpgradePointIndex {
-    RingLevelUpgradeRadius = 0,
-    RingLevelUpgradeSpeed = 1,
-    RingLevelUpgradeWeightLimit = 2,
-};
-
-struct RingWorkshopRespecTransfer {
-    int from = 0;
-    int to = 0;
-};
-
-constexpr int RingWorkshopRespecTransferCount = 6;
-constexpr int RingWorkshopConfirmItemIndex = RingWorkshopRespecTransferCount;
+constexpr int RingLevelUpgradeKindCount = 3;
+constexpr int RingWorkshopRespecSlotCount = SpellRingCount * RingLevelUpgradeKindCount;
+constexpr int RingWorkshopConfirmItemIndex = RingWorkshopRespecSlotCount;
 constexpr int RingWorkshopUpgradeStartIndex = RingWorkshopConfirmItemIndex + 1;
 constexpr int BaseBackpackSourceIndex = 0;
-constexpr std::array<RingWorkshopRespecTransfer, RingWorkshopRespecTransferCount> RingWorkshopRespecTransfers{{
-    {RingLevelUpgradeSpeed, RingLevelUpgradeRadius},
-    {RingLevelUpgradeWeightLimit, RingLevelUpgradeRadius},
-    {RingLevelUpgradeRadius, RingLevelUpgradeSpeed},
-    {RingLevelUpgradeWeightLimit, RingLevelUpgradeSpeed},
-    {RingLevelUpgradeRadius, RingLevelUpgradeWeightLimit},
-    {RingLevelUpgradeSpeed, RingLevelUpgradeWeightLimit},
-}};
 
-const char* ringLevelUpgradePointName(int index)
+RingLevelUpgradeKind ringLevelUpgradeKindForSlot(int slotIndex)
 {
-    switch (index) {
-    case RingLevelUpgradeRadius: return "半径";
-    case RingLevelUpgradeSpeed: return "速度";
-    case RingLevelUpgradeWeightLimit: return "重量";
-    default: return "強化";
+    switch (slotIndex % RingLevelUpgradeKindCount) {
+    case 1:
+        return RingLevelUpgradeKind::Speed;
+    case 2:
+        return RingLevelUpgradeKind::WeightLimit;
+    case 0:
+    default:
+        return RingLevelUpgradeKind::Radius;
     }
+}
+
+RingLevelUpgradeSelection ringLevelUpgradeSelectionForSlot(int slotIndex)
+{
+    return {
+        std::clamp(slotIndex / RingLevelUpgradeKindCount, 0, SpellRingCount - 1),
+        ringLevelUpgradeKindForSlot(slotIndex),
+    };
+}
+
+bool sameRingLevelUpgradeSelection(RingLevelUpgradeSelection left, RingLevelUpgradeSelection right)
+{
+    return left.ringIndex == right.ringIndex && left.kind == right.kind;
 }
 
 constexpr std::array<std::string_view, BaseItemSourceCount> BaseItemSourceLabels{{
@@ -184,6 +182,11 @@ constexpr float MerchantSellSourceYOffset = 44.0f;
 constexpr float MerchantSellItemYOffset = MerchantSellSourceYOffset + 16.0f;
 constexpr float MerchantSellRingYOffset = MerchantSellSourceYOffset + 40.0f + 40.0f;
 constexpr float StorageTransferLayoutYOffset = 24.0f;
+constexpr int StorageWithdrawRows = 3;
+constexpr int StorageWithdrawSlotCount = StorageColumns * StorageWithdrawRows;
+constexpr float StorageWithdrawGridY = 190.0f;
+constexpr float StorageWithdrawRowGap = 8.0f;
+constexpr float StorageWithdrawSortButtonGap = 22.0f;
 constexpr float BaseRingPreviewScale = 0.8f;
 constexpr float MerchantSellRingPreviewScale = 0.9f;
 constexpr float StorageRingPreviewScale = 1.0f;
@@ -276,9 +279,12 @@ int storageDepositSourceTabIndex(int source)
 
 UiRect storageDepositSourceRect(int tabIndex)
 {
+    constexpr float StorageDepositSourceTabWidth = 180.0f;
+    constexpr float StorageDepositSourceTabPitch = 194.0f;
     UiRect rect = merchantSellSourceRect(tabIndex);
-    rect.pos.x = storageItemCircleLeftX() + static_cast<float>(tabIndex) * BaseItemSourceTabPitch;
+    rect.pos.x = storageItemCircleLeftX() + static_cast<float>(tabIndex) * StorageDepositSourceTabPitch;
     rect.pos.y += StorageTransferLayoutYOffset;
+    rect.size.x = StorageDepositSourceTabWidth;
     return rect;
 }
 
@@ -297,6 +303,34 @@ Vec2 storageTransferCountTextPos()
 UiRect storageQuantityDialogRect()
 {
     return {{430.0f, 130.0f}, {420.0f, 396.0f}};
+}
+
+UiRect storageTransferSortButtonRect()
+{
+    UiRect rect = uiBottomLeftButtonRect(merchantPanelRect(), {180.0f, ui::ButtonHeight});
+    rect.pos.x = storageItemCircleLeftX();
+    return rect;
+}
+
+UiRect storageWithdrawSlotRect(int index)
+{
+    UiRect rect = merchantGridSlotRect(index);
+    const int row = index / StorageColumns;
+    rect.pos.y = StorageWithdrawGridY + static_cast<float>(row) * (rect.size.y + StorageWithdrawRowGap);
+    return rect;
+}
+
+Vec2 storageWithdrawCountTextPos()
+{
+    return storageTransferCountTextPos();
+}
+
+UiRect storageWithdrawSortButtonRect()
+{
+    UiRect rect = storageTransferSortButtonRect();
+    const UiRect lastSlot = storageWithdrawSlotRect(StorageWithdrawSlotCount - 1);
+    rect.pos.y = lastSlot.pos.y + lastSlot.size.y + StorageWithdrawSortButtonGap;
+    return rect;
 }
 
 UiRect smallActionDialogRect()
@@ -420,6 +454,25 @@ void drawExternalWarehouseSourceHeader(
     int pageCount)
 {
     const UiPageSelectorRects pageRects = externalWarehousePageSelectorRects(sourceSlotRect);
+    char buffer[64];
+    std::snprintf(buffer, sizeof(buffer), "%d/%d", page + 1, pageCount);
+    drawTextCentered(renderer, pageRects.text, pageRects.text.pos.y + StoragePageTextYOffset, buffer, {198, 198, 206, 255}, StoragePageTextScale);
+    drawUiRectButton(renderer, pageRects.prev, "<", false);
+    drawUiRectButton(renderer, pageRects.next, ">", false);
+}
+
+UiPageSelectorRects storageWithdrawPageSelectorRects()
+{
+    const UiRect first = storageWithdrawSlotRect(0);
+    const UiRect last = storageWithdrawSlotRect(StorageColumns - 1);
+    return uiPageSelectorRectsFromNextButton(
+        {last.pos.x + last.size.x - StoragePageButtonSize, first.pos.y - StoragePageButtonSize - ExternalWarehousePageSelectorGap},
+        StoragePageTextWidth);
+}
+
+void drawStorageWithdrawHeader(Renderer& renderer, int page, int pageCount)
+{
+    const UiPageSelectorRects pageRects = storageWithdrawPageSelectorRects();
     char buffer[64];
     std::snprintf(buffer, sizeof(buffer), "%d/%d", page + 1, pageCount);
     drawTextCentered(renderer, pageRects.text, pageRects.text.pos.y + StoragePageTextYOffset, buffer, {198, 198, 206, 255}, StoragePageTextScale);
@@ -1566,12 +1619,18 @@ void Game::buyMerchantProduct(int index)
         baseStatus_ = "リュックがいっぱいです";
         return;
     }
-    if (!inventory_.addObjectItem(objectCatalog_, product.objectId)) {
+    InventoryAddResult addResult;
+    if (!inventory_.addObjectItem(objectCatalog_, product.objectId, &addResult)) {
         baseStatus_ = "リュックがいっぱいです";
         return;
     }
     money_ -= product.price;
     --product.quantity;
+    recordObjectObtainedForFirstNotice(
+        product.objectId,
+        addResult.instanceId,
+        addResult.kind == InventoryAddKind::Instance && !addResult.instanceId.empty(),
+        basePlayerPosition_);
     baseStatus_ = product.quantity <= 0 ? "購入しました（品切れ）" : "購入しました";
 }
 
@@ -1618,14 +1677,20 @@ std::optional<Game::StorageEntry> Game::processingEntryForScreenSlot(int slotInd
 
 std::optional<Game::StorageEntry> Game::warehouseEntryForPageSlot(int slotIndex, int page) const
 {
-    if (slotIndex < 0 || slotIndex >= StoragePaneSlotCount) {
+    return warehouseEntryForPageSlot(slotIndex, page, StoragePaneSlotCount);
+}
+
+std::optional<Game::StorageEntry> Game::warehouseEntryForPageSlot(int slotIndex, int page, int slotsPerPage) const
+{
+    const int pageSize = std::max(1, slotsPerPage);
+    if (slotIndex < 0 || slotIndex >= pageSize) {
         return std::nullopt;
     }
 
     const std::vector<StorageEntry> entries = warehouseStorageEntries();
-    const int pageCount = std::max(1, (warehouseCapacity() + StoragePaneSlotCount - 1) / StoragePaneSlotCount);
+    const int pageCount = std::max(1, (warehouseCapacity() + pageSize - 1) / pageSize);
     const int warehousePage = std::clamp(page, 0, pageCount - 1);
-    const int entryIndex = warehouseEntryIndexAtStorageSlot(warehousePage * StoragePaneSlotCount + slotIndex);
+    const int entryIndex = warehouseEntryIndexAtStorageSlot(warehousePage * pageSize + slotIndex);
     if (entryIndex < 0 || entryIndex >= static_cast<int>(entries.size())) {
         return std::nullopt;
     }
@@ -2650,7 +2715,10 @@ Game::StorageTransferTarget Game::storageWithdrawTargetForSlot(int slotIndex) co
     StorageTransferTarget target{};
     target.source = BaseItemSource::Warehouse;
     target.slotIndex = slotIndex;
-    const std::optional<StorageEntry> entry = warehouseEntryForPageSlot(slotIndex, baseStorageWarehousePage_);
+    const std::optional<StorageEntry> entry = warehouseEntryForPageSlot(
+        slotIndex,
+        baseStorageWarehousePage_,
+        StorageWithdrawSlotCount);
     if (!entry) {
         return target;
     }
@@ -2868,7 +2936,7 @@ void Game::withdrawStorageTarget(StorageTransferTarget target, int count)
             removeWarehouseDisplaySlotAtEntryIndex(target.storageEntry.index);
             warehouseObjectStacks_.erase(warehouseObjectStacks_.begin() + target.storageEntry.index);
         }
-        baseStorageWithdrawSelection_ = std::clamp(baseStorageWithdrawSelection_, 0, StoragePaneSlotCount - 1);
+        baseStorageWithdrawSelection_ = std::clamp(baseStorageWithdrawSelection_, 0, StorageWithdrawSlotCount - 1);
         baseStatus_ = "リュックに取り出しました";
         return;
     }
@@ -2884,7 +2952,7 @@ void Game::withdrawStorageTarget(StorageTransferTarget target, int count)
     }
     removeWarehouseDisplaySlotAtEntryIndex(static_cast<int>(warehouseObjectStacks_.size()) + target.storageEntry.index);
     warehouseObjectInstances_.erase(warehouseObjectInstances_.begin() + target.storageEntry.index);
-    baseStorageWithdrawSelection_ = std::clamp(baseStorageWithdrawSelection_, 0, StoragePaneSlotCount - 1);
+    baseStorageWithdrawSelection_ = std::clamp(baseStorageWithdrawSelection_, 0, StorageWithdrawSlotCount - 1);
     baseStatus_ = "リュックに取り出しました";
 }
 
@@ -3082,23 +3150,18 @@ void Game::openRingWorkshop()
 
 void Game::resetRingWorkshopDraft()
 {
-    ringWorkshopDraftRadiusPoints_ = levelRingRadiusPoints_;
-    ringWorkshopDraftSpeedPoints_ = levelRingSpeedPoints_;
-    ringWorkshopDraftWeightLimitPoints_ = levelRingWeightLimitPoints_;
+    ringWorkshopDraftUpgradePoints_ = levelRingUpgradePoints_;
+    ringWorkshopRespecSource_.reset();
 }
 
 int Game::ringLevelUpgradePointTotal() const
 {
-    return std::max(0, levelRingRadiusPoints_) +
-        std::max(0, levelRingSpeedPoints_) +
-        std::max(0, levelRingWeightLimitPoints_);
+    return majo::ringLevelUpgradePointTotal(levelRingUpgradePoints_);
 }
 
 bool Game::ringWorkshopRespecChanged() const
 {
-    return ringWorkshopDraftRadiusPoints_ != levelRingRadiusPoints_ ||
-        ringWorkshopDraftSpeedPoints_ != levelRingSpeedPoints_ ||
-        ringWorkshopDraftWeightLimitPoints_ != levelRingWeightLimitPoints_;
+    return ringWorkshopDraftUpgradePoints_ != levelRingUpgradePoints_;
 }
 
 int Game::ringWorkshopRespecMoneyCost() const
@@ -3117,36 +3180,31 @@ int Game::ringWorkshopRespecMoonCost() const
     return 1 + ringLevelUpgradePointTotal() / 3;
 }
 
-bool Game::adjustRingWorkshopRespec(int fromIndex, int toIndex)
+bool Game::adjustRingWorkshopRespec(RingLevelUpgradeSelection from, RingLevelUpgradeSelection to)
 {
     if (ringLevelUpgradePointTotal() <= 0) {
         baseStatus_ = "再調整できるリング強化ポイントがありません";
         return false;
     }
-    if (fromIndex == toIndex) {
+    from.ringIndex = std::clamp(from.ringIndex, 0, SpellRingCount - 1);
+    to.ringIndex = std::clamp(to.ringIndex, 0, SpellRingCount - 1);
+    if (sameRingLevelUpgradeSelection(from, to)) {
+        ringWorkshopRespecSource_.reset();
         return false;
     }
 
-    const auto pointRef = [this](int index) -> int& {
-        switch (index) {
-        case RingLevelUpgradeSpeed:
-            return ringWorkshopDraftSpeedPoints_;
-        case RingLevelUpgradeWeightLimit:
-            return ringWorkshopDraftWeightLimitPoints_;
-        case RingLevelUpgradeRadius:
-        default:
-            return ringWorkshopDraftRadiusPoints_;
-        }
-    };
-
-    int& fromPoints = pointRef(fromIndex);
-    int& toPoints = pointRef(toIndex);
+    RingLevelUpgradePoints& fromRingPoints = ringWorkshopDraftUpgradePoints_[static_cast<std::size_t>(from.ringIndex)];
+    RingLevelUpgradePoints& toRingPoints = ringWorkshopDraftUpgradePoints_[static_cast<std::size_t>(to.ringIndex)];
+    int& fromPoints = ringLevelUpgradePointRef(fromRingPoints, from.kind);
+    int& toPoints = ringLevelUpgradePointRef(toRingPoints, to.kind);
     if (fromPoints <= 0) {
-        baseStatus_ = std::string(ringLevelUpgradePointName(fromIndex)) + "から移せるポイントがありません";
+        baseStatus_ = "リング" + std::to_string(from.ringIndex + 1) + " " +
+            ringLevelUpgradeKindName(from.kind) + "から移せるポイントがありません";
         return false;
     }
     --fromPoints;
     ++toPoints;
+    ringWorkshopRespecSource_.reset();
     baseStatus_ = "配分案を変更しました。確定で支払います";
     return true;
 }
@@ -3170,9 +3228,11 @@ void Game::confirmRingWorkshopRespec()
     money_ -= moneyCost;
     const bool spent = inventory_.materials().spend(MaterialType::MoonFragment, moonCost);
     (void)spent;
-    levelRingRadiusPoints_ = std::max(0, ringWorkshopDraftRadiusPoints_);
-    levelRingSpeedPoints_ = std::max(0, ringWorkshopDraftSpeedPoints_);
-    levelRingWeightLimitPoints_ = std::max(0, ringWorkshopDraftWeightLimitPoints_);
+    for (RingLevelUpgradePoints& points : ringWorkshopDraftUpgradePoints_) {
+        points = clampedRingLevelUpgradePoints(points);
+    }
+    levelRingUpgradePoints_ = ringWorkshopDraftUpgradePoints_;
+    ringWorkshopRespecSource_.reset();
     applyPermanentUpgrades();
     baseStatus_ = "リング強化の配分を再調整しました";
 }
@@ -3230,9 +3290,9 @@ float Game::ringWorkshopUpgradeCurrentValue(RingWorkshopUpgrade upgrade) const
 {
     switch (upgrade) {
     case RingWorkshopUpgrade::InitialRadius:
-        return effectiveInitialRingRadius(levelRingRadiusPoints_);
+        return effectiveInitialRingRadiusForRing(0, levelRingUpgradePoints_[0].radius);
     case RingWorkshopUpgrade::InitialSpeed:
-        return effectiveInitialRingSpeed(levelRingSpeedPoints_);
+        return effectiveInitialRingSpeedForRing(0, levelRingUpgradePoints_[0].speed);
     case RingWorkshopUpgrade::ShiftDistance:
         return effectiveRingShiftDistance();
     }
@@ -3249,13 +3309,13 @@ float Game::ringWorkshopUpgradeNextValue(RingWorkshopUpgrade upgrade) const
     case RingWorkshopUpgrade::InitialRadius: {
         const float baseUpgradeMultiplier = 1.0f + static_cast<float>(ringRadiusUpgradeLevel_) * 0.08f;
         const float workshopMultiplier = 1.0f + static_cast<float>(currentLevel + 1) * 0.05f;
-        const float levelMultiplier = static_cast<float>(std::pow(1.1, std::max(0, levelRingRadiusPoints_)));
+        const float levelMultiplier = SpellRingSystem::levelScaleMultiplierForPoints(levelRingUpgradePoints_[0].radius);
         return balance_.spellRingRadius * baseUpgradeMultiplier * workshopMultiplier * levelMultiplier;
     }
     case RingWorkshopUpgrade::InitialSpeed: {
         const float baseUpgradeMultiplier = 1.0f + static_cast<float>(ringSpeedUpgradeLevel_) * 0.08f;
         const float workshopMultiplier = 1.0f + static_cast<float>(currentLevel + 1) * 0.05f;
-        const float levelMultiplier = static_cast<float>(std::pow(1.1, std::max(0, levelRingSpeedPoints_)));
+        const float levelMultiplier = SpellRingSystem::levelScaleMultiplierForPoints(levelRingUpgradePoints_[0].speed);
         return balance_.spellRingSpeed * baseUpgradeMultiplier * workshopMultiplier * levelMultiplier;
     }
     case RingWorkshopUpgrade::ShiftDistance:
@@ -3402,6 +3462,42 @@ void Game::captureEncyclopediaSyncSuppressState()
 void Game::applyEffectDiscoveries(const std::vector<EffectDiscoveryEvent>& discoveries)
 {
     encyclopedia_.noteEffectEvents(discoveries, objectCatalog_);
+}
+
+void Game::recordObjectObtainedForFirstNotice(
+    std::string_view objectId,
+    std::string_view instanceId,
+    bool protectable,
+    Vec2 position)
+{
+    if (objectId.empty()) {
+        return;
+    }
+    const ObjectDefinition* object = objectCatalog_.registry.findById(objectId);
+    if (object == nullptr) {
+        return;
+    }
+    if (!encyclopedia_.noteItemObtained(*object, position)) {
+        return;
+    }
+
+    firstItemAcquisitionNotices_.push_back(FirstItemAcquisitionNotice{
+        .objectId = std::string(objectId),
+        .instanceId = std::string(instanceId),
+        .protectable = protectable && !instanceId.empty(),
+    });
+}
+
+bool Game::firstItemAcquisitionNoticeActive() const
+{
+    return !firstItemAcquisitionNotices_.empty();
+}
+
+void Game::closeFirstItemAcquisitionNotice()
+{
+    if (!firstItemAcquisitionNotices_.empty()) {
+        firstItemAcquisitionNotices_.pop_front();
+    }
 }
 
 void Game::addStoryFlag(std::string flag)
@@ -3768,10 +3864,22 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
             baseRingWorkshopSelection_ = (baseRingWorkshopSelection_ + 1) % BaseRingWorkshopItemCount;
         }
         const auto chooseWorkshopItem = [this, &ui](int item) {
-            if (item >= 0 && item < RingWorkshopRespecTransferCount) {
+            if (item >= 0 && item < RingWorkshopRespecSlotCount) {
+                const RingLevelUpgradeSelection selection = ringLevelUpgradeSelectionForSlot(item);
+                if (!ringWorkshopRespecSource_) {
+                    const RingLevelUpgradePoints& points = ringWorkshopDraftUpgradePoints_[static_cast<std::size_t>(selection.ringIndex)];
+                    if (ringLevelUpgradePoint(points, selection.kind) <= 0) {
+                        ui.emitSound(UiSoundEvent::Cancel);
+                        baseStatus_ = "移動元にできるポイントがありません";
+                        return;
+                    }
+                    ringWorkshopRespecSource_ = selection;
+                    ui.emitSound(UiSoundEvent::Confirm);
+                    baseStatus_ = "移動先を選んでください";
+                    return;
+                }
                 ui.emitSound(UiSoundEvent::Confirm);
-                const RingWorkshopRespecTransfer transfer = RingWorkshopRespecTransfers[static_cast<std::size_t>(item)];
-                adjustRingWorkshopRespec(transfer.from, transfer.to);
+                adjustRingWorkshopRespec(*ringWorkshopRespecSource_, selection);
                 return;
             }
             if (item == RingWorkshopConfirmItemIndex) {
@@ -3994,7 +4102,7 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
         }
 
         if (baseStorageMode_ == StorageUiMode::ChooseAction) {
-            constexpr int ChoiceCount = 3;
+            constexpr int ChoiceCount = 2;
             baseStorageActionSelection_ = std::clamp(baseStorageActionSelection_, 0, ChoiceCount - 1);
             if (input.pressed(InputAction::MoveUp)) {
                 baseStorageActionSelection_ = (baseStorageActionSelection_ + ChoiceCount - 1) % ChoiceCount;
@@ -4009,25 +4117,15 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
                 }
                 if (ui.pressed(rect)) {
                     baseStorageActionSelection_ = i;
-                    if (i == 2) {
-                        ui.emitSound(UiSoundEvent::ItemMove);
-                        sortWarehouseByCatalogOrder();
-                    } else {
-                        ui.emitSound(UiSoundEvent::Confirm);
-                        baseStorageMode_ = i == 0 ? StorageUiMode::Deposit : StorageUiMode::Withdraw;
-                    }
+                    ui.emitSound(UiSoundEvent::Confirm);
+                    baseStorageMode_ = i == 0 ? StorageUiMode::Deposit : StorageUiMode::Withdraw;
                     ui.block(storageBounds);
                     return;
                 }
             }
             if (input.confirmPressed() || input.useItemPressed()) {
-                if (baseStorageActionSelection_ == 2) {
-                    ui.emitSound(UiSoundEvent::ItemMove);
-                    sortWarehouseByCatalogOrder();
-                } else {
-                    ui.emitSound(UiSoundEvent::Confirm);
-                    baseStorageMode_ = baseStorageActionSelection_ == 0 ? StorageUiMode::Deposit : StorageUiMode::Withdraw;
-                }
+                ui.emitSound(UiSoundEvent::Confirm);
+                baseStorageMode_ = baseStorageActionSelection_ == 0 ? StorageUiMode::Deposit : StorageUiMode::Withdraw;
                 ui.block(storageBounds);
                 return;
             }
@@ -4179,6 +4277,17 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
                 return;
             }
 
+            if (ui.pressed(storageTransferSortButtonRect())) {
+                closeStorageCommand();
+                resetStoragePointerPress();
+                const bool sorted = inventory_.sortByCatalogOrder(objectCatalog_);
+                ui.emitSound(sorted ? UiSoundEvent::ItemMove : UiSoundEvent::Cancel);
+                baseStorageDepositSelection_ = 0;
+                baseStatus_ = sorted ? "リュックを並び替えました" : "リュックは空です";
+                ui.block(storageBounds);
+                return;
+            }
+
             moveGridSelection(baseStorageDepositSelection_, inventory_.screenSlotCount());
             int hoveredBackpackSlot = -1;
             for (int i = 0; i < inventory_.screenSlotCount(); ++i) {
@@ -4257,9 +4366,16 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
         }
 
         if (baseStorageMode_ == StorageUiMode::Withdraw) {
-            const int warehousePageCount = std::max(1, (warehouseCapacity() + StoragePaneSlotCount - 1) / StoragePaneSlotCount);
+            const int warehousePageCount = std::max(1, (warehouseCapacity() + StorageWithdrawSlotCount - 1) / StorageWithdrawSlotCount);
             baseStorageWarehousePage_ = std::clamp(baseStorageWarehousePage_, 0, warehousePageCount - 1);
-            const UiPageSelectorRects pageRects = externalWarehousePageSelectorRects(storageTransferGridSlotRect);
+            const UiPageSelectorRects pageRects = storageWithdrawPageSelectorRects();
+            if (ui.pressed(storageWithdrawSortButtonRect())) {
+                const bool hasItems = warehouseUsedSlots() > 0;
+                ui.emitSound(hasItems ? UiSoundEvent::ItemMove : UiSoundEvent::Cancel);
+                sortWarehouseByCatalogOrder();
+                ui.block(storageBounds);
+                return;
+            }
             if (input.activeRingDelta() != 0) {
                 closeStorageCommand();
                 resetStoragePointerPress();
@@ -4288,10 +4404,10 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
                 }
             }
 
-            moveGridSelection(baseStorageWithdrawSelection_, StoragePaneSlotCount);
+            moveGridSelection(baseStorageWithdrawSelection_, StorageWithdrawSlotCount);
             int hoveredWarehouseSlot = -1;
-            for (int i = 0; i < StoragePaneSlotCount; ++i) {
-                const UiRect rect = externalWarehouseSourceSlotRect(storageTransferGridSlotRect, i);
+            for (int i = 0; i < StorageWithdrawSlotCount; ++i) {
+                const UiRect rect = storageWithdrawSlotRect(i);
                 if (rect.contains(ui.mouse())) {
                     baseStorageWithdrawSelection_ = i;
                     hoveredWarehouseSlot = i;
@@ -4301,13 +4417,16 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
                 if (target.source != BaseItemSource::Warehouse ||
                     !target.valid ||
                     toSlot < 0 ||
-                    toSlot >= StoragePaneSlotCount) {
+                    toSlot >= StorageWithdrawSlotCount) {
                     return false;
                 }
                 const int entryIndex = target.storageEntry.kind == StorageEntryKind::Stack
                     ? target.storageEntry.index
                     : static_cast<int>(warehouseObjectStacks_.size()) + target.storageEntry.index;
-                const int storageSlot = baseStorageWarehousePage_ * StoragePaneSlotCount + toSlot;
+                const int storageSlot = baseStorageWarehousePage_ * StorageWithdrawSlotCount + toSlot;
+                if (storageSlot >= warehouseCapacity()) {
+                    return false;
+                }
                 assignWarehouseEntryToStorageSlot(entryIndex, storageSlot);
                 return true;
             };
@@ -4343,7 +4462,7 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
                         }
                     } else if (baseStoragePointerPressCanOpenMenu_ &&
                         hoveredWarehouseSlot == baseStoragePointerTarget_.slotIndex) {
-                        const UiRect rect = externalWarehouseSourceSlotRect(storageTransferGridSlotRect, hoveredWarehouseSlot);
+                        const UiRect rect = storageWithdrawSlotRect(hoveredWarehouseSlot);
                         openStorageCommand(
                             StorageQuantityOperation::Withdraw,
                             baseStoragePointerTarget_,
@@ -4355,7 +4474,7 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
                 }
             }
             if (input.confirmPressed() || input.useItemPressed()) {
-                const UiRect rect = externalWarehouseSourceSlotRect(storageTransferGridSlotRect, baseStorageWithdrawSelection_);
+                const UiRect rect = storageWithdrawSlotRect(baseStorageWithdrawSelection_);
                 openStorageCommand(
                     StorageQuantityOperation::Withdraw,
                     storageWithdrawTargetForSlot(baseStorageWithdrawSelection_),
@@ -5962,7 +6081,7 @@ void Game::renderBaseScreen(Renderer& renderer) const
             if (baseStorageMode_ == StorageUiMode::Deposit) {
                 panelTitle = "収納箱にしまう";
             } else if (baseStorageMode_ == StorageUiMode::Withdraw) {
-                panelTitle = "収納箱 取り出す";
+                panelTitle = "収納箱から取り出す";
             } else {
                 panelTitle = "収納箱";
             }
@@ -5982,7 +6101,7 @@ void Game::renderBaseScreen(Renderer& renderer) const
         if (baseStorageMode_ == StorageUiMode::ChooseAction) {
             std::snprintf(buffer, sizeof(buffer), "収納数：%d/%d", warehouseUsedSlots(), warehouseCapacity());
             renderer.drawText(smallActionInfoTextPos(panel), buffer, {198, 198, 206, 255}, 2);
-            constexpr std::array<std::string_view, 3> Choices{"しまう", "取り出す", "並び替え"};
+            constexpr std::array<std::string_view, 2> Choices{"しまう", "取り出す"};
             for (int i = 0; i < static_cast<int>(Choices.size()); ++i) {
                 drawUiButton(renderer, storageActionChoiceRect(i), Choices[static_cast<std::size_t>(i)], i == baseStorageActionSelection_, uiActionButtonStyle());
             }
@@ -6069,18 +6188,15 @@ void Game::renderBaseScreen(Renderer& renderer) const
                     }
                     detailEntry = storageTransferTargetView(storageDepositTargetForScreenSlot(
                         std::clamp(baseStorageDepositSelection_, 0, std::max(0, inventory_.screenSlotCount() - 1))));
+                    drawUiButton(renderer, storageTransferSortButtonRect(), "並び替え", false, uiActionButtonStyle());
                 }
             } else if (baseStorageMode_ == StorageUiMode::Withdraw) {
-                const int warehousePageCount = std::max(1, (warehouseCapacity() + StoragePaneSlotCount - 1) / StoragePaneSlotCount);
+                const int warehousePageCount = std::max(1, (warehouseCapacity() + StorageWithdrawSlotCount - 1) / StorageWithdrawSlotCount);
                 const int warehousePage = std::clamp(baseStorageWarehousePage_, 0, warehousePageCount - 1);
                 std::snprintf(buffer, sizeof(buffer), "収納箱 %d/%d", warehouseUsedSlots(), warehouseCapacity());
-                renderer.drawText(storageTransferCountTextPos(), buffer, ui::TextMuted, 2);
-                drawExternalWarehouseSourceHeader(
-                    renderer,
-                    storageTransferGridSlotRect,
-                    warehousePage,
-                    warehousePageCount);
-                for (int i = 0; i < StoragePaneSlotCount; ++i) {
+                renderer.drawText(storageWithdrawCountTextPos(), buffer, ui::TextMuted, 2);
+                drawStorageWithdrawHeader(renderer, warehousePage, warehousePageCount);
+                for (int i = 0; i < StorageWithdrawSlotCount; ++i) {
                     const StorageTransferTarget target = storageWithdrawTargetForSlot(i);
                     const InventoryUiEntryView view = storageTransferTargetView(target);
                     const bool draggingThis =
@@ -6093,10 +6209,11 @@ void Game::renderBaseScreen(Renderer& renderer) const
                         style.showTopRightCount = true;
                         style.topRightCount = view.stackCount;
                     }
-                    drawInventoryUiSlot(renderer, externalWarehouseSourceSlotRect(storageTransferGridSlotRect, i), view, style);
+                    drawInventoryUiSlot(renderer, storageWithdrawSlotRect(i), view, style);
                 }
                 detailEntry = storageTransferTargetView(storageWithdrawTargetForSlot(
-                    std::clamp(baseStorageWithdrawSelection_, 0, StoragePaneSlotCount - 1)));
+                    std::clamp(baseStorageWithdrawSelection_, 0, StorageWithdrawSlotCount - 1)));
+                drawUiButton(renderer, storageWithdrawSortButtonRect(), "並び替え", false, uiActionButtonStyle());
             }
 
             if (detailEntry.item == nullptr && selectedRingItem != nullptr) {
@@ -6119,42 +6236,37 @@ void Game::renderBaseScreen(Renderer& renderer) const
     } else if (baseRingWorkshopActive_) {
         renderer.drawText(panel.pos + Vec2{168.0f, 214.0f}, "リング工房", {246, 235, 255, 255}, 3);
         const int totalPoints = ringLevelUpgradePointTotal();
-        std::snprintf(buffer, sizeof(buffer), "強化点 %d  現在: 半径%d / 速度%d / 重量%d  案: 半径%d / 速度%d / 重量%d",
+        std::string sourceText = "なし";
+        if (ringWorkshopRespecSource_) {
+            sourceText = "リング" + std::to_string(ringWorkshopRespecSource_->ringIndex + 1) + " " +
+                ringLevelUpgradeKindName(ringWorkshopRespecSource_->kind);
+        }
+        std::snprintf(buffer, sizeof(buffer), "強化点 %d  移動元: %s  セルを2つ選ぶと1点移動",
             totalPoints,
-            levelRingRadiusPoints_,
-            levelRingSpeedPoints_,
-            levelRingWeightLimitPoints_,
-            ringWorkshopDraftRadiusPoints_,
-            ringWorkshopDraftSpeedPoints_,
-            ringWorkshopDraftWeightLimitPoints_);
+            sourceText.c_str());
         renderer.drawText(panel.pos + Vec2{54.0f, 224.0f}, buffer, {198, 198, 206, 255}, 2);
 
-        const float currentRadius = effectiveInitialRingRadius(levelRingRadiusPoints_);
-        const float currentSpeed = effectiveInitialRingSpeed(levelRingSpeedPoints_);
-        const float currentWeightLimit = effectiveInitialRingWeightLimit(levelRingWeightLimitPoints_);
-        const float draftRadius = effectiveInitialRingRadius(ringWorkshopDraftRadiusPoints_);
-        const float draftSpeed = effectiveInitialRingSpeed(ringWorkshopDraftSpeedPoints_);
-        const float draftWeightLimit = effectiveInitialRingWeightLimit(ringWorkshopDraftWeightLimitPoints_);
-        std::snprintf(buffer, sizeof(buffer), "案: 半径 %.0f->%.0f / 速度 %.2f->%.2f / 重量 %.1f->%.1fkg  費用 %dG 月のカケラ%d",
-            currentRadius,
-            draftRadius,
-            currentSpeed,
-            draftSpeed,
-            currentWeightLimit,
-            draftWeightLimit,
+        std::snprintf(buffer, sizeof(buffer), "費用 %dG 月のカケラ%d",
             ringWorkshopRespecMoneyCost(),
             ringWorkshopRespecMoonCost());
         renderer.drawText(panel.pos + Vec2{54.0f, 532.0f}, buffer, {198, 198, 206, 255}, 2);
 
         for (int i = 0; i < BaseRingWorkshopItemCount; ++i) {
-            if (i >= 0 && i < RingWorkshopRespecTransferCount) {
-                const RingWorkshopRespecTransfer transfer = RingWorkshopRespecTransfers[static_cast<std::size_t>(i)];
-                std::snprintf(buffer, sizeof(buffer), "%s→%s  半%d 速%d 重%d",
-                    ringLevelUpgradePointName(transfer.from),
-                    ringLevelUpgradePointName(transfer.to),
-                    ringWorkshopDraftRadiusPoints_,
-                    ringWorkshopDraftSpeedPoints_,
-                    ringWorkshopDraftWeightLimitPoints_);
+            bool sourceSelected = false;
+            if (i >= 0 && i < RingWorkshopRespecSlotCount) {
+                const RingLevelUpgradeSelection selection = ringLevelUpgradeSelectionForSlot(i);
+                const RingLevelUpgradePoints& current = levelRingUpgradePoints_[static_cast<std::size_t>(selection.ringIndex)];
+                const RingLevelUpgradePoints& draft = ringWorkshopDraftUpgradePoints_[static_cast<std::size_t>(selection.ringIndex)];
+                const int currentPoints = ringLevelUpgradePoint(current, selection.kind);
+                const int draftPoints = ringLevelUpgradePoint(draft, selection.kind);
+                sourceSelected = ringWorkshopRespecSource_ &&
+                    sameRingLevelUpgradeSelection(*ringWorkshopRespecSource_, selection);
+                std::snprintf(buffer, sizeof(buffer), "%sR%d %s  %d->%d",
+                    sourceSelected ? "*" : "",
+                    selection.ringIndex + 1,
+                    ringLevelUpgradeKindName(selection.kind),
+                    currentPoints,
+                    draftPoints);
             } else if (i == RingWorkshopConfirmItemIndex) {
                 std::snprintf(buffer, sizeof(buffer), "再調整確定  %dG 月のカケラ%d",
                     ringWorkshopRespecMoneyCost(),
@@ -6200,7 +6312,7 @@ void Game::renderBaseScreen(Renderer& renderer) const
                 }
                 std::snprintf(buffer, sizeof(buffer), "%s  未解禁", futureName);
             }
-            drawUiButton(renderer, baseRingWorkshopItemRect(i), buffer, i == baseRingWorkshopSelection_, uiActionButtonStyle());
+            drawUiButton(renderer, baseRingWorkshopItemRect(i), buffer, i == baseRingWorkshopSelection_ || sourceSelected, uiActionButtonStyle());
         }
 
         std::snprintf(buffer, sizeof(buffer), "所持 %dG / 月のカケラ %d   F/Enter 実行  Esc/右クリック 戻る",

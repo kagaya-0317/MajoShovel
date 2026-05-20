@@ -58,8 +58,10 @@ struct WorldDropItem {
 struct WorldDropPickupEvent {
     WorldDropKind kind = WorldDropKind::Object;
     std::string id;
+    std::string instanceId;
     std::string name;
     int quantity = 1;
+    bool protectable = false;
 };
 
 class WorldDropSystem {

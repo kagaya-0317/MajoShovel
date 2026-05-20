@@ -1331,6 +1331,92 @@ bool InventorySystem::addScreenItemToRing(
     return false;
 }
 
+bool InventorySystem::addObjectToRing(
+    std::string_view objectId,
+    std::string_view instanceId,
+    SpellRingSystem& spellRing,
+    SpellRingAddResult* outResult,
+    std::string* outStatus)
+{
+    const auto setStatus = [&](std::string message) {
+        status_ = std::move(message);
+        if (outStatus != nullptr) {
+            *outStatus = status_;
+        }
+    };
+
+    if (!instanceId.empty()) {
+        const auto it = std::find_if(objectInstances_.begin(), objectInstances_.end(), [instanceId](const InventoryObjectInstance& entry) {
+            return entry.instance.instanceId == instanceId;
+        });
+        if (it == objectInstances_.end()) {
+            setStatus("リュックにありません");
+            return false;
+        }
+        if (it->instance.isBroken) {
+            setStatus("壊れています");
+            return false;
+        }
+        if (!spellRing.canAddObjectItem(it->item, it->instance)) {
+            setStatus(spellRing.canAddItem() ? "リングへ配置できません" : "リング満杯");
+            return false;
+        }
+
+        SpellRingAddResult result{};
+        if (!spellRing.addObjectItem(it->item, it->instance, &result)) {
+            setStatus("リングへ配置できません");
+            return false;
+        }
+
+        if (outResult != nullptr) {
+            *outResult = result;
+        }
+        const std::string itemName = it->item.name;
+        const int instanceIndex = static_cast<int>(std::distance(objectInstances_.begin(), it));
+        removePackedSlotAtPackedIndex(static_cast<int>(objectStacks_.size()) + instanceIndex);
+        objectInstances_.erase(it);
+        setStatus("リングに追加: " + itemName);
+        return true;
+    }
+
+    if (objectId.empty()) {
+        setStatus("リュックにありません");
+        return false;
+    }
+
+    const auto it = std::find_if(objectStacks_.begin(), objectStacks_.end(), [objectId](const InventoryObjectStack& stack) {
+        return stack.objectId == objectId && stack.count > 0;
+    });
+    if (it == objectStacks_.end()) {
+        setStatus("リュックにありません");
+        return false;
+    }
+    if (!spellRing.canAddObjectItem(it->item)) {
+        setStatus(spellRing.canAddItem() ? "リングへ配置できません" : "リング満杯");
+        return false;
+    }
+
+    ItemInstance instance = createDetachedObjectInstance(it->item);
+    SpellRingAddResult result{};
+    if (!spellRing.addObjectItem(it->item, instance, &result)) {
+        setStatus("リングへ配置できません");
+        return false;
+    }
+
+    if (outResult != nullptr) {
+        *outResult = result;
+    }
+    const std::string itemName = it->item.name;
+    --it->count;
+    if (it->count <= 0) {
+        const int stackIndex = static_cast<int>(std::distance(objectStacks_.begin(), it));
+        removePackedSlotAtPackedIndex(stackIndex);
+        objectStacks_.erase(it);
+    }
+    setStatus("リングに追加: " + itemName);
+    return true;
+}
+
 bool InventorySystem::addObjectSelectionToRing(SpellRingSystem& spellRing, SpellRingAddResult* outResult)
 {
     const int index = selectedShortcutIndex();

@@ -479,9 +479,9 @@ void EncyclopediaSystem::noteItemDiscovered(const ObjectDefinition& object, Vec2
     raiseObjectStage(object, EncyclopediaStage::Discovered, position, false);
 }
 
-void EncyclopediaSystem::noteItemObtained(const ObjectDefinition& object, Vec2 position)
+bool EncyclopediaSystem::noteItemObtained(const ObjectDefinition& object, Vec2 position)
 {
-    raiseObjectStage(object, EncyclopediaStage::Obtained, position, false);
+    return raiseObjectStage(object, EncyclopediaStage::Obtained, position, false);
 }
 
 void EncyclopediaSystem::noteItemEquipped(const ObjectDefinition& object, Vec2 position)

@@ -26,6 +26,18 @@ UiRect optionRect(int index)
     return {{startX + static_cast<float>(index) * (CardWidth + CardGap), CardY}, {CardWidth, CardHeight}};
 }
 
+UiRect ringTabRect(int index)
+{
+    constexpr float TabWidth = 164.0f;
+    constexpr float TabHeight = 38.0f;
+    constexpr float TabGap = 18.0f;
+    constexpr float TabY = 208.0f;
+    const UiRect panel = panelRect();
+    const float totalWidth = TabWidth * static_cast<float>(SpellRingCount) + TabGap * static_cast<float>(SpellRingCount - 1);
+    const float startX = panel.pos.x + (panel.size.x - totalWidth) * 0.5f;
+    return {{startX + static_cast<float>(index) * (TabWidth + TabGap), TabY}, {TabWidth, TabHeight}};
+}
+
 const char* upgradeName(int option)
 {
     switch (option) {
@@ -41,23 +53,36 @@ const char* upgradeDescription(int option)
     switch (option) {
     case 0: return "リングの半径が広がる";
     case 1: return "リングの回転速度が上がる";
-    case 2: return "全リングの重量上限が上がる";
+    case 2: return "リングの重量上限が上がる";
     default: return "";
     }
 }
 
-std::string upgradeCurrentValueText(int option, const SpellRingSystem& spellRing)
+RingLevelUpgradeKind upgradeKindForOption(int option)
+{
+    switch (option) {
+    case 0:
+        return RingLevelUpgradeKind::Radius;
+    case 1:
+        return RingLevelUpgradeKind::Speed;
+    case 2:
+    default:
+        return RingLevelUpgradeKind::WeightLimit;
+    }
+}
+
+std::string upgradeCurrentValueText(int option, const SpellRingSystem& spellRing, int ringIndex)
 {
     char buffer[64];
     switch (option) {
     case 0:
-        std::snprintf(buffer, sizeof(buffer), "半径 %.0f", spellRing.radius());
+        std::snprintf(buffer, sizeof(buffer), "半径 %.0f", spellRing.radiusForRing(ringIndex));
         break;
     case 1:
-        std::snprintf(buffer, sizeof(buffer), "速度 %.2f", spellRing.angularSpeed());
+        std::snprintf(buffer, sizeof(buffer), "速度 %.2f", spellRing.angularSpeedForRing(ringIndex));
         break;
     case 2:
-        std::snprintf(buffer, sizeof(buffer), "重量 %.1fkg", spellRing.maxEquippedWeight());
+        std::snprintf(buffer, sizeof(buffer), "重量 %.1fkg", spellRing.maxEquippedWeightForRing(ringIndex));
         break;
     default:
         buffer[0] = '\0';
@@ -66,73 +91,40 @@ std::string upgradeCurrentValueText(int option, const SpellRingSystem& spellRing
     return buffer;
 }
 
-std::string upgradeNextValueText(int option, const SpellRingSystem& spellRing)
+float nextLevelScaleFactor(int currentPoints)
 {
-    char buffer[64];
-    switch (option) {
-    case 0:
-        std::snprintf(buffer, sizeof(buffer), "%.0f", spellRing.radius() * 1.1f);
-        break;
-    case 1:
-        std::snprintf(buffer, sizeof(buffer), "%.2f", spellRing.angularSpeed() * 1.1f);
-        break;
-    case 2:
-        std::snprintf(buffer, sizeof(buffer), "%.1fkg", spellRing.maxEquippedWeight() + SpellRingSystem::LevelWeightLimitUpgradeAmount);
-        break;
-    default:
-        buffer[0] = '\0';
-        break;
-    }
-    return buffer;
+    const float currentMultiplier = SpellRingSystem::levelScaleMultiplierForPoints(currentPoints);
+    const float nextMultiplier = SpellRingSystem::levelScaleMultiplierForPoints(currentPoints + 1);
+    return nextMultiplier / std::max(0.0001f, currentMultiplier);
 }
 
-int upgradeStageForOption(int option, int levelRingRadiusPoints, int levelRingSpeedPoints, int levelRingWeightLimitPoints)
-{
-    switch (option) {
-    case 0:
-        return std::max(0, levelRingRadiusPoints);
-    case 1:
-        return std::max(0, levelRingSpeedPoints);
-    case 2:
-        return std::max(0, levelRingWeightLimitPoints);
-    default:
-        return 0;
-    }
-}
-
-UpgradeChoice upgradeChoiceForOption(int option)
-{
-    switch (option) {
-    case 0:
-        return UpgradeChoice::Radius;
-    case 1:
-        return UpgradeChoice::Speed;
-    case 2:
-    default:
-        return UpgradeChoice::WeightLimit;
-    }
-}
-
-std::optional<UpgradeChoice> applyUpgrade(
+std::string upgradeNextValueText(
     int option,
-    LevelSystem& level,
-    SpellRingSystem& spellRing,
-    int& levelRingRadiusPoints,
-    int& levelRingSpeedPoints,
-    int& levelRingWeightLimitPoints)
+    const SpellRingSystem& spellRing,
+    int ringIndex,
+    const RingLevelUpgradePoints& points)
 {
-    if (option == 0) {
-        spellRing.upgradeRadius(1.1f);
-        ++levelRingRadiusPoints;
-    } else if (option == 1) {
-        spellRing.upgradeSpeed(1.1f);
-        ++levelRingSpeedPoints;
-    } else {
-        spellRing.upgradeMaxEquippedWeightForAllRings(SpellRingSystem::LevelWeightLimitUpgradeAmount);
-        ++levelRingWeightLimitPoints;
+    char buffer[64];
+    switch (option) {
+    case 0:
+        std::snprintf(buffer, sizeof(buffer), "%.0f", spellRing.radiusForRing(ringIndex) * nextLevelScaleFactor(points.radius));
+        break;
+    case 1:
+        std::snprintf(buffer, sizeof(buffer), "%.2f", spellRing.angularSpeedForRing(ringIndex) * nextLevelScaleFactor(points.speed));
+        break;
+    case 2:
+        std::snprintf(buffer, sizeof(buffer), "%.1fkg", spellRing.maxEquippedWeightForRing(ringIndex) + SpellRingSystem::LevelWeightLimitUpgradeAmount);
+        break;
+    default:
+        buffer[0] = '\0';
+        break;
     }
-    level.finishChoice();
-    return upgradeChoiceForOption(option);
+    return buffer;
+}
+
+int upgradeStageForOption(int option, const RingLevelUpgradePoints& points)
+{
+    return std::max(0, ringLevelUpgradePoint(points, upgradeKindForOption(option)));
 }
 
 void drawCenteredText(Renderer& renderer, UiRect rect, float y, std::string_view text, Color color, int scale)
@@ -174,23 +166,42 @@ void drawUpgradeValueLine(
 
 }
 
-std::optional<UpgradeChoice> UpgradeSystem::update(
+std::optional<RingLevelUpgradeSelection> UpgradeSystem::update(
     const Input& input,
     UiContext& ui,
-    LevelSystem& level,
-    SpellRingSystem& spellRing,
-    int& levelRingRadiusPoints,
-    int& levelRingSpeedPoints,
-    int& levelRingWeightLimitPoints)
+    SpellRingSystem& spellRing)
 {
-    if (!level.isChoosing()) {
-        return std::nullopt;
+    if (!ringSelectionInitialized_) {
+        selectedRingIndex_ = std::clamp(spellRing.activeRingIndex(), 0, SpellRingCount - 1);
+        ringSelectionInitialized_ = true;
     }
+    selectedRingIndex_ = std::clamp(selectedRingIndex_, 0, SpellRingCount - 1);
+    selectedOption_ = std::clamp(selectedOption_, 0, 2);
 
     const auto chooseUpgrade = [&](int option) {
         ui.emitSound(UiSoundEvent::UpgradeSelect);
-        return applyUpgrade(option, level, spellRing, levelRingRadiusPoints, levelRingSpeedPoints, levelRingWeightLimitPoints);
+        return RingLevelUpgradeSelection{selectedRingIndex_, upgradeKindForOption(option)};
     };
+
+    for (int i = 0; i < SpellRingCount; ++i) {
+        const UiRect rect = ringTabRect(i);
+        if (ui.pressed(rect)) {
+            if (selectedRingIndex_ != i) {
+                ui.emitSound(UiSoundEvent::TabSwitch);
+            }
+            selectedRingIndex_ = i;
+            ui.block(panelRect());
+            return std::nullopt;
+        }
+    }
+
+    if (input.activeRingDelta() != 0) {
+        selectedRingIndex_ = (selectedRingIndex_ + input.activeRingDelta()) % SpellRingCount;
+        if (selectedRingIndex_ < 0) {
+            selectedRingIndex_ += SpellRingCount;
+        }
+        ui.emitSound(UiSoundEvent::TabSwitch);
+    }
 
     for (int i = 0; i < 3; ++i) {
         const UiRect rect = optionRect(i);
@@ -234,17 +245,30 @@ void UpgradeSystem::render(
     Renderer& renderer,
     const LevelSystem& level,
     const SpellRingSystem& spellRing,
-    int levelRingRadiusPoints,
-    int levelRingSpeedPoints,
-    int levelRingWeightLimitPoints)
+    const RingLevelUpgradePointTable& levelRingUpgradePoints)
 {
     if (!level.isChoosing()) {
+        ringSelectionInitialized_ = false;
         return;
     }
     renderer.setScreenSpace();
     const UiRect panel = panelRect();
-    UiWindowScope levelUpWindow(renderer, "level_up", panel, "レベルアップ", "Q/E で選択   F/Enter で決定");
+    if (!ringSelectionInitialized_) {
+        selectedRingIndex_ = std::clamp(spellRing.activeRingIndex(), 0, SpellRingCount - 1);
+        ringSelectionInitialized_ = true;
+    }
+    const int ringIndex = std::clamp(selectedRingIndex_, 0, SpellRingCount - 1);
+    const RingLevelUpgradePoints& points = levelRingUpgradePoints[static_cast<std::size_t>(ringIndex)];
+    UiWindowScope levelUpWindow(renderer, "level_up", panel, "レベルアップ", "Z/X リング   Q/E で選択   F/Enter で決定");
     drawLevelUpSubtitle(renderer, panel);
+
+    for (int i = 0; i < SpellRingCount; ++i) {
+        const UiRect tab = ringTabRect(i);
+        const bool selected = i == ringIndex;
+        renderer.fillRect(tab.pos, tab.size, selected ? Color{54, 46, 76, 245} : Color{22, 22, 32, 232});
+        renderer.drawRect(tab.pos, tab.size, selected ? ui::WindowBorder : Color{104, 94, 128, 255});
+        drawCenteredText(renderer, tab, tab.pos.y + 10.0f, "リング" + std::to_string(i + 1), selected ? ui::Text : ui::TextMuted, 2);
+    }
 
     for (int i = 0; i < 3; ++i) {
         const UiRect card = optionRect(i);
@@ -257,11 +281,11 @@ void UpgradeSystem::render(
             renderer,
             card,
             card.pos.y + 146.0f,
-            upgradeCurrentValueText(i, spellRing),
-            upgradeNextValueText(i, spellRing),
+            upgradeCurrentValueText(i, spellRing, ringIndex),
+            upgradeNextValueText(i, spellRing, ringIndex, points),
             selected ? ui::Text : ui::TextMuted,
             2);
-        const int currentStage = upgradeStageForOption(i, levelRingRadiusPoints, levelRingSpeedPoints, levelRingWeightLimitPoints);
+        const int currentStage = upgradeStageForOption(i, points);
         drawCenteredText(
             renderer,
             card,

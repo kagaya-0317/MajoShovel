@@ -87,16 +87,22 @@ float findNearestRingPathParam(Vec2 worldPoint, Vec2 center, const RingOrbitCont
 class SpellRingSystem {
 public:
     static constexpr float InitialMaxEquippedWeight = 10.0f;
-    static constexpr float LevelWeightLimitUpgradeAmount = 2.0f;
+    static constexpr float LevelRingScaleUpgradeAmount = 0.1f;
+    static constexpr float LevelWeightLimitUpgradeAmount = 1.0f;
+    static float levelScaleMultiplierForPoints(int points);
 
     void initialize(const RuntimeBalance& balance);
     void update(Player& player, const Input& input, float dt, float totalTime, bool paused, bool blockPointerThrow, const RuntimeBalance& balance);
     void updatePresentation(const Player& player, float dt, const RuntimeBalance& balance);
     void resetRuntimeStateAtPlayer(const Player& player, const RuntimeBalance& balance);
-    void upgradeRadius(float factor) { radius_ *= factor; }
-    void upgradeSpeed(float factor) { angularSpeed_ *= factor; }
-    void setRadius(float radius) { radius_ = radius; }
-    void setAngularSpeed(float angularSpeed) { angularSpeed_ = angularSpeed; }
+    void upgradeRadius(float factor);
+    void upgradeSpeed(float factor);
+    void upgradeRadiusForRing(int ringIndex, float factor);
+    void upgradeSpeedForRing(int ringIndex, float factor);
+    void setRadius(float radius);
+    void setAngularSpeed(float angularSpeed);
+    void setRadiusForRing(int ringIndex, float radius);
+    void setAngularSpeedForRing(int ringIndex, float angularSpeed);
     void clearOrbitModifiers();
     void setOrbitModifiers(OrbitModifiers modifiers);
     void applyOrbitModifierEffect(std::string_view effect, double value, std::string_view source);
@@ -104,6 +110,8 @@ public:
     void upgradeItemDamage(int amount);
     void upgradeMaxEquippedWeightForAllRings(float amount);
     void setMaxEquippedWeightForAllRings(float maxWeight);
+    void upgradeMaxEquippedWeightForRing(int ringIndex, float amount);
+    void setMaxEquippedWeightForRing(int ringIndex, float maxWeight);
     bool addItem(SpellRingItemType type);
     bool addItem(SpellRingItem item, SpellRingAddResult* outResult = nullptr);
     bool addObjectItem(const ItemData& item, SpellRingAddResult* outResult = nullptr);
@@ -167,8 +175,10 @@ public:
     std::vector<SpellRingItem*> runtimeItemsMutable();
     int runtimeRingCount() const { return SpellRingCount; }
     Vec2 center() const { return center_; }
-    float radius() const { return radius_; }
-    float angularSpeed() const { return angularSpeed_; }
+    float radius() const { return radiusForRing(activeRingIndex_); }
+    float radiusForRing(int ringIndex) const;
+    float angularSpeed() const { return angularSpeedForRing(activeRingIndex_); }
+    float angularSpeedForRing(int ringIndex) const;
     float effectiveAngularSpeed() const;
     float effectiveAngularSpeedForRing(int ringIndex) const;
     float totalEquippedWeight() const;
@@ -200,8 +210,16 @@ private:
     Vec2 center_{};
     Vec2 throwDirection_{1.0f, 0.0f};
     Vec2 throwStart_{};
-    float radius_ = 54.0f;
-    float angularSpeed_ = 2.72f;
+    std::array<float, SpellRingCount> radii_{{
+        54.0f,
+        54.0f,
+        54.0f,
+    }};
+    std::array<float, SpellRingCount> angularSpeeds_{{
+        2.72f,
+        2.72f,
+        2.72f,
+    }};
     std::array<float, SpellRingCount> maxEquippedWeights_{{
         InitialMaxEquippedWeight,
         InitialMaxEquippedWeight,
