@@ -334,6 +334,22 @@ float Renderer::screenScale() const
     return scale;
 }
 
+void Renderer::applyClipRect()
+{
+    if (clipStack_.empty()) {
+        SDL_SetRenderClipRect(renderer_, nullptr);
+        return;
+    }
+
+    const RectF& clip = clipStack_.back();
+    const int x = static_cast<int>(std::floor(clip.x));
+    const int y = static_cast<int>(std::floor(clip.y));
+    const int right = static_cast<int>(std::ceil(clip.x + std::max(0.0f, clip.w)));
+    const int bottom = static_cast<int>(std::ceil(clip.y + std::max(0.0f, clip.h)));
+    const SDL_Rect rect{x, y, std::max(0, right - x), std::max(0, bottom - y)};
+    SDL_SetRenderClipRect(renderer_, &rect);
+}
+
 void Renderer::pushScreenTransform(Vec2 origin, float scale, float alpha)
 {
     screenTransforms_.push_back({origin, scale, alpha});
@@ -343,6 +359,36 @@ void Renderer::popScreenTransform()
 {
     if (!screenTransforms_.empty()) {
         screenTransforms_.pop_back();
+    }
+}
+
+void Renderer::pushClipRect(Vec2 pos, Vec2 size)
+{
+    RectF next{};
+    if (size.x > 0.0f && size.y > 0.0f) {
+        const Vec2 p = transform(pos);
+        const Vec2 s = transformSize(size);
+        next = {p.x, p.y, std::max(0.0f, s.x), std::max(0.0f, s.y)};
+    }
+
+    if (!clipStack_.empty()) {
+        const RectF& current = clipStack_.back();
+        const float left = std::max(current.x, next.x);
+        const float top = std::max(current.y, next.y);
+        const float right = std::min(current.x + current.w, next.x + next.w);
+        const float bottom = std::min(current.y + current.h, next.y + next.h);
+        next = {left, top, std::max(0.0f, right - left), std::max(0.0f, bottom - top)};
+    }
+
+    clipStack_.push_back(next);
+    applyClipRect();
+}
+
+void Renderer::popClipRect()
+{
+    if (!clipStack_.empty()) {
+        clipStack_.pop_back();
+        applyClipRect();
     }
 }
 
@@ -479,7 +525,7 @@ void Renderer::fillPolygon(const Vec2* points, std::size_t count, Color color)
         return;
     }
 
-    constexpr std::size_t MaxVertices = 8;
+    constexpr std::size_t MaxVertices = 24;
     const std::size_t vertexCount = std::min(count, MaxVertices);
     Color transformed = transformColor(color);
 

@@ -50,11 +50,26 @@ struct InventoryObjectInstance {
     ItemInstance instance;
 };
 
+enum class InventoryAddKind {
+    None,
+    Stack,
+    Instance,
+    Material,
+};
+
+struct InventoryAddResult {
+    bool added = false;
+    InventoryAddKind kind = InventoryAddKind::None;
+    std::string objectId;
+    std::string instanceId;
+    int quantity = 0;
+};
+
 class InventorySystem {
 public:
     bool canAddObjectItem(const ObjectCatalog& catalog, std::string_view objectId) const;
-    bool addObjectItem(const ObjectCatalog& catalog, std::string_view objectId);
-    bool addRuntimeObjectItem(const ItemData& item);
+    bool addObjectItem(const ObjectCatalog& catalog, std::string_view objectId, InventoryAddResult* outResult = nullptr);
+    bool addRuntimeObjectItem(const ItemData& item, InventoryAddResult* outResult = nullptr);
     bool sortByCatalogOrder(const ObjectCatalog& catalog);
     void updateShortcuts(
         const Input& input,
@@ -109,6 +124,8 @@ public:
     bool addObjectInstance(const ObjectCatalog& catalog, ItemInstance instance);
     ItemInstance createDetachedObjectInstance(const ItemData& item);
     void observeObjectInstanceId(std::string_view instanceId);
+    std::optional<bool> objectInstanceProtectionEnabled(std::string_view instanceId) const;
+    bool setObjectInstanceProtection(std::string_view instanceId, bool enabled);
     bool removeObjectItemCount(std::string_view objectId, int count);
     bool removeObjectInstance(std::string_view instanceId);
     bool takeObjectInstance(std::string_view instanceId, InventoryObjectInstance& outInstance);

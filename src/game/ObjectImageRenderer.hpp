@@ -23,6 +23,7 @@ struct ObjectImageDrawOptions {
     bool selectedOutlineEnabled = false;
     Color selectedOutlineColor{255, 230, 150, 255};
     int selectedOutlinePx = 6;
+    Color maskOverlayColor{255, 255, 255, 0};
     float rotationDegrees = 0.0f;
     bool flipX = false;
     bool flipY = false;

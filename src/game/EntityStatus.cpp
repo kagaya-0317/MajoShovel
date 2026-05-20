@@ -232,7 +232,7 @@ double EntityStatus::applyModifiers(ModifierStat stat, double baseValue) const
 
 double EntityStatus::movementMultiplierFromStates() const
 {
-    if (hasState("status_paralyze") || hasState("status_sleep") || hasState("status_stun")) {
+    if (hasState("status_paralyze") || hasState("status_sleep") || hasState("status_stun") || hasState("status_frozen")) {
         return 0.0;
     }
 
@@ -241,6 +241,18 @@ double EntityStatus::movementMultiplierFromStates() const
         if (state.stateId == "status_slow") {
             const double slowMultiplier = state.value > 0.0 ? state.value : 0.65;
             result *= std::clamp(slowMultiplier, 0.0, 1.0);
+        }
+    }
+    return result;
+}
+
+double EntityStatus::attackAccuracyMultiplierFromStates() const
+{
+    double result = 1.0;
+    for (const EntityState& state : states_) {
+        if (state.stateId == "status_blind") {
+            const double accuracyMultiplier = state.value > 0.0 ? state.value : 0.5;
+            result *= std::clamp(accuracyMultiplier, 0.0, 1.0);
         }
     }
     return result;
@@ -263,6 +275,17 @@ double EntityStatus::poisonDamagePerSecond() const
     double result = 0.0;
     for (const EntityState& state : states_) {
         if (state.stateId == "status_poison") {
+            result += state.value > 0.0 ? state.value : 1.0;
+        }
+    }
+    return result;
+}
+
+double EntityStatus::hotDamagePerSecond() const
+{
+    double result = 0.0;
+    for (const EntityState& state : states_) {
+        if (state.stateId == "status_hot") {
             result += state.value > 0.0 ? state.value : 1.0;
         }
     }

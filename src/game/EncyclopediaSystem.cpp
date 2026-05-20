@@ -1,23 +1,350 @@
 ﻿#include "game/EncyclopediaSystem.hpp"
 
 #include "engine/Ui.hpp"
+#include "game/InventoryUiCommon.hpp"
 
 #include <algorithm>
+#include <array>
+#include <cmath>
 #include <cstdio>
+#include <limits>
 #include <utility>
 
 namespace majo {
 
 namespace {
-constexpr float PopupSeconds = 2.6f;
 constexpr float PopupWidth = 300.0f;
 constexpr float PopupMinHeight = 72.0f;
+constexpr float PopupPaddingX = 16.0f;
+constexpr float PopupPaddingY = 12.0f;
+constexpr float PopupLineGap = 6.0f;
+constexpr float PopupScreenMargin = 12.0f;
+constexpr float PopupTopMargin = 58.0f;
+constexpr float PopupAvoidPadding = 8.0f;
+constexpr float PopupFadeInSeconds = 0.2f;
+constexpr float PopupFadeOutSeconds = 0.2f;
+constexpr float PopupHoldAfterRevealSeconds = 2.5f;
+constexpr float PopupRevealUnitsPerSecond = 34.0f;
 constexpr int PopupTextScale = 2;
+constexpr int MaxActiveDiscoveryPopups = 3;
 constexpr std::string_view TreasureCategory = "\xE5\xAE\x9D";
+constexpr std::string_view NoEffectText = "\xE3\x81\xAA\xE3\x81\x97";
+
+struct PopupTextUnit {
+    std::string text;
+    bool newline = false;
+};
+
+struct PopupTextLine {
+    std::string text;
+    int startUnit = 0;
+    int unitCount = 0;
+};
 
 int stageValue(EncyclopediaStage stage)
 {
     return static_cast<int>(stage);
+}
+
+bool isNoEffectKey(std::string_view key)
+{
+    return key == "none" || key == "None" || key == "NONE" || key == NoEffectText;
+}
+
+bool isNoEffectText(std::string_view text)
+{
+    return text == NoEffectText || text == "none" || text == "None" || text == "NONE";
+}
+
+bool inlinePopupIconTagAt(std::string_view text, std::size_t offset, std::size_t& outEnd)
+{
+    constexpr std::string_view ItemPrefix = "{item:";
+    constexpr std::string_view WorldPrefix = "{world:";
+
+    std::string_view prefix;
+    if (offset + ItemPrefix.size() < text.size() && text.substr(offset, ItemPrefix.size()) == ItemPrefix) {
+        prefix = ItemPrefix;
+    } else if (offset + WorldPrefix.size() < text.size() && text.substr(offset, WorldPrefix.size()) == WorldPrefix) {
+        prefix = WorldPrefix;
+    } else {
+        return false;
+    }
+
+    const std::size_t close = text.find('}', offset + prefix.size());
+    if (close == std::string_view::npos || close == offset + prefix.size()) {
+        return false;
+    }
+    outEnd = close + 1;
+    return true;
+}
+
+std::size_t utf8CodepointSize(std::string_view text, std::size_t offset)
+{
+    const unsigned char c = static_cast<unsigned char>(text[offset]);
+    std::size_t count = 1;
+    if ((c & 0x80u) == 0x00u) {
+        count = 1;
+    } else if ((c & 0xE0u) == 0xC0u) {
+        count = 2;
+    } else if ((c & 0xF0u) == 0xE0u) {
+        count = 3;
+    } else if ((c & 0xF8u) == 0xF0u) {
+        count = 4;
+    }
+    return std::min(count, text.size() - offset);
+}
+
+std::vector<PopupTextUnit> popupTextUnits(std::string_view text)
+{
+    std::vector<PopupTextUnit> units;
+    for (std::size_t offset = 0; offset < text.size();) {
+        std::size_t tagEnd = 0;
+        if (inlinePopupIconTagAt(text, offset, tagEnd)) {
+            units.push_back({std::string(text.substr(offset, tagEnd - offset)), false});
+            offset = tagEnd;
+            continue;
+        }
+
+        const std::size_t codepointSize = utf8CodepointSize(text, offset);
+        const std::string_view codepoint = text.substr(offset, codepointSize);
+        if (codepoint == "\r") {
+            offset += codepointSize;
+            continue;
+        }
+        if (codepoint == "\n") {
+            units.push_back({{}, true});
+            offset += codepointSize;
+            continue;
+        }
+        units.push_back({std::string(codepoint), false});
+        offset += codepointSize;
+    }
+    return units;
+}
+
+int popupRevealUnitCount(std::string_view text)
+{
+    int count = 0;
+    for (const PopupTextUnit& unit : popupTextUnits(text)) {
+        if (!unit.newline) {
+            ++count;
+        }
+    }
+    return count;
+}
+
+float popupLineHeight(Renderer& renderer)
+{
+    return std::max(24.0f, renderer.measureText("あ", PopupTextScale).y + PopupLineGap);
+}
+
+InlineItemTextStyle popupTextStyle()
+{
+    InlineItemTextStyle style;
+    style.text = {246, 246, 252, 255};
+    style.scale = PopupTextScale;
+    style.iconTextGap = 4.0f;
+    style.iconScale = 1.15f;
+    style.outlineEnabled = true;
+    style.outline = {0, 0, 0, 210};
+    style.outlinePx = 2;
+    return style;
+}
+
+std::vector<PopupTextLine> layoutPopupText(
+    Renderer& renderer,
+    std::string_view text,
+    float maxWidth,
+    const InlineItemTextStyle& style)
+{
+    std::vector<PopupTextLine> lines;
+    std::string line;
+    int lineStart = 0;
+    int lineUnits = 0;
+    int nextUnit = 0;
+
+    const auto pushLine = [&]() {
+        lines.push_back(PopupTextLine{
+            .text = line,
+            .startUnit = lineStart,
+            .unitCount = lineUnits,
+        });
+        line.clear();
+        lineUnits = 0;
+        lineStart = nextUnit;
+    };
+
+    for (const PopupTextUnit& unit : popupTextUnits(text)) {
+        if (unit.newline) {
+            pushLine();
+            continue;
+        }
+
+        const std::string candidate = line + unit.text;
+        if (!line.empty() && measureInlineItemText(renderer, candidate, style).x > maxWidth) {
+            pushLine();
+        }
+        if (line.empty()) {
+            lineStart = nextUnit;
+        }
+        line += unit.text;
+        ++lineUnits;
+        ++nextUnit;
+    }
+
+    if (!line.empty() || lines.empty()) {
+        pushLine();
+    }
+    return lines;
+}
+
+std::string visiblePopupLineText(std::string_view line, int visibleUnits)
+{
+    if (visibleUnits <= 0) {
+        return {};
+    }
+
+    std::string visible;
+    int count = 0;
+    for (const PopupTextUnit& unit : popupTextUnits(line)) {
+        if (unit.newline) {
+            continue;
+        }
+        if (count >= visibleUnits) {
+            break;
+        }
+        visible += unit.text;
+        ++count;
+    }
+    return visible;
+}
+
+float popupTextBlockHeight(Renderer& renderer, std::size_t lineCount)
+{
+    if (lineCount == 0) {
+        return 0.0f;
+    }
+    return popupLineHeight(renderer) * static_cast<float>(lineCount) - PopupLineGap;
+}
+
+UiRect expandedRect(UiRect rect, float padding)
+{
+    rect.pos -= Vec2{padding, padding};
+    rect.size += Vec2{padding * 2.0f, padding * 2.0f};
+    return rect;
+}
+
+float rectOverlapArea(UiRect a, UiRect b)
+{
+    const float left = std::max(a.pos.x, b.pos.x);
+    const float top = std::max(a.pos.y, b.pos.y);
+    const float right = std::min(a.pos.x + a.size.x, b.pos.x + b.size.x);
+    const float bottom = std::min(a.pos.y + a.size.y, b.pos.y + b.size.y);
+    if (right <= left || bottom <= top) {
+        return 0.0f;
+    }
+    return (right - left) * (bottom - top);
+}
+
+float totalAvoidOverlap(UiRect popup, std::span<const UiRect> avoidRects)
+{
+    float total = 0.0f;
+    for (UiRect avoid : avoidRects) {
+        if (avoid.size.x <= 0.0f || avoid.size.y <= 0.0f) {
+            continue;
+        }
+        total += rectOverlapArea(popup, expandedRect(avoid, PopupAvoidPadding));
+    }
+    return total;
+}
+
+float popupFadeAlpha(float elapsed, float revealSeconds)
+{
+    if (PopupFadeInSeconds > 0.0f && elapsed < PopupFadeInSeconds) {
+        return std::clamp(elapsed / PopupFadeInSeconds, 0.0f, 1.0f);
+    }
+
+    const float fadeOutStart = PopupFadeInSeconds + revealSeconds + PopupHoldAfterRevealSeconds;
+    if (PopupFadeOutSeconds > 0.0f && elapsed > fadeOutStart) {
+        return 1.0f - std::clamp((elapsed - fadeOutStart) / PopupFadeOutSeconds, 0.0f, 1.0f);
+    }
+
+    return 1.0f;
+}
+
+float popupRevealElapsed(float elapsed)
+{
+    return std::max(0.0f, elapsed - PopupFadeInSeconds);
+}
+
+float popupTotalDuration(float revealSeconds)
+{
+    return PopupFadeInSeconds + revealSeconds + PopupHoldAfterRevealSeconds + PopupFadeOutSeconds;
+}
+
+float clampPopupAxis(float value, float minValue, float maxValue)
+{
+    if (maxValue < minValue) {
+        return minValue;
+    }
+    return std::clamp(value, minValue, maxValue);
+}
+
+Vec2 clampPopupPosition(Vec2 pos, Vec2 size, const Camera& camera)
+{
+    const float screenWidth = static_cast<float>(camera.width());
+    const float screenHeight = static_cast<float>(camera.height());
+    pos.x = clampPopupAxis(pos.x, PopupScreenMargin, screenWidth - size.x - PopupScreenMargin);
+    pos.y = clampPopupAxis(pos.y, PopupTopMargin, screenHeight - size.y - PopupScreenMargin);
+    return pos;
+}
+
+Vec2 choosePopupPosition(
+    Vec2 anchor,
+    Vec2 desired,
+    Vec2 size,
+    const Camera& camera,
+    std::span<const UiRect> avoidRects)
+{
+    const std::array<Vec2, 8> candidates{{
+        desired,
+        anchor + Vec2{14.0f, 18.0f},
+        anchor + Vec2{-size.x - 14.0f, -34.0f},
+        anchor + Vec2{-size.x - 14.0f, 18.0f},
+        anchor + Vec2{-size.x * 0.5f, -size.y - 18.0f},
+        anchor + Vec2{-size.x * 0.5f, 18.0f},
+        anchor + Vec2{18.0f, -size.y * 0.5f},
+        anchor + Vec2{-size.x - 18.0f, -size.y * 0.5f},
+    }};
+
+    Vec2 best = clampPopupPosition(desired, size, camera);
+    float bestScore = std::numeric_limits<float>::max();
+    for (Vec2 candidate : candidates) {
+        const Vec2 pos = clampPopupPosition(candidate, size, camera);
+        const UiRect rect{pos, size};
+        const float overlap = totalAvoidOverlap(rect, avoidRects);
+        const float movement = lengthSquared(pos - desired);
+        const float score = overlap * 100000.0f + movement;
+        if (score < bestScore) {
+            best = pos;
+            bestScore = score;
+        }
+    }
+    return best;
+}
+
+void drawDiscoveryPopupBackdrop(Renderer& renderer, UiRect rect)
+{
+    const float halfWidth = rect.size.x * 0.5f;
+    const Color transparent{0, 0, 0, 0};
+    const Color center{0, 0, 0, 188};
+    renderer.fillGradientRect(rect.pos, {halfWidth, rect.size.y}, transparent, center, GradientDirection::LeftToRight);
+    renderer.fillGradientRect(
+        rect.pos + Vec2{halfWidth, 0.0f},
+        {halfWidth, rect.size.y},
+        center,
+        transparent,
+        GradientDirection::LeftToRight);
 }
 
 std::string fallbackEffectDescription(std::string_view effectKey)
@@ -60,44 +387,91 @@ void EncyclopediaSystem::clear()
     enemyStages_.clear();
     objectEffects_.clear();
     queuedPopups_.clear();
-    activePopup_ = Popup{};
+    activePopups_.clear();
     updateLog_.clear();
 }
 
 void EncyclopediaSystem::update(float dt)
 {
-    if (activePopup_.remaining > 0.0f) {
-        activePopup_.remaining = std::max(0.0f, activePopup_.remaining - dt);
+    for (Popup& popup : activePopups_) {
+        if (popup.duration > 0.0f) {
+            popup.elapsed += std::max(0.0f, dt);
+        }
     }
-    if (activePopup_.remaining <= 0.0f && !queuedPopups_.empty()) {
-        activePopup_ = queuedPopups_.front();
+    activePopups_.erase(
+        std::remove_if(activePopups_.begin(), activePopups_.end(), [](const Popup& popup) {
+            return popup.duration <= 0.0f || popup.elapsed >= popup.duration;
+        }),
+        activePopups_.end());
+
+    while (static_cast<int>(activePopups_.size()) < MaxActiveDiscoveryPopups && !queuedPopups_.empty()) {
+        Popup popup = queuedPopups_.front();
         queuedPopups_.pop_front();
-        activePopup_.remaining = PopupSeconds;
+        popup.elapsed = 0.0f;
+        popup.screenPositionLocked = false;
+        activePopups_.push_back(std::move(popup));
     }
 }
 
-void EncyclopediaSystem::renderPopups(Renderer& renderer, const Camera& camera)
+void EncyclopediaSystem::renderPopups(
+    Renderer& renderer,
+    const Camera& camera,
+    const ObjectCatalog& catalog,
+    std::span<const UiRect> avoidRects)
 {
-    if (activePopup_.remaining <= 0.0f || activePopup_.text.empty()) {
+    if (activePopups_.empty()) {
         return;
     }
 
-    const float contentWidth = std::max(0.0f, PopupWidth - ui::SubPanelPadding.x * 2.0f);
-    const Vec2 textSize = renderer.measureWrappedText(activePopup_.text, contentWidth, PopupTextScale);
-    const Vec2 size{PopupWidth, std::max(PopupMinHeight, textSize.y + ui::SubPanelPadding.y * 2.0f)};
-    if (!activePopup_.screenPositionLocked) {
-        activePopup_.screenPosition = camera.worldToScreen(activePopup_.position) + Vec2{14.0f, -34.0f};
-        activePopup_.screenPositionLocked = true;
-    }
-    Vec2 pos = activePopup_.screenPosition;
-    pos.x = clamp(pos.x, 12.0f, static_cast<float>(camera.width()) - size.x - 12.0f);
-    pos.y = clamp(pos.y, 58.0f, static_cast<float>(camera.height()) - size.y - 14.0f);
-    activePopup_.screenPosition = pos;
+    const InlineItemTextStyle textStyle = popupTextStyle();
+    const float contentWidth = std::max(0.0f, PopupWidth - PopupPaddingX * 2.0f);
+    std::vector<UiRect> popupAvoidRects(avoidRects.begin(), avoidRects.end());
 
     renderer.setScreenSpace();
-    const UiRect panel{pos, size};
-    drawUiSubPanel(renderer, panel);
-    renderer.drawWrappedText(uiSubPanelContentPos(panel), activePopup_.text, contentWidth, ui::Text, PopupTextScale);
+    for (Popup& popup : activePopups_) {
+        if (popup.duration <= 0.0f || popup.text.empty()) {
+            continue;
+        }
+
+        const std::vector<PopupTextLine> lines = layoutPopupText(renderer, popup.text, contentWidth, textStyle);
+        const Vec2 size{
+            PopupWidth,
+            std::max(PopupMinHeight, popupTextBlockHeight(renderer, lines.size()) + PopupPaddingY * 2.0f),
+        };
+        const Vec2 anchor = camera.worldToScreen(popup.position);
+        const Vec2 desired = anchor + Vec2{14.0f, -34.0f};
+        UiRect panel{clampPopupPosition(popup.screenPosition, size, camera), size};
+        if (!popup.screenPositionLocked || totalAvoidOverlap(panel, popupAvoidRects) > 0.0f) {
+            popup.screenPosition = choosePopupPosition(anchor, desired, size, camera, popupAvoidRects);
+            popup.screenPositionLocked = true;
+            panel = {popup.screenPosition, size};
+        } else {
+            popup.screenPosition = panel.pos;
+        }
+
+        const float alpha = popupFadeAlpha(popup.elapsed, popup.revealSeconds);
+        renderer.pushScreenTransform({0.0f, 0.0f}, 1.0f, alpha);
+
+        drawDiscoveryPopupBackdrop(renderer, panel);
+
+        const float revealElapsed = popupRevealElapsed(popup.elapsed);
+        const int visibleUnits = revealElapsed >= popup.revealSeconds
+            ? popup.revealUnitCount
+            : std::clamp(static_cast<int>(std::floor(revealElapsed * PopupRevealUnitsPerSecond)), 0, popup.revealUnitCount);
+        const float lineHeight = popupLineHeight(renderer);
+        Vec2 linePos = panel.pos + Vec2{PopupPaddingX, PopupPaddingY};
+        for (const PopupTextLine& line : lines) {
+            const int lineVisibleUnits = std::clamp(visibleUnits - line.startUnit, 0, line.unitCount);
+            const std::string visibleLine = visiblePopupLineText(line.text, lineVisibleUnits);
+            if (!visibleLine.empty()) {
+                drawInlineItemText(renderer, catalog, linePos, visibleLine, textStyle);
+            }
+            linePos.y += lineHeight;
+        }
+        renderer.popScreenTransform();
+
+        popupAvoidRects.push_back(panel);
+    }
 }
 
 void EncyclopediaSystem::noteItemDiscovered(const ObjectDefinition& object, Vec2 position)
@@ -117,37 +491,51 @@ void EncyclopediaSystem::noteItemEquipped(const ObjectDefinition& object, Vec2 p
 
 void EncyclopediaSystem::noteItemEffect(const ObjectDefinition& object, std::string_view effectKey, std::string_view description, Vec2 position)
 {
-    const std::string key = canonicalEffectKey(effectKey);
-    if (object.id.empty() || key.empty()) {
-        return;
-    }
-    auto& effects = objectEffects_[object.id];
-    const bool newEffect = effects.insert(key).second;
-    raiseObjectStage(object, EncyclopediaStage::EffectTriggered, position, false);
-    if (!newEffect) {
+    std::optional<EffectPopupLine> line = recordObjectEffect(
+        object,
+        effectKey,
+        description,
+        {},
+        position,
+        {},
+        true);
+    if (!line.has_value()) {
         return;
     }
 
-    const DiscoveryEffectLine* effectLine = findEffectLineByKey(object, key);
-    const std::string resolvedDescription = effectLine != nullptr
-        ? effectLine->text
-        : (description.empty() ? fallbackEffectDescription(key) : std::string(description));
-    const std::string itemName = object.name.empty() ? object.id : object.name;
-    std::string popup = "効果判明：" + itemName + "\n・" + resolvedDescription;
-    enqueuePopup(std::move(popup), position);
+    const std::array<EffectPopupLine, 1> lines{std::move(*line)};
+    enqueueEffectPopup(lines);
 }
 
 void EncyclopediaSystem::noteEffectEvent(const EffectDiscoveryEvent& event, const ObjectCatalog& catalog)
 {
-    if (event.objectId.empty() || event.effectKey.empty()) {
-        return;
+    noteEffectEvents(std::span<const EffectDiscoveryEvent>(&event, 1), catalog);
+}
+
+void EncyclopediaSystem::noteEffectEvents(std::span<const EffectDiscoveryEvent> events, const ObjectCatalog& catalog)
+{
+    struct PopupGroup {
+        std::vector<EffectPopupLine> lines;
+    };
+
+    std::vector<PopupGroup> groups;
+    std::unordered_map<std::string, std::size_t> groupIndexByObjectId;
+
+    for (const EffectDiscoveryEvent& event : events) {
+        std::optional<EffectPopupLine> line = recordEffectDiscovery(event, catalog);
+        if (!line.has_value()) {
+            continue;
+        }
+
+        auto [it, inserted] = groupIndexByObjectId.emplace(line->objectId, groups.size());
+        if (inserted) {
+            groups.push_back({});
+        }
+        groups[it->second].lines.push_back(std::move(*line));
     }
-    if (discoverObjectEffect(event.objectId, event.effectKey, catalog, event.position, event.note)) {
-        return;
-    }
-    const ObjectDefinition* object = catalog.registry.findById(event.objectId);
-    if (object != nullptr && !event.description.empty()) {
-        noteItemEffect(*object, event.effectKey, event.description, event.position);
+
+    for (const PopupGroup& group : groups) {
+        enqueueEffectPopup(group.lines);
     }
 }
 
@@ -158,42 +546,124 @@ bool EncyclopediaSystem::discoverObjectEffect(
     Vec2 worldPosition,
     std::string_view optionalNote)
 {
-    const std::string canonicalKey = canonicalEffectKey(effectKey);
-    if (objectId.empty() || canonicalKey.empty()) {
-        return false;
-    }
-
     const ObjectDefinition* object = catalog.registry.findById(objectId);
     if (object == nullptr) {
         return false;
     }
-    const std::size_t lineIndex = findEffectLineIndexByKey(*object, canonicalKey);
-    if (lineIndex == object->discoveryEffectLines.size()) {
+
+    std::optional<EffectPopupLine> line = recordObjectEffect(
+        *object,
+        effectKey,
+        {},
+        optionalNote,
+        worldPosition,
+        {},
+        false);
+    if (!line.has_value()) {
         return false;
     }
 
-    auto& effects = objectEffects_[object->id];
-    if (!effects.insert(canonicalKey).second) {
-        return false;
+    const std::array<EffectPopupLine, 1> lines{std::move(*line)};
+    enqueueEffectPopup(lines);
+    return true;
+}
+
+std::optional<EncyclopediaSystem::EffectPopupLine> EncyclopediaSystem::recordObjectEffect(
+    const ObjectDefinition& object,
+    std::string_view effectKey,
+    std::string_view description,
+    std::string_view note,
+    Vec2 position,
+    std::string_view objectNameOverride,
+    bool allowGenericFallback)
+{
+    const std::string canonicalKey = canonicalEffectKey(effectKey);
+    if (object.id.empty() || canonicalKey.empty() || isNoEffectKey(canonicalKey) || isNoEffectText(description)) {
+        return std::nullopt;
     }
 
-    raiseObjectStage(*object, EncyclopediaStage::EffectTriggered, worldPosition, false);
-    const std::vector<std::string> allLines = getObjectEffectDisplayLines(object->id, catalog, EffectRevealMode::DebugAll);
-    std::string lineText = lineIndex < allLines.size()
-        ? allLines[lineIndex]
-        : object->discoveryEffectLines[lineIndex].text;
+    const std::size_t lineIndex = findEffectLineIndexByKey(object, canonicalKey);
+    const bool hasCatalogLine = lineIndex != object.discoveryEffectLines.size();
+    std::string lineText;
+    if (hasCatalogLine) {
+        lineText = object.discoveryEffectLines[lineIndex].text;
+    } else if (!description.empty()) {
+        lineText = std::string(description);
+    } else if (allowGenericFallback) {
+        lineText = fallbackEffectDescription(canonicalKey);
+    } else {
+        return std::nullopt;
+    }
+
     if (lineText.empty()) {
         lineText = fallbackEffectDescription(canonicalKey);
     }
-
-    const std::string itemName = object->name.empty() ? object->id : object->name;
-    std::string popup = "効果判明：" + itemName + "\n・" + lineText;
-    if (!optionalNote.empty()) {
-        popup += "\n";
-        popup += std::string(optionalNote);
+    if (isNoEffectText(lineText)) {
+        return std::nullopt;
     }
-    enqueuePopup(std::move(popup), worldPosition);
-    return true;
+
+    auto& effects = objectEffects_[object.id];
+    if (!effects.insert(canonicalKey).second) {
+        return std::nullopt;
+    }
+
+    raiseObjectStage(object, EncyclopediaStage::EffectTriggered, position, false);
+    const std::string itemName = objectNameOverride.empty()
+        ? (object.name.empty() ? object.id : object.name)
+        : std::string(objectNameOverride);
+    return EffectPopupLine{
+        .objectId = object.id,
+        .objectName = itemName,
+        .lineText = std::move(lineText),
+        .note = std::string(note),
+        .position = position,
+    };
+}
+
+std::optional<EncyclopediaSystem::EffectPopupLine> EncyclopediaSystem::recordEffectDiscovery(
+    const EffectDiscoveryEvent& event,
+    const ObjectCatalog& catalog)
+{
+    if (event.objectId.empty()) {
+        return std::nullopt;
+    }
+
+    const ObjectDefinition* object = catalog.registry.findById(event.objectId);
+    if (object == nullptr) {
+        return std::nullopt;
+    }
+    return recordObjectEffect(
+        *object,
+        event.effectKey,
+        event.description,
+        event.note,
+        event.position,
+        event.objectName,
+        false);
+}
+
+void EncyclopediaSystem::enqueueEffectPopup(std::span<const EffectPopupLine> lines)
+{
+    if (lines.empty()) {
+        return;
+    }
+
+    const EffectPopupLine& first = lines.front();
+    std::string popup = "効果判明：" + inlineItemTag(first.objectId) + " " + first.objectName;
+    std::vector<std::string> notes;
+    for (const EffectPopupLine& line : lines) {
+        popup += "\n";
+        popup += "・";
+        popup += line.lineText;
+        if (!line.note.empty() && std::find(notes.begin(), notes.end(), line.note) == notes.end()) {
+            notes.push_back(line.note);
+        }
+    }
+    for (const std::string& note : notes) {
+        popup += "\n";
+        popup += note;
+    }
+    enqueuePopup(std::move(popup), first.position);
 }
 
 void EncyclopediaSystem::noteEnemyDiscovered(std::string_view enemyId, std::string_view enemyName, Vec2 position)
@@ -263,7 +733,7 @@ void EncyclopediaSystem::loadEntry(EncyclopediaKind kind, std::string id, Encycl
 void EncyclopediaSystem::loadEffect(std::string objectId, std::string effectKey)
 {
     effectKey = canonicalEffectKey(effectKey);
-    if (objectId.empty() || effectKey.empty()) {
+    if (objectId.empty() || effectKey.empty() || isNoEffectKey(effectKey)) {
         return;
     }
     objectEffects_[std::move(objectId)].insert(std::move(effectKey));
@@ -280,6 +750,7 @@ std::vector<std::string> EncyclopediaSystem::getObjectEffectDisplayLines(
         return lines;
     }
     if (object->discoveryEffectLines.empty()) {
+        lines.emplace_back(NoEffectText);
         return lines;
     }
 
@@ -350,17 +821,6 @@ std::string EncyclopediaSystem::canonicalEffectKey(std::string_view effectKey)
     return std::string(effectKey);
 }
 
-const DiscoveryEffectLine* EncyclopediaSystem::findEffectLineByKey(const ObjectDefinition& object, std::string_view effectKey)
-{
-    const auto it = std::find_if(
-        object.discoveryEffectLines.begin(),
-        object.discoveryEffectLines.end(),
-        [effectKey](const DiscoveryEffectLine& line) {
-            return line.effectKey == effectKey;
-        });
-    return it != object.discoveryEffectLines.end() ? &*it : nullptr;
-}
-
 std::size_t EncyclopediaSystem::findEffectLineIndexByKey(const ObjectDefinition& object, std::string_view effectKey)
 {
     const std::string canonical = canonicalEffectKey(effectKey);
@@ -374,12 +834,6 @@ std::size_t EncyclopediaSystem::findEffectLineIndexByKey(const ObjectDefinition&
         return object.discoveryEffectLines.size();
     }
     return static_cast<std::size_t>(std::distance(object.discoveryEffectLines.begin(), it));
-}
-
-std::string EncyclopediaSystem::makeEffectText(const ObjectDefinition& object, std::string_view description)
-{
-    const std::string name = object.name.empty() ? object.id : object.name;
-    return name + ": " + std::string(description);
 }
 
 bool EncyclopediaSystem::raiseObjectStage(const ObjectDefinition& object, EncyclopediaStage stage, Vec2 position, bool popup)
@@ -427,10 +881,15 @@ void EncyclopediaSystem::enqueuePopup(std::string text, Vec2 position)
         return;
     }
     updateLog_.push_back(text);
+    const int revealUnits = popupRevealUnitCount(text);
+    const float revealSeconds = static_cast<float>(revealUnits) / PopupRevealUnitsPerSecond;
     queuedPopups_.push_back(Popup{
         .text = std::move(text),
         .position = position,
-        .remaining = PopupSeconds,
+        .elapsed = 0.0f,
+        .duration = popupTotalDuration(revealSeconds),
+        .revealSeconds = revealSeconds,
+        .revealUnitCount = revealUnits,
     });
 }
 

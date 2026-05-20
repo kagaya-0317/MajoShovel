@@ -62,6 +62,7 @@ private:
     void syncRightPortraitForCurrentLine(bool immediate);
     void setRightPortraitTarget(std::string speakerId, bool immediate);
     void updateRightPortrait(float dt);
+    void renderMonicaCall(Renderer& renderer, int screenWidth, int screenHeight, const DialogueLine* line) const;
 
     DialogueSequence sequence_;
     int stepIndex_ = 0;

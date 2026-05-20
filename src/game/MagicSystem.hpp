@@ -24,6 +24,11 @@ enum class MagicElement {
     Earth,
 };
 
+enum class MagicSoundEvent {
+    Cast,
+    Impact,
+};
+
 std::string_view magicElementDamageType(MagicElement element);
 bool magicElementFromCastEffect(std::string_view effect, MagicElement& outElement);
 
@@ -34,8 +39,8 @@ public:
     void update(Player& player, SpellRingSystem& spellRing, EnemySystem& enemies, TileMap& map, float dt);
     void appendLightSources(std::vector<LightSource>& outLights) const;
     void clear();
+    std::vector<MagicSoundEvent> consumeSoundEvents();
 
-public:
     enum class ProjectileKind {
         Fireball,
         IceShard,
@@ -47,7 +52,9 @@ public:
         FirePatch,
         FireAfterglow,
         IceShatter,
+        ThunderStrikeLight,
         EarthSpike,
+        EarthDebrisBreakLight,
     };
 
     struct MagicProjectile {
@@ -121,6 +128,7 @@ private:
     std::vector<MagicGroundArea> groundAreas_;
     std::vector<PendingThunder> pendingThunder_;
     std::vector<MagicLight> transientLights_;
+    std::vector<MagicSoundEvent> soundEvents_;
 };
 
 }

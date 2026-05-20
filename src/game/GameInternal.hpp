@@ -7,6 +7,7 @@
 #include "engine/Ui.hpp"
 #include "game/ActorVisual.hpp"
 #include "game/InventoryUiCommon.hpp"
+#include "game/ItemImageRenderer.hpp"
 #include "game/ObjectImageRenderer.hpp"
 #include "game/ObjectVisualPose.hpp"
 #include "game/WorldIconRenderer.hpp"
@@ -448,6 +449,9 @@ std::string joinEffectLines(const std::vector<std::string>& lines)
     if (lines.empty()) {
         return "-";
     }
+    if (lines.size() == 1 && lines.front() == "\xE3\x81\xAA\xE3\x81\x97") {
+        return lines.front();
+    }
     std::string text;
     for (std::size_t i = 0; i < lines.size(); ++i) {
         if (!text.empty()) {
@@ -500,6 +504,19 @@ int lootDepthRankForProgress(std::string_view stageId, float pathProgress)
     const int maxDepth = lootMaxDepthForStage(stageId);
     const float progress = clamp(pathProgress, 0.0f, 0.9999f);
     return std::clamp(static_cast<int>(progress * static_cast<float>(maxDepth)) + 1, 1, maxDepth);
+}
+
+int lootDepthRankForWorldPosition(
+    const TileMap& tileMap,
+    const DungeonLayout& dungeonLayout,
+    std::string_view stageId,
+    Vec2 position)
+{
+    const DungeonLayoutMetrics metrics = calculateDungeonLayoutMetrics(dungeonLayout, {
+        static_cast<float>(tileMap.worldToTile(position.x)),
+        static_cast<float>(tileMap.worldToTile(position.y)),
+    });
+    return lootDepthRankForProgress(stageId, metrics.pathProgress);
 }
 
 float lootStageMultiplier(const RuntimeBalance& balance, std::string_view stageId)
@@ -731,6 +748,11 @@ std::filesystem::path baseEditDataPath(BaseArea area)
 std::filesystem::path openingKamishibaiDataPath()
 {
     return std::filesystem::path("data") / "opening_kamishibai.tsv";
+}
+
+std::filesystem::path endingKamishibaiDataPath()
+{
+    return std::filesystem::path("data") / "ending_kamishibai.tsv";
 }
 
 std::filesystem::path storyEventDataDirectory()
@@ -974,6 +996,7 @@ const char* screenModeName(ScreenMode mode)
 {
     switch (mode) {
     case ScreenMode::OpeningKamishibai: return "OpeningKamishibai";
+    case ScreenMode::EndingKamishibai: return "EndingKamishibai";
     case ScreenMode::Title: return "Title";
     case ScreenMode::Base: return "Base";
     case ScreenMode::WorldLoading: return "WorldLoading";
@@ -982,9 +1005,11 @@ const char* screenModeName(ScreenMode mode)
     case ScreenMode::Inventory: return "Inventory";
     case ScreenMode::Ring: return "Ring";
     case ScreenMode::ObjectImageScaleEdit: return "ObjectImageScaleEdit";
+    case ScreenMode::AudioCueEdit: return "AudioCueEdit";
     case ScreenMode::LevelUp: return "LevelUp";
     case ScreenMode::GameOver: return "GameOver";
     case ScreenMode::StageClear: return "StageClear";
+    case ScreenMode::AstralResult: return "AstralResult";
     }
     return "Unknown";
 }
@@ -993,7 +1018,7 @@ const char* baseAreaName(BaseArea area)
 {
     switch (area) {
     case BaseArea::Outdoor: return "屋外拠点";
-    case BaseArea::HomeInterior: return "主人公の家";
+    case BaseArea::HomeInterior: return "ルネの家";
     }
     return "拠点";
 }
@@ -1018,8 +1043,8 @@ std::vector<BaseFacility> baseFacilities(BaseArea area, bool ringWorkshopUnlocke
         BaseFacility{"upgrade_forge", "拠点強化炉", {{568.0f, 76.0f}, {144.0f, 74.0f}}, 76.0f, true, true, BaseFacilityAction::Forge},
         BaseFacility{"ring_workshop", "リング工房用スペース", {{902.0f, 520.0f}, {172.0f, 92.0f}}, 82.0f, true, ringWorkshopUnlocked, BaseFacilityAction::RingWorkshop},
         BaseFacility{"monica", "モニカ", {{760.0f, 230.0f}, {74.0f, 86.0f}}, 72.0f, true, true, BaseFacilityAction::MonicaTalk},
-        BaseFacility{"home_entrance", "主人公の家の入口", {{382.0f, 158.0f}, {52.0f, 32.0f}}, 64.0f, true, true, BaseFacilityAction::HomeEntrance},
-        BaseFacility{"home", "主人公の家", {{330.0f, 72.0f}, {154.0f, 100.0f}}, 0.0f, false, true, BaseFacilityAction::HomeEntrance},
+        BaseFacility{"home_entrance", "ルネの家の入口", {{382.0f, 158.0f}, {52.0f, 32.0f}}, 64.0f, true, true, BaseFacilityAction::HomeEntrance},
+        BaseFacility{"home", "ルネの家", {{330.0f, 72.0f}, {154.0f, 100.0f}}, 0.0f, false, true, BaseFacilityAction::HomeEntrance},
     };
 }
 
@@ -1034,7 +1059,7 @@ const char* baseInteractionPrompt(const BaseFacility& facility)
     case BaseFacilityAction::MonicaTalk:
         return "Enter: モニカと話す / クリック: 近くのNPCと話す / Esc: メニュー";
     case BaseFacilityAction::HomeEntrance:
-        return "Enter: 主人公の家に入る / クリック: 近くの入口を調べる / Esc: メニュー";
+        return "Enter: ルネの家に入る / クリック: 近くの入口を調べる / Esc: メニュー";
     case BaseFacilityAction::HomeExit:
         return "Enter: 屋外へ戻る / クリック: 近くの出口を調べる / Esc: メニュー";
     default:
@@ -1057,25 +1082,6 @@ DialogueSequence baseMonicaDialogue()
         "モニカ",
         "",
         "チコリが反応したら、近くに星くずか古い魔導具があるかも。壁の色も見てみて。",
-    });
-    return sequence;
-}
-
-DialogueSequence firstDungeonDialogue()
-{
-    DialogueSequence sequence;
-    sequence.id = "dungeon_first_monica";
-    sequence.lines.push_back(DialogueLine{
-        "monica",
-        "モニカ",
-        "",
-        "通信はつながってる。暗い場所では、松明の光から離れすぎないで。",
-    });
-    sequence.lines.push_back(DialogueLine{
-        "monica",
-        "モニカ",
-        "",
-        "答えを全部は見通せないけど、異変の気配なら拾える。気になる壁は少し掘ってみよう。",
     });
     return sequence;
 }
@@ -2140,9 +2146,27 @@ float ringItemRotationWobbleDegrees(const SpellRingItem& item, float totalSecond
     return std::cos(ringItemBobPhase(item, totalSeconds)) * RingItemRotationWobbleDegrees;
 }
 
+Vec2 ringItemActionShakeOffset(const SpellRingItem& item, float totalSeconds)
+{
+    if (item.actionFlashTimer <= 0.0f) {
+        return {};
+    }
+
+    const float t = std::clamp(item.actionFlashTimer / SpellRingItemActionFlashSeconds, 0.0f, 1.0f);
+    const float eased = t * t * (3.0f - 2.0f * t);
+    const float amplitude = 3.6f * eased;
+    const float phase = item.localAngle * 17.0f + static_cast<float>(item.ringIndex) * 5.0f;
+    constexpr float ShakeSpeed = 86.0f;
+    return {
+        std::sin(totalSeconds * ShakeSpeed + phase) * amplitude,
+        std::cos(totalSeconds * ShakeSpeed * 1.27f + phase) * amplitude,
+    };
+}
+
 Vec2 ringItemDrawPosition(const SpellRingItem& item, float totalSeconds)
 {
-    return elevatedDrawPosition(item.worldPosition, ringItemAltitude(item, totalSeconds));
+    return elevatedDrawPosition(item.worldPosition, ringItemAltitude(item, totalSeconds)) +
+        ringItemActionShakeOffset(item, totalSeconds);
 }
 
 float ringItemBaseShadowVisualSize(const SpellRingItem& item)
@@ -2161,6 +2185,43 @@ float ringItemShadowVisualSize(const SpellRingItem& item, float totalSeconds)
     return actorShadowVisualSizeForAltitude(ringItemBaseShadowVisualSize(item), ringItemAltitude(item, totalSeconds));
 }
 
+Vec2 ringItemOutwardDirection(const SpellRingItem& item, Vec2 outward)
+{
+    if (lengthSquared(outward) > 0.0001f) {
+        return normalize(outward);
+    }
+    return fromAngle(item.localAngle);
+}
+
+ObjectImageDrawOptions ringItemActionFlashOptions(const SpellRingItem& item, ObjectImageDrawOptions options = {})
+{
+    if (item.actionFlashTimer > 0.0f) {
+        const float t = std::clamp(item.actionFlashTimer / SpellRingItemActionFlashSeconds, 0.0f, 1.0f);
+        const float eased = t * t * (3.0f - 2.0f * t);
+        options.maskOverlayColor = {
+            255,
+            244,
+            214,
+            static_cast<unsigned char>(std::round(150.0f * eased)),
+        };
+    }
+    return options;
+}
+
+ItemImageDrawOptions ringWorldItemImageOptions(
+    const SpellRingItem& item,
+    Vec2 outward,
+    float totalSeconds,
+    const ObjectImageDrawOptions& options)
+{
+    ItemImageDrawOptions itemOptions = itemImageOptionsFromObjectOptions(options);
+    itemOptions.enemyAnimationTimeSeconds = totalSeconds;
+    itemOptions.enemy.directionOverrideEnabled = true;
+    itemOptions.enemy.directionOverride = ringItemOutwardDirection(item, outward);
+    itemOptions.enemy.rotationDegrees = 0.0f;
+    return itemOptions;
+}
+
 void drawRingItemShape(
     Renderer& renderer,
     const SpellRingItem& item,
@@ -2177,37 +2238,37 @@ void drawRingItemShape(
         : Color{96, 104, 126, 220};
 
     if (object != nullptr) {
-        ObjectImageDrawOptions baseImageOptions;
+        ObjectImageDrawOptions baseImageOptions = ringItemActionFlashOptions(item);
         baseImageOptions.rotationDegrees = ringItemRotationWobbleDegrees(item, totalSeconds);
-        const ObjectImageDrawOptions imageOptions = objectRingImageOptions(
+        ObjectImageDrawOptions imageOptions = objectRingImageOptions(
             *object,
             outward,
             forward,
             totalSeconds,
             baseImageOptions);
         if (selected) {
-            const ObjectImageDrawOptions selectedOutlineOptions = withSelectedItemOutline(imageOptions, outline, 6);
-            if (drawObjectImage(
-                    renderer,
-                    *object,
-                    center,
-                    {RingObjectImageMaxSize, RingObjectImageMaxSize},
-                    selectedOutlineOptions)) {
-                // Keep the original 1px black outline and sprite on top.
-                (void)drawObjectImage(
-                    renderer,
-                    *object,
-                    center,
-                    {RingObjectImageMaxSize, RingObjectImageMaxSize},
-                    imageOptions);
-                return;
-            }
-        } else if (drawObjectImage(
-                       renderer,
-                       *object,
-                       center,
-                       {RingObjectImageMaxSize, RingObjectImageMaxSize},
-                       imageOptions)) {
+            imageOptions = withSelectedItemOutline(imageOptions, outline, 6);
+        }
+        if (drawItemImage(
+                renderer,
+                *object,
+                center,
+                {RingObjectImageMaxSize, RingObjectImageMaxSize},
+                imageOptions)) {
+            return;
+        }
+    } else if (item.objectVisual.imageNumber > 0) {
+        ObjectImageDrawOptions imageOptions = ringItemActionFlashOptions(item);
+        imageOptions.rotationDegrees = ringItemRotationWobbleDegrees(item, totalSeconds);
+        if (selected) {
+            imageOptions = withSelectedItemOutline(imageOptions, outline, 6);
+        }
+        if (drawItemVisual(
+                renderer,
+                item.objectVisual,
+                center,
+                {RingObjectImageMaxSize, RingObjectImageMaxSize},
+                itemImageOptionsFromObjectOptions(imageOptions))) {
             return;
         }
     }
@@ -2253,21 +2314,29 @@ bool drawRingItemObjectImage(
     const ObjectImageDrawOptions& baseOptions = {})
 {
     if (object == nullptr) {
-        return false;
+        ObjectImageDrawOptions options = ringItemActionFlashOptions(item, baseOptions);
+        options.rotationDegrees += ringItemRotationWobbleDegrees(item, totalSeconds);
+        return drawItemVisual(
+            renderer,
+            item.objectVisual,
+            center,
+            maxSize,
+            ringWorldItemImageOptions(item, outward, totalSeconds, options));
     }
-    ObjectImageDrawOptions options = baseOptions;
+    ObjectImageDrawOptions options = ringItemActionFlashOptions(item, baseOptions);
     options.rotationDegrees += ringItemRotationWobbleDegrees(item, totalSeconds);
-    return drawObjectImage(
+    const ObjectImageDrawOptions imageOptions = objectRingImageOptions(
+        *object,
+        outward,
+        forward,
+        totalSeconds,
+        options);
+    return drawItemImage(
         renderer,
         *object,
         center,
         maxSize,
-        objectRingImageOptions(
-            *object,
-            outward,
-            forward,
-            totalSeconds,
-            options));
+        ringWorldItemImageOptions(item, outward, totalSeconds, imageOptions));
 }
 
 UiRect ringDetailRect()
@@ -2451,6 +2520,9 @@ ObjectDefinition makeCapturedObjectDefinition(const EnemyDefinition& enemy)
     item.description = enemy.capturedDescription;
     item.rarity = 1;
     item.price = 0;
+    item.visual.source = ItemVisualSource::Enemy;
+    item.visual.imageNumber = enemy.imageNumber;
+    item.visual.sourceId = enemy.id;
     item.normalEffects = enemy.capturedNormalEffects;
     item.orbitEffects = enemy.capturedOrbitEffects;
     item.attackPower = enemy.capturedAttackPower;

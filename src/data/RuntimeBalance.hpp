@@ -41,8 +41,8 @@ struct RuntimeBalance {
     int enemyHp = balance::EnemyHp;
     int enemyXp = balance::EnemyXp;
     int enemyDugSpawnEvery = balance::EnemyDugSpawnEvery;
-    int enemyMinDugTiles = 16;
-    int enemyGuaranteeDugTiles = 30;
+    int enemyMinDugTiles = 11;
+    int enemyGuaranteeDugTiles = 20;
     int enemySoftCap = balance::EnemySoftCap;
     float enemyMinSpawnDistance = balance::EnemyMinSpawnDistance;
     float enemySpawnWarmup = balance::EnemySpawnWarmup;

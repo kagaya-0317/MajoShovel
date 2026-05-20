@@ -84,6 +84,7 @@ bool drawObjectImage(
     scaledOptions.selectedOutlineEnabled = options.selectedOutlineEnabled;
     scaledOptions.selectedOutlineColor = options.selectedOutlineColor;
     scaledOptions.selectedOutlinePx = options.selectedOutlinePx;
+    scaledOptions.maskOverlayColor = options.maskOverlayColor;
     scaledOptions.rotationDegrees = options.rotationDegrees;
     scaledOptions.flipX = options.flipX;
     scaledOptions.flipY = options.flipY;

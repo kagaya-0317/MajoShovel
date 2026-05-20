@@ -1,4 +1,4 @@
-#include "engine/Input.hpp"
+﻿#include "engine/Input.hpp"
 
 namespace majo {
 
@@ -36,7 +36,7 @@ constexpr KeyBinding KeyBindings[] = {
     {SDL_SCANCODE_G, InputAction::GrabOrPlaceItem},
     {SDL_SCANCODE_Z, InputAction::PreviousActiveRing},
     {SDL_SCANCODE_X, InputAction::NextActiveRing},
-    {SDL_SCANCODE_C, InputAction::CaptureNet},
+    {SDL_SCANCODE_C, InputAction::ThrowActiveRing},
     {SDL_SCANCODE_P, InputAction::ToggleProtection},
     {SDL_SCANCODE_ESCAPE, InputAction::Pause},
     {SDL_SCANCODE_I, InputAction::OpenInventory},
@@ -65,11 +65,13 @@ void Input::beginFrame()
 {
     pressed_.fill(false);
     released_.fill(false);
+    mouseLeftPressed_ = false;
     mouseLeftReleased_ = false;
     ctrlSavePressed_ = false;
     ctrlUndoPressed_ = false;
     ctrlRedoPressed_ = false;
     shortcutCursorDelta_ = 0;
+    mouseWheelDelta_ = 0;
     shortcutSlotPressed_ = -1;
     activeRingDelta_ = 0;
 }
@@ -115,8 +117,10 @@ void Input::handleEvent(const SDL_Event& event)
     }
     if (event.type == SDL_EVENT_MOUSE_BUTTON_DOWN) {
         if (event.button.button == SDL_BUTTON_LEFT) {
-            press(InputAction::ThrowActiveRing);
-            setHeld(InputAction::ThrowActiveRing, true);
+            mouseLeftPressed_ = true;
+            mouseLeftHeld_ = true;
+            press(InputAction::CaptureNet);
+            setHeld(InputAction::CaptureNet, true);
         } else if (event.button.button == SDL_BUTTON_RIGHT) {
             press(InputAction::OffsetRingCenter);
             setHeld(InputAction::OffsetRingCenter, true);
@@ -124,8 +128,9 @@ void Input::handleEvent(const SDL_Event& event)
     }
     if (event.type == SDL_EVENT_MOUSE_BUTTON_UP) {
         if (event.button.button == SDL_BUTTON_LEFT) {
-            release(InputAction::ThrowActiveRing);
-            setHeld(InputAction::ThrowActiveRing, false);
+            mouseLeftHeld_ = false;
+            release(InputAction::CaptureNet);
+            setHeld(InputAction::CaptureNet, false);
             mouseLeftReleased_ = true;
         } else if (event.button.button == SDL_BUTTON_RIGHT) {
             release(InputAction::OffsetRingCenter);
@@ -134,8 +139,10 @@ void Input::handleEvent(const SDL_Event& event)
     }
     if (event.type == SDL_EVENT_MOUSE_WHEEL) {
         if (event.wheel.y > 0.0f) {
+            --mouseWheelDelta_;
             press(InputAction::ShortcutCursorLeft);
         } else if (event.wheel.y < 0.0f) {
+            ++mouseWheelDelta_;
             press(InputAction::ShortcutCursorRight);
         }
     }

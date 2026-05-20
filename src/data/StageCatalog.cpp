@@ -1,4 +1,4 @@
-#include "data/StageCatalog.hpp"
+﻿#include "data/StageCatalog.hpp"
 
 #include <algorithm>
 #include <array>
@@ -449,7 +449,7 @@ void StageCatalog::loadDefaultStages()
         defaultStage("stage_01_stardust", "星くずの浅坑", "ストーリー", 10, "natural_cave", "soft_stardust", 320, 0.30, 0.25, 1.00, 1.00, 3, 1),
         defaultStage("stage_02_junk_magic", "魔導廃棄層", "ストーリー", 20, "junk_layer", "junk_mixed", 420, 0.38, 0.32, 1.12, 1.45, 4, 2),
         defaultStage("stage_03_star_core", "落星核の深層", "ストーリー", 30, "star_core", "hard_star_core", 540, 0.44, 0.28, 0.90, 2.20, 5, 2),
-        defaultStage("stage_04_astral_mine", "星間廃坑", "ローグライク", 40, "astral_rogue", "chaos_astral", 640, 0.55, 0.45, 1.25, 1.80, 0, 4),
+        defaultStage("stage_04_astral_mine", "星間廃坑", "ローグライク", 40, "astral_rogue", "chaos_astral", 640, 0.55, 0.45, 1.25, 1.80, 0, 5),
     };
     rebuildStageIndex(catalog);
     *this = std::move(catalog);

@@ -36,6 +36,11 @@ constexpr float MaterialParticleInterval = 0.16f;
 constexpr float CapturedMagnetDropRadius = 170.0f;
 constexpr float CapturedMagnetDropAcceleration = 260.0f;
 constexpr int CapturedMagnetDropLimit = 6;
+constexpr float VacuumLightDropAcceleration = 220.0f;
+constexpr float VacuumLightObjectMaxWeightKg = 1.0f;
+constexpr int VacuumLightDropLimit = 10;
+constexpr float WindLightDropAcceleration = 245.0f;
+constexpr int WindLightDropLimit = 10;
 constexpr std::string_view MoneyDropId = "money";
 
 constexpr std::array<std::string_view, 6> DropCategories = {
@@ -233,6 +238,31 @@ bool objectDropCanEnterInventory(const WorldDropItem& drop, const ObjectCatalog&
     return drop.kind != WorldDropKind::Object || inventory == nullptr || inventory->canAddObjectItem(catalog, drop.id);
 }
 
+bool isLightObjectDrop(const ObjectDefinition& object)
+{
+    constexpr std::array<std::string_view, 2> LightTags = {"small", "light"};
+    constexpr std::array<std::string_view, 4> HeavyTags = {"heavy", "large", "massive", "huge"};
+    if (hasAnyTag(object, HeavyTags)) {
+        return false;
+    }
+    if (hasAnyTag(object, LightTags)) {
+        return true;
+    }
+    return object.weightKg > 0.0 && object.weightKg <= VacuumLightObjectMaxWeightKg;
+}
+
+bool isLightDrop(const WorldDropItem& drop, const ObjectCatalog& catalog)
+{
+    if (drop.kind == WorldDropKind::Money || drop.kind == WorldDropKind::Material) {
+        return true;
+    }
+    if (drop.kind != WorldDropKind::Object) {
+        return false;
+    }
+    const ObjectDefinition* object = catalog.registry.findById(drop.id);
+    return object != nullptr && isLightObjectDrop(*object);
+}
+
 bool hasAllowedCategory(const ObjectDefinition& object)
 {
     return containsValue(DropCategories, object.category);
@@ -354,6 +384,33 @@ void WorldDropSystem::setDropLimit(int limit)
 {
     dropLimit_ = std::max(0, limit);
     if (dropLimit_ > 0 && static_cast<int>(drops_.size()) > dropLimit_) {
+        while (static_cast<int>(drops_.size()) > dropLimit_) {
+            if (!pruneOneDropForLimit()) {
+                break;
+            }
+        }
+    }
+}
+
+void WorldDropSystem::restoreDropsForSave(std::vector<WorldDropItem> drops)
+{
+    drops_.clear();
+    drops_.reserve(drops.size());
+    for (WorldDropItem& drop : drops) {
+        if (drop.id.empty() || drop.quantity <= 0) {
+            continue;
+        }
+        drop.velocity = {};
+        drop.jumpActive = false;
+        drop.jumpElapsedSeconds = 0.0f;
+        drop.jumpDurationSeconds = 0.0f;
+        drop.jumpArcHeight = 0.0f;
+        drop.pickupDelaySeconds = 0.0f;
+        configureDropMotion(drop, {});
+        drop.altitude = dropHoverAltitude(drop);
+        drops_.push_back(std::move(drop));
+    }
+    if (dropLimit_ > 0) {
         while (static_cast<int>(drops_.size()) > dropLimit_) {
             if (!pruneOneDropForLimit()) {
                 break;
@@ -575,6 +632,86 @@ int WorldDropSystem::pullMetalDrops(const ObjectCatalog& catalog, Vec2 center, f
         }
     }
     return pulled;
+}
+
+int WorldDropSystem::pullLightDrops(
+    const ObjectCatalog& catalog,
+    Vec2 center,
+    float dt,
+    float radius,
+    float strength,
+    const InventorySystem* inventory)
+{
+    if (dt <= 0.0f || radius <= 0.0f || strength <= 0.0f) {
+        return 0;
+    }
+
+    int pulled = 0;
+    const float effectiveRadius = std::max(DropPickupRadius, radius);
+    const float radiusSq = effectiveRadius * effectiveRadius;
+    const float acceleration = VacuumLightDropAcceleration * std::clamp(strength, 0.1f, 4.0f);
+    for (WorldDropItem& drop : drops_) {
+        if (drop.jumpActive || drop.pickupDelaySeconds > 0.0f) {
+            continue;
+        }
+        if (!isLightDrop(drop, catalog)) {
+            continue;
+        }
+        if (!objectDropCanEnterInventory(drop, catalog, inventory)) {
+            continue;
+        }
+        const Vec2 toCenter = center - drop.position;
+        const float distanceSq = lengthSquared(toCenter);
+        if (distanceSq <= 1.0f || distanceSq > radiusSq) {
+            continue;
+        }
+        const float distance = std::sqrt(distanceSq);
+        const float falloff = 0.45f + (1.0f - clamp(distance / effectiveRadius, 0.0f, 1.0f)) * 0.55f;
+        drop.velocity += normalize(toCenter) * (acceleration * falloff * dt);
+        ++pulled;
+        if (pulled >= VacuumLightDropLimit) {
+            break;
+        }
+    }
+    return pulled;
+}
+
+int WorldDropSystem::pushLightDrops(
+    const ObjectCatalog& catalog,
+    Vec2 center,
+    float dt,
+    float radius,
+    float strength)
+{
+    if (dt <= 0.0f || radius <= 0.0f || strength <= 0.0f) {
+        return 0;
+    }
+
+    int pushed = 0;
+    const float effectiveRadius = std::max(DropPickupRadius, radius);
+    const float radiusSq = effectiveRadius * effectiveRadius;
+    const float acceleration = WindLightDropAcceleration * std::clamp(strength, 0.1f, 4.0f);
+    for (WorldDropItem& drop : drops_) {
+        if (drop.jumpActive || drop.pickupDelaySeconds > 0.0f) {
+            continue;
+        }
+        if (!isLightDrop(drop, catalog)) {
+            continue;
+        }
+        const Vec2 away = drop.position - center;
+        const float distanceSq = lengthSquared(away);
+        if (distanceSq <= 1.0f || distanceSq > radiusSq) {
+            continue;
+        }
+        const float distance = std::sqrt(distanceSq);
+        const float falloff = 0.45f + (1.0f - clamp(distance / effectiveRadius, 0.0f, 1.0f)) * 0.55f;
+        drop.velocity += normalize(away) * (acceleration * falloff * dt);
+        ++pushed;
+        if (pushed >= WindLightDropLimit) {
+            break;
+        }
+    }
+    return pushed;
 }
 
 int WorldDropSystem::update(

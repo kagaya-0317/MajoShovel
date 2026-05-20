@@ -81,6 +81,19 @@ struct ObjectVisualRotation {
     bool operator==(const ObjectVisualRotation&) const = default;
 };
 
+enum class ItemVisualSource {
+    Object,
+    Enemy,
+};
+
+struct ItemVisualRef {
+    ItemVisualSource source = ItemVisualSource::Object;
+    int imageNumber = 0;
+    std::string sourceId;
+
+    bool operator==(const ItemVisualRef&) const = default;
+};
+
 struct ObjectDefinition {
     std::string id;
     std::string name;
@@ -96,6 +109,7 @@ struct ObjectDefinition {
     int durability = 0;
     double weightKg = 0.0;
     int imageNumber = 0;
+    ItemVisualRef visual;
     ObjectVisualRotation visualRotation;
     std::vector<std::string> tags;
     std::string effectText;

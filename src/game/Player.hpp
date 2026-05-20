@@ -19,6 +19,7 @@ class TileMap;
 enum class DamageSource {
     Unknown,
     Poison,
+    Hot,
     Bleed,
     SlimeAttack,
     SlimeContact,
@@ -47,15 +48,17 @@ struct Player {
     int maxHp = 10;
     int level = 1;
     int xp = 0;
-    int xpToNext = 12;
+    int xpToNext = balance::XpBase + balance::XpPerLevel;
     float spellRingShift = 0.0f;
     float spellRingShiftDistanceBonus = 0.0f;
+    float spellRingShiftDistanceMultiplier = 1.0f;
     float throwCooldownRemaining = 0.0f;
     float spriteAnimationTime = 0.0f;
     bool spriteWalking = false;
     float damageFlash = 0.0f;
     float stunWakeTimer = 0.0f;
     double poisonDamageAccumulator = 0.0;
+    double hotDamageAccumulator = 0.0;
     double bleedDamageAccumulator = 0.0;
     DamageSource lastDamageSource = DamageSource::Unknown;
     std::string lastDamageEnemyName;

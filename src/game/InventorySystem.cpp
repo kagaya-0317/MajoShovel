@@ -192,6 +192,30 @@ bool isStackableObject(const ItemData& item)
         objectHasTag(item, "potion");
 }
 
+void clearInventoryAddResult(InventoryAddResult* outResult)
+{
+    if (outResult != nullptr) {
+        *outResult = {};
+    }
+}
+
+void setInventoryAddResult(
+    InventoryAddResult* outResult,
+    InventoryAddKind kind,
+    std::string_view objectId,
+    std::string_view instanceId = {},
+    int quantity = 1)
+{
+    if (outResult == nullptr) {
+        return;
+    }
+    outResult->added = true;
+    outResult->kind = kind;
+    outResult->objectId = std::string(objectId);
+    outResult->instanceId = std::string(instanceId);
+    outResult->quantity = std::max(0, quantity);
+}
+
 std::unordered_map<std::string, int> buildObjectSortOrder(const ObjectCatalog& catalog)
 {
     std::unordered_map<std::string, int> order;
@@ -417,6 +441,36 @@ void InventorySystem::observeObjectInstanceId(std::string_view instanceId)
         return;
     }
     nextInstanceId_ = std::max(nextInstanceId_, parsed + 1);
+}
+
+std::optional<bool> InventorySystem::objectInstanceProtectionEnabled(std::string_view instanceId) const
+{
+    if (instanceId.empty()) {
+        return std::nullopt;
+    }
+    const auto it = std::find_if(objectInstances_.begin(), objectInstances_.end(), [instanceId](const InventoryObjectInstance& entry) {
+        return entry.instance.instanceId == instanceId;
+    });
+    if (it == objectInstances_.end()) {
+        return std::nullopt;
+    }
+    return it->instance.protectionEnabled;
+}
+
+bool InventorySystem::setObjectInstanceProtection(std::string_view instanceId, bool enabled)
+{
+    if (instanceId.empty()) {
+        return false;
+    }
+    const auto it = std::find_if(objectInstances_.begin(), objectInstances_.end(), [instanceId](const InventoryObjectInstance& entry) {
+        return entry.instance.instanceId == instanceId;
+    });
+    if (it == objectInstances_.end()) {
+        return false;
+    }
+    it->instance.protectionEnabled = enabled;
+    status_ = enabled ? "保護ON" : "保護OFF";
+    return true;
 }
 
 bool InventorySystem::removeObjectItemCount(std::string_view objectId, int count)
@@ -820,8 +874,9 @@ bool InventorySystem::canAddObjectItem(const ObjectCatalog& catalog, std::string
     return static_cast<int>(objectStacks_.size() + objectInstances_.size()) < ShortcutSlotCount;
 }
 
-bool InventorySystem::addObjectItem(const ObjectCatalog& catalog, std::string_view objectId)
+bool InventorySystem::addObjectItem(const ObjectCatalog& catalog, std::string_view objectId, InventoryAddResult* outResult)
 {
+    clearInventoryAddResult(outResult);
     if (objectId.empty()) {
         logError("[warning] InventorySystem: empty object ID cannot be added");
         return false;
@@ -841,6 +896,7 @@ bool InventorySystem::addObjectItem(const ObjectCatalog& catalog, std::string_vi
     if (materialTypeForObject(*item, materialType)) {
         materials_.add(materialType, 1);
         status_ = "素材入手: " + std::string(materialTypeDisplayName(materialType));
+        setInventoryAddResult(outResult, InventoryAddKind::Material, item->id);
         return true;
     }
 
@@ -849,8 +905,9 @@ bool InventorySystem::addObjectItem(const ObjectCatalog& catalog, std::string_vi
             status_ = "インベントリ満杯";
             return false;
         }
-        createObjectInstance(*item);
+        InventoryObjectInstance objectInstance = createObjectInstance(*item);
         status_ = "Picked up: " + item->name;
+        setInventoryAddResult(outResult, InventoryAddKind::Instance, item->id, objectInstance.instance.instanceId);
         return true;
     }
 
@@ -859,6 +916,7 @@ bool InventorySystem::addObjectItem(const ObjectCatalog& catalog, std::string_vi
             ++stack.count;
             stack.item = *item;
             status_ = "Picked up: " + item->name;
+            setInventoryAddResult(outResult, InventoryAddKind::Stack, item->id);
             return true;
         }
     }
@@ -870,11 +928,13 @@ bool InventorySystem::addObjectItem(const ObjectCatalog& catalog, std::string_vi
 
     objectStacks_.push_back(InventoryObjectStack{*item, 1});
     status_ = "Picked up: " + item->name;
+    setInventoryAddResult(outResult, InventoryAddKind::Stack, item->id);
     return true;
 }
 
-bool InventorySystem::addRuntimeObjectItem(const ItemData& item)
+bool InventorySystem::addRuntimeObjectItem(const ItemData& item, InventoryAddResult* outResult)
 {
+    clearInventoryAddResult(outResult);
     if (item.id.empty()) {
         return false;
     }
@@ -883,6 +943,7 @@ bool InventorySystem::addRuntimeObjectItem(const ItemData& item)
     if (materialTypeForObject(item, materialType)) {
         materials_.add(materialType, 1);
         status_ = "素材入手: " + std::string(materialTypeDisplayName(materialType));
+        setInventoryAddResult(outResult, InventoryAddKind::Material, item.id);
         return true;
     }
 
@@ -891,8 +952,9 @@ bool InventorySystem::addRuntimeObjectItem(const ItemData& item)
             status_ = "インベントリ満杯";
             return false;
         }
-        createObjectInstance(item);
+        InventoryObjectInstance objectInstance = createObjectInstance(item);
         status_ = "Picked up: " + item.name;
+        setInventoryAddResult(outResult, InventoryAddKind::Instance, item.id, objectInstance.instance.instanceId);
         return true;
     }
 
@@ -902,6 +964,7 @@ bool InventorySystem::addRuntimeObjectItem(const ItemData& item)
             stack.item = item;
             stack.objectId = item.id;
             status_ = "Picked up: " + item.name;
+            setInventoryAddResult(outResult, InventoryAddKind::Stack, item.id);
             return true;
         }
     }
@@ -913,6 +976,7 @@ bool InventorySystem::addRuntimeObjectItem(const ItemData& item)
 
     objectStacks_.push_back(InventoryObjectStack{item, 1});
     status_ = "Picked up: " + item.name;
+    setInventoryAddResult(outResult, InventoryAddKind::Stack, item.id);
     return true;
 }
 
@@ -1514,7 +1578,13 @@ void InventorySystem::updateShortcuts(
 
     if (hoveredSlotIndex >= 0 && input.mouseLeftPressed() && !ui.pointerConsumed()) {
         if (canUseScreenItem(hoveredSlotIndex)) {
-            useShortcutSelection(player, spellRing, effectDispatcher, magic, discoveryEvents, encyclopedia);
+            if (useShortcutSelection(player, spellRing, effectDispatcher, magic, discoveryEvents, encyclopedia)) {
+                ui.emitSound(UiSoundEvent::ItemUse);
+            } else {
+                ui.emitSound(UiSoundEvent::Cancel);
+            }
+        } else {
+            ui.emitSound(UiSoundEvent::Cancel);
         }
         ui.consumePointer();
         return;
@@ -1529,15 +1599,21 @@ void InventorySystem::updateShortcuts(
     }
 
     if (input.useItemPressed()) {
-        useShortcutSelection(player, spellRing, effectDispatcher, magic, discoveryEvents, encyclopedia);
+        ui.emitSound(useShortcutSelection(player, spellRing, effectDispatcher, magic, discoveryEvents, encyclopedia)
+            ? UiSoundEvent::ItemUse
+            : UiSoundEvent::Cancel);
     }
     if (input.addRingPressed()) {
         SpellRingAddResult result{};
         if (addShortcutSelectionToRing(spellRing, &result)) {
+            ui.emitSound(UiSoundEvent::RingPlace);
             queueRingEquipFx(shortcutHudSlotCenter(selectedShortcutColumn_, screenWidth, screenHeight), result);
+        } else {
+            ui.emitSound(UiSoundEvent::Cancel);
         }
     }
     if (input.pressed(InputAction::ToggleProtection)) {
+        ui.emitSound(selectedObjectInstance() != nullptr ? UiSoundEvent::Confirm : UiSoundEvent::Cancel);
         toggleSelectedProtection();
     }
 }
@@ -1625,7 +1701,7 @@ void InventorySystem::updateScreen(
     }
 
     if (ui.pressed(inventorySortButtonRect())) {
-        sortByCatalogOrder(catalog);
+        ui.emitSound(sortByCatalogOrder(catalog) ? UiSoundEvent::ItemMove : UiSoundEvent::Cancel);
         ui.block(inventoryScreenRect());
         return;
     }
@@ -1674,6 +1750,9 @@ void InventorySystem::updateScreen(
         selectShortcutIndex(slotPointerPressIndex_);
         grabOrPlaceSelected();
         slotPointerDragTriggered_ = grabbedSlotActive_;
+        if (slotPointerDragTriggered_) {
+            ui.emitSound(UiSoundEvent::ItemMove);
+        }
         slotPointerPressCanOpenMenu_ = false;
         closeUiCommandMenu(slotCommandMenu_);
         slotCommandMenuIndex_ = -1;
@@ -1685,6 +1764,7 @@ void InventorySystem::updateScreen(
                 selectShortcutIndex(hoveredSlotIndex);
             }
             placeGrabbedAtSelected();
+            ui.emitSound(UiSoundEvent::ItemMove);
         } else if (slotPointerPressCanOpenMenu_ && hoveredSlotIndex == slotPointerPressIndex_) {
             openSlotCommandMenu(slotPointerPressIndex_);
         }
@@ -1694,26 +1774,33 @@ void InventorySystem::updateScreen(
     if (input.grabOrPlacePressed()) {
         closeUiCommandMenu(slotCommandMenu_);
         slotCommandMenuIndex_ = -1;
+        ui.emitSound(grabbedSlotActive_ || hasScreenItem(selectedShortcutIndex()) ? UiSoundEvent::ItemMove : UiSoundEvent::Cancel);
         grabOrPlaceSelected();
     }
     if (input.useItemPressed() || input.confirmPressed()) {
         if (grabbedSlotActive_) {
             placeGrabbedAtSelected();
+            ui.emitSound(UiSoundEvent::ItemMove);
         } else if (hasScreenItem(selectedShortcutIndex())) {
             openSlotCommandMenu(selectedShortcutIndex());
+        } else {
+            ui.emitSound(UiSoundEvent::Cancel);
         }
     }
     if (input.addRingPressed()) {
         if (grabbedSlotActive_) {
+            ui.emitSound(UiSoundEvent::Cancel);
             status_ = "つかみ中は配置してください";
         } else {
-            addShortcutSelectionToRing(spellRing);
+            ui.emitSound(addShortcutSelectionToRing(spellRing) ? UiSoundEvent::RingPlace : UiSoundEvent::Cancel);
         }
     }
     if (input.pressed(InputAction::ToggleProtection)) {
         if (grabbedSlotActive_) {
+            ui.emitSound(UiSoundEvent::Cancel);
             status_ = "つかみ中は保護変更できません";
         } else {
+            ui.emitSound(selectedObjectInstance() != nullptr ? UiSoundEvent::Confirm : UiSoundEvent::Cancel);
             toggleSelectedProtection();
         }
     }

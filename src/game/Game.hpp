@@ -21,6 +21,7 @@
 #include "game/EffectSystem.hpp"
 #include "game/EnemySystem.hpp"
 #include "game/EncyclopediaSystem.hpp"
+#include "game/GroundLineSystem.hpp"
 #include "game/InventorySystem.hpp"
 #include "game/InventoryUiCommon.hpp"
 #include "game/Kamishibai.hpp"
@@ -51,9 +52,11 @@ namespace majo {
 
 class UiContext;
 class Renderer;
+class AudioEngine;
 
 enum class ScreenMode {
     OpeningKamishibai,
+    EndingKamishibai,
     Title,
     Base,
     WorldLoading,
@@ -62,9 +65,11 @@ enum class ScreenMode {
     Inventory,
     Ring,
     ObjectImageScaleEdit,
+    AudioCueEdit,
     LevelUp,
     GameOver,
-    StageClear
+    StageClear,
+    AstralResult
 };
 
 enum class BaseArea {
@@ -92,6 +97,11 @@ enum class ImageScaleEditTab {
     Others,
 };
 
+enum class AudioCueEditMode {
+    Bgm,
+    Se,
+};
+
 struct BaseEditRect {
     float x = 0.0f;
     float y = 0.0f;
@@ -106,9 +116,26 @@ struct BaseEditSnapshot {
     std::unordered_set<std::int64_t> homeBlockedTiles;
 };
 
+struct AudioCueEditEntry {
+    std::string id;
+    std::string displayName;
+    std::string type;
+    std::string path;
+    float volume = 1.0f;
+    bool loop = false;
+    float cooldownMs = 0.0f;
+};
+
+struct AudioCueFileEntry {
+    std::string name;
+    std::string relativePath;
+    std::uintmax_t fileSize = 0;
+};
+
 class Game {
 public:
     void initialize(int width, int height);
+    void setAudioEngine(AudioEngine* audio);
     void resize(int width, int height);
     void update(const Input& input, const Time& time);
     void render(Renderer& renderer, const Time& time);
@@ -122,8 +149,57 @@ private:
         int defeatedEnemies = 0;
         int dugTiles = 0;
         int acquiredItems = 0;
+        int acquiredObjectItems = 0;
         int dugTilesSinceMoneyDrop = 0;
         int dugTilesSinceItemDrop = 0;
+    };
+
+    struct PlayerRegenSource {
+        std::string objectId;
+        std::string objectName;
+        Vec2 position{};
+        double ratePerSecond = 0.0;
+    };
+
+    enum class AstralDistortionKind {
+        None,
+        FadingStarlight,
+        StarHardened,
+        EchoSpawn,
+    };
+
+    enum class AstralRunResult {
+        None,
+        Returned,
+        Died,
+        DragonDefeated,
+    };
+
+    struct AstralRunState {
+        bool active = false;
+        AstralDistortionKind distortion = AstralDistortionKind::None;
+        int currentDepth = 1;
+        int maxReachedDepth = 1;
+        int maxDepth = 9;
+        int maxReachedDistanceTiles = 0;
+        int distortionChanges = 0;
+        float baseStageHardnessMultiplier = 1.0f;
+    };
+
+    struct AstralRunSummary {
+        AstralRunResult result = AstralRunResult::None;
+        int reachedDepth = 1;
+        int maxDepth = 9;
+        int reachedDistanceTiles = 0;
+        int defeatedEnemies = 0;
+        int dugTiles = 0;
+        int acquiredItems = 0;
+        int acquiredMaterials = 0;
+        int acquiredMoney = 0;
+        bool carriedOut = false;
+        int score = 0;
+        int highScore = 0;
+        bool highScoreUpdated = false;
     };
 
     struct DungeonLogEntry {
@@ -139,6 +215,7 @@ private:
     struct InventoryCarryState {
         InventorySystem inventory;
         std::array<std::vector<SpellRingItem>, SpellRingCount> ringItemsByRing;
+        int money = 0;
         bool valid = false;
     };
 
@@ -169,6 +246,20 @@ private:
         int retainedXpToNext = 1;
         float elapsedSeconds = 0.0f;
         WorldBuildStep step = WorldBuildStep::None;
+    };
+
+    enum class DebugStoryTestMode {
+        Events,
+        Tutorials,
+    };
+
+    struct DebugStoryTestEntry {
+        std::string eventId;
+        std::string title;
+        std::string trigger;
+        std::string onceFlag;
+        bool repeatable = false;
+        bool alreadySeen = false;
     };
 
     struct WarpPoint {
@@ -255,6 +346,12 @@ private:
         bool spawned = false;
     };
 
+    struct DungeonMinimapCell {
+        TileType type = TileType::Empty;
+    };
+
+    using DungeonMinimapCells = std::unordered_map<std::int64_t, DungeonMinimapCell>;
+
     struct RetrySnapshot {
         Vec2 playerPosition{};
         Vec2 playerFacing{1.0f, 0.0f};
@@ -266,6 +363,7 @@ private:
         InventoryCarryState inventory;
         TileMap tileMap;
         DungeonLayout dungeonLayout;
+        DungeonMinimapCells dungeonMinimapCells;
         RunStats runStats{};
         std::vector<WarpPoint> warpPoints;
         std::vector<RewardNode> rewardNodes;
@@ -290,6 +388,7 @@ private:
         std::string currentStageId;
         TileMap tileMap;
         DungeonLayout dungeonLayout;
+        DungeonMinimapCells dungeonMinimapCells;
         RunStats runStats{};
         std::vector<WarpPoint> warpPoints;
         std::vector<RewardNode> rewardNodes;
@@ -429,6 +528,22 @@ private:
 
         [[nodiscard]] bool active() const { return phase != ScreenTransitionPhase::Idle; }
     };
+    enum class BossEncounterPhase {
+        None,
+        WaitingBeforeDialogue,
+        Fighting,
+        DefeatPresentation,
+        WaitingAfterDialogue,
+    };
+    struct BossEncounterState {
+        BossEncounterPhase phase = BossEncounterPhase::None;
+        std::string stageId;
+        std::string bossEnemyId;
+        Vec2 spawnPoint{};
+        Vec2 defeatPosition{};
+        float timer = 0.0f;
+        bool finalBoss = false;
+    };
     void initializeWorld(bool captureRunStartInventory = true);
     void resetWorldSimulationState();
     void resetWorldPlayerState();
@@ -457,15 +572,22 @@ private:
     int worldBuildStepCount() const;
     float worldBuildProgress() const;
     std::string worldBuildStatusText() const;
+    void playAudioBgm(std::string_view id, float fadeSeconds = 0.0f, bool restart = false);
+    void playAudioSe(std::string_view id, float volumeScale = 1.0f);
+    void playUiSoundEvents(const UiContext& ui);
     void enterBase();
     void placeBasePlayerAtMineExitReturnPoint();
     void placeBasePlayerAtHomeDoorResumePoint();
     void startMiningFromBase(bool useLatestWarpPoint, bool forceRegenerate = false);
     void loadOpeningKamishibaiData();
+    void loadEndingKamishibaiData();
     void loadStoryEvents();
     void startOpeningKamishibai();
     void finishOpeningKamishibai(bool completedPlayback);
     void updateOpeningKamishibai(const Input& input, float dt);
+    void startEndingKamishibai();
+    void finishEndingKamishibai(bool completedPlayback);
+    void updateEndingKamishibai(const Input& input, float dt);
     void updateTitleScreen(const Input& input, UiContext& ui);
     void requestScreenTransition(ScreenTransitionTarget target);
     void requestMiningStartTransition(bool useLatestWarpPoint, bool forceRegenerate);
@@ -474,6 +596,7 @@ private:
     void updateScreenTransition(float dt);
     void applyScreenTransitionTarget(ScreenTransitionTarget target);
     void applyPermanentUpgrades();
+    LevelGainResult gainPlayerXp(int amount);
     float effectiveInitialRingRadius(int levelRadiusPoints) const;
     float effectiveInitialRingSpeed(int levelSpeedPoints) const;
     float effectiveInitialRingWeightLimit(int levelWeightLimitPoints) const;
@@ -495,6 +618,7 @@ private:
     void applyDebugStageUnlockState(int unlockedStoryStages);
     void resolveCurrentStageDefinition();
     void refreshOrbitEffects();
+    void updatePlayerRegen(float dt, std::vector<EffectDiscoveryEvent>& discoveryEvents);
     DungeonGenerationContext makeDungeonGenerationContext() const;
     void generateDungeonLayoutForRun();
     void updateCapturedProjectileBehaviors(float dt);
@@ -619,6 +743,7 @@ private:
     void buyRingWorkshopUpgrade(RingWorkshopUpgrade upgrade);
     void openBookshelf();
     void syncEncyclopediaFromInventoryAndRing();
+    void captureEncyclopediaSyncSuppressState();
     void applyEffectDiscoveries(const std::vector<EffectDiscoveryEvent>& discoveries);
     void addStoryFlag(std::string flag);
     void updateBookshelfScreen(const Input& input, UiContext& ui);
@@ -638,6 +763,13 @@ private:
     void updateGameOverScreen(const Input& input, UiContext& ui);
     void retryAfterGameOver();
     void returnToBaseAfterGameOver();
+    void enterAstralResult(AstralRunResult result);
+    void updateAstralResultScreen(const Input& input, UiContext& ui);
+    void returnToBaseAfterAstralResult();
+    AstralRunSummary makeAstralRunSummary(AstralRunResult result) const;
+    int calculateAstralRunScore(const AstralRunSummary& summary) const;
+    int astralRunMaterialDeltaFromStart() const;
+    int astralRunMoneyDeltaFromStart() const;
     bool shouldRefreshMerchantOnReturn(bool stageCleared, bool died) const;
     void returnToBaseFromNormalStage(bool stageCleared, bool died);
     InventoryCarryState captureInventoryCarryState() const;
@@ -652,6 +784,12 @@ private:
     void captureDungeonState();
     bool restoreDungeonState(bool useLatestWarpPoint);
     bool canRegenerateCurrentStage() const;
+    bool currentStageIsRoguelike() const;
+    bool currentStageCleared() const;
+    bool stageCleared(std::string_view stageId) const;
+    std::string stageClearFlagForStage(std::string_view stageId) const;
+    std::string currentStageBossCaptureObjectId() const;
+    bool hasCapturedBossForCurrentStage() const;
     std::size_t retainedWorldDropCountForCurrentStage() const;
     void initializeWarpPointsFromLayout();
     int discoveredWarpPointCount() const;
@@ -664,6 +802,24 @@ private:
     bool unlockAllWarpPointsForCurrentDungeon();
     void updateWarpPoints(float dt);
     void initializeMoonFragmentNodesFromWarpPoints();
+    static std::int64_t dungeonMinimapKey(int tx, int ty);
+    static DungeonTile dungeonMinimapTileFromKey(std::int64_t key);
+    void resetDungeonMinimap();
+    void setDungeonMinimapTile(int tx, int ty, TileType type);
+    bool dungeonMinimapTileSeen(int tx, int ty) const;
+    void revealDungeonMinimapAround(Vec2 center, float radius);
+    void revealDungeonMinimapOpenedTiles(const std::vector<Vec2>& openedTiles);
+    void updateDungeonMinimap(double totalSeconds);
+    std::vector<LightSource> collectDungeonLightSources(double totalSeconds) const;
+    void resetAstralRunState();
+    void initializeAstralRunForLayout();
+    void updateAstralRunProgress();
+    void applyAstralDistortionToLayout();
+    AstralDistortionKind chooseAstralDistortionForDepth(int depth, AstralDistortionKind previous) const;
+    float astralLightRadiusMultiplier() const;
+    float astralHardnessMultiplier() const;
+    RuntimeBalance runtimeBalanceForDungeon() const;
+    bool astralRunActive() const;
     void initializeRewardNodesFromLayout();
     void updateExposedRewardNodes();
     void revealRewardNodesFromOpenedTiles(const std::vector<Vec2>& openedTiles);
@@ -696,12 +852,21 @@ private:
     void applyPlacementTerrainOverrides();
     void updateExposedEnemyNodes();
     void updateRingEffectDiscoveries(std::vector<EffectDiscoveryEvent>& discoveryEvents);
+    void updateOrbitAreaEffects(float dt, std::vector<EffectDiscoveryEvent>& discoveryEvents);
+    void updateOrbitGroundEffects(float dt, std::vector<EffectDiscoveryEvent>& discoveryEvents);
     std::vector<Vec2> spawnHiddenEnemyNodesFromOpenedTiles(const std::vector<Vec2>& openedTiles);
     int exposedEnemyNodeCount() const;
     int buriedEnemyNodeCount() const;
     int spawnedEnemyNodeCount() const;
     void configureBossSpawnPointFromWarp(Vec2 warpPosition);
     void updateBossSpawn();
+    void resetBossEncounter();
+    bool beginBossFightForCurrentEncounter();
+    void beginBossDefeatSequence(Vec2 position);
+    bool updateBossEncounterFlow(float dt);
+    void finishBossEncounterAfterDialogue();
+    bool bossEncounterBlocksProgress() const;
+    float bossDefeatPresentationProgress() const;
     void captureRetrySnapshotAtWarpPoint();
     void restoreRetrySnapshot();
     void renderDungeonEntrance(Renderer& renderer) const;
@@ -711,7 +876,9 @@ private:
         Renderer& renderer,
         const std::vector<LightSource>& extraLights) const;
     void renderRewardNodes(Renderer& renderer, const std::vector<LightSource>& extraLights) const;
+    void markCurrentStageCleared();
     void enterStageClear();
+    void beginFinalBossEndingSequence();
     void updateStageClearScreen(const Input& input, UiContext& ui);
     void resetPlayerFootstepDust();
     void updatePlayerFootstepDust(float dt);
@@ -737,6 +904,16 @@ private:
     void exitObjectImageScaleEditMode();
     void updateObjectImageScaleEditScreen(const Input& input, UiContext& ui);
     void renderObjectImageScaleEditScreen(Renderer& renderer) const;
+    bool loadAudioCueManifestForEdit();
+    bool saveAudioCueManifestFromEdit(std::string& message);
+    bool handleAudioCueEditCommand(std::string_view normalized);
+    void rebuildAudioCueFileList();
+    void enterAudioCueEditMode(AudioCueEditMode editMode);
+    void exitAudioCueEditMode();
+    void previewSelectedAudioCueFile();
+    void applySelectedAudioCueFile();
+    void updateAudioCueEditScreen(const Input& input, UiContext& ui);
+    void renderAudioCueEditScreen(Renderer& renderer) const;
     bool handleDebugItemPickerCommand(std::string_view normalized);
     void rebuildDebugItemPickerList();
     void openDebugItemPicker();
@@ -744,6 +921,13 @@ private:
     void addSelectedDebugItem();
     void updateDebugItemPicker(const Input& input, UiContext& ui);
     void renderDebugItemPicker(Renderer& renderer) const;
+    bool handleDebugStoryTestCommand(std::string_view normalized);
+    void rebuildDebugStoryTestList();
+    void openDebugStoryTest(DebugStoryTestMode mode);
+    void closeDebugStoryTest();
+    void playSelectedDebugStoryTest();
+    void updateDebugStoryTest(const Input& input, UiContext& ui);
+    void renderDebugStoryTest(Renderer& renderer) const;
     void enterEnemyTestMode();
     void exitEnemyTestToBase();
     void spawnSelectedEnemyTestEnemy();
@@ -765,17 +949,23 @@ private:
     bool gameProgressPaused() const;
     bool basePresentationActive() const;
     void startBaseMonicaDialogue();
-    void maybeStartFirstDungeonDialogue();
+    void maybeQueueStageStartStory();
+    bool hasStoryFlag(std::string_view flag) const;
     const StoryEvent* findStoryEvent(std::string_view id) const;
     const StoryEvent* findStoryEventForTrigger(std::string_view trigger) const;
+    std::string currentStageStoryTrigger(std::string_view triggerName) const;
+    bool queueStoryEventForTrigger(std::string trigger);
+    bool queueStoryEventForCurrentStage(std::string_view triggerName);
+    void updateQueuedStoryEvents();
     bool startStoryEvent(std::string_view id);
+    bool startStoryEventForDebug(std::string_view id);
     bool startStoryEventForTrigger(std::string_view trigger);
     void maybeStartOpeningBaseIntroEvent();
     void pushDungeonLog(std::string message, std::string mergeKey = {});
     void pushCountedDungeonLog(std::string label, int amount, std::string suffix, std::string mergeKey);
     void updateDungeonLogs(float dt);
     void appendPickupLogs(const std::vector<WorldDropPickupEvent>& pickupEvents);
-    void handleRingItemBreakEvents();
+    void handleRingItemBreakEvents(std::vector<EffectDiscoveryEvent>* discoveryEvents = nullptr);
     void switchActiveRingWithLog(int delta);
     int unlockedRingHudCount() const;
     UiRect ringStatusHudRect(int ringIndex, int unlockedRingCount) const;
@@ -783,6 +973,7 @@ private:
     std::string currentMapDisplayName() const;
     void renderTopInfoBar(Renderer& renderer) const;
     void renderOpeningKamishibai(Renderer& renderer) const;
+    void renderEndingKamishibai(Renderer& renderer) const;
     void renderTitleScreen(Renderer& renderer) const;
     void renderScreenTransitionOverlay(Renderer& renderer);
     void renderBaseBackdrop(Renderer& renderer) const;
@@ -791,12 +982,15 @@ private:
     void renderPauseMenu(Renderer& renderer) const;
     void renderRingScreen(Renderer& renderer, float totalTime) const;
     void renderRingStatusHud(Renderer& renderer) const;
+    void renderDungeonMinimap(Renderer& renderer, const std::vector<LightSource>& itemLights) const;
     void renderDungeonStatusHud(Renderer& renderer) const;
     void renderDungeonLogs(Renderer& renderer) const;
     void renderWarpReturnUi(Renderer& renderer) const;
     void renderWorldLoadingScreen(Renderer& renderer, float totalSeconds) const;
     void renderGameOverScreen(Renderer& renderer) const;
     void renderStageClearScreen(Renderer& renderer) const;
+    void renderAstralResultScreen(Renderer& renderer) const;
+    void renderBossDefeatPresentation(Renderer& renderer) const;
     void renderBaseDebugOverlay(Renderer& renderer, const Time& time) const;
     void renderDebugOverlay(Renderer& renderer, const Time& time);
     void beginDungeonRingIntro();
@@ -827,9 +1021,12 @@ private:
     ProjectileSystem projectiles_;
     MagicSystem magic_;
     MagicFxSystem magicFx_;
+    GroundLineSystem groundLines_;
     InventorySystem inventory_;
     WorldDropSystem worldDrops_;
     EncyclopediaSystem encyclopedia_;
+    std::unordered_map<std::string, int> encyclopediaOwnedSyncSuppressCounts_;
+    std::unordered_map<std::string, int> encyclopediaRingSyncSuppressCounts_;
     LevelSystem levels_;
     UpgradeSystem upgrades_;
     UiResultDialogState levelUpResultDialog_{};
@@ -838,10 +1035,14 @@ private:
     OpeningMetaSave openingMetaSave_;
     OpeningMetaData openingMeta_;
     std::vector<KamishibaiPage> openingPages_;
+    std::vector<KamishibaiPage> endingPages_;
     KamishibaiPlayer openingPlayer_;
+    KamishibaiPlayer endingPlayer_;
     KamishibaiRenderer openingRenderer_;
     std::vector<StoryEvent> storyEvents_;
+    int storyEventsRevision_ = 0;
     std::string pendingStoryTrigger_;
+    std::vector<std::string> pendingStoryTriggers_;
     ScreenTransitionState screenTransition_;
     FrameSnapshot screenTransitionSnapshot_;
     ScreenMode mode_ = ScreenMode::Base;
@@ -937,12 +1138,35 @@ private:
     float otherImageScaleScrollOffset_ = 0.0f;
     bool objectImageScaleDirty_ = false;
     std::string objectImageScaleStatus_;
+    ScreenMode audioCueEditReturnMode_ = ScreenMode::Playing;
+    AudioCueEditMode audioCueEditMode_ = AudioCueEditMode::Bgm;
+    std::vector<AudioCueEditEntry> audioCueEditEntries_;
+    std::vector<AudioCueFileEntry> audioCueEditFiles_;
+    int audioCueEditCueIndex_ = -1;
+    int audioCueEditFileIndex_ = -1;
+    float audioCueEditCueScrollOffset_ = 0.0f;
+    float audioCueEditFileScrollOffset_ = 0.0f;
+    UiScrollAreaState audioCueEditCueScrollState_{};
+    UiScrollAreaState audioCueEditFileScrollState_{};
+    bool audioCueEditDirty_ = false;
+    std::string audioCueEditStatus_;
+    std::string audioCueEditPreviousBgmCue_;
+    mutable UiCancelControlState audioCueEditCancelState_{};
     bool debugItemPickerActive_ = false;
     std::vector<std::string> debugItemPickerObjectIds_;
     int debugItemPickerSelectedIndex_ = -1;
     float debugItemPickerScrollOffset_ = 0.0f;
     std::string debugItemPickerStatus_;
     mutable UiCancelControlState debugItemPickerCancelState_{};
+    bool debugStoryTestActive_ = false;
+    DebugStoryTestMode debugStoryTestMode_ = DebugStoryTestMode::Events;
+    std::vector<DebugStoryTestEntry> debugStoryTestEntries_;
+    int debugStoryTestSelectedIndex_ = -1;
+    float debugStoryTestScrollOffset_ = 0.0f;
+    std::string debugStoryTestStatus_;
+    int debugStoryTestLoadedRevision_ = -1;
+    bool debugStoryTestReturnAfterDialogue_ = false;
+    mutable UiCancelControlState debugStoryTestCancelState_{};
     bool enemyTestActive_ = false;
     bool enemyTestUiVisible_ = true;
     UiDropdownState enemyTestDropdown_{};
@@ -984,7 +1208,8 @@ private:
     std::string ringStatus_;
     float dungeonRingIntroTimer_ = 0.0f;
     bool dungeonRingIntroStartPending_ = false;
-    bool firstDungeonDialoguePendingAfterRingIntro_ = false;
+    bool stageStartStoryPendingAfterRingIntro_ = false;
+    bool endingKamishibaiPending_ = false;
     std::vector<DungeonLogEntry> dungeonLogs_;
     WorldBuildJob worldBuildJob_;
     std::array<FootstepDustPuff, 10> playerFootstepDustPuffs_{};
@@ -994,14 +1219,38 @@ private:
     int previousPlayerDustFrame_ = -1;
     int previousBasePlayerDustFrame_ = -1;
     RunStats runStats_{};
+    double playerRegenPerSecond_ = 0.0;
+    double playerRegenAccumulator_ = 0.0;
+    std::vector<PlayerRegenSource> playerRegenSources_;
     int gameOverSelection_ = 0;
     std::string gameOverStatus_;
     bool bossSpawned_ = false;
+    BossEncounterState bossEncounter_{};
     int stageClearSelection_ = 0;
     std::string stageClearStatus_;
+    AstralRunState astralRun_{};
+    AstralRunSummary astralResult_{};
+    int astralResultSelection_ = 0;
+    int astralHighScore_ = 0;
+    int debugAstralDepth_ = 1;
+    std::string debugAstralMoveTarget_ = "depth";
+    std::string debugAstralDistortionMode_ = "auto";
+    std::string debugAstralRoomType_ = "ore";
+    int debugAstralRoomIndex_ = 1;
+    std::string debugAstralResultKind_ = "returned";
+    bool debugAstralStatOverride_ = false;
+    int debugAstralStatKills_ = 0;
+    int debugAstralStatDugTiles_ = 0;
+    int debugAstralStatItems_ = 0;
+    int debugAstralStatMaterials_ = 0;
+    int debugAstralStatMoney_ = 0;
     InventoryCarryState runStartInventoryState_{};
     RetrySnapshot retrySnapshot_{};
     std::unordered_map<std::string, DungeonState> dungeonStates_;
+    DungeonMinimapCells dungeonMinimapCells_;
+    double dungeonMinimapLastRevealSeconds_ = -1.0e9;
+    int dungeonMinimapLastPlayerTileX_ = std::numeric_limits<int>::min();
+    int dungeonMinimapLastPlayerTileY_ = std::numeric_limits<int>::min();
     std::vector<WarpPoint> warpPoints_;
     std::vector<RewardNode> rewardNodes_;
     std::vector<MoneyNode> moneyNodes_;
@@ -1060,7 +1309,10 @@ private:
     bool quitRequested_ = false;
     bool debugPaused_ = false;
     bool autoReloadBlocked_ = false;
+    AudioEngine* audio_ = nullptr;
+    std::string activeAudioBgmCue_;
     float captureCooldown_ = 0.0f;
+    int captureHoverEnemyId_ = 0;
     float ringTrailEffectTimer_ = 0.0f;
     float ambientParticleTimer_ = 0.0f;
     float reloadNoticeTimer_ = 0.0f;

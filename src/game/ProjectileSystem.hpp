@@ -24,6 +24,12 @@ enum class ProjectileOwnerType {
     PlayerOrbit,
 };
 
+enum class ProjectileSoundEvent {
+    Impact,
+    Guard,
+    Reflect,
+};
+
 struct Projectile {
     bool active = false;
     Vec2 position{};
@@ -78,9 +84,11 @@ public:
     int activeCount(ProjectileOwnerType ownerType) const;
     int pullMetalProjectiles(Vec2 center, float dt, float radius = 170.0f);
     int deflectEnemyProjectiles(Vec2 center, float dt, float radius = 150.0f);
+    std::vector<ProjectileSoundEvent> consumeSoundEvents();
 
 private:
     ObjectPool<Projectile, balance::MaxProjectiles> projectiles_;
+    std::vector<ProjectileSoundEvent> soundEvents_;
 };
 
 }

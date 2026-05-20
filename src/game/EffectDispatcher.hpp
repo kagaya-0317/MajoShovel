@@ -18,10 +18,13 @@ struct DugTile;
 struct TerrainHitTile;
 struct SpellRingItem;
 class EffectSystem;
+class EnemySystem;
+class GroundLineSystem;
 class MagicSystem;
 class SpellRingSystem;
 class TileMap;
 class EncyclopediaSystem;
+class WorldDropSystem;
 
 enum class EffectTriggerType {
     Unknown,
@@ -58,13 +61,17 @@ struct EffectContext {
     SpellRingItem* orbitItem = nullptr;
     TileMap* tileMap = nullptr;
     EffectSystem* effects = nullptr;
+    EnemySystem* enemies = nullptr;
+    GroundLineSystem* groundLines = nullptr;
     MagicSystem* magic = nullptr;
+    WorldDropSystem* worldDrops = nullptr;
     std::vector<TerrainHitTile>* terrainHitTiles = nullptr;
     std::vector<Vec2>* terrainOpenedTiles = nullptr;
     std::vector<DugTile>* terrainDugTiles = nullptr;
     std::vector<EffectDiscoveryEvent>* discoveryEvents = nullptr;
     const EncyclopediaSystem* encyclopedia = nullptr;
     Vec2 position{};
+    float dropSpawnedAtSeconds = 0.0f;
     EffectTriggerType triggerType = EffectTriggerType::Unknown;
     bool logUnimplementedEffects = true;
 };
@@ -91,6 +98,7 @@ public:
     [[nodiscard]] std::size_t handlerCount() const;
 
     void dispatch(const std::vector<EffectSpec>& specs, const EffectContext& context) const;
+    void dispatchTargetEffects(const std::vector<EffectSpec>& specs, std::string_view target, const EffectContext& context) const;
     void dispatchNormalEffects(const ObjectDefinition& object, EffectContext context) const;
     void dispatchOrbitEffects(const ObjectDefinition& object, EffectContext context) const;
 

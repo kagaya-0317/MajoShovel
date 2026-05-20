@@ -18,6 +18,10 @@ constexpr float CapturedJumpDistance = 18.0f;
 constexpr float CapturedPeriodicHealInterval = 8.0f;
 constexpr int CapturedPeriodicHealMaxPerPulse = 2;
 constexpr float FullCircleRadians = Pi * 2.0f;
+constexpr double MinSlashDamageMultiplier = 0.05;
+constexpr double MaxSlashDamageMultiplier = 10.0;
+constexpr float MinItemOrbitDistanceOffset = -48.0f;
+constexpr float MaxItemOrbitDistanceOffset = 96.0f;
 constexpr std::array<float, SpellRingCount> RingBaseRadiusMultipliers{{
     1.2f,
     1.8f,
@@ -37,6 +41,35 @@ SpellRingItem makeSpellRingItem(SpellRingItemType type)
     case SpellRingItemType::Object: return makeObjectRingItem({});
     }
     return makeObjectRingItem({});
+}
+
+struct ItemOrbitParameters {
+    double slashDamageMultiplier = 1.0;
+    float orbitDistanceOffset = 0.0f;
+};
+
+ItemOrbitParameters collectItemOrbitParameters(const ItemData& object)
+{
+    ItemOrbitParameters parameters;
+    for (const EffectSpec& spec : object.orbitEffects) {
+        if (spec.target != "item") {
+            continue;
+        }
+        for (std::size_t index = 0; index < spec.effects.size(); ++index) {
+            const double value = index < spec.values.size() ? spec.values[index] : 0.0;
+            if (spec.effects[index] == "slash_power") {
+                const double multiplier = value > 0.0 && std::isfinite(value) ? value : 1.0;
+                parameters.slashDamageMultiplier *= std::clamp(multiplier, MinSlashDamageMultiplier, MaxSlashDamageMultiplier);
+            } else if (spec.effects[index] == "item_orbit_offset" && std::isfinite(value)) {
+                parameters.orbitDistanceOffset += static_cast<float>(value);
+            }
+        }
+    }
+    parameters.orbitDistanceOffset = std::clamp(
+        parameters.orbitDistanceOffset,
+        MinItemOrbitDistanceOffset,
+        MaxItemOrbitDistanceOffset);
+    return parameters;
 }
 
 float normalizeAngle(float angle)
@@ -125,6 +158,7 @@ float cometLaneOffset(int itemIndex, int itemCount, float laneSpacing)
 void applyObjectDefinition(SpellRingItem& item, const ItemData& object)
 {
     const int previousDurability = item.durability;
+    const ItemOrbitParameters itemOrbitParameters = collectItemOrbitParameters(object);
     item.damage = object.attackPower + item.attackBonus;
     item.damageType = object.damageType.empty() ? "none" : object.damageType;
     item.digPower = object.digPower + item.digBonus;
@@ -133,9 +167,12 @@ void applyObjectDefinition(SpellRingItem& item, const ItemData& object)
     item.weight = static_cast<float>(std::max(0.0, object.weightKg * item.weightModifier));
     const SpellRingItem baseItem = makeSpellRingItem(item.type);
     item.hitRadius = static_cast<float>(std::max(1.0, static_cast<double>(baseItem.hitRadius) * item.sizeModifier));
+    item.slashDamageMultiplier = itemOrbitParameters.slashDamageMultiplier;
+    item.orbitDistanceOffset = itemOrbitParameters.orbitDistanceOffset;
     item.capturedBehaviorIds = object.capturedBehaviorIds;
     item.capturedBehaviorSpecs = object.capturedBehaviorSpecs;
     item.capturedBehaviorId = item.capturedBehaviorIds.empty() ? std::string{} : item.capturedBehaviorIds.front();
+    item.objectVisual = effectiveItemVisualRef(object);
     item.isBroken = item.durability == 0;
     item.objectStatsApplied = true;
 }
@@ -265,9 +302,37 @@ Vec2 getRingItemLocalPosition(float localAngle, const RingOrbitContext& context)
     return fromAngle(localAngle) * context.radius;
 }
 
+Vec2 applyItemOrbitDistanceOffset(Vec2 localPosition, float localAngle, float distanceOffset)
+{
+    if (std::abs(distanceOffset) < 0.001f) {
+        return localPosition;
+    }
+    const Vec2 outward = lengthSquared(localPosition) > 0.0001f
+        ? normalize(localPosition)
+        : fromAngle(localAngle);
+    return localPosition + outward * distanceOffset;
+}
+
+Vec2 getRingItemLocalPositionWithDistanceOffset(
+    float localAngle,
+    const RingOrbitContext& context,
+    float distanceOffset)
+{
+    return applyItemOrbitDistanceOffset(getRingItemLocalPosition(localAngle, context), localAngle, distanceOffset);
+}
+
 Vec2 getRingItemWorldPosition(Vec2 center, float localAngle, const RingOrbitContext& context)
 {
     return center + getRingItemLocalPosition(localAngle, context);
+}
+
+Vec2 getRingItemWorldPositionWithDistanceOffset(
+    Vec2 center,
+    float localAngle,
+    const RingOrbitContext& context,
+    float distanceOffset)
+{
+    return center + getRingItemLocalPositionWithDistanceOffset(localAngle, context, distanceOffset);
 }
 
 Vec2 getRingItemVelocity(
@@ -282,6 +347,25 @@ Vec2 getRingItemVelocity(
     RingOrbitContext nextContext = context;
     nextContext.shapeRotation += shapeRotationSpeed * SampleDt;
     const Vec2 after = getRingItemLocalPosition(localAngle + localAngularSpeed * SampleDt, nextContext);
+    return centerVelocity + (after - before) / SampleDt;
+}
+
+Vec2 getRingItemVelocityWithDistanceOffset(
+    float localAngle,
+    float localAngularSpeed,
+    float shapeRotationSpeed,
+    Vec2 centerVelocity,
+    const RingOrbitContext& context,
+    float distanceOffset)
+{
+    constexpr float SampleDt = 1.0f / 240.0f;
+    const Vec2 before = getRingItemLocalPositionWithDistanceOffset(localAngle, context, distanceOffset);
+    RingOrbitContext nextContext = context;
+    nextContext.shapeRotation += shapeRotationSpeed * SampleDt;
+    const Vec2 after = getRingItemLocalPositionWithDistanceOffset(
+        localAngle + localAngularSpeed * SampleDt,
+        nextContext,
+        distanceOffset);
     return centerVelocity + (after - before) / SampleDt;
 }
 
@@ -418,13 +502,18 @@ void SpellRingSystem::refreshItemWorldPositions(float dt, Vec2 previousCenter, c
             const float param = ringShape == RingShape::Comet
                 ? normalizeLocalParam(ringShape, item.localAngle, context.tuning)
                 : normalizeAngle(baseAngles_[static_cast<std::size_t>(ringIndex)] + item.localAngle);
-            item.worldPosition = getRingItemWorldPosition(center_, param, context);
-            item.worldVelocity = getRingItemVelocity(
+            item.worldPosition = getRingItemWorldPositionWithDistanceOffset(
+                center_,
+                param,
+                context,
+                item.orbitDistanceOffset);
+            item.worldVelocity = getRingItemVelocityWithDistanceOffset(
                 param,
                 ringShape == RingShape::Comet ? 0.0f : ringAngularSpeed,
                 shapeRotationSpeed,
                 centerVelocity,
-                context);
+                context,
+                item.orbitDistanceOffset);
             item.orbitMotionSpeed = length(item.worldVelocity) / std::max(1.0f, radius_);
         }
     }
@@ -464,13 +553,32 @@ void SpellRingSystem::update(Player& player, const Input& input, float dt, float
         enemyOrbitSpeedDebuffMultiplier_ = 1.0f;
     }
 
+    for (SpellRingItem* item : runtimeItemsMutable()) {
+        if (item != nullptr) {
+            item->actionFlashTimer = std::max(0.0f, item->actionFlashTimer - safeDt);
+        }
+    }
+
     advanceOrbitAngles(safeDt, balance);
 
     const Vec2 normalCenter = getRingCenterWorldPosition(player.position, player.facing, player.spellRingShift);
     const Vec2 previousCenter = center_;
 
     if (state_ == SpellRingState::Normal) {
-        center_ = normalCenter;
+        const double anchorStrength = std::max(0.0, orbitModifiers_.anchorStrength);
+        if (input.ringOffsetHeld() && anchorStrength > 0.0 && safeDt > 0.0f) {
+            const float clampedAnchor = clamp(static_cast<float>(anchorStrength), 0.0f, 5.0f);
+            const float followRate = 14.0f / (1.0f + clampedAnchor * 2.5f);
+            center_ = lerp(center_, normalCenter, 1.0f - std::exp(-followRate * safeDt));
+            const Vec2 toNormalCenter = normalCenter - center_;
+            const float lag = length(toNormalCenter);
+            const float maxLag = 16.0f + clampedAnchor * 32.0f;
+            if (lag > maxLag) {
+                center_ = normalCenter - normalize(toNormalCenter) * maxLag;
+            }
+        } else {
+            center_ = normalCenter;
+        }
         const bool throwPressed = input.throwPressed() && !(blockPointerThrow && input.mouseLeftPressed());
         if (throwPressed && player.throwCooldownRemaining <= 0.0f) {
             state_ = SpellRingState::Thrown;
@@ -1052,9 +1160,17 @@ RingOrbitContext SpellRingSystem::makeOrbitContext(int itemIndex, int itemCount,
 RingOrbitContext SpellRingSystem::makeOrbitContextForRing(int ringIndex, int itemIndex, int itemCount, float radiusScale, const RuntimeBalance& balance) const
 {
     const int clampedRingIndex = std::clamp(ringIndex, 0, SpellRingCount - 1);
+    const double orbitRadiusMultiplier = std::clamp(
+        orbitModifiers_.gravityMultiplier * orbitModifiers_.antigravityMultiplier,
+        0.25,
+        3.0);
     RingOrbitContext context;
     context.shape = ringShapeForIndex(clampedRingIndex);
-    context.radius = std::max(1.0f, radius_ * ringBaseRadiusMultiplierForIndex(clampedRingIndex) * std::max(0.1f, radiusScale));
+    context.radius = std::max(
+        1.0f,
+        radius_ * ringBaseRadiusMultiplierForIndex(clampedRingIndex) *
+            std::max(0.1f, radiusScale) *
+            static_cast<float>(orbitRadiusMultiplier));
     context.shapeRotation = context.shape == RingShape::FigureEight
         ? shapeRotations_[static_cast<std::size_t>(clampedRingIndex)]
         : (context.shape == RingShape::Comet ? baseAngles_[static_cast<std::size_t>(clampedRingIndex)] : 0.0f);

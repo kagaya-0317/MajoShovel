@@ -37,6 +37,17 @@ constexpr float MicroFeatureProgressSpan = 0.84f;
 constexpr float MicroFeatureSpacingTiles = 9.5f;
 constexpr int MicroFeatureMinCount = 10;
 constexpr int MicroFeatureMaxCount = 30;
+constexpr double DungeonMinimapRevealIntervalSeconds = 0.15;
+constexpr std::string_view FinalStoryStageId = "stage_03_star_core";
+constexpr std::string_view EndingSeenFlag = "ending_seen";
+constexpr std::string_view PostEndingIntroFlag = "story_post_ending_intro";
+constexpr std::string_view AudioSeChestOpen = "se.chest.open";
+constexpr std::string_view AudioSeCrateBreak = "se.crate.break";
+constexpr std::string_view AudioSeItemBreak = "se.item.break";
+constexpr std::string_view AudioSeDiscovery = "se.discovery";
+constexpr std::string_view AudioSeWarpDiscovery = "se.discovery.warp";
+constexpr float BossDefeatPresentationSeconds = 1.85f;
+constexpr double PlayerRegenRateCap = 0.5;
 
 struct PlacementReservation {
     DungeonTile tile{};
@@ -115,6 +126,231 @@ struct PlacementReservations {
         return false;
     }
 };
+
+bool isPlayerRegenTarget(std::string_view target)
+{
+    return target == "player" || target == "owner" || target == "self";
+}
+
+bool discoveryQueueContainsObjectEffect(
+    const std::vector<EffectDiscoveryEvent>& discoveryEvents,
+    std::string_view objectId,
+    std::string_view effectKey)
+{
+    if (objectId.empty() || effectKey.empty()) {
+        return false;
+    }
+    for (const EffectDiscoveryEvent& event : discoveryEvents) {
+        if (event.objectId == objectId && event.effectKey == effectKey) {
+            return true;
+        }
+    }
+    return false;
+}
+
+enum class ObjectBreakKind {
+    Generic,
+    Wood,
+    Ceramic,
+    Glass,
+};
+
+struct ObjectBreakSpec {
+    ObjectBreakKind kind = ObjectBreakKind::Generic;
+    std::string_view effectKey{};
+    double value = 1.0;
+};
+
+struct ObjectBreakEffectEntry {
+    std::string_view effectKey{};
+    double value = 1.0;
+    double duration = 0.0;
+};
+
+std::vector<ObjectBreakEffectEntry> objectBreakEffectEntriesFor(const ObjectDefinition* object)
+{
+    std::vector<ObjectBreakEffectEntry> entries;
+    if (object == nullptr) {
+        return entries;
+    }
+    for (const EffectSpec& spec : object->orbitEffects) {
+        if (spec.target != "item") {
+            continue;
+        }
+        for (std::size_t index = 0; index < spec.effects.size(); ++index) {
+            entries.push_back(ObjectBreakEffectEntry{
+                .effectKey = spec.effects[index],
+                .value = index < spec.values.size() ? spec.values[index] : 1.0,
+                .duration = spec.duration,
+            });
+        }
+    }
+    return entries;
+}
+
+ObjectBreakSpec objectBreakSpecFor(const std::vector<ObjectBreakEffectEntry>& effects)
+{
+    for (const ObjectBreakEffectEntry& effect : effects) {
+        if (effect.effectKey == "break_glass_shards") {
+            return {.kind = ObjectBreakKind::Glass, .effectKey = "break_glass_shards", .value = effect.value};
+        }
+    }
+    for (const ObjectBreakEffectEntry& effect : effects) {
+        if (effect.effectKey == "break_ceramic_shards") {
+            return {.kind = ObjectBreakKind::Ceramic, .effectKey = "break_ceramic_shards", .value = effect.value};
+        }
+    }
+    for (const ObjectBreakEffectEntry& effect : effects) {
+        if (effect.effectKey == "break_wood_fragments") {
+            return {.kind = ObjectBreakKind::Wood, .effectKey = "break_wood_fragments", .value = effect.value};
+        }
+    }
+    return {};
+}
+
+ItemBreakVisual itemBreakVisualFor(ObjectBreakKind kind)
+{
+    switch (kind) {
+    case ObjectBreakKind::Wood:
+        return ItemBreakVisual::Wood;
+    case ObjectBreakKind::Ceramic:
+        return ItemBreakVisual::Ceramic;
+    case ObjectBreakKind::Glass:
+        return ItemBreakVisual::Glass;
+    case ObjectBreakKind::Generic:
+        break;
+    }
+    return ItemBreakVisual::Generic;
+}
+
+float objectBreakVisualScale(double value)
+{
+    const double amount = std::max(1.0, value);
+    return std::clamp(static_cast<float>(0.88 + (amount - 1.0) * 0.22), 0.75f, 1.65f);
+}
+
+float objectBreakShardRadius(const ObjectBreakSpec& spec)
+{
+    const double amount = std::max(1.0, spec.value);
+    if (spec.kind == ObjectBreakKind::Glass) {
+        return std::clamp(static_cast<float>(52.0 + (amount - 1.0) * 10.0), 52.0f, 78.0f);
+    }
+    if (spec.kind == ObjectBreakKind::Ceramic) {
+        return std::clamp(static_cast<float>(44.0 + (amount - 1.0) * 8.0), 44.0f, 66.0f);
+    }
+    return 0.0f;
+}
+
+int objectBreakShardDamage(const ObjectBreakSpec& spec)
+{
+    const double amount = std::max(1.0, spec.value);
+    if (spec.kind == ObjectBreakKind::Glass) {
+        return std::max(1, static_cast<int>(std::ceil(3.0 + amount)));
+    }
+    if (spec.kind == ObjectBreakKind::Ceramic) {
+        return std::max(1, static_cast<int>(std::ceil(2.0 + amount)));
+    }
+    return 0;
+}
+
+std::string_view objectBreakShardDamageType(ObjectBreakKind kind)
+{
+    if (kind == ObjectBreakKind::Glass) {
+        return "slash";
+    }
+    if (kind == ObjectBreakKind::Ceramic) {
+        return "pierce";
+    }
+    return "none";
+}
+
+float objectBreakElementRadius(std::string_view effectKey, double value)
+{
+    const double amount = std::max(1.0, value);
+    if (effectKey == "break_fire_burst") {
+        return std::clamp(static_cast<float>(48.0 + (amount - 1.0) * 10.0), 42.0f, 84.0f);
+    }
+    if (effectKey == "water_spray") {
+        return std::clamp(static_cast<float>(56.0 + (amount - 1.0) * 12.0), 48.0f, 96.0f);
+    }
+    return 0.0f;
+}
+
+int objectBreakFireDamage(double value)
+{
+    const double amount = std::max(1.0, value);
+    return std::clamp(static_cast<int>(std::ceil(2.0 + amount * 2.0)), 1, 12);
+}
+
+int dryWetBonusDamageFor(const std::vector<ObjectBreakEffectEntry>& effects)
+{
+    double total = 0.0;
+    for (const ObjectBreakEffectEntry& effect : effects) {
+        if (effect.effectKey == "dry_wet_bonus_damage") {
+            total += std::max(0.0, effect.value);
+        }
+    }
+    return std::max(0, static_cast<int>(std::ceil(total)));
+}
+
+int objectBreakCoinSpillAmount(const ObjectDefinition& object, double value)
+{
+    const int rarity = std::clamp(object.rarity, 1, 10);
+    const int price = std::max(0, object.price);
+    const int baseAmount = std::clamp(1 + rarity / 2 + price / 90, 1, 12);
+    const double multiplier = value > 0.0 ? value : 1.0;
+    return std::clamp(static_cast<int>(std::round(static_cast<double>(baseAmount) * multiplier)), 1, 30);
+}
+
+bool shouldGuaranteeFirstDiscovery(
+    const std::vector<EffectDiscoveryEvent>* discoveryEvents,
+    const EncyclopediaSystem& encyclopedia,
+    const ObjectDefinition& object,
+    std::string_view effectKey)
+{
+    return discoveryEvents != nullptr &&
+        !encyclopedia.hasObjectEffect(object.id, effectKey) &&
+        !discoveryQueueContainsObjectEffect(*discoveryEvents, object.id, effectKey);
+}
+
+bool percentRollSucceeds(std::mt19937& rng, double percent)
+{
+    const double chance = std::clamp(percent, 0.0, 100.0);
+    if (chance >= 100.0) {
+        return true;
+    }
+    if (chance <= 0.0) {
+        return false;
+    }
+    std::uniform_real_distribution<double> distribution(0.0, 100.0);
+    return distribution(rng) <= chance;
+}
+
+void appendObjectEffectDiscovery(
+    std::vector<EffectDiscoveryEvent>* discoveryEvents,
+    const EncyclopediaSystem& encyclopedia,
+    const ObjectDefinition& object,
+    std::string_view effectKey,
+    Vec2 position)
+{
+    if (discoveryEvents == nullptr || object.id.empty() || effectKey.empty()) {
+        return;
+    }
+    if (encyclopedia.hasObjectEffect(object.id, effectKey)) {
+        return;
+    }
+    if (discoveryQueueContainsObjectEffect(*discoveryEvents, object.id, effectKey)) {
+        return;
+    }
+    discoveryEvents->push_back(EffectDiscoveryEvent{
+        .objectId = object.id,
+        .objectName = object.name,
+        .effectKey = std::string(effectKey),
+        .description = {},
+        .note = {},
+        .position = position,
+    });
+}
 
 void reserveLayoutAnchors(PlacementReservations& reservations, const DungeonLayout& layout)
 {
@@ -439,6 +675,189 @@ DungeonGenerationContext Game::makeDungeonGenerationContext() const
 void Game::generateDungeonLayoutForRun()
 {
     dungeonLayout_ = generateDungeonLayout(makeDungeonGenerationContext());
+    initializeAstralRunForLayout();
+}
+
+bool Game::astralRunActive() const
+{
+    return astralRun_.active && currentStageIsRoguelike();
+}
+
+void Game::resetAstralRunState()
+{
+    astralRun_ = AstralRunState{};
+    astralRun_.active = currentStageIsRoguelike();
+    astralRun_.maxDepth = lootMaxDepthForStage(currentStageId_);
+    astralRun_.maxReachedDepth = 1;
+    astralRun_.currentDepth = 1;
+    astralRun_.distortion = AstralDistortionKind::None;
+}
+
+Game::AstralDistortionKind Game::chooseAstralDistortionForDepth(int depth, Game::AstralDistortionKind previous) const
+{
+    if (debugAstralDistortionMode_ == "none") {
+        return AstralDistortionKind::None;
+    }
+    if (debugAstralDistortionMode_ == "fading-starlight") {
+        return AstralDistortionKind::FadingStarlight;
+    }
+    if (debugAstralDistortionMode_ == "star-hardened") {
+        return AstralDistortionKind::StarHardened;
+    }
+    if (debugAstralDistortionMode_ == "echo-spawn") {
+        return AstralDistortionKind::EchoSpawn;
+    }
+
+    std::uint32_t value = dungeonLayout_.seed ^
+        (static_cast<std::uint32_t>(std::max(1, depth)) * 0x45D9F3Bu) ^
+        0xA53C9E2Du;
+    value ^= value >> 16;
+    value *= 0x7FEB352Du;
+    value ^= value >> 15;
+    value *= 0x846CA68Bu;
+    value ^= value >> 16;
+
+    AstralDistortionKind chosen = AstralDistortionKind::FadingStarlight;
+    switch (value % 3u) {
+    case 0u:
+        chosen = AstralDistortionKind::FadingStarlight;
+        break;
+    case 1u:
+        chosen = AstralDistortionKind::StarHardened;
+        break;
+    default:
+        chosen = AstralDistortionKind::EchoSpawn;
+        break;
+    }
+    if (chosen == previous) {
+        switch (chosen) {
+        case AstralDistortionKind::FadingStarlight:
+            return AstralDistortionKind::StarHardened;
+        case AstralDistortionKind::StarHardened:
+            return AstralDistortionKind::EchoSpawn;
+        case AstralDistortionKind::EchoSpawn:
+            return AstralDistortionKind::FadingStarlight;
+        case AstralDistortionKind::None:
+            break;
+        }
+    }
+    return chosen;
+}
+
+float Game::astralLightRadiusMultiplier() const
+{
+    return astralRunActive() && astralRun_.distortion == AstralDistortionKind::FadingStarlight
+        ? 0.85f
+        : 1.0f;
+}
+
+float Game::astralHardnessMultiplier() const
+{
+    return astralRunActive() && astralRun_.distortion == AstralDistortionKind::StarHardened
+        ? 1.20f
+        : 1.0f;
+}
+
+RuntimeBalance Game::runtimeBalanceForDungeon() const
+{
+    RuntimeBalance adjusted = balance_;
+    if (!astralRunActive()) {
+        return adjusted;
+    }
+    const float lightMultiplier = astralLightRadiusMultiplier();
+    adjusted.playerLightRadius = std::max(16.0f, adjusted.playerLightRadius * lightMultiplier);
+    adjusted.lightRadius = std::max(16.0f, adjusted.lightRadius * lightMultiplier);
+    if (astralRun_.distortion == AstralDistortionKind::EchoSpawn) {
+        adjusted.enemyMinDugTiles = std::max(1, static_cast<int>(std::floor(static_cast<float>(adjusted.enemyMinDugTiles) * 0.75f)));
+        adjusted.enemyGuaranteeDugTiles = std::max(
+            adjusted.enemyMinDugTiles,
+            static_cast<int>(std::floor(static_cast<float>(adjusted.enemyGuaranteeDugTiles) * 0.75f)));
+    }
+    return adjusted;
+}
+
+void Game::applyAstralDistortionToLayout()
+{
+    if (!astralRunActive()) {
+        return;
+    }
+    dungeonLayout_.stageHardnessMultiplier = std::max(
+        0.25f,
+        astralRun_.baseStageHardnessMultiplier * astralHardnessMultiplier());
+}
+
+void Game::initializeAstralRunForLayout()
+{
+    if (!currentStageIsRoguelike()) {
+        astralRun_ = AstralRunState{};
+        return;
+    }
+
+    astralRun_.active = true;
+    astralRun_.currentDepth = 1;
+    astralRun_.maxReachedDepth = 1;
+    astralRun_.maxDepth = lootMaxDepthForStage(currentStageId_);
+    astralRun_.maxReachedDistanceTiles = 0;
+    astralRun_.distortionChanges = 1;
+    astralRun_.baseStageHardnessMultiplier = dungeonLayout_.stageHardnessMultiplier;
+    astralRun_.distortion = chooseAstralDistortionForDepth(1, AstralDistortionKind::None);
+    applyAstralDistortionToLayout();
+    const char* distortionName = "なし";
+    switch (astralRun_.distortion) {
+    case AstralDistortionKind::FadingStarlight:
+        distortionName = "星明かりが遠のく";
+        break;
+    case AstralDistortionKind::StarHardened:
+        distortionName = "星硬化";
+        break;
+    case AstralDistortionKind::EchoSpawn:
+        distortionName = "残響湧き";
+        break;
+    case AstralDistortionKind::None:
+        break;
+    }
+    pushDungeonLog(std::string("星の歪み: ") + distortionName, "astral_distortion");
+}
+
+void Game::updateAstralRunProgress()
+{
+    if (!astralRunActive()) {
+        return;
+    }
+
+    const DungeonLayoutMetrics metrics = calculateDungeonLayoutMetrics(dungeonLayout_, {
+        static_cast<float>(tileMap_.worldToTile(player_.position.x)),
+        static_cast<float>(tileMap_.worldToTile(player_.position.y)),
+    });
+    const int depth = lootDepthRankForProgress(currentStageId_, metrics.pathProgress);
+    astralRun_.maxReachedDepth = std::max(astralRun_.maxReachedDepth, depth);
+    astralRun_.maxReachedDistanceTiles = std::max(
+        astralRun_.maxReachedDistanceTiles,
+        static_cast<int>(std::round(metrics.distanceFromStart)));
+
+    if (depth <= astralRun_.currentDepth) {
+        return;
+    }
+
+    astralRun_.currentDepth = depth;
+    astralRun_.distortion = chooseAstralDistortionForDepth(depth, astralRun_.distortion);
+    ++astralRun_.distortionChanges;
+    applyAstralDistortionToLayout();
+    const char* distortionName = "なし";
+    switch (astralRun_.distortion) {
+    case AstralDistortionKind::FadingStarlight:
+        distortionName = "星明かりが遠のく";
+        break;
+    case AstralDistortionKind::StarHardened:
+        distortionName = "星硬化";
+        break;
+    case AstralDistortionKind::EchoSpawn:
+        distortionName = "残響湧き";
+        break;
+    case AstralDistortionKind::None:
+        break;
+    }
+    pushDungeonLog(std::string("星の歪み: ") + distortionName, "astral_distortion");
 }
 
 void Game::refreshOrbitEffects()
@@ -446,6 +865,8 @@ void Game::refreshOrbitEffects()
     spellRing_.applyObjectParameters(objectCatalog_);
     spellRing_.clearOrbitModifiers();
     player_.status.removeModifiersBySourcePrefix("orbit:");
+    playerRegenPerSecond_ = 0.0;
+    playerRegenSources_.clear();
     if (objectCatalog_.objectsById.empty()) {
         return;
     }
@@ -459,6 +880,15 @@ void Game::refreshOrbitEffects()
         item.lightRadius = 0.0f;
         item.hiddenDetectionRadius = 0.0f;
         item.treasureDetectionRadius = 0.0f;
+        item.coldAirRadius = 0.0f;
+        item.coldAirStrength = 0.0f;
+        item.vacuumPullRadius = 0.0f;
+        item.vacuumPullStrength = 0.0f;
+        item.hotAirRadius = 0.0f;
+        item.hotAirStrength = 0.0f;
+        item.windPushRadius = 0.0f;
+        item.windPushStrength = 0.0f;
+        item.dryWetBonusDamage = 0;
         if (item.broken()) {
             continue;
         }
@@ -469,6 +899,28 @@ void Game::refreshOrbitEffects()
         const auto objectIt = objectCatalog_.objectsById.find(item.objectId);
         if (objectIt == objectCatalog_.objectsById.end()) {
             continue;
+        }
+
+        for (const EffectSpec& spec : objectIt->second.orbitEffects) {
+            if (!isPlayerRegenTarget(spec.target)) {
+                continue;
+            }
+            for (std::size_t index = 0; index < spec.effects.size(); ++index) {
+                if (spec.effects[index] != "regen") {
+                    continue;
+                }
+                const double rate = index < spec.values.size() ? std::max(0.0, spec.values[index]) : 0.0;
+                if (rate <= 0.0) {
+                    continue;
+                }
+                playerRegenPerSecond_ = std::min(PlayerRegenRateCap, playerRegenPerSecond_ + rate);
+                playerRegenSources_.push_back(PlayerRegenSource{
+                    .objectId = objectIt->second.id,
+                    .objectName = objectIt->second.name,
+                    .position = item.worldPosition,
+                    .ratePerSecond = rate,
+                });
+            }
         }
 
         EffectContext context;
@@ -483,6 +935,51 @@ void Game::refreshOrbitEffects()
         context.triggerType = EffectTriggerType::Orbit;
         context.logUnimplementedEffects = false;
         effectDispatcher_.dispatchOrbitEffects(objectIt->second, context);
+    }
+}
+
+void Game::updatePlayerRegen(float dt, std::vector<EffectDiscoveryEvent>& discoveryEvents)
+{
+    if (dt <= 0.0f) {
+        return;
+    }
+
+    const double ratePerSecond = std::clamp(playerRegenPerSecond_, 0.0, PlayerRegenRateCap);
+    if (ratePerSecond <= 0.0 || player_.hp <= 0 || player_.hp >= player_.maxHp) {
+        playerRegenAccumulator_ = 0.0;
+        return;
+    }
+
+    playerRegenAccumulator_ += ratePerSecond * static_cast<double>(dt);
+    const int requestedHeal = static_cast<int>(std::floor(playerRegenAccumulator_));
+    if (requestedHeal <= 0) {
+        return;
+    }
+
+    const int healed = player_.heal(requestedHeal);
+    if (healed <= 0) {
+        return;
+    }
+    playerRegenAccumulator_ = std::max(0.0, playerRegenAccumulator_ - static_cast<double>(healed));
+
+    for (const PlayerRegenSource& source : playerRegenSources_) {
+        if (source.objectId.empty() || source.ratePerSecond <= 0.0) {
+            continue;
+        }
+        if (encyclopedia_.hasObjectEffect(source.objectId, "regen")) {
+            continue;
+        }
+        if (discoveryQueueContainsObjectEffect(discoveryEvents, source.objectId, "regen")) {
+            continue;
+        }
+        discoveryEvents.push_back(EffectDiscoveryEvent{
+            .objectId = source.objectId,
+            .objectName = source.objectName,
+            .effectKey = "regen",
+            .description = {},
+            .note = {},
+            .position = source.position,
+        });
     }
 }
 
@@ -723,7 +1220,7 @@ void Game::updateAmbientParticleEffects(float dt)
                 effects_.spawnWarpCircle(point.position, false);
             }
         }
-        if (hasBossSpawnPoint_ && !bossSpawned_) {
+        if (hasBossSpawnPoint_ && !bossSpawned_ && !hasCapturedBossForCurrentStage()) {
             effects_.spawnWarpCircle(bossSpawnPoint_, true);
         }
     }
@@ -733,10 +1230,14 @@ void Game::handleCapturedExplosion(Vec2 position)
 {
     effects_.spawnAreaPulse(position, 50.0f, {255, 128, 54, 190});
     const std::vector<DamagedTile> openedTiles = tileMap_.damageCircle(position, CapturedExplosionTileRadius, CapturedExplosionTileDamage);
+    std::vector<Vec2> openedTileCenters;
+    openedTileCenters.reserve(openedTiles.size());
     for (const DamagedTile& tile : openedTiles) {
         effects_.spawnTileBreak(tile.center, tile.type, tile.color);
+        openedTileCenters.push_back(tile.center);
         ++runStats_.dugTiles;
     }
+    revealDungeonMinimapOpenedTiles(openedTileCenters);
     enemies_.applyCapturedExplosion(position, spellRing_, CapturedExplosionEnemyDamage);
 }
 
@@ -832,6 +1333,7 @@ Game::InventoryCarryState Game::captureInventoryCarryState() const
     InventoryCarryState state;
     state.inventory = inventory_;
     state.ringItemsByRing = spellRing_.ringItems();
+    state.money = money_;
     state.valid = true;
     return state;
 }
@@ -843,6 +1345,7 @@ void Game::restoreInventoryCarryState(const InventoryCarryState& state)
     }
 
     inventory_ = state.inventory;
+    money_ = std::max(0, state.money);
     inventory_.setOpen(false);
     inventory_.cancelGrab();
     spellRing_.ringItems() = state.ringItemsByRing;
@@ -868,6 +1371,7 @@ void Game::clearTemporaryPlayerState(bool fullHeal)
     player_.velocity = {};
     player_.throwCooldownRemaining = 0.0f;
     player_.poisonDamageAccumulator = 0.0;
+    player_.hotDamageAccumulator = 0.0;
     player_.bleedDamageAccumulator = 0.0;
     player_.stunWakeTimer = 0.0f;
     player_.lastDamageSource = DamageSource::Unknown;
@@ -958,12 +1462,14 @@ void Game::retryAfterGameOver()
     clearTemporaryPlayerState(true);
     enemies_.clearTemporaryState();
     effects_ = EffectSystem{};
+    groundLines_ = GroundLineSystem{};
     projectiles_ = ProjectileSystem{};
     magic_ = MagicSystem{};
     magicFx_ = MagicFxSystem{};
     levels_ = LevelSystem{};
-    tileMap_.updateAround(player_.position, 0.0f, balance_, dungeonLayout_);
+    tileMap_.updateAround(player_.position, 0.0f, runtimeBalanceForDungeon(), dungeonLayout_);
     normalizeOpenBuriedPlacementNodes();
+    updateDungeonMinimap(0.0);
     camera_.follow(player_.position, 1.0f);
     captureRunStartInventoryState();
     mode_ = ScreenMode::Playing;
@@ -973,6 +1479,110 @@ void Game::retryAfterGameOver()
 void Game::returnToBaseAfterGameOver()
 {
     returnToBaseFromNormalStage(false, true);
+}
+
+int Game::astralRunMaterialDeltaFromStart() const
+{
+    if (!runStartInventoryState_.valid) {
+        return 0;
+    }
+
+    int total = 0;
+    for (int index = 0; index < static_cast<int>(MaterialType::Count); ++index) {
+        const MaterialType type = static_cast<MaterialType>(index);
+        total += std::max(
+            0,
+            inventory_.materialCount(type) - runStartInventoryState_.inventory.materialCount(type));
+    }
+    return total;
+}
+
+int Game::astralRunMoneyDeltaFromStart() const
+{
+    if (!runStartInventoryState_.valid) {
+        return 0;
+    }
+    return std::max(0, money_ - runStartInventoryState_.money);
+}
+
+int Game::calculateAstralRunScore(const Game::AstralRunSummary& summary) const
+{
+    if (summary.result == AstralRunResult::Died) {
+        return 0;
+    }
+
+    const int resultBonus = summary.result == AstralRunResult::DragonDefeated ? 10000 : 3000;
+    return std::max(0,
+        summary.reachedDepth * 1000 +
+        summary.reachedDistanceTiles * 2 +
+        summary.defeatedEnemies * 120 +
+        summary.dugTiles * 3 +
+        summary.acquiredItems * 250 +
+        summary.acquiredMaterials * 40 +
+        summary.acquiredMoney +
+        resultBonus);
+}
+
+Game::AstralRunSummary Game::makeAstralRunSummary(Game::AstralRunResult result) const
+{
+    AstralRunSummary summary;
+    summary.result = result;
+    summary.reachedDepth = std::clamp(astralRun_.maxReachedDepth, 1, std::max(1, astralRun_.maxDepth));
+    summary.maxDepth = std::max(1, astralRun_.maxDepth);
+    summary.reachedDistanceTiles = std::max(0, astralRun_.maxReachedDistanceTiles);
+    summary.defeatedEnemies = std::max(0, runStats_.defeatedEnemies);
+    summary.dugTiles = std::max(0, runStats_.dugTiles);
+    summary.acquiredItems = std::max(0, runStats_.acquiredObjectItems);
+    summary.acquiredMaterials = astralRunMaterialDeltaFromStart();
+    summary.acquiredMoney = astralRunMoneyDeltaFromStart();
+    summary.carriedOut = result != AstralRunResult::Died;
+    summary.score = calculateAstralRunScore(summary);
+    summary.highScore = astralHighScore_;
+    return summary;
+}
+
+void Game::enterAstralResult(Game::AstralRunResult result)
+{
+    if (mode_ == ScreenMode::AstralResult) {
+        return;
+    }
+
+    resetBossEncounter();
+    if (result == AstralRunResult::Died) {
+        player_.hp = 0;
+    } else {
+        clearTemporaryPlayerState(true);
+    }
+    inventory_.setOpen(false);
+    inventory_.cancelGrab();
+    cancelRingGrab();
+    closeDebugItemPicker();
+    closeDebugStoryTest();
+    debugStoryTestReturnAfterDialogue_ = false;
+    if (levels_.isChoosing()) {
+        levels_ = LevelSystem{};
+    }
+    levelUpResultDialog_ = {};
+
+    astralResult_ = makeAstralRunSummary(result);
+    if (astralResult_.carriedOut && astralResult_.score > astralHighScore_) {
+        astralHighScore_ = astralResult_.score;
+        astralResult_.highScore = astralHighScore_;
+        astralResult_.highScoreUpdated = true;
+    }
+
+    mode_ = ScreenMode::AstralResult;
+    pausePage_ = PauseMenuPage::Main;
+    pauseReturnMode_ = ScreenMode::Playing;
+    inventoryReturnToPause_ = false;
+    astralResultSelection_ = 0;
+}
+
+void Game::returnToBaseAfterAstralResult()
+{
+    const bool dragonDefeated = astralResult_.result == AstralRunResult::DragonDefeated;
+    const bool died = astralResult_.result == AstralRunResult::Died;
+    requestReturnToBaseTransition(dragonDefeated, died);
 }
 
 bool Game::shouldRefreshMerchantOnReturn(bool stageCleared, bool died) const
@@ -991,12 +1601,17 @@ void Game::returnToBaseFromNormalStage(bool stageCleared, bool died)
         return;
     }
 
+    const std::string returnedStageId = currentStageId_;
+    if (currentStageIsRoguelike() && died && restoreRunStartInventoryOnDeath_ && runStartInventoryState_.valid) {
+        restoreInventoryCarryState(runStartInventoryState_);
+    }
     const bool refreshMerchant = shouldRefreshMerchantOnReturn(stageCleared, died);
     merchantRefreshPending_ = merchantRefreshPending_ || refreshMerchant;
     clearTemporaryPlayerState(true);
     captureDungeonState();
     enemies_ = EnemySystem{};
     effects_ = EffectSystem{};
+    groundLines_ = GroundLineSystem{};
     ringTrailEffectTimer_ = 0.0f;
     ambientParticleTimer_ = 0.0f;
     projectiles_ = ProjectileSystem{};
@@ -1013,6 +1628,7 @@ void Game::returnToBaseFromNormalStage(bool stageCleared, bool died)
     focusedWarpReturnPointIndex_ = -1;
     bossSpawned_ = false;
     hasBossSpawnPoint_ = false;
+    resetBossEncounter();
     retrySnapshot_ = RetrySnapshot{};
     warpPoints_.clear();
     spawnedWarpPointCount_ = 0;
@@ -1027,11 +1643,23 @@ void Game::returnToBaseFromNormalStage(bool stageCleared, bool died)
             baseStatus_ += " / " + message;
         }
     }
+    if (stageCleared && !returnedStageId.empty()) {
+        if (returnedStageId == FinalStoryStageId) {
+            if (hasStoryFlag(EndingSeenFlag) && !hasStoryFlag(PostEndingIntroFlag)) {
+                queueStoryEventForTrigger("post_ending:intro");
+            } else if (!hasStoryFlag(EndingSeenFlag)) {
+                queueStoryEventForTrigger("ending:main");
+            }
+            return;
+        }
+        queueStoryEventForTrigger("stage_clear:" + returnedStageId);
+    }
 }
 
 void Game::resetWarpPointRunState()
 {
     hasBossSpawnPoint_ = false;
+    resetBossEncounter();
     retrySnapshot_ = RetrySnapshot{};
     const bool stageIsRoguelike = currentStageDefinition_.type == "ローグライク" ||
         currentStageDefinition_.generationProfile == "astral_rogue";
@@ -1054,6 +1682,7 @@ void Game::captureDungeonState()
     state.currentStageId = currentStageId_;
     state.tileMap = tileMap_;
     state.dungeonLayout = dungeonLayout_;
+    state.dungeonMinimapCells = dungeonMinimapCells_;
     state.runStats = runStats_;
     state.warpPoints = warpPoints_;
     state.rewardNodes = rewardNodes_;
@@ -1092,6 +1721,7 @@ bool Game::restoreDungeonState(bool useLatestWarpPoint)
     resolveCurrentStageDefinition();
     tileMap_ = state.tileMap;
     dungeonLayout_ = state.dungeonLayout;
+    dungeonMinimapCells_ = state.dungeonMinimapCells;
     runStats_ = state.runStats;
     warpPoints_ = state.warpPoints;
     rewardNodes_ = state.rewardNodes;
@@ -1111,9 +1741,11 @@ bool Game::restoreDungeonState(bool useLatestWarpPoint)
     bossSpawnPoint_ = state.bossSpawnPoint;
     hasBossSpawnPoint_ = state.hasBossSpawnPoint;
     bossSpawned_ = state.bossSpawned;
+    resetBossEncounter();
     warpPointsEnabled_ = true;
     retrySnapshot_ = RetrySnapshot{};
     effects_ = EffectSystem{};
+    groundLines_ = GroundLineSystem{};
     projectiles_ = ProjectileSystem{};
     magic_ = MagicSystem{};
     magicFx_ = MagicFxSystem{};
@@ -1122,14 +1754,15 @@ bool Game::restoreDungeonState(bool useLatestWarpPoint)
     ambientParticleTimer_ = 0.0f;
 
     player_ = Player{};
-    player_.xpToNext = balance_.xpBase + player_.level * balance_.xpPerLevel;
+    player_.xpToNext = playerXpToNextForLevel(player_.level, balance_);
     const Vec2 preferredStartPosition = useLatestWarpPoint
         ? warpPointStartPositionForCurrentRequest()
         : tileWorldCenter(dungeonLayout_.startTile);
     player_.position = safePlayerStartPosition(preferredStartPosition);
     camera_.follow(player_.position, 1.0f);
-    tileMap_.updateAround(player_.position, 0.0f, balance_, dungeonLayout_);
+    tileMap_.updateAround(player_.position, 0.0f, runtimeBalanceForDungeon(), dungeonLayout_);
     normalizeOpenBuriedPlacementNodes();
+    updateDungeonMinimap(0.0);
     return true;
 }
 
@@ -1138,6 +1771,9 @@ bool Game::canRegenerateCurrentStage() const
     const bool stageIsRoguelike = currentStageDefinition_.type == "ローグライク" ||
         currentStageDefinition_.generationProfile == "astral_rogue";
     if (roguelikeDungeon_ || stageIsRoguelike) {
+        return false;
+    }
+    if (!currentStageCleared()) {
         return false;
     }
     auto it = dungeonStates_.find(currentStageId_);
@@ -1202,6 +1838,129 @@ int Game::discoveredWarpPointCount() const
     return static_cast<int>(std::count_if(warpPoints_.begin(), warpPoints_.end(), [](const WarpPoint& point) {
         return point.discovered;
     }));
+}
+
+std::int64_t Game::dungeonMinimapKey(int tx, int ty)
+{
+    const std::uint64_t x = static_cast<std::uint32_t>(tx);
+    const std::uint64_t y = static_cast<std::uint32_t>(ty);
+    return static_cast<std::int64_t>((x << 32) | y);
+}
+
+DungeonTile Game::dungeonMinimapTileFromKey(std::int64_t key)
+{
+    const std::uint64_t raw = static_cast<std::uint64_t>(key);
+    const auto signedFromU32 = [](std::uint32_t value) {
+        if (value <= static_cast<std::uint32_t>(std::numeric_limits<int>::max())) {
+            return static_cast<int>(value);
+        }
+        return -1 - static_cast<int>(~value);
+    };
+    return {
+        signedFromU32(static_cast<std::uint32_t>(raw >> 32)),
+        signedFromU32(static_cast<std::uint32_t>(raw & 0xFFFFFFFFull)),
+    };
+}
+
+void Game::resetDungeonMinimap()
+{
+    dungeonMinimapCells_.clear();
+    dungeonMinimapLastRevealSeconds_ = -1.0e9;
+    dungeonMinimapLastPlayerTileX_ = std::numeric_limits<int>::min();
+    dungeonMinimapLastPlayerTileY_ = std::numeric_limits<int>::min();
+}
+
+void Game::setDungeonMinimapTile(int tx, int ty, TileType type)
+{
+    dungeonMinimapCells_[dungeonMinimapKey(tx, ty)] = DungeonMinimapCell{type};
+}
+
+bool Game::dungeonMinimapTileSeen(int tx, int ty) const
+{
+    return dungeonMinimapCells_.find(dungeonMinimapKey(tx, ty)) != dungeonMinimapCells_.end();
+}
+
+void Game::revealDungeonMinimapAround(Vec2 center, float radius)
+{
+    if (radius <= 0.0f) {
+        return;
+    }
+
+    const float tileSize = static_cast<float>(balance::TileSize);
+    const int minTileX = tileMap_.worldToTile(center.x - radius) - 1;
+    const int maxTileX = tileMap_.worldToTile(center.x + radius) + 1;
+    const int minTileY = tileMap_.worldToTile(center.y - radius) - 1;
+    const int maxTileY = tileMap_.worldToTile(center.y + radius) + 1;
+    for (int ty = minTileY; ty <= maxTileY; ++ty) {
+        for (int tx = minTileX; tx <= maxTileX; ++tx) {
+            const Vec2 tilePos{static_cast<float>(tx) * tileSize, static_cast<float>(ty) * tileSize};
+            if (!circleIntersectsAabb(center, radius, tilePos, {tileSize, tileSize})) {
+                continue;
+            }
+            const TerrainDebugInfo info = tileMap_.terrainDebugAtWorld(tileMap_.tileCenter(tx, ty));
+            setDungeonMinimapTile(tx, ty, info.type);
+        }
+    }
+}
+
+void Game::revealDungeonMinimapOpenedTiles(const std::vector<Vec2>& openedTiles)
+{
+    for (Vec2 openedTile : openedTiles) {
+        setDungeonMinimapTile(
+            tileMap_.worldToTile(openedTile.x),
+            tileMap_.worldToTile(openedTile.y),
+            TileType::Empty);
+    }
+}
+
+void Game::updateDungeonMinimap(double totalSeconds)
+{
+    if (enemyTestActive_ || dungeonLayout_.mainPathPoints.empty()) {
+        return;
+    }
+
+    const int playerTileX = tileMap_.worldToTile(player_.position.x);
+    const int playerTileY = tileMap_.worldToTile(player_.position.y);
+    const bool playerTileChanged =
+        playerTileX != dungeonMinimapLastPlayerTileX_ ||
+        playerTileY != dungeonMinimapLastPlayerTileY_;
+    const bool intervalElapsed =
+        totalSeconds < dungeonMinimapLastRevealSeconds_ ||
+        totalSeconds - dungeonMinimapLastRevealSeconds_ >= DungeonMinimapRevealIntervalSeconds;
+    if (!playerTileChanged && !intervalElapsed) {
+        return;
+    }
+
+    dungeonMinimapLastRevealSeconds_ = totalSeconds;
+    dungeonMinimapLastPlayerTileX_ = playerTileX;
+    dungeonMinimapLastPlayerTileY_ = playerTileY;
+
+    const RuntimeBalance dungeonBalance = runtimeBalanceForDungeon();
+    revealDungeonMinimapAround(player_.position, dungeonBalance.playerLightRadius);
+
+    const Vec2 viewTopLeft = camera_.screenToWorld({0.0f, 0.0f});
+    const Vec2 viewBottomRight = camera_.screenToWorld({
+        static_cast<float>(camera_.width()),
+        static_cast<float>(camera_.height()),
+    });
+    const float viewLeft = std::min(viewTopLeft.x, viewBottomRight.x);
+    const float viewRight = std::max(viewTopLeft.x, viewBottomRight.x);
+    const float viewTop = std::min(viewTopLeft.y, viewBottomRight.y);
+    const float viewBottom = std::max(viewTopLeft.y, viewBottomRight.y);
+    const auto lightIntersectsView = [&](const LightSource& light, float radius) {
+        return light.position.x + radius >= viewLeft &&
+            light.position.x - radius <= viewRight &&
+            light.position.y + radius >= viewTop &&
+            light.position.y - radius <= viewBottom;
+    };
+
+    for (const LightSource& light : collectDungeonLightSources(totalSeconds)) {
+        const float radius = light.radius > 0.0f ? light.radius : dungeonBalance.lightRadius;
+        if (!lightIntersectsView(light, radius)) {
+            continue;
+        }
+        revealDungeonMinimapAround(light.position, radius);
+    }
 }
 
 std::vector<Game::WarpPoint> Game::discoveredWarpPoints() const
@@ -1328,13 +2087,19 @@ bool Game::updateWarpReturnUi(const Input& input, UiContext& ui)
             ((input.confirmPressed() || input.useItemPressed()) && warpReturnConfirmSelection_ == 1);
 
         if (returnRequested) {
+            ui.emitSound(UiSoundEvent::Confirm);
             warpReturnConfirmActive_ = false;
             warpReturnConfirmSelection_ = 0;
             focusedWarpReturnPointIndex_ = -1;
+            if (currentStageIsRoguelike()) {
+                enterAstralResult(AstralRunResult::Returned);
+                return true;
+            }
             requestReturnToBaseTransition(false, false);
             return true;
         }
         if (cancelRequested) {
+            ui.emitSound(UiSoundEvent::Cancel);
             warpReturnConfirmActive_ = false;
             warpReturnConfirmSelection_ = 0;
             const bool entranceNearby =
@@ -1355,12 +2120,14 @@ bool Game::updateWarpReturnUi(const Input& input, UiContext& ui)
         ? DungeonEntranceReturnFocusIndex
         : nearbyDiscoveredWarpPointIndex();
     if (focusedWarpReturnPointIndex_ >= 0 && (input.confirmPressed() || input.useItemPressed())) {
+        ui.emitSound(UiSoundEvent::MenuOpen);
         warpReturnConfirmActive_ = true;
         warpReturnConfirmSelection_ = 0;
         ui.block(warpReturnConfirmRect());
         return true;
     }
     if (focusedWarpReturnPointIndex_ == DungeonEntranceReturnFocusIndex && (input.confirmPressed() || input.useItemPressed())) {
+        ui.emitSound(UiSoundEvent::MenuOpen);
         warpReturnConfirmActive_ = true;
         warpReturnConfirmSelection_ = 0;
         ui.block(warpReturnConfirmRect());
@@ -1400,6 +2167,7 @@ bool Game::unlockAllWarpPointsForCurrentDungeon()
     for (const WarpPoint& point : warpPoints_) {
         if (point.index == bossWarpPointIndex) {
             configureBossSpawnPointFromWarp(point.position);
+            queueStoryEventForCurrentStage("boss_before");
             break;
         }
     }
@@ -1409,6 +2177,9 @@ bool Game::unlockAllWarpPointsForCurrentDungeon()
     reloadNotice_ = newlyDiscovered > 0 ? "ワープポイント全開放" : "ワープポイントは全開放済み";
     reloadNoticeTimer_ = 2.0f;
     pushDungeonLog(reloadNotice_, "warp_point_all");
+    if (newlyDiscovered > 0) {
+        playAudioSe(AudioSeWarpDiscovery);
+    }
     return true;
 }
 
@@ -1426,10 +2197,11 @@ void Game::updateWarpPoints(float dt)
                 point.lightRevealAnimating = false;
             }
         }
-        if (point.discovered) {
-            continue;
-        }
         if (distanceSquared(player_.position, point.position) <= WarpPointTouchRadius * WarpPointTouchRadius) {
+            player_.heal(player_.maxHp);
+            if (point.discovered) {
+                continue;
+            }
             point.discovered = true;
             point.unlocked = true;
             unlockedWarpPointCount_ = std::max(unlockedWarpPointCount_, discoveredWarpPointCount());
@@ -1439,6 +2211,7 @@ void Game::updateWarpPoints(float dt)
             const int bossWarpPointIndex = std::max(0, static_cast<int>(warpPoints_.size()) - 1);
             if (point.index == bossWarpPointIndex) {
                 configureBossSpawnPointFromWarp(point.position);
+                queueStoryEventForCurrentStage("boss_before");
             }
             captureRetrySnapshotAtWarpPoint();
             point.lightRevealTimer = 0.0f;
@@ -1446,6 +2219,8 @@ void Game::updateWarpPoints(float dt)
             reloadNotice_ = "ワープポイント発見";
             reloadNoticeTimer_ = 2.0f;
             pushDungeonLog("ワープポイントを発見", "warp_point");
+            playAudioSe(AudioSeWarpDiscovery);
+            queueStoryEventForTrigger("tutorial:warp");
         }
     }
 }
@@ -1845,6 +2620,7 @@ void Game::revealRewardNodesFromOpenedTiles(const std::vector<Vec2>& openedTiles
         return;
     }
 
+    bool discoveredReward = false;
     for (Vec2 openedTile : openedTiles) {
         const DungeonTile tile{
             tileMap_.worldToTile(openedTile.x),
@@ -1867,6 +2643,7 @@ void Game::revealRewardNodesFromOpenedTiles(const std::vector<Vec2>& openedTiles
             }
             reloadNotice_ = node.objectId.has_value() ? "埋まり報酬を発見" : "隠し報酬を発見";
             reloadNoticeTimer_ = 1.6f;
+            discoveredReward = true;
         }
         for (MoneyNode& node : moneyNodes_) {
             if (node.collected || node.visibility == PlacementVisibility::Exposed ||
@@ -1877,7 +2654,11 @@ void Game::revealRewardNodesFromOpenedTiles(const std::vector<Vec2>& openedTiles
             node.collected = true;
             reloadNotice_ = "埋まり金貨 +" + std::to_string(std::max(0, node.amount)) + "G";
             reloadNoticeTimer_ = 1.6f;
+            discoveredReward = true;
         }
+    }
+    if (discoveredReward) {
+        playAudioSe(AudioSeDiscovery);
     }
 }
 
@@ -2309,8 +3090,10 @@ void Game::openChestNode(ChestNode& node)
     node.lootSpawned = false;
     node.openingSeconds = 0.0f;
 
+    playAudioSe(AudioSeChestOpen);
     reloadNotice_ = "Chest opened";
     reloadNoticeTimer_ = 1.4f;
+    queueStoryEventForTrigger("tutorial:chest");
 }
 
 void Game::spawnChestLoot(ChestNode& node)
@@ -2510,6 +3293,7 @@ void Game::destroyCrateNode(CrateNode& node)
 
     const Vec2 center = tileWorldCenter(node.tile);
     effects_.spawnTileBreak(center, TileType::Dirt, CrateBreakParticleColor);
+    playAudioSe(AudioSeCrateBreak);
 
     std::mt19937 rng(
         dungeonLayout_.seed ^
@@ -2909,7 +3693,7 @@ void Game::updateRingEffectDiscoveries(std::vector<EffectDiscoveryEvent>& discov
             return false;
         };
 
-        for (std::string_view orbitEffectKey : {"orbit_speed", "orbit_power", "damage_speed"}) {
+        for (std::string_view orbitEffectKey : {"orbit_gravity", "orbit_power", "orbit_antigravity", "orbit_speed", "orbit_anchor", "orbit_shift", "damage_speed", "item_orbit_offset"}) {
             if (hasOrbitEffect(orbitEffectKey) && !encyclopedia_.hasObjectEffect(object->id, orbitEffectKey)) {
                 discoveryEvents.push_back(EffectDiscoveryEvent{
                     .objectId = object->id,
@@ -2978,6 +3762,7 @@ void Game::updateRingEffectDiscoveries(std::vector<EffectDiscoveryEvent>& discov
                 detectedHidden = true;
             }
             if (detectedHidden) {
+                playAudioSe(AudioSeDiscovery);
                 discoveryEvents.push_back(EffectDiscoveryEvent{
                     .objectId = object->id,
                     .objectName = object->name,
@@ -3023,6 +3808,7 @@ void Game::updateRingEffectDiscoveries(std::vector<EffectDiscoveryEvent>& discov
                 detectedTreasure = true;
             }
             if (detectedTreasure) {
+                playAudioSe(AudioSeDiscovery);
                 discoveryEvents.push_back(EffectDiscoveryEvent{
                     .objectId = object->id,
                     .objectName = object->name,
@@ -3033,6 +3819,189 @@ void Game::updateRingEffectDiscoveries(std::vector<EffectDiscoveryEvent>& discov
                 });
             }
         }
+    }
+}
+
+void Game::updateOrbitAreaEffects(float dt, std::vector<EffectDiscoveryEvent>& discoveryEvents)
+{
+    if (dt <= 0.0f) {
+        return;
+    }
+
+    std::vector<SpellRingItem*> runtimeItems = spellRing_.runtimeItemsMutable();
+    for (SpellRingItem* itemPtr : runtimeItems) {
+        if (itemPtr == nullptr) {
+            continue;
+        }
+
+        SpellRingItem& item = *itemPtr;
+        item.coldAirFxTimer = std::max(0.0f, item.coldAirFxTimer - dt);
+        item.vacuumPullFxTimer = std::max(0.0f, item.vacuumPullFxTimer - dt);
+        item.hotAirFxTimer = std::max(0.0f, item.hotAirFxTimer - dt);
+        item.windPushFxTimer = std::max(0.0f, item.windPushFxTimer - dt);
+        if (item.broken()) {
+            continue;
+        }
+
+        const ObjectDefinition* object = item.objectId.empty()
+            ? nullptr
+            : objectCatalog_.registry.findById(item.objectId);
+
+        if (item.vacuumPullRadius > 0.0f && item.vacuumPullStrength > 0.0f) {
+            const int pulledDrops = worldDrops_.pullLightDrops(
+                objectCatalog_,
+                item.worldPosition,
+                dt,
+                item.vacuumPullRadius,
+                item.vacuumPullStrength,
+                &inventory_);
+            const int pulledEnemies = enemies_.pullLightEnemies(
+                item.worldPosition,
+                tileMap_,
+                dt,
+                item.vacuumPullRadius,
+                item.vacuumPullStrength);
+            if (pulledDrops + pulledEnemies > 0) {
+                if (item.vacuumPullFxTimer <= 0.0f) {
+                    effects_.spawnAreaPulse(item.worldPosition, item.vacuumPullRadius, {232, 226, 154, 118});
+                    item.vacuumPullFxTimer = 0.30f;
+                }
+                if (object != nullptr) {
+                    appendObjectEffectDiscovery(&discoveryEvents, encyclopedia_, *object, "vacuum_pull_light", item.worldPosition);
+                }
+            }
+        }
+
+        if (item.windPushRadius > 0.0f && item.windPushStrength > 0.0f) {
+            const int pushedDrops = worldDrops_.pushLightDrops(
+                objectCatalog_,
+                item.worldPosition,
+                dt,
+                item.windPushRadius,
+                item.windPushStrength);
+            const int pushedEnemies = enemies_.pushLightEnemies(
+                item.worldPosition,
+                tileMap_,
+                dt,
+                item.windPushRadius,
+                item.windPushStrength);
+            if (pushedDrops + pushedEnemies > 0) {
+                if (item.windPushFxTimer <= 0.0f) {
+                    effects_.spawnAreaPulse(item.worldPosition, item.windPushRadius, {142, 238, 198, 124});
+                    item.windPushFxTimer = 0.28f;
+                }
+                if (object != nullptr) {
+                    appendObjectEffectDiscovery(&discoveryEvents, encyclopedia_, *object, "wind_push_light", item.worldPosition);
+                }
+            }
+        }
+
+        if (item.coldAirRadius > 0.0f && item.coldAirStrength > 0.0f) {
+            int frozenCount = 0;
+            const std::string source = item.objectId.empty()
+                ? "orbit:cold_air_aura"
+                : "orbit:" + item.objectId;
+            const int touched = enemies_.applyColdAirAura(
+                item.worldPosition,
+                item.coldAirRadius,
+                item.coldAirStrength,
+                dt,
+                source,
+                &frozenCount);
+            if (touched > 0) {
+                if (item.coldAirFxTimer <= 0.0f) {
+                    effects_.spawnAreaPulse(item.worldPosition, item.coldAirRadius, {126, 218, 255, 135});
+                    item.coldAirFxTimer = 0.34f;
+                }
+                if (object != nullptr) {
+                    appendObjectEffectDiscovery(&discoveryEvents, encyclopedia_, *object, "cold_air_aura", item.worldPosition);
+                    if (frozenCount > 0) {
+                        appendObjectEffectDiscovery(&discoveryEvents, encyclopedia_, *object, "status_frozen", item.worldPosition);
+                    }
+                }
+            }
+        }
+
+        if (item.hotAirRadius > 0.0f && item.hotAirStrength > 0.0f) {
+            int hotCount = 0;
+            int driedWetCount = 0;
+            const std::string source = item.objectId.empty()
+                ? "orbit:hot_air"
+                : "orbit:" + item.objectId;
+            const int touched = enemies_.applyHotAir(
+                item.worldPosition,
+                item.hotAirRadius,
+                item.hotAirStrength,
+                dt,
+                source,
+                spellRing_,
+                item.dryWetBonusDamage,
+                &hotCount,
+                &driedWetCount);
+            if (touched > 0) {
+                if (item.hotAirFxTimer <= 0.0f) {
+                    effects_.spawnAreaPulse(item.worldPosition, item.hotAirRadius, {255, 134, 66, 132});
+                    item.hotAirFxTimer = 0.32f;
+                }
+                if (object != nullptr) {
+                    appendObjectEffectDiscovery(&discoveryEvents, encyclopedia_, *object, "hot_air", item.worldPosition);
+                    if (hotCount > 0) {
+                        appendObjectEffectDiscovery(&discoveryEvents, encyclopedia_, *object, "status_hot", item.worldPosition);
+                    }
+                    if (driedWetCount > 0 && item.dryWetBonusDamage > 0) {
+                        appendObjectEffectDiscovery(&discoveryEvents, encyclopedia_, *object, "dry_wet_bonus_damage", item.worldPosition);
+                    }
+                }
+            }
+        }
+    }
+}
+
+void Game::updateOrbitGroundEffects(float dt, std::vector<EffectDiscoveryEvent>& discoveryEvents)
+{
+    if (dt <= 0.0f || objectCatalog_.objectsById.empty()) {
+        return;
+    }
+
+    std::vector<SpellRingItem*> runtimeItems = spellRing_.runtimeItemsMutable();
+    for (SpellRingItem* itemPtr : runtimeItems) {
+        if (itemPtr == nullptr || itemPtr->broken() || itemPtr->objectId.empty()) {
+            continue;
+        }
+
+        SpellRingItem& item = *itemPtr;
+        const auto objectIt = objectCatalog_.objectsById.find(item.objectId);
+        if (objectIt == objectCatalog_.objectsById.end()) {
+            continue;
+        }
+
+        bool hasGroundEffect = false;
+        for (const EffectSpec& spec : objectIt->second.orbitEffects) {
+            if (spec.target == "ground") {
+                hasGroundEffect = true;
+                break;
+            }
+        }
+        if (!hasGroundEffect) {
+            continue;
+        }
+
+        EffectContext context;
+        context.sourceObject = &objectIt->second;
+        context.owner = &player_;
+        context.orbit = &spellRing_;
+        context.orbitItem = &item;
+        context.tileMap = &tileMap_;
+        context.effects = &effects_;
+        context.enemies = &enemies_;
+        context.groundLines = &groundLines_;
+        context.magic = &magic_;
+        context.encyclopedia = &encyclopedia_;
+        context.discoveryEvents = &discoveryEvents;
+        context.position = item.worldPosition;
+        context.triggerType = EffectTriggerType::Orbit;
+        context.logUnimplementedEffects = false;
+        effectDispatcher_.dispatchTargetEffects(objectIt->second.orbitEffects, "ground", context);
     }
 }
 
@@ -3102,20 +4071,139 @@ void Game::configureBossSpawnPointFromWarp(Vec2 warpPosition)
     hasBossSpawnPoint_ = true;
 }
 
+void Game::resetBossEncounter()
+{
+    bossEncounter_ = BossEncounterState{};
+}
+
+bool Game::bossEncounterBlocksProgress() const
+{
+    return bossEncounter_.phase == BossEncounterPhase::WaitingBeforeDialogue ||
+        bossEncounter_.phase == BossEncounterPhase::DefeatPresentation ||
+        bossEncounter_.phase == BossEncounterPhase::WaitingAfterDialogue;
+}
+
+float Game::bossDefeatPresentationProgress() const
+{
+    if (bossEncounter_.phase != BossEncounterPhase::DefeatPresentation) {
+        return 0.0f;
+    }
+    return clamp(bossEncounter_.timer / std::max(0.001f, BossDefeatPresentationSeconds), 0.0f, 1.0f);
+}
+
+bool Game::beginBossFightForCurrentEncounter()
+{
+    if (!hasBossSpawnPoint_ || bossSpawned_ || !warpPointsEnabled_ || hasCapturedBossForCurrentStage()) {
+        resetBossEncounter();
+        return false;
+    }
+
+    bossSpawned_ = enemies_.spawnBossNear(tileMap_, bossSpawnPoint_, player_.position, balance_, enemyCatalog_);
+    if (!bossSpawned_) {
+        resetBossEncounter();
+        return false;
+    }
+
+    bossEncounter_.phase = BossEncounterPhase::Fighting;
+    bossEncounter_.stageId = currentStageId_;
+    bossEncounter_.spawnPoint = bossSpawnPoint_;
+    playAudioSe("se.boss.spawn");
+    playAudioBgm("bgm.boss", 0.45f);
+    reloadNotice_ = "深部の主が出現";
+    reloadNoticeTimer_ = 2.0f;
+    pushDungeonLog(reloadNotice_, "boss_spawn");
+    return true;
+}
+
+void Game::beginBossDefeatSequence(Vec2 position)
+{
+    pendingStoryTriggers_.clear();
+    bossEncounter_.phase = BossEncounterPhase::DefeatPresentation;
+    bossEncounter_.stageId = currentStageId_;
+    bossEncounter_.defeatPosition = position;
+    bossEncounter_.timer = 0.0f;
+    bossEncounter_.finalBoss = currentStageId_ == FinalStoryStageId && !hasStoryFlag(EndingSeenFlag);
+    playAudioSe("se.boss.defeat");
+    playAudioBgm("bgm.dungeon", 0.70f);
+    reloadNotice_ = "深部の主を撃破";
+    reloadNoticeTimer_ = 2.0f;
+    pushDungeonLog(reloadNotice_, "boss_defeated");
+    effects_.spawnAreaPulse(position, 92.0f, {255, 214, 110, 210});
+}
+
+void Game::finishBossEncounterAfterDialogue()
+{
+    const bool finalBoss = bossEncounter_.finalBoss;
+    resetBossEncounter();
+    if (finalBoss) {
+        beginFinalBossEndingSequence();
+    } else if (currentStageIsRoguelike()) {
+        enterAstralResult(AstralRunResult::DragonDefeated);
+    } else {
+        enterStageClear();
+    }
+}
+
+bool Game::updateBossEncounterFlow(float dt)
+{
+    switch (bossEncounter_.phase) {
+    case BossEncounterPhase::None:
+    case BossEncounterPhase::Fighting:
+        return false;
+    case BossEncounterPhase::WaitingBeforeDialogue:
+        if (dialogue_.active() || !pendingStoryTriggers_.empty()) {
+            return true;
+        }
+        beginBossFightForCurrentEncounter();
+        return true;
+    case BossEncounterPhase::DefeatPresentation:
+        bossEncounter_.timer += std::max(0.0f, dt);
+        effects_.update(std::max(0.0f, dt));
+        magicFx_.update(std::max(0.0f, dt));
+        if (bossEncounter_.timer < BossDefeatPresentationSeconds) {
+            return true;
+        }
+        bossEncounter_.phase = BossEncounterPhase::WaitingAfterDialogue;
+        bossEncounter_.timer = 0.0f;
+        if (!queueStoryEventForCurrentStage("boss_after")) {
+            finishBossEncounterAfterDialogue();
+        }
+        return true;
+    case BossEncounterPhase::WaitingAfterDialogue:
+        if (dialogue_.active() || !pendingStoryTriggers_.empty()) {
+            return true;
+        }
+        finishBossEncounterAfterDialogue();
+        return true;
+    }
+    return false;
+}
+
 void Game::updateBossSpawn()
 {
     if (!hasBossSpawnPoint_ || bossSpawned_ || !warpPointsEnabled_) {
+        return;
+    }
+    if (hasCapturedBossForCurrentStage()) {
+        resetBossEncounter();
+        return;
+    }
+    if (bossEncounter_.phase != BossEncounterPhase::None) {
         return;
     }
     if (distanceSquared(player_.position, bossSpawnPoint_) > BossSpawnTriggerRadius * BossSpawnTriggerRadius) {
         return;
     }
 
-    bossSpawned_ = enemies_.spawnBossNear(tileMap_, bossSpawnPoint_, player_.position, balance_, enemyCatalog_);
-    if (bossSpawned_) {
-        reloadNotice_ = "深部の主が出現";
-        reloadNoticeTimer_ = 2.0f;
+    bossEncounter_ = BossEncounterState{};
+    bossEncounter_.phase = BossEncounterPhase::WaitingBeforeDialogue;
+    bossEncounter_.stageId = currentStageId_;
+    bossEncounter_.spawnPoint = bossSpawnPoint_;
+    if (queueStoryEventForCurrentStage("boss_before")) {
+        return;
     }
+
+    beginBossFightForCurrentEncounter();
 }
 
 void Game::captureRetrySnapshotAtWarpPoint()
@@ -3130,6 +4218,7 @@ void Game::captureRetrySnapshotAtWarpPoint()
     retrySnapshot_.inventory = captureInventoryCarryState();
     retrySnapshot_.tileMap = tileMap_;
     retrySnapshot_.dungeonLayout = dungeonLayout_;
+    retrySnapshot_.dungeonMinimapCells = dungeonMinimapCells_;
     retrySnapshot_.runStats = runStats_;
     retrySnapshot_.warpPoints = warpPoints_;
     retrySnapshot_.rewardNodes = rewardNodes_;
@@ -3164,6 +4253,7 @@ void Game::restoreRetrySnapshot()
     player_.velocity = {};
     player_.throwCooldownRemaining = 0.0f;
     player_.poisonDamageAccumulator = 0.0;
+    player_.hotDamageAccumulator = 0.0;
     player_.bleedDamageAccumulator = 0.0;
     player_.stunWakeTimer = 0.0f;
     player_.lastDamageSource = DamageSource::Unknown;
@@ -3172,6 +4262,7 @@ void Game::restoreRetrySnapshot()
 
     tileMap_ = retrySnapshot_.tileMap;
     dungeonLayout_ = retrySnapshot_.dungeonLayout;
+    dungeonMinimapCells_ = retrySnapshot_.dungeonMinimapCells;
     restoreInventoryCarryState(retrySnapshot_.inventory);
     runStats_ = retrySnapshot_.runStats;
     warpPoints_ = retrySnapshot_.warpPoints;
@@ -3190,7 +4281,9 @@ void Game::restoreRetrySnapshot()
     bossSpawnPoint_ = retrySnapshot_.bossSpawnPoint;
     hasBossSpawnPoint_ = retrySnapshot_.hasBossSpawnPoint;
     bossSpawned_ = retrySnapshot_.bossSpawned;
+    resetBossEncounter();
     effects_ = EffectSystem{};
+    groundLines_ = GroundLineSystem{};
     magic_ = MagicSystem{};
     magicFx_ = MagicFxSystem{};
     ringTrailEffectTimer_ = 0.0f;
@@ -3198,8 +4291,9 @@ void Game::restoreRetrySnapshot()
     levels_ = LevelSystem{};
     inventoryReturnToPause_ = false;
     gameOverStatus_.clear();
-    tileMap_.updateAround(player_.position, 0.0f, balance_, dungeonLayout_);
+    tileMap_.updateAround(player_.position, 0.0f, runtimeBalanceForDungeon(), dungeonLayout_);
     normalizeOpenBuriedPlacementNodes();
+    updateDungeonMinimap(0.0);
     camera_.follow(player_.position, 1.0f);
     resetPlayerFootstepDust();
 }
@@ -3522,10 +4616,13 @@ void Game::appendPickupLogs(const std::vector<WorldDropPickupEvent>& pickupEvent
     }
 }
 
-void Game::handleRingItemBreakEvents()
+void Game::handleRingItemBreakEvents(std::vector<EffectDiscoveryEvent>* discoveryEvents)
 {
     for (const RingItemBreakEvent& event : spellRing_.consumeItemBreakEvents()) {
         const ItemData* object = objectCatalog_.registry.findById(event.objectId);
+        const std::vector<ObjectBreakEffectEntry> breakEffects = objectBreakEffectEntriesFor(object);
+        const ObjectBreakSpec breakSpec = objectBreakSpecFor(breakEffects);
+        const float breakScale = objectBreakVisualScale(breakSpec.value);
         const std::string name = object != nullptr && !object->name.empty()
             ? object->name
             : std::string(spellRingItemName(event.type));
@@ -3535,7 +4632,108 @@ void Game::handleRingItemBreakEvents()
             ? "item_break:" + event.objectId
             : "item_break:" + event.instanceId;
 
-        effects_.spawnItemBreak(event.position);
+        effects_.spawnItemBreak(event.position, itemBreakVisualFor(breakSpec.kind), breakScale);
+        if (object != nullptr) {
+            std::mt19937& rng = lootRuntimeRng();
+            const int dryWetBonusDamage = dryWetBonusDamageFor(breakEffects);
+            for (const ObjectBreakEffectEntry& effect : breakEffects) {
+                if (effect.effectKey == "break_glass_shards" ||
+                    effect.effectKey == "break_ceramic_shards" ||
+                    effect.effectKey == "break_wood_fragments") {
+                    ObjectBreakSpec shardSpec;
+                    if (effect.effectKey == "break_glass_shards") {
+                        shardSpec = {.kind = ObjectBreakKind::Glass, .effectKey = effect.effectKey, .value = effect.value};
+                    } else if (effect.effectKey == "break_ceramic_shards") {
+                        shardSpec = {.kind = ObjectBreakKind::Ceramic, .effectKey = effect.effectKey, .value = effect.value};
+                    } else {
+                        shardSpec = {.kind = ObjectBreakKind::Wood, .effectKey = effect.effectKey, .value = effect.value};
+                    }
+                    const int shardDamage = objectBreakShardDamage(shardSpec);
+                    if (shardDamage > 0) {
+                        enemies_.applyObjectBreakShardDamage(
+                            event.position,
+                            objectBreakShardRadius(shardSpec),
+                            shardDamage,
+                            objectBreakShardDamageType(shardSpec.kind),
+                            shardSpec.effectKey,
+                            spellRing_);
+                        appendObjectEffectDiscovery(discoveryEvents, encyclopedia_, *object, shardSpec.effectKey, event.position);
+                    }
+                } else if (effect.effectKey == "break_fire_burst") {
+                    EnemyMagicHitSpec spec;
+                    spec.position = event.position;
+                    spec.radius = objectBreakElementRadius(effect.effectKey, effect.value);
+                    spec.damage = objectBreakFireDamage(effect.value);
+                    spec.damageType = "fire";
+                    spec.effectId = "break_fire_burst";
+                    int driedWetCount = 0;
+                    if (dryWetBonusDamage > 0) {
+                        spec.consumeStateForBonus = "status_wet";
+                        spec.consumeStateBonusDamage = dryWetBonusDamage;
+                        spec.consumeStateBonusDamageType = "fire";
+                        spec.consumeStateBonusEffectId = "dry_wet_bonus_damage";
+                        spec.outConsumedStateCount = &driedWetCount;
+                    }
+                    enemies_.applyMagicArea(spec, spellRing_);
+                    effects_.spawnAreaPulse(event.position, spec.radius, {255, 116, 54, 150});
+                    appendObjectEffectDiscovery(discoveryEvents, encyclopedia_, *object, "break_fire_burst", event.position);
+                    if (driedWetCount > 0) {
+                        appendObjectEffectDiscovery(discoveryEvents, encyclopedia_, *object, "dry_wet_bonus_damage", event.position);
+                    }
+                } else if (effect.effectKey == "water_spray") {
+                    EnemyMagicHitSpec spec;
+                    spec.position = event.position;
+                    spec.radius = objectBreakElementRadius(effect.effectKey, effect.value);
+                    spec.damage = 0;
+                    spec.damageType = "water";
+                    spec.effectId = "water_spray";
+                    spec.statusEffect = "status_wet";
+                    spec.statusValue = std::max(1.0, effect.value);
+                    spec.statusDuration = effect.duration > 0.0 ? effect.duration : 4.0;
+                    spec.statusChance = 100.0;
+                    const int hitCount = enemies_.applyMagicArea(spec, spellRing_);
+                    effects_.spawnAreaPulse(event.position, spec.radius, {98, 186, 255, 145});
+                    appendObjectEffectDiscovery(discoveryEvents, encyclopedia_, *object, "water_spray", event.position);
+                    if (hitCount > 0) {
+                        appendObjectEffectDiscovery(discoveryEvents, encyclopedia_, *object, "status_wet", event.position);
+                    }
+                } else if (effect.effectKey == "break_coin_spill") {
+                    const int amount = objectBreakCoinSpillAmount(*object, effect.value);
+                    if (worldDrops_.spawnMoneyDrop(
+                            amount,
+                            scatterLootPosition(event.position, rng),
+                            runStats_.elapsedSeconds,
+                            makeWorldLootJumpMotion(event.position, rng))) {
+                        effects_.spawnAreaPulse(event.position, 38.0f, {246, 214, 108, 142});
+                        appendObjectEffectDiscovery(discoveryEvents, encyclopedia_, *object, "break_coin_spill", event.position);
+                    }
+                } else if (effect.effectKey == "break_random_item_drop") {
+                    const bool guarantee = shouldGuaranteeFirstDiscovery(
+                        discoveryEvents,
+                        encyclopedia_,
+                        *object,
+                        "break_random_item_drop");
+                    if (guarantee || percentRollSucceeds(rng, effect.value)) {
+                        const int depthRank = lootDepthRankForWorldPosition(
+                            tileMap_,
+                            dungeonLayout_,
+                            currentStageId_,
+                            event.position);
+                        if (spawnWeightedObjectLoot(
+                                LootChestKind::Common,
+                                depthRank,
+                                event.position,
+                                rng,
+                                "BreakRandomItemDrop",
+                                true,
+                                LootSourceKind::DigItem)) {
+                            appendObjectEffectDiscovery(discoveryEvents, encyclopedia_, *object, "break_random_item_drop", event.position);
+                        }
+                    }
+                }
+            }
+        }
+        playAudioSe(AudioSeItemBreak);
         pushDungeonLog(message, mergeKey);
         reloadNotice_ = message;
         reloadNoticeTimer_ = 1.8f;
@@ -3588,7 +4786,7 @@ void Game::renderWarpPoints(Renderer& renderer) const
         }
     }
 
-    if (hasBossSpawnPoint_ && !bossSpawned_) {
+    if (hasBossSpawnPoint_ && !bossSpawned_ && !hasCapturedBossForCurrentStage()) {
         renderer.drawCircle(bossSpawnPoint_, BossSpawnTriggerRadius, {255, 98, 92, 150});
         renderer.drawCircle(bossSpawnPoint_, 18.0f, {255, 180, 80, 230});
         renderer.drawLine(bossSpawnPoint_ + Vec2{-22.0f, -22.0f}, bossSpawnPoint_ + Vec2{22.0f, 22.0f}, {255, 120, 90, 210});

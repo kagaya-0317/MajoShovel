@@ -30,6 +30,8 @@ std::string_view deathCauseText(DamageSource source)
     switch (source) {
     case DamageSource::Poison:
         return "毒で死亡";
+    case DamageSource::Hot:
+        return "熱で死亡";
     case DamageSource::Bleed:
         return "出血で死亡";
     case DamageSource::SlimeAttack:
@@ -114,6 +116,17 @@ void Player::update(
     } else {
         poisonDamageAccumulator = 0.0;
     }
+    const double hotDps = status.hotDamagePerSecond();
+    if (hotDps > 0.0) {
+        hotDamageAccumulator += hotDps * static_cast<double>(dt);
+        const int hotDamage = static_cast<int>(std::floor(hotDamageAccumulator));
+        if (hotDamage > 0) {
+            applyDamage(hotDamage, DamageSource::Hot);
+            hotDamageAccumulator -= static_cast<double>(hotDamage);
+        }
+    } else {
+        hotDamageAccumulator = 0.0;
+    }
 
     const float speed = static_cast<float>(
         status.applyModifiers(ModifierStat::Speed, balance.playerSpeed) *
@@ -161,9 +174,10 @@ void Player::update(
         facing = normalize(velocity);
     }
 
-    const float targetShift = input.ringOffsetHeld()
-        ? balance.spellRingShiftDistance + spellRingShiftDistanceBonus
-        : 0.0f;
+    const float shiftDistance =
+        (balance.spellRingShiftDistance + spellRingShiftDistanceBonus) *
+        clamp(spellRingShiftDistanceMultiplier, 0.25f, 3.0f);
+    const float targetShift = input.ringOffsetHeld() ? shiftDistance : 0.0f;
     spellRingShift = lerp(spellRingShift, targetShift, 1.0f - std::exp(-14.0f * dt));
     throwCooldownRemaining = std::max(0.0f, throwCooldownRemaining - dt);
 }

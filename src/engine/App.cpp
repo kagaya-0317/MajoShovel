@@ -75,6 +75,10 @@ enum class DevLaunchMode {
     Base,
     Dungeon,
     EnemyTest,
+    FinalBossBefore,
+    FinalBossAfter,
+    EndingKamishibai,
+    PostEndingBase,
 };
 
 std::filesystem::path devLaunchModePath()
@@ -97,6 +101,18 @@ std::optional<DevLaunchMode> parseDevLaunchMode(std::string_view value)
     if (normalized == "enemy-test") {
         return DevLaunchMode::EnemyTest;
     }
+    if (normalized == "final-boss-before" || normalized == "final-boss") {
+        return DevLaunchMode::FinalBossBefore;
+    }
+    if (normalized == "final-boss-after") {
+        return DevLaunchMode::FinalBossAfter;
+    }
+    if (normalized == "ending-kamishibai" || normalized == "ending-paper") {
+        return DevLaunchMode::EndingKamishibai;
+    }
+    if (normalized == "post-ending-base" || normalized == "ending-base") {
+        return DevLaunchMode::PostEndingBase;
+    }
     return std::nullopt;
 }
 
@@ -117,6 +133,10 @@ const char* devLaunchModeSaveName(DevLaunchMode mode)
     case DevLaunchMode::Base: return "base";
     case DevLaunchMode::Dungeon: return "dungeon";
     case DevLaunchMode::EnemyTest: return "enemy-test";
+    case DevLaunchMode::FinalBossBefore: return "final-boss-before";
+    case DevLaunchMode::FinalBossAfter: return "final-boss-after";
+    case DevLaunchMode::EndingKamishibai: return "ending-kamishibai";
+    case DevLaunchMode::PostEndingBase: return "post-ending-base";
     }
     return "pre-title";
 }
@@ -128,6 +148,10 @@ const char* devLaunchModeLogName(DevLaunchMode mode)
     case DevLaunchMode::Base: return "base";
     case DevLaunchMode::Dungeon: return "dungeon";
     case DevLaunchMode::EnemyTest: return "enemy test";
+    case DevLaunchMode::FinalBossBefore: return "final boss before";
+    case DevLaunchMode::FinalBossAfter: return "final boss after";
+    case DevLaunchMode::EndingKamishibai: return "ending kamishibai";
+    case DevLaunchMode::PostEndingBase: return "post-ending base";
     }
     return "pre-title";
 }
@@ -139,6 +163,10 @@ int devLaunchModeDropdownIndex(DevLaunchMode mode)
     case DevLaunchMode::Base: return 1;
     case DevLaunchMode::Dungeon: return 2;
     case DevLaunchMode::EnemyTest: return 3;
+    case DevLaunchMode::FinalBossBefore: return 4;
+    case DevLaunchMode::FinalBossAfter: return 5;
+    case DevLaunchMode::EndingKamishibai: return 6;
+    case DevLaunchMode::PostEndingBase: return 7;
     }
     return 0;
 }
@@ -256,6 +284,7 @@ bool saveDevAutoReloadBlocked(bool blocked, std::string& outError)
 App::~App()
 {
     setLogSink({});
+    audio_.shutdown();
     debugConsole_.shutdown();
     delete renderer_;
     if (sdlRenderer_) {
@@ -273,7 +302,7 @@ bool App::initialize(const char* title, int width, int height, bool testPlayMode
     height_ = height;
     testPlayMode_ = testPlayMode;
     restartRequested_ = false;
-    if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_GAMEPAD)) {
+    if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO | SDL_INIT_GAMEPAD)) {
         logError(std::string("SDL_Init failed: ") + SDL_GetError());
         return false;
     }
@@ -297,6 +326,11 @@ bool App::initialize(const char* title, int width, int height, bool testPlayMode
         logInfo(std::string("Launch mode: ") + devLaunchModeLogName(launchMode));
         logInfo("Test-play debug console enabled. Press F8 to show or hide it.");
     }
+    if (!audio_.initialize()) {
+        logWarning("Audio disabled: " + audio_.lastError());
+    }
+    audio_.loadManifest("assets/audio/audio_manifest.tsv");
+    game_.setAudioEngine(&audio_);
     loadAssets();
     configureAssetWatcher();
     game_.initialize(width_, height_);
@@ -376,6 +410,11 @@ bool App::reloadAssetForPath(const std::string& changedPath)
     if (extension == ".otf" || extension == ".ttf") {
         return renderer_->loadTextFont("assets/fonts/craftmincho.otf");
     }
+    if (fileName == "audio_manifest.tsv" ||
+        parentPath.find("assets/audio") != std::string::npos ||
+        extension == ".wav") {
+        return audio_.reloadManifest();
+    }
     if (extension == ".png" &&
         fileName.rfind("obj_", 0) == 0 &&
         parentPath.find("assets/objects") != std::string::npos) {
@@ -385,6 +424,15 @@ bool App::reloadAssetForPath(const std::string& changedPath)
     if (extension == ".png" &&
         fileName.rfind("img_", 0) == 0 &&
         parentPath.find("assets/others") != std::string::npos) {
+        renderer_->invalidateImage(changedPath);
+        return true;
+    }
+    if (extension == ".png" &&
+        fileName.size() == std::string_view("tile_1.png").size() &&
+        fileName.rfind("tile_", 0) == 0 &&
+        fileName[5] >= '1' &&
+        fileName[5] <= '4' &&
+        parentPath.find("assets/tiles") != std::string::npos) {
         renderer_->invalidateImage(changedPath);
         return true;
     }
@@ -521,6 +569,7 @@ void App::run()
 
         checkAssetHotReload();
         time_.tick();
+        audio_.update(time_.deltaSeconds());
         game_.update(input_, time_);
         if (game_.quitRequested()) {
             running_ = false;

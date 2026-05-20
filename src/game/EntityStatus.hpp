@@ -65,8 +65,10 @@ public:
     [[nodiscard]] double flatBonusFor(ModifierStat stat) const;
     [[nodiscard]] double applyModifiers(ModifierStat stat, double baseValue) const;
     [[nodiscard]] double movementMultiplierFromStates() const;
+    [[nodiscard]] double attackAccuracyMultiplierFromStates() const;
     [[nodiscard]] double sizeMultiplierFromStates() const;
     [[nodiscard]] double poisonDamagePerSecond() const;
+    [[nodiscard]] double hotDamagePerSecond() const;
     [[nodiscard]] double bleedDamagePerSecond() const;
     [[nodiscard]] const std::vector<EntityModifier>& modifiers() const;
 

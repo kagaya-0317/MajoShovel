@@ -1,6 +1,7 @@
 ﻿#include "game/InventoryUiCommon.hpp"
 
 #include "game/EncyclopediaSystem.hpp"
+#include "game/ItemImageRenderer.hpp"
 #include "game/ObjectImageRenderer.hpp"
 #include "game/ObjectVisualPose.hpp"
 #include "game/WorldIconRenderer.hpp"
@@ -212,6 +213,9 @@ std::string joinInventoryUiEffectLines(const std::vector<std::string>& lines)
     if (lines.empty()) {
         return "-";
     }
+    if (lines.size() == 1 && lines.front() == "\xE3\x81\xAA\xE3\x81\x97") {
+        return lines.front();
+    }
     std::string text;
     for (std::size_t i = 0; i < lines.size(); ++i) {
         if (!text.empty()) {
@@ -321,7 +325,7 @@ void drawInlineItemText(
                 if (const ObjectDefinition* object = catalog.registry.findById(tag.key)) {
                     ObjectImageDrawOptions options;
                     options.applyScaleOverride = false;
-                    drewIcon = drawObjectImage(
+                    drewIcon = drawItemImage(
                         renderer,
                         *object,
                         center,
@@ -433,7 +437,7 @@ void drawInventoryUiSlot(
         if (style.selected) {
             imageOptions = withSelectedItemOutline(imageOptions);
         }
-        const bool drewImage = drawObjectImage(
+        const bool drewImage = drawItemImage(
             renderer,
             *entry.item,
             slotCenter,
@@ -459,7 +463,7 @@ void drawInventoryUiSlot(
     if (style.selected) {
         imageOptions = withSelectedItemOutline(imageOptions);
     }
-    const bool drewImage = drawObjectImage(
+    const bool drewImage = drawItemImage(
         renderer,
         *entry.item,
         slotCenter,
@@ -519,7 +523,7 @@ void drawInventoryUiDetailPanel(
         encyclopedia.getObjectEffectDisplayLines(entry.item->id, catalog, EffectRevealMode::WithUnknown);
     const std::string effectText = joinInventoryUiEffectLines(effectLines);
     drawUiDetailText(renderer, panel, detailLineY, entry.item->description.empty() ? "-" : entry.item->description);
-    std::snprintf(buffer, sizeof(buffer), "%d", static_cast<int>(effectLines.size()));
+    std::snprintf(buffer, sizeof(buffer), "%d", static_cast<int>(entry.item->discoveryEffectLines.size()));
     drawUiDetailLine(renderer, panel, detailLineY, "効果数", buffer);
     drawUiDetailText(renderer, panel, detailLineY, "効果");
     drawUiDetailText(renderer, panel, detailLineY, effectText);

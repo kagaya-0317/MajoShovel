@@ -33,6 +33,7 @@ constexpr float DialogueInactivePortraitBrightness = 0.68f;
 constexpr int DialogueTextScale = 3;
 constexpr std::string_view DialogueWindowId = "dialogue.message";
 constexpr std::string_view DialogueHelpText = "F/Enter/Click/Esc 文字送り";
+constexpr std::string_view MonicaCallHelpText = "F/Enter/Click/Esc 文字送り";
 
 enum class DialoguePortraitSide {
     Left,
@@ -143,6 +144,59 @@ UiRect textRectFor(UiRect panel)
             std::max(1.0f, panel.size.y - DialogueTextPaddingTop - DialogueTextPaddingBottom - footerHeight),
         },
     };
+}
+
+UiRect monicaCallPhoneRect(int screenWidth, int screenHeight)
+{
+    const float width = static_cast<float>(std::max(1, screenWidth));
+    const float height = static_cast<float>(std::max(1, screenHeight));
+    const float phoneWidth = std::clamp(width * 0.11f, 108.0f, 148.0f);
+    const float phoneHeight = phoneWidth * 1.72f;
+    return {
+        {std::clamp(width * 0.08f, 28.0f, 126.0f), std::max(22.0f, height - phoneHeight - 36.0f)},
+        {phoneWidth, phoneHeight},
+    };
+}
+
+UiRect monicaCallBubbleRect(int screenWidth, int screenHeight, UiRect phone)
+{
+    const float width = static_cast<float>(std::max(1, screenWidth));
+    const float height = static_cast<float>(std::max(1, screenHeight));
+    const float bubbleWidth = std::clamp(width * 0.70f, 560.0f, 840.0f);
+    const float bubbleHeight = std::clamp(height * 0.25f, 178.0f, 220.0f);
+    const float bubbleX = std::clamp(
+        phone.pos.x + phone.size.x * 0.82f,
+        22.0f,
+        std::max(22.0f, width - bubbleWidth - 24.0f));
+    return {
+        {bubbleX, std::max(18.0f, height - bubbleHeight - 46.0f)},
+        {bubbleWidth, bubbleHeight},
+    };
+}
+
+void fillRoundedRectLocal(Renderer& renderer, UiRect rect, float radius, Color color)
+{
+    if (rect.size.x <= 0.0f || rect.size.y <= 0.0f || color.a == 0) {
+        return;
+    }
+    const float r = std::min({std::max(0.0f, radius), rect.size.x * 0.5f, rect.size.y * 0.5f});
+    if (r <= 0.0f) {
+        renderer.fillRect(rect.pos, rect.size, color);
+        return;
+    }
+
+    renderer.fillRect({rect.pos.x + r, rect.pos.y}, {std::max(0.0f, rect.size.x - r * 2.0f), rect.size.y}, color);
+    renderer.fillRect({rect.pos.x, rect.pos.y + r}, {r, std::max(0.0f, rect.size.y - r * 2.0f)}, color);
+    renderer.fillRect({rect.pos.x + rect.size.x - r, rect.pos.y + r}, {r, std::max(0.0f, rect.size.y - r * 2.0f)}, color);
+    renderer.fillCircle(rect.pos + Vec2{r, r}, r, color);
+    renderer.fillCircle(rect.pos + Vec2{rect.size.x - r, r}, r, color);
+    renderer.fillCircle(rect.pos + Vec2{r, rect.size.y - r}, r, color);
+    renderer.fillCircle(rect.pos + rect.size - Vec2{r, r}, r, color);
+}
+
+bool sequenceUsesMonicaCallUi(const DialogueSequence& sequence)
+{
+    return sequence.id.rfind("monica_radio_", 0) == 0;
 }
 
 float dialogueNativeMeasurePadding(Renderer& renderer)
@@ -268,7 +322,7 @@ std::string speakerNameForId(std::string_view speakerId)
         return "モニカ";
     }
     if (speakerId == "player") {
-        return "主人公";
+        return "ルネ";
     }
     if (speakerId == "chicory") {
         return "チコリ";
@@ -486,6 +540,11 @@ void DialoguePlayer::render(Renderer& renderer, int screenWidth, int screenHeigh
     }
     const DialogueLine* line = currentLine();
 
+    if (sequenceUsesMonicaCallUi(sequence_)) {
+        renderMonicaCall(renderer, screenWidth, screenHeight, line);
+        return;
+    }
+
     renderer.setScreenSpace();
     const UiRect panel = dialoguePanelRect(screenWidth, screenHeight);
     const UiRect textRect = textRectFor(panel);
@@ -549,6 +608,101 @@ void DialoguePlayer::render(Renderer& renderer, int screenWidth, int screenHeigh
         renderer.drawText(glyph.pos, glyph.text, {255, 255, 255, alpha}, DialogueTextScale);
     }
 
+}
+
+void DialoguePlayer::renderMonicaCall(Renderer& renderer, int screenWidth, int screenHeight, const DialogueLine* line) const
+{
+    renderer.setScreenSpace();
+
+    const float contentStartDelay = dialogueContentStartDelaySeconds();
+    const bool contentVisible = closing_ || openElapsed_ >= contentStartDelay;
+    if (!contentVisible) {
+        return;
+    }
+
+    const UiRect phone = monicaCallPhoneRect(screenWidth, screenHeight);
+    const UiRect bubble = monicaCallBubbleRect(screenWidth, screenHeight, phone);
+    const float alpha = contentFade_;
+    const auto a = [alpha](Color color) {
+        return fadeColor(color, alpha);
+    };
+
+    renderer.fillRect(
+        {0.0f, 0.0f},
+        {static_cast<float>(std::max(1, screenWidth)), static_cast<float>(std::max(1, screenHeight))},
+        a({0, 0, 0, 42}));
+
+    fillRoundedRectLocal(renderer, {phone.pos + Vec2{8.0f, 10.0f}, phone.size}, 20.0f, a({0, 0, 0, 96}));
+    fillRoundedRectLocal(renderer, phone, 20.0f, a({18, 22, 34, 245}));
+    const UiRect screen{{phone.pos.x + 10.0f, phone.pos.y + 20.0f}, {phone.size.x - 20.0f, phone.size.y - 44.0f}};
+    fillRoundedRectLocal(renderer, screen, 12.0f, a({46, 72, 116, 244}));
+    renderer.fillGradientRect(screen.pos, screen.size, a({38, 78, 136, 230}), a({112, 176, 210, 210}), GradientDirection::TopToBottom);
+    renderer.fillCircle({phone.pos.x + phone.size.x * 0.5f, phone.pos.y + 10.0f}, 3.0f, a({104, 118, 144, 230}));
+    renderer.drawCircle({phone.pos.x + phone.size.x * 0.5f, phone.pos.y + phone.size.y - 14.0f}, 7.0f, a({110, 126, 154, 210}));
+
+    const DialoguePortraitSlot monicaSlot = portraitSlotFor(sequence_, "monica", DialoguePortraitSide::Right);
+    drawPortrait(
+        renderer,
+        {{screen.pos.x + screen.size.x * 0.18f, screen.pos.y + 16.0f}, {screen.size.x * 0.64f, screen.size.y - 20.0f}},
+        monicaSlot,
+        alpha,
+        1.0f);
+
+    const Vec2 tail[3] = {
+        {bubble.pos.x + 38.0f, bubble.pos.y + bubble.size.y - 48.0f},
+        {phone.pos.x + phone.size.x * 0.76f, phone.pos.y + phone.size.y * 0.30f},
+        {bubble.pos.x + 38.0f, bubble.pos.y + bubble.size.y - 94.0f},
+    };
+    renderer.fillPolygon(tail, 3, a({238, 248, 255, 236}));
+    fillRoundedRectLocal(renderer, {bubble.pos + Vec2{8.0f, 10.0f}, bubble.size}, 24.0f, a({0, 0, 0, 86}));
+    fillRoundedRectLocal(renderer, bubble, 24.0f, a({238, 248, 255, 238}));
+    renderer.drawRect(bubble.pos, bubble.size, a({120, 182, 220, 230}));
+
+    const UiRect portraitFrame{{bubble.pos.x + 24.0f, bubble.pos.y + 28.0f}, {132.0f, bubble.size.y - 56.0f}};
+    fillRoundedRectLocal(renderer, portraitFrame, 16.0f, a({48, 84, 136, 226}));
+    renderer.fillGradientRect(
+        portraitFrame.pos,
+        portraitFrame.size,
+        a({38, 62, 112, 210}),
+        a({118, 178, 214, 190}),
+        GradientDirection::TopToBottom);
+    drawPortrait(renderer, portraitFrame, monicaSlot, alpha, 1.0f);
+
+    renderer.fillCircle({bubble.pos.x + bubble.size.x - 34.0f, bubble.pos.y + 32.0f}, 5.0f, a({72, 218, 164, 255}));
+    renderer.drawText({bubble.pos.x + 176.0f, bubble.pos.y + 24.0f}, "モニカ通信", a({38, 76, 122, 255}), 2);
+    renderer.drawText({bubble.pos.x + 176.0f, bubble.pos.y + 48.0f}, line != nullptr && !line->speakerName.empty() ? line->speakerName : "モニカ", a({24, 32, 54, 255}), 3);
+
+    if (closing_ || line == nullptr) {
+        return;
+    }
+
+    const float footerHeight = uiFooterHeight(MonicaCallHelpText);
+    const UiRect textRect{
+        {bubble.pos.x + 176.0f, bubble.pos.y + 84.0f},
+        {
+            std::max(1.0f, bubble.size.x - 212.0f),
+            std::max(1.0f, bubble.size.y - 98.0f - footerHeight),
+        },
+    };
+    const std::vector<DialogueGlyph> glyphs = layoutDialogueGlyphs(renderer, line->text, textRect);
+    for (const DialogueGlyph& glyph : glyphs) {
+        const unsigned char glyphAlpha = fadedAlpha(lineElapsed_, glyph.revealIndex);
+        if (glyphAlpha == 0) {
+            continue;
+        }
+        const unsigned char scaled = static_cast<unsigned char>(std::clamp(
+            std::lround(static_cast<float>(glyphAlpha) * alpha),
+            0L,
+            255L));
+        renderer.drawText(glyph.pos + Vec2{1.0f, 1.0f}, glyph.text, {255, 255, 255, static_cast<unsigned char>(scaled / 2)}, DialogueTextScale);
+        renderer.drawText(glyph.pos, glyph.text, {24, 30, 46, scaled}, DialogueTextScale);
+    }
+
+    renderer.drawText(
+        {bubble.pos.x + 176.0f, bubble.pos.y + bubble.size.y - footerHeight + 8.0f},
+        MonicaCallHelpText,
+        a({86, 104, 128, 255}),
+        2);
 }
 
 bool DialoguePlayer::lineComplete() const

@@ -12,12 +12,67 @@ struct LoadedDungeonWarpPointSave {
     bool snapshotCaptured = false;
 };
 
+struct LoadedDungeonMinimapCellSave {
+    int x = 0;
+    int y = 0;
+    TileType type = TileType::Empty;
+};
+
+struct LoadedRewardNodeSave {
+    DungeonTile tile{};
+    int visibility = 0;
+    bool revealed = false;
+    bool spawned = false;
+    bool collected = false;
+};
+
+struct LoadedMoneyNodeSave {
+    DungeonTile tile{};
+    int visibility = 0;
+    bool collected = false;
+};
+
+struct LoadedMoonFragmentNodeSave {
+    DungeonTile tile{};
+    int visibility = 0;
+    bool collected = false;
+};
+
+struct LoadedChestNodeSave {
+    DungeonTile tile{};
+    int visibility = 0;
+    bool revealed = false;
+    bool opened = false;
+    bool lootSpawned = false;
+    float openingSeconds = 0.0f;
+};
+
+struct LoadedCrateNodeSave {
+    DungeonTile tile{};
+    bool destroyed = false;
+};
+
+struct LoadedEnemyNodeSave {
+    DungeonTile tile{};
+    int placementType = 0;
+    bool spawned = false;
+};
+
 struct LoadedDungeonStateSave {
     bool hasSeed = false;
     std::string stageId;
     int currentStage = 0;
     std::uint32_t seed = 0;
     std::vector<LoadedDungeonWarpPointSave> warpPoints;
+    std::vector<LoadedDungeonMinimapCellSave> minimapCells;
+    std::vector<TerrainTileEdit> terrainEdits;
+    std::vector<LoadedRewardNodeSave> rewardNodes;
+    std::vector<LoadedMoneyNodeSave> moneyNodes;
+    std::vector<LoadedMoonFragmentNodeSave> moonFragmentNodes;
+    std::vector<LoadedChestNodeSave> chestNodes;
+    std::vector<LoadedCrateNodeSave> crateNodes;
+    std::vector<LoadedEnemyNodeSave> enemyNodes;
+    std::vector<WorldDropItem> worldDrops;
 };
 
 bool isRoguelikeSaveStage(const StageDefinition& stage)
@@ -30,6 +85,82 @@ bool isRoguelikeSaveStage(const StageDefinition& stage)
 bool hasSaveableDungeonLayout(const DungeonLayout& layout)
 {
     return !layout.mainPathPoints.empty();
+}
+
+bool dungeonMinimapTileTypeFromSave(int value, TileType& outType)
+{
+    switch (value) {
+    case static_cast<int>(TileType::Empty):
+        outType = TileType::Empty;
+        return true;
+    case static_cast<int>(TileType::Dirt):
+        outType = TileType::Dirt;
+        return true;
+    case static_cast<int>(TileType::Rock):
+        outType = TileType::Rock;
+        return true;
+    case static_cast<int>(TileType::Ore):
+        outType = TileType::Ore;
+        return true;
+    case static_cast<int>(TileType::HardRock):
+        outType = TileType::HardRock;
+        return true;
+    default:
+        return false;
+    }
+}
+
+bool validPlacementVisibilitySaveValue(int value)
+{
+    switch (value) {
+    case 0:
+    case 1:
+    case 2:
+        return true;
+    default:
+        return false;
+    }
+}
+
+bool validEnemyPlacementTypeSaveValue(int value)
+{
+    switch (value) {
+    case 0:
+    case 1:
+        return true;
+    default:
+        return false;
+    }
+}
+
+const char* worldDropKindSaveName(WorldDropKind kind)
+{
+    switch (kind) {
+    case WorldDropKind::Object:
+        return "object";
+    case WorldDropKind::Money:
+        return "money";
+    case WorldDropKind::Material:
+        return "material";
+    }
+    return "object";
+}
+
+bool worldDropKindFromSaveName(std::string_view name, WorldDropKind& outKind)
+{
+    if (name == "object") {
+        outKind = WorldDropKind::Object;
+        return true;
+    }
+    if (name == "money") {
+        outKind = WorldDropKind::Money;
+        return true;
+    }
+    if (name == "material") {
+        outKind = WorldDropKind::Material;
+        return true;
+    }
+    return false;
 }
 
 }
@@ -58,10 +189,13 @@ bool Game::loadSaveData()
 
     InventorySystem loadedInventory;
     EncyclopediaSystem loadedEncyclopedia;
+    std::unordered_map<std::string, int> loadedEncyclopediaOwnedSyncSuppressCounts;
+    std::unordered_map<std::string, int> loadedEncyclopediaRingSyncSuppressCounts;
     std::array<std::vector<SpellRingItem>, SpellRingCount> loadedRingItemsByRing{};
     std::vector<InventoryObjectStack> loadedWarehouseStacks;
     std::vector<InventoryObjectInstance> loadedWarehouseInstances;
     int loadedMoney = 0;
+    int loadedAstralHighScore = 0;
     int loadedCurrentStage = 0;
     std::string loadedCurrentStageId = currentStageId_;
     int loadedUnlockedStages = 1;
@@ -70,7 +204,7 @@ bool Game::loadSaveData()
     Vec2 loadedLatestWarpPointPosition{};
     int loadedPlayerLevel = 1;
     int loadedPlayerXp = 0;
-    int loadedPlayerXpToNext = balance_.xpBase + loadedPlayerLevel * balance_.xpPerLevel;
+    int loadedPlayerXpToNext = playerXpToNextForLevel(loadedPlayerLevel, balance_);
     int loadedMaxHpUpgradeLevel = 0;
     int loadedRingRadiusUpgradeLevel = 0;
     int loadedRingSpeedUpgradeLevel = 0;
@@ -108,6 +242,8 @@ bool Game::loadSaveData()
         }
         if (key == "money") {
             stream >> loadedMoney;
+        } else if (key == "astral_high_score") {
+            stream >> loadedAstralHighScore;
         } else if (key == "player_level") {
             stream >> loadedPlayerLevel;
         } else if (key == "player_xp") {
@@ -200,6 +336,20 @@ bool Game::loadSaveData()
             if (!stream.fail()) {
                 loadedEncyclopedia.loadEffect(std::move(objectId), std::move(effectKey));
             }
+        } else if (key == "codex_sync_suppress_owned") {
+            std::string objectId;
+            int count = 0;
+            stream >> objectId >> count;
+            if (!stream.fail() && !objectId.empty() && count > 0) {
+                loadedEncyclopediaOwnedSyncSuppressCounts[std::move(objectId)] = count;
+            }
+        } else if (key == "codex_sync_suppress_ring") {
+            std::string objectId;
+            int count = 0;
+            stream >> objectId >> count;
+            if (!stream.fail() && !objectId.empty() && count > 0) {
+                loadedEncyclopediaRingSyncSuppressCounts[std::move(objectId)] = count;
+            }
         } else if (key == "current_stage") {
             stream >> loadedCurrentStage;
         } else if (key == "current_stage_id") {
@@ -236,6 +386,166 @@ bool Game::loadSaveData()
                 if (!loadedDungeonState.hasSeed || loadedDungeonState.stageId.empty() || loadedDungeonState.stageId == stageId) {
                     loadedDungeonState.stageId = std::move(stageId);
                     loadedDungeonState.warpPoints.push_back(point);
+                }
+            }
+        } else if (key == "dungeon_minimap_cell") {
+            std::string stageId;
+            int x = 0;
+            int y = 0;
+            int typeValue = 0;
+            stream >> stageId >> x >> y >> typeValue;
+            TileType type = TileType::Empty;
+            if (!stream.fail() && !stageId.empty() && dungeonMinimapTileTypeFromSave(typeValue, type)) {
+                if (!loadedDungeonState.hasSeed || loadedDungeonState.stageId.empty() || loadedDungeonState.stageId == stageId) {
+                    loadedDungeonState.stageId = std::move(stageId);
+                    loadedDungeonState.minimapCells.push_back(LoadedDungeonMinimapCellSave{x, y, type});
+                }
+            }
+        } else if (key == "dungeon_tile_edit") {
+            std::string stageId;
+            int x = 0;
+            int y = 0;
+            int typeValue = 0;
+            stream >> stageId >> x >> y >> typeValue;
+            TileType type = TileType::Empty;
+            if (!stream.fail() && !stageId.empty() && dungeonMinimapTileTypeFromSave(typeValue, type)) {
+                if (!loadedDungeonState.hasSeed || loadedDungeonState.stageId.empty() || loadedDungeonState.stageId == stageId) {
+                    loadedDungeonState.stageId = std::move(stageId);
+                    loadedDungeonState.terrainEdits.push_back(TerrainTileEdit{DungeonTile{x, y}, type});
+                }
+            }
+        } else if (key == "dungeon_reward_node") {
+            std::string stageId;
+            LoadedRewardNodeSave node;
+            int visibilityValue = 0;
+            stream >> stageId
+                >> node.tile.x
+                >> node.tile.y
+                >> visibilityValue
+                >> node.revealed
+                >> node.spawned
+                >> node.collected;
+            if (!stream.fail() && !stageId.empty() && validPlacementVisibilitySaveValue(visibilityValue)) {
+                if (!loadedDungeonState.hasSeed || loadedDungeonState.stageId.empty() || loadedDungeonState.stageId == stageId) {
+                    loadedDungeonState.stageId = std::move(stageId);
+                    node.visibility = visibilityValue;
+                    loadedDungeonState.rewardNodes.push_back(node);
+                }
+            }
+        } else if (key == "dungeon_money_node") {
+            std::string stageId;
+            LoadedMoneyNodeSave node;
+            int visibilityValue = 0;
+            stream >> stageId
+                >> node.tile.x
+                >> node.tile.y
+                >> visibilityValue
+                >> node.collected;
+            if (!stream.fail() && !stageId.empty() && validPlacementVisibilitySaveValue(visibilityValue)) {
+                if (!loadedDungeonState.hasSeed || loadedDungeonState.stageId.empty() || loadedDungeonState.stageId == stageId) {
+                    loadedDungeonState.stageId = std::move(stageId);
+                    node.visibility = visibilityValue;
+                    loadedDungeonState.moneyNodes.push_back(node);
+                }
+            }
+        } else if (key == "dungeon_moon_fragment_node") {
+            std::string stageId;
+            LoadedMoonFragmentNodeSave node;
+            int visibilityValue = 0;
+            stream >> stageId
+                >> node.tile.x
+                >> node.tile.y
+                >> visibilityValue
+                >> node.collected;
+            if (!stream.fail() && !stageId.empty() && validPlacementVisibilitySaveValue(visibilityValue)) {
+                if (!loadedDungeonState.hasSeed || loadedDungeonState.stageId.empty() || loadedDungeonState.stageId == stageId) {
+                    loadedDungeonState.stageId = std::move(stageId);
+                    node.visibility = visibilityValue;
+                    loadedDungeonState.moonFragmentNodes.push_back(node);
+                }
+            }
+        } else if (key == "dungeon_chest_node") {
+            std::string stageId;
+            LoadedChestNodeSave node;
+            int visibilityValue = 0;
+            stream >> stageId
+                >> node.tile.x
+                >> node.tile.y
+                >> visibilityValue
+                >> node.revealed
+                >> node.opened
+                >> node.lootSpawned
+                >> node.openingSeconds;
+            if (!stream.fail() && !stageId.empty() && validPlacementVisibilitySaveValue(visibilityValue)) {
+                if (!loadedDungeonState.hasSeed || loadedDungeonState.stageId.empty() || loadedDungeonState.stageId == stageId) {
+                    loadedDungeonState.stageId = std::move(stageId);
+                    node.visibility = visibilityValue;
+                    node.openingSeconds = std::max(0.0f, node.openingSeconds);
+                    loadedDungeonState.chestNodes.push_back(node);
+                }
+            }
+        } else if (key == "dungeon_crate_node") {
+            std::string stageId;
+            LoadedCrateNodeSave node;
+            stream >> stageId
+                >> node.tile.x
+                >> node.tile.y
+                >> node.destroyed;
+            if (!stream.fail() && !stageId.empty()) {
+                if (!loadedDungeonState.hasSeed || loadedDungeonState.stageId.empty() || loadedDungeonState.stageId == stageId) {
+                    loadedDungeonState.stageId = std::move(stageId);
+                    loadedDungeonState.crateNodes.push_back(node);
+                }
+            }
+        } else if (key == "dungeon_enemy_node") {
+            std::string stageId;
+            LoadedEnemyNodeSave node;
+            int placementTypeValue = 0;
+            stream >> stageId
+                >> node.tile.x
+                >> node.tile.y
+                >> placementTypeValue
+                >> node.spawned;
+            if (!stream.fail() && !stageId.empty() && validEnemyPlacementTypeSaveValue(placementTypeValue)) {
+                if (!loadedDungeonState.hasSeed || loadedDungeonState.stageId.empty() || loadedDungeonState.stageId == stageId) {
+                    loadedDungeonState.stageId = std::move(stageId);
+                    node.placementType = placementTypeValue;
+                    loadedDungeonState.enemyNodes.push_back(node);
+                }
+            }
+        } else if (key == "dungeon_world_drop") {
+            std::string stageId;
+            std::string kindName;
+            WorldDropItem drop;
+            stream >> stageId
+                >> kindName
+                >> drop.id
+                >> drop.quantity
+                >> drop.position.x
+                >> drop.position.y
+                >> drop.spawnedAtSeconds
+                >> drop.ageSeconds;
+            WorldDropKind kind = WorldDropKind::Object;
+            bool validDrop = !stream.fail() &&
+                !stageId.empty() &&
+                worldDropKindFromSaveName(kindName, kind) &&
+                !drop.id.empty() &&
+                drop.quantity > 0;
+            if (validDrop && kind == WorldDropKind::Object && objectCatalog_.registry.findById(drop.id) == nullptr) {
+                ++warningCount;
+                logError("[warning] SaveData: dungeon_world_drop object_id=\"" + drop.id + "\" is missing from Objects DB; keeping ID");
+            } else if (validDrop && kind == WorldDropKind::Material) {
+                MaterialType materialType = MaterialType::Count;
+                validDrop = materialTypeFromSaveName(drop.id, materialType);
+            }
+            if (validDrop) {
+                drop.kind = kind;
+                drop.quantity = std::max(1, drop.quantity);
+                drop.spawnedAtSeconds = std::max(0.0f, drop.spawnedAtSeconds);
+                drop.ageSeconds = std::max(0.0f, drop.ageSeconds);
+                if (!loadedDungeonState.hasSeed || loadedDungeonState.stageId.empty() || loadedDungeonState.stageId == stageId) {
+                    loadedDungeonState.stageId = std::move(stageId);
+                    loadedDungeonState.worldDrops.push_back(std::move(drop));
                 }
             }
         } else if (key == "object") {
@@ -410,6 +720,7 @@ bool Game::loadSaveData()
     spellRing_.resetBaseWeightToCurrent();
     refreshOrbitEffects();
     money_ = std::max(0, loadedMoney);
+    astralHighScore_ = std::max(0, loadedAstralHighScore);
     unlockedStages_ = std::max(1, loadedUnlockedStages);
     unlockedWarpPointCount_ = std::max(0, loadedUnlockedWarpPointCount);
     hasLatestWarpPointPosition_ = loadedHasLatestWarpPointPosition;
@@ -481,12 +792,88 @@ bool Game::loadSaveData()
             }
         }
 
+        dungeonMinimapCells_.clear();
+        for (const LoadedDungeonMinimapCellSave& cell : loadedDungeonState.minimapCells) {
+            setDungeonMinimapTile(cell.x, cell.y, cell.type);
+        }
+
         initializeMoonFragmentNodesFromWarpPoints();
         initializeRewardNodesFromLayout();
         initializeChestNodesFromLayout();
         initializeCrateNodesFromLayout();
         initializeEnemyNodesFromLayout();
+        const auto sameTile = [](DungeonTile lhs, DungeonTile rhs) {
+            return lhs.x == rhs.x && lhs.y == rhs.y;
+        };
+        for (const LoadedRewardNodeSave& savedNode : loadedDungeonState.rewardNodes) {
+            auto nodeIt = std::find_if(rewardNodes_.begin(), rewardNodes_.end(), [&](const RewardNode& node) {
+                return sameTile(node.tile, savedNode.tile);
+            });
+            if (nodeIt == rewardNodes_.end()) {
+                continue;
+            }
+            nodeIt->visibility = static_cast<PlacementVisibility>(savedNode.visibility);
+            nodeIt->revealed = savedNode.revealed;
+            nodeIt->spawned = savedNode.spawned;
+            nodeIt->collected = savedNode.collected;
+        }
+        for (const LoadedMoneyNodeSave& savedNode : loadedDungeonState.moneyNodes) {
+            auto nodeIt = std::find_if(moneyNodes_.begin(), moneyNodes_.end(), [&](const MoneyNode& node) {
+                return sameTile(node.tile, savedNode.tile);
+            });
+            if (nodeIt == moneyNodes_.end()) {
+                continue;
+            }
+            nodeIt->visibility = static_cast<PlacementVisibility>(savedNode.visibility);
+            nodeIt->collected = savedNode.collected;
+        }
+        for (const LoadedMoonFragmentNodeSave& savedNode : loadedDungeonState.moonFragmentNodes) {
+            auto nodeIt = std::find_if(moonFragmentNodes_.begin(), moonFragmentNodes_.end(), [&](const MoonFragmentNode& node) {
+                return sameTile(node.tile, savedNode.tile);
+            });
+            if (nodeIt == moonFragmentNodes_.end()) {
+                continue;
+            }
+            nodeIt->visibility = static_cast<PlacementVisibility>(savedNode.visibility);
+            nodeIt->collected = savedNode.collected;
+        }
+        for (const LoadedChestNodeSave& savedNode : loadedDungeonState.chestNodes) {
+            auto nodeIt = std::find_if(chestNodes_.begin(), chestNodes_.end(), [&](const ChestNode& node) {
+                return sameTile(node.tile, savedNode.tile);
+            });
+            if (nodeIt == chestNodes_.end()) {
+                continue;
+            }
+            nodeIt->visibility = static_cast<PlacementVisibility>(savedNode.visibility);
+            nodeIt->revealed = savedNode.revealed;
+            nodeIt->opened = savedNode.opened;
+            nodeIt->lootSpawned = savedNode.lootSpawned;
+            nodeIt->openingSeconds = savedNode.openingSeconds;
+        }
+        for (const LoadedCrateNodeSave& savedNode : loadedDungeonState.crateNodes) {
+            auto nodeIt = std::find_if(crateNodes_.begin(), crateNodes_.end(), [&](const CrateNode& node) {
+                return sameTile(node.tile, savedNode.tile);
+            });
+            if (nodeIt == crateNodes_.end()) {
+                continue;
+            }
+            nodeIt->destroyed = savedNode.destroyed;
+        }
+        for (const LoadedEnemyNodeSave& savedNode : loadedDungeonState.enemyNodes) {
+            auto nodeIt = std::find_if(enemyNodes_.begin(), enemyNodes_.end(), [&](const EnemyNode& node) {
+                return sameTile(node.tile, savedNode.tile);
+            });
+            if (nodeIt == enemyNodes_.end()) {
+                continue;
+            }
+            nodeIt->placementType = static_cast<EnemyPlacementType>(savedNode.placementType);
+            nodeIt->spawned = savedNode.spawned;
+        }
         applyPlacementTerrainOverrides();
+        for (const TerrainTileEdit& edit : loadedDungeonState.terrainEdits) {
+            tileMap_.setTerrainEdit(edit.tile, edit.type);
+        }
+        worldDrops_.restoreDropsForSave(std::move(loadedDungeonState.worldDrops));
         captureDungeonState();
         syncWarpStateForCurrentStage();
         restoredDungeonStateFromSave = true;
@@ -496,9 +883,9 @@ bool Game::loadSaveData()
         hasLatestWarpPointPosition_ = false;
         latestWarpPointPosition_ = {};
     }
-    player_.level = std::max(1, loadedPlayerLevel);
-    player_.xp = std::max(0, loadedPlayerXp);
-    player_.xpToNext = std::max(1, loadedPlayerXpToNext);
+    player_.level = std::clamp(loadedPlayerLevel, 1, PlayerMaxLevel);
+    player_.xpToNext = playerXpToNextForLevel(player_.level, balance_);
+    player_.xp = playerAtMaxLevel(player_) ? 0 : std::max(0, loadedPlayerXp);
     maxHpUpgradeLevel_ = std::max(0, loadedMaxHpUpgradeLevel);
     ringRadiusUpgradeLevel_ = std::max(0, loadedRingRadiusUpgradeLevel);
     ringSpeedUpgradeLevel_ = std::max(0, loadedRingSpeedUpgradeLevel);
@@ -521,6 +908,8 @@ bool Game::loadSaveData()
     autoSaveOnReturn_ = loadedAutoSaveOnReturn;
     storyFlags_ = std::move(loadedStoryFlags);
     encyclopedia_ = std::move(loadedEncyclopedia);
+    encyclopediaOwnedSyncSuppressCounts_ = std::move(loadedEncyclopediaOwnedSyncSuppressCounts);
+    encyclopediaRingSyncSuppressCounts_ = std::move(loadedEncyclopediaRingSyncSuppressCounts);
     warehouseObjectStacks_ = std::move(loadedWarehouseStacks);
     warehouseObjectInstances_ = std::move(loadedWarehouseInstances);
     applyPermanentUpgrades();
@@ -553,6 +942,7 @@ bool Game::saveSaveData(std::string& message) const
 
     file << "MAJO_SHOVEL_SAVE_V1\n";
     file << "money " << money_ << "\n";
+    file << "astral_high_score " << astralHighScore_ << "\n";
     file << "player_level " << player_.level << "\n";
     file << "player_xp " << player_.xp << "\n";
     file << "player_xp_to_next " << player_.xpToNext << "\n";
@@ -604,6 +994,16 @@ bool Game::saveSaveData(std::string& message) const
             file << "codex_effect " << effect.objectId << " " << effect.effectKey << "\n";
         }
     }
+    for (const auto& [objectId, count] : encyclopediaOwnedSyncSuppressCounts_) {
+        if (!objectId.empty() && count > 0) {
+            file << "codex_sync_suppress_owned " << objectId << " " << count << "\n";
+        }
+    }
+    for (const auto& [objectId, count] : encyclopediaRingSyncSuppressCounts_) {
+        if (!objectId.empty() && count > 0) {
+            file << "codex_sync_suppress_ring " << objectId << " " << count << "\n";
+        }
+    }
     file << "current_stage " << currentStage_ << "\n";
     file << "current_stage_id " << currentStageId_ << "\n";
     file << "unlocked_stages " << unlockedStages_ << "\n";
@@ -612,7 +1012,16 @@ bool Game::saveSaveData(std::string& message) const
         file << "latest_warp " << latestWarpPointPosition_.x << " " << latestWarpPointPosition_.y << "\n";
     }
     const DungeonLayout* saveDungeonLayout = nullptr;
+    const TileMap* saveDungeonTileMap = nullptr;
     const std::vector<WarpPoint>* saveDungeonWarpPoints = nullptr;
+    const DungeonMinimapCells* saveDungeonMinimapCells = nullptr;
+    const std::vector<RewardNode>* saveRewardNodes = nullptr;
+    const std::vector<MoneyNode>* saveMoneyNodes = nullptr;
+    const std::vector<MoonFragmentNode>* saveMoonFragmentNodes = nullptr;
+    const std::vector<ChestNode>* saveChestNodes = nullptr;
+    const std::vector<CrateNode>* saveCrateNodes = nullptr;
+    const std::vector<EnemyNode>* saveEnemyNodes = nullptr;
+    const WorldDropSystem* saveWorldDrops = nullptr;
     std::string saveDungeonStageId = currentStageId_;
     int saveDungeonCurrentStage = currentStage_;
     if (mode_ == ScreenMode::Playing &&
@@ -620,7 +1029,16 @@ bool Game::saveSaveData(std::string& message) const
         hasSaveableDungeonLayout(dungeonLayout_) &&
         !isRoguelikeSaveStage(currentStageDefinition())) {
         saveDungeonLayout = &dungeonLayout_;
+        saveDungeonTileMap = &tileMap_;
         saveDungeonWarpPoints = &warpPoints_;
+        saveDungeonMinimapCells = &dungeonMinimapCells_;
+        saveRewardNodes = &rewardNodes_;
+        saveMoneyNodes = &moneyNodes_;
+        saveMoonFragmentNodes = &moonFragmentNodes_;
+        saveChestNodes = &chestNodes_;
+        saveCrateNodes = &crateNodes_;
+        saveEnemyNodes = &enemyNodes_;
+        saveWorldDrops = &worldDrops_;
     } else {
         const auto retainedStage = dungeonStates_.find(currentStageId_);
         if (retainedStage != dungeonStates_.end() &&
@@ -628,7 +1046,16 @@ bool Game::saveSaveData(std::string& message) const
             hasSaveableDungeonLayout(retainedStage->second.dungeonLayout) &&
             !isRoguelikeSaveStage(currentStageDefinition())) {
             saveDungeonLayout = &retainedStage->second.dungeonLayout;
+            saveDungeonTileMap = &retainedStage->second.tileMap;
             saveDungeonWarpPoints = &retainedStage->second.warpPoints;
+            saveDungeonMinimapCells = &retainedStage->second.dungeonMinimapCells;
+            saveRewardNodes = &retainedStage->second.rewardNodes;
+            saveMoneyNodes = &retainedStage->second.moneyNodes;
+            saveMoonFragmentNodes = &retainedStage->second.moonFragmentNodes;
+            saveChestNodes = &retainedStage->second.chestNodes;
+            saveCrateNodes = &retainedStage->second.crateNodes;
+            saveEnemyNodes = &retainedStage->second.enemyNodes;
+            saveWorldDrops = &retainedStage->second.worldDrops;
             saveDungeonStageId = retainedStage->second.currentStageId;
             saveDungeonCurrentStage = retainedStage->second.currentStage;
         }
@@ -647,6 +1074,105 @@ bool Game::saveSaveData(std::string& message) const
                 << point.discovered << " "
                 << point.unlocked << " "
                 << point.snapshotCaptured << "\n";
+        }
+        if (saveDungeonMinimapCells != nullptr) {
+            for (const auto& [key, cell] : *saveDungeonMinimapCells) {
+                const DungeonTile tile = dungeonMinimapTileFromKey(key);
+                file << "dungeon_minimap_cell "
+                    << saveDungeonStageId << " "
+                    << tile.x << " "
+                    << tile.y << " "
+                    << static_cast<int>(cell.type) << "\n";
+            }
+        }
+        if (saveDungeonTileMap != nullptr) {
+            for (const TerrainTileEdit& edit : saveDungeonTileMap->terrainEditsForSave()) {
+                file << "dungeon_tile_edit "
+                    << saveDungeonStageId << " "
+                    << edit.tile.x << " "
+                    << edit.tile.y << " "
+                    << static_cast<int>(edit.type) << "\n";
+            }
+        }
+        if (saveRewardNodes != nullptr) {
+            for (const RewardNode& node : *saveRewardNodes) {
+                file << "dungeon_reward_node "
+                    << saveDungeonStageId << " "
+                    << node.tile.x << " "
+                    << node.tile.y << " "
+                    << static_cast<int>(node.visibility) << " "
+                    << node.revealed << " "
+                    << node.spawned << " "
+                    << node.collected << "\n";
+            }
+        }
+        if (saveMoneyNodes != nullptr) {
+            for (const MoneyNode& node : *saveMoneyNodes) {
+                file << "dungeon_money_node "
+                    << saveDungeonStageId << " "
+                    << node.tile.x << " "
+                    << node.tile.y << " "
+                    << static_cast<int>(node.visibility) << " "
+                    << node.collected << "\n";
+            }
+        }
+        if (saveMoonFragmentNodes != nullptr) {
+            for (const MoonFragmentNode& node : *saveMoonFragmentNodes) {
+                file << "dungeon_moon_fragment_node "
+                    << saveDungeonStageId << " "
+                    << node.tile.x << " "
+                    << node.tile.y << " "
+                    << static_cast<int>(node.visibility) << " "
+                    << node.collected << "\n";
+            }
+        }
+        if (saveChestNodes != nullptr) {
+            for (const ChestNode& node : *saveChestNodes) {
+                file << "dungeon_chest_node "
+                    << saveDungeonStageId << " "
+                    << node.tile.x << " "
+                    << node.tile.y << " "
+                    << static_cast<int>(node.visibility) << " "
+                    << node.revealed << " "
+                    << node.opened << " "
+                    << node.lootSpawned << " "
+                    << node.openingSeconds << "\n";
+            }
+        }
+        if (saveCrateNodes != nullptr) {
+            for (const CrateNode& node : *saveCrateNodes) {
+                file << "dungeon_crate_node "
+                    << saveDungeonStageId << " "
+                    << node.tile.x << " "
+                    << node.tile.y << " "
+                    << node.destroyed << "\n";
+            }
+        }
+        if (saveEnemyNodes != nullptr) {
+            for (const EnemyNode& node : *saveEnemyNodes) {
+                file << "dungeon_enemy_node "
+                    << saveDungeonStageId << " "
+                    << node.tile.x << " "
+                    << node.tile.y << " "
+                    << static_cast<int>(node.placementType) << " "
+                    << node.spawned << "\n";
+            }
+        }
+        if (saveWorldDrops != nullptr) {
+            for (const WorldDropItem& drop : saveWorldDrops->drops()) {
+                if (drop.id.empty() || drop.quantity <= 0) {
+                    continue;
+                }
+                file << "dungeon_world_drop "
+                    << saveDungeonStageId << " "
+                    << worldDropKindSaveName(drop.kind) << " "
+                    << drop.id << " "
+                    << drop.quantity << " "
+                    << drop.position.x << " "
+                    << drop.position.y << " "
+                    << drop.spawnedAtSeconds << " "
+                    << drop.ageSeconds << "\n";
+            }
         }
     }
     for (const StackItem& stack : inventory_.stackItemsForSave()) {

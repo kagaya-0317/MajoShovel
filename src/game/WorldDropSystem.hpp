@@ -92,6 +92,19 @@ public:
         float dt,
         float radius = 170.0f,
         const InventorySystem* inventory = nullptr);
+    int pullLightDrops(
+        const ObjectCatalog& catalog,
+        Vec2 center,
+        float dt,
+        float radius,
+        float strength = 1.0f,
+        const InventorySystem* inventory = nullptr);
+    int pushLightDrops(
+        const ObjectCatalog& catalog,
+        Vec2 center,
+        float dt,
+        float radius,
+        float strength = 1.0f);
     int update(
         float dt,
         const Player& player,
@@ -123,6 +136,7 @@ public:
 
     [[nodiscard]] std::size_t size() const { return drops_.size(); }
     [[nodiscard]] const std::vector<WorldDropItem>& drops() const { return drops_; }
+    void restoreDropsForSave(std::vector<WorldDropItem> drops);
 
 private:
     const ObjectDefinition* chooseDigDrop(const ObjectCatalog& catalog, std::string_view warningContext) const;

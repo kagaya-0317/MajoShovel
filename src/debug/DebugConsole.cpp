@@ -56,6 +56,16 @@ constexpr int ControlCopy = 1005;
 constexpr int ControlPause = 1006;
 constexpr int ControlAutoScroll = 1007;
 constexpr int ControlDebugBase = 2000;
+constexpr int DebugGroupContentTop = 28;
+constexpr int DebugGroupContentBottom = 10;
+constexpr int DebugGroupPaddingX = 12;
+constexpr int DebugGroupScrollbarWidth = 16;
+constexpr int DebugGroupScrollbarGap = 4;
+constexpr int DebugControlButtonH = 28;
+constexpr int DebugControlLabelH = 20;
+constexpr int DebugControlDropdownH = 30;
+constexpr int DebugControlGap = 8;
+constexpr int DebugGroupLineScroll = DebugControlButtonH + DebugControlGap;
 
 std::wstring utf8ToWide(std::string_view text)
 {
@@ -146,13 +156,28 @@ struct DebugConsole::Impl {
         std::vector<std::string> optionCommands;
     };
 
+    struct DebugNumberCommand {
+        std::string command;
+        int minValue = 0;
+        int maxValue = 100;
+    };
+
     struct DebugGroupUi {
         HWND box = nullptr;
+        HWND scrollbar = nullptr;
         std::vector<DebugControlUi> controls;
+        int scrollOffset = 0;
+        int viewportHeight = 0;
+        int contentHeight = 0;
     };
 
     struct DebugTabUi {
         std::vector<DebugGroupUi> groups;
+    };
+
+    struct DebugGroupRef {
+        std::size_t tabIndex = 0;
+        std::size_t groupIndex = 0;
     };
 #endif
 
@@ -337,10 +362,18 @@ struct DebugConsole::Impl {
                 queueCommand("restart");
                 continue;
             }
-            if (msg.message == WM_KEYDOWN && msg.wParam == VK_RETURN &&
-                (msg.hwnd == commandCombo || IsChild(commandCombo, msg.hwnd))) {
-                submitCommand();
-                continue;
+            if (msg.message == WM_KEYDOWN && msg.wParam == VK_RETURN) {
+                if (msg.hwnd == commandCombo || IsChild(commandCombo, msg.hwnd)) {
+                    submitCommand();
+                    continue;
+                }
+
+                const int controlId = GetDlgCtrlID(msg.hwnd);
+                auto numberIt = debugNumberByControlId.find(controlId);
+                if (numberIt != debugNumberByControlId.end()) {
+                    queueNumberCommand(controlId, numberIt->second);
+                    continue;
+                }
             }
 
             TranslateMessage(&msg);
@@ -373,6 +406,14 @@ struct DebugConsole::Impl {
         case WM_COMMAND:
             impl->handleCommand(LOWORD(wParam), HIWORD(wParam));
             return 0;
+        case WM_VSCROLL:
+            impl->handleVScroll(reinterpret_cast<HWND>(lParam), LOWORD(wParam));
+            return 0;
+        case WM_MOUSEWHEEL:
+            if (impl->handleMouseWheel(GET_WHEEL_DELTA_WPARAM(wParam), lParam)) {
+                return 0;
+            }
+            break;
         case WM_NOTIFY:
             impl->handleNotify(reinterpret_cast<NMHDR*>(lParam));
             return 0;
@@ -487,7 +528,7 @@ struct DebugConsole::Impl {
             item.mask = TCIF_TEXT;
             std::wstring label = utf8ToWide(layoutDefinition.tabs[index].label);
             item.pszText = label.data();
-            TabCtrl_InsertItem(tabControl, static_cast<int>(index), &item);
+            SendMessageW(tabControl, TCM_INSERTITEMW, static_cast<WPARAM>(index), reinterpret_cast<LPARAM>(&item));
         }
 
         int nextControlId = ControlDebugBase;
@@ -509,6 +550,11 @@ struct DebugConsole::Impl {
                     nullptr);
                 SendMessageW(groupUi.box, WM_SETFONT, reinterpret_cast<WPARAM>(uiFont), TRUE);
 
+                const int scrollId = nextControlId++;
+                groupUi.scrollbar = createScrollbar(parent, scrollId);
+                ShowWindow(groupUi.scrollbar, SW_HIDE);
+                debugGroupByScrollbar[groupUi.scrollbar] = {tabIndex, groupIndex};
+
                 for (const DebugControlDefinition& control : group.controls) {
                     const int controlId = nextControlId++;
                     if (control.kind == DebugControlKind::Button) {
@@ -516,6 +562,20 @@ struct DebugConsole::Impl {
                         ShowWindow(button, SW_HIDE);
                         groupUi.controls.push_back({control.kind, button, nullptr, controlId, control.id, control.command});
                         debugCommandByControlId[controlId] = control.command;
+                    } else if (control.kind == DebugControlKind::Toggle) {
+                        HWND toggle = createToggle(parent, utf8ToWide(control.label).c_str(), controlId, control.minValue != 0);
+                        ShowWindow(toggle, SW_HIDE);
+                        groupUi.controls.push_back({control.kind, toggle, nullptr, controlId, control.id, control.command});
+                        debugToggleCommandByControlId[controlId] = control.command;
+                    } else if (control.kind == DebugControlKind::NumberInput) {
+                        HWND label = createStatic(parent, utf8ToWide(control.label).c_str());
+                        const int minValue = std::min(control.minValue, control.maxValue);
+                        const int maxValue = std::max(control.minValue, control.maxValue);
+                        HWND number = createNumberInput(parent, controlId, std::clamp(control.minValue, minValue, maxValue));
+                        ShowWindow(label, SW_HIDE);
+                        ShowWindow(number, SW_HIDE);
+                        groupUi.controls.push_back({control.kind, number, label, controlId, control.id, control.command});
+                        debugNumberByControlId[controlId] = {control.command, minValue, maxValue};
                     } else if (control.kind == DebugControlKind::Dropdown) {
                         HWND label = createStatic(parent, utf8ToWide(control.label).c_str());
                         HWND combo = createDropdown(parent, controlId);
@@ -557,6 +617,23 @@ struct DebugConsole::Impl {
         return button;
     }
 
+    HWND createToggle(HWND parent, const wchar_t* text, int controlId, bool checked)
+    {
+        HWND toggle = CreateWindowExW(
+            0,
+            L"BUTTON",
+            text,
+            WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX,
+            0, 0, 0, 0,
+            parent,
+            reinterpret_cast<HMENU>(static_cast<INT_PTR>(controlId)),
+            GetModuleHandleW(nullptr),
+            nullptr);
+        SendMessageW(toggle, WM_SETFONT, reinterpret_cast<WPARAM>(uiFont), TRUE);
+        SendMessageW(toggle, BM_SETCHECK, checked ? BST_CHECKED : BST_UNCHECKED, 0);
+        return toggle;
+    }
+
     HWND createStatic(HWND parent, const wchar_t* text)
     {
         HWND label = CreateWindowExW(
@@ -571,6 +648,36 @@ struct DebugConsole::Impl {
             nullptr);
         SendMessageW(label, WM_SETFONT, reinterpret_cast<WPARAM>(uiFont), TRUE);
         return label;
+    }
+
+    HWND createNumberInput(HWND parent, int controlId, int value)
+    {
+        HWND input = CreateWindowExW(
+            WS_EX_CLIENTEDGE,
+            L"EDIT",
+            std::to_wstring(value).c_str(),
+            WS_CHILD | WS_VISIBLE | ES_AUTOHSCROLL | ES_NUMBER,
+            0, 0, 0, 0,
+            parent,
+            reinterpret_cast<HMENU>(static_cast<INT_PTR>(controlId)),
+            GetModuleHandleW(nullptr),
+            nullptr);
+        SendMessageW(input, WM_SETFONT, reinterpret_cast<WPARAM>(uiFont), TRUE);
+        return input;
+    }
+
+    HWND createScrollbar(HWND parent, int controlId)
+    {
+        return CreateWindowExW(
+            0,
+            L"SCROLLBAR",
+            L"",
+            WS_CHILD | SBS_VERT,
+            0, 0, 0, 0,
+            parent,
+            reinterpret_cast<HMENU>(static_cast<INT_PTR>(controlId)),
+            GetModuleHandleW(nullptr),
+            nullptr);
     }
 
     HWND createDropdown(HWND parent, int controlId)
@@ -622,14 +729,16 @@ struct DebugConsole::Impl {
 
     void handleCommand(int controlId, int notification)
     {
-        if (notification != BN_CLICKED && notification != CBN_SELENDOK) {
-            return;
-        }
-
         if (notification == BN_CLICKED) {
             auto it = debugCommandByControlId.find(controlId);
             if (it != debugCommandByControlId.end()) {
                 queueCommand(it->second);
+                return;
+            }
+
+            auto toggleIt = debugToggleCommandByControlId.find(controlId);
+            if (toggleIt != debugToggleCommandByControlId.end()) {
+                queueToggleCommand(controlId, toggleIt->second);
                 return;
             }
         } else if (notification == CBN_SELENDOK) {
@@ -638,6 +747,14 @@ struct DebugConsole::Impl {
                 queueDropdownCommand(controlId, it->second);
                 return;
             }
+        } else if (notification == EN_KILLFOCUS) {
+            auto it = debugNumberByControlId.find(controlId);
+            if (it != debugNumberByControlId.end()) {
+                queueNumberCommand(controlId, it->second);
+            }
+            return;
+        } else {
+            return;
         }
 
         switch (controlId) {
@@ -663,6 +780,77 @@ struct DebugConsole::Impl {
         default:
             break;
         }
+    }
+
+    void handleVScroll(HWND scrollHwnd, int requestCode)
+    {
+        DebugGroupUi* group = debugGroupForScrollbar(scrollHwnd);
+        if (!group) {
+            return;
+        }
+
+        const int maxOffset = maxGroupScrollOffset(*group);
+        int nextOffset = group->scrollOffset;
+        switch (requestCode) {
+        case SB_LINEUP:
+            nextOffset -= DebugGroupLineScroll;
+            break;
+        case SB_LINEDOWN:
+            nextOffset += DebugGroupLineScroll;
+            break;
+        case SB_PAGEUP:
+            nextOffset -= std::max(DebugGroupLineScroll, group->viewportHeight - DebugGroupLineScroll);
+            break;
+        case SB_PAGEDOWN:
+            nextOffset += std::max(DebugGroupLineScroll, group->viewportHeight - DebugGroupLineScroll);
+            break;
+        case SB_TOP:
+            nextOffset = 0;
+            break;
+        case SB_BOTTOM:
+            nextOffset = maxOffset;
+            break;
+        case SB_THUMBPOSITION:
+        case SB_THUMBTRACK: {
+            SCROLLINFO info{};
+            info.cbSize = sizeof(info);
+            info.fMask = SIF_TRACKPOS;
+            if (GetScrollInfo(scrollHwnd, SB_CTL, &info)) {
+                nextOffset = info.nTrackPos;
+            }
+            break;
+        }
+        default:
+            return;
+        }
+
+        group->scrollOffset = std::clamp(nextOffset, 0, maxOffset);
+        RECT rect{};
+        GetClientRect(hwnd, &rect);
+        layoutControls(rect.right - rect.left, rect.bottom - rect.top);
+    }
+
+    bool handleMouseWheel(int delta, LPARAM pointParam)
+    {
+        POINT screenPoint{
+            static_cast<short>(LOWORD(pointParam)),
+            static_cast<short>(HIWORD(pointParam)),
+        };
+        DebugGroupUi* group = debugGroupAtScreenPoint(screenPoint);
+        if (!group || maxGroupScrollOffset(*group) <= 0) {
+            return false;
+        }
+
+        const int steps = std::max(1, std::abs(delta) / WHEEL_DELTA);
+        const int direction = delta > 0 ? -1 : 1;
+        group->scrollOffset = std::clamp(
+            group->scrollOffset + direction * steps * DebugGroupLineScroll,
+            0,
+            maxGroupScrollOffset(*group));
+        RECT rect{};
+        GetClientRect(hwnd, &rect);
+        layoutControls(rect.right - rect.left, rect.bottom - rect.top);
+        return true;
     }
 
     void handleNotify(const NMHDR* header)
@@ -714,29 +902,139 @@ struct DebugConsole::Impl {
             MoveWindow(group.box, groupX, y, actualGroupWidth, height, TRUE);
             ShowWindow(group.box, visible ? SW_SHOW : SW_HIDE);
 
-            const int buttonX = groupX + 12;
-            int buttonY = y + 28;
-            const int buttonW = std::max(80, actualGroupWidth - 24);
-            constexpr int ButtonH = 28;
-            constexpr int LabelH = 20;
-            constexpr int DropdownH = 30;
-            constexpr int ButtonGap = 8;
+            const int bodyHeight = debugGroupBodyHeight(group);
+            const int viewportTop = y + DebugGroupContentTop;
+            const int viewportHeight = std::max(1, height - DebugGroupContentTop - DebugGroupContentBottom);
+            const bool scrollable = bodyHeight > viewportHeight;
+            group.contentHeight = bodyHeight;
+            group.viewportHeight = viewportHeight;
+            group.scrollOffset = std::clamp(group.scrollOffset, 0, maxGroupScrollOffset(group));
+
+            if (scrollable) {
+                const int scrollX = groupX + actualGroupWidth - DebugGroupPaddingX - DebugGroupScrollbarWidth;
+                MoveWindow(
+                    group.scrollbar,
+                    scrollX,
+                    viewportTop,
+                    DebugGroupScrollbarWidth,
+                    viewportHeight,
+                    TRUE);
+                SCROLLINFO info{};
+                info.cbSize = sizeof(info);
+                info.fMask = SIF_RANGE | SIF_PAGE | SIF_POS;
+                info.nMin = 0;
+                info.nMax = std::max(0, bodyHeight - 1);
+                info.nPage = static_cast<UINT>(std::max(1, viewportHeight));
+                info.nPos = group.scrollOffset;
+                SetScrollInfo(group.scrollbar, SB_CTL, &info, TRUE);
+            }
+            ShowWindow(group.scrollbar, visible && scrollable ? SW_SHOW : SW_HIDE);
+
+            const int buttonX = groupX + DebugGroupPaddingX;
+            int buttonY = viewportTop - group.scrollOffset;
+            const int buttonW = std::max(
+                80,
+                actualGroupWidth -
+                    DebugGroupPaddingX * 2 -
+                    (scrollable ? DebugGroupScrollbarWidth + DebugGroupScrollbarGap : 0));
+            const int viewportBottom = viewportTop + viewportHeight;
             for (DebugControlUi& control : group.controls) {
+                const int rowHeight = debugControlVisibleHeight(control.kind);
+                const bool controlVisible = visible && buttonY >= viewportTop && buttonY + rowHeight <= viewportBottom;
                 if (control.kind == DebugControlKind::Dropdown) {
-                    MoveWindow(control.labelHwnd, buttonX, buttonY, buttonW, LabelH, TRUE);
-                    ShowWindow(control.labelHwnd, visible ? SW_SHOW : SW_HIDE);
-                    buttonY += LabelH;
+                    MoveWindow(control.labelHwnd, buttonX, buttonY, buttonW, DebugControlLabelH, TRUE);
+                    ShowWindow(control.labelHwnd, controlVisible ? SW_SHOW : SW_HIDE);
+                    buttonY += DebugControlLabelH;
                     MoveWindow(control.hwnd, buttonX, buttonY, buttonW, 180, TRUE);
-                    ShowWindow(control.hwnd, visible ? SW_SHOW : SW_HIDE);
-                    buttonY += DropdownH + ButtonGap;
+                    ShowWindow(control.hwnd, controlVisible ? SW_SHOW : SW_HIDE);
+                    buttonY += DebugControlDropdownH + DebugControlGap;
+                    continue;
+                }
+                if (control.kind == DebugControlKind::NumberInput) {
+                    const int labelW = std::clamp(buttonW / 2, 74, std::max(74, buttonW - 56));
+                    const int inputX = buttonX + labelW + 6;
+                    const int inputW = std::max(46, buttonW - labelW - 6);
+                    MoveWindow(control.labelHwnd, buttonX, buttonY + 4, labelW, DebugControlLabelH, TRUE);
+                    ShowWindow(control.labelHwnd, controlVisible ? SW_SHOW : SW_HIDE);
+                    MoveWindow(control.hwnd, inputX, buttonY, inputW, DebugControlButtonH, TRUE);
+                    ShowWindow(control.hwnd, controlVisible ? SW_SHOW : SW_HIDE);
+                    buttonY += DebugControlButtonH + DebugControlGap;
                     continue;
                 }
 
-                MoveWindow(control.hwnd, buttonX, buttonY, buttonW, ButtonH, TRUE);
-                ShowWindow(control.hwnd, visible ? SW_SHOW : SW_HIDE);
-                buttonY += ButtonH + ButtonGap;
+                MoveWindow(control.hwnd, buttonX, buttonY, buttonW, DebugControlButtonH, TRUE);
+                ShowWindow(control.hwnd, controlVisible ? SW_SHOW : SW_HIDE);
+                buttonY += DebugControlButtonH + DebugControlGap;
             }
         }
+    }
+
+    int debugControlVisibleHeight(DebugControlKind kind) const
+    {
+        if (kind == DebugControlKind::Dropdown) {
+            return DebugControlLabelH + DebugControlDropdownH;
+        }
+        return DebugControlButtonH;
+    }
+
+    int debugControlPitch(DebugControlKind kind) const
+    {
+        return debugControlVisibleHeight(kind) + DebugControlGap;
+    }
+
+    int debugGroupBodyHeight(const DebugGroupUi& group) const
+    {
+        int height = 0;
+        for (const DebugControlUi& control : group.controls) {
+            height += debugControlPitch(control.kind);
+        }
+        if (!group.controls.empty()) {
+            height -= DebugControlGap;
+        }
+        return std::max(0, height);
+    }
+
+    int maxGroupScrollOffset(const DebugGroupUi& group) const
+    {
+        return std::max(0, group.contentHeight - group.viewportHeight);
+    }
+
+    DebugGroupUi* debugGroupForScrollbar(HWND scrollbar)
+    {
+        if (!scrollbar) {
+            return nullptr;
+        }
+        auto it = debugGroupByScrollbar.find(scrollbar);
+        if (it == debugGroupByScrollbar.end()) {
+            return nullptr;
+        }
+        if (it->second.tabIndex >= debugTabs.size()) {
+            return nullptr;
+        }
+        DebugTabUi& tab = debugTabs[it->second.tabIndex];
+        if (it->second.groupIndex >= tab.groups.size()) {
+            return nullptr;
+        }
+        return &tab.groups[it->second.groupIndex];
+    }
+
+    DebugGroupUi* debugGroupAtScreenPoint(POINT screenPoint)
+    {
+        if (currentTabIndex < 0 || currentTabIndex >= static_cast<int>(debugTabs.size())) {
+            return nullptr;
+        }
+        DebugTabUi& tab = debugTabs[static_cast<std::size_t>(currentTabIndex)];
+        for (DebugGroupUi& group : tab.groups) {
+            RECT rect{};
+            if (!GetWindowRect(group.box, &rect)) {
+                continue;
+            }
+            if (screenPoint.x >= rect.left && screenPoint.x < rect.right &&
+                screenPoint.y >= rect.top && screenPoint.y < rect.bottom) {
+                return &group;
+            }
+        }
+        return nullptr;
     }
 
     void queueDropdownCommand(int controlId, const DebugDropdownCommand& dropdown)
@@ -769,6 +1067,54 @@ struct DebugConsole::Impl {
             command += " ";
             command += suffix;
         }
+        queueCommand(command);
+    }
+
+    void queueNumberCommand(int controlId, const DebugNumberCommand& number)
+    {
+        HWND control = GetDlgItem(hwnd, controlId);
+        if (!control) {
+            return;
+        }
+
+        const int length = GetWindowTextLengthW(control);
+        std::wstring wide(static_cast<std::size_t>(length) + 1, L'\0');
+        if (length > 0) {
+            GetWindowTextW(control, wide.data(), length + 1);
+        }
+        wide.resize(static_cast<std::size_t>(length));
+
+        const std::string text = trimAscii(wideToUtf8(wide));
+        int value = number.minValue;
+        if (!text.empty()) {
+            try {
+                value = std::stoi(text);
+            } catch (...) {
+                value = number.minValue;
+            }
+        }
+        value = std::clamp(value, number.minValue, number.maxValue);
+
+        const std::wstring normalized = std::to_wstring(value);
+        if (wide != normalized) {
+            SetWindowTextW(control, normalized.c_str());
+        }
+
+        std::string command = number.command;
+        command += " ";
+        command += std::to_string(value);
+        queueCommand(command);
+    }
+
+    void queueToggleCommand(int controlId, std::string_view baseCommand)
+    {
+        HWND control = GetDlgItem(hwnd, controlId);
+        if (!control) {
+            return;
+        }
+
+        std::string command(baseCommand);
+        command += (SendMessageW(control, BM_GETCHECK, 0, 0) == BST_CHECKED ? " on" : " off");
         queueCommand(command);
     }
 
@@ -1019,8 +1365,11 @@ struct DebugConsole::Impl {
     DebugConsoleLayout layoutDefinition;
     std::vector<DebugTabUi> debugTabs;
     std::unordered_map<int, std::string> debugCommandByControlId;
+    std::unordered_map<int, std::string> debugToggleCommandByControlId;
+    std::unordered_map<int, DebugNumberCommand> debugNumberByControlId;
     std::unordered_map<int, DebugDropdownCommand> debugDropdownByControlId;
     std::unordered_map<std::string, int> debugDropdownControlIdByDebugId;
+    std::unordered_map<HWND, DebugGroupRef> debugGroupByScrollbar;
     std::deque<LogEntry> pendingLogs;
     std::deque<LogEntry> logLines;
     std::deque<std::string> commandQueue;

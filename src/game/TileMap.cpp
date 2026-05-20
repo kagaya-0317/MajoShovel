@@ -1,10 +1,15 @@
 ﻿#include "game/TileMap.hpp"
 
 #include "data/GameBalance.hpp"
+#include "engine/Log.hpp"
 #include "game/Collision.hpp"
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstdint>
+#include <limits>
+#include <string>
+#include <unordered_map>
 
 namespace majo {
 
@@ -16,6 +21,126 @@ constexpr float WarpCavernRadius = 4.1f;
 constexpr float SoftPathMargin = 3.4f;
 constexpr std::string_view CrackTexturePath = "assets/crack.png";
 constexpr int CrackTextureFrames = 4;
+constexpr int TerrainTileSheetColumns = 5;
+constexpr int TerrainTileSheetRows = 10;
+constexpr int TerrainTileSourceSize = 48;
+constexpr int TerrainTileQuadrantSize = TerrainTileSourceSize / 2;
+constexpr float TerrainTileDrawSize = static_cast<float>(balance::TileSize);
+constexpr float LightFalloffMinWidth = 10.0f;
+constexpr float LightFalloffMaxWidth = 42.0f;
+constexpr float LightFalloffRadiusRatio = 0.20f;
+constexpr float LightFalloffSegmentWidth = 8.0f;
+
+enum class TerrainWallCell {
+    Basic,
+    Top,
+    Bottom,
+    Left,
+    Right,
+    OuterTopLeft,
+    OuterTopRight,
+    OuterBottomLeft,
+    OuterBottomRight,
+    InnerTopLeft,
+    InnerTopRight,
+    InnerBottomLeft,
+    InnerBottomRight,
+    Decor1,
+    Decor2,
+};
+
+enum class TerrainQuadrant {
+    TopLeft,
+    TopRight,
+    BottomLeft,
+    BottomRight,
+};
+
+struct TerrainTileSheet {
+    ImageHandle handle{};
+    std::string path;
+    int stageId = 1;
+    bool available = false;
+};
+
+struct TerrainNeighbors {
+    bool up = false;
+    bool down = false;
+    bool left = false;
+    bool right = false;
+    bool upLeft = false;
+    bool upRight = false;
+    bool downLeft = false;
+    bool downRight = false;
+};
+
+struct TerrainWallSelection {
+    bool split = false;
+    TerrainWallCell full = TerrainWallCell::Basic;
+    std::array<TerrainWallCell, 4> quadrants{
+        TerrainWallCell::Basic,
+        TerrainWallCell::Basic,
+        TerrainWallCell::Basic,
+        TerrainWallCell::Basic,
+    };
+};
+
+float lightFalloffInnerRadius(float radius)
+{
+    const float falloffWidth = std::clamp(
+        radius * LightFalloffRadiusRatio,
+        LightFalloffMinWidth,
+        LightFalloffMaxWidth);
+    return std::max(0.0f, radius - falloffWidth);
+}
+
+void mergeLightSpans(std::vector<Vec2>& spans)
+{
+    if (spans.empty()) {
+        return;
+    }
+
+    std::sort(spans.begin(), spans.end(), [](Vec2 a, Vec2 b) {
+        return a.x < b.x;
+    });
+
+    std::size_t writeIndex = 0;
+    for (std::size_t readIndex = 1; readIndex < spans.size(); ++readIndex) {
+        if (spans[readIndex].x <= spans[writeIndex].y) {
+            spans[writeIndex].y = std::max(spans[writeIndex].y, spans[readIndex].y);
+            continue;
+        }
+        ++writeIndex;
+        spans[writeIndex] = spans[readIndex];
+    }
+    spans.resize(writeIndex + 1);
+}
+
+void appendFalloffSpans(const std::vector<Vec2>& outerSpans, const std::vector<Vec2>& innerSpans, std::vector<Vec2>& outSpans)
+{
+    outSpans.clear();
+    for (Vec2 outer : outerSpans) {
+        float cursor = outer.x;
+        for (Vec2 inner : innerSpans) {
+            if (inner.y <= cursor) {
+                continue;
+            }
+            if (inner.x >= outer.y) {
+                break;
+            }
+            if (inner.x > cursor) {
+                outSpans.push_back({cursor, std::min(inner.x, outer.y)});
+            }
+            cursor = std::max(cursor, inner.y);
+            if (cursor >= outer.y) {
+                break;
+            }
+        }
+        if (cursor < outer.y) {
+            outSpans.push_back({cursor, outer.y});
+        }
+    }
+}
 
 std::uint32_t hashTile(int x, int y, std::uint32_t seed)
 {
@@ -28,6 +153,109 @@ std::uint32_t hashTile(int x, int y, std::uint32_t seed)
     h *= 0x846CA68Bu;
     h ^= h >> 16;
     return h;
+}
+
+RectF terrainSheetCellSource(int row, int col)
+{
+    return RectF{
+        static_cast<float>(col * TerrainTileSourceSize),
+        static_cast<float>(row * TerrainTileSourceSize),
+        static_cast<float>(TerrainTileSourceSize),
+        static_cast<float>(TerrainTileSourceSize),
+    };
+}
+
+RectF terrainSheetQuadrantSource(RectF cell, TerrainQuadrant quadrant)
+{
+    const float half = static_cast<float>(TerrainTileQuadrantSize);
+    switch (quadrant) {
+    case TerrainQuadrant::TopLeft:
+        return {cell.x, cell.y, half, half};
+    case TerrainQuadrant::TopRight:
+        return {cell.x + half, cell.y, half, half};
+    case TerrainQuadrant::BottomLeft:
+        return {cell.x, cell.y + half, half, half};
+    case TerrainQuadrant::BottomRight:
+        return {cell.x + half, cell.y + half, half, half};
+    }
+    return {cell.x, cell.y, half, half};
+}
+
+Vec2 terrainQuadrantOffset(TerrainQuadrant quadrant)
+{
+    const float half = TerrainTileDrawSize * 0.5f;
+    switch (quadrant) {
+    case TerrainQuadrant::TopLeft:
+        return {0.0f, 0.0f};
+    case TerrainQuadrant::TopRight:
+        return {half, 0.0f};
+    case TerrainQuadrant::BottomLeft:
+        return {0.0f, half};
+    case TerrainQuadrant::BottomRight:
+        return {half, half};
+    }
+    return {};
+}
+
+std::string terrainTileSheetPathForStage(int stageId)
+{
+    return "assets/tiles/tile_" + std::to_string(std::clamp(stageId, 1, 4)) + ".png";
+}
+
+TerrainTileSheet acquireTerrainTileSheet(Renderer& renderer, int stageId)
+{
+    struct LogState {
+        std::uint32_t handleValue = 0;
+        bool available = false;
+        bool initialized = false;
+    };
+    static std::unordered_map<std::string, LogState> logStates;
+
+    TerrainTileSheet sheet;
+    sheet.stageId = std::clamp(stageId, 1, 4);
+    sheet.path = terrainTileSheetPathForStage(sheet.stageId);
+    sheet.handle = renderer.acquireImage(sheet.path, TextureFilter::Nearest);
+
+    Vec2 imageSize{};
+    const bool loaded = sheet.handle.valid() && renderer.getImageSize(sheet.handle, imageSize);
+    const bool validSize =
+        loaded &&
+        imageSize.x >= static_cast<float>(TerrainTileSheetColumns * TerrainTileSourceSize) &&
+        imageSize.y >= static_cast<float>(TerrainTileSheetRows * TerrainTileSourceSize);
+    sheet.available = validSize;
+
+    LogState& state = logStates[sheet.path];
+    if (!state.initialized || state.handleValue != sheet.handle.value || state.available != sheet.available) {
+        if (sheet.available) {
+            logInfo(
+                "Terrain tile sheet loaded: stage=" + std::to_string(sheet.stageId) +
+                " path=" + sheet.path +
+                " size=" + std::to_string(static_cast<int>(std::round(imageSize.x))) +
+                "x" + std::to_string(static_cast<int>(std::round(imageSize.y))));
+        } else {
+            std::string reason;
+            if (!loaded) {
+                reason = renderer.lastAssetError();
+                if (reason.empty()) {
+                    reason = "image is not available";
+                }
+            } else {
+                reason =
+                    "invalid sheet size " +
+                    std::to_string(static_cast<int>(std::round(imageSize.x))) +
+                    "x" +
+                    std::to_string(static_cast<int>(std::round(imageSize.y))) +
+                    ", expected at least 240x480";
+            }
+            logWarning(
+                "Terrain tile sheet fallback: stage=" + std::to_string(sheet.stageId) +
+                " path=" + sheet.path +
+                " reason=" + reason);
+        }
+        state = LogState{sheet.handle.value, sheet.available, true};
+    }
+
+    return sheet;
 }
 
 float noise01(int x, int y, std::uint32_t seed)
@@ -49,6 +277,306 @@ float smoothNoise(int x, int y, std::uint32_t seed)
         noise01(x + 1, y - 1, seed) +
         noise01(x - 1, y - 1, seed);
     return (center + cardinal * 2.0f + diagonal) / 16.0f;
+}
+
+int terrainWallBaseRow(TileType type)
+{
+    switch (type) {
+    case TileType::Dirt:
+        return 1;
+    case TileType::Rock:
+    case TileType::HardRock:
+        return 4;
+    case TileType::Ore:
+        return 7;
+    case TileType::Empty:
+        return 1;
+    }
+    return 1;
+}
+
+RectF terrainWallCellSource(TileType type, TerrainWallCell cell)
+{
+    const int baseRow = terrainWallBaseRow(type);
+    int row = baseRow + 1;
+    int col = 1;
+    switch (cell) {
+    case TerrainWallCell::Basic:
+        row = baseRow + 1;
+        col = 1;
+        break;
+    case TerrainWallCell::Top:
+        row = baseRow + 0;
+        col = 1;
+        break;
+    case TerrainWallCell::Bottom:
+        row = baseRow + 2;
+        col = 1;
+        break;
+    case TerrainWallCell::Left:
+        row = baseRow + 1;
+        col = 0;
+        break;
+    case TerrainWallCell::Right:
+        row = baseRow + 1;
+        col = 2;
+        break;
+    case TerrainWallCell::OuterTopLeft:
+        row = baseRow + 0;
+        col = 0;
+        break;
+    case TerrainWallCell::OuterTopRight:
+        row = baseRow + 0;
+        col = 2;
+        break;
+    case TerrainWallCell::OuterBottomLeft:
+        row = baseRow + 2;
+        col = 0;
+        break;
+    case TerrainWallCell::OuterBottomRight:
+        row = baseRow + 2;
+        col = 2;
+        break;
+    case TerrainWallCell::InnerTopLeft:
+        row = baseRow + 1;
+        col = 4;
+        break;
+    case TerrainWallCell::InnerTopRight:
+        row = baseRow + 1;
+        col = 3;
+        break;
+    case TerrainWallCell::InnerBottomLeft:
+        row = baseRow + 0;
+        col = 4;
+        break;
+    case TerrainWallCell::InnerBottomRight:
+        row = baseRow + 0;
+        col = 3;
+        break;
+    case TerrainWallCell::Decor1:
+        row = baseRow + 2;
+        col = 3;
+        break;
+    case TerrainWallCell::Decor2:
+        row = baseRow + 2;
+        col = 4;
+        break;
+    }
+    return terrainSheetCellSource(row, col);
+}
+
+TerrainWallCell terrainBasicWallVariant(int tx, int ty, TileType type)
+{
+    const std::uint32_t materialSalt =
+        type == TileType::Ore ? 0x785A2FE3u :
+        type == TileType::Rock || type == TileType::HardRock ? 0x5B7D91A1u :
+        0x3E4C6A17u;
+    const std::uint32_t h = hashTile(tx, ty, materialSalt);
+    const std::uint32_t roll = h % 1000U;
+    if (roll < 35U) {
+        return TerrainWallCell::Decor1;
+    }
+    if (roll < 70U) {
+        return TerrainWallCell::Decor2;
+    }
+    return TerrainWallCell::Basic;
+}
+
+int terrainFloorColumn(int tx, int ty)
+{
+    const std::uint32_t h = hashTile(tx, ty, 0xB47C91E5u);
+    if (h % 100U < 24U) {
+        return 1 + static_cast<int>((h >> 8) % 4U);
+    }
+    return 0;
+}
+
+int trueCount(std::array<bool, 4> values)
+{
+    return static_cast<int>(std::count(values.begin(), values.end(), true));
+}
+
+TerrainWallCell terrainQuadrantCell(TerrainQuadrant quadrant, const TerrainNeighbors& neighbors)
+{
+    switch (quadrant) {
+    case TerrainQuadrant::TopLeft:
+        if (!neighbors.up && !neighbors.left && neighbors.upLeft) {
+            return TerrainWallCell::InnerTopLeft;
+        }
+        if (neighbors.up && neighbors.left) {
+            return TerrainWallCell::OuterTopLeft;
+        }
+        if (neighbors.up) {
+            return TerrainWallCell::Top;
+        }
+        if (neighbors.left) {
+            return TerrainWallCell::Left;
+        }
+        return TerrainWallCell::Basic;
+    case TerrainQuadrant::TopRight:
+        if (!neighbors.up && !neighbors.right && neighbors.upRight) {
+            return TerrainWallCell::InnerTopRight;
+        }
+        if (neighbors.up && neighbors.right) {
+            return TerrainWallCell::OuterTopRight;
+        }
+        if (neighbors.up) {
+            return TerrainWallCell::Top;
+        }
+        if (neighbors.right) {
+            return TerrainWallCell::Right;
+        }
+        return TerrainWallCell::Basic;
+    case TerrainQuadrant::BottomLeft:
+        if (!neighbors.down && !neighbors.left && neighbors.downLeft) {
+            return TerrainWallCell::InnerBottomLeft;
+        }
+        if (neighbors.down && neighbors.left) {
+            return TerrainWallCell::OuterBottomLeft;
+        }
+        if (neighbors.down) {
+            return TerrainWallCell::Bottom;
+        }
+        if (neighbors.left) {
+            return TerrainWallCell::Left;
+        }
+        return TerrainWallCell::Basic;
+    case TerrainQuadrant::BottomRight:
+        if (!neighbors.down && !neighbors.right && neighbors.downRight) {
+            return TerrainWallCell::InnerBottomRight;
+        }
+        if (neighbors.down && neighbors.right) {
+            return TerrainWallCell::OuterBottomRight;
+        }
+        if (neighbors.down) {
+            return TerrainWallCell::Bottom;
+        }
+        if (neighbors.right) {
+            return TerrainWallCell::Right;
+        }
+        return TerrainWallCell::Basic;
+    }
+    return TerrainWallCell::Basic;
+}
+
+TerrainWallSelection chooseTerrainWallSelection(TileType type, int tx, int ty, const TerrainNeighbors& neighbors)
+{
+    const std::array<bool, 4> inner{
+        !neighbors.up && !neighbors.left && neighbors.upLeft,
+        !neighbors.up && !neighbors.right && neighbors.upRight,
+        !neighbors.down && !neighbors.left && neighbors.downLeft,
+        !neighbors.down && !neighbors.right && neighbors.downRight,
+    };
+    const std::array<bool, 4> outer{
+        neighbors.up && neighbors.left,
+        neighbors.up && neighbors.right,
+        neighbors.down && neighbors.left,
+        neighbors.down && neighbors.right,
+    };
+    const std::array<bool, 4> edge{
+        neighbors.up,
+        neighbors.down,
+        neighbors.left,
+        neighbors.right,
+    };
+
+    const int innerCount = trueCount(inner);
+    const int outerCount = trueCount(outer);
+    const int edgeCount = trueCount(edge);
+
+    TerrainWallSelection selection;
+    if (innerCount == 0 && outerCount == 0 && edgeCount == 0) {
+        selection.full = terrainBasicWallVariant(tx, ty, type);
+        return selection;
+    }
+
+    selection.split = true;
+    selection.quadrants = {
+        terrainQuadrantCell(TerrainQuadrant::TopLeft, neighbors),
+        terrainQuadrantCell(TerrainQuadrant::TopRight, neighbors),
+        terrainQuadrantCell(TerrainQuadrant::BottomLeft, neighbors),
+        terrainQuadrantCell(TerrainQuadrant::BottomRight, neighbors),
+    };
+    return selection;
+}
+
+bool drawTerrainImageRegion(Renderer& renderer, ImageHandle handle, RectF source, Vec2 pos, Vec2 size)
+{
+    ImageDrawOptions options;
+    options.anchor = {0.0f, 0.0f};
+    return renderer.drawImageRegion(handle, source, pos, size, options);
+}
+
+bool drawTerrainFloorTile(Renderer& renderer, const TerrainTileSheet& sheet, Vec2 pos, int tx, int ty)
+{
+    return drawTerrainImageRegion(
+        renderer,
+        sheet.handle,
+        terrainSheetCellSource(0, terrainFloorColumn(tx, ty)),
+        pos,
+        {TerrainTileDrawSize, TerrainTileDrawSize});
+}
+
+bool drawTerrainWallTile(
+    Renderer& renderer,
+    const TerrainTileSheet& sheet,
+    Vec2 pos,
+    int tx,
+    int ty,
+    TileType type,
+    const TerrainNeighbors& neighbors)
+{
+    const TerrainWallSelection selection = chooseTerrainWallSelection(type, tx, ty, neighbors);
+    if (!selection.split) {
+        return drawTerrainImageRegion(
+            renderer,
+            sheet.handle,
+            terrainWallCellSource(type, selection.full),
+            pos,
+            {TerrainTileDrawSize, TerrainTileDrawSize});
+    }
+
+    bool ok = true;
+    constexpr std::array<TerrainQuadrant, 4> quadrants{
+        TerrainQuadrant::TopLeft,
+        TerrainQuadrant::TopRight,
+        TerrainQuadrant::BottomLeft,
+        TerrainQuadrant::BottomRight,
+    };
+    const Vec2 quadrantSize{TerrainTileDrawSize * 0.5f, TerrainTileDrawSize * 0.5f};
+    for (std::size_t i = 0; i < quadrants.size(); ++i) {
+        const TerrainQuadrant quadrant = quadrants[i];
+        const RectF sourceCell = terrainWallCellSource(type, selection.quadrants[i]);
+        ok = drawTerrainImageRegion(
+                 renderer,
+                 sheet.handle,
+                 terrainSheetQuadrantSource(sourceCell, quadrant),
+                 pos + terrainQuadrantOffset(quadrant),
+                 quadrantSize) && ok;
+    }
+    return ok;
+}
+
+bool drawTerrainTileImage(
+    Renderer& renderer,
+    const TerrainTileSheet& sheet,
+    Vec2 pos,
+    int tx,
+    int ty,
+    const Tile& tile,
+    const TerrainNeighbors& neighbors)
+{
+    if (!sheet.available) {
+        return false;
+    }
+
+    if (!drawTerrainFloorTile(renderer, sheet, pos, tx, ty)) {
+        return false;
+    }
+    if (tile.type == TileType::Empty) {
+        return true;
+    }
+    return drawTerrainWallTile(renderer, sheet, pos, tx, ty, tile.type, neighbors);
 }
 
 float dot(Vec2 a, Vec2 b)
@@ -370,6 +898,21 @@ long long TileMap::key(int cx, int cy)
     return (static_cast<long long>(cx) << 32) ^ (static_cast<unsigned int>(cy));
 }
 
+DungeonTile TileMap::tileFromKey(long long packed)
+{
+    const std::uint64_t raw = static_cast<std::uint64_t>(packed);
+    const auto signedFromU32 = [](std::uint32_t value) {
+        if (value <= static_cast<std::uint32_t>(std::numeric_limits<int>::max())) {
+            return static_cast<int>(value);
+        }
+        return -1 - static_cast<int>(~value);
+    };
+    return {
+        signedFromU32(static_cast<std::uint32_t>(raw >> 32)),
+        signedFromU32(static_cast<std::uint32_t>(raw & 0xFFFFFFFFull)),
+    };
+}
+
 int TileMap::floorDiv(int a, int b)
 {
     int q = a / b;
@@ -498,16 +1041,59 @@ void TileMap::setTileOverride(DungeonTile tile, TileType type)
         return;
     }
 
+    const auto editIt = terrainEdits_.find(key(tile.x, tile.y));
+    const TileType finalType = editIt != terrainEdits_.end() ? editIt->second : type;
     Tile& target = chunkIt->second.at(floorMod(tile.x, balance::ChunkTiles), floorMod(tile.y, balance::ChunkTiles));
-    target.type = type;
+    target.type = finalType;
     clearCrackCacheForTile(tile.x, tile.y);
-    if (type == TileType::Empty) {
+    if (finalType == TileType::Empty) {
         target.hp = 0;
         return;
     }
 
     const TerrainDebugInfo info = terrainInfoForTile(tile.x, tile.y, nullptr);
     target.hp = static_cast<unsigned char>(clampTileHp(info.effectiveHp));
+}
+
+void TileMap::setTerrainEdit(DungeonTile tile, TileType type)
+{
+    terrainEdits_[key(tile.x, tile.y)] = type;
+
+    const int cx = floorDiv(tile.x, balance::ChunkTiles);
+    const int cy = floorDiv(tile.y, balance::ChunkTiles);
+    auto chunkIt = chunks_.find(key(cx, cy));
+    if (chunkIt == chunks_.end()) {
+        return;
+    }
+
+    const auto editIt = terrainEdits_.find(key(tile.x, tile.y));
+    const TileType finalType = editIt != terrainEdits_.end() ? editIt->second : type;
+    Tile& target = chunkIt->second.at(floorMod(tile.x, balance::ChunkTiles), floorMod(tile.y, balance::ChunkTiles));
+    target.type = finalType;
+    clearCrackCacheForTile(tile.x, tile.y);
+    if (finalType == TileType::Empty) {
+        target.hp = 0;
+        return;
+    }
+
+    const TerrainDebugInfo info = terrainInfoForTile(tile.x, tile.y, nullptr);
+    target.hp = static_cast<unsigned char>(clampTileHp(info.effectiveHp));
+}
+
+std::vector<TerrainTileEdit> TileMap::terrainEditsForSave() const
+{
+    std::vector<TerrainTileEdit> edits;
+    edits.reserve(terrainEdits_.size());
+    for (const auto& [packed, type] : terrainEdits_) {
+        edits.push_back(TerrainTileEdit{tileFromKey(packed), type});
+    }
+    std::sort(edits.begin(), edits.end(), [](const TerrainTileEdit& lhs, const TerrainTileEdit& rhs) {
+        if (lhs.tile.x != rhs.tile.x) {
+            return lhs.tile.x < rhs.tile.x;
+        }
+        return lhs.tile.y < rhs.tile.y;
+    });
+    return edits;
 }
 
 void TileMap::updateAround(Vec2 worldCenter, float, const RuntimeBalance& config, const DungeonLayout& dungeonLayout)
@@ -573,6 +1159,7 @@ std::vector<DamagedTile> TileMap::damageCircle(Vec2 center, float radius, int da
             tile->hp = static_cast<unsigned char>(std::max(0, static_cast<int>(tile->hp) - damage));
             if (tile->hp == 0) {
                 tile->type = TileType::Empty;
+                terrainEdits_[key(tx, ty)] = TileType::Empty;
                 clearCrackCacheForTile(tx, ty);
                 openedTiles.push_back({tileCenter(tx, ty), destroyedType, destroyedColor});
             }
@@ -593,6 +1180,7 @@ bool TileMap::damageTile(int tx, int ty, int damage, Vec2& openedTileCenter, Til
     tile->hp = static_cast<unsigned char>(std::max(0, static_cast<int>(tile->hp) - damage));
     if (tile->hp == 0) {
         tile->type = TileType::Empty;
+        terrainEdits_[key(tx, ty)] = TileType::Empty;
         clearCrackCacheForTile(tx, ty);
         openedTileCenter = tileCenter(tx, ty);
         if (openedTileType) {
@@ -825,6 +1413,10 @@ TerrainDebugInfo TileMap::terrainInfoForTile(int tx, int ty, const Tile* tile) c
     if (overrideIt != tileOverrides_.end()) {
         generatedType = overrideIt->second;
     }
+    const auto editIt = terrainEdits_.find(key(tx, ty));
+    if (editIt != terrainEdits_.end()) {
+        generatedType = editIt->second;
+    }
 
     const float distanceHardness = clamp((carvedDistance - caveWidth) / 22.0f, 0.0f, 1.0f);
     info.localHardnessMultiplier = 0.85f + distanceHardness * 0.75f + (broadNoise - 0.5f) * 0.28f;
@@ -907,6 +1499,29 @@ void TileMap::render(Renderer& renderer, const Camera& camera, Vec2 lightCenter,
     const int minTileY = worldToTile(std::min(viewTopLeft.y, viewBottomRight.y)) - ViewTileMargin;
     const int maxTileY = worldToTile(std::max(viewTopLeft.y, viewBottomRight.y)) + ViewTileMargin;
 
+    const TerrainTileSheet terrainSheet = acquireTerrainTileSheet(renderer, dungeonLayoutSnapshot_.stageId);
+    const auto tileTypeForRender = [this](int tx, int ty) {
+        if (const Tile* tile = tileAtWorldIfGenerated(tx, ty)) {
+            return tile->type;
+        }
+        return terrainInfoForTile(tx, ty, nullptr).type;
+    };
+    const auto emptyForRender = [&](int tx, int ty) {
+        return tileTypeForRender(tx, ty) == TileType::Empty;
+    };
+    const auto neighborsForRender = [&](int tx, int ty) {
+        return TerrainNeighbors{
+            .up = emptyForRender(tx, ty - 1),
+            .down = emptyForRender(tx, ty + 1),
+            .left = emptyForRender(tx - 1, ty),
+            .right = emptyForRender(tx + 1, ty),
+            .upLeft = emptyForRender(tx - 1, ty - 1),
+            .upRight = emptyForRender(tx + 1, ty - 1),
+            .downLeft = emptyForRender(tx - 1, ty + 1),
+            .downRight = emptyForRender(tx + 1, ty + 1),
+        };
+    };
+
     for (int cy = centerChunkY_ - balance::ActiveChunkRadius; cy <= centerChunkY_ + balance::ActiveChunkRadius; ++cy) {
         const int chunkMinTileY = cy * balance::ChunkTiles;
         const int chunkMaxTileY = chunkMinTileY + balance::ChunkTiles - 1;
@@ -936,7 +1551,12 @@ void TileMap::render(Renderer& renderer, const Camera& camera, Vec2 lightCenter,
                         continue;
                     }
                     const Tile& tile = chunk.at(x, y);
-                    drawTileLitByCircles(renderer, pos, tileColor(tile), lightCenter, extraLights);
+                    const TerrainNeighbors neighbors = terrainSheet.available && tile.type != TileType::Empty
+                        ? neighborsForRender(tx, ty)
+                        : TerrainNeighbors{};
+                    if (!drawTerrainTileImage(renderer, terrainSheet, pos, tx, ty, tile, neighbors)) {
+                        drawTileLitByCircles(renderer, pos, tileColor(tile), lightCenter, extraLights);
+                    }
                     drawTileCracks(renderer, pos, tx, ty, tile);
                 }
             }
@@ -959,56 +1579,127 @@ void TileMap::renderDarknessOverlay(Renderer& renderer, const Camera& camera, Ve
     lights.insert(lights.end(), extraLights.begin(), extraLights.end());
 
     constexpr Color DarknessColor{5, 5, 8, 255};
-    std::vector<Vec2> spans;
-    spans.reserve(lights.size());
+    std::vector<Vec2> outerSpans;
+    std::vector<Vec2> innerSpans;
+    std::vector<Vec2> falloffSpans;
+    outerSpans.reserve(lights.size());
+    innerSpans.reserve(lights.size());
+    falloffSpans.reserve(lights.size() * 2);
+
+    const auto darknessAlphaAt = [&](float x, float y) {
+        float alpha = static_cast<float>(DarknessColor.a);
+        for (const LightSource& light : lights) {
+            const float radius = light.radius > 0.0f ? light.radius : balanceSnapshot_.lightRadius;
+            if (radius <= 0.0f) {
+                continue;
+            }
+            const float dx = x - light.position.x;
+            const float dy = y - light.position.y;
+            const float distanceSq = dx * dx + dy * dy;
+            const float radiusSq = radius * radius;
+            if (distanceSq >= radiusSq) {
+                continue;
+            }
+
+            const float innerRadius = lightFalloffInnerRadius(radius);
+            const float innerRadiusSq = innerRadius * innerRadius;
+            if (distanceSq <= innerRadiusSq) {
+                return 0.0f;
+            }
+
+            const float distance = std::sqrt(distanceSq);
+            const float t = std::clamp((distance - innerRadius) / std::max(1.0f, radius - innerRadius), 0.0f, 1.0f);
+            const float smooth = t * t * (3.0f - 2.0f * t);
+            alpha = std::min(alpha, static_cast<float>(DarknessColor.a) * smooth);
+        }
+        return alpha;
+    };
+
+    const auto drawFalloffSpan = [&](float x0, float x1, float y) {
+        if (x1 <= x0) {
+            return;
+        }
+        float x = x0;
+        while (x < x1) {
+            const float nextX = std::min(x1, x + LightFalloffSegmentWidth);
+            const float midX = (x + nextX) * 0.5f;
+            const float alpha0 = darknessAlphaAt(x, y);
+            const float alphaMid = darknessAlphaAt(midX, y);
+            const float alpha1 = darknessAlphaAt(nextX, y);
+            if (std::max({alpha0, alphaMid, alpha1}) > 0.5f) {
+                const auto makeColor = [](float alpha) {
+                    return Color{5, 5, 8, static_cast<unsigned char>(std::clamp(std::lround(alpha), 0L, 255L))};
+                };
+                renderer.fillGradientRect(
+                    {x, y - 0.5f},
+                    {std::max(0.0f, midX - x), 1.0f},
+                    makeColor(alpha0),
+                    makeColor(alphaMid),
+                    GradientDirection::LeftToRight);
+                renderer.fillGradientRect(
+                    {midX, y - 0.5f},
+                    {std::max(0.0f, nextX - midX), 1.0f},
+                    makeColor(alphaMid),
+                    makeColor(alpha1),
+                    GradientDirection::LeftToRight);
+            }
+            x = nextX;
+        }
+    };
+
     for (int row = 0; row < static_cast<int>(viewHeight); ++row) {
         const float y = viewTop + static_cast<float>(row) + 0.5f;
-        spans.clear();
+        outerSpans.clear();
+        innerSpans.clear();
         for (const LightSource& light : lights) {
             const float radius = light.radius > 0.0f ? light.radius : balanceSnapshot_.lightRadius;
             const float radiusSq = radius * radius;
             const float dy = y - light.position.y;
             const float remaining = radiusSq - dy * dy;
-            if (remaining <= 0.0f) {
-                continue;
+            if (remaining > 0.0f) {
+                const float dx = std::sqrt(remaining);
+                const float x0 = std::max(viewLeft, light.position.x - dx);
+                const float x1 = std::min(viewRight, light.position.x + dx);
+                if (x1 > x0) {
+                    outerSpans.push_back({x0, x1});
+                }
             }
-            const float dx = std::sqrt(remaining);
-            const float x0 = std::max(viewLeft, light.position.x - dx);
-            const float x1 = std::min(viewRight, light.position.x + dx);
-            if (x1 > x0) {
-                spans.push_back({x0, x1});
+
+            const float innerRadius = lightFalloffInnerRadius(radius);
+            const float innerRemaining = innerRadius * innerRadius - dy * dy;
+            if (innerRemaining > 0.0f) {
+                const float dx = std::sqrt(innerRemaining);
+                const float x0 = std::max(viewLeft, light.position.x - dx);
+                const float x1 = std::min(viewRight, light.position.x + dx);
+                if (x1 > x0) {
+                    innerSpans.push_back({x0, x1});
+                }
             }
         }
 
-        if (spans.empty()) {
+        mergeLightSpans(outerSpans);
+        if (outerSpans.empty()) {
             renderer.fillRect({viewLeft, viewTop + static_cast<float>(row)}, {viewWidth, 1.0f}, DarknessColor);
             continue;
         }
 
-        std::sort(spans.begin(), spans.end(), [](Vec2 a, Vec2 b) {
-            return a.x < b.x;
-        });
-
-        float litStart = spans[0].x;
-        float litEnd = spans[0].y;
         float darkStart = viewLeft;
-        for (std::size_t i = 1; i < spans.size(); ++i) {
-            if (spans[i].x <= litEnd) {
-                litEnd = std::max(litEnd, spans[i].y);
-                continue;
-            }
+        for (Vec2 span : outerSpans) {
+            const float litStart = span.x;
+            const float litEnd = span.y;
             if (litStart > darkStart) {
                 renderer.fillRect({darkStart, viewTop + static_cast<float>(row)}, {litStart - darkStart, 1.0f}, DarknessColor);
             }
             darkStart = litEnd;
-            litStart = spans[i].x;
-            litEnd = spans[i].y;
         }
-        if (litStart > darkStart) {
-            renderer.fillRect({darkStart, viewTop + static_cast<float>(row)}, {litStart - darkStart, 1.0f}, DarknessColor);
+        if (darkStart < viewRight) {
+            renderer.fillRect({darkStart, viewTop + static_cast<float>(row)}, {viewRight - darkStart, 1.0f}, DarknessColor);
         }
-        if (litEnd < viewRight) {
-            renderer.fillRect({litEnd, viewTop + static_cast<float>(row)}, {viewRight - litEnd, 1.0f}, DarknessColor);
+
+        mergeLightSpans(innerSpans);
+        appendFalloffSpans(outerSpans, innerSpans, falloffSpans);
+        for (Vec2 span : falloffSpans) {
+            drawFalloffSpan(span.x, span.y, y);
         }
     }
 }

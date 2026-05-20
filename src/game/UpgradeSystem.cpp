@@ -187,6 +187,11 @@ std::optional<UpgradeChoice> UpgradeSystem::update(
         return std::nullopt;
     }
 
+    const auto chooseUpgrade = [&](int option) {
+        ui.emitSound(UiSoundEvent::UpgradeSelect);
+        return applyUpgrade(option, level, spellRing, levelRingRadiusPoints, levelRingSpeedPoints, levelRingWeightLimitPoints);
+    };
+
     for (int i = 0; i < 3; ++i) {
         const UiRect rect = optionRect(i);
         if (rect.contains(ui.mouse())) {
@@ -194,7 +199,7 @@ std::optional<UpgradeChoice> UpgradeSystem::update(
         }
         if (ui.pressed(rect)) {
             selectedOption_ = i;
-            return applyUpgrade(i, level, spellRing, levelRingRadiusPoints, levelRingSpeedPoints, levelRingWeightLimitPoints);
+            return chooseUpgrade(i);
         }
     }
     ui.block(panelRect());
@@ -212,15 +217,15 @@ std::optional<UpgradeChoice> UpgradeSystem::update(
 
     if (input.upgradePressed(0)) {
         selectedOption_ = 0;
-        return applyUpgrade(0, level, spellRing, levelRingRadiusPoints, levelRingSpeedPoints, levelRingWeightLimitPoints);
+        return chooseUpgrade(0);
     } else if (input.upgradePressed(1)) {
         selectedOption_ = 1;
-        return applyUpgrade(1, level, spellRing, levelRingRadiusPoints, levelRingSpeedPoints, levelRingWeightLimitPoints);
+        return chooseUpgrade(1);
     } else if (input.upgradePressed(2)) {
         selectedOption_ = 2;
-        return applyUpgrade(2, level, spellRing, levelRingRadiusPoints, levelRingSpeedPoints, levelRingWeightLimitPoints);
+        return chooseUpgrade(2);
     } else if (input.useItemPressed() || input.confirmPressed()) {
-        return applyUpgrade(selectedOption_, level, spellRing, levelRingRadiusPoints, levelRingSpeedPoints, levelRingWeightLimitPoints);
+        return chooseUpgrade(selectedOption_);
     }
     return std::nullopt;
 }

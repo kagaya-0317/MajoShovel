@@ -331,6 +331,21 @@ std::string statusNameJa(std::string_view effect)
     if (effect.find("bleed") != std::string_view::npos) {
         return "出血";
     }
+    if (effect.find("confuse") != std::string_view::npos) {
+        return "混乱";
+    }
+    if (effect.find("blind") != std::string_view::npos) {
+        return "盲目";
+    }
+    if (effect.find("wet") != std::string_view::npos) {
+        return "濡れ";
+    }
+    if (effect.find("hot") != std::string_view::npos) {
+        return "熱々";
+    }
+    if (effect.find("frozen") != std::string_view::npos) {
+        return "凍結";
+    }
     return "状態異常";
 }
 
@@ -386,6 +401,12 @@ std::vector<std::string> splitEffectTextLines(std::string_view text)
     return lines;
 }
 
+bool isNoDiscoveryEffectText(std::string_view text)
+{
+    const std::string normalized = trim(text);
+    return equalsIgnoreCase(normalized, "none") || normalized == "\xE3\x81\xAA\xE3\x81\x97";
+}
+
 void pushDiscoveryLine(
     std::vector<DiscoveryEffectLine>& lines,
     const ObjectDefinition& object,
@@ -438,12 +459,130 @@ bool autoTextForEffectCode(
         outText = "弾を防ぐ";
         return true;
     }
+    if (effectCode == "guard_large") {
+        outText = "大型弾を防ぐ";
+        return true;
+    }
+    if (effectCode == "coin_drop_chance") {
+        outText = "敵に当たると少額のお金を落とす（" + formatDiscoveryPercent(std::max(0.0, value)) + "）";
+        return true;
+    }
+    if (effectCode == "hit_coin_spill") {
+        outText = "敵に当たると小銭をこぼさせる（" + formatDiscoveryPercent(std::max(0.0, value)) + "）";
+        return true;
+    }
+    if (effectCode == "break_coin_spill") {
+        outText = value > 0.0
+            ? "壊れると小銭をばらまく（" + formatDiscoveryNumber(value) + "倍）"
+            : "壊れると小銭をばらまく";
+        return true;
+    }
+    if (effectCode == "break_random_item_drop") {
+        outText = "壊れるとランダムなアイテムを落とす（" + formatDiscoveryPercent(std::max(0.0, value)) + "）";
+        return true;
+    }
+    if (effectCode == "vacuum_pull_light") {
+        outText = "回転中に軽いドロップや小型の敵を引き寄せる";
+        return true;
+    }
+    if (effectCode == "wind_push_light") {
+        outText = "回転中に軽いドロップや小型の敵を押し出す";
+        return true;
+    }
+    if (effectCode == "draw_white_line") {
+        outText = "地面に白い線を書く";
+        return true;
+    }
+    if (effectCode == "complete_magic_circle") {
+        outText = "白線で丸く囲うと魔法陣を発動する";
+        return true;
+    }
+    if (effectCode == "critical_chance") {
+        outText = "会心率を上げる（" + formatDiscoveryPercent(std::max(0.0, value)) + "）";
+        return true;
+    }
+    if (effectCode == "critical_power") {
+        outText = value > 0.0
+            ? "会心ダメージ倍率を変える（" + formatDiscoveryNumber(value) + "倍）"
+            : "会心ダメージ倍率を変える";
+        return true;
+    }
+    if (effectCode == "forced_critical_hit") {
+        outText = value > 0.0
+            ? "敵に当たると必ず会心になる（" + formatDiscoveryNumber(value) + "倍）"
+            : "敵に当たると必ず会心になる";
+        return true;
+    }
+    if (effectCode == "break_ceramic_shards") {
+        outText = "壊れると陶器片が飛び散り、周囲の敵に小ダメージを与える";
+        return true;
+    }
+    if (effectCode == "break_glass_shards") {
+        outText = "壊れるとガラス片が飛び散り、周囲の敵に小ダメージを与える";
+        return true;
+    }
+    if (effectCode == "break_fire_burst") {
+        outText = "壊れると火が弾け、周囲の敵に火ダメージを与える";
+        return true;
+    }
+    if (effectCode == "water_spray") {
+        outText = "壊れると水をまき散らし、周囲の敵を濡らす";
+        return true;
+    }
+    if (effectCode == "hot_air") {
+        outText = "回転中に熱気を出し、周囲の敵を熱々にする";
+        return true;
+    }
+    if (effectCode == "dry_wet_bonus_damage") {
+        outText = value > 0.0
+            ? "濡れた敵を乾かすと追加ダメージを与える（+" + formatDiscoveryNumber(value) + "）"
+            : "濡れた敵を乾かすと追加ダメージを与える";
+        return true;
+    }
+    if (effectCode == "cold_air_aura") {
+        outText = "回転中に冷気を吹き出し、浴び続けた敵を凍結させる";
+        return true;
+    }
+    if (effectCode == "slash_power") {
+        outText = value > 0.0
+            ? "斬撃接触ダメージを強める（" + formatDiscoveryNumber(value) + "倍）"
+            : "斬撃接触ダメージを強める";
+        return true;
+    }
+    if (effectCode == "item_orbit_offset") {
+        outText = value != 0.0
+            ? "このアイテムだけ軌道距離を補正する（" + formatDiscoveryNumber(value) + "px）"
+            : "このアイテムだけ軌道距離を補正する";
+        return true;
+    }
+    if (effectCode == "regen") {
+        outText = value > 0.0
+            ? "少しずつHPを回復する（毎秒" + formatDiscoveryNumber(value) + "）"
+            : "少しずつHPを回復する";
+        return true;
+    }
     if (effectCode == "reflect_physical") {
         outText = "物理弾を反射する";
         return true;
     }
     if (effectCode == "reflect_physical_chance") {
         outText = "物理弾を確率で反射（" + formatDiscoveryPercent(std::max(0.0, value)) + "）";
+        return true;
+    }
+    if (effectCode == "reflect_magic") {
+        outText = "元素/魔法弾を反射する";
+        return true;
+    }
+    if (effectCode == "reflect_magic_chance") {
+        outText = "元素/魔法弾を確率で反射（" + formatDiscoveryPercent(std::max(0.0, value)) + "）";
+        return true;
+    }
+    if (effectCode == "reflect_water") {
+        outText = "水弾を反射する";
+        return true;
+    }
+    if (effectCode == "reflect_water_chance") {
+        outText = "水弾を確率で反射（" + formatDiscoveryPercent(std::max(0.0, value)) + "）";
         return true;
     }
     if (effectCode.rfind("status_", 0) == 0) {
@@ -487,12 +626,28 @@ bool autoTextForEffectCode(
         outText = "リング回転速度を変化させる";
         return true;
     }
+    if (effectCode == "orbit_gravity") {
+        outText = "リング軌道を内側へ寄せる";
+        return true;
+    }
     if (effectCode == "orbit_power") {
-        outText = "リング攻撃力を変化させる";
+        outText = "リング出力を変化させる";
+        return true;
+    }
+    if (effectCode == "orbit_antigravity") {
+        outText = "リング軌道を外側へ広げる";
+        return true;
+    }
+    if (effectCode == "orbit_anchor") {
+        outText = "リング中心を安定させる";
+        return true;
+    }
+    if (effectCode == "orbit_shift") {
+        outText = "リングずらし距離を変化させる";
         return true;
     }
     if (effectCode == "damage_speed") {
-        outText = "攻撃間隔を変化させる";
+        outText = "速度ダメージ補正を強める";
         return true;
     }
     return false;
@@ -1288,6 +1443,9 @@ std::vector<DiscoveryEffectLine> buildDiscoveryEffectLines(const ObjectDefinitio
 
     const std::vector<std::string> manualLines = splitEffectTextLines(object.effectText);
     if (!manualLines.empty()) {
+        if (manualLines.size() == 1 && isNoDiscoveryEffectText(manualLines.front())) {
+            return {};
+        }
         if (manualLines.size() == lines.size()) {
             for (std::size_t i = 0; i < lines.size(); ++i) {
                 lines[i].text = manualLines[i];

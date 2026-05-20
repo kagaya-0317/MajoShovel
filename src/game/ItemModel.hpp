@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 #include "data/ObjectCatalog.hpp"
 
@@ -78,6 +78,7 @@ struct MaterialInventory {
 };
 
 ItemInstance makeItemInstanceFromDefinition(std::string instanceId, const ObjectDefinition& object);
+ItemVisualRef effectiveItemVisualRef(const ItemData& item);
 ItemData makeMissingItemData(std::string_view objectId);
 std::string_view materialTypeSaveName(MaterialType type);
 bool materialTypeFromSaveName(std::string_view name, MaterialType& outType);

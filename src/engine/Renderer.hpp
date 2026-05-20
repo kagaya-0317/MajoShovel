@@ -26,6 +26,8 @@ public:
     void setWorldSpace(const Camera* camera) { camera_ = camera; }
     void pushScreenTransform(Vec2 origin, float scale, float alpha);
     void popScreenTransform();
+    void pushClipRect(Vec2 pos, Vec2 size);
+    void popClipRect();
 
     void fillRect(Vec2 pos, Vec2 size, Color color);
     void fillGradientRect(
@@ -161,6 +163,7 @@ private:
     Vec2 transformSize(Vec2 size) const;
     Color transformColor(Color color) const;
     float screenScale() const;
+    void applyClipRect();
     void setColor(Color color);
     void drawGlyph(char c, Vec2 pos, Color color, int scale);
     bool drawNativeText(Vec2 pos, std::string_view text, Color color, int scale, TextStyle style);
@@ -203,6 +206,7 @@ private:
         float alpha = 1.0f;
     };
     std::vector<ScreenTransform> screenTransforms_;
+    std::vector<RectF> clipStack_;
     SpriteSheet playerSheet_;
     ImageTexture baseMapTexture_;
     GuidedTexture uiWindowTexture_;

@@ -331,7 +331,10 @@ DungeonLayout generateDungeonLayout(const DungeonGenerationContext& context)
         SpecialRoomType::TreasureRoom,
         SpecialRoomType::EnemyRoom,
     };
-    const int specialRoomCount = std::clamp(context.specialRoomCount, 0, 24);
+    int specialRoomCount = std::clamp(context.specialRoomCount, 0, 24);
+    if (context.roguelike || isProfile(layout.generationProfile, "astral_rogue")) {
+        specialRoomCount = std::max(5, specialRoomCount);
+    }
     const float roomRadiusBonus = roomRadiusBonusForProfile(layout.generationProfile);
     for (int roomIndex = 0; roomIndex < specialRoomCount && !typedCandidates.empty(); ++roomIndex) {
         const std::size_t candidateIndex = static_cast<std::size_t>(roomIndex) % typedCandidates.size();

@@ -29,7 +29,8 @@ enum class EffectLayer {
 enum class DamagePopupStyle {
     Enemy,
     Player,
-    Heal
+    Heal,
+    Critical
 };
 
 enum class ParticleEffectId {
@@ -59,6 +60,16 @@ enum class ParticleEffectId {
     WarpCircle,
     BossCircle,
     ItemBreak,
+    WoodBreak,
+    CeramicBreak,
+    GlassBreak,
+};
+
+enum class ItemBreakVisual {
+    Generic,
+    Wood,
+    Ceramic,
+    Glass,
 };
 
 struct Effect {
@@ -157,7 +168,7 @@ public:
     void spawnForegroundRingTrail(Vec2 position, Vec2 direction);
     void spawnCaptureSuccess(Vec2 position, Vec2 direction);
     void spawnDropPickup(Vec2 position, Vec2 direction);
-    void spawnItemBreak(Vec2 position);
+    void spawnItemBreak(Vec2 position, ItemBreakVisual visual = ItemBreakVisual::Generic, float scale = 1.0f);
     void spawnMaterialFloat(Vec2 position, Color color);
     void spawnTorchFlicker(Vec2 position);
     void spawnForegroundTorchFlicker(Vec2 position);

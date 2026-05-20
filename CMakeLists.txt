@@ -33,6 +33,7 @@ endif()
 
 add_executable(MajoShovel
     src/main.cpp
+    src/engine/Audio.cpp
     src/engine/App.cpp
     src/engine/Time.cpp
     src/engine/Input.cpp
@@ -76,8 +77,10 @@ add_executable(MajoShovel
     src/game/EnemyImageRenderer.cpp
     src/game/EnemySystem.cpp
     src/game/EncyclopediaSystem.cpp
+    src/game/GroundLineSystem.cpp
     src/game/InventorySystem.cpp
     src/game/InventoryUiCommon.cpp
+    src/game/ItemImageRenderer.cpp
     src/game/ItemModel.cpp
     src/game/ObjectImageRenderer.cpp
     src/game/ObjectVisualPose.cpp

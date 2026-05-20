@@ -373,6 +373,34 @@ UiContext::UiContext(const Input& input)
 {
 }
 
+void UiContext::emitSound(UiSoundEvent event)
+{
+    const int index = static_cast<int>(event);
+    if (index < 0 || index >= static_cast<int>(UiSoundEvent::Count)) {
+        return;
+    }
+    ++soundEventCounts_[index];
+}
+
+int UiContext::soundEventCount(UiSoundEvent event) const
+{
+    const int index = static_cast<int>(event);
+    if (index < 0 || index >= static_cast<int>(UiSoundEvent::Count)) {
+        return 0;
+    }
+    return soundEventCounts_[index];
+}
+
+bool UiContext::hasSoundEvents() const
+{
+    for (int count : soundEventCounts_) {
+        if (count > 0) {
+            return true;
+        }
+    }
+    return false;
+}
+
 void beginUiFrame(float dt)
 {
     const float duration = std::max(0.001f, ui::WindowAnimationSeconds);
@@ -614,12 +642,16 @@ bool uiCancelRequested(UiCancelControlState& state, const Input& input, UiContex
 
     if (input.backReleased() && state.backArmed) {
         state.backArmed = false;
+        ui.emitSound(UiSoundEvent::Cancel);
         return true;
     }
 
     if (input.mouseLeftReleased()) {
         const bool requested = state.pointerArmed && uiCancelButtonRect(panel).contains(ui.mouse());
         state.pointerArmed = false;
+        if (requested) {
+            ui.emitSound(UiSoundEvent::Cancel);
+        }
         return requested;
     }
 
@@ -1143,6 +1175,7 @@ bool updateUiResultDialog(UiResultDialogState& state, UiContext& ui, const Input
         return false;
     }
     if (ui.pressed(uiResultDialogOkButtonRect(panel)) || input.confirmPressed() || input.useItemPressed()) {
+        ui.emitSound(UiSoundEvent::Confirm);
         state.open = false;
         state.title.clear();
         state.lines.clear();
@@ -1227,10 +1260,12 @@ UiQuantityDialogResult updateUiQuantityDialog(UiQuantityDialogState& state, UiCo
         adjust(1);
     }
     if (ui.pressed(uiQuantityConfirmButtonRect(panel)) || input.confirmPressed() || input.useItemPressed()) {
+        ui.emitSound(UiSoundEvent::Confirm);
         closeUiQuantityDialog(state);
         return UiQuantityDialogResult::Confirmed;
     }
     if (ui.pressed(uiCancelButtonRect(panel)) || input.backPressed()) {
+        ui.emitSound(UiSoundEvent::Cancel);
         closeUiQuantityDialog(state);
         return UiQuantityDialogResult::Cancelled;
     }
@@ -1316,11 +1351,13 @@ void openUiCommandMenu(
     state.textScale = effectiveScale;
     state.hoveredIndex = 0;
     state.animation = 0.0f;
+    state.openSoundPending = true;
 }
 
 void closeUiCommandMenu(UiCommandMenuState& state)
 {
     state.open = false;
+    state.openSoundPending = false;
     state.closing = state.visible;
     if (!state.visible) {
         state.hoveredIndex = -1;
@@ -1338,6 +1375,7 @@ int updateUiCommandMenu(UiCommandMenuState& state, UiContext& ui, const Input& i
             state.visible = false;
             state.closing = false;
             state.hoveredIndex = -1;
+            state.openSoundPending = false;
         }
         return -1;
     }
@@ -1352,8 +1390,13 @@ int updateUiCommandMenu(UiCommandMenuState& state, UiContext& ui, const Input& i
         closeUiCommandMenu(state);
         return -1;
     }
+    if (state.openSoundPending) {
+        ui.emitSound(UiSoundEvent::MenuOpen);
+        state.openSoundPending = false;
+    }
 
     if (input.pausePressed() || input.pressed(InputAction::OffsetRingCenter)) {
+        ui.emitSound(UiSoundEvent::Cancel);
         closeUiCommandMenu(state);
         return -1;
     }
@@ -1385,6 +1428,7 @@ int updateUiCommandMenu(UiCommandMenuState& state, UiContext& ui, const Input& i
             return -1;
         }
         const int selected = state.hoveredIndex;
+        ui.emitSound(UiSoundEvent::Confirm);
         closeUiCommandMenu(state);
         return selected;
     }
@@ -1396,6 +1440,7 @@ int updateUiCommandMenu(UiCommandMenuState& state, UiContext& ui, const Input& i
     const bool insidePanel = state.panel.contains(ui.mouse());
     if (!insidePanel) {
         ui.consumePointer();
+        ui.emitSound(UiSoundEvent::Cancel);
         closeUiCommandMenu(state);
         return -1;
     }
@@ -1408,6 +1453,7 @@ int updateUiCommandMenu(UiCommandMenuState& state, UiContext& ui, const Input& i
         return -1;
     }
     const int selected = state.hoveredIndex;
+    ui.emitSound(UiSoundEvent::Confirm);
     closeUiCommandMenu(state);
     return selected;
 }
@@ -1451,6 +1497,225 @@ void drawUiCommandMenu(Renderer& renderer, const UiCommandMenuState& state, cons
     renderer.popScreenTransform();
 }
 
+namespace {
+
+UiRect scrollAreaTrackRect(const UiScrollAreaLayout& layout, const UiScrollAreaStyle& style)
+{
+    return {{
+        layout.viewport.pos.x + layout.viewport.size.x - style.scrollbarPaddingX - style.scrollbarWidth,
+        layout.viewport.pos.y + style.scrollbarPaddingY,
+    }, {
+        style.scrollbarWidth,
+        std::max(1.0f, layout.viewport.size.y - style.scrollbarPaddingY * 2.0f),
+    }};
+}
+
+UiRect scrollAreaThumbRect(const UiScrollAreaLayout& layout, const UiScrollAreaStyle& style)
+{
+    const UiRect track = scrollAreaTrackRect(layout, style);
+    if (!layout.scrollable || layout.contentHeight <= 0.0f) {
+        return track;
+    }
+
+    const float visibleRatio = clamp(layout.viewport.size.y / std::max(layout.viewport.size.y, layout.contentHeight), 0.0f, 1.0f);
+    const float thumbHeight = std::clamp(
+        track.size.y * visibleRatio,
+        std::min(track.size.y, style.scrollbarMinThumbHeight),
+        track.size.y);
+    const float scrollRatio = layout.maxScroll > 0.0f ? layout.scrollOffset / layout.maxScroll : 0.0f;
+    return {{
+        track.pos.x,
+        track.pos.y + (track.size.y - thumbHeight) * scrollRatio,
+    }, {track.size.x, thumbHeight}};
+}
+
+void scrollAreaSetThumbY(
+    const UiScrollAreaLayout& layout,
+    const UiScrollAreaStyle& style,
+    float thumbY,
+    float& scrollOffset)
+{
+    const UiRect track = scrollAreaTrackRect(layout, style);
+    const UiRect thumb = scrollAreaThumbRect(layout, style);
+    const float movable = std::max(0.0f, track.size.y - thumb.size.y);
+    if (movable <= 0.0f || layout.maxScroll <= 0.0f) {
+        scrollOffset = 0.0f;
+        return;
+    }
+
+    const float ratio = clamp((thumbY - track.pos.y) / movable, 0.0f, 1.0f);
+    scrollOffset = ratio * layout.maxScroll;
+}
+
+}
+
+UiScrollAreaLayout makeUiScrollAreaLayout(UiRect viewport, float contentHeight, float scrollOffset, const UiScrollAreaStyle& style)
+{
+    UiScrollAreaLayout layout;
+    layout.viewport = viewport;
+    layout.contentHeight = std::max(0.0f, contentHeight);
+    layout.maxScroll = std::max(0.0f, layout.contentHeight - std::max(0.0f, viewport.size.y));
+    layout.scrollable = layout.maxScroll > 0.0f;
+    layout.scrollOffset = clamp(scrollOffset, 0.0f, layout.maxScroll);
+    layout.scrollbarReserve = layout.scrollable
+        ? std::max(0.0f, style.scrollbarWidth + style.scrollbarGap + style.scrollbarPaddingX)
+        : 0.0f;
+    layout.content = viewport;
+    layout.content.size.x = std::max(0.0f, layout.content.size.x - layout.scrollbarReserve);
+    return layout;
+}
+
+UiScrollAreaLayout updateUiScrollArea(
+    UiContext& ui,
+    const Input& input,
+    UiRect viewport,
+    float contentHeight,
+    float& scrollOffset,
+    const UiScrollAreaStyle& style,
+    UiScrollAreaState* state)
+{
+    UiScrollAreaLayout layout = makeUiScrollAreaLayout(viewport, contentHeight, scrollOffset, style);
+    if (state != nullptr && state->draggingScrollbar) {
+        if (input.mouseLeftHeld() && layout.scrollable) {
+            scrollAreaSetThumbY(layout, style, ui.mouse().y - state->scrollbarDragOffsetY, scrollOffset);
+            layout = makeUiScrollAreaLayout(viewport, contentHeight, scrollOffset, style);
+            ui.consumePointer();
+            return layout;
+        }
+        state->draggingScrollbar = false;
+    }
+
+    if (state != nullptr && layout.scrollable && input.mouseLeftPressed() && !ui.pointerConsumed()) {
+        const UiRect track = scrollAreaTrackRect(layout, style);
+        if (track.contains(ui.mouse())) {
+            const UiRect thumb = scrollAreaThumbRect(layout, style);
+            state->draggingScrollbar = true;
+            state->scrollbarDragOffsetY = thumb.contains(ui.mouse())
+                ? ui.mouse().y - thumb.pos.y
+                : thumb.size.y * 0.5f;
+            scrollAreaSetThumbY(layout, style, ui.mouse().y - state->scrollbarDragOffsetY, scrollOffset);
+            layout = makeUiScrollAreaLayout(viewport, contentHeight, scrollOffset, style);
+            ui.consumePointer();
+            return layout;
+        }
+    }
+
+    const int wheel = input.mouseWheelDelta();
+    if (wheel != 0 && layout.scrollable && viewport.contains(ui.mouse())) {
+        scrollOffset = clamp(
+            layout.scrollOffset + static_cast<float>(wheel) * std::max(1.0f, style.wheelStep),
+            0.0f,
+            layout.maxScroll);
+        layout = makeUiScrollAreaLayout(viewport, contentHeight, scrollOffset, style);
+    } else {
+        scrollOffset = layout.scrollOffset;
+    }
+    return layout;
+}
+
+bool uiScrollAreaRectVisible(const UiScrollAreaLayout& layout, UiRect rect)
+{
+    return rect.pos.y + rect.size.y >= layout.viewport.pos.y &&
+        rect.pos.y <= layout.viewport.pos.y + layout.viewport.size.y &&
+        rect.pos.x + rect.size.x >= layout.viewport.pos.x &&
+        rect.pos.x <= layout.viewport.pos.x + layout.content.size.x;
+}
+
+void keepUiScrollAreaRectVisible(UiRect viewport, UiRect rect, float contentHeight, float& scrollOffset, const UiScrollAreaStyle& style)
+{
+    const UiScrollAreaLayout layout = makeUiScrollAreaLayout(viewport, contentHeight, scrollOffset, style);
+    const float top = viewport.pos.y;
+    const float bottom = viewport.pos.y + viewport.size.y;
+    if (rect.pos.y < top) {
+        scrollOffset -= top - rect.pos.y;
+    } else if (rect.pos.y + rect.size.y > bottom) {
+        scrollOffset += rect.pos.y + rect.size.y - bottom;
+    }
+    scrollOffset = clamp(scrollOffset, 0.0f, layout.maxScroll);
+}
+
+void drawUiScrollAreaFrame(Renderer& renderer, const UiScrollAreaLayout& layout, const UiScrollAreaStyle& style)
+{
+    renderer.drawRect(layout.viewport.pos, layout.viewport.size, style.outline);
+    drawUiScrollAreaScrollbar(renderer, layout, style);
+}
+
+void drawUiScrollAreaScrollbar(Renderer& renderer, const UiScrollAreaLayout& layout, const UiScrollAreaStyle& style)
+{
+    if (!layout.scrollable || layout.contentHeight <= 0.0f || layout.viewport.size.y <= 0.0f) {
+        return;
+    }
+
+    const UiRect track = scrollAreaTrackRect(layout, style);
+    const UiRect thumb = scrollAreaThumbRect(layout, style);
+    renderer.fillRect(track.pos, track.size, style.scrollbarTrack);
+    renderer.fillRect(thumb.pos, thumb.size, style.scrollbarThumb);
+}
+
+float uiScrollableListContentHeight(int itemCount, const UiScrollableListStyle& style)
+{
+    if (itemCount <= 0) {
+        return style.leadingPadding + style.trailingPadding;
+    }
+    return style.leadingPadding +
+        static_cast<float>(itemCount) * style.rowHeight +
+        static_cast<float>(itemCount - 1) * style.rowGap +
+        style.trailingPadding;
+}
+
+UiScrollAreaLayout makeUiScrollableListLayout(UiRect viewport, int itemCount, float scrollOffset, const UiScrollableListStyle& style)
+{
+    return makeUiScrollAreaLayout(viewport, uiScrollableListContentHeight(itemCount, style), scrollOffset, style.scroll);
+}
+
+UiScrollAreaLayout updateUiScrollableList(
+    UiContext& ui,
+    const Input& input,
+    UiRect viewport,
+    int itemCount,
+    float& scrollOffset,
+    const UiScrollableListStyle& style,
+    UiScrollAreaState* state)
+{
+    return updateUiScrollArea(
+        ui,
+        input,
+        viewport,
+        uiScrollableListContentHeight(itemCount, style),
+        scrollOffset,
+        style.scroll,
+        state);
+}
+
+UiRect uiScrollableListItemRect(const UiScrollAreaLayout& layout, int index, const UiScrollableListStyle& style)
+{
+    return {
+        {
+            layout.content.pos.x + style.rowInsetX,
+            layout.content.pos.y + style.leadingPadding + static_cast<float>(std::max(0, index)) * (style.rowHeight + style.rowGap) - layout.scrollOffset,
+        },
+        {
+            std::max(0.0f, layout.content.size.x - style.rowInsetX * 2.0f),
+            style.rowHeight,
+        },
+    };
+}
+
+void keepUiScrollableListItemVisible(UiRect viewport, int selectedIndex, int itemCount, float& scrollOffset, const UiScrollableListStyle& style)
+{
+    if (selectedIndex < 0 || selectedIndex >= itemCount) {
+        scrollOffset = makeUiScrollableListLayout(viewport, itemCount, scrollOffset, style).scrollOffset;
+        return;
+    }
+    const UiScrollAreaLayout layout = makeUiScrollableListLayout(viewport, itemCount, scrollOffset, style);
+    keepUiScrollAreaRectVisible(
+        viewport,
+        uiScrollableListItemRect(layout, selectedIndex, style),
+        uiScrollableListContentHeight(itemCount, style),
+        scrollOffset,
+        style.scroll);
+}
+
 UiRect uiDropdownListRect(UiRect buttonRect, int itemCount, const UiDropdownStyle& style)
 {
     const int visibleCount = dropdownVisibleCount(itemCount, style);
@@ -1492,6 +1757,9 @@ int updateUiDropdown(
         if (state.open) {
             state.highlightedIndex = count > 0 ? std::clamp(selectedIndex, 0, count - 1) : -1;
             keepDropdownHighlightVisible(state, count, style);
+            ui.emitSound(UiSoundEvent::MenuOpen);
+        } else {
+            ui.emitSound(UiSoundEvent::Cancel);
         }
         return -1;
     }
@@ -1513,7 +1781,7 @@ int updateUiDropdown(
         }
         moveDropdownHighlight(state, move, count, style);
 
-        const int wheel = input.shortcutCursorDelta();
+        const int wheel = input.mouseWheelDelta();
         if (wheel != 0 && listRect.contains(ui.mouse())) {
             scrollDropdown(state, wheel, count, style);
         }
@@ -1534,6 +1802,7 @@ int updateUiDropdown(
                 if (items != nullptr && items[itemIndex].enabled) {
                     selected = itemIndex;
                     state.open = false;
+                    ui.emitSound(UiSoundEvent::Confirm);
                 }
                 return selected;
             }
@@ -1544,6 +1813,7 @@ int updateUiDropdown(
             if (items != nullptr && index >= 0 && index < count && items[index].enabled) {
                 selected = index;
                 state.open = false;
+                ui.emitSound(UiSoundEvent::Confirm);
                 return selected;
             }
         }
@@ -1551,12 +1821,14 @@ int updateUiDropdown(
 
     if (input.backPressed()) {
         state.open = false;
+        ui.emitSound(UiSoundEvent::Cancel);
         return -1;
     }
 
     if (input.mouseLeftPressed() && !ui.pointerConsumed() && !buttonRect.contains(ui.mouse()) && !listRect.contains(ui.mouse())) {
         ui.consumePointer();
         state.open = false;
+        ui.emitSound(UiSoundEvent::Cancel);
         return -1;
     }
 
@@ -1684,6 +1956,9 @@ int updateUiTabs(
                 return -1;
             }
             state.focusedIndex = i;
+            if (i != selectedIndex) {
+                ui.emitSound(UiSoundEvent::TabSwitch);
+            }
             return i;
         }
     }
@@ -1697,6 +1972,7 @@ int updateUiTabs(
 
     if (input.commit && state.focusedIndex >= 0 && state.focusedIndex < itemCount &&
         state.focusedIndex != selectedIndex && tabItemEnabled(items, state.focusedIndex)) {
+        ui.emitSound(UiSoundEvent::TabSwitch);
         return state.focusedIndex;
     }
 

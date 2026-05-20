@@ -29,6 +29,12 @@ class EncyclopediaSystem;
 enum class EnemyEventType {
     Hit,
     AttackHit,
+    Spawn,
+    Alert,
+    Attack,
+    Shoot,
+    Heal,
+    Explode,
     Death,
     BossDeath,
     RewardDrop,
@@ -43,6 +49,7 @@ struct EnemyEvent {
     std::string enemyName;
     std::string effectId;
     int damageAmount = -1;
+    bool critical = false;
     int moneyDrop = 0;
     std::string objectDropId;
     std::string objectDropProfile;
@@ -53,13 +60,23 @@ enum class CaptureResultType {
     NoTarget,
     Success,
     Failed,
+    OutOfRange,
     InventoryFull,
+    BossLocked,
+    BossAlreadyOwned,
 };
 
 struct CaptureResult {
     CaptureResultType type = CaptureResultType::NoTarget;
     std::string enemyName;
     float chance = 0.0f;
+    Vec2 position{};
+};
+
+struct CaptureTargetPreview {
+    int enemyRuntimeId = 0;
+    CaptureResultType blockedReason = CaptureResultType::NoTarget;
+    bool challengeable = false;
     Vec2 position{};
 };
 
@@ -78,9 +95,19 @@ struct EnemyMagicHitSpec {
     double statusValue = 1.0;
     double statusDuration = 0.0;
     double statusChance = 100.0;
+    std::string consumeStateForBonus;
+    int consumeStateBonusDamage = 0;
+    std::string consumeStateBonusDamageType;
+    std::string consumeStateBonusEffectId;
+    int* outConsumedStateCount = nullptr;
     Vec2 knockbackDirection{};
     float knockbackStrength = 0.0f;
     int maxHits = 0;
+};
+
+struct EnemyMinimapMarker {
+    Vec2 position{};
+    bool boss = false;
 };
 
 class EnemySystem {
@@ -114,20 +141,33 @@ public:
         MagicSystem& magic,
         std::vector<EffectDiscoveryEvent>* discoveryEvents = nullptr,
         const EncyclopediaSystem* encyclopedia = nullptr);
-    void render(Renderer& renderer, const TileMap& map, Vec2 playerLight, const std::vector<LightSource>& extraLights);
+    void render(Renderer& renderer, const TileMap& map, Vec2 playerLight, const std::vector<LightSource>& extraLights, int highlightedEnemyId = 0);
     void renderShadows(Renderer& renderer, const TileMap& map, Vec2 playerLight, const std::vector<LightSource>& extraLights) const;
     void appendRenderEntries(
         std::vector<DepthRenderEntry>& entries,
         Renderer& renderer,
         const TileMap& map,
         Vec2 playerLight,
-        const std::vector<LightSource>& extraLights) const;
+        const std::vector<LightSource>& extraLights,
+        int highlightedEnemyId = 0) const;
     void emitStatusParticles(EffectSystem& effects) const;
     int activeCount() const { return enemies_.activeCount(); }
     bool bossActive() const;
+    void appendMinimapMarkers(std::vector<EnemyMinimapMarker>& markers) const;
     const std::vector<EnemyEvent>& events() const { return events_; }
     std::string debugEnemySummary() const;
-    CaptureResult tryCapture(Player& player, SpellRingSystem& spellRing, InventorySystem& inventory);
+    CaptureTargetPreview previewCaptureAt(
+        Vec2 targetWorld,
+        const Player& player,
+        bool allowBossCapture = true,
+        std::string_view bossCaptureObjectId = {}) const;
+    CaptureResult tryCaptureAt(
+        Vec2 targetWorld,
+        Player& player,
+        SpellRingSystem& spellRing,
+        InventorySystem& inventory,
+        bool allowBossCapture = true,
+        std::string_view bossCaptureObjectId = {});
     bool hitByPlayerProjectile(
         Projectile& projectile,
         Player& player,
@@ -136,11 +176,37 @@ public:
         const EffectDispatcher& effectDispatcher,
         std::vector<EffectDiscoveryEvent>* discoveryEvents = nullptr,
         const EncyclopediaSystem* encyclopedia = nullptr);
+    int applyObjectBreakShardDamage(
+        Vec2 position,
+        float radius,
+        int damage,
+        std::string_view damageType,
+        std::string_view effectId,
+        SpellRingSystem& spellRing);
+    int applyColdAirAura(
+        Vec2 position,
+        float radius,
+        float strength,
+        float dt,
+        std::string_view source,
+        int* outFrozenCount = nullptr);
+    int applyHotAir(
+        Vec2 position,
+        float radius,
+        float strength,
+        float dt,
+        std::string_view source,
+        SpellRingSystem& spellRing,
+        int dryWetBonusDamage = 0,
+        int* outHotCount = nullptr,
+        int* outDriedWetCount = nullptr);
     int applyMagicArea(const EnemyMagicHitSpec& spec, SpellRingSystem& spellRing);
     bool applyMagicNearest(Vec2 origin, float range, EnemyMagicHitSpec spec, SpellRingSystem& spellRing, Vec2* outTargetPosition = nullptr);
     void applyCapturedExplosion(Vec2 position, SpellRingSystem& spellRing, int damage);
     void addMudZone(Vec2 position, float radius, float duration, float speedMultiplier, float damagePerSecond, std::string damageType);
     int pullMetalEnemies(Vec2 center, TileMap& map, float dt, float radius = 160.0f);
+    int pullLightEnemies(Vec2 center, TileMap& map, float dt, float radius, float strength = 1.0f);
+    int pushLightEnemies(Vec2 center, TileMap& map, float dt, float radius, float strength = 1.0f);
     int consumePendingXp();
     void clearTemporaryState();
 
@@ -155,6 +221,8 @@ private:
     };
 
     void queueEnemyObjectDrops(Enemy& enemy);
+    Enemy* findCaptureTarget(Vec2 targetWorld);
+    const Enemy* findCaptureTarget(Vec2 targetWorld) const;
 
     void setAwareness(Enemy& enemy, EnemyAwarenessState nextState, bool showIcon);
     void forceDetectInSight(Enemy& enemy, Vec2 playerPosition, bool showIcon);

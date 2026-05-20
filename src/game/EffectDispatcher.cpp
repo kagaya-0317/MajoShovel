@@ -2,7 +2,9 @@
 
 #include "engine/Log.hpp"
 #include "game/Enemy.hpp"
+#include "game/EnemySystem.hpp"
 #include "game/EntityStatus.hpp"
+#include "game/GroundLineSystem.hpp"
 #include "game/OrbitModifiers.hpp"
 #include "game/Player.hpp"
 #include "game/SpellRingSystem.hpp"
@@ -10,6 +12,7 @@
 #include "game/EffectSystem.hpp"
 #include "game/MagicSystem.hpp"
 #include "game/TileMap.hpp"
+#include "game/WorldDropSystem.hpp"
 
 #include <sstream>
 #include <string>
@@ -17,6 +20,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <optional>
 #include <random>
 
 namespace majo {
@@ -153,6 +157,52 @@ float areaRadiusFromValue(double value)
     return static_cast<float>(std::max(0.0, value) * 48.0);
 }
 
+std::string groundLineSourceKey(const EffectInvocation& invocation)
+{
+    if (invocation.context == nullptr || invocation.context->orbitItem == nullptr) {
+        return {};
+    }
+    const SpellRingItem& item = *invocation.context->orbitItem;
+    if (!item.instanceId.empty()) {
+        return "item:" + item.instanceId;
+    }
+    if (!item.objectId.empty()) {
+        return "object:" + item.objectId + ":ring:" + std::to_string(item.ringIndex);
+    }
+    return "ring:" + std::to_string(item.ringIndex);
+}
+
+int magicCircleDamage(double value, const MagicCircleCandidate& circle)
+{
+    const double multiplier = value > 0.0 ? value : 1.0;
+    const double baseDamage = 8.0 + static_cast<double>(circle.radius) * 0.08;
+    return std::clamp(
+        static_cast<int>(std::ceil(baseDamage * multiplier * static_cast<double>(circle.power))),
+        1,
+        60);
+}
+
+Vec2 scatterEffectDropPosition(Vec2 center, std::mt19937& rng)
+{
+    std::uniform_real_distribution<float> angleDistribution(0.0f, Pi * 2.0f);
+    std::uniform_real_distribution<float> radiusDistribution(10.0f, 30.0f);
+    return center + fromAngle(angleDistribution(rng)) * radiusDistribution(rng);
+}
+
+WorldDropSpawnMotion makeEffectDropJumpMotion(Vec2 center, std::mt19937& rng)
+{
+    std::uniform_real_distribution<float> durationDistribution(0.34f, 0.48f);
+    std::uniform_real_distribution<float> heightDistribution(24.0f, 40.0f);
+    const float duration = durationDistribution(rng);
+    return {
+        .jump = true,
+        .startPosition = center,
+        .jumpDurationSeconds = duration,
+        .jumpArcHeight = heightDistribution(rng),
+        .pickupDelaySeconds = duration * 0.75f,
+    };
+}
+
 TerrainDigModifier terrainDigModifierForEffect(std::string_view effect)
 {
     return effect == "dig_hard" ? TerrainDigModifier::HardSpecialist : TerrainDigModifier::Normal;
@@ -169,8 +219,14 @@ void recordTerrainHit(const EffectInvocation& invocation, int tileX, int tileY, 
         return;
     }
 
+    int effectiveBaseDamage = baseDamage;
+    if (invocation.context->triggerType == EffectTriggerType::Hit && invocation.context->orbit != nullptr) {
+        const double powerMultiplier = std::max(0.0, invocation.context->orbit->effectivePowerMultiplier());
+        effectiveBaseDamage = std::max(1, static_cast<int>(std::round(static_cast<double>(baseDamage) * powerMultiplier)));
+    }
+
     const int damage = adjustedTerrainDigDamage(
-        baseDamage,
+        effectiveBaseDamage,
         map.terrainAttributeAtTile(tileX, tileY),
         terrainDigModifierForEffect(invocation.effect));
     if (damage <= 0) {
@@ -207,7 +263,7 @@ struct StatusDefinition {
     double defaultValue = 1.0;
 };
 
-constexpr std::array<StatusDefinition, 7> StatusDefinitions{{
+constexpr std::array<StatusDefinition, 12> StatusDefinitions{{
     {"status_poison", 8.0, 1.0},
     {"status_slow", 8.0, 0.65},
     {"status_bleed", 8.0, 1.0},
@@ -215,6 +271,11 @@ constexpr std::array<StatusDefinition, 7> StatusDefinitions{{
     {"status_paralyze", 1.5, 1.0},
     {"status_sleep", 4.0, 1.0},
     {"status_stun", 0.6, 1.0},
+    {"status_confuse", 3.0, 1.0},
+    {"status_blind", 4.0, 0.5},
+    {"status_wet", 4.0, 1.0},
+    {"status_hot", 4.0, 1.0},
+    {"status_frozen", 2.5, 1.0},
 }};
 
 const StatusDefinition* findStatusDefinition(std::string_view effect)
@@ -311,6 +372,8 @@ void applyChanceStateInvocation(const EffectInvocation& invocation)
         statusEffect = "status_sleep";
     } else if (invocation.effect == "status_stun_chance") {
         statusEffect = "status_stun";
+    } else if (invocation.effect == "status_confuse_chance") {
+        statusEffect = "status_confuse";
     } else {
         return;
     }
@@ -390,6 +453,20 @@ void applyOrbitModifierInvocation(const EffectInvocation& invocation)
     recordEffectDiscovery(invocation);
 }
 
+void applyItemParameterInvocation(const EffectInvocation& invocation)
+{
+    if (invocation.context->triggerType != EffectTriggerType::Orbit ||
+        invocation.target != "item" ||
+        invocation.context->orbitItem == nullptr) {
+        return;
+    }
+
+    if (invocation.effect == "dry_wet_bonus_damage") {
+        const int bonusDamage = std::max(0, static_cast<int>(std::ceil(std::max(0.0, invocation.value))));
+        invocation.context->orbitItem->dryWetBonusDamage += bonusDamage;
+    }
+}
+
 void applyDigInvocation(const EffectInvocation& invocation)
 {
     if (!isTerrainTarget(invocation.target) || invocation.context->tileMap == nullptr) {
@@ -442,6 +519,83 @@ void applyAreaInvocation(const EffectInvocation& invocation)
             std::max(invocation.context->orbitItem->treasureDetectionRadius, radius);
         return;
     }
+    if (invocation.effect == "cold_air_aura") {
+        invocation.context->orbitItem->coldAirRadius =
+            std::max(invocation.context->orbitItem->coldAirRadius, std::max(radius, invocation.context->orbitItem->hitRadius + 24.0f));
+        invocation.context->orbitItem->coldAirStrength += static_cast<float>(std::max(0.0, invocation.value));
+        return;
+    }
+    if (invocation.effect == "vacuum_pull_light") {
+        invocation.context->orbitItem->vacuumPullRadius =
+            std::max(invocation.context->orbitItem->vacuumPullRadius, std::max(radius, invocation.context->orbitItem->hitRadius + 36.0f));
+        invocation.context->orbitItem->vacuumPullStrength += static_cast<float>(std::max(1.0, invocation.value));
+        return;
+    }
+    if (invocation.effect == "hot_air") {
+        invocation.context->orbitItem->hotAirRadius =
+            std::max(invocation.context->orbitItem->hotAirRadius, std::max(radius, invocation.context->orbitItem->hitRadius + 30.0f));
+        invocation.context->orbitItem->hotAirStrength += static_cast<float>(std::max(1.0, invocation.value));
+        return;
+    }
+    if (invocation.effect == "wind_push_light") {
+        invocation.context->orbitItem->windPushRadius =
+            std::max(invocation.context->orbitItem->windPushRadius, std::max(radius, invocation.context->orbitItem->hitRadius + 36.0f));
+        invocation.context->orbitItem->windPushStrength += static_cast<float>(std::max(1.0, invocation.value));
+        return;
+    }
+}
+
+void applyGroundInvocation(const EffectInvocation& invocation)
+{
+    if (invocation.target != "ground" ||
+        invocation.context == nullptr ||
+        invocation.context->orbitItem == nullptr ||
+        invocation.context->groundLines == nullptr) {
+        return;
+    }
+
+    const std::string sourceKey = groundLineSourceKey(invocation);
+    if (sourceKey.empty()) {
+        return;
+    }
+
+    const Vec2 position = invocation.context->orbitItem->worldPosition;
+    if (invocation.effect == "draw_white_line") {
+        const float strength = static_cast<float>(std::max(0.25, invocation.value));
+        const float width = std::clamp(2.0f + strength * 1.7f, 2.0f, 8.0f);
+        const float lifetime = invocation.duration > 0.0
+            ? static_cast<float>(invocation.duration)
+            : 0.0f;
+        if (invocation.context->groundLines->drawWhiteLine(sourceKey, position, width, strength, lifetime)) {
+            recordEffectDiscovery(invocation, "地面に白い線を書く");
+        }
+        return;
+    }
+
+    if (invocation.effect != "complete_magic_circle" ||
+        invocation.context->enemies == nullptr ||
+        invocation.context->orbit == nullptr) {
+        return;
+    }
+
+    const std::optional<MagicCircleCandidate> circle =
+        invocation.context->groundLines->findCompletedCircleNear(position, 64.0f, sourceKey);
+    if (!circle.has_value()) {
+        return;
+    }
+
+    EnemyMagicHitSpec spec;
+    spec.position = circle->center;
+    spec.radius = std::clamp(circle->radius, 28.0f, 180.0f);
+    spec.damage = magicCircleDamage(invocation.value, *circle);
+    spec.damageType = "magic";
+    spec.effectId = "complete_magic_circle";
+    const int hitCount = invocation.context->enemies->applyMagicArea(spec, *invocation.context->orbit);
+    invocation.context->groundLines->consumeSegments(circle->segmentIds);
+    if (invocation.context->effects != nullptr) {
+        invocation.context->effects->spawnAreaPulse(circle->center, spec.radius, {238, 246, 255, 196});
+    }
+    recordEffectDiscovery(invocation, hitCount > 0 ? "白線で囲んだ魔法陣を発動する" : "白線の魔法陣を完成させる");
 }
 
 void applyKnockbackInvocation(const EffectInvocation& invocation)
@@ -464,6 +618,43 @@ void applyKnockbackInvocation(const EffectInvocation& invocation)
     enemy->knockbackVelocity = normalize(direction) * strength;
     enemy->knockbackTimer = 0.16f + static_cast<float>(std::min(0.18, std::max(0.0, invocation.value) * 0.03));
     recordEffectDiscovery(invocation, "敵をノックバックさせる");
+}
+
+void applyCoinDropChanceInvocation(const EffectInvocation& invocation)
+{
+    if (invocation.target != "enemy" && invocation.target != "target") {
+        return;
+    }
+
+    const EffectContext& context = *invocation.context;
+    Enemy* enemy = context.hitTarget != nullptr ? context.hitTarget : context.targetEntity;
+    if (enemy == nullptr || context.worldDrops == nullptr) {
+        return;
+    }
+
+    const bool firstDiscoveryGuarantee = context.discoveryEvents != nullptr &&
+        context.sourceObject != nullptr &&
+        !isEffectDiscovered(context, invocation.effect);
+    if (!firstDiscoveryGuarantee) {
+        const double chance = std::clamp(invocation.value, 0.0, 100.0);
+        static std::mt19937 rng{std::random_device{}()};
+        std::uniform_real_distribution<double> dist(0.0, 100.0);
+        if (dist(rng) > chance) {
+            return;
+        }
+    }
+
+    static std::mt19937 amountRng{std::random_device{}()};
+    std::uniform_int_distribution<int> amountDist(1, 3);
+    if (context.worldDrops->spawnMoneyDrop(
+            amountDist(amountRng),
+            scatterEffectDropPosition(enemy->position, amountRng),
+            context.dropSpawnedAtSeconds,
+            makeEffectDropJumpMotion(enemy->position, amountRng))) {
+        recordEffectDiscovery(
+            invocation,
+            invocation.effect == "hit_coin_spill" ? "敵から小銭をこぼさせる" : "敵から少額のお金を落とす");
+    }
 }
 
 void applyCastMagicInvocation(const EffectInvocation& invocation)
@@ -537,23 +728,35 @@ void EffectDispatcher::registerFoundationHandlers(const ObjectCatalog& catalog)
         }
     }
 
-    for (std::string_view effect : {"light", "detect_hidden", "detect_treasure", "detect"}) {
+    for (std::string_view effect : {"light", "detect_hidden", "detect_treasure", "detect", "cold_air_aura", "vacuum_pull_light", "hot_air", "wind_push_light"}) {
         if (catalog.effectCodes.find(std::string(effect)) != catalog.effectCodes.end()) {
             registerHandler(std::string(effect), applyAreaInvocation);
         }
     }
 
-    for (std::string_view effect : {"orbit_speed", "orbit_power", "damage_speed"}) {
+    for (std::string_view effect : {"draw_white_line", "complete_magic_circle"}) {
+        if (catalog.effectCodes.find(std::string(effect)) != catalog.effectCodes.end()) {
+            registerHandler(std::string(effect), applyGroundInvocation);
+        }
+    }
+
+    for (std::string_view effect : {"orbit_speed", "orbit_power", "orbit_gravity", "orbit_antigravity", "orbit_anchor", "orbit_shift", "damage_speed"}) {
         if (catalog.effectCodes.find(std::string(effect)) != catalog.effectCodes.end()) {
             registerHandler(std::string(effect), applyOrbitModifierInvocation);
         }
     }
 
-    for (std::string_view effect : {"status_poison", "status_slow", "status_giant", "status_paralyze", "status_sleep", "status_bleed", "status_stun"}) {
+    for (std::string_view effect : {"slash_power", "item_orbit_offset", "dry_wet_bonus_damage"}) {
+        if (catalog.effectCodes.find(std::string(effect)) != catalog.effectCodes.end()) {
+            registerHandler(std::string(effect), applyItemParameterInvocation);
+        }
+    }
+
+    for (std::string_view effect : {"status_poison", "status_slow", "status_giant", "status_paralyze", "status_sleep", "status_bleed", "status_stun", "status_confuse", "status_blind", "status_wet", "status_hot", "status_frozen"}) {
         registerHandler(std::string(effect), applyStateInvocation);
     }
 
-    for (std::string_view effect : {"status_poison_chance", "status_slow_chance", "status_paralyze_chance", "status_bleed_chance", "status_sleep_chance", "status_stun_chance"}) {
+    for (std::string_view effect : {"status_poison_chance", "status_slow_chance", "status_paralyze_chance", "status_bleed_chance", "status_sleep_chance", "status_stun_chance", "status_confuse_chance"}) {
         registerHandler(std::string(effect), applyChanceStateInvocation);
     }
 
@@ -563,6 +766,12 @@ void EffectDispatcher::registerFoundationHandlers(const ObjectCatalog& catalog)
 
     if (catalog.effectCodes.find("knockback") != catalog.effectCodes.end()) {
         registerHandler("knockback", applyKnockbackInvocation);
+    }
+
+    for (std::string_view effect : {"coin_drop_chance", "hit_coin_spill"}) {
+        if (catalog.effectCodes.find(std::string(effect)) != catalog.effectCodes.end()) {
+            registerHandler(std::string(effect), applyCoinDropChanceInvocation);
+        }
     }
 
     for (std::string_view effect : {"cast_fire", "cast_ice", "cast_thunder", "cast_wind", "cast_earth"}) {
@@ -583,6 +792,18 @@ std::size_t EffectDispatcher::handlerCount() const
 void EffectDispatcher::dispatch(const std::vector<EffectSpec>& specs, const EffectContext& context) const
 {
     for (const EffectSpec& spec : specs) {
+        for (std::size_t effectIndex = 0; effectIndex < spec.effects.size(); ++effectIndex) {
+            dispatchOne(spec, effectIndex, context);
+        }
+    }
+}
+
+void EffectDispatcher::dispatchTargetEffects(const std::vector<EffectSpec>& specs, std::string_view target, const EffectContext& context) const
+{
+    for (const EffectSpec& spec : specs) {
+        if (spec.target != target) {
+            continue;
+        }
         for (std::size_t effectIndex = 0; effectIndex < spec.effects.size(); ++effectIndex) {
             dispatchOne(spec, effectIndex, context);
         }

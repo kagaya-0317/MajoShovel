@@ -1,0 +1,7 @@
+﻿id	image	text	duration	effect	note
+end_1	assets/ending/end_1.png	外殻が静かにほどけ、|地底の空に小さな守護星が姿を見せました。	5.5	none	守護星救出
+end_2	assets/ending/end_2.png	地上では、モニカが大きな魔法陣を開きます。|強い魔法は星に触れないよう、|光の道だけをそっと作ります。	6.5	none	モニカの光の道
+end_3	assets/ending/end_3.png	ルネは守護星をリングの中心に入れました。|スコップ、松明、盾、魔導書、拾った宝。|旅の道具が、星を守るかごになります。	7.0	flash	スペルリングのかご
+end_4	assets/ending/end_4.png	光の道を、星がゆっくり上っていきます。|チコリは一度だけ強く光って、|守護星の中へ帰っていきました。	7.0	none	チコリの別れ
+end_5	assets/ending/end_5.png	夜空に守護星が戻ります。|村はまた、やわらかな星明かりに照らされました。	6.0	shake_dark	守護星帰還
+end_6	assets/ending/end_6.png	けれど、ルネの帽子の奥で、|小さな光がひとつ、ちかりと灯りました。||ちこり。	7.0	title_fade	チコリ残留

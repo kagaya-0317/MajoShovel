@@ -173,10 +173,16 @@ void loadStoryEventFile(
         if (command == "event") {
             event.id = rest.empty() ? event.id : rest;
             event.dialogue.id = event.id;
+        } else if (command == "title") {
+            event.title = rest;
         } else if (command == "trigger") {
             event.trigger = rest;
         } else if (command == "once") {
             event.onceFlag = rest;
+            event.repeatable = false;
+        } else if (command == "repeat") {
+            event.onceFlag.clear();
+            event.repeatable = true;
         } else if (command == "narration") {
             block.kind = TextBlockKind::Narration;
         } else if (command == "say") {
@@ -198,7 +204,7 @@ void loadStoryEventFile(
     if (event.dialogue.id.empty()) {
         event.dialogue.id = event.id;
     }
-    if (event.onceFlag.empty() && !event.id.empty()) {
+    if (!event.repeatable && event.onceFlag.empty() && !event.id.empty()) {
         event.onceFlag = "story_" + event.id;
     }
     if (event.dialogue.steps.empty()) {

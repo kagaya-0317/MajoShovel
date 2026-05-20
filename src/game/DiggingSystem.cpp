@@ -128,7 +128,11 @@ void DiggingSystem::update(
             }
         }
 
-        if (hitTiles_.size() != hitCountBefore && discoveryEvents != nullptr && !item.objectId.empty()) {
+        const bool terrainHit = hitTiles_.size() != hitCountBefore;
+        if (terrainHit) {
+            item.actionFlashTimer = SpellRingItemActionFlashSeconds;
+        }
+        if (terrainHit && discoveryEvents != nullptr && !item.objectId.empty()) {
             const auto objectIt = objectCatalog.objectsById.find(item.objectId);
             if (objectIt != objectCatalog.objectsById.end()) {
                 std::string effectKey = "dig";

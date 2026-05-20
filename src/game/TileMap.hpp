@@ -48,6 +48,11 @@ struct DamagedTile {
     Color color{105, 68, 37, 255};
 };
 
+struct TerrainTileEdit {
+    DungeonTile tile{};
+    TileType type = TileType::Empty;
+};
+
 class TileMap {
 public:
     void updateAround(Vec2 worldCenter, float dt, const RuntimeBalance& config, const DungeonLayout& dungeonLayout);
@@ -67,6 +72,8 @@ public:
     Color tileColorAtTile(int tx, int ty) const;
     Color tileColorAtWorld(Vec2 world) const;
     void setTileOverride(DungeonTile tile, TileType type);
+    void setTerrainEdit(DungeonTile tile, TileType type);
+    std::vector<TerrainTileEdit> terrainEditsForSave() const;
     int activeChunkCount() const { return activeChunkCount_; }
     std::size_t generatedChunkCount() const { return chunks_.size(); }
 
@@ -74,6 +81,7 @@ private:
     Chunk& getOrCreateChunk(int cx, int cy, const RuntimeBalance& config);
     void initializeChunk(Chunk& chunk, const RuntimeBalance& config);
     static long long key(int cx, int cy);
+    static DungeonTile tileFromKey(long long key);
     static int floorDiv(int a, int b);
     static int floorMod(int a, int b);
     Tile* tileAtWorld(int tx, int ty);
@@ -91,6 +99,7 @@ private:
 
     std::unordered_map<long long, Chunk> chunks_;
     std::unordered_map<long long, TileType> tileOverrides_;
+    std::unordered_map<long long, TileType> terrainEdits_;
     std::unordered_map<long long, int> damagedTileMaxHp_;
     int centerChunkX_ = 0;
     int centerChunkY_ = 0;

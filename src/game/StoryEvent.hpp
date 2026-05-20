@@ -10,8 +10,10 @@ namespace majo {
 
 struct StoryEvent {
     std::string id;
+    std::string title;
     std::string trigger;
     std::string onceFlag;
+    bool repeatable = false;
     DialogueSequence dialogue;
 };
 

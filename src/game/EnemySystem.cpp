@@ -17,6 +17,7 @@
 #include <cstdint>
 #include <cstdlib>
 #include <initializer_list>
+#include <limits>
 #include <queue>
 #include <random>
 #include <sstream>
@@ -39,8 +40,9 @@ constexpr float BossMinSpawnDistance = 96.0f;
 constexpr std::string_view DefaultEnemyId = "default_enemy";
 constexpr float KeepDistanceMin = 130.0f;
 constexpr float KeepDistanceMax = 210.0f;
-constexpr float CaptureRange = 58.0f;
-constexpr float CaptureForwardOffset = 42.0f;
+constexpr float CaptureReach = 100.0f;
+constexpr float CaptureTargetPadding = 8.0f;
+constexpr float CaptureTargetMinRadius = 14.0f;
 constexpr std::string_view DefaultEnemyName = "敵";
 constexpr float CapturedRewardChanceEnemy = 0.10f;
 constexpr float CapturedStealChanceEnemy = 0.12f;
@@ -54,6 +56,13 @@ constexpr float CapturedExplosionRadius = 44.0f;
 constexpr float CapturedMagnetEnemyRadius = 160.0f;
 constexpr float CapturedMagnetEnemyPullSpeed = 58.0f;
 constexpr int CapturedMagnetEnemyLimit = 4;
+constexpr float VacuumLightEnemyPullSpeed = 44.0f;
+constexpr int VacuumLightEnemyLimit = 4;
+constexpr float VacuumLightEnemyFallbackRadius = 10.0f;
+constexpr int VacuumLightEnemyFallbackMaxHp = 3;
+constexpr float WindLightEnemyPushSpeed = 58.0f;
+constexpr int WindLightEnemyLimit = 5;
+constexpr double HotAirStatusDurationSeconds = 1.15;
 constexpr float DefaultVisionDistance = 120.0f;
 constexpr float DefaultVisionAngle = 100.0f;
 constexpr float DefaultLoseSightSeconds = 1.5f;
@@ -87,9 +96,19 @@ constexpr float EnemyHpBarMinWidth = 24.0f;
 constexpr float EnemyHpBarMaxWidth = 42.0f;
 constexpr float StunWakeHopSeconds = 0.18f;
 constexpr float StunWakeHopPixels = 8.0f;
+constexpr double DefaultCriticalDamageMultiplier = 2.0;
+constexpr double MaxCriticalDamageMultiplier = 5.0;
+constexpr float ConfusedRetargetMinSeconds = 0.25f;
+constexpr float ConfusedRetargetMaxSeconds = 0.65f;
+constexpr double ConfusedSpeedMultiplier = 0.75;
 constexpr float MudZoneTickSeconds = 0.20f;
 constexpr float MudZoneMaxDurationSeconds = 30.0f;
 constexpr float MagnetDisturbMaxRadius = 320.0f;
+constexpr float ColdExposureFreezeThreshold = 1.0f;
+constexpr float ColdExposureRatePerSecond = 0.55f;
+constexpr float ColdExposureDecayPerSecond = 0.45f;
+constexpr double FrozenDefaultDurationSeconds = 2.5;
+constexpr float BlindProjectileMaxSpreadDegrees = 70.0f;
 constexpr int SwarmSpawnCountMax = 6;
 constexpr int FlowOrthogonalCost = 10;
 constexpr int FlowDiagonalCost = 14;
@@ -122,6 +141,20 @@ struct FlowNodeGreater {
     {
         return left.distance > right.distance;
     }
+};
+
+struct CriticalEffectSource {
+    const ObjectDefinition* object = nullptr;
+    std::string effectKey;
+    Vec2 position{};
+};
+
+struct CriticalDamageSpec {
+    double chancePercent = 0.0;
+    double damageMultiplier = DefaultCriticalDamageMultiplier;
+    bool hasPowerOverride = false;
+    bool forced = false;
+    std::vector<CriticalEffectSource> sources;
 };
 
 bool parseIntStrict(std::string_view text, int& value)
@@ -403,6 +436,30 @@ bool hasEnemyTag(const Enemy& enemy, std::string_view tag)
     return std::any_of(enemy.enemyTags.begin(), enemy.enemyTags.end(), [tag](const std::string& value) {
         return value == tag;
     });
+}
+
+bool hasEnemyTagAny(const Enemy& enemy, std::initializer_list<std::string_view> tags)
+{
+    return std::any_of(enemy.enemyTags.begin(), enemy.enemyTags.end(), [tags](const std::string& value) {
+        return std::any_of(tags.begin(), tags.end(), [&value](std::string_view tag) {
+            return equalsIgnoreCaseAscii(value, tag);
+        });
+    });
+}
+
+bool canMoveLightEnemy(const Enemy& enemy)
+{
+    if (enemy.isBoss || hasEnemyTagAny(enemy, {"boss", "boss_only", "heavy", "large", "massive", "huge"})) {
+        return false;
+    }
+    if (hasEnemyTagAny(enemy, {"small", "light", "tiny", "lightweight"})) {
+        return true;
+    }
+    if (!enemy.enemyTags.empty()) {
+        return false;
+    }
+    return effectiveEnemyRadius(enemy) <= VacuumLightEnemyFallbackRadius ||
+        enemy.maxHp <= VacuumLightEnemyFallbackMaxHp;
 }
 
 bool pipeListContains(std::string_view text, std::string_view token)
@@ -737,6 +794,9 @@ ItemData makeCapturedItemData(const Enemy& enemy)
     }
 
     const EnemyDefinition& definition = *enemy.definition;
+    item.visual.source = ItemVisualSource::Enemy;
+    item.visual.imageNumber = definition.imageNumber;
+    item.visual.sourceId = definition.id.empty() ? item.id : definition.id;
     item.description = definition.capturedDescription;
     item.normalEffects = definition.capturedNormalEffects;
     item.orbitEffects = definition.capturedOrbitEffects;
@@ -785,6 +845,11 @@ std::string visualEffectIdFor(const std::vector<EffectSpec>& specs, std::string_
                 effect == "status_bleed" || effect == "status_bleed_chance" ||
                 effect == "status_sleep" || effect == "status_sleep_chance" ||
                 effect == "status_stun" || effect == "status_stun_chance" ||
+                effect == "status_confuse" || effect == "status_confuse_chance" ||
+                effect == "status_blind" ||
+                effect == "status_wet" ||
+                effect == "status_hot" ||
+                effect == "status_frozen" ||
                 effect == "status_giant") {
                 return effect;
             }
@@ -796,7 +861,7 @@ std::string visualEffectIdFor(const std::vector<EffectSpec>& specs, std::string_
     return {};
 }
 
-EnemyEvent makeEnemyEvent(EnemyEventType type, const Enemy& enemy, std::string effectId = {}, int damageAmount = -1)
+EnemyEvent makeEnemyEvent(EnemyEventType type, const Enemy& enemy, std::string effectId = {}, int damageAmount = -1, bool critical = false)
 {
     return EnemyEvent{
         .type = type,
@@ -805,6 +870,7 @@ EnemyEvent makeEnemyEvent(EnemyEventType type, const Enemy& enemy, std::string e
         .enemyName = enemy.enemyName,
         .effectId = std::move(effectId),
         .damageAmount = damageAmount,
+        .critical = critical,
         .moneyDrop = enemy.moneyDrop,
     };
 }
@@ -839,6 +905,163 @@ bool effectSpecsContain(const std::vector<EffectSpec>& specs, std::string_view e
         }
     }
     return false;
+}
+
+bool effectSpecsContainForTarget(
+    const std::vector<EffectSpec>& specs,
+    std::string_view target,
+    std::string_view effectId)
+{
+    for (const EffectSpec& spec : specs) {
+        if (spec.target != target) {
+            continue;
+        }
+        for (const std::string& effect : spec.effects) {
+            if (effect == effectId) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+bool criticalSpecTargetMatches(std::string_view target, std::string_view expected)
+{
+    return target == expected;
+}
+
+void applyCriticalDamageMultiplier(CriticalDamageSpec& outSpec, double value)
+{
+    if (value <= 0.0) {
+        return;
+    }
+    const double multiplier = std::clamp(value, 1.0, MaxCriticalDamageMultiplier);
+    outSpec.damageMultiplier = outSpec.hasPowerOverride
+        ? std::max(outSpec.damageMultiplier, multiplier)
+        : multiplier;
+    outSpec.hasPowerOverride = true;
+}
+
+void appendCriticalEffectsFromObject(
+    const ObjectDefinition& object,
+    std::string_view target,
+    Vec2 position,
+    CriticalDamageSpec& outSpec)
+{
+    for (const EffectSpec& spec : object.orbitEffects) {
+        if (!criticalSpecTargetMatches(spec.target, target)) {
+            continue;
+        }
+        for (std::size_t index = 0; index < spec.effects.size(); ++index) {
+            const std::string& effect = spec.effects[index];
+            if (effect != "critical_chance" && effect != "critical_power" && effect != "forced_critical_hit") {
+                continue;
+            }
+            const double value = index < spec.values.size() ? spec.values[index] : 0.0;
+            if (effect == "critical_chance") {
+                outSpec.chancePercent += std::max(0.0, value);
+            } else if (effect == "critical_power") {
+                applyCriticalDamageMultiplier(outSpec, value);
+            } else {
+                outSpec.forced = true;
+                applyCriticalDamageMultiplier(outSpec, value);
+            }
+            outSpec.sources.push_back(CriticalEffectSource{
+                .object = &object,
+                .effectKey = effect,
+                .position = position,
+            });
+        }
+    }
+}
+
+CriticalDamageSpec collectCriticalDamageSpec(
+    const SpellRingItem& hitItem,
+    const ObjectDefinition* hitObject,
+    const SpellRingSystem& spellRing,
+    const ObjectCatalog& objectCatalog)
+{
+    CriticalDamageSpec spec;
+    if (hitObject != nullptr) {
+        appendCriticalEffectsFromObject(*hitObject, "item", hitItem.worldPosition, spec);
+        appendCriticalEffectsFromObject(*hitObject, "enemy", hitItem.worldPosition, spec);
+    }
+
+    const std::vector<const SpellRingItem*> runtimeItems = spellRing.runtimeItems();
+    for (const SpellRingItem* itemPtr : runtimeItems) {
+        if (itemPtr == nullptr || itemPtr->broken() || itemPtr->objectId.empty()) {
+            continue;
+        }
+        const ObjectDefinition* object = objectCatalog.registry.findById(itemPtr->objectId);
+        if (object == nullptr) {
+            continue;
+        }
+        appendCriticalEffectsFromObject(*object, "orbit", itemPtr->worldPosition, spec);
+    }
+
+    spec.chancePercent = spec.forced ? 100.0 : std::clamp(spec.chancePercent, 0.0, 100.0);
+    if (!spec.hasPowerOverride) {
+        spec.damageMultiplier = DefaultCriticalDamageMultiplier;
+    }
+    return spec;
+}
+
+bool criticalRollSucceeds(double chancePercent, std::mt19937& rng)
+{
+    if (chancePercent <= 0.0) {
+        return false;
+    }
+    if (chancePercent >= 100.0) {
+        return true;
+    }
+    std::uniform_real_distribution<double> dist(0.0, 100.0);
+    return dist(rng) < chancePercent;
+}
+
+bool discoveryQueueContainsEffect(
+    const std::vector<EffectDiscoveryEvent>* discoveryEvents,
+    std::string_view objectId,
+    std::string_view effectKey)
+{
+    if (discoveryEvents == nullptr || objectId.empty() || effectKey.empty()) {
+        return false;
+    }
+    for (const EffectDiscoveryEvent& event : *discoveryEvents) {
+        if (event.objectId == objectId && event.effectKey == effectKey) {
+            return true;
+        }
+    }
+    return false;
+}
+
+void recordCriticalEffectDiscoveries(
+    std::vector<EffectDiscoveryEvent>* discoveryEvents,
+    const EncyclopediaSystem* encyclopedia,
+    const std::vector<CriticalEffectSource>& sources,
+    Vec2 fallbackPosition)
+{
+    if (discoveryEvents == nullptr) {
+        return;
+    }
+    for (const CriticalEffectSource& source : sources) {
+        if (source.object == nullptr || source.object->id.empty() || source.effectKey.empty()) {
+            continue;
+        }
+        if (encyclopedia != nullptr && encyclopedia->hasObjectEffect(source.object->id, source.effectKey)) {
+            continue;
+        }
+        if (discoveryQueueContainsEffect(discoveryEvents, source.object->id, source.effectKey)) {
+            continue;
+        }
+        discoveryEvents->push_back(EffectDiscoveryEvent{
+            .objectId = source.object->id,
+            .objectName = source.object->name,
+            .effectKey = source.effectKey,
+            .description = {},
+            .note = {},
+            .position = source.position.x != 0.0f || source.position.y != 0.0f ? source.position : fallbackPosition,
+        });
+    }
 }
 
 void dispatchCapturedContactEffect(
@@ -990,6 +1213,27 @@ void applyEnemyDamage(Enemy& enemy, int damage)
     enemy.status.removeState("status_sleep");
 }
 
+bool fireDamageRemovesFrozen(std::string_view damageType)
+{
+    return damageType == "fire" ||
+        damageType == "flame" ||
+        damageType == "burn" ||
+        damageType == "break_fire_burst" ||
+        damageType == "hot_air" ||
+        damageType == "status_hot" ||
+        damageType == "dry_wet_bonus_damage";
+}
+
+void applyEnemyDamageTyped(Enemy& enemy, int damage, std::string_view damageType)
+{
+    if (damage > 0 && fireDamageRemovesFrozen(damageType)) {
+        enemy.status.removeState("status_frozen");
+        enemy.coldExposure = 0.0f;
+        enemy.coldExposureTouched = false;
+    }
+    applyEnemyDamage(enemy, damage);
+}
+
 Vec2 paralyzeJitterOffset(const EntityStatus& status, float timeSeconds)
 {
     if (!status.hasState("status_paralyze")) {
@@ -1027,8 +1271,16 @@ EnemyImageDrawOptions enemyImageOptionsFor(const Enemy& enemy)
     }
     if (enemy.hitFlash <= 0.0f && enemy.status.hasState("status_poison")) {
         imageOptions.tint = {160, 255, 160, 255};
+    } else if (enemy.hitFlash <= 0.0f && enemy.status.hasState("status_hot")) {
+        imageOptions.tint = {255, 178, 132, 255};
+    } else if (enemy.hitFlash <= 0.0f && enemy.status.hasState("status_frozen")) {
+        imageOptions.tint = {170, 232, 255, 255};
     } else if (enemy.hitFlash <= 0.0f && enemy.status.hasState("status_slow")) {
         imageOptions.tint = {160, 190, 255, 255};
+    } else if (enemy.hitFlash <= 0.0f && enemy.status.hasState("status_blind")) {
+        imageOptions.tint = {205, 195, 255, 255};
+    } else if (enemy.hitFlash <= 0.0f && enemy.status.hasState("status_confuse")) {
+        imageOptions.tint = {236, 166, 255, 255};
     }
     imageOptions.outlineColor = enemy.isBoss ? Color{255, 210, 96, 255} : Color{80, 18, 28, 255};
     return imageOptions;
@@ -1106,7 +1358,7 @@ void drawEnemyHpBar(Renderer& renderer, const Enemy& enemy, Vec2 drawPosition, f
     drawUiGauge(renderer, {barPos, {barWidth, EnemyHpBarHeight}}, hpRatio, hpGaugeStyle);
 }
 
-void drawEnemyVisual(Renderer& renderer, const Enemy& enemy)
+void drawEnemyVisual(Renderer& renderer, const Enemy& enemy, bool captureHighlighted)
 {
     const Vec2 drawPosition = enemyDrawPosition(enemy);
     const auto drawAwarenessIcon = [&](float visualRadius) {
@@ -1132,17 +1384,31 @@ void drawEnemyVisual(Renderer& renderer, const Enemy& enemy)
     Color color = enemy.hitFlash > 0.0f ? Color{255, 255, 255, 255} : (enemy.isBoss ? Color{142, 46, 160, 255} : colorForEnemy(enemy));
     if (enemy.hitFlash <= 0.0f && enemy.status.hasState("status_poison")) {
         color = {92, 184, 88, 255};
+    } else if (enemy.hitFlash <= 0.0f && enemy.status.hasState("status_frozen")) {
+        color = {112, 198, 238, 255};
     } else if (enemy.hitFlash <= 0.0f && enemy.status.hasState("status_slow")) {
         color = {76, 132, 218, 255};
+    } else if (enemy.hitFlash <= 0.0f && enemy.status.hasState("status_blind")) {
+        color = {154, 136, 224, 255};
+    } else if (enemy.hitFlash <= 0.0f && enemy.status.hasState("status_confuse")) {
+        color = {178, 88, 214, 255};
     }
     const float visualRadius = enemyVisualRadius(enemy);
-    const EnemyImageDrawOptions imageOptions = enemyImageOptionsFor(enemy);
+    EnemyImageDrawOptions imageOptions = enemyImageOptionsFor(enemy);
+    if (captureHighlighted) {
+        imageOptions.selectedOutlineEnabled = true;
+        imageOptions.selectedOutlineColor = {255, 255, 255, 245};
+        imageOptions.selectedOutlinePx = 4;
+    }
     Vec2 enemyImageDrawSize{};
     const bool drewImage = drawEnemyImage(renderer, enemy, drawPosition, enemy.behaviorTimer, imageOptions, &enemyImageDrawSize);
     const float uiVisualRadius = drewImage ? std::max(visualRadius, enemyImageDrawSize.y * 0.5f) : visualRadius;
     if (!drewImage) {
         renderer.fillCircle(drawPosition, visualRadius, color);
         renderer.drawCircle(drawPosition, visualRadius + 3.0f, enemy.isBoss ? Color{255, 210, 96, 255} : Color{80, 18, 28, 255});
+        if (captureHighlighted) {
+            renderer.drawCircle(drawPosition, visualRadius + 6.0f, {255, 255, 255, 245});
+        }
     }
     drawEnemyHpBar(renderer, enemy, drawPosition, uiVisualRadius);
     if (enemy.isBoss) {
@@ -1332,6 +1598,9 @@ void EnemySystem::setAwareness(Enemy& enemy, EnemyAwarenessState nextState, bool
         ? EnemyAwarenessIcon::Exclamation
         : EnemyAwarenessIcon::Question;
     enemy.awarenessIconTimer = AwarenessIconDuration;
+    if (nextState == EnemyAwarenessState::Detected) {
+        events_.push_back(makeEnemyEvent(EnemyEventType::Alert, enemy));
+    }
 }
 
 void EnemySystem::forceDetectInSight(Enemy& enemy, Vec2 playerPosition, bool showIcon)
@@ -2084,6 +2353,19 @@ bool EnemySystem::bossActive() const
     return false;
 }
 
+void EnemySystem::appendMinimapMarkers(std::vector<EnemyMinimapMarker>& markers) const
+{
+    for (const Enemy& enemy : enemies_.items()) {
+        if (!enemy.active || enemy.spawnTimer > 0.0f) {
+            continue;
+        }
+        markers.push_back(EnemyMinimapMarker{
+            .position = enemy.position,
+            .boss = enemy.isBoss,
+        });
+    }
+}
+
 void EnemySystem::rebuildFlowField(TileMap& map, Vec2 playerPosition)
 {
     const int playerTileX = map.worldToTile(playerPosition.x);
@@ -2268,10 +2550,25 @@ void EnemySystem::moveWithCollision(Enemy& enemy, TileMap& map, Vec2 desiredVelo
     }
 }
 
-void fireEnemyProjectile(Enemy& enemy, ProjectileSystem& projectiles, Vec2 playerPosition)
+Vec2 enemyAimDirection(const Enemy& enemy, Vec2 playerPosition, std::mt19937& rng)
+{
+    const Vec2 baseDirection = normalize(playerPosition - enemy.position);
+    const double accuracy = enemy.status.attackAccuracyMultiplierFromStates();
+    if (accuracy >= 0.999) {
+        return baseDirection;
+    }
+
+    const float baseAngle = std::atan2(baseDirection.y, baseDirection.x);
+    const float maxSpread = (1.0f - static_cast<float>(std::clamp(accuracy, 0.0, 1.0))) *
+        BlindProjectileMaxSpreadDegrees * (Pi / 180.0f);
+    std::uniform_real_distribution<float> spreadDist(-maxSpread, maxSpread);
+    return fromAngle(baseAngle + spreadDist(rng));
+}
+
+bool fireEnemyProjectile(Enemy& enemy, ProjectileSystem& projectiles, Vec2 playerPosition, std::mt19937& rng)
 {
     if (enemy.projectileId.empty() || enemy.rangedBehaviorId.empty()) {
-        return;
+        return false;
     }
 
     ProjectileSpawnTuning tuning;
@@ -2280,22 +2577,23 @@ void fireEnemyProjectile(Enemy& enemy, ProjectileSystem& projectiles, Vec2 playe
     tuning.damageMultiplier = std::max(0.0, enemy.status.multiplierFor(ModifierStat::Attack));
     tuning.radiusScale = std::max(0.1f, enemy.projectileRadiusScale);
 
-    const Vec2 toPlayer = normalize(playerPosition - enemy.position);
+    const Vec2 toPlayer = enemyAimDirection(enemy, playerPosition, rng);
     const float radius = effectiveEnemyRadius(enemy);
     const Vec2 origin = enemy.position + toPlayer * (radius + 6.0f);
+    bool spawned = false;
     if (enemy.rangedBehaviorId == "radial_spike") {
         const int count = std::clamp(enemy.fireVolleyCount, 1, 24);
         for (int i = 0; i < count; ++i) {
             const float angle = (static_cast<float>(i) / static_cast<float>(count)) * Pi * 2.0f;
-            projectiles.spawn(
+            spawned = projectiles.spawn(
                 enemy.projectileId,
                 enemy.position + fromAngle(angle) * (radius + 5.0f),
                 fromAngle(angle),
                 ProjectileOwnerType::Enemy,
                 enemy.projectileEffects,
-                tuning);
+                tuning) || spawned;
         }
-        return;
+        return spawned;
     }
 
     if (enemy.rangedBehaviorId == "shoot_fire" && enemy.fireVolleyCount > 1) {
@@ -2307,12 +2605,12 @@ void fireEnemyProjectile(Enemy& enemy, ProjectileSystem& projectiles, Vec2 playe
         for (int i = 0; i < count; ++i) {
             const float angle = baseAngle + start + step * static_cast<float>(i);
             const Vec2 dir = fromAngle(angle);
-            projectiles.spawn(enemy.projectileId, enemy.position + dir * (radius + 6.0f), dir, ProjectileOwnerType::Enemy, enemy.projectileEffects, tuning);
+            spawned = projectiles.spawn(enemy.projectileId, enemy.position + dir * (radius + 6.0f), dir, ProjectileOwnerType::Enemy, enemy.projectileEffects, tuning) || spawned;
         }
-        return;
+        return spawned;
     }
 
-    projectiles.spawn(enemy.projectileId, origin, toPlayer, ProjectileOwnerType::Enemy, enemy.projectileEffects, tuning);
+    return projectiles.spawn(enemy.projectileId, origin, toPlayer, ProjectileOwnerType::Enemy, enemy.projectileEffects, tuning);
 }
 
 bool EnemySystem::resolvePlayerOverlap(Player& player, Enemy& enemy, TileMap& map, const RuntimeBalance& balance)
@@ -2460,6 +2758,14 @@ void EnemySystem::update(
         if (wasStunned && !enemy.status.hasState("status_stun")) {
             enemy.stunWakeTimer = StunWakeHopSeconds;
         }
+        if (enemy.status.hasState("status_frozen")) {
+            enemy.coldExposure = 0.0f;
+            enemy.coldExposureTouched = false;
+        } else if (enemy.coldExposureTouched) {
+            enemy.coldExposureTouched = false;
+        } else {
+            enemy.coldExposure = std::max(0.0f, enemy.coldExposure - ColdExposureDecayPerSecond * dt);
+        }
         const double poisonDps = enemy.status.poisonDamagePerSecond();
         if (poisonDps > 0.0) {
             enemy.poisonDamageAccumulator += poisonDps * static_cast<double>(dt);
@@ -2478,12 +2784,31 @@ void EnemySystem::update(
         } else {
             enemy.poisonDamageAccumulator = 0.0;
         }
+        const double hotDps = enemy.status.hotDamagePerSecond();
+        if (hotDps > 0.0) {
+            enemy.hotDamageAccumulator += hotDps * static_cast<double>(dt);
+            const int hotDamage = static_cast<int>(std::floor(enemy.hotDamageAccumulator));
+            if (hotDamage > 0) {
+                applyEnemyDamageTyped(enemy, hotDamage, "fire");
+                enemy.hotDamageAccumulator -= static_cast<double>(hotDamage);
+                revealEnemyHpBar(enemy, hotDamage);
+                enemy.hitFlash = 0.12f;
+                events_.push_back(makeEnemyEvent(EnemyEventType::Hit, enemy, "status_hot", hotDamage));
+                if (enemy.hp <= 0) {
+                    processEnemyDeath(enemy);
+                    continue;
+                }
+            }
+        } else {
+            enemy.hotDamageAccumulator = 0.0;
+        }
         const double bleedDps = enemy.status.bleedDamagePerSecond();
         if (bleedDps > 0.0) {
             const bool movementStopped =
                 enemy.status.hasState("status_sleep") ||
                 enemy.status.hasState("status_stun") ||
-                enemy.status.hasState("status_paralyze");
+                enemy.status.hasState("status_paralyze") ||
+                enemy.status.hasState("status_frozen");
             const double movementScale = !movementStopped && lengthSquared(enemy.velocity) > 1.0f ? 1.5 : 0.5;
             enemy.bleedDamageAccumulator += bleedDps * movementScale * static_cast<double>(dt);
             const int bleedDamage = static_cast<int>(std::floor(enemy.bleedDamageAccumulator));
@@ -2508,6 +2833,7 @@ void EnemySystem::update(
             if (enemy.spawnTimer <= 0.0f && enemy.swarmSpawnEnabled && !enemy.swarmSpawnExecuted) {
                 enemy.swarmSpawnExecuted = true;
                 const int count = std::clamp(enemy.swarmSpawnCount, 1, SwarmSpawnCountMax);
+                int spawnedChildren = 0;
                 for (int i = 0; i < count; ++i) {
                     Enemy* child = enemies_.acquire();
                     if (child == nullptr) {
@@ -2528,6 +2854,10 @@ void EnemySystem::update(
                     child->spawnDuration = 0.4f;
                     child->swarmSpawnEnabled = false;
                     child->swarmSpawnExecuted = true;
+                    ++spawnedChildren;
+                }
+                if (spawnedChildren > 0) {
+                    events_.push_back(makeEnemyEvent(EnemyEventType::Spawn, enemy));
                 }
             }
             continue;
@@ -2579,10 +2909,13 @@ void EnemySystem::update(
         const Vec2 directToPlayer = distanceToPlayer > 0.0001f ? toPlayer / distanceToPlayer : Vec2{};
         const float enemyRadius = effectiveEnemyRadius(enemy);
         const float playerRadius = effectivePlayerRadius(player, balance);
+        const bool confused = enemy.status.hasState("status_confuse");
         const bool actionBlocked =
             enemy.status.hasState("status_sleep") ||
             enemy.status.hasState("status_stun") ||
-            enemy.status.hasState("status_paralyze");
+            enemy.status.hasState("status_paralyze") ||
+            enemy.status.hasState("status_frozen");
+        const bool attackBlocked = actionBlocked || confused;
         const float detectedMultiplier = std::max(1.0f, balance.enemyDetectedVisionMultiplier);
         const float unawareVisionDistance = std::max(0.0f, enemy.visionDistance);
         const float unawareVisionAngle = std::max(0.0f, enemy.visionAngle);
@@ -2783,6 +3116,14 @@ void EnemySystem::update(
         if (enemy.stealItemEnabled && carriedCount() > 0 && distanceToPlayer < enemy.stealEscapeDistance) {
             direction = directToPlayer * -1.0f;
         }
+        if (confused) {
+            if (enemy.aiDecisionTimer <= 0.0f || lengthSquared(enemy.aiMoveDirection) <= 0.0001f) {
+                enemy.aiMoveDirection = randomDirection(rng_);
+                std::uniform_real_distribution<float> retarget(ConfusedRetargetMinSeconds, ConfusedRetargetMaxSeconds);
+                enemy.aiDecisionTimer = retarget(rng_);
+            }
+            direction = enemy.aiMoveDirection;
+        }
         double baseSpeed = balance.enemySpeed;
         if (enemy.definition != nullptr && enemy.definition->moveSpeed > 0.0 && std::isfinite(enemy.definition->moveSpeed)) {
             baseSpeed = enemy.definition->moveSpeed;
@@ -2800,6 +3141,9 @@ void EnemySystem::update(
         if (aiId == "support") {
             baseSpeed *= 0.85;
         }
+        if (confused) {
+            baseSpeed *= ConfusedSpeedMultiplier;
+        }
         const float enemySpeed = static_cast<float>(
             enemy.status.applyModifiers(ModifierStat::Speed, baseSpeed) *
             enemy.status.movementMultiplierFromStates() *
@@ -2811,11 +3155,11 @@ void EnemySystem::update(
         }
 
         enemy.velocity = lengthSquared(direction) > 0.0001f ? normalize(direction) * enemySpeed : Vec2{};
-        if (aiId != "stationary" && aiId != "idle" && aiId != "buried") {
+        if (!actionBlocked && aiId != "stationary" && aiId != "idle" && aiId != "buried") {
             enemy.velocity += separationFor(enemy) * balance.enemySeparationStrength;
         }
         enemy.jumpLandingBuffTimer = std::max(0.0f, enemy.jumpLandingBuffTimer - dt);
-        if (!enemy.jumpActive && hasBehavior(enemy, "jump_attack") && enemy.awareness == EnemyAwarenessState::Detected) {
+        if (!attackBlocked && !enemy.jumpActive && hasBehavior(enemy, "jump_attack") && enemy.awareness == EnemyAwarenessState::Detected) {
             enemy.jumpAttackTimer = std::max(0.0f, enemy.jumpAttackTimer - dt);
             if (enemy.jumpAttackTimer <= 0.0f && lengthSquared(directToPlayer) > 0.0001f) {
                 beginEnemyJump(
@@ -2832,8 +3176,8 @@ void EnemySystem::update(
         if (lengthSquared(enemy.velocity) > maxSpeed * maxSpeed) {
             enemy.velocity = normalize(enemy.velocity) * maxSpeed;
         }
-        const bool ignoresWallCollision = aiId == "phase_wander" || aiId == "phase_chase";
-        const bool digsThroughWall = (aiId == "dig_chase" || aiId == "dig_wander") && hasBehavior(enemy, "dig_move");
+        const bool ignoresWallCollision = !confused && (aiId == "phase_wander" || aiId == "phase_chase");
+        const bool digsThroughWall = !confused && (aiId == "dig_chase" || aiId == "dig_wander") && hasBehavior(enemy, "dig_move");
         const Vec2 previousPosition = enemy.position;
         if (ignoresWallCollision) {
             enemy.position += enemy.velocity * dt;
@@ -2855,21 +3199,23 @@ void EnemySystem::update(
             moveWithCollision(enemy, map, enemy.velocity, dt);
         }
 
-        if ((aiId == "wander" || aiId == "patrol" || aiId == "item_seek" || aiId == "dig_wander") &&
+        if ((confused || aiId == "wander" || aiId == "patrol" || aiId == "item_seek" || aiId == "dig_wander") &&
             distanceSquared(enemy.position, previousPosition) <= 0.0004f) {
             enemy.aiDecisionTimer = 0.0f;
             enemy.aiMoveDirection = randomDirection(rng_);
         }
 
-        if (enemy.awareness == EnemyAwarenessState::Detected && lengthSquared(toPlayer) > 0.0001f && aiId != "shield_chase") {
+        if (!confused && enemy.awareness == EnemyAwarenessState::Detected && lengthSquared(toPlayer) > 0.0001f && aiId != "shield_chase") {
             enemy.facingAngle = std::atan2(toPlayer.y, toPlayer.x);
-        } else if (aiId != "stationary" && aiId != "idle" && aiId != "buried" && lengthSquared(enemy.velocity) > 0.0001f) {
+        } else if ((confused || (aiId != "stationary" && aiId != "idle" && aiId != "buried")) && lengthSquared(enemy.velocity) > 0.0001f) {
             enemy.facingAngle = std::atan2(enemy.velocity.y, enemy.velocity.x);
         }
-        if (!actionBlocked && canFireEnemyProjectile(enemy, map, distanceToPlayer, player.position)) {
+        if (!attackBlocked && canFireEnemyProjectile(enemy, map, distanceToPlayer, player.position)) {
             enemy.projectileTimer = std::max(0.0f, enemy.projectileTimer - dt);
             if (enemy.projectileTimer <= 0.0f) {
-                fireEnemyProjectile(enemy, projectiles, player.position);
+                if (fireEnemyProjectile(enemy, projectiles, player.position, rng_)) {
+                    events_.push_back(makeEnemyEvent(EnemyEventType::Shoot, enemy));
+                }
                 if (enemy.projectileBurstCount > 1 && enemy.rangedBehaviorId == "shoot_water") {
                     if (enemy.projectileBurstRemaining <= 1) {
                         enemy.projectileBurstRemaining = enemy.projectileBurstCount;
@@ -2928,6 +3274,7 @@ void EnemySystem::update(
             if (enemy.enemyHealTimer <= 0.0f) {
                 const float radiusSq = enemy.enemyHealRadius * enemy.enemyHealRadius;
                 const int healAmount = std::max(1, static_cast<int>(std::round(enemy.enemyHealAmount)));
+                bool healedAny = false;
                 for (Enemy& ally : enemies_.items()) {
                     if (!ally.active || ally.hp >= ally.maxHp) {
                         continue;
@@ -2936,12 +3283,16 @@ void EnemySystem::update(
                         continue;
                     }
                     ally.hp = std::min(ally.maxHp, ally.hp + healAmount);
+                    healedAny = true;
+                }
+                if (healedAny) {
+                    events_.push_back(makeEnemyEvent(EnemyEventType::Heal, enemy));
                 }
                 enemy.enemyHealTimer = enemy.enemyHealIntervalSeconds;
             }
         }
 
-        if (hasBehavior(enemy, "countdown_explode") && (!enemy.countdownExploded || !enemy.countdownExplodeOnce)) {
+        if (!attackBlocked && hasBehavior(enemy, "countdown_explode") && (!enemy.countdownExploded || !enemy.countdownExplodeOnce)) {
             enemy.countdownExplodeDelay = std::max(0.0f, enemy.countdownExplodeDelay - dt);
             if (enemy.countdownExplodeDelay <= 0.0f) {
                 const float radius = std::max(8.0f, enemy.countdownExplodeRadius);
@@ -2969,6 +3320,7 @@ void EnemySystem::update(
                     }
                 }
                 enemy.countdownExploded = true;
+                events_.push_back(makeEnemyEvent(EnemyEventType::Explode, enemy));
                 processEnemyDeath(enemy);
                 continue;
             }
@@ -2982,40 +3334,49 @@ void EnemySystem::update(
             distanceSquared(player.position, enemy.position) <= enemy.jumpLandingRadius * enemy.jumpLandingRadius) {
             touchedPlayer = true;
         }
-        if (!actionBlocked && touchedPlayer && enemy.contactTimer <= 0.0f) {
-            const double baseAttackPower = static_cast<double>(enemy.contactAttackPower) * (enemy.isBoss ? 2.0 : 1.0);
-            const double modifiedAttackPower = enemy.status.applyModifiers(ModifierStat::Attack, baseAttackPower);
-            int contactDamage = enemy.isBoss
-                ? std::max(1, static_cast<int>(std::ceil(std::max(0.0, modifiedAttackPower) * damageTypeMultiplier(enemy.contactDamageType))))
-                : std::max(0, static_cast<int>(std::ceil(std::max(0.0, modifiedAttackPower) * damageTypeMultiplier(enemy.contactDamageType))));
-            float contactMultiplier = std::max(0.0f, enemy.contactDamageMultiplier);
-            if (enemy.jumpLandingBuffTimer > 0.0f) {
-                contactMultiplier *= std::max(1.0f, enemy.jumpLandingDamageMultiplier);
+        if (!attackBlocked && touchedPlayer && enemy.contactTimer <= 0.0f) {
+            bool attackHit = true;
+            const double accuracy = enemy.status.attackAccuracyMultiplierFromStates();
+            if (accuracy < 0.999) {
+                std::uniform_real_distribution<double> accuracyDist(0.0, 1.0);
+                attackHit = accuracyDist(rng_) <= std::clamp(accuracy, 0.0, 1.0);
             }
-            contactDamage = std::max(0, static_cast<int>(std::ceil(static_cast<double>(contactDamage) * contactMultiplier)));
-            player.lastDamageEnemyName = enemy.enemyName.empty() ? std::string(DefaultEnemyName) : enemy.enemyName;
-            player.applyDamage(
-                applyDefenseModifier(player.status, contactDamage),
-                enemy.isBoss ? DamageSource::SlimeAttack : DamageSource::SlimeContact);
-            if (hasBehavior(enemy, "rust_touch")) {
-                player.status.applyModifier(
-                    "rust_touch",
-                    ModifierStat::Defense,
-                    clamp(enemy.rustDefenseMultiplier, 0.05f, 1.0f),
-                    0.0,
-                    std::max(0.1f, enemy.rustDurationSeconds),
-                    "enemy:rust_touch:" + enemy.enemyId,
-                    StateApplyMode::KeepLonger);
+            if (attackHit) {
+                const double baseAttackPower = static_cast<double>(enemy.contactAttackPower) * (enemy.isBoss ? 2.0 : 1.0);
+                const double modifiedAttackPower = enemy.status.applyModifiers(ModifierStat::Attack, baseAttackPower);
+                int contactDamage = enemy.isBoss
+                    ? std::max(1, static_cast<int>(std::ceil(std::max(0.0, modifiedAttackPower) * damageTypeMultiplier(enemy.contactDamageType))))
+                    : std::max(0, static_cast<int>(std::ceil(std::max(0.0, modifiedAttackPower) * damageTypeMultiplier(enemy.contactDamageType))));
+                float contactMultiplier = std::max(0.0f, enemy.contactDamageMultiplier);
+                if (enemy.jumpLandingBuffTimer > 0.0f) {
+                    contactMultiplier *= std::max(1.0f, enemy.jumpLandingDamageMultiplier);
+                }
+                contactDamage = std::max(0, static_cast<int>(std::ceil(static_cast<double>(contactDamage) * contactMultiplier)));
+                player.lastDamageEnemyName = enemy.enemyName.empty() ? std::string(DefaultEnemyName) : enemy.enemyName;
+                player.applyDamage(
+                    applyDefenseModifier(player.status, contactDamage),
+                    enemy.isBoss ? DamageSource::SlimeAttack : DamageSource::SlimeContact);
+                if (hasBehavior(enemy, "rust_touch")) {
+                    player.status.applyModifier(
+                        "rust_touch",
+                        ModifierStat::Defense,
+                        clamp(enemy.rustDefenseMultiplier, 0.05f, 1.0f),
+                        0.0,
+                        std::max(0.1f, enemy.rustDurationSeconds),
+                        "enemy:rust_touch:" + enemy.enemyId,
+                        StateApplyMode::KeepLonger);
+                }
+                if (hasBehavior(enemy, "ring_slow_bite")) {
+                    spellRing.applyEnemyOrbitSpeedDebuff(
+                        enemy.ringSlowMultiplier > 0.0f ? enemy.ringSlowMultiplier : balance.enemyRingSlowBiteMultiplier,
+                        enemy.ringSlowDurationSeconds >= 0.0f ? enemy.ringSlowDurationSeconds : balance.enemyRingSlowBiteDuration);
+                }
+                if (hasBehavior(enemy, "chest_bite") && enemy.chestBiteKnockback > 0.0f) {
+                    const Vec2 push = normalize(player.position - enemy.position) * enemy.chestBiteKnockback;
+                    tryMoveCircle(map, player.position, playerRadius, push);
+                }
             }
-            if (hasBehavior(enemy, "ring_slow_bite")) {
-                spellRing.applyEnemyOrbitSpeedDebuff(
-                    enemy.ringSlowMultiplier > 0.0f ? enemy.ringSlowMultiplier : balance.enemyRingSlowBiteMultiplier,
-                    enemy.ringSlowDurationSeconds >= 0.0f ? enemy.ringSlowDurationSeconds : balance.enemyRingSlowBiteDuration);
-            }
-            if (hasBehavior(enemy, "chest_bite") && enemy.chestBiteKnockback > 0.0f) {
-                const Vec2 push = normalize(player.position - enemy.position) * enemy.chestBiteKnockback;
-                tryMoveCircle(map, player.position, playerRadius, push);
-            }
+            events_.push_back(makeEnemyEvent(EnemyEventType::Attack, enemy));
             enemy.contactTimer = enemy.isBoss ? 1.0f : 0.8f;
         }
 
@@ -3050,6 +3411,13 @@ void EnemySystem::update(
                 continue;
             }
             item.lastEnemyHitTime = totalTime;
+            const ObjectDefinition* hitObject = nullptr;
+            if (!item.objectId.empty()) {
+                const auto objectIt = objectCatalog.objectsById.find(item.objectId);
+                if (objectIt != objectCatalog.objectsById.end()) {
+                    hitObject = &objectIt->second;
+                }
+            }
             std::string_view contactDamageType = item.damageType;
             if (item.magicAuraTimer > 0.0f && !item.magicAuraDamageType.empty()) {
                 contactDamageType = item.magicAuraDamageType;
@@ -3061,9 +3429,18 @@ void EnemySystem::update(
                     ModifierStat::Attack,
                     static_cast<double>(item.damage) *
                         damageTypeMultiplier(contactDamageType) *
+                        item.slashDamageMultiplier *
                         spellRing.effectivePowerMultiplier()));
-            const int rawDamage = modifiedDamage + (item.type == SpellRingItemType::Shovel ? speedBonus : 0);
+            const int rawDamage = modifiedDamage + speedBonus;
             int adjustedDamage = rawDamage;
+            const CriticalDamageSpec criticalSpec = collectCriticalDamageSpec(item, hitObject, spellRing, objectCatalog);
+            bool criticalHit = false;
+            if (rawDamage > 0 && criticalRollSucceeds(criticalSpec.chancePercent, rng_)) {
+                criticalHit = true;
+                adjustedDamage = static_cast<int>(
+                    std::ceil(static_cast<double>(adjustedDamage) * criticalSpec.damageMultiplier));
+                recordCriticalEffectDiscoveries(discoveryEvents, encyclopedia, criticalSpec.sources, enemy.position);
+            }
             if (isPhysicalDamageType(contactDamageType) && hasBehavior(enemy, "physical_resist")) {
                 adjustedDamage = static_cast<int>(std::ceil(static_cast<double>(adjustedDamage) * enemy.physicalDamageMultiplier));
             }
@@ -3076,8 +3453,11 @@ void EnemySystem::update(
                 adjustedDamage = static_cast<int>(std::ceil(static_cast<double>(adjustedDamage) * enemy.frontGuardDamageMultiplier));
             }
             const int damageDealt = applyDefenseModifier(enemy.status, adjustedDamage);
-            applyEnemyDamage(enemy, damageDealt);
+            applyEnemyDamageTyped(enemy, damageDealt, contactDamageType);
             revealEnemyHpBar(enemy, damageDealt);
+            if (damageDealt > 0) {
+                item.actionFlashTimer = SpellRingItemActionFlashSeconds;
+            }
             if (item.hasCapturedBehavior("heavy_guard")) {
                 enemy.knockbackVelocity = normalize(enemy.position - item.worldPosition) * 90.0f;
                 enemy.knockbackTimer = std::max(enemy.knockbackTimer, 0.10f);
@@ -3085,36 +3465,38 @@ void EnemySystem::update(
                 spellRing.consumeItemDurability(item);
             }
             std::string hitEffectId;
-            if (!item.objectId.empty()) {
-                const auto objectIt = objectCatalog.objectsById.find(item.objectId);
-                if (objectIt != objectCatalog.objectsById.end()) {
-                    hitEffectId = visualEffectIdFor(objectIt->second.orbitEffects);
-                    EffectContext context;
-                    context.sourceObject = &objectIt->second;
-                    context.owner = &player;
-                    context.targetEntity = &enemy;
-                    context.hitTarget = &enemy;
-                    context.orbit = &spellRing;
-                    context.orbitItem = &item;
-                    context.magic = &magic;
-                    context.discoveryEvents = discoveryEvents;
-                    context.encyclopedia = encyclopedia;
-                    context.position = enemy.position;
-                    context.triggerType = EffectTriggerType::Hit;
-                    context.logUnimplementedEffects = false;
-                    effectDispatcher.dispatchOrbitEffects(objectIt->second, context);
-                    dispatchCapturedContactEffect(
-                        item,
-                        objectIt->second,
-                        enemy,
-                        player,
-                        spellRing,
-                        effectDispatcher,
-                        enemy.position,
-                        discoveryEvents,
-                        encyclopedia);
-                    if (damageDealt > 0) {
-                        recordObjectEffectDiscovery(discoveryEvents, objectIt->second, "basic_attack", "", enemy.position);
+            if (hitObject != nullptr) {
+                hitEffectId = visualEffectIdFor(hitObject->orbitEffects);
+                EffectContext context;
+                context.sourceObject = hitObject;
+                context.owner = &player;
+                context.targetEntity = &enemy;
+                context.hitTarget = &enemy;
+                context.orbit = &spellRing;
+                context.orbitItem = &item;
+                context.magic = &magic;
+                context.worldDrops = &worldDrops;
+                context.discoveryEvents = discoveryEvents;
+                context.encyclopedia = encyclopedia;
+                context.position = enemy.position;
+                context.dropSpawnedAtSeconds = totalTime;
+                context.triggerType = EffectTriggerType::Hit;
+                context.logUnimplementedEffects = false;
+                effectDispatcher.dispatchOrbitEffects(*hitObject, context);
+                dispatchCapturedContactEffect(
+                    item,
+                    *hitObject,
+                    enemy,
+                    player,
+                    spellRing,
+                    effectDispatcher,
+                    enemy.position,
+                    discoveryEvents,
+                    encyclopedia);
+                if (damageDealt > 0) {
+                    recordObjectEffectDiscovery(discoveryEvents, *hitObject, "basic_attack", "", enemy.position);
+                    if (effectSpecsContainForTarget(hitObject->orbitEffects, "item", "slash_power")) {
+                        recordObjectEffectDiscovery(discoveryEvents, *hitObject, "slash_power", "", enemy.position);
                     }
                 }
             }
@@ -3136,7 +3518,7 @@ void EnemySystem::update(
                 }
             }
             enemy.hitFlash = 0.12f;
-            events_.push_back(makeEnemyEvent(EnemyEventType::AttackHit, enemy, hitEffectId, damageDealt));
+            events_.push_back(makeEnemyEvent(EnemyEventType::AttackHit, enemy, hitEffectId, damageDealt, criticalHit));
             if (enemy.hp <= 0) {
                 processEnemyDeath(enemy);
                 break;
@@ -3146,11 +3528,11 @@ void EnemySystem::update(
     spellRing.removeBrokenItems();
 }
 
-void EnemySystem::render(Renderer& renderer, const TileMap& map, Vec2 playerLight, const std::vector<LightSource>& extraLights)
+void EnemySystem::render(Renderer& renderer, const TileMap& map, Vec2 playerLight, const std::vector<LightSource>& extraLights, int highlightedEnemyId)
 {
     std::vector<DepthRenderEntry> entries;
     renderShadows(renderer, map, playerLight, extraLights);
-    appendRenderEntries(entries, renderer, map, playerLight, extraLights);
+    appendRenderEntries(entries, renderer, map, playerLight, extraLights, highlightedEnemyId);
     std::stable_sort(entries.begin(), entries.end(), [](const DepthRenderEntry& left, const DepthRenderEntry& right) {
         return left.sortY < right.sortY;
     });
@@ -3178,7 +3560,8 @@ void EnemySystem::appendRenderEntries(
     Renderer& renderer,
     const TileMap& map,
     Vec2 playerLight,
-    const std::vector<LightSource>& extraLights) const
+    const std::vector<LightSource>& extraLights,
+    int highlightedEnemyId) const
 {
     for (const Enemy& enemy : enemies_.items()) {
         if (!enemy.active) {
@@ -3189,10 +3572,11 @@ void EnemySystem::appendRenderEntries(
         if (!map.isRectLit(drawPosition, visualSize, playerLight, extraLights)) {
             continue;
         }
+        const bool captureHighlighted = highlightedEnemyId != 0 && enemy.id == highlightedEnemyId;
         entries.push_back(DepthRenderEntry{
             enemy.position.y,
-            [&renderer, &enemy]() {
-                drawEnemyVisual(renderer, enemy);
+            [&renderer, &enemy, captureHighlighted]() {
+                drawEnemyVisual(renderer, enemy, captureHighlighted);
             },
         });
     }
@@ -3210,8 +3594,23 @@ void EnemySystem::emitStatusParticles(EffectSystem& effects) const
         if (enemy.status.hasState("status_slow")) {
             effects.spawnStatusAura(enemy.position, "status_slow");
         }
+        if (enemy.status.hasState("status_frozen")) {
+            effects.spawnStatusAura(enemy.position, "status_frozen");
+        }
         if (enemy.status.hasState("status_bleed")) {
             effects.spawnStatusAura(enemy.position, "status_bleed");
+        }
+        if (enemy.status.hasState("status_blind")) {
+            effects.spawnStatusAura(enemy.position, "status_blind");
+        }
+        if (enemy.status.hasState("status_wet")) {
+            effects.spawnStatusAura(enemy.position, "status_wet");
+        }
+        if (enemy.status.hasState("status_hot")) {
+            effects.spawnStatusAura(enemy.position, "status_hot");
+        }
+        if (enemy.status.hasState("status_confuse")) {
+            effects.spawnStatusAura(enemy.position, "status_confuse");
         }
     }
 }
@@ -3238,7 +3637,7 @@ bool EnemySystem::hitByPlayerProjectile(
         }
 
         const int adjustedDamage = applyDefenseModifier(enemy.status, std::max(0, damage));
-        applyEnemyDamage(enemy, adjustedDamage);
+        applyEnemyDamageTyped(enemy, adjustedDamage, projectile.damageType);
         revealEnemyHpBar(enemy, adjustedDamage);
         enemy.hitFlash = 0.12f;
 
@@ -3299,6 +3698,164 @@ bool EnemySystem::hitByPlayerProjectile(
     return false;
 }
 
+int EnemySystem::applyObjectBreakShardDamage(
+    Vec2 position,
+    float radius,
+    int damage,
+    std::string_view damageType,
+    std::string_view effectId,
+    SpellRingSystem& spellRing)
+{
+    if (damage <= 0 || radius <= 0.0f) {
+        return 0;
+    }
+
+    EnemyMagicHitSpec spec;
+    spec.position = position;
+    spec.radius = radius;
+    spec.damage = damage;
+    spec.damageType = std::string(damageType);
+    spec.effectId = std::string(effectId);
+    return applyMagicArea(spec, spellRing);
+}
+
+int EnemySystem::applyColdAirAura(
+    Vec2 position,
+    float radius,
+    float strength,
+    float dt,
+    std::string_view source,
+    int* outFrozenCount)
+{
+    if (outFrozenCount != nullptr) {
+        *outFrozenCount = 0;
+    }
+    if (radius <= 0.0f || strength <= 0.0f || dt <= 0.0f) {
+        return 0;
+    }
+
+    int touched = 0;
+    int frozen = 0;
+    const float clampedStrength = std::max(0.0f, strength);
+    for (Enemy& enemy : enemies_.items()) {
+        if (!enemy.active || enemy.spawnTimer > 0.0f) {
+            continue;
+        }
+        const float effectiveRadius = radius + effectiveEnemyRadius(enemy);
+        if (distanceSquared(enemy.position, position) > effectiveRadius * effectiveRadius) {
+            continue;
+        }
+
+        ++touched;
+        enemy.coldExposureTouched = true;
+        if (enemy.status.hasState("status_frozen")) {
+            enemy.coldExposure = 0.0f;
+            continue;
+        }
+
+        enemy.coldExposure = std::min(
+            ColdExposureFreezeThreshold,
+            enemy.coldExposure + clampedStrength * ColdExposureRatePerSecond * dt);
+        if (enemy.coldExposure >= ColdExposureFreezeThreshold) {
+            enemy.status.applyState(
+                "status_frozen",
+                clampedStrength,
+                FrozenDefaultDurationSeconds,
+                std::string(source),
+                StateApplyMode::KeepLonger);
+            enemy.coldExposure = 0.0f;
+            enemy.hitFlash = 0.12f;
+            ++frozen;
+        }
+    }
+
+    if (outFrozenCount != nullptr) {
+        *outFrozenCount = frozen;
+    }
+    return touched;
+}
+
+int EnemySystem::applyHotAir(
+    Vec2 position,
+    float radius,
+    float strength,
+    float dt,
+    std::string_view source,
+    SpellRingSystem& spellRing,
+    int dryWetBonusDamage,
+    int* outHotCount,
+    int* outDriedWetCount)
+{
+    if (outHotCount != nullptr) {
+        *outHotCount = 0;
+    }
+    if (outDriedWetCount != nullptr) {
+        *outDriedWetCount = 0;
+    }
+    if (radius <= 0.0f || strength <= 0.0f || dt <= 0.0f) {
+        return 0;
+    }
+
+    int touched = 0;
+    int heated = 0;
+    int driedWet = 0;
+    const double hotValue = std::max(0.25, static_cast<double>(strength));
+    const int bonusBaseDamage = std::max(0, dryWetBonusDamage);
+    for (Enemy& enemy : enemies_.items()) {
+        if (!enemy.active || enemy.spawnTimer > 0.0f) {
+            continue;
+        }
+        const float effectiveRadius = radius + effectiveEnemyRadius(enemy);
+        if (distanceSquared(enemy.position, position) > effectiveRadius * effectiveRadius) {
+            continue;
+        }
+
+        ++touched;
+        if (enemy.status.removeState("status_wet")) {
+            ++driedWet;
+            if (bonusBaseDamage > 0) {
+                const int typedDamage = std::max(
+                    0,
+                    static_cast<int>(std::ceil(static_cast<double>(bonusBaseDamage) * damageTypeMultiplier("fire"))));
+                const int damageDealt = applyDefenseModifier(enemy.status, typedDamage);
+                applyEnemyDamageTyped(enemy, damageDealt, "fire");
+                revealEnemyHpBar(enemy, damageDealt);
+                enemy.hitFlash = 0.12f;
+                events_.push_back(makeEnemyEvent(
+                    EnemyEventType::AttackHit,
+                    enemy,
+                    "dry_wet_bonus_damage",
+                    damageDealt));
+                if (enemy.hp <= 0) {
+                    finishEnemyDeath(enemy, spellRing);
+                    continue;
+                }
+            }
+        }
+
+        if (!enemy.isBoss) {
+            const bool wasHot = enemy.status.hasState("status_hot");
+            enemy.status.applyState(
+                "status_hot",
+                hotValue,
+                HotAirStatusDurationSeconds,
+                std::string(source),
+                StateApplyMode::KeepLonger);
+            if (!wasHot) {
+                ++heated;
+            }
+        }
+    }
+
+    if (outHotCount != nullptr) {
+        *outHotCount = heated;
+    }
+    if (outDriedWetCount != nullptr) {
+        *outDriedWetCount = driedWet;
+    }
+    return touched;
+}
+
 void EnemySystem::finishEnemyDeath(Enemy& enemy, SpellRingSystem& spellRing)
 {
     if (!enemy.active) {
@@ -3343,10 +3900,16 @@ void EnemySystem::finishEnemyDeath(Enemy& enemy, SpellRingSystem& spellRing)
 
 int EnemySystem::applyMagicArea(const EnemyMagicHitSpec& spec, SpellRingSystem& spellRing)
 {
-    if (spec.damage <= 0 && spec.statusEffect.empty() && spec.knockbackStrength <= 0.0f) {
+    if (spec.damage <= 0 &&
+        spec.statusEffect.empty() &&
+        spec.consumeStateForBonus.empty() &&
+        spec.knockbackStrength <= 0.0f) {
         return 0;
     }
 
+    if (spec.outConsumedStateCount != nullptr) {
+        *spec.outConsumedStateCount = 0;
+    }
     int hits = 0;
     const float radius = std::max(0.0f, spec.radius);
     std::uniform_real_distribution<double> chanceDist(0.0, 100.0);
@@ -3364,7 +3927,7 @@ int EnemySystem::applyMagicArea(const EnemyMagicHitSpec& spec, SpellRingSystem& 
                 0,
                 static_cast<int>(std::ceil(static_cast<double>(spec.damage) * damageTypeMultiplier(spec.damageType))));
             const int damageDealt = applyDefenseModifier(enemy.status, typedDamage);
-            applyEnemyDamage(enemy, damageDealt);
+            applyEnemyDamageTyped(enemy, damageDealt, spec.damageType.empty() ? spec.effectId : spec.damageType);
             revealEnemyHpBar(enemy, damageDealt);
             enemy.hitFlash = 0.12f;
             events_.push_back(makeEnemyEvent(
@@ -3374,7 +3937,35 @@ int EnemySystem::applyMagicArea(const EnemyMagicHitSpec& spec, SpellRingSystem& 
                 damageDealt));
         }
 
-        if (!spec.statusEffect.empty() && !enemy.isBoss && chanceDist(rng_) <= std::clamp(spec.statusChance, 0.0, 100.0)) {
+        if (!spec.consumeStateForBonus.empty() && enemy.hp > 0 && enemy.status.removeState(spec.consumeStateForBonus)) {
+            if (spec.outConsumedStateCount != nullptr) {
+                ++(*spec.outConsumedStateCount);
+            }
+            if (spec.consumeStateBonusDamage > 0) {
+                const std::string& bonusDamageType = spec.consumeStateBonusDamageType.empty()
+                    ? spec.damageType
+                    : spec.consumeStateBonusDamageType;
+                const std::string& bonusEffectId = spec.consumeStateBonusEffectId.empty()
+                    ? bonusDamageType
+                    : spec.consumeStateBonusEffectId;
+                const int typedDamage = std::max(
+                    0,
+                    static_cast<int>(std::ceil(
+                        static_cast<double>(spec.consumeStateBonusDamage) *
+                        damageTypeMultiplier(bonusDamageType))));
+                const int damageDealt = applyDefenseModifier(enemy.status, typedDamage);
+                applyEnemyDamageTyped(enemy, damageDealt, bonusDamageType);
+                revealEnemyHpBar(enemy, damageDealt);
+                enemy.hitFlash = 0.12f;
+                events_.push_back(makeEnemyEvent(
+                    EnemyEventType::AttackHit,
+                    enemy,
+                    bonusEffectId,
+                    damageDealt));
+            }
+        }
+
+        if (!spec.statusEffect.empty() && enemy.hp > 0 && !enemy.isBoss && chanceDist(rng_) <= std::clamp(spec.statusChance, 0.0, 100.0)) {
             enemy.status.applyState(
                 spec.statusEffect,
                 spec.statusValue,
@@ -3446,7 +4037,7 @@ void EnemySystem::applyCapturedExplosion(Vec2 position, SpellRingSystem& spellRi
         }
 
         const int damageDealt = applyDefenseModifier(enemy.status, std::max(0, damage));
-        applyEnemyDamage(enemy, damageDealt);
+        applyEnemyDamageTyped(enemy, damageDealt, "fire");
         revealEnemyHpBar(enemy, damageDealt);
         enemy.hitFlash = 0.18f;
         enemy.knockbackVelocity = normalize(enemy.position - position) * 110.0f;
@@ -3538,6 +4129,72 @@ int EnemySystem::pullMetalEnemies(Vec2 center, TileMap& map, float dt, float rad
     return pulled;
 }
 
+int EnemySystem::pullLightEnemies(Vec2 center, TileMap& map, float dt, float radius, float strength)
+{
+    if (dt <= 0.0f || radius <= 0.0f || strength <= 0.0f) {
+        return 0;
+    }
+
+    int pulled = 0;
+    const float effectiveRadius = std::max(8.0f, radius);
+    const float radiusSq = effectiveRadius * effectiveRadius;
+    const float pullSpeed = VacuumLightEnemyPullSpeed * std::clamp(strength, 0.1f, 3.0f);
+    for (Enemy& enemy : enemies_.items()) {
+        if (!enemy.active || enemy.spawnTimer > 0.0f || !canMoveLightEnemy(enemy)) {
+            continue;
+        }
+        const Vec2 toCenter = center - enemy.position;
+        const float distanceSq = lengthSquared(toCenter);
+        if (distanceSq <= 1.0f || distanceSq > radiusSq) {
+            continue;
+        }
+
+        const float distance = std::sqrt(distanceSq);
+        const float falloff = 0.35f + (1.0f - clamp(distance / effectiveRadius, 0.0f, 1.0f)) * 0.65f;
+        const Vec2 delta = normalize(toCenter) * (pullSpeed * falloff * dt);
+        if (tryMoveCircle(map, enemy.position, effectiveEnemyRadius(enemy), delta)) {
+            ++pulled;
+            if (pulled >= VacuumLightEnemyLimit) {
+                break;
+            }
+        }
+    }
+    return pulled;
+}
+
+int EnemySystem::pushLightEnemies(Vec2 center, TileMap& map, float dt, float radius, float strength)
+{
+    if (dt <= 0.0f || radius <= 0.0f || strength <= 0.0f) {
+        return 0;
+    }
+
+    int pushed = 0;
+    const float effectiveRadius = std::max(8.0f, radius);
+    const float radiusSq = effectiveRadius * effectiveRadius;
+    const float pushSpeed = WindLightEnemyPushSpeed * std::clamp(strength, 0.1f, 3.0f);
+    for (Enemy& enemy : enemies_.items()) {
+        if (!enemy.active || enemy.spawnTimer > 0.0f || !canMoveLightEnemy(enemy)) {
+            continue;
+        }
+        const Vec2 away = enemy.position - center;
+        const float distanceSq = lengthSquared(away);
+        if (distanceSq <= 1.0f || distanceSq > radiusSq) {
+            continue;
+        }
+
+        const float distance = std::sqrt(distanceSq);
+        const float falloff = 0.35f + (1.0f - clamp(distance / effectiveRadius, 0.0f, 1.0f)) * 0.65f;
+        const Vec2 delta = normalize(away) * (pushSpeed * falloff * dt);
+        if (tryMoveCircle(map, enemy.position, effectiveEnemyRadius(enemy), delta)) {
+            ++pushed;
+            if (pushed >= WindLightEnemyLimit) {
+                break;
+            }
+        }
+    }
+    return pushed;
+}
+
 int EnemySystem::consumePendingXp()
 {
     const int xp = pendingXp_;
@@ -3557,6 +4214,7 @@ void EnemySystem::clearTemporaryState()
         }
         enemy.status = EntityStatus{};
         enemy.poisonDamageAccumulator = 0.0;
+        enemy.hotDamageAccumulator = 0.0;
         enemy.bleedDamageAccumulator = 0.0;
         enemy.stunWakeTimer = 0.0f;
         enemy.hitFlash = 0.0f;
@@ -3598,51 +4256,136 @@ std::string EnemySystem::debugEnemySummary() const
     return out.str();
 }
 
-CaptureResult EnemySystem::tryCapture(Player& player, SpellRingSystem& spellRing, InventorySystem& inventory)
+Enemy* EnemySystem::findCaptureTarget(Vec2 targetWorld)
 {
-    const Vec2 center = player.position + normalize(player.facing) * CaptureForwardOffset;
     Enemy* best = nullptr;
-    float bestDistanceSq = CaptureRange * CaptureRange;
+    float bestDistanceSq = std::numeric_limits<float>::max();
     for (Enemy& enemy : enemies_.items()) {
         if (!enemy.active || enemy.definition == nullptr) {
             continue;
         }
-        const float distanceSq = distanceSquared(enemy.position, center);
-        if (distanceSq <= bestDistanceSq) {
-            bestDistanceSq = distanceSq;
+        const float targetRadius = std::max(CaptureTargetMinRadius, effectiveEnemyRadius(enemy) + CaptureTargetPadding);
+        const float targetDistanceSq = distanceSquared(enemy.position, targetWorld);
+        if (targetDistanceSq <= targetRadius * targetRadius && targetDistanceSq <= bestDistanceSq) {
+            bestDistanceSq = targetDistanceSq;
             best = &enemy;
         }
     }
+    return best;
+}
+
+const Enemy* EnemySystem::findCaptureTarget(Vec2 targetWorld) const
+{
+    const Enemy* best = nullptr;
+    float bestDistanceSq = std::numeric_limits<float>::max();
+    for (const Enemy& enemy : enemies_.items()) {
+        if (!enemy.active || enemy.definition == nullptr) {
+            continue;
+        }
+        const float targetRadius = std::max(CaptureTargetMinRadius, effectiveEnemyRadius(enemy) + CaptureTargetPadding);
+        const float targetDistanceSq = distanceSquared(enemy.position, targetWorld);
+        if (targetDistanceSq <= targetRadius * targetRadius && targetDistanceSq <= bestDistanceSq) {
+            bestDistanceSq = targetDistanceSq;
+            best = &enemy;
+        }
+    }
+    return best;
+}
+
+CaptureTargetPreview EnemySystem::previewCaptureAt(
+    Vec2 targetWorld,
+    const Player& player,
+    bool allowBossCapture,
+    std::string_view bossCaptureObjectId) const
+{
+    const Enemy* target = findCaptureTarget(targetWorld);
+    if (target == nullptr) {
+        return {};
+    }
+
+    CaptureTargetPreview preview{
+        .enemyRuntimeId = target->id,
+        .blockedReason = CaptureResultType::Failed,
+        .challengeable = true,
+        .position = target->position,
+    };
+    if (distanceSquared(player.position, target->position) > CaptureReach * CaptureReach) {
+        preview.blockedReason = CaptureResultType::OutOfRange;
+        preview.challengeable = false;
+        return preview;
+    }
+    if (target->isBoss && !allowBossCapture) {
+        preview.blockedReason = bossCaptureObjectId.empty()
+            ? CaptureResultType::BossLocked
+            : CaptureResultType::BossAlreadyOwned;
+        preview.challengeable = false;
+        return preview;
+    }
+    return preview;
+}
+
+CaptureResult EnemySystem::tryCaptureAt(
+    Vec2 targetWorld,
+    Player& player,
+    SpellRingSystem& spellRing,
+    InventorySystem& inventory,
+    bool allowBossCapture,
+    std::string_view bossCaptureObjectId)
+{
+    Enemy* best = findCaptureTarget(targetWorld);
 
     if (best == nullptr) {
         return {};
     }
 
     const float chance = captureChanceFor(*best);
-    std::uniform_real_distribution<float> dist(0.0f, 1.0f);
     CaptureResult result{
         .type = CaptureResultType::Failed,
         .enemyName = best->enemyName,
         .chance = chance,
         .position = best->position,
     };
+    if (distanceSquared(player.position, best->position) > CaptureReach * CaptureReach) {
+        result.type = CaptureResultType::OutOfRange;
+        return result;
+    }
+    if (best->isBoss && !allowBossCapture) {
+        result.type = bossCaptureObjectId.empty()
+            ? CaptureResultType::BossLocked
+            : CaptureResultType::BossAlreadyOwned;
+        return result;
+    }
+
+    std::uniform_real_distribution<float> dist(0.0f, 1.0f);
     if (dist(rng_) > chance) {
         return result;
     }
 
-    if (!inventory.addRuntimeObjectItem(makeCapturedItemData(*best))) {
+    ItemData capturedItem = makeCapturedItemData(*best);
+    if (best->isBoss) {
+        if (!bossCaptureObjectId.empty()) {
+            capturedItem.id = std::string(bossCaptureObjectId);
+        }
+        capturedItem.tags.push_back("captured_boss");
+    }
+
+    if (!inventory.addRuntimeObjectItem(capturedItem)) {
         result.type = CaptureResultType::InventoryFull;
         return result;
     }
 
-    std::vector<SpellRingItem*> runtimeItems = spellRing.runtimeItemsMutable();
-    for (SpellRingItem* itemPtr : runtimeItems) {
-        if (itemPtr == nullptr) {
-            continue;
+    if (best->isBoss) {
+        finishEnemyDeath(*best, spellRing);
+    } else {
+        std::vector<SpellRingItem*> runtimeItems = spellRing.runtimeItemsMutable();
+        for (SpellRingItem* itemPtr : runtimeItems) {
+            if (itemPtr == nullptr) {
+                continue;
+            }
+            itemPtr->unlatchEnemy(best->id);
         }
-        itemPtr->unlatchEnemy(best->id);
+        best->active = false;
     }
-    best->active = false;
     result.type = CaptureResultType::Success;
     return result;
 }

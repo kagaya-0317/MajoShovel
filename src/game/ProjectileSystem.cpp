@@ -123,34 +123,55 @@ bool hasProjectileTag(const Projectile& projectile, std::string_view tag)
     });
 }
 
-bool isSmallProjectile(const Projectile& projectile)
-{
-    return projectile.radius <= 5.0f || hasProjectileTag(projectile, "small");
-}
-
 bool isHeavyProjectile(const Projectile& projectile)
 {
     return projectile.radius >= 6.0f ||
         projectile.damage >= 2 ||
-        hasProjectileTag(projectile, "stone") ||
-        hasProjectileTag(projectile, "metal");
+        hasProjectileTag(projectile, "large") ||
+        hasProjectileTag(projectile, "heavy") ||
+        projectile.projectileId == "big_stone_bullet" ||
+        projectile.projectileId == "explosion_small";
 }
 
-bool blocksProjectile(const SpellRingItem& item, const SpellRingSystem& spellRing, const Projectile& projectile)
+bool orbitEffectContains(const ObjectDefinition& object, std::string_view effectCode);
+double orbitEffectValue(const ObjectDefinition& object, std::string_view effectCode, double fallbackValue);
+
+float projectileGuardRadius(const SpellRingItem& item, double value, float baseBonus)
+{
+    const float normalizedValue = static_cast<float>(std::max(0.0, value));
+    const float valueBonus = std::max(0.0f, normalizedValue - 1.0f) * 10.0f;
+    return item.hitRadius + baseBonus + valueBonus;
+}
+
+bool projectileOverlapsItemGuard(const SpellRingItem& item, const Projectile& projectile, float guardRadius)
+{
+    return circlesOverlap(projectile.position, projectile.radius, item.worldPosition, guardRadius);
+}
+
+struct GuardBlockResult {
+    bool blocked = false;
+    std::string effectKey;
+};
+
+GuardBlockResult blocksProjectile(
+    const SpellRingItem& item,
+    const SpellRingSystem& spellRing,
+    const Projectile& projectile,
+    const ObjectDefinition* object)
 {
     if (item.broken()) {
-        return false;
+        return {};
     }
 
     if (item.hasCapturedBehavior("magic_guard") && projectile.damageType == "magic" &&
         circlesOverlap(projectile.position, projectile.radius, item.worldPosition, item.hitRadius + 12.0f)) {
-        return true;
+        return {true, "guard_projectile"};
     }
 
     if (item.hasCapturedBehavior("heavy_guard") &&
         (isPhysicalDamageType(projectile.damageType) || isHeavyProjectile(projectile)) &&
         circlesOverlap(projectile.position, projectile.radius, item.worldPosition, item.hitRadius + 10.0f)) {
-        return true;
+        return {true, isHeavyProjectile(projectile) ? "guard_large" : "guard_projectile"};
     }
 
     if (item.hasCapturedBehavior("outward_guard") &&
@@ -158,12 +179,34 @@ bool blocksProjectile(const SpellRingItem& item, const SpellRingSystem& spellRin
         const Vec2 outward = normalize(item.worldPosition - spellRing.center());
         const Vec2 incomingFrom = normalize(projectile.velocity * -1.0f);
         if (dot(outward, incomingFrom) > 0.25f) {
-            return true;
+            return {true, "guard_projectile"};
         }
     }
 
-    return isSmallProjectile(projectile) &&
-        circlesOverlap(projectile.position, projectile.radius, item.worldPosition, item.hitRadius);
+    if (object == nullptr) {
+        return {};
+    }
+
+    const bool heavy = isHeavyProjectile(projectile);
+    if (heavy && orbitEffectContains(*object, "guard_large")) {
+        const float guardRadius = projectileGuardRadius(item, orbitEffectValue(*object, "guard_large", 1.0), 8.0f);
+        if (projectileOverlapsItemGuard(item, projectile, guardRadius)) {
+            return {true, "guard_large"};
+        }
+    }
+    if (!heavy && orbitEffectContains(*object, "guard")) {
+        const float guardRadius = projectileGuardRadius(item, orbitEffectValue(*object, "guard", 1.0), 4.0f);
+        if (projectileOverlapsItemGuard(item, projectile, guardRadius)) {
+            return {true, "guard_projectile"};
+        }
+    }
+
+    return {};
+}
+
+bool projectileOverlapsItemCounter(const SpellRingItem& item, const Projectile& projectile)
+{
+    return !item.broken() && projectileOverlapsItemGuard(item, projectile, item.hitRadius + 4.0f);
 }
 
 bool orbitEffectContains(const ObjectDefinition& object, std::string_view effectCode)
@@ -250,6 +293,17 @@ bool projectileIsReflectImmune(const Projectile& projectile)
     return hasProjectileTag(projectile, "unreflectable");
 }
 
+bool isMagicReflectDamageType(std::string_view damageType)
+{
+    return damageType == "magic" ||
+        damageType == "fire" ||
+        damageType == "ice" ||
+        damageType == "thunder" ||
+        damageType == "wind" ||
+        damageType == "earth" ||
+        damageType == "water";
+}
+
 void pushDiscoveryEvent(
     std::vector<EffectDiscoveryEvent>* discoveryEvents,
     const ObjectDefinition& object,
@@ -307,10 +361,17 @@ ReflectAttemptResult tryReflectProjectile(
     ReflectRule rule{};
     if (isPhysicalDamageType(projectile.damageType)) {
         rule = {"reflect_physical", "reflect_physical_chance"};
-    } else if (projectile.damageType == "magic") {
-        rule = {"reflect_magic", "reflect_magic_chance"};
     } else if (projectile.damageType == "water") {
-        rule = {"reflect_water", "reflect_water_chance"};
+        const bool hasWaterReflect =
+            orbitEffectContains(object, "reflect_water") ||
+            orbitEffectContains(object, "reflect_water_chance");
+        if (hasWaterReflect) {
+            rule = {"reflect_water", "reflect_water_chance"};
+        } else {
+            rule = {"reflect_magic", "reflect_magic_chance"};
+        }
+    } else if (isMagicReflectDamageType(projectile.damageType)) {
+        rule = {"reflect_magic", "reflect_magic_chance"};
     } else {
         return {};
     }
@@ -440,6 +501,7 @@ void ProjectileSystem::update(
 
         projectile.position += projectile.velocity * dt;
         if (map.isCircleBlocked(projectile.position, projectile.radius)) {
+            soundEvents_.push_back(ProjectileSoundEvent::Impact);
             double mudRadius = 0.0;
             double mudSlow = 1.0;
             double mudDamagePerSecond = 0.0;
@@ -488,13 +550,18 @@ void ProjectileSystem::update(
                     continue;
                 }
                 const SpellRingItem& item = *itemPtr;
-                if (blocksProjectile(item, spellRing, projectile)) {
+                const ObjectDefinition* itemObject = nullptr;
+                if (!item.objectId.empty()) {
+                    itemObject = objectCatalog.registry.findById(item.objectId);
+                }
+                const GuardBlockResult guardBlock = blocksProjectile(item, spellRing, projectile, itemObject);
+                if (guardBlock.blocked) {
                     blockingItem = itemPtr;
                     consumedByRing = true;
-                    if (!item.objectId.empty()) {
-                        blockingObject = objectCatalog.registry.findById(item.objectId);
-                    }
-                    guardEffectKey = chooseGuardEffectKey(blockingObject, projectile);
+                    blockingObject = itemObject;
+                    guardEffectKey = guardBlock.effectKey.empty()
+                        ? chooseGuardEffectKey(blockingObject, projectile)
+                        : guardBlock.effectKey;
                     if (blockingObject != nullptr) {
                         const ReflectAttemptResult reflect = tryReflectProjectile(
                             projectile,
@@ -515,9 +582,32 @@ void ProjectileSystem::update(
                     }
                     break;
                 }
+                if (itemObject != nullptr && projectileOverlapsItemCounter(item, projectile)) {
+                    const ReflectAttemptResult reflect = tryReflectProjectile(
+                        projectile,
+                        *itemObject,
+                        encyclopedia,
+                        discoveryEvents);
+                    if (!reflect.discoveredEffectKey.empty()) {
+                        pushDiscoveryEvent(
+                            discoveryEvents,
+                            *itemObject,
+                            reflect.discoveredEffectKey,
+                            item.worldPosition,
+                            reflect.note);
+                    }
+                    if (reflect.reflected) {
+                        blockingItem = itemPtr;
+                        blockingObject = itemObject;
+                        consumedByRing = true;
+                        reflectedByRing = true;
+                        break;
+                    }
+                }
             }
             if (consumedByRing) {
                 if (reflectedByRing && blockingItem != nullptr) {
+                    soundEvents_.push_back(ProjectileSoundEvent::Reflect);
                     projectile.ownerType = ProjectileOwnerType::PlayerOrbit;
                     const Vec2 fromRing = projectile.position - blockingItem->worldPosition;
                     const Vec2 reflectDirection = lengthSquared(fromRing) > 0.0001f
@@ -527,6 +617,7 @@ void ProjectileSystem::update(
                     projectile.velocity = reflectDirection * speed;
                     continue;
                 }
+                soundEvents_.push_back(ProjectileSoundEvent::Guard);
                 if (blockingItem != nullptr && blockingObject != nullptr) {
                     pushDiscoveryEvent(
                         discoveryEvents,
@@ -726,6 +817,14 @@ void ProjectileSystem::appendRenderEntries(
 void ProjectileSystem::clear()
 {
     projectiles_ = {};
+    soundEvents_.clear();
+}
+
+std::vector<ProjectileSoundEvent> ProjectileSystem::consumeSoundEvents()
+{
+    std::vector<ProjectileSoundEvent> events = soundEvents_;
+    soundEvents_.clear();
+    return events;
 }
 
 }

@@ -1,4 +1,4 @@
-#include "game/ItemModel.hpp"
+﻿#include "game/ItemModel.hpp"
 
 #include <algorithm>
 #include <array>
@@ -15,6 +15,20 @@ ItemInstance makeItemInstanceFromDefinition(std::string instanceId, const Object
     instance.maxDurability = object.durability;
     instance.isBroken = object.durability == 0;
     return instance;
+}
+
+ItemVisualRef effectiveItemVisualRef(const ItemData& item)
+{
+    ItemVisualRef visual = item.visual;
+    if (visual.source == ItemVisualSource::Object) {
+        if (visual.imageNumber <= 0) {
+            visual.imageNumber = item.imageNumber;
+        }
+        if (visual.sourceId.empty()) {
+            visual.sourceId = item.id;
+        }
+    }
+    return visual;
 }
 
 ItemData makeMissingItemData(std::string_view objectId)

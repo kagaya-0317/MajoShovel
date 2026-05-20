@@ -34,7 +34,7 @@ struct ParticlePreset {
     ParticleVisual visual = ParticleVisual::Circle;
 };
 
-constexpr std::array<ParticlePreset, 26> ParticlePresets{{
+constexpr std::array<ParticlePreset, 29> ParticlePresets{{
     {ParticleEffectId::DigDust, 4, {142, 104, 66, 220}, {102, 78, 54, 190}, 76.0f, 26.0f, Pi * 2.0f, 5.5f, 1.4f, 0.76f, 0.08f, {0.0f, 330.0f}, 1.45f, false, false, 4.0f, 14.0f, {184, 136, 76, 140}, ParticleVisual::RockShard},
     {ParticleEffectId::DirtBreak, 18, {154, 110, 66, 235}, {214, 150, 82, 205}, 126.0f, 58.0f, Pi * 2.0f, 7.4f, 2.4f, 0.84f, 0.10f, {0.0f, 390.0f}, 1.55f, false, false, 8.0f, 34.0f, {218, 164, 88, 205}, ParticleVisual::RockShard},
     {ParticleEffectId::RockBreak, 18, {122, 126, 132, 235}, {86, 88, 96, 205}, 118.0f, 48.0f, Pi * 2.0f, 8.4f, 2.6f, 0.92f, 0.12f, {0.0f, 420.0f}, 1.45f, false, false, 8.0f, 32.0f, {170, 174, 180, 190}, ParticleVisual::RockShard},
@@ -61,6 +61,9 @@ constexpr std::array<ParticlePreset, 26> ParticlePresets{{
     {ParticleEffectId::WarpCircle, 18, {112, 208, 255, 190}, {255, 224, 112, 170}, 62.0f, 24.0f, Pi * 2.0f, 2.4f, 0.8f, 0.72f, 0.18f, {0.0f, -24.0f}, 1.5f, false, true, 18.0f, 64.0f, {126, 208, 255, 150}},
     {ParticleEffectId::BossCircle, 24, {255, 96, 120, 210}, {255, 210, 96, 190}, 74.0f, 28.0f, Pi * 2.0f, 2.7f, 0.9f, 0.82f, 0.22f, {0.0f, -18.0f}, 1.4f, false, true, 24.0f, 90.0f, {255, 176, 84, 180}},
     {ParticleEffectId::ItemBreak, 14, {226, 220, 198, 232}, {118, 128, 148, 210}, 104.0f, 42.0f, Pi * 2.0f, 4.0f, 1.2f, 0.54f, 0.10f, {0.0f, 220.0f}, 1.7f, false, true, 8.0f, 30.0f, {255, 226, 142, 185}, ParticleVisual::RockShard},
+    {ParticleEffectId::WoodBreak, 16, {164, 112, 62, 232}, {92, 58, 34, 205}, 112.0f, 48.0f, Pi * 2.0f, 7.2f, 2.1f, 0.58f, 0.10f, {0.0f, 260.0f}, 1.8f, false, true, 8.0f, 30.0f, {212, 154, 84, 170}, ParticleVisual::RockShard},
+    {ParticleEffectId::CeramicBreak, 18, {238, 232, 218, 236}, {154, 146, 132, 210}, 128.0f, 54.0f, Pi * 2.0f, 6.2f, 2.0f, 0.62f, 0.10f, {0.0f, 280.0f}, 1.65f, false, true, 9.0f, 34.0f, {248, 238, 212, 170}, ParticleVisual::RockShard},
+    {ParticleEffectId::GlassBreak, 20, {198, 238, 255, 222}, {236, 250, 255, 190}, 148.0f, 66.0f, Pi * 2.0f, 5.2f, 1.8f, 0.50f, 0.08f, {0.0f, 220.0f}, 1.95f, false, true, 10.0f, 38.0f, {170, 228, 255, 185}, ParticleVisual::RockShard},
 }};
 
 constexpr std::size_t MaxShardPoints = 6;
@@ -502,16 +505,24 @@ void EffectSystem::renderDamagePopups(Renderer& renderer)
             continue;
         }
 
-        std::snprintf(buffer, sizeof(buffer), "%d", popup.amount);
-        const int textScale = t < 0.10f ? 4 : 3;
+        if (popup.style == DamagePopupStyle::Critical) {
+            std::snprintf(buffer, sizeof(buffer), "%d!", popup.amount);
+        } else {
+            std::snprintf(buffer, sizeof(buffer), "%d", popup.amount);
+        }
+        const int textScale = popup.style == DamagePopupStyle::Critical
+            ? (t < 0.14f ? 5 : 4)
+            : (t < 0.10f ? 4 : 3);
         const Vec2 size = renderer.measureText(buffer, textScale, TextStyle::Italic);
         float hopHeight = 0.0f;
+        const float primaryHopHeight = popup.style == DamagePopupStyle::Critical ? 42.0f : 34.0f;
+        const float secondaryHopHeight = popup.style == DamagePopupStyle::Critical ? 17.0f : 13.0f;
         if (t < 0.58f) {
             const float u = t / 0.58f;
-            hopHeight = std::sin(u * Pi) * 34.0f;
+            hopHeight = std::sin(u * Pi) * primaryHopHeight;
         } else {
             const float u = (t - 0.58f) / 0.42f;
-            hopHeight = std::sin(u * Pi) * 13.0f;
+            hopHeight = std::sin(u * Pi) * secondaryHopHeight;
         }
         const Vec2 center = popup.position + popup.velocity * popup.age - Vec2{0.0f, hopHeight};
         const Vec2 pos = center - Vec2{size.x * 0.5f, size.y * 0.5f};
@@ -520,6 +531,8 @@ void EffectSystem::renderDamagePopups(Renderer& renderer)
             textColor = {255, 72, 64, alpha};
         } else if (popup.style == DamagePopupStyle::Heal) {
             textColor = {72, 238, 132, alpha};
+        } else if (popup.style == DamagePopupStyle::Critical) {
+            textColor = mixColor({255, 42, 36, alpha}, {255, 255, 255, alpha}, clamp(t / 0.26f, 0.0f, 1.0f));
         }
         const Color shadowColor{0, 0, 0, static_cast<unsigned char>(std::clamp(std::lround(190.0f * fade), 0L, 255L))};
 
@@ -579,9 +592,15 @@ void EffectSystem::spawnDamagePopup(Vec2 position, int amount, DamagePopupStyle 
         return;
     }
 
-    popup->position = position + Vec2{randomRange(-12.0f, 12.0f), randomRange(-34.0f, -26.0f)};
-    popup->velocity = {randomRange(-10.0f, 10.0f), 0.0f};
-    popup->duration = 0.92f + randomRange(-0.04f, 0.04f);
+    if (style == DamagePopupStyle::Critical) {
+        popup->position = position + Vec2{randomRange(-14.0f, 14.0f), randomRange(-42.0f, -32.0f)};
+        popup->velocity = {randomRange(-12.0f, 12.0f), 0.0f};
+        popup->duration = 1.05f + randomRange(-0.04f, 0.04f);
+    } else {
+        popup->position = position + Vec2{randomRange(-12.0f, 12.0f), randomRange(-34.0f, -26.0f)};
+        popup->velocity = {randomRange(-10.0f, 10.0f), 0.0f};
+        popup->duration = 0.92f + randomRange(-0.04f, 0.04f);
+    }
     popup->amount = amount;
     popup->style = style;
 }
@@ -735,19 +754,29 @@ void EffectSystem::spawnEnemyHit(Vec2 position, std::string_view effect)
         id = ParticleEffectId::MagicDefault;
     } else if (effect == "status_sleep" || effect == "status_sleep_chance") {
         id = ParticleEffectId::MagicDefault;
+    } else if (effect == "status_confuse" || effect == "status_confuse_chance") {
+        id = ParticleEffectId::MagicDefault;
+    } else if (effect == "status_blind") {
+        id = ParticleEffectId::MagicDefault;
+    } else if (effect == "status_wet") {
+        id = ParticleEffectId::MagicIce;
+    } else if (effect == "status_hot") {
+        id = ParticleEffectId::MagicFire;
+    } else if (effect == "status_frozen") {
+        id = ParticleEffectId::MagicIce;
     } else if (effect == "status_stun" || effect == "status_stun_chance") {
         id = ParticleEffectId::EnemyHit;
-    } else if (effect == "fire") {
+    } else if (effect == "fire" || effect == "break_fire_burst" || effect == "hot_air" || effect == "dry_wet_bonus_damage") {
         id = ParticleEffectId::MagicFire;
-    } else if (effect == "ice" || effect == "water") {
+    } else if (effect == "ice" || effect == "water" || effect == "water_spray") {
         id = ParticleEffectId::MagicIce;
     } else if (effect == "thunder" || effect == "status_paralyze" || effect == "status_paralyze_chance") {
         id = ParticleEffectId::MagicThunder;
-    } else if (effect == "wind") {
+    } else if (effect == "wind" || effect == "wind_push_light") {
         id = ParticleEffectId::MagicWind;
     } else if (effect == "earth") {
         id = ParticleEffectId::MagicEarth;
-    } else if (effect == "magic") {
+    } else if (effect == "magic" || effect == "complete_magic_circle") {
         id = ParticleEffectId::MagicDefault;
     }
     spawn(id, position);
@@ -806,7 +835,7 @@ void EffectSystem::spawnDropPickup(Vec2 position, Vec2 direction)
     spawn(ParticleEffectId::DropPickup, position, direction);
 }
 
-void EffectSystem::spawnItemBreak(Vec2 position)
+void EffectSystem::spawnItemBreak(Vec2 position, ItemBreakVisual visual, float scale)
 {
     SmokeBurstOptions options;
     options.count = 7;
@@ -818,8 +847,32 @@ void EffectSystem::spawnItemBreak(Vec2 position)
     options.colorA = {230, 226, 214, 150};
     options.colorB = {116, 122, 138, 135};
     options.layer = EffectLayer::Foreground;
+    ParticleEffectId particleId = ParticleEffectId::ItemBreak;
+
+    if (visual == ItemBreakVisual::Wood) {
+        particleId = ParticleEffectId::WoodBreak;
+        options.count = 8;
+        options.colorA = {168, 118, 68, 130};
+        options.colorB = {86, 58, 38, 115};
+    } else if (visual == ItemBreakVisual::Ceramic) {
+        particleId = ParticleEffectId::CeramicBreak;
+        options.count = 8;
+        options.colorA = {238, 232, 220, 140};
+        options.colorB = {132, 126, 118, 120};
+    } else if (visual == ItemBreakVisual::Glass) {
+        particleId = ParticleEffectId::GlassBreak;
+        options.count = 6;
+        options.size = 13.0f;
+        options.colorA = {220, 246, 255, 112};
+        options.colorB = {150, 210, 238, 94};
+    }
+
+    const float visualScale = std::clamp(scale, 0.55f, 2.0f);
+    options.size *= visualScale;
+    options.spreadRadius *= visualScale;
+    options.speed *= visualScale;
     spawnSmokeBurst(position, options);
-    spawn(ParticleEffectId::ItemBreak, position, {1.0f, 0.0f}, 1.0f, EffectLayer::Foreground);
+    spawn(particleId, position, {1.0f, 0.0f}, visualScale, EffectLayer::Foreground);
 }
 
 void EffectSystem::spawnMaterialFloat(Vec2 position, Color color)
@@ -854,6 +907,16 @@ void EffectSystem::spawnStatusAura(Vec2 position, std::string_view stateId)
         spawn(ParticleEffectId::SlowAura, position);
     } else if (stateId == "status_bleed") {
         spawn(ParticleEffectId::BleedAura, position);
+    } else if (stateId == "status_blind") {
+        spawn(ParticleEffectId::MagicDefault, position);
+    } else if (stateId == "status_wet") {
+        spawn(ParticleEffectId::MagicIce, position);
+    } else if (stateId == "status_hot") {
+        spawn(ParticleEffectId::MagicFire, position);
+    } else if (stateId == "status_frozen") {
+        spawn(ParticleEffectId::MagicIce, position);
+    } else if (stateId == "status_confuse") {
+        spawn(ParticleEffectId::MagicDefault, position);
     }
 }
 

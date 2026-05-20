@@ -1,5 +1,6 @@
-#pragma once
+﻿#pragma once
 
+#include "engine/Audio.hpp"
 #include "engine/FileWatcher.hpp"
 #include "engine/Input.hpp"
 #include "engine/Renderer.hpp"
@@ -31,6 +32,7 @@ private:
     SDL_Window* window_ = nullptr;
     SDL_Renderer* sdlRenderer_ = nullptr;
     Renderer* renderer_ = nullptr;
+    AudioEngine audio_;
     Input input_;
     Time time_;
     FileWatcher assetWatcher_;

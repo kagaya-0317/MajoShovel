@@ -10,6 +10,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <random>
 
 namespace majo {
 
@@ -20,7 +21,37 @@ constexpr std::size_t MaxMagicGroundAreas = 48;
 constexpr std::size_t MaxMagicTransientLights = 32;
 constexpr float FireAfterglowLightSeconds = 1.22f;
 constexpr float IceShatterLightSeconds = 1.05f;
+constexpr float ThunderStrongLightSeconds = 1.28f;
+constexpr float ThunderWeakLightSeconds = 1.04f;
+constexpr float EarthDebrisLightSeconds = 0.72f;
 constexpr float WindWaveFxFadeStart = 0.68f;
+
+std::mt19937& magicSystemRng()
+{
+    static std::mt19937 rng{std::random_device{}()};
+    return rng;
+}
+
+float sampleFloat(float minValue, float maxValue)
+{
+    if (maxValue < minValue) {
+        std::swap(minValue, maxValue);
+    }
+    if (std::abs(maxValue - minValue) <= 0.0001f) {
+        return minValue;
+    }
+    std::uniform_real_distribution<float> dist(minValue, maxValue);
+    return dist(magicSystemRng());
+}
+
+int sampleInt(int minValue, int maxValue)
+{
+    if (maxValue < minValue) {
+        std::swap(minValue, maxValue);
+    }
+    std::uniform_int_distribution<int> dist(minValue, maxValue);
+    return dist(magicSystemRng());
+}
 
 float magicCooldownSeconds(MagicElement element)
 {
@@ -135,8 +166,37 @@ float groundAreaLightRadius(const MagicSystem::MagicGroundArea& area)
         const float eased = shrink * shrink * (3.0f - 2.0f * shrink);
         return baseRadius * 1.18f * (1.0f - eased);
     }
-    case MagicSystem::GroundKind::EarthSpike:
-        return std::max(72.0f, area.radius * 3.0f) * fade;
+    case MagicSystem::GroundKind::ThunderStrikeLight: {
+        const float baseRadius = std::max(24.0f, area.radius);
+        if (progress < 0.16f) {
+            const float expand = progress / 0.16f;
+            const float eased = 1.0f - (1.0f - expand) * (1.0f - expand);
+            return baseRadius * lerp(0.72f, 1.0f, eased);
+        }
+        const float shrink = (progress - 0.16f) / 0.84f;
+        const float eased = shrink * shrink * (3.0f - 2.0f * shrink);
+        return baseRadius * (1.0f - eased);
+    }
+    case MagicSystem::GroundKind::EarthSpike: {
+        const float baseRadius = std::max(36.0f, area.radius * 1.5f);
+        if (progress < 0.76f) {
+            return baseRadius;
+        }
+        const float shrink = (progress - 0.76f) / 0.24f;
+        const float eased = shrink * shrink * (3.0f - 2.0f * shrink);
+        return baseRadius * (1.0f - eased);
+    }
+    case MagicSystem::GroundKind::EarthDebrisBreakLight: {
+        const float baseRadius = std::max(30.0f, area.radius * 2.2f);
+        if (progress < 0.18f) {
+            const float expand = progress / 0.18f;
+            const float eased = 1.0f - (1.0f - expand) * (1.0f - expand);
+            return baseRadius * lerp(0.64f, 1.0f, eased);
+        }
+        const float shrink = (progress - 0.18f) / 0.82f;
+        const float eased = shrink * shrink * (3.0f - 2.0f * shrink);
+        return baseRadius * (1.0f - eased);
+    }
     }
     return 64.0f * fade;
 }
@@ -208,6 +268,8 @@ void MagicSystem::cast(MagicElement element, Vec2 origin, Vec2 direction, int po
                 std::max(8.0f, sourceItem->hitRadius));
         }
     }
+
+    soundEvents_.push_back(MagicSoundEvent::Cast);
 
     switch (element) {
     case MagicElement::Fire:
@@ -283,6 +345,14 @@ void MagicSystem::clear()
     groundAreas_.clear();
     pendingThunder_.clear();
     transientLights_.clear();
+    soundEvents_.clear();
+}
+
+std::vector<MagicSoundEvent> MagicSystem::consumeSoundEvents()
+{
+    std::vector<MagicSoundEvent> events = soundEvents_;
+    soundEvents_.clear();
+    return events;
 }
 
 void MagicSystem::castFire(Vec2 origin, Vec2 direction, int power)
@@ -361,7 +431,7 @@ void MagicSystem::castEarth(Vec2 origin, Vec2 direction, int power)
     spike.kind = GroundKind::EarthSpike;
     spike.position = origin + direction * 48.0f;
     spike.radius = 24.0f + static_cast<float>(power) * 2.0f;
-    spike.lifetime = 0.55f;
+    spike.lifetime = 1.10f;
     spike.damage = std::max(1, power * 3);
     if (magicFx_ != nullptr) {
         magicFx_->playEarthSpikeRise(spike.position, spike.radius);
@@ -369,19 +439,23 @@ void MagicSystem::castEarth(Vec2 origin, Vec2 direction, int power)
     addGroundArea(spike);
 
     const float baseAngle = angleOf(direction);
-    constexpr std::array<float, 5> Spreads{-0.55f, -0.25f, 0.0f, 0.25f, 0.55f};
-    for (float spread : Spreads) {
+    const int clodCount = sampleInt(5, 7);
+    const float fan = sampleFloat(0.92f, 1.28f);
+    for (int i = 0; i < clodCount; ++i) {
+        const float t = clodCount > 1 ? static_cast<float>(i) / static_cast<float>(clodCount - 1) : 0.5f;
+        const float spread = lerp(-fan * 0.5f, fan * 0.5f, t) + sampleFloat(-0.18f, 0.18f);
         const Vec2 clodDirection = fromAngle(baseAngle + spread);
+        const float speed = sampleFloat(48.0f, 96.0f) + static_cast<float>(power) * sampleFloat(2.0f, 6.0f);
         MagicProjectile projectile;
         projectile.kind = ProjectileKind::DirtClod;
         projectile.element = MagicElement::Earth;
-        projectile.position = origin + clodDirection * 18.0f;
-        projectile.velocity = clodDirection * (120.0f + static_cast<float>(power) * 8.0f);
-        projectile.radius = 5.5f;
-        projectile.lifetime = 0.78f;
-        projectile.height = 8.0f;
-        projectile.verticalVelocity = 86.0f;
-        projectile.gravity = 240.0f;
+        projectile.position = origin + clodDirection * sampleFloat(12.0f, 24.0f);
+        projectile.velocity = clodDirection * speed;
+        projectile.radius = sampleFloat(5.2f, 12.8f);
+        projectile.lifetime = sampleFloat(0.82f, 1.36f);
+        projectile.height = sampleFloat(6.0f, 24.0f);
+        projectile.verticalVelocity = sampleFloat(46.0f, 104.0f);
+        projectile.gravity = sampleFloat(190.0f, 340.0f);
         projectile.damage = std::max(1, power + 1);
         projectile.piercesWalls = true;
         projectile.fxEmitterId = startProjectileFxEmitter(projectile);
@@ -404,11 +478,16 @@ void MagicSystem::updateProjectiles(EnemySystem& enemies, SpellRingSystem& spell
             const float progress = projectile.lifetime > 0.0f ? std::clamp(projectile.age / projectile.lifetime, 0.0f, 1.0f) : 1.0f;
             const float windDrag = lerp(0.55f, 3.2f, progress);
             projectile.velocity = projectile.velocity * std::max(0.0f, 1.0f - windDrag * dt);
+        } else if (projectile.kind == ProjectileKind::DirtClod) {
+            const float progress = projectile.lifetime > 0.0f ? std::clamp(projectile.age / projectile.lifetime, 0.0f, 1.0f) : 1.0f;
+            const float clodDrag = lerp(0.58f, 2.25f, progress);
+            projectile.velocity = projectile.velocity * std::max(0.0f, 1.0f - clodDrag * dt);
         }
         updateProjectileFx(projectile);
 
         if (!projectile.piercesWalls && map.isCircleBlocked(projectile.position, projectile.radius)) {
             if (projectile.kind == ProjectileKind::IceShard) {
+                soundEvents_.push_back(MagicSoundEvent::Impact);
                 if (magicFx_ != nullptr) {
                     magicFx_->playIceShatter(projectile.position, projectile.radius + 12.0f);
                 }
@@ -424,6 +503,13 @@ void MagicSystem::updateProjectiles(EnemySystem& enemies, SpellRingSystem& spell
                     .triggered = false,
                 });
             }
+            stopProjectileFx(projectile);
+            projectile.active = false;
+            continue;
+        }
+
+        if (projectile.kind == ProjectileKind::DirtClod && projectile.age > 0.12f && projectile.height <= 0.0f && projectile.verticalVelocity <= 0.0f) {
+            playProjectileImpactFx(projectile);
             stopProjectileFx(projectile);
             projectile.active = false;
             continue;
@@ -457,6 +543,7 @@ void MagicSystem::updateProjectiles(EnemySystem& enemies, SpellRingSystem& spell
         }
 
         if (projectile.kind == ProjectileKind::Fireball && projectile.age > 0.12f && projectile.height <= 0.0f) {
+            soundEvents_.push_back(MagicSoundEvent::Impact);
             stopProjectileFx(projectile);
             projectile.active = false;
             spawnFirePatch(projectile.position, 28.0f, std::max(1, projectile.damage / 2));
@@ -503,16 +590,17 @@ void MagicSystem::updateGroundAreas(EnemySystem& enemies, SpellRingSystem& spell
             continue;
         }
 
-        if (area.kind == GroundKind::IceShatter) {
+        if (area.kind == GroundKind::IceShatter || area.kind == GroundKind::EarthDebrisBreakLight) {
             continue;
         }
 
-        if (area.kind == GroundKind::FireAfterglow) {
+        if (area.kind == GroundKind::FireAfterglow || area.kind == GroundKind::ThunderStrikeLight) {
             continue;
         }
 
         if (area.kind == GroundKind::EarthSpike && !area.triggered) {
             area.triggered = true;
+            soundEvents_.push_back(MagicSoundEvent::Impact);
             EnemyMagicHitSpec hit;
             hit.position = area.position;
             hit.radius = area.radius;
@@ -549,14 +637,36 @@ void MagicSystem::updateThunder(EnemySystem& enemies, SpellRingSystem& spellRing
         hit.statusChance = thunder.paralyzeChance;
         Vec2 target{};
         if (enemies.applyMagicNearest(thunder.origin, thunder.range, hit, spellRing, &target)) {
+            soundEvents_.push_back(MagicSoundEvent::Impact);
             addTransientLight(thunder.origin, 108.0f, 0.18f);
             addTransientLight((thunder.origin + target) * 0.5f, 126.0f, 0.17f);
-            addTransientLight(target, 150.0f, 0.24f);
+            addGroundArea(MagicGroundArea{
+                .kind = GroundKind::ThunderStrikeLight,
+                .position = target,
+                .radius = 172.0f,
+                .age = 0.0f,
+                .lifetime = ThunderStrongLightSeconds,
+                .tickTimer = 0.0f,
+                .damage = 0,
+                .active = true,
+                .triggered = false,
+            });
             if (magicFx_ != nullptr) {
                 magicFx_->playThunderStrike(thunder.origin, target, true);
             }
         } else {
-            addTransientLight(thunder.origin, 104.0f, 0.20f);
+            soundEvents_.push_back(MagicSoundEvent::Impact);
+            addGroundArea(MagicGroundArea{
+                .kind = GroundKind::ThunderStrikeLight,
+                .position = thunder.origin,
+                .radius = 144.0f,
+                .age = 0.0f,
+                .lifetime = ThunderWeakLightSeconds,
+                .tickTimer = 0.0f,
+                .damage = 0,
+                .active = true,
+                .triggered = false,
+            });
             if (magicFx_ != nullptr) {
                 magicFx_->playThunderStrike(thunder.origin, thunder.origin, false);
             }
@@ -683,15 +793,15 @@ void MagicSystem::updateProjectileFx(MagicProjectile& projectile)
 
 void MagicSystem::playProjectileImpactFx(const MagicProjectile& projectile)
 {
-    if (magicFx_ == nullptr) {
-        return;
-    }
     const Vec2 direction = lengthSquared(projectile.velocity) > 0.0001f ? normalize(projectile.velocity) : Vec2{1.0f, 0.0f};
+    soundEvents_.push_back(MagicSoundEvent::Impact);
     switch (projectile.kind) {
     case ProjectileKind::Fireball:
         return;
     case ProjectileKind::IceShard:
-        magicFx_->playIceShatter(projectile.position, projectile.radius + 12.0f);
+        if (magicFx_ != nullptr) {
+            magicFx_->playIceShatter(projectile.position, projectile.radius + 12.0f);
+        }
         addGroundArea(MagicGroundArea{
             .kind = GroundKind::IceShatter,
             .position = projectile.position,
@@ -705,10 +815,25 @@ void MagicSystem::playProjectileImpactFx(const MagicProjectile& projectile)
         });
         return;
     case ProjectileKind::WindWave:
-        magicFx_->playWindImpact(projectile.position, direction, projectile.radius);
+        if (magicFx_ != nullptr) {
+            magicFx_->playWindImpact(projectile.position, direction, projectile.radius);
+        }
         return;
     case ProjectileKind::DirtClod:
-        magicFx_->playEarthDebrisBurst(projectile.position, projectile.radius + 6.0f);
+        if (magicFx_ != nullptr) {
+            magicFx_->playEarthDebrisBurst(projectile.position, projectile.radius + 6.0f);
+        }
+        addGroundArea(MagicGroundArea{
+            .kind = GroundKind::EarthDebrisBreakLight,
+            .position = projectile.position,
+            .radius = projectile.radius + 6.0f,
+            .age = 0.0f,
+            .lifetime = EarthDebrisLightSeconds,
+            .tickTimer = 0.0f,
+            .damage = 0,
+            .active = true,
+            .triggered = false,
+        });
         return;
     }
 }

@@ -1,5 +1,7 @@
 ﻿#include "game/GameInternal.hpp"
 
+#include "engine/Audio.hpp"
+
 namespace majo {
 
 namespace {
@@ -7,6 +9,42 @@ namespace {
 constexpr float DungeonRingIntroDuration = 1.18f;
 constexpr std::string_view DefaultShovelObjectId = "item_shovel";
 constexpr std::string_view DefaultTorchObjectId = "item_torch";
+constexpr std::string_view EndingSeenFlag = "ending_seen";
+constexpr std::string_view AudioBgmTitle = "bgm.title";
+constexpr std::string_view AudioBgmBase = "bgm.base";
+constexpr std::string_view AudioBgmDungeon = "bgm.dungeon";
+constexpr std::string_view AudioSeTransition = "se.transition";
+constexpr std::string_view AudioSeDigHit = "se.dig.hit";
+constexpr std::string_view AudioSeDigBreak = "se.dig.break";
+constexpr std::string_view AudioSeDigOreBreak = "se.dig.ore_break";
+constexpr std::string_view AudioSeAttackHit = "se.attack.hit";
+constexpr std::string_view AudioSePickup = "se.pickup";
+constexpr std::string_view AudioSePlayerDamage = "se.player.damage";
+constexpr std::string_view AudioSeRingThrow = "se.ring.throw";
+constexpr std::string_view AudioSeEnemyDefeat = "se.enemy.defeat";
+constexpr std::string_view AudioSeEnemySpawn = "se.enemy.spawn";
+constexpr std::string_view AudioSeEnemyAlert = "se.enemy.alert";
+constexpr std::string_view AudioSeEnemyAttack = "se.enemy.attack";
+constexpr std::string_view AudioSeEnemyShoot = "se.enemy.shoot";
+constexpr std::string_view AudioSeEnemyHeal = "se.enemy.heal";
+constexpr std::string_view AudioSeProjectileImpact = "se.projectile.impact";
+constexpr std::string_view AudioSeRingGuard = "se.ring.guard";
+constexpr std::string_view AudioSeRingReflect = "se.ring.reflect";
+constexpr std::string_view AudioSeMagicCast = "se.magic.cast";
+constexpr std::string_view AudioSeMagicImpact = "se.magic.impact";
+constexpr std::string_view AudioSeCaptureThrow = "se.capture.throw";
+constexpr std::string_view AudioSeCaptureSuccess = "se.capture.success";
+constexpr std::string_view AudioSeCaptureFail = "se.capture.fail";
+constexpr std::string_view AudioSeExplosion = "se.explosion";
+constexpr std::string_view AudioSeUiConfirm = "se.ui.confirm";
+constexpr std::string_view AudioSeUiCancel = "se.ui.cancel";
+constexpr std::string_view AudioSeUiMenuOpen = "se.ui.menu_open";
+constexpr std::string_view AudioSeUiTabSwitch = "se.ui.tab_switch";
+constexpr std::string_view AudioSeUiBookOpen = "se.ui.book_open";
+constexpr std::string_view AudioSeUiItemMove = "se.ui.item_move";
+constexpr std::string_view AudioSeUiItemUse = "se.ui.item_use";
+constexpr std::string_view AudioSeUiRingPlace = "se.ui.ring_place";
+constexpr std::string_view AudioSeUiUpgradeSelect = "se.ui.upgrade_select";
 
 bool lootChestKindForDropProfile(std::string_view profile, LootChestKind& outKind)
 {
@@ -68,19 +106,6 @@ std::vector<UiResultDialogLine> levelUpResultLines(UpgradeChoice choice, float b
     return lines;
 }
 
-int lootDepthRankForWorldPosition(
-    const TileMap& tileMap,
-    const DungeonLayout& dungeonLayout,
-    std::string_view stageId,
-    Vec2 position)
-{
-    const DungeonLayoutMetrics metrics = calculateDungeonLayoutMetrics(dungeonLayout, {
-        static_cast<float>(tileMap.worldToTile(position.x)),
-        static_cast<float>(tileMap.worldToTile(position.y)),
-    });
-    return lootDepthRankForProgress(stageId, metrics.pathProgress);
-}
-
 bool isRoguelikeStageDefinition(const StageDefinition& stage)
 {
     return stage.id == "stage_04_astral_mine" ||
@@ -93,6 +118,68 @@ bool isStageClearStoryFlag(const std::string& flag)
     return flag.rfind("stage_clear_", 0) == 0;
 }
 
+}
+
+void Game::setAudioEngine(AudioEngine* audio)
+{
+    audio_ = audio;
+    activeAudioBgmCue_.clear();
+}
+
+void Game::playAudioBgm(std::string_view id, float fadeSeconds, bool restart)
+{
+    if (audio_ == nullptr || id.empty()) {
+        return;
+    }
+
+    const std::string cueId(id);
+    if (!restart && activeAudioBgmCue_ == cueId) {
+        return;
+    }
+    audio_->playBgm(cueId, fadeSeconds, restart);
+    activeAudioBgmCue_ = cueId;
+}
+
+void Game::playAudioSe(std::string_view id, float volumeScale)
+{
+    if (audio_ == nullptr || id.empty()) {
+        return;
+    }
+    audio_->playSe(id, volumeScale);
+}
+
+void Game::playUiSoundEvents(const UiContext& ui)
+{
+    if (!ui.hasSoundEvents()) {
+        return;
+    }
+    if (ui.soundEventCount(UiSoundEvent::MenuOpen) > 0) {
+        playAudioSe(AudioSeUiMenuOpen);
+    }
+    if (ui.soundEventCount(UiSoundEvent::TabSwitch) > 0) {
+        playAudioSe(AudioSeUiTabSwitch);
+    }
+    if (ui.soundEventCount(UiSoundEvent::BookOpen) > 0) {
+        playAudioSe(AudioSeUiBookOpen);
+    }
+    if (ui.soundEventCount(UiSoundEvent::ItemMove) > 0) {
+        playAudioSe(AudioSeUiItemMove);
+    }
+    if (ui.soundEventCount(UiSoundEvent::ItemUse) > 0) {
+        playAudioSe(AudioSeUiItemUse);
+    }
+    if (ui.soundEventCount(UiSoundEvent::RingPlace) > 0) {
+        playAudioSe(AudioSeUiRingPlace);
+    }
+    if (ui.soundEventCount(UiSoundEvent::UpgradeSelect) > 0) {
+        playAudioSe(AudioSeUiUpgradeSelect);
+    }
+    if (ui.soundEventCount(UiSoundEvent::Confirm) > 0) {
+        playAudioSe(AudioSeUiConfirm);
+    }
+    if (ui.soundEventCount(UiSoundEvent::Cancel) > 0) {
+        playAudioSe(AudioSeUiCancel);
+    }
 }
 
 void Game::initialize(int width, int height)
@@ -164,13 +251,14 @@ void Game::resetWorldPlayerState()
 {
     resetInPlace(player_);
     player_.position = {0.0f, 0.0f};
-    player_.xpToNext = balance_.xpBase + player_.level * balance_.xpPerLevel;
+    player_.xpToNext = playerXpToNextForLevel(player_.level, balance_);
 }
 
 void Game::resetWorldMapAndRingState()
 {
     resetInPlace(tileMap_);
     resetInPlace(spellRing_);
+    resetDungeonMinimap();
 }
 
 void Game::resetWorldActionSystems()
@@ -187,6 +275,7 @@ void Game::resetWorldActionSystems()
 void Game::resetWorldEffectState()
 {
     resetInPlace(effects_);
+    resetInPlace(groundLines_);
     ringTrailEffectTimer_ = 0.0f;
     ambientParticleTimer_ = 0.0f;
 }
@@ -295,6 +384,14 @@ void Game::resetWorldUiState()
     debugItemPickerScrollOffset_ = 0.0f;
     debugItemPickerStatus_.clear();
     debugItemPickerCancelState_ = {};
+    debugStoryTestActive_ = false;
+    debugStoryTestEntries_.clear();
+    debugStoryTestSelectedIndex_ = -1;
+    debugStoryTestScrollOffset_ = 0.0f;
+    debugStoryTestStatus_.clear();
+    debugStoryTestLoadedRevision_ = -1;
+    debugStoryTestReturnAfterDialogue_ = false;
+    debugStoryTestCancelState_ = {};
     enemyTestActive_ = false;
     enemyTestUiVisible_ = true;
     enemyTestDropdown_ = {};
@@ -319,12 +416,21 @@ void Game::resetWorldRunState()
     gameOverStatus_.clear();
     bossSpawned_ = false;
     hasBossSpawnPoint_ = false;
+    resetBossEncounter();
     stageClearSelection_ = 0;
     stageClearStatus_.clear();
+    astralResult_ = AstralRunSummary{};
+    astralResultSelection_ = 0;
     inventoryReturnToPause_ = false;
     debugPaused_ = false;
     captureCooldown_ = 0.0f;
+    captureHoverEnemyId_ = 0;
     clampCurrentStageToSelectableStages();
+    roguelikeDungeon_ = currentStageIsRoguelike();
+    restoreRunStartInventoryOnDeath_ = roguelikeDungeon_;
+    roguelikeCarryInRestricted_ = roguelikeDungeon_;
+    roguelikeCarryOutRestricted_ = roguelikeDungeon_;
+    resetAstralRunState();
 }
 
 void Game::buildWorldForRun(bool captureRunStartInventory)
@@ -344,8 +450,9 @@ void Game::buildWorldForRun(bool captureRunStartInventory)
     refreshOrbitEffects();
     // Future connection: TileMap chunk initialization will consult
     // currentStageDefinition().terrainProfile and terrainHardnessMultiplier.
-    tileMap_.updateAround(player_.position, 0.0f, balance_, dungeonLayout_);
+    tileMap_.updateAround(player_.position, 0.0f, runtimeBalanceForDungeon(), dungeonLayout_);
     normalizeOpenBuriedPlacementNodes();
+    updateDungeonMinimap(0.0);
     logDungeonGenerationAudit();
     logSpellRingShapeExtensionAudit();
     if (captureRunStartInventory) {
@@ -456,8 +563,9 @@ void Game::advanceWorldBuildOneStep()
         worldBuildJob_.step = WorldBuildStep::WarmInitialTiles;
         break;
     case WorldBuildStep::WarmInitialTiles:
-        tileMap_.updateAround(player_.position, 0.0f, balance_, dungeonLayout_);
+        tileMap_.updateAround(player_.position, 0.0f, runtimeBalanceForDungeon(), dungeonLayout_);
         normalizeOpenBuriedPlacementNodes();
+        updateDungeonMinimap(0.0);
         logDungeonGenerationAudit();
         logSpellRingShapeExtensionAudit();
         worldBuildJob_.step = WorldBuildStep::Finalize;
@@ -491,8 +599,9 @@ void Game::finishWorldBuild()
         const Vec2 warpStartPosition = warpPointStartPositionForCurrentRequest();
         rebuildUnlockedWarpPointsForStart(warpStartPosition);
         player_.position = safePlayerStartPosition(warpStartPosition);
-        tileMap_.updateAround(player_.position, 0.0f, balance_, dungeonLayout_);
+        tileMap_.updateAround(player_.position, 0.0f, runtimeBalanceForDungeon(), dungeonLayout_);
         normalizeOpenBuriedPlacementNodes();
+        updateDungeonMinimap(0.0);
     }
     if (job.useLatestWarpPoint) {
         captureRetrySnapshotAtWarpPoint();
@@ -503,11 +612,12 @@ void Game::finishWorldBuild()
     baseEditMode_ = BaseEditMode::None;
     resetBaseEditDragState();
     mode_ = ScreenMode::Playing;
+    playAudioBgm(AudioBgmDungeon, 0.45f);
     pauseReturnMode_ = ScreenMode::Playing;
     resetPlayerFootstepDust();
     camera_.follow(player_.position, 1.0f);
     beginDungeonRingIntro();
-    maybeStartFirstDungeonDialogue();
+    maybeQueueStageStartStory();
 }
 
 int Game::worldBuildStepIndex() const
@@ -591,10 +701,13 @@ void Game::enterBase()
     inventory_.cancelGrab();
     cancelRingGrab();
     closeDebugItemPicker();
+    closeDebugStoryTest();
+    debugStoryTestReturnAfterDialogue_ = false;
     if (levels_.isChoosing()) {
         levels_ = LevelSystem{};
     }
     mode_ = ScreenMode::Base;
+    playAudioBgm(AudioBgmBase, 0.35f);
     pausePage_ = PauseMenuPage::Main;
     pauseReturnMode_ = ScreenMode::Base;
     inventoryReturnToPause_ = false;
@@ -648,11 +761,23 @@ void Game::loadOpeningKamishibaiData()
     }
 }
 
+void Game::loadEndingKamishibaiData()
+{
+    KamishibaiLoader loader;
+    KamishibaiLoadResult result = loader.load(endingKamishibaiDataPath());
+    endingPages_ = std::move(result.pages);
+    logInfo("[ending] kamishibai pages loaded: " + std::to_string(endingPages_.size()));
+    for (const std::string& warning : result.warnings) {
+        logWarning("[ending] " + warning);
+    }
+}
+
 void Game::loadStoryEvents()
 {
     StoryEventLoader loader;
     StoryEventLoadResult result = loader.loadDirectory(storyEventDataDirectory());
     storyEvents_ = std::move(result.events);
+    ++storyEventsRevision_;
     logInfo("[story] events loaded: " + std::to_string(storyEvents_.size()));
     for (const std::string& warning : result.warnings) {
         logWarning("[story] " + warning);
@@ -666,6 +791,7 @@ void Game::startOpeningKamishibai()
     }
     openingPlayer_.start(openingPages_, openingMeta_.openingEverWatched);
     mode_ = ScreenMode::OpeningKamishibai;
+    playAudioBgm(AudioBgmTitle, 0.45f);
     pausePage_ = PauseMenuPage::Main;
     pauseReturnMode_ = ScreenMode::Base;
     inventoryReturnToPause_ = false;
@@ -683,6 +809,7 @@ void Game::finishOpeningKamishibai(bool completedPlayback)
         }
     }
     mode_ = ScreenMode::Title;
+    playAudioBgm(AudioBgmTitle, 0.25f);
     pausePage_ = PauseMenuPage::Main;
     pauseReturnMode_ = ScreenMode::Base;
     inventoryReturnToPause_ = false;
@@ -703,12 +830,50 @@ void Game::updateOpeningKamishibai(const Input& input, float dt)
     }
 }
 
+void Game::startEndingKamishibai()
+{
+    if (endingPages_.empty()) {
+        loadEndingKamishibaiData();
+    }
+    endingPlayer_.start(endingPages_, hasStoryFlag(EndingSeenFlag));
+    mode_ = ScreenMode::EndingKamishibai;
+    playAudioBgm(AudioBgmTitle, 0.65f);
+    pausePage_ = PauseMenuPage::Main;
+    pauseReturnMode_ = ScreenMode::Playing;
+    inventoryReturnToPause_ = false;
+}
+
+void Game::finishEndingKamishibai(bool)
+{
+    endingKamishibaiPending_ = false;
+    addStoryFlag(std::string(EndingSeenFlag));
+    addStoryFlag("story_ending_main");
+    addStoryFlag("story_stage_03_clear");
+    requestReturnToBaseTransition(true, false);
+}
+
+void Game::updateEndingKamishibai(const Input& input, float dt)
+{
+    bool skipped = false;
+    if (endingPlayer_.canSkipImmediately() &&
+        (input.mouseLeftPressed() || input.confirmPressed() || input.useItemPressed())) {
+        endingPlayer_.finishImmediately();
+        skipped = true;
+    }
+
+    endingPlayer_.update(dt);
+    if (endingPlayer_.finished()) {
+        finishEndingKamishibai(!skipped);
+    }
+}
+
 void Game::updateTitleScreen(const Input& input, UiContext& ui)
 {
     if (input.mouseLeftPressed() || input.confirmPressed() || input.useItemPressed()) {
         if (input.mouseLeftPressed()) {
             ui.consumePointer();
         }
+        ui.emitSound(UiSoundEvent::Confirm);
         requestScreenTransition(ScreenTransitionTarget::TitleToBase);
     }
 }
@@ -723,6 +888,7 @@ void Game::requestScreenTransition(ScreenTransitionTarget target)
     screenTransition_.phase = ScreenTransitionPhase::FadingOut;
     screenTransition_.elapsed = 0.0f;
     screenTransition_.applied = false;
+    playAudioSe(AudioSeTransition);
 }
 
 void Game::requestMiningStartTransition(bool useLatestWarpPoint, bool forceRegenerate)
@@ -740,6 +906,7 @@ void Game::requestMiningStartTransition(bool useLatestWarpPoint, bool forceRegen
     screenTransition_.applied = false;
     screenTransition_.useLatestWarpPoint = useLatestWarpPoint;
     screenTransition_.forceRegenerate = forceRegenerate;
+    playAudioSe(AudioSeTransition);
 }
 
 void Game::requestReturnToBaseTransition(bool stageCleared, bool died)
@@ -754,6 +921,7 @@ void Game::requestReturnToBaseTransition(bool stageCleared, bool died)
     screenTransition_.applied = false;
     screenTransition_.returnStageCleared = stageCleared;
     screenTransition_.returnDied = died;
+    playAudioSe(AudioSeTransition);
 }
 
 void Game::requestBaseAreaCrossfade(BaseArea targetArea, Vec2 playerPosition, Vec2 playerFacing, std::string status)
@@ -770,6 +938,7 @@ void Game::requestBaseAreaCrossfade(BaseArea targetArea, Vec2 playerPosition, Ve
     screenTransition_.targetBasePlayerPosition = playerPosition;
     screenTransition_.targetBasePlayerFacing = playerFacing;
     screenTransition_.targetBaseStatus = std::move(status);
+    playAudioSe(AudioSeTransition);
 }
 
 void Game::updateScreenTransition(float dt)
@@ -824,7 +993,7 @@ void Game::updateScreenTransition(float dt)
             if (!pendingStoryTrigger_.empty()) {
                 std::string trigger = std::move(pendingStoryTrigger_);
                 pendingStoryTrigger_.clear();
-                startStoryEventForTrigger(trigger);
+                queueStoryEventForTrigger(std::move(trigger));
             }
         }
         break;
@@ -861,14 +1030,24 @@ void Game::applyScreenTransitionTarget(ScreenTransitionTarget target)
 
 void Game::startMiningFromBase(bool useLatestWarpPoint, bool forceRegenerate)
 {
+    const bool roguelikeStage = currentStageIsRoguelike();
+    if (roguelikeStage) {
+        useLatestWarpPoint = false;
+        forceRegenerate = true;
+    }
     useLatestWarpPoint = useLatestWarpPoint && unlockedWarpPointCount_ > 0;
     if (!useLatestWarpPoint || forceRegenerate) {
         requestedWarpPointStartPosition_.reset();
     }
     InventoryCarryState retained = captureInventoryCarryState();
-    const int retainedLevel = player_.level;
-    const int retainedXp = player_.xp;
-    const int retainedXpToNext = player_.xpToNext;
+    int retainedLevel = player_.level;
+    int retainedXp = player_.xp;
+    int retainedXpToNext = player_.xpToNext;
+    if (roguelikeStage) {
+        retainedLevel = 1;
+        retainedXp = 0;
+        retainedXpToNext = playerXpToNextForLevel(retainedLevel, balance_);
+    }
     const bool restoredDungeon = !forceRegenerate && restoreDungeonState(useLatestWarpPoint);
     if (!restoredDungeon) {
         if (forceRegenerate) {
@@ -895,8 +1074,9 @@ void Game::startMiningFromBase(bool useLatestWarpPoint, bool forceRegenerate)
     if (useLatestWarpPoint) {
         const Vec2 startPosition = warpPointStartPositionForCurrentRequest();
         player_.position = startPosition;
-        tileMap_.updateAround(player_.position, 0.0f, balance_, dungeonLayout_);
+        tileMap_.updateAround(player_.position, 0.0f, runtimeBalanceForDungeon(), dungeonLayout_);
         normalizeOpenBuriedPlacementNodes();
+        updateDungeonMinimap(0.0);
         captureRetrySnapshotAtWarpPoint();
     }
     requestedWarpPointStartPosition_.reset();
@@ -904,21 +1084,48 @@ void Game::startMiningFromBase(bool useLatestWarpPoint, bool forceRegenerate)
     baseEditMode_ = BaseEditMode::None;
     resetBaseEditDragState();
     mode_ = ScreenMode::Playing;
+    playAudioBgm(AudioBgmDungeon, 0.45f);
     pauseReturnMode_ = ScreenMode::Playing;
     resetPlayerFootstepDust();
     camera_.follow(player_.position, 1.0f);
     beginDungeonRingIntro();
-    maybeStartFirstDungeonDialogue();
+    maybeQueueStageStartStory();
 }
 
 void Game::applyPermanentUpgrades()
 {
-    player_.maxHp = 10 + maxHpUpgradeLevel_ * 2;
+    player_.level = std::clamp(player_.level, 1, PlayerMaxLevel);
+    player_.xpToNext = playerXpToNextForLevel(player_.level, balance_);
+    if (playerAtMaxLevel(player_)) {
+        player_.xp = 0;
+    }
+    player_.maxHp = playerMaxHpForLevel(player_.level) + maxHpUpgradeLevel_ * 2;
     player_.hp = std::min(player_.hp, player_.maxHp);
     player_.spellRingShiftDistanceBonus = effectiveRingShiftDistance() - balance_.spellRingShiftDistance;
     spellRing_.setRadius(effectiveInitialRingRadius(levelRingRadiusPoints_));
     spellRing_.setAngularSpeed(effectiveInitialRingSpeed(levelRingSpeedPoints_));
     spellRing_.setMaxEquippedWeightForAllRings(effectiveInitialRingWeightLimit(levelRingWeightLimitPoints_));
+}
+
+LevelGainResult Game::gainPlayerXp(int amount)
+{
+    const int beforeMaxHp = player_.maxHp;
+    const LevelGainResult result = levels_.addXp(player_, amount, balance_);
+    if (result.levelsGained <= 0) {
+        return result;
+    }
+
+    applyPermanentUpgrades();
+    const int maxHpGain = player_.maxHp - beforeMaxHp;
+    if (maxHpGain > 0 && player_.hp > 0) {
+        const int beforeHp = player_.hp;
+        player_.hp = std::min(player_.maxHp, player_.hp + maxHpGain);
+        const int healed = player_.hp - beforeHp;
+        if (healed > 0) {
+            player_.healEvents.push_back({healed, player_.position});
+        }
+    }
+    return result;
 }
 
 float Game::effectiveInitialRingRadius(int levelRadiusPoints) const
@@ -1259,6 +1466,88 @@ void Game::syncWarpStateForCurrentStage()
         : (hasLatest ? latestPosition : Vec2{});
 }
 
+std::string Game::stageClearFlagForStage(std::string_view stageId) const
+{
+    if (stageId.empty()) {
+        return {};
+    }
+
+    int storyStageNumber = 0;
+    for (const StageDefinition& stage : stageCatalog_.getStagesSortedByDisplayOrder()) {
+        if (isRoguelikeStageDefinition(stage)) {
+            continue;
+        }
+        ++storyStageNumber;
+        if (stage.id == stageId) {
+            return "stage_clear_" + std::to_string(storyStageNumber);
+        }
+    }
+
+    if (stageId == currentStageId_) {
+        return "stage_clear_" + std::to_string(currentStage_ + 1);
+    }
+    return {};
+}
+
+bool Game::stageCleared(std::string_view stageId) const
+{
+    const std::string flag = stageClearFlagForStage(stageId);
+    return !flag.empty() && hasStoryFlag(flag);
+}
+
+bool Game::currentStageCleared() const
+{
+    return stageCleared(currentStageId_);
+}
+
+bool Game::currentStageIsRoguelike() const
+{
+    return isRoguelikeStageDefinition(currentStageDefinition_);
+}
+
+std::string Game::currentStageBossCaptureObjectId() const
+{
+    if (currentStageId_.empty()) {
+        return {};
+    }
+    return "captured_boss_" + currentStageId_;
+}
+
+bool Game::hasCapturedBossForCurrentStage() const
+{
+    const std::string objectId = currentStageBossCaptureObjectId();
+    if (objectId.empty()) {
+        return false;
+    }
+
+    for (const InventoryObjectStack& stack : inventory_.objectStacks()) {
+        if (stack.count > 0 && stack.objectId == objectId) {
+            return true;
+        }
+    }
+    for (const InventoryObjectInstance& instance : inventory_.objectInstances()) {
+        if (instance.instance.objectId == objectId || instance.item.id == objectId) {
+            return true;
+        }
+    }
+    for (const InventoryObjectStack& stack : warehouseObjectStacks_) {
+        if (stack.count > 0 && stack.objectId == objectId) {
+            return true;
+        }
+    }
+    for (const InventoryObjectInstance& instance : warehouseObjectInstances_) {
+        if (instance.instance.objectId == objectId || instance.item.id == objectId) {
+            return true;
+        }
+    }
+    for (const SpellRingItem* item : spellRing_.runtimeItems()) {
+        if (item != nullptr && item->objectId == objectId) {
+            return true;
+        }
+    }
+    return false;
+}
+
 void Game::applyDebugStageUnlockState(int unlockedStoryStages)
 {
     int maxStoryStageCount = 0;
@@ -1379,15 +1668,22 @@ bool Game::loadEnemiesFromSheet()
 
 void Game::enterGameOver()
 {
-    if (mode_ == ScreenMode::GameOver || mode_ == ScreenMode::StageClear) {
+    if (mode_ == ScreenMode::GameOver || mode_ == ScreenMode::StageClear || mode_ == ScreenMode::AstralResult) {
+        return;
+    }
+    if (currentStageIsRoguelike()) {
+        enterAstralResult(AstralRunResult::Died);
         return;
     }
 
+    resetBossEncounter();
     player_.hp = 0;
     inventory_.setOpen(false);
     inventory_.cancelGrab();
     cancelRingGrab();
     closeDebugItemPicker();
+    closeDebugStoryTest();
+    debugStoryTestReturnAfterDialogue_ = false;
     if (levels_.isChoosing()) {
         levels_ = LevelSystem{};
     }
@@ -1400,29 +1696,61 @@ void Game::enterGameOver()
     gameOverStatus_.clear();
 }
 
+void Game::markCurrentStageCleared()
+{
+    unlockedStages_ = std::max(unlockedStages_, currentStage_ + 2);
+    addStoryFlag("stage_clear_" + std::to_string(currentStage_ + 1));
+}
+
 void Game::enterStageClear()
 {
     if (mode_ == ScreenMode::StageClear) {
         return;
     }
 
-    unlockedStages_ = std::max(unlockedStages_, currentStage_ + 2);
-    addStoryFlag("stage_clear_" + std::to_string(currentStage_ + 1));
+    markCurrentStageCleared();
     clearTemporaryPlayerState(true);
     inventory_.setOpen(false);
     inventory_.cancelGrab();
     cancelRingGrab();
     closeDebugItemPicker();
+    closeDebugStoryTest();
+    debugStoryTestReturnAfterDialogue_ = false;
     if (levels_.isChoosing()) {
         levels_ = LevelSystem{};
     }
     levelUpResultDialog_ = {};
     mode_ = ScreenMode::StageClear;
+    playAudioBgm(AudioBgmDungeon, 0.55f);
     pausePage_ = PauseMenuPage::Main;
     pauseReturnMode_ = ScreenMode::Playing;
     inventoryReturnToPause_ = false;
     stageClearSelection_ = 0;
     stageClearStatus_.clear();
+}
+
+void Game::beginFinalBossEndingSequence()
+{
+    if (endingKamishibaiPending_ || mode_ == ScreenMode::EndingKamishibai) {
+        return;
+    }
+
+    markCurrentStageCleared();
+    clearTemporaryPlayerState(true);
+    inventory_.setOpen(false);
+    inventory_.cancelGrab();
+    cancelRingGrab();
+    closeDebugItemPicker();
+    closeDebugStoryTest();
+    debugStoryTestReturnAfterDialogue_ = false;
+    if (levels_.isChoosing()) {
+        levels_ = LevelSystem{};
+    }
+    levelUpResultDialog_ = {};
+    pausePage_ = PauseMenuPage::Main;
+    pauseReturnMode_ = ScreenMode::Playing;
+    inventoryReturnToPause_ = false;
+    endingKamishibaiPending_ = true;
 }
 
 void Game::updateScreenMode(
@@ -1433,6 +1761,11 @@ void Game::updateScreenMode(
 {
     if (mode_ == ScreenMode::OpeningKamishibai) {
         updateOpeningKamishibai(input, dt);
+        return;
+    }
+
+    if (mode_ == ScreenMode::EndingKamishibai) {
+        updateEndingKamishibai(input, dt);
         return;
     }
 
@@ -1450,14 +1783,42 @@ void Game::updateScreenMode(
         return;
     }
 
+    if (debugStoryTestActive_) {
+        updateDebugStoryTest(input, ui);
+        return;
+    }
+
     if (mode_ == ScreenMode::ObjectImageScaleEdit) {
         updateObjectImageScaleEditScreen(input, ui);
         return;
     }
 
+    if (mode_ == ScreenMode::AudioCueEdit) {
+        updateAudioCueEditScreen(input, ui);
+        return;
+    }
+
+    if (debugStoryTestReturnAfterDialogue_ && !dialogue_.active()) {
+        debugStoryTestReturnAfterDialogue_ = false;
+        openDebugStoryTest(debugStoryTestMode_);
+        if (debugStoryTestActive_) {
+            return;
+        }
+    }
+
+    updateQueuedStoryEvents();
     if (dialogue_.active()) {
         dialogue_.update(input, dt);
         ui.consumePointer();
+        return;
+    }
+
+    if (updateBossEncounterFlow(dt)) {
+        return;
+    }
+
+    if (endingKamishibaiPending_ && pendingStoryTriggers_.empty()) {
+        startEndingKamishibai();
         return;
     }
 
@@ -1466,7 +1827,10 @@ void Game::updateScreenMode(
         return;
     }
 
-    if (player_.hp <= 0 && mode_ != ScreenMode::GameOver && mode_ != ScreenMode::StageClear) {
+    if (player_.hp <= 0 &&
+        mode_ != ScreenMode::GameOver &&
+        mode_ != ScreenMode::StageClear &&
+        mode_ != ScreenMode::AstralResult) {
         enterGameOver();
     }
     if (mode_ == ScreenMode::GameOver) {
@@ -1475,6 +1839,10 @@ void Game::updateScreenMode(
     }
     if (mode_ == ScreenMode::StageClear) {
         updateStageClearScreen(input, ui);
+        return;
+    }
+    if (mode_ == ScreenMode::AstralResult) {
+        updateAstralResultScreen(input, ui);
         return;
     }
 
@@ -1488,6 +1856,9 @@ void Game::updateScreenMode(
     switch (mode_) {
     case ScreenMode::OpeningKamishibai:
         updateOpeningKamishibai(input, dt);
+        break;
+    case ScreenMode::EndingKamishibai:
+        updateEndingKamishibai(input, dt);
         break;
     case ScreenMode::Title:
         updateTitleScreen(input, ui);
@@ -1508,6 +1879,7 @@ void Game::updateScreenMode(
             return;
         }
         if (input.pausePressed()) {
+            ui.emitSound(UiSoundEvent::MenuOpen);
             mode_ = ScreenMode::PauseMenu;
             pauseReturnMode_ = ScreenMode::Playing;
             pausePage_ = PauseMenuPage::Main;
@@ -1552,6 +1924,9 @@ void Game::updateScreenMode(
     case ScreenMode::ObjectImageScaleEdit:
         updateObjectImageScaleEditScreen(input, ui);
         break;
+    case ScreenMode::AudioCueEdit:
+        updateAudioCueEditScreen(input, ui);
+        break;
     case ScreenMode::LevelUp:
         if (levelUpResultDialog_.open) {
             const UiRect resultPanel = levelUpResultDialogRect();
@@ -1593,12 +1968,20 @@ void Game::updateScreenMode(
         break;
     case ScreenMode::StageClear:
         break;
+    case ScreenMode::AstralResult:
+        break;
     }
 }
 
 bool Game::gameProgressPaused() const
 {
-    return debugItemPickerActive_ || dialogue_.active() || warpReturnConfirmActive_ || mode_ != ScreenMode::Playing;
+    return debugItemPickerActive_ ||
+        debugStoryTestActive_ ||
+        dialogue_.active() ||
+        bossEncounterBlocksProgress() ||
+        endingKamishibaiPending_ ||
+        warpReturnConfirmActive_ ||
+        mode_ != ScreenMode::Playing;
 }
 
 bool Game::basePresentationActive() const
@@ -1635,9 +2018,9 @@ void Game::updateDungeonRingIntro(float dt)
     }
     const bool wasActive = dungeonRingIntroTimer_ > 0.0f;
     dungeonRingIntroTimer_ = std::max(0.0f, dungeonRingIntroTimer_ - std::max(0.0f, dt));
-    if (wasActive && dungeonRingIntroTimer_ <= 0.0f && firstDungeonDialoguePendingAfterRingIntro_) {
-        firstDungeonDialoguePendingAfterRingIntro_ = false;
-        maybeStartFirstDungeonDialogue();
+    if (wasActive && dungeonRingIntroTimer_ <= 0.0f && stageStartStoryPendingAfterRingIntro_) {
+        stageStartStoryPendingAfterRingIntro_ = false;
+        maybeQueueStageStartStory();
     }
 }
 
@@ -1677,6 +2060,7 @@ void Game::update(const Input& input, const Time& time)
     reloadNoticeTimer_ = std::max(0.0f, reloadNoticeTimer_ - time.deltaSeconds());
     encyclopedia_.update(time.deltaSeconds());
     updateDungeonLogs(time.deltaSeconds());
+    captureHoverEnemyId_ = 0;
 
     if (input.debugPressed()) {
         debug_.toggle();
@@ -1704,6 +2088,11 @@ void Game::update(const Input& input, const Time& time)
 
     std::vector<EffectDiscoveryEvent> effectDiscoveries;
     UiContext ui(input);
+    struct UiSoundFlush {
+        Game& game;
+        const UiContext& ui;
+        ~UiSoundFlush() { game.playUiSoundEvents(ui); }
+    } uiSoundFlush{*this, ui};
     const bool wasPaused = gameProgressPaused();
     updateScreenMode(input, ui, time.deltaSeconds(), &effectDiscoveries);
     for (const RingEquipFxRequest& request : inventory_.consumeRingEquipFxRequests()) {
@@ -1721,13 +2110,19 @@ void Game::update(const Input& input, const Time& time)
 
     if (!paused) {
         runStats_.elapsedSeconds += time.deltaSeconds();
+        updateAstralRunProgress();
+        if (currentStageId_ == "stage_01_stardust" && runStats_.elapsedSeconds >= 1.0f) {
+            queueStoryEventForTrigger("tutorial:light");
+        }
         updatePlayerFootstepDust(time.deltaSeconds());
-        tileMap_.updateAround(player_.position, time.deltaSeconds(), balance_, dungeonLayout_);
+        const RuntimeBalance dungeonBalance = runtimeBalanceForDungeon();
+        tileMap_.updateAround(player_.position, time.deltaSeconds(), dungeonBalance, dungeonLayout_);
         normalizeOpenBuriedPlacementNodes();
         std::vector<CollisionRect> objectBlockers;
         if (!enemyTestActive_) {
             objectBlockers = solidObjectCollisionRects();
         }
+        player_.spellRingShiftDistanceMultiplier = static_cast<float>(spellRing_.orbitShiftMultiplier());
         player_.update(
             input,
             camera_,
@@ -1742,6 +2137,7 @@ void Game::update(const Input& input, const Time& time)
             player_.spriteWalking,
             player_.spriteFrameIndex(),
             previousPlayerDustFrame_);
+        updatePlayerRegen(time.deltaSeconds(), effectDiscoveries);
         if (player_.hp <= 0) {
             enterGameOver();
             refreshOrbitEffects();
@@ -1751,41 +2147,34 @@ void Game::update(const Input& input, const Time& time)
             updateWarpPoints(time.deltaSeconds());
             updateExposedRewardNodes();
             updateExposedMoonFragmentNodes();
+            const int enemyCountBeforeExposedSpawn = enemies_.activeCount();
             updateExposedEnemyNodes();
+            if (enemies_.activeCount() > enemyCountBeforeExposedSpawn) {
+                playAudioSe(AudioSeEnemySpawn);
+            }
         }
         updateRingEffectDiscoveries(effectDiscoveries);
         normalizeOpenBuriedPlacementNodes();
-        if (input.capturePressed() && captureCooldown_ <= 0.0f) {
-            const CaptureResult capture = enemies_.tryCapture(player_, spellRing_, inventory_);
-            captureCooldown_ = capture.type == CaptureResultType::Success ? 0.35f : 0.75f;
-            if (capture.type == CaptureResultType::Success) {
-                reloadNotice_ = "捕獲: " + capture.enemyName;
-                reloadNoticeTimer_ = 1.6f;
-                effects_.spawnCaptureSuccess(capture.position, player_.position - capture.position);
-            } else if (capture.type == CaptureResultType::InventoryFull) {
-                reloadNotice_ = "捕獲失敗: インベントリ満杯";
-                reloadNoticeTimer_ = 1.6f;
-            } else if (capture.type == CaptureResultType::Failed) {
-                reloadNotice_ = "捕獲失敗";
-                reloadNoticeTimer_ = 1.2f;
-            }
-        }
         camera_.follow(player_.position, time.deltaSeconds());
 
         const SpellRingState previousSpellRingState = spellRing_.state();
         const Vec2 previousRingCenter = spellRing_.center();
         spellRing_.update(player_, input, time.deltaSeconds(), time.totalSeconds(), false, ui.pointerConsumed(), balance_);
         if (previousSpellRingState == SpellRingState::Normal && spellRing_.state() == SpellRingState::Thrown) {
+            playAudioSe(AudioSeRingThrow);
             effects_.spawnThrowStart(previousRingCenter, player_.facing);
         } else if (previousSpellRingState == SpellRingState::Returning && spellRing_.state() == SpellRingState::Normal) {
             effects_.spawnReturn(spellRing_.center());
+        }
+        if (input.ringOffsetHeld()) {
+            queueStoryEventForTrigger("tutorial:ring_shift");
         }
         if (!enemyTestActive_) {
             updateChestNodes(time.deltaSeconds(), input);
             updateCrateNodes();
         }
 
-        tileMap_.updateAround(player_.position, time.deltaSeconds(), balance_, dungeonLayout_);
+        tileMap_.updateAround(player_.position, time.deltaSeconds(), dungeonBalance, dungeonLayout_);
         digging_.update(
             tileMap_,
             spellRing_,
@@ -1796,6 +2185,22 @@ void Game::update(const Input& input, const Time& time)
             &magic_,
             &effectDiscoveries,
             &encyclopedia_);
+        if (!digging_.dugTiles().empty() || !digging_.openedTiles().empty()) {
+            queueStoryEventForTrigger("tutorial:dig");
+        }
+        if (!digging_.dugTiles().empty()) {
+            bool brokeOre = false;
+            for (const DugTile& tile : digging_.dugTiles()) {
+                if (tile.type == TileType::Ore) {
+                    brokeOre = true;
+                    break;
+                }
+            }
+            playAudioSe(brokeOre ? AudioSeDigOreBreak : AudioSeDigBreak);
+        }
+        if (!digging_.hitTiles().empty()) {
+            playAudioSe(AudioSeDigHit);
+        }
         for (const TerrainHitTile& tile : digging_.hitTiles()) {
             effects_.spawnDigHit(tile.center, tile.center - spellRing_.center(), tile.color);
         }
@@ -1809,6 +2214,7 @@ void Game::update(const Input& input, const Time& time)
             revealMoonFragmentNodesFromOpenedTiles(digging_.openedTiles());
             revealChestNodesFromOpenedTiles(digging_.openedTiles());
         }
+        revealDungeonMinimapOpenedTiles(digging_.openedTiles());
         for (const DugTile& tile : digging_.dugTiles()) {
             effects_.spawnTileBreak(tile.center, tile.type, tile.color);
             ++runStats_.dugTiles;
@@ -1902,7 +2308,15 @@ void Game::update(const Input& input, const Time& time)
             &effects_,
             &pickupEvents,
             &blockedObjectPickupCount);
+        for (const WorldDropPickupEvent& event : pickupEvents) {
+            if (event.kind == WorldDropKind::Object) {
+                runStats_.acquiredObjectItems += std::max(1, event.quantity);
+            }
+        }
         appendPickupLogs(pickupEvents);
+        if (!pickupEvents.empty()) {
+            playAudioSe(AudioSePickup);
+        }
         if (blockedObjectPickupCount > 0) {
             pushDungeonLog("リュックがいっぱいで拾えません", "pickup_inventory_full");
         }
@@ -1916,9 +2330,16 @@ void Game::update(const Input& input, const Time& time)
                     .depthRank = lootDepthRankForWorldPosition(tileMap_, dungeonLayout_, currentStageId_, spawnTile),
                 });
             }
-            enemies_.spawnFromDugTiles(randomEnemySpawnPoints, tileMap_, player_.position, balance_, enemyCatalog_, currentStageId_);
+            const int enemyCountBeforeDugSpawn = enemies_.activeCount();
+            enemies_.spawnFromDugTiles(randomEnemySpawnPoints, tileMap_, player_.position, dungeonBalance, enemyCatalog_, currentStageId_);
+            if (enemies_.activeCount() > enemyCountBeforeDugSpawn) {
+                playAudioSe(AudioSeEnemySpawn);
+            }
             updateBossSpawn();
         }
+
+        updateOrbitAreaEffects(time.deltaSeconds(), effectDiscoveries);
+        updateOrbitGroundEffects(time.deltaSeconds(), effectDiscoveries);
 
         enemies_.update(
             player_,
@@ -1937,6 +2358,24 @@ void Game::update(const Input& input, const Time& time)
             magic_,
             &effectDiscoveries,
             &encyclopedia_);
+        const bool capturedBossOwned = hasCapturedBossForCurrentStage();
+        const bool allowBossCapture = currentStageCleared() && !capturedBossOwned;
+        const std::string bossCaptureObjectId = currentStageCleared()
+            ? currentStageBossCaptureObjectId()
+            : std::string{};
+        if (!ui.pointerConsumed() && captureCooldown_ <= 0.0f) {
+            const CaptureTargetPreview preview = enemies_.previewCaptureAt(
+                camera_.screenToWorld(input.mouseScreen()),
+                player_,
+                allowBossCapture,
+                bossCaptureObjectId);
+            if (preview.challengeable) {
+                captureHoverEnemyId_ = preview.enemyRuntimeId;
+            }
+        }
+        if (!enemyTestActive_ && enemies_.activeCount() > 0) {
+            queueStoryEventForTrigger("tutorial:capture_net");
+        }
         for (Vec2 explosionPosition : digging_.capturedExplosionRequests()) {
             handleCapturedExplosion(explosionPosition);
         }
@@ -1953,7 +2392,86 @@ void Game::update(const Input& input, const Time& time)
             &effectDiscoveries,
             &encyclopedia_);
         magic_.update(player_, spellRing_, enemies_, tileMap_, time.deltaSeconds());
-        handleRingItemBreakEvents();
+        bool projectileImpactSound = false;
+        bool ringGuardSound = false;
+        bool ringReflectSound = false;
+        for (ProjectileSoundEvent event : projectiles_.consumeSoundEvents()) {
+            switch (event) {
+            case ProjectileSoundEvent::Impact:
+                projectileImpactSound = true;
+                break;
+            case ProjectileSoundEvent::Guard:
+                ringGuardSound = true;
+                break;
+            case ProjectileSoundEvent::Reflect:
+                ringReflectSound = true;
+                break;
+            }
+        }
+        if (projectileImpactSound) {
+            playAudioSe(AudioSeProjectileImpact);
+        }
+        if (ringGuardSound) {
+            playAudioSe(AudioSeRingGuard);
+        }
+        if (ringReflectSound) {
+            playAudioSe(AudioSeRingReflect);
+        }
+        bool magicCastSound = false;
+        bool magicImpactSound = false;
+        for (MagicSoundEvent event : magic_.consumeSoundEvents()) {
+            switch (event) {
+            case MagicSoundEvent::Cast:
+                magicCastSound = true;
+                break;
+            case MagicSoundEvent::Impact:
+                magicImpactSound = true;
+                break;
+            }
+        }
+        if (magicCastSound) {
+            playAudioSe(AudioSeMagicCast);
+        }
+        if (magicImpactSound) {
+            playAudioSe(AudioSeMagicImpact);
+        }
+        bool capturedEnemyThisFrame = false;
+        if (input.capturePressed() && !ui.pointerConsumed() && captureCooldown_ <= 0.0f) {
+            playAudioSe(AudioSeCaptureThrow);
+            const CaptureResult capture = enemies_.tryCaptureAt(
+                camera_.screenToWorld(input.mouseScreen()),
+                player_,
+                spellRing_,
+                inventory_,
+                allowBossCapture,
+                bossCaptureObjectId);
+            if (capture.type != CaptureResultType::NoTarget) {
+                captureCooldown_ = capture.type == CaptureResultType::Success ? 0.35f : 0.75f;
+            }
+            if (capture.type == CaptureResultType::Success) {
+                capturedEnemyThisFrame = true;
+                playAudioSe(AudioSeCaptureSuccess);
+                pushDungeonLog(capture.enemyName + " を捕まえた", "capture_success:" + capture.enemyName);
+                effects_.spawnCaptureSuccess(capture.position, player_.position - capture.position);
+            } else if (capture.type == CaptureResultType::OutOfRange) {
+                playAudioSe(AudioSeCaptureFail);
+                pushDungeonLog("虫とり網: 遠すぎる", "capture_out_of_range");
+            } else if (capture.type == CaptureResultType::InventoryFull) {
+                playAudioSe(AudioSeCaptureFail);
+                pushDungeonLog("虫とり網: 持ち物がいっぱい", "capture_inventory_full");
+            } else if (capture.type == CaptureResultType::BossLocked) {
+                playAudioSe(AudioSeCaptureFail);
+                pushDungeonLog("虫とり網: 初回ボスは捕獲できない", "capture_boss_locked");
+            } else if (capture.type == CaptureResultType::BossAlreadyOwned) {
+                playAudioSe(AudioSeCaptureFail);
+                pushDungeonLog("虫とり網: 捕獲中のボスは再捕獲できない", "capture_boss_owned");
+            } else if (capture.type == CaptureResultType::Failed) {
+                playAudioSe(AudioSeCaptureFail);
+                pushDungeonLog("虫とり網: 逃げられた", "capture_failed:" + capture.enemyName);
+            }
+        }
+        updateDungeonMinimap(time.totalSeconds());
+        handleRingItemBreakEvents(&effectDiscoveries);
 
         std::vector<Vec2> capturedExplosionPositions;
         for (const EnemyEvent& event : enemies_.events()) {
@@ -1969,10 +2487,26 @@ void Game::update(const Input& input, const Time& time)
         }
 
         bool bossDefeated = false;
+        Vec2 bossDefeatPosition{};
         for (const EnemyEvent& event : enemies_.events()) {
-            if (event.type == EnemyEventType::Death || event.type == EnemyEventType::BossDeath) {
+            if (event.type == EnemyEventType::Spawn) {
+                playAudioSe(AudioSeEnemySpawn);
+            } else if (event.type == EnemyEventType::Alert) {
+                playAudioSe(AudioSeEnemyAlert);
+            } else if (event.type == EnemyEventType::Attack) {
+                playAudioSe(AudioSeEnemyAttack);
+            } else if (event.type == EnemyEventType::Shoot) {
+                playAudioSe(AudioSeEnemyShoot);
+            } else if (event.type == EnemyEventType::Heal) {
+                playAudioSe(AudioSeEnemyHeal);
+            } else if (event.type == EnemyEventType::Explode) {
+                playAudioSe(AudioSeExplosion);
+            } else if (event.type == EnemyEventType::Death || event.type == EnemyEventType::BossDeath) {
                 ++runStats_.defeatedEnemies;
                 effects_.spawnEnemyDeath(event.position);
+                if (event.type == EnemyEventType::Death && !capturedEnemyThisFrame) {
+                    playAudioSe(AudioSeEnemyDefeat);
+                }
                 std::mt19937& rng = lootRuntimeRng();
                 if (event.moneyDrop > 0) {
                     worldDrops_.spawnMoneyDrop(
@@ -2007,6 +2541,7 @@ void Game::update(const Input& input, const Time& time)
                 }
                 if (event.type == EnemyEventType::BossDeath) {
                     bossDefeated = true;
+                    bossDefeatPosition = event.position;
                 }
             } else if (event.type == EnemyEventType::RewardDrop) {
                 std::mt19937& rng = lootRuntimeRng();
@@ -2052,9 +2587,13 @@ void Game::update(const Input& input, const Time& time)
             } else if (event.type == EnemyEventType::CapturedExplosion) {
                 continue;
             } else if (event.type == EnemyEventType::AttackHit) {
+                playAudioSe(AudioSeAttackHit);
                 effects_.spawnEnemyHit(event.position, event.effectId);
                 if (event.damageAmount >= 0) {
-                    effects_.spawnDamagePopup(event.position, event.damageAmount, DamagePopupStyle::Enemy);
+                    effects_.spawnDamagePopup(
+                        event.position,
+                        event.damageAmount,
+                        event.critical ? DamagePopupStyle::Critical : DamagePopupStyle::Enemy);
                 }
             } else if (event.damageAmount >= 0) {
                 effects_.spawnDamagePopup(event.position, event.damageAmount, DamagePopupStyle::Enemy);
@@ -2062,6 +2601,9 @@ void Game::update(const Input& input, const Time& time)
         }
         for (const PlayerDamageEvent& event : player_.damageEvents) {
             effects_.spawnDamagePopup(event.position, event.amount, DamagePopupStyle::Player);
+        }
+        if (!player_.damageEvents.empty()) {
+            playAudioSe(AudioSePlayerDamage);
         }
         player_.damageEvents.clear();
         for (const PlayerHealEvent& event : player_.healEvents) {
@@ -2071,11 +2613,12 @@ void Game::update(const Input& input, const Time& time)
         applyEffectDiscoveries(effectDiscoveries);
         syncEncyclopediaFromInventoryAndRing();
         updateAmbientParticleEffects(time.deltaSeconds());
+        groundLines_.update(time.deltaSeconds());
         magicFx_.update(time.deltaSeconds());
         effects_.update(time.deltaSeconds());
-        levels_.addXp(player_, enemies_.consumePendingXp(), balance_);
+        gainPlayerXp(enemies_.consumePendingXp());
         if (bossDefeated) {
-            enterStageClear();
+            beginBossDefeatSequence(bossDefeatPosition);
             return;
         }
         if (player_.hp <= 0) {
@@ -2113,6 +2656,15 @@ void Game::checkHotReload()
         reloadNoticeTimer_ = 3.0f;
         configureWatcher();
         return;
+    } else if (fileName == "ending_kamishibai.tsv") {
+        loadEndingKamishibaiData();
+        if (mode_ == ScreenMode::EndingKamishibai) {
+            endingPlayer_.start(endingPages_, hasStoryFlag(EndingSeenFlag));
+        }
+        reloadNotice_ = "Hot reload: " + changedPath;
+        reloadNoticeTimer_ = 3.0f;
+        configureWatcher();
+        return;
     } else if (std::filesystem::path(changedPath).extension() == ".story") {
         loadStoryEvents();
         reloadNotice_ = "Hot reload: " + changedPath;
@@ -2124,11 +2676,14 @@ void Game::checkHotReload()
     }
 
     if (reloaded) {
-        player_.xpToNext = std::max(1, balance_.xpBase + player_.level * balance_.xpPerLevel);
+        player_.xpToNext = playerXpToNextForLevel(player_.level, balance_);
+        if (playerAtMaxLevel(player_)) {
+            player_.xp = 0;
+        }
         worldDrops_.setDropLimit(balance_.worldDropLimitPerStage);
         applyPermanentUpgrades();
         refreshOrbitEffects();
-        tileMap_.updateAround(player_.position, 0.0f, balance_, dungeonLayout_);
+        tileMap_.updateAround(player_.position, 0.0f, runtimeBalanceForDungeon(), dungeonLayout_);
         normalizeOpenBuriedPlacementNodes();
         configureWatcher();
         reloadNotice_ = "Hot reload: " + changedPath;

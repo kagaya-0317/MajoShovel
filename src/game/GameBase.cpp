@@ -4,6 +4,11 @@ namespace majo {
 
 namespace {
 
+bool isTutorialStoryTrigger(std::string_view trigger)
+{
+    return trigger.rfind("tutorial:", 0) == 0;
+}
+
 int baseUpgradeWarehouseCapacityForLevel(int level)
 {
     constexpr std::array<int, 5> Capacities{{48, 72, 100, 140, 200}};
@@ -3305,16 +3310,42 @@ void Game::openBookshelf()
 
 void Game::syncEncyclopediaFromInventoryAndRing()
 {
+    std::unordered_map<std::string, int> ownedCounts;
+    std::unordered_map<std::string, const ObjectDefinition*> ownedObjects;
+    const auto addOwnedObject = [&ownedCounts, &ownedObjects](const ObjectDefinition& object, int count) {
+        if (object.id.empty() || count <= 0) {
+            return;
+        }
+        ownedCounts[object.id] += count;
+        ownedObjects.try_emplace(object.id, &object);
+    };
+
     for (const InventoryObjectStack& stack : inventory_.objectStacks()) {
         if (!stack.objectId.empty() && stack.count > 0) {
-            encyclopedia_.noteItemObtained(stack.item, player_.position);
+            addOwnedObject(stack.item, stack.count);
         }
     }
     for (const InventoryObjectInstance& objectInstance : inventory_.objectInstances()) {
         if (!objectInstance.item.id.empty()) {
-            encyclopedia_.noteItemObtained(objectInstance.item, player_.position);
+            addOwnedObject(objectInstance.item, 1);
         }
     }
+    for (const auto& [objectId, count] : ownedCounts) {
+        const int suppressCount = [&]() {
+            const auto it = encyclopediaOwnedSyncSuppressCounts_.find(objectId);
+            return it == encyclopediaOwnedSyncSuppressCounts_.end() ? 0 : it->second;
+        }();
+        if (count <= suppressCount) {
+            continue;
+        }
+        const auto objectIt = ownedObjects.find(objectId);
+        if (objectIt != ownedObjects.end() && objectIt->second != nullptr) {
+            encyclopedia_.noteItemObtained(*objectIt->second, player_.position);
+        }
+    }
+
+    std::unordered_map<std::string, int> ringCounts;
+    std::unordered_map<std::string, const ObjectDefinition*> ringObjects;
     const std::vector<const SpellRingItem*> runtimeItems = spellRing_.runtimeItems();
     for (const SpellRingItem* itemPtr : runtimeItems) {
         if (itemPtr == nullptr || itemPtr->objectId.empty()) {
@@ -3322,23 +3353,55 @@ void Game::syncEncyclopediaFromInventoryAndRing()
         }
         const ObjectDefinition* object = objectCatalog_.registry.findById(itemPtr->objectId);
         if (object != nullptr) {
-            encyclopedia_.noteItemEquipped(*object, itemPtr->worldPosition);
+            ringCounts[object->id] += 1;
+            ringObjects.try_emplace(object->id, object);
         }
+    }
+    for (const auto& [objectId, count] : ringCounts) {
+        const int suppressCount = [&]() {
+            const auto it = encyclopediaRingSyncSuppressCounts_.find(objectId);
+            return it == encyclopediaRingSyncSuppressCounts_.end() ? 0 : it->second;
+        }();
+        if (count <= suppressCount) {
+            continue;
+        }
+        const auto objectIt = ringObjects.find(objectId);
+        if (objectIt != ringObjects.end() && objectIt->second != nullptr) {
+            encyclopedia_.noteItemEquipped(*objectIt->second, player_.position);
+        }
+    }
+}
+
+void Game::captureEncyclopediaSyncSuppressState()
+{
+    encyclopediaOwnedSyncSuppressCounts_.clear();
+    encyclopediaRingSyncSuppressCounts_.clear();
+
+    const auto addOwnedId = [this](std::string_view objectId, int count) {
+        if (objectId.empty() || count <= 0) {
+            return;
+        }
+        encyclopediaOwnedSyncSuppressCounts_[std::string(objectId)] += count;
+    };
+    for (const InventoryObjectStack& stack : inventory_.objectStacks()) {
+        addOwnedId(stack.objectId, stack.count);
+    }
+    for (const InventoryObjectInstance& objectInstance : inventory_.objectInstances()) {
+        addOwnedId(objectInstance.item.id, 1);
+    }
+
+    const std::vector<const SpellRingItem*> runtimeItems = spellRing_.runtimeItems();
+    for (const SpellRingItem* itemPtr : runtimeItems) {
+        if (itemPtr == nullptr || itemPtr->objectId.empty()) {
+            continue;
+        }
+        encyclopediaRingSyncSuppressCounts_[itemPtr->objectId] += 1;
     }
 }
 
 void Game::applyEffectDiscoveries(const std::vector<EffectDiscoveryEvent>& discoveries)
 {
-    for (const EffectDiscoveryEvent& discovery : discoveries) {
-        if (!encyclopedia_.discoverObjectEffect(
-                discovery.objectId,
-                discovery.effectKey,
-                objectCatalog_,
-                discovery.position,
-                discovery.note)) {
-            encyclopedia_.noteEffectEvent(discovery, objectCatalog_);
-        }
-    }
+    encyclopedia_.noteEffectEvents(discoveries, objectCatalog_);
 }
 
 void Game::addStoryFlag(std::string flag)
@@ -3351,27 +3414,37 @@ void Game::addStoryFlag(std::string flag)
     }
 }
 
+bool Game::hasStoryFlag(std::string_view flag) const
+{
+    return std::find(storyFlags_.begin(), storyFlags_.end(), std::string(flag)) != storyFlags_.end();
+}
+
 void Game::startBaseMonicaDialogue()
 {
     baseStatus_.clear();
+    if (hasStoryFlag("ending_seen") && startStoryEventForTrigger("monica_base:post_ending")) {
+        return;
+    }
+    const int progress = std::clamp(unlockedStages_, 1, 4);
+    if (startStoryEventForTrigger("monica_base:progress_" + std::to_string(progress))) {
+        return;
+    }
     dialogue_.start(baseMonicaDialogue());
 }
 
-void Game::maybeStartFirstDungeonDialogue()
+void Game::maybeQueueStageStartStory()
 {
-    constexpr std::string_view Flag = "dialogue_first_dungeon";
-    const bool alreadySeen = std::find(storyFlags_.begin(), storyFlags_.end(), std::string(Flag)) != storyFlags_.end();
-    if (alreadySeen) {
+    if (currentStageId_.empty()) {
         return;
     }
     if (dungeonRingIntroActive()) {
-        firstDungeonDialoguePendingAfterRingIntro_ = true;
+        stageStartStoryPendingAfterRingIntro_ = true;
         return;
     }
 
-    firstDungeonDialoguePendingAfterRingIntro_ = false;
-    addStoryFlag(std::string(Flag));
-    dialogue_.start(firstDungeonDialogue());
+    stageStartStoryPendingAfterRingIntro_ = false;
+    queueStoryEventForCurrentStage("stage_start");
+    queueStoryEventForCurrentStage("monica_radio");
 }
 
 void Game::placeBasePlayerAtMineExitReturnPoint()
@@ -3453,10 +3526,67 @@ const StoryEvent* Game::findStoryEventForTrigger(std::string_view trigger) const
         if (event.trigger != trigger) {
             return false;
         }
+        if (event.repeatable) {
+            return true;
+        }
         return event.onceFlag.empty() ||
             std::find(storyFlags_.begin(), storyFlags_.end(), event.onceFlag) == storyFlags_.end();
     });
     return it == storyEvents_.end() ? nullptr : &*it;
+}
+
+std::string Game::currentStageStoryTrigger(std::string_view triggerName) const
+{
+    if (currentStageId_.empty()) {
+        return {};
+    }
+    return std::string(triggerName) + ":" + currentStageId_;
+}
+
+bool Game::queueStoryEventForTrigger(std::string trigger)
+{
+    if (trigger.empty()) {
+        return false;
+    }
+    if (isTutorialStoryTrigger(trigger) && !pendingStoryTriggers_.empty()) {
+        return false;
+    }
+    if (findStoryEventForTrigger(trigger) == nullptr) {
+        return false;
+    }
+    if (std::find(pendingStoryTriggers_.begin(), pendingStoryTriggers_.end(), trigger) != pendingStoryTriggers_.end()) {
+        return true;
+    }
+    pendingStoryTriggers_.push_back(std::move(trigger));
+    return true;
+}
+
+bool Game::queueStoryEventForCurrentStage(std::string_view triggerName)
+{
+    return queueStoryEventForTrigger(currentStageStoryTrigger(triggerName));
+}
+
+void Game::updateQueuedStoryEvents()
+{
+    if (dialogue_.active() ||
+        pendingStoryTriggers_.empty() ||
+        screenTransition_.active() ||
+        worldBuildActive() ||
+        dungeonRingIntroActive() ||
+        mode_ == ScreenMode::OpeningKamishibai ||
+        mode_ == ScreenMode::EndingKamishibai ||
+        mode_ == ScreenMode::Title ||
+        mode_ == ScreenMode::WorldLoading) {
+        return;
+    }
+
+    while (!pendingStoryTriggers_.empty()) {
+        std::string trigger = std::move(pendingStoryTriggers_.front());
+        pendingStoryTriggers_.erase(pendingStoryTriggers_.begin());
+        if (startStoryEventForTrigger(trigger)) {
+            return;
+        }
+    }
 }
 
 bool Game::startStoryEvent(std::string_view id)
@@ -3480,6 +3610,22 @@ bool Game::startStoryEvent(std::string_view id)
     return true;
 }
 
+bool Game::startStoryEventForDebug(std::string_view id)
+{
+    const StoryEvent* event = findStoryEvent(id);
+    if (event == nullptr) {
+        logWarning("[story] debug event not found: " + std::string(id));
+        return false;
+    }
+
+    pendingStoryTrigger_.clear();
+    pendingStoryTriggers_.clear();
+    baseStatus_.clear();
+    dialogue_.start(event->dialogue);
+    logInfo("[story] debug replay: " + event->id);
+    return true;
+}
+
 bool Game::startStoryEventForTrigger(std::string_view trigger)
 {
     const StoryEvent* event = findStoryEventForTrigger(trigger);
@@ -3491,7 +3637,7 @@ bool Game::startStoryEventForTrigger(std::string_view trigger)
 
 void Game::maybeStartOpeningBaseIntroEvent()
 {
-    startStoryEventForTrigger("title_base_enter");
+    queueStoryEventForTrigger("title_base_enter");
 }
 
 void Game::updateBookshelfScreen(const Input& input, UiContext& ui)
@@ -3545,14 +3691,18 @@ void Game::updateBookshelfScreen(const Input& input, UiContext& ui)
         if (ui.pressed(rect)) {
             bookshelfSelection_ = itemIndex;
             if (bookshelfPage_ == BookshelfPage::Menu) {
+                ui.emitSound(UiSoundEvent::BookOpen);
                 bookshelfPage_ = static_cast<BookshelfPage>(bookshelfSelection_ + 1);
                 bookshelfSelection_ = 0;
+            } else {
+                ui.emitSound(UiSoundEvent::Confirm);
             }
             return;
         }
     }
 
     if ((input.confirmPressed() || input.useItemPressed()) && bookshelfPage_ == BookshelfPage::Menu) {
+        ui.emitSound(UiSoundEvent::BookOpen);
         bookshelfPage_ = static_cast<BookshelfPage>(bookshelfSelection_ + 1);
         bookshelfSelection_ = 0;
         return;
@@ -3617,21 +3767,25 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
         if (input.pressed(InputAction::MoveDown)) {
             baseRingWorkshopSelection_ = (baseRingWorkshopSelection_ + 1) % BaseRingWorkshopItemCount;
         }
-        const auto chooseWorkshopItem = [this](int item) {
+        const auto chooseWorkshopItem = [this, &ui](int item) {
             if (item >= 0 && item < RingWorkshopRespecTransferCount) {
+                ui.emitSound(UiSoundEvent::Confirm);
                 const RingWorkshopRespecTransfer transfer = RingWorkshopRespecTransfers[static_cast<std::size_t>(item)];
                 adjustRingWorkshopRespec(transfer.from, transfer.to);
                 return;
             }
             if (item == RingWorkshopConfirmItemIndex) {
+                ui.emitSound(UiSoundEvent::Confirm);
                 confirmRingWorkshopRespec();
                 return;
             }
             if (item >= RingWorkshopUpgradeStartIndex &&
                 item < RingWorkshopUpgradeStartIndex + RingWorkshopImplementedUpgradeCount) {
+                ui.emitSound(UiSoundEvent::Confirm);
                 buyRingWorkshopUpgrade(static_cast<RingWorkshopUpgrade>(item - RingWorkshopUpgradeStartIndex));
                 return;
             }
+            ui.emitSound(UiSoundEvent::Cancel);
             baseStatus_ = "この項目は未解禁です";
         };
         for (int i = 0; i < BaseRingWorkshopItemCount; ++i) {
@@ -3646,6 +3800,7 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
             }
         }
         if (ui.pressed(ringWorkshopConfirmRect())) {
+            ui.emitSound(UiSoundEvent::Confirm);
             confirmRingWorkshopRespec();
             return;
         }
@@ -3741,6 +3896,7 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
         };
         const auto openStorageCommand = [&](StorageQuantityOperation operation, StorageTransferTarget target, Vec2 anchor) {
             if (!storageTransferTargetAvailable(target)) {
+                ui.emitSound(UiSoundEvent::Cancel);
                 if (operation == StorageQuantityOperation::Deposit &&
                     target.valid &&
                     target.source != BaseItemSource::Backpack &&
@@ -3854,8 +4010,10 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
                 if (ui.pressed(rect)) {
                     baseStorageActionSelection_ = i;
                     if (i == 2) {
+                        ui.emitSound(UiSoundEvent::ItemMove);
                         sortWarehouseByCatalogOrder();
                     } else {
+                        ui.emitSound(UiSoundEvent::Confirm);
                         baseStorageMode_ = i == 0 ? StorageUiMode::Deposit : StorageUiMode::Withdraw;
                     }
                     ui.block(storageBounds);
@@ -3864,8 +4022,10 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
             }
             if (input.confirmPressed() || input.useItemPressed()) {
                 if (baseStorageActionSelection_ == 2) {
+                    ui.emitSound(UiSoundEvent::ItemMove);
                     sortWarehouseByCatalogOrder();
                 } else {
+                    ui.emitSound(UiSoundEvent::Confirm);
                     baseStorageMode_ = baseStorageActionSelection_ == 0 ? StorageUiMode::Deposit : StorageUiMode::Withdraw;
                 }
                 ui.block(storageBounds);
@@ -4066,6 +4226,7 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
                     if (baseStoragePointerDragTriggered_) {
                         if (hoveredBackpackSlot >= 0 &&
                             moveBackpackStorageItem(baseStoragePointerTarget_, hoveredBackpackSlot)) {
+                            ui.emitSound(UiSoundEvent::ItemMove);
                             baseStorageDepositSelection_ = hoveredBackpackSlot;
                             baseStatus_.clear();
                         }
@@ -4102,17 +4263,29 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
             if (input.activeRingDelta() != 0) {
                 closeStorageCommand();
                 resetStoragePointerPress();
+                const int previousPage = baseStorageWarehousePage_;
                 baseStorageWarehousePage_ = wrapStoragePageIndex(baseStorageWarehousePage_, input.activeRingDelta(), warehousePageCount);
+                if (baseStorageWarehousePage_ != previousPage) {
+                    ui.emitSound(UiSoundEvent::TabSwitch);
+                }
             }
             if (ui.pressed(pageRects.prev)) {
                 closeStorageCommand();
                 resetStoragePointerPress();
+                const int previousPage = baseStorageWarehousePage_;
                 baseStorageWarehousePage_ = wrapStoragePageIndex(baseStorageWarehousePage_, -1, warehousePageCount);
+                if (baseStorageWarehousePage_ != previousPage) {
+                    ui.emitSound(UiSoundEvent::TabSwitch);
+                }
             }
             if (ui.pressed(pageRects.next)) {
                 closeStorageCommand();
                 resetStoragePointerPress();
+                const int previousPage = baseStorageWarehousePage_;
                 baseStorageWarehousePage_ = wrapStoragePageIndex(baseStorageWarehousePage_, 1, warehousePageCount);
+                if (baseStorageWarehousePage_ != previousPage) {
+                    ui.emitSound(UiSoundEvent::TabSwitch);
+                }
             }
 
             moveGridSelection(baseStorageWithdrawSelection_, StoragePaneSlotCount);
@@ -4164,6 +4337,7 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
                     if (baseStoragePointerDragTriggered_) {
                         if (hoveredWarehouseSlot >= 0 &&
                             moveWarehouseStorageItem(baseStoragePointerTarget_, hoveredWarehouseSlot)) {
+                            ui.emitSound(UiSoundEvent::ItemMove);
                             baseStorageWithdrawSelection_ = hoveredWarehouseSlot;
                             baseStatus_.clear();
                         }
@@ -4206,6 +4380,7 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
         const auto openProcessingCommand = [&](int slotIndex) {
             const ProcessingTarget target = processingTargetForScreenSlot(slotIndex);
             if (!processingTargetAvailable(target)) {
+                ui.emitSound(UiSoundEvent::Cancel);
                 baseStatus_ = "この作業はできません";
                 return false;
             }
@@ -4338,13 +4513,25 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
             baseStorageWarehousePage_ = std::clamp(baseStorageWarehousePage_, 0, warehousePageCount - 1);
             const UiPageSelectorRects pageRects = externalWarehousePageSelectorRects(baseProcessingGridSlotRect);
             if (input.activeRingDelta() != 0) {
+                const int previousPage = baseStorageWarehousePage_;
                 baseStorageWarehousePage_ = wrapStoragePageIndex(baseStorageWarehousePage_, input.activeRingDelta(), warehousePageCount);
+                if (baseStorageWarehousePage_ != previousPage) {
+                    ui.emitSound(UiSoundEvent::TabSwitch);
+                }
             }
             if (ui.pressed(pageRects.prev)) {
+                const int previousPage = baseStorageWarehousePage_;
                 baseStorageWarehousePage_ = wrapStoragePageIndex(baseStorageWarehousePage_, -1, warehousePageCount);
+                if (baseStorageWarehousePage_ != previousPage) {
+                    ui.emitSound(UiSoundEvent::TabSwitch);
+                }
             }
             if (ui.pressed(pageRects.next)) {
+                const int previousPage = baseStorageWarehousePage_;
                 baseStorageWarehousePage_ = wrapStoragePageIndex(baseStorageWarehousePage_, 1, warehousePageCount);
+                if (baseStorageWarehousePage_ != previousPage) {
+                    ui.emitSound(UiSoundEvent::TabSwitch);
+                }
             }
 
             baseProcessingSelection_ = std::clamp(baseProcessingSelection_, 0, StoragePaneSlotCount - 1);
@@ -4520,10 +4707,12 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
         const auto openSellCommand = [&](int slotIndex) {
             const MerchantSellTarget target = merchantSellTargetForScreenSlot(slotIndex);
             if (!target.valid) {
+                ui.emitSound(UiSoundEvent::Cancel);
                 baseStatus_ = "売却対象がありません";
                 return;
             }
             if (!merchantSellTargetAvailable(target)) {
+                ui.emitSound(UiSoundEvent::Confirm);
                 sellMerchantTarget(target, 1);
                 return;
             }
@@ -4562,6 +4751,7 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
         };
         const auto openBuyCommand = [&](int index) {
             if (index < 0 || index >= static_cast<int>(merchantStock_.size())) {
+                ui.emitSound(UiSoundEvent::Cancel);
                 baseStatus_ = "購入できる商品がありません";
                 return;
             }
@@ -4606,6 +4796,7 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
                 }
                 if (ui.pressed(rect)) {
                     baseMerchantActionSelection_ = i;
+                    ui.emitSound(UiSoundEvent::Confirm);
                     if (i == 0) {
                         baseMerchantMode_ = MerchantUiMode::Buy;
                     } else if (i == 1) {
@@ -4616,6 +4807,7 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
                 }
             }
             if (input.confirmPressed() || input.useItemPressed()) {
+                ui.emitSound(UiSoundEvent::Confirm);
                 if (baseMerchantActionSelection_ == 0) {
                     baseMerchantMode_ = MerchantUiMode::Buy;
                 } else if (baseMerchantActionSelection_ == 1) {
@@ -4701,13 +4893,25 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
                 baseStorageWarehousePage_ = std::clamp(baseStorageWarehousePage_, 0, warehousePageCount - 1);
                 const UiPageSelectorRects pageRects = externalWarehousePageSelectorRects(merchantSellGridSlotRect);
                 if (input.activeRingDelta() != 0) {
+                    const int previousPage = baseStorageWarehousePage_;
                     baseStorageWarehousePage_ = wrapStoragePageIndex(baseStorageWarehousePage_, input.activeRingDelta(), warehousePageCount);
+                    if (baseStorageWarehousePage_ != previousPage) {
+                        ui.emitSound(UiSoundEvent::TabSwitch);
+                    }
                 }
                 if (ui.pressed(pageRects.prev)) {
+                    const int previousPage = baseStorageWarehousePage_;
                     baseStorageWarehousePage_ = wrapStoragePageIndex(baseStorageWarehousePage_, -1, warehousePageCount);
+                    if (baseStorageWarehousePage_ != previousPage) {
+                        ui.emitSound(UiSoundEvent::TabSwitch);
+                    }
                 }
                 if (ui.pressed(pageRects.next)) {
+                    const int previousPage = baseStorageWarehousePage_;
                     baseStorageWarehousePage_ = wrapStoragePageIndex(baseStorageWarehousePage_, 1, warehousePageCount);
+                    if (baseStorageWarehousePage_ != previousPage) {
+                        ui.emitSound(UiSoundEvent::TabSwitch);
+                    }
                 }
 
                 moveGridSelection(baseSellSelection_, StoragePaneSlotCount);
@@ -4882,17 +5086,20 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
                 baseUpgradeSelection_ = i;
             }
             if (ui.pressed(rect)) {
+                ui.emitSound(UiSoundEvent::Confirm);
                 baseUpgradeSelection_ = i;
                 ui.block(upgradePanel);
                 return;
             }
         }
         if (ui.pressed(baseUpgradeConfirmRect())) {
+            ui.emitSound(UiSoundEvent::Confirm);
             buyUpgrade(baseUpgradeSelection_);
             ui.block(upgradePanel);
             return;
         }
         if (input.confirmPressed() || input.useItemPressed()) {
+            ui.emitSound(UiSoundEvent::Confirm);
             buyUpgrade(baseUpgradeSelection_);
             ui.block(upgradePanel);
             return;
@@ -4913,11 +5120,13 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
 
         if (baseRegenerateConfirmActive_) {
             if (ui.pressed(baseMiningRegenerateConfirmButtonRect(0)) || input.confirmPressed() || input.useItemPressed()) {
+                ui.emitSound(UiSoundEvent::Confirm);
                 confirmRegenerate();
                 ui.block(baseMiningRegenerateConfirmRect());
                 return;
             }
             if (ui.pressed(baseMiningRegenerateConfirmButtonRect(1)) || input.backPressed()) {
+                ui.emitSound(UiSoundEvent::Cancel);
                 baseRegenerateConfirmActive_ = false;
                 baseStatus_.clear();
                 ui.block(baseMiningRegenerateConfirmRect());
@@ -5019,12 +5228,14 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
                 }
                 if (ui.pressed(rect)) {
                     baseWarpPointSelection_ = i;
+                    ui.emitSound(UiSoundEvent::Confirm);
                     if (startFromSelectedWarpPoint()) {
                         return;
                     }
                 }
             }
             if (input.confirmPressed() || input.useItemPressed()) {
+                ui.emitSound(UiSoundEvent::Confirm);
                 if (startFromSelectedWarpPoint()) {
                     return;
                 }
@@ -5036,21 +5247,25 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
         const UiPageSelectorRects stageSelector = baseMiningStageSelectorRects();
         const int pageDelta = input.activeRingDelta();
         if (pageDelta < 0 && changeSelectedStage(pageDelta)) {
+            ui.emitSound(UiSoundEvent::TabSwitch);
             ui.block(basePanelRect());
             return;
         }
         if (pageDelta > 0 && changeSelectedStage(pageDelta)) {
+            ui.emitSound(UiSoundEvent::TabSwitch);
             ui.block(basePanelRect());
             return;
         }
         if (input.pressed(InputAction::MoveLeft) || ui.pressed(stageSelectorHitRect(stageSelector.prev))) {
             if (changeSelectedStage(-1)) {
+                ui.emitSound(UiSoundEvent::TabSwitch);
                 ui.block(basePanelRect());
                 return;
             }
         }
         if (input.pressed(InputAction::MoveRight) || ui.pressed(stageSelectorHitRect(stageSelector.next))) {
             if (changeSelectedStage(1)) {
+                ui.emitSound(UiSoundEvent::TabSwitch);
                 ui.block(basePanelRect());
                 return;
             }
@@ -5069,10 +5284,12 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
             if (ui.pressed(rect)) {
                 baseMiningStartSelection_ = i;
                 if (i == 1 && selectableWarpPoints.empty()) {
+                    ui.emitSound(UiSoundEvent::Cancel);
                     baseStatus_ = "解放済みワープポイントがありません";
                     return;
                 }
                 if (i == 1) {
+                    ui.emitSound(UiSoundEvent::MenuOpen);
                     baseWarpPointSelectActive_ = true;
                     baseWarpPointSelection_ = std::clamp(
                         baseWarpPointSelection_,
@@ -5083,12 +5300,15 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
                 }
                 if (i == 2) {
                     if (!canRegenerateCurrentStage()) {
-                        baseStatus_ = "全ワープポイントを解放すると可能";
+                        ui.emitSound(UiSoundEvent::Cancel);
+                        baseStatus_ = "全ワープ解放とクリア後に可能";
                         return;
                     }
+                    ui.emitSound(UiSoundEvent::MenuOpen);
                     openRegenerateConfirm();
                     return;
                 }
+                ui.emitSound(UiSoundEvent::Confirm);
                 baseRegenerateConfirmActive_ = false;
                 requestMiningStartTransition(false, false);
                 return;
@@ -5096,10 +5316,12 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
         }
         if (input.confirmPressed() || input.useItemPressed()) {
             if (baseMiningStartSelection_ == 1 && selectableWarpPoints.empty()) {
+                ui.emitSound(UiSoundEvent::Cancel);
                 baseStatus_ = "解放済みワープポイントがありません";
                 return;
             }
             if (baseMiningStartSelection_ == 1) {
+                ui.emitSound(UiSoundEvent::MenuOpen);
                 baseWarpPointSelectActive_ = true;
                 baseWarpPointSelection_ = std::clamp(
                     baseWarpPointSelection_,
@@ -5110,12 +5332,15 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
             }
             if (baseMiningStartSelection_ == 2) {
                 if (!canRegenerateCurrentStage()) {
-                    baseStatus_ = "全ワープポイントを解放すると可能";
+                    ui.emitSound(UiSoundEvent::Cancel);
+                    baseStatus_ = "全ワープ解放とクリア後に可能";
                     return;
                 }
+                ui.emitSound(UiSoundEvent::MenuOpen);
                 openRegenerateConfirm();
                 return;
             }
+            ui.emitSound(UiSoundEvent::Confirm);
             baseRegenerateConfirmActive_ = false;
             requestMiningStartTransition(false, false);
             return;
@@ -5125,6 +5350,7 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
     }
 
     if (input.pausePressed()) {
+        ui.emitSound(UiSoundEvent::MenuOpen);
         mode_ = ScreenMode::PauseMenu;
         pauseReturnMode_ = ScreenMode::Base;
         pausePage_ = PauseMenuPage::Main;
@@ -5168,6 +5394,9 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
             baseStatus_.clear();
             break;
         case BaseFacilityAction::Merchant:
+            if (hasStoryFlag("ending_seen") && startStoryEventForTrigger("merchant:post_ending")) {
+                break;
+            }
             if (merchantRefreshPending_) {
                 refreshMerchantStock(true);
                 merchantRefreshPending_ = false;
@@ -5194,6 +5423,9 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
             baseStatus_.clear();
             break;
         case BaseFacilityAction::Processing:
+            if (hasStoryFlag("ending_seen") && startStoryEventForTrigger("processing:post_ending")) {
+                break;
+            }
             baseProcessingActive_ = true;
             baseProcessingMode_ = 0;
             baseProcessingTabs_.focusedIndex = baseProcessingMode_;
@@ -5226,7 +5458,7 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
                 BaseArea::HomeInterior,
                 {640.0f, 542.0f},
                 {0.0f, -1.0f},
-                "主人公の家に入りました");
+                "ルネの家に入りました");
             break;
         case BaseFacilityAction::HomeExit:
             requestBaseAreaCrossfade(
@@ -5323,8 +5555,10 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
             }
             ui.consumePointer();
             if (baseInteractionAvailable(basePlayerPosition_, facility)) {
+                ui.emitSound(facility.onInteract == BaseFacilityAction::Bookshelf ? UiSoundEvent::BookOpen : UiSoundEvent::Confirm);
                 interact(facility);
             } else if (facility.enabled) {
+                ui.emitSound(UiSoundEvent::Cancel);
                 baseStatus_ = "近くまで移動してください";
             }
             return;
@@ -5332,6 +5566,7 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
     }
 
     if (input.confirmPressed() && nearest != nullptr) {
+        ui.emitSound(nearest->onInteract == BaseFacilityAction::Bookshelf ? UiSoundEvent::BookOpen : UiSoundEvent::Confirm);
         interact(*nearest);
         return;
     }
@@ -5461,7 +5696,7 @@ void Game::renderBaseBackdrop(Renderer& renderer) const
         renderer.fillRect({76.0f, 116.0f}, {44.0f, 468.0f}, {96, 68, 62, 255});
         renderer.fillRect({1160.0f, 116.0f}, {44.0f, 468.0f}, {96, 68, 62, 255});
         renderer.fillRect({132.0f, 132.0f}, {1016.0f, 436.0f}, {118, 92, 66, 255});
-        renderer.drawText({558.0f, 88.0f}, "主人公の家", {246, 235, 255, 255}, 2);
+        renderer.drawText({558.0f, 88.0f}, "ルネの家", {246, 235, 255, 255}, 2);
     } else {
         if (renderer.hasBaseMapTexture()) {
             renderer.drawBaseMapTexture(map.pos, map.size);
@@ -5472,7 +5707,7 @@ void Game::renderBaseBackdrop(Renderer& renderer) const
             renderer.fillRect({566.0f, 130.0f}, {132.0f, 430.0f}, {92, 78, 54, 255});
             renderer.fillRect({330.0f, 72.0f}, {154.0f, 100.0f}, {96, 54, 62, 255});
             renderer.drawRect({330.0f, 72.0f}, {154.0f, 100.0f}, {216, 184, 130, 255});
-            renderer.drawText({350.0f, 106.0f}, "主人公の家", {246, 235, 255, 255}, 2);
+            renderer.drawText({350.0f, 106.0f}, "ルネの家", {246, 235, 255, 255}, 2);
             renderer.fillRect({600.0f, 586.0f}, {80.0f, 34.0f}, {38, 30, 36, 255});
             renderer.drawCircle({640.0f, 602.0f}, 42.0f, {160, 122, 80, 255});
         }
@@ -5572,7 +5807,7 @@ void Game::renderBaseScreen(Renderer& renderer) const
         renderer.fillRect({76.0f, 116.0f}, {44.0f, 468.0f}, {96, 68, 62, 255});
         renderer.fillRect({1160.0f, 116.0f}, {44.0f, 468.0f}, {96, 68, 62, 255});
         renderer.fillRect({132.0f, 132.0f}, {1016.0f, 436.0f}, {118, 92, 66, 255});
-        renderer.drawText({558.0f, 88.0f}, "主人公の家", {246, 235, 255, 255}, 2);
+        renderer.drawText({558.0f, 88.0f}, "ルネの家", {246, 235, 255, 255}, 2);
     } else {
         if (renderer.hasBaseMapTexture()) {
             renderer.drawBaseMapTexture(map.pos, map.size);
@@ -5583,7 +5818,7 @@ void Game::renderBaseScreen(Renderer& renderer) const
         renderer.fillRect({566.0f, 130.0f}, {132.0f, 430.0f}, {92, 78, 54, 255});
         renderer.fillRect({330.0f, 72.0f}, {154.0f, 100.0f}, {96, 54, 62, 255});
         renderer.drawRect({330.0f, 72.0f}, {154.0f, 100.0f}, {216, 184, 130, 255});
-        renderer.drawText({350.0f, 106.0f}, "主人公の家", {246, 235, 255, 255}, 2);
+        renderer.drawText({350.0f, 106.0f}, "ルネの家", {246, 235, 255, 255}, 2);
         renderer.fillRect({600.0f, 586.0f}, {80.0f, 34.0f}, {38, 30, 36, 255});
             renderer.drawCircle({640.0f, 602.0f}, 42.0f, {160, 122, 80, 255});
         }
@@ -6919,7 +7154,7 @@ void Game::renderBaseScreen(Renderer& renderer) const
                 description = disabled ? "ワープポイントを解放すると可能" : "解放済み地点から選んで出発";
                 break;
             case 2:
-                description = disabled ? "全ワープポイントを解放すると可能" : "地形・敵・宝箱・ワープ配置を作り直す";
+                description = disabled ? "全ワープ解放とクリア後に可能" : "地形・敵・宝箱・ワープ配置を作り直す";
                 break;
             default:
                 break;
@@ -7076,7 +7311,7 @@ void Game::renderBaseScreen(Renderer& renderer) const
             UiWindowOptions{true, false});
         renderer.drawWrappedText(
             confirmPanel.pos + Vec2{40.0f, 112.0f},
-            "現在の坑道状態を破棄して、地形・敵・宝箱・ワープポイントを作り直します。\n拾っていないドロップがある場合は消えます。",
+            "現在の坑道状態を破棄して、地形・敵・宝箱・ワープポイントを作り直します。\n拾っていないドロップがある場合は消えます。\nボス再戦用に地形も作り直します。",
             confirmPanel.size.x - 80.0f,
             {246, 235, 255, 255},
             2);

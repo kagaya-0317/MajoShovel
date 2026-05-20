@@ -17,6 +17,8 @@ enum class SpellRingItemType {
     Object = 4
 };
 
+constexpr float SpellRingItemActionFlashSeconds = 0.10f;
+
 struct SpellRingItem {
     SpellRingItemType type = SpellRingItemType::Shovel;
     int ringIndex = 0;
@@ -31,10 +33,12 @@ struct SpellRingItem {
     float hitInterval = 0.22f;
     float lastTerrainHitTime = -100.0f;
     float lastEnemyHitTime = -100.0f;
+    float actionFlashTimer = 0.0f;
     int lastDigTileX = 2147483647;
     int lastDigTileY = 2147483647;
     std::string objectId;
     std::string instanceId;
+    ItemVisualRef objectVisual;
     bool objectStatsApplied = false;
     int enhanceLevel = 0;
     int attackBonus = 0;
@@ -49,6 +53,21 @@ struct SpellRingItem {
     float lightRadius = 0.0f;
     float hiddenDetectionRadius = 0.0f;
     float treasureDetectionRadius = 0.0f;
+    float coldAirRadius = 0.0f;
+    float coldAirStrength = 0.0f;
+    float coldAirFxTimer = 0.0f;
+    float vacuumPullRadius = 0.0f;
+    float vacuumPullStrength = 0.0f;
+    float vacuumPullFxTimer = 0.0f;
+    float hotAirRadius = 0.0f;
+    float hotAirStrength = 0.0f;
+    float hotAirFxTimer = 0.0f;
+    float windPushRadius = 0.0f;
+    float windPushStrength = 0.0f;
+    float windPushFxTimer = 0.0f;
+    int dryWetBonusDamage = 0;
+    double slashDamageMultiplier = 1.0;
+    float orbitDistanceOffset = 0.0f;
     Vec2 worldPosition{};
     Vec2 worldVelocity{};
     float orbitMotionSpeed = 0.0f;

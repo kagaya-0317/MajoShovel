@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 #include "engine/Math.hpp"
 #include <SDL3/SDL.h>
@@ -71,13 +71,14 @@ public:
     bool backHeld() const { return held(InputAction::Pause) || held(InputAction::OffsetRingCenter); }
     bool ringOffsetHeld() const { return held(InputAction::OffsetRingCenter); }
     bool upgradePressed(int option) const;
-    bool mouseLeftPressed() const { return pressed(InputAction::ThrowActiveRing); }
+    bool mouseLeftPressed() const { return mouseLeftPressed_; }
     bool mouseLeftReleased() const { return mouseLeftReleased_; }
-    bool mouseLeftHeld() const { return held(InputAction::ThrowActiveRing); }
+    bool mouseLeftHeld() const { return mouseLeftHeld_; }
     bool saveShortcutPressed() const { return ctrlSavePressed_; }
     bool undoShortcutPressed() const { return ctrlUndoPressed_; }
     bool redoShortcutPressed() const { return ctrlRedoPressed_; }
     int shortcutCursorDelta() const { return shortcutCursorDelta_; }
+    int mouseWheelDelta() const { return mouseWheelDelta_; }
     int shortcutSlotPressed() const { return shortcutSlotPressed_; }
     int activeRingDelta() const { return activeRingDelta_; }
     bool toggleShortcutRowPressed() const { return pressed(InputAction::ToggleShortcutRow); }
@@ -92,7 +93,9 @@ private:
     void setHeld(InputAction action, bool held);
 
     bool quitRequested_ = false;
+    bool mouseLeftPressed_ = false;
     bool mouseLeftReleased_ = false;
+    bool mouseLeftHeld_ = false;
     bool ctrlSavePressed_ = false;
     bool ctrlUndoPressed_ = false;
     bool ctrlRedoPressed_ = false;
@@ -100,6 +103,7 @@ private:
     std::array<bool, ActionCount> released_{};
     std::array<bool, ActionCount> held_{};
     int shortcutCursorDelta_ = 0;
+    int mouseWheelDelta_ = 0;
     int shortcutSlotPressed_ = -1;
     int activeRingDelta_ = 0;
     Vec2 moveAxis_{};

@@ -21,6 +21,9 @@ enum class MagicFxParticleShape {
     Crystal,
     WindCrescent,
     WindSparkle,
+    EarthSpike,
+    EarthCrack,
+    DirtClod,
 };
 
 enum class MagicFxSpawnShape {
@@ -51,6 +54,7 @@ struct MagicFxEmitterConfig {
     MagicFxSpawnShape spawnShape = MagicFxSpawnShape::Point;
     Color startColor{255, 255, 255, 220};
     Color endColor{255, 255, 255, 0};
+    MagicFxRange alphaScale{1.0f, 1.0f};
     MagicFxRange speed{0.0f, 0.0f};
     MagicFxRange lifetime{0.35f, 0.55f};
     MagicFxRange startSize{4.0f, 6.0f};
@@ -72,6 +76,7 @@ struct MagicFxEmitterConfig {
     int burstCount = 0;
     bool loop = false;
     bool depthSorted = true;
+    bool foreground = false;
 };
 
 class MagicFxSystem {
@@ -98,24 +103,38 @@ public:
         float fadeInFraction = 0.0f;
         float fadeOutFraction = 0.45f;
         bool depthSorted = true;
-    };
-
-    struct LightningBranch {
-        std::array<Vec2, 4> points{};
-        int pointCount = 0;
-        float width = 1.0f;
+        bool foreground = false;
     };
 
     struct LightningStrike {
         bool active = false;
         std::array<Vec2, 12> points{};
         int pointCount = 0;
-        std::array<LightningBranch, 8> branches{};
-        int branchCount = 0;
         float age = 0.0f;
         float lifetime = 0.14f;
         float outerWidth = 6.0f;
         float coreWidth = 2.0f;
+        bool strong = true;
+    };
+
+    enum class ThunderImpactArcStyle {
+        Ground,
+        Vertical,
+        Sigil,
+    };
+
+    struct ThunderImpactArc {
+        bool active = false;
+        ThunderImpactArcStyle style = ThunderImpactArcStyle::Ground;
+        std::array<Vec2, 8> points{};
+        int pointCount = 0;
+        Vec2 origin{};
+        float age = 0.0f;
+        float startDelay = 0.0f;
+        float lifetime = 0.22f;
+        float outerWidth = 2.0f;
+        float coreWidth = 1.0f;
+        float phase = 0.0f;
         bool strong = true;
     };
 
@@ -142,6 +161,7 @@ public:
     bool stopEmitter(MagicFxEmitterHandle handle);
     void update(float dt);
     void appendRenderEntries(std::vector<DepthRenderEntry>& entries, Renderer& renderer) const;
+    void appendForegroundRenderEntries(std::vector<DepthRenderEntry>& entries, Renderer& renderer) const;
     void clear();
 
     [[nodiscard]] int activeParticleCount() const;
@@ -162,14 +182,17 @@ private:
     void updateEmitters(float dt);
     void updateParticles(float dt);
     void updateLightningStrikes(float dt);
+    void updateThunderImpactArcs(float dt);
     [[nodiscard]] float sample(MagicFxRange range);
     [[nodiscard]] Vec2 sampleSpawnOffset(const MagicFxEmitterConfig& config);
     [[nodiscard]] Vec2 sampleVelocity(const MagicFxEmitterConfig& config);
     void addParticle(Particle particle);
+    void addThunderImpactArc(ThunderImpactArc arc);
 
     std::vector<Particle> particles_;
     std::vector<Emitter> emitters_;
     std::vector<LightningStrike> lightningStrikes_;
+    std::vector<ThunderImpactArc> thunderImpactArcs_;
     std::uint32_t nextEmitterId_ = 1;
 };
 

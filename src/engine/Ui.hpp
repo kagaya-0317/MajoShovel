@@ -47,6 +47,19 @@ struct UiRect {
     bool contains(Vec2 point) const;
 };
 
+enum class UiSoundEvent {
+    Confirm,
+    Cancel,
+    MenuOpen,
+    TabSwitch,
+    BookOpen,
+    ItemMove,
+    ItemUse,
+    RingPlace,
+    UpgradeSelect,
+    Count,
+};
+
 class UiContext {
 public:
     explicit UiContext(const Input& input);
@@ -57,11 +70,15 @@ public:
     bool pressed(UiRect rect);
     void consumePointer() { pointerConsumed_ = true; }
     void block(UiRect rect);
+    void emitSound(UiSoundEvent event);
+    int soundEventCount(UiSoundEvent event) const;
+    bool hasSoundEvents() const;
 
 private:
     Vec2 mouse_{};
     bool mouseLeftPressed_ = false;
     bool pointerConsumed_ = false;
+    int soundEventCounts_[static_cast<int>(UiSoundEvent::Count)]{};
 };
 
 struct UiButtonStyle {
@@ -135,6 +152,7 @@ struct UiCommandMenuState {
     bool open = false;
     bool visible = false;
     bool closing = false;
+    bool openSoundPending = false;
     UiRect panel{};
     int hoveredIndex = -1;
     int textScale = 2;
@@ -197,6 +215,42 @@ struct UiDropdownStyle {
     Color scrollbarTrack{255, 255, 255, 48};
     Color scrollbarThumb{255, 255, 255, 170};
     std::string_view emptyLabel = "項目がありません";
+};
+
+struct UiScrollAreaStyle {
+    float wheelStep = 48.0f;
+    float scrollbarWidth = 8.0f;
+    float scrollbarGap = 6.0f;
+    float scrollbarPaddingX = 6.0f;
+    float scrollbarPaddingY = 6.0f;
+    float scrollbarMinThumbHeight = 24.0f;
+    Color scrollbarTrack{255, 255, 255, 48};
+    Color scrollbarThumb{255, 255, 255, 170};
+    Color outline{255, 255, 255, 170};
+};
+
+struct UiScrollAreaState {
+    bool draggingScrollbar = false;
+    float scrollbarDragOffsetY = 0.0f;
+};
+
+struct UiScrollAreaLayout {
+    UiRect viewport{};
+    UiRect content{};
+    float contentHeight = 0.0f;
+    float scrollOffset = 0.0f;
+    float maxScroll = 0.0f;
+    float scrollbarReserve = 0.0f;
+    bool scrollable = false;
+};
+
+struct UiScrollableListStyle {
+    float rowHeight = 44.0f;
+    float rowGap = 4.0f;
+    float leadingPadding = 0.0f;
+    float trailingPadding = 0.0f;
+    float rowInsetX = 0.0f;
+    UiScrollAreaStyle scroll{};
 };
 
 struct UiTabItem {
@@ -351,6 +405,31 @@ void openUiCommandMenu(
 void closeUiCommandMenu(UiCommandMenuState& state);
 int updateUiCommandMenu(UiCommandMenuState& state, UiContext& ui, const Input& input, const UiCommandMenuItem* items, int itemCount);
 void drawUiCommandMenu(Renderer& renderer, const UiCommandMenuState& state, const UiCommandMenuItem* items, int itemCount);
+UiScrollAreaLayout makeUiScrollAreaLayout(UiRect viewport, float contentHeight, float scrollOffset, const UiScrollAreaStyle& style = {});
+UiScrollAreaLayout updateUiScrollArea(
+    UiContext& ui,
+    const Input& input,
+    UiRect viewport,
+    float contentHeight,
+    float& scrollOffset,
+    const UiScrollAreaStyle& style = {},
+    UiScrollAreaState* state = nullptr);
+bool uiScrollAreaRectVisible(const UiScrollAreaLayout& layout, UiRect rect);
+void keepUiScrollAreaRectVisible(UiRect viewport, UiRect rect, float contentHeight, float& scrollOffset, const UiScrollAreaStyle& style = {});
+void drawUiScrollAreaFrame(Renderer& renderer, const UiScrollAreaLayout& layout, const UiScrollAreaStyle& style = {});
+void drawUiScrollAreaScrollbar(Renderer& renderer, const UiScrollAreaLayout& layout, const UiScrollAreaStyle& style = {});
+float uiScrollableListContentHeight(int itemCount, const UiScrollableListStyle& style = {});
+UiScrollAreaLayout makeUiScrollableListLayout(UiRect viewport, int itemCount, float scrollOffset, const UiScrollableListStyle& style = {});
+UiScrollAreaLayout updateUiScrollableList(
+    UiContext& ui,
+    const Input& input,
+    UiRect viewport,
+    int itemCount,
+    float& scrollOffset,
+    const UiScrollableListStyle& style = {},
+    UiScrollAreaState* state = nullptr);
+UiRect uiScrollableListItemRect(const UiScrollAreaLayout& layout, int index, const UiScrollableListStyle& style = {});
+void keepUiScrollableListItemVisible(UiRect viewport, int selectedIndex, int itemCount, float& scrollOffset, const UiScrollableListStyle& style = {});
 UiRect uiDropdownListRect(UiRect buttonRect, int itemCount, const UiDropdownStyle& style = {});
 UiRect uiDropdownItemRect(UiRect buttonRect, int visibleIndex, const UiDropdownStyle& style = {});
 int updateUiDropdown(
