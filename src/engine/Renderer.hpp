@@ -79,6 +79,9 @@ public:
     bool loadUiButtonTexture(std::string_view path);
     void unloadUiButtonTexture();
     bool hasUiButtonTexture() const { return uiButtonTexture_.texture != nullptr && uiButtonTexture_.valid; }
+    bool loadUiTabTexture(std::string_view path);
+    void unloadUiTabTexture();
+    bool hasUiTabTexture() const { return uiTabTexture_.texture != nullptr && uiTabTexture_.valid; }
     bool loadUiLineTexture(std::string_view path);
     void unloadUiLineTexture();
     bool hasUiLineTexture() const { return uiLineTexture_.texture != nullptr; }
@@ -102,6 +105,7 @@ public:
     void drawUiMessageWindowFrame(Vec2 pos, Vec2 size, Color tint = {255, 255, 255, 255});
     void drawUiSubWindowFrame(Vec2 pos, Vec2 size, Color tint = {255, 255, 255, 255});
     void drawUiButtonFrame(Vec2 pos, float width, int variant, Color tint = {255, 255, 255, 255});
+    void drawUiTabFrame(Vec2 pos, Vec2 size, bool selected, Color tint = {255, 255, 255, 255});
     void drawUiLine(Vec2 pos, float width, Color tint = {255, 255, 255, 255});
     ImageHandle acquireImage(std::string_view path, TextureFilter filter = TextureFilter::Nearest);
     bool drawImage(ImageHandle handle, Vec2 center, Vec2 size, const ImageDrawOptions& options = {});
@@ -202,6 +206,7 @@ private:
     void drawTextureTiled(SDL_Texture* texture, RectF src, Vec2 pos, Vec2 size, Color tint);
     void drawNineSliceFrame(const GuidedTexture& texture, Vec2 pos, Vec2 size, Color tint);
     void drawHorizontalSliceRow(const GuidedTexture& texture, int row, Vec2 pos, float width, Color tint);
+    void drawHorizontalSliceRow(const GuidedTexture& texture, int row, Vec2 pos, Vec2 size, Color tint);
 
     SDL_Renderer* renderer_ = nullptr;
     const Camera* camera_ = nullptr;
@@ -218,6 +223,7 @@ private:
     ImageTexture uiMessageWindowTexture_;
     GuidedTexture uiSubWindowTexture_;
     GuidedTexture uiButtonTexture_;
+    GuidedTexture uiTabTexture_;
     ImageTexture uiLineTexture_;
     std::unique_ptr<NativeTextFont> nativeTextFont_;
     std::unordered_map<std::string, TextTexture> textCache_;

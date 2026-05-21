@@ -21,6 +21,10 @@ enum class InlineIconKind {
     World,
 };
 
+constexpr std::string_view BrokenItemNamePrefix = "壊れた";
+constexpr Color BrokenItemImageTint{140, 140, 148, 220};
+constexpr Color BrokenItemFallbackColor{82, 82, 90, 255};
+
 struct InlineIconTag {
     InlineIconKind kind = InlineIconKind::Item;
     std::string_view key;
@@ -138,8 +142,61 @@ Color darkenColor(Color color, float factor)
     return color;
 }
 
+Color multiplyColor(Color color, Color multiplier)
+{
+    color.r = static_cast<unsigned char>((static_cast<int>(color.r) * static_cast<int>(multiplier.r)) / 255);
+    color.g = static_cast<unsigned char>((static_cast<int>(color.g) * static_cast<int>(multiplier.g)) / 255);
+    color.b = static_cast<unsigned char>((static_cast<int>(color.b) * static_cast<int>(multiplier.b)) / 255);
+    color.a = static_cast<unsigned char>((static_cast<int>(color.a) * static_cast<int>(multiplier.a)) / 255);
+    return color;
+}
+
+float drawInventoryDetailHeader(Renderer& renderer, UiRect panel, std::string_view text, bool protectedItem)
+{
+    constexpr float MinHeaderHeight = 50.0f;
+    constexpr float HeaderGap = 16.0f;
+    constexpr float ProtectionGap = 12.0f;
+    constexpr int TitleScale = 3;
+    constexpr int ProtectionScale = 2;
+    const UiRect content = uiSubPanelContentRect(panel);
+    const std::string_view protectionText = "保護";
+    const Vec2 protectionSize = protectedItem
+        ? renderer.measureText(protectionText, ProtectionScale)
+        : Vec2{};
+    const float titleMaxWidth = protectedItem
+        ? std::max(0.0f, content.size.x - protectionSize.x - ProtectionGap)
+        : content.size.x;
+
+    renderer.drawWrappedText(content.pos, text, titleMaxWidth, ui::Text, TitleScale);
+    renderer.drawWrappedText({content.pos.x + 1.0f, content.pos.y}, text, titleMaxWidth, ui::Text, TitleScale);
+    if (protectedItem) {
+        renderer.drawText(
+            {content.pos.x + content.size.x - protectionSize.x, content.pos.y + 6.0f},
+            protectionText,
+            {255, 230, 150, 255},
+            ProtectionScale);
+    }
+    return content.pos.y + std::max(MinHeaderHeight, renderer.measureWrappedText(text, titleMaxWidth, TitleScale).y + HeaderGap);
+}
+
+void drawDetailSeparator(Renderer& renderer, UiRect panel, float& y)
+{
+    constexpr float SeparatorBleed = 10.0f;
+    const UiRect content = uiSubPanelContentRect(panel);
+    y += 4.0f;
+    const UiRect separator{
+        Vec2{content.pos.x - SeparatorBleed, y},
+        Vec2{content.size.x + SeparatorBleed * 2.0f, ui::SeparatorHeight}};
+    drawUiSeparator(renderer, separator);
+    y += ui::SeparatorHeight + 2.0f;
+}
+
 void drawExtraLines(Renderer& renderer, UiRect panel, float& y, const std::vector<InventoryUiDetailExtraLine>& extraLines)
 {
+    if (extraLines.empty()) {
+        return;
+    }
+    drawDetailSeparator(renderer, panel, y);
     for (const InventoryUiDetailExtraLine& line : extraLines) {
         drawUiDetailLine(renderer, panel, y, line.label, line.value, line.valueColor);
     }
@@ -167,6 +224,32 @@ Color inventoryUiObjectColor(const ItemData& item)
     return {188, 152, 236, 255};
 }
 
+std::string itemDisplayName(std::string_view baseName, bool broken)
+{
+    if (!broken || baseName.empty() || baseName.starts_with(BrokenItemNamePrefix)) {
+        return std::string(baseName);
+    }
+    return std::string(BrokenItemNamePrefix) + std::string(baseName);
+}
+
+Color itemFallbackColorForBrokenState(Color color, bool broken)
+{
+    if (!broken) {
+        return color;
+    }
+    Color brokenColor = BrokenItemFallbackColor;
+    brokenColor.a = color.a;
+    return brokenColor;
+}
+
+ObjectImageDrawOptions itemImageOptionsWithBrokenState(ObjectImageDrawOptions options, bool broken)
+{
+    if (broken) {
+        options.tint = multiplyColor(options.tint, BrokenItemImageTint);
+    }
+    return options;
+}
+
 InventoryUiItemStats inventoryUiStatsFromInstance(const ItemInstance& instance)
 {
     return {
@@ -177,6 +260,8 @@ InventoryUiItemStats inventoryUiStatsFromInstance(const ItemInstance& instance)
         instance.attackBonus,
         instance.digBonus,
         instance.durabilityBonus,
+        instance.weightModifier,
+        instance.sizeModifier,
         instance.protectionEnabled,
         instance.isBroken,
     };
@@ -192,6 +277,8 @@ InventoryUiItemStats inventoryUiStatsFromRingItem(const SpellRingItem& item)
         item.attackBonus,
         item.digBonus,
         item.durabilityBonus,
+        item.weightModifier,
+        item.sizeModifier,
         item.protectionEnabled,
         item.broken(),
     };
@@ -225,6 +312,26 @@ std::string joinInventoryUiEffectLines(const std::vector<std::string>& lines)
         text += lines[i];
     }
     return text;
+}
+
+void drawItemEffectDetailSections(
+    Renderer& renderer,
+    UiRect panel,
+    float& y,
+    const ItemData& item,
+    const ObjectCatalog& catalog,
+    const EncyclopediaSystem& encyclopedia)
+{
+    const ObjectEffectDisplaySections sections =
+        encyclopedia.getObjectEffectDisplaySections(item.id, catalog, EffectRevealMode::WithUnknown);
+    if (!sections.useLines.empty()) {
+        drawUiDetailText(renderer, panel, y, "使用時の効果");
+        drawUiDetailText(renderer, panel, y, joinInventoryUiEffectLines(sections.useLines));
+    }
+    if (!sections.ringLines.empty()) {
+        drawUiDetailText(renderer, panel, y, "リングに乗せたときの効果");
+        drawUiDetailText(renderer, panel, y, joinInventoryUiEffectLines(sections.ringLines));
+    }
 }
 
 Vec2 measureInlineItemText(Renderer& renderer, std::string_view text, const InlineItemTextStyle& style)
@@ -430,10 +537,13 @@ void drawInventoryUiSlot(
         return;
     }
 
+    const bool broken = stats ? stats->broken : entry.item->durability == 0;
+
     if (!stats) {
-        const Color objectColor = inventoryUiObjectColor(*entry.item);
+        const Color objectColor = itemFallbackColorForBrokenState(inventoryUiObjectColor(*entry.item), broken);
         ObjectImageDrawOptions imageOptions;
         imageOptions.tint = style.disabled ? Color{128, 128, 128, 255} : Color{255, 255, 255, 255};
+        imageOptions = itemImageOptionsWithBrokenState(imageOptions, broken);
         if (style.selected) {
             imageOptions = withSelectedItemOutline(imageOptions);
         }
@@ -454,12 +564,13 @@ void drawInventoryUiSlot(
         return;
     }
 
-    const Color objectColor = stats->broken ? Color{82, 82, 90, 255} : inventoryUiObjectColor(*entry.item);
+    const Color objectColor = itemFallbackColorForBrokenState(inventoryUiObjectColor(*entry.item), broken);
     ObjectImageDrawOptions imageOptions;
-    imageOptions.tint = stats->broken ? Color{140, 140, 148, 220} : Color{255, 255, 255, 255};
+    imageOptions.tint = Color{255, 255, 255, 255};
     if (style.disabled) {
         imageOptions.tint = darkenColor(imageOptions.tint, 0.5f);
     }
+    imageOptions = itemImageOptionsWithBrokenState(imageOptions, broken);
     if (style.selected) {
         imageOptions = withSelectedItemOutline(imageOptions);
     }
@@ -496,18 +607,20 @@ void drawInventoryUiDetailPanel(
     const InventoryUiEntryView& entry,
     const ObjectCatalog& catalog,
     const EncyclopediaSystem& encyclopedia,
-    bool showProtectionOperation,
+    const InventoryUiDetailOptions& options,
     const std::vector<InventoryUiDetailExtraLine>& extraLines)
 {
     char buffer[160];
     const std::optional<InventoryUiItemStats> stats = inventoryUiEntryStats(entry);
     std::string detailTitle = "Empty";
     if (entry.item != nullptr) {
+        const bool broken = stats ? stats->broken : entry.item->durability == 0;
+        const std::string displayName = itemDisplayName(entry.item->name, broken);
         if (!stats && entry.stackCount > 1) {
-            std::snprintf(buffer, sizeof(buffer), "%s x%d", entry.item->name.c_str(), entry.stackCount);
+            std::snprintf(buffer, sizeof(buffer), "%s x%d", displayName.c_str(), entry.stackCount);
             detailTitle = buffer;
         } else {
-            detailTitle = entry.item->name;
+            detailTitle = displayName;
         }
     }
 
@@ -517,51 +630,33 @@ void drawInventoryUiDetailPanel(
     }
 
     drawUiSubPanel(renderer, panel);
-    float detailLineY = drawUiDetailHeader(renderer, panel, detailTitle);
+    float detailLineY = drawInventoryDetailHeader(renderer, panel, detailTitle, stats && stats->protectionEnabled);
 
-    const std::vector<std::string> effectLines =
-        encyclopedia.getObjectEffectDisplayLines(entry.item->id, catalog, EffectRevealMode::WithUnknown);
-    const std::string effectText = joinInventoryUiEffectLines(effectLines);
     drawUiDetailText(renderer, panel, detailLineY, entry.item->description.empty() ? "-" : entry.item->description);
-    std::snprintf(buffer, sizeof(buffer), "%d", static_cast<int>(entry.item->discoveryEffectLines.size()));
-    drawUiDetailLine(renderer, panel, detailLineY, "効果数", buffer);
-    drawUiDetailText(renderer, panel, detailLineY, "効果");
-    drawUiDetailText(renderer, panel, detailLineY, effectText);
+    drawItemEffectDetailSections(renderer, panel, detailLineY, *entry.item, catalog, encyclopedia);
 
-    if (!stats) {
-        std::snprintf(buffer, sizeof(buffer), "%d", entry.item->attackPower);
-        drawUiDetailLine(renderer, panel, detailLineY, "攻撃力", buffer);
-        const std::string damageTypeText = entry.item->damageType.empty() ? "-" : std::string(damageTypeDisplayName(entry.item->damageType));
-        drawUiDetailLine(renderer, panel, detailLineY, "ダメージ", damageTypeText);
-        std::snprintf(buffer, sizeof(buffer), "%d", entry.item->digPower);
-        drawUiDetailLine(renderer, panel, detailLineY, "掘削力", buffer);
-        std::snprintf(buffer, sizeof(buffer), "%d", entry.item->durability);
-        drawUiDetailLine(renderer, panel, detailLineY, "耐久力", buffer);
-        std::snprintf(buffer, sizeof(buffer), "%.1fkg", entry.item->weightKg);
-        drawUiDetailLine(renderer, panel, detailLineY, "重さ", buffer);
-        drawExtraLines(renderer, panel, detailLineY, extraLines);
-        return;
-    }
-
-    if (!stats->instanceId.empty()) {
-        std::snprintf(buffer, sizeof(buffer), "%s", stats->instanceId.c_str());
-        drawUiDetailLine(renderer, panel, detailLineY, "個体ID", buffer);
-    }
-    std::snprintf(buffer, sizeof(buffer), "%d", stats->enhanceLevel);
-    drawUiDetailLine(renderer, panel, detailLineY, "強化Lv", buffer);
-    if (stats->maxDurability < 0) {
+    if (stats) {
+        if (stats->maxDurability < 0) {
+            std::snprintf(buffer, sizeof(buffer), "壊れない");
+        } else {
+            std::snprintf(buffer, sizeof(buffer), "%d/%d", stats->currentDurability, stats->maxDurability);
+        }
+    } else if (entry.item->durability < 0) {
         std::snprintf(buffer, sizeof(buffer), "壊れない");
     } else {
-        std::snprintf(buffer, sizeof(buffer), "%d/%d", stats->currentDurability, stats->maxDurability);
+        std::snprintf(buffer, sizeof(buffer), "%d", entry.item->durability);
     }
     drawUiDetailLine(renderer, panel, detailLineY, "耐久力", buffer);
-    drawUiDetailLine(renderer, panel, detailLineY, "保護", stats->protectionEnabled ? "ON" : "OFF");
-    drawUiDetailLine(renderer, panel, detailLineY, "状態", stats->broken ? "破損" : "通常");
-    std::snprintf(buffer, sizeof(buffer), "+%d / +%d / +%d", stats->attackBonus, stats->digBonus, stats->durabilityBonus);
-    drawUiDetailLine(renderer, panel, detailLineY, "補正", buffer);
-    if (showProtectionOperation) {
-        drawUiDetailLine(renderer, panel, detailLineY, "操作", "P 保護ON/OFF");
+
+    const double weightKg = entry.item->weightKg * (stats ? stats->weightModifier : 1.0);
+    std::snprintf(buffer, sizeof(buffer), "%.1fkg", weightKg);
+    drawUiDetailLine(renderer, panel, detailLineY, "重さ", buffer);
+
+    if (options.showEnhanceCount && stats && stats->enhanceLevel > 0) {
+        std::snprintf(buffer, sizeof(buffer), "%d", stats->enhanceLevel);
+        drawUiDetailLine(renderer, panel, detailLineY, "強化回数", buffer);
     }
+
     drawExtraLines(renderer, panel, detailLineY, extraLines);
 }
 

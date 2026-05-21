@@ -442,7 +442,7 @@ void drawRingPlaceWindow(
     if (selection >= 0 && selection < slotCount) {
         detailEntry = ringPlaceEntryView(inventory, selection);
     }
-    drawInventoryUiDetailPanel(renderer, ringPlaceDetailRect(), detailEntry, objectCatalog, encyclopedia, true);
+    drawInventoryUiDetailPanel(renderer, ringPlaceDetailRect(), detailEntry, objectCatalog, encyclopedia);
 
     if (!status.empty()) {
         renderer.drawText(panel.pos + Vec2{32.0f, panel.size.y - 66.0f}, status, {255, 230, 150, 255}, 2);
@@ -1278,22 +1278,19 @@ void Game::updateRingScreen(const Input& input, UiContext& ui, float dt)
 void Game::updatePauseMenu(const Input& input, UiContext& ui)
 {
     const UiRect cancelPanel = pausePage_ == PauseMenuPage::QuitConfirm ? quitConfirmRect() : pausePanelRect();
-    if (uiCancelRequested(pauseCancelState_, input, ui, cancelPanel)) {
+    if (pausePage_ != PauseMenuPage::QuitConfirm && uiCancelRequested(pauseCancelState_, input, ui, cancelPanel)) {
         leavePausePage();
         return;
     }
 
     if (pausePage_ == PauseMenuPage::QuitConfirm) {
-        pauseConfirmSelection_ = 1;
-        const UiRect quitRect = quitConfirmButtonRect(1);
-        if (ui.pressed(quitRect)) {
-            ui.emitSound(UiSoundEvent::Confirm);
+        const UiConfirmDialogResult result = updateUiConfirmDialog(pauseQuitConfirm_, ui, input, cancelPanel);
+        if (result == UiConfirmDialogResult::Confirmed) {
             quitRequested_ = true;
             return;
         }
-        if (input.confirmPressed() || input.useItemPressed()) {
-            ui.emitSound(UiSoundEvent::Confirm);
-            quitRequested_ = true;
+        if (result == UiConfirmDialogResult::Cancelled) {
+            leavePausePage();
             return;
         }
         ui.block(quitConfirmRect());
@@ -1767,7 +1764,30 @@ void Game::renderFirstItemAcquisitionNotice(Renderer& renderer) const
         ? "F/Enter OK   R リングへ   P 保護ON/OFF"
         : "F/Enter OK   R リングへ   P 保護不可";
 
-    drawUiModalBackdrop(renderer, screen, {0, 0, 0, 132});
+    const bool baseUiActive = mode_ == ScreenMode::Base && (
+        baseStorageActive_ ||
+        baseSellActive_ ||
+        baseUpgradeActive_ ||
+        baseProcessingActive_ ||
+        baseRingWorkshopActive_ ||
+        baseBookshelfActive_ ||
+        baseMiningStartChoiceActive_ ||
+        baseResultDialog_.open ||
+        baseStorageQuantityDialog_.open ||
+        baseRegenerateConfirm_.open ||
+        baseBrokenRingDepartureConfirm_.open);
+    const bool noticeOverlapsUi =
+        baseUiActive ||
+        debugItemPickerActive_ ||
+        debugStoryTestActive_ ||
+        dialogue_.active() ||
+        mode_ == ScreenMode::PauseMenu ||
+        mode_ == ScreenMode::Inventory ||
+        mode_ == ScreenMode::Ring ||
+        mode_ == ScreenMode::LevelUp;
+    if (noticeOverlapsUi) {
+        drawUiModalBackdrop(renderer, screen, {0, 0, 0, 132});
+    }
     UiWindowScope window(
         renderer,
         "first_item_acquisition",
@@ -2022,40 +2042,8 @@ void Game::renderWarpReturnUi(Renderer& renderer) const
     const float screenWidth = static_cast<float>(camera_.width());
     const float screenHeight = static_cast<float>(camera_.height());
 
-    if (warpReturnConfirmActive_) {
-        renderer.fillRect({0.0f, 0.0f}, {screenWidth, screenHeight}, {0, 0, 0, 118});
-        const UiRect panel = warpReturnConfirmRect();
-        UiWindowScope confirmWindow(renderer, "warp.return_confirm", panel, "", "F/Enter 決定  Esc/右クリック 戻る", UiWindowOptions{true, true});
-
-        const std::string title = "拠点へ帰還しますか？";
-        const Vec2 titleSize = renderer.measureText(title, 3);
-        renderer.drawText(
-            {panel.pos.x + (panel.size.x - titleSize.x) * 0.5f, panel.pos.y + 66.0f},
-            title,
-            ui::Text,
-            3);
-
-        constexpr float BodyWidth = 330.0f;
-        const Vec2 bodyPos{panel.pos.x + (panel.size.x - BodyWidth) * 0.5f, panel.pos.y + 112.0f};
-        renderer.drawWrappedText(
-            bodyPos,
-            "現在のダンジョン状態を保持したまま、ダンジョン入口へ戻ります。",
-            BodyWidth,
-            ui::TextMuted,
-            2);
-
-        drawUiButton(
-            renderer,
-            warpReturnConfirmButtonRect(0),
-            "帰還する",
-            warpReturnConfirmSelection_ == 0,
-            uiActionButtonStyle());
-        drawUiButton(
-            renderer,
-            warpReturnConfirmButtonRect(1),
-            "戻る",
-            warpReturnConfirmSelection_ == 1,
-            uiCancelButtonStyle());
+    if (warpReturnConfirm_.open) {
+        drawUiConfirmDialog(renderer, warpReturnConfirm_, warpReturnConfirmRect(), "warp.return_confirm");
         return;
     }
 
@@ -2256,45 +2244,26 @@ void Game::renderRingScreen(Renderer& renderer, float totalTime) const
         renderer.drawText(itemCenter + Vec2{-5.0f, 22.0f}, buffer, selected ? Color{255, 230, 150, 255} : Color{174, 182, 198, 255}, 1);
     }
 
-    std::string ringDetailTitle = "空き";
-    if (ringSlotSelection_ < static_cast<int>(items.size())) {
-        ringDetailTitle = ringItemDisplayName(objectCatalog_, items[ringSlotSelection_]);
-    }
-
     const UiRect ringDetailPanel = ringDetailRect();
-    drawUiSubPanel(renderer, ringDetailPanel);
-    float detailLineY = drawUiDetailHeader(renderer, ringDetailPanel, ringDetailTitle);
-
     if (ringSlotSelection_ < static_cast<int>(items.size())) {
         const SpellRingItem& item = items[ringSlotSelection_];
         const ItemData* object = objectForRingItem(objectCatalog_, item);
-        const std::vector<std::string> effectLines = object != nullptr
-            ? encyclopedia_.getObjectEffectDisplayLines(object->id, objectCatalog_, EffectRevealMode::WithUnknown)
-            : std::vector<std::string>{};
-        const std::string effectText = joinEffectLines(effectLines);
-        drawUiDetailText(renderer, ringDetailPanel, detailLineY, object != nullptr && !object->description.empty() ? object->description : "-");
-        std::snprintf(buffer, sizeof(buffer), "%d", object != nullptr ? static_cast<int>(object->discoveryEffectLines.size()) : 0);
-        drawUiDetailLine(renderer, ringDetailPanel, detailLineY, "効果数", buffer);
-        drawUiDetailText(renderer, ringDetailPanel, detailLineY, "効果");
-        drawUiDetailText(renderer, ringDetailPanel, detailLineY, effectText);
-        drawUiDetailLine(renderer, ringDetailPanel, detailLineY, "形状", ringShapeDisplayName(activeShape));
-        if (item.durability < 0) {
-            std::snprintf(buffer, sizeof(buffer), "壊れない");
+        if (object != nullptr) {
+            InventoryUiEntryView detailEntry{};
+            detailEntry.item = object;
+            detailEntry.stats = inventoryUiStatsFromRingItem(item);
+            detailEntry.stackCount = 1;
+            drawInventoryUiDetailPanel(renderer, ringDetailPanel, detailEntry, objectCatalog_, encyclopedia_);
         } else {
-            std::snprintf(buffer, sizeof(buffer), "%d/%d", item.durability, item.maxDurability);
+            drawUiSubPanel(renderer, ringDetailPanel);
+            float detailLineY = drawUiDetailHeader(renderer, ringDetailPanel, ringItemDisplayName(objectCatalog_, item));
+            drawUiDetailText(renderer, ringDetailPanel, detailLineY, "-");
         }
-        drawUiDetailLine(renderer, ringDetailPanel, detailLineY, "耐久力", buffer);
-        std::snprintf(buffer, sizeof(buffer), "%.1fkg", item.weight);
-        drawUiDetailLine(renderer, ringDetailPanel, detailLineY, "重さ", buffer);
     } else {
+        drawUiSubPanel(renderer, ringDetailPanel);
+        float detailLineY = drawUiDetailHeader(renderer, ringDetailPanel, "空き");
         drawUiDetailText(renderer, ringDetailPanel, detailLineY, "アイテム未配置");
         drawUiDetailText(renderer, ringDetailPanel, detailLineY, "-");
-        drawUiDetailLine(renderer, ringDetailPanel, detailLineY, "効果数", "0");
-        drawUiDetailText(renderer, ringDetailPanel, detailLineY, "効果");
-        drawUiDetailText(renderer, ringDetailPanel, detailLineY, "-");
-        drawUiDetailLine(renderer, ringDetailPanel, detailLineY, "形状", ringShapeDisplayName(activeShape));
-        drawUiDetailLine(renderer, ringDetailPanel, detailLineY, "耐久力", "-");
-        drawUiDetailLine(renderer, ringDetailPanel, detailLineY, "重さ", "-");
     }
 
     if (ringGrabActive_) {
@@ -2404,11 +2373,11 @@ void Game::renderPauseMenu(Renderer& renderer) const
         renderer.drawText(panel.pos + Vec2{48.0f, 102.0f}, "オプション", {246, 235, 255, 255}, 3);
         renderer.drawText(panel.pos + Vec2{58.0f, 164.0f}, "仮画面です。設定項目は後続実装で追加します。", {230, 230, 236, 255}, 2);
     } else if (pausePage_ == PauseMenuPage::QuitConfirm) {
-        const UiRect confirm = quitConfirmRect();
-        UiWindowScope confirmWindow(renderer, "pause.quit_confirm", confirm, "確認", "Esc/右クリック 戻る", UiWindowOptions{true, true});
-        renderer.drawText(confirm.pos + Vec2{58.0f, 82.0f}, "ゲームを終了しますか？", ui::Text, 3);
-        renderer.drawText(confirm.pos + Vec2{62.0f, 126.0f}, "セーブは拠点でのみ実行できます。", ui::TextMuted, 2);
-        drawUiButton(renderer, quitConfirmButtonRect(1), "終了する", true, uiActionButtonStyle());
+        drawUiModalBackdrop(
+            renderer,
+            {{0.0f, 0.0f}, {static_cast<float>(camera_.width()), static_cast<float>(camera_.height())}},
+            {0, 0, 0, 96});
+        drawUiConfirmDialog(renderer, pauseQuitConfirm_, quitConfirmRect(), "pause.quit_confirm");
         return;
     }
 }
@@ -2420,7 +2389,6 @@ void Game::renderGameOverScreen(Renderer& renderer) const
     }
 
     renderer.setScreenSpace();
-    renderer.fillRect({0.0f, 0.0f}, {static_cast<float>(camera_.width()), static_cast<float>(camera_.height())}, {0, 0, 0, 150});
     const UiRect panel = gameOverPanelRect();
     UiWindowScope gameOverWindow(renderer, "game_over", panel, "GAME OVER", "F/Enter 決定");
     renderer.drawText(panel.pos + Vec2{118.0f, 92.0f}, "リザルト", ui::Text, 3);
@@ -2455,7 +2423,6 @@ void Game::renderStageClearScreen(Renderer& renderer) const
     }
 
     renderer.setScreenSpace();
-    renderer.fillRect({0.0f, 0.0f}, {static_cast<float>(camera_.width()), static_cast<float>(camera_.height())}, {0, 0, 0, 130});
     const UiRect panel = stageClearPanelRect();
     UiWindowScope stageClearWindow(renderer, "stage_clear", panel, "STAGE CLEAR", "F/Enter 決定");
     renderer.drawText(panel.pos + Vec2{118.0f, 92.0f}, "クリア結果", ui::Text, 3);
@@ -2502,7 +2469,6 @@ void Game::renderAstralResultScreen(Renderer& renderer) const
     }
 
     renderer.setScreenSpace();
-    renderer.fillRect({0.0f, 0.0f}, {static_cast<float>(camera_.width()), static_cast<float>(camera_.height())}, {0, 0, 0, 142});
     const UiRect panel = stageClearPanelRect();
     UiWindowScope astralWindow(renderer, "astral_result", panel, "ASTRAL RECORD", "F/Enter 決定");
     renderer.drawText(panel.pos + Vec2{118.0f, 82.0f}, "星間記録", ui::Text, 3);
@@ -2811,7 +2777,7 @@ void Game::render(Renderer& renderer, const Time& time)
     }
     if (basePresentationActive()) {
         renderBaseScreen(renderer);
-        inventory_.render(renderer, player_, spellRing_, objectCatalog_, encyclopedia_);
+        inventory_.render(renderer, player_, spellRing_, objectCatalog_, encyclopedia_, pauseReturnMode_ != ScreenMode::Base);
         renderPauseMenu(renderer);
         renderRingScreen(renderer, time.totalSeconds());
         dialogue_.render(renderer, camera_.width(), camera_.height());

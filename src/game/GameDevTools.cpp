@@ -2041,7 +2041,7 @@ void Game::renderDebugItemPicker(Renderer& renderer) const
             }
         }
     }
-    drawInventoryUiDetailPanel(renderer, layout.detail, detailEntry, objectCatalog_, encyclopedia_, false, detailLines);
+    drawInventoryUiDetailPanel(renderer, layout.detail, detailEntry, objectCatalog_, encyclopedia_, {}, detailLines);
 
     drawUiButton(renderer, debugItemPickerCloseButtonRect(layout.panel), "閉じる", false, uiCancelButtonStyle());
     drawUiButton(renderer, debugItemPickerAddButtonRect(layout.panel), "追加", detailEntry.item != nullptr, uiActionButtonStyle());
@@ -3282,9 +3282,10 @@ bool Game::executeDebugCommand(std::string_view command)
             levels_ = LevelSystem{};
         }
         levelUpResultDialog_ = {};
-        baseRegenerateConfirmActive_ = false;
+        baseRegenerateConfirm_ = {};
+        baseBrokenRingDepartureConfirm_ = {};
         baseWarpPointSelectActive_ = false;
-        warpReturnConfirmActive_ = false;
+        warpReturnConfirm_ = {};
     };
 
     const auto storyUnlockCountForStageId = [&](std::string_view stageId) {
@@ -3322,7 +3323,8 @@ bool Game::executeDebugCommand(std::string_view command)
         baseMiningStartSelection_ = unlockedWarpPointCount_ > 0 ? 1 : 0;
         baseWarpPointSelectActive_ = false;
         baseWarpPointSelection_ = 0;
-        baseRegenerateConfirmActive_ = false;
+        baseRegenerateConfirm_ = {};
+        baseBrokenRingDepartureConfirm_ = {};
         return true;
     };
 
@@ -3369,7 +3371,8 @@ bool Game::executeDebugCommand(std::string_view command)
         enterBase();
         baseMiningStartChoiceActive_ = false;
         baseWarpPointSelectActive_ = false;
-        baseRegenerateConfirmActive_ = false;
+        baseRegenerateConfirm_ = {};
+        baseBrokenRingDepartureConfirm_ = {};
         baseStatus_.clear();
     };
 
@@ -4235,6 +4238,14 @@ bool Game::executeDebugCommand(std::string_view command)
             inventory_.addMaterial(static_cast<MaterialType>(index), 100);
         }
         logInfo("Debug: all upgrade materials +100.");
+        return true;
+    }
+
+    if (normalized == "game ring-workshop unlock" ||
+        normalized == "game ring workshop unlock") {
+        ringWorkshopUnlocked_ = true;
+        baseStatus_ = "リング工房を解禁しました";
+        logInfo("Debug: ring workshop unlocked.");
         return true;
     }
 

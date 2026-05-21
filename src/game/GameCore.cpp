@@ -314,10 +314,11 @@ void Game::resetWorldUiState()
     baseMenuSelection_ = 0;
     baseMiningStartChoiceActive_ = false;
     baseMiningStartSelection_ = 0;
+    baseRegenerateConfirm_ = {};
+    baseBrokenRingDepartureConfirm_ = {};
     baseWarpPointSelectActive_ = false;
     baseWarpPointSelection_ = 0;
-    warpReturnConfirmActive_ = false;
-    warpReturnConfirmSelection_ = 0;
+    warpReturnConfirm_ = {};
     focusedWarpReturnPointIndex_ = -1;
     baseStorageActive_ = false;
     baseStorageMode_ = StorageUiMode::Closed;
@@ -404,7 +405,7 @@ void Game::resetWorldRunState()
     pausePage_ = PauseMenuPage::Main;
     pauseReturnMode_ = ScreenMode::Playing;
     pauseMenuSelection_ = 0;
-    pauseConfirmSelection_ = 0;
+    pauseQuitConfirm_ = {};
     ringTabs_ = {};
     ringSlotSelection_ = 0;
     ringGrabActive_ = false;
@@ -424,6 +425,7 @@ void Game::resetWorldRunState()
     debugPaused_ = false;
     captureCooldown_ = 0.0f;
     captureHoverEnemyId_ = 0;
+    digToolFailsafeSpawnCooldown_ = 0.0f;
     clampCurrentStageToSelectableStages();
     roguelikeDungeon_ = currentStageIsRoguelike();
     restoreRunStartInventoryOnDeath_ = roguelikeDungeon_;
@@ -483,9 +485,9 @@ void Game::beginWorldBuildFromBase(
     }
     baseMiningStartChoiceActive_ = false;
     baseWarpPointSelectActive_ = false;
-    baseRegenerateConfirmActive_ = false;
-    warpReturnConfirmActive_ = false;
-    warpReturnConfirmSelection_ = 0;
+    baseRegenerateConfirm_ = {};
+    baseBrokenRingDepartureConfirm_ = {};
+    warpReturnConfirm_ = {};
     focusedWarpReturnPointIndex_ = -1;
     baseStatus_.clear();
     pausePage_ = PauseMenuPage::Main;
@@ -712,8 +714,9 @@ void Game::enterBase()
     inventoryReturnToPause_ = false;
     baseMiningStartChoiceActive_ = false;
     baseWarpPointSelectActive_ = false;
-    warpReturnConfirmActive_ = false;
-    warpReturnConfirmSelection_ = 0;
+    baseRegenerateConfirm_ = {};
+    baseBrokenRingDepartureConfirm_ = {};
+    warpReturnConfirm_ = {};
     focusedWarpReturnPointIndex_ = -1;
     baseStorageActive_ = false;
     baseStorageMode_ = StorageUiMode::Closed;
@@ -1581,7 +1584,8 @@ void Game::applyDebugStageUnlockState(int unlockedStoryStages)
     baseMiningStartSelection_ = unlockedWarpPointCount_ > 0 ? 1 : 0;
     baseWarpPointSelectActive_ = false;
     baseWarpPointSelection_ = 0;
-    baseRegenerateConfirmActive_ = false;
+    baseRegenerateConfirm_ = {};
+    baseBrokenRingDepartureConfirm_ = {};
     baseStatus_.clear();
 }
 
@@ -1922,7 +1926,17 @@ void Game::updateScreenMode(
         updatePauseMenu(input, ui);
         break;
     case ScreenMode::Inventory:
-        inventory_.updateScreen(input, ui, player_, spellRing_, effectDispatcher_, objectCatalog_, &magic_, discoveryEvents, &encyclopedia_);
+        inventory_.updateScreen(
+            input,
+            ui,
+            player_,
+            spellRing_,
+            effectDispatcher_,
+            objectCatalog_,
+            &magic_,
+            discoveryEvents,
+            &encyclopedia_,
+            pauseReturnMode_ != ScreenMode::Base);
         if (!inventory_.isOpen()) {
             mode_ = inventoryReturnToPause_ ? ScreenMode::PauseMenu : ScreenMode::Playing;
             pausePage_ = PauseMenuPage::Main;
@@ -1995,7 +2009,7 @@ bool Game::gameProgressPaused() const
         dialogue_.active() ||
         bossEncounterBlocksProgress() ||
         endingKamishibaiPending_ ||
-        warpReturnConfirmActive_ ||
+        warpReturnConfirm_.open ||
         mode_ != ScreenMode::Playing;
 }
 
@@ -2301,6 +2315,11 @@ void Game::update(const Input& input, const Time& time)
             const int amount = scaledLootAmount(oreAmountDistribution(lootRuntimeRng()), multiplier);
             worldDrops_.spawnMaterialDrop(MaterialType::EnhancementOre, amount, tile.center, runStats_.elapsedSeconds);
         }
+        for (const DugTile& tile : digging_.dugTiles()) {
+            if (trySpawnFailsafeShovelDropFromWall(tile.center)) {
+                break;
+            }
+        }
         std::vector<WorldDropPickupEvent> pickupEvents;
         int blockedObjectPickupCount = 0;
         const float collectionPullRadius = effectiveCollectionPullRadius(collectionRangeUpgradeLevel_);
@@ -2336,6 +2355,7 @@ void Game::update(const Input& input, const Time& time)
         if (blockedObjectPickupCount > 0) {
             pushDungeonLog("リュックがいっぱいで拾えません", "pickup_inventory_full");
         }
+        updateDigToolFailsafe(time.deltaSeconds());
         if (!enemyTestActive_) {
             const std::vector<Vec2> randomEnemySpawnTiles = spawnHiddenEnemyNodesFromOpenedTiles(digging_.openedTiles());
             std::vector<DugEnemySpawnPoint> randomEnemySpawnPoints;

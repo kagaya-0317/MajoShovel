@@ -739,38 +739,44 @@ void EncyclopediaSystem::loadEffect(std::string objectId, std::string effectKey)
     objectEffects_[std::move(objectId)].insert(std::move(effectKey));
 }
 
-std::vector<std::string> EncyclopediaSystem::getObjectEffectDisplayLines(
+ObjectEffectDisplaySections EncyclopediaSystem::getObjectEffectDisplaySections(
     std::string_view objectId,
     const ObjectCatalog& catalog,
-    EffectRevealMode revealMode) const
+    EffectRevealMode ringRevealMode) const
 {
-    std::vector<std::string> lines;
+    ObjectEffectDisplaySections sections;
     const ObjectDefinition* object = catalog.registry.findById(objectId);
-    if (object == nullptr) {
-        return lines;
-    }
-    if (object->discoveryEffectLines.empty()) {
-        lines.emplace_back(NoEffectText);
-        return lines;
+    if (object == nullptr || object->discoveryEffectLines.empty()) {
+        return sections;
     }
 
     const auto discoveredIt = objectEffects_.find(std::string(objectId));
     const std::unordered_set<std::string>* discovered = discoveredIt != objectEffects_.end()
         ? &discoveredIt->second
         : nullptr;
+
     for (const DiscoveryEffectLine& line : object->discoveryEffectLines) {
+        if (line.text.empty()) {
+            continue;
+        }
+        if (line.trigger == DiscoveryTrigger::NormalEffect) {
+            sections.useLines.push_back(line.text);
+            continue;
+        }
+
         bool visible = false;
         if (discovered != nullptr) {
             const std::string canonical = canonicalEffectKey(line.effectKey);
             visible = discovered->contains(line.effectKey) || discovered->contains(canonical);
         }
-        if (revealMode == EffectRevealMode::DebugAll || visible) {
-            lines.push_back(line.text);
-        } else if (revealMode == EffectRevealMode::WithUnknown) {
-            lines.push_back("？？？");
+        if (ringRevealMode == EffectRevealMode::DebugAll || visible) {
+            sections.ringLines.push_back(line.text);
+        } else if (ringRevealMode == EffectRevealMode::WithUnknown) {
+            sections.ringLines.push_back("？？？");
         }
     }
-    return lines;
+
+    return sections;
 }
 
 std::vector<EncyclopediaEntrySave> EncyclopediaSystem::saveEntries() const

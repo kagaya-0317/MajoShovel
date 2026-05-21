@@ -43,6 +43,7 @@ constexpr KeyBinding KeyBindings[] = {
     {SDL_SCANCODE_F1, InputAction::ToggleDebug},
     {SDL_SCANCODE_F5, InputAction::TestRestart},
     {SDL_SCANCODE_F6, InputAction::ToggleDebugPause},
+    {SDL_SCANCODE_F7, InputAction::ToggleTestFreeze},
     {SDL_SCANCODE_F8, InputAction::OpenConsole},
     {SDL_SCANCODE_F2, InputAction::ToggleAutoReloadBlock},
 };

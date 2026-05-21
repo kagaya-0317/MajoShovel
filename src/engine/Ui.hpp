@@ -174,6 +174,22 @@ struct UiResultDialogState {
     std::vector<UiResultDialogLine> lines;
 };
 
+struct UiConfirmDialogState {
+    bool open = false;
+    std::string title;
+    std::string message;
+    std::string confirmLabel = "はい";
+    std::string cancelLabel = "いいえ";
+    int selection = 1;
+    bool confirmEnabled = true;
+};
+
+enum class UiConfirmDialogResult {
+    None,
+    Confirmed,
+    Cancelled,
+};
+
 struct UiQuantityDialogState {
     bool open = false;
     std::string title;
@@ -390,6 +406,18 @@ void openUiResultDialog(UiResultDialogState& state, std::string title, std::vect
 bool updateUiResultDialog(UiResultDialogState& state, UiContext& ui, const Input& input, UiRect panel);
 void drawUiResultDialog(Renderer& renderer, const UiResultDialogState& state, UiRect panel, std::string_view id);
 UiRect uiResultDialogOkButtonRect(UiRect panel);
+void openUiConfirmDialog(
+    UiConfirmDialogState& state,
+    std::string title,
+    std::string message,
+    std::string confirmLabel = "はい",
+    std::string cancelLabel = "いいえ",
+    int defaultSelection = 1);
+UiConfirmDialogResult updateUiConfirmDialog(UiConfirmDialogState& state, UiContext& ui, const Input& input, UiRect panel);
+void drawUiConfirmDialog(Renderer& renderer, const UiConfirmDialogState& state, UiRect panel, std::string_view id);
+std::string_view uiConfirmDialogHelpText();
+void drawUiConfirmDialogButtons(Renderer& renderer, const UiConfirmDialogState& state, UiRect panel);
+UiRect uiConfirmDialogButtonRect(UiRect panel, int index);
 void openUiQuantityDialog(
     UiQuantityDialogState& state,
     std::string title,

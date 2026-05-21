@@ -107,7 +107,7 @@ bool utf8ToWide(std::string_view text, std::wstring& out)
 
 bool isUiGuidePixel(unsigned char b, unsigned char g, unsigned char r, unsigned char a)
 {
-    return a <= 8 || (r <= 8 && g <= 8 && b <= 8);
+    return a <= 8 || (r <= 8 && g <= 8 && b <= 8) || (b <= 8 && a < 250);
 }
 
 std::vector<int> collapseGuideRuns(const std::vector<int>& guides, int limit)
@@ -121,7 +121,8 @@ std::vector<int> collapseGuideRuns(const std::vector<int>& guides, int limit)
             end = guides[i];
             ++i;
         }
-        if (start == 0 || end >= limit - 1) {
+        constexpr int EdgeGuidePadding = 12;
+        if (start <= EdgeGuidePadding || end >= limit - 1 - EdgeGuidePadding) {
             continue;
         }
         collapsed.push_back((start + end) / 2);
@@ -292,6 +293,7 @@ Renderer::~Renderer()
     unloadUiMessageWindowTexture();
     unloadUiSubWindowTexture();
     unloadUiButtonTexture();
+    unloadUiTabTexture();
     unloadUiLineTexture();
 }
 
@@ -1453,6 +1455,11 @@ void Renderer::unloadUiButtonTexture()
     unloadGuidedTexture(uiButtonTexture_);
 }
 
+void Renderer::unloadUiTabTexture()
+{
+    unloadGuidedTexture(uiTabTexture_);
+}
+
 void Renderer::unloadUiLineTexture()
 {
     unloadImageTexture(uiLineTexture_);
@@ -1612,6 +1619,11 @@ bool Renderer::loadUiSubWindowTexture(std::string_view path)
 bool Renderer::loadUiButtonTexture(std::string_view path)
 {
     return loadGuidedTexture(path, 3, 3, true, "UI button texture", uiButtonTexture_);
+}
+
+bool Renderer::loadUiTabTexture(std::string_view path)
+{
+    return loadGuidedTexture(path, 3, 2, false, "UI tab texture", uiTabTexture_);
 }
 
 bool Renderer::loadUiLineTexture(std::string_view path)
@@ -2149,7 +2161,9 @@ bool Renderer::loadGuidedTexture(std::string_view path, int columns, int rows, b
     if (verticalGuides.size() != static_cast<std::size_t>(columns - 1) ||
         horizontalGuides.size() != static_cast<std::size_t>(rows - 1)) {
         lastAssetError_ = labelString + " must contain " + std::to_string(columns - 1) +
-            " vertical and " + std::to_string(rows - 1) + " horizontal guide lines: " + pathString;
+            " vertical and " + std::to_string(rows - 1) + " horizontal guide lines, got " +
+            std::to_string(verticalGuides.size()) + " vertical and " +
+            std::to_string(horizontalGuides.size()) + " horizontal: " + pathString;
         return false;
     }
 
@@ -2299,22 +2313,45 @@ void Renderer::drawHorizontalSliceRow(const GuidedTexture& texture, int row, Vec
         return;
     }
 
+    drawHorizontalSliceRow(texture, row, pos, {width, texture.rowHeights[static_cast<std::size_t>(row)]}, tint);
+}
+
+void Renderer::drawHorizontalSliceRow(const GuidedTexture& texture, int row, Vec2 pos, Vec2 size, Color tint)
+{
+    if (!texture.texture || !texture.valid || texture.columns != 3 || row < 0 || row >= texture.rows ||
+        size.x <= 0.0f || size.y <= 0.0f) {
+        return;
+    }
+
     auto cell = [&](int col) -> RectF {
         return texture.cells[static_cast<std::size_t>(row * texture.columns + col)];
     };
 
     const float leftWidth = texture.columnWidths[0];
     const float rightWidth = texture.columnWidths[2];
-    const float height = texture.rowHeights[static_cast<std::size_t>(row)];
     const float fixedWidth = leftWidth + rightWidth;
-    const float scaleX = fixedWidth > 0.0f && width < fixedWidth ? width / fixedWidth : 1.0f;
+    const float scaleX = fixedWidth > 0.0f && size.x < fixedWidth ? size.x / fixedWidth : 1.0f;
     const float dstLeftWidth = leftWidth * scaleX;
     const float dstRightWidth = rightWidth * scaleX;
-    const float dstCenterWidth = std::max(0.0f, width - dstLeftWidth - dstRightWidth);
+    const float dstCenterWidth = std::max(0.0f, size.x - dstLeftWidth - dstRightWidth);
 
-    drawTextureRegion(texture.texture, cell(0), pos, {dstLeftWidth, height}, tint);
-    drawTextureTiled(texture.texture, cell(1), {pos.x + dstLeftWidth, pos.y}, {dstCenterWidth, height}, tint);
-    drawTextureRegion(texture.texture, cell(2), {pos.x + width - dstRightWidth, pos.y}, {dstRightWidth, height}, tint);
+    drawTextureRegion(texture.texture, cell(0), pos, {dstLeftWidth, size.y}, tint);
+
+    const RectF center = cell(1);
+    if (center.w > 0.0f) {
+        for (float x = 0.0f; x < dstCenterWidth;) {
+            const float dstWidth = std::min(center.w, dstCenterWidth - x);
+            drawTextureRegion(
+                texture.texture,
+                {center.x, center.y, dstWidth, center.h},
+                {pos.x + dstLeftWidth + x, pos.y},
+                {dstWidth, size.y},
+                tint);
+            x += dstWidth;
+        }
+    }
+
+    drawTextureRegion(texture.texture, cell(2), {pos.x + size.x - dstRightWidth, pos.y}, {dstRightWidth, size.y}, tint);
 }
 
 void Renderer::drawPlayerSprite(int index, Vec2 anchorPosition, float size, bool flipHorizontal, Color tint, Vec2 anchor, bool flipVertical)
@@ -2547,6 +2584,14 @@ void Renderer::drawUiButtonFrame(Vec2 pos, float width, int variant, Color tint)
         return;
     }
     drawHorizontalSliceRow(uiButtonTexture_, std::clamp(variant, 0, 2), pos, width, tint);
+}
+
+void Renderer::drawUiTabFrame(Vec2 pos, Vec2 size, bool selected, Color tint)
+{
+    if (!hasUiTabTexture()) {
+        return;
+    }
+    drawHorizontalSliceRow(uiTabTexture_, selected ? 1 : 0, pos, size, tint);
 }
 
 void Renderer::drawUiLine(Vec2 pos, float width, Color tint)

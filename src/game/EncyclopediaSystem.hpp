@@ -59,6 +59,11 @@ enum class EffectRevealMode {
     DebugAll,
 };
 
+struct ObjectEffectDisplaySections {
+    std::vector<std::string> useLines;
+    std::vector<std::string> ringLines;
+};
+
 class EncyclopediaSystem {
 public:
     void clear();
@@ -88,7 +93,10 @@ public:
     EncyclopediaStage enemyStage(std::string_view enemyId) const;
     bool hasObjectEffect(std::string_view objectId, std::string_view effectKey) const;
     std::vector<std::string> objectEffects(std::string_view objectId) const;
-    std::vector<std::string> getObjectEffectDisplayLines(std::string_view objectId, const ObjectCatalog& catalog, EffectRevealMode revealMode) const;
+    ObjectEffectDisplaySections getObjectEffectDisplaySections(
+        std::string_view objectId,
+        const ObjectCatalog& catalog,
+        EffectRevealMode ringRevealMode) const;
 
     void loadEntry(EncyclopediaKind kind, std::string id, EncyclopediaStage stage);
     void loadEffect(std::string objectId, std::string effectKey);

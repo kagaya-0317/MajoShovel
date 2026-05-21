@@ -233,7 +233,7 @@ Vec2 baseFacilitySpawnPosition(UiRect facilityRect, BaseFacilitySpawnSide side, 
 
 UiRect merchantSellSourceRect(int index)
 {
-    return {{BaseItemSourceTabX + static_cast<float>(index) * BaseItemSourceTabPitch, 116.0f + MerchantSellSourceYOffset}, {BaseItemSourceTabWidth, ui::ButtonHeight}};
+    return baseItemSourceTabRect(index, 116.0f + MerchantSellSourceYOffset);
 }
 
 float storageItemCircleLeftX()
@@ -374,6 +374,11 @@ UiRect merchantActionDialogRect()
 UiRect merchantActionChoiceRect(int index)
 {
     return smallActionChoiceRect(index);
+}
+
+UiRect baseBrokenRingDepartureConfirmRect()
+{
+    return {{410.0f, 230.0f}, {460.0f, 250.0f}};
 }
 
 Vec2 baseSystemMessagePos(
@@ -816,6 +821,7 @@ void drawStorageRingPreview(
 
 struct ProcessingResultSnapshot {
     std::string name;
+    std::string objectId;
     int stackCount = 1;
     bool stackSource = false;
     bool isBroken = false;
@@ -834,26 +840,126 @@ std::string nonEmptyItemName(std::string_view name)
     return name.empty() ? std::string{"アイテム"} : std::string{name};
 }
 
+constexpr Color ConfirmAfterValueColor{255, 230, 150, 255};
+constexpr Color RequirementShortageColor{238, 82, 82, 255};
+
+struct RequirementRow {
+    std::string label;
+    std::string required;
+    std::string owned;
+    bool enough = true;
+};
+
+void drawUiTextRun(Renderer& renderer, Vec2& pos, std::string_view text, Color color, int scale = 2)
+{
+    renderer.drawText(pos, text, color, scale);
+    pos.x += renderer.measureText(text, scale).x;
+}
+
+void drawUiInlineRun(
+    Renderer& renderer,
+    const ObjectCatalog& catalog,
+    Vec2& pos,
+    std::string_view text,
+    Color color = ui::Text,
+    int scale = 2)
+{
+    InlineItemTextStyle style{};
+    style.text = color;
+    style.scale = scale;
+    drawInlineItemText(renderer, catalog, pos, text, style);
+    pos.x += measureInlineItemText(renderer, text, style).x;
+}
+
+RequirementRow moneyRequirementRow(int required, int owned)
+{
+    return RequirementRow{
+        inlineWorldIconTag(worldIconKey(WorldIconId::MoneyLarge)) + " お金",
+        std::to_string(required) + "G",
+        std::to_string(owned) + "G",
+        owned >= required,
+    };
+}
+
+RequirementRow materialRequirementRow(MaterialType type, int required, int owned)
+{
+    return RequirementRow{
+        inlineMaterialIconTag(type) + std::string(materialTypeDisplayName(type)),
+        "×" + std::to_string(required),
+        "×" + std::to_string(owned),
+        owned >= required,
+    };
+}
+
+void drawRequirementValue(Renderer& renderer, Vec2 pos, const RequirementRow& row)
+{
+    const Color valueColor = row.enough ? ui::Text : RequirementShortageColor;
+    drawUiTextRun(renderer, pos, row.required, valueColor);
+    drawUiTextRun(renderer, pos, "（", ui::TextMuted);
+    drawUiTextRun(renderer, pos, row.owned, valueColor);
+    drawUiTextRun(renderer, pos, "）", ui::TextMuted);
+}
+
+void drawRequirementRows(
+    Renderer& renderer,
+    const ObjectCatalog& catalog,
+    UiRect content,
+    const std::vector<RequirementRow>& rows)
+{
+    constexpr float LabelWidth = 140.0f;
+    constexpr float LineHeight = 31.0f;
+    float y = content.pos.y;
+    if (rows.empty()) {
+        renderer.drawText({content.pos.x, y}, "なし", ui::TextMuted, 2);
+        return;
+    }
+    for (const RequirementRow& row : rows) {
+        Vec2 labelPos{content.pos.x, y};
+        drawUiInlineRun(renderer, catalog, labelPos, row.label, ui::Text);
+        drawRequirementValue(renderer, {content.pos.x + LabelWidth, y}, row);
+        y += LineHeight;
+    }
+}
+
+void drawRequirementSubWindow(
+    Renderer& renderer,
+    const ObjectCatalog& catalog,
+    UiRect panel,
+    const std::vector<RequirementRow>& rows)
+{
+    drawUiSubPanel(renderer, panel);
+    UiRect content = uiSubPanelContentRect(panel);
+    const float topPadding = ui::SubPanelPadding.y;
+    content.pos.y = panel.pos.y + topPadding;
+    content.size.y = std::max(0.0f, panel.size.y - topPadding - ui::SubPanelPadding.y);
+    renderer.drawText(content.pos, "必要素材", ui::TextMuted, 2);
+    content.pos.y += 34.0f;
+    content.size.y = std::max(0.0f, content.size.y - 34.0f);
+    drawRequirementRows(renderer, catalog, content, rows);
+}
+
 ProcessingResultSnapshot processingSnapshotFromStack(const InventoryObjectStack& stack)
 {
     ProcessingResultSnapshot snapshot{};
-    snapshot.name = nonEmptyItemName(stack.item.name);
+    snapshot.objectId = stack.objectId;
     snapshot.stackCount = stack.count;
     snapshot.stackSource = true;
     snapshot.currentDurability = stack.item.durability;
     snapshot.maxDurability = stack.item.durability;
     snapshot.isBroken = stack.item.durability == 0;
+    snapshot.name = nonEmptyItemName(itemDisplayName(stack.item.name, snapshot.isBroken));
     return snapshot;
 }
 
 ProcessingResultSnapshot processingSnapshotFromInstance(const InventoryObjectInstance& entry)
 {
     ProcessingResultSnapshot snapshot{};
-    snapshot.name = nonEmptyItemName(entry.item.name);
+    snapshot.objectId = entry.instance.objectId.empty() ? entry.item.id : entry.instance.objectId;
     snapshot.stackCount = 1;
     snapshot.currentDurability = entry.instance.currentDurability;
     snapshot.maxDurability = entry.instance.maxDurability;
     snapshot.isBroken = entry.instance.isBroken;
+    snapshot.name = nonEmptyItemName(itemDisplayName(entry.item.name, snapshot.isBroken));
     snapshot.enhanceLevel = entry.instance.enhanceLevel;
     snapshot.attackBonus = entry.instance.attackBonus;
     snapshot.digBonus = entry.instance.digBonus;
@@ -866,6 +972,7 @@ ProcessingResultSnapshot processingSnapshotFromInstance(const InventoryObjectIns
 ProcessingResultSnapshot processingSnapshotFromRingItem(const ObjectCatalog& catalog, const SpellRingItem& item)
 {
     ProcessingResultSnapshot snapshot{};
+    snapshot.objectId = item.objectId;
     snapshot.name = nonEmptyItemName(ringItemDisplayName(catalog, item));
     snapshot.stackCount = 1;
     snapshot.currentDurability = item.durability;
@@ -947,6 +1054,61 @@ std::string processingPercentChangeLine(std::string_view label, double beforeVal
         beforeValue * 100.0,
         afterValue * 100.0);
     return buffer;
+}
+
+struct ProcessingPreviewRow {
+    std::string label;
+    std::string beforeValue;
+    std::string afterValue;
+};
+
+std::string formatProcessingInt(int value)
+{
+    return std::to_string(value);
+}
+
+std::string formatProcessingDurability(int current, int maximum)
+{
+    if (maximum < 0) {
+        return "壊れない";
+    }
+    return std::to_string(std::max(0, current)) + "/" + std::to_string(maximum);
+}
+
+std::string formatProcessingMaxDurability(int maximum)
+{
+    if (maximum < 0) {
+        return "壊れない";
+    }
+    return std::to_string(maximum);
+}
+
+std::string formatProcessingPercent(double value)
+{
+    char buffer[64];
+    std::snprintf(buffer, sizeof(buffer), "%.0f%%", value * 100.0);
+    return buffer;
+}
+
+std::string processingInlineItemName(const ProcessingResultSnapshot& snapshot)
+{
+    std::string text = inlineItemTag(snapshot.objectId);
+    if (!text.empty()) {
+        text += " ";
+    }
+    text += snapshot.name;
+    return text;
+}
+
+void drawProcessingPreviewRow(Renderer& renderer, UiRect content, float& y, const ProcessingPreviewRow& row)
+{
+    constexpr float ValueX = 184.0f;
+    renderer.drawText({content.pos.x, y}, row.label, ui::TextMuted, 2);
+    Vec2 valuePos{content.pos.x + ValueX, y};
+    drawUiTextRun(renderer, valuePos, row.beforeValue, ui::Text);
+    drawUiTextRun(renderer, valuePos, "→", ui::TextMuted);
+    drawUiTextRun(renderer, valuePos, row.afterValue, ConfirmAfterValueColor);
+    y += 31.0f;
 }
 
 std::string processingRepairDurabilityLine(const ProcessingResultSnapshot& before, const ProcessingResultSnapshot& after)
@@ -1802,6 +1964,11 @@ bool Game::processingModeUnlocked(ProcessingMode mode) const
 bool Game::processingEntryAvailable(StorageEntry entry, bool warehouseEntry) const
 {
     const ProcessingMode mode = static_cast<ProcessingMode>(std::clamp(baseProcessingMode_, 0, BaseProcessingModeCount - 1));
+    return processingEntryAvailable(entry, mode, warehouseEntry);
+}
+
+bool Game::processingEntryAvailable(StorageEntry entry, ProcessingMode mode, bool warehouseEntry) const
+{
     if (!processingModeUnlocked(mode)) {
         return false;
     }
@@ -1837,11 +2004,17 @@ bool Game::processingScreenSlotAvailable(int slotIndex) const
 
 bool Game::processingTargetAvailable(ProcessingTarget target) const
 {
+    const ProcessingMode mode = static_cast<ProcessingMode>(std::clamp(baseProcessingMode_, 0, BaseProcessingModeCount - 1));
+    return processingTargetAvailable(target, mode);
+}
+
+bool Game::processingTargetAvailable(ProcessingTarget target, ProcessingMode mode) const
+{
     if (!target.valid) {
         return false;
     }
     if (target.source == BaseItemSource::Backpack || target.source == BaseItemSource::Warehouse) {
-        return processingEntryAvailable(target.backpackEntry, target.warehouseEntry);
+        return processingEntryAvailable(target.backpackEntry, mode, target.warehouseEntry);
     }
 
     if (target.ringIndex < 0 || target.ringIndex >= SpellRingCount) {
@@ -1852,7 +2025,6 @@ bool Game::processingTargetAvailable(ProcessingTarget target) const
         return false;
     }
 
-    const ProcessingMode mode = static_cast<ProcessingMode>(std::clamp(baseProcessingMode_, 0, BaseProcessingModeCount - 1));
     if (!processingModeUnlocked(mode)) {
         return false;
     }
@@ -1873,6 +2045,25 @@ bool Game::processingTargetAvailable(ProcessingTarget target) const
         return item.sizeModifier <= 1.001;
     }
     return item.enhanceLevel < MaxItemEnhanceLevel;
+}
+
+bool Game::processingTargetHasAvailableCommand(ProcessingTarget target) const
+{
+    for (int i = 0; i < BaseProcessingModeCount; ++i) {
+        if (processingTargetAvailable(target, static_cast<ProcessingMode>(i))) {
+            return true;
+        }
+    }
+    return false;
+}
+
+bool Game::processingCommandExecutable(ProcessingTarget target, ProcessingMode mode) const
+{
+    if (!processingTargetAvailable(target, mode)) {
+        return false;
+    }
+    return money_ >= processingMoneyCost(target, mode) &&
+        inventory_.materialCount(MaterialType::EnhancementOre) >= processingOreCost(target, mode);
 }
 
 int Game::processingMoneyCost(StorageEntry entry, ProcessingMode mode, bool warehouseEntry) const
@@ -2017,6 +2208,213 @@ int Game::processingOreCost(ProcessingTarget target, ProcessingMode mode) const
     return ringItem.enhanceLevel + 1;
 }
 
+std::vector<UiCommandMenuItem> Game::processingCommandItems(ProcessingTarget target) const
+{
+    std::vector<UiCommandMenuItem> items;
+    items.reserve(BaseProcessingModeCount);
+    for (int i = 0; i < BaseProcessingModeCount; ++i) {
+        const ProcessingMode mode = static_cast<ProcessingMode>(i);
+        items.push_back(UiCommandMenuItem{
+            processingModeName(mode),
+            processingTargetAvailable(target, mode),
+        });
+    }
+    return items;
+}
+
+void Game::openProcessingConfirm(ProcessingTarget target, ProcessingMode mode)
+{
+    baseProcessingMode_ = static_cast<int>(mode);
+    baseProcessingConfirmTarget_ = target;
+    baseProcessingConfirmMode_ = mode;
+    const bool executable = processingCommandExecutable(target, mode);
+    openUiConfirmDialog(
+        baseProcessingConfirm_,
+        processingModeName(mode),
+        "",
+        processingActionName(mode),
+        "戻る",
+        executable ? 0 : 1);
+    baseProcessingConfirm_.confirmEnabled = executable;
+    baseStatus_.clear();
+}
+
+void Game::drawProcessingConfirmDialog(Renderer& renderer, UiRect panel) const
+{
+    if (!baseProcessingConfirm_.open) {
+        return;
+    }
+
+    UiWindowScope window(
+        renderer,
+        "base.processing.confirm",
+        panel,
+        baseProcessingConfirm_.title,
+        uiConfirmDialogHelpText(),
+        UiWindowOptions{true, true});
+
+    constexpr float ContentInset = ui::PanelPadding + 12.0f;
+    constexpr float BodyTopOffset = -2.0f;
+    const float bodyTop = panel.pos.y + ui::HeaderHeight + BodyTopOffset;
+    const UiRect body{{
+        panel.pos.x + ContentInset,
+        bodyTop,
+    }, {
+        panel.size.x - ContentInset * 2.0f,
+        std::max(0.0f, uiConfirmDialogButtonRect(panel, 0).pos.y - bodyTop - 16.0f),
+    }};
+
+    const auto targetSnapshot = [this](ProcessingTarget snapshotTarget) {
+        if (snapshotTarget.source == BaseItemSource::Backpack || snapshotTarget.source == BaseItemSource::Warehouse) {
+            if (snapshotTarget.backpackEntry.kind == StorageEntryKind::Stack) {
+                const InventoryObjectStack& stack = snapshotTarget.warehouseEntry
+                    ? warehouseObjectStacks_[static_cast<std::size_t>(snapshotTarget.backpackEntry.index)]
+                    : inventory_.objectStacks()[static_cast<std::size_t>(snapshotTarget.backpackEntry.index)];
+                return processingSnapshotFromStack(stack);
+            }
+            const InventoryObjectInstance& instance = snapshotTarget.warehouseEntry
+                ? warehouseObjectInstances_[static_cast<std::size_t>(snapshotTarget.backpackEntry.index)]
+                : inventory_.objectInstances()[static_cast<std::size_t>(snapshotTarget.backpackEntry.index)];
+            return processingSnapshotFromInstance(instance);
+        }
+
+        const std::vector<SpellRingItem>& ringItems = spellRing_.itemsForRing(snapshotTarget.ringIndex);
+        if (snapshotTarget.ringItemIndex >= 0 && snapshotTarget.ringItemIndex < static_cast<int>(ringItems.size())) {
+            return processingSnapshotFromRingItem(objectCatalog_, ringItems[static_cast<std::size_t>(snapshotTarget.ringItemIndex)]);
+        }
+        ProcessingResultSnapshot snapshot{};
+        snapshot.name = "アイテム";
+        return snapshot;
+    };
+
+    if (!baseProcessingConfirmTarget_.valid) {
+        renderer.drawText(body.pos, "加工対象がありません", ui::Text, 2);
+        drawUiConfirmDialogButtons(renderer, baseProcessingConfirm_, panel);
+        return;
+    }
+
+    const ProcessingMode mode = baseProcessingConfirmMode_;
+    const ProcessingResultSnapshot before = targetSnapshot(baseProcessingConfirmTarget_);
+    ProcessingResultSnapshot after = before;
+    int attackBonus = 0;
+    int digBonus = 0;
+    int durabilityBonus = 0;
+    if (mode == ProcessingMode::Attack) {
+        attackBonus = 1;
+    } else if (mode == ProcessingMode::Dig) {
+        digBonus = 1;
+    } else if (mode == ProcessingMode::Durability) {
+        durabilityBonus = 2;
+    }
+
+    if (mode == ProcessingMode::Repair) {
+        if (after.maxDurability >= 0) {
+            after.currentDurability = after.maxDurability;
+            after.isBroken = false;
+        }
+    } else if (mode == ProcessingMode::ResetEnhancement) {
+        after = processingResetSnapshot(after);
+    } else if (mode == ProcessingMode::Lighten || mode == ProcessingMode::Enlarge) {
+        after = processingShapeSnapshot(
+            after,
+            mode == ProcessingMode::Lighten ? LightenWeightMultiplier : EnlargeWeightMultiplier,
+            mode == ProcessingMode::Lighten ? 1.0 : EnlargeSizeMultiplier);
+    } else {
+        after = processingEnhancedSnapshot(after, attackBonus, digBonus, durabilityBonus);
+    }
+
+    std::vector<ProcessingPreviewRow> previewRows;
+    if (mode == ProcessingMode::Repair) {
+        previewRows.push_back({
+            "耐久力",
+            formatProcessingDurability(before.currentDurability, before.maxDurability),
+            formatProcessingDurability(after.currentDurability, after.maxDurability),
+        });
+        if (before.isBroken && !after.isBroken) {
+            previewRows.push_back({"状態", "破損", "通常"});
+        }
+    } else if (mode == ProcessingMode::ResetEnhancement) {
+        previewRows.push_back({"攻撃力補正", formatProcessingInt(before.attackBonus), formatProcessingInt(after.attackBonus)});
+        previewRows.push_back({"掘削力補正", formatProcessingInt(before.digBonus), formatProcessingInt(after.digBonus)});
+        previewRows.push_back({"耐久力補正", formatProcessingInt(before.durabilityBonus), formatProcessingInt(after.durabilityBonus)});
+        previewRows.push_back({"合計強化回数", formatProcessingInt(before.enhanceLevel), formatProcessingInt(after.enhanceLevel)});
+    } else if (mode == ProcessingMode::Lighten || mode == ProcessingMode::Enlarge) {
+        previewRows.push_back({"重量", formatProcessingPercent(before.weightModifier), formatProcessingPercent(after.weightModifier)});
+        previewRows.push_back({"大きさ", formatProcessingPercent(before.sizeModifier), formatProcessingPercent(after.sizeModifier)});
+    } else {
+        if (mode == ProcessingMode::Attack) {
+            previewRows.push_back({"攻撃力補正", formatProcessingInt(before.attackBonus), formatProcessingInt(after.attackBonus)});
+        } else if (mode == ProcessingMode::Dig) {
+            previewRows.push_back({"掘削力補正", formatProcessingInt(before.digBonus), formatProcessingInt(after.digBonus)});
+        } else if (mode == ProcessingMode::Durability) {
+            previewRows.push_back({"最大耐久力", formatProcessingMaxDurability(before.maxDurability), formatProcessingMaxDurability(after.maxDurability)});
+        }
+        previewRows.push_back({"合計強化回数", formatProcessingInt(before.enhanceLevel), formatProcessingInt(after.enhanceLevel)});
+    }
+
+    const auto confirmQuestion = [&]() -> std::string {
+        const std::string itemName = processingInlineItemName(before);
+        switch (mode) {
+        case ProcessingMode::Repair:
+            return itemName + "を修理しますか？";
+        case ProcessingMode::ResetEnhancement:
+            return itemName + "の強化をリセットしますか？";
+        case ProcessingMode::Lighten:
+            return itemName + "を軽量化しますか？";
+        case ProcessingMode::Enlarge:
+            return itemName + "を大型化しますか？";
+        case ProcessingMode::Attack:
+        case ProcessingMode::Dig:
+        case ProcessingMode::Durability:
+            return itemName + "を強化しますか？";
+        }
+        return itemName + "に作業を行いますか？";
+    };
+
+    float y = body.pos.y;
+    InlineItemTextStyle questionStyle{};
+    questionStyle.text = ui::Text;
+    questionStyle.scale = 2;
+    const std::string question = fittedInlineItemText(renderer, confirmQuestion(), body.size.x, questionStyle);
+    drawInlineItemText(renderer, objectCatalog_, {body.pos.x, y}, question, questionStyle);
+    y += measureInlineItemText(renderer, question, questionStyle).y + 22.0f;
+
+    for (const ProcessingPreviewRow& row : previewRows) {
+        drawProcessingPreviewRow(renderer, body, y, row);
+    }
+
+    std::vector<RequirementRow> requirements;
+    const int moneyCost = processingMoneyCost(baseProcessingConfirmTarget_, mode);
+    const int oreCost = processingOreCost(baseProcessingConfirmTarget_, mode);
+    if (moneyCost > 0) {
+        requirements.push_back(moneyRequirementRow(moneyCost, money_));
+    }
+    if (oreCost > 0) {
+        requirements.push_back(materialRequirementRow(
+            MaterialType::EnhancementOre,
+            oreCost,
+            inventory_.materialCount(MaterialType::EnhancementOre)));
+    }
+
+    const float buttonTop = uiConfirmDialogButtonRect(panel, 0).pos.y;
+    constexpr float RequirementTopPadding = ui::SubPanelPadding.y;
+    constexpr float RequirementTitleToRows = 34.0f;
+    constexpr float RequirementRowHeight = 31.0f;
+    constexpr float RequirementBottomPadding = 18.0f;
+    const float materialTop = y + 7.0f;
+    const float requiredRows = static_cast<float>(std::max<std::size_t>(1, requirements.size()));
+    const float preferredMaterialHeight =
+        RequirementTopPadding + RequirementTitleToRows + RequirementRowHeight * requiredRows + RequirementBottomPadding;
+    const float materialHeight = std::max(86.0f, std::min(preferredMaterialHeight, buttonTop - materialTop - 14.0f));
+    drawRequirementSubWindow(
+        renderer,
+        objectCatalog_,
+        {{body.pos.x, materialTop}, {body.size.x, materialHeight}},
+        requirements);
+
+    drawUiConfirmDialogButtons(renderer, baseProcessingConfirm_, panel);
+}
+
 void Game::applyProcessing(int entryIndex)
 {
     const std::vector<StorageEntry> entries = processingEntries();
@@ -2041,7 +2439,12 @@ void Game::applyProcessingScreenSlot(int slotIndex)
 void Game::applyProcessingEntry(StorageEntry entry, bool warehouseEntry)
 {
     const ProcessingMode mode = static_cast<ProcessingMode>(std::clamp(baseProcessingMode_, 0, BaseProcessingModeCount - 1));
-    if (!processingEntryAvailable(entry, warehouseEntry)) {
+    applyProcessingEntry(entry, mode, warehouseEntry);
+}
+
+void Game::applyProcessingEntry(StorageEntry entry, ProcessingMode mode, bool warehouseEntry)
+{
+    if (!processingEntryAvailable(entry, mode, warehouseEntry)) {
         if (!processingModeUnlocked(mode)) {
             baseStatus_ = "この作業は未解禁です";
         } else if ((mode == ProcessingMode::Repair || mode == ProcessingMode::ResetEnhancement) && entry.kind == StorageEntryKind::Stack) {
@@ -2283,16 +2686,21 @@ void Game::applyProcessingEntry(StorageEntry entry, bool warehouseEntry)
 void Game::applyProcessingTarget(ProcessingTarget target)
 {
     const ProcessingMode mode = static_cast<ProcessingMode>(std::clamp(baseProcessingMode_, 0, BaseProcessingModeCount - 1));
+    applyProcessingTarget(target, mode);
+}
+
+void Game::applyProcessingTarget(ProcessingTarget target, ProcessingMode mode)
+{
     if (!target.valid) {
         baseStatus_ = "加工対象がありません";
         return;
     }
     if (target.source == BaseItemSource::Backpack || target.source == BaseItemSource::Warehouse) {
-        applyProcessingEntry(target.backpackEntry, target.warehouseEntry);
+        applyProcessingEntry(target.backpackEntry, mode, target.warehouseEntry);
         return;
     }
 
-    if (!processingTargetAvailable(target)) {
+    if (!processingTargetAvailable(target, mode)) {
         if (!processingModeUnlocked(mode)) {
             baseStatus_ = "この作業は未解禁です";
         } else if (mode == ProcessingMode::ResetEnhancement) {
@@ -2623,17 +3031,18 @@ std::string Game::storageEntryLabel(StorageEntry entry, bool warehouseEntry) con
         const InventoryObjectStack& stack = warehouseEntry
             ? warehouseObjectStacks_[static_cast<std::size_t>(entry.index)]
             : inventory_.objectStacks()[static_cast<std::size_t>(entry.index)];
-        std::snprintf(buffer, sizeof(buffer), "%s x%d", stack.item.name.c_str(), stack.count);
+        const std::string name = itemDisplayName(stack.item.name, stack.item.durability == 0);
+        std::snprintf(buffer, sizeof(buffer), "%s x%d", name.c_str(), stack.count);
         return buffer;
     }
 
     const InventoryObjectInstance& instance = warehouseEntry
         ? warehouseObjectInstances_[static_cast<std::size_t>(entry.index)]
         : inventory_.objectInstances()[static_cast<std::size_t>(entry.index)];
-    std::snprintf(buffer, sizeof(buffer), "%s %s%s Lv.%d",
-        instance.item.name.c_str(),
+    const std::string name = itemDisplayName(instance.item.name, instance.instance.isBroken);
+    std::snprintf(buffer, sizeof(buffer), "%s %sLv.%d",
+        name.c_str(),
         instance.instance.protectionEnabled ? "[保護] " : "",
-        instance.instance.isBroken ? "[破損] " : "",
         instance.instance.enhanceLevel);
     return buffer;
 }
@@ -3528,6 +3937,31 @@ void Game::startBaseMonicaDialogue()
     dialogue_.start(baseMonicaDialogue());
 }
 
+bool Game::hasBrokenRingItemForDeparture() const
+{
+    for (int ringIndex = 0; ringIndex < SpellRingCount; ++ringIndex) {
+        for (const SpellRingItem& item : spellRing_.itemsForRing(ringIndex)) {
+            if (item.broken()) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+void Game::openBaseMiningStartChoice()
+{
+    clampCurrentStageToSelectableStages();
+    syncWarpStateForCurrentStage();
+    baseMiningStartChoiceActive_ = true;
+    baseMiningStartSelection_ = unlockedWarpPointCount_ > 0 ? 1 : 0;
+    baseWarpPointSelectActive_ = false;
+    baseWarpPointSelection_ = 0;
+    baseRegenerateConfirm_ = {};
+    baseBrokenRingDepartureConfirm_ = {};
+    baseStatus_.clear();
+}
+
 void Game::maybeQueueStageStartStory()
 {
     if (currentStageId_.empty()) {
@@ -3845,6 +4279,39 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
         return;
     }
 
+    if (baseProcessingConfirm_.open) {
+        const UiRect confirmPanel = baseProcessingConfirmRect();
+        baseProcessingConfirm_.confirmEnabled = processingCommandExecutable(
+            baseProcessingConfirmTarget_,
+            baseProcessingConfirmMode_);
+        const UiConfirmDialogResult result = updateUiConfirmDialog(baseProcessingConfirm_, ui, input, confirmPanel);
+        if (result == UiConfirmDialogResult::Confirmed) {
+            applyProcessingTarget(baseProcessingConfirmTarget_, baseProcessingConfirmMode_);
+            baseProcessingConfirmTarget_ = {};
+        } else if (result == UiConfirmDialogResult::Cancelled) {
+            baseProcessingConfirmTarget_ = {};
+            baseStatus_.clear();
+        }
+        ui.block(confirmPanel);
+        return;
+    }
+
+    if (baseBrokenRingDepartureConfirm_.open) {
+        const UiRect confirmPanel = baseBrokenRingDepartureConfirmRect();
+        const UiConfirmDialogResult result = updateUiConfirmDialog(
+            baseBrokenRingDepartureConfirm_,
+            ui,
+            input,
+            confirmPanel);
+        if (result == UiConfirmDialogResult::Confirmed) {
+            openBaseMiningStartChoice();
+        } else if (result == UiConfirmDialogResult::Cancelled) {
+            baseStatus_.clear();
+        }
+        ui.block(confirmPanel);
+        return;
+    }
+
     if (baseBookshelfActive_) {
         updateBookshelfScreen(input, ui);
         return;
@@ -3956,7 +4423,11 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
         };
         const auto openQuantityDialog = [this](StorageQuantityOperation operation, StorageTransferTarget target, int maxCount) {
             InventoryUiEntryView view = storageTransferTargetView(target);
-            const std::string itemName = view.item != nullptr && !view.item->name.empty() ? view.item->name : std::string("アイテム");
+            const std::optional<InventoryUiItemStats> stats = inventoryUiEntryStats(view);
+            const bool broken = stats ? stats->broken : (view.item != nullptr && view.item->durability == 0);
+            const std::string itemName = view.item != nullptr && !view.item->name.empty()
+                ? itemDisplayName(view.item->name, broken)
+                : std::string("アイテム");
             baseStorageQuantityPending_ = StorageQuantityPending{operation, target};
             openUiQuantityDialog(
                 baseStorageQuantityDialog_,
@@ -4498,13 +4969,17 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
         };
         const auto openProcessingCommand = [&](int slotIndex) {
             const ProcessingTarget target = processingTargetForScreenSlot(slotIndex);
-            if (!processingTargetAvailable(target)) {
+            if (!target.valid) {
                 ui.emitSound(UiSoundEvent::Cancel);
-                baseStatus_ = "この作業はできません";
+                baseStatus_ = "加工対象がありません";
                 return false;
             }
-            const ProcessingMode mode = static_cast<ProcessingMode>(std::clamp(baseProcessingMode_, 0, BaseProcessingModeCount - 1));
-            const std::array<UiCommandMenuItem, 1> items{{{processingActionName(mode), true}}};
+            if (!processingTargetHasAvailableCommand(target)) {
+                ui.emitSound(UiSoundEvent::Cancel);
+                baseStatus_ = "このアイテムにできる作業がありません";
+                return false;
+            }
+            const std::vector<UiCommandMenuItem> items = processingCommandItems(target);
             baseProcessingCommandSlot_ = slotIndex;
             Vec2 commandAnchor = baseProcessingGridSlotRect(slotIndex).pos;
             if (target.source == BaseItemSource::Warehouse) {
@@ -4530,7 +5005,7 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
                 merchantPanelRect(),
                 static_cast<int>(items.size()),
                 items.data(),
-                144.0f,
+                184.0f,
                 2);
             return true;
         };
@@ -4539,12 +5014,16 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
                 closeProcessingCommand();
             } else {
                 baseProcessingActive_ = false;
+                baseProcessingConfirm_ = {};
+                baseProcessingConfirmTarget_ = {};
                 baseStatus_.clear();
             }
             return;
         }
-        const ProcessingMode currentProcessingMode = static_cast<ProcessingMode>(std::clamp(baseProcessingMode_, 0, BaseProcessingModeCount - 1));
-        const std::array<UiCommandMenuItem, 1> commandItems{{{processingActionName(currentProcessingMode), true}}};
+        const ProcessingTarget commandTarget = baseProcessingCommandSlot_ >= 0
+            ? processingTargetForScreenSlot(baseProcessingCommandSlot_)
+            : ProcessingTarget{};
+        const std::vector<UiCommandMenuItem> commandItems = processingCommandItems(commandTarget);
         const bool commandOpenBeforeUpdate = baseProcessingCommandMenu_.open;
         const int commandSelection = updateUiCommandMenu(
             baseProcessingCommandMenu_,
@@ -4553,7 +5032,8 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
             commandItems.data(),
             static_cast<int>(commandItems.size()));
         if (commandSelection >= 0 && baseProcessingCommandSlot_ >= 0) {
-            applyProcessingTarget(processingTargetForScreenSlot(baseProcessingCommandSlot_));
+            const ProcessingMode mode = static_cast<ProcessingMode>(std::clamp(commandSelection, 0, BaseProcessingModeCount - 1));
+            openProcessingConfirm(processingTargetForScreenSlot(baseProcessingCommandSlot_), mode);
             closeProcessingCommand();
             ui.block(merchantPanelRect());
             return;
@@ -4562,29 +5042,6 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
         }
         if (baseProcessingCommandMenu_.open) {
             ui.block(merchantPanelRect());
-            return;
-        }
-
-        std::array<UiTabItem, BaseProcessingModeCount> processingTabs{};
-        std::array<UiRect, BaseProcessingModeCount> processingTabRects{};
-        for (int i = 0; i < BaseProcessingModeCount; ++i) {
-            const auto mode = static_cast<ProcessingMode>(i);
-            processingTabs[static_cast<std::size_t>(i)] = {processingModeName(mode), processingModeUnlocked(mode)};
-            processingTabRects[static_cast<std::size_t>(i)] = baseProcessingModeRect(i);
-        }
-        UiTabsInput processingTabsInput{};
-        processingTabsInput.focusDelta = input.toggleShortcutRowPressed() ? 1 : 0;
-        processingTabsInput.commit = input.confirmPressed() || input.useItemPressed();
-        const int processingTabSelection = updateUiTabs(
-            baseProcessingTabs_,
-            ui,
-            processingTabsInput,
-            baseProcessingMode_,
-            processingTabs.data(),
-            static_cast<int>(processingTabs.size()),
-            processingTabRects.data());
-        if (processingTabSelection >= 0) {
-            baseProcessingMode_ = processingTabSelection;
             return;
         }
 
@@ -5229,29 +5686,30 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
 
     if (baseMiningStartChoiceActive_) {
         const auto openRegenerateConfirm = [this]() {
-            baseRegenerateConfirmActive_ = true;
+            openUiConfirmDialog(
+                baseRegenerateConfirm_,
+                "再生成確認",
+                "現在の坑道状態を破棄して、地形・敵・宝箱・ワープポイントを作り直します。\n拾っていないドロップがある場合は消えます。\nボス再戦用に地形も作り直します。",
+                "再生成する",
+                "戻る",
+                1);
             baseStatus_.clear();
         };
-        const auto confirmRegenerate = [this]() {
-            baseRegenerateConfirmActive_ = false;
-            requestMiningStartTransition(false, true);
-        };
 
-        if (baseRegenerateConfirmActive_) {
-            if (ui.pressed(baseMiningRegenerateConfirmButtonRect(0)) || input.confirmPressed() || input.useItemPressed()) {
-                ui.emitSound(UiSoundEvent::Confirm);
-                confirmRegenerate();
-                ui.block(baseMiningRegenerateConfirmRect());
+        if (baseRegenerateConfirm_.open) {
+            const UiRect confirmPanel = baseMiningRegenerateConfirmRect();
+            const UiConfirmDialogResult result = updateUiConfirmDialog(baseRegenerateConfirm_, ui, input, confirmPanel);
+            if (result == UiConfirmDialogResult::Confirmed) {
+                requestMiningStartTransition(false, true);
+                ui.block(confirmPanel);
                 return;
             }
-            if (ui.pressed(baseMiningRegenerateConfirmButtonRect(1)) || input.backPressed()) {
-                ui.emitSound(UiSoundEvent::Cancel);
-                baseRegenerateConfirmActive_ = false;
+            if (result == UiConfirmDialogResult::Cancelled) {
                 baseStatus_.clear();
-                ui.block(baseMiningRegenerateConfirmRect());
+                ui.block(confirmPanel);
                 return;
             }
-            ui.block(baseMiningRegenerateConfirmRect());
+            ui.block(confirmPanel);
             return;
         }
 
@@ -5261,7 +5719,7 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
             } else {
                 baseMiningStartChoiceActive_ = false;
             }
-            baseRegenerateConfirmActive_ = false;
+            baseRegenerateConfirm_ = {};
             baseStatus_.clear();
             return;
         }
@@ -5300,7 +5758,7 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
             baseMiningStartSelection_ = unlockedWarpPointCount_ > 0 ? 1 : 0;
             baseWarpPointSelectActive_ = false;
             baseWarpPointSelection_ = 0;
-            baseRegenerateConfirmActive_ = false;
+            baseRegenerateConfirm_ = {};
             baseStatus_.clear();
             return true;
         };
@@ -5317,7 +5775,7 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
                 static_cast<int>(selectableWarpPoints.size()) - 1);
             requestedWarpPointStartPosition_ = selectableWarpPoints[static_cast<std::size_t>(baseWarpPointSelection_)].position;
             baseWarpPointSelectActive_ = false;
-            baseRegenerateConfirmActive_ = false;
+            baseRegenerateConfirm_ = {};
             baseStatus_.clear();
             requestMiningStartTransition(true, false);
             return true;
@@ -5428,7 +5886,7 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
                     return;
                 }
                 ui.emitSound(UiSoundEvent::Confirm);
-                baseRegenerateConfirmActive_ = false;
+                baseRegenerateConfirm_ = {};
                 requestMiningStartTransition(false, false);
                 return;
             }
@@ -5460,7 +5918,7 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
                 return;
             }
             ui.emitSound(UiSoundEvent::Confirm);
-            baseRegenerateConfirmActive_ = false;
+            baseRegenerateConfirm_ = {};
             requestMiningStartTransition(false, false);
             return;
         }
@@ -5482,14 +5940,18 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
         }
         switch (facility.onInteract) {
         case BaseFacilityAction::MineExit:
-            clampCurrentStageToSelectableStages();
-            syncWarpStateForCurrentStage();
-            baseMiningStartChoiceActive_ = true;
-            baseMiningStartSelection_ = unlockedWarpPointCount_ > 0 ? 1 : 0;
-            baseWarpPointSelectActive_ = false;
-            baseWarpPointSelection_ = 0;
-            baseRegenerateConfirmActive_ = false;
-            baseStatus_.clear();
+            if (hasBrokenRingItemForDeparture()) {
+                openUiConfirmDialog(
+                    baseBrokenRingDepartureConfirm_,
+                    "出発確認",
+                    "壊れたアイテムがリングに乗っています。このまま出発しますか？",
+                    "はい",
+                    "いいえ",
+                    1);
+                baseStatus_.clear();
+            } else {
+                openBaseMiningStartChoice();
+            }
             break;
         case BaseFacilityAction::Storage:
             baseStorageActive_ = true;
@@ -5553,6 +6015,8 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
             baseProcessingSelection_ = 0;
             closeUiCommandMenu(baseProcessingCommandMenu_);
             baseProcessingCommandSlot_ = -1;
+            baseProcessingConfirm_ = {};
+            baseProcessingConfirmTarget_ = {};
             baseStatus_.clear();
             break;
         case BaseFacilityAction::Bookshelf:
@@ -5774,8 +6238,8 @@ void Game::renderBookshelfScreen(Renderer& renderer) const
 
     const UiRect bookshelfDetailPanel{{414.0f, 548.0f}, {452.0f, 144.0f}};
     const Vec2 bookshelfDetailContent = uiSubPanelContentPos(bookshelfDetailPanel);
-    drawUiSubPanel(renderer, bookshelfDetailPanel);
     if (bookshelfPage_ == BookshelfPage::Enemies) {
+        drawUiSubPanel(renderer, bookshelfDetailPanel);
         if (bookshelfSelection_ >= 0 && bookshelfSelection_ < static_cast<int>(enemyCatalog_.enemies.size())) {
             const EnemyDefinition& enemy = enemyCatalog_.enemies[static_cast<std::size_t>(bookshelfSelection_)];
             const EncyclopediaStage stage = encyclopedia_.enemyStage(enemy.id);
@@ -5787,19 +6251,16 @@ void Game::renderBookshelfScreen(Renderer& renderer) const
         const bool treasure = object->category == "\xE5\xAE\x9D";
         const EncyclopediaStage stage = encyclopedia_.objectStage(object->id, treasure);
         const std::string name = stage == EncyclopediaStage::Undiscovered ? "????" : (object->name.empty() ? object->id : object->name);
-        std::snprintf(buffer, sizeof(buffer), "%s / %s", name.c_str(), encyclopediaStageName(stage));
-        renderer.drawText(bookshelfDetailContent, buffer, {255, 230, 150, 255}, 2);
-        const std::vector<std::string> effects = encyclopedia_.getObjectEffectDisplayLines(
-            object->id,
-            objectCatalog_,
-            EffectRevealMode::WithUnknown);
-        const std::string effectText = joinEffectLines(effects);
-        renderer.drawWrappedText(
-            bookshelfDetailContent + Vec2{0.0f, 34.0f},
-            effectText,
-            bookshelfDetailPanel.size.x - ui::SubPanelPadding.x * 2.0f,
-            {232, 234, 242, 255},
-            2);
+        if (stage != EncyclopediaStage::Undiscovered) {
+            InventoryUiEntryView detailEntry{};
+            detailEntry.item = object;
+            detailEntry.stackCount = 1;
+            drawInventoryUiDetailPanel(renderer, bookshelfDetailPanel, detailEntry, objectCatalog_, encyclopedia_);
+        } else {
+            drawUiSubPanel(renderer, bookshelfDetailPanel);
+            std::snprintf(buffer, sizeof(buffer), "%s / %s", name.c_str(), encyclopediaStageName(stage));
+            renderer.drawText(bookshelfDetailContent, buffer, {255, 230, 150, 255}, 2);
+        }
     }
 }
 
@@ -6221,7 +6682,7 @@ void Game::renderBaseScreen(Renderer& renderer) const
                 float detailLineY = drawUiDetailHeader(renderer, detailPanel, ringItemDisplayName(objectCatalog_, *selectedRingItem));
                 drawUiDetailText(renderer, detailPanel, detailLineY, "このアイテムは収納箱にしまえません。");
             } else {
-                drawInventoryUiDetailPanel(renderer, detailPanel, detailEntry, objectCatalog_, encyclopedia_, false);
+                drawInventoryUiDetailPanel(renderer, detailPanel, detailEntry, objectCatalog_, encyclopedia_);
             }
             const char* commandLabel = baseStorageCommandOperation_ == StorageQuantityOperation::Withdraw
                 ? "取り出す"
@@ -6321,40 +6782,6 @@ void Game::renderBaseScreen(Renderer& renderer) const
         renderer.drawText(panel.pos + Vec2{54.0f, 558.0f}, buffer, {198, 198, 206, 255}, 2);
         drawUiButton(renderer, ringWorkshopConfirmRect(), "再調整確定", false, uiActionButtonStyle());
     } else if (baseProcessingActive_) {
-        std::array<UiTabItem, BaseProcessingModeCount> processingTabs{};
-        std::array<UiRect, BaseProcessingModeCount> processingTabRects{};
-        for (int i = 0; i < BaseProcessingModeCount; ++i) {
-            const auto processingTabMode = static_cast<ProcessingMode>(i);
-            processingTabs[static_cast<std::size_t>(i)] = {processingModeName(processingTabMode), processingModeUnlocked(processingTabMode)};
-            processingTabRects[static_cast<std::size_t>(i)] = baseProcessingModeRect(i);
-        }
-        const ProcessingMode mode = static_cast<ProcessingMode>(std::clamp(baseProcessingMode_, 0, BaseProcessingModeCount - 1));
-        drawUiTabs(
-            renderer,
-            baseProcessingTabs_,
-            baseProcessingMode_,
-            processingTabs.data(),
-            static_cast<int>(processingTabs.size()),
-            processingTabRects.data());
-
-        const auto processingModeDescription = [](ProcessingMode descriptionMode) -> std::string_view {
-            switch (descriptionMode) {
-            case ProcessingMode::Repair: return "耐久力が減った道具を所持金で修理します。";
-            case ProcessingMode::Attack: return "強化鉱石と所持金を使い、攻撃力補正を上げます。";
-            case ProcessingMode::Dig: return "強化鉱石と所持金を使い、抑制力補正を上げます。";
-            case ProcessingMode::Durability: return "強化鉱石と所持金を使い、最大耐久力を上げます。";
-            case ProcessingMode::ResetEnhancement: return "強化値と補正を初期化します。加工状態は残ります。";
-            case ProcessingMode::Lighten: return "強化鉱石と所持金を使い、重量を軽くします。";
-            case ProcessingMode::Enlarge: return "強化鉱石と所持金を使い、当たり判定を大きくします。重量も増えます。";
-            }
-            return "";
-        };
-        const UiRect firstTabRect = processingTabRects.front();
-        const UiRect lastGridSlotRect = baseProcessingGridSlotRect(7);
-        const Vec2 descriptionPos{firstTabRect.pos.x, firstTabRect.pos.y + firstTabRect.size.y + 10.0f};
-        const float descriptionWidth = std::max(0.0f, lastGridSlotRect.pos.x + lastGridSlotRect.size.x - descriptionPos.x);
-        renderer.drawWrappedText(descriptionPos, processingModeDescription(mode), descriptionWidth, ui::TextMuted, 2);
-
         std::array<UiTabItem, BaseProcessingSourceCount> sourceTabs{};
         std::array<UiRect, BaseProcessingSourceCount> sourceTabRects{};
         for (int i = 0; i < BaseProcessingSourceCount; ++i) {
@@ -6423,7 +6850,7 @@ void Game::renderBaseScreen(Renderer& renderer) const
                 warehousePageCount);
             for (int i = 0; i < StoragePaneSlotCount; ++i) {
                 const InventoryUiEntryView view = entryViewForScreenSlot(i);
-                const bool unavailable = view.item != nullptr && !processingTargetAvailable(processingTargetForScreenSlot(i));
+                const bool unavailable = view.item != nullptr && !processingTargetHasAvailableCommand(processingTargetForScreenSlot(i));
                 InventoryUiSlotStyle style{i == baseProcessingSelection_, unavailable, 48.0f};
                 if (view.item != nullptr && view.instance == nullptr && view.stackCount > 1) {
                     style.showTopRightCount = true;
@@ -6434,7 +6861,7 @@ void Game::renderBaseScreen(Renderer& renderer) const
         } else {
             for (int i = 0; i < inventory_.screenSlotCount(); ++i) {
                 const InventoryUiEntryView view = entryViewForScreenSlot(i);
-                const bool unavailable = view.item != nullptr && !processingTargetAvailable(processingTargetForScreenSlot(i));
+                const bool unavailable = view.item != nullptr && !processingTargetHasAvailableCommand(processingTargetForScreenSlot(i));
                 InventoryUiSlotStyle style{i == baseProcessingSelection_, unavailable, 48.0f};
                 if (view.item != nullptr && view.instance == nullptr && view.stackCount > 1) {
                     style.showTopRightCount = true;
@@ -6458,39 +6885,6 @@ void Game::renderBaseScreen(Renderer& renderer) const
         }
         const InventoryUiEntryView detailEntry = entryViewForScreenSlot(selected);
         const ProcessingTarget selectedTarget = processingTargetForScreenSlot(selected);
-        drawUiSubPanel(renderer, detailPanel);
-
-        const auto drawSectionLabel = [&renderer](UiRect targetPanel, float& y, std::string_view text) {
-            const UiRect content = uiSubPanelContentRect(targetPanel);
-            renderer.drawText({content.pos.x, y}, text, ui::Text, 2);
-            y += 31.0f;
-        };
-        const auto drawTextRun = [&renderer](Vec2& pos, std::string_view text, Color color, int scale) {
-            renderer.drawText(pos, text, color, scale);
-            pos.x += renderer.measureText(text, scale).x;
-        };
-        const auto drawMoneyCostLine = [&](UiRect targetPanel, float& y, int moneyCost) {
-            const UiRect content = uiSubPanelContentRect(targetPanel);
-            Vec2 pos{content.pos.x, y};
-            const Color numberColor = money_ >= moneyCost ? ui::Text : Color{238, 82, 82, 255};
-            const std::string number = std::to_string(moneyCost);
-            drawTextRun(pos, number, numberColor, 2);
-            drawTextRun(pos, "G", ui::Text, 2);
-            y += 31.0f;
-        };
-        const auto drawOreCostLine = [&](UiRect targetPanel, float& y, int oreCost) {
-            const int ownedOre = inventory_.materialCount(MaterialType::EnhancementOre);
-            const bool enough = ownedOre >= oreCost;
-            const Color numberColor = enough ? ui::Text : Color{238, 82, 82, 255};
-            const UiRect content = uiSubPanelContentRect(targetPanel);
-            Vec2 pos{content.pos.x, y};
-            drawTextRun(pos, "強化鉱石 ×", ui::Text, 2);
-            drawTextRun(pos, std::to_string(oreCost), numberColor, 2);
-            drawTextRun(pos, " (", ui::Text, 2);
-            drawTextRun(pos, std::to_string(ownedOre), numberColor, 2);
-            drawTextRun(pos, ")", ui::Text, 2);
-            y += 31.0f;
-        };
 
         const bool selectedRingTarget = selectedTarget.valid && baseItemSourceIsRing(static_cast<int>(selectedTarget.source));
         const SpellRingItem* selectedRingItem = nullptr;
@@ -6504,144 +6898,59 @@ void Game::renderBaseScreen(Renderer& renderer) const
         }
 
         if (!selectedTarget.valid || (detailEntry.item == nullptr && selectedRingItem == nullptr)) {
+            drawUiSubPanel(renderer, detailPanel);
             float detailLineY = drawUiDetailHeader(renderer, detailPanel, "アイテム未選択");
             drawUiDetailText(renderer, detailPanel, detailLineY, "加工するアイテムを選択してください。");
         } else {
-            const ItemData* item = detailEntry.item;
             std::optional<InventoryUiItemStats> stats = inventoryUiEntryStats(detailEntry);
             if (!stats && selectedRingItem != nullptr) {
                 stats = inventoryUiStatsFromRingItem(*selectedRingItem);
             }
-            std::string detailTitle = item != nullptr ? item->name : ringItemDisplayName(objectCatalog_, *selectedRingItem);
-            if (item != nullptr && !stats && detailEntry.stackCount > 1) {
-                std::snprintf(buffer, sizeof(buffer), "%s x%d", item->name.c_str(), detailEntry.stackCount);
-                detailTitle = buffer;
-            }
-            float detailLineY = drawUiDetailHeader(renderer, detailPanel, detailTitle);
-            drawUiDetailText(renderer, detailPanel, detailLineY, item != nullptr && !item->description.empty() ? item->description : "-");
-
-            const int enhanceLevel = stats ? stats->enhanceLevel : 0;
             const int attackBonus = stats ? stats->attackBonus : 0;
             const int digBonus = stats ? stats->digBonus : 0;
             const int durabilityBonus = stats ? stats->durabilityBonus : 0;
-            const int currentDurability = stats ? stats->currentDurability : (item != nullptr ? item->durability : -1);
-            const int maxDurability = stats ? stats->maxDurability : (item != nullptr ? item->durability : -1);
-            double weightModifier = 1.0;
-            double sizeModifier = 1.0;
-            if (detailEntry.instance != nullptr) {
-                weightModifier = detailEntry.instance->weightModifier;
-                sizeModifier = detailEntry.instance->sizeModifier;
-            } else if (selectedRingItem != nullptr) {
-                weightModifier = selectedRingItem->weightModifier;
-                sizeModifier = selectedRingItem->sizeModifier;
+            const double weightModifier = stats ? stats->weightModifier : 1.0;
+            const double sizeModifier = stats ? stats->sizeModifier : 1.0;
+
+            std::vector<InventoryUiDetailExtraLine> extraLines;
+            std::snprintf(buffer, sizeof(buffer), "攻撃+%d / 掘削+%d / 耐久+%d", attackBonus, digBonus, durabilityBonus);
+            extraLines.push_back({"強化", buffer, ui::Text});
+
+            std::string processingText;
+            if (std::abs(weightModifier - 1.0) > 0.001) {
+                std::snprintf(buffer, sizeof(buffer), "重量%.0f%%", weightModifier * 100.0);
+                processingText = buffer;
+            }
+            if (std::abs(sizeModifier - 1.0) > 0.001) {
+                std::snprintf(buffer, sizeof(buffer), "大きさ%.0f%%", sizeModifier * 100.0);
+                if (!processingText.empty()) {
+                    processingText += " / ";
+                }
+                processingText += buffer;
+            }
+            if (!processingText.empty()) {
+                extraLines.push_back({"加工", processingText, ui::Text});
             }
 
-            drawSectionLabel(detailPanel, detailLineY, "現在");
-            std::snprintf(buffer, sizeof(buffer), "%d / %d", enhanceLevel, MaxItemEnhanceLevel);
-            drawUiDetailLine(renderer, detailPanel, detailLineY, "強化Lv", buffer);
-            if (maxDurability < 0) {
-                std::snprintf(buffer, sizeof(buffer), "壊れない");
+            if (detailEntry.item != nullptr) {
+                drawInventoryUiDetailPanel(
+                    renderer,
+                    detailPanel,
+                    detailEntry,
+                    objectCatalog_,
+                    encyclopedia_,
+                    InventoryUiDetailOptions{.showEnhanceCount = false},
+                    extraLines);
             } else {
-                std::snprintf(buffer, sizeof(buffer), "%d/%d", currentDurability, maxDurability);
-            }
-            drawUiDetailLine(renderer, detailPanel, detailLineY, "耐久力", buffer);
-            std::snprintf(buffer, sizeof(buffer), "+%d / +%d / +%d", attackBonus, digBonus, durabilityBonus);
-            drawUiDetailLine(renderer, detailPanel, detailLineY, "補正", buffer);
-            std::snprintf(buffer, sizeof(buffer), "重量%.0f%% / 大きさ%.0f%%", weightModifier * 100.0, sizeModifier * 100.0);
-            drawUiDetailLine(renderer, detailPanel, detailLineY, "加工", buffer);
-
-            const bool available = processingTargetAvailable(selectedTarget);
-            std::string blockedReason;
-            if (!available) {
-                if (!processingModeUnlocked(mode)) {
-                    blockedReason = "この作業は未解禁です";
-                } else if ((mode == ProcessingMode::Repair || mode == ProcessingMode::ResetEnhancement) &&
-                    (selectedTarget.source == BaseItemSource::Backpack || selectedTarget.source == BaseItemSource::Warehouse) &&
-                    selectedTarget.backpackEntry.kind == StorageEntryKind::Stack) {
-                    blockedReason = "この作業はできません";
-                } else if (mode == ProcessingMode::ResetEnhancement) {
-                    blockedReason = "リセット不要です";
-                } else if (mode == ProcessingMode::Lighten || mode == ProcessingMode::Enlarge) {
-                    blockedReason = "加工済みです";
-                } else {
-                    blockedReason = mode == ProcessingMode::Repair ? "修理不要です" : "強化上限です";
-                }
-            }
-
-            if (mode == ProcessingMode::Repair) {
-                drawSectionLabel(detailPanel, detailLineY, "修理後");
-                if (maxDurability < 0 ||
-                    ((selectedTarget.source == BaseItemSource::Backpack || selectedTarget.source == BaseItemSource::Warehouse) &&
-                        selectedTarget.backpackEntry.kind == StorageEntryKind::Stack)) {
-                    drawUiDetailLine(renderer, detailPanel, detailLineY, "耐久力", "-");
-                } else {
-                    std::snprintf(buffer, sizeof(buffer), "%d/%d -> %d/%d",
-                        currentDurability,
-                        maxDurability,
-                        maxDurability,
-                        maxDurability);
-                    drawUiDetailLine(renderer, detailPanel, detailLineY, "耐久力", buffer);
-                }
-            } else if (mode == ProcessingMode::ResetEnhancement) {
-                drawSectionLabel(detailPanel, detailLineY, "リセット後");
-                drawUiDetailLine(renderer, detailPanel, detailLineY, "強化Lv", "0");
-                drawUiDetailLine(renderer, detailPanel, detailLineY, "補正", "+0 / +0 / +0");
-            } else if (mode == ProcessingMode::Lighten) {
-                drawSectionLabel(detailPanel, detailLineY, "加工後");
-                std::snprintf(buffer, sizeof(buffer), "%.0f%% -> %.0f%%", weightModifier * 100.0, weightModifier * LightenWeightMultiplier * 100.0);
-                drawUiDetailLine(renderer, detailPanel, detailLineY, "重量", buffer);
-                std::snprintf(buffer, sizeof(buffer), "%.0f%%", sizeModifier * 100.0);
-                drawUiDetailLine(renderer, detailPanel, detailLineY, "大きさ", buffer);
-            } else if (mode == ProcessingMode::Enlarge) {
-                drawSectionLabel(detailPanel, detailLineY, "加工後");
-                std::snprintf(buffer, sizeof(buffer), "%.0f%% -> %.0f%%", sizeModifier * 100.0, sizeModifier * EnlargeSizeMultiplier * 100.0);
-                drawUiDetailLine(renderer, detailPanel, detailLineY, "大きさ", buffer);
-                std::snprintf(buffer, sizeof(buffer), "%.0f%% -> %.0f%%", weightModifier * 100.0, weightModifier * EnlargeWeightMultiplier * 100.0);
-                drawUiDetailLine(renderer, detailPanel, detailLineY, "重量", buffer);
-            } else {
-                drawSectionLabel(detailPanel, detailLineY, "強化後");
-                std::snprintf(buffer, sizeof(buffer), "%d -> %d", enhanceLevel, std::min(MaxItemEnhanceLevel, enhanceLevel + 1));
-                drawUiDetailLine(renderer, detailPanel, detailLineY, "強化Lv", buffer);
-                if (mode == ProcessingMode::Attack) {
-                    std::snprintf(buffer, sizeof(buffer), "+%d -> +%d", attackBonus, attackBonus + 1);
-                    drawUiDetailLine(renderer, detailPanel, detailLineY, "攻撃力", buffer);
-                } else if (mode == ProcessingMode::Dig) {
-                    std::snprintf(buffer, sizeof(buffer), "+%d -> +%d", digBonus, digBonus + 1);
-                    drawUiDetailLine(renderer, detailPanel, detailLineY, "抑制力", buffer);
-                } else if (mode == ProcessingMode::Durability) {
-                    if (maxDurability < 0) {
-                        drawUiDetailLine(renderer, detailPanel, detailLineY, "耐久力", "-");
-                    } else {
-                        std::snprintf(buffer, sizeof(buffer), "%d -> %d", maxDurability, maxDurability + 2);
-                        drawUiDetailLine(renderer, detailPanel, detailLineY, "耐久力", buffer);
-                    }
-                }
-            }
-
-            if (available) {
-                const int moneyCost = processingMoneyCost(selectedTarget, mode);
-                const int oreCost = processingOreCost(selectedTarget, mode);
-                drawSectionLabel(detailPanel, detailLineY, "強化素材");
-                drawMoneyCostLine(detailPanel, detailLineY, moneyCost);
-                if (oreCost > 0) {
-                    drawOreCostLine(detailPanel, detailLineY, oreCost);
-                }
-                if (blockedReason.empty()) {
-                    if (money_ < moneyCost) {
-                        blockedReason = "所持金が足りません";
-                    } else if (inventory_.materialCount(MaterialType::EnhancementOre) < oreCost) {
-                        blockedReason = "強化鉱石が足りません";
-                    }
-                }
-            }
-
-            if (blockedReason.empty()) {
-                drawUiDetailText(renderer, detailPanel, detailLineY, std::string("Enter ") + processingActionName(mode));
-            } else {
-                drawUiDetailText(renderer, detailPanel, detailLineY, blockedReason);
+                drawUiSubPanel(renderer, detailPanel);
+                float detailLineY = drawUiDetailHeader(renderer, detailPanel, ringItemDisplayName(objectCatalog_, *selectedRingItem));
+                drawUiDetailText(renderer, detailPanel, detailLineY, "-");
             }
         }
-        const std::array<UiCommandMenuItem, 1> processingCommandItems{{{processingActionName(mode), true}}};
+        const ProcessingTarget commandTarget = baseProcessingCommandSlot_ >= 0
+            ? processingTargetForScreenSlot(baseProcessingCommandSlot_)
+            : ProcessingTarget{};
+        const std::vector<UiCommandMenuItem> processingCommandItems = this->processingCommandItems(commandTarget);
         drawUiCommandMenu(
             renderer,
             baseProcessingCommandMenu_,
@@ -6964,7 +7273,7 @@ void Game::renderBaseScreen(Renderer& renderer) const
                 drawUiDetailText(renderer, detailPanel, detailLineY, "売却できません。");
                 drawUiDetailLine(renderer, detailPanel, detailLineY, "売値", "売却不可");
             } else {
-                drawInventoryUiDetailPanel(renderer, detailPanel, detailEntry, objectCatalog_, encyclopedia_, false, extraLines);
+                drawInventoryUiDetailPanel(renderer, detailPanel, detailEntry, objectCatalog_, encyclopedia_, {}, extraLines);
             }
             if (buyMode) {
                 const bool buyCommandEnabled = baseMerchantBuyCommandIndex_ >= 0 &&
@@ -7395,6 +7704,13 @@ void Game::renderBaseScreen(Renderer& renderer) const
             statusStyle.padding = {20.0f, 3.0f};
             drawUiSystemMessage(renderer, baseStatus_, {300.0f, 612.0f}, statusStyle);
         }
+        if (baseBrokenRingDepartureConfirm_.open) {
+            drawUiConfirmDialog(
+                renderer,
+                baseBrokenRingDepartureConfirm_,
+                baseBrokenRingDepartureConfirmRect(),
+                "base.broken_ring_departure.confirm");
+        }
         return;
     }
 
@@ -7404,39 +7720,45 @@ void Game::renderBaseScreen(Renderer& renderer) const
             baseStatus_,
             baseSystemMessagePos(panel, baseStorageActive_, baseSellActive_, baseProcessingActive_, baseUpgradeActive_));
     }
-    if (baseRegenerateConfirmActive_) {
+    if (baseBrokenRingDepartureConfirm_.open) {
         panelCancelScope.reset();
         panelWindow.reset();
 
-        renderer.fillRect(
-            {0.0f, 0.0f},
-            {static_cast<float>(camera_.width()), static_cast<float>(camera_.height())},
+        drawUiConfirmDialog(
+            renderer,
+            baseBrokenRingDepartureConfirm_,
+            baseBrokenRingDepartureConfirmRect(),
+            "base.broken_ring_departure.confirm");
+    }
+    if (baseRegenerateConfirm_.open) {
+        panelCancelScope.reset();
+        panelWindow.reset();
+
+        drawUiModalBackdrop(
+            renderer,
+            {{0.0f, 0.0f}, {static_cast<float>(camera_.width()), static_cast<float>(camera_.height())}},
             {0, 0, 0, 96});
 
-        const UiRect confirmPanel = baseMiningRegenerateConfirmRect();
-        UiWindowScope confirmWindow(
+        drawUiConfirmDialog(
             renderer,
-            "base.mining.regenerate.confirm",
-            confirmPanel,
-            "再生成確認",
-            "F/Enter 再生成  Esc/右クリック 戻る",
-            UiWindowOptions{true, false});
-        renderer.drawWrappedText(
-            confirmPanel.pos + Vec2{40.0f, 112.0f},
-            "現在の坑道状態を破棄して、地形・敵・宝箱・ワープポイントを作り直します。\n拾っていないドロップがある場合は消えます。\nボス再戦用に地形も作り直します。",
-            confirmPanel.size.x - 80.0f,
-            {246, 235, 255, 255},
-            2);
-        drawUiButton(renderer, baseMiningRegenerateConfirmButtonRect(0), "再生成する", true, uiActionButtonStyle());
-        drawUiButton(renderer, baseMiningRegenerateConfirmButtonRect(1), "戻る", false, uiCancelButtonStyle());
+            baseRegenerateConfirm_,
+            baseMiningRegenerateConfirmRect(),
+            "base.mining.regenerate.confirm");
+    }
+    if (baseProcessingConfirm_.open) {
+        panelCancelScope.reset();
+        panelWindow.reset();
+
+        drawUiModalBackdrop(
+            renderer,
+            {{0.0f, 0.0f}, {static_cast<float>(camera_.width()), static_cast<float>(camera_.height())}},
+            {0, 0, 0, 96});
+
+        drawProcessingConfirmDialog(renderer, baseProcessingConfirmRect());
     }
     if (baseResultDialog_.open) {
         panelCancelScope.reset();
         panelWindow.reset();
-        renderer.fillRect(
-            {0.0f, 0.0f},
-            {static_cast<float>(camera_.width()), static_cast<float>(camera_.height())},
-            {0, 0, 0, 96});
         drawUiResultDialog(renderer, baseResultDialog_, baseResultDialogRect(), "base.result");
     }
     if (baseStorageQuantityDialog_.open) {

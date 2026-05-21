@@ -691,16 +691,25 @@ private:
     const char* processingModeName(ProcessingMode mode) const;
     const char* processingActionName(ProcessingMode mode) const;
     bool processingModeUnlocked(ProcessingMode mode) const;
+    bool processingEntryAvailable(StorageEntry entry, ProcessingMode mode, bool warehouseEntry = false) const;
     bool processingEntryAvailable(StorageEntry entry, bool warehouseEntry = false) const;
     bool processingScreenSlotAvailable(int slotIndex) const;
+    bool processingTargetAvailable(ProcessingTarget target, ProcessingMode mode) const;
     bool processingTargetAvailable(ProcessingTarget target) const;
+    bool processingTargetHasAvailableCommand(ProcessingTarget target) const;
+    bool processingCommandExecutable(ProcessingTarget target, ProcessingMode mode) const;
     int processingMoneyCost(StorageEntry entry, ProcessingMode mode, bool warehouseEntry = false) const;
     int processingOreCost(StorageEntry entry, ProcessingMode mode, bool warehouseEntry = false) const;
     int processingMoneyCost(ProcessingTarget target, ProcessingMode mode) const;
     int processingOreCost(ProcessingTarget target, ProcessingMode mode) const;
+    std::vector<UiCommandMenuItem> processingCommandItems(ProcessingTarget target) const;
+    void openProcessingConfirm(ProcessingTarget target, ProcessingMode mode);
+    void drawProcessingConfirmDialog(Renderer& renderer, UiRect panel) const;
     void applyProcessing(int entryIndex);
     void applyProcessingScreenSlot(int slotIndex);
+    void applyProcessingEntry(StorageEntry entry, ProcessingMode mode, bool warehouseEntry = false);
     void applyProcessingEntry(StorageEntry entry, bool warehouseEntry = false);
+    void applyProcessingTarget(ProcessingTarget target, ProcessingMode mode);
     void applyProcessingTarget(ProcessingTarget target);
     int warehouseCapacity() const;
     int warehouseUsedSlots() const;
@@ -861,6 +870,12 @@ private:
         bool launchFromCenter = false,
         LootSourceKind sourceKind = LootSourceKind::Chest);
     Vec2 safeLootLandingPosition(Vec2 center, std::mt19937& rng);
+    void updateDigToolFailsafe(float dt);
+    bool hasUsableDigToolOnRing() const;
+    bool hasUsableDigToolInInventory() const;
+    bool hasNearbyUsableDigToolDrop(float radius) const;
+    bool trySpawnFailsafeShovelDropFromWall(Vec2 wallCenter);
+    bool spawnFailsafeShovelDropFromWall(Vec2 wallCenter);
     int rewardNodeCount() const;
     int moneyNodeCount() const;
     int buriedVisibleNodeCount() const;
@@ -966,6 +981,8 @@ private:
     bool gameProgressPaused() const;
     bool basePresentationActive() const;
     void startBaseMonicaDialogue();
+    bool hasBrokenRingItemForDeparture() const;
+    void openBaseMiningStartChoice();
     void maybeQueueStageStartStory();
     bool hasStoryFlag(std::string_view flag) const;
     const StoryEvent* findStoryEvent(std::string_view id) const;
@@ -1075,6 +1092,7 @@ private:
     int baseMenuSelection_ = 0;
     bool baseMiningStartChoiceActive_ = false;
     int baseMiningStartSelection_ = 0;
+    UiConfirmDialogState baseBrokenRingDepartureConfirm_{};
     bool baseWarpPointSelectActive_ = false;
     int baseWarpPointSelection_ = 0;
     bool baseStorageActive_ = false;
@@ -1110,6 +1128,7 @@ private:
     bool baseUpgradeActive_ = false;
     int baseUpgradeSelection_ = 0;
     UiResultDialogState baseResultDialog_{};
+    UiConfirmDialogState baseRegenerateConfirm_{};
     bool baseProcessingActive_ = false;
     int baseProcessingMode_ = 0;
     UiTabsState baseProcessingTabs_{};
@@ -1118,6 +1137,9 @@ private:
     int baseProcessingSelection_ = 0;
     UiCommandMenuState baseProcessingCommandMenu_{};
     int baseProcessingCommandSlot_ = -1;
+    UiConfirmDialogState baseProcessingConfirm_{};
+    ProcessingTarget baseProcessingConfirmTarget_{};
+    ProcessingMode baseProcessingConfirmMode_ = ProcessingMode::Repair;
     bool baseRingWorkshopActive_ = false;
     int baseRingWorkshopSelection_ = 0;
     std::optional<RingLevelUpgradeSelection> ringWorkshopRespecSource_;
@@ -1194,7 +1216,7 @@ private:
     PauseMenuPage pausePage_ = PauseMenuPage::Main;
     ScreenMode pauseReturnMode_ = ScreenMode::Playing;
     int pauseMenuSelection_ = 0;
-    int pauseConfirmSelection_ = 1;
+    UiConfirmDialogState pauseQuitConfirm_{};
     mutable UiCancelControlState pauseCancelState_{};
     mutable UiCancelControlState baseCancelState_{};
     mutable UiCancelControlState ringCancelState_{};
@@ -1224,6 +1246,7 @@ private:
     float ringSnapElapsed_ = 0.0f;
     Vec2 ringDragStartMouse_{};
     std::string ringStatus_;
+    float digToolFailsafeSpawnCooldown_ = 0.0f;
     float dungeonRingIntroTimer_ = 0.0f;
     bool dungeonRingIntroStartPending_ = false;
     bool stageStartStoryPendingAfterRingIntro_ = false;
@@ -1287,10 +1310,8 @@ private:
     Vec2 latestWarpPointPosition_{};
     bool hasLatestWarpPointPosition_ = false;
     std::optional<Vec2> requestedWarpPointStartPosition_;
-    bool warpReturnConfirmActive_ = false;
-    int warpReturnConfirmSelection_ = 0;
+    UiConfirmDialogState warpReturnConfirm_{};
     int focusedWarpReturnPointIndex_ = -1;
-    bool baseRegenerateConfirmActive_ = false;
     int money_ = 0;
     int maxHpUpgradeLevel_ = 0;
     int ringRadiusUpgradeLevel_ = 0;

@@ -28,6 +28,8 @@ struct UiWindowState {
 UiCancelControlState* activeCancelState = nullptr;
 
 std::unordered_map<std::string, UiWindowState> windowStates;
+
+constexpr std::string_view ConfirmDialogHelpText = "F/Enter 決定  Esc/右クリック 戻る";
 float windowAnimationStep = 1.0f / ui::WindowAnimationFrames;
 
 std::string windowKey(std::string_view id, UiRect panel)
@@ -1077,6 +1079,19 @@ UiRect uiResultDialogTextRect(UiRect panel)
     }};
 }
 
+UiRect uiConfirmDialogMessageRect(UiRect panel)
+{
+    const UiRect confirm = uiConfirmDialogButtonRect(panel, 0);
+    const float top = panel.pos.y + ui::HeaderHeight + 2.0f;
+    return {{
+        panel.pos.x + 48.0f,
+        top,
+    }, {
+        panel.size.x - 96.0f,
+        std::max(0.0f, confirm.pos.y - top - 16.0f),
+    }};
+}
+
 UiResultDialogLine uiResultDialogPlainLine(std::string text)
 {
     UiResultDialogLine line;
@@ -1157,6 +1172,17 @@ UiRect uiQuantityConfirmButtonRect(UiRect panel)
     }, Size};
 }
 
+void closeUiConfirmDialog(UiConfirmDialogState& state)
+{
+    state.open = false;
+    state.title.clear();
+    state.message.clear();
+    state.confirmLabel = "はい";
+    state.cancelLabel = "いいえ";
+    state.selection = 1;
+    state.confirmEnabled = true;
+}
+
 UiButtonStyle uiQuantityStepButtonStyle(bool enabled)
 {
     UiButtonStyle style;
@@ -1222,6 +1248,115 @@ void drawUiResultDialog(Renderer& renderer, const UiResultDialogState& state, Ui
         y += measureUiResultDialogLine(renderer, line, TextScale).y + 10.0f;
     }
     drawUiButton(renderer, uiResultDialogOkButtonRect(panel), "OK", true, uiActionButtonStyle());
+}
+
+UiRect uiConfirmDialogButtonRect(UiRect panel, int index)
+{
+    constexpr Vec2 Size{164.0f, ui::ButtonHeight};
+    constexpr float BottomGap = 10.0f;
+    constexpr float HorizontalInset = 12.0f;
+    const float footerHeight = uiFooterHeight(ConfirmDialogHelpText);
+    const float y = panel.pos.y + panel.size.y - footerHeight - ui::ButtonHeight - BottomGap;
+    return index == 0
+        ? UiRect{{panel.pos.x + panel.size.x - ui::PanelPadding - Size.x - HorizontalInset, y}, Size}
+        : UiRect{{panel.pos.x + ui::PanelPadding + HorizontalInset, y}, Size};
+}
+
+std::string_view uiConfirmDialogHelpText()
+{
+    return ConfirmDialogHelpText;
+}
+
+void openUiConfirmDialog(
+    UiConfirmDialogState& state,
+    std::string title,
+    std::string message,
+    std::string confirmLabel,
+    std::string cancelLabel,
+    int defaultSelection)
+{
+    state.open = true;
+    state.title = std::move(title);
+    state.message = std::move(message);
+    state.confirmLabel = std::move(confirmLabel);
+    state.cancelLabel = std::move(cancelLabel);
+    state.selection = std::clamp(defaultSelection, 0, 1);
+    state.confirmEnabled = true;
+}
+
+UiConfirmDialogResult updateUiConfirmDialog(UiConfirmDialogState& state, UiContext& ui, const Input& input, UiRect panel)
+{
+    if (!state.open) {
+        return UiConfirmDialogResult::None;
+    }
+
+    if (ui.hovered(uiConfirmDialogButtonRect(panel, 0))) {
+        state.selection = 0;
+    } else if (ui.hovered(uiConfirmDialogButtonRect(panel, 1))) {
+        state.selection = 1;
+    }
+    if (input.pressed(InputAction::MoveLeft) || input.pressed(InputAction::MoveUp) || input.activeRingDelta() < 0) {
+        state.selection = 1;
+    }
+    if (input.pressed(InputAction::MoveRight) || input.pressed(InputAction::MoveDown) || input.activeRingDelta() > 0) {
+        state.selection = 0;
+    }
+
+    const bool confirmRequested =
+        state.confirmEnabled &&
+        (ui.pressed(uiConfirmDialogButtonRect(panel, 0)) ||
+            ((input.confirmPressed() || input.useItemPressed()) && state.selection == 0));
+    const bool cancelRequested =
+        ui.pressed(uiConfirmDialogButtonRect(panel, 1)) ||
+        ui.pressed(uiCancelButtonRect(panel)) ||
+        input.backPressed() ||
+        ((input.confirmPressed() || input.useItemPressed()) && state.selection == 1);
+
+    if (confirmRequested) {
+        ui.emitSound(UiSoundEvent::Confirm);
+        closeUiConfirmDialog(state);
+        return UiConfirmDialogResult::Confirmed;
+    }
+    if (cancelRequested) {
+        ui.emitSound(UiSoundEvent::Cancel);
+        closeUiConfirmDialog(state);
+        return UiConfirmDialogResult::Cancelled;
+    }
+    return UiConfirmDialogResult::None;
+}
+
+void drawUiConfirmDialogButtons(Renderer& renderer, const UiConfirmDialogState& state, UiRect panel)
+{
+    UiButtonStyle confirmStyle = uiActionButtonStyle();
+    if (!state.confirmEnabled) {
+        confirmStyle.fill = {20, 24, 38, 190};
+        confirmStyle.fillHot = confirmStyle.fill;
+        confirmStyle.text = ui::TextDisabled;
+    }
+    drawUiButton(
+        renderer,
+        uiConfirmDialogButtonRect(panel, 0),
+        state.confirmLabel,
+        state.selection == 0 && state.confirmEnabled,
+        confirmStyle);
+    drawUiButton(
+        renderer,
+        uiConfirmDialogButtonRect(panel, 1),
+        state.cancelLabel,
+        state.selection == 1,
+        uiCancelButtonStyle());
+}
+
+void drawUiConfirmDialog(Renderer& renderer, const UiConfirmDialogState& state, UiRect panel, std::string_view id)
+{
+    if (!state.open) {
+        return;
+    }
+
+    UiWindowScope window(renderer, id, panel, state.title, uiConfirmDialogHelpText(), UiWindowOptions{true, true});
+    const UiRect message = uiConfirmDialogMessageRect(panel);
+    renderer.drawWrappedText(message.pos, state.message, message.size.x, ui::Text, 2);
+    drawUiConfirmDialogButtons(renderer, state, panel);
 }
 
 void openUiQuantityDialog(
@@ -2026,9 +2161,35 @@ void drawUiTabs(
         if (!tabItemEnabled(items, i)) {
             buttonStyle.text = ui::TextDisabled;
         }
-        drawUiButton(renderer, rects[i], items[i].label, i == selectedIndex, buttonStyle);
+        UiRect rect = rects[i];
+        rect.size.y = ui::ButtonHeight;
+        if (renderer.hasUiTabTexture()) {
+            const bool selected = i == selectedIndex;
+            const Color tint = selected ? buttonStyle.imageTintHot : buttonStyle.imageTint;
+            renderer.drawUiTabFrame(rect.pos, rect.size, selected, tint);
+
+            const Vec2 textSize = renderer.measureText(items[i].label, 2);
+            const Vec2 textPos{
+                rect.pos.x + std::max(0.0f, (rect.size.x - textSize.x) * 0.5f),
+                rect.pos.y + std::max(0.0f, (rect.size.y - textSize.y) * 0.5f),
+            };
+            renderer.drawText(textPos, items[i].label, buttonStyle.text, 2);
+        } else {
+            const bool selected = i == selectedIndex;
+            const Color fill = selected ? buttonStyle.fillHot : buttonStyle.fill;
+            const Color outline = selected ? scaledColor(buttonStyle.outlineHot, 1.04f) : buttonStyle.outline;
+            renderer.fillRect(rect.pos, rect.size, fill);
+            renderer.drawRect(rect.pos, rect.size, outline);
+
+            const Vec2 textSize = renderer.measureText(items[i].label, 2);
+            const Vec2 textPos{
+                rect.pos.x + std::max(0.0f, (rect.size.x - textSize.x) * 0.5f),
+                rect.pos.y + std::max(0.0f, (rect.size.y - textSize.y) * 0.5f),
+            };
+            renderer.drawText(textPos, items[i].label, buttonStyle.text, 2);
+        }
         if (i == state.focusedIndex && i != selectedIndex && tabItemEnabled(items, i) && style.focusOutline.a > 0) {
-            UiRect focusRect = rects[i];
+            UiRect focusRect = rect;
             focusRect.size.y = ui::ButtonHeight;
             constexpr float Inset = 3.0f;
             renderer.drawRect(

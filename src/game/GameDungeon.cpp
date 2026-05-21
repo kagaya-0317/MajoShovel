@@ -46,6 +46,10 @@ constexpr std::string_view AudioSeCrateBreak = "se.crate.break";
 constexpr std::string_view AudioSeItemBreak = "se.item.break";
 constexpr std::string_view AudioSeDiscovery = "se.discovery";
 constexpr std::string_view AudioSeWarpDiscovery = "se.discovery.warp";
+constexpr std::string_view DigToolFailsafeShovelObjectId = "item_shovel";
+constexpr std::string_view DigToolFailsafeDigCategory = "\xE6\x8E\x98\xE5\x89\x8A";
+constexpr float DigToolFailsafeSpawnCooldownSeconds = 12.0f;
+constexpr float DigToolFailsafeNearbyDropRadius = 220.0f;
 constexpr float BossDefeatPresentationSeconds = 1.85f;
 constexpr double PlayerRegenRateCap = 0.5;
 
@@ -126,6 +130,23 @@ struct PlacementReservations {
         return false;
     }
 };
+
+bool objectIsUsableDigTool(const ItemData& item)
+{
+    return item.category == DigToolFailsafeDigCategory && item.durability != 0;
+}
+
+bool inventoryInstanceIsUsableDigTool(const InventoryObjectInstance& instance)
+{
+    return instance.item.category == DigToolFailsafeDigCategory &&
+        !instance.instance.isBroken &&
+        instance.instance.currentDurability != 0;
+}
+
+Vec2 effectiveDropPosition(const WorldDropItem& drop)
+{
+    return drop.jumpActive ? drop.jumpTargetPosition : drop.position;
+}
 
 bool isPlayerRegenTarget(std::string_view target)
 {
@@ -1271,7 +1292,13 @@ void Game::choosePauseMenuItem(int item)
         break;
     case 4:
         pausePage_ = PauseMenuPage::QuitConfirm;
-        pauseConfirmSelection_ = 0;
+        openUiConfirmDialog(
+            pauseQuitConfirm_,
+            "確認",
+            "ゲームを終了しますか？\nセーブは拠点でのみ実行できます。",
+            "終了する",
+            "戻る",
+            1);
         break;
     default:
         break;
@@ -1281,10 +1308,14 @@ void Game::choosePauseMenuItem(int item)
 void Game::leavePausePage()
 {
     if (pausePage_ == PauseMenuPage::Main) {
+        pauseQuitConfirm_ = {};
         mode_ = pauseReturnMode_;
         return;
     }
 
+    if (pausePage_ == PauseMenuPage::QuitConfirm) {
+        pauseQuitConfirm_ = {};
+    }
     pausePage_ = PauseMenuPage::Main;
 }
 
@@ -1627,8 +1658,7 @@ void Game::returnToBaseFromNormalStage(bool stageCleared, bool died)
     inventory_.setOpen(false);
     inventory_.cancelGrab();
     cancelRingGrab();
-    warpReturnConfirmActive_ = false;
-    warpReturnConfirmSelection_ = 0;
+    warpReturnConfirm_ = {};
     focusedWarpReturnPointIndex_ = -1;
     bossSpawned_ = false;
     hasBossSpawnPoint_ = false;
@@ -2063,37 +2093,15 @@ int Game::nearbyDiscoveredWarpPointIndex() const
 bool Game::updateWarpReturnUi(const Input& input, UiContext& ui)
 {
     if (mode_ != ScreenMode::Playing || enemyTestActive_) {
-        warpReturnConfirmActive_ = false;
-        warpReturnConfirmSelection_ = 0;
+        warpReturnConfirm_ = {};
         focusedWarpReturnPointIndex_ = -1;
         return false;
     }
 
-    if (warpReturnConfirmActive_) {
-        if (ui.hovered(warpReturnConfirmButtonRect(0))) {
-            warpReturnConfirmSelection_ = 0;
-        } else if (ui.hovered(warpReturnConfirmButtonRect(1))) {
-            warpReturnConfirmSelection_ = 1;
-        }
-        if (input.pressed(InputAction::MoveLeft) || input.pressed(InputAction::MoveUp)) {
-            warpReturnConfirmSelection_ = 0;
-        }
-        if (input.pressed(InputAction::MoveRight) || input.pressed(InputAction::MoveDown)) {
-            warpReturnConfirmSelection_ = 1;
-        }
-
-        const bool returnRequested =
-            ui.pressed(warpReturnConfirmButtonRect(0)) ||
-            ((input.confirmPressed() || input.useItemPressed()) && warpReturnConfirmSelection_ == 0);
-        const bool cancelRequested =
-            ui.pressed(warpReturnConfirmButtonRect(1)) ||
-            input.backPressed() ||
-            ((input.confirmPressed() || input.useItemPressed()) && warpReturnConfirmSelection_ == 1);
-
-        if (returnRequested) {
-            ui.emitSound(UiSoundEvent::Confirm);
-            warpReturnConfirmActive_ = false;
-            warpReturnConfirmSelection_ = 0;
+    if (warpReturnConfirm_.open) {
+        const UiRect confirmPanel = warpReturnConfirmRect();
+        const UiConfirmDialogResult result = updateUiConfirmDialog(warpReturnConfirm_, ui, input, confirmPanel);
+        if (result == UiConfirmDialogResult::Confirmed) {
             focusedWarpReturnPointIndex_ = -1;
             if (currentStageIsRoguelike()) {
                 enterAstralResult(AstralRunResult::Returned);
@@ -2102,10 +2110,7 @@ bool Game::updateWarpReturnUi(const Input& input, UiContext& ui)
             requestReturnToBaseTransition(false, false);
             return true;
         }
-        if (cancelRequested) {
-            ui.emitSound(UiSoundEvent::Cancel);
-            warpReturnConfirmActive_ = false;
-            warpReturnConfirmSelection_ = 0;
+        if (result == UiConfirmDialogResult::Cancelled) {
             const bool entranceNearby =
                 distanceSquared(player_.position, dungeonEntrancePosition()) <= WarpPointReturnRadius * WarpPointReturnRadius;
             focusedWarpReturnPointIndex_ = entranceNearby
@@ -2114,7 +2119,7 @@ bool Game::updateWarpReturnUi(const Input& input, UiContext& ui)
             return true;
         }
 
-        ui.block(warpReturnConfirmRect());
+        ui.block(confirmPanel);
         return true;
     }
 
@@ -2123,17 +2128,18 @@ bool Game::updateWarpReturnUi(const Input& input, UiContext& ui)
     focusedWarpReturnPointIndex_ = entranceNearby
         ? DungeonEntranceReturnFocusIndex
         : nearbyDiscoveredWarpPointIndex();
-    if (focusedWarpReturnPointIndex_ >= 0 && (input.confirmPressed() || input.useItemPressed())) {
+    const bool returnPromptFocused =
+        focusedWarpReturnPointIndex_ >= 0 ||
+        focusedWarpReturnPointIndex_ == DungeonEntranceReturnFocusIndex;
+    if (returnPromptFocused && (input.confirmPressed() || input.useItemPressed())) {
         ui.emitSound(UiSoundEvent::MenuOpen);
-        warpReturnConfirmActive_ = true;
-        warpReturnConfirmSelection_ = 0;
-        ui.block(warpReturnConfirmRect());
-        return true;
-    }
-    if (focusedWarpReturnPointIndex_ == DungeonEntranceReturnFocusIndex && (input.confirmPressed() || input.useItemPressed())) {
-        ui.emitSound(UiSoundEvent::MenuOpen);
-        warpReturnConfirmActive_ = true;
-        warpReturnConfirmSelection_ = 0;
+        openUiConfirmDialog(
+            warpReturnConfirm_,
+            "帰還確認",
+            "拠点へ帰還しますか？\n現在のダンジョン状態を保持したまま、ダンジョン入口へ戻ります。",
+            "帰還する",
+            "戻る",
+            0);
         ui.block(warpReturnConfirmRect());
         return true;
     }
@@ -3081,6 +3087,96 @@ Vec2 Game::safeLootLandingPosition(Vec2 center, std::mt19937& rng)
     }
 
     return scatterLootPosition(center, rng);
+}
+
+void Game::updateDigToolFailsafe(float dt)
+{
+    if (enemyTestActive_ || mode_ != ScreenMode::Playing) {
+        return;
+    }
+
+    digToolFailsafeSpawnCooldown_ = std::max(0.0f, digToolFailsafeSpawnCooldown_ - dt);
+}
+
+bool Game::hasUsableDigToolOnRing() const
+{
+    for (const SpellRingItem* item : spellRing_.runtimeItems()) {
+        if (item == nullptr || item->broken() || item->objectId.empty()) {
+            continue;
+        }
+        const ItemData* object = objectCatalog_.registry.findById(item->objectId);
+        if (object != nullptr && objectIsUsableDigTool(*object)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+bool Game::hasUsableDigToolInInventory() const
+{
+    for (const InventoryObjectStack& stack : inventory_.objectStacks()) {
+        if (stack.count > 0 && objectIsUsableDigTool(stack.item)) {
+            return true;
+        }
+    }
+    for (const InventoryObjectInstance& instance : inventory_.objectInstances()) {
+        if (inventoryInstanceIsUsableDigTool(instance)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+bool Game::hasNearbyUsableDigToolDrop(float radius) const
+{
+    const float radiusSq = std::max(0.0f, radius) * std::max(0.0f, radius);
+    for (const WorldDropItem& drop : worldDrops_.drops()) {
+        if (drop.kind != WorldDropKind::Object || distanceSquared(player_.position, effectiveDropPosition(drop)) > radiusSq) {
+            continue;
+        }
+        const ItemData* object = objectCatalog_.registry.findById(drop.id);
+        if (object != nullptr && objectIsUsableDigTool(*object)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+bool Game::trySpawnFailsafeShovelDropFromWall(Vec2 wallCenter)
+{
+    if (enemyTestActive_ ||
+        mode_ != ScreenMode::Playing ||
+        digToolFailsafeSpawnCooldown_ > 0.0f ||
+        hasUsableDigToolOnRing() ||
+        hasUsableDigToolInInventory() ||
+        hasNearbyUsableDigToolDrop(DigToolFailsafeNearbyDropRadius)) {
+        return false;
+    }
+
+    if (!spawnFailsafeShovelDropFromWall(wallCenter)) {
+        return false;
+    }
+
+    digToolFailsafeSpawnCooldown_ = DigToolFailsafeSpawnCooldownSeconds;
+    pushDungeonLog(inlineItemTag(DigToolFailsafeShovelObjectId) + " 壁からスコップが出た", "dig_tool_failsafe");
+    return true;
+}
+
+bool Game::spawnFailsafeShovelDropFromWall(Vec2 wallCenter)
+{
+    const ItemData* shovel = objectCatalog_.registry.findById(DigToolFailsafeShovelObjectId);
+    if (shovel == nullptr || !objectIsUsableDigTool(*shovel)) {
+        return false;
+    }
+
+    std::mt19937& rng = lootRuntimeRng();
+    const Vec2 target = safeLootLandingPosition(wallCenter, rng);
+    return worldDrops_.spawnObjectDrop(
+        objectCatalog_,
+        DigToolFailsafeShovelObjectId,
+        target,
+        runStats_.elapsedSeconds,
+        makeWorldLootJumpMotion(wallCenter, rng));
 }
 
 void Game::openChestNode(ChestNode& node)

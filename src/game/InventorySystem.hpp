@@ -91,7 +91,8 @@ public:
         const ObjectCatalog& catalog,
         MagicSystem* magic = nullptr,
         std::vector<EffectDiscoveryEvent>* discoveryEvents = nullptr,
-        const EncyclopediaSystem* encyclopedia = nullptr);
+        const EncyclopediaSystem* encyclopedia = nullptr,
+        bool itemUseEnabled = true);
     void update(
         const Input& input,
         UiContext& ui,
@@ -108,7 +109,8 @@ public:
         const Player& player,
         const SpellRingSystem& spellRing,
         const ObjectCatalog& catalog,
-        const EncyclopediaSystem& encyclopedia) const;
+        const EncyclopediaSystem& encyclopedia,
+        bool itemUseEnabled = true) const;
     void renderShortcutHud(Renderer& renderer, const SpellRingSystem& spellRing, int screenWidth, int screenHeight) const;
     bool isOpen() const { return open_; }
     void setOpen(bool open) { open_ = open; }
@@ -203,7 +205,7 @@ private:
         const EncyclopediaSystem* encyclopedia);
     bool addShortcutSelectionToRing(SpellRingSystem& spellRing, SpellRingAddResult* outResult = nullptr);
     bool canUseScreenItem(int index) const;
-    std::array<UiCommandMenuItem, 3> buildSlotCommandItems(int slotIndex) const;
+    std::array<UiCommandMenuItem, 3> buildSlotCommandItems(int slotIndex, bool itemUseEnabled = true) const;
     bool hasScreenItem(int index) const;
     bool moveScreenItem(int fromIndex, int toIndex);
     void syncPackedItemSlots() const;

@@ -301,6 +301,7 @@ bool App::initialize(const char* title, int width, int height, bool testPlayMode
     width_ = width;
     height_ = height;
     testPlayMode_ = testPlayMode;
+    testFreezePaused_ = false;
     restartRequested_ = false;
     if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO | SDL_INIT_GAMEPAD)) {
         logError(std::string("SDL_Init failed: ") + SDL_GetError());
@@ -369,6 +370,10 @@ bool App::loadAssets()
         logError(renderer_->lastAssetError());
         ok = false;
     }
+    if (!renderer_->loadUiTabTexture("assets/UI_tubs.png")) {
+        logError(renderer_->lastAssetError());
+        ok = false;
+    }
     if (!renderer_->loadUiLineTexture("assets/UI_line.png")) {
         logError(renderer_->lastAssetError());
         ok = false;
@@ -410,6 +415,9 @@ bool App::reloadAssetForPath(const std::string& changedPath)
     }
     if (fileName == "ui_buttons.png") {
         return renderer_->loadUiButtonTexture("assets/UI_buttons.png");
+    }
+    if (fileName == "ui_tubs.png") {
+        return renderer_->loadUiTabTexture("assets/UI_tubs.png");
     }
     if (fileName == "ui_line.png") {
         return renderer_->loadUiLineTexture("assets/UI_line.png");
@@ -574,6 +582,15 @@ void App::run()
                 logError("Auto reload block toggle failed: " + error);
             }
         }
+        if (testPlayMode_ && input_.testFreezePressed()) {
+            testFreezePaused_ = !testFreezePaused_;
+            if (testFreezePaused_) {
+                frozenTime_ = time_;
+                logInfo("Test freeze: PAUSED (F7)");
+            } else {
+                logInfo("Test freeze: RESUMED (F7)");
+            }
+        }
         if (testPlayMode_) {
             while (std::optional<std::string> command = debugConsole_.pollCommand()) {
                 executeDebugCommand(*command);
@@ -582,12 +599,14 @@ void App::run()
 
         checkAssetHotReload();
         time_.tick();
-        audio_.update(time_.deltaSeconds());
-        game_.update(input_, time_);
-        if (game_.quitRequested()) {
-            running_ = false;
+        if (!testFreezePaused_) {
+            audio_.update(time_.deltaSeconds());
+            game_.update(input_, time_);
+            if (game_.quitRequested()) {
+                running_ = false;
+            }
         }
-        game_.render(*renderer_, time_);
+        game_.render(*renderer_, testFreezePaused_ ? frozenTime_ : time_);
     }
 }
 

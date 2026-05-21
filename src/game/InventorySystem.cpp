@@ -1112,11 +1112,11 @@ bool InventorySystem::canUseScreenItem(int index) const
     return false;
 }
 
-std::array<UiCommandMenuItem, 3> InventorySystem::buildSlotCommandItems(int slotIndex) const
+std::array<UiCommandMenuItem, 3> InventorySystem::buildSlotCommandItems(int slotIndex, bool itemUseEnabled) const
 {
     const bool hasItem = hasScreenItem(slotIndex);
     std::array<UiCommandMenuItem, 3> items{{
-        {"使用する", canUseScreenItem(slotIndex)},
+        {"使用する", itemUseEnabled && canUseScreenItem(slotIndex)},
         {"リングへ", hasItem},
         {"保護", objectInstanceAtScreenIndex(slotIndex) != nullptr},
     }};
@@ -1713,7 +1713,8 @@ void InventorySystem::updateScreen(
     const ObjectCatalog& catalog,
     MagicSystem* magic,
     std::vector<EffectDiscoveryEvent>* discoveryEvents,
-    const EncyclopediaSystem* encyclopedia)
+    const EncyclopediaSystem* encyclopedia,
+    bool itemUseEnabled)
 {
     if (!open_) {
         return;
@@ -1721,7 +1722,7 @@ void InventorySystem::updateScreen(
 
     const bool commandOpenBeforeUpdate = slotCommandMenu_.open;
     const int commandSlotIndex = slotCommandMenuIndex_ >= 0 ? slotCommandMenuIndex_ : selectedShortcutIndex();
-    const std::array<UiCommandMenuItem, 3> commandItems = buildSlotCommandItems(commandSlotIndex);
+    const std::array<UiCommandMenuItem, 3> commandItems = buildSlotCommandItems(commandSlotIndex, itemUseEnabled);
     const int commandSelection = updateUiCommandMenu(
         slotCommandMenu_,
         ui,
@@ -1928,7 +1929,8 @@ void InventorySystem::render(
     const Player& player,
     const SpellRingSystem& spellRing,
     const ObjectCatalog& catalog,
-    const EncyclopediaSystem& encyclopedia) const
+    const EncyclopediaSystem& encyclopedia,
+    bool itemUseEnabled) const
 {
     (void)player;
     (void)spellRing;
@@ -1980,11 +1982,11 @@ void InventorySystem::render(
     }
 
     const UiRect detailPanel{{DetailX, DetailY}, {DetailW, DetailH}};
-    drawInventoryUiDetailPanel(renderer, detailPanel, detailEntry, catalog, encyclopedia, true);
+    drawInventoryUiDetailPanel(renderer, detailPanel, detailEntry, catalog, encyclopedia);
     drawUiButton(renderer, inventorySortButtonRect(), "並び替え", false, uiActionButtonStyle());
 
     const int commandSlotIndex = slotCommandMenuIndex_ >= 0 ? slotCommandMenuIndex_ : selectedShortcutIndex();
-    const std::array<UiCommandMenuItem, 3> commandItems = buildSlotCommandItems(commandSlotIndex);
+    const std::array<UiCommandMenuItem, 3> commandItems = buildSlotCommandItems(commandSlotIndex, itemUseEnabled);
     drawUiCommandMenu(renderer, slotCommandMenu_, commandItems.data(), static_cast<int>(commandItems.size()));
 
 }
@@ -2012,11 +2014,12 @@ void InventorySystem::renderShortcutHud(Renderer& renderer, const SpellRingSyste
         char buffer[128];
         const int selectedIndex = selectedShortcutIndex();
         if (const InventoryObjectStack* objectStack = objectStackAtScreenIndex(selectedIndex)) {
-            std::snprintf(buffer, sizeof(buffer), "%s x%d", objectStack->item.name.c_str(), objectStack->count);
+            const std::string name = itemDisplayName(objectStack->item.name, objectStack->item.durability == 0);
+            std::snprintf(buffer, sizeof(buffer), "%s x%d", name.c_str(), objectStack->count);
             return std::string(buffer);
         }
         if (const InventoryObjectInstance* objectInstance = objectInstanceAtScreenIndex(selectedIndex)) {
-            return objectInstance->item.name;
+            return itemDisplayName(objectInstance->item.name, objectInstance->instance.isBroken);
         }
         return std::string{};
     }();

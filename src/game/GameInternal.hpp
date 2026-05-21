@@ -64,9 +64,8 @@ constexpr int BaseWarehouseSourceIndex = 1;
 constexpr int BaseRingSourceOffset = 2;
 constexpr int BaseItemSourceCount = BaseRingSourceOffset + SpellRingCount;
 constexpr int BaseProcessingSourceCount = BaseItemSourceCount;
-constexpr float BaseItemSourceTabX = 44.0f;
-constexpr float BaseItemSourceTabWidth = 152.0f;
-constexpr float BaseItemSourceTabPitch = 165.0f;
+constexpr float BaseItemSourceTabOuterGap = 24.0f;
+constexpr float BaseItemSourceTabInnerGap = 13.0f;
 constexpr int BaseRingWorkshopItemCount = 14;
 constexpr int BookshelfMenuItemCount = 3;
 constexpr int BookshelfVisibleRows = 5;
@@ -442,25 +441,6 @@ std::optional<std::string> firstAvailableObjectId(const ObjectCatalog& catalog)
         }
     }
     return std::nullopt;
-}
-
-std::string joinEffectLines(const std::vector<std::string>& lines)
-{
-    if (lines.empty()) {
-        return "-";
-    }
-    if (lines.size() == 1 && lines.front() == "\xE3\x81\xAA\xE3\x81\x97") {
-        return lines.front();
-    }
-    std::string text;
-    for (std::size_t i = 0; i < lines.size(); ++i) {
-        if (!text.empty()) {
-            text += '\n';
-        }
-        text += "\xE3\x83\xBB";
-        text += lines[i];
-    }
-    return text;
 }
 
 const char* chestKindCode(LootChestKind kind)
@@ -1101,6 +1081,11 @@ UiRect baseResultDialogRect()
     return {{410.0f, 200.0f}, {460.0f, 260.0f}};
 }
 
+UiRect baseProcessingConfirmRect()
+{
+    return {{360.0f, 118.0f}, {560.0f, 470.0f}};
+}
+
 UiRect levelUpResultDialogRect()
 {
     return baseResultDialogRect();
@@ -1211,15 +1196,7 @@ UiRect baseMiningWarpPointSelectChoiceRect(int index)
 
 UiRect baseMiningRegenerateConfirmRect()
 {
-    return {{430.0f, 232.0f}, {420.0f, 238.0f}};
-}
-
-UiRect baseMiningRegenerateConfirmButtonRect(int index)
-{
-    const Vec2 size{164.0f, ui::ButtonHeight};
-    return index == 0
-        ? uiBottomLeftButtonRect(baseMiningRegenerateConfirmRect(), size)
-        : uiBottomRightButtonRect(baseMiningRegenerateConfirmRect(), size);
+    return {{410.0f, 210.0f}, {460.0f, 300.0f}};
 }
 
 UiRect baseSellItemRect(int index)
@@ -1268,6 +1245,19 @@ UiRect baseProcessingGridSlotRect(int index)
 UiRect merchantDetailPanelRect()
 {
     return {{864.0f, 108.0f}, {330.0f, 520.0f}};
+}
+
+UiRect baseItemSourceTabRect(int index, float y, int tabCount = BaseItemSourceCount)
+{
+    const int count = std::max(1, tabCount);
+    const UiRect panel = merchantPanelRect();
+    const UiRect detail = merchantDetailPanelRect();
+    const float left = panel.pos.x + BaseItemSourceTabOuterGap;
+    const float right = detail.pos.x - BaseItemSourceTabOuterGap;
+    const float totalGap = BaseItemSourceTabInnerGap * static_cast<float>(std::max(0, count - 1));
+    const float width = std::max(1.0f, (right - left - totalGap) / static_cast<float>(count));
+    const float pitch = width + BaseItemSourceTabInnerGap;
+    return {{left + static_cast<float>(index) * pitch, y}, {width, ui::ButtonHeight}};
 }
 
 void drawMoneySummaryText(Renderer& renderer, Vec2 topRight, int money)
@@ -1323,7 +1313,7 @@ UiRect baseProcessingModeRect(int index)
 
 UiRect baseProcessingSourceRect(int index)
 {
-    return {{BaseItemSourceTabX + static_cast<float>(index) * BaseItemSourceTabPitch, 238.0f}, {BaseItemSourceTabWidth, ui::ButtonHeight}};
+    return baseItemSourceTabRect(index, 238.0f);
 }
 
 UiRect baseProcessingItemRect(int index)
@@ -1442,28 +1432,12 @@ UiRect pauseBackButtonRect()
 
 UiRect quitConfirmRect()
 {
-    return {{420.0f, 240.0f}, {440.0f, 220.0f}};
-}
-
-UiRect quitConfirmButtonRect(int index)
-{
-    const Vec2 size{150.0f, 42.0f};
-    return index == 0 ? uiBottomLeftButtonRect(quitConfirmRect(), size) : uiBottomRightButtonRect(quitConfirmRect(), size);
+    return {{410.0f, 220.0f}, {460.0f, 260.0f}};
 }
 
 UiRect warpReturnConfirmRect()
 {
     return {{410.0f, 220.0f}, {460.0f, 280.0f}};
-}
-
-UiRect warpReturnConfirmButtonRect(int index)
-{
-    const Vec2 size{172.0f, ui::ButtonHeight};
-    UiRect rect = index == 0
-        ? uiBottomLeftButtonRect(warpReturnConfirmRect(), size)
-        : uiBottomRightButtonRect(warpReturnConfirmRect(), size);
-    rect.pos.y += 28.0f;
-    return rect;
 }
 
 UiRect gameOverPanelRect()
@@ -2261,6 +2235,7 @@ void drawRingItemShape(
     const Color outline = selected
         ? (invalid ? Color{255, 92, 92, 255} : Color{255, 230, 150, 255})
         : Color{96, 104, 126, 220};
+    const bool broken = item.broken();
 
     if (object != nullptr) {
         ObjectImageDrawOptions baseImageOptions = ringItemActionFlashOptions(item);
@@ -2271,6 +2246,7 @@ void drawRingItemShape(
             forward,
             totalSeconds,
             baseImageOptions);
+        imageOptions = itemImageOptionsWithBrokenState(imageOptions, broken);
         if (selected) {
             imageOptions = withSelectedItemOutline(imageOptions, outline, 6);
         }
@@ -2285,6 +2261,7 @@ void drawRingItemShape(
     } else if (item.objectVisual.imageNumber > 0) {
         ObjectImageDrawOptions imageOptions = ringItemActionFlashOptions(item);
         imageOptions.rotationDegrees = ringItemRotationWobbleDegrees(item, totalSeconds);
+        imageOptions = itemImageOptionsWithBrokenState(imageOptions, broken);
         if (selected) {
             imageOptions = withSelectedItemOutline(imageOptions, outline, 6);
         }
@@ -2305,8 +2282,8 @@ void drawRingItemShape(
             renderer.drawLine(center + Vec2{-3.0f, 0.0f}, center + outward * 24.0f + Vec2{-3.0f, 0.0f}, outline);
             renderer.drawLine(center + Vec2{3.0f, 0.0f}, center + outward * 24.0f + Vec2{3.0f, 0.0f}, outline);
         }
-        renderer.fillCircle(center, 11.0f, {178, 184, 190, 255});
-        renderer.drawLine(center, center + outward * 20.0f, {90, 96, 102, 255});
+        renderer.fillCircle(center, 11.0f, itemFallbackColorForBrokenState({178, 184, 190, 255}, broken));
+        renderer.drawLine(center, center + outward * 20.0f, itemFallbackColorForBrokenState({90, 96, 102, 255}, broken));
         return;
     }
 
@@ -2315,16 +2292,16 @@ void drawRingItemShape(
             renderer.drawCircle(center, 17.0f, outline);
             renderer.drawCircle(center + Vec2{3.0f, -4.0f}, 8.0f, outline);
         }
-        renderer.fillCircle(center, 13.0f, {242, 122, 25, 255});
-        renderer.fillCircle(center + Vec2{3.0f, -4.0f}, 5.0f, {255, 238, 98, 255});
+        renderer.fillCircle(center, 13.0f, itemFallbackColorForBrokenState({242, 122, 25, 255}, broken));
+        renderer.fillCircle(center + Vec2{3.0f, -4.0f}, 5.0f, itemFallbackColorForBrokenState({255, 238, 98, 255}, broken));
         return;
     }
 
     if (selected) {
         renderer.drawCircle(center, 17.0f, outline);
     }
-    renderer.fillCircle(center, 12.0f, {96, 122, 210, 255});
-    renderer.drawCircle(center, 15.0f, {160, 202, 255, 255});
+    renderer.fillCircle(center, 12.0f, itemFallbackColorForBrokenState({96, 122, 210, 255}, broken));
+    renderer.drawCircle(center, 15.0f, itemFallbackColorForBrokenState({160, 202, 255, 255}, broken));
 }
 
 bool drawRingItemObjectImage(
@@ -2341,6 +2318,7 @@ bool drawRingItemObjectImage(
     if (object == nullptr) {
         ObjectImageDrawOptions options = ringItemActionFlashOptions(item, baseOptions);
         options.rotationDegrees += ringItemRotationWobbleDegrees(item, totalSeconds);
+        options = itemImageOptionsWithBrokenState(options, item.broken());
         return drawItemVisual(
             renderer,
             item.objectVisual,
@@ -2350,12 +2328,13 @@ bool drawRingItemObjectImage(
     }
     ObjectImageDrawOptions options = ringItemActionFlashOptions(item, baseOptions);
     options.rotationDegrees += ringItemRotationWobbleDegrees(item, totalSeconds);
-    const ObjectImageDrawOptions imageOptions = objectRingImageOptions(
+    ObjectImageDrawOptions imageOptions = objectRingImageOptions(
         *object,
         outward,
         forward,
         totalSeconds,
         options);
+    imageOptions = itemImageOptionsWithBrokenState(imageOptions, item.broken());
     return drawItemImage(
         renderer,
         *object,
@@ -2415,9 +2394,9 @@ std::string ringItemDisplayName(const ObjectCatalog& catalog, const SpellRingIte
 {
     const ItemData* object = objectForRingItem(catalog, item);
     if (object != nullptr && !object->name.empty()) {
-        return object->name;
+        return itemDisplayName(object->name, item.broken());
     }
-    return spellRingItemName(item.type);
+    return itemDisplayName(spellRingItemName(item.type), item.broken());
 }
 
 ItemInstance inventoryInstanceFromRingItem(

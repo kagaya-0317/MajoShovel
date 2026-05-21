@@ -3,6 +3,7 @@
 #include "data/ObjectCatalog.hpp"
 #include "engine/Ui.hpp"
 #include "game/ItemModel.hpp"
+#include "game/ObjectImageRenderer.hpp"
 #include "game/SpellRingItem.hpp"
 
 #include <optional>
@@ -21,6 +22,8 @@ struct InventoryUiItemStats {
     int attackBonus = 0;
     int digBonus = 0;
     int durabilityBonus = 0;
+    double weightModifier = 1.0;
+    double sizeModifier = 1.0;
     bool protectionEnabled = false;
     bool broken = false;
 };
@@ -51,6 +54,10 @@ struct InventoryUiDetailExtraLine {
     Color valueColor = ui::Text;
 };
 
+struct InventoryUiDetailOptions {
+    bool showEnhanceCount = true;
+};
+
 struct InlineItemTextStyle {
     Color text{255, 255, 255, 255};
     int scale = 2;
@@ -62,6 +69,9 @@ struct InlineItemTextStyle {
 };
 
 [[nodiscard]] Color inventoryUiObjectColor(const ItemData& item);
+[[nodiscard]] std::string itemDisplayName(std::string_view baseName, bool broken);
+[[nodiscard]] Color itemFallbackColorForBrokenState(Color color, bool broken);
+[[nodiscard]] ObjectImageDrawOptions itemImageOptionsWithBrokenState(ObjectImageDrawOptions options, bool broken);
 [[nodiscard]] InventoryUiItemStats inventoryUiStatsFromInstance(const ItemInstance& instance);
 [[nodiscard]] InventoryUiItemStats inventoryUiStatsFromRingItem(const SpellRingItem& item);
 [[nodiscard]] std::optional<InventoryUiItemStats> inventoryUiEntryStats(const InventoryUiEntryView& entry);
@@ -118,7 +128,7 @@ void drawInventoryUiDetailPanel(
     const InventoryUiEntryView& entry,
     const ObjectCatalog& catalog,
     const EncyclopediaSystem& encyclopedia,
-    bool showProtectionOperation,
+    const InventoryUiDetailOptions& options = {},
     const std::vector<InventoryUiDetailExtraLine>& extraLines = {});
 
 }

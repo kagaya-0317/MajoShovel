@@ -35,11 +35,13 @@ private:
     AudioEngine audio_;
     Input input_;
     Time time_;
+    Time frozenTime_;
     FileWatcher assetWatcher_;
     DebugConsole debugConsole_;
     Game game_;
     bool running_ = false;
     bool testPlayMode_ = false;
+    bool testFreezePaused_ = false;
     bool restartRequested_ = false;
     int width_ = 1280;
     int height_ = 720;
