@@ -1,5 +1,7 @@
 ﻿#include "game/GameInternal.hpp"
 
+#include "game/EnemyImageRenderer.hpp"
+
 namespace majo {
 
 namespace {
@@ -351,6 +353,16 @@ UiRect merchantActionDialogRect()
 UiRect merchantActionChoiceRect(int index)
 {
     return smallActionChoiceRect(index);
+}
+
+UiRect bookshelfMenuPanelRect()
+{
+    return merchantActionDialogRect();
+}
+
+UiRect bookshelfMenuChoiceRect(int index)
+{
+    return merchantActionChoiceRect(index);
 }
 
 constexpr int RingWorkshopActionCount = 2;
@@ -4268,6 +4280,7 @@ bool Game::queueStoryEventForCurrentStage(std::string_view triggerName)
 void Game::updateQueuedStoryEvents()
 {
     if (dialogue_.active() ||
+        dungeonFocusActive() ||
         pendingStoryTriggers_.empty() ||
         screenTransition_.active() ||
         worldBuildActive() ||
@@ -4341,19 +4354,25 @@ void Game::maybeStartOpeningBaseIntroEvent()
 
 void Game::updateBookshelfScreen(const Input& input, UiContext& ui)
 {
-    const auto objectCountForPage = [this](BookshelfPage page) {
-        int count = 0;
-        for (const ObjectDefinition& object : objectCatalog_.objects) {
-            const bool treasure = object.category == "\xE5\xAE\x9D";
-            if ((page == BookshelfPage::Treasures && treasure) ||
-                (page == BookshelfPage::Items && !treasure)) {
-                ++count;
-            }
+    const auto itemCountForPage = [this](BookshelfPage page) {
+        switch (page) {
+        case BookshelfPage::Menu:
+            return BookshelfMenuItemCount;
+        case BookshelfPage::Items:
+            return static_cast<int>(objectCatalog_.objects.size());
+        case BookshelfPage::Enemies:
+            return static_cast<int>(enemyCatalog_.enemies.size());
         }
-        return count;
+        return 0;
+    };
+    const auto pageForMenuSelection = [](int selection) {
+        return selection == 1 ? BookshelfPage::Enemies : BookshelfPage::Items;
     };
 
-    if (uiCancelRequested(baseCancelState_, input, ui, basePanelRect())) {
+    const UiRect panel = bookshelfPage_ == BookshelfPage::Menu
+        ? bookshelfMenuPanelRect()
+        : merchantPanelRect();
+    if (uiCancelRequested(baseCancelState_, input, ui, panel)) {
         if (bookshelfPage_ == BookshelfPage::Menu) {
             baseBookshelfActive_ = false;
             baseStatus_.clear();
@@ -4364,9 +4383,7 @@ void Game::updateBookshelfScreen(const Input& input, UiContext& ui)
         return;
     }
 
-    const int itemCount = bookshelfPage_ == BookshelfPage::Menu
-        ? BookshelfMenuItemCount
-        : (bookshelfPage_ == BookshelfPage::Enemies ? static_cast<int>(enemyCatalog_.enemies.size()) : objectCountForPage(bookshelfPage_));
+    const int itemCount = itemCountForPage(bookshelfPage_);
     if (itemCount <= 0) {
         bookshelfSelection_ = 0;
     } else {
@@ -4382,7 +4399,9 @@ void Game::updateBookshelfScreen(const Input& input, UiContext& ui)
     const int visibleCount = std::min(BookshelfVisibleRows, itemCount);
     const int firstVisibleIndex = std::clamp(bookshelfSelection_ - visibleCount / 2, 0, std::max(0, itemCount - visibleCount));
     for (int i = 0; i < visibleCount; ++i) {
-        const UiRect rect = bookshelfItemRect(i);
+        const UiRect rect = bookshelfPage_ == BookshelfPage::Menu
+            ? bookshelfMenuChoiceRect(i)
+            : bookshelfItemRect(i);
         const int itemIndex = firstVisibleIndex + i;
         if (rect.contains(ui.mouse())) {
             bookshelfSelection_ = itemIndex;
@@ -4391,7 +4410,7 @@ void Game::updateBookshelfScreen(const Input& input, UiContext& ui)
             bookshelfSelection_ = itemIndex;
             if (bookshelfPage_ == BookshelfPage::Menu) {
                 ui.emitSound(UiSoundEvent::BookOpen);
-                bookshelfPage_ = static_cast<BookshelfPage>(bookshelfSelection_ + 1);
+                bookshelfPage_ = pageForMenuSelection(bookshelfSelection_);
                 bookshelfSelection_ = 0;
             } else {
                 ui.emitSound(UiSoundEvent::Confirm);
@@ -4402,12 +4421,12 @@ void Game::updateBookshelfScreen(const Input& input, UiContext& ui)
 
     if ((input.confirmPressed() || input.useItemPressed()) && bookshelfPage_ == BookshelfPage::Menu) {
         ui.emitSound(UiSoundEvent::BookOpen);
-        bookshelfPage_ = static_cast<BookshelfPage>(bookshelfSelection_ + 1);
+        bookshelfPage_ = pageForMenuSelection(bookshelfSelection_);
         bookshelfSelection_ = 0;
         return;
     }
 
-    ui.block(basePanelRect());
+    ui.block(panel);
 }
 
 void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
@@ -6514,73 +6533,87 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
 
 void Game::renderBookshelfScreen(Renderer& renderer) const
 {
-    const UiRect panel = basePanelRect();
-    renderer.drawText(panel.pos + Vec2{202.0f, 214.0f}, "本棚", {246, 235, 255, 255}, 3);
-
     char buffer[256];
     const auto menuName = [](int index) {
         switch (index) {
         case 0:
             return "アイテム図鑑";
         case 1:
-            return "宝図鑑";
-        case 2:
             return "敵図鑑";
         default:
             return "";
         }
     };
-    const auto objectAt = [this](BookshelfPage page, int targetIndex) -> const ObjectDefinition* {
-        int index = 0;
-        for (const ObjectDefinition& object : objectCatalog_.objects) {
-            const bool treasure = object.category == "\xE5\xAE\x9D";
-            if ((page == BookshelfPage::Treasures && treasure) ||
-                (page == BookshelfPage::Items && !treasure)) {
-                if (index == targetIndex) {
-                    return &object;
-                }
-                ++index;
-            }
+    const auto objectAt = [this](int targetIndex) -> const ObjectDefinition* {
+        if (targetIndex < 0 || targetIndex >= static_cast<int>(objectCatalog_.objects.size())) {
+            return nullptr;
         }
-        return nullptr;
+        return &objectCatalog_.objects[static_cast<std::size_t>(targetIndex)];
+    };
+    const auto joinLimited = [](const std::vector<std::string>& values, int maxCount) {
+        if (values.empty()) {
+            return std::string("-");
+        }
+        std::string text;
+        const int count = std::min(static_cast<int>(values.size()), std::max(1, maxCount));
+        for (int i = 0; i < count; ++i) {
+            if (!text.empty()) {
+                text += " / ";
+            }
+            text += values[static_cast<std::size_t>(i)];
+        }
+        if (static_cast<int>(values.size()) > count) {
+            text += " ほか";
+            text += std::to_string(static_cast<int>(values.size()) - count);
+        }
+        return text;
     };
 
     if (bookshelfPage_ == BookshelfPage::Menu) {
-        renderer.drawText(panel.pos + Vec2{76.0f, 224.0f}, "図鑑を選んでください", {198, 198, 206, 255}, 2);
+        const UiRect panel = bookshelfMenuPanelRect();
+        renderer.drawText(smallActionInfoTextPos(panel), "どの図鑑を開きますか？", {198, 198, 206, 255}, 2);
         for (int i = 0; i < BookshelfMenuItemCount; ++i) {
-            drawUiButton(renderer, bookshelfItemRect(i), menuName(i), i == bookshelfSelection_);
+            drawUiButton(renderer, bookshelfMenuChoiceRect(i), menuName(i), i == bookshelfSelection_, uiActionButtonStyle());
         }
         return;
     }
 
+    const UiRect panel = merchantPanelRect();
+    const UiRect detailPanel = merchantDetailPanelRect();
     std::vector<std::string> lines;
+    int discoveredCount = 0;
     if (bookshelfPage_ == BookshelfPage::Enemies) {
         for (const EnemyDefinition& enemy : enemyCatalog_.enemies) {
             const EncyclopediaStage stage = encyclopedia_.enemyStage(enemy.id);
+            if (stage != EncyclopediaStage::Undiscovered) {
+                ++discoveredCount;
+            }
             const std::string name = stage == EncyclopediaStage::Undiscovered ? "????" : (enemy.name.empty() ? enemy.id : enemy.name);
-            std::snprintf(buffer, sizeof(buffer), "%s  [%s]", name.c_str(), encyclopediaStageName(stage));
-            lines.emplace_back(buffer);
+            lines.push_back(name + "  [" + encyclopediaStageName(stage) + "]");
         }
     } else {
         for (const ObjectDefinition& object : objectCatalog_.objects) {
             const bool treasure = object.category == "\xE5\xAE\x9D";
-            if ((bookshelfPage_ == BookshelfPage::Treasures && !treasure) ||
-                (bookshelfPage_ == BookshelfPage::Items && treasure)) {
-                continue;
-            }
             const EncyclopediaStage stage = encyclopedia_.objectStage(object.id, treasure);
+            if (stage != EncyclopediaStage::Undiscovered) {
+                ++discoveredCount;
+            }
             const std::string name = stage == EncyclopediaStage::Undiscovered ? "????" : (object.name.empty() ? object.id : object.name);
-            std::snprintf(buffer, sizeof(buffer), "%s  [%s]", name.c_str(), encyclopediaStageName(stage));
-            lines.emplace_back(buffer);
+            const std::string category = stage == EncyclopediaStage::Undiscovered || object.category.empty()
+                ? std::string{}
+                : " / " + object.category;
+            lines.push_back(name + category + "  [" + encyclopediaStageName(stage) + "]");
         }
     }
 
     const char* title = bookshelfPage_ == BookshelfPage::Items
         ? "アイテム図鑑"
-        : (bookshelfPage_ == BookshelfPage::Treasures ? "宝図鑑" : "敵図鑑");
-    renderer.drawText(panel.pos + Vec2{74.0f, 224.0f}, title, {198, 198, 206, 255}, 2);
+        : "敵図鑑";
+    renderer.drawText(panel.pos + Vec2{28.0f, 62.0f}, title, {198, 198, 206, 255}, 2);
+    std::snprintf(buffer, sizeof(buffer), "%d/%d 記録", discoveredCount, static_cast<int>(lines.size()));
+    renderer.drawText(panel.pos + Vec2{28.0f, 92.0f}, buffer, {150, 150, 160, 255}, 2);
     if (lines.empty()) {
-        renderer.drawText(panel.pos + Vec2{94.0f, 276.0f}, "記録対象がありません", {150, 150, 160, 255}, 2);
+        renderer.drawText(panel.pos + Vec2{28.0f, 154.0f}, "記録対象がありません", {150, 150, 160, 255}, 2);
     } else {
         const int visibleCount = std::min(BookshelfVisibleRows, static_cast<int>(lines.size()));
         const int firstVisibleIndex = std::clamp(
@@ -6593,18 +6626,91 @@ void Game::renderBookshelfScreen(Renderer& renderer) const
         }
     }
 
-    const UiRect bookshelfDetailPanel{{414.0f, 548.0f}, {452.0f, 144.0f}};
-    const Vec2 bookshelfDetailContent = uiSubPanelContentPos(bookshelfDetailPanel);
     if (bookshelfPage_ == BookshelfPage::Enemies) {
-        drawUiSubPanel(renderer, bookshelfDetailPanel);
         if (bookshelfSelection_ >= 0 && bookshelfSelection_ < static_cast<int>(enemyCatalog_.enemies.size())) {
             const EnemyDefinition& enemy = enemyCatalog_.enemies[static_cast<std::size_t>(bookshelfSelection_)];
             const EncyclopediaStage stage = encyclopedia_.enemyStage(enemy.id);
-            const std::string name = stage == EncyclopediaStage::Undiscovered ? "????" : (enemy.name.empty() ? enemy.id : enemy.name);
-            std::snprintf(buffer, sizeof(buffer), "%s / %s", name.c_str(), encyclopediaStageName(stage));
-            renderer.drawText(bookshelfDetailContent, buffer, {255, 230, 150, 255}, 2);
+            drawUiSubPanel(renderer, detailPanel);
+            if (stage == EncyclopediaStage::Undiscovered) {
+                float detailY = drawUiDetailHeader(renderer, detailPanel, "未発見");
+                drawUiDetailText(renderer, detailPanel, detailY, "まだ記録されていません。ダンジョンで遭遇すると敵図鑑に登録されます。");
+            } else {
+                const std::string name = enemy.name.empty() ? enemy.id : enemy.name;
+                float detailY = drawUiDetailHeader(renderer, detailPanel, name);
+                EnemyImageDrawOptions imageOptions;
+                imageOptions.allowUpscale = true;
+                imageOptions.outlineColor = {42, 22, 34, 255};
+                imageOptions.directionOverrideEnabled = true;
+                imageOptions.directionOverride = {0.0f, 1.0f};
+                const Vec2 imageMax{112.0f, 112.0f};
+                const Vec2 imageCenter{
+                    detailPanel.pos.x + detailPanel.size.x * 0.5f,
+                    detailY + imageMax.y * 0.5f,
+                };
+                if (drawEnemyImageIcon(renderer, enemy.imageNumber, imageCenter, imageMax, baseRingPreviewAnimationTime_, imageOptions)) {
+                    detailY += imageMax.y + 12.0f;
+                }
+                drawUiDetailLine(renderer, detailPanel, detailY, "図鑑", encyclopediaStageName(stage), {255, 230, 150, 255});
+                drawUiDetailText(renderer, detailPanel, detailY, enemy.description.empty() ? "-" : enemy.description);
+                if (stage != EncyclopediaStage::Complete) {
+                    drawUiDetailText(renderer, detailPanel, detailY, "討伐すると詳細な能力が記録されます。");
+                } else {
+                    drawUiDetailLine(renderer, detailPanel, detailY, "HP", std::to_string(enemy.hp));
+                    std::string attack = enemy.contactAttackPower > 0 ? std::to_string(enemy.contactAttackPower) : "-";
+                    if (!enemy.contactDamageType.empty() && enemy.contactDamageType != "none") {
+                        attack += " / ";
+                        attack += damageTypeDisplayName(enemy.contactDamageType);
+                    }
+                    drawUiDetailLine(renderer, detailPanel, detailY, "接触攻撃", attack);
+                    std::snprintf(buffer, sizeof(buffer), "%.1f", enemy.moveSpeed);
+                    drawUiDetailLine(renderer, detailPanel, detailY, "移動速度", buffer);
+                    std::string reward = "EXP ";
+                    reward += std::to_string(enemy.xp);
+                    reward += " / ";
+                    reward += std::to_string(enemy.money);
+                    reward += "G";
+                    drawUiDetailLine(renderer, detailPanel, detailY, "報酬", reward);
+                    if (enemy.captureDifficulty > 0) {
+                        drawUiDetailLine(renderer, detailPanel, detailY, "捕獲難度", std::to_string(enemy.captureDifficulty));
+                    }
+                    std::vector<std::string> behaviorNames;
+                    for (const EnemyBehaviorSpec& spec : enemy.enemyBehaviorSpecs) {
+                        if (spec.behavior.empty()) {
+                            continue;
+                        }
+                        const auto it = enemyCatalog_.behaviorsById.find(spec.behavior);
+                        const std::string displayName = it != enemyCatalog_.behaviorsById.end() && !it->second.displayName.empty()
+                            ? it->second.displayName
+                            : spec.behavior;
+                        if (std::find(behaviorNames.begin(), behaviorNames.end(), displayName) == behaviorNames.end()) {
+                            behaviorNames.push_back(displayName);
+                        }
+                    }
+                    for (const std::string& behaviorId : enemy.enemyBehaviorIds) {
+                        if (behaviorId.empty()) {
+                            continue;
+                        }
+                        const auto it = enemyCatalog_.behaviorsById.find(behaviorId);
+                        const std::string displayName = it != enemyCatalog_.behaviorsById.end() && !it->second.displayName.empty()
+                            ? it->second.displayName
+                            : behaviorId;
+                        if (std::find(behaviorNames.begin(), behaviorNames.end(), displayName) == behaviorNames.end()) {
+                            behaviorNames.push_back(displayName);
+                        }
+                    }
+                    drawUiDetailLine(renderer, detailPanel, detailY, "行動", joinLimited(behaviorNames, 3));
+                    if (!enemy.capturedEffectText.empty()) {
+                        drawUiDetailText(renderer, detailPanel, detailY, "捕獲時効果");
+                        drawUiDetailText(renderer, detailPanel, detailY, enemy.capturedEffectText);
+                    }
+                }
+            }
+        } else {
+            drawUiSubPanel(renderer, detailPanel);
+            float detailY = drawUiDetailHeader(renderer, detailPanel, "敵未選択");
+            drawUiDetailText(renderer, detailPanel, detailY, "敵を選択してください。");
         }
-    } else if (const ObjectDefinition* object = objectAt(bookshelfPage_, bookshelfSelection_)) {
+    } else if (const ObjectDefinition* object = objectAt(bookshelfSelection_)) {
         const bool treasure = object->category == "\xE5\xAE\x9D";
         const EncyclopediaStage stage = encyclopedia_.objectStage(object->id, treasure);
         const std::string name = stage == EncyclopediaStage::Undiscovered ? "????" : (object->name.empty() ? object->id : object->name);
@@ -6612,18 +6718,34 @@ void Game::renderBookshelfScreen(Renderer& renderer) const
             InventoryUiEntryView detailEntry{};
             detailEntry.item = object;
             detailEntry.stackCount = 1;
+            std::vector<InventoryUiDetailExtraLine> extraLines;
+            extraLines.push_back({"図鑑", encyclopediaStageName(stage), {255, 230, 150, 255}});
+            if (!object->category.empty()) {
+                extraLines.push_back({"分類", object->category});
+            }
+            if (object->price > 0) {
+                extraLines.push_back({"価格", std::to_string(object->price) + "G"});
+            }
             drawInventoryUiDetailPanel(
                 renderer,
-                bookshelfDetailPanel,
+                detailPanel,
                 detailEntry,
                 objectCatalog_,
                 encyclopedia_,
-                InventoryUiDetailOptions{.animationSeconds = baseRingPreviewAnimationTime_});
+                InventoryUiDetailOptions{.animationSeconds = baseRingPreviewAnimationTime_},
+                extraLines);
         } else {
-            drawUiSubPanel(renderer, bookshelfDetailPanel);
+            drawUiSubPanel(renderer, detailPanel);
+            const Vec2 bookshelfDetailContent = uiSubPanelContentPos(detailPanel);
             std::snprintf(buffer, sizeof(buffer), "%s / %s", name.c_str(), encyclopediaStageName(stage));
             renderer.drawText(bookshelfDetailContent, buffer, {255, 230, 150, 255}, 2);
+            float detailY = bookshelfDetailContent.y + 36.0f;
+            drawUiDetailText(renderer, detailPanel, detailY, "まだ記録されていません。入手するとアイテム図鑑に登録されます。");
         }
+    } else {
+        drawUiSubPanel(renderer, detailPanel);
+        float detailY = drawUiDetailHeader(renderer, detailPanel, "アイテム未選択");
+        drawUiDetailText(renderer, detailPanel, detailY, "アイテムを選択してください。");
     }
 }
 
@@ -6852,28 +6974,33 @@ void Game::renderBaseScreen(Renderer& renderer) const
         baseMiningStartChoiceActive_;
     const bool storageActionDialogActive = baseStorageActive_ && baseStorageMode_ == StorageUiMode::ChooseAction;
     const bool merchantActionDialogActive = baseSellActive_ && baseMerchantMode_ == MerchantUiMode::ChooseAction;
+    const bool bookshelfMenuDialogActive = baseBookshelfActive_ && bookshelfPage_ == BookshelfPage::Menu;
+    const bool bookshelfWideActive = baseBookshelfActive_ && bookshelfPage_ != BookshelfPage::Menu;
     const bool ringWorkshopActionDialogActive = baseRingWorkshopActive_ && baseRingWorkshopMode_ == RingWorkshopMode::ChooseAction;
     const bool ringWorkshopWideActive = baseRingWorkshopActive_ && baseRingWorkshopMode_ != RingWorkshopMode::ChooseAction;
     const UiRect panel = storageActionDialogActive
         ? storageActionDialogRect()
         : (merchantActionDialogActive
         ? merchantActionDialogRect()
+        : (bookshelfMenuDialogActive
+        ? bookshelfMenuPanelRect()
         : (ringWorkshopActionDialogActive
         ? ringWorkshopActionDialogRect()
         : ((baseProcessingActive_ ||
+        bookshelfWideActive ||
         ringWorkshopWideActive ||
         (baseStorageActive_ && baseStorageMode_ != StorageUiMode::ChooseAction) ||
         (baseSellActive_ && baseMerchantMode_ != MerchantUiMode::ChooseAction))
         ? merchantPanelRect()
-        : (baseUpgradeActive_ ? baseUpgradePanelRect() : basePanelRect()))));
+        : (baseUpgradeActive_ ? baseUpgradePanelRect() : basePanelRect())))));
     std::optional<UiWindowScope> panelWindow;
     std::optional<UiCancelControlScope> panelCancelScope;
     if (panelUiActive) {
         const char* panelHelp = "F/Enter 決定  左クリック 決定  Esc/右クリック 戻る";
         if (baseBookshelfActive_) {
             panelHelp = bookshelfPage_ == BookshelfPage::Menu
-                ? "F/Enter 決定  Esc/右クリック 戻る"
-                : "Esc/右クリック 戻る";
+                ? "F/Enter 決定  左クリック 決定  Esc/右クリック 戻る"
+                : "方向キー 選択  Esc/右クリック 戻る";
         } else if (baseSellActive_) {
             panelHelp = baseMerchantMode_ == MerchantUiMode::Buy
                 ? "F/Enter 買う  Esc/右クリック 戻る"

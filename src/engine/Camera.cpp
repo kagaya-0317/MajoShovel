@@ -8,6 +8,11 @@ void Camera::setViewport(int width, int height)
     height_ = height;
 }
 
+void Camera::setPosition(Vec2 position)
+{
+    position_ = position;
+}
+
 void Camera::follow(Vec2 target, float dt)
 {
     position_ = lerp(position_, target, 1.0f - std::exp(-10.0f * dt));

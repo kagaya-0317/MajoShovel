@@ -41,6 +41,7 @@
 #include <array>
 #include <cstdint>
 #include <deque>
+#include <functional>
 #include <limits>
 #include <optional>
 #include <random>
@@ -144,6 +145,89 @@ public:
     bool executeDebugCommand(std::string_view command);
     bool quitRequested() const { return quitRequested_; }
     void setAutoReloadBlocked(bool blocked) { autoReloadBlocked_ = blocked; }
+
+    enum class DungeonEventKind {
+        SleepingEnemyTreasure,
+        MonsterSwarmRoom,
+        NestRoom,
+        BossMonsterRoom,
+        GlowingRockRoom,
+        ElectricCircuitRoom,
+        WarpGuideMap,
+        BuriedWitch,
+        LostBaggageWitch,
+        ItemRequestWitch,
+        SurroundedWitch,
+        ColdWitchCampfire,
+        HeavyRockWitch,
+    };
+
+    struct DungeonEventNestHole {
+        DungeonTile tile{};
+        int hp = 16;
+        int maxHp = 16;
+        bool destroyed = false;
+        bool rewardSpawned = false;
+        float spawnCooldown = 0.0f;
+        float hitCooldown = 0.0f;
+        std::vector<int> spawnedEnemyRuntimeIds;
+    };
+
+    enum class DungeonEventObjectKind {
+        GlowingRock,
+        ElectricReceiver,
+        BuriedDebris,
+        LostBaggage,
+        Campfire,
+        HeavyRock,
+    };
+
+    struct DungeonEventObject {
+        DungeonEventObjectKind kind = DungeonEventObjectKind::GlowingRock;
+        DungeonTile tile{};
+        int hp = 10;
+        int maxHp = 10;
+        bool destroyed = false;
+        bool powered = false;
+        float hitCooldown = 0.0f;
+    };
+
+    struct DungeonEventInstance {
+        std::string id;
+        DungeonEventKind kind = DungeonEventKind::SleepingEnemyTreasure;
+        DungeonTile centerTile{};
+        DungeonTile focusTile{};
+        DungeonTile rewardTile{};
+        float discoveryRadiusTiles = 5.0f;
+        bool discovered = false;
+        bool completed = false;
+        bool encounterSpawned = false;
+        bool activated = false;
+        bool rewardSpawned = false;
+        bool bossDefeated = false;
+        int bossEnemyRuntimeId = 0;
+        float selfLightRadiusTiles = 4.0f;
+        std::string selectedEnemyId;
+        std::vector<int> spawnedEnemyRuntimeIds;
+        std::vector<DungeonEventNestHole> nestHoles;
+        std::vector<DungeonEventObject> eventObjects;
+        std::string requestKey;
+        std::string deliveredObjectId;
+        int guideTargetWarpPointIndex = -1;
+        float guideRemainingSeconds = 0.0f;
+        std::vector<std::string> spawnedEntityIds;
+        std::string params;
+        std::string data;
+    };
+
+    struct DungeonFocusRequest {
+        std::string eventKind;
+        Vec2 focusWorldPos{};
+        std::string discoveryStoryEventId;
+        float holdSecondsIfNoDialogue = 2.0f;
+        std::function<void()> onComplete;
+    };
+    bool requestDungeonFocus(DungeonFocusRequest request);
 
 private:
     struct RunStats {
@@ -348,6 +432,41 @@ private:
         bool spawned = false;
     };
 
+    struct DungeonEventSystem {
+        void clear();
+        void setInstances(std::vector<DungeonEventInstance> instances);
+        [[nodiscard]] const std::vector<DungeonEventInstance>& all() const;
+        [[nodiscard]] std::vector<DungeonEventInstance>& mutableAll();
+        [[nodiscard]] bool empty() const;
+        [[nodiscard]] std::size_t size() const;
+        void generateFromLayout(
+            const DungeonLayout& layout,
+            const std::vector<WarpPoint>& warpPoints,
+            bool warpPointsEnabled,
+            std::string_view stageId);
+        void appendLightSources(std::vector<LightSource>& lights, double totalSeconds) const;
+        [[nodiscard]] DungeonEventInstance* firstDiscoverable(Vec2 playerPosition, float tileSize);
+        [[nodiscard]] DungeonEventInstance* findById(std::string_view id);
+        [[nodiscard]] const DungeonEventInstance* nearest(Vec2 playerPosition) const;
+
+        std::vector<DungeonEventInstance> instances;
+    };
+
+    enum class DungeonEventRewardKind {
+        ChestDrop,
+        MultiChestDrop,
+        MaterialDrop,
+        MoneyDrop,
+    };
+
+    struct DungeonEventRewardRequest {
+        DungeonEventRewardKind kind = DungeonEventRewardKind::MaterialDrop;
+        LootChestKind chestKind = LootChestKind::Common;
+        int count = 1;
+        MaterialType materialType = MaterialType::EnhancementOre;
+        int amount = 1;
+    };
+
     struct DungeonMinimapCell {
         TileType type = TileType::Empty;
     };
@@ -374,6 +493,7 @@ private:
         std::vector<ChestNode> chestNodes;
         std::vector<CrateNode> crateNodes;
         std::vector<EnemyNode> enemyNodes;
+        std::vector<DungeonEventInstance> dungeonEventInstances;
         EnemySystem enemies;
         WorldDropSystem worldDrops;
         int spawnedWarpPointCount = 0;
@@ -399,6 +519,7 @@ private:
         std::vector<ChestNode> chestNodes;
         std::vector<CrateNode> crateNodes;
         std::vector<EnemyNode> enemyNodes;
+        std::vector<DungeonEventInstance> dungeonEventInstances;
         EnemySystem enemies;
         WorldDropSystem worldDrops;
         int spawnedWarpPointCount = 0;
@@ -500,7 +621,6 @@ private:
     enum class BookshelfPage {
         Menu,
         Items,
-        Treasures,
         Enemies,
     };
     enum class ScreenTransitionTarget {
@@ -534,6 +654,26 @@ private:
         std::string targetBaseStatus;
 
         [[nodiscard]] bool active() const { return phase != ScreenTransitionPhase::Idle; }
+    };
+    enum class DungeonFocusPhase {
+        Idle,
+        MoveToTarget,
+        Hold,
+        PlayDiscoveryDialogue,
+        ReturnToPlayer,
+    };
+    struct DungeonFocusState {
+        DungeonFocusPhase phase = DungeonFocusPhase::Idle;
+        std::string eventKind;
+        Vec2 startCameraPos{};
+        Vec2 focusWorldPos{};
+        Vec2 moveFrom{};
+        Vec2 moveTo{};
+        float elapsed = 0.0f;
+        float duration = 0.0f;
+        float holdSeconds = 2.0f;
+        std::string discoveryStoryEventId;
+        std::function<void()> onComplete;
     };
     enum class BossEncounterPhase {
         None,
@@ -845,6 +985,29 @@ private:
     void revealDungeonMinimapOpenedTiles(const std::vector<Vec2>& openedTiles);
     void updateDungeonMinimap(double totalSeconds);
     std::vector<LightSource> collectDungeonLightSources(double totalSeconds) const;
+    static const char* dungeonEventKindId(DungeonEventKind kind);
+    static bool dungeonEventKindFromId(std::string_view id, DungeonEventKind& outKind);
+    static const char* dungeonEventKindDisplayName(DungeonEventKind kind);
+    static std::string dungeonEventDiscoverySeenFlag(DungeonEventKind kind);
+    static std::string dungeonEventDiscoveryStoryEventId(DungeonEventKind kind);
+    void initializeDungeonEventInstancesFromLayout();
+    void updateDungeonEvents(float dt, double totalSeconds);
+    void handleDungeonEventEnemyEvent(const EnemyEvent& enemyEvent);
+    bool updateDungeonEventDiscovery(float dt);
+    void appendDungeonEventRenderEntries(
+        std::vector<DepthRenderEntry>& entries,
+        Renderer& renderer,
+        const std::vector<LightSource>& extraLights,
+        double totalSeconds) const;
+    bool spawnDungeonEventReward(DungeonEventInstance& event, const DungeonEventRewardRequest& request);
+    void completeDungeonEvent(DungeonEventInstance& event, std::optional<DungeonEventRewardRequest> reward);
+    bool ensureDungeonEventChest(DungeonEventInstance& event, DungeonTile tile, LootChestKind chestKind);
+    std::string nearestDungeonEventDebugText() const;
+    void resetDungeonFocus();
+    bool updateDungeonFocus(float dt);
+    bool dungeonFocusActive() const;
+    static const char* dungeonFocusPhaseName(DungeonFocusPhase phase);
+    std::string dungeonFocusDebugText() const;
     void resetAstralRunState();
     void initializeAstralRunForLayout();
     void updateAstralRunProgress();
@@ -1049,6 +1212,7 @@ private:
         float totalSeconds) const;
 
     Camera camera_;
+    DungeonFocusState dungeonFocus_;
     RuntimeBalance balance_;
     GoogleSheetSourceConfig sheetSource_;
     EnemyCatalog enemyCatalog_;
@@ -1318,6 +1482,8 @@ private:
     std::vector<ChestNode> chestNodes_;
     std::vector<CrateNode> crateNodes_;
     std::vector<EnemyNode> enemyNodes_;
+    DungeonEventSystem dungeonEvents_;
+    float dungeonEventDiscoveryCooldown_ = 0.0f;
     int spawnedWarpPointCount_ = 0;
     Vec2 bossSpawnPoint_{};
     bool hasBossSpawnPoint_ = false;

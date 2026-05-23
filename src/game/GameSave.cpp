@@ -58,6 +58,21 @@ struct LoadedEnemyNodeSave {
     bool spawned = false;
 };
 
+struct LoadedDungeonEventInstanceSave {
+    std::string id;
+    std::string kindName;
+    DungeonTile centerTile{};
+    DungeonTile focusTile{};
+    float discoveryRadiusTiles = 5.0f;
+    bool discovered = false;
+    bool completed = false;
+    bool rewardSpawned = false;
+    float selfLightRadiusTiles = 4.0f;
+    std::vector<std::string> spawnedEntityIds;
+    std::string params;
+    std::string data;
+};
+
 struct LoadedDungeonStateSave {
     bool hasSeed = false;
     std::string stageId;
@@ -72,6 +87,7 @@ struct LoadedDungeonStateSave {
     std::vector<LoadedChestNodeSave> chestNodes;
     std::vector<LoadedCrateNodeSave> crateNodes;
     std::vector<LoadedEnemyNodeSave> enemyNodes;
+    std::vector<LoadedDungeonEventInstanceSave> dungeonEventInstances;
     std::vector<WorldDropItem> worldDrops;
 };
 
@@ -85,6 +101,284 @@ bool isRoguelikeSaveStage(const StageDefinition& stage)
 bool hasSaveableDungeonLayout(const DungeonLayout& layout)
 {
     return !layout.mainPathPoints.empty();
+}
+
+std::vector<std::string> splitSaveList(std::string_view text)
+{
+    std::vector<std::string> values;
+    if (text.empty() || text == "-") {
+        return values;
+    }
+    std::size_t begin = 0;
+    while (begin <= text.size()) {
+        const std::size_t comma = text.find(',', begin);
+        const std::size_t end = comma == std::string_view::npos ? text.size() : comma;
+        if (end > begin) {
+            values.emplace_back(text.substr(begin, end - begin));
+        }
+        if (comma == std::string_view::npos) {
+            break;
+        }
+        begin = comma + 1;
+    }
+    return values;
+}
+
+std::string joinSaveList(const std::vector<std::string>& values)
+{
+    std::string joined;
+    for (const std::string& value : values) {
+        if (value.empty()) {
+            continue;
+        }
+        if (!joined.empty()) {
+            joined += ',';
+        }
+        joined += value;
+    }
+    return joined.empty() ? std::string("-") : joined;
+}
+
+std::vector<std::string_view> splitTokenList(std::string_view text, char delimiter)
+{
+    std::vector<std::string_view> values;
+    if (text.empty() || text == "-") {
+        return values;
+    }
+    std::size_t begin = 0;
+    while (begin <= text.size()) {
+        const std::size_t next = text.find(delimiter, begin);
+        const std::size_t end = next == std::string_view::npos ? text.size() : next;
+        if (end > begin) {
+            values.push_back(text.substr(begin, end - begin));
+        }
+        if (next == std::string_view::npos) {
+            break;
+        }
+        begin = next + 1;
+    }
+    return values;
+}
+
+std::string tileSaveToken(DungeonTile tile)
+{
+    return std::to_string(tile.x) + ":" + std::to_string(tile.y);
+}
+
+bool parseTileSaveToken(std::string_view token, DungeonTile& outTile)
+{
+    const std::size_t colon = token.find(':');
+    if (colon == std::string_view::npos) {
+        return false;
+    }
+    try {
+        outTile.x = std::stoi(std::string(token.substr(0, colon)));
+        outTile.y = std::stoi(std::string(token.substr(colon + 1)));
+        return true;
+    } catch (...) {
+        return false;
+    }
+}
+
+std::string_view dungeonEventObjectKindToken(Game::DungeonEventObjectKind kind)
+{
+    switch (kind) {
+    case Game::DungeonEventObjectKind::GlowingRock: return "rock";
+    case Game::DungeonEventObjectKind::ElectricReceiver: return "receiver";
+    case Game::DungeonEventObjectKind::BuriedDebris: return "debris";
+    case Game::DungeonEventObjectKind::LostBaggage: return "baggage";
+    case Game::DungeonEventObjectKind::Campfire: return "campfire";
+    case Game::DungeonEventObjectKind::HeavyRock: return "heavy_rock";
+    }
+    return "rock";
+}
+
+bool parseDungeonEventObjectKind(std::string_view token, Game::DungeonEventObjectKind& outKind)
+{
+    if (token == "rock") {
+        outKind = Game::DungeonEventObjectKind::GlowingRock;
+        return true;
+    }
+    if (token == "receiver") {
+        outKind = Game::DungeonEventObjectKind::ElectricReceiver;
+        return true;
+    }
+    if (token == "debris") {
+        outKind = Game::DungeonEventObjectKind::BuriedDebris;
+        return true;
+    }
+    if (token == "baggage") {
+        outKind = Game::DungeonEventObjectKind::LostBaggage;
+        return true;
+    }
+    if (token == "campfire") {
+        outKind = Game::DungeonEventObjectKind::Campfire;
+        return true;
+    }
+    if (token == "heavy_rock") {
+        outKind = Game::DungeonEventObjectKind::HeavyRock;
+        return true;
+    }
+    return false;
+}
+
+std::string serializedDungeonEventParams(const Game::DungeonEventInstance& event)
+{
+    std::vector<std::string> parts;
+    if (!event.data.empty()) {
+        parts.push_back("source=" + event.data);
+    }
+    if (!event.selectedEnemyId.empty()) {
+        parts.push_back("enemy=" + event.selectedEnemyId);
+    }
+    parts.push_back("reward=" + tileSaveToken(event.rewardTile));
+    parts.push_back(std::string("encounter=") + (event.encounterSpawned ? "1" : "0"));
+    parts.push_back(std::string("activated=") + (event.activated ? "1" : "0"));
+    parts.push_back(std::string("bossDefeated=") + (event.bossDefeated ? "1" : "0"));
+    parts.push_back("bossId=" + std::to_string(event.bossEnemyRuntimeId));
+    if (!event.requestKey.empty()) {
+        parts.push_back("request=" + event.requestKey);
+    }
+    if (!event.deliveredObjectId.empty()) {
+        parts.push_back("delivered=" + event.deliveredObjectId);
+    }
+    parts.push_back("guideTarget=" + std::to_string(event.guideTargetWarpPointIndex));
+    parts.push_back("guideRemaining=" + std::to_string(event.guideRemainingSeconds));
+    if (!event.nestHoles.empty()) {
+        std::string holes = "holes=";
+        bool first = true;
+        for (const Game::DungeonEventNestHole& hole : event.nestHoles) {
+            if (!first) {
+                holes += '|';
+            }
+            first = false;
+            holes += tileSaveToken(hole.tile) + ":" +
+                std::to_string(hole.hp) + ":" +
+                std::to_string(hole.maxHp) + ":" +
+                (hole.destroyed ? "1" : "0") + ":" +
+                (hole.rewardSpawned ? "1" : "0");
+        }
+        parts.push_back(std::move(holes));
+    }
+    if (!event.eventObjects.empty()) {
+        std::string objects = "objects=";
+        bool first = true;
+        for (const Game::DungeonEventObject& object : event.eventObjects) {
+            if (!first) {
+                objects += '|';
+            }
+            first = false;
+            objects += std::string(dungeonEventObjectKindToken(object.kind)) + ":" +
+                tileSaveToken(object.tile) + ":" +
+                std::to_string(object.hp) + ":" +
+                std::to_string(object.maxHp) + ":" +
+                (object.destroyed ? "1" : "0") + ":" +
+                (object.powered ? "1" : "0");
+        }
+        parts.push_back(std::move(objects));
+    }
+
+    std::string result;
+    for (const std::string& part : parts) {
+        if (!result.empty()) {
+            result += ';';
+        }
+        result += part;
+    }
+    return result.empty() ? std::string("-") : result;
+}
+
+void applyDungeonEventParams(Game::DungeonEventInstance& event, std::string_view params)
+{
+    if (params.empty() || params == "-") {
+        return;
+    }
+    for (std::string_view part : splitTokenList(params, ';')) {
+        const std::size_t equals = part.find('=');
+        if (equals == std::string_view::npos) {
+            continue;
+        }
+        const std::string_view key = part.substr(0, equals);
+        const std::string_view value = part.substr(equals + 1);
+        if (key == "source") {
+            event.data = std::string(value);
+        } else if (key == "enemy") {
+            event.selectedEnemyId = std::string(value);
+        } else if (key == "reward") {
+            parseTileSaveToken(value, event.rewardTile);
+        } else if (key == "encounter") {
+            event.encounterSpawned = value == "1";
+        } else if (key == "activated") {
+            event.activated = value == "1";
+        } else if (key == "bossDefeated") {
+            event.bossDefeated = value == "1";
+        } else if (key == "bossId") {
+            try {
+                event.bossEnemyRuntimeId = std::stoi(std::string(value));
+            } catch (...) {
+                event.bossEnemyRuntimeId = 0;
+            }
+        } else if (key == "request") {
+            event.requestKey = std::string(value);
+        } else if (key == "delivered") {
+            event.deliveredObjectId = std::string(value);
+        } else if (key == "guideTarget") {
+            try {
+                event.guideTargetWarpPointIndex = std::stoi(std::string(value));
+            } catch (...) {
+                event.guideTargetWarpPointIndex = -1;
+            }
+        } else if (key == "guideRemaining") {
+            try {
+                event.guideRemainingSeconds = std::stof(std::string(value));
+            } catch (...) {
+                event.guideRemainingSeconds = 0.0f;
+            }
+        } else if (key == "holes") {
+            event.nestHoles.clear();
+            for (std::string_view holeToken : splitTokenList(value, '|')) {
+                const std::vector<std::string_view> fields = splitTokenList(holeToken, ':');
+                if (fields.size() < 6) {
+                    continue;
+                }
+                Game::DungeonEventNestHole hole;
+                try {
+                    hole.tile.x = std::stoi(std::string(fields[0]));
+                    hole.tile.y = std::stoi(std::string(fields[1]));
+                    hole.hp = std::stoi(std::string(fields[2]));
+                    hole.maxHp = std::stoi(std::string(fields[3]));
+                    hole.destroyed = fields[4] == "1";
+                    hole.rewardSpawned = fields[5] == "1";
+                } catch (...) {
+                    continue;
+                }
+                event.nestHoles.push_back(std::move(hole));
+            }
+        } else if (key == "objects") {
+            event.eventObjects.clear();
+            for (std::string_view objectToken : splitTokenList(value, '|')) {
+                const std::vector<std::string_view> fields = splitTokenList(objectToken, ':');
+                if (fields.size() < 7) {
+                    continue;
+                }
+                Game::DungeonEventObject object;
+                if (!parseDungeonEventObjectKind(fields[0], object.kind)) {
+                    continue;
+                }
+                try {
+                    object.tile.x = std::stoi(std::string(fields[1]));
+                    object.tile.y = std::stoi(std::string(fields[2]));
+                    object.hp = std::stoi(std::string(fields[3]));
+                    object.maxHp = std::stoi(std::string(fields[4]));
+                    object.destroyed = fields[5] == "1";
+                    object.powered = fields[6] == "1";
+                } catch (...) {
+                    continue;
+                }
+                event.eventObjects.push_back(std::move(object));
+            }
+        }
+    }
 }
 
 bool dungeonMinimapTileTypeFromSave(int value, TileType& outType)
@@ -550,6 +844,41 @@ bool Game::loadSaveData()
                     loadedDungeonState.enemyNodes.push_back(node);
                 }
             }
+        } else if (key == "dungeon_event_instance") {
+            std::string stageId;
+            LoadedDungeonEventInstanceSave event;
+            std::string data;
+            stream >> stageId
+                >> event.id
+                >> event.kindName
+                >> event.centerTile.x
+                >> event.centerTile.y
+                >> event.focusTile.x
+                >> event.focusTile.y
+                >> event.discoveryRadiusTiles
+                >> event.discovered
+                >> event.completed
+                >> event.selfLightRadiusTiles
+                >> data;
+            if (!stream.fail() && !stageId.empty() && !event.id.empty()) {
+                if (data != "-") {
+                    event.data = std::move(data);
+                }
+                std::string spawnedEntityIds;
+                std::string params;
+                if (stream >> event.rewardSpawned) {
+                    if (stream >> spawnedEntityIds) {
+                        event.spawnedEntityIds = splitSaveList(spawnedEntityIds);
+                    }
+                    if (stream >> params && params != "-") {
+                        event.params = std::move(params);
+                    }
+                }
+                if (!loadedDungeonState.hasSeed || loadedDungeonState.stageId.empty() || loadedDungeonState.stageId == stageId) {
+                    loadedDungeonState.stageId = std::move(stageId);
+                    loadedDungeonState.dungeonEventInstances.push_back(std::move(event));
+                }
+            }
         } else if (key == "dungeon_world_drop") {
             std::string stageId;
             std::string kindName;
@@ -804,6 +1133,7 @@ bool Game::loadSaveData()
         chestNodes_.clear();
         crateNodes_.clear();
         enemyNodes_.clear();
+        dungeonEvents_.clear();
         spawnedWarpPointCount_ = 0;
         bossSpawnPoint_ = {};
         hasBossSpawnPoint_ = false;
@@ -854,6 +1184,7 @@ bool Game::loadSaveData()
         initializeChestNodesFromLayout();
         initializeCrateNodesFromLayout();
         initializeEnemyNodesFromLayout();
+        initializeDungeonEventInstancesFromLayout();
         const auto sameTile = [](DungeonTile lhs, DungeonTile rhs) {
             return lhs.x == rhs.x && lhs.y == rhs.y;
         };
@@ -920,6 +1251,27 @@ bool Game::loadSaveData()
             }
             nodeIt->placementType = static_cast<EnemyPlacementType>(savedNode.placementType);
             nodeIt->spawned = savedNode.spawned;
+        }
+        for (const LoadedDungeonEventInstanceSave& savedEvent : loadedDungeonState.dungeonEventInstances) {
+            DungeonEventInstance* eventIt = dungeonEvents_.findById(savedEvent.id);
+            if (eventIt == nullptr) {
+                continue;
+            }
+            DungeonEventKind savedKind = eventIt->kind;
+            if (dungeonEventKindFromId(savedEvent.kindName, savedKind)) {
+                eventIt->kind = savedKind;
+            }
+            eventIt->centerTile = savedEvent.centerTile;
+            eventIt->focusTile = savedEvent.focusTile;
+            eventIt->discoveryRadiusTiles = std::max(0.0f, savedEvent.discoveryRadiusTiles);
+            eventIt->discovered = savedEvent.discovered;
+            eventIt->completed = savedEvent.completed;
+            eventIt->rewardSpawned = savedEvent.rewardSpawned;
+            eventIt->selfLightRadiusTiles = std::max(0.0f, savedEvent.selfLightRadiusTiles);
+            eventIt->spawnedEntityIds = savedEvent.spawnedEntityIds;
+            eventIt->params = savedEvent.params;
+            eventIt->data = savedEvent.data;
+            applyDungeonEventParams(*eventIt, savedEvent.params);
         }
         applyPlacementTerrainOverrides();
         for (const TerrainTileEdit& edit : loadedDungeonState.terrainEdits) {
@@ -1092,6 +1444,7 @@ bool Game::saveSaveData(std::string& message) const
     const std::vector<ChestNode>* saveChestNodes = nullptr;
     const std::vector<CrateNode>* saveCrateNodes = nullptr;
     const std::vector<EnemyNode>* saveEnemyNodes = nullptr;
+    const std::vector<DungeonEventInstance>* saveDungeonEventInstances = nullptr;
     const WorldDropSystem* saveWorldDrops = nullptr;
     std::string saveDungeonStageId = currentStageId_;
     int saveDungeonCurrentStage = currentStage_;
@@ -1109,6 +1462,7 @@ bool Game::saveSaveData(std::string& message) const
         saveChestNodes = &chestNodes_;
         saveCrateNodes = &crateNodes_;
         saveEnemyNodes = &enemyNodes_;
+        saveDungeonEventInstances = &dungeonEvents_.all();
         saveWorldDrops = &worldDrops_;
     } else {
         const auto retainedStage = dungeonStates_.find(currentStageId_);
@@ -1126,6 +1480,7 @@ bool Game::saveSaveData(std::string& message) const
             saveChestNodes = &retainedStage->second.chestNodes;
             saveCrateNodes = &retainedStage->second.crateNodes;
             saveEnemyNodes = &retainedStage->second.enemyNodes;
+            saveDungeonEventInstances = &retainedStage->second.dungeonEventInstances;
             saveWorldDrops = &retainedStage->second.worldDrops;
             saveDungeonStageId = retainedStage->second.currentStageId;
             saveDungeonCurrentStage = retainedStage->second.currentStage;
@@ -1227,6 +1582,26 @@ bool Game::saveSaveData(std::string& message) const
                     << node.tile.y << " "
                     << static_cast<int>(node.placementType) << " "
                     << node.spawned << "\n";
+            }
+        }
+        if (saveDungeonEventInstances != nullptr) {
+            for (const DungeonEventInstance& event : *saveDungeonEventInstances) {
+                file << "dungeon_event_instance "
+                    << saveDungeonStageId << " "
+                    << event.id << " "
+                    << dungeonEventKindId(event.kind) << " "
+                    << event.centerTile.x << " "
+                    << event.centerTile.y << " "
+                    << event.focusTile.x << " "
+                    << event.focusTile.y << " "
+                    << event.discoveryRadiusTiles << " "
+                    << event.discovered << " "
+                    << event.completed << " "
+                    << event.selfLightRadiusTiles << " "
+                    << (event.data.empty() ? "-" : event.data) << " "
+                    << event.rewardSpawned << " "
+                    << joinSaveList(event.spawnedEntityIds) << " "
+                    << serializedDungeonEventParams(event) << "\n";
             }
         }
         if (saveWorldDrops != nullptr) {

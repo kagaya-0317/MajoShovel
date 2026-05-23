@@ -7,6 +7,7 @@ namespace majo {
 class Camera {
 public:
     void setViewport(int width, int height);
+    void setPosition(Vec2 position);
     void follow(Vec2 target, float dt);
     Vec2 worldToScreen(Vec2 world) const;
     Vec2 screenToWorld(Vec2 screen) const;

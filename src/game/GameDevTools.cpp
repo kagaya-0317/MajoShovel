@@ -3246,6 +3246,19 @@ bool Game::executeDebugCommand(std::string_view command)
     if (handleDebugStoryTestCommand(normalized)) {
         return true;
     }
+    if (normalized == "game dungeon-focus test" ||
+        normalized == "game dungeon focus test" ||
+        normalized == "game focus test") {
+        DungeonFocusRequest request;
+        request.eventKind = "debug";
+        request.focusWorldPos = player_.position + Vec2{240.0f, 0.0f};
+        request.holdSecondsIfNoDialogue = 2.0f;
+        const bool requested = requestDungeonFocus(std::move(request));
+        if (requested) {
+            logInfo("Debug: dungeon focus test requested.");
+        }
+        return true;
+    }
 
     const auto applyStageUnlockDebugCommand = [&](int unlockedStoryStages, std::string_view label) {
         if (enemyTestActive_) {
@@ -3275,6 +3288,7 @@ bool Game::executeDebugCommand(std::string_view command)
         dialogue_.clear();
         endingKamishibaiPending_ = false;
         resetBossEncounter();
+        resetDungeonFocus();
         screenTransition_ = ScreenTransitionState{};
         worldBuildJob_ = WorldBuildJob{};
         inventory_.setOpen(false);
@@ -4515,6 +4529,10 @@ void Game::renderBaseDebugOverlay(Renderer& renderer, const Time& time) const
 
 void Game::renderDebugOverlay(Renderer& renderer, const Time& time)
 {
+    if (!debug_.visible()) {
+        return;
+    }
+
     const int nearestWarp = nearestWarpPointIndex(player_.position);
     bool nearestWarpDiscovered = false;
     for (const WarpPoint& point : warpPoints_) {
@@ -4545,6 +4563,26 @@ void Game::renderDebugOverlay(Renderer& renderer, const Time& time)
         buriedEnemyNodeCount(),
         spawnedEnemyNodeCount(),
         autoReloadBlocked_);
+
+    const std::string focusDebug = dungeonFocusDebugText() + "\n" + nearestDungeonEventDebugText();
+    renderer.setScreenSpace();
+    constexpr float PanelWidth = 570.0f;
+    constexpr float PanelPadding = 8.0f;
+    constexpr int TextScale = 2;
+    const float textWidth = PanelWidth - PanelPadding * 2.0f;
+    const Vec2 textSize = renderer.measureWrappedText(focusDebug, textWidth, TextScale);
+    const float panelHeight = std::max(34.0f, textSize.y + PanelPadding * 2.0f);
+    const Vec2 panelPos{
+        10.0f,
+        std::max(10.0f, static_cast<float>(camera_.height()) - panelHeight - 10.0f),
+    };
+    renderer.fillRect(panelPos, {PanelWidth, panelHeight}, {0, 0, 0, 125});
+    renderer.drawWrappedText(
+        panelPos + Vec2{PanelPadding, PanelPadding},
+        focusDebug,
+        textWidth,
+        {220, 244, 224, 255},
+        TextScale);
 }
 
 } // namespace majo

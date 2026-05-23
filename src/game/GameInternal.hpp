@@ -66,8 +66,8 @@ constexpr int BaseItemSourceCount = BaseRingSourceOffset + SpellRingCount;
 constexpr int BaseProcessingSourceCount = BaseItemSourceCount;
 constexpr float BaseItemSourceTabOuterGap = 24.0f;
 constexpr float BaseItemSourceTabInnerGap = 13.0f;
-constexpr int BookshelfMenuItemCount = 3;
-constexpr int BookshelfVisibleRows = 5;
+constexpr int BookshelfMenuItemCount = 2;
+constexpr int BookshelfVisibleRows = 8;
 constexpr int RingWorkshopImplementedUpgradeCount = 3;
 constexpr int MaxItemEnhanceLevel = 5;
 constexpr int MerchantRefreshDugTileThreshold = 10;
@@ -1321,7 +1321,7 @@ UiRect baseProcessingItemRect(int index)
 
 UiRect bookshelfItemRect(int index)
 {
-    return {{402.0f, 250.0f + static_cast<float>(index) * 58.0f}, {474.0f, ui::ButtonHeight}};
+    return {{72.0f, 170.0f + static_cast<float>(index) * 58.0f}, {760.0f, ui::ButtonHeight}};
 }
 
 UiRect storagePanelRect()

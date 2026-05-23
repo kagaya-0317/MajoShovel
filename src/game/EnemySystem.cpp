@@ -931,6 +931,8 @@ EnemyEvent makeEnemyEvent(EnemyEventType type, const Enemy& enemy, std::string e
     return EnemyEvent{
         .type = type,
         .position = enemy.position,
+        .enemyRuntimeId = enemy.id,
+        .dungeonEventId = enemy.dungeonEventId,
         .enemyId = enemy.enemyId,
         .enemyName = enemy.enemyName,
         .effectId = std::move(effectId),
@@ -1679,6 +1681,10 @@ void drawEnemyVisual(Renderer& renderer, const Enemy& enemy, bool captureHighlig
         color = {178, 88, 214, 255};
     }
     const float visualRadius = enemyVisualRadius(enemy);
+    if (enemy.dungeonEventBoss) {
+        renderer.drawCircle(drawPosition, visualRadius + 10.0f, {255, 188, 90, 190});
+        renderer.drawCircle(drawPosition, visualRadius + 15.0f, {255, 94, 118, 115});
+    }
     EnemyImageDrawOptions imageOptions = enemyImageOptionsFor(enemy);
     if (captureHighlighted) {
         imageOptions.selectedOutlineEnabled = true;
@@ -1699,6 +1705,9 @@ void drawEnemyVisual(Renderer& renderer, const Enemy& enemy, bool captureHighlig
         if (captureHighlighted) {
             renderer.drawCircle(drawPosition, visualRadius + 6.0f, {255, 255, 255, 245});
         }
+    }
+    if (enemy.dungeonEventSleeping) {
+        renderer.drawText(drawPosition + Vec2{visualRadius * 0.35f, -visualRadius - 18.0f}, "Z", {210, 235, 255, 235}, 2);
     }
     drawEnemyHpBar(renderer, enemy, drawPosition, uiVisualRadius);
     if (enemy.isBoss) {
@@ -1933,6 +1942,9 @@ void EnemySystem::forceDetectInSight(Enemy& enemy, Vec2 playerPosition, bool sho
 void EnemySystem::applyDefinition(Enemy& enemy, const EnemyDefinition* definition, const RuntimeBalance& balance, const EnemyCatalog& enemyCatalog)
 {
     enemy.definition = definition;
+    enemy.dungeonEventId.clear();
+    enemy.dungeonEventBoss = false;
+    enemy.dungeonEventSleeping = false;
     enemy.enemyId = std::string(DefaultEnemyId);
     enemy.enemyName = std::string(DefaultEnemyName);
     enemy.behaviorId.clear();
@@ -2336,7 +2348,8 @@ bool EnemySystem::spawnDefinitionAt(
     const EnemyCatalog& enemyCatalog,
     bool detectedOnSpawn,
     Vec2 detectedTarget,
-    float spawnWarmupOverride)
+    float spawnWarmupOverride,
+    int* outRuntimeId)
 {
     Enemy* enemy = enemies_.acquire();
     if (!enemy) {
@@ -2355,6 +2368,9 @@ bool EnemySystem::spawnDefinitionAt(
     enemy->spawnDuration = spawnWarmup;
     if (detectedOnSpawn) {
         forceDetectInSight(*enemy, detectedTarget, true);
+    }
+    if (outRuntimeId != nullptr) {
+        *outRuntimeId = enemy->id;
     }
     return true;
 }
@@ -2626,6 +2642,102 @@ bool EnemySystem::spawnSpecificEnemy(
     }
 
     return spawnDefinitionAt(spawnPosition, &it->second, balance, enemyCatalog, detectedOnSpawn, playerPosition);
+}
+
+bool EnemySystem::spawnEventEnemy(
+    TileMap& map,
+    Vec2 desiredPosition,
+    Vec2 playerPosition,
+    const RuntimeBalance& balance,
+    const EnemyCatalog& enemyCatalog,
+    const EventEnemySpawnOptions& options,
+    int* outRuntimeId)
+{
+    if (activeCount() >= balance.enemySoftCap) {
+        return false;
+    }
+
+    const EnemyDefinition* definition = nullptr;
+    if (!options.enemyId.empty()) {
+        const auto it = enemyCatalog.enemiesById.find(options.enemyId);
+        if (it != enemyCatalog.enemiesById.end()) {
+            definition = &it->second;
+        }
+    }
+    if (definition == nullptr) {
+        definition = options.stageId.empty()
+            ? chooseEnemyDefinition(enemyCatalog)
+            : chooseDugSpawnEnemyDefinition(enemyCatalog, options.stageId, options.depthRank);
+    }
+
+    float radius = balance.enemyRadius;
+    if (definition != nullptr && definition->radius > 0.0 && std::isfinite(definition->radius)) {
+        radius = static_cast<float>(definition->radius);
+    }
+    radius *= std::max(0.1f, options.radiusMultiplier);
+
+    Vec2 spawnPosition = desiredPosition;
+    if (options.fixedPosition) {
+        if (map.isCircleBlocked(spawnPosition, radius)) {
+            return false;
+        }
+        for (const Enemy& enemy : enemies_.items()) {
+            if (!enemy.active) {
+                continue;
+            }
+            const float minDistance = effectiveEnemyRadius(enemy) + radius + SpawnAvoidancePadding;
+            if (distanceSquared(spawnPosition, enemy.position) < minDistance * minDistance) {
+                return false;
+            }
+        }
+    } else {
+        const float minPlayerDistance = options.allowNearPlayer ? 0.0f : balance.enemyMinSpawnDistance;
+        if (!findSpawnPosition(map, desiredPosition, playerPosition, radius, minPlayerDistance, spawnPosition)) {
+            return false;
+        }
+    }
+
+    int runtimeId = 0;
+    if (!spawnDefinitionAt(
+            spawnPosition,
+            definition,
+            balance,
+            enemyCatalog,
+            options.detectedOnSpawn && !options.sleeping,
+            playerPosition,
+            options.sleeping ? 0.0f : -1.0f,
+            &runtimeId)) {
+        return false;
+    }
+    Enemy* enemy = findRuntimeEnemy(runtimeId);
+    if (enemy == nullptr) {
+        return false;
+    }
+
+    enemy->dungeonEventId = options.dungeonEventId;
+    enemy->dungeonEventSleeping = options.sleeping;
+    enemy->dungeonEventBoss = options.bossVariant;
+    if (options.sleeping) {
+        enemy->status.applyState("status_sleep", 1.0, -1.0, "dungeon_event:" + options.dungeonEventId, StateApplyMode::KeepLonger);
+        enemy->awareness = EnemyAwarenessState::Unaware;
+        enemy->awarenessIcon = EnemyAwarenessIcon::None;
+        enemy->awarenessIconTimer = 0.0f;
+    }
+    const float hpMultiplier = std::max(0.1f, options.hpMultiplier);
+    if (std::abs(hpMultiplier - 1.0f) > 0.001f) {
+        enemy->maxHp = std::max(1, static_cast<int>(std::ceil(static_cast<float>(enemy->maxHp) * hpMultiplier)));
+        enemy->hp = enemy->maxHp;
+    }
+    enemy->contactDamageMultiplier *= std::max(0.1f, options.contactDamageMultiplier);
+    enemy->radius *= std::max(0.1f, options.radiusMultiplier);
+    const float xpMultiplier = std::max(0.0f, options.xpMultiplier);
+    if (std::abs(xpMultiplier - 1.0f) > 0.001f) {
+        enemy->xp = std::max(0, static_cast<int>(std::ceil(static_cast<float>(enemy->xp) * xpMultiplier)));
+    }
+    if (outRuntimeId != nullptr) {
+        *outRuntimeId = runtimeId;
+    }
+    return true;
 }
 
 bool EnemySystem::spawnBoss(TileMap& map, Vec2 playerPosition, const RuntimeBalance& balance, const EnemyCatalog& enemyCatalog)
@@ -3069,6 +3181,14 @@ void EnemySystem::update(
 
     for (Enemy& enemy : enemies_.items()) {
         if (!enemy.active) {
+            continue;
+        }
+        if (enemy.dungeonEventSleeping) {
+            enemy.hitFlash = std::max(0.0f, enemy.hitFlash - dt);
+            enemy.hpBarTimer = std::max(0.0f, enemy.hpBarTimer - dt);
+            enemy.awarenessIconTimer = 0.0f;
+            enemy.awarenessIcon = EnemyAwarenessIcon::None;
+            enemy.velocity = {};
             continue;
         }
         enemy.stunWakeTimer = std::max(0.0f, enemy.stunWakeTimer - dt);
@@ -3942,7 +4062,10 @@ void EnemySystem::update(
                 if (item.capturedExplodeCharge >= requiredHits) {
                     item.capturedExplodeCharge = 0;
                     item.capturedExplodeSleepTimer = restSeconds;
-                    events_.push_back({EnemyEventType::CapturedExplosion, item.worldPosition});
+                    events_.push_back(EnemyEvent{
+                        .type = EnemyEventType::CapturedExplosion,
+                        .position = item.worldPosition,
+                    });
                 }
             }
             enemy.hitFlash = 0.12f;
@@ -4690,6 +4813,54 @@ void EnemySystem::applySpawnBias(std::string_view group, double multiplier)
         SpawnBiasMaxMultiplier);
 }
 
+void EnemySystem::wakeDungeonEventEnemies(std::string_view eventId)
+{
+    if (eventId.empty()) {
+        return;
+    }
+    for (Enemy& enemy : enemies_.items()) {
+        if (!enemy.active || enemy.dungeonEventId != eventId) {
+            continue;
+        }
+        if (!enemy.dungeonEventSleeping) {
+            continue;
+        }
+        enemy.dungeonEventSleeping = false;
+        enemy.status.removeState("status_sleep");
+        forceDetectInSight(enemy, enemy.position + Vec2{1.0f, 0.0f}, true);
+    }
+}
+
+int EnemySystem::activeDungeonEventEnemyCount(std::string_view eventId) const
+{
+    if (eventId.empty()) {
+        return 0;
+    }
+    int count = 0;
+    for (const Enemy& enemy : enemies_.items()) {
+        if (enemy.active && enemy.dungeonEventId == eventId) {
+            ++count;
+        }
+    }
+    return count;
+}
+
+int EnemySystem::activeRuntimeEnemyCount(const std::vector<int>& runtimeIds) const
+{
+    int count = 0;
+    for (int runtimeId : runtimeIds) {
+        if (runtimeEnemyActive(runtimeId)) {
+            ++count;
+        }
+    }
+    return count;
+}
+
+bool EnemySystem::runtimeEnemyActive(int runtimeId) const
+{
+    return findRuntimeEnemy(runtimeId) != nullptr;
+}
+
 int EnemySystem::consumePendingXp()
 {
     const int xp = pendingXp_;
@@ -4768,6 +4939,32 @@ Enemy* EnemySystem::findCaptureTarget(Vec2 targetWorld)
         }
     }
     return best;
+}
+
+Enemy* EnemySystem::findRuntimeEnemy(int runtimeId)
+{
+    if (runtimeId <= 0) {
+        return nullptr;
+    }
+    for (Enemy& enemy : enemies_.items()) {
+        if (enemy.active && enemy.id == runtimeId) {
+            return &enemy;
+        }
+    }
+    return nullptr;
+}
+
+const Enemy* EnemySystem::findRuntimeEnemy(int runtimeId) const
+{
+    if (runtimeId <= 0) {
+        return nullptr;
+    }
+    for (const Enemy& enemy : enemies_.items()) {
+        if (enemy.active && enemy.id == runtimeId) {
+            return &enemy;
+        }
+    }
+    return nullptr;
 }
 
 const Enemy* EnemySystem::findCaptureTarget(Vec2 targetWorld) const

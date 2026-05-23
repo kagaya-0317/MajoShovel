@@ -23,7 +23,10 @@ enum class EnemyAwarenessIcon {
 struct Enemy {
     bool active = false;
     bool isBoss = false;
+    bool dungeonEventBoss = false;
+    bool dungeonEventSleeping = false;
     int id = 0;
+    std::string dungeonEventId;
     std::string enemyId;
     std::string enemyName;
     const EnemyDefinition* definition = nullptr;

@@ -2122,6 +2122,39 @@ void Game::renderDungeonMinimap(Renderer& renderer, const std::vector<LightSourc
         }
     }
 
+    if (warpPointsEnabled_) {
+        for (const DungeonEventInstance& event : dungeonEvents_.all()) {
+            if (event.kind != DungeonEventKind::WarpGuideMap ||
+                !event.activated ||
+                event.completed ||
+                event.guideRemainingSeconds <= 0.0f ||
+                event.guideTargetWarpPointIndex < 0 ||
+                event.guideTargetWarpPointIndex >= static_cast<int>(warpPoints_.size())) {
+                continue;
+            }
+            const WarpPoint& target = warpPoints_[static_cast<std::size_t>(event.guideTargetWarpPointIndex)];
+            if (target.discovered) {
+                continue;
+            }
+            const Vec2 toTarget = target.position - player_.position;
+            if (lengthSquared(toTarget) <= 0.0001f) {
+                continue;
+            }
+            const Vec2 direction = normalize(toTarget);
+            const Vec2 tangent{-direction.y, direction.x};
+            const Vec2 tip = minimapCenter + direction * (contentRadius - 4.0f);
+            const Vec2 base = tip - direction * 14.0f;
+            const Vec2 arrow[] = {
+                tip,
+                base + tangent * 5.5f,
+                base - tangent * 5.5f,
+            };
+            renderer.fillPolygon(arrow, 3, {255, 232, 116, 235});
+            renderer.drawCircle(tip - direction * 7.0f, 8.5f, {255, 232, 116, 150});
+            break;
+        }
+    }
+
     std::vector<EnemyMinimapMarker> enemyMarkers;
     enemies_.appendMinimapMarkers(enemyMarkers);
     for (const EnemyMinimapMarker& enemy : enemyMarkers) {
@@ -2900,6 +2933,7 @@ std::vector<LightSource> Game::collectDungeonLightSources(double totalSeconds) c
             flickeredLightRadius(entranceLightRadius, static_cast<float>(totalSeconds), 2.9f),
         });
     }
+    dungeonEvents_.appendLightSources(lights, totalSeconds);
     magic_.appendLightSources(lights);
     const float lightMultiplier = astralLightRadiusMultiplier();
     if (std::abs(lightMultiplier - 1.0f) > 0.001f) {
@@ -3002,6 +3036,7 @@ void Game::render(Renderer& renderer, const Time& time)
     std::vector<DepthRenderEntry> worldDepthEntries;
     if (!enemyTestActive_) {
         appendRewardNodeRenderEntries(worldDepthEntries, renderer, itemLights);
+        appendDungeonEventRenderEntries(worldDepthEntries, renderer, itemLights, time.totalSeconds());
     }
     groundLines_.appendRenderEntries(worldDepthEntries, renderer);
     worldDrops_.appendRenderEntries(worldDepthEntries, renderer, tileMap_, objectCatalog_, player_.position, itemLights);

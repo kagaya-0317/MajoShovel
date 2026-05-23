@@ -353,6 +353,7 @@ void Game::resetWorldUiState()
     baseWarpPointSelection_ = 0;
     warpReturnConfirm_ = {};
     focusedWarpReturnPointIndex_ = -1;
+    resetDungeonFocus();
     baseStorageActive_ = false;
     baseStorageMode_ = StorageUiMode::Closed;
     baseStorageActionSelection_ = 0;
@@ -455,6 +456,7 @@ void Game::resetWorldRunState()
     bossSpawned_ = false;
     hasBossSpawnPoint_ = false;
     resetBossEncounter();
+    dungeonEvents_.clear();
     stageClearSelection_ = 0;
     stageClearStatus_.clear();
     astralResult_ = AstralRunSummary{};
@@ -481,6 +483,7 @@ void Game::buildWorldForRun(bool captureRunStartInventory)
     initializeChestNodesFromLayout();
     initializeCrateNodesFromLayout();
     initializeEnemyNodesFromLayout();
+    initializeDungeonEventInstancesFromLayout();
     applyPlacementTerrainOverrides();
     initializeDefaultSpellRing();
     refreshEquipmentModifiers();
@@ -588,6 +591,7 @@ void Game::advanceWorldBuildOneStep()
         break;
     case WorldBuildStep::InitializeEnemies:
         initializeEnemyNodesFromLayout();
+        initializeDungeonEventInstancesFromLayout();
         applyPlacementTerrainOverrides();
         worldBuildJob_.step = WorldBuildStep::InitializeRing;
         break;
@@ -2006,6 +2010,11 @@ void Game::updateScreenMode(
         return;
     }
 
+    if (updateDungeonFocus(dt)) {
+        ui.consumePointer();
+        return;
+    }
+
     if (updateBossEncounterFlow(dt)) {
         return;
     }
@@ -2156,6 +2165,7 @@ bool Game::gameProgressPaused() const
     return debugItemPickerActive_ ||
         debugStoryTestActive_ ||
         firstItemAcquisitionNoticeActive() ||
+        dungeonFocusActive() ||
         dialogue_.active() ||
         bossEncounterBlocksProgress() ||
         endingKamishibaiPending_ ||
@@ -2290,7 +2300,7 @@ void Game::update(const Input& input, const Time& time)
     if (paused && !effectDiscoveries.empty()) {
         applyEffectDiscoveries(effectDiscoveries);
     }
-    if (dialogue_.active() && mode_ == ScreenMode::Playing) {
+    if ((dialogue_.active() || dungeonFocusActive()) && mode_ == ScreenMode::Playing) {
         spellRing_.updatePresentation(player_, time.deltaSeconds(), balance_);
     }
 
@@ -2346,6 +2356,9 @@ void Game::update(const Input& input, const Time& time)
         updateRingEffectDiscoveries(effectDiscoveries);
         normalizeOpenBuriedPlacementNodes();
         camera_.follow(player_.position, time.deltaSeconds());
+        if (updateDungeonEventDiscovery(time.deltaSeconds())) {
+            return;
+        }
 
         const SpellRingState previousSpellRingState = spellRing_.state();
         const Vec2 previousRingCenter = spellRing_.center();
@@ -2359,6 +2372,7 @@ void Game::update(const Input& input, const Time& time)
         if (input.ringOffsetHeld()) {
             queueStoryEventForTrigger("tutorial:ring_shift");
         }
+        updateDungeonEvents(time.deltaSeconds(), time.totalSeconds());
         if (!enemyTestActive_) {
             updateChestNodes(time.deltaSeconds(), input);
             updateCrateNodes();
@@ -2700,6 +2714,7 @@ void Game::update(const Input& input, const Time& time)
             } else if (event.type == EnemyEventType::Explode) {
                 playAudioSe(AudioSeExplosion);
             } else if (event.type == EnemyEventType::Death || event.type == EnemyEventType::BossDeath) {
+                handleDungeonEventEnemyEvent(event);
                 ++runStats_.defeatedEnemies;
                 effects_.spawnEnemyDeath(event.position);
                 if (event.type == EnemyEventType::Death && !capturedEnemyThisFrame) {

@@ -46,6 +46,8 @@ enum class EnemyEventType {
 struct EnemyEvent {
     EnemyEventType type = EnemyEventType::Hit;
     Vec2 position{};
+    int enemyRuntimeId = 0;
+    std::string dungeonEventId;
     std::string enemyId;
     std::string enemyName;
     std::string effectId;
@@ -65,6 +67,22 @@ enum class CaptureResultType {
     InventoryFull,
     BossLocked,
     BossAlreadyOwned,
+};
+
+struct EventEnemySpawnOptions {
+    std::string enemyId;
+    std::string dungeonEventId;
+    std::string stageId;
+    int depthRank = 1;
+    bool allowNearPlayer = true;
+    bool detectedOnSpawn = true;
+    bool fixedPosition = false;
+    bool sleeping = false;
+    bool bossVariant = false;
+    float hpMultiplier = 1.0f;
+    float contactDamageMultiplier = 1.0f;
+    float radiusMultiplier = 1.0f;
+    float xpMultiplier = 1.0f;
 };
 
 struct CaptureResult {
@@ -127,6 +145,7 @@ public:
     bool spawnNodeEnemy(TileMap& map, Vec2 desiredPosition, Vec2 playerPosition, const RuntimeBalance& balance, const EnemyCatalog& enemyCatalog, bool allowNearPlayer, bool detectedOnSpawn = false);
     bool spawnFixedNodeEnemy(TileMap& map, Vec2 desiredPosition, Vec2 playerPosition, const RuntimeBalance& balance, const EnemyCatalog& enemyCatalog, bool detectedOnSpawn = false);
     bool spawnSpecificEnemy(TileMap& map, std::string_view enemyId, Vec2 desiredPosition, Vec2 playerPosition, const RuntimeBalance& balance, const EnemyCatalog& enemyCatalog, bool allowNearPlayer, bool detectedOnSpawn = false);
+    bool spawnEventEnemy(TileMap& map, Vec2 desiredPosition, Vec2 playerPosition, const RuntimeBalance& balance, const EnemyCatalog& enemyCatalog, const EventEnemySpawnOptions& options, int* outRuntimeId = nullptr);
     bool spawnBoss(TileMap& map, Vec2 playerPosition, const RuntimeBalance& balance, const EnemyCatalog& enemyCatalog);
     bool spawnBossNear(TileMap& map, Vec2 desiredPosition, Vec2 playerPosition, const RuntimeBalance& balance, const EnemyCatalog& enemyCatalog);
     void update(
@@ -214,6 +233,10 @@ public:
     int pushLightEnemies(Vec2 center, TileMap& map, float dt, float radius, float strength = 1.0f);
     void clearSpawnBiases();
     void applySpawnBias(std::string_view group, double multiplier);
+    void wakeDungeonEventEnemies(std::string_view eventId);
+    int activeDungeonEventEnemyCount(std::string_view eventId) const;
+    int activeRuntimeEnemyCount(const std::vector<int>& runtimeIds) const;
+    bool runtimeEnemyActive(int runtimeId) const;
     int consumePendingXp();
     void clearTemporaryState();
 
@@ -230,6 +253,8 @@ private:
     void queueEnemyObjectDrops(Enemy& enemy);
     Enemy* findCaptureTarget(Vec2 targetWorld);
     const Enemy* findCaptureTarget(Vec2 targetWorld) const;
+    Enemy* findRuntimeEnemy(int runtimeId);
+    const Enemy* findRuntimeEnemy(int runtimeId) const;
 
     void setAwareness(Enemy& enemy, EnemyAwarenessState nextState, bool showIcon);
     void forceDetectInSight(Enemy& enemy, Vec2 playerPosition, bool showIcon);
@@ -239,7 +264,7 @@ private:
     double spawnBiasMultiplierFor(const EnemyDefinition& definition) const;
     void logSpawnWeightFallbackOnce(std::string key, std::string message);
     void applyDefinition(Enemy& enemy, const EnemyDefinition* definition, const RuntimeBalance& balance, const EnemyCatalog& enemyCatalog);
-    bool spawnDefinitionAt(Vec2 position, const EnemyDefinition* definition, const RuntimeBalance& balance, const EnemyCatalog& enemyCatalog, bool detectedOnSpawn = false, Vec2 detectedTarget = {}, float spawnWarmupOverride = -1.0f);
+    bool spawnDefinitionAt(Vec2 position, const EnemyDefinition* definition, const RuntimeBalance& balance, const EnemyCatalog& enemyCatalog, bool detectedOnSpawn = false, Vec2 detectedTarget = {}, float spawnWarmupOverride = -1.0f, int* outRuntimeId = nullptr);
     void spawnAt(Vec2 position, const RuntimeBalance& balance, const EnemyCatalog& enemyCatalog, bool detectedOnSpawn = false, Vec2 detectedTarget = {});
     bool spawnBossAt(Vec2 position, const RuntimeBalance& balance, const EnemyCatalog& enemyCatalog, bool detectedOnSpawn = false, Vec2 detectedTarget = {});
     bool findSpawnPosition(TileMap& map, Vec2 desiredPosition, Vec2 playerPosition, const RuntimeBalance& balance, Vec2& outPosition) const;
