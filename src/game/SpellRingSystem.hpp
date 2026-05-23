@@ -105,6 +105,7 @@ public:
     void setAngularSpeedForRing(int ringIndex, float angularSpeed);
     void clearOrbitModifiers();
     void setOrbitModifiers(OrbitModifiers modifiers);
+    void setEquipmentModifiers(EquipmentModifiers modifiers);
     void applyOrbitModifierEffect(std::string_view effect, double value, std::string_view source);
     void applyEnemyOrbitSpeedDebuff(float multiplier, float durationSeconds);
     void upgradeItemDamage(int amount);
@@ -195,6 +196,11 @@ public:
     double orbitShiftMultiplier() const { return orbitModifiers_.shiftMultiplier; }
     double speedDamageMultiplier() const { return orbitModifiers_.speedDamageMultiplier; }
     const OrbitModifiers& orbitModifiers() const { return orbitModifiers_; }
+    const EquipmentModifiers& equipmentModifiers() const { return equipmentModifiers_; }
+    const RingEquipmentModifiers& equipmentModifiersForRing(int ringIndex) const;
+    double ringOutputMultiplierForRing(int ringIndex) const;
+    double ringDamageSpeedMultiplierForRing(int ringIndex) const;
+    double digPowerMultiplierForRing(int ringIndex) const;
     SpellRingState state() const { return state_; }
     int activeRingIndex() const { return activeRingIndex_; }
     float shapeRotation() const { return shapeRotationForRing(activeRingIndex_); }
@@ -234,6 +240,7 @@ private:
     float enemyOrbitSpeedDebuffTimer_ = 0.0f;
     int activeRingIndex_ = 0;
     OrbitModifiers orbitModifiers_{};
+    EquipmentModifiers equipmentModifiers_{};
     RingOrbitTuning orbitTuning_{};
     SpellRingState state_ = SpellRingState::Normal;
     std::vector<RingItemBreakEvent> itemBreakEvents_;

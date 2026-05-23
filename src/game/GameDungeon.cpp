@@ -50,6 +50,13 @@ constexpr std::string_view DigToolFailsafeShovelObjectId = "item_shovel";
 constexpr std::string_view DigToolFailsafeDigCategory = "\xE6\x8E\x98\xE5\x89\x8A";
 constexpr float DigToolFailsafeSpawnCooldownSeconds = 12.0f;
 constexpr float DigToolFailsafeNearbyDropRadius = 220.0f;
+constexpr float DiscardThrowStartOffset = 24.0f;
+constexpr float DiscardThrowDistance = 310.0f;
+constexpr float DiscardThrowLandingJitter = 40.0f;
+constexpr float DiscardThrowDurationMin = 0.48f;
+constexpr float DiscardThrowDurationMax = 0.62f;
+constexpr float DiscardThrowArcHeightMin = 52.0f;
+constexpr float DiscardThrowArcHeightMax = 72.0f;
 constexpr float BossDefeatPresentationSeconds = 1.85f;
 constexpr double PlayerRegenRateCap = 0.5;
 
@@ -960,6 +967,11 @@ void Game::refreshOrbitEffects()
         context.triggerType = EffectTriggerType::Orbit;
         context.logUnimplementedEffects = false;
         effectDispatcher_.dispatchOrbitEffects(objectIt->second, context);
+        const RingEquipmentModifiers& equipment =
+            spellRing_.equipmentModifiersForRing(item.ringIndex);
+        item.lightRadius *= static_cast<float>(std::max(0.0, equipment.lightRadiusMul));
+        item.hiddenDetectionRadius *= static_cast<float>(std::max(0.0, equipment.detectRangeMul));
+        item.treasureDetectionRadius *= static_cast<float>(std::max(0.0, equipment.detectRangeMul));
     }
 }
 
@@ -1326,6 +1338,7 @@ void Game::openRingScreen()
     const int maxIndex = std::max(0, static_cast<int>(spellRing_.items().size()) - 1);
     ringTabs_.focusedIndex = spellRing_.activeRingIndex();
     ringSlotSelection_ = std::clamp(ringSlotSelection_, 0, maxIndex);
+    ringDetailShowsRing_ = true;
     ringDragPending_ = false;
     ringDragActive_ = false;
     ringSnapActive_ = false;
@@ -1727,6 +1740,7 @@ void Game::captureDungeonState()
     state.enemyNodes = enemyNodes_;
     state.enemies = enemies_;
     state.worldDrops = worldDrops_;
+    state.worldDrops.removeTemporaryDrops();
     state.spawnedWarpPointCount = spawnedWarpPointCount_;
     state.unlockedWarpPointCount = unlockedWarpPointCount_;
     state.latestWarpPointPosition = latestWarpPointPosition_;
@@ -2184,9 +2198,9 @@ bool Game::unlockAllWarpPointsForCurrentDungeon()
 
     captureRetrySnapshotAtWarpPoint();
     captureDungeonState();
-    reloadNotice_ = newlyDiscovered > 0 ? "ワープポイント全開放" : "ワープポイントは全開放済み";
-    reloadNoticeTimer_ = 2.0f;
-    pushDungeonLog(reloadNotice_, "warp_point_all");
+    pushDungeonLog(
+        newlyDiscovered > 0 ? "ワープポイント全開放" : "ワープポイントは全開放済み",
+        "warp_point_all");
     if (newlyDiscovered > 0) {
         playAudioSe(AudioSeWarpDiscovery);
     }
@@ -2226,9 +2240,7 @@ void Game::updateWarpPoints(float dt)
             captureRetrySnapshotAtWarpPoint();
             point.lightRevealTimer = 0.0f;
             point.lightRevealAnimating = true;
-            reloadNotice_ = "ワープポイント発見";
-            reloadNoticeTimer_ = 2.0f;
-            pushDungeonLog("ワープポイントを発見", "warp_point");
+            pushDungeonLog("ワープポイント発見", "warp_point");
             playAudioSe(AudioSeWarpDiscovery);
             queueStoryEventForTrigger("tutorial:warp");
         }
@@ -2606,8 +2618,6 @@ void Game::updateExposedRewardNodes()
         if (!spawnedObject) {
             ++runStats_.acquiredItems;
         }
-        reloadNotice_ = node.objectId.has_value() ? "報酬を拾得" : "仮報酬を拾得";
-        reloadNoticeTimer_ = 1.4f;
     }
 
     for (MoneyNode& node : moneyNodes_) {
@@ -2619,8 +2629,6 @@ void Game::updateExposedRewardNodes()
         }
         worldDrops_.spawnMoneyDrop(node.amount, tileWorldCenter(node.tile), runStats_.elapsedSeconds);
         node.collected = true;
-        reloadNotice_ = "金貨 +" + std::to_string(std::max(0, node.amount)) + "G";
-        reloadNoticeTimer_ = 1.4f;
     }
 }
 
@@ -2651,8 +2659,6 @@ void Game::revealRewardNodesFromOpenedTiles(const std::vector<Vec2>& openedTiles
             if (!spawnedObject) {
                 ++runStats_.acquiredItems;
             }
-            reloadNotice_ = node.objectId.has_value() ? "埋まり報酬を発見" : "隠し報酬を発見";
-            reloadNoticeTimer_ = 1.6f;
             discoveredReward = true;
         }
         for (MoneyNode& node : moneyNodes_) {
@@ -2662,8 +2668,6 @@ void Game::revealRewardNodesFromOpenedTiles(const std::vector<Vec2>& openedTiles
             }
             worldDrops_.spawnMoneyDrop(node.amount, tileWorldCenter(node.tile), runStats_.elapsedSeconds);
             node.collected = true;
-            reloadNotice_ = "埋まり金貨 +" + std::to_string(std::max(0, node.amount)) + "G";
-            reloadNoticeTimer_ = 1.6f;
             discoveredReward = true;
         }
     }
@@ -2684,8 +2688,6 @@ void Game::updateExposedMoonFragmentNodes()
         }
         worldDrops_.spawnMaterialDrop(MaterialType::MoonFragment, 1, tileWorldCenter(node.tile), runStats_.elapsedSeconds);
         node.collected = true;
-        reloadNotice_ = "Moon fragment";
-        reloadNoticeTimer_ = 1.4f;
     }
 }
 
@@ -2707,8 +2709,6 @@ void Game::revealMoonFragmentNodesFromOpenedTiles(const std::vector<Vec2>& opene
             }
             worldDrops_.spawnMaterialDrop(MaterialType::MoonFragment, 1, tileWorldCenter(node.tile), runStats_.elapsedSeconds);
             node.collected = true;
-            reloadNotice_ = "Moon fragment";
-            reloadNoticeTimer_ = 1.4f;
         }
     }
 }
@@ -3089,6 +3089,82 @@ Vec2 Game::safeLootLandingPosition(Vec2 center, std::mt19937& rng)
     return scatterLootPosition(center, rng);
 }
 
+void Game::spawnInventoryDiscardRequests(std::vector<InventoryDiscardRequest> requests)
+{
+    if (requests.empty() || enemyTestActive_) {
+        return;
+    }
+    const bool canSpawnDiscardDrop =
+        mode_ == ScreenMode::Playing ||
+        (mode_ == ScreenMode::Inventory && pauseReturnMode_ != ScreenMode::Base);
+    if (!canSpawnDiscardDrop) {
+        return;
+    }
+
+    std::mt19937& rng = lootRuntimeRng();
+    std::uniform_real_distribution<float> angleDistribution(0.0f, Pi * 2.0f);
+    std::uniform_real_distribution<float> jitterDistribution(0.0f, DiscardThrowLandingJitter);
+    std::uniform_real_distribution<float> durationDistribution(DiscardThrowDurationMin, DiscardThrowDurationMax);
+    std::uniform_real_distribution<float> heightDistribution(DiscardThrowArcHeightMin, DiscardThrowArcHeightMax);
+
+    Vec2 direction = lengthSquared(player_.facing) > 0.0001f ? normalize(player_.facing) : Vec2{1.0f, 0.0f};
+    const Vec2 start = player_.position + direction * DiscardThrowStartOffset;
+
+    for (InventoryDiscardRequest& request : requests) {
+        if (request.item.id.empty() || request.quantity <= 0 || isImportantItem(request.item)) {
+            continue;
+        }
+
+        const Vec2 jitter = fromAngle(angleDistribution(rng)) * jitterDistribution(rng);
+        Vec2 target = player_.position + direction * DiscardThrowDistance + jitter;
+        for (float distance = DiscardThrowDistance; distance >= 96.0f; distance -= 36.0f) {
+            const Vec2 candidate = player_.position + direction * distance + jitter;
+            if (!tileMap_.isCircleBlocked(candidate, LootLandingCollisionRadius)) {
+                target = candidate;
+                break;
+            }
+        }
+
+        const float duration = durationDistribution(rng);
+        const WorldDropSpawnMotion motion{
+            .jump = true,
+            .startPosition = start,
+            .jumpDurationSeconds = duration,
+            .jumpArcHeight = heightDistribution(rng),
+            .pickupDelaySeconds = duration * 0.9f,
+        };
+
+        bool spawned = false;
+        if (request.instance) {
+            spawned = worldDrops_.spawnObjectInstanceDrop(
+                objectCatalog_,
+                std::move(*request.instance),
+                target,
+                runStats_.elapsedSeconds,
+                motion,
+                true);
+        } else {
+            for (int i = 0; i < request.quantity; ++i) {
+                spawned = worldDrops_.spawnObjectDrop(
+                    objectCatalog_,
+                    request.item.id,
+                    target,
+                    runStats_.elapsedSeconds,
+                    motion,
+                    true) || spawned;
+            }
+        }
+
+        if (spawned) {
+            const std::string name = request.item.name.empty() ? request.item.id : request.item.name;
+            const std::string icon = objectCatalog_.registry.findById(request.item.id) != nullptr
+                ? inlineItemTag(request.item.id)
+                : "";
+            pushDungeonLog(icon + name + "を捨てた");
+        }
+    }
+}
+
 void Game::updateDigToolFailsafe(float dt)
 {
     if (enemyTestActive_ || mode_ != ScreenMode::Playing) {
@@ -3191,8 +3267,6 @@ void Game::openChestNode(ChestNode& node)
     node.openingSeconds = 0.0f;
 
     playAudioSe(AudioSeChestOpen);
-    reloadNotice_ = "Chest opened";
-    reloadNoticeTimer_ = 1.4f;
     queueStoryEventForTrigger("tutorial:chest");
 }
 
@@ -3432,9 +3506,6 @@ void Game::destroyCrateNode(CrateNode& node)
     if (bonusChance(rng)) {
         spawnWeightedObjectLoot(LootChestKind::Common, node.depthRank, center, rng, "CrateBonusLoot", true, LootSourceKind::CrateBonus);
     }
-
-    reloadNotice_ = "Crate broken";
-    reloadNoticeTimer_ = 1.2f;
 }
 
 std::vector<CollisionRect> Game::solidObjectCollisionRects() const
@@ -4126,8 +4197,6 @@ std::vector<Vec2> Game::spawnHiddenEnemyNodesFromOpenedTiles(const std::vector<V
             consumedByHiddenNode = true;
             if (enemies_.spawnNodeEnemy(tileMap_, tileWorldCenter(node.tile), player_.position, balance_, enemyCatalog_, true, true)) {
                 node.spawned = true;
-                reloadNotice_ = "隠れ敵が出現";
-                reloadNoticeTimer_ = 1.5f;
             }
             break;
         }
@@ -4209,9 +4278,6 @@ bool Game::beginBossFightForCurrentEncounter()
     bossEncounter_.spawnPoint = bossSpawnPoint_;
     playAudioSe("se.boss.spawn");
     playAudioBgm("bgm.boss", 0.45f);
-    reloadNotice_ = "深部の主が出現";
-    reloadNoticeTimer_ = 2.0f;
-    pushDungeonLog(reloadNotice_, "boss_spawn");
     return true;
 }
 
@@ -4225,9 +4291,6 @@ void Game::beginBossDefeatSequence(Vec2 position)
     bossEncounter_.finalBoss = currentStageId_ == FinalStoryStageId && !hasStoryFlag(EndingSeenFlag);
     playAudioSe("se.boss.defeat");
     playAudioBgm("bgm.dungeon", 0.70f);
-    reloadNotice_ = "深部の主を撃破";
-    reloadNoticeTimer_ = 2.0f;
-    pushDungeonLog(reloadNotice_, "boss_defeated");
     effects_.spawnAreaPulse(position, 92.0f, {255, 214, 110, 210});
 }
 
@@ -4329,6 +4392,7 @@ void Game::captureRetrySnapshotAtWarpPoint()
     retrySnapshot_.enemyNodes = enemyNodes_;
     retrySnapshot_.enemies = enemies_;
     retrySnapshot_.worldDrops = worldDrops_;
+    retrySnapshot_.worldDrops.removeTemporaryDrops();
     retrySnapshot_.spawnedWarpPointCount = spawnedWarpPointCount_;
     retrySnapshot_.unlockedWarpPointCount = unlockedWarpPointCount_;
     retrySnapshot_.bossSpawnPoint = bossSpawnPoint_;
@@ -4835,8 +4899,6 @@ void Game::handleRingItemBreakEvents(std::vector<EffectDiscoveryEvent>* discover
         }
         playAudioSe(AudioSeItemBreak);
         pushDungeonLog(message, mergeKey);
-        reloadNotice_ = message;
-        reloadNoticeTimer_ = 1.8f;
     }
 }
 

@@ -138,31 +138,7 @@ std::string baseUpgradeResultChangeLine(int index, int beforeLevel, int afterLev
 }
 
 constexpr int RingLevelUpgradeKindCount = 3;
-constexpr int RingWorkshopRespecSlotCount = SpellRingCount * RingLevelUpgradeKindCount;
-constexpr int RingWorkshopConfirmItemIndex = RingWorkshopRespecSlotCount;
-constexpr int RingWorkshopUpgradeStartIndex = RingWorkshopConfirmItemIndex + 1;
 constexpr int BaseBackpackSourceIndex = 0;
-
-RingLevelUpgradeKind ringLevelUpgradeKindForSlot(int slotIndex)
-{
-    switch (slotIndex % RingLevelUpgradeKindCount) {
-    case 1:
-        return RingLevelUpgradeKind::Speed;
-    case 2:
-        return RingLevelUpgradeKind::WeightLimit;
-    case 0:
-    default:
-        return RingLevelUpgradeKind::Radius;
-    }
-}
-
-RingLevelUpgradeSelection ringLevelUpgradeSelectionForSlot(int slotIndex)
-{
-    return {
-        std::clamp(slotIndex / RingLevelUpgradeKindCount, 0, SpellRingCount - 1),
-        ringLevelUpgradeKindForSlot(slotIndex),
-    };
-}
 
 bool sameRingLevelUpgradeSelection(RingLevelUpgradeSelection left, RingLevelUpgradeSelection right)
 {
@@ -187,7 +163,8 @@ constexpr int StorageWithdrawSlotCount = StorageColumns * StorageWithdrawRows;
 constexpr float StorageWithdrawGridY = 190.0f;
 constexpr float StorageWithdrawRowGap = 8.0f;
 constexpr float StorageWithdrawSortButtonGap = 22.0f;
-constexpr float BaseRingPreviewScale = 0.8f;
+constexpr float BaseRingPreviewScale = 0.9f;
+constexpr float BaseProcessingRingYOffset = 64.0f;
 constexpr float MerchantSellRingPreviewScale = 0.9f;
 constexpr float StorageRingPreviewScale = 1.0f;
 constexpr float MerchantSellRingItemLabelExtraHeight = 30.0f;
@@ -376,6 +353,186 @@ UiRect merchantActionChoiceRect(int index)
     return smallActionChoiceRect(index);
 }
 
+constexpr int RingWorkshopActionCount = 2;
+constexpr int RingWorkshopUpgradeFutureCount = 4;
+constexpr int RingWorkshopUpgradeDisplayCount = RingWorkshopImplementedUpgradeCount + RingWorkshopUpgradeFutureCount;
+
+UiRect ringWorkshopActionDialogRect()
+{
+    return smallActionDialogRect();
+}
+
+UiRect ringWorkshopActionChoiceRect(int index)
+{
+    return smallActionChoiceRect(index);
+}
+
+UiRect ringWorkshopPanelRect()
+{
+    return merchantPanelRect();
+}
+
+UiRect ringWorkshopDetailPanelRect()
+{
+    return merchantDetailPanelRect();
+}
+
+UiRect ringWorkshopRingTabRect(int index)
+{
+    constexpr float TabTop = 126.0f;
+    constexpr float TabGap = 22.0f;
+    const UiRect panel = ringWorkshopPanelRect();
+    const UiRect detail = ringWorkshopDetailPanelRect();
+    const float left = panel.pos.x + 72.0f;
+    const float right = detail.pos.x - 24.0f;
+    const float totalGap = TabGap * static_cast<float>(std::max(0, SpellRingCount - 1));
+    const float width = std::max(1.0f, (right - left - totalGap) / static_cast<float>(SpellRingCount));
+    const float pitch = width + TabGap;
+    return {{left + static_cast<float>(index) * pitch, TabTop}, {width, ui::ButtonHeight}};
+}
+
+UiRect ringWorkshopRespecPanelRect()
+{
+    const UiRect firstTab = ringWorkshopRingTabRect(0);
+    const UiRect lastTab = ringWorkshopRingTabRect(SpellRingCount - 1);
+    return {{
+        firstTab.pos.x,
+        firstTab.pos.y + firstTab.size.y + 30.0f,
+    }, {
+        lastTab.pos.x + lastTab.size.x - firstTab.pos.x,
+        302.0f,
+    }};
+}
+
+UiRect ringWorkshopRespecKindRect(int index)
+{
+    constexpr float TopGap = 58.0f;
+    constexpr float RowGap = 16.0f;
+    constexpr float RowHeight = 54.0f;
+    const UiRect panel = ringWorkshopRespecPanelRect();
+    return {{
+        panel.pos.x + 24.0f,
+        panel.pos.y + TopGap + static_cast<float>(index) * (RowHeight + RowGap),
+    }, {
+        panel.size.x - 48.0f,
+        RowHeight,
+    }};
+}
+
+UiRect ringWorkshopRespecConfirmRect()
+{
+    const UiRect panel = ringWorkshopPanelRect();
+    const UiRect detail = ringWorkshopDetailPanelRect();
+    const Vec2 size{220.0f, ui::ButtonHeight};
+    const float leftAreaLeft = panel.pos.x + 72.0f;
+    const float leftAreaRight = detail.pos.x - 24.0f;
+    return {{
+        leftAreaLeft + (leftAreaRight - leftAreaLeft - size.x) * 0.5f,
+        panel.pos.y + panel.size.y - 74.0f,
+    }, size};
+}
+
+UiRect ringWorkshopUpgradeListPanelRect()
+{
+    const UiRect panel = ringWorkshopPanelRect();
+    const UiRect detail = ringWorkshopDetailPanelRect();
+    return {{
+        panel.pos.x + 72.0f,
+        panel.pos.y + 96.0f,
+    }, {
+        detail.pos.x - panel.pos.x - 108.0f,
+        420.0f,
+    }};
+}
+
+UiRect ringWorkshopUpgradeItemRect(int index)
+{
+    constexpr float RowGap = 10.0f;
+    constexpr float RowHeight = 42.0f;
+    const UiRect panel = ringWorkshopUpgradeListPanelRect();
+    return {{
+        panel.pos.x + 24.0f,
+        panel.pos.y + 58.0f + static_cast<float>(index) * (RowHeight + RowGap),
+    }, {
+        panel.size.x - 48.0f,
+        RowHeight,
+    }};
+}
+
+UiRect ringWorkshopUpgradeConfirmRect()
+{
+    const UiRect detail = ringWorkshopDetailPanelRect();
+    const Vec2 size{208.0f, ui::ButtonHeight};
+    return {{
+        detail.pos.x + (detail.size.x - size.x) * 0.5f,
+        ringWorkshopPanelRect().pos.y + ringWorkshopPanelRect().size.y - 74.0f,
+    }, size};
+}
+
+RingLevelUpgradeKind ringWorkshopKindForIndex(int index)
+{
+    switch (index) {
+    case 1:
+        return RingLevelUpgradeKind::Speed;
+    case 2:
+        return RingLevelUpgradeKind::WeightLimit;
+    case 0:
+    default:
+        return RingLevelUpgradeKind::Radius;
+    }
+}
+
+const char* ringWorkshopActionLabel(int index)
+{
+    switch (index) {
+    case 0: return "配分再調整";
+    case 1: return "工房強化";
+    default: return "";
+    }
+}
+
+const char* ringWorkshopUpgradeShortName(int index)
+{
+    switch (index) {
+    case 0: return "初期半径";
+    case 1: return "初期速度";
+    case 2: return "ずらし距離";
+    case 3: return "投げ距離";
+    case 4: return "投げ短縮";
+    case 5: return "重量軽減";
+    case 6: return "装着枠";
+    default: return "未解禁";
+    }
+}
+
+const char* ringWorkshopFutureUpgradeName(int index)
+{
+    switch (index) {
+    case 3: return "リング投げ距離強化";
+    case 4: return "リング投げクールダウン短縮";
+    case 5: return "リング重量ペナルティ軽減";
+    case 6: return "リング装着枠増加";
+    default: return "未解禁項目";
+    }
+}
+
+std::string formatRingWorkshopValue(RingLevelUpgradeKind kind, float value)
+{
+    char buffer[64];
+    switch (kind) {
+    case RingLevelUpgradeKind::Radius:
+        std::snprintf(buffer, sizeof(buffer), "%.0fpx", value);
+        break;
+    case RingLevelUpgradeKind::Speed:
+        std::snprintf(buffer, sizeof(buffer), "%.2f", value);
+        break;
+    case RingLevelUpgradeKind::WeightLimit:
+        std::snprintf(buffer, sizeof(buffer), "%.1fkg", value);
+        break;
+    }
+    return buffer;
+}
+
 UiRect baseBrokenRingDepartureConfirmRect()
 {
     return {{410.0f, 230.0f}, {460.0f, 250.0f}};
@@ -391,11 +548,8 @@ Vec2 baseSystemMessagePos(
     if (upgradeActive) {
         return baseUpgradePanelRect().pos + Vec2{32.0f, 468.0f};
     }
-    if (storageActive || merchantActive) {
+    if (storageActive || merchantActive || processingActive) {
         return {80.0f, 500.0f};
-    }
-    if (processingActive) {
-        return panel.pos + Vec2{54.0f, 504.0f};
     }
     return panel.pos + Vec2{54.0f, 454.0f};
 }
@@ -497,7 +651,7 @@ Vec2 baseRingPreviewCenterFromGrid(UiRect(*slotRect)(int), float yOffset)
 
 Vec2 baseProcessingRingPreviewCenter()
 {
-    return baseRingPreviewCenterFromGrid(baseProcessingGridSlotRect, 28.0f);
+    return baseRingPreviewCenterFromGrid(baseProcessingGridSlotRect, BaseProcessingRingYOffset);
 }
 
 Vec2 merchantSellRingPreviewCenter()
@@ -1201,15 +1355,7 @@ bool Game::isSellableObject(const ItemData& item) const
 
 bool Game::isStoryObject(const ItemData& item) const
 {
-    if (item.category == "\xE3\x82\xB9\xE3\x83\x88\xE3\x83\xBC\xE3\x83\xAA\xE3\x83\xBC") {
-        return true;
-    }
-    for (const std::string& tag : item.tags) {
-        if (tag == "story" || tag == "story_item" || tag == "key_item" || tag == "unsellable" || tag == "no_sell") {
-            return true;
-        }
-    }
-    return false;
+    return isImportantItem(item);
 }
 
 namespace {
@@ -1392,8 +1538,11 @@ std::vector<Game::SellableEntry> Game::sellableObjects() const
         const InventoryObjectInstance& instance = instances[static_cast<std::size_t>(i)];
         SellableEntry entry{SellableKind::Instance, i};
         entry.price = sellPrice(instance.item, &instance.instance);
-        entry.sellable = !instance.instance.protectionEnabled;
-        if (!entry.sellable) {
+        entry.sellable = !inventory_.isStaffEquipped(instance.instance.instanceId) &&
+            !instance.instance.protectionEnabled;
+        if (inventory_.isStaffEquipped(instance.instance.instanceId)) {
+            entry.blockedReason = "装備中";
+        } else if (!entry.sellable) {
             entry.blockedReason = "保護中";
         }
         entries.push_back(std::move(entry));
@@ -1574,7 +1723,9 @@ bool Game::merchantSellTargetAvailable(MerchantSellTarget target) const
             return stack->count > 0 && isSellableObject(stack->item);
         }
         if (const InventoryObjectInstance* instance = inventory_.screenObjectInstanceAt(target.slotIndex)) {
-            return !instance->instance.protectionEnabled && isSellableObject(instance->item);
+            return !inventory_.isStaffEquipped(instance->instance.instanceId) &&
+                !instance->instance.protectionEnabled &&
+                isSellableObject(instance->item);
         }
         return false;
     }
@@ -1649,7 +1800,9 @@ void Game::sellMerchantTarget(MerchantSellTarget target, int count)
         baseStatus_ = "売れません";
         if (target.source == BaseItemSource::Backpack) {
             if (const InventoryObjectInstance* instance = inventory_.screenObjectInstanceAt(target.slotIndex)) {
-                if (instance->instance.protectionEnabled) {
+                if (inventory_.isStaffEquipped(instance->instance.instanceId)) {
+                    baseStatus_ = "装備中";
+                } else if (instance->instance.protectionEnabled) {
                     baseStatus_ = "保護中";
                 }
             }
@@ -1865,6 +2018,9 @@ InventoryUiEntryView Game::storageEntryView(StorageEntry entry, bool warehouseEn
     view.item = storageEntryItem(entry, warehouseEntry);
     view.instance = storageEntryInstance(entry, warehouseEntry);
     view.stackCount = storageEntryStackCount(entry, warehouseEntry);
+    view.equipped = !warehouseEntry &&
+        view.instance != nullptr &&
+        inventory_.isStaffEquipped(view.instance->instanceId);
     return view;
 }
 
@@ -3143,8 +3299,13 @@ bool Game::storageTransferTargetAvailable(StorageTransferTarget target) const
         return false;
     }
     if (target.source == BaseItemSource::Backpack) {
-        return inventory_.screenObjectStackAt(target.slotIndex) != nullptr ||
-            inventory_.screenObjectInstanceAt(target.slotIndex) != nullptr;
+        if (inventory_.screenObjectStackAt(target.slotIndex) != nullptr) {
+            return true;
+        }
+        if (const InventoryObjectInstance* instance = inventory_.screenObjectInstanceAt(target.slotIndex)) {
+            return !inventory_.isStaffEquipped(instance->instance.instanceId);
+        }
+        return false;
     }
     if (target.source == BaseItemSource::Warehouse) {
         if (target.storageEntry.kind == StorageEntryKind::Stack) {
@@ -3207,6 +3368,7 @@ InventoryUiEntryView Game::storageTransferTargetView(StorageTransferTarget targe
             view.item = &instance->item;
             view.instance = &instance->instance;
             view.stackCount = 1;
+            view.equipped = inventory_.isStaffEquipped(instance->instance.instanceId);
         }
         return view;
     }
@@ -3265,6 +3427,10 @@ void Game::depositStorageTarget(StorageTransferTarget target, int count)
         const InventoryObjectInstance* source = inventory_.screenObjectInstanceAt(target.slotIndex);
         if (source == nullptr) {
             baseStatus_ = "しまうアイテムがありません";
+            return;
+        }
+        if (inventory_.isStaffEquipped(source->instance.instanceId)) {
+            baseStatus_ = "装備中の杖はしまえません";
             return;
         }
         if (warehouseUsedSlots() >= warehouseCapacity()) {
@@ -3552,7 +3718,10 @@ void Game::openRingWorkshop()
         return;
     }
     baseRingWorkshopActive_ = true;
+    baseRingWorkshopMode_ = RingWorkshopMode::ChooseAction;
     baseRingWorkshopSelection_ = 0;
+    baseRingWorkshopRingIndex_ = std::clamp(spellRing_.activeRingIndex(), 0, SpellRingCount - 1);
+    baseRingWorkshopRingTabs_ = {};
     resetRingWorkshopDraft();
     baseStatus_.clear();
 }
@@ -4318,21 +4487,128 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
     }
 
     if (baseRingWorkshopActive_) {
-        if (uiCancelRequested(baseCancelState_, input, ui, basePanelRect())) {
+        const UiRect workshopBounds = baseRingWorkshopMode_ == RingWorkshopMode::ChooseAction
+            ? ringWorkshopActionDialogRect()
+            : ringWorkshopPanelRect();
+        const auto closeWorkshop = [this]() {
             baseRingWorkshopActive_ = false;
+            baseRingWorkshopMode_ = RingWorkshopMode::ChooseAction;
+            baseRingWorkshopSelection_ = 0;
             resetRingWorkshopDraft();
             baseStatus_.clear();
+        };
+        const auto returnToWorkshopMenu = [this]() {
+            if (baseRingWorkshopMode_ == RingWorkshopMode::Respec) {
+                resetRingWorkshopDraft();
+            }
+            baseRingWorkshopMode_ = RingWorkshopMode::ChooseAction;
+            baseRingWorkshopSelection_ = 0;
+            baseStatus_.clear();
+        };
+        if (uiCancelRequested(baseCancelState_, input, ui, workshopBounds)) {
+            if (baseRingWorkshopMode_ == RingWorkshopMode::ChooseAction) {
+                closeWorkshop();
+            } else {
+                returnToWorkshopMenu();
+            }
+            ui.block(workshopBounds);
             return;
         }
-        if (input.pressed(InputAction::MoveUp)) {
-            baseRingWorkshopSelection_ = (baseRingWorkshopSelection_ + BaseRingWorkshopItemCount - 1) % BaseRingWorkshopItemCount;
+
+        if (baseRingWorkshopMode_ == RingWorkshopMode::ChooseAction) {
+            baseRingWorkshopSelection_ = std::clamp(baseRingWorkshopSelection_, 0, RingWorkshopActionCount - 1);
+            const auto chooseAction = [this, &ui](int item) {
+                ui.emitSound(UiSoundEvent::Confirm);
+                if (item == 0) {
+                    baseRingWorkshopMode_ = RingWorkshopMode::Respec;
+                    baseRingWorkshopSelection_ = 0;
+                    baseRingWorkshopRingIndex_ = std::clamp(spellRing_.activeRingIndex(), 0, SpellRingCount - 1);
+                    baseRingWorkshopRingTabs_ = {};
+                    resetRingWorkshopDraft();
+                    baseStatus_.clear();
+                    return;
+                }
+                baseRingWorkshopMode_ = RingWorkshopMode::Upgrade;
+                baseRingWorkshopSelection_ = 0;
+                baseStatus_.clear();
+            };
+            if (input.pressed(InputAction::MoveUp)) {
+                baseRingWorkshopSelection_ = (baseRingWorkshopSelection_ + RingWorkshopActionCount - 1) % RingWorkshopActionCount;
+            }
+            if (input.pressed(InputAction::MoveDown)) {
+                baseRingWorkshopSelection_ = (baseRingWorkshopSelection_ + 1) % RingWorkshopActionCount;
+            }
+            for (int i = 0; i < RingWorkshopActionCount; ++i) {
+                const UiRect rect = ringWorkshopActionChoiceRect(i);
+                if (rect.contains(ui.mouse())) {
+                    baseRingWorkshopSelection_ = i;
+                }
+                if (ui.pressed(rect)) {
+                    baseRingWorkshopSelection_ = i;
+                    chooseAction(i);
+                    ui.block(workshopBounds);
+                    return;
+                }
+            }
+            if (input.confirmPressed() || input.useItemPressed()) {
+                chooseAction(baseRingWorkshopSelection_);
+                ui.block(workshopBounds);
+                return;
+            }
+            ui.block(workshopBounds);
+            return;
         }
-        if (input.pressed(InputAction::MoveDown)) {
-            baseRingWorkshopSelection_ = (baseRingWorkshopSelection_ + 1) % BaseRingWorkshopItemCount;
-        }
-        const auto chooseWorkshopItem = [this, &ui](int item) {
-            if (item >= 0 && item < RingWorkshopRespecSlotCount) {
-                const RingLevelUpgradeSelection selection = ringLevelUpgradeSelectionForSlot(item);
+
+        if (baseRingWorkshopMode_ == RingWorkshopMode::Respec) {
+            constexpr int RespecSelectionCount = RingLevelUpgradeKindCount + 1;
+            baseRingWorkshopRingIndex_ = std::clamp(baseRingWorkshopRingIndex_, 0, SpellRingCount - 1);
+            baseRingWorkshopSelection_ = std::clamp(baseRingWorkshopSelection_, 0, RespecSelectionCount - 1);
+
+            std::array<UiTabItem, SpellRingCount> ringTabs{};
+            std::array<UiRect, SpellRingCount> ringTabRects{};
+            std::array<std::string, SpellRingCount> ringTabLabels{};
+            for (int i = 0; i < SpellRingCount; ++i) {
+                ringTabLabels[static_cast<std::size_t>(i)] = "リング " + std::to_string(i + 1);
+                ringTabs[static_cast<std::size_t>(i)] = {ringTabLabels[static_cast<std::size_t>(i)], true};
+                ringTabRects[static_cast<std::size_t>(i)] = ringWorkshopRingTabRect(i);
+            }
+            UiTabsInput ringTabsInput{};
+            ringTabsInput.focusDelta = input.activeRingDelta();
+            const int directRingFocus = input.shortcutSlotPressed();
+            if (directRingFocus >= 0 && directRingFocus < SpellRingCount) {
+                ringTabsInput.directFocusIndex = directRingFocus;
+            }
+            ringTabsInput.commit = ringTabsInput.focusDelta != 0 || ringTabsInput.directFocusIndex >= 0;
+            const int ringSelection = updateUiTabs(
+                baseRingWorkshopRingTabs_,
+                ui,
+                ringTabsInput,
+                baseRingWorkshopRingIndex_,
+                ringTabs.data(),
+                static_cast<int>(ringTabs.size()),
+                ringTabRects.data());
+            if (ringSelection >= 0) {
+                baseRingWorkshopRingIndex_ = ringSelection;
+                ui.block(workshopBounds);
+                return;
+            }
+
+            int move = 0;
+            if (input.pressed(InputAction::MoveUp) || input.pressed(InputAction::MoveLeft) || input.shortcutCursorDelta() < 0) {
+                --move;
+            }
+            if (input.pressed(InputAction::MoveDown) || input.pressed(InputAction::MoveRight) || input.shortcutCursorDelta() > 0) {
+                ++move;
+            }
+            if (move != 0) {
+                baseRingWorkshopSelection_ = (baseRingWorkshopSelection_ + move + RespecSelectionCount) % RespecSelectionCount;
+            }
+
+            const auto chooseRespecKind = [this, &ui](int kindIndex) {
+                const RingLevelUpgradeSelection selection{
+                    baseRingWorkshopRingIndex_,
+                    ringWorkshopKindForIndex(kindIndex),
+                };
                 if (!ringWorkshopRespecSource_) {
                     const RingLevelUpgradePoints& points = ringWorkshopDraftUpgradePoints_[static_cast<std::size_t>(selection.ringIndex)];
                     if (ringLevelUpgradePoint(points, selection.kind) <= 0) {
@@ -4347,43 +4623,95 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
                 }
                 ui.emitSound(UiSoundEvent::Confirm);
                 adjustRingWorkshopRespec(*ringWorkshopRespecSource_, selection);
-                return;
+            };
+
+            for (int i = 0; i < RingLevelUpgradeKindCount; ++i) {
+                const UiRect rect = ringWorkshopRespecKindRect(i);
+                if (rect.contains(ui.mouse())) {
+                    baseRingWorkshopSelection_ = i;
+                }
+                if (ui.pressed(rect)) {
+                    baseRingWorkshopSelection_ = i;
+                    chooseRespecKind(i);
+                    ui.block(workshopBounds);
+                    return;
+                }
             }
-            if (item == RingWorkshopConfirmItemIndex) {
+            const UiRect confirmRect = ringWorkshopRespecConfirmRect();
+            if (confirmRect.contains(ui.mouse())) {
+                baseRingWorkshopSelection_ = RingLevelUpgradeKindCount;
+            }
+            if (ui.pressed(confirmRect)) {
+                baseRingWorkshopSelection_ = RingLevelUpgradeKindCount;
                 ui.emitSound(UiSoundEvent::Confirm);
                 confirmRingWorkshopRespec();
+                ui.block(workshopBounds);
                 return;
             }
-            if (item >= RingWorkshopUpgradeStartIndex &&
-                item < RingWorkshopUpgradeStartIndex + RingWorkshopImplementedUpgradeCount) {
-                ui.emitSound(UiSoundEvent::Confirm);
-                buyRingWorkshopUpgrade(static_cast<RingWorkshopUpgrade>(item - RingWorkshopUpgradeStartIndex));
+            if (input.confirmPressed() || input.useItemPressed()) {
+                if (baseRingWorkshopSelection_ == RingLevelUpgradeKindCount) {
+                    ui.emitSound(UiSoundEvent::Confirm);
+                    confirmRingWorkshopRespec();
+                } else {
+                    chooseRespecKind(baseRingWorkshopSelection_);
+                }
+                ui.block(workshopBounds);
                 return;
             }
-            ui.emitSound(UiSoundEvent::Cancel);
-            baseStatus_ = "この項目は未解禁です";
-        };
-        for (int i = 0; i < BaseRingWorkshopItemCount; ++i) {
-            const UiRect rect = baseRingWorkshopItemRect(i);
-            if (rect.contains(ui.mouse())) {
-                baseRingWorkshopSelection_ = i;
-            }
-            if (ui.pressed(rect)) {
-                baseRingWorkshopSelection_ = i;
-                chooseWorkshopItem(i);
-                return;
-            }
-        }
-        if (ui.pressed(ringWorkshopConfirmRect())) {
-            ui.emitSound(UiSoundEvent::Confirm);
-            confirmRingWorkshopRespec();
+            ui.block(workshopBounds);
             return;
         }
-        if (input.confirmPressed() || input.useItemPressed()) {
-            chooseWorkshopItem(baseRingWorkshopSelection_);
+
+        if (baseRingWorkshopMode_ == RingWorkshopMode::Upgrade) {
+            baseRingWorkshopSelection_ = std::clamp(baseRingWorkshopSelection_, 0, RingWorkshopUpgradeDisplayCount - 1);
+            int move = 0;
+            if (input.pressed(InputAction::MoveUp) || input.pressed(InputAction::MoveLeft) || input.shortcutCursorDelta() < 0) {
+                --move;
+            }
+            if (input.pressed(InputAction::MoveDown) || input.pressed(InputAction::MoveRight) || input.shortcutCursorDelta() > 0) {
+                ++move;
+            }
+            if (move != 0) {
+                baseRingWorkshopSelection_ = (baseRingWorkshopSelection_ + move + RingWorkshopUpgradeDisplayCount) % RingWorkshopUpgradeDisplayCount;
+            }
+
+            const auto chooseUpgradeItem = [this, &ui](int item) {
+                if (item >= 0 && item < RingWorkshopImplementedUpgradeCount) {
+                    ui.emitSound(UiSoundEvent::Confirm);
+                    buyRingWorkshopUpgrade(static_cast<RingWorkshopUpgrade>(item));
+                    return;
+                }
+                ui.emitSound(UiSoundEvent::Cancel);
+                baseStatus_ = "この項目は未解禁です";
+            };
+
+            for (int i = 0; i < RingWorkshopUpgradeDisplayCount; ++i) {
+                const UiRect rect = ringWorkshopUpgradeItemRect(i);
+                if (rect.contains(ui.mouse())) {
+                    baseRingWorkshopSelection_ = i;
+                }
+                if (ui.pressed(rect)) {
+                    baseRingWorkshopSelection_ = i;
+                    chooseUpgradeItem(i);
+                    ui.block(workshopBounds);
+                    return;
+                }
+            }
+            if (ui.pressed(ringWorkshopUpgradeConfirmRect())) {
+                chooseUpgradeItem(baseRingWorkshopSelection_);
+                ui.block(workshopBounds);
+                return;
+            }
+            if (input.confirmPressed() || input.useItemPressed()) {
+                chooseUpgradeItem(baseRingWorkshopSelection_);
+                ui.block(workshopBounds);
+                return;
+            }
+            ui.block(workshopBounds);
             return;
         }
-        ui.block(basePanelRect());
+
+        ui.block(workshopBounds);
         return;
     }
 
@@ -4442,6 +4770,15 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
         const auto applyStorageTarget = [this, &openQuantityDialog](StorageQuantityOperation operation, StorageTransferTarget target) {
             if (!storageTransferTargetAvailable(target)) {
                 if (operation == StorageQuantityOperation::Deposit &&
+                    target.source == BaseItemSource::Backpack) {
+                    if (const InventoryObjectInstance* instance = inventory_.screenObjectInstanceAt(target.slotIndex)) {
+                        if (inventory_.isStaffEquipped(instance->instance.instanceId)) {
+                            baseStatus_ = "装備中の杖はしまえません";
+                            return;
+                        }
+                    }
+                }
+                if (operation == StorageQuantityOperation::Deposit &&
                     target.valid &&
                     target.source != BaseItemSource::Backpack &&
                     target.source != BaseItemSource::Warehouse) {
@@ -4476,6 +4813,16 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
         const auto openStorageCommand = [&](StorageQuantityOperation operation, StorageTransferTarget target, Vec2 anchor) {
             if (!storageTransferTargetAvailable(target)) {
                 ui.emitSound(UiSoundEvent::Cancel);
+                if (operation == StorageQuantityOperation::Deposit &&
+                    target.source == BaseItemSource::Backpack) {
+                    if (const InventoryObjectInstance* instance = inventory_.screenObjectInstanceAt(target.slotIndex)) {
+                        if (inventory_.isStaffEquipped(instance->instance.instanceId)) {
+                            baseStatus_ = "装備中の杖はしまえません";
+                            closeStorageCommand();
+                            return;
+                        }
+                    }
+                }
                 if (operation == StorageQuantityOperation::Deposit &&
                     target.valid &&
                     target.source != BaseItemSource::Backpack &&
@@ -5650,23 +5997,32 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
             baseStatus_.clear();
             return;
         }
+        UiTabsInput upgradeTabInput{};
         if (input.pressed(InputAction::MoveUp)) {
             baseUpgradeSelection_ = (baseUpgradeSelection_ + BaseUpgradeItemCount - 1) % BaseUpgradeItemCount;
         }
         if (input.pressed(InputAction::MoveDown)) {
             baseUpgradeSelection_ = (baseUpgradeSelection_ + 1) % BaseUpgradeItemCount;
         }
+        std::array<UiVerticalTabItem, BaseUpgradeItemCount> upgradeTabs{};
+        std::array<UiRect, BaseUpgradeItemCount> upgradeTabRects{};
         for (int i = 0; i < BaseUpgradeItemCount; ++i) {
-            const UiRect rect = baseUpgradeItemRect(i);
-            if (rect.contains(ui.mouse())) {
-                baseUpgradeSelection_ = i;
-            }
-            if (ui.pressed(rect)) {
-                ui.emitSound(UiSoundEvent::Confirm);
-                baseUpgradeSelection_ = i;
-                ui.block(upgradePanel);
-                return;
-            }
+            upgradeTabs[static_cast<std::size_t>(i)] = {"", "", upgradeImplemented(i)};
+            upgradeTabRects[static_cast<std::size_t>(i)] = baseUpgradeItemRect(i);
+        }
+        baseUpgradeTabs_.focusedIndex = std::clamp(baseUpgradeSelection_, 0, BaseUpgradeItemCount - 1);
+        const int selectedTab = updateUiVerticalTabs(
+            baseUpgradeTabs_,
+            ui,
+            upgradeTabInput,
+            baseUpgradeSelection_,
+            upgradeTabs.data(),
+            static_cast<int>(upgradeTabs.size()),
+            upgradeTabRects.data());
+        if (selectedTab >= 0) {
+            baseUpgradeSelection_ = selectedTab;
+            ui.block(upgradePanel);
+            return;
         }
         if (ui.pressed(baseUpgradeConfirmRect())) {
             ui.emitSound(UiSoundEvent::Confirm);
@@ -6001,6 +6357,7 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
         case BaseFacilityAction::Forge:
             baseUpgradeActive_ = true;
             baseUpgradeSelection_ = 0;
+            baseUpgradeTabs_.focusedIndex = baseUpgradeSelection_;
             baseStatus_.clear();
             break;
         case BaseFacilityAction::Processing:
@@ -6255,7 +6612,13 @@ void Game::renderBookshelfScreen(Renderer& renderer) const
             InventoryUiEntryView detailEntry{};
             detailEntry.item = object;
             detailEntry.stackCount = 1;
-            drawInventoryUiDetailPanel(renderer, bookshelfDetailPanel, detailEntry, objectCatalog_, encyclopedia_);
+            drawInventoryUiDetailPanel(
+                renderer,
+                bookshelfDetailPanel,
+                detailEntry,
+                objectCatalog_,
+                encyclopedia_,
+                InventoryUiDetailOptions{.animationSeconds = baseRingPreviewAnimationTime_});
         } else {
             drawUiSubPanel(renderer, bookshelfDetailPanel);
             std::snprintf(buffer, sizeof(buffer), "%s / %s", name.c_str(), encyclopediaStageName(stage));
@@ -6489,15 +6852,20 @@ void Game::renderBaseScreen(Renderer& renderer) const
         baseMiningStartChoiceActive_;
     const bool storageActionDialogActive = baseStorageActive_ && baseStorageMode_ == StorageUiMode::ChooseAction;
     const bool merchantActionDialogActive = baseSellActive_ && baseMerchantMode_ == MerchantUiMode::ChooseAction;
+    const bool ringWorkshopActionDialogActive = baseRingWorkshopActive_ && baseRingWorkshopMode_ == RingWorkshopMode::ChooseAction;
+    const bool ringWorkshopWideActive = baseRingWorkshopActive_ && baseRingWorkshopMode_ != RingWorkshopMode::ChooseAction;
     const UiRect panel = storageActionDialogActive
         ? storageActionDialogRect()
         : (merchantActionDialogActive
         ? merchantActionDialogRect()
+        : (ringWorkshopActionDialogActive
+        ? ringWorkshopActionDialogRect()
         : ((baseProcessingActive_ ||
+        ringWorkshopWideActive ||
         (baseStorageActive_ && baseStorageMode_ != StorageUiMode::ChooseAction) ||
         (baseSellActive_ && baseMerchantMode_ != MerchantUiMode::ChooseAction))
         ? merchantPanelRect()
-        : (baseUpgradeActive_ ? baseUpgradePanelRect() : basePanelRect())));
+        : (baseUpgradeActive_ ? baseUpgradePanelRect() : basePanelRect()))));
     std::optional<UiWindowScope> panelWindow;
     std::optional<UiCancelControlScope> panelCancelScope;
     if (panelUiActive) {
@@ -6518,6 +6886,12 @@ void Game::renderBaseScreen(Renderer& renderer) const
             panelHelp = "F/Enter 確定/実行  Tab 作業選択  Z/X・1-5 対象/ページ切替  Esc/右クリック 戻る";
         } else if (baseUpgradeActive_) {
             panelHelp = "F/Enter 強化  Esc/右クリック 戻る";
+        } else if (baseRingWorkshopActive_) {
+            if (baseRingWorkshopMode_ == RingWorkshopMode::Respec) {
+                panelHelp = "Z/X・1-3 リング選択  Q/E・方向キー 選択  F/Enter 決定  Esc/右クリック 戻る";
+            } else if (baseRingWorkshopMode_ == RingWorkshopMode::Upgrade) {
+                panelHelp = "Q/E・方向キー 選択  F/Enter 強化  Esc/右クリック 戻る";
+            }
         } else if (baseMiningStartChoiceActive_) {
             panelHelp = baseWarpPointSelectActive_
                 ? "F/Enter 出発  Z/X・方向キー 選択  Esc/右クリック 戻る"
@@ -6682,7 +7056,13 @@ void Game::renderBaseScreen(Renderer& renderer) const
                 float detailLineY = drawUiDetailHeader(renderer, detailPanel, ringItemDisplayName(objectCatalog_, *selectedRingItem));
                 drawUiDetailText(renderer, detailPanel, detailLineY, "このアイテムは収納箱にしまえません。");
             } else {
-                drawInventoryUiDetailPanel(renderer, detailPanel, detailEntry, objectCatalog_, encyclopedia_);
+                drawInventoryUiDetailPanel(
+                    renderer,
+                    detailPanel,
+                    detailEntry,
+                    objectCatalog_,
+                    encyclopedia_,
+                    InventoryUiDetailOptions{.animationSeconds = ringPreviewSeconds});
             }
             const char* commandLabel = baseStorageCommandOperation_ == StorageQuantityOperation::Withdraw
                 ? "取り出す"
@@ -6695,92 +7075,237 @@ void Game::renderBaseScreen(Renderer& renderer) const
     } else if (baseBookshelfActive_) {
         renderBookshelfScreen(renderer);
     } else if (baseRingWorkshopActive_) {
-        renderer.drawText(panel.pos + Vec2{168.0f, 214.0f}, "リング工房", {246, 235, 255, 255}, 3);
-        const int totalPoints = ringLevelUpgradePointTotal();
-        std::string sourceText = "なし";
-        if (ringWorkshopRespecSource_) {
-            sourceText = "リング" + std::to_string(ringWorkshopRespecSource_->ringIndex + 1) + " " +
-                ringLevelUpgradeKindName(ringWorkshopRespecSource_->kind);
-        }
-        std::snprintf(buffer, sizeof(buffer), "強化点 %d  移動元: %s  セルを2つ選ぶと1点移動",
-            totalPoints,
-            sourceText.c_str());
-        renderer.drawText(panel.pos + Vec2{54.0f, 224.0f}, buffer, {198, 198, 206, 255}, 2);
+        if (baseRingWorkshopMode_ == RingWorkshopMode::ChooseAction) {
+            renderer.drawText(smallActionInfoTextPos(panel), "何を調整しますか？", {198, 198, 206, 255}, 2);
+            for (int i = 0; i < RingWorkshopActionCount; ++i) {
+                drawUiButton(
+                    renderer,
+                    ringWorkshopActionChoiceRect(i),
+                    ringWorkshopActionLabel(i),
+                    i == baseRingWorkshopSelection_,
+                    uiActionButtonStyle());
+            }
+        } else if (baseRingWorkshopMode_ == RingWorkshopMode::Respec) {
+            const int ringIndex = std::clamp(baseRingWorkshopRingIndex_, 0, SpellRingCount - 1);
+            std::array<UiTabItem, SpellRingCount> ringTabs{};
+            std::array<UiRect, SpellRingCount> ringTabRects{};
+            std::array<std::string, SpellRingCount> ringTabLabels{};
+            for (int i = 0; i < SpellRingCount; ++i) {
+                ringTabLabels[static_cast<std::size_t>(i)] = "リング " + std::to_string(i + 1);
+                ringTabs[static_cast<std::size_t>(i)] = {ringTabLabels[static_cast<std::size_t>(i)], true};
+                ringTabRects[static_cast<std::size_t>(i)] = ringWorkshopRingTabRect(i);
+            }
+            drawUiTabs(
+                renderer,
+                baseRingWorkshopRingTabs_,
+                ringIndex,
+                ringTabs.data(),
+                static_cast<int>(ringTabs.size()),
+                ringTabRects.data());
 
-        std::snprintf(buffer, sizeof(buffer), "費用 %dG 月のカケラ%d",
-            ringWorkshopRespecMoneyCost(),
-            ringWorkshopRespecMoonCost());
-        renderer.drawText(panel.pos + Vec2{54.0f, 532.0f}, buffer, {198, 198, 206, 255}, 2);
+            const UiRect respecPanel = ringWorkshopRespecPanelRect();
+            drawUiSubPanel(renderer, respecPanel);
+            renderer.drawText(respecPanel.pos + Vec2{24.0f, 22.0f}, "配分再調整", ui::Text, 3);
+            std::snprintf(buffer, sizeof(buffer), "合計強化点 %d", ringLevelUpgradePointTotal());
+            renderer.drawText(respecPanel.pos + Vec2{respecPanel.size.x - 168.0f, 29.0f}, buffer, ui::TextMuted, 2);
 
-        for (int i = 0; i < BaseRingWorkshopItemCount; ++i) {
-            bool sourceSelected = false;
-            if (i >= 0 && i < RingWorkshopRespecSlotCount) {
-                const RingLevelUpgradeSelection selection = ringLevelUpgradeSelectionForSlot(i);
-                const RingLevelUpgradePoints& current = levelRingUpgradePoints_[static_cast<std::size_t>(selection.ringIndex)];
-                const RingLevelUpgradePoints& draft = ringWorkshopDraftUpgradePoints_[static_cast<std::size_t>(selection.ringIndex)];
-                const int currentPoints = ringLevelUpgradePoint(current, selection.kind);
-                const int draftPoints = ringLevelUpgradePoint(draft, selection.kind);
-                sourceSelected = ringWorkshopRespecSource_ &&
+            const RingLevelUpgradePoints& currentRingPoints = levelRingUpgradePoints_[static_cast<std::size_t>(ringIndex)];
+            const RingLevelUpgradePoints& draftRingPoints = ringWorkshopDraftUpgradePoints_[static_cast<std::size_t>(ringIndex)];
+            for (int i = 0; i < RingLevelUpgradeKindCount; ++i) {
+                const RingLevelUpgradeKind kind = ringWorkshopKindForIndex(i);
+                const int currentPoints = ringLevelUpgradePoint(currentRingPoints, kind);
+                const int draftPoints = ringLevelUpgradePoint(draftRingPoints, kind);
+                const RingLevelUpgradeSelection selection{ringIndex, kind};
+                const bool sourceSelected = ringWorkshopRespecSource_ &&
                     sameRingLevelUpgradeSelection(*ringWorkshopRespecSource_, selection);
-                std::snprintf(buffer, sizeof(buffer), "%sR%d %s  %d->%d",
-                    sourceSelected ? "*" : "",
-                    selection.ringIndex + 1,
-                    ringLevelUpgradeKindName(selection.kind),
-                    currentPoints,
-                    draftPoints);
-            } else if (i == RingWorkshopConfirmItemIndex) {
-                std::snprintf(buffer, sizeof(buffer), "再調整確定  %dG 月のカケラ%d",
-                    ringWorkshopRespecMoneyCost(),
-                    ringWorkshopRespecMoonCost());
-            } else if (i >= RingWorkshopUpgradeStartIndex &&
-                i < RingWorkshopUpgradeStartIndex + RingWorkshopImplementedUpgradeCount) {
-                const auto upgrade = static_cast<RingWorkshopUpgrade>(i - RingWorkshopUpgradeStartIndex);
+                std::snprintf(buffer, sizeof(buffer), "%d -> %d", currentPoints, draftPoints);
+                UiSmallSelectButtonStyle style;
+                style.valueText = sourceSelected ? Color{255, 230, 150, 255} : ui::TextMuted;
+                drawUiSmallSelectButton(
+                    renderer,
+                    ringWorkshopRespecKindRect(i),
+                    ringLevelUpgradeKindName(kind),
+                    buffer,
+                    i == baseRingWorkshopSelection_ || sourceSelected,
+                    false,
+                    style);
+            }
+
+            const UiRect detailPanel = ringWorkshopDetailPanelRect();
+            drawUiSubPanel(renderer, detailPanel);
+            const int selectedKindIndex = std::clamp(baseRingWorkshopSelection_, 0, RingLevelUpgradeKindCount - 1);
+            const RingLevelUpgradeKind selectedKind = ringWorkshopKindForIndex(selectedKindIndex);
+            const auto valueForPoints = [this](int selectedRing, RingLevelUpgradeKind kind, const RingLevelUpgradePoints& points) {
+                switch (kind) {
+                case RingLevelUpgradeKind::Radius:
+                    return effectiveInitialRingRadiusForRing(selectedRing, points.radius);
+                case RingLevelUpgradeKind::Speed:
+                    return effectiveInitialRingSpeedForRing(selectedRing, points.speed);
+                case RingLevelUpgradeKind::WeightLimit:
+                    return effectiveInitialRingWeightLimitForRing(selectedRing, points.weightLimit);
+                }
+                return 0.0f;
+            };
+            float detailY = drawUiDetailHeader(
+                renderer,
+                detailPanel,
+                baseRingWorkshopSelection_ == RingLevelUpgradeKindCount ? "再調整確定" : ringLevelUpgradeKindName(selectedKind));
+            std::snprintf(buffer, sizeof(buffer), "リング %d", ringIndex + 1);
+            drawUiDetailLine(renderer, detailPanel, detailY, "対象", buffer);
+            const int selectedCurrentPoints = ringLevelUpgradePoint(currentRingPoints, selectedKind);
+            const int selectedDraftPoints = ringLevelUpgradePoint(draftRingPoints, selectedKind);
+            std::snprintf(buffer, sizeof(buffer), "%d点 / %s",
+                selectedCurrentPoints,
+                formatRingWorkshopValue(selectedKind, valueForPoints(ringIndex, selectedKind, currentRingPoints)).c_str());
+            drawUiDetailLine(renderer, detailPanel, detailY, "現在", buffer);
+            std::snprintf(buffer, sizeof(buffer), "%d点 / %s",
+                selectedDraftPoints,
+                formatRingWorkshopValue(selectedKind, valueForPoints(ringIndex, selectedKind, draftRingPoints)).c_str());
+            drawUiDetailLine(
+                renderer,
+                detailPanel,
+                detailY,
+                "配分案",
+                buffer,
+                selectedCurrentPoints == selectedDraftPoints ? ui::Text : Color{255, 230, 150, 255});
+            if (ringWorkshopRespecSource_) {
+                std::snprintf(buffer, sizeof(buffer), "リング%d %s",
+                    ringWorkshopRespecSource_->ringIndex + 1,
+                    ringLevelUpgradeKindName(ringWorkshopRespecSource_->kind));
+                drawUiDetailLine(renderer, detailPanel, detailY, "移動元", buffer, Color{255, 230, 150, 255});
+                drawUiDetailText(renderer, detailPanel, detailY, "次に選んだ項目へ1点移します。");
+            } else {
+                drawUiDetailLine(renderer, detailPanel, detailY, "移動元", "未選択", ui::TextMuted);
+                drawUiDetailText(renderer, detailPanel, detailY, "ポイントがある項目を選ぶと移動元になります。");
+            }
+            std::snprintf(buffer, sizeof(buffer), "%dG", ringWorkshopRespecMoneyCost());
+            drawUiDetailLine(
+                renderer,
+                detailPanel,
+                detailY,
+                "費用",
+                buffer,
+                money_ >= ringWorkshopRespecMoneyCost() ? ui::Text : Color{238, 82, 82, 255});
+            std::snprintf(buffer, sizeof(buffer), "%d / 所持 %d",
+                ringWorkshopRespecMoonCost(),
+                inventory_.materialCount(MaterialType::MoonFragment));
+            drawUiDetailLine(
+                renderer,
+                detailPanel,
+                detailY,
+                "月のカケラ",
+                buffer,
+                inventory_.materialCount(MaterialType::MoonFragment) >= ringWorkshopRespecMoonCost() ? ui::Text : Color{238, 82, 82, 255});
+
+            UiButtonStyle confirmStyle = uiActionButtonStyle();
+            if (!ringWorkshopRespecChanged()) {
+                confirmStyle.text = ui::TextMuted;
+            }
+            drawUiButton(
+                renderer,
+                ringWorkshopRespecConfirmRect(),
+                ringWorkshopRespecChanged() ? "再調整確定" : "変更なし",
+                baseRingWorkshopSelection_ == RingLevelUpgradeKindCount,
+                confirmStyle);
+        } else if (baseRingWorkshopMode_ == RingWorkshopMode::Upgrade) {
+            const UiRect listPanel = ringWorkshopUpgradeListPanelRect();
+            drawUiSubPanel(renderer, listPanel);
+            renderer.drawText(listPanel.pos + Vec2{24.0f, 22.0f}, "工房強化", ui::Text, 3);
+            for (int i = 0; i < RingWorkshopUpgradeDisplayCount; ++i) {
+                const bool implemented = i < RingWorkshopImplementedUpgradeCount;
+                UiSmallSelectButtonStyle style;
+                const char* value = "未解禁";
+                if (implemented) {
+                    const auto upgrade = static_cast<RingWorkshopUpgrade>(i);
+                    const int level = ringWorkshopUpgradeLevel(upgrade);
+                    const int maxLevel = ringWorkshopUpgradeMaxLevel(upgrade);
+                    if (level >= maxLevel) {
+                        value = "上限";
+                        style.valueText = Color{160, 220, 190, 255};
+                    } else {
+                        std::snprintf(buffer, sizeof(buffer), "Lv.%d/%d", level, maxLevel);
+                        value = buffer;
+                    }
+                }
+                drawUiSmallSelectButton(
+                    renderer,
+                    ringWorkshopUpgradeItemRect(i),
+                    ringWorkshopUpgradeShortName(i),
+                    value,
+                    i == baseRingWorkshopSelection_,
+                    !implemented,
+                    style);
+            }
+
+            const UiRect detailPanel = ringWorkshopDetailPanelRect();
+            drawUiSubPanel(renderer, detailPanel);
+            const int selected = std::clamp(baseRingWorkshopSelection_, 0, RingWorkshopUpgradeDisplayCount - 1);
+            const bool implemented = selected < RingWorkshopImplementedUpgradeCount;
+            const auto formatUpgradeValue = [](RingWorkshopUpgrade upgrade, float value) {
+                char valueBuffer[64];
+                switch (upgrade) {
+                case RingWorkshopUpgrade::InitialRadius:
+                case RingWorkshopUpgrade::ShiftDistance:
+                    std::snprintf(valueBuffer, sizeof(valueBuffer), "%.0fpx", value);
+                    break;
+                case RingWorkshopUpgrade::InitialSpeed:
+                    std::snprintf(valueBuffer, sizeof(valueBuffer), "%.2f", value);
+                    break;
+                }
+                return std::string(valueBuffer);
+            };
+            const char* confirmLabel = "強化する";
+            UiButtonStyle confirmStyle = uiActionButtonStyle();
+            if (implemented) {
+                const auto upgrade = static_cast<RingWorkshopUpgrade>(selected);
                 const int level = ringWorkshopUpgradeLevel(upgrade);
                 const int maxLevel = ringWorkshopUpgradeMaxLevel(upgrade);
-                if (level >= maxLevel) {
-                    std::snprintf(buffer, sizeof(buffer), "%s Lv.%d/%d  上限",
-                        ringWorkshopUpgradeName(upgrade),
-                        level,
-                        maxLevel);
+                const bool maxed = level >= maxLevel;
+                float detailY = drawUiDetailHeader(renderer, detailPanel, ringWorkshopUpgradeName(upgrade));
+                std::snprintf(buffer, sizeof(buffer), "Lv.%d/%d", level, maxLevel);
+                drawUiDetailLine(renderer, detailPanel, detailY, "段階", buffer, maxed ? Color{160, 220, 190, 255} : ui::Text);
+                if (maxed) {
+                    drawUiDetailLine(renderer, detailPanel, detailY, "効果", "上限到達済み", ui::TextMuted);
+                    drawUiDetailLine(renderer, detailPanel, detailY, "必要素材", "なし", ui::TextMuted);
+                    confirmLabel = "上限";
+                    confirmStyle.text = ui::TextMuted;
                 } else {
-                    std::snprintf(buffer, sizeof(buffer), "%s Lv.%d/%d  %.2f -> %.2f  %dG 月のカケラ%d",
-                        ringWorkshopUpgradeName(upgrade),
-                        level,
-                        maxLevel,
-                        ringWorkshopUpgradeCurrentValue(upgrade),
-                        ringWorkshopUpgradeNextValue(upgrade),
-                        ringWorkshopUpgradeMoneyCost(upgrade),
-                        ringWorkshopUpgradeMoonCost(upgrade));
+                    const std::string currentValue = formatUpgradeValue(upgrade, ringWorkshopUpgradeCurrentValue(upgrade));
+                    const std::string nextValue = formatUpgradeValue(upgrade, ringWorkshopUpgradeNextValue(upgrade));
+                    drawUiDetailLine(renderer, detailPanel, detailY, "効果", currentValue + " -> " + nextValue, Color{255, 230, 150, 255});
+                    std::snprintf(buffer, sizeof(buffer), "%dG", ringWorkshopUpgradeMoneyCost(upgrade));
+                    drawUiDetailLine(
+                        renderer,
+                        detailPanel,
+                        detailY,
+                        "費用",
+                        buffer,
+                        money_ >= ringWorkshopUpgradeMoneyCost(upgrade) ? ui::Text : Color{238, 82, 82, 255});
+                    std::snprintf(buffer, sizeof(buffer), "%d / 所持 %d",
+                        ringWorkshopUpgradeMoonCost(upgrade),
+                        inventory_.materialCount(MaterialType::MoonFragment));
+                    drawUiDetailLine(
+                        renderer,
+                        detailPanel,
+                        detailY,
+                        "月のカケラ",
+                        buffer,
+                        inventory_.materialCount(MaterialType::MoonFragment) >= ringWorkshopUpgradeMoonCost(upgrade) ? ui::Text : Color{238, 82, 82, 255});
                 }
             } else {
-                const char* futureName = "";
-                switch (i) {
-                case RingWorkshopUpgradeStartIndex + RingWorkshopImplementedUpgradeCount:
-                    futureName = "リング投げ距離強化";
-                    break;
-                case RingWorkshopUpgradeStartIndex + RingWorkshopImplementedUpgradeCount + 1:
-                    futureName = "リング投げクールダウン短縮";
-                    break;
-                case RingWorkshopUpgradeStartIndex + RingWorkshopImplementedUpgradeCount + 2:
-                    futureName = "リング重量ペナルティ軽減";
-                    break;
-                case RingWorkshopUpgradeStartIndex + RingWorkshopImplementedUpgradeCount + 3:
-                    futureName = "リング装着枠増加";
-                    break;
-                default:
-                    futureName = "未解禁項目";
-                    break;
-                }
-                std::snprintf(buffer, sizeof(buffer), "%s  未解禁", futureName);
+                float detailY = drawUiDetailHeader(renderer, detailPanel, ringWorkshopFutureUpgradeName(selected));
+                drawUiDetailLine(renderer, detailPanel, detailY, "状態", "未解禁", ui::TextMuted);
+                drawUiDetailText(renderer, detailPanel, detailY, "今後の工房拡張で利用予定です。");
+                confirmLabel = "未解禁";
+                confirmStyle.text = ui::TextDisabled;
             }
-            drawUiButton(renderer, baseRingWorkshopItemRect(i), buffer, i == baseRingWorkshopSelection_ || sourceSelected, uiActionButtonStyle());
+            drawUiButton(
+                renderer,
+                ringWorkshopUpgradeConfirmRect(),
+                confirmLabel,
+                false,
+                confirmStyle);
         }
-
-        std::snprintf(buffer, sizeof(buffer), "所持 %dG / 月のカケラ %d   F/Enter 実行  Esc/右クリック 戻る",
-            money_,
-            inventory_.materialCount(MaterialType::MoonFragment));
-        renderer.drawText(panel.pos + Vec2{54.0f, 558.0f}, buffer, {198, 198, 206, 255}, 2);
-        drawUiButton(renderer, ringWorkshopConfirmRect(), "再調整確定", false, uiActionButtonStyle());
     } else if (baseProcessingActive_) {
         std::array<UiTabItem, BaseProcessingSourceCount> sourceTabs{};
         std::array<UiRect, BaseProcessingSourceCount> sourceTabRects{};
@@ -6939,7 +7464,7 @@ void Game::renderBaseScreen(Renderer& renderer) const
                     detailEntry,
                     objectCatalog_,
                     encyclopedia_,
-                    InventoryUiDetailOptions{.showEnhanceCount = false},
+                    InventoryUiDetailOptions{.showEnhanceCount = false, .animationSeconds = ringPreviewSeconds},
                     extraLines);
             } else {
                 drawUiSubPanel(renderer, detailPanel);
@@ -6976,6 +7501,7 @@ void Game::renderBaseScreen(Renderer& renderer) const
                     view.item = &instance->item;
                     view.instance = &instance->instance;
                     view.stackCount = 1;
+                    view.equipped = inventory_.isStaffEquipped(instance->instance.instanceId);
                 }
                 return view;
             };
@@ -7010,6 +7536,9 @@ void Game::renderBaseScreen(Renderer& renderer) const
                 }
                 if (target.source == BaseItemSource::Backpack) {
                     if (const InventoryObjectInstance* instance = inventory_.screenObjectInstanceAt(target.slotIndex)) {
+                        if (inventory_.isStaffEquipped(instance->instance.instanceId)) {
+                            return "装備中";
+                        }
                         if (instance->instance.protectionEnabled) {
                             return "保護中";
                         }
@@ -7273,7 +7802,14 @@ void Game::renderBaseScreen(Renderer& renderer) const
                 drawUiDetailText(renderer, detailPanel, detailLineY, "売却できません。");
                 drawUiDetailLine(renderer, detailPanel, detailLineY, "売値", "売却不可");
             } else {
-                drawInventoryUiDetailPanel(renderer, detailPanel, detailEntry, objectCatalog_, encyclopedia_, {}, extraLines);
+                drawInventoryUiDetailPanel(
+                    renderer,
+                    detailPanel,
+                    detailEntry,
+                    objectCatalog_,
+                    encyclopedia_,
+                    InventoryUiDetailOptions{.animationSeconds = ringPreviewSeconds},
+                    extraLines);
             }
             if (buyMode) {
                 const bool buyCommandEnabled = baseMerchantBuyCommandIndex_ >= 0 &&
@@ -7341,22 +7877,35 @@ void Game::renderBaseScreen(Renderer& renderer) const
         renderer.drawText({listLabelX, 148.0f}, "拠点機能", {198, 198, 206, 255}, 2);
         renderer.drawText({listLabelX, 270.0f}, "施設解禁", {198, 198, 206, 255}, 2);
         renderer.drawText({listLabelX, 392.0f}, "プレイ性能", {198, 198, 206, 255}, 2);
+        std::array<UiVerticalTabItem, BaseUpgradeItemCount> upgradeTabs{};
+        std::array<UiRect, BaseUpgradeItemCount> upgradeTabRects{};
+        std::array<std::string, BaseUpgradeItemCount> upgradeTabValues{};
         for (int i = 0; i < BaseUpgradeItemCount; ++i) {
-            const UiRect rect = baseUpgradeItemRect(i);
             const bool implemented = upgradeImplemented(i);
             const bool maxed = implemented && upgradeMaxed(i);
-            const bool hot = i == selected;
             if (!implemented) {
-                std::snprintf(buffer, sizeof(buffer), "未実装");
+                upgradeTabValues[static_cast<std::size_t>(i)] = "未実装";
             } else if (maxed) {
-                std::snprintf(buffer, sizeof(buffer), "上限");
+                upgradeTabValues[static_cast<std::size_t>(i)] = "上限";
             } else {
                 std::snprintf(buffer, sizeof(buffer), "Lv.%d/%d", upgradeLevel(i), upgradeMaxLevel(i));
+                upgradeTabValues[static_cast<std::size_t>(i)] = buffer;
             }
-            UiSmallSelectButtonStyle selectStyle;
-            selectStyle.valueText = maxed ? Color{160, 220, 190, 255} : ui::TextMuted;
-            drawUiSmallSelectButton(renderer, rect, shortName(i), buffer, hot, !implemented, selectStyle);
+            upgradeTabs[static_cast<std::size_t>(i)] = {
+                shortName(i),
+                upgradeTabValues[static_cast<std::size_t>(i)],
+                implemented,
+                maxed ? Color{160, 220, 190, 255} : ui::TextMuted,
+            };
+            upgradeTabRects[static_cast<std::size_t>(i)] = baseUpgradeItemRect(i);
         }
+        drawUiVerticalTabs(
+            renderer,
+            baseUpgradeTabs_,
+            selected,
+            upgradeTabs.data(),
+            static_cast<int>(upgradeTabs.size()),
+            upgradeTabRects.data());
 
         const UiRect detailPanel = baseUpgradeDetailPanelRect();
         drawUiSubPanel(renderer, detailPanel);
@@ -7718,7 +8267,12 @@ void Game::renderBaseScreen(Renderer& renderer) const
         drawUiSystemMessage(
             renderer,
             baseStatus_,
-            baseSystemMessagePos(panel, baseStorageActive_, baseSellActive_, baseProcessingActive_, baseUpgradeActive_));
+            baseSystemMessagePos(
+                panel,
+                baseStorageActive_,
+                baseSellActive_,
+                baseProcessingActive_ || (baseRingWorkshopActive_ && baseRingWorkshopMode_ != RingWorkshopMode::ChooseAction),
+                baseUpgradeActive_));
     }
     if (baseBrokenRingDepartureConfirm_.open) {
         panelCancelScope.reset();

@@ -3,6 +3,8 @@
 #include "game/Player.hpp"
 #include "data/RuntimeBalance.hpp"
 
+#include <algorithm>
+
 namespace majo {
 
 inline constexpr int PlayerMaxLevel = 100;
@@ -19,12 +21,15 @@ struct LevelGainResult {
 class LevelSystem {
 public:
     LevelGainResult addXp(Player& player, int amount, const RuntimeBalance& balance);
-    bool isChoosing() const { return choosing_; }
-    void beginChoice() { choosing_ = true; }
-    void finishChoice() { choosing_ = false; }
+    bool isChoosing() const { return pendingChoiceCount_ > 0; }
+    int pendingChoiceCount() const { return pendingChoiceCount_; }
+    void beginChoice() { pendingChoiceCount_ = std::max(1, pendingChoiceCount_); }
+    void finishChoice() { pendingChoiceCount_ = std::max(0, pendingChoiceCount_ - 1); }
+    void clearChoices() { pendingChoiceCount_ = 0; }
+    void setPendingChoiceCount(int count) { pendingChoiceCount_ = std::max(0, count); }
 
 private:
-    bool choosing_ = false;
+    int pendingChoiceCount_ = 0;
 };
 
 }

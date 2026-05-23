@@ -107,7 +107,7 @@ bool utf8ToWide(std::string_view text, std::wstring& out)
 
 bool isUiGuidePixel(unsigned char b, unsigned char g, unsigned char r, unsigned char a)
 {
-    return a <= 8 || (r <= 8 && g <= 8 && b <= 8) || (b <= 8 && a < 250);
+    return a <= 8 || (r <= 8 && g <= 8 && b <= 8);
 }
 
 std::vector<int> collapseGuideRuns(const std::vector<int>& guides, int limit)
@@ -1623,7 +1623,7 @@ bool Renderer::loadUiButtonTexture(std::string_view path)
 
 bool Renderer::loadUiTabTexture(std::string_view path)
 {
-    return loadGuidedTexture(path, 3, 2, false, "UI tab texture", uiTabTexture_);
+    return loadGuidedTexture(path, 3, 2, false, "UI tab texture", uiTabTexture_, true);
 }
 
 bool Renderer::loadUiLineTexture(std::string_view path)
@@ -2066,7 +2066,14 @@ bool Renderer::loadImageTexture(std::string_view path, std::string_view label, I
 #endif
 }
 
-bool Renderer::loadGuidedTexture(std::string_view path, int columns, int rows, bool transparentOnly, std::string_view label, GuidedTexture& target)
+bool Renderer::loadGuidedTexture(
+    std::string_view path,
+    int columns,
+    int rows,
+    bool transparentOnly,
+    std::string_view label,
+    GuidedTexture& target,
+    bool useEqualRows)
 {
     lastAssetError_.clear();
     const std::string pathString(path);
@@ -2159,9 +2166,10 @@ bool Renderer::loadGuidedTexture(std::string_view path, int columns, int rows, b
     verticalGuides = collapseGuideRuns(verticalGuides, width);
     horizontalGuides = collapseGuideRuns(horizontalGuides, height);
     if (verticalGuides.size() != static_cast<std::size_t>(columns - 1) ||
-        horizontalGuides.size() != static_cast<std::size_t>(rows - 1)) {
+        (!useEqualRows && horizontalGuides.size() != static_cast<std::size_t>(rows - 1))) {
         lastAssetError_ = labelString + " must contain " + std::to_string(columns - 1) +
-            " vertical and " + std::to_string(rows - 1) + " horizontal guide lines, got " +
+            " vertical" + (useEqualRows ? "" : " and " + std::to_string(rows - 1) + " horizontal") +
+            " guide lines, got " +
             std::to_string(verticalGuides.size()) + " vertical and " +
             std::to_string(horizontalGuides.size()) + " horizontal: " + pathString;
         return false;
@@ -2202,12 +2210,19 @@ bool Renderer::loadGuidedTexture(std::string_view path, int columns, int rows, b
 
     std::array<int, 4> yEdges{};
     std::array<int, 3> ySeparators{};
-    yEdges[0] = 0;
-    for (int i = 0; i < rows - 1; ++i) {
-        ySeparators[static_cast<std::size_t>(i)] = horizontalGuides[static_cast<std::size_t>(i)];
-        yEdges[static_cast<std::size_t>(i + 1)] = horizontalGuides[static_cast<std::size_t>(i)] + 1;
+    if (useEqualRows) {
+        for (int i = 0; i <= rows; ++i) {
+            yEdges[static_cast<std::size_t>(i)] = static_cast<int>(
+                std::round(static_cast<double>(height) * static_cast<double>(i) / static_cast<double>(rows)));
+        }
+    } else {
+        yEdges[0] = 0;
+        for (int i = 0; i < rows - 1; ++i) {
+            ySeparators[static_cast<std::size_t>(i)] = horizontalGuides[static_cast<std::size_t>(i)];
+            yEdges[static_cast<std::size_t>(i + 1)] = horizontalGuides[static_cast<std::size_t>(i)] + 1;
+        }
+        yEdges[static_cast<std::size_t>(rows)] = height;
     }
-    yEdges[static_cast<std::size_t>(rows)] = height;
 
     for (int col = 0; col < columns; ++col) {
         const int start = xEdges[static_cast<std::size_t>(col)];
@@ -2216,12 +2231,16 @@ bool Renderer::loadGuidedTexture(std::string_view path, int columns, int rows, b
     }
     for (int row = 0; row < rows; ++row) {
         const int start = yEdges[static_cast<std::size_t>(row)];
-        const int end = row < rows - 1 ? ySeparators[static_cast<std::size_t>(row)] : height;
+        const int end = useEqualRows
+            ? yEdges[static_cast<std::size_t>(row + 1)]
+            : (row < rows - 1 ? ySeparators[static_cast<std::size_t>(row)] : height);
         loaded.rowHeights[static_cast<std::size_t>(row)] = static_cast<float>(end - start);
     }
     for (int row = 0; row < rows; ++row) {
         const int y = yEdges[static_cast<std::size_t>(row)];
-        const int bottom = row < rows - 1 ? ySeparators[static_cast<std::size_t>(row)] : height;
+        const int bottom = useEqualRows
+            ? yEdges[static_cast<std::size_t>(row + 1)]
+            : (row < rows - 1 ? ySeparators[static_cast<std::size_t>(row)] : height);
         for (int col = 0; col < columns; ++col) {
             const int x = xEdges[static_cast<std::size_t>(col)];
             const int right = col < columns - 1 ? xSeparators[static_cast<std::size_t>(col)] : width;

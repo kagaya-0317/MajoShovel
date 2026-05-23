@@ -221,7 +221,12 @@ void recordTerrainHit(const EffectInvocation& invocation, int tileX, int tileY, 
 
     int effectiveBaseDamage = baseDamage;
     if (invocation.context->triggerType == EffectTriggerType::Hit && invocation.context->orbit != nullptr) {
-        const double powerMultiplier = std::max(0.0, invocation.context->orbit->effectivePowerMultiplier());
+        double powerMultiplier = std::max(0.0, invocation.context->orbit->effectivePowerMultiplier());
+        if (invocation.context->orbitItem != nullptr) {
+            const int ringIndex = invocation.context->orbitItem->ringIndex;
+            powerMultiplier *= invocation.context->orbit->digPowerMultiplierForRing(ringIndex);
+            powerMultiplier *= invocation.context->orbit->ringOutputMultiplierForRing(ringIndex);
+        }
         effectiveBaseDamage = std::max(1, static_cast<int>(std::round(static_cast<double>(baseDamage) * powerMultiplier)));
     }
 
@@ -857,6 +862,9 @@ void EffectDispatcher::dispatchTargetEffects(const std::vector<EffectSpec>& spec
 
 void EffectDispatcher::dispatchNormalEffects(const ObjectDefinition& object, EffectContext context) const
 {
+    if (isStaffObject(object)) {
+        return;
+    }
     context.sourceObject = &object;
     if (context.triggerType == EffectTriggerType::Unknown) {
         context.triggerType = EffectTriggerType::NormalUse;

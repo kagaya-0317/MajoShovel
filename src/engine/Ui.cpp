@@ -2150,7 +2150,9 @@ void drawUiTabs(
         return;
     }
 
-    for (int i = 0; i < itemCount; ++i) {
+    constexpr float TabTextOffsetY = 2.0f;
+
+    auto drawTab = [&](int i) {
         UiButtonStyle buttonStyle = style.buttonStyle;
         if (i == selectedIndex) {
             buttonStyle.fillHot = style.selectedFillHot;
@@ -2163,42 +2165,175 @@ void drawUiTabs(
         }
         UiRect rect = rects[i];
         rect.size.y = ui::ButtonHeight;
+        const float visualInsetX = std::min(std::max(0.0f, style.visualGap * 0.5f), std::max(0.0f, rect.size.x * 0.25f));
+        rect.pos.x += visualInsetX;
+        rect.size.x = std::max(1.0f, rect.size.x - visualInsetX * 2.0f);
+
+        const bool selected = i == selectedIndex;
+        const bool active = selected || (i == state.focusedIndex && tabItemEnabled(items, i));
+        const float scale = active ? std::max(1.0f, style.activeScale) : 1.0f;
+        const Vec2 center = rect.pos + rect.size * 0.5f;
+        renderer.pushScreenTransform(center, scale, 1.0f);
+
+        const float imageOutset = std::max(0.0f, style.imageOutset);
+        const UiRect imageRect{
+            rect.pos - Vec2{imageOutset, imageOutset},
+            rect.size + Vec2{imageOutset * 2.0f, imageOutset * 2.0f},
+        };
+
         if (renderer.hasUiTabTexture()) {
-            const bool selected = i == selectedIndex;
             const Color tint = selected ? buttonStyle.imageTintHot : buttonStyle.imageTint;
-            renderer.drawUiTabFrame(rect.pos, rect.size, selected, tint);
+            renderer.drawUiTabFrame(imageRect.pos, imageRect.size, selected, tint);
 
             const Vec2 textSize = renderer.measureText(items[i].label, 2);
             const Vec2 textPos{
                 rect.pos.x + std::max(0.0f, (rect.size.x - textSize.x) * 0.5f),
-                rect.pos.y + std::max(0.0f, (rect.size.y - textSize.y) * 0.5f),
+                rect.pos.y + std::max(0.0f, (rect.size.y - textSize.y) * 0.5f) + TabTextOffsetY,
             };
             renderer.drawText(textPos, items[i].label, buttonStyle.text, 2);
         } else {
-            const bool selected = i == selectedIndex;
             const Color fill = selected ? buttonStyle.fillHot : buttonStyle.fill;
             const Color outline = selected ? scaledColor(buttonStyle.outlineHot, 1.04f) : buttonStyle.outline;
-            renderer.fillRect(rect.pos, rect.size, fill);
-            renderer.drawRect(rect.pos, rect.size, outline);
+            renderer.fillRect(imageRect.pos, imageRect.size, fill);
+            renderer.drawRect(imageRect.pos, imageRect.size, outline);
 
             const Vec2 textSize = renderer.measureText(items[i].label, 2);
             const Vec2 textPos{
                 rect.pos.x + std::max(0.0f, (rect.size.x - textSize.x) * 0.5f),
-                rect.pos.y + std::max(0.0f, (rect.size.y - textSize.y) * 0.5f),
+                rect.pos.y + std::max(0.0f, (rect.size.y - textSize.y) * 0.5f) + TabTextOffsetY,
             };
             renderer.drawText(textPos, items[i].label, buttonStyle.text, 2);
         }
-        if (i == state.focusedIndex && i != selectedIndex && tabItemEnabled(items, i) && style.focusOutline.a > 0) {
-            UiRect focusRect = rect;
-            focusRect.size.y = ui::ButtonHeight;
-            constexpr float Inset = 3.0f;
-            renderer.drawRect(
-                focusRect.pos + Vec2{Inset, Inset},
-                {
-                    std::max(0.0f, focusRect.size.x - Inset * 2.0f),
-                    std::max(0.0f, focusRect.size.y - Inset * 2.0f),
-                },
-                style.focusOutline);
+        renderer.popScreenTransform();
+    };
+
+    for (int i = 0; i < itemCount; ++i) {
+        const bool active = i == selectedIndex || (i == state.focusedIndex && tabItemEnabled(items, i));
+        if (!active) {
+            drawTab(i);
+        }
+    }
+    for (int i = 0; i < itemCount; ++i) {
+        const bool active = i == selectedIndex || (i == state.focusedIndex && tabItemEnabled(items, i));
+        if (active) {
+            drawTab(i);
+        }
+    }
+}
+
+int updateUiVerticalTabs(
+    UiTabsState& state,
+    UiContext& ui,
+    const UiTabsInput& input,
+    int selectedIndex,
+    const UiVerticalTabItem* items,
+    int itemCount,
+    const UiRect* rects,
+    const UiVerticalTabsStyle& style)
+{
+    if (items == nullptr || rects == nullptr || itemCount <= 0) {
+        state.focusedIndex = -1;
+        return -1;
+    }
+
+    std::vector<UiTabItem> tabItems;
+    tabItems.reserve(static_cast<std::size_t>(itemCount));
+    for (int i = 0; i < itemCount; ++i) {
+        tabItems.push_back({items[i].label, items[i].enabled});
+    }
+    return updateUiTabs(state, ui, input, selectedIndex, tabItems.data(), itemCount, rects, style.tabs);
+}
+
+void drawUiVerticalTabs(
+    Renderer& renderer,
+    const UiTabsState& state,
+    int selectedIndex,
+    const UiVerticalTabItem* items,
+    int itemCount,
+    const UiRect* rects,
+    const UiVerticalTabsStyle& style)
+{
+    if (items == nullptr || rects == nullptr || itemCount <= 0) {
+        return;
+    }
+
+    auto itemEnabled = [&](int index) {
+        return index >= 0 && index < itemCount && items[index].enabled;
+    };
+
+    auto drawTab = [&](int i) {
+        const bool enabled = itemEnabled(i);
+        const bool selected = i == selectedIndex;
+        const bool active = selected || (i == state.focusedIndex && enabled);
+        const float scale = active ? std::max(1.0f, style.tabs.activeScale) : 1.0f;
+        const UiRect rect = rects[i];
+        const Vec2 center = rect.pos + rect.size * 0.5f;
+        renderer.pushScreenTransform(center, scale, 1.0f);
+
+        const float imageOutset = std::max(0.0f, style.tabs.imageOutset);
+        const UiRect imageRect{
+            rect.pos - Vec2{imageOutset, imageOutset},
+            rect.size + Vec2{imageOutset * 2.0f, imageOutset * 2.0f},
+        };
+
+        UiButtonStyle buttonStyle = style.tabs.buttonStyle;
+        if (selected) {
+            buttonStyle.fillHot = style.tabs.selectedFillHot;
+            buttonStyle.outlineHot = style.tabs.selectedOutlineHot;
+            buttonStyle.text = style.tabs.selectedText;
+            buttonStyle.imageTintHot = style.tabs.selectedImageTint;
+        }
+
+        if (renderer.hasUiTabTexture()) {
+            Color tint = selected ? buttonStyle.imageTintHot : buttonStyle.imageTint;
+            if (!enabled) {
+                tint = alphaScaledColor(tint, 0.55f);
+            }
+            renderer.drawUiTabFrame(imageRect.pos, imageRect.size, selected, tint);
+        } else {
+            Color fill = selected ? buttonStyle.fillHot : buttonStyle.fill;
+            Color outline = selected ? scaledColor(buttonStyle.outlineHot, 1.04f) : buttonStyle.outline;
+            if (!enabled) {
+                fill = alphaScaledColor(fill, 0.55f);
+                outline = alphaScaledColor(outline, 0.55f);
+            }
+            renderer.fillRect(imageRect.pos, imageRect.size, fill);
+            renderer.drawRect(imageRect.pos, imageRect.size, outline);
+        }
+
+        const int labelScale = std::max(1, style.labelScale);
+        const int valueScale = std::max(1, style.valueScale);
+        const bool hasValue = !items[i].value.empty();
+        const Vec2 valueSize = hasValue ? renderer.measureText(items[i].value, valueScale) : Vec2{};
+        const float labelX = rect.pos.x + std::max(0.0f, style.textPaddingX);
+        const float valueX = rect.pos.x + rect.size.x - valueSize.x - std::max(0.0f, style.valuePaddingX);
+        const float labelRight = hasValue
+            ? valueX - std::max(0.0f, style.valueGap)
+            : rect.pos.x + rect.size.x - std::max(0.0f, style.textPaddingX);
+        const std::string label = fittedUiText(renderer, items[i].label, std::max(0.0f, labelRight - labelX), labelScale);
+        const Vec2 labelSize = renderer.measureText(label, labelScale);
+        const float lineHeight = std::max(labelSize.y, valueSize.y);
+        const float labelY = rect.pos.y + std::max(0.0f, (rect.size.y - lineHeight) * 0.5f) + style.textOffsetY;
+        const float valueY = rect.pos.y + std::max(0.0f, (rect.size.y - valueSize.y) * 0.5f) + style.textOffsetY;
+        const Color labelColor = enabled ? buttonStyle.text : style.disabledText;
+        const Color valueColor = enabled ? items[i].valueText : style.disabledText;
+        renderer.drawText({labelX, labelY}, label, labelColor, labelScale);
+        if (hasValue) {
+            renderer.drawText({valueX, valueY}, items[i].value, valueColor, valueScale);
+        }
+        renderer.popScreenTransform();
+    };
+
+    for (int i = 0; i < itemCount; ++i) {
+        const bool active = i == selectedIndex || (i == state.focusedIndex && itemEnabled(i));
+        if (!active) {
+            drawTab(i);
+        }
+    }
+    for (int i = 0; i < itemCount; ++i) {
+        const bool active = i == selectedIndex || (i == state.focusedIndex && itemEnabled(i));
+        if (active) {
+            drawTab(i);
         }
     }
 }

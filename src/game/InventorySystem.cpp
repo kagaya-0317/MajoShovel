@@ -86,6 +86,11 @@ UiRect inventorySortButtonRect()
     return uiBottomLeftButtonRect(inventoryScreenRect(), {150.0f, ui::ButtonHeight});
 }
 
+UiRect inventoryDiscardConfirmRect()
+{
+    return {{390.0f, 220.0f}, {500.0f, 280.0f}};
+}
+
 UiRect inventorySlotRect(int index)
 {
     const int row = index / InventoryColumns;
@@ -258,12 +263,73 @@ const std::string& packedObjectSortId(
     return Empty;
 }
 
+bool ringContainsInstanceId(const SpellRingSystem& spellRing, std::string_view instanceId)
+{
+    if (instanceId.empty()) {
+        return false;
+    }
+    for (int ringIndex = 0; ringIndex < SpellRingCount; ++ringIndex) {
+        const std::vector<SpellRingItem>& ringItems = spellRing.itemsForRing(ringIndex);
+        if (std::any_of(ringItems.begin(), ringItems.end(), [instanceId](const SpellRingItem& item) {
+            return item.instanceId == instanceId;
+        })) {
+            return true;
+        }
+    }
+    return false;
+}
+
 }
 
 void InventorySystem::clearObjectStacks()
 {
     objectStacks_.clear();
     objectInstances_.clear();
+    equippedStaffInstanceId_.clear();
+}
+
+bool InventorySystem::isStaffEquipped(std::string_view instanceId) const
+{
+    return !instanceId.empty() && equippedStaffInstanceId_ == instanceId;
+}
+
+void InventorySystem::clearEquippedStaff()
+{
+    equippedStaffInstanceId_.clear();
+}
+
+bool InventorySystem::restoreEquippedStaffInstanceId(std::string_view instanceId, std::string* outWarning)
+{
+    equippedStaffInstanceId_.clear();
+    if (outWarning != nullptr) {
+        outWarning->clear();
+    }
+    if (instanceId.empty() || instanceId == "-") {
+        return true;
+    }
+
+    const InventoryObjectInstance* entry = objectInstanceById(instanceId);
+    if (entry == nullptr) {
+        if (outWarning != nullptr) {
+            *outWarning = "equipped_staff instance_id=\"" + std::string(instanceId) + "\" is missing; staff unequipped";
+        }
+        return false;
+    }
+    if (!isStaffObject(entry->item)) {
+        if (outWarning != nullptr) {
+            *outWarning = "equipped_staff instance_id=\"" + std::string(instanceId) + "\" is not a staff; staff unequipped";
+        }
+        return false;
+    }
+    if (entry->instance.isBroken) {
+        if (outWarning != nullptr) {
+            *outWarning = "equipped_staff instance_id=\"" + std::string(instanceId) + "\" is broken; staff unequipped";
+        }
+        return false;
+    }
+
+    equippedStaffInstanceId_ = std::string(instanceId);
+    return true;
 }
 
 bool InventorySystem::sortByCatalogOrder(const ObjectCatalog& catalog)
@@ -340,6 +406,25 @@ std::vector<RingEquipFxRequest> InventorySystem::consumeRingEquipFxRequests()
     std::vector<RingEquipFxRequest> requests = std::move(ringEquipFxRequests_);
     ringEquipFxRequests_.clear();
     return requests;
+}
+
+std::vector<InventoryDiscardRequest> InventorySystem::consumeDiscardRequests()
+{
+    std::vector<InventoryDiscardRequest> requests = std::move(discardRequests_);
+    discardRequests_.clear();
+    return requests;
+}
+
+void InventorySystem::setOpen(bool open)
+{
+    open_ = open;
+    if (!open_) {
+        closeUiCommandMenu(slotCommandMenu_);
+        slotCommandMenuIndex_ = -1;
+        discardConfirm_ = {};
+        discardConfirmSlotIndex_ = -1;
+        resetSlotPointerPress();
+    }
 }
 
 std::vector<StackItem> InventorySystem::stackItemsForSave() const
@@ -508,6 +593,10 @@ bool InventorySystem::removeObjectInstance(std::string_view instanceId)
     if (it == objectInstances_.end()) {
         return false;
     }
+    if (isStaffEquipped(instanceId)) {
+        status_ = "装備中の杖は外してください";
+        return false;
+    }
     if (it->instance.protectionEnabled) {
         status_ = "保護中は売却不可";
         return false;
@@ -528,6 +617,10 @@ bool InventorySystem::takeObjectInstance(std::string_view instanceId, InventoryO
         return entry.instance.instanceId == instanceId;
     });
     if (it == objectInstances_.end()) {
+        return false;
+    }
+    if (isStaffEquipped(instanceId)) {
+        status_ = "装備中の杖はしまえません";
         return false;
     }
     outInstance = std::move(*it);
@@ -799,6 +892,28 @@ InventoryObjectInstance* InventorySystem::objectInstanceAtScreenIndex(int index)
         return nullptr;
     }
     return &objectInstances_[static_cast<std::size_t>(instanceIndex)];
+}
+
+const InventoryObjectInstance* InventorySystem::objectInstanceById(std::string_view instanceId) const
+{
+    if (instanceId.empty()) {
+        return nullptr;
+    }
+    const auto it = std::find_if(objectInstances_.begin(), objectInstances_.end(), [instanceId](const InventoryObjectInstance& entry) {
+        return entry.instance.instanceId == instanceId;
+    });
+    return it == objectInstances_.end() ? nullptr : &*it;
+}
+
+InventoryObjectInstance* InventorySystem::objectInstanceById(std::string_view instanceId)
+{
+    if (instanceId.empty()) {
+        return nullptr;
+    }
+    const auto it = std::find_if(objectInstances_.begin(), objectInstances_.end(), [instanceId](const InventoryObjectInstance& entry) {
+        return entry.instance.instanceId == instanceId;
+    });
+    return it == objectInstances_.end() ? nullptr : &*it;
 }
 
 std::string InventorySystem::allocateInstanceId()
@@ -1104,23 +1219,315 @@ bool InventorySystem::hasScreenItem(int index) const
 bool InventorySystem::canUseScreenItem(int index) const
 {
     if (const InventoryObjectStack* objectStack = objectStackAtScreenIndex(index)) {
-        return !objectStack->item.normalEffects.empty();
+        return !isStaffObject(objectStack->item) && !objectStack->item.normalEffects.empty();
     }
     if (const InventoryObjectInstance* objectInstance = objectInstanceAtScreenIndex(index)) {
-        return !objectInstance->instance.isBroken && !objectInstance->item.normalEffects.empty();
+        return !isStaffObject(objectInstance->item) &&
+            !objectInstance->instance.isBroken &&
+            !objectInstance->item.normalEffects.empty();
     }
     return false;
 }
 
-std::array<UiCommandMenuItem, 3> InventorySystem::buildSlotCommandItems(int slotIndex, bool itemUseEnabled) const
+bool InventorySystem::canDiscardScreenItem(int index, bool itemDiscardEnabled) const
 {
-    const bool hasItem = hasScreenItem(slotIndex);
-    std::array<UiCommandMenuItem, 3> items{{
-        {"使用する", itemUseEnabled && canUseScreenItem(slotIndex)},
-        {"リングへ", hasItem},
-        {"保護", objectInstanceAtScreenIndex(slotIndex) != nullptr},
+    (void)itemDiscardEnabled;
+    if (const InventoryObjectStack* objectStack = objectStackAtScreenIndex(index)) {
+        return objectStack->count > 0 && !isImportantItem(objectStack->item);
+    }
+    if (const InventoryObjectInstance* objectInstance = objectInstanceAtScreenIndex(index)) {
+        return !isStaffEquipped(objectInstance->instance.instanceId) &&
+            !objectInstance->instance.protectionEnabled &&
+            !isImportantItem(objectInstance->item);
+    }
+    return false;
+}
+
+bool InventorySystem::discardScreenItem(int index, bool itemDiscardEnabled)
+{
+    if (InventoryObjectStack* objectStack = objectStackAtScreenIndex(index)) {
+        if (objectStack->count <= 0) {
+            status_ = "アイテム未選択";
+            return false;
+        }
+        if (isImportantItem(objectStack->item)) {
+            status_ = "重要アイテムは捨てられません";
+            return false;
+        }
+        if (itemDiscardEnabled) {
+            discardRequests_.push_back(InventoryDiscardRequest{
+                .item = objectStack->item,
+                .quantity = 1,
+            });
+        }
+        status_ = "捨てた: " + objectStack->item.name;
+        --objectStack->count;
+        if (objectStack->count <= 0) {
+            const int objectIndex = stackIndexAtScreenIndex(index);
+            if (objectIndex >= 0) {
+                removePackedSlotAtPackedIndex(objectIndex);
+                objectStacks_.erase(objectStacks_.begin() + objectIndex);
+            }
+        }
+        return true;
+    }
+    if (InventoryObjectInstance* objectInstance = objectInstanceAtScreenIndex(index)) {
+        if (isStaffEquipped(objectInstance->instance.instanceId)) {
+            status_ = "装備中の杖は捨てられません";
+            return false;
+        }
+        if (objectInstance->instance.protectionEnabled) {
+            status_ = "保護中は捨てられません";
+            return false;
+        }
+        if (isImportantItem(objectInstance->item)) {
+            status_ = "重要アイテムは捨てられません";
+            return false;
+        }
+        if (itemDiscardEnabled) {
+            discardRequests_.push_back(InventoryDiscardRequest{
+                .item = objectInstance->item,
+                .instance = objectInstance->instance,
+                .quantity = 1,
+            });
+        }
+        status_ = "捨てた: " + objectInstance->item.name;
+        const int instanceIndex = instanceIndexAtScreenIndex(index);
+        if (instanceIndex >= 0) {
+            removePackedSlotAtPackedIndex(static_cast<int>(objectStacks_.size()) + instanceIndex);
+            objectInstances_.erase(objectInstances_.begin() + instanceIndex);
+        }
+        return true;
+    }
+
+    status_ = "アイテム未選択";
+    return false;
+}
+
+void InventorySystem::openDiscardConfirmDialog(int slotIndex)
+{
+    if (!canDiscardScreenItem(slotIndex, false)) {
+        status_ = "捨てられません";
+        return;
+    }
+
+    discardConfirmSlotIndex_ = slotIndex;
+    openUiConfirmDialog(
+        discardConfirm_,
+        "確認",
+        "",
+        "捨てる",
+        "戻る",
+        1);
+    closeUiCommandMenu(slotCommandMenu_);
+    slotCommandMenuIndex_ = -1;
+    resetSlotPointerPress();
+}
+
+void InventorySystem::drawDiscardConfirmDialog(Renderer& renderer, const ObjectCatalog& catalog) const
+{
+    if (!discardConfirm_.open) {
+        return;
+    }
+
+    const UiRect panel = inventoryDiscardConfirmRect();
+    UiWindowScope window(
+        renderer,
+        "inventory.discard.confirm",
+        panel,
+        discardConfirm_.title,
+        uiConfirmDialogHelpText(),
+        UiWindowOptions{true, true});
+
+    const InventoryObjectStack* stack = objectStackAtScreenIndex(discardConfirmSlotIndex_);
+    const InventoryObjectInstance* instance = objectInstanceAtScreenIndex(discardConfirmSlotIndex_);
+    const ItemData* item = stack != nullptr ? &stack->item : (instance != nullptr ? &instance->item : nullptr);
+    const bool broken = stack != nullptr
+        ? stack->item.durability == 0
+        : (instance != nullptr && instance->instance.isBroken);
+    const std::string itemName = item != nullptr
+        ? itemDisplayName(item->name.empty() ? item->id : item->name, broken)
+        : std::string("アイテム");
+    const std::string iconPrefix = item != nullptr && catalog.registry.findById(item->id) != nullptr
+        ? inlineItemTag(item->id)
+        : "";
+
+    constexpr float ContentInset = 48.0f;
+    const float bodyTop = panel.pos.y + ui::HeaderHeight + 6.0f;
+    const UiRect body{{
+        panel.pos.x + ContentInset,
+        bodyTop,
+    }, {
+        panel.size.x - ContentInset * 2.0f,
+        std::max(0.0f, uiConfirmDialogButtonRect(panel, 0).pos.y - bodyTop - 16.0f),
     }};
-    return items;
+
+    InlineItemTextStyle questionStyle;
+    questionStyle.text = ui::Text;
+    questionStyle.scale = 2;
+    const std::string question = fittedInlineItemText(
+        renderer,
+        iconPrefix + itemName + "を捨てますか？",
+        body.size.x,
+        questionStyle);
+    float y = body.pos.y;
+    drawInlineItemText(renderer, catalog, {body.pos.x, y}, question, questionStyle);
+    y += measureInlineItemText(renderer, question, questionStyle).y + 18.0f;
+    renderer.drawWrappedText(
+        {body.pos.x, y},
+        "（捨てたアイテムは再入手できません）",
+        body.size.x,
+        {255, 224, 164, 255},
+        2);
+
+    drawUiConfirmDialogButtons(renderer, discardConfirm_, panel);
+}
+
+bool InventorySystem::canEquipStaffScreenItem(int index) const
+{
+    if (const InventoryObjectStack* objectStack = objectStackAtScreenIndex(index)) {
+        const bool stackSlotWillRemain = objectStack->count > 1;
+        return objectStack->count > 0 &&
+            isStaffObject(objectStack->item) &&
+            objectStack->item.durability != 0 &&
+            (!stackSlotWillRemain || static_cast<int>(objectStacks_.size() + objectInstances_.size()) < ShortcutSlotCount);
+    }
+    if (const InventoryObjectInstance* objectInstance = objectInstanceAtScreenIndex(index)) {
+        if (isStaffEquipped(objectInstance->instance.instanceId)) {
+            return true;
+        }
+        return isStaffObject(objectInstance->item) && !objectInstance->instance.isBroken;
+    }
+    return false;
+}
+
+bool InventorySystem::unequipStaff()
+{
+    if (equippedStaffInstanceId_.empty()) {
+        status_ = "杖を装備していません";
+        return false;
+    }
+    equippedStaffInstanceId_.clear();
+    status_ = "杖を外しました";
+    return true;
+}
+
+bool InventorySystem::equipStaffScreenItem(int index, const SpellRingSystem& spellRing)
+{
+    if (InventoryObjectInstance* objectInstance = objectInstanceAtScreenIndex(index)) {
+        if (isStaffEquipped(objectInstance->instance.instanceId)) {
+            return unequipStaff();
+        }
+        if (!isStaffObject(objectInstance->item)) {
+            status_ = "杖ではありません";
+            return false;
+        }
+        if (objectInstance->instance.isBroken) {
+            status_ = "壊れた杖は装備できません";
+            return false;
+        }
+        if (ringContainsInstanceId(spellRing, objectInstance->instance.instanceId)) {
+            status_ = "リングから外してから装備してください";
+            return false;
+        }
+        equippedStaffInstanceId_ = objectInstance->instance.instanceId;
+        status_ = "杖を装備しました: " + objectInstance->item.name;
+        return true;
+    }
+
+    InventoryObjectStack* objectStack = objectStackAtScreenIndex(index);
+    if (objectStack == nullptr || objectStack->count <= 0) {
+        status_ = "杖がありません";
+        return false;
+    }
+    if (!isStaffObject(objectStack->item)) {
+        status_ = "杖ではありません";
+        return false;
+    }
+    if (objectStack->item.durability == 0) {
+        status_ = "壊れた杖は装備できません";
+        return false;
+    }
+    const bool stackSlotWillRemain = objectStack->count > 1;
+    if (stackSlotWillRemain && static_cast<int>(objectStacks_.size() + objectInstances_.size()) >= ShortcutSlotCount) {
+        status_ = "インベントリ満杯";
+        return false;
+    }
+
+    const ItemData item = objectStack->item;
+    ItemInstance instance = createDetachedObjectInstance(item);
+    const std::string instanceId = instance.instanceId;
+    objectInstances_.push_back(InventoryObjectInstance{
+        .item = item,
+        .instance = std::move(instance),
+    });
+    if (stackSlotWillRemain) {
+        --objectStack->count;
+    } else {
+        const int stackIndex = stackIndexAtScreenIndex(index);
+        if (stackIndex >= 0) {
+            removePackedSlotAtPackedIndex(stackIndex);
+            objectStacks_.erase(objectStacks_.begin() + stackIndex);
+        }
+    }
+    syncPackedItemSlots();
+    moveObjectInstanceToScreenSlot(instanceId, index);
+    equippedStaffInstanceId_ = instanceId;
+    status_ = "杖を装備しました: " + item.name;
+    return true;
+}
+
+bool InventorySystem::toggleStaffEquipmentScreenItem(int index, const SpellRingSystem& spellRing)
+{
+    if (const InventoryObjectInstance* objectInstance = objectInstanceAtScreenIndex(index)) {
+        if (isStaffEquipped(objectInstance->instance.instanceId)) {
+            return unequipStaff();
+        }
+    }
+    return equipStaffScreenItem(index, spellRing);
+}
+
+InventorySystem::SlotCommandList InventorySystem::buildSlotCommandItems(
+    int slotIndex,
+    bool itemUseEnabled,
+    bool itemDiscardEnabled) const
+{
+    SlotCommandList list;
+    list.items.reserve(SlotCommandMaxCount);
+    list.actions.reserve(SlotCommandMaxCount);
+
+    const bool hasItem = hasScreenItem(slotIndex);
+    if (!hasItem) {
+        return list;
+    }
+
+    const InventoryObjectStack* objectStack = objectStackAtScreenIndex(slotIndex);
+    const InventoryObjectInstance* objectInstance = objectInstanceAtScreenIndex(slotIndex);
+    const ItemData* item = objectStack != nullptr
+        ? &objectStack->item
+        : (objectInstance != nullptr ? &objectInstance->item : nullptr);
+    const bool staff = item != nullptr && isStaffObject(*item);
+    const bool equippedStaff = objectInstance != nullptr && isStaffEquipped(objectInstance->instance.instanceId);
+
+    const auto addCommand = [&list](std::string_view label, bool enabled, SlotCommandAction action) {
+        list.items.push_back(UiCommandMenuItem{label, enabled});
+        list.actions.push_back(action);
+    };
+
+    if (staff) {
+        addCommand(equippedStaff ? "外す" : "装備する", canEquipStaffScreenItem(slotIndex), SlotCommandAction::ToggleStaffEquipment);
+    } else {
+        addCommand("使用する", itemUseEnabled && canUseScreenItem(slotIndex), SlotCommandAction::Use);
+    }
+    if (!equippedStaff) {
+        addCommand("リングへ", hasItem, SlotCommandAction::AddToRing);
+    }
+    if (objectInstance != nullptr) {
+        addCommand("保護", true, SlotCommandAction::ToggleProtection);
+    }
+    addCommand("捨てる", canDiscardScreenItem(slotIndex, itemDiscardEnabled), SlotCommandAction::Discard);
+
+    return list;
 }
 
 bool InventorySystem::moveScreenItem(int fromIndex, int toIndex)
@@ -1218,22 +1625,22 @@ void InventorySystem::cancelGrab()
     status_ = "キャンセル";
 }
 
-void InventorySystem::openSlotCommandMenu(int slotIndex)
+void InventorySystem::openSlotCommandMenu(int slotIndex, bool itemUseEnabled, bool itemDiscardEnabled)
 {
     if (!hasScreenItem(slotIndex)) {
         closeUiCommandMenu(slotCommandMenu_);
         slotCommandMenuIndex_ = -1;
         return;
     }
-    const std::array<UiCommandMenuItem, 3> commandItems = buildSlotCommandItems(slotIndex);
+    const SlotCommandList commandItems = buildSlotCommandItems(slotIndex, itemUseEnabled, itemDiscardEnabled);
     slotCommandMenuIndex_ = slotIndex;
     const UiRect slotRect = inventorySlotRect(slotIndex);
     openUiCommandMenu(
         slotCommandMenu_,
         slotRect.pos + Vec2{slotRect.size.x - 20.0f, 0.0f},
         inventoryScreenRect(),
-        static_cast<int>(commandItems.size()),
-        commandItems.data(),
+        static_cast<int>(commandItems.items.size()),
+        commandItems.items.data(),
         120.0f,
         2);
 }
@@ -1260,6 +1667,9 @@ bool InventorySystem::screenItemCanAddToRing(
             : spellRing.canAddObjectItem(stack->item);
     }
     if (const InventoryObjectInstance* instance = objectInstanceAtScreenIndex(index)) {
+        if (isStaffEquipped(instance->instance.instanceId)) {
+            return false;
+        }
         return preferredAngle
             ? spellRing.canAddObjectItemAtAngle(instance->item, instance->instance, *preferredAngle)
             : spellRing.canAddObjectItem(instance->item, instance->instance);
@@ -1305,6 +1715,10 @@ bool InventorySystem::addScreenItemToRing(
     }
 
     if (InventoryObjectInstance* instance = objectInstanceAtScreenIndex(index)) {
+        if (isStaffEquipped(instance->instance.instanceId)) {
+            status_ = "装備中の杖はリングに乗せられません";
+            return false;
+        }
         if (!screenItemCanAddToRing(index, spellRing, preferredAngle)) {
             status_ = spellRing.canAddItem() ? "リングへ配置できません" : "リング満杯";
             return false;
@@ -1351,6 +1765,10 @@ bool InventorySystem::addObjectToRing(
         });
         if (it == objectInstances_.end()) {
             setStatus("リュックにありません");
+            return false;
+        }
+        if (isStaffEquipped(instanceId)) {
+            setStatus("装備中の杖はリングに乗せられません");
             return false;
         }
         if (it->instance.isBroken) {
@@ -1459,6 +1877,10 @@ bool InventorySystem::addObjectInstanceSelectionToRing(SpellRingSystem& spellRin
         status_ = "壊れています";
         return false;
     }
+    if (isStaffEquipped(selected->instance.instanceId)) {
+        status_ = "装備中の杖はリングに乗せられません";
+        return false;
+    }
     if (!spellRing.addObjectItem(selected->item, selected->instance, outResult)) {
         status_ = "リング満杯";
         return false;
@@ -1481,6 +1903,10 @@ bool InventorySystem::useObjectSelection(
     InventoryObjectStack* selected = objectStackAtScreenIndex(index);
     if (selected == nullptr || selected->count <= 0) {
         status_ = "Objects DB item not selected";
+        return false;
+    }
+    if (isStaffObject(selected->item)) {
+        status_ = "杖は装備用です";
         return false;
     }
     if (selected->item.normalEffects.empty()) {
@@ -1569,6 +1995,10 @@ bool InventorySystem::useObjectInstanceSelection(
     }
     if (selected->instance.isBroken) {
         status_ = "壊れています";
+        return false;
+    }
+    if (isStaffObject(selected->item)) {
+        status_ = "杖は装備用です";
         return false;
     }
     if (selected->item.normalEffects.empty()) {
@@ -1714,40 +2144,74 @@ void InventorySystem::updateScreen(
     MagicSystem* magic,
     std::vector<EffectDiscoveryEvent>* discoveryEvents,
     const EncyclopediaSystem* encyclopedia,
-    bool itemUseEnabled)
+    bool itemUseEnabled,
+    bool itemDiscardEnabled)
 {
     if (!open_) {
         return;
     }
 
+    if (discardConfirm_.open) {
+        const UiRect confirmPanel = inventoryDiscardConfirmRect();
+        const UiConfirmDialogResult result = updateUiConfirmDialog(discardConfirm_, ui, input, confirmPanel);
+        if (result == UiConfirmDialogResult::Confirmed) {
+            discardScreenItem(discardConfirmSlotIndex_, false);
+            discardConfirmSlotIndex_ = -1;
+        } else if (result == UiConfirmDialogResult::Cancelled) {
+            discardConfirmSlotIndex_ = -1;
+        }
+        ui.block(inventoryScreenRect());
+        return;
+    }
+
     const bool commandOpenBeforeUpdate = slotCommandMenu_.open;
     const int commandSlotIndex = slotCommandMenuIndex_ >= 0 ? slotCommandMenuIndex_ : selectedShortcutIndex();
-    const std::array<UiCommandMenuItem, 3> commandItems = buildSlotCommandItems(commandSlotIndex, itemUseEnabled);
+    const SlotCommandList commandItems = buildSlotCommandItems(
+        commandSlotIndex,
+        itemUseEnabled,
+        itemDiscardEnabled);
     const int commandSelection = updateUiCommandMenu(
         slotCommandMenu_,
         ui,
         input,
-        commandItems.data(),
-        static_cast<int>(commandItems.size()));
-    if (commandSelection >= 0 && slotCommandMenuIndex_ >= 0) {
+        commandItems.items.data(),
+        static_cast<int>(commandItems.items.size()));
+    if (commandSelection >= 0 &&
+        commandSelection < static_cast<int>(commandItems.actions.size()) &&
+        slotCommandMenuIndex_ >= 0) {
         selectShortcutIndex(slotCommandMenuIndex_);
-        if (commandSelection == 0) {
+        const SlotCommandAction action = commandItems.actions[static_cast<std::size_t>(commandSelection)];
+        if (action == SlotCommandAction::Use) {
             if (grabbedSlotActive_) {
                 status_ = "つかみ中は使用できません";
             } else {
                 useShortcutSelection(player, spellRing, effectDispatcher, magic, discoveryEvents, encyclopedia);
             }
-        } else if (commandSelection == 1) {
+        } else if (action == SlotCommandAction::AddToRing) {
             if (grabbedSlotActive_) {
                 status_ = "つかみ中はリング移動できません";
             } else {
                 addShortcutSelectionToRing(spellRing);
             }
-        } else if (commandSelection == 2) {
+        } else if (action == SlotCommandAction::ToggleStaffEquipment) {
+            if (grabbedSlotActive_) {
+                status_ = "つかみ中は装備変更できません";
+            } else {
+                toggleStaffEquipmentScreenItem(slotCommandMenuIndex_, spellRing);
+            }
+        } else if (action == SlotCommandAction::ToggleProtection) {
             if (grabbedSlotActive_) {
                 status_ = "つかみ中は保護変更できません";
             } else {
                 toggleSelectedProtection();
+            }
+        } else if (action == SlotCommandAction::Discard) {
+            if (grabbedSlotActive_) {
+                status_ = "つかみ中は捨てられません";
+            } else if (!itemDiscardEnabled) {
+                openDiscardConfirmDialog(slotCommandMenuIndex_);
+            } else {
+                discardScreenItem(slotCommandMenuIndex_, itemDiscardEnabled);
             }
         }
         slotCommandMenuIndex_ = -1;
@@ -1853,7 +2317,7 @@ void InventorySystem::updateScreen(
             placeGrabbedAtSelected();
             ui.emitSound(UiSoundEvent::ItemMove);
         } else if (slotPointerPressCanOpenMenu_ && hoveredSlotIndex == slotPointerPressIndex_) {
-            openSlotCommandMenu(slotPointerPressIndex_);
+            openSlotCommandMenu(slotPointerPressIndex_, itemUseEnabled, itemDiscardEnabled);
         }
         resetSlotPointerPress();
     }
@@ -1869,7 +2333,7 @@ void InventorySystem::updateScreen(
             placeGrabbedAtSelected();
             ui.emitSound(UiSoundEvent::ItemMove);
         } else if (hasScreenItem(selectedShortcutIndex())) {
-            openSlotCommandMenu(selectedShortcutIndex());
+            openSlotCommandMenu(selectedShortcutIndex(), itemUseEnabled, itemDiscardEnabled);
         } else {
             ui.emitSound(UiSoundEvent::Cancel);
         }
@@ -1930,7 +2394,9 @@ void InventorySystem::render(
     const SpellRingSystem& spellRing,
     const ObjectCatalog& catalog,
     const EncyclopediaSystem& encyclopedia,
-    bool itemUseEnabled) const
+    bool itemUseEnabled,
+    bool itemDiscardEnabled,
+    float animationSeconds) const
 {
     (void)player;
     (void)spellRing;
@@ -1961,6 +2427,7 @@ void InventorySystem::render(
             entry.item = &objectInstance->item;
             entry.instance = &objectInstance->instance;
             entry.stackCount = 1;
+            entry.equipped = isStaffEquipped(objectInstance->instance.instanceId);
         }
         drawInventoryUiSlot(renderer, rect, entry, i == selectedShortcutIndex(), InventoryObjectImageMaxSize);
     }
@@ -1979,15 +2446,30 @@ void InventorySystem::render(
         detailEntry.item = &detailInstance->item;
         detailEntry.instance = &detailInstance->instance;
         detailEntry.stackCount = 1;
+        detailEntry.equipped = isStaffEquipped(detailInstance->instance.instanceId);
     }
 
     const UiRect detailPanel{{DetailX, DetailY}, {DetailW, DetailH}};
-    drawInventoryUiDetailPanel(renderer, detailPanel, detailEntry, catalog, encyclopedia);
+    drawInventoryUiDetailPanel(
+        renderer,
+        detailPanel,
+        detailEntry,
+        catalog,
+        encyclopedia,
+        InventoryUiDetailOptions{.animationSeconds = animationSeconds});
     drawUiButton(renderer, inventorySortButtonRect(), "並び替え", false, uiActionButtonStyle());
 
     const int commandSlotIndex = slotCommandMenuIndex_ >= 0 ? slotCommandMenuIndex_ : selectedShortcutIndex();
-    const std::array<UiCommandMenuItem, 3> commandItems = buildSlotCommandItems(commandSlotIndex, itemUseEnabled);
-    drawUiCommandMenu(renderer, slotCommandMenu_, commandItems.data(), static_cast<int>(commandItems.size()));
+    const SlotCommandList commandItems = buildSlotCommandItems(
+        commandSlotIndex,
+        itemUseEnabled,
+        itemDiscardEnabled);
+    drawUiCommandMenu(
+        renderer,
+        slotCommandMenu_,
+        commandItems.items.data(),
+        static_cast<int>(commandItems.items.size()));
+    drawDiscardConfirmDialog(renderer, catalog);
 
 }
 
@@ -2006,6 +2488,7 @@ void InventorySystem::renderShortcutHud(Renderer& renderer, const SpellRingSyste
             entry.item = &objectInstance->item;
             entry.instance = &objectInstance->instance;
             entry.stackCount = 1;
+            entry.equipped = isStaffEquipped(objectInstance->instance.instanceId);
         }
         return entry;
     };

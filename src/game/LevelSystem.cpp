@@ -62,8 +62,8 @@ LevelGainResult LevelSystem::addXp(Player& player, int amount, const RuntimeBala
         ++player.level;
         ++result.levelsGained;
         player.xpToNext = playerXpToNextForLevel(player.level, balance);
-        choosing_ = true;
     }
+    pendingChoiceCount_ += result.levelsGained;
     if (playerAtMaxLevel(player)) {
         player.level = PlayerMaxLevel;
         player.xp = 0;

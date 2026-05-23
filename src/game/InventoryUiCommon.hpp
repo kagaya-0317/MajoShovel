@@ -33,6 +33,7 @@ struct InventoryUiEntryView {
     const ItemInstance* instance = nullptr;
     std::optional<InventoryUiItemStats> stats;
     int stackCount = 0;
+    bool equipped = false;
 };
 
 struct InventoryUiSlotStyle {
@@ -56,6 +57,7 @@ struct InventoryUiDetailExtraLine {
 
 struct InventoryUiDetailOptions {
     bool showEnhanceCount = true;
+    float animationSeconds = 0.0f;
 };
 
 struct InlineItemTextStyle {

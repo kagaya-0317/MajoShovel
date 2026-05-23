@@ -45,6 +45,25 @@ ItemData makeMissingItemData(std::string_view objectId)
     return item;
 }
 
+bool isImportantItem(const ItemData& item)
+{
+    if (item.category == "\xE3\x82\xB9\xE3\x83\x88\xE3\x83\xBC\xE3\x83\xAA\xE3\x83\xBC") {
+        return true;
+    }
+    return std::any_of(item.tags.begin(), item.tags.end(), [](const std::string& tag) {
+        return tag == "story" ||
+            tag == "story_item" ||
+            tag == "key_item" ||
+            tag == "quest" ||
+            tag == "quest_item" ||
+            tag == "important" ||
+            tag == "unsellable" ||
+            tag == "no_sell" ||
+            tag == "no_discard" ||
+            tag == "undiscardable";
+    });
+}
+
 std::string_view materialTypeSaveName(MaterialType type)
 {
     switch (type) {

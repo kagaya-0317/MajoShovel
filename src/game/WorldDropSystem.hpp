@@ -10,6 +10,7 @@
 
 #include <string>
 #include <string_view>
+#include <optional>
 #include <vector>
 
 namespace majo {
@@ -53,6 +54,8 @@ struct WorldDropItem {
     float jumpArcHeight = 0.0f;
     float pickupDelaySeconds = 0.0f;
     float materialParticleTimer = 0.0f;
+    std::optional<ItemInstance> instance;
+    bool temporary = false;
 };
 
 struct WorldDropPickupEvent {
@@ -74,7 +77,15 @@ public:
         std::string_view objectId,
         Vec2 position,
         float spawnedAtSeconds = 0.0f,
-        WorldDropSpawnMotion motion = {});
+        WorldDropSpawnMotion motion = {},
+        bool temporary = false);
+    bool spawnObjectInstanceDrop(
+        const ObjectCatalog& catalog,
+        ItemInstance instance,
+        Vec2 position,
+        float spawnedAtSeconds = 0.0f,
+        WorldDropSpawnMotion motion = {},
+        bool temporary = false);
     bool spawnDigItemDrop(const ObjectCatalog& catalog, Vec2 position, float spawnedAtSeconds = 0.0f);
     bool spawnMoneyDrop(int amount, Vec2 position, float spawnedAtSeconds = 0.0f, WorldDropSpawnMotion motion = {});
     bool spawnMaterialDrop(MaterialType type, int count, Vec2 position, float spawnedAtSeconds = 0.0f, WorldDropSpawnMotion motion = {});
@@ -138,6 +149,7 @@ public:
 
     [[nodiscard]] std::size_t size() const { return drops_.size(); }
     [[nodiscard]] const std::vector<WorldDropItem>& drops() const { return drops_; }
+    void removeTemporaryDrops();
     void restoreDropsForSave(std::vector<WorldDropItem> drops);
 
 private:
@@ -146,7 +158,12 @@ private:
     bool canSpawnDrop(std::string_view label);
     bool pruneOneDropForLimit();
     Vec2 randomDropVelocity() const;
-    void spawnDrop(const ObjectDefinition& object, Vec2 position, float spawnedAtSeconds, WorldDropSpawnMotion motion = {});
+    void spawnDrop(
+        const ObjectDefinition& object,
+        Vec2 position,
+        float spawnedAtSeconds,
+        WorldDropSpawnMotion motion = {},
+        bool temporary = false);
 
     std::vector<WorldDropItem> drops_;
     int dropLimit_ = 300;

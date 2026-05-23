@@ -274,6 +274,13 @@ struct UiTabItem {
     bool enabled = true;
 };
 
+struct UiVerticalTabItem {
+    std::string_view label;
+    std::string_view value;
+    bool enabled = true;
+    Color valueText = ui::TextMuted;
+};
+
 struct UiTabsInput {
     int focusDelta = 0;
     int directFocusIndex = -1;
@@ -291,7 +298,21 @@ struct UiTabsStyle {
     Color selectedText{255, 250, 224, 255};
     Color selectedImageTint{255, 255, 255, 255};
     Color focusOutline{255, 228, 138, 210};
+    float visualGap = 8.0f;
+    float imageOutset = 18.0f;
+    float activeScale = 1.035f;
     bool wrapKeyboard = true;
+};
+
+struct UiVerticalTabsStyle {
+    UiTabsStyle tabs{};
+    float textPaddingX = 18.0f;
+    float valuePaddingX = 20.0f;
+    float valueGap = 10.0f;
+    float textOffsetY = 2.0f;
+    int labelScale = 3;
+    int valueScale = 2;
+    Color disabledText = ui::TextDisabled;
 };
 
 enum class UiWindowFrame {
@@ -500,5 +521,22 @@ void drawUiTabs(
     int itemCount,
     const UiRect* rects,
     const UiTabsStyle& style = {});
+int updateUiVerticalTabs(
+    UiTabsState& state,
+    UiContext& ui,
+    const UiTabsInput& input,
+    int selectedIndex,
+    const UiVerticalTabItem* items,
+    int itemCount,
+    const UiRect* rects,
+    const UiVerticalTabsStyle& style = {});
+void drawUiVerticalTabs(
+    Renderer& renderer,
+    const UiTabsState& state,
+    int selectedIndex,
+    const UiVerticalTabItem* items,
+    int itemCount,
+    const UiRect* rects,
+    const UiVerticalTabsStyle& style = {});
 
 }

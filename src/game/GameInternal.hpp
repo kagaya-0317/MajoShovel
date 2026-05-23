@@ -66,7 +66,6 @@ constexpr int BaseItemSourceCount = BaseRingSourceOffset + SpellRingCount;
 constexpr int BaseProcessingSourceCount = BaseItemSourceCount;
 constexpr float BaseItemSourceTabOuterGap = 24.0f;
 constexpr float BaseItemSourceTabInnerGap = 13.0f;
-constexpr int BaseRingWorkshopItemCount = 14;
 constexpr int BookshelfMenuItemCount = 3;
 constexpr int BookshelfVisibleRows = 5;
 constexpr int RingWorkshopImplementedUpgradeCount = 3;
@@ -1237,8 +1236,7 @@ UiRect merchantGridSlotRect(int index)
 UiRect baseProcessingGridSlotRect(int index)
 {
     UiRect rect = merchantGridSlotRect(index);
-    rect.pos.x += 2.0f;
-    rect.pos.y += 130.0f;
+    rect.pos.y += 60.0f;
     return rect;
 }
 
@@ -1313,24 +1311,12 @@ UiRect baseProcessingModeRect(int index)
 
 UiRect baseProcessingSourceRect(int index)
 {
-    return baseItemSourceTabRect(index, 238.0f);
+    return baseItemSourceTabRect(index, 160.0f);
 }
 
 UiRect baseProcessingItemRect(int index)
 {
     return {{390.0f, 270.0f + static_cast<float>(index) * 58.0f}, {500.0f, ui::ButtonHeight}};
-}
-
-UiRect baseRingWorkshopItemRect(int index)
-{
-    const int column = index / 5;
-    const int row = index % 5;
-    return {{390.0f + static_cast<float>(column) * 252.0f, 252.0f + static_cast<float>(row) * 58.0f}, {240.0f, ui::ButtonHeight}};
-}
-
-UiRect ringWorkshopConfirmRect()
-{
-    return {{688.0f, 552.0f}, {190.0f, ui::ButtonHeight}};
 }
 
 UiRect bookshelfItemRect(int index)
@@ -1635,7 +1621,18 @@ UiRect ringPanelRect()
 
 UiRect ringTabRect(int index)
 {
-    return {{116.0f + static_cast<float>(index) * 174.0f, 148.0f}, {152.0f, ui::ButtonHeight}};
+    constexpr float TabLeft = 116.0f;
+    constexpr float TabY = 148.0f;
+    constexpr float TabGap = 22.0f;
+    const UiRect panel = ringPanelRect();
+    const float detailLeft = panel.pos.x + panel.size.x - DetailOuterRightMargin - RingDetailW;
+    const float leftGap = TabLeft - panel.pos.x;
+    const float right = detailLeft - leftGap;
+    const int tabCount = std::max(1, UnlockedRingCount);
+    const float totalGap = TabGap * static_cast<float>(std::max(0, tabCount - 1));
+    const float tabWidth = std::max(1.0f, (right - TabLeft - totalGap) / static_cast<float>(tabCount));
+    const float pitch = tabWidth + TabGap;
+    return {{TabLeft + static_cast<float>(index) * pitch, TabY}, {tabWidth, ui::ButtonHeight}};
 }
 
 Vec2 ringOrbitCenter()
@@ -2698,6 +2695,39 @@ void logEffectTargetUsage(const ObjectCatalog& catalog)
     }
 }
 
+std::size_t countStaffCategoryObjects(const ObjectCatalog& catalog)
+{
+    return static_cast<std::size_t>(std::count_if(
+        catalog.objects.begin(),
+        catalog.objects.end(),
+        [](const ObjectDefinition& object) {
+            return isStaffObject(object);
+        }));
+}
+
+std::size_t countStaffNormalEffectSpecs(const ObjectCatalog& catalog)
+{
+    std::size_t count = 0;
+    for (const ObjectDefinition& object : catalog.objects) {
+        if (isStaffObject(object)) {
+            count += object.normalEffects.size();
+        }
+    }
+    return count;
+}
+
+std::size_t countStaffEquipTargetWarnings(const ObjectCatalog& catalog)
+{
+    return static_cast<std::size_t>(std::count_if(
+        catalog.validationIssues.begin(),
+        catalog.validationIssues.end(),
+        [](const DbValidationIssue& issue) {
+            return issue.severity == DbValidationSeverity::Warning &&
+                issue.category == DbValidationCategory::TargetMismatch &&
+                issue.message.find("equip target") != std::string::npos;
+        }));
+}
+
 void logDungeonGenerationAudit()
 {
     static bool logged = false;
@@ -2809,6 +2839,9 @@ void logDbValidationReport(const ObjectCatalog& catalog)
     logError("Object IDs: " + std::to_string(catalog.objectsById.size()));
     logError("Effect codes: " + std::to_string(catalog.effectCodes.size()));
     logError("Special tags: " + std::to_string(catalog.specialTags.size()));
+    logError("Staff category objects: " + std::to_string(countStaffCategoryObjects(catalog)));
+    logError("Staff normal effect specs: " + std::to_string(countStaffNormalEffectSpecs(catalog)));
+    logError("Staff equip target validation warnings: " + std::to_string(countStaffEquipTargetWarnings(catalog)));
     logError("Errors: " + std::to_string(countSeverity(catalog, DbValidationSeverity::Error)));
     logError("Warnings: " + std::to_string(countSeverity(catalog, DbValidationSeverity::Warning)));
     logEffectTargetUsage(catalog);

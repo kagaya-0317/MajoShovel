@@ -26,11 +26,15 @@ DebugConsoleLayout makeDefaultDebugConsoleLayout()
                     "ゲームデータ",
                     {
                         {DebugControlKind::Button, "money_10000", "所持金 +10000", "game money add 10000"},
+                        {DebugControlKind::Button, "money_reset", "所持金リセット", "game money reset"},
                         {DebugControlKind::Button, "materials_100", "強化素材 +100", "game materials add 100"},
+                        {DebugControlKind::Button, "materials_reset", "強化素材リセット", "game materials reset"},
                         {DebugControlKind::Button, "ring_workshop_unlock", "リング工房解禁", "game ring-workshop unlock"},
                         {DebugControlKind::Button, "random_items_8", "ランダムアイテム +8", "game items random8"},
                         {DebugControlKind::Button, "item_picker", "任意アイテム追加", "game items picker"},
+                        {DebugControlKind::Button, "items_reset", "所持アイテムリセット", "game items reset"},
                         {DebugControlKind::Button, "codex_reset", "図鑑リセット", "game codex reset"},
+                        {DebugControlKind::Button, "codex_complete", "図鑑完成", "game codex complete"},
                     },
                 },
                 DebugGroupDefinition{

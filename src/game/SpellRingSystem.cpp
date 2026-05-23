@@ -33,6 +33,29 @@ constexpr std::array<float, SpellRingCount> RingBaseSpeedMultipliers{{
     0.8f,
 }};
 
+double finiteEquipmentMultiplier(double value)
+{
+    if (!std::isfinite(value)) {
+        return 1.0;
+    }
+    return value;
+}
+
+double nonNegativeEquipmentMultiplier(double value)
+{
+    return std::max(0.0, finiteEquipmentMultiplier(value));
+}
+
+float scaledNonNegative(float base, double multiplier)
+{
+    return std::max(0.0f, base * static_cast<float>(nonNegativeEquipmentMultiplier(multiplier)));
+}
+
+float scaledAtLeast(float base, double multiplier, float minimum)
+{
+    return std::max(minimum, base * static_cast<float>(nonNegativeEquipmentMultiplier(multiplier)));
+}
+
 SpellRingItem makeSpellRingItem(SpellRingItemType type)
 {
     switch (type) {
@@ -442,6 +465,7 @@ void SpellRingSystem::initialize(const RuntimeBalance& balance)
     shapeRotations_.fill(0.0f);
     center_ = {};
     orbitModifiers_ = OrbitModifiers{};
+    equipmentModifiers_ = EquipmentModifiers{};
     state_ = SpellRingState::Normal;
     capturedHealTimer_ = CapturedPeriodicHealInterval;
     enemyOrbitSpeedDebuffMultiplier_ = 1.0f;
@@ -623,9 +647,19 @@ void SpellRingSystem::update(Player& player, const Input& input, float dt, float
 
     const Vec2 normalCenter = getRingCenterWorldPosition(player.position, player.facing, player.spellRingShift);
     const Vec2 previousCenter = center_;
+    const RingEquipmentModifiers& activeEquipment = equipmentModifiersForRing(activeRingIndex_);
+    const float throwCooldown = scaledAtLeast(
+        balance.spellRingThrowCooldown,
+        activeEquipment.ringThrowCooldownMul,
+        0.02f);
+    const float throwSpeed = scaledNonNegative(balance.spellRingThrowSpeed, activeEquipment.ringThrowSpeedMul);
+    const float throwDistance = scaledNonNegative(balance.spellRingThrowDistance, activeEquipment.ringThrowDistanceMul);
+    const float returnSpeed = scaledNonNegative(balance.spellRingReturnSpeed, activeEquipment.ringReturnSpeedMul);
 
     if (state_ == SpellRingState::Normal) {
-        const double anchorStrength = std::max(0.0, orbitModifiers_.anchorStrength);
+        const double anchorStrength = std::max(
+            0.0,
+            orbitModifiers_.anchorStrength * finiteEquipmentMultiplier(activeEquipment.ringAnchorMul));
         if (input.ringOffsetHeld() && anchorStrength > 0.0 && safeDt > 0.0f) {
             const float clampedAnchor = clamp(static_cast<float>(anchorStrength), 0.0f, 5.0f);
             const float followRate = 14.0f / (1.0f + clampedAnchor * 2.5f);
@@ -645,12 +679,12 @@ void SpellRingSystem::update(Player& player, const Input& input, float dt, float
             throwDirection_ = player.facing;
             throwStart_ = center_;
             throwTime_ = 0.0f;
-            player.throwCooldownRemaining = balance.spellRingThrowCooldown;
+            player.throwCooldownRemaining = throwCooldown;
         }
     } else if (state_ == SpellRingState::Thrown) {
         throwTime_ += safeDt;
-        center_ += throwDirection_ * balance.spellRingThrowSpeed * safeDt;
-        if (distanceSquared(center_, throwStart_) >= balance.spellRingThrowDistance * balance.spellRingThrowDistance ||
+        center_ += throwDirection_ * throwSpeed * safeDt;
+        if (distanceSquared(center_, throwStart_) >= throwDistance * throwDistance ||
             throwTime_ >= balance.spellRingThrowMaxTime) {
             state_ = SpellRingState::Returning;
         }
@@ -661,7 +695,7 @@ void SpellRingSystem::update(Player& player, const Input& input, float dt, float
             center_ = normalCenter;
             state_ = SpellRingState::Normal;
         } else {
-            center_ += normalize(toPlayer) * balance.spellRingReturnSpeed * safeDt;
+            center_ += normalize(toPlayer) * returnSpeed * safeDt;
         }
     }
 
@@ -708,6 +742,11 @@ void SpellRingSystem::clearOrbitModifiers()
 void SpellRingSystem::setOrbitModifiers(OrbitModifiers modifiers)
 {
     orbitModifiers_ = std::move(modifiers);
+}
+
+void SpellRingSystem::setEquipmentModifiers(EquipmentModifiers modifiers)
+{
+    equipmentModifiers_ = std::move(modifiers);
 }
 
 void SpellRingSystem::applyOrbitModifierEffect(std::string_view effect, double value, std::string_view source)
@@ -1326,7 +1365,11 @@ float SpellRingSystem::quantizeLocalAngle(float angle, const RuntimeBalance& bal
 
 float SpellRingSystem::cooldownRatio(const Player& player, const RuntimeBalance& balance) const
 {
-    return clamp(player.throwCooldownRemaining / balance.spellRingThrowCooldown, 0.0f, 1.0f);
+    const float cooldown = scaledAtLeast(
+        balance.spellRingThrowCooldown,
+        equipmentModifiersForRing(activeRingIndex_).ringThrowCooldownMul,
+        0.02f);
+    return clamp(player.throwCooldownRemaining / cooldown, 0.0f, 1.0f);
 }
 
 float SpellRingSystem::effectiveAngularSpeed() const
@@ -1341,6 +1384,26 @@ float SpellRingSystem::effectiveAngularSpeedForRing(int ringIndex) const
         static_cast<double>(weightSpeedMultiplierForRing(ringIndex)) *
         orbitModifiers_.speedMultiplier *
         static_cast<double>(enemyOrbitSpeedDebuffMultiplier_));
+}
+
+const RingEquipmentModifiers& SpellRingSystem::equipmentModifiersForRing(int ringIndex) const
+{
+    return ringEquipmentModifiersForRing(equipmentModifiers_, ringIndex);
+}
+
+double SpellRingSystem::ringOutputMultiplierForRing(int ringIndex) const
+{
+    return nonNegativeEquipmentMultiplier(equipmentModifiersForRing(ringIndex).ringOutputMul);
+}
+
+double SpellRingSystem::ringDamageSpeedMultiplierForRing(int ringIndex) const
+{
+    return nonNegativeEquipmentMultiplier(equipmentModifiersForRing(ringIndex).ringDamageSpeedMul);
+}
+
+double SpellRingSystem::digPowerMultiplierForRing(int ringIndex) const
+{
+    return nonNegativeEquipmentMultiplier(equipmentModifiersForRing(ringIndex).digPowerMul);
 }
 
 float SpellRingSystem::radiusForRing(int ringIndex) const
@@ -1456,8 +1519,13 @@ float SpellRingSystem::weightSpeedMultiplierForRing(int ringIndex) const
     }
 
     const std::size_t index = static_cast<std::size_t>(ringIndex);
-    const float excessWeight = std::max(0.0f, totalEquippedWeightForRing(ringIndex) - baseEquippedWeights_[index]);
-    return 1.0f / (1.0f + excessWeight * 0.035f);
+    const RingEquipmentModifiers& equipment = equipmentModifiersForRing(ringIndex);
+    const float staffWeightAllowance = static_cast<float>(std::max(0.0, equipment.ringWeightLimitAdd));
+    const float excessWeight = std::max(
+        0.0f,
+        totalEquippedWeightForRing(ringIndex) - baseEquippedWeights_[index] - staffWeightAllowance);
+    const float penaltyRate = 0.035f * static_cast<float>(nonNegativeEquipmentMultiplier(equipment.metalWeightPenaltyMul));
+    return 1.0f / (1.0f + excessWeight * penaltyRate);
 }
 
 bool SpellRingSystem::canPlaceItemAtAngle(const SpellRingItem&, float angle, int ignoreIndex, const RingOrbitTuning& tuning) const

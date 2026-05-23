@@ -136,16 +136,23 @@ bool isHeavyProjectile(const Projectile& projectile)
 bool orbitEffectContains(const ObjectDefinition& object, std::string_view effectCode);
 double orbitEffectValue(const ObjectDefinition& object, std::string_view effectCode, double fallbackValue);
 
-float projectileGuardRadius(const SpellRingItem& item, double value, float baseBonus)
+float projectileGuardRadius(const SpellRingItem& item, double value, float baseBonus, double areaMultiplier)
 {
     const float normalizedValue = static_cast<float>(std::max(0.0, value));
     const float valueBonus = std::max(0.0f, normalizedValue - 1.0f) * 10.0f;
-    return item.hitRadius + baseBonus + valueBonus;
+    return (item.hitRadius + baseBonus + valueBonus) *
+        static_cast<float>(std::max(0.0, areaMultiplier));
 }
 
 bool projectileOverlapsItemGuard(const SpellRingItem& item, const Projectile& projectile, float guardRadius)
 {
     return circlesOverlap(projectile.position, projectile.radius, item.worldPosition, guardRadius);
+}
+
+float equipmentScaledGuardRadius(const SpellRingSystem& spellRing, const SpellRingItem& item, float radius)
+{
+    const double guardAreaMultiplier = spellRing.equipmentModifiersForRing(item.ringIndex).guardAreaMul;
+    return radius * static_cast<float>(std::max(0.0, guardAreaMultiplier));
 }
 
 struct GuardBlockResult {
@@ -164,18 +171,30 @@ GuardBlockResult blocksProjectile(
     }
 
     if (item.hasCapturedBehavior("magic_guard") && projectile.damageType == "magic" &&
-        circlesOverlap(projectile.position, projectile.radius, item.worldPosition, item.hitRadius + 12.0f)) {
+        circlesOverlap(
+            projectile.position,
+            projectile.radius,
+            item.worldPosition,
+            equipmentScaledGuardRadius(spellRing, item, item.hitRadius + 12.0f))) {
         return {true, "guard_projectile"};
     }
 
     if (item.hasCapturedBehavior("heavy_guard") &&
         (isPhysicalDamageType(projectile.damageType) || isHeavyProjectile(projectile)) &&
-        circlesOverlap(projectile.position, projectile.radius, item.worldPosition, item.hitRadius + 10.0f)) {
+        circlesOverlap(
+            projectile.position,
+            projectile.radius,
+            item.worldPosition,
+            equipmentScaledGuardRadius(spellRing, item, item.hitRadius + 10.0f))) {
         return {true, isHeavyProjectile(projectile) ? "guard_large" : "guard_projectile"};
     }
 
     if (item.hasCapturedBehavior("outward_guard") &&
-        circlesOverlap(projectile.position, projectile.radius, item.worldPosition, item.hitRadius + 8.0f)) {
+        circlesOverlap(
+            projectile.position,
+            projectile.radius,
+            item.worldPosition,
+            equipmentScaledGuardRadius(spellRing, item, item.hitRadius + 8.0f))) {
         const Vec2 outward = normalize(item.worldPosition - spellRing.center());
         const Vec2 incomingFrom = normalize(projectile.velocity * -1.0f);
         if (dot(outward, incomingFrom) > 0.25f) {
@@ -189,13 +208,21 @@ GuardBlockResult blocksProjectile(
 
     const bool heavy = isHeavyProjectile(projectile);
     if (heavy && orbitEffectContains(*object, "guard_large")) {
-        const float guardRadius = projectileGuardRadius(item, orbitEffectValue(*object, "guard_large", 1.0), 8.0f);
+        const float guardRadius = projectileGuardRadius(
+            item,
+            orbitEffectValue(*object, "guard_large", 1.0),
+            8.0f,
+            spellRing.equipmentModifiersForRing(item.ringIndex).guardAreaMul);
         if (projectileOverlapsItemGuard(item, projectile, guardRadius)) {
             return {true, "guard_large"};
         }
     }
     if (!heavy && orbitEffectContains(*object, "guard")) {
-        const float guardRadius = projectileGuardRadius(item, orbitEffectValue(*object, "guard", 1.0), 4.0f);
+        const float guardRadius = projectileGuardRadius(
+            item,
+            orbitEffectValue(*object, "guard", 1.0),
+            4.0f,
+            spellRing.equipmentModifiersForRing(item.ringIndex).guardAreaMul);
         if (projectileOverlapsItemGuard(item, projectile, guardRadius)) {
             return {true, "guard_projectile"};
         }
@@ -350,6 +377,7 @@ struct ReflectAttemptResult {
 ReflectAttemptResult tryReflectProjectile(
     const Projectile& projectile,
     const ObjectDefinition& object,
+    double reflectChanceAdd,
     const EncyclopediaSystem* encyclopedia,
     const std::vector<EffectDiscoveryEvent>* discoveryEvents)
 {
@@ -388,7 +416,7 @@ ReflectAttemptResult tryReflectProjectile(
             !isEffectDiscovered(encyclopedia, discoveryEvents, object.id, rule.chanceKey);
         bool passed = firstGuarantee;
         if (!firstGuarantee) {
-            passed = rollChancePercent(orbitEffectValue(object, rule.chanceKey, 0.0));
+            passed = rollChancePercent(orbitEffectValue(object, rule.chanceKey, 0.0) + reflectChanceAdd);
         }
         if (passed) {
             result.discoveredEffectKey = std::string(rule.chanceKey);
@@ -566,6 +594,7 @@ void ProjectileSystem::update(
                         const ReflectAttemptResult reflect = tryReflectProjectile(
                             projectile,
                             *blockingObject,
+                            spellRing.equipmentModifiersForRing(item.ringIndex).reflectChanceAdd,
                             encyclopedia,
                             discoveryEvents);
                         if (!reflect.discoveredEffectKey.empty()) {
@@ -586,6 +615,7 @@ void ProjectileSystem::update(
                     const ReflectAttemptResult reflect = tryReflectProjectile(
                         projectile,
                         *itemObject,
+                        spellRing.equipmentModifiersForRing(item.ringIndex).reflectChanceAdd,
                         encyclopedia,
                         discoveryEvents);
                     if (!reflect.discoveredEffectKey.empty()) {
@@ -609,6 +639,13 @@ void ProjectileSystem::update(
                 if (reflectedByRing && blockingItem != nullptr) {
                     soundEvents_.push_back(ProjectileSoundEvent::Reflect);
                     projectile.ownerType = ProjectileOwnerType::PlayerOrbit;
+                    projectile.damage = std::max(
+                        0,
+                        static_cast<int>(std::ceil(
+                            static_cast<double>(projectile.damage) *
+                            std::max(
+                                0.0,
+                                spellRing.equipmentModifiersForRing(blockingItem->ringIndex).reflectPowerMul))));
                     const Vec2 fromRing = projectile.position - blockingItem->worldPosition;
                     const Vec2 reflectDirection = lengthSquared(fromRing) > 0.0001f
                         ? normalize(fromRing)

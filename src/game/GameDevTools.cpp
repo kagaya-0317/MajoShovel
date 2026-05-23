@@ -2612,6 +2612,10 @@ void Game::enterBaseEditMode()
     closeUiCommandMenu(baseProcessingCommandMenu_);
     baseProcessingCommandSlot_ = -1;
     baseRingWorkshopActive_ = false;
+    baseRingWorkshopMode_ = RingWorkshopMode::ChooseAction;
+    baseRingWorkshopSelection_ = 0;
+    baseRingWorkshopRingIndex_ = 0;
+    baseRingWorkshopRingTabs_ = {};
     baseBookshelfActive_ = false;
 
     baseEditEnabled_ = true;
@@ -3975,6 +3979,53 @@ bool Game::executeDebugCommand(std::string_view command)
         return true;
     }
 
+    if (normalized == "game codex complete" || normalized == "game encyclopedia complete") {
+        encyclopedia_ = EncyclopediaSystem{};
+
+        int objectCount = 0;
+        for (const ItemData& object : objectCatalog_.registry.items()) {
+            if (object.id.empty()) {
+                continue;
+            }
+            const bool treasure = object.category == "宝";
+            encyclopedia_.loadEntry(
+                treasure ? EncyclopediaKind::Treasure : EncyclopediaKind::Item,
+                object.id,
+                EncyclopediaStage::Complete);
+            ++objectCount;
+
+            for (const DiscoveryEffectLine& line : object.discoveryEffectLines) {
+                if (!line.effectKey.empty()) {
+                    encyclopedia_.loadEffect(object.id, line.effectKey);
+                }
+            }
+        }
+
+        int enemyCount = 0;
+        for (const EnemyDefinition& enemy : enemyCatalog_.enemies) {
+            if (enemy.id.empty()) {
+                continue;
+            }
+            encyclopedia_.loadEntry(EncyclopediaKind::Enemy, enemy.id, EncyclopediaStage::Complete);
+            ++enemyCount;
+        }
+
+        captureEncyclopediaSyncSuppressState();
+        reloadNotice_ = "図鑑を完成";
+        reloadNoticeTimer_ = 1.8f;
+        baseStatus_ = "図鑑を完成状態にしました";
+
+        std::string saveMessage;
+        if (saveSaveData(saveMessage)) {
+            logInfo("Debug: codex completed and saved. objects=" + std::to_string(objectCount) +
+                " enemies=" + std::to_string(enemyCount) +
+                " effects=" + std::to_string(encyclopedia_.saveEffects().size()) + ".");
+        } else {
+            logWarning("Debug: codex completed in memory, but save failed: " + saveMessage);
+        }
+        return true;
+    }
+
     if (normalized == "game stage-unlock initial" ||
         normalized == "game stage-unlock reset" ||
         normalized == "game stage-unlock stage1" ||
@@ -4233,11 +4284,27 @@ bool Game::executeDebugCommand(std::string_view command)
         return true;
     }
 
+    if (normalized == "game money reset") {
+        money_ = 0;
+        baseStatus_ = "所持金をリセットしました";
+        logInfo("Debug: money reset to 0G.");
+        return true;
+    }
+
     if (normalized == "game materials add 100") {
         for (int index = 0; index < static_cast<int>(MaterialType::Count); ++index) {
             inventory_.addMaterial(static_cast<MaterialType>(index), 100);
         }
         logInfo("Debug: all upgrade materials +100.");
+        return true;
+    }
+
+    if (normalized == "game materials reset") {
+        for (int index = 0; index < static_cast<int>(MaterialType::Count); ++index) {
+            inventory_.setMaterialCount(static_cast<MaterialType>(index), 0);
+        }
+        baseStatus_ = "強化素材をリセットしました";
+        logInfo("Debug: all upgrade materials reset.");
         return true;
     }
 
@@ -4282,6 +4349,32 @@ bool Game::executeDebugCommand(std::string_view command)
         return true;
     }
 
+    if (normalized == "game items reset" || normalized == "game inventory reset") {
+        inventory_.clearObjectStacks();
+        inventory_.setOpen(false);
+        inventory_.cancelGrab();
+        closeUiCommandMenu(ringCommandMenu_);
+        ringCommandItemIndex_ = -1;
+        ringCommandPlaceActive_ = false;
+        ringPlaceModeActive_ = false;
+        ringGrabActive_ = false;
+        ringGrabOrigin_ = -1;
+        ringGrabbedItem_ = {};
+        firstItemAcquisitionNotices_.clear();
+
+        initializeDefaultSpellRing();
+        refreshEquipmentModifiers();
+        applyPermanentUpgrades();
+        spellRing_.applyObjectParameters(objectCatalog_);
+        spellRing_.resetBaseWeightToCurrent();
+        refreshOrbitEffects();
+        captureRunStartInventoryState();
+
+        baseStatus_ = "所持アイテムをリセットしました";
+        logInfo("Debug: carried inventory reset to default ring items.");
+        return true;
+    }
+
     if (normalized == "game hp full") {
         applyPermanentUpgrades();
         player_.hp = player_.maxHp;
@@ -4305,24 +4398,20 @@ bool Game::executeDebugCommand(std::string_view command)
     }
 
     if (normalized == "game level-up" || normalized == "game levelup") {
-        if (basePresentationActive()) {
-            if (levels_.isChoosing()) {
-                levels_ = LevelSystem{};
-            }
-            levelUpResultDialog_ = {};
-            logWarning("Debug: level-up requires an active dungeon run.");
-            return true;
-        }
         if (levels_.isChoosing() || levelUpResultDialog_.open) {
             logWarning("Debug: level-up choice is already active.");
             return true;
         }
+        const bool baseContext =
+            mode_ == ScreenMode::Base ||
+            (pauseReturnMode_ == ScreenMode::Base &&
+                (mode_ == ScreenMode::PauseMenu || mode_ == ScreenMode::Inventory || mode_ == ScreenMode::Ring));
         const bool dungeonRunMode =
             mode_ == ScreenMode::Playing ||
             (pauseReturnMode_ == ScreenMode::Playing &&
                 (mode_ == ScreenMode::PauseMenu || mode_ == ScreenMode::Inventory || mode_ == ScreenMode::Ring));
-        if (!dungeonRunMode) {
-            logWarning("Debug: level-up requires an active dungeon run.");
+        if (!baseContext && !dungeonRunMode) {
+            logWarning("Debug: level-up requires base or an active dungeon run.");
             return true;
         }
 
@@ -4344,7 +4433,7 @@ bool Game::executeDebugCommand(std::string_view command)
         inventory_.setOpen(false);
         inventoryReturnToPause_ = false;
         levelUpResultDialog_ = {};
-        mode_ = ScreenMode::LevelUp;
+        openLevelUpChoice(baseContext ? ScreenMode::Base : ScreenMode::Playing);
         logInfo("Debug: forced level up to Lv " + std::to_string(player_.level) + ".");
         return true;
     }

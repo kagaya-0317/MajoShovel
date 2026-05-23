@@ -492,6 +492,11 @@ private:
         InitialSpeed,
         ShiftDistance,
     };
+    enum class RingWorkshopMode {
+        ChooseAction,
+        Respec,
+        Upgrade,
+    };
     enum class BookshelfPage {
         Menu,
         Items,
@@ -599,6 +604,9 @@ private:
     void applyScreenTransitionTarget(ScreenTransitionTarget target);
     void applyPermanentUpgrades();
     LevelGainResult gainPlayerXp(int amount);
+    void openLevelUpChoice(ScreenMode returnMode);
+    void updateLevelUpScreen(const Input& input, UiContext& ui, float dt);
+    void refreshEquipmentModifiers();
     float effectiveInitialRingRadiusForRing(int ringIndex, int levelRadiusPoints) const;
     float effectiveInitialRingSpeedForRing(int ringIndex, int levelSpeedPoints) const;
     float effectiveInitialRingWeightLimitForRing(int ringIndex, int levelWeightLimitPoints) const;
@@ -870,6 +878,7 @@ private:
         bool launchFromCenter = false,
         LootSourceKind sourceKind = LootSourceKind::Chest);
     Vec2 safeLootLandingPosition(Vec2 center, std::mt19937& rng);
+    void spawnInventoryDiscardRequests(std::vector<InventoryDiscardRequest> requests);
     void updateDigToolFailsafe(float dt);
     bool hasUsableDigToolOnRing() const;
     bool hasUsableDigToolInInventory() const;
@@ -1013,6 +1022,7 @@ private:
     void renderBaseBackdrop(Renderer& renderer) const;
     void renderBaseScreen(Renderer& renderer) const;
     void renderBookshelfScreen(Renderer& renderer) const;
+    void renderLevelUpOverlay(Renderer& renderer);
     void renderPauseMenu(Renderer& renderer) const;
     void renderRingScreen(Renderer& renderer, float totalTime) const;
     void renderRingStatusHud(Renderer& renderer) const;
@@ -1049,6 +1059,7 @@ private:
     DungeonLayout dungeonLayout_;
     TileMap tileMap_;
     SpellRingSystem spellRing_;
+    EquipmentModifiers equipmentModifiers_;
     DiggingSystem digging_;
     EffectDispatcher effectDispatcher_;
     EffectSystem effects_;
@@ -1066,8 +1077,11 @@ private:
     LevelSystem levels_;
     UpgradeSystem upgrades_;
     UiResultDialogState levelUpResultDialog_{};
+    ScreenMode levelUpReturnMode_ = ScreenMode::Playing;
     DialoguePlayer dialogue_;
     DebugOverlay debug_;
+    std::string observedEquippedStaffInstanceId_;
+    std::string equipmentModifierLogKey_;
     OpeningMetaSave openingMetaSave_;
     OpeningMetaData openingMeta_;
     std::vector<KamishibaiPage> openingPages_;
@@ -1127,6 +1141,7 @@ private:
     int baseMerchantBuyCommandIndex_ = -1;
     bool baseUpgradeActive_ = false;
     int baseUpgradeSelection_ = 0;
+    UiTabsState baseUpgradeTabs_{};
     UiResultDialogState baseResultDialog_{};
     UiConfirmDialogState baseRegenerateConfirm_{};
     bool baseProcessingActive_ = false;
@@ -1141,7 +1156,10 @@ private:
     ProcessingTarget baseProcessingConfirmTarget_{};
     ProcessingMode baseProcessingConfirmMode_ = ProcessingMode::Repair;
     bool baseRingWorkshopActive_ = false;
+    RingWorkshopMode baseRingWorkshopMode_ = RingWorkshopMode::ChooseAction;
     int baseRingWorkshopSelection_ = 0;
+    int baseRingWorkshopRingIndex_ = 0;
+    UiTabsState baseRingWorkshopRingTabs_{};
     std::optional<RingLevelUpgradeSelection> ringWorkshopRespecSource_;
     RingLevelUpgradePointTable ringWorkshopDraftUpgradePoints_{};
     bool baseBookshelfActive_ = false;
@@ -1232,6 +1250,7 @@ private:
     Vec2 ringEmptyPressMouse_{};
     float ringEmptyPressAngle_ = 0.0f;
     int ringSlotSelection_ = 0;
+    bool ringDetailShowsRing_ = true;
     bool ringGrabActive_ = false;
     int ringGrabOrigin_ = -1;
     SpellRingItem ringGrabbedItem_{};

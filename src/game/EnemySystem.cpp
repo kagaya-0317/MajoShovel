@@ -3779,8 +3779,13 @@ void EnemySystem::update(
             if (item.magicAuraTimer > 0.0f && !item.magicAuraDamageType.empty()) {
                 contactDamageType = item.magicAuraDamageType;
             }
+            const double ringOutputMultiplier = spellRing.ringOutputMultiplierForRing(item.ringIndex);
             const int speedBonus = static_cast<int>(
-                item.orbitMotionSpeed * 0.25f * static_cast<float>(spellRing.speedDamageMultiplier()));
+                item.orbitMotionSpeed *
+                0.25f *
+                static_cast<float>(
+                    spellRing.speedDamageMultiplier() *
+                    spellRing.ringDamageSpeedMultiplierForRing(item.ringIndex)));
             const int modifiedDamage = static_cast<int>(
                 player.status.applyModifiers(
                     ModifierStat::Attack,
@@ -3788,7 +3793,8 @@ void EnemySystem::update(
                         damageTypeMultiplier(contactDamageType) *
                         item.slashDamageMultiplier *
                         spellRing.effectivePowerMultiplier()));
-            const int rawDamage = modifiedDamage + speedBonus;
+            const int rawDamage = static_cast<int>(
+                std::ceil(static_cast<double>(modifiedDamage + speedBonus) * ringOutputMultiplier));
             int adjustedDamage = rawDamage;
             const CriticalDamageSpec criticalSpec = collectCriticalDamageSpec(item, hitObject, spellRing, objectCatalog);
             bool criticalHit = false;

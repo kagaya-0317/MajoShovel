@@ -193,7 +193,14 @@ private:
     void unloadSpriteSheet(SpriteSheet& sheet);
     bool loadImageTexture(std::string_view path, std::string_view label, ImageTexture& target);
     void unloadImageTexture(ImageTexture& texture);
-    bool loadGuidedTexture(std::string_view path, int columns, int rows, bool transparentOnly, std::string_view label, GuidedTexture& target);
+    bool loadGuidedTexture(
+        std::string_view path,
+        int columns,
+        int rows,
+        bool transparentOnly,
+        std::string_view label,
+        GuidedTexture& target,
+        bool useEqualRows = false);
     void unloadGuidedTexture(GuidedTexture& texture);
     CachedImageEntry* findImageEntry(ImageHandle handle);
     const CachedImageEntry* findImageEntry(ImageHandle handle) const;

@@ -1,16 +1,21 @@
 ﻿#include "game/InventoryUiCommon.hpp"
 
+#include "engine/Log.hpp"
 #include "game/EncyclopediaSystem.hpp"
 #include "game/ItemImageRenderer.hpp"
 #include "game/ObjectImageRenderer.hpp"
 #include "game/ObjectVisualPose.hpp"
+#include "game/OrbitModifiers.hpp"
 #include "game/WorldIconRenderer.hpp"
 
 #include <algorithm>
+#include <cctype>
 #include <cmath>
+#include <cstddef>
 #include <cstdio>
 #include <string>
 #include <string_view>
+#include <unordered_set>
 
 namespace majo {
 
@@ -24,6 +29,7 @@ enum class InlineIconKind {
 constexpr std::string_view BrokenItemNamePrefix = "壊れた";
 constexpr Color BrokenItemImageTint{140, 140, 148, 220};
 constexpr Color BrokenItemFallbackColor{82, 82, 90, 255};
+constexpr float TwoPi = 6.283185307f;
 
 struct InlineIconTag {
     InlineIconKind kind = InlineIconKind::Item;
@@ -33,6 +39,223 @@ struct InlineIconTag {
 bool objectCategoryEquals(const ItemData& item, std::string_view category)
 {
     return item.category == category;
+}
+
+void trimInPlace(std::string& text)
+{
+    const auto isSpace = [](unsigned char ch) {
+        return std::isspace(ch) != 0;
+    };
+    while (!text.empty() && isSpace(static_cast<unsigned char>(text.front()))) {
+        text.erase(text.begin());
+    }
+    while (!text.empty() && isSpace(static_cast<unsigned char>(text.back()))) {
+        text.pop_back();
+    }
+}
+
+std::vector<std::string> splitInventoryEffectTextLines(std::string_view text)
+{
+    std::vector<std::string> lines;
+    std::string current;
+    const auto flush = [&]() {
+        trimInPlace(current);
+        if (!current.empty()) {
+            lines.push_back(std::move(current));
+        }
+        current.clear();
+    };
+
+    for (std::size_t i = 0; i < text.size(); ++i) {
+        const unsigned char ch = static_cast<unsigned char>(text[i]);
+        if (ch == '\n' || ch == '\r') {
+            flush();
+            continue;
+        }
+        if (i + 2 < text.size() &&
+            ch == 0xEF &&
+            static_cast<unsigned char>(text[i + 1]) == 0xBD &&
+            static_cast<unsigned char>(text[i + 2]) == 0x9C) {
+            flush();
+            i += 2;
+            continue;
+        }
+        current.push_back(text[i]);
+    }
+    flush();
+    return lines;
+}
+
+bool noInventoryEffectText(std::string_view text)
+{
+    std::string normalized(text);
+    trimInPlace(normalized);
+    return normalized == "none" || normalized == "なし";
+}
+
+std::string signedPercentText(double multiplier)
+{
+    const int percent = static_cast<int>(std::round((multiplier - 1.0) * 100.0));
+    char buffer[32];
+    std::snprintf(buffer, sizeof(buffer), "%+d%%", percent);
+    return buffer;
+}
+
+std::string signedAddText(double value, std::string_view unit)
+{
+    char buffer[48];
+    std::snprintf(buffer, sizeof(buffer), "%+.1f%s", value, std::string(unit).c_str());
+    return buffer;
+}
+
+std::string equipmentTargetDisplayPrefix(std::string_view target)
+{
+    if (target == "equip_ring1") {
+        return "リング1: ";
+    }
+    if (target == "equip_ring2") {
+        return "リング2: ";
+    }
+    if (target == "equip_ring3") {
+        return "リング3: ";
+    }
+    return {};
+}
+
+void logUnsupportedStaffEquipmentEffectOnce(std::string_view objectId, std::string_view effect)
+{
+    static std::unordered_set<std::string> logged;
+    std::string key(objectId);
+    key += ':';
+    key += effect;
+    if (logged.insert(key).second) {
+        logError("[warning] Staff equipment UI: unsupported equipment effect \"" +
+            std::string(effect) + "\" on object \"" + std::string(objectId) + "\"");
+    }
+}
+
+std::string staffEquipmentEffectLine(
+    const ItemData& item,
+    const ObjectCatalog& catalog,
+    std::string_view target,
+    std::string_view effect,
+    double value)
+{
+    const double multiplier = value == 0.0 ? 1.0 : value;
+    std::string line = equipmentTargetDisplayPrefix(target);
+    if (effect == "ring_speed_mul") {
+        line += "速度";
+        line += signedPercentText(multiplier);
+    } else if (effect == "ring_radius_mul") {
+        line += "半径";
+        line += signedPercentText(multiplier);
+    } else if (effect == "ring_weight_limit_add") {
+        line += "重量上限";
+        line += signedAddText(value, "kg");
+    } else if (effect == "ring_shift_distance_mul") {
+        line += "ずらし距離";
+        line += signedPercentText(multiplier);
+    } else if (effect == "ring_throw_distance_mul") {
+        line += "投げ距離";
+        line += signedPercentText(multiplier);
+    } else if (effect == "ring_throw_speed_mul") {
+        line += "投げ速度";
+        line += signedPercentText(multiplier);
+    } else if (effect == "ring_throw_cooldown_mul") {
+        line += "投げクールダウン";
+        line += signedPercentText(multiplier);
+    } else if (effect == "ring_return_speed_mul") {
+        line += "戻り速度";
+        line += signedPercentText(multiplier);
+    } else if (effect == "ring_output_mul") {
+        line += "最終出力";
+        line += signedPercentText(multiplier);
+    } else if (effect == "ring_anchor_mul") {
+        line += "アンカー";
+        line += signedPercentText(multiplier);
+    } else if (effect == "ring_damage_speed_mul") {
+        line += "速度ダメージ";
+        line += signedPercentText(multiplier);
+    } else if (effect == "light_radius_mul") {
+        line += "照明半径";
+        line += signedPercentText(multiplier);
+    } else if (effect == "detect_range_mul") {
+        line += "探知範囲";
+        line += signedPercentText(multiplier);
+    } else if (effect == "guard_area_mul") {
+        line += "防御範囲";
+        line += signedPercentText(multiplier);
+    } else if (effect == "reflect_power_mul") {
+        line += "反射威力";
+        line += signedPercentText(multiplier);
+    } else if (effect == "reflect_chance_add") {
+        line += "反射確率";
+        line += signedAddText(value, "%");
+    } else if (effect == "metal_weight_penalty_mul") {
+        line += "重量ペナルティ";
+        line += signedPercentText(multiplier);
+    } else if (effect == "dig_power_mul") {
+        line += "掘削力";
+        line += signedPercentText(multiplier);
+    } else if (effect == "durability_cost_mul") {
+        line += "耐久消費";
+        line += signedPercentText(multiplier);
+    } else if (effect == "sell_price_mul") {
+        line += "売却価格";
+        line += signedPercentText(multiplier);
+    } else if (effect == "money_visible_level") {
+        line += "お金表示Lv";
+        line += std::to_string(std::max(0, static_cast<int>(std::round(value))));
+    } else if (effect == "danger_hint_level") {
+        line += "危険ヒントLv";
+        line += std::to_string(std::max(0, static_cast<int>(std::round(value))));
+    } else {
+        logUnsupportedStaffEquipmentEffectOnce(item.id, effect);
+        line += "未実装の装備効果: ";
+        line += effectCodeDisplayName(catalog, effect);
+    }
+    return line;
+}
+
+std::vector<std::string> staffEquipmentEffectLines(const ItemData& item, const ObjectCatalog& catalog)
+{
+    std::vector<std::string> lines;
+    for (const EffectSpec& spec : item.normalEffects) {
+        if (!isStaffEquipTarget(spec.target)) {
+            continue;
+        }
+        for (std::size_t index = 0; index < spec.effects.size(); ++index) {
+            const std::string& effect = spec.effects[index];
+            if (effect.empty() || effect == "none") {
+                continue;
+            }
+            const double value = index < spec.values.size() ? spec.values[index] : 0.0;
+            lines.push_back(staffEquipmentEffectLine(item, catalog, spec.target, effect, value));
+        }
+    }
+    return lines;
+}
+
+void applyStaffManualEquipmentEffectText(
+    const ItemData& item,
+    std::vector<std::string>& equipmentLines,
+    std::size_t ringLineCount)
+{
+    std::vector<std::string> manualLines = splitInventoryEffectTextLines(item.effectText);
+    if (manualLines.empty() || (manualLines.size() == 1 && noInventoryEffectText(manualLines.front()))) {
+        return;
+    }
+
+    const std::size_t equipmentCount = equipmentLines.size();
+    if (equipmentCount == 0) {
+        return;
+    }
+
+    const bool equipmentOnlyText = manualLines.size() == equipmentCount;
+    const bool equipmentAndRingText = ringLineCount > 0 && manualLines.size() == equipmentCount + ringLineCount;
+    if (equipmentOnlyText || equipmentAndRingText) {
+        equipmentLines.assign(manualLines.begin(), manualLines.begin() + static_cast<std::ptrdiff_t>(equipmentCount));
+    }
 }
 
 float slotFrameRadius(const UiRect& rect)
@@ -151,10 +374,228 @@ Color multiplyColor(Color color, Color multiplier)
     return color;
 }
 
-float drawInventoryDetailHeader(Renderer& renderer, UiRect panel, std::string_view text, bool protectedItem)
+unsigned char colorByte(float value)
 {
-    constexpr float MinHeaderHeight = 50.0f;
-    constexpr float HeaderGap = 16.0f;
+    return static_cast<unsigned char>(std::clamp(std::lround(value), 0L, 255L));
+}
+
+Color mixColor(Color from, Color to, float t)
+{
+    t = std::clamp(t, 0.0f, 1.0f);
+    return {
+        colorByte(static_cast<float>(from.r) + (static_cast<float>(to.r) - static_cast<float>(from.r)) * t),
+        colorByte(static_cast<float>(from.g) + (static_cast<float>(to.g) - static_cast<float>(from.g)) * t),
+        colorByte(static_cast<float>(from.b) + (static_cast<float>(to.b) - static_cast<float>(from.b)) * t),
+        colorByte(static_cast<float>(from.a) + (static_cast<float>(to.a) - static_cast<float>(from.a)) * t),
+    };
+}
+
+float smootherStep01(float value)
+{
+    value = std::clamp(value, 0.0f, 1.0f);
+    return value * value * value * (value * (value * 6.0f - 15.0f) + 10.0f);
+}
+
+Color withAlpha(Color color, float alpha)
+{
+    color.a = colorByte(alpha);
+    return color;
+}
+
+Color hsvColor(float hue, float saturation, float value)
+{
+    hue = hue - std::floor(hue);
+    saturation = std::clamp(saturation, 0.0f, 1.0f);
+    value = std::clamp(value, 0.0f, 1.0f);
+
+    const float sector = hue * 6.0f;
+    const int index = static_cast<int>(std::floor(sector));
+    const float fraction = sector - static_cast<float>(index);
+    const float p = value * (1.0f - saturation);
+    const float q = value * (1.0f - saturation * fraction);
+    const float r = value * (1.0f - saturation * (1.0f - fraction));
+
+    float red = value;
+    float green = r;
+    float blue = p;
+    switch (index % 6) {
+    case 0:
+        red = value;
+        green = r;
+        blue = p;
+        break;
+    case 1:
+        red = q;
+        green = value;
+        blue = p;
+        break;
+    case 2:
+        red = p;
+        green = value;
+        blue = r;
+        break;
+    case 3:
+        red = p;
+        green = q;
+        blue = value;
+        break;
+    case 4:
+        red = r;
+        green = p;
+        blue = value;
+        break;
+    default:
+        red = value;
+        green = p;
+        blue = q;
+        break;
+    }
+
+    return {colorByte(red * 255.0f), colorByte(green * 255.0f), colorByte(blue * 255.0f), 255};
+}
+
+Color rarityBaseColor(int rarity, int starIndex, float animationSeconds)
+{
+    rarity = std::clamp(rarity, 1, 10);
+    constexpr Color Brown{205, 124, 66, 255};
+    constexpr Color Gray{168, 170, 176, 255};
+    constexpr Color Yellow{255, 226, 88, 255};
+    constexpr Color YellowGreen{174, 226, 76, 255};
+    constexpr Color Aqua{86, 220, 232, 255};
+    constexpr Color Sky{104, 184, 255, 255};
+    constexpr Color Copper{205, 124, 66, 255};
+    constexpr Color Silver{153, 178, 188, 255};
+    constexpr Color Gold{255, 216, 82, 255};
+
+    switch (rarity) {
+    case 1:
+        return Brown;
+    case 2:
+        return Gray;
+    case 3:
+        return Yellow;
+    case 4:
+        return YellowGreen;
+    case 5:
+        return Aqua;
+    case 6:
+        return Sky;
+    case 7:
+        return Copper;
+    case 8:
+        return Silver;
+    case 9:
+        return Gold;
+    default:
+        break;
+    }
+
+    const float hue = animationSeconds * 0.16f + static_cast<float>(starIndex) * 0.095f;
+    return hsvColor(hue, 0.58f, 1.0f);
+}
+
+float rarityShineScale(int rarity)
+{
+    if (rarity < 4) {
+        return 0.0f;
+    }
+    if (rarity >= 7) {
+        return 1.0f;
+    }
+    return static_cast<float>(rarity - 3) / 4.0f;
+}
+
+float rarityShineAmount(int rarity, int starIndex, float animationSeconds)
+{
+    const float scale = rarityShineScale(rarity);
+    if (scale <= 0.0f) {
+        return 0.0f;
+    }
+    const float primary =
+        0.5f + 0.5f * std::sin(animationSeconds * TwoPi * 0.95f + static_cast<float>(starIndex) * 0.82f);
+    const float secondary =
+        0.5f + 0.5f * std::sin(animationSeconds * TwoPi * 0.37f + static_cast<float>(starIndex) * 1.31f + 1.7f);
+    const float wave = std::clamp(primary * 0.82f + secondary * 0.18f, 0.0f, 1.0f);
+    return scale * (0.18f + 0.82f * smootherStep01(wave));
+}
+
+void drawRarityStarGlow(
+    Renderer& renderer,
+    Vec2 pos,
+    std::string_view star,
+    Color baseColor,
+    float shine,
+    int scale)
+{
+    if (shine <= 0.0f) {
+        return;
+    }
+
+    constexpr Vec2 OuterOffsets[] = {
+        {-2.0f, 0.0f},
+        {2.0f, 0.0f},
+        {0.0f, -2.0f},
+        {0.0f, 2.0f},
+        {-1.5f, -1.5f},
+        {1.5f, -1.5f},
+        {-1.5f, 1.5f},
+        {1.5f, 1.5f},
+    };
+    constexpr Vec2 InnerOffsets[] = {
+        {-1.0f, 0.0f},
+        {1.0f, 0.0f},
+        {0.0f, -1.0f},
+        {0.0f, 1.0f},
+    };
+
+    const Color outerGlow = withAlpha(mixColor(baseColor, {255, 255, 255, 255}, 0.62f), 34.0f + 112.0f * shine);
+    const Color innerGlow = withAlpha({255, 255, 255, 255}, 46.0f + 154.0f * shine);
+
+    for (const Vec2 offset : OuterOffsets) {
+        renderer.drawText(pos + offset, star, outerGlow, scale);
+    }
+    for (const Vec2 offset : InnerOffsets) {
+        renderer.drawText(pos + offset, star, innerGlow, scale);
+    }
+}
+
+Vec2 drawRarityStars(Renderer& renderer, Vec2 pos, int rarity, float animationSeconds)
+{
+    constexpr std::string_view Star = "★";
+    constexpr int StarScale = 2;
+    constexpr float StarGap = 2.0f;
+    const int clampedRarity = std::clamp(rarity, 1, 10);
+    const Vec2 starSize = renderer.measureText(Star, StarScale);
+    Vec2 cursor = pos;
+    for (int i = 0; i < clampedRarity; ++i) {
+        const float shine = rarityShineAmount(clampedRarity, i, animationSeconds);
+        const Color baseColor = rarityBaseColor(clampedRarity, i, animationSeconds);
+        const Color color = mixColor(baseColor, {255, 255, 255, 255}, shine * 0.88f);
+        drawRarityStarGlow(renderer, cursor, Star, baseColor, shine, StarScale);
+        if (clampedRarity >= 7) {
+            renderer.drawOutlinedText(cursor, Star, color, {20, 16, 24, 150}, 2, StarScale);
+        } else {
+            renderer.drawText(cursor, Star, color, StarScale);
+        }
+        if (shine > 0.0f) {
+            renderer.drawText(cursor + Vec2{-1.0f, -1.0f}, Star, withAlpha({255, 255, 255, 255}, 58.0f + 150.0f * shine), StarScale);
+        }
+        cursor.x += starSize.x + StarGap;
+    }
+    return {cursor.x - pos.x - StarGap, starSize.y};
+}
+
+float drawInventoryDetailHeader(
+    Renderer& renderer,
+    UiRect panel,
+    std::string_view text,
+    bool protectedItem,
+    int rarity,
+    float animationSeconds)
+{
+    constexpr float MinHeaderHeight = 72.0f;
+    constexpr float NameRarityGap = 3.0f;
+    constexpr float HeaderGap = 14.0f;
     constexpr float ProtectionGap = 12.0f;
     constexpr int TitleScale = 3;
     constexpr int ProtectionScale = 2;
@@ -169,6 +610,7 @@ float drawInventoryDetailHeader(Renderer& renderer, UiRect panel, std::string_vi
 
     renderer.drawWrappedText(content.pos, text, titleMaxWidth, ui::Text, TitleScale);
     renderer.drawWrappedText({content.pos.x + 1.0f, content.pos.y}, text, titleMaxWidth, ui::Text, TitleScale);
+    const Vec2 titleSize = renderer.measureWrappedText(text, titleMaxWidth, TitleScale);
     if (protectedItem) {
         renderer.drawText(
             {content.pos.x + content.size.x - protectionSize.x, content.pos.y + 6.0f},
@@ -176,7 +618,13 @@ float drawInventoryDetailHeader(Renderer& renderer, UiRect panel, std::string_vi
             {255, 230, 150, 255},
             ProtectionScale);
     }
-    return content.pos.y + std::max(MinHeaderHeight, renderer.measureWrappedText(text, titleMaxWidth, TitleScale).y + HeaderGap);
+
+    const Vec2 raritySize = drawRarityStars(
+        renderer,
+        {content.pos.x, content.pos.y + titleSize.y + NameRarityGap},
+        rarity,
+        animationSeconds);
+    return content.pos.y + std::max(MinHeaderHeight, titleSize.y + NameRarityGap + raritySize.y + HeaderGap);
 }
 
 void drawDetailSeparator(Renderer& renderer, UiRect panel, float& y)
@@ -324,6 +772,20 @@ void drawItemEffectDetailSections(
 {
     const ObjectEffectDisplaySections sections =
         encyclopedia.getObjectEffectDisplaySections(item.id, catalog, EffectRevealMode::WithUnknown);
+    if (isStaffObject(item)) {
+        std::vector<std::string> equipmentLines = staffEquipmentEffectLines(item, catalog);
+        std::vector<std::string> ringLines = sections.ringLines;
+        applyStaffManualEquipmentEffectText(item, equipmentLines, ringLines.size());
+        if (!equipmentLines.empty()) {
+            drawUiDetailText(renderer, panel, y, "装備時効果");
+            drawUiDetailText(renderer, panel, y, joinInventoryUiEffectLines(equipmentLines));
+        }
+        if (!ringLines.empty()) {
+            drawUiDetailText(renderer, panel, y, "リングに乗せたときの効果");
+            drawUiDetailText(renderer, panel, y, joinInventoryUiEffectLines(ringLines));
+        }
+        return;
+    }
     if (!sections.useLines.empty()) {
         drawUiDetailText(renderer, panel, y, "使用時の効果");
         drawUiDetailText(renderer, panel, y, joinInventoryUiEffectLines(sections.useLines));
@@ -431,6 +893,8 @@ void drawInlineItemText(
             if (tag.kind == InlineIconKind::Item) {
                 if (const ObjectDefinition* object = catalog.registry.findById(tag.key)) {
                     ObjectImageDrawOptions options;
+                    options.tint.a = style.text.a;
+                    options.outlineColor.a = style.text.a;
                     options.applyScaleOverride = false;
                     drewIcon = drawItemImage(
                         renderer,
@@ -442,6 +906,8 @@ void drawInlineItemText(
             } else {
                 const WorldIconDefinition* definition = worldIconDefinitionByKey(tag.key);
                 WorldIconDrawOptions options;
+                options.tint.a = style.text.a;
+                options.outlineColor.a = style.text.a;
                 options.applyScaleOverride = false;
                 drewIcon = definition != nullptr && drawWorldIcon(renderer, definition->iconId, center, {iconSize, iconSize}, options);
             }
@@ -505,7 +971,7 @@ void drawInventoryUiSlot(
         drawInventoryUiSlotBottomLabel(renderer, rect, style.bottomLabel, style.bottomLabelColor);
     };
     const auto drawTopRightCount = [&]() {
-        if (!style.showTopRightCount) {
+        if (entry.equipped || !style.showTopRightCount) {
             return;
         }
         constexpr int CountScale = 2;
@@ -516,6 +982,19 @@ void drawInventoryUiSlot(
             rect.pos.y + 3.0f,
         };
         renderer.drawOutlinedText(textPos, text, style.topRightCountColor, {0, 0, 0, 120}, 6, CountScale);
+    };
+    const auto drawEquippedLabel = [&]() {
+        if (!entry.equipped) {
+            return;
+        }
+        constexpr int LabelScale = 3;
+        const std::string_view text = "E";
+        const Vec2 textSize = renderer.measureText(text, LabelScale);
+        const Vec2 textPos{
+            rect.pos.x + rect.size.x - textSize.x - 5.0f,
+            rect.pos.y + 3.0f,
+        };
+        renderer.drawOutlinedText(textPos, text, Color{90, 230, 120, 255}, {0, 0, 0, 140}, 6, LabelScale);
     };
     const auto drawProtectionLabel = [&]() {
         if (!style.showProtectionLabel || !stats || !stats->protectionEnabled) {
@@ -534,6 +1013,7 @@ void drawInventoryUiSlot(
     if (entry.item == nullptr) {
         drawBottomLabel();
         drawTopRightCount();
+        drawEquippedLabel();
         return;
     }
 
@@ -561,6 +1041,7 @@ void drawInventoryUiSlot(
         }
         drawBottomLabel();
         drawTopRightCount();
+        drawEquippedLabel();
         return;
     }
 
@@ -589,6 +1070,7 @@ void drawInventoryUiSlot(
     drawProtectionLabel();
     drawBottomLabel();
     drawTopRightCount();
+    drawEquippedLabel();
 }
 
 void drawInventoryUiSlot(
@@ -630,7 +1112,13 @@ void drawInventoryUiDetailPanel(
     }
 
     drawUiSubPanel(renderer, panel);
-    float detailLineY = drawInventoryDetailHeader(renderer, panel, detailTitle, stats && stats->protectionEnabled);
+    float detailLineY = drawInventoryDetailHeader(
+        renderer,
+        panel,
+        detailTitle,
+        stats && stats->protectionEnabled,
+        entry.item->rarity,
+        options.animationSeconds);
 
     drawUiDetailText(renderer, panel, detailLineY, entry.item->description.empty() ? "-" : entry.item->description);
     drawItemEffectDetailSections(renderer, panel, detailLineY, *entry.item, catalog, encyclopedia);

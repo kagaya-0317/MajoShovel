@@ -80,6 +80,7 @@ struct MaterialInventory {
 ItemInstance makeItemInstanceFromDefinition(std::string instanceId, const ObjectDefinition& object);
 ItemVisualRef effectiveItemVisualRef(const ItemData& item);
 ItemData makeMissingItemData(std::string_view objectId);
+bool isImportantItem(const ItemData& item);
 std::string_view materialTypeSaveName(MaterialType type);
 bool materialTypeFromSaveName(std::string_view name, MaterialType& outType);
 std::string_view materialTypeDisplayName(MaterialType type);

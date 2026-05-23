@@ -163,6 +163,23 @@ bool worldDropKindFromSaveName(std::string_view name, WorldDropKind& outKind)
     return false;
 }
 
+bool ringItemsContainInstanceId(
+    const std::array<std::vector<SpellRingItem>, SpellRingCount>& ringItemsByRing,
+    std::string_view instanceId)
+{
+    if (instanceId.empty()) {
+        return false;
+    }
+    for (const std::vector<SpellRingItem>& ringItems : ringItemsByRing) {
+        if (std::any_of(ringItems.begin(), ringItems.end(), [instanceId](const SpellRingItem& item) {
+            return item.instanceId == instanceId;
+        })) {
+            return true;
+        }
+    }
+    return false;
+}
+
 }
 
 bool Game::loadSaveData()
@@ -205,6 +222,7 @@ bool Game::loadSaveData()
     int loadedPlayerLevel = 1;
     int loadedPlayerXp = 0;
     int loadedPlayerXpToNext = playerXpToNextForLevel(loadedPlayerLevel, balance_);
+    int loadedPendingLevelBonusChoices = 0;
     int loadedMaxHpUpgradeLevel = 0;
     int loadedRingRadiusUpgradeLevel = 0;
     int loadedRingSpeedUpgradeLevel = 0;
@@ -227,6 +245,7 @@ bool Game::loadSaveData()
     int loadedProcessingUnlockLevel = 0;
     bool loadedRingWorkshopUnlocked = false;
     bool loadedAutoSaveOnReturn = false;
+    std::string loadedEquippedStaffInstanceId;
     std::vector<std::string> loadedStoryFlags;
     int warningCount = 0;
     LoadedDungeonStateSave loadedDungeonState;
@@ -252,6 +271,8 @@ bool Game::loadSaveData()
             stream >> loadedPlayerXp;
         } else if (key == "player_xp_to_next") {
             stream >> loadedPlayerXpToNext;
+        } else if (key == "pending_level_bonus_choices") {
+            stream >> loadedPendingLevelBonusChoices;
         } else if (key == "upgrade_max_hp") {
             stream >> loadedMaxHpUpgradeLevel;
         } else if (key == "upgrade_ring_radius") {
@@ -325,6 +346,11 @@ bool Game::loadSaveData()
             stream >> loadedRingWorkshopUnlocked;
         } else if (key == "auto_save_on_return") {
             stream >> loadedAutoSaveOnReturn;
+        } else if (key == "equipped_staff") {
+            stream >> loadedEquippedStaffInstanceId;
+            if (loadedEquippedStaffInstanceId == "-") {
+                loadedEquippedStaffInstanceId.clear();
+            }
         } else if (key == "story_flag") {
             std::string flag;
             stream >> flag;
@@ -714,6 +740,20 @@ bool Game::loadSaveData()
     inventory_ = loadedInventory;
     inventory_.setOpen(false);
     inventory_.cancelGrab();
+    if (!loadedEquippedStaffInstanceId.empty()) {
+        if (ringItemsContainInstanceId(loadedRingItemsByRing, loadedEquippedStaffInstanceId)) {
+            ++warningCount;
+            inventory_.clearEquippedStaff();
+            logError("[warning] SaveData: equipped_staff instance_id=\"" + loadedEquippedStaffInstanceId +
+                "\" is also mounted on a ring; staff unequipped");
+        } else {
+            std::string staffWarning;
+            if (!inventory_.restoreEquippedStaffInstanceId(loadedEquippedStaffInstanceId, &staffWarning)) {
+                ++warningCount;
+                logError("[warning] SaveData: " + staffWarning);
+            }
+        }
+    }
     if (loadedRingShapes[0] == RingShape::Circle &&
         loadedRingShapes[1] == RingShape::Circle &&
         loadedRingShapes[2] == RingShape::Circle) {
@@ -729,6 +769,7 @@ bool Game::loadSaveData()
     spellRing_.normalizeItemPlacements();
     observeRingItemInstanceIds();
     spellRing_.resetBaseWeightToCurrent();
+    refreshEquipmentModifiers();
     refreshOrbitEffects();
     money_ = std::max(0, loadedMoney);
     astralHighScore_ = std::max(0, loadedAstralHighScore);
@@ -913,6 +954,7 @@ bool Game::loadSaveData()
         points = clampedRingLevelUpgradePoints(points);
     }
     levelRingUpgradePoints_ = loadedLevelRingUpgradePoints;
+    levels_.setPendingChoiceCount(loadedPendingLevelBonusChoices);
     workshopInitialRadiusLevel_ = std::clamp(loadedWorkshopInitialRadiusLevel, 0, 5);
     workshopInitialSpeedLevel_ = std::clamp(loadedWorkshopInitialSpeedLevel, 0, 5);
     workshopShiftDistanceLevel_ = std::clamp(loadedWorkshopShiftDistanceLevel, 0, 5);
@@ -966,6 +1008,7 @@ bool Game::saveSaveData(std::string& message) const
     file << "player_level " << player_.level << "\n";
     file << "player_xp " << player_.xp << "\n";
     file << "player_xp_to_next " << player_.xpToNext << "\n";
+    file << "pending_level_bonus_choices " << levels_.pendingChoiceCount() << "\n";
     file << "upgrade_max_hp " << maxHpUpgradeLevel_ << "\n";
     file << "upgrade_ring_radius " << ringRadiusUpgradeLevel_ << "\n";
     file << "upgrade_ring_speed " << ringSpeedUpgradeLevel_ << "\n";
@@ -998,6 +1041,9 @@ bool Game::saveSaveData(std::string& message) const
     file << "processing_unlock_level " << processingUnlockLevel_ << "\n";
     file << "ring_workshop_unlocked " << ringWorkshopUnlocked_ << "\n";
     file << "auto_save_on_return " << autoSaveOnReturn_ << "\n";
+    file << "equipped_staff "
+        << (inventory_.equippedStaffInstanceId().empty() ? "-" : inventory_.equippedStaffInstanceId())
+        << "\n";
     for (int i = 0; i < SpellRingCount; ++i) {
         file << "ring_shape_" << (i + 1) << " " << saveRingShapeName(spellRing_.ringShapeForIndex(i)) << "\n";
     }
@@ -1185,7 +1231,7 @@ bool Game::saveSaveData(std::string& message) const
         }
         if (saveWorldDrops != nullptr) {
             for (const WorldDropItem& drop : saveWorldDrops->drops()) {
-                if (drop.id.empty() || drop.quantity <= 0) {
+                if (drop.temporary || drop.id.empty() || drop.quantity <= 0) {
                     continue;
                 }
                 file << "dungeon_world_drop "

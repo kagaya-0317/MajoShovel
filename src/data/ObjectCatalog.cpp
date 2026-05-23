@@ -40,6 +40,7 @@ constexpr std::string_view HeaderGroundRotation = "\xE5\x9C\xB0\xE9\x9D\xA2\xE8\
 constexpr std::string_view HeaderRingRotation = "\xE3\x83\xAA\xE3\x83\xB3\xE3\x82\xB0\xE8\xA7\x92\xE5\xBA\xA6";
 constexpr std::string_view HeaderTags = "\xE7\x89\xB9\xE6\xAE\x8A\xE3\x82\xBF\xE3\x82\xB0";
 constexpr std::string_view HeaderEffectText = "\xE5\x8A\xB9\xE6\x9E\x9C\xE3\x83\x86\xE3\x82\xAD\xE3\x82\xB9\xE3\x83\x88";
+constexpr std::string_view CategoryStaff = "\xE6\x9D\x96";
 constexpr std::string_view EffectCodesSheetName = "\xE5\x8A\xB9\xE6\x9E\x9C\xE3\x82\xB3\xE3\x83\xBC\xE3\x83\x89\xE4\xB8\x80\xE8\xA6\xA7";
 constexpr std::string_view SpecialTagsSheetName = "\xE7\x89\xB9\xE6\xAE\x8A\xE3\x82\xBF\xE3\x82\xB0\xE4\xB8\x80\xE8\xA6\xA7";
 constexpr std::string_view LegacyEffectCodesSheetName = "\x23\xE5\x8A\xB9\xE6\x9E\x9C\xE3\x82\xB3\xE3\x83\xBC\xE3\x83\x89";
@@ -60,7 +61,7 @@ constexpr std::string_view HeaderTargetCategories = "\xE5\xAF\xBE\xE8\xB1\xA1\xE
 constexpr std::string_view HeaderExclusiveGroup = "\xE6\x8E\x92\xE4\xBB\x96\xE3\x82\xB0\xE3\x83\xAB\xE3\x83\xBC\xE3\x83\x97";
 constexpr std::string_view HeaderRelatedEffectCodes = "\xE9\x96\xA2\xE9\x80\xA3\xE5\x8A\xB9\xE6\x9E\x9C\xE3\x82\xB3\xE3\x83\xBC\xE3\x83\x89";
 
-constexpr std::array<std::string_view, 10> AllowedCategories = {
+constexpr std::array<std::string_view, 11> AllowedCategories = {
     "\xE6\x8E\x98\xE5\x89\x8A",
     "\xE6\x8E\xA2\xE7\xB4\xA2",
     "\xE8\xBB\x8C\xE9\x81\x93",
@@ -71,6 +72,12 @@ constexpr std::array<std::string_view, 10> AllowedCategories = {
     "\xE9\xAD\x94\xE5\xB0\x8E\xE6\x9B\xB8",
     "\xE6\xAD\xA6\xE5\x99\xA8",
     "\xE7\x9B\xBE",
+    CategoryStaff,
+};
+
+enum class ObjectEffectField {
+    Normal,
+    Orbit,
 };
 
 constexpr std::array<std::string_view, 11> AllowedDamageTypes = {
@@ -1364,6 +1371,24 @@ bool findSpecialTagColumns(const GoogleSheetRow& headers, SpecialTagColumns& out
 
 }
 
+bool isStaffObjectCategory(std::string_view category)
+{
+    return category == CategoryStaff;
+}
+
+bool isStaffObject(const ObjectDefinition& object)
+{
+    return isStaffObjectCategory(object.category);
+}
+
+bool isStaffEquipTarget(std::string_view target)
+{
+    return target == "equip_all" ||
+        target == "equip_ring1" ||
+        target == "equip_ring2" ||
+        target == "equip_ring3";
+}
+
 bool isDamageTypeAllowed(std::string_view value)
 {
     const std::string normalized = lowerAscii(trim(value));
@@ -1445,13 +1470,16 @@ std::vector<DiscoveryEffectLine> buildDiscoveryEffectLines(const ObjectDefinitio
             DiscoveryTrigger::Attack);
     }
 
-    const bool hasDig = hasEffectCode(object.normalEffects, "dig") ||
+    const bool staffObject = isStaffObject(object);
+    const bool hasNormalDig = !staffObject && (
+        hasEffectCode(object.normalEffects, "dig") ||
         hasEffectCode(object.normalEffects, "dig_multi") ||
-        hasEffectCode(object.normalEffects, "dig_hard") ||
+        hasEffectCode(object.normalEffects, "dig_hard"));
+    const bool hasDig = hasNormalDig ||
         hasEffectCode(object.orbitEffects, "dig") ||
         hasEffectCode(object.orbitEffects, "dig_multi") ||
         hasEffectCode(object.orbitEffects, "dig_hard");
-    const bool hasDigHard = hasEffectCode(object.normalEffects, "dig_hard") ||
+    const bool hasDigHard = (!staffObject && hasEffectCode(object.normalEffects, "dig_hard")) ||
         hasEffectCode(object.orbitEffects, "dig_hard");
     if (hasDig && object.digPower > 0) {
         const std::string key = hasDigHard ? "dig_hard" : "dig";
@@ -1482,7 +1510,9 @@ std::vector<DiscoveryEffectLine> buildDiscoveryEffectLines(const ObjectDefinitio
         }
     };
 
-    appendFromSpecs(object.normalEffects, DiscoveryTrigger::NormalEffect);
+    if (!staffObject) {
+        appendFromSpecs(object.normalEffects, DiscoveryTrigger::NormalEffect);
+    }
     appendFromSpecs(object.orbitEffects, DiscoveryTrigger::OrbitEffect);
 
     const std::vector<std::string> manualLines = splitEffectTextLines(object.effectText);
@@ -1490,15 +1520,38 @@ std::vector<DiscoveryEffectLine> buildDiscoveryEffectLines(const ObjectDefinitio
         if (manualLines.size() == 1 && isNoDiscoveryEffectText(manualLines.front())) {
             return {};
         }
-        if (manualLines.size() == lines.size()) {
-            for (std::size_t i = 0; i < lines.size(); ++i) {
-                lines[i].text = manualLines[i];
+        std::size_t staffEquipmentLineCount = 0;
+        if (staffObject) {
+            for (const EffectSpec& spec : object.normalEffects) {
+                if (!isStaffEquipTarget(spec.target)) {
+                    continue;
+                }
+                for (const std::string& effect : spec.effects) {
+                    if (!effect.empty() && effect != "none") {
+                        ++staffEquipmentLineCount;
+                    }
+                }
             }
-        } else if (debugWarnings != nullptr) {
-            debugWarnings->push_back(
-                "object=\"" + object.id + "\" effectText line count mismatch: generated=" +
-                std::to_string(lines.size()) + ", manual=" + std::to_string(manualLines.size()) +
-                "; generated text is used");
+        }
+        if (staffObject && staffEquipmentLineCount > 0 &&
+            manualLines.size() == staffEquipmentLineCount + lines.size()) {
+            for (std::size_t i = 0; i < lines.size(); ++i) {
+                lines[i].text = manualLines[staffEquipmentLineCount + i];
+            }
+        } else if (staffObject && staffEquipmentLineCount > 0 &&
+            manualLines.size() == staffEquipmentLineCount) {
+            return lines;
+        } else {
+            if (manualLines.size() == lines.size()) {
+                for (std::size_t i = 0; i < lines.size(); ++i) {
+                    lines[i].text = manualLines[i];
+                }
+            } else if (debugWarnings != nullptr) {
+                debugWarnings->push_back(
+                    "object=\"" + object.id + "\" effectText line count mismatch: generated=" +
+                    std::to_string(lines.size()) + ", manual=" + std::to_string(manualLines.size()) +
+                    "; generated text is used");
+            }
         }
     }
 
@@ -1958,15 +2011,29 @@ bool targetAllowedByDefinition(const EffectCodeDefinition& definition, std::stri
     return target == "ground" && containsValue(definition.targets, "terrain");
 }
 
+bool staffEquipTargetAllowedForField(const ItemData& item, ObjectEffectField field)
+{
+    return field == ObjectEffectField::Normal && isStaffObject(item);
+}
+
 void validateEffectReferencesForField(
     const ItemData& item,
     std::string_view fieldName,
+    ObjectEffectField field,
     const std::vector<EffectSpec>& specs,
     const std::unordered_map<std::string, EffectCodeDefinition>& effectCodes,
     std::vector<std::string>& outWarnings)
 {
     for (const EffectSpec& spec : specs) {
         for (const std::string& effect : spec.effects) {
+            const bool equipTarget = isStaffEquipTarget(spec.target);
+            const bool equipTargetAllowed = !equipTarget || staffEquipTargetAllowedForField(item, field);
+            if (!equipTargetAllowed) {
+                outWarnings.push_back("item=\"" + item.id + "\" " + std::string(fieldName) +
+                    ": equip target \"" + spec.target + "\" is only allowed in staff normal effects for effect \"" +
+                    effect + "\"");
+            }
+
             if (const DeprecatedName* deprecated = findDeprecated(effect, DeprecatedEffectCodes)) {
                 outWarnings.push_back("item=\"" + item.id + "\" " + std::string(fieldName) +
                     ": deprecated effect code \"" + effect + "\"; migrate to \"" +
@@ -1981,7 +2048,7 @@ void validateEffectReferencesForField(
             }
 
             const EffectCodeDefinition& definition = effectIt->second;
-            if (!targetAllowedByDefinition(definition, spec.target)) {
+            if (equipTargetAllowed && !targetAllowedByDefinition(definition, spec.target)) {
                 outWarnings.push_back("item=\"" + item.id + "\" " + std::string(fieldName) +
                     ": target \"" + spec.target + "\" is not allowed for effect \"" + effect + "\"");
             } else if (spec.target == "ground" && containsValue(definition.targets, "terrain")) {
@@ -1996,7 +2063,13 @@ void validateObjectEffectReferences(ObjectCatalog& catalog)
 {
     for (const ObjectDefinition& item : catalog.objects) {
         std::vector<std::string> warnings;
-        validateEffectReferencesForField(item, "normal effects", item.normalEffects, catalog.effectCodes, warnings);
+        validateEffectReferencesForField(
+            item,
+            "normal effects",
+            ObjectEffectField::Normal,
+            item.normalEffects,
+            catalog.effectCodes,
+            warnings);
         for (const std::string& warning : warnings) {
             const DbValidationCategory category =
                 warning.find("undefined effect code") != std::string::npos
@@ -2009,7 +2082,13 @@ void validateObjectEffectReferences(ObjectCatalog& catalog)
         }
 
         warnings.clear();
-        validateEffectReferencesForField(item, "orbit effects", item.orbitEffects, catalog.effectCodes, warnings);
+        validateEffectReferencesForField(
+            item,
+            "orbit effects",
+            ObjectEffectField::Orbit,
+            item.orbitEffects,
+            catalog.effectCodes,
+            warnings);
         for (const std::string& warning : warnings) {
             const DbValidationCategory category =
                 warning.find("undefined effect code") != std::string::npos

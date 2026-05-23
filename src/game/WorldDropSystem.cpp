@@ -392,6 +392,15 @@ void WorldDropSystem::setDropLimit(int limit)
     }
 }
 
+void WorldDropSystem::removeTemporaryDrops()
+{
+    drops_.erase(
+        std::remove_if(drops_.begin(), drops_.end(), [](const WorldDropItem& drop) {
+            return drop.temporary;
+        }),
+        drops_.end());
+}
+
 void WorldDropSystem::restoreDropsForSave(std::vector<WorldDropItem> drops)
 {
     drops_.clear();
@@ -406,6 +415,8 @@ void WorldDropSystem::restoreDropsForSave(std::vector<WorldDropItem> drops)
         drop.jumpDurationSeconds = 0.0f;
         drop.jumpArcHeight = 0.0f;
         drop.pickupDelaySeconds = 0.0f;
+        drop.instance.reset();
+        drop.temporary = false;
         configureDropMotion(drop, {});
         drop.altitude = dropHoverAltitude(drop);
         drops_.push_back(std::move(drop));
@@ -438,7 +449,8 @@ bool WorldDropSystem::spawnObjectDrop(
     std::string_view objectId,
     Vec2 position,
     float spawnedAtSeconds,
-    WorldDropSpawnMotion motion)
+    WorldDropSpawnMotion motion,
+    bool temporary)
 {
     if (objectId.empty()) {
         logDropWarning("reward node requested an empty object_id; no item drop spawned");
@@ -451,7 +463,45 @@ bool WorldDropSystem::spawnObjectDrop(
         return false;
     }
 
-    spawnDrop(*object, position, spawnedAtSeconds, motion);
+    spawnDrop(*object, position, spawnedAtSeconds, motion, temporary);
+    return true;
+}
+
+bool WorldDropSystem::spawnObjectInstanceDrop(
+    const ObjectCatalog& catalog,
+    ItemInstance instance,
+    Vec2 position,
+    float spawnedAtSeconds,
+    WorldDropSpawnMotion motion,
+    bool temporary)
+{
+    if (instance.objectId.empty()) {
+        logDropWarning("discard requested an empty object_id; no item drop spawned");
+        return false;
+    }
+
+    const ObjectDefinition* object = catalog.registry.findById(instance.objectId);
+    if (object == nullptr) {
+        logDropWarning("discard object_id=\"" + instance.objectId + "\" is missing; no item drop spawned");
+        return false;
+    }
+    if (!canSpawnDrop("object instance")) {
+        return false;
+    }
+
+    WorldDropItem drop{
+        .kind = WorldDropKind::Object,
+        .id = instance.objectId,
+        .quantity = 1,
+        .position = position,
+        .velocity = randomDropVelocity(),
+        .spawnedAtSeconds = spawnedAtSeconds,
+        .ageSeconds = 0.0f,
+        .instance = std::move(instance),
+        .temporary = temporary,
+    };
+    configureDropMotion(drop, motion);
+    drops_.push_back(std::move(drop));
     return true;
 }
 
@@ -777,23 +827,42 @@ int WorldDropSystem::update(
         WorldDropPickupEvent pickupEvent;
         bool hasPickupEvent = false;
         if (drop.kind == WorldDropKind::Object) {
-            if (!inventory.canAddObjectItem(catalog, drop.id)) {
-                if (blockedObjectPickupCount != nullptr && catalog.registry.findById(drop.id) != nullptr) {
-                    ++*blockedObjectPickupCount;
-                }
-                return false;
-            }
-            InventoryAddResult addResult;
-            pickedUp = inventory.addObjectItem(catalog, drop.id, &addResult);
-            if (pickedUp) {
+            if (drop.instance) {
+                const std::string instanceId = drop.instance->instanceId;
                 const ObjectDefinition* object = catalog.registry.findById(drop.id);
+                pickedUp = inventory.addObjectInstance(catalog, *drop.instance);
+                if (!pickedUp) {
+                    if (blockedObjectPickupCount != nullptr && object != nullptr) {
+                        ++*blockedObjectPickupCount;
+                    }
+                    return false;
+                }
                 pickupEvent.kind = drop.kind;
                 pickupEvent.id = drop.id;
-                pickupEvent.instanceId = addResult.instanceId;
+                pickupEvent.instanceId = instanceId;
                 pickupEvent.name = object != nullptr ? object->name : drop.id;
                 pickupEvent.quantity = 1;
-                pickupEvent.protectable = addResult.kind == InventoryAddKind::Instance && !addResult.instanceId.empty();
+                pickupEvent.protectable = !instanceId.empty();
                 hasPickupEvent = true;
+            } else {
+                if (!inventory.canAddObjectItem(catalog, drop.id)) {
+                    if (blockedObjectPickupCount != nullptr && catalog.registry.findById(drop.id) != nullptr) {
+                        ++*blockedObjectPickupCount;
+                    }
+                    return false;
+                }
+                InventoryAddResult addResult;
+                pickedUp = inventory.addObjectItem(catalog, drop.id, &addResult);
+                if (pickedUp) {
+                    const ObjectDefinition* object = catalog.registry.findById(drop.id);
+                    pickupEvent.kind = drop.kind;
+                    pickupEvent.id = drop.id;
+                    pickupEvent.instanceId = addResult.instanceId;
+                    pickupEvent.name = object != nullptr ? object->name : drop.id;
+                    pickupEvent.quantity = 1;
+                    pickupEvent.protectable = addResult.kind == InventoryAddKind::Instance && !addResult.instanceId.empty();
+                    hasPickupEvent = true;
+                }
             }
         } else if (drop.kind == WorldDropKind::Money) {
             money = std::max(0, money + std::max(0, drop.quantity));
@@ -1006,7 +1075,12 @@ Vec2 WorldDropSystem::randomDropVelocity() const
     return fromAngle(angleDistribution(dropRng())) * speedDistribution(dropRng());
 }
 
-void WorldDropSystem::spawnDrop(const ObjectDefinition& object, Vec2 position, float spawnedAtSeconds, WorldDropSpawnMotion motion)
+void WorldDropSystem::spawnDrop(
+    const ObjectDefinition& object,
+    Vec2 position,
+    float spawnedAtSeconds,
+    WorldDropSpawnMotion motion,
+    bool temporary)
 {
     if (object.id.empty()) {
         logDropWarning("selected drop object has empty ID");
@@ -1024,6 +1098,7 @@ void WorldDropSystem::spawnDrop(const ObjectDefinition& object, Vec2 position, f
         .velocity = randomDropVelocity(),
         .spawnedAtSeconds = spawnedAtSeconds,
         .ageSeconds = 0.0f,
+        .temporary = temporary,
     };
     configureDropMotion(drop, motion);
     drops_.push_back(std::move(drop));

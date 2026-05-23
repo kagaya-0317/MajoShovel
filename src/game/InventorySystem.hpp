@@ -65,6 +65,12 @@ struct InventoryAddResult {
     int quantity = 0;
 };
 
+struct InventoryDiscardRequest {
+    ItemData item;
+    std::optional<ItemInstance> instance;
+    int quantity = 1;
+};
+
 class InventorySystem {
 public:
     bool canAddObjectItem(const ObjectCatalog& catalog, std::string_view objectId) const;
@@ -92,7 +98,8 @@ public:
         MagicSystem* magic = nullptr,
         std::vector<EffectDiscoveryEvent>* discoveryEvents = nullptr,
         const EncyclopediaSystem* encyclopedia = nullptr,
-        bool itemUseEnabled = true);
+        bool itemUseEnabled = true,
+        bool itemDiscardEnabled = true);
     void update(
         const Input& input,
         UiContext& ui,
@@ -110,17 +117,24 @@ public:
         const SpellRingSystem& spellRing,
         const ObjectCatalog& catalog,
         const EncyclopediaSystem& encyclopedia,
-        bool itemUseEnabled = true) const;
+        bool itemUseEnabled = true,
+        bool itemDiscardEnabled = true,
+        float animationSeconds = 0.0f) const;
     void renderShortcutHud(Renderer& renderer, const SpellRingSystem& spellRing, int screenWidth, int screenHeight) const;
     bool isOpen() const { return open_; }
-    void setOpen(bool open) { open_ = open; }
+    void setOpen(bool open);
     void cancelGrab();
     const std::vector<InventoryObjectStack>& objectStacks() const { return objectStacks_; }
     std::vector<StackItem> stackItemsForSave() const;
     const std::vector<InventoryObjectInstance>& objectInstances() const { return objectInstances_; }
     const MaterialInventory& materials() const { return materials_; }
     MaterialInventory& materials() { return materials_; }
+    const std::string& equippedStaffInstanceId() const { return equippedStaffInstanceId_; }
+    bool isStaffEquipped(std::string_view instanceId) const;
+    bool restoreEquippedStaffInstanceId(std::string_view instanceId, std::string* outWarning = nullptr);
+    void clearEquippedStaff();
     std::vector<RingEquipFxRequest> consumeRingEquipFxRequests();
+    std::vector<InventoryDiscardRequest> consumeDiscardRequests();
     void clearObjectStacks();
     bool setObjectItemCount(const ObjectCatalog& catalog, std::string_view objectId, int count);
     bool addObjectInstance(const ObjectCatalog& catalog, ItemInstance instance);
@@ -164,6 +178,20 @@ private:
     static constexpr int ShortcutColumns = 8;
     static constexpr int ShortcutRows = 3;
     static constexpr int ShortcutSlotCount = ShortcutColumns * ShortcutRows;
+    static constexpr int SlotCommandMaxCount = 5;
+
+    enum class SlotCommandAction {
+        Use,
+        AddToRing,
+        ToggleStaffEquipment,
+        ToggleProtection,
+        Discard,
+    };
+
+    struct SlotCommandList {
+        std::vector<UiCommandMenuItem> items;
+        std::vector<SlotCommandAction> actions;
+    };
 
     const ShortcutSlot& selectedShortcutSlot() const;
     ShortcutSlot& selectedShortcutSlot();
@@ -171,6 +199,8 @@ private:
     InventoryObjectStack* objectStackAtScreenIndex(int index);
     const InventoryObjectInstance* objectInstanceAtScreenIndex(int index) const;
     InventoryObjectInstance* objectInstanceAtScreenIndex(int index);
+    const InventoryObjectInstance* objectInstanceById(std::string_view instanceId) const;
+    InventoryObjectInstance* objectInstanceById(std::string_view instanceId);
     const InventoryObjectStack* selectedObjectStack() const;
     InventoryObjectInstance* selectedObjectInstance();
     const InventoryObjectInstance* selectedObjectInstance() const;
@@ -205,7 +235,18 @@ private:
         const EncyclopediaSystem* encyclopedia);
     bool addShortcutSelectionToRing(SpellRingSystem& spellRing, SpellRingAddResult* outResult = nullptr);
     bool canUseScreenItem(int index) const;
-    std::array<UiCommandMenuItem, 3> buildSlotCommandItems(int slotIndex, bool itemUseEnabled = true) const;
+    bool canEquipStaffScreenItem(int index) const;
+    bool toggleStaffEquipmentScreenItem(int index, const SpellRingSystem& spellRing);
+    bool equipStaffScreenItem(int index, const SpellRingSystem& spellRing);
+    bool unequipStaff();
+    bool canDiscardScreenItem(int index, bool itemDiscardEnabled = true) const;
+    bool discardScreenItem(int index, bool itemDiscardEnabled = true);
+    void openDiscardConfirmDialog(int slotIndex);
+    void drawDiscardConfirmDialog(Renderer& renderer, const ObjectCatalog& catalog) const;
+    SlotCommandList buildSlotCommandItems(
+        int slotIndex,
+        bool itemUseEnabled = true,
+        bool itemDiscardEnabled = true) const;
     bool hasScreenItem(int index) const;
     bool moveScreenItem(int fromIndex, int toIndex);
     void syncPackedItemSlots() const;
@@ -216,7 +257,7 @@ private:
     std::string allocateInstanceId();
     InventoryObjectInstance createObjectInstance(const ItemData& item);
     void toggleSelectedProtection();
-    void openSlotCommandMenu(int slotIndex);
+    void openSlotCommandMenu(int slotIndex, bool itemUseEnabled = true, bool itemDiscardEnabled = true);
     void resetSlotPointerPress();
     void queueRingEquipFx(Vec2 sourceScreen, const SpellRingAddResult& result);
 
@@ -224,6 +265,8 @@ private:
     std::vector<InventoryObjectStack> objectStacks_;
     std::vector<InventoryObjectInstance> objectInstances_;
     MaterialInventory materials_;
+    std::string equippedStaffInstanceId_;
+    std::vector<InventoryDiscardRequest> discardRequests_;
     unsigned long long nextInstanceId_ = 1;
     int selected_ = 0;
     int shortcutRow_ = 0;
@@ -233,6 +276,8 @@ private:
     int grabbedSlotOrigin_ = -1;
     UiCommandMenuState slotCommandMenu_{};
     int slotCommandMenuIndex_ = -1;
+    UiConfirmDialogState discardConfirm_{};
+    int discardConfirmSlotIndex_ = -1;
     int slotPointerPressIndex_ = -1;
     Vec2 slotPointerPressMouse_{};
     bool slotPointerPressCanOpenMenu_ = false;

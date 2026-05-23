@@ -46,6 +46,38 @@ constexpr std::string_view AudioSeUiItemUse = "se.ui.item_use";
 constexpr std::string_view AudioSeUiRingPlace = "se.ui.ring_place";
 constexpr std::string_view AudioSeUiUpgradeSelect = "se.ui.upgrade_select";
 
+const InventoryObjectInstance* findInventoryObjectInstanceById(
+    const InventorySystem& inventory,
+    std::string_view instanceId)
+{
+    if (instanceId.empty()) {
+        return nullptr;
+    }
+    const auto& instances = inventory.objectInstances();
+    const auto it = std::find_if(
+        instances.begin(),
+        instances.end(),
+        [instanceId](const InventoryObjectInstance& entry) {
+            return entry.instance.instanceId == instanceId;
+        });
+    return it == instances.end() ? nullptr : &*it;
+}
+
+bool spellRingContainsInstanceId(const SpellRingSystem& spellRing, std::string_view instanceId)
+{
+    if (instanceId.empty()) {
+        return false;
+    }
+    for (const auto& ringItems : spellRing.ringItems()) {
+        for (const SpellRingItem& item : ringItems) {
+            if (item.instanceId == instanceId) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
 bool lootChestKindForDropProfile(std::string_view profile, LootChestKind& outKind)
 {
     if (profile == "box_common") {
@@ -198,6 +230,7 @@ void Game::initialize(int width, int height)
     resetWorldUiState();
     resetWorldRunState();
     initializeDefaultSpellRing();
+    refreshEquipmentModifiers();
     applyPermanentUpgrades();
     spellRing_.applyObjectParameters(objectCatalog_);
     spellRing_.resetBaseWeightToCurrent();
@@ -344,6 +377,7 @@ void Game::resetWorldUiState()
     baseMerchantBuyCommandIndex_ = -1;
     baseUpgradeActive_ = false;
     baseUpgradeSelection_ = 0;
+    baseUpgradeTabs_ = {};
     baseProcessingActive_ = false;
     baseProcessingMode_ = 0;
     baseProcessingTabs_ = {};
@@ -358,8 +392,12 @@ void Game::resetWorldUiState()
     ringPlaceModeActive_ = false;
     ringEmptyPressActive_ = false;
     levelUpResultDialog_ = {};
+    levelUpReturnMode_ = ScreenMode::Playing;
     baseRingWorkshopActive_ = false;
+    baseRingWorkshopMode_ = RingWorkshopMode::ChooseAction;
     baseRingWorkshopSelection_ = 0;
+    baseRingWorkshopRingIndex_ = 0;
+    baseRingWorkshopRingTabs_ = {};
     ringWorkshopDraftUpgradePoints_ = levelRingUpgradePoints_;
     baseBookshelfActive_ = false;
     bookshelfPage_ = BookshelfPage::Menu;
@@ -445,6 +483,7 @@ void Game::buildWorldForRun(bool captureRunStartInventory)
     initializeEnemyNodesFromLayout();
     applyPlacementTerrainOverrides();
     initializeDefaultSpellRing();
+    refreshEquipmentModifiers();
     applyPermanentUpgrades();
     spellRing_.applyObjectParameters(objectCatalog_);
     spellRing_.resetBaseWeightToCurrent();
@@ -480,9 +519,6 @@ void Game::beginWorldBuildFromBase(
     inventory_.setOpen(false);
     inventory_.cancelGrab();
     cancelRingGrab();
-    if (levels_.isChoosing()) {
-        levels_ = LevelSystem{};
-    }
     baseMiningStartChoiceActive_ = false;
     baseWarpPointSelectActive_ = false;
     baseRegenerateConfirm_ = {};
@@ -557,6 +593,7 @@ void Game::advanceWorldBuildOneStep()
         break;
     case WorldBuildStep::InitializeRing:
         initializeDefaultSpellRing();
+        refreshEquipmentModifiers();
         applyPermanentUpgrades();
         spellRing_.applyObjectParameters(objectCatalog_);
         spellRing_.resetBaseWeightToCurrent();
@@ -589,6 +626,7 @@ void Game::finishWorldBuild()
     player_.level = job.retainedLevel;
     player_.xp = job.retainedXp;
     player_.xpToNext = job.retainedXpToNext;
+    refreshEquipmentModifiers();
     applyPermanentUpgrades();
     clearTemporaryPlayerState(true);
     captureRunStartInventoryState();
@@ -704,9 +742,6 @@ void Game::enterBase()
     closeDebugItemPicker();
     closeDebugStoryTest();
     debugStoryTestReturnAfterDialogue_ = false;
-    if (levels_.isChoosing()) {
-        levels_ = LevelSystem{};
-    }
     mode_ = ScreenMode::Base;
     playAudioBgm(AudioBgmBase, 0.35f);
     pausePage_ = PauseMenuPage::Main;
@@ -738,10 +773,14 @@ void Game::enterBase()
     closeUiCommandMenu(baseMerchantBuyCommandMenu_);
     baseMerchantBuyCommandIndex_ = -1;
     baseUpgradeActive_ = false;
+    baseUpgradeTabs_ = {};
     baseProcessingActive_ = false;
     closeUiCommandMenu(baseProcessingCommandMenu_);
     baseProcessingCommandSlot_ = -1;
     baseRingWorkshopActive_ = false;
+    baseRingWorkshopMode_ = RingWorkshopMode::ChooseAction;
+    baseRingWorkshopSelection_ = 0;
+    baseRingWorkshopRingTabs_ = {};
     baseBookshelfActive_ = false;
     baseMenuSelection_ = std::clamp(baseMenuSelection_, 0, BaseMenuItemCount - 1);
     clearTemporaryPlayerState(true);
@@ -1096,6 +1135,7 @@ void Game::startMiningFromBase(bool useLatestWarpPoint, bool forceRegenerate)
 
 void Game::applyPermanentUpgrades()
 {
+    spellRing_.setEquipmentModifiers(equipmentModifiers_);
     player_.level = std::clamp(player_.level, 1, PlayerMaxLevel);
     player_.xpToNext = playerXpToNextForLevel(player_.level, balance_);
     if (playerAtMaxLevel(player_)) {
@@ -1110,6 +1150,51 @@ void Game::applyPermanentUpgrades()
         spellRing_.setRadiusForRing(ringIndex, effectiveInitialRingRadiusForRing(ringIndex, points.radius));
         spellRing_.setAngularSpeedForRing(ringIndex, effectiveInitialRingSpeedForRing(ringIndex, points.speed));
         spellRing_.setMaxEquippedWeightForRing(ringIndex, effectiveInitialRingWeightLimitForRing(ringIndex, points.weightLimit));
+    }
+}
+
+void Game::refreshEquipmentModifiers()
+{
+    EquipmentModifiers nextModifiers;
+    const std::string equippedStaffId = inventory_.equippedStaffInstanceId();
+    if (!equippedStaffId.empty()) {
+        const InventoryObjectInstance* staffInstance = findInventoryObjectInstanceById(inventory_, equippedStaffId);
+        if (staffInstance == nullptr) {
+            logError("[warning] Staff equipment: instance_id=\"" + equippedStaffId +
+                "\" is missing from inventory; staff unequipped");
+            inventory_.clearEquippedStaff();
+        } else if (staffInstance->instance.isBroken) {
+            logError("[warning] Staff equipment: instance_id=\"" + equippedStaffId +
+                "\" is broken; staff unequipped");
+            inventory_.clearEquippedStaff();
+        } else if (spellRingContainsInstanceId(spellRing_, equippedStaffId)) {
+            logError("[warning] Staff equipment: instance_id=\"" + equippedStaffId +
+                "\" is also mounted on a ring; staff unequipped");
+            inventory_.clearEquippedStaff();
+        } else {
+            const ObjectDefinition* staffObject = &staffInstance->item;
+            const auto objectIt = objectCatalog_.objectsById.find(staffInstance->item.id);
+            if (objectIt != objectCatalog_.objectsById.end()) {
+                staffObject = &objectIt->second;
+            }
+            if (!isStaffObject(*staffObject)) {
+                logError("[warning] Staff equipment: instance_id=\"" + equippedStaffId +
+                    "\" object_id=\"" + staffInstance->item.id + "\" is not category staff; staff unequipped");
+                inventory_.clearEquippedStaff();
+            } else {
+                nextModifiers = collectStaffEquipmentModifiers(*staffObject, equippedStaffId);
+            }
+        }
+    }
+
+    equipmentModifiers_ = std::move(nextModifiers);
+    spellRing_.setEquipmentModifiers(equipmentModifiers_);
+    observedEquippedStaffInstanceId_ = inventory_.equippedStaffInstanceId();
+
+    const std::string summary = equipmentModifiersDebugSummary(equipmentModifiers_);
+    if (summary != equipmentModifierLogKey_) {
+        equipmentModifierLogKey_ = summary;
+        logError("Staff equipment modifiers: " + summary);
     }
 }
 
@@ -1134,29 +1219,122 @@ LevelGainResult Game::gainPlayerXp(int amount)
     return result;
 }
 
+void Game::openLevelUpChoice(ScreenMode returnMode)
+{
+    if (!levels_.isChoosing()) {
+        return;
+    }
+    inventory_.setOpen(false);
+    inventory_.cancelGrab();
+    cancelRingGrab();
+
+    levelUpReturnMode_ = returnMode == ScreenMode::Base ? ScreenMode::Base : ScreenMode::Playing;
+    if (levelUpReturnMode_ == ScreenMode::Base) {
+        pauseReturnMode_ = ScreenMode::Base;
+        inventoryReturnToPause_ = false;
+    }
+    mode_ = ScreenMode::LevelUp;
+}
+
+void Game::updateLevelUpScreen(const Input& input, UiContext& ui, float dt)
+{
+    const auto returnFromLevelUp = [this]() {
+        levelUpResultDialog_ = {};
+        if (levelUpReturnMode_ == ScreenMode::Base) {
+            mode_ = ScreenMode::Base;
+            pauseReturnMode_ = ScreenMode::Base;
+            inventoryReturnToPause_ = false;
+            return;
+        }
+        mode_ = ScreenMode::Playing;
+        pauseReturnMode_ = ScreenMode::Playing;
+        inventoryReturnToPause_ = false;
+    };
+
+    if (levelUpResultDialog_.open) {
+        const UiRect resultPanel = levelUpResultDialogRect();
+        if (updateUiResultDialog(levelUpResultDialog_, ui, input, resultPanel) && !levels_.isChoosing()) {
+            returnFromLevelUp();
+        }
+        ui.block(resultPanel);
+        return;
+    }
+
+    if (!levels_.isChoosing()) {
+        returnFromLevelUp();
+        return;
+    }
+
+    const std::optional<RingLevelUpgradeSelection> selection = upgrades_.update(
+        input,
+        ui,
+        spellRing_,
+        dt,
+        UnlockedRingCount);
+    if (!selection) {
+        return;
+    }
+
+    const int ringIndex = std::clamp(selection->ringIndex, 0, SpellRingCount - 1);
+    float beforeValue = spellRing_.radiusForRing(ringIndex);
+    if (selection->kind == RingLevelUpgradeKind::Speed) {
+        beforeValue = spellRing_.angularSpeedForRing(ringIndex);
+    } else if (selection->kind == RingLevelUpgradeKind::WeightLimit) {
+        beforeValue = spellRing_.maxEquippedWeightForRing(ringIndex);
+    }
+
+    RingLevelUpgradePoints& points = levelRingUpgradePoints_[static_cast<std::size_t>(ringIndex)];
+    ++ringLevelUpgradePointRef(points, selection->kind);
+    levels_.finishChoice();
+    applyPermanentUpgrades();
+
+    float afterValue = spellRing_.radiusForRing(ringIndex);
+    if (selection->kind == RingLevelUpgradeKind::Speed) {
+        afterValue = spellRing_.angularSpeedForRing(ringIndex);
+    } else if (selection->kind == RingLevelUpgradeKind::WeightLimit) {
+        afterValue = spellRing_.maxEquippedWeightForRing(ringIndex);
+    }
+    openUiResultDialog(levelUpResultDialog_, "レベルアップ", levelUpResultLines(*selection, beforeValue, afterValue));
+}
+
 float Game::effectiveInitialRingRadiusForRing(int ringIndex, int levelRadiusPoints) const
 {
-    (void)ringIndex;
     const float baseUpgradeMultiplier = 1.0f + static_cast<float>(ringRadiusUpgradeLevel_) * 0.08f;
     const float workshopMultiplier = 1.0f + static_cast<float>(workshopInitialRadiusLevel_) * 0.05f;
     const float levelMultiplier = SpellRingSystem::levelScaleMultiplierForPoints(levelRadiusPoints);
-    return balance_.spellRingRadius * baseUpgradeMultiplier * workshopMultiplier * levelMultiplier;
+    const double staffMultiplier = std::max(
+        0.0,
+        ringEquipmentModifiersForRing(equipmentModifiers_, ringIndex).ringRadiusMul);
+    return balance_.spellRingRadius *
+        baseUpgradeMultiplier *
+        workshopMultiplier *
+        levelMultiplier *
+        static_cast<float>(staffMultiplier);
 }
 
 float Game::effectiveInitialRingSpeedForRing(int ringIndex, int levelSpeedPoints) const
 {
-    (void)ringIndex;
     const float baseUpgradeMultiplier = 1.0f + static_cast<float>(ringSpeedUpgradeLevel_) * 0.08f;
     const float workshopMultiplier = 1.0f + static_cast<float>(workshopInitialSpeedLevel_) * 0.05f;
     const float levelMultiplier = SpellRingSystem::levelScaleMultiplierForPoints(levelSpeedPoints);
-    return balance_.spellRingSpeed * baseUpgradeMultiplier * workshopMultiplier * levelMultiplier;
+    const double staffMultiplier = std::max(
+        0.0,
+        ringEquipmentModifiersForRing(equipmentModifiers_, ringIndex).ringSpeedMul);
+    return balance_.spellRingSpeed *
+        baseUpgradeMultiplier *
+        workshopMultiplier *
+        levelMultiplier *
+        static_cast<float>(staffMultiplier);
 }
 
 float Game::effectiveInitialRingWeightLimitForRing(int ringIndex, int levelWeightLimitPoints) const
 {
-    (void)ringIndex;
+    const double staffWeightAdd = std::max(
+        0.0,
+        ringEquipmentModifiersForRing(equipmentModifiers_, ringIndex).ringWeightLimitAdd);
     return SpellRingSystem::InitialMaxEquippedWeight +
-        SpellRingSystem::LevelWeightLimitUpgradeAmount * static_cast<float>(std::max(0, levelWeightLimitPoints));
+        SpellRingSystem::LevelWeightLimitUpgradeAmount * static_cast<float>(std::max(0, levelWeightLimitPoints)) +
+        static_cast<float>(staffWeightAdd);
 }
 
 float Game::effectiveRingShiftDistance() const
@@ -1837,6 +2015,10 @@ void Game::updateScreenMode(
         return;
     }
 
+    if (levels_.isChoosing() && mode_ != ScreenMode::LevelUp && mode_ != ScreenMode::WorldLoading) {
+        openLevelUpChoice(basePresentationActive() ? ScreenMode::Base : ScreenMode::Playing);
+    }
+
     if (mode_ == ScreenMode::Base) {
         updateBaseScreen(input, ui, dt);
         return;
@@ -1861,11 +2043,8 @@ void Game::updateScreenMode(
         return;
     }
 
-    if (levels_.isChoosing()) {
-        inventory_.setOpen(false);
-        mode_ = ScreenMode::LevelUp;
-    } else if (mode_ == ScreenMode::LevelUp && !levelUpResultDialog_.open) {
-        mode_ = ScreenMode::Playing;
+    if (levels_.isChoosing() && mode_ != ScreenMode::LevelUp) {
+        openLevelUpChoice(ScreenMode::Playing);
     }
 
     switch (mode_) {
@@ -1926,6 +2105,8 @@ void Game::updateScreenMode(
         updatePauseMenu(input, ui);
         break;
     case ScreenMode::Inventory:
+    {
+        const bool inventoryWorldActionsEnabled = pauseReturnMode_ != ScreenMode::Base;
         inventory_.updateScreen(
             input,
             ui,
@@ -1936,13 +2117,19 @@ void Game::updateScreenMode(
             &magic_,
             discoveryEvents,
             &encyclopedia_,
-            pauseReturnMode_ != ScreenMode::Base);
+            inventoryWorldActionsEnabled,
+            inventoryWorldActionsEnabled);
+        std::vector<InventoryDiscardRequest> discardRequests = inventory_.consumeDiscardRequests();
+        if (!discardRequests.empty()) {
+            spawnInventoryDiscardRequests(std::move(discardRequests));
+        }
         if (!inventory_.isOpen()) {
             mode_ = inventoryReturnToPause_ ? ScreenMode::PauseMenu : ScreenMode::Playing;
-            pausePage_ = PauseMenuPage::Main;
             inventoryReturnToPause_ = false;
+            pausePage_ = PauseMenuPage::Main;
         }
         break;
+    }
     case ScreenMode::Ring:
         updateRingScreen(input, ui, dt);
         break;
@@ -1953,44 +2140,7 @@ void Game::updateScreenMode(
         updateAudioCueEditScreen(input, ui);
         break;
     case ScreenMode::LevelUp:
-        if (levelUpResultDialog_.open) {
-            const UiRect resultPanel = levelUpResultDialogRect();
-            if (updateUiResultDialog(levelUpResultDialog_, ui, input, resultPanel)) {
-                mode_ = ScreenMode::Playing;
-            }
-            ui.block(resultPanel);
-            break;
-        }
-        if (levels_.isChoosing()) {
-            const std::optional<RingLevelUpgradeSelection> selection = upgrades_.update(
-                input,
-                ui,
-                spellRing_);
-            if (selection) {
-                const int ringIndex = std::clamp(selection->ringIndex, 0, SpellRingCount - 1);
-                float beforeValue = spellRing_.radiusForRing(ringIndex);
-                if (selection->kind == RingLevelUpgradeKind::Speed) {
-                    beforeValue = spellRing_.angularSpeedForRing(ringIndex);
-                } else if (selection->kind == RingLevelUpgradeKind::WeightLimit) {
-                    beforeValue = spellRing_.maxEquippedWeightForRing(ringIndex);
-                }
-
-                RingLevelUpgradePoints& points = levelRingUpgradePoints_[static_cast<std::size_t>(ringIndex)];
-                ++ringLevelUpgradePointRef(points, selection->kind);
-                levels_.finishChoice();
-                applyPermanentUpgrades();
-
-                float afterValue = spellRing_.radiusForRing(ringIndex);
-                if (selection->kind == RingLevelUpgradeKind::Speed) {
-                    afterValue = spellRing_.angularSpeedForRing(ringIndex);
-                } else if (selection->kind == RingLevelUpgradeKind::WeightLimit) {
-                    afterValue = spellRing_.maxEquippedWeightForRing(ringIndex);
-                }
-                openUiResultDialog(levelUpResultDialog_, "レベルアップ", levelUpResultLines(*selection, beforeValue, afterValue));
-            }
-        } else {
-            mode_ = ScreenMode::Playing;
-        }
+        updateLevelUpScreen(input, ui, dt);
         break;
     case ScreenMode::GameOver:
         break;
@@ -2016,6 +2166,9 @@ bool Game::gameProgressPaused() const
 bool Game::basePresentationActive() const
 {
     if (mode_ == ScreenMode::Base || mode_ == ScreenMode::WorldLoading) {
+        return true;
+    }
+    if (mode_ == ScreenMode::LevelUp && levelUpReturnMode_ == ScreenMode::Base) {
         return true;
     }
     if (pauseReturnMode_ != ScreenMode::Base) {
@@ -2124,6 +2277,10 @@ void Game::update(const Input& input, const Time& time)
     } uiSoundFlush{*this, ui};
     const bool wasPaused = gameProgressPaused();
     updateScreenMode(input, ui, time.deltaSeconds(), &effectDiscoveries);
+    if (inventory_.equippedStaffInstanceId() != observedEquippedStaffInstanceId_) {
+        refreshEquipmentModifiers();
+        applyPermanentUpgrades();
+    }
     for (const RingEquipFxRequest& request : inventory_.consumeRingEquipFxRequests()) {
         spawnRingEquipFx(request);
     }
@@ -2151,7 +2308,11 @@ void Game::update(const Input& input, const Time& time)
         if (!enemyTestActive_) {
             objectBlockers = solidObjectCollisionRects();
         }
-        player_.spellRingShiftDistanceMultiplier = static_cast<float>(spellRing_.orbitShiftMultiplier());
+        const RingEquipmentModifiers& activeEquipment =
+            spellRing_.equipmentModifiersForRing(spellRing_.activeRingIndex());
+        player_.spellRingShiftDistanceMultiplier = static_cast<float>(
+            std::max(0.0, spellRing_.orbitShiftMultiplier()) *
+            std::max(0.0, activeEquipment.ringShiftDistanceMul));
         player_.update(
             input,
             camera_,
@@ -2663,7 +2824,7 @@ void Game::update(const Input& input, const Time& time)
             return;
         }
         if (levels_.isChoosing()) {
-            mode_ = ScreenMode::LevelUp;
+            openLevelUpChoice(ScreenMode::Playing);
         }
     }
 }

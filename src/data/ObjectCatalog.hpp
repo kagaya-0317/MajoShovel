@@ -234,6 +234,9 @@ std::string effectSummaryText(const ObjectCatalog& catalog, const std::vector<Ef
 std::string resolveLootWeightColumnName(std::string_view stageId, int depthRank, LootChestKind chestKind);
 std::string resolveLootWeightColumnName(std::string_view stageId, int depthRank, std::string_view chestKind);
 double lootWeightFor(const ObjectDefinition& object, std::string_view stageId, int depthRank, LootChestKind chestKind);
+bool isStaffObjectCategory(std::string_view category);
+bool isStaffObject(const ObjectDefinition& object);
+bool isStaffEquipTarget(std::string_view target);
 bool isDamageTypeAllowed(std::string_view value);
 bool isPhysicalDamageType(std::string_view value);
 std::string normalizeDamageType(std::string_view value);
