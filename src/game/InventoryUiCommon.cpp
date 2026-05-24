@@ -593,9 +593,8 @@ float drawInventoryDetailHeader(
     int rarity,
     float animationSeconds)
 {
-    constexpr float MinHeaderHeight = 72.0f;
     constexpr float NameRarityGap = 3.0f;
-    constexpr float HeaderGap = 14.0f;
+    constexpr float RarityImageGap = 8.0f;
     constexpr float ProtectionGap = 12.0f;
     constexpr int TitleScale = 3;
     constexpr int ProtectionScale = 2;
@@ -624,7 +623,40 @@ float drawInventoryDetailHeader(
         {content.pos.x, content.pos.y + titleSize.y + NameRarityGap},
         rarity,
         animationSeconds);
-    return content.pos.y + std::max(MinHeaderHeight, titleSize.y + NameRarityGap + raritySize.y + HeaderGap);
+    return content.pos.y + titleSize.y + NameRarityGap + raritySize.y + RarityImageGap;
+}
+
+ObjectImageDrawOptions inventoryUiObjectImageOptions(
+    const ItemData& item,
+    bool broken,
+    ObjectImageDrawOptions options = {})
+{
+    return objectGroundImageOptions(item, itemImageOptionsWithBrokenState(options, broken));
+}
+
+void drawInventoryDetailImage(Renderer& renderer, UiRect panel, float& y, const ItemData& item, bool broken)
+{
+    constexpr Vec2 ImageMaxSize{96.0f, 96.0f};
+    constexpr float ImageBottomGap = 8.0f;
+    const UiRect content = uiSubPanelContentRect(panel);
+    const Vec2 center{
+        content.pos.x + content.size.x * 0.5f,
+        y + ImageMaxSize.y * 0.5f,
+    };
+
+    ObjectImageDrawOptions objectOptions;
+    objectOptions.allowUpscale = true;
+    objectOptions.applyScaleOverride = false;
+    const bool drewImage = drawItemImage(
+        renderer,
+        item,
+        center,
+        ImageMaxSize,
+        inventoryUiObjectImageOptions(item, broken, objectOptions));
+    if (!drewImage) {
+        renderer.fillCircle(center, ImageMaxSize.x * 0.35f, itemFallbackColorForBrokenState(inventoryUiObjectColor(item), broken));
+    }
+    y += ImageMaxSize.y + ImageBottomGap;
 }
 
 void drawDetailSeparator(Renderer& renderer, UiRect panel, float& y)
@@ -639,12 +671,19 @@ void drawDetailSeparator(Renderer& renderer, UiRect panel, float& y)
     y += ui::SeparatorHeight + 2.0f;
 }
 
-void drawExtraLines(Renderer& renderer, UiRect panel, float& y, const std::vector<InventoryUiDetailExtraLine>& extraLines)
+void drawExtraLines(
+    Renderer& renderer,
+    UiRect panel,
+    float& y,
+    const std::vector<InventoryUiDetailExtraLine>& extraLines,
+    bool showSeparator)
 {
     if (extraLines.empty()) {
         return;
     }
-    drawDetailSeparator(renderer, panel, y);
+    if (showSeparator) {
+        drawDetailSeparator(renderer, panel, y);
+    }
     for (const InventoryUiDetailExtraLine& line : extraLines) {
         drawUiDetailLine(renderer, panel, y, line.label, line.value, line.valueColor);
     }
@@ -1023,7 +1062,6 @@ void drawInventoryUiSlot(
         const Color objectColor = itemFallbackColorForBrokenState(inventoryUiObjectColor(*entry.item), broken);
         ObjectImageDrawOptions imageOptions;
         imageOptions.tint = style.disabled ? Color{128, 128, 128, 255} : Color{255, 255, 255, 255};
-        imageOptions = itemImageOptionsWithBrokenState(imageOptions, broken);
         if (style.selected) {
             imageOptions = withSelectedItemOutline(imageOptions);
         }
@@ -1032,7 +1070,7 @@ void drawInventoryUiSlot(
             *entry.item,
             slotCenter,
             {style.imageMaxSize, style.imageMaxSize},
-            objectGroundImageOptions(*entry.item, imageOptions));
+            inventoryUiObjectImageOptions(*entry.item, broken, imageOptions));
         if (!drewImage) {
             renderer.fillCircle(slotCenter, 22.0f, style.disabled ? darkenColor(objectColor, 0.5f) : objectColor);
             if (style.selected) {
@@ -1051,7 +1089,6 @@ void drawInventoryUiSlot(
     if (style.disabled) {
         imageOptions.tint = darkenColor(imageOptions.tint, 0.5f);
     }
-    imageOptions = itemImageOptionsWithBrokenState(imageOptions, broken);
     if (style.selected) {
         imageOptions = withSelectedItemOutline(imageOptions);
     }
@@ -1060,7 +1097,7 @@ void drawInventoryUiSlot(
         *entry.item,
         slotCenter,
         {style.imageMaxSize, style.imageMaxSize},
-        objectGroundImageOptions(*entry.item, imageOptions));
+        inventoryUiObjectImageOptions(*entry.item, broken, imageOptions));
     if (!drewImage) {
         renderer.fillCircle(slotCenter, 22.0f, style.disabled ? darkenColor(objectColor, 0.5f) : objectColor);
         if (style.selected) {
@@ -1081,6 +1118,120 @@ void drawInventoryUiSlot(
     float imageMaxSize)
 {
     drawInventoryUiSlot(renderer, rect, entry, InventoryUiSlotStyle{selected, false, imageMaxSize});
+}
+
+int inventoryUiGridRowCount(int itemCount, const InventoryUiGridStyle& style)
+{
+    const int columns = std::max(1, style.columns);
+    return itemCount <= 0 ? 0 : (itemCount + columns - 1) / columns;
+}
+
+float inventoryUiGridWidth(const InventoryUiGridStyle& style)
+{
+    const int columns = std::max(1, style.columns);
+    return static_cast<float>(columns) * style.slotSize.x + static_cast<float>(columns - 1) * style.slotGap.x;
+}
+
+float inventoryUiGridVisibleHeight(const InventoryUiGridStyle& style)
+{
+    const int rows = std::max(1, style.visibleRows);
+    return static_cast<float>(rows) * style.slotSize.y + static_cast<float>(rows - 1) * style.slotGap.y;
+}
+
+UiRect inventoryUiGridViewport(Vec2 pos, const InventoryUiGridStyle& style)
+{
+    const float scrollbarReserve = std::max(
+        0.0f,
+        style.scroll.scrollbarWidth + style.scroll.scrollbarGap + style.scroll.scrollbarPaddingX);
+    return {pos, {inventoryUiGridWidth(style) + scrollbarReserve, inventoryUiGridVisibleHeight(style)}};
+}
+
+float inventoryUiGridContentHeight(int itemCount, const InventoryUiGridStyle& style)
+{
+    const int rows = inventoryUiGridRowCount(itemCount, style);
+    if (rows <= 0) {
+        return 0.0f;
+    }
+    return static_cast<float>(rows) * style.slotSize.y + static_cast<float>(rows - 1) * style.slotGap.y;
+}
+
+UiScrollAreaLayout makeInventoryUiGridLayout(
+    UiRect viewport,
+    int itemCount,
+    float scrollOffset,
+    const InventoryUiGridStyle& style)
+{
+    return makeUiScrollAreaLayout(viewport, inventoryUiGridContentHeight(itemCount, style), scrollOffset, style.scroll);
+}
+
+UiScrollAreaLayout updateInventoryUiGrid(
+    UiContext& ui,
+    const Input& input,
+    UiRect viewport,
+    int itemCount,
+    float& scrollOffset,
+    const InventoryUiGridStyle& style,
+    UiScrollAreaState* state)
+{
+    return updateUiScrollArea(
+        ui,
+        input,
+        viewport,
+        inventoryUiGridContentHeight(itemCount, style),
+        scrollOffset,
+        style.scroll,
+        state);
+}
+
+UiRect inventoryUiGridSlotRect(const UiScrollAreaLayout& layout, int index, const InventoryUiGridStyle& style)
+{
+    const int columns = std::max(1, style.columns);
+    const int clampedIndex = std::max(0, index);
+    const int row = clampedIndex / columns;
+    const int column = clampedIndex % columns;
+    return {{
+        layout.content.pos.x + static_cast<float>(column) * (style.slotSize.x + style.slotGap.x),
+        layout.content.pos.y + static_cast<float>(row) * (style.slotSize.y + style.slotGap.y) - layout.scrollOffset,
+    }, style.slotSize};
+}
+
+void keepInventoryUiGridItemVisible(
+    UiRect viewport,
+    int selectedIndex,
+    int itemCount,
+    float& scrollOffset,
+    const InventoryUiGridStyle& style)
+{
+    if (selectedIndex < 0 || selectedIndex >= itemCount) {
+        scrollOffset = makeInventoryUiGridLayout(viewport, itemCount, scrollOffset, style).scrollOffset;
+        return;
+    }
+    const UiScrollAreaLayout layout = makeInventoryUiGridLayout(viewport, itemCount, scrollOffset, style);
+    keepUiScrollAreaRectVisible(
+        viewport,
+        inventoryUiGridSlotRect(layout, selectedIndex, style),
+        inventoryUiGridContentHeight(itemCount, style),
+        scrollOffset,
+        style.scroll);
+}
+
+void drawInventoryUiGrid(
+    Renderer& renderer,
+    const UiScrollAreaLayout& layout,
+    std::span<const InventoryUiEntryView> entries,
+    int selectedIndex,
+    const InventoryUiGridStyle& style)
+{
+    renderer.pushClipRect(layout.viewport.pos, layout.viewport.size);
+    for (int i = 0; i < static_cast<int>(entries.size()); ++i) {
+        const UiRect rect = inventoryUiGridSlotRect(layout, i, style);
+        if (!uiScrollAreaRectVisible(layout, rect)) {
+            continue;
+        }
+        drawInventoryUiSlot(renderer, rect, entries[static_cast<std::size_t>(i)], i == selectedIndex, style.imageMaxSize);
+    }
+    renderer.popClipRect();
+    drawUiScrollAreaScrollbar(renderer, layout, style.scroll);
 }
 
 void drawInventoryUiDetailPanel(
@@ -1120,8 +1271,14 @@ void drawInventoryUiDetailPanel(
         entry.item->rarity,
         options.animationSeconds);
 
+    const bool broken = stats ? stats->broken : entry.item->durability == 0;
+    drawInventoryDetailImage(renderer, panel, detailLineY, *entry.item, broken);
     drawUiDetailText(renderer, panel, detailLineY, entry.item->description.empty() ? "-" : entry.item->description);
     drawItemEffectDetailSections(renderer, panel, detailLineY, *entry.item, catalog, encyclopedia);
+
+    if (!entry.item->category.empty()) {
+        drawUiDetailLine(renderer, panel, detailLineY, "分類", entry.item->category);
+    }
 
     if (stats) {
         if (stats->maxDurability < 0) {
@@ -1145,7 +1302,7 @@ void drawInventoryUiDetailPanel(
         drawUiDetailLine(renderer, panel, detailLineY, "強化回数", buffer);
     }
 
-    drawExtraLines(renderer, panel, detailLineY, extraLines);
+    drawExtraLines(renderer, panel, detailLineY, extraLines, options.showExtraLineSeparator);
 }
 
 }

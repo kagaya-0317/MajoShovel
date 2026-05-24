@@ -37,6 +37,12 @@
 
 namespace majo {
 
+inline constexpr std::string_view IntroTutorialStageId = "stage_00_intro_tutorial";
+inline constexpr std::string_view IntroTutorialCompletedFlag = "intro_tutorial_completed";
+inline constexpr std::string_view IntroTutorialFallTrigger = "intro_tutorial:fall";
+inline constexpr std::string_view IntroTutorialBaseReturnTrigger = "intro_tutorial:base_return";
+inline constexpr std::string_view IntroTutorialGenerationProfile = "intro_tutorial";
+
 inline std::mt19937& lootRuntimeRng()
 {
     static std::mt19937 rng{std::random_device{}()};
@@ -1006,24 +1012,23 @@ std::vector<BaseFacility> baseFacilities(BaseArea area, bool ringWorkshopUnlocke
 {
     if (area == BaseArea::HomeInterior) {
         return {
-            BaseFacility{"bookshelf", "本棚", {{150.0f, 128.0f}, {128.0f, 66.0f}}, 72.0f, true, true, BaseFacilityAction::Bookshelf},
-            BaseFacility{"diary", "日記", {{940.0f, 174.0f}, {88.0f, 58.0f}}, 64.0f, true, true, BaseFacilityAction::Diary},
-            BaseFacility{"home_exit", "屋外へ戻る出口", {{592.0f, 584.0f}, {96.0f, 42.0f}}, 80.0f, true, true, BaseFacilityAction::HomeExit},
-            BaseFacility{"bed", "ベッド", {{156.0f, 452.0f}, {172.0f, 86.0f}}, 0.0f, false, true, BaseFacilityAction::Bookshelf},
-            BaseFacility{"desk", "机", {{898.0f, 360.0f}, {150.0f, 76.0f}}, 0.0f, false, true, BaseFacilityAction::Diary},
+            BaseFacility{"bookshelf", "本棚", {{786.0f, 184.0f}, {118.0f, 60.0f}}, 72.0f, true, true, BaseFacilityAction::Bookshelf},
+            BaseFacility{"diary", "日記", {{798.0f, 426.0f}, {78.0f, 50.0f}}, 64.0f, true, true, BaseFacilityAction::Diary},
+            BaseFacility{"home_exit", "屋外へ戻る出口", {{592.0f, 574.0f}, {96.0f, 42.0f}}, 80.0f, true, true, BaseFacilityAction::HomeExit},
+            BaseFacility{"bed", "ベッド", {{376.0f, 352.0f}, {156.0f, 80.0f}}, 0.0f, false, true, BaseFacilityAction::Bookshelf},
+            BaseFacility{"desk", "机", {{760.0f, 416.0f}, {148.0f, 76.0f}}, 0.0f, false, true, BaseFacilityAction::Diary},
         };
     }
 
     return {
-        BaseFacility{"mine_exit", "ダンジョン入口", {{584.0f, 560.0f}, {112.0f, 64.0f}}, 78.0f, true, true, BaseFacilityAction::MineExit},
-        BaseFacility{"storage_chest", "収納箱", {{158.0f, 320.0f}, {98.0f, 72.0f}}, 68.0f, true, true, BaseFacilityAction::Storage},
-        BaseFacility{"merchant_wagon", "商人ワゴン", {{982.0f, 302.0f}, {150.0f, 90.0f}}, 78.0f, true, true, BaseFacilityAction::Merchant},
-        BaseFacility{"processing_table", "作業台", {{930.0f, 128.0f}, {130.0f, 68.0f}}, 70.0f, true, true, BaseFacilityAction::Processing},
-        BaseFacility{"upgrade_forge", "拠点強化炉", {{568.0f, 76.0f}, {144.0f, 74.0f}}, 76.0f, true, true, BaseFacilityAction::Forge},
-        BaseFacility{"ring_workshop", "リング工房用スペース", {{902.0f, 520.0f}, {172.0f, 92.0f}}, 82.0f, true, ringWorkshopUnlocked, BaseFacilityAction::RingWorkshop},
-        BaseFacility{"monica", "モニカ", {{760.0f, 230.0f}, {74.0f, 86.0f}}, 72.0f, true, true, BaseFacilityAction::MonicaTalk},
-        BaseFacility{"home_entrance", "ルネの家の入口", {{382.0f, 158.0f}, {52.0f, 32.0f}}, 64.0f, true, true, BaseFacilityAction::HomeEntrance},
-        BaseFacility{"home", "ルネの家", {{330.0f, 72.0f}, {154.0f, 100.0f}}, 0.0f, false, true, BaseFacilityAction::HomeEntrance},
+        BaseFacility{"mine_exit", "ダンジョン入口", {{494.0f, 553.0f}, {289.0f, 167.0f}}, 78.0f, true, true, BaseFacilityAction::MineExit},
+        BaseFacility{"storage_chest", "収納箱", {{578.0f, 430.0f}, {98.0f, 72.0f}}, 68.0f, true, true, BaseFacilityAction::Storage},
+        BaseFacility{"merchant_wagon", "商人ワゴン", {{936.0f, 99.0f}, {227.0f, 152.0f}}, 78.0f, true, true, BaseFacilityAction::Merchant},
+        BaseFacility{"processing_table", "作業台", {{506.0f, 169.0f}, {217.0f, 94.0f}}, 70.0f, true, true, BaseFacilityAction::Processing},
+        BaseFacility{"upgrade_forge", "拠点強化炉", {{1056.0f, 425.0f}, {144.0f, 74.0f}}, 76.0f, true, true, BaseFacilityAction::Forge},
+        BaseFacility{"ring_workshop", "リング工房用スペース", {{837.0f, 468.0f}, {102.0f, 87.0f}}, 82.0f, true, ringWorkshopUnlocked, BaseFacilityAction::RingWorkshop},
+        BaseFacility{"monica", "モニカ", {{841.0f, 245.0f}, {74.0f, 86.0f}}, 72.0f, true, true, BaseFacilityAction::MonicaTalk},
+        BaseFacility{"home", "ルネの家", {{113.0f, 11.0f}, {301.0f, 308.0f}}, 90.0f, true, true, BaseFacilityAction::HomeEntrance},
     };
 }
 

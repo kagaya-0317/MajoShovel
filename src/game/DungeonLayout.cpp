@@ -244,10 +244,43 @@ float roomRadiusBonusForProfile(std::string_view generationProfile)
     return 0.0f;
 }
 
+DungeonLayout makeIntroTutorialLayout(const DungeonGenerationContext& context)
+{
+    DungeonLayout layout;
+    layout.stageId = 1;
+    layout.seed = context.seed;
+    layout.stageHardnessMultiplier = std::max(0.25f, context.stageHardnessMultiplier);
+    layout.cavernWidthMultiplier = 0.82f;
+    layout.generationProfile = context.generationProfile.empty() ? "intro_tutorial" : context.generationProfile;
+    layout.terrainProfile = context.terrainProfile.empty() ? "soft_stardust" : context.terrainProfile;
+    layout.startTile = {0, 0};
+    layout.goalTile = {74, 2};
+    layout.mainPathPoints = {
+        {0.0f, 0.0f},
+        {8.0f, 0.0f},
+        {12.0f, 0.0f},
+        {20.0f, 0.0f},
+        {30.0f, 0.0f},
+        {38.0f, 0.0f},
+        {52.0f, 3.0f},
+        {68.0f, 4.0f},
+        {74.0f, 2.0f},
+    };
+    layout.specialRoomAnchors = {
+        {SpecialRoomType::SafeCavern, {0.0f, 0.0f}, 4.2f},
+        {SpecialRoomType::EnemyRoom, {38.0f, 0.0f}, 5.6f},
+    };
+    return layout;
+}
+
 }
 
 DungeonLayout generateDungeonLayout(const DungeonGenerationContext& context)
 {
+    if (isProfile(context.generationProfile, "intro_tutorial")) {
+        return makeIntroTutorialLayout(context);
+    }
+
     std::mt19937 rng(context.seed);
     std::uniform_real_distribution<float> angleDist(0.0f, Pi * 2.0f);
     std::uniform_real_distribution<float> unitDist(0.0f, 1.0f);

@@ -1,18 +1,18 @@
 ﻿@event opening_base_intro
-@title 開幕拠点会話
-@trigger title_base_enter
+@title 帰還後拠点会話
+@trigger intro_tutorial:base_return
 @once story_opening_base_intro
 
 @narration
-守護星が落ちた穴の周りに、守護星救助隊の拠点が作られました。
+ルネが地底から戻るころには、守護星救助隊の拠点が作られていました。
 
 @wait small
 
 @say player ルネ
-……ここ、私の家の庭だよ？
+……ここ、私の家の庭だよね？
 
 @say elder 村長
-うむ。落ちたのがそなたの家の前だったからな
+うむ。落ちた穴がそなたの家の前だったからな
 
 @say player ルネ
 そっか…それは仕方ないか
@@ -29,7 +29,7 @@
 村を守る守護星が、落ちてしまった。どうやら大地に穴を開けて、地底まで行った。
 
 @say player ルネ
-うう…私のせいで…
+うう…やっぱり私のせいで…
 
 @say monica モニカ
 ルネのせいじゃないわ
@@ -105,7 +105,7 @@
 @wait small
 
 @say elder 村長
-まずは、星くずの浅坑へ向かうのじゃ
+まずは、星くずの浅坑へ向かい、守護星の行方を探すのじゃ
 
 @say player ルネ
 ……とりあえず、回せば、なんとかなるかな

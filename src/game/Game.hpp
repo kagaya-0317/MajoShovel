@@ -16,6 +16,7 @@
 #include "game/DepthRender.hpp"
 #include "game/DialogueSystem.hpp"
 #include "game/DiggingSystem.hpp"
+#include "game/DungeonEventDefinition.hpp"
 #include "game/DungeonLayout.hpp"
 #include "game/EffectDispatcher.hpp"
 #include "game/EffectSystem.hpp"
@@ -144,23 +145,10 @@ public:
     void render(Renderer& renderer, const Time& time);
     bool executeDebugCommand(std::string_view command);
     bool quitRequested() const { return quitRequested_; }
-    void setAutoReloadBlocked(bool blocked) { autoReloadBlocked_ = blocked; }
+    void setAutoReloadBlocked(bool blocked);
+    void setHotReloadEnabled(bool enabled);
 
-    enum class DungeonEventKind {
-        SleepingEnemyTreasure,
-        MonsterSwarmRoom,
-        NestRoom,
-        BossMonsterRoom,
-        GlowingRockRoom,
-        ElectricCircuitRoom,
-        WarpGuideMap,
-        BuriedWitch,
-        LostBaggageWitch,
-        ItemRequestWitch,
-        SurroundedWitch,
-        ColdWitchCampfire,
-        HeavyRockWitch,
-    };
+    using DungeonEventKind = majo::DungeonEventKind;
 
     struct DungeonEventNestHole {
         DungeonTile tile{};
@@ -205,12 +193,16 @@ public:
         bool activated = false;
         bool rewardSpawned = false;
         bool bossDefeated = false;
+        bool npcRequestKnown = false;
+        bool objectiveResolved = false;
+        bool rewardClaimed = false;
         int bossEnemyRuntimeId = 0;
         float selfLightRadiusTiles = 4.0f;
         std::string selectedEnemyId;
         std::vector<int> spawnedEnemyRuntimeIds;
         std::vector<DungeonEventNestHole> nestHoles;
         std::vector<DungeonEventObject> eventObjects;
+        float cavityRadiusTiles = 0.0f;
         std::string requestKey;
         std::string deliveredObjectId;
         int guideTargetWarpPointIndex = -1;
@@ -225,6 +217,8 @@ public:
         Vec2 focusWorldPos{};
         std::string discoveryStoryEventId;
         float holdSecondsIfNoDialogue = 2.0f;
+        float moveSeconds = 0.0f;
+        float returnSeconds = 0.0f;
         std::function<void()> onComplete;
     };
     bool requestDungeonFocus(DungeonFocusRequest request);
@@ -627,9 +621,23 @@ private:
         None,
         Base,
         TitleToBase,
+        TitleToIntroTutorial,
         MiningStart,
         ReturnToBase,
+        IntroTutorialToBase,
         BaseArea,
+    };
+    enum class IntroTutorialPhase {
+        Inactive,
+        FallDialogue,
+        ShovelRingIntro,
+        ExploreToTorch,
+        TorchDialogue,
+        TorchRingIntro,
+        ExploreToEnemy,
+        DefeatEnemy,
+        FreeToExit,
+        Returning,
     };
     enum class ScreenTransitionPhase {
         Idle,
@@ -672,6 +680,8 @@ private:
         float elapsed = 0.0f;
         float duration = 0.0f;
         float holdSeconds = 2.0f;
+        float moveSeconds = 0.0f;
+        float returnSeconds = 0.0f;
         std::string discoveryStoryEventId;
         std::function<void()> onComplete;
     };
@@ -753,7 +763,7 @@ private:
     float effectiveRingShiftDistance() const;
     float effectiveCollectionPullRadius(int collectionLevel) const;
     void configureWatcher();
-    void checkHotReload();
+    void checkHotReload(float dt);
     void loadSheetSourceConfig();
     bool loadBalanceFromSources(std::string& message);
     bool loadBalanceFromDisk(std::string& message);
@@ -937,6 +947,16 @@ private:
     void updateGameOverScreen(const Input& input, UiContext& ui);
     void retryAfterGameOver();
     void returnToBaseAfterGameOver();
+    void startIntroTutorialDungeon();
+    bool updateIntroTutorial(const Input& input, float dt);
+    void equipIntroTutorialStartingTools();
+    void addIntroTutorialTorchToRing();
+    void spawnIntroTutorialChest();
+    void unlockIntroTutorialFreeRoute();
+    void completeIntroTutorialAndReturnToBase();
+    bool introTutorialActive() const;
+    Vec2 introTutorialExitPosition() const;
+    std::vector<LightSource> introTutorialLightSources(double totalSeconds) const;
     void enterAstralResult(AstralRunResult result);
     void updateAstralResultScreen(const Input& input, UiContext& ui);
     void returnToBaseAfterAstralResult();
@@ -993,6 +1013,8 @@ private:
     void initializeDungeonEventInstancesFromLayout();
     void updateDungeonEvents(float dt, double totalSeconds);
     void handleDungeonEventEnemyEvent(const EnemyEvent& enemyEvent);
+    bool updateDungeonEventNpcInteraction(const Input& input, UiContext& ui);
+    std::string dungeonEventNpcPromptText() const;
     bool updateDungeonEventDiscovery(float dt);
     void appendDungeonEventRenderEntries(
         std::vector<DepthRenderEntry>& entries,
@@ -1002,6 +1024,11 @@ private:
     bool spawnDungeonEventReward(DungeonEventInstance& event, const DungeonEventRewardRequest& request);
     void completeDungeonEvent(DungeonEventInstance& event, std::optional<DungeonEventRewardRequest> reward);
     bool ensureDungeonEventChest(DungeonEventInstance& event, DungeonTile tile, LootChestKind chestKind);
+    void requestDungeonRewardChestFocus(Vec2 focusWorldPos);
+    void applyDungeonEventCavity(const DungeonEventInstance& event);
+    bool debugRequestDungeonEventPlacement(DungeonEventKind kind);
+    bool debugPlaceDungeonEvent(DungeonEventKind kind);
+    void flushPendingDebugDungeonEventPlacement();
     std::string nearestDungeonEventDebugText() const;
     void resetDungeonFocus();
     bool updateDungeonFocus(float dt);
@@ -1164,6 +1191,9 @@ private:
     bool queueStoryEventForCurrentStage(std::string_view triggerName);
     void updateQueuedStoryEvents();
     bool startStoryEvent(std::string_view id);
+    bool startStoryEventWithCompletion(std::string_view id, std::function<void()> onComplete);
+    bool startDialogueSequenceWithCompletion(DialogueSequence sequence, std::function<void()> onComplete);
+    void runDialogueCompletionCallbackIfFinished(bool dialogueWasActive);
     bool startStoryEventForDebug(std::string_view id);
     bool startStoryEventForTrigger(std::string_view trigger);
     void maybeStartOpeningBaseIntroEvent();
@@ -1193,6 +1223,7 @@ private:
     void renderDungeonMinimap(Renderer& renderer, const std::vector<LightSource>& itemLights) const;
     void renderDungeonStatusHud(Renderer& renderer) const;
     void renderDungeonLogs(Renderer& renderer) const;
+    void renderDungeonControlHelp(Renderer& renderer) const;
     void renderWarpReturnUi(Renderer& renderer) const;
     void renderWorldLoadingScreen(Renderer& renderer, float totalSeconds) const;
     void renderGameOverScreen(Renderer& renderer) const;
@@ -1243,6 +1274,7 @@ private:
     UiResultDialogState levelUpResultDialog_{};
     ScreenMode levelUpReturnMode_ = ScreenMode::Playing;
     DialoguePlayer dialogue_;
+    std::function<void()> pendingDialogueCompletion_;
     DebugOverlay debug_;
     std::string observedEquippedStaffInstanceId_;
     std::string equipmentModifierLogKey_;
@@ -1329,6 +1361,8 @@ private:
     bool baseBookshelfActive_ = false;
     BookshelfPage bookshelfPage_ = BookshelfPage::Menu;
     int bookshelfSelection_ = 0;
+    float bookshelfScrollOffset_ = 0.0f;
+    UiScrollAreaState bookshelfScrollState_{};
     bool baseEditEnabled_ = false;
     BaseEditMode baseEditMode_ = BaseEditMode::None;
     std::unordered_map<std::string, BaseEditRect> baseFacilityRectsOutdoor_;
@@ -1434,6 +1468,18 @@ private:
     bool dungeonRingIntroStartPending_ = false;
     bool stageStartStoryPendingAfterRingIntro_ = false;
     bool endingKamishibaiPending_ = false;
+    IntroTutorialPhase introTutorialPhase_ = IntroTutorialPhase::Inactive;
+    bool introTutorialLightTutorialQueued_ = false;
+    bool introTutorialFirstEnemySpawned_ = false;
+    bool introTutorialEnemyEncounterQueued_ = false;
+    bool introTutorialEnemyDefeatedQueued_ = false;
+    bool introTutorialChestOpened_ = false;
+    bool introTutorialChestLootDialogueQueued_ = false;
+    bool introTutorialMidwayDialogueQueued_ = false;
+    bool introTutorialExitDialogueQueued_ = false;
+    DungeonTile introTutorialFirstEnemyTile_{};
+    DungeonTile introTutorialChestTile_{};
+    DungeonTile introTutorialExitTile_{};
     std::vector<DungeonLogEntry> dungeonLogs_;
     WorldBuildJob worldBuildJob_;
     std::array<FootstepDustPuff, 10> playerFootstepDustPuffs_{};
@@ -1484,6 +1530,7 @@ private:
     std::vector<EnemyNode> enemyNodes_;
     DungeonEventSystem dungeonEvents_;
     float dungeonEventDiscoveryCooldown_ = 0.0f;
+    std::optional<DungeonEventKind> pendingDebugDungeonEventPlacement_;
     int spawnedWarpPointCount_ = 0;
     Vec2 bossSpawnPoint_{};
     bool hasBossSpawnPoint_ = false;
@@ -1529,8 +1576,11 @@ private:
     bool roguelikeCarryOutRestricted_ = false;
     bool inventoryReturnToPause_ = false;
     bool quitRequested_ = false;
+    bool saveDataLoaded_ = false;
     bool debugPaused_ = false;
     bool autoReloadBlocked_ = false;
+    bool hotReloadEnabled_ = false;
+    float hotReloadPollTimer_ = 0.0f;
     AudioEngine* audio_ = nullptr;
     std::string activeAudioBgmCue_;
     float captureCooldown_ = 0.0f;

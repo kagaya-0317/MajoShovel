@@ -365,9 +365,106 @@ UiRect bookshelfMenuChoiceRect(int index)
     return merchantActionChoiceRect(index);
 }
 
+InventoryUiGridStyle bookshelfGridStyle()
+{
+    InventoryUiGridStyle style;
+    style.visibleRows = 5;
+    style.scroll.wheelStep = style.slotSize.y + style.slotGap.y;
+    style.scroll.scrollbarPaddingX = 2.0f;
+    style.scroll.scrollbarPaddingY = 0.0f;
+    return style;
+}
+
+UiRect bookshelfGridViewport()
+{
+    return inventoryUiGridViewport({72.0f, 142.0f}, bookshelfGridStyle());
+}
+
+const char* enemyMoveSpeedLabel(double speed)
+{
+    if (!std::isfinite(speed) || speed <= 20.0) {
+        return "かなり遅い";
+    }
+    if (speed <= 35.0) {
+        return "遅い";
+    }
+    if (speed <= 45.0) {
+        return "やや遅い";
+    }
+    if (speed <= 55.0) {
+        return "まあまあ";
+    }
+    if (speed <= 65.0) {
+        return "やや速い";
+    }
+    if (speed <= 80.0) {
+        return "速い";
+    }
+    return "かなり速い";
+}
+
+const char* enemyCaptureDifficultyLabel(int difficulty)
+{
+    if (difficulty <= 1) {
+        return "超簡単";
+    }
+    if (difficulty == 2) {
+        return "簡単";
+    }
+    if (difficulty == 3) {
+        return "やや簡単";
+    }
+    if (difficulty == 4) {
+        return "まあまあ";
+    }
+    if (difficulty == 5) {
+        return "ややムズい";
+    }
+    if (difficulty == 6) {
+        return "ムズい";
+    }
+    return "激ムズ";
+}
+
+std::string enemyContactAttackText(const EnemyDefinition& enemy)
+{
+    if (enemy.contactAttackPower <= 0) {
+        return "-";
+    }
+
+    std::string text = std::to_string(enemy.contactAttackPower);
+    const std::string damageType = normalizeDamageType(enemy.contactDamageType);
+    if (!damageType.empty() && damageType != "none") {
+        text += "（";
+        text += damageTypeDisplayName(damageType);
+        text += "ダメージ）";
+    }
+    return text;
+}
+
 constexpr int RingWorkshopActionCount = 2;
 constexpr int RingWorkshopUpgradeFutureCount = 4;
 constexpr int RingWorkshopUpgradeDisplayCount = RingWorkshopImplementedUpgradeCount + RingWorkshopUpgradeFutureCount;
+
+UiRect homeInteriorWalkBounds()
+{
+    return {{354.0f, 182.0f}, {572.0f, 388.0f}};
+}
+
+void drawHomeInteriorBackdrop(Renderer& renderer)
+{
+    const UiRect map = baseMapBounds();
+    renderer.fillRect(map.pos, map.size, {46, 36, 38, 255});
+    renderer.drawRect({300.0f, 126.0f}, {680.0f, 492.0f}, {184, 150, 108, 255});
+    renderer.fillRect({300.0f, 126.0f}, {680.0f, 44.0f}, {96, 68, 62, 255});
+    renderer.fillRect({300.0f, 574.0f}, {680.0f, 44.0f}, {96, 68, 62, 255});
+    renderer.fillRect({300.0f, 170.0f}, {44.0f, 404.0f}, {96, 68, 62, 255});
+    renderer.fillRect({936.0f, 170.0f}, {44.0f, 404.0f}, {96, 68, 62, 255});
+    renderer.fillRect({356.0f, 182.0f}, {568.0f, 376.0f}, {118, 92, 66, 255});
+    renderer.fillRect({508.0f, 304.0f}, {264.0f, 132.0f}, {104, 76, 76, 255});
+    renderer.drawRect({508.0f, 304.0f}, {264.0f, 132.0f}, {146, 104, 88, 255});
+    renderer.drawText({584.0f, 142.0f}, "ルネの家", {246, 235, 255, 255}, 2);
+}
 
 UiRect ringWorkshopActionDialogRect()
 {
@@ -3954,6 +4051,8 @@ void Game::openBookshelf()
     baseBookshelfActive_ = true;
     bookshelfPage_ = BookshelfPage::Menu;
     bookshelfSelection_ = 0;
+    bookshelfScrollOffset_ = 0.0f;
+    bookshelfScrollState_ = {};
     baseStatus_.clear();
     syncEncyclopediaFromInventoryAndRing();
 }
@@ -4318,7 +4417,44 @@ bool Game::startStoryEvent(std::string_view id)
     }
 
     baseStatus_.clear();
+    pendingDialogueCompletion_ = {};
     dialogue_.start(event->dialogue);
+    return true;
+}
+
+bool Game::startStoryEventWithCompletion(std::string_view id, std::function<void()> onComplete)
+{
+    if (dialogue_.active()) {
+        return false;
+    }
+    if (!startStoryEvent(id)) {
+        return false;
+    }
+    if (!dialogue_.active()) {
+        if (onComplete) {
+            onComplete();
+        }
+        return true;
+    }
+    pendingDialogueCompletion_ = std::move(onComplete);
+    return true;
+}
+
+bool Game::startDialogueSequenceWithCompletion(DialogueSequence sequence, std::function<void()> onComplete)
+{
+    if (dialogue_.active()) {
+        return false;
+    }
+    baseStatus_.clear();
+    pendingDialogueCompletion_ = std::move(onComplete);
+    dialogue_.start(std::move(sequence));
+    if (!dialogue_.active()) {
+        std::function<void()> callback = std::move(pendingDialogueCompletion_);
+        pendingDialogueCompletion_ = {};
+        if (callback) {
+            callback();
+        }
+    }
     return true;
 }
 
@@ -4333,6 +4469,7 @@ bool Game::startStoryEventForDebug(std::string_view id)
     pendingStoryTrigger_.clear();
     pendingStoryTriggers_.clear();
     baseStatus_.clear();
+    pendingDialogueCompletion_ = {};
     dialogue_.start(event->dialogue);
     logInfo("[story] debug replay: " + event->id);
     return true;
@@ -4349,7 +4486,7 @@ bool Game::startStoryEventForTrigger(std::string_view trigger)
 
 void Game::maybeStartOpeningBaseIntroEvent()
 {
-    queueStoryEventForTrigger("title_base_enter");
+    queueStoryEventForTrigger(std::string(IntroTutorialBaseReturnTrigger));
 }
 
 void Game::updateBookshelfScreen(const Input& input, UiContext& ui)
@@ -4368,6 +4505,12 @@ void Game::updateBookshelfScreen(const Input& input, UiContext& ui)
     const auto pageForMenuSelection = [](int selection) {
         return selection == 1 ? BookshelfPage::Enemies : BookshelfPage::Items;
     };
+    const auto openSelectedPage = [&]() {
+        bookshelfPage_ = pageForMenuSelection(bookshelfSelection_);
+        bookshelfSelection_ = 0;
+        bookshelfScrollOffset_ = 0.0f;
+        bookshelfScrollState_ = {};
+    };
 
     const UiRect panel = bookshelfPage_ == BookshelfPage::Menu
         ? bookshelfMenuPanelRect()
@@ -4379,6 +4522,8 @@ void Game::updateBookshelfScreen(const Input& input, UiContext& ui)
         } else {
             bookshelfPage_ = BookshelfPage::Menu;
             bookshelfSelection_ = 0;
+            bookshelfScrollOffset_ = 0.0f;
+            bookshelfScrollState_ = {};
         }
         return;
     }
@@ -4387,42 +4532,86 @@ void Game::updateBookshelfScreen(const Input& input, UiContext& ui)
     if (itemCount <= 0) {
         bookshelfSelection_ = 0;
     } else {
-        if (input.pressed(InputAction::MoveUp)) {
-            bookshelfSelection_ = (bookshelfSelection_ + itemCount - 1) % itemCount;
-        }
-        if (input.pressed(InputAction::MoveDown)) {
-            bookshelfSelection_ = (bookshelfSelection_ + 1) % itemCount;
+        if (bookshelfPage_ == BookshelfPage::Menu) {
+            if (input.pressed(InputAction::MoveUp)) {
+                bookshelfSelection_ = (bookshelfSelection_ + itemCount - 1) % itemCount;
+            }
+            if (input.pressed(InputAction::MoveDown)) {
+                bookshelfSelection_ = (bookshelfSelection_ + 1) % itemCount;
+            }
+        } else {
+            const InventoryUiGridStyle gridStyle = bookshelfGridStyle();
+            const int columns = std::max(1, gridStyle.columns);
+            int nextSelection = bookshelfSelection_;
+            if (input.pressed(InputAction::MoveLeft)) {
+                nextSelection = std::max(0, nextSelection - 1);
+            }
+            if (input.pressed(InputAction::MoveRight)) {
+                nextSelection = std::min(itemCount - 1, nextSelection + 1);
+            }
+            if (input.pressed(InputAction::MoveUp)) {
+                nextSelection = std::max(0, nextSelection - columns);
+            }
+            if (input.pressed(InputAction::MoveDown)) {
+                nextSelection = std::min(itemCount - 1, nextSelection + columns);
+            }
+            if (nextSelection != bookshelfSelection_) {
+                bookshelfSelection_ = nextSelection;
+                keepInventoryUiGridItemVisible(
+                    bookshelfGridViewport(),
+                    bookshelfSelection_,
+                    itemCount,
+                    bookshelfScrollOffset_,
+                    gridStyle);
+            }
         }
         bookshelfSelection_ = std::clamp(bookshelfSelection_, 0, itemCount - 1);
     }
 
-    const int visibleCount = std::min(BookshelfVisibleRows, itemCount);
-    const int firstVisibleIndex = std::clamp(bookshelfSelection_ - visibleCount / 2, 0, std::max(0, itemCount - visibleCount));
-    for (int i = 0; i < visibleCount; ++i) {
-        const UiRect rect = bookshelfPage_ == BookshelfPage::Menu
-            ? bookshelfMenuChoiceRect(i)
-            : bookshelfItemRect(i);
-        const int itemIndex = firstVisibleIndex + i;
-        if (rect.contains(ui.mouse())) {
-            bookshelfSelection_ = itemIndex;
-        }
-        if (ui.pressed(rect)) {
-            bookshelfSelection_ = itemIndex;
-            if (bookshelfPage_ == BookshelfPage::Menu) {
-                ui.emitSound(UiSoundEvent::BookOpen);
-                bookshelfPage_ = pageForMenuSelection(bookshelfSelection_);
-                bookshelfSelection_ = 0;
-            } else {
-                ui.emitSound(UiSoundEvent::Confirm);
+    if (bookshelfPage_ == BookshelfPage::Menu) {
+        const int visibleCount = std::min(BookshelfVisibleRows, itemCount);
+        for (int i = 0; i < visibleCount; ++i) {
+            const UiRect rect = bookshelfMenuChoiceRect(i);
+            if (rect.contains(ui.mouse())) {
+                bookshelfSelection_ = i;
             }
-            return;
+            if (ui.pressed(rect)) {
+                bookshelfSelection_ = i;
+                ui.emitSound(UiSoundEvent::BookOpen);
+                openSelectedPage();
+                return;
+            }
+        }
+    } else {
+        const InventoryUiGridStyle gridStyle = bookshelfGridStyle();
+        const UiRect viewport = bookshelfGridViewport();
+        const UiScrollAreaLayout layout = updateInventoryUiGrid(
+            ui,
+            input,
+            viewport,
+            itemCount,
+            bookshelfScrollOffset_,
+            gridStyle,
+            &bookshelfScrollState_);
+        for (int i = 0; i < itemCount; ++i) {
+            const UiRect rect = inventoryUiGridSlotRect(layout, i, gridStyle);
+            if (!uiScrollAreaRectVisible(layout, rect)) {
+                continue;
+            }
+            if (ui.hovered(rect)) {
+                bookshelfSelection_ = i;
+            }
+            if (ui.pressed(rect)) {
+                bookshelfSelection_ = i;
+                ui.emitSound(UiSoundEvent::Confirm);
+                return;
+            }
         }
     }
 
     if ((input.confirmPressed() || input.useItemPressed()) && bookshelfPage_ == BookshelfPage::Menu) {
         ui.emitSound(UiSoundEvent::BookOpen);
-        bookshelfPage_ = pageForMenuSelection(bookshelfSelection_);
-        bookshelfSelection_ = 0;
+        openSelectedPage();
         return;
     }
 
@@ -6415,7 +6604,7 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
             baseOutdoorPlayerPosition_ = basePlayerPosition_;
             requestBaseAreaCrossfade(
                 BaseArea::HomeInterior,
-                {640.0f, 542.0f},
+                {640.0f, 516.0f},
                 {0.0f, -1.0f},
                 "ルネの家に入りました");
             break;
@@ -6446,6 +6635,15 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
             return true;
         }
         const Vec2 passabilityProbe = playerSpriteFootAnchor(position);
+        if (baseArea_ == BaseArea::HomeInterior) {
+            const UiRect homeWalk = homeInteriorWalkBounds();
+            if (passabilityProbe.x - playerRadius < homeWalk.pos.x ||
+                passabilityProbe.y - playerRadius < homeWalk.pos.y ||
+                passabilityProbe.x + playerRadius > homeWalk.pos.x + homeWalk.size.x ||
+                passabilityProbe.y + playerRadius > homeWalk.pos.y + homeWalk.size.y) {
+                return true;
+            }
+        }
         const int minTileX = static_cast<int>(std::floor((passabilityProbe.x - playerRadius) / static_cast<float>(BaseEditGridSize)));
         const int maxTileX = static_cast<int>(std::floor((passabilityProbe.x + playerRadius) / static_cast<float>(BaseEditGridSize)));
         const int minTileY = static_cast<int>(std::floor((passabilityProbe.y - playerRadius) / static_cast<float>(BaseEditGridSize)));
@@ -6539,7 +6737,7 @@ void Game::renderBookshelfScreen(Renderer& renderer) const
         case 0:
             return "アイテム図鑑";
         case 1:
-            return "敵図鑑";
+            return "モンスター図鑑";
         default:
             return "";
         }
@@ -6549,24 +6747,6 @@ void Game::renderBookshelfScreen(Renderer& renderer) const
             return nullptr;
         }
         return &objectCatalog_.objects[static_cast<std::size_t>(targetIndex)];
-    };
-    const auto joinLimited = [](const std::vector<std::string>& values, int maxCount) {
-        if (values.empty()) {
-            return std::string("-");
-        }
-        std::string text;
-        const int count = std::min(static_cast<int>(values.size()), std::max(1, maxCount));
-        for (int i = 0; i < count; ++i) {
-            if (!text.empty()) {
-                text += " / ";
-            }
-            text += values[static_cast<std::size_t>(i)];
-        }
-        if (static_cast<int>(values.size()) > count) {
-            text += " ほか";
-            text += std::to_string(static_cast<int>(values.size()) - count);
-        }
-        return text;
     };
 
     if (bookshelfPage_ == BookshelfPage::Menu) {
@@ -6580,7 +6760,13 @@ void Game::renderBookshelfScreen(Renderer& renderer) const
 
     const UiRect panel = merchantPanelRect();
     const UiRect detailPanel = merchantDetailPanelRect();
-    std::vector<std::string> lines;
+    const InventoryUiGridStyle gridStyle = bookshelfGridStyle();
+    const UiRect gridViewport = bookshelfGridViewport();
+    const int totalCount = bookshelfPage_ == BookshelfPage::Enemies
+        ? static_cast<int>(enemyCatalog_.enemies.size())
+        : static_cast<int>(objectCatalog_.objects.size());
+    const UiScrollAreaLayout gridLayout =
+        makeInventoryUiGridLayout(gridViewport, totalCount, bookshelfScrollOffset_, gridStyle);
     int discoveredCount = 0;
     if (bookshelfPage_ == BookshelfPage::Enemies) {
         for (const EnemyDefinition& enemy : enemyCatalog_.enemies) {
@@ -6588,8 +6774,6 @@ void Game::renderBookshelfScreen(Renderer& renderer) const
             if (stage != EncyclopediaStage::Undiscovered) {
                 ++discoveredCount;
             }
-            const std::string name = stage == EncyclopediaStage::Undiscovered ? "????" : (enemy.name.empty() ? enemy.id : enemy.name);
-            lines.push_back(name + "  [" + encyclopediaStageName(stage) + "]");
         }
     } else {
         for (const ObjectDefinition& object : objectCatalog_.objects) {
@@ -6598,32 +6782,85 @@ void Game::renderBookshelfScreen(Renderer& renderer) const
             if (stage != EncyclopediaStage::Undiscovered) {
                 ++discoveredCount;
             }
-            const std::string name = stage == EncyclopediaStage::Undiscovered ? "????" : (object.name.empty() ? object.id : object.name);
-            const std::string category = stage == EncyclopediaStage::Undiscovered || object.category.empty()
-                ? std::string{}
-                : " / " + object.category;
-            lines.push_back(name + category + "  [" + encyclopediaStageName(stage) + "]");
         }
     }
 
-    const char* title = bookshelfPage_ == BookshelfPage::Items
-        ? "アイテム図鑑"
-        : "敵図鑑";
-    renderer.drawText(panel.pos + Vec2{28.0f, 62.0f}, title, {198, 198, 206, 255}, 2);
-    std::snprintf(buffer, sizeof(buffer), "%d/%d 記録", discoveredCount, static_cast<int>(lines.size()));
-    renderer.drawText(panel.pos + Vec2{28.0f, 92.0f}, buffer, {150, 150, 160, 255}, 2);
-    if (lines.empty()) {
+    std::snprintf(buffer, sizeof(buffer), "%d/%d 記録", discoveredCount, totalCount);
+    renderer.drawText(panel.pos + Vec2{28.0f, 62.0f}, buffer, {150, 150, 160, 255}, 2);
+    if (totalCount <= 0) {
         renderer.drawText(panel.pos + Vec2{28.0f, 154.0f}, "記録対象がありません", {150, 150, 160, 255}, 2);
-    } else {
-        const int visibleCount = std::min(BookshelfVisibleRows, static_cast<int>(lines.size()));
-        const int firstVisibleIndex = std::clamp(
-            bookshelfSelection_ - visibleCount / 2,
-            0,
-            std::max(0, static_cast<int>(lines.size()) - visibleCount));
-        for (int i = 0; i < visibleCount; ++i) {
-            const int lineIndex = firstVisibleIndex + i;
-            drawUiButton(renderer, bookshelfItemRect(i), lines[static_cast<std::size_t>(lineIndex)], lineIndex == bookshelfSelection_);
+    } else if (bookshelfPage_ == BookshelfPage::Items) {
+        std::vector<InventoryUiEntryView> entries;
+        entries.reserve(objectCatalog_.objects.size());
+        for (const ObjectDefinition& object : objectCatalog_.objects) {
+            InventoryUiEntryView entry{};
+            const bool treasure = object.category == "\xE5\xAE\x9D";
+            if (encyclopedia_.objectStage(object.id, treasure) != EncyclopediaStage::Undiscovered) {
+                entry.item = &object;
+                entry.stackCount = 1;
+            }
+            entries.push_back(entry);
         }
+        drawInventoryUiGrid(renderer, gridLayout, entries, bookshelfSelection_, gridStyle);
+        renderer.pushClipRect(gridLayout.viewport.pos, gridLayout.viewport.size);
+        for (int i = 0; i < static_cast<int>(entries.size()); ++i) {
+            if (entries[static_cast<std::size_t>(i)].item != nullptr) {
+                continue;
+            }
+            const UiRect rect = inventoryUiGridSlotRect(gridLayout, i, gridStyle);
+            if (!uiScrollAreaRectVisible(gridLayout, rect)) {
+                continue;
+            }
+            const std::string_view unknown = "?";
+            const Vec2 textSize = renderer.measureText(unknown, 3);
+            renderer.drawOutlinedText(
+                rect.pos + (rect.size - textSize) * 0.5f,
+                unknown,
+                ui::TextMuted,
+                {0, 0, 0, 160},
+                4,
+                3);
+        }
+        renderer.popClipRect();
+    } else {
+        renderer.pushClipRect(gridLayout.viewport.pos, gridLayout.viewport.size);
+        for (int i = 0; i < static_cast<int>(enemyCatalog_.enemies.size()); ++i) {
+            const UiRect rect = inventoryUiGridSlotRect(gridLayout, i, gridStyle);
+            if (!uiScrollAreaRectVisible(gridLayout, rect)) {
+                continue;
+            }
+            const EnemyDefinition& enemy = enemyCatalog_.enemies[static_cast<std::size_t>(i)];
+            const EncyclopediaStage stage = encyclopedia_.enemyStage(enemy.id);
+            InventoryUiEntryView emptyEntry{};
+            drawInventoryUiSlot(renderer, rect, emptyEntry, InventoryUiSlotStyle{i == bookshelfSelection_, stage == EncyclopediaStage::Undiscovered, gridStyle.imageMaxSize});
+            if (stage == EncyclopediaStage::Undiscovered) {
+                const std::string_view unknown = "?";
+                const Vec2 textSize = renderer.measureText(unknown, 3);
+                renderer.drawOutlinedText(
+                    rect.pos + (rect.size - textSize) * 0.5f,
+                    unknown,
+                    ui::TextMuted,
+                    {0, 0, 0, 160},
+                    4,
+                    3);
+                continue;
+            }
+            EnemyImageDrawOptions iconOptions;
+            iconOptions.allowUpscale = true;
+            iconOptions.outlineColor = {42, 22, 34, 255};
+            iconOptions.directionOverrideEnabled = true;
+            iconOptions.directionOverride = {0.0f, 1.0f};
+            iconOptions.selectedOutlineEnabled = i == bookshelfSelection_;
+            (void)drawEnemyImageIcon(
+                renderer,
+                enemy.imageNumber,
+                rect.pos + rect.size * 0.5f,
+                {gridStyle.imageMaxSize, gridStyle.imageMaxSize},
+                baseRingPreviewAnimationTime_,
+                iconOptions);
+        }
+        renderer.popClipRect();
+        drawUiScrollAreaScrollbar(renderer, gridLayout, gridStyle.scroll);
     }
 
     if (bookshelfPage_ == BookshelfPage::Enemies) {
@@ -6633,7 +6870,7 @@ void Game::renderBookshelfScreen(Renderer& renderer) const
             drawUiSubPanel(renderer, detailPanel);
             if (stage == EncyclopediaStage::Undiscovered) {
                 float detailY = drawUiDetailHeader(renderer, detailPanel, "未発見");
-                drawUiDetailText(renderer, detailPanel, detailY, "まだ記録されていません。ダンジョンで遭遇すると敵図鑑に登録されます。");
+                drawUiDetailText(renderer, detailPanel, detailY, "まだ記録されていません。ダンジョンで遭遇するとモンスター図鑑に登録されます。");
             } else {
                 const std::string name = enemy.name.empty() ? enemy.id : enemy.name;
                 float detailY = drawUiDetailHeader(renderer, detailPanel, name);
@@ -6650,20 +6887,13 @@ void Game::renderBookshelfScreen(Renderer& renderer) const
                 if (drawEnemyImageIcon(renderer, enemy.imageNumber, imageCenter, imageMax, baseRingPreviewAnimationTime_, imageOptions)) {
                     detailY += imageMax.y + 12.0f;
                 }
-                drawUiDetailLine(renderer, detailPanel, detailY, "図鑑", encyclopediaStageName(stage), {255, 230, 150, 255});
                 drawUiDetailText(renderer, detailPanel, detailY, enemy.description.empty() ? "-" : enemy.description);
                 if (stage != EncyclopediaStage::Complete) {
                     drawUiDetailText(renderer, detailPanel, detailY, "討伐すると詳細な能力が記録されます。");
                 } else {
                     drawUiDetailLine(renderer, detailPanel, detailY, "HP", std::to_string(enemy.hp));
-                    std::string attack = enemy.contactAttackPower > 0 ? std::to_string(enemy.contactAttackPower) : "-";
-                    if (!enemy.contactDamageType.empty() && enemy.contactDamageType != "none") {
-                        attack += " / ";
-                        attack += damageTypeDisplayName(enemy.contactDamageType);
-                    }
-                    drawUiDetailLine(renderer, detailPanel, detailY, "接触攻撃", attack);
-                    std::snprintf(buffer, sizeof(buffer), "%.1f", enemy.moveSpeed);
-                    drawUiDetailLine(renderer, detailPanel, detailY, "移動速度", buffer);
+                    drawUiDetailLine(renderer, detailPanel, detailY, "攻撃力", enemyContactAttackText(enemy));
+                    drawUiDetailLine(renderer, detailPanel, detailY, "移動速度", enemyMoveSpeedLabel(enemy.moveSpeed));
                     std::string reward = "EXP ";
                     reward += std::to_string(enemy.xp);
                     reward += " / ";
@@ -6671,34 +6901,8 @@ void Game::renderBookshelfScreen(Renderer& renderer) const
                     reward += "G";
                     drawUiDetailLine(renderer, detailPanel, detailY, "報酬", reward);
                     if (enemy.captureDifficulty > 0) {
-                        drawUiDetailLine(renderer, detailPanel, detailY, "捕獲難度", std::to_string(enemy.captureDifficulty));
+                        drawUiDetailLine(renderer, detailPanel, detailY, "捕獲難度", enemyCaptureDifficultyLabel(enemy.captureDifficulty));
                     }
-                    std::vector<std::string> behaviorNames;
-                    for (const EnemyBehaviorSpec& spec : enemy.enemyBehaviorSpecs) {
-                        if (spec.behavior.empty()) {
-                            continue;
-                        }
-                        const auto it = enemyCatalog_.behaviorsById.find(spec.behavior);
-                        const std::string displayName = it != enemyCatalog_.behaviorsById.end() && !it->second.displayName.empty()
-                            ? it->second.displayName
-                            : spec.behavior;
-                        if (std::find(behaviorNames.begin(), behaviorNames.end(), displayName) == behaviorNames.end()) {
-                            behaviorNames.push_back(displayName);
-                        }
-                    }
-                    for (const std::string& behaviorId : enemy.enemyBehaviorIds) {
-                        if (behaviorId.empty()) {
-                            continue;
-                        }
-                        const auto it = enemyCatalog_.behaviorsById.find(behaviorId);
-                        const std::string displayName = it != enemyCatalog_.behaviorsById.end() && !it->second.displayName.empty()
-                            ? it->second.displayName
-                            : behaviorId;
-                        if (std::find(behaviorNames.begin(), behaviorNames.end(), displayName) == behaviorNames.end()) {
-                            behaviorNames.push_back(displayName);
-                        }
-                    }
-                    drawUiDetailLine(renderer, detailPanel, detailY, "行動", joinLimited(behaviorNames, 3));
                     if (!enemy.capturedEffectText.empty()) {
                         drawUiDetailText(renderer, detailPanel, detailY, "捕獲時効果");
                         drawUiDetailText(renderer, detailPanel, detailY, enemy.capturedEffectText);
@@ -6719,12 +6923,10 @@ void Game::renderBookshelfScreen(Renderer& renderer) const
             detailEntry.item = object;
             detailEntry.stackCount = 1;
             std::vector<InventoryUiDetailExtraLine> extraLines;
-            extraLines.push_back({"図鑑", encyclopediaStageName(stage), {255, 230, 150, 255}});
-            if (!object->category.empty()) {
-                extraLines.push_back({"分類", object->category});
-            }
-            if (object->price > 0) {
-                extraLines.push_back({"価格", std::to_string(object->price) + "G"});
+            if (isSellableObject(*object)) {
+                extraLines.push_back({"売値", std::to_string(sellPrice(*object)) + "G"});
+            } else {
+                extraLines.push_back({"売値", "売却不可", ui::TextDisabled});
             }
             drawInventoryUiDetailPanel(
                 renderer,
@@ -6732,7 +6934,7 @@ void Game::renderBookshelfScreen(Renderer& renderer) const
                 detailEntry,
                 objectCatalog_,
                 encyclopedia_,
-                InventoryUiDetailOptions{.animationSeconds = baseRingPreviewAnimationTime_},
+                InventoryUiDetailOptions{.animationSeconds = baseRingPreviewAnimationTime_, .showExtraLineSeparator = false},
                 extraLines);
         } else {
             drawUiSubPanel(renderer, detailPanel);
@@ -6754,14 +6956,7 @@ void Game::renderBaseBackdrop(Renderer& renderer) const
     renderer.fillRect({0.0f, 0.0f}, {static_cast<float>(camera_.width()), static_cast<float>(camera_.height())}, {24, 28, 32, 255});
     const UiRect map = baseMapBounds();
     if (baseArea_ == BaseArea::HomeInterior) {
-        renderer.fillRect(map.pos, map.size, {74, 58, 52, 255});
-        renderer.drawRect(map.pos, map.size, {184, 150, 108, 255});
-        renderer.fillRect({76.0f, 72.0f}, {1128.0f, 44.0f}, {96, 68, 62, 255});
-        renderer.fillRect({76.0f, 584.0f}, {1128.0f, 44.0f}, {96, 68, 62, 255});
-        renderer.fillRect({76.0f, 116.0f}, {44.0f, 468.0f}, {96, 68, 62, 255});
-        renderer.fillRect({1160.0f, 116.0f}, {44.0f, 468.0f}, {96, 68, 62, 255});
-        renderer.fillRect({132.0f, 132.0f}, {1016.0f, 436.0f}, {118, 92, 66, 255});
-        renderer.drawText({558.0f, 88.0f}, "ルネの家", {246, 235, 255, 255}, 2);
+        drawHomeInteriorBackdrop(renderer);
     } else {
         if (renderer.hasBaseMapTexture()) {
             renderer.drawBaseMapTexture(map.pos, map.size);
@@ -6865,14 +7060,7 @@ void Game::renderBaseScreen(Renderer& renderer) const
     renderer.fillRect({0.0f, 0.0f}, {static_cast<float>(camera_.width()), static_cast<float>(camera_.height())}, {24, 28, 32, 255});
     const UiRect map = baseMapBounds();
     if (baseArea_ == BaseArea::HomeInterior) {
-        renderer.fillRect(map.pos, map.size, {74, 58, 52, 255});
-        renderer.drawRect(map.pos, map.size, {184, 150, 108, 255});
-        renderer.fillRect({76.0f, 72.0f}, {1128.0f, 44.0f}, {96, 68, 62, 255});
-        renderer.fillRect({76.0f, 584.0f}, {1128.0f, 44.0f}, {96, 68, 62, 255});
-        renderer.fillRect({76.0f, 116.0f}, {44.0f, 468.0f}, {96, 68, 62, 255});
-        renderer.fillRect({1160.0f, 116.0f}, {44.0f, 468.0f}, {96, 68, 62, 255});
-        renderer.fillRect({132.0f, 132.0f}, {1016.0f, 436.0f}, {118, 92, 66, 255});
-        renderer.drawText({558.0f, 88.0f}, "ルネの家", {246, 235, 255, 255}, 2);
+        drawHomeInteriorBackdrop(renderer);
     } else {
         if (renderer.hasBaseMapTexture()) {
             renderer.drawBaseMapTexture(map.pos, map.size);
@@ -7026,7 +7214,9 @@ void Game::renderBaseScreen(Renderer& renderer) const
         }
         const char* panelTitle = "魔女の拠点";
         if (baseBookshelfActive_) {
-            panelTitle = "本棚";
+            panelTitle = bookshelfPage_ == BookshelfPage::Items
+                ? "アイテム図鑑"
+                : (bookshelfPage_ == BookshelfPage::Enemies ? "モンスター図鑑" : "本棚");
         } else if (baseRingWorkshopActive_) {
             panelTitle = "リング工房";
         } else if (baseProcessingActive_) {

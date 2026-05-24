@@ -8,6 +8,7 @@
 #include "debug/DebugConsole.hpp"
 #include "game/Game.hpp"
 #include <SDL3/SDL.h>
+#include <cstdint>
 #include <string>
 
 namespace majo {
@@ -24,6 +25,7 @@ public:
 private:
     bool loadAssets();
     void configureAssetWatcher();
+    void setRuntimeHotReloadEnabled(bool enabled);
     void checkAssetHotReload();
     bool reloadAssetForPath(const std::string& changedPath);
     void toggleFullscreen();
@@ -41,6 +43,9 @@ private:
     Game game_;
     bool running_ = false;
     bool testPlayMode_ = false;
+    bool autoReloadBlocked_ = false;
+    bool runtimeHotReloadEnabled_ = false;
+    std::uint64_t nextAssetHotReloadPollTicks_ = 0;
     bool testFreezePaused_ = false;
     bool restartRequested_ = false;
     int width_ = 1280;

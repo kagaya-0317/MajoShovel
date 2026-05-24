@@ -1917,6 +1917,61 @@ bool Renderer::getImageSize(std::string_view path, Vec2& outSize, TextureFilter 
     return getImageSize(handle, outSize);
 }
 
+bool Renderer::imageHitTestAlpha(
+    ImageHandle handle,
+    Vec2 center,
+    Vec2 size,
+    Vec2 point,
+    const ImageDrawOptions& options,
+    unsigned char alphaThreshold)
+{
+    if (size.x <= 0.0f || size.y <= 0.0f) {
+        return false;
+    }
+
+    CachedImageEntry* entry = findImageEntry(handle);
+    if (entry == nullptr) {
+        return false;
+    }
+    touchImage(*entry);
+    if (!ensureImageReady(*entry) || entry->texture.texture == nullptr) {
+        return false;
+    }
+
+    const Vec2 topLeft = center - Vec2{size.x * options.anchor.x, size.y * options.anchor.y};
+    if (point.x < topLeft.x || point.y < topLeft.y ||
+        point.x >= topLeft.x + size.x || point.y >= topLeft.y + size.y) {
+        return false;
+    }
+
+    const ImageTexture& texture = entry->texture;
+    if (texture.width <= 0 || texture.height <= 0 || texture.alphaMask.empty()) {
+        return true;
+    }
+
+    float u = (point.x - topLeft.x) / size.x;
+    float v = (point.y - topLeft.y) / size.y;
+    if (options.flipX) {
+        u = 1.0f - u;
+    }
+    if (options.flipY) {
+        v = 1.0f - v;
+    }
+
+    const int pixelX = std::clamp(
+        static_cast<int>(std::floor(u * static_cast<float>(texture.width))),
+        0,
+        texture.width - 1);
+    const int pixelY = std::clamp(
+        static_cast<int>(std::floor(v * static_cast<float>(texture.height))),
+        0,
+        texture.height - 1);
+    const std::size_t alphaIndex =
+        static_cast<std::size_t>(pixelY) * static_cast<std::size_t>(texture.width) +
+        static_cast<std::size_t>(pixelX);
+    return alphaIndex < texture.alphaMask.size() && texture.alphaMask[alphaIndex] >= alphaThreshold;
+}
+
 void Renderer::invalidateImage(std::string_view path)
 {
     const std::string normalizedPath = normalizedImagePathKey(path);
@@ -2056,6 +2111,12 @@ bool Renderer::loadImageTexture(std::string_view path, std::string_view label, I
     loaded.outlineTexture = outlineTexture;
     loaded.width = width;
     loaded.height = height;
+    loaded.alphaMask.resize(static_cast<std::size_t>(width) * static_cast<std::size_t>(height));
+    for (std::size_t sourceIndex = 3, alphaIndex = 0;
+         sourceIndex < pixels.size() && alphaIndex < loaded.alphaMask.size();
+         sourceIndex += 4, ++alphaIndex) {
+        loaded.alphaMask[alphaIndex] = pixels[sourceIndex];
+    }
 
     unloadImageTexture(target);
     target = loaded;

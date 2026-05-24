@@ -149,11 +149,18 @@ struct DebugConsole::Impl {
         int controlId = 0;
         std::string id;
         std::string command;
+        HWND actionHwnd = nullptr;
+        int actionControlId = 0;
     };
 
     struct DebugDropdownCommand {
         std::string command;
         std::vector<std::string> optionCommands;
+    };
+
+    struct DebugDropdownButtonCommand {
+        int dropdownControlId = 0;
+        DebugDropdownCommand dropdown;
     };
 
     struct DebugNumberCommand {
@@ -591,6 +598,32 @@ struct DebugConsole::Impl {
                         groupUi.controls.push_back({control.kind, combo, label, controlId, control.id, control.command});
                         debugDropdownByControlId[controlId] = {control.command, control.optionCommands};
                         debugDropdownControlIdByDebugId[control.id] = controlId;
+                    } else if (control.kind == DebugControlKind::DropdownButton) {
+                        HWND label = createStatic(parent, utf8ToWide(control.label).c_str());
+                        HWND combo = createDropdown(parent, controlId);
+                        for (const std::string& option : control.options) {
+                            std::wstring wide = utf8ToWide(option);
+                            SendMessageW(combo, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(wide.c_str()));
+                        }
+                        if (!control.options.empty()) {
+                            SendMessageW(combo, CB_SETCURSEL, std::clamp(control.minValue, 0, static_cast<int>(control.options.size()) - 1), 0);
+                        }
+                        const int buttonId = nextControlId++;
+                        HWND button = createButton(parent, L"実行", buttonId);
+                        ShowWindow(label, SW_HIDE);
+                        ShowWindow(combo, SW_HIDE);
+                        ShowWindow(button, SW_HIDE);
+                        groupUi.controls.push_back({
+                            control.kind,
+                            combo,
+                            label,
+                            controlId,
+                            control.id,
+                            control.command,
+                            button,
+                            buttonId});
+                        debugDropdownButtonByControlId[buttonId] = {controlId, {control.command, control.optionCommands}};
+                        debugDropdownControlIdByDebugId[control.id] = controlId;
                     }
                 }
 
@@ -730,6 +763,12 @@ struct DebugConsole::Impl {
     void handleCommand(int controlId, int notification)
     {
         if (notification == BN_CLICKED) {
+            auto dropdownButtonIt = debugDropdownButtonByControlId.find(controlId);
+            if (dropdownButtonIt != debugDropdownButtonByControlId.end()) {
+                queueDropdownCommand(dropdownButtonIt->second.dropdownControlId, dropdownButtonIt->second.dropdown);
+                return;
+            }
+
             auto it = debugCommandByControlId.find(controlId);
             if (it != debugCommandByControlId.end()) {
                 queueCommand(it->second);
@@ -950,6 +989,21 @@ struct DebugConsole::Impl {
                     buttonY += DebugControlDropdownH + DebugControlGap;
                     continue;
                 }
+                if (control.kind == DebugControlKind::DropdownButton) {
+                    constexpr int ActionGap = 6;
+                    const int actionW = std::clamp(buttonW / 3, 52, 64);
+                    const int comboW = std::max(64, buttonW - actionW - ActionGap);
+                    const int actionX = buttonX + comboW + ActionGap;
+                    MoveWindow(control.labelHwnd, buttonX, buttonY, buttonW, DebugControlLabelH, TRUE);
+                    ShowWindow(control.labelHwnd, controlVisible ? SW_SHOW : SW_HIDE);
+                    buttonY += DebugControlLabelH;
+                    MoveWindow(control.hwnd, buttonX, buttonY, comboW, 180, TRUE);
+                    ShowWindow(control.hwnd, controlVisible ? SW_SHOW : SW_HIDE);
+                    MoveWindow(control.actionHwnd, actionX, buttonY, actionW, DebugControlButtonH, TRUE);
+                    ShowWindow(control.actionHwnd, controlVisible ? SW_SHOW : SW_HIDE);
+                    buttonY += DebugControlDropdownH + DebugControlGap;
+                    continue;
+                }
                 if (control.kind == DebugControlKind::NumberInput) {
                     const int labelW = std::clamp(buttonW / 2, 74, std::max(74, buttonW - 56));
                     const int inputX = buttonX + labelW + 6;
@@ -971,7 +1025,7 @@ struct DebugConsole::Impl {
 
     int debugControlVisibleHeight(DebugControlKind kind) const
     {
-        if (kind == DebugControlKind::Dropdown) {
+        if (kind == DebugControlKind::Dropdown || kind == DebugControlKind::DropdownButton) {
             return DebugControlLabelH + DebugControlDropdownH;
         }
         return DebugControlButtonH;
@@ -1368,6 +1422,7 @@ struct DebugConsole::Impl {
     std::unordered_map<int, std::string> debugToggleCommandByControlId;
     std::unordered_map<int, DebugNumberCommand> debugNumberByControlId;
     std::unordered_map<int, DebugDropdownCommand> debugDropdownByControlId;
+    std::unordered_map<int, DebugDropdownButtonCommand> debugDropdownButtonByControlId;
     std::unordered_map<std::string, int> debugDropdownControlIdByDebugId;
     std::unordered_map<HWND, DebugGroupRef> debugGroupByScrollbar;
     std::deque<LogEntry> pendingLogs;

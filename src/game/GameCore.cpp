@@ -2,11 +2,14 @@
 
 #include "engine/Audio.hpp"
 
+#include <cmath>
+
 namespace majo {
 
 namespace {
 
 constexpr float DungeonRingIntroDuration = 1.18f;
+constexpr float HotReloadPollIntervalSeconds = 0.50f;
 constexpr std::string_view DefaultShovelObjectId = "item_shovel";
 constexpr std::string_view DefaultTorchObjectId = "item_torch";
 constexpr std::string_view EndingSeenFlag = "ending_seen";
@@ -45,6 +48,13 @@ constexpr std::string_view AudioSeUiItemMove = "se.ui.item_move";
 constexpr std::string_view AudioSeUiItemUse = "se.ui.item_use";
 constexpr std::string_view AudioSeUiRingPlace = "se.ui.ring_place";
 constexpr std::string_view AudioSeUiUpgradeSelect = "se.ui.upgrade_select";
+constexpr std::string_view IntroTutorialChestLootInventoryTrigger = "intro_tutorial:chest_loot_inventory";
+constexpr std::string_view IntroTutorialChestLootRingTrigger = "intro_tutorial:chest_loot_ring";
+
+int chunkCoordForWorld(float world)
+{
+    return static_cast<int>(std::floor(world / static_cast<float>(balance::ChunkWorldSize)));
+}
 
 const InventoryObjectInstance* findInventoryObjectInstanceById(
     const InventorySystem& inventory,
@@ -73,6 +83,19 @@ bool spellRingContainsInstanceId(const SpellRingSystem& spellRing, std::string_v
             if (item.instanceId == instanceId) {
                 return true;
             }
+        }
+    }
+    return false;
+}
+
+bool spellRingContainsObjectId(const SpellRingSystem& spellRing, std::string_view objectId)
+{
+    if (objectId.empty()) {
+        return false;
+    }
+    for (const SpellRingItem* item : spellRing.runtimeItems()) {
+        if (item != nullptr && item->objectId == objectId) {
+            return true;
         }
     }
     return false;
@@ -159,6 +182,36 @@ void Game::setAudioEngine(AudioEngine* audio)
     activeAudioBgmCue_.clear();
 }
 
+void Game::setAutoReloadBlocked(bool blocked)
+{
+    if (autoReloadBlocked_ == blocked) {
+        return;
+    }
+
+    autoReloadBlocked_ = blocked;
+    hotReloadPollTimer_ = 0.0f;
+    if (autoReloadBlocked_) {
+        watcher_ = FileWatcher{};
+    } else if (hotReloadEnabled_) {
+        configureWatcher();
+    }
+}
+
+void Game::setHotReloadEnabled(bool enabled)
+{
+    if (hotReloadEnabled_ == enabled) {
+        return;
+    }
+
+    hotReloadEnabled_ = enabled;
+    hotReloadPollTimer_ = 0.0f;
+    if (hotReloadEnabled_ && !autoReloadBlocked_) {
+        configureWatcher();
+    } else {
+        watcher_ = FileWatcher{};
+    }
+}
+
 void Game::playAudioBgm(std::string_view id, float fadeSeconds, bool restart)
 {
     if (audio_ == nullptr || id.empty()) {
@@ -235,14 +288,14 @@ void Game::initialize(int width, int height)
     spellRing_.applyObjectParameters(objectCatalog_);
     spellRing_.resetBaseWeightToCurrent();
     refreshOrbitEffects();
-    const bool loadedSave = loadSaveData();
-    if (loadedSave) {
+    saveDataLoaded_ = loadSaveData();
+    if (saveDataLoaded_) {
         reloadNotice_ = "セーブ読込完了";
     } else {
         reloadNotice_ = message.empty() ? "データ読込完了" : message;
     }
     loadBaseEditData();
-    if (loadedSave) {
+    if (saveDataLoaded_) {
         placeBasePlayerAtHomeDoorResumePoint();
     } else {
         baseArea_ = BaseArea::Outdoor;
@@ -403,6 +456,8 @@ void Game::resetWorldUiState()
     baseBookshelfActive_ = false;
     bookshelfPage_ = BookshelfPage::Menu;
     bookshelfSelection_ = 0;
+    bookshelfScrollOffset_ = 0.0f;
+    bookshelfScrollState_ = {};
     baseEditEnabled_ = false;
     baseEditMode_ = BaseEditMode::None;
     baseEditDirty_ = false;
@@ -661,6 +716,7 @@ void Game::finishWorldBuild()
     camera_.follow(player_.position, 1.0f);
     beginDungeonRingIntro();
     maybeQueueStageStartStory();
+    flushPendingDebugDungeonEventPlacement();
 }
 
 int Game::worldBuildStepIndex() const
@@ -786,6 +842,8 @@ void Game::enterBase()
     baseRingWorkshopSelection_ = 0;
     baseRingWorkshopRingTabs_ = {};
     baseBookshelfActive_ = false;
+    bookshelfScrollOffset_ = 0.0f;
+    bookshelfScrollState_ = {};
     baseMenuSelection_ = std::clamp(baseMenuSelection_, 0, BaseMenuItemCount - 1);
     clearTemporaryPlayerState(true);
     resetPlayerFootstepDust();
@@ -919,7 +977,10 @@ void Game::updateTitleScreen(const Input& input, UiContext& ui)
             ui.consumePointer();
         }
         ui.emitSound(UiSoundEvent::Confirm);
-        requestScreenTransition(ScreenTransitionTarget::TitleToBase);
+        const bool needsIntroTutorial = !hasStoryFlag(IntroTutorialCompletedFlag);
+        requestScreenTransition(needsIntroTutorial
+            ? ScreenTransitionTarget::TitleToIntroTutorial
+            : ScreenTransitionTarget::TitleToBase);
     }
 }
 
@@ -1055,13 +1116,18 @@ void Game::applyScreenTransitionTarget(ScreenTransitionTarget target)
         break;
     case ScreenTransitionTarget::TitleToBase:
         enterBase();
-        pendingStoryTrigger_ = "title_base_enter";
+        break;
+    case ScreenTransitionTarget::TitleToIntroTutorial:
+        startIntroTutorialDungeon();
         break;
     case ScreenTransitionTarget::MiningStart:
         startMiningFromBase(screenTransition_.useLatestWarpPoint, screenTransition_.forceRegenerate);
         break;
     case ScreenTransitionTarget::ReturnToBase:
         returnToBaseFromNormalStage(screenTransition_.returnStageCleared, screenTransition_.returnDied);
+        break;
+    case ScreenTransitionTarget::IntroTutorialToBase:
+        completeIntroTutorialAndReturnToBase();
         break;
     case ScreenTransitionTarget::BaseArea:
         baseArea_ = screenTransition_.targetBaseArea;
@@ -1135,6 +1201,7 @@ void Game::startMiningFromBase(bool useLatestWarpPoint, bool forceRegenerate)
     camera_.follow(player_.position, 1.0f);
     beginDungeonRingIntro();
     maybeQueueStageStartStory();
+    flushPendingDebugDungeonEventPlacement();
 }
 
 void Game::applyPermanentUpgrades()
@@ -1393,6 +1460,10 @@ float Game::effectiveCollectionPullRadius(int collectionLevel) const
 void Game::configureWatcher()
 {
     watcher_ = FileWatcher{};
+    if (!hotReloadEnabled_ || autoReloadBlocked_) {
+        return;
+    }
+
     watcher_.watchPath("data");
     watcher_.reset();
 }
@@ -1757,6 +1828,20 @@ void Game::applyDebugStageUnlockState(int unlockedStoryStages)
         storyFlags_.end());
 
     const int clearedStoryStages = std::max(0, unlockedStages_ - 1);
+    storyFlags_.erase(
+        std::remove_if(storyFlags_.begin(), storyFlags_.end(), [](const std::string& flag) {
+            const std::string_view flagView(flag.data(), flag.size());
+            return flagView == IntroTutorialCompletedFlag ||
+                flagView == "story_intro_tutorial_fall" ||
+                flagView == "story_opening_base_intro";
+        }),
+        storyFlags_.end());
+    if (clearedStoryStages > 0) {
+        addStoryFlag(std::string(IntroTutorialCompletedFlag));
+        addStoryFlag("story_intro_tutorial_fall");
+        addStoryFlag("story_opening_base_intro");
+    }
+
     for (int stage = 1; stage <= clearedStoryStages; ++stage) {
         addStoryFlag("stage_clear_" + std::to_string(stage));
     }
@@ -2005,7 +2090,9 @@ void Game::updateScreenMode(
 
     updateQueuedStoryEvents();
     if (dialogue_.active()) {
+        const bool dialogueWasActive = dialogue_.active();
         dialogue_.update(input, dt);
+        runDialogueCompletionCallbackIfFinished(dialogueWasActive);
         ui.consumePointer();
         return;
     }
@@ -2079,6 +2166,9 @@ void Game::updateScreenMode(
             }
         }
         if (updateWarpReturnUi(input, ui)) {
+            return;
+        }
+        if (updateDungeonEventNpcInteraction(input, ui)) {
             return;
         }
         if (input.pausePressed()) {
@@ -2160,6 +2250,17 @@ void Game::updateScreenMode(
     }
 }
 
+void Game::runDialogueCompletionCallbackIfFinished(bool dialogueWasActive)
+{
+    if (!dialogueWasActive || dialogue_.active() || !pendingDialogueCompletion_) {
+        return;
+    }
+
+    std::function<void()> onComplete = std::move(pendingDialogueCompletion_);
+    pendingDialogueCompletion_ = {};
+    onComplete();
+}
+
 bool Game::gameProgressPaused() const
 {
     return debugItemPickerActive_ ||
@@ -2167,6 +2268,7 @@ bool Game::gameProgressPaused() const
         firstItemAcquisitionNoticeActive() ||
         dungeonFocusActive() ||
         dialogue_.active() ||
+        (introTutorialActive() && dungeonRingIntroActive()) ||
         bossEncounterBlocksProgress() ||
         endingKamishibaiPending_ ||
         warpReturnConfirm_.open ||
@@ -2248,7 +2350,7 @@ void Game::switchActiveRingWithLog(int delta)
 
 void Game::update(const Input& input, const Time& time)
 {
-    checkHotReload();
+    checkHotReload(time.deltaSeconds());
     reloadNoticeTimer_ = std::max(0.0f, reloadNoticeTimer_ - time.deltaSeconds());
     encyclopedia_.update(time.deltaSeconds());
     updateDungeonLogs(time.deltaSeconds());
@@ -2307,11 +2409,13 @@ void Game::update(const Input& input, const Time& time)
     if (!paused) {
         runStats_.elapsedSeconds += time.deltaSeconds();
         updateAstralRunProgress();
-        if (currentStageId_ == "stage_01_stardust" && runStats_.elapsedSeconds >= 1.0f) {
+        if (!introTutorialActive() && currentStageId_ == "stage_01_stardust" && runStats_.elapsedSeconds >= 1.0f) {
             queueStoryEventForTrigger("tutorial:light");
         }
         updatePlayerFootstepDust(time.deltaSeconds());
         const RuntimeBalance dungeonBalance = runtimeBalanceForDungeon();
+        const int playerChunkBeforeX = chunkCoordForWorld(player_.position.x);
+        const int playerChunkBeforeY = chunkCoordForWorld(player_.position.y);
         tileMap_.updateAround(player_.position, time.deltaSeconds(), dungeonBalance, dungeonLayout_);
         normalizeOpenBuriedPlacementNodes();
         std::vector<CollisionRect> objectBlockers;
@@ -2369,7 +2473,7 @@ void Game::update(const Input& input, const Time& time)
         } else if (previousSpellRingState == SpellRingState::Returning && spellRing_.state() == SpellRingState::Normal) {
             effects_.spawnReturn(spellRing_.center());
         }
-        if (input.ringOffsetHeld()) {
+        if (!introTutorialActive() && input.ringOffsetHeld()) {
             queueStoryEventForTrigger("tutorial:ring_shift");
         }
         updateDungeonEvents(time.deltaSeconds(), time.totalSeconds());
@@ -2378,7 +2482,12 @@ void Game::update(const Input& input, const Time& time)
             updateCrateNodes();
         }
 
-        tileMap_.updateAround(player_.position, time.deltaSeconds(), dungeonBalance, dungeonLayout_);
+        const bool playerChunkChanged =
+            chunkCoordForWorld(player_.position.x) != playerChunkBeforeX ||
+            chunkCoordForWorld(player_.position.y) != playerChunkBeforeY;
+        if (playerChunkChanged) {
+            tileMap_.updateAround(player_.position, time.deltaSeconds(), dungeonBalance, dungeonLayout_);
+        }
         digging_.update(
             tileMap_,
             spellRing_,
@@ -2523,6 +2632,29 @@ void Game::update(const Input& input, const Time& time)
                 recordObjectObtainedForFirstNotice(event.id, event.instanceId, event.protectable, player_.position);
             }
         }
+        if (introTutorialActive() &&
+            introTutorialChestOpened_ &&
+            !introTutorialChestLootDialogueQueued_ &&
+            !pickupEvents.empty()) {
+            bool objectPickedUp = false;
+            bool objectAlreadyOnRing = false;
+            for (const WorldDropPickupEvent& event : pickupEvents) {
+                if (event.kind != WorldDropKind::Object) {
+                    continue;
+                }
+                objectPickedUp = true;
+                objectAlreadyOnRing = objectAlreadyOnRing ||
+                    spellRingContainsInstanceId(spellRing_, event.instanceId) ||
+                    spellRingContainsObjectId(spellRing_, event.id);
+            }
+            if (objectPickedUp) {
+                introTutorialChestLootDialogueQueued_ = true;
+                queueStoryEventForTrigger(std::string(
+                    objectAlreadyOnRing
+                        ? IntroTutorialChestLootRingTrigger
+                        : IntroTutorialChestLootInventoryTrigger));
+            }
+        }
         appendPickupLogs(pickupEvents);
         if (!pickupEvents.empty()) {
             playAudioSe(AudioSePickup);
@@ -2574,7 +2706,7 @@ void Game::update(const Input& input, const Time& time)
         const std::string bossCaptureObjectId = currentStageCleared()
             ? currentStageBossCaptureObjectId()
             : std::string{};
-        if (!ui.pointerConsumed() && captureCooldown_ <= 0.0f) {
+        if (!introTutorialActive() && !ui.pointerConsumed() && captureCooldown_ <= 0.0f) {
             const CaptureTargetPreview preview = enemies_.previewCaptureAt(
                 camera_.screenToWorld(input.mouseScreen()),
                 player_,
@@ -2584,7 +2716,7 @@ void Game::update(const Input& input, const Time& time)
                 captureHoverEnemyId_ = preview.enemyRuntimeId;
             }
         }
-        if (!enemyTestActive_ && enemies_.activeCount() > 0) {
+        if (!enemyTestActive_ && !introTutorialActive() && enemies_.activeCount() > 0) {
             queueStoryEventForTrigger("tutorial:capture_net");
         }
         for (Vec2 explosionPosition : digging_.capturedExplosionRequests()) {
@@ -2647,7 +2779,7 @@ void Game::update(const Input& input, const Time& time)
             playAudioSe(AudioSeMagicImpact);
         }
         bool capturedEnemyThisFrame = false;
-        if (input.capturePressed() && !ui.pointerConsumed() && captureCooldown_ <= 0.0f) {
+        if (!introTutorialActive() && input.capturePressed() && !ui.pointerConsumed() && captureCooldown_ <= 0.0f) {
             playAudioSe(AudioSeCaptureThrow);
             const CaptureResult capture = enemies_.tryCaptureAt(
                 camera_.screenToWorld(input.mouseScreen()),
@@ -2830,6 +2962,9 @@ void Game::update(const Input& input, const Time& time)
         magicFx_.update(time.deltaSeconds());
         effects_.update(time.deltaSeconds());
         gainPlayerXp(enemies_.consumePendingXp());
+        if (updateIntroTutorial(input, time.deltaSeconds())) {
+            return;
+        }
         if (bossDefeated) {
             beginBossDefeatSequence(bossDefeatPosition);
             return;
@@ -2844,8 +2979,18 @@ void Game::update(const Input& input, const Time& time)
     }
 }
 
-void Game::checkHotReload()
+void Game::checkHotReload(float dt)
 {
+    if (!hotReloadEnabled_ || autoReloadBlocked_) {
+        return;
+    }
+
+    hotReloadPollTimer_ = std::max(0.0f, hotReloadPollTimer_ - std::max(0.0f, dt));
+    if (hotReloadPollTimer_ > 0.0f) {
+        return;
+    }
+    hotReloadPollTimer_ = HotReloadPollIntervalSeconds;
+
     std::string changedPath;
     if (!watcher_.poll(changedPath)) {
         return;

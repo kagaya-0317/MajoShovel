@@ -222,6 +222,51 @@ bool parseDungeonEventObjectKind(std::string_view token, Game::DungeonEventObjec
     return false;
 }
 
+bool hasSaveStoryFlag(const std::vector<std::string>& flags, std::string_view flag)
+{
+    return std::any_of(flags.begin(), flags.end(), [flag](const std::string& entry) {
+        return std::string_view(entry.data(), entry.size()) == flag;
+    });
+}
+
+bool ringLevelUpgradePointsEmpty(const RingLevelUpgradePointTable& table)
+{
+    return std::all_of(table.begin(), table.end(), [](const RingLevelUpgradePoints& points) {
+        return points.radius == 0 && points.speed == 0 && points.weightLimit == 0;
+    });
+}
+
+bool inventoryHasSavedProgress(const InventorySystem& inventory)
+{
+    if (!inventory.objectStacks().empty() ||
+        !inventory.objectInstances().empty() ||
+        !inventory.equippedStaffInstanceId().empty()) {
+        return true;
+    }
+    for (int index = 0; index < static_cast<int>(MaterialType::Count); ++index) {
+        if (inventory.materialCount(static_cast<MaterialType>(index)) > 0) {
+            return true;
+        }
+    }
+    return false;
+}
+
+bool dungeonStateHasSavedProgress(const LoadedDungeonStateSave& state)
+{
+    return state.hasSeed ||
+        !state.warpPoints.empty() ||
+        !state.minimapCells.empty() ||
+        !state.terrainEdits.empty() ||
+        !state.rewardNodes.empty() ||
+        !state.moneyNodes.empty() ||
+        !state.moonFragmentNodes.empty() ||
+        !state.chestNodes.empty() ||
+        !state.crateNodes.empty() ||
+        !state.enemyNodes.empty() ||
+        !state.dungeonEventInstances.empty() ||
+        !state.worldDrops.empty();
+}
+
 std::string serializedDungeonEventParams(const Game::DungeonEventInstance& event)
 {
     std::vector<std::string> parts;
@@ -235,6 +280,9 @@ std::string serializedDungeonEventParams(const Game::DungeonEventInstance& event
     parts.push_back(std::string("encounter=") + (event.encounterSpawned ? "1" : "0"));
     parts.push_back(std::string("activated=") + (event.activated ? "1" : "0"));
     parts.push_back(std::string("bossDefeated=") + (event.bossDefeated ? "1" : "0"));
+    parts.push_back(std::string("npcRequestKnown=") + (event.npcRequestKnown ? "1" : "0"));
+    parts.push_back(std::string("objectiveResolved=") + (event.objectiveResolved ? "1" : "0"));
+    parts.push_back(std::string("rewardClaimed=") + (event.rewardClaimed ? "1" : "0"));
     parts.push_back("bossId=" + std::to_string(event.bossEnemyRuntimeId));
     if (!event.requestKey.empty()) {
         parts.push_back("request=" + event.requestKey);
@@ -312,6 +360,12 @@ void applyDungeonEventParams(Game::DungeonEventInstance& event, std::string_view
             event.activated = value == "1";
         } else if (key == "bossDefeated") {
             event.bossDefeated = value == "1";
+        } else if (key == "npcRequestKnown") {
+            event.npcRequestKnown = value == "1";
+        } else if (key == "objectiveResolved") {
+            event.objectiveResolved = value == "1";
+        } else if (key == "rewardClaimed") {
+            event.rewardClaimed = value == "1";
         } else if (key == "bossId") {
             try {
                 event.bossEnemyRuntimeId = std::stoi(std::string(value));
@@ -1066,6 +1120,63 @@ bool Game::loadSaveData()
         }
     }
 
+    const bool loadedSaveHasIntroCompletion = hasSaveStoryFlag(loadedStoryFlags, IntroTutorialCompletedFlag);
+    const bool loadedSaveHasUpgradeProgress =
+        loadedMaxHpUpgradeLevel > 0 ||
+        loadedRingRadiusUpgradeLevel > 0 ||
+        loadedRingSpeedUpgradeLevel > 0 ||
+        loadedCollectionRangeUpgradeLevel > 0 ||
+        loadedLevelRingRadiusPoints > 0 ||
+        loadedLevelRingSpeedPoints > 0 ||
+        loadedLevelRingWeightLimitPoints > 0 ||
+        !ringLevelUpgradePointsEmpty(loadedLevelRingUpgradePoints) ||
+        loadedWorkshopInitialRadiusLevel > 0 ||
+        loadedWorkshopInitialSpeedLevel > 0 ||
+        loadedWorkshopShiftDistanceLevel > 0;
+    const bool loadedSaveHasMerchantProgress =
+        loadedMerchantRefreshPending ||
+        loadedMerchantUpgradeLevel > 1 ||
+        loadedMerchantStockVersion > 0 ||
+        !loadedMerchantStock.empty() ||
+        !loadedHighValueBuyCategory.empty() ||
+        !loadedHighValueBuyObjectIds.empty();
+    const bool loadedSaveHasBaseProgress =
+        loadedWarehouseCapacityLevel > 0 ||
+        loadedProcessingUnlockLevel > 0 ||
+        loadedRingWorkshopUnlocked ||
+        loadedAutoSaveOnReturn ||
+        !loadedWarehouseStacks.empty() ||
+        !loadedWarehouseInstances.empty();
+    const bool loadedSaveHasStageProgress =
+        loadedCurrentStage > 0 ||
+        loadedCurrentStageId != "stage_01_stardust" ||
+        loadedUnlockedStages > 1 ||
+        loadedUnlockedWarpPointCount > 0 ||
+        loadedHasLatestWarpPointPosition;
+    const bool loadedSaveHasPlayerProgress =
+        loadedMoney > 0 ||
+        loadedAstralHighScore > 0 ||
+        loadedPlayerLevel > 1 ||
+        loadedPlayerXp > 0 ||
+        loadedPendingLevelBonusChoices > 0;
+    const bool loadedSaveHasProgressBeyondFreshStart =
+        loadedSaveHasUpgradeProgress ||
+        loadedSaveHasMerchantProgress ||
+        loadedSaveHasBaseProgress ||
+        loadedSaveHasStageProgress ||
+        loadedSaveHasPlayerProgress ||
+        !loadedStoryFlags.empty() ||
+        inventoryHasSavedProgress(loadedInventory) ||
+        !loadedEncyclopedia.saveEntries().empty() ||
+        !loadedEncyclopedia.saveEffects().empty() ||
+        !loadedEncyclopediaOwnedSyncSuppressCounts.empty() ||
+        !loadedEncyclopediaRingSyncSuppressCounts.empty() ||
+        dungeonStateHasSavedProgress(loadedDungeonState);
+    if (!loadedSaveHasIntroCompletion && loadedSaveHasProgressBeyondFreshStart) {
+        loadedStoryFlags.push_back(std::string(IntroTutorialCompletedFlag));
+        logInfo("[save] migrated existing save to skip intro tutorial.");
+    }
+
     inventory_ = loadedInventory;
     inventory_.setOpen(false);
     inventory_.cancelGrab();
@@ -1586,6 +1697,9 @@ bool Game::saveSaveData(std::string& message) const
         }
         if (saveDungeonEventInstances != nullptr) {
             for (const DungeonEventInstance& event : *saveDungeonEventInstances) {
+                if (event.data == "debug" || event.params.find("source=debug") != std::string::npos) {
+                    continue;
+                }
                 file << "dungeon_event_instance "
                     << saveDungeonStageId << " "
                     << event.id << " "

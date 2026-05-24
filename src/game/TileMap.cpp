@@ -63,6 +63,15 @@ struct TerrainTileSheet {
     bool available = false;
 };
 
+struct PreparedLight {
+    Vec2 position{};
+    float radius = 0.0f;
+    float radiusSq = 0.0f;
+    float innerRadius = 0.0f;
+    float innerRadiusSq = 0.0f;
+    float falloffDenom = 1.0f;
+};
+
 struct TerrainNeighbors {
     bool up = false;
     bool down = false;
@@ -92,6 +101,27 @@ float lightFalloffInnerRadius(float radius)
         LightFalloffMinWidth,
         LightFalloffMaxWidth);
     return std::max(0.0f, radius - falloffWidth);
+}
+
+PreparedLight prepareLight(Vec2 position, float radius)
+{
+    const float innerRadius = lightFalloffInnerRadius(radius);
+    return PreparedLight{
+        position,
+        radius,
+        radius * radius,
+        innerRadius,
+        innerRadius * innerRadius,
+        std::max(1.0f, radius - innerRadius),
+    };
+}
+
+bool lightIntersectsBounds(const PreparedLight& light, float left, float top, float right, float bottom)
+{
+    return light.position.x + light.radius >= left &&
+        light.position.x - light.radius <= right &&
+        light.position.y + light.radius >= top &&
+        light.position.y - light.radius <= bottom;
 }
 
 void mergeLightSpans(std::vector<Vec2>& spans)
@@ -1498,6 +1528,43 @@ void TileMap::render(Renderer& renderer, const Camera& camera, Vec2 lightCenter,
     const int maxTileX = worldToTile(std::max(viewTopLeft.x, viewBottomRight.x)) + ViewTileMargin;
     const int minTileY = worldToTile(std::min(viewTopLeft.y, viewBottomRight.y)) - ViewTileMargin;
     const int maxTileY = worldToTile(std::max(viewTopLeft.y, viewBottomRight.y)) + ViewTileMargin;
+    const float tileSize = static_cast<float>(balance::TileSize);
+    const float tileViewLeft = static_cast<float>(minTileX) * tileSize;
+    const float tileViewRight = static_cast<float>(maxTileX + 1) * tileSize;
+    const float tileViewTop = static_cast<float>(minTileY) * tileSize;
+    const float tileViewBottom = static_cast<float>(maxTileY + 1) * tileSize;
+
+    std::vector<PreparedLight> lights;
+    lights.reserve(extraLights.size() + 1);
+    const auto addLight = [&](Vec2 position, float rawRadius) {
+        const float radius = rawRadius > 0.0f ? rawRadius : balanceSnapshot_.lightRadius;
+        if (radius <= 0.0f) {
+            return;
+        }
+        const PreparedLight light = prepareLight(position, radius);
+        if (lightIntersectsBounds(light, tileViewLeft, tileViewTop, tileViewRight, tileViewBottom)) {
+            lights.push_back(light);
+        }
+    };
+    addLight(lightCenter, balanceSnapshot_.playerLightRadius);
+    for (const LightSource& light : extraLights) {
+        addLight(light.position, light.radius);
+    }
+
+    const auto tileRectLit = [&](Vec2 pos) {
+        const float right = pos.x + tileSize;
+        const float bottom = pos.y + tileSize;
+        for (const PreparedLight& light : lights) {
+            const float nearestX = std::clamp(light.position.x, pos.x, right);
+            const float nearestY = std::clamp(light.position.y, pos.y, bottom);
+            const float dx = nearestX - light.position.x;
+            const float dy = nearestY - light.position.y;
+            if (dx * dx + dy * dy <= light.radiusSq) {
+                return true;
+            }
+        }
+        return false;
+    };
 
     const TerrainTileSheet terrainSheet = acquireTerrainTileSheet(renderer, dungeonLayoutSnapshot_.stageId);
     const auto tileTypeForRender = [this](int tx, int ty) {
@@ -1547,7 +1614,7 @@ void TileMap::render(Renderer& renderer, const Camera& camera, Vec2 lightCenter,
                     const int tx = cx * balance::ChunkTiles + x;
                     const int ty = cy * balance::ChunkTiles + y;
                     const Vec2 pos{static_cast<float>(tx * balance::TileSize), static_cast<float>(ty * balance::TileSize)};
-                    if (!isTileRectLit(pos, lightCenter, extraLights)) {
+                    if (!tileRectLit(pos)) {
                         continue;
                     }
                     const Tile& tile = chunk.at(x, y);
@@ -1566,49 +1633,68 @@ void TileMap::render(Renderer& renderer, const Camera& camera, Vec2 lightCenter,
 
 void TileMap::renderDarknessOverlay(Renderer& renderer, const Camera& camera, Vec2 lightCenter, const std::vector<LightSource>& extraLights) const
 {
+    const int viewColumns = std::max(0, camera.width());
+    const int viewRows = std::max(0, camera.height());
+    if (viewColumns <= 0 || viewRows <= 0) {
+        return;
+    }
+
     const Vec2 viewTopLeft = camera.screenToWorld({0.0f, 0.0f});
-    const float viewWidth = static_cast<float>(camera.width());
-    const float viewHeight = static_cast<float>(camera.height());
+    const float viewWidth = static_cast<float>(viewColumns);
+    const float viewHeight = static_cast<float>(viewRows);
     const float viewLeft = viewTopLeft.x;
     const float viewRight = viewTopLeft.x + viewWidth;
     const float viewTop = viewTopLeft.y;
+    const float viewBottom = viewTop + viewHeight;
 
-    std::vector<LightSource> lights;
+    std::vector<PreparedLight> lights;
     lights.reserve(extraLights.size() + 1);
-    lights.push_back({lightCenter, balanceSnapshot_.playerLightRadius});
-    lights.insert(lights.end(), extraLights.begin(), extraLights.end());
+    const auto addLight = [&](Vec2 position, float rawRadius) {
+        const float radius = rawRadius > 0.0f ? rawRadius : balanceSnapshot_.lightRadius;
+        if (radius <= 0.0f) {
+            return;
+        }
+        const PreparedLight light = prepareLight(position, radius);
+        if (lightIntersectsBounds(light, viewLeft, viewTop, viewRight, viewBottom)) {
+            lights.push_back(light);
+        }
+    };
+    addLight(lightCenter, balanceSnapshot_.playerLightRadius);
+    for (const LightSource& light : extraLights) {
+        addLight(light.position, light.radius);
+    }
 
     constexpr Color DarknessColor{5, 5, 8, 255};
+    if (lights.empty()) {
+        renderer.fillRect({viewLeft, viewTop}, {viewWidth, viewHeight}, DarknessColor);
+        return;
+    }
+
     std::vector<Vec2> outerSpans;
     std::vector<Vec2> innerSpans;
     std::vector<Vec2> falloffSpans;
+    std::vector<const PreparedLight*> rowLights;
     outerSpans.reserve(lights.size());
     innerSpans.reserve(lights.size());
     falloffSpans.reserve(lights.size() * 2);
+    rowLights.reserve(lights.size());
 
     const auto darknessAlphaAt = [&](float x, float y) {
         float alpha = static_cast<float>(DarknessColor.a);
-        for (const LightSource& light : lights) {
-            const float radius = light.radius > 0.0f ? light.radius : balanceSnapshot_.lightRadius;
-            if (radius <= 0.0f) {
-                continue;
-            }
-            const float dx = x - light.position.x;
-            const float dy = y - light.position.y;
+        for (const PreparedLight* light : rowLights) {
+            const float dx = x - light->position.x;
+            const float dy = y - light->position.y;
             const float distanceSq = dx * dx + dy * dy;
-            const float radiusSq = radius * radius;
-            if (distanceSq >= radiusSq) {
+            if (distanceSq >= light->radiusSq) {
                 continue;
             }
 
-            const float innerRadius = lightFalloffInnerRadius(radius);
-            const float innerRadiusSq = innerRadius * innerRadius;
-            if (distanceSq <= innerRadiusSq) {
+            if (distanceSq <= light->innerRadiusSq) {
                 return 0.0f;
             }
 
             const float distance = std::sqrt(distanceSq);
-            const float t = std::clamp((distance - innerRadius) / std::max(1.0f, radius - innerRadius), 0.0f, 1.0f);
+            const float t = std::clamp((distance - light->innerRadius) / light->falloffDenom, 0.0f, 1.0f);
             const float smooth = t * t * (3.0f - 2.0f * t);
             alpha = std::min(alpha, static_cast<float>(DarknessColor.a) * smooth);
         }
@@ -1626,7 +1712,7 @@ void TileMap::renderDarknessOverlay(Renderer& renderer, const Camera& camera, Ve
             const float alpha0 = darknessAlphaAt(x, y);
             const float alphaMid = darknessAlphaAt(midX, y);
             const float alpha1 = darknessAlphaAt(nextX, y);
-            if (std::max({alpha0, alphaMid, alpha1}) > 0.5f) {
+            if (std::max(std::max(alpha0, alphaMid), alpha1) > 0.5f) {
                 const auto makeColor = [](float alpha) {
                     return Color{5, 5, 8, static_cast<unsigned char>(std::clamp(std::lround(alpha), 0L, 255L))};
                 };
@@ -1647,26 +1733,37 @@ void TileMap::renderDarknessOverlay(Renderer& renderer, const Camera& camera, Ve
         }
     };
 
-    for (int row = 0; row < static_cast<int>(viewHeight); ++row) {
+    int fullDarkRunStart = -1;
+    const auto flushFullDarkRun = [&](int rowEnd) {
+        if (fullDarkRunStart < 0 || rowEnd <= fullDarkRunStart) {
+            return;
+        }
+        renderer.fillRect(
+            {viewLeft, viewTop + static_cast<float>(fullDarkRunStart)},
+            {viewWidth, static_cast<float>(rowEnd - fullDarkRunStart)},
+            DarknessColor);
+        fullDarkRunStart = -1;
+    };
+
+    for (int row = 0; row < viewRows; ++row) {
         const float y = viewTop + static_cast<float>(row) + 0.5f;
         outerSpans.clear();
         innerSpans.clear();
-        for (const LightSource& light : lights) {
-            const float radius = light.radius > 0.0f ? light.radius : balanceSnapshot_.lightRadius;
-            const float radiusSq = radius * radius;
+        rowLights.clear();
+        for (const PreparedLight& light : lights) {
             const float dy = y - light.position.y;
-            const float remaining = radiusSq - dy * dy;
+            const float remaining = light.radiusSq - dy * dy;
             if (remaining > 0.0f) {
                 const float dx = std::sqrt(remaining);
                 const float x0 = std::max(viewLeft, light.position.x - dx);
                 const float x1 = std::min(viewRight, light.position.x + dx);
                 if (x1 > x0) {
+                    rowLights.push_back(&light);
                     outerSpans.push_back({x0, x1});
                 }
             }
 
-            const float innerRadius = lightFalloffInnerRadius(radius);
-            const float innerRemaining = innerRadius * innerRadius - dy * dy;
+            const float innerRemaining = light.innerRadiusSq - dy * dy;
             if (innerRemaining > 0.0f) {
                 const float dx = std::sqrt(innerRemaining);
                 const float x0 = std::max(viewLeft, light.position.x - dx);
@@ -1679,9 +1776,12 @@ void TileMap::renderDarknessOverlay(Renderer& renderer, const Camera& camera, Ve
 
         mergeLightSpans(outerSpans);
         if (outerSpans.empty()) {
-            renderer.fillRect({viewLeft, viewTop + static_cast<float>(row)}, {viewWidth, 1.0f}, DarknessColor);
+            if (fullDarkRunStart < 0) {
+                fullDarkRunStart = row;
+            }
             continue;
         }
+        flushFullDarkRun(row);
 
         float darkStart = viewLeft;
         for (Vec2 span : outerSpans) {
@@ -1702,6 +1802,7 @@ void TileMap::renderDarknessOverlay(Renderer& renderer, const Camera& camera, Ve
             drawFalloffSpan(span.x, span.y, y);
         }
     }
+    flushFullDarkRun(viewRows);
 }
 
 }

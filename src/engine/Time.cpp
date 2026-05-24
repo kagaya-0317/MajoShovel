@@ -1,27 +1,36 @@
-#include "engine/Time.hpp"
+﻿#include "engine/Time.hpp"
 
 #include <SDL3/SDL.h>
 #include <algorithm>
 
 namespace majo {
 
+namespace {
+
+constexpr float MaxDeltaSeconds = 0.25f;
+constexpr float FpsSmoothing = 0.90f;
+
+}
+
 void Time::reset()
 {
     lastCounter_ = static_cast<double>(SDL_GetPerformanceCounter());
     deltaSeconds_ = 1.0f / 60.0f;
     totalSeconds_ = 0.0f;
+    fps_ = 60.0f;
 }
 
 void Time::tick()
 {
     const double now = static_cast<double>(SDL_GetPerformanceCounter());
     const double freq = static_cast<double>(SDL_GetPerformanceFrequency());
-    deltaSeconds_ = static_cast<float>((now - lastCounter_) / freq);
+    const float rawDeltaSeconds = static_cast<float>((now - lastCounter_) / freq);
     lastCounter_ = now;
-    deltaSeconds_ = std::clamp(deltaSeconds_, 0.0f, 1.0f / 20.0f);
+    const float nonNegativeDeltaSeconds = std::max(0.0f, rawDeltaSeconds);
+    deltaSeconds_ = std::min(nonNegativeDeltaSeconds, MaxDeltaSeconds);
     totalSeconds_ += deltaSeconds_;
-    if (deltaSeconds_ > 0.0f) {
-        fps_ = 0.9f * fps_ + 0.1f * (1.0f / deltaSeconds_);
+    if (nonNegativeDeltaSeconds > 0.0f) {
+        fps_ = FpsSmoothing * fps_ + (1.0f - FpsSmoothing) * (1.0f / nonNegativeDeltaSeconds);
     }
 }
 

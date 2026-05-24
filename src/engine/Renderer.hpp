@@ -118,6 +118,13 @@ public:
         TextureFilter filter = TextureFilter::Nearest);
     bool getImageSize(ImageHandle handle, Vec2& outSize) const;
     bool getImageSize(std::string_view path, Vec2& outSize, TextureFilter filter = TextureFilter::Nearest);
+    bool imageHitTestAlpha(
+        ImageHandle handle,
+        Vec2 center,
+        Vec2 size,
+        Vec2 point,
+        const ImageDrawOptions& options = {},
+        unsigned char alphaThreshold = 1);
     void invalidateImage(std::string_view path);
     void invalidateAllImages();
     void setImageCacheBudgetBytes(std::size_t bytes);
@@ -155,6 +162,7 @@ private:
         SDL_Texture* outlineTexture = nullptr;
         int width = 0;
         int height = 0;
+        std::vector<unsigned char> alphaMask;
     };
 
     struct CachedImageEntry {

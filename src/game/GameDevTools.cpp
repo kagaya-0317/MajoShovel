@@ -680,7 +680,13 @@ BaseEditRect Game::baseFacilityRectFor(BaseArea area, std::string_view facilityI
     if (it == table.end()) {
         return normalizeBaseEditRect(fallback);
     }
-    return normalizeBaseEditRect(it->second);
+    const BaseEditRect rect = normalizeBaseEditRect(it->second);
+    if (area == BaseArea::Outdoor &&
+        facilityId == std::string_view("home") &&
+        (rect.w < 220.0f || rect.h < 220.0f)) {
+        return normalizeBaseEditRect(fallback);
+    }
+    return rect;
 }
 
 void Game::setBaseFacilityRectFor(BaseArea area, std::string_view facilityId, BaseEditRect rect)
@@ -2617,6 +2623,8 @@ void Game::enterBaseEditMode()
     baseRingWorkshopRingIndex_ = 0;
     baseRingWorkshopRingTabs_ = {};
     baseBookshelfActive_ = false;
+    bookshelfScrollOffset_ = 0.0f;
+    bookshelfScrollState_ = {};
 
     baseEditEnabled_ = true;
     baseEditMode_ = BaseEditMode::Facility;
@@ -3244,6 +3252,22 @@ bool Game::executeDebugCommand(std::string_view command)
         return true;
     }
     if (handleDebugStoryTestCommand(normalized)) {
+        return true;
+    }
+    constexpr std::string_view DungeonEventPlacePrefix = "game dungeon-event place ";
+    constexpr std::string_view DungeonEventPlaceAltPrefix = "game dungeon event place ";
+    if (normalized.rfind(DungeonEventPlacePrefix, 0) == 0 ||
+        normalized.rfind(DungeonEventPlaceAltPrefix, 0) == 0) {
+        const std::size_t prefixLength = normalized.rfind(DungeonEventPlacePrefix, 0) == 0
+            ? DungeonEventPlacePrefix.size()
+            : DungeonEventPlaceAltPrefix.size();
+        const std::string kindId = trimAscii(normalized.substr(prefixLength));
+        DungeonEventKind kind = DungeonEventKind::SleepingEnemyTreasure;
+        if (kindId.empty() || !dungeonEventKindFromId(kindId, kind)) {
+            logWarning("Debug: unknown dungeon event kind '" + kindId + "'.");
+            return true;
+        }
+        debugRequestDungeonEventPlacement(kind);
         return true;
     }
     if (normalized == "game dungeon-focus test" ||

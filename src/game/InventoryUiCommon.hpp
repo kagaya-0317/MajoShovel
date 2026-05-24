@@ -7,6 +7,7 @@
 #include "game/SpellRingItem.hpp"
 
 #include <optional>
+#include <span>
 #include <string>
 #include <vector>
 
@@ -58,6 +59,16 @@ struct InventoryUiDetailExtraLine {
 struct InventoryUiDetailOptions {
     bool showEnhanceCount = true;
     float animationSeconds = 0.0f;
+    bool showExtraLineSeparator = true;
+};
+
+struct InventoryUiGridStyle {
+    int columns = 8;
+    int visibleRows = 3;
+    Vec2 slotSize{88.0f, 76.0f};
+    Vec2 slotGap{8.0f, 8.0f};
+    float imageMaxSize = 48.0f;
+    UiScrollAreaStyle scroll{};
 };
 
 struct InlineItemTextStyle {
@@ -123,6 +134,41 @@ void drawInventoryUiSlot(
     const InventoryUiEntryView& entry,
     bool selected,
     float imageMaxSize);
+
+[[nodiscard]] int inventoryUiGridRowCount(int itemCount, const InventoryUiGridStyle& style = {});
+[[nodiscard]] float inventoryUiGridWidth(const InventoryUiGridStyle& style = {});
+[[nodiscard]] float inventoryUiGridVisibleHeight(const InventoryUiGridStyle& style = {});
+[[nodiscard]] UiRect inventoryUiGridViewport(Vec2 pos, const InventoryUiGridStyle& style = {});
+[[nodiscard]] float inventoryUiGridContentHeight(int itemCount, const InventoryUiGridStyle& style = {});
+[[nodiscard]] UiScrollAreaLayout makeInventoryUiGridLayout(
+    UiRect viewport,
+    int itemCount,
+    float scrollOffset,
+    const InventoryUiGridStyle& style = {});
+[[nodiscard]] UiScrollAreaLayout updateInventoryUiGrid(
+    UiContext& ui,
+    const Input& input,
+    UiRect viewport,
+    int itemCount,
+    float& scrollOffset,
+    const InventoryUiGridStyle& style = {},
+    UiScrollAreaState* state = nullptr);
+[[nodiscard]] UiRect inventoryUiGridSlotRect(
+    const UiScrollAreaLayout& layout,
+    int index,
+    const InventoryUiGridStyle& style = {});
+void keepInventoryUiGridItemVisible(
+    UiRect viewport,
+    int selectedIndex,
+    int itemCount,
+    float& scrollOffset,
+    const InventoryUiGridStyle& style = {});
+void drawInventoryUiGrid(
+    Renderer& renderer,
+    const UiScrollAreaLayout& layout,
+    std::span<const InventoryUiEntryView> entries,
+    int selectedIndex,
+    const InventoryUiGridStyle& style = {});
 
 void drawInventoryUiDetailPanel(
     Renderer& renderer,

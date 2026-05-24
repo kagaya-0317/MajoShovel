@@ -70,6 +70,8 @@ std::filesystem::path devAutoReloadBlockPath()
     return devSettingsRootPath() / "dev_auto_reload_blocked.txt";
 }
 
+constexpr std::uint64_t HotReloadPollIntervalMs = 500;
+
 enum class DevLaunchMode {
     PreTitle,
     Base,
@@ -301,6 +303,8 @@ bool App::initialize(const char* title, int width, int height, bool testPlayMode
     width_ = width;
     height_ = height;
     testPlayMode_ = testPlayMode;
+    autoReloadBlocked_ = false;
+    runtimeHotReloadEnabled_ = false;
     testFreezePaused_ = false;
     restartRequested_ = false;
     if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO | SDL_INIT_GAMEPAD)) {
@@ -319,11 +323,11 @@ bool App::initialize(const char* title, int width, int height, bool testPlayMode
         setLogSink([this](LogLevel level, std::string_view message) {
             debugConsole_.appendLog(level, message);
         });
-        const bool autoReloadBlocked = loadDevAutoReloadBlocked();
-        game_.setAutoReloadBlocked(autoReloadBlocked);
+        autoReloadBlocked_ = loadDevAutoReloadBlocked();
+        game_.setAutoReloadBlocked(autoReloadBlocked_);
         launchMode = loadDevLaunchMode();
         debugConsole_.setDropdownSelection("launch_mode", devLaunchModeDropdownIndex(launchMode));
-        logInfo(std::string("Auto reload block: ") + (autoReloadBlocked ? "ON" : "OFF"));
+        logInfo(std::string("Auto reload block: ") + (autoReloadBlocked_ ? "ON" : "OFF"));
         logInfo(std::string("Launch mode: ") + devLaunchModeLogName(launchMode));
         logInfo("Test-play debug console enabled. Press F8 to show or hide it.");
     }
@@ -333,8 +337,8 @@ bool App::initialize(const char* title, int width, int height, bool testPlayMode
     audio_.loadManifest("assets/audio/audio_manifest.tsv");
     game_.setAudioEngine(&audio_);
     loadAssets();
-    configureAssetWatcher();
     game_.initialize(width_, height_);
+    setRuntimeHotReloadEnabled(testPlayMode_ && !autoReloadBlocked_);
     if (testPlayMode_ && launchMode != DevLaunchMode::PreTitle) {
         game_.executeDebugCommand(devLaunchModeCommand(launchMode));
     }
@@ -350,7 +354,7 @@ bool App::loadAssets()
         logError(renderer_->lastAssetError());
         ok = false;
     }
-    if (!renderer_->loadBaseMapTexture("assets/map_kyoten.png")) {
+    if (!renderer_->loadBaseMapTexture("assets/kyoten/map.png")) {
         logError(renderer_->lastAssetError());
         ok = false;
     }
@@ -392,6 +396,22 @@ void App::configureAssetWatcher()
     assetWatcher_.reset();
 }
 
+void App::setRuntimeHotReloadEnabled(bool enabled)
+{
+    if (runtimeHotReloadEnabled_ == enabled) {
+        return;
+    }
+
+    runtimeHotReloadEnabled_ = enabled;
+    nextAssetHotReloadPollTicks_ = 0;
+    game_.setHotReloadEnabled(enabled);
+    if (runtimeHotReloadEnabled_) {
+        configureAssetWatcher();
+    } else {
+        assetWatcher_ = FileWatcher{};
+    }
+}
+
 bool App::reloadAssetForPath(const std::string& changedPath)
 {
     const std::string fileName = filenameOf(changedPath);
@@ -401,8 +421,12 @@ bool App::reloadAssetForPath(const std::string& changedPath)
     if (fileName == "majo.png") {
         return renderer_->loadPlayerSheet("assets/majo.png");
     }
-    if (fileName == "map_kyoten.png") {
-        return renderer_->loadBaseMapTexture("assets/map_kyoten.png");
+    if (fileName == "map.png" && parentPath.find("assets/kyoten") != std::string::npos) {
+        return renderer_->loadBaseMapTexture("assets/kyoten/map.png");
+    }
+    if (extension == ".png" && parentPath.find("assets/kyoten") != std::string::npos) {
+        renderer_->invalidateImage(changedPath);
+        return true;
     }
     if (fileName == "ui_window1.png") {
         return renderer_->loadUiWindowTexture("assets/UI_window1.png");
@@ -469,6 +493,16 @@ bool App::reloadAssetForPath(const std::string& changedPath)
 
 void App::checkAssetHotReload()
 {
+    if (!runtimeHotReloadEnabled_ || autoReloadBlocked_) {
+        return;
+    }
+
+    const std::uint64_t now = SDL_GetTicks();
+    if (now < nextAssetHotReloadPollTicks_) {
+        return;
+    }
+    nextAssetHotReloadPollTicks_ = now + HotReloadPollIntervalMs;
+
     std::string changedPath;
     if (!assetWatcher_.poll(changedPath)) {
         return;
@@ -576,7 +610,9 @@ void App::run()
             const bool blocked = !loadDevAutoReloadBlocked();
             std::string error;
             if (saveDevAutoReloadBlocked(blocked, error)) {
+                autoReloadBlocked_ = blocked;
                 game_.setAutoReloadBlocked(blocked);
+                setRuntimeHotReloadEnabled(testPlayMode_ && !blocked);
                 logInfo(std::string("Auto reload block: ") + (blocked ? "ON (F2)" : "OFF (F2)"));
             } else {
                 logError("Auto reload block toggle failed: " + error);

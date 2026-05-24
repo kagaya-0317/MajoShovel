@@ -362,6 +362,40 @@ void drawDetectionBadges(Renderer& renderer, const SpellRingItem& item, Vec2 anc
     }
 }
 
+void drawWarpGuideMinimapIcon(Renderer& renderer, Vec2 center, Vec2 direction, float pulse)
+{
+    direction = normalize(direction);
+    const Vec2 tangent{-direction.y, direction.x};
+    const float glowScale = 0.72f + 0.28f * pulse;
+
+    renderer.fillSoftCircle(center, 20.0f + 3.0f * pulse, withAlpha({255, 202, 70, 255}, 76.0f * glowScale));
+    renderer.drawSoftRing(center, 11.0f + 1.6f * pulse, 6.4f, withAlpha({255, 224, 92, 255}, 118.0f * glowScale));
+    renderer.fillCircle(center, 10.5f, {14, 18, 28, 205});
+    renderer.drawCircle(center, 11.2f, {255, 228, 106, 245});
+    renderer.drawCircle(center, 8.0f, {118, 214, 255, 108});
+
+    const Vec2 tip = center + direction * 8.2f;
+    const Vec2 shoulder = center - direction * 2.4f;
+    const Vec2 tail = center - direction * 7.0f;
+    const Vec2 arrow[] = {
+        tip,
+        shoulder + tangent * 5.3f,
+        tail,
+        shoulder - tangent * 5.3f,
+    };
+    renderer.fillPolygon(arrow, 4, {255, 216, 68, 248});
+
+    const Vec2 highlight[] = {
+        tip - direction * 1.6f,
+        center + tangent * 2.0f,
+        center + direction * 2.8f - tangent * 0.8f,
+    };
+    renderer.fillPolygon(highlight, 3, {255, 252, 194, 222});
+    renderer.drawLine(tail + tangent * 3.2f, shoulder + tangent * 5.3f, {86, 58, 32, 155});
+    renderer.drawLine(tail - tangent * 3.2f, shoulder - tangent * 5.3f, {86, 58, 32, 155});
+    renderer.fillCircle(center + direction * 4.0f, 2.0f, {255, 255, 226, 235});
+}
+
 float dungeonRingIntroItemLocalProgress(float introProgress, int itemIndex, int ringIndex)
 {
     const float delay = std::min(0.38f, static_cast<float>(itemIndex) * 0.045f + static_cast<float>(ringIndex) * 0.07f);
@@ -937,7 +971,9 @@ Color dungeonMinimapTileColor(TileType type, bool lit)
 } // namespace
 void Game::updateRingScreen(const Input& input, UiContext& ui, float dt)
 {
-    queueStoryEventForTrigger("tutorial:ring_equip");
+    if (!introTutorialActive()) {
+        queueStoryEventForTrigger("tutorial:ring_equip");
+    }
 
     auto& items = spellRing_.items();
     if (ringSnapActive_) {
@@ -2122,6 +2158,9 @@ void Game::renderDungeonMinimap(Renderer& renderer, const std::vector<LightSourc
         }
     }
 
+    bool hasWarpGuideMarker = false;
+    Vec2 warpGuideDirection{};
+    float warpGuidePulse = 0.0f;
     if (warpPointsEnabled_) {
         for (const DungeonEventInstance& event : dungeonEvents_.all()) {
             if (event.kind != DungeonEventKind::WarpGuideMap ||
@@ -2140,17 +2179,9 @@ void Game::renderDungeonMinimap(Renderer& renderer, const std::vector<LightSourc
             if (lengthSquared(toTarget) <= 0.0001f) {
                 continue;
             }
-            const Vec2 direction = normalize(toTarget);
-            const Vec2 tangent{-direction.y, direction.x};
-            const Vec2 tip = minimapCenter + direction * (contentRadius - 4.0f);
-            const Vec2 base = tip - direction * 14.0f;
-            const Vec2 arrow[] = {
-                tip,
-                base + tangent * 5.5f,
-                base - tangent * 5.5f,
-            };
-            renderer.fillPolygon(arrow, 3, {255, 232, 116, 235});
-            renderer.drawCircle(tip - direction * 7.0f, 8.5f, {255, 232, 116, 150});
+            warpGuideDirection = normalize(toTarget);
+            warpGuidePulse = 0.5f + 0.5f * std::sin(std::max(0.0f, event.guideRemainingSeconds) * 7.4f);
+            hasWarpGuideMarker = true;
             break;
         }
     }
@@ -2178,6 +2209,9 @@ void Game::renderDungeonMinimap(Renderer& renderer, const std::vector<LightSourc
     const Vec2 facing = lengthSquared(player_.facing) > 0.0001f ? normalize(player_.facing) : Vec2{1.0f, 0.0f};
     renderer.drawLine(minimapCenter, minimapCenter + facing * 8.0f, {246, 244, 214, 230});
     renderer.drawCircle(minimapCenter, contentRadius, {88, 108, 132, 145});
+    if (hasWarpGuideMarker) {
+        drawWarpGuideMinimapIcon(renderer, minimapCenter + warpGuideDirection * (contentRadius + 0.5f), warpGuideDirection, warpGuidePulse);
+    }
 }
 
 void Game::renderDungeonLogs(Renderer& renderer) const
@@ -2251,9 +2285,15 @@ void Game::renderDungeonLogs(Renderer& renderer) const
     }
 }
 
-void Game::renderWarpReturnUi(Renderer& renderer) const
+void Game::renderDungeonControlHelp(Renderer& renderer) const
 {
-    if (mode_ != ScreenMode::Playing || enemyTestActive_ || !warpPointsEnabled_) {
+    if (mode_ != ScreenMode::Playing ||
+        enemyTestActive_ ||
+        screenTransition_.active() ||
+        dungeonRingIntroActive() ||
+        dungeonFocusActive() ||
+        dialogue_.active() ||
+        warpReturnConfirm_.open) {
         return;
     }
 
@@ -2261,52 +2301,59 @@ void Game::renderWarpReturnUi(Renderer& renderer) const
     const float screenWidth = static_cast<float>(camera_.width());
     const float screenHeight = static_cast<float>(camera_.height());
 
-    if (warpReturnConfirm_.open) {
-        drawUiConfirmDialog(renderer, warpReturnConfirm_, warpReturnConfirmRect(), "warp.return_confirm");
-        return;
+    std::string help =
+        "WASD/方向キー 移動   Q/E スロット   Tab 段切替   F 使用   左クリック 虫とり網   右長押し 中心ずらし   C リング投げ   I リュック   Esc メニュー";
+    bool promptFocused = false;
+    if (introTutorialActive()) {
+        help = "WASD/方向キー 移動   F 使用   I リュック   Esc メニュー";
+        constexpr float IntroTutorialExitPromptRadius = 58.0f;
+        if (introTutorialPhase_ == IntroTutorialPhase::FreeToExit &&
+            distanceSquared(player_.position, introTutorialExitPosition()) <=
+                IntroTutorialExitPromptRadius * IntroTutorialExitPromptRadius) {
+            help = "出口   F/Enter 拠点へ帰還";
+            promptFocused = true;
+        }
+    } else if (warpPointsEnabled_) {
+        if (focusedWarpReturnPointIndex_ == DungeonEntranceReturnFocusIndex) {
+            help = "ダンジョン入口   F/Enter 拠点へ帰還";
+            promptFocused = true;
+        } else if (focusedWarpReturnPointIndex_ >= 0 &&
+            focusedWarpReturnPointIndex_ < static_cast<int>(warpPoints_.size())) {
+            const WarpPoint& point = warpPoints_[static_cast<std::size_t>(focusedWarpReturnPointIndex_)];
+            if (point.discovered) {
+                help = "ワープポイント " + std::to_string(point.index + 1) + "   F/Enter 拠点へ帰還";
+                promptFocused = true;
+            }
+        }
+    }
+    if (!promptFocused) {
+        const std::string npcPrompt = dungeonEventNpcPromptText();
+        if (!npcPrompt.empty()) {
+            help = npcPrompt;
+        }
     }
 
-    if (focusedWarpReturnPointIndex_ == DungeonEntranceReturnFocusIndex) {
-        const std::string prompt = "ダンジョン入口  F/Enter 拠点へ帰還";
-        constexpr int TextScale = 2;
-        const Vec2 textSize = renderer.measureText(prompt, TextScale);
-        const Vec2 padding{22.0f, 10.0f};
-        const Vec2 size{textSize.x + padding.x * 2.0f, textSize.y + padding.y * 2.0f};
-        const Vec2 pos{
-            (screenWidth - size.x) * 0.5f,
-            std::max(96.0f, screenHeight - 174.0f),
-        };
-        renderer.fillRect(pos, size, {12, 18, 34, 218});
-        renderer.drawRect(pos, size, {154, 230, 246, 210});
-        renderer.drawText(pos + padding + Vec2{1.0f, 1.0f}, prompt, {0, 0, 0, 180}, TextScale);
-        renderer.drawText(pos + padding, prompt, {232, 250, 255, 255}, TextScale);
-        return;
-    }
-
-    if (focusedWarpReturnPointIndex_ < 0 ||
-        focusedWarpReturnPointIndex_ >= static_cast<int>(warpPoints_.size())) {
-        return;
-    }
-
-    const WarpPoint& point = warpPoints_[static_cast<std::size_t>(focusedWarpReturnPointIndex_)];
-    if (!point.discovered) {
-        return;
-    }
-
-    char buffer[96];
-    std::snprintf(buffer, sizeof(buffer), "ワープポイント %d  F/Enter 拠点へ帰還", point.index + 1);
     constexpr int TextScale = 2;
-    const Vec2 textSize = renderer.measureText(buffer, TextScale);
-    const Vec2 padding{22.0f, 10.0f};
-    const Vec2 size{textSize.x + padding.x * 2.0f, textSize.y + padding.y * 2.0f};
+    const float maxWidth = std::max(120.0f, screenWidth - 32.0f);
+    help = fittedSingleLineText(renderer, std::move(help), maxWidth, TextScale);
+    const Vec2 textSize = renderer.measureText(help, TextScale);
     const Vec2 pos{
-        (screenWidth - size.x) * 0.5f,
-        std::max(96.0f, screenHeight - 174.0f),
+        (screenWidth - textSize.x) * 0.5f,
+        std::max(TopInfoBarY + TopInfoBarHeight + 8.0f, screenHeight - textSize.y - 4.0f),
     };
-    renderer.fillRect(pos, size, {12, 18, 34, 218});
-    renderer.drawRect(pos, size, {154, 230, 246, 210});
-    renderer.drawText(pos + padding + Vec2{1.0f, 1.0f}, buffer, {0, 0, 0, 180}, TextScale);
-    renderer.drawText(pos + padding, buffer, {232, 250, 255, 255}, TextScale);
+    renderer.drawOutlinedText(pos, help, {232, 232, 238, 235}, {0, 0, 0, 190}, 4, TextScale);
+}
+
+void Game::renderWarpReturnUi(Renderer& renderer) const
+{
+    if (mode_ != ScreenMode::Playing || enemyTestActive_ || !warpPointsEnabled_) {
+        return;
+    }
+
+    if (warpReturnConfirm_.open) {
+        renderer.setScreenSpace();
+        drawUiConfirmDialog(renderer, warpReturnConfirm_, warpReturnConfirmRect(), "warp.return_confirm");
+    }
 }
 
 void Game::renderWorldLoadingScreen(Renderer& renderer, float totalSeconds) const
@@ -2933,6 +2980,8 @@ std::vector<LightSource> Game::collectDungeonLightSources(double totalSeconds) c
             flickeredLightRadius(entranceLightRadius, static_cast<float>(totalSeconds), 2.9f),
         });
     }
+    const std::vector<LightSource> introLights = introTutorialLightSources(totalSeconds);
+    lights.insert(lights.end(), introLights.begin(), introLights.end());
     dungeonEvents_.appendLightSources(lights, totalSeconds);
     magic_.appendLightSources(lights);
     const float lightMultiplier = astralLightRadiusMultiplier();
@@ -3228,6 +3277,7 @@ void Game::render(Renderer& renderer, const Time& time)
     if (mode_ == ScreenMode::Playing) {
         inventory_.renderShortcutHud(renderer, spellRing_, camera_.width(), camera_.height());
         renderRingEquipFx(renderer);
+        renderDungeonControlHelp(renderer);
     } else if (mode_ == ScreenMode::Inventory && pauseReturnMode_ != ScreenMode::Base) {
         renderDungeonLogs(renderer);
     }

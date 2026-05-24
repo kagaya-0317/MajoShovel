@@ -1,6 +1,29 @@
 ﻿#include "debug/DebugPanel.hpp"
 
+#include "game/DungeonEventDefinition.hpp"
+
 namespace majo {
+
+namespace {
+
+DebugControlDefinition makeDungeonEventPlacementControl()
+{
+    DebugControlDefinition control;
+    control.kind = DebugControlKind::DropdownButton;
+    control.id = "dungeon_event_place";
+    control.label = "イベント配置";
+    control.command = "game dungeon-event place";
+    for (const DungeonEventDefinition& definition : dungeonEventDefinitions()) {
+        if (!definition.debugPlaceable) {
+            continue;
+        }
+        control.options.emplace_back(definition.displayName.data(), definition.displayName.size());
+        control.optionCommands.emplace_back(definition.id.data(), definition.id.size());
+    }
+    return control;
+}
+
+} // namespace
 
 DebugConsoleLayout makeDefaultDebugConsoleLayout()
 {
@@ -39,12 +62,13 @@ DebugConsoleLayout makeDefaultDebugConsoleLayout()
                 },
                 DebugGroupDefinition{
                     "combat_data",
-                    "戦闘データ",
+                    "戦闘・ダンジョンデータ",
                     {
                         {DebugControlKind::Button, "hp_full", "HP最大", "game hp full"},
                         {DebugControlKind::Button, "hp_one", "HP1", "game hp set 1"},
                         {DebugControlKind::Button, "level_up", "レベルアップ", "game level-up"},
                         {DebugControlKind::Button, "enemy_test", "敵テスト", "game enemy-test"},
+                        makeDungeonEventPlacementControl(),
                     },
                 },
             },
