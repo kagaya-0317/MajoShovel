@@ -343,6 +343,36 @@ float dropHoverAltitude(const WorldDropItem& drop)
         drop.hoverBaseAltitude + std::sin(drop.ageSeconds * drop.hoverSpeed + drop.hoverPhase) * drop.hoverAmplitude);
 }
 
+void updateWorldDropPresentationMotion(WorldDropItem& drop, float dt, bool moveSettledDrops)
+{
+    dt = std::max(0.0f, dt);
+    drop.ageSeconds += dt;
+    drop.pickupDelaySeconds = std::max(0.0f, drop.pickupDelaySeconds - dt);
+    if (drop.jumpActive) {
+        drop.jumpElapsedSeconds = std::min(drop.jumpDurationSeconds, drop.jumpElapsedSeconds + dt);
+        const float t = drop.jumpDurationSeconds > 0.0f
+            ? clamp(drop.jumpElapsedSeconds / drop.jumpDurationSeconds, 0.0f, 1.0f)
+            : 1.0f;
+        drop.position = lerp(drop.jumpStartPosition, drop.jumpTargetPosition, t);
+        drop.altitude = dropHoverAltitude(drop) + std::sin(t * Pi) * std::max(0.0f, drop.jumpArcHeight);
+        if (t >= 1.0f) {
+            drop.position = drop.jumpTargetPosition;
+            drop.jumpActive = false;
+            drop.jumpElapsedSeconds = 0.0f;
+            drop.jumpDurationSeconds = 0.0f;
+            drop.jumpArcHeight = 0.0f;
+            drop.altitude = dropHoverAltitude(drop);
+        }
+    } else {
+        if (moveSettledDrops) {
+            drop.position += drop.velocity * dt;
+            const float damping = std::max(0.0f, 1.0f - dt * 5.5f);
+            drop.velocity = drop.velocity * damping;
+        }
+        drop.altitude = dropHoverAltitude(drop);
+    }
+}
+
 void configureDropMotion(WorldDropItem& drop, const WorldDropSpawnMotion& motion)
 {
     MaterialType materialType = MaterialType::Count;
@@ -777,29 +807,7 @@ int WorldDropSystem::update(
     const float pickupRadiusSq = DropPickupRadius * DropPickupRadius;
     int pickedUpCount = 0;
     for (WorldDropItem& drop : drops_) {
-        drop.ageSeconds += dt;
-        drop.pickupDelaySeconds = std::max(0.0f, drop.pickupDelaySeconds - dt);
-        if (drop.jumpActive) {
-            drop.jumpElapsedSeconds = std::min(drop.jumpDurationSeconds, drop.jumpElapsedSeconds + dt);
-            const float t = drop.jumpDurationSeconds > 0.0f
-                ? clamp(drop.jumpElapsedSeconds / drop.jumpDurationSeconds, 0.0f, 1.0f)
-                : 1.0f;
-            drop.position = lerp(drop.jumpStartPosition, drop.jumpTargetPosition, t);
-            drop.altitude = dropHoverAltitude(drop) + std::sin(t * Pi) * std::max(0.0f, drop.jumpArcHeight);
-            if (t >= 1.0f) {
-                drop.position = drop.jumpTargetPosition;
-                drop.jumpActive = false;
-                drop.jumpElapsedSeconds = 0.0f;
-                drop.jumpDurationSeconds = 0.0f;
-                drop.jumpArcHeight = 0.0f;
-                drop.altitude = dropHoverAltitude(drop);
-            }
-        } else {
-            drop.position += drop.velocity * dt;
-            const float damping = std::max(0.0f, 1.0f - dt * 5.5f);
-            drop.velocity = drop.velocity * damping;
-            drop.altitude = dropHoverAltitude(drop);
-        }
+        updateWorldDropPresentationMotion(drop, dt, true);
 
         if (effects != nullptr && drop.kind == WorldDropKind::Material) {
             MaterialType materialType = MaterialType::Count;
@@ -901,6 +909,13 @@ int WorldDropSystem::update(
     });
     drops_.erase(removeBegin, drops_.end());
     return pickedUpCount;
+}
+
+void WorldDropSystem::updatePresentation(float dt)
+{
+    for (WorldDropItem& drop : drops_) {
+        updateWorldDropPresentationMotion(drop, dt, false);
+    }
 }
 
 void WorldDropSystem::render(

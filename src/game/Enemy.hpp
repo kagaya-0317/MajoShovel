@@ -140,6 +140,9 @@ struct Enemy {
     Vec2 aiMoveDirection{1.0f, 0.0f};
     Vec2 patrolAnchor{};
     bool patrolAnchorInitialized = false;
+    bool movementLeashEnabled = false;
+    Vec2 movementLeashCenter{};
+    float movementLeashRadius = 0.0f;
     float aiDecisionTimer = 0.0f;
     float aiDigTimer = 0.0f;
     float repathTimer = 0.0f;

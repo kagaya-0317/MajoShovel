@@ -72,7 +72,7 @@ struct RingItemBreakEvent {
     bool protectionEnabled = false;
 };
 
-Vec2 getRingCenterWorldPosition(Vec2 playerPosition, Vec2 playerFacing, float spellRingShift);
+Vec2 getRingCenterWorldPosition(Vec2 playerPosition, Vec2 shiftDirection, float spellRingShift);
 Vec2 getRingItemLocalPosition(float localAngle, const RingOrbitContext& context);
 Vec2 getRingItemWorldPosition(Vec2 center, float localAngle, const RingOrbitContext& context);
 Vec2 getRingItemVelocity(

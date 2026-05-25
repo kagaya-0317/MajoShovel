@@ -120,6 +120,7 @@ public:
         bool itemUseEnabled = true,
         bool itemDiscardEnabled = true,
         float animationSeconds = 0.0f) const;
+    UiRect shortcutHudPanelRect(int screenWidth, int screenHeight) const;
     void renderShortcutHud(Renderer& renderer, const SpellRingSystem& spellRing, int screenWidth, int screenHeight) const;
     bool isOpen() const { return open_; }
     void setOpen(bool open);

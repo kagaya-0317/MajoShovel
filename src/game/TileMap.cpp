@@ -20,6 +20,7 @@ constexpr float StartCavernRadius = 3.2f;
 constexpr float GoalCavernRadius = 9.0f;
 constexpr float WarpCavernRadius = 4.1f;
 constexpr float SoftPathMargin = 3.4f;
+constexpr float SpecialRoomPathConnectorHalfWidthTiles = 1.45f;
 constexpr std::string_view CrackTexturePath = "assets/crack.png";
 constexpr int CrackTextureFrames = 4;
 constexpr int TerrainTileSheetColumns = 5;
@@ -1419,12 +1420,13 @@ TerrainDebugInfo TileMap::terrainInfoForTile(int tx, int ty, const Tile* tile) c
     }
 
     TileType generatedType = TileType::Rock;
+    const bool specialRoomPathConnector = carvedDistance <= SpecialRoomPathConnectorHalfWidthTiles;
     if (currentRoomType == SpecialRoomType::SafeCavern && distanceFromSpecialRoomCenter <= specialRoomRadius) {
         generatedType = TileType::Empty;
     } else if (currentRoomType == SpecialRoomType::CoinRoom && distanceFromSpecialRoomCenter <= specialRoomRadius) {
         generatedType = distanceFromSpecialRoomCenter <= specialRoomRadius * 0.88f ? TileType::Empty : TileType::Dirt;
     } else if (currentRoomType == SpecialRoomType::EnemyRoom && distanceFromSpecialRoomCenter <= specialRoomRadius) {
-        generatedType = distanceFromSpecialRoomCenter <= specialRoomRadius * 0.78f
+        generatedType = distanceFromSpecialRoomCenter <= specialRoomRadius * 0.78f || specialRoomPathConnector
             ? TileType::Empty
             : mixedRockBandTile(fineNoise, broadNoise);
     } else if (currentRoomType == SpecialRoomType::OreRoom && distanceFromSpecialRoomCenter <= specialRoomRadius + 1.5f) {

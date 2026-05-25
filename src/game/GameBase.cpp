@@ -317,9 +317,43 @@ float dot(Vec2 a, Vec2 b)
     return a.x * b.x + a.y * b.y;
 }
 
-bool baseFacilityHiddenUntilUnlocked(const BaseFacility& facility)
+const BaseFacility* findBaseFacilityById(
+    const std::vector<BaseFacility>& facilities,
+    std::string_view facilityId)
 {
-    return !facility.unlocked && std::string_view(facility.facilityId) == "ring_workshop";
+    const auto it = std::find_if(
+        facilities.begin(),
+        facilities.end(),
+        [facilityId](const BaseFacility& facility) {
+            return std::string_view(facility.facilityId) == facilityId;
+        });
+    return it == facilities.end() ? nullptr : &*it;
+}
+
+bool pointEnteredRectFromBelow(Vec2 previousPoint, Vec2 currentPoint, UiRect rect)
+{
+    return rect.contains(currentPoint) &&
+        previousPoint.y >= rect.pos.y + rect.size.y &&
+        currentPoint.y < previousPoint.y;
+}
+
+bool pointEnteredRectFromAbove(Vec2 previousPoint, Vec2 currentPoint, UiRect rect)
+{
+    return rect.contains(currentPoint) &&
+        previousPoint.y <= rect.pos.y &&
+        currentPoint.y > previousPoint.y;
+}
+
+bool baseFacilityHiddenInNormalView(BaseArea area, const BaseFacility& facility)
+{
+    const std::string_view facilityId = facility.facilityId;
+    if (area == BaseArea::Outdoor && facilityId == "home_entrance") {
+        return true;
+    }
+    if (area == BaseArea::HomeInterior && facilityId == "home_exit") {
+        return true;
+    }
+    return !facility.unlocked && facilityId == "ring_workshop";
 }
 
 void drawBaseFacilityNameLabel(
@@ -362,6 +396,7 @@ void drawBaseFacilityNameLabel(
 const BaseFacility* selectBaseInteractionFacility(
     Vec2 playerPosition,
     Vec2 playerFacing,
+    BaseArea area,
     const std::vector<BaseFacility>& facilities)
 {
     constexpr float DirectionalCandidateDot = 0.45f;
@@ -376,7 +411,7 @@ const BaseFacility* selectBaseInteractionFacility(
     const Vec2 facing = hasFacing ? normalize(playerFacing) : Vec2{};
 
     for (const BaseFacility& facility : facilities) {
-        if (baseFacilityHiddenUntilUnlocked(facility)) {
+        if (baseFacilityHiddenInNormalView(area, facility)) {
             continue;
         }
         if (!baseInteractionAvailable(playerPosition, facility)) {
@@ -462,7 +497,7 @@ void drawBaseFacilities(
     for (int pass = 0; pass < 2; ++pass) {
         const bool drawEnabled = pass == 1;
         for (const BaseFacility& facility : facilities) {
-            if (baseFacilityHiddenUntilUnlocked(facility)) {
+            if (baseFacilityHiddenInNormalView(area, facility)) {
                 continue;
             }
             if (facility.enabled != drawEnabled) {
@@ -533,6 +568,13 @@ Vec2 baseFacilitySpawnPosition(UiRect facilityRect, BaseFacilitySpawnSide side, 
         position.y,
         bounds.pos.y + playerRadius,
         bounds.pos.y + bounds.size.y - playerRadius);
+    return position;
+}
+
+Vec2 homeInteriorEntryPosition(UiRect homeExitRect, float playerRadius)
+{
+    Vec2 position = baseFacilitySpawnPosition(homeExitRect, BaseFacilitySpawnSide::Above, playerRadius);
+    position.y -= static_cast<float>(balance::TileSize);
     return position;
 }
 
@@ -4648,11 +4690,11 @@ std::vector<Game::WarpPoint> Game::selectableWarpPointsForCurrentStageStart() co
 
 void Game::placeBasePlayerAtHomeDoorResumePoint()
 {
-    const UiRect fallback = defaultBaseFacilityRect(BaseArea::Outdoor, ringWorkshopUnlocked_, "home");
-    const UiRect homeRect = toUiRect(baseFacilityRectFor(BaseArea::Outdoor, "home", toBaseEditRect(fallback)));
+    const UiRect fallback = defaultBaseFacilityRect(BaseArea::Outdoor, ringWorkshopUnlocked_, "home_entrance");
+    const UiRect entranceRect = toUiRect(baseFacilityRectFor(BaseArea::Outdoor, "home_entrance", toBaseEditRect(fallback)));
     baseArea_ = BaseArea::Outdoor;
     basePlayerPosition_ = baseFacilitySpawnPosition(
-        outdoorHomeDoorSpawnRect(homeRect, ringWorkshopUnlocked_),
+        entranceRect,
         BaseFacilitySpawnSide::Below,
         balance_.playerRadius);
     baseOutdoorPlayerPosition_ = basePlayerPosition_;
@@ -6940,18 +6982,31 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
             break;
         case BaseFacilityAction::HomeEntrance:
             baseOutdoorPlayerPosition_ = basePlayerPosition_;
-            requestBaseAreaCrossfade(
-                BaseArea::HomeInterior,
-                {640.0f, 516.0f},
-                {0.0f, -1.0f},
-                "ルネの家に入りました");
+            {
+                const UiRect fallback = defaultBaseFacilityRect(BaseArea::HomeInterior, ringWorkshopUnlocked_, "home_exit");
+                const UiRect homeExitRect = toUiRect(baseFacilityRectFor(BaseArea::HomeInterior, "home_exit", toBaseEditRect(fallback)));
+                requestBaseAreaCrossfade(
+                    BaseArea::HomeInterior,
+                    homeInteriorEntryPosition(homeExitRect, balance_.playerRadius),
+                    {0.0f, -1.0f},
+                    "ルネの家に入りました");
+            }
             break;
         case BaseFacilityAction::HomeExit:
-            requestBaseAreaCrossfade(
-                BaseArea::Outdoor,
-                baseOutdoorPlayerPosition_,
-                {0.0f, 1.0f},
-                "魔女の拠点に戻りました");
+            {
+                const UiRect fallback = defaultBaseFacilityRect(BaseArea::Outdoor, ringWorkshopUnlocked_, "home_entrance");
+                const UiRect homeEntranceRect = toUiRect(baseFacilityRectFor(BaseArea::Outdoor, "home_entrance", toBaseEditRect(fallback)));
+                const Vec2 outdoorPosition = baseFacilitySpawnPosition(
+                    homeEntranceRect,
+                    BaseFacilitySpawnSide::Below,
+                    balance_.playerRadius);
+                baseOutdoorPlayerPosition_ = outdoorPosition;
+                requestBaseAreaCrossfade(
+                    BaseArea::Outdoor,
+                    outdoorPosition,
+                    {0.0f, 1.0f},
+                    "魔女の拠点に戻りました");
+            }
             break;
         case BaseFacilityAction::MonicaTalk:
             startBaseMonicaDialogue();
@@ -7003,6 +7058,7 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
         return false;
     };
 
+    const Vec2 previousBasePlayerPosition = basePlayerPosition_;
     const Vec2 moveAxis = input.moveAxis();
     const bool walkingNow = lengthSquared(moveAxis) > 0.0001f;
     updateBasePlayerSpriteAnimation(dt, walkingNow);
@@ -7025,11 +7081,49 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
         }
     }
 
-    const BaseFacility* interactionFacility = selectBaseInteractionFacility(basePlayerPosition_, basePlayerFacing_, facilities);
+    const Vec2 previousBasePlayerFoot = playerSpriteFootAnchor(previousBasePlayerPosition);
+    const Vec2 currentBasePlayerFoot = playerSpriteFootAnchor(basePlayerPosition_);
+    const auto editedFacilityRect = [this](BaseArea area, std::string_view facilityId) {
+        const UiRect fallback = defaultBaseFacilityRect(area, ringWorkshopUnlocked_, facilityId);
+        return toUiRect(baseFacilityRectFor(area, facilityId, toBaseEditRect(fallback)));
+    };
+    if (baseArea_ == BaseArea::Outdoor) {
+        if (const BaseFacility* entrance = findBaseFacilityById(facilities, "home_entrance")) {
+            if (pointEnteredRectFromBelow(previousBasePlayerFoot, currentBasePlayerFoot, entrance->rect)) {
+                const UiRect homeExitRect = editedFacilityRect(BaseArea::HomeInterior, "home_exit");
+                baseOutdoorPlayerPosition_ = basePlayerPosition_;
+                requestBaseAreaCrossfade(
+                    BaseArea::HomeInterior,
+                    homeInteriorEntryPosition(homeExitRect, balance_.playerRadius),
+                    {0.0f, -1.0f},
+                    "ルネの家に入りました");
+                return;
+            }
+        }
+    } else if (baseArea_ == BaseArea::HomeInterior) {
+        if (const BaseFacility* exit = findBaseFacilityById(facilities, "home_exit")) {
+            if (pointEnteredRectFromAbove(previousBasePlayerFoot, currentBasePlayerFoot, exit->rect)) {
+                const UiRect homeEntranceRect = editedFacilityRect(BaseArea::Outdoor, "home_entrance");
+                const Vec2 outdoorPosition = baseFacilitySpawnPosition(
+                    homeEntranceRect,
+                    BaseFacilitySpawnSide::Below,
+                    balance_.playerRadius);
+                baseOutdoorPlayerPosition_ = outdoorPosition;
+                requestBaseAreaCrossfade(
+                    BaseArea::Outdoor,
+                    outdoorPosition,
+                    {0.0f, 1.0f},
+                    "魔女の拠点に戻りました");
+                return;
+            }
+        }
+    }
+
+    const BaseFacility* interactionFacility = selectBaseInteractionFacility(basePlayerPosition_, basePlayerFacing_, baseArea_, facilities);
 
     if (input.mouseLeftPressed() && !ui.pointerConsumed()) {
         for (const BaseFacility& facility : facilities) {
-            if (baseFacilityHiddenUntilUnlocked(facility)) {
+            if (baseFacilityHiddenInNormalView(baseArea_, facility)) {
                 continue;
             }
             if (!baseFacilityPointerRect(facility, baseArea_, ringWorkshopUnlocked_).contains(ui.mouse())) {
@@ -7374,7 +7468,7 @@ void Game::renderBaseScreen(Renderer& renderer) const
     float mouseY = 0.0f;
     SDL_GetMouseState(&mouseX, &mouseY);
     const Vec2 mouse{mouseX, mouseY};
-    const BaseFacility* interactionFacility = selectBaseInteractionFacility(basePlayerPosition_, basePlayerFacing_, facilities);
+    const BaseFacility* interactionFacility = selectBaseInteractionFacility(basePlayerPosition_, basePlayerFacing_, baseArea_, facilities);
     drawBaseFacilities(renderer, facilities, baseArea_, ringWorkshopUnlocked_, basePlayerPosition_, mouse);
     renderBaseEditOverlay(renderer);
 

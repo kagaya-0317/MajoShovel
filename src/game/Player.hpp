@@ -29,6 +29,18 @@ enum class DamageSource {
 
 std::string_view deathCauseText(DamageSource source);
 int playerSpriteFrameIndex(float animationTime, bool walking);
+inline constexpr float WitchSelfLightRadiusMultiplier = 2.0f;
+inline constexpr float WitchSelfLightCenterYOffset = -26.0f;
+
+inline Vec2 witchSelfLightCenter(Vec2 footAnchor)
+{
+    return footAnchor + Vec2{0.0f, WitchSelfLightCenterYOffset};
+}
+
+inline float witchSelfLightRadius(float baseRadius)
+{
+    return baseRadius * WitchSelfLightRadiusMultiplier;
+}
 
 struct PlayerDamageEvent {
     int amount = 0;
@@ -44,8 +56,10 @@ struct Player {
     Vec2 position{0.0f, 0.0f};
     Vec2 velocity{};
     Vec2 facing{1.0f, 0.0f};
+    Vec2 spellRingShiftDirection{1.0f, 0.0f};
     int hp = 10;
     int maxHp = 10;
+    int minimumHpAfterDamage = 0;
     int level = 1;
     int xp = 0;
     int xpToNext = balance::XpBase + balance::XpPerLevel;

@@ -33,6 +33,7 @@ enum class InputAction {
     NextActiveRing,
     CaptureNet,
     ToggleProtection,
+    Cancel,
     Pause,
     OpenInventory,
     ToggleDebug,
@@ -44,8 +45,15 @@ enum class InputAction {
     Count
 };
 
+enum class InputDeviceKind {
+    KeyboardMouse,
+    Gamepad,
+};
+
 class Input {
 public:
+    ~Input();
+
     void beginFrame();
     void handleEvent(const SDL_Event& event);
     void update(int windowWidth, int windowHeight);
@@ -68,9 +76,9 @@ public:
     bool addRingPressed() const { return pressed(InputAction::PutSelectedItemOnRing); }
     bool grabOrPlacePressed() const { return pressed(InputAction::GrabOrPlaceItem); }
     bool capturePressed() const { return pressed(InputAction::CaptureNet); }
-    bool backPressed() const { return pressed(InputAction::Pause) || pressed(InputAction::OffsetRingCenter); }
-    bool backReleased() const { return released(InputAction::Pause) || released(InputAction::OffsetRingCenter); }
-    bool backHeld() const { return held(InputAction::Pause) || held(InputAction::OffsetRingCenter); }
+    bool backPressed() const { return pressed(InputAction::Cancel) || pressed(InputAction::Pause); }
+    bool backReleased() const { return released(InputAction::Cancel) || released(InputAction::Pause); }
+    bool backHeld() const { return held(InputAction::Cancel) || held(InputAction::Pause); }
     bool ringOffsetHeld() const { return held(InputAction::OffsetRingCenter); }
     bool upgradePressed(int option) const;
     bool mouseLeftPressed() const { return mouseLeftPressed_; }
@@ -85,14 +93,36 @@ public:
     int activeRingDelta() const { return activeRingDelta_; }
     bool toggleShortcutRowPressed() const { return pressed(InputAction::ToggleShortcutRow); }
     Vec2 moveAxis() const { return moveAxis_; }
+    Vec2 aimAxis() const { return aimAxis_; }
+    bool hasAimAxis() const { return hasAimAxis_; }
     Vec2 mouseScreen() const { return mouseScreen_; }
+    InputDeviceKind lastActiveDevice() const { return lastActiveDevice_; }
 
 private:
     static constexpr int ActionCount = static_cast<int>(InputAction::Count);
+    static constexpr int InputSourceCount = 3;
 
+    enum class InputSource {
+        Keyboard,
+        Mouse,
+        Gamepad,
+    };
+
+    bool openGamepad(SDL_JoystickID id);
+    void openFirstGamepad();
+    void closeGamepad();
+    void clearSource(InputSource source);
+    void addSourceHold(InputSource source, InputAction action);
+    void removeSourceHold(InputSource source, InputAction action);
+    void setSourceHeld(InputSource source, InputAction action, bool held);
+    bool sourceHeld(InputSource source, InputAction action) const;
+    bool anySourceHeld(InputAction action) const;
+    void handleGamepadButton(SDL_GamepadButton button, bool down);
+    void updateGamepadState();
+    void updateGamepadAxisAction(InputAction negativeAction, InputAction positiveAction, float value);
+    void updateGamepadTriggerAction(InputAction action, float value);
     void press(InputAction action);
     void release(InputAction action);
-    void setHeld(InputAction action, bool held);
 
     bool quitRequested_ = false;
     bool mouseLeftPressed_ = false;
@@ -101,14 +131,21 @@ private:
     bool ctrlSavePressed_ = false;
     bool ctrlUndoPressed_ = false;
     bool ctrlRedoPressed_ = false;
+    InputDeviceKind lastActiveDevice_ = InputDeviceKind::KeyboardMouse;
+    SDL_Gamepad* gamepad_ = nullptr;
+    SDL_JoystickID gamepadId_ = 0;
     std::array<bool, ActionCount> pressed_{};
     std::array<bool, ActionCount> released_{};
     std::array<bool, ActionCount> held_{};
+    std::array<std::array<int, ActionCount>, InputSourceCount> sourceHoldCounts_{};
     int shortcutCursorDelta_ = 0;
     int mouseWheelDelta_ = 0;
     int shortcutSlotPressed_ = -1;
     int activeRingDelta_ = 0;
     Vec2 moveAxis_{};
+    Vec2 leftStickAxis_{};
+    Vec2 aimAxis_{};
+    bool hasAimAxis_ = false;
     Vec2 mouseScreen_{};
 };
 

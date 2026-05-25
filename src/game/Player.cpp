@@ -56,7 +56,8 @@ void Player::applyDamage(int amount, DamageSource source)
 
     lastDamageSource = source;
     const int beforeHp = hp;
-    hp = std::max(0, hp - amount);
+    const int damageFloor = std::clamp(minimumHpAfterDamage, 0, hp);
+    hp = std::max(damageFloor, hp - amount);
     const int damageTaken = beforeHp - hp;
     if (damageTaken > 0) {
         damageFlash = 0.16f;
@@ -161,11 +162,23 @@ void Player::update(
         position = next;
     }
 
-    const Vec2 aim = camera.screenToWorld(input.mouseScreen()) - position;
-    if (lengthSquared(aim) > 16.0f) {
-        facing = normalize(aim);
+    if (input.hasAimAxis()) {
+        facing = normalize(input.aimAxis());
+    } else if (input.lastActiveDevice() == InputDeviceKind::KeyboardMouse) {
+        const Vec2 aim = camera.screenToWorld(input.mouseScreen()) - position;
+        if (lengthSquared(aim) > 16.0f) {
+            facing = normalize(aim);
+        } else if (lengthSquared(velocity) > 1.0f) {
+            facing = normalize(velocity);
+        }
     } else if (lengthSquared(velocity) > 1.0f) {
         facing = normalize(velocity);
+    }
+
+    if (input.ringOffsetHeld()) {
+        spellRingShiftDirection = input.hasAimAxis() ? normalize(input.aimAxis()) : normalize(facing);
+    } else if (lengthSquared(facing) > 0.0001f) {
+        spellRingShiftDirection = normalize(facing);
     }
 
     const float shiftDistance =

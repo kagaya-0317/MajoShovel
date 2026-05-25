@@ -42,18 +42,6 @@ inline constexpr std::string_view IntroTutorialCompletedFlag = "intro_tutorial_c
 inline constexpr std::string_view IntroTutorialFallTrigger = "intro_tutorial:fall";
 inline constexpr std::string_view IntroTutorialBaseReturnTrigger = "intro_tutorial:base_return";
 inline constexpr std::string_view IntroTutorialGenerationProfile = "intro_tutorial";
-inline constexpr float WitchSelfLightRadiusMultiplier = 2.0f;
-inline constexpr float WitchSelfLightCenterYOffset = -26.0f;
-
-inline Vec2 witchSelfLightCenter(Vec2 footAnchor)
-{
-    return footAnchor + Vec2{0.0f, WitchSelfLightCenterYOffset};
-}
-
-inline float witchSelfLightRadius(float baseRadius)
-{
-    return baseRadius * WitchSelfLightRadiusMultiplier;
-}
 
 inline std::mt19937& lootRuntimeRng()
 {
@@ -230,6 +218,7 @@ constexpr float ScreenTransitionFadeInSeconds = 0.45f;
 constexpr float ScreenTransitionCrossFadeSeconds = 0.35f;
 constexpr float IntroTutorialStartTransitionHoldSeconds = 2.0f;
 constexpr float IntroTutorialStartTransitionFadeInSeconds = ScreenTransitionFadeInSeconds * 2.0f;
+constexpr float IntroTutorialStartEventDelaySeconds = 1.0f;
 constexpr float IntroTutorialReturnTransitionHoldSeconds = 3.0f;
 constexpr float IntroTutorialReturnTransitionFadeInSeconds = ScreenTransitionFadeInSeconds * 2.0f;
 constexpr float IntroTutorialReturnBaseEventDelaySeconds = 2.0f;
@@ -1031,7 +1020,7 @@ std::vector<BaseFacility> baseFacilities(BaseArea area, bool ringWorkshopUnlocke
         return {
             BaseFacility{"bookshelf", "本棚", {{368.0f, 322.0f}, {127.0f, 213.0f}}, 72.0f, true, true, BaseFacilityAction::Bookshelf},
             BaseFacility{"diary", "日記", {{760.0f, 416.0f}, {179.0f, 142.0f}}, 64.0f, true, true, BaseFacilityAction::Diary},
-            BaseFacility{"home_exit", "屋外へ戻る出口", {{592.0f, 574.0f}, {96.0f, 42.0f}}, 80.0f, true, true, BaseFacilityAction::HomeExit},
+            BaseFacility{"home_exit", "屋外へ戻る出口", {{592.0f, 540.0f}, {96.0f, 42.0f}}, 0.0f, false, true, BaseFacilityAction::HomeExit},
             BaseFacility{"bed", "ベッド", {{680.0f, 188.0f}, {178.0f, 195.0f}}, 0.0f, false, true, BaseFacilityAction::Bookshelf},
         };
     }
@@ -1045,6 +1034,7 @@ std::vector<BaseFacility> baseFacilities(BaseArea area, bool ringWorkshopUnlocke
         BaseFacility{"ring_workshop", "リング工房", {{837.0f, 468.0f}, {102.0f, 87.0f}}, 82.0f, true, ringWorkshopUnlocked, BaseFacilityAction::RingWorkshop},
         BaseFacility{"monica", "モニカ", {{841.0f, 245.0f}, {74.0f, 86.0f}}, 72.0f, true, true, BaseFacilityAction::MonicaTalk},
         BaseFacility{"home", "ルネの家", {{113.0f, 11.0f}, {301.0f, 308.0f}}, 90.0f, true, true, BaseFacilityAction::HomeEntrance},
+        BaseFacility{"home_entrance", "ルネの家の入口", {{265.0f, 274.0f}, {60.0f, 44.0f}}, 0.0f, false, true, BaseFacilityAction::HomeEntrance},
     };
 }
 

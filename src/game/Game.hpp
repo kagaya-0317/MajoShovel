@@ -216,6 +216,7 @@ public:
         std::string eventKind;
         Vec2 focusWorldPos{};
         std::string discoveryStoryEventId;
+        DialogueSequence discoveryDialogue;
         float holdSecondsIfNoDialogue = 2.0f;
         float moveSeconds = 0.0f;
         float returnSeconds = 0.0f;
@@ -697,6 +698,7 @@ private:
         float moveSeconds = 0.0f;
         float returnSeconds = 0.0f;
         std::string discoveryStoryEventId;
+        DialogueSequence discoveryDialogue;
         std::function<void()> onComplete;
     };
     enum class BossEncounterPhase {
@@ -949,6 +951,7 @@ private:
         Vec2 position);
     bool firstItemAcquisitionNoticeActive() const;
     void closeFirstItemAcquisitionNotice();
+    void queueIntroTutorialChestLootDialogueIfReady();
     void updateFirstItemAcquisitionNotice(const Input& input, UiContext& ui);
     void addStoryFlag(std::string flag);
     void updateBookshelfScreen(const Input& input, UiContext& ui);
@@ -973,6 +976,9 @@ private:
     bool updateIntroTutorial(const Input& input, float dt);
     void equipIntroTutorialStartingTools();
     void addIntroTutorialTorchToRing();
+    void startIntroTutorialEnemyEncounterEvent();
+    void startIntroTutorialSlimeFocusDialogue();
+    void startIntroTutorialEnemyRetreatDialogue();
     void spawnIntroTutorialChest();
     void spawnIntroTutorialSecondChest();
     void unlockIntroTutorialFreeRoute();
@@ -1212,6 +1218,8 @@ private:
     void updateBaseEditScreen(const Input& input, UiContext& ui, float dt);
     void renderBaseEditOverlay(Renderer& renderer) const;
     bool gameProgressPaused() const;
+    bool dungeonEventUiSuppressed() const;
+    void updatePausedDungeonPresentation(float dt);
     bool basePresentationActive() const;
     void startBaseMonicaDialogue();
     bool hasBrokenRingItemForDeparture() const;
@@ -1516,9 +1524,14 @@ private:
     bool introTutorialChestFoundQueued_ = false;
     bool introTutorialSecondChestPlaced_ = false;
     bool introTutorialChestOpened_ = false;
+    bool introTutorialChestLootPending_ = false;
     bool introTutorialChestLootDialogueQueued_ = false;
     bool introTutorialMidwayDialogueQueued_ = false;
     bool introTutorialExitDialogueQueued_ = false;
+    int introTutorialFirstEnemyRuntimeId_ = 0;
+    int introTutorialSecondEnemyRuntimeId_ = 0;
+    std::string introTutorialChestLootObjectId_;
+    std::string introTutorialChestLootInstanceId_;
     DungeonTile introTutorialFirstEnemyTile_{};
     DungeonTile introTutorialSecondEnemyTile_{};
     DungeonTile introTutorialChestTile_{};

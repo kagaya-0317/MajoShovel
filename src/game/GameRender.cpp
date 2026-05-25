@@ -1712,6 +1712,10 @@ UiRect Game::ringStatusHudRect(int ringIndex, int unlockedRingCount) const
 
 void Game::updateRingStatusHud(UiContext& ui)
 {
+    if (introTutorialActive()) {
+        return;
+    }
+
     const int unlockedRingCount = unlockedRingHudCount();
     for (int ringIndex = 0; ringIndex < unlockedRingCount; ++ringIndex) {
         if (!ui.pressed(ringStatusHudRect(ringIndex, unlockedRingCount))) {
@@ -2302,6 +2306,9 @@ void Game::renderDungeonControlHelp(Renderer& renderer) const
         enemyTestActive_ ||
         screenTransition_.active() ||
         dungeonRingIntroActive() ||
+        dungeonEventUiSuppressed() ||
+        firstItemAcquisitionNoticeActive() ||
+        levels_.isChoosing() ||
         dungeonFocusActive() ||
         dialogue_.active() ||
         warpReturnConfirm_.open) {
@@ -2316,7 +2323,7 @@ void Game::renderDungeonControlHelp(Renderer& renderer) const
         "WASD/方向キー 移動   Q/E アイテム選択   Tab アイテム行切替   F 使用   左クリック 虫とり網   右長押し 中心ずらし   C リング投げ　Esc メニュー";
     bool promptFocused = false;
     if (introTutorialActive()) {
-        help = "WASD/方向キー 移動   F 使用   I リュック   Esc メニュー";
+        help = "WASD/方向キー 移動   Esc メニュー";
         constexpr float IntroTutorialExitPromptRadius = 58.0f;
         if (introTutorialPhase_ == IntroTutorialPhase::FreeToExit &&
             distanceSquared(player_.position, introTutorialExitPosition()) <=
@@ -2344,15 +2351,26 @@ void Game::renderDungeonControlHelp(Renderer& renderer) const
         }
     }
 
-    constexpr int TextScale = 2;
-    const float maxWidth = std::max(120.0f, screenWidth - 32.0f);
-    help = fittedSingleLineText(renderer, std::move(help), maxWidth, TextScale);
-    const Vec2 textSize = renderer.measureText(help, TextScale);
-    const Vec2 pos{
+    const bool introTutorialHelpLayout = introTutorialActive();
+    const UiRect shortcutHud = introTutorialHelpLayout
+        ? inventory_.shortcutHudPanelRect(camera_.width(), camera_.height())
+        : UiRect{};
+    const int textScale = 2;
+    const float maxWidth = introTutorialHelpLayout
+        ? std::max(120.0f, shortcutHud.size.x - 32.0f)
+        : std::max(120.0f, screenWidth - 32.0f);
+    help = fittedSingleLineText(renderer, std::move(help), maxWidth, textScale);
+    const Vec2 textSize = renderer.measureText(help, textScale);
+    Vec2 pos{
         (screenWidth - textSize.x) * 0.5f,
         std::max(TopInfoBarY + TopInfoBarHeight + 8.0f, screenHeight - textSize.y - 4.0f),
     };
-    renderer.drawOutlinedText(pos, help, {232, 232, 238, 235}, {0, 0, 0, 190}, 4, TextScale);
+    if (introTutorialHelpLayout) {
+        pos.y = std::max(
+            TopInfoBarY + TopInfoBarHeight + 8.0f,
+            shortcutHud.pos.y - textSize.y - 10.0f);
+    }
+    renderer.drawOutlinedText(pos, help, {232, 232, 238, 235}, {0, 0, 0, 190}, 4, textScale);
 }
 
 void Game::renderWarpReturnUi(Renderer& renderer) const
@@ -2843,7 +2861,7 @@ void Game::renderSpellRingForeground(
     drawSpellRingOrbitLayer(renderer, spellRing_, balance_, totalSeconds, 0.78f);
 
     if (spellRing_.state() != SpellRingState::Normal) {
-        renderer.drawLine(player_.position, spellRing_.center(), {150, 110, 80, 100});
+        renderer.drawLine(witchSelfLightCenter(player_.position), spellRing_.center(), {150, 110, 80, 100});
     }
 
     for (const SpellRingItem* itemPtr : runtimeItems) {
@@ -3113,7 +3131,7 @@ void Game::render(Renderer& renderer, const Time& time)
         drawSpellRingOrbitLayer(renderer, spellRing_, balance_, time.totalSeconds(), 0.46f);
     }
     if (spellRing_.state() != SpellRingState::Normal && ringCenterVisible) {
-        renderer.drawLine(player_.position, spellRing_.center(), {150, 110, 80, 100});
+        renderer.drawLine(playerLightCenter, spellRing_.center(), {150, 110, 80, 100});
     }
 
     const Vec2 playerFootAnchor = player_.position;
@@ -3273,10 +3291,13 @@ void Game::render(Renderer& renderer, const Time& time)
     effects_.renderDamagePopups(renderer);
 
     renderer.setScreenSpace();
+    const bool suppressDungeonUi = dungeonEventUiSuppressed();
     renderTopInfoBar(renderer);
-    if (mode_ == ScreenMode::Playing) {
+    if (mode_ == ScreenMode::Playing && !suppressDungeonUi) {
         renderDungeonMinimap(renderer, itemLights);
-        renderRingStatusHud(renderer);
+        if (!introTutorialActive()) {
+            renderRingStatusHud(renderer);
+        }
         renderDungeonLogs(renderer);
         renderDungeonStatusHud(renderer);
     }
@@ -3284,24 +3305,26 @@ void Game::render(Renderer& renderer, const Time& time)
         renderer.fillRect({18.0f, 202.0f}, {190.0f, 28.0f}, {0, 0, 0, 190});
         renderer.drawText({28.0f, 208.0f}, "DEBUG PAUSED", {255, 230, 150, 255}, 2);
     }
-    inventory_.render(renderer, player_, spellRing_, objectCatalog_, encyclopedia_, true, true, time.totalSeconds());
-    renderLevelUpOverlay(renderer);
-    if (mode_ == ScreenMode::Playing) {
-        inventory_.renderShortcutHud(renderer, spellRing_, camera_.width(), camera_.height());
-        renderRingEquipFx(renderer);
-        renderDungeonControlHelp(renderer);
-    } else if (mode_ == ScreenMode::Inventory && pauseReturnMode_ != ScreenMode::Base) {
-        renderDungeonLogs(renderer);
+    if (!suppressDungeonUi) {
+        inventory_.render(renderer, player_, spellRing_, objectCatalog_, encyclopedia_, true, true, time.totalSeconds());
+        renderLevelUpOverlay(renderer);
+        if (mode_ == ScreenMode::Playing) {
+            inventory_.renderShortcutHud(renderer, spellRing_, camera_.width(), camera_.height());
+            renderRingEquipFx(renderer);
+            renderDungeonControlHelp(renderer);
+        } else if (mode_ == ScreenMode::Inventory && pauseReturnMode_ != ScreenMode::Base) {
+            renderDungeonLogs(renderer);
+        }
+        renderWarpReturnUi(renderer);
+        renderPauseMenu(renderer);
+        renderRingScreen(renderer, time.totalSeconds());
+        renderBossDefeatPresentation(renderer);
+        renderGameOverScreen(renderer);
+        renderStageClearScreen(renderer);
+        renderAstralResultScreen(renderer);
+        renderEnemyTestUi(renderer);
     }
-    renderWarpReturnUi(renderer);
-    renderPauseMenu(renderer);
-    renderRingScreen(renderer, time.totalSeconds());
-    renderBossDefeatPresentation(renderer);
-    renderGameOverScreen(renderer);
-    renderStageClearScreen(renderer);
-    renderAstralResultScreen(renderer);
-    renderEnemyTestUi(renderer);
-    if (reloadNoticeTimer_ > 0.0f) {
+    if (!suppressDungeonUi && reloadNoticeTimer_ > 0.0f) {
         renderer.fillRect({18.0f, 170.0f}, {430.0f, 26.0f}, {0, 0, 0, 180});
         InlineItemTextStyle noticeStyle;
         noticeStyle.text = {255, 235, 150, 255};
@@ -3310,7 +3333,8 @@ void Game::render(Renderer& renderer, const Time& time)
         noticeStyle.iconScale = 1.15f;
         drawInlineItemText(renderer, objectCatalog_, {26.0f, 176.0f}, reloadNotice_, noticeStyle);
     }
-    if (mode_ == ScreenMode::Playing || mode_ == ScreenMode::Inventory || mode_ == ScreenMode::PauseMenu || mode_ == ScreenMode::Ring) {
+    if (!suppressDungeonUi &&
+        (mode_ == ScreenMode::Playing || mode_ == ScreenMode::Inventory || mode_ == ScreenMode::PauseMenu || mode_ == ScreenMode::Ring)) {
         std::vector<UiRect> encyclopediaAvoidRects;
         const float screenWidth = static_cast<float>(camera_.width());
         const float screenHeight = static_cast<float>(camera_.height());
@@ -3325,9 +3349,11 @@ void Game::render(Renderer& renderer, const Time& time)
                 encyclopediaAvoidRects.push_back({{DungeonMinimapX, minimapY}, {minimapDiameter, minimapDiameter}});
             }
 
-            const int unlockedRingCount = unlockedRingHudCount();
-            for (int ringIndex = 0; ringIndex < unlockedRingCount; ++ringIndex) {
-                encyclopediaAvoidRects.push_back(ringStatusHudRect(ringIndex, unlockedRingCount));
+            if (!introTutorialActive()) {
+                const int unlockedRingCount = unlockedRingHudCount();
+                for (int ringIndex = 0; ringIndex < unlockedRingCount; ++ringIndex) {
+                    encyclopediaAvoidRects.push_back(ringStatusHudRect(ringIndex, unlockedRingCount));
+                }
             }
 
             const UiRect statusPanel{{
@@ -3358,9 +3384,11 @@ void Game::render(Renderer& renderer, const Time& time)
         encyclopedia_.renderPopups(renderer, camera_, objectCatalog_, encyclopediaAvoidRects);
     }
     dialogue_.render(renderer, camera_.width(), camera_.height());
-    renderDebugItemPicker(renderer);
-    renderDebugStoryTest(renderer);
-    renderFirstItemAcquisitionNotice(renderer);
+    if (!suppressDungeonUi) {
+        renderDebugItemPicker(renderer);
+        renderDebugStoryTest(renderer);
+        renderFirstItemAcquisitionNotice(renderer);
+    }
     finishUiFrame(renderer);
     renderDebugOverlay(renderer, time);
     renderScreenTransitionOverlay(renderer);

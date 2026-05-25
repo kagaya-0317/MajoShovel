@@ -62,8 +62,10 @@ constexpr float IntroTutorialExitFoundRadiusTiles = 5.0f;
 constexpr float IntroTutorialDarkCueTileX = 13.0f;
 constexpr float IntroTutorialMidwayCueTileX = 59.0f;
 constexpr float IntroTutorialEnemySpawnRadiusTiles = 9.0f;
-constexpr float IntroTutorialEnemyEncounterRadiusTiles = 5.4f;
+constexpr float IntroTutorialEnemyEncounterRadiusTiles = 5.6f;
 constexpr float IntroTutorialEnemyResolveRadiusTiles = 3.0f;
+constexpr float IntroTutorialSlimeLeashRadiusTiles = 2.4f;
+constexpr float IntroTutorialExitLightRadiusTiles = 4.2f;
 constexpr std::string_view IntroTutorialShovelObjectId = "item_shovel";
 constexpr std::string_view IntroTutorialTorchObjectId = "item_torch";
 constexpr std::string_view IntroTutorialCoinBagObjectId = "item_coin_bag";
@@ -78,6 +80,7 @@ constexpr std::string_view IntroTutorialShovelReadyTrigger = "intro_tutorial:sho
 constexpr std::string_view IntroTutorialTorchFoundTrigger = "intro_tutorial:torch_found";
 constexpr std::string_view IntroTutorialTorchReadyTrigger = "intro_tutorial:torch_ready";
 constexpr std::string_view IntroTutorialEnemyEncounterTrigger = "intro_tutorial:enemy_encounter";
+constexpr std::string_view IntroTutorialEnemyEncounterFlag = "story_intro_tutorial_enemy_encounter";
 constexpr std::string_view IntroTutorialEnemyDefeatedTrigger = "intro_tutorial:enemy_defeated";
 constexpr std::string_view IntroTutorialChestFoundTrigger = "intro_tutorial:chest_found";
 constexpr std::string_view IntroTutorialMidwayTrigger = "intro_tutorial:midway";
@@ -189,7 +192,7 @@ StageDefinition makeIntroTutorialStageDefinition()
 {
     StageDefinition stage;
     stage.id = std::string(IntroTutorialStageId);
-    stage.name = "落星の抜け道";
+    stage.name = "落ちた星の道";
     stage.type = "チュートリアル";
     stage.displayOrder = 0;
     stage.implementationState = "code_intro";
@@ -378,6 +381,25 @@ std::string introTutorialMushroomEnemyId(const EnemyCatalog& catalog)
         }
     }
     return {};
+}
+
+DialogueSequence singleLineDialogueSequence(
+    std::string id,
+    std::string speakerId,
+    std::string speakerName,
+    std::string text)
+{
+    DialogueLine line{
+        .speakerId = std::move(speakerId),
+        .speakerName = std::move(speakerName),
+        .text = std::move(text),
+    };
+
+    DialogueSequence sequence;
+    sequence.id = std::move(id);
+    sequence.lines.push_back(line);
+    sequence.steps.push_back(DialogueStep{DialogueStepKind::Line, std::move(line), 0.0f});
+    return sequence;
 }
 
 int dungeonEventStageMaxCount(std::string_view stageId)
@@ -868,7 +890,7 @@ std::string dungeonEventWitchRequestText(const Game::DungeonEventInstance& event
 {
     switch (event.kind) {
     case Game::DungeonEventKind::BuriedWitch:
-        return "たすけて... 周りの瓦礫を壊してくれる？";
+        return "たすけて... 周りのガレキを壊してくれる？";
     case Game::DungeonEventKind::LostBaggageWitch:
         return "荷物を落としちゃったの。近くにあるはずなんだけど...";
     case Game::DungeonEventKind::ItemRequestWitch:
@@ -888,7 +910,7 @@ std::string dungeonEventWitchProgressText(const Game::DungeonEventInstance& even
 {
     switch (event.kind) {
     case Game::DungeonEventKind::BuriedWitch:
-        return "瓦礫がまだ残ってるみたい。周りを掘ってくれる？";
+        return "ガレキがまだ残ってるみたい。周りを掘ってくれる？";
     case Game::DungeonEventKind::LostBaggageWitch:
         return "落とし物は、たぶん近くにあるはず。見つけたら持ってきて。";
     case Game::DungeonEventKind::ItemRequestWitch:
@@ -2689,9 +2711,14 @@ void Game::startIntroTutorialDungeon()
     introTutorialChestFoundQueued_ = false;
     introTutorialSecondChestPlaced_ = false;
     introTutorialChestOpened_ = false;
+    introTutorialChestLootPending_ = false;
     introTutorialChestLootDialogueQueued_ = false;
     introTutorialMidwayDialogueQueued_ = false;
     introTutorialExitDialogueQueued_ = false;
+    introTutorialFirstEnemyRuntimeId_ = 0;
+    introTutorialSecondEnemyRuntimeId_ = 0;
+    introTutorialChestLootObjectId_.clear();
+    introTutorialChestLootInstanceId_.clear();
     introTutorialFirstEnemyTile_ = {29, 0};
     introTutorialSecondEnemyTile_ = {52, 2};
     introTutorialChestTile_ = introTutorialFirstEnemyTile_;
@@ -2715,6 +2742,7 @@ void Game::startIntroTutorialDungeon()
 
     player_.position = tileWorldCenter(DungeonTile{dungeonLayout_.startTile.x + 2, dungeonLayout_.startTile.y});
     player_.facing = {1.0f, 0.0f};
+    player_.minimumHpAfterDamage = 1;
     player_.xpToNext = playerXpToNextForLevel(player_.level, balance_);
 
     rewardNodes_.clear();
@@ -2768,7 +2796,7 @@ void Game::startIntroTutorialDungeon()
     baseEditMode_ = BaseEditMode::None;
     resetPlayerFootstepDust();
     playAudioBgm(AudioBgmDungeon, 0.45f);
-    queueStoryEventForTrigger(std::string(IntroTutorialFallTrigger));
+    pendingStoryTrigger_ = std::string(IntroTutorialFallTrigger);
 }
 
 bool Game::introTutorialActive() const
@@ -2801,7 +2829,7 @@ std::vector<LightSource> Game::introTutorialLightSources(double totalSeconds) co
     add({startTile.x + 3, startTile.y}, 7.0f);
     add(introTutorialFirstEnemyTile_, 7.0f);
     add({introTutorialSecondEnemyTile_.x + 2, introTutorialSecondEnemyTile_.y}, 7.0f);
-    add(introTutorialExitTile_, 6.5f);
+    add(introTutorialExitTile_, IntroTutorialExitLightRadiusTiles);
     return lights;
 }
 
@@ -2860,6 +2888,67 @@ void Game::addIntroTutorialTorchToRing()
     introTutorialPhase_ = IntroTutorialPhase::TorchRingIntro;
 }
 
+void Game::startIntroTutorialEnemyEncounterEvent()
+{
+    addStoryFlag(std::string(IntroTutorialEnemyEncounterFlag));
+    DialogueSequence sequence = singleLineDialogueSequence(
+        "intro_tutorial_enemy_encounter_intro",
+        "player",
+        "ルネ",
+        "うわ！モンスターだ！");
+    if (!startDialogueSequenceWithCompletion(std::move(sequence), [this]() {
+            startIntroTutorialSlimeFocusDialogue();
+        })) {
+        startIntroTutorialSlimeFocusDialogue();
+    }
+}
+
+void Game::startIntroTutorialSlimeFocusDialogue()
+{
+    Vec2 focusPosition = tileWorldCenter(introTutorialFirstEnemyTile_);
+    enemies_.runtimeEnemyPosition(introTutorialFirstEnemyRuntimeId_, focusPosition);
+
+    DungeonFocusRequest request;
+    request.eventKind = "intro_tutorial_slime_encounter";
+    request.focusWorldPos = focusPosition;
+    request.discoveryDialogue = singleLineDialogueSequence(
+        "intro_tutorial_enemy_encounter_slime",
+        "slime",
+        "スライム",
+        "グヘヘヘ！襲ってやるぜ～！");
+    request.holdSecondsIfNoDialogue = 0.0f;
+    request.moveSeconds = 0.55f;
+    request.returnSeconds = 0.55f;
+    request.onComplete = [this]() {
+        startIntroTutorialEnemyRetreatDialogue();
+    };
+
+    if (requestDungeonFocus(std::move(request))) {
+        return;
+    }
+
+    DialogueSequence fallback = singleLineDialogueSequence(
+        "intro_tutorial_enemy_encounter_slime",
+        "slime",
+        "スライム",
+        "グヘヘヘ！襲ってやるぜ～！");
+    if (!startDialogueSequenceWithCompletion(std::move(fallback), [this]() {
+            startIntroTutorialEnemyRetreatDialogue();
+        })) {
+        startIntroTutorialEnemyRetreatDialogue();
+    }
+}
+
+void Game::startIntroTutorialEnemyRetreatDialogue()
+{
+    DialogueSequence sequence = singleLineDialogueSequence(
+        "intro_tutorial_enemy_encounter_retreat",
+        "player",
+        "ルネ",
+        "こっちに来ないで～！");
+    startDialogueSequenceWithCompletion(std::move(sequence), {});
+}
+
 void Game::spawnIntroTutorialChest()
 {
     if (!introTutorialActive()) {
@@ -2905,7 +2994,7 @@ void Game::spawnIntroTutorialSecondChest()
         introTutorialSecondChestTile_,
         LootChestKind::Common,
         1,
-        tileWorldCenter(introTutorialSecondEnemyTile_),
+        tileWorldCenter(introTutorialSecondChestTile_),
         std::string_view{});
     introTutorialSecondChestPlaced_ = true;
 }
@@ -2989,17 +3078,17 @@ bool Game::updateIntroTutorial(const Input& input, float)
             introTutorialFirstEnemySpawned_ = true;
             const float encounterRadius =
                 IntroTutorialEnemyEncounterRadiusTiles * static_cast<float>(balance::TileSize);
+            const Vec2 enemyRoomCenter = tileWorldCenter(introTutorialFirstEnemyTile_);
             if (!introTutorialEnemyEncounterQueued_ &&
-                distanceSquared(player_.position, tileWorldCenter(introTutorialFirstEnemyTile_)) <= encounterRadius * encounterRadius) {
-                const float resolveRadius =
-                    IntroTutorialEnemyResolveRadiusTiles * static_cast<float>(balance::TileSize);
-                enemies_.forceDetectEnemyNear(
-                    tileWorldCenter(introTutorialFirstEnemyTile_),
-                    resolveRadius,
-                    player_.position,
-                    true);
+                distanceSquared(player_.position, enemyRoomCenter) <= encounterRadius * encounterRadius) {
+                const bool detected = (introTutorialFirstEnemyRuntimeId_ > 0 &&
+                    enemies_.forceDetectRuntimeEnemy(introTutorialFirstEnemyRuntimeId_, player_.position, true)) ||
+                    enemies_.forceDetectEnemyNear(enemyRoomCenter, encounterRadius, player_.position, true);
+                if (!detected) {
+                    return false;
+                }
                 introTutorialEnemyEncounterQueued_ = true;
-                queueStoryEventForTrigger(std::string(IntroTutorialEnemyEncounterTrigger));
+                startIntroTutorialEnemyEncounterEvent();
                 introTutorialPhase_ = IntroTutorialPhase::DefeatEnemy;
             }
         }
@@ -3050,12 +3139,16 @@ bool Game::updateIntroTutorial(const Input& input, float)
                     encounterRadius * encounterRadius) {
                     const float resolveRadius =
                         IntroTutorialEnemyResolveRadiusTiles * static_cast<float>(balance::TileSize);
-                    enemies_.forceDetectEnemyNear(
-                        tileWorldCenter(introTutorialSecondEnemyTile_),
-                        resolveRadius,
-                        player_.position,
-                        true);
-                    introTutorialSecondEnemyEncountered_ = true;
+                    const bool detected = (introTutorialSecondEnemyRuntimeId_ > 0 &&
+                        enemies_.forceDetectRuntimeEnemy(introTutorialSecondEnemyRuntimeId_, player_.position, true)) ||
+                        enemies_.forceDetectEnemyNear(
+                            tileWorldCenter(introTutorialSecondEnemyTile_),
+                            resolveRadius,
+                            player_.position,
+                            true);
+                    if (detected) {
+                        introTutorialSecondEnemyEncountered_ = true;
+                    }
                 }
             }
         }
@@ -3086,7 +3179,6 @@ bool Game::updateIntroTutorial(const Input& input, float)
 
         const float exitInteractRadiusSq = IntroTutorialExitInteractRadius * IntroTutorialExitInteractRadius;
         if (distanceToExitSq <= exitInteractRadiusSq) {
-            pushDungeonLog("出口: F/Enter 拠点へ帰還", "intro_tutorial_exit_prompt");
             if (input.confirmPressed() || input.useItemPressed()) {
                 introTutorialPhase_ = IntroTutorialPhase::Returning;
                 requestScreenTransition(ScreenTransitionTarget::IntroTutorialToBase);
@@ -3103,6 +3195,7 @@ void Game::completeIntroTutorialAndReturnToBase()
     addStoryFlag(std::string(IntroTutorialCompletedFlag));
     tileMap_.clearDamageProtectionAreas();
     introTutorialPhase_ = IntroTutorialPhase::Inactive;
+    player_.minimumHpAfterDamage = 0;
     introTutorialLightTutorialQueued_ = false;
     introTutorialFirstEnemySpawned_ = false;
     introTutorialSecondEnemySpawned_ = false;
@@ -3112,9 +3205,14 @@ void Game::completeIntroTutorialAndReturnToBase()
     introTutorialChestFoundQueued_ = false;
     introTutorialSecondChestPlaced_ = false;
     introTutorialChestOpened_ = false;
+    introTutorialChestLootPending_ = false;
     introTutorialChestLootDialogueQueued_ = false;
     introTutorialMidwayDialogueQueued_ = false;
     introTutorialExitDialogueQueued_ = false;
+    introTutorialFirstEnemyRuntimeId_ = 0;
+    introTutorialSecondEnemyRuntimeId_ = 0;
+    introTutorialChestLootObjectId_.clear();
+    introTutorialChestLootInstanceId_.clear();
 
     clearTemporaryPlayerState(true);
     enemies_ = EnemySystem{};
@@ -5214,10 +5312,12 @@ bool Game::requestDungeonFocus(DungeonFocusRequest request)
     const float moveSeconds = dungeonFocusDurationSeconds(request.moveSeconds, DungeonFocusMoveSeconds);
     const float returnSeconds = dungeonFocusDurationSeconds(request.returnSeconds, DungeonFocusMoveSeconds);
     std::string storyEventId = std::move(request.discoveryStoryEventId);
+    DialogueSequence focusDialogue = std::move(request.discoveryDialogue);
     if (!validDungeonFocusPosition(focusWorldPos)) {
         logWarning("[dungeon_focus] invalid target position; falling back to current camera position");
         focusWorldPos = camera_.position();
         storyEventId.clear();
+        focusDialogue = {};
         holdSeconds = DungeonFocusDefaultHoldSeconds;
     } else if (!storyEventId.empty()) {
         const StoryEvent* event = findStoryEvent(storyEventId);
@@ -5231,7 +5331,6 @@ bool Game::requestDungeonFocus(DungeonFocusRequest request)
             holdSeconds = DungeonFocusDefaultHoldSeconds;
         }
     }
-
     dungeonFocus_ = DungeonFocusState{};
     dungeonFocus_.phase = DungeonFocusPhase::MoveToTarget;
     dungeonFocus_.eventKind = std::move(request.eventKind);
@@ -5244,6 +5343,7 @@ bool Game::requestDungeonFocus(DungeonFocusRequest request)
     dungeonFocus_.moveSeconds = moveSeconds;
     dungeonFocus_.returnSeconds = returnSeconds;
     dungeonFocus_.discoveryStoryEventId = std::move(storyEventId);
+    dungeonFocus_.discoveryDialogue = std::move(focusDialogue);
     dungeonFocus_.onComplete = std::move(request.onComplete);
 
     logInfo(
@@ -5313,6 +5413,17 @@ bool Game::updateDungeonFocus(float dt)
                 return true;
             }
             logInfo("[dungeon_focus] discovery dialogue skipped: " + storyEventId);
+        }
+        if (!dungeonFocus_.discoveryDialogue.steps.empty() || !dungeonFocus_.discoveryDialogue.lines.empty()) {
+            dialogue_.start(std::move(dungeonFocus_.discoveryDialogue));
+            if (dialogue_.active()) {
+                dungeonFocus_.phase = DungeonFocusPhase::PlayDiscoveryDialogue;
+                dungeonFocus_.elapsed = 0.0f;
+                dungeonFocus_.duration = 0.0f;
+                logInfo("[dungeon_focus] state=PlayDiscoveryDialogue sequence");
+                return true;
+            }
+            logInfo("[dungeon_focus] inline dialogue skipped");
         }
         beginHold();
         return true;
@@ -6706,8 +6817,6 @@ void Game::openChestNode(ChestNode& node)
     playAudioSe(AudioSeChestOpen);
     if (introTutorialActive()) {
         introTutorialChestOpened_ = true;
-    } else {
-        queueStoryEventForTrigger("tutorial:chest");
     }
 }
 
@@ -7331,6 +7440,7 @@ void Game::updateExposedEnemyNodes()
             continue;
         }
         bool spawned = false;
+        int spawnedRuntimeId = 0;
         if (introTutorialSlimeNode) {
             const std::string slimeId = introTutorialSlimeEnemyId(enemyCatalog_);
             if (!slimeId.empty()) {
@@ -7343,10 +7453,11 @@ void Game::updateExposedEnemyNodes()
                     enemyCatalog_,
                     true,
                     false,
-                    0.0f);
+                    0.0f,
+                    &spawnedRuntimeId);
             }
             if (!spawned) {
-                spawned = enemies_.spawnFixedNodeEnemy(tileMap_, center, player_.position, balance_, enemyCatalog_, false);
+                spawned = enemies_.spawnFixedNodeEnemy(tileMap_, center, player_.position, balance_, enemyCatalog_, false, &spawnedRuntimeId);
             }
         } else if (introTutorialMushroomNode) {
             const std::string mushroomId = introTutorialMushroomEnemyId(enemyCatalog_);
@@ -7360,10 +7471,11 @@ void Game::updateExposedEnemyNodes()
                     enemyCatalog_,
                     true,
                     false,
-                    0.0f);
+                    0.0f,
+                    &spawnedRuntimeId);
             }
             if (!spawned) {
-                spawned = enemies_.spawnFixedNodeEnemy(tileMap_, center, player_.position, balance_, enemyCatalog_, false);
+                spawned = enemies_.spawnFixedNodeEnemy(tileMap_, center, player_.position, balance_, enemyCatalog_, false, &spawnedRuntimeId);
             }
         } else {
             spawned = enemies_.spawnFixedNodeEnemy(tileMap_, center, player_.position, balance_, enemyCatalog_);
@@ -7372,7 +7484,22 @@ void Game::updateExposedEnemyNodes()
             if (introTutorialFixedNode) {
                 const float resolveRadius =
                     IntroTutorialEnemyResolveRadiusTiles * static_cast<float>(balance::TileSize);
-                enemies_.setManualDetectionOnlyNear(center, resolveRadius, true);
+                const bool manualSet = spawnedRuntimeId > 0 &&
+                    enemies_.setManualDetectionOnlyForRuntimeEnemy(spawnedRuntimeId, true);
+                if (!manualSet) {
+                    enemies_.setManualDetectionOnlyNear(center, resolveRadius, true);
+                }
+            }
+            if (introTutorialSlimeNode) {
+                introTutorialFirstEnemyRuntimeId_ = spawnedRuntimeId;
+                if (spawnedRuntimeId > 0) {
+                    enemies_.setRuntimeEnemyMovementLeash(
+                        spawnedRuntimeId,
+                        center,
+                        IntroTutorialSlimeLeashRadiusTiles * static_cast<float>(balance::TileSize));
+                }
+            } else if (introTutorialMushroomNode) {
+                introTutorialSecondEnemyRuntimeId_ = spawnedRuntimeId;
             }
             node.spawned = true;
         }

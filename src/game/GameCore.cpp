@@ -1039,9 +1039,20 @@ float Game::fadeInSecondsForScreenTransitionTarget(ScreenTransitionTarget target
 
 float Game::postTransitionStoryDelaySecondsForScreenTransitionTarget(ScreenTransitionTarget target)
 {
-    return target == ScreenTransitionTarget::IntroTutorialToBase
-        ? IntroTutorialReturnBaseEventDelaySeconds
-        : 0.0f;
+    switch (target) {
+    case ScreenTransitionTarget::TitleToIntroTutorial:
+        return IntroTutorialStartEventDelaySeconds;
+    case ScreenTransitionTarget::IntroTutorialToBase:
+        return IntroTutorialReturnBaseEventDelaySeconds;
+    case ScreenTransitionTarget::None:
+    case ScreenTransitionTarget::Base:
+    case ScreenTransitionTarget::TitleToBase:
+    case ScreenTransitionTarget::MiningStart:
+    case ScreenTransitionTarget::ReturnToBase:
+    case ScreenTransitionTarget::BaseArea:
+        return 0.0f;
+    }
+    return 0.0f;
 }
 
 void Game::startScreenTransition(ScreenTransitionTarget target, ScreenTransitionPhase phase)
@@ -2396,6 +2407,7 @@ bool Game::gameProgressPaused() const
 {
     return debugItemPickerActive_ ||
         debugStoryTestActive_ ||
+        pendingStoryTriggerDelayActive() ||
         firstItemAcquisitionNoticeActive() ||
         dungeonFocusActive() ||
         dialogue_.active() ||
@@ -2404,6 +2416,33 @@ bool Game::gameProgressPaused() const
         endingKamishibaiPending_ ||
         warpReturnConfirm_.open ||
         mode_ != ScreenMode::Playing;
+}
+
+bool Game::dungeonEventUiSuppressed() const
+{
+    return mode_ == ScreenMode::Playing &&
+        (!pendingStoryTrigger_.empty() ||
+            !pendingStoryTriggers_.empty() ||
+            pendingStoryTriggerDelayActive() ||
+            dungeonFocusActive() ||
+            dialogue_.active());
+}
+
+void Game::updatePausedDungeonPresentation(float dt)
+{
+    if (mode_ != ScreenMode::Playing) {
+        return;
+    }
+
+    const float safeDt = std::max(0.0f, dt);
+    spellRing_.updatePresentation(player_, safeDt, balance_);
+    worldDrops_.updatePresentation(safeDt);
+    for (ChestNode& node : chestNodes_) {
+        updateChestSpawnJump(node, safeDt);
+    }
+    groundLines_.update(safeDt);
+    magicFx_.update(safeDt);
+    effects_.update(safeDt);
 }
 
 bool Game::basePresentationActive() const
@@ -2465,6 +2504,27 @@ float Game::dungeonRingIntroProgress() const
     return clamp(1.0f - dungeonRingIntroTimer_ / DungeonRingIntroDuration, 0.0f, 1.0f);
 }
 
+void Game::queueIntroTutorialChestLootDialogueIfReady()
+{
+    if (!introTutorialActive() ||
+        !introTutorialChestLootPending_ ||
+        introTutorialChestLootDialogueQueued_ ||
+        firstItemAcquisitionNoticeActive()) {
+        return;
+    }
+
+    const bool objectAlreadyOnRing =
+        spellRingContainsInstanceId(spellRing_, introTutorialChestLootInstanceId_) ||
+        spellRingContainsObjectId(spellRing_, introTutorialChestLootObjectId_);
+
+    introTutorialChestLootPending_ = false;
+    introTutorialChestLootDialogueQueued_ = true;
+    queueStoryEventForTrigger(std::string(
+        objectAlreadyOnRing
+            ? IntroTutorialChestLootRingTrigger
+            : IntroTutorialChestLootInventoryTrigger));
+}
+
 void Game::switchActiveRingWithLog(int delta)
 {
     if (delta == 0) {
@@ -2505,8 +2565,9 @@ void Game::update(const Input& input, const Time& time)
     }
     const bool pendingStoryDelayWasActive = pendingStoryTriggerDelayActive();
     updatePendingStoryTriggerDelay(time.deltaSeconds());
-    if (pendingStoryDelayWasActive) {
+    if (pendingStoryDelayWasActive && pendingStoryTriggerDelayActive()) {
         updateDialoguePlayerIdleAnimation(time.deltaSeconds());
+        updatePausedDungeonPresentation(time.deltaSeconds());
         return;
     }
     if (worldBuildActive()) {
@@ -2526,6 +2587,7 @@ void Game::update(const Input& input, const Time& time)
     } uiSoundFlush{*this, ui};
     const bool wasPaused = gameProgressPaused();
     updateScreenMode(input, ui, time.deltaSeconds(), &effectDiscoveries);
+    queueIntroTutorialChestLootDialogueIfReady();
     if (inventory_.equippedStaffInstanceId() != observedEquippedStaffInstanceId_) {
         refreshEquipmentModifiers();
         applyPermanentUpgrades();
@@ -2540,16 +2602,13 @@ void Game::update(const Input& input, const Time& time)
         applyEffectDiscoveries(effectDiscoveries);
     }
     syncIntroTutorialTerrainDamageLocks();
-    if ((dialogue_.active() || dungeonFocusActive()) && mode_ == ScreenMode::Playing) {
-        spellRing_.updatePresentation(player_, time.deltaSeconds(), balance_);
+    if (dungeonEventUiSuppressed()) {
+        updatePausedDungeonPresentation(time.deltaSeconds());
     }
 
     if (!paused) {
         runStats_.elapsedSeconds += time.deltaSeconds();
         updateAstralRunProgress();
-        if (!introTutorialActive() && currentStageId_ == "stage_01_stardust" && runStats_.elapsedSeconds >= 1.0f) {
-            queueStoryEventForTrigger("tutorial:light");
-        }
         updatePlayerFootstepDust(time.deltaSeconds());
         const RuntimeBalance dungeonBalance = runtimeBalanceForDungeon();
         const int playerChunkBeforeX = chunkCoordForWorld(player_.position.x);
@@ -2636,9 +2695,6 @@ void Game::update(const Input& input, const Time& time)
             &magic_,
             &effectDiscoveries,
             &encyclopedia_);
-        if (!introTutorialActive() && (!digging_.dugTiles().empty() || !digging_.openedTiles().empty())) {
-            queueStoryEventForTrigger("tutorial:dig");
-        }
         if (!digging_.dugTiles().empty()) {
             bool brokeOre = false;
             for (const DugTile& tile : digging_.dugTiles()) {
@@ -2775,22 +2831,17 @@ void Game::update(const Input& input, const Time& time)
             !introTutorialChestLootDialogueQueued_ &&
             !pickupEvents.empty()) {
             bool objectPickedUp = false;
-            bool objectAlreadyOnRing = false;
             for (const WorldDropPickupEvent& event : pickupEvents) {
                 if (event.kind != WorldDropKind::Object) {
                     continue;
                 }
                 objectPickedUp = true;
-                objectAlreadyOnRing = objectAlreadyOnRing ||
-                    spellRingContainsInstanceId(spellRing_, event.instanceId) ||
-                    spellRingContainsObjectId(spellRing_, event.id);
+                introTutorialChestLootObjectId_ = event.id;
+                introTutorialChestLootInstanceId_ = event.instanceId;
             }
             if (objectPickedUp) {
-                introTutorialChestLootDialogueQueued_ = true;
-                queueStoryEventForTrigger(std::string(
-                    objectAlreadyOnRing
-                        ? IntroTutorialChestLootRingTrigger
-                        : IntroTutorialChestLootInventoryTrigger));
+                introTutorialChestLootPending_ = true;
+                queueIntroTutorialChestLootDialogueIfReady();
             }
         }
         appendPickupLogs(pickupEvents);
@@ -2844,12 +2895,23 @@ void Game::update(const Input& input, const Time& time)
         const std::string bossCaptureObjectId = currentStageCleared()
             ? currentStageBossCaptureObjectId()
             : std::string{};
+        const bool useGamepadAim = input.lastActiveDevice() == InputDeviceKind::Gamepad;
+        const Vec2 captureAimDirection = input.hasAimAxis()
+            ? normalize(input.aimAxis())
+            : normalize(player_.facing);
         if (!introTutorialActive() && !ui.pointerConsumed() && captureCooldown_ <= 0.0f) {
-            const CaptureTargetPreview preview = enemies_.previewCaptureAt(
-                camera_.screenToWorld(input.mouseScreen()),
-                player_,
-                allowBossCapture,
-                bossCaptureObjectId);
+            const CaptureTargetPreview preview = useGamepadAim
+                ? enemies_.previewCaptureInDirection(
+                    player_.position,
+                    captureAimDirection,
+                    player_,
+                    allowBossCapture,
+                    bossCaptureObjectId)
+                : enemies_.previewCaptureAt(
+                    camera_.screenToWorld(input.mouseScreen()),
+                    player_,
+                    allowBossCapture,
+                    bossCaptureObjectId);
             if (preview.challengeable) {
                 captureHoverEnemyId_ = preview.enemyRuntimeId;
             }
@@ -2919,13 +2981,22 @@ void Game::update(const Input& input, const Time& time)
         bool capturedEnemyThisFrame = false;
         if (!introTutorialActive() && input.capturePressed() && !ui.pointerConsumed() && captureCooldown_ <= 0.0f) {
             playAudioSe(AudioSeCaptureThrow);
-            const CaptureResult capture = enemies_.tryCaptureAt(
-                camera_.screenToWorld(input.mouseScreen()),
-                player_,
-                spellRing_,
-                inventory_,
-                allowBossCapture,
-                bossCaptureObjectId);
+            const CaptureResult capture = useGamepadAim
+                ? enemies_.tryCaptureInDirection(
+                    player_.position,
+                    captureAimDirection,
+                    player_,
+                    spellRing_,
+                    inventory_,
+                    allowBossCapture,
+                    bossCaptureObjectId)
+                : enemies_.tryCaptureAt(
+                    camera_.screenToWorld(input.mouseScreen()),
+                    player_,
+                    spellRing_,
+                    inventory_,
+                    allowBossCapture,
+                    bossCaptureObjectId);
             if (capture.type != CaptureResultType::NoTarget) {
                 captureCooldown_ = capture.type == CaptureResultType::Success ? 0.35f : 0.75f;
             }

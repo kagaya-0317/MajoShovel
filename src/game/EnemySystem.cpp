@@ -73,6 +73,7 @@ constexpr float WanderRetargetMax = 1.8f;
 constexpr float PatrolRetargetMin = 1.8f;
 constexpr float PatrolRetargetMax = 3.2f;
 constexpr float PatrolRadius = 120.0f;
+constexpr float MovementLeashSteerThreshold = 0.72f;
 constexpr float ItemSeekRadius = 240.0f;
 constexpr float DigActionInterval = 0.11f;
 constexpr float SwarmAlertRadius = 180.0f;
@@ -2585,7 +2586,8 @@ bool EnemySystem::spawnFixedNodeEnemy(
     Vec2 playerPosition,
     const RuntimeBalance& balance,
     const EnemyCatalog& enemyCatalog,
-    bool detectedOnSpawn)
+    bool detectedOnSpawn,
+    int* outRuntimeId)
 {
     const EnemyDefinition* definition = chooseEnemyDefinition(enemyCatalog);
     float radius = balance.enemyRadius;
@@ -2614,7 +2616,8 @@ bool EnemySystem::spawnFixedNodeEnemy(
         enemyCatalog,
         detectedOnSpawn,
         playerPosition,
-        0.0f);
+        0.0f,
+        outRuntimeId);
 }
 
 bool EnemySystem::spawnSpecificEnemy(
@@ -2626,7 +2629,8 @@ bool EnemySystem::spawnSpecificEnemy(
     const EnemyCatalog& enemyCatalog,
     bool allowNearPlayer,
     bool detectedOnSpawn,
-    float spawnWarmupOverride)
+    float spawnWarmupOverride,
+    int* outRuntimeId)
 {
     if (activeCount() >= balance.enemySoftCap) {
         return false;
@@ -2650,7 +2654,8 @@ bool EnemySystem::spawnSpecificEnemy(
         enemyCatalog,
         detectedOnSpawn,
         playerPosition,
-        spawnWarmupOverride);
+        spawnWarmupOverride,
+        outRuntimeId);
 }
 
 bool EnemySystem::spawnEventEnemy(
@@ -3600,6 +3605,20 @@ void EnemySystem::update(
             }
             direction = enemy.aiMoveDirection;
         }
+        if (enemy.movementLeashEnabled && enemy.movementLeashRadius > 0.0f) {
+            const Vec2 toLeashCenter = enemy.movementLeashCenter - enemy.position;
+            const float leashDistance = length(toLeashCenter);
+            const float steerDistance = enemy.movementLeashRadius * MovementLeashSteerThreshold;
+            if (leashDistance > steerDistance && leashDistance > 0.0001f) {
+                const Vec2 leashDirection = toLeashCenter / leashDistance;
+                if (lengthSquared(direction) <= 0.0001f || dot(normalize(direction), leashDirection) < 0.0f) {
+                    direction = leashDirection;
+                } else {
+                    const float leashWeight = leashDistance > enemy.movementLeashRadius ? 2.0f : 1.25f;
+                    direction = normalize(direction + leashDirection * leashWeight);
+                }
+            }
+        }
         double baseSpeed = balance.enemySpeed;
         if (enemy.definition != nullptr && enemy.definition->moveSpeed > 0.0 && std::isfinite(enemy.definition->moveSpeed)) {
             baseSpeed = enemy.definition->moveSpeed;
@@ -3673,6 +3692,15 @@ void EnemySystem::update(
             }
         } else {
             moveWithCollision(enemy, map, enemy.velocity, dt);
+        }
+        if (enemy.movementLeashEnabled && enemy.movementLeashRadius > 0.0f) {
+            const Vec2 fromLeashCenter = enemy.position - enemy.movementLeashCenter;
+            const float leashDistance = length(fromLeashCenter);
+            if (leashDistance > enemy.movementLeashRadius && leashDistance > 0.0001f) {
+                enemy.position = enemy.movementLeashCenter + fromLeashCenter / leashDistance * enemy.movementLeashRadius;
+                enemy.velocity = {};
+                enemy.aiDecisionTimer = 0.0f;
+            }
         }
 
         if ((confused || aiId == "wander" || aiId == "patrol" || aiId == "item_seek" || aiId == "dig_wander") &&
@@ -4852,6 +4880,27 @@ bool EnemySystem::setManualDetectionOnlyNear(Vec2 position, float radius, bool m
     return true;
 }
 
+bool EnemySystem::setManualDetectionOnlyForRuntimeEnemy(int runtimeId, bool manualOnly)
+{
+    Enemy* enemy = findRuntimeEnemy(runtimeId);
+    if (enemy == nullptr) {
+        return false;
+    }
+    enemy->manualDetectionOnly = manualOnly;
+    return true;
+}
+
+bool EnemySystem::forceDetectRuntimeEnemy(int runtimeId, Vec2 playerPosition, bool showIcon)
+{
+    Enemy* enemy = findRuntimeEnemy(runtimeId);
+    if (enemy == nullptr) {
+        return false;
+    }
+    enemy->manualDetectionOnly = false;
+    forceDetectInSight(*enemy, playerPosition, showIcon);
+    return true;
+}
+
 bool EnemySystem::forceDetectEnemyNear(Vec2 position, float radius, Vec2 playerPosition, bool showIcon)
 {
     Enemy* enemy = findActiveEnemyNear(position, radius);
@@ -4860,6 +4909,28 @@ bool EnemySystem::forceDetectEnemyNear(Vec2 position, float radius, Vec2 playerP
     }
     enemy->manualDetectionOnly = false;
     forceDetectInSight(*enemy, playerPosition, showIcon);
+    return true;
+}
+
+bool EnemySystem::setRuntimeEnemyMovementLeash(int runtimeId, Vec2 center, float radius)
+{
+    Enemy* enemy = findRuntimeEnemy(runtimeId);
+    if (enemy == nullptr) {
+        return false;
+    }
+    enemy->movementLeashEnabled = radius > 0.0f;
+    enemy->movementLeashCenter = center;
+    enemy->movementLeashRadius = std::max(0.0f, radius);
+    if (!enemy->movementLeashEnabled) {
+        return true;
+    }
+    const Vec2 fromLeashCenter = enemy->position - center;
+    const float leashDistance = length(fromLeashCenter);
+    if (leashDistance > enemy->movementLeashRadius && leashDistance > 0.0001f) {
+        enemy->position = center + fromLeashCenter / leashDistance * enemy->movementLeashRadius;
+        enemy->velocity = {};
+        enemy->aiDecisionTimer = 0.0f;
+    }
     return true;
 }
 
@@ -4891,6 +4962,16 @@ int EnemySystem::activeRuntimeEnemyCount(const std::vector<int>& runtimeIds) con
 bool EnemySystem::runtimeEnemyActive(int runtimeId) const
 {
     return findRuntimeEnemy(runtimeId) != nullptr;
+}
+
+bool EnemySystem::runtimeEnemyPosition(int runtimeId, Vec2& outPosition) const
+{
+    const Enemy* enemy = findRuntimeEnemy(runtimeId);
+    if (enemy == nullptr) {
+        return false;
+    }
+    outPosition = enemy->position;
+    return true;
 }
 
 int EnemySystem::consumePendingXp()
@@ -5017,6 +5098,46 @@ const Enemy* EnemySystem::findCaptureTarget(Vec2 targetWorld) const
     return best;
 }
 
+Enemy* EnemySystem::findCaptureTargetInDirection(Vec2 origin, Vec2 direction)
+{
+    return const_cast<Enemy*>(std::as_const(*this).findCaptureTargetInDirection(origin, direction));
+}
+
+const Enemy* EnemySystem::findCaptureTargetInDirection(Vec2 origin, Vec2 direction) const
+{
+    if (lengthSquared(direction) <= 0.0001f) {
+        return nullptr;
+    }
+
+    const Vec2 aim = normalize(direction);
+    const Enemy* best = nullptr;
+    float bestScore = std::numeric_limits<float>::max();
+    for (const Enemy& enemy : enemies_.items()) {
+        if (!enemy.active || enemy.definition == nullptr) {
+            continue;
+        }
+        const Vec2 toEnemy = enemy.position - origin;
+        const float along = dot(toEnemy, aim);
+        if (along < 0.0f || along > CaptureReach) {
+            continue;
+        }
+
+        const float distanceSq = lengthSquared(toEnemy);
+        const float perpendicularSq = std::max(0.0f, distanceSq - along * along);
+        const float targetRadius = std::max(CaptureTargetMinRadius, effectiveEnemyRadius(enemy) + CaptureTargetPadding);
+        if (perpendicularSq > targetRadius * targetRadius) {
+            continue;
+        }
+
+        const float score = along + std::sqrt(perpendicularSq) * 0.35f;
+        if (score < bestScore) {
+            bestScore = score;
+            best = &enemy;
+        }
+    }
+    return best;
+}
+
 Enemy* EnemySystem::findActiveEnemyNear(Vec2 position, float radius)
 {
     Enemy* best = nullptr;
@@ -5035,13 +5156,12 @@ Enemy* EnemySystem::findActiveEnemyNear(Vec2 position, float radius)
     return best;
 }
 
-CaptureTargetPreview EnemySystem::previewCaptureAt(
-    Vec2 targetWorld,
+CaptureTargetPreview EnemySystem::previewCaptureTarget(
+    const Enemy* target,
     const Player& player,
     bool allowBossCapture,
     std::string_view bossCaptureObjectId) const
 {
-    const Enemy* target = findCaptureTarget(targetWorld);
     if (target == nullptr) {
         return {};
     }
@@ -5067,16 +5187,33 @@ CaptureTargetPreview EnemySystem::previewCaptureAt(
     return preview;
 }
 
-CaptureResult EnemySystem::tryCaptureAt(
+CaptureTargetPreview EnemySystem::previewCaptureAt(
     Vec2 targetWorld,
+    const Player& player,
+    bool allowBossCapture,
+    std::string_view bossCaptureObjectId) const
+{
+    return previewCaptureTarget(findCaptureTarget(targetWorld), player, allowBossCapture, bossCaptureObjectId);
+}
+
+CaptureTargetPreview EnemySystem::previewCaptureInDirection(
+    Vec2 origin,
+    Vec2 direction,
+    const Player& player,
+    bool allowBossCapture,
+    std::string_view bossCaptureObjectId) const
+{
+    return previewCaptureTarget(findCaptureTargetInDirection(origin, direction), player, allowBossCapture, bossCaptureObjectId);
+}
+
+CaptureResult EnemySystem::tryCaptureTarget(
+    Enemy* best,
     Player& player,
     SpellRingSystem& spellRing,
     InventorySystem& inventory,
     bool allowBossCapture,
     std::string_view bossCaptureObjectId)
 {
-    Enemy* best = findCaptureTarget(targetWorld);
-
     if (best == nullptr) {
         return {};
     }
@@ -5135,6 +5272,41 @@ CaptureResult EnemySystem::tryCaptureAt(
     result.instanceId = addResult.instanceId;
     result.protectable = addResult.kind == InventoryAddKind::Instance && !addResult.instanceId.empty();
     return result;
+}
+
+CaptureResult EnemySystem::tryCaptureAt(
+    Vec2 targetWorld,
+    Player& player,
+    SpellRingSystem& spellRing,
+    InventorySystem& inventory,
+    bool allowBossCapture,
+    std::string_view bossCaptureObjectId)
+{
+    return tryCaptureTarget(
+        findCaptureTarget(targetWorld),
+        player,
+        spellRing,
+        inventory,
+        allowBossCapture,
+        bossCaptureObjectId);
+}
+
+CaptureResult EnemySystem::tryCaptureInDirection(
+    Vec2 origin,
+    Vec2 direction,
+    Player& player,
+    SpellRingSystem& spellRing,
+    InventorySystem& inventory,
+    bool allowBossCapture,
+    std::string_view bossCaptureObjectId)
+{
+    return tryCaptureTarget(
+        findCaptureTargetInDirection(origin, direction),
+        player,
+        spellRing,
+        inventory,
+        allowBossCapture,
+        bossCaptureObjectId);
 }
 
 }

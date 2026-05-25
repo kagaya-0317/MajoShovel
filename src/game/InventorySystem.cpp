@@ -101,7 +101,7 @@ UiRect inventorySlotRect(int index)
     }, {ScreenSlotW, ScreenSlotH}};
 }
 
-UiRect shortcutHudPanelRect(int screenWidth, int screenHeight)
+UiRect makeShortcutHudPanelRect(int screenWidth, int screenHeight)
 {
     const float panelW = std::min(1040.0f, std::max(760.0f, static_cast<float>(screenWidth) - HudMargin * 2.0f));
     const float panelX = (static_cast<float>(screenWidth) - panelW) * 0.5f;
@@ -111,7 +111,7 @@ UiRect shortcutHudPanelRect(int screenWidth, int screenHeight)
 
 UiRect shortcutHudSlotRect(int column, int screenWidth, int screenHeight)
 {
-    const UiRect panel = shortcutHudPanelRect(screenWidth, screenHeight);
+    const UiRect panel = makeShortcutHudPanelRect(screenWidth, screenHeight);
     const float totalW = HudSlotSize * static_cast<float>(ShortcutHudColumns) +
         HudSlotGap * static_cast<float>(ShortcutHudColumns - 1);
     const float startX = panel.pos.x + (panel.size.x - totalW) * 0.5f;
@@ -2471,6 +2471,11 @@ void InventorySystem::render(
         static_cast<int>(commandItems.items.size()));
     drawDiscardConfirmDialog(renderer, catalog);
 
+}
+
+UiRect InventorySystem::shortcutHudPanelRect(int screenWidth, int screenHeight) const
+{
+    return makeShortcutHudPanelRect(screenWidth, screenHeight);
 }
 
 void InventorySystem::renderShortcutHud(Renderer& renderer, const SpellRingSystem& spellRing, int screenWidth, int screenHeight) const

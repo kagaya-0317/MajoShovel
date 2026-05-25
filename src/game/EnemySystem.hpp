@@ -143,8 +143,8 @@ public:
         const EnemyCatalog& enemyCatalog,
         std::string_view stageId);
     bool spawnNodeEnemy(TileMap& map, Vec2 desiredPosition, Vec2 playerPosition, const RuntimeBalance& balance, const EnemyCatalog& enemyCatalog, bool allowNearPlayer, bool detectedOnSpawn = false);
-    bool spawnFixedNodeEnemy(TileMap& map, Vec2 desiredPosition, Vec2 playerPosition, const RuntimeBalance& balance, const EnemyCatalog& enemyCatalog, bool detectedOnSpawn = false);
-    bool spawnSpecificEnemy(TileMap& map, std::string_view enemyId, Vec2 desiredPosition, Vec2 playerPosition, const RuntimeBalance& balance, const EnemyCatalog& enemyCatalog, bool allowNearPlayer, bool detectedOnSpawn = false, float spawnWarmupOverride = -1.0f);
+    bool spawnFixedNodeEnemy(TileMap& map, Vec2 desiredPosition, Vec2 playerPosition, const RuntimeBalance& balance, const EnemyCatalog& enemyCatalog, bool detectedOnSpawn = false, int* outRuntimeId = nullptr);
+    bool spawnSpecificEnemy(TileMap& map, std::string_view enemyId, Vec2 desiredPosition, Vec2 playerPosition, const RuntimeBalance& balance, const EnemyCatalog& enemyCatalog, bool allowNearPlayer, bool detectedOnSpawn = false, float spawnWarmupOverride = -1.0f, int* outRuntimeId = nullptr);
     bool spawnEventEnemy(TileMap& map, Vec2 desiredPosition, Vec2 playerPosition, const RuntimeBalance& balance, const EnemyCatalog& enemyCatalog, const EventEnemySpawnOptions& options, int* outRuntimeId = nullptr);
     bool spawnBoss(TileMap& map, Vec2 playerPosition, const RuntimeBalance& balance, const EnemyCatalog& enemyCatalog);
     bool spawnBossNear(TileMap& map, Vec2 desiredPosition, Vec2 playerPosition, const RuntimeBalance& balance, const EnemyCatalog& enemyCatalog);
@@ -185,8 +185,22 @@ public:
         const Player& player,
         bool allowBossCapture = true,
         std::string_view bossCaptureObjectId = {}) const;
+    CaptureTargetPreview previewCaptureInDirection(
+        Vec2 origin,
+        Vec2 direction,
+        const Player& player,
+        bool allowBossCapture = true,
+        std::string_view bossCaptureObjectId = {}) const;
     CaptureResult tryCaptureAt(
         Vec2 targetWorld,
+        Player& player,
+        SpellRingSystem& spellRing,
+        InventorySystem& inventory,
+        bool allowBossCapture = true,
+        std::string_view bossCaptureObjectId = {});
+    CaptureResult tryCaptureInDirection(
+        Vec2 origin,
+        Vec2 direction,
         Player& player,
         SpellRingSystem& spellRing,
         InventorySystem& inventory,
@@ -234,11 +248,15 @@ public:
     void clearSpawnBiases();
     void applySpawnBias(std::string_view group, double multiplier);
     void wakeDungeonEventEnemies(std::string_view eventId);
+    bool setManualDetectionOnlyForRuntimeEnemy(int runtimeId, bool manualOnly);
     bool setManualDetectionOnlyNear(Vec2 position, float radius, bool manualOnly);
+    bool forceDetectRuntimeEnemy(int runtimeId, Vec2 playerPosition, bool showIcon = true);
     bool forceDetectEnemyNear(Vec2 position, float radius, Vec2 playerPosition, bool showIcon = true);
+    bool setRuntimeEnemyMovementLeash(int runtimeId, Vec2 center, float radius);
     int activeDungeonEventEnemyCount(std::string_view eventId) const;
     int activeRuntimeEnemyCount(const std::vector<int>& runtimeIds) const;
     bool runtimeEnemyActive(int runtimeId) const;
+    bool runtimeEnemyPosition(int runtimeId, Vec2& outPosition) const;
     int consumePendingXp();
     void clearTemporaryState();
 
@@ -255,6 +273,20 @@ private:
     void queueEnemyObjectDrops(Enemy& enemy);
     Enemy* findCaptureTarget(Vec2 targetWorld);
     const Enemy* findCaptureTarget(Vec2 targetWorld) const;
+    Enemy* findCaptureTargetInDirection(Vec2 origin, Vec2 direction);
+    const Enemy* findCaptureTargetInDirection(Vec2 origin, Vec2 direction) const;
+    CaptureTargetPreview previewCaptureTarget(
+        const Enemy* target,
+        const Player& player,
+        bool allowBossCapture,
+        std::string_view bossCaptureObjectId) const;
+    CaptureResult tryCaptureTarget(
+        Enemy* target,
+        Player& player,
+        SpellRingSystem& spellRing,
+        InventorySystem& inventory,
+        bool allowBossCapture,
+        std::string_view bossCaptureObjectId);
     Enemy* findActiveEnemyNear(Vec2 position, float radius);
     Enemy* findRuntimeEnemy(int runtimeId);
     const Enemy* findRuntimeEnemy(int runtimeId) const;

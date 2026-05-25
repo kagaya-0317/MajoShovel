@@ -679,6 +679,11 @@ BaseEditRect Game::baseFacilityRectFor(BaseArea area, std::string_view facilityI
         return normalizeBaseEditRect(fallback);
     }
     if (area == BaseArea::HomeInterior &&
+        facilityId == std::string_view("home_exit") &&
+        sameBaseEditRect(rect, {592.0f, 574.0f, 96.0f, 42.0f})) {
+        return normalizeBaseEditRect(fallback);
+    }
+    if (area == BaseArea::HomeInterior &&
         facilityId == std::string_view("bed") &&
         sameBaseEditRect(rect, {680.0f, 188.0f, 233.0f, 107.0f})) {
         return normalizeBaseEditRect(fallback);
@@ -2976,6 +2981,25 @@ void Game::renderBaseEditOverlay(Renderer& renderer) const
         std::vector<BaseFacility> facilities = baseFacilities(baseArea_, ringWorkshopUnlocked_);
         for (BaseFacility& facility : facilities) {
             facility.rect = toUiRect(baseFacilityRectFor(baseArea_, facility.facilityId, toBaseEditRect(facility.rect)));
+        }
+        for (const BaseFacility& facility : facilities) {
+            const std::string_view facilityId = facility.facilityId;
+            const bool hiddenTransitionRect =
+                (baseArea_ == BaseArea::Outdoor && facilityId == "home_entrance") ||
+                (baseArea_ == BaseArea::HomeInterior && facilityId == "home_exit");
+            if (!hiddenTransitionRect) {
+                continue;
+            }
+
+            renderer.fillRect(facility.rect.pos, facility.rect.size, {255, 64, 180, 70});
+            renderer.drawRect(facility.rect.pos, facility.rect.size, {255, 220, 80, 255});
+            renderer.drawOutlinedText(
+                facility.rect.pos + Vec2{4.0f, -24.0f},
+                facility.displayName,
+                {255, 244, 180, 255},
+                {0, 0, 0, 180},
+                4,
+                2);
         }
         if (baseEditSelectedFacilityIndex_ >= 0 && baseEditSelectedFacilityIndex_ < static_cast<int>(facilities.size())) {
             const UiRect rect = facilities[static_cast<std::size_t>(baseEditSelectedFacilityIndex_)].rect;

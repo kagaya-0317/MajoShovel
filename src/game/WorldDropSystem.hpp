@@ -127,6 +127,7 @@ public:
         EffectSystem* effects = nullptr,
         std::vector<WorldDropPickupEvent>* pickupEvents = nullptr,
         int* blockedObjectPickupCount = nullptr);
+    void updatePresentation(float dt);
     void render(
         Renderer& renderer,
         const TileMap& tileMap,

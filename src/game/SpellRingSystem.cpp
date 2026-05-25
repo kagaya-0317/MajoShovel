@@ -296,9 +296,9 @@ RingOrbitTuning makeRingOrbitTuning(const RuntimeBalance& balance)
     return tuning;
 }
 
-Vec2 getRingCenterWorldPosition(Vec2 playerPosition, Vec2 playerFacing, float spellRingShift)
+Vec2 getRingCenterWorldPosition(Vec2 playerPosition, Vec2 shiftDirection, float spellRingShift)
 {
-    return playerPosition + playerFacing * spellRingShift;
+    return witchSelfLightCenter(playerPosition) + normalize(shiftDirection) * spellRingShift;
 }
 
 Vec2 getRingItemLocalPosition(float localAngle, const RingOrbitContext& context)
@@ -608,14 +608,14 @@ void SpellRingSystem::updatePresentation(const Player& player, float dt, const R
     advanceOrbitAngles(dt, balance);
     const Vec2 previousCenter = center_;
     if (state_ == SpellRingState::Normal) {
-        center_ = getRingCenterWorldPosition(player.position, player.facing, player.spellRingShift);
+        center_ = getRingCenterWorldPosition(player.position, player.spellRingShiftDirection, player.spellRingShift);
     }
     refreshItemWorldPositions(dt, previousCenter, balance, false);
 }
 
 void SpellRingSystem::resetRuntimeStateAtPlayer(const Player& player, const RuntimeBalance& balance)
 {
-    center_ = getRingCenterWorldPosition(player.position, player.facing, player.spellRingShift);
+    center_ = getRingCenterWorldPosition(player.position, player.spellRingShiftDirection, player.spellRingShift);
     throwDirection_ = player.facing;
     throwStart_ = center_;
     throwTime_ = 0.0f;
@@ -645,7 +645,7 @@ void SpellRingSystem::update(Player& player, const Input& input, float dt, float
 
     advanceOrbitAngles(safeDt, balance);
 
-    const Vec2 normalCenter = getRingCenterWorldPosition(player.position, player.facing, player.spellRingShift);
+    const Vec2 normalCenter = getRingCenterWorldPosition(player.position, player.spellRingShiftDirection, player.spellRingShift);
     const Vec2 previousCenter = center_;
     const RingEquipmentModifiers& activeEquipment = equipmentModifiersForRing(activeRingIndex_);
     const float throwCooldown = scaledAtLeast(
