@@ -1,4 +1,4 @@
-#include "game/DebugOverlay.hpp"
+﻿#include "game/DebugOverlay.hpp"
 
 #include <cstdio>
 #include <string>
@@ -6,6 +6,11 @@
 namespace majo {
 
 namespace {
+
+const char* yesNo(bool value)
+{
+    return value ? "yes" : "no";
+}
 
 const char* tileTypeName(TileType type)
 {
@@ -39,6 +44,11 @@ void DebugOverlay::render(
     int nearestWarpIndex,
     bool nearestWarpDiscovered,
     int discoveredWarpCount,
+    int unlockedWarpCount,
+    bool hasLatestWarpPointPosition,
+    Vec2 latestWarpPointPosition,
+    bool hasRequestedWarpPointStartPosition,
+    Vec2 requestedWarpPointStartPosition,
     int rewardNodeCount,
     int moneyNodeCount,
     int buriedVisibleNodeCount,
@@ -46,7 +56,9 @@ void DebugOverlay::render(
     int exposedEnemyNodeCount,
     int buriedEnemyNodeCount,
     int spawnedEnemyNodeCount,
-    bool autoReloadBlocked)
+    bool autoReloadBlocked,
+    bool autoSimulationDebugActive,
+    const autosim::AutoSimulationDebugSnapshot& autoSimulationDebug)
 {
     if (!visible_) {
         return;
@@ -61,8 +73,22 @@ void DebugOverlay::render(
     const TerrainDebugInfo terrain = map.terrainDebugAtWorld(player.position);
     const int playerTileX = map.worldToTile(player.position.x);
     const int playerTileY = map.worldToTile(player.position.y);
+    char latestWarpText[64];
+    std::snprintf(
+        latestWarpText,
+        sizeof(latestWarpText),
+        hasLatestWarpPointPosition ? "(%.0f,%.0f)" : "-",
+        latestWarpPointPosition.x,
+        latestWarpPointPosition.y);
+    char requestedWarpStartText[64];
+    std::snprintf(
+        requestedWarpStartText,
+        sizeof(requestedWarpStartText),
+        hasRequestedWarpPointStartPosition ? "(%.0f,%.0f)" : "-",
+        requestedWarpPointStartPosition.x,
+        requestedWarpPointStartPosition.y);
 
-    char buffer[2048];
+    char buffer[4096];
     std::snprintf(buffer, sizeof(buffer),
         "FPS: %03d   Auto reload block: %s\n"
         "Stage: %d %s / %s   Seed: %u\n"
@@ -70,7 +96,7 @@ void DebugOverlay::render(
         "Player: HP %d/%d   Lv %02d XP %02d/%02d   Tile(%d,%d)\n"
         "Terrain: %s HP %d/%d Hard %.2f   MainPathDist %.1f\n"
         "Ring: %d/%d %s   R %03d Speed %.2f Throw %02d%%\n"
-        "Warp: nearest %d %s   found %d/%d\n"
+        "Warp: nearest %d %s   found %d/%d unlocked %d latest %s startReq %s\n"
         "Chunks: active %02d generated %02zu   Enemies: active %03d",
         static_cast<int>(time.fps()),
         autoReloadBlocked ? "ON" : "OFF",
@@ -106,6 +132,9 @@ void DebugOverlay::render(
         nearestWarpDiscovered ? "found" : "hidden",
         discoveredWarpCount,
         currentStage.warpPointCount,
+        unlockedWarpCount,
+        latestWarpText,
+        requestedWarpStartText,
         map.activeChunkCount(),
         map.generatedChunkCount(),
         enemies.activeCount());
@@ -135,12 +164,64 @@ void DebugOverlay::render(
     std::snprintf(
         buffer + std::char_traits<char>::length(buffer),
         sizeof(buffer) - std::char_traits<char>::length(buffer),
-        "\nProfile: gen=%s terrain=%s goal=%d hard=%.2f special=%d\nEnemies:\n%s",
+        "\nProfile: gen=%s terrain=%s goal=%d hard=%.2f special=%d",
         currentStage.generationProfile.c_str(),
         currentStage.terrainProfile.c_str(),
         currentStage.goalDistanceTiles,
         currentStage.terrainHardnessMultiplier,
-        currentStage.specialRoomCount,
+        currentStage.specialRoomCount);
+    if (autoSimulationDebugActive && autoSimulationDebug.active) {
+        std::snprintf(
+            buffer + std::char_traits<char>::length(buffer),
+            sizeof(buffer) - std::char_traits<char>::length(buffer),
+            "\nAutoSim: %s plan=%s goal=%s reason=%s lock=%s %.1fs"
+            "\nAutoPlan: player(%.0f,%.0f) target=%s(%.0f,%.0f) d=%.1f move=%s(%.0f,%.0f) d=%.1f"
+            "\nAutoRoute: dig=%d hard=%d avoidHard=%s stuck=%d still=%.1f mineIdle=%.1f escape=%.1f"
+            "\nAutoWarp: known=%d discovered=%d unlocked=%d total=%d nearest=%d %s known=%s d=%.1f"
+            "\nAutoWarpTarget: target=%d %s known=%s dToPlan=%.1f nextUnknown=%d %s d=%.1f",
+            autosim::autoSimulationStateName(autoSimulationDebug.state),
+            yesNo(autoSimulationDebug.hasPlan),
+            autosim::autoSimulationGoalName(autoSimulationDebug.goal),
+            autoSimulationDebug.reason.empty() ? "-" : autoSimulationDebug.reason.c_str(),
+            yesNo(autoSimulationDebug.lockedPlanActive),
+            autoSimulationDebug.planLockSeconds,
+            autoSimulationDebug.playerWorld.x,
+            autoSimulationDebug.playerWorld.y,
+            yesNo(autoSimulationDebug.hasTarget),
+            autoSimulationDebug.targetWorld.x,
+            autoSimulationDebug.targetWorld.y,
+            autoSimulationDebug.distanceToTarget,
+            yesNo(autoSimulationDebug.hasMoveTarget),
+            autoSimulationDebug.moveTargetWorld.x,
+            autoSimulationDebug.moveTargetWorld.y,
+            autoSimulationDebug.distanceToMoveTarget,
+            autoSimulationDebug.routeDigTileCount,
+            autoSimulationDebug.routeHardTileCount,
+            yesNo(autoSimulationDebug.routeAvoidingHardWall),
+            autoSimulationDebug.stuckCount,
+            autoSimulationDebug.stillSeconds,
+            autoSimulationDebug.miningNoProgressSeconds,
+            autoSimulationDebug.escapeStuckSeconds,
+            autoSimulationDebug.knownWarpPoints,
+            autoSimulationDebug.discoveredWarpPoints,
+            autoSimulationDebug.unlockedWarpPoints,
+            autoSimulationDebug.totalWarpPoints,
+            autoSimulationDebug.nearestWarpIndex,
+            autoSimulationDebug.nearestWarpDiscovered ? "found" : "hidden",
+            yesNo(autoSimulationDebug.nearestWarpKnown),
+            autoSimulationDebug.nearestWarpDistance,
+            autoSimulationDebug.targetWarpIndex,
+            autoSimulationDebug.targetWarpDiscovered ? "found" : "hidden",
+            yesNo(autoSimulationDebug.targetWarpKnown),
+            autoSimulationDebug.targetWarpDistance,
+            autoSimulationDebug.nextUnknownWarpIndex,
+            autoSimulationDebug.nextUnknownWarpDiscovered ? "found" : "hidden",
+            autoSimulationDebug.nextUnknownWarpDistance);
+    }
+    std::snprintf(
+        buffer + std::char_traits<char>::length(buffer),
+        sizeof(buffer) - std::char_traits<char>::length(buffer),
+        "\nEnemies:\n%s",
         enemySummary.c_str());
     renderer.setScreenSpace();
     constexpr Vec2 PanelPos{10.0f, 10.0f};

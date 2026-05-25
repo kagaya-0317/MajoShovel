@@ -6,11 +6,13 @@
 #include <algorithm>
 #include <cctype>
 #include <cstdlib>
+#include <exception>
 #include <filesystem>
 #include <fstream>
 #include <optional>
 #include <string>
 #include <string_view>
+#include <vector>
 
 namespace majo {
 
@@ -34,6 +36,95 @@ std::string trimAscii(std::string text)
     text.erase(text.begin(), std::find_if_not(text.begin(), text.end(), isSpace));
     text.erase(std::find_if_not(text.rbegin(), text.rend(), isSpace).base(), text.end());
     return text;
+}
+
+std::vector<std::string> splitAsciiWords(std::string_view text)
+{
+    std::vector<std::string> words;
+    std::size_t pos = 0;
+    while (pos < text.size()) {
+        while (pos < text.size() && std::isspace(static_cast<unsigned char>(text[pos])) != 0) {
+            ++pos;
+        }
+        const std::size_t start = pos;
+        while (pos < text.size() && std::isspace(static_cast<unsigned char>(text[pos])) == 0) {
+            ++pos;
+        }
+        if (start < pos) {
+            words.emplace_back(text.substr(start, pos - start));
+        }
+    }
+    return words;
+}
+
+std::optional<float> parseFloatSetting(std::string_view text)
+{
+    try {
+        std::size_t consumed = 0;
+        const float value = std::stof(std::string(text), &consumed);
+        if (consumed == text.size()) {
+            return value;
+        }
+    } catch (const std::exception&) {
+    }
+    return std::nullopt;
+}
+
+std::optional<int> parseIntSetting(std::string_view text)
+{
+    try {
+        std::size_t consumed = 0;
+        const int value = std::stoi(std::string(text), &consumed);
+        if (consumed == text.size()) {
+            return value;
+        }
+    } catch (const std::exception&) {
+    }
+    return std::nullopt;
+}
+
+std::optional<bool> parseBoolSetting(std::string_view text)
+{
+    const std::string normalized = lowerAscii(std::string(text));
+    if (normalized == "on" || normalized == "true" || normalized == "1") {
+        return true;
+    }
+    if (normalized == "off" || normalized == "false" || normalized == "0") {
+        return false;
+    }
+    return std::nullopt;
+}
+
+std::string inputBindingSummary(const std::vector<InputBinding>& bindings)
+{
+    if (bindings.empty()) {
+        return "(none)";
+    }
+    std::string result;
+    for (std::size_t i = 0; i < bindings.size(); ++i) {
+        if (i > 0) {
+            result += ", ";
+        }
+        result += inputBindingDisplayName(bindings[i]);
+    }
+    return result;
+}
+
+bool inputBindingMapsEqual(const InputBindingMap& lhs, const InputBindingMap& rhs)
+{
+    for (int action = 0; action < InputActionCount; ++action) {
+        const auto& left = lhs[action];
+        const auto& right = rhs[action];
+        if (left.size() != right.size()) {
+            return false;
+        }
+        for (std::size_t i = 0; i < left.size(); ++i) {
+            if (!inputBindingEquals(left[i], right[i])) {
+                return false;
+            }
+        }
+    }
+    return true;
 }
 
 std::filesystem::path devSettingsRootPath()
@@ -285,9 +376,13 @@ bool saveDevAutoReloadBlocked(bool blocked, std::string& outError)
 
 App::~App()
 {
+    if (settingsSavePending_) {
+        saveSettingsNow();
+    }
     setLogSink({});
     audio_.shutdown();
     debugConsole_.shutdown();
+    input_.shutdown();
     delete renderer_;
     if (sdlRenderer_) {
         SDL_DestroyRenderer(sdlRenderer_);
@@ -296,6 +391,103 @@ App::~App()
         SDL_DestroyWindow(window_);
     }
     SDL_Quit();
+}
+
+void App::applyAudioSettings()
+{
+    settings_ = sanitizeSettings(settings_);
+    audio_.setMasterVolume(settings_.audio.masterVolume);
+    audio_.setBgmVolume(settings_.audio.bgmVolume);
+    audio_.setSeVolume(settings_.audio.seVolume);
+}
+
+void App::applyVideoSettings(bool notifyGameResize)
+{
+    settings_ = sanitizeSettings(settings_);
+
+    if (sdlRenderer_ != nullptr) {
+        if (!SDL_SetRenderVSync(sdlRenderer_, settings_.video.vsync ? 1 : 0)) {
+            logWarning(std::string("SDL_SetRenderVSync failed: ") + SDL_GetError());
+        }
+    }
+
+    if (window_ == nullptr) {
+        width_ = settings_.video.windowWidth;
+        height_ = settings_.video.windowHeight;
+        return;
+    }
+
+    const int previousWidth = width_;
+    const int previousHeight = height_;
+
+    if (settings_.video.windowMode == WindowMode::BorderlessFullscreen) {
+        if (!SDL_SetWindowFullscreenMode(window_, nullptr)) {
+            logWarning(std::string("SDL_SetWindowFullscreenMode failed: ") + SDL_GetError());
+        }
+        if (!SDL_SetWindowFullscreen(window_, true)) {
+            logWarning(std::string("SDL_SetWindowFullscreen failed: ") + SDL_GetError());
+        }
+    } else {
+        if (!SDL_SetWindowFullscreen(window_, false)) {
+            logWarning(std::string("SDL_SetWindowFullscreen failed: ") + SDL_GetError());
+        }
+        SDL_SyncWindow(window_);
+        if (!SDL_SetWindowBordered(window_, true)) {
+            logWarning(std::string("SDL_SetWindowBordered failed: ") + SDL_GetError());
+        }
+        if (!SDL_SetWindowSize(window_, settings_.video.windowWidth, settings_.video.windowHeight)) {
+            logWarning(std::string("SDL_SetWindowSize failed: ") + SDL_GetError());
+        }
+        if (!SDL_SetWindowPosition(window_, SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED)) {
+            logWarning(std::string("SDL_SetWindowPosition failed: ") + SDL_GetError());
+        }
+    }
+
+    SDL_SyncWindow(window_);
+    int actualWidth = width_;
+    int actualHeight = height_;
+    if (SDL_GetWindowSize(window_, &actualWidth, &actualHeight)) {
+        width_ = actualWidth;
+        height_ = actualHeight;
+        if (settings_.video.windowMode == WindowMode::Windowed) {
+            settings_.video.windowWidth = actualWidth;
+            settings_.video.windowHeight = actualHeight;
+        }
+    }
+
+    if (notifyGameResize && (width_ != previousWidth || height_ != previousHeight)) {
+        game_.resize(width_, height_);
+    }
+}
+
+void App::queueSettingsSave()
+{
+    settingsSavePending_ = true;
+    settingsSaveDelaySeconds_ = 0.5f;
+}
+
+void App::updateSettingsSave(float dt)
+{
+    if (!settingsSavePending_) {
+        return;
+    }
+    settingsSaveDelaySeconds_ -= dt;
+    if (settingsSaveDelaySeconds_ <= 0.0f) {
+        saveSettingsNow();
+    }
+}
+
+bool App::saveSettingsNow()
+{
+    settings_ = sanitizeSettings(settings_);
+    std::string error;
+    if (!settingsStore_.save(settings_, &error)) {
+        logError("Settings save failed: " + error);
+        return false;
+    }
+    settingsSavePending_ = false;
+    settingsSaveDelaySeconds_ = 0.0f;
+    return true;
 }
 
 bool App::initialize(const char* title, int width, int height, bool testPlayMode)
@@ -311,11 +503,24 @@ bool App::initialize(const char* title, int width, int height, bool testPlayMode
         logError(std::string("SDL_Init failed: ") + SDL_GetError());
         return false;
     }
+    const bool hadSettingsFile = settingsStore_.exists();
+    std::string settingsError;
+    if (!settingsStore_.load(settings_, &settingsError)) {
+        logWarning("Settings load failed; using defaults: " + settingsError);
+        settings_ = GameSettings{};
+    }
+    settings_ = sanitizeSettings(settings_);
+    input_.setBindingMap(settings_.input.bindings);
+    width_ = settings_.video.windowWidth;
+    height_ = settings_.video.windowHeight;
+    if (!hadSettingsFile) {
+        saveSettingsNow();
+    }
     if (!SDL_CreateWindowAndRenderer(title, width_, height_, SDL_WINDOW_RESIZABLE, &window_, &sdlRenderer_)) {
         logError(std::string("SDL_CreateWindowAndRenderer failed: ") + SDL_GetError());
         return false;
     }
-    SDL_SetRenderVSync(sdlRenderer_, 1);
+    applyVideoSettings(false);
     renderer_ = new Renderer(sdlRenderer_);
     DevLaunchMode launchMode = DevLaunchMode::PreTitle;
     if (testPlayMode_) {
@@ -334,8 +539,32 @@ bool App::initialize(const char* title, int width, int height, bool testPlayMode
     if (!audio_.initialize()) {
         logWarning("Audio disabled: " + audio_.lastError());
     }
+    applyAudioSettings();
     audio_.loadManifest("assets/audio/audio_manifest.tsv");
     game_.setAudioEngine(&audio_);
+    game_.setSettingsAccessors(
+        [this]() {
+            return settings_;
+        },
+        [this](const GameSettings& settings) {
+            const InputBindingMap previousBindings = settings_.input.bindings;
+            settings_ = sanitizeSettings(settings);
+            if (!inputBindingMapsEqual(previousBindings, settings_.input.bindings)) {
+                input_.setBindingMap(settings_.input.bindings);
+            }
+            applyAudioSettings();
+            applyVideoSettings(true);
+            queueSettingsSave();
+        });
+    game_.setInputBindingAccessors(
+        [this]() {
+            return settings_.input.bindings;
+        },
+        [this](const InputBindingMap& bindings) {
+            settings_.input.bindings = sanitizeInputBindings(bindings);
+            input_.setBindingMap(settings_.input.bindings);
+            queueSettingsSave();
+        });
     loadAssets();
     game_.initialize(width_, height_);
     setRuntimeHotReloadEnabled(testPlayMode_ && !autoReloadBlocked_);
@@ -518,16 +747,297 @@ void App::checkAssetHotReload()
 
 void App::toggleFullscreen()
 {
-    const SDL_WindowFlags flags = SDL_GetWindowFlags(window_);
-    const bool fullscreen = (flags & SDL_WINDOW_FULLSCREEN) != 0;
-    if (!SDL_SetWindowFullscreen(window_, !fullscreen)) {
-        logError(std::string("SDL_SetWindowFullscreen failed: ") + SDL_GetError());
+    if (window_ == nullptr) {
+        return;
     }
+    if (settings_.video.windowMode == WindowMode::BorderlessFullscreen) {
+        settings_.video.windowMode = WindowMode::Windowed;
+    } else {
+        int windowWidth = width_;
+        int windowHeight = height_;
+        if (SDL_GetWindowSize(window_, &windowWidth, &windowHeight)) {
+            settings_.video.windowWidth = windowWidth;
+            settings_.video.windowHeight = windowHeight;
+        }
+        settings_.video.windowMode = WindowMode::BorderlessFullscreen;
+    }
+    applyVideoSettings(true);
+    queueSettingsSave();
+}
+
+bool App::executeSettingsDebugCommand(const std::string& normalizedCommand)
+{
+    const std::vector<std::string> words = splitAsciiWords(normalizedCommand);
+    if (words.empty() || words[0] != "settings") {
+        return false;
+    }
+
+    if (words.size() == 1 || words[1] == "show") {
+        logInfo(
+            "Settings: audio master=" + std::to_string(settings_.audio.masterVolume) +
+            " bgm=" + std::to_string(settings_.audio.bgmVolume) +
+            " se=" + std::to_string(settings_.audio.seVolume) +
+            " video mode=" + windowModeName(settings_.video.windowMode) +
+            " size=" + std::to_string(settings_.video.windowWidth) +
+            "x" + std::to_string(settings_.video.windowHeight) +
+            " vsync=" + (settings_.video.vsync ? "on" : "off") +
+            " path=" + settingsStore_.path().string());
+        return true;
+    }
+
+    if (words[1] == "save") {
+        if (saveSettingsNow()) {
+            logInfo("Settings saved: " + settingsStore_.path().string());
+        }
+        return true;
+    }
+
+    if (words[1] == "reload") {
+        std::string error;
+        GameSettings loaded;
+        if (!settingsStore_.load(loaded, &error)) {
+            logError("Settings reload failed: " + error);
+            return true;
+        }
+        settings_ = sanitizeSettings(loaded);
+        input_.setBindingMap(settings_.input.bindings);
+        applyAudioSettings();
+        applyVideoSettings(true);
+        logInfo("Settings reloaded: " + settingsStore_.path().string());
+        return true;
+    }
+
+    if (words[1] == "input") {
+        if (words.size() == 2 || words[2] == "show") {
+            if (words.size() >= 4) {
+                const std::optional<InputAction> action = parseInputAction(words[3]);
+                if (!action) {
+                    logWarning("Unknown input action: " + words[3]);
+                    return true;
+                }
+                logInfo(
+                    std::string(inputActionName(*action)) +
+                    ": " +
+                    inputBindingSummary(settings_.input.bindings[inputActionIndex(*action)]));
+                return true;
+            }
+            for (int action = 0; action < InputActionCount; ++action) {
+                const auto inputAction = static_cast<InputAction>(action);
+                logInfo(
+                    std::string(inputActionName(inputAction)) +
+                    ": " +
+                    inputBindingSummary(settings_.input.bindings[action]));
+            }
+            return true;
+        }
+
+        if (words[2] == "reset") {
+            settings_.input.bindings = defaultInputBindings();
+            input_.setBindingMap(settings_.input.bindings);
+            queueSettingsSave();
+            logInfo("Input bindings reset to defaults.");
+            return true;
+        }
+
+        if ((words[2] == "clear" || words[2] == "add") && words.size() >= 4) {
+            const std::optional<InputAction> action = parseInputAction(words[3]);
+            if (!action) {
+                logWarning("Unknown input action: " + words[3]);
+                return true;
+            }
+
+            if (words[2] == "clear") {
+                settings_.input.bindings[inputActionIndex(*action)].clear();
+                settings_ = sanitizeSettings(settings_);
+                input_.setBindingMap(settings_.input.bindings);
+                queueSettingsSave();
+                logInfo(std::string(inputActionName(*action)) + " bindings cleared.");
+                return true;
+            }
+
+            if (words.size() < 6) {
+                logWarning(
+                    "Usage: settings input add ACTION keyboard KEY | mouse BUTTON | "
+                    "gamepad_button BUTTON | gamepad_axis AXIS DIRECTION [THRESHOLD]");
+                return true;
+            }
+
+            const std::optional<InputBindingDevice> device = parseInputBindingDevice(words[4]);
+            if (!device) {
+                logWarning("Unknown input binding device: " + words[4]);
+                return true;
+            }
+
+            InputBinding binding;
+            binding.device = *device;
+            if (*device == InputBindingDevice::Keyboard) {
+                const std::optional<int> scancode = parseKeyboardScancode(words[5]);
+                if (!scancode) {
+                    logWarning("Unknown keyboard key: " + words[5]);
+                    return true;
+                }
+                binding.code = *scancode;
+            } else if (*device == InputBindingDevice::MouseButton) {
+                const std::optional<int> button = parseMouseButton(words[5]);
+                if (!button) {
+                    logWarning("Unknown mouse button: " + words[5]);
+                    return true;
+                }
+                binding.code = *button;
+            } else if (*device == InputBindingDevice::GamepadButton) {
+                const std::optional<int> button = parseGamepadButton(words[5]);
+                if (!button) {
+                    logWarning("Unknown gamepad button: " + words[5]);
+                    return true;
+                }
+                binding.code = *button;
+            } else if (*device == InputBindingDevice::GamepadAxis) {
+                if (words.size() < 7) {
+                    logWarning("Usage: settings input add ACTION gamepad_axis AXIS DIRECTION [THRESHOLD]");
+                    return true;
+                }
+                const std::optional<int> axis = parseGamepadAxis(words[5]);
+                const std::optional<int> direction = parseIntSetting(words[6]);
+                if (!axis || !direction || *direction == 0) {
+                    logWarning("Usage: settings input add ACTION gamepad_axis AXIS DIRECTION [THRESHOLD]");
+                    return true;
+                }
+                binding.code = *axis;
+                binding.direction = *direction < 0 ? -1 : 1;
+                if (words.size() >= 8) {
+                    binding.threshold = parseFloatSetting(words[7]).value_or(binding.threshold);
+                }
+            }
+
+            auto& actionBindings = settings_.input.bindings[inputActionIndex(*action)];
+            const bool alreadyBound = std::any_of(
+                actionBindings.begin(),
+                actionBindings.end(),
+                [&](const InputBinding& existing) {
+                    return inputBindingEquals(existing, binding);
+                });
+            if (!alreadyBound) {
+                actionBindings.push_back(binding);
+            }
+            settings_ = sanitizeSettings(settings_);
+            input_.setBindingMap(settings_.input.bindings);
+            queueSettingsSave();
+            logInfo(
+                std::string(inputActionName(*action)) +
+                ": " +
+                inputBindingSummary(settings_.input.bindings[inputActionIndex(*action)]));
+            return true;
+        }
+
+        logWarning(
+            "Settings input usage: settings input show [ACTION], settings input reset, "
+            "settings input clear ACTION, settings input add ACTION DEVICE VALUE");
+        return true;
+    }
+
+    if ((words[1] == "audio" || words[1] == "volume") && words.size() == 4) {
+        const std::optional<float> value = parseFloatSetting(words[3]);
+        if (!value) {
+            logWarning("Usage: settings audio master|bgm|se 0.0-1.0");
+            return true;
+        }
+        if (words[2] == "master") {
+            settings_.audio.masterVolume = *value;
+        } else if (words[2] == "bgm") {
+            settings_.audio.bgmVolume = *value;
+        } else if (words[2] == "se") {
+            settings_.audio.seVolume = *value;
+        } else {
+            logWarning("Usage: settings audio master|bgm|se 0.0-1.0");
+            return true;
+        }
+        applyAudioSettings();
+        queueSettingsSave();
+        logInfo("Audio settings updated");
+        return true;
+    }
+
+    if (words[1] == "video" && words.size() >= 4 && words[2] == "vsync") {
+        const std::optional<bool> value = parseBoolSetting(words[3]);
+        if (!value) {
+            logWarning("Usage: settings video vsync on|off");
+            return true;
+        }
+        settings_.video.vsync = *value;
+        applyVideoSettings(true);
+        queueSettingsSave();
+        logInfo(std::string("VSync: ") + (settings_.video.vsync ? "on" : "off"));
+        return true;
+    }
+
+    if (words[1] == "video" && words.size() >= 4 && words[2] == "mode") {
+        WindowMode mode = settings_.video.windowMode;
+        if (!parseWindowMode(words[3], mode)) {
+            logWarning("Usage: settings video mode windowed|borderless");
+            return true;
+        }
+        if (mode == WindowMode::BorderlessFullscreen &&
+            settings_.video.windowMode == WindowMode::Windowed &&
+            window_ != nullptr) {
+            int windowWidth = settings_.video.windowWidth;
+            int windowHeight = settings_.video.windowHeight;
+            if (SDL_GetWindowSize(window_, &windowWidth, &windowHeight)) {
+                settings_.video.windowWidth = windowWidth;
+                settings_.video.windowHeight = windowHeight;
+            }
+        }
+        settings_.video.windowMode = mode;
+        applyVideoSettings(true);
+        queueSettingsSave();
+        logInfo(std::string("Window mode: ") + windowModeName(settings_.video.windowMode));
+        return true;
+    }
+
+    if (words[1] == "video" && words.size() >= 5 && words[2] == "size") {
+        const std::optional<int> width = parseIntSetting(words[3]);
+        const std::optional<int> height = parseIntSetting(words[4]);
+        if (!width || !height) {
+            logWarning("Usage: settings video size WIDTH HEIGHT");
+            return true;
+        }
+        settings_.video.windowWidth = *width;
+        settings_.video.windowHeight = *height;
+        settings_ = sanitizeSettings(settings_);
+        if (settings_.video.windowMode == WindowMode::Windowed) {
+            applyVideoSettings(true);
+        }
+        queueSettingsSave();
+        logInfo(
+            "Windowed size: " +
+            std::to_string(settings_.video.windowWidth) +
+            "x" +
+            std::to_string(settings_.video.windowHeight));
+        return true;
+    }
+
+    logWarning(
+        "Settings command usage: settings show|save|reload, "
+        "settings audio master|bgm|se VALUE, "
+        "settings video mode windowed|borderless, "
+        "settings video vsync on|off, "
+        "settings video size WIDTH HEIGHT");
+    return true;
 }
 
 void App::executeDebugCommand(const std::string& command)
 {
     const std::string normalized = lowerAscii(trimAscii(command));
+    if (executeSettingsDebugCommand(normalized)) {
+        return;
+    }
+    if (normalized.rfind("autosim", 0) == 0 || normalized.rfind("auto-sim", 0) == 0) {
+        if (!testPlayMode_) {
+            logWarning("AutoSim commands are available only in test-play mode.");
+            return;
+        }
+        autoSimulation_.executeCommand(normalized, game_.makeTestSnapshot());
+        return;
+    }
     if (std::optional<DevLaunchMode> launchMode = parseDevLaunchModeCommand(normalized)) {
         std::string error;
         if (saveDevLaunchMode(*launchMode, error)) {
@@ -584,13 +1094,29 @@ void App::run()
         input_.beginFrame();
         SDL_Event event;
         while (SDL_PollEvent(&event)) {
-            input_.handleEvent(event);
-            if (event.type == SDL_EVENT_KEY_DOWN && !event.key.repeat && event.key.scancode == SDL_SCANCODE_F4) {
+            const bool gameConsumedEvent = game_.handleEvent(event);
+            if (!gameConsumedEvent) {
+                input_.handleEvent(event);
+            }
+            if (!gameConsumedEvent && testPlayMode_ && event.type == SDL_EVENT_KEY_DOWN && !event.key.repeat && event.key.scancode == SDL_SCANCODE_F3) {
+                const bool autosimRunning =
+                    autoSimulation_.state() == autosim::AutoSimulationState::Running ||
+                    autoSimulation_.state() == autosim::AutoSimulationState::Paused;
+                autoSimulation_.executeCommand(
+                    autosimRunning ? "autosim stop" : "autosim start",
+                    game_.makeTestSnapshot());
+            }
+            if (!gameConsumedEvent && event.type == SDL_EVENT_KEY_DOWN && !event.key.repeat && event.key.scancode == SDL_SCANCODE_F4) {
                 toggleFullscreen();
             }
             if (event.type == SDL_EVENT_WINDOW_RESIZED) {
                 width_ = event.window.data1;
                 height_ = event.window.data2;
+                if (settings_.video.windowMode == WindowMode::Windowed) {
+                    settings_.video.windowWidth = width_;
+                    settings_.video.windowHeight = height_;
+                    queueSettingsSave();
+                }
                 game_.resize(width_, height_);
             }
         }
@@ -635,12 +1161,41 @@ void App::run()
 
         checkAssetHotReload();
         time_.tick();
+        updateSettingsSave(time_.deltaSeconds());
         if (!testFreezePaused_) {
             audio_.update(time_.deltaSeconds());
-            game_.update(input_, time_);
+            Input effectiveInput = input_;
+            if (testPlayMode_ && autoSimulation_.state() != autosim::AutoSimulationState::Idle) {
+                const GameTestSnapshot snapshot = game_.makeTestSnapshot();
+                autoSimulation_.update(snapshot, time_.deltaSeconds());
+                while (std::optional<GameTestAction> action = autoSimulation_.consumeAction()) {
+                    const GameTestActionResult result = game_.applyTestAction(*action);
+                    autoSimulation_.recordActionResult(*action, result);
+                }
+                effectiveInput.applyAutomation(autoSimulation_.inputFrame());
+            }
+            const bool autoSimulationOverlayActive =
+                testPlayMode_ && autoSimulation_.state() != autosim::AutoSimulationState::Idle;
+            game_.setAutoSimulationIntentOverlay(
+                autoSimulationOverlayActive,
+                autoSimulation_.intentHistory());
+            game_.setAutoSimulationDebugOverlay(
+                autoSimulationOverlayActive,
+                autoSimulation_.debugSnapshot());
+            game_.update(effectiveInput, time_);
             if (game_.quitRequested()) {
                 running_ = false;
             }
+        }
+        if (testFreezePaused_) {
+            const bool autoSimulationOverlayActive =
+                testPlayMode_ && autoSimulation_.state() != autosim::AutoSimulationState::Idle;
+            game_.setAutoSimulationIntentOverlay(
+                autoSimulationOverlayActive,
+                autoSimulation_.intentHistory());
+            game_.setAutoSimulationDebugOverlay(
+                autoSimulationOverlayActive,
+                autoSimulation_.debugSnapshot());
         }
         game_.render(*renderer_, testFreezePaused_ ? frozenTime_ : time_);
     }

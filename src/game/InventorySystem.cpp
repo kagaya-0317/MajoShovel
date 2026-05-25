@@ -1487,6 +1487,46 @@ bool InventorySystem::toggleStaffEquipmentScreenItem(int index, const SpellRingS
     return equipStaffScreenItem(index, spellRing);
 }
 
+bool InventorySystem::equipStaffObject(
+    std::string_view objectId,
+    std::string_view instanceId,
+    const SpellRingSystem& spellRing,
+    std::string* outStatus)
+{
+    const auto finish = [&](bool equipped) {
+        if (outStatus != nullptr) {
+            *outStatus = status_;
+        }
+        return equipped;
+    };
+
+    if (!instanceId.empty()) {
+        for (int slot = 0; slot < screenSlotCount(); ++slot) {
+            const InventoryObjectInstance* instance = screenObjectInstanceAt(slot);
+            if (instance != nullptr && instance->instance.instanceId == instanceId) {
+                return finish(equipStaffScreenItem(slot, spellRing));
+            }
+        }
+        status_ = "杖がありません";
+        return finish(false);
+    }
+
+    if (objectId.empty()) {
+        status_ = "杖がありません";
+        return finish(false);
+    }
+
+    for (int slot = 0; slot < screenSlotCount(); ++slot) {
+        const InventoryObjectStack* stack = screenObjectStackAt(slot);
+        if (stack != nullptr && stack->objectId == objectId && stack->count > 0) {
+            return finish(equipStaffScreenItem(slot, spellRing));
+        }
+    }
+
+    status_ = "杖がありません";
+    return finish(false);
+}
+
 InventorySystem::SlotCommandList InventorySystem::buildSlotCommandItems(
     int slotIndex,
     bool itemUseEnabled,

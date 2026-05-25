@@ -120,6 +120,9 @@ DebugConsoleLayout makeDefaultDebugConsoleLayout()
                         {DebugControlKind::Button, "story_event_test", "イベントテスト", "game story-test events"},
                         {DebugControlKind::Button, "story_tutorial_test", "チュートリアルテスト", "game story-test tutorials"},
                         {DebugControlKind::Button, "dungeon_focus_test", "カメラフォーカス", "game dungeon-focus test"},
+                        {DebugControlKind::Button, "autosim_start", "オートシミュ開始", "autosim start"},
+                        {DebugControlKind::Button, "autosim_stop", "オートシミュ停止", "autosim stop"},
+                        {DebugControlKind::Button, "autosim_report", "オートシミュログ", "autosim report"},
                     },
                 },
                 DebugGroupDefinition{

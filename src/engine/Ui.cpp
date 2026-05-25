@@ -1874,6 +1874,277 @@ void keepUiScrollableListItemVisible(UiRect viewport, int selectedIndex, int ite
         style.scroll);
 }
 
+namespace {
+
+float selectableTableColumnWidth(
+    const UiScrollAreaLayout& scroll,
+    const UiSelectableTableColumn* columns,
+    int columnCount,
+    int column,
+    const UiSelectableTableStyle& style)
+{
+    if (columns == nullptr || columnCount <= 0 || column < 0 || column >= columnCount) {
+        return 0.0f;
+    }
+
+    float fixedWidth = 0.0f;
+    int flexibleCount = 0;
+    for (int i = 0; i < columnCount; ++i) {
+        if (columns[i].width > 0.0f) {
+            fixedWidth += columns[i].width;
+        } else {
+            ++flexibleCount;
+        }
+    }
+
+    const float totalGap = std::max(0, columnCount - 1) * std::max(0.0f, style.columnGap);
+    const float available = std::max(0.0f, scroll.content.size.x - totalGap);
+    if (columns[column].width > 0.0f) {
+        return std::min(columns[column].width, available);
+    }
+    if (flexibleCount <= 0) {
+        return 0.0f;
+    }
+    return std::max(1.0f, (available - fixedWidth) / static_cast<float>(flexibleCount));
+}
+
+float selectableTableColumnX(
+    const UiScrollAreaLayout& scroll,
+    const UiSelectableTableColumn* columns,
+    int columnCount,
+    int column,
+    const UiSelectableTableStyle& style)
+{
+    float x = scroll.content.pos.x;
+    for (int i = 0; i < column; ++i) {
+        x += selectableTableColumnWidth(scroll, columns, columnCount, i, style) + std::max(0.0f, style.columnGap);
+    }
+    return x;
+}
+
+void clampSelectableTableState(UiSelectableTableState& state, int rowCount, const UiSelectableTableColumn* columns, int columnCount)
+{
+    if (rowCount <= 0 || columnCount <= 0 || columns == nullptr) {
+        state.selectedRow = 0;
+        state.selectedColumn = 0;
+        return;
+    }
+
+    state.selectedRow = std::clamp(state.selectedRow, 0, rowCount - 1);
+    state.selectedColumn = std::clamp(state.selectedColumn, 0, columnCount - 1);
+    if (!columns[state.selectedColumn].enabled) {
+        for (int offset = 1; offset < columnCount; ++offset) {
+            const int right = state.selectedColumn + offset;
+            if (right < columnCount && columns[right].enabled) {
+                state.selectedColumn = right;
+                return;
+            }
+            const int left = state.selectedColumn - offset;
+            if (left >= 0 && columns[left].enabled) {
+                state.selectedColumn = left;
+                return;
+            }
+        }
+    }
+}
+
+bool moveSelectableTableColumn(UiSelectableTableState& state, int delta, const UiSelectableTableColumn* columns, int columnCount)
+{
+    if (delta == 0 || columns == nullptr || columnCount <= 0) {
+        return false;
+    }
+
+    const int start = state.selectedColumn;
+    int next = start;
+    do {
+        next += delta;
+        if (next < 0 || next >= columnCount) {
+            return false;
+        }
+    } while (!columns[next].enabled);
+
+    state.selectedColumn = next;
+    return state.selectedColumn != start;
+}
+
+}
+
+float uiSelectableTableContentHeight(int rowCount, const UiSelectableTableStyle& style)
+{
+    if (rowCount <= 0) {
+        return 0.0f;
+    }
+    return static_cast<float>(rowCount) * style.rowHeight +
+        static_cast<float>(rowCount - 1) * style.rowGap;
+}
+
+UiSelectableTableLayout makeUiSelectableTableLayout(
+    UiRect rect,
+    int rowCount,
+    float scrollOffset,
+    const UiSelectableTableStyle& style)
+{
+    UiSelectableTableLayout layout;
+    layout.header = {rect.pos, {rect.size.x, std::max(0.0f, style.headerHeight)}};
+    const UiRect viewport{
+        {rect.pos.x, rect.pos.y + layout.header.size.y + std::max(0.0f, style.rowGap)},
+        {rect.size.x, std::max(0.0f, rect.size.y - layout.header.size.y - std::max(0.0f, style.rowGap))},
+    };
+    layout.scroll = makeUiScrollAreaLayout(viewport, uiSelectableTableContentHeight(rowCount, style), scrollOffset, style.scroll);
+    return layout;
+}
+
+UiSelectableTableResult updateUiSelectableTable(
+    UiSelectableTableState& state,
+    UiContext& ui,
+    const Input& input,
+    UiRect rect,
+    int rowCount,
+    const UiSelectableTableColumn* columns,
+    int columnCount,
+    const UiSelectableTableStyle& style)
+{
+    UiSelectableTableResult result;
+    clampSelectableTableState(state, rowCount, columns, columnCount);
+    UiSelectableTableLayout layout = makeUiSelectableTableLayout(rect, rowCount, state.scrollOffset, style);
+    layout.scroll = updateUiScrollArea(
+        ui,
+        input,
+        layout.scroll.viewport,
+        uiSelectableTableContentHeight(rowCount, style),
+        state.scrollOffset,
+        style.scroll,
+        &state.scroll);
+    layout = makeUiSelectableTableLayout(rect, rowCount, state.scrollOffset, style);
+
+    if (rowCount <= 0 || columnCount <= 0 || columns == nullptr) {
+        return result;
+    }
+
+    const int previousRow = state.selectedRow;
+    const int previousColumn = state.selectedColumn;
+    if (input.pressed(InputAction::MoveUp)) {
+        state.selectedRow = std::max(0, state.selectedRow - 1);
+    }
+    if (input.pressed(InputAction::MoveDown)) {
+        state.selectedRow = std::min(rowCount - 1, state.selectedRow + 1);
+    }
+    if (input.pressed(InputAction::MoveLeft)) {
+        moveSelectableTableColumn(state, -1, columns, columnCount);
+    }
+    if (input.pressed(InputAction::MoveRight)) {
+        moveSelectableTableColumn(state, 1, columns, columnCount);
+    }
+
+    for (int row = 0; row < rowCount; ++row) {
+        const UiRect rowRect = uiSelectableTableRowRect(layout, row, style);
+        if (!uiScrollAreaRectVisible(layout.scroll, rowRect)) {
+            continue;
+        }
+        for (int column = 0; column < columnCount; ++column) {
+            if (!columns[column].enabled) {
+                continue;
+            }
+            const UiRect cellRect = uiSelectableTableCellRect(layout, columns, columnCount, row, column, style);
+            if (ui.hovered(cellRect)) {
+                state.selectedRow = row;
+                state.selectedColumn = column;
+            }
+            if (ui.pressed(cellRect)) {
+                state.selectedRow = row;
+                state.selectedColumn = column;
+                result.pressedRow = row;
+                result.pressedColumn = column;
+            }
+        }
+    }
+
+    result.selectionChanged = state.selectedRow != previousRow || state.selectedColumn != previousColumn;
+    keepUiSelectableTableCellVisible(rect, state.selectedRow, rowCount, state.scrollOffset, style);
+    return result;
+}
+
+UiRect uiSelectableTableRowRect(const UiSelectableTableLayout& layout, int row, const UiSelectableTableStyle& style)
+{
+    return {
+        {
+            layout.scroll.content.pos.x,
+            layout.scroll.content.pos.y + static_cast<float>(std::max(0, row)) * (style.rowHeight + style.rowGap) - layout.scroll.scrollOffset,
+        },
+        {layout.scroll.content.size.x, style.rowHeight},
+    };
+}
+
+UiRect uiSelectableTableCellRect(
+    const UiSelectableTableLayout& layout,
+    const UiSelectableTableColumn* columns,
+    int columnCount,
+    int row,
+    int column,
+    const UiSelectableTableStyle& style)
+{
+    const UiRect rowRect = uiSelectableTableRowRect(layout, row, style);
+    return {
+        {selectableTableColumnX(layout.scroll, columns, columnCount, column, style), rowRect.pos.y},
+        {selectableTableColumnWidth(layout.scroll, columns, columnCount, column, style), rowRect.size.y},
+    };
+}
+
+void keepUiSelectableTableCellVisible(
+    UiRect rect,
+    int row,
+    int rowCount,
+    float& scrollOffset,
+    const UiSelectableTableStyle& style)
+{
+    const UiSelectableTableLayout layout = makeUiSelectableTableLayout(rect, rowCount, scrollOffset, style);
+    if (row < 0 || row >= rowCount) {
+        scrollOffset = layout.scroll.scrollOffset;
+        return;
+    }
+    keepUiScrollAreaRectVisible(
+        layout.scroll.viewport,
+        uiSelectableTableRowRect(layout, row, style),
+        uiSelectableTableContentHeight(rowCount, style),
+        scrollOffset,
+        style.scroll);
+}
+
+void drawUiSelectableTableFrame(
+    Renderer& renderer,
+    const UiSelectableTableLayout& layout,
+    const UiSelectableTableColumn* columns,
+    int columnCount,
+    const UiSelectableTableStyle& style)
+{
+    if (columns == nullptr || columnCount <= 0) {
+        drawUiScrollAreaFrame(renderer, layout.scroll, style.scroll);
+        return;
+    }
+
+    renderer.fillRect(layout.header.pos, layout.header.size, style.headerFill);
+    for (int column = 0; column < columnCount; ++column) {
+        const UiRect cell{
+            {
+                selectableTableColumnX(layout.scroll, columns, columnCount, column, style),
+                layout.header.pos.y,
+            },
+            {
+                selectableTableColumnWidth(layout.scroll, columns, columnCount, column, style),
+                layout.header.size.y,
+            },
+        };
+        renderer.drawRect(cell.pos, cell.size, style.cellOutline);
+        const Vec2 textSize = renderer.measureText(columns[column].label, style.headerTextScale);
+        const Vec2 textPos{
+            cell.pos.x + std::max(0.0f, (cell.size.x - textSize.x) * 0.5f),
+            cell.pos.y + std::max(0.0f, (cell.size.y - textSize.y) * 0.5f),
+        };
+        renderer.drawText(textPos, columns[column].label, style.headerText, style.headerTextScale);
+    }
+    drawUiScrollAreaFrame(renderer, layout.scroll, style.scroll);
+}
+
 UiRect uiDropdownListRect(UiRect buttonRect, int itemCount, const UiDropdownStyle& style)
 {
     const int visibleCount = dropdownVisibleCount(itemCount, style);

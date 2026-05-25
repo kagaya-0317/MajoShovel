@@ -1,62 +1,43 @@
 ﻿#pragma once
 
+#include "engine/InputBinding.hpp"
 #include "engine/Math.hpp"
 #include <SDL3/SDL.h>
 #include <array>
 
 namespace majo {
 
-enum class InputAction {
-    MoveLeft,
-    MoveRight,
-    MoveUp,
-    MoveDown,
-    AimPointer,
-    ThrowActiveRing,
-    OffsetRingCenter,
-    ShortcutCursorLeft,
-    ShortcutCursorRight,
-    DirectShortcut1,
-    DirectShortcut2,
-    DirectShortcut3,
-    DirectShortcut4,
-    DirectShortcut5,
-    DirectShortcut6,
-    DirectShortcut7,
-    DirectShortcut8,
-    ToggleShortcutRow,
-    UseSelectedItem,
-    Confirm,
-    PutSelectedItemOnRing,
-    GrabOrPlaceItem,
-    PreviousActiveRing,
-    NextActiveRing,
-    CaptureNet,
-    ToggleProtection,
-    Cancel,
-    Pause,
-    OpenInventory,
-    ToggleDebug,
-    ToggleDebugPause,
-    TestRestart,
-    ToggleTestFreeze,
-    OpenConsole,
-    ToggleAutoReloadBlock,
-    Count
-};
-
 enum class InputDeviceKind {
     KeyboardMouse,
     Gamepad,
 };
 
+struct InputAutomationFrame {
+    bool active = false;
+    bool exclusive = true;
+    Vec2 moveAxis{};
+    Vec2 aimScreen{};
+    bool throwPressed = false;
+    bool ringOffsetHeld = false;
+    bool confirmPressed = false;
+    bool useItemPressed = false;
+    bool capturePressed = false;
+};
+
 class Input {
 public:
+    Input() = default;
     ~Input();
+    Input(const Input& other);
+    Input& operator=(const Input& other);
 
+    void shutdown();
     void beginFrame();
     void handleEvent(const SDL_Event& event);
     void update(int windowWidth, int windowHeight);
+    void applyAutomation(const InputAutomationFrame& frame);
+    void setBindingMap(const InputBindingMap& bindings);
+    const InputBindingMap& bindingMap() const { return bindings_; }
 
     bool quitRequested() const { return quitRequested_; }
     bool pressed(InputAction action) const;
@@ -99,7 +80,7 @@ public:
     InputDeviceKind lastActiveDevice() const { return lastActiveDevice_; }
 
 private:
-    static constexpr int ActionCount = static_cast<int>(InputAction::Count);
+    static constexpr int ActionCount = InputActionCount;
     static constexpr int InputSourceCount = 3;
 
     enum class InputSource {
@@ -119,8 +100,10 @@ private:
     bool anySourceHeld(InputAction action) const;
     void handleGamepadButton(SDL_GamepadButton button, bool down);
     void updateGamepadState();
-    void updateGamepadAxisAction(InputAction negativeAction, InputAction positiveAction, float value);
-    void updateGamepadTriggerAction(InputAction action, float value);
+    void updateGamepadButtonBindings(std::array<bool, ActionCount>& gamepadHeld);
+    void updateGamepadAxisBindings(int axis, float value, std::array<bool, ActionCount>& gamepadHeld);
+    void updateKeyboardPolledBindings(const bool* keys);
+    void accumulateGamepadMoveAxis(InputAction action, float amount);
     void press(InputAction action);
     void release(InputAction action);
 
@@ -138,6 +121,7 @@ private:
     std::array<bool, ActionCount> released_{};
     std::array<bool, ActionCount> held_{};
     std::array<std::array<int, ActionCount>, InputSourceCount> sourceHoldCounts_{};
+    InputBindingMap bindings_ = defaultInputBindings();
     int shortcutCursorDelta_ = 0;
     int mouseWheelDelta_ = 0;
     int shortcutSlotPressed_ = -1;

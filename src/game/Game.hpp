@@ -3,7 +3,9 @@
 #include "engine/Camera.hpp"
 #include "engine/FileWatcher.hpp"
 #include "engine/Input.hpp"
+#include "engine/InputRemapCapture.hpp"
 #include "engine/RendererTypes.hpp"
+#include "engine/Settings.hpp"
 #include "engine/Time.hpp"
 #include "engine/Ui.hpp"
 #include "data/GoogleSheetSource.hpp"
@@ -11,6 +13,7 @@
 #include "data/ObjectCatalog.hpp"
 #include "data/RuntimeBalance.hpp"
 #include "data/StageCatalog.hpp"
+#include "devtools/autosim/AutoSimulationTypes.hpp"
 #include "game/DebugOverlay.hpp"
 #include "game/Collision.hpp"
 #include "game/DepthRender.hpp"
@@ -23,6 +26,8 @@
 #include "game/EnemySystem.hpp"
 #include "game/EncyclopediaSystem.hpp"
 #include "game/GroundLineSystem.hpp"
+#include "game/GameTestAction.hpp"
+#include "game/GameTestProbe.hpp"
 #include "game/InventorySystem.hpp"
 #include "game/InventoryUiCommon.hpp"
 #include "game/Kamishibai.hpp"
@@ -140,10 +145,21 @@ class Game {
 public:
     void initialize(int width, int height);
     void setAudioEngine(AudioEngine* audio);
+    void setSettingsAccessors(
+        std::function<GameSettings()> getter,
+        std::function<void(const GameSettings&)> applier);
+    void setInputBindingAccessors(
+        std::function<InputBindingMap()> getter,
+        std::function<void(const InputBindingMap&)> applier);
+    bool handleEvent(const SDL_Event& event);
     void resize(int width, int height);
     void update(const Input& input, const Time& time);
     void render(Renderer& renderer, const Time& time);
     bool executeDebugCommand(std::string_view command);
+    GameTestSnapshot makeTestSnapshot() const;
+    GameTestActionResult applyTestAction(const GameTestAction& action);
+    void setAutoSimulationIntentOverlay(bool active, std::vector<autosim::AutoSimulationIntent> history);
+    void setAutoSimulationDebugOverlay(bool active, autosim::AutoSimulationDebugSnapshot debug);
     bool quitRequested() const { return quitRequested_; }
     void setAutoReloadBlocked(bool blocked);
     void setHotReloadEnabled(bool enabled);
@@ -965,6 +981,24 @@ private:
     void updatePauseMenu(const Input& input, UiContext& ui);
     void choosePauseMenuItem(int item);
     void leavePausePage();
+    void openOptionsMenu();
+    void loadOptionsSettings();
+    void applyOptionsSettings(std::string status);
+    void updateOptionsMenu(const Input& input, UiContext& ui);
+    void updateOperationSettings(const Input& input, UiContext& ui);
+    void updateAudioSettings(const Input& input, UiContext& ui);
+    void updateVideoSettings(const Input& input, UiContext& ui);
+    bool handleOperationSettingsEvent(const SDL_Event& event);
+    void renderOptionsMenu(Renderer& renderer) const;
+    void renderOperationSettings(Renderer& renderer) const;
+    void renderAudioSettings(Renderer& renderer) const;
+    void renderVideoSettings(Renderer& renderer) const;
+    void queueOperationSettingsBinding(InputAction action, int column, const InputBinding& binding);
+    void applyOperationSettingsBinding(InputAction action, int column, const InputBinding& binding, bool removeConflicts);
+    void clearOperationSettingsBinding(InputAction action, int column);
+    void resetOperationSettingsAction(InputAction action);
+    void resetOperationSettingsCategory();
+    void resetOperationSettingsAll();
     void openRingScreen();
     void updateRingScreen(const Input& input, UiContext& ui, float dt);
     void cancelRingGrab();
@@ -1120,6 +1154,7 @@ private:
     int buriedVisibleNodeCount() const;
     int buriedHiddenNodeCount() const;
     void initializeEnemyNodesFromLayout();
+    void clearKnownWarpPointTerrain();
     void applyPlacementTerrainOverrides();
     void updateExposedEnemyNodes();
     void updateRingEffectDiscoveries(std::vector<EffectDiscoveryEvent>& discoveryEvents);
@@ -1276,6 +1311,7 @@ private:
     void renderBossDefeatPresentation(Renderer& renderer) const;
     void renderBaseDebugOverlay(Renderer& renderer, const Time& time) const;
     void renderDebugOverlay(Renderer& renderer, const Time& time);
+    void renderAutoSimulationIntentOverlay(Renderer& renderer) const;
     void beginDungeonRingIntro();
     void updateDungeonRingIntro(float dt);
     bool dungeonRingIntroActive() const;
@@ -1469,17 +1505,46 @@ private:
     int debugStoryTestLoadedRevision_ = -1;
     bool debugStoryTestReturnAfterDialogue_ = false;
     mutable UiCancelControlState debugStoryTestCancelState_{};
+    std::function<GameSettings()> settingsGetter_;
+    std::function<void(const GameSettings&)> settingsApplier_;
+    std::function<InputBindingMap()> inputBindingGetter_;
+    std::function<void(const InputBindingMap&)> inputBindingApplier_;
     bool enemyTestActive_ = false;
     bool enemyTestUiVisible_ = true;
     UiDropdownState enemyTestDropdown_{};
     int enemyTestSelectedIndex_ = 0;
     std::string enemyTestStatus_;
+    bool autoSimulationIntentOverlayActive_ = false;
+    std::vector<autosim::AutoSimulationIntent> autoSimulationIntentHistory_;
+    bool autoSimulationDebugOverlayActive_ = false;
+    autosim::AutoSimulationDebugSnapshot autoSimulationDebug_;
     std::string baseStatus_;
     PauseMenuPage pausePage_ = PauseMenuPage::Main;
     ScreenMode pauseReturnMode_ = ScreenMode::Playing;
     int pauseMenuSelection_ = 0;
     UiConfirmDialogState pauseQuitConfirm_{};
     mutable UiCancelControlState pauseCancelState_{};
+    UiTabsState optionsTabs_{};
+    GameSettings optionsSettings_{};
+    int optionsPage_ = 0;
+    int audioSettingsSelection_ = 0;
+    int videoSettingsSelection_ = 0;
+    bool optionsSettingsLoaded_ = false;
+    bool optionsSuppressCancelThisFrame_ = false;
+    std::string optionsStatus_;
+    UiTabsState operationSettingsTabs_{};
+    UiSelectableTableState operationSettingsTable_{};
+    UiConfirmDialogState operationSettingsConflictConfirm_{};
+    UiConfirmDialogState operationSettingsResetAllConfirm_{};
+    InputRemapCapture operationSettingsCapture_{};
+    InputBindingMap operationSettingsBindings_ = defaultInputBindings();
+    std::vector<InputAction> operationSettingsConflictActions_;
+    InputBinding operationSettingsPendingBinding_{};
+    InputAction operationSettingsPendingAction_ = InputAction::Count;
+    int operationSettingsPendingColumn_ = 0;
+    int operationSettingsCategory_ = 0;
+    bool operationSettingsLoaded_ = false;
+    std::string operationSettingsStatus_;
     mutable UiCancelControlState baseCancelState_{};
     mutable UiCancelControlState ringCancelState_{};
     UiTabsState ringTabs_{};

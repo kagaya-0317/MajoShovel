@@ -4,6 +4,7 @@
 #include "engine/Time.hpp"
 #include "data/RuntimeBalance.hpp"
 #include "data/StageCatalog.hpp"
+#include "devtools/autosim/AutoSimulationTypes.hpp"
 #include "game/EnemySystem.hpp"
 #include "game/DungeonLayout.hpp"
 #include "game/SpellRingSystem.hpp"
@@ -29,6 +30,11 @@ public:
         int nearestWarpIndex,
         bool nearestWarpDiscovered,
         int discoveredWarpCount,
+        int unlockedWarpCount,
+        bool hasLatestWarpPointPosition,
+        Vec2 latestWarpPointPosition,
+        bool hasRequestedWarpPointStartPosition,
+        Vec2 requestedWarpPointStartPosition,
         int rewardNodeCount,
         int moneyNodeCount,
         int buriedVisibleNodeCount,
@@ -36,7 +42,9 @@ public:
         int exposedEnemyNodeCount,
         int buriedEnemyNodeCount,
         int spawnedEnemyNodeCount,
-        bool autoReloadBlocked);
+        bool autoReloadBlocked,
+        bool autoSimulationDebugActive,
+        const autosim::AutoSimulationDebugSnapshot& autoSimulationDebug);
 
 private:
     bool visible_ = false;

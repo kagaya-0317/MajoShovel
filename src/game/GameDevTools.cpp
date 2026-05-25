@@ -1,6 +1,11 @@
 ﻿#include "game/GameInternal.hpp"
 
 #include "engine/Audio.hpp"
+#include "game/WorldIconRenderer.hpp"
+
+#include <algorithm>
+#include <utility>
+#include <vector>
 
 namespace majo {
 
@@ -35,6 +40,224 @@ constexpr float AudioCueEditDetailWidth = 330.0f;
 constexpr float AudioCueEditButtonAreaHeight = 64.0f;
 constexpr float AudioCueEditRowHeight = 44.0f;
 constexpr float AudioCueEditRowGap = 4.0f;
+
+GameTestTerrainKind gameTestTerrainKind(TileType type)
+{
+    switch (type) {
+    case TileType::Empty: return GameTestTerrainKind::Empty;
+    case TileType::Dirt: return GameTestTerrainKind::Dirt;
+    case TileType::Rock: return GameTestTerrainKind::Rock;
+    case TileType::Ore: return GameTestTerrainKind::Ore;
+    case TileType::HardRock: return GameTestTerrainKind::HardRock;
+    }
+    return GameTestTerrainKind::Empty;
+}
+
+GameTestTerrainAttribute gameTestTerrainAttribute(TerrainAttribute attribute)
+{
+    switch (attribute) {
+    case TerrainAttribute::None: return GameTestTerrainAttribute::None;
+    case TerrainAttribute::Soft: return GameTestTerrainAttribute::Soft;
+    case TerrainAttribute::Hard: return GameTestTerrainAttribute::Hard;
+    case TerrainAttribute::Ore: return GameTestTerrainAttribute::Ore;
+    }
+    return GameTestTerrainAttribute::None;
+}
+
+float positiveStaffMultiplierScore(double multiplier, float weight)
+{
+    if (!std::isfinite(multiplier)) {
+        return 0.0f;
+    }
+    return static_cast<float>(std::max(0.0, multiplier - 1.0) * static_cast<double>(weight));
+}
+
+float lowerStaffMultiplierScore(double multiplier, float weight)
+{
+    if (!std::isfinite(multiplier)) {
+        return 0.0f;
+    }
+    return static_cast<float>(std::max(0.0, 1.0 - multiplier) * static_cast<double>(weight));
+}
+
+float autoSimulationStaffEquipScore(const ItemData& item)
+{
+    if (!isStaffObject(item) || item.durability == 0) {
+        return 0.0f;
+    }
+
+    const EquipmentModifiers modifiers = collectStaffEquipmentModifiers(item, "autosim");
+    float score = 24.0f;
+    score += static_cast<float>(std::clamp(item.rarity, 0, 10)) * 6.0f;
+    score += std::min(30.0f, static_cast<float>(std::max(0, item.price)) * 0.015f);
+    score += static_cast<float>(modifiers.sources.size()) * 6.0f;
+
+    for (const RingEquipmentModifiers& ring : modifiers.rings) {
+        score += positiveStaffMultiplierScore(ring.ringOutputMul, 85.0f);
+        score += positiveStaffMultiplierScore(ring.digPowerMul, 80.0f);
+        score += positiveStaffMultiplierScore(ring.ringSpeedMul, 32.0f);
+        score += positiveStaffMultiplierScore(ring.ringRadiusMul, 26.0f);
+        score += positiveStaffMultiplierScore(ring.ringShiftDistanceMul, 20.0f);
+        score += positiveStaffMultiplierScore(ring.ringThrowDistanceMul, 22.0f);
+        score += positiveStaffMultiplierScore(ring.ringThrowSpeedMul, 18.0f);
+        score += lowerStaffMultiplierScore(ring.ringThrowCooldownMul, 30.0f);
+        score += positiveStaffMultiplierScore(ring.ringReturnSpeedMul, 16.0f);
+        score += positiveStaffMultiplierScore(ring.ringDamageSpeedMul, 24.0f);
+        score += positiveStaffMultiplierScore(ring.lightRadiusMul, 12.0f);
+        score += positiveStaffMultiplierScore(ring.detectRangeMul, 18.0f);
+        score += positiveStaffMultiplierScore(ring.guardAreaMul, 18.0f);
+        score += positiveStaffMultiplierScore(ring.reflectPowerMul, 18.0f);
+        score += static_cast<float>(std::max(0.0, ring.reflectChanceAdd)) * 40.0f;
+        score += lowerStaffMultiplierScore(ring.metalWeightPenaltyMul, 18.0f);
+        score += static_cast<float>(std::max(0.0, ring.ringWeightLimitAdd)) * 1.8f;
+    }
+
+    score += lowerStaffMultiplierScore(modifiers.durabilityCostMul, 40.0f);
+    score += positiveStaffMultiplierScore(modifiers.sellPriceMul, 8.0f);
+    score += static_cast<float>(std::max(0, modifiers.moneyVisibleLevel)) * 6.0f;
+    score += static_cast<float>(std::max(0, modifiers.dangerHintLevel)) * 6.0f;
+    return std::max(0.0f, score);
+}
+
+bool autoSimulationIntentHasIcon(const autosim::AutoSimulationIntent& intent)
+{
+    return intent.iconKind != autosim::AutoSimulationIntentIconKind::None;
+}
+
+std::string autoSimulationIntentSubjectText(const autosim::AutoSimulationIntent& intent)
+{
+    return intent.subject + intent.suffix;
+}
+
+bool drawAutoSimulationIntentIcon(
+    Renderer& renderer,
+    const ObjectCatalog& objectCatalog,
+    const autosim::AutoSimulationIntent& intent,
+    Vec2 center,
+    float size,
+    unsigned char alpha)
+{
+    switch (intent.iconKind) {
+    case autosim::AutoSimulationIntentIconKind::Object: {
+        ObjectImageDrawOptions options;
+        options.tint.a = alpha;
+        options.outlineColor.a = alpha;
+        options.applyScaleOverride = false;
+        return drawObjectImageById(renderer, objectCatalog, intent.iconKey, center, {size, size}, options);
+    }
+    case autosim::AutoSimulationIntentIconKind::World: {
+        const WorldIconDefinition* definition = worldIconDefinitionByKey(intent.iconKey);
+        if (definition == nullptr) {
+            return false;
+        }
+        WorldIconDrawOptions options;
+        options.tint.a = alpha;
+        options.outlineColor.a = alpha;
+        options.applyScaleOverride = false;
+        return drawWorldIcon(renderer, definition->iconId, center, {size, size}, options);
+    }
+    case autosim::AutoSimulationIntentIconKind::Chest: {
+        WorldIconDrawOptions options;
+        options.tint.a = alpha;
+        options.outlineColor.a = alpha;
+        options.applyScaleOverride = false;
+        return drawWorldIcon(renderer, WorldIconId::Chest, center, {size, size}, options);
+    }
+    case autosim::AutoSimulationIntentIconKind::Warp: {
+        WorldIconDrawOptions options;
+        options.tint.a = alpha;
+        options.outlineColor.a = alpha;
+        options.applyScaleOverride = false;
+        return drawWorldIcon(renderer, WorldIconId::WarpPoint, center, {size, size}, options);
+    }
+    case autosim::AutoSimulationIntentIconKind::Enemy:
+        renderer.fillCircle(center, size * 0.36f, {206, 62, 78, alpha});
+        renderer.drawCircle(center, size * 0.40f, {255, 214, 176, alpha});
+        return true;
+    case autosim::AutoSimulationIntentIconKind::Dig:
+        renderer.fillRect(center - Vec2{size * 0.32f, size * 0.24f}, {size * 0.64f, size * 0.48f}, {98, 80, 62, alpha});
+        renderer.drawRect(center - Vec2{size * 0.32f, size * 0.24f}, {size * 0.64f, size * 0.48f}, {235, 220, 184, alpha});
+        return true;
+    case autosim::AutoSimulationIntentIconKind::Path:
+        renderer.drawSoftLine(center - Vec2{size * 0.34f, 0.0f}, center + Vec2{size * 0.28f, 0.0f}, 3.0f, {126, 214, 232, alpha});
+        renderer.drawLine(center + Vec2{size * 0.28f, 0.0f}, center + Vec2{size * 0.08f, -size * 0.16f}, {230, 250, 255, alpha});
+        renderer.drawLine(center + Vec2{size * 0.28f, 0.0f}, center + Vec2{size * 0.08f, size * 0.16f}, {230, 250, 255, alpha});
+        return true;
+    case autosim::AutoSimulationIntentIconKind::Base: {
+        const Vec2 roof[] = {
+            center + Vec2{-size * 0.38f, -size * 0.02f},
+            center + Vec2{0.0f, -size * 0.34f},
+            center + Vec2{size * 0.38f, -size * 0.02f},
+        };
+        renderer.fillPolygon(roof, 3, {236, 180, 92, alpha});
+        renderer.fillRect(center + Vec2{-size * 0.26f, -size * 0.02f}, {size * 0.52f, size * 0.34f}, {84, 122, 176, alpha});
+        return true;
+    }
+    case autosim::AutoSimulationIntentIconKind::None:
+        break;
+    }
+    return false;
+}
+
+struct AutoSimulationIntentLineLayout {
+    std::string prefix;
+    std::string subjectText;
+    float width = 0.0f;
+    bool showIcon = false;
+};
+
+AutoSimulationIntentLineLayout makeAutoSimulationIntentLineLayout(
+    Renderer& renderer,
+    const autosim::AutoSimulationIntent& intent,
+    float maxWidth,
+    int textScale,
+    float iconSize,
+    float iconGap)
+{
+    AutoSimulationIntentLineLayout layout;
+    layout.prefix = intent.prefix;
+    layout.subjectText = autoSimulationIntentSubjectText(intent);
+    layout.showIcon = autoSimulationIntentHasIcon(intent);
+
+    const float prefixWidth = renderer.measureText(layout.prefix, textScale).x;
+    const float fixedWidth = prefixWidth + (layout.showIcon ? iconSize + iconGap : 0.0f);
+    const float subjectMaxWidth = std::max(0.0f, maxWidth - fixedWidth);
+    layout.subjectText = fittedSingleLineText(renderer, layout.subjectText, subjectMaxWidth, textScale);
+    layout.width = fixedWidth + renderer.measureText(layout.subjectText, textScale).x;
+    return layout;
+}
+
+void drawAutoSimulationIntentLine(
+    Renderer& renderer,
+    const ObjectCatalog& objectCatalog,
+    const autosim::AutoSimulationIntent& intent,
+    const AutoSimulationIntentLineLayout& layout,
+    Vec2 pos,
+    int textScale,
+    float iconSize,
+    float iconGap,
+    Color textColor,
+    Color outlineColor)
+{
+    Vec2 cursor = pos;
+    if (!layout.prefix.empty()) {
+        renderer.drawOutlinedText(cursor, layout.prefix, textColor, outlineColor, 2, textScale);
+        cursor.x += renderer.measureText(layout.prefix, textScale).x;
+    }
+    if (layout.showIcon) {
+        const Vec2 textMeasure = renderer.measureText("0", textScale);
+        const Vec2 center{
+            cursor.x + iconSize * 0.5f,
+            pos.y + std::max(0.0f, (textMeasure.y - iconSize) * 0.5f) + iconSize * 0.5f - 2.0f,
+        };
+        if (drawAutoSimulationIntentIcon(renderer, objectCatalog, intent, center, iconSize, textColor.a)) {
+            cursor.x += iconSize + iconGap;
+        }
+    }
+    if (!layout.subjectText.empty()) {
+        renderer.drawOutlinedText(cursor, layout.subjectText, textColor, outlineColor, 2, textScale);
+    }
+}
 
 struct DebugItemPickerLayout {
     UiRect panel{};
@@ -3271,6 +3494,802 @@ bool Game::handleDebugStoryTestCommand(std::string_view normalized)
     return false;
 }
 
+GameTestSnapshot Game::makeTestSnapshot() const
+{
+    const auto screenMode = [](ScreenMode mode) {
+        switch (mode) {
+        case ScreenMode::OpeningKamishibai: return GameTestScreenMode::OpeningKamishibai;
+        case ScreenMode::EndingKamishibai: return GameTestScreenMode::EndingKamishibai;
+        case ScreenMode::Title: return GameTestScreenMode::Title;
+        case ScreenMode::Base: return GameTestScreenMode::Base;
+        case ScreenMode::WorldLoading: return GameTestScreenMode::WorldLoading;
+        case ScreenMode::Playing: return GameTestScreenMode::Playing;
+        case ScreenMode::PauseMenu: return GameTestScreenMode::PauseMenu;
+        case ScreenMode::Inventory: return GameTestScreenMode::Inventory;
+        case ScreenMode::Ring: return GameTestScreenMode::Ring;
+        case ScreenMode::ObjectImageScaleEdit: return GameTestScreenMode::ObjectImageScaleEdit;
+        case ScreenMode::AudioCueEdit: return GameTestScreenMode::AudioCueEdit;
+        case ScreenMode::LevelUp: return GameTestScreenMode::LevelUp;
+        case ScreenMode::GameOver: return GameTestScreenMode::GameOver;
+        case ScreenMode::StageClear: return GameTestScreenMode::StageClear;
+        case ScreenMode::AstralResult: return GameTestScreenMode::AstralResult;
+        }
+        return GameTestScreenMode::Base;
+    };
+    const auto ringState = [](SpellRingState state) {
+        switch (state) {
+        case SpellRingState::Normal: return GameTestRingState::Normal;
+        case SpellRingState::Thrown: return GameTestRingState::Thrown;
+        case SpellRingState::Returning: return GameTestRingState::Returning;
+        }
+        return GameTestRingState::Normal;
+    };
+    const auto dropKind = [](WorldDropKind kind) {
+        switch (kind) {
+        case WorldDropKind::Object: return GameTestDropKind::Object;
+        case WorldDropKind::Money: return GameTestDropKind::Money;
+        case WorldDropKind::Material: return GameTestDropKind::Material;
+        }
+        return GameTestDropKind::Object;
+    };
+    const auto codexStageForItem = [this](const ItemData& item) {
+        const bool treasure = item.category == "\xE5\xAE\x9D";
+        return static_cast<GameTestCodexStage>(static_cast<int>(encyclopedia_.objectStage(item.id, treasure)));
+    };
+    const auto fillProcessingState = [this](
+        GameTestObjectEntrySnapshot& entry,
+        StorageEntry storageEntry,
+        bool warehouseEntry,
+        int sourceCount) {
+        const int usedSlots = warehouseEntry ? warehouseUsedSlots() : backpackUsedSlots();
+        const int capacity = warehouseEntry ? warehouseCapacity() : inventory_.screenSlotCount();
+        const bool canCreateInstanceSlot =
+            storageEntry.kind != StorageEntryKind::Stack ||
+            sourceCount <= 1 ||
+            usedSlots < capacity;
+        const int enhancementOre = inventory_.materialCount(MaterialType::EnhancementOre);
+
+        const auto fillMode = [&](ProcessingMode mode, bool& canUse, int& moneyCost, int& oreCost) {
+            moneyCost = processingMoneyCost(storageEntry, mode, warehouseEntry);
+            oreCost = processingOreCost(storageEntry, mode, warehouseEntry);
+            canUse =
+                processingEntryAvailable(storageEntry, mode, warehouseEntry) &&
+                (mode == ProcessingMode::Repair || canCreateInstanceSlot) &&
+                money_ >= moneyCost &&
+                enhancementOre >= oreCost;
+        };
+
+        int repairOreCost = 0;
+        fillMode(ProcessingMode::Repair, entry.canRepair, entry.repairMoneyCost, repairOreCost);
+        fillMode(ProcessingMode::Attack, entry.canEnhanceAttack, entry.enhanceAttackMoneyCost, entry.enhanceAttackOreCost);
+        fillMode(ProcessingMode::Dig, entry.canEnhanceDig, entry.enhanceDigMoneyCost, entry.enhanceDigOreCost);
+    };
+    const auto makeStackEntry = [this, &codexStageForItem, &fillProcessingState](
+        const InventoryObjectStack& stack,
+        GameTestInventoryLocation location,
+        int index) {
+        GameTestObjectEntrySnapshot entry;
+        entry.location = location;
+        entry.kind = GameTestObjectEntryKind::Stack;
+        entry.objectId = stack.objectId;
+        entry.name = stack.item.name;
+        entry.category = stack.item.category;
+        entry.damageType = stack.item.damageType;
+        entry.tags = stack.item.tags;
+        entry.count = stack.count;
+        entry.rarity = stack.item.rarity;
+        entry.price = stack.item.price;
+        entry.sellPrice = sellPrice(stack.item);
+        entry.attackPower = stack.item.attackPower;
+        entry.digPower = stack.item.digPower;
+        entry.staffEquipScore = autoSimulationStaffEquipScore(stack.item);
+        entry.durability = stack.item.durability;
+        entry.weightKg = stack.item.weightKg;
+        entry.currentDurability = stack.item.durability;
+        entry.maxDurability = stack.item.durability;
+        entry.broken = stack.item.durability == 0;
+        entry.important = isImportantItem(stack.item);
+        entry.sellable = isSellableObject(stack.item);
+        entry.codexStage = codexStageForItem(stack.item);
+        fillProcessingState(
+            entry,
+            StorageEntry{StorageEntryKind::Stack, index},
+            location == GameTestInventoryLocation::Warehouse,
+            stack.count);
+        return entry;
+    };
+    const auto makeInstanceEntry = [this, &codexStageForItem, &fillProcessingState](
+        const InventoryObjectInstance& objectInstance,
+        GameTestInventoryLocation location,
+        int index) {
+        GameTestObjectEntrySnapshot entry;
+        entry.location = location;
+        entry.kind = GameTestObjectEntryKind::Instance;
+        entry.objectId = objectInstance.item.id;
+        entry.instanceId = objectInstance.instance.instanceId;
+        entry.name = objectInstance.item.name;
+        entry.category = objectInstance.item.category;
+        entry.damageType = objectInstance.item.damageType;
+        entry.tags = objectInstance.item.tags;
+        entry.count = 1;
+        entry.rarity = objectInstance.item.rarity;
+        entry.price = objectInstance.item.price;
+        entry.sellPrice = sellPrice(objectInstance.item, &objectInstance.instance);
+        entry.attackPower = objectInstance.item.attackPower;
+        entry.digPower = objectInstance.item.digPower;
+        entry.staffEquipScore = autoSimulationStaffEquipScore(objectInstance.item);
+        entry.durability = objectInstance.item.durability;
+        entry.weightKg = objectInstance.item.weightKg;
+        entry.currentDurability = objectInstance.instance.currentDurability;
+        entry.maxDurability = objectInstance.instance.maxDurability;
+        entry.enhanceLevel = objectInstance.instance.enhanceLevel;
+        entry.attackBonus = objectInstance.instance.attackBonus;
+        entry.digBonus = objectInstance.instance.digBonus;
+        entry.durabilityBonus = objectInstance.instance.durabilityBonus;
+        entry.weightModifier = objectInstance.instance.weightModifier;
+        entry.sizeModifier = objectInstance.instance.sizeModifier;
+        entry.protectionEnabled = objectInstance.instance.protectionEnabled;
+        entry.equipped =
+            location == GameTestInventoryLocation::Backpack &&
+            inventory_.isStaffEquipped(objectInstance.instance.instanceId);
+        entry.broken = objectInstance.instance.isBroken;
+        entry.important = isImportantItem(objectInstance.item);
+        entry.sellable = isSellableObject(objectInstance.item) && !entry.equipped && !entry.protectionEnabled;
+        entry.codexStage = codexStageForItem(objectInstance.item);
+        fillProcessingState(
+            entry,
+            StorageEntry{StorageEntryKind::Instance, index},
+            location == GameTestInventoryLocation::Warehouse,
+            1);
+        return entry;
+    };
+
+    GameTestSnapshot snapshot;
+    snapshot.screenMode = screenMode(mode_);
+    snapshot.stageId = currentStageId_;
+    snapshot.stageName = currentStageDefinition_.name;
+    snapshot.worldLoading = mode_ == ScreenMode::WorldLoading || worldBuildActive();
+    snapshot.transitionActive = screenTransition_.active();
+    snapshot.dialogueActive = dialogue_.active();
+    snapshot.dungeonFocusActive = dungeonFocusActive();
+    snapshot.bossPresentationActive = bossEncounterBlocksProgress();
+    snapshot.firstItemNoticeActive = firstItemAcquisitionNoticeActive();
+    snapshot.pendingStoryDelayActive = pendingStoryTriggerDelayActive();
+    snapshot.warpReturnConfirmOpen = warpReturnConfirm_.open;
+    snapshot.introTutorialActive = introTutorialActive();
+    snapshot.cameraPosition = camera_.position();
+    snapshot.viewportWidth = camera_.width();
+    snapshot.viewportHeight = camera_.height();
+    snapshot.player.position = player_.position;
+    snapshot.player.facing = player_.facing;
+    snapshot.player.velocity = player_.velocity;
+    snapshot.player.radius = player_.effectiveRadius(balance_.playerRadius);
+    snapshot.player.hp = player_.hp;
+    snapshot.player.maxHp = player_.maxHp;
+    snapshot.player.level = player_.level;
+    snapshot.ringState = ringState(spellRing_.state());
+    snapshot.ringCenter = spellRing_.center();
+    snapshot.ring.activeRingIndex = spellRing_.activeRingIndex();
+    snapshot.ring.activeRadius = spellRing_.radius();
+    snapshot.ring.activeAngularSpeed = spellRing_.effectiveAngularSpeed();
+    snapshot.ring.activeWeight = spellRing_.totalEquippedWeight();
+    snapshot.ring.activeMaxWeight = spellRing_.maxEquippedWeight();
+    snapshot.ring.anchorOffsetFromPlayer = witchSelfLightCenter(player_.position) - player_.position;
+    snapshot.ring.currentOffsetDistance = player_.spellRingShift;
+    snapshot.ring.maxOffsetDistance =
+        (balance_.spellRingShiftDistance + player_.spellRingShiftDistanceBonus) *
+        clamp(player_.spellRingShiftDistanceMultiplier, 0.25f, 3.0f);
+    snapshot.ring.activeItemCount = static_cast<int>(spellRing_.items().size());
+    snapshot.ring.activeMaxItemCount = spellRing_.maxItemCount();
+    snapshot.ring.activeCanAddItem = spellRing_.canAddItem();
+    for (int ringIndex = 0; ringIndex < SpellRingCount; ++ringIndex) {
+        const std::vector<SpellRingItem>& ringItems = spellRing_.itemsForRing(ringIndex);
+        for (int itemIndex = 0; itemIndex < static_cast<int>(ringItems.size()); ++itemIndex) {
+            const SpellRingItem& item = ringItems[static_cast<std::size_t>(itemIndex)];
+            const auto objectIt = objectCatalog_.objectsById.find(item.objectId);
+            const ObjectDefinition* object = objectIt == objectCatalog_.objectsById.end() ? nullptr : &objectIt->second;
+            std::vector<std::string> tags = object != nullptr ? object->tags : std::vector<std::string>{};
+            tags.insert(tags.end(), item.addedTags.begin(), item.addedTags.end());
+            snapshot.ring.items.push_back(GameTestRingItemSnapshot{
+                .ringIndex = ringIndex,
+                .itemIndex = itemIndex,
+                .objectId = item.objectId,
+                .instanceId = item.instanceId,
+                .name = object != nullptr ? object->name : std::string{},
+                .category = object != nullptr ? object->category : std::string{},
+                .damageType = item.damageType,
+                .tags = std::move(tags),
+                .worldPosition = item.worldPosition,
+                .damage = item.damage,
+                .digPower = item.digPower,
+                .hitRadius = item.hitRadius,
+                .durability = item.durability,
+                .maxDurability = item.maxDurability,
+                .rarity = object != nullptr ? object->rarity : 0,
+                .price = object != nullptr ? object->price : 0,
+                .weightKg = item.weight,
+                .enhanceLevel = item.enhanceLevel,
+                .attackBonus = item.attackBonus,
+                .digBonus = item.digBonus,
+                .durabilityBonus = item.durabilityBonus,
+                .protectionEnabled = item.protectionEnabled,
+                .broken = item.broken(),
+            });
+            if (ringIndex == spellRing_.activeRingIndex() && !item.broken()) {
+                snapshot.ring.bestDamage = std::max(snapshot.ring.bestDamage, item.damage);
+                snapshot.ring.bestDigPower = std::max(snapshot.ring.bestDigPower, item.digPower);
+                snapshot.ring.bestHitRadius = std::max(snapshot.ring.bestHitRadius, item.hitRadius);
+            }
+        }
+    }
+    snapshot.ring.hasCombatTool = snapshot.ring.bestDamage > 0;
+    snapshot.ring.hasDigTool = snapshot.ring.bestDigPower > 0;
+    snapshot.dungeon.active = mode_ == ScreenMode::Playing ||
+        mode_ == ScreenMode::Inventory ||
+        mode_ == ScreenMode::PauseMenu ||
+        mode_ == ScreenMode::Ring ||
+        mode_ == ScreenMode::LevelUp ||
+        mode_ == ScreenMode::GameOver ||
+        mode_ == ScreenMode::StageClear ||
+        mode_ == ScreenMode::AstralResult;
+    snapshot.dungeon.seed = dungeonLayout_.seed;
+    snapshot.dungeon.startWorld = tileWorldCenter(dungeonLayout_.startTile);
+    snapshot.dungeon.goalWorld = tileWorldCenter(dungeonLayout_.goalTile);
+    snapshot.dungeon.hasBossSpawnPoint = hasBossSpawnPoint_;
+    snapshot.dungeon.bossSpawnPoint = bossSpawnPoint_;
+    snapshot.dungeon.bossSpawned = bossSpawned_;
+    snapshot.dungeon.discoveredWarpPoints = discoveredWarpPointCount();
+    snapshot.dungeon.unlockedWarpPoints = unlockedWarpPointCount_;
+    snapshot.dungeon.mainPathWorldPoints.reserve(dungeonLayout_.mainPathPoints.size());
+    for (Vec2 tilePoint : dungeonLayout_.mainPathPoints) {
+        snapshot.dungeon.mainPathWorldPoints.push_back(tileWorldCenter(roundDungeonTile(tilePoint)));
+    }
+    snapshot.dungeon.warpPoints.reserve(warpPoints_.size());
+    for (const WarpPoint& point : warpPoints_) {
+        const bool knownDiscovered =
+            point.discovered ||
+            point.unlocked ||
+            point.index < unlockedWarpPointCount_;
+        snapshot.dungeon.warpPoints.push_back(GameTestWarpPointSnapshot{
+            .position = point.position,
+            .index = point.index,
+            .discovered = knownDiscovered,
+        });
+    }
+
+    std::vector<EnemyMinimapMarker> markers;
+    enemies_.appendMinimapMarkers(markers);
+    snapshot.enemies.reserve(markers.size());
+    for (const EnemyMinimapMarker& marker : markers) {
+        snapshot.enemies.push_back(GameTestEnemySnapshot{
+            .position = marker.position,
+            .boss = marker.boss,
+        });
+    }
+
+    snapshot.chests.reserve(chestNodes_.size());
+    for (const ChestNode& node : chestNodes_) {
+        snapshot.chests.push_back(GameTestChestSnapshot{
+            .position = chestVisualCenter(node),
+            .revealed = node.revealed,
+            .opened = node.opened,
+        });
+    }
+
+    const std::vector<WorldDropItem>& drops = worldDrops_.drops();
+    snapshot.drops.reserve(drops.size());
+    for (const WorldDropItem& drop : drops) {
+        std::string displayName = drop.id;
+        GameTestIconKind iconKind = GameTestIconKind::None;
+        std::string iconKey;
+        if (drop.kind == WorldDropKind::Object) {
+            const ItemData* object = objectCatalog_.registry.findById(drop.id);
+            displayName = object != nullptr ? object->name : drop.id;
+            iconKind = GameTestIconKind::Object;
+            iconKey = drop.id;
+        } else if (drop.kind == WorldDropKind::Money) {
+            displayName = std::to_string(drop.quantity) + "G";
+            iconKind = GameTestIconKind::World;
+            iconKey = std::string(worldIconKey(moneyWorldIconForAmount(drop.quantity)));
+        } else {
+            MaterialType materialType = MaterialType::Count;
+            if (materialTypeFromSaveName(drop.id, materialType)) {
+                displayName = std::string(materialTypeDisplayName(materialType));
+                iconKind = GameTestIconKind::World;
+                iconKey = std::string(worldIconKey(materialWorldIcon(materialType)));
+            }
+        }
+        snapshot.drops.push_back(GameTestDropSnapshot{
+            .kind = dropKind(drop.kind),
+            .id = drop.id,
+            .displayName = std::move(displayName),
+            .iconKind = iconKind,
+            .iconKey = std::move(iconKey),
+            .position = drop.position,
+            .quantity = drop.quantity,
+        });
+    }
+
+    if (snapshot.dungeon.active) {
+        constexpr int PathGridScanRadius = 30;
+        constexpr int MineTileScanRadius = 5;
+        const float halfTile = static_cast<float>(balance::TileSize) * 0.5f;
+        const int playerTileX = tileMap_.worldToTile(player_.position.x);
+        const int playerTileY = tileMap_.worldToTile(player_.position.y);
+        const std::vector<CollisionRect> objectBlockers = enemyTestActive_
+            ? std::vector<CollisionRect>{}
+            : solidObjectCollisionRects();
+        snapshot.pathGrid.objectBlockers.reserve(objectBlockers.size());
+        for (const CollisionRect& rect : objectBlockers) {
+            snapshot.pathGrid.objectBlockers.push_back(GameTestCollisionRectSnapshot{
+                .pos = rect.pos,
+                .size = rect.size,
+            });
+        }
+        const auto objectBlocksPlayer = [&](Vec2 center) {
+            return circleIntersectsAnyRect(
+                center,
+                snapshot.player.radius,
+                std::span<const CollisionRect>{objectBlockers.data(), objectBlockers.size()});
+        };
+        const auto terrainBlocksPlayer = [&](Vec2 center) {
+            const float sample = snapshot.player.radius * 0.55f;
+            const Vec2 points[] = {
+                center,
+                center + Vec2{sample, 0.0f},
+                center + Vec2{-sample, 0.0f},
+                center + Vec2{0.0f, sample},
+                center + Vec2{0.0f, -sample},
+                center + Vec2{sample, sample},
+                center + Vec2{-sample, sample},
+                center + Vec2{sample, -sample},
+                center + Vec2{-sample, -sample},
+            };
+            for (Vec2 point : points) {
+                if (tileMap_.terrainDebugAtWorld(point).type != TileType::Empty) {
+                    return true;
+                }
+            }
+            return false;
+        };
+        snapshot.pathGrid.minTileX = playerTileX - PathGridScanRadius;
+        snapshot.pathGrid.minTileY = playerTileY - PathGridScanRadius;
+        snapshot.pathGrid.width = PathGridScanRadius * 2 + 1;
+        snapshot.pathGrid.height = PathGridScanRadius * 2 + 1;
+        snapshot.pathGrid.tiles.reserve(static_cast<std::size_t>(snapshot.pathGrid.width * snapshot.pathGrid.height));
+        for (int dy = -PathGridScanRadius; dy <= PathGridScanRadius; ++dy) {
+            for (int dx = -PathGridScanRadius; dx <= PathGridScanRadius; ++dx) {
+                const int tx = playerTileX + dx;
+                const int ty = playerTileY + dy;
+                const Vec2 center = tileMap_.tileCenter(tx, ty);
+                const TerrainDebugInfo terrain = tileMap_.terrainDebugAtWorld(center);
+                const bool terrainSolid = terrain.type != TileType::Empty;
+                const bool terrainBlocked = terrainBlocksPlayer(center);
+                const bool objectBlocked = objectBlocksPlayer(center);
+                snapshot.pathGrid.tiles.push_back(GameTestPathTileSnapshot{
+                    .center = center,
+                    .tileX = tx,
+                    .tileY = ty,
+                    .hp = terrain.hp,
+                    .effectiveHp = terrain.effectiveHp,
+                    .terrainKind = gameTestTerrainKind(terrain.type),
+                    .terrainAttribute = gameTestTerrainAttribute(terrain.attribute),
+                    .localHardnessMultiplier = terrain.localHardnessMultiplier,
+                    .distanceFromMainPath = terrain.distanceFromMainPath,
+                    .solid = terrainSolid || terrainBlocked || objectBlocked,
+                    .diggable = terrainSolid && !objectBlocked,
+                });
+            }
+        }
+
+        for (int dy = -MineTileScanRadius; dy <= MineTileScanRadius; ++dy) {
+            for (int dx = -MineTileScanRadius; dx <= MineTileScanRadius; ++dx) {
+                const int tx = playerTileX + dx;
+                const int ty = playerTileY + dy;
+                const Vec2 center = tileMap_.tileCenter(tx, ty);
+                const TerrainDebugInfo terrain = tileMap_.terrainDebugAtWorld(center);
+                if (terrain.type == TileType::Empty) {
+                    continue;
+                }
+                Vec2 normal = normalize(player_.position - center);
+                if (lengthSquared(normal) <= 0.0001f) {
+                    normal = normalize(player_.facing);
+                }
+                snapshot.nearbyMineTiles.push_back(GameTestMineTileSnapshot{
+                    .center = center,
+                    .surfacePoint = center + normal * halfTile,
+                    .outwardNormal = normal,
+                    .tileX = tx,
+                    .tileY = ty,
+                    .hp = terrain.hp,
+                    .effectiveHp = terrain.effectiveHp,
+                    .terrainKind = gameTestTerrainKind(terrain.type),
+                    .terrainAttribute = gameTestTerrainAttribute(terrain.attribute),
+                    .localHardnessMultiplier = terrain.localHardnessMultiplier,
+                    .distanceFromMainPath = terrain.distanceFromMainPath,
+                    .solid = true,
+                    .diggable = terrain.type != TileType::Empty,
+                });
+            }
+        }
+    }
+
+    snapshot.inventory.backpackUsedSlots = backpackUsedSlots();
+    snapshot.inventory.backpackCapacity = inventory_.screenSlotCount();
+    snapshot.inventory.warehouseUsedSlots = warehouseUsedSlots();
+    snapshot.inventory.warehouseCapacity = warehouseCapacity();
+    const auto& backpackStacks = inventory_.objectStacks();
+    const auto& backpackInstances = inventory_.objectInstances();
+    snapshot.inventory.backpackItems.reserve(backpackStacks.size() + backpackInstances.size());
+    for (int i = 0; i < static_cast<int>(backpackStacks.size()); ++i) {
+        const InventoryObjectStack& stack = backpackStacks[static_cast<std::size_t>(i)];
+        if (stack.count > 0) {
+            snapshot.inventory.backpackItems.push_back(makeStackEntry(stack, GameTestInventoryLocation::Backpack, i));
+        }
+    }
+    for (int i = 0; i < static_cast<int>(backpackInstances.size()); ++i) {
+        snapshot.inventory.backpackItems.push_back(makeInstanceEntry(
+            backpackInstances[static_cast<std::size_t>(i)],
+            GameTestInventoryLocation::Backpack,
+            i));
+    }
+    snapshot.inventory.warehouseItems.reserve(warehouseObjectStacks_.size() + warehouseObjectInstances_.size());
+    for (int i = 0; i < static_cast<int>(warehouseObjectStacks_.size()); ++i) {
+        const InventoryObjectStack& stack = warehouseObjectStacks_[static_cast<std::size_t>(i)];
+        if (stack.count > 0) {
+            snapshot.inventory.warehouseItems.push_back(makeStackEntry(stack, GameTestInventoryLocation::Warehouse, i));
+        }
+    }
+    for (int i = 0; i < static_cast<int>(warehouseObjectInstances_.size()); ++i) {
+        snapshot.inventory.warehouseItems.push_back(makeInstanceEntry(
+            warehouseObjectInstances_[static_cast<std::size_t>(i)],
+            GameTestInventoryLocation::Warehouse,
+            i));
+    }
+
+    snapshot.base.active = mode_ == ScreenMode::Base;
+    snapshot.base.money = money_;
+    snapshot.base.materials.oldWoodBuildingMaterial = inventory_.materialCount(MaterialType::OldWoodBuildingMaterial);
+    snapshot.base.materials.enhancementOre = inventory_.materialCount(MaterialType::EnhancementOre);
+    snapshot.base.materials.moonFragment = inventory_.materialCount(MaterialType::MoonFragment);
+    snapshot.base.materials.manaDrop = inventory_.materialCount(MaterialType::ManaDrop);
+    snapshot.base.ringWorkshopUnlocked = ringWorkshopUnlocked_;
+    snapshot.base.upgrades.reserve(8);
+    for (int index = 0; index < 8; ++index) {
+        const MaterialType materialType = upgradeMaterialType(index);
+        const int materialCost = upgradeMaterialCost(index);
+        const int moneyCost = upgradeCost(index);
+        GameTestUpgradeSnapshot upgrade;
+        upgrade.index = index;
+        upgrade.name = upgradeName(index);
+        upgrade.materialName = std::string(materialTypeDisplayName(materialType));
+        upgrade.level = upgradeLevel(index);
+        upgrade.maxLevel = upgradeMaxLevel(index);
+        upgrade.moneyCost = moneyCost;
+        upgrade.materialCost = materialCost;
+        upgrade.implemented = upgradeImplemented(index);
+        upgrade.maxed = upgradeMaxed(index);
+        upgrade.affordable =
+            upgrade.implemented &&
+            !upgrade.maxed &&
+            moneyCost > 0 &&
+            money_ >= moneyCost &&
+            inventory_.materialCount(materialType) >= materialCost;
+        snapshot.base.upgrades.push_back(std::move(upgrade));
+    }
+
+    snapshot.runStats = GameTestRunStats{
+        .elapsedSeconds = runStats_.elapsedSeconds,
+        .defeatedEnemies = runStats_.defeatedEnemies,
+        .dugTiles = runStats_.dugTiles,
+        .acquiredItems = runStats_.acquiredItems,
+        .acquiredObjectItems = runStats_.acquiredObjectItems,
+    };
+    snapshot.money = money_;
+    for (int materialIndex = 0; materialIndex < static_cast<int>(MaterialType::Count); ++materialIndex) {
+        snapshot.totalMaterials += inventory_.materials().counts[static_cast<std::size_t>(materialIndex)];
+    }
+
+    return snapshot;
+}
+
+GameTestActionResult Game::applyTestAction(const GameTestAction& action)
+{
+    const auto result = [](bool applied, std::string message) {
+        return GameTestActionResult{applied, std::move(message)};
+    };
+    const auto screenSlotForStack = [this](std::string_view objectId) {
+        for (int slot = 0; slot < inventory_.screenSlotCount(); ++slot) {
+            const InventoryObjectStack* stack = inventory_.screenObjectStackAt(slot);
+            if (stack != nullptr && stack->objectId == objectId) {
+                return slot;
+            }
+        }
+        return -1;
+    };
+    const auto screenSlotForInstance = [this](std::string_view instanceId) {
+        for (int slot = 0; slot < inventory_.screenSlotCount(); ++slot) {
+            const InventoryObjectInstance* instance = inventory_.screenObjectInstanceAt(slot);
+            if (instance != nullptr && instance->instance.instanceId == instanceId) {
+                return slot;
+            }
+        }
+        return -1;
+    };
+    const auto backpackStackCount = [this](std::string_view objectId) {
+        const auto& stacks = inventory_.objectStacks();
+        const auto it = std::find_if(stacks.begin(), stacks.end(), [objectId](const InventoryObjectStack& stack) {
+            return stack.objectId == objectId;
+        });
+        return it == stacks.end() ? 0 : it->count;
+    };
+    const auto backpackHasInstance = [this](std::string_view instanceId) {
+        const auto& instances = inventory_.objectInstances();
+        return std::any_of(instances.begin(), instances.end(), [instanceId](const InventoryObjectInstance& instance) {
+            return instance.instance.instanceId == instanceId;
+        });
+    };
+    const auto backpackInstanceEnhanceLevel = [this](std::string_view instanceId) {
+        const auto& instances = inventory_.objectInstances();
+        const auto it = std::find_if(instances.begin(), instances.end(), [instanceId](const InventoryObjectInstance& instance) {
+            return instance.instance.instanceId == instanceId;
+        });
+        return it == instances.end() ? -1 : it->instance.enhanceLevel;
+    };
+    const auto processingEntryForStack = [this](std::string_view objectId) -> std::optional<StorageEntry> {
+        const auto& stacks = inventory_.objectStacks();
+        for (int i = 0; i < static_cast<int>(stacks.size()); ++i) {
+            if (stacks[static_cast<std::size_t>(i)].objectId == objectId) {
+                return StorageEntry{StorageEntryKind::Stack, i};
+            }
+        }
+        return std::nullopt;
+    };
+    const auto processingEntryForInstance = [this](std::string_view instanceId) -> std::optional<StorageEntry> {
+        const auto& instances = inventory_.objectInstances();
+        for (int i = 0; i < static_cast<int>(instances.size()); ++i) {
+            if (instances[static_cast<std::size_t>(i)].instance.instanceId == instanceId) {
+                return StorageEntry{StorageEntryKind::Instance, i};
+            }
+        }
+        return std::nullopt;
+    };
+
+    switch (action.kind) {
+    case GameTestActionKind::None:
+        return result(false, "no action");
+
+    case GameTestActionKind::ReturnToBaseViaWarp:
+    {
+        if (mode_ != ScreenMode::Playing || worldBuildActive() || screenTransition_.active() || introTutorialActive()) {
+            return result(false, "cannot return now");
+        }
+        const bool entranceNearby =
+            distanceSquared(player_.position, dungeonEntrancePosition()) <= WarpPointReturnRadius * WarpPointReturnRadius;
+        if (!entranceNearby && nearbyDiscoveredWarpPointIndex() < 0) {
+            return result(false, "no nearby discovered warp");
+        }
+        if (currentStageIsRoguelike()) {
+            enterAstralResult(AstralRunResult::Returned);
+        } else {
+            requestReturnToBaseTransition(false, false);
+        }
+        return result(true, "return requested");
+    }
+
+    case GameTestActionKind::ReturnToBaseAfterGameOver:
+        if (mode_ != ScreenMode::GameOver || worldBuildActive() || screenTransition_.active()) {
+            return result(false, "cannot return from game over now");
+        }
+        returnToBaseAfterGameOver();
+        return result(mode_ != ScreenMode::GameOver || screenTransition_.active(), "game over return requested");
+
+    case GameTestActionKind::StartMiningFromBase:
+        if (mode_ != ScreenMode::Base || worldBuildActive() || screenTransition_.active()) {
+            return result(false, "cannot start mining now");
+        }
+        requestMiningStartTransition(true, false);
+        return result(screenTransition_.active(), "mining start requested");
+
+    case GameTestActionKind::SyncEncyclopedia:
+    {
+        const std::size_t before = encyclopedia_.updateLog().size();
+        syncEncyclopediaFromInventoryAndRing();
+        const bool changed = encyclopedia_.updateLog().size() != before;
+        baseStatus_ = changed ? "図鑑を同期しました" : baseStatus_;
+        return result(true, changed ? "encyclopedia updated" : "encyclopedia already current");
+    }
+
+    case GameTestActionKind::EquipBackpackStaff:
+    {
+        std::string status;
+        const bool equipped = inventory_.equipStaffObject(action.objectId, action.instanceId, spellRing_, &status);
+        if (equipped) {
+            refreshEquipmentModifiers();
+            applyPermanentUpgrades();
+            refreshOrbitEffects();
+            baseStatus_ = "杖を装備しました";
+        }
+        return result(equipped, status.empty() ? (equipped ? "staff equipped" : "staff equip failed") : status);
+    }
+
+    case GameTestActionKind::EquipBackpackItemToRing:
+    {
+        const int targetRing = action.ringIndex >= 0
+            ? std::clamp(action.ringIndex, 0, SpellRingCount - 1)
+            : spellRing_.activeRingIndex();
+        if (targetRing != spellRing_.activeRingIndex()) {
+            spellRing_.switchActiveRing(targetRing - spellRing_.activeRingIndex());
+        }
+        SpellRingAddResult addResult{};
+        std::string status;
+        const bool equipped = inventory_.addObjectToRing(action.objectId, action.instanceId, spellRing_, &addResult, &status);
+        if (equipped) {
+            refreshOrbitEffects();
+            baseStatus_ = "リングに装備しました";
+        }
+        return result(equipped, status.empty() ? (equipped ? "equipped to ring" : "ring equip failed") : status);
+    }
+
+    case GameTestActionKind::RemoveRingItemToBackpack:
+    {
+        const int targetRing = action.ringIndex >= 0
+            ? std::clamp(action.ringIndex, 0, SpellRingCount - 1)
+            : spellRing_.activeRingIndex();
+        std::vector<SpellRingItem>& ringItems = spellRing_.itemsForRing(targetRing);
+        if (action.ringItemIndex < 0 || action.ringItemIndex >= static_cast<int>(ringItems.size())) {
+            return result(false, "ring item not found");
+        }
+
+        const SpellRingItem& ringItem = ringItems[static_cast<std::size_t>(action.ringItemIndex)];
+        if (ringItem.objectId.empty()) {
+            return result(false, "ring item cannot be removed");
+        }
+        if (!inventory_.addObjectInstance(
+                objectCatalog_,
+                inventoryInstanceFromRingItem(inventory_, objectCatalog_, ringItem))) {
+            return result(false, "backpack full");
+        }
+
+        ringItems.erase(ringItems.begin() + action.ringItemIndex);
+        spellRing_.resetBaseWeightToCurrent();
+        refreshOrbitEffects();
+        baseStatus_ = "リングから外しました";
+        return result(true, "removed ring item to backpack");
+    }
+
+    case GameTestActionKind::DepositBackpackStack:
+    {
+        const int slot = screenSlotForStack(action.objectId);
+        if (slot < 0) {
+            return result(false, "stack not found");
+        }
+        const StorageTransferTarget target = storageDepositTargetForSourceSlot(0, slot);
+        if (!storageTransferTargetAvailable(target)) {
+            return result(false, "deposit unavailable");
+        }
+        const int beforeCount = backpackStackCount(action.objectId);
+        const int moveCount = action.count <= 0 ? beforeCount : std::min(action.count, beforeCount);
+        depositStorageTarget(target, moveCount);
+        return result(backpackStackCount(action.objectId) < beforeCount, baseStatus_.empty() ? "deposited stack" : baseStatus_);
+    }
+
+    case GameTestActionKind::DepositBackpackInstance:
+    {
+        const int slot = screenSlotForInstance(action.instanceId);
+        if (slot < 0) {
+            return result(false, "instance not found");
+        }
+        const StorageTransferTarget target = storageDepositTargetForSourceSlot(0, slot);
+        if (!storageTransferTargetAvailable(target)) {
+            return result(false, "deposit unavailable");
+        }
+        depositStorageTarget(target, 1);
+        return result(!backpackHasInstance(action.instanceId), baseStatus_.empty() ? "deposited instance" : baseStatus_);
+    }
+
+    case GameTestActionKind::SellBackpackStack:
+    {
+        const int slot = screenSlotForStack(action.objectId);
+        if (slot < 0) {
+            return result(false, "stack not found");
+        }
+        const MerchantSellTarget target = merchantSellTargetForSourceSlot(0, slot);
+        if (!merchantSellTargetAvailable(target)) {
+            return result(false, "sell unavailable");
+        }
+        const int beforeCount = backpackStackCount(action.objectId);
+        const int sellCount = action.count <= 0 ? beforeCount : std::min(action.count, beforeCount);
+        sellMerchantTarget(target, sellCount);
+        return result(backpackStackCount(action.objectId) < beforeCount, baseStatus_.empty() ? "sold stack" : baseStatus_);
+    }
+
+    case GameTestActionKind::SellBackpackInstance:
+    {
+        const int slot = screenSlotForInstance(action.instanceId);
+        if (slot < 0) {
+            return result(false, "instance not found");
+        }
+        const MerchantSellTarget target = merchantSellTargetForSourceSlot(0, slot);
+        if (!merchantSellTargetAvailable(target)) {
+            return result(false, "sell unavailable");
+        }
+        sellMerchantTarget(target, 1);
+        return result(!backpackHasInstance(action.instanceId), baseStatus_.empty() ? "sold instance" : baseStatus_);
+    }
+
+    case GameTestActionKind::ProtectBackpackInstance:
+        if (action.instanceId.empty()) {
+            return result(false, "missing instance id");
+        }
+        return result(
+            inventory_.setObjectInstanceProtection(action.instanceId, true),
+            "protection enabled");
+
+    case GameTestActionKind::RepairBackpackInstance:
+    {
+        const std::optional<StorageEntry> entry = processingEntryForInstance(action.instanceId);
+        if (!entry) {
+            return result(false, "instance not found");
+        }
+        applyProcessingEntry(*entry, ProcessingMode::Repair, false);
+        baseResultDialog_ = {};
+        return result(baseStatus_.empty(), baseStatus_.empty() ? "repaired instance" : baseStatus_);
+    }
+
+    case GameTestActionKind::EnhanceBackpackStackAttack:
+    case GameTestActionKind::EnhanceBackpackStackDig:
+    {
+        const std::optional<StorageEntry> entry = processingEntryForStack(action.objectId);
+        if (!entry) {
+            return result(false, "stack not found");
+        }
+        const int beforeCount = backpackStackCount(action.objectId);
+        const int beforeInstances = static_cast<int>(inventory_.objectInstances().size());
+        const ProcessingMode mode = action.kind == GameTestActionKind::EnhanceBackpackStackAttack
+            ? ProcessingMode::Attack
+            : ProcessingMode::Dig;
+        applyProcessingEntry(*entry, mode, false);
+        baseResultDialog_ = {};
+        const bool changed =
+            backpackStackCount(action.objectId) < beforeCount ||
+            static_cast<int>(inventory_.objectInstances().size()) > beforeInstances;
+        return result(changed, baseStatus_.empty() ? "enhanced stack item" : baseStatus_);
+    }
+
+    case GameTestActionKind::EnhanceBackpackInstanceAttack:
+    case GameTestActionKind::EnhanceBackpackInstanceDig:
+    {
+        const std::optional<StorageEntry> entry = processingEntryForInstance(action.instanceId);
+        if (!entry) {
+            return result(false, "instance not found");
+        }
+        const int beforeLevel = backpackInstanceEnhanceLevel(action.instanceId);
+        const ProcessingMode mode = action.kind == GameTestActionKind::EnhanceBackpackInstanceAttack
+            ? ProcessingMode::Attack
+            : ProcessingMode::Dig;
+        applyProcessingEntry(*entry, mode, false);
+        baseResultDialog_ = {};
+        return result(
+            backpackInstanceEnhanceLevel(action.instanceId) > beforeLevel,
+            baseStatus_.empty() ? "enhanced instance" : baseStatus_);
+    }
+
+    case GameTestActionKind::BuyBaseUpgrade:
+    {
+        if (mode_ != ScreenMode::Base || action.upgradeIndex < 0) {
+            return result(false, "upgrade unavailable");
+        }
+        const int beforeLevel = upgradeLevel(action.upgradeIndex);
+        buyUpgrade(action.upgradeIndex);
+        baseResultDialog_ = {};
+        return result(upgradeLevel(action.upgradeIndex) > beforeLevel, baseStatus_.empty() ? "bought upgrade" : baseStatus_);
+    }
+    }
+
+    return result(false, "unknown action");
+}
+
 bool Game::executeDebugCommand(std::string_view command)
 {
     const std::string normalized = lowerAscii(trimAscii(std::string(command)));
@@ -4018,6 +5037,8 @@ bool Game::executeDebugCommand(std::string_view command)
         unlockedStages_ = 1;
         unlockedWarpPointCount_ = 0;
         hasLatestWarpPointPosition_ = false;
+        dungeonStates_.clear();
+        requestedWarpPointStartPosition_.reset();
         currentStage_ = 0;
         currentStageId_ = "stage_01_stardust";
         resolveCurrentStageDefinition();
@@ -4027,6 +5048,7 @@ bool Game::executeDebugCommand(std::string_view command)
         initializeWorld(false);
         enterBase();
         captureRunStartInventoryState();
+        captureEncyclopediaSyncSuppressState();
 
         std::string saveMessage;
         if (saveSaveData(saveMessage)) {
@@ -4587,6 +5609,88 @@ void Game::renderBaseDebugOverlay(Renderer& renderer, const Time& time) const
         TextScale);
 }
 
+void Game::setAutoSimulationIntentOverlay(bool active, std::vector<autosim::AutoSimulationIntent> history)
+{
+    autoSimulationIntentOverlayActive_ = active;
+    autoSimulationIntentHistory_ = std::move(history);
+}
+
+void Game::setAutoSimulationDebugOverlay(bool active, autosim::AutoSimulationDebugSnapshot debug)
+{
+    autoSimulationDebugOverlayActive_ = active;
+    autoSimulationDebug_ = std::move(debug);
+}
+
+void Game::renderAutoSimulationIntentOverlay(Renderer& renderer) const
+{
+    if (!autoSimulationIntentOverlayActive_ || autoSimulationIntentHistory_.empty()) {
+        return;
+    }
+
+    renderer.setScreenSpace();
+    constexpr int TextScale = 2;
+    constexpr float IconSize = 29.0f;
+    constexpr float IconGap = 6.0f;
+    constexpr float PaddingX = 18.0f;
+    constexpr float PaddingY = 10.0f;
+    constexpr float LineGap = 3.0f;
+    constexpr float MaxPanelWidth = 790.0f;
+    const float screenWidth = static_cast<float>(camera_.width());
+    const float maxContentWidth = std::max(80.0f, std::min(MaxPanelWidth, screenWidth - 36.0f) - PaddingX * 2.0f);
+    const int lineCount = std::min<int>(3, static_cast<int>(autoSimulationIntentHistory_.size()));
+
+    std::vector<AutoSimulationIntentLineLayout> layouts;
+    layouts.reserve(static_cast<std::size_t>(lineCount));
+    float contentWidth = 0.0f;
+    for (int i = 0; i < lineCount; ++i) {
+        layouts.push_back(makeAutoSimulationIntentLineLayout(
+            renderer,
+            autoSimulationIntentHistory_[static_cast<std::size_t>(i)],
+            maxContentWidth,
+            TextScale,
+            IconSize,
+            IconGap));
+        contentWidth = std::max(contentWidth, layouts.back().width);
+    }
+
+    const Vec2 textMeasure = renderer.measureText("0", TextScale);
+    const float lineHeight = std::max(textMeasure.y, IconSize + 2.0f);
+    const float panelWidth = std::min(MaxPanelWidth, std::max(220.0f, contentWidth + PaddingX * 2.0f));
+    const float panelHeight = PaddingY * 2.0f + lineHeight * static_cast<float>(lineCount) + LineGap * static_cast<float>(std::max(0, lineCount - 1));
+    const Vec2 panelPos{
+        std::max(12.0f, (screenWidth - panelWidth) * 0.5f),
+        TopInfoBarY + TopInfoBarHeight + 10.0f,
+    };
+
+    renderer.fillRect(panelPos, {panelWidth, panelHeight}, {0, 0, 0, 148});
+    renderer.drawRect(panelPos, {panelWidth, panelHeight}, {190, 218, 236, 132});
+
+    for (int i = 0; i < lineCount; ++i) {
+        const float fade = i == 0 ? 1.0f : (i == 1 ? 0.70f : 0.48f);
+        const unsigned char textAlpha = alphaByte(255.0f * fade);
+        const unsigned char outlineAlpha = alphaByte(210.0f * fade);
+        const Color textColor = i == 0
+            ? Color{255, 248, 210, textAlpha}
+            : Color{214, 226, 236, textAlpha};
+        const Color outlineColor{0, 0, 0, outlineAlpha};
+        const Vec2 linePos{
+            panelPos.x + (panelWidth - layouts[static_cast<std::size_t>(i)].width) * 0.5f,
+            panelPos.y + PaddingY + static_cast<float>(i) * (lineHeight + LineGap) + 2.0f,
+        };
+        drawAutoSimulationIntentLine(
+            renderer,
+            objectCatalog_,
+            autoSimulationIntentHistory_[static_cast<std::size_t>(i)],
+            layouts[static_cast<std::size_t>(i)],
+            linePos,
+            TextScale,
+            IconSize,
+            IconGap,
+            textColor,
+            outlineColor);
+    }
+}
+
 void Game::renderDebugOverlay(Renderer& renderer, const Time& time)
 {
     if (!debug_.visible()) {
@@ -4615,6 +5719,11 @@ void Game::renderDebugOverlay(Renderer& renderer, const Time& time)
         nearestWarp,
         nearestWarpDiscovered,
         discoveredWarpPointCount(),
+        unlockedWarpPointCount_,
+        hasLatestWarpPointPosition_,
+        latestWarpPointPosition_,
+        requestedWarpPointStartPosition_.has_value(),
+        requestedWarpPointStartPosition_.value_or(Vec2{}),
         rewardNodeCount(),
         moneyNodeCount(),
         buriedVisibleNodeCount(),
@@ -4622,7 +5731,9 @@ void Game::renderDebugOverlay(Renderer& renderer, const Time& time)
         exposedEnemyNodeCount(),
         buriedEnemyNodeCount(),
         spawnedEnemyNodeCount(),
-        autoReloadBlocked_);
+        autoReloadBlocked_,
+        autoSimulationDebugOverlayActive_,
+        autoSimulationDebug_);
 
     const std::string focusDebug = dungeonFocusDebugText() + "\n" + nearestDungeonEventDebugText();
     renderer.setScreenSpace();

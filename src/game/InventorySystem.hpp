@@ -172,6 +172,11 @@ public:
         SpellRingSystem& spellRing,
         SpellRingAddResult* outResult = nullptr,
         std::string* outStatus = nullptr);
+    bool equipStaffObject(
+        std::string_view objectId,
+        std::string_view instanceId,
+        const SpellRingSystem& spellRing,
+        std::string* outStatus = nullptr);
     bool moveObjectStackToScreenSlot(std::string_view objectId, int slotIndex);
     bool moveObjectInstanceToScreenSlot(std::string_view instanceId, int slotIndex);
 

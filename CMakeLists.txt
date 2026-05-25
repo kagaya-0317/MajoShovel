@@ -34,13 +34,29 @@ endif()
 add_executable(MajoShovel
     src/main.cpp
     src/engine/Audio.cpp
+    src/engine/Settings.cpp
     src/engine/App.cpp
     src/engine/Time.cpp
+    src/engine/InputBinding.cpp
+    src/engine/InputRemapCapture.cpp
     src/engine/Input.cpp
     src/engine/FileWatcher.cpp
     src/engine/Log.cpp
     src/debug/DebugConsole.cpp
     src/debug/DebugPanel.cpp
+    src/devtools/autosim/AutoSimulationTypes.cpp
+    src/devtools/autosim/AutoSimulationLogger.cpp
+    src/devtools/autosim/AutoSimulationIntentFormatter.cpp
+    src/devtools/autosim/AutoSimulationItemEvaluator.cpp
+    src/devtools/autosim/AutoSimulationLoadoutPlanner.cpp
+    src/devtools/autosim/AutoSimulationBaseTasks.cpp
+    src/devtools/autosim/AutoSimulationCombatModel.cpp
+    src/devtools/autosim/AutoSimulationMiningModel.cpp
+    src/devtools/autosim/AutoSimulationPathfinder.cpp
+    src/devtools/autosim/AutoSimulationExplorationModel.cpp
+    src/devtools/autosim/AutoSimulationPlanner.cpp
+    src/devtools/autosim/AutoSimulationNavigator.cpp
+    src/devtools/autosim/AutoSimulationController.cpp
     src/engine/Ui.cpp
     src/engine/Renderer.cpp
     src/engine/Camera.cpp

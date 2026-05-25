@@ -2266,7 +2266,7 @@ void Game::choosePauseMenuItem(int item)
         openRingScreen();
         break;
     case 3:
-        pausePage_ = PauseMenuPage::Options;
+        openOptionsMenu();
         break;
     case 4:
         pausePage_ = PauseMenuPage::QuitConfirm;
@@ -2293,6 +2293,14 @@ void Game::leavePausePage()
 
     if (pausePage_ == PauseMenuPage::QuitConfirm) {
         pauseQuitConfirm_ = {};
+    } else if (pausePage_ == PauseMenuPage::Options) {
+        operationSettingsCapture_.cancel();
+        operationSettingsConflictConfirm_ = {};
+        operationSettingsResetAllConfirm_ = {};
+        operationSettingsPendingAction_ = InputAction::Count;
+        operationSettingsConflictActions_.clear();
+        optionsSettingsLoaded_ = false;
+        operationSettingsLoaded_ = false;
     }
     pausePage_ = PauseMenuPage::Main;
 }
@@ -2443,6 +2451,7 @@ void Game::rebuildUnlockedWarpPointsForStart(Vec2 latestPosition)
     if (!warpPoints_.empty() && unlockedWarpPointCount_ >= static_cast<int>(warpPoints_.size())) {
         configureBossSpawnPointFromWarp(latestPosition);
     }
+    clearKnownWarpPointTerrain();
 }
 
 void Game::retryAfterGameOver()
@@ -3367,6 +3376,7 @@ bool Game::restoreDungeonState(bool useLatestWarpPoint)
 
     player_ = Player{};
     player_.xpToNext = playerXpToNextForLevel(player_.level, balance_);
+    clearKnownWarpPointTerrain();
     const Vec2 preferredStartPosition = useLatestWarpPoint
         ? warpPointStartPositionForCurrentRequest()
         : tileWorldCenter(dungeonLayout_.startTile);
@@ -7249,6 +7259,37 @@ void Game::applyDungeonEventCavity(const DungeonEventInstance& event)
     }
 }
 
+void Game::clearKnownWarpPointTerrain()
+{
+    const auto clearPocket = [this](DungeonTile tile) {
+        for (int y = -WarpReservationRadiusTiles; y <= WarpReservationRadiusTiles; ++y) {
+            for (int x = -WarpReservationRadiusTiles; x <= WarpReservationRadiusTiles; ++x) {
+                tileMap_.setTileOverride(
+                    DungeonTile{tile.x + x, tile.y + y},
+                    TileType::Empty);
+            }
+        }
+        tileMap_.setTileOverride(tile, TileType::Empty);
+    };
+
+    for (const WarpPoint& point : warpPoints_) {
+        const bool known =
+            point.discovered ||
+            point.unlocked ||
+            point.snapshotCaptured ||
+            point.index < unlockedWarpPointCount_;
+        if (known) {
+            clearPocket(point.tilePosition);
+        }
+    }
+    if (hasLatestWarpPointPosition_) {
+        clearPocket(DungeonTile{
+            tileMap_.worldToTile(latestWarpPointPosition_.x),
+            tileMap_.worldToTile(latestWarpPointPosition_.y),
+        });
+    }
+}
+
 void Game::applyPlacementTerrainOverrides()
 {
     const auto applyExposedPocket = [this](DungeonTile tile, int radius) {
@@ -7341,6 +7382,7 @@ void Game::applyPlacementTerrainOverrides()
     for (const CrateNode& node : crateNodes_) {
         applyExposedPocket(node.tile, 1);
     }
+    clearKnownWarpPointTerrain();
 
     for (const RewardNode& node : rewardNodes_) {
         if (node.visibility == PlacementVisibility::Exposed) {
@@ -7404,6 +7446,7 @@ void Game::applyPlacementTerrainOverrides()
     for (const CrateNode& node : crateNodes_) {
         applyExposedCenter(node.tile);
     }
+    clearKnownWarpPointTerrain();
 
     for (const DungeonEventInstance& event : dungeonEvents_.all()) {
         applyDungeonEventCavity(event);

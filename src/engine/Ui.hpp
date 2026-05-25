@@ -269,6 +269,49 @@ struct UiScrollableListStyle {
     UiScrollAreaStyle scroll{};
 };
 
+struct UiSelectableTableColumn {
+    std::string_view label;
+    float width = 0.0f;
+    bool enabled = true;
+};
+
+struct UiSelectableTableState {
+    int selectedRow = 0;
+    int selectedColumn = 0;
+    float scrollOffset = 0.0f;
+    UiScrollAreaState scroll{};
+};
+
+struct UiSelectableTableStyle {
+    float headerHeight = 34.0f;
+    float rowHeight = 44.0f;
+    float rowGap = 4.0f;
+    float columnGap = 8.0f;
+    float cellPaddingX = 12.0f;
+    int headerTextScale = 2;
+    int cellTextScale = 2;
+    Color headerFill{18, 24, 48, 214};
+    Color rowFill{20, 30, 68, 190};
+    Color rowFillHot{42, 58, 118, 224};
+    Color cellOutline{112, 128, 178, 160};
+    Color cellOutlineHot{255, 230, 150, 255};
+    Color headerText{220, 226, 244, 255};
+    Color text{255, 255, 255, 255};
+    Color disabledText{150, 150, 160, 255};
+    UiScrollAreaStyle scroll{};
+};
+
+struct UiSelectableTableLayout {
+    UiRect header{};
+    UiScrollAreaLayout scroll{};
+};
+
+struct UiSelectableTableResult {
+    int pressedRow = -1;
+    int pressedColumn = -1;
+    bool selectionChanged = false;
+};
+
 struct UiTabItem {
     std::string_view label;
     bool enabled = true;
@@ -485,6 +528,41 @@ UiScrollAreaLayout updateUiScrollableList(
     UiScrollAreaState* state = nullptr);
 UiRect uiScrollableListItemRect(const UiScrollAreaLayout& layout, int index, const UiScrollableListStyle& style = {});
 void keepUiScrollableListItemVisible(UiRect viewport, int selectedIndex, int itemCount, float& scrollOffset, const UiScrollableListStyle& style = {});
+float uiSelectableTableContentHeight(int rowCount, const UiSelectableTableStyle& style = {});
+UiSelectableTableLayout makeUiSelectableTableLayout(
+    UiRect rect,
+    int rowCount,
+    float scrollOffset,
+    const UiSelectableTableStyle& style = {});
+UiSelectableTableResult updateUiSelectableTable(
+    UiSelectableTableState& state,
+    UiContext& ui,
+    const Input& input,
+    UiRect rect,
+    int rowCount,
+    const UiSelectableTableColumn* columns,
+    int columnCount,
+    const UiSelectableTableStyle& style = {});
+UiRect uiSelectableTableRowRect(const UiSelectableTableLayout& layout, int row, const UiSelectableTableStyle& style = {});
+UiRect uiSelectableTableCellRect(
+    const UiSelectableTableLayout& layout,
+    const UiSelectableTableColumn* columns,
+    int columnCount,
+    int row,
+    int column,
+    const UiSelectableTableStyle& style = {});
+void keepUiSelectableTableCellVisible(
+    UiRect rect,
+    int row,
+    int rowCount,
+    float& scrollOffset,
+    const UiSelectableTableStyle& style = {});
+void drawUiSelectableTableFrame(
+    Renderer& renderer,
+    const UiSelectableTableLayout& layout,
+    const UiSelectableTableColumn* columns,
+    int columnCount,
+    const UiSelectableTableStyle& style = {});
 UiRect uiDropdownListRect(UiRect buttonRect, int itemCount, const UiDropdownStyle& style = {});
 UiRect uiDropdownItemRect(UiRect buttonRect, int visibleIndex, const UiDropdownStyle& style = {});
 int updateUiDropdown(

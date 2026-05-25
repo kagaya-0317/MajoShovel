@@ -968,6 +968,511 @@ Color dungeonMinimapTileColor(TileType type, bool lit)
     return {58, 72, 92, 178};
 }
 
+constexpr int OperationSettingsColumnAction = 0;
+constexpr int OperationSettingsColumnKeyboardMouse = 1;
+constexpr int OperationSettingsColumnGamepad = 2;
+constexpr int OperationSettingsColumnCount = 3;
+constexpr int OptionsPageOperation = 0;
+constexpr int OptionsPageAudio = 1;
+constexpr int OptionsPageVideo = 2;
+constexpr int OptionsPageCount = 3;
+constexpr int OperationSettingsCategoryCount = 4;
+constexpr int AudioSettingsRowCount = 3;
+constexpr int VideoSettingsRowCount = 3;
+
+struct OperationSettingsActionRow {
+    InputAction action;
+    const char* label;
+    int category;
+};
+
+struct VideoResolutionPreset {
+    int width;
+    int height;
+};
+
+constexpr const char* OptionsPageLabels[OptionsPageCount] = {
+    "操作",
+    "音量",
+    "画面",
+};
+
+constexpr const char* OperationSettingsCategoryLabels[OperationSettingsCategoryCount] = {
+    "基本",
+    "リング/アイテム",
+    "ショートカット",
+    "開発",
+};
+
+constexpr VideoResolutionPreset VideoResolutionPresets[] = {
+    {1280, 720},
+    {1600, 900},
+    {1920, 1080},
+    {2560, 1440},
+};
+constexpr int VideoResolutionPresetCount = static_cast<int>(sizeof(VideoResolutionPresets) / sizeof(VideoResolutionPresets[0]));
+
+constexpr OperationSettingsActionRow OperationSettingsActionRows[] = {
+    {InputAction::MoveLeft, "左へ移動", 0},
+    {InputAction::MoveRight, "右へ移動", 0},
+    {InputAction::MoveUp, "上へ移動", 0},
+    {InputAction::MoveDown, "下へ移動", 0},
+    {InputAction::Confirm, "決定", 0},
+    {InputAction::Cancel, "戻る", 0},
+    {InputAction::Pause, "ポーズ", 0},
+    {InputAction::OpenInventory, "アイテム画面", 0},
+    {InputAction::ThrowActiveRing, "リングを投げる", 1},
+    {InputAction::OffsetRingCenter, "リングずらし", 1},
+    {InputAction::UseSelectedItem, "選択アイテム使用", 1},
+    {InputAction::PutSelectedItemOnRing, "リングへ入れる", 1},
+    {InputAction::GrabOrPlaceItem, "つかむ/置く", 1},
+    {InputAction::PreviousActiveRing, "前のリング", 1},
+    {InputAction::NextActiveRing, "次のリング", 1},
+    {InputAction::CaptureNet, "捕獲ネット", 1},
+    {InputAction::ToggleProtection, "保護切替", 1},
+    {InputAction::ShortcutCursorLeft, "ショートカット左", 2},
+    {InputAction::ShortcutCursorRight, "ショートカット右", 2},
+    {InputAction::DirectShortcut1, "ショートカット1", 2},
+    {InputAction::DirectShortcut2, "ショートカット2", 2},
+    {InputAction::DirectShortcut3, "ショートカット3", 2},
+    {InputAction::DirectShortcut4, "ショートカット4", 2},
+    {InputAction::DirectShortcut5, "ショートカット5", 2},
+    {InputAction::DirectShortcut6, "ショートカット6", 2},
+    {InputAction::DirectShortcut7, "ショートカット7", 2},
+    {InputAction::DirectShortcut8, "ショートカット8", 2},
+    {InputAction::ToggleShortcutRow, "ショートカット列切替", 2},
+    {InputAction::ToggleDebug, "デバッグ表示", 3},
+    {InputAction::ToggleDebugPause, "デバッグ停止", 3},
+    {InputAction::TestRestart, "テスト再起動", 3},
+    {InputAction::ToggleTestFreeze, "テスト停止", 3},
+    {InputAction::OpenConsole, "コンソール", 3},
+    {InputAction::ToggleAutoReloadBlock, "自動リロード停止", 3},
+};
+
+UiRect optionsPanelRect()
+{
+    return {{180.0f, 70.0f}, {920.0f, 580.0f}};
+}
+
+UiRect optionsPageTabRect(int index)
+{
+    const UiRect panel = optionsPanelRect();
+    constexpr float Gap = 12.0f;
+    const float totalWidth = panel.size.x - 84.0f;
+    const float width = (totalWidth - Gap * static_cast<float>(OptionsPageCount - 1)) /
+        static_cast<float>(OptionsPageCount);
+    return {{
+        panel.pos.x + 42.0f + static_cast<float>(index) * (width + Gap),
+        panel.pos.y + 104.0f,
+    }, {width, ui::ButtonHeight}};
+}
+
+UiRect operationSettingsTableRect()
+{
+    const UiRect panel = optionsPanelRect();
+    return {{panel.pos.x + 42.0f, panel.pos.y + 220.0f}, {panel.size.x - 84.0f, 250.0f}};
+}
+
+UiRect operationSettingsTabRect(int index)
+{
+    const UiRect panel = optionsPanelRect();
+    constexpr float Gap = 10.0f;
+    const float totalWidth = panel.size.x - 84.0f;
+    const float width = (totalWidth - Gap * static_cast<float>(OperationSettingsCategoryCount - 1)) /
+        static_cast<float>(OperationSettingsCategoryCount);
+    return {{
+        panel.pos.x + 42.0f + static_cast<float>(index) * (width + Gap),
+        panel.pos.y + 164.0f,
+    }, {width, ui::ButtonHeight}};
+}
+
+UiRect optionsFooterButtonRect(int index, int count, float width = 150.0f)
+{
+    const UiRect panel = optionsPanelRect();
+    constexpr float Gap = 10.0f;
+    const float totalWidth = width * static_cast<float>(count) + Gap * static_cast<float>(std::max(0, count - 1));
+    return {{
+        panel.pos.x + (panel.size.x - totalWidth) * 0.5f + static_cast<float>(index) * (width + Gap),
+        panel.pos.y + panel.size.y - uiFooterHeight("x\nx") - ui::ButtonHeight - 12.0f,
+    }, {width, ui::ButtonHeight}};
+}
+
+UiRect operationSettingsDialogRect()
+{
+    return {{390.0f, 226.0f}, {500.0f, 270.0f}};
+}
+
+UiRect optionSettingsContentRect()
+{
+    const UiRect panel = optionsPanelRect();
+    return {{panel.pos.x + 74.0f, panel.pos.y + 176.0f}, {panel.size.x - 148.0f, 286.0f}};
+}
+
+UiRect audioSettingsRowRect(int index)
+{
+    const UiRect content = optionSettingsContentRect();
+    return {{content.pos.x, content.pos.y + static_cast<float>(index) * 76.0f}, {content.size.x, 58.0f}};
+}
+
+UiRect audioSettingsSliderRect(int index)
+{
+    const UiRect row = audioSettingsRowRect(index);
+    return {{row.pos.x + 260.0f, row.pos.y + 16.0f}, {360.0f, 26.0f}};
+}
+
+UiRect videoSettingsRowRect(int index)
+{
+    const UiRect content = optionSettingsContentRect();
+    return {{content.pos.x, content.pos.y + static_cast<float>(index) * 72.0f}, {content.size.x, 58.0f}};
+}
+
+UiTabItem optionsPageTabItem(int index)
+{
+    return {OptionsPageLabels[std::clamp(index, 0, OptionsPageCount - 1)], true};
+}
+
+std::array<UiTabItem, OptionsPageCount> optionsPageTabItems()
+{
+    std::array<UiTabItem, OptionsPageCount> items{};
+    for (int i = 0; i < OptionsPageCount; ++i) {
+        items[static_cast<std::size_t>(i)] = optionsPageTabItem(i);
+    }
+    return items;
+}
+
+std::array<UiRect, OptionsPageCount> optionsPageTabRects()
+{
+    std::array<UiRect, OptionsPageCount> rects{};
+    for (int i = 0; i < OptionsPageCount; ++i) {
+        rects[static_cast<std::size_t>(i)] = optionsPageTabRect(i);
+    }
+    return rects;
+}
+
+UiSelectableTableStyle operationSettingsTableStyle()
+{
+    UiSelectableTableStyle style;
+    style.headerHeight = 34.0f;
+    style.rowHeight = 42.0f;
+    style.rowGap = 4.0f;
+    style.columnGap = 8.0f;
+    style.cellTextScale = 2;
+    return style;
+}
+
+std::vector<OperationSettingsActionRow> operationSettingsRowsForCategory(int category)
+{
+    std::vector<OperationSettingsActionRow> rows;
+    for (const OperationSettingsActionRow& row : OperationSettingsActionRows) {
+        if (row.category == category) {
+            rows.push_back(row);
+        }
+    }
+    return rows;
+}
+
+UiTabItem operationSettingsTabItem(int index)
+{
+    return {OperationSettingsCategoryLabels[std::clamp(index, 0, OperationSettingsCategoryCount - 1)], true};
+}
+
+std::array<UiTabItem, OperationSettingsCategoryCount> operationSettingsTabItems()
+{
+    std::array<UiTabItem, OperationSettingsCategoryCount> items{};
+    for (int i = 0; i < OperationSettingsCategoryCount; ++i) {
+        items[static_cast<std::size_t>(i)] = operationSettingsTabItem(i);
+    }
+    return items;
+}
+
+std::array<UiRect, OperationSettingsCategoryCount> operationSettingsTabRects()
+{
+    std::array<UiRect, OperationSettingsCategoryCount> rects{};
+    for (int i = 0; i < OperationSettingsCategoryCount; ++i) {
+        rects[static_cast<std::size_t>(i)] = operationSettingsTabRect(i);
+    }
+    return rects;
+}
+
+const char* audioSettingsRowLabel(int row)
+{
+    switch (row) {
+    case 0: return "Master";
+    case 1: return "BGM";
+    case 2: return "SE";
+    default: return "";
+    }
+}
+
+float audioSettingsRowValue(const GameSettings& settings, int row)
+{
+    switch (row) {
+    case 0: return settings.audio.masterVolume;
+    case 1: return settings.audio.bgmVolume;
+    case 2: return settings.audio.seVolume;
+    default: return 0.0f;
+    }
+}
+
+void setAudioSettingsRowValue(GameSettings& settings, int row, float value)
+{
+    value = clamp(value, 0.0f, 1.0f);
+    switch (row) {
+    case 0:
+        settings.audio.masterVolume = value;
+        break;
+    case 1:
+        settings.audio.bgmVolume = value;
+        break;
+    case 2:
+        settings.audio.seVolume = value;
+        break;
+    default:
+        break;
+    }
+}
+
+std::string volumePercentText(float value)
+{
+    char buffer[16];
+    std::snprintf(buffer, sizeof(buffer), "%3d%%", static_cast<int>(std::lround(clamp(value, 0.0f, 1.0f) * 100.0f)));
+    return buffer;
+}
+
+const char* videoSettingsRowLabel(int row)
+{
+    switch (row) {
+    case 0: return "表示モード";
+    case 1: return "ウィンドウサイズ";
+    case 2: return "VSync";
+    default: return "";
+    }
+}
+
+std::string windowModeDisplayName(WindowMode mode)
+{
+    switch (mode) {
+    case WindowMode::Windowed:
+        return "ウィンドウ";
+    case WindowMode::BorderlessFullscreen:
+        return "フルスクリーン";
+    }
+    return "ウィンドウ";
+}
+
+std::string videoResolutionText(const VideoSettings& video)
+{
+    return std::to_string(video.windowWidth) + " x " + std::to_string(video.windowHeight);
+}
+
+std::string videoSettingsRowValueText(const GameSettings& settings, int row)
+{
+    switch (row) {
+    case 0:
+        return windowModeDisplayName(settings.video.windowMode);
+    case 1:
+        return videoResolutionText(settings.video);
+    case 2:
+        return settings.video.vsync ? "ON" : "OFF";
+    default:
+        return "";
+    }
+}
+
+int videoResolutionPresetIndex(const VideoSettings& video)
+{
+    for (int i = 0; i < VideoResolutionPresetCount; ++i) {
+        const VideoResolutionPreset preset = VideoResolutionPresets[i];
+        if (video.windowWidth == preset.width && video.windowHeight == preset.height) {
+            return i;
+        }
+    }
+    return 0;
+}
+
+void cycleVideoResolution(GameSettings& settings, int delta)
+{
+    const int count = VideoResolutionPresetCount;
+    if (count <= 0 || delta == 0) {
+        return;
+    }
+    const int current = videoResolutionPresetIndex(settings.video);
+    const int next = (current + delta + count) % count;
+    settings.video.windowWidth = VideoResolutionPresets[next].width;
+    settings.video.windowHeight = VideoResolutionPresets[next].height;
+}
+
+void cycleVideoSetting(GameSettings& settings, int row, int delta)
+{
+    if (delta == 0) {
+        return;
+    }
+    switch (row) {
+    case 0:
+        settings.video.windowMode = settings.video.windowMode == WindowMode::Windowed
+            ? WindowMode::BorderlessFullscreen
+            : WindowMode::Windowed;
+        break;
+    case 1:
+        cycleVideoResolution(settings, delta);
+        break;
+    case 2:
+        settings.video.vsync = !settings.video.vsync;
+        break;
+    default:
+        break;
+    }
+}
+
+std::array<UiSelectableTableColumn, OperationSettingsColumnCount> operationSettingsTableColumns()
+{
+    const UiRect table = operationSettingsTableRect();
+    constexpr float ActionWidth = 210.0f;
+    constexpr float GapTotal = 8.0f * static_cast<float>(OperationSettingsColumnCount - 1);
+    const float bindingWidth = std::max(1.0f, (table.size.x - ActionWidth - GapTotal) * 0.5f);
+    return {{
+        UiSelectableTableColumn{"操作", ActionWidth, false},
+        UiSelectableTableColumn{"キーボード/マウス", bindingWidth, true},
+        UiSelectableTableColumn{"ゲームパッド", bindingWidth, true},
+    }};
+}
+
+bool operationSettingsColumnMatchesBinding(int column, const InputBinding& binding)
+{
+    if (column == OperationSettingsColumnKeyboardMouse) {
+        return binding.device == InputBindingDevice::Keyboard || binding.device == InputBindingDevice::MouseButton;
+    }
+    if (column == OperationSettingsColumnGamepad) {
+        return binding.device == InputBindingDevice::GamepadButton || binding.device == InputBindingDevice::GamepadAxis;
+    }
+    return false;
+}
+
+InputRemapCaptureDeviceGroup operationSettingsCaptureGroupForColumn(int column)
+{
+    return column == OperationSettingsColumnGamepad
+        ? InputRemapCaptureDeviceGroup::Gamepad
+        : InputRemapCaptureDeviceGroup::KeyboardMouse;
+}
+
+std::string operationSettingsBindingDisplayName(const InputBinding& binding)
+{
+    switch (binding.device) {
+    case InputBindingDevice::Keyboard:
+        return keyboardScancodeName(binding.code);
+    case InputBindingDevice::MouseButton:
+        return "Mouse " + mouseButtonName(binding.code);
+    case InputBindingDevice::GamepadButton:
+        return "Pad " + gamepadButtonName(binding.code);
+    case InputBindingDevice::GamepadAxis:
+        return "Pad " + gamepadAxisName(binding.code) + (binding.direction < 0 ? "-" : "+");
+    }
+    return "Unknown";
+}
+
+std::string operationSettingsBindingText(const InputBindingMap& bindings, InputAction action, int column)
+{
+    std::string text;
+    const auto& actionBindings = bindings[inputActionIndex(action)];
+    for (const InputBinding& binding : actionBindings) {
+        if (!operationSettingsColumnMatchesBinding(column, binding)) {
+            continue;
+        }
+        if (!text.empty()) {
+            text += " / ";
+        }
+        text += operationSettingsBindingDisplayName(binding);
+    }
+    return text.empty() ? "未設定" : text;
+}
+
+bool operationSettingsBindingSamePhysicalInput(const InputBinding& lhs, const InputBinding& rhs)
+{
+    return lhs.device == rhs.device &&
+        lhs.code == rhs.code &&
+        lhs.direction == rhs.direction;
+}
+
+void removeOperationSettingsColumnBindings(std::vector<InputBinding>& bindings, int column)
+{
+    bindings.erase(
+        std::remove_if(bindings.begin(), bindings.end(), [column](const InputBinding& binding) {
+            return operationSettingsColumnMatchesBinding(column, binding);
+        }),
+        bindings.end());
+}
+
+void removeOperationSettingsBinding(std::vector<InputBinding>& bindings, const InputBinding& target)
+{
+    bindings.erase(
+        std::remove_if(bindings.begin(), bindings.end(), [&target](const InputBinding& binding) {
+            return operationSettingsBindingSamePhysicalInput(binding, target);
+        }),
+        bindings.end());
+}
+
+std::vector<InputAction> operationSettingsConflictingActions(
+    const InputBindingMap& bindings,
+    InputAction targetAction,
+    const InputBinding& targetBinding)
+{
+    std::vector<InputAction> conflicts;
+    for (int actionIndex = 0; actionIndex < InputActionCount; ++actionIndex) {
+        const InputAction action = static_cast<InputAction>(actionIndex);
+        if (action == targetAction) {
+            continue;
+        }
+        for (const InputBinding& binding : bindings[actionIndex]) {
+            if (operationSettingsBindingSamePhysicalInput(binding, targetBinding)) {
+                conflicts.push_back(action);
+                break;
+            }
+        }
+    }
+    return conflicts;
+}
+
+std::string operationSettingsConflictMessage(const std::vector<InputAction>& actions)
+{
+    std::string message = "この入力は別の操作に割り当て済みです。\n既存の割当を外して変更しますか？";
+    if (!actions.empty()) {
+        message += "\n対象: ";
+        for (std::size_t i = 0; i < actions.size(); ++i) {
+            if (i > 0) {
+                message += ", ";
+            }
+            message += std::string(inputActionName(actions[i]));
+        }
+    }
+    return message;
+}
+
+InputAction operationSettingsSelectedAction(const UiSelectableTableState& state, int category)
+{
+    const std::vector<OperationSettingsActionRow> rows = operationSettingsRowsForCategory(category);
+    if (rows.empty()) {
+        return InputAction::Count;
+    }
+    const int row = std::clamp(state.selectedRow, 0, static_cast<int>(rows.size()) - 1);
+    return rows[static_cast<std::size_t>(row)].action;
+}
+
+void drawOperationSettingsCellText(
+    Renderer& renderer,
+    UiRect cell,
+    std::string_view text,
+    Color color,
+    int scale,
+    float paddingX)
+{
+    const Vec2 textSize = renderer.measureText(text, scale);
+    const Vec2 textPos{
+        cell.pos.x + paddingX,
+        cell.pos.y + std::max(0.0f, (cell.size.y - textSize.y) * 0.5f),
+    };
+    renderer.drawText(textPos, text, color, scale);
+}
+
 } // namespace
 void Game::updateRingScreen(const Input& input, UiContext& ui, float dt)
 {
@@ -1497,10 +2002,521 @@ void Game::updateRingScreen(const Input& input, UiContext& ui, float dt)
     }
 }
 
+void Game::openOptionsMenu()
+{
+    pausePage_ = PauseMenuPage::Options;
+    operationSettingsCapture_.cancel();
+    operationSettingsConflictConfirm_ = {};
+    operationSettingsResetAllConfirm_ = {};
+    operationSettingsPendingAction_ = InputAction::Count;
+    operationSettingsConflictActions_.clear();
+    optionsStatus_.clear();
+    operationSettingsStatus_.clear();
+    loadOptionsSettings();
+}
+
+void Game::loadOptionsSettings()
+{
+    optionsSettings_ = settingsGetter_
+        ? sanitizeSettings(settingsGetter_())
+        : GameSettings{};
+    if (!settingsGetter_ && inputBindingGetter_) {
+        optionsSettings_.input.bindings = sanitizeInputBindings(inputBindingGetter_());
+    }
+    operationSettingsBindings_ = optionsSettings_.input.bindings;
+    optionsSettingsLoaded_ = true;
+    operationSettingsLoaded_ = true;
+    optionsPage_ = std::clamp(optionsPage_, 0, OptionsPageCount - 1);
+    operationSettingsCategory_ = std::clamp(operationSettingsCategory_, 0, OperationSettingsCategoryCount - 1);
+    operationSettingsTable_.selectedColumn = OperationSettingsColumnKeyboardMouse;
+    operationSettingsTable_.selectedRow = 0;
+    operationSettingsTable_.scrollOffset = 0.0f;
+    audioSettingsSelection_ = std::clamp(audioSettingsSelection_, 0, AudioSettingsRowCount - 1);
+    videoSettingsSelection_ = std::clamp(videoSettingsSelection_, 0, VideoSettingsRowCount - 1);
+}
+
+void Game::applyOptionsSettings(std::string status)
+{
+    optionsSettings_ = sanitizeSettings(optionsSettings_);
+    operationSettingsBindings_ = optionsSettings_.input.bindings;
+    if (settingsApplier_) {
+        settingsApplier_(optionsSettings_);
+    } else if (inputBindingApplier_) {
+        inputBindingApplier_(operationSettingsBindings_);
+    }
+    optionsStatus_ = std::move(status);
+}
+
+void Game::queueOperationSettingsBinding(InputAction action, int column, const InputBinding& binding)
+{
+    operationSettingsPendingAction_ = action;
+    operationSettingsPendingColumn_ = column;
+    operationSettingsPendingBinding_ = binding;
+    operationSettingsConflictActions_ = operationSettingsConflictingActions(operationSettingsBindings_, action, binding);
+    if (!operationSettingsConflictActions_.empty()) {
+        openUiConfirmDialog(
+            operationSettingsConflictConfirm_,
+            "割当の確認",
+            operationSettingsConflictMessage(operationSettingsConflictActions_),
+            "変更する",
+            "戻る",
+            1);
+        return;
+    }
+    applyOperationSettingsBinding(action, column, binding, false);
+}
+
+void Game::applyOperationSettingsBinding(InputAction action, int column, const InputBinding& binding, bool removeConflicts)
+{
+    if (action == InputAction::Count) {
+        return;
+    }
+
+    InputBindingMap candidate = operationSettingsBindings_;
+    if (removeConflicts) {
+        for (InputAction conflict : operationSettingsConflictActions_) {
+            removeOperationSettingsBinding(candidate[inputActionIndex(conflict)], binding);
+        }
+    }
+    auto& target = candidate[inputActionIndex(action)];
+    removeOperationSettingsColumnBindings(target, column);
+    target.push_back(binding);
+    candidate = sanitizeInputBindings(candidate);
+
+    operationSettingsBindings_ = candidate;
+    optionsSettings_.input.bindings = operationSettingsBindings_;
+    applyOptionsSettings("");
+    operationSettingsStatus_ = "割当を変更しました: " + operationSettingsBindingDisplayName(binding);
+    operationSettingsPendingAction_ = InputAction::Count;
+    operationSettingsConflictActions_.clear();
+}
+
+void Game::clearOperationSettingsBinding(InputAction action, int column)
+{
+    if (action == InputAction::Count) {
+        return;
+    }
+
+    InputBindingMap candidate = operationSettingsBindings_;
+    auto& target = candidate[inputActionIndex(action)];
+    removeOperationSettingsColumnBindings(target, column);
+    if (inputActionRequiresBinding(action) && target.empty()) {
+        operationSettingsStatus_ = "必須操作はすべて未設定にはできません";
+        return;
+    }
+    candidate = sanitizeInputBindings(candidate);
+    operationSettingsBindings_ = candidate;
+    optionsSettings_.input.bindings = operationSettingsBindings_;
+    applyOptionsSettings("");
+    operationSettingsStatus_ = "割当を削除しました";
+}
+
+void Game::resetOperationSettingsAction(InputAction action)
+{
+    if (action == InputAction::Count) {
+        return;
+    }
+    InputBindingMap candidate = operationSettingsBindings_;
+    const InputBindingMap defaults = defaultInputBindings();
+    candidate[inputActionIndex(action)] = defaults[inputActionIndex(action)];
+    operationSettingsBindings_ = sanitizeInputBindings(candidate);
+    optionsSettings_.input.bindings = operationSettingsBindings_;
+    applyOptionsSettings("");
+    operationSettingsStatus_ = "選択中の操作を初期化しました";
+}
+
+void Game::resetOperationSettingsCategory()
+{
+    InputBindingMap candidate = operationSettingsBindings_;
+    const InputBindingMap defaults = defaultInputBindings();
+    for (const OperationSettingsActionRow& row : operationSettingsRowsForCategory(operationSettingsCategory_)) {
+        candidate[inputActionIndex(row.action)] = defaults[inputActionIndex(row.action)];
+    }
+    operationSettingsBindings_ = sanitizeInputBindings(candidate);
+    optionsSettings_.input.bindings = operationSettingsBindings_;
+    applyOptionsSettings("");
+    operationSettingsStatus_ = "現在の分類を初期化しました";
+}
+
+void Game::resetOperationSettingsAll()
+{
+    operationSettingsBindings_ = defaultInputBindings();
+    optionsSettings_.input.bindings = operationSettingsBindings_;
+    applyOptionsSettings("");
+    operationSettingsStatus_ = "すべての操作を初期化しました";
+}
+
+bool Game::handleOperationSettingsEvent(const SDL_Event& event)
+{
+    if (mode_ != ScreenMode::PauseMenu ||
+        pausePage_ != PauseMenuPage::Options ||
+        optionsPage_ != OptionsPageOperation ||
+        !operationSettingsCapture_.active() ||
+        !operationSettingsCapture_.shouldConsumeEvent(event)) {
+        return false;
+    }
+
+    optionsSuppressCancelThisFrame_ = true;
+    if (event.type == SDL_EVENT_MOUSE_BUTTON_DOWN &&
+        event.button.button == SDL_BUTTON_LEFT &&
+        uiCancelButtonRect(operationSettingsDialogRect()).contains(Vec2{
+            static_cast<float>(event.button.x),
+            static_cast<float>(event.button.y),
+        })) {
+        operationSettingsCapture_.cancel();
+        operationSettingsStatus_ = "変更をキャンセルしました";
+        return true;
+    }
+
+    const InputAction action = operationSettingsCapture_.action();
+    const int column = operationSettingsPendingColumn_;
+    InputBinding binding{};
+    const InputRemapCaptureResult result = operationSettingsCapture_.handleEvent(event, binding);
+    if (result == InputRemapCaptureResult::Captured) {
+        queueOperationSettingsBinding(action, column, binding);
+    } else if (result == InputRemapCaptureResult::ClearRequested) {
+        clearOperationSettingsBinding(action, column);
+    } else if (result == InputRemapCaptureResult::Cancelled) {
+        operationSettingsStatus_ = "変更をキャンセルしました";
+    }
+    return true;
+}
+
+void Game::updateOperationSettings(const Input& input, UiContext& ui)
+{
+    if (!optionsSettingsLoaded_ || !operationSettingsLoaded_) {
+        loadOptionsSettings();
+    }
+
+    const UiRect panel = optionsPanelRect();
+    const UiRect table = operationSettingsTableRect();
+    const UiRect dialog = operationSettingsDialogRect();
+
+    if (operationSettingsConflictConfirm_.open) {
+        const UiConfirmDialogResult result = updateUiConfirmDialog(operationSettingsConflictConfirm_, ui, input, dialog);
+        if (result == UiConfirmDialogResult::Confirmed) {
+            applyOperationSettingsBinding(
+                operationSettingsPendingAction_,
+                operationSettingsPendingColumn_,
+                operationSettingsPendingBinding_,
+                true);
+        } else if (result == UiConfirmDialogResult::Cancelled) {
+            operationSettingsPendingAction_ = InputAction::Count;
+            operationSettingsConflictActions_.clear();
+            operationSettingsStatus_ = "変更をキャンセルしました";
+        }
+        ui.block(panel);
+        return;
+    }
+
+    if (operationSettingsResetAllConfirm_.open) {
+        const UiConfirmDialogResult result = updateUiConfirmDialog(operationSettingsResetAllConfirm_, ui, input, dialog);
+        if (result == UiConfirmDialogResult::Confirmed) {
+            resetOperationSettingsAll();
+        } else if (result == UiConfirmDialogResult::Cancelled) {
+            operationSettingsStatus_ = "初期化をキャンセルしました";
+        }
+        ui.block(panel);
+        return;
+    }
+
+    if (operationSettingsCapture_.active()) {
+        if (ui.pressed(uiCancelButtonRect(operationSettingsDialogRect()))) {
+            operationSettingsCapture_.cancel();
+            operationSettingsStatus_ = "変更をキャンセルしました";
+            ui.emitSound(UiSoundEvent::Cancel);
+            ui.block(panel);
+            return;
+        }
+        ui.block(panel);
+        return;
+    }
+
+    const int categoryDelta = input.mouseWheelDelta() == 0 ? input.shortcutCursorDelta() : 0;
+    if (categoryDelta != 0) {
+        operationSettingsCategory_ =
+            (operationSettingsCategory_ + categoryDelta + OperationSettingsCategoryCount) % OperationSettingsCategoryCount;
+        operationSettingsTable_.selectedRow = 0;
+        operationSettingsTable_.scrollOffset = 0.0f;
+        ui.emitSound(UiSoundEvent::TabSwitch);
+    }
+
+    const auto tabItems = operationSettingsTabItems();
+    const auto tabRects = operationSettingsTabRects();
+    UiTabsInput tabsInput{};
+    const int selectedTab = updateUiTabs(
+        operationSettingsTabs_,
+        ui,
+        tabsInput,
+        operationSettingsCategory_,
+        tabItems.data(),
+        static_cast<int>(tabItems.size()),
+        tabRects.data());
+    if (selectedTab >= 0 && selectedTab != operationSettingsCategory_) {
+        operationSettingsCategory_ = selectedTab;
+        operationSettingsTable_.selectedRow = 0;
+        operationSettingsTable_.scrollOffset = 0.0f;
+    }
+
+    const std::vector<OperationSettingsActionRow> rows = operationSettingsRowsForCategory(operationSettingsCategory_);
+    operationSettingsTable_.selectedRow = std::clamp(
+        operationSettingsTable_.selectedRow,
+        0,
+        std::max(0, static_cast<int>(rows.size()) - 1));
+    if (operationSettingsTable_.selectedColumn <= OperationSettingsColumnAction) {
+        operationSettingsTable_.selectedColumn = OperationSettingsColumnKeyboardMouse;
+    }
+
+    const auto columns = operationSettingsTableColumns();
+    const UiSelectableTableResult tableResult = updateUiSelectableTable(
+        operationSettingsTable_,
+        ui,
+        input,
+        table,
+        static_cast<int>(rows.size()),
+        columns.data(),
+        static_cast<int>(columns.size()),
+        operationSettingsTableStyle());
+
+    const bool tableCommitted = tableResult.pressedRow >= 0 ||
+        input.confirmPressed() ||
+        input.useItemPressed();
+    if (tableCommitted && !rows.empty()) {
+        const int row = std::clamp(operationSettingsTable_.selectedRow, 0, static_cast<int>(rows.size()) - 1);
+        const int column = std::clamp(
+            operationSettingsTable_.selectedColumn,
+            OperationSettingsColumnKeyboardMouse,
+            OperationSettingsColumnGamepad);
+        const InputAction action = rows[static_cast<std::size_t>(row)].action;
+        operationSettingsPendingAction_ = action;
+        operationSettingsPendingColumn_ = column;
+        operationSettingsCapture_.begin(action, operationSettingsCaptureGroupForColumn(column));
+        operationSettingsStatus_ = column == OperationSettingsColumnGamepad
+            ? "ゲームパッド入力を押してください。Esc で中止、Backspace/Delete で削除"
+            : "キーまたはマウスボタンを押してください。Esc で中止、Backspace/Delete で削除";
+        ui.emitSound(UiSoundEvent::Confirm);
+        ui.block(panel);
+        return;
+    }
+
+    constexpr int ButtonCount = 5;
+    const InputAction selectedAction = operationSettingsSelectedAction(operationSettingsTable_, operationSettingsCategory_);
+    for (int i = 0; i < ButtonCount; ++i) {
+        const UiRect button = optionsFooterButtonRect(i, ButtonCount);
+        if (ui.pressed(button)) {
+            ui.emitSound(i == 0 ? UiSoundEvent::Cancel : UiSoundEvent::Confirm);
+            if (i == 0) {
+                leavePausePage();
+            } else if (i == 1) {
+                clearOperationSettingsBinding(selectedAction, operationSettingsTable_.selectedColumn);
+            } else if (i == 2) {
+                resetOperationSettingsAction(selectedAction);
+            } else if (i == 3) {
+                resetOperationSettingsCategory();
+            } else {
+                openUiConfirmDialog(
+                    operationSettingsResetAllConfirm_,
+                    "初期化の確認",
+                    "すべての操作割当を初期状態に戻しますか？",
+                    "初期化する",
+                    "戻る",
+                    1);
+            }
+            ui.block(panel);
+            return;
+        }
+    }
+
+    ui.block(panel);
+}
+
+void Game::updateAudioSettings(const Input& input, UiContext& ui)
+{
+    const UiRect panel = optionsPanelRect();
+    audioSettingsSelection_ = std::clamp(audioSettingsSelection_, 0, AudioSettingsRowCount - 1);
+
+    if (input.pressed(InputAction::MoveUp)) {
+        audioSettingsSelection_ = (audioSettingsSelection_ + AudioSettingsRowCount - 1) % AudioSettingsRowCount;
+    }
+    if (input.pressed(InputAction::MoveDown)) {
+        audioSettingsSelection_ = (audioSettingsSelection_ + 1) % AudioSettingsRowCount;
+    }
+
+    const auto applyAudioRow = [&](int row, float value) {
+        setAudioSettingsRowValue(optionsSettings_, row, value);
+        applyOptionsSettings(std::string(audioSettingsRowLabel(row)) + " 音量 " + volumePercentText(audioSettingsRowValue(optionsSettings_, row)));
+    };
+
+    if (input.pressed(InputAction::MoveLeft)) {
+        applyAudioRow(audioSettingsSelection_, audioSettingsRowValue(optionsSettings_, audioSettingsSelection_) - 0.05f);
+        ui.emitSound(UiSoundEvent::Confirm);
+    }
+    if (input.pressed(InputAction::MoveRight)) {
+        applyAudioRow(audioSettingsSelection_, audioSettingsRowValue(optionsSettings_, audioSettingsSelection_) + 0.05f);
+        ui.emitSound(UiSoundEvent::Confirm);
+    }
+
+    for (int row = 0; row < AudioSettingsRowCount; ++row) {
+        const UiRect rowRect = audioSettingsRowRect(row);
+        const UiRect sliderRect = audioSettingsSliderRect(row);
+        if (rowRect.contains(ui.mouse()) && !ui.pointerConsumed()) {
+            audioSettingsSelection_ = row;
+        }
+        if (input.mouseLeftHeld() && sliderRect.contains(ui.mouse()) && !ui.pointerConsumed()) {
+            audioSettingsSelection_ = row;
+            const float value = clamp((ui.mouse().x - sliderRect.pos.x) / std::max(1.0f, sliderRect.size.x), 0.0f, 1.0f);
+            applyAudioRow(row, value);
+            ui.consumePointer();
+            return;
+        }
+        if (ui.pressed(rowRect)) {
+            audioSettingsSelection_ = row;
+            return;
+        }
+    }
+
+    constexpr int ButtonCount = 2;
+    for (int i = 0; i < ButtonCount; ++i) {
+        if (ui.pressed(optionsFooterButtonRect(i, ButtonCount))) {
+            if (i == 0) {
+                ui.emitSound(UiSoundEvent::Cancel);
+                leavePausePage();
+            } else {
+                ui.emitSound(UiSoundEvent::Confirm);
+                optionsSettings_.audio = AudioSettings{};
+                applyOptionsSettings("音量を初期化しました");
+            }
+            ui.block(panel);
+            return;
+        }
+    }
+
+    ui.block(panel);
+}
+
+void Game::updateVideoSettings(const Input& input, UiContext& ui)
+{
+    const UiRect panel = optionsPanelRect();
+    videoSettingsSelection_ = std::clamp(videoSettingsSelection_, 0, VideoSettingsRowCount - 1);
+
+    if (input.pressed(InputAction::MoveUp)) {
+        videoSettingsSelection_ = (videoSettingsSelection_ + VideoSettingsRowCount - 1) % VideoSettingsRowCount;
+    }
+    if (input.pressed(InputAction::MoveDown)) {
+        videoSettingsSelection_ = (videoSettingsSelection_ + 1) % VideoSettingsRowCount;
+    }
+
+    const auto applyVideoRow = [&](int row, int delta) {
+        cycleVideoSetting(optionsSettings_, row, delta);
+        applyOptionsSettings(std::string(videoSettingsRowLabel(row)) + " " + videoSettingsRowValueText(optionsSettings_, row));
+    };
+
+    if (input.pressed(InputAction::MoveLeft)) {
+        applyVideoRow(videoSettingsSelection_, -1);
+        ui.emitSound(UiSoundEvent::Confirm);
+    }
+    if (input.pressed(InputAction::MoveRight) || input.confirmPressed() || input.useItemPressed()) {
+        applyVideoRow(videoSettingsSelection_, 1);
+        ui.emitSound(UiSoundEvent::Confirm);
+    }
+
+    for (int row = 0; row < VideoSettingsRowCount; ++row) {
+        const UiRect rowRect = videoSettingsRowRect(row);
+        if (rowRect.contains(ui.mouse()) && !ui.pointerConsumed()) {
+            videoSettingsSelection_ = row;
+        }
+        if (ui.pressed(rowRect)) {
+            videoSettingsSelection_ = row;
+            applyVideoRow(row, 1);
+            ui.emitSound(UiSoundEvent::Confirm);
+            return;
+        }
+    }
+
+    constexpr int ButtonCount = 2;
+    for (int i = 0; i < ButtonCount; ++i) {
+        if (ui.pressed(optionsFooterButtonRect(i, ButtonCount))) {
+            if (i == 0) {
+                ui.emitSound(UiSoundEvent::Cancel);
+                leavePausePage();
+            } else {
+                ui.emitSound(UiSoundEvent::Confirm);
+                optionsSettings_.video = VideoSettings{};
+                applyOptionsSettings("画面設定を初期化しました");
+            }
+            ui.block(panel);
+            return;
+        }
+    }
+
+    ui.block(panel);
+}
+
+void Game::updateOptionsMenu(const Input& input, UiContext& ui)
+{
+    if (!optionsSettingsLoaded_) {
+        loadOptionsSettings();
+    }
+
+    const bool operationModalOpen = optionsPage_ == OptionsPageOperation &&
+        (operationSettingsCapture_.active() ||
+            operationSettingsConflictConfirm_.open ||
+            operationSettingsResetAllConfirm_.open);
+    if (!operationModalOpen) {
+        int pageDelta = 0;
+        if (input.pressed(InputAction::PreviousActiveRing)) {
+            --pageDelta;
+        }
+        if (input.pressed(InputAction::NextActiveRing)) {
+            ++pageDelta;
+        }
+        if (pageDelta != 0) {
+            optionsPage_ = (optionsPage_ + pageDelta + OptionsPageCount) % OptionsPageCount;
+            optionsStatus_.clear();
+            ui.emitSound(UiSoundEvent::TabSwitch);
+        }
+
+        const auto tabItems = optionsPageTabItems();
+        const auto tabRects = optionsPageTabRects();
+        UiTabsInput tabsInput{};
+        const int selectedTab = updateUiTabs(
+            optionsTabs_,
+            ui,
+            tabsInput,
+            optionsPage_,
+            tabItems.data(),
+            static_cast<int>(tabItems.size()),
+            tabRects.data());
+        if (selectedTab >= 0 && selectedTab != optionsPage_) {
+            optionsPage_ = selectedTab;
+            optionsStatus_.clear();
+        }
+    }
+
+    if (optionsPage_ == OptionsPageAudio) {
+        updateAudioSettings(input, ui);
+    } else if (optionsPage_ == OptionsPageVideo) {
+        updateVideoSettings(input, ui);
+    } else {
+        updateOperationSettings(input, ui);
+    }
+}
+
 void Game::updatePauseMenu(const Input& input, UiContext& ui)
 {
-    const UiRect cancelPanel = pausePage_ == PauseMenuPage::QuitConfirm ? quitConfirmRect() : pausePanelRect();
-    if (pausePage_ != PauseMenuPage::QuitConfirm && uiCancelRequested(pauseCancelState_, input, ui, cancelPanel)) {
+    const bool suppressCancelThisFrame = optionsSuppressCancelThisFrame_;
+    optionsSuppressCancelThisFrame_ = false;
+    const UiRect cancelPanel = pausePage_ == PauseMenuPage::QuitConfirm
+        ? quitConfirmRect()
+        : (pausePage_ == PauseMenuPage::Options ? optionsPanelRect() : pausePanelRect());
+    const bool operationModalOpen = pausePage_ == PauseMenuPage::Options &&
+        (operationSettingsCapture_.active() ||
+            operationSettingsConflictConfirm_.open ||
+            operationSettingsResetAllConfirm_.open);
+    if (pausePage_ != PauseMenuPage::QuitConfirm &&
+        !operationModalOpen &&
+        !suppressCancelThisFrame &&
+        uiCancelRequested(pauseCancelState_, input, ui, cancelPanel)) {
         leavePausePage();
         return;
     }
@@ -1516,6 +2532,11 @@ void Game::updatePauseMenu(const Input& input, UiContext& ui)
             return;
         }
         ui.block(quitConfirmRect());
+        return;
+    }
+
+    if (pausePage_ == PauseMenuPage::Options) {
+        updateOptionsMenu(input, ui);
         return;
     }
 
@@ -2589,6 +3610,249 @@ void Game::renderRingScreen(Renderer& renderer, float totalTime) const
     }
 }
 
+void Game::renderOperationSettings(Renderer& renderer) const
+{
+    const UiRect panel = optionsPanelRect();
+    const UiRect tableRect = operationSettingsTableRect();
+    const auto tabItems = operationSettingsTabItems();
+    const auto tabRects = operationSettingsTabRects();
+    drawUiTabs(
+        renderer,
+        operationSettingsTabs_,
+        operationSettingsCategory_,
+        tabItems.data(),
+        static_cast<int>(tabItems.size()),
+        tabRects.data());
+
+    const std::vector<OperationSettingsActionRow> rows = operationSettingsRowsForCategory(operationSettingsCategory_);
+    const auto columns = operationSettingsTableColumns();
+    const UiSelectableTableStyle tableStyle = operationSettingsTableStyle();
+    const UiSelectableTableLayout tableLayout = makeUiSelectableTableLayout(
+        tableRect,
+        static_cast<int>(rows.size()),
+        operationSettingsTable_.scrollOffset,
+        tableStyle);
+    drawUiSelectableTableFrame(
+        renderer,
+        tableLayout,
+        columns.data(),
+        static_cast<int>(columns.size()),
+        tableStyle);
+
+    for (int row = 0; row < static_cast<int>(rows.size()); ++row) {
+        const UiRect rowRect = uiSelectableTableRowRect(tableLayout, row, tableStyle);
+        if (!uiScrollAreaRectVisible(tableLayout.scroll, rowRect)) {
+            continue;
+        }
+        const bool selectedRow = row == operationSettingsTable_.selectedRow;
+        renderer.fillRect(rowRect.pos, rowRect.size, selectedRow ? tableStyle.rowFillHot : tableStyle.rowFill);
+        for (int column = 0; column < OperationSettingsColumnCount; ++column) {
+            const UiRect cell = uiSelectableTableCellRect(
+                tableLayout,
+                columns.data(),
+                static_cast<int>(columns.size()),
+                row,
+                column,
+                tableStyle);
+            const bool selectedCell = selectedRow && column == operationSettingsTable_.selectedColumn;
+            renderer.drawRect(cell.pos, cell.size, selectedCell ? tableStyle.cellOutlineHot : tableStyle.cellOutline);
+            if (column == OperationSettingsColumnAction) {
+                drawOperationSettingsCellText(
+                    renderer,
+                    cell,
+                    rows[static_cast<std::size_t>(row)].label,
+                    tableStyle.text,
+                    tableStyle.cellTextScale,
+                    tableStyle.cellPaddingX);
+            } else {
+                const std::string text = operationSettingsBindingText(
+                    operationSettingsBindings_,
+                    rows[static_cast<std::size_t>(row)].action,
+                    column);
+                const Color color = text == "未設定" ? tableStyle.disabledText : tableStyle.text;
+                drawOperationSettingsCellText(
+                    renderer,
+                    cell,
+                    text,
+                    color,
+                    tableStyle.cellTextScale,
+                    tableStyle.cellPaddingX);
+            }
+        }
+    }
+    drawUiScrollAreaScrollbar(renderer, tableLayout.scroll, tableStyle.scroll);
+
+    if (!operationSettingsStatus_.empty()) {
+        renderer.drawText(
+            {panel.pos.x + 46.0f, panel.pos.y + 414.0f},
+            operationSettingsStatus_,
+            {255, 230, 150, 255},
+            2);
+    }
+
+    constexpr int ButtonCount = 5;
+    constexpr const char* ButtonLabels[ButtonCount] = {
+        "戻る",
+        "削除",
+        "項目初期化",
+        "分類初期化",
+        "全初期化",
+    };
+    for (int i = 0; i < ButtonCount; ++i) {
+        const bool hot = false;
+        drawUiButton(
+            renderer,
+            optionsFooterButtonRect(i, ButtonCount),
+            ButtonLabels[i],
+            hot,
+            i == 0 ? uiCancelButtonStyle() : uiActionButtonStyle());
+    }
+
+    if (operationSettingsCapture_.active()) {
+        drawUiModalBackdrop(
+            renderer,
+            {{0.0f, 0.0f}, {static_cast<float>(camera_.width()), static_cast<float>(camera_.height())}},
+            {0, 0, 0, 120});
+        const UiRect dialog = operationSettingsDialogRect();
+        UiWindowScope captureWindow(
+            renderer,
+            "operation_settings.capture",
+            dialog,
+            "入力待ち",
+            "Esc 中止  Backspace/Delete 削除",
+            UiWindowOptions{true, true});
+        const std::string line = operationSettingsPendingColumn_ == OperationSettingsColumnGamepad
+            ? "ゲームパッドのボタンまたはスティック/トリガーを入力してください。"
+            : "キーまたはマウスボタンを入力してください。";
+        const float textMaxWidth = std::max(1.0f, dialog.size.x - 84.0f);
+        const Vec2 linePos = dialog.pos + Vec2{42.0f, 104.0f};
+        renderer.drawWrappedText(linePos, line, textMaxWidth, ui::Text, 2);
+        const Vec2 lineSize = renderer.measureWrappedText(line, textMaxWidth, 2);
+        renderer.drawText(
+            linePos + Vec2{0.0f, lineSize.y + 16.0f},
+            "最初に入った入力で上書きします。",
+            ui::TextMuted,
+            2);
+    }
+
+    if (operationSettingsConflictConfirm_.open) {
+        drawUiModalBackdrop(
+            renderer,
+            {{0.0f, 0.0f}, {static_cast<float>(camera_.width()), static_cast<float>(camera_.height())}},
+            {0, 0, 0, 120});
+        drawUiConfirmDialog(
+            renderer,
+            operationSettingsConflictConfirm_,
+            operationSettingsDialogRect(),
+            "operation_settings.conflict");
+    } else if (operationSettingsResetAllConfirm_.open) {
+        drawUiModalBackdrop(
+            renderer,
+            {{0.0f, 0.0f}, {static_cast<float>(camera_.width()), static_cast<float>(camera_.height())}},
+            {0, 0, 0, 120});
+        drawUiConfirmDialog(
+            renderer,
+            operationSettingsResetAllConfirm_,
+            operationSettingsDialogRect(),
+            "operation_settings.reset_all");
+    }
+}
+
+void Game::renderAudioSettings(Renderer& renderer) const
+{
+    const UiRect panel = optionsPanelRect();
+    for (int row = 0; row < AudioSettingsRowCount; ++row) {
+        const UiRect rowRect = audioSettingsRowRect(row);
+        const bool hot = row == audioSettingsSelection_;
+        renderer.fillRect(rowRect.pos, rowRect.size, hot ? Color{42, 58, 118, 224} : Color{20, 30, 68, 190});
+        renderer.drawRect(rowRect.pos, rowRect.size, hot ? Color{255, 230, 150, 255} : Color{112, 128, 178, 160});
+        if (hot) {
+            renderer.fillRect(rowRect.pos + Vec2{3.0f, 6.0f}, {5.0f, rowRect.size.y - 12.0f}, {255, 230, 150, 255});
+        }
+
+        const float value = audioSettingsRowValue(optionsSettings_, row);
+        const UiRect slider = audioSettingsSliderRect(row);
+        renderer.drawText(rowRect.pos + Vec2{20.0f, 17.0f}, audioSettingsRowLabel(row), ui::Text, 2);
+        UiGaugeStyle gaugeStyle;
+        gaugeStyle.tickCount = 10;
+        gaugeStyle.fill.start = row == 0 ? Color{132, 230, 250, 230} : (row == 1 ? Color{160, 206, 255, 230} : Color{255, 206, 132, 230});
+        gaugeStyle.fill.end = row == 0 ? Color{190, 246, 220, 230} : (row == 1 ? Color{132, 230, 250, 230} : Color{255, 230, 150, 230});
+        drawUiGauge(renderer, slider, value, gaugeStyle);
+        const std::string percent = volumePercentText(value);
+        const Vec2 percentSize = renderer.measureText(percent, 2);
+        renderer.drawText(
+            {rowRect.pos.x + rowRect.size.x - percentSize.x - 22.0f, rowRect.pos.y + 17.0f},
+            percent,
+            ui::Text,
+            2);
+    }
+
+    if (!optionsStatus_.empty()) {
+        renderer.drawText({panel.pos.x + 74.0f, panel.pos.y + 414.0f}, optionsStatus_, {255, 230, 150, 255}, 2);
+    }
+
+    constexpr int ButtonCount = 2;
+    constexpr const char* ButtonLabels[ButtonCount] = {"戻る", "音量初期化"};
+    for (int i = 0; i < ButtonCount; ++i) {
+        drawUiButton(
+            renderer,
+            optionsFooterButtonRect(i, ButtonCount),
+            ButtonLabels[i],
+            false,
+            i == 0 ? uiCancelButtonStyle() : uiActionButtonStyle());
+    }
+}
+
+void Game::renderVideoSettings(Renderer& renderer) const
+{
+    const UiRect panel = optionsPanelRect();
+    for (int row = 0; row < VideoSettingsRowCount; ++row) {
+        drawUiSmallSelectButton(
+            renderer,
+            videoSettingsRowRect(row),
+            videoSettingsRowLabel(row),
+            videoSettingsRowValueText(optionsSettings_, row),
+            row == videoSettingsSelection_,
+            false);
+    }
+
+    if (!optionsStatus_.empty()) {
+        renderer.drawText({panel.pos.x + 74.0f, panel.pos.y + 414.0f}, optionsStatus_, {255, 230, 150, 255}, 2);
+    }
+
+    constexpr int ButtonCount = 2;
+    constexpr const char* ButtonLabels[ButtonCount] = {"戻る", "画面初期化"};
+    for (int i = 0; i < ButtonCount; ++i) {
+        drawUiButton(
+            renderer,
+            optionsFooterButtonRect(i, ButtonCount),
+            ButtonLabels[i],
+            false,
+            i == 0 ? uiCancelButtonStyle() : uiActionButtonStyle());
+    }
+}
+
+void Game::renderOptionsMenu(Renderer& renderer) const
+{
+    const auto tabItems = optionsPageTabItems();
+    const auto tabRects = optionsPageTabRects();
+    drawUiTabs(
+        renderer,
+        optionsTabs_,
+        optionsPage_,
+        tabItems.data(),
+        static_cast<int>(tabItems.size()),
+        tabRects.data());
+
+    if (optionsPage_ == OptionsPageAudio) {
+        renderAudioSettings(renderer);
+    } else if (optionsPage_ == OptionsPageVideo) {
+        renderVideoSettings(renderer);
+    } else {
+        renderOperationSettings(renderer);
+    }
+}
+
 void Game::renderPauseMenu(Renderer& renderer) const
 {
     if (mode_ != ScreenMode::PauseMenu) {
@@ -2596,12 +3860,22 @@ void Game::renderPauseMenu(Renderer& renderer) const
     }
 
     renderer.setScreenSpace();
-    const UiRect panel = pausePanelRect();
+    const UiRect panel = pausePage_ == PauseMenuPage::Options ? optionsPanelRect() : pausePanelRect();
     UiCancelControlScope cancelScope(pauseCancelState_);
-    const char* pauseTitle = pausePage_ == PauseMenuPage::Status ? "ステータス" : "PAUSED";
+    const char* pauseTitle = pausePage_ == PauseMenuPage::Status
+        ? "ステータス"
+        : (pausePage_ == PauseMenuPage::Options ? "オプション" : "PAUSED");
     const char* pauseHelp = pausePage_ == PauseMenuPage::Status
         ? "Esc/右クリック 戻る"
-        : (pausePage_ == PauseMenuPage::Ring ? "Z/X でアクティブリング切替  Esc/右クリック 戻る" : "F/Enter 決定  Esc/右クリック 戻る");
+        : (pausePage_ == PauseMenuPage::Ring
+            ? "Z/X でアクティブリング切替  Esc/右クリック 戻る"
+            : (pausePage_ == PauseMenuPage::Options
+                ? (optionsPage_ == OptionsPageOperation
+                    ? "Z/X 設定切替  Q/E 分類切替  ↑/↓ 行選択  ←/→ 列選択  F/Enter 変更\nEsc/右クリック 戻る"
+                    : (optionsPage_ == OptionsPageAudio
+                        ? "Z/X 設定切替  ↑/↓ 項目選択  ←/→ 音量変更\nEsc/右クリック 戻る"
+                        : "Z/X 設定切替  ↑/↓ 項目選択  ←/→ 変更  F/Enter 切替\nEsc/右クリック 戻る"))
+                : "F/Enter 決定  Esc/右クリック 戻る"));
     UiWindowScope pauseWindow(
         renderer,
         "pause.main",
@@ -2658,8 +3932,7 @@ void Game::renderPauseMenu(Renderer& renderer) const
         std::snprintf(buffer, sizeof(buffer), "装着アイテム %02d/%02d", static_cast<int>(spellRing_.items().size()), spellRing_.maxItemCount());
         renderer.drawText(panel.pos + Vec2{58.0f, 206.0f}, buffer, {230, 230, 236, 255}, 2);
     } else if (pausePage_ == PauseMenuPage::Options) {
-        renderer.drawText(panel.pos + Vec2{48.0f, 102.0f}, "オプション", {246, 235, 255, 255}, 3);
-        renderer.drawText(panel.pos + Vec2{58.0f, 164.0f}, "仮画面です。設定項目は後続実装で追加します。", {230, 230, 236, 255}, 2);
+        renderOptionsMenu(renderer);
     } else if (pausePage_ == PauseMenuPage::QuitConfirm) {
         drawUiModalBackdrop(
             renderer,
@@ -3389,6 +4662,7 @@ void Game::render(Renderer& renderer, const Time& time)
         renderDebugStoryTest(renderer);
         renderFirstItemAcquisitionNotice(renderer);
     }
+    renderAutoSimulationIntentOverlay(renderer);
     finishUiFrame(renderer);
     renderDebugOverlay(renderer, time);
     renderScreenTransitionOverlay(renderer);

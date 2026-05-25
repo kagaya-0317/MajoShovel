@@ -182,6 +182,33 @@ void Game::setAudioEngine(AudioEngine* audio)
     activeAudioBgmCue_.clear();
 }
 
+void Game::setSettingsAccessors(
+    std::function<GameSettings()> getter,
+    std::function<void(const GameSettings&)> applier)
+{
+    settingsGetter_ = std::move(getter);
+    settingsApplier_ = std::move(applier);
+    optionsSettingsLoaded_ = false;
+    operationSettingsLoaded_ = false;
+}
+
+void Game::setInputBindingAccessors(
+    std::function<InputBindingMap()> getter,
+    std::function<void(const InputBindingMap&)> applier)
+{
+    inputBindingGetter_ = std::move(getter);
+    inputBindingApplier_ = std::move(applier);
+    operationSettingsLoaded_ = false;
+}
+
+bool Game::handleEvent(const SDL_Event& event)
+{
+    if (handleOperationSettingsEvent(event)) {
+        return true;
+    }
+    return false;
+}
+
 void Game::setAutoReloadBlocked(bool blocked)
 {
     if (autoReloadBlocked_ == blocked) {
@@ -1294,7 +1321,8 @@ void Game::startMiningFromBase(bool useLatestWarpPoint, bool forceRegenerate)
     captureRunStartInventoryState();
     if (useLatestWarpPoint) {
         const Vec2 startPosition = warpPointStartPositionForCurrentRequest();
-        player_.position = startPosition;
+        clearKnownWarpPointTerrain();
+        player_.position = safePlayerStartPosition(startPosition);
         tileMap_.updateAround(player_.position, 0.0f, runtimeBalanceForDungeon(), dungeonLayout_);
         normalizeOpenBuriedPlacementNodes();
         updateDungeonMinimap(0.0);
