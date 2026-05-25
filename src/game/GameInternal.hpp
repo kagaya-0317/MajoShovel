@@ -42,6 +42,18 @@ inline constexpr std::string_view IntroTutorialCompletedFlag = "intro_tutorial_c
 inline constexpr std::string_view IntroTutorialFallTrigger = "intro_tutorial:fall";
 inline constexpr std::string_view IntroTutorialBaseReturnTrigger = "intro_tutorial:base_return";
 inline constexpr std::string_view IntroTutorialGenerationProfile = "intro_tutorial";
+inline constexpr float WitchSelfLightRadiusMultiplier = 2.0f;
+inline constexpr float WitchSelfLightCenterYOffset = -26.0f;
+
+inline Vec2 witchSelfLightCenter(Vec2 footAnchor)
+{
+    return footAnchor + Vec2{0.0f, WitchSelfLightCenterYOffset};
+}
+
+inline float witchSelfLightRadius(float baseRadius)
+{
+    return baseRadius * WitchSelfLightRadiusMultiplier;
+}
 
 inline std::mt19937& lootRuntimeRng()
 {
@@ -213,9 +225,14 @@ constexpr float ObjectImageScaleFooterHeight = 60.0f;
 constexpr float ObjectImageScalePreviewSize = 48.0f;
 constexpr int EnemyTestVisibleRows = 8;
 constexpr float ScreenTransitionFadeOutSeconds = 0.45f;
-constexpr float ScreenTransitionBlackHoldSeconds = 0.08f;
+constexpr float ScreenTransitionHoldSeconds = 0.08f;
 constexpr float ScreenTransitionFadeInSeconds = 0.45f;
 constexpr float ScreenTransitionCrossFadeSeconds = 0.35f;
+constexpr float IntroTutorialStartTransitionHoldSeconds = 2.0f;
+constexpr float IntroTutorialStartTransitionFadeInSeconds = ScreenTransitionFadeInSeconds * 2.0f;
+constexpr float IntroTutorialReturnTransitionHoldSeconds = 3.0f;
+constexpr float IntroTutorialReturnTransitionFadeInSeconds = ScreenTransitionFadeInSeconds * 2.0f;
+constexpr float IntroTutorialReturnBaseEventDelaySeconds = 2.0f;
 constexpr float FootstepDustLifetime = 0.30f;
 constexpr float FootstepDustStartOffset = 8.0f;
 constexpr float FootstepDustEndOffset = 20.0f;
@@ -1002,7 +1019,7 @@ const char* screenModeName(ScreenMode mode)
 const char* baseAreaName(BaseArea area)
 {
     switch (area) {
-    case BaseArea::Outdoor: return "屋外拠点";
+    case BaseArea::Outdoor: return "魔女の拠点";
     case BaseArea::HomeInterior: return "ルネの家";
     }
     return "拠点";
@@ -1012,11 +1029,10 @@ std::vector<BaseFacility> baseFacilities(BaseArea area, bool ringWorkshopUnlocke
 {
     if (area == BaseArea::HomeInterior) {
         return {
-            BaseFacility{"bookshelf", "本棚", {{786.0f, 184.0f}, {118.0f, 60.0f}}, 72.0f, true, true, BaseFacilityAction::Bookshelf},
-            BaseFacility{"diary", "日記", {{798.0f, 426.0f}, {78.0f, 50.0f}}, 64.0f, true, true, BaseFacilityAction::Diary},
+            BaseFacility{"bookshelf", "本棚", {{368.0f, 322.0f}, {127.0f, 213.0f}}, 72.0f, true, true, BaseFacilityAction::Bookshelf},
+            BaseFacility{"diary", "日記", {{760.0f, 416.0f}, {179.0f, 142.0f}}, 64.0f, true, true, BaseFacilityAction::Diary},
             BaseFacility{"home_exit", "屋外へ戻る出口", {{592.0f, 574.0f}, {96.0f, 42.0f}}, 80.0f, true, true, BaseFacilityAction::HomeExit},
-            BaseFacility{"bed", "ベッド", {{376.0f, 352.0f}, {156.0f, 80.0f}}, 0.0f, false, true, BaseFacilityAction::Bookshelf},
-            BaseFacility{"desk", "机", {{760.0f, 416.0f}, {148.0f, 76.0f}}, 0.0f, false, true, BaseFacilityAction::Diary},
+            BaseFacility{"bed", "ベッド", {{680.0f, 188.0f}, {178.0f, 195.0f}}, 0.0f, false, true, BaseFacilityAction::Bookshelf},
         };
     }
 
@@ -1025,8 +1041,8 @@ std::vector<BaseFacility> baseFacilities(BaseArea area, bool ringWorkshopUnlocke
         BaseFacility{"storage_chest", "収納箱", {{578.0f, 430.0f}, {98.0f, 72.0f}}, 68.0f, true, true, BaseFacilityAction::Storage},
         BaseFacility{"merchant_wagon", "商人ワゴン", {{936.0f, 99.0f}, {227.0f, 152.0f}}, 78.0f, true, true, BaseFacilityAction::Merchant},
         BaseFacility{"processing_table", "作業台", {{506.0f, 169.0f}, {217.0f, 94.0f}}, 70.0f, true, true, BaseFacilityAction::Processing},
-        BaseFacility{"upgrade_forge", "拠点強化炉", {{1056.0f, 425.0f}, {144.0f, 74.0f}}, 76.0f, true, true, BaseFacilityAction::Forge},
-        BaseFacility{"ring_workshop", "リング工房用スペース", {{837.0f, 468.0f}, {102.0f, 87.0f}}, 82.0f, true, ringWorkshopUnlocked, BaseFacilityAction::RingWorkshop},
+        BaseFacility{"upgrade_forge", "拠点強化炉", {{968.0f, 355.0f}, {217.0f, 226.0f}}, 76.0f, true, true, BaseFacilityAction::Forge},
+        BaseFacility{"ring_workshop", "リング工房", {{837.0f, 468.0f}, {102.0f, 87.0f}}, 82.0f, true, ringWorkshopUnlocked, BaseFacilityAction::RingWorkshop},
         BaseFacility{"monica", "モニカ", {{841.0f, 245.0f}, {74.0f, 86.0f}}, 72.0f, true, true, BaseFacilityAction::MonicaTalk},
         BaseFacility{"home", "ルネの家", {{113.0f, 11.0f}, {301.0f, 308.0f}}, 90.0f, true, true, BaseFacilityAction::HomeEntrance},
     };
@@ -1577,7 +1593,7 @@ const char* baseMenuItemName(int index)
     case 4: return "作業台";
     case 5: return "本棚";
     case 6: return "日記";
-    case 7: return "リング工房用スペース";
+    case 7: return "リング工房";
     default: return "";
     }
 }

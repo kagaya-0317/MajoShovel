@@ -144,7 +144,7 @@ public:
         std::string_view stageId);
     bool spawnNodeEnemy(TileMap& map, Vec2 desiredPosition, Vec2 playerPosition, const RuntimeBalance& balance, const EnemyCatalog& enemyCatalog, bool allowNearPlayer, bool detectedOnSpawn = false);
     bool spawnFixedNodeEnemy(TileMap& map, Vec2 desiredPosition, Vec2 playerPosition, const RuntimeBalance& balance, const EnemyCatalog& enemyCatalog, bool detectedOnSpawn = false);
-    bool spawnSpecificEnemy(TileMap& map, std::string_view enemyId, Vec2 desiredPosition, Vec2 playerPosition, const RuntimeBalance& balance, const EnemyCatalog& enemyCatalog, bool allowNearPlayer, bool detectedOnSpawn = false);
+    bool spawnSpecificEnemy(TileMap& map, std::string_view enemyId, Vec2 desiredPosition, Vec2 playerPosition, const RuntimeBalance& balance, const EnemyCatalog& enemyCatalog, bool allowNearPlayer, bool detectedOnSpawn = false, float spawnWarmupOverride = -1.0f);
     bool spawnEventEnemy(TileMap& map, Vec2 desiredPosition, Vec2 playerPosition, const RuntimeBalance& balance, const EnemyCatalog& enemyCatalog, const EventEnemySpawnOptions& options, int* outRuntimeId = nullptr);
     bool spawnBoss(TileMap& map, Vec2 playerPosition, const RuntimeBalance& balance, const EnemyCatalog& enemyCatalog);
     bool spawnBossNear(TileMap& map, Vec2 desiredPosition, Vec2 playerPosition, const RuntimeBalance& balance, const EnemyCatalog& enemyCatalog);
@@ -234,6 +234,8 @@ public:
     void clearSpawnBiases();
     void applySpawnBias(std::string_view group, double multiplier);
     void wakeDungeonEventEnemies(std::string_view eventId);
+    bool setManualDetectionOnlyNear(Vec2 position, float radius, bool manualOnly);
+    bool forceDetectEnemyNear(Vec2 position, float radius, Vec2 playerPosition, bool showIcon = true);
     int activeDungeonEventEnemyCount(std::string_view eventId) const;
     int activeRuntimeEnemyCount(const std::vector<int>& runtimeIds) const;
     bool runtimeEnemyActive(int runtimeId) const;
@@ -253,6 +255,7 @@ private:
     void queueEnemyObjectDrops(Enemy& enemy);
     Enemy* findCaptureTarget(Vec2 targetWorld);
     const Enemy* findCaptureTarget(Vec2 targetWorld) const;
+    Enemy* findActiveEnemyNear(Vec2 position, float radius);
     Enemy* findRuntimeEnemy(int runtimeId);
     const Enemy* findRuntimeEnemy(int runtimeId) const;
 

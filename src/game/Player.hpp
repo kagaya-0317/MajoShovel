@@ -77,6 +77,7 @@ struct Player {
         bool paused,
         const RuntimeBalance& balance,
         std::span<const CollisionRect> objectBlockers = {});
+    void updateSpriteAnimation(float dt, bool walking);
     int spriteFrameIndex() const;
 };
 

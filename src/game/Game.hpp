@@ -397,6 +397,11 @@ private:
         bool opened = false;
         bool lootSpawned = false;
         float openingSeconds = 0.0f;
+        bool spawnJumpActive = false;
+        Vec2 spawnJumpStartPosition{};
+        float spawnJumpElapsedSeconds = 0.0f;
+        float spawnJumpDurationSeconds = 0.0f;
+        float spawnJumpArcHeight = 0.0f;
     };
 
     struct CrateNode {
@@ -636,6 +641,7 @@ private:
         TorchRingIntro,
         ExploreToEnemy,
         DefeatEnemy,
+        EnemyDefeatedDialogue,
         FreeToExit,
         Returning,
     };
@@ -644,12 +650,20 @@ private:
         CrossFadeCapture,
         CrossFading,
         FadingOut,
-        HoldBlack,
+        Hold,
         FadingIn,
+    };
+    enum class ScreenTransitionFadeColor {
+        Black,
+        White,
     };
     struct ScreenTransitionState {
         ScreenTransitionTarget target = ScreenTransitionTarget::None;
         ScreenTransitionPhase phase = ScreenTransitionPhase::Idle;
+        ScreenTransitionFadeColor fadeColor = ScreenTransitionFadeColor::Black;
+        float holdSeconds = 0.0f;
+        float fadeInSeconds = 0.0f;
+        float postTransitionStoryDelaySeconds = 0.0f;
         float elapsed = 0.0f;
         bool applied = false;
         bool useLatestWarpPoint = false;
@@ -750,8 +764,15 @@ private:
     void requestMiningStartTransition(bool useLatestWarpPoint, bool forceRegenerate);
     void requestReturnToBaseTransition(bool stageCleared, bool died);
     void requestBaseAreaCrossfade(BaseArea targetArea, Vec2 playerPosition, Vec2 playerFacing, std::string status);
+    void startScreenTransition(ScreenTransitionTarget target, ScreenTransitionPhase phase);
+    static ScreenTransitionFadeColor fadeColorForScreenTransitionTarget(ScreenTransitionTarget target);
+    static float holdSecondsForScreenTransitionTarget(ScreenTransitionTarget target);
+    static float fadeInSecondsForScreenTransitionTarget(ScreenTransitionTarget target);
+    static float postTransitionStoryDelaySecondsForScreenTransitionTarget(ScreenTransitionTarget target);
     void updateScreenTransition(float dt);
     void applyScreenTransitionTarget(ScreenTransitionTarget target);
+    void updatePendingStoryTriggerDelay(float dt);
+    void queuePendingStoryTriggerIfReady();
     void applyPermanentUpgrades();
     LevelGainResult gainPlayerXp(int amount);
     void openLevelUpChoice(ScreenMode returnMode);
@@ -937,6 +958,7 @@ private:
         float dt,
         std::vector<EffectDiscoveryEvent>* discoveryEvents);
     void updateBaseScreen(const Input& input, UiContext& ui, float dt);
+    void updateBasePlayerSpriteAnimation(float dt, bool walking);
     void updatePauseMenu(const Input& input, UiContext& ui);
     void choosePauseMenuItem(int item);
     void leavePausePage();
@@ -952,8 +974,10 @@ private:
     void equipIntroTutorialStartingTools();
     void addIntroTutorialTorchToRing();
     void spawnIntroTutorialChest();
+    void spawnIntroTutorialSecondChest();
     void unlockIntroTutorialFreeRoute();
     void completeIntroTutorialAndReturnToBase();
+    void syncIntroTutorialTerrainDamageLocks();
     bool introTutorialActive() const;
     Vec2 introTutorialExitPosition() const;
     std::vector<LightSource> introTutorialLightSources(double totalSeconds) const;
@@ -1053,6 +1077,16 @@ private:
     void initializeChestNodesFromLayout();
     void updateChestNodes(float dt, const Input& input);
     void revealChestNodesFromOpenedTiles(const std::vector<Vec2>& openedTiles);
+    bool spawnAppearingChestNode(
+        DungeonTile tile,
+        LootChestKind chestKind,
+        int depthRank,
+        Vec2 sourceWorldPosition,
+        std::string_view logMergeKey = {});
+    void startChestSpawnJump(ChestNode& node, Vec2 sourceWorldPosition, std::mt19937& rng);
+    void updateChestSpawnJump(ChestNode& node, float dt);
+    Vec2 chestVisualCenter(const ChestNode& node) const;
+    float chestVisualAltitude(const ChestNode& node) const;
     void openChestNode(ChestNode& node);
     void spawnChestLoot(ChestNode& node);
     void initializeCrateNodesFromLayout();
@@ -1190,9 +1224,11 @@ private:
     bool queueStoryEventForTrigger(std::string trigger);
     bool queueStoryEventForCurrentStage(std::string_view triggerName);
     void updateQueuedStoryEvents();
+    bool pendingStoryTriggerDelayActive() const;
     bool startStoryEvent(std::string_view id);
     bool startStoryEventWithCompletion(std::string_view id, std::function<void()> onComplete);
     bool startDialogueSequenceWithCompletion(DialogueSequence sequence, std::function<void()> onComplete);
+    void updateDialoguePlayerIdleAnimation(float dt);
     void runDialogueCompletionCallbackIfFinished(bool dialogueWasActive);
     bool startStoryEventForDebug(std::string_view id);
     bool startStoryEventForTrigger(std::string_view trigger);
@@ -1288,6 +1324,7 @@ private:
     std::vector<StoryEvent> storyEvents_;
     int storyEventsRevision_ = 0;
     std::string pendingStoryTrigger_;
+    float pendingStoryTriggerDelaySeconds_ = 0.0f;
     std::vector<std::string> pendingStoryTriggers_;
     ScreenTransitionState screenTransition_;
     FrameSnapshot screenTransitionSnapshot_;
@@ -1419,6 +1456,7 @@ private:
     std::vector<DebugStoryTestEntry> debugStoryTestEntries_;
     int debugStoryTestSelectedIndex_ = -1;
     float debugStoryTestScrollOffset_ = 0.0f;
+    UiScrollAreaState debugStoryTestScrollState_{};
     std::string debugStoryTestStatus_;
     int debugStoryTestLoadedRevision_ = -1;
     bool debugStoryTestReturnAfterDialogue_ = false;
@@ -1471,14 +1509,20 @@ private:
     IntroTutorialPhase introTutorialPhase_ = IntroTutorialPhase::Inactive;
     bool introTutorialLightTutorialQueued_ = false;
     bool introTutorialFirstEnemySpawned_ = false;
+    bool introTutorialSecondEnemySpawned_ = false;
+    bool introTutorialSecondEnemyEncountered_ = false;
     bool introTutorialEnemyEncounterQueued_ = false;
     bool introTutorialEnemyDefeatedQueued_ = false;
+    bool introTutorialChestFoundQueued_ = false;
+    bool introTutorialSecondChestPlaced_ = false;
     bool introTutorialChestOpened_ = false;
     bool introTutorialChestLootDialogueQueued_ = false;
     bool introTutorialMidwayDialogueQueued_ = false;
     bool introTutorialExitDialogueQueued_ = false;
     DungeonTile introTutorialFirstEnemyTile_{};
+    DungeonTile introTutorialSecondEnemyTile_{};
     DungeonTile introTutorialChestTile_{};
+    DungeonTile introTutorialSecondChestTile_{};
     DungeonTile introTutorialExitTile_{};
     std::vector<DungeonLogEntry> dungeonLogs_;
     WorldBuildJob worldBuildJob_;

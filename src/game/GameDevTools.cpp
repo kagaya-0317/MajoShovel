@@ -89,6 +89,18 @@ UiScrollableListStyle audioCueEditListStyle()
     return style;
 }
 
+UiScrollableListStyle debugStoryTestListStyle()
+{
+    UiScrollableListStyle style;
+    style.rowHeight = DebugStoryTestRowHeight;
+    style.rowGap = DebugStoryTestRowGap;
+    style.leadingPadding = 8.0f;
+    style.trailingPadding = 8.0f;
+    style.rowInsetX = 8.0f;
+    style.scroll = debugListScrollStyle(DebugStoryTestRowHeight + DebugStoryTestRowGap);
+    return style;
+}
+
 UiRect audioCueEditListViewport(UiRect listPanel)
 {
     constexpr float HeaderHeight = 36.0f;
@@ -221,23 +233,6 @@ float debugItemPickerMaxScroll(const DebugItemPickerLayout& layout, int itemCoun
     return std::max(0.0f, contentHeight - layout.grid.size.y);
 }
 
-UiRect debugStoryTestRowRect(const DebugStoryTestLayout& layout, int index, float scrollOffset)
-{
-    return {{
-        layout.list.pos.x,
-        layout.list.pos.y + static_cast<float>(index) * layout.rowPitch - scrollOffset,
-    }, {layout.list.size.x, DebugStoryTestRowHeight}};
-}
-
-float debugStoryTestMaxScroll(const DebugStoryTestLayout& layout, int itemCount)
-{
-    const float contentHeight = itemCount <= 0
-        ? 0.0f
-        : static_cast<float>(itemCount) * DebugStoryTestRowHeight +
-            static_cast<float>(itemCount - 1) * DebugStoryTestRowGap;
-    return std::max(0.0f, contentHeight - layout.list.size.y);
-}
-
 UiRect audioCueEditCloseButtonRect(UiRect panel)
 {
     return uiBottomLeftButtonRect(panel, {130.0f, ui::ButtonHeight});
@@ -294,20 +289,12 @@ void keepDebugStoryTestSelectionVisible(
     int itemCount,
     float& scrollOffset)
 {
-    if (selectedIndex < 0 || selectedIndex >= itemCount) {
-        scrollOffset = clamp(scrollOffset, 0.0f, debugStoryTestMaxScroll(layout, itemCount));
-        return;
-    }
-
-    const UiRect rect = debugStoryTestRowRect(layout, selectedIndex, scrollOffset);
-    const float top = layout.list.pos.y;
-    const float bottom = layout.list.pos.y + layout.list.size.y;
-    if (rect.pos.y < top) {
-        scrollOffset -= top - rect.pos.y;
-    } else if (rect.pos.y + rect.size.y > bottom) {
-        scrollOffset += rect.pos.y + rect.size.y - bottom;
-    }
-    scrollOffset = clamp(scrollOffset, 0.0f, debugStoryTestMaxScroll(layout, itemCount));
+    keepUiScrollableListItemVisible(
+        layout.list,
+        selectedIndex,
+        itemCount,
+        scrollOffset,
+        debugStoryTestListStyle());
 }
 
 void keepAudioCueEditSelectionVisible(UiRect list, int selectedIndex, int itemCount, float& scrollOffset)
@@ -681,9 +668,29 @@ BaseEditRect Game::baseFacilityRectFor(BaseArea area, std::string_view facilityI
         return normalizeBaseEditRect(fallback);
     }
     const BaseEditRect rect = normalizeBaseEditRect(it->second);
+    if (area == BaseArea::HomeInterior &&
+        facilityId == std::string_view("bookshelf") &&
+        sameBaseEditRect(rect, {368.0f, 322.0f, 118.0f, 157.0f})) {
+        return normalizeBaseEditRect(fallback);
+    }
+    if (area == BaseArea::HomeInterior &&
+        facilityId == std::string_view("diary") &&
+        sameBaseEditRect(rect, {802.0f, 488.0f, 78.0f, 50.0f})) {
+        return normalizeBaseEditRect(fallback);
+    }
+    if (area == BaseArea::HomeInterior &&
+        facilityId == std::string_view("bed") &&
+        sameBaseEditRect(rect, {680.0f, 188.0f, 233.0f, 107.0f})) {
+        return normalizeBaseEditRect(fallback);
+    }
     if (area == BaseArea::Outdoor &&
         facilityId == std::string_view("home") &&
         (rect.w < 220.0f || rect.h < 220.0f)) {
+        return normalizeBaseEditRect(fallback);
+    }
+    if (area == BaseArea::Outdoor &&
+        facilityId == std::string_view("upgrade_forge") &&
+        (rect.w < 180.0f || rect.h < 180.0f)) {
         return normalizeBaseEditRect(fallback);
     }
     return rect;
@@ -2130,6 +2137,7 @@ void Game::openDebugStoryTest(DebugStoryTestMode mode)
     inventory_.cancelGrab();
     cancelRingGrab();
     debugStoryTestScrollOffset_ = std::max(0.0f, debugStoryTestScrollOffset_);
+    debugStoryTestScrollState_ = {};
     const bool tutorials = debugStoryTestMode_ == DebugStoryTestMode::Tutorials;
     debugStoryTestStatus_ = debugStoryTestEntries_.empty()
         ? (tutorials ? "チュートリアルがありません" : "イベントがありません")
@@ -2142,6 +2150,7 @@ void Game::closeDebugStoryTest()
 {
     debugStoryTestActive_ = false;
     debugStoryTestReturnAfterDialogue_ = false;
+    debugStoryTestScrollState_ = {};
     debugStoryTestCancelState_ = {};
 }
 
@@ -2179,14 +2188,21 @@ void Game::updateDebugStoryTest(const Input& input, UiContext& ui)
 
     const DebugStoryTestLayout layout = makeDebugStoryTestLayout(camera_.width(), camera_.height());
     const int itemCount = static_cast<int>(debugStoryTestEntries_.size());
+    const UiScrollableListStyle listStyle = debugStoryTestListStyle();
     if (itemCount > 0) {
         debugStoryTestSelectedIndex_ = std::clamp(debugStoryTestSelectedIndex_, 0, itemCount - 1);
     } else {
         debugStoryTestSelectedIndex_ = -1;
     }
 
-    const float maxScroll = debugStoryTestMaxScroll(layout, itemCount);
-    debugStoryTestScrollOffset_ = clamp(debugStoryTestScrollOffset_, 0.0f, maxScroll);
+    UiScrollAreaLayout listLayout = updateUiScrollableList(
+        ui,
+        input,
+        layout.list,
+        itemCount,
+        debugStoryTestScrollOffset_,
+        listStyle,
+        &debugStoryTestScrollState_);
 
     if (uiCancelRequested(debugStoryTestCancelState_, input, ui, layout.panel) ||
         ui.pressed(debugStoryTestCloseButtonRect(layout.panel))) {
@@ -2201,24 +2217,16 @@ void Game::updateDebugStoryTest(const Input& input, UiContext& ui)
         if (moveDelta != 0) {
             debugStoryTestSelectedIndex_ = std::clamp(debugStoryTestSelectedIndex_ + moveDelta, 0, itemCount - 1);
             keepDebugStoryTestSelectionVisible(layout, debugStoryTestSelectedIndex_, itemCount, debugStoryTestScrollOffset_);
+            listLayout = makeUiScrollableListLayout(layout.list, itemCount, debugStoryTestScrollOffset_, listStyle);
         }
-    }
-
-    const int wheel = input.shortcutCursorDelta();
-    if (wheel != 0) {
-        debugStoryTestScrollOffset_ = clamp(
-            debugStoryTestScrollOffset_ + static_cast<float>(wheel) * 48.0f,
-            0.0f,
-            maxScroll);
     }
 
     for (int i = 0; i < itemCount; ++i) {
-        const UiRect rect = debugStoryTestRowRect(layout, i, debugStoryTestScrollOffset_);
-        if (rect.pos.y + rect.size.y < layout.list.pos.y ||
-            rect.pos.y > layout.list.pos.y + layout.list.size.y) {
+        const UiRect rect = uiScrollableListItemRect(listLayout, i, listStyle);
+        if (!uiScrollAreaRectVisible(listLayout, rect)) {
             continue;
         }
-        if (ui.pressed(rect)) {
+        if (listLayout.viewport.contains(ui.mouse()) && ui.pressed(rect)) {
             debugStoryTestSelectedIndex_ = i;
             keepDebugStoryTestSelectionVisible(layout, debugStoryTestSelectedIndex_, itemCount, debugStoryTestScrollOffset_);
             break;
@@ -2243,10 +2251,12 @@ void Game::renderDebugStoryTest(Renderer& renderer) const
     renderer.setScreenSpace();
     const DebugStoryTestLayout layout = makeDebugStoryTestLayout(camera_.width(), camera_.height());
     const int itemCount = static_cast<int>(debugStoryTestEntries_.size());
-    const float scrollOffset = clamp(
+    const UiScrollableListStyle listStyle = debugStoryTestListStyle();
+    const UiScrollAreaLayout listLayout = makeUiScrollableListLayout(
+        layout.list,
+        itemCount,
         debugStoryTestScrollOffset_,
-        0.0f,
-        debugStoryTestMaxScroll(layout, itemCount));
+        listStyle);
     const bool tutorials = debugStoryTestMode_ == DebugStoryTestMode::Tutorials;
 
     drawUiModalBackdrop(
@@ -2274,10 +2284,10 @@ void Game::renderDebugStoryTest(Renderer& renderer) const
             2);
     }
 
+    renderer.pushClipRect(listLayout.viewport.pos, listLayout.viewport.size);
     for (int i = 0; i < itemCount; ++i) {
-        const UiRect rect = debugStoryTestRowRect(layout, i, scrollOffset);
-        if (rect.pos.y + rect.size.y < layout.list.pos.y ||
-            rect.pos.y > layout.list.pos.y + layout.list.size.y) {
+        const UiRect rect = uiScrollableListItemRect(listLayout, i, listStyle);
+        if (!uiScrollAreaRectVisible(listLayout, rect)) {
             continue;
         }
 
@@ -2302,6 +2312,8 @@ void Game::renderDebugStoryTest(Renderer& renderer) const
         const std::string shownMeta = fittedSingleLineText(renderer, meta, rect.size.x - 28.0f, 1);
         renderer.drawText(rect.pos + Vec2{14.0f, 34.0f}, shownMeta, ui::TextMuted, 1);
     }
+    renderer.popClipRect();
+    drawUiScrollAreaFrame(renderer, listLayout, listStyle.scroll);
 
     bool canPlay = false;
     if (debugStoryTestSelectedIndex_ >= 0 &&

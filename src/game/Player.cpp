@@ -145,13 +145,7 @@ void Player::update(
     } else {
         bleedDamageAccumulator = 0.0;
     }
-    const bool walkingNow = lengthSquared(moveAxis) > 0.0001f;
-    if (walkingNow != spriteWalking) {
-        spriteWalking = walkingNow;
-        spriteAnimationTime = 0.0f;
-    } else {
-        spriteAnimationTime += dt;
-    }
+    updateSpriteAnimation(dt, lengthSquared(moveAxis) > 0.0001f);
     const Vec2 delta = velocity * dt;
     const float playerRadius = effectiveRadius(balance.playerRadius);
     const auto blocked = [&](Vec2 center) {
@@ -180,6 +174,16 @@ void Player::update(
     const float targetShift = input.ringOffsetHeld() ? shiftDistance : 0.0f;
     spellRingShift = lerp(spellRingShift, targetShift, 1.0f - std::exp(-14.0f * dt));
     throwCooldownRemaining = std::max(0.0f, throwCooldownRemaining - dt);
+}
+
+void Player::updateSpriteAnimation(float dt, bool walking)
+{
+    if (walking != spriteWalking) {
+        spriteWalking = walking;
+        spriteAnimationTime = 0.0f;
+    } else {
+        spriteAnimationTime += std::max(0.0f, dt);
+    }
 }
 
 int Player::spriteFrameIndex() const

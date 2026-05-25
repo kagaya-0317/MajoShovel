@@ -254,21 +254,24 @@ DungeonLayout makeIntroTutorialLayout(const DungeonGenerationContext& context)
     layout.generationProfile = context.generationProfile.empty() ? "intro_tutorial" : context.generationProfile;
     layout.terrainProfile = context.terrainProfile.empty() ? "soft_stardust" : context.terrainProfile;
     layout.startTile = {0, 0};
-    layout.goalTile = {74, 2};
+    layout.goalTile = {77, 2};
     layout.mainPathPoints = {
         {0.0f, 0.0f},
-        {8.0f, 0.0f},
-        {12.0f, 0.0f},
-        {20.0f, 0.0f},
-        {30.0f, 0.0f},
-        {38.0f, 0.0f},
-        {52.0f, 3.0f},
-        {68.0f, 4.0f},
-        {74.0f, 2.0f},
+        {11.0f, 0.0f},
+        {15.0f, 0.0f},
+        {21.0f, 0.0f},
+        {29.0f, 0.0f},
+        {43.0f, 1.0f},
+        {52.0f, 2.0f},
+        {55.0f, 2.0f},
+        {59.0f, 3.0f},
+        {71.0f, 4.0f},
+        {77.0f, 2.0f},
     };
     layout.specialRoomAnchors = {
         {SpecialRoomType::SafeCavern, {0.0f, 0.0f}, 4.2f},
-        {SpecialRoomType::EnemyRoom, {38.0f, 0.0f}, 5.6f},
+        {SpecialRoomType::EnemyRoom, {29.0f, 0.0f}, 5.6f},
+        {SpecialRoomType::EnemyRoom, {54.0f, 2.0f}, 5.4f},
     };
     return layout;
 }

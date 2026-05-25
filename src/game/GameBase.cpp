@@ -189,6 +189,332 @@ UiRect defaultBaseFacilityRect(BaseArea area, bool ringWorkshopUnlocked, std::st
     return it == facilities.end() ? UiRect{{0.0f, 0.0f}, {0.0f, 0.0f}} : it->rect;
 }
 
+UiRect outdoorHomeDoorSpawnRect(UiRect homeRect, bool ringWorkshopUnlocked)
+{
+    constexpr UiRect DefaultDoor{{265.0f, 222.0f}, {60.0f, 44.0f}};
+    const UiRect defaultHome = defaultBaseFacilityRect(BaseArea::Outdoor, ringWorkshopUnlocked, "home");
+    if (defaultHome.size.x <= 0.0f || defaultHome.size.y <= 0.0f) {
+        return DefaultDoor;
+    }
+
+    const float scaleX = homeRect.size.x / defaultHome.size.x;
+    const float scaleY = homeRect.size.y / defaultHome.size.y;
+    const float scale = std::isfinite(scaleX) && std::isfinite(scaleY)
+        ? std::max(0.001f, std::min(scaleX, scaleY))
+        : 1.0f;
+    return {
+        DefaultDoor.pos + (homeRect.pos - defaultHome.pos),
+        DefaultDoor.size * scale,
+    };
+}
+
+struct BaseFacilityVisual {
+    const char* facilityId = "";
+    const char* imagePath = "";
+    UiRect rect{};
+};
+
+constexpr std::array<BaseFacilityVisual, 7> OutdoorBaseFacilityVisuals{{
+    {"mine_exit", "assets/kyoten/move.png", {{578.0f, 530.0f}, {148.0f, 190.0f}}},
+    {"storage_chest", "assets/kyoten/box.png", {{593.0f, 445.0f}, {60.0f, 53.0f}}},
+    {"merchant_wagon", "assets/kyoten/wagon.png", {{928.0f, 65.0f}, {206.0f, 185.0f}}},
+    {"processing_table", "assets/kyoten/sagyodai.png", {{512.0f, 154.0f}, {183.0f, 106.0f}}},
+    {"upgrade_forge", "assets/kyoten/kyokaro.png", {{968.0f, 355.0f}, {217.0f, 226.0f}}},
+    {"ring_workshop", "assets/kyoten/ring-kobo.png", {{842.0f, 470.0f}, {115.0f, 93.0f}}},
+    {"home", "assets/kyoten/house.png", {{113.0f, 11.0f}, {301.0f, 308.0f}}},
+}};
+
+constexpr std::array<BaseFacilityVisual, 3> HomeInteriorBaseFacilityVisuals{{
+    {"bookshelf", "assets/kyoten/books.png", {{368.0f, 322.0f}, {127.0f, 213.0f}}},
+    {"diary", "assets/kyoten/desk.png", {{760.0f, 416.0f}, {179.0f, 142.0f}}},
+    {"bed", "assets/kyoten/bed.png", {{680.0f, 188.0f}, {178.0f, 195.0f}}},
+}};
+
+const BaseFacilityVisual* findBaseFacilityVisual(
+    std::span<const BaseFacilityVisual> visuals,
+    std::string_view facilityId)
+{
+    const auto it = std::find_if(
+        visuals.begin(),
+        visuals.end(),
+        [facilityId](const BaseFacilityVisual& visual) {
+            return std::string_view(visual.facilityId) == facilityId;
+        });
+    return it == visuals.end() ? nullptr : &*it;
+}
+
+const BaseFacilityVisual* baseFacilityVisual(BaseArea area, std::string_view facilityId)
+{
+    switch (area) {
+    case BaseArea::Outdoor:
+        return findBaseFacilityVisual(OutdoorBaseFacilityVisuals, facilityId);
+    case BaseArea::HomeInterior:
+        return findBaseFacilityVisual(HomeInteriorBaseFacilityVisuals, facilityId);
+    }
+    return nullptr;
+}
+
+UiRect baseFacilityVisualRect(
+    const BaseFacility& facility,
+    BaseArea area,
+    bool ringWorkshopUnlocked,
+    const BaseFacilityVisual& visual)
+{
+    const UiRect defaultRect = defaultBaseFacilityRect(area, ringWorkshopUnlocked, facility.facilityId);
+    if (defaultRect.size.x <= 0.0f || defaultRect.size.y <= 0.0f) {
+        return visual.rect;
+    }
+
+    const float scaleX = facility.rect.size.x / defaultRect.size.x;
+    const float scaleY = facility.rect.size.y / defaultRect.size.y;
+    const float visualScale = std::isfinite(scaleX) && std::isfinite(scaleY)
+        ? std::max(0.001f, std::min(scaleX, scaleY))
+        : 1.0f;
+    return {
+        visual.rect.pos + (facility.rect.pos - defaultRect.pos),
+        visual.rect.size * visualScale,
+    };
+}
+
+UiRect baseFacilityPointerRect(const BaseFacility& facility, BaseArea area, bool ringWorkshopUnlocked)
+{
+    if (const BaseFacilityVisual* visual = baseFacilityVisual(area, facility.facilityId)) {
+        return baseFacilityVisualRect(facility, area, ringWorkshopUnlocked, *visual);
+    }
+    return facility.rect;
+}
+
+bool baseFacilityVisualHitTest(
+    Renderer& renderer,
+    const BaseFacilityVisual& visual,
+    UiRect rect,
+    Vec2 point)
+{
+    ImageDrawOptions options;
+    const ImageHandle handle = renderer.acquireImage(visual.imagePath, TextureFilter::Nearest);
+    if (!handle.valid()) {
+        return rect.contains(point);
+    }
+    return renderer.imageHitTestAlpha(
+        handle,
+        rect.pos + rect.size * 0.5f,
+        rect.size,
+        point,
+        options,
+        12);
+}
+
+Vec2 closestPointOnRect(Vec2 point, UiRect rect)
+{
+    return {
+        clamp(point.x, rect.pos.x, rect.pos.x + rect.size.x),
+        clamp(point.y, rect.pos.y, rect.pos.y + rect.size.y),
+    };
+}
+
+float dot(Vec2 a, Vec2 b)
+{
+    return a.x * b.x + a.y * b.y;
+}
+
+bool baseFacilityHiddenUntilUnlocked(const BaseFacility& facility)
+{
+    return !facility.unlocked && std::string_view(facility.facilityId) == "ring_workshop";
+}
+
+void drawBaseFacilityNameLabel(
+    Renderer& renderer,
+    const BaseFacility& facility,
+    UiRect labelRect,
+    BaseArea area,
+    bool ringWorkshopUnlocked)
+{
+    constexpr int LabelScale = 2;
+    constexpr int LabelOutlinePx = 6;
+    constexpr float TopPadding = 4.0f;
+    constexpr float LabelLift = 16.0f;
+    constexpr float HomeDoorLabelGap = 6.0f;
+    const Vec2 textSize = renderer.measureText(facility.displayName, LabelScale);
+    Vec2 pos{
+        labelRect.pos.x + (labelRect.size.x - textSize.x) * 0.5f,
+        labelRect.pos.y + TopPadding,
+    };
+
+    const std::string_view facilityId = facility.facilityId;
+    if (area == BaseArea::Outdoor && facilityId == "home") {
+        const UiRect doorRect = outdoorHomeDoorSpawnRect(facility.rect, ringWorkshopUnlocked);
+        pos.x = doorRect.pos.x + (doorRect.size.x - textSize.x) * 0.5f;
+        pos.y = doorRect.pos.y - textSize.y - HomeDoorLabelGap;
+    } else if (area == BaseArea::Outdoor &&
+        (facilityId == "storage_chest" || facilityId == "ring_workshop")) {
+        pos.y -= LabelLift;
+    }
+
+    renderer.drawOutlinedText(
+        pos,
+        facility.displayName,
+        {255, 255, 255, 255},
+        {0, 0, 0, 170},
+        LabelOutlinePx,
+        LabelScale);
+}
+
+const BaseFacility* selectBaseInteractionFacility(
+    Vec2 playerPosition,
+    Vec2 playerFacing,
+    const std::vector<BaseFacility>& facilities)
+{
+    constexpr float DirectionalCandidateDot = 0.45f;
+    constexpr float DirectionalTieEpsilon = 0.001f;
+
+    const BaseFacility* nearest = nullptr;
+    float nearestDistance = std::numeric_limits<float>::max();
+    const BaseFacility* directional = nullptr;
+    float directionalDot = DirectionalCandidateDot;
+    float directionalDistance = std::numeric_limits<float>::max();
+    const bool hasFacing = lengthSquared(playerFacing) > 0.0001f;
+    const Vec2 facing = hasFacing ? normalize(playerFacing) : Vec2{};
+
+    for (const BaseFacility& facility : facilities) {
+        if (baseFacilityHiddenUntilUnlocked(facility)) {
+            continue;
+        }
+        if (!baseInteractionAvailable(playerPosition, facility)) {
+            continue;
+        }
+
+        const float dist = distanceToRect(playerPosition, facility.rect);
+        if (dist < nearestDistance) {
+            nearestDistance = dist;
+            nearest = &facility;
+        }
+
+        if (!hasFacing) {
+            continue;
+        }
+
+        Vec2 target = closestPointOnRect(playerPosition, facility.rect);
+        Vec2 toFacility = target - playerPosition;
+        if (lengthSquared(toFacility) <= 0.0001f) {
+            target = facility.rect.pos + facility.rect.size * 0.5f;
+            toFacility = target - playerPosition;
+        }
+        if (lengthSquared(toFacility) <= 0.0001f) {
+            continue;
+        }
+
+        const float candidateDot = dot(facing, normalize(toFacility));
+        if (candidateDot < DirectionalCandidateDot) {
+            continue;
+        }
+
+        if (candidateDot > directionalDot + DirectionalTieEpsilon ||
+            (std::abs(candidateDot - directionalDot) <= DirectionalTieEpsilon && dist < directionalDistance)) {
+            directionalDot = candidateDot;
+            directionalDistance = dist;
+            directional = &facility;
+        }
+    }
+
+    return directional != nullptr ? directional : nearest;
+}
+
+void drawBaseFacilityFallbackRect(
+    Renderer& renderer,
+    const BaseFacility& facility,
+    bool inInteractionRange,
+    bool hovered)
+{
+    Color fill = facility.enabled ? Color{96, 82, 82, 255} : Color{84, 62, 56, 255};
+    if (!facility.unlocked) {
+        fill = {58, 58, 64, 255};
+    }
+    Color outline = facility.enabled ? Color{220, 200, 150, 255} : Color{120, 108, 98, 255};
+    if (inInteractionRange && facility.enabled) {
+        outline = hovered ? Color{255, 230, 72, 255} : Color{255, 255, 255, 245};
+        fill.a = std::max<unsigned char>(fill.a, 170);
+    }
+    renderer.fillRect(facility.rect.pos, facility.rect.size, fill);
+    renderer.drawRect(facility.rect.pos, facility.rect.size, outline);
+    if (!inInteractionRange || !facility.enabled) {
+        renderer.drawText(
+            facility.rect.pos + Vec2{8.0f, 8.0f},
+            facility.displayName,
+            facility.enabled ? Color{248, 238, 214, 255} : Color{154, 146, 138, 255},
+            2);
+    }
+}
+
+void drawBaseFacilities(
+    Renderer& renderer,
+    const std::vector<BaseFacility>& facilities,
+    BaseArea area,
+    bool ringWorkshopUnlocked,
+    Vec2 playerPosition,
+    Vec2 mouse)
+{
+    struct FacilityNameLabel {
+        const BaseFacility* facility = nullptr;
+        UiRect rect{};
+    };
+    std::vector<FacilityNameLabel> labels;
+
+    for (int pass = 0; pass < 2; ++pass) {
+        const bool drawEnabled = pass == 1;
+        for (const BaseFacility& facility : facilities) {
+            if (baseFacilityHiddenUntilUnlocked(facility)) {
+                continue;
+            }
+            if (facility.enabled != drawEnabled) {
+                continue;
+            }
+
+            const bool inInteractionRange = baseInteractionAvailable(playerPosition, facility);
+            const bool labelVisible = inInteractionRange && facility.enabled;
+            const BaseFacilityVisual* visual = baseFacilityVisual(area, facility.facilityId);
+
+            if (visual == nullptr) {
+                const bool hovered = inInteractionRange && facility.enabled && facility.rect.contains(mouse);
+                drawBaseFacilityFallbackRect(renderer, facility, inInteractionRange, hovered);
+                if (labelVisible) {
+                    labels.push_back({&facility, facility.rect});
+                }
+                continue;
+            }
+
+            const UiRect visualRect = baseFacilityVisualRect(facility, area, ringWorkshopUnlocked, *visual);
+            const bool hovered = inInteractionRange &&
+                facility.enabled &&
+                baseFacilityVisualHitTest(renderer, *visual, visualRect, mouse);
+
+            ImageDrawOptions options;
+            options.outlineEnabled = inInteractionRange && facility.enabled;
+            options.outlineColor = hovered ? Color{255, 230, 72, 255} : Color{255, 255, 255, 245};
+            options.outlinePx = 1;
+            if (!facility.unlocked) {
+                options.tint = {190, 190, 198, 230};
+            }
+            if (!renderer.drawImage(
+                    visual->imagePath,
+                    visualRect.pos + visualRect.size * 0.5f,
+                    visualRect.size,
+                    options,
+                    TextureFilter::Nearest)) {
+                drawBaseFacilityFallbackRect(renderer, facility, inInteractionRange, hovered);
+            }
+            if (labelVisible) {
+                labels.push_back({&facility, visualRect});
+            }
+        }
+    }
+
+    for (const FacilityNameLabel& label : labels) {
+        if (label.facility != nullptr) {
+            drawBaseFacilityNameLabel(renderer, *label.facility, label.rect, area, ringWorkshopUnlocked);
+        }
+    }
+}
+
 Vec2 baseFacilitySpawnPosition(UiRect facilityRect, BaseFacilitySpawnSide side, float playerRadius)
 {
     Vec2 position{facilityRect.pos.x + facilityRect.size.x * 0.5f, facilityRect.pos.y};
@@ -446,6 +772,11 @@ constexpr int RingWorkshopActionCount = 2;
 constexpr int RingWorkshopUpgradeFutureCount = 4;
 constexpr int RingWorkshopUpgradeDisplayCount = RingWorkshopImplementedUpgradeCount + RingWorkshopUpgradeFutureCount;
 
+UiRect homeInteriorMapRect()
+{
+    return {{290.0f, 100.0f}, {700.0f, 520.0f}};
+}
+
 UiRect homeInteriorWalkBounds()
 {
     return {{354.0f, 182.0f}, {572.0f, 388.0f}};
@@ -453,17 +784,20 @@ UiRect homeInteriorWalkBounds()
 
 void drawHomeInteriorBackdrop(Renderer& renderer)
 {
-    const UiRect map = baseMapBounds();
-    renderer.fillRect(map.pos, map.size, {46, 36, 38, 255});
-    renderer.drawRect({300.0f, 126.0f}, {680.0f, 492.0f}, {184, 150, 108, 255});
-    renderer.fillRect({300.0f, 126.0f}, {680.0f, 44.0f}, {96, 68, 62, 255});
-    renderer.fillRect({300.0f, 574.0f}, {680.0f, 44.0f}, {96, 68, 62, 255});
-    renderer.fillRect({300.0f, 170.0f}, {44.0f, 404.0f}, {96, 68, 62, 255});
-    renderer.fillRect({936.0f, 170.0f}, {44.0f, 404.0f}, {96, 68, 62, 255});
-    renderer.fillRect({356.0f, 182.0f}, {568.0f, 376.0f}, {118, 92, 66, 255});
-    renderer.fillRect({508.0f, 304.0f}, {264.0f, 132.0f}, {104, 76, 76, 255});
-    renderer.drawRect({508.0f, 304.0f}, {264.0f, 132.0f}, {146, 104, 88, 255});
-    renderer.drawText({584.0f, 142.0f}, "ルネの家", {246, 235, 255, 255}, 2);
+    const UiRect room = homeInteriorMapRect();
+    if (renderer.drawImage(
+            "assets/kyoten/map_house.png",
+            room.pos + room.size * 0.5f,
+            room.size,
+            ImageDrawOptions{},
+            TextureFilter::Nearest)) {
+        return;
+    }
+
+    renderer.fillRect(room.pos, room.size, {46, 36, 38, 255});
+    renderer.drawRect(room.pos, room.size, {184, 150, 108, 255});
+    renderer.fillRect(room.pos + Vec2{56.0f, 82.0f}, {568.0f, 376.0f}, {118, 92, 66, 255});
+    renderer.drawText(room.pos + Vec2{294.0f, 42.0f}, "ルネの家", {246, 235, 255, 255}, 2);
 }
 
 UiRect ringWorkshopActionDialogRect()
@@ -4314,10 +4648,13 @@ std::vector<Game::WarpPoint> Game::selectableWarpPointsForCurrentStageStart() co
 
 void Game::placeBasePlayerAtHomeDoorResumePoint()
 {
-    const UiRect fallback = defaultBaseFacilityRect(BaseArea::Outdoor, ringWorkshopUnlocked_, "home_entrance");
-    const UiRect homeEntranceRect = toUiRect(baseFacilityRectFor(BaseArea::Outdoor, "home_entrance", toBaseEditRect(fallback)));
+    const UiRect fallback = defaultBaseFacilityRect(BaseArea::Outdoor, ringWorkshopUnlocked_, "home");
+    const UiRect homeRect = toUiRect(baseFacilityRectFor(BaseArea::Outdoor, "home", toBaseEditRect(fallback)));
     baseArea_ = BaseArea::Outdoor;
-    basePlayerPosition_ = baseFacilitySpawnPosition(homeEntranceRect, BaseFacilitySpawnSide::Below, balance_.playerRadius);
+    basePlayerPosition_ = baseFacilitySpawnPosition(
+        outdoorHomeDoorSpawnRect(homeRect, ringWorkshopUnlocked_),
+        BaseFacilitySpawnSide::Below,
+        balance_.playerRadius);
     baseOutdoorPlayerPosition_ = basePlayerPosition_;
     basePlayerFacing_ = {0.0f, -1.0f};
 }
@@ -4467,6 +4804,7 @@ bool Game::startStoryEventForDebug(std::string_view id)
     }
 
     pendingStoryTrigger_.clear();
+    pendingStoryTriggerDelaySeconds_ = 0.0f;
     pendingStoryTriggers_.clear();
     baseStatus_.clear();
     pendingDialogueCompletion_ = {};
@@ -6597,7 +6935,7 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
             if (facility.unlocked) {
                 openRingWorkshop();
             } else {
-                baseStatus_ = "リング工房用スペース: まだ解禁されていません";
+                baseStatus_ = "リング工房: まだ解禁されていません";
             }
             break;
         case BaseFacilityAction::HomeEntrance:
@@ -6613,7 +6951,7 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
                 BaseArea::Outdoor,
                 baseOutdoorPlayerPosition_,
                 {0.0f, 1.0f},
-                "屋外拠点に戻りました");
+                "魔女の拠点に戻りました");
             break;
         case BaseFacilityAction::MonicaTalk:
             startBaseMonicaDialogue();
@@ -6667,12 +7005,7 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
 
     const Vec2 moveAxis = input.moveAxis();
     const bool walkingNow = lengthSquared(moveAxis) > 0.0001f;
-    if (walkingNow != basePlayerSpriteWalking_) {
-        basePlayerSpriteWalking_ = walkingNow;
-        basePlayerSpriteAnimationTime_ = 0.0f;
-    } else {
-        basePlayerSpriteAnimationTime_ += dt;
-    }
+    updateBasePlayerSpriteAnimation(dt, walkingNow);
     maybeSpawnPlayerFootstepDust(
         playerSpriteFootAnchor(basePlayerPosition_),
         lengthSquared(moveAxis) > 0.0001f ? moveAxis : basePlayerFacing_,
@@ -6692,22 +7025,14 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
         }
     }
 
-    const BaseFacility* nearest = nullptr;
-    float nearestDistance = std::numeric_limits<float>::max();
-    for (const BaseFacility& facility : facilities) {
-        if (!baseInteractionAvailable(basePlayerPosition_, facility)) {
-            continue;
-        }
-        const float dist = distanceToRect(basePlayerPosition_, facility.rect);
-        if (dist < nearestDistance) {
-            nearestDistance = dist;
-            nearest = &facility;
-        }
-    }
+    const BaseFacility* interactionFacility = selectBaseInteractionFacility(basePlayerPosition_, basePlayerFacing_, facilities);
 
     if (input.mouseLeftPressed() && !ui.pointerConsumed()) {
         for (const BaseFacility& facility : facilities) {
-            if (!facility.rect.contains(ui.mouse())) {
+            if (baseFacilityHiddenUntilUnlocked(facility)) {
+                continue;
+            }
+            if (!baseFacilityPointerRect(facility, baseArea_, ringWorkshopUnlocked_).contains(ui.mouse())) {
                 continue;
             }
             ui.consumePointer();
@@ -6722,9 +7047,9 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
         }
     }
 
-    if (input.confirmPressed() && nearest != nullptr) {
-        ui.emitSound(nearest->onInteract == BaseFacilityAction::Bookshelf ? UiSoundEvent::BookOpen : UiSoundEvent::Confirm);
-        interact(*nearest);
+    if (input.confirmPressed() && interactionFacility != nullptr) {
+        ui.emitSound(interactionFacility->onInteract == BaseFacilityAction::Bookshelf ? UiSoundEvent::BookOpen : UiSoundEvent::Confirm);
+        interact(*interactionFacility);
         return;
     }
 }
@@ -6951,6 +7276,16 @@ void Game::renderBookshelfScreen(Renderer& renderer) const
     }
 }
 
+void Game::updateBasePlayerSpriteAnimation(float dt, bool walking)
+{
+    if (walking != basePlayerSpriteWalking_) {
+        basePlayerSpriteWalking_ = walking;
+        basePlayerSpriteAnimationTime_ = 0.0f;
+    } else {
+        basePlayerSpriteAnimationTime_ += std::max(0.0f, dt);
+    }
+}
+
 void Game::renderBaseBackdrop(Renderer& renderer) const
 {
     renderer.fillRect({0.0f, 0.0f}, {static_cast<float>(camera_.width()), static_cast<float>(camera_.height())}, {24, 28, 32, 255});
@@ -6977,57 +7312,11 @@ void Game::renderBaseBackdrop(Renderer& renderer) const
     for (BaseFacility& facility : facilities) {
         facility.rect = toUiRect(baseFacilityRectFor(baseArea_, facility.facilityId, toBaseEditRect(facility.rect)));
     }
-    const BaseFacility* nearest = nullptr;
-    const BaseFacility* hovered = nullptr;
-    float nearestDistance = std::numeric_limits<float>::max();
     float mouseX = 0.0f;
     float mouseY = 0.0f;
     SDL_GetMouseState(&mouseX, &mouseY);
     const Vec2 mouse{mouseX, mouseY};
-    for (const BaseFacility& facility : facilities) {
-        if (!facility.enabled) {
-            continue;
-        }
-        if (facility.rect.contains(mouse)) {
-            hovered = &facility;
-        }
-        if (!baseInteractionAvailable(basePlayerPosition_, facility)) {
-            continue;
-        }
-        const float dist = distanceToRect(basePlayerPosition_, facility.rect);
-        if (dist < nearestDistance) {
-            nearestDistance = dist;
-            nearest = &facility;
-        }
-    }
-    for (int pass = 0; pass < 2; ++pass) {
-        const bool drawEnabled = pass == 1;
-        for (const BaseFacility& facility : facilities) {
-            if (facility.enabled != drawEnabled) {
-                continue;
-            }
-            const bool texturedOutdoorBase = baseArea_ == BaseArea::Outdoor && renderer.hasBaseMapTexture();
-            Color fill = facility.enabled ? Color{96, 82, 82, 255} : Color{84, 62, 56, 255};
-            if (texturedOutdoorBase) {
-                fill.a = facility.enabled ? 120 : 80;
-            }
-            if (!facility.unlocked) {
-                fill = {58, 58, 64, 255};
-                if (texturedOutdoorBase) {
-                    fill.a = 120;
-                }
-            }
-            if (&facility == nearest) {
-                fill = {118, 98, 58, static_cast<unsigned char>(texturedOutdoorBase ? 170 : 255)};
-            }
-            if (&facility == hovered) {
-                fill = {124, 104, 72, static_cast<unsigned char>(texturedOutdoorBase ? 170 : 255)};
-            }
-            renderer.fillRect(facility.rect.pos, facility.rect.size, fill);
-            renderer.drawRect(facility.rect.pos, facility.rect.size, facility.enabled ? Color{220, 200, 150, 255} : Color{120, 108, 98, 255});
-            renderer.drawText(facility.rect.pos + Vec2{8.0f, 8.0f}, facility.displayName, facility.enabled ? Color{248, 238, 214, 255} : Color{154, 146, 138, 255}, 2);
-        }
-    }
+    drawBaseFacilities(renderer, facilities, baseArea_, ringWorkshopUnlocked_, basePlayerPosition_, mouse);
     renderBaseEditOverlay(renderer);
 
     const Vec2 basePlayerFootAnchor = playerSpriteFootAnchor(basePlayerPosition_);
@@ -7081,57 +7370,12 @@ void Game::renderBaseScreen(Renderer& renderer) const
     for (BaseFacility& facility : facilities) {
         facility.rect = toUiRect(baseFacilityRectFor(baseArea_, facility.facilityId, toBaseEditRect(facility.rect)));
     }
-    const BaseFacility* nearest = nullptr;
-    const BaseFacility* hovered = nullptr;
-    float nearestDistance = std::numeric_limits<float>::max();
     float mouseX = 0.0f;
     float mouseY = 0.0f;
     SDL_GetMouseState(&mouseX, &mouseY);
     const Vec2 mouse{mouseX, mouseY};
-    for (const BaseFacility& facility : facilities) {
-        if (!facility.enabled) {
-            continue;
-        }
-        if (facility.rect.contains(mouse)) {
-            hovered = &facility;
-        }
-        if (!baseInteractionAvailable(basePlayerPosition_, facility)) {
-            continue;
-        }
-        const float dist = distanceToRect(basePlayerPosition_, facility.rect);
-        if (dist < nearestDistance) {
-            nearestDistance = dist;
-            nearest = &facility;
-        }
-    }
-    for (int pass = 0; pass < 2; ++pass) {
-        const bool drawEnabled = pass == 1;
-        for (const BaseFacility& facility : facilities) {
-            if (facility.enabled != drawEnabled) {
-                continue;
-            }
-            const bool texturedOutdoorBase = baseArea_ == BaseArea::Outdoor && renderer.hasBaseMapTexture();
-            Color fill = facility.enabled ? Color{96, 82, 82, 255} : Color{84, 62, 56, 255};
-            if (texturedOutdoorBase) {
-                fill.a = facility.enabled ? 120 : 80;
-            }
-            if (!facility.unlocked) {
-                fill = {58, 58, 64, 255};
-                if (texturedOutdoorBase) {
-                    fill.a = 120;
-                }
-            }
-            if (&facility == nearest) {
-                fill = {118, 98, 58, static_cast<unsigned char>(texturedOutdoorBase ? 170 : 255)};
-            }
-            if (&facility == hovered) {
-                fill = {124, 104, 72, static_cast<unsigned char>(texturedOutdoorBase ? 170 : 255)};
-            }
-            renderer.fillRect(facility.rect.pos, facility.rect.size, fill);
-            renderer.drawRect(facility.rect.pos, facility.rect.size, facility.enabled ? Color{220, 200, 150, 255} : Color{120, 108, 98, 255});
-            renderer.drawText(facility.rect.pos + Vec2{8.0f, 8.0f}, facility.displayName, facility.enabled ? Color{248, 238, 214, 255} : Color{154, 146, 138, 255}, 2);
-        }
-    }
+    const BaseFacility* interactionFacility = selectBaseInteractionFacility(basePlayerPosition_, basePlayerFacing_, facilities);
+    drawBaseFacilities(renderer, facilities, baseArea_, ringWorkshopUnlocked_, basePlayerPosition_, mouse);
     renderBaseEditOverlay(renderer);
 
     const Vec2 basePlayerFootAnchor = playerSpriteFootAnchor(basePlayerPosition_);
@@ -8324,7 +8568,7 @@ void Game::renderBaseScreen(Renderer& renderer) const
                 drawEffectChangeLine(detailY, "効果", "加工解禁: ", processingFeature(level), processingFeature(nextLevel));
                 break;
             case 3:
-                drawDetailTextRow(detailY, "効果", "リング工房スペースを解禁", Color{255, 230, 150, 255});
+                drawDetailTextRow(detailY, "効果", "リング工房を解禁", Color{255, 230, 150, 255});
                 break;
             case 4:
                 std::snprintf(currentValue, sizeof(currentValue), "+%d", level * 2);
@@ -8552,10 +8796,10 @@ void Game::renderBaseScreen(Renderer& renderer) const
             }
         }
     } else {
-        const char* promptName = nearest != nullptr ? nearest->displayName : "";
+        const char* promptName = interactionFacility != nullptr ? interactionFacility->displayName : "";
         renderer.fillRect({280.0f, 644.0f}, {720.0f, 34.0f}, ui::FooterFill);
-        if (nearest != nullptr) {
-            if (const char* specialPrompt = baseInteractionPrompt(*nearest)) {
+        if (interactionFacility != nullptr) {
+            if (const char* specialPrompt = baseInteractionPrompt(*interactionFacility)) {
                 std::snprintf(buffer, sizeof(buffer), "%s", specialPrompt);
             } else {
                 std::snprintf(buffer, sizeof(buffer), "Enter: %sを調べる / クリック: 近くの施設を調べる / Esc: メニュー", promptName);

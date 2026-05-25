@@ -53,6 +53,11 @@ struct TerrainTileEdit {
     TileType type = TileType::Empty;
 };
 
+struct TerrainDamageProtectionArea {
+    DungeonTile minTile{};
+    DungeonTile maxTile{};
+};
+
 class TileMap {
 public:
     void updateAround(Vec2 worldCenter, float dt, const RuntimeBalance& config, const DungeonLayout& dungeonLayout);
@@ -73,6 +78,8 @@ public:
     Color tileColorAtWorld(Vec2 world) const;
     void setTileOverride(DungeonTile tile, TileType type);
     void setTerrainEdit(DungeonTile tile, TileType type);
+    void setDamageProtectionAreas(std::vector<TerrainDamageProtectionArea> areas);
+    void clearDamageProtectionAreas();
     std::vector<TerrainTileEdit> terrainEditsForSave() const;
     int activeChunkCount() const { return activeChunkCount_; }
     std::size_t generatedChunkCount() const { return chunks_.size(); }
@@ -87,6 +94,7 @@ private:
     Tile* tileAtWorld(int tx, int ty);
     const Tile* tileAtWorldIfGenerated(int tx, int ty) const;
     void rememberDamagedTileMaxHp(int tx, int ty, const Tile& tile);
+    bool damageProtectedAt(int tx, int ty) const;
     void clearCrackCacheForTile(int tx, int ty);
     int crackLevelForTile(int tx, int ty, const Tile& tile) const;
     void drawTileCracks(Renderer& renderer, Vec2 pos, int tx, int ty, const Tile& tile);
@@ -101,6 +109,7 @@ private:
     std::unordered_map<long long, TileType> tileOverrides_;
     std::unordered_map<long long, TileType> terrainEdits_;
     std::unordered_map<long long, int> damagedTileMaxHp_;
+    std::vector<TerrainDamageProtectionArea> damageProtectionAreas_;
     int centerChunkX_ = 0;
     int centerChunkY_ = 0;
     int activeChunkCount_ = 0;

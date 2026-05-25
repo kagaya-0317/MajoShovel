@@ -418,6 +418,11 @@ std::string portraitPathForId(std::string_view speakerId)
     return {};
 }
 
+bool speakerUsesRightPortrait(std::string_view speakerId)
+{
+    return !portraitPathForId(speakerId).empty();
+}
+
 DialoguePortraitSlot portraitSlotFor(const DialogueSequence& sequence, std::string_view speakerId, DialoguePortraitSide side)
 {
     DialoguePortraitSlot slot{
@@ -932,12 +937,34 @@ void DialoguePlayer::syncRightPortraitForCurrentLine(bool immediate)
     if (line == nullptr || line->speakerId.empty() || line->speakerId == "player") {
         return;
     }
+    if (!speakerUsesRightPortrait(line->speakerId)) {
+        clearRightPortraitTarget(immediate);
+        return;
+    }
     setRightPortraitTarget(line->speakerId, immediate);
+}
+
+void DialoguePlayer::clearRightPortraitTarget(bool immediate)
+{
+    pendingRightSpeakerId_.clear();
+    if (rightSpeakerId_.empty()) {
+        rightPortraitFade_ = 0.0f;
+        rightPortraitTransition_ = RightPortraitTransition::Stable;
+        return;
+    }
+    if (immediate) {
+        rightSpeakerId_.clear();
+        rightPortraitFade_ = 0.0f;
+        rightPortraitTransition_ = RightPortraitTransition::Stable;
+        return;
+    }
+    rightPortraitTransition_ = RightPortraitTransition::FadingOut;
 }
 
 void DialoguePlayer::setRightPortraitTarget(std::string speakerId, bool immediate)
 {
     if (speakerId.empty()) {
+        clearRightPortraitTarget(immediate);
         return;
     }
     if (speakerId == rightSpeakerId_) {

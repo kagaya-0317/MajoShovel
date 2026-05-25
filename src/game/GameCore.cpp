@@ -984,16 +984,85 @@ void Game::updateTitleScreen(const Input& input, UiContext& ui)
     }
 }
 
+Game::ScreenTransitionFadeColor Game::fadeColorForScreenTransitionTarget(ScreenTransitionTarget target)
+{
+    switch (target) {
+    case ScreenTransitionTarget::Base:
+    case ScreenTransitionTarget::ReturnToBase:
+    case ScreenTransitionTarget::IntroTutorialToBase:
+        return ScreenTransitionFadeColor::White;
+    case ScreenTransitionTarget::None:
+    case ScreenTransitionTarget::TitleToBase:
+    case ScreenTransitionTarget::TitleToIntroTutorial:
+    case ScreenTransitionTarget::MiningStart:
+    case ScreenTransitionTarget::BaseArea:
+        return ScreenTransitionFadeColor::Black;
+    }
+    return ScreenTransitionFadeColor::Black;
+}
+
+float Game::holdSecondsForScreenTransitionTarget(ScreenTransitionTarget target)
+{
+    switch (target) {
+    case ScreenTransitionTarget::TitleToIntroTutorial:
+        return IntroTutorialStartTransitionHoldSeconds;
+    case ScreenTransitionTarget::IntroTutorialToBase:
+        return IntroTutorialReturnTransitionHoldSeconds;
+    case ScreenTransitionTarget::None:
+    case ScreenTransitionTarget::Base:
+    case ScreenTransitionTarget::TitleToBase:
+    case ScreenTransitionTarget::MiningStart:
+    case ScreenTransitionTarget::ReturnToBase:
+    case ScreenTransitionTarget::BaseArea:
+        return ScreenTransitionHoldSeconds;
+    }
+    return ScreenTransitionHoldSeconds;
+}
+
+float Game::fadeInSecondsForScreenTransitionTarget(ScreenTransitionTarget target)
+{
+    switch (target) {
+    case ScreenTransitionTarget::TitleToIntroTutorial:
+        return IntroTutorialStartTransitionFadeInSeconds;
+    case ScreenTransitionTarget::IntroTutorialToBase:
+        return IntroTutorialReturnTransitionFadeInSeconds;
+    case ScreenTransitionTarget::None:
+    case ScreenTransitionTarget::Base:
+    case ScreenTransitionTarget::TitleToBase:
+    case ScreenTransitionTarget::MiningStart:
+    case ScreenTransitionTarget::ReturnToBase:
+    case ScreenTransitionTarget::BaseArea:
+        return ScreenTransitionFadeInSeconds;
+    }
+    return ScreenTransitionFadeInSeconds;
+}
+
+float Game::postTransitionStoryDelaySecondsForScreenTransitionTarget(ScreenTransitionTarget target)
+{
+    return target == ScreenTransitionTarget::IntroTutorialToBase
+        ? IntroTutorialReturnBaseEventDelaySeconds
+        : 0.0f;
+}
+
+void Game::startScreenTransition(ScreenTransitionTarget target, ScreenTransitionPhase phase)
+{
+    screenTransition_.target = target;
+    screenTransition_.phase = phase;
+    screenTransition_.fadeColor = fadeColorForScreenTransitionTarget(target);
+    screenTransition_.holdSeconds = holdSecondsForScreenTransitionTarget(target);
+    screenTransition_.fadeInSeconds = fadeInSecondsForScreenTransitionTarget(target);
+    screenTransition_.postTransitionStoryDelaySeconds = postTransitionStoryDelaySecondsForScreenTransitionTarget(target);
+    screenTransition_.elapsed = 0.0f;
+    screenTransition_.applied = false;
+}
+
 void Game::requestScreenTransition(ScreenTransitionTarget target)
 {
     if (target == ScreenTransitionTarget::None || screenTransition_.active()) {
         return;
     }
 
-    screenTransition_.target = target;
-    screenTransition_.phase = ScreenTransitionPhase::FadingOut;
-    screenTransition_.elapsed = 0.0f;
-    screenTransition_.applied = false;
+    startScreenTransition(target, ScreenTransitionPhase::FadingOut);
     playAudioSe(AudioSeTransition);
 }
 
@@ -1006,10 +1075,7 @@ void Game::requestMiningStartTransition(bool useLatestWarpPoint, bool forceRegen
         return;
     }
 
-    screenTransition_.target = ScreenTransitionTarget::MiningStart;
-    screenTransition_.phase = ScreenTransitionPhase::FadingOut;
-    screenTransition_.elapsed = 0.0f;
-    screenTransition_.applied = false;
+    startScreenTransition(ScreenTransitionTarget::MiningStart, ScreenTransitionPhase::FadingOut);
     screenTransition_.useLatestWarpPoint = useLatestWarpPoint;
     screenTransition_.forceRegenerate = forceRegenerate;
     playAudioSe(AudioSeTransition);
@@ -1021,10 +1087,7 @@ void Game::requestReturnToBaseTransition(bool stageCleared, bool died)
         return;
     }
 
-    screenTransition_.target = ScreenTransitionTarget::ReturnToBase;
-    screenTransition_.phase = ScreenTransitionPhase::FadingOut;
-    screenTransition_.elapsed = 0.0f;
-    screenTransition_.applied = false;
+    startScreenTransition(ScreenTransitionTarget::ReturnToBase, ScreenTransitionPhase::FadingOut);
     screenTransition_.returnStageCleared = stageCleared;
     screenTransition_.returnDied = died;
     playAudioSe(AudioSeTransition);
@@ -1036,10 +1099,7 @@ void Game::requestBaseAreaCrossfade(BaseArea targetArea, Vec2 playerPosition, Ve
         return;
     }
 
-    screenTransition_.target = ScreenTransitionTarget::BaseArea;
-    screenTransition_.phase = ScreenTransitionPhase::CrossFadeCapture;
-    screenTransition_.elapsed = 0.0f;
-    screenTransition_.applied = false;
+    startScreenTransition(ScreenTransitionTarget::BaseArea, ScreenTransitionPhase::CrossFadeCapture);
     screenTransition_.targetBaseArea = targetArea;
     screenTransition_.targetBasePlayerPosition = playerPosition;
     screenTransition_.targetBasePlayerFacing = playerFacing;
@@ -1073,36 +1133,47 @@ void Game::updateScreenTransition(float dt)
                 applyScreenTransitionTarget(screenTransition_.target);
                 screenTransition_.applied = true;
             }
-            screenTransition_.phase = ScreenTransitionPhase::HoldBlack;
+            screenTransition_.phase = ScreenTransitionPhase::Hold;
         }
         break;
-    case ScreenTransitionPhase::HoldBlack:
+    case ScreenTransitionPhase::Hold:
+    {
         screenTransition_.elapsed += safeDt;
         if (screenTransition_.target == ScreenTransitionTarget::MiningStart && worldBuildActive()) {
             updateWorldBuild(safeDt);
         }
-        if (screenTransition_.elapsed >= ScreenTransitionBlackHoldSeconds && !worldBuildActive()) {
+        const float holdSeconds = screenTransition_.holdSeconds > 0.0f
+            ? screenTransition_.holdSeconds
+            : ScreenTransitionHoldSeconds;
+        if (screenTransition_.elapsed >= holdSeconds && !worldBuildActive()) {
             screenTransition_.elapsed = 0.0f;
             screenTransition_.phase = ScreenTransitionPhase::FadingIn;
         }
         break;
+    }
     case ScreenTransitionPhase::FadingIn:
+    {
         screenTransition_.elapsed += safeDt;
-        if (screenTransition_.elapsed >= ScreenTransitionFadeInSeconds) {
+        const float fadeInSeconds = screenTransition_.fadeInSeconds > 0.0f
+            ? screenTransition_.fadeInSeconds
+            : ScreenTransitionFadeInSeconds;
+        if (screenTransition_.elapsed >= fadeInSeconds) {
             const bool startDungeonRingIntro = dungeonRingIntroStartPending_ &&
                 screenTransition_.target == ScreenTransitionTarget::MiningStart;
+            const float postTransitionStoryDelaySeconds =
+                screenTransition_.postTransitionStoryDelaySeconds;
             screenTransition_ = ScreenTransitionState{};
             if (startDungeonRingIntro) {
                 dungeonRingIntroStartPending_ = false;
                 dungeonRingIntroTimer_ = DungeonRingIntroDuration;
             }
             if (!pendingStoryTrigger_.empty()) {
-                std::string trigger = std::move(pendingStoryTrigger_);
-                pendingStoryTrigger_.clear();
-                queueStoryEventForTrigger(std::move(trigger));
+                pendingStoryTriggerDelaySeconds_ = std::max(0.0f, postTransitionStoryDelaySeconds);
+                queuePendingStoryTriggerIfReady();
             }
         }
         break;
+    }
     }
 }
 
@@ -1137,6 +1208,34 @@ void Game::applyScreenTransitionTarget(ScreenTransitionTarget target)
         baseStatus_ = std::move(screenTransition_.targetBaseStatus);
         break;
     }
+}
+
+void Game::queuePendingStoryTriggerIfReady()
+{
+    if (pendingStoryTrigger_.empty() || pendingStoryTriggerDelaySeconds_ > 0.0f) {
+        return;
+    }
+
+    std::string trigger = std::move(pendingStoryTrigger_);
+    pendingStoryTrigger_.clear();
+    pendingStoryTriggerDelaySeconds_ = 0.0f;
+    queueStoryEventForTrigger(std::move(trigger));
+}
+
+void Game::updatePendingStoryTriggerDelay(float dt)
+{
+    if (pendingStoryTrigger_.empty()) {
+        pendingStoryTriggerDelaySeconds_ = 0.0f;
+        return;
+    }
+
+    pendingStoryTriggerDelaySeconds_ = std::max(0.0f, pendingStoryTriggerDelaySeconds_ - std::max(0.0f, dt));
+    queuePendingStoryTriggerIfReady();
+}
+
+bool Game::pendingStoryTriggerDelayActive() const
+{
+    return !pendingStoryTrigger_.empty() && pendingStoryTriggerDelaySeconds_ > 0.0f;
 }
 
 void Game::startMiningFromBase(bool useLatestWarpPoint, bool forceRegenerate)
@@ -1833,12 +1932,32 @@ void Game::applyDebugStageUnlockState(int unlockedStoryStages)
             const std::string_view flagView(flag.data(), flag.size());
             return flagView == IntroTutorialCompletedFlag ||
                 flagView == "story_intro_tutorial_fall" ||
+                flagView == "story_intro_tutorial_shovel_ready" ||
+                flagView == "story_intro_tutorial_torch_found" ||
+                flagView == "story_intro_tutorial_torch_ready" ||
+                flagView == "story_intro_tutorial_enemy_encounter" ||
+                flagView == "story_intro_tutorial_enemy_defeated" ||
+                flagView == "story_intro_tutorial_chest_found" ||
+                flagView == "story_intro_tutorial_chest_loot_inventory" ||
+                flagView == "story_intro_tutorial_chest_loot_ring" ||
+                flagView == "story_intro_tutorial_midway" ||
+                flagView == "story_intro_tutorial_exit_found" ||
                 flagView == "story_opening_base_intro";
         }),
         storyFlags_.end());
     if (clearedStoryStages > 0) {
         addStoryFlag(std::string(IntroTutorialCompletedFlag));
         addStoryFlag("story_intro_tutorial_fall");
+        addStoryFlag("story_intro_tutorial_shovel_ready");
+        addStoryFlag("story_intro_tutorial_torch_found");
+        addStoryFlag("story_intro_tutorial_torch_ready");
+        addStoryFlag("story_intro_tutorial_enemy_encounter");
+        addStoryFlag("story_intro_tutorial_enemy_defeated");
+        addStoryFlag("story_intro_tutorial_chest_found");
+        addStoryFlag("story_intro_tutorial_chest_loot_inventory");
+        addStoryFlag("story_intro_tutorial_chest_loot_ring");
+        addStoryFlag("story_intro_tutorial_midway");
+        addStoryFlag("story_intro_tutorial_exit_found");
         addStoryFlag("story_opening_base_intro");
     }
 
@@ -2090,6 +2209,7 @@ void Game::updateScreenMode(
 
     updateQueuedStoryEvents();
     if (dialogue_.active()) {
+        updateDialoguePlayerIdleAnimation(dt);
         const bool dialogueWasActive = dialogue_.active();
         dialogue_.update(input, dt);
         runDialogueCompletionCallbackIfFinished(dialogueWasActive);
@@ -2250,6 +2370,17 @@ void Game::updateScreenMode(
     }
 }
 
+void Game::updateDialoguePlayerIdleAnimation(float dt)
+{
+    if (basePresentationActive()) {
+        updateBasePlayerSpriteAnimation(dt, false);
+        return;
+    }
+    if (mode_ == ScreenMode::Playing) {
+        player_.updateSpriteAnimation(dt, false);
+    }
+}
+
 void Game::runDialogueCompletionCallbackIfFinished(bool dialogueWasActive)
 {
     if (!dialogueWasActive || dialogue_.active() || !pendingDialogueCompletion_) {
@@ -2372,6 +2503,12 @@ void Game::update(const Input& input, const Time& time)
     if (transitionWasActive || screenTransition_.active()) {
         return;
     }
+    const bool pendingStoryDelayWasActive = pendingStoryTriggerDelayActive();
+    updatePendingStoryTriggerDelay(time.deltaSeconds());
+    if (pendingStoryDelayWasActive) {
+        updateDialoguePlayerIdleAnimation(time.deltaSeconds());
+        return;
+    }
     if (worldBuildActive()) {
         updateWorldBuild(time.deltaSeconds());
         return;
@@ -2402,6 +2539,7 @@ void Game::update(const Input& input, const Time& time)
     if (paused && !effectDiscoveries.empty()) {
         applyEffectDiscoveries(effectDiscoveries);
     }
+    syncIntroTutorialTerrainDamageLocks();
     if ((dialogue_.active() || dungeonFocusActive()) && mode_ == ScreenMode::Playing) {
         spellRing_.updatePresentation(player_, time.deltaSeconds(), balance_);
     }
@@ -2498,7 +2636,7 @@ void Game::update(const Input& input, const Time& time)
             &magic_,
             &effectDiscoveries,
             &encyclopedia_);
-        if (!digging_.dugTiles().empty() || !digging_.openedTiles().empty()) {
+        if (!introTutorialActive() && (!digging_.dugTiles().empty() || !digging_.openedTiles().empty())) {
             queueStoryEventForTrigger("tutorial:dig");
         }
         if (!digging_.dugTiles().empty()) {
@@ -2694,7 +2832,7 @@ void Game::update(const Input& input, const Time& time)
             balance_,
             objectCatalog_,
             worldDrops_,
-            player_.position,
+            witchSelfLightCenter(player_.position),
             std::vector<LightSource>{},
             effectDispatcher_,
             projectiles_,

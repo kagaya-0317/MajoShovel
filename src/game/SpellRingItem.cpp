@@ -147,7 +147,7 @@ void SpellRingItem::unlatchEnemy(int enemyId)
 
 bool SpellRingItem::consumeDurability(int amount)
 {
-    if (amount <= 0 || durability < 0) {
+    if (amount <= 0 || durabilityLocked || durability < 0) {
         return false;
     }
 

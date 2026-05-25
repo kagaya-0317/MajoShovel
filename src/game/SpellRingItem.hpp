@@ -47,6 +47,7 @@ struct SpellRingItem {
     double weightModifier = 1.0;
     double sizeModifier = 1.0;
     bool protectionEnabled = false;
+    bool durabilityLocked = false;
     bool isBroken = false;
     std::vector<EffectSpec> addedEffects;
     std::vector<std::string> addedTags;

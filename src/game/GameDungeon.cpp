@@ -14,6 +14,11 @@ struct FloorCavernAnchor {
 constexpr int WallPocketRewardNodeCount = 6;
 constexpr int WallPocketMoneyNodeCount = 8;
 constexpr int WallPocketChestNodeCount = 4;
+constexpr int CoinRoomMoneyNodeMinCount = 5;
+constexpr int CoinRoomMoneyNodeMaxCount = 8;
+constexpr float CoinRoomMoneyInnerRadiusScale = 0.42f;
+constexpr float CoinRoomMoneyOuterRadiusScale = 0.58f;
+constexpr float CoinRoomMoneyMinRadiusTiles = 2.0f;
 constexpr float WallPocketProgressStart = 0.12f;
 constexpr float WallPocketProgressSpan = 0.76f;
 constexpr float WallPocketMinOffsetTiles = 6.5f;
@@ -52,17 +57,29 @@ constexpr std::string_view DigToolFailsafeDigCategory = "\xE6\x8E\x98\xE5\x89\x8
 constexpr float DigToolFailsafeSpawnCooldownSeconds = 12.0f;
 constexpr float DigToolFailsafeNearbyDropRadius = 220.0f;
 constexpr std::uint32_t IntroTutorialSeed = 0x1A57D00Du;
-constexpr float IntroTutorialExitRadius = 58.0f;
-constexpr float IntroTutorialDarkCueTileX = 10.0f;
-constexpr float IntroTutorialMidwayCueTileX = 56.0f;
+constexpr float IntroTutorialExitInteractRadius = 58.0f;
+constexpr float IntroTutorialExitFoundRadiusTiles = 5.0f;
+constexpr float IntroTutorialDarkCueTileX = 13.0f;
+constexpr float IntroTutorialMidwayCueTileX = 59.0f;
+constexpr float IntroTutorialEnemySpawnRadiusTiles = 9.0f;
+constexpr float IntroTutorialEnemyEncounterRadiusTiles = 5.4f;
+constexpr float IntroTutorialEnemyResolveRadiusTiles = 3.0f;
 constexpr std::string_view IntroTutorialShovelObjectId = "item_shovel";
 constexpr std::string_view IntroTutorialTorchObjectId = "item_torch";
+constexpr std::string_view IntroTutorialCoinBagObjectId = "item_coin_bag";
+constexpr std::string_view IntroTutorialIronSwordObjectId = "item_iron_sword";
 constexpr std::string_view IntroTutorialSlimeGroup = "intro_slime";
+constexpr std::string_view IntroTutorialMushroomGroup = "intro_mushroom";
+constexpr float IntroTutorialSecondEnemyEncounterRadiusTiles = 4.8f;
+constexpr int IntroTutorialSlimeCombatLockLeftTiles = 8;
+constexpr int IntroTutorialSlimeCombatLockRightTiles = 14;
+constexpr int IntroTutorialSlimeCombatLockVerticalTiles = 7;
 constexpr std::string_view IntroTutorialShovelReadyTrigger = "intro_tutorial:shovel_ready";
 constexpr std::string_view IntroTutorialTorchFoundTrigger = "intro_tutorial:torch_found";
 constexpr std::string_view IntroTutorialTorchReadyTrigger = "intro_tutorial:torch_ready";
 constexpr std::string_view IntroTutorialEnemyEncounterTrigger = "intro_tutorial:enemy_encounter";
 constexpr std::string_view IntroTutorialEnemyDefeatedTrigger = "intro_tutorial:enemy_defeated";
+constexpr std::string_view IntroTutorialChestFoundTrigger = "intro_tutorial:chest_found";
 constexpr std::string_view IntroTutorialMidwayTrigger = "intro_tutorial:midway";
 constexpr std::string_view IntroTutorialExitFoundTrigger = "intro_tutorial:exit_found";
 constexpr float DiscardThrowStartOffset = 24.0f;
@@ -120,6 +137,54 @@ float dungeonFocusDurationSeconds(float seconds, float fallbackSeconds)
     return seconds;
 }
 
+bool sameDungeonTile(DungeonTile lhs, DungeonTile rhs)
+{
+    return lhs.x == rhs.x && lhs.y == rhs.y;
+}
+
+bool dungeonEventKindUsesDiscoveryFocus(Game::DungeonEventKind kind)
+{
+    switch (kind) {
+    case Game::DungeonEventKind::CoinRoom:
+        return false;
+    default:
+        return true;
+    }
+}
+
+DungeonTile coinRoomMoneyNodeTile(const SpecialRoomAnchor& room, int index, int count, float angleOffset)
+{
+    const float angle = angleOffset + Pi * 2.0f * (static_cast<float>(index) / static_cast<float>(std::max(1, count)));
+    const float radiusScale = count >= 7 && index % 2 == 1
+        ? CoinRoomMoneyOuterRadiusScale
+        : CoinRoomMoneyInnerRadiusScale;
+    const float radiusTiles = std::max(CoinRoomMoneyMinRadiusTiles, room.radius * radiusScale);
+    return roundDungeonTile(room.center + fromAngle(angle) * radiusTiles);
+}
+
+Vec2 dungeonEventSelfLightPosition(const Game::DungeonEventInstance& event)
+{
+    Vec2 position = tileWorldCenter(event.focusTile);
+    if (dungeonEventKindIsWitch(event.kind)) {
+        position = witchSelfLightCenter(position);
+    }
+    return position;
+}
+
+float dungeonEventSelfLightRadiusPx(const Game::DungeonEventInstance& event)
+{
+    const float baseRadiusTiles = event.selfLightRadiusTiles > 0.0f
+        ? event.selfLightRadiusTiles
+        : (dungeonEventKindIsWitch(event.kind) ? dungeonEventLightRadiusTiles(event.kind) : 0.0f);
+    const float radiusPx = baseRadiusTiles * static_cast<float>(balance::TileSize);
+    return dungeonEventKindIsWitch(event.kind) ? witchSelfLightRadius(radiusPx) : radiusPx;
+}
+
+bool dungeonEventSelfLightActive(const Game::DungeonEventInstance& event)
+{
+    return !event.completed || dungeonEventKindIsWitch(event.kind);
+}
+
 StageDefinition makeIntroTutorialStageDefinition()
 {
     StageDefinition stage;
@@ -154,36 +219,125 @@ void carveTutorialPocket(TileMap& tileMap, DungeonTile center, int radius)
     }
 }
 
-void applyIntroTutorialRubbleGate(TileMap& tileMap)
+DungeonTile introTutorialRelativeTile(DungeonTile origin, int dx, int dy)
 {
-    for (int y = -3; y <= 3; ++y) {
-        for (int x = -2; x <= 1; ++x) {
-            tileMap.setTileOverride(DungeonTile{x, y}, TileType::Empty);
-        }
+    return DungeonTile{origin.x + dx, origin.y + dy};
+}
+
+std::uint32_t introTutorialTerrainHash(std::uint32_t seed, int dx, int dy, std::uint32_t salt)
+{
+    std::uint32_t h = seed ^ salt;
+    h ^= static_cast<std::uint32_t>(dx) * 0x9E3779B9u;
+    h = (h << 13) | (h >> 19);
+    h ^= static_cast<std::uint32_t>(dy) * 0x85EBCA6Bu;
+    h ^= h >> 16;
+    h *= 0x7FEB352Du;
+    h ^= h >> 15;
+    h *= 0x846CA68Bu;
+    h ^= h >> 16;
+    return h;
+}
+
+TileType introTutorialDeadEndWallTile(std::uint32_t seed, int dx, int dy)
+{
+    const std::uint32_t roll = introTutorialTerrainHash(seed, dx, dy, 0xD1EAD00Du) % 100u;
+    if (roll < 35u) {
+        return TileType::Dirt;
+    }
+    if (roll < 85u) {
+        return TileType::Rock;
+    }
+    return TileType::HardRock;
+}
+
+TileType introTutorialFirstWallTile(std::uint32_t seed, int dx, int dy)
+{
+    const int absY = std::abs(dy);
+    if (absY == 0) {
+        return TileType::Dirt;
     }
 
-    for (int x = 2; x <= 6; ++x) {
-        for (int y = -2; y <= 2; ++y) {
-            TileType type = TileType::Dirt;
-            if (y != 0) {
-                const int pattern = std::abs(x * 31 + y * 17 + 7) % 5;
-                type = pattern == 0 ? TileType::HardRock : TileType::Rock;
-            }
-            tileMap.setTileOverride(DungeonTile{x, y}, type);
+    const std::uint32_t roll = introTutorialTerrainHash(seed, dx, dy, 0xF1A57A11u) % 100u;
+    if (absY == 1) {
+        return roll < 75u ? TileType::Dirt : TileType::Rock;
+    }
+    if (roll < 10u) {
+        return TileType::Dirt;
+    }
+    return roll < 75u ? TileType::Rock : TileType::HardRock;
+}
+
+TileType introTutorialExitWallTile(std::uint32_t seed, int dx, int dy)
+{
+    const std::uint32_t roll = introTutorialTerrainHash(seed, dx, dy, 0xE817CAFEu) % 100u;
+    if (roll < 18u) {
+        return TileType::Dirt;
+    }
+    return roll < 82u ? TileType::Rock : TileType::HardRock;
+}
+
+void applyIntroTutorialStartPocket(TileMap& tileMap, DungeonTile startTile, std::uint32_t seed)
+{
+    for (int dy = -4; dy <= 4; ++dy) {
+        for (int dx = -4; dx <= 4; ++dx) {
+            const bool rightOpenPocket = dx >= 0 && dx <= 4 && std::abs(dy) <= 2;
+            const bool shallowLeftNotch = dx == -1 && dy == 0;
+            tileMap.setTileOverride(
+                introTutorialRelativeTile(startTile, dx, dy),
+                rightOpenPocket || shallowLeftNotch
+                    ? TileType::Empty
+                    : introTutorialDeadEndWallTile(seed, dx, dy));
         }
     }
+}
 
-    for (int x = 7; x <= 14; ++x) {
-        tileMap.setTileOverride(DungeonTile{x, 0}, TileType::Empty);
-        tileMap.setTileOverride(DungeonTile{x, -1}, TileType::Empty);
-        tileMap.setTileOverride(DungeonTile{x, 1}, TileType::Empty);
+void applyIntroTutorialFirstRubbleWall(TileMap& tileMap, DungeonTile startTile, std::uint32_t seed)
+{
+    for (int dx = 5; dx <= 9; ++dx) {
+        for (int dy = -2; dy <= 2; ++dy) {
+            tileMap.setTileOverride(
+                introTutorialRelativeTile(startTile, dx, dy),
+                introTutorialFirstWallTile(seed, dx, dy));
+        }
     }
+}
+
+void applyIntroTutorialPostWallCorridor(TileMap& tileMap, DungeonTile startTile)
+{
+    for (int dx = 10; dx <= 17; ++dx) {
+        tileMap.setTileOverride(introTutorialRelativeTile(startTile, dx, 0), TileType::Empty);
+        tileMap.setTileOverride(introTutorialRelativeTile(startTile, dx, -1), TileType::Empty);
+        tileMap.setTileOverride(introTutorialRelativeTile(startTile, dx, 1), TileType::Empty);
+    }
+}
+
+void applyIntroTutorialExitPocket(TileMap& tileMap, DungeonTile exitTile, std::uint32_t seed)
+{
+    for (int dy = -5; dy <= 5; ++dy) {
+        for (int dx = -8; dx <= 5; ++dx) {
+            const bool exitPocket = dx * dx + dy * dy <= 10;
+            const bool approachCorridor = dx >= -8 && dx <= -2 && dy >= -1 && dy <= 2;
+            tileMap.setTileOverride(
+                introTutorialRelativeTile(exitTile, dx, dy),
+                exitPocket || approachCorridor
+                    ? TileType::Empty
+                    : introTutorialExitWallTile(seed, dx, dy));
+        }
+    }
+}
+
+void applyIntroTutorialRubbleGate(TileMap& tileMap, const DungeonLayout& layout)
+{
+    applyIntroTutorialStartPocket(tileMap, layout.startTile, layout.seed);
+    applyIntroTutorialFirstRubbleWall(tileMap, layout.startTile, layout.seed);
+    applyIntroTutorialPostWallCorridor(tileMap, layout.startTile);
+    applyIntroTutorialExitPocket(tileMap, layout.goalTile, layout.seed);
 }
 
 std::string introTutorialSlimeEnemyId(const EnemyCatalog& catalog)
 {
     const auto matchesSlimeId = [](std::string_view id) {
-        const std::string lower = lowerAscii(id);
+        const std::string lower = lowerAscii(std::string(id));
         return lower == "slime" ||
             lower == "enemy_slime" ||
             lower.find("slime") != std::string::npos;
@@ -195,6 +349,31 @@ std::string introTutorialSlimeEnemyId(const EnemyCatalog& catalog)
     }
     for (const EnemyDefinition& enemy : catalog.enemies) {
         if (matchesSlimeId(enemy.id)) {
+            return enemy.id;
+        }
+    }
+    return {};
+}
+
+std::string introTutorialMushroomEnemyId(const EnemyCatalog& catalog)
+{
+    const auto matchesMushroomId = [](std::string_view id) {
+        const std::string lower = lowerAscii(std::string(id));
+        return lower == "bake_kinoko" ||
+            lower == "kinoko" ||
+            lower == "enemy_kinoko" ||
+            lower.find("kinoko") != std::string::npos ||
+            lower.find("mush") != std::string::npos ||
+            lower.find("shroom") != std::string::npos ||
+            lower.find("fungus") != std::string::npos;
+    };
+    for (const EnemyDefinition& enemy : catalog.enemies) {
+        if (enemy.name == "化けキノコ" || enemy.name.find("キノコ") != std::string::npos) {
+            return enemy.id;
+        }
+    }
+    for (const EnemyDefinition& enemy : catalog.enemies) {
+        if (matchesMushroomId(enemy.id)) {
             return enemy.id;
         }
     }
@@ -1549,22 +1728,23 @@ RuntimeBalance Game::runtimeBalanceForDungeon() const
     RuntimeBalance adjusted = balance_;
     if (introTutorialActive()) {
         adjusted.playerLightRadius = std::min(adjusted.playerLightRadius, 28.0f);
+        adjusted.playerLightRadius = witchSelfLightRadius(adjusted.playerLightRadius);
         adjusted.enemyMinDugTiles = 9999;
         adjusted.enemyGuaranteeDugTiles = 9999;
         return adjusted;
     }
-    if (!astralRunActive()) {
-        return adjusted;
+    if (astralRunActive()) {
+        const float lightMultiplier = astralLightRadiusMultiplier();
+        adjusted.playerLightRadius = std::max(16.0f, adjusted.playerLightRadius * lightMultiplier);
+        adjusted.lightRadius = std::max(16.0f, adjusted.lightRadius * lightMultiplier);
+        if (astralRun_.distortion == AstralDistortionKind::EchoSpawn) {
+            adjusted.enemyMinDugTiles = std::max(1, static_cast<int>(std::floor(static_cast<float>(adjusted.enemyMinDugTiles) * 0.75f)));
+            adjusted.enemyGuaranteeDugTiles = std::max(
+                adjusted.enemyMinDugTiles,
+                static_cast<int>(std::floor(static_cast<float>(adjusted.enemyGuaranteeDugTiles) * 0.75f)));
+        }
     }
-    const float lightMultiplier = astralLightRadiusMultiplier();
-    adjusted.playerLightRadius = std::max(16.0f, adjusted.playerLightRadius * lightMultiplier);
-    adjusted.lightRadius = std::max(16.0f, adjusted.lightRadius * lightMultiplier);
-    if (astralRun_.distortion == AstralDistortionKind::EchoSpawn) {
-        adjusted.enemyMinDugTiles = std::max(1, static_cast<int>(std::floor(static_cast<float>(adjusted.enemyMinDugTiles) * 0.75f)));
-        adjusted.enemyGuaranteeDugTiles = std::max(
-            adjusted.enemyMinDugTiles,
-            static_cast<int>(std::floor(static_cast<float>(adjusted.enemyGuaranteeDugTiles) * 0.75f)));
-    }
+    adjusted.playerLightRadius = witchSelfLightRadius(adjusted.playerLightRadius);
     return adjusted;
 }
 
@@ -2482,8 +2662,10 @@ void Game::startIntroTutorialDungeon()
     resetWorldSimulationState();
     resetWorldUiState();
     resetWorldRunState();
+    tileMap_.clearDamageProtectionAreas();
 
     pendingStoryTrigger_.clear();
+    pendingStoryTriggerDelaySeconds_ = 0.0f;
     pendingStoryTriggers_.clear();
     requestedWarpPointStartPosition_.reset();
 
@@ -2500,15 +2682,21 @@ void Game::startIntroTutorialDungeon()
     introTutorialPhase_ = IntroTutorialPhase::FallDialogue;
     introTutorialLightTutorialQueued_ = false;
     introTutorialFirstEnemySpawned_ = false;
+    introTutorialSecondEnemySpawned_ = false;
+    introTutorialSecondEnemyEncountered_ = false;
     introTutorialEnemyEncounterQueued_ = false;
     introTutorialEnemyDefeatedQueued_ = false;
+    introTutorialChestFoundQueued_ = false;
+    introTutorialSecondChestPlaced_ = false;
     introTutorialChestOpened_ = false;
     introTutorialChestLootDialogueQueued_ = false;
     introTutorialMidwayDialogueQueued_ = false;
     introTutorialExitDialogueQueued_ = false;
-    introTutorialFirstEnemyTile_ = {38, 0};
+    introTutorialFirstEnemyTile_ = {29, 0};
+    introTutorialSecondEnemyTile_ = {52, 2};
     introTutorialChestTile_ = introTutorialFirstEnemyTile_;
-    introTutorialExitTile_ = {74, 2};
+    introTutorialSecondChestTile_ = {55, 2};
+    introTutorialExitTile_ = {77, 2};
 
     dungeonLayout_ = generateDungeonLayout(DungeonGenerationContext{
         .stageId = 1,
@@ -2525,7 +2713,7 @@ void Game::startIntroTutorialDungeon()
         .roguelike = false,
     });
 
-    player_.position = tileWorldCenter(dungeonLayout_.startTile);
+    player_.position = tileWorldCenter(DungeonTile{dungeonLayout_.startTile.x + 2, dungeonLayout_.startTile.y});
     player_.facing = {1.0f, 0.0f};
     player_.xpToNext = playerXpToNextForLevel(player_.level, balance_);
 
@@ -2540,6 +2728,13 @@ void Game::startIntroTutorialDungeon()
         .placementType = EnemyPlacementType::Exposed,
         .dangerTier = 1,
         .enemySpawnGroup = std::string(IntroTutorialSlimeGroup),
+        .spawned = false,
+    });
+    enemyNodes_.push_back(EnemyNode{
+        .tile = introTutorialSecondEnemyTile_,
+        .placementType = EnemyPlacementType::Exposed,
+        .dangerTier = 1,
+        .enemySpawnGroup = std::string(IntroTutorialMushroomGroup),
         .spawned = false,
     });
     warpPoints_.clear();
@@ -2561,7 +2756,7 @@ void Game::startIntroTutorialDungeon()
     spellRing_.resetRuntimeStateAtPlayer(player_, balance_);
 
     tileMap_.updateAround(player_.position, 0.0f, runtimeBalanceForDungeon(), dungeonLayout_);
-    applyIntroTutorialRubbleGate(tileMap_);
+    applyIntroTutorialRubbleGate(tileMap_, dungeonLayout_);
     normalizeOpenBuriedPlacementNodes();
     updateDungeonMinimap(0.0);
     camera_.follow(player_.position, 1.0f);
@@ -2601,10 +2796,11 @@ std::vector<LightSource> Game::introTutorialLightSources(double totalSeconds) co
     const auto add = [&](DungeonTile tile, float radiusTiles) {
         lights.push_back({tileWorldCenter(tile), radiusTiles * tileSize * pulse});
     };
-    add({0, 0}, 8.5f);
-    add({13, 0}, 7.0f);
-    add({22, 0}, 6.0f);
+    const DungeonTile startTile = dungeonLayout_.startTile;
+    add(startTile, 7.0f);
+    add({startTile.x + 3, startTile.y}, 7.0f);
     add(introTutorialFirstEnemyTile_, 7.0f);
+    add({introTutorialSecondEnemyTile_.x + 2, introTutorialSecondEnemyTile_.y}, 7.0f);
     add(introTutorialExitTile_, 6.5f);
     return lights;
 }
@@ -2619,10 +2815,16 @@ void Game::equipIntroTutorialStartingTools()
     const ItemData* shovel = objectCatalog_.registry.findById(IntroTutorialShovelObjectId);
     if (shovel != nullptr) {
         const ItemInstance shovelInstance = inventory_.createDetachedObjectInstance(*shovel);
-        if (!spellRing_.addObjectItem(*shovel, shovelInstance)) {
+        SpellRingAddResult result{};
+        if (!spellRing_.addObjectItem(*shovel, shovelInstance, &result)) {
             spellRing_.initialize(balance_);
-        } else if (!spellRing_.itemsForRing(0).empty()) {
-            spellRing_.itemsForRing(0).front().localAngle = 0.0f;
+        } else {
+            std::vector<SpellRingItem>& ringItems = spellRing_.itemsForRing(result.ringIndex);
+            if (result.itemIndex >= 0 && result.itemIndex < static_cast<int>(ringItems.size())) {
+                SpellRingItem& ringItem = ringItems[static_cast<std::size_t>(result.itemIndex)];
+                ringItem.localAngle = 0.0f;
+                ringItem.durabilityLocked = true;
+            }
         }
     }
     refreshEquipmentModifiers();
@@ -2660,22 +2862,52 @@ void Game::addIntroTutorialTorchToRing()
 
 void Game::spawnIntroTutorialChest()
 {
-    if (!introTutorialActive() || !chestNodes_.empty()) {
+    if (!introTutorialActive()) {
         return;
     }
 
-    chestNodes_.push_back(ChestNode{
-        .tile = introTutorialChestTile_,
-        .visibility = PlacementVisibility::Exposed,
-        .chestKind = LootChestKind::Common,
-        .depthRank = 1,
-        .revealed = true,
-        .opened = false,
-        .lootSpawned = false,
-        .openingSeconds = 0.0f,
-    });
+    const auto hasChestAt = [&](DungeonTile tile) {
+        return std::any_of(chestNodes_.begin(), chestNodes_.end(), [&](const ChestNode& node) {
+            return sameDungeonTile(node.tile, tile);
+        });
+    };
+    if (hasChestAt(introTutorialChestTile_)) {
+        return;
+    }
+
     carveTutorialPocket(tileMap_, introTutorialChestTile_, 1);
-    pushDungeonLog("宝箱が現れた", "intro_tutorial_chest");
+    spawnAppearingChestNode(
+        introTutorialChestTile_,
+        LootChestKind::Common,
+        1,
+        tileWorldCenter(introTutorialChestTile_),
+        "intro_tutorial_chest");
+}
+
+void Game::spawnIntroTutorialSecondChest()
+{
+    if (!introTutorialActive() || introTutorialSecondChestPlaced_) {
+        return;
+    }
+
+    const auto hasChestAt = [&](DungeonTile tile) {
+        return std::any_of(chestNodes_.begin(), chestNodes_.end(), [&](const ChestNode& node) {
+            return sameDungeonTile(node.tile, tile);
+        });
+    };
+    if (hasChestAt(introTutorialSecondChestTile_)) {
+        introTutorialSecondChestPlaced_ = true;
+        return;
+    }
+
+    carveTutorialPocket(tileMap_, introTutorialSecondChestTile_, 1);
+    spawnAppearingChestNode(
+        introTutorialSecondChestTile_,
+        LootChestKind::Common,
+        1,
+        tileWorldCenter(introTutorialSecondEnemyTile_),
+        std::string_view{});
+    introTutorialSecondChestPlaced_ = true;
 }
 
 void Game::unlockIntroTutorialFreeRoute()
@@ -2684,6 +2916,26 @@ void Game::unlockIntroTutorialFreeRoute()
         return;
     }
     introTutorialPhase_ = IntroTutorialPhase::FreeToExit;
+}
+
+void Game::syncIntroTutorialTerrainDamageLocks()
+{
+    if (introTutorialActive() && introTutorialPhase_ == IntroTutorialPhase::DefeatEnemy) {
+        tileMap_.setDamageProtectionAreas({
+            TerrainDamageProtectionArea{
+                .minTile = {
+                    introTutorialFirstEnemyTile_.x - IntroTutorialSlimeCombatLockLeftTiles,
+                    introTutorialFirstEnemyTile_.y - IntroTutorialSlimeCombatLockVerticalTiles,
+                },
+                .maxTile = {
+                    introTutorialFirstEnemyTile_.x + IntroTutorialSlimeCombatLockRightTiles,
+                    introTutorialFirstEnemyTile_.y + IntroTutorialSlimeCombatLockVerticalTiles,
+                },
+            },
+        });
+        return;
+    }
+    tileMap_.clearDamageProtectionAreas();
 }
 
 bool Game::updateIntroTutorial(const Input& input, float)
@@ -2735,23 +2987,83 @@ bool Game::updateIntroTutorial(const Input& input, float)
     if (introTutorialPhase_ == IntroTutorialPhase::ExploreToEnemy) {
         if (!enemyNodes_.empty() && enemyNodes_.front().spawned) {
             introTutorialFirstEnemySpawned_ = true;
-            if (!introTutorialEnemyEncounterQueued_) {
+            const float encounterRadius =
+                IntroTutorialEnemyEncounterRadiusTiles * static_cast<float>(balance::TileSize);
+            if (!introTutorialEnemyEncounterQueued_ &&
+                distanceSquared(player_.position, tileWorldCenter(introTutorialFirstEnemyTile_)) <= encounterRadius * encounterRadius) {
+                const float resolveRadius =
+                    IntroTutorialEnemyResolveRadiusTiles * static_cast<float>(balance::TileSize);
+                enemies_.forceDetectEnemyNear(
+                    tileWorldCenter(introTutorialFirstEnemyTile_),
+                    resolveRadius,
+                    player_.position,
+                    true);
                 introTutorialEnemyEncounterQueued_ = true;
                 queueStoryEventForTrigger(std::string(IntroTutorialEnemyEncounterTrigger));
+                introTutorialPhase_ = IntroTutorialPhase::DefeatEnemy;
             }
-            introTutorialPhase_ = IntroTutorialPhase::DefeatEnemy;
         }
     }
 
     if (introTutorialPhase_ == IntroTutorialPhase::DefeatEnemy &&
         introTutorialFirstEnemySpawned_ &&
         enemies_.activeCount() == 0) {
-        spawnIntroTutorialChest();
         if (!introTutorialEnemyDefeatedQueued_) {
             introTutorialEnemyDefeatedQueued_ = true;
             queueStoryEventForTrigger(std::string(IntroTutorialEnemyDefeatedTrigger));
         }
-        unlockIntroTutorialFreeRoute();
+        introTutorialPhase_ = IntroTutorialPhase::EnemyDefeatedDialogue;
+        return false;
+    }
+
+    if (introTutorialPhase_ == IntroTutorialPhase::EnemyDefeatedDialogue) {
+        if (!dialogue_.active() && pendingStoryTriggers_.empty() && pendingStoryTrigger_.empty()) {
+            spawnIntroTutorialChest();
+            if (!introTutorialChestFoundQueued_) {
+                const Vec2 toChest = tileWorldCenter(introTutorialChestTile_) - player_.position;
+                if (lengthSquared(toChest) > 0.0001f) {
+                    player_.facing = normalize(toChest);
+                }
+                introTutorialChestFoundQueued_ = true;
+                queueStoryEventForTrigger(std::string(IntroTutorialChestFoundTrigger));
+            }
+            unlockIntroTutorialFreeRoute();
+        }
+        return false;
+    }
+
+    if (introTutorialPhase_ == IntroTutorialPhase::FreeToExit) {
+        EnemyNode* secondEnemyNode = nullptr;
+        for (EnemyNode& node : enemyNodes_) {
+            const std::string_view group(node.enemySpawnGroup.data(), node.enemySpawnGroup.size());
+            if (group == IntroTutorialMushroomGroup) {
+                secondEnemyNode = &node;
+                break;
+            }
+        }
+        if (secondEnemyNode != nullptr && secondEnemyNode->spawned) {
+            introTutorialSecondEnemySpawned_ = true;
+            if (!introTutorialSecondEnemyEncountered_) {
+                const float encounterRadius =
+                    IntroTutorialSecondEnemyEncounterRadiusTiles * static_cast<float>(balance::TileSize);
+                if (distanceSquared(player_.position, tileWorldCenter(introTutorialSecondEnemyTile_)) <=
+                    encounterRadius * encounterRadius) {
+                    const float resolveRadius =
+                        IntroTutorialEnemyResolveRadiusTiles * static_cast<float>(balance::TileSize);
+                    enemies_.forceDetectEnemyNear(
+                        tileWorldCenter(introTutorialSecondEnemyTile_),
+                        resolveRadius,
+                        player_.position,
+                        true);
+                    introTutorialSecondEnemyEncountered_ = true;
+                }
+            }
+        }
+        if (introTutorialSecondEnemySpawned_ &&
+            !introTutorialSecondChestPlaced_ &&
+            enemies_.activeCount() == 0) {
+            spawnIntroTutorialSecondChest();
+        }
     }
 
     if (introTutorialPhase_ == IntroTutorialPhase::FreeToExit) {
@@ -2763,13 +3075,17 @@ bool Game::updateIntroTutorial(const Input& input, float)
     }
 
     if (introTutorialPhase_ == IntroTutorialPhase::FreeToExit) {
-        const float exitRadiusSq = IntroTutorialExitRadius * IntroTutorialExitRadius;
-        if (distanceSquared(player_.position, introTutorialExitPosition()) <= exitRadiusSq) {
-            if (!introTutorialExitDialogueQueued_) {
-                introTutorialExitDialogueQueued_ = true;
-                queueStoryEventForTrigger(std::string(IntroTutorialExitFoundTrigger));
-                return false;
-            }
+        const float distanceToExitSq = distanceSquared(player_.position, introTutorialExitPosition());
+        const float exitFoundRadius =
+            IntroTutorialExitFoundRadiusTiles * static_cast<float>(balance::TileSize);
+        if (!introTutorialExitDialogueQueued_ && distanceToExitSq <= exitFoundRadius * exitFoundRadius) {
+            introTutorialExitDialogueQueued_ = true;
+            queueStoryEventForTrigger(std::string(IntroTutorialExitFoundTrigger));
+            return false;
+        }
+
+        const float exitInteractRadiusSq = IntroTutorialExitInteractRadius * IntroTutorialExitInteractRadius;
+        if (distanceToExitSq <= exitInteractRadiusSq) {
             pushDungeonLog("出口: F/Enter 拠点へ帰還", "intro_tutorial_exit_prompt");
             if (input.confirmPressed() || input.useItemPressed()) {
                 introTutorialPhase_ = IntroTutorialPhase::Returning;
@@ -2785,11 +3101,16 @@ bool Game::updateIntroTutorial(const Input& input, float)
 void Game::completeIntroTutorialAndReturnToBase()
 {
     addStoryFlag(std::string(IntroTutorialCompletedFlag));
+    tileMap_.clearDamageProtectionAreas();
     introTutorialPhase_ = IntroTutorialPhase::Inactive;
     introTutorialLightTutorialQueued_ = false;
     introTutorialFirstEnemySpawned_ = false;
+    introTutorialSecondEnemySpawned_ = false;
+    introTutorialSecondEnemyEncountered_ = false;
     introTutorialEnemyEncounterQueued_ = false;
     introTutorialEnemyDefeatedQueued_ = false;
+    introTutorialChestFoundQueued_ = false;
+    introTutorialSecondChestPlaced_ = false;
     introTutorialChestOpened_ = false;
     introTutorialChestLootDialogueQueued_ = false;
     introTutorialMidwayDialogueQueued_ = false;
@@ -3129,7 +3450,8 @@ void Game::updateDungeonMinimap(double totalSeconds)
     dungeonMinimapLastPlayerTileY_ = playerTileY;
 
     const RuntimeBalance dungeonBalance = runtimeBalanceForDungeon();
-    revealDungeonMinimapAround(player_.position, dungeonBalance.playerLightRadius);
+    const Vec2 playerLightCenter = witchSelfLightCenter(player_.position);
+    revealDungeonMinimapAround(playerLightCenter, dungeonBalance.playerLightRadius);
 
     const Vec2 viewTopLeft = camera_.screenToWorld({0.0f, 0.0f});
     const Vec2 viewBottomRight = camera_.screenToWorld({
@@ -3379,14 +3701,14 @@ void Game::DungeonEventSystem::generateFromLayout(
 void Game::DungeonEventSystem::appendLightSources(std::vector<LightSource>& lights, double totalSeconds) const
 {
     for (const DungeonEventInstance& event : instances) {
-        if (event.selfLightRadiusTiles <= 0.0f) {
+        const float radiusPx = dungeonEventSelfLightRadiusPx(event);
+        if (radiusPx <= 0.0f) {
             continue;
         }
         const float phase = static_cast<float>(std::hash<std::string>{}(event.id) % 997u) * 0.017f;
-        const float radiusPx = event.selfLightRadiusTiles * static_cast<float>(balance::TileSize);
-        if (!event.completed) {
+        if (dungeonEventSelfLightActive(event)) {
             lights.push_back({
-                flickeredLightPosition(tileWorldCenter(event.focusTile), static_cast<float>(totalSeconds), phase),
+                flickeredLightPosition(dungeonEventSelfLightPosition(event), static_cast<float>(totalSeconds), phase),
                 flickeredLightRadius(radiusPx, static_cast<float>(totalSeconds), phase),
             });
         }
@@ -4343,17 +4665,19 @@ bool Game::updateDungeonEventDiscovery(float dt)
         }
     }
 
-    const std::string seenFlag = dungeonEventDiscoverySeenFlag(event->kind);
-    DungeonFocusRequest request;
-    request.eventKind = dungeonEventKindId(event->kind);
-    request.focusWorldPos = tileWorldCenter(event->focusTile);
-    request.discoveryStoryEventId =
-        dungeonEventKindHasDiscoveryDialogue(event->kind) && !hasStoryFlag(seenFlag)
-            ? dungeonEventDiscoveryStoryEventId(event->kind)
-            : std::string{};
-    request.holdSecondsIfNoDialogue = DungeonFocusDefaultHoldSeconds;
-    if (!requestDungeonFocus(std::move(request))) {
-        return false;
+    if (dungeonEventKindUsesDiscoveryFocus(event->kind)) {
+        const std::string seenFlag = dungeonEventDiscoverySeenFlag(event->kind);
+        DungeonFocusRequest request;
+        request.eventKind = dungeonEventKindId(event->kind);
+        request.focusWorldPos = tileWorldCenter(event->focusTile);
+        request.discoveryStoryEventId =
+            dungeonEventKindHasDiscoveryDialogue(event->kind) && !hasStoryFlag(seenFlag)
+                ? dungeonEventDiscoveryStoryEventId(event->kind)
+                : std::string{};
+        request.holdSecondsIfNoDialogue = DungeonFocusDefaultHoldSeconds;
+        if (!requestDungeonFocus(std::move(request))) {
+            return false;
+        }
     }
 
     event->discovered = true;
@@ -4373,19 +4697,21 @@ void Game::appendDungeonEventRenderEntries(
 {
     const bool debugVisible = debug_.visible();
     const float tileSize = static_cast<float>(balance::TileSize);
+    const Vec2 playerLightCenter = witchSelfLightCenter(player_.position);
     for (const DungeonEventInstance& event : dungeonEvents_.all()) {
         if (!isDungeonEventMarkerKind(event.kind)) {
             continue;
         }
 
         const Vec2 center = tileWorldCenter(event.focusTile);
-        const bool centerVisible = debugVisible || tileMap_.isLit(center, player_.position, extraLights);
+        const Vec2 selfLightCenter = dungeonEventSelfLightPosition(event);
+        const bool centerVisible = debugVisible || tileMap_.isLit(center, playerLightCenter, extraLights);
         if (debugVisible) {
             entries.push_back(DepthRenderEntry{
                 center.y - 5.0f,
-                [&renderer, center, discoveryRadius = event.discoveryRadiusTiles * tileSize, selfLightRadius = event.selfLightRadiusTiles * tileSize]() {
+                [&renderer, center, selfLightCenter, discoveryRadius = event.discoveryRadiusTiles * tileSize, selfLightRadius = dungeonEventSelfLightRadiusPx(event)]() {
                     renderer.drawCircle(center, discoveryRadius, {255, 238, 130, 92});
-                    renderer.drawCircle(center, selfLightRadius, {120, 220, 255, 72});
+                    renderer.drawCircle(selfLightCenter, selfLightRadius, {120, 220, 255, 72});
                     renderer.fillCircle(center, 3.0f, {255, 255, 255, 220});
                 },
             });
@@ -4427,7 +4753,7 @@ void Game::appendDungeonEventRenderEntries(
         if (event.kind == DungeonEventKind::NestRoom) {
             for (const DungeonEventNestHole& hole : event.nestHoles) {
                 const Vec2 holeCenter = tileWorldCenter(hole.tile);
-                if (!debugVisible && !tileMap_.isLit(holeCenter, player_.position, extraLights)) {
+                if (!debugVisible && !tileMap_.isLit(holeCenter, playerLightCenter, extraLights)) {
                     continue;
                 }
                 entries.push_back(DepthRenderEntry{
@@ -4451,7 +4777,7 @@ void Game::appendDungeonEventRenderEntries(
                 continue;
             }
             const Vec2 objectCenter = tileWorldCenter(object.tile);
-            if (!debugVisible && !tileMap_.isLit(objectCenter, player_.position, extraLights)) {
+            if (!debugVisible && !tileMap_.isLit(objectCenter, playerLightCenter, extraLights)) {
                 continue;
             }
             entries.push_back(DepthRenderEntry{
@@ -4530,11 +4856,6 @@ bool Game::spawnDungeonEventReward(DungeonEventInstance& event, const DungeonEve
     }
 
     const Vec2 center = tileWorldCenter(event.focusTile);
-    const DungeonLayoutMetrics metrics = calculateDungeonLayoutMetrics(dungeonLayout_, {
-        static_cast<float>(event.centerTile.x),
-        static_cast<float>(event.centerTile.y),
-    });
-    const int depthRank = lootDepthRankForProgress(currentStageId_, metrics.pathProgress);
     std::mt19937 rng(
         dungeonLayout_.seed ^
         (static_cast<std::uint32_t>(event.centerTile.x) * 0x7F4A7C15u) ^
@@ -4546,14 +4867,25 @@ bool Game::spawnDungeonEventReward(DungeonEventInstance& event, const DungeonEve
     case DungeonEventRewardKind::ChestDrop:
     case DungeonEventRewardKind::MultiChestDrop: {
         const int count = std::max(1, request.kind == DungeonEventRewardKind::ChestDrop ? 1 : request.count);
+        constexpr std::array<DungeonTile, 9> ChestOffsets{{
+            {0, 0},
+            {1, 0},
+            {-1, 0},
+            {0, 1},
+            {0, -1},
+            {1, 1},
+            {-1, 1},
+            {1, -1},
+            {-1, -1},
+        }};
         for (int i = 0; i < count; ++i) {
-            spawned = spawnWeightedObjectLoot(
-                request.chestKind,
-                depthRank,
-                center,
-                rng,
-                "DungeonEventReward",
-                true) || spawned;
+            const DungeonTile offset = ChestOffsets[static_cast<std::size_t>(i % static_cast<int>(ChestOffsets.size()))];
+            const DungeonTile tile = dungeonEventOffsetTile(event.rewardTile, offset.x, offset.y);
+            const bool alreadyPresent = std::any_of(chestNodes_.begin(), chestNodes_.end(), [tile](const ChestNode& node) {
+                return sameDungeonTile(node.tile, tile);
+            });
+            const bool chestSpawned = ensureDungeonEventChest(event, tile, request.chestKind);
+            spawned = alreadyPresent || chestSpawned || spawned;
         }
         break;
     }
@@ -4582,10 +4914,11 @@ bool Game::spawnDungeonEventReward(DungeonEventInstance& event, const DungeonEve
 
     if (spawned) {
         event.rewardSpawned = true;
-        event.spawnedEntityIds.push_back("world_drop");
         if (request.kind == DungeonEventRewardKind::ChestDrop ||
             request.kind == DungeonEventRewardKind::MultiChestDrop) {
-            requestDungeonRewardChestFocus(center);
+            requestDungeonRewardChestFocus(tileWorldCenter(event.rewardTile));
+        } else {
+            event.spawnedEntityIds.push_back("world_drop");
         }
     }
     return spawned;
@@ -4621,15 +4954,17 @@ bool Game::ensureDungeonEventChest(DungeonEventInstance& event, DungeonTile tile
         return false;
     }
 
-    ChestNode node;
-    node.tile = tile;
-    node.visibility = PlacementVisibility::Exposed;
-    node.chestKind = chestKind;
-    node.depthRank = lootDepthRankForWorldPosition(tileMap_, dungeonLayout_, currentStageId_, tileWorldCenter(tile));
-    node.revealed = true;
-    chestNodes_.push_back(node);
+    const int depthRank = lootDepthRankForWorldPosition(tileMap_, dungeonLayout_, currentStageId_, tileWorldCenter(tile));
+    const bool spawned = spawnAppearingChestNode(
+        tile,
+        chestKind,
+        depthRank,
+        tileWorldCenter(event.focusTile),
+        "dungeon_event_chest:" + event.id + ":" + std::to_string(tile.x) + ":" + std::to_string(tile.y));
+    if (!spawned) {
+        return false;
+    }
     event.spawnedEntityIds.push_back("chest:" + std::to_string(tile.x) + ":" + std::to_string(tile.y));
-    pushDungeonLog("宝箱が現れた", "dungeon_event_chest:" + event.id + ":" + std::to_string(tile.x) + ":" + std::to_string(tile.y));
     return true;
 }
 
@@ -5105,7 +5440,7 @@ int Game::nearbyDiscoveredWarpPointIndex() const
 
 bool Game::updateWarpReturnUi(const Input& input, UiContext& ui)
 {
-    if (mode_ != ScreenMode::Playing || enemyTestActive_) {
+    if (mode_ != ScreenMode::Playing || enemyTestActive_ || introTutorialActive()) {
         warpReturnConfirm_ = {};
         focusedWarpReturnPointIndex_ = -1;
         return false;
@@ -5328,8 +5663,10 @@ void Game::initializeRewardNodesFromLayout()
     std::uniform_real_distribution<float> sideJitter(-1.2f, 1.2f);
     std::uniform_real_distribution<float> pocketProgressJitter(-0.030f, 0.030f);
     std::uniform_real_distribution<float> pocketOffsetDist(WallPocketMinOffsetTiles, WallPocketMaxOffsetTiles);
+    std::uniform_real_distribution<float> coinRoomAngleDist(0.0f, Pi * 2.0f);
     std::uniform_int_distribution<int> signDist(0, 1);
     std::uniform_int_distribution<int> moneyDist(2, 8);
+    std::uniform_int_distribution<int> coinRoomMoneyCountDist(CoinRoomMoneyNodeMinCount, CoinRoomMoneyNodeMaxCount);
     const std::optional<std::string> fallbackObjectId = firstAvailableObjectId(objectCatalog_);
 
     PlacementReservations reservations;
@@ -5530,18 +5867,13 @@ void Game::initializeRewardNodesFromLayout()
     for (const SpecialRoomAnchor& room : dungeonLayout_.specialRoomAnchors) {
         const DungeonTile centerTile = roundDungeonTile(room.center);
         if (room.type == SpecialRoomType::CoinRoom) {
-            for (int i = 0; i < 4; ++i) {
-                const PlacementVisibility visibility = i == 0
-                    ? PlacementVisibility::Exposed
-                    : (i == 1 ? PlacementVisibility::BuriedVisible : PlacementVisibility::BuriedHidden);
-                const float radiusTiles = visibility == PlacementVisibility::Exposed
-                    ? std::max(1.0f, room.radius * 0.28f)
-                    : (visibility == PlacementVisibility::BuriedVisible ? room.radius * 0.82f : room.radius * (i == 2 ? 1.00f : 1.12f));
-                const Vec2 offset = fromAngle(static_cast<float>(i) * Pi * 0.5f) * radiusTiles;
+            const int moneyNodeCount = coinRoomMoneyCountDist(rng);
+            const float angleOffset = coinRoomAngleDist(rng);
+            for (int i = 0; i < moneyNodeCount; ++i) {
                 placeMoneyNode(MoneyNode{
-                    .tile = roundDungeonTile(room.center + offset),
+                    .tile = coinRoomMoneyNodeTile(room, i, moneyNodeCount, angleOffset),
                     .amount = std::max(4, moneyDist(rng) + dungeonLayout_.stageId * 4),
-                    .visibility = visibility,
+                    .visibility = PlacementVisibility::Exposed,
                     .collected = false,
                 });
             }
@@ -5870,12 +6202,115 @@ void Game::initializeChestNodesFromLayout()
     }
 }
 
+bool Game::spawnAppearingChestNode(
+    DungeonTile tile,
+    LootChestKind chestKind,
+    int depthRank,
+    Vec2 sourceWorldPosition,
+    std::string_view logMergeKey)
+{
+    auto existing = std::find_if(chestNodes_.begin(), chestNodes_.end(), [tile](const ChestNode& node) {
+        return sameDungeonTile(node.tile, tile);
+    });
+    if (existing != chestNodes_.end()) {
+        existing->visibility = PlacementVisibility::Exposed;
+        existing->revealed = true;
+        existing->chestKind = chestKind;
+        existing->depthRank = std::max(1, depthRank);
+        return false;
+    }
+
+    ChestNode node;
+    node.tile = tile;
+    node.visibility = PlacementVisibility::Exposed;
+    node.chestKind = chestKind;
+    node.depthRank = std::max(1, depthRank);
+    node.revealed = true;
+    node.opened = false;
+    node.lootSpawned = false;
+    node.openingSeconds = 0.0f;
+
+    std::mt19937 rng(
+        dungeonLayout_.seed ^
+        (static_cast<std::uint32_t>(tile.x) * 0x85EBCA6Bu) ^
+        (static_cast<std::uint32_t>(tile.y) * 0xC2B2AE35u) ^
+        (static_cast<std::uint32_t>(runStats_.elapsedSeconds * 1000.0f) * 0x27D4EB2Du));
+    startChestSpawnJump(node, sourceWorldPosition, rng);
+    chestNodes_.push_back(node);
+    if (!logMergeKey.empty()) {
+        pushDungeonLog("宝箱が現れた", std::string(logMergeKey));
+    }
+    return true;
+}
+
+void Game::startChestSpawnJump(ChestNode& node, Vec2 sourceWorldPosition, std::mt19937& rng)
+{
+    const Vec2 target = tileWorldCenter(node.tile);
+    if (!std::isfinite(sourceWorldPosition.x) || !std::isfinite(sourceWorldPosition.y)) {
+        sourceWorldPosition = target;
+    }
+
+    const WorldDropSpawnMotion motion = makeWorldLootJumpMotion(sourceWorldPosition, rng);
+    node.spawnJumpActive = motion.jump && motion.jumpDurationSeconds > 0.0f;
+    node.spawnJumpStartPosition = motion.startPosition;
+    node.spawnJumpElapsedSeconds = 0.0f;
+    node.spawnJumpDurationSeconds = std::max(0.05f, motion.jumpDurationSeconds);
+    node.spawnJumpArcHeight = std::max(0.0f, motion.jumpArcHeight);
+}
+
+void Game::updateChestSpawnJump(ChestNode& node, float dt)
+{
+    if (!node.spawnJumpActive) {
+        return;
+    }
+
+    node.spawnJumpElapsedSeconds = std::min(
+        node.spawnJumpDurationSeconds,
+        node.spawnJumpElapsedSeconds + std::max(0.0f, dt));
+    const float t = node.spawnJumpDurationSeconds > 0.0f
+        ? clamp(node.spawnJumpElapsedSeconds / node.spawnJumpDurationSeconds, 0.0f, 1.0f)
+        : 1.0f;
+    if (t >= 1.0f) {
+        node.spawnJumpActive = false;
+        node.spawnJumpStartPosition = {};
+        node.spawnJumpElapsedSeconds = 0.0f;
+        node.spawnJumpDurationSeconds = 0.0f;
+        node.spawnJumpArcHeight = 0.0f;
+    }
+}
+
+Vec2 Game::chestVisualCenter(const ChestNode& node) const
+{
+    const Vec2 target = tileWorldCenter(node.tile);
+    if (!node.spawnJumpActive) {
+        return target;
+    }
+
+    const float t = node.spawnJumpDurationSeconds > 0.0f
+        ? clamp(node.spawnJumpElapsedSeconds / node.spawnJumpDurationSeconds, 0.0f, 1.0f)
+        : 1.0f;
+    return lerp(node.spawnJumpStartPosition, target, t);
+}
+
+float Game::chestVisualAltitude(const ChestNode& node) const
+{
+    if (!node.spawnJumpActive) {
+        return 0.0f;
+    }
+
+    const float t = node.spawnJumpDurationSeconds > 0.0f
+        ? clamp(node.spawnJumpElapsedSeconds / node.spawnJumpDurationSeconds, 0.0f, 1.0f)
+        : 1.0f;
+    return std::sin(t * Pi) * std::max(0.0f, node.spawnJumpArcHeight);
+}
+
 void Game::updateChestNodes(float dt, const Input& input)
 {
     const bool interact = input.confirmPressed() || input.useItemPressed();
     const float interactRadiusSq = ChestInteractRadius * ChestInteractRadius;
 
     for (ChestNode& node : chestNodes_) {
+        updateChestSpawnJump(node, dt);
         if (node.opened) {
             if (!node.lootSpawned) {
                 node.openingSeconds += dt;
@@ -5892,6 +6327,9 @@ void Game::updateChestNodes(float dt, const Input& input)
         }
 
         const Vec2 center = tileWorldCenter(node.tile);
+        if (node.spawnJumpActive) {
+            continue;
+        }
         bool shouldOpen = interact && distanceSquared(player_.position, center) <= interactRadiusSq;
         if (!shouldOpen) {
             const std::vector<const SpellRingItem*> runtimeItems = spellRing_.runtimeItems();
@@ -6286,6 +6724,28 @@ void Game::spawnChestLoot(ChestNode& node)
         (static_cast<std::uint32_t>(node.tile.x) * 0x85EBCA6Bu) ^
         (static_cast<std::uint32_t>(node.tile.y) * 0xC2B2AE35u) ^
         (static_cast<std::uint32_t>(runStats_.elapsedSeconds * 1000.0f) * 0x27D4EB2Du));
+
+    if (introTutorialActive() && sameDungeonTile(node.tile, introTutorialChestTile_)) {
+        const Vec2 target = safeLootLandingPosition(center, rng);
+        worldDrops_.spawnObjectDrop(
+            objectCatalog_,
+            IntroTutorialCoinBagObjectId,
+            target,
+            runStats_.elapsedSeconds,
+            makeWorldLootJumpMotion(center, rng));
+        return;
+    }
+
+    if (introTutorialActive() && sameDungeonTile(node.tile, introTutorialSecondChestTile_)) {
+        const Vec2 target = safeLootLandingPosition(center, rng);
+        worldDrops_.spawnObjectDrop(
+            objectCatalog_,
+            IntroTutorialIronSwordObjectId,
+            target,
+            runStats_.elapsedSeconds,
+            makeWorldLootJumpMotion(center, rng));
+        return;
+    }
 
     const int itemRolls = lootItemRollCount(node.chestKind, rng);
     for (int i = 0; i < itemRolls; ++i) {
@@ -6843,19 +7303,35 @@ void Game::applyPlacementTerrainOverrides()
 
 void Game::updateExposedEnemyNodes()
 {
+    const RuntimeBalance dungeonBalance = runtimeBalanceForDungeon();
+    const Vec2 playerLightCenter = witchSelfLightCenter(player_.position);
     const float spawnRadius =
-        std::max(balance_.playerLightRadius, balance_.lightRadius) + ExposedEnemyNodeSpawnPadding;
+        std::max(dungeonBalance.playerLightRadius, dungeonBalance.lightRadius) + ExposedEnemyNodeSpawnPadding;
     const float spawnRadiusSq = spawnRadius * spawnRadius;
+    const float introTutorialSpawnRadius =
+        IntroTutorialEnemySpawnRadiusTiles * static_cast<float>(balance::TileSize);
+    const float introTutorialSpawnRadiusSq = introTutorialSpawnRadius * introTutorialSpawnRadius;
     for (EnemyNode& node : enemyNodes_) {
         if (node.spawned || node.placementType != EnemyPlacementType::Exposed) {
             continue;
         }
         const Vec2 center = tileWorldCenter(node.tile);
-        if (distanceSquared(center, player_.position) > spawnRadiusSq) {
+        const bool introTutorialSlimeNode = introTutorialActive() &&
+            std::string_view(node.enemySpawnGroup.data(), node.enemySpawnGroup.size()) == IntroTutorialSlimeGroup;
+        const bool introTutorialMushroomNode = introTutorialActive() &&
+            std::string_view(node.enemySpawnGroup.data(), node.enemySpawnGroup.size()) == IntroTutorialMushroomGroup;
+        if (introTutorialMushroomNode && introTutorialPhase_ != IntroTutorialPhase::FreeToExit) {
+            continue;
+        }
+        const bool introTutorialFixedNode = introTutorialSlimeNode || introTutorialMushroomNode;
+        const float effectiveSpawnRadiusSq = introTutorialFixedNode
+            ? introTutorialSpawnRadiusSq
+            : spawnRadiusSq;
+        if (distanceSquared(center, playerLightCenter) > effectiveSpawnRadiusSq) {
             continue;
         }
         bool spawned = false;
-        if (node.enemySpawnGroup == IntroTutorialSlimeGroup) {
+        if (introTutorialSlimeNode) {
             const std::string slimeId = introTutorialSlimeEnemyId(enemyCatalog_);
             if (!slimeId.empty()) {
                 spawned = enemies_.spawnSpecificEnemy(
@@ -6866,15 +7342,38 @@ void Game::updateExposedEnemyNodes()
                     balance_,
                     enemyCatalog_,
                     true,
-                    true);
+                    false,
+                    0.0f);
             }
             if (!spawned) {
-                spawned = enemies_.spawnFixedNodeEnemy(tileMap_, center, player_.position, balance_, enemyCatalog_, true);
+                spawned = enemies_.spawnFixedNodeEnemy(tileMap_, center, player_.position, balance_, enemyCatalog_, false);
+            }
+        } else if (introTutorialMushroomNode) {
+            const std::string mushroomId = introTutorialMushroomEnemyId(enemyCatalog_);
+            if (!mushroomId.empty()) {
+                spawned = enemies_.spawnSpecificEnemy(
+                    tileMap_,
+                    mushroomId,
+                    center,
+                    player_.position,
+                    balance_,
+                    enemyCatalog_,
+                    true,
+                    false,
+                    0.0f);
+            }
+            if (!spawned) {
+                spawned = enemies_.spawnFixedNodeEnemy(tileMap_, center, player_.position, balance_, enemyCatalog_, false);
             }
         } else {
             spawned = enemies_.spawnFixedNodeEnemy(tileMap_, center, player_.position, balance_, enemyCatalog_);
         }
         if (spawned) {
+            if (introTutorialFixedNode) {
+                const float resolveRadius =
+                    IntroTutorialEnemyResolveRadiusTiles * static_cast<float>(balance::TileSize);
+                enemies_.setManualDetectionOnlyNear(center, resolveRadius, true);
+            }
             node.spawned = true;
         }
     }
@@ -8004,13 +8503,14 @@ void Game::appendRewardNodeRenderEntries(
     const Color exposedReward{255, 222, 94, 255};
     const Color exposedMoney{246, 190, 64, 255};
     const Color sparkle{255, 242, 164, 230};
+    const Vec2 playerLightCenter = witchSelfLightCenter(player_.position);
 
     for (const RewardNode& node : rewardNodes_) {
         if (node.collected) {
             continue;
         }
         const Vec2 center = tileWorldCenter(node.tile);
-        if (!tileMap_.isLit(center, player_.position, extraLights)) {
+        if (!tileMap_.isLit(center, playerLightCenter, extraLights)) {
             continue;
         }
         if (node.visibility != PlacementVisibility::Exposed && node.visibility != PlacementVisibility::BuriedVisible) {
@@ -8038,7 +8538,7 @@ void Game::appendRewardNodeRenderEntries(
             continue;
         }
         const Vec2 center = tileWorldCenter(node.tile);
-        if (!tileMap_.isLit(center, player_.position, extraLights)) {
+        if (!tileMap_.isLit(center, playerLightCenter, extraLights)) {
             continue;
         }
         if (node.visibility != PlacementVisibility::Exposed && node.visibility != PlacementVisibility::BuriedVisible) {
@@ -8065,7 +8565,7 @@ void Game::appendRewardNodeRenderEntries(
             continue;
         }
         const Vec2 center = tileWorldCenter(node.tile);
-        if (!tileMap_.isLit(center, player_.position, extraLights)) {
+        if (!tileMap_.isLit(center, playerLightCenter, extraLights)) {
             continue;
         }
         if (node.visibility != PlacementVisibility::Exposed && node.visibility != PlacementVisibility::BuriedVisible) {
@@ -8099,7 +8599,7 @@ void Game::appendRewardNodeRenderEntries(
             continue;
         }
         const Vec2 center = tileWorldCenter(node.tile);
-        if (!tileMap_.isLit(center, player_.position, extraLights)) {
+        if (!tileMap_.isLit(center, playerLightCenter, extraLights)) {
             continue;
         }
         entries.push_back(DepthRenderEntry{
@@ -8119,13 +8619,14 @@ void Game::appendRewardNodeRenderEntries(
         if (!node.revealed && !node.opened) {
             continue;
         }
-        const Vec2 center = tileWorldCenter(node.tile);
-        if (!tileMap_.isLit(center, player_.position, extraLights)) {
+        const Vec2 groundCenter = tileWorldCenter(node.tile);
+        if (!tileMap_.isLit(groundCenter, playerLightCenter, extraLights)) {
             continue;
         }
+        const Vec2 center = chestVisualCenter(node) + Vec2{0.0f, -chestVisualAltitude(node)};
         if (node.visibility == PlacementVisibility::BuriedVisible && !node.opened) {
             entries.push_back(DepthRenderEntry{
-                center.y,
+                groundCenter.y,
                 [&renderer, center, chestKind = node.chestKind]() {
                     WorldIconDrawOptions options;
                     options.tint = {255, 255, 255, 165};
@@ -8144,7 +8645,7 @@ void Game::appendRewardNodeRenderEntries(
         }
 
         entries.push_back(DepthRenderEntry{
-            center.y,
+            groundCenter.y,
             [&renderer,
                 center,
                 chestKind = node.chestKind,

@@ -2040,6 +2040,7 @@ void EnemySystem::applyDefinition(Enemy& enemy, const EnemyDefinition* definitio
     enemy.stolenObjectIds.clear();
     enemy.pendingDeath = false;
     enemy.awareness = EnemyAwarenessState::Unaware;
+    enemy.manualDetectionOnly = false;
     enemy.loseSightTimer = 0.0f;
     enemy.visionDistance = DefaultVisionDistance;
     enemy.visionAngle = DefaultVisionAngle;
@@ -2624,7 +2625,8 @@ bool EnemySystem::spawnSpecificEnemy(
     const RuntimeBalance& balance,
     const EnemyCatalog& enemyCatalog,
     bool allowNearPlayer,
-    bool detectedOnSpawn)
+    bool detectedOnSpawn,
+    float spawnWarmupOverride)
 {
     if (activeCount() >= balance.enemySoftCap) {
         return false;
@@ -2641,7 +2643,14 @@ bool EnemySystem::spawnSpecificEnemy(
         return false;
     }
 
-    return spawnDefinitionAt(spawnPosition, &it->second, balance, enemyCatalog, detectedOnSpawn, playerPosition);
+    return spawnDefinitionAt(
+        spawnPosition,
+        &it->second,
+        balance,
+        enemyCatalog,
+        detectedOnSpawn,
+        playerPosition,
+        spawnWarmupOverride);
 }
 
 bool EnemySystem::spawnEventEnemy(
@@ -3421,7 +3430,8 @@ void EnemySystem::update(
             const bool proximityTriggeredAmbush =
                 enemy.aiId == "ambush" &&
                 isAmbushTriggerDistance();
-            if (canDetectPlayer(unawareVisionDistance, unawareVisionAngle) || proximityTriggeredAmbush) {
+            if (!enemy.manualDetectionOnly &&
+                (canDetectPlayer(unawareVisionDistance, unawareVisionAngle) || proximityTriggeredAmbush)) {
                 setAwareness(enemy, EnemyAwarenessState::Detected, true);
                 if (hasBehavior(enemy, "swarm_alert")) {
                     alertNearbySwarm(enemy);
@@ -4827,8 +4837,30 @@ void EnemySystem::wakeDungeonEventEnemies(std::string_view eventId)
         }
         enemy.dungeonEventSleeping = false;
         enemy.status.removeState("status_sleep");
+        enemy.manualDetectionOnly = false;
         forceDetectInSight(enemy, enemy.position + Vec2{1.0f, 0.0f}, true);
     }
+}
+
+bool EnemySystem::setManualDetectionOnlyNear(Vec2 position, float radius, bool manualOnly)
+{
+    Enemy* enemy = findActiveEnemyNear(position, radius);
+    if (enemy == nullptr) {
+        return false;
+    }
+    enemy->manualDetectionOnly = manualOnly;
+    return true;
+}
+
+bool EnemySystem::forceDetectEnemyNear(Vec2 position, float radius, Vec2 playerPosition, bool showIcon)
+{
+    Enemy* enemy = findActiveEnemyNear(position, radius);
+    if (enemy == nullptr) {
+        return false;
+    }
+    enemy->manualDetectionOnly = false;
+    forceDetectInSight(*enemy, playerPosition, showIcon);
+    return true;
 }
 
 int EnemySystem::activeDungeonEventEnemyCount(std::string_view eventId) const
@@ -4978,6 +5010,24 @@ const Enemy* EnemySystem::findCaptureTarget(Vec2 targetWorld) const
         const float targetRadius = std::max(CaptureTargetMinRadius, effectiveEnemyRadius(enemy) + CaptureTargetPadding);
         const float targetDistanceSq = distanceSquared(enemy.position, targetWorld);
         if (targetDistanceSq <= targetRadius * targetRadius && targetDistanceSq <= bestDistanceSq) {
+            bestDistanceSq = targetDistanceSq;
+            best = &enemy;
+        }
+    }
+    return best;
+}
+
+Enemy* EnemySystem::findActiveEnemyNear(Vec2 position, float radius)
+{
+    Enemy* best = nullptr;
+    float bestDistanceSq = std::max(0.0f, radius);
+    bestDistanceSq *= bestDistanceSq;
+    for (Enemy& enemy : enemies_.items()) {
+        if (!enemy.active) {
+            continue;
+        }
+        const float targetDistanceSq = distanceSquared(enemy.position, position);
+        if (targetDistanceSq <= bestDistanceSq) {
             bestDistanceSq = targetDistanceSq;
             best = &enemy;
         }

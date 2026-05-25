@@ -1851,12 +1851,18 @@ void Game::renderScreenTransitionOverlay(Renderer& renderer)
     case ScreenTransitionPhase::FadingOut:
         alpha = smoothStep01(screenTransition_.elapsed / std::max(0.001f, ScreenTransitionFadeOutSeconds));
         break;
-    case ScreenTransitionPhase::HoldBlack:
+    case ScreenTransitionPhase::Hold:
         alpha = 1.0f;
         break;
     case ScreenTransitionPhase::FadingIn:
-        alpha = 1.0f - smoothStep01(screenTransition_.elapsed / std::max(0.001f, ScreenTransitionFadeInSeconds));
+    {
+        const float fadeInSeconds = screenTransition_.fadeInSeconds > 0.0f
+            ? screenTransition_.fadeInSeconds
+            : ScreenTransitionFadeInSeconds;
+        alpha = 1.0f - smoothStep01(
+            screenTransition_.elapsed / std::max(0.001f, fadeInSeconds));
         break;
+    }
     }
 
     if (alpha <= 0.0f) {
@@ -1864,10 +1870,14 @@ void Game::renderScreenTransitionOverlay(Renderer& renderer)
     }
 
     renderer.setScreenSpace();
+    const unsigned char overlayAlpha = alphaByte(255.0f * alpha);
+    const Color overlayColor = screenTransition_.fadeColor == ScreenTransitionFadeColor::White
+        ? Color{255, 255, 255, overlayAlpha}
+        : Color{0, 0, 0, overlayAlpha};
     renderer.fillRect(
         {0.0f, 0.0f},
         {static_cast<float>(camera_.width()), static_cast<float>(camera_.height())},
-        {0, 0, 0, alphaByte(255.0f * alpha)});
+        overlayColor);
 }
 
 void Game::renderDungeonStatusHud(Renderer& renderer) const
@@ -2111,6 +2121,7 @@ void Game::renderDungeonMinimap(Renderer& renderer, const std::vector<LightSourc
     const Vec2 minimapCenter = {DungeonMinimapX + minimapRadius, minimapY + minimapRadius};
     const int playerTileX = tileMap_.worldToTile(player_.position.x);
     const int playerTileY = tileMap_.worldToTile(player_.position.y);
+    const Vec2 playerLightCenter = witchSelfLightCenter(player_.position);
     const int viewRadiusTiles = static_cast<int>(std::ceil(contentRadius / DungeonMinimapTilePx)) + 2;
     const auto pointInMinimap = [&](Vec2 point, float margin) {
         const float radius = std::max(0.0f, contentRadius - margin);
@@ -2137,7 +2148,7 @@ void Game::renderDungeonMinimap(Renderer& renderer, const std::vector<LightSourc
             if (!pointInMinimap(cellCenter, DungeonMinimapTilePx)) {
                 continue;
             }
-            const bool lit = tileMap_.isLit(tileMap_.tileCenter(tx, ty), player_.position, itemLights);
+            const bool lit = tileMap_.isLit(tileMap_.tileCenter(tx, ty), playerLightCenter, itemLights);
             const Color color = dungeonMinimapTileColor(cellIt->second.type, lit);
             const Vec2 drawPos = cellCenter - Vec2{DungeonMinimapTilePx, DungeonMinimapTilePx} * 0.5f;
             renderer.fillRect(drawPos, {DungeonMinimapTilePx + 0.4f, DungeonMinimapTilePx + 0.4f}, color);
@@ -2302,7 +2313,7 @@ void Game::renderDungeonControlHelp(Renderer& renderer) const
     const float screenHeight = static_cast<float>(camera_.height());
 
     std::string help =
-        "WASD/方向キー 移動   Q/E スロット   Tab 段切替   F 使用   左クリック 虫とり網   右長押し 中心ずらし   C リング投げ   I リュック   Esc メニュー";
+        "WASD/方向キー 移動   Q/E アイテム選択   Tab アイテム行切替   F 使用   左クリック 虫とり網   右長押し 中心ずらし   C リング投げ　Esc メニュー";
     bool promptFocused = false;
     if (introTutorialActive()) {
         help = "WASD/方向キー 移動   F 使用   I リュック   Esc メニュー";
@@ -3081,14 +3092,15 @@ void Game::render(Renderer& renderer, const Time& time)
     const std::vector<const SpellRingItem*> runtimeItems = spellRing_.runtimeItems();
     const bool ringIntroActive = dungeonRingIntroActive();
     const std::vector<LightSource> itemLights = collectDungeonLightSources(time.totalSeconds());
-    tileMap_.render(renderer, camera_, player_.position, itemLights);
+    const Vec2 playerLightCenter = witchSelfLightCenter(player_.position);
+    tileMap_.render(renderer, camera_, playerLightCenter, itemLights);
     std::vector<DepthRenderEntry> worldDepthEntries;
     if (!enemyTestActive_) {
         appendRewardNodeRenderEntries(worldDepthEntries, renderer, itemLights);
         appendDungeonEventRenderEntries(worldDepthEntries, renderer, itemLights, time.totalSeconds());
     }
     groundLines_.appendRenderEntries(worldDepthEntries, renderer);
-    worldDrops_.appendRenderEntries(worldDepthEntries, renderer, tileMap_, objectCatalog_, player_.position, itemLights);
+    worldDrops_.appendRenderEntries(worldDepthEntries, renderer, tileMap_, objectCatalog_, playerLightCenter, itemLights);
     effects_.appendRenderEntries(worldDepthEntries, renderer);
     magicFx_.appendRenderEntries(worldDepthEntries, renderer);
     if (!enemyTestActive_) {
@@ -3096,7 +3108,7 @@ void Game::render(Renderer& renderer, const Time& time)
         renderWarpPoints(renderer);
     }
 
-    const bool ringCenterVisible = tileMap_.isLit(spellRing_.center(), player_.position, itemLights);
+    const bool ringCenterVisible = tileMap_.isLit(spellRing_.center(), playerLightCenter, itemLights);
     if (ringCenterVisible && !ringIntroActive) {
         drawSpellRingOrbitLayer(renderer, spellRing_, balance_, time.totalSeconds(), 0.46f);
     }
@@ -3112,8 +3124,8 @@ void Game::render(Renderer& renderer, const Time& time)
     const float playerSizeMultiplier = static_cast<float>(player_.status.sizeMultiplierFromStates());
     const float playerSpriteDrawSize = PlayerSpriteDrawSize * playerSizeMultiplier;
     renderer.drawActorShadow(playerFootAnchor, playerSpriteDrawSize);
-    worldDrops_.renderShadows(renderer, tileMap_, objectCatalog_, player_.position, itemLights);
-    enemies_.renderShadows(renderer, tileMap_, player_.position, itemLights);
+    worldDrops_.renderShadows(renderer, tileMap_, objectCatalog_, playerLightCenter, itemLights);
+    enemies_.renderShadows(renderer, tileMap_, playerLightCenter, itemLights);
     effects_.renderShadows(renderer);
     renderPlayerFootstepDust(renderer);
     worldDepthEntries.push_back(DepthRenderEntry{
@@ -3154,7 +3166,7 @@ void Game::render(Renderer& renderer, const Time& time)
                 return;
             }
             for (const SpellRingItem* itemPtr : runtimeItems) {
-                if (itemPtr == nullptr || !tileMap_.isLit(itemPtr->worldPosition, player_.position, itemLights)) {
+                if (itemPtr == nullptr || !tileMap_.isLit(itemPtr->worldPosition, playerLightCenter, itemLights)) {
                     continue;
                 }
                 const SpellRingItem& item = *itemPtr;
@@ -3230,7 +3242,7 @@ void Game::render(Renderer& renderer, const Time& time)
             }
         },
     });
-    enemies_.appendRenderEntries(worldDepthEntries, renderer, tileMap_, player_.position, itemLights, captureHoverEnemyId_);
+    enemies_.appendRenderEntries(worldDepthEntries, renderer, tileMap_, playerLightCenter, itemLights, captureHoverEnemyId_);
     std::stable_sort(worldDepthEntries.begin(), worldDepthEntries.end(), [](const DepthRenderEntry& left, const DepthRenderEntry& right) {
         return left.sortY < right.sortY;
     });
@@ -3239,7 +3251,7 @@ void Game::render(Renderer& renderer, const Time& time)
     }
 
     std::vector<DepthRenderEntry> projectileDepthEntries;
-    projectiles_.appendRenderEntries(projectileDepthEntries, renderer, tileMap_, player_.position, itemLights);
+    projectiles_.appendRenderEntries(projectileDepthEntries, renderer, tileMap_, playerLightCenter, itemLights);
     std::stable_sort(projectileDepthEntries.begin(), projectileDepthEntries.end(), [](const DepthRenderEntry& left, const DepthRenderEntry& right) {
         return left.sortY < right.sortY;
     });
@@ -3247,7 +3259,7 @@ void Game::render(Renderer& renderer, const Time& time)
         entry.draw();
     }
     effects_.render(renderer);
-    tileMap_.renderDarknessOverlay(renderer, camera_, player_.position, itemLights);
+    tileMap_.renderDarknessOverlay(renderer, camera_, playerLightCenter, itemLights);
     std::vector<DepthRenderEntry> magicForegroundEntries;
     magicFx_.appendForegroundRenderEntries(magicForegroundEntries, renderer);
     std::stable_sort(magicForegroundEntries.begin(), magicForegroundEntries.end(), [](const DepthRenderEntry& left, const DepthRenderEntry& right) {

@@ -130,6 +130,7 @@ struct Enemy {
     float hpBarTimer = 0.0f;
     float facingAngle = 0.0f;
     EnemyAwarenessState awareness = EnemyAwarenessState::Unaware;
+    bool manualDetectionOnly = false;
     float loseSightTimer = 0.0f;
     float visionDistance = 120.0f;
     float visionAngle = 100.0f;

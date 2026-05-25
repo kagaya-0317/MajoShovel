@@ -10,6 +10,7 @@
 #include <limits>
 #include <string>
 #include <unordered_map>
+#include <utility>
 
 namespace majo {
 
@@ -1110,6 +1111,16 @@ void TileMap::setTerrainEdit(DungeonTile tile, TileType type)
     target.hp = static_cast<unsigned char>(clampTileHp(info.effectiveHp));
 }
 
+void TileMap::setDamageProtectionAreas(std::vector<TerrainDamageProtectionArea> areas)
+{
+    damageProtectionAreas_ = std::move(areas);
+}
+
+void TileMap::clearDamageProtectionAreas()
+{
+    damageProtectionAreas_.clear();
+}
+
 std::vector<TerrainTileEdit> TileMap::terrainEditsForSave() const
 {
     std::vector<TerrainTileEdit> edits;
@@ -1179,6 +1190,9 @@ std::vector<DamagedTile> TileMap::damageCircle(Vec2 center, float radius, int da
             if (!tile || tile->type == TileType::Empty) {
                 continue;
             }
+            if (damageProtectedAt(tx, ty)) {
+                continue;
+            }
             const Vec2 rectPos{static_cast<float>(tx * balance::TileSize), static_cast<float>(ty * balance::TileSize)};
             if (!circleIntersectsAabb(center, radius, rectPos, {static_cast<float>(balance::TileSize), static_cast<float>(balance::TileSize)})) {
                 continue;
@@ -1204,6 +1218,9 @@ bool TileMap::damageTile(int tx, int ty, int damage, Vec2& openedTileCenter, Til
     if (!tile || tile->type == TileType::Empty) {
         return false;
     }
+    if (damageProtectedAt(tx, ty)) {
+        return false;
+    }
 
     const TileType destroyedType = tile->type;
     rememberDamagedTileMaxHp(tx, ty, *tile);
@@ -1217,6 +1234,20 @@ bool TileMap::damageTile(int tx, int ty, int damage, Vec2& openedTileCenter, Til
             *openedTileType = destroyedType;
         }
         return true;
+    }
+    return false;
+}
+
+bool TileMap::damageProtectedAt(int tx, int ty) const
+{
+    for (const TerrainDamageProtectionArea& area : damageProtectionAreas_) {
+        const int minX = std::min(area.minTile.x, area.maxTile.x);
+        const int maxX = std::max(area.minTile.x, area.maxTile.x);
+        const int minY = std::min(area.minTile.y, area.maxTile.y);
+        const int maxY = std::max(area.minTile.y, area.maxTile.y);
+        if (tx >= minX && tx <= maxX && ty >= minY && ty <= maxY) {
+            return true;
+        }
     }
     return false;
 }

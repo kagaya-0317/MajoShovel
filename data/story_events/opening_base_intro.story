@@ -3,10 +3,23 @@
 @trigger intro_tutorial:base_return
 @once story_opening_base_intro
 
-@narration
-ルネが地底から戻るころには、守護星救助隊の拠点が作られていました。
+@say player ルネ
+はあ、はあ…やっと帰ってきたよ
 
 @wait small
+
+@say monica モニカ
+ルネ！大丈夫！？
+心配したんだから！
+
+@say player ルネ
+ふ、ふふん、ルネを舐めないでよね
+
+@say player ルネ
+それにしても…
+
+@narration
+ルネは周りを見渡しました。
 
 @say player ルネ
 ……ここ、私の家の庭だよね？
@@ -20,8 +33,8 @@
 @wait small
 
 @narration
-この子は、ルネ。
-魔法は下手だけど、物を浮かせて周囲に回転させる「スペルリング」だけ異常に上手な、見習い魔女です。
+紹介が遅れましたが、この子は、ルネ。
+魔法は下手だけど、物を浮かせて周囲に回転させる「スペルリング」だけ異常に上手な見習い魔女です。
 
 @wait small
 
