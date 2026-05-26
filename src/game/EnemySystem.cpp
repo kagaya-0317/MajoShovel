@@ -2806,6 +2806,12 @@ void EnemySystem::appendMinimapMarkers(std::vector<EnemyMinimapMarker>& markers)
         }
         markers.push_back(EnemyMinimapMarker{
             .position = enemy.position,
+            .radius = effectiveEnemyRadius(enemy),
+            .jumpLandingRadius = enemy.jumpLandingRadius,
+            .countdownExplodeRadius = enemy.countdownExplodeRadius,
+            .contactAttackPower = enemy.contactAttackPower,
+            .contactDamageMultiplier = enemy.contactDamageMultiplier,
+            .ranged = isRangedBehavior(enemy.rangedBehaviorId),
             .boss = enemy.isBoss,
         });
     }

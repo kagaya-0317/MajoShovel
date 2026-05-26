@@ -28,6 +28,7 @@ enum class AutoSimulationGoal {
     None,
     DismissUi,
     EquipLoadout,
+    UseItem,
     MineWall,
     Combat,
     CollectDrop,
@@ -39,9 +40,18 @@ enum class AutoSimulationGoal {
     EscapeStuck,
 };
 
+enum class AutoSimulationRingRole {
+    None,
+    Combat,
+    Dig,
+    Light,
+    Utility,
+};
+
 struct AutoSimulationSettings {
     int requestedRuns = 1;
     float timeoutSeconds = 600.0f;
+    int speedMultiplier = 1;
     bool trace = false;
 };
 
@@ -89,8 +99,12 @@ struct AutoSimulationPlan {
     float desiredRangeMin = 0.0f;
     float desiredRangeMax = 0.0f;
     bool strafe = false;
+    AutoSimulationRingRole preferredRingRole = AutoSimulationRingRole::None;
     GameTestTerrainKind targetTerrainKind = GameTestTerrainKind::Empty;
     bool hasTargetTerrainKind = false;
+    int routePathTileCount = 0;
+    int routeWaypointPathIndex = -1;
+    int routeFirstDigPathIndex = -1;
     int routeDigTileCount = 0;
     int routeHardTileCount = 0;
     bool routeAvoidingHardWall = false;
@@ -100,6 +114,8 @@ struct AutoSimulationPlan {
 struct AutoSimulationDebugSnapshot {
     bool active = false;
     AutoSimulationState state = AutoSimulationState::Idle;
+    int speedMultiplier = 1;
+    int simulationStepsLastFrame = 0;
     bool hasPlan = false;
     AutoSimulationGoal goal = AutoSimulationGoal::None;
     std::string reason;
@@ -112,6 +128,15 @@ struct AutoSimulationDebugSnapshot {
     bool hasAimTarget = false;
     float distanceToTarget = 0.0f;
     float distanceToMoveTarget = 0.0f;
+    float moveTargetArriveDistance = 0.0f;
+    Vec2 inputMoveAxis{};
+    float stuckMoveDistance = 0.0f;
+    float activeLightRadius = 0.0f;
+    float bestBackpackLightRadius = 0.0f;
+    bool missingLight = false;
+    int routePathTileCount = 0;
+    int routeWaypointPathIndex = -1;
+    int routeFirstDigPathIndex = -1;
     int routeDigTileCount = 0;
     int routeHardTileCount = 0;
     bool routeAvoidingHardWall = false;

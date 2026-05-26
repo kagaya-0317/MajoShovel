@@ -145,6 +145,22 @@ public:
     bool setObjectInstanceProtection(std::string_view instanceId, bool enabled);
     bool removeObjectItemCount(std::string_view objectId, int count);
     bool removeObjectInstance(std::string_view instanceId);
+    bool useObjectStackById(
+        std::string_view objectId,
+        Player& player,
+        const EffectDispatcher& effectDispatcher,
+        MagicSystem* magic,
+        std::vector<EffectDiscoveryEvent>* discoveryEvents,
+        const EncyclopediaSystem* encyclopedia,
+        std::string* outStatus = nullptr);
+    bool useObjectInstanceById(
+        std::string_view instanceId,
+        Player& player,
+        const EffectDispatcher& effectDispatcher,
+        MagicSystem* magic,
+        std::vector<EffectDiscoveryEvent>* discoveryEvents,
+        const EncyclopediaSystem* encyclopedia,
+        std::string* outStatus = nullptr);
     bool takeObjectInstance(std::string_view instanceId, InventoryObjectInstance& outInstance);
     bool repairObjectInstance(std::string_view instanceId);
     bool resetObjectInstanceEnhancement(std::string_view instanceId, const ObjectCatalog& catalog);
@@ -220,6 +236,13 @@ private:
     void placeGrabbedAtSelected();
     bool addObjectSelectionToRing(SpellRingSystem& spellRing, SpellRingAddResult* outResult = nullptr);
     bool addObjectInstanceSelectionToRing(SpellRingSystem& spellRing, SpellRingAddResult* outResult = nullptr);
+    bool useObjectStackAtIndex(
+        int stackIndex,
+        Player& player,
+        const EffectDispatcher& effectDispatcher,
+        MagicSystem* magic,
+        std::vector<EffectDiscoveryEvent>* discoveryEvents,
+        const EncyclopediaSystem* encyclopedia);
     bool useObjectSelection(
         Player& player,
         const EffectDispatcher& effectDispatcher,
@@ -227,6 +250,13 @@ private:
         std::vector<EffectDiscoveryEvent>* discoveryEvents,
         const EncyclopediaSystem* encyclopedia);
     bool useObjectInstanceSelection(
+        Player& player,
+        const EffectDispatcher& effectDispatcher,
+        MagicSystem* magic,
+        std::vector<EffectDiscoveryEvent>* discoveryEvents,
+        const EncyclopediaSystem* encyclopedia);
+    bool useObjectInstanceAtIndex(
+        int instanceIndex,
         Player& player,
         const EffectDispatcher& effectDispatcher,
         MagicSystem* magic,

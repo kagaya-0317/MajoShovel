@@ -1480,6 +1480,19 @@ void Game::updateRingScreen(const Input& input, UiContext& ui, float dt)
         queueStoryEventForTrigger("tutorial:ring_equip");
     }
 
+    const int ringCount = unlockedRingCount();
+    if (spellRing_.activeRingIndex() >= ringCount) {
+        clampActiveRingToUnlocked();
+        closeUiCommandMenu(ringCommandMenu_);
+        ringCommandItemIndex_ = -1;
+        ringCommandPlaceActive_ = false;
+        ringPlaceModeActive_ = false;
+        ringEmptyPressActive_ = false;
+        ringSnapActive_ = false;
+        ringDragItemIndex_ = -1;
+        ringStatus_.clear();
+    }
+
     auto& items = spellRing_.items();
     if (ringSnapActive_) {
         if (ringDragItemIndex_ < 0 || ringDragItemIndex_ >= static_cast<int>(items.size())) {
@@ -1500,16 +1513,6 @@ void Game::updateRingScreen(const Input& input, UiContext& ui, float dt)
         }
         ui.block(ringPanelRect());
         return;
-    }
-
-    if (spellRing_.activeRingIndex() >= UnlockedRingCount) {
-        spellRing_.switchActiveRing(-spellRing_.activeRingIndex());
-        closeUiCommandMenu(ringCommandMenu_);
-        ringCommandItemIndex_ = -1;
-        ringCommandPlaceActive_ = false;
-        ringPlaceModeActive_ = false;
-        ringEmptyPressActive_ = false;
-        ringStatus_.clear();
     }
 
     if (!items.empty()) {
@@ -1677,17 +1680,17 @@ void Game::updateRingScreen(const Input& input, UiContext& ui, float dt)
         return;
     }
 
-    std::array<UiTabItem, UnlockedRingCount> ringTabs{};
-    std::array<UiRect, UnlockedRingCount> ringTabRects{};
-    std::array<std::string, UnlockedRingCount> ringTabLabels{};
-    for (int i = 0; i < UnlockedRingCount; ++i) {
+    std::array<UiTabItem, SpellRingCount> ringTabs{};
+    std::array<UiRect, SpellRingCount> ringTabRects{};
+    std::array<std::string, SpellRingCount> ringTabLabels{};
+    for (int i = 0; i < ringCount; ++i) {
         ringTabLabels[static_cast<std::size_t>(i)] = "リング " + std::to_string(i + 1);
         ringTabs[static_cast<std::size_t>(i)] = {ringTabLabels[static_cast<std::size_t>(i)], true};
-        ringTabRects[static_cast<std::size_t>(i)] = ringTabRect(i);
+        ringTabRects[static_cast<std::size_t>(i)] = ringTabRect(i, ringCount);
     }
     UiTabsInput ringTabsInput{};
     const int directRingFocus = input.shortcutSlotPressed();
-    if (directRingFocus >= 0 && directRingFocus < UnlockedRingCount) {
+    if (directRingFocus >= 0 && directRingFocus < ringCount) {
         ringTabsInput.directFocusIndex = directRingFocus;
     }
     ringTabsInput.focusDelta = input.activeRingDelta();
@@ -1698,7 +1701,7 @@ void Game::updateRingScreen(const Input& input, UiContext& ui, float dt)
         ringTabsInput,
         spellRing_.activeRingIndex(),
         ringTabs.data(),
-        static_cast<int>(ringTabs.size()),
+        ringCount,
         ringTabRects.data());
     if (ringTabSelection >= 0) {
         ringDetailShowsRing_ = true;
@@ -2714,7 +2717,7 @@ void Game::updateFirstItemAcquisitionNotice(const Input& input, UiContext& ui)
 
 int Game::unlockedRingHudCount() const
 {
-    return std::clamp(UnlockedRingCount, 0, SpellRingCount);
+    return unlockedRingCount();
 }
 
 UiRect Game::ringStatusHudRect(int ringIndex, int unlockedRingCount) const
@@ -3459,26 +3462,27 @@ void Game::renderRingScreen(Renderer& renderer, float totalTime) const
     renderer.setScreenSpace();
     const UiRect panel = ringPanelRect();
     UiCancelControlScope cancelScope(ringCancelState_);
-    constexpr std::string_view RingHelpText = UnlockedRingCount > 1
+    const int ringCount = unlockedRingCount();
+    const std::string_view RingHelpText = ringCount > 1
         ? "Z/X リング選択  F/Enter 決定  Q/E アイテム選択  A/D・←/→ 位置  R 外す  G つかむ/置く  P 保護  Esc/右クリック 戻る"
         : "Q/E アイテム選択  A/D・←/→ 位置  F/Enter 詳細  R 外す  G つかむ/置く  P 保護  Esc/右クリック 戻る";
     UiWindowScope ringWindow(renderer, "ring.manage", panel, "リング", RingHelpText, UiWindowOptions{true, true});
 
     char buffer[192];
-    std::array<UiTabItem, UnlockedRingCount> ringTabs{};
-    std::array<UiRect, UnlockedRingCount> ringTabRects{};
-    std::array<std::string, UnlockedRingCount> ringTabLabels{};
-    for (int i = 0; i < UnlockedRingCount; ++i) {
+    std::array<UiTabItem, SpellRingCount> ringTabs{};
+    std::array<UiRect, SpellRingCount> ringTabRects{};
+    std::array<std::string, SpellRingCount> ringTabLabels{};
+    for (int i = 0; i < ringCount; ++i) {
         ringTabLabels[static_cast<std::size_t>(i)] = "リング " + std::to_string(i + 1);
         ringTabs[static_cast<std::size_t>(i)] = {ringTabLabels[static_cast<std::size_t>(i)], true};
-        ringTabRects[static_cast<std::size_t>(i)] = ringTabRect(i);
+        ringTabRects[static_cast<std::size_t>(i)] = ringTabRect(i, ringCount);
     }
     drawUiTabs(
         renderer,
         ringTabs_,
         spellRing_.activeRingIndex(),
         ringTabs.data(),
-        static_cast<int>(ringTabs.size()),
+        ringCount,
         ringTabRects.data());
     drawUiButton(renderer, ringArrangeButtonRect(), "整列", false, uiActionButtonStyle());
 
@@ -4297,7 +4301,7 @@ std::vector<LightSource> Game::collectDungeonLightSources(double totalSeconds) c
 
 void Game::renderLevelUpOverlay(Renderer& renderer)
 {
-    upgrades_.render(renderer, levels_, spellRing_, levelRingUpgradePoints_, UnlockedRingCount);
+    upgrades_.render(renderer, levels_, spellRing_, levelRingUpgradePoints_, unlockedRingCount());
     if (!levelUpResultDialog_.open) {
         return;
     }

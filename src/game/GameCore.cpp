@@ -1445,6 +1445,43 @@ void Game::openLevelUpChoice(ScreenMode returnMode)
     mode_ = ScreenMode::LevelUp;
 }
 
+bool Game::applyLevelUpSelection(RingLevelUpgradeSelection selection)
+{
+    if (!levels_.isChoosing() || levelUpResultDialog_.open) {
+        return false;
+    }
+
+    const int ringIndex = std::clamp(selection.ringIndex, 0, SpellRingCount - 1);
+    if (ringIndex >= unlockedRingCount()) {
+        return false;
+    }
+    const RingLevelUpgradeKind kind = selection.kind;
+    float beforeValue = spellRing_.radiusForRing(ringIndex);
+    if (kind == RingLevelUpgradeKind::Speed) {
+        beforeValue = spellRing_.angularSpeedForRing(ringIndex);
+    } else if (kind == RingLevelUpgradeKind::WeightLimit) {
+        beforeValue = spellRing_.maxEquippedWeightForRing(ringIndex);
+    }
+
+    RingLevelUpgradePoints& points = levelRingUpgradePoints_[static_cast<std::size_t>(ringIndex)];
+    ++ringLevelUpgradePointRef(points, kind);
+    levels_.finishChoice();
+    applyPermanentUpgrades();
+
+    float afterValue = spellRing_.radiusForRing(ringIndex);
+    if (kind == RingLevelUpgradeKind::Speed) {
+        afterValue = spellRing_.angularSpeedForRing(ringIndex);
+    } else if (kind == RingLevelUpgradeKind::WeightLimit) {
+        afterValue = spellRing_.maxEquippedWeightForRing(ringIndex);
+    }
+
+    openUiResultDialog(
+        levelUpResultDialog_,
+        "レベルアップ",
+        levelUpResultLines(RingLevelUpgradeSelection{ringIndex, kind}, beforeValue, afterValue));
+    return true;
+}
+
 void Game::updateLevelUpScreen(const Input& input, UiContext& ui, float dt)
 {
     const auto returnFromLevelUp = [this]() {
@@ -1479,31 +1516,12 @@ void Game::updateLevelUpScreen(const Input& input, UiContext& ui, float dt)
         ui,
         spellRing_,
         dt,
-        UnlockedRingCount);
+        unlockedRingCount());
     if (!selection) {
         return;
     }
 
-    const int ringIndex = std::clamp(selection->ringIndex, 0, SpellRingCount - 1);
-    float beforeValue = spellRing_.radiusForRing(ringIndex);
-    if (selection->kind == RingLevelUpgradeKind::Speed) {
-        beforeValue = spellRing_.angularSpeedForRing(ringIndex);
-    } else if (selection->kind == RingLevelUpgradeKind::WeightLimit) {
-        beforeValue = spellRing_.maxEquippedWeightForRing(ringIndex);
-    }
-
-    RingLevelUpgradePoints& points = levelRingUpgradePoints_[static_cast<std::size_t>(ringIndex)];
-    ++ringLevelUpgradePointRef(points, selection->kind);
-    levels_.finishChoice();
-    applyPermanentUpgrades();
-
-    float afterValue = spellRing_.radiusForRing(ringIndex);
-    if (selection->kind == RingLevelUpgradeKind::Speed) {
-        afterValue = spellRing_.angularSpeedForRing(ringIndex);
-    } else if (selection->kind == RingLevelUpgradeKind::WeightLimit) {
-        afterValue = spellRing_.maxEquippedWeightForRing(ringIndex);
-    }
-    openUiResultDialog(levelUpResultDialog_, "レベルアップ", levelUpResultLines(*selection, beforeValue, afterValue));
+    applyLevelUpSelection(*selection);
 }
 
 float Game::effectiveInitialRingRadiusForRing(int ringIndex, int levelRadiusPoints) const
@@ -1905,6 +1923,49 @@ bool Game::currentStageIsRoguelike() const
     return isRoguelikeStageDefinition(currentStageDefinition_);
 }
 
+int Game::unlockedRingCount() const
+{
+    return std::clamp(unlockedRingCount_, 1, SpellRingCount);
+}
+
+void Game::clampActiveRingToUnlocked()
+{
+    const int ringCount = unlockedRingCount();
+    const int activeRing = spellRing_.activeRingIndex();
+    if (activeRing < ringCount) {
+        return;
+    }
+
+    const int targetRing = std::clamp(activeRing, 0, ringCount - 1);
+    spellRing_.switchActiveRing(targetRing - activeRing);
+}
+
+void Game::setUnlockedRingCount(int count)
+{
+    unlockedRingCount_ = std::clamp(count, 1, SpellRingCount);
+    clampActiveRingToUnlocked();
+}
+
+bool Game::unlockRingsForCurrentStageClear()
+{
+    int storyStageNumber = currentStage_ + 1;
+    int sortedStoryStageNumber = 0;
+    for (const StageDefinition& stage : stageCatalog_.getStagesSortedByDisplayOrder()) {
+        if (isRoguelikeStageDefinition(stage)) {
+            continue;
+        }
+        ++sortedStoryStageNumber;
+        if (stage.id == currentStageId_) {
+            storyStageNumber = sortedStoryStageNumber;
+            break;
+        }
+    }
+
+    const int before = unlockedRingCount();
+    setUnlockedRingCount(std::max(before, storyStageNumber + 1));
+    return unlockedRingCount() > before;
+}
+
 std::string Game::currentStageBossCaptureObjectId() const
 {
     if (currentStageId_.empty()) {
@@ -1961,6 +2022,7 @@ void Game::applyDebugStageUnlockState(int unlockedStoryStages)
     }
 
     unlockedStages_ = std::clamp(unlockedStoryStages, 1, maxStoryStageCount);
+    setUnlockedRingCount(unlockedStages_);
     storyFlags_.erase(
         std::remove_if(storyFlags_.begin(), storyFlags_.end(), isStageClearStoryFlag),
         storyFlags_.end());
@@ -2134,6 +2196,7 @@ void Game::enterGameOver()
 void Game::markCurrentStageCleared()
 {
     unlockedStages_ = std::max(unlockedStages_, currentStage_ + 2);
+    unlockRingsForCurrentStageClear();
     addStoryFlag("stage_clear_" + std::to_string(currentStage_ + 1));
 }
 
@@ -2559,8 +2622,18 @@ void Game::switchActiveRingWithLog(int delta)
         return;
     }
 
+    clampActiveRingToUnlocked();
+    const int ringCount = unlockedRingCount();
+    if (ringCount <= 1) {
+        return;
+    }
+
     const int previousRing = spellRing_.activeRingIndex();
-    spellRing_.switchActiveRing(delta);
+    int targetRing = (previousRing + delta) % ringCount;
+    if (targetRing < 0) {
+        targetRing += ringCount;
+    }
+    spellRing_.switchActiveRing(targetRing - previousRing);
     const int currentRing = spellRing_.activeRingIndex();
     if (currentRing != previousRing && mode_ == ScreenMode::Playing) {
         pushDungeonLog("Ring " + std::to_string(currentRing + 1) + " に切替", "ring_switch");

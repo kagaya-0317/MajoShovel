@@ -78,12 +78,31 @@ enum class GameTestIconKind {
     World,
 };
 
+enum class GameTestMapClueKind {
+    UnknownLight,
+    WarpGlow,
+};
+
 struct GameTestRunStats {
     float elapsedSeconds = 0.0f;
     int defeatedEnemies = 0;
     int dugTiles = 0;
     int acquiredItems = 0;
     int acquiredObjectItems = 0;
+};
+
+struct GameTestPlayerStateSnapshot {
+    std::string id;
+    double value = 0.0;
+    double duration = 0.0;
+};
+
+struct GameTestPlayerModifierSnapshot {
+    std::string id;
+    std::string stat;
+    double multiplier = 1.0;
+    double flat = 0.0;
+    double duration = 0.0;
 };
 
 struct GameTestPlayerSnapshot {
@@ -94,10 +113,18 @@ struct GameTestPlayerSnapshot {
     int hp = 0;
     int maxHp = 0;
     int level = 1;
+    std::vector<GameTestPlayerStateSnapshot> states;
+    std::vector<GameTestPlayerModifierSnapshot> modifiers;
 };
 
 struct GameTestEnemySnapshot {
     Vec2 position{};
+    float radius = 10.0f;
+    float jumpLandingRadius = 0.0f;
+    float countdownExplodeRadius = 0.0f;
+    int contactAttackPower = 0;
+    float contactDamageMultiplier = 1.0f;
+    bool ranged = false;
     bool boss = false;
 };
 
@@ -114,6 +141,7 @@ struct GameTestRingItemSnapshot {
     int damage = 0;
     int digPower = 0;
     float hitRadius = 0.0f;
+    float lightRadius = 0.0f;
     int durability = -1;
     int maxDurability = -1;
     int rarity = 0;
@@ -125,10 +153,39 @@ struct GameTestRingItemSnapshot {
     int durabilityBonus = 0;
     bool protectionEnabled = false;
     bool broken = false;
+    bool canRepair = false;
+    int repairMoneyCost = 0;
+    bool canEnhanceAttack = false;
+    int enhanceAttackMoneyCost = 0;
+    int enhanceAttackOreCost = 0;
+    bool canEnhanceDig = false;
+    int enhanceDigMoneyCost = 0;
+    int enhanceDigOreCost = 0;
+};
+
+struct GameTestRingLoadoutSnapshot {
+    int ringIndex = 0;
+    float radius = 0.0f;
+    float angularSpeed = 0.0f;
+    float weight = 0.0f;
+    float maxWeight = 0.0f;
+    int itemCount = 0;
+    int maxItemCount = 0;
+    int bestDamage = 0;
+    int bestDigPower = 0;
+    float bestHitRadius = 0.0f;
+    float bestLightRadius = 0.0f;
+    int radiusUpgradePoints = 0;
+    int speedUpgradePoints = 0;
+    int weightLimitUpgradePoints = 0;
+    bool hasCombatTool = false;
+    bool hasDigTool = false;
+    bool hasLightTool = false;
 };
 
 struct GameTestRingSnapshot {
     int activeRingIndex = 0;
+    int unlockedRingCount = 1;
     float activeRadius = 0.0f;
     float activeAngularSpeed = 0.0f;
     float activeWeight = 0.0f;
@@ -142,8 +199,11 @@ struct GameTestRingSnapshot {
     int bestDamage = 0;
     int bestDigPower = 0;
     float bestHitRadius = 0.0f;
+    float bestLightRadius = 0.0f;
     bool hasCombatTool = false;
     bool hasDigTool = false;
+    bool hasLightTool = false;
+    std::vector<GameTestRingLoadoutSnapshot> rings;
     std::vector<GameTestRingItemSnapshot> items;
 };
 
@@ -151,6 +211,15 @@ struct GameTestWarpPointSnapshot {
     Vec2 position{};
     int index = 0;
     bool discovered = false;
+    bool visible = false;
+};
+
+struct GameTestMapClueSnapshot {
+    Vec2 position{};
+    GameTestMapClueKind kind = GameTestMapClueKind::UnknownLight;
+    bool visibleOnMinimap = false;
+    bool alreadyVisited = false;
+    float confidence = 0.0f;
 };
 
 struct GameTestChestSnapshot {
@@ -213,6 +282,17 @@ struct GameTestPathGridSnapshot {
     std::vector<GameTestCollisionRectSnapshot> objectBlockers;
 };
 
+struct GameTestSnapshotOptions {
+    bool includePathGrid = true;
+};
+
+struct GameTestUseEffectSnapshot {
+    std::string target;
+    std::string effect;
+    double value = 0.0;
+    double duration = 0.0;
+};
+
 struct GameTestObjectEntrySnapshot {
     GameTestInventoryLocation location = GameTestInventoryLocation::Backpack;
     GameTestObjectEntryKind kind = GameTestObjectEntryKind::Stack;
@@ -222,6 +302,7 @@ struct GameTestObjectEntrySnapshot {
     std::string category;
     std::string damageType;
     std::vector<std::string> tags;
+    std::vector<GameTestUseEffectSnapshot> useEffects;
     int count = 1;
     int rarity = 0;
     int price = 0;
@@ -229,6 +310,7 @@ struct GameTestObjectEntrySnapshot {
     int attackPower = 0;
     int digPower = 0;
     float staffEquipScore = 0.0f;
+    float lightRadius = 0.0f;
     int durability = -1;
     double weightKg = 0.0;
     int currentDurability = -1;
@@ -253,6 +335,7 @@ struct GameTestObjectEntrySnapshot {
     bool canEnhanceDig = false;
     int enhanceDigMoneyCost = 0;
     int enhanceDigOreCost = 0;
+    std::vector<int> addableRingIndices;
 };
 
 struct GameTestInventorySnapshot {
@@ -292,6 +375,11 @@ struct GameTestBaseSnapshot {
     std::vector<GameTestUpgradeSnapshot> upgrades;
 };
 
+struct GameTestLevelUpSnapshot {
+    bool choiceActive = false;
+    int pendingChoices = 0;
+};
+
 struct GameTestDungeonSnapshot {
     bool active = false;
     std::uint32_t seed = 0;
@@ -299,6 +387,7 @@ struct GameTestDungeonSnapshot {
     Vec2 goalWorld{};
     std::vector<Vec2> mainPathWorldPoints;
     std::vector<GameTestWarpPointSnapshot> warpPoints;
+    std::vector<GameTestMapClueSnapshot> mapClues;
     Vec2 bossSpawnPoint{};
     bool hasBossSpawnPoint = false;
     bool bossSpawned = false;
@@ -334,6 +423,7 @@ struct GameTestSnapshot {
     GameTestPathGridSnapshot pathGrid;
     GameTestInventorySnapshot inventory;
     GameTestBaseSnapshot base;
+    GameTestLevelUpSnapshot levelUp;
     GameTestRunStats runStats;
     int money = 0;
     int totalMaterials = 0;

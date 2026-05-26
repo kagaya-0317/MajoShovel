@@ -156,7 +156,7 @@ public:
     void update(const Input& input, const Time& time);
     void render(Renderer& renderer, const Time& time);
     bool executeDebugCommand(std::string_view command);
-    GameTestSnapshot makeTestSnapshot() const;
+    GameTestSnapshot makeTestSnapshot(GameTestSnapshotOptions options = {}) const;
     GameTestActionResult applyTestAction(const GameTestAction& action);
     void setAutoSimulationIntentOverlay(bool active, std::vector<autosim::AutoSimulationIntent> history);
     void setAutoSimulationDebugOverlay(bool active, autosim::AutoSimulationDebugSnapshot debug);
@@ -795,6 +795,7 @@ private:
     LevelGainResult gainPlayerXp(int amount);
     void openLevelUpChoice(ScreenMode returnMode);
     void updateLevelUpScreen(const Input& input, UiContext& ui, float dt);
+    bool applyLevelUpSelection(RingLevelUpgradeSelection selection);
     void refreshEquipmentModifiers();
     float effectiveInitialRingRadiusForRing(int ringIndex, int levelRadiusPoints) const;
     float effectiveInitialRingSpeedForRing(int ringIndex, int levelSpeedPoints) const;
@@ -1182,6 +1183,10 @@ private:
         Renderer& renderer,
         const std::vector<LightSource>& extraLights) const;
     void renderRewardNodes(Renderer& renderer, const std::vector<LightSource>& extraLights) const;
+    int unlockedRingCount() const;
+    void setUnlockedRingCount(int count);
+    void clampActiveRingToUnlocked();
+    bool unlockRingsForCurrentStageClear();
     void markCurrentStageCleared();
     void enterStageClear();
     void beginFinalBossEndingSequence();
@@ -1660,6 +1665,7 @@ private:
     std::string currentStageId_ = "stage_01_stardust";
     StageDefinition currentStageDefinition_{};
     int unlockedStages_ = 1;
+    int unlockedRingCount_ = 1;
     int unlockedWarpPointCount_ = 0;
     Vec2 latestWarpPointPosition_{};
     bool hasLatestWarpPointPosition_ = false;

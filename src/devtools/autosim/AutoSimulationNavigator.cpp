@@ -26,6 +26,11 @@ Vec2 viewportCenter(const GameTestSnapshot& snapshot)
     };
 }
 
+float dot(Vec2 a, Vec2 b)
+{
+    return a.x * b.x + a.y * b.y;
+}
+
 } // namespace
 
 void AutoSimulationNavigator::reset()
@@ -75,7 +80,16 @@ InputAutomationFrame AutoSimulationNavigator::makeInput(
     if (plan.rangeControl && aimDistance > 0.0001f) {
         const Vec2 aimDirection = toAim * (1.0f / aimDistance);
         if (aimDistance < plan.desiredRangeMin) {
-            moveDirection = aimDirection * -1.0f;
+            if (plan.goal == AutoSimulationGoal::Combat &&
+                plan.alignMoveTargetInRange &&
+                targetDistanceSq > arriveDistance * arriveDistance) {
+                const Vec2 routeDirection = normalize(toTarget);
+                moveDirection = dot(routeDirection, aimDirection) <= 0.18f
+                    ? routeDirection
+                    : aimDirection * -1.0f;
+            } else {
+                moveDirection = aimDirection * -1.0f;
+            }
         } else if (aimDistance > plan.desiredRangeMax) {
             moveDirection = targetDistanceSq > arriveDistance * arriveDistance ? normalize(toTarget) : aimDirection;
         } else if (plan.strafe) {

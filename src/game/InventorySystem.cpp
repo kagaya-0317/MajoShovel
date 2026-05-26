@@ -582,6 +582,92 @@ bool InventorySystem::removeObjectItemCount(std::string_view objectId, int count
     return false;
 }
 
+bool InventorySystem::useObjectStackById(
+    std::string_view objectId,
+    Player& player,
+    const EffectDispatcher& effectDispatcher,
+    MagicSystem* magic,
+    std::vector<EffectDiscoveryEvent>* discoveryEvents,
+    const EncyclopediaSystem* encyclopedia,
+    std::string* outStatus)
+{
+    if (objectId.empty()) {
+        status_ = "アイテム未指定";
+        if (outStatus != nullptr) {
+            *outStatus = status_;
+        }
+        return false;
+    }
+
+    for (int i = 0; i < static_cast<int>(objectStacks_.size()); ++i) {
+        const InventoryObjectStack& stack = objectStacks_[static_cast<std::size_t>(i)];
+        if (stack.objectId != objectId || stack.count <= 0) {
+            continue;
+        }
+
+        const bool used = useObjectStackAtIndex(
+            i,
+            player,
+            effectDispatcher,
+            magic,
+            discoveryEvents,
+            encyclopedia);
+        if (outStatus != nullptr) {
+            *outStatus = status_;
+        }
+        return used;
+    }
+
+    status_ = "アイテムがありません";
+    if (outStatus != nullptr) {
+        *outStatus = status_;
+    }
+    return false;
+}
+
+bool InventorySystem::useObjectInstanceById(
+    std::string_view instanceId,
+    Player& player,
+    const EffectDispatcher& effectDispatcher,
+    MagicSystem* magic,
+    std::vector<EffectDiscoveryEvent>* discoveryEvents,
+    const EncyclopediaSystem* encyclopedia,
+    std::string* outStatus)
+{
+    if (instanceId.empty()) {
+        status_ = "アイテム未指定";
+        if (outStatus != nullptr) {
+            *outStatus = status_;
+        }
+        return false;
+    }
+
+    for (int i = 0; i < static_cast<int>(objectInstances_.size()); ++i) {
+        const InventoryObjectInstance& objectInstance = objectInstances_[static_cast<std::size_t>(i)];
+        if (objectInstance.instance.instanceId != instanceId) {
+            continue;
+        }
+
+        const bool used = useObjectInstanceAtIndex(
+            i,
+            player,
+            effectDispatcher,
+            magic,
+            discoveryEvents,
+            encyclopedia);
+        if (outStatus != nullptr) {
+            *outStatus = status_;
+        }
+        return used;
+    }
+
+    status_ = "アイテムがありません";
+    if (outStatus != nullptr) {
+        *outStatus = status_;
+    }
+    return false;
+}
+
 bool InventorySystem::removeObjectInstance(std::string_view instanceId)
 {
     if (instanceId.empty()) {
@@ -1932,30 +2018,35 @@ bool InventorySystem::addObjectInstanceSelectionToRing(SpellRingSystem& spellRin
     return true;
 }
 
-bool InventorySystem::useObjectSelection(
+bool InventorySystem::useObjectStackAtIndex(
+    int stackIndex,
     Player& player,
     const EffectDispatcher& effectDispatcher,
     MagicSystem* magic,
     std::vector<EffectDiscoveryEvent>* discoveryEvents,
     const EncyclopediaSystem* encyclopedia)
 {
-    const int index = selectedShortcutIndex();
-    InventoryObjectStack* selected = objectStackAtScreenIndex(index);
-    if (selected == nullptr || selected->count <= 0) {
+    if (stackIndex < 0 || stackIndex >= static_cast<int>(objectStacks_.size())) {
         status_ = "Objects DB item not selected";
         return false;
     }
-    if (isStaffObject(selected->item)) {
+
+    InventoryObjectStack& selected = objectStacks_[static_cast<std::size_t>(stackIndex)];
+    if (selected.count <= 0) {
+        status_ = "Objects DB item not selected";
+        return false;
+    }
+    if (isStaffObject(selected.item)) {
         status_ = "杖は装備用です";
         return false;
     }
-    if (selected->item.normalEffects.empty()) {
+    if (selected.item.normalEffects.empty()) {
         status_ = "通常効果なし";
         return false;
     }
 
     bool hasImplementedEffect = false;
-    for (const EffectSpec& spec : selected->item.normalEffects) {
+    for (const EffectSpec& spec : selected.item.normalEffects) {
         for (const std::string& effect : spec.effects) {
             if (effectDispatcher.hasHandler(effect)) {
                 hasImplementedEffect = true;
@@ -1976,7 +2067,7 @@ bool InventorySystem::useObjectSelection(
         context.position = player.position;
         context.triggerType = EffectTriggerType::NormalUse;
         context.logUnimplementedEffects = true;
-        effectDispatcher.dispatchNormalEffects(selected->item, context);
+        effectDispatcher.dispatchNormalEffects(selected.item, context);
         status_ = "未実装効果";
         return false;
     }
@@ -1990,11 +2081,11 @@ bool InventorySystem::useObjectSelection(
     context.position = player.position;
     context.triggerType = EffectTriggerType::NormalUse;
     context.logUnimplementedEffects = true;
-    effectDispatcher.dispatchNormalEffects(selected->item, context);
+    effectDispatcher.dispatchNormalEffects(selected.item, context);
 
     if (player.hp == beforeHp && beforeHp >= player.maxHp) {
         bool healOnly = true;
-        for (const EffectSpec& spec : selected->item.normalEffects) {
+        for (const EffectSpec& spec : selected.item.normalEffects) {
             for (const std::string& effect : spec.effects) {
                 if (effect != "heal") {
                     healOnly = false;
@@ -2011,37 +2102,61 @@ bool InventorySystem::useObjectSelection(
         }
     }
 
-    status_ = "使用: " + selected->item.name;
-    --selected->count;
-    if (selected->count <= 0) {
-        const int objectIndex = stackIndexAtScreenIndex(index);
-        removePackedSlotAtPackedIndex(objectIndex);
-        objectStacks_.erase(objectStacks_.begin() + objectIndex);
+    status_ = "使用: " + selected.item.name;
+    --selected.count;
+    if (selected.count <= 0) {
+        removePackedSlotAtPackedIndex(stackIndex);
+        objectStacks_.erase(objectStacks_.begin() + stackIndex);
     }
     return true;
 }
 
-bool InventorySystem::useObjectInstanceSelection(
+bool InventorySystem::useObjectSelection(
     Player& player,
     const EffectDispatcher& effectDispatcher,
     MagicSystem* magic,
     std::vector<EffectDiscoveryEvent>* discoveryEvents,
     const EncyclopediaSystem* encyclopedia)
 {
-    InventoryObjectInstance* selected = selectedObjectInstance();
-    if (selected == nullptr) {
+    const int index = selectedShortcutIndex();
+    const int objectIndex = stackIndexAtScreenIndex(index);
+    if (objectIndex < 0) {
+        status_ = "Objects DB item not selected";
+        return false;
+    }
+
+    return useObjectStackAtIndex(
+        objectIndex,
+        player,
+        effectDispatcher,
+        magic,
+        discoveryEvents,
+        encyclopedia);
+}
+
+bool InventorySystem::useObjectInstanceAtIndex(
+    int instanceIndex,
+    Player& player,
+    const EffectDispatcher& effectDispatcher,
+    MagicSystem* magic,
+    std::vector<EffectDiscoveryEvent>* discoveryEvents,
+    const EncyclopediaSystem* encyclopedia)
+{
+    if (instanceIndex < 0 || instanceIndex >= static_cast<int>(objectInstances_.size())) {
         status_ = "個体アイテム未選択";
         return false;
     }
-    if (selected->instance.isBroken) {
+
+    InventoryObjectInstance& selected = objectInstances_[static_cast<std::size_t>(instanceIndex)];
+    if (selected.instance.isBroken) {
         status_ = "壊れています";
         return false;
     }
-    if (isStaffObject(selected->item)) {
+    if (isStaffObject(selected.item)) {
         status_ = "杖は装備用です";
         return false;
     }
-    if (selected->item.normalEffects.empty()) {
+    if (selected.item.normalEffects.empty()) {
         status_ = "通常効果なし";
         return false;
     }
@@ -2054,10 +2169,33 @@ bool InventorySystem::useObjectInstanceSelection(
     context.position = player.position;
     context.triggerType = EffectTriggerType::NormalUse;
     context.logUnimplementedEffects = true;
-    effectDispatcher.dispatchNormalEffects(selected->item, context);
-    effectDispatcher.dispatch(selected->instance.addedEffects, context);
-    status_ = "使用: " + selected->item.name;
+    effectDispatcher.dispatchNormalEffects(selected.item, context);
+    effectDispatcher.dispatch(selected.instance.addedEffects, context);
+    status_ = "使用: " + selected.item.name;
     return true;
+}
+
+bool InventorySystem::useObjectInstanceSelection(
+    Player& player,
+    const EffectDispatcher& effectDispatcher,
+    MagicSystem* magic,
+    std::vector<EffectDiscoveryEvent>* discoveryEvents,
+    const EncyclopediaSystem* encyclopedia)
+{
+    const int index = selectedShortcutIndex();
+    const int instanceIndex = instanceIndexAtScreenIndex(index);
+    if (instanceIndex < 0) {
+        status_ = "個体アイテム未選択";
+        return false;
+    }
+
+    return useObjectInstanceAtIndex(
+        instanceIndex,
+        player,
+        effectDispatcher,
+        magic,
+        discoveryEvents,
+        encyclopedia);
 }
 
 bool InventorySystem::useShortcutSelection(

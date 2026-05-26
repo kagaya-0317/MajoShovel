@@ -7096,7 +7096,10 @@ std::vector<CollisionRect> Game::solidObjectCollisionRects() const
     rects.reserve(chestNodes_.size() + crateNodes_.size());
 
     for (const ChestNode& node : chestNodes_) {
-        if (!node.opened && (node.visibility != PlacementVisibility::Exposed || !node.revealed)) {
+        if (node.opened) {
+            continue;
+        }
+        if (node.visibility != PlacementVisibility::Exposed || !node.revealed) {
             continue;
         }
         rects.push_back(collisionRectFromCenter(tileWorldCenter(node.tile), ChestCollisionSize));

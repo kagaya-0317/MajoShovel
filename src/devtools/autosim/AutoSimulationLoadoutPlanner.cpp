@@ -1,6 +1,8 @@
 ﻿#include "devtools/autosim/AutoSimulationLoadoutPlanner.hpp"
 
 #include <algorithm>
+#include <limits>
+#include <string>
 #include <string_view>
 #include <utility>
 #include <vector>
@@ -11,20 +13,27 @@ namespace {
 
 constexpr float MeaningfulDigScore = 70.0f;
 constexpr float MeaningfulCombatScore = 55.0f;
+constexpr float MeaningfulLightRadius = 140.0f;
+constexpr float MeaningfulLightScore = 70.0f;
 constexpr float UsefulEquipScore = 58.0f;
 constexpr float ReplaceGainScore = 26.0f;
+constexpr float BrokenProtectedReplaceGainScore = 6.0f;
 constexpr float StaffReplaceGainScore = 8.0f;
 
 struct LoadoutProfile {
     float digWeight = 1.0f;
     float combatWeight = 1.0f;
+    float lightWeight = 1.0f;
+    float utilityWeight = 1.0f;
     bool missingDig = true;
     bool missingCombat = true;
+    bool missingLight = true;
 };
 
 struct LoadoutScore {
     float dig = 0.0f;
     float combat = 0.0f;
+    float light = 0.0f;
     float utility = 0.0f;
     float total = 0.0f;
 };
@@ -36,11 +45,18 @@ struct RingChoice {
 
 bool canEquipFromBackpack(const GameTestObjectEntrySnapshot& item)
 {
-    return !item.objectId.empty() &&
+    return item.location == GameTestInventoryLocation::Backpack &&
+        !item.objectId.empty() &&
         !item.equipped &&
         !item.broken &&
         item.category != "杖" &&
-        (item.attackPower + item.attackBonus > 0 || item.digPower + item.digBonus > 0);
+        (item.attackPower + item.attackBonus > 0 || item.digPower + item.digBonus > 0 || item.lightRadius > 0.0f);
+}
+
+bool canAddToRing(const GameTestObjectEntrySnapshot& item, int ringIndex)
+{
+    return std::find(item.addableRingIndices.begin(), item.addableRingIndices.end(), ringIndex) !=
+        item.addableRingIndices.end();
 }
 
 bool hasTag(const std::vector<std::string>& tags, std::string_view tag)
@@ -181,6 +197,23 @@ float combatScore(
     return std::max(0.0f, score);
 }
 
+float lightScore(
+    float lightRadius,
+    int durability,
+    int maxDurability,
+    bool broken,
+    double weightKg)
+{
+    if (lightRadius <= 0.0f) {
+        return 0.0f;
+    }
+
+    float score = 34.0f + lightRadius * 0.42f;
+    score *= durabilityMultiplier(durability, maxDurability, broken);
+    score -= static_cast<float>(std::max(0.0, weightKg)) * 3.2f;
+    return std::max(0.0f, score);
+}
+
 float utilityScore(
     int rarity,
     int price,
@@ -194,9 +227,6 @@ float utilityScore(
     if (protectionEnabled) {
         score += 8.0f;
     }
-    if (hasTag(tags, "light_source")) {
-        score += 7.0f;
-    }
     if (hasTag(tags, "hidden_detection") || hasTag(tags, "treasure_detection") || hasTag(tags, "vacuum")) {
         score += 8.0f;
     }
@@ -205,7 +235,11 @@ float utilityScore(
 
 LoadoutScore makeTotalScore(LoadoutScore score, const LoadoutProfile& profile)
 {
-    score.total = score.dig * profile.digWeight + score.combat * profile.combatWeight + score.utility * 0.35f;
+    score.total =
+        score.dig * profile.digWeight +
+        score.combat * profile.combatWeight +
+        score.light * profile.lightWeight +
+        score.utility * profile.utilityWeight * 0.35f;
     return score;
 }
 
@@ -231,6 +265,12 @@ LoadoutScore scoreBackpackItem(const GameTestObjectEntrySnapshot& item, const Lo
         item.category,
         item.damageType,
         item.tags);
+    score.light = lightScore(
+        item.lightRadius,
+        item.currentDurability,
+        item.maxDurability,
+        item.broken,
+        item.weightKg);
     score.utility = utilityScore(item.rarity, item.price, item.enhanceLevel, item.protectionEnabled, item.tags);
     return makeTotalScore(score, profile);
 }
@@ -257,37 +297,103 @@ LoadoutScore scoreRingItem(const GameTestRingItemSnapshot& item, const LoadoutPr
         item.category,
         item.damageType,
         item.tags);
+    score.light = lightScore(
+        item.lightRadius,
+        item.durability,
+        item.maxDurability,
+        item.broken,
+        item.weightKg);
     score.utility = utilityScore(item.rarity, item.price, item.enhanceLevel, item.protectionEnabled, item.tags);
     return makeTotalScore(score, profile);
 }
 
 LoadoutScore scoreRingItemRaw(const GameTestRingItemSnapshot& item)
 {
-    const LoadoutProfile neutralProfile{1.0f, 1.0f, false, false};
+    const LoadoutProfile neutralProfile;
     return scoreRingItem(item, neutralProfile);
 }
 
-LoadoutProfile makeProfile(const GameTestSnapshot& snapshot)
+bool unknownWarpRemaining(const GameTestSnapshot& snapshot)
+{
+    const int knownWarps = std::max(snapshot.dungeon.discoveredWarpPoints, snapshot.dungeon.unlockedWarpPoints);
+    return knownWarps < static_cast<int>(snapshot.dungeon.warpPoints.size());
+}
+
+bool bossPressure(const GameTestSnapshot& snapshot)
+{
+    if (snapshot.dungeon.bossSpawned || snapshot.dungeon.hasBossSpawnPoint) {
+        return true;
+    }
+    return std::any_of(snapshot.enemies.begin(), snapshot.enemies.end(), [](const GameTestEnemySnapshot& enemy) {
+        return enemy.boss;
+    });
+}
+
+bool hardDigWorkNearby(const GameTestSnapshot& snapshot)
+{
+    return std::any_of(snapshot.nearbyMineTiles.begin(), snapshot.nearbyMineTiles.end(), [](const GameTestMineTileSnapshot& tile) {
+        return tile.diggable &&
+            (tile.terrainKind == GameTestTerrainKind::Rock ||
+                tile.terrainKind == GameTestTerrainKind::HardRock ||
+                tile.terrainAttribute == GameTestTerrainAttribute::Hard);
+    });
+}
+
+float hpRatio(const GameTestSnapshot& snapshot)
+{
+    if (snapshot.player.maxHp <= 0) {
+        return 1.0f;
+    }
+    return std::clamp(
+        static_cast<float>(snapshot.player.hp) / static_cast<float>(snapshot.player.maxHp),
+        0.0f,
+        1.0f);
+}
+
+LoadoutProfile makeProfile(const GameTestSnapshot& snapshot, const GameTestRingLoadoutSnapshot& ring)
 {
     float bestDig = 0.0f;
     float bestCombat = 0.0f;
+    float bestLightRadius = 0.0f;
     for (const GameTestRingItemSnapshot& item : snapshot.ring.items) {
-        if (item.ringIndex != snapshot.ring.activeRingIndex || item.broken) {
+        if (item.ringIndex != ring.ringIndex || item.broken) {
             continue;
         }
         const LoadoutScore score = scoreRingItemRaw(item);
         bestDig = std::max(bestDig, score.dig);
         bestCombat = std::max(bestCombat, score.combat);
+        bestLightRadius = std::max(bestLightRadius, item.lightRadius);
     }
 
     LoadoutProfile profile;
     profile.missingDig = bestDig < MeaningfulDigScore;
     profile.missingCombat = bestCombat < MeaningfulCombatScore;
+    profile.missingLight = bestLightRadius < MeaningfulLightRadius;
     profile.digWeight = 1.15f + (snapshot.nearbyMineTiles.empty() ? 0.0f : 0.45f) + (profile.missingDig ? 0.75f : 0.0f);
     profile.combatWeight = 1.05f + (snapshot.enemies.empty() ? 0.0f : 0.60f) + (profile.missingCombat ? 0.55f : 0.0f);
+    profile.lightWeight = 0.60f + (profile.missingLight ? 1.30f : 0.0f);
+    if (snapshot.screenMode == GameTestScreenMode::Playing) {
+        profile.lightWeight += 0.20f;
+    }
     if (snapshot.screenMode == GameTestScreenMode::Base) {
         profile.digWeight += 0.20f;
         profile.combatWeight += 0.15f;
+        profile.lightWeight += 0.15f;
+    }
+    if (unknownWarpRemaining(snapshot)) {
+        profile.lightWeight += 0.34f;
+        profile.digWeight += 0.12f;
+    }
+    if (hardDigWorkNearby(snapshot) || !snapshot.ring.hasDigTool) {
+        profile.digWeight += 0.32f;
+    }
+    if (bossPressure(snapshot)) {
+        profile.combatWeight += 0.38f;
+        profile.utilityWeight += 0.08f;
+    }
+    if (!snapshot.enemies.empty() && hpRatio(snapshot) <= 0.55f) {
+        profile.combatWeight += 0.16f;
+        profile.utilityWeight += 0.08f;
     }
     return profile;
 }
@@ -296,19 +402,20 @@ bool usefulCandidate(const LoadoutScore& score, const LoadoutProfile& profile)
 {
     return score.total >= UsefulEquipScore ||
         (profile.missingDig && score.dig > 0.0f) ||
-        (profile.missingCombat && score.combat > 0.0f);
+        (profile.missingCombat && score.combat > 0.0f) ||
+        (profile.missingLight && score.light > 0.0f);
 }
 
-bool fitsWeight(const GameTestSnapshot& snapshot, double removeWeightKg, double addWeightKg)
+bool fitsWeight(const GameTestRingLoadoutSnapshot& ring, double removeWeightKg, double addWeightKg)
 {
-    if (snapshot.ring.activeMaxWeight <= 0.0f) {
+    if (ring.maxWeight <= 0.0f) {
         return true;
     }
     const float nextWeight =
-        snapshot.ring.activeWeight -
+        ring.weight -
         static_cast<float>(std::max(0.0, removeWeightKg)) +
         static_cast<float>(std::max(0.0, addWeightKg));
-    return nextWeight <= snapshot.ring.activeMaxWeight + 0.001f;
+    return nextWeight <= ring.maxWeight + 0.001f;
 }
 
 bool rolePreservedByReplacement(
@@ -332,19 +439,75 @@ bool rolePreservedByReplacement(
             return false;
         }
     }
+    if (removed.score.light >= MeaningfulLightScore && candidateScore.light < MeaningfulLightScore) {
+        const bool hasOtherLight = std::any_of(ringChoices.begin(), ringChoices.end(), [&removed](const RingChoice& choice) {
+            return choice.item != removed.item && choice.score.light >= MeaningfulLightScore;
+        });
+        if (!hasOtherLight) {
+            return false;
+        }
+    }
     return true;
 }
 
+bool replacementRestoresMissingRole(const LoadoutProfile& profile, const LoadoutScore& candidateScore)
+{
+    return (profile.missingDig && candidateScore.dig > 0.0f) ||
+        (profile.missingCombat && candidateScore.combat > 0.0f) ||
+        (profile.missingLight && candidateScore.light > 0.0f);
+}
+
+bool removableForReplacement(
+    const RingChoice& target,
+    const LoadoutProfile& profile,
+    const LoadoutScore& candidateScore)
+{
+    if (target.item == nullptr) {
+        return false;
+    }
+    if (!target.item->protectionEnabled) {
+        return true;
+    }
+    return target.item->broken && replacementRestoresMissingRole(profile, candidateScore);
+}
+
+float replacementGainThreshold(
+    const RingChoice& target,
+    const LoadoutProfile& profile,
+    const LoadoutScore& candidateScore)
+{
+    if (target.item != nullptr &&
+        target.item->protectionEnabled &&
+        target.item->broken &&
+        replacementRestoresMissingRole(profile, candidateScore)) {
+        return BrokenProtectedReplaceGainScore;
+    }
+    return ReplaceGainScore;
+}
+
+std::string loadoutReason(std::string_view prefix, const LoadoutScore& score)
+{
+    std::string reason(prefix);
+    if (score.light >= score.dig && score.light >= score.combat) {
+        reason += "_light_radius";
+    } else if (score.dig >= score.combat) {
+        reason += "_dig_efficiency";
+    } else {
+        reason += "_combat_efficiency";
+    }
+    return reason;
+}
+
 GameTestAction makeEquipAction(
-    const GameTestSnapshot& snapshot,
     const GameTestObjectEntrySnapshot& item,
+    int ringIndex,
     std::string reason)
 {
     GameTestAction action;
     action.kind = GameTestActionKind::EquipBackpackItemToRing;
     action.objectId = item.objectId;
     action.instanceId = item.instanceId;
-    action.ringIndex = snapshot.ring.activeRingIndex;
+    action.ringIndex = ringIndex;
     action.reason = std::move(reason) + " " + item.objectId;
     return action;
 }
@@ -396,6 +559,26 @@ std::optional<GameTestAction> chooseStaffAction(const GameTestSnapshot& snapshot
     return action;
 }
 
+GameTestRingLoadoutSnapshot fallbackActiveRing(const GameTestSnapshot& snapshot)
+{
+    GameTestRingLoadoutSnapshot ring;
+    ring.ringIndex = std::max(0, snapshot.ring.activeRingIndex);
+    ring.radius = snapshot.ring.activeRadius;
+    ring.angularSpeed = snapshot.ring.activeAngularSpeed;
+    ring.weight = snapshot.ring.activeWeight;
+    ring.maxWeight = snapshot.ring.activeMaxWeight;
+    ring.itemCount = snapshot.ring.activeItemCount;
+    ring.maxItemCount = snapshot.ring.activeMaxItemCount;
+    ring.bestDamage = snapshot.ring.bestDamage;
+    ring.bestDigPower = snapshot.ring.bestDigPower;
+    ring.bestHitRadius = snapshot.ring.bestHitRadius;
+    ring.bestLightRadius = snapshot.ring.bestLightRadius;
+    ring.hasCombatTool = snapshot.ring.hasCombatTool;
+    ring.hasDigTool = snapshot.ring.hasDigTool;
+    ring.hasLightTool = snapshot.ring.hasLightTool;
+    return ring;
+}
+
 } // namespace
 
 std::optional<GameTestAction> AutoSimulationLoadoutPlanner::chooseAction(const GameTestSnapshot& snapshot) const
@@ -411,84 +594,92 @@ std::optional<GameTestAction> AutoSimulationLoadoutPlanner::chooseAction(const G
         return staffAction;
     }
 
-    const LoadoutProfile profile = makeProfile(snapshot);
-    std::vector<RingChoice> ringChoices;
-    for (const GameTestRingItemSnapshot& item : snapshot.ring.items) {
-        if (item.ringIndex != snapshot.ring.activeRingIndex || item.broken || item.objectId.empty()) {
-            continue;
-        }
-        ringChoices.push_back(RingChoice{&item, scoreRingItem(item, profile)});
+    std::vector<GameTestRingLoadoutSnapshot> rings = snapshot.ring.rings;
+    if (rings.empty()) {
+        rings.push_back(fallbackActiveRing(snapshot));
     }
 
     const GameTestObjectEntrySnapshot* directItem = nullptr;
+    int directRingIndex = -1;
     LoadoutScore directScore;
     const GameTestObjectEntrySnapshot* replacementItem = nullptr;
-    const RingChoice* replacementTarget = nullptr;
+    const GameTestRingItemSnapshot* replacementTarget = nullptr;
     LoadoutScore replacementScore;
-    float bestReplaceGain = ReplaceGainScore;
+    float bestReplaceGain = -std::numeric_limits<float>::max();
 
-    const bool hasCountSlot =
-        snapshot.ring.activeCanAddItem &&
-        snapshot.ring.activeItemCount < snapshot.ring.activeMaxItemCount;
     const bool backpackHasFreeSlot =
         snapshot.inventory.backpackCapacity <= 0 ||
         snapshot.inventory.backpackUsedSlots < snapshot.inventory.backpackCapacity;
 
-    for (const GameTestObjectEntrySnapshot& item : snapshot.inventory.backpackItems) {
-        if (!canEquipFromBackpack(item)) {
-            continue;
-        }
-
-        const LoadoutScore candidateScore = scoreBackpackItem(item, profile);
-        if (!usefulCandidate(candidateScore, profile)) {
-            continue;
-        }
-
-        if (hasCountSlot && fitsWeight(snapshot, 0.0, item.weightKg) && candidateScore.total > directScore.total) {
-            directItem = &item;
-            directScore = candidateScore;
-        }
-
-        if (!backpackHasFreeSlot) {
-            continue;
-        }
-
-        for (const RingChoice& target : ringChoices) {
-            if (target.item == nullptr || target.item->protectionEnabled) {
+    for (const GameTestRingLoadoutSnapshot& ring : rings) {
+        const LoadoutProfile profile = makeProfile(snapshot, ring);
+        std::vector<RingChoice> ringChoices;
+        for (const GameTestRingItemSnapshot& item : snapshot.ring.items) {
+            if (item.ringIndex != ring.ringIndex || item.objectId.empty()) {
                 continue;
             }
-            if (!fitsWeight(snapshot, target.item->weightKg, item.weightKg)) {
-                continue;
-            }
-            if (!rolePreservedByReplacement(ringChoices, target, candidateScore)) {
+            ringChoices.push_back(RingChoice{&item, scoreRingItem(item, profile)});
+        }
+
+        const bool hasCountSlot =
+            ring.maxItemCount > 0 &&
+            ring.itemCount < ring.maxItemCount;
+
+        for (const GameTestObjectEntrySnapshot& item : snapshot.inventory.backpackItems) {
+            if (!canEquipFromBackpack(item)) {
                 continue;
             }
 
-            const float gain = candidateScore.total - target.score.total;
-            if (gain > bestReplaceGain) {
-                bestReplaceGain = gain;
-                replacementItem = &item;
-                replacementTarget = &target;
-                replacementScore = candidateScore;
+            const LoadoutScore candidateScore = scoreBackpackItem(item, profile);
+            if (!usefulCandidate(candidateScore, profile)) {
+                continue;
+            }
+
+            if (hasCountSlot &&
+                canAddToRing(item, ring.ringIndex) &&
+                fitsWeight(ring, 0.0, item.weightKg) &&
+                candidateScore.total > directScore.total) {
+                directItem = &item;
+                directRingIndex = ring.ringIndex;
+                directScore = candidateScore;
+            }
+
+            if (!backpackHasFreeSlot) {
+                continue;
+            }
+
+            for (const RingChoice& target : ringChoices) {
+                if (!removableForReplacement(target, profile, candidateScore)) {
+                    continue;
+                }
+                if (!fitsWeight(ring, target.item->weightKg, item.weightKg)) {
+                    continue;
+                }
+                if (!rolePreservedByReplacement(ringChoices, target, candidateScore)) {
+                    continue;
+                }
+
+                const float threshold = replacementGainThreshold(target, profile, candidateScore);
+                const float gain = candidateScore.total - target.score.total;
+                if (gain > threshold && gain > bestReplaceGain) {
+                    bestReplaceGain = gain;
+                    replacementItem = &item;
+                    replacementTarget = target.item;
+                    replacementScore = candidateScore;
+                }
             }
         }
     }
 
-    if (directItem != nullptr) {
-        const std::string reason = directScore.dig >= directScore.combat
-            ? "loadout_add_dig_efficiency"
-            : "loadout_add_combat_efficiency";
-        return makeEquipAction(snapshot, *directItem, reason);
+    if (directItem != nullptr && directRingIndex >= 0) {
+        return makeEquipAction(*directItem, directRingIndex, loadoutReason("loadout_add", directScore));
     }
 
-    if (replacementItem == nullptr || replacementTarget == nullptr || replacementTarget->item == nullptr) {
+    if (replacementItem == nullptr || replacementTarget == nullptr) {
         return std::nullopt;
     }
 
-    const std::string reason = replacementScore.dig >= replacementScore.combat
-        ? "loadout_replace_for_dig_efficiency"
-        : "loadout_replace_for_combat_efficiency";
-    return makeRemoveAction(*replacementTarget->item, reason);
+    return makeRemoveAction(*replacementTarget, loadoutReason("loadout_replace_for", replacementScore));
 }
 
 } // namespace majo::autosim

@@ -216,7 +216,18 @@ float enemyDangerCost(const GameTestSnapshot& snapshot, Vec2 position)
     const float survivalScale = canFight && hpRatio >= 0.45f ? 0.45f : 1.0f;
 
     for (const GameTestEnemySnapshot& enemy : snapshot.enemies) {
-        const float radius = enemy.boss ? 180.0f : 104.0f;
+        const float contactRadius =
+            snapshot.player.radius +
+            std::max(enemy.radius, enemy.boss ? 28.0f : 14.0f) +
+            (enemy.boss ? 52.0f : 34.0f);
+        const float specialRadius = std::max(enemy.jumpLandingRadius, enemy.countdownExplodeRadius) +
+            snapshot.player.radius +
+            18.0f;
+        const float radius = std::max({
+            enemy.boss ? 180.0f : 104.0f,
+            contactRadius,
+            specialRadius,
+        });
         const float distanceToEnemy = length(enemy.position - position);
         if (distanceToEnemy >= radius) {
             continue;
@@ -547,6 +558,7 @@ std::optional<AutoSimulationRoute> AutoSimulationPathfinder::findRoute(
     AutoSimulationRoute route;
     route.found = true;
     route.totalCost = field.cells[static_cast<std::size_t>(*destinationIndex)].cost;
+    route.pathTileCount = static_cast<int>(path.size());
     route.debugWorldPoints.reserve(path.size());
 
     int firstDigPathIndex = -1;
@@ -565,6 +577,7 @@ std::optional<AutoSimulationRoute> AutoSimulationPathfinder::findRoute(
     }
 
     if (firstDigPathIndex > 0) {
+        route.firstDigPathIndex = firstDigPathIndex;
         const GameTestPathTileSnapshot& firstDigTile =
             field.cells[static_cast<std::size_t>(path[static_cast<std::size_t>(firstDigPathIndex)])].tile;
         route.firstDigTerrainKind = firstDigTile.terrainKind;
@@ -589,16 +602,30 @@ std::optional<AutoSimulationRoute> AutoSimulationPathfinder::findRoute(
             const int afterDigPathIndex = std::min(
                 static_cast<int>(path.size()) - 1,
                 firstDigPathIndex + 1);
+            route.waypointPathIndex = afterDigPathIndex;
             route.nextWaypointWorld = field.cells[static_cast<std::size_t>(path[static_cast<std::size_t>(afterDigPathIndex)])].tile.center;
             return route;
         }
     }
 
     const int waypointPathIndex = safeWaypointPathIndex(field, path, firstDigPathIndex);
+    route.waypointPathIndex = waypointPathIndex;
     route.nextWaypointWorld = path.size() == 1
         ? targetWorld
         : field.cells[static_cast<std::size_t>(path[static_cast<std::size_t>(waypointPathIndex)])].tile.center;
     return route;
+}
+
+bool AutoSimulationPathfinder::hasClearLine(
+    const AutoSimulationPathField& field,
+    Vec2 from,
+    Vec2 to,
+    bool allowBlockedDestination) const
+{
+    if (!field.valid()) {
+        return false;
+    }
+    return lineWalkable(field, from, to, allowBlockedDestination);
 }
 
 } // namespace majo::autosim

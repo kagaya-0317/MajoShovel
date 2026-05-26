@@ -5,6 +5,7 @@
 #include <limits>
 #include <optional>
 #include <string>
+#include <utility>
 
 namespace majo::autosim {
 
@@ -14,6 +15,10 @@ constexpr float DropAcquireRadius = 420.0f;
 constexpr float ChestAcquireRadius = 420.0f;
 constexpr float UnlimitedTargetRadius = 100000.0f;
 constexpr float RouteActionDistance = 150.0f;
+constexpr float RouteWaypointArriveDistance = 14.0f;
+constexpr float RouteStartWaypointArriveDistance = 6.0f;
+constexpr float PreciseWarpEntryDistance = 96.0f;
+constexpr float PreciseWarpEntryArriveDistance = 8.0f;
 constexpr int MainPathLookAheadPoints = 3;
 
 template <typename T, typename PositionFn, typename AcceptFn>
@@ -96,6 +101,11 @@ bool hasUnknownWarpPoint(const GameTestSnapshot& snapshot)
     return knownWarpCount(snapshot) < static_cast<int>(snapshot.dungeon.warpPoints.size());
 }
 
+bool knownWarpDiscovered(const GameTestSnapshot& snapshot, const GameTestWarpPointSnapshot& point)
+{
+    return point.discovered || point.index < knownWarpCount(snapshot);
+}
+
 Vec2 escapeTarget(const GameTestSnapshot& snapshot, const AutoSimulationPathField& pathField)
 {
     const Vec2 fallback = snapshot.player.position + normalize(snapshot.player.facing) * 180.0f;
@@ -138,14 +148,198 @@ std::string pathReason(std::string reason, const AutoSimulationRoute& route)
     return reason;
 }
 
+bool preciseWarpEntryGoal(AutoSimulationGoal goal, const std::string& reason)
+{
+    return (goal == AutoSimulationGoal::ReturnToBase || goal == AutoSimulationGoal::DiscoverWarp) &&
+        reason.find("warp") != std::string::npos;
+}
+
 void applyRouteMetadata(AutoSimulationPlan& plan, const AutoSimulationRoute& route)
 {
+    plan.routePathTileCount = route.pathTileCount;
+    plan.routeWaypointPathIndex = route.waypointPathIndex;
+    plan.routeFirstDigPathIndex = route.firstDigPathIndex;
     plan.routeDigTileCount = route.digTileCount;
     plan.routeHardTileCount = route.hardTileCount;
     plan.routeAvoidingHardWall = route.avoidingHardWall;
     if (route.hasFirstDigTerrainKind) {
         plan.targetTerrainKind = route.firstDigTerrainKind;
         plan.hasTargetTerrainKind = true;
+    }
+}
+
+struct ScoredPlan {
+    AutoSimulationPlan plan;
+    float score = -std::numeric_limits<float>::max();
+};
+
+float hpRatio(const GameTestSnapshot& snapshot)
+{
+    if (snapshot.player.maxHp <= 0) {
+        return 1.0f;
+    }
+    return std::clamp(
+        static_cast<float>(snapshot.player.hp) / static_cast<float>(snapshot.player.maxHp),
+        0.0f,
+        1.0f);
+}
+
+bool backpackPressure(const GameTestSnapshot& snapshot)
+{
+    if (snapshot.inventory.backpackCapacity <= 0) {
+        return false;
+    }
+    return snapshot.inventory.backpackUsedSlots >= snapshot.inventory.backpackCapacity - 2 ||
+        static_cast<float>(snapshot.inventory.backpackUsedSlots) /
+            static_cast<float>(snapshot.inventory.backpackCapacity) >= 0.78f;
+}
+
+float nearestEnemyDistance(const GameTestSnapshot& snapshot)
+{
+    float best = std::numeric_limits<float>::max();
+    for (const GameTestEnemySnapshot& enemy : snapshot.enemies) {
+        best = std::min(best, length(enemy.position - snapshot.player.position));
+    }
+    return best;
+}
+
+bool bossPresent(const GameTestSnapshot& snapshot)
+{
+    if (snapshot.dungeon.bossSpawned) {
+        return true;
+    }
+    return std::any_of(snapshot.enemies.begin(), snapshot.enemies.end(), [](const GameTestEnemySnapshot& enemy) {
+        return enemy.boss;
+    });
+}
+
+bool softDigPreferenceReason(const std::string& reason)
+{
+    return reason.find("explore") != std::string::npos ||
+        reason.find("main_path") != std::string::npos ||
+        reason.find("map_clue") != std::string::npos;
+}
+
+float softDigPreferencePenalty(const AutoSimulationPlan& plan)
+{
+    if (plan.goal != AutoSimulationGoal::MineWall ||
+        !plan.hasTargetTerrainKind ||
+        !softDigPreferenceReason(plan.reason)) {
+        return 0.0f;
+    }
+
+    switch (plan.targetTerrainKind) {
+    case GameTestTerrainKind::Dirt:
+        return -55.0f;
+    case GameTestTerrainKind::Ore:
+        return -8.0f;
+    case GameTestTerrainKind::Rock:
+        return 260.0f;
+    case GameTestTerrainKind::HardRock:
+        return 900.0f;
+    case GameTestTerrainKind::Empty:
+        break;
+    }
+    return 0.0f;
+}
+
+float routePenalty(const AutoSimulationPlan& plan)
+{
+    float penalty = 0.0f;
+    penalty += static_cast<float>(std::max(0, plan.routePathTileCount)) * 0.85f;
+    penalty += static_cast<float>(std::max(0, plan.routeDigTileCount)) * 15.0f;
+    penalty += static_cast<float>(std::max(0, plan.routeHardTileCount)) * 58.0f;
+    if (plan.routeAvoidingHardWall) {
+        penalty -= 10.0f;
+    }
+    if (plan.goal == AutoSimulationGoal::MineWall &&
+        plan.hasTargetTerrainKind &&
+        plan.targetTerrainKind == GameTestTerrainKind::HardRock) {
+        penalty += 24.0f;
+    }
+    penalty += softDigPreferencePenalty(plan);
+    return penalty;
+}
+
+float distancePenalty(const GameTestSnapshot& snapshot, const AutoSimulationPlan& plan)
+{
+    if (!plan.hasTarget) {
+        return 0.0f;
+    }
+    return length(plan.targetWorld - snapshot.player.position) * 0.025f;
+}
+
+float contextualGoalBonus(const GameTestSnapshot& snapshot, const AutoSimulationPlan& plan)
+{
+    const float hp = hpRatio(snapshot);
+    const float enemyDistance = nearestEnemyDistance(snapshot);
+    float bonus = 0.0f;
+    const bool explicitBackpackFull = plan.reason.find("backpack_full") != std::string::npos;
+    if (explicitBackpackFull) {
+        bonus += 110.0f;
+    } else if (plan.reason.find("low_hp") != std::string::npos) {
+        bonus += hp <= 0.32f ? 58.0f : (hp <= 0.46f ? 24.0f : 0.0f);
+    }
+    if (hasUnknownWarpPoint(snapshot) &&
+        (plan.reason.find("visible_warp") != std::string::npos ||
+            plan.reason.find("map_clue") != std::string::npos ||
+            plan.reason.find("explore_") != std::string::npos)) {
+        bonus += 24.0f;
+    }
+    switch (plan.goal) {
+    case AutoSimulationGoal::ReturnToBase:
+        bonus += (!explicitBackpackFull && backpackFull(snapshot) ? 110.0f : 0.0f) +
+            (hp <= 0.32f ? 58.0f : (hp <= 0.46f ? 24.0f : 0.0f));
+        return bonus;
+    case AutoSimulationGoal::Combat:
+        bonus += (enemyDistance <= 90.0f ? 62.0f : (enemyDistance <= 180.0f ? 32.0f : 0.0f)) +
+            (bossPresent(snapshot) ? 48.0f : 0.0f) +
+            (hp <= 0.35f ? -26.0f : 0.0f);
+        return bonus;
+    case AutoSimulationGoal::CollectDrop:
+        return bonus + (backpackPressure(snapshot) ? -24.0f : 0.0f);
+    case AutoSimulationGoal::OpenChest:
+        return bonus + (backpackPressure(snapshot) ? -18.0f : 0.0f);
+    case AutoSimulationGoal::DiscoverWarp:
+        bonus += (hasUnknownWarpPoint(snapshot) ? 26.0f : 0.0f) +
+            (plan.reason.find("visible_warp") != std::string::npos ? 24.0f : 0.0f) +
+            (plan.reason.find("map_clue") != std::string::npos ? 12.0f : 0.0f);
+        return bonus;
+    case AutoSimulationGoal::ApproachBoss:
+        bonus += (snapshot.ring.hasCombatTool && hp >= 0.58f ? 28.0f : -18.0f) +
+            (hasUnknownWarpPoint(snapshot) ? -16.0f : 12.0f);
+        return bonus;
+    case AutoSimulationGoal::FollowMainPath:
+        return bonus + (hasUnknownWarpPoint(snapshot) ? 6.0f : 14.0f);
+    case AutoSimulationGoal::MineWall:
+        return bonus + (snapshot.ring.hasDigTool ? 8.0f : -18.0f);
+    case AutoSimulationGoal::None:
+    case AutoSimulationGoal::DismissUi:
+    case AutoSimulationGoal::EquipLoadout:
+    case AutoSimulationGoal::UseItem:
+    case AutoSimulationGoal::EscapeStuck:
+        break;
+    }
+    return bonus;
+}
+
+void keepBetterPlan(
+    std::optional<ScoredPlan>& best,
+    const GameTestSnapshot& snapshot,
+    AutoSimulationPlan plan,
+    float baseScore)
+{
+    if (plan.goal == AutoSimulationGoal::None) {
+        return;
+    }
+
+    const float score =
+        baseScore +
+        contextualGoalBonus(snapshot, plan) -
+        routePenalty(plan) -
+        distancePenalty(snapshot, plan);
+    if (!best || score > best->score) {
+        best = ScoredPlan{std::move(plan), score};
     }
 }
 
@@ -167,7 +361,8 @@ AutoSimulationPlan AutoSimulationPlanner::makeTargetPlan(
     std::string reason,
     bool throwRing,
     bool ringOffset,
-    bool moveAwayFromTarget)
+    bool moveAwayFromTarget,
+    AutoSimulationRingRole preferredRingRole)
 {
     AutoSimulationPlan plan;
     plan.goal = goal;
@@ -181,6 +376,7 @@ AutoSimulationPlan AutoSimulationPlanner::makeTargetPlan(
     plan.throwRing = throwRing;
     plan.ringOffset = ringOffset;
     plan.moveAwayFromTarget = moveAwayFromTarget;
+    plan.preferredRingRole = preferredRingRole;
     return plan;
 }
 
@@ -191,9 +387,11 @@ AutoSimulationPlan AutoSimulationPlanner::makeTravelPlan(
     Vec2 target,
     std::string reason,
     bool throwRing,
-    bool ringOffset) const
+    bool ringOffset,
+    AutoSimulationRingRole preferredRingRole) const
 {
     (void)ringOffset;
+    const bool preciseWarpEntry = preciseWarpEntryGoal(goal, reason);
     if (pathField.valid()) {
         if (std::optional<AutoSimulationRoute> route = pathfinder_.findRoute(pathField, target)) {
             const std::string routeReason = pathReason(reason, *route);
@@ -210,11 +408,22 @@ AutoSimulationPlan AutoSimulationPlanner::makeTravelPlan(
                 }
             }
 
-            AutoSimulationPlan plan = makeTargetPlan(goal, target, routeReason, false, false);
+            AutoSimulationPlan plan = makeTargetPlan(goal, target, routeReason, false, false, false, preferredRingRole);
             plan.moveTargetWorld = route->nextWaypointWorld;
             plan.hasMoveTarget = true;
             plan.aimTargetWorld = target;
             plan.hasAimTarget = true;
+            if (route->pathTileCount > 1) {
+                plan.moveTargetArriveDistance = route->waypointPathIndex == 0
+                    ? RouteStartWaypointArriveDistance
+                    : RouteWaypointArriveDistance;
+            }
+            if (preciseWarpEntry &&
+                distanceSquared(snapshot.player.position, target) <= PreciseWarpEntryDistance * PreciseWarpEntryDistance &&
+                pathfinder_.hasClearLine(pathField, snapshot.player.position, target)) {
+                plan.moveTargetWorld = target;
+                plan.moveTargetArriveDistance = PreciseWarpEntryArriveDistance;
+            }
             plan.throwRing = throwRing &&
                 distanceSquared(snapshot.player.position, target) <= RouteActionDistance * RouteActionDistance;
             plan.ringOffset = false;
@@ -226,7 +435,7 @@ AutoSimulationPlan AutoSimulationPlanner::makeTravelPlan(
     if (std::optional<AutoSimulationPlan> miningPlan = miningModel_.makePlan(snapshot, target, reason)) {
         return *miningPlan;
     }
-    return makeTargetPlan(goal, target, std::move(reason), throwRing, false);
+    return makeTargetPlan(goal, target, std::move(reason), throwRing, false, false, preferredRingRole);
 }
 
 AutoSimulationPlan AutoSimulationPlanner::makePlan(const GameTestSnapshot& snapshot, bool escapeStuck) const
@@ -250,7 +459,11 @@ AutoSimulationPlan AutoSimulationPlanner::makePlan(const GameTestSnapshot& snaps
         return makeTargetPlan(AutoSimulationGoal::EscapeStuck, target, "stuck", true, false, false);
     }
 
-    if (backpackFull(snapshot)) {
+    std::optional<ScoredPlan> bestPlan;
+    const bool shouldConsiderReturn =
+        backpackFull(snapshot) ||
+        hpRatio(snapshot) <= 0.34f;
+    if (shouldConsiderReturn) {
         const GameTestWarpPointSnapshot* discoveredWarp = bestAcceptedByRoute(
             snapshot.dungeon.warpPoints,
             pathfinder_,
@@ -258,15 +471,40 @@ AutoSimulationPlan AutoSimulationPlanner::makePlan(const GameTestSnapshot& snaps
             snapshot.player.position,
             UnlimitedTargetRadius,
             [](const GameTestWarpPointSnapshot& value) { return value.position; },
-            [](const GameTestWarpPointSnapshot& value) { return value.discovered; });
+            [&snapshot](const GameTestWarpPointSnapshot& value) { return knownWarpDiscovered(snapshot, value); });
         if (discoveredWarp != nullptr) {
-            return makeTravelPlan(snapshot, pathField, AutoSimulationGoal::ReturnToBase, discoveredWarp->position, "backpack_full_warp", false, true);
+            keepBetterPlan(
+                bestPlan,
+                snapshot,
+                makeTravelPlan(
+                    snapshot,
+                    pathField,
+                    AutoSimulationGoal::ReturnToBase,
+                    discoveredWarp->position,
+                    backpackFull(snapshot) ? "backpack_full_warp" : "low_hp_warp",
+                    false,
+                    true,
+                    AutoSimulationRingRole::None),
+                78.0f);
+        } else {
+            keepBetterPlan(
+                bestPlan,
+                snapshot,
+                makeTravelPlan(
+                    snapshot,
+                    pathField,
+                    AutoSimulationGoal::ReturnToBase,
+                    snapshot.dungeon.startWorld,
+                    backpackFull(snapshot) ? "backpack_full_entrance" : "low_hp_entrance",
+                    false,
+                    true,
+                    AutoSimulationRingRole::None),
+                70.0f);
         }
-        return makeTravelPlan(snapshot, pathField, AutoSimulationGoal::ReturnToBase, snapshot.dungeon.startWorld, "backpack_full_entrance", false, true);
     }
 
-    if (std::optional<AutoSimulationPlan> combatPlan = combatModel_.makePlan(snapshot)) {
-        return *combatPlan;
+    if (std::optional<AutoSimulationPlan> combatPlan = combatModel_.makePlan(snapshot, pathfinder_, pathField)) {
+        keepBetterPlan(bestPlan, snapshot, *combatPlan, 72.0f);
     }
 
     const GameTestDropSnapshot* drop = bestAcceptedByRoute(
@@ -278,7 +516,25 @@ AutoSimulationPlan AutoSimulationPlanner::makePlan(const GameTestSnapshot& snaps
         [](const GameTestDropSnapshot& value) { return value.position; },
         [](const GameTestDropSnapshot&) { return true; });
     if (drop != nullptr) {
-        return makeTravelPlan(snapshot, pathField, AutoSimulationGoal::CollectDrop, drop->position, "drop");
+        float baseScore = 46.0f;
+        if (drop->kind == GameTestDropKind::Object) {
+            baseScore += 8.0f;
+        } else if (drop->kind == GameTestDropKind::Material) {
+            baseScore += 5.0f;
+        }
+        keepBetterPlan(
+            bestPlan,
+            snapshot,
+            makeTravelPlan(
+                snapshot,
+                pathField,
+                AutoSimulationGoal::CollectDrop,
+                drop->position,
+                "drop",
+                false,
+                false,
+                AutoSimulationRingRole::Utility),
+            baseScore);
     }
 
     const GameTestChestSnapshot* chest = bestAcceptedByRoute(
@@ -290,28 +546,119 @@ AutoSimulationPlan AutoSimulationPlanner::makePlan(const GameTestSnapshot& snaps
         [](const GameTestChestSnapshot& value) { return value.position; },
         [](const GameTestChestSnapshot& value) { return value.revealed && !value.opened; });
     if (chest != nullptr) {
-        return makeTravelPlan(snapshot, pathField, AutoSimulationGoal::OpenChest, chest->position, "chest", true, false);
+        keepBetterPlan(
+            bestPlan,
+            snapshot,
+            makeTravelPlan(
+                snapshot,
+                pathField,
+                AutoSimulationGoal::OpenChest,
+                chest->position,
+                "chest",
+                true,
+                false,
+                AutoSimulationRingRole::Utility),
+            48.0f);
+    }
+
+    const GameTestWarpPointSnapshot* visibleWarp = bestAcceptedByRoute(
+        snapshot.dungeon.warpPoints,
+        pathfinder_,
+        pathField,
+        snapshot.player.position,
+        UnlimitedTargetRadius,
+        [](const GameTestWarpPointSnapshot& value) { return value.position; },
+        [&snapshot](const GameTestWarpPointSnapshot& value) {
+            return value.visible && !knownWarpDiscovered(snapshot, value);
+        });
+    if (visibleWarp != nullptr) {
+        keepBetterPlan(
+            bestPlan,
+            snapshot,
+            makeTravelPlan(
+                snapshot,
+                pathField,
+                AutoSimulationGoal::DiscoverWarp,
+                visibleWarp->position,
+                "visible_warp",
+                false,
+                true,
+                AutoSimulationRingRole::Light),
+            62.0f);
+    }
+
+    if (hasUnknownWarpPoint(snapshot)) {
+        if (std::optional<AutoSimulationMapClueTarget> target =
+                mapClueModel_.chooseTarget(snapshot, pathfinder_, pathField)) {
+            keepBetterPlan(
+                bestPlan,
+                snapshot,
+                makeTravelPlan(
+                    snapshot,
+                    pathField,
+                    AutoSimulationGoal::DiscoverWarp,
+                    target->world,
+                    target->reason,
+                    false,
+                    true,
+                    AutoSimulationRingRole::Light),
+                54.0f);
+        }
     }
 
     if (hasUnknownWarpPoint(snapshot)) {
         if (std::optional<AutoSimulationExplorationTarget> target =
                 explorationModel_.chooseTarget(snapshot, pathField)) {
-            return makeTravelPlan(
+            keepBetterPlan(
+                bestPlan,
                 snapshot,
-                pathField,
-                AutoSimulationGoal::DiscoverWarp,
-                target->world,
-                target->reason,
-                false,
-                true);
+                makeTravelPlan(
+                    snapshot,
+                    pathField,
+                    AutoSimulationGoal::DiscoverWarp,
+                    target->world,
+                    target->reason,
+                    false,
+                    true,
+                    AutoSimulationRingRole::Light),
+                42.0f);
         }
     }
 
     if (snapshot.dungeon.hasBossSpawnPoint && !snapshot.dungeon.bossSpawned) {
-        return makeTravelPlan(snapshot, pathField, AutoSimulationGoal::ApproachBoss, snapshot.dungeon.bossSpawnPoint, "boss_spawn", false, true);
+        keepBetterPlan(
+            bestPlan,
+            snapshot,
+            makeTravelPlan(
+                snapshot,
+                pathField,
+                AutoSimulationGoal::ApproachBoss,
+                snapshot.dungeon.bossSpawnPoint,
+                "boss_spawn",
+                false,
+                true,
+                AutoSimulationRingRole::Light),
+            42.0f);
     }
 
-    return makeTravelPlan(snapshot, pathField, AutoSimulationGoal::FollowMainPath, mainPathTarget(snapshot), "main_path", false, true);
+    keepBetterPlan(
+        bestPlan,
+        snapshot,
+        makeTravelPlan(
+            snapshot,
+            pathField,
+            AutoSimulationGoal::FollowMainPath,
+            mainPathTarget(snapshot),
+            "main_path",
+            false,
+            true,
+            AutoSimulationRingRole::Light),
+        16.0f);
+
+    if (bestPlan) {
+        return bestPlan->plan;
+    }
+    return {};
 }
 
 } // namespace majo::autosim

@@ -1,16 +1,20 @@
 ﻿#pragma once
 
 #include "devtools/autosim/AutoSimulationPathfinder.hpp"
-#include "devtools/autosim/AutoSimulationTypes.hpp"
-#include "game/GameTestProbe.hpp"
 
 #include <optional>
+#include <string>
 
 namespace majo::autosim {
 
-class AutoSimulationCombatModel {
+struct AutoSimulationMapClueTarget {
+    Vec2 world{};
+    std::string reason;
+};
+
+class AutoSimulationMapClueModel {
 public:
-    std::optional<AutoSimulationPlan> makePlan(
+    std::optional<AutoSimulationMapClueTarget> chooseTarget(
         const GameTestSnapshot& snapshot,
         const AutoSimulationPathfinder& pathfinder,
         const AutoSimulationPathField& pathField) const;

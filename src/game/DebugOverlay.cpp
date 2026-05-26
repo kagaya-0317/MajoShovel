@@ -174,12 +174,15 @@ void DebugOverlay::render(
         std::snprintf(
             buffer + std::char_traits<char>::length(buffer),
             sizeof(buffer) - std::char_traits<char>::length(buffer),
-            "\nAutoSim: %s plan=%s goal=%s reason=%s lock=%s %.1fs"
-            "\nAutoPlan: player(%.0f,%.0f) target=%s(%.0f,%.0f) d=%.1f move=%s(%.0f,%.0f) d=%.1f"
-            "\nAutoRoute: dig=%d hard=%d avoidHard=%s stuck=%d still=%.1f mineIdle=%.1f escape=%.1f"
+            "\nAutoSim: %s x%d steps=%d plan=%s goal=%s reason=%s lock=%s %.1fs"
+            "\nAutoPlan: player(%.0f,%.0f) target=%s(%.0f,%.0f) d=%.1f move=%s(%.0f,%.0f) d=%.1f arrive=%.1f axis(%.2f,%.2f)"
+            "\nAutoRoute: path=%d wp=%d digAt=%d dig=%d hard=%d avoidHard=%s stuck=%d still=%.1f move=%.1f mineIdle=%.1f escape=%.1f"
+            "\nAutoLight: active=%.0f backpack=%.0f missing=%s"
             "\nAutoWarp: known=%d discovered=%d unlocked=%d total=%d nearest=%d %s known=%s d=%.1f"
             "\nAutoWarpTarget: target=%d %s known=%s dToPlan=%.1f nextUnknown=%d %s d=%.1f",
             autosim::autoSimulationStateName(autoSimulationDebug.state),
+            autoSimulationDebug.speedMultiplier,
+            autoSimulationDebug.simulationStepsLastFrame,
             yesNo(autoSimulationDebug.hasPlan),
             autosim::autoSimulationGoalName(autoSimulationDebug.goal),
             autoSimulationDebug.reason.empty() ? "-" : autoSimulationDebug.reason.c_str(),
@@ -195,13 +198,23 @@ void DebugOverlay::render(
             autoSimulationDebug.moveTargetWorld.x,
             autoSimulationDebug.moveTargetWorld.y,
             autoSimulationDebug.distanceToMoveTarget,
+            autoSimulationDebug.moveTargetArriveDistance,
+            autoSimulationDebug.inputMoveAxis.x,
+            autoSimulationDebug.inputMoveAxis.y,
+            autoSimulationDebug.routePathTileCount,
+            autoSimulationDebug.routeWaypointPathIndex,
+            autoSimulationDebug.routeFirstDigPathIndex,
             autoSimulationDebug.routeDigTileCount,
             autoSimulationDebug.routeHardTileCount,
             yesNo(autoSimulationDebug.routeAvoidingHardWall),
             autoSimulationDebug.stuckCount,
             autoSimulationDebug.stillSeconds,
+            autoSimulationDebug.stuckMoveDistance,
             autoSimulationDebug.miningNoProgressSeconds,
             autoSimulationDebug.escapeStuckSeconds,
+            autoSimulationDebug.activeLightRadius,
+            autoSimulationDebug.bestBackpackLightRadius,
+            yesNo(autoSimulationDebug.missingLight),
             autoSimulationDebug.knownWarpPoints,
             autoSimulationDebug.discoveredWarpPoints,
             autoSimulationDebug.unlockedWarpPoints,

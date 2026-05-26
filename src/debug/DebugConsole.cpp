@@ -169,6 +169,14 @@ struct DebugConsole::Impl {
         int maxValue = 100;
     };
 
+    struct DebugSliderCommand {
+        std::string command;
+        int minValue = 0;
+        int maxValue = 100;
+        int lastQueuedValue = 0;
+        HWND valueHwnd = nullptr;
+    };
+
     struct DebugGroupUi {
         HWND box = nullptr;
         HWND scrollbar = nullptr;
@@ -300,6 +308,32 @@ struct DebugConsole::Impl {
 #endif
     }
 
+    void setSliderValue(std::string_view controlId, int value)
+    {
+#ifdef _WIN32
+        auto it = debugSliderControlIdByDebugId.find(std::string(controlId));
+        if (it == debugSliderControlIdByDebugId.end()) {
+            return;
+        }
+        auto commandIt = debugSliderByControlId.find(it->second);
+        if (commandIt == debugSliderByControlId.end()) {
+            return;
+        }
+
+        DebugSliderCommand& slider = commandIt->second;
+        const int clamped = std::clamp(value, slider.minValue, slider.maxValue);
+        HWND trackbar = GetDlgItem(hwnd, it->second);
+        if (trackbar) {
+            SendMessageW(trackbar, TBM_SETPOS, TRUE, clamped);
+        }
+        updateSliderValueLabel(slider, clamped);
+        slider.lastQueuedValue = clamped;
+#else
+        (void)controlId;
+        (void)value;
+#endif
+    }
+
     std::optional<std::string> pollCommand()
     {
         std::lock_guard<std::mutex> lock(mutex);
@@ -415,6 +449,9 @@ struct DebugConsole::Impl {
             return 0;
         case WM_VSCROLL:
             impl->handleVScroll(reinterpret_cast<HWND>(lParam), LOWORD(wParam));
+            return 0;
+        case WM_HSCROLL:
+            impl->handleHScroll(reinterpret_cast<HWND>(lParam));
             return 0;
         case WM_MOUSEWHEEL:
             if (impl->handleMouseWheel(GET_WHEEL_DELTA_WPARAM(wParam), lParam)) {
@@ -583,6 +620,41 @@ struct DebugConsole::Impl {
                         ShowWindow(number, SW_HIDE);
                         groupUi.controls.push_back({control.kind, number, label, controlId, control.id, control.command});
                         debugNumberByControlId[controlId] = {control.command, minValue, maxValue};
+                    } else if (control.kind == DebugControlKind::Slider) {
+                        HWND label = createStatic(parent, utf8ToWide(control.label).c_str());
+                        const int minValue = std::min(control.minValue, control.maxValue);
+                        const int maxValue = std::max(control.minValue, control.maxValue);
+                        const int initialValue = std::clamp(control.minValue, minValue, maxValue);
+                        HWND value = createStatic(parent, L"");
+                        HWND slider = createSlider(parent, controlId, minValue, maxValue, initialValue);
+                        ShowWindow(label, SW_HIDE);
+                        ShowWindow(value, SW_HIDE);
+                        ShowWindow(slider, SW_HIDE);
+                        groupUi.controls.push_back({
+                            control.kind,
+                            slider,
+                            label,
+                            controlId,
+                            control.id,
+                            control.command,
+                            value,
+                            0});
+                        debugSliderByControlId[controlId] = {
+                            control.command,
+                            minValue,
+                            maxValue,
+                            initialValue,
+                            value};
+                        debugSliderControlIdByDebugId[control.id] = controlId;
+                        updateSliderValueLabel(debugSliderByControlId[controlId], initialValue);
+                    } else if (control.kind == DebugControlKind::Gauge) {
+                        HWND label = createStatic(parent, utf8ToWide(control.label).c_str());
+                        const int minValue = std::min(control.minValue, control.maxValue);
+                        const int maxValue = std::max(control.minValue, control.maxValue);
+                        HWND gauge = createGauge(parent, minValue, maxValue, std::clamp(control.minValue, minValue, maxValue));
+                        ShowWindow(label, SW_HIDE);
+                        ShowWindow(gauge, SW_HIDE);
+                        groupUi.controls.push_back({control.kind, gauge, label, controlId, control.id, control.command});
                     } else if (control.kind == DebugControlKind::Dropdown) {
                         HWND label = createStatic(parent, utf8ToWide(control.label).c_str());
                         HWND combo = createDropdown(parent, controlId);
@@ -697,6 +769,51 @@ struct DebugConsole::Impl {
             nullptr);
         SendMessageW(input, WM_SETFONT, reinterpret_cast<WPARAM>(uiFont), TRUE);
         return input;
+    }
+
+    HWND createSlider(HWND parent, int controlId, int minValue, int maxValue, int value)
+    {
+        HWND slider = CreateWindowExW(
+            0,
+            TRACKBAR_CLASSW,
+            L"",
+            WS_CHILD | WS_VISIBLE | TBS_AUTOTICKS | TBS_TOOLTIPS,
+            0, 0, 0, 0,
+            parent,
+            reinterpret_cast<HMENU>(static_cast<INT_PTR>(controlId)),
+            GetModuleHandleW(nullptr),
+            nullptr);
+        SendMessageW(slider, TBM_SETRANGE, TRUE, MAKELPARAM(minValue, maxValue));
+        SendMessageW(slider, TBM_SETPAGESIZE, 0, 1);
+        SendMessageW(slider, TBM_SETTICFREQ, 1, 0);
+        SendMessageW(slider, TBM_SETPOS, TRUE, std::clamp(value, minValue, maxValue));
+        SendMessageW(slider, WM_SETFONT, reinterpret_cast<WPARAM>(uiFont), TRUE);
+        return slider;
+    }
+
+    HWND createGauge(HWND parent, int minValue, int maxValue, int value)
+    {
+        HWND gauge = CreateWindowExW(
+            0,
+            PROGRESS_CLASSW,
+            L"",
+            WS_CHILD | WS_VISIBLE,
+            0, 0, 0, 0,
+            parent,
+            nullptr,
+            GetModuleHandleW(nullptr),
+            nullptr);
+        SendMessageW(gauge, PBM_SETRANGE32, minValue, maxValue);
+        SendMessageW(gauge, PBM_SETPOS, std::clamp(value, minValue, maxValue), 0);
+        return gauge;
+    }
+
+    void updateSliderValueLabel(const DebugSliderCommand& slider, int value)
+    {
+        if (!slider.valueHwnd) {
+            return;
+        }
+        SetWindowTextW(slider.valueHwnd, std::to_wstring(value).c_str());
     }
 
     HWND createScrollbar(HWND parent, int controlId)
@@ -869,6 +986,19 @@ struct DebugConsole::Impl {
         layoutControls(rect.right - rect.left, rect.bottom - rect.top);
     }
 
+    void handleHScroll(HWND controlHwnd)
+    {
+        if (!controlHwnd) {
+            return;
+        }
+        const int controlId = GetDlgCtrlID(controlHwnd);
+        auto it = debugSliderByControlId.find(controlId);
+        if (it == debugSliderByControlId.end()) {
+            return;
+        }
+        queueSliderCommand(controlId, it->second);
+    }
+
     bool handleMouseWheel(int delta, LPARAM pointParam)
     {
         POINT screenPoint{
@@ -1015,6 +1145,30 @@ struct DebugConsole::Impl {
                     buttonY += DebugControlButtonH + DebugControlGap;
                     continue;
                 }
+                if (control.kind == DebugControlKind::Slider || control.kind == DebugControlKind::Gauge) {
+                    constexpr int ValueWidth = 42;
+                    constexpr int ValueGap = 6;
+                    const int labelW = control.kind == DebugControlKind::Slider
+                        ? std::max(64, buttonW - ValueWidth - ValueGap)
+                        : buttonW;
+                    MoveWindow(control.labelHwnd, buttonX, buttonY, labelW, DebugControlLabelH, TRUE);
+                    ShowWindow(control.labelHwnd, controlVisible ? SW_SHOW : SW_HIDE);
+                    if (control.kind == DebugControlKind::Slider && control.actionHwnd) {
+                        MoveWindow(
+                            control.actionHwnd,
+                            buttonX + labelW + ValueGap,
+                            buttonY,
+                            ValueWidth,
+                            DebugControlLabelH,
+                            TRUE);
+                        ShowWindow(control.actionHwnd, controlVisible ? SW_SHOW : SW_HIDE);
+                    }
+                    buttonY += DebugControlLabelH;
+                    MoveWindow(control.hwnd, buttonX, buttonY, buttonW, DebugControlDropdownH, TRUE);
+                    ShowWindow(control.hwnd, controlVisible ? SW_SHOW : SW_HIDE);
+                    buttonY += DebugControlDropdownH + DebugControlGap;
+                    continue;
+                }
 
                 MoveWindow(control.hwnd, buttonX, buttonY, buttonW, DebugControlButtonH, TRUE);
                 ShowWindow(control.hwnd, controlVisible ? SW_SHOW : SW_HIDE);
@@ -1025,7 +1179,10 @@ struct DebugConsole::Impl {
 
     int debugControlVisibleHeight(DebugControlKind kind) const
     {
-        if (kind == DebugControlKind::Dropdown || kind == DebugControlKind::DropdownButton) {
+        if (kind == DebugControlKind::Dropdown ||
+            kind == DebugControlKind::DropdownButton ||
+            kind == DebugControlKind::Slider ||
+            kind == DebugControlKind::Gauge) {
             return DebugControlLabelH + DebugControlDropdownH;
         }
         return DebugControlButtonH;
@@ -1160,6 +1317,29 @@ struct DebugConsole::Impl {
         queueCommand(command);
     }
 
+    void queueSliderCommand(int controlId, DebugSliderCommand& slider)
+    {
+        HWND control = GetDlgItem(hwnd, controlId);
+        if (!control) {
+            return;
+        }
+
+        const int value = std::clamp(
+            static_cast<int>(SendMessageW(control, TBM_GETPOS, 0, 0)),
+            slider.minValue,
+            slider.maxValue);
+        updateSliderValueLabel(slider, value);
+        if (value == slider.lastQueuedValue) {
+            return;
+        }
+
+        slider.lastQueuedValue = value;
+        std::string command = slider.command;
+        command += " ";
+        command += std::to_string(value);
+        queueCommand(command);
+    }
+
     void queueToggleCommand(int controlId, std::string_view baseCommand)
     {
         HWND control = GetDlgItem(hwnd, controlId);
@@ -1199,6 +1379,7 @@ struct DebugConsole::Impl {
             appendUiLog({LogLevel::Info, "help: show this list"});
             appendUiLog({LogLevel::Info, "clear: clear console logs"});
             appendUiLog({LogLevel::Info, "restart: restart the current test-play run"});
+            appendUiLog({LogLevel::Info, "autosim speed 1..16: change AutoSim update speed"});
             appendUiLog({LogLevel::Info, "dev build-config debug: save Debug for next dev_auto_reload start"});
             appendUiLog({LogLevel::Info, "dev build-config release: save Release for next dev_auto_reload start"});
             appendUiLog({LogLevel::Info, "quit: close the game"});
@@ -1421,9 +1602,11 @@ struct DebugConsole::Impl {
     std::unordered_map<int, std::string> debugCommandByControlId;
     std::unordered_map<int, std::string> debugToggleCommandByControlId;
     std::unordered_map<int, DebugNumberCommand> debugNumberByControlId;
+    std::unordered_map<int, DebugSliderCommand> debugSliderByControlId;
     std::unordered_map<int, DebugDropdownCommand> debugDropdownByControlId;
     std::unordered_map<int, DebugDropdownButtonCommand> debugDropdownButtonByControlId;
     std::unordered_map<std::string, int> debugDropdownControlIdByDebugId;
+    std::unordered_map<std::string, int> debugSliderControlIdByDebugId;
     std::unordered_map<HWND, DebugGroupRef> debugGroupByScrollbar;
     std::deque<LogEntry> pendingLogs;
     std::deque<LogEntry> logLines;
@@ -1471,6 +1654,11 @@ void DebugConsole::appendLog(LogLevel level, std::string_view message)
 void DebugConsole::setDropdownSelection(std::string_view controlId, int selectedIndex)
 {
     impl_->setDropdownSelection(controlId, selectedIndex);
+}
+
+void DebugConsole::setSliderValue(std::string_view controlId, int value)
+{
+    impl_->setSliderValue(controlId, value);
 }
 
 std::optional<std::string> DebugConsole::pollCommand()

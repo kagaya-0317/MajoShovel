@@ -22,6 +22,7 @@ public:
     void toggleVisible();
     void appendLog(LogLevel level, std::string_view message);
     void setDropdownSelection(std::string_view controlId, int selectedIndex);
+    void setSliderValue(std::string_view controlId, int value);
     std::optional<std::string> pollCommand();
 
 private:

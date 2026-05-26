@@ -250,7 +250,13 @@ void MagicSystem::setFxSystem(MagicFxSystem* magicFx)
     magicFx_ = magicFx;
 }
 
-void MagicSystem::cast(MagicElement element, Vec2 origin, Vec2 direction, int power, SpellRingItem* sourceItem)
+void MagicSystem::cast(
+    MagicElement element,
+    Vec2 origin,
+    Vec2 direction,
+    int power,
+    SpellRingItem* sourceItem,
+    float cooldownOverrideSeconds)
 {
     direction = normalize(direction);
     power = std::max(1, power);
@@ -260,7 +266,9 @@ void MagicSystem::cast(MagicElement element, Vec2 origin, Vec2 direction, int po
         }
         sourceItem->magicAuraDamageType = std::string(magicElementDamageType(element));
         sourceItem->magicAuraTimer = std::max(sourceItem->magicAuraTimer, magicAuraSeconds(element));
-        sourceItem->magicCastCooldownTimer = magicCooldownSeconds(element);
+        sourceItem->magicCastCooldownTimer = cooldownOverrideSeconds > 0.0f
+            ? cooldownOverrideSeconds
+            : magicCooldownSeconds(element);
         if (magicFx_ != nullptr && sourceItem->magicAuraFxEmitterId == 0) {
             sourceItem->magicAuraFxEmitterId = startAuraFxEmitter(
                 element,

@@ -38,6 +38,7 @@ private:
     void toggleFullscreen();
     bool executeSettingsDebugCommand(const std::string& normalizedCommand);
     void executeDebugCommand(const std::string& command);
+    void runAutoSimulationStep(float dt, Time& updateTime);
 
     SDL_Window* window_ = nullptr;
     SDL_Renderer* sdlRenderer_ = nullptr;
@@ -48,6 +49,7 @@ private:
     Input input_;
     Time time_;
     Time frozenTime_;
+    Time autoSimulationTime_;
     FileWatcher assetWatcher_;
     DebugConsole debugConsole_;
     Game game_;
@@ -60,7 +62,9 @@ private:
     bool testFreezePaused_ = false;
     bool restartRequested_ = false;
     bool settingsSavePending_ = false;
+    bool autoSimulationTimeActive_ = false;
     float settingsSaveDelaySeconds_ = 0.0f;
+    float autoSimulationStepDebtSeconds_ = 0.0f;
     int width_ = 1280;
     int height_ = 720;
 };

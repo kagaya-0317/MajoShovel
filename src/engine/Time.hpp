@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 namespace majo {
 
@@ -6,6 +6,7 @@ class Time {
 public:
     void reset();
     void tick();
+    void advanceSimulation(float dt);
 
     float deltaSeconds() const { return deltaSeconds_; }
     float totalSeconds() const { return totalSeconds_; }

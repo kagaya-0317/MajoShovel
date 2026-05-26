@@ -34,4 +34,10 @@ void Time::tick()
     }
 }
 
+void Time::advanceSimulation(float dt)
+{
+    deltaSeconds_ = std::min(std::max(0.0f, dt), MaxDeltaSeconds);
+    totalSeconds_ += deltaSeconds_;
+}
+
 }

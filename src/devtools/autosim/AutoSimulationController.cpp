@@ -19,9 +19,15 @@ constexpr float EscapeStuckDurationSeconds = 2.4f;
 constexpr float MiningNoProgressThresholdSeconds = 4.8f;
 constexpr float ActionCooldownSeconds = 0.35f;
 constexpr float BaseResumeDelaySeconds = 0.95f;
+constexpr float FastPlanReuseSeconds = 0.16f;
 constexpr float ReturnActionRadius = 64.0f;
+constexpr float LowHpReturnRatio = 0.34f;
 constexpr float TargetSameDistance = 28.0f;
 constexpr float MineTargetSameDistance = 4.0f;
+constexpr float RouteWaypointSameDistance = 18.0f;
+constexpr float MeaningfulLightRadius = 140.0f;
+constexpr int MinSpeedMultiplier = 1;
+constexpr int MaxSpeedMultiplier = 16;
 
 std::vector<std::string> splitCommand(std::string_view command)
 {
@@ -63,6 +69,33 @@ AutoSimulationResult resultForSnapshot(const GameTestSnapshot& snapshot)
     return AutoSimulationResult::None;
 }
 
+float bestBackpackLightRadius(const GameTestSnapshot& snapshot)
+{
+    float best = 0.0f;
+    for (const GameTestObjectEntrySnapshot& item : snapshot.inventory.backpackItems) {
+        if (!item.equipped && !item.broken) {
+            best = std::max(best, item.lightRadius);
+        }
+    }
+    return best;
+}
+
+float hpRatio(const GameTestSnapshot& snapshot)
+{
+    if (snapshot.player.maxHp <= 0) {
+        return 1.0f;
+    }
+    return std::clamp(
+        static_cast<float>(snapshot.player.hp) / static_cast<float>(snapshot.player.maxHp),
+        0.0f,
+        1.0f);
+}
+
+bool shouldReturnForLowHp(const GameTestSnapshot& snapshot)
+{
+    return snapshot.player.hp > 0 && hpRatio(snapshot) <= LowHpReturnRatio;
+}
+
 std::optional<int> miningTargetHp(const GameTestSnapshot& snapshot, const AutoSimulationPlan& plan)
 {
     const GameTestMineTileSnapshot* best = nullptr;
@@ -94,6 +127,7 @@ bool lockableGoal(AutoSimulationGoal goal)
     case AutoSimulationGoal::None:
     case AutoSimulationGoal::DismissUi:
     case AutoSimulationGoal::EquipLoadout:
+    case AutoSimulationGoal::UseItem:
     case AutoSimulationGoal::Combat:
     case AutoSimulationGoal::EscapeStuck:
         return false;
@@ -114,6 +148,7 @@ float lockSecondsForGoal(AutoSimulationGoal goal)
     case AutoSimulationGoal::None:
     case AutoSimulationGoal::DismissUi:
     case AutoSimulationGoal::EquipLoadout:
+    case AutoSimulationGoal::UseItem:
     case AutoSimulationGoal::Combat:
     case AutoSimulationGoal::EscapeStuck:
         return 0.0f;
@@ -134,6 +169,7 @@ int goalPriority(AutoSimulationGoal goal)
     case AutoSimulationGoal::ApproachBoss: return 40;
     case AutoSimulationGoal::FollowMainPath: return 10;
     case AutoSimulationGoal::EquipLoadout: return 8;
+    case AutoSimulationGoal::UseItem: return 88;
     case AutoSimulationGoal::EscapeStuck: return 95;
     case AutoSimulationGoal::None: return 0;
     }
@@ -153,12 +189,41 @@ bool routeFollowGoal(AutoSimulationGoal goal)
     case AutoSimulationGoal::None:
     case AutoSimulationGoal::DismissUi:
     case AutoSimulationGoal::EquipLoadout:
+    case AutoSimulationGoal::UseItem:
     case AutoSimulationGoal::MineWall:
     case AutoSimulationGoal::Combat:
     case AutoSimulationGoal::EscapeStuck:
         return false;
     }
     return false;
+}
+
+bool shouldKeepLockedRoutePlan(
+    const GameTestSnapshot& snapshot,
+    const AutoSimulationPlan& locked,
+    const AutoSimulationPlan& candidate)
+{
+    if (!routeFollowGoal(candidate.goal) ||
+        !locked.hasMoveTarget ||
+        !candidate.hasMoveTarget ||
+        locked.routePathTileCount <= 1 ||
+        candidate.routePathTileCount <= 1) {
+        return false;
+    }
+
+    const float arriveDistance = std::max(1.0f, locked.moveTargetArriveDistance);
+    if (distanceSquared(snapshot.player.position, locked.moveTargetWorld) <= arriveDistance * arriveDistance) {
+        return false;
+    }
+    if (distanceSquared(locked.moveTargetWorld, candidate.moveTargetWorld) <=
+        RouteWaypointSameDistance * RouteWaypointSameDistance) {
+        return false;
+    }
+    if (locked.routeWaypointPathIndex >= 0 &&
+        candidate.routeWaypointPathIndex > locked.routeWaypointPathIndex) {
+        return false;
+    }
+    return true;
 }
 
 bool samePlanTarget(const AutoSimulationPlan& a, const AutoSimulationPlan& b)
@@ -220,6 +285,15 @@ AutoSimulationIntent actionIntent(const GameTestAction& action)
         intent.iconKind = AutoSimulationIntentIconKind::Base;
         intent.subject = "図鑑を確認したい";
         break;
+    case GameTestActionKind::UseBackpackStackItem:
+    case GameTestActionKind::UseBackpackInstanceItem:
+        intent.goal = AutoSimulationGoal::UseItem;
+        intent.iconKind = action.objectId.empty() ? AutoSimulationIntentIconKind::None : AutoSimulationIntentIconKind::Object;
+        intent.iconKey = action.objectId;
+        intent.prefix = "必要なので";
+        intent.subject = "消耗アイテム";
+        intent.suffix = "を使いたい";
+        break;
     case GameTestActionKind::EquipBackpackStaff:
         intent.goal = AutoSimulationGoal::EquipLoadout;
         intent.iconKind = action.objectId.empty() ? AutoSimulationIntentIconKind::None : AutoSimulationIntentIconKind::Object;
@@ -228,20 +302,32 @@ AutoSimulationIntent actionIntent(const GameTestAction& action)
         intent.subject = "アイテム";
         intent.suffix = "を装備したい";
         break;
+    case GameTestActionKind::SwitchActiveRing:
+        intent.goal = AutoSimulationGoal::EquipLoadout;
+        intent.iconKind = AutoSimulationIntentIconKind::Base;
+        intent.subject = "使うリングを切り替えたい";
+        break;
     case GameTestActionKind::DepositBackpackStack:
     case GameTestActionKind::DepositBackpackInstance:
     case GameTestActionKind::SellBackpackStack:
     case GameTestActionKind::SellBackpackInstance:
+    case GameTestActionKind::SellWarehouseStack:
+    case GameTestActionKind::SellWarehouseInstance:
+    case GameTestActionKind::UnprotectBackpackInstance:
+    case GameTestActionKind::UnprotectWarehouseInstance:
         intent.goal = AutoSimulationGoal::ReturnToBase;
         intent.iconKind = AutoSimulationIntentIconKind::Base;
         intent.subject = "拠点で荷物を整理したい";
         break;
     case GameTestActionKind::ProtectBackpackInstance:
     case GameTestActionKind::RepairBackpackInstance:
+    case GameTestActionKind::RepairRingItem:
     case GameTestActionKind::EnhanceBackpackStackAttack:
     case GameTestActionKind::EnhanceBackpackStackDig:
     case GameTestActionKind::EnhanceBackpackInstanceAttack:
     case GameTestActionKind::EnhanceBackpackInstanceDig:
+    case GameTestActionKind::EnhanceRingItemAttack:
+    case GameTestActionKind::EnhanceRingItemDig:
         intent.goal = AutoSimulationGoal::EquipLoadout;
         intent.iconKind = action.objectId.empty() ? AutoSimulationIntentIconKind::Base : AutoSimulationIntentIconKind::Object;
         intent.iconKey = action.objectId;
@@ -251,6 +337,11 @@ AutoSimulationIntent actionIntent(const GameTestAction& action)
         intent.goal = AutoSimulationGoal::ReturnToBase;
         intent.iconKind = AutoSimulationIntentIconKind::Base;
         intent.subject = "拠点施設を強化したい";
+        break;
+    case GameTestActionKind::ChooseLevelUpUpgrade:
+        intent.goal = AutoSimulationGoal::EquipLoadout;
+        intent.iconKind = AutoSimulationIntentIconKind::Base;
+        intent.subject = "レベルアップでリングを強化したい";
         break;
     case GameTestActionKind::None:
         intent.visible = false;
@@ -342,7 +433,7 @@ bool planTargetsWarpPoint(const AutoSimulationPlan& plan)
         return plan.reason.find("warp") != std::string::npos;
     }
     if (plan.goal == AutoSimulationGoal::DiscoverWarp) {
-        return plan.reason.rfind("warp", 0) == 0;
+        return plan.reason.find("warp") != std::string::npos;
     }
     return false;
 }
@@ -354,6 +445,28 @@ bool chestTargetExists(const GameTestSnapshot& snapshot, Vec2 target)
             !chest.opened &&
             distanceSquared(chest.position, target) <= TargetSameDistance * TargetSameDistance;
     });
+}
+
+bool fastReusableGoal(AutoSimulationGoal goal)
+{
+    switch (goal) {
+    case AutoSimulationGoal::MineWall:
+    case AutoSimulationGoal::Combat:
+    case AutoSimulationGoal::CollectDrop:
+    case AutoSimulationGoal::OpenChest:
+    case AutoSimulationGoal::DiscoverWarp:
+    case AutoSimulationGoal::ReturnToBase:
+    case AutoSimulationGoal::ApproachBoss:
+    case AutoSimulationGoal::FollowMainPath:
+    case AutoSimulationGoal::EscapeStuck:
+        return true;
+    case AutoSimulationGoal::None:
+    case AutoSimulationGoal::DismissUi:
+    case AutoSimulationGoal::EquipLoadout:
+    case AutoSimulationGoal::UseItem:
+        return false;
+    }
+    return false;
 }
 
 bool lockedPlanStillValid(const GameTestSnapshot& snapshot, const AutoSimulationPlan& plan)
@@ -378,6 +491,7 @@ bool lockedPlanStillValid(const GameTestSnapshot& snapshot, const AutoSimulation
     case AutoSimulationGoal::None:
     case AutoSimulationGoal::DismissUi:
     case AutoSimulationGoal::EquipLoadout:
+    case AutoSimulationGoal::UseItem:
     case AutoSimulationGoal::Combat:
     case AutoSimulationGoal::EscapeStuck:
         return false;
@@ -385,7 +499,38 @@ bool lockedPlanStillValid(const GameTestSnapshot& snapshot, const AutoSimulation
     return false;
 }
 
+bool cachedPlanStillValid(const GameTestSnapshot& snapshot, const AutoSimulationPlan& plan)
+{
+    if (snapshot.screenMode != GameTestScreenMode::Playing || !plan.hasTarget) {
+        return false;
+    }
+    if (!fastReusableGoal(plan.goal)) {
+        return false;
+    }
+    if (plan.goal == AutoSimulationGoal::Combat) {
+        return !snapshot.enemies.empty();
+    }
+    if (plan.goal == AutoSimulationGoal::EscapeStuck) {
+        return true;
+    }
+    return lockedPlanStillValid(snapshot, plan);
+}
+
 } // namespace
+
+GameTestSnapshotOptions AutoSimulationController::snapshotOptionsForNextStep() const
+{
+    GameTestSnapshotOptions options;
+    if (state_ == AutoSimulationState::Running &&
+        settings_.speedMultiplier > 1 &&
+        !pendingAction_ &&
+        cachedPlan_ &&
+        cachedPlanSeconds_ > 0.0f &&
+        fastReusableGoal(cachedPlan_->goal)) {
+        options.includePathGrid = false;
+    }
+    return options;
+}
 
 bool AutoSimulationController::executeCommand(std::string_view normalizedCommand, const GameTestSnapshot& snapshot)
 {
@@ -441,6 +586,17 @@ bool AutoSimulationController::executeCommand(std::string_view normalizedCommand
         logInfo("AutoSim: timeout = " + std::to_string(static_cast<int>(settings_.timeoutSeconds)) + "s.");
         return true;
     }
+    if (action == "speed") {
+        if (tokens.size() >= 3) {
+            settings_.speedMultiplier = std::clamp(
+                parseIntOr(tokens[2], settings_.speedMultiplier),
+                MinSpeedMultiplier,
+                MaxSpeedMultiplier);
+        }
+        debugSnapshot_.speedMultiplier = settings_.speedMultiplier;
+        logInfo("AutoSim: speed = x" + std::to_string(settings_.speedMultiplier) + ".");
+        return true;
+    }
     if (action == "trace") {
         if (tokens.size() >= 3) {
             settings_.trace = tokens[2] == "on" || tokens[2] == "true" || tokens[2] == "1";
@@ -471,7 +627,9 @@ void AutoSimulationController::start(const GameTestSnapshot& snapshot)
     pendingAction_.reset();
     intentHistory_.clear();
     clearPlanLock();
+    clearCachedPlan();
     navigator_.reset();
+    ringPlanner_.reset();
     ++runIndex_;
     runElapsedSeconds_ = 0.0f;
     actionCooldownSeconds_ = 0.0f;
@@ -490,7 +648,12 @@ void AutoSimulationController::start(const GameTestSnapshot& snapshot)
     debugSnapshot_ = {};
     debugSnapshot_.active = true;
     debugSnapshot_.state = state_;
+    debugSnapshot_.speedMultiplier = settings_.speedMultiplier;
+    debugSnapshot_.simulationStepsLastFrame = simulationStepsLastFrame_;
     debugSnapshot_.playerWorld = snapshot.player.position;
+    debugSnapshot_.activeLightRadius = snapshot.ring.bestLightRadius;
+    debugSnapshot_.bestBackpackLightRadius = bestBackpackLightRadius(snapshot);
+    debugSnapshot_.missingLight = snapshot.ring.bestLightRadius < MeaningfulLightRadius;
     debugSnapshot_.totalWarpPoints = static_cast<int>(snapshot.dungeon.warpPoints.size());
     debugSnapshot_.discoveredWarpPoints = snapshot.dungeon.discoveredWarpPoints;
     debugSnapshot_.unlockedWarpPoints = snapshot.dungeon.unlockedWarpPoints;
@@ -509,7 +672,9 @@ void AutoSimulationController::finish(const GameTestSnapshot& snapshot, AutoSimu
     pendingAction_.reset();
     intentHistory_.clear();
     clearPlanLock();
+    clearCachedPlan();
     navigator_.reset();
+    ringPlanner_.reset();
     debugSnapshot_ = {};
     logger_.recordRun(record);
 
@@ -524,6 +689,7 @@ void AutoSimulationController::report() const
     logger_.writeSummary();
     logInfo("AutoSim: state=" + std::string(autoSimulationStateName(state_)) +
         " run=" + std::to_string(runIndex_) +
+        " speed=x" + std::to_string(settings_.speedMultiplier) +
         " elapsed=" + std::to_string(static_cast<int>(runElapsedSeconds_)) + "s" +
         " csv=" + logger_.csvPath().string());
     if (logger_.records().empty()) {
@@ -560,6 +726,13 @@ void AutoSimulationController::recordActionResult(const GameTestAction& action, 
         (result.message.empty() ? std::string{} : " message=" + result.message));
 }
 
+void AutoSimulationController::setSimulationStepsLastFrame(int steps)
+{
+    simulationStepsLastFrame_ = std::max(0, steps);
+    debugSnapshot_.speedMultiplier = settings_.speedMultiplier;
+    debugSnapshot_.simulationStepsLastFrame = simulationStepsLastFrame_;
+}
+
 void AutoSimulationController::queueAction(GameTestAction action)
 {
     if (pendingAction_ || action.kind == GameTestActionKind::None) {
@@ -573,6 +746,7 @@ void AutoSimulationController::queueAction(GameTestAction action)
     recordIntent(actionIntent(*pendingAction_));
     actionCooldownSeconds_ = ActionCooldownSeconds;
     clearPlanLock();
+    clearCachedPlan();
 }
 
 void AutoSimulationController::recordIntent(AutoSimulationIntent intent)
@@ -596,6 +770,31 @@ void AutoSimulationController::clearPlanLock()
 {
     lockedPlan_.reset();
     planLockSeconds_ = 0.0f;
+}
+
+void AutoSimulationController::clearCachedPlan()
+{
+    cachedPlan_.reset();
+    cachedPlanSeconds_ = 0.0f;
+}
+
+bool AutoSimulationController::canReuseCachedPlan(const GameTestSnapshot& snapshot) const
+{
+    return settings_.speedMultiplier > 1 &&
+        cachedPlan_ &&
+        cachedPlanSeconds_ > 0.0f &&
+        cachedPlanStillValid(snapshot, *cachedPlan_);
+}
+
+void AutoSimulationController::cachePlanForFastForward(const AutoSimulationPlan& plan)
+{
+    if (settings_.speedMultiplier <= 1 || !plan.hasTarget || !fastReusableGoal(plan.goal)) {
+        clearCachedPlan();
+        return;
+    }
+
+    cachedPlan_ = plan;
+    cachedPlanSeconds_ = FastPlanReuseSeconds;
 }
 
 AutoSimulationPlan AutoSimulationController::stabilizePlan(
@@ -625,6 +824,9 @@ AutoSimulationPlan AutoSimulationController::stabilizePlan(
     if (samePlanTarget(*lockedPlan_, candidate)) {
         planLockSeconds_ = lockSecondsForGoal(candidate.goal);
         if (routeFollowGoal(candidate.goal)) {
+            if (shouldKeepLockedRoutePlan(snapshot, *lockedPlan_, candidate)) {
+                return *lockedPlan_;
+            }
             lockedPlan_ = candidate;
             return candidate;
         }
@@ -646,6 +848,7 @@ void AutoSimulationController::update(const GameTestSnapshot& snapshot, float dt
     inputFrame_ = {};
     if (state_ != AutoSimulationState::Running) {
         pendingAction_.reset();
+        clearCachedPlan();
         return;
     }
     if (pendingAction_) {
@@ -660,6 +863,7 @@ void AutoSimulationController::update(const GameTestSnapshot& snapshot, float dt
     const float safeDt = std::max(0.0f, dt);
     runElapsedSeconds_ += safeDt;
     actionCooldownSeconds_ = std::max(0.0f, actionCooldownSeconds_ - safeDt);
+    cachedPlanSeconds_ = std::max(0.0f, cachedPlanSeconds_ - safeDt);
     if (runElapsedSeconds_ >= settings_.timeoutSeconds) {
         finish(snapshot, AutoSimulationResult::Timeout);
         return;
@@ -667,6 +871,7 @@ void AutoSimulationController::update(const GameTestSnapshot& snapshot, float dt
 
     if (snapshot.screenMode == GameTestScreenMode::GameOver) {
         clearPlanLock();
+        clearCachedPlan();
         navigator_.reset();
         if (actionCooldownSeconds_ <= 0.0f) {
             GameTestAction action;
@@ -677,17 +882,78 @@ void AutoSimulationController::update(const GameTestSnapshot& snapshot, float dt
         return;
     }
 
-    if (actionCooldownSeconds_ <= 0.0f) {
-        if (std::optional<GameTestAction> action = loadoutPlanner_.chooseAction(snapshot)) {
-            queueAction(std::move(*action));
+    if (snapshot.screenMode == GameTestScreenMode::LevelUp && snapshot.levelUp.choiceActive) {
+        clearPlanLock();
+        clearCachedPlan();
+        navigator_.reset();
+        if (actionCooldownSeconds_ <= 0.0f) {
+            if (std::optional<GameTestAction> action = levelUpPlanner_.chooseAction(snapshot)) {
+                queueAction(std::move(*action));
+            }
+        }
+        return;
+    }
+
+    if (snapshot.screenMode == GameTestScreenMode::Playing &&
+        nearReturnPoint(snapshot) &&
+        actionCooldownSeconds_ <= 0.0f) {
+        const bool returnForFullBackpack = backpackFull(snapshot);
+        const bool returnForLowHp = shouldReturnForLowHp(snapshot);
+        const bool returnForCheckpointPrep = shouldReturnForCheckpointPrep(snapshot);
+        if (returnForFullBackpack || returnForLowHp || returnForCheckpointPrep) {
+            GameTestAction action;
+            action.kind = GameTestActionKind::ReturnToBaseViaWarp;
+            action.reason = returnForFullBackpack
+                ? "backpack_full_near_warp"
+                : (returnForLowHp ? "low_hp_near_warp" : "checkpoint_base_prep");
+            queueAction(std::move(action));
+            inputFrame_ = {};
             return;
         }
     }
 
+    if (actionCooldownSeconds_ <= 0.0f) {
+        if (std::optional<GameTestAction> action = consumablePlanner_.chooseAction(snapshot)) {
+            queueAction(std::move(*action));
+            return;
+        }
+        if (std::optional<GameTestAction> action = gearPlanner_.chooseAction(snapshot)) {
+            queueAction(std::move(*action));
+            return;
+        }
+        if (snapshot.screenMode != GameTestScreenMode::Base) {
+            if (std::optional<GameTestAction> action = loadoutPlanner_.chooseAction(snapshot)) {
+                queueAction(std::move(*action));
+                return;
+            }
+        }
+    }
+
     if (snapshot.screenMode == GameTestScreenMode::Base) {
+        inputFrame_.active = true;
+        inputFrame_.exclusive = true;
         clearPlanLock();
+        clearCachedPlan();
         navigator_.reset();
         if (actionCooldownSeconds_ > 0.0f) {
+            return;
+        }
+        if (std::optional<GameTestAction> action = baseTasks_.choosePreparationAction(snapshot)) {
+            baseIdleSeconds_ = 0.0f;
+            queueAction(std::move(*action));
+            return;
+        }
+        const bool backpackReady = AutoSimulationBaseTasks::backpackReadyForDeparture(snapshot.inventory);
+        if (!backpackReady) {
+            if (std::optional<GameTestAction> action = baseTasks_.chooseAction(snapshot)) {
+                baseIdleSeconds_ = 0.0f;
+                queueAction(std::move(*action));
+            }
+            return;
+        }
+        if (std::optional<GameTestAction> action = loadoutPlanner_.chooseAction(snapshot)) {
+            baseIdleSeconds_ = 0.0f;
+            queueAction(std::move(*action));
             return;
         }
         if (std::optional<GameTestAction> action = baseTasks_.chooseAction(snapshot)) {
@@ -695,41 +961,42 @@ void AutoSimulationController::update(const GameTestSnapshot& snapshot, float dt
             queueAction(std::move(*action));
             return;
         }
-        if (!backpackFull(snapshot)) {
-            baseIdleSeconds_ += safeDt;
-            if (baseIdleSeconds_ >= BaseResumeDelaySeconds) {
-                GameTestAction action;
-                action.kind = GameTestActionKind::StartMiningFromBase;
-                action.reason = "base_tasks_complete";
-                baseIdleSeconds_ = 0.0f;
-                queueAction(std::move(action));
-            }
+        baseIdleSeconds_ += safeDt;
+        if (baseIdleSeconds_ >= BaseResumeDelaySeconds) {
+            GameTestAction action;
+            action.kind = GameTestActionKind::StartMiningFromBase;
+            action.reason = "base_tasks_complete";
+            baseIdleSeconds_ = 0.0f;
+            queueAction(std::move(action));
         }
         return;
     }
 
     baseIdleSeconds_ = 0.0f;
-    if (snapshot.screenMode == GameTestScreenMode::Playing &&
-        nearReturnPoint(snapshot) &&
-        actionCooldownSeconds_ <= 0.0f &&
-        (backpackFull(snapshot) || shouldReturnForCheckpointPrep(snapshot))) {
-        GameTestAction action;
-        action.kind = GameTestActionKind::ReturnToBaseViaWarp;
-        action.reason = backpackFull(snapshot) ? "backpack_full_near_warp" : "checkpoint_base_prep";
-        queueAction(std::move(action));
-        inputFrame_ = {};
-        return;
+    const bool escapingStuck = escapeStuckSeconds_ > 0.0f;
+    AutoSimulationPlan plan;
+    if (canReuseCachedPlan(snapshot)) {
+        planLockSeconds_ = std::max(0.0f, planLockSeconds_ - safeDt);
+        plan = *cachedPlan_;
+    } else {
+        plan = stabilizePlan(
+            snapshot,
+            planner_.makePlan(snapshot, escapingStuck),
+            safeDt);
+        cachePlanForFastForward(plan);
     }
 
-    const bool escapingStuck = escapeStuckSeconds_ > 0.0f;
-    AutoSimulationPlan plan = stabilizePlan(
-        snapshot,
-        planner_.makePlan(snapshot, escapingStuck),
-        safeDt);
+    if (actionCooldownSeconds_ <= 0.0f) {
+        if (std::optional<GameTestAction> action = ringPlanner_.chooseAction(snapshot, plan, safeDt)) {
+            queueAction(std::move(*action));
+            updateDebugSnapshot(snapshot, plan);
+            return;
+        }
+    }
+
     updateStuckDetection(snapshot, plan, dt);
     recordIntent(intentFormatter_.format(snapshot, plan));
     escapeStuckSeconds_ = std::max(0.0f, escapeStuckSeconds_ - std::max(0.0f, dt));
-    updateDebugSnapshot(snapshot, plan);
 
     if (plan.goal != lastGoal_) {
         if (settings_.trace || plan.goal == AutoSimulationGoal::EscapeStuck) {
@@ -740,6 +1007,7 @@ void AutoSimulationController::update(const GameTestSnapshot& snapshot, float dt
     }
 
     inputFrame_ = navigator_.makeInput(snapshot, plan, dt);
+    updateDebugSnapshot(snapshot, plan);
 }
 
 void AutoSimulationController::updateDebugSnapshot(
@@ -749,6 +1017,8 @@ void AutoSimulationController::updateDebugSnapshot(
     AutoSimulationDebugSnapshot debug;
     debug.active = state_ != AutoSimulationState::Idle;
     debug.state = state_;
+    debug.speedMultiplier = settings_.speedMultiplier;
+    debug.simulationStepsLastFrame = simulationStepsLastFrame_;
     debug.hasPlan = true;
     debug.goal = plan.goal;
     debug.reason = plan.reason;
@@ -761,6 +1031,17 @@ void AutoSimulationController::updateDebugSnapshot(
     debug.hasAimTarget = plan.hasAimTarget;
     debug.distanceToTarget = plan.hasTarget ? distanceBetween(snapshot.player.position, plan.targetWorld) : 0.0f;
     debug.distanceToMoveTarget = plan.hasMoveTarget ? distanceBetween(snapshot.player.position, plan.moveTargetWorld) : 0.0f;
+    debug.moveTargetArriveDistance = plan.moveTargetArriveDistance;
+    debug.inputMoveAxis = inputFrame_.moveAxis;
+    debug.stuckMoveDistance = hasLastPlayerPosition_
+        ? distanceBetween(snapshot.player.position, lastPlayerPosition_)
+        : 0.0f;
+    debug.activeLightRadius = snapshot.ring.bestLightRadius;
+    debug.bestBackpackLightRadius = bestBackpackLightRadius(snapshot);
+    debug.missingLight = snapshot.ring.bestLightRadius < MeaningfulLightRadius;
+    debug.routePathTileCount = plan.routePathTileCount;
+    debug.routeWaypointPathIndex = plan.routeWaypointPathIndex;
+    debug.routeFirstDigPathIndex = plan.routeFirstDigPathIndex;
     debug.routeDigTileCount = plan.routeDigTileCount;
     debug.routeHardTileCount = plan.routeHardTileCount;
     debug.routeAvoidingHardWall = plan.routeAvoidingHardWall;
@@ -953,7 +1234,7 @@ bool AutoSimulationController::shouldReturnForCheckpointPrep(const GameTestSnaps
     baseSnapshot.dialogueActive = false;
     baseSnapshot.pendingStoryDelayActive = false;
     baseSnapshot.firstItemNoticeActive = false;
-    return baseTasks_.chooseAction(baseSnapshot).has_value();
+    return baseTasks_.chooseCheckpointPrepAction(baseSnapshot).has_value();
 }
 
 } // namespace majo::autosim

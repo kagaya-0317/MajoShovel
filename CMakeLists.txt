@@ -48,11 +48,16 @@ add_executable(MajoShovel
     src/devtools/autosim/AutoSimulationLogger.cpp
     src/devtools/autosim/AutoSimulationIntentFormatter.cpp
     src/devtools/autosim/AutoSimulationItemEvaluator.cpp
+    src/devtools/autosim/AutoSimulationGearPlanner.cpp
     src/devtools/autosim/AutoSimulationLoadoutPlanner.cpp
+    src/devtools/autosim/AutoSimulationRingPlanner.cpp
+    src/devtools/autosim/AutoSimulationLevelUpPlanner.cpp
+    src/devtools/autosim/AutoSimulationConsumablePlanner.cpp
     src/devtools/autosim/AutoSimulationBaseTasks.cpp
     src/devtools/autosim/AutoSimulationCombatModel.cpp
     src/devtools/autosim/AutoSimulationMiningModel.cpp
     src/devtools/autosim/AutoSimulationPathfinder.cpp
+    src/devtools/autosim/AutoSimulationMapClueModel.cpp
     src/devtools/autosim/AutoSimulationExplorationModel.cpp
     src/devtools/autosim/AutoSimulationPlanner.cpp
     src/devtools/autosim/AutoSimulationNavigator.cpp

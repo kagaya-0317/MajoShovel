@@ -578,9 +578,9 @@ Vec2 homeInteriorEntryPosition(UiRect homeExitRect, float playerRadius)
     return position;
 }
 
-UiRect merchantSellSourceRect(int index)
+UiRect merchantSellSourceRect(int index, int tabCount = BaseItemSourceCount)
 {
-    return baseItemSourceTabRect(index, 116.0f + MerchantSellSourceYOffset);
+    return baseItemSourceTabRect(index, 116.0f + MerchantSellSourceYOffset, tabCount);
 }
 
 float storageItemCircleLeftX()
@@ -603,6 +603,36 @@ bool baseItemSourceIsRing(int source)
 int ringIndexFromBaseItemSource(int source)
 {
     return source - BaseRingSourceOffset;
+}
+
+int baseItemSourceCountForUnlockedRings(int unlockedRingCount)
+{
+    return BaseRingSourceOffset + std::clamp(unlockedRingCount, 1, SpellRingCount);
+}
+
+int storageDepositSourceCountForUnlockedRings(int unlockedRingCount)
+{
+    return 1 + std::clamp(unlockedRingCount, 1, SpellRingCount);
+}
+
+int clampBaseItemSourceForUnlockedRings(int source, int unlockedRingCount)
+{
+    const int sourceCount = baseItemSourceCountForUnlockedRings(unlockedRingCount);
+    return source >= 0 && source < sourceCount ? source : BaseBackpackSourceIndex;
+}
+
+int clampStorageDepositSourceForUnlockedRings(int source, int unlockedRingCount)
+{
+    if (source == BaseBackpackSourceIndex) {
+        return source;
+    }
+    if (!baseItemSourceIsRing(source)) {
+        return BaseBackpackSourceIndex;
+    }
+    const int ringIndex = ringIndexFromBaseItemSource(source);
+    return ringIndex >= 0 && ringIndex < std::clamp(unlockedRingCount, 1, SpellRingCount)
+        ? source
+        : BaseBackpackSourceIndex;
 }
 
 int storageDepositSourceValue(int tabIndex)
@@ -862,16 +892,17 @@ UiRect ringWorkshopDetailPanelRect()
     return merchantDetailPanelRect();
 }
 
-UiRect ringWorkshopRingTabRect(int index)
+UiRect ringWorkshopRingTabRect(int index, int unlockedRingCount = SpellRingCount)
 {
     constexpr float TabTop = 126.0f;
     constexpr float TabGap = 22.0f;
+    const int ringCount = std::clamp(unlockedRingCount, 1, SpellRingCount);
     const UiRect panel = ringWorkshopPanelRect();
     const UiRect detail = ringWorkshopDetailPanelRect();
     const float left = panel.pos.x + 72.0f;
     const float right = detail.pos.x - 24.0f;
-    const float totalGap = TabGap * static_cast<float>(std::max(0, SpellRingCount - 1));
-    const float width = std::max(1.0f, (right - left - totalGap) / static_cast<float>(SpellRingCount));
+    const float totalGap = TabGap * static_cast<float>(std::max(0, ringCount - 1));
+    const float width = std::max(1.0f, (right - left - totalGap) / static_cast<float>(ringCount));
     const float pitch = width + TabGap;
     return {{left + static_cast<float>(index) * pitch, TabTop}, {width, ui::ButtonHeight}};
 }
@@ -5110,7 +5141,7 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
                 if (item == 0) {
                     baseRingWorkshopMode_ = RingWorkshopMode::Respec;
                     baseRingWorkshopSelection_ = 0;
-                    baseRingWorkshopRingIndex_ = std::clamp(spellRing_.activeRingIndex(), 0, SpellRingCount - 1);
+                    baseRingWorkshopRingIndex_ = std::clamp(spellRing_.activeRingIndex(), 0, unlockedRingCount() - 1);
                     baseRingWorkshopRingTabs_ = {};
                     resetRingWorkshopDraft();
                     baseStatus_.clear();
@@ -5149,21 +5180,22 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
 
         if (baseRingWorkshopMode_ == RingWorkshopMode::Respec) {
             constexpr int RespecSelectionCount = RingLevelUpgradeKindCount + 1;
-            baseRingWorkshopRingIndex_ = std::clamp(baseRingWorkshopRingIndex_, 0, SpellRingCount - 1);
+            const int ringCount = unlockedRingCount();
+            baseRingWorkshopRingIndex_ = std::clamp(baseRingWorkshopRingIndex_, 0, ringCount - 1);
             baseRingWorkshopSelection_ = std::clamp(baseRingWorkshopSelection_, 0, RespecSelectionCount - 1);
 
             std::array<UiTabItem, SpellRingCount> ringTabs{};
             std::array<UiRect, SpellRingCount> ringTabRects{};
             std::array<std::string, SpellRingCount> ringTabLabels{};
-            for (int i = 0; i < SpellRingCount; ++i) {
+            for (int i = 0; i < ringCount; ++i) {
                 ringTabLabels[static_cast<std::size_t>(i)] = "リング " + std::to_string(i + 1);
                 ringTabs[static_cast<std::size_t>(i)] = {ringTabLabels[static_cast<std::size_t>(i)], true};
-                ringTabRects[static_cast<std::size_t>(i)] = ringWorkshopRingTabRect(i);
+                ringTabRects[static_cast<std::size_t>(i)] = ringWorkshopRingTabRect(i, ringCount);
             }
             UiTabsInput ringTabsInput{};
             ringTabsInput.focusDelta = input.activeRingDelta();
             const int directRingFocus = input.shortcutSlotPressed();
-            if (directRingFocus >= 0 && directRingFocus < SpellRingCount) {
+            if (directRingFocus >= 0 && directRingFocus < ringCount) {
                 ringTabsInput.directFocusIndex = directRingFocus;
             }
             ringTabsInput.commit = ringTabsInput.focusDelta != 0 || ringTabsInput.directFocusIndex >= 0;
@@ -5173,7 +5205,7 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
                 ringTabsInput,
                 baseRingWorkshopRingIndex_,
                 ringTabs.data(),
-                static_cast<int>(ringTabs.size()),
+                ringCount,
                 ringTabRects.data());
             if (ringSelection >= 0) {
                 baseRingWorkshopRingIndex_ = ringSelection;
@@ -5540,10 +5572,12 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
         }
 
         if (baseStorageMode_ == StorageUiMode::Deposit) {
+            const int sourceCount = storageDepositSourceCountForUnlockedRings(unlockedRingCount());
+            baseStorageDepositSource_ = clampStorageDepositSourceForUnlockedRings(baseStorageDepositSource_, unlockedRingCount());
             const int currentTab = storageDepositSourceTabIndex(baseStorageDepositSource_);
             std::array<UiTabItem, StorageDepositSourceCount> sourceTabs{};
             std::array<UiRect, StorageDepositSourceCount> sourceTabRects{};
-            for (int i = 0; i < StorageDepositSourceCount; ++i) {
+            for (int i = 0; i < sourceCount; ++i) {
                 const int source = storageDepositSourceValue(i);
                 sourceTabs[static_cast<std::size_t>(i)] = {BaseItemSourceLabels[static_cast<std::size_t>(source)], true};
                 sourceTabRects[static_cast<std::size_t>(i)] = storageDepositSourceRect(i);
@@ -5551,7 +5585,7 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
             UiTabsInput sourceTabsInput{};
             sourceTabsInput.focusDelta = input.activeRingDelta();
             const int directSourceFocus = input.shortcutSlotPressed();
-            if (directSourceFocus >= 0 && directSourceFocus < StorageDepositSourceCount) {
+            if (directSourceFocus >= 0 && directSourceFocus < sourceCount) {
                 sourceTabsInput.directFocusIndex = directSourceFocus;
             }
             sourceTabsInput.commit =
@@ -5565,7 +5599,7 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
                 sourceTabsInput,
                 currentTab,
                 sourceTabs.data(),
-                static_cast<int>(sourceTabs.size()),
+                sourceCount,
                 sourceTabRects.data());
             if (sourceSelection >= 0) {
                 closeStorageCommand();
@@ -5980,16 +6014,18 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
             return;
         }
 
+        const int sourceCount = baseItemSourceCountForUnlockedRings(unlockedRingCount());
+        baseProcessingSource_ = clampBaseItemSourceForUnlockedRings(baseProcessingSource_, unlockedRingCount());
         std::array<UiTabItem, BaseProcessingSourceCount> sourceTabs{};
         std::array<UiRect, BaseProcessingSourceCount> sourceTabRects{};
-        for (int i = 0; i < BaseProcessingSourceCount; ++i) {
+        for (int i = 0; i < sourceCount; ++i) {
             sourceTabs[static_cast<std::size_t>(i)] = {BaseItemSourceLabels[static_cast<std::size_t>(i)], true};
-            sourceTabRects[static_cast<std::size_t>(i)] = baseProcessingSourceRect(i);
+            sourceTabRects[static_cast<std::size_t>(i)] = baseProcessingSourceRect(i, sourceCount);
         }
         UiTabsInput sourceTabsInput{};
         sourceTabsInput.focusDelta = baseItemSourceIsWarehouse(baseProcessingSource_) ? 0 : input.activeRingDelta();
         const int directSourceFocus = input.shortcutSlotPressed();
-        if (directSourceFocus >= 0 && directSourceFocus < BaseProcessingSourceCount) {
+        if (directSourceFocus >= 0 && directSourceFocus < sourceCount) {
             sourceTabsInput.directFocusIndex = directSourceFocus;
         }
         sourceTabsInput.commit =
@@ -6003,8 +6039,8 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
             sourceTabsInput,
             baseProcessingSource_,
             sourceTabs.data(),
-                static_cast<int>(sourceTabs.size()),
-                sourceTabRects.data());
+            sourceCount,
+            sourceTabRects.data());
         if (sourceSelection >= 0) {
             baseProcessingSource_ = sourceSelection;
             int sourceSlotCount = inventory_.screenSlotCount();
@@ -6366,16 +6402,18 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
                 return;
             }
 
+            const int sourceCount = baseItemSourceCountForUnlockedRings(unlockedRingCount());
+            baseMerchantSellSource_ = clampBaseItemSourceForUnlockedRings(baseMerchantSellSource_, unlockedRingCount());
             std::array<UiTabItem, BaseItemSourceCount> sourceTabs{};
             std::array<UiRect, BaseItemSourceCount> sourceTabRects{};
-            for (int i = 0; i < BaseItemSourceCount; ++i) {
+            for (int i = 0; i < sourceCount; ++i) {
                 sourceTabs[static_cast<std::size_t>(i)] = {BaseItemSourceLabels[static_cast<std::size_t>(i)], true};
-                sourceTabRects[static_cast<std::size_t>(i)] = merchantSellSourceRect(i);
+                sourceTabRects[static_cast<std::size_t>(i)] = merchantSellSourceRect(i, sourceCount);
             }
             UiTabsInput sourceTabsInput{};
             sourceTabsInput.focusDelta = baseItemSourceIsWarehouse(baseMerchantSellSource_) ? 0 : input.activeRingDelta();
             const int directSourceFocus = input.shortcutSlotPressed();
-            if (directSourceFocus >= 0 && directSourceFocus < BaseItemSourceCount) {
+            if (directSourceFocus >= 0 && directSourceFocus < sourceCount) {
                 sourceTabsInput.directFocusIndex = directSourceFocus;
             }
             sourceTabsInput.commit =
@@ -6389,7 +6427,7 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
                 sourceTabsInput,
                 baseMerchantSellSource_,
                 sourceTabs.data(),
-                static_cast<int>(sourceTabs.size()),
+                sourceCount,
                 sourceTabRects.data());
             if (sourceSelection >= 0) {
                 baseMerchantSellSource_ = sourceSelection;
@@ -7600,9 +7638,10 @@ void Game::renderBaseScreen(Renderer& renderer) const
             InventoryUiEntryView detailEntry{};
             const SpellRingItem* selectedRingItem = nullptr;
             if (baseStorageMode_ == StorageUiMode::Deposit) {
+                const int sourceCount = storageDepositSourceCountForUnlockedRings(unlockedRingCount());
                 std::array<UiTabItem, StorageDepositSourceCount> sourceTabs{};
                 std::array<UiRect, StorageDepositSourceCount> sourceTabRects{};
-                for (int i = 0; i < StorageDepositSourceCount; ++i) {
+                for (int i = 0; i < sourceCount; ++i) {
                     const int source = storageDepositSourceValue(i);
                     sourceTabs[static_cast<std::size_t>(i)] = {BaseItemSourceLabels[static_cast<std::size_t>(source)], true};
                     sourceTabRects[static_cast<std::size_t>(i)] = storageDepositSourceRect(i);
@@ -7613,7 +7652,7 @@ void Game::renderBaseScreen(Renderer& renderer) const
                     baseStorageDepositSourceTabs_,
                     currentTab,
                     sourceTabs.data(),
-                    static_cast<int>(sourceTabs.size()),
+                    sourceCount,
                     sourceTabRects.data());
 
                 std::snprintf(buffer, sizeof(buffer), "収納箱 %d/%d", warehouseUsedSlots(), warehouseCapacity());
@@ -7741,21 +7780,22 @@ void Game::renderBaseScreen(Renderer& renderer) const
                     uiActionButtonStyle());
             }
         } else if (baseRingWorkshopMode_ == RingWorkshopMode::Respec) {
-            const int ringIndex = std::clamp(baseRingWorkshopRingIndex_, 0, SpellRingCount - 1);
+            const int ringCount = unlockedRingCount();
+            const int ringIndex = std::clamp(baseRingWorkshopRingIndex_, 0, ringCount - 1);
             std::array<UiTabItem, SpellRingCount> ringTabs{};
             std::array<UiRect, SpellRingCount> ringTabRects{};
             std::array<std::string, SpellRingCount> ringTabLabels{};
-            for (int i = 0; i < SpellRingCount; ++i) {
+            for (int i = 0; i < ringCount; ++i) {
                 ringTabLabels[static_cast<std::size_t>(i)] = "リング " + std::to_string(i + 1);
                 ringTabs[static_cast<std::size_t>(i)] = {ringTabLabels[static_cast<std::size_t>(i)], true};
-                ringTabRects[static_cast<std::size_t>(i)] = ringWorkshopRingTabRect(i);
+                ringTabRects[static_cast<std::size_t>(i)] = ringWorkshopRingTabRect(i, ringCount);
             }
             drawUiTabs(
                 renderer,
                 baseRingWorkshopRingTabs_,
                 ringIndex,
                 ringTabs.data(),
-                static_cast<int>(ringTabs.size()),
+                ringCount,
                 ringTabRects.data());
 
             const UiRect respecPanel = ringWorkshopRespecPanelRect();
@@ -7962,18 +8002,19 @@ void Game::renderBaseScreen(Renderer& renderer) const
                 confirmStyle);
         }
     } else if (baseProcessingActive_) {
+        const int sourceCount = baseItemSourceCountForUnlockedRings(unlockedRingCount());
         std::array<UiTabItem, BaseProcessingSourceCount> sourceTabs{};
         std::array<UiRect, BaseProcessingSourceCount> sourceTabRects{};
-        for (int i = 0; i < BaseProcessingSourceCount; ++i) {
+        for (int i = 0; i < sourceCount; ++i) {
             sourceTabs[static_cast<std::size_t>(i)] = {BaseItemSourceLabels[static_cast<std::size_t>(i)], true};
-            sourceTabRects[static_cast<std::size_t>(i)] = baseProcessingSourceRect(i);
+            sourceTabRects[static_cast<std::size_t>(i)] = baseProcessingSourceRect(i, sourceCount);
         }
         drawUiTabs(
             renderer,
             baseProcessingSourceTabs_,
             baseProcessingSource_,
             sourceTabs.data(),
-            static_cast<int>(sourceTabs.size()),
+            sourceCount,
             sourceTabRects.data());
 
         const auto entryViewForScreenSlot = [this](int slot) {
@@ -8274,18 +8315,19 @@ void Game::renderBaseScreen(Renderer& renderer) const
                     extraLines.push_back({"在庫", buffer, product.quantity > 0 ? ui::Text : ui::TextDisabled});
                 }
             } else {
+                const int sourceCount = baseItemSourceCountForUnlockedRings(unlockedRingCount());
                 std::array<UiTabItem, BaseItemSourceCount> sourceTabs{};
                 std::array<UiRect, BaseItemSourceCount> sourceTabRects{};
-                for (int i = 0; i < BaseItemSourceCount; ++i) {
+                for (int i = 0; i < sourceCount; ++i) {
                     sourceTabs[static_cast<std::size_t>(i)] = {BaseItemSourceLabels[static_cast<std::size_t>(i)], true};
-                    sourceTabRects[static_cast<std::size_t>(i)] = merchantSellSourceRect(i);
+                    sourceTabRects[static_cast<std::size_t>(i)] = merchantSellSourceRect(i, sourceCount);
                 }
                 drawUiTabs(
                     renderer,
                     baseMerchantSellSourceTabs_,
                     baseMerchantSellSource_,
                     sourceTabs.data(),
-                    static_cast<int>(sourceTabs.size()),
+                    sourceCount,
                     sourceTabRects.data());
 
                 const bool warehouseSource = baseItemSourceIsWarehouse(baseMerchantSellSource_);

@@ -33,6 +33,9 @@ struct AutoSimulationPathField {
 struct AutoSimulationRoute {
     bool found = false;
     float totalCost = 0.0f;
+    int pathTileCount = 0;
+    int waypointPathIndex = -1;
+    int firstDigPathIndex = -1;
     int digTileCount = 0;
     int hardTileCount = 0;
     GameTestTerrainKind firstDigTerrainKind = GameTestTerrainKind::Empty;
@@ -47,6 +50,7 @@ class AutoSimulationPathfinder {
 public:
     AutoSimulationPathField buildField(const GameTestSnapshot& snapshot) const;
     std::optional<AutoSimulationRoute> findRoute(const AutoSimulationPathField& field, Vec2 targetWorld) const;
+    bool hasClearLine(const AutoSimulationPathField& field, Vec2 from, Vec2 to, bool allowBlockedDestination = false) const;
 };
 
 } // namespace majo::autosim

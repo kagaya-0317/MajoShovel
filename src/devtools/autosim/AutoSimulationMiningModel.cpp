@@ -6,6 +6,7 @@
 #include <cmath>
 #include <limits>
 #include <optional>
+#include <string_view>
 #include <utility>
 
 namespace majo::autosim {
@@ -210,6 +211,39 @@ float terrainAttributeCost(GameTestTerrainAttribute attribute)
     return 0.0f;
 }
 
+bool reasonContains(std::string_view reason, std::string_view text)
+{
+    return reason.find(text) != std::string_view::npos;
+}
+
+bool preferSoftDigReason(std::string_view reason)
+{
+    return reasonContains(reason, "explore") ||
+        reasonContains(reason, "main_path") ||
+        reasonContains(reason, "map_clue");
+}
+
+float softDigTerrainBias(std::string_view reason, const GameTestMineTileSnapshot& tile)
+{
+    if (!preferSoftDigReason(reason)) {
+        return 0.0f;
+    }
+
+    switch (tile.terrainKind) {
+    case GameTestTerrainKind::Dirt:
+        return tile.terrainAttribute == GameTestTerrainAttribute::Soft ? -120.0f : -70.0f;
+    case GameTestTerrainKind::Ore:
+        return -10.0f;
+    case GameTestTerrainKind::Rock:
+        return 180.0f;
+    case GameTestTerrainKind::HardRock:
+        return 620.0f;
+    case GameTestTerrainKind::Empty:
+        break;
+    }
+    return 0.0f;
+}
+
 float expectedBreakHits(const GameTestSnapshot& snapshot, const GameTestMineTileSnapshot& tile)
 {
     const int remainingHp = std::max(1, tile.hp > 0 ? tile.hp : tile.effectiveHp);
@@ -242,7 +276,10 @@ MiningCandidate miningCandidateForTile(
     return candidate;
 }
 
-std::optional<MiningCandidate> bestBlockingTile(const GameTestSnapshot& snapshot, Vec2 travelTarget)
+std::optional<MiningCandidate> bestBlockingTile(
+    const GameTestSnapshot& snapshot,
+    Vec2 travelTarget,
+    std::string_view reason)
 {
     const Vec2 direction = travelDirection(snapshot, travelTarget);
 
@@ -266,6 +303,7 @@ std::optional<MiningCandidate> bestBlockingTile(const GameTestSnapshot& snapshot
         candidate.score =
             terrainKindCost(tile.terrainKind) +
             terrainAttributeCost(tile.terrainAttribute) +
+            softDigTerrainBias(reason, tile) +
             expectedBreakHits(snapshot, tile) * 22.0f +
             std::max(0.0f, tile.localHardnessMultiplier - 1.0f) * 42.0f +
             std::clamp(tile.distanceFromMainPath, 0.0f, 8.0f) * 3.0f +
@@ -300,6 +338,7 @@ AutoSimulationPlan planForCandidate(
     plan.desiredRangeMin = std::max(18.0f, candidate.desiredFootRange - MiningRangeSlack);
     plan.desiredRangeMax = candidate.desiredFootRange + MiningRangeSlack;
     plan.strafe = false;
+    plan.preferredRingRole = AutoSimulationRingRole::Dig;
     plan.throwRing = false;
     plan.ringOffset = snapshot.ring.hasDigTool;
     plan.ringOffsetRequiresMoveTarget = true;
@@ -317,7 +356,7 @@ std::optional<AutoSimulationPlan> AutoSimulationMiningModel::makePlan(
     Vec2 travelTarget,
     std::string reason) const
 {
-    const std::optional<MiningCandidate> candidate = bestBlockingTile(snapshot, travelTarget);
+    const std::optional<MiningCandidate> candidate = bestBlockingTile(snapshot, travelTarget, reason);
     if (!candidate) {
         return std::nullopt;
     }

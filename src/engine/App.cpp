@@ -17,6 +17,11 @@
 namespace majo {
 
 namespace {
+
+constexpr float AutoSimulationFixedStepSeconds = 1.0f / 60.0f;
+constexpr float AutoSimulationMaxDebtSeconds = 0.75f;
+constexpr int AutoSimulationMaxStepsPerFrame = 16;
+
 std::string lowerAscii(std::string text)
 {
     std::transform(text.begin(), text.end(), text.begin(), [](unsigned char c) {
@@ -1036,6 +1041,8 @@ void App::executeDebugCommand(const std::string& command)
             return;
         }
         autoSimulation_.executeCommand(normalized, game_.makeTestSnapshot());
+        debugConsole_.setSliderValue("autosim_speed", autoSimulation_.speedMultiplier());
+        autoSimulationStepDebtSeconds_ = 0.0f;
         return;
     }
     if (std::optional<DevLaunchMode> launchMode = parseDevLaunchModeCommand(normalized)) {
@@ -1086,6 +1093,19 @@ void App::executeDebugCommand(const std::string& command)
     }
 
     logWarning("Unknown debug command: " + command);
+}
+
+void App::runAutoSimulationStep(float dt, Time& updateTime)
+{
+    Input effectiveInput = input_;
+    const GameTestSnapshot snapshot = game_.makeTestSnapshot(autoSimulation_.snapshotOptionsForNextStep());
+    autoSimulation_.update(snapshot, dt);
+    while (std::optional<GameTestAction> action = autoSimulation_.consumeAction()) {
+        const GameTestActionResult result = game_.applyTestAction(*action);
+        autoSimulation_.recordActionResult(*action, result);
+    }
+    effectiveInput.applyAutomation(autoSimulation_.inputFrame());
+    game_.update(effectiveInput, updateTime);
 }
 
 void App::run()
@@ -1164,15 +1184,45 @@ void App::run()
         updateSettingsSave(time_.deltaSeconds());
         if (!testFreezePaused_) {
             audio_.update(time_.deltaSeconds());
-            Input effectiveInput = input_;
             if (testPlayMode_ && autoSimulation_.state() != autosim::AutoSimulationState::Idle) {
-                const GameTestSnapshot snapshot = game_.makeTestSnapshot();
-                autoSimulation_.update(snapshot, time_.deltaSeconds());
-                while (std::optional<GameTestAction> action = autoSimulation_.consumeAction()) {
-                    const GameTestActionResult result = game_.applyTestAction(*action);
-                    autoSimulation_.recordActionResult(*action, result);
+                if (!autoSimulationTimeActive_) {
+                    autoSimulationTime_ = time_;
+                    autoSimulationStepDebtSeconds_ = 0.0f;
+                    autoSimulationTimeActive_ = true;
                 }
-                effectiveInput.applyAutomation(autoSimulation_.inputFrame());
+
+                int simulationSteps = 0;
+                if (autoSimulation_.state() == autosim::AutoSimulationState::Running &&
+                    autoSimulation_.speedMultiplier() > 1) {
+                    autoSimulationStepDebtSeconds_ = std::min(
+                        AutoSimulationMaxDebtSeconds,
+                        autoSimulationStepDebtSeconds_ +
+                            time_.deltaSeconds() * static_cast<float>(autoSimulation_.speedMultiplier()));
+
+                    while (autoSimulationStepDebtSeconds_ >= AutoSimulationFixedStepSeconds &&
+                        simulationSteps < AutoSimulationMaxStepsPerFrame &&
+                        autoSimulation_.state() != autosim::AutoSimulationState::Idle) {
+                        autoSimulationTime_.advanceSimulation(AutoSimulationFixedStepSeconds);
+                        runAutoSimulationStep(AutoSimulationFixedStepSeconds, autoSimulationTime_);
+                        autoSimulationStepDebtSeconds_ -= AutoSimulationFixedStepSeconds;
+                        ++simulationSteps;
+                        if (game_.quitRequested()) {
+                            running_ = false;
+                            break;
+                        }
+                    }
+                } else {
+                    autoSimulationStepDebtSeconds_ = 0.0f;
+                    autoSimulationTime_.advanceSimulation(time_.deltaSeconds());
+                    runAutoSimulationStep(time_.deltaSeconds(), autoSimulationTime_);
+                    simulationSteps = 1;
+                }
+                autoSimulation_.setSimulationStepsLastFrame(simulationSteps);
+            } else {
+                autoSimulationTimeActive_ = false;
+                autoSimulationStepDebtSeconds_ = 0.0f;
+                Input effectiveInput = input_;
+                game_.update(effectiveInput, time_);
             }
             const bool autoSimulationOverlayActive =
                 testPlayMode_ && autoSimulation_.state() != autosim::AutoSimulationState::Idle;
@@ -1182,7 +1232,6 @@ void App::run()
             game_.setAutoSimulationDebugOverlay(
                 autoSimulationOverlayActive,
                 autoSimulation_.debugSnapshot());
-            game_.update(effectiveInput, time_);
             if (game_.quitRequested()) {
                 running_ = false;
             }
@@ -1197,7 +1246,11 @@ void App::run()
                 autoSimulationOverlayActive,
                 autoSimulation_.debugSnapshot());
         }
-        game_.render(*renderer_, testFreezePaused_ ? frozenTime_ : time_);
+        const Time& renderTime =
+            !testFreezePaused_ && autoSimulationTimeActive_
+                ? autoSimulationTime_
+                : (testFreezePaused_ ? frozenTime_ : time_);
+        game_.render(*renderer_, renderTime);
     }
 }
 

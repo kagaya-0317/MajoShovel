@@ -10,7 +10,12 @@ namespace majo::autosim {
 
 class AutoSimulationBaseTasks {
 public:
+    static int desiredBackpackFreeSlots(const GameTestInventorySnapshot& inventory);
+    static bool backpackReadyForDeparture(const GameTestInventorySnapshot& inventory);
+
     std::optional<GameTestAction> chooseAction(const GameTestSnapshot& snapshot) const;
+    std::optional<GameTestAction> choosePreparationAction(const GameTestSnapshot& snapshot) const;
+    std::optional<GameTestAction> chooseCheckpointPrepAction(const GameTestSnapshot& snapshot) const;
 
 private:
     AutoSimulationItemEvaluator itemEvaluator_;

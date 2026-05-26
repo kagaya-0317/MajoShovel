@@ -130,6 +130,12 @@ struct EnemyMagicHitSpec {
 
 struct EnemyMinimapMarker {
     Vec2 position{};
+    float radius = 10.0f;
+    float jumpLandingRadius = 0.0f;
+    float countdownExplodeRadius = 0.0f;
+    int contactAttackPower = 0;
+    float contactDamageMultiplier = 1.0f;
+    bool ranged = false;
     bool boss = false;
 };
 

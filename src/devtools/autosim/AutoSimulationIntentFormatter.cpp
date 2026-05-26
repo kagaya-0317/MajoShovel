@@ -115,9 +115,16 @@ AutoSimulationIntent AutoSimulationIntentFormatter::format(
     case AutoSimulationGoal::EquipLoadout:
         intent = makeIntent(plan.goal, "", "装備を整えたい", "");
         break;
+    case AutoSimulationGoal::UseItem:
+        intent = makeIntent(plan.goal, "", "消耗アイテムを使いたい", "", AutoSimulationIntentIconKind::Object);
+        break;
     case AutoSimulationGoal::MineWall: {
         const std::string wallName = terrainName(plan.hasTargetTerrainKind ? plan.targetTerrainKind : GameTestTerrainKind::Empty);
-        if (reasonContains(plan, "explore_soft_dirt")) {
+        if (reasonContains(plan, "map_clue") && plan.targetTerrainKind == GameTestTerrainKind::Dirt) {
+            intent = makeIntent(plan.goal, "", "地図の光へ向けて土壁を掘りたい", "", AutoSimulationIntentIconKind::Dig);
+        } else if (reasonContains(plan, "map_clue")) {
+            intent = makeIntent(plan.goal, "", "地図の光へ向けて進みたい", "", AutoSimulationIntentIconKind::Dig);
+        } else if (reasonContains(plan, "explore_soft_dirt")) {
             intent = makeIntent(plan.goal, "", "やわらかい土壁を掘って奥を探したい", "", AutoSimulationIntentIconKind::Dig);
         } else if (reasonContains(plan, "explore") && plan.targetTerrainKind == GameTestTerrainKind::Dirt) {
             intent = makeIntent(plan.goal, "", "土壁を掘って奥を探したい", "", AutoSimulationIntentIconKind::Dig);
@@ -151,7 +158,11 @@ AutoSimulationIntent AutoSimulationIntentFormatter::format(
         intent = makeIntent(plan.goal, "そこの", "宝箱", "を開けたい", AutoSimulationIntentIconKind::Chest);
         break;
     case AutoSimulationGoal::DiscoverWarp:
-        if (reasonContains(plan, "explore_open")) {
+        if (reasonContains(plan, "visible_warp")) {
+            intent = makeIntent(plan.goal, "見えている", "ワープ", "に触れたい", AutoSimulationIntentIconKind::Warp);
+        } else if (reasonContains(plan, "map_clue")) {
+            intent = makeIntent(plan.goal, "", "地図の光を調べに行きたい", "", AutoSimulationIntentIconKind::Path);
+        } else if (reasonContains(plan, "explore_open")) {
             intent = makeIntent(plan.goal, "", "まだ調べていない通路を進みたい", "", AutoSimulationIntentIconKind::Path);
         } else if (reasonContains(plan, "explore")) {
             intent = makeIntent(plan.goal, "", "土壁が多い方を探したい", "", AutoSimulationIntentIconKind::Path);
@@ -160,7 +171,15 @@ AutoSimulationIntent AutoSimulationIntentFormatter::format(
         }
         break;
     case AutoSimulationGoal::ReturnToBase:
-        intent = makeIntent(plan.goal, "", "リュックがいっぱいなので拠点へ戻りたい", "", AutoSimulationIntentIconKind::Base);
+        if (reasonContains(plan, "backpack_full")) {
+            intent = makeIntent(plan.goal, "", "リュックがいっぱいなので拠点へ戻りたい", "", AutoSimulationIntentIconKind::Base);
+        } else if (reasonContains(plan, "low_hp")) {
+            intent = makeIntent(plan.goal, "", "HPが少ないので拠点へ戻りたい", "", AutoSimulationIntentIconKind::Base);
+        } else if (reasonContains(plan, "checkpoint")) {
+            intent = makeIntent(plan.goal, "", "拠点で準備したい", "", AutoSimulationIntentIconKind::Base);
+        } else {
+            intent = makeIntent(plan.goal, "", "拠点へ戻りたい", "", AutoSimulationIntentIconKind::Base);
+        }
         break;
     case AutoSimulationGoal::ApproachBoss:
         intent = makeIntent(plan.goal, "", "奥へ進んでボスを探したい", "", AutoSimulationIntentIconKind::Path);

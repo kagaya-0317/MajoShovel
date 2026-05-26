@@ -528,6 +528,32 @@ bool ringItemsContainInstanceId(
     return false;
 }
 
+int unlockedRingCountFromStageClearFlags(const std::vector<std::string>& storyFlags)
+{
+    constexpr std::string_view Prefix = "stage_clear_";
+    int result = 1;
+    for (const std::string& flag : storyFlags) {
+        std::string_view text(flag.data(), flag.size());
+        if (text.rfind(Prefix, 0) != 0 || text.size() == Prefix.size()) {
+            continue;
+        }
+
+        int stageNumber = 0;
+        bool valid = true;
+        for (char ch : text.substr(Prefix.size())) {
+            if (!std::isdigit(static_cast<unsigned char>(ch))) {
+                valid = false;
+                break;
+            }
+            stageNumber = stageNumber * 10 + (ch - '0');
+        }
+        if (valid) {
+            result = std::max(result, stageNumber + 1);
+        }
+    }
+    return std::clamp(result, 1, SpellRingCount);
+}
+
 }
 
 bool Game::loadSaveData()
@@ -564,6 +590,8 @@ bool Game::loadSaveData()
     int loadedCurrentStage = 0;
     std::string loadedCurrentStageId = currentStageId_;
     int loadedUnlockedStages = 1;
+    int loadedUnlockedRingCount = 1;
+    bool loadedUnlockedRingCountExplicit = false;
     int loadedUnlockedWarpPointCount = 0;
     bool loadedHasLatestWarpPointPosition = false;
     Vec2 loadedLatestWarpPointPosition{};
@@ -692,6 +720,9 @@ bool Game::loadSaveData()
             stream >> loadedProcessingUnlockLevel;
         } else if (key == "ring_workshop_unlocked") {
             stream >> loadedRingWorkshopUnlocked;
+        } else if (key == "unlocked_ring_count") {
+            stream >> loadedUnlockedRingCount;
+            loadedUnlockedRingCountExplicit = !stream.fail();
         } else if (key == "auto_save_on_return") {
             stream >> loadedAutoSaveOnReturn;
         } else if (key == "equipped_staff") {
@@ -1151,6 +1182,7 @@ bool Game::loadSaveData()
         loadedCurrentStage > 0 ||
         loadedCurrentStageId != "stage_01_stardust" ||
         loadedUnlockedStages > 1 ||
+        (loadedUnlockedRingCountExplicit && loadedUnlockedRingCount > 1) ||
         loadedUnlockedWarpPointCount > 0 ||
         loadedHasLatestWarpPointPosition;
     const bool loadedSaveHasPlayerProgress =
@@ -1214,6 +1246,10 @@ bool Game::loadSaveData()
     money_ = std::max(0, loadedMoney);
     astralHighScore_ = std::max(0, loadedAstralHighScore);
     unlockedStages_ = std::max(1, loadedUnlockedStages);
+    const int migratedUnlockedRingCount = loadedUnlockedRingCountExplicit
+        ? loadedUnlockedRingCount
+        : std::max(unlockedStages_, unlockedRingCountFromStageClearFlags(loadedStoryFlags));
+    setUnlockedRingCount(migratedUnlockedRingCount);
     unlockedWarpPointCount_ = std::max(0, loadedUnlockedWarpPointCount);
     hasLatestWarpPointPosition_ = loadedHasLatestWarpPointPosition;
     latestWarpPointPosition_ = loadedHasLatestWarpPointPosition
@@ -1541,6 +1577,7 @@ bool Game::saveSaveData(std::string& message) const
     file << "current_stage " << currentStage_ << "\n";
     file << "current_stage_id " << currentStageId_ << "\n";
     file << "unlocked_stages " << unlockedStages_ << "\n";
+    file << "unlocked_ring_count " << unlockedRingCount() << "\n";
     file << "unlocked_warp_points " << unlockedWarpPointCount_ << "\n";
     if (hasLatestWarpPointPosition_) {
         file << "latest_warp " << latestWarpPointPosition_.x << " " << latestWarpPointPosition_.y << "\n";

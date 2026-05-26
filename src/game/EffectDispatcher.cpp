@@ -25,6 +25,11 @@
 
 namespace majo {
 
+float areaEffectRadiusFromValue(double value)
+{
+    return static_cast<float>(std::max(0.0, value) * 48.0);
+}
+
 namespace {
 
 std::string_view objectIdOrNone(const EffectContext& context)
@@ -150,11 +155,6 @@ int positiveIntPower(double value, int fallback = 1)
         return fallback;
     }
     return std::max(1, static_cast<int>(std::round(value)));
-}
-
-float areaRadiusFromValue(double value)
-{
-    return static_cast<float>(std::max(0.0, value) * 48.0);
 }
 
 std::string groundLineSourceKey(const EffectInvocation& invocation)
@@ -537,7 +537,7 @@ void applyAreaInvocation(const EffectInvocation& invocation)
         return;
     }
 
-    const float radius = areaRadiusFromValue(invocation.value);
+    const float radius = areaEffectRadiusFromValue(invocation.value);
     if (invocation.effect == "light") {
         const float beforeRadius = invocation.context->orbitItem->lightRadius;
         invocation.context->orbitItem->lightRadius = std::max(invocation.context->orbitItem->lightRadius, radius);
@@ -730,7 +730,10 @@ void applyCastMagicInvocation(const EffectInvocation& invocation)
     }
 
     const int power = positiveIntPower(invocation.value, 1);
-    context.magic->cast(element, origin, direction, power, context.orbitItem);
+    const float cooldownOverrideSeconds = invocation.duration > 0.0
+        ? static_cast<float>(invocation.duration)
+        : 0.0f;
+    context.magic->cast(element, origin, direction, power, context.orbitItem, cooldownOverrideSeconds);
     recordEffectDiscovery(invocation, "属性魔法を発動する");
 }
 

@@ -35,7 +35,13 @@ bool magicElementFromCastEffect(std::string_view effect, MagicElement& outElemen
 class MagicSystem {
 public:
     void setFxSystem(MagicFxSystem* magicFx);
-    void cast(MagicElement element, Vec2 origin, Vec2 direction, int power, SpellRingItem* sourceItem = nullptr);
+    void cast(
+        MagicElement element,
+        Vec2 origin,
+        Vec2 direction,
+        int power,
+        SpellRingItem* sourceItem = nullptr,
+        float cooldownOverrideSeconds = 0.0f);
     void update(Player& player, SpellRingSystem& spellRing, EnemySystem& enemies, TileMap& map, float dt);
     void appendLightSources(std::vector<LightSource>& outLights) const;
     void clear();

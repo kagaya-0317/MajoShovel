@@ -108,7 +108,6 @@ constexpr int PauseMenuItemCount = 5;
 constexpr int GameOverItemCount = 2;
 constexpr int StageClearItemCount = 1;
 constexpr int RingCount = 3;
-constexpr int UnlockedRingCount = SpellRingCount;
 constexpr float RingAngleStep = Pi / 36.0f;
 constexpr float RingDragSnapMaxDelta = Pi / 6.0f;
 constexpr float RingSnapDuration = 0.14f;
@@ -1320,9 +1319,9 @@ UiRect baseProcessingModeRect(int index)
     return {{96.0f + static_cast<float>(index) * 150.0f, 148.0f}, {142.0f, ui::ButtonHeight}};
 }
 
-UiRect baseProcessingSourceRect(int index)
+UiRect baseProcessingSourceRect(int index, int tabCount = BaseProcessingSourceCount)
 {
-    return baseItemSourceTabRect(index, 160.0f);
+    return baseItemSourceTabRect(index, 160.0f, tabCount);
 }
 
 UiRect baseProcessingItemRect(int index)
@@ -1630,7 +1629,7 @@ UiRect ringPanelRect()
     return {{70.0f, 68.0f}, {1140.0f, 590.0f}};
 }
 
-UiRect ringTabRect(int index)
+UiRect ringTabRect(int index, int unlockedRingCount = SpellRingCount)
 {
     constexpr float TabLeft = 116.0f;
     constexpr float TabY = 148.0f;
@@ -1639,7 +1638,7 @@ UiRect ringTabRect(int index)
     const float detailLeft = panel.pos.x + panel.size.x - DetailOuterRightMargin - RingDetailW;
     const float leftGap = TabLeft - panel.pos.x;
     const float right = detailLeft - leftGap;
-    const int tabCount = std::max(1, UnlockedRingCount);
+    const int tabCount = std::clamp(unlockedRingCount, 1, SpellRingCount);
     const float totalGap = TabGap * static_cast<float>(std::max(0, tabCount - 1));
     const float tabWidth = std::max(1.0f, (right - TabLeft - totalGap) / static_cast<float>(tabCount));
     const float pitch = tabWidth + TabGap;

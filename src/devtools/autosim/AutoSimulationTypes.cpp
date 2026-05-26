@@ -31,6 +31,7 @@ const char* autoSimulationGoalName(AutoSimulationGoal goal)
     case AutoSimulationGoal::None: return "none";
     case AutoSimulationGoal::DismissUi: return "dismiss_ui";
     case AutoSimulationGoal::EquipLoadout: return "equip_loadout";
+    case AutoSimulationGoal::UseItem: return "use_item";
     case AutoSimulationGoal::MineWall: return "mine_wall";
     case AutoSimulationGoal::Combat: return "combat";
     case AutoSimulationGoal::CollectDrop: return "collect_drop";

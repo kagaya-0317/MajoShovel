@@ -110,5 +110,6 @@ private:
 };
 
 std::string_view effectTriggerTypeName(EffectTriggerType triggerType);
+float areaEffectRadiusFromValue(double value);
 
 }

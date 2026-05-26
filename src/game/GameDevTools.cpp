@@ -4,6 +4,7 @@
 #include "game/WorldIconRenderer.hpp"
 
 #include <algorithm>
+#include <cmath>
 #include <utility>
 #include <vector>
 
@@ -64,6 +65,19 @@ GameTestTerrainAttribute gameTestTerrainAttribute(TerrainAttribute attribute)
     return GameTestTerrainAttribute::None;
 }
 
+RingLevelUpgradeKind gameTestLevelUpUpgradeKind(int option)
+{
+    switch (option) {
+    case 1:
+        return RingLevelUpgradeKind::Speed;
+    case 2:
+        return RingLevelUpgradeKind::WeightLimit;
+    case 0:
+    default:
+        return RingLevelUpgradeKind::Radius;
+    }
+}
+
 float positiveStaffMultiplierScore(double multiplier, float weight)
 {
     if (!std::isfinite(multiplier)) {
@@ -117,6 +131,23 @@ float autoSimulationStaffEquipScore(const ItemData& item)
     score += static_cast<float>(std::max(0, modifiers.moneyVisibleLevel)) * 6.0f;
     score += static_cast<float>(std::max(0, modifiers.dangerHintLevel)) * 6.0f;
     return std::max(0.0f, score);
+}
+
+float autoSimulationLightRadiusFromOrbitEffects(const std::vector<EffectSpec>& effects)
+{
+    float radius = 0.0f;
+    for (const EffectSpec& spec : effects) {
+        if (spec.target != "area") {
+            continue;
+        }
+        const std::size_t count = std::min(spec.effects.size(), spec.values.size());
+        for (std::size_t i = 0; i < count; ++i) {
+            if (spec.effects[i] == "light") {
+                radius = std::max(radius, areaEffectRadiusFromValue(spec.values[i]));
+            }
+        }
+    }
+    return radius;
 }
 
 bool autoSimulationIntentHasIcon(const autosim::AutoSimulationIntent& intent)
@@ -3494,8 +3525,9 @@ bool Game::handleDebugStoryTestCommand(std::string_view normalized)
     return false;
 }
 
-GameTestSnapshot Game::makeTestSnapshot() const
+GameTestSnapshot Game::makeTestSnapshot(GameTestSnapshotOptions options) const
 {
+    const int ringCount = unlockedRingCount();
     const auto screenMode = [](ScreenMode mode) {
         switch (mode) {
         case ScreenMode::OpeningKamishibai: return GameTestScreenMode::OpeningKamishibai;
@@ -3564,7 +3596,89 @@ GameTestSnapshot Game::makeTestSnapshot() const
         fillMode(ProcessingMode::Attack, entry.canEnhanceAttack, entry.enhanceAttackMoneyCost, entry.enhanceAttackOreCost);
         fillMode(ProcessingMode::Dig, entry.canEnhanceDig, entry.enhanceDigMoneyCost, entry.enhanceDigOreCost);
     };
-    const auto makeStackEntry = [this, &codexStageForItem, &fillProcessingState](
+    const auto ringSourceForIndex = [](int ringIndex) {
+        switch (ringIndex) {
+        case 0: return BaseItemSource::Ring0;
+        case 1: return BaseItemSource::Ring1;
+        default: return BaseItemSource::Ring2;
+        }
+    };
+    const auto fillRingProcessingState = [this, &ringSourceForIndex](
+        GameTestRingItemSnapshot& entry,
+        int ringIndex,
+        int itemIndex) {
+        ProcessingTarget target;
+        target.source = ringSourceForIndex(ringIndex);
+        target.ringIndex = ringIndex;
+        target.ringItemIndex = itemIndex;
+        target.valid = true;
+        const int enhancementOre = inventory_.materialCount(MaterialType::EnhancementOre);
+
+        const auto fillMode = [&](ProcessingMode mode, bool& canUse, int& moneyCost, int& oreCost) {
+            moneyCost = processingMoneyCost(target, mode);
+            oreCost = processingOreCost(target, mode);
+            canUse =
+                processingTargetAvailable(target, mode) &&
+                money_ >= moneyCost &&
+                enhancementOre >= oreCost;
+        };
+
+        int repairOreCost = 0;
+        fillMode(ProcessingMode::Repair, entry.canRepair, entry.repairMoneyCost, repairOreCost);
+        fillMode(ProcessingMode::Attack, entry.canEnhanceAttack, entry.enhanceAttackMoneyCost, entry.enhanceAttackOreCost);
+        fillMode(ProcessingMode::Dig, entry.canEnhanceDig, entry.enhanceDigMoneyCost, entry.enhanceDigOreCost);
+    };
+    const auto fillUseEffects = [](GameTestObjectEntrySnapshot& entry, const ItemData& item) {
+        for (const EffectSpec& spec : item.normalEffects) {
+            const std::size_t count = std::min(spec.effects.size(), spec.values.size());
+            for (std::size_t i = 0; i < count; ++i) {
+                entry.useEffects.push_back(GameTestUseEffectSnapshot{
+                    .target = spec.target,
+                    .effect = spec.effects[i],
+                    .value = spec.values[i],
+                    .duration = spec.duration,
+                });
+            }
+        }
+    };
+    const auto expectedLoadoutLightRadius = [this](const ItemData& item) {
+        const RingEquipmentModifiers& equipment =
+            spellRing_.equipmentModifiersForRing(spellRing_.activeRingIndex());
+        return autoSimulationLightRadiusFromOrbitEffects(item.orbitEffects) *
+            static_cast<float>(std::max(0.0, equipment.lightRadiusMul));
+    };
+    const auto fillRingAddability = [this, ringCount](
+        GameTestObjectEntrySnapshot& entry,
+        const ItemData& item,
+        const ItemInstance* instance) {
+        if (entry.location != GameTestInventoryLocation::Backpack ||
+            entry.equipped ||
+            entry.broken ||
+            item.id.empty()) {
+            return;
+        }
+
+        for (int ringIndex = 0; ringIndex < ringCount; ++ringIndex) {
+            SpellRingSystem ringProbe = spellRing_;
+            const int activeRing = ringProbe.activeRingIndex();
+            if (activeRing != ringIndex) {
+                ringProbe.switchActiveRing(ringIndex - activeRing);
+            }
+            const bool canAdd = instance != nullptr
+                ? ringProbe.canAddObjectItem(item, *instance)
+                : ringProbe.canAddObjectItem(item);
+            if (canAdd) {
+                entry.addableRingIndices.push_back(ringIndex);
+            }
+        }
+    };
+    const auto makeStackEntry = [
+        this,
+        &codexStageForItem,
+        &fillProcessingState,
+        &fillUseEffects,
+        &expectedLoadoutLightRadius,
+        &fillRingAddability](
         const InventoryObjectStack& stack,
         GameTestInventoryLocation location,
         int index) {
@@ -3576,6 +3690,7 @@ GameTestSnapshot Game::makeTestSnapshot() const
         entry.category = stack.item.category;
         entry.damageType = stack.item.damageType;
         entry.tags = stack.item.tags;
+        fillUseEffects(entry, stack.item);
         entry.count = stack.count;
         entry.rarity = stack.item.rarity;
         entry.price = stack.item.price;
@@ -3583,6 +3698,7 @@ GameTestSnapshot Game::makeTestSnapshot() const
         entry.attackPower = stack.item.attackPower;
         entry.digPower = stack.item.digPower;
         entry.staffEquipScore = autoSimulationStaffEquipScore(stack.item);
+        entry.lightRadius = expectedLoadoutLightRadius(stack.item);
         entry.durability = stack.item.durability;
         entry.weightKg = stack.item.weightKg;
         entry.currentDurability = stack.item.durability;
@@ -3591,6 +3707,7 @@ GameTestSnapshot Game::makeTestSnapshot() const
         entry.important = isImportantItem(stack.item);
         entry.sellable = isSellableObject(stack.item);
         entry.codexStage = codexStageForItem(stack.item);
+        fillRingAddability(entry, stack.item, nullptr);
         fillProcessingState(
             entry,
             StorageEntry{StorageEntryKind::Stack, index},
@@ -3598,7 +3715,13 @@ GameTestSnapshot Game::makeTestSnapshot() const
             stack.count);
         return entry;
     };
-    const auto makeInstanceEntry = [this, &codexStageForItem, &fillProcessingState](
+    const auto makeInstanceEntry = [
+        this,
+        &codexStageForItem,
+        &fillProcessingState,
+        &fillUseEffects,
+        &expectedLoadoutLightRadius,
+        &fillRingAddability](
         const InventoryObjectInstance& objectInstance,
         GameTestInventoryLocation location,
         int index) {
@@ -3611,6 +3734,7 @@ GameTestSnapshot Game::makeTestSnapshot() const
         entry.category = objectInstance.item.category;
         entry.damageType = objectInstance.item.damageType;
         entry.tags = objectInstance.item.tags;
+        fillUseEffects(entry, objectInstance.item);
         entry.count = 1;
         entry.rarity = objectInstance.item.rarity;
         entry.price = objectInstance.item.price;
@@ -3618,6 +3742,7 @@ GameTestSnapshot Game::makeTestSnapshot() const
         entry.attackPower = objectInstance.item.attackPower;
         entry.digPower = objectInstance.item.digPower;
         entry.staffEquipScore = autoSimulationStaffEquipScore(objectInstance.item);
+        entry.lightRadius = expectedLoadoutLightRadius(objectInstance.item);
         entry.durability = objectInstance.item.durability;
         entry.weightKg = objectInstance.item.weightKg;
         entry.currentDurability = objectInstance.instance.currentDurability;
@@ -3634,8 +3759,9 @@ GameTestSnapshot Game::makeTestSnapshot() const
             inventory_.isStaffEquipped(objectInstance.instance.instanceId);
         entry.broken = objectInstance.instance.isBroken;
         entry.important = isImportantItem(objectInstance.item);
-        entry.sellable = isSellableObject(objectInstance.item) && !entry.equipped && !entry.protectionEnabled;
+        entry.sellable = isSellableObject(objectInstance.item);
         entry.codexStage = codexStageForItem(objectInstance.item);
+        fillRingAddability(entry, objectInstance.item, &objectInstance.instance);
         fillProcessingState(
             entry,
             StorageEntry{StorageEntryKind::Instance, index},
@@ -3660,6 +3786,11 @@ GameTestSnapshot Game::makeTestSnapshot() const
     snapshot.cameraPosition = camera_.position();
     snapshot.viewportWidth = camera_.width();
     snapshot.viewportHeight = camera_.height();
+    snapshot.levelUp.choiceActive =
+        mode_ == ScreenMode::LevelUp &&
+        levels_.isChoosing() &&
+        !levelUpResultDialog_.open;
+    snapshot.levelUp.pendingChoices = levels_.pendingChoiceCount();
     snapshot.player.position = player_.position;
     snapshot.player.facing = player_.facing;
     snapshot.player.velocity = player_.velocity;
@@ -3667,9 +3798,28 @@ GameTestSnapshot Game::makeTestSnapshot() const
     snapshot.player.hp = player_.hp;
     snapshot.player.maxHp = player_.maxHp;
     snapshot.player.level = player_.level;
+    snapshot.player.states.reserve(player_.status.states().size());
+    for (const EntityState& state : player_.status.states()) {
+        snapshot.player.states.push_back(GameTestPlayerStateSnapshot{
+            .id = state.stateId,
+            .value = state.value,
+            .duration = state.duration,
+        });
+    }
+    snapshot.player.modifiers.reserve(player_.status.modifiers().size());
+    for (const EntityModifier& modifier : player_.status.modifiers()) {
+        snapshot.player.modifiers.push_back(GameTestPlayerModifierSnapshot{
+            .id = modifier.modifierId,
+            .stat = std::string(modifierStatName(modifier.stat)),
+            .multiplier = modifier.multiplier,
+            .flat = modifier.flat,
+            .duration = modifier.duration,
+        });
+    }
     snapshot.ringState = ringState(spellRing_.state());
     snapshot.ringCenter = spellRing_.center();
     snapshot.ring.activeRingIndex = spellRing_.activeRingIndex();
+    snapshot.ring.unlockedRingCount = ringCount;
     snapshot.ring.activeRadius = spellRing_.radius();
     snapshot.ring.activeAngularSpeed = spellRing_.effectiveAngularSpeed();
     snapshot.ring.activeWeight = spellRing_.totalEquippedWeight();
@@ -3682,7 +3832,24 @@ GameTestSnapshot Game::makeTestSnapshot() const
     snapshot.ring.activeItemCount = static_cast<int>(spellRing_.items().size());
     snapshot.ring.activeMaxItemCount = spellRing_.maxItemCount();
     snapshot.ring.activeCanAddItem = spellRing_.canAddItem();
-    for (int ringIndex = 0; ringIndex < SpellRingCount; ++ringIndex) {
+    snapshot.ring.rings.reserve(ringCount);
+    for (int ringIndex = 0; ringIndex < ringCount; ++ringIndex) {
+        const RingLevelUpgradePoints points = clampedRingLevelUpgradePoints(
+            levelRingUpgradePoints_[static_cast<std::size_t>(ringIndex)]);
+        GameTestRingLoadoutSnapshot ring;
+        ring.ringIndex = ringIndex;
+        ring.radius = spellRing_.radiusForRing(ringIndex);
+        ring.angularSpeed = spellRing_.effectiveAngularSpeedForRing(ringIndex);
+        ring.weight = spellRing_.totalEquippedWeightForRing(ringIndex);
+        ring.maxWeight = spellRing_.maxEquippedWeightForRing(ringIndex);
+        ring.itemCount = static_cast<int>(spellRing_.itemsForRing(ringIndex).size());
+        ring.maxItemCount = spellRing_.maxItemCount();
+        ring.radiusUpgradePoints = points.radius;
+        ring.speedUpgradePoints = points.speed;
+        ring.weightLimitUpgradePoints = points.weightLimit;
+        snapshot.ring.rings.push_back(ring);
+    }
+    for (int ringIndex = 0; ringIndex < ringCount; ++ringIndex) {
         const std::vector<SpellRingItem>& ringItems = spellRing_.itemsForRing(ringIndex);
         for (int itemIndex = 0; itemIndex < static_cast<int>(ringItems.size()); ++itemIndex) {
             const SpellRingItem& item = ringItems[static_cast<std::size_t>(itemIndex)];
@@ -3690,7 +3857,10 @@ GameTestSnapshot Game::makeTestSnapshot() const
             const ObjectDefinition* object = objectIt == objectCatalog_.objectsById.end() ? nullptr : &objectIt->second;
             std::vector<std::string> tags = object != nullptr ? object->tags : std::vector<std::string>{};
             tags.insert(tags.end(), item.addedTags.begin(), item.addedTags.end());
-            snapshot.ring.items.push_back(GameTestRingItemSnapshot{
+            const float itemLightRadius = item.lightRadius > 0.0f
+                ? item.lightRadius
+                : (item.type == SpellRingItemType::Torch ? balance_.lightRadius : 0.0f);
+            GameTestRingItemSnapshot ringEntry{
                 .ringIndex = ringIndex,
                 .itemIndex = itemIndex,
                 .objectId = item.objectId,
@@ -3703,6 +3873,7 @@ GameTestSnapshot Game::makeTestSnapshot() const
                 .damage = item.damage,
                 .digPower = item.digPower,
                 .hitRadius = item.hitRadius,
+                .lightRadius = itemLightRadius,
                 .durability = item.durability,
                 .maxDurability = item.maxDurability,
                 .rarity = object != nullptr ? object->rarity : 0,
@@ -3714,16 +3885,30 @@ GameTestSnapshot Game::makeTestSnapshot() const
                 .durabilityBonus = item.durabilityBonus,
                 .protectionEnabled = item.protectionEnabled,
                 .broken = item.broken(),
-            });
+            };
+            fillRingProcessingState(ringEntry, ringIndex, itemIndex);
+            snapshot.ring.items.push_back(std::move(ringEntry));
             if (ringIndex == spellRing_.activeRingIndex() && !item.broken()) {
                 snapshot.ring.bestDamage = std::max(snapshot.ring.bestDamage, item.damage);
                 snapshot.ring.bestDigPower = std::max(snapshot.ring.bestDigPower, item.digPower);
                 snapshot.ring.bestHitRadius = std::max(snapshot.ring.bestHitRadius, item.hitRadius);
+                snapshot.ring.bestLightRadius = std::max(snapshot.ring.bestLightRadius, itemLightRadius);
+            }
+            if (ringIndex >= 0 && ringIndex < static_cast<int>(snapshot.ring.rings.size()) && !item.broken()) {
+                GameTestRingLoadoutSnapshot& ring = snapshot.ring.rings[static_cast<std::size_t>(ringIndex)];
+                ring.bestDamage = std::max(ring.bestDamage, item.damage);
+                ring.bestDigPower = std::max(ring.bestDigPower, item.digPower);
+                ring.bestHitRadius = std::max(ring.bestHitRadius, item.hitRadius);
+                ring.bestLightRadius = std::max(ring.bestLightRadius, itemLightRadius);
+                ring.hasCombatTool = ring.bestDamage > 0;
+                ring.hasDigTool = ring.bestDigPower > 0;
+                ring.hasLightTool = ring.bestLightRadius > 0.0f;
             }
         }
     }
     snapshot.ring.hasCombatTool = snapshot.ring.bestDamage > 0;
     snapshot.ring.hasDigTool = snapshot.ring.bestDigPower > 0;
+    snapshot.ring.hasLightTool = snapshot.ring.bestLightRadius > 0.0f;
     snapshot.dungeon.active = mode_ == ScreenMode::Playing ||
         mode_ == ScreenMode::Inventory ||
         mode_ == ScreenMode::PauseMenu ||
@@ -3744,16 +3929,62 @@ GameTestSnapshot Game::makeTestSnapshot() const
     for (Vec2 tilePoint : dungeonLayout_.mainPathPoints) {
         snapshot.dungeon.mainPathWorldPoints.push_back(tileWorldCenter(roundDungeonTile(tilePoint)));
     }
+    const Vec2 cameraCenter = camera_.position();
+    const float visibleWarpMargin = 72.0f;
+    const float visibleWarpHalfWidth = static_cast<float>(camera_.width()) * 0.5f + visibleWarpMargin;
+    const float visibleWarpHalfHeight = static_cast<float>(camera_.height()) * 0.5f + visibleWarpMargin;
     snapshot.dungeon.warpPoints.reserve(warpPoints_.size());
+    snapshot.dungeon.mapClues.reserve(warpPoints_.size());
     for (const WarpPoint& point : warpPoints_) {
         const bool knownDiscovered =
             point.discovered ||
             point.unlocked ||
             point.index < unlockedWarpPointCount_;
+        const bool visibleOnScreen =
+            std::abs(point.position.x - cameraCenter.x) <= visibleWarpHalfWidth &&
+            std::abs(point.position.y - cameraCenter.y) <= visibleWarpHalfHeight;
         snapshot.dungeon.warpPoints.push_back(GameTestWarpPointSnapshot{
             .position = point.position,
             .index = point.index,
             .discovered = knownDiscovered,
+            .visible = knownDiscovered || visibleOnScreen,
+        });
+
+        if (knownDiscovered) {
+            continue;
+        }
+
+        const int clueRadiusTiles = std::max(1, static_cast<int>(std::ceil(point.undiscoveredLightRadiusTiles)));
+        int seenTiles = 0;
+        Vec2 seenCenterSum{};
+        for (int dy = -clueRadiusTiles; dy <= clueRadiusTiles; ++dy) {
+            for (int dx = -clueRadiusTiles; dx <= clueRadiusTiles; ++dx) {
+                if (dx * dx + dy * dy > clueRadiusTiles * clueRadiusTiles) {
+                    continue;
+                }
+                const int tx = point.tilePosition.x + dx;
+                const int ty = point.tilePosition.y + dy;
+                if (!dungeonMinimapTileSeen(tx, ty)) {
+                    continue;
+                }
+                ++seenTiles;
+                seenCenterSum += tileMap_.tileCenter(tx, ty);
+            }
+        }
+
+        const bool centerSeen = dungeonMinimapTileSeen(point.tilePosition.x, point.tilePosition.y);
+        if (!centerSeen && seenTiles < 4) {
+            continue;
+        }
+
+        const float maxSeenTiles = std::max(1.0f, 3.14159f * static_cast<float>(clueRadiusTiles * clueRadiusTiles));
+        const float coverage = std::clamp(static_cast<float>(seenTiles) / maxSeenTiles, 0.0f, 1.0f);
+        snapshot.dungeon.mapClues.push_back(GameTestMapClueSnapshot{
+            .position = centerSeen || seenTiles <= 0 ? point.position : seenCenterSum * (1.0f / static_cast<float>(seenTiles)),
+            .kind = GameTestMapClueKind::WarpGlow,
+            .visibleOnMinimap = true,
+            .alreadyVisited = false,
+            .confidence = std::clamp(coverage + (centerSeen ? 0.35f : 0.0f), 0.0f, 1.0f),
         });
     }
 
@@ -3763,6 +3994,12 @@ GameTestSnapshot Game::makeTestSnapshot() const
     for (const EnemyMinimapMarker& marker : markers) {
         snapshot.enemies.push_back(GameTestEnemySnapshot{
             .position = marker.position,
+            .radius = marker.radius,
+            .jumpLandingRadius = marker.jumpLandingRadius,
+            .countdownExplodeRadius = marker.countdownExplodeRadius,
+            .contactAttackPower = marker.contactAttackPower,
+            .contactDamageMultiplier = marker.contactDamageMultiplier,
+            .ranged = marker.ranged,
             .boss = marker.boss,
         });
     }
@@ -3811,74 +4048,77 @@ GameTestSnapshot Game::makeTestSnapshot() const
     }
 
     if (snapshot.dungeon.active) {
-        constexpr int PathGridScanRadius = 30;
         constexpr int MineTileScanRadius = 5;
         const float halfTile = static_cast<float>(balance::TileSize) * 0.5f;
         const int playerTileX = tileMap_.worldToTile(player_.position.x);
         const int playerTileY = tileMap_.worldToTile(player_.position.y);
-        const std::vector<CollisionRect> objectBlockers = enemyTestActive_
-            ? std::vector<CollisionRect>{}
-            : solidObjectCollisionRects();
-        snapshot.pathGrid.objectBlockers.reserve(objectBlockers.size());
-        for (const CollisionRect& rect : objectBlockers) {
-            snapshot.pathGrid.objectBlockers.push_back(GameTestCollisionRectSnapshot{
-                .pos = rect.pos,
-                .size = rect.size,
-            });
-        }
-        const auto objectBlocksPlayer = [&](Vec2 center) {
-            return circleIntersectsAnyRect(
-                center,
-                snapshot.player.radius,
-                std::span<const CollisionRect>{objectBlockers.data(), objectBlockers.size()});
-        };
-        const auto terrainBlocksPlayer = [&](Vec2 center) {
-            const float sample = snapshot.player.radius * 0.55f;
-            const Vec2 points[] = {
-                center,
-                center + Vec2{sample, 0.0f},
-                center + Vec2{-sample, 0.0f},
-                center + Vec2{0.0f, sample},
-                center + Vec2{0.0f, -sample},
-                center + Vec2{sample, sample},
-                center + Vec2{-sample, sample},
-                center + Vec2{sample, -sample},
-                center + Vec2{-sample, -sample},
-            };
-            for (Vec2 point : points) {
-                if (tileMap_.terrainDebugAtWorld(point).type != TileType::Empty) {
-                    return true;
-                }
-            }
-            return false;
-        };
-        snapshot.pathGrid.minTileX = playerTileX - PathGridScanRadius;
-        snapshot.pathGrid.minTileY = playerTileY - PathGridScanRadius;
-        snapshot.pathGrid.width = PathGridScanRadius * 2 + 1;
-        snapshot.pathGrid.height = PathGridScanRadius * 2 + 1;
-        snapshot.pathGrid.tiles.reserve(static_cast<std::size_t>(snapshot.pathGrid.width * snapshot.pathGrid.height));
-        for (int dy = -PathGridScanRadius; dy <= PathGridScanRadius; ++dy) {
-            for (int dx = -PathGridScanRadius; dx <= PathGridScanRadius; ++dx) {
-                const int tx = playerTileX + dx;
-                const int ty = playerTileY + dy;
-                const Vec2 center = tileMap_.tileCenter(tx, ty);
-                const TerrainDebugInfo terrain = tileMap_.terrainDebugAtWorld(center);
-                const bool terrainSolid = terrain.type != TileType::Empty;
-                const bool terrainBlocked = terrainBlocksPlayer(center);
-                const bool objectBlocked = objectBlocksPlayer(center);
-                snapshot.pathGrid.tiles.push_back(GameTestPathTileSnapshot{
-                    .center = center,
-                    .tileX = tx,
-                    .tileY = ty,
-                    .hp = terrain.hp,
-                    .effectiveHp = terrain.effectiveHp,
-                    .terrainKind = gameTestTerrainKind(terrain.type),
-                    .terrainAttribute = gameTestTerrainAttribute(terrain.attribute),
-                    .localHardnessMultiplier = terrain.localHardnessMultiplier,
-                    .distanceFromMainPath = terrain.distanceFromMainPath,
-                    .solid = terrainSolid || terrainBlocked || objectBlocked,
-                    .diggable = terrainSolid && !objectBlocked,
+
+        if (options.includePathGrid) {
+            constexpr int PathGridScanRadius = 30;
+            const std::vector<CollisionRect> objectBlockers = enemyTestActive_
+                ? std::vector<CollisionRect>{}
+                : solidObjectCollisionRects();
+            snapshot.pathGrid.objectBlockers.reserve(objectBlockers.size());
+            for (const CollisionRect& rect : objectBlockers) {
+                snapshot.pathGrid.objectBlockers.push_back(GameTestCollisionRectSnapshot{
+                    .pos = rect.pos,
+                    .size = rect.size,
                 });
+            }
+            const auto objectBlocksPlayer = [&](Vec2 center) {
+                return circleIntersectsAnyRect(
+                    center,
+                    snapshot.player.radius,
+                    std::span<const CollisionRect>{objectBlockers.data(), objectBlockers.size()});
+            };
+            const auto terrainBlocksPlayer = [&](Vec2 center) {
+                const float sample = snapshot.player.radius * 0.55f;
+                const Vec2 points[] = {
+                    center,
+                    center + Vec2{sample, 0.0f},
+                    center + Vec2{-sample, 0.0f},
+                    center + Vec2{0.0f, sample},
+                    center + Vec2{0.0f, -sample},
+                    center + Vec2{sample, sample},
+                    center + Vec2{-sample, sample},
+                    center + Vec2{sample, -sample},
+                    center + Vec2{-sample, -sample},
+                };
+                for (Vec2 point : points) {
+                    if (tileMap_.terrainDebugAtWorld(point).type != TileType::Empty) {
+                        return true;
+                    }
+                }
+                return false;
+            };
+            snapshot.pathGrid.minTileX = playerTileX - PathGridScanRadius;
+            snapshot.pathGrid.minTileY = playerTileY - PathGridScanRadius;
+            snapshot.pathGrid.width = PathGridScanRadius * 2 + 1;
+            snapshot.pathGrid.height = PathGridScanRadius * 2 + 1;
+            snapshot.pathGrid.tiles.reserve(static_cast<std::size_t>(snapshot.pathGrid.width * snapshot.pathGrid.height));
+            for (int dy = -PathGridScanRadius; dy <= PathGridScanRadius; ++dy) {
+                for (int dx = -PathGridScanRadius; dx <= PathGridScanRadius; ++dx) {
+                    const int tx = playerTileX + dx;
+                    const int ty = playerTileY + dy;
+                    const Vec2 center = tileMap_.tileCenter(tx, ty);
+                    const TerrainDebugInfo terrain = tileMap_.terrainDebugAtWorld(center);
+                    const bool terrainSolid = terrain.type != TileType::Empty;
+                    const bool terrainBlocked = terrainBlocksPlayer(center);
+                    const bool objectBlocked = objectBlocksPlayer(center);
+                    snapshot.pathGrid.tiles.push_back(GameTestPathTileSnapshot{
+                        .center = center,
+                        .tileX = tx,
+                        .tileY = ty,
+                        .hp = terrain.hp,
+                        .effectiveHp = terrain.effectiveHp,
+                        .terrainKind = gameTestTerrainKind(terrain.type),
+                        .terrainAttribute = gameTestTerrainAttribute(terrain.attribute),
+                        .localHardnessMultiplier = terrain.localHardnessMultiplier,
+                        .distanceFromMainPath = terrain.distanceFromMainPath,
+                        .solid = terrainSolid || terrainBlocked || objectBlocked,
+                        .diggable = terrainSolid && !objectBlocked,
+                    });
+                }
             }
         }
 
@@ -4036,6 +4276,41 @@ GameTestActionResult Game::applyTestAction(const GameTestAction& action)
         });
         return it == instances.end() ? -1 : it->instance.enhanceLevel;
     };
+    const auto warehouseStackCount = [this](std::string_view objectId) {
+        const auto it = std::find_if(warehouseObjectStacks_.begin(), warehouseObjectStacks_.end(), [objectId](const InventoryObjectStack& stack) {
+            return stack.objectId == objectId;
+        });
+        return it == warehouseObjectStacks_.end() ? 0 : it->count;
+    };
+    const auto warehouseEntryForStack = [this](std::string_view objectId) -> std::optional<StorageEntry> {
+        for (int i = 0; i < static_cast<int>(warehouseObjectStacks_.size()); ++i) {
+            if (warehouseObjectStacks_[static_cast<std::size_t>(i)].objectId == objectId) {
+                return StorageEntry{StorageEntryKind::Stack, i};
+            }
+        }
+        return std::nullopt;
+    };
+    const auto warehouseEntryForInstance = [this](std::string_view instanceId) -> std::optional<StorageEntry> {
+        for (int i = 0; i < static_cast<int>(warehouseObjectInstances_.size()); ++i) {
+            if (warehouseObjectInstances_[static_cast<std::size_t>(i)].instance.instanceId == instanceId) {
+                return StorageEntry{StorageEntryKind::Instance, i};
+            }
+        }
+        return std::nullopt;
+    };
+    const auto warehouseHasInstance = [this](std::string_view instanceId) {
+        return std::any_of(warehouseObjectInstances_.begin(), warehouseObjectInstances_.end(), [instanceId](const InventoryObjectInstance& instance) {
+            return instance.instance.instanceId == instanceId;
+        });
+    };
+    const auto warehouseSellTargetForEntry = [](StorageEntry entry) {
+        MerchantSellTarget target;
+        target.source = BaseItemSource::Warehouse;
+        target.storageEntry = entry;
+        target.warehouseEntry = true;
+        target.valid = true;
+        return target;
+    };
     const auto processingEntryForStack = [this](std::string_view objectId) -> std::optional<StorageEntry> {
         const auto& stacks = inventory_.objectStacks();
         for (int i = 0; i < static_cast<int>(stacks.size()); ++i) {
@@ -4053,6 +4328,70 @@ GameTestActionResult Game::applyTestAction(const GameTestAction& action)
             }
         }
         return std::nullopt;
+    };
+    const auto resolveUnlockedRingIndex = [this](int requestedRingIndex) -> std::optional<int> {
+        const int ringCount = unlockedRingCount();
+        const int ringIndex = requestedRingIndex >= 0
+            ? requestedRingIndex
+            : spellRing_.activeRingIndex();
+        if (ringIndex < 0 || ringIndex >= ringCount) {
+            return std::nullopt;
+        }
+        return ringIndex;
+    };
+    const auto ringSourceForIndex = [](int ringIndex) {
+        switch (ringIndex) {
+        case 0: return BaseItemSource::Ring0;
+        case 1: return BaseItemSource::Ring1;
+        default: return BaseItemSource::Ring2;
+        }
+    };
+    const auto processingTargetForRingItem = [this, &ringSourceForIndex, &resolveUnlockedRingIndex](int ringIndex, int itemIndex) {
+        ProcessingTarget target;
+        const std::optional<int> resolvedRing = resolveUnlockedRingIndex(ringIndex);
+        if (!resolvedRing) {
+            return target;
+        }
+        ringIndex = *resolvedRing;
+        target.source = ringSourceForIndex(ringIndex);
+        target.ringIndex = ringIndex;
+        target.ringItemIndex = itemIndex;
+        const std::vector<SpellRingItem>& ringItems = spellRing_.itemsForRing(ringIndex);
+        target.valid = itemIndex >= 0 && itemIndex < static_cast<int>(ringItems.size());
+        return target;
+    };
+    const auto ringItemEnhanceLevel = [this, &resolveUnlockedRingIndex](int ringIndex, int itemIndex) {
+        const std::optional<int> resolvedRing = resolveUnlockedRingIndex(ringIndex);
+        if (!resolvedRing) {
+            return -1;
+        }
+        const std::vector<SpellRingItem>& ringItems = spellRing_.itemsForRing(*resolvedRing);
+        if (itemIndex < 0 || itemIndex >= static_cast<int>(ringItems.size())) {
+            return -1;
+        }
+        return ringItems[static_cast<std::size_t>(itemIndex)].enhanceLevel;
+    };
+    const auto ringItemDurability = [this, &resolveUnlockedRingIndex](int ringIndex, int itemIndex) {
+        const std::optional<int> resolvedRing = resolveUnlockedRingIndex(ringIndex);
+        if (!resolvedRing) {
+            return -1;
+        }
+        const std::vector<SpellRingItem>& ringItems = spellRing_.itemsForRing(*resolvedRing);
+        if (itemIndex < 0 || itemIndex >= static_cast<int>(ringItems.size())) {
+            return -1;
+        }
+        return ringItems[static_cast<std::size_t>(itemIndex)].durability;
+    };
+    const auto ringItemBroken = [this, &resolveUnlockedRingIndex](int ringIndex, int itemIndex) {
+        const std::optional<int> resolvedRing = resolveUnlockedRingIndex(ringIndex);
+        if (!resolvedRing) {
+            return false;
+        }
+        const std::vector<SpellRingItem>& ringItems = spellRing_.itemsForRing(*resolvedRing);
+        if (itemIndex < 0 || itemIndex >= static_cast<int>(ringItems.size())) {
+            return false;
+        }
+        return ringItems[static_cast<std::size_t>(itemIndex)].broken();
     };
 
     switch (action.kind) {
@@ -4100,6 +4439,48 @@ GameTestActionResult Game::applyTestAction(const GameTestAction& action)
         return result(true, changed ? "encyclopedia updated" : "encyclopedia already current");
     }
 
+    case GameTestActionKind::UseBackpackStackItem:
+    {
+        if (mode_ != ScreenMode::Playing || worldBuildActive() || screenTransition_.active()) {
+            return result(false, "cannot use item now");
+        }
+        std::string status;
+        std::vector<EffectDiscoveryEvent> discoveries;
+        const bool used = inventory_.useObjectStackById(
+            action.objectId,
+            player_,
+            effectDispatcher_,
+            &magic_,
+            &discoveries,
+            &encyclopedia_,
+            &status);
+        if (used && !discoveries.empty()) {
+            applyEffectDiscoveries(discoveries);
+        }
+        return result(used, status.empty() ? (used ? "used stack item" : "item use failed") : status);
+    }
+
+    case GameTestActionKind::UseBackpackInstanceItem:
+    {
+        if (mode_ != ScreenMode::Playing || worldBuildActive() || screenTransition_.active()) {
+            return result(false, "cannot use item now");
+        }
+        std::string status;
+        std::vector<EffectDiscoveryEvent> discoveries;
+        const bool used = inventory_.useObjectInstanceById(
+            action.instanceId,
+            player_,
+            effectDispatcher_,
+            &magic_,
+            &discoveries,
+            &encyclopedia_,
+            &status);
+        if (used && !discoveries.empty()) {
+            applyEffectDiscoveries(discoveries);
+        }
+        return result(used, status.empty() ? (used ? "used instance item" : "item use failed") : status);
+    }
+
     case GameTestActionKind::EquipBackpackStaff:
     {
         std::string status;
@@ -4113,11 +4494,23 @@ GameTestActionResult Game::applyTestAction(const GameTestAction& action)
         return result(equipped, status.empty() ? (equipped ? "staff equipped" : "staff equip failed") : status);
     }
 
+    case GameTestActionKind::SwitchActiveRing:
+    {
+        const std::optional<int> targetRing = resolveUnlockedRingIndex(action.ringIndex);
+        if (!targetRing) {
+            return result(false, "ring locked");
+        }
+        switchActiveRingWithLog(*targetRing - spellRing_.activeRingIndex());
+        return result(spellRing_.activeRingIndex() == *targetRing, "active ring switched");
+    }
+
     case GameTestActionKind::EquipBackpackItemToRing:
     {
-        const int targetRing = action.ringIndex >= 0
-            ? std::clamp(action.ringIndex, 0, SpellRingCount - 1)
-            : spellRing_.activeRingIndex();
+        const std::optional<int> resolvedRing = resolveUnlockedRingIndex(action.ringIndex);
+        if (!resolvedRing) {
+            return result(false, "ring locked");
+        }
+        const int targetRing = *resolvedRing;
         if (targetRing != spellRing_.activeRingIndex()) {
             spellRing_.switchActiveRing(targetRing - spellRing_.activeRingIndex());
         }
@@ -4133,9 +4526,11 @@ GameTestActionResult Game::applyTestAction(const GameTestAction& action)
 
     case GameTestActionKind::RemoveRingItemToBackpack:
     {
-        const int targetRing = action.ringIndex >= 0
-            ? std::clamp(action.ringIndex, 0, SpellRingCount - 1)
-            : spellRing_.activeRingIndex();
+        const std::optional<int> resolvedRing = resolveUnlockedRingIndex(action.ringIndex);
+        if (!resolvedRing) {
+            return result(false, "ring locked");
+        }
+        const int targetRing = *resolvedRing;
         std::vector<SpellRingItem>& ringItems = spellRing_.itemsForRing(targetRing);
         if (action.ringItemIndex < 0 || action.ringItemIndex >= static_cast<int>(ringItems.size())) {
             return result(false, "ring item not found");
@@ -4218,6 +4613,36 @@ GameTestActionResult Game::applyTestAction(const GameTestAction& action)
         return result(!backpackHasInstance(action.instanceId), baseStatus_.empty() ? "sold instance" : baseStatus_);
     }
 
+    case GameTestActionKind::SellWarehouseStack:
+    {
+        const std::optional<StorageEntry> entry = warehouseEntryForStack(action.objectId);
+        if (!entry) {
+            return result(false, "warehouse stack not found");
+        }
+        const MerchantSellTarget target = warehouseSellTargetForEntry(*entry);
+        if (!merchantSellTargetAvailable(target)) {
+            return result(false, "warehouse sell unavailable");
+        }
+        const int beforeCount = warehouseStackCount(action.objectId);
+        const int sellCount = action.count <= 0 ? beforeCount : std::min(action.count, beforeCount);
+        sellMerchantTarget(target, sellCount);
+        return result(warehouseStackCount(action.objectId) < beforeCount, baseStatus_.empty() ? "sold warehouse stack" : baseStatus_);
+    }
+
+    case GameTestActionKind::SellWarehouseInstance:
+    {
+        const std::optional<StorageEntry> entry = warehouseEntryForInstance(action.instanceId);
+        if (!entry) {
+            return result(false, "warehouse instance not found");
+        }
+        const MerchantSellTarget target = warehouseSellTargetForEntry(*entry);
+        if (!merchantSellTargetAvailable(target)) {
+            return result(false, "warehouse sell unavailable");
+        }
+        sellMerchantTarget(target, 1);
+        return result(!warehouseHasInstance(action.instanceId), baseStatus_.empty() ? "sold warehouse instance" : baseStatus_);
+    }
+
     case GameTestActionKind::ProtectBackpackInstance:
         if (action.instanceId.empty()) {
             return result(false, "missing instance id");
@@ -4225,6 +4650,26 @@ GameTestActionResult Game::applyTestAction(const GameTestAction& action)
         return result(
             inventory_.setObjectInstanceProtection(action.instanceId, true),
             "protection enabled");
+
+    case GameTestActionKind::UnprotectBackpackInstance:
+        if (action.instanceId.empty()) {
+            return result(false, "missing instance id");
+        }
+        return result(
+            inventory_.setObjectInstanceProtection(action.instanceId, false),
+            "protection disabled");
+
+    case GameTestActionKind::UnprotectWarehouseInstance:
+    {
+        const std::optional<StorageEntry> entry = warehouseEntryForInstance(action.instanceId);
+        if (!entry) {
+            return result(false, "warehouse instance not found");
+        }
+        InventoryObjectInstance& objectInstance = warehouseObjectInstances_[static_cast<std::size_t>(entry->index)];
+        objectInstance.instance.protectionEnabled = false;
+        baseStatus_ = "保護OFF";
+        return result(true, "warehouse protection disabled");
+    }
 
     case GameTestActionKind::RepairBackpackInstance:
     {
@@ -4235,6 +4680,25 @@ GameTestActionResult Game::applyTestAction(const GameTestAction& action)
         applyProcessingEntry(*entry, ProcessingMode::Repair, false);
         baseResultDialog_ = {};
         return result(baseStatus_.empty(), baseStatus_.empty() ? "repaired instance" : baseStatus_);
+    }
+
+    case GameTestActionKind::RepairRingItem:
+    {
+        if (mode_ != ScreenMode::Base) {
+            return result(false, "not in base");
+        }
+        const ProcessingTarget target = processingTargetForRingItem(action.ringIndex, action.ringItemIndex);
+        if (!target.valid) {
+            return result(false, "ring item not found");
+        }
+        const int beforeDurability = ringItemDurability(target.ringIndex, target.ringItemIndex);
+        const bool beforeBroken = ringItemBroken(target.ringIndex, target.ringItemIndex);
+        applyProcessingTarget(target, ProcessingMode::Repair);
+        baseResultDialog_ = {};
+        const int afterDurability = ringItemDurability(target.ringIndex, target.ringItemIndex);
+        const bool afterBroken = ringItemBroken(target.ringIndex, target.ringItemIndex);
+        const bool changed = afterDurability > beforeDurability || (beforeBroken && !afterBroken);
+        return result(changed, baseStatus_.empty() ? "repaired ring item" : baseStatus_);
     }
 
     case GameTestActionKind::EnhanceBackpackStackAttack:
@@ -4275,6 +4739,27 @@ GameTestActionResult Game::applyTestAction(const GameTestAction& action)
             baseStatus_.empty() ? "enhanced instance" : baseStatus_);
     }
 
+    case GameTestActionKind::EnhanceRingItemAttack:
+    case GameTestActionKind::EnhanceRingItemDig:
+    {
+        if (mode_ != ScreenMode::Base) {
+            return result(false, "not in base");
+        }
+        const ProcessingTarget target = processingTargetForRingItem(action.ringIndex, action.ringItemIndex);
+        if (!target.valid) {
+            return result(false, "ring item not found");
+        }
+        const int beforeLevel = ringItemEnhanceLevel(target.ringIndex, target.ringItemIndex);
+        const ProcessingMode mode = action.kind == GameTestActionKind::EnhanceRingItemAttack
+            ? ProcessingMode::Attack
+            : ProcessingMode::Dig;
+        applyProcessingTarget(target, mode);
+        baseResultDialog_ = {};
+        return result(
+            ringItemEnhanceLevel(target.ringIndex, target.ringItemIndex) > beforeLevel,
+            baseStatus_.empty() ? "enhanced ring item" : baseStatus_);
+    }
+
     case GameTestActionKind::BuyBaseUpgrade:
     {
         if (mode_ != ScreenMode::Base || action.upgradeIndex < 0) {
@@ -4284,6 +4769,23 @@ GameTestActionResult Game::applyTestAction(const GameTestAction& action)
         buyUpgrade(action.upgradeIndex);
         baseResultDialog_ = {};
         return result(upgradeLevel(action.upgradeIndex) > beforeLevel, baseStatus_.empty() ? "bought upgrade" : baseStatus_);
+    }
+
+    case GameTestActionKind::ChooseLevelUpUpgrade:
+    {
+        if (mode_ != ScreenMode::LevelUp || !levels_.isChoosing() || levelUpResultDialog_.open) {
+            return result(false, "level up unavailable");
+        }
+        const std::optional<int> ringIndex = resolveUnlockedRingIndex(action.ringIndex);
+        if (!ringIndex) {
+            return result(false, "ring locked");
+        }
+        const int option = std::clamp(action.upgradeIndex, 0, 2);
+        const bool applied = applyLevelUpSelection(RingLevelUpgradeSelection{
+            *ringIndex,
+            gameTestLevelUpUpgradeKind(option),
+        });
+        return result(applied, applied ? "level up upgrade chosen" : "level up unavailable");
     }
     }
 
@@ -4455,6 +4957,7 @@ bool Game::executeDebugCommand(std::string_view command)
             addStoryFlag(clearFlag);
         }
         unlockedStages_ = std::max(unlockedStages_, storyUnlockCountForStageId(currentStageId_) + 1);
+        setUnlockedRingCount(std::max(unlockedRingCount(), storyUnlockCountForStageId(currentStageId_) + 1));
         markStoryTriggerSeenForCurrentStage("boss_before");
         markStoryTriggerSeenForCurrentStage("boss_after");
         markStoryTriggerSeenForCurrentStage("stage_clear");
@@ -5035,6 +5538,7 @@ bool Game::executeDebugCommand(std::string_view command)
         warehouseObjectStacks_.clear();
         warehouseObjectInstances_.clear();
         unlockedStages_ = 1;
+        setUnlockedRingCount(1);
         unlockedWarpPointCount_ = 0;
         hasLatestWarpPointPosition_ = false;
         dungeonStates_.clear();
@@ -5409,6 +5913,36 @@ bool Game::executeDebugCommand(std::string_view command)
         ringWorkshopUnlocked_ = true;
         baseStatus_ = "リング工房を解禁しました";
         logInfo("Debug: ring workshop unlocked.");
+        return true;
+    }
+
+    if (normalized == "game ring unlock 2" ||
+        normalized == "game rings unlock 2" ||
+        normalized == "game ring2 unlock" ||
+        normalized == "game ring 2 unlock") {
+        setUnlockedRingCount(std::max(unlockedRingCount(), 2));
+        baseStatus_ = "リング2を解禁しました";
+        logInfo("Debug: unlocked rings up to Ring 2.");
+        return true;
+    }
+
+    if (normalized == "game ring unlock 3" ||
+        normalized == "game rings unlock 3" ||
+        normalized == "game ring3 unlock" ||
+        normalized == "game ring 3 unlock") {
+        setUnlockedRingCount(std::max(unlockedRingCount(), 3));
+        baseStatus_ = "リング3を解禁しました";
+        logInfo("Debug: unlocked rings up to Ring 3.");
+        return true;
+    }
+
+    if (normalized == "game ring unlock reset" ||
+        normalized == "game rings unlock reset" ||
+        normalized == "game ring reset" ||
+        normalized == "game rings reset") {
+        setUnlockedRingCount(1);
+        baseStatus_ = "リング解禁状態をリセットしました";
+        logInfo("Debug: ring unlock state reset to Ring 1 only.");
         return true;
     }
 
