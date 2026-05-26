@@ -4486,6 +4486,16 @@ void Game::syncEncyclopediaFromInventoryAndRing()
             addOwnedObject(objectInstance.item, 1);
         }
     }
+    for (const InventoryObjectStack& stack : warehouseObjectStacks_) {
+        if (!stack.objectId.empty() && stack.count > 0) {
+            addOwnedObject(stack.item, stack.count);
+        }
+    }
+    for (const InventoryObjectInstance& objectInstance : warehouseObjectInstances_) {
+        if (!objectInstance.item.id.empty()) {
+            addOwnedObject(objectInstance.item, 1);
+        }
+    }
     for (const auto& [objectId, count] : ownedCounts) {
         const int suppressCount = [&]() {
             const auto it = encyclopediaOwnedSyncSuppressCounts_.find(objectId);

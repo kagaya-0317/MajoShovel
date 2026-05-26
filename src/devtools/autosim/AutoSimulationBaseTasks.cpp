@@ -5,6 +5,7 @@
 #include <optional>
 #include <string>
 #include <utility>
+#include <vector>
 
 namespace majo::autosim {
 
@@ -15,6 +16,8 @@ constexpr float RepairThreshold = 72.0f;
 constexpr float EnhanceThreshold = 92.0f;
 constexpr int MinDepartureFreeSlots = 8;
 constexpr int MaxDepartureFreeSlots = 12;
+constexpr int MinWarehouseFreeSlots = 2;
+constexpr int MaxWarehouseFreeSlots = 6;
 constexpr float CleanupDepositBaseScore = 0.0f;
 constexpr float CleanupSellKeepThreshold = 64.0f;
 constexpr float SevereCleanupSellKeepThreshold = 82.0f;
@@ -79,6 +82,14 @@ int backpackFreeSlots(const GameTestInventorySnapshot& inventory)
     return std::max(0, inventory.backpackCapacity - inventory.backpackUsedSlots);
 }
 
+int warehouseFreeSlots(const GameTestInventorySnapshot& inventory)
+{
+    if (inventory.warehouseCapacity <= 0) {
+        return 0;
+    }
+    return std::max(0, inventory.warehouseCapacity - inventory.warehouseUsedSlots);
+}
+
 int desiredFreeSlotsForCapacity(int capacity)
 {
     if (capacity <= 0) {
@@ -87,6 +98,16 @@ int desiredFreeSlotsForCapacity(int capacity)
     return std::min(
         std::min(MaxDepartureFreeSlots, capacity),
         std::max(MinDepartureFreeSlots, capacity / 3));
+}
+
+int desiredWarehouseFreeSlotsForCapacity(int capacity)
+{
+    if (capacity <= 0) {
+        return 0;
+    }
+    return std::min(
+        std::min(MaxWarehouseFreeSlots, capacity),
+        std::max(MinWarehouseFreeSlots, capacity / 20));
 }
 
 bool warehouseHasRoomFor(const GameTestInventorySnapshot& inventory, const GameTestObjectEntrySnapshot& item)
@@ -177,6 +198,25 @@ GameTestAction itemAction(
     return action;
 }
 
+GameTestActionKind sellKindForItem(const GameTestObjectEntrySnapshot& item)
+{
+    if (item.location == GameTestInventoryLocation::Warehouse) {
+        return item.kind == GameTestObjectEntryKind::Stack
+            ? GameTestActionKind::SellWarehouseStack
+            : GameTestActionKind::SellWarehouseInstance;
+    }
+    return item.kind == GameTestObjectEntryKind::Stack
+        ? GameTestActionKind::SellBackpackStack
+        : GameTestActionKind::SellBackpackInstance;
+}
+
+GameTestActionKind unprotectKindForItem(const GameTestObjectEntrySnapshot& item)
+{
+    return item.location == GameTestInventoryLocation::Warehouse
+        ? GameTestActionKind::UnprotectWarehouseInstance
+        : GameTestActionKind::UnprotectBackpackInstance;
+}
+
 GameTestAction ringItemAction(
     GameTestActionKind kind,
     const GameTestRingItemSnapshot& item,
@@ -245,13 +285,22 @@ std::optional<GameTestActionKind> ringEnhanceKind(
 
 std::optional<GameTestAction> chooseCodexAction(const GameTestSnapshot& snapshot)
 {
-    for (const GameTestObjectEntrySnapshot& item : snapshot.inventory.backpackItems) {
-        if (codexNeedsSync(item)) {
-            GameTestAction action;
-            action.kind = GameTestActionKind::SyncEncyclopedia;
-            action.reason = "codex_obtained_sync";
-            return action;
+    const auto syncActionIfNeeded = [](const std::vector<GameTestObjectEntrySnapshot>& items) -> std::optional<GameTestAction> {
+        for (const GameTestObjectEntrySnapshot& item : items) {
+            if (codexNeedsSync(item)) {
+                GameTestAction action;
+                action.kind = GameTestActionKind::SyncEncyclopedia;
+                action.reason = "codex_obtained_sync";
+                return action;
+            }
         }
+        return std::nullopt;
+    };
+    if (std::optional<GameTestAction> action = syncActionIfNeeded(snapshot.inventory.backpackItems)) {
+        return action;
+    }
+    if (std::optional<GameTestAction> action = syncActionIfNeeded(snapshot.inventory.warehouseItems)) {
+        return action;
     }
     return std::nullopt;
 }
@@ -394,21 +443,22 @@ std::optional<GameTestAction> AutoSimulationBaseTasks::chooseAction(const GameTe
     const bool pressure = backpackPressure(snapshot.inventory);
     const int freeSlots = backpackFreeSlots(snapshot.inventory);
     const int desiredFreeSlots = desiredBackpackFreeSlots(snapshot.inventory);
-    const bool cleanup = freeSlots < desiredFreeSlots;
-    const bool severeCleanup = cleanup && freeSlots <= std::max(1, desiredFreeSlots / 2);
+    const bool backpackCleanup = freeSlots < desiredFreeSlots;
+    const bool severeBackpackCleanup = backpackCleanup && freeSlots <= std::max(1, desiredFreeSlots / 2);
+    const int warehouseFree = warehouseFreeSlots(snapshot.inventory);
+    const int desiredWarehouseFree = desiredWarehouseFreeSlotsForCapacity(snapshot.inventory.warehouseCapacity);
+    const bool warehouseCleanup = desiredWarehouseFree > 0 && warehouseFree < desiredWarehouseFree;
+    const bool severeWarehouseCleanup = warehouseCleanup && warehouseFree <= 0;
+    const bool cleanup = backpackCleanup || warehouseCleanup;
     const float currentStaffScore = equippedStaffScore(snapshot.inventory);
     const GameTestObjectEntrySnapshot* bestDeposit = nullptr;
     const GameTestObjectEntrySnapshot* bestSell = nullptr;
     const GameTestObjectEntrySnapshot* bestUnprotect = nullptr;
     const GameTestObjectEntrySnapshot* fallbackSell = nullptr;
     const GameTestObjectEntrySnapshot* fallbackUnprotect = nullptr;
-    float bestDepositScore = cleanup ? -std::numeric_limits<float>::max() : (pressure ? 48.0f : 72.0f);
-    float bestSellScore = cleanup
-        ? (severeCleanup ? SevereCleanupSellKeepThreshold : CleanupSellKeepThreshold)
-        : (pressure ? 52.0f : 34.0f);
-    float bestUnprotectScore = cleanup
-        ? (severeCleanup ? SevereCleanupUnprotectKeepThreshold : CleanupUnprotectKeepThreshold)
-        : -1.0f;
+    float bestDepositScore = backpackCleanup ? -std::numeric_limits<float>::max() : (pressure ? 48.0f : 72.0f);
+    float bestSellScore = std::numeric_limits<float>::max();
+    float bestUnprotectScore = std::numeric_limits<float>::max();
     float fallbackSellScore = std::numeric_limits<float>::max();
     float fallbackUnprotectScore = std::numeric_limits<float>::max();
     const AutoSimulationItemEvaluationContext itemContext =
@@ -417,13 +467,13 @@ std::optional<GameTestAction> AutoSimulationBaseTasks::chooseAction(const GameTe
     for (const GameTestObjectEntrySnapshot& item : snapshot.inventory.backpackItems) {
         const AutoSimulationItemScore score = itemEvaluator_.evaluate(item, itemContext);
         const bool loadoutReserved = reservedForGearLoadout(item, score, currentStaffScore);
-        const bool depositReserved = loadoutReserved && !item.protectionEnabled && !cleanup;
-        const bool sellReserved = loadoutReserved && !cleanup;
+        const bool depositReserved = loadoutReserved && !item.protectionEnabled && !backpackCleanup;
+        const bool sellReserved = loadoutReserved && !backpackCleanup;
         if (warehouseHasRoomFor(snapshot.inventory, item) &&
             !depositReserved &&
             !item.equipped &&
-            (cleanup || item.important || item.protectionEnabled || score.store > bestDepositScore)) {
-            const float depositScore = cleanup
+            (backpackCleanup || item.important || item.protectionEnabled || score.store > bestDepositScore)) {
+            const float depositScore = backpackCleanup
                 ? cleanupDepositPriority(item, score, loadoutReserved)
                 : score.store;
             if (depositScore <= bestDepositScore) {
@@ -432,22 +482,58 @@ std::optional<GameTestAction> AutoSimulationBaseTasks::chooseAction(const GameTe
             bestDeposit = &item;
             bestDepositScore = depositScore;
         }
-        if (!sellReserved && canSell(item) && score.keep < bestSellScore) {
+        const float sellLimit = backpackCleanup
+            ? (severeBackpackCleanup ? SevereCleanupSellKeepThreshold : CleanupSellKeepThreshold)
+            : (pressure ? 52.0f : 34.0f);
+        if (!sellReserved && canSell(item) && score.keep < sellLimit && score.keep < bestSellScore) {
             bestSell = &item;
             bestSellScore = score.keep;
         }
-        if (cleanup && !sellReserved && canSell(item) && score.keep < fallbackSellScore) {
+        if (backpackCleanup && !sellReserved && canSell(item) && score.keep < fallbackSellScore) {
             fallbackSell = &item;
             fallbackSellScore = score.keep;
         }
-        if (cleanup && canUnprotectForCleanup(item)) {
-            if (score.keep < bestUnprotectScore) {
+        if (backpackCleanup && canUnprotectForCleanup(item)) {
+            const float unprotectLimit = severeBackpackCleanup
+                ? SevereCleanupUnprotectKeepThreshold
+                : CleanupUnprotectKeepThreshold;
+            if (score.keep < unprotectLimit && score.keep < bestUnprotectScore) {
                 bestUnprotect = &item;
                 bestUnprotectScore = score.keep;
             }
             if (score.keep < fallbackUnprotectScore) {
                 fallbackUnprotect = &item;
                 fallbackUnprotectScore = score.keep;
+            }
+        }
+    }
+
+    if (warehouseCleanup) {
+        const float sellLimit = severeWarehouseCleanup
+            ? SevereCleanupSellKeepThreshold
+            : CleanupSellKeepThreshold;
+        const float unprotectLimit = severeWarehouseCleanup
+            ? SevereCleanupUnprotectKeepThreshold
+            : CleanupUnprotectKeepThreshold;
+        for (const GameTestObjectEntrySnapshot& item : snapshot.inventory.warehouseItems) {
+            const AutoSimulationItemScore score = itemEvaluator_.evaluate(item, itemContext);
+            if (canSell(item) && score.keep < sellLimit && score.keep < bestSellScore) {
+                bestSell = &item;
+                bestSellScore = score.keep;
+            }
+            if (canSell(item) && score.keep < fallbackSellScore) {
+                fallbackSell = &item;
+                fallbackSellScore = score.keep;
+            }
+            if (canUnprotectForCleanup(item)) {
+                if (score.keep < unprotectLimit && score.keep < bestUnprotectScore) {
+                    bestUnprotect = &item;
+                    bestUnprotectScore = score.keep;
+                }
+                if (score.keep < fallbackUnprotectScore) {
+                    fallbackUnprotect = &item;
+                    fallbackUnprotectScore = score.keep;
+                }
             }
         }
     }
@@ -466,6 +552,26 @@ std::optional<GameTestAction> AutoSimulationBaseTasks::chooseAction(const GameTe
         bestUnprotect = fallbackUnprotect;
     }
 
+    if (!backpackCleanup &&
+        warehouseCleanup &&
+        bestSell != nullptr &&
+        bestSell->location == GameTestInventoryLocation::Warehouse) {
+        const AutoSimulationItemScore score = itemEvaluator_.evaluate(*bestSell, itemContext);
+        return itemAction(sellKindForItem(*bestSell), *bestSell, std::max(1, bestSell->count), "sell " + score.reason);
+    }
+
+    if (!backpackCleanup &&
+        warehouseCleanup &&
+        bestUnprotect != nullptr &&
+        bestUnprotect->location == GameTestInventoryLocation::Warehouse) {
+        const AutoSimulationItemScore score = itemEvaluator_.evaluate(*bestUnprotect, itemContext);
+        return itemAction(
+            unprotectKindForItem(*bestUnprotect),
+            *bestUnprotect,
+            1,
+            "unprotect_for_cleanup " + score.reason);
+    }
+
     if (bestDeposit != nullptr) {
         const AutoSimulationItemScore score = itemEvaluator_.evaluate(*bestDeposit, itemContext);
         const GameTestActionKind kind = bestDeposit->kind == GameTestObjectEntryKind::Stack
@@ -476,22 +582,19 @@ std::optional<GameTestAction> AutoSimulationBaseTasks::chooseAction(const GameTe
 
     if (bestSell != nullptr) {
         const AutoSimulationItemScore score = itemEvaluator_.evaluate(*bestSell, itemContext);
-        const GameTestActionKind kind = bestSell->kind == GameTestObjectEntryKind::Stack
-            ? GameTestActionKind::SellBackpackStack
-            : GameTestActionKind::SellBackpackInstance;
-        return itemAction(kind, *bestSell, std::max(1, bestSell->count), "sell " + score.reason);
+        return itemAction(sellKindForItem(*bestSell), *bestSell, std::max(1, bestSell->count), "sell " + score.reason);
     }
 
     if (bestUnprotect != nullptr) {
         const AutoSimulationItemScore score = itemEvaluator_.evaluate(*bestUnprotect, itemContext);
         return itemAction(
-            GameTestActionKind::UnprotectBackpackInstance,
+            unprotectKindForItem(*bestUnprotect),
             *bestUnprotect,
             1,
             "unprotect_for_cleanup " + score.reason);
     }
 
-    if (cleanup) {
+    if (backpackCleanup) {
         return std::nullopt;
     }
 
