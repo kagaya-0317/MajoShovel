@@ -35,6 +35,7 @@
 #include "game/MagicFxSystem.hpp"
 #include "game/MagicSystem.hpp"
 #include "game/OpeningMetaSave.hpp"
+#include "game/RingPresetSystem.hpp"
 #include "game/RingLevelUpgrade.hpp"
 #include "game/SpellRingSystem.hpp"
 #include "game/StoryEvent.hpp"
@@ -566,6 +567,11 @@ private:
         int shapeIndex = 0;
         bool active = false;
     };
+    enum class PlayerFootstepSurface {
+        BaseOutdoor,
+        HomeInterior,
+        Dungeon,
+    };
     struct RingEquipFx {
         Vec2 sourceScreen{};
         int ringIndex = 0;
@@ -598,6 +604,7 @@ private:
         ChooseAction,
         Deposit,
         Withdraw,
+        Bulk,
     };
     struct ProcessingTarget {
         BaseItemSource source = BaseItemSource::Backpack;
@@ -764,7 +771,7 @@ private:
     float worldBuildProgress() const;
     std::string worldBuildStatusText() const;
     void playAudioBgm(std::string_view id, float fadeSeconds = 0.0f, bool restart = false);
-    void playAudioSe(std::string_view id, float volumeScale = 1.0f);
+    void playAudioSe(std::string_view id, float volumeScale = 1.0f, float pitchScale = 1.0f);
     void playUiSoundEvents(const UiContext& ui);
     void enterBase();
     void placeBasePlayerAtMineExitReturnPoint();
@@ -930,6 +937,8 @@ private:
     InventoryUiEntryView storageTransferTargetView(StorageTransferTarget target) const;
     void depositStorageTarget(StorageTransferTarget target, int count);
     void withdrawStorageTarget(StorageTransferTarget target, int count);
+    void depositAllStorageItems();
+    void prepareRingPresetFromWarehouse(int presetIndex);
     std::string storageEntryLabel(StorageEntry entry, bool warehouseEntry) const;
     const ItemData* storageEntryItem(StorageEntry entry, bool warehouseEntry) const;
     const ItemInstance* storageEntryInstance(StorageEntry entry, bool warehouseEntry) const;
@@ -979,6 +988,8 @@ private:
         UiContext& ui,
         float dt,
         std::vector<EffectDiscoveryEvent>* discoveryEvents);
+    bool registerRingPresetShortcut(int presetIndex);
+    bool applyRingPresetShortcut(int presetIndex);
     void updateBaseScreen(const Input& input, UiContext& ui, float dt);
     void updateBasePlayerSpriteAnimation(float dt, bool walking);
     void updatePauseMenu(const Input& input, UiContext& ui);
@@ -1198,8 +1209,15 @@ private:
     void updateStageClearScreen(const Input& input, UiContext& ui);
     void resetPlayerFootstepDust();
     void updatePlayerFootstepDust(float dt);
-    void maybeSpawnPlayerFootstepDust(Vec2 footAnchor, Vec2 movementDirection, bool walking, int frameIndex, int& previousFrame);
+    void maybeTriggerPlayerFootstep(
+        Vec2 footAnchor,
+        Vec2 movementDirection,
+        bool walking,
+        int frameIndex,
+        int& previousFrame,
+        PlayerFootstepSurface surface);
     void spawnPlayerFootstepDust(Vec2 footAnchor, Vec2 movementDirection);
+    void playPlayerFootstepSound(PlayerFootstepSurface surface, int frameIndex);
     void renderPlayerFootstepDust(Renderer& renderer) const;
     void spawnRingEquipFx(const RingEquipFxRequest& request);
     void updateRingEquipFx(float dt);
@@ -1357,6 +1375,7 @@ private:
     MagicFxSystem magicFx_;
     GroundLineSystem groundLines_;
     InventorySystem inventory_;
+    RingPresetSystem ringPresets_;
     WorldDropSystem worldDrops_;
     EncyclopediaSystem encyclopedia_;
     std::deque<FirstItemAcquisitionNotice> firstItemAcquisitionNotices_;
@@ -1402,6 +1421,7 @@ private:
     bool baseStorageActive_ = false;
     StorageUiMode baseStorageMode_ = StorageUiMode::Closed;
     int baseStorageActionSelection_ = 0;
+    int baseStorageBulkSelection_ = 0;
     int baseStorageDepositSource_ = 0;
     UiTabsState baseStorageDepositSourceTabs_{};
     int baseStorageDepositSelection_ = 0;

@@ -59,10 +59,15 @@ constexpr std::string_view AudioSeEnemySpawn = "se.enemy.spawn";
 constexpr std::string_view AudioSeItemBreak = "se.item.break";
 constexpr std::string_view AudioSeDiscovery = "se.discovery";
 constexpr std::string_view AudioSeWarpDiscovery = "se.discovery.warp";
+constexpr std::string_view AudioSeFootstepBaseOutdoor = "se.footstep.base_outdoor";
+constexpr std::string_view AudioSeFootstepHomeInterior = "se.footstep.home";
+constexpr std::string_view AudioSeFootstepDungeon = "se.footstep.dungeon";
 constexpr std::string_view DigToolFailsafeShovelObjectId = "item_shovel";
 constexpr std::string_view DigToolFailsafeDigCategory = "\xE6\x8E\x98\xE5\x89\x8A";
 constexpr float DigToolFailsafeSpawnCooldownSeconds = 12.0f;
 constexpr float DigToolFailsafeNearbyDropRadius = 220.0f;
+constexpr float FootstepPitchSideOffset = 0.025f;
+constexpr float FootstepPitchRandomJitter = 0.015f;
 constexpr std::uint32_t IntroTutorialSeed = 0x1A57D00Du;
 constexpr float IntroTutorialExitInteractRadius = 58.0f;
 constexpr float IntroTutorialExitFoundRadiusTiles = 5.0f;
@@ -95,6 +100,15 @@ constexpr std::string_view IntroTutorialExitFoundTrigger = "intro_tutorial:exit_
 constexpr float DiscardThrowStartOffset = 24.0f;
 constexpr float DiscardThrowDistance = 310.0f;
 constexpr float DiscardThrowLandingJitter = 40.0f;
+
+float randomFootstepPitchJitter()
+{
+    static std::mt19937 rng{std::random_device{}()};
+    static std::uniform_real_distribution<float> distribution(
+        -FootstepPitchRandomJitter,
+        FootstepPitchRandomJitter);
+    return distribution(rng);
+}
 
 float chestMimicChanceForKind(LootChestKind kind)
 {
@@ -2089,7 +2103,7 @@ void Game::updateCapturedProjectileBehaviors(float dt)
         }
 
         const std::vector<EffectSpec> effects = capturedProjectileEffects(item, behaviorId, behavior);
-        const Vec2 outward = normalize(item.worldPosition - spellRing_.center());
+        const Vec2 outward = item.orbitOutward;
         bool fired = false;
         if (behaviorId == "radial_spike") {
             for (int i = 0; i < radialCount; ++i) {
@@ -2219,17 +2233,15 @@ void Game::updateAmbientParticleEffects(float dt)
     }
 
     ringTrailEffectTimer_ -= dt;
-    if (spellRing_.state() != SpellRingState::Normal && ringTrailEffectTimer_ <= 0.0f) {
-        const Vec2 trailDirection = spellRing_.state() == SpellRingState::Thrown
+    const int throwingRingIndex = spellRing_.throwingRingIndex();
+    if (throwingRingIndex >= 0 && ringTrailEffectTimer_ <= 0.0f) {
+        const Vec2 ringCenter = spellRing_.centerForRing(throwingRingIndex);
+        const Vec2 trailDirection = spellRing_.stateForRing(throwingRingIndex) == SpellRingState::Thrown
             ? player_.facing
-            : player_.position - spellRing_.center();
-        effects_.spawnForegroundRingTrail(spellRing_.center(), trailDirection);
-        const std::vector<const SpellRingItem*> runtimeItems = spellRing_.runtimeItems();
-        for (const SpellRingItem* itemPtr : runtimeItems) {
-            if (itemPtr == nullptr) {
-                continue;
-            }
-            effects_.spawnForegroundRingTrail(itemPtr->worldPosition, trailDirection);
+            : player_.position - ringCenter;
+        effects_.spawnForegroundRingTrail(ringCenter, trailDirection);
+        for (const SpellRingItem& item : spellRing_.itemsForRing(throwingRingIndex)) {
+            effects_.spawnForegroundRingTrail(item.worldPosition, trailDirection);
         }
         ringTrailEffectTimer_ = 0.055f;
     }
@@ -8340,11 +8352,18 @@ void Game::updatePlayerFootstepDust(float dt)
     }
 }
 
-void Game::maybeSpawnPlayerFootstepDust(Vec2 footAnchor, Vec2 movementDirection, bool walking, int frameIndex, int& previousFrame)
+void Game::maybeTriggerPlayerFootstep(
+    Vec2 footAnchor,
+    Vec2 movementDirection,
+    bool walking,
+    int frameIndex,
+    int& previousFrame,
+    PlayerFootstepSurface surface)
 {
     const bool dustFrame = frameIndex == 3 || frameIndex == 6;
     if (walking && dustFrame && previousFrame != frameIndex) {
         spawnPlayerFootstepDust(footAnchor, movementDirection);
+        playPlayerFootstepSound(surface, frameIndex);
     }
     previousFrame = frameIndex;
 }
@@ -8365,6 +8384,29 @@ void Game::spawnPlayerFootstepDust(Vec2 footAnchor, Vec2 movementDirection)
 
     nextPlayerFootstepDustPuff_ = (nextPlayerFootstepDustPuff_ + 1) % static_cast<int>(playerFootstepDustPuffs_.size());
     nextPlayerFootstepDustShape_ = (nextPlayerFootstepDustShape_ + 1) % static_cast<int>(FootstepDustShapes.size());
+}
+
+void Game::playPlayerFootstepSound(PlayerFootstepSurface surface, int frameIndex)
+{
+    std::string_view cueId;
+    switch (surface) {
+    case PlayerFootstepSurface::BaseOutdoor:
+        cueId = AudioSeFootstepBaseOutdoor;
+        break;
+    case PlayerFootstepSurface::HomeInterior:
+        cueId = AudioSeFootstepHomeInterior;
+        break;
+    case PlayerFootstepSurface::Dungeon:
+        cueId = AudioSeFootstepDungeon;
+        break;
+    }
+    if (cueId.empty()) {
+        return;
+    }
+
+    const float sidePitchOffset = frameIndex == 3 ? -FootstepPitchSideOffset : FootstepPitchSideOffset;
+    const float pitchScale = 1.0f + sidePitchOffset + randomFootstepPitchJitter();
+    playAudioSe(cueId, 1.0f, pitchScale);
 }
 
 void Game::renderPlayerFootstepDust(Renderer& renderer) const

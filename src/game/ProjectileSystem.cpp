@@ -212,7 +212,7 @@ GuardBlockResult blocksProjectile(
             projectile.radius,
             item.worldPosition,
             equipmentScaledGuardRadius(spellRing, item, item.hitRadius + 8.0f))) {
-        const Vec2 outward = normalize(item.worldPosition - spellRing.center());
+        const Vec2 outward = item.orbitOutward;
         const Vec2 incomingFrom = normalize(projectile.velocity * -1.0f);
         if (dot(outward, incomingFrom) > 0.25f) {
             return {true, "guard_projectile"};

@@ -149,6 +149,14 @@ float clampVolume(float volume)
     return std::clamp(volume, 0.0f, 1.0f);
 }
 
+float sanitizePitchScale(float pitchScale)
+{
+    if (!std::isfinite(pitchScale)) {
+        return 1.0f;
+    }
+    return std::clamp(pitchScale, 0.25f, 4.0f);
+}
+
 std::size_t framesFromSampleCount(std::size_t sampleCount, int channels)
 {
     if (channels <= 0) {
@@ -374,6 +382,7 @@ public:
         voice.type = AudioCueType::Bgm;
         voice.sound = cue->sound;
         voice.loop = cue->options.loop;
+        voice.pitchScale = 1.0f;
         voice.baseVolume = clampVolume(cue->options.volume);
         voice.currentVolume = fadeFrames > 0 ? 0.0f : voice.baseVolume;
         voice.targetVolume = voice.baseVolume;
@@ -395,12 +404,13 @@ public:
         currentBgmId_.clear();
     }
 
-    void playSe(std::string_view id, float volumeScale)
+    void playSe(std::string_view id, float volumeScale, float pitchScale)
     {
         if (volumeScale <= 0.0f) {
             return;
         }
 
+        const float sanitizedPitchScale = sanitizePitchScale(pitchScale);
         const std::string key(id);
         std::scoped_lock lock(mutex_);
         const Cue* cue = findCueLocked(key, AudioCueType::Se);
@@ -423,6 +433,7 @@ public:
         voice.type = AudioCueType::Se;
         voice.sound = cue->sound;
         voice.loop = false;
+        voice.pitchScale = sanitizedPitchScale;
         voice.baseVolume = clampVolume(cue->options.volume * volumeScale);
         voice.currentVolume = voice.baseVolume;
         voice.targetVolume = voice.baseVolume;
@@ -492,9 +503,10 @@ private:
         std::string id;
         AudioCueType type = AudioCueType::Se;
         std::shared_ptr<const SoundData> sound;
-        std::size_t frameIndex = 0;
+        double framePosition = 0.0;
         bool loop = false;
         bool stoppingAfterFade = false;
+        float pitchScale = 1.0f;
         float baseVolume = 1.0f;
         float currentVolume = 1.0f;
         float targetVolume = 1.0f;
@@ -544,9 +556,11 @@ private:
                     continue;
                 }
 
-                if (voice.frameIndex >= voice.sound->frames) {
+                if (voice.framePosition >= static_cast<double>(voice.sound->frames)) {
                     if (voice.loop) {
-                        voice.frameIndex = 0;
+                        voice.framePosition = std::fmod(
+                            voice.framePosition,
+                            static_cast<double>(voice.sound->frames));
                     } else {
                         voice.finished = true;
                         continue;
@@ -555,15 +569,26 @@ private:
 
                 const float busVolume = voice.type == AudioCueType::Bgm ? bgmVolume_ : seVolume_;
                 const float voiceVolume = masterVolume_ * busVolume * voice.currentVolume;
-                const std::size_t sourceBase = voice.frameIndex * static_cast<std::size_t>(settings_.channels);
+                const double sourceFramePosition = std::max(0.0, voice.framePosition);
+                const std::size_t sourceFrameA = static_cast<std::size_t>(sourceFramePosition);
+                std::size_t sourceFrameB = sourceFrameA + 1;
+                if (sourceFrameB >= voice.sound->frames) {
+                    sourceFrameB = voice.loop ? 0 : sourceFrameA;
+                }
+                const float blend = static_cast<float>(sourceFramePosition - static_cast<double>(sourceFrameA));
+                const std::size_t sourceBaseA = sourceFrameA * static_cast<std::size_t>(settings_.channels);
+                const std::size_t sourceBaseB = sourceFrameB * static_cast<std::size_t>(settings_.channels);
                 const std::size_t outputBase = static_cast<std::size_t>(frame * settings_.channels);
                 for (int channel = 0; channel < settings_.channels; ++channel) {
+                    const std::size_t channelIndex = static_cast<std::size_t>(channel);
+                    const float sampleA = voice.sound->samples[sourceBaseA + channelIndex];
+                    const float sampleB = voice.sound->samples[sourceBaseB + channelIndex];
                     out[outputBase + static_cast<std::size_t>(channel)] +=
-                        voice.sound->samples[sourceBase + static_cast<std::size_t>(channel)] * voiceVolume;
+                        (sampleA + (sampleB - sampleA) * blend) * voiceVolume;
                 }
 
-                ++voice.frameIndex;
-                if (voice.frameIndex >= voice.sound->frames && !voice.loop) {
+                voice.framePosition += static_cast<double>(sanitizePitchScale(voice.pitchScale));
+                if (voice.framePosition >= static_cast<double>(voice.sound->frames) && !voice.loop) {
                     voice.finished = true;
                 }
                 stepFade(voice);
@@ -851,9 +876,9 @@ void AudioEngine::stopBgm(float fadeSeconds)
     impl_->stopBgm(fadeSeconds);
 }
 
-void AudioEngine::playSe(std::string_view id, float volumeScale)
+void AudioEngine::playSe(std::string_view id, float volumeScale, float pitchScale)
 {
-    impl_->playSe(id, volumeScale);
+    impl_->playSe(id, volumeScale, pitchScale);
 }
 
 void AudioEngine::stopAll()

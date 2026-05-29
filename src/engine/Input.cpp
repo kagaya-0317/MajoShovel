@@ -21,6 +21,16 @@ int shortcutSlotForAction(InputAction action)
     return index >= 0 && index < 8 ? index : -1;
 }
 
+int ringPresetRegisterSlotForScancode(SDL_Scancode scancode)
+{
+    switch (scancode) {
+    case SDL_SCANCODE_1: return 0;
+    case SDL_SCANCODE_2: return 1;
+    case SDL_SCANCODE_3: return 2;
+    default: return -1;
+    }
+}
+
 float normalizeGamepadAxis(Sint16 value)
 {
     const float raw = value < 0
@@ -60,6 +70,7 @@ Input& Input::operator=(const Input& other)
     ctrlSavePressed_ = other.ctrlSavePressed_;
     ctrlUndoPressed_ = other.ctrlUndoPressed_;
     ctrlRedoPressed_ = other.ctrlRedoPressed_;
+    suppressDirectShortcutThisFrame_ = other.suppressDirectShortcutThisFrame_;
     lastActiveDevice_ = other.lastActiveDevice_;
     pressed_ = other.pressed_;
     released_ = other.released_;
@@ -69,6 +80,7 @@ Input& Input::operator=(const Input& other)
     shortcutCursorDelta_ = other.shortcutCursorDelta_;
     mouseWheelDelta_ = other.mouseWheelDelta_;
     shortcutSlotPressed_ = other.shortcutSlotPressed_;
+    ringPresetRegisterSlotPressed_ = other.ringPresetRegisterSlotPressed_;
     activeRingDelta_ = other.activeRingDelta_;
     moveAxis_ = other.moveAxis_;
     leftStickAxis_ = other.leftStickAxis_;
@@ -102,9 +114,11 @@ void Input::beginFrame()
     ctrlSavePressed_ = false;
     ctrlUndoPressed_ = false;
     ctrlRedoPressed_ = false;
+    suppressDirectShortcutThisFrame_ = false;
     shortcutCursorDelta_ = 0;
     mouseWheelDelta_ = 0;
     shortcutSlotPressed_ = -1;
+    ringPresetRegisterSlotPressed_ = -1;
     activeRingDelta_ = 0;
 }
 
@@ -128,6 +142,7 @@ void Input::handleEvent(const SDL_Event& event)
         lastActiveDevice_ = InputDeviceKind::KeyboardMouse;
         const SDL_Keymod mods = SDL_GetModState();
         const bool ctrlDown = (mods & SDL_KMOD_CTRL) != 0;
+        const bool shiftDown = (mods & SDL_KMOD_SHIFT) != 0;
         if (ctrlDown) {
             if (event.key.scancode == SDL_SCANCODE_S) {
                 ctrlSavePressed_ = true;
@@ -139,6 +154,14 @@ void Input::handleEvent(const SDL_Event& event)
             }
             if (event.key.scancode == SDL_SCANCODE_Y) {
                 ctrlRedoPressed_ = true;
+                return;
+            }
+        }
+        if (shiftDown) {
+            const int registerSlot = ringPresetRegisterSlotForScancode(event.key.scancode);
+            if (registerSlot >= 0) {
+                ringPresetRegisterSlotPressed_ = registerSlot;
+                suppressDirectShortcutThisFrame_ = true;
                 return;
             }
         }
@@ -283,6 +306,8 @@ void Input::applyAutomation(const InputAutomationFrame& frame)
         shortcutCursorDelta_ = 0;
         mouseWheelDelta_ = 0;
         shortcutSlotPressed_ = -1;
+        ringPresetRegisterSlotPressed_ = -1;
+        suppressDirectShortcutThisFrame_ = false;
         activeRingDelta_ = 0;
         aimAxis_ = {};
         hasAimAxis_ = false;
@@ -463,6 +488,10 @@ void Input::updateKeyboardPolledBindings(const bool* keys)
     for (int action = 0; action < ActionCount; ++action) {
         for (const InputBinding& binding : bindings_[action]) {
             if (binding.device != InputBindingDevice::Keyboard) {
+                continue;
+            }
+            if (suppressDirectShortcutThisFrame_ &&
+                shortcutSlotForAction(static_cast<InputAction>(action)) >= 0) {
                 continue;
             }
             if (binding.code <= SDL_SCANCODE_UNKNOWN || binding.code >= SDL_SCANCODE_COUNT) {

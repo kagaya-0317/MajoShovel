@@ -147,6 +147,31 @@ function Placeholder-Sample([string]$Kind, [double]$Time, [double]$Duration, [Sy
             $noise = ($Random.NextDouble() * 2.0 - 1.0) * 0.035
             return $env * (0.34 * [Math]::Sin($TwoPi * $freq * $Time) + $noise)
         }
+        "se.footstep.base_outdoor" {
+            $env = Decay $Time $Duration 2.2
+            $noise = ($Random.NextDouble() * 2.0 - 1.0) * 0.080
+            $scrape = 0.5 + 0.5 * [Math]::Sin($TwoPi * 19.0 * $Time)
+            return $env * (
+                0.18 * [Math]::Sin($TwoPi * 92.0 * $Time) +
+                0.10 * [Math]::Sin($TwoPi * 184.0 * $Time) +
+                $scrape * $noise)
+        }
+        "se.footstep.home" {
+            $env = Decay $Time $Duration 2.0
+            $wood = 0.28 * [Math]::Sin($TwoPi * 245.0 * $Time) +
+                0.12 * [Math]::Sin($TwoPi * 490.0 * $Time)
+            $noise = ($Random.NextDouble() * 2.0 - 1.0) * 0.035
+            return $env * ($wood + $noise)
+        }
+        "se.footstep.dungeon" {
+            $env = Decay $Time $Duration 2.45
+            $noise = ($Random.NextDouble() * 2.0 - 1.0) * 0.125
+            $grit = 0.5 + 0.5 * [Math]::Sin($TwoPi * 28.0 * $Time)
+            return $env * (
+                0.16 * [Math]::Sin($TwoPi * 118.0 * $Time) +
+                0.09 * [Math]::Sin($TwoPi * 310.0 * $Time) +
+                $grit * $noise)
+        }
         "se.dig.hit" {
             $env = Decay $Time $Duration 2.8
             $noise = ($Random.NextDouble() * 2.0 - 1.0) * 0.16
@@ -366,6 +391,9 @@ $clips = @(
     @{ Path = Join-Path $SeRoot "ui_ring_place_placeholder.wav"; Kind = "se.ui.ring_place"; Duration = 0.22; Seed = 2008 },
     @{ Path = Join-Path $SeRoot "ui_upgrade_select_placeholder.wav"; Kind = "se.ui.upgrade_select"; Duration = 0.30; Seed = 2009 },
     @{ Path = Join-Path $SeRoot "transition_placeholder.wav"; Kind = "se.transition"; Duration = 0.42; Seed = 2010 },
+    @{ Path = Join-Path $SeRoot "footstep_base_outdoor_placeholder.wav"; Kind = "se.footstep.base_outdoor"; Duration = 0.16; Seed = 2040 },
+    @{ Path = Join-Path $SeRoot "footstep_home_placeholder.wav"; Kind = "se.footstep.home"; Duration = 0.14; Seed = 2041 },
+    @{ Path = Join-Path $SeRoot "footstep_dungeon_placeholder.wav"; Kind = "se.footstep.dungeon"; Duration = 0.17; Seed = 2042 },
     @{ Path = Join-Path $SeRoot "dig_hit_placeholder.wav"; Kind = "se.dig.hit"; Duration = 0.12; Seed = 2011 },
     @{ Path = Join-Path $SeRoot "dig_break_placeholder.wav"; Kind = "se.dig.break"; Duration = 0.22; Seed = 2012 },
     @{ Path = Join-Path $SeRoot "attack_hit_placeholder.wav"; Kind = "se.attack.hit"; Duration = 0.15; Seed = 2013 },

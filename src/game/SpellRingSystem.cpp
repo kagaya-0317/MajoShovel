@@ -32,6 +32,38 @@ constexpr std::array<float, SpellRingCount> RingBaseSpeedMultipliers{{
     1.0f,
     0.8f,
 }};
+constexpr float ThrowMorphOpenDurationRatio = 0.18f;
+constexpr float ThrowMorphCloseStartRatio = 0.70f;
+constexpr float ThrowMorphGapFraction = 0.18f;
+constexpr float ThrowPathSampleOffset = 0.006f;
+
+float smoothStep01(float t)
+{
+    t = clamp(t, 0.0f, 1.0f);
+    return t * t * (3.0f - 2.0f * t);
+}
+
+float dotVec2(Vec2 a, Vec2 b)
+{
+    return a.x * b.x + a.y * b.y;
+}
+
+float wrap01(float value)
+{
+    value = std::fmod(value, 1.0f);
+    if (value < 0.0f) {
+        value += 1.0f;
+    }
+    return value;
+}
+
+Vec2 safeNormalize(Vec2 value, Vec2 fallback = {1.0f, 0.0f})
+{
+    if (lengthSquared(value) <= 0.0001f) {
+        return fallback;
+    }
+    return normalize(value);
+}
 
 double finiteEquipmentMultiplier(double value)
 {
@@ -428,6 +460,67 @@ float findNearestRingPathParam(Vec2 worldPoint, Vec2 center, const RingOrbitCont
     return nearestParam;
 }
 
+float pathTForParam(RingShape shape, float param, const RingOrbitTuning& tuning)
+{
+    if (shape == RingShape::Comet) {
+        const float arc = clampCometArcRadians(tuning);
+        const float halfArc = arc * 0.5f;
+        return arc > 0.0001f ? clamp((std::clamp(param, -halfArc, halfArc) + halfArc) / arc, 0.0f, 1.0f) : 0.0f;
+    }
+    return normalizeAngle(param) / FullCircleRadians;
+}
+
+float cometPathParamForT(float t, const RingOrbitTuning& tuning)
+{
+    const float arc = clampCometArcRadians(tuning);
+    return -arc * 0.5f + arc * clamp(t, 0.0f, 1.0f);
+}
+
+float openPathParamForT(RingShape shape, float t, float gapCenterT, const RingOrbitTuning& tuning)
+{
+    if (shape == RingShape::Comet) {
+        return cometPathParamForT(t, tuning);
+    }
+
+    const float gap = std::clamp(ThrowMorphGapFraction, 0.02f, 0.42f);
+    const float phase = wrap01(gapCenterT + gap * 0.5f + clamp(t, 0.0f, 1.0f) * (1.0f - gap));
+    return phase * FullCircleRadians;
+}
+
+float pathTForOpenPathParam(RingShape shape, float param, float gapCenterT, const RingOrbitTuning& tuning)
+{
+    if (shape == RingShape::Comet) {
+        return pathTForParam(shape, param, tuning);
+    }
+
+    const float gap = std::clamp(ThrowMorphGapFraction, 0.02f, 0.42f);
+    const float rawT = pathTForParam(shape, param, tuning);
+    return clamp(wrap01(rawT - wrap01(gapCenterT + gap * 0.5f)) / (1.0f - gap), 0.0f, 1.0f);
+}
+
+float pathTClosestToDirection(Vec2 center, Vec2 direction, const RingOrbitContext& context)
+{
+    if (context.shape == RingShape::Comet) {
+        return 1.0f;
+    }
+
+    const Vec2 unitDirection = safeNormalize(direction);
+    constexpr int SampleCount = 160;
+    float bestT = 0.0f;
+    float bestScore = -std::numeric_limits<float>::max();
+    for (int i = 0; i < SampleCount; ++i) {
+        const float t = static_cast<float>(i) / static_cast<float>(SampleCount);
+        const float param = t * FullCircleRadians;
+        const Vec2 point = getRingItemWorldPosition(center, param, context);
+        const float score = dotVec2(safeNormalize(point - center, unitDirection), unitDirection);
+        if (score > bestScore) {
+            bestScore = score;
+            bestT = t;
+        }
+    }
+    return bestT;
+}
+
 std::vector<SpellRingItem>& SpellRingSystem::activeItems()
 {
     return itemsByRing_[static_cast<std::size_t>(activeRingIndex_)];
@@ -463,15 +556,16 @@ void SpellRingSystem::initialize(const RuntimeBalance& balance)
     resetBaseWeightToCurrent();
     baseAngles_.fill(0.0f);
     shapeRotations_.fill(0.0f);
-    center_ = {};
+    ringRuntime_ = {};
     orbitModifiers_ = OrbitModifiers{};
     equipmentModifiers_ = EquipmentModifiers{};
-    state_ = SpellRingState::Normal;
     capturedHealTimer_ = CapturedPeriodicHealInterval;
     enemyOrbitSpeedDebuffMultiplier_ = 1.0f;
     enemyOrbitSpeedDebuffTimer_ = 0.0f;
     activeRingIndex_ = 0;
+    throwingRingIndex_ = -1;
     itemBreakEvents_.clear();
+    motionEvents_.clear();
 }
 
 float SpellRingSystem::levelScaleMultiplierForPoints(int points)
@@ -545,12 +639,13 @@ void SpellRingSystem::advanceOrbitAngles(float dt, const RuntimeBalance& balance
     }
 }
 
-void SpellRingSystem::refreshItemWorldPositions(float dt, Vec2 previousCenter, const RuntimeBalance& balance, bool advanceCapturedBehaviors)
+void SpellRingSystem::refreshItemWorldPositions(float dt, const RuntimeBalance& balance, bool advanceCapturedBehaviors)
 {
     const float safeDt = std::max(0.0f, dt);
     const RingOrbitTuning tuning = orbitTuning_;
-    const Vec2 centerVelocity = safeDt > 0.0f ? (center_ - previousCenter) / safeDt : Vec2{};
     for (int ringIndex = 0; ringIndex < SpellRingCount; ++ringIndex) {
+        const RingRuntimeState& runtime = ringRuntime_[static_cast<std::size_t>(ringIndex)];
+        const Vec2 centerVelocity = safeDt > 0.0f ? (runtime.center - runtime.previousCenter) / safeDt : Vec2{};
         std::vector<SpellRingItem>& ringItems = itemsByRing_[static_cast<std::size_t>(ringIndex)];
         const RingShape ringShape = ringShapeForIndex(ringIndex);
         const float ringAngularSpeed = ringAngularSpeedForIndex(ringIndex, balance);
@@ -586,18 +681,49 @@ void SpellRingSystem::refreshItemWorldPositions(float dt, Vec2 previousCenter, c
             const float param = ringShape == RingShape::Comet
                 ? normalizeLocalParam(ringShape, item.localAngle, context.tuning)
                 : normalizeAngle(baseAngles_[static_cast<std::size_t>(ringIndex)] + item.localAngle);
-            item.worldPosition = getRingItemWorldPositionWithDistanceOffset(
-                center_,
-                param,
-                context,
-                item.orbitDistanceOffset);
-            item.worldVelocity = getRingItemVelocityWithDistanceOffset(
-                param,
-                ringShape == RingShape::Comet ? 0.0f : ringAngularSpeed,
-                shapeRotationSpeed,
-                centerVelocity,
-                context,
-                item.orbitDistanceOffset);
+            const Vec2 previousWorldPosition = item.worldPosition;
+            if (runtime.state == SpellRingState::Normal) {
+                const Vec2 localPosition = getRingItemLocalPosition(param, context);
+                item.orbitOutward = safeNormalize(localPosition, fromAngle(param));
+                item.orbitTangent = safeNormalize(
+                    getRingItemVelocity(
+                        param,
+                        ringShape == RingShape::Comet ? 0.0f : ringAngularSpeed,
+                        shapeRotationSpeed,
+                        {},
+                        context),
+                    {-item.orbitOutward.y, item.orbitOutward.x});
+                item.worldPosition = getRingItemWorldPositionWithDistanceOffset(
+                    runtime.center,
+                    param,
+                    context,
+                    item.orbitDistanceOffset);
+                item.worldVelocity = getRingItemVelocityWithDistanceOffset(
+                    param,
+                    ringShape == RingShape::Comet ? 0.0f : ringAngularSpeed,
+                    shapeRotationSpeed,
+                    centerVelocity,
+                    context,
+                    item.orbitDistanceOffset);
+            } else {
+                const float pathT = throwPathTForItem(ringIndex, param, context);
+                item.worldPosition = throwMorphPathPointForRing(ringIndex, pathT, context, item.orbitDistanceOffset);
+                const Vec2 before = throwMorphPathPointForRing(
+                    ringIndex,
+                    pathT - ThrowPathSampleOffset,
+                    context,
+                    item.orbitDistanceOffset);
+                const Vec2 after = throwMorphPathPointForRing(
+                    ringIndex,
+                    pathT + ThrowPathSampleOffset,
+                    context,
+                    item.orbitDistanceOffset);
+                item.orbitTangent = safeNormalize(after - before, runtime.throwDirection);
+                item.orbitOutward = safeNormalize(
+                    lerp(item.worldPosition - runtime.homeCenter, runtime.throwDirection, throwLineMixForRing(ringIndex)),
+                    runtime.throwDirection);
+                item.worldVelocity = safeDt > 0.0f ? (item.worldPosition - previousWorldPosition) / safeDt : centerVelocity;
+            }
             item.orbitMotionSpeed = length(item.worldVelocity) / std::max(1.0f, radiusForRing(ringIndex));
         }
     }
@@ -606,23 +732,32 @@ void SpellRingSystem::refreshItemWorldPositions(float dt, Vec2 previousCenter, c
 void SpellRingSystem::updatePresentation(const Player& player, float dt, const RuntimeBalance& balance)
 {
     advanceOrbitAngles(dt, balance);
-    const Vec2 previousCenter = center_;
-    if (state_ == SpellRingState::Normal) {
-        center_ = getRingCenterWorldPosition(player.position, player.spellRingShiftDirection, player.spellRingShift);
+    const Vec2 normalCenter = getRingCenterWorldPosition(player.position, player.spellRingShiftDirection, player.spellRingShift);
+    for (RingRuntimeState& runtime : ringRuntime_) {
+        runtime.previousCenter = runtime.center;
+        runtime.homeCenter = normalCenter;
+        if (runtime.state == SpellRingState::Normal) {
+            runtime.center = normalCenter;
+        }
     }
-    refreshItemWorldPositions(dt, previousCenter, balance, false);
+    refreshItemWorldPositions(dt, balance, false);
 }
 
 void SpellRingSystem::resetRuntimeStateAtPlayer(const Player& player, const RuntimeBalance& balance)
 {
-    center_ = getRingCenterWorldPosition(player.position, player.spellRingShiftDirection, player.spellRingShift);
-    throwDirection_ = player.facing;
-    throwStart_ = center_;
-    throwTime_ = 0.0f;
-    state_ = SpellRingState::Normal;
+    const Vec2 normalCenter = getRingCenterWorldPosition(player.position, player.spellRingShiftDirection, player.spellRingShift);
+    for (RingRuntimeState& runtime : ringRuntime_) {
+        runtime = {};
+        runtime.homeCenter = normalCenter;
+        runtime.center = normalCenter;
+        runtime.previousCenter = normalCenter;
+        runtime.throwDirection = player.facing;
+    }
+    throwingRingIndex_ = -1;
     enemyOrbitSpeedDebuffMultiplier_ = 1.0f;
     enemyOrbitSpeedDebuffTimer_ = 0.0f;
-    refreshItemWorldPositions(0.0f, center_, balance, false);
+    motionEvents_.clear();
+    refreshItemWorldPositions(0.0f, balance, false);
 }
 
 void SpellRingSystem::update(Player& player, const Input& input, float dt, float, bool paused, bool blockPointerThrow, const RuntimeBalance& balance)
@@ -646,7 +781,6 @@ void SpellRingSystem::update(Player& player, const Input& input, float dt, float
     advanceOrbitAngles(safeDt, balance);
 
     const Vec2 normalCenter = getRingCenterWorldPosition(player.position, player.spellRingShiftDirection, player.spellRingShift);
-    const Vec2 previousCenter = center_;
     const RingEquipmentModifiers& activeEquipment = equipmentModifiersForRing(activeRingIndex_);
     const float throwCooldown = scaledAtLeast(
         balance.spellRingThrowCooldown,
@@ -656,46 +790,73 @@ void SpellRingSystem::update(Player& player, const Input& input, float dt, float
     const float throwDistance = scaledNonNegative(balance.spellRingThrowDistance, activeEquipment.ringThrowDistanceMul);
     const float returnSpeed = scaledNonNegative(balance.spellRingReturnSpeed, activeEquipment.ringReturnSpeedMul);
 
-    if (state_ == SpellRingState::Normal) {
-        const double anchorStrength = std::max(
-            0.0,
-            orbitModifiers_.anchorStrength * finiteEquipmentMultiplier(activeEquipment.ringAnchorMul));
-        if (input.ringOffsetHeld() && anchorStrength > 0.0 && safeDt > 0.0f) {
-            const float clampedAnchor = clamp(static_cast<float>(anchorStrength), 0.0f, 5.0f);
-            const float followRate = 14.0f / (1.0f + clampedAnchor * 2.5f);
-            center_ = lerp(center_, normalCenter, 1.0f - std::exp(-followRate * safeDt));
-            const Vec2 toNormalCenter = normalCenter - center_;
-            const float lag = length(toNormalCenter);
-            const float maxLag = 16.0f + clampedAnchor * 32.0f;
-            if (lag > maxLag) {
-                center_ = normalCenter - normalize(toNormalCenter) * maxLag;
+    const double anchorStrength = std::max(
+        0.0,
+        orbitModifiers_.anchorStrength * finiteEquipmentMultiplier(activeEquipment.ringAnchorMul));
+    for (int ringIndex = 0; ringIndex < SpellRingCount; ++ringIndex) {
+        RingRuntimeState& runtime = ringRuntime_[static_cast<std::size_t>(ringIndex)];
+        runtime.previousCenter = runtime.center;
+        runtime.homeCenter = normalCenter;
+
+        if (runtime.state == SpellRingState::Normal) {
+            if (input.ringOffsetHeld() && anchorStrength > 0.0 && safeDt > 0.0f) {
+                const float clampedAnchor = clamp(static_cast<float>(anchorStrength), 0.0f, 5.0f);
+                const float followRate = 14.0f / (1.0f + clampedAnchor * 2.5f);
+                runtime.center = lerp(runtime.center, normalCenter, 1.0f - std::exp(-followRate * safeDt));
+                const Vec2 toNormalCenter = normalCenter - runtime.center;
+                const float lag = length(toNormalCenter);
+                const float maxLag = 16.0f + clampedAnchor * 32.0f;
+                if (lag > maxLag) {
+                    runtime.center = normalCenter - normalize(toNormalCenter) * maxLag;
+                }
+            } else {
+                runtime.center = normalCenter;
             }
-        } else {
-            center_ = normalCenter;
+            continue;
         }
-        const bool throwPressed = input.throwPressed() && !(blockPointerThrow && input.mouseLeftPressed());
-        if (throwPressed && player.throwCooldownRemaining <= 0.0f) {
-            state_ = SpellRingState::Thrown;
-            throwDirection_ = player.facing;
-            throwStart_ = center_;
-            throwTime_ = 0.0f;
+
+        runtime.throwElapsed += safeDt;
+        const float peakTime = std::max(0.02f, runtime.throwPeakTime);
+        const float totalTime = std::max(peakTime + std::max(0.02f, runtime.throwReturnTime), 0.04f);
+        if (runtime.state == SpellRingState::Thrown && runtime.throwElapsed >= peakTime) {
+            runtime.state = SpellRingState::Returning;
+            motionEvents_.push_back({RingMotionEventKind::ReturnStart, ringIndex, runtime.center, runtime.throwDirection});
+        }
+        if (runtime.throwElapsed >= totalTime) {
+            runtime.state = SpellRingState::Normal;
+            runtime.center = normalCenter;
+            runtime.throwElapsed = 0.0f;
+            runtime.throwPeakTime = 0.0f;
+            runtime.throwReturnTime = 0.0f;
+            runtime.throwDistance = 0.0f;
+            if (throwingRingIndex_ == ringIndex) {
+                throwingRingIndex_ = -1;
+            }
+            motionEvents_.push_back({RingMotionEventKind::ReturnEnd, ringIndex, runtime.center, runtime.throwDirection});
+        } else {
+            runtime.center = normalCenter + runtime.throwDirection * (runtime.throwDistance * throwReachForRing(ringIndex));
+        }
+    }
+
+    const bool throwPressed = input.throwPressed() && !(blockPointerThrow && input.mouseLeftPressed());
+    if (throwPressed && player.throwCooldownRemaining <= 0.0f && throwingRingIndex_ < 0) {
+        RingRuntimeState& runtime = ringRuntime_[static_cast<std::size_t>(activeRingIndex_)];
+        if (runtime.state == SpellRingState::Normal) {
+            const float peakTime = throwSpeed > 0.001f
+                ? std::max(0.02f, std::min(std::max(0.02f, balance.spellRingThrowMaxTime), throwDistance / throwSpeed))
+                : std::max(0.02f, balance.spellRingThrowMaxTime);
+            const float returnTime = returnSpeed > 0.001f
+                ? std::max(0.02f, throwDistance / returnSpeed)
+                : peakTime;
+            runtime.state = SpellRingState::Thrown;
+            runtime.throwDirection = safeNormalize(player.facing);
+            runtime.throwElapsed = 0.0f;
+            runtime.throwPeakTime = peakTime;
+            runtime.throwReturnTime = returnTime;
+            runtime.throwDistance = throwDistance;
+            throwingRingIndex_ = activeRingIndex_;
             player.throwCooldownRemaining = throwCooldown;
-        }
-    } else if (state_ == SpellRingState::Thrown) {
-        throwTime_ += safeDt;
-        center_ += throwDirection_ * throwSpeed * safeDt;
-        if (distanceSquared(center_, throwStart_) >= throwDistance * throwDistance ||
-            throwTime_ >= balance.spellRingThrowMaxTime) {
-            state_ = SpellRingState::Returning;
-        }
-    } else {
-        const Vec2 toPlayer = normalCenter - center_;
-        const float dist = length(toPlayer);
-        if (dist < 14.0f) {
-            center_ = normalCenter;
-            state_ = SpellRingState::Normal;
-        } else {
-            center_ += normalize(toPlayer) * returnSpeed * safeDt;
+            motionEvents_.push_back({RingMotionEventKind::ThrowStart, activeRingIndex_, runtime.center, runtime.throwDirection});
         }
     }
 
@@ -731,7 +892,94 @@ void SpellRingSystem::update(Player& player, const Input& input, float dt, float
         capturedHealTimer_ = CapturedPeriodicHealInterval;
     }
 
-    refreshItemWorldPositions(safeDt, previousCenter, balance, true);
+    refreshItemWorldPositions(safeDt, balance, true);
+}
+
+float SpellRingSystem::throwTotalTimeForRing(int ringIndex) const
+{
+    if (ringIndex < 0 || ringIndex >= SpellRingCount) {
+        return 0.0f;
+    }
+    const RingRuntimeState& runtime = ringRuntime_[static_cast<std::size_t>(ringIndex)];
+    return std::max(0.0f, runtime.throwPeakTime) + std::max(0.0f, runtime.throwReturnTime);
+}
+
+float SpellRingSystem::throwProgressForRing(int ringIndex) const
+{
+    const float totalTime = throwTotalTimeForRing(ringIndex);
+    if (totalTime <= 0.001f || ringIndex < 0 || ringIndex >= SpellRingCount) {
+        return 0.0f;
+    }
+    return clamp(ringRuntime_[static_cast<std::size_t>(ringIndex)].throwElapsed / totalTime, 0.0f, 1.0f);
+}
+
+float SpellRingSystem::throwReachForRing(int ringIndex) const
+{
+    if (ringIndex < 0 || ringIndex >= SpellRingCount) {
+        return 0.0f;
+    }
+
+    const RingRuntimeState& runtime = ringRuntime_[static_cast<std::size_t>(ringIndex)];
+    if (runtime.state == SpellRingState::Normal) {
+        return 0.0f;
+    }
+
+    const float peakTime = std::max(0.02f, runtime.throwPeakTime);
+    if (runtime.throwElapsed <= peakTime) {
+        return smoothStep01(runtime.throwElapsed / peakTime);
+    }
+
+    const float returnTime = std::max(0.02f, runtime.throwReturnTime);
+    return 1.0f - smoothStep01((runtime.throwElapsed - peakTime) / returnTime);
+}
+
+float SpellRingSystem::throwLineMixForRing(int ringIndex) const
+{
+    if (ringIndex < 0 || ringIndex >= SpellRingCount ||
+        ringRuntime_[static_cast<std::size_t>(ringIndex)].state == SpellRingState::Normal) {
+        return 0.0f;
+    }
+
+    const float progress = throwProgressForRing(ringIndex);
+    const float open = smoothStep01(progress / ThrowMorphOpenDurationRatio);
+    const float close = 1.0f - smoothStep01((progress - ThrowMorphCloseStartRatio) / (1.0f - ThrowMorphCloseStartRatio));
+    return clamp(open * close, 0.0f, 1.0f);
+}
+
+float SpellRingSystem::throwPathTForItem(int ringIndex, float pathParam, const RingOrbitContext& context) const
+{
+    if (ringIndex < 0 || ringIndex >= SpellRingCount) {
+        return pathTForParam(context.shape, pathParam, context.tuning);
+    }
+    const RingRuntimeState& runtime = ringRuntime_[static_cast<std::size_t>(ringIndex)];
+    const float gapCenterT = pathTClosestToDirection(runtime.homeCenter, runtime.throwDirection, context);
+    return pathTForOpenPathParam(context.shape, pathParam, gapCenterT, context.tuning);
+}
+
+Vec2 SpellRingSystem::throwMorphPathPointForRing(
+    int ringIndex,
+    float pathT,
+    const RingOrbitContext& context,
+    float distanceOffset) const
+{
+    const int clampedRingIndex = std::clamp(ringIndex, 0, SpellRingCount - 1);
+    const RingRuntimeState& runtime = ringRuntime_[static_cast<std::size_t>(clampedRingIndex)];
+    const Vec2 direction = safeNormalize(runtime.throwDirection);
+    RingOrbitContext openContext = context;
+    if (openContext.shape == RingShape::Comet) {
+        openContext.shapeRotation = std::atan2(direction.y, direction.x);
+    }
+
+    const float gapCenterT = pathTClosestToDirection(runtime.homeCenter, direction, openContext);
+    const float openParam = openPathParamForT(openContext.shape, pathT, gapCenterT, openContext.tuning);
+    const Vec2 openPoint = getRingItemWorldPosition(runtime.homeCenter, openParam, openContext);
+    const float lineMix = throwLineMixForRing(clampedRingIndex);
+    const float reachDistance = runtime.throwDistance * throwReachForRing(clampedRingIndex);
+    const float lineT = smoothStep01(pathT);
+    const Vec2 linePoint = runtime.homeCenter + direction * (reachDistance * lineT);
+    const Vec2 morphed = lerp(openPoint, linePoint, lineMix);
+    const Vec2 outward = safeNormalize(lerp(openPoint - runtime.homeCenter, direction, lineMix), direction);
+    return morphed + outward * distanceOffset;
 }
 
 void SpellRingSystem::clearOrbitModifiers()
@@ -1213,6 +1461,9 @@ void SpellRingSystem::resetBaseWeightToCurrent()
 
 void SpellRingSystem::switchActiveRing(int delta)
 {
+    if (anyRingInFlight()) {
+        return;
+    }
     activeRingIndex_ = (activeRingIndex_ + delta) % SpellRingCount;
     if (activeRingIndex_ < 0) {
         activeRingIndex_ += SpellRingCount;
@@ -1314,7 +1565,7 @@ Vec2 SpellRingSystem::sampleItemWorldPositionForRing(
     const float param = context.shape == RingShape::Comet
         ? normalizeLocalParam(context.shape, localAngle, context.tuning)
         : normalizeAngle(baseAngles_[static_cast<std::size_t>(clampedRingIndex)] + localAngle);
-    return getRingItemWorldPosition(center_, param, context);
+    return getRingItemWorldPosition(centerForRing(clampedRingIndex), param, context);
 }
 
 float SpellRingSystem::nearestPathParam(Vec2 worldPoint, Vec2 center, float radiusScale, const RuntimeBalance& balance, int sampleCount) const
@@ -1349,6 +1600,28 @@ std::vector<Vec2> SpellRingSystem::pathSamplePointsForRing(
 {
     RingOrbitContext context = makeOrbitContextForRing(ringIndex, 0, 1, radiusScale, balance);
     return getRingPathSamplePoints(center, context, sampleCount);
+}
+
+std::vector<Vec2> SpellRingSystem::runtimePathSamplePointsForRing(
+    int ringIndex,
+    const RuntimeBalance& balance,
+    int sampleCount) const
+{
+    const int clampedRingIndex = std::clamp(ringIndex, 0, SpellRingCount - 1);
+    const RingRuntimeState& runtime = ringRuntime_[static_cast<std::size_t>(clampedRingIndex)];
+    RingOrbitContext context = makeOrbitContextForRing(clampedRingIndex, 0, 1, 1.0f, balance);
+    if (runtime.state == SpellRingState::Normal) {
+        return getRingPathSamplePoints(runtime.center, context, sampleCount);
+    }
+
+    const int count = std::max(8, sampleCount);
+    std::vector<Vec2> points;
+    points.reserve(static_cast<std::size_t>(count));
+    for (int i = 0; i < count; ++i) {
+        const float t = static_cast<float>(i) / static_cast<float>(count - 1);
+        points.push_back(throwMorphPathPointForRing(clampedRingIndex, t, context, 0.0f));
+    }
+    return points;
 }
 
 float SpellRingSystem::normalizeLocalAngle(float angle, const RuntimeBalance& balance) const
@@ -1404,6 +1677,39 @@ double SpellRingSystem::ringDamageSpeedMultiplierForRing(int ringIndex) const
 double SpellRingSystem::digPowerMultiplierForRing(int ringIndex) const
 {
     return nonNegativeEquipmentMultiplier(equipmentModifiersForRing(ringIndex).digPowerMul);
+}
+
+Vec2 SpellRingSystem::centerForRing(int ringIndex) const
+{
+    if (ringIndex < 0 || ringIndex >= SpellRingCount) {
+        return ringRuntime_[0].center;
+    }
+    return ringRuntime_[static_cast<std::size_t>(ringIndex)].center;
+}
+
+SpellRingState SpellRingSystem::stateForRing(int ringIndex) const
+{
+    if (ringIndex < 0 || ringIndex >= SpellRingCount) {
+        return SpellRingState::Normal;
+    }
+    return ringRuntime_[static_cast<std::size_t>(ringIndex)].state;
+}
+
+bool SpellRingSystem::anyRingInFlight() const
+{
+    for (const RingRuntimeState& runtime : ringRuntime_) {
+        if (runtime.state != SpellRingState::Normal) {
+            return true;
+        }
+    }
+    return false;
+}
+
+std::vector<RingMotionEvent> SpellRingSystem::consumeMotionEvents()
+{
+    std::vector<RingMotionEvent> events = std::move(motionEvents_);
+    motionEvents_.clear();
+    return events;
 }
 
 float SpellRingSystem::radiusForRing(int ringIndex) const

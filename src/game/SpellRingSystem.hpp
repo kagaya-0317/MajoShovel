@@ -26,7 +26,20 @@ enum class SpellRingState {
     Returning
 };
 
+enum class RingMotionEventKind {
+    ThrowStart,
+    ReturnStart,
+    ReturnEnd
+};
+
 constexpr int SpellRingCount = 3;
+
+struct RingMotionEvent {
+    RingMotionEventKind kind = RingMotionEventKind::ThrowStart;
+    int ringIndex = 0;
+    Vec2 position{};
+    Vec2 direction{1.0f, 0.0f};
+};
 
 RingShape defaultRingShapeForIndex(int ringIndex);
 const char* ringShapeName(RingShape shape);
@@ -163,6 +176,7 @@ public:
     float nearestPathParamForRing(int ringIndex, Vec2 worldPoint, Vec2 center, float radiusScale, const RuntimeBalance& balance, int sampleCount = 256) const;
     std::vector<Vec2> pathSamplePoints(Vec2 center, float radiusScale, const RuntimeBalance& balance, int sampleCount = 96) const;
     std::vector<Vec2> pathSamplePointsForRing(int ringIndex, Vec2 center, float radiusScale, const RuntimeBalance& balance, int sampleCount = 96) const;
+    std::vector<Vec2> runtimePathSamplePointsForRing(int ringIndex, const RuntimeBalance& balance, int sampleCount = 96) const;
     float normalizeLocalAngle(float angle, const RuntimeBalance& balance) const;
     float quantizeLocalAngle(float angle, const RuntimeBalance& balance) const;
 
@@ -175,7 +189,8 @@ public:
     std::vector<const SpellRingItem*> runtimeItems() const;
     std::vector<SpellRingItem*> runtimeItemsMutable();
     int runtimeRingCount() const { return SpellRingCount; }
-    Vec2 center() const { return center_; }
+    Vec2 center() const { return centerForRing(activeRingIndex_); }
+    Vec2 centerForRing(int ringIndex) const;
     float radius() const { return radiusForRing(activeRingIndex_); }
     float radiusForRing(int ringIndex) const;
     float angularSpeed() const { return angularSpeedForRing(activeRingIndex_); }
@@ -201,21 +216,35 @@ public:
     double ringOutputMultiplierForRing(int ringIndex) const;
     double ringDamageSpeedMultiplierForRing(int ringIndex) const;
     double digPowerMultiplierForRing(int ringIndex) const;
-    SpellRingState state() const { return state_; }
+    SpellRingState state() const { return stateForRing(activeRingIndex_); }
+    SpellRingState stateForRing(int ringIndex) const;
+    bool anyRingInFlight() const;
+    int throwingRingIndex() const { return throwingRingIndex_; }
     int activeRingIndex() const { return activeRingIndex_; }
     float shapeRotation() const { return shapeRotationForRing(activeRingIndex_); }
     float cooldownRatio(const Player& player, const RuntimeBalance& balance) const;
+    std::vector<RingMotionEvent> consumeMotionEvents();
 
 private:
+    struct RingRuntimeState {
+        Vec2 homeCenter{};
+        Vec2 center{};
+        Vec2 previousCenter{};
+        Vec2 throwDirection{1.0f, 0.0f};
+        float throwElapsed = 0.0f;
+        float throwPeakTime = 0.0f;
+        float throwReturnTime = 0.0f;
+        float throwDistance = 0.0f;
+        SpellRingState state = SpellRingState::Normal;
+    };
+
     std::array<std::vector<SpellRingItem>, SpellRingCount> itemsByRing_{};
     std::array<RingShape, SpellRingCount> ringShapes_{
         RingShape::Circle,
         RingShape::FigureEight,
         RingShape::Comet,
     };
-    Vec2 center_{};
-    Vec2 throwDirection_{1.0f, 0.0f};
-    Vec2 throwStart_{};
+    std::array<RingRuntimeState, SpellRingCount> ringRuntime_{};
     std::array<float, SpellRingCount> radii_{{
         54.0f,
         54.0f,
@@ -234,21 +263,31 @@ private:
     std::array<float, SpellRingCount> baseEquippedWeights_{};
     std::array<float, SpellRingCount> baseAngles_{};
     std::array<float, SpellRingCount> shapeRotations_{};
-    float throwTime_ = 0.0f;
     float capturedHealTimer_ = 0.0f;
     float enemyOrbitSpeedDebuffMultiplier_ = 1.0f;
     float enemyOrbitSpeedDebuffTimer_ = 0.0f;
     int activeRingIndex_ = 0;
+    int throwingRingIndex_ = -1;
     OrbitModifiers orbitModifiers_{};
     EquipmentModifiers equipmentModifiers_{};
     RingOrbitTuning orbitTuning_{};
-    SpellRingState state_ = SpellRingState::Normal;
     std::vector<RingItemBreakEvent> itemBreakEvents_;
+    std::vector<RingMotionEvent> motionEvents_;
 
     std::vector<SpellRingItem>& activeItems();
     const std::vector<SpellRingItem>& activeItems() const;
     void advanceOrbitAngles(float dt, const RuntimeBalance& balance);
-    void refreshItemWorldPositions(float dt, Vec2 previousCenter, const RuntimeBalance& balance, bool advanceCapturedBehaviors);
+    void refreshItemWorldPositions(float dt, const RuntimeBalance& balance, bool advanceCapturedBehaviors);
+    float throwTotalTimeForRing(int ringIndex) const;
+    float throwProgressForRing(int ringIndex) const;
+    float throwReachForRing(int ringIndex) const;
+    float throwLineMixForRing(int ringIndex) const;
+    float throwPathTForItem(int ringIndex, float pathParam, const RingOrbitContext& context) const;
+    Vec2 throwMorphPathPointForRing(
+        int ringIndex,
+        float pathT,
+        const RingOrbitContext& context,
+        float distanceOffset) const;
     bool canPlaceItemAtAngle(const SpellRingItem& item, float angle, int ignoreIndex, const RingOrbitTuning& tuning) const;
     std::optional<float> findBestPlacementAngle(const SpellRingItem& item, int ignoreIndex, const RingOrbitTuning& tuning) const;
 };

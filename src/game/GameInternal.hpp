@@ -2194,7 +2194,6 @@ void drawSpellRingOrbitLayer(
     float totalSeconds,
     float alphaScale)
 {
-    const bool energized = spellRing.state() != SpellRingState::Normal;
     for (RingShape shapePass : MagicRingShapeRenderOrder) {
         for (int ringIndex = 0; ringIndex < SpellRingCount; ++ringIndex) {
             const auto& ringItems = spellRing.itemsForRing(ringIndex);
@@ -2202,15 +2201,16 @@ void drawSpellRingOrbitLayer(
                 continue;
             }
 
-            std::vector<Vec2> orbitPath = spellRing.pathSamplePointsForRing(ringIndex, spellRing.center(), 1.0f, balance, 160);
+            const Vec2 center = spellRing.centerForRing(ringIndex);
+            std::vector<Vec2> orbitPath = spellRing.runtimePathSamplePointsForRing(ringIndex, balance, 160);
             drawMagicOrbitPath(
                 renderer,
                 orbitPath,
-                spellRing.center(),
+                center,
                 MagicOrbitDrawOptions{
                     shapePass,
                     ringIndex == spellRing.activeRingIndex(),
-                    energized,
+                    spellRing.stateForRing(ringIndex) != SpellRingState::Normal,
                     false,
                     false,
                     ringIndex,

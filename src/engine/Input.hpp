@@ -68,6 +68,7 @@ public:
     bool saveShortcutPressed() const { return ctrlSavePressed_; }
     bool undoShortcutPressed() const { return ctrlUndoPressed_; }
     bool redoShortcutPressed() const { return ctrlRedoPressed_; }
+    int ringPresetRegisterSlotPressed() const { return ringPresetRegisterSlotPressed_; }
     int shortcutCursorDelta() const { return shortcutCursorDelta_; }
     int mouseWheelDelta() const { return mouseWheelDelta_; }
     int shortcutSlotPressed() const { return shortcutSlotPressed_; }
@@ -114,6 +115,7 @@ private:
     bool ctrlSavePressed_ = false;
     bool ctrlUndoPressed_ = false;
     bool ctrlRedoPressed_ = false;
+    bool suppressDirectShortcutThisFrame_ = false;
     InputDeviceKind lastActiveDevice_ = InputDeviceKind::KeyboardMouse;
     SDL_Gamepad* gamepad_ = nullptr;
     SDL_JoystickID gamepadId_ = 0;
@@ -125,6 +127,7 @@ private:
     int shortcutCursorDelta_ = 0;
     int mouseWheelDelta_ = 0;
     int shortcutSlotPressed_ = -1;
+    int ringPresetRegisterSlotPressed_ = -1;
     int activeRingDelta_ = 0;
     Vec2 moveAxis_{};
     Vec2 leftStickAxis_{};

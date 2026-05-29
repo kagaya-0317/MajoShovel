@@ -93,6 +93,7 @@ add_executable(MajoShovel
     src/game/MagicSystem.cpp
     src/game/MagicFxSystem.cpp
     src/game/ProjectileSystem.cpp
+    src/game/RingPresetSystem.cpp
     src/game/SpellRingSystem.cpp
     src/game/SpellRingItem.cpp
     src/game/DiggingSystem.cpp

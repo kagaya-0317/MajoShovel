@@ -103,7 +103,7 @@ void DiggingSystem::update(
         }
         Vec2 digPosition = item.worldPosition;
         if (item.hasCapturedBehavior("dig_contact")) {
-            const Vec2 outward = normalize(item.worldPosition - spellRing.center());
+            const Vec2 outward = item.orbitOutward;
             const float probeDistance = static_cast<float>(std::max(4.0, item.capturedBehaviorParamDouble("dig_contact", "probeDistance", 4.0)));
             const Vec2 probe = item.worldPosition + outward * (item.hitRadius + probeDistance);
             if (map.isTileSolid(map.worldToTile(probe.x), map.worldToTile(probe.y))) {

@@ -236,12 +236,12 @@ void Game::playAudioBgm(std::string_view id, float fadeSeconds, bool restart)
     activeAudioBgmCue_ = cueId;
 }
 
-void Game::playAudioSe(std::string_view id, float volumeScale)
+void Game::playAudioSe(std::string_view id, float volumeScale, float pitchScale)
 {
     if (audio_ == nullptr || id.empty()) {
         return;
     }
-    audio_->playSe(id, volumeScale);
+    audio_->playSe(id, volumeScale, pitchScale);
 }
 
 void Game::playUiSoundEvents(const UiContext& ui)
@@ -420,6 +420,7 @@ void Game::resetWorldUiState()
     baseStorageActive_ = false;
     baseStorageMode_ = StorageUiMode::Closed;
     baseStorageActionSelection_ = 0;
+    baseStorageBulkSelection_ = 0;
     baseStorageDepositSource_ = static_cast<int>(BaseItemSource::Backpack);
     baseStorageDepositSourceTabs_ = {};
     baseStorageDepositSelection_ = 0;
@@ -830,6 +831,7 @@ void Game::enterBase()
     baseStorageActive_ = false;
     baseStorageMode_ = StorageUiMode::Closed;
     baseStorageActionSelection_ = 0;
+    baseStorageBulkSelection_ = 0;
     baseStorageDepositSource_ = static_cast<int>(BaseItemSource::Backpack);
     baseStorageDepositSourceTabs_ = {};
     baseStorageDepositSelection_ = 0;
@@ -1592,6 +1594,46 @@ void Game::observeRingItemInstanceIds()
             inventory_.observeObjectInstanceId(item.instanceId);
         }
     }
+}
+
+bool Game::registerRingPresetShortcut(int presetIndex)
+{
+    if (!ringPresets_.capturePreset(presetIndex, spellRing_)) {
+        ringStatus_ = "プリセット登録に失敗しました";
+        return false;
+    }
+    ringStatus_ = "プリセット" + std::to_string(presetIndex + 1) + "に登録しました";
+    baseStatus_ = ringStatus_;
+    return true;
+}
+
+bool Game::applyRingPresetShortcut(int presetIndex)
+{
+    RingPresetApplyResult result = ringPresets_.applyPreset(
+        presetIndex,
+        inventory_,
+        spellRing_,
+        objectCatalog_);
+    if (!result.status.empty()) {
+        ringStatus_ = result.status;
+        baseStatus_ = result.status;
+    }
+    if (!result.applied) {
+        return false;
+    }
+
+    spellRing_.applyObjectParameters(objectCatalog_);
+    spellRing_.normalizeItemPlacements();
+    spellRing_.resetBaseWeightToCurrent();
+    observeRingItemInstanceIds();
+    refreshEquipmentModifiers();
+    refreshOrbitEffects();
+    syncEncyclopediaFromInventoryAndRing();
+    ringSlotSelection_ = std::clamp(
+        ringSlotSelection_,
+        0,
+        std::max(0, static_cast<int>(spellRing_.items().size()) - 1));
+    return true;
 }
 
 float Game::effectiveCollectionPullRadius(int collectionLevel) const
@@ -2394,6 +2436,12 @@ void Game::updateScreenMode(
             mode_ = ScreenMode::Inventory;
             return;
         }
+        if (input.shortcutSlotPressed() >= 0 && input.shortcutSlotPressed() < RingPresetSlotCount) {
+            ui.emitSound(applyRingPresetShortcut(input.shortcutSlotPressed())
+                ? UiSoundEvent::Confirm
+                : UiSoundEvent::Cancel);
+            return;
+        }
         if (input.activeRingDelta() != 0) {
             switchActiveRingWithLog(input.activeRingDelta());
         }
@@ -2720,12 +2768,13 @@ void Game::update(const Input& input, const Time& time)
             false,
             balance_,
             std::span<const CollisionRect>{objectBlockers.data(), objectBlockers.size()});
-        maybeSpawnPlayerFootstepDust(
+        maybeTriggerPlayerFootstep(
             player_.position,
             lengthSquared(player_.velocity) > 0.0001f ? player_.velocity : player_.facing,
             player_.spriteWalking,
             player_.spriteFrameIndex(),
-            previousPlayerDustFrame_);
+            previousPlayerDustFrame_,
+            PlayerFootstepSurface::Dungeon);
         updatePlayerRegen(time.deltaSeconds(), effectDiscoveries);
         if (player_.hp <= 0) {
             enterGameOver();
@@ -2749,14 +2798,14 @@ void Game::update(const Input& input, const Time& time)
             return;
         }
 
-        const SpellRingState previousSpellRingState = spellRing_.state();
-        const Vec2 previousRingCenter = spellRing_.center();
         spellRing_.update(player_, input, time.deltaSeconds(), time.totalSeconds(), false, ui.pointerConsumed(), balance_);
-        if (previousSpellRingState == SpellRingState::Normal && spellRing_.state() == SpellRingState::Thrown) {
-            playAudioSe(AudioSeRingThrow);
-            effects_.spawnThrowStart(previousRingCenter, player_.facing);
-        } else if (previousSpellRingState == SpellRingState::Returning && spellRing_.state() == SpellRingState::Normal) {
-            effects_.spawnReturn(spellRing_.center());
+        for (const RingMotionEvent& event : spellRing_.consumeMotionEvents()) {
+            if (event.kind == RingMotionEventKind::ThrowStart) {
+                playAudioSe(AudioSeRingThrow);
+                effects_.spawnThrowStart(event.position, event.direction);
+            } else if (event.kind == RingMotionEventKind::ReturnEnd) {
+                effects_.spawnReturn(event.position);
+            }
         }
         if (!introTutorialActive() && input.ringOffsetHeld()) {
             queueStoryEventForTrigger("tutorial:ring_shift");

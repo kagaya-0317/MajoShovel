@@ -73,6 +73,8 @@ struct SpellRingItem {
     float orbitDistanceOffset = 0.0f;
     Vec2 worldPosition{};
     Vec2 worldVelocity{};
+    Vec2 orbitOutward{1.0f, 0.0f};
+    Vec2 orbitTangent{0.0f, 1.0f};
     float orbitMotionSpeed = 0.0f;
     std::array<int, balance::MaxEnemies> latchedEnemyIds{};
     std::string capturedBehaviorId;

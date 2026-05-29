@@ -585,6 +585,7 @@ bool Game::loadSaveData()
     std::unordered_map<std::string, int> loadedEncyclopediaOwnedSyncSuppressCounts;
     std::unordered_map<std::string, int> loadedEncyclopediaRingSyncSuppressCounts;
     std::array<std::vector<SpellRingItem>, SpellRingCount> loadedRingItemsByRing{};
+    RingPresetSystem loadedRingPresets;
     std::vector<InventoryObjectStack> loadedWarehouseStacks;
     std::vector<InventoryObjectInstance> loadedWarehouseInstances;
     int loadedMoney = 0;
@@ -1163,6 +1164,54 @@ bool Game::loadSaveData()
                 item.ringIndex = loadedRingIndex;
                 loadedRingItemsByRing[static_cast<std::size_t>(loadedRingIndex)].push_back(item);
             }
+        } else if (key == "ring_preset") {
+            int presetNumber = 0;
+            int registered = 0;
+            stream >> presetNumber >> registered;
+            const int presetIndex = presetNumber - 1;
+            if (!stream.fail() && loadedRingPresets.validPresetIndex(presetIndex)) {
+                RingPreset preset = loadedRingPresets.preset(presetIndex);
+                preset.registered = registered != 0;
+                loadedRingPresets.setPreset(presetIndex, std::move(preset));
+            }
+        } else if (key == "ring_preset_item") {
+            int presetNumber = 0;
+            int ringNumber = 0;
+            int type = 0;
+            std::string objectId;
+            std::string instanceId;
+            RingPresetItem item;
+            stream >> presetNumber
+                >> ringNumber
+                >> type
+                >> objectId
+                >> instanceId
+                >> item.localAngle
+                >> item.currentDurability
+                >> item.maxDurability
+                >> item.enhanceLevel
+                >> item.attackBonus
+                >> item.digBonus
+                >> item.durabilityBonus
+                >> item.weightModifier
+                >> item.sizeModifier
+                >> item.protectionEnabled
+                >> item.isBroken;
+            const int presetIndex = presetNumber - 1;
+            const int ringIndex = ringNumber - 1;
+            if (!stream.fail() &&
+                loadedRingPresets.validPresetIndex(presetIndex) &&
+                ringIndex >= 0 &&
+                ringIndex < SpellRingCount) {
+                item.type = ringTypeFromInt(type);
+                item.ringIndex = ringIndex;
+                item.objectId = loadRingObjectId(objectId);
+                item.instanceId = instanceId == "-" ? std::string{} : std::move(instanceId);
+                RingPreset preset = loadedRingPresets.preset(presetIndex);
+                preset.registered = true;
+                preset.rings[static_cast<std::size_t>(ringIndex)].push_back(std::move(item));
+                loadedRingPresets.setPreset(presetIndex, std::move(preset));
+            }
         }
     }
 
@@ -1186,13 +1235,22 @@ bool Game::loadSaveData()
         !loadedMerchantStock.empty() ||
         !loadedHighValueBuyCategory.empty() ||
         !loadedHighValueBuyObjectIds.empty();
+    const bool loadedSaveHasRingPresetProgress = [&loadedRingPresets]() {
+        for (int presetIndex = 0; presetIndex < RingPresetSlotCount; ++presetIndex) {
+            if (loadedRingPresets.registered(presetIndex)) {
+                return true;
+            }
+        }
+        return false;
+    }();
     const bool loadedSaveHasBaseProgress =
         loadedWarehouseCapacityLevel > 0 ||
         loadedProcessingUnlockLevel > 0 ||
         loadedRingWorkshopUnlocked ||
         loadedAutoSaveOnReturn ||
         !loadedWarehouseStacks.empty() ||
-        !loadedWarehouseInstances.empty();
+        !loadedWarehouseInstances.empty() ||
+        loadedSaveHasRingPresetProgress;
     const bool loadedSaveHasStageProgress =
         loadedCurrentStage > 0 ||
         loadedCurrentStageId != "stage_01_stardust" ||
@@ -1490,6 +1548,7 @@ bool Game::loadSaveData()
     encyclopediaRingSyncSuppressCounts_ = std::move(loadedEncyclopediaRingSyncSuppressCounts);
     warehouseObjectStacks_ = std::move(loadedWarehouseStacks);
     warehouseObjectInstances_ = std::move(loadedWarehouseInstances);
+    ringPresets_ = std::move(loadedRingPresets);
     applyPermanentUpgrades();
     resetRingWorkshopDraft();
     syncEncyclopediaFromInventoryAndRing();
@@ -1865,6 +1924,36 @@ bool Game::saveSaveData(std::string& message) const
                 << item.protectionEnabled << " "
                 << item.isBroken << " "
                 << ringIndex << "\n";
+        }
+    }
+    for (int presetIndex = 0; presetIndex < RingPresetSlotCount; ++presetIndex) {
+        if (!ringPresets_.registered(presetIndex)) {
+            continue;
+        }
+        const RingPreset& preset = ringPresets_.preset(presetIndex);
+        file << "ring_preset " << (presetIndex + 1) << " 1\n";
+        for (int ringIndex = 0; ringIndex < SpellRingCount; ++ringIndex) {
+            for (const RingPresetItem& item : preset.rings[static_cast<std::size_t>(ringIndex)]) {
+                const std::string objectToken = item.objectId.empty() ? std::string("-") : item.objectId;
+                const std::string instanceToken = item.instanceId.empty() ? std::string("-") : item.instanceId;
+                file << "ring_preset_item "
+                    << (presetIndex + 1) << " "
+                    << (ringIndex + 1) << " "
+                    << ringTypeToInt(item.type) << " "
+                    << objectToken << " "
+                    << instanceToken << " "
+                    << item.localAngle << " "
+                    << item.currentDurability << " "
+                    << item.maxDurability << " "
+                    << item.enhanceLevel << " "
+                    << item.attackBonus << " "
+                    << item.digBonus << " "
+                    << item.durabilityBonus << " "
+                    << item.weightModifier << " "
+                    << item.sizeModifier << " "
+                    << item.protectionEnabled << " "
+                    << item.isBroken << "\n";
+            }
         }
     }
 

@@ -1802,6 +1802,36 @@ void Game::updateRingScreen(const Input& input, UiContext& ui, float dt)
         ringStatus_.clear();
     }
 
+    const auto clearRingTransientUi = [this]() {
+        closeUiCommandMenu(ringCommandMenu_);
+        ringCommandItemIndex_ = -1;
+        ringCommandPlaceActive_ = false;
+        ringPlaceModeActive_ = false;
+        ringEmptyPressActive_ = false;
+        ringItemMoveModeActive_ = false;
+        ringItemMoveIndex_ = -1;
+        ringSnapActive_ = false;
+        ringDragItemIndex_ = -1;
+    };
+    const int registerPreset = input.ringPresetRegisterSlotPressed();
+    if (registerPreset >= 0 && registerPreset < RingPresetSlotCount) {
+        clearRingTransientUi();
+        ui.emitSound(registerRingPresetShortcut(registerPreset)
+            ? UiSoundEvent::Confirm
+            : UiSoundEvent::Cancel);
+        ui.block(ringPanelRect());
+        return;
+    }
+    const int applyPreset = input.shortcutSlotPressed();
+    if (applyPreset >= 0 && applyPreset < RingPresetSlotCount) {
+        clearRingTransientUi();
+        ui.emitSound(applyRingPresetShortcut(applyPreset)
+            ? UiSoundEvent::Confirm
+            : UiSoundEvent::Cancel);
+        ui.block(ringPanelRect());
+        return;
+    }
+
     auto& items = spellRing_.items();
     if (ringSnapActive_) {
         if (ringDragItemIndex_ < 0 || ringDragItemIndex_ >= static_cast<int>(items.size())) {
@@ -2043,10 +2073,6 @@ void Game::updateRingScreen(const Input& input, UiContext& ui, float dt)
         ringTabRects[static_cast<std::size_t>(i)] = ringTabRect(i, ringCount);
     }
     UiTabsInput ringTabsInput{};
-    const int directRingFocus = input.shortcutSlotPressed();
-    if (directRingFocus >= 0 && directRingFocus < ringCount) {
-        ringTabsInput.directFocusIndex = directRingFocus;
-    }
     ringTabsInput.focusDelta = input.activeRingDelta();
     ringTabsInput.commit = input.confirmPressed() || input.useItemPressed();
     const int ringTabSelection = updateUiTabs(
@@ -3802,8 +3828,8 @@ void Game::renderRingScreen(Renderer& renderer, float totalTime) const
     const std::string_view RingHelpText = ringItemMoveModeActive_
         ? "WASD/矢印 位置変更  F/Enter 確定  Esc/右クリック キャンセル"
         : (ringCount > 1
-            ? "Z/X リング選択  WASD/矢印 アイテム選択  F/Enter 移動  R 外す  P 保護  Esc/右クリック 戻る"
-            : "WASD/矢印 アイテム選択  F/Enter 移動  R 外す  P 保護  Esc/右クリック 戻る");
+            ? "1-3 プリセット呼出  Shift+1-3 登録  Z/X リング選択  F/Enter 移動  R 外す  P 保護"
+            : "1-3 プリセット呼出  Shift+1-3 登録  WASD/矢印 選択  F/Enter 移動  R 外す  P 保護");
     UiWindowScope ringWindow(renderer, "ring.manage", panel, "リング", RingHelpText, UiWindowOptions{true, true});
 
     char buffer[192];
@@ -4643,7 +4669,7 @@ void Game::renderSpellRingForeground(
             : 1.0f;
         const Vec2 drawPosition = ringItemDrawPosition(item, totalSeconds);
         const ItemData* object = objectForRingItem(objectCatalog_, item);
-        const Vec2 outward = normalize(item.worldPosition - spellRing_.center());
+        const Vec2 outward = item.orbitOutward;
         const Vec2 maxImageSize{RingObjectImageMaxSize * cometVisualScale, RingObjectImageMaxSize * cometVisualScale};
         if (item.type == SpellRingItemType::Shovel) {
             const bool drewImage = drawRingItemObjectImage(
@@ -4892,7 +4918,14 @@ void Game::render(Renderer& renderer, const Time& time)
         renderWarpPoints(renderer);
     }
 
-    const bool ringCenterVisible = tileMap_.isLit(spellRing_.center(), playerLightCenter, itemLights);
+    bool ringCenterVisible = false;
+    for (int ringIndex = 0; ringIndex < SpellRingCount; ++ringIndex) {
+        if (!spellRing_.itemsForRing(ringIndex).empty() &&
+            tileMap_.isLit(spellRing_.centerForRing(ringIndex), playerLightCenter, itemLights)) {
+            ringCenterVisible = true;
+            break;
+        }
+    }
     if (ringCenterVisible && !ringIntroActive) {
         drawSpellRingOrbitLayer(renderer, spellRing_, balance_, time.totalSeconds(), 0.46f);
     }
@@ -4967,8 +5000,7 @@ void Game::render(Renderer& renderer, const Time& time)
                     actorShadowAnchor(item.worldPosition, ItemShadowGroundOffsetY),
                     ringItemShadowVisualSize(item, time.totalSeconds()) * cometVisualScale);
                 const ItemData* object = objectForRingItem(objectCatalog_, item);
-                const Vec2 offset = item.worldPosition - spellRing_.center();
-                const Vec2 outward = lengthSquared(offset) > 0.0001f ? normalize(offset) : fromAngle(item.localAngle);
+                const Vec2 outward = item.orbitOutward;
                 const Vec2 maxImageSize{
                     RingObjectImageMaxSize * cometVisualScale,
                     RingObjectImageMaxSize * cometVisualScale};
