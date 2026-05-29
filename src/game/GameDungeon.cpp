@@ -2,6 +2,8 @@
 
 #include "data/StageWeight.hpp"
 
+#include "game/EntityStatusVisuals.hpp"
+
 namespace majo {
 
 namespace {
@@ -37,6 +39,10 @@ constexpr int LootLandingRingCount = 12;
 constexpr int LootLandingSamplesPerRing = 16;
 constexpr float LootLandingFirstRadius = 18.0f;
 constexpr float LootLandingRadiusStep = 18.0f;
+constexpr float CommonChestMimicChance = 0.05f;
+constexpr float RareChestMimicChance = 0.08f;
+constexpr float SuperRareChestMimicChance = 0.12f;
+constexpr float ChestMimicSpawnWarmupSeconds = 0.18f;
 constexpr float MicroFeatureProgressStart = 0.08f;
 constexpr float MicroFeatureProgressSpan = 0.84f;
 constexpr float MicroFeatureSpacingTiles = 9.5f;
@@ -49,6 +55,7 @@ constexpr std::string_view PostEndingIntroFlag = "story_post_ending_intro";
 constexpr std::string_view AudioBgmDungeon = "bgm.dungeon";
 constexpr std::string_view AudioSeChestOpen = "se.chest.open";
 constexpr std::string_view AudioSeCrateBreak = "se.crate.break";
+constexpr std::string_view AudioSeEnemySpawn = "se.enemy.spawn";
 constexpr std::string_view AudioSeItemBreak = "se.item.break";
 constexpr std::string_view AudioSeDiscovery = "se.discovery";
 constexpr std::string_view AudioSeWarpDiscovery = "se.discovery.warp";
@@ -88,6 +95,16 @@ constexpr std::string_view IntroTutorialExitFoundTrigger = "intro_tutorial:exit_
 constexpr float DiscardThrowStartOffset = 24.0f;
 constexpr float DiscardThrowDistance = 310.0f;
 constexpr float DiscardThrowLandingJitter = 40.0f;
+
+float chestMimicChanceForKind(LootChestKind kind)
+{
+    switch (kind) {
+    case LootChestKind::Common: return CommonChestMimicChance;
+    case LootChestKind::Rare: return RareChestMimicChance;
+    case LootChestKind::SuperRare: return SuperRareChestMimicChance;
+    }
+    return 0.0f;
+}
 constexpr float DiscardThrowDurationMin = 0.48f;
 constexpr float DiscardThrowDurationMax = 0.62f;
 constexpr float DiscardThrowArcHeightMin = 52.0f;
@@ -143,6 +160,27 @@ float dungeonFocusDurationSeconds(float seconds, float fallbackSeconds)
 bool sameDungeonTile(DungeonTile lhs, DungeonTile rhs)
 {
     return lhs.x == rhs.x && lhs.y == rhs.y;
+}
+
+bool tagListContains(std::string_view text, std::string_view token)
+{
+    const std::string normalizedToken = lowerAscii(std::string(token));
+    std::string current;
+    auto flush = [&]() {
+        std::string trimmed = trimAscii(current);
+        current.clear();
+        return lowerAscii(std::move(trimmed));
+    };
+    for (char ch : text) {
+        if (ch == '|') {
+            if (flush() == normalizedToken) {
+                return true;
+            }
+            continue;
+        }
+        current.push_back(ch);
+    }
+    return flush() == normalizedToken;
 }
 
 bool dungeonEventKindUsesDiscoveryFocus(Game::DungeonEventKind kind)
@@ -2146,8 +2184,8 @@ void Game::updateCapturedUtilityBehaviors(float dt)
             const float radius = static_cast<float>(std::max(32.0, item.capturedBehaviorParamDouble("magnet_pull", "radius", 170.0)));
             const float strength = static_cast<float>(std::max(0.05, item.capturedBehaviorParamDouble("magnet_pull", "strength", 1.0)));
             const std::string targetTag = item.capturedBehaviorParamString("magnet_pull", "targetTag", "metal");
-            const bool affectMetal = targetTag.empty() || targetTag.find("metal") != std::string::npos;
-            const int pulledDrops = affectMetal ? worldDrops_.pullMetalDrops(objectCatalog_, item.worldPosition, dt * strength, radius, &inventory_) : 0;
+            const bool affectMetal = targetTag.empty() || tagListContains(targetTag, "metal");
+            const int pulledDrops = affectMetal ? worldDrops_.pullMetalDrops(objectCatalog_, item.worldPosition, dt * strength, radius) : 0;
             const int pulledEnemies = affectMetal ? enemies_.pullMetalEnemies(item.worldPosition, tileMap_, dt * strength, radius) : 0;
             const int pulledProjectiles = affectMetal ? projectiles_.pullMetalProjectiles(item.worldPosition, dt * strength, radius) : 0;
             if (pulledDrops + pulledEnemies + pulledProjectiles > 0 && item.capturedMagnetVisualTimer <= 0.0f) {
@@ -2215,6 +2253,7 @@ void Game::updateAmbientParticleEffects(float dt)
         }
     }
 
+    emitEntityStatusAuras(player_.status, player_.position, effects_);
     enemies_.emitStatusParticles(effects_);
 
     if (warpPointsEnabled_) {
@@ -2322,12 +2361,16 @@ void Game::openRingScreen()
     ringCommandPlaceActive_ = false;
     ringPlaceModeActive_ = false;
     ringEmptyPressActive_ = false;
+    ringItemMoveModeActive_ = false;
+    ringItemMoveIndex_ = -1;
     cancelRingGrab();
     ringStatus_.clear();
 }
 
 void Game::cancelRingGrab()
 {
+    ringItemMoveModeActive_ = false;
+    ringItemMoveIndex_ = -1;
     if (!ringGrabActive_) {
         return;
     }
@@ -6262,6 +6305,7 @@ void Game::initializeChestNodesFromLayout()
         node.opened = false;
         node.lootSpawned = false;
         node.openingSeconds = 0.0f;
+        assignChestMimic(node);
         if (reservations.tryReserve(node.tile, ExposedPlacementReservationRadiusTiles)) {
             chestNodes_.push_back(node);
         }
@@ -6298,6 +6342,7 @@ void Game::initializeChestNodesFromLayout()
                 nodeRadius(node.visibility),
                 SolidPlacementSearchRadiusTiles,
                 node.tile)) {
+            assignChestMimic(node);
             chestNodes_.push_back(node);
         }
     }
@@ -6318,8 +6363,36 @@ void Game::initializeChestNodesFromLayout()
                 nodeRadius(node.visibility),
                 SolidPlacementSearchRadiusTiles,
                 node.tile)) {
+            assignChestMimic(node);
             chestNodes_.push_back(node);
         }
+    }
+}
+
+void Game::assignChestMimic(ChestNode& node)
+{
+    node.mimicEnemyId.clear();
+    node.mimicTriggered = false;
+
+    const float chance = chestMimicChanceForKind(node.chestKind);
+    if (chance <= 0.0f) {
+        return;
+    }
+
+    const std::string_view enemyId = chestMimicEnemyIdForChestKind(node.chestKind);
+    if (enemyCatalog_.enemiesById.find(std::string(enemyId)) == enemyCatalog_.enemiesById.end()) {
+        return;
+    }
+
+    std::mt19937 rng(
+        dungeonLayout_.seed ^
+        0x9E3779B9u ^
+        (static_cast<std::uint32_t>(node.tile.x) * 0x85EBCA6Bu) ^
+        (static_cast<std::uint32_t>(node.tile.y) * 0xC2B2AE35u) ^
+        (static_cast<std::uint32_t>(static_cast<int>(node.chestKind) + 1) * 0x27D4EB2Du));
+    std::bernoulli_distribution mimicChance(static_cast<double>(std::clamp(chance, 0.0f, 1.0f)));
+    if (mimicChance(rng)) {
+        node.mimicEnemyId = std::string(enemyId);
     }
 }
 
@@ -6338,6 +6411,8 @@ bool Game::spawnAppearingChestNode(
         existing->revealed = true;
         existing->chestKind = chestKind;
         existing->depthRank = std::max(1, depthRank);
+        existing->mimicEnemyId.clear();
+        existing->mimicTriggered = false;
         return false;
     }
 
@@ -6467,7 +6542,9 @@ void Game::updateChestNodes(float dt, const Input& input)
         }
 
         if (shouldOpen) {
-            openChestNode(node);
+            if (!tryTriggerChestMimic(node)) {
+                openChestNode(node);
+            }
         }
     }
 }
@@ -6489,7 +6566,9 @@ void Game::revealChestNodesFromOpenedTiles(const std::vector<Vec2>& openedTiles)
                 continue;
             }
             node.revealed = true;
-            openChestNode(node);
+            if (!tryTriggerChestMimic(node)) {
+                openChestNode(node);
+            }
         }
     }
 }
@@ -6501,7 +6580,8 @@ bool Game::spawnWeightedObjectLoot(
     std::mt19937& rng,
     std::string_view sourceLabel,
     bool launchFromCenter,
-    LootSourceKind sourceKind)
+    LootSourceKind sourceKind,
+    std::string_view requiredTag)
 {
     const auto sourceWeightMultiplier = [sourceKind](const ObjectDefinition& object) {
         constexpr std::string_view RecoveryCategory = "\xE5\x9B\x9E\xE5\xBE\xA9";
@@ -6536,10 +6616,21 @@ bool Game::spawnWeightedObjectLoot(
         }
         return 1.0;
     };
+    const auto hasRequiredTag = [requiredTag](const ObjectDefinition& object) {
+        if (requiredTag.empty()) {
+            return true;
+        }
+        return std::any_of(object.tags.begin(), object.tags.end(), [requiredTag](const std::string& tag) {
+            return tag == requiredTag;
+        });
+    };
 
     std::vector<const ObjectDefinition*> candidates;
     std::vector<double> weights;
     for (const ObjectDefinition& object : objectCatalog_.objects) {
+        if (!hasRequiredTag(object)) {
+            continue;
+        }
         const double baseWeight = lootWeightFor(object, currentStageId_, depthRank, chestKind);
         if (baseWeight >= 1.0) {
             const double weight = baseWeight * sourceWeightMultiplier(object);
@@ -6553,10 +6644,14 @@ bool Game::spawnWeightedObjectLoot(
 
     if (candidates.empty()) {
         const std::string columnName = resolveLootWeightColumnName(currentStageId_, depthRank, chestKind);
-        logError("[warning] " + std::string(sourceLabel) + ": no Objects candidates stage=\"" + currentStageId_ +
+        std::string message = "[warning] " + std::string(sourceLabel) + ": no Objects candidates stage=\"" + currentStageId_ +
             "\" depth=" + std::to_string(depthRank) +
             " chest=" + chestKindCode(chestKind) +
-            " column=\"" + columnName + "\"");
+            " column=\"" + columnName + "\"";
+        if (!requiredTag.empty()) {
+            message += " tag=\"" + std::string(requiredTag) + "\"";
+        }
+        logError(message);
         return false;
     }
 
@@ -6594,6 +6689,9 @@ Vec2 Game::safeLootLandingPosition(Vec2 center, std::mt19937& rng)
     };
     const auto blockedByObject = [&](Vec2 candidate) {
         for (const ChestNode& node : chestNodes_) {
+            if (node.mimicTriggered) {
+                continue;
+            }
             if (!node.revealed && !node.opened && node.visibility != PlacementVisibility::Exposed) {
                 continue;
             }
@@ -6813,6 +6911,44 @@ bool Game::spawnFailsafeShovelDropFromWall(Vec2 wallCenter)
         makeWorldLootJumpMotion(wallCenter, rng));
 }
 
+bool Game::tryTriggerChestMimic(ChestNode& node)
+{
+    if (node.opened || node.mimicTriggered || node.mimicEnemyId.empty()) {
+        return false;
+    }
+
+    const Vec2 center = tileWorldCenter(node.tile);
+    const RuntimeBalance dungeonBalance = runtimeBalanceForDungeon();
+    int spawnedRuntimeId = 0;
+    if (!enemies_.spawnSpecificEnemyAtPosition(
+            tileMap_,
+            node.mimicEnemyId,
+            center,
+            player_.position,
+            dungeonBalance,
+            enemyCatalog_,
+            true,
+            ChestMimicSpawnWarmupSeconds,
+            &spawnedRuntimeId)) {
+        logError("[warning] Chest mimic spawn failed: enemyId=\"" + node.mimicEnemyId + "\"");
+        node.mimicEnemyId.clear();
+        return false;
+    }
+
+    node.opened = true;
+    node.revealed = true;
+    node.lootSpawned = true;
+    node.openingSeconds = ChestLootReleaseSeconds;
+    node.mimicTriggered = true;
+    node.spawnJumpActive = false;
+
+    playAudioSe(AudioSeChestOpen);
+    playAudioSe(AudioSeEnemySpawn);
+    effects_.spawnEnemyTransform(center);
+    pushDungeonLog("宝箱はミミックだった", "chest_mimic:" + std::to_string(spawnedRuntimeId));
+    return true;
+}
+
 void Game::openChestNode(ChestNode& node)
 {
     if (node.opened) {
@@ -6832,7 +6968,7 @@ void Game::openChestNode(ChestNode& node)
 
 void Game::spawnChestLoot(ChestNode& node)
 {
-    if (node.lootSpawned) {
+    if (node.lootSpawned || node.mimicTriggered) {
         return;
     }
 
@@ -7977,7 +8113,13 @@ bool Game::beginBossFightForCurrentEncounter()
         return false;
     }
 
-    bossSpawned_ = enemies_.spawnBossNear(tileMap_, bossSpawnPoint_, player_.position, balance_, enemyCatalog_);
+    bossSpawned_ = enemies_.spawnBossNear(
+        tileMap_,
+        bossSpawnPoint_,
+        player_.position,
+        balance_,
+        enemyCatalog_,
+        currentStageDefinition().bossEnemyId);
     if (!bossSpawned_) {
         resetBossEncounter();
         return false;
@@ -8789,6 +8931,9 @@ void Game::appendRewardNodeRenderEntries(
     }
 
     for (const ChestNode& node : chestNodes_) {
+        if (node.mimicTriggered) {
+            continue;
+        }
         if (!node.revealed && !node.opened) {
             continue;
         }

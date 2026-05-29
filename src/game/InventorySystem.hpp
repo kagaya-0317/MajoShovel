@@ -4,6 +4,7 @@
 #include "engine/Renderer.hpp"
 #include "engine/Ui.hpp"
 #include "data/ObjectCatalog.hpp"
+#include "game/EntityStatusVisuals.hpp"
 #include "game/ItemModel.hpp"
 #include "game/SpellRingSystem.hpp"
 #include "game/Player.hpp"
@@ -136,6 +137,7 @@ public:
     void clearEquippedStaff();
     std::vector<RingEquipFxRequest> consumeRingEquipFxRequests();
     std::vector<InventoryDiscardRequest> consumeDiscardRequests();
+    std::vector<StatusPopupEvent> consumeStatusPopupEvents();
     void clearObjectStacks();
     bool setObjectItemCount(const ObjectCatalog& catalog, std::string_view objectId, int count);
     bool addObjectInstance(const ObjectCatalog& catalog, ItemInstance instance);
@@ -303,6 +305,7 @@ private:
     MaterialInventory materials_;
     std::string equippedStaffInstanceId_;
     std::vector<InventoryDiscardRequest> discardRequests_;
+    std::vector<StatusPopupEvent> statusPopupEvents_;
     unsigned long long nextInstanceId_ = 1;
     int selected_ = 0;
     int shortcutRow_ = 0;

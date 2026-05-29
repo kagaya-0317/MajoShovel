@@ -45,6 +45,8 @@ struct LoadedChestNodeSave {
     bool opened = false;
     bool lootSpawned = false;
     float openingSeconds = 0.0f;
+    std::string mimicEnemyId;
+    bool mimicTriggered = false;
 };
 
 struct LoadedCrateNodeSave {
@@ -892,7 +894,20 @@ bool Game::loadSaveData()
                 >> node.opened
                 >> node.lootSpawned
                 >> node.openingSeconds;
-            if (!stream.fail() && !stageId.empty() && validPlacementVisibilitySaveValue(visibilityValue)) {
+            const bool requiredFieldsOk = !stream.fail();
+            std::string mimicEnemyIdToken;
+            if (stream >> mimicEnemyIdToken) {
+                if (mimicEnemyIdToken != "-") {
+                    node.mimicEnemyId = std::move(mimicEnemyIdToken);
+                }
+                if (!(stream >> node.mimicTriggered)) {
+                    node.mimicTriggered = false;
+                    stream.clear();
+                }
+            } else {
+                stream.clear();
+            }
+            if (requiredFieldsOk && !stageId.empty() && validPlacementVisibilitySaveValue(visibilityValue)) {
                 if (!loadedDungeonState.hasSeed || loadedDungeonState.stageId.empty() || loadedDungeonState.stageId == stageId) {
                     loadedDungeonState.stageId = std::move(stageId);
                     node.visibility = visibilityValue;
@@ -1379,6 +1394,8 @@ bool Game::loadSaveData()
             nodeIt->opened = savedNode.opened;
             nodeIt->lootSpawned = savedNode.lootSpawned;
             nodeIt->openingSeconds = savedNode.openingSeconds;
+            nodeIt->mimicEnemyId = savedNode.mimicEnemyId;
+            nodeIt->mimicTriggered = savedNode.mimicTriggered;
         }
         for (const LoadedCrateNodeSave& savedNode : loadedDungeonState.crateNodes) {
             auto nodeIt = std::find_if(crateNodes_.begin(), crateNodes_.end(), [&](const CrateNode& node) {
@@ -1710,7 +1727,9 @@ bool Game::saveSaveData(std::string& message) const
                     << node.revealed << " "
                     << node.opened << " "
                     << node.lootSpawned << " "
-                    << node.openingSeconds << "\n";
+                    << node.openingSeconds << " "
+                    << (node.mimicEnemyId.empty() ? "-" : node.mimicEnemyId) << " "
+                    << node.mimicTriggered << "\n";
             }
         }
         if (saveCrateNodes != nullptr) {

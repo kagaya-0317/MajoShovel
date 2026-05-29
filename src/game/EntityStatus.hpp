@@ -27,6 +27,15 @@ struct EntityState {
     std::string source;
 };
 
+struct EntityStateApplyResult {
+    bool applied = false;
+    bool added = false;
+    bool refreshed = false;
+    bool durationExtended = false;
+    double previousDuration = 0.0;
+    double newDuration = 0.0;
+};
+
 struct EntityModifier {
     std::string modifierId;
     ModifierStat stat = ModifierStat::Attack;
@@ -41,7 +50,7 @@ public:
     void update(double dt);
     void clear();
 
-    void applyState(
+    [[nodiscard]] EntityStateApplyResult applyState(
         std::string stateId,
         double value,
         double duration,

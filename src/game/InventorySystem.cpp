@@ -8,6 +8,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <string>
@@ -45,6 +46,10 @@ constexpr float ScreenSlotGap = 8.0f;
 constexpr float InventoryObjectImageMaxSize = 48.0f;
 constexpr float ShortcutObjectImageMaxSize = 48.0f;
 constexpr float SlotDragStartDistanceSq = 36.0f;
+constexpr float GrabbedSlotContentAlpha = 0.42f;
+constexpr float GrabbedFloatingIconLift = 38.0f;
+constexpr float GrabbedFloatingIconBobAmplitude = 4.0f;
+constexpr float GrabbedFloatingIconBobSpeed = 5.4f;
 constexpr float DetailX = ScreenX + 820.0f;
 constexpr float DetailY = ScreenY + 50.0f;
 constexpr float DetailW = 330.0f;
@@ -413,6 +418,13 @@ std::vector<InventoryDiscardRequest> InventorySystem::consumeDiscardRequests()
     std::vector<InventoryDiscardRequest> requests = std::move(discardRequests_);
     discardRequests_.clear();
     return requests;
+}
+
+std::vector<StatusPopupEvent> InventorySystem::consumeStatusPopupEvents()
+{
+    std::vector<StatusPopupEvent> consumed;
+    consumed.swap(statusPopupEvents_);
+    return consumed;
 }
 
 void InventorySystem::setOpen(bool open)
@@ -2062,6 +2074,7 @@ bool InventorySystem::useObjectStackAtIndex(
         EffectContext context;
         context.owner = &player;
         context.magic = magic;
+        context.statusPopupEvents = &statusPopupEvents_;
         context.discoveryEvents = discoveryEvents;
         context.encyclopedia = encyclopedia;
         context.position = player.position;
@@ -2076,6 +2089,7 @@ bool InventorySystem::useObjectStackAtIndex(
     EffectContext context;
     context.owner = &player;
     context.magic = magic;
+    context.statusPopupEvents = &statusPopupEvents_;
     context.discoveryEvents = discoveryEvents;
     context.encyclopedia = encyclopedia;
     context.position = player.position;
@@ -2164,6 +2178,7 @@ bool InventorySystem::useObjectInstanceAtIndex(
     EffectContext context;
     context.owner = &player;
     context.magic = magic;
+    context.statusPopupEvents = &statusPopupEvents_;
     context.discoveryEvents = discoveryEvents;
     context.encyclopedia = encyclopedia;
     context.position = player.position;
@@ -2594,20 +2609,45 @@ void InventorySystem::render(
         "F/Enter 決定  R リングへ  P 保護  G つかむ/置く  並び替え  Esc/右クリック 戻る",
         UiWindowOptions{true, true});
 
-    for (int i = 0; i < ShortcutSlotCount; ++i) {
-        const UiRect rect = inventorySlotRect(i);
+    const auto entryViewForSlot = [this](int slotIndex) {
         InventoryUiEntryView entry{};
-        const InventoryObjectStack* objectStack = objectStackAtScreenIndex(i);
+        const InventoryObjectStack* objectStack = objectStackAtScreenIndex(slotIndex);
         if (objectStack != nullptr) {
             entry.item = &objectStack->item;
             entry.stackCount = objectStack->count;
-        } else if (const InventoryObjectInstance* objectInstance = objectInstanceAtScreenIndex(i)) {
+        } else if (const InventoryObjectInstance* objectInstance = objectInstanceAtScreenIndex(slotIndex)) {
             entry.item = &objectInstance->item;
             entry.instance = &objectInstance->instance;
             entry.stackCount = 1;
             entry.equipped = isStaffEquipped(objectInstance->instance.instanceId);
         }
-        drawInventoryUiSlot(renderer, rect, entry, i == selectedShortcutIndex(), InventoryObjectImageMaxSize);
+        return entry;
+    };
+
+    for (int i = 0; i < ShortcutSlotCount; ++i) {
+        const UiRect rect = inventorySlotRect(i);
+        InventoryUiSlotStyle style{i == selectedShortcutIndex(), false, InventoryObjectImageMaxSize};
+        if (grabbedSlotActive_ && i == grabbedSlotOrigin_) {
+            style.contentAlpha = GrabbedSlotContentAlpha;
+        }
+        drawInventoryUiSlot(renderer, rect, entryViewForSlot(i), style);
+    }
+
+    if (grabbedSlotActive_ && grabbedSlotOrigin_ >= 0 && grabbedSlotOrigin_ < ShortcutSlotCount) {
+        const InventoryUiEntryView grabbedEntry = entryViewForSlot(grabbedSlotOrigin_);
+        if (grabbedEntry.item != nullptr) {
+            const UiRect targetRect = inventorySlotRect(selectedShortcutIndex());
+            const float bob = std::sin(animationSeconds * GrabbedFloatingIconBobSpeed) * GrabbedFloatingIconBobAmplitude;
+            const Vec2 iconCenter = uiRectCenter(targetRect) + Vec2{0.0f, -GrabbedFloatingIconLift + bob};
+            drawInventoryUiItemIcon(
+                renderer,
+                iconCenter,
+                grabbedEntry,
+                InventoryObjectImageMaxSize,
+                false,
+                false,
+                1.0f);
+        }
     }
 
     const int detailIndex = (slotCommandMenu_.open && slotCommandMenuIndex_ >= 0)

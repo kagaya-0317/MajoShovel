@@ -136,6 +136,23 @@ bool isKnown(std::string_view key, const auto& knownValues)
     });
 }
 
+std::string defaultBossEnemyIdForStage(std::string_view stageId)
+{
+    if (stageId == "stage_01_stardust") {
+        return "stardust_mole";
+    }
+    if (stageId == "stage_02_junk_magic") {
+        return "junk_crab";
+    }
+    if (stageId == "stage_03_star_core") {
+        return "astragna";
+    }
+    if (stageId == "stage_04_astral_mine") {
+        return "star_vein_dragon";
+    }
+    return {};
+}
+
 void addWarning(StageCatalog& catalog, std::string message)
 {
     catalog.validationWarnings.push_back(std::move(message));
@@ -165,6 +182,7 @@ struct StageColumns {
     int terrainHardnessMultiplier = -1;
     int warpPointCount = -1;
     int specialRoomCount = -1;
+    int bossEnemyId = -1;
 };
 
 void warnMissingColumn(StageCatalog& catalog, int column, std::string_view columnName)
@@ -191,6 +209,7 @@ StageColumns findStageColumns(const GoogleSheetRow& headers, StageCatalog& catal
     columns.terrainHardnessMultiplier = findColumn(headers, {"地形硬度倍率", "terrain_hardness_multiplier", "terrainHardnessMultiplier"});
     columns.warpPointCount = findColumn(headers, {"ワープポイント数", "warp_point_count", "warpPointCount"});
     columns.specialRoomCount = findColumn(headers, {"特殊部屋数", "special_room_count", "specialRoomCount"});
+    columns.bossEnemyId = findColumn(headers, {"ボス敵ID", "boss_enemy_id", "bossEnemyId"});
 
     warnMissingColumn(catalog, columns.id, "ステージID");
     warnMissingColumn(catalog, columns.name, "ステージ名");
@@ -317,7 +336,8 @@ StageDefinition defaultStage(
     double cavernWidthMultiplier,
     double terrainHardnessMultiplier,
     int warpPointCount,
-    int specialRoomCount)
+    int specialRoomCount,
+    std::string bossEnemyId)
 {
     StageDefinition stage;
     stage.id = std::move(id);
@@ -334,6 +354,7 @@ StageDefinition defaultStage(
     stage.terrainHardnessMultiplier = terrainHardnessMultiplier;
     stage.warpPointCount = warpPointCount;
     stage.specialRoomCount = specialRoomCount;
+    stage.bossEnemyId = std::move(bossEnemyId);
     return stage;
 }
 
@@ -421,6 +442,10 @@ bool StageCatalog::loadFromTable(const GoogleSheetTable& table, std::string& out
         stage.terrainHardnessMultiplier = parseDoubleColumnOrDefault(row, columns.terrainHardnessMultiplier, DefaultTerrainHardnessMultiplier, "terrain hardness multiplier", rowIndex, stage.id, catalog);
         stage.warpPointCount = parseIntColumnOrDefault(row, columns.warpPointCount, DefaultWarpPointCount, "warp point count", rowIndex, stage.id, catalog);
         stage.specialRoomCount = parseIntColumnOrDefault(row, columns.specialRoomCount, DefaultSpecialRoomCount, "special room count", rowIndex, stage.id, catalog);
+        stage.bossEnemyId = cellAt(row, columns.bossEnemyId);
+        if (stage.bossEnemyId.empty()) {
+            stage.bossEnemyId = defaultBossEnemyIdForStage(stage.id);
+        }
 
         if (!seenIds.insert(stage.id).second) {
             addWarning(catalog, rowPrefix(rowIndex, stage.id) + "duplicate stage ID; first map entry is kept");
@@ -446,10 +471,10 @@ void StageCatalog::loadDefaultStages()
 {
     StageCatalog catalog;
     catalog.stages = {
-        defaultStage("stage_01_stardust", "星くずの浅坑", "ストーリー", 10, "natural_cave", "soft_stardust", 320, 0.30, 0.25, 1.00, 1.00, 3, 1),
-        defaultStage("stage_02_junk_magic", "魔導廃棄層", "ストーリー", 20, "junk_layer", "junk_mixed", 420, 0.38, 0.32, 1.12, 1.45, 4, 2),
-        defaultStage("stage_03_star_core", "落星核の深層", "ストーリー", 30, "star_core", "hard_star_core", 540, 0.44, 0.28, 0.90, 2.20, 5, 2),
-        defaultStage("stage_04_astral_mine", "星間廃坑", "ローグライク", 40, "astral_rogue", "chaos_astral", 640, 0.55, 0.45, 1.25, 1.80, 0, 5),
+        defaultStage("stage_01_stardust", "星くずの浅坑", "ストーリー", 10, "natural_cave", "soft_stardust", 320, 0.30, 0.25, 1.00, 1.00, 3, 1, "stardust_mole"),
+        defaultStage("stage_02_junk_magic", "魔導具廃棄層", "ストーリー", 20, "junk_layer", "junk_mixed", 420, 0.38, 0.32, 1.12, 1.45, 4, 2, "junk_crab"),
+        defaultStage("stage_03_star_core", "落星核の深層", "ストーリー", 30, "star_core", "hard_star_core", 540, 0.44, 0.28, 0.90, 2.20, 5, 2, "astragna"),
+        defaultStage("stage_04_astral_mine", "星間廃坑", "ローグライク", 40, "astral_rogue", "chaos_astral", 640, 0.55, 0.45, 1.25, 1.80, 0, 5, "star_vein_dragon"),
     };
     rebuildStageIndex(catalog);
     *this = std::move(catalog);

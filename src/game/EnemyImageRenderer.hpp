@@ -22,6 +22,7 @@ struct EnemyImageDrawOptions {
     int selectedOutlinePx = 6;
     Color maskOverlayColor{255, 255, 255, 0};
     float scaleMultiplier = 1.0f;
+    Vec2 stretchScale{1.0f, 1.0f};
     float rotationDegrees = 0.0f;
     bool flipX = false;
     bool flipY = false;

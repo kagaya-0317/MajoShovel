@@ -395,12 +395,26 @@ constexpr std::array<std::string_view, 12> KnownProjectileIds = {
     "explosion_small",
 };
 
-constexpr std::array<std::string_view, 5> KnownDropProfiles = {
+constexpr std::array<std::string_view, 12> KnownDropProfiles = {
+    "common",
+    "rare",
+    "super",
+    "super_rare",
     "money",
     "treasure",
     "box_common",
     "box_rare",
     "box_super",
+    "ore",
+    "ore_rare",
+    "ore_super",
+};
+
+constexpr std::array<std::string_view, 4> KnownMaterialIds = {
+    "old_wood_building_material",
+    "enhancement_ore",
+    "moon_fragment",
+    "mana_drop",
 };
 
 constexpr std::array<std::string_view, 1> EnemySpawnWeightCodes = {
@@ -511,11 +525,54 @@ bool isKnownDropProfile(std::string_view profile)
     });
 }
 
+bool isKnownMaterialId(std::string_view materialId)
+{
+    return std::any_of(KnownMaterialIds.begin(), KnownMaterialIds.end(), [materialId](std::string_view value) {
+        return value == materialId;
+    });
+}
+
 bool isDefinedBehaviorTrigger(std::string_view trigger)
 {
     return std::any_of(DefinedBehaviorTriggers.begin(), DefinedBehaviorTriggers.end(), [trigger](std::string_view value) {
         return value == trigger;
     });
+}
+
+bool behaviorTriggerTokenMatches(std::string_view supportedTrigger, std::string_view trigger)
+{
+    const std::string supported = toLowerAscii(trim(supportedTrigger));
+    if (supported.empty()) {
+        return true;
+    }
+    if (supported == trigger) {
+        return true;
+    }
+    if (supported == "常時") {
+        return trigger == "always" || trigger == "aura";
+    }
+    if (supported == "一定間隔") {
+        return trigger == "attack" || trigger == "interval";
+    }
+    if (supported == "接触時") {
+        return trigger == "contact" || trigger == "hit";
+    }
+    if (supported == "被弾時") {
+        return trigger == "hit";
+    }
+    if (supported == "移動時") {
+        return trigger == "always";
+    }
+    if (supported == "接近時") {
+        return trigger == "attack" || trigger == "contact";
+    }
+    if (supported == "出現後または発見後") {
+        return trigger == "timer";
+    }
+    if (supported == "接触回数蓄積") {
+        return trigger == "contact" || trigger == "hit";
+    }
+    return false;
 }
 
 std::string mapLegacyBehaviorIdToCode(std::string_view legacyId)
@@ -526,6 +583,9 @@ std::string mapLegacyBehaviorIdToCode(std::string_view legacyId)
     }
     if (id == "front_guard") {
         return "always:front_guard:none:0";
+    }
+    if (id == "magnet_disturb") {
+        return "aura:magnet_disturb:radius=120,strength=0.6,targetTag=metal:0";
     }
     if (id == "shoot_fire") {
         return "attack:shoot_fire:none:2.0";
@@ -562,6 +622,9 @@ std::string mapLegacyBehaviorIdToCode(std::string_view legacyId)
     }
     if (id == "dig_contact") {
         return "hit:dig_contact:none:0.2";
+    }
+    if (id == "magnet_pull") {
+        return "always:magnet_pull:radius=170,strength=1.0,targetTag=metal:0";
     }
     return {};
 }
@@ -717,7 +780,7 @@ bool behaviorSupportedTriggerMatches(const BehaviorDefinition& behavior, std::st
         return true;
     }
     return std::any_of(behavior.supportedTriggers.begin(), behavior.supportedTriggers.end(), [trigger](const std::string& supported) {
-        return toLowerAscii(supported) == trigger;
+        return behaviorTriggerTokenMatches(supported, trigger);
     });
 }
 
@@ -769,6 +832,11 @@ bool validateBehaviorParamsForEntry(
                     outError = "unknown drop profile \"" + profile + "\"";
                     return false;
                 }
+            }
+        } else if (key == "material") {
+            if (!isKnownMaterialId(value)) {
+                outError = "unknown material \"" + value + "\"";
+                return false;
             }
         }
     }

@@ -103,8 +103,7 @@ public:
         const ObjectCatalog& catalog,
         Vec2 center,
         float dt,
-        float radius = 170.0f,
-        const InventorySystem* inventory = nullptr);
+        float radius = 170.0f);
     int pullLightDrops(
         const ObjectCatalog& catalog,
         Vec2 center,

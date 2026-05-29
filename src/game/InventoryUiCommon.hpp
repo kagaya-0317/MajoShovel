@@ -41,6 +41,7 @@ struct InventoryUiSlotStyle {
     bool selected = false;
     bool disabled = false;
     float imageMaxSize = 48.0f;
+    float contentAlpha = 1.0f;
     std::string bottomLabel;
     Color bottomLabelColor = ui::Text;
     bool showTopRightCount = false;
@@ -121,6 +122,15 @@ void drawInventoryUiSlotBottomLabel(
     UiRect rect,
     std::string_view label,
     Color color = ui::Text);
+
+void drawInventoryUiItemIcon(
+    Renderer& renderer,
+    Vec2 center,
+    const InventoryUiEntryView& entry,
+    float imageMaxSize,
+    bool selected = false,
+    bool disabled = false,
+    float alphaScale = 1.0f);
 
 void drawInventoryUiSlot(
     Renderer& renderer,

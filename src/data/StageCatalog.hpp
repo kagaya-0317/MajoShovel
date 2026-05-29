@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 #include "data/GoogleSheetSource.hpp"
 
@@ -25,6 +25,7 @@ struct StageDefinition {
     double terrainHardnessMultiplier = 1.00;
     int warpPointCount = 0;
     int specialRoomCount = 0;
+    std::string bossEnemyId;
 
     bool operator==(const StageDefinition&) const = default;
 };

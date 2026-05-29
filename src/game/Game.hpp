@@ -414,6 +414,8 @@ private:
         bool opened = false;
         bool lootSpawned = false;
         float openingSeconds = 0.0f;
+        std::string mimicEnemyId;
+        bool mimicTriggered = false;
         bool spawnJumpActive = false;
         Vec2 spawnJumpStartPosition{};
         float spawnJumpElapsedSeconds = 0.0f;
@@ -1128,6 +1130,8 @@ private:
     void updateChestSpawnJump(ChestNode& node, float dt);
     Vec2 chestVisualCenter(const ChestNode& node) const;
     float chestVisualAltitude(const ChestNode& node) const;
+    void assignChestMimic(ChestNode& node);
+    bool tryTriggerChestMimic(ChestNode& node);
     void openChestNode(ChestNode& node);
     void spawnChestLoot(ChestNode& node);
     void initializeCrateNodesFromLayout();
@@ -1141,7 +1145,8 @@ private:
         std::mt19937& rng,
         std::string_view sourceLabel,
         bool launchFromCenter = false,
-        LootSourceKind sourceKind = LootSourceKind::Chest);
+        LootSourceKind sourceKind = LootSourceKind::Chest,
+        std::string_view requiredTag = {});
     Vec2 safeLootLandingPosition(Vec2 center, std::mt19937& rng);
     void spawnInventoryDiscardRequests(std::vector<InventoryDiscardRequest> requests);
     void updateDigToolFailsafe(float dt);
@@ -1242,6 +1247,9 @@ private:
     void enterEnemyTestMode();
     void exitEnemyTestToBase();
     void spawnSelectedEnemyTestEnemy();
+    bool spawnEnemyTestMimicChest(const EnemyDefinition& enemy, Vec2 desiredPosition);
+    int spawnEnemyTestMagnetDrops(Vec2 center);
+    int spawnEnemyTestHealSlimes(Vec2 center);
     void clearEnemyTestArena();
     void updateEnemyTestUi(const Input& input, UiContext& ui);
     void renderEnemyTestUi(Renderer& renderer) const;
@@ -1565,6 +1573,9 @@ private:
     float ringEmptyPressAngle_ = 0.0f;
     int ringSlotSelection_ = 0;
     bool ringDetailShowsRing_ = true;
+    bool ringItemMoveModeActive_ = false;
+    int ringItemMoveIndex_ = -1;
+    float ringItemMoveOriginalAngle_ = 0.0f;
     bool ringGrabActive_ = false;
     int ringGrabOrigin_ = -1;
     SpellRingItem ringGrabbedItem_{};

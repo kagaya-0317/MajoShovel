@@ -85,10 +85,12 @@ public:
     int pullMetalProjectiles(Vec2 center, float dt, float radius = 170.0f);
     int deflectEnemyProjectiles(Vec2 center, float dt, float radius = 150.0f);
     std::vector<ProjectileSoundEvent> consumeSoundEvents();
+    std::vector<StatusPopupEvent> consumeStatusPopupEvents();
 
 private:
     ObjectPool<Projectile, balance::MaxProjectiles> projectiles_;
     std::vector<ProjectileSoundEvent> soundEvents_;
+    std::vector<StatusPopupEvent> statusPopupEvents_;
 };
 
 }

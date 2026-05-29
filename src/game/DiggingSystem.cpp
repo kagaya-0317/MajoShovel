@@ -42,7 +42,22 @@ bool rollCapturedReward(float chance)
     return dist(rng) <= chance;
 }
 
-void recordCapturedReward(SpellRingItem& item, float totalTime, Vec2 position, std::vector<Vec2>& rewardDropRequests)
+std::string capturedRewardProfile(const SpellRingItem& item)
+{
+    if (item.hasCapturedBehavior("reward_drop")) {
+        return item.capturedBehaviorParamString("reward_drop", "profile", "common");
+    }
+    if (item.hasCapturedBehavior("steal_or_dig")) {
+        return item.capturedBehaviorParamString("steal_or_dig", "profile", "common");
+    }
+    return "common";
+}
+
+void recordCapturedReward(
+    SpellRingItem& item,
+    float totalTime,
+    Vec2 position,
+    std::vector<CapturedRewardDropRequest>& rewardDropRequests)
 {
     item.capturedRewardLastTime = totalTime;
     if (totalTime - item.capturedRewardWindowStart > CapturedRewardWindowSeconds) {
@@ -50,7 +65,10 @@ void recordCapturedReward(SpellRingItem& item, float totalTime, Vec2 position, s
         item.capturedRewardWindowCount = 0;
     }
     ++item.capturedRewardWindowCount;
-    rewardDropRequests.push_back(position);
+    rewardDropRequests.push_back({
+        .position = position,
+        .profile = capturedRewardProfile(item),
+    });
 }
 
 }

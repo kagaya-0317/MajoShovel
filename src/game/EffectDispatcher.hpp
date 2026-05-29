@@ -2,6 +2,7 @@
 
 #include "data/ObjectCatalog.hpp"
 #include "engine/Math.hpp"
+#include "game/EntityStatusVisuals.hpp"
 #include "game/EncyclopediaSystem.hpp"
 
 #include <functional>
@@ -68,6 +69,7 @@ struct EffectContext {
     std::vector<TerrainHitTile>* terrainHitTiles = nullptr;
     std::vector<Vec2>* terrainOpenedTiles = nullptr;
     std::vector<DugTile>* terrainDugTiles = nullptr;
+    std::vector<StatusPopupEvent>* statusPopupEvents = nullptr;
     std::vector<EffectDiscoveryEvent>* discoveryEvents = nullptr;
     const EncyclopediaSystem* encyclopedia = nullptr;
     Vec2 position{};

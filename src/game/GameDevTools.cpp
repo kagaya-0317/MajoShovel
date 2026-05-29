@@ -41,6 +41,91 @@ constexpr float AudioCueEditDetailWidth = 330.0f;
 constexpr float AudioCueEditButtonAreaHeight = 64.0f;
 constexpr float AudioCueEditRowHeight = 44.0f;
 constexpr float AudioCueEditRowGap = 4.0f;
+constexpr int EnemyTestMagnetDropCount = 7;
+constexpr float EnemyTestMagnetDropMinRadius = 72.0f;
+constexpr float EnemyTestMagnetDropMaxRadius = 178.0f;
+constexpr int EnemyTestHealSlimeCount = 6;
+constexpr float EnemyTestHealSlimeMinRadius = 46.0f;
+constexpr float EnemyTestHealSlimeMaxRadius = 92.0f;
+constexpr float EnemyTestHealSlimeLeashRadius = 125.0f;
+constexpr std::string_view EnemyTestHealSlimeEnemyId = "slime";
+
+bool enemyDefinitionHasBehavior(const EnemyDefinition& enemy, std::string_view behaviorId)
+{
+    return std::any_of(enemy.enemyBehaviorIds.begin(), enemy.enemyBehaviorIds.end(), [behaviorId](const std::string& id) {
+        return id == behaviorId;
+    });
+}
+
+LootChestKind chestKindForEnemyTestMimic(const EnemyDefinition& enemy)
+{
+    LootChestKind kind = LootChestKind::Rare;
+    if (chestKindForChestMimicEnemyId(enemy.id, kind)) {
+        return kind;
+    }
+
+    for (const EnemyBehaviorSpec& spec : enemy.enemyBehaviorSpecs) {
+        if (spec.behavior != "drop_item") {
+            continue;
+        }
+        const auto profileIt = spec.params.find("profile");
+        if (profileIt != spec.params.end() && chestKindForBoxDropProfile(profileIt->second, kind)) {
+            return kind;
+        }
+    }
+
+    return kind;
+}
+
+bool enemyDefinitionIsChestMimic(const EnemyDefinition& enemy)
+{
+    LootChestKind unused = LootChestKind::Common;
+    if (chestKindForChestMimicEnemyId(enemy.id, unused)) {
+        return true;
+    }
+    return enemyDefinitionHasBehavior(enemy, "chest_bite") && enemyDefinitionHasBehavior(enemy, "drop_item");
+}
+
+bool objectDefinitionHasTag(const ObjectDefinition& object, std::string_view tag)
+{
+    return std::any_of(object.tags.begin(), object.tags.end(), [tag](const std::string& objectTag) {
+        return objectTag == tag;
+    });
+}
+
+bool objectDefinitionHasAnyTag(const ObjectDefinition& object, std::initializer_list<std::string_view> tags)
+{
+    return std::any_of(tags.begin(), tags.end(), [&object](std::string_view tag) {
+        return objectDefinitionHasTag(object, tag);
+    });
+}
+
+bool objectIsEnemyTestMetalDropCandidate(const ObjectDefinition& object)
+{
+    return !object.id.empty() &&
+        objectDefinitionHasTag(object, "metal") &&
+        !objectDefinitionHasAnyTag(object, {"no_drop", "nodrop", "shop_only", "ショップ専用"});
+}
+
+Vec2 randomEnemyTestMagnetDropPosition(Vec2 center, TileMap& tileMap, std::mt19937& rng)
+{
+    std::uniform_real_distribution<float> angleDistribution(0.0f, Pi * 2.0f);
+    std::uniform_real_distribution<float> radiusDistribution(EnemyTestMagnetDropMinRadius, EnemyTestMagnetDropMaxRadius);
+    for (int attempt = 0; attempt < 16; ++attempt) {
+        const Vec2 candidate = center + fromAngle(angleDistribution(rng)) * radiusDistribution(rng);
+        if (!tileMap.isCircleBlocked(candidate, 12.0f)) {
+            return candidate;
+        }
+    }
+    return center + fromAngle(angleDistribution(rng)) * EnemyTestMagnetDropMinRadius;
+}
+
+Vec2 randomEnemyTestHealSlimePosition(Vec2 center, std::mt19937& rng)
+{
+    std::uniform_real_distribution<float> angleDistribution(0.0f, Pi * 2.0f);
+    std::uniform_real_distribution<float> radiusDistribution(EnemyTestHealSlimeMinRadius, EnemyTestHealSlimeMaxRadius);
+    return center + fromAngle(angleDistribution(rng)) * radiusDistribution(rng);
+}
 
 GameTestTerrainKind gameTestTerrainKind(TileType type)
 {
@@ -2693,6 +2778,110 @@ void Game::exitEnemyTestToBase()
     enterBase();
 }
 
+bool Game::spawnEnemyTestMimicChest(const EnemyDefinition& enemy, Vec2 desiredPosition)
+{
+    if (enemy.id.empty()) {
+        return false;
+    }
+
+    const DungeonTile tile{
+        tileMap_.worldToTile(desiredPosition.x),
+        tileMap_.worldToTile(desiredPosition.y),
+    };
+    const Vec2 center = tileWorldCenter(tile);
+    if (tileMap_.isCircleBlocked(center, ChestHitRadius)) {
+        return false;
+    }
+
+    auto existing = std::find_if(chestNodes_.begin(), chestNodes_.end(), [tile](const ChestNode& node) {
+        return node.tile.x == tile.x && node.tile.y == tile.y;
+    });
+
+    ChestNode node;
+    node.tile = tile;
+    node.visibility = PlacementVisibility::Exposed;
+    node.chestKind = chestKindForEnemyTestMimic(enemy);
+    node.depthRank = 1;
+    node.revealed = true;
+    node.opened = false;
+    node.lootSpawned = false;
+    node.openingSeconds = 0.0f;
+    node.mimicEnemyId = enemy.id;
+    node.mimicTriggered = false;
+
+    if (existing != chestNodes_.end()) {
+        *existing = std::move(node);
+    } else {
+        chestNodes_.push_back(std::move(node));
+    }
+    return true;
+}
+
+int Game::spawnEnemyTestMagnetDrops(Vec2 center)
+{
+    std::vector<const ObjectDefinition*> candidates;
+    candidates.reserve(objectCatalog_.objects.size());
+    for (const ObjectDefinition& object : objectCatalog_.objects) {
+        if (objectIsEnemyTestMetalDropCandidate(object)) {
+            candidates.push_back(&object);
+        }
+    }
+
+    if (candidates.empty()) {
+        return 0;
+    }
+
+    std::mt19937& rng = lootRuntimeRng();
+    std::uniform_int_distribution<std::size_t> objectDistribution(0, candidates.size() - 1);
+    int spawned = 0;
+    for (int i = 0; i < EnemyTestMagnetDropCount; ++i) {
+        const ObjectDefinition& object = *candidates[objectDistribution(rng)];
+        const Vec2 target = randomEnemyTestMagnetDropPosition(center, tileMap_, rng);
+        if (worldDrops_.spawnObjectDrop(
+                objectCatalog_,
+                object.id,
+                target,
+                runStats_.elapsedSeconds,
+                makeWorldLootJumpMotion(center, rng),
+                true)) {
+            ++spawned;
+        }
+    }
+    return spawned;
+}
+
+int Game::spawnEnemyTestHealSlimes(Vec2 center)
+{
+    if (enemyCatalog_.enemiesById.find(std::string(EnemyTestHealSlimeEnemyId)) == enemyCatalog_.enemiesById.end()) {
+        return 0;
+    }
+
+    std::mt19937& rng = lootRuntimeRng();
+    int spawned = 0;
+    const int maxAttempts = EnemyTestHealSlimeCount * 8;
+    for (int attempt = 0; attempt < maxAttempts && spawned < EnemyTestHealSlimeCount; ++attempt) {
+        const Vec2 target = randomEnemyTestHealSlimePosition(center, rng);
+        int runtimeId = 0;
+        if (!enemies_.spawnSpecificEnemy(
+                tileMap_,
+                EnemyTestHealSlimeEnemyId,
+                target,
+                player_.position,
+                balance_,
+                enemyCatalog_,
+                true,
+                false,
+                0.0f,
+                &runtimeId)) {
+            continue;
+        }
+        enemies_.setRuntimeEnemyHp(runtimeId, 1);
+        enemies_.setRuntimeEnemyMovementLeash(runtimeId, center, EnemyTestHealSlimeLeashRadius);
+        ++spawned;
+    }
+    return spawned;
+}
+
 void Game::spawnSelectedEnemyTestEnemy()
 {
     if (enemyCatalog_.enemies.empty()) {
@@ -2703,10 +2892,48 @@ void Game::spawnSelectedEnemyTestEnemy()
     const EnemyDefinition& enemy = enemyCatalog_.enemies[static_cast<std::size_t>(enemyTestSelectedIndex_)];
     Vec2 facing = lengthSquared(player_.facing) > 0.0001f ? normalize(player_.facing) : Vec2{1.0f, 0.0f};
     const Vec2 desiredPosition = player_.position + facing * 120.0f;
-    if (enemies_.spawnSpecificEnemy(tileMap_, enemy.id, desiredPosition, player_.position, balance_, enemyCatalog_, true, true)) {
-        enemyTestStatus_ = "召喚: " + (enemy.name.empty() ? enemy.id : enemy.name);
+    if (enemyDefinitionIsChestMimic(enemy)) {
+        if (spawnEnemyTestMimicChest(enemy, desiredPosition)) {
+            enemyTestStatus_ = "宝箱として配置: " + (enemy.name.empty() ? enemy.id : enemy.name);
+        } else {
+            enemyTestStatus_ = "宝箱を配置できませんでした: " + (enemy.name.empty() ? enemy.id : enemy.name);
+        }
     } else {
-        enemyTestStatus_ = "召喚できませんでした: " + (enemy.name.empty() ? enemy.id : enemy.name);
+        int spawnedRuntimeId = 0;
+        if (!enemies_.spawnSpecificEnemy(
+                tileMap_,
+                enemy.id,
+                desiredPosition,
+                player_.position,
+                balance_,
+                enemyCatalog_,
+                true,
+                true,
+                -1.0f,
+                &spawnedRuntimeId)) {
+            enemyTestStatus_ = "召喚できませんでした: " + (enemy.name.empty() ? enemy.id : enemy.name);
+            return;
+        }
+
+        Vec2 spawnedPosition = desiredPosition;
+        enemies_.runtimeEnemyPosition(spawnedRuntimeId, spawnedPosition);
+        enemyTestStatus_ = "召喚: " + (enemy.name.empty() ? enemy.id : enemy.name);
+        if (enemyDefinitionHasBehavior(enemy, "magnet_disturb")) {
+            const int dropCount = spawnEnemyTestMagnetDrops(spawnedPosition);
+            if (dropCount > 0) {
+                enemyTestStatus_ += " / 金属アイテム " + std::to_string(dropCount) + "個";
+            } else {
+                enemyTestStatus_ += " / 金属アイテム候補なし";
+            }
+        }
+        if (enemyDefinitionHasBehavior(enemy, "enemy_heal")) {
+            const int slimeCount = spawnEnemyTestHealSlimes(spawnedPosition);
+            if (slimeCount > 0) {
+                enemyTestStatus_ += " / HP1スライム " + std::to_string(slimeCount) + "体";
+            } else {
+                enemyTestStatus_ += " / スライム召喚なし";
+            }
+        }
     }
 }
 
@@ -2718,7 +2945,10 @@ void Game::clearEnemyTestArena()
     groundLines_ = GroundLineSystem{};
     magic_ = MagicSystem{};
     magicFx_ = MagicFxSystem{};
-    enemyTestStatus_ = "敵と弾を消去しました";
+    worldDrops_ = WorldDropSystem{};
+    worldDrops_.setDropLimit(balance_.worldDropLimitPerStage);
+    chestNodes_.clear();
+    enemyTestStatus_ = "敵・宝箱・弾を消去しました";
 }
 
 void Game::updateEnemyTestUi(const Input& input, UiContext& ui)
@@ -4551,6 +4781,86 @@ GameTestActionResult Game::applyTestAction(const GameTestAction& action)
         refreshOrbitEffects();
         baseStatus_ = "リングから外しました";
         return result(true, "removed ring item to backpack");
+    }
+
+    case GameTestActionKind::DiscardBackpackStack:
+    {
+        if (mode_ != ScreenMode::Playing || worldBuildActive() || screenTransition_.active()) {
+            return result(false, "cannot discard item now");
+        }
+
+        const InventoryObjectStack* targetStack = nullptr;
+        for (const InventoryObjectStack& stack : inventory_.objectStacks()) {
+            if (stack.objectId == action.objectId) {
+                targetStack = &stack;
+                break;
+            }
+        }
+        if (targetStack == nullptr || targetStack->count <= 0) {
+            return result(false, "stack not found");
+        }
+        if (isImportantItem(targetStack->item)) {
+            return result(false, "important item cannot be discarded");
+        }
+
+        const ItemData item = targetStack->item;
+        const int discardCount = action.count <= 0
+            ? targetStack->count
+            : std::min(action.count, targetStack->count);
+        if (discardCount <= 0 || !inventory_.removeObjectItemCount(action.objectId, discardCount)) {
+            return result(false, "discard failed");
+        }
+
+        std::vector<InventoryDiscardRequest> requests;
+        requests.push_back(InventoryDiscardRequest{
+            .item = item,
+            .quantity = discardCount,
+        });
+        spawnInventoryDiscardRequests(std::move(requests));
+        baseStatus_ = "リュックを空けました";
+        return result(true, "discarded backpack stack");
+    }
+
+    case GameTestActionKind::DiscardBackpackInstance:
+    {
+        if (mode_ != ScreenMode::Playing || worldBuildActive() || screenTransition_.active()) {
+            return result(false, "cannot discard item now");
+        }
+
+        const InventoryObjectInstance* targetInstance = nullptr;
+        for (const InventoryObjectInstance& objectInstance : inventory_.objectInstances()) {
+            if (objectInstance.instance.instanceId == action.instanceId) {
+                targetInstance = &objectInstance;
+                break;
+            }
+        }
+        if (targetInstance == nullptr) {
+            return result(false, "instance not found");
+        }
+        if (inventory_.isStaffEquipped(action.instanceId)) {
+            return result(false, "equipped staff cannot be discarded");
+        }
+        if (targetInstance->instance.protectionEnabled) {
+            return result(false, "protected item cannot be discarded");
+        }
+        if (isImportantItem(targetInstance->item)) {
+            return result(false, "important item cannot be discarded");
+        }
+
+        InventoryObjectInstance removedInstance;
+        if (!inventory_.takeObjectInstance(action.instanceId, removedInstance)) {
+            return result(false, "discard failed");
+        }
+
+        std::vector<InventoryDiscardRequest> requests;
+        requests.push_back(InventoryDiscardRequest{
+            .item = removedInstance.item,
+            .instance = std::move(removedInstance.instance),
+            .quantity = 1,
+        });
+        spawnInventoryDiscardRequests(std::move(requests));
+        baseStatus_ = "リュックを空けました";
+        return result(true, "discarded backpack instance");
     }
 
     case GameTestActionKind::DepositBackpackStack:

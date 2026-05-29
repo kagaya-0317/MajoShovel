@@ -1,0 +1,5 @@
+Auto reload block: ON
+Launch mode: pre-title
+Test-play debug console enabled. Press F8 to show or hide it.
+Audio initialized
+Audio manifest loaded: assets/audio/audio_manifest.tsv cues=43

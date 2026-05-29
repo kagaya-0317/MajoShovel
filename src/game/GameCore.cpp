@@ -101,23 +101,6 @@ bool spellRingContainsObjectId(const SpellRingSystem& spellRing, std::string_vie
     return false;
 }
 
-bool lootChestKindForDropProfile(std::string_view profile, LootChestKind& outKind)
-{
-    if (profile == "box_common") {
-        outKind = LootChestKind::Common;
-        return true;
-    }
-    if (profile == "box_rare") {
-        outKind = LootChestKind::Rare;
-        return true;
-    }
-    if (profile == "box_super") {
-        outKind = LootChestKind::SuperRare;
-        return true;
-    }
-    return false;
-}
-
 UiResultDialogLine levelUpResultTextLine(std::string text)
 {
     UiResultDialogLine line;
@@ -472,6 +455,8 @@ void Game::resetWorldUiState()
     ringCommandPlaceActive_ = false;
     ringPlaceModeActive_ = false;
     ringEmptyPressActive_ = false;
+    ringItemMoveModeActive_ = false;
+    ringItemMoveIndex_ = -1;
     levelUpResultDialog_ = {};
     levelUpReturnMode_ = ScreenMode::Playing;
     baseRingWorkshopActive_ = false;
@@ -529,6 +514,8 @@ void Game::resetWorldRunState()
     pauseQuitConfirm_ = {};
     ringTabs_ = {};
     ringSlotSelection_ = 0;
+    ringItemMoveModeActive_ = false;
+    ringItemMoveIndex_ = -1;
     ringGrabActive_ = false;
     ringGrabOrigin_ = -1;
     ringStatus_.clear();
@@ -2775,8 +2762,8 @@ void Game::update(const Input& input, const Time& time)
             queueStoryEventForTrigger("tutorial:ring_shift");
         }
         updateDungeonEvents(time.deltaSeconds(), time.totalSeconds());
+        updateChestNodes(time.deltaSeconds(), input);
         if (!enemyTestActive_) {
-            updateChestNodes(time.deltaSeconds(), input);
             updateCrateNodes();
         }
 
@@ -2866,17 +2853,23 @@ void Game::update(const Input& input, const Time& time)
                 }
             }
         }
-        for (Vec2 rewardPosition : digging_.rewardDropRequests()) {
+        for (const CapturedRewardDropRequest& rewardRequest : digging_.rewardDropRequests()) {
             std::mt19937& rng = lootRuntimeRng();
-            const int depthRank = lootDepthRankForWorldPosition(tileMap_, dungeonLayout_, currentStageId_, rewardPosition);
+            WeightedObjectLootProfile lootProfile;
+            if (!weightedObjectLootProfileForDropProfile(rewardRequest.profile, lootProfile)) {
+                logError("[warning] CapturedRewardLoot: unknown reward profile \"" + rewardRequest.profile + "\"; no item drop");
+                continue;
+            }
+            const int depthRank = lootDepthRankForWorldPosition(tileMap_, dungeonLayout_, currentStageId_, rewardRequest.position);
             spawnWeightedObjectLoot(
-                LootChestKind::Common,
+                lootProfile.chestKind,
                 depthRank,
-                rewardPosition,
+                rewardRequest.position,
                 rng,
                 "CapturedRewardLoot",
                 true,
-                LootSourceKind::CapturedReward);
+                LootSourceKind::CapturedReward,
+                lootProfile.requiredTag);
         }
         for (const DugTile& tile : digging_.dugTiles()) {
             if (tile.type != TileType::Ore) {
@@ -3151,10 +3144,42 @@ void Game::update(const Input& input, const Time& time)
                 playAudioSe(AudioSeEnemyAttack);
             } else if (event.type == EnemyEventType::Shoot) {
                 playAudioSe(AudioSeEnemyShoot);
-            } else if (event.type == EnemyEventType::Heal) {
+            } else if (event.type == EnemyEventType::HealCast) {
                 playAudioSe(AudioSeEnemyHeal);
+                magicFx_.playHealPulse(event.position, 24.0f);
+            } else if (event.type == EnemyEventType::Heal) {
+                if (event.healAmount > 0) {
+                    effects_.spawnDamagePopup(event.position, event.healAmount, DamagePopupStyle::Heal);
+                }
+                magicFx_.playHealPulse(event.position, 18.0f);
             } else if (event.type == EnemyEventType::Explode) {
                 playAudioSe(AudioSeExplosion);
+            } else if (event.type == EnemyEventType::BossTelegraph) {
+                SmokeBurstOptions smoke;
+                smoke.count = 18;
+                smoke.size = 26.0f;
+                smoke.spreadRadius = 18.0f;
+                smoke.speed = 34.0f;
+                smoke.riseSpeed = 22.0f;
+                smoke.duration = 0.72f;
+                smoke.colorA = {176, 128, 72, 205};
+                smoke.colorB = {92, 68, 50, 172};
+                effects_.spawnSmokeBurst(event.position, smoke);
+            } else if (event.type == EnemyEventType::BossImpact) {
+                const bool wallStunImpact = event.effectId == "wall_stun";
+                const bool burrowImpact = event.effectId == "burrow";
+                SmokeBurstOptions smoke;
+                smoke.count = wallStunImpact ? 14 : (burrowImpact ? 16 : 10);
+                smoke.size = wallStunImpact ? 24.0f : (burrowImpact ? 22.0f : 18.0f);
+                smoke.spreadRadius = wallStunImpact ? 16.0f : (burrowImpact ? 14.0f : 10.0f);
+                smoke.colorA = {192, 144, 82, 192};
+                smoke.colorB = {110, 82, 58, 150};
+                effects_.spawnSmokeBurst(event.position, smoke);
+                if (wallStunImpact) {
+                    playAudioSe(AudioSeAttackHit);
+                }
+            } else if (event.type == EnemyEventType::TerrainBreak) {
+                effects_.spawnTileBreak(event.position, TileType::Dirt);
             } else if (event.type == EnemyEventType::Death || event.type == EnemyEventType::BossDeath) {
                 handleDungeonEventEnemyEvent(event);
                 ++runStats_.defeatedEnemies;
@@ -3200,33 +3225,52 @@ void Game::update(const Input& input, const Time& time)
                 }
             } else if (event.type == EnemyEventType::RewardDrop) {
                 std::mt19937& rng = lootRuntimeRng();
+                WeightedObjectLootProfile lootProfile;
+                if (!weightedObjectLootProfileForDropProfile(event.objectDropProfile, lootProfile)) {
+                    logError("[warning] CapturedRewardLoot: unknown reward profile \"" + event.objectDropProfile + "\"; no item drop");
+                    continue;
+                }
                 const int depthRank = lootDepthRankForWorldPosition(tileMap_, dungeonLayout_, currentStageId_, event.position);
                 spawnWeightedObjectLoot(
-                    LootChestKind::Common,
+                    lootProfile.chestKind,
                     depthRank,
                     event.position,
                     rng,
                     "CapturedRewardLoot",
                     true,
-                    LootSourceKind::CapturedReward);
+                    LootSourceKind::CapturedReward,
+                    lootProfile.requiredTag);
+            } else if (event.type == EnemyEventType::MaterialDrop) {
+                if (event.materialDropType == MaterialType::Count || event.materialDropCount <= 0) {
+                    logError("[warning] EnemyMaterialDrop: invalid material drop event; no material drop");
+                    continue;
+                }
+                std::mt19937& rng = lootRuntimeRng();
+                worldDrops_.spawnMaterialDrop(
+                    event.materialDropType,
+                    event.materialDropCount,
+                    event.position,
+                    runStats_.elapsedSeconds,
+                    makeWorldLootJumpMotion(event.position, rng));
             } else if (event.type == EnemyEventType::ObjectDrop) {
                 std::mt19937& rng = lootRuntimeRng();
                 const int dropCount = std::max(1, event.objectDropCount);
                 if (!event.objectDropProfile.empty()) {
-                    LootChestKind chestKind = LootChestKind::Common;
-                    if (!lootChestKindForDropProfile(event.objectDropProfile, chestKind)) {
+                    WeightedObjectLootProfile lootProfile;
+                    if (!weightedObjectLootProfileForDropProfile(event.objectDropProfile, lootProfile)) {
                         logError("[warning] EnemyDropLoot: unknown drop profile \"" + event.objectDropProfile + "\"; no item drop");
                     } else {
                         const int depthRank = lootDepthRankForWorldPosition(tileMap_, dungeonLayout_, currentStageId_, event.position);
                         for (int i = 0; i < dropCount; ++i) {
                             spawnWeightedObjectLoot(
-                                chestKind,
+                                lootProfile.chestKind,
                                 depthRank,
                                 event.position,
                                 rng,
                                 "EnemyDropLoot",
                                 true,
-                                LootSourceKind::EnemyDrop);
+                                LootSourceKind::EnemyDrop,
+                                lootProfile.requiredTag);
                         }
                     }
                 } else if (!event.objectDropId.empty()) {
@@ -3265,6 +3309,15 @@ void Game::update(const Input& input, const Time& time)
             effects_.spawnDamagePopup(event.position, event.amount, DamagePopupStyle::Heal);
         }
         player_.healEvents.clear();
+        for (const StatusPopupEvent& event : enemies_.consumeStatusPopupEvents()) {
+            effects_.spawnStatusPopup(event.position, event.stateId, event.target);
+        }
+        for (const StatusPopupEvent& event : projectiles_.consumeStatusPopupEvents()) {
+            effects_.spawnStatusPopup(event.position, event.stateId, event.target);
+        }
+        for (const StatusPopupEvent& event : inventory_.consumeStatusPopupEvents()) {
+            effects_.spawnStatusPopup(event.position, event.stateId, event.target);
+        }
         applyEffectDiscoveries(effectDiscoveries);
         syncEncyclopediaFromInventoryAndRing();
         updateAmbientParticleEffects(time.deltaSeconds());

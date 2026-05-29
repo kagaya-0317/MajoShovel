@@ -3,6 +3,7 @@
 #include "engine/Math.hpp"
 #include "data/EnemyCatalog.hpp"
 #include "game/EntityStatus.hpp"
+#include "game/ItemModel.hpp"
 
 #include <string>
 #include <vector>
@@ -18,6 +19,41 @@ enum class EnemyAwarenessIcon {
     None,
     Exclamation,
     Question,
+};
+
+enum class BossActionPhase {
+    None,
+    Submerge,
+    Telegraph,
+    Jump,
+    LandingDelay,
+    Charge,
+    Stun,
+    Recover,
+};
+
+struct BossActionRuntime {
+    bool enabled = false;
+    std::string pattern;
+    BossActionPhase phase = BossActionPhase::None;
+    float timer = 0.0f;
+    float phaseDuration = 0.0f;
+    Vec2 targetPosition{};
+    Vec2 chargeDirection{1.0f, 0.0f};
+    bool hidden = false;
+    bool invulnerable = false;
+};
+
+struct EnemyActionRuntime {
+    bool active = false;
+    std::string behaviorId;
+    std::string animationId;
+    float elapsedSeconds = 0.0f;
+    float durationSeconds = 0.0f;
+    float fireAtSeconds = 0.0f;
+    bool fired = false;
+    bool lockMovement = false;
+    bool lockFacing = true;
 };
 
 struct Enemy {
@@ -60,6 +96,8 @@ struct Enemy {
     std::string contactDamageType = "blunt";
     float contactTimer = 0.0f;
     float contactDamageMultiplier = 1.0f;
+    EnemyActionRuntime action;
+    BossActionRuntime bossAction;
     float frontGuardArcDegrees = 140.0f;
     float frontGuardDamageMultiplier = 0.35f;
     float physicalDamageMultiplier = 0.55f;
@@ -118,6 +156,13 @@ struct Enemy {
     int dropItemCount = 0;
     float dropItemScatterRadius = 0.0f;
     bool dropItemConsumed = false;
+    bool dropMaterialEnabled = false;
+    MaterialType dropMaterialType = MaterialType::Count;
+    float dropMaterialChance = 0.0f;
+    int dropMaterialMin = 0;
+    int dropMaterialMax = 0;
+    float dropMaterialScatterRadius = 0.0f;
+    bool dropMaterialConsumed = false;
     bool stealItemEnabled = false;
     std::string stealTarget;
     float stealRadius = 0.0f;

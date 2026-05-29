@@ -15,6 +15,8 @@ constexpr int EnemyAnimationFrameInterval = 10;
 constexpr float EnemyAnimationFps = 60.0f;
 constexpr float EnemyImageScaleMin = 0.05f;
 constexpr float EnemyImageScaleMax = 8.0f;
+constexpr float EnemyImageStretchMin = 0.05f;
+constexpr float EnemyImageStretchMax = 8.0f;
 
 enum class EnemySpriteDirection {
     Down,
@@ -68,6 +70,14 @@ int rowForDirection(EnemySpriteDirection direction)
     return 0;
 }
 
+Vec2 clampedStretchScale(Vec2 scale)
+{
+    return {
+        std::clamp(std::isfinite(scale.x) ? scale.x : 1.0f, EnemyImageStretchMin, EnemyImageStretchMax),
+        std::clamp(std::isfinite(scale.y) ? scale.y : 1.0f, EnemyImageStretchMin, EnemyImageStretchMax),
+    };
+}
+
 bool resolveEnemyImageFrame(
     Renderer& renderer,
     const Enemy& enemy,
@@ -112,10 +122,11 @@ bool resolveEnemyImageFrame(
 
     const float bossScale = enemy.isBoss ? 1.35f : 1.0f;
     const float optionScale = std::clamp(options.scaleMultiplier, EnemyImageScaleMin, EnemyImageScaleMax);
+    const Vec2 stretchScale = clampedStretchScale(options.stretchScale);
     outHandle = handle;
     outDrawSize = {
-        std::max(1.0f, static_cast<float>(frameWidth) * bossScale * optionScale),
-        std::max(1.0f, static_cast<float>(frameHeight) * bossScale * optionScale),
+        std::max(1.0f, static_cast<float>(frameWidth) * bossScale * optionScale * stretchScale.x),
+        std::max(1.0f, static_cast<float>(frameHeight) * bossScale * optionScale * stretchScale.y),
     };
     outFrameWidth = frameWidth;
     outFrameHeight = frameHeight;
@@ -285,9 +296,10 @@ bool drawEnemyImageIcon(
         std::isfinite(options.scaleMultiplier) ? options.scaleMultiplier : 1.0f,
         EnemyImageScaleMin,
         EnemyImageScaleMax);
+    const Vec2 stretchScale = clampedStretchScale(options.stretchScale);
     const Vec2 drawSize{
-        std::max(1.0f, static_cast<float>(std::round(static_cast<float>(frameWidth) * scale * optionScale))),
-        std::max(1.0f, static_cast<float>(std::round(static_cast<float>(frameHeight) * scale * optionScale))),
+        std::max(1.0f, static_cast<float>(std::round(static_cast<float>(frameWidth) * scale * optionScale * stretchScale.x))),
+        std::max(1.0f, static_cast<float>(std::round(static_cast<float>(frameHeight) * scale * optionScale * stretchScale.y))),
     };
 
     const int animationTick = static_cast<int>(std::floor(std::max(0.0f, animationTimeSeconds) * EnemyAnimationFps));

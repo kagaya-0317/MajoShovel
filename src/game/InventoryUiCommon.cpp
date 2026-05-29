@@ -402,6 +402,12 @@ Color withAlpha(Color color, float alpha)
     return color;
 }
 
+Color scaleAlpha(Color color, float alphaScale)
+{
+    color.a = colorByte(static_cast<float>(color.a) * std::clamp(alphaScale, 0.0f, 1.0f));
+    return color;
+}
+
 Color hsvColor(float hue, float saturation, float value)
 {
     hue = hue - std::floor(hue);
@@ -996,6 +1002,48 @@ void drawInventoryUiSlotBottomLabel(Renderer& renderer, UiRect rect, std::string
     renderer.drawOutlinedText(labelPos, label, color, {0, 0, 0, 120}, 6, LabelScale);
 }
 
+void drawInventoryUiItemIcon(
+    Renderer& renderer,
+    Vec2 center,
+    const InventoryUiEntryView& entry,
+    float imageMaxSize,
+    bool selected,
+    bool disabled,
+    float alphaScale)
+{
+    if (entry.item == nullptr) {
+        return;
+    }
+
+    alphaScale = std::clamp(alphaScale, 0.0f, 1.0f);
+    const std::optional<InventoryUiItemStats> stats = inventoryUiEntryStats(entry);
+    const bool broken = stats ? stats->broken : entry.item->durability == 0;
+    const Color objectColor = itemFallbackColorForBrokenState(inventoryUiObjectColor(*entry.item), broken);
+
+    ObjectImageDrawOptions imageOptions;
+    imageOptions.tint = disabled ? Color{128, 128, 128, 255} : Color{255, 255, 255, 255};
+    imageOptions.tint = scaleAlpha(imageOptions.tint, alphaScale);
+    if (selected) {
+        imageOptions = withSelectedItemOutline(imageOptions);
+        imageOptions.outlineColor = scaleAlpha(imageOptions.outlineColor, alphaScale);
+    }
+
+    const bool drewImage = drawItemImage(
+        renderer,
+        *entry.item,
+        center,
+        {imageMaxSize, imageMaxSize},
+        inventoryUiObjectImageOptions(*entry.item, broken, imageOptions));
+    if (!drewImage) {
+        Color fallback = disabled ? darkenColor(objectColor, 0.5f) : objectColor;
+        fallback = scaleAlpha(fallback, alphaScale);
+        renderer.fillCircle(center, 22.0f, fallback);
+        if (selected) {
+            drawSelectedItemCircleOutline(renderer, center, 22.0f);
+        }
+    }
+}
+
 void drawInventoryUiSlot(
     Renderer& renderer,
     UiRect rect,
@@ -1005,9 +1053,10 @@ void drawInventoryUiSlot(
     Color fill = style.selected ? Color{54, 44, 72, 242} : Color{20, 20, 28, 226};
     const Vec2 slotCenter = uiRectCenter(rect);
     const std::optional<InventoryUiItemStats> stats = inventoryUiEntryStats(entry);
+    const float contentAlpha = std::clamp(style.contentAlpha, 0.0f, 1.0f);
     renderer.fillCircle(slotCenter, slotFrameRadius(rect), fill);
     const auto drawBottomLabel = [&]() {
-        drawInventoryUiSlotBottomLabel(renderer, rect, style.bottomLabel, style.bottomLabelColor);
+        drawInventoryUiSlotBottomLabel(renderer, rect, style.bottomLabel, scaleAlpha(style.bottomLabelColor, contentAlpha));
     };
     const auto drawTopRightCount = [&]() {
         if (entry.equipped || !style.showTopRightCount) {
@@ -1020,7 +1069,13 @@ void drawInventoryUiSlot(
             rect.pos.x + rect.size.x - textSize.x - 5.0f,
             rect.pos.y + 3.0f,
         };
-        renderer.drawOutlinedText(textPos, text, style.topRightCountColor, {0, 0, 0, 120}, 6, CountScale);
+        renderer.drawOutlinedText(
+            textPos,
+            text,
+            scaleAlpha(style.topRightCountColor, contentAlpha),
+            scaleAlpha({0, 0, 0, 120}, contentAlpha),
+            6,
+            CountScale);
     };
     const auto drawEquippedLabel = [&]() {
         if (!entry.equipped) {
@@ -1033,7 +1088,13 @@ void drawInventoryUiSlot(
             rect.pos.x + rect.size.x - textSize.x - 5.0f,
             rect.pos.y + 3.0f,
         };
-        renderer.drawOutlinedText(textPos, text, Color{90, 230, 120, 255}, {0, 0, 0, 140}, 6, LabelScale);
+        renderer.drawOutlinedText(
+            textPos,
+            text,
+            scaleAlpha(Color{90, 230, 120, 255}, contentAlpha),
+            scaleAlpha({0, 0, 0, 140}, contentAlpha),
+            6,
+            LabelScale);
     };
     const auto drawProtectionLabel = [&]() {
         if (!style.showProtectionLabel || !stats || !stats->protectionEnabled) {
@@ -1043,8 +1104,8 @@ void drawInventoryUiSlot(
         renderer.drawOutlinedText(
             rect.pos + Vec2{5.0f, 3.0f},
             "保護",
-            style.protectionLabelColor,
-            {0, 0, 0, 120},
+            scaleAlpha(style.protectionLabelColor, contentAlpha),
+            scaleAlpha({0, 0, 0, 120}, contentAlpha),
             6,
             LabelScale);
     };
@@ -1059,51 +1120,15 @@ void drawInventoryUiSlot(
     const bool broken = stats ? stats->broken : entry.item->durability == 0;
 
     if (!stats) {
-        const Color objectColor = itemFallbackColorForBrokenState(inventoryUiObjectColor(*entry.item), broken);
-        ObjectImageDrawOptions imageOptions;
-        imageOptions.tint = style.disabled ? Color{128, 128, 128, 255} : Color{255, 255, 255, 255};
-        if (style.selected) {
-            imageOptions = withSelectedItemOutline(imageOptions);
-        }
-        const bool drewImage = drawItemImage(
-            renderer,
-            *entry.item,
-            slotCenter,
-            {style.imageMaxSize, style.imageMaxSize},
-            inventoryUiObjectImageOptions(*entry.item, broken, imageOptions));
-        if (!drewImage) {
-            renderer.fillCircle(slotCenter, 22.0f, style.disabled ? darkenColor(objectColor, 0.5f) : objectColor);
-            if (style.selected) {
-                drawSelectedItemCircleOutline(renderer, slotCenter, 22.0f);
-            }
-        }
+        drawInventoryUiItemIcon(renderer, slotCenter, entry, style.imageMaxSize, style.selected, style.disabled, contentAlpha);
         drawBottomLabel();
         drawTopRightCount();
         drawEquippedLabel();
         return;
     }
 
-    const Color objectColor = itemFallbackColorForBrokenState(inventoryUiObjectColor(*entry.item), broken);
-    ObjectImageDrawOptions imageOptions;
-    imageOptions.tint = Color{255, 255, 255, 255};
-    if (style.disabled) {
-        imageOptions.tint = darkenColor(imageOptions.tint, 0.5f);
-    }
-    if (style.selected) {
-        imageOptions = withSelectedItemOutline(imageOptions);
-    }
-    const bool drewImage = drawItemImage(
-        renderer,
-        *entry.item,
-        slotCenter,
-        {style.imageMaxSize, style.imageMaxSize},
-        inventoryUiObjectImageOptions(*entry.item, broken, imageOptions));
-    if (!drewImage) {
-        renderer.fillCircle(slotCenter, 22.0f, style.disabled ? darkenColor(objectColor, 0.5f) : objectColor);
-        if (style.selected) {
-            drawSelectedItemCircleOutline(renderer, slotCenter, 22.0f);
-        }
-    }
+    (void)broken;
+    drawInventoryUiItemIcon(renderer, slotCenter, entry, style.imageMaxSize, style.selected, style.disabled, contentAlpha);
     drawProtectionLabel();
     drawBottomLabel();
     drawTopRightCount();

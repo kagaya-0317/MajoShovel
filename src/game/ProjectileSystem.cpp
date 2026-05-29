@@ -123,6 +123,23 @@ bool hasProjectileTag(const Projectile& projectile, std::string_view tag)
     });
 }
 
+void queueStatusPopupEvent(
+    std::vector<StatusPopupEvent>& events,
+    Vec2 position,
+    std::string_view stateId,
+    StatusPopupTarget target,
+    const EntityStateApplyResult& result)
+{
+    if (!shouldShowEntityStatusPopup(result) || entityStatusDisplayName(stateId).empty()) {
+        return;
+    }
+    events.push_back(StatusPopupEvent{
+        .position = position,
+        .stateId = std::string(stateId),
+        .target = target,
+    });
+}
+
 bool isHeavyProjectile(const Projectile& projectile)
 {
     return projectile.radius >= 6.0f ||
@@ -687,12 +704,18 @@ void ProjectileSystem::update(
                 for (const std::string& effect : spec.effects) {
                     if (effect == "status_paralyze") {
                         const double paralyzeDuration = spec.duration > 0.0 ? spec.duration : 1.5;
-                        player.status.applyState(
+                        const EntityStateApplyResult result = player.status.applyState(
                             "status_paralyze",
                             1.0,
                             paralyzeDuration,
                             "enemy:shoot_paralyze",
                             StateApplyMode::KeepLonger);
+                        queueStatusPopupEvent(
+                            statusPopupEvents_,
+                            player.position,
+                            "status_paralyze",
+                            StatusPopupTarget::Player,
+                            result);
                         customOnly = true;
                     } else if (effect == "mud_zone") {
                         if (spec.values.size() >= 1) {
@@ -728,6 +751,7 @@ void ProjectileSystem::update(
                 EffectContext context;
                 context.owner = &player;
                 context.encyclopedia = encyclopedia;
+                context.statusPopupEvents = &statusPopupEvents_;
                 context.position = projectile.position;
                 context.triggerType = EffectTriggerType::Hit;
                 context.logUnimplementedEffects = false;
@@ -855,6 +879,7 @@ void ProjectileSystem::clear()
 {
     projectiles_ = {};
     soundEvents_.clear();
+    statusPopupEvents_.clear();
 }
 
 std::vector<ProjectileSoundEvent> ProjectileSystem::consumeSoundEvents()
@@ -862,6 +887,13 @@ std::vector<ProjectileSoundEvent> ProjectileSystem::consumeSoundEvents()
     std::vector<ProjectileSoundEvent> events = soundEvents_;
     soundEvents_.clear();
     return events;
+}
+
+std::vector<StatusPopupEvent> ProjectileSystem::consumeStatusPopupEvents()
+{
+    std::vector<StatusPopupEvent> consumed;
+    consumed.swap(statusPopupEvents_);
+    return consumed;
 }
 
 }

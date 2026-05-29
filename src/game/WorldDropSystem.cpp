@@ -35,6 +35,7 @@ constexpr float MaterialHoverSpeed = 4.8f;
 constexpr float MaterialParticleInterval = 0.16f;
 constexpr float CapturedMagnetDropRadius = 170.0f;
 constexpr float CapturedMagnetDropAcceleration = 260.0f;
+constexpr float MetalDropMagnetMinFalloff = 0.35f;
 constexpr int CapturedMagnetDropLimit = 6;
 constexpr float VacuumLightDropAcceleration = 220.0f;
 constexpr float VacuumLightObjectMaxWeightKg = 1.0f;
@@ -117,6 +118,19 @@ bool hasObjectTag(const ObjectDefinition& object, std::string_view tag)
     return std::any_of(object.tags.begin(), object.tags.end(), [tag](const std::string& objectTag) {
         return objectTag == tag;
     });
+}
+
+bool isMetalDrop(const WorldDropItem& drop, const ObjectCatalog& catalog)
+{
+    if (drop.kind == WorldDropKind::Object) {
+        const ObjectDefinition* object = catalog.registry.findById(drop.id);
+        return object != nullptr && hasObjectTag(*object, "metal");
+    }
+    if (drop.kind == WorldDropKind::Material) {
+        MaterialType type = MaterialType::Count;
+        return materialTypeFromSaveName(drop.id, type) && type == MaterialType::EnhancementOre;
+    }
+    return false;
 }
 
 bool filterContainsToken(std::string_view filterText, std::string_view token)
@@ -675,7 +689,7 @@ int WorldDropSystem::pullNearbyDrops(
     return pulled;
 }
 
-int WorldDropSystem::pullMetalDrops(const ObjectCatalog& catalog, Vec2 center, float dt, float radius, const InventorySystem* inventory)
+int WorldDropSystem::pullMetalDrops(const ObjectCatalog& catalog, Vec2 center, float dt, float radius)
 {
     if (dt <= 0.0f) {
         return 0;
@@ -685,17 +699,10 @@ int WorldDropSystem::pullMetalDrops(const ObjectCatalog& catalog, Vec2 center, f
     const float effectiveRadius = std::max(8.0f, radius);
     const float radiusSq = effectiveRadius * effectiveRadius;
     for (WorldDropItem& drop : drops_) {
-        if (drop.kind != WorldDropKind::Object) {
-            continue;
-        }
         if (drop.jumpActive) {
             continue;
         }
-        const ObjectDefinition* object = catalog.registry.findById(drop.id);
-        if (object == nullptr || !hasObjectTag(*object, "metal")) {
-            continue;
-        }
-        if (!objectDropCanEnterInventory(drop, catalog, inventory)) {
+        if (!isMetalDrop(drop, catalog)) {
             continue;
         }
         const Vec2 toCenter = center - drop.position;
@@ -704,7 +711,8 @@ int WorldDropSystem::pullMetalDrops(const ObjectCatalog& catalog, Vec2 center, f
             continue;
         }
         const float distance = std::sqrt(distanceSq);
-        const float falloff = 1.0f - clamp(distance / effectiveRadius, 0.0f, 1.0f);
+        const float normalizedDistance = clamp(distance / effectiveRadius, 0.0f, 1.0f);
+        const float falloff = MetalDropMagnetMinFalloff + (1.0f - normalizedDistance) * (1.0f - MetalDropMagnetMinFalloff);
         drop.velocity += normalize(toCenter) * (CapturedMagnetDropAcceleration * falloff * dt);
         ++pulled;
         if (pulled >= CapturedMagnetDropLimit) {

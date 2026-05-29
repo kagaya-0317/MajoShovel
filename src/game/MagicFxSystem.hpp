@@ -150,6 +150,7 @@ public:
     void playThunderStrike(Vec2 origin, Vec2 target, bool strong);
     void playThunderBolt(Vec2 origin, Vec2 target);
     void playThunderSparkBurst(Vec2 position, float radius);
+    void playHealPulse(Vec2 position, float radius);
     MagicFxEmitterHandle startWindAura(Vec2 position, float radius);
     MagicFxEmitterHandle startWindWaveLoop(Vec2 position, Vec2 direction, float radius);
     void playWindImpact(Vec2 position, Vec2 direction, float radius);

@@ -463,6 +463,98 @@ const char* chestKindCode(LootChestKind kind)
     return "C";
 }
 
+std::string_view chestMimicEnemyIdForChestKind(LootChestKind kind)
+{
+    switch (kind) {
+    case LootChestKind::Common: return "surprise_box";
+    case LootChestKind::Rare: return "mimic";
+    case LootChestKind::SuperRare: return "pandora_box";
+    }
+    return "surprise_box";
+}
+
+bool chestKindForBoxDropProfile(std::string_view profile, LootChestKind& outKind)
+{
+    if (profile == "box_common") {
+        outKind = LootChestKind::Common;
+        return true;
+    }
+    if (profile == "box_rare") {
+        outKind = LootChestKind::Rare;
+        return true;
+    }
+    if (profile == "box_super") {
+        outKind = LootChestKind::SuperRare;
+        return true;
+    }
+    return false;
+}
+
+struct WeightedObjectLootProfile {
+    LootChestKind chestKind = LootChestKind::Common;
+    std::string_view requiredTag;
+};
+
+bool chestKindForRewardDropProfile(std::string_view profile, LootChestKind& outKind)
+{
+    if (profile.empty() || profile == "common" || profile == "box_common") {
+        outKind = LootChestKind::Common;
+        return true;
+    }
+    if (profile == "rare" || profile == "box_rare") {
+        outKind = LootChestKind::Rare;
+        return true;
+    }
+    if (profile == "super" || profile == "super_rare" || profile == "box_super") {
+        outKind = LootChestKind::SuperRare;
+        return true;
+    }
+    return false;
+}
+
+bool weightedObjectLootProfileForDropProfile(std::string_view profile, WeightedObjectLootProfile& outProfile)
+{
+    LootChestKind chestKind = LootChestKind::Common;
+    if (chestKindForRewardDropProfile(profile, chestKind)) {
+        outProfile.chestKind = chestKind;
+        outProfile.requiredTag = {};
+        return true;
+    }
+    if (profile == "ore") {
+        outProfile.chestKind = LootChestKind::Common;
+        outProfile.requiredTag = "ore";
+        return true;
+    }
+    if (profile == "ore_rare") {
+        outProfile.chestKind = LootChestKind::Rare;
+        outProfile.requiredTag = "ore";
+        return true;
+    }
+    if (profile == "ore_super") {
+        outProfile.chestKind = LootChestKind::SuperRare;
+        outProfile.requiredTag = "ore";
+        return true;
+    }
+    return false;
+}
+
+bool chestKindForChestMimicEnemyId(std::string_view enemyId, LootChestKind& outKind)
+{
+    if (enemyId == "surprise_box") {
+        outKind = LootChestKind::Common;
+        return true;
+    }
+    if (enemyId == "mimic") {
+        outKind = LootChestKind::Rare;
+        return true;
+    }
+    if (enemyId == "pandora_box") {
+        outKind = LootChestKind::SuperRare;
+        return true;
+    }
+    return false;
+}
+
 LootChestKind rollChestKind(std::mt19937& rng, float pathProgress)
 {
     const float progress = clamp(pathProgress, 0.0f, 1.0f);
@@ -2237,11 +2329,14 @@ void drawRingItemShape(
     Vec2 forward,
     float totalSeconds,
     bool selected,
-    bool invalid = false)
+    bool invalid = false,
+    bool moveMode = false)
 {
-    const Color outline = selected
-        ? (invalid ? Color{255, 92, 92, 255} : Color{255, 230, 150, 255})
-        : Color{96, 104, 126, 220};
+    const Color outline = moveMode
+        ? Color{255, 142, 42, 255}
+        : (selected
+            ? (invalid ? Color{255, 92, 92, 255} : Color{255, 230, 150, 255})
+            : Color{96, 104, 126, 220});
     const bool broken = item.broken();
 
     if (object != nullptr) {
@@ -2821,6 +2916,7 @@ StageDefinition makeCodeDefaultStageDefinition()
     stage.terrainHardnessMultiplier = 1.00;
     stage.warpPointCount = 3;
     stage.specialRoomCount = 1;
+    stage.bossEnemyId = "stardust_mole";
     return stage;
 }
 
@@ -2835,7 +2931,8 @@ void logCurrentStageDefinition(const StageDefinition& stage, std::string_view re
     logError("  goal_distance_tiles=" + std::to_string(stage.goalDistanceTiles) +
         " terrain_hardness_multiplier=" + std::to_string(stage.terrainHardnessMultiplier) +
         " warp_point_count=" + std::to_string(stage.warpPointCount) +
-        " special_room_count=" + std::to_string(stage.specialRoomCount));
+        " special_room_count=" + std::to_string(stage.specialRoomCount) +
+        " boss_enemy_id=\"" + stage.bossEnemyId + "\"");
 }
 
 void logDbValidationReport(const ObjectCatalog& catalog)

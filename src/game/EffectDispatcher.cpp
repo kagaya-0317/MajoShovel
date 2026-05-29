@@ -149,6 +149,58 @@ EntityStatus* statusForInvocation(const EffectInvocation& invocation)
     return context.owner != nullptr ? &context.owner->status : nullptr;
 }
 
+StatusPopupTarget statusPopupTargetForInvocation(const EffectInvocation& invocation)
+{
+    const EffectContext& context = *invocation.context;
+    if (invocation.target == "player" || invocation.target == "owner" || invocation.target == "self") {
+        return StatusPopupTarget::Player;
+    }
+    if (invocation.target == "enemy" || invocation.target == "target") {
+        return StatusPopupTarget::Enemy;
+    }
+    if (context.hitTarget != nullptr || context.targetEntity != nullptr) {
+        return StatusPopupTarget::Enemy;
+    }
+    return StatusPopupTarget::Player;
+}
+
+Vec2 statusPopupPositionForInvocation(const EffectInvocation& invocation, StatusPopupTarget target)
+{
+    const EffectContext& context = *invocation.context;
+    if (target == StatusPopupTarget::Player && context.owner != nullptr) {
+        return context.owner->position;
+    }
+    const Enemy* enemy = context.hitTarget != nullptr ? context.hitTarget : context.targetEntity;
+    if (target == StatusPopupTarget::Enemy && enemy != nullptr) {
+        return enemy->position;
+    }
+    return context.position;
+}
+
+void emitStatusPopupForApplyResult(
+    const EffectInvocation& invocation,
+    std::string_view stateId,
+    const EntityStateApplyResult& result)
+{
+    if (!shouldShowEntityStatusPopup(result) || entityStatusDisplayName(stateId).empty()) {
+        return;
+    }
+
+    const StatusPopupTarget target = statusPopupTargetForInvocation(invocation);
+    const Vec2 position = statusPopupPositionForInvocation(invocation, target);
+    if (invocation.context->statusPopupEvents != nullptr) {
+        invocation.context->statusPopupEvents->push_back(StatusPopupEvent{
+            .position = position,
+            .stateId = std::string(stateId),
+            .target = target,
+        });
+        return;
+    }
+    if (invocation.context->effects != nullptr) {
+        invocation.context->effects->spawnStatusPopup(position, stateId, target);
+    }
+}
+
 int positiveIntPower(double value, int fallback = 1)
 {
     if (value <= 0.0) {
@@ -311,12 +363,13 @@ void applyStatus(
     }
 
     const double duration = invocation.duration > 0.0 ? invocation.duration : definition->defaultDuration;
-    status->applyState(
+    const EntityStateApplyResult result = status->applyState(
         std::string(statusEffect),
         stateValue,
         duration,
         sourceIdFor(invocation),
         StateApplyMode::KeepLonger);
+    emitStatusPopupForApplyResult(invocation, statusEffect, result);
     recordEffectDiscovery(invocation, statusEffect == "status_giant" ? "巨大化状態を付与する" : "状態異常を付与する");
 }
 

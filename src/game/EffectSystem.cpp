@@ -34,7 +34,7 @@ struct ParticlePreset {
     ParticleVisual visual = ParticleVisual::Circle;
 };
 
-constexpr std::array<ParticlePreset, 29> ParticlePresets{{
+constexpr std::array<ParticlePreset, 30> ParticlePresets{{
     {ParticleEffectId::DigDust, 4, {142, 104, 66, 220}, {102, 78, 54, 190}, 76.0f, 26.0f, Pi * 2.0f, 5.5f, 1.4f, 0.76f, 0.08f, {0.0f, 330.0f}, 1.45f, false, false, 4.0f, 14.0f, {184, 136, 76, 140}, ParticleVisual::RockShard},
     {ParticleEffectId::DirtBreak, 18, {154, 110, 66, 235}, {214, 150, 82, 205}, 126.0f, 58.0f, Pi * 2.0f, 7.4f, 2.4f, 0.84f, 0.10f, {0.0f, 390.0f}, 1.55f, false, false, 8.0f, 34.0f, {218, 164, 88, 205}, ParticleVisual::RockShard},
     {ParticleEffectId::RockBreak, 18, {122, 126, 132, 235}, {86, 88, 96, 205}, 118.0f, 48.0f, Pi * 2.0f, 8.4f, 2.6f, 0.92f, 0.12f, {0.0f, 420.0f}, 1.45f, false, false, 8.0f, 32.0f, {170, 174, 180, 190}, ParticleVisual::RockShard},
@@ -57,6 +57,7 @@ constexpr std::array<ParticlePreset, 29> ParticlePresets{{
     {ParticleEffectId::PoisonAura, 4, {94, 218, 88, 120}, {180, 72, 220, 105}, 22.0f, 14.0f, Pi * 2.0f, 1.9f, 0.6f, 0.52f, 0.12f, {0.0f, -28.0f}, 1.0f, false, false},
     {ParticleEffectId::SlowAura, 4, {98, 176, 255, 130}, {220, 248, 255, 105}, 18.0f, 12.0f, Pi * 2.0f, 1.8f, 0.6f, 0.56f, 0.12f, {0.0f, -8.0f}, 1.2f, false, false},
     {ParticleEffectId::BleedAura, 4, {190, 34, 54, 125}, {255, 76, 86, 95}, 20.0f, 12.0f, Pi * 2.0f, 1.9f, 0.6f, 0.48f, 0.10f, {0.0f, 42.0f}, 1.8f, false, false},
+    {ParticleEffectId::FrozenSparkle, 6, {140, 232, 255, 210}, {255, 255, 255, 185}, 26.0f, 16.0f, Pi * 2.0f, 3.8f, 1.2f, 0.64f, 0.14f, {0.0f, -14.0f}, 0.85f, false, false, 4.0f, 9.0f, {170, 236, 255, 180}, ParticleVisual::Sparkle},
     {ParticleEffectId::SpecialItemGlimmer, 3, {180, 224, 255, 125}, {255, 224, 128, 115}, 16.0f, 10.0f, Pi * 2.0f, 1.7f, 0.5f, 0.44f, 0.10f, {0.0f, -18.0f}, 1.2f, false, false},
     {ParticleEffectId::WarpCircle, 18, {112, 208, 255, 190}, {255, 224, 112, 170}, 62.0f, 24.0f, Pi * 2.0f, 2.4f, 0.8f, 0.72f, 0.18f, {0.0f, -24.0f}, 1.5f, false, true, 18.0f, 64.0f, {126, 208, 255, 150}},
     {ParticleEffectId::BossCircle, 24, {255, 96, 120, 210}, {255, 210, 96, 190}, 74.0f, 28.0f, Pi * 2.0f, 2.7f, 0.9f, 0.82f, 0.22f, {0.0f, -18.0f}, 1.4f, false, true, 24.0f, 90.0f, {255, 176, 84, 180}},
@@ -309,6 +310,32 @@ void renderRockShard(Renderer& renderer, const Effect& effect, Vec2 center, Colo
     renderer.fillPolygon(fillPoints.data(), count, color);
 }
 
+void renderSparkle(Renderer& renderer, const Effect& effect, Vec2 center, Color color, float radius)
+{
+    if (radius <= 0.0f || color.a == 0) {
+        return;
+    }
+
+    const float pulse = 0.72f + 0.28f * std::sin(effect.age * 18.0f + effect.rotation);
+    const float longRadius = radius * (1.15f + pulse * 0.55f);
+    const float shortRadius = std::max(0.8f, radius * 0.32f);
+    const float rotation = effect.rotation;
+    std::array<Vec2, 8> points{};
+    for (std::size_t i = 0; i < points.size(); ++i) {
+        const float pointRadius = i % 2 == 0 ? longRadius : shortRadius;
+        const float angle = rotation + static_cast<float>(i) * Pi * 0.25f;
+        points[i] = snapPoint(center + fromAngle(angle) * pointRadius);
+    }
+
+    renderer.fillSoftCircle(center, longRadius * 0.65f, {color.r, color.g, color.b, static_cast<unsigned char>(color.a / 3)});
+    renderer.fillPolygon(points.data(), points.size(), color);
+    renderer.drawLine(center - fromAngle(rotation) * longRadius, center + fromAngle(rotation) * longRadius, {255, 255, 255, color.a});
+    renderer.drawLine(
+        center - fromAngle(rotation + Pi * 0.5f) * (longRadius * 0.72f),
+        center + fromAngle(rotation + Pi * 0.5f) * (longRadius * 0.72f),
+        {220, 250, 255, static_cast<unsigned char>(color.a * 3 / 4)});
+}
+
 bool isDepthSortedEffect(const Effect& effect)
 {
     return effect.type == EffectType::Particle && effect.visual == ParticleVisual::RockShard;
@@ -330,6 +357,8 @@ void renderEffectVisual(Renderer& renderer, const Effect& effect)
         renderer.drawCircle(drawPosition, radius, color);
     } else if (effect.visual == ParticleVisual::RockShard) {
         renderRockShard(renderer, effect, drawPosition, color, std::max(1.0f, radius));
+    } else if (effect.visual == ParticleVisual::Sparkle) {
+        renderSparkle(renderer, effect, drawPosition, color, std::max(1.0f, radius));
     } else {
         renderer.fillCircle(drawPosition, std::max(0.8f, radius), color);
     }
@@ -392,6 +421,17 @@ void EffectSystem::update(float dt)
     }
 
     for (DamagePopup& popup : damagePopups_.items()) {
+        if (!popup.active) {
+            continue;
+        }
+        popup.age += dt;
+        if (popup.age >= popup.duration) {
+            popup.active = false;
+            continue;
+        }
+    }
+
+    for (StatusTextPopup& popup : statusTextPopups_.items()) {
         if (!popup.active) {
             continue;
         }
@@ -539,6 +579,50 @@ void EffectSystem::renderDamagePopups(Renderer& renderer)
         renderer.drawText(pos + Vec2{2.0f, 2.0f}, buffer, shadowColor, textScale, TextStyle::Italic);
         renderer.drawText(pos, buffer, textColor, textScale, TextStyle::Italic);
     }
+
+    for (const StatusTextPopup& popup : statusTextPopups_.items()) {
+        if (!popup.active || popup.text.empty()) {
+            continue;
+        }
+
+        const float t = popup.duration > 0.0f ? clamp(popup.age / popup.duration, 0.0f, 1.0f) : 1.0f;
+        const float fade = t < 0.74f ? 1.0f : 1.0f - clamp((t - 0.74f) / 0.26f, 0.0f, 1.0f);
+        const unsigned char alpha = static_cast<unsigned char>(std::clamp(std::lround(255.0f * fade), 0L, 255L));
+        if (alpha == 0) {
+            continue;
+        }
+
+        const bool playerTarget = popup.target == StatusPopupTarget::Player;
+        const int textScale = playerTarget
+            ? (t < 0.12f ? 4 : 3)
+            : (t < 0.10f ? 3 : 2);
+        const Vec2 size = renderer.measureText(popup.text, textScale, TextStyle::Italic);
+        const float hopHeight = std::sin(clamp(t / 0.62f, 0.0f, 1.0f) * Pi) * (playerTarget ? 24.0f : 18.0f);
+        const float driftY = playerTarget ? -10.0f * t : -7.0f * t;
+        const Vec2 center = popup.position + popup.velocity * popup.age + Vec2{0.0f, driftY - hopHeight};
+        const Vec2 pos = center - Vec2{size.x * 0.5f, size.y * 0.5f};
+        const Color textColor{
+            popup.color.r,
+            popup.color.g,
+            popup.color.b,
+            alpha,
+        };
+        const Color outlineColor{
+            24,
+            10,
+            12,
+            static_cast<unsigned char>(std::clamp(std::lround(210.0f * fade), 0L, 255L)),
+        };
+        const Color glowColor{
+            popup.color.r,
+            popup.color.g,
+            popup.color.b,
+            static_cast<unsigned char>(std::clamp(std::lround((playerTarget ? 48.0f : 34.0f) * fade), 0L, 255L)),
+        };
+
+        renderer.fillSoftCircle(center, std::max(size.x, size.y) * 0.42f, glowColor);
+        renderer.drawOutlinedText(pos, popup.text, textColor, outlineColor, playerTarget ? 2 : 1, textScale, TextStyle::Italic);
+    }
 }
 
 void EffectSystem::spawnSmokeBurst(Vec2 position, SmokeBurstOptions options)
@@ -603,6 +687,30 @@ void EffectSystem::spawnDamagePopup(Vec2 position, int amount, DamagePopupStyle 
     }
     popup->amount = amount;
     popup->style = style;
+}
+
+void EffectSystem::spawnStatusPopup(Vec2 position, std::string_view stateId, StatusPopupTarget target)
+{
+    const std::string_view displayName = entityStatusDisplayName(stateId);
+    if (displayName.empty()) {
+        return;
+    }
+
+    StatusTextPopup* popup = statusTextPopups_.acquire();
+    if (!popup) {
+        return;
+    }
+
+    const bool playerTarget = target == StatusPopupTarget::Player;
+    popup->position = position + Vec2{
+        randomRange(playerTarget ? -8.0f : -10.0f, playerTarget ? 8.0f : 10.0f),
+        randomRange(playerTarget ? -54.0f : -44.0f, playerTarget ? -46.0f : -36.0f),
+    };
+    popup->velocity = {randomRange(playerTarget ? -7.0f : -9.0f, playerTarget ? 7.0f : 9.0f), 0.0f};
+    popup->duration = (playerTarget ? 1.02f : 0.86f) + randomRange(-0.04f, 0.04f);
+    popup->text = std::string(displayName);
+    popup->color = entityStatusPopupColor(stateId, target);
+    popup->target = target;
 }
 
 void EffectSystem::spawnRing(Vec2 position, float startRadius, float endRadius, Color color, float duration, EffectLayer layer)
@@ -801,6 +909,23 @@ void EffectSystem::spawnEnemyDeath(Vec2 position)
     spawnSmokeBurst(position, options);
 }
 
+void EffectSystem::spawnEnemyTransform(Vec2 position)
+{
+    SmokeBurstOptions options;
+    options.count = 18;
+    options.size = 22.0f;
+    options.sizeJitter = 0.48f;
+    options.spreadRadius = 13.0f;
+    options.speed = 34.0f;
+    options.riseSpeed = 26.0f;
+    options.duration = 0.82f;
+    options.durationJitter = 0.16f;
+    options.colorA = {154, 24, 32, 170};
+    options.colorB = {30, 14, 18, 154};
+    options.layer = EffectLayer::Foreground;
+    spawnSmokeBurst(position, options);
+}
+
 void EffectSystem::spawnThrowStart(Vec2 position, Vec2 direction)
 {
     const Vec2 forward = normalize(direction);
@@ -911,6 +1036,8 @@ void EffectSystem::spawnStatusAura(Vec2 position, std::string_view stateId)
         spawn(ParticleEffectId::SlowAura, position);
     } else if (stateId == "status_bleed") {
         spawn(ParticleEffectId::BleedAura, position);
+    } else if (stateId == "status_paralyze") {
+        spawn(ParticleEffectId::MagicThunder, position);
     } else if (stateId == "status_blind") {
         spawn(ParticleEffectId::MagicDefault, position);
     } else if (stateId == "status_wet") {
@@ -918,11 +1045,9 @@ void EffectSystem::spawnStatusAura(Vec2 position, std::string_view stateId)
     } else if (stateId == "status_hot") {
         spawn(ParticleEffectId::MagicFire, position);
     } else if (stateId == "status_frozen") {
-        spawn(ParticleEffectId::MagicIce, position);
+        spawn(ParticleEffectId::FrozenSparkle, position);
     } else if (stateId == "status_shocked") {
         spawn(ParticleEffectId::MagicThunder, position);
-    } else if (stateId == "status_confuse") {
-        spawn(ParticleEffectId::MagicDefault, position);
     }
 }
 

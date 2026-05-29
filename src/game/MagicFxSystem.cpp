@@ -681,6 +681,99 @@ void MagicFxSystem::emitBurst(const MagicFxEmitterConfig& config)
     spawnParticles(config, std::max(0, config.burstCount));
 }
 
+void MagicFxSystem::playHealPulse(Vec2 position, float radius)
+{
+    radius = std::max(8.0f, radius);
+
+    MagicFxEmitterConfig ring;
+    ring.position = position;
+    ring.particleShape = MagicFxParticleShape::Ring;
+    ring.spawnShape = MagicFxSpawnShape::Point;
+    ring.startColor = {118, 255, 168, 220};
+    ring.endColor = {220, 255, 218, 0};
+    ring.alphaScale = {0.82f, 1.0f};
+    ring.lifetime = {0.42f, 0.56f};
+    ring.startSize = {radius * 0.34f, radius * 0.44f};
+    ring.endSize = {radius * 1.16f, radius * 1.36f};
+    ring.fadeInFraction = 0.02f;
+    ring.fadeOutFraction = 0.78f;
+    ring.burstCount = 1;
+    ring.depthSorted = true;
+    emitBurst(ring);
+
+    MagicFxEmitterConfig glow;
+    glow.position = position;
+    glow.particleShape = MagicFxParticleShape::SoftCircle;
+    glow.spawnShape = MagicFxSpawnShape::Circle;
+    glow.startColor = {112, 255, 184, 146};
+    glow.endColor = {226, 255, 214, 0};
+    glow.alphaScale = {0.72f, 1.0f};
+    glow.speed = {4.0f, 18.0f};
+    glow.lifetime = {0.34f, 0.66f};
+    glow.startSize = {radius * 0.14f, radius * 0.30f};
+    glow.endSize = {0.0f, radius * 0.08f};
+    glow.height = {0.0f, 4.0f};
+    glow.verticalVelocity = {16.0f, 42.0f};
+    glow.gravity = 14.0f;
+    glow.drag = 2.2f;
+    glow.spawnRadius = radius * 0.58f;
+    glow.spreadRadians = Pi * 1.35f;
+    glow.fadeInFraction = 0.04f;
+    glow.fadeOutFraction = 0.76f;
+    glow.burstCount = 18;
+    glow.depthSorted = true;
+    glow.foreground = true;
+    emitBurst(glow);
+
+    MagicFxEmitterConfig motes;
+    motes.position = position;
+    motes.particleShape = MagicFxParticleShape::Circle;
+    motes.spawnShape = MagicFxSpawnShape::Ring;
+    motes.startColor = {198, 255, 146, 230};
+    motes.endColor = {102, 255, 202, 0};
+    motes.alphaScale = {0.76f, 1.0f};
+    motes.speed = {16.0f, 54.0f};
+    motes.lifetime = {0.38f, 0.82f};
+    motes.startSize = {1.8f, 4.2f};
+    motes.endSize = {0.0f, 0.8f};
+    motes.height = {0.0f, 6.0f};
+    motes.verticalVelocity = {24.0f, 58.0f};
+    motes.gravity = 18.0f;
+    motes.drag = 1.7f;
+    motes.spawnRadius = radius * 0.72f;
+    motes.spreadRadians = Pi * 1.50f;
+    motes.fadeInFraction = 0.05f;
+    motes.fadeOutFraction = 0.82f;
+    motes.burstCount = 12;
+    motes.depthSorted = true;
+    motes.foreground = true;
+    emitBurst(motes);
+
+    MagicFxEmitterConfig glints;
+    glints.position = position;
+    glints.particleShape = MagicFxParticleShape::SparkLine;
+    glints.spawnShape = MagicFxSpawnShape::Ring;
+    glints.startColor = {230, 255, 190, 238};
+    glints.endColor = {116, 255, 188, 0};
+    glints.alphaScale = {0.78f, 1.0f};
+    glints.speed = {24.0f, 76.0f};
+    glints.lifetime = {0.18f, 0.42f};
+    glints.startSize = {0.7f, 1.8f};
+    glints.endSize = {0.0f, 0.3f};
+    glints.height = {0.0f, 5.0f};
+    glints.verticalVelocity = {10.0f, 34.0f};
+    glints.gravity = 8.0f;
+    glints.drag = 1.2f;
+    glints.spawnRadius = radius * 0.78f;
+    glints.spreadRadians = Pi * 1.65f;
+    glints.stretch = 2.2f;
+    glints.fadeOutFraction = 0.78f;
+    glints.burstCount = 10;
+    glints.depthSorted = true;
+    glints.foreground = true;
+    emitBurst(glints);
+}
+
 MagicFxEmitterHandle MagicFxSystem::startFireAura(Vec2 position, float radius)
 {
     radius = std::max(4.0f, radius);

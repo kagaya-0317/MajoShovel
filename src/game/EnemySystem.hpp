@@ -10,6 +10,7 @@
 #include "game/EffectDispatcher.hpp"
 #include "game/Enemy.hpp"
 #include "game/InventorySystem.hpp"
+#include "game/ItemModel.hpp"
 #include "game/SpellRingSystem.hpp"
 #include "game/Player.hpp"
 #include "game/ProjectileSystem.hpp"
@@ -34,12 +35,17 @@ enum class EnemyEventType {
     Alert,
     Attack,
     Shoot,
+    HealCast,
     Heal,
     Explode,
+    BossTelegraph,
+    BossImpact,
+    TerrainBreak,
     Death,
     BossDeath,
     RewardDrop,
     ObjectDrop,
+    MaterialDrop,
     CapturedExplosion
 };
 
@@ -52,11 +58,14 @@ struct EnemyEvent {
     std::string enemyName;
     std::string effectId;
     int damageAmount = -1;
+    int healAmount = 0;
     bool critical = false;
     int moneyDrop = 0;
     std::string objectDropId;
     std::string objectDropProfile;
     int objectDropCount = 0;
+    MaterialType materialDropType = MaterialType::Count;
+    int materialDropCount = 0;
 };
 
 enum class CaptureResultType {
@@ -151,9 +160,10 @@ public:
     bool spawnNodeEnemy(TileMap& map, Vec2 desiredPosition, Vec2 playerPosition, const RuntimeBalance& balance, const EnemyCatalog& enemyCatalog, bool allowNearPlayer, bool detectedOnSpawn = false);
     bool spawnFixedNodeEnemy(TileMap& map, Vec2 desiredPosition, Vec2 playerPosition, const RuntimeBalance& balance, const EnemyCatalog& enemyCatalog, bool detectedOnSpawn = false, int* outRuntimeId = nullptr);
     bool spawnSpecificEnemy(TileMap& map, std::string_view enemyId, Vec2 desiredPosition, Vec2 playerPosition, const RuntimeBalance& balance, const EnemyCatalog& enemyCatalog, bool allowNearPlayer, bool detectedOnSpawn = false, float spawnWarmupOverride = -1.0f, int* outRuntimeId = nullptr);
+    bool spawnSpecificEnemyAtPosition(TileMap& map, std::string_view enemyId, Vec2 position, Vec2 playerPosition, const RuntimeBalance& balance, const EnemyCatalog& enemyCatalog, bool detectedOnSpawn = false, float spawnWarmupOverride = -1.0f, int* outRuntimeId = nullptr);
     bool spawnEventEnemy(TileMap& map, Vec2 desiredPosition, Vec2 playerPosition, const RuntimeBalance& balance, const EnemyCatalog& enemyCatalog, const EventEnemySpawnOptions& options, int* outRuntimeId = nullptr);
-    bool spawnBoss(TileMap& map, Vec2 playerPosition, const RuntimeBalance& balance, const EnemyCatalog& enemyCatalog);
-    bool spawnBossNear(TileMap& map, Vec2 desiredPosition, Vec2 playerPosition, const RuntimeBalance& balance, const EnemyCatalog& enemyCatalog);
+    bool spawnBoss(TileMap& map, Vec2 playerPosition, const RuntimeBalance& balance, const EnemyCatalog& enemyCatalog, std::string_view bossEnemyId = {});
+    bool spawnBossNear(TileMap& map, Vec2 desiredPosition, Vec2 playerPosition, const RuntimeBalance& balance, const EnemyCatalog& enemyCatalog, std::string_view bossEnemyId = {});
     void update(
         Player& player,
         SpellRingSystem& spellRing,
@@ -185,6 +195,7 @@ public:
     bool bossActive() const;
     void appendMinimapMarkers(std::vector<EnemyMinimapMarker>& markers) const;
     const std::vector<EnemyEvent>& events() const { return events_; }
+    std::vector<StatusPopupEvent> consumeStatusPopupEvents();
     std::string debugEnemySummary() const;
     CaptureTargetPreview previewCaptureAt(
         Vec2 targetWorld,
@@ -263,6 +274,7 @@ public:
     int activeRuntimeEnemyCount(const std::vector<int>& runtimeIds) const;
     bool runtimeEnemyActive(int runtimeId) const;
     bool runtimeEnemyPosition(int runtimeId, Vec2& outPosition) const;
+    bool setRuntimeEnemyHp(int runtimeId, int hp);
     int consumePendingXp();
     void clearTemporaryState();
 
@@ -277,6 +289,7 @@ private:
     };
 
     void queueEnemyObjectDrops(Enemy& enemy);
+    void queueEnemyMaterialDrops(Enemy& enemy);
     Enemy* findCaptureTarget(Vec2 targetWorld);
     const Enemy* findCaptureTarget(Vec2 targetWorld) const;
     Enemy* findCaptureTargetInDirection(Vec2 origin, Vec2 direction);
@@ -307,10 +320,11 @@ private:
     void applyDefinition(Enemy& enemy, const EnemyDefinition* definition, const RuntimeBalance& balance, const EnemyCatalog& enemyCatalog);
     bool spawnDefinitionAt(Vec2 position, const EnemyDefinition* definition, const RuntimeBalance& balance, const EnemyCatalog& enemyCatalog, bool detectedOnSpawn = false, Vec2 detectedTarget = {}, float spawnWarmupOverride = -1.0f, int* outRuntimeId = nullptr);
     void spawnAt(Vec2 position, const RuntimeBalance& balance, const EnemyCatalog& enemyCatalog, bool detectedOnSpawn = false, Vec2 detectedTarget = {});
-    bool spawnBossAt(Vec2 position, const RuntimeBalance& balance, const EnemyCatalog& enemyCatalog, bool detectedOnSpawn = false, Vec2 detectedTarget = {});
+    bool spawnBossAt(Vec2 position, const RuntimeBalance& balance, const EnemyCatalog& enemyCatalog, std::string_view bossEnemyId = {}, bool detectedOnSpawn = false, Vec2 detectedTarget = {});
     bool findSpawnPosition(TileMap& map, Vec2 desiredPosition, Vec2 playerPosition, const RuntimeBalance& balance, Vec2& outPosition) const;
     bool findSpawnPosition(TileMap& map, Vec2 desiredPosition, Vec2 playerPosition, float radius, float minPlayerDistance, Vec2& outPosition) const;
     bool findBossSpawnPosition(TileMap& map, Vec2 playerPosition, const RuntimeBalance& balance, Vec2& outPosition) const;
+    bool updateBossActionSequence(Enemy& enemy, Player& player, TileMap& map, float dt);
     void rebuildFlowField(TileMap& map, Vec2 playerPosition);
     Vec2 flowDirectionFor(TileMap& map, Vec2 enemyPosition, Vec2 playerPosition) const;
     Vec2 separationFor(const Enemy& enemy) const;
@@ -321,6 +335,7 @@ private:
 
     ObjectPool<Enemy, balance::MaxEnemies> enemies_;
     std::vector<EnemyEvent> events_;
+    std::vector<StatusPopupEvent> statusPopupEvents_;
     int pendingXp_ = 0;
     int dugSpawnCounter_ = 0;
     int nextEnemyId_ = 1;

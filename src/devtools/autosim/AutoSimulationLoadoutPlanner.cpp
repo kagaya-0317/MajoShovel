@@ -1,5 +1,7 @@
 ﻿#include "devtools/autosim/AutoSimulationLoadoutPlanner.hpp"
 
+#include "devtools/autosim/AutoSimulationItemEvaluator.hpp"
+
 #include <algorithm>
 #include <limits>
 #include <string>
@@ -19,6 +21,7 @@ constexpr float UsefulEquipScore = 58.0f;
 constexpr float ReplaceGainScore = 26.0f;
 constexpr float BrokenProtectedReplaceGainScore = 6.0f;
 constexpr float StaffReplaceGainScore = 8.0f;
+constexpr float LowHpDiscardAvoidRatio = 0.55f;
 
 struct LoadoutProfile {
     float digWeight = 1.0f;
@@ -457,6 +460,11 @@ bool replacementRestoresMissingRole(const LoadoutProfile& profile, const Loadout
         (profile.missingLight && candidateScore.light > 0.0f);
 }
 
+bool replacementRestoresEmergencyDig(const LoadoutProfile& profile, const LoadoutScore& candidateScore)
+{
+    return profile.missingDig && candidateScore.dig > 0.0f;
+}
+
 bool removableForReplacement(
     const RingChoice& target,
     const LoadoutProfile& profile,
@@ -483,6 +491,143 @@ float replacementGainThreshold(
         return BrokenProtectedReplaceGainScore;
     }
     return ReplaceGainScore;
+}
+
+bool emergencyDiscardCanUnblockReplacement(
+    const RingChoice& target,
+    const LoadoutProfile& profile,
+    const LoadoutScore& candidateScore)
+{
+    return target.item != nullptr &&
+        target.item->broken &&
+        replacementRestoresEmergencyDig(profile, candidateScore);
+}
+
+bool codexObtained(const GameTestObjectEntrySnapshot& item)
+{
+    return static_cast<int>(item.codexStage) >= static_cast<int>(GameTestCodexStage::Obtained);
+}
+
+bool selfTarget(std::string_view target)
+{
+    return target == "player" || target == "owner" || target == "self";
+}
+
+bool hasSelfHeal(const GameTestObjectEntrySnapshot& item)
+{
+    return std::any_of(item.useEffects.begin(), item.useEffects.end(), [](const GameTestUseEffectSnapshot& effect) {
+        return selfTarget(effect.target) && effect.effect == "heal" && effect.value > 0.0;
+    });
+}
+
+bool sameBackpackEntry(
+    const GameTestObjectEntrySnapshot& lhs,
+    const GameTestObjectEntrySnapshot& rhs)
+{
+    if (!lhs.instanceId.empty() || !rhs.instanceId.empty()) {
+        return !lhs.instanceId.empty() && lhs.instanceId == rhs.instanceId;
+    }
+    return !lhs.objectId.empty() && lhs.objectId == rhs.objectId;
+}
+
+bool discardableForRingRecovery(
+    const GameTestSnapshot& snapshot,
+    const GameTestObjectEntrySnapshot& item,
+    const GameTestObjectEntrySnapshot& replacementItem)
+{
+    if (item.location != GameTestInventoryLocation::Backpack ||
+        item.objectId.empty() ||
+        item.important ||
+        item.equipped ||
+        item.protectionEnabled ||
+        !codexObtained(item) ||
+        sameBackpackEntry(item, replacementItem)) {
+        return false;
+    }
+    if (item.kind == GameTestObjectEntryKind::Stack && item.count <= 0) {
+        return false;
+    }
+    if (item.kind == GameTestObjectEntryKind::Instance && item.instanceId.empty()) {
+        return false;
+    }
+    if (hasSelfHeal(item) && hpRatio(snapshot) <= LowHpDiscardAvoidRatio) {
+        return false;
+    }
+    return true;
+}
+
+float emergencyDiscardCost(
+    const GameTestObjectEntrySnapshot& item,
+    const AutoSimulationItemScore& score)
+{
+    float cost = score.keep + score.investment * 0.35f + score.loadout * 0.25f;
+    cost += std::min(36.0f, static_cast<float>(std::max(0, item.sellPrice)) * 0.025f);
+    if (item.kind == GameTestObjectEntryKind::Stack) {
+        cost += std::min(80.0f, static_cast<float>(std::max(0, item.count - 1)) * 5.0f);
+    } else {
+        cost += 8.0f;
+    }
+    if (canEquipFromBackpack(item)) {
+        cost += 42.0f + score.loadout * 0.35f;
+    }
+    if (isStaff(item)) {
+        cost += 24.0f + item.staffEquipScore * 0.60f;
+    }
+    if (hasSelfHeal(item)) {
+        cost += 24.0f;
+    }
+    if (item.broken) {
+        cost -= 18.0f;
+    }
+    return cost;
+}
+
+GameTestAction makeDiscardAction(
+    const GameTestObjectEntrySnapshot& item,
+    const AutoSimulationItemScore& score,
+    const GameTestObjectEntrySnapshot& replacementItem)
+{
+    GameTestAction action;
+    action.kind = item.kind == GameTestObjectEntryKind::Instance
+        ? GameTestActionKind::DiscardBackpackInstance
+        : GameTestActionKind::DiscardBackpackStack;
+    action.objectId = item.objectId;
+    action.instanceId = item.instanceId;
+    action.count = item.kind == GameTestObjectEntryKind::Stack ? std::max(1, item.count) : 1;
+    action.reason = "emergency_ring_recovery_free_slot " + score.reason + " for " + replacementItem.objectId;
+    return action;
+}
+
+std::optional<GameTestAction> chooseEmergencyDiscardAction(
+    const GameTestSnapshot& snapshot,
+    const GameTestObjectEntrySnapshot& replacementItem)
+{
+    const GameTestObjectEntrySnapshot* bestDiscard = nullptr;
+    AutoSimulationItemScore bestScore;
+    float bestCost = std::numeric_limits<float>::max();
+    AutoSimulationItemEvaluator evaluator;
+    AutoSimulationItemEvaluationContext itemContext =
+        autoSimulationItemEvaluationContextForSnapshot(snapshot);
+    itemContext.backpackPressure = true;
+
+    for (const GameTestObjectEntrySnapshot& item : snapshot.inventory.backpackItems) {
+        if (!discardableForRingRecovery(snapshot, item, replacementItem)) {
+            continue;
+        }
+
+        const AutoSimulationItemScore score = evaluator.evaluate(item, itemContext);
+        const float cost = emergencyDiscardCost(item, score);
+        if (cost < bestCost) {
+            bestDiscard = &item;
+            bestScore = score;
+            bestCost = cost;
+        }
+    }
+
+    if (bestDiscard == nullptr) {
+        return std::nullopt;
+    }
+    return makeDiscardAction(*bestDiscard, bestScore, replacementItem);
 }
 
 std::string loadoutReason(std::string_view prefix, const LoadoutScore& score)
@@ -606,6 +751,8 @@ std::optional<GameTestAction> AutoSimulationLoadoutPlanner::chooseAction(const G
     const GameTestRingItemSnapshot* replacementTarget = nullptr;
     LoadoutScore replacementScore;
     float bestReplaceGain = -std::numeric_limits<float>::max();
+    const GameTestObjectEntrySnapshot* emergencyReplacementItem = nullptr;
+    float bestEmergencyReplaceGain = -std::numeric_limits<float>::max();
 
     const bool backpackHasFreeSlot =
         snapshot.inventory.backpackCapacity <= 0 ||
@@ -644,10 +791,6 @@ std::optional<GameTestAction> AutoSimulationLoadoutPlanner::chooseAction(const G
                 directScore = candidateScore;
             }
 
-            if (!backpackHasFreeSlot) {
-                continue;
-            }
-
             for (const RingChoice& target : ringChoices) {
                 if (!removableForReplacement(target, profile, candidateScore)) {
                     continue;
@@ -661,11 +804,19 @@ std::optional<GameTestAction> AutoSimulationLoadoutPlanner::chooseAction(const G
 
                 const float threshold = replacementGainThreshold(target, profile, candidateScore);
                 const float gain = candidateScore.total - target.score.total;
-                if (gain > threshold && gain > bestReplaceGain) {
+                if (gain <= threshold) {
+                    continue;
+                }
+                if (backpackHasFreeSlot && gain > bestReplaceGain) {
                     bestReplaceGain = gain;
                     replacementItem = &item;
                     replacementTarget = target.item;
                     replacementScore = candidateScore;
+                } else if (!backpackHasFreeSlot &&
+                    emergencyDiscardCanUnblockReplacement(target, profile, candidateScore) &&
+                    gain > bestEmergencyReplaceGain) {
+                    bestEmergencyReplaceGain = gain;
+                    emergencyReplacementItem = &item;
                 }
             }
         }
@@ -673,6 +824,13 @@ std::optional<GameTestAction> AutoSimulationLoadoutPlanner::chooseAction(const G
 
     if (directItem != nullptr && directRingIndex >= 0) {
         return makeEquipAction(*directItem, directRingIndex, loadoutReason("loadout_add", directScore));
+    }
+
+    if (!backpackHasFreeSlot && emergencyReplacementItem != nullptr) {
+        if (std::optional<GameTestAction> action =
+            chooseEmergencyDiscardAction(snapshot, *emergencyReplacementItem)) {
+            return action;
+        }
     }
 
     if (replacementItem == nullptr || replacementTarget == nullptr) {

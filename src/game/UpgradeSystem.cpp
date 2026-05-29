@@ -279,9 +279,6 @@ std::optional<RingLevelUpgradeSelection> UpgradeSystem::update(
 
     for (int i = 0; i < 3; ++i) {
         const UiRect rect = optionRect(i);
-        if (rect.contains(ui.mouse())) {
-            selectedOption_ = i;
-        }
         if (ui.pressed(rect)) {
             if (selectedOption_ != i) {
                 ui.emitSound(UiSoundEvent::TabSwitch);

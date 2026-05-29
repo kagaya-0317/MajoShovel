@@ -280,6 +280,15 @@ AutoSimulationIntent actionIntent(const GameTestAction& action)
         intent.goal = AutoSimulationGoal::EquipLoadout;
         intent.subject = "リングを整理したい";
         break;
+    case GameTestActionKind::DiscardBackpackStack:
+    case GameTestActionKind::DiscardBackpackInstance:
+        intent.goal = AutoSimulationGoal::EquipLoadout;
+        intent.iconKind = action.objectId.empty() ? AutoSimulationIntentIconKind::None : AutoSimulationIntentIconKind::Object;
+        intent.iconKey = action.objectId;
+        intent.prefix = "復旧のため";
+        intent.subject = "荷物";
+        intent.suffix = "を空けたい";
+        break;
     case GameTestActionKind::SyncEncyclopedia:
         intent.goal = AutoSimulationGoal::EquipLoadout;
         intent.iconKind = AutoSimulationIntentIconKind::Base;

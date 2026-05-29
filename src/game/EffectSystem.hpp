@@ -5,7 +5,9 @@
 #include "engine/ObjectPool.hpp"
 #include "engine/Renderer.hpp"
 #include "game/DepthRender.hpp"
+#include "game/EntityStatusVisuals.hpp"
 #include "game/TileMap.hpp"
+#include <string>
 #include <string_view>
 #include <vector>
 
@@ -18,7 +20,8 @@ enum class EffectType {
 
 enum class ParticleVisual {
     Circle,
-    RockShard
+    RockShard,
+    Sparkle
 };
 
 enum class EffectLayer {
@@ -56,6 +59,7 @@ enum class ParticleEffectId {
     PoisonAura,
     SlowAura,
     BleedAura,
+    FrozenSparkle,
     SpecialItemGlimmer,
     WarpCircle,
     BossCircle,
@@ -110,6 +114,17 @@ struct DamagePopup {
     DamagePopupStyle style = DamagePopupStyle::Enemy;
 };
 
+struct StatusTextPopup {
+    bool active = false;
+    Vec2 position{};
+    Vec2 velocity{};
+    float age = 0.0f;
+    float duration = 0.9f;
+    std::string text;
+    Color color{255, 255, 255, 255};
+    StatusPopupTarget target = StatusPopupTarget::Enemy;
+};
+
 struct SmokeBurstOptions {
     int count = 10;
     float size = 22.0f;
@@ -157,11 +172,13 @@ public:
         EffectLayer layer = EffectLayer::World,
         Color colorOverride = {0, 0, 0, 0});
     void spawnDamagePopup(Vec2 position, int amount, DamagePopupStyle style = DamagePopupStyle::Enemy);
+    void spawnStatusPopup(Vec2 position, std::string_view stateId, StatusPopupTarget target);
     void spawnDigHit(Vec2 position, Vec2 direction = {1.0f, 0.0f}, Color colorOverride = {0, 0, 0, 0});
     void spawnTileBreak(Vec2 position, TileType tileType = TileType::Dirt, Color colorOverride = {0, 0, 0, 0});
     void spawnSmokeBurst(Vec2 position, SmokeBurstOptions options = {});
     void spawnEnemyHit(Vec2 position, std::string_view effect = {});
     void spawnEnemyDeath(Vec2 position);
+    void spawnEnemyTransform(Vec2 position);
     void spawnThrowStart(Vec2 position, Vec2 direction);
     void spawnReturn(Vec2 position);
     void spawnRingTrail(Vec2 position, Vec2 direction);
@@ -202,6 +219,7 @@ private:
     ObjectPool<Effect, balance::MaxEffects> effects_;
     ObjectPool<SmokePuff, 192> smokePuffs_;
     ObjectPool<DamagePopup, 128> damagePopups_;
+    ObjectPool<StatusTextPopup, 96> statusTextPopups_;
 };
 
 }

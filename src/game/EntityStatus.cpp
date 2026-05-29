@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cmath>
 
 namespace majo {
 
@@ -93,7 +94,7 @@ void EntityStatus::clear()
     modifiers_.clear();
 }
 
-void EntityStatus::applyState(
+EntityStateApplyResult EntityStatus::applyState(
     std::string stateId,
     double value,
     double duration,
@@ -101,17 +102,29 @@ void EntityStatus::applyState(
     StateApplyMode mode)
 {
     if (stateId.empty()) {
-        return;
+        return {};
     }
 
     for (EntityState& state : states_) {
         if (state.stateId != stateId) {
             continue;
         }
+        const double previousDuration = state.duration;
+        const double previousValue = state.value;
         state.value = value;
         state.source = std::move(source);
         mergeDuration(state.duration, duration, mode);
-        return;
+        const bool durationExtended = state.duration < 0.0
+            ? previousDuration >= 0.0
+            : previousDuration >= 0.0 && state.duration > previousDuration + 0.001;
+        return EntityStateApplyResult{
+            .applied = true,
+            .added = false,
+            .refreshed = durationExtended || std::abs(previousValue - value) > 0.0001,
+            .durationExtended = durationExtended,
+            .previousDuration = previousDuration,
+            .newDuration = state.duration,
+        };
     }
 
     states_.push_back(EntityState{
@@ -120,6 +133,14 @@ void EntityStatus::applyState(
         .duration = duration,
         .source = std::move(source),
     });
+    return EntityStateApplyResult{
+        .applied = true,
+        .added = true,
+        .refreshed = true,
+        .durationExtended = duration != 0.0,
+        .previousDuration = 0.0,
+        .newDuration = duration,
+    };
 }
 
 bool EntityStatus::removeState(std::string_view stateId)

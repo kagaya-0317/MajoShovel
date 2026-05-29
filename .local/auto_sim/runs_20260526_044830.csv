@@ -1,0 +1,7 @@
+﻿run_index,stage_id,stage_name,seed,result,elapsed_seconds,player_level,hp,max_hp,dug_tiles,defeated_enemies,acquired_items,acquired_object_items,money,total_materials,warp_discovered,warp_total,boss_defeated,timeout,stuck_count
+1,stage_01_stardust,星くずの浅坑,0,stopped,0.00,1,10,10,0,0,0,0,0,0,0,0,false,false,0
+2,stage_01_stardust,星くずの浅坑,762432826,stopped,142.92,2,15,15,135,8,31,8,62,2,0,4,false,false,0
+3,stage_01_stardust,星くずの浅坑,762432826,stopped,35.83,2,15,15,187,11,45,10,118,6,0,4,false,false,0
+4,stage_01_stardust,星くずの浅坑,762432826,stopped,14.47,2,15,15,187,11,45,10,118,6,0,4,false,false,0
+5,stage_01_stardust,星くずの浅坑,762432826,stopped,1.80,2,15,15,187,11,45,10,118,6,0,4,false,false,0
+6,stage_01_stardust,星くずの浅坑,762432826,stopped,268.25,3,17,18,288,18,68,15,224,10,0,4,false,false,1

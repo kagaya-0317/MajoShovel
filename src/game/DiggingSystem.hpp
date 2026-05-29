@@ -5,6 +5,7 @@
 #include "game/Player.hpp"
 #include "game/SpellRingSystem.hpp"
 #include "game/TileMap.hpp"
+#include <string>
 #include <vector>
 
 namespace majo {
@@ -19,6 +20,12 @@ struct TerrainHitTile {
     Vec2 center{};
     Color color{105, 68, 37, 255};
 };
+
+struct CapturedRewardDropRequest {
+    Vec2 position{};
+    std::string profile;
+};
+
 class EncyclopediaSystem;
 class MagicSystem;
 
@@ -37,14 +44,14 @@ public:
     const std::vector<Vec2>& openedTiles() const { return openedTiles_; }
     const std::vector<TerrainHitTile>& hitTiles() const { return hitTiles_; }
     const std::vector<DugTile>& dugTiles() const { return dugTiles_; }
-    const std::vector<Vec2>& rewardDropRequests() const { return rewardDropRequests_; }
+    const std::vector<CapturedRewardDropRequest>& rewardDropRequests() const { return rewardDropRequests_; }
     const std::vector<Vec2>& capturedExplosionRequests() const { return capturedExplosionRequests_; }
 
 private:
     std::vector<Vec2> openedTiles_;
     std::vector<TerrainHitTile> hitTiles_;
     std::vector<DugTile> dugTiles_;
-    std::vector<Vec2> rewardDropRequests_;
+    std::vector<CapturedRewardDropRequest> rewardDropRequests_;
     std::vector<Vec2> capturedExplosionRequests_;
 };
 

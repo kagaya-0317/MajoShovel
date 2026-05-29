@@ -1,5 +1,7 @@
 ﻿#include "game/GameInternal.hpp"
 
+#include "game/EntityStatusVisuals.hpp"
+
 namespace majo {
 
 namespace {
@@ -26,13 +28,14 @@ float smootherStep(float t)
     return t * t * t * (t * (t * 6.0f - 15.0f) + 10.0f);
 }
 
-Vec2 paralyzeJitterOffset(const EntityStatus& status, double totalSeconds)
+float dotVec2(Vec2 a, Vec2 b)
 {
-    if (!status.hasState("status_paralyze") && !status.hasState("status_shocked")) {
-        return {};
-    }
-    const int phase = static_cast<int>(std::floor(std::max(0.0, totalSeconds) * 36.0));
-    return {phase % 2 == 0 ? -1.0f : 1.0f, 0.0f};
+    return a.x * b.x + a.y * b.y;
+}
+
+Vec2 dungeonTileVec(DungeonTile tile)
+{
+    return {static_cast<float>(tile.x), static_cast<float>(tile.y)};
 }
 
 float stunWakeHopOffset(float stunWakeTimer)
@@ -79,6 +82,55 @@ std::string signedWeightShort(double value)
     char buffer[32];
     std::snprintf(buffer, sizeof(buffer), "%+.1fkg", value);
     return buffer;
+}
+
+float projectedDungeonRouteDistanceTiles(const DungeonLayout& layout, Vec2 tilePosition)
+{
+    if (layout.mainPathPoints.size() < 2) {
+        return length(tilePosition - dungeonTileVec(layout.startTile));
+    }
+
+    float bestDistanceSq = std::numeric_limits<float>::max();
+    float bestRouteDistance = 0.0f;
+    float traveled = 0.0f;
+    for (std::size_t i = 1; i < layout.mainPathPoints.size(); ++i) {
+        const Vec2 a = layout.mainPathPoints[i - 1];
+        const Vec2 b = layout.mainPathPoints[i];
+        const Vec2 ab = b - a;
+        const float segmentLengthSq = lengthSquared(ab);
+        const float segmentT = segmentLengthSq > 0.0001f
+            ? clamp(dotVec2(tilePosition - a, ab) / segmentLengthSq, 0.0f, 1.0f)
+            : 0.0f;
+        const Vec2 projected = a + ab * segmentT;
+        const float distanceSq = distanceSquared(tilePosition, projected);
+        const float segmentLength = std::sqrt(segmentLengthSq);
+        if (distanceSq < bestDistanceSq) {
+            bestDistanceSq = distanceSq;
+            bestRouteDistance = traveled + segmentLength * segmentT;
+        }
+        traveled += segmentLength;
+    }
+
+    return std::max(0.0f, bestRouteDistance);
+}
+
+std::string dungeonDepthTopInfoEntry(const DungeonLayout& layout, Vec2 tilePosition)
+{
+    char buffer[32];
+    const int meters = std::max(0, static_cast<int>(std::lround(projectedDungeonRouteDistanceTiles(layout, tilePosition))));
+    std::snprintf(buffer, sizeof(buffer), "深度 %dm", meters);
+    return buffer;
+}
+
+std::string dungeonWarpTopInfoEntry(int discovered, int total)
+{
+    if (total <= 0) {
+        return {};
+    }
+
+    char buffer[32];
+    std::snprintf(buffer, sizeof(buffer), "%d/%d", std::clamp(discovered, 0, total), total);
+    return inlineWorldIconTag(worldIconKey(WorldIconId::WarpPoint)) + std::string(buffer);
 }
 
 bool equipmentTargetAppliesToRing(std::string_view target, int ringIndex)
@@ -458,10 +510,153 @@ std::array<UiCommandMenuItem, 1> ringCommandItems(bool placeCommand, bool enable
     return {{{placeCommand ? "アイテムを配置" : "リングから外す", enabled}}};
 }
 
+Vec2 ringPressedDirection(const Input& input)
+{
+    Vec2 direction{};
+    if (input.pressed(InputAction::MoveLeft)) {
+        direction.x -= 1.0f;
+    }
+    if (input.pressed(InputAction::MoveRight)) {
+        direction.x += 1.0f;
+    }
+    if (input.pressed(InputAction::MoveUp)) {
+        direction.y -= 1.0f;
+    }
+    if (input.pressed(InputAction::MoveDown)) {
+        direction.y += 1.0f;
+    }
+    return lengthSquared(direction) > 1.0f ? normalize(direction) : direction;
+}
+
+int ringItemSelectionByDirection(
+    const std::vector<SpellRingItem>& items,
+    const SpellRingSystem& spellRing,
+    const RuntimeBalance& balance,
+    int current,
+    Vec2 direction)
+{
+    const int count = static_cast<int>(items.size());
+    if (count <= 0) {
+        return 0;
+    }
+    if (count == 1 || lengthSquared(direction) <= 0.0001f) {
+        return std::clamp(current, 0, count - 1);
+    }
+
+    const Vec2 unitDirection = normalize(direction);
+    const int currentIndex = std::clamp(current, 0, count - 1);
+    const Vec2 currentCenter = ringItemUiCenter(
+        items[static_cast<std::size_t>(currentIndex)],
+        spellRing,
+        balance,
+        currentIndex,
+        count);
+
+    int bestIndex = currentIndex;
+    bool bestForward = false;
+    float bestScore = -std::numeric_limits<float>::max();
+    float bestDistanceSq = std::numeric_limits<float>::max();
+    for (int i = 0; i < count; ++i) {
+        if (i == currentIndex) {
+            continue;
+        }
+        const Vec2 itemCenter = ringItemUiCenter(
+            items[static_cast<std::size_t>(i)],
+            spellRing,
+            balance,
+            i,
+            count);
+        const Vec2 offset = itemCenter - currentCenter;
+        const float distanceSq = lengthSquared(offset);
+        if (distanceSq <= 0.0001f) {
+            continue;
+        }
+
+        const float alignment = dotVec2(normalize(offset), unitDirection);
+        const bool forward = alignment > 0.15f;
+        const float score = forward
+            ? alignment * 256.0f - std::sqrt(distanceSq) * 0.25f
+            : alignment;
+        if ((forward && !bestForward) ||
+            (forward == bestForward && (score > bestScore + 0.001f ||
+                (std::fabs(score - bestScore) <= 0.001f && distanceSq < bestDistanceSq)))) {
+            bestIndex = i;
+            bestForward = forward;
+            bestScore = score;
+            bestDistanceSq = distanceSq;
+        }
+    }
+
+    return bestForward ? bestIndex : currentIndex;
+}
+
+int ringMoveStepSignForDirection(
+    const SpellRingSystem& spellRing,
+    const RuntimeBalance& balance,
+    int itemIndex,
+    int itemCount,
+    float currentAngle,
+    Vec2 direction)
+{
+    if (lengthSquared(direction) <= 0.0001f) {
+        return 0;
+    }
+
+    const Vec2 unitDirection = normalize(direction);
+    const Vec2 currentCenter = ringItemUiCenterAtAngle(currentAngle, spellRing, balance, itemIndex, itemCount);
+    const auto directionScore = [&](float angle) {
+        const Vec2 nextCenter = ringItemUiCenterAtAngle(
+            spellRing.quantizeLocalAngle(angle, balance),
+            spellRing,
+            balance,
+            itemIndex,
+            itemCount);
+        const Vec2 offset = nextCenter - currentCenter;
+        if (lengthSquared(offset) <= 0.0001f) {
+            return -std::numeric_limits<float>::max();
+        }
+        return dotVec2(normalize(offset), unitDirection);
+    };
+
+    const float clockwiseScore = directionScore(currentAngle + RingAngleStep);
+    const float counterClockwiseScore = directionScore(currentAngle - RingAngleStep);
+    return clockwiseScore >= counterClockwiseScore ? 1 : -1;
+}
+
+bool moveRingItemByDirection(
+    SpellRingSystem& spellRing,
+    const RuntimeBalance& balance,
+    int itemIndex,
+    int itemCount,
+    Vec2 direction)
+{
+    std::vector<SpellRingItem>& items = spellRing.items();
+    if (itemIndex < 0 || itemIndex >= static_cast<int>(items.size())) {
+        return false;
+    }
+
+    const int sign = ringMoveStepSignForDirection(
+        spellRing,
+        balance,
+        itemIndex,
+        itemCount,
+        items[static_cast<std::size_t>(itemIndex)].localAngle,
+        direction);
+    return sign != 0 && spellRing.moveItemAngle(itemIndex, RingAngleStep * static_cast<float>(sign));
+}
+
 UiRect ringArrangeButtonRect()
 {
     const UiRect panel = ringPanelRect();
     return {{panel.pos.x + 48.0f, panel.pos.y + 196.0f}, {118.0f, ui::ButtonHeight}};
+}
+
+UiRect ringRemoveAllButtonRect()
+{
+    constexpr Vec2 ButtonSize{118.0f, ui::ButtonHeight};
+    const UiRect panel = ringPanelRect();
+    const float rightEdge = ringDetailRect().pos.x - 48.0f;
+    return {{rightEdge - ButtonSize.x, panel.pos.y + 196.0f}, ButtonSize};
 }
 
 UiRect ringPlaceWindowRect()
@@ -768,6 +963,102 @@ bool returnRingItemToInventory(
         inventoryInstanceFromRingItem(inventory, objectCatalog, item));
 }
 
+int ringInventoryFreeObjectSlots(const InventorySystem& inventory)
+{
+    const int usedSlots = static_cast<int>(inventory.objectStacks().size() + inventory.objectInstances().size());
+    return std::max(0, inventory.screenSlotCount() - usedSlots);
+}
+
+struct RingRemoveCandidate {
+    int itemIndex = -1;
+    float weight = 0.0f;
+};
+
+std::vector<RingRemoveCandidate> removableRingItemsByWeight(const std::vector<SpellRingItem>& items)
+{
+    std::vector<RingRemoveCandidate> candidates;
+    candidates.reserve(items.size());
+    for (int i = 0; i < static_cast<int>(items.size()); ++i) {
+        const SpellRingItem& item = items[static_cast<std::size_t>(i)];
+        if (item.objectId.empty()) {
+            continue;
+        }
+        candidates.push_back(RingRemoveCandidate{i, std::max(0.0f, item.weight)});
+    }
+
+    std::stable_sort(candidates.begin(), candidates.end(), [](const RingRemoveCandidate& left, const RingRemoveCandidate& right) {
+        if (std::fabs(left.weight - right.weight) > 0.0001f) {
+            return left.weight > right.weight;
+        }
+        return left.itemIndex < right.itemIndex;
+    });
+    return candidates;
+}
+
+bool removeAllRingItemsToInventory(
+    std::vector<SpellRingItem>& items,
+    int& selection,
+    InventorySystem& inventory,
+    const ObjectCatalog& objectCatalog,
+    std::string& status)
+{
+    std::vector<RingRemoveCandidate> candidates = removableRingItemsByWeight(items);
+    if (candidates.empty()) {
+        status = "外せるアイテムがありません";
+        return false;
+    }
+
+    const int removableCount = static_cast<int>(candidates.size());
+    const int removeLimit = std::min(removableCount, ringInventoryFreeObjectSlots(inventory));
+    if (removeLimit <= 0) {
+        status = "インベントリ満杯のため外せません";
+        return false;
+    }
+
+    std::vector<int> removedIndices;
+    removedIndices.reserve(static_cast<std::size_t>(removeLimit));
+    for (int i = 0; i < removeLimit; ++i) {
+        const int itemIndex = candidates[static_cast<std::size_t>(i)].itemIndex;
+        if (itemIndex < 0 || itemIndex >= static_cast<int>(items.size()) ||
+            !returnRingItemToInventory(inventory, objectCatalog, items[static_cast<std::size_t>(itemIndex)])) {
+            break;
+        }
+        removedIndices.push_back(itemIndex);
+    }
+
+    if (removedIndices.empty()) {
+        status = "インベントリ満杯のため外せません";
+        return false;
+    }
+
+    const int removedBeforeSelection = static_cast<int>(std::count_if(
+        removedIndices.begin(),
+        removedIndices.end(),
+        [selection](int itemIndex) {
+            return itemIndex < selection;
+        }));
+
+    std::sort(removedIndices.begin(), removedIndices.end(), [](int left, int right) {
+        return left > right;
+    });
+    for (int itemIndex : removedIndices) {
+        if (itemIndex >= 0 && itemIndex < static_cast<int>(items.size())) {
+            items.erase(items.begin() + itemIndex);
+        }
+    }
+
+    selection -= removedBeforeSelection;
+    selection = items.empty() ? 0 : std::clamp(selection, 0, static_cast<int>(items.size()) - 1);
+
+    const int removedCount = static_cast<int>(removedIndices.size());
+    if (removedCount >= removableCount) {
+        status = "外せるアイテムをすべて戻しました";
+    } else {
+        status = "空き枠分だけ重い順に" + std::to_string(removedCount) + "個戻しました";
+    }
+    return true;
+}
+
 bool removeRingItemToInventory(
     std::vector<SpellRingItem>& items,
     int& selection,
@@ -1052,6 +1343,22 @@ constexpr OperationSettingsActionRow OperationSettingsActionRows[] = {
 UiRect optionsPanelRect()
 {
     return {{180.0f, 70.0f}, {920.0f, 580.0f}};
+}
+
+UiRect statusPanelRect()
+{
+    return {{120.0f, 70.0f}, {1040.0f, 580.0f}};
+}
+
+UiRect pausePanelForPage(PauseMenuPage page)
+{
+    if (page == PauseMenuPage::Options) {
+        return optionsPanelRect();
+    }
+    if (page == PauseMenuPage::Status) {
+        return statusPanelRect();
+    }
+    return pausePanelRect();
 }
 
 UiRect optionsPageTabRect(int index)
@@ -1488,6 +1795,8 @@ void Game::updateRingScreen(const Input& input, UiContext& ui, float dt)
         ringCommandPlaceActive_ = false;
         ringPlaceModeActive_ = false;
         ringEmptyPressActive_ = false;
+        ringItemMoveModeActive_ = false;
+        ringItemMoveIndex_ = -1;
         ringSnapActive_ = false;
         ringDragItemIndex_ = -1;
         ringStatus_.clear();
@@ -1680,6 +1989,51 @@ void Game::updateRingScreen(const Input& input, UiContext& ui, float dt)
         return;
     }
 
+    if (ringItemMoveModeActive_) {
+        if (ringItemMoveIndex_ < 0 || ringItemMoveIndex_ >= static_cast<int>(items.size())) {
+            ringItemMoveModeActive_ = false;
+            ringItemMoveIndex_ = -1;
+            ui.block(ringPanelRect());
+            return;
+        }
+
+        ringSlotSelection_ = ringItemMoveIndex_;
+        ringDetailShowsRing_ = false;
+
+        if (uiCancelRequested(ringCancelState_, input, ui, ringPanelRect())) {
+            items[static_cast<std::size_t>(ringItemMoveIndex_)].localAngle = ringItemMoveOriginalAngle_;
+            ringItemMoveModeActive_ = false;
+            ringItemMoveIndex_ = -1;
+            ringStatus_ = "移動をキャンセルしました";
+            ui.emitSound(UiSoundEvent::Cancel);
+            ui.block(ringPanelRect());
+            return;
+        }
+
+        if (input.confirmPressed() || input.useItemPressed()) {
+            ringItemMoveModeActive_ = false;
+            ringItemMoveIndex_ = -1;
+            ringStatus_ = "位置を確定しました";
+            ui.emitSound(UiSoundEvent::Confirm);
+            ui.block(ringPanelRect());
+            return;
+        }
+
+        const Vec2 moveDirection = ringPressedDirection(input);
+        if (lengthSquared(moveDirection) > 0.0001f) {
+            if (moveRingItemByDirection(spellRing_, balance_, ringItemMoveIndex_, static_cast<int>(items.size()), moveDirection)) {
+                ui.emitSound(UiSoundEvent::ItemMove);
+                ringStatus_.clear();
+            } else {
+                ui.emitSound(UiSoundEvent::Cancel);
+                ringStatus_ = "その位置には移動できません";
+            }
+        }
+
+        ui.block(ringPanelRect());
+        return;
+    }
+
     std::array<UiTabItem, SpellRingCount> ringTabs{};
     std::array<UiRect, SpellRingCount> ringTabRects{};
     std::array<std::string, SpellRingCount> ringTabLabels{};
@@ -1712,6 +2066,8 @@ void Game::updateRingScreen(const Input& input, UiContext& ui, float dt)
             ringCommandPlaceActive_ = false;
             ringPlaceModeActive_ = false;
             ringEmptyPressActive_ = false;
+            ringItemMoveModeActive_ = false;
+            ringItemMoveIndex_ = -1;
             ringStatus_.clear();
         }
         return;
@@ -1723,10 +2079,7 @@ void Game::updateRingScreen(const Input& input, UiContext& ui, float dt)
         closeUiCommandMenu(ringCommandMenu_);
         ringCommandItemIndex_ = -1;
         ringCommandPlaceActive_ = false;
-        if (ringGrabActive_) {
-            ui.emitSound(UiSoundEvent::Cancel);
-            ringStatus_ = "つかみ中は整列できません";
-        } else if (arrangeActiveRingItemsEvenly(spellRing_, balance_)) {
+        if (arrangeActiveRingItemsEvenly(spellRing_, balance_)) {
             ui.emitSound(UiSoundEvent::ItemMove);
             ringSlotSelection_ = std::clamp(ringSlotSelection_, 0, static_cast<int>(items.size()) - 1);
             ringStatus_ = "等間隔に整列しました";
@@ -1734,6 +2087,22 @@ void Game::updateRingScreen(const Input& input, UiContext& ui, float dt)
             ui.emitSound(UiSoundEvent::Cancel);
             ringStatus_ = "アイテム未配置です";
         }
+        ui.block(ringPanelRect());
+        return;
+    }
+
+    if (ui.pressed(ringRemoveAllButtonRect())) {
+        closeUiCommandMenu(ringCommandMenu_);
+        ringCommandItemIndex_ = -1;
+        ringCommandPlaceActive_ = false;
+        ringPlaceModeActive_ = false;
+        ringEmptyPressActive_ = false;
+        ringItemMoveModeActive_ = false;
+        ringItemMoveIndex_ = -1;
+        ringDetailShowsRing_ = false;
+        ui.emitSound(removeAllRingItemsToInventory(items, ringSlotSelection_, inventory_, objectCatalog_, ringStatus_)
+            ? UiSoundEvent::ItemMove
+            : UiSoundEvent::Cancel);
         ui.block(ringPanelRect());
         return;
     }
@@ -1812,9 +2181,7 @@ void Game::updateRingScreen(const Input& input, UiContext& ui, float dt)
         if (input.mouseLeftReleased()) {
             if (ringEmptyPressActive_) {
                 const float placeAngle = ringEmptyPressAngle_;
-                if (ringGrabActive_) {
-                    ringStatus_ = "つかみ中は配置できません";
-                } else if (firstRingPlaceableSlot(inventory_, spellRing_, placeAngle) < 0) {
+                if (firstRingPlaceableSlot(inventory_, spellRing_, placeAngle) < 0) {
                     ringStatus_ = ringPlacementUnavailableStatus(inventory_, spellRing_);
                 } else {
                     ringCommandItemIndex_ = -1;
@@ -1839,13 +2206,8 @@ void Game::updateRingScreen(const Input& input, UiContext& ui, float dt)
     }
 
     if (uiCancelRequested(ringCancelState_, input, ui, ringPanelRect())) {
-        if (ringGrabActive_) {
-            cancelRingGrab();
-            ringStatus_ = "つかみ操作をキャンセルしました";
-        } else {
-            mode_ = ScreenMode::PauseMenu;
-            pausePage_ = PauseMenuPage::Main;
-        }
+        mode_ = ScreenMode::PauseMenu;
+        pausePage_ = PauseMenuPage::Main;
         return;
     }
 
@@ -1887,38 +2249,23 @@ void Game::updateRingScreen(const Input& input, UiContext& ui, float dt)
 
     ui.block(ringPanelRect());
 
-    if (!items.empty() && input.shortcutCursorDelta() != 0) {
-        const int count = static_cast<int>(items.size());
-        ringSlotSelection_ = (ringSlotSelection_ + input.shortcutCursorDelta() + count) % count;
+    const Vec2 selectionDirection = ringPressedDirection(input);
+    if (!items.empty() && lengthSquared(selectionDirection) > 0.0001f) {
+        ringSlotSelection_ = ringItemSelectionByDirection(
+            items,
+            spellRing_,
+            balance_,
+            ringSlotSelection_,
+            selectionDirection);
         ringDetailShowsRing_ = false;
-    }
-    if (input.pressed(InputAction::MoveLeft)) {
-        ringDetailShowsRing_ = false;
-        if (spellRing_.moveItemAngle(ringSlotSelection_, -RingAngleStep)) {
-            ui.emitSound(UiSoundEvent::ItemMove);
-        } else {
-            ui.emitSound(UiSoundEvent::Cancel);
-            ringStatus_ = "その位置には移動できません";
-        }
-    }
-    if (input.pressed(InputAction::MoveRight)) {
-        ringDetailShowsRing_ = false;
-        if (spellRing_.moveItemAngle(ringSlotSelection_, RingAngleStep)) {
-            ui.emitSound(UiSoundEvent::ItemMove);
-        } else {
-            ui.emitSound(UiSoundEvent::Cancel);
-            ringStatus_ = "その位置には移動できません";
-        }
+        ringStatus_.clear();
     }
 
     (void)actualRing;
 
     if (input.addRingPressed()) {
         ringDetailShowsRing_ = false;
-        if (ringGrabActive_) {
-            ui.emitSound(UiSoundEvent::Cancel);
-            ringStatus_ = "つかみ中は外せません";
-        } else if (ringSlotSelection_ < static_cast<int>(items.size())) {
+        if (ringSlotSelection_ < static_cast<int>(items.size())) {
             ui.emitSound(removeRingItemToInventory(items, ringSlotSelection_, inventory_, objectCatalog_, ringStatus_)
                 ? UiSoundEvent::ItemMove
                 : UiSoundEvent::Cancel);
@@ -1931,10 +2278,7 @@ void Game::updateRingScreen(const Input& input, UiContext& ui, float dt)
 
     if (input.pressed(InputAction::ToggleProtection)) {
         ringDetailShowsRing_ = false;
-        if (ringGrabActive_) {
-            ui.emitSound(UiSoundEvent::Cancel);
-            ringStatus_ = "つかみ中は保護変更できません";
-        } else if (ringSlotSelection_ < static_cast<int>(items.size())) {
+        if (ringSlotSelection_ < static_cast<int>(items.size())) {
             SpellRingItem& item = items[ringSlotSelection_];
             if (item.instanceId.empty()) {
                 ui.emitSound(UiSoundEvent::Cancel);
@@ -1951,53 +2295,14 @@ void Game::updateRingScreen(const Input& input, UiContext& ui, float dt)
         return;
     }
 
-    if (input.grabOrPlacePressed()) {
-        ringDetailShowsRing_ = false;
-        if (ringGrabActive_) {
-            if (spellRing_.addItem(ringGrabbedItem_)) {
-                ui.emitSound(UiSoundEvent::ItemMove);
-                ringSlotSelection_ = std::max(0, static_cast<int>(items.size()) - 1);
-                ringGrabActive_ = false;
-                ringGrabOrigin_ = -1;
-                ringStatus_ = "最も広い空きに配置しました";
-            } else {
-                ui.emitSound(UiSoundEvent::Cancel);
-                ringStatus_ = "配置できる空きがありません";
-            }
-        } else if (ringSlotSelection_ < static_cast<int>(items.size())) {
-            ui.emitSound(UiSoundEvent::ItemMove);
-            ringGrabbedItem_ = items[ringSlotSelection_];
-            ringGrabOrigin_ = ringSlotSelection_;
-            items.erase(items.begin() + ringSlotSelection_);
-            ringGrabActive_ = true;
-            ringStatus_ = "装着アイテムをつかみました";
-        } else {
-            ui.emitSound(UiSoundEvent::Cancel);
-            ringStatus_ = "アイテム未選択です";
-        }
-        return;
-    }
-
     if (input.useItemPressed() || input.confirmPressed()) {
-        if (ringDetailShowsRing_) {
-            ringStatus_ = "リング情報を表示中";
-            return;
-        }
         ringDetailShowsRing_ = false;
-        if (ringGrabActive_) {
-            if (spellRing_.addItem(ringGrabbedItem_)) {
-                ui.emitSound(UiSoundEvent::ItemMove);
-                ringSlotSelection_ = std::max(0, static_cast<int>(items.size()) - 1);
-                ringGrabActive_ = false;
-                ringGrabOrigin_ = -1;
-                ringStatus_ = "最も広い空きに配置しました";
-            } else {
-                ui.emitSound(UiSoundEvent::Cancel);
-                ringStatus_ = "配置できる空きがありません";
-            }
-        } else if (ringSlotSelection_ < static_cast<int>(items.size())) {
+        if (ringSlotSelection_ < static_cast<int>(items.size())) {
             ui.emitSound(UiSoundEvent::Confirm);
-            ringStatus_ = "詳細を表示中";
+            ringItemMoveModeActive_ = true;
+            ringItemMoveIndex_ = ringSlotSelection_;
+            ringItemMoveOriginalAngle_ = items[static_cast<std::size_t>(ringSlotSelection_)].localAngle;
+            ringStatus_ = "移動モード";
         } else {
             ui.emitSound(UiSoundEvent::Cancel);
             ringStatus_ = "アイテム未選択です";
@@ -2511,7 +2816,7 @@ void Game::updatePauseMenu(const Input& input, UiContext& ui)
     optionsSuppressCancelThisFrame_ = false;
     const UiRect cancelPanel = pausePage_ == PauseMenuPage::QuitConfirm
         ? quitConfirmRect()
-        : (pausePage_ == PauseMenuPage::Options ? optionsPanelRect() : pausePanelRect());
+        : pausePanelForPage(pausePage_);
     const bool operationModalOpen = pausePage_ == PauseMenuPage::Options &&
         (operationSettingsCapture_.active() ||
             operationSettingsConflictConfirm_.open ||
@@ -2544,7 +2849,7 @@ void Game::updatePauseMenu(const Input& input, UiContext& ui)
     }
 
     if (pausePage_ != PauseMenuPage::Main) {
-        ui.block(pausePanelRect());
+        ui.block(pausePanelForPage(pausePage_));
         return;
     }
 
@@ -2811,9 +3116,40 @@ void Game::renderTopInfoBar(Renderer& renderer) const
     rightX = std::max(TopInfoBarX + TopInfoBarPaddingX, rightX);
 
     const float mapX = TopInfoBarX + TopInfoBarPaddingX;
-    const float mapMaxWidth = std::max(0.0f, rightX - mapX - 18.0f);
+    const float mapAreaMaxWidth = std::max(0.0f, rightX - mapX - 18.0f);
+    std::string dungeonInfoEntry;
+    if (!basePresentationActive() && !enemyTestActive_) {
+        const Vec2 playerTilePosition{
+            static_cast<float>(tileMap_.worldToTile(player_.position.x)),
+            static_cast<float>(tileMap_.worldToTile(player_.position.y)),
+        };
+        dungeonInfoEntry = dungeonDepthTopInfoEntry(dungeonLayout_, playerTilePosition);
+
+        const int totalWarpPoints = std::max(0, static_cast<int>(warpPoints_.size()));
+        if (warpPointsEnabled_ && totalWarpPoints > 0) {
+            dungeonInfoEntry += "   " + dungeonWarpTopInfoEntry(discoveredWarpPointCount(), totalWarpPoints);
+        }
+    }
+
+    InlineItemTextStyle dungeonInfoStyle = materialStyle;
+    dungeonInfoStyle.text = {206, 218, 238, 255};
+    dungeonInfoStyle.iconTextGap = 5.0f;
+    dungeonInfoStyle.iconScale = 28.0f / std::max(1.0f, textMeasure.y);
+    if (!dungeonInfoEntry.empty()) {
+        dungeonInfoEntry = fittedInlineItemText(renderer, std::move(dungeonInfoEntry), mapAreaMaxWidth, dungeonInfoStyle);
+    }
+
+    const Vec2 dungeonInfoSize = measureInlineItemText(renderer, dungeonInfoEntry, dungeonInfoStyle);
+    constexpr float MapDungeonInfoGap = 18.0f;
+    const float reservedMapInfoGap = !dungeonInfoEntry.empty() ? MapDungeonInfoGap : 0.0f;
+    const float mapMaxWidth = std::max(0.0f, mapAreaMaxWidth - reservedMapInfoGap - dungeonInfoSize.x);
     const std::string mapName = fittedSingleLineText(renderer, currentMapDisplayName(), mapMaxWidth, textScale);
     renderer.drawText({mapX, textY}, mapName, {246, 246, 252, 255}, textScale);
+    if (!dungeonInfoEntry.empty()) {
+        const float mapInfoGap = !mapName.empty() ? MapDungeonInfoGap : 0.0f;
+        const float dungeonInfoX = mapX + renderer.measureText(mapName, textScale).x + mapInfoGap;
+        drawInlineItemText(renderer, objectCatalog_, {dungeonInfoX, textY}, dungeonInfoEntry, dungeonInfoStyle);
+    }
 
     float x = rightX;
     drawInlineItemText(renderer, objectCatalog_, {x, textY}, moneyEntry, moneyStyle);
@@ -3463,9 +3799,11 @@ void Game::renderRingScreen(Renderer& renderer, float totalTime) const
     const UiRect panel = ringPanelRect();
     UiCancelControlScope cancelScope(ringCancelState_);
     const int ringCount = unlockedRingCount();
-    const std::string_view RingHelpText = ringCount > 1
-        ? "Z/X リング選択  F/Enter 決定  Q/E アイテム選択  A/D・←/→ 位置  R 外す  G つかむ/置く  P 保護  Esc/右クリック 戻る"
-        : "Q/E アイテム選択  A/D・←/→ 位置  F/Enter 詳細  R 外す  G つかむ/置く  P 保護  Esc/右クリック 戻る";
+    const std::string_view RingHelpText = ringItemMoveModeActive_
+        ? "WASD/矢印 位置変更  F/Enter 確定  Esc/右クリック キャンセル"
+        : (ringCount > 1
+            ? "Z/X リング選択  WASD/矢印 アイテム選択  F/Enter 移動  R 外す  P 保護  Esc/右クリック 戻る"
+            : "WASD/矢印 アイテム選択  F/Enter 移動  R 外す  P 保護  Esc/右クリック 戻る");
     UiWindowScope ringWindow(renderer, "ring.manage", panel, "リング", RingHelpText, UiWindowOptions{true, true});
 
     char buffer[192];
@@ -3485,6 +3823,7 @@ void Game::renderRingScreen(Renderer& renderer, float totalTime) const
         ringCount,
         ringTabRects.data());
     drawUiButton(renderer, ringArrangeButtonRect(), "整列", false, uiActionButtonStyle());
+    drawUiButton(renderer, ringRemoveAllButtonRect(), "すべて外す", false, uiActionButtonStyle());
 
     const bool actualRing = true;
     const auto& items = spellRing_.items();
@@ -3535,10 +3874,13 @@ void Game::renderRingScreen(Renderer& renderer, float totalTime) const
             forward = {1.0f, 0.0f};
         }
         const bool selected = i == ringSlotSelection_;
+        const bool moveMode = ringItemMoveModeActive_ && i == ringItemMoveIndex_;
         const bool invalidDragPosition = selected && ringDragActive_ && !spellRing_.canPlaceItemAtAngle(i, displayAngle);
         const ItemData* object = objectForRingItem(objectCatalog_, item);
         if (activeShape != RingShape::FigureEight) {
-            const Color angleLineColor = selected ? Color{255, 230, 150, 120} : Color{94, 102, 128, 85};
+            const Color angleLineColor = moveMode
+                ? Color{255, 142, 42, 150}
+                : (selected ? Color{255, 230, 150, 120} : Color{94, 102, 128, 85});
             const Vec2 radial = itemAnchor - orbitCenter;
             Vec2 tangent = normalize(Vec2{-radial.y, radial.x});
             if (lengthSquared(tangent) <= 0.0001f) {
@@ -3548,9 +3890,13 @@ void Game::renderRingScreen(Renderer& renderer, float totalTime) const
             renderer.drawLine(orbitCenter + tangent * AngleLineHalfWidthPx, itemAnchor + tangent * AngleLineHalfWidthPx, angleLineColor);
             renderer.drawLine(orbitCenter - tangent * AngleLineHalfWidthPx, itemAnchor - tangent * AngleLineHalfWidthPx, angleLineColor);
         }
-        drawRingItemShape(renderer, item, object, itemCenter, outward, forward, totalTime, selected, invalidDragPosition);
+        drawRingItemShape(renderer, item, object, itemCenter, outward, forward, totalTime, selected, invalidDragPosition, moveMode);
         std::snprintf(buffer, sizeof(buffer), "%d", i + 1);
-        renderer.drawText(itemCenter + Vec2{-5.0f, 22.0f}, buffer, selected ? Color{255, 230, 150, 255} : Color{174, 182, 198, 255}, 1);
+        renderer.drawText(
+            itemCenter + Vec2{-5.0f, 22.0f},
+            buffer,
+            moveMode ? Color{255, 170, 82, 255} : (selected ? Color{255, 230, 150, 255} : Color{174, 182, 198, 255}),
+            1);
     }
 
     const UiRect ringDetailPanel = ringDetailRect();
@@ -3578,10 +3924,14 @@ void Game::renderRingScreen(Renderer& renderer, float totalTime) const
         }
     }
 
-    if (ringGrabActive_) {
-        const std::string grabbedName = ringItemDisplayName(objectCatalog_, ringGrabbedItem_);
-        std::snprintf(buffer, sizeof(buffer), "つかみ中: %s   G または F で置く / Esc でキャンセル", grabbedName.c_str());
-        renderer.drawText(panel.pos + Vec2{48.0f, 556.0f}, buffer, {255, 230, 150, 255}, 2);
+    if (ringItemMoveModeActive_ &&
+        ringItemMoveIndex_ >= 0 &&
+        ringItemMoveIndex_ < static_cast<int>(items.size())) {
+        const std::string itemName = ringItemDisplayName(
+            objectCatalog_,
+            items[static_cast<std::size_t>(ringItemMoveIndex_)]);
+        std::snprintf(buffer, sizeof(buffer), "移動中: %s", itemName.c_str());
+        renderer.drawText(panel.pos + Vec2{48.0f, 556.0f}, buffer, {255, 170, 82, 255}, 2);
     } else if (!ringStatus_.empty()) {
         renderer.drawText(panel.pos + Vec2{48.0f, 556.0f}, ringStatus_, {255, 230, 150, 255}, 2);
     }
@@ -3864,7 +4214,7 @@ void Game::renderPauseMenu(Renderer& renderer) const
     }
 
     renderer.setScreenSpace();
-    const UiRect panel = pausePage_ == PauseMenuPage::Options ? optionsPanelRect() : pausePanelRect();
+    const UiRect panel = pausePanelForPage(pausePage_);
     UiCancelControlScope cancelScope(pauseCancelState_);
     const char* pauseTitle = pausePage_ == PauseMenuPage::Status
         ? "ステータス"
@@ -3898,33 +4248,172 @@ void Game::renderPauseMenu(Renderer& renderer) const
     }
 
     if (pausePage_ == PauseMenuPage::Status) {
-        const Vec2 labelPos = panel.pos + Vec2{74.0f, 110.0f};
-        const Vec2 valuePos = panel.pos + Vec2{236.0f, 110.0f};
-        constexpr float RowHeight = 32.0f;
-        const auto drawStatusRow = [&](int row, std::string_view label, std::string_view value) {
-            const float y = static_cast<float>(row) * RowHeight;
-            renderer.drawText(labelPos + Vec2{0.0f, y}, label, ui::TextMuted, 2);
-            renderer.drawText(valuePos + Vec2{0.0f, y}, value, {230, 230, 236, 255}, 2);
-        };
+        constexpr float LeftWidth = 528.0f;
+        const UiRect ringPanel{{panel.pos.x + 46.0f, panel.pos.y + 334.0f}, {LeftWidth, 172.0f}};
+        const Vec2 profilePos{ringPanel.pos.x, panel.pos.y + 112.0f};
+        const UiRect portraitRect{{panel.pos.x + 636.0f, panel.pos.y + 36.0f}, {340.0f, 500.0f}};
 
-        std::snprintf(buffer, sizeof(buffer), "%02d", player_.hp);
-        drawStatusRow(0, "HP", buffer);
-        std::snprintf(buffer, sizeof(buffer), "%02d", player_.level);
-        drawStatusRow(1, "Level", buffer);
+        drawUiSubPanel(renderer, ringPanel);
+
+        renderer.drawText(profilePos, "見習い魔女 ルネ", {246, 235, 255, 255}, 3);
+        renderer.drawText(profilePos + Vec2{1.0f, 0.0f}, "見習い魔女 ルネ", {246, 235, 255, 255}, 3);
+
+        const int hpMax = std::max(1, player_.maxHp);
+        const int hp = std::clamp(player_.hp, 0, hpMax);
+        std::snprintf(buffer, sizeof(buffer), "HP  %02d / %02d", hp, hpMax);
+        renderer.drawText(profilePos + Vec2{0.0f, 42.0f}, buffer, {255, 232, 232, 255}, 2);
+
+        UiGaugeStyle hpGaugeStyle;
+        hpGaugeStyle.fill.start = {224, 74, 84, 255};
+        hpGaugeStyle.fill.end = {255, 126, 116, 255};
+        hpGaugeStyle.track = {42, 18, 24, 230};
+        hpGaugeStyle.trackInner = {58, 24, 32, 220};
+        hpGaugeStyle.trackOuter = {255, 220, 224, 82};
+        hpGaugeStyle.highlight = {255, 244, 244, 92};
+        hpGaugeStyle.capGlow = {255, 116, 128, 58};
+        hpGaugeStyle.trackInnerInset = 4.0f;
+        hpGaugeStyle.shadowOffsetY = 2.0f;
+        hpGaugeStyle.shadowExtra = 5.0f;
+        constexpr float StatusGaugeWidth = 228.0f;
+        drawUiGauge(
+            renderer,
+            {profilePos + Vec2{0.0f, 68.0f}, {StatusGaugeWidth, 12.0f}},
+            static_cast<float>(hp) / static_cast<float>(hpMax),
+            hpGaugeStyle);
+
+        const float expGaugeX = ringPanel.pos.x + ringPanel.size.x - StatusGaugeWidth;
+        const Vec2 expLabelPos{expGaugeX, profilePos.y + 42.0f};
+        std::snprintf(buffer, sizeof(buffer), "Lv.%d", std::max(1, player_.level));
+        renderer.drawText(expLabelPos, buffer, {222, 236, 255, 255}, 2);
         if (playerAtMaxLevel(player_)) {
             std::snprintf(buffer, sizeof(buffer), "MAX");
         } else {
-            std::snprintf(buffer, sizeof(buffer), "%02d/%02d", player_.xp, player_.xpToNext);
+            std::snprintf(buffer, sizeof(buffer), "%d/%d", player_.xp, player_.xpToNext);
         }
-        drawStatusRow(2, "XP", buffer);
-        std::snprintf(buffer, sizeof(buffer), "%d", spellRing_.activeRingIndex() + 1);
-        drawStatusRow(3, "Ring", buffer);
-        std::snprintf(buffer, sizeof(buffer), "%02d/%02d", static_cast<int>(spellRing_.items().size()), spellRing_.maxItemCount());
-        drawStatusRow(4, "Items", buffer);
-        std::snprintf(buffer, sizeof(buffer), "%.0f", spellRing_.radius());
-        drawStatusRow(5, "Radius", buffer);
-        std::snprintf(buffer, sizeof(buffer), "%.1f", spellRing_.effectiveAngularSpeed());
-        drawStatusRow(6, "Speed", buffer);
+        const std::string expText = std::string("EXP ") + buffer;
+        const Vec2 expTextSize = renderer.measureText(expText, 2);
+        renderer.drawText({expLabelPos.x + StatusGaugeWidth - expTextSize.x, expLabelPos.y}, expText, {222, 236, 255, 255}, 2);
+
+        UiGaugeStyle expGaugeStyle;
+        expGaugeStyle.fill.start = {86, 158, 255, 255};
+        expGaugeStyle.fill.end = {132, 230, 250, 255};
+        expGaugeStyle.track = {18, 28, 54, 230};
+        expGaugeStyle.trackInner = {24, 40, 74, 220};
+        expGaugeStyle.trackOuter = {206, 222, 255, 82};
+        expGaugeStyle.highlight = {236, 248, 255, 92};
+        expGaugeStyle.capGlow = {132, 230, 250, 58};
+        expGaugeStyle.trackInnerInset = 4.0f;
+        expGaugeStyle.shadowOffsetY = 2.0f;
+        expGaugeStyle.shadowExtra = 5.0f;
+        const int xpToNext = std::max(1, player_.xpToNext);
+        const float expProgress = playerAtMaxLevel(player_)
+            ? 1.0f
+            : static_cast<float>(std::clamp(player_.xp, 0, xpToNext)) / static_cast<float>(xpToNext);
+        drawUiGauge(
+            renderer,
+            {{expGaugeX, profilePos.y + 68.0f}, {StatusGaugeWidth, 12.0f}},
+            expProgress,
+            expGaugeStyle);
+
+        constexpr std::array<MaterialType, 4> StatusMaterials{{
+            MaterialType::OldWoodBuildingMaterial,
+            MaterialType::EnhancementOre,
+            MaterialType::MoonFragment,
+            MaterialType::ManaDrop,
+        }};
+        InlineItemTextStyle materialStyle;
+        materialStyle.text = {232, 236, 244, 255};
+        materialStyle.scale = 2;
+        materialStyle.iconScale = 1.0f;
+        materialStyle.iconTextGap = 6.0f;
+        InlineItemTextStyle moneyStyle = materialStyle;
+        moneyStyle.text = {246, 230, 174, 255};
+        drawInlineItemText(
+            renderer,
+            objectCatalog_,
+            profilePos + Vec2{0.0f, 98.0f},
+            inlineWorldIconTag(worldIconKey(WorldIconId::MoneyLarge)) + "所持金 " + std::to_string(std::max(0, money_)) + "G",
+            moneyStyle);
+
+        renderer.drawText(profilePos + Vec2{0.0f, 132.0f}, "強化素材", {246, 246, 252, 255}, 2);
+        constexpr float MaterialColumnGap = 32.0f;
+        constexpr float MaterialColumnWidth = (LeftWidth - MaterialColumnGap) * 0.5f;
+        constexpr float MaterialValueGap = 8.0f;
+        for (int i = 0; i < static_cast<int>(StatusMaterials.size()); ++i) {
+            const MaterialType type = StatusMaterials[static_cast<std::size_t>(i)];
+            std::string name = inlineMaterialIconTag(type);
+            name += materialTypeDisplayName(type);
+            const std::string count = "×" + std::to_string(inventory_.materialCount(type));
+            const int column = i % 2;
+            const int row = i / 2;
+            const Vec2 pos{
+                profilePos.x + static_cast<float>(column) * (MaterialColumnWidth + MaterialColumnGap),
+                profilePos.y + 162.0f + static_cast<float>(row) * 30.0f,
+            };
+            const Vec2 countSize = renderer.measureText(count, materialStyle.scale);
+            name = fittedInlineItemText(
+                renderer,
+                std::move(name),
+                std::max(0.0f, MaterialColumnWidth - countSize.x - MaterialValueGap),
+                materialStyle);
+            drawInlineItemText(renderer, objectCatalog_, pos, name, materialStyle);
+            renderer.drawText(
+                {pos.x + MaterialColumnWidth - countSize.x, pos.y},
+                count,
+                materialStyle.text,
+                materialStyle.scale);
+        }
+
+        const UiRect ringContent = uiSubPanelContentRect(ringPanel);
+        renderer.drawText(ringContent.pos, "スペルリング", {246, 246, 252, 255}, 2);
+        const int unlockedRings = unlockedRingCount();
+        for (int ringIndex = 0; ringIndex < unlockedRings; ++ringIndex) {
+            const float y = ringContent.pos.y + 34.0f + static_cast<float>(ringIndex) * 34.0f;
+            std::snprintf(buffer, sizeof(buffer), "リング%d", ringIndex + 1);
+            renderer.drawText({ringContent.pos.x, y}, buffer, ui::Text, 2);
+
+            const std::vector<SpellRingItem>& items = spellRing_.itemsForRing(ringIndex);
+            std::snprintf(
+                buffer,
+                sizeof(buffer),
+                "装着 %02d/%02d",
+                static_cast<int>(items.size()),
+                spellRing_.maxItemCount());
+            renderer.drawText({ringContent.pos.x + 104.0f, y}, buffer, ui::TextMuted, 2);
+
+            std::snprintf(
+                buffer,
+                sizeof(buffer),
+                "重量 %.1f/%.1fkg",
+                spellRing_.totalEquippedWeightForRing(ringIndex),
+                spellRing_.maxEquippedWeightForRing(ringIndex));
+            renderer.drawText({ringContent.pos.x + 284.0f, y}, buffer, ui::TextMuted, 2);
+        }
+
+        Vec2 portraitSourceSize;
+        const bool portraitSizeLoaded =
+            renderer.getImageSize("assets/taties/tatie_1.png", portraitSourceSize, TextureFilter::Linear) &&
+            portraitSourceSize.x > 0.0f &&
+            portraitSourceSize.y > 0.0f;
+        constexpr float PortraitScale = 0.65f;
+        const Vec2 portraitDrawSize = (portraitSizeLoaded ? portraitSourceSize : portraitRect.size) * PortraitScale;
+        ImageDrawOptions portraitOptions;
+        portraitOptions.anchor = {0.5f, 0.06f};
+        portraitOptions.flipX = true;
+        if (!renderer.drawImage(
+                "assets/taties/tatie_1.png",
+                {panel.pos.x + panel.size.x - 190.0f, panel.pos.y - 36.0f},
+                portraitDrawSize,
+                portraitOptions,
+                TextureFilter::Linear)) {
+            renderer.drawPlayerSprite(
+                0,
+                {portraitRect.pos.x + portraitRect.size.x * 0.5f, panel.pos.y + panel.size.y - 94.0f},
+                180.0f,
+                false,
+                {255, 255, 255, 255},
+                {PlayerSpriteAnchorX, PlayerSpriteAnchorY});
+        }
     } else if (pausePage_ == PauseMenuPage::Items) {
         renderer.drawText(panel.pos + Vec2{48.0f, 102.0f}, "アイテム", {246, 235, 255, 255}, 3);
         renderer.drawText(panel.pos + Vec2{58.0f, 164.0f}, "通常画面のショートカットHUDとアイテム画面で管理します。", {230, 230, 236, 255}, 2);
@@ -4390,8 +4879,8 @@ void Game::render(Renderer& renderer, const Time& time)
     const Vec2 playerLightCenter = witchSelfLightCenter(player_.position);
     tileMap_.render(renderer, camera_, playerLightCenter, itemLights);
     std::vector<DepthRenderEntry> worldDepthEntries;
+    appendRewardNodeRenderEntries(worldDepthEntries, renderer, itemLights);
     if (!enemyTestActive_) {
-        appendRewardNodeRenderEntries(worldDepthEntries, renderer, itemLights);
         appendDungeonEventRenderEntries(worldDepthEntries, renderer, itemLights, time.totalSeconds());
     }
     groundLines_.appendRenderEntries(worldDepthEntries, renderer);
@@ -4412,12 +4901,13 @@ void Game::render(Renderer& renderer, const Time& time)
     }
 
     const Vec2 playerFootAnchor = player_.position;
-    const bool playerStunned = player_.status.hasState("status_stun");
+    const EntityStatusVisualStyle playerStatusVisual = entityStatusVisualStyle(player_.status);
     const Vec2 playerVisualFootAnchor = playerFootAnchor +
-        paralyzeJitterOffset(player_.status, time.totalSeconds()) +
+        entityStatusJitterOffset(player_.status, time.totalSeconds()) +
         Vec2{0.0f, -stunWakeHopOffset(player_.stunWakeTimer)};
-    const float playerSizeMultiplier = static_cast<float>(player_.status.sizeMultiplierFromStates());
+    const float playerSizeMultiplier = playerStatusVisual.scaleMultiplier;
     const float playerSpriteDrawSize = PlayerSpriteDrawSize * playerSizeMultiplier;
+    const Color playerStatusTint = playerStatusVisual.hasTint ? playerStatusVisual.tint : Color{255, 255, 255, 255};
     renderer.drawActorShadow(playerFootAnchor, playerSpriteDrawSize);
     worldDrops_.renderShadows(renderer, tileMap_, objectCatalog_, playerLightCenter, itemLights);
     enemies_.renderShadows(renderer, tileMap_, playerLightCenter, itemLights);
@@ -4434,9 +4924,9 @@ void Game::render(Renderer& renderer, const Time& time)
                     playerVisualFootAnchor,
                     playerSpriteDrawSize,
                     playerFlip,
-                    {255, 255, 255, 255},
+                    playerStatusTint,
                     {PlayerSpriteAnchorX, PlayerSpriteAnchorY},
-                    playerStunned);
+                    playerStatusVisual.flipVertical);
                 if (player_.damageFlash > 0.0f) {
                     const float flash = clamp(player_.damageFlash / 0.16f, 0.0f, 1.0f);
                     const unsigned char alpha = static_cast<unsigned char>(std::round(185.0f * flash));
@@ -4447,15 +4937,16 @@ void Game::render(Renderer& renderer, const Time& time)
                         playerFlip,
                         {255, 52, 52, alpha},
                         {PlayerSpriteAnchorX, PlayerSpriteAnchorY},
-                        playerStunned);
+                        playerStatusVisual.flipVertical);
                 }
             } else {
                 const Color playerColor = player_.damageFlash > 0.0f
                     ? Color{255, 72, 72, 255}
-                    : Color{118, 72, 168, 255};
+                    : (playerStatusVisual.hasTint ? playerStatusVisual.tint : Color{118, 72, 168, 255});
                 renderer.fillCircle(playerVisualFootAnchor, player_.effectiveRadius(balance_.playerRadius), playerColor);
                 renderer.drawLine(playerVisualFootAnchor, playerVisualFootAnchor + player_.facing * (22.0f * playerSizeMultiplier), {235, 210, 255, 255});
             }
+            renderEntityStatusOverlays(renderer, player_.status, playerVisualFootAnchor, playerSpriteDrawSize, time.totalSeconds());
 
             if (ringIntroActive) {
                 return;

@@ -16,6 +16,8 @@ enum class GameTestActionKind {
     SwitchActiveRing,
     EquipBackpackItemToRing,
     RemoveRingItemToBackpack,
+    DiscardBackpackStack,
+    DiscardBackpackInstance,
     DepositBackpackStack,
     DepositBackpackInstance,
     SellBackpackStack,
@@ -67,6 +69,8 @@ inline const char* gameTestActionKindName(GameTestActionKind kind)
     case GameTestActionKind::SwitchActiveRing: return "switch_active_ring";
     case GameTestActionKind::EquipBackpackItemToRing: return "equip_backpack_item_to_ring";
     case GameTestActionKind::RemoveRingItemToBackpack: return "remove_ring_item_to_backpack";
+    case GameTestActionKind::DiscardBackpackStack: return "discard_backpack_stack";
+    case GameTestActionKind::DiscardBackpackInstance: return "discard_backpack_instance";
     case GameTestActionKind::DepositBackpackStack: return "deposit_backpack_stack";
     case GameTestActionKind::DepositBackpackInstance: return "deposit_backpack_instance";
     case GameTestActionKind::SellBackpackStack: return "sell_backpack_stack";
