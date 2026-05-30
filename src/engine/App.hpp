@@ -11,6 +11,7 @@
 #include "game/Game.hpp"
 #include <SDL3/SDL.h>
 #include <cstdint>
+#include <filesystem>
 #include <string>
 
 namespace majo {
@@ -39,6 +40,27 @@ private:
     bool executeSettingsDebugCommand(const std::string& normalizedCommand);
     void executeDebugCommand(const std::string& command);
     void runAutoSimulationStep(float dt, Time& updateTime);
+    void advanceStartupLoad();
+    void renderStartupFrame();
+    float startupLoadProgress() const;
+    void requestScreenshot();
+    void logPendingScreenshotResult();
+    std::filesystem::path screenshotDirectory() const;
+    std::filesystem::path makeScreenshotPath() const;
+
+    enum class StartupLoadStep {
+        FirstFrame,
+        InitializeAudio,
+        LoadAudioManifest,
+        WireGameServices,
+        LoadAssets,
+        BeginGameInitialize,
+        AdvanceGameInitialize,
+        EnableHotReload,
+        ExecuteLaunchMode,
+        Finish,
+        Done,
+    };
 
     SDL_Window* window_ = nullptr;
     SDL_Renderer* sdlRenderer_ = nullptr;
@@ -63,6 +85,10 @@ private:
     bool restartRequested_ = false;
     bool settingsSavePending_ = false;
     bool autoSimulationTimeActive_ = false;
+    bool startupLoadActive_ = false;
+    StartupLoadStep startupLoadStep_ = StartupLoadStep::Done;
+    std::string startupStatus_;
+    std::string startupLaunchModeCommand_;
     float settingsSaveDelaySeconds_ = 0.0f;
     float autoSimulationStepDebtSeconds_ = 0.0f;
     int width_ = 1280;

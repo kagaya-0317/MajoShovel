@@ -1,17 +1,24 @@
 ﻿#include "engine/App.hpp"
 
+#include "data/GameBalance.hpp"
+#include "engine/InputHelpGlyph.hpp"
 #include "engine/Log.hpp"
 
 #include <SDL3/SDL.h>
 #include <algorithm>
 #include <cctype>
+#include <chrono>
+#include <ctime>
 #include <cstdlib>
 #include <exception>
 #include <filesystem>
 #include <fstream>
+#include <iomanip>
 #include <optional>
+#include <sstream>
 #include <string>
 #include <string_view>
+#include <system_error>
 #include <vector>
 
 namespace majo {
@@ -21,6 +28,8 @@ namespace {
 constexpr float AutoSimulationFixedStepSeconds = 1.0f / 60.0f;
 constexpr float AutoSimulationMaxDebtSeconds = 0.75f;
 constexpr int AutoSimulationMaxStepsPerFrame = 16;
+constexpr int LogicalScreenWidth = balance::ScreenWidth;
+constexpr int LogicalScreenHeight = balance::ScreenHeight;
 
 std::string lowerAscii(std::string text)
 {
@@ -33,6 +42,43 @@ std::string lowerAscii(std::string text)
 std::string filenameOf(const std::string& path)
 {
     return lowerAscii(std::filesystem::path(path).filename().string());
+}
+
+std::string pathToUtf8(const std::filesystem::path& path)
+{
+#if defined(__cpp_char8_t) && __cpp_char8_t >= 201811L
+    const auto encoded = path.generic_u8string();
+    return std::string(reinterpret_cast<const char*>(encoded.data()), encoded.size());
+#else
+    return path.generic_u8string();
+#endif
+}
+
+std::string screenshotTimestamp()
+{
+    using namespace std::chrono;
+    const auto now = system_clock::now();
+    const auto millis = duration_cast<milliseconds>(now.time_since_epoch()) % 1000;
+    const std::time_t time = system_clock::to_time_t(now);
+
+    std::tm localTime{};
+#if defined(_WIN32)
+    localtime_s(&localTime, &time);
+#else
+    localtime_r(&time, &localTime);
+#endif
+
+    std::ostringstream out;
+    out << std::put_time(&localTime, "%Y%m%d_%H%M%S")
+        << '_' << std::setw(3) << std::setfill('0') << millis.count();
+    return out.str();
+}
+
+std::string threeDigitSuffix(int value)
+{
+    std::ostringstream out;
+    out << std::setw(3) << std::setfill('0') << value;
+    return out.str();
 }
 
 std::string trimAscii(std::string text)
@@ -461,7 +507,7 @@ void App::applyVideoSettings(bool notifyGameResize)
     }
 
     if (notifyGameResize && (width_ != previousWidth || height_ != previousHeight)) {
-        game_.resize(width_, height_);
+        game_.resize(LogicalScreenWidth, LogicalScreenHeight);
     }
 }
 
@@ -527,6 +573,9 @@ bool App::initialize(const char* title, int width, int height, bool testPlayMode
     }
     applyVideoSettings(false);
     renderer_ = new Renderer(sdlRenderer_);
+    if (!renderer_->setLogicalPresentation(LogicalScreenWidth, LogicalScreenHeight)) {
+        logWarning(std::string("SDL_SetRenderLogicalPresentation failed: ") + SDL_GetError());
+    }
     DevLaunchMode launchMode = DevLaunchMode::PreTitle;
     if (testPlayMode_) {
         debugConsole_.initialize();
@@ -541,41 +590,13 @@ bool App::initialize(const char* title, int width, int height, bool testPlayMode
         logInfo(std::string("Launch mode: ") + devLaunchModeLogName(launchMode));
         logInfo("Test-play debug console enabled. Press F8 to show or hide it.");
     }
-    if (!audio_.initialize()) {
-        logWarning("Audio disabled: " + audio_.lastError());
-    }
-    applyAudioSettings();
-    audio_.loadManifest("assets/audio/audio_manifest.tsv");
-    game_.setAudioEngine(&audio_);
-    game_.setSettingsAccessors(
-        [this]() {
-            return settings_;
-        },
-        [this](const GameSettings& settings) {
-            const InputBindingMap previousBindings = settings_.input.bindings;
-            settings_ = sanitizeSettings(settings);
-            if (!inputBindingMapsEqual(previousBindings, settings_.input.bindings)) {
-                input_.setBindingMap(settings_.input.bindings);
-            }
-            applyAudioSettings();
-            applyVideoSettings(true);
-            queueSettingsSave();
-        });
-    game_.setInputBindingAccessors(
-        [this]() {
-            return settings_.input.bindings;
-        },
-        [this](const InputBindingMap& bindings) {
-            settings_.input.bindings = sanitizeInputBindings(bindings);
-            input_.setBindingMap(settings_.input.bindings);
-            queueSettingsSave();
-        });
-    loadAssets();
-    game_.initialize(width_, height_);
-    setRuntimeHotReloadEnabled(testPlayMode_ && !autoReloadBlocked_);
-    if (testPlayMode_ && launchMode != DevLaunchMode::PreTitle) {
-        game_.executeDebugCommand(devLaunchModeCommand(launchMode));
-    }
+    startupLaunchModeCommand_ =
+        testPlayMode_ && launchMode != DevLaunchMode::PreTitle
+            ? devLaunchModeCommand(launchMode)
+            : std::string{};
+    startupStatus_ = "Starting";
+    startupLoadStep_ = StartupLoadStep::FirstFrame;
+    startupLoadActive_ = true;
     time_.reset();
     running_ = true;
     return true;
@@ -786,6 +807,7 @@ bool App::executeSettingsDebugCommand(const std::string& normalizedCommand)
             " size=" + std::to_string(settings_.video.windowWidth) +
             "x" + std::to_string(settings_.video.windowHeight) +
             " vsync=" + (settings_.video.vsync ? "on" : "off") +
+            " lightweight=" + (settings_.performance.lightweight ? "on" : "off") +
             " path=" + settingsStore_.path().string());
         return true;
     }
@@ -962,6 +984,19 @@ bool App::executeSettingsDebugCommand(const std::string& normalizedCommand)
         return true;
     }
 
+    if ((words[1] == "performance" || words[1] == "perf") && words.size() == 4 && words[2] == "lightweight") {
+        const std::optional<bool> value = parseBoolSetting(words[3]);
+        if (!value) {
+            logWarning("Usage: settings performance lightweight on|off");
+            return true;
+        }
+        settings_.performance.lightweight = *value;
+        settings_ = sanitizeSettings(settings_);
+        queueSettingsSave();
+        logInfo(std::string("Lightweight mode: ") + (settings_.performance.lightweight ? "on" : "off"));
+        return true;
+    }
+
     if (words[1] == "video" && words.size() >= 4 && words[2] == "vsync") {
         const std::optional<bool> value = parseBoolSetting(words[3]);
         if (!value) {
@@ -1025,7 +1060,8 @@ bool App::executeSettingsDebugCommand(const std::string& normalizedCommand)
         "settings audio master|bgm|se VALUE, "
         "settings video mode windowed|borderless, "
         "settings video vsync on|off, "
-        "settings video size WIDTH HEIGHT");
+        "settings video size WIDTH HEIGHT, "
+        "settings performance lightweight on|off");
     return true;
 }
 
@@ -1108,15 +1144,221 @@ void App::runAutoSimulationStep(float dt, Time& updateTime)
     game_.update(effectiveInput, updateTime);
 }
 
+float App::startupLoadProgress() const
+{
+    constexpr float AppStepCount = 9.0f;
+    switch (startupLoadStep_) {
+    case StartupLoadStep::FirstFrame:
+        return 0.0f / AppStepCount;
+    case StartupLoadStep::InitializeAudio:
+        return 1.0f / AppStepCount;
+    case StartupLoadStep::LoadAudioManifest:
+        return 2.0f / AppStepCount;
+    case StartupLoadStep::WireGameServices:
+        return 3.0f / AppStepCount;
+    case StartupLoadStep::LoadAssets:
+        return 4.0f / AppStepCount;
+    case StartupLoadStep::BeginGameInitialize:
+        return 5.0f / AppStepCount;
+    case StartupLoadStep::AdvanceGameInitialize:
+        return (6.0f + game_.initializeProgress()) / AppStepCount;
+    case StartupLoadStep::EnableHotReload:
+        return 7.0f / AppStepCount;
+    case StartupLoadStep::ExecuteLaunchMode:
+        return 8.0f / AppStepCount;
+    case StartupLoadStep::Finish:
+    case StartupLoadStep::Done:
+        return 1.0f;
+    }
+    return 0.0f;
+}
+
+void App::renderStartupFrame()
+{
+    if (renderer_ == nullptr) {
+        return;
+    }
+
+    renderer_->setScreenSpace();
+    renderer_->clear({6, 7, 10, 255});
+
+    const float screenWidth = static_cast<float>(LogicalScreenWidth);
+    const float screenHeight = static_cast<float>(LogicalScreenHeight);
+    const float progress = std::clamp(startupLoadProgress(), 0.0f, 1.0f);
+    const float barWidth = std::max(80.0f, screenWidth - 96.0f);
+    const float barX = (screenWidth - barWidth) * 0.5f;
+    const float barY = std::max(96.0f, screenHeight - 96.0f);
+
+    renderer_->fillRect({barX, barY}, {barWidth, 6.0f}, {30, 34, 44, 255});
+    renderer_->fillRect({barX, barY}, {barWidth * progress, 6.0f}, {226, 186, 92, 255});
+    renderer_->drawText({barX, barY - 62.0f}, "MAJO SHOVEL", {238, 230, 208, 255}, 3);
+    renderer_->drawText({barX, barY - 28.0f}, startupStatus_, {190, 200, 218, 255}, 2);
+    renderer_->present();
+}
+
+std::filesystem::path App::screenshotDirectory() const
+{
+    return devSettingsRootPath() / "screenshots";
+}
+
+std::filesystem::path App::makeScreenshotPath() const
+{
+    const std::filesystem::path directory = screenshotDirectory();
+    const std::string stem = "majo_shovel_" + screenshotTimestamp();
+
+    for (int suffix = 0; suffix <= 999; ++suffix) {
+        const std::string filename =
+            suffix == 0
+                ? stem + ".png"
+                : stem + "_" + threeDigitSuffix(suffix) + ".png";
+        const std::filesystem::path candidate = directory / filename;
+        std::error_code existsError;
+        if (!std::filesystem::exists(candidate, existsError)) {
+            return candidate;
+        }
+    }
+
+    return directory / (stem + "_999.png");
+}
+
+void App::requestScreenshot()
+{
+    if (!testPlayMode_ || renderer_ == nullptr) {
+        return;
+    }
+
+    const std::filesystem::path path = makeScreenshotPath();
+    renderer_->requestScreenshot(path);
+    logInfo("Screenshot requested: " + pathToUtf8(path));
+}
+
+void App::logPendingScreenshotResult()
+{
+    if (renderer_ == nullptr) {
+        return;
+    }
+
+    std::optional<Renderer::ScreenshotResult> result = renderer_->consumeScreenshotResult();
+    if (!result) {
+        return;
+    }
+
+    const std::string path = pathToUtf8(result->path);
+    if (result->success) {
+        logInfo("Screenshot saved: " + path);
+        return;
+    }
+
+    logError("Screenshot failed: " + result->message + " (" + path + ")");
+}
+
+void App::advanceStartupLoad()
+{
+    switch (startupLoadStep_) {
+    case StartupLoadStep::FirstFrame:
+        startupStatus_ = "Starting";
+        startupLoadStep_ = StartupLoadStep::InitializeAudio;
+        break;
+    case StartupLoadStep::InitializeAudio:
+        startupStatus_ = "Initializing audio";
+        if (!audio_.initialize()) {
+            logWarning("Audio disabled: " + audio_.lastError());
+        }
+        applyAudioSettings();
+        startupLoadStep_ = StartupLoadStep::LoadAudioManifest;
+        break;
+    case StartupLoadStep::LoadAudioManifest:
+        startupStatus_ = "Loading audio manifest";
+        audio_.loadManifest("assets/audio/audio_manifest.tsv");
+        startupLoadStep_ = StartupLoadStep::WireGameServices;
+        break;
+    case StartupLoadStep::WireGameServices:
+        startupStatus_ = "Wiring game services";
+        game_.setAudioEngine(&audio_);
+        game_.setSettingsAccessors(
+            [this]() {
+                return settings_;
+            },
+            [this](const GameSettings& settings) {
+                const InputBindingMap previousBindings = settings_.input.bindings;
+                settings_ = sanitizeSettings(settings);
+                if (!inputBindingMapsEqual(previousBindings, settings_.input.bindings)) {
+                    input_.setBindingMap(settings_.input.bindings);
+                }
+                applyAudioSettings();
+                applyVideoSettings(true);
+                queueSettingsSave();
+            });
+        game_.setInputBindingAccessors(
+            [this]() {
+                return settings_.input.bindings;
+            },
+            [this](const InputBindingMap& bindings) {
+                settings_.input.bindings = sanitizeInputBindings(bindings);
+                input_.setBindingMap(settings_.input.bindings);
+                queueSettingsSave();
+            });
+        startupLoadStep_ = StartupLoadStep::LoadAssets;
+        break;
+    case StartupLoadStep::LoadAssets:
+        startupStatus_ = "Loading fixed assets";
+        loadAssets();
+        startupLoadStep_ = StartupLoadStep::BeginGameInitialize;
+        break;
+    case StartupLoadStep::BeginGameInitialize:
+        startupStatus_ = "Preparing game data";
+        game_.beginInitialize(LogicalScreenWidth, LogicalScreenHeight, testPlayMode_);
+        startupLoadStep_ = StartupLoadStep::AdvanceGameInitialize;
+        break;
+    case StartupLoadStep::AdvanceGameInitialize:
+        startupStatus_ = game_.initializeStatusText();
+        if (game_.advanceInitialize()) {
+            startupLoadStep_ = StartupLoadStep::EnableHotReload;
+            startupStatus_ = "Finalizing runtime";
+        }
+        break;
+    case StartupLoadStep::EnableHotReload:
+        startupStatus_ = "Configuring hot reload";
+        setRuntimeHotReloadEnabled(testPlayMode_ && !autoReloadBlocked_);
+        startupLoadStep_ = StartupLoadStep::ExecuteLaunchMode;
+        break;
+    case StartupLoadStep::ExecuteLaunchMode:
+        startupStatus_ = "Applying launch mode";
+        if (testPlayMode_ && !startupLaunchModeCommand_.empty()) {
+            game_.executeDebugCommand(startupLaunchModeCommand_);
+        }
+        startupLoadStep_ = StartupLoadStep::Finish;
+        break;
+    case StartupLoadStep::Finish:
+        startupStatus_ = "Ready";
+        time_.reset();
+        startupLoadStep_ = StartupLoadStep::Done;
+        startupLoadActive_ = false;
+        break;
+    case StartupLoadStep::Done:
+        startupLoadActive_ = false;
+        break;
+    }
+}
+
 void App::run()
 {
     while (running_) {
         input_.beginFrame();
         SDL_Event event;
         while (SDL_PollEvent(&event)) {
-            const bool gameConsumedEvent = game_.handleEvent(event);
+            SDL_Event renderEvent = event;
+            if (renderer_ != nullptr) {
+                renderer_->convertEventToRenderCoordinates(renderEvent);
+            }
+            const bool gameConsumedEvent = !startupLoadActive_ && game_.handleEvent(renderEvent);
             if (!gameConsumedEvent) {
-                input_.handleEvent(event);
+                input_.handleEvent(renderEvent);
+            }
+            if (!gameConsumedEvent && testPlayMode_ && !startupLoadActive_ &&
+                event.type == SDL_EVENT_KEY_DOWN && !event.key.repeat &&
+                event.key.scancode == SDL_SCANCODE_PRINTSCREEN) {
+                requestScreenshot();
             }
             if (!gameConsumedEvent && testPlayMode_ && event.type == SDL_EVENT_KEY_DOWN && !event.key.repeat && event.key.scancode == SDL_SCANCODE_F3) {
                 const bool autosimRunning =
@@ -1137,10 +1379,12 @@ void App::run()
                     settings_.video.windowHeight = height_;
                     queueSettingsSave();
                 }
-                game_.resize(width_, height_);
+                if (!startupLoadActive_) {
+                    game_.resize(LogicalScreenWidth, LogicalScreenHeight);
+                }
             }
         }
-        input_.update(width_, height_);
+        input_.update(renderer_);
         if (input_.quitRequested()) {
             running_ = false;
         }
@@ -1151,6 +1395,19 @@ void App::run()
         }
         if (testPlayMode_ && input_.openConsolePressed()) {
             debugConsole_.toggleVisible();
+        }
+        if (startupLoadActive_) {
+            if (!running_) {
+                continue;
+            }
+            time_.tick();
+            updateSettingsSave(time_.deltaSeconds());
+            audio_.update(time_.deltaSeconds());
+            advanceStartupLoad();
+            if (running_ && startupLoadActive_) {
+                renderStartupFrame();
+            }
+            continue;
         }
         if (testPlayMode_ && input_.toggleAutoReloadBlockPressed()) {
             const bool blocked = !loadDevAutoReloadBlocked();
@@ -1250,7 +1507,9 @@ void App::run()
             !testFreezePaused_ && autoSimulationTimeActive_
                 ? autoSimulationTime_
                 : (testFreezePaused_ ? frozenTime_ : time_);
+        setInputHelpContext(&input_);
         game_.render(*renderer_, renderTime);
+        logPendingScreenshotResult();
     }
 }
 

@@ -368,7 +368,7 @@ struct DebugConsole::Impl {
         HWND created = CreateWindowExW(
             WS_EX_TOOLWINDOW,
             className,
-            L"Majo Shovel Debug Console",
+            L"ダンジョンを掘る魔女 デバッグコンソール",
             WS_OVERLAPPEDWINDOW,
             CW_USEDEFAULT,
             CW_USEDEFAULT,

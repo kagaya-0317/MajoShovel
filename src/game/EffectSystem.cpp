@@ -12,6 +12,9 @@ namespace majo {
 
 namespace {
 
+constexpr int LightweightMaxEffects = 512;
+constexpr int LightweightMaxSmokePuffs = 96;
+
 struct ParticlePreset {
     ParticleEffectId id = ParticleEffectId::DigDust;
     int count = 1;
@@ -627,6 +630,10 @@ void EffectSystem::renderDamagePopups(Renderer& renderer)
 
 void EffectSystem::spawnSmokeBurst(Vec2 position, SmokeBurstOptions options)
 {
+    if (lightweightMode_ && smokePuffs_.activeCount() >= LightweightMaxSmokePuffs) {
+        return;
+    }
+
     const int count = std::clamp(options.count, 0, 96);
     const float size = std::max(0.1f, options.size);
     const float sizeJitter = clamp(options.sizeJitter, 0.0f, 0.95f);
@@ -715,6 +722,10 @@ void EffectSystem::spawnStatusPopup(Vec2 position, std::string_view stateId, Sta
 
 void EffectSystem::spawnRing(Vec2 position, float startRadius, float endRadius, Color color, float duration, EffectLayer layer)
 {
+    if (lightweightMode_ && effects_.activeCount() >= LightweightMaxEffects) {
+        return;
+    }
+
     Effect* effect = effects_.acquire();
     if (!effect) {
         return;
@@ -743,6 +754,10 @@ Effect* EffectSystem::spawnParticle(
     float angularVelocity,
     float shardAspect)
 {
+    if (lightweightMode_ && effects_.activeCount() >= LightweightMaxEffects) {
+        return nullptr;
+    }
+
     Effect* effect = effects_.acquire();
     if (!effect) {
         return nullptr;

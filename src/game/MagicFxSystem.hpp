@@ -160,6 +160,7 @@ public:
     void playEarthDebrisBurst(Vec2 position, float radius);
     bool setEmitterPosition(MagicFxEmitterHandle handle, Vec2 position);
     bool stopEmitter(MagicFxEmitterHandle handle);
+    void setLightweightMode(bool enabled) { lightweightMode_ = enabled; }
     void update(float dt);
     void appendRenderEntries(std::vector<DepthRenderEntry>& entries, Renderer& renderer) const;
     void appendForegroundRenderEntries(std::vector<DepthRenderEntry>& entries, Renderer& renderer) const;
@@ -194,6 +195,7 @@ private:
     std::vector<Emitter> emitters_;
     std::vector<LightningStrike> lightningStrikes_;
     std::vector<ThunderImpactArc> thunderImpactArcs_;
+    bool lightweightMode_ = false;
     std::uint32_t nextEmitterId_ = 1;
 };
 

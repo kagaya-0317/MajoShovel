@@ -1,8 +1,12 @@
 ﻿#include "game/GameInternal.hpp"
 
+#include "data/GameBalance.hpp"
 #include "engine/Audio.hpp"
+#include "game/RingImpactSound.hpp"
 
 #include <cmath>
+#include <fstream>
+#include <iterator>
 
 namespace majo {
 
@@ -12,6 +16,7 @@ constexpr float DungeonRingIntroDuration = 1.18f;
 constexpr float HotReloadPollIntervalSeconds = 0.50f;
 constexpr std::string_view DefaultShovelObjectId = "item_shovel";
 constexpr std::string_view DefaultTorchObjectId = "item_torch";
+constexpr std::string_view MagnifyingGlassObjectId = "item_magnifying_glass";
 constexpr std::string_view EndingSeenFlag = "ending_seen";
 constexpr std::string_view AudioBgmTitle = "bgm.title";
 constexpr std::string_view AudioBgmBase = "bgm.base";
@@ -35,10 +40,10 @@ constexpr std::string_view AudioSeRingGuard = "se.ring.guard";
 constexpr std::string_view AudioSeRingReflect = "se.ring.reflect";
 constexpr std::string_view AudioSeMagicCast = "se.magic.cast";
 constexpr std::string_view AudioSeMagicImpact = "se.magic.impact";
-constexpr std::string_view AudioSeCaptureThrow = "se.capture.throw";
 constexpr std::string_view AudioSeCaptureSuccess = "se.capture.success";
 constexpr std::string_view AudioSeCaptureFail = "se.capture.fail";
 constexpr std::string_view AudioSeExplosion = "se.explosion";
+constexpr std::string_view AudioSeDiscovery = "se.discovery";
 constexpr std::string_view AudioSeUiConfirm = "se.ui.confirm";
 constexpr std::string_view AudioSeUiCancel = "se.ui.cancel";
 constexpr std::string_view AudioSeUiMenuOpen = "se.ui.menu_open";
@@ -50,6 +55,173 @@ constexpr std::string_view AudioSeUiRingPlace = "se.ui.ring_place";
 constexpr std::string_view AudioSeUiUpgradeSelect = "se.ui.upgrade_select";
 constexpr std::string_view IntroTutorialChestLootInventoryTrigger = "intro_tutorial:chest_loot_inventory";
 constexpr std::string_view IntroTutorialChestLootRingTrigger = "intro_tutorial:chest_loot_ring";
+constexpr std::string_view LocalObjectsSnapshotPath = "Objects_with_rotation.tsv";
+constexpr std::string_view LocalEnemiesSnapshotPath = ".tmp_enemies.csv";
+constexpr std::string_view LocalEnemyBehaviorsSnapshotPath = ".tmp_behaviors.csv";
+
+void stripUtf8Bom(std::string& text)
+{
+    if (text.size() >= 3 &&
+        static_cast<unsigned char>(text[0]) == 0xEF &&
+        static_cast<unsigned char>(text[1]) == 0xBB &&
+        static_cast<unsigned char>(text[2]) == 0xBF) {
+        text.erase(0, 3);
+    }
+}
+
+bool readTextFile(const std::filesystem::path& path, std::string& outText, std::string& outError)
+{
+    std::ifstream file(path, std::ios::binary);
+    if (!file) {
+        outError = "file not found: " + path.generic_string();
+        return false;
+    }
+    outText.assign(std::istreambuf_iterator<char>(file), std::istreambuf_iterator<char>());
+    if (!file.eof() && file.bad()) {
+        outError = "failed to read: " + path.generic_string();
+        outText.clear();
+        return false;
+    }
+    stripUtf8Bom(outText);
+    outError.clear();
+    return true;
+}
+
+bool parseTsvTable(std::string_view text, GoogleSheetTable& outTable, std::string& outError)
+{
+    GoogleSheetTable table;
+    GoogleSheetRow row;
+    std::string cell;
+    auto flushCell = [&]() {
+        if (!cell.empty() && cell.back() == '\r') {
+            cell.pop_back();
+        }
+        row.push_back(std::move(cell));
+        cell.clear();
+    };
+    auto flushRow = [&]() {
+        flushCell();
+        bool hasContent = false;
+        for (const std::string& value : row) {
+            if (!value.empty()) {
+                hasContent = true;
+                break;
+            }
+        }
+        if (hasContent) {
+            table.rows.push_back(std::move(row));
+        }
+        row.clear();
+    };
+
+    for (char ch : text) {
+        if (ch == '\t') {
+            flushCell();
+        } else if (ch == '\n') {
+            flushRow();
+        } else {
+            cell.push_back(ch);
+        }
+    }
+    if (!cell.empty() || !row.empty()) {
+        flushRow();
+    }
+
+    outTable = std::move(table);
+    outError.clear();
+    return true;
+}
+
+bool loadTsvTableFromDisk(const std::filesystem::path& path, GoogleSheetTable& outTable, std::string& outError)
+{
+    std::string text;
+    if (!readTextFile(path, text, outError)) {
+        return false;
+    }
+    return parseTsvTable(text, outTable, outError);
+}
+
+bool loadCsvTableFromDisk(const std::filesystem::path& path, GoogleSheetTable& outTable, std::string& outError)
+{
+    std::string text;
+    if (!readTextFile(path, text, outError)) {
+        return false;
+    }
+    return parseGoogleSheetCsv(text, outTable, outError);
+}
+
+void synthesizeLocalObjectDefinitions(ObjectCatalog& catalog)
+{
+    const auto ensureEffect = [&catalog](const std::string& code) {
+        if (code.empty() || code == "none" || catalog.effectCodes.find(code) != catalog.effectCodes.end()) {
+            return;
+        }
+        EffectCodeDefinition definition;
+        definition.code = code;
+        definition.displayName = code;
+        definition.implementationState = "local_snapshot";
+        catalog.effectCodes.emplace(code, std::move(definition));
+    };
+    const auto ensureTag = [&catalog](const std::string& tag) {
+        if (tag.empty() || catalog.specialTags.find(tag) != catalog.specialTags.end()) {
+            return;
+        }
+        SpecialTagDefinition definition;
+        definition.tag = tag;
+        definition.displayName = tag;
+        definition.implementationState = "local_snapshot";
+        catalog.specialTags.emplace(tag, std::move(definition));
+    };
+
+    for (const ObjectDefinition& object : catalog.objects) {
+        for (const EffectSpec& spec : object.normalEffects) {
+            for (const std::string& effect : spec.effects) {
+                ensureEffect(effect);
+            }
+        }
+        for (const EffectSpec& spec : object.orbitEffects) {
+            for (const std::string& effect : spec.effects) {
+                ensureEffect(effect);
+            }
+        }
+        for (const std::string& tag : object.tags) {
+            ensureTag(tag);
+        }
+    }
+}
+
+bool loadLocalObjectCatalog(ObjectCatalog& outCatalog, std::string& outError)
+{
+    GoogleSheetTable table;
+    if (!loadTsvTableFromDisk(std::filesystem::path(LocalObjectsSnapshotPath), table, outError)) {
+        return false;
+    }
+    ObjectCatalog catalog;
+    if (!parseObjectCatalog(table, catalog, outError)) {
+        outCatalog = {};
+        return false;
+    }
+    synthesizeLocalObjectDefinitions(catalog);
+    outCatalog = std::move(catalog);
+    outError.clear();
+    return true;
+}
+
+bool loadLocalEnemyCatalog(
+    const std::unordered_map<std::string, SpecialTagDefinition>& specialTags,
+    EnemyCatalog& outCatalog,
+    std::string& outError)
+{
+    GoogleSheetTable enemiesTable;
+    if (!loadCsvTableFromDisk(std::filesystem::path(LocalEnemiesSnapshotPath), enemiesTable, outError)) {
+        return false;
+    }
+    GoogleSheetTable behaviorsTable;
+    if (!loadCsvTableFromDisk(std::filesystem::path(LocalEnemyBehaviorsSnapshotPath), behaviorsTable, outError)) {
+        return false;
+    }
+    return parseEnemyCatalog(enemiesTable, behaviorsTable, specialTags, outCatalog, outError);
+}
 
 int chunkCoordForWorld(float world)
 {
@@ -96,6 +268,67 @@ bool spellRingContainsObjectId(const SpellRingSystem& spellRing, std::string_vie
     for (const SpellRingItem* item : spellRing.runtimeItems()) {
         if (item != nullptr && item->objectId == objectId) {
             return true;
+        }
+    }
+    return false;
+}
+
+bool effectSpecsContainEffectForTarget(
+    const std::vector<EffectSpec>& specs,
+    std::string_view target,
+    std::string_view effect)
+{
+    for (const EffectSpec& spec : specs) {
+        if (spec.target != target) {
+            continue;
+        }
+        for (const std::string& effectId : spec.effects) {
+            if (effectId == effect) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+bool objectHasCaptureNetOrbitEffect(const ItemData* item)
+{
+    return item != nullptr && (
+        effectSpecsContainEffectForTarget(item->orbitEffects, "enemy", "capture_net") ||
+        effectSpecsContainEffectForTarget(item->orbitEffects, "target", "capture_net"));
+}
+
+bool objectIdHasCaptureNetOrbitEffect(const ObjectCatalog& catalog, std::string_view objectId)
+{
+    if (objectId.empty()) {
+        return false;
+    }
+    const ItemData* item = catalog.registry.findById(objectId);
+    return objectHasCaptureNetOrbitEffect(item);
+}
+
+bool inventoryContainsCaptureNet(const InventorySystem& inventory)
+{
+    for (const InventoryObjectStack& stack : inventory.objectStacks()) {
+        if (stack.count > 0 && objectHasCaptureNetOrbitEffect(&stack.item)) {
+            return true;
+        }
+    }
+    for (const InventoryObjectInstance& instance : inventory.objectInstances()) {
+        if (!instance.instance.isBroken && objectHasCaptureNetOrbitEffect(&instance.item)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+bool spellRingContainsCaptureNet(const SpellRingSystem& spellRing, const ObjectCatalog& catalog)
+{
+    for (const auto& ringItems : spellRing.ringItems()) {
+        for (const SpellRingItem& item : ringItems) {
+            if (!item.broken() && objectIdHasCaptureNetOrbitEffect(catalog, item.objectId)) {
+                return true;
+            }
         }
     }
     return false;
@@ -171,8 +404,14 @@ void Game::setSettingsAccessors(
 {
     settingsGetter_ = std::move(getter);
     settingsApplier_ = std::move(applier);
+    lightweightModeActive_ = settingsGetter_ ? settingsGetter_().performance.lightweight : false;
     optionsSettingsLoaded_ = false;
     operationSettingsLoaded_ = false;
+}
+
+bool Game::lightweightModeEnabled() const
+{
+    return lightweightModeActive_;
 }
 
 void Game::setInputBindingAccessors(
@@ -186,6 +425,12 @@ void Game::setInputBindingAccessors(
 
 bool Game::handleEvent(const SDL_Event& event)
 {
+    if (handleDebugItemPickerEvent(event)) {
+        return true;
+    }
+    if (handleObjectImageScaleEditEvent(event)) {
+        return true;
+    }
     if (handleOperationSettingsEvent(event)) {
         return true;
     }
@@ -278,54 +523,215 @@ void Game::playUiSoundEvents(const UiContext& ui)
     }
 }
 
-void Game::initialize(int width, int height)
+void Game::initialize(int width, int height, bool allowSheetSource)
 {
-    camera_.setViewport(width, height);
-    loadSheetSourceConfig();
-    std::string message;
-    loadBalanceFromSources(message);
-    loadObjectsFromSheet();
-    loadStagesFromSheet();
-    resolveCurrentStageDefinition();
-    loadEnemiesFromSheet();
-    configureWatcher();
-    resetWorldSimulationState();
-    resetWorldUiState();
-    resetWorldRunState();
-    initializeDefaultSpellRing();
-    refreshEquipmentModifiers();
-    applyPermanentUpgrades();
-    spellRing_.applyObjectParameters(objectCatalog_);
-    spellRing_.resetBaseWeightToCurrent();
-    refreshOrbitEffects();
-    saveDataLoaded_ = loadSaveData();
-    if (saveDataLoaded_) {
-        reloadNotice_ = "セーブ読込完了";
-    } else {
-        reloadNotice_ = message.empty() ? "データ読込完了" : message;
+    beginInitialize(width, height, allowSheetSource);
+    while (!advanceInitialize()) {
     }
-    loadBaseEditData();
-    if (saveDataLoaded_) {
-        placeBasePlayerAtHomeDoorResumePoint();
-    } else {
-        baseArea_ = BaseArea::Outdoor;
-        basePlayerPosition_ = {640.0f, 360.0f};
-        baseOutdoorPlayerPosition_ = basePlayerPosition_;
-        basePlayerFacing_ = {0.0f, 1.0f};
+}
+
+void Game::beginInitialize(int width, int height, bool allowSheetSource)
+{
+    (void)width;
+    (void)height;
+    camera_.setViewport(balance::ScreenWidth, balance::ScreenHeight);
+    initializeJob_ = InitializeJob{};
+    initializeJob_.active = true;
+    initializeJob_.allowSheetSource = allowSheetSource;
+    initializeJob_.step = InitializeStep::LoadSheetSourceConfig;
+}
+
+bool Game::advanceInitialize()
+{
+    if (!initializeJob_.active) {
+        return initializeJob_.step == InitializeStep::Done;
     }
-    loadObjectImageScaleData();
-    setObjectImageScaleOverrides(&objectImageScaleById_);
-    setWorldIconScaleOverrides(&otherImageScaleByKey_);
-    loadOpeningKamishibaiData();
-    loadStoryEvents();
-    std::string openingMetaMessage;
-    openingMeta_ = openingMetaSave_.load(&openingMetaMessage);
-    logInfo(
-        "[opening] " + openingMetaMessage +
-        " openingEverWatched=" + (openingMeta_.openingEverWatched ? std::string("true") : std::string("false")));
-    enterBase();
-    startOpeningKamishibai();
-    reloadNoticeTimer_ = 2.0f;
+
+    switch (initializeJob_.step) {
+    case InitializeStep::None:
+        initializeJob_.step = InitializeStep::LoadSheetSourceConfig;
+        break;
+    case InitializeStep::LoadSheetSourceConfig:
+        loadSheetSourceConfig();
+        initializeJob_.step = InitializeStep::LoadBalance;
+        break;
+    case InitializeStep::LoadBalance:
+        loadBalanceFromSources(initializeJob_.loadMessage);
+        initializeJob_.step = InitializeStep::LoadObjects;
+        break;
+    case InitializeStep::LoadObjects:
+        loadObjectsFromSheet();
+        initializeJob_.step = InitializeStep::LoadStages;
+        break;
+    case InitializeStep::LoadStages:
+        loadStagesFromSheet();
+        initializeJob_.step = InitializeStep::ResolveCurrentStage;
+        break;
+    case InitializeStep::ResolveCurrentStage:
+        resolveCurrentStageDefinition();
+        initializeJob_.step = InitializeStep::LoadEnemies;
+        break;
+    case InitializeStep::LoadEnemies:
+        loadEnemiesFromSheet();
+        initializeJob_.step = InitializeStep::ConfigureWatcher;
+        break;
+    case InitializeStep::ConfigureWatcher:
+        configureWatcher();
+        initializeJob_.step = InitializeStep::ResetState;
+        break;
+    case InitializeStep::ResetState:
+        resetWorldSimulationState();
+        resetWorldUiState();
+        resetWorldRunState();
+        initializeJob_.step = InitializeStep::InitializeRing;
+        break;
+    case InitializeStep::InitializeRing:
+        initializeDefaultSpellRing();
+        refreshEquipmentModifiers();
+        applyPermanentUpgrades();
+        spellRing_.applyObjectParameters(objectCatalog_);
+        spellRing_.resetBaseWeightToCurrent();
+        refreshOrbitEffects();
+        initializeJob_.step = InitializeStep::LoadSave;
+        break;
+    case InitializeStep::LoadSave:
+        saveDataLoaded_ = loadSaveData();
+        initializeJob_.saveDataLoaded = saveDataLoaded_;
+        if (saveDataLoaded_) {
+            reloadNotice_ = "セーブ読込完了";
+        } else {
+            reloadNotice_ = initializeJob_.loadMessage.empty() ? "データ読込完了" : initializeJob_.loadMessage;
+        }
+        initializeJob_.step = InitializeStep::LoadBaseEdit;
+        break;
+    case InitializeStep::LoadBaseEdit:
+        loadBaseEditData();
+        if (initializeJob_.saveDataLoaded) {
+            placeBasePlayerAtHomeDoorResumePoint();
+        } else {
+            baseArea_ = BaseArea::Outdoor;
+            basePlayerPosition_ = {640.0f, 360.0f};
+            baseOutdoorPlayerPosition_ = basePlayerPosition_;
+            basePlayerFacing_ = {0.0f, 1.0f};
+        }
+        initializeJob_.step = InitializeStep::LoadImageScale;
+        break;
+    case InitializeStep::LoadImageScale:
+        loadObjectImageScaleData();
+        setObjectImageScaleOverrides(&objectImageScaleById_);
+        setWorldIconScaleOverrides(&otherImageScaleByKey_);
+        initializeJob_.step = InitializeStep::LoadOpening;
+        break;
+    case InitializeStep::LoadOpening:
+        loadOpeningKamishibaiData();
+        initializeJob_.step = InitializeStep::LoadStoryEvents;
+        break;
+    case InitializeStep::LoadStoryEvents:
+        loadStoryEvents();
+        initializeJob_.step = InitializeStep::LoadOpeningMeta;
+        break;
+    case InitializeStep::LoadOpeningMeta:
+        openingMeta_ = openingMetaSave_.load(&initializeJob_.openingMetaMessage);
+        logInfo(
+            "[opening] " + initializeJob_.openingMetaMessage +
+            " openingEverWatched=" + (openingMeta_.openingEverWatched ? std::string("true") : std::string("false")));
+        initializeJob_.step = InitializeStep::EnterInitialScreen;
+        break;
+    case InitializeStep::EnterInitialScreen:
+        enterBase();
+        startOpeningKamishibai();
+        reloadNoticeTimer_ = 2.0f;
+        if (sheetSource_.enabled) {
+            sheetSource_.enabled = false;
+            logInfo("Google Sheet source disabled after startup load; runtime reload uses local data.");
+        }
+        initializeJob_.step = InitializeStep::Done;
+        initializeJob_.active = false;
+        break;
+    case InitializeStep::Done:
+        initializeJob_.active = false;
+        break;
+    }
+
+    return initializeJob_.step == InitializeStep::Done;
+}
+
+int Game::initializeStepCount() const
+{
+    return 16;
+}
+
+int Game::initializeStepIndex() const
+{
+    switch (initializeJob_.step) {
+    case InitializeStep::None: return 0;
+    case InitializeStep::LoadSheetSourceConfig: return 0;
+    case InitializeStep::LoadBalance: return 1;
+    case InitializeStep::LoadObjects: return 2;
+    case InitializeStep::LoadStages: return 3;
+    case InitializeStep::ResolveCurrentStage: return 4;
+    case InitializeStep::LoadEnemies: return 5;
+    case InitializeStep::ConfigureWatcher: return 6;
+    case InitializeStep::ResetState: return 7;
+    case InitializeStep::InitializeRing: return 8;
+    case InitializeStep::LoadSave: return 9;
+    case InitializeStep::LoadBaseEdit: return 10;
+    case InitializeStep::LoadImageScale: return 11;
+    case InitializeStep::LoadOpening: return 12;
+    case InitializeStep::LoadStoryEvents: return 13;
+    case InitializeStep::LoadOpeningMeta: return 14;
+    case InitializeStep::EnterInitialScreen: return 15;
+    case InitializeStep::Done: return initializeStepCount();
+    }
+    return 0;
+}
+
+float Game::initializeProgress() const
+{
+    const int count = std::max(1, initializeStepCount());
+    return std::clamp(static_cast<float>(initializeStepIndex()) / static_cast<float>(count), 0.0f, 1.0f);
+}
+
+std::string Game::initializeStatusText() const
+{
+    switch (initializeJob_.step) {
+    case InitializeStep::None:
+    case InitializeStep::LoadSheetSourceConfig:
+        return "Loading data source settings";
+    case InitializeStep::LoadBalance:
+        return "Loading balance data";
+    case InitializeStep::LoadObjects:
+        return sheetSource_.enabled ? "Loading Objects sheet" : "Preparing local Objects data";
+    case InitializeStep::LoadStages:
+        return sheetSource_.enabled ? "Loading Stages sheet" : "Preparing local stage data";
+    case InitializeStep::ResolveCurrentStage:
+        return "Resolving current stage";
+    case InitializeStep::LoadEnemies:
+        return sheetSource_.enabled ? "Loading Enemies sheet" : "Preparing local enemy data";
+    case InitializeStep::ConfigureWatcher:
+        return "Configuring data watchers";
+    case InitializeStep::ResetState:
+        return "Resetting game state";
+    case InitializeStep::InitializeRing:
+        return "Preparing spell rings";
+    case InitializeStep::LoadSave:
+        return "Loading save data";
+    case InitializeStep::LoadBaseEdit:
+        return "Loading base layout";
+    case InitializeStep::LoadImageScale:
+        return "Loading image scale settings";
+    case InitializeStep::LoadOpening:
+        return "Loading opening data";
+    case InitializeStep::LoadStoryEvents:
+        return "Loading story events";
+    case InitializeStep::LoadOpeningMeta:
+        return "Loading opening progress";
+    case InitializeStep::EnterInitialScreen:
+        return "Starting title flow";
+    case InitializeStep::Done:
+        return "Ready";
+    }
+    return "Loading";
 }
 
 void Game::initializeWorld(bool captureRunStartInventory)
@@ -373,6 +779,7 @@ void Game::resetWorldEffectState()
 {
     resetInPlace(effects_);
     resetInPlace(groundLines_);
+    captureAbsorbAnimations_.clear();
     ringTrailEffectTimer_ = 0.0f;
     ambientParticleTimer_ = 0.0f;
 }
@@ -479,6 +886,9 @@ void Game::resetWorldUiState()
     resetBaseEditDragState();
     objectImageScaleReturnMode_ = ScreenMode::Playing;
     imageScaleEditTab_ = ImageScaleEditTab::Objects;
+    objectImageScaleAllObjectIds_.clear();
+    objectImageScaleObjectIds_.clear();
+    objectImageScaleSearchInput_ = {};
     objectImageScaleSelectedIndex_ = -1;
     otherImageScaleSelectedIndex_ = -1;
     objectImageScaleScrollOffset_ = 0.0f;
@@ -486,7 +896,9 @@ void Game::resetWorldUiState()
     objectImageScaleDirty_ = false;
     objectImageScaleStatus_.clear();
     debugItemPickerActive_ = false;
+    debugItemPickerAllObjectIds_.clear();
     debugItemPickerObjectIds_.clear();
+    debugItemPickerSearchInput_ = {};
     debugItemPickerSelectedIndex_ = -1;
     debugItemPickerScrollOffset_ = 0.0f;
     debugItemPickerStatus_.clear();
@@ -533,8 +945,6 @@ void Game::resetWorldRunState()
     astralResultSelection_ = 0;
     inventoryReturnToPause_ = false;
     debugPaused_ = false;
-    captureCooldown_ = 0.0f;
-    captureHoverEnemyId_ = 0;
     digToolFailsafeSpawnCooldown_ = 0.0f;
     clampCurrentStageToSelectableStages();
     roguelikeDungeon_ = currentStageIsRoguelike();
@@ -1661,6 +2071,11 @@ void Game::loadSheetSourceConfig()
         logWarning("Google Sheet source disabled: " + error);
         return;
     }
+    const bool allowSheetSourceNow = initializeJob_.active && initializeJob_.allowSheetSource;
+    if (!allowSheetSourceNow && sheetSource_.enabled) {
+        sheetSource_.enabled = false;
+        logInfo("Google Sheet source skipped outside test-play startup load; using local/fallback data.");
+    }
 }
 
 bool Game::loadBalanceFromDisk(std::string& message)
@@ -1709,17 +2124,23 @@ bool Game::loadBalanceFromSources(std::string& message)
 
 bool Game::loadObjectsFromSheet()
 {
-    if (!sheetSource_.enabled) {
-        objectCatalog_ = ObjectCatalog{};
-        rebuildObjectImageScaleList();
-        return false;
-    }
-
     ObjectCatalog loaded;
-    std::string error;
-    if (!loadObjectCatalogFromGoogleSheet(sheetSource_, loaded, error)) {
-        logError("Objects sheet load failed: " + error);
-        return false;
+    bool loadedFromLocalSnapshot = false;
+    if (!sheetSource_.enabled) {
+        std::string error;
+        if (!loadLocalObjectCatalog(loaded, error)) {
+            objectCatalog_ = ObjectCatalog{};
+            rebuildObjectImageScaleList();
+            logError("Local Objects snapshot load failed: " + error);
+            return false;
+        }
+        loadedFromLocalSnapshot = true;
+    } else {
+        std::string error;
+        if (!loadObjectCatalogFromGoogleSheet(sheetSource_, loaded, error)) {
+            logError("Objects sheet load failed: " + error);
+            return false;
+        }
     }
 
     objectCatalog_ = std::move(loaded);
@@ -1727,7 +2148,8 @@ bool Game::loadObjectsFromSheet()
     effectDispatcher_.registerFoundationHandlers(objectCatalog_);
     logDbValidationReport(objectCatalog_);
     logEffectDispatcherSmoke(objectCatalog_, effectDispatcher_);
-    logError("Objects sheet loaded: " + std::to_string(objectCatalog_.registry.size()) + " items");
+    logError(std::string(loadedFromLocalSnapshot ? "Local Objects snapshot loaded: " : "Objects sheet loaded: ") +
+        std::to_string(objectCatalog_.registry.size()) + " items");
     logError("Objects loot weight columns detected: " + std::to_string(objectCatalog_.lootWeightStats.detectedColumnCount));
     logError("Objects loot weighted items: " + std::to_string(objectCatalog_.lootWeightStats.weightedItemCount));
     logError("Objects loot weight warnings: " + std::to_string(objectCatalog_.lootWeightStats.warningCount));
@@ -2135,16 +2557,22 @@ void Game::resolveCurrentStageDefinition()
 
 bool Game::loadEnemiesFromSheet()
 {
-    if (!sheetSource_.enabled) {
-        enemyCatalog_ = EnemyCatalog{};
-        return false;
-    }
-
     EnemyCatalog loaded;
-    std::string error;
-    if (!loadEnemyCatalogFromGoogleSheet(sheetSource_, objectCatalog_.specialTags, loaded, error)) {
-        logError("Enemies sheet load failed: " + error);
-        return false;
+    bool loadedFromLocalSnapshot = false;
+    if (!sheetSource_.enabled) {
+        std::string error;
+        if (!loadLocalEnemyCatalog(objectCatalog_.specialTags, loaded, error)) {
+            enemyCatalog_ = EnemyCatalog{};
+            logError("Local Enemies snapshot load failed: " + error);
+            return false;
+        }
+        loadedFromLocalSnapshot = true;
+    } else {
+        std::string error;
+        if (!loadEnemyCatalogFromGoogleSheet(sheetSource_, objectCatalog_.specialTags, loaded, error)) {
+            logError("Enemies sheet load failed: " + error);
+            return false;
+        }
     }
 
     enemyCatalog_ = std::move(loaded);
@@ -2152,7 +2580,8 @@ bool Game::loadEnemiesFromSheet()
         upsertObjectDefinition(objectCatalog_, makeCapturedObjectDefinition(enemy));
     }
     logEnemyDbValidationReport(enemyCatalog_);
-    logError("Enemies sheet loaded: " + std::to_string(enemyCatalog_.enemies.size()) +
+    logError(std::string(loadedFromLocalSnapshot ? "Local Enemies snapshot loaded: " : "Enemies sheet loaded: ") +
+        std::to_string(enemyCatalog_.enemies.size()) +
         " enemies, " + std::to_string(enemyCatalog_.enemiesById.size()) + " unique IDs");
     logError("Enemies spawn weight columns detected: " + std::to_string(enemyCatalog_.spawnWeightStats.detectedColumnCount));
     logError("Enemies spawn weighted enemies: " + std::to_string(enemyCatalog_.spawnWeightStats.weightedEnemyCount));
@@ -2677,11 +3106,17 @@ void Game::switchActiveRingWithLog(int delta)
 
 void Game::update(const Input& input, const Time& time)
 {
+    lightweightModeActive_ = settingsGetter_
+        ? settingsGetter_().performance.lightweight
+        : optionsSettings_.performance.lightweight;
+    const bool lightweight = lightweightModeEnabled();
+    effects_.setLightweightMode(lightweight);
+    magicFx_.setLightweightMode(lightweight);
+
     checkHotReload(time.deltaSeconds());
     reloadNoticeTimer_ = std::max(0.0f, reloadNoticeTimer_ - time.deltaSeconds());
     encyclopedia_.update(time.deltaSeconds());
     updateDungeonLogs(time.deltaSeconds());
-    captureHoverEnemyId_ = 0;
 
     if (input.debugPressed()) {
         debug_.toggle();
@@ -2711,7 +3146,6 @@ void Game::update(const Input& input, const Time& time)
         return;
     }
     updateDungeonRingIntro(time.deltaSeconds());
-    captureCooldown_ = std::max(0.0f, captureCooldown_ - time.deltaSeconds());
     magic_.setFxSystem(&magicFx_);
 
     std::vector<EffectDiscoveryEvent> effectDiscoveries;
@@ -2723,6 +3157,8 @@ void Game::update(const Input& input, const Time& time)
     } uiSoundFlush{*this, ui};
     const bool wasPaused = gameProgressPaused();
     updateScreenMode(input, ui, time.deltaSeconds(), &effectDiscoveries);
+    effects_.setLightweightMode(lightweight);
+    magicFx_.setLightweightMode(lightweight);
     queueIntroTutorialChestLootDialogueIfReady();
     if (inventory_.equippedStaffInstanceId() != observedEquippedStaffInstanceId_) {
         refreshEquipmentModifiers();
@@ -2832,18 +3268,26 @@ void Game::update(const Input& input, const Time& time)
             &magic_,
             &effectDiscoveries,
             &encyclopedia_);
-        if (!digging_.dugTiles().empty()) {
-            bool brokeOre = false;
-            for (const DugTile& tile : digging_.dugTiles()) {
-                if (tile.type == TileType::Ore) {
-                    brokeOre = true;
-                    break;
-                }
+        const std::vector<RingImpactSoundPlayback> terrainImpactSounds =
+            resolveRingImpactSoundEvents(digging_.impactSoundEvents(), lootRuntimeRng(), 3);
+        if (!terrainImpactSounds.empty()) {
+            for (const RingImpactSoundPlayback& sound : terrainImpactSounds) {
+                playAudioSe(sound.cueId, sound.volumeScale, sound.pitchScale);
             }
-            playAudioSe(brokeOre ? AudioSeDigOreBreak : AudioSeDigBreak);
-        }
-        if (!digging_.hitTiles().empty()) {
-            playAudioSe(AudioSeDigHit);
+        } else {
+            if (!digging_.dugTiles().empty()) {
+                bool brokeOre = false;
+                for (const DugTile& tile : digging_.dugTiles()) {
+                    if (tile.type == TileType::Ore) {
+                        brokeOre = true;
+                        break;
+                    }
+                }
+                playAudioSe(brokeOre ? AudioSeDigOreBreak : AudioSeDigBreak);
+            }
+            if (!digging_.hitTiles().empty()) {
+                playAudioSe(AudioSeDigHit);
+            }
         }
         for (const TerrainHitTile& tile : digging_.hitTiles()) {
             effects_.spawnDigHit(tile.center, tile.center - spellRing_.center(), tile.color);
@@ -2967,6 +3411,9 @@ void Game::update(const Input& input, const Time& time)
             if (event.kind == WorldDropKind::Object) {
                 runStats_.acquiredObjectItems += std::max(1, event.quantity);
                 recordObjectObtainedForFirstNotice(event.id, event.instanceId, event.protectable, player_.position);
+                if (std::string_view(event.id) == MagnifyingGlassObjectId) {
+                    queueStoryEventForTrigger("tutorial:magnifying_glass");
+                }
             }
         }
         if (introTutorialActive() &&
@@ -3016,9 +3463,15 @@ void Game::update(const Input& input, const Time& time)
         updateOrbitAreaEffects(time.deltaSeconds(), effectDiscoveries);
         updateOrbitGroundEffects(time.deltaSeconds(), effectDiscoveries);
 
+        const bool capturedBossOwned = hasCapturedBossForCurrentStage();
+        const bool allowBossCapture = currentStageCleared() && !capturedBossOwned;
+        const std::string bossCaptureObjectId = currentStageCleared()
+            ? currentStageBossCaptureObjectId()
+            : std::string{};
         enemies_.update(
             player_,
             spellRing_,
+            inventory_,
             tileMap_,
             time.deltaSeconds(),
             time.totalSeconds(),
@@ -3031,35 +3484,14 @@ void Game::update(const Input& input, const Time& time)
             effectDispatcher_,
             projectiles_,
             magic_,
+            allowBossCapture,
+            bossCaptureObjectId,
             &effectDiscoveries,
             &encyclopedia_);
-        const bool capturedBossOwned = hasCapturedBossForCurrentStage();
-        const bool allowBossCapture = currentStageCleared() && !capturedBossOwned;
-        const std::string bossCaptureObjectId = currentStageCleared()
-            ? currentStageBossCaptureObjectId()
-            : std::string{};
-        const bool useGamepadAim = input.lastActiveDevice() == InputDeviceKind::Gamepad;
-        const Vec2 captureAimDirection = input.hasAimAxis()
-            ? normalize(input.aimAxis())
-            : normalize(player_.facing);
-        if (!introTutorialActive() && !ui.pointerConsumed() && captureCooldown_ <= 0.0f) {
-            const CaptureTargetPreview preview = useGamepadAim
-                ? enemies_.previewCaptureInDirection(
-                    player_.position,
-                    captureAimDirection,
-                    player_,
-                    allowBossCapture,
-                    bossCaptureObjectId)
-                : enemies_.previewCaptureAt(
-                    camera_.screenToWorld(input.mouseScreen()),
-                    player_,
-                    allowBossCapture,
-                    bossCaptureObjectId);
-            if (preview.challengeable) {
-                captureHoverEnemyId_ = preview.enemyRuntimeId;
-            }
-        }
-        if (!enemyTestActive_ && !introTutorialActive() && enemies_.activeCount() > 0) {
+        if (!enemyTestActive_ &&
+            !introTutorialActive() &&
+            enemies_.activeCount() > 0 &&
+            (inventoryContainsCaptureNet(inventory_) || spellRingContainsCaptureNet(spellRing_, objectCatalog_))) {
             queueStoryEventForTrigger("tutorial:capture_net");
         }
         for (Vec2 explosionPosition : digging_.capturedExplosionRequests()) {
@@ -3122,50 +3554,10 @@ void Game::update(const Input& input, const Time& time)
             playAudioSe(AudioSeMagicImpact);
         }
         bool capturedEnemyThisFrame = false;
-        if (!introTutorialActive() && input.capturePressed() && !ui.pointerConsumed() && captureCooldown_ <= 0.0f) {
-            playAudioSe(AudioSeCaptureThrow);
-            const CaptureResult capture = useGamepadAim
-                ? enemies_.tryCaptureInDirection(
-                    player_.position,
-                    captureAimDirection,
-                    player_,
-                    spellRing_,
-                    inventory_,
-                    allowBossCapture,
-                    bossCaptureObjectId)
-                : enemies_.tryCaptureAt(
-                    camera_.screenToWorld(input.mouseScreen()),
-                    player_,
-                    spellRing_,
-                    inventory_,
-                    allowBossCapture,
-                    bossCaptureObjectId);
-            if (capture.type != CaptureResultType::NoTarget) {
-                captureCooldown_ = capture.type == CaptureResultType::Success ? 0.35f : 0.75f;
-            }
-            if (capture.type == CaptureResultType::Success) {
-                capturedEnemyThisFrame = true;
-                recordObjectObtainedForFirstNotice(capture.objectId, capture.instanceId, capture.protectable, capture.position);
-                playAudioSe(AudioSeCaptureSuccess);
-                pushDungeonLog(capture.enemyName + " を捕まえた", "capture_success:" + capture.enemyName);
-                effects_.spawnCaptureSuccess(capture.position, player_.position - capture.position);
-            } else if (capture.type == CaptureResultType::OutOfRange) {
-                playAudioSe(AudioSeCaptureFail);
-                pushDungeonLog("虫とり網: 遠すぎる", "capture_out_of_range");
-            } else if (capture.type == CaptureResultType::InventoryFull) {
-                playAudioSe(AudioSeCaptureFail);
-                pushDungeonLog("虫とり網: 持ち物がいっぱい", "capture_inventory_full");
-            } else if (capture.type == CaptureResultType::BossLocked) {
-                playAudioSe(AudioSeCaptureFail);
-                pushDungeonLog("虫とり網: 初回ボスは捕獲できない", "capture_boss_locked");
-            } else if (capture.type == CaptureResultType::BossAlreadyOwned) {
-                playAudioSe(AudioSeCaptureFail);
-                pushDungeonLog("虫とり網: 捕獲中のボスは再捕獲できない", "capture_boss_owned");
-            } else if (capture.type == CaptureResultType::Failed) {
-                playAudioSe(AudioSeCaptureFail);
-                pushDungeonLog("虫とり網: 逃げられた", "capture_failed:" + capture.enemyName);
-            }
+        for (const CaptureResult& capture : enemies_.consumeCaptureResults()) {
+            capturedEnemyThisFrame = handleCaptureResult(capture) || capturedEnemyThisFrame;
         }
+        updateCaptureAbsorbAnimations(time.deltaSeconds());
         updateDungeonMinimap(time.totalSeconds());
         handleRingItemBreakEvents(&effectDiscoveries);
 
@@ -3184,6 +3576,11 @@ void Game::update(const Input& input, const Time& time)
 
         bool bossDefeated = false;
         Vec2 bossDefeatPosition{};
+        const std::vector<RingImpactSoundPlayback> enemyImpactSounds =
+            resolveRingImpactSoundEvents(enemies_.impactSoundEvents(), lootRuntimeRng(), 4);
+        for (const RingImpactSoundPlayback& sound : enemyImpactSounds) {
+            playAudioSe(sound.cueId, sound.volumeScale, sound.pitchScale);
+        }
         for (const EnemyEvent& event : enemies_.events()) {
             if (event.type == EnemyEventType::Spawn) {
                 playAudioSe(AudioSeEnemySpawn);
@@ -3229,6 +3626,12 @@ void Game::update(const Input& input, const Time& time)
                 }
             } else if (event.type == EnemyEventType::TerrainBreak) {
                 effects_.spawnTileBreak(event.position, TileType::Dirt);
+            } else if (event.type == EnemyEventType::Inspected) {
+                const auto enemyIt = enemyCatalog_.enemiesById.find(event.enemyId);
+                if (enemyIt != enemyCatalog_.enemiesById.end() &&
+                    encyclopedia_.noteEnemyInspected(enemyIt->second, event.position)) {
+                    playAudioSe(AudioSeDiscovery);
+                }
             } else if (event.type == EnemyEventType::Death || event.type == EnemyEventType::BossDeath) {
                 handleDungeonEventEnemyEvent(event);
                 ++runStats_.defeatedEnemies;
@@ -3289,6 +3692,16 @@ void Game::update(const Input& input, const Time& time)
                     true,
                     LootSourceKind::CapturedReward,
                     lootProfile.requiredTag);
+            } else if (event.type == EnemyEventType::MoneyDrop) {
+                if (event.moneyDrop <= 0) {
+                    continue;
+                }
+                std::mt19937& rng = lootRuntimeRng();
+                worldDrops_.spawnMoneyDrop(
+                    event.moneyDrop,
+                    scatterLootPosition(event.position, rng),
+                    runStats_.elapsedSeconds,
+                    makeWorldLootJumpMotion(event.position, rng));
             } else if (event.type == EnemyEventType::MaterialDrop) {
                 if (event.materialDropType == MaterialType::Count || event.materialDropCount <= 0) {
                     logError("[warning] EnemyMaterialDrop: invalid material drop event; no material drop");
@@ -3323,19 +3736,37 @@ void Game::update(const Input& input, const Time& time)
                         }
                     }
                 } else if (!event.objectDropId.empty()) {
-                    for (int i = 0; i < dropCount; ++i) {
-                        worldDrops_.spawnObjectDrop(
+                    if (event.objectDropInstance) {
+                        worldDrops_.spawnObjectInstanceDrop(
                             objectCatalog_,
-                            event.objectDropId,
+                            *event.objectDropInstance,
                             scatterLootPosition(event.position, rng),
                             runStats_.elapsedSeconds,
                             makeWorldLootJumpMotion(event.position, rng));
+                    } else {
+                        for (int i = 0; i < dropCount; ++i) {
+                            worldDrops_.spawnObjectDrop(
+                                objectCatalog_,
+                                event.objectDropId,
+                                scatterLootPosition(event.position, rng),
+                                runStats_.elapsedSeconds,
+                                makeWorldLootJumpMotion(event.position, rng));
+                        }
                     }
+                } else if (event.objectDropInstance) {
+                    worldDrops_.spawnObjectInstanceDrop(
+                        objectCatalog_,
+                        *event.objectDropInstance,
+                        scatterLootPosition(event.position, rng),
+                        runStats_.elapsedSeconds,
+                        makeWorldLootJumpMotion(event.position, rng));
                 }
             } else if (event.type == EnemyEventType::CapturedExplosion) {
                 continue;
             } else if (event.type == EnemyEventType::AttackHit) {
-                playAudioSe(AudioSeAttackHit);
+                if (!event.ringItemImpact) {
+                    playAudioSe(AudioSeAttackHit);
+                }
                 effects_.spawnEnemyHit(event.position, event.effectId);
                 if (event.damageAmount >= 0) {
                     effects_.spawnDamagePopup(

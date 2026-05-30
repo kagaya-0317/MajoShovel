@@ -651,6 +651,13 @@ bool SettingsStore::load(GameSettings& outSettings, std::string* outError) const
             loaded.video.vsync = *value;
         }
     }
+
+    if (const JsonValue* performance = objectMember(*root, "performance")) {
+        if (std::optional<bool> value = boolMember(*performance, "lightweight")) {
+            loaded.performance.lightweight = *value;
+        }
+    }
+
     if (const JsonValue* input = objectMember(*root, "input")) {
         loadInputBindings(*input, loaded.input.bindings);
     }
@@ -689,6 +696,9 @@ bool SettingsStore::save(const GameSettings& settings, std::string* outError) co
     file << "    \"windowWidth\": " << sanitized.video.windowWidth << ",\n";
     file << "    \"windowHeight\": " << sanitized.video.windowHeight << ",\n";
     file << "    \"vsync\": " << (sanitized.video.vsync ? "true" : "false") << "\n";
+    file << "  },\n";
+    file << "  \"performance\": {\n";
+    file << "    \"lightweight\": " << (sanitized.performance.lightweight ? "true" : "false") << "\n";
     file << "  },\n";
     file << "  \"input\": {\n";
     file << "    \"bindings\": {\n";

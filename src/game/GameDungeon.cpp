@@ -1,5 +1,6 @@
 ﻿#include "game/GameInternal.hpp"
 
+#include "data/GameBalance.hpp"
 #include "data/StageWeight.hpp"
 
 #include "game/EntityStatusVisuals.hpp"
@@ -49,12 +50,19 @@ constexpr float MicroFeatureSpacingTiles = 9.5f;
 constexpr int MicroFeatureMinCount = 10;
 constexpr int MicroFeatureMaxCount = 30;
 constexpr double DungeonMinimapRevealIntervalSeconds = 0.15;
+constexpr std::string_view FirstDungeonStageId = "stage_01_stardust";
+constexpr std::string_view MagnifyingGlassObjectId = "item_magnifying_glass";
+constexpr float MagnifyingGlassGuaranteedMaxDepthTiles = 100.0f;
+constexpr float MagnifyingGlassGuaranteedProgressFallback = 0.24f;
 constexpr std::string_view FinalStoryStageId = "stage_03_star_core";
 constexpr std::string_view EndingSeenFlag = "ending_seen";
 constexpr std::string_view PostEndingIntroFlag = "story_post_ending_intro";
 constexpr std::string_view AudioBgmDungeon = "bgm.dungeon";
 constexpr std::string_view AudioSeChestOpen = "se.chest.open";
 constexpr std::string_view AudioSeCrateBreak = "se.crate.break";
+constexpr std::string_view AudioSeCaptureSuccess = "se.capture.success";
+constexpr std::string_view AudioSeCaptureFail = "se.capture.fail";
+constexpr std::string_view AudioSePickup = "se.pickup";
 constexpr std::string_view AudioSeEnemySpawn = "se.enemy.spawn";
 constexpr std::string_view AudioSeItemBreak = "se.item.break";
 constexpr std::string_view AudioSeDiscovery = "se.discovery";
@@ -64,6 +72,9 @@ constexpr std::string_view AudioSeFootstepHomeInterior = "se.footstep.home";
 constexpr std::string_view AudioSeFootstepDungeon = "se.footstep.dungeon";
 constexpr std::string_view DigToolFailsafeShovelObjectId = "item_shovel";
 constexpr std::string_view DigToolFailsafeDigCategory = "\xE6\x8E\x98\xE5\x89\x8A";
+constexpr float CaptureAbsorbDurationSeconds = 0.78f;
+constexpr float CaptureAbsorbFlyDelaySeconds = 0.24f;
+constexpr float CaptureAbsorbSparkIntervalSeconds = 0.045f;
 constexpr float DigToolFailsafeSpawnCooldownSeconds = 12.0f;
 constexpr float DigToolFailsafeNearbyDropRadius = 220.0f;
 constexpr float FootstepPitchSideOffset = 0.025f;
@@ -76,6 +87,24 @@ constexpr float IntroTutorialMidwayCueTileX = 59.0f;
 constexpr float IntroTutorialEnemySpawnRadiusTiles = 9.0f;
 constexpr float IntroTutorialEnemyEncounterRadiusTiles = 5.6f;
 constexpr float IntroTutorialEnemyResolveRadiusTiles = 3.0f;
+
+float captureAbsorbFlyProgress(float elapsedSeconds, float flyDelaySeconds, float durationSeconds)
+{
+    const float flySeconds = std::max(0.05f, durationSeconds - flyDelaySeconds);
+    return smooth01((elapsedSeconds - flyDelaySeconds) / flySeconds);
+}
+
+Vec2 captureAbsorbCurvePosition(Vec2 start, Vec2 target, float flyProgress)
+{
+    const float t = clamp(flyProgress, 0.0f, 1.0f);
+    const float rush = t * t * (2.2f - 1.2f * t);
+    const Vec2 delta = target - start;
+    const Vec2 side = lengthSquared(delta) > 0.01f
+        ? normalize(Vec2{-delta.y, delta.x})
+        : Vec2{0.0f, -1.0f};
+    const float arc = std::sin(t * Pi);
+    return lerp(start, target, rush) + side * (arc * 12.0f) + Vec2{0.0f, -arc * 18.0f};
+}
 constexpr float IntroTutorialSlimeLeashRadiusTiles = 2.4f;
 constexpr float IntroTutorialExitLightRadiusTiles = 4.2f;
 constexpr std::string_view IntroTutorialShovelObjectId = "item_shovel";
@@ -2232,6 +2261,7 @@ void Game::updateAmbientParticleEffects(float dt)
         return;
     }
 
+    const bool lightweight = lightweightModeEnabled();
     ringTrailEffectTimer_ -= dt;
     const int throwingRingIndex = spellRing_.throwingRingIndex();
     if (throwingRingIndex >= 0 && ringTrailEffectTimer_ <= 0.0f) {
@@ -2240,17 +2270,19 @@ void Game::updateAmbientParticleEffects(float dt)
             ? player_.facing
             : player_.position - ringCenter;
         effects_.spawnForegroundRingTrail(ringCenter, trailDirection);
-        for (const SpellRingItem& item : spellRing_.itemsForRing(throwingRingIndex)) {
-            effects_.spawnForegroundRingTrail(item.worldPosition, trailDirection);
+        if (!lightweight) {
+            for (const SpellRingItem& item : spellRing_.itemsForRing(throwingRingIndex)) {
+                effects_.spawnForegroundRingTrail(item.worldPosition, trailDirection);
+            }
         }
-        ringTrailEffectTimer_ = 0.055f;
+        ringTrailEffectTimer_ = lightweight ? 0.11f : 0.055f;
     }
 
     ambientParticleTimer_ -= dt;
     if (ambientParticleTimer_ > 0.0f) {
         return;
     }
-    ambientParticleTimer_ = 0.18f;
+    ambientParticleTimer_ = lightweight ? 0.36f : 0.18f;
 
     const std::vector<const SpellRingItem*> runtimeItems = spellRing_.runtimeItems();
     for (const SpellRingItem* itemPtr : runtimeItems) {
@@ -2260,7 +2292,8 @@ void Game::updateAmbientParticleEffects(float dt)
         if (itemPtr->type == SpellRingItemType::Torch || itemPtr->lightRadius > 0.0f) {
             effects_.spawnForegroundTorchFlicker(itemPtr->worldPosition);
         }
-        if (!itemPtr->objectId.empty() || !itemPtr->addedEffects.empty() || itemPtr->hiddenDetectionRadius > 0.0f || itemPtr->treasureDetectionRadius > 0.0f) {
+        if (!lightweight &&
+            (!itemPtr->objectId.empty() || !itemPtr->addedEffects.empty() || itemPtr->hiddenDetectionRadius > 0.0f || itemPtr->treasureDetectionRadius > 0.0f)) {
             effects_.spawnForegroundSpecialItemGlimmer(itemPtr->worldPosition);
         }
     }
@@ -2269,15 +2302,159 @@ void Game::updateAmbientParticleEffects(float dt)
     enemies_.emitStatusParticles(effects_);
 
     if (warpPointsEnabled_) {
-        for (const WarpPoint& point : warpPoints_) {
-            if (point.discovered || point.unlocked) {
-                effects_.spawnWarpCircle(point.position, false);
+        if (!lightweight) {
+            for (const WarpPoint& point : warpPoints_) {
+                if (point.discovered || point.unlocked) {
+                    effects_.spawnWarpCircle(point.position, false);
+                }
             }
         }
         if (hasBossSpawnPoint_ && !bossSpawned_ && !hasCapturedBossForCurrentStage()) {
             effects_.spawnWarpCircle(bossSpawnPoint_, true);
         }
     }
+}
+
+bool Game::handleCaptureResult(const CaptureResult& capture)
+{
+    if (capture.type == CaptureResultType::NoTarget) {
+        return false;
+    }
+
+    if (capture.type == CaptureResultType::Success) {
+        playAudioSe(AudioSeCaptureSuccess);
+        if (!capture.capturedEnemy.enemyId.empty()) {
+            encyclopedia_.noteEnemyDiscovered(
+                capture.capturedEnemy.enemyId,
+                capture.capturedEnemy.enemyName,
+                capture.position);
+        }
+        startCaptureAbsorbAnimation(capture);
+        return true;
+    }
+
+    playAudioSe(AudioSeCaptureFail);
+    if (capture.type == CaptureResultType::OutOfRange) {
+        pushDungeonLog("虫とりアミ: 遠すぎる", "capture_out_of_range");
+    } else if (capture.type == CaptureResultType::InventoryFull) {
+        pushDungeonLog("虫とりアミ: 持ち物がいっぱい", "capture_inventory_full");
+    } else if (capture.type == CaptureResultType::BossLocked) {
+        pushDungeonLog("虫とりアミ: 初回ボスは捕獲できない", "capture_boss_locked");
+    } else if (capture.type == CaptureResultType::BossAlreadyOwned) {
+        pushDungeonLog("虫とりアミ: 捕獲中のボスは再捕獲できない", "capture_boss_owned");
+    } else if (capture.type == CaptureResultType::Failed) {
+        pushDungeonLog("虫とりアミ: 逃げられた", "capture_failed:" + capture.enemyName);
+    }
+    return false;
+}
+
+void Game::startCaptureAbsorbAnimation(const CaptureResult& capture)
+{
+    if (capture.capturedItem.id.empty()) {
+        return;
+    }
+
+    CaptureAbsorbAnimation animation;
+    animation.enemy = capture.capturedEnemy;
+    animation.enemy.active = true;
+    animation.enemy.position = capture.position;
+    animation.enemy.velocity = {};
+    animation.enemy.knockbackVelocity = {};
+    animation.item = capture.capturedItem;
+    animation.startPosition = capture.position;
+    animation.lastPosition = capture.position;
+    animation.durationSeconds = CaptureAbsorbDurationSeconds;
+    animation.flyDelaySeconds = CaptureAbsorbFlyDelaySeconds;
+    animation.sparkleTimer = 0.0f;
+    captureAbsorbAnimations_.push_back(std::move(animation));
+
+    effects_.spawnCaptureSuccess(capture.position, player_.position - capture.position);
+}
+
+Vec2 Game::captureAbsorbPosition(const CaptureAbsorbAnimation& animation, Vec2 targetPosition) const
+{
+    const float flyProgress = captureAbsorbFlyProgress(
+        animation.elapsedSeconds,
+        animation.flyDelaySeconds,
+        animation.durationSeconds);
+    return captureAbsorbCurvePosition(animation.startPosition, targetPosition, flyProgress);
+}
+
+void Game::finalizeCaptureAbsorbAnimation(const CaptureAbsorbAnimation& animation)
+{
+    if (animation.item.id.empty()) {
+        return;
+    }
+
+    upsertObjectDefinition(objectCatalog_, animation.item);
+
+    InventoryAddResult addResult;
+    if (inventory_.addRuntimeObjectItem(animation.item, &addResult)) {
+        ++runStats_.acquiredItems;
+        ++runStats_.acquiredObjectItems;
+        recordObjectObtainedForFirstNotice(
+            animation.item.id,
+            addResult.instanceId,
+            addResult.kind == InventoryAddKind::Instance && !addResult.instanceId.empty(),
+            player_.position);
+        pushDungeonLog(animation.enemy.enemyName + " を捕まえた", "capture_success:" + animation.enemy.enemyName);
+    } else {
+        ItemInstance instance = inventory_.createDetachedObjectInstance(animation.item);
+        std::mt19937& rng = lootRuntimeRng();
+        const Vec2 dropPosition = scatterLootPosition(player_.position, rng);
+        const bool dropped = worldDrops_.spawnObjectInstanceDrop(
+            objectCatalog_,
+            std::move(instance),
+            dropPosition,
+            runStats_.elapsedSeconds,
+            makeWorldLootJumpMotion(player_.position, rng));
+        if (dropped) {
+            pushDungeonLog(
+                "リュックがいっぱいなので " + animation.enemy.enemyName + " は地面に落ちた",
+                "capture_drop_full:" + animation.enemy.enemyName);
+        } else {
+            pushDungeonLog(
+                "虫とりアミ: " + animation.enemy.enemyName + " を収納できませんでした",
+                "capture_drop_failed:" + animation.enemy.enemyName);
+        }
+    }
+
+    effects_.spawnDropPickup(player_.position, animation.startPosition - player_.position);
+    playAudioSe(AudioSePickup);
+}
+
+void Game::updateCaptureAbsorbAnimations(float dt)
+{
+    if (captureAbsorbAnimations_.empty()) {
+        return;
+    }
+
+    const float safeDt = std::max(0.0f, dt);
+    for (CaptureAbsorbAnimation& animation : captureAbsorbAnimations_) {
+        animation.elapsedSeconds += safeDt;
+        animation.lastPosition = captureAbsorbPosition(animation, player_.position);
+
+        animation.sparkleTimer -= safeDt;
+        if (animation.sparkleTimer <= 0.0f) {
+            effects_.spawnForegroundSpecialItemGlimmer(animation.lastPosition);
+            if (animation.elapsedSeconds > animation.flyDelaySeconds) {
+                effects_.spawnForegroundRingTrail(animation.lastPosition, player_.position - animation.lastPosition);
+            }
+            animation.sparkleTimer = CaptureAbsorbSparkIntervalSeconds;
+        }
+    }
+
+    auto removeBegin = std::remove_if(
+        captureAbsorbAnimations_.begin(),
+        captureAbsorbAnimations_.end(),
+        [this](const CaptureAbsorbAnimation& animation) {
+            if (animation.elapsedSeconds < animation.durationSeconds) {
+                return false;
+            }
+            finalizeCaptureAbsorbAnimation(animation);
+            return true;
+        });
+    captureAbsorbAnimations_.erase(removeBegin, captureAbsorbAnimations_.end());
 }
 
 void Game::handleCapturedExplosion(Vec2 position)
@@ -2297,7 +2474,9 @@ void Game::handleCapturedExplosion(Vec2 position)
 
 void Game::resize(int width, int height)
 {
-    camera_.setViewport(width, height);
+    (void)width;
+    (void)height;
+    camera_.setViewport(balance::ScreenWidth, balance::ScreenHeight);
 }
 
 void Game::choosePauseMenuItem(int item)
@@ -2545,6 +2724,7 @@ void Game::retryAfterGameOver()
     clearTemporaryPlayerState(true);
     enemies_.clearTemporaryState();
     effects_ = EffectSystem{};
+    captureAbsorbAnimations_.clear();
     groundLines_ = GroundLineSystem{};
     projectiles_ = ProjectileSystem{};
     magic_ = MagicSystem{};
@@ -2699,6 +2879,7 @@ void Game::returnToBaseFromNormalStage(bool stageCleared, bool died)
     captureDungeonState();
     enemies_ = EnemySystem{};
     effects_ = EffectSystem{};
+    captureAbsorbAnimations_.clear();
     groundLines_ = GroundLineSystem{};
     ringTrailEffectTimer_ = 0.0f;
     ambientParticleTimer_ = 0.0f;
@@ -3281,6 +3462,7 @@ void Game::completeIntroTutorialAndReturnToBase()
     clearTemporaryPlayerState(true);
     enemies_ = EnemySystem{};
     effects_ = EffectSystem{};
+    captureAbsorbAnimations_.clear();
     groundLines_ = GroundLineSystem{};
     ringTrailEffectTimer_ = 0.0f;
     ambientParticleTimer_ = 0.0f;
@@ -3421,6 +3603,7 @@ bool Game::restoreDungeonState(bool useLatestWarpPoint)
     warpPointsEnabled_ = true;
     retrySnapshot_ = RetrySnapshot{};
     effects_ = EffectSystem{};
+    captureAbsorbAnimations_.clear();
     groundLines_ = GroundLineSystem{};
     projectiles_ = ProjectileSystem{};
     magic_ = MagicSystem{};
@@ -6040,6 +6223,29 @@ void Game::initializeRewardNodesFromLayout()
         }
     };
 
+    if (std::string_view(currentStageId_) == FirstDungeonStageId &&
+        objectCatalog_.registry.findById(MagnifyingGlassObjectId) != nullptr &&
+        encyclopedia_.objectStage(MagnifyingGlassObjectId, false) == EncyclopediaStage::Undiscovered) {
+        const float pathLength = pathLengthTiles(dungeonLayout_.mainPathPoints);
+        const float maxDepthProgress = pathLength > 1.0f
+            ? MagnifyingGlassGuaranteedMaxDepthTiles / pathLength
+            : MagnifyingGlassGuaranteedProgressFallback;
+        const float progress = clamp(
+            std::min(MagnifyingGlassGuaranteedProgressFallback, maxDepthProgress * 0.88f),
+            WallPocketProgressStart,
+            0.32f);
+        RewardNode node{
+            .tile = wallPocketTileAtProgress(dungeonLayout_, progress, WallPocketMinOffsetTiles, signDist(rng) == 1),
+            .visibility = PlacementVisibility::Exposed,
+            .rewardKind = "first_dungeon_magnifying_glass",
+            .objectId = std::string(MagnifyingGlassObjectId),
+            .revealed = true,
+            .spawned = false,
+            .collected = false,
+        };
+        placeRewardNode(std::move(node));
+    }
+
     for (const SpecialRoomAnchor& room : dungeonLayout_.specialRoomAnchors) {
         const DungeonTile centerTile = roundDungeonTile(room.center);
         if (room.type == SpecialRoomType::CoinRoom) {
@@ -6931,6 +7137,7 @@ bool Game::tryTriggerChestMimic(ChestNode& node)
 
     const Vec2 center = tileWorldCenter(node.tile);
     const RuntimeBalance dungeonBalance = runtimeBalanceForDungeon();
+    const int lootDepthRank = lootDepthRankForWorldPosition(tileMap_, dungeonLayout_, currentStageId_, center);
     int spawnedRuntimeId = 0;
     if (!enemies_.spawnSpecificEnemyAtPosition(
             tileMap_,
@@ -6941,7 +7148,9 @@ bool Game::tryTriggerChestMimic(ChestNode& node)
             enemyCatalog_,
             true,
             ChestMimicSpawnWarmupSeconds,
-            &spawnedRuntimeId)) {
+            &spawnedRuntimeId,
+            currentStageId_,
+            lootDepthRank)) {
         logError("[warning] Chest mimic spawn failed: enemyId=\"" + node.mimicEnemyId + "\"");
         node.mimicEnemyId.clear();
         return false;
@@ -7635,6 +7844,7 @@ void Game::updateExposedEnemyNodes()
         }
         bool spawned = false;
         int spawnedRuntimeId = 0;
+        const int lootDepthRank = lootDepthRankForWorldPosition(tileMap_, dungeonLayout_, currentStageId_, center);
         if (introTutorialSlimeNode) {
             const std::string slimeId = introTutorialSlimeEnemyId(enemyCatalog_);
             if (!slimeId.empty()) {
@@ -7648,10 +7858,12 @@ void Game::updateExposedEnemyNodes()
                     true,
                     false,
                     0.0f,
-                    &spawnedRuntimeId);
+                    &spawnedRuntimeId,
+                    currentStageId_,
+                    lootDepthRank);
             }
             if (!spawned) {
-                spawned = enemies_.spawnFixedNodeEnemy(tileMap_, center, player_.position, balance_, enemyCatalog_, false, &spawnedRuntimeId);
+                spawned = enemies_.spawnFixedNodeEnemy(tileMap_, center, player_.position, balance_, enemyCatalog_, false, &spawnedRuntimeId, currentStageId_, lootDepthRank);
             }
         } else if (introTutorialMushroomNode) {
             const std::string mushroomId = introTutorialMushroomEnemyId(enemyCatalog_);
@@ -7666,13 +7878,15 @@ void Game::updateExposedEnemyNodes()
                     true,
                     false,
                     0.0f,
-                    &spawnedRuntimeId);
+                    &spawnedRuntimeId,
+                    currentStageId_,
+                    lootDepthRank);
             }
             if (!spawned) {
-                spawned = enemies_.spawnFixedNodeEnemy(tileMap_, center, player_.position, balance_, enemyCatalog_, false, &spawnedRuntimeId);
+                spawned = enemies_.spawnFixedNodeEnemy(tileMap_, center, player_.position, balance_, enemyCatalog_, false, &spawnedRuntimeId, currentStageId_, lootDepthRank);
             }
         } else {
-            spawned = enemies_.spawnFixedNodeEnemy(tileMap_, center, player_.position, balance_, enemyCatalog_);
+            spawned = enemies_.spawnFixedNodeEnemy(tileMap_, center, player_.position, balance_, enemyCatalog_, false, nullptr, currentStageId_, lootDepthRank);
         }
         if (spawned) {
             if (introTutorialFixedNode) {
@@ -8053,7 +8267,9 @@ std::vector<Vec2> Game::spawnHiddenEnemyNodesFromOpenedTiles(const std::vector<V
             }
 
             consumedByHiddenNode = true;
-            if (enemies_.spawnNodeEnemy(tileMap_, tileWorldCenter(node.tile), player_.position, balance_, enemyCatalog_, true, true)) {
+            const Vec2 center = tileWorldCenter(node.tile);
+            const int lootDepthRank = lootDepthRankForWorldPosition(tileMap_, dungeonLayout_, currentStageId_, center);
+            if (enemies_.spawnNodeEnemy(tileMap_, center, player_.position, balance_, enemyCatalog_, true, true, currentStageId_, lootDepthRank)) {
                 node.spawned = true;
             }
             break;
@@ -8313,6 +8529,7 @@ void Game::restoreRetrySnapshot()
     bossSpawned_ = retrySnapshot_.bossSpawned;
     resetBossEncounter();
     effects_ = EffectSystem{};
+    captureAbsorbAnimations_.clear();
     groundLines_ = GroundLineSystem{};
     magic_ = MagicSystem{};
     magicFx_ = MagicFxSystem{};
@@ -8362,7 +8579,9 @@ void Game::maybeTriggerPlayerFootstep(
 {
     const bool dustFrame = frameIndex == 3 || frameIndex == 6;
     if (walking && dustFrame && previousFrame != frameIndex) {
-        spawnPlayerFootstepDust(footAnchor, movementDirection);
+        if (!lightweightModeEnabled()) {
+            spawnPlayerFootstepDust(footAnchor, movementDirection);
+        }
         playPlayerFootstepSound(surface, frameIndex);
     }
     previousFrame = frameIndex;

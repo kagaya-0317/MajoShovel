@@ -1,5 +1,7 @@
 ﻿#include "engine/Input.hpp"
 
+#include "engine/Renderer.hpp"
+
 #include <cmath>
 
 namespace majo {
@@ -29,6 +31,35 @@ int ringPresetRegisterSlotForScancode(SDL_Scancode scancode)
     case SDL_SCANCODE_3: return 2;
     default: return -1;
     }
+}
+
+bool textInputAllowsPolledScancode(SDL_Scancode scancode)
+{
+    if (scancode >= SDL_SCANCODE_F1 && scancode <= SDL_SCANCODE_F24) {
+        return true;
+    }
+    switch (scancode) {
+    case SDL_SCANCODE_ESCAPE:
+    case SDL_SCANCODE_RETURN:
+    case SDL_SCANCODE_KP_ENTER:
+    case SDL_SCANCODE_UP:
+    case SDL_SCANCODE_DOWN:
+    case SDL_SCANCODE_LEFT:
+    case SDL_SCANCODE_RIGHT:
+    case SDL_SCANCODE_PAGEUP:
+    case SDL_SCANCODE_PAGEDOWN:
+    case SDL_SCANCODE_HOME:
+    case SDL_SCANCODE_END:
+        return true;
+    default:
+        return false;
+    }
+}
+
+bool textInputActiveForKeyboardFocus()
+{
+    SDL_Window* window = SDL_GetKeyboardFocus();
+    return window != nullptr && SDL_TextInputActive(window);
 }
 
 float normalizeGamepadAxis(Sint16 value)
@@ -233,7 +264,7 @@ void Input::handleEvent(const SDL_Event& event)
     }
 }
 
-void Input::update(int, int)
+void Input::update(const Renderer* renderer)
 {
     const bool* keys = SDL_GetKeyboardState(nullptr);
     updateKeyboardPolledBindings(keys);
@@ -252,7 +283,9 @@ void Input::update(int, int)
     float mx = 0.0f;
     float my = 0.0f;
     SDL_GetMouseState(&mx, &my);
-    mouseScreen_ = {mx, my};
+    mouseScreen_ = renderer != nullptr
+        ? renderer->windowToRenderCoordinates({mx, my})
+        : Vec2{mx, my};
 }
 
 void Input::applyAutomation(const InputAutomationFrame& frame)
@@ -353,6 +386,13 @@ bool Input::released(InputAction action) const
 bool Input::held(InputAction action) const
 {
     return held_[actionIndex(action)];
+}
+
+bool Input::removeAllRingItemsPressed() const
+{
+    const bool shiftHeld = (SDL_GetModState() & SDL_KMOD_SHIFT) != 0;
+    const bool gamepadOffsetHeld = sourceHeld(InputSource::Gamepad, InputAction::OffsetRingCenter);
+    return pressed(InputAction::PutSelectedItemOnRing) && (shiftHeld || gamepadOffsetHeld);
 }
 
 bool Input::upgradePressed(int option) const
@@ -485,6 +525,7 @@ bool Input::anySourceHeld(InputAction action) const
 void Input::updateKeyboardPolledBindings(const bool* keys)
 {
     std::array<bool, ActionCount> keyboardHeld{};
+    const bool textInputActive = textInputActiveForKeyboardFocus();
     for (int action = 0; action < ActionCount; ++action) {
         for (const InputBinding& binding : bindings_[action]) {
             if (binding.device != InputBindingDevice::Keyboard) {
@@ -495,6 +536,9 @@ void Input::updateKeyboardPolledBindings(const bool* keys)
                 continue;
             }
             if (binding.code <= SDL_SCANCODE_UNKNOWN || binding.code >= SDL_SCANCODE_COUNT) {
+                continue;
+            }
+            if (textInputActive && !textInputAllowsPolledScancode(static_cast<SDL_Scancode>(binding.code))) {
                 continue;
             }
             keyboardHeld[action] = keyboardHeld[action] || keys[binding.code];

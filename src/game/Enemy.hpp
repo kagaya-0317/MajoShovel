@@ -5,6 +5,8 @@
 #include "game/EntityStatus.hpp"
 #include "game/ItemModel.hpp"
 
+#include <array>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -32,6 +34,76 @@ enum class BossActionPhase {
     Recover,
 };
 
+enum class JunkCrabPhase {
+    None,
+    RingGuard,
+    ClawWindup,
+    ClawStrike,
+    ThrowWindup,
+    ThrowBurst,
+    Toppled,
+    Recover,
+};
+
+enum class AstragnaPhase {
+    None,
+    Sealed,
+    Downed,
+    Rescued,
+};
+
+inline constexpr int JunkCrabMaxDebris = 6;
+inline constexpr int AstragnaSealPartCount = 5;
+inline constexpr int AstragnaMaxShellBlocks = 36;
+
+struct JunkCrabDebrisRuntime {
+    bool active = false;
+    float baseAngle = 0.0f;
+    float radius = 0.0f;
+    int hp = 0;
+};
+
+struct JunkCrabBossRuntime {
+    JunkCrabPhase phase = JunkCrabPhase::None;
+    float timer = 0.0f;
+    float orbitAngle = 0.0f;
+    int toppleMeter = 0;
+    int throwBurstIndex = 0;
+    bool actionFired = false;
+    std::array<JunkCrabDebrisRuntime, JunkCrabMaxDebris> debris{};
+};
+
+struct AstragnaSealPartRuntime {
+    bool active = false;
+    float localAngle = 0.0f;
+    float orbitRadius = 0.0f;
+    float radius = 0.0f;
+    int hp = 0;
+    int maxHp = 0;
+};
+
+struct AstragnaShellBlockRuntime {
+    bool active = false;
+    bool repairing = false;
+    float localAngle = 0.0f;
+    float orbitRadius = 0.0f;
+    float radius = 0.0f;
+    int hp = 0;
+    int maxHp = 0;
+};
+
+struct AstragnaBossRuntime {
+    AstragnaPhase phase = AstragnaPhase::None;
+    float timer = 0.0f;
+    float rotationAngle = 0.0f;
+    float repairTimer = 0.0f;
+    int reviveCount = 0;
+    int repairCursor = 0;
+    bool initialized = false;
+    std::array<AstragnaSealPartRuntime, AstragnaSealPartCount> sealParts{};
+    std::array<AstragnaShellBlockRuntime, AstragnaMaxShellBlocks> shellBlocks{};
+};
+
 struct BossActionRuntime {
     bool enabled = false;
     std::string pattern;
@@ -42,6 +114,8 @@ struct BossActionRuntime {
     Vec2 chargeDirection{1.0f, 0.0f};
     bool hidden = false;
     bool invulnerable = false;
+    JunkCrabBossRuntime junkCrab;
+    AstragnaBossRuntime astragna;
 };
 
 struct EnemyActionRuntime {
@@ -54,6 +128,36 @@ struct EnemyActionRuntime {
     bool fired = false;
     bool lockMovement = false;
     bool lockFacing = true;
+};
+
+inline constexpr int EnemyHeldDropCapacity = 3;
+
+enum class EnemyHeldDropKind {
+    Object,
+    Money,
+};
+
+enum class EnemyHeldDropOrigin {
+    Initial,
+    PickedUp,
+};
+
+struct EnemyHeldDrop {
+    EnemyHeldDropKind kind = EnemyHeldDropKind::Object;
+    EnemyHeldDropOrigin origin = EnemyHeldDropOrigin::Initial;
+    std::string objectId;
+    int quantity = 1;
+    float deathDropChance = 0.0f;
+    std::optional<ItemInstance> instance;
+};
+
+struct EnemyDeathRuntime {
+    bool active = false;
+    float elapsedSeconds = 0.0f;
+    float durationSeconds = 0.0f;
+    Vec2 knockbackVelocity{};
+    float knockbackTimer = 0.0f;
+    unsigned int shakeSeed = 0;
 };
 
 struct Enemy {
@@ -92,6 +196,10 @@ struct Enemy {
     int maxHp = 5;
     int xp = 5;
     int moneyDrop = 0;
+    std::vector<EnemyHeldDrop> heldDrops;
+    bool heldDropsInitialized = false;
+    std::string lootStageId;
+    int lootDepthRank = 1;
     int contactAttackPower = 1;
     std::string contactDamageType = "blunt";
     float contactTimer = 0.0f;
@@ -168,9 +276,7 @@ struct Enemy {
     float stealRadius = 0.0f;
     float stealEscapeDistance = 0.0f;
     int stealMaxCarry = 0;
-    int stolenMoney = 0;
-    std::vector<std::string> stolenObjectIds;
-    bool pendingDeath = false;
+    EnemyDeathRuntime death;
     float hitFlash = 0.0f;
     float hpBarTimer = 0.0f;
     float facingAngle = 0.0f;

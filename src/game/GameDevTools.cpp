@@ -18,10 +18,14 @@ constexpr float DebugItemPickerPanelMargin = 24.0f;
 constexpr float DebugItemPickerDetailWidth = 332.0f;
 constexpr float DebugItemPickerPaneGap = 18.0f;
 constexpr float DebugItemPickerButtonAreaHeight = 66.0f;
+constexpr float DebugItemPickerSearchHeight = 44.0f;
+constexpr float DebugItemPickerSearchGap = 12.0f;
 constexpr float DebugItemPickerCardWidth = 118.0f;
 constexpr float DebugItemPickerCardHeight = 106.0f;
 constexpr float DebugItemPickerCardGap = 10.0f;
 constexpr float DebugItemPickerIconSize = 58.0f;
+constexpr float ObjectImageScaleSearchHeight = 42.0f;
+constexpr float ObjectImageScaleSearchGap = 10.0f;
 constexpr float DebugStoryTestDetailWidth = 360.0f;
 constexpr float DebugStoryTestRowHeight = 56.0f;
 constexpr float DebugStoryTestRowGap = 5.0f;
@@ -377,6 +381,7 @@ void drawAutoSimulationIntentLine(
 
 struct DebugItemPickerLayout {
     UiRect panel{};
+    UiRect search{};
     UiRect grid{};
     UiRect detail{};
     int columns = 1;
@@ -474,12 +479,20 @@ DebugItemPickerLayout makeDebugItemPickerLayout(int screenWidth, int screenHeigh
         body.pos.x + body.size.x - DebugItemPickerDetailWidth,
         body.pos.y,
     }, {DebugItemPickerDetailWidth, contentHeight}};
-    layout.grid = {{
+    const UiRect listArea{{
         body.pos.x,
         body.pos.y,
     }, {
         std::max(120.0f, layout.detail.pos.x - body.pos.x - DebugItemPickerPaneGap),
         contentHeight,
+    }};
+    layout.search = {listArea.pos, {listArea.size.x, DebugItemPickerSearchHeight}};
+    layout.grid = {{
+        listArea.pos.x,
+        listArea.pos.y + DebugItemPickerSearchHeight + DebugItemPickerSearchGap,
+    }, {
+        listArea.size.x,
+        std::max(1.0f, listArea.size.y - DebugItemPickerSearchHeight - DebugItemPickerSearchGap),
     }};
 
     const float pitch = DebugItemPickerCardWidth + DebugItemPickerCardGap;
@@ -561,15 +574,116 @@ UiRect debugItemPickerCardRect(const DebugItemPickerLayout& layout, int index, f
     }, {DebugItemPickerCardWidth, DebugItemPickerCardHeight}};
 }
 
-float debugItemPickerMaxScroll(const DebugItemPickerLayout& layout, int itemCount)
+float debugItemPickerContentHeight(const DebugItemPickerLayout& layout, int itemCount)
 {
     const int columns = std::max(1, layout.columns);
     const int rows = itemCount <= 0 ? 0 : (itemCount + columns - 1) / columns;
-    const float contentHeight = rows <= 0
+    return rows <= 0
         ? 0.0f
         : static_cast<float>(rows) * DebugItemPickerCardHeight +
             static_cast<float>(rows - 1) * DebugItemPickerCardGap;
+}
+
+float debugItemPickerMaxScroll(const DebugItemPickerLayout& layout, int itemCount)
+{
+    const float contentHeight = debugItemPickerContentHeight(layout, itemCount);
     return std::max(0.0f, contentHeight - layout.grid.size.y);
+}
+
+UiRect debugItemPickerSearchInputRect(const DebugItemPickerLayout& layout)
+{
+    constexpr float ClearButtonWidth = 72.0f;
+    constexpr float CountWidth = 118.0f;
+    constexpr float Gap = 8.0f;
+    return {layout.search.pos, {std::max(180.0f, layout.search.size.x - ClearButtonWidth - CountWidth - Gap * 2.0f), layout.search.size.y}};
+}
+
+UiRect debugItemPickerSearchClearButtonRect(const DebugItemPickerLayout& layout)
+{
+    constexpr float ClearButtonWidth = 72.0f;
+    constexpr float Gap = 8.0f;
+    const UiRect input = debugItemPickerSearchInputRect(layout);
+    return {{input.pos.x + input.size.x + Gap, layout.search.pos.y}, {ClearButtonWidth, layout.search.size.y}};
+}
+
+UiRect debugItemPickerSearchCountRect(const DebugItemPickerLayout& layout)
+{
+    constexpr float Gap = 8.0f;
+    const UiRect clear = debugItemPickerSearchClearButtonRect(layout);
+    const float x = clear.pos.x + clear.size.x + Gap;
+    return {{x, layout.search.pos.y}, {std::max(0.0f, layout.search.pos.x + layout.search.size.x - x), layout.search.size.y}};
+}
+
+ObjectImageScaleLayout objectImageScaleGridLayout(ObjectImageScaleLayout layout, bool searchVisible)
+{
+    if (!searchVisible) {
+        return layout;
+    }
+    const float offsetY = ObjectImageScaleSearchHeight + ObjectImageScaleSearchGap;
+    layout.viewport.pos.y += offsetY;
+    layout.viewport.size.y = std::max(1.0f, layout.viewport.size.y - offsetY);
+    layout.content = layout.viewport;
+    return layout;
+}
+
+float objectImageScaleContentHeight(const ObjectImageScaleLayout& layout, int itemCount)
+{
+    const int columns = std::max(1, layout.columns);
+    const int rows = itemCount <= 0 ? 0 : (itemCount + columns - 1) / columns;
+    return rows <= 0
+        ? 0.0f
+        : static_cast<float>(rows) * ObjectImageScaleCardHeight + static_cast<float>(rows - 1) * ObjectImageScaleCardGap;
+}
+
+float objectImageScaleMaxScroll(const ObjectImageScaleLayout& layout, int itemCount)
+{
+    return std::max(0.0f, objectImageScaleContentHeight(layout, itemCount) - layout.viewport.size.y);
+}
+
+void keepObjectImageScaleSelectionVisible(
+    const ObjectImageScaleLayout& layout,
+    int selectedIndex,
+    int itemCount,
+    float& scrollOffset)
+{
+    if (selectedIndex < 0 || selectedIndex >= itemCount) {
+        scrollOffset = clamp(scrollOffset, 0.0f, objectImageScaleMaxScroll(layout, itemCount));
+        return;
+    }
+
+    const UiRect rect = objectImageScaleCardRect(layout, selectedIndex, scrollOffset);
+    const float top = layout.viewport.pos.y;
+    const float bottom = layout.viewport.pos.y + layout.viewport.size.y;
+    if (rect.pos.y < top) {
+        scrollOffset -= top - rect.pos.y;
+    } else if (rect.pos.y + rect.size.y > bottom) {
+        scrollOffset += rect.pos.y + rect.size.y - bottom;
+    }
+    scrollOffset = clamp(scrollOffset, 0.0f, objectImageScaleMaxScroll(layout, itemCount));
+}
+
+UiRect objectImageScaleSearchInputRect(const ObjectImageScaleLayout& layout)
+{
+    constexpr float ClearButtonWidth = 72.0f;
+    constexpr float CountWidth = 124.0f;
+    constexpr float Gap = 8.0f;
+    return {layout.viewport.pos, {std::max(220.0f, layout.viewport.size.x - ClearButtonWidth - CountWidth - Gap * 2.0f), ObjectImageScaleSearchHeight}};
+}
+
+UiRect objectImageScaleSearchClearButtonRect(const ObjectImageScaleLayout& layout)
+{
+    constexpr float ClearButtonWidth = 72.0f;
+    constexpr float Gap = 8.0f;
+    const UiRect input = objectImageScaleSearchInputRect(layout);
+    return {{input.pos.x + input.size.x + Gap, layout.viewport.pos.y}, {ClearButtonWidth, ObjectImageScaleSearchHeight}};
+}
+
+UiRect objectImageScaleSearchCountRect(const ObjectImageScaleLayout& layout)
+{
+    constexpr float Gap = 8.0f;
+    const UiRect clear = objectImageScaleSearchClearButtonRect(layout);
+    const float x = clear.pos.x + clear.size.x + Gap;
+    return {{x, layout.viewport.pos.y}, {std::max(0.0f, layout.viewport.pos.x + layout.viewport.size.x - x), ObjectImageScaleSearchHeight}};
 }
 
 UiRect audioCueEditCloseButtonRect(UiRect panel)
@@ -903,6 +1017,43 @@ std::string debugItemPickerSubtitle(const ItemData& item)
         text += std::to_string(item.rarity);
     }
     return text;
+}
+
+std::string normalizedUiSearchText(std::string_view text)
+{
+    std::string normalized;
+    normalized.reserve(text.size());
+    for (unsigned char ch : text) {
+        if (ch >= 'A' && ch <= 'Z') {
+            normalized.push_back(static_cast<char>(ch - 'A' + 'a'));
+        } else {
+            normalized.push_back(static_cast<char>(ch));
+        }
+    }
+    return normalized;
+}
+
+bool uiSearchTextContains(std::string_view text, std::string_view normalizedQuery)
+{
+    if (normalizedQuery.empty()) {
+        return true;
+    }
+    return normalizedUiSearchText(text).find(normalizedQuery) != std::string::npos;
+}
+
+bool debugItemPickerNameMatchesSearch(const ItemData& item, std::string_view normalizedQuery)
+{
+    return uiSearchTextContains(debugItemPickerDisplayName(item), normalizedQuery);
+}
+
+std::string objectImageScaleDisplayName(const ObjectDefinition& object)
+{
+    return object.name.empty() ? object.id : object.name;
+}
+
+bool objectImageScaleObjectMatchesSearch(const ObjectDefinition& object, std::string_view normalizedQuery)
+{
+    return uiSearchTextContains(objectImageScaleDisplayName(object), normalizedQuery);
 }
 
 bool debugStoryTestIsTutorialTrigger(std::string_view trigger)
@@ -1276,8 +1427,19 @@ bool Game::saveObjectImageScaleData(std::string& message)
 
 void Game::rebuildObjectImageScaleList()
 {
-    objectImageScaleObjectIds_.clear();
-    objectImageScaleObjectIds_.reserve(objectCatalog_.objects.size());
+    std::string previousObjectSelection;
+    if (objectImageScaleSelectedIndex_ >= 0 &&
+        objectImageScaleSelectedIndex_ < static_cast<int>(objectImageScaleObjectIds_.size())) {
+        previousObjectSelection = objectImageScaleObjectIds_[static_cast<std::size_t>(objectImageScaleSelectedIndex_)];
+    }
+    std::string previousOtherSelection;
+    if (otherImageScaleSelectedIndex_ >= 0 &&
+        otherImageScaleSelectedIndex_ < static_cast<int>(otherImageScaleKeys_.size())) {
+        previousOtherSelection = otherImageScaleKeys_[static_cast<std::size_t>(otherImageScaleSelectedIndex_)];
+    }
+
+    objectImageScaleAllObjectIds_.clear();
+    objectImageScaleAllObjectIds_.reserve(objectCatalog_.objects.size());
     std::unordered_set<std::string> seen;
     seen.reserve(objectCatalog_.objects.size());
 
@@ -1288,10 +1450,10 @@ void Game::rebuildObjectImageScaleList()
         if (!seen.insert(object.id).second) {
             continue;
         }
-        objectImageScaleObjectIds_.push_back(object.id);
+        objectImageScaleAllObjectIds_.push_back(object.id);
     }
 
-    std::sort(objectImageScaleObjectIds_.begin(), objectImageScaleObjectIds_.end(), [this](const std::string& left, const std::string& right) {
+    std::sort(objectImageScaleAllObjectIds_.begin(), objectImageScaleAllObjectIds_.end(), [this](const std::string& left, const std::string& right) {
         const ObjectDefinition* lhs = objectCatalog_.registry.findById(left);
         const ObjectDefinition* rhs = objectCatalog_.registry.findById(right);
         if (lhs == nullptr || rhs == nullptr) {
@@ -1303,11 +1465,7 @@ void Game::rebuildObjectImageScaleList()
         return left < right;
     });
 
-    if (objectImageScaleObjectIds_.empty()) {
-        objectImageScaleSelectedIndex_ = -1;
-    } else if (objectImageScaleSelectedIndex_ < 0 || objectImageScaleSelectedIndex_ >= static_cast<int>(objectImageScaleObjectIds_.size())) {
-        objectImageScaleSelectedIndex_ = 0;
-    }
+    applyObjectImageScaleFilter(previousObjectSelection);
 
     otherImageScaleKeys_.clear();
     for (const WorldIconDefinition& definition : worldIconDefinitions()) {
@@ -1316,11 +1474,76 @@ void Game::rebuildObjectImageScaleList()
         }
     }
 
-    if (otherImageScaleKeys_.empty()) {
-        otherImageScaleSelectedIndex_ = -1;
-    } else if (otherImageScaleSelectedIndex_ < 0 || otherImageScaleSelectedIndex_ >= static_cast<int>(otherImageScaleKeys_.size())) {
+    otherImageScaleSelectedIndex_ = -1;
+    if (!previousOtherSelection.empty()) {
+        const auto it = std::find(otherImageScaleKeys_.begin(), otherImageScaleKeys_.end(), previousOtherSelection);
+        if (it != otherImageScaleKeys_.end()) {
+            otherImageScaleSelectedIndex_ = static_cast<int>(std::distance(otherImageScaleKeys_.begin(), it));
+        }
+    }
+    if (otherImageScaleSelectedIndex_ < 0 && !otherImageScaleKeys_.empty()) {
         otherImageScaleSelectedIndex_ = 0;
     }
+}
+
+void Game::applyObjectImageScaleFilter(std::string_view preferredSelection)
+{
+    std::string previousSelection{preferredSelection};
+    if (previousSelection.empty() &&
+        objectImageScaleSelectedIndex_ >= 0 &&
+        objectImageScaleSelectedIndex_ < static_cast<int>(objectImageScaleObjectIds_.size())) {
+        previousSelection = objectImageScaleObjectIds_[static_cast<std::size_t>(objectImageScaleSelectedIndex_)];
+    }
+
+    objectImageScaleObjectIds_.clear();
+    objectImageScaleObjectIds_.reserve(objectImageScaleAllObjectIds_.size());
+    const std::string normalizedQuery = normalizedUiSearchText(objectImageScaleSearchInput_.text);
+    for (const std::string& objectId : objectImageScaleAllObjectIds_) {
+        const ObjectDefinition* object = objectCatalog_.registry.findById(objectId);
+        if (object != nullptr && objectImageScaleObjectMatchesSearch(*object, normalizedQuery)) {
+            objectImageScaleObjectIds_.push_back(objectId);
+        }
+    }
+
+    objectImageScaleSelectedIndex_ = -1;
+    if (!previousSelection.empty()) {
+        const auto it = std::find(objectImageScaleObjectIds_.begin(), objectImageScaleObjectIds_.end(), previousSelection);
+        if (it != objectImageScaleObjectIds_.end()) {
+            objectImageScaleSelectedIndex_ = static_cast<int>(std::distance(objectImageScaleObjectIds_.begin(), it));
+        }
+    }
+    if (objectImageScaleSelectedIndex_ < 0 && !objectImageScaleObjectIds_.empty()) {
+        objectImageScaleSelectedIndex_ = 0;
+    }
+}
+
+bool Game::handleObjectImageScaleEditEvent(const SDL_Event& event)
+{
+    if (mode_ != ScreenMode::ObjectImageScaleEdit || imageScaleEditTab_ != ImageScaleEditTab::Objects) {
+        return false;
+    }
+
+    std::string previousSelection;
+    if (objectImageScaleSelectedIndex_ >= 0 &&
+        objectImageScaleSelectedIndex_ < static_cast<int>(objectImageScaleObjectIds_.size())) {
+        previousSelection = objectImageScaleObjectIds_[static_cast<std::size_t>(objectImageScaleSelectedIndex_)];
+    }
+
+    const std::string previousText = objectImageScaleSearchInput_.text;
+    const bool consumed = handleUiTextInputEvent(objectImageScaleSearchInput_, event, 48);
+    if (objectImageScaleSearchInput_.text != previousText) {
+        applyObjectImageScaleFilter(previousSelection);
+        objectImageScaleScrollOffset_ = 0.0f;
+        const ObjectImageScaleLayout layout = objectImageScaleGridLayout(
+            makeObjectImageScaleLayout(camera_.width(), camera_.height()),
+            true);
+        keepObjectImageScaleSelectionVisible(
+            layout,
+            objectImageScaleSelectedIndex_,
+            static_cast<int>(objectImageScaleObjectIds_.size()),
+            objectImageScaleScrollOffset_);
+    }
+    return consumed;
 }
 
 void Game::enterObjectImageScaleEditMode()
@@ -1332,6 +1555,7 @@ void Game::enterObjectImageScaleEditMode()
         exitAudioCueEditMode();
     }
 
+    objectImageScaleSearchInput_.text.clear();
     rebuildObjectImageScaleList();
     objectImageScaleReturnMode_ = mode_;
     if (objectImageScaleReturnMode_ == ScreenMode::ObjectImageScaleEdit) {
@@ -1347,6 +1571,9 @@ void Game::enterObjectImageScaleEditMode()
         ? "No images available"
         : "画像サイズ編集";
     mode_ = ScreenMode::ObjectImageScaleEdit;
+    if (imageScaleEditTab_ == ImageScaleEditTab::Objects) {
+        focusUiTextInput(objectImageScaleSearchInput_);
+    }
 }
 
 void Game::exitObjectImageScaleEditMode()
@@ -1355,6 +1582,7 @@ void Game::exitObjectImageScaleEditMode()
         return;
     }
 
+    blurUiTextInput(objectImageScaleSearchInput_);
     mode_ = objectImageScaleReturnMode_;
     if (mode_ == ScreenMode::ObjectImageScaleEdit) {
         mode_ = ScreenMode::Playing;
@@ -1375,10 +1603,12 @@ void Game::updateObjectImageScaleEditScreen(const Input& input, UiContext& ui)
     if (ui.pressed(objectImageScaleTabRect(0))) {
         imageScaleEditTab_ = ImageScaleEditTab::Objects;
         objectImageScaleStatus_ = "Objects";
+        focusUiTextInput(objectImageScaleSearchInput_);
     }
     if (ui.pressed(objectImageScaleTabRect(1))) {
         imageScaleEditTab_ = ImageScaleEditTab::Others;
         objectImageScaleStatus_ = "Others";
+        blurUiTextInput(objectImageScaleSearchInput_);
     }
 
     std::vector<std::string>& itemKeys = imageScaleEditTab_ == ImageScaleEditTab::Others
@@ -1395,15 +1625,31 @@ void Game::updateObjectImageScaleEditScreen(const Input& input, UiContext& ui)
         : objectImageScaleScrollOffset_;
     const bool editingOthers = imageScaleEditTab_ == ImageScaleEditTab::Others;
 
-    const ObjectImageScaleLayout layout = makeObjectImageScaleLayout(camera_.width(), camera_.height());
-    const int itemCount = static_cast<int>(itemKeys.size());
-    const int columns = std::max(1, layout.columns);
-    const int rows = itemCount <= 0 ? 0 : (itemCount + columns - 1) / columns;
-    const float contentHeight = rows <= 0
-        ? 0.0f
-        : static_cast<float>(rows) * ObjectImageScaleCardHeight + static_cast<float>(rows - 1) * ObjectImageScaleCardGap;
-    const float maxScroll = std::max(0.0f, contentHeight - layout.viewport.size.y);
+    const ObjectImageScaleLayout baseLayout = makeObjectImageScaleLayout(camera_.width(), camera_.height());
+    const ObjectImageScaleLayout layout = objectImageScaleGridLayout(baseLayout, !editingOthers);
+    int itemCount = static_cast<int>(itemKeys.size());
+    float maxScroll = objectImageScaleMaxScroll(layout, itemCount);
     scrollOffset = clamp(scrollOffset, 0.0f, maxScroll);
+
+    if (!editingOthers) {
+        updateUiTextInput(objectImageScaleSearchInput_, ui, objectImageScaleSearchInputRect(baseLayout));
+        if (ui.pressed(objectImageScaleSearchClearButtonRect(baseLayout))) {
+            if (!objectImageScaleSearchInput_.text.empty()) {
+                std::string previousSelection;
+                if (objectImageScaleSelectedIndex_ >= 0 &&
+                    objectImageScaleSelectedIndex_ < static_cast<int>(objectImageScaleObjectIds_.size())) {
+                    previousSelection = objectImageScaleObjectIds_[static_cast<std::size_t>(objectImageScaleSelectedIndex_)];
+                }
+                objectImageScaleSearchInput_.text.clear();
+                applyObjectImageScaleFilter(previousSelection);
+                objectImageScaleScrollOffset_ = 0.0f;
+                itemCount = static_cast<int>(objectImageScaleObjectIds_.size());
+                maxScroll = objectImageScaleMaxScroll(layout, itemCount);
+                keepObjectImageScaleSelectionVisible(layout, objectImageScaleSelectedIndex_, itemCount, objectImageScaleScrollOffset_);
+            }
+            focusUiTextInput(objectImageScaleSearchInput_);
+        }
+    }
 
     if (input.saveShortcutPressed()) {
         std::string message;
@@ -1484,14 +1730,10 @@ void Game::renderObjectImageScaleEditScreen(Renderer& renderer) const
     const int selectedIndex = editingOthers ? otherImageScaleSelectedIndex_ : objectImageScaleSelectedIndex_;
     const float activeScrollOffset = editingOthers ? otherImageScaleScrollOffset_ : objectImageScaleScrollOffset_;
 
-    const ObjectImageScaleLayout layout = makeObjectImageScaleLayout(camera_.width(), camera_.height());
+    const ObjectImageScaleLayout baseLayout = makeObjectImageScaleLayout(camera_.width(), camera_.height());
+    const ObjectImageScaleLayout layout = objectImageScaleGridLayout(baseLayout, !editingOthers);
     const int itemCount = static_cast<int>(itemKeys.size());
-    const int columns = std::max(1, layout.columns);
-    const int rows = itemCount <= 0 ? 0 : (itemCount + columns - 1) / columns;
-    const float contentHeight = rows <= 0
-        ? 0.0f
-        : static_cast<float>(rows) * ObjectImageScaleCardHeight + static_cast<float>(rows - 1) * ObjectImageScaleCardGap;
-    const float maxScroll = std::max(0.0f, contentHeight - layout.viewport.size.y);
+    const float maxScroll = objectImageScaleMaxScroll(layout, itemCount);
     const float scrollOffset = clamp(activeScrollOffset, 0.0f, maxScroll);
 
     renderer.fillRect({0.0f, 0.0f}, {static_cast<float>(camera_.width()), static_cast<float>(camera_.height())}, {10, 12, 18, 255});
@@ -1507,9 +1749,44 @@ void Game::renderObjectImageScaleEditScreen(Renderer& renderer) const
         renderer.drawText(rect.pos + Vec2{14.0f, 8.0f}, tab == 0 ? "Objects" : "Others", active ? Color{255, 236, 166, 255} : Color{198, 206, 222, 255}, 2);
     }
 
-    renderer.drawText({22.0f, 58.0f}, "Click to select  Wheel: scroll / selected card wheel: scale  Up/Down: scale  Ctrl+S: save  Esc: exit", {198, 206, 222, 255}, 2);
+    renderer.drawText(
+        {22.0f, 58.0f},
+        editingOthers
+            ? "Click: select  Wheel: scroll/scale  Up/Down: scale  Ctrl+S: save  Esc: exit"
+            : "Type: search  Click: select  Wheel: scroll/scale  Up/Down: scale  Ctrl+S: save  Esc: exit",
+        {198, 206, 222, 255},
+        2);
+    if (!editingOthers) {
+        drawUiTextInput(renderer, objectImageScaleSearchInputRect(baseLayout), objectImageScaleSearchInput_, "アイテム名で検索", {});
+        UiButtonStyle clearStyle;
+        if (objectImageScaleSearchInput_.text.empty()) {
+            clearStyle.text = ui::TextDisabled;
+            clearStyle.fill = {18, 24, 42, 170};
+            clearStyle.outline = {90, 84, 108, 170};
+        }
+        drawUiRectButton(renderer, objectImageScaleSearchClearButtonRect(baseLayout), "消去", false, clearStyle);
+        const std::string countText = std::to_string(itemCount) + "/" + std::to_string(static_cast<int>(objectImageScaleAllObjectIds_.size())) + "件";
+        const UiRect countRect = objectImageScaleSearchCountRect(baseLayout);
+        const std::string fittedCountText = fittedSingleLineText(renderer, countText, countRect.size.x, 2);
+        renderer.drawText(
+            {
+                countRect.pos.x + std::max(0.0f, countRect.size.x - renderer.measureText(fittedCountText, 2).x),
+                countRect.pos.y + 11.0f,
+            },
+            fittedCountText,
+            {198, 206, 222, 255},
+            2);
+    }
     renderer.drawRect(layout.viewport.pos, layout.viewport.size, {96, 108, 132, 255});
 
+    if (itemCount <= 0 && !editingOthers) {
+        const std::string emptyMessage = objectImageScaleSearchInput_.text.empty()
+            ? "画像付きアイテムがありません"
+            : "検索に一致するアイテムがありません";
+        renderer.drawText(layout.viewport.pos + Vec2{18.0f, 18.0f}, emptyMessage, {198, 206, 222, 255}, 2);
+    }
+
+    renderer.pushClipRect(layout.viewport.pos, layout.viewport.size);
     for (int i = 0; i < itemCount; ++i) {
         const UiRect rect = objectImageScaleCardRect(layout, i, scrollOffset);
         if (rect.pos.y + rect.size.y < layout.viewport.pos.y || rect.pos.y > layout.viewport.pos.y + layout.viewport.size.y) {
@@ -1554,7 +1831,7 @@ void Game::renderObjectImageScaleEditScreen(Renderer& renderer) const
                     previewCenter,
                     {ObjectImageScalePreviewSize, ObjectImageScalePreviewSize},
                     objectGroundImageOptions(*object, options));
-                name = !object->name.empty() ? object->name : key;
+                name = objectImageScaleDisplayName(*object);
                 subtitle = key;
             } else {
                 name = key;
@@ -1575,6 +1852,7 @@ void Game::renderObjectImageScaleEditScreen(Renderer& renderer) const
         std::snprintf(scaleText, sizeof(scaleText), "x%.2f", scale);
         renderer.drawText(rect.pos + Vec2{6.0f, 108.0f}, scaleText, selected ? Color{255, 232, 148, 255} : Color{186, 198, 216, 255}, 2);
     }
+    renderer.popClipRect();
 
     const char* dirty = objectImageScaleDirty_ ? "Unsaved (*)" : "Saved";
     renderer.drawText({22.0f, static_cast<float>(camera_.height()) - 40.0f}, dirty, objectImageScaleDirty_ ? Color{255, 230, 150, 255} : Color{170, 220, 170, 255}, 2);
@@ -2138,15 +2416,15 @@ void Game::rebuildDebugItemPickerList()
         previousSelection = debugItemPickerObjectIds_[static_cast<std::size_t>(debugItemPickerSelectedIndex_)];
     }
 
-    debugItemPickerObjectIds_.clear();
-    debugItemPickerObjectIds_.reserve(objectCatalog_.registry.size());
+    debugItemPickerAllObjectIds_.clear();
+    debugItemPickerAllObjectIds_.reserve(objectCatalog_.registry.size());
     for (const ItemData& item : objectCatalog_.registry.items()) {
         if (!item.id.empty()) {
-            debugItemPickerObjectIds_.push_back(item.id);
+            debugItemPickerAllObjectIds_.push_back(item.id);
         }
     }
 
-    std::sort(debugItemPickerObjectIds_.begin(), debugItemPickerObjectIds_.end(), [this](const std::string& left, const std::string& right) {
+    std::sort(debugItemPickerAllObjectIds_.begin(), debugItemPickerAllObjectIds_.end(), [this](const std::string& left, const std::string& right) {
         const ItemData* lhs = objectCatalog_.registry.findById(left);
         const ItemData* rhs = objectCatalog_.registry.findById(right);
         if (lhs == nullptr || rhs == nullptr) {
@@ -2166,6 +2444,28 @@ void Game::rebuildDebugItemPickerList()
         return left < right;
     });
 
+    applyDebugItemPickerFilter(previousSelection);
+}
+
+void Game::applyDebugItemPickerFilter(std::string_view preferredSelection)
+{
+    std::string previousSelection{preferredSelection};
+    if (previousSelection.empty() &&
+        debugItemPickerSelectedIndex_ >= 0 &&
+        debugItemPickerSelectedIndex_ < static_cast<int>(debugItemPickerObjectIds_.size())) {
+        previousSelection = debugItemPickerObjectIds_[static_cast<std::size_t>(debugItemPickerSelectedIndex_)];
+    }
+
+    debugItemPickerObjectIds_.clear();
+    debugItemPickerObjectIds_.reserve(debugItemPickerAllObjectIds_.size());
+    const std::string normalizedQuery = normalizedUiSearchText(debugItemPickerSearchInput_.text);
+    for (const std::string& objectId : debugItemPickerAllObjectIds_) {
+        const ItemData* item = objectCatalog_.registry.findById(objectId);
+        if (item != nullptr && debugItemPickerNameMatchesSearch(*item, normalizedQuery)) {
+            debugItemPickerObjectIds_.push_back(objectId);
+        }
+    }
+
     debugItemPickerSelectedIndex_ = -1;
     if (!previousSelection.empty()) {
         const auto it = std::find(debugItemPickerObjectIds_.begin(), debugItemPickerObjectIds_.end(), previousSelection);
@@ -2176,6 +2476,33 @@ void Game::rebuildDebugItemPickerList()
     if (debugItemPickerSelectedIndex_ < 0 && !debugItemPickerObjectIds_.empty()) {
         debugItemPickerSelectedIndex_ = 0;
     }
+}
+
+bool Game::handleDebugItemPickerEvent(const SDL_Event& event)
+{
+    if (!debugItemPickerActive_) {
+        return false;
+    }
+
+    std::string previousSelection;
+    if (debugItemPickerSelectedIndex_ >= 0 &&
+        debugItemPickerSelectedIndex_ < static_cast<int>(debugItemPickerObjectIds_.size())) {
+        previousSelection = debugItemPickerObjectIds_[static_cast<std::size_t>(debugItemPickerSelectedIndex_)];
+    }
+
+    const std::string previousText = debugItemPickerSearchInput_.text;
+    const bool consumed = handleUiTextInputEvent(debugItemPickerSearchInput_, event, 48);
+    if (debugItemPickerSearchInput_.text != previousText) {
+        applyDebugItemPickerFilter(previousSelection);
+        debugItemPickerScrollOffset_ = 0.0f;
+        const DebugItemPickerLayout layout = makeDebugItemPickerLayout(camera_.width(), camera_.height());
+        keepDebugItemPickerSelectionVisible(
+            layout,
+            debugItemPickerSelectedIndex_,
+            static_cast<int>(debugItemPickerObjectIds_.size()),
+            debugItemPickerScrollOffset_);
+    }
+    return consumed;
 }
 
 void Game::openDebugItemPicker()
@@ -2193,6 +2520,7 @@ void Game::openDebugItemPicker()
 
     closeDebugStoryTest();
     debugStoryTestReturnAfterDialogue_ = false;
+    debugItemPickerSearchInput_.text.clear();
     rebuildDebugItemPickerList();
     inventory_.cancelGrab();
     cancelRingGrab();
@@ -2202,10 +2530,12 @@ void Game::openDebugItemPicker()
         : "アイテムを選んで追加できます";
     debugItemPickerCancelState_ = {};
     debugItemPickerActive_ = true;
+    focusUiTextInput(debugItemPickerSearchInput_);
 }
 
 void Game::closeDebugItemPicker()
 {
+    blurUiTextInput(debugItemPickerSearchInput_);
     debugItemPickerActive_ = false;
     debugItemPickerCancelState_ = {};
 }
@@ -2254,15 +2584,33 @@ void Game::updateDebugItemPicker(const Input& input, UiContext& ui)
     }
 
     const DebugItemPickerLayout layout = makeDebugItemPickerLayout(camera_.width(), camera_.height());
-    const int itemCount = static_cast<int>(debugItemPickerObjectIds_.size());
+    int itemCount = static_cast<int>(debugItemPickerObjectIds_.size());
     if (itemCount > 0) {
         debugItemPickerSelectedIndex_ = std::clamp(debugItemPickerSelectedIndex_, 0, itemCount - 1);
     } else {
         debugItemPickerSelectedIndex_ = -1;
     }
 
-    const float maxScroll = debugItemPickerMaxScroll(layout, itemCount);
+    float maxScroll = debugItemPickerMaxScroll(layout, itemCount);
     debugItemPickerScrollOffset_ = clamp(debugItemPickerScrollOffset_, 0.0f, maxScroll);
+
+    updateUiTextInput(debugItemPickerSearchInput_, ui, debugItemPickerSearchInputRect(layout));
+    if (ui.pressed(debugItemPickerSearchClearButtonRect(layout))) {
+        if (!debugItemPickerSearchInput_.text.empty()) {
+            std::string previousSelection;
+            if (debugItemPickerSelectedIndex_ >= 0 &&
+                debugItemPickerSelectedIndex_ < static_cast<int>(debugItemPickerObjectIds_.size())) {
+                previousSelection = debugItemPickerObjectIds_[static_cast<std::size_t>(debugItemPickerSelectedIndex_)];
+            }
+            debugItemPickerSearchInput_.text.clear();
+            applyDebugItemPickerFilter(previousSelection);
+            debugItemPickerScrollOffset_ = 0.0f;
+            itemCount = static_cast<int>(debugItemPickerObjectIds_.size());
+            maxScroll = debugItemPickerMaxScroll(layout, itemCount);
+            keepDebugItemPickerSelectionVisible(layout, debugItemPickerSelectedIndex_, itemCount, debugItemPickerScrollOffset_);
+        }
+        focusUiTextInput(debugItemPickerSearchInput_);
+    }
 
     if (uiCancelRequested(debugItemPickerCancelState_, input, ui, layout.panel) ||
         ui.pressed(debugItemPickerCloseButtonRect(layout.panel))) {
@@ -2337,16 +2685,40 @@ void Game::renderDebugItemPicker(Renderer& renderer) const
         "debug.item_picker",
         layout.panel,
         "デバッグ: 任意アイテム追加",
-        "クリック/方向キー 選択  F/Enter 追加  Esc/右クリック 戻る",
+        "キーボード入力 検索  クリック/方向キー 選択  Enter 追加  Esc/右クリック 戻る",
         UiWindowOptions{true, true});
 
     drawUiSubPanel(renderer, layout.grid);
     drawUiSubPanel(renderer, layout.detail);
+    drawUiTextInput(renderer, debugItemPickerSearchInputRect(layout), debugItemPickerSearchInput_, "アイテム名で検索", {});
+    UiButtonStyle clearStyle;
+    if (debugItemPickerSearchInput_.text.empty()) {
+        clearStyle.text = ui::TextDisabled;
+        clearStyle.fill = {18, 24, 42, 170};
+        clearStyle.outline = {90, 84, 108, 170};
+    }
+    drawUiRectButton(renderer, debugItemPickerSearchClearButtonRect(layout), "消去", false, clearStyle);
+    const int totalItemCount = static_cast<int>(debugItemPickerAllObjectIds_.size());
+    const std::string countText = std::to_string(itemCount) + "/" + std::to_string(totalItemCount) + "件";
+    const UiRect countRect = debugItemPickerSearchCountRect(layout);
+    const std::string fittedCountText = fittedSingleLineText(renderer, countText, countRect.size.x, 2);
+    renderer.drawText(
+        {
+            countRect.pos.x + std::max(0.0f, countRect.size.x - renderer.measureText(fittedCountText, 2).x),
+            countRect.pos.y + 12.0f,
+        },
+        fittedCountText,
+        ui::TextMuted,
+        2);
 
     if (itemCount <= 0) {
-        renderer.drawText(layout.grid.pos + Vec2{22.0f, 24.0f}, "Objects DBにアイテムがありません", ui::TextMuted, 2);
+        const std::string emptyMessage = debugItemPickerSearchInput_.text.empty()
+            ? "Objects DBにアイテムがありません"
+            : "検索に一致するアイテムがありません";
+        renderer.drawText(layout.grid.pos + Vec2{22.0f, 24.0f}, emptyMessage, ui::TextMuted, 2);
     }
 
+    renderer.pushClipRect(layout.grid.pos, layout.grid.size);
     for (int i = 0; i < itemCount; ++i) {
         const UiRect rect = debugItemPickerCardRect(layout, i, scrollOffset);
         if (rect.pos.y + rect.size.y < layout.grid.pos.y ||
@@ -2383,6 +2755,14 @@ void Game::renderDebugItemPicker(Renderer& renderer) const
         const std::string subtitle = fittedSingleLineText(renderer, debugItemPickerSubtitle(*item), rect.size.x - 12.0f, 1);
         renderer.drawText(rect.pos + Vec2{6.0f, 91.0f}, subtitle, ui::TextMuted, 1);
     }
+    renderer.popClipRect();
+    const UiScrollAreaStyle scrollStyle = debugListScrollStyle(48.0f);
+    const UiScrollAreaLayout scrollLayout = makeUiScrollAreaLayout(
+        layout.grid,
+        debugItemPickerContentHeight(layout, itemCount),
+        scrollOffset,
+        scrollStyle);
+    drawUiScrollAreaScrollbar(renderer, scrollLayout, scrollStyle);
 
     InventoryUiEntryView detailEntry{};
     std::vector<InventoryUiDetailExtraLine> detailLines;
@@ -2725,6 +3105,7 @@ void Game::enterEnemyTestMode()
     tileMap_ = TileMap{};
     digging_ = DiggingSystem{};
     effects_ = EffectSystem{};
+    captureAbsorbAnimations_.clear();
     groundLines_ = GroundLineSystem{};
     enemies_ = EnemySystem{};
     projectiles_ = ProjectileSystem{};
@@ -2942,6 +3323,7 @@ void Game::clearEnemyTestArena()
     enemies_ = EnemySystem{};
     projectiles_ = ProjectileSystem{};
     effects_ = EffectSystem{};
+    captureAbsorbAnimations_.clear();
     groundLines_ = GroundLineSystem{};
     magic_ = MagicSystem{};
     magicFx_ = MagicFxSystem{};

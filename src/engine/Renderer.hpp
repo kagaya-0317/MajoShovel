@@ -5,8 +5,10 @@
 #include "engine/RendererTypes.hpp"
 #include <array>
 #include <cstdint>
+#include <filesystem>
 #include <memory>
 #include <cstddef>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <unordered_map>
@@ -16,11 +18,25 @@ namespace majo {
 
 class Renderer {
 public:
+    struct ScreenshotResult {
+        bool success = false;
+        std::filesystem::path path;
+        std::string message;
+    };
+
     explicit Renderer(SDL_Renderer* renderer);
     ~Renderer();
 
     void clear(Color color);
     void present();
+    bool setLogicalPresentation(
+        int width,
+        int height,
+        LogicalPresentationMode mode = LogicalPresentationMode::Letterbox);
+    Vec2 windowToRenderCoordinates(Vec2 windowPosition) const;
+    bool convertEventToRenderCoordinates(SDL_Event& event) const;
+    void requestScreenshot(std::filesystem::path path);
+    std::optional<ScreenshotResult> consumeScreenshotResult();
     void setCamera(const Camera* camera) { camera_ = camera; }
     void setScreenSpace();
     void setWorldSpace(const Camera* camera) { camera_ = camera; }
@@ -222,6 +238,7 @@ private:
     void drawNineSliceFrame(const GuidedTexture& texture, Vec2 pos, Vec2 size, Color tint);
     void drawHorizontalSliceRow(const GuidedTexture& texture, int row, Vec2 pos, float width, Color tint);
     void drawHorizontalSliceRow(const GuidedTexture& texture, int row, Vec2 pos, Vec2 size, Color tint);
+    ScreenshotResult saveCurrentFramePng(const std::filesystem::path& path);
 
     SDL_Renderer* renderer_ = nullptr;
     const Camera* camera_ = nullptr;
@@ -253,6 +270,11 @@ private:
     std::size_t imageCacheHitCount_ = 0;
     std::size_t imageCacheMissCount_ = 0;
     std::size_t imageCacheLoadFailCount_ = 0;
+    int logicalPresentationWidth_ = 0;
+    int logicalPresentationHeight_ = 0;
+    LogicalPresentationMode logicalPresentationMode_ = LogicalPresentationMode::Disabled;
+    std::optional<std::filesystem::path> pendingScreenshotPath_;
+    std::optional<ScreenshotResult> lastScreenshotResult_;
     std::string lastAssetError_;
 };
 

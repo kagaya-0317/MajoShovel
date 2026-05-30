@@ -62,7 +62,12 @@ class TileMap {
 public:
     void updateAround(Vec2 worldCenter, float dt, const RuntimeBalance& config, const DungeonLayout& dungeonLayout);
     void render(Renderer& renderer, const Camera& camera, Vec2 lightCenter, const std::vector<LightSource>& extraLights);
-    void renderDarknessOverlay(Renderer& renderer, const Camera& camera, Vec2 lightCenter, const std::vector<LightSource>& extraLights) const;
+    void renderDarknessOverlay(
+        Renderer& renderer,
+        const Camera& camera,
+        Vec2 lightCenter,
+        const std::vector<LightSource>& extraLights,
+        bool lightweight = false) const;
     std::vector<DamagedTile> damageCircle(Vec2 center, float radius, int damage);
     bool damageTile(int tx, int ty, int damage, Vec2& openedTileCenter, TileType* openedTileType = nullptr);
     bool isSolidAt(Vec2 world);

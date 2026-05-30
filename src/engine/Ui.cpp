@@ -1,5 +1,7 @@
 ﻿#include "engine/Ui.hpp"
 
+#include "engine/InputHelpGlyph.hpp"
+
 #include <SDL3/SDL.h>
 #include <algorithm>
 #include <cmath>
@@ -337,6 +339,109 @@ void removeUtf8LastCodepoint(std::string& text)
     text.pop_back();
     while (!text.empty() && (static_cast<unsigned char>(text.back()) & 0xC0u) == 0x80u) {
         text.pop_back();
+    }
+}
+
+std::size_t utf8CodepointByteLength(std::string_view text, std::size_t index)
+{
+    if (index >= text.size()) {
+        return 0;
+    }
+    const unsigned char lead = static_cast<unsigned char>(text[index]);
+    std::size_t length = 1;
+    if ((lead & 0x80u) == 0) {
+        length = 1;
+    } else if ((lead & 0xe0u) == 0xc0u) {
+        length = 2;
+    } else if ((lead & 0xf0u) == 0xe0u) {
+        length = 3;
+    } else if ((lead & 0xf8u) == 0xf0u) {
+        length = 4;
+    }
+    return std::min(length, text.size() - index);
+}
+
+bool appendUiTextInput(std::string& target, std::string_view text, int maxCodepoints)
+{
+    if (text.empty()) {
+        return false;
+    }
+
+    const int limit = std::max(0, maxCodepoints);
+    int count = utf8CodepointCount(target);
+    bool changed = false;
+    for (std::size_t i = 0; i < text.size();) {
+        const unsigned char lead = static_cast<unsigned char>(text[i]);
+        const std::size_t length = utf8CodepointByteLength(text, i);
+        if (length == 0) {
+            break;
+        }
+        if (lead < 0x20u || lead == 0x7fu) {
+            i += length;
+            continue;
+        }
+        if (limit > 0 && count >= limit) {
+            break;
+        }
+        target.append(text.substr(i, length));
+        ++count;
+        changed = true;
+        i += length;
+    }
+    return changed;
+}
+
+bool uiTextInputShouldConsumeKey(SDL_Scancode scancode)
+{
+    if (scancode >= SDL_SCANCODE_F1 && scancode <= SDL_SCANCODE_F24) {
+        return false;
+    }
+    switch (scancode) {
+    case SDL_SCANCODE_ESCAPE:
+    case SDL_SCANCODE_RETURN:
+    case SDL_SCANCODE_KP_ENTER:
+    case SDL_SCANCODE_UP:
+    case SDL_SCANCODE_DOWN:
+    case SDL_SCANCODE_LEFT:
+    case SDL_SCANCODE_RIGHT:
+    case SDL_SCANCODE_PAGEUP:
+    case SDL_SCANCODE_PAGEDOWN:
+    case SDL_SCANCODE_HOME:
+    case SDL_SCANCODE_END:
+    case SDL_SCANCODE_LCTRL:
+    case SDL_SCANCODE_RCTRL:
+    case SDL_SCANCODE_LSHIFT:
+    case SDL_SCANCODE_RSHIFT:
+    case SDL_SCANCODE_LALT:
+    case SDL_SCANCODE_RALT:
+    case SDL_SCANCODE_LGUI:
+    case SDL_SCANCODE_RGUI:
+        return false;
+    default:
+        return true;
+    }
+}
+
+void syncUiTextInputActive(UiTextInputState& state, UiRect* area = nullptr)
+{
+    SDL_Window* window = SDL_GetKeyboardFocus();
+    if (window == nullptr) {
+        state.textInputActive = false;
+        return;
+    }
+    if (!SDL_TextInputActive(window)) {
+        state.textInputActive = SDL_StartTextInput(window);
+    } else {
+        state.textInputActive = true;
+    }
+    if (state.textInputActive && area != nullptr) {
+        const SDL_Rect textArea{
+            static_cast<int>(std::lround(area->pos.x)),
+            static_cast<int>(std::lround(area->pos.y)),
+            static_cast<int>(std::lround(std::max(1.0f, area->size.x))),
+            static_cast<int>(std::lround(std::max(1.0f, area->size.y))),
+        };
+        SDL_SetTextInputArea(window, &textArea, 0);
     }
 }
 
@@ -728,12 +833,13 @@ void drawUiFooter(Renderer& renderer, UiRect panel, std::string_view helpText, U
             textPadding.x = std::max(0.0f, textPadding.x + 50.0f);
         }
     }
-    renderer.drawWrappedText(
-        footer.pos + textPadding,
-        helpText,
-        footer.size.x - textPadding.x * 2.0f,
-        ui::TextMuted,
-        2);
+    InputHelpStyle helpStyle;
+    helpStyle.text = ui::TextMuted;
+    helpStyle.scale = 2;
+    helpStyle.iconHeight = 23.0f;
+    const float maxWidth = footer.size.x - textPadding.x * 2.0f;
+    const std::string fitted = fittedInputHelpText(renderer, std::string(helpText), maxWidth, helpStyle);
+    drawInputHelpText(renderer, footer.pos + textPadding, fitted, helpStyle);
 }
 
 void drawUiWindow(Renderer& renderer, UiRect panel, std::string_view title, std::string_view helpText)
@@ -993,6 +1099,133 @@ void drawUiSmallSelectButton(
     const float valueY = rect.pos.y + std::max(0.0f, (rect.size.y - valueSize.y) * 0.5f);
     renderer.drawText({rect.pos.x + PaddingX, textY}, label, labelColor, scale);
     renderer.drawText({rect.pos.x + rect.size.x - valueSize.x - PaddingX, valueY}, value, valueColor, valueScale);
+}
+
+void focusUiTextInput(UiTextInputState& state)
+{
+    state.focused = true;
+    syncUiTextInputActive(state);
+}
+
+void blurUiTextInput(UiTextInputState& state)
+{
+    if (state.textInputActive) {
+        if (SDL_Window* window = SDL_GetKeyboardFocus()) {
+            SDL_StopTextInput(window);
+        }
+    }
+    state.composition.clear();
+    state.focused = false;
+    state.textInputActive = false;
+}
+
+bool handleUiTextInputEvent(UiTextInputState& state, const SDL_Event& event, int maxCodepoints)
+{
+    if (!state.focused) {
+        return false;
+    }
+
+    if (event.type == SDL_EVENT_TEXT_INPUT) {
+        appendUiTextInput(state.text, event.text.text == nullptr ? std::string_view{} : std::string_view(event.text.text), maxCodepoints);
+        state.composition.clear();
+        return true;
+    }
+
+    if (event.type == SDL_EVENT_TEXT_EDITING) {
+        state.composition = event.edit.text == nullptr ? std::string{} : std::string(event.edit.text);
+        return true;
+    }
+
+    if (event.type != SDL_EVENT_KEY_DOWN) {
+        return false;
+    }
+
+    const SDL_Keymod mods = SDL_GetModState();
+    const bool ctrlDown = (mods & SDL_KMOD_CTRL) != 0;
+    if (event.key.scancode == SDL_SCANCODE_BACKSPACE) {
+        if (state.composition.empty()) {
+            removeUtf8LastCodepoint(state.text);
+        }
+        return true;
+    }
+    if (event.key.scancode == SDL_SCANCODE_DELETE) {
+        if (state.composition.empty() && !state.text.empty()) {
+            state.text.clear();
+        }
+        return true;
+    }
+    if (ctrlDown && event.key.scancode == SDL_SCANCODE_V) {
+        if (char* clipboard = SDL_GetClipboardText()) {
+            appendUiTextInput(state.text, clipboard, maxCodepoints);
+            SDL_free(clipboard);
+        }
+        state.composition.clear();
+        return true;
+    }
+    if (ctrlDown) {
+        return false;
+    }
+
+    return uiTextInputShouldConsumeKey(event.key.scancode);
+}
+
+UiTextInputResult updateUiTextInput(UiTextInputState& state, UiContext& ui, UiRect rect)
+{
+    UiTextInputResult result;
+    if (ui.pressed(rect)) {
+        const bool wasFocused = state.focused;
+        focusUiTextInput(state);
+        result.focusedChanged = !wasFocused;
+        ui.consumePointer();
+    }
+    if (state.focused) {
+        syncUiTextInputActive(state, &rect);
+    }
+    return result;
+}
+
+void drawUiTextInput(
+    Renderer& renderer,
+    UiRect rect,
+    const UiTextInputState& state,
+    std::string_view placeholder,
+    const UiTextInputStyle& style)
+{
+    const Color fill = state.focused ? style.fillFocused : style.fill;
+    const Color outline = state.focused ? style.outlineFocused : style.outline;
+    renderer.fillRect(rect.pos, rect.size, fill);
+    renderer.drawRect(rect.pos, rect.size, outline);
+
+    const int scale = std::max(1, style.textScale);
+    const UiRect textRect{
+        rect.pos + Vec2{std::max(0.0f, style.padding.x), 0.0f},
+        {
+            std::max(0.0f, rect.size.x - std::max(0.0f, style.padding.x) * 2.0f),
+            rect.size.y,
+        },
+    };
+    const std::string displayValue = state.text + state.composition;
+    const bool showPlaceholder = displayValue.empty();
+    const std::string text = fittedUiText(
+        renderer,
+        showPlaceholder ? placeholder : std::string_view(displayValue),
+        textRect.size.x,
+        scale);
+    const Vec2 textSize = renderer.measureText(text, scale);
+    const Vec2 textPos{
+        textRect.pos.x,
+        rect.pos.y + std::max(0.0f, (rect.size.y - textSize.y) * 0.5f),
+    };
+    renderer.pushClipRect(textRect.pos, textRect.size);
+    renderer.drawText(textPos, text, showPlaceholder ? style.placeholder : style.text, scale);
+    if (state.focused && !showPlaceholder) {
+        const float elapsed = static_cast<float>(SDL_GetTicks()) / 1000.0f;
+        if (std::fmod(elapsed, 1.0f) < 0.55f) {
+            const float caretX = std::min(textRect.pos.x + textRect.size.x, textPos.x + textSize.x + 3.0f);
+            renderer.fillRect({caretX, rect.pos.y + 8.0f}, {2.0f, std::max(4.0f, rect.size.y - 16.0f)}, style.caret);
+        }
+    }
+    renderer.popClipRect();
 }
 
 void drawUiBodyMessageBelow(Renderer& renderer, UiRect anchor, std::string_view message, Color color)

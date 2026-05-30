@@ -87,6 +87,7 @@ void DiggingSystem::update(
     openedTiles_.clear();
     hitTiles_.clear();
     dugTiles_.clear();
+    impactSoundEvents_.clear();
     rewardDropRequests_.clear();
     capturedExplosionRequests_.clear();
     std::vector<SpellRingItem*> runtimeItems = spellRing.runtimeItemsMutable();
@@ -122,55 +123,66 @@ void DiggingSystem::update(
             continue;
         }
 
-        const std::size_t hitCountBefore = hitTiles_.size();
-        const std::size_t openedCountBefore = openedTiles_.size();
+        const TileType impactTileType = map.terrainDebugAtWorld(digPosition).type;
+        const ObjectDefinition* sourceObject = nullptr;
         if (!item.objectId.empty()) {
             const auto objectIt = objectCatalog.objectsById.find(item.objectId);
             if (objectIt != objectCatalog.objectsById.end()) {
-                EffectContext context;
-                context.sourceObject = &objectIt->second;
-                context.owner = &player;
-                context.orbit = &spellRing;
-                context.orbitItem = &item;
-                context.tileMap = &map;
-                context.magic = magic;
-                context.terrainHitTiles = &hitTiles_;
-                context.terrainOpenedTiles = &openedTiles_;
-                context.terrainDugTiles = &dugTiles_;
-                context.discoveryEvents = discoveryEvents;
-                context.encyclopedia = encyclopedia;
-                context.position = digPosition;
-                context.triggerType = EffectTriggerType::Hit;
-                context.logUnimplementedEffects = false;
-                effectDispatcher.dispatchOrbitEffects(objectIt->second, context);
+                sourceObject = &objectIt->second;
             }
         }
 
+        const std::size_t hitCountBefore = hitTiles_.size();
+        const std::size_t openedCountBefore = openedTiles_.size();
+        if (sourceObject != nullptr) {
+            EffectContext context;
+            context.sourceObject = sourceObject;
+            context.owner = &player;
+            context.orbit = &spellRing;
+            context.orbitItem = &item;
+            context.tileMap = &map;
+            context.magic = magic;
+            context.terrainHitTiles = &hitTiles_;
+            context.terrainOpenedTiles = &openedTiles_;
+            context.terrainDugTiles = &dugTiles_;
+            context.discoveryEvents = discoveryEvents;
+            context.encyclopedia = encyclopedia;
+            context.position = digPosition;
+            context.triggerType = EffectTriggerType::Hit;
+            context.logUnimplementedEffects = false;
+            effectDispatcher.dispatchOrbitEffects(*sourceObject, context);
+        }
+
         const bool terrainHit = hitTiles_.size() != hitCountBefore;
+        const bool terrainOpened = openedTiles_.size() != openedCountBefore;
         if (terrainHit) {
             item.actionFlashTimer = SpellRingItemActionFlashSeconds;
+            impactSoundEvents_.push_back(makeTerrainRingImpactSoundEvent(
+                item,
+                sourceObject,
+                impactTileType,
+                terrainOpened ? RingImpactResult::Break : RingImpactResult::Hit,
+                digPosition,
+                static_cast<float>(std::max(0, item.digPower))));
         }
-        if (terrainHit && discoveryEvents != nullptr && !item.objectId.empty()) {
-            const auto objectIt = objectCatalog.objectsById.find(item.objectId);
-            if (objectIt != objectCatalog.objectsById.end()) {
-                std::string effectKey = "dig";
-                if (std::any_of(
-                        objectIt->second.discoveryEffectLines.begin(),
-                        objectIt->second.discoveryEffectLines.end(),
-                        [](const DiscoveryEffectLine& line) {
-                            return line.effectKey == "dig_hard";
-                        })) {
-                    effectKey = "dig_hard";
-                }
-                discoveryEvents->push_back(EffectDiscoveryEvent{
-                    .objectId = objectIt->second.id,
-                    .objectName = objectIt->second.name,
-                    .effectKey = effectKey,
-                    .description = "",
-                    .note = {},
-                    .position = digPosition,
-                });
+        if (terrainHit && discoveryEvents != nullptr && sourceObject != nullptr) {
+            std::string effectKey = "dig";
+            if (std::any_of(
+                    sourceObject->discoveryEffectLines.begin(),
+                    sourceObject->discoveryEffectLines.end(),
+                    [](const DiscoveryEffectLine& line) {
+                        return line.effectKey == "dig_hard";
+                    })) {
+                effectKey = "dig_hard";
             }
+            discoveryEvents->push_back(EffectDiscoveryEvent{
+                .objectId = sourceObject->id,
+                .objectName = sourceObject->name,
+                .effectKey = effectKey,
+                .description = "",
+                .note = {},
+                .position = digPosition,
+            });
         }
         if ((item.hasCapturedBehavior("reward_drop") || item.hasCapturedBehavior("steal_or_dig")) &&
             capturedRewardAllowed(item, totalTime) &&
@@ -192,7 +204,7 @@ void DiggingSystem::update(
                 capturedExplosionRequests_.push_back(digPosition);
             }
         }
-        if (openedTiles_.size() != openedCountBefore) {
+        if (terrainOpened) {
             spellRing.consumeItemDurability(item);
         }
         item.lastTerrainHitTime = totalTime;

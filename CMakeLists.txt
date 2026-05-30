@@ -40,6 +40,7 @@ add_executable(MajoShovel
     src/engine/InputBinding.cpp
     src/engine/InputRemapCapture.cpp
     src/engine/Input.cpp
+    src/engine/InputHelpGlyph.cpp
     src/engine/FileWatcher.cpp
     src/engine/Log.cpp
     src/debug/DebugConsole.cpp
@@ -96,6 +97,7 @@ add_executable(MajoShovel
     src/game/RingPresetSystem.cpp
     src/game/SpellRingSystem.cpp
     src/game/SpellRingItem.cpp
+    src/game/RingImpactSound.cpp
     src/game/DiggingSystem.cpp
     src/game/TileMap.cpp
     src/game/Enemy.cpp

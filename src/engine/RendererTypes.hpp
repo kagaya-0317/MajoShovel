@@ -7,6 +7,7 @@
 
 struct SDL_Renderer;
 struct SDL_Texture;
+union SDL_Event;
 
 namespace majo {
 
@@ -32,6 +33,14 @@ enum class GradientDirection {
     TopToBottom,
     TopLeftToBottomRight,
     BottomLeftToTopRight,
+};
+
+enum class LogicalPresentationMode {
+    Disabled,
+    Stretch,
+    Letterbox,
+    Overscan,
+    IntegerScale,
 };
 
 struct RectF {

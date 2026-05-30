@@ -31,6 +31,7 @@ enum class InputAction {
     Confirm,
     PutSelectedItemOnRing,
     GrabOrPlaceItem,
+    ArrangeItems,
     PreviousActiveRing,
     NextActiveRing,
     CaptureNet,

@@ -157,6 +157,9 @@ struct SmokePuff {
 
 class EffectSystem {
 public:
+    void setLightweightMode(bool enabled) { lightweightMode_ = enabled; }
+    [[nodiscard]] bool lightweightMode() const { return lightweightMode_; }
+
     void update(float dt);
     void render(Renderer& renderer);
     void renderShadows(Renderer& renderer);
@@ -220,6 +223,7 @@ private:
     ObjectPool<SmokePuff, 192> smokePuffs_;
     ObjectPool<DamagePopup, 128> damagePopups_;
     ObjectPool<StatusTextPopup, 96> statusTextPopups_;
+    bool lightweightMode_ = false;
 };
 
 }

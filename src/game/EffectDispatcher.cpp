@@ -753,6 +753,36 @@ void applyCoinDropChanceInvocation(const EffectInvocation& invocation)
     }
 }
 
+void applyStealInvocation(const EffectInvocation& invocation)
+{
+    if (invocation.target != "enemy" && invocation.target != "target") {
+        return;
+    }
+
+    const EffectContext& context = *invocation.context;
+    Enemy* enemy = context.hitTarget != nullptr ? context.hitTarget : context.targetEntity;
+    if (enemy == nullptr ||
+        context.enemies == nullptr ||
+        context.worldDrops == nullptr ||
+        context.objectCatalog == nullptr) {
+        return;
+    }
+
+    const float chance = invocation.value > 0.0
+        ? static_cast<float>(invocation.value)
+        : 100.0f;
+    const Vec2 targetPosition = context.owner != nullptr ? context.owner->position : context.position;
+    if (context.enemies->tryStealHeldDrop(
+            *enemy,
+            *context.worldDrops,
+            *context.objectCatalog,
+            targetPosition,
+            context.dropSpawnedAtSeconds,
+            chance)) {
+        recordEffectDiscovery(invocation, "敵から所持品を盗む");
+    }
+}
+
 void applyCastMagicInvocation(const EffectInvocation& invocation)
 {
     const EffectContext& context = *invocation.context;
@@ -872,6 +902,8 @@ void EffectDispatcher::registerFoundationHandlers(const ObjectCatalog& catalog)
             registerHandler(std::string(effect), applyCoinDropChanceInvocation);
         }
     }
+
+    registerHandler("steal", applyStealInvocation);
 
     for (std::string_view effect : {"cast_fire", "cast_ice", "cast_thunder", "cast_wind", "cast_earth"}) {
         registerHandler(std::string(effect), applyCastMagicInvocation);

@@ -1,5 +1,7 @@
 ﻿#include "game/GameInternal.hpp"
 
+#include "engine/InputHelpGlyph.hpp"
+#include "game/EnemyImageRenderer.hpp"
 #include "game/EntityStatusVisuals.hpp"
 
 namespace majo {
@@ -645,20 +647,6 @@ bool moveRingItemByDirection(
     return sign != 0 && spellRing.moveItemAngle(itemIndex, RingAngleStep * static_cast<float>(sign));
 }
 
-UiRect ringArrangeButtonRect()
-{
-    const UiRect panel = ringPanelRect();
-    return {{panel.pos.x + 48.0f, panel.pos.y + 196.0f}, {118.0f, ui::ButtonHeight}};
-}
-
-UiRect ringRemoveAllButtonRect()
-{
-    constexpr Vec2 ButtonSize{118.0f, ui::ButtonHeight};
-    const UiRect panel = ringPanelRect();
-    const float rightEdge = ringDetailRect().pos.x - 48.0f;
-    return {{rightEdge - ButtonSize.x, panel.pos.y + 196.0f}, ButtonSize};
-}
-
 UiRect ringPlaceWindowRect()
 {
     return {{RingPlaceScreenX, RingPlaceScreenY}, {RingPlaceScreenW, RingPlaceScreenH}};
@@ -1269,7 +1257,7 @@ constexpr int OptionsPageVideo = 2;
 constexpr int OptionsPageCount = 3;
 constexpr int OperationSettingsCategoryCount = 4;
 constexpr int AudioSettingsRowCount = 3;
-constexpr int VideoSettingsRowCount = 3;
+constexpr int VideoSettingsRowCount = 4;
 
 struct OperationSettingsActionRow {
     InputAction action;
@@ -1317,9 +1305,9 @@ constexpr OperationSettingsActionRow OperationSettingsActionRows[] = {
     {InputAction::UseSelectedItem, "選択アイテム使用", 1},
     {InputAction::PutSelectedItemOnRing, "リングへ入れる", 1},
     {InputAction::GrabOrPlaceItem, "つかむ/置く", 1},
+    {InputAction::ArrangeItems, "整列/並び替え", 1},
     {InputAction::PreviousActiveRing, "前のリング", 1},
     {InputAction::NextActiveRing, "次のリング", 1},
-    {InputAction::CaptureNet, "捕獲ネット", 1},
     {InputAction::ToggleProtection, "保護切替", 1},
     {InputAction::ShortcutCursorLeft, "ショートカット左", 2},
     {InputAction::ShortcutCursorRight, "ショートカット右", 2},
@@ -1342,7 +1330,7 @@ constexpr OperationSettingsActionRow OperationSettingsActionRows[] = {
 
 UiRect optionsPanelRect()
 {
-    return {{180.0f, 70.0f}, {920.0f, 580.0f}};
+    return {{150.0f, 35.0f}, {980.0f, 650.0f}};
 }
 
 UiRect statusPanelRect()
@@ -1377,7 +1365,7 @@ UiRect optionsPageTabRect(int index)
 UiRect operationSettingsTableRect()
 {
     const UiRect panel = optionsPanelRect();
-    return {{panel.pos.x + 42.0f, panel.pos.y + 220.0f}, {panel.size.x - 84.0f, 250.0f}};
+    return {{panel.pos.x + 42.0f, panel.pos.y + 220.0f}, {panel.size.x - 84.0f, 200.0f}};
 }
 
 UiRect operationSettingsTabRect(int index)
@@ -1431,6 +1419,12 @@ UiRect videoSettingsRowRect(int index)
 {
     const UiRect content = optionSettingsContentRect();
     return {{content.pos.x, content.pos.y + static_cast<float>(index) * 72.0f}, {content.size.x, 58.0f}};
+}
+
+UiRect optionsHelpWindowRect()
+{
+    const UiRect panel = optionsPanelRect();
+    return {{panel.pos.x + 74.0f, panel.pos.y + 423.0f}, {panel.size.x - 148.0f, 88.0f}};
 }
 
 UiTabItem optionsPageTabItem(int index)
@@ -1552,6 +1546,7 @@ const char* videoSettingsRowLabel(int row)
     case 0: return "表示モード";
     case 1: return "ウィンドウサイズ";
     case 2: return "VSync";
+    case 3: return "軽量化";
     default: return "";
     }
 }
@@ -1581,6 +1576,8 @@ std::string videoSettingsRowValueText(const GameSettings& settings, int row)
         return videoResolutionText(settings.video);
     case 2:
         return settings.video.vsync ? "ON" : "OFF";
+    case 3:
+        return settings.performance.lightweight ? "ON" : "OFF";
     default:
         return "";
     }
@@ -1626,9 +1623,165 @@ void cycleVideoSetting(GameSettings& settings, int row, int delta)
     case 2:
         settings.video.vsync = !settings.video.vsync;
         break;
+    case 3:
+        settings.performance.lightweight = !settings.performance.lightweight;
+        break;
     default:
         break;
     }
+}
+
+const char* audioSettingsHelpText(int row)
+{
+    switch (row) {
+    case 0:
+        return "ゲーム全体の音量です。BGMとSEの両方にまとめて反映されます。";
+    case 1:
+        return "音楽の音量です。拠点、ダンジョン、ボス戦などのBGMに反映されます。";
+    case 2:
+        return "効果音の音量です。UI、採掘、攻撃、拾得などのSEに反映されます。";
+    default:
+        return "";
+    }
+}
+
+const char* videoSettingsHelpText(int row)
+{
+    switch (row) {
+    case 0:
+        return "ウィンドウ表示とフルスクリーン表示を切り替えます。フルスクリーンはボーダーレス全画面です。";
+    case 1:
+        return "ウィンドウ時の画面サイズです。フルスクリーン中も、次にウィンドウへ戻した時のサイズとして保存します。";
+    case 2:
+        return "VSyncはモニターの更新タイミングに描画を合わせる設定です。画面の裂けを抑えますが、入力遅延やFPSに影響することがあります。";
+    case 3:
+        return "ONにすると追加ライト、暗幕、影、常時エフェクト、粒子数を抑えて、ダンジョン中の負荷を下げます。";
+    default:
+        return "";
+    }
+}
+
+const char* operationSettingsActionHelpText(InputAction action)
+{
+    switch (action) {
+    case InputAction::MoveLeft:
+        return "左方向の移動と、左右を使う画面でのカーソル移動に使います。";
+    case InputAction::MoveRight:
+        return "右方向の移動と、左右を使う画面でのカーソル移動に使います。";
+    case InputAction::MoveUp:
+        return "上方向の移動と、項目一覧でのカーソル移動に使います。";
+    case InputAction::MoveDown:
+        return "下方向の移動と、項目一覧でのカーソル移動に使います。";
+    case InputAction::Confirm:
+        return "メニュー項目や確認ダイアログを決定します。";
+    case InputAction::Cancel:
+        return "現在の画面を戻る、または操作をキャンセルします。";
+    case InputAction::Pause:
+        return "通常画面から一時停止メニューを開きます。";
+    case InputAction::OpenInventory:
+        return "アイテム画面を直接開きます。";
+    case InputAction::ThrowActiveRing:
+        return "選択中のアクティブリングを投げます。";
+    case InputAction::OffsetRingCenter:
+        return "押している間、リング中心をプレイヤーからずらします。";
+    case InputAction::UseSelectedItem:
+        return "ショートカットやアイテム画面で選択中のアイテムを使います。";
+    case InputAction::PutSelectedItemOnRing:
+        return "選択中のアイテムをアクティブリングへ入れます。";
+    case InputAction::GrabOrPlaceItem:
+        return "アイテム画面やリング画面で、アイテムをつかむ/置く操作に使います。";
+    case InputAction::ArrangeItems:
+        return "アイテムやリング上の配置を整列、または並び替えします。";
+    case InputAction::PreviousActiveRing:
+        return "前のアクティブリングへ切り替えます。";
+    case InputAction::NextActiveRing:
+        return "次のアクティブリングへ切り替えます。";
+    case InputAction::ToggleProtection:
+        return "アイテムやリング装備の保護ON/OFFを切り替えます。";
+    case InputAction::ShortcutCursorLeft:
+        return "ショートカット選択を左へ移動します。";
+    case InputAction::ShortcutCursorRight:
+        return "ショートカット選択を右へ移動します。";
+    case InputAction::DirectShortcut1:
+        return "ショートカット1番を直接選びます。";
+    case InputAction::DirectShortcut2:
+        return "ショートカット2番を直接選びます。";
+    case InputAction::DirectShortcut3:
+        return "ショートカット3番を直接選びます。";
+    case InputAction::DirectShortcut4:
+        return "ショートカット4番を直接選びます。";
+    case InputAction::DirectShortcut5:
+        return "ショートカット5番を直接選びます。";
+    case InputAction::DirectShortcut6:
+        return "ショートカット6番を直接選びます。";
+    case InputAction::DirectShortcut7:
+        return "ショートカット7番を直接選びます。";
+    case InputAction::DirectShortcut8:
+        return "ショートカット8番を直接選びます。";
+    case InputAction::ToggleShortcutRow:
+        return "ショートカットの表示行を切り替えます。";
+    case InputAction::ToggleDebug:
+        return "開発用のデバッグ表示を切り替えます。";
+    case InputAction::ToggleDebugPause:
+        return "開発用のデバッグ停止を切り替えます。";
+    case InputAction::TestRestart:
+        return "テストプレイ中にゲームを再起動します。通常起動では無効です。";
+    case InputAction::ToggleTestFreeze:
+        return "テスト用の自動進行停止を切り替えます。";
+    case InputAction::OpenConsole:
+        return "開発用のコマンドコンソールを開きます。";
+    case InputAction::ToggleAutoReloadBlock:
+        return "開発中の自動リロード停止を切り替えます。";
+    default:
+        return "この操作の割当を変更します。";
+    }
+}
+
+std::string operationSettingsHelpTitle(const OperationSettingsActionRow& row, int column)
+{
+    std::string title = row.label;
+    title += column == OperationSettingsColumnGamepad ? " / ゲームパッド" : " / キーボード/マウス";
+    return title;
+}
+
+std::string operationSettingsHelpDescription(InputAction action, int column)
+{
+    std::string description = operationSettingsActionHelpText(action);
+    description += column == OperationSettingsColumnGamepad
+        ? " 決定するとゲームパッド入力の割当を変更します。"
+        : " 決定するとキー/マウス入力の割当を変更します。";
+    return description;
+}
+
+void drawOptionsHelpWindow(
+    Renderer& renderer,
+    std::string_view title,
+    std::string_view description,
+    std::string_view status)
+{
+    const UiRect rect = optionsHelpWindowRect();
+    drawUiSubPanel(renderer, rect);
+    renderer.fillRect(rect.pos + Vec2{3.0f, 8.0f}, {5.0f, rect.size.y - 16.0f}, {255, 230, 150, 230});
+
+    const std::string header = "ヘルプ: " + std::string(title);
+    const Vec2 headerPos = rect.pos + Vec2{20.0f, 12.0f};
+    renderer.drawText(headerPos, header, ui::Text, 2);
+
+    if (!status.empty()) {
+        const Vec2 headerSize = renderer.measureText(header, 2);
+        const Vec2 statusSize = renderer.measureText(status, 2);
+        const float statusX = rect.pos.x + rect.size.x - statusSize.x - 20.0f;
+        if (statusX > headerPos.x + headerSize.x + 18.0f) {
+            renderer.drawText({statusX, headerPos.y}, status, {255, 230, 150, 255}, 2);
+        }
+    }
+
+    renderer.drawWrappedText(
+        rect.pos + Vec2{20.0f, 42.0f},
+        description,
+        rect.size.x - 40.0f,
+        ui::TextMuted,
+        2);
 }
 
 std::array<UiSelectableTableColumn, OperationSettingsColumnCount> operationSettingsTableColumns()
@@ -2101,7 +2254,7 @@ void Game::updateRingScreen(const Input& input, UiContext& ui, float dt)
 
     const bool actualRing = true;
 
-    if (ui.pressed(ringArrangeButtonRect())) {
+    if (input.arrangeItemsPressed()) {
         closeUiCommandMenu(ringCommandMenu_);
         ringCommandItemIndex_ = -1;
         ringCommandPlaceActive_ = false;
@@ -2117,7 +2270,7 @@ void Game::updateRingScreen(const Input& input, UiContext& ui, float dt)
         return;
     }
 
-    if (ui.pressed(ringRemoveAllButtonRect())) {
+    if (input.removeAllRingItemsPressed()) {
         closeUiCommandMenu(ringCommandMenu_);
         ringCommandItemIndex_ = -1;
         ringCommandPlaceActive_ = false;
@@ -2357,6 +2510,7 @@ void Game::loadOptionsSettings()
     if (!settingsGetter_ && inputBindingGetter_) {
         optionsSettings_.input.bindings = sanitizeInputBindings(inputBindingGetter_());
     }
+    lightweightModeActive_ = optionsSettings_.performance.lightweight;
     operationSettingsBindings_ = optionsSettings_.input.bindings;
     optionsSettingsLoaded_ = true;
     operationSettingsLoaded_ = true;
@@ -2372,6 +2526,7 @@ void Game::loadOptionsSettings()
 void Game::applyOptionsSettings(std::string status)
 {
     optionsSettings_ = sanitizeSettings(optionsSettings_);
+    lightweightModeActive_ = optionsSettings_.performance.lightweight;
     operationSettingsBindings_ = optionsSettings_.input.bindings;
     if (settingsApplier_) {
         settingsApplier_(optionsSettings_);
@@ -2776,6 +2931,7 @@ void Game::updateVideoSettings(const Input& input, UiContext& ui)
             } else {
                 ui.emitSound(UiSoundEvent::Confirm);
                 optionsSettings_.video = VideoSettings{};
+                optionsSettings_.performance = PerformanceSettings{};
                 applyOptionsSettings("画面設定を初期化しました");
             }
             ui.block(panel);
@@ -3495,6 +3651,78 @@ void Game::renderFirstItemAcquisitionNotice(Renderer& renderer) const
     drawUiButton(renderer, okButton, "OK", true, uiActionButtonStyle());
 }
 
+void Game::appendCaptureAbsorbRenderEntries(
+    std::vector<DepthRenderEntry>& entries,
+    Renderer& renderer,
+    float totalSeconds) const
+{
+    for (const CaptureAbsorbAnimation& animation : captureAbsorbAnimations_) {
+        const Vec2 drawPosition = animation.lastPosition;
+        entries.push_back(DepthRenderEntry{
+            drawPosition.y + 2.0f,
+            [this, &renderer, &animation, drawPosition, totalSeconds]() {
+                const float flySeconds = std::max(0.05f, animation.durationSeconds - animation.flyDelaySeconds);
+                const float flyProgress = smooth01((animation.elapsedSeconds - animation.flyDelaySeconds) / flySeconds);
+                const float whiteProgress = smooth01(animation.elapsedSeconds / std::max(0.05f, animation.flyDelaySeconds));
+                const float fadeProgress = smooth01((animation.elapsedSeconds - (animation.durationSeconds - 0.16f)) / 0.16f);
+                const float alphaScale = 1.0f - fadeProgress;
+                if (alphaScale <= 0.0f) {
+                    return;
+                }
+
+                const float pulse = 0.5f + 0.5f * std::sin(totalSeconds * 18.0f + animation.elapsedSeconds * 12.0f);
+                const float pop = 1.0f + std::sin(std::min(1.0f, animation.elapsedSeconds / std::max(0.05f, animation.flyDelaySeconds)) * Pi) * 0.18f;
+                const float shrink = lerp(1.0f, 0.22f, flyProgress);
+                const float visualScale = pop * shrink;
+                const Color glowColor = withAlpha({164, 224, 255, 255}, (96.0f + pulse * 42.0f) * alphaScale);
+                renderer.fillSoftCircle(drawPosition, 36.0f * visualScale + pulse * 8.0f, glowColor);
+                renderer.drawSoftRing(
+                    drawPosition,
+                    20.0f * visualScale + flyProgress * 10.0f,
+                    std::max(2.0f, 5.0f * visualScale),
+                    withAlpha({255, 248, 210, 255}, 150.0f * alphaScale));
+                if (flyProgress > 0.04f && flyProgress < 0.98f) {
+                    renderer.drawSoftLine(
+                        drawPosition,
+                        player_.position,
+                        std::max(1.2f, 4.2f * (1.0f - flyProgress) * alphaScale),
+                        withAlpha({204, 238, 255, 255}, 92.0f * alphaScale));
+                }
+
+                renderer.drawActorShadow(
+                    drawPosition + Vec2{0.0f, 11.0f * visualScale},
+                    std::max(10.0f, 54.0f * visualScale),
+                    withAlpha({0, 0, 0, 82}, 72.0f * alphaScale));
+
+                Enemy visualEnemy = animation.enemy;
+                visualEnemy.position = drawPosition;
+                EnemyImageDrawOptions imageOptions;
+                imageOptions.tint = withAlpha({255, 255, 255, 255}, 255.0f * alphaScale);
+                imageOptions.scaleMultiplier = visualScale;
+                imageOptions.outlineEnabled = true;
+                imageOptions.outlineColor = withAlpha({144, 224, 255, 255}, 210.0f * alphaScale);
+                imageOptions.outlinePx = 2;
+                imageOptions.selectedOutlineEnabled = true;
+                imageOptions.selectedOutlineColor = withAlpha({255, 255, 255, 255}, 170.0f * alphaScale);
+                imageOptions.selectedOutlinePx = 5;
+                imageOptions.maskOverlayColor = withAlpha({255, 255, 255, 255}, 255.0f * whiteProgress * alphaScale);
+                Vec2 drawSize{};
+                if (!drawEnemyImage(
+                        renderer,
+                        visualEnemy,
+                        drawPosition,
+                        animation.enemy.behaviorTimer + animation.elapsedSeconds,
+                        imageOptions,
+                        &drawSize)) {
+                    const float radius = std::max(8.0f, animation.enemy.radius * 1.35f) * visualScale;
+                    renderer.fillCircle(drawPosition, radius, withAlpha({255, 255, 255, 255}, 255.0f * alphaScale));
+                    renderer.drawCircle(drawPosition, radius + 3.0f, withAlpha({144, 224, 255, 255}, 210.0f * alphaScale));
+                }
+            },
+        });
+    }
+}
+
 void Game::renderDungeonMinimap(Renderer& renderer, const std::vector<LightSource>& itemLights) const
 {
     if (enemyTestActive_ || dungeonMinimapCells_.empty()) {
@@ -3706,7 +3934,7 @@ void Game::renderDungeonControlHelp(Renderer& renderer) const
     const float screenHeight = static_cast<float>(camera_.height());
 
     std::string help =
-        "WASD/方向キー 移動   Q/E アイテム選択   Tab アイテム行切替   F 使用   左クリック 虫とり網   右長押し 中心ずらし   C リング投げ　Esc メニュー";
+        "WASD/方向キー 移動   Q/E アイテム選択   Tab アイテム行切替   F 使用   R リングへ   右長押し 中心ずらし   C リング投げ　Esc メニュー";
     bool promptFocused = false;
     if (introTutorialActive()) {
         help = "WASD/方向キー 移動   Esc メニュー";
@@ -3741,12 +3969,18 @@ void Game::renderDungeonControlHelp(Renderer& renderer) const
     const UiRect shortcutHud = introTutorialHelpLayout
         ? inventory_.shortcutHudPanelRect(camera_.width(), camera_.height())
         : UiRect{};
-    const int textScale = 2;
+    InputHelpStyle helpStyle;
+    helpStyle.text = {232, 232, 238, 235};
+    helpStyle.outline = {0, 0, 0, 190};
+    helpStyle.scale = 2;
+    helpStyle.outlinePx = 4;
+    helpStyle.iconHeight = 24.0f;
+    helpStyle.outlineEnabled = true;
     const float maxWidth = introTutorialHelpLayout
         ? std::max(120.0f, shortcutHud.size.x - 32.0f)
         : std::max(120.0f, screenWidth - 32.0f);
-    help = fittedSingleLineText(renderer, std::move(help), maxWidth, textScale);
-    const Vec2 textSize = renderer.measureText(help, textScale);
+    help = fittedInputHelpText(renderer, std::move(help), maxWidth, helpStyle);
+    const Vec2 textSize = measureInputHelpText(renderer, help, helpStyle);
     Vec2 pos{
         (screenWidth - textSize.x) * 0.5f,
         std::max(TopInfoBarY + TopInfoBarHeight + 8.0f, screenHeight - textSize.y - 4.0f),
@@ -3756,7 +3990,7 @@ void Game::renderDungeonControlHelp(Renderer& renderer) const
             TopInfoBarY + TopInfoBarHeight + 8.0f,
             shortcutHud.pos.y - textSize.y - 10.0f);
     }
-    renderer.drawOutlinedText(pos, help, {232, 232, 238, 235}, {0, 0, 0, 190}, 4, textScale);
+    drawInputHelpText(renderer, pos, help, helpStyle);
 }
 
 void Game::renderWarpReturnUi(Renderer& renderer) const
@@ -3828,8 +4062,8 @@ void Game::renderRingScreen(Renderer& renderer, float totalTime) const
     const std::string_view RingHelpText = ringItemMoveModeActive_
         ? "WASD/矢印 位置変更  F/Enter 確定  Esc/右クリック キャンセル"
         : (ringCount > 1
-            ? "1-3 プリセット呼出  Shift+1-3 登録  Z/X リング選択  F/Enter 移動  R 外す  P 保護"
-            : "1-3 プリセット呼出  Shift+1-3 登録  WASD/矢印 選択  F/Enter 移動  R 外す  P 保護");
+            ? "1-3 呼出  Shift+1-3 登録  Z/X リング  F/Enter 移動  T 整列  R 外す  Shift+R 全部取る  P 保護"
+            : "1-3 呼出  Shift+1-3 登録  WASD/矢印 選択  F/Enter 移動  T 整列  R 外す  Shift+R 全部取る  P 保護");
     UiWindowScope ringWindow(renderer, "ring.manage", panel, "リング", RingHelpText, UiWindowOptions{true, true});
 
     char buffer[192];
@@ -3848,9 +4082,6 @@ void Game::renderRingScreen(Renderer& renderer, float totalTime) const
         ringTabs.data(),
         ringCount,
         ringTabRects.data());
-    drawUiButton(renderer, ringArrangeButtonRect(), "整列", false, uiActionButtonStyle());
-    drawUiButton(renderer, ringRemoveAllButtonRect(), "すべて外す", false, uiActionButtonStyle());
-
     const bool actualRing = true;
     const auto& items = spellRing_.items();
     (void)actualRing;
@@ -3992,7 +4223,6 @@ void Game::renderRingScreen(Renderer& renderer, float totalTime) const
 
 void Game::renderOperationSettings(Renderer& renderer) const
 {
-    const UiRect panel = optionsPanelRect();
     const UiRect tableRect = operationSettingsTableRect();
     const auto tabItems = operationSettingsTabItems();
     const auto tabRects = operationSettingsTabRects();
@@ -4062,12 +4292,18 @@ void Game::renderOperationSettings(Renderer& renderer) const
     }
     drawUiScrollAreaScrollbar(renderer, tableLayout.scroll, tableStyle.scroll);
 
-    if (!operationSettingsStatus_.empty()) {
-        renderer.drawText(
-            {panel.pos.x + 46.0f, panel.pos.y + 414.0f},
-            operationSettingsStatus_,
-            {255, 230, 150, 255},
-            2);
+    if (!rows.empty()) {
+        const int row = std::clamp(operationSettingsTable_.selectedRow, 0, static_cast<int>(rows.size()) - 1);
+        const int column = std::clamp(
+            operationSettingsTable_.selectedColumn,
+            OperationSettingsColumnKeyboardMouse,
+            OperationSettingsColumnGamepad);
+        const OperationSettingsActionRow& selectedRow = rows[static_cast<std::size_t>(row)];
+        drawOptionsHelpWindow(
+            renderer,
+            operationSettingsHelpTitle(selectedRow, column),
+            operationSettingsHelpDescription(selectedRow.action, column),
+            operationSettingsStatus_);
     }
 
     constexpr int ButtonCount = 5;
@@ -4140,7 +4376,6 @@ void Game::renderOperationSettings(Renderer& renderer) const
 
 void Game::renderAudioSettings(Renderer& renderer) const
 {
-    const UiRect panel = optionsPanelRect();
     for (int row = 0; row < AudioSettingsRowCount; ++row) {
         const UiRect rowRect = audioSettingsRowRect(row);
         const bool hot = row == audioSettingsSelection_;
@@ -4167,9 +4402,11 @@ void Game::renderAudioSettings(Renderer& renderer) const
             2);
     }
 
-    if (!optionsStatus_.empty()) {
-        renderer.drawText({panel.pos.x + 74.0f, panel.pos.y + 414.0f}, optionsStatus_, {255, 230, 150, 255}, 2);
-    }
+    drawOptionsHelpWindow(
+        renderer,
+        audioSettingsRowLabel(audioSettingsSelection_),
+        audioSettingsHelpText(audioSettingsSelection_),
+        optionsStatus_);
 
     constexpr int ButtonCount = 2;
     constexpr const char* ButtonLabels[ButtonCount] = {"戻る", "音量初期化"};
@@ -4185,7 +4422,6 @@ void Game::renderAudioSettings(Renderer& renderer) const
 
 void Game::renderVideoSettings(Renderer& renderer) const
 {
-    const UiRect panel = optionsPanelRect();
     for (int row = 0; row < VideoSettingsRowCount; ++row) {
         drawUiSmallSelectButton(
             renderer,
@@ -4196,9 +4432,11 @@ void Game::renderVideoSettings(Renderer& renderer) const
             false);
     }
 
-    if (!optionsStatus_.empty()) {
-        renderer.drawText({panel.pos.x + 74.0f, panel.pos.y + 414.0f}, optionsStatus_, {255, 230, 150, 255}, 2);
-    }
+    drawOptionsHelpWindow(
+        renderer,
+        videoSettingsRowLabel(videoSettingsSelection_),
+        videoSettingsHelpText(videoSettingsSelection_),
+        optionsStatus_);
 
     constexpr int ButtonCount = 2;
     constexpr const char* ButtonLabels[ButtonCount] = {"戻る", "画面初期化"};
@@ -4718,6 +4956,61 @@ void Game::renderSpellRingForeground(
     }
 }
 
+namespace {
+
+constexpr int LightweightDungeonExtraLightLimit = 8;
+constexpr int DungeonLightPriorityRing = 20;
+constexpr int DungeonLightPriorityRingAura = 24;
+constexpr int DungeonLightPriorityEntrance = 26;
+constexpr int DungeonLightPriorityMagic = 32;
+constexpr int DungeonLightPriorityWarp = 38;
+constexpr int DungeonLightPriorityEvent = 40;
+constexpr int DungeonLightPriorityTutorial = 42;
+constexpr int DungeonLightPriorityBoss = 44;
+
+struct DungeonLightCandidate {
+    LightSource light;
+    int priority = 0;
+    int order = 0;
+};
+
+std::vector<LightSource> finalizeDungeonLightSources(
+    std::vector<DungeonLightCandidate> candidates,
+    Vec2 focus,
+    bool lightweight)
+{
+    if (lightweight && static_cast<int>(candidates.size()) > LightweightDungeonExtraLightLimit) {
+        std::stable_sort(candidates.begin(), candidates.end(), [focus](const DungeonLightCandidate& a, const DungeonLightCandidate& b) {
+            const auto score = [focus](const DungeonLightCandidate& candidate) {
+                const Vec2 delta = candidate.light.position - focus;
+                const float distance = std::sqrt(delta.x * delta.x + delta.y * delta.y);
+                return static_cast<float>(candidate.priority) * 1000.0f +
+                    candidate.light.radius * 3.0f -
+                    distance * 0.45f;
+            };
+            const float scoreA = score(a);
+            const float scoreB = score(b);
+            if (std::abs(scoreA - scoreB) > 0.001f) {
+                return scoreA > scoreB;
+            }
+            return a.order < b.order;
+        });
+        candidates.resize(LightweightDungeonExtraLightLimit);
+        std::sort(candidates.begin(), candidates.end(), [](const DungeonLightCandidate& a, const DungeonLightCandidate& b) {
+            return a.order < b.order;
+        });
+    }
+
+    std::vector<LightSource> lights;
+    lights.reserve(candidates.size());
+    for (const DungeonLightCandidate& candidate : candidates) {
+        lights.push_back(candidate.light);
+    }
+    return lights;
+}
+
+} // namespace
+
 std::vector<LightSource> Game::collectDungeonLightSources(double totalSeconds) const
 {
     const std::vector<const SpellRingItem*> runtimeItems = spellRing_.runtimeItems();
@@ -4728,7 +5021,12 @@ std::vector<LightSource> Game::collectDungeonLightSources(double totalSeconds) c
         screenTransition_.target == ScreenTransitionTarget::MiningStart;
     const float ringIntroProgress = dungeonRingIntroProgress();
 
-    std::vector<LightSource> lights;
+    std::vector<DungeonLightCandidate> lights;
+    int lightOrder = 0;
+    const auto addLight = [&](LightSource light, int priority) {
+        lights.push_back({light, priority, lightOrder++});
+    };
+
     int runtimeItemIndex = 0;
     for (const SpellRingItem* itemPtr : runtimeItems) {
         if (itemPtr == nullptr) {
@@ -4747,26 +5045,26 @@ std::vector<LightSource> Game::collectDungeonLightSources(double totalSeconds) c
             : itemPtr->worldPosition;
         const float phase = itemPtr->localAngle * 1.7f + static_cast<float>(itemPtr->ringIndex) * 2.3f;
         if (itemPtr->lightRadius > 0.0f) {
-            lights.push_back({
+            addLight({
                 flickeredLightPosition(lightPosition, static_cast<float>(totalSeconds), phase),
                 flickeredLightRadius(itemPtr->lightRadius, static_cast<float>(totalSeconds), phase) * introLightScale,
-            });
+            }, DungeonLightPriorityRing);
         } else if (itemPtr->type == SpellRingItemType::Torch) {
             const float torchPhase = phase + 0.47f;
-            lights.push_back({
+            addLight({
                 flickeredLightPosition(lightPosition, static_cast<float>(totalSeconds), torchPhase),
                 flickeredLightRadius(balance_.lightRadius, static_cast<float>(totalSeconds), torchPhase) * introLightScale,
-            });
+            }, DungeonLightPriorityRing);
         }
         if (itemPtr->magicAuraTimer > 0.0f && !itemPtr->magicAuraDamageType.empty()) {
             const float auraPhase = phase + 0.83f;
-            lights.push_back({
+            addLight({
                 flickeredLightPosition(lightPosition, static_cast<float>(totalSeconds), auraPhase),
                 flickeredLightRadius(
                     magicAuraLightRadius(itemPtr->magicAuraDamageType, itemPtr->hitRadius),
                     static_cast<float>(totalSeconds),
                     auraPhase) * introLightScale,
-            });
+            }, DungeonLightPriorityRingAura);
         }
         ++runtimeItemIndex;
     }
@@ -4782,36 +5080,46 @@ std::vector<LightSource> Game::collectDungeonLightSources(double totalSeconds) c
             }
             const float radiusPx = radiusTiles * static_cast<float>(balance::TileSize);
             const float phase = static_cast<float>(point.index) * 1.73f;
-            lights.push_back({
+            addLight({
                 flickeredLightPosition(point.position, static_cast<float>(totalSeconds), phase),
                 flickeredLightRadius(radiusPx, static_cast<float>(totalSeconds), phase),
-            });
+            }, DungeonLightPriorityWarp);
         }
         if (hasBossSpawnPoint_ && !bossSpawned_ && !hasCapturedBossForCurrentStage()) {
-            lights.push_back({
+            addLight({
                 flickeredLightPosition(bossSpawnPoint_, static_cast<float>(totalSeconds), 4.8f),
                 flickeredLightRadius(120.0f, static_cast<float>(totalSeconds), 4.8f),
-            });
+            }, DungeonLightPriorityBoss);
         }
     }
     if (mode_ == ScreenMode::Playing && !enemyTestActive_) {
         const float entranceLightRadius = DungeonEntranceLightRadiusTiles * static_cast<float>(balance::TileSize);
-        lights.push_back({
+        addLight({
             flickeredLightPosition(dungeonEntrancePosition(), static_cast<float>(totalSeconds), 2.9f),
             flickeredLightRadius(entranceLightRadius, static_cast<float>(totalSeconds), 2.9f),
-        });
+        }, DungeonLightPriorityEntrance);
     }
     const std::vector<LightSource> introLights = introTutorialLightSources(totalSeconds);
-    lights.insert(lights.end(), introLights.begin(), introLights.end());
-    dungeonEvents_.appendLightSources(lights, totalSeconds);
-    magic_.appendLightSources(lights);
+    for (const LightSource& light : introLights) {
+        addLight(light, DungeonLightPriorityTutorial);
+    }
+    std::vector<LightSource> eventLights;
+    dungeonEvents_.appendLightSources(eventLights, totalSeconds);
+    for (const LightSource& light : eventLights) {
+        addLight(light, DungeonLightPriorityEvent);
+    }
+    std::vector<LightSource> magicLights;
+    magic_.appendLightSources(magicLights);
+    for (const LightSource& light : magicLights) {
+        addLight(light, DungeonLightPriorityMagic);
+    }
     const float lightMultiplier = astralLightRadiusMultiplier();
     if (std::abs(lightMultiplier - 1.0f) > 0.001f) {
-        for (LightSource& light : lights) {
-            light.radius *= lightMultiplier;
+        for (DungeonLightCandidate& candidate : lights) {
+            candidate.light.radius *= lightMultiplier;
         }
     }
-    return lights;
+    return finalizeDungeonLightSources(std::move(lights), witchSelfLightCenter(player_.position), lightweightModeEnabled());
 }
 
 void Game::renderLevelUpOverlay(Renderer& renderer)
@@ -4901,6 +5209,7 @@ void Game::render(Renderer& renderer, const Time& time)
 
     const std::vector<const SpellRingItem*> runtimeItems = spellRing_.runtimeItems();
     const bool ringIntroActive = dungeonRingIntroActive();
+    const bool lightweight = lightweightModeEnabled();
     const std::vector<LightSource> itemLights = collectDungeonLightSources(time.totalSeconds());
     const Vec2 playerLightCenter = witchSelfLightCenter(player_.position);
     tileMap_.render(renderer, camera_, playerLightCenter, itemLights);
@@ -4942,9 +5251,11 @@ void Game::render(Renderer& renderer, const Time& time)
     const float playerSpriteDrawSize = PlayerSpriteDrawSize * playerSizeMultiplier;
     const Color playerStatusTint = playerStatusVisual.hasTint ? playerStatusVisual.tint : Color{255, 255, 255, 255};
     renderer.drawActorShadow(playerFootAnchor, playerSpriteDrawSize);
-    worldDrops_.renderShadows(renderer, tileMap_, objectCatalog_, playerLightCenter, itemLights);
-    enemies_.renderShadows(renderer, tileMap_, playerLightCenter, itemLights);
-    effects_.renderShadows(renderer);
+    if (!lightweight) {
+        worldDrops_.renderShadows(renderer, tileMap_, objectCatalog_, playerLightCenter, itemLights);
+        enemies_.renderShadows(renderer, tileMap_, playerLightCenter, itemLights);
+        effects_.renderShadows(renderer);
+    }
     renderPlayerFootstepDust(renderer);
     worldDepthEntries.push_back(DepthRenderEntry{
         player_.position.y,
@@ -5060,7 +5371,8 @@ void Game::render(Renderer& renderer, const Time& time)
             }
         },
     });
-    enemies_.appendRenderEntries(worldDepthEntries, renderer, tileMap_, playerLightCenter, itemLights, captureHoverEnemyId_);
+    enemies_.appendRenderEntries(worldDepthEntries, renderer, tileMap_, playerLightCenter, itemLights, 0, &encyclopedia_);
+    appendCaptureAbsorbRenderEntries(worldDepthEntries, renderer, time.totalSeconds());
     std::stable_sort(worldDepthEntries.begin(), worldDepthEntries.end(), [](const DepthRenderEntry& left, const DepthRenderEntry& right) {
         return left.sortY < right.sortY;
     });
@@ -5077,7 +5389,7 @@ void Game::render(Renderer& renderer, const Time& time)
         entry.draw();
     }
     effects_.render(renderer);
-    tileMap_.renderDarknessOverlay(renderer, camera_, playerLightCenter, itemLights);
+    tileMap_.renderDarknessOverlay(renderer, camera_, playerLightCenter, itemLights, lightweight);
     std::vector<DepthRenderEntry> magicForegroundEntries;
     magicFx_.appendForegroundRenderEntries(magicForegroundEntries, renderer);
     std::stable_sort(magicForegroundEntries.begin(), magicForegroundEntries.end(), [](const DepthRenderEntry& left, const DepthRenderEntry& right) {

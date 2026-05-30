@@ -673,7 +673,29 @@ void EncyclopediaSystem::noteEnemyDiscovered(std::string_view enemyId, std::stri
 
 void EncyclopediaSystem::noteEnemyDefeated(std::string_view enemyId, std::string_view enemyName, Vec2 position)
 {
-    raiseEnemyStage(enemyId, enemyName, EncyclopediaStage::Complete, position, false);
+    raiseEnemyStage(enemyId, enemyName, EncyclopediaStage::Discovered, position, false);
+}
+
+bool EncyclopediaSystem::noteEnemyInspected(const EnemyDefinition& enemy, Vec2 position)
+{
+    if (enemy.id.empty()) {
+        return false;
+    }
+
+    const std::string name = enemy.name.empty() ? enemy.id : enemy.name;
+    if (!raiseEnemyStage(enemy.id, name, EncyclopediaStage::Complete, position, false)) {
+        return false;
+    }
+
+    std::string popup = "モンスター発見：" + name;
+    popup += "\nHP ";
+    popup += std::to_string(std::max(1, enemy.hp));
+    popup += " / 攻撃 ";
+    popup += std::to_string(std::max(0, enemy.contactAttackPower));
+    popup += "\n";
+    popup += enemy.description.empty() ? "-" : enemy.description;
+    enqueuePopup(std::move(popup), position);
+    return true;
 }
 
 EncyclopediaStage EncyclopediaSystem::objectStage(std::string_view objectId, bool treasure) const

@@ -19,7 +19,7 @@ int main(int argc, char** argv)
     bool restart = false;
     do {
         auto app = std::make_unique<majo::App>();
-        if (!app->initialize("Majo Shovel", 1280, 720, testPlayMode)) {
+        if (!app->initialize("ダンジョンを掘る魔女", 1280, 720, testPlayMode)) {
             return 1;
         }
         app->run();

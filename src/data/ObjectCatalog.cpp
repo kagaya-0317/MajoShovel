@@ -562,6 +562,14 @@ bool autoTextForEffectCode(
             : "眠っている敵への接触ダメージを強める";
         return true;
     }
+    if (effectCode == "nonlethal_hit") {
+        outText = "敵にとどめを刺さない";
+        return true;
+    }
+    if (effectCode == "inspect_enemy") {
+        outText = "敵に当たるとモンスターの詳細を記録する";
+        return true;
+    }
     if (effectCode == "bounce_grounded") {
         outText = "地上の敵に当たると跳ね上げる";
         return true;

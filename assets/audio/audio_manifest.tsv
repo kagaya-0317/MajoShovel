@@ -20,6 +20,28 @@ se.dig.hit	se	se/dig_hit_placeholder.wav	0.62	false	70	採掘ヒット
 se.dig.break	se	se/dig_break_placeholder.wav	0.72	false	90	採掘破壊
 se.dig.ore_break	se	se/dig_ore_break_placeholder.wav	0.78	false	110	鉱石破壊
 se.attack.hit	se	se/attack_hit_placeholder.wav	0.74	false	45	攻撃ヒット
+se.impact.dirt.scoop	se	se/impact_dirt_scoop_placeholder.wav	0.68	false	55	衝突 土 すくい形状
+se.impact.dirt.blade	se	se/impact_dirt_blade_placeholder.wav	0.64	false	55	衝突 土 刃物
+se.impact.dirt.pointed	se	se/impact_dirt_pointed_placeholder.wav	0.64	false	55	衝突 土 尖り
+se.impact.dirt.generic	se	se/impact_dirt_generic_placeholder.wav	0.58	false	55	衝突 土 汎用
+se.impact.rock.metal	se	se/impact_rock_metal_placeholder.wav	0.74	false	65	衝突 岩 金属
+se.impact.rock.pointed	se	se/impact_rock_pointed_placeholder.wav	0.72	false	65	衝突 岩 尖り
+se.impact.rock.stone	se	se/impact_rock_stone_placeholder.wav	0.68	false	65	衝突 岩 石
+se.impact.slime.slime	se	se/impact_slime_slime_placeholder.wav	0.62	false	50	衝突 スライム同士
+se.impact.soft.soft	se	se/impact_soft_soft_placeholder.wav	0.58	false	50	衝突 柔らかい同士
+se.impact.hard.soft	se	se/impact_hard_soft_placeholder.wav	0.64	false	50	衝突 硬いものと柔らかいもの
+se.impact.crisp	se	se/impact_crisp_placeholder.wav	0.56	false	45	衝突 シャリ質感
+se.impact.paper.book	se	se/impact_paper_book_placeholder.wav	0.54	false	45	衝突 本・紙
+se.impact.metal.trinket	se	se/impact_metal_trinket_placeholder.wav	0.60	false	55	衝突 小物金属
+se.impact.resonant.gong	se	se/impact_resonant_gong_placeholder.wav	0.74	false	110	衝突 鐘
+se.impact.resonant.chime	se	se/impact_resonant_chime_placeholder.wav	0.62	false	80	衝突 風鈴
+se.impact.cloth.fluffy	se	se/impact_cloth_fluffy_placeholder.wav	0.56	false	55	衝突 ふわふわ布
+se.impact.fiber.rustle	se	se/impact_fiber_rustle_placeholder.wav	0.54	false	45	衝突 毛束・網
+se.impact.glass	se	se/impact_glass_placeholder.wav	0.62	false	65	衝突 ガラス
+se.impact.metal.metal	se	se/impact_metal_metal_placeholder.wav	0.70	false	55	衝突 金属
+se.impact.stone.metal	se	se/impact_stone_metal_placeholder.wav	0.68	false	60	衝突 石と金属
+se.impact.wood	se	se/impact_wood_placeholder.wav	0.58	false	55	衝突 木
+se.impact.generic	se	se/impact_generic_placeholder.wav	0.54	false	45	衝突 汎用
 se.pickup	se	se/pickup_placeholder.wav	0.72	false	45	拾得
 se.boss.spawn	se	se/boss_spawn_placeholder.wav	0.82	false	350	ボス出現
 se.boss.defeat	se	se/boss_defeat_placeholder.wav	0.88	false	400	ボス撃破

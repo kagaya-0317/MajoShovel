@@ -1,6 +1,8 @@
 ﻿param(
     [string]$Root = "",
-    [switch]$OnlyMissing
+    [switch]$OnlyMissing,
+    [switch]$OnlySe,
+    [switch]$HighQualitySe
 )
 
 $ErrorActionPreference = "Stop"
@@ -186,6 +188,118 @@ function Placeholder-Sample([string]$Kind, [double]$Time, [double]$Duration, [Sy
             $env = Decay $Time $Duration 2.4
             $noise = ($Random.NextDouble() * 2.0 - 1.0) * 0.20
             return $env * (0.40 * [Math]::Sin($TwoPi * 185.0 * $Time) + $noise)
+        }
+        "se.impact.dirt.scoop" {
+            $env = Decay $Time $Duration 2.1
+            $noise = ($Random.NextDouble() * 2.0 - 1.0) * 0.20
+            $scrape = 0.45 + 0.55 * [Math]::Sin($TwoPi * 32.0 * $Time)
+            return $env * (0.22 * [Math]::Sin($TwoPi * 88.0 * $Time) + 0.10 * [Math]::Sin($TwoPi * 176.0 * $Time) + $scrape * $noise)
+        }
+        "se.impact.dirt.blade" {
+            $env = Decay $Time $Duration 2.4
+            $noise = ($Random.NextDouble() * 2.0 - 1.0) * 0.16
+            $slice = [Math]::Min(1.0, $Time / [Math]::Max(0.001, $Duration * 0.35))
+            return $env * (0.18 * [Math]::Sin($TwoPi * 118.0 * $Time) + 0.10 * [Math]::Sin($TwoPi * 236.0 * $Time) + $slice * $noise)
+        }
+        "se.impact.dirt.pointed" {
+            $env = Decay $Time $Duration 3.0
+            $noise = ($Random.NextDouble() * 2.0 - 1.0) * 0.12
+            return $env * (0.30 * [Math]::Sin($TwoPi * 132.0 * $Time) + 0.12 * [Math]::Sin($TwoPi * 360.0 * $Time) + $noise)
+        }
+        "se.impact.dirt.generic" {
+            $env = Decay $Time $Duration 2.2
+            $noise = ($Random.NextDouble() * 2.0 - 1.0) * 0.18
+            return $env * (0.24 * [Math]::Sin($TwoPi * 96.0 * $Time) + $noise)
+        }
+        "se.impact.rock.metal" {
+            $env = Decay $Time $Duration 1.75
+            $noise = ($Random.NextDouble() * 2.0 - 1.0) * 0.10
+            return $env * (0.28 * [Math]::Sin($TwoPi * 360.0 * $Time) + 0.22 * [Math]::Sin($TwoPi * 720.0 * $Time) + 0.10 * [Math]::Sin($TwoPi * 1080.0 * $Time) + $noise)
+        }
+        "se.impact.rock.pointed" {
+            $env = Decay $Time $Duration 1.9
+            $noise = ($Random.NextDouble() * 2.0 - 1.0) * 0.13
+            return $env * (0.30 * [Math]::Sin($TwoPi * 230.0 * $Time) + 0.18 * [Math]::Sin($TwoPi * 690.0 * $Time) + $noise)
+        }
+        "se.impact.rock.stone" {
+            $env = Decay $Time $Duration 1.65
+            $noise = ($Random.NextDouble() * 2.0 - 1.0) * 0.18
+            return $env * (0.26 * [Math]::Sin($TwoPi * 118.0 * $Time) + 0.18 * [Math]::Sin($TwoPi * 236.0 * $Time) + $noise)
+        }
+        "se.impact.slime.slime" {
+            $env = Decay $Time $Duration 1.3
+            $wobble = 1.0 + 0.12 * [Math]::Sin($TwoPi * 18.0 * $Time)
+            $noise = ($Random.NextDouble() * 2.0 - 1.0) * 0.025
+            return $env * (0.34 * [Math]::Sin($TwoPi * 118.0 * $wobble * $Time) + 0.18 * [Math]::Sin($TwoPi * 178.0 * $wobble * $Time) + $noise)
+        }
+        "se.impact.soft.soft" {
+            $env = Decay $Time $Duration 1.45
+            $wobble = 1.0 + 0.08 * [Math]::Sin($TwoPi * 14.0 * $Time)
+            return $env * (0.32 * [Math]::Sin($TwoPi * 105.0 * $wobble * $Time) + 0.12 * [Math]::Sin($TwoPi * 210.0 * $Time))
+        }
+        "se.impact.hard.soft" {
+            $env = Decay $Time $Duration 1.55
+            $noise = ($Random.NextDouble() * 2.0 - 1.0) * 0.08
+            $wobble = 1.0 + 0.10 * [Math]::Sin($TwoPi * 11.0 * $Time)
+            return $env * (0.30 * [Math]::Sin($TwoPi * 82.0 * $wobble * $Time) + 0.16 * [Math]::Sin($TwoPi * 164.0 * $Time) + $noise)
+        }
+        "se.impact.crisp" {
+            $env = Decay $Time $Duration 2.8
+            $noise = ($Random.NextDouble() * 2.0 - 1.0) * 0.18
+            return $env * (0.20 * [Math]::Sin($TwoPi * 520.0 * $Time) + 0.12 * [Math]::Sin($TwoPi * 1040.0 * $Time) + $noise)
+        }
+        "se.impact.paper.book" {
+            $env = Decay $Time $Duration 1.2
+            $noise = ($Random.NextDouble() * 2.0 - 1.0) * 0.14
+            $flutter = 0.55 + 0.45 * [Math]::Sin($TwoPi * 28.0 * $Time)
+            return $env * (0.08 * [Math]::Sin($TwoPi * 180.0 * $Time) + $flutter * $noise)
+        }
+        "se.impact.metal.trinket" {
+            $env = Decay $Time $Duration 1.25
+            return $env * (0.24 * [Math]::Sin($TwoPi * 880.0 * $Time) + 0.20 * [Math]::Sin($TwoPi * 1320.0 * $Time) + 0.12 * [Math]::Sin($TwoPi * 1760.0 * $Time))
+        }
+        "se.impact.resonant.gong" {
+            $env = Decay $Time $Duration 0.85
+            return $env * (0.32 * [Math]::Sin($TwoPi * 196.0 * $Time) + 0.20 * [Math]::Sin($TwoPi * 294.0 * $Time) + 0.14 * [Math]::Sin($TwoPi * 392.0 * $Time))
+        }
+        "se.impact.resonant.chime" {
+            $env = Decay $Time $Duration 0.95
+            return $env * (0.24 * [Math]::Sin($TwoPi * 1046.5 * $Time) + 0.18 * [Math]::Sin($TwoPi * 1568.0 * $Time) + 0.12 * [Math]::Sin($TwoPi * 2093.0 * $Time))
+        }
+        "se.impact.cloth.fluffy" {
+            $env = Decay $Time $Duration 1.1
+            $noise = ($Random.NextDouble() * 2.0 - 1.0) * 0.12
+            return $env * (0.09 * [Math]::Sin($TwoPi * 74.0 * $Time) + $noise)
+        }
+        "se.impact.fiber.rustle" {
+            $env = Decay $Time $Duration 1.45
+            $noise = ($Random.NextDouble() * 2.0 - 1.0) * 0.15
+            $bristle = 0.5 + 0.5 * [Math]::Sin($TwoPi * 36.0 * $Time)
+            return $env * (0.06 * [Math]::Sin($TwoPi * 220.0 * $Time) + $bristle * $noise)
+        }
+        "se.impact.glass" {
+            $env = Decay $Time $Duration 1.35
+            $noise = ($Random.NextDouble() * 2.0 - 1.0) * 0.04
+            return $env * (0.26 * [Math]::Sin($TwoPi * 1480.0 * $Time) + 0.20 * [Math]::Sin($TwoPi * 2220.0 * $Time) + $noise)
+        }
+        "se.impact.metal.metal" {
+            $env = Decay $Time $Duration 1.25
+            return $env * (0.28 * [Math]::Sin($TwoPi * 620.0 * $Time) + 0.22 * [Math]::Sin($TwoPi * 930.0 * $Time) + 0.12 * [Math]::Sin($TwoPi * 1240.0 * $Time))
+        }
+        "se.impact.stone.metal" {
+            $env = Decay $Time $Duration 1.5
+            $noise = ($Random.NextDouble() * 2.0 - 1.0) * 0.11
+            return $env * (0.26 * [Math]::Sin($TwoPi * 260.0 * $Time) + 0.20 * [Math]::Sin($TwoPi * 520.0 * $Time) + $noise)
+        }
+        "se.impact.wood" {
+            $env = Decay $Time $Duration 1.8
+            $noise = ($Random.NextDouble() * 2.0 - 1.0) * 0.08
+            return $env * (0.28 * [Math]::Sin($TwoPi * 180.0 * $Time) + 0.14 * [Math]::Sin($TwoPi * 360.0 * $Time) + $noise)
+        }
+        "se.impact.generic" {
+            $env = Decay $Time $Duration 2.0
+            $noise = ($Random.NextDouble() * 2.0 - 1.0) * 0.13
+            return $env * (0.24 * [Math]::Sin($TwoPi * 160.0 * $Time) + $noise)
         }
         "se.pickup" {
             $env = Decay $Time $Duration 1.7
@@ -376,6 +490,319 @@ function Write-PlaceholderWav([string]$Path, [string]$Kind, [double]$DurationSec
     Write-Host "[audio] wrote $Path"
 }
 
+if ($HighQualitySe) {
+Add-Type -TypeDefinition @'
+using System;
+using System.IO;
+using System.Text;
+
+public static class MajoPlaceholderAudioHQ
+{
+    private const double TwoPi = Math.PI * 2.0;
+
+    private static double Clamp(double value, double min, double max)
+    {
+        if (value < min) return min;
+        if (value > max) return max;
+        return value;
+    }
+
+    private static double Pos(double t, double d)
+    {
+        return d <= 0.0 ? 0.0 : Clamp(t / d, 0.0, 1.0);
+    }
+
+    private static double S(double freq, double t)
+    {
+        return Math.Sin(TwoPi * freq * t);
+    }
+
+    private static double N(Random rng)
+    {
+        return rng.NextDouble() * 2.0 - 1.0;
+    }
+
+    private static double Decay(double t, double d, double power)
+    {
+        if (d <= 0.0) return 0.0;
+        double x = 1.0 - t / d;
+        if (x <= 0.0) return 0.0;
+        return Math.Pow(x, power);
+    }
+
+    private static double Env(double t, double d, double attack, double power)
+    {
+        if (t < 0.0 || t > d) return 0.0;
+        double a = attack <= 0.0 ? 1.0 : Clamp(t / attack, 0.0, 1.0);
+        return a * Decay(t, d, power);
+    }
+
+    private static double Burst(double t, double start, double length, double power)
+    {
+        double local = t - start;
+        if (local < 0.0 || local > length) return 0.0;
+        return Env(local, length, Math.Min(0.004, length * 0.25), power);
+    }
+
+    private static double Sweep(double t, double d, double startFreq, double endFreq)
+    {
+        double u = Pos(t, d);
+        double freq = startFreq + (endFreq - startFreq) * u;
+        return S(freq, t);
+    }
+
+    private static double Ring(double t, double d, double freq, double amp, double power)
+    {
+        double e = Env(t, d, 0.002, power);
+        return amp * e * (S(freq, t) + 0.45 * S(freq * 2.01, t) + 0.18 * S(freq * 2.98, t));
+    }
+
+    private static double Sparkle(double t, double d, double baseFreq, double amp)
+    {
+        double e = Env(t, d, 0.006, 1.25);
+        double shimmer = 0.65 + 0.35 * S(17.0, t);
+        return amp * e * (S(baseFreq, t) + 0.55 * S(baseFreq * 1.5, t) + 0.32 * shimmer * S(baseFreq * 2.0, t));
+    }
+
+    private static double Dust(double t, double d, Random rng, double bodyFreq, double noiseAmp, double gritFreq)
+    {
+        double e = Env(t, d, 0.004, 2.25);
+        double grit = 0.55 + 0.45 * S(gritFreq, t);
+        return e * (0.24 * S(bodyFreq, t) + 0.11 * S(bodyFreq * 2.05, t) + noiseAmp * grit * N(rng));
+    }
+
+    private static double Stone(double t, double d, Random rng, double bodyFreq, double metal)
+    {
+        double e = Env(t, d, 0.002, 1.7);
+        double crunch = (0.55 + 0.45 * S(43.0, t)) * N(rng);
+        return e * (
+            0.25 * S(bodyFreq, t) +
+            0.18 * S(bodyFreq * 2.02, t) +
+            0.10 * S(bodyFreq * 3.11, t) +
+            0.15 * crunch) +
+            metal * Ring(t, d, 720.0, 0.16, 1.5);
+    }
+
+    private static double Soft(double t, double d, Random rng, double freq, double wobbleDepth, double noiseAmp)
+    {
+        double e = Env(t, d, 0.005, 1.35);
+        double wobble = 1.0 + wobbleDepth * S(13.0, t);
+        return e * (0.34 * S(freq * wobble, t) + 0.18 * S(freq * 1.55 * wobble, t) + noiseAmp * N(rng));
+    }
+
+    private static double Whoosh(double t, double d, Random rng, double startFreq, double endFreq, double noiseAmp)
+    {
+        double e = Env(t, d, 0.012, 1.15);
+        double gate = 0.50 + 0.50 * S(18.0 + 14.0 * Pos(t, d), t);
+        return e * (0.24 * Sweep(t, d, startFreq, endFreq) + noiseAmp * gate * N(rng));
+    }
+
+    private static double Page(double t, double d, Random rng, double amp)
+    {
+        double e = Env(t, d, 0.006, 1.05);
+        double flutter = 0.55 + 0.45 * S(26.0, t);
+        return e * (0.07 * S(180.0, t) + amp * flutter * N(rng));
+    }
+
+    private static double Sample(string kind, double t, double d, Random rng)
+    {
+        double u = Pos(t, d);
+        switch (kind)
+        {
+            case "se.ui.confirm":
+                return Env(t, d, 0.004, 1.75) * (0.34 * Sweep(t, d, 700.0, 1180.0) + 0.20 * S(1568.0, t)) + 0.18 * Burst(t, 0.055, 0.07, 2.2) * S(2093.0, t);
+            case "se.ui.cancel":
+                return Env(t, d, 0.004, 1.65) * (0.36 * Sweep(t, d, 580.0, 300.0) + 0.15 * S(220.0, t));
+            case "se.ui.menu_open":
+                return Whoosh(t, d, rng, 250.0, 620.0, 0.045) + Sparkle(t, d, 660.0, 0.12);
+            case "se.ui.tab_switch":
+                return Ring(t, d, 720.0, 0.22, 2.0) + Ring(t, d, 1080.0, 0.12, 2.2);
+            case "se.ui.book_open":
+                return Page(t, d, rng, 0.18) + 0.08 * Burst(t, 0.055, 0.10, 1.5) * S(260.0, t);
+            case "se.ui.item_move":
+                return Ring(t, d, 430.0, 0.18, 2.0) + Ring(t, d, 690.0, 0.11, 2.1);
+            case "se.ui.item_use":
+                return Sparkle(t, d, 880.0, 0.24) + 0.08 * Whoosh(t, d, rng, 320.0, 960.0, 0.025);
+            case "se.ui.ring_place":
+                return Ring(t, d, 520.0, 0.20, 1.55) + Ring(t, d, 780.0, 0.16, 1.7) + Sparkle(t, d, 1040.0, 0.08);
+            case "se.ui.upgrade_select":
+                return Sparkle(t, d, 660.0, 0.18) + Sparkle(t, d, 990.0, 0.14) + Ring(t, d, 1320.0, 0.10, 1.2);
+            case "se.transition":
+                return Whoosh(t, d, rng, 160.0, 720.0, 0.075) + 0.10 * S(96.0, t) * Env(t, d, 0.02, 1.4);
+
+            case "se.footstep.base_outdoor":
+                return Dust(t, d, rng, 88.0, 0.18, 31.0) + 0.10 * Burst(t, 0.020, 0.045, 2.4) * N(rng);
+            case "se.footstep.home":
+                return Env(t, d, 0.002, 2.0) * (0.26 * S(185.0, t) + 0.15 * S(370.0, t) + 0.04 * N(rng));
+            case "se.footstep.dungeon":
+                return Dust(t, d, rng, 112.0, 0.24, 38.0) + 0.08 * Stone(t, d * 0.75, rng, 170.0, 0.2);
+
+            case "se.dig.hit":
+                return Dust(t, d, rng, 126.0, 0.22, 35.0) + 0.14 * Burst(t, 0.012, 0.035, 2.6) * S(320.0, t);
+            case "se.dig.break":
+                return Dust(t, d, rng, 92.0, 0.28, 28.0) + 0.12 * Stone(t, d, rng, 118.0, 0.0);
+            case "se.dig.ore_break":
+                return Stone(t, d, rng, 132.0, 0.85) + 0.12 * Ring(t, d, 980.0, 0.12, 1.6);
+            case "se.attack.hit":
+                return Env(t, d, 0.002, 1.9) * (0.36 * S(170.0, t) + 0.20 * S(340.0, t) + 0.18 * N(rng)) + 0.10 * Ring(t, d, 520.0, 0.10, 2.0);
+
+            case "se.impact.dirt.scoop":
+                return Dust(t, d, rng, 82.0, 0.30, 27.0) + 0.10 * Burst(t, 0.045, 0.05, 1.8) * N(rng);
+            case "se.impact.dirt.blade":
+                return Dust(t, d, rng, 112.0, 0.18, 42.0) + 0.12 * Burst(t, 0.010, 0.035, 2.8) * S(520.0, t);
+            case "se.impact.dirt.pointed":
+                return Dust(t, d, rng, 135.0, 0.16, 34.0) + 0.18 * Burst(t, 0.000, 0.028, 3.0) * S(410.0, t);
+            case "se.impact.dirt.generic":
+                return Dust(t, d, rng, 96.0, 0.22, 30.0);
+            case "se.impact.rock.metal":
+                return Stone(t, d, rng, 180.0, 1.0) + Ring(t, d, 960.0, 0.16, 1.55);
+            case "se.impact.rock.pointed":
+                return Stone(t, d, rng, 220.0, 0.65) + 0.16 * Burst(t, 0.000, 0.030, 2.8) * S(1320.0, t);
+            case "se.impact.rock.stone":
+                return Stone(t, d, rng, 120.0, 0.15) + 0.08 * Dust(t, d, rng, 80.0, 0.12, 21.0);
+            case "se.impact.slime.slime":
+                return Soft(t, d, rng, 118.0, 0.15, 0.025) + 0.12 * Soft(t - 0.030, d * 0.75, rng, 155.0, 0.10, 0.02);
+            case "se.impact.soft.soft":
+                return Soft(t, d, rng, 96.0, 0.10, 0.018);
+            case "se.impact.hard.soft":
+                return Soft(t, d, rng, 82.0, 0.12, 0.06) + 0.12 * Burst(t, 0.000, 0.04, 2.2) * S(220.0, t);
+            case "se.impact.crisp":
+                return Env(t, d, 0.001, 2.5) * (0.15 * S(760.0, t) + 0.12 * S(1520.0, t) + 0.22 * N(rng) * (0.55 + 0.45 * S(72.0, t)));
+            case "se.impact.paper.book":
+                return Page(t, d, rng, 0.20) + 0.05 * S(220.0, t) * Env(t, d, 0.012, 1.2);
+            case "se.impact.metal.trinket":
+                return Ring(t, d, 880.0, 0.24, 1.2) + Ring(t, d, 1320.0, 0.17, 1.35) + Ring(t, d, 1760.0, 0.09, 1.55);
+            case "se.impact.resonant.gong":
+                return Ring(t, d, 196.0, 0.34, 0.85) + Ring(t, d, 294.0, 0.22, 1.05) + Ring(t, d, 392.0, 0.14, 1.25);
+            case "se.impact.resonant.chime":
+                return Ring(t, d, 1046.5, 0.25, 0.95) + Ring(t, d, 1568.0, 0.18, 1.1) + Ring(t, d, 2093.0, 0.10, 1.35);
+            case "se.impact.cloth.fluffy":
+                return Env(t, d, 0.010, 1.15) * (0.08 * S(72.0, t) + 0.18 * N(rng) * (0.5 + 0.5 * S(18.0, t)));
+            case "se.impact.fiber.rustle":
+                return Env(t, d, 0.004, 1.35) * (0.06 * S(210.0, t) + 0.22 * N(rng) * (0.5 + 0.5 * S(42.0, t)));
+            case "se.impact.glass":
+                return Ring(t, d, 1480.0, 0.26, 1.05) + Ring(t, d, 2220.0, 0.19, 1.25) + 0.05 * N(rng) * Env(t, d, 0.001, 2.0);
+            case "se.impact.metal.metal":
+                return Ring(t, d, 620.0, 0.28, 1.1) + Ring(t, d, 930.0, 0.20, 1.25) + Ring(t, d, 1240.0, 0.12, 1.45);
+            case "se.impact.stone.metal":
+                return Stone(t, d, rng, 260.0, 0.75) + 0.10 * Ring(t, d, 520.0, 0.12, 1.5);
+            case "se.impact.wood":
+                return Env(t, d, 0.002, 1.8) * (0.30 * S(180.0, t) + 0.16 * S(360.0, t) + 0.10 * N(rng));
+            case "se.impact.generic":
+                return Env(t, d, 0.003, 2.0) * (0.24 * S(160.0, t) + 0.13 * N(rng));
+
+            case "se.pickup":
+                return Sparkle(t, d, 784.0, 0.22) + 0.10 * Sparkle(t - 0.060, d * 0.75, 1174.66, 0.16);
+            case "se.boss.spawn":
+                return Env(t, d, 0.030, 0.65) * (0.34 * Sweep(t, d, 62.0, 180.0) + 0.20 * S(36.0, t) + 0.08 * N(rng)) + 0.12 * Ring(t, d, 294.0, 0.15, 1.1);
+            case "se.boss.defeat":
+                return Env(t, d, 0.006, 0.85) * (0.28 * Sweep(t, d, 360.0, 95.0) + 0.20 * S(196.0, t) + 0.10 * N(rng)) + Ring(t, d, 392.0, 0.12, 1.0);
+            case "se.player.damage":
+                return Env(t, d, 0.002, 1.7) * (0.34 * S(140.0, t) + 0.18 * S(70.0, t) + 0.16 * N(rng));
+            case "se.ring.throw":
+                return Whoosh(t, d, rng, 260.0, 980.0, 0.055) + 0.10 * Ring(t, d, 1180.0, 0.12, 1.2);
+            case "se.enemy.defeat":
+                return Env(t, d, 0.006, 0.95) * (0.24 * Sweep(t, d, 360.0, 95.0) + 0.18 * N(rng) * (1.0 - u));
+            case "se.enemy.spawn":
+                return Whoosh(t, d, rng, 90.0, 260.0, 0.10) + 0.08 * S(180.0, t) * Env(t, d, 0.02, 1.1);
+            case "se.enemy.alert":
+                return Ring(t, d, 880.0, 0.26, 1.25) + Ring(t, d, 1320.0, 0.18, 1.35);
+            case "se.enemy.attack":
+                return Whoosh(t, d, rng, 520.0, 150.0, 0.12) + 0.16 * Burst(t, 0.040, 0.05, 2.1) * S(190.0, t);
+            case "se.enemy.shoot":
+                return Env(t, d, 0.002, 1.8) * (0.28 * Sweep(t, d, 720.0, 360.0) + 0.13 * S(1440.0, t));
+            case "se.enemy.heal":
+                return Sparkle(t, d, 520.0, 0.16) + Sparkle(t, d, 780.0, 0.14) + Sparkle(t, d, 1040.0, 0.10);
+            case "se.projectile.impact":
+                return Env(t, d, 0.002, 2.0) * (0.30 * S(220.0, t) + 0.18 * N(rng)) + 0.08 * Ring(t, d, 660.0, 0.10, 1.8);
+            case "se.ring.guard":
+                return Ring(t, d, 360.0, 0.24, 1.25) + Ring(t, d, 720.0, 0.24, 1.4);
+            case "se.ring.reflect":
+                return Ring(t, d, 560.0, 0.20, 1.1) + 0.24 * Env(t, d, 0.003, 1.2) * Sweep(t, d, 760.0, 1480.0);
+            case "se.magic.cast":
+                return Sparkle(t, d, 660.0, 0.18) + 0.15 * Whoosh(t, d, rng, 320.0, 980.0, 0.04);
+            case "se.magic.impact":
+                return Ring(t, d, 240.0, 0.22, 1.4) + Ring(t, d, 720.0, 0.16, 1.55) + 0.13 * Env(t, d, 0.002, 1.8) * N(rng);
+            case "se.capture.throw":
+                return Whoosh(t, d, rng, 420.0, 900.0, 0.050) + 0.09 * Ring(t, d, 1180.0, 0.11, 1.2);
+            case "se.capture.success":
+                return Sparkle(t, d, 660.0, 0.16) + Sparkle(t, d, 990.0, 0.16) + Sparkle(t, d, 1320.0, 0.14);
+            case "se.capture.fail":
+                return Env(t, d, 0.004, 1.55) * (0.30 * Sweep(t, d, 520.0, 220.0) + 0.14 * S(210.0, t));
+            case "se.discovery":
+                return Sparkle(t, d, 784.0, 0.18) + Sparkle(t, d, 1174.66, 0.15) + Sparkle(t, d, 1568.0, 0.10);
+            case "se.discovery.warp":
+                return Ring(t, d, 392.0, 0.18, 0.9) + Sparkle(t, d, 784.0, 0.15) + 0.10 * S(1174.66, t) * Env(t, d, 0.01, 0.9);
+            case "se.chest.open":
+                return Ring(t, d, 180.0, 0.16, 1.35) + Ring(t, d, 430.0, 0.12, 1.55) + 0.09 * Burst(t, 0.060, 0.12, 1.5) * N(rng);
+            case "se.crate.break":
+                return Stone(t, d, rng, 120.0, 0.0) + 0.22 * Env(t, d, 0.002, 1.7) * N(rng);
+            case "se.item.break":
+                return Ring(t, d, 260.0, 0.18, 1.45) + Ring(t, d, 620.0, 0.15, 1.6) + 0.10 * N(rng) * Env(t, d, 0.002, 1.8);
+            case "se.explosion":
+                return Env(t, d, 0.001, 1.05) * (0.34 * S(72.0, t) + 0.20 * S(144.0, t) + 0.34 * N(rng) * (1.0 - 0.65 * u));
+        }
+        return Env(t, d, 0.004, 1.8) * (0.24 * S(220.0, t) + 0.08 * N(rng));
+    }
+
+    private static double SoftClip(double value)
+    {
+        return Math.Tanh(value * 1.15) / Math.Tanh(1.15);
+    }
+
+    public static void WriteWav(string path, string kind, double durationSeconds, int seed, int sampleRate)
+    {
+        int sampleCount = (int)Math.Round(durationSeconds * sampleRate);
+        double[] samples = new double[sampleCount];
+        Random rng = new Random(seed);
+        double peak = 0.0;
+        for (int i = 0; i < sampleCount; ++i)
+        {
+            double t = (double)i / sampleRate;
+            double fadeIn = Math.Min(1.0, i / Math.Max(1.0, sampleRate * 0.002));
+            double fadeOut = Math.Min(1.0, (sampleCount - i - 1) / Math.Max(1.0, sampleRate * 0.006));
+            double sample = SoftClip(Sample(kind, t, durationSeconds, rng)) * Math.Min(fadeIn, fadeOut);
+            samples[i] = sample;
+            double abs = Math.Abs(sample);
+            if (abs > peak) peak = abs;
+        }
+
+        double gain = peak > 0.000001 ? Math.Min(3.0, 0.78 / peak) : 1.0;
+        Directory.CreateDirectory(Path.GetDirectoryName(path));
+        using (FileStream stream = File.Open(path, FileMode.Create, FileAccess.Write))
+        using (BinaryWriter writer = new BinaryWriter(stream, Encoding.ASCII))
+        {
+            short channels = 1;
+            short bitsPerSample = 16;
+            short blockAlign = (short)(channels * (bitsPerSample / 8));
+            int byteRate = sampleRate * blockAlign;
+            int dataSize = sampleCount * blockAlign;
+            writer.Write(Encoding.ASCII.GetBytes("RIFF"));
+            writer.Write(36 + dataSize);
+            writer.Write(Encoding.ASCII.GetBytes("WAVE"));
+            writer.Write(Encoding.ASCII.GetBytes("fmt "));
+            writer.Write(16);
+            writer.Write((short)1);
+            writer.Write(channels);
+            writer.Write(sampleRate);
+            writer.Write(byteRate);
+            writer.Write(blockAlign);
+            writer.Write(bitsPerSample);
+            writer.Write(Encoding.ASCII.GetBytes("data"));
+            writer.Write(dataSize);
+            for (int i = 0; i < sampleCount; ++i)
+            {
+                int pcm = (int)Math.Round(Clamp(samples[i] * gain, -0.95, 0.95) * 32767.0);
+                if (pcm > 32767) pcm = 32767;
+                if (pcm < -32768) pcm = -32768;
+                writer.Write((short)pcm);
+            }
+        }
+    }
+}
+'@
+}
+
 $clips = @(
     @{ Path = Join-Path $BgmRoot "title_placeholder.wav"; Kind = "bgm.title"; Duration = 4.0; Seed = 1001 },
     @{ Path = Join-Path $BgmRoot "base_placeholder.wav"; Kind = "bgm.base"; Duration = 4.0; Seed = 1002 },
@@ -397,6 +824,28 @@ $clips = @(
     @{ Path = Join-Path $SeRoot "dig_hit_placeholder.wav"; Kind = "se.dig.hit"; Duration = 0.12; Seed = 2011 },
     @{ Path = Join-Path $SeRoot "dig_break_placeholder.wav"; Kind = "se.dig.break"; Duration = 0.22; Seed = 2012 },
     @{ Path = Join-Path $SeRoot "attack_hit_placeholder.wav"; Kind = "se.attack.hit"; Duration = 0.15; Seed = 2013 },
+    @{ Path = Join-Path $SeRoot "impact_dirt_scoop_placeholder.wav"; Kind = "se.impact.dirt.scoop"; Duration = 0.14; Seed = 2050 },
+    @{ Path = Join-Path $SeRoot "impact_dirt_blade_placeholder.wav"; Kind = "se.impact.dirt.blade"; Duration = 0.13; Seed = 2051 },
+    @{ Path = Join-Path $SeRoot "impact_dirt_pointed_placeholder.wav"; Kind = "se.impact.dirt.pointed"; Duration = 0.12; Seed = 2052 },
+    @{ Path = Join-Path $SeRoot "impact_dirt_generic_placeholder.wav"; Kind = "se.impact.dirt.generic"; Duration = 0.13; Seed = 2053 },
+    @{ Path = Join-Path $SeRoot "impact_rock_metal_placeholder.wav"; Kind = "se.impact.rock.metal"; Duration = 0.16; Seed = 2054 },
+    @{ Path = Join-Path $SeRoot "impact_rock_pointed_placeholder.wav"; Kind = "se.impact.rock.pointed"; Duration = 0.15; Seed = 2055 },
+    @{ Path = Join-Path $SeRoot "impact_rock_stone_placeholder.wav"; Kind = "se.impact.rock.stone"; Duration = 0.15; Seed = 2056 },
+    @{ Path = Join-Path $SeRoot "impact_slime_slime_placeholder.wav"; Kind = "se.impact.slime.slime"; Duration = 0.18; Seed = 2057 },
+    @{ Path = Join-Path $SeRoot "impact_soft_soft_placeholder.wav"; Kind = "se.impact.soft.soft"; Duration = 0.16; Seed = 2058 },
+    @{ Path = Join-Path $SeRoot "impact_hard_soft_placeholder.wav"; Kind = "se.impact.hard.soft"; Duration = 0.16; Seed = 2059 },
+    @{ Path = Join-Path $SeRoot "impact_crisp_placeholder.wav"; Kind = "se.impact.crisp"; Duration = 0.12; Seed = 2060 },
+    @{ Path = Join-Path $SeRoot "impact_paper_book_placeholder.wav"; Kind = "se.impact.paper.book"; Duration = 0.18; Seed = 2061 },
+    @{ Path = Join-Path $SeRoot "impact_metal_trinket_placeholder.wav"; Kind = "se.impact.metal.trinket"; Duration = 0.20; Seed = 2062 },
+    @{ Path = Join-Path $SeRoot "impact_resonant_gong_placeholder.wav"; Kind = "se.impact.resonant.gong"; Duration = 0.60; Seed = 2063 },
+    @{ Path = Join-Path $SeRoot "impact_resonant_chime_placeholder.wav"; Kind = "se.impact.resonant.chime"; Duration = 0.42; Seed = 2064 },
+    @{ Path = Join-Path $SeRoot "impact_cloth_fluffy_placeholder.wav"; Kind = "se.impact.cloth.fluffy"; Duration = 0.18; Seed = 2065 },
+    @{ Path = Join-Path $SeRoot "impact_fiber_rustle_placeholder.wav"; Kind = "se.impact.fiber.rustle"; Duration = 0.18; Seed = 2066 },
+    @{ Path = Join-Path $SeRoot "impact_glass_placeholder.wav"; Kind = "se.impact.glass"; Duration = 0.18; Seed = 2067 },
+    @{ Path = Join-Path $SeRoot "impact_metal_metal_placeholder.wav"; Kind = "se.impact.metal.metal"; Duration = 0.18; Seed = 2068 },
+    @{ Path = Join-Path $SeRoot "impact_stone_metal_placeholder.wav"; Kind = "se.impact.stone.metal"; Duration = 0.17; Seed = 2069 },
+    @{ Path = Join-Path $SeRoot "impact_wood_placeholder.wav"; Kind = "se.impact.wood"; Duration = 0.14; Seed = 2070 },
+    @{ Path = Join-Path $SeRoot "impact_generic_placeholder.wav"; Kind = "se.impact.generic"; Duration = 0.13; Seed = 2071 },
     @{ Path = Join-Path $SeRoot "pickup_placeholder.wav"; Kind = "se.pickup"; Duration = 0.24; Seed = 2014 },
     @{ Path = Join-Path $SeRoot "boss_spawn_placeholder.wav"; Kind = "se.boss.spawn"; Duration = 0.78; Seed = 2015 },
     @{ Path = Join-Path $SeRoot "boss_defeat_placeholder.wav"; Kind = "se.boss.defeat"; Duration = 1.05; Seed = 2016 },
@@ -426,5 +875,22 @@ $clips = @(
 )
 
 foreach ($clip in $clips) {
+    if ($OnlySe -and -not ([string]$clip.Kind).StartsWith("se.", [System.StringComparison]::Ordinal)) {
+        continue
+    }
+    if ($HighQualitySe -and ([string]$clip.Kind).StartsWith("se.", [System.StringComparison]::Ordinal)) {
+        if ($OnlyMissing -and (Test-Path -LiteralPath $clip.Path)) {
+            Write-Host "[audio] skip existing $($clip.Path)"
+            continue
+        }
+        [MajoPlaceholderAudioHQ]::WriteWav(
+            [string]$clip.Path,
+            [string]$clip.Kind,
+            [double]$clip.Duration,
+            [int]$clip.Seed,
+            [int]$SampleRate)
+        Write-Host "[audio] wrote $($clip.Path)"
+        continue
+    }
     Write-PlaceholderWav $clip.Path $clip.Kind $clip.Duration $clip.Seed
 }

@@ -26,7 +26,7 @@ struct ProjectilePrototype {
     std::initializer_list<std::string_view> tags;
 };
 
-constexpr std::array<ProjectilePrototype, 12> Prototypes{{
+constexpr std::array<ProjectilePrototype, 13> Prototypes{{
     {"stone_bullet", 190.0f, 4.5f, 2.4f, 1, "blunt", {"small", "stone"}},
     {"big_stone_bullet", 150.0f, 7.5f, 2.6f, 3, "blunt", {"stone"}},
     {"weapon_throw", 220.0f, 4.8f, 2.0f, 2, "blunt", {"metal", "small"}},
@@ -39,6 +39,7 @@ constexpr std::array<ProjectilePrototype, 12> Prototypes{{
     {"web_thread", 135.0f, 3.5f, 2.4f, 0, "none", {"small", "web"}},
     {"wind_wave", 235.0f, 6.0f, 1.6f, 1, "wind", {"wind"}},
     {"explosion_small", 80.0f, 10.0f, 0.55f, 2, "fire", {"explosion"}},
+    {"junk_chunk", 175.0f, 7.0f, 2.5f, 2, "blunt", {"metal", "heavy"}},
 }};
 
 constexpr float CapturedMagnetProjectileRadius = 170.0f;

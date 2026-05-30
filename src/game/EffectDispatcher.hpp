@@ -66,6 +66,7 @@ struct EffectContext {
     GroundLineSystem* groundLines = nullptr;
     MagicSystem* magic = nullptr;
     WorldDropSystem* worldDrops = nullptr;
+    const ObjectCatalog* objectCatalog = nullptr;
     std::vector<TerrainHitTile>* terrainHitTiles = nullptr;
     std::vector<Vec2>* terrainOpenedTiles = nullptr;
     std::vector<DugTile>* terrainDugTiles = nullptr;

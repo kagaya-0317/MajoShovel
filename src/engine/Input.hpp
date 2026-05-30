@@ -7,6 +7,8 @@
 
 namespace majo {
 
+class Renderer;
+
 enum class InputDeviceKind {
     KeyboardMouse,
     Gamepad,
@@ -34,7 +36,7 @@ public:
     void shutdown();
     void beginFrame();
     void handleEvent(const SDL_Event& event);
-    void update(int windowWidth, int windowHeight);
+    void update(const Renderer* renderer);
     void applyAutomation(const InputAutomationFrame& frame);
     void setBindingMap(const InputBindingMap& bindings);
     const InputBindingMap& bindingMap() const { return bindings_; }
@@ -56,6 +58,8 @@ public:
     bool confirmPressed() const { return pressed(InputAction::Confirm); }
     bool addRingPressed() const { return pressed(InputAction::PutSelectedItemOnRing); }
     bool grabOrPlacePressed() const { return pressed(InputAction::GrabOrPlaceItem); }
+    bool arrangeItemsPressed() const { return pressed(InputAction::ArrangeItems); }
+    bool removeAllRingItemsPressed() const;
     bool capturePressed() const { return pressed(InputAction::CaptureNet); }
     bool backPressed() const { return pressed(InputAction::Cancel) || pressed(InputAction::Pause); }
     bool backReleased() const { return released(InputAction::Cancel) || released(InputAction::Pause); }

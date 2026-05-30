@@ -115,6 +115,29 @@ struct UiSmallSelectButtonStyle {
     int valueTextScale = 2;
 };
 
+struct UiTextInputState {
+    std::string text;
+    std::string composition;
+    bool focused = false;
+    bool textInputActive = false;
+};
+
+struct UiTextInputStyle {
+    Color fill{18, 24, 48, 214};
+    Color fillFocused{26, 38, 78, 232};
+    Color outline{112, 128, 178, 190};
+    Color outlineFocused{255, 230, 150, 255};
+    Color text{255, 255, 255, 255};
+    Color placeholder{172, 178, 198, 220};
+    Color caret{255, 246, 190, 255};
+    Vec2 padding{14.0f, 0.0f};
+    int textScale = 2;
+};
+
+struct UiTextInputResult {
+    bool focusedChanged = false;
+};
+
 struct UiGaugeGradient {
     Color start{108, 206, 236, 230};
     Color end{132, 230, 250, 230};
@@ -460,6 +483,16 @@ void drawUiSmallSelectButton(
     bool hot,
     bool disabled = false,
     const UiSmallSelectButtonStyle& style = {});
+void focusUiTextInput(UiTextInputState& state);
+void blurUiTextInput(UiTextInputState& state);
+bool handleUiTextInputEvent(UiTextInputState& state, const SDL_Event& event, int maxCodepoints = 64);
+UiTextInputResult updateUiTextInput(UiTextInputState& state, UiContext& ui, UiRect rect);
+void drawUiTextInput(
+    Renderer& renderer,
+    UiRect rect,
+    const UiTextInputState& state,
+    std::string_view placeholder,
+    const UiTextInputStyle& style = {});
 void drawUiBodyMessageBelow(Renderer& renderer, UiRect anchor, std::string_view message, Color color = ui::TextMuted);
 void drawUiSystemMessage(Renderer& renderer, std::string_view message, Vec2 pos, const UiSystemMessageStyle& style = {});
 float drawUiDetailHeader(Renderer& renderer, UiRect panel, std::string_view text);

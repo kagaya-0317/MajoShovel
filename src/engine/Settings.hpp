@@ -26,6 +26,10 @@ struct VideoSettings {
     bool vsync = true;
 };
 
+struct PerformanceSettings {
+    bool lightweight = false;
+};
+
 struct InputSettings {
     InputBindingMap bindings = defaultInputBindings();
 };
@@ -34,6 +38,7 @@ struct GameSettings {
     int version = 1;
     AudioSettings audio;
     VideoSettings video;
+    PerformanceSettings performance;
     InputSettings input;
 };
 

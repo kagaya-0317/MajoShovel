@@ -535,7 +535,7 @@ void KamishibaiRenderer::renderTitleScreen(Renderer& renderer, std::string_view 
         {0, 0, 0, 150},
         {0, 0, 0, 92});
 
-    const std::string title = "魔女採掘";
+    const std::string title = "ダンジョンを掘る魔女";
     const int titleScale = width >= 1000 ? 7 : 5;
     const Vec2 titleSize = renderer.measureText(title, titleScale);
     const Vec2 titlePos{

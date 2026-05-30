@@ -13,6 +13,7 @@ namespace majo {
 namespace {
 
 constexpr std::size_t MaxParticles = 2800;
+constexpr std::size_t LightweightMaxParticles = 1400;
 constexpr std::size_t MaxEmitters = 220;
 constexpr std::size_t MaxLightningStrikes = 32;
 constexpr std::size_t MaxThunderImpactArcs = 220;
@@ -2471,7 +2472,8 @@ void MagicFxSystem::spawnParticles(const MagicFxEmitterConfig& config, int count
         return;
     }
 
-    for (int i = 0; i < count; ++i) {
+    const int effectiveCount = lightweightMode_ ? std::max(1, (count + 1) / 2) : count;
+    for (int i = 0; i < effectiveCount; ++i) {
         Particle particle;
         particle.active = true;
         particle.shape = config.particleShape;
@@ -2653,7 +2655,8 @@ Vec2 MagicFxSystem::sampleVelocity(const MagicFxEmitterConfig& config)
 
 void MagicFxSystem::addParticle(Particle particle)
 {
-    if (particles_.size() >= MaxParticles) {
+    const std::size_t maxParticles = lightweightMode_ ? LightweightMaxParticles : MaxParticles;
+    if (particles_.size() >= maxParticles) {
         const auto inactive = std::find_if(particles_.begin(), particles_.end(), [](const Particle& existing) {
             return !existing.active;
         });

@@ -44,6 +44,7 @@ constexpr ActionNameEntry ActionNames[] = {
     {InputAction::Confirm, "Confirm"},
     {InputAction::PutSelectedItemOnRing, "PutSelectedItemOnRing"},
     {InputAction::GrabOrPlaceItem, "GrabOrPlaceItem"},
+    {InputAction::ArrangeItems, "ArrangeItems"},
     {InputAction::PreviousActiveRing, "PreviousActiveRing"},
     {InputAction::NextActiveRing, "NextActiveRing"},
     {InputAction::CaptureNet, "CaptureNet"},
@@ -267,6 +268,7 @@ InputBindingMap defaultInputBindings()
     addKeyboard(bindings, InputAction::Confirm, SDL_SCANCODE_KP_ENTER);
     addKeyboard(bindings, InputAction::PutSelectedItemOnRing, SDL_SCANCODE_R);
     addKeyboard(bindings, InputAction::GrabOrPlaceItem, SDL_SCANCODE_G);
+    addKeyboard(bindings, InputAction::ArrangeItems, SDL_SCANCODE_T);
     addKeyboard(bindings, InputAction::PreviousActiveRing, SDL_SCANCODE_Z);
     addKeyboard(bindings, InputAction::NextActiveRing, SDL_SCANCODE_X);
     addKeyboard(bindings, InputAction::ThrowActiveRing, SDL_SCANCODE_C);
@@ -281,15 +283,14 @@ InputBindingMap defaultInputBindings()
     addKeyboard(bindings, InputAction::OpenConsole, SDL_SCANCODE_F8);
     addKeyboard(bindings, InputAction::ToggleAutoReloadBlock, SDL_SCANCODE_F2);
 
-    addMouse(bindings, InputAction::CaptureNet, SDL_BUTTON_LEFT);
     addMouse(bindings, InputAction::OffsetRingCenter, SDL_BUTTON_RIGHT);
     addMouse(bindings, InputAction::Cancel, SDL_BUTTON_RIGHT);
 
     addGamepadButton(bindings, InputAction::Confirm, SDL_GAMEPAD_BUTTON_SOUTH);
     addGamepadButton(bindings, InputAction::UseSelectedItem, SDL_GAMEPAD_BUTTON_SOUTH);
     addGamepadButton(bindings, InputAction::Cancel, SDL_GAMEPAD_BUTTON_EAST);
-    addGamepadButton(bindings, InputAction::CaptureNet, SDL_GAMEPAD_BUTTON_WEST);
     addGamepadButton(bindings, InputAction::OpenInventory, SDL_GAMEPAD_BUTTON_NORTH);
+    addGamepadButton(bindings, InputAction::ArrangeItems, SDL_GAMEPAD_BUTTON_WEST);
     addGamepadButton(bindings, InputAction::ToggleProtection, SDL_GAMEPAD_BUTTON_BACK);
     addGamepadButton(bindings, InputAction::Pause, SDL_GAMEPAD_BUTTON_START);
     addGamepadButton(bindings, InputAction::GrabOrPlaceItem, SDL_GAMEPAD_BUTTON_LEFT_STICK);

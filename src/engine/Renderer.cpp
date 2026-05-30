@@ -5,12 +5,15 @@
 #include <array>
 #include <cctype>
 #include <cmath>
+#include <cwchar>
 #include <cstring>
 #include <exception>
 #include <filesystem>
 #include <limits>
 #include <sstream>
 #include <string>
+#include <system_error>
+#include <utility>
 #include <vector>
 
 #ifdef _WIN32
@@ -101,6 +104,30 @@ bool utf8ToWide(std::string_view text, std::wstring& out)
     }
     out.resize(static_cast<size_t>(size));
     return MultiByteToWideChar(CP_UTF8, 0, text.data(), static_cast<int>(text.size()), out.data(), size) == size;
+}
+
+bool findPngEncoderClsid(CLSID& outClsid)
+{
+    UINT encoderCount = 0;
+    UINT encoderBytes = 0;
+    if (Gdiplus::GetImageEncodersSize(&encoderCount, &encoderBytes) != Gdiplus::Ok ||
+        encoderCount == 0 || encoderBytes == 0) {
+        return false;
+    }
+
+    std::vector<unsigned char> buffer(encoderBytes);
+    auto* encoders = reinterpret_cast<Gdiplus::ImageCodecInfo*>(buffer.data());
+    if (Gdiplus::GetImageEncoders(encoderCount, encoderBytes, encoders) != Gdiplus::Ok) {
+        return false;
+    }
+
+    for (UINT i = 0; i < encoderCount; ++i) {
+        if (encoders[i].MimeType != nullptr && std::wcscmp(encoders[i].MimeType, L"image/png") == 0) {
+            outClsid = encoders[i].Clsid;
+            return true;
+        }
+    }
+    return false;
 }
 
 #endif
@@ -259,6 +286,23 @@ SDL_FRect pixelSnappedRect(SDL_FRect rect)
     return {left, top, width, height};
 }
 
+SDL_RendererLogicalPresentation toSdlLogicalPresentation(LogicalPresentationMode mode)
+{
+    switch (mode) {
+    case LogicalPresentationMode::Disabled:
+        return SDL_LOGICAL_PRESENTATION_DISABLED;
+    case LogicalPresentationMode::Stretch:
+        return SDL_LOGICAL_PRESENTATION_STRETCH;
+    case LogicalPresentationMode::Letterbox:
+        return SDL_LOGICAL_PRESENTATION_LETTERBOX;
+    case LogicalPresentationMode::Overscan:
+        return SDL_LOGICAL_PRESENTATION_OVERSCAN;
+    case LogicalPresentationMode::IntegerScale:
+        return SDL_LOGICAL_PRESENTATION_INTEGER_SCALE;
+    }
+    return SDL_LOGICAL_PRESENTATION_LETTERBOX;
+}
+
 std::uint64_t currentTicks()
 {
     return static_cast<std::uint64_t>(SDL_GetTicks());
@@ -403,10 +447,69 @@ void Renderer::clear(Color color)
 
 void Renderer::present()
 {
+    if (pendingScreenshotPath_) {
+        lastScreenshotResult_ = saveCurrentFramePng(*pendingScreenshotPath_);
+        pendingScreenshotPath_.reset();
+    }
+
     SDL_RenderPresent(renderer_);
     if (frameCounter_ < std::numeric_limits<std::uint64_t>::max()) {
         ++frameCounter_;
     }
+}
+
+bool Renderer::setLogicalPresentation(int width, int height, LogicalPresentationMode mode)
+{
+    if (renderer_ == nullptr) {
+        return false;
+    }
+    if (mode != LogicalPresentationMode::Disabled && (width <= 0 || height <= 0)) {
+        return false;
+    }
+    const int logicalWidth = mode == LogicalPresentationMode::Disabled ? 0 : width;
+    const int logicalHeight = mode == LogicalPresentationMode::Disabled ? 0 : height;
+    const bool changed = SDL_SetRenderLogicalPresentation(
+        renderer_,
+        logicalWidth,
+        logicalHeight,
+        toSdlLogicalPresentation(mode));
+    if (changed) {
+        logicalPresentationMode_ = mode;
+        logicalPresentationWidth_ = logicalWidth;
+        logicalPresentationHeight_ = logicalHeight;
+    }
+    return changed;
+}
+
+Vec2 Renderer::windowToRenderCoordinates(Vec2 windowPosition) const
+{
+    if (renderer_ == nullptr) {
+        return windowPosition;
+    }
+
+    float x = windowPosition.x;
+    float y = windowPosition.y;
+    if (!SDL_RenderCoordinatesFromWindow(renderer_, windowPosition.x, windowPosition.y, &x, &y)) {
+        return windowPosition;
+    }
+    return {x, y};
+}
+
+bool Renderer::convertEventToRenderCoordinates(SDL_Event& event) const
+{
+    return renderer_ != nullptr && SDL_ConvertEventToRenderCoordinates(renderer_, &event);
+}
+
+void Renderer::requestScreenshot(std::filesystem::path path)
+{
+    pendingScreenshotPath_ = std::move(path);
+}
+
+std::optional<Renderer::ScreenshotResult> Renderer::consumeScreenshotResult()
+{
+    std::optional<ScreenshotResult> result = std::move(lastScreenshotResult_);
+    lastScreenshotResult_.reset();
+    return result;
 }
 
 void Renderer::setScreenSpace()
@@ -2478,6 +2581,98 @@ void Renderer::drawBaseMapTexture(Vec2 pos, Vec2 size, Color tint)
     SDL_SetTextureColorMod(baseMapTexture_.texture, tint.r, tint.g, tint.b);
     SDL_SetTextureAlphaMod(baseMapTexture_.texture, tint.a);
     SDL_RenderTexture(renderer_, baseMapTexture_.texture, nullptr, &dst);
+}
+
+Renderer::ScreenshotResult Renderer::saveCurrentFramePng(const std::filesystem::path& path)
+{
+    ScreenshotResult result;
+    result.path = path;
+
+    if (renderer_ == nullptr) {
+        result.message = "Renderer is not initialized";
+        return result;
+    }
+    if (path.empty()) {
+        result.message = "Screenshot path is empty";
+        return result;
+    }
+
+#ifdef _WIN32
+    std::error_code filesystemError;
+    const std::filesystem::path parent = path.parent_path();
+    if (!parent.empty()) {
+        std::filesystem::create_directories(parent, filesystemError);
+        if (filesystemError) {
+            result.message = "Failed to create screenshot directory: " + filesystemError.message();
+            return result;
+        }
+    }
+
+    SDL_Rect logicalReadRect{};
+    SDL_Rect* readRect = nullptr;
+    if (logicalPresentationMode_ != LogicalPresentationMode::Disabled &&
+        logicalPresentationWidth_ > 0 &&
+        logicalPresentationHeight_ > 0) {
+        logicalReadRect = {0, 0, logicalPresentationWidth_, logicalPresentationHeight_};
+        readRect = &logicalReadRect;
+    }
+
+    SDL_Surface* surface = SDL_RenderReadPixels(renderer_, readRect);
+    if (surface == nullptr) {
+        result.message = std::string("SDL_RenderReadPixels failed: ") + SDL_GetError();
+        return result;
+    }
+
+    SDL_Surface* converted = SDL_ConvertSurface(surface, SDL_PIXELFORMAT_BGRA32);
+    SDL_DestroySurface(surface);
+    if (converted == nullptr) {
+        result.message = std::string("SDL_ConvertSurface failed: ") + SDL_GetError();
+        return result;
+    }
+
+    static GdiPlusSession gdiPlus;
+    if (!gdiPlus.initialized()) {
+        SDL_DestroySurface(converted);
+        result.message = "GDI+ startup failed";
+        return result;
+    }
+
+    CLSID pngClsid{};
+    if (!findPngEncoderClsid(pngClsid)) {
+        SDL_DestroySurface(converted);
+        result.message = "PNG encoder was not found";
+        return result;
+    }
+
+    const std::wstring widePath = path.wstring();
+    Gdiplus::Status status = Gdiplus::GenericError;
+    {
+        Gdiplus::Bitmap bitmap(
+            converted->w,
+            converted->h,
+            converted->pitch,
+            PixelFormat32bppARGB,
+            static_cast<BYTE*>(converted->pixels));
+        if (bitmap.GetLastStatus() != Gdiplus::Ok) {
+            SDL_DestroySurface(converted);
+            result.message = "Failed to create PNG bitmap";
+            return result;
+        }
+        status = bitmap.Save(widePath.c_str(), &pngClsid, nullptr);
+    }
+    SDL_DestroySurface(converted);
+    if (status != Gdiplus::Ok) {
+        result.message = "GDI+ PNG save failed: status " + std::to_string(static_cast<int>(status));
+        return result;
+    }
+
+    result.success = true;
+    result.message = "OK";
+    return result;
+#else
+    result.message = "PNG screenshot saving is only implemented on Windows";
+    return result;
+#endif
 }
 
 FrameSnapshot Renderer::captureFrameSnapshot()

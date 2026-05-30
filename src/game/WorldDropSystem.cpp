@@ -228,6 +228,9 @@ void drawWorldDropShadow(Renderer& renderer, const WorldDropItem& drop, const Ob
 
 bool isDropStealTarget(const WorldDropItem& drop, const ObjectCatalog& catalog, std::string_view targetFilter)
 {
+    if (drop.kind == WorldDropKind::Material) {
+        return false;
+    }
     if (targetFilter.empty()) {
         return true;
     }
@@ -817,7 +820,7 @@ int WorldDropSystem::update(
     for (WorldDropItem& drop : drops_) {
         updateWorldDropPresentationMotion(drop, dt, true);
 
-        if (effects != nullptr && drop.kind == WorldDropKind::Material) {
+        if (effects != nullptr && !effects->lightweightMode() && drop.kind == WorldDropKind::Material) {
             MaterialType materialType = MaterialType::Count;
             if (materialTypeFromSaveName(drop.id, materialType)) {
                 drop.materialParticleTimer -= dt;

@@ -850,6 +850,19 @@ void SpellRingSystem::update(Player& player, const Input& input, float dt, float
                 : peakTime;
             runtime.state = SpellRingState::Thrown;
             runtime.throwDirection = safeNormalize(player.facing);
+            RingOrbitContext throwContext = makeOrbitContextForRing(activeRingIndex_, 0, 1, 1.0f, balance);
+            if (throwContext.shape == RingShape::Comet) {
+                throwContext.shapeRotation = std::atan2(runtime.throwDirection.y, runtime.throwDirection.x);
+            }
+            const float launchPathT = pathTClosestToDirection(runtime.homeCenter, runtime.throwDirection, throwContext);
+            const float launchParam = throwContext.shape == RingShape::Comet
+                ? cometPathParamForT(1.0f, throwContext.tuning)
+                : launchPathT * FullCircleRadians;
+            const float returnParam = throwContext.shape == RingShape::Comet
+                ? cometPathParamForT(0.0f, throwContext.tuning)
+                : wrap01(launchPathT + 0.5f) * FullCircleRadians;
+            runtime.throwLaunchOffset = getRingItemWorldPosition(runtime.homeCenter, launchParam, throwContext) - runtime.homeCenter;
+            runtime.throwReturnOffset = getRingItemWorldPosition(runtime.homeCenter, returnParam, throwContext) - runtime.homeCenter;
             runtime.throwElapsed = 0.0f;
             runtime.throwPeakTime = peakTime;
             runtime.throwReturnTime = returnTime;
@@ -976,7 +989,13 @@ Vec2 SpellRingSystem::throwMorphPathPointForRing(
     const float lineMix = throwLineMixForRing(clampedRingIndex);
     const float reachDistance = runtime.throwDistance * throwReachForRing(clampedRingIndex);
     const float lineT = smoothStep01(pathT);
-    const Vec2 linePoint = runtime.homeCenter + direction * (reachDistance * lineT);
+    const float peakTime = std::max(0.02f, runtime.throwPeakTime);
+    const float returnTime = std::max(0.02f, runtime.throwReturnTime);
+    const float returnProgress = smoothStep01((runtime.throwElapsed - peakTime) / returnTime);
+    const Vec2 launchAnchor = runtime.homeCenter + runtime.throwLaunchOffset;
+    const Vec2 returnAnchor = runtime.homeCenter + runtime.throwReturnOffset;
+    const Vec2 lineAnchor = lerp(launchAnchor, returnAnchor, returnProgress);
+    const Vec2 linePoint = lineAnchor + direction * (reachDistance * lineT);
     const Vec2 morphed = lerp(openPoint, linePoint, lineMix);
     const Vec2 outward = safeNormalize(lerp(openPoint - runtime.homeCenter, direction, lineMix), direction);
     return morphed + outward * distanceOffset;

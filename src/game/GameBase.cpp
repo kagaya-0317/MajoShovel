@@ -6046,7 +6046,7 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
                 return;
             }
 
-            if (ui.pressed(storageTransferSortButtonRect())) {
+            if (input.arrangeItemsPressed() || ui.pressed(storageTransferSortButtonRect())) {
                 closeStorageCommand();
                 resetStoragePointerPress();
                 const bool sorted = inventory_.sortByCatalogOrder(objectCatalog_);
@@ -6138,7 +6138,7 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
             const int warehousePageCount = std::max(1, (warehouseCapacity() + StorageWithdrawSlotCount - 1) / StorageWithdrawSlotCount);
             baseStorageWarehousePage_ = std::clamp(baseStorageWarehousePage_, 0, warehousePageCount - 1);
             const UiPageSelectorRects pageRects = storageWithdrawPageSelectorRects();
-            if (ui.pressed(storageWithdrawSortButtonRect())) {
+            if (input.arrangeItemsPressed() || ui.pressed(storageWithdrawSortButtonRect())) {
                 const bool hasItems = warehouseUsedSlots() > 0;
                 ui.emitSound(hasItems ? UiSoundEvent::ItemMove : UiSoundEvent::Cancel);
                 sortWarehouseByCatalogOrder();
@@ -7678,10 +7678,14 @@ void Game::renderBookshelfScreen(Renderer& renderer) const
                 if (drawEnemyImageIcon(renderer, enemy.imageNumber, imageCenter, imageMax, baseRingPreviewAnimationTime_, imageOptions)) {
                     detailY += imageMax.y + 12.0f;
                 }
-                drawUiDetailText(renderer, detailPanel, detailY, enemy.description.empty() ? "-" : enemy.description);
                 if (stage != EncyclopediaStage::Complete) {
-                    drawUiDetailText(renderer, detailPanel, detailY, "討伐すると詳細な能力が記録されます。");
+                    drawUiDetailText(renderer, detailPanel, detailY, "？？？");
+                    drawUiDetailLine(renderer, detailPanel, detailY, "HP", "？？？");
+                    drawUiDetailLine(renderer, detailPanel, detailY, "攻撃力", "？？？");
+                    drawUiDetailLine(renderer, detailPanel, detailY, "移動速度", "？？？");
+                    drawUiDetailText(renderer, detailPanel, detailY, "虫眼鏡で観察すると詳細が記録されます。");
                 } else {
+                    drawUiDetailText(renderer, detailPanel, detailY, enemy.description.empty() ? "-" : enemy.description);
                     drawUiDetailLine(renderer, detailPanel, detailY, "HP", std::to_string(enemy.hp));
                     drawUiDetailLine(renderer, detailPanel, detailY, "攻撃力", enemyContactAttackText(enemy));
                     drawUiDetailLine(renderer, detailPanel, detailY, "移動速度", enemyMoveSpeedLabel(enemy.moveSpeed));
@@ -7906,9 +7910,11 @@ void Game::renderBaseScreen(Renderer& renderer) const
                 : (baseMerchantMode_ == MerchantUiMode::Sell ? "F/Enter 売る  Z/X・1-5 対象/ページ切替  Esc/右クリック 戻る" : "F/Enter 決定  Esc/右クリック 戻る");
         } else if (baseStorageActive_) {
             panelHelp = baseStorageMode_ == StorageUiMode::Deposit
-                ? "F/Enter コマンド  Z/X 対象切替  1-3 プリセット準備  Esc/右クリック 戻る"
+                ? (baseItemSourceIsRing(baseStorageDepositSource_)
+                    ? "F/Enter コマンド  Z/X 対象切替  1-3 プリセット準備  Esc/右クリック 戻る"
+                    : "F/Enter コマンド  T 並び替え  Z/X 対象切替  1-3 プリセット準備  Esc/右クリック 戻る")
                 : (baseStorageMode_ == StorageUiMode::Withdraw
-                    ? "F/Enter コマンド  Z/X 倉庫ページ  1-3 プリセット準備  Esc/右クリック 戻る"
+                    ? "F/Enter コマンド  T 並び替え  Z/X 倉庫ページ  1-3 プリセット準備  Esc/右クリック 戻る"
                     : (baseStorageMode_ == StorageUiMode::Bulk
                         ? "F/Enter 実行  1-3 プリセット準備  Esc/右クリック 戻る"
                         : "F/Enter 決定  Esc/右クリック 戻る"));

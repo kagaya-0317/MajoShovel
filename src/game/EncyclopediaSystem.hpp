@@ -88,6 +88,7 @@ public:
         std::string_view optionalNote = {});
     void noteEnemyDiscovered(std::string_view enemyId, std::string_view enemyName, Vec2 position);
     void noteEnemyDefeated(std::string_view enemyId, std::string_view enemyName, Vec2 position);
+    bool noteEnemyInspected(const EnemyDefinition& enemy, Vec2 position);
 
     EncyclopediaStage objectStage(std::string_view objectId, bool treasure) const;
     EncyclopediaStage enemyStage(std::string_view enemyId) const;

@@ -1664,7 +1664,12 @@ void TileMap::render(Renderer& renderer, const Camera& camera, Vec2 lightCenter,
     }
 }
 
-void TileMap::renderDarknessOverlay(Renderer& renderer, const Camera& camera, Vec2 lightCenter, const std::vector<LightSource>& extraLights) const
+void TileMap::renderDarknessOverlay(
+    Renderer& renderer,
+    const Camera& camera,
+    Vec2 lightCenter,
+    const std::vector<LightSource>& extraLights,
+    bool lightweight) const
 {
     const int viewColumns = std::max(0, camera.width());
     const int viewRows = std::max(0, camera.height());
@@ -1734,13 +1739,16 @@ void TileMap::renderDarknessOverlay(Renderer& renderer, const Camera& camera, Ve
         return alpha;
     };
 
-    const auto drawFalloffSpan = [&](float x0, float x1, float y) {
+    const float falloffSegmentWidth = lightweight ? LightFalloffSegmentWidth * 2.0f : LightFalloffSegmentWidth;
+    const int rowStep = lightweight ? 2 : 1;
+
+    const auto drawFalloffSpan = [&](float x0, float x1, float y, float rowHeight) {
         if (x1 <= x0) {
             return;
         }
         float x = x0;
         while (x < x1) {
-            const float nextX = std::min(x1, x + LightFalloffSegmentWidth);
+            const float nextX = std::min(x1, x + falloffSegmentWidth);
             const float midX = (x + nextX) * 0.5f;
             const float alpha0 = darknessAlphaAt(x, y);
             const float alphaMid = darknessAlphaAt(midX, y);
@@ -1750,14 +1758,14 @@ void TileMap::renderDarknessOverlay(Renderer& renderer, const Camera& camera, Ve
                     return Color{5, 5, 8, static_cast<unsigned char>(std::clamp(std::lround(alpha), 0L, 255L))};
                 };
                 renderer.fillGradientRect(
-                    {x, y - 0.5f},
-                    {std::max(0.0f, midX - x), 1.0f},
+                    {x, y - rowHeight * 0.5f},
+                    {std::max(0.0f, midX - x), rowHeight},
                     makeColor(alpha0),
                     makeColor(alphaMid),
                     GradientDirection::LeftToRight);
                 renderer.fillGradientRect(
-                    {midX, y - 0.5f},
-                    {std::max(0.0f, nextX - midX), 1.0f},
+                    {midX, y - rowHeight * 0.5f},
+                    {std::max(0.0f, nextX - midX), rowHeight},
                     makeColor(alphaMid),
                     makeColor(alpha1),
                     GradientDirection::LeftToRight);
@@ -1778,8 +1786,10 @@ void TileMap::renderDarknessOverlay(Renderer& renderer, const Camera& camera, Ve
         fullDarkRunStart = -1;
     };
 
-    for (int row = 0; row < viewRows; ++row) {
-        const float y = viewTop + static_cast<float>(row) + 0.5f;
+    for (int row = 0; row < viewRows; row += rowStep) {
+        const int rowsThisStep = std::min(rowStep, viewRows - row);
+        const float rowHeight = static_cast<float>(rowsThisStep);
+        const float y = viewTop + static_cast<float>(row) + rowHeight * 0.5f;
         outerSpans.clear();
         innerSpans.clear();
         rowLights.clear();
@@ -1821,18 +1831,18 @@ void TileMap::renderDarknessOverlay(Renderer& renderer, const Camera& camera, Ve
             const float litStart = span.x;
             const float litEnd = span.y;
             if (litStart > darkStart) {
-                renderer.fillRect({darkStart, viewTop + static_cast<float>(row)}, {litStart - darkStart, 1.0f}, DarknessColor);
+                renderer.fillRect({darkStart, viewTop + static_cast<float>(row)}, {litStart - darkStart, rowHeight}, DarknessColor);
             }
             darkStart = litEnd;
         }
         if (darkStart < viewRight) {
-            renderer.fillRect({darkStart, viewTop + static_cast<float>(row)}, {viewRight - darkStart, 1.0f}, DarknessColor);
+            renderer.fillRect({darkStart, viewTop + static_cast<float>(row)}, {viewRight - darkStart, rowHeight}, DarknessColor);
         }
 
         mergeLightSpans(innerSpans);
         appendFalloffSpans(outerSpans, innerSpans, falloffSpans);
         for (Vec2 span : falloffSpans) {
-            drawFalloffSpan(span.x, span.y, y);
+            drawFalloffSpan(span.x, span.y, y, rowHeight);
         }
     }
     flushFullDarkRun(viewRows);

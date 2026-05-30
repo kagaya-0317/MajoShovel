@@ -144,7 +144,15 @@ struct AudioCueFileEntry {
 
 class Game {
 public:
-    void initialize(int width, int height);
+    void initialize(int width, int height, bool allowSheetSource = false);
+    void beginInitialize(int width, int height, bool allowSheetSource);
+    bool advanceInitialize();
+    bool initializeActive() const { return initializeJob_.active; }
+    bool initializeComplete() const { return initializeJob_.step == InitializeStep::Done; }
+    int initializeStepIndex() const;
+    int initializeStepCount() const;
+    float initializeProgress() const;
+    std::string initializeStatusText() const;
     void setAudioEngine(AudioEngine* audio);
     void setSettingsAccessors(
         std::function<GameSettings()> getter,
@@ -335,6 +343,27 @@ private:
         Done,
     };
 
+    enum class InitializeStep {
+        None,
+        LoadSheetSourceConfig,
+        LoadBalance,
+        LoadObjects,
+        LoadStages,
+        ResolveCurrentStage,
+        LoadEnemies,
+        ConfigureWatcher,
+        ResetState,
+        InitializeRing,
+        LoadSave,
+        LoadBaseEdit,
+        LoadImageScale,
+        LoadOpening,
+        LoadStoryEvents,
+        LoadOpeningMeta,
+        EnterInitialScreen,
+        Done,
+    };
+
     struct WorldBuildJob {
         bool active = false;
         bool useLatestWarpPoint = false;
@@ -344,6 +373,15 @@ private:
         int retainedXpToNext = 1;
         float elapsedSeconds = 0.0f;
         WorldBuildStep step = WorldBuildStep::None;
+    };
+
+    struct InitializeJob {
+        bool active = false;
+        bool allowSheetSource = true;
+        bool saveDataLoaded = false;
+        std::string loadMessage;
+        std::string openingMetaMessage;
+        InitializeStep step = InitializeStep::None;
     };
 
     enum class DebugStoryTestMode {
@@ -830,9 +868,15 @@ private:
     void updatePlayerRegen(float dt, std::vector<EffectDiscoveryEvent>& discoveryEvents);
     DungeonGenerationContext makeDungeonGenerationContext() const;
     void generateDungeonLayoutForRun();
+    struct CaptureAbsorbAnimation;
     void updateCapturedProjectileBehaviors(float dt);
     void updateCapturedUtilityBehaviors(float dt);
     void updateAmbientParticleEffects(float dt);
+    bool handleCaptureResult(const CaptureResult& capture);
+    void startCaptureAbsorbAnimation(const CaptureResult& capture);
+    void updateCaptureAbsorbAnimations(float dt);
+    void finalizeCaptureAbsorbAnimation(const CaptureAbsorbAnimation& animation);
+    Vec2 captureAbsorbPosition(const CaptureAbsorbAnimation& animation, Vec2 targetPosition) const;
     void handleCapturedExplosion(Vec2 position);
     enum class SellableKind {
         Stack,
@@ -855,6 +899,16 @@ private:
         std::string instanceId;
         std::string statusText;
         bool protectable = false;
+    };
+    struct CaptureAbsorbAnimation {
+        Enemy enemy;
+        ItemData item;
+        Vec2 startPosition{};
+        Vec2 lastPosition{};
+        float elapsedSeconds = 0.0f;
+        float durationSeconds = 0.78f;
+        float flyDelaySeconds = 0.24f;
+        float sparkleTimer = 0.0f;
     };
     struct MerchantSellTarget {
         BaseItemSource source = BaseItemSource::Backpack;
@@ -1083,6 +1137,7 @@ private:
     void revealDungeonMinimapOpenedTiles(const std::vector<Vec2>& openedTiles);
     void updateDungeonMinimap(double totalSeconds);
     std::vector<LightSource> collectDungeonLightSources(double totalSeconds) const;
+    bool lightweightModeEnabled() const;
     static const char* dungeonEventKindId(DungeonEventKind kind);
     static bool dungeonEventKindFromId(std::string_view id, DungeonEventKind& outKind);
     static const char* dungeonEventKindDisplayName(DungeonEventKind kind);
@@ -1234,6 +1289,8 @@ private:
     bool saveObjectImageScaleData(std::string& message);
     bool handleObjectImageScaleCommand(std::string_view normalized);
     void rebuildObjectImageScaleList();
+    void applyObjectImageScaleFilter(std::string_view preferredSelection = {});
+    bool handleObjectImageScaleEditEvent(const SDL_Event& event);
     void enterObjectImageScaleEditMode();
     void exitObjectImageScaleEditMode();
     void updateObjectImageScaleEditScreen(const Input& input, UiContext& ui);
@@ -1250,6 +1307,8 @@ private:
     void renderAudioCueEditScreen(Renderer& renderer) const;
     bool handleDebugItemPickerCommand(std::string_view normalized);
     void rebuildDebugItemPickerList();
+    void applyDebugItemPickerFilter(std::string_view preferredSelection = {});
+    bool handleDebugItemPickerEvent(const SDL_Event& event);
     void openDebugItemPicker();
     void closeDebugItemPicker();
     void addSelectedDebugItem();
@@ -1352,6 +1411,10 @@ private:
         const std::vector<const SpellRingItem*>& runtimeItems,
         const std::vector<LightSource>& itemLights,
         float totalSeconds) const;
+    void appendCaptureAbsorbRenderEntries(
+        std::vector<DepthRenderEntry>& entries,
+        Renderer& renderer,
+        float totalSeconds) const;
 
     Camera camera_;
     DungeonFocusState dungeonFocus_;
@@ -1378,7 +1441,9 @@ private:
     RingPresetSystem ringPresets_;
     WorldDropSystem worldDrops_;
     EncyclopediaSystem encyclopedia_;
+    InitializeJob initializeJob_;
     std::deque<FirstItemAcquisitionNotice> firstItemAcquisitionNotices_;
+    std::vector<CaptureAbsorbAnimation> captureAbsorbAnimations_;
     std::unordered_map<std::string, int> encyclopediaOwnedSyncSuppressCounts_;
     std::unordered_map<std::string, int> encyclopediaRingSyncSuppressCounts_;
     LevelSystem levels_;
@@ -1498,8 +1563,10 @@ private:
     bool baseEditDirty_ = false;
     std::unordered_map<std::string, float> objectImageScaleById_;
     std::unordered_map<std::string, float> otherImageScaleByKey_;
+    std::vector<std::string> objectImageScaleAllObjectIds_;
     std::vector<std::string> objectImageScaleObjectIds_;
     std::vector<std::string> otherImageScaleKeys_;
+    UiTextInputState objectImageScaleSearchInput_;
     ScreenMode objectImageScaleReturnMode_ = ScreenMode::Playing;
     ImageScaleEditTab imageScaleEditTab_ = ImageScaleEditTab::Objects;
     int objectImageScaleSelectedIndex_ = -1;
@@ -1523,7 +1590,9 @@ private:
     std::string audioCueEditPreviousBgmCue_;
     mutable UiCancelControlState audioCueEditCancelState_{};
     bool debugItemPickerActive_ = false;
+    std::vector<std::string> debugItemPickerAllObjectIds_;
     std::vector<std::string> debugItemPickerObjectIds_;
+    UiTextInputState debugItemPickerSearchInput_;
     int debugItemPickerSelectedIndex_ = -1;
     float debugItemPickerScrollOffset_ = 0.0f;
     std::string debugItemPickerStatus_;
@@ -1542,6 +1611,7 @@ private:
     std::function<void(const GameSettings&)> settingsApplier_;
     std::function<InputBindingMap()> inputBindingGetter_;
     std::function<void(const InputBindingMap&)> inputBindingApplier_;
+    bool lightweightModeActive_ = false;
     bool enemyTestActive_ = false;
     bool enemyTestUiVisible_ = true;
     UiDropdownState enemyTestDropdown_{};
@@ -1742,8 +1812,6 @@ private:
     float hotReloadPollTimer_ = 0.0f;
     AudioEngine* audio_ = nullptr;
     std::string activeAudioBgmCue_;
-    float captureCooldown_ = 0.0f;
-    int captureHoverEnemyId_ = 0;
     float ringTrailEffectTimer_ = 0.0f;
     float ambientParticleTimer_ = 0.0f;
     float reloadNoticeTimer_ = 0.0f;

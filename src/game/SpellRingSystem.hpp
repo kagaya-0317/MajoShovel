@@ -231,6 +231,8 @@ private:
         Vec2 center{};
         Vec2 previousCenter{};
         Vec2 throwDirection{1.0f, 0.0f};
+        Vec2 throwLaunchOffset{};
+        Vec2 throwReturnOffset{};
         float throwElapsed = 0.0f;
         float throwPeakTime = 0.0f;
         float throwReturnTime = 0.0f;
