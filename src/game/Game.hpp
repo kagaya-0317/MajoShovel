@@ -22,6 +22,7 @@
 #include "game/DungeonEventDefinition.hpp"
 #include "game/DungeonLayout.hpp"
 #include "game/EffectDispatcher.hpp"
+#include "game/EffectPreviewCatalog.hpp"
 #include "game/EffectSystem.hpp"
 #include "game/EnemySystem.hpp"
 #include "game/EncyclopediaSystem.hpp"
@@ -43,6 +44,7 @@
 #include "game/ProjectileSystem.hpp"
 #include "game/TileMap.hpp"
 #include "game/UpgradeSystem.hpp"
+#include "game/WetGroundSystem.hpp"
 #include "game/WorldDropSystem.hpp"
 
 #include <array>
@@ -144,8 +146,8 @@ struct AudioCueFileEntry {
 
 class Game {
 public:
-    void initialize(int width, int height, bool allowSheetSource = false);
-    void beginInitialize(int width, int height, bool allowSheetSource);
+    void initialize(int width, int height, bool testPlayMode = false);
+    void beginInitialize(int width, int height, bool testPlayMode);
     bool advanceInitialize();
     bool initializeActive() const { return initializeJob_.active; }
     bool initializeComplete() const { return initializeJob_.step == InitializeStep::Done; }
@@ -258,6 +260,25 @@ private:
         int acquiredObjectItems = 0;
         int dugTilesSinceMoneyDrop = 0;
         int dugTilesSinceItemDrop = 0;
+    };
+
+    struct DiarySaveSummary {
+        bool hasSave = false;
+        bool storyCleared = false;
+        std::string latestStageId;
+        std::string latestStageName;
+        int discoveredWarpPoints = 0;
+        int totalWarpPoints = 0;
+        int playerLevel = 1;
+        int itemCodexPercent = 0;
+        int enemyCodexPercent = 0;
+        std::int64_t playTimeSeconds = 0;
+    };
+
+    enum class BaseDiaryMode {
+        Confirm,
+        Saved,
+        Error,
     };
 
     struct PlayerRegenSource {
@@ -871,6 +892,7 @@ private:
     struct CaptureAbsorbAnimation;
     void updateCapturedProjectileBehaviors(float dt);
     void updateCapturedUtilityBehaviors(float dt);
+    void updateWetGroundFromStatus();
     void updateAmbientParticleEffects(float dt);
     bool handleCaptureResult(const CaptureResult& capture);
     void startCaptureAbsorbAnimation(const CaptureResult& capture);
@@ -1045,6 +1067,9 @@ private:
     bool registerRingPresetShortcut(int presetIndex);
     bool applyRingPresetShortcut(int presetIndex);
     void updateBaseScreen(const Input& input, UiContext& ui, float dt);
+    void openBaseDiary();
+    void closeBaseDiary();
+    void updateBaseDiaryScreen(const Input& input, UiContext& ui);
     void updateBasePlayerSpriteAnimation(float dt, bool walking);
     void updatePauseMenu(const Input& input, UiContext& ui);
     void choosePauseMenuItem(int item);
@@ -1138,6 +1163,10 @@ private:
     void updateDungeonMinimap(double totalSeconds);
     std::vector<LightSource> collectDungeonLightSources(double totalSeconds) const;
     bool lightweightModeEnabled() const;
+    float screenShakeScale() const;
+    void addScreenShake(float amplitude, float duration);
+    void updateScreenShake(float dt);
+    Vec2 screenShakeOffset(double totalSeconds) const;
     static const char* dungeonEventKindId(DungeonEventKind kind);
     static bool dungeonEventKindFromId(std::string_view id, DungeonEventKind& outKind);
     static const char* dungeonEventKindDisplayName(DungeonEventKind kind);
@@ -1282,6 +1311,8 @@ private:
     void observeRingItemInstanceIds();
     bool loadSaveData();
     bool saveSaveData(std::string& message) const;
+    DiarySaveSummary currentDiarySaveSummary() const;
+    DiarySaveSummary loadDiarySaveSummaryFromDisk() const;
     void loadBaseEditData();
     bool saveBaseEditData(std::string& message);
     bool handleBaseEditCommand(std::string_view normalized);
@@ -1321,6 +1352,23 @@ private:
     void playSelectedDebugStoryTest();
     void updateDebugStoryTest(const Input& input, UiContext& ui);
     void renderDebugStoryTest(Renderer& renderer) const;
+    void rebuildEffectTestEntries();
+    void rebuildEffectTestVisibleEntries(std::string_view preferredEntryId = {});
+    void enterEffectTestMode();
+    void closeEffectTestMode();
+    void exitEffectTestToBase();
+    void resetEffectTestPlayback();
+    void triggerEffectTestPlayback(const EffectPreviewEntry& entry);
+    void updateEffectTestScreen(const Input& input, UiContext& ui, float dt);
+    void renderEffectTestScreen(Renderer& renderer, double totalSeconds);
+    void rebuildProjectileTestEntries();
+    void enterProjectileTestMode();
+    void closeProjectileTestMode();
+    void exitProjectileTestToBase();
+    void resetProjectileTestPlayback();
+    void triggerProjectileTestPlayback(const ProjectileDefinition& entry);
+    void updateProjectileTestScreen(const Input& input, UiContext& ui, float dt);
+    void renderProjectileTestScreen(Renderer& renderer, double totalSeconds);
     void enterEnemyTestMode();
     void exitEnemyTestToBase();
     void spawnSelectedEnemyTestEnemy();
@@ -1383,6 +1431,7 @@ private:
     void renderScreenTransitionOverlay(Renderer& renderer);
     void renderBaseBackdrop(Renderer& renderer) const;
     void renderBaseScreen(Renderer& renderer) const;
+    void renderBaseDiaryScreen(Renderer& renderer, UiRect panel) const;
     void renderBookshelfScreen(Renderer& renderer) const;
     void renderLevelUpOverlay(Renderer& renderer);
     void renderPauseMenu(Renderer& renderer) const;
@@ -1437,6 +1486,7 @@ private:
     MagicSystem magic_;
     MagicFxSystem magicFx_;
     GroundLineSystem groundLines_;
+    WetGroundSystem wetGround_;
     InventorySystem inventory_;
     RingPresetSystem ringPresets_;
     WorldDropSystem worldDrops_;
@@ -1542,6 +1592,11 @@ private:
     int bookshelfSelection_ = 0;
     float bookshelfScrollOffset_ = 0.0f;
     UiScrollAreaState bookshelfScrollState_{};
+    bool baseDiaryActive_ = false;
+    BaseDiaryMode baseDiaryMode_ = BaseDiaryMode::Confirm;
+    int baseDiarySelection_ = 0;
+    DiarySaveSummary baseDiarySummary_{};
+    std::string baseDiaryMessage_;
     bool baseEditEnabled_ = false;
     BaseEditMode baseEditMode_ = BaseEditMode::None;
     std::unordered_map<std::string, BaseEditRect> baseFacilityRectsOutdoor_;
@@ -1607,11 +1662,37 @@ private:
     int debugStoryTestLoadedRevision_ = -1;
     bool debugStoryTestReturnAfterDialogue_ = false;
     mutable UiCancelControlState debugStoryTestCancelState_{};
+    int debugPreviewBackgroundIndex_ = 0;
+    bool effectTestActive_ = false;
+    std::vector<const EffectPreviewEntry*> effectTestEntries_;
+    std::vector<const EffectPreviewEntry*> effectTestVisibleEntries_;
+    std::vector<std::string> effectTestTabKeys_;
+    std::vector<std::string> effectTestTabLabels_;
+    UiTabsState effectTestTabsState_{};
+    int effectTestTabIndex_ = 0;
+    int effectTestSelectedIndex_ = 0;
+    int effectTestFrame_ = 0;
+    float effectTestScrollOffset_ = 0.0f;
+    UiScrollAreaState effectTestScrollState_{};
+    MagicFxEmitterHandle effectTestEmitter_{};
+    std::string effectTestStatus_;
+    bool projectileTestActive_ = false;
+    std::vector<const ProjectileDefinition*> projectileTestEntries_;
+    int projectileTestSelectedIndex_ = 0;
+    int projectileTestFrame_ = 0;
+    float projectileTestScrollOffset_ = 0.0f;
+    UiScrollAreaState projectileTestScrollState_{};
+    std::string projectileTestStatus_;
     std::function<GameSettings()> settingsGetter_;
     std::function<void(const GameSettings&)> settingsApplier_;
     std::function<InputBindingMap()> inputBindingGetter_;
     std::function<void(const InputBindingMap&)> inputBindingApplier_;
     bool lightweightModeActive_ = false;
+    PresentationSettings presentationSettingsActive_{};
+    float screenShakeTimer_ = 0.0f;
+    float screenShakeDuration_ = 0.0f;
+    float screenShakeAmplitude_ = 0.0f;
+    unsigned int screenShakeSeed_ = 0;
     bool enemyTestActive_ = false;
     bool enemyTestUiVisible_ = true;
     UiDropdownState enemyTestDropdown_{};
@@ -1774,6 +1855,7 @@ private:
     UiConfirmDialogState warpReturnConfirm_{};
     int focusedWarpReturnPointIndex_ = -1;
     int money_ = 0;
+    double playTimeSeconds_ = 0.0;
     int maxHpUpgradeLevel_ = 0;
     int ringRadiusUpgradeLevel_ = 0;
     int ringSpeedUpgradeLevel_ = 0;
@@ -1806,6 +1888,7 @@ private:
     bool inventoryReturnToPause_ = false;
     bool quitRequested_ = false;
     bool saveDataLoaded_ = false;
+    bool testPlayMode_ = false;
     bool debugPaused_ = false;
     bool autoReloadBlocked_ = false;
     bool hotReloadEnabled_ = false;

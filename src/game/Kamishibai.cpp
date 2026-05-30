@@ -453,7 +453,12 @@ void KamishibaiPlayer::advancePage()
     transitionActive_ = true;
 }
 
-void KamishibaiRenderer::render(Renderer& renderer, const KamishibaiPlayer& player, int screenWidth, int screenHeight) const
+void KamishibaiRenderer::render(
+    Renderer& renderer,
+    const KamishibaiPlayer& player,
+    int screenWidth,
+    int screenHeight,
+    float shakeScale) const
 {
     const int width = std::max(1, screenWidth);
     const int height = std::max(1, screenHeight);
@@ -469,7 +474,7 @@ void KamishibaiRenderer::render(Renderer& renderer, const KamishibaiPlayer& play
     float overscan = 0.0f;
     if (current->effect == KamishibaiEffect::ShakeDark) {
         const float progress = player.pageProgress();
-        const float strength = 5.0f * (1.0f - smoothStep(progress));
+        const float strength = 5.0f * (1.0f - smoothStep(progress)) * shakeScale;
         shakeOffset = {
             std::sin(player.pageElapsed() * 34.0f) * strength,
             std::sin(player.pageElapsed() * 47.0f + 1.1f) * strength * 0.7f,

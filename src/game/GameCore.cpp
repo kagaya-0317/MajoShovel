@@ -307,33 +307,6 @@ bool objectIdHasCaptureNetOrbitEffect(const ObjectCatalog& catalog, std::string_
     return objectHasCaptureNetOrbitEffect(item);
 }
 
-bool inventoryContainsCaptureNet(const InventorySystem& inventory)
-{
-    for (const InventoryObjectStack& stack : inventory.objectStacks()) {
-        if (stack.count > 0 && objectHasCaptureNetOrbitEffect(&stack.item)) {
-            return true;
-        }
-    }
-    for (const InventoryObjectInstance& instance : inventory.objectInstances()) {
-        if (!instance.instance.isBroken && objectHasCaptureNetOrbitEffect(&instance.item)) {
-            return true;
-        }
-    }
-    return false;
-}
-
-bool spellRingContainsCaptureNet(const SpellRingSystem& spellRing, const ObjectCatalog& catalog)
-{
-    for (const auto& ringItems : spellRing.ringItems()) {
-        for (const SpellRingItem& item : ringItems) {
-            if (!item.broken() && objectIdHasCaptureNetOrbitEffect(catalog, item.objectId)) {
-                return true;
-            }
-        }
-    }
-    return false;
-}
-
 UiResultDialogLine levelUpResultTextLine(std::string text)
 {
     UiResultDialogLine line;
@@ -390,6 +363,19 @@ bool isStageClearStoryFlag(const std::string& flag)
     return flag.rfind("stage_clear_", 0) == 0;
 }
 
+bool playTimeCountsForMode(ScreenMode mode)
+{
+    switch (mode) {
+    case ScreenMode::OpeningKamishibai:
+    case ScreenMode::Title:
+    case ScreenMode::ObjectImageScaleEdit:
+    case ScreenMode::AudioCueEdit:
+        return false;
+    default:
+        return true;
+    }
+}
+
 }
 
 void Game::setAudioEngine(AudioEngine* audio)
@@ -404,7 +390,14 @@ void Game::setSettingsAccessors(
 {
     settingsGetter_ = std::move(getter);
     settingsApplier_ = std::move(applier);
-    lightweightModeActive_ = settingsGetter_ ? settingsGetter_().performance.lightweight : false;
+    if (settingsGetter_) {
+        const GameSettings settings = settingsGetter_();
+        lightweightModeActive_ = settings.performance.lightweight;
+        presentationSettingsActive_ = settings.presentation;
+    } else {
+        lightweightModeActive_ = false;
+        presentationSettingsActive_ = {};
+    }
     optionsSettingsLoaded_ = false;
     operationSettingsLoaded_ = false;
 }
@@ -412,6 +405,61 @@ void Game::setSettingsAccessors(
 bool Game::lightweightModeEnabled() const
 {
     return lightweightModeActive_;
+}
+
+float Game::screenShakeScale() const
+{
+    switch (presentationSettingsActive_.screenShake) {
+    case ScreenShakeSetting::Off:
+        return 0.0f;
+    case ScreenShakeSetting::Low:
+        return 0.5f;
+    case ScreenShakeSetting::Standard:
+        return 1.0f;
+    }
+    return 1.0f;
+}
+
+void Game::addScreenShake(float amplitude, float duration)
+{
+    if (amplitude <= 0.0f || duration <= 0.0f || screenShakeScale() <= 0.0f) {
+        return;
+    }
+    screenShakeAmplitude_ = std::max(screenShakeAmplitude_, amplitude);
+    screenShakeDuration_ = std::max(screenShakeDuration_, duration);
+    screenShakeTimer_ = std::max(screenShakeTimer_, duration);
+    ++screenShakeSeed_;
+}
+
+void Game::updateScreenShake(float dt)
+{
+    if (screenShakeTimer_ <= 0.0f) {
+        return;
+    }
+    screenShakeTimer_ = std::max(0.0f, screenShakeTimer_ - std::max(0.0f, dt));
+    if (screenShakeTimer_ <= 0.0f) {
+        screenShakeDuration_ = 0.0f;
+        screenShakeAmplitude_ = 0.0f;
+    }
+}
+
+Vec2 Game::screenShakeOffset(double totalSeconds) const
+{
+    if (screenShakeTimer_ <= 0.0f || screenShakeDuration_ <= 0.0f) {
+        return {};
+    }
+    const float scale = screenShakeScale();
+    if (scale <= 0.0f) {
+        return {};
+    }
+    const float remaining = clamp(screenShakeTimer_ / screenShakeDuration_, 0.0f, 1.0f);
+    const float amplitude = screenShakeAmplitude_ * remaining * remaining * scale;
+    const float t = static_cast<float>(totalSeconds);
+    const float seed = static_cast<float>(screenShakeSeed_ % 997U);
+    return {
+        std::sin(t * 83.0f + seed * 1.37f) * amplitude,
+        std::cos(t * 97.0f + seed * 1.91f) * amplitude,
+    };
 }
 
 void Game::setInputBindingAccessors(
@@ -523,21 +571,22 @@ void Game::playUiSoundEvents(const UiContext& ui)
     }
 }
 
-void Game::initialize(int width, int height, bool allowSheetSource)
+void Game::initialize(int width, int height, bool testPlayMode)
 {
-    beginInitialize(width, height, allowSheetSource);
+    beginInitialize(width, height, testPlayMode);
     while (!advanceInitialize()) {
     }
 }
 
-void Game::beginInitialize(int width, int height, bool allowSheetSource)
+void Game::beginInitialize(int width, int height, bool testPlayMode)
 {
     (void)width;
     (void)height;
     camera_.setViewport(balance::ScreenWidth, balance::ScreenHeight);
+    testPlayMode_ = testPlayMode;
     initializeJob_ = InitializeJob{};
     initializeJob_.active = true;
-    initializeJob_.allowSheetSource = allowSheetSource;
+    initializeJob_.allowSheetSource = testPlayMode;
     initializeJob_.step = InitializeStep::LoadSheetSourceConfig;
 }
 
@@ -779,6 +828,7 @@ void Game::resetWorldEffectState()
 {
     resetInPlace(effects_);
     resetInPlace(groundLines_);
+    resetInPlace(wetGround_);
     captureAbsorbAnimations_.clear();
     ringTrailEffectTimer_ = 0.0f;
     ambientParticleTimer_ = 0.0f;
@@ -911,6 +961,27 @@ void Game::resetWorldUiState()
     debugStoryTestLoadedRevision_ = -1;
     debugStoryTestReturnAfterDialogue_ = false;
     debugStoryTestCancelState_ = {};
+    debugPreviewBackgroundIndex_ = 0;
+    effectTestActive_ = false;
+    effectTestEntries_.clear();
+    effectTestVisibleEntries_.clear();
+    effectTestTabKeys_.clear();
+    effectTestTabLabels_.clear();
+    effectTestTabsState_ = {};
+    effectTestTabIndex_ = 0;
+    effectTestSelectedIndex_ = 0;
+    effectTestFrame_ = 0;
+    effectTestScrollOffset_ = 0.0f;
+    effectTestScrollState_ = {};
+    effectTestEmitter_ = {};
+    effectTestStatus_.clear();
+    projectileTestActive_ = false;
+    projectileTestEntries_.clear();
+    projectileTestSelectedIndex_ = 0;
+    projectileTestFrame_ = 0;
+    projectileTestScrollOffset_ = 0.0f;
+    projectileTestScrollState_ = {};
+    projectileTestStatus_.clear();
     enemyTestActive_ = false;
     enemyTestUiVisible_ = true;
     enemyTestDropdown_ = {};
@@ -1540,7 +1611,7 @@ void Game::requestBaseAreaCrossfade(BaseArea targetArea, Vec2 playerPosition, Ve
     screenTransition_.targetBaseArea = targetArea;
     screenTransition_.targetBasePlayerPosition = playerPosition;
     screenTransition_.targetBasePlayerFacing = playerFacing;
-    screenTransition_.targetBaseStatus = std::move(status);
+    screenTransition_.targetBaseStatus = testPlayMode_ ? std::move(status) : std::string{};
     playAudioSe(AudioSeTransition);
 }
 
@@ -2839,6 +2910,14 @@ void Game::updateScreenMode(
     case ScreenMode::WorldLoading:
         break;
     case ScreenMode::Playing:
+        if (effectTestActive_) {
+            updateEffectTestScreen(input, ui, dt);
+            return;
+        }
+        if (projectileTestActive_) {
+            updateProjectileTestScreen(input, ui, dt);
+            return;
+        }
         if (enemyTestActive_) {
             updateEnemyTestUi(input, ui);
             if (mode_ != ScreenMode::Playing || (enemyTestUiVisible_ && input.pausePressed())) {
@@ -2960,7 +3039,9 @@ void Game::runDialogueCompletionCallbackIfFinished(bool dialogueWasActive)
 
 bool Game::gameProgressPaused() const
 {
-    return debugItemPickerActive_ ||
+    return effectTestActive_ ||
+        projectileTestActive_ ||
+        debugItemPickerActive_ ||
         debugStoryTestActive_ ||
         pendingStoryTriggerDelayActive() ||
         firstItemAcquisitionNoticeActive() ||
@@ -2995,6 +3076,8 @@ void Game::updatePausedDungeonPresentation(float dt)
     for (ChestNode& node : chestNodes_) {
         updateChestSpawnJump(node, safeDt);
     }
+    wetGround_.update(safeDt);
+    wetGround_.erasePendingGroundLines(groundLines_);
     groundLines_.update(safeDt);
     magicFx_.update(safeDt);
     effects_.update(safeDt);
@@ -3106,12 +3189,14 @@ void Game::switchActiveRingWithLog(int delta)
 
 void Game::update(const Input& input, const Time& time)
 {
-    lightweightModeActive_ = settingsGetter_
-        ? settingsGetter_().performance.lightweight
-        : optionsSettings_.performance.lightweight;
+    const GameSettings currentSettings = settingsGetter_ ? settingsGetter_() : optionsSettings_;
+    lightweightModeActive_ = currentSettings.performance.lightweight;
+    presentationSettingsActive_ = currentSettings.presentation;
     const bool lightweight = lightweightModeEnabled();
     effects_.setLightweightMode(lightweight);
     magicFx_.setLightweightMode(lightweight);
+    wetGround_.setLightweightMode(lightweight);
+    updateScreenShake(time.deltaSeconds());
 
     checkHotReload(time.deltaSeconds());
     reloadNoticeTimer_ = std::max(0.0f, reloadNoticeTimer_ - time.deltaSeconds());
@@ -3128,6 +3213,9 @@ void Game::update(const Input& input, const Time& time)
     }
     if (debugPaused_) {
         return;
+    }
+    if (playTimeCountsForMode(mode_) && !effectTestActive_ && !projectileTestActive_) {
+        playTimeSeconds_ += std::max(0.0f, time.deltaSeconds());
     }
     const bool transitionWasActive = screenTransition_.active();
     updateScreenTransition(time.deltaSeconds());
@@ -3159,6 +3247,7 @@ void Game::update(const Input& input, const Time& time)
     updateScreenMode(input, ui, time.deltaSeconds(), &effectDiscoveries);
     effects_.setLightweightMode(lightweight);
     magicFx_.setLightweightMode(lightweight);
+    wetGround_.setLightweightMode(lightweight);
     queueIntroTutorialChestLootDialogueIfReady();
     if (inventory_.equippedStaffInstanceId() != observedEquippedStaffInstanceId_) {
         refreshEquipmentModifiers();
@@ -3414,6 +3503,9 @@ void Game::update(const Input& input, const Time& time)
                 if (std::string_view(event.id) == MagnifyingGlassObjectId) {
                     queueStoryEventForTrigger("tutorial:magnifying_glass");
                 }
+                if (!introTutorialActive() && objectIdHasCaptureNetOrbitEffect(objectCatalog_, event.id)) {
+                    queueStoryEventForTrigger("tutorial:capture_net");
+                }
             }
         }
         if (introTutorialActive() &&
@@ -3488,12 +3580,6 @@ void Game::update(const Input& input, const Time& time)
             bossCaptureObjectId,
             &effectDiscoveries,
             &encyclopedia_);
-        if (!enemyTestActive_ &&
-            !introTutorialActive() &&
-            enemies_.activeCount() > 0 &&
-            (inventoryContainsCaptureNet(inventory_) || spellRingContainsCaptureNet(spellRing_, objectCatalog_))) {
-            queueStoryEventForTrigger("tutorial:capture_net");
-        }
         for (Vec2 explosionPosition : digging_.capturedExplosionRequests()) {
             handleCapturedExplosion(explosionPosition);
         }
@@ -3600,6 +3686,7 @@ void Game::update(const Input& input, const Time& time)
                 magicFx_.playHealPulse(event.position, 18.0f);
             } else if (event.type == EnemyEventType::Explode) {
                 playAudioSe(AudioSeExplosion);
+                addScreenShake(5.0f, 0.18f);
             } else if (event.type == EnemyEventType::BossTelegraph) {
                 SmokeBurstOptions smoke;
                 smoke.count = 18;
@@ -3612,6 +3699,7 @@ void Game::update(const Input& input, const Time& time)
                 smoke.colorB = {92, 68, 50, 172};
                 effects_.spawnSmokeBurst(event.position, smoke);
             } else if (event.type == EnemyEventType::BossImpact) {
+                addScreenShake(event.effectId == "wall_stun" ? 5.0f : 3.0f, 0.16f);
                 const bool wallStunImpact = event.effectId == "wall_stun";
                 const bool burrowImpact = event.effectId == "burrow";
                 SmokeBurstOptions smoke;
@@ -3636,6 +3724,7 @@ void Game::update(const Input& input, const Time& time)
                 handleDungeonEventEnemyEvent(event);
                 ++runStats_.defeatedEnemies;
                 effects_.spawnEnemyDeath(event.position);
+                addScreenShake(event.type == EnemyEventType::BossDeath ? 8.0f : 1.5f, event.type == EnemyEventType::BossDeath ? 0.28f : 0.08f);
                 if (event.type == EnemyEventType::Death && !capturedEnemyThisFrame) {
                     playAudioSe(AudioSeEnemyDefeat);
                 }
@@ -3783,6 +3872,7 @@ void Game::update(const Input& input, const Time& time)
         }
         if (!player_.damageEvents.empty()) {
             playAudioSe(AudioSePlayerDamage);
+            addScreenShake(4.5f, 0.16f);
         }
         player_.damageEvents.clear();
         for (const PlayerHealEvent& event : player_.healEvents) {
@@ -3801,6 +3891,8 @@ void Game::update(const Input& input, const Time& time)
         applyEffectDiscoveries(effectDiscoveries);
         syncEncyclopediaFromInventoryAndRing();
         updateAmbientParticleEffects(time.deltaSeconds());
+        wetGround_.update(time.deltaSeconds());
+        wetGround_.erasePendingGroundLines(groundLines_);
         groundLines_.update(time.deltaSeconds());
         magicFx_.update(time.deltaSeconds());
         effects_.update(time.deltaSeconds());

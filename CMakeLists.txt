@@ -105,6 +105,7 @@ add_executable(MajoShovel
     src/game/EnemySystem.cpp
     src/game/EncyclopediaSystem.cpp
     src/game/GroundLineSystem.cpp
+    src/game/WetGroundSystem.cpp
     src/game/InventorySystem.cpp
     src/game/InventoryUiCommon.cpp
     src/game/ItemImageRenderer.cpp

@@ -532,6 +532,33 @@ void writeInputBindingJson(std::ostream& out, const InputBinding& binding, std::
     out << " }";
 }
 
+std::optional<float> parseScreenBrightnessValue(std::string_view text)
+{
+    const std::string normalized = lowerAscii(text);
+    if (normalized == "dark" || normalized == "darker") {
+        return 0.85f;
+    }
+    if (normalized == "standard" || normalized == "normal" || normalized == "default") {
+        return DefaultScreenBrightness;
+    }
+    if (normalized == "bright" || normalized == "brighter") {
+        return 1.15f;
+    }
+
+    try {
+        std::size_t consumed = 0;
+        float value = std::stof(std::string(text), &consumed);
+        if (consumed == text.size()) {
+            if (value > 2.0f) {
+                value *= 0.01f;
+            }
+            return value;
+        }
+    } catch (const std::exception&) {
+    }
+    return std::nullopt;
+}
+
 } // namespace
 
 const char* windowModeName(WindowMode mode)
@@ -560,6 +587,62 @@ bool parseWindowMode(std::string_view text, WindowMode& outMode)
     return false;
 }
 
+const char* screenShakeSettingName(ScreenShakeSetting setting)
+{
+    switch (setting) {
+    case ScreenShakeSetting::Off: return "off";
+    case ScreenShakeSetting::Low: return "low";
+    case ScreenShakeSetting::Standard: return "standard";
+    }
+    return "standard";
+}
+
+bool parseScreenShakeSetting(std::string_view text, ScreenShakeSetting& outSetting)
+{
+    const std::string normalized = lowerAscii(text);
+    if (normalized == "off" || normalized == "none") {
+        outSetting = ScreenShakeSetting::Off;
+        return true;
+    }
+    if (normalized == "low" || normalized == "weak") {
+        outSetting = ScreenShakeSetting::Low;
+        return true;
+    }
+    if (normalized == "standard" || normalized == "normal" || normalized == "default") {
+        outSetting = ScreenShakeSetting::Standard;
+        return true;
+    }
+    return false;
+}
+
+const char* inputIconSettingName(InputIconSetting setting)
+{
+    switch (setting) {
+    case InputIconSetting::Auto: return "auto";
+    case InputIconSetting::KeyboardMouse: return "keyboard_mouse";
+    case InputIconSetting::Gamepad: return "gamepad";
+    }
+    return "auto";
+}
+
+bool parseInputIconSetting(std::string_view text, InputIconSetting& outSetting)
+{
+    const std::string normalized = lowerAscii(text);
+    if (normalized == "auto") {
+        outSetting = InputIconSetting::Auto;
+        return true;
+    }
+    if (normalized == "keyboard" || normalized == "keyboard_mouse" || normalized == "keyboard-mouse" || normalized == "mouse") {
+        outSetting = InputIconSetting::KeyboardMouse;
+        return true;
+    }
+    if (normalized == "gamepad" || normalized == "pad" || normalized == "controller") {
+        outSetting = InputIconSetting::Gamepad;
+        return true;
+    }
+    return false;
+}
+
 GameSettings sanitizeSettings(GameSettings settings)
 {
     settings.version = CurrentSettingsVersion;
@@ -568,6 +651,7 @@ GameSettings sanitizeSettings(GameSettings settings)
     settings.audio.seVolume = clampVolume(settings.audio.seVolume);
     settings.video.windowWidth = std::clamp(settings.video.windowWidth, MinWindowWidth, MaxWindowWidth);
     settings.video.windowHeight = std::clamp(settings.video.windowHeight, MinWindowHeight, MaxWindowHeight);
+    settings.presentation.brightness = std::clamp(settings.presentation.brightness, MinScreenBrightness, MaxScreenBrightness);
     settings.input.bindings = sanitizeInputBindings(settings.input.bindings);
     return settings;
 }
@@ -658,6 +742,28 @@ bool SettingsStore::load(GameSettings& outSettings, std::string* outError) const
         }
     }
 
+    if (const JsonValue* presentation = objectMember(*root, "presentation")) {
+        if (std::optional<float> value = floatMember(*presentation, "brightness")) {
+            loaded.presentation.brightness = *value;
+        } else if (std::optional<std::string> value = stringMember(*presentation, "brightness")) {
+            if (std::optional<float> parsed = parseScreenBrightnessValue(*value)) {
+                loaded.presentation.brightness = *parsed;
+            }
+        }
+        if (std::optional<std::string> value = stringMember(*presentation, "screenShake")) {
+            ScreenShakeSetting parsed = loaded.presentation.screenShake;
+            if (parseScreenShakeSetting(*value, parsed)) {
+                loaded.presentation.screenShake = parsed;
+            }
+        }
+        if (std::optional<std::string> value = stringMember(*presentation, "inputIcons")) {
+            InputIconSetting parsed = loaded.presentation.inputIcons;
+            if (parseInputIconSetting(*value, parsed)) {
+                loaded.presentation.inputIcons = parsed;
+            }
+        }
+    }
+
     if (const JsonValue* input = objectMember(*root, "input")) {
         loadInputBindings(*input, loaded.input.bindings);
     }
@@ -699,6 +805,11 @@ bool SettingsStore::save(const GameSettings& settings, std::string* outError) co
     file << "  },\n";
     file << "  \"performance\": {\n";
     file << "    \"lightweight\": " << (sanitized.performance.lightweight ? "true" : "false") << "\n";
+    file << "  },\n";
+    file << "  \"presentation\": {\n";
+    file << "    \"brightness\": " << sanitized.presentation.brightness << ",\n";
+    file << "    \"screenShake\": \"" << screenShakeSettingName(sanitized.presentation.screenShake) << "\",\n";
+    file << "    \"inputIcons\": \"" << inputIconSettingName(sanitized.presentation.inputIcons) << "\"\n";
     file << "  },\n";
     file << "  \"input\": {\n";
     file << "    \"bindings\": {\n";

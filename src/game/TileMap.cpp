@@ -1549,6 +1549,18 @@ void TileMap::drawTileLitByCircles(Renderer& renderer, Vec2 pos, Color color, Ve
     renderer.fillRect(pos, {tileSize, tileSize}, color);
 }
 
+void TileMap::renderTilePreview(Renderer& renderer, Vec2 pos, int stageId, TileType type) const
+{
+    Tile tile;
+    tile.type = type;
+    tile.hp = static_cast<unsigned char>(clampTileHp(terrainInfoForTile(0, 0, &tile).effectiveHp));
+
+    const TerrainTileSheet terrainSheet = acquireTerrainTileSheet(renderer, stageId);
+    if (!drawTerrainTileImage(renderer, terrainSheet, pos, 0, 0, tile, TerrainNeighbors{})) {
+        drawTileLitByCircles(renderer, pos, tileColor(tile), pos, {});
+    }
+}
+
 void TileMap::render(Renderer& renderer, const Camera& camera, Vec2 lightCenter, const std::vector<LightSource>& extraLights)
 {
     constexpr int ViewTileMargin = 1;

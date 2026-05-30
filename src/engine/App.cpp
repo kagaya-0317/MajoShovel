@@ -3,11 +3,13 @@
 #include "data/GameBalance.hpp"
 #include "engine/InputHelpGlyph.hpp"
 #include "engine/Log.hpp"
+#include "engine/Ui.hpp"
 
 #include <SDL3/SDL.h>
 #include <algorithm>
 #include <cctype>
 #include <chrono>
+#include <cmath>
 #include <ctime>
 #include <cstdlib>
 #include <exception>
@@ -30,6 +32,31 @@ constexpr float AutoSimulationMaxDebtSeconds = 0.75f;
 constexpr int AutoSimulationMaxStepsPerFrame = 16;
 constexpr int LogicalScreenWidth = balance::ScreenWidth;
 constexpr int LogicalScreenHeight = balance::ScreenHeight;
+
+InputHelpDeviceMode inputHelpDeviceModeForSetting(InputIconSetting setting)
+{
+    switch (setting) {
+    case InputIconSetting::Auto:
+        return InputHelpDeviceMode::Auto;
+    case InputIconSetting::KeyboardMouse:
+        return InputHelpDeviceMode::KeyboardMouse;
+    case InputIconSetting::Gamepad:
+        return InputHelpDeviceMode::Gamepad;
+    }
+    return InputHelpDeviceMode::Auto;
+}
+
+float screenBrightnessMultiplier(float brightness)
+{
+    return std::clamp(brightness, MinScreenBrightness, MaxScreenBrightness);
+}
+
+std::string screenBrightnessLogValue(float brightness)
+{
+    std::ostringstream out;
+    out << std::fixed << std::setprecision(2) << screenBrightnessMultiplier(brightness);
+    return out.str();
+}
 
 std::string lowerAscii(std::string text)
 {
@@ -573,6 +600,7 @@ bool App::initialize(const char* title, int width, int height, bool testPlayMode
     }
     applyVideoSettings(false);
     renderer_ = new Renderer(sdlRenderer_);
+    renderer_->setScreenBrightness(screenBrightnessMultiplier(settings_.presentation.brightness));
     if (!renderer_->setLogicalPresentation(LogicalScreenWidth, LogicalScreenHeight)) {
         logWarning(std::string("SDL_SetRenderLogicalPresentation failed: ") + SDL_GetError());
     }
@@ -808,6 +836,9 @@ bool App::executeSettingsDebugCommand(const std::string& normalizedCommand)
             "x" + std::to_string(settings_.video.windowHeight) +
             " vsync=" + (settings_.video.vsync ? "on" : "off") +
             " lightweight=" + (settings_.performance.lightweight ? "on" : "off") +
+            " brightness=" + screenBrightnessLogValue(settings_.presentation.brightness) +
+            " shake=" + screenShakeSettingName(settings_.presentation.screenShake) +
+            " input_icons=" + inputIconSettingName(settings_.presentation.inputIcons) +
             " path=" + settingsStore_.path().string());
         return true;
     }
@@ -997,6 +1028,48 @@ bool App::executeSettingsDebugCommand(const std::string& normalizedCommand)
         return true;
     }
 
+    if ((words[1] == "presentation" || words[1] == "display") && words.size() == 4) {
+        if (words[2] == "brightness") {
+            std::optional<float> value = parseFloatSetting(words[3]);
+            if (!value) {
+                logWarning("Usage: settings presentation brightness 0.70-1.30");
+                return true;
+            }
+            if (*value > 2.0f) {
+                *value *= 0.01f;
+            }
+            settings_.presentation.brightness = *value;
+            settings_ = sanitizeSettings(settings_);
+            queueSettingsSave();
+            logInfo("Screen brightness: " + screenBrightnessLogValue(settings_.presentation.brightness));
+            return true;
+        }
+        if (words[2] == "shake" || words[2] == "screen_shake") {
+            ScreenShakeSetting value = settings_.presentation.screenShake;
+            if (!parseScreenShakeSetting(words[3], value)) {
+                logWarning("Usage: settings presentation shake off|low|standard");
+                return true;
+            }
+            settings_.presentation.screenShake = value;
+            settings_ = sanitizeSettings(settings_);
+            queueSettingsSave();
+            logInfo(std::string("Screen shake: ") + screenShakeSettingName(settings_.presentation.screenShake));
+            return true;
+        }
+        if (words[2] == "icons" || words[2] == "input_icons") {
+            InputIconSetting value = settings_.presentation.inputIcons;
+            if (!parseInputIconSetting(words[3], value)) {
+                logWarning("Usage: settings presentation icons auto|keyboard|gamepad");
+                return true;
+            }
+            settings_.presentation.inputIcons = value;
+            settings_ = sanitizeSettings(settings_);
+            queueSettingsSave();
+            logInfo(std::string("Input icons: ") + inputIconSettingName(settings_.presentation.inputIcons));
+            return true;
+        }
+    }
+
     if (words[1] == "video" && words.size() >= 4 && words[2] == "vsync") {
         const std::optional<bool> value = parseBoolSetting(words[3]);
         if (!value) {
@@ -1061,7 +1134,10 @@ bool App::executeSettingsDebugCommand(const std::string& normalizedCommand)
         "settings video mode windowed|borderless, "
         "settings video vsync on|off, "
         "settings video size WIDTH HEIGHT, "
-        "settings performance lightweight on|off");
+        "settings performance lightweight on|off, "
+        "settings presentation brightness 0.70-1.30, "
+        "settings presentation shake off|low|standard, "
+        "settings presentation icons auto|keyboard|gamepad");
     return true;
 }
 
@@ -1182,17 +1258,42 @@ void App::renderStartupFrame()
     renderer_->setScreenSpace();
     renderer_->clear({6, 7, 10, 255});
 
-    const float screenWidth = static_cast<float>(LogicalScreenWidth);
-    const float screenHeight = static_cast<float>(LogicalScreenHeight);
-    const float progress = std::clamp(startupLoadProgress(), 0.0f, 1.0f);
-    const float barWidth = std::max(80.0f, screenWidth - 96.0f);
-    const float barX = (screenWidth - barWidth) * 0.5f;
-    const float barY = std::max(96.0f, screenHeight - 96.0f);
+    const float screenW = static_cast<float>(LogicalScreenWidth);
+    const float screenH = static_cast<float>(LogicalScreenHeight);
 
-    renderer_->fillRect({barX, barY}, {barWidth, 6.0f}, {30, 34, 44, 255});
-    renderer_->fillRect({barX, barY}, {barWidth * progress, 6.0f}, {226, 186, 92, 255});
-    renderer_->drawText({barX, barY - 62.0f}, "MAJO SHOVEL", {238, 230, 208, 255}, 3);
-    renderer_->drawText({barX, barY - 28.0f}, startupStatus_, {190, 200, 218, 255}, 2);
+    constexpr float BarW = 280.0f;
+    constexpr float TrackH = 16.0f;
+    constexpr float MarginRight = 28.0f;
+    constexpr float MarginBottom = 28.0f;
+    const float barLeft = std::max(12.0f, screenW - MarginRight - BarW);
+    const float barCenterY = std::max(20.0f, screenH - MarginBottom - TrackH * 0.5f);
+    const UiRect bar{{barLeft, barCenterY - TrackH * 0.5f}, {BarW, TrackH}};
+    const float progress = std::clamp(startupLoadProgress(), 0.0f, 1.0f);
+    const float totalSeconds = time_.totalSeconds();
+    const float pulse = 0.76f + 0.24f * std::sin(totalSeconds * 5.0f);
+    UiGaugeStyle loadingGaugeStyle;
+    loadingGaugeStyle.fill.start = {static_cast<unsigned char>(108.0f + 48.0f * pulse), 206, 236, 230};
+    loadingGaugeStyle.fill.end = {132, 230, 250, 230};
+    loadingGaugeStyle.track = {12, 16, 24, 190};
+    loadingGaugeStyle.trackInner = {30, 38, 52, 220};
+    loadingGaugeStyle.trackOuter = {218, 228, 244, 78};
+    loadingGaugeStyle.shadow = {0, 0, 0, 105};
+    loadingGaugeStyle.tick = {255, 255, 255, 32};
+    loadingGaugeStyle.highlight = {255, 255, 255, 118};
+    loadingGaugeStyle.capGlow = {132, 230, 250, 78};
+    loadingGaugeStyle.capCore = {246, 252, 255, 225};
+    loadingGaugeStyle.tickCount = 8;
+    loadingGaugeStyle.shimmer = {255, 255, 255, 76};
+    loadingGaugeStyle.shimmerPhase =
+        std::fmod(std::max(0.0f, totalSeconds) * 116.0f, BarW + loadingGaugeStyle.shimmerWidth) /
+        (BarW + loadingGaugeStyle.shimmerWidth);
+    drawUiGauge(*renderer_, bar, progress, loadingGaugeStyle);
+
+    const std::string label = "LOADING";
+    const Vec2 labelSize = renderer_->measureText(label, 2);
+    const Vec2 labelPos{bar.pos.x + bar.size.x - labelSize.x, bar.pos.y - labelSize.y - 9.0f};
+    renderer_->drawText(labelPos + Vec2{1.0f, 1.0f}, label, {0, 0, 0, 170}, 2);
+    renderer_->drawText(labelPos, label, {246, 246, 252, 230}, 2);
     renderer_->present();
 }
 
@@ -1507,7 +1608,11 @@ void App::run()
             !testFreezePaused_ && autoSimulationTimeActive_
                 ? autoSimulationTime_
                 : (testFreezePaused_ ? frozenTime_ : time_);
+        if (renderer_ != nullptr) {
+            renderer_->setScreenBrightness(screenBrightnessMultiplier(settings_.presentation.brightness));
+        }
         setInputHelpContext(&input_);
+        setInputHelpDeviceMode(inputHelpDeviceModeForSetting(settings_.presentation.inputIcons));
         game_.render(*renderer_, renderTime);
         logPendingScreenshotResult();
     }

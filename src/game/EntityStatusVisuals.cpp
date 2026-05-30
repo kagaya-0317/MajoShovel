@@ -1,12 +1,14 @@
 ﻿#include "game/EntityStatusVisuals.hpp"
 
 #include "engine/Renderer.hpp"
+#include "game/EffectPreviewCatalog.hpp"
 #include "game/EffectSystem.hpp"
 
 #include <algorithm>
 #include <array>
 #include <cmath>
 #include <string_view>
+#include <vector>
 
 namespace majo {
 
@@ -86,6 +88,36 @@ void drawConfuseStar(Renderer& renderer, Vec2 center, float radius, float rotati
         {255, 255, 220, alpha(220)});
 }
 
+void drawSleepZzz(Renderer& renderer, Vec2 center, float visualSize, double totalSeconds)
+{
+    const float size = std::max(1.0f, visualSize);
+    const Vec2 imageTop = center + Vec2{0.0f, -size * 0.5f};
+    const Vec2 base{
+        center.x + std::clamp(size * 0.16f, 7.0f, 18.0f),
+        imageTop.y - std::clamp(size * 0.12f, 5.0f, 13.0f),
+    };
+
+    for (int i = 0; i < 3; ++i) {
+        const float offset = static_cast<float>(i) * 0.30f;
+        const float cycle = std::fmod(static_cast<float>(totalSeconds) * 0.34f + offset, 1.0f);
+        const float wave = std::sin(static_cast<float>(totalSeconds) * 2.1f + static_cast<float>(i) * 1.35f);
+        const Vec2 pos{
+            base.x + static_cast<float>(i) * 8.0f + wave * 2.0f,
+            base.y - cycle * 20.0f + std::sin(static_cast<float>(totalSeconds) * 3.0f + static_cast<float>(i)) * 1.8f,
+        };
+        const float fadeT = std::clamp(std::max(0.0f, cycle - 0.72f) / 0.28f, 0.0f, 1.0f);
+        const float fade = 1.0f - fadeT * fadeT * (3.0f - 2.0f * fadeT);
+        const unsigned char alpha = static_cast<unsigned char>(std::clamp(std::lround(230.0f * fade), 0L, 255L));
+        renderer.drawOutlinedText(
+            pos,
+            i == 0 ? "Z" : "z",
+            {210, 235, 255, alpha},
+            {36, 48, 88, static_cast<unsigned char>(alpha * 3 / 4)},
+            1,
+            i == 0 ? 2 : 1);
+    }
+}
+
 } // namespace
 
 EntityStatusVisualStyle entityStatusVisualStyle(const EntityStatus& status)
@@ -142,6 +174,28 @@ void emitEntityStatusAuras(const EntityStatus& status, Vec2 position, EffectSyst
     }
 }
 
+std::span<const EffectPreviewEntry> entityStatusPreviewEntries()
+{
+    static const std::vector<EffectPreviewEntry> entries = [] {
+        std::vector<EffectPreviewEntry> result;
+        result.reserve(StatusVisualDefinitions.size());
+        for (const StatusVisualDefinition& definition : StatusVisualDefinitions) {
+            result.push_back(EffectPreviewEntry{
+                .id = definition.stateId,
+                .label = definition.displayName,
+                .group = "状態異常",
+                .source = EffectPreviewSource::StatusVisual,
+                .target = EffectPreviewTarget::EnemySlime,
+                .playback = EffectPreviewPlayback::StatusLoop,
+                .argument = definition.stateId,
+                .radius = 34.0f,
+            });
+        }
+        return result;
+    }();
+    return {entries.data(), entries.size()};
+}
+
 void renderEntityStatusOverlays(
     Renderer& renderer,
     const EntityStatus& status,
@@ -149,15 +203,24 @@ void renderEntityStatusOverlays(
     float visualSize,
     double totalSeconds)
 {
-    if (!status.hasState("status_confuse")) {
+    const bool sleeping = status.hasState("status_sleep");
+    const bool confused = status.hasState("status_confuse");
+    if (!sleeping && !confused) {
         return;
     }
 
     const float size = std::max(1.0f, visualSize);
+    if (sleeping) {
+        drawSleepZzz(renderer, footAnchor, size, totalSeconds);
+    }
+    if (!confused) {
+        return;
+    }
+
     const float orbitX = std::clamp(size * 0.16f, 7.0f, 18.0f);
     const float orbitY = std::clamp(size * 0.045f, 2.0f, 7.0f);
     const float starRadius = std::clamp(size * 0.075f, 4.2f, 9.0f);
-    const Vec2 center = footAnchor + Vec2{0.0f, -size * 0.88f - starRadius * 1.6f};
+    const Vec2 center = footAnchor + Vec2{0.0f, -size * 0.5f + starRadius * 0.85f};
     const float baseAngle = static_cast<float>(totalSeconds) * 4.25f;
     const float pulse = 0.84f + 0.16f * std::sin(static_cast<float>(totalSeconds) * 6.0f);
 

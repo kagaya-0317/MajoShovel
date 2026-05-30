@@ -2,6 +2,7 @@
 
 #include "engine/Renderer.hpp"
 #include "game/DepthRender.hpp"
+#include "game/EffectPreviewCatalog.hpp"
 
 #include <algorithm>
 #include <array>
@@ -17,6 +18,7 @@ constexpr std::size_t LightweightMaxParticles = 1400;
 constexpr std::size_t MaxEmitters = 220;
 constexpr std::size_t MaxLightningStrikes = 32;
 constexpr std::size_t MaxThunderImpactArcs = 220;
+constexpr float MagicFxBounceStopSpeed = 32.0f;
 
 std::mt19937& magicFxRng()
 {
@@ -91,6 +93,30 @@ Color scaleAlpha(Color color, float scale)
         0L,
         255L));
     return color;
+}
+
+int electricFrameIndex(float age, float phase = 0.0f)
+{
+    return static_cast<int>(std::floor((age + phase * 0.037f) * 36.0f));
+}
+
+float electricFrameAlpha(float age, float lifetime, float phase, bool strong)
+{
+    if (age < 0.0f || age >= lifetime || lifetime <= 0.0f) {
+        return 0.0f;
+    }
+
+    static constexpr std::array<float, 8> Pattern{{1.0f, 0.42f, 0.86f, 0.0f, 0.72f, 0.24f, 0.94f, 0.0f}};
+    const int frame = electricFrameIndex(age, phase);
+    const float frameAlpha = Pattern[static_cast<std::size_t>(std::abs(frame) % static_cast<int>(Pattern.size()))];
+    if (frameAlpha <= 0.0f) {
+        return 0.0f;
+    }
+
+    const float progress = clamp(age / lifetime, 0.0f, 1.0f);
+    const float step = std::floor(progress * 4.0f) / 3.0f;
+    const float steppedDecay = lerp(strong ? 1.0f : 0.90f, strong ? 0.56f : 0.46f, clamp(step, 0.0f, 1.0f));
+    return frameAlpha * steppedDecay;
 }
 
 Color particleColor(const MagicFxSystem::Particle& particle)
@@ -504,22 +530,23 @@ void drawSharpLightningSegment(Renderer& renderer, Vec2 a, Vec2 b, float width, 
     renderer.fillPolygon(points.data(), points.size(), color);
 }
 
-void drawLightningPath(Renderer& renderer, const Vec2* points, int pointCount, float outerWidth, float coreWidth, float alpha, bool strong)
+void drawLightningPath(Renderer& renderer, const Vec2* points, int pointCount, float outerWidth, float coreWidth, float alpha, bool strong, int frameIndex)
 {
     if (points == nullptr || pointCount < 2 || alpha <= 0.0f) {
         return;
     }
 
-    const Color outer = scaleAlpha(strong ? Color{92, 150, 255, 170} : Color{120, 176, 255, 126}, alpha);
-    const Color mid = scaleAlpha(strong ? Color{255, 232, 118, 232} : Color{218, 240, 255, 192}, alpha);
+    const Color shell = scaleAlpha(strong ? Color{224, 246, 255, 226} : Color{214, 238, 255, 194}, alpha);
     const Color core = scaleAlpha(Color{255, 255, 255, 255}, alpha);
     for (int i = 1; i < pointCount; ++i) {
+        if (((frameIndex + i * 3) % 7) == 3) {
+            continue;
+        }
         const float segmentT = static_cast<float>(i - 1) / static_cast<float>(std::max(1, pointCount - 2));
-        const float pulse = 0.54f + 1.18f * (static_cast<float>((i * 37) % 7) / 6.0f);
+        const float pulse = 0.72f + 0.48f * (static_cast<float>((frameIndex + i * 37) % 5) / 4.0f);
         const float taper = lerp(1.36f, 0.54f, segmentT);
         const float width = outerWidth * pulse * taper;
-        renderer.drawSoftLine(points[i - 1], points[i], width * 2.65f, scaleAlpha(outer, 0.70f));
-        drawSharpLightningSegment(renderer, points[i - 1], points[i], width * 0.88f, mid);
+        drawSharpLightningSegment(renderer, points[i - 1], points[i], width * 0.78f, shell);
         drawSharpLightningSegment(renderer, points[i - 1], points[i], std::max(1.0f, coreWidth * pulse * taper), core);
     }
 }
@@ -527,11 +554,10 @@ void drawLightningPath(Renderer& renderer, const Vec2* points, int pointCount, f
 void drawLightningStrike(Renderer& renderer, const MagicFxSystem::LightningStrike& strike)
 {
     const float progress = strike.lifetime > 0.0f ? clamp(strike.age / strike.lifetime, 0.0f, 1.0f) : 1.0f;
-    const float fade = progress < 0.18f
-        ? clamp(progress / 0.18f, 0.0f, 1.0f)
-        : std::pow(clamp((1.0f - progress) / 0.82f, 0.0f, 1.0f), 0.62f);
-    const float flicker = 0.86f + 0.14f * std::sin(progress * Pi * 18.0f);
-    const float alpha = fade * flicker;
+    const float alpha = electricFrameAlpha(strike.age, strike.lifetime, strike.strong ? 0.18f : 0.43f, strike.strong);
+    if (progress >= 1.0f || alpha <= 0.0f) {
+        return;
+    }
 
     drawLightningPath(
         renderer,
@@ -540,20 +566,23 @@ void drawLightningStrike(Renderer& renderer, const MagicFxSystem::LightningStrik
         strike.outerWidth,
         strike.coreWidth,
         alpha,
-        strike.strong);
+        strike.strong,
+        electricFrameIndex(strike.age, strike.strong ? 0.18f : 0.43f));
 }
 
 void drawThunderSigilArc(Renderer& renderer, const MagicFxSystem::ThunderImpactArc& arc, float alpha)
 {
-    const Color glow = scaleAlpha(arc.strong ? Color{118, 132, 255, 96} : Color{128, 182, 255, 72}, alpha);
+    const int frameIndex = electricFrameIndex(arc.age - arc.startDelay, arc.phase);
     const Color line = scaleAlpha(arc.strong ? Color{224, 246, 255, 192} : Color{210, 236, 255, 156}, alpha);
     const Color core = scaleAlpha(Color{255, 255, 255, 230}, alpha);
     for (int i = 1; i < arc.pointCount; ++i) {
+        if (((frameIndex + i * 5) % 6) == 2) {
+            continue;
+        }
         const float t = static_cast<float>(i - 1) / static_cast<float>(std::max(1, arc.pointCount - 2));
         const float width = arc.outerWidth * lerp(1.18f, 0.72f, t);
-        renderer.drawSoftLine(arc.points[static_cast<std::size_t>(i - 1)], arc.points[static_cast<std::size_t>(i)], width * 3.4f, glow);
-        renderer.drawSoftLine(arc.points[static_cast<std::size_t>(i - 1)], arc.points[static_cast<std::size_t>(i)], std::max(1.0f, width * 1.05f), line);
-        renderer.drawSoftLine(arc.points[static_cast<std::size_t>(i - 1)], arc.points[static_cast<std::size_t>(i)], std::max(1.0f, arc.coreWidth * 0.62f), core);
+        drawSharpLightningSegment(renderer, arc.points[static_cast<std::size_t>(i - 1)], arc.points[static_cast<std::size_t>(i)], width * 0.82f, line);
+        drawSharpLightningSegment(renderer, arc.points[static_cast<std::size_t>(i - 1)], arc.points[static_cast<std::size_t>(i)], std::max(1.0f, arc.coreWidth * 0.62f), core);
     }
 }
 
@@ -564,16 +593,13 @@ void drawThunderImpactArc(Renderer& renderer, const MagicFxSystem::ThunderImpact
     }
     const float localAge = arc.age - arc.startDelay;
     const float progress = arc.lifetime > 0.0f ? clamp(localAge / arc.lifetime, 0.0f, 1.0f) : 1.0f;
-    const float fadeIn = clamp(progress / 0.08f, 0.0f, 1.0f);
-    const float fadeOut = std::pow(clamp((1.0f - progress) / 0.92f, 0.0f, 1.0f), arc.style == MagicFxSystem::ThunderImpactArcStyle::Sigil ? 0.88f : 0.54f);
-    const float flicker = 0.78f + 0.22f * std::sin((progress * (arc.style == MagicFxSystem::ThunderImpactArcStyle::Sigil ? 9.0f : 22.0f) + arc.phase) * Pi * 2.0f);
-    float alpha = fadeIn * fadeOut * flicker;
+    float alpha = electricFrameAlpha(localAge, arc.lifetime, arc.phase, arc.strong);
     if (arc.style == MagicFxSystem::ThunderImpactArcStyle::Vertical) {
         alpha *= 0.92f;
     } else if (arc.style == MagicFxSystem::ThunderImpactArcStyle::Sigil) {
         alpha *= 0.78f;
     }
-    if (alpha <= 0.0f) {
+    if (progress >= 1.0f || alpha <= 0.0f) {
         return;
     }
 
@@ -589,7 +615,25 @@ void drawThunderImpactArc(Renderer& renderer, const MagicFxSystem::ThunderImpact
         arc.outerWidth,
         arc.coreWidth,
         alpha,
-        arc.strong);
+        arc.strong,
+        electricFrameIndex(localAge, arc.phase));
+}
+
+void drawParticleGroundShadow(Renderer& renderer, const MagicFxSystem::Particle& particle, float size)
+{
+    if (particle.bouncesRemaining <= 0 && particle.height <= 0.5f) {
+        return;
+    }
+    if (particle.bounceRestitution <= 0.0f) {
+        return;
+    }
+
+    const float heightFade = clamp(1.0f - particle.height / 64.0f, 0.18f, 0.54f);
+    const float radius = std::max(1.4f, size * lerp(0.95f, 0.52f, clamp(particle.height / 54.0f, 0.0f, 1.0f)));
+    renderer.fillSoftCircle(
+        particle.position + Vec2{0.0f, 2.0f},
+        radius,
+        scaleAlpha({20, 28, 34, 82}, heightFade));
 }
 
 void drawParticle(Renderer& renderer, const MagicFxSystem::Particle& particle)
@@ -602,6 +646,7 @@ void drawParticle(Renderer& renderer, const MagicFxSystem::Particle& particle)
     if (size <= 0.0f) {
         return;
     }
+    drawParticleGroundShadow(renderer, particle, size);
     const Vec2 center = particleDrawPosition(particle);
     switch (particle.shape) {
     case MagicFxParticleShape::SoftCircle:
@@ -693,7 +738,7 @@ void MagicFxSystem::playHealPulse(Vec2 position, float radius)
     ring.startColor = {118, 255, 168, 220};
     ring.endColor = {220, 255, 218, 0};
     ring.alphaScale = {0.82f, 1.0f};
-    ring.lifetime = {0.42f, 0.56f};
+    ring.lifetime = {0.62f, 0.82f};
     ring.startSize = {radius * 0.34f, radius * 0.44f};
     ring.endSize = {radius * 1.16f, radius * 1.36f};
     ring.fadeInFraction = 0.02f;
@@ -710,7 +755,7 @@ void MagicFxSystem::playHealPulse(Vec2 position, float radius)
     glow.endColor = {226, 255, 214, 0};
     glow.alphaScale = {0.72f, 1.0f};
     glow.speed = {4.0f, 18.0f};
-    glow.lifetime = {0.34f, 0.66f};
+    glow.lifetime = {0.56f, 1.02f};
     glow.startSize = {radius * 0.14f, radius * 0.30f};
     glow.endSize = {0.0f, radius * 0.08f};
     glow.height = {0.0f, 4.0f};
@@ -734,7 +779,7 @@ void MagicFxSystem::playHealPulse(Vec2 position, float radius)
     motes.endColor = {102, 255, 202, 0};
     motes.alphaScale = {0.76f, 1.0f};
     motes.speed = {16.0f, 54.0f};
-    motes.lifetime = {0.38f, 0.82f};
+    motes.lifetime = {0.62f, 1.18f};
     motes.startSize = {1.8f, 4.2f};
     motes.endSize = {0.0f, 0.8f};
     motes.height = {0.0f, 6.0f};
@@ -758,7 +803,7 @@ void MagicFxSystem::playHealPulse(Vec2 position, float radius)
     glints.endColor = {116, 255, 188, 0};
     glints.alphaScale = {0.78f, 1.0f};
     glints.speed = {24.0f, 76.0f};
-    glints.lifetime = {0.18f, 0.42f};
+    glints.lifetime = {0.34f, 0.72f};
     glints.startSize = {0.7f, 1.8f};
     glints.endSize = {0.0f, 0.3f};
     glints.height = {0.0f, 5.0f};
@@ -991,19 +1036,22 @@ void MagicFxSystem::playFireGroundBurn(Vec2 position, float radius, float durati
     MagicFxEmitterConfig ignition;
     ignition.position = position;
     ignition.direction = {0.0f, -1.0f};
-    ignition.particleShape = MagicFxParticleShape::SparkLine;
+    ignition.particleShape = MagicFxParticleShape::Circle;
     ignition.spawnShape = MagicFxSpawnShape::Ring;
     ignition.startColor = {255, 222, 92, 238};
     ignition.endColor = {255, 58, 18, 0};
-    ignition.speed = {36.0f, 118.0f};
-    ignition.lifetime = {0.12f, 0.26f};
-    ignition.startSize = {0.9f, 2.6f};
-    ignition.endSize = {0.0f, 0.5f};
-    ignition.spawnRadius = radius * 0.48f;
+    ignition.speed = {18.0f, 64.0f};
+    ignition.lifetime = {0.22f, 0.48f};
+    ignition.startSize = {0.45f, 1.20f};
+    ignition.endSize = {0.0f, 0.22f};
+    ignition.height = {0.0f, 2.5f};
+    ignition.verticalVelocity = {8.0f, 24.0f};
+    ignition.gravity = 14.0f;
+    ignition.drag = 1.4f;
+    ignition.spawnRadius = radius * 0.56f;
     ignition.spreadRadians = Pi * 2.0f;
-    ignition.stretch = 3.4f;
-    ignition.fadeOutFraction = 0.82f;
-    ignition.burstCount = 54;
+    ignition.fadeOutFraction = 0.76f;
+    ignition.burstCount = 82;
     ignition.depthSorted = true;
     emitBurst(ignition);
 
@@ -1029,9 +1077,9 @@ void MagicFxSystem::playFireGroundBurn(Vec2 position, float radius, float durati
     flames.startColor = {255, 82, 22, 190};
     flames.endColor = {255, 184, 58, 0};
     flames.speed = {10.0f, 38.0f};
-    flames.lifetime = {0.18f, 0.42f};
-    flames.startSize = {radius * 0.07f, radius * 0.18f};
-    flames.endSize = {0.0f, radius * 0.04f};
+    flames.lifetime = {0.34f, 0.72f};
+    flames.startSize = {radius * 0.045f, radius * 0.115f};
+    flames.endSize = {0.0f, radius * 0.026f};
     flames.height = {0.0f, 3.0f};
     flames.verticalVelocity = {14.0f, 42.0f};
     flames.gravity = 24.0f;
@@ -1040,7 +1088,7 @@ void MagicFxSystem::playFireGroundBurn(Vec2 position, float radius, float durati
     flames.spreadRadians = Pi * 1.05f;
     flames.fadeInFraction = 0.03f;
     flames.fadeOutFraction = 0.74f;
-    flames.emissionRate = 118.0f;
+    flames.emissionRate = 86.0f;
     flames.duration = duration;
     flames.loop = false;
     flames.depthSorted = true;
@@ -1054,9 +1102,9 @@ void MagicFxSystem::playFireGroundBurn(Vec2 position, float radius, float durati
     coreFlames.startColor = {255, 240, 118, 220};
     coreFlames.endColor = {255, 102, 26, 0};
     coreFlames.speed = {8.0f, 28.0f};
-    coreFlames.lifetime = {0.10f, 0.24f};
-    coreFlames.startSize = {radius * 0.04f, radius * 0.10f};
-    coreFlames.endSize = {0.0f, radius * 0.025f};
+    coreFlames.lifetime = {0.20f, 0.46f};
+    coreFlames.startSize = {radius * 0.026f, radius * 0.065f};
+    coreFlames.endSize = {0.0f, radius * 0.018f};
     coreFlames.height = {0.0f, 2.5f};
     coreFlames.verticalVelocity = {12.0f, 36.0f};
     coreFlames.gravity = 20.0f;
@@ -1064,7 +1112,7 @@ void MagicFxSystem::playFireGroundBurn(Vec2 position, float radius, float durati
     coreFlames.spawnRadius = radius * 0.48f;
     coreFlames.spreadRadians = Pi * 0.75f;
     coreFlames.fadeOutFraction = 0.76f;
-    coreFlames.emissionRate = 76.0f;
+    coreFlames.emissionRate = 56.0f;
     coreFlames.duration = duration * 0.92f;
     coreFlames.loop = false;
     coreFlames.depthSorted = true;
@@ -1073,23 +1121,22 @@ void MagicFxSystem::playFireGroundBurn(Vec2 position, float radius, float durati
     MagicFxEmitterConfig embers;
     embers.position = position;
     embers.direction = {0.0f, -1.0f};
-    embers.particleShape = MagicFxParticleShape::SparkLine;
+    embers.particleShape = MagicFxParticleShape::Circle;
     embers.spawnShape = MagicFxSpawnShape::Circle;
     embers.startColor = {255, 226, 92, 220};
     embers.endColor = {255, 54, 16, 0};
-    embers.speed = {26.0f, 92.0f};
-    embers.lifetime = {0.14f, 0.38f};
-    embers.startSize = {0.7f, 1.8f};
-    embers.endSize = {0.0f, 0.4f};
+    embers.speed = {14.0f, 58.0f};
+    embers.lifetime = {0.32f, 0.72f};
+    embers.startSize = {0.45f, 1.15f};
+    embers.endSize = {0.0f, 0.18f};
     embers.height = {0.0f, 4.0f};
-    embers.verticalVelocity = {10.0f, 30.0f};
-    embers.gravity = 14.0f;
-    embers.drag = 1.15f;
+    embers.verticalVelocity = {8.0f, 26.0f};
+    embers.gravity = 12.0f;
+    embers.drag = 1.35f;
     embers.spawnRadius = radius * 0.70f;
     embers.spreadRadians = Pi * 1.55f;
-    embers.stretch = 2.6f;
-    embers.fadeOutFraction = 0.82f;
-    embers.emissionRate = 30.0f;
+    embers.fadeOutFraction = 0.78f;
+    embers.emissionRate = 22.0f;
     embers.duration = duration * 0.86f;
     embers.loop = false;
     embers.depthSorted = true;
@@ -1346,35 +1393,42 @@ void MagicFxSystem::playIceShatter(Vec2 position, float radius)
     largeShards.spawnShape = MagicFxSpawnShape::Circle;
     largeShards.startColor = {176, 236, 255, 235};
     largeShards.endColor = {235, 252, 255, 0};
-    largeShards.speed = {50.0f, 154.0f};
-    largeShards.lifetime = {0.42f, 0.94f};
+    largeShards.speed = {46.0f, 142.0f};
+    largeShards.lifetime = {0.72f, 1.22f};
     largeShards.startSize = {3.2f, 7.2f};
     largeShards.endSize = {0.0f, 1.0f};
     largeShards.rotation = {0.0f, Pi * 2.0f};
     largeShards.angularVelocity = {-8.0f, 8.0f};
-    largeShards.height = {0.0f, 5.0f};
-    largeShards.verticalVelocity = {5.0f, 26.0f};
-    largeShards.gravity = 34.0f;
-    largeShards.drag = 1.25f;
+    largeShards.height = {8.0f, 22.0f};
+    largeShards.verticalVelocity = {118.0f, 260.0f};
+    largeShards.gravity = 620.0f;
+    largeShards.drag = 1.15f;
     largeShards.spawnRadius = radius * 0.22f;
     largeShards.spreadRadians = Pi * 2.0f;
     largeShards.fadeOutFraction = 0.78f;
     largeShards.burstCount = 24;
+    largeShards.bounceRestitution = 0.42f;
+    largeShards.groundFriction = 8.6f;
+    largeShards.maxBounces = 2;
     largeShards.depthSorted = true;
     emitBurst(largeShards);
 
     MagicFxEmitterConfig smallShards = largeShards;
     smallShards.startColor = {232, 252, 255, 220};
     smallShards.endColor = {142, 222, 255, 0};
-    smallShards.speed = {66.0f, 196.0f};
-    smallShards.lifetime = {0.24f, 0.64f};
+    smallShards.speed = {58.0f, 176.0f};
+    smallShards.lifetime = {0.54f, 0.98f};
     smallShards.startSize = {1.0f, 2.8f};
     smallShards.endSize = {0.0f, 0.35f};
-    smallShards.verticalVelocity = {2.0f, 18.0f};
-    smallShards.gravity = 28.0f;
+    smallShards.height = {5.0f, 15.0f};
+    smallShards.verticalVelocity = {86.0f, 210.0f};
+    smallShards.gravity = 560.0f;
     smallShards.drag = 1.0f;
     smallShards.spawnRadius = radius * 0.30f;
     smallShards.burstCount = 58;
+    smallShards.bounceRestitution = 0.36f;
+    smallShards.groundFriction = 10.0f;
+    smallShards.maxBounces = 1;
     emitBurst(smallShards);
 
     MagicFxEmitterConfig flash;
@@ -1592,86 +1646,6 @@ void MagicFxSystem::playThunderStrike(Vec2 origin, Vec2 target, bool strong)
         addThunderImpactArc(arc);
     }
 
-    MagicFxEmitterConfig impactGlow;
-    impactGlow.position = target;
-    impactGlow.particleShape = MagicFxParticleShape::SoftCircle;
-    impactGlow.spawnShape = MagicFxSpawnShape::Point;
-    impactGlow.startColor = strong ? Color{255, 250, 174, 150} : Color{198, 228, 255, 128};
-    impactGlow.endColor = {102, 176, 255, 0};
-    impactGlow.lifetime = strong ? MagicFxRange{0.20f, 0.36f} : MagicFxRange{0.16f, 0.30f};
-    impactGlow.startSize = strong ? MagicFxRange{18.0f, 30.0f} : MagicFxRange{14.0f, 24.0f};
-    impactGlow.endSize = strong ? MagicFxRange{30.0f, 54.0f} : MagicFxRange{24.0f, 42.0f};
-    impactGlow.fadeOutFraction = 0.82f;
-    impactGlow.burstCount = strong ? 3 : 2;
-    impactGlow.depthSorted = true;
-    emitBurst(impactGlow);
-
-    MagicFxEmitterConfig electricGlow;
-    electricGlow.position = target;
-    electricGlow.direction = {1.0f, 0.0f};
-    electricGlow.particleShape = MagicFxParticleShape::SoftCircle;
-    electricGlow.spawnShape = MagicFxSpawnShape::Circle;
-    electricGlow.startColor = strong ? Color{196, 224, 255, 118} : Color{188, 224, 255, 96};
-    electricGlow.endColor = {255, 244, 150, 0};
-    electricGlow.alphaScale = strong ? MagicFxRange{0.42f, 1.0f} : MagicFxRange{0.38f, 0.92f};
-    electricGlow.speed = strong ? MagicFxRange{3.0f, 20.0f} : MagicFxRange{2.0f, 15.0f};
-    electricGlow.lifetime = strong ? MagicFxRange{0.44f, 0.92f} : MagicFxRange{0.34f, 0.74f};
-    electricGlow.startSize = strong ? MagicFxRange{3.0f, 10.0f} : MagicFxRange{2.4f, 8.0f};
-    electricGlow.endSize = {0.0f, 1.8f};
-    electricGlow.height = {0.0f, 4.0f};
-    electricGlow.verticalVelocity = strong ? MagicFxRange{16.0f, 42.0f} : MagicFxRange{12.0f, 34.0f};
-    electricGlow.gravity = 7.0f;
-    electricGlow.spawnRadius = strong ? 34.0f : 26.0f;
-    electricGlow.spreadRadians = Pi * 2.0f;
-    electricGlow.drag = 1.8f;
-    electricGlow.fadeInFraction = 0.16f;
-    electricGlow.fadeOutFraction = 0.84f;
-    electricGlow.burstCount = strong ? 56 : 40;
-    electricGlow.depthSorted = true;
-    emitBurst(electricGlow);
-
-    MagicFxEmitterConfig lingeringGlow;
-    lingeringGlow.position = target;
-    lingeringGlow.direction = {1.0f, 0.0f};
-    lingeringGlow.particleShape = MagicFxParticleShape::SoftCircle;
-    lingeringGlow.spawnShape = MagicFxSpawnShape::Circle;
-    lingeringGlow.startColor = strong ? Color{232, 246, 255, 132} : Color{214, 238, 255, 108};
-    lingeringGlow.endColor = {255, 248, 176, 0};
-    lingeringGlow.alphaScale = strong ? MagicFxRange{0.34f, 1.0f} : MagicFxRange{0.30f, 0.88f};
-    lingeringGlow.speed = strong ? MagicFxRange{1.0f, 12.0f} : MagicFxRange{0.6f, 8.0f};
-    lingeringGlow.lifetime = strong ? MagicFxRange{0.78f, 1.26f} : MagicFxRange{0.60f, 1.02f};
-    lingeringGlow.startSize = strong ? MagicFxRange{1.4f, 4.6f} : MagicFxRange{1.0f, 3.6f};
-    lingeringGlow.endSize = {0.0f, 0.6f};
-    lingeringGlow.height = {0.0f, 6.0f};
-    lingeringGlow.verticalVelocity = strong ? MagicFxRange{18.0f, 48.0f} : MagicFxRange{14.0f, 38.0f};
-    lingeringGlow.gravity = 5.5f;
-    lingeringGlow.drag = 1.4f;
-    lingeringGlow.spawnRadius = strong ? 42.0f : 32.0f;
-    lingeringGlow.spreadRadians = Pi * 2.0f;
-    lingeringGlow.fadeInFraction = 0.24f;
-    lingeringGlow.fadeOutFraction = 0.76f;
-    lingeringGlow.burstCount = strong ? 70 : 48;
-    lingeringGlow.depthSorted = true;
-    emitBurst(lingeringGlow);
-
-    MagicFxEmitterConfig sparks;
-    sparks.position = target;
-    sparks.direction = {1.0f, 0.0f};
-    sparks.particleShape = MagicFxParticleShape::SparkLine;
-    sparks.spawnShape = MagicFxSpawnShape::Circle;
-    sparks.startColor = strong ? Color{255, 252, 168, 238} : Color{222, 242, 255, 222};
-    sparks.endColor = {112, 190, 255, 0};
-    sparks.speed = strong ? MagicFxRange{48.0f, 176.0f} : MagicFxRange{36.0f, 132.0f};
-    sparks.lifetime = strong ? MagicFxRange{0.18f, 0.42f} : MagicFxRange{0.16f, 0.36f};
-    sparks.startSize = strong ? MagicFxRange{1.4f, 3.6f} : MagicFxRange{1.1f, 2.8f};
-    sparks.endSize = {0.0f, 0.35f};
-    sparks.spawnRadius = strong ? 11.0f : 9.0f;
-    sparks.spreadRadians = Pi * 2.0f;
-    sparks.stretch = strong ? 4.2f : 3.6f;
-    sparks.fadeOutFraction = 0.82f;
-    sparks.burstCount = strong ? 52 : 40;
-    sparks.depthSorted = true;
-    emitBurst(sparks);
 }
 
 void MagicFxSystem::playThunderBolt(Vec2 origin, Vec2 target)
@@ -2503,6 +2477,9 @@ void MagicFxSystem::spawnParticles(const MagicFxEmitterConfig& config, int count
         particle.stretch = std::max(0.1f, config.stretch);
         particle.fadeInFraction = clamp(config.fadeInFraction, 0.0f, 1.0f);
         particle.fadeOutFraction = clamp(config.fadeOutFraction, 0.0f, 1.0f);
+        particle.bounceRestitution = clamp(config.bounceRestitution, 0.0f, 1.0f);
+        particle.groundFriction = std::max(0.0f, config.groundFriction);
+        particle.bouncesRemaining = std::max(0, config.maxBounces);
         particle.depthSorted = config.depthSorted;
         particle.foreground = config.foreground;
         addParticle(particle);
@@ -2559,8 +2536,27 @@ void MagicFxSystem::updateParticles(float dt)
         particle.velocity += particle.acceleration * dt;
         particle.position += particle.velocity * dt;
         particle.velocity = particle.velocity * std::max(0.0f, 1.0f - particle.drag * dt);
-        particle.height = std::max(0.0f, particle.height + particle.verticalVelocity * dt);
         particle.verticalVelocity -= particle.gravity * dt;
+        particle.height += particle.verticalVelocity * dt;
+        if (particle.height <= 0.0f) {
+            particle.height = 0.0f;
+            if (particle.verticalVelocity < 0.0f && particle.bouncesRemaining > 0 && particle.bounceRestitution > 0.0f) {
+                particle.verticalVelocity = -particle.verticalVelocity * particle.bounceRestitution;
+                --particle.bouncesRemaining;
+                particle.velocity = particle.velocity * 0.62f;
+                particle.angularVelocity *= -0.58f;
+                if (particle.verticalVelocity < MagicFxBounceStopSpeed) {
+                    particle.verticalVelocity = 0.0f;
+                    particle.bouncesRemaining = 0;
+                }
+            } else {
+                particle.verticalVelocity = 0.0f;
+                particle.bouncesRemaining = 0;
+            }
+            if (particle.groundFriction > 0.0f) {
+                particle.velocity = particle.velocity * std::max(0.0f, 1.0f - particle.groundFriction * dt);
+            }
+        }
         particle.rotation += particle.angularVelocity * dt;
     }
 
@@ -2682,6 +2678,98 @@ void MagicFxSystem::addThunderImpactArc(ThunderImpactArc arc)
         thunderImpactArcs_.erase(thunderImpactArcs_.begin());
     }
     thunderImpactArcs_.push_back(arc);
+}
+
+std::span<const EffectPreviewEntry> magicFxPreviewEntries()
+{
+    static constexpr std::array<EffectPreviewEntry, 18> Entries{{
+        {.id = "fire_aura", .label = "火オーラ", .group = "MagicFx / 常駐", .source = EffectPreviewSource::MagicFx, .target = EffectPreviewTarget::Player, .playback = EffectPreviewPlayback::PersistentEmitter, .radius = 34.0f},
+        {.id = "fireball_loop", .label = "火球ループ", .group = "MagicFx / 常駐", .source = EffectPreviewSource::MagicFx, .target = EffectPreviewTarget::EnemySlime, .playback = EffectPreviewPlayback::PersistentEmitter, .direction = {1.0f, 0.0f}, .radius = 28.0f},
+        {.id = "fire_ground_burn", .label = "火の地面燃焼", .group = "MagicFx / 単発", .source = EffectPreviewSource::MagicFx, .target = EffectPreviewTarget::WallTile, .radius = 38.0f},
+        {.id = "ice_aura", .label = "氷オーラ", .group = "MagicFx / 常駐", .source = EffectPreviewSource::MagicFx, .target = EffectPreviewTarget::Player, .playback = EffectPreviewPlayback::PersistentEmitter, .radius = 34.0f},
+        {.id = "ice_shard_loop", .label = "氷片ループ", .group = "MagicFx / 常駐", .source = EffectPreviewSource::MagicFx, .target = EffectPreviewTarget::EnemySlime, .playback = EffectPreviewPlayback::PersistentEmitter, .direction = {1.0f, 0.0f}, .radius = 28.0f},
+        {.id = "ice_shatter", .label = "氷砕け", .group = "MagicFx / 単発", .source = EffectPreviewSource::MagicFx, .target = EffectPreviewTarget::EnemySlime, .radius = 34.0f},
+        {.id = "thunder_aura", .label = "雷オーラ", .group = "MagicFx / 常駐", .source = EffectPreviewSource::MagicFx, .target = EffectPreviewTarget::Player, .playback = EffectPreviewPlayback::PersistentEmitter, .radius = 36.0f},
+        {.id = "thunder_strike", .label = "落雷", .group = "MagicFx / 単発", .source = EffectPreviewSource::MagicFx, .target = EffectPreviewTarget::EnemySlime, .radius = 40.0f},
+        {.id = "thunder_bolt", .label = "雷ボルト", .group = "MagicFx / 単発", .source = EffectPreviewSource::MagicFx, .target = EffectPreviewTarget::EnemySlime, .radius = 40.0f},
+        {.id = "thunder_spark_burst", .label = "雷スパーク", .group = "MagicFx / 単発", .source = EffectPreviewSource::MagicFx, .target = EffectPreviewTarget::EnemySlime, .radius = 36.0f},
+        {.id = "heal_pulse", .label = "回復パルス", .group = "MagicFx / 単発", .source = EffectPreviewSource::MagicFx, .target = EffectPreviewTarget::Player, .radius = 32.0f},
+        {.id = "wind_aura", .label = "風オーラ", .group = "MagicFx / 常駐", .source = EffectPreviewSource::MagicFx, .target = EffectPreviewTarget::Player, .playback = EffectPreviewPlayback::PersistentEmitter, .radius = 38.0f},
+        {.id = "wind_wave_loop", .label = "風波ループ", .group = "MagicFx / 常駐", .source = EffectPreviewSource::MagicFx, .target = EffectPreviewTarget::EnemySlime, .playback = EffectPreviewPlayback::PersistentEmitter, .direction = {1.0f, 0.0f}, .radius = 34.0f},
+        {.id = "wind_impact", .label = "風ヒット", .group = "MagicFx / 単発", .source = EffectPreviewSource::MagicFx, .target = EffectPreviewTarget::EnemySlime, .direction = {1.0f, 0.0f}, .radius = 36.0f},
+        {.id = "earth_aura", .label = "土オーラ", .group = "MagicFx / 常駐", .source = EffectPreviewSource::MagicFx, .target = EffectPreviewTarget::Player, .playback = EffectPreviewPlayback::PersistentEmitter, .radius = 36.0f},
+        {.id = "dirt_clod_loop", .label = "土塊ループ", .group = "MagicFx / 常駐", .source = EffectPreviewSource::MagicFx, .target = EffectPreviewTarget::EnemySlime, .playback = EffectPreviewPlayback::PersistentEmitter, .direction = {1.0f, 0.0f}, .radius = 32.0f},
+        {.id = "earth_spike_rise", .label = "土の棘", .group = "MagicFx / 単発", .source = EffectPreviewSource::MagicFx, .target = EffectPreviewTarget::WallTile, .radius = 38.0f},
+        {.id = "earth_debris_burst", .label = "土破片バースト", .group = "MagicFx / 単発", .source = EffectPreviewSource::MagicFx, .target = EffectPreviewTarget::WallTile, .radius = 38.0f},
+    }};
+    return {Entries.data(), Entries.size()};
+}
+
+MagicFxEmitterHandle startMagicFxPreview(
+    MagicFxSystem& magicFx,
+    const EffectPreviewEntry& entry,
+    Vec2 position,
+    Vec2 direction)
+{
+    const Vec2 dir = lengthSquared(direction) > 0.0001f ? normalize(direction) : Vec2{1.0f, 0.0f};
+    const float radius = std::max(1.0f, entry.radius);
+    if (entry.id == "fire_aura") {
+        return magicFx.startFireAura(position, radius);
+    }
+    if (entry.id == "fireball_loop") {
+        return magicFx.startFireballLoop(position, dir, radius);
+    }
+    if (entry.id == "ice_aura") {
+        return magicFx.startIceAura(position, radius);
+    }
+    if (entry.id == "ice_shard_loop") {
+        return magicFx.startIceShardLoop(position, dir, radius);
+    }
+    if (entry.id == "thunder_aura") {
+        return magicFx.startThunderAura(position, radius);
+    }
+    if (entry.id == "wind_aura") {
+        return magicFx.startWindAura(position, radius);
+    }
+    if (entry.id == "wind_wave_loop") {
+        return magicFx.startWindWaveLoop(position, dir, radius);
+    }
+    if (entry.id == "earth_aura") {
+        return magicFx.startEarthAura(position, radius);
+    }
+    if (entry.id == "dirt_clod_loop") {
+        return magicFx.startDirtClodLoop(position, dir, radius);
+    }
+    return {};
+}
+
+void playMagicFxPreview(
+    MagicFxSystem& magicFx,
+    const EffectPreviewEntry& entry,
+    Vec2 position,
+    Vec2 direction)
+{
+    const Vec2 dir = lengthSquared(direction) > 0.0001f ? normalize(direction) : Vec2{1.0f, 0.0f};
+    const float radius = std::max(1.0f, entry.radius);
+    if (entry.id == "fire_ground_burn") {
+        magicFx.playFireGroundBurn(position, radius, 0.9f);
+    } else if (entry.id == "ice_shatter") {
+        magicFx.playIceShatter(position, radius);
+    } else if (entry.id == "thunder_strike") {
+        magicFx.playThunderStrike(position + Vec2{0.0f, -150.0f}, position, true);
+    } else if (entry.id == "thunder_bolt") {
+        magicFx.playThunderBolt(position - dir * 130.0f + Vec2{0.0f, -24.0f}, position + dir * 24.0f);
+    } else if (entry.id == "thunder_spark_burst") {
+        magicFx.playThunderSparkBurst(position, radius);
+    } else if (entry.id == "heal_pulse") {
+        magicFx.playHealPulse(position, radius);
+    } else if (entry.id == "wind_impact") {
+        magicFx.playWindImpact(position, dir, radius);
+    } else if (entry.id == "earth_spike_rise") {
+        magicFx.playEarthSpikeRise(position, radius);
+    } else if (entry.id == "earth_debris_burst") {
+        magicFx.playEarthDebrisBurst(position, radius);
+    }
 }
 
 }

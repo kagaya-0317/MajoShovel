@@ -78,6 +78,7 @@ struct Segment {
 };
 
 const Input* currentInput = nullptr;
+InputHelpDeviceMode currentDeviceMode = InputHelpDeviceMode::Auto;
 
 Color withAlpha(Color color, unsigned char alpha)
 {
@@ -140,6 +141,14 @@ bool startsWithAt(std::string_view text, std::size_t offset, std::string_view pa
 
 InputDeviceKind activeDevice(const Input* input)
 {
+    switch (currentDeviceMode) {
+    case InputHelpDeviceMode::KeyboardMouse:
+        return InputDeviceKind::KeyboardMouse;
+    case InputHelpDeviceMode::Gamepad:
+        return InputDeviceKind::Gamepad;
+    case InputHelpDeviceMode::Auto:
+        break;
+    }
     return input == nullptr ? InputDeviceKind::KeyboardMouse : input->lastActiveDevice();
 }
 
@@ -394,7 +403,7 @@ std::vector<Glyph> semanticGlyphs(SemanticGlyph semantic, const Input* input)
     case SemanticGlyph::Back:
         return gamepad
             ? glyphsForActions(input, {InputAction::Cancel, InputAction::Pause})
-            : std::vector<Glyph>{keyGlyph("Esc"), mouseGlyph(MousePart::Right)};
+            : std::vector<Glyph>{keyGlyph("Esc")};
     case SemanticGlyph::Use:
         return glyphsForActions(input, {InputAction::UseSelectedItem});
     case SemanticGlyph::RingAdd:
@@ -566,6 +575,41 @@ bool matchPlainGlyph(std::string_view text, std::size_t offset, const Input* inp
     return false;
 }
 
+bool isAsciiHelpSpace(char c)
+{
+    return c == ' ' || c == '\t';
+}
+
+void removeCommonMouseConfirmPhrase(std::string& text, std::string_view phrase)
+{
+    for (std::size_t pos = text.find(phrase);
+        pos != std::string::npos;
+        pos = text.find(phrase, pos)) {
+        std::size_t eraseStart = pos;
+        while (eraseStart > 0 && isAsciiHelpSpace(text[eraseStart - 1])) {
+            --eraseStart;
+        }
+
+        std::size_t eraseEnd = pos + phrase.size();
+        while (eraseEnd < text.size() && isAsciiHelpSpace(text[eraseEnd])) {
+            ++eraseEnd;
+        }
+
+        const bool joinsClauses = eraseStart < pos && eraseEnd > pos + phrase.size();
+        text.replace(eraseStart, eraseEnd - eraseStart, joinsClauses ? "  " : "");
+        pos = eraseStart + (joinsClauses ? 2U : 0U);
+    }
+}
+
+std::string normalizedInputHelpText(std::string_view text)
+{
+    std::string normalized{text};
+    removeCommonMouseConfirmPhrase(normalized, "左クリック 決定");
+    removeCommonMouseConfirmPhrase(normalized, "クリック 決定");
+    removeCommonMouseConfirmPhrase(normalized, "Click 決定");
+    return normalized;
+}
+
 std::vector<Segment> parseSegments(std::string_view text, const Input* input)
 {
     std::vector<Segment> segments;
@@ -720,8 +764,16 @@ void fillSoftRoundedRect(Renderer& renderer, Vec2 pos, Vec2 size, float radius, 
 void drawCenteredText(Renderer& renderer, Vec2 pos, Vec2 size, std::string_view label, Color color, int scale)
 {
     const Vec2 labelSize = renderer.measureText(label, scale);
+    const float scalePx = static_cast<float>(std::max(1, scale));
+    const Vec2 opticalOffset{
+        scalePx,
+        scalePx * 2.25f,
+    };
     renderer.drawText(
-        {pos.x + (size.x - labelSize.x) * 0.5f, pos.y + (size.y - labelSize.y) * 0.5f - 1.0f},
+        {
+            pos.x + (size.x - labelSize.x) * 0.5f + opticalOffset.x,
+            pos.y + (size.y - labelSize.y) * 0.5f + opticalOffset.y,
+        },
         label,
         color,
         scale);
@@ -893,10 +945,21 @@ const Input* inputHelpContext()
     return currentInput;
 }
 
+void setInputHelpDeviceMode(InputHelpDeviceMode mode)
+{
+    currentDeviceMode = mode;
+}
+
+InputHelpDeviceMode inputHelpDeviceMode()
+{
+    return currentDeviceMode;
+}
+
 Vec2 measureInputHelpText(Renderer& renderer, std::string_view text, const InputHelpStyle& style, const Input* input)
 {
     const Input* resolvedInput = input != nullptr ? input : currentInput;
-    const std::vector<Segment> segments = parseSegments(text, resolvedInput);
+    const std::string normalized = normalizedInputHelpText(text);
+    const std::vector<Segment> segments = parseSegments(normalized, resolvedInput);
     const auto ranges = lineRanges(segments);
     Vec2 result{};
     for (const auto& range : ranges) {
@@ -915,6 +978,7 @@ std::string fittedInputHelpText(Renderer& renderer, std::string text, float maxW
     if (maxWidth <= 0.0f) {
         return "";
     }
+    text = normalizedInputHelpText(text);
     if (measureInputHelpText(renderer, text, style, input).x <= maxWidth) {
         return text;
     }
@@ -942,7 +1006,8 @@ std::string fittedInputHelpText(Renderer& renderer, std::string text, float maxW
 void drawInputHelpText(Renderer& renderer, Vec2 pos, std::string_view text, const InputHelpStyle& style, const Input* input)
 {
     const Input* resolvedInput = input != nullptr ? input : currentInput;
-    const std::vector<Segment> segments = parseSegments(text, resolvedInput);
+    const std::string normalized = normalizedInputHelpText(text);
+    const std::vector<Segment> segments = parseSegments(normalized, resolvedInput);
     const auto ranges = lineRanges(segments);
     float y = pos.y;
     for (const auto& range : ranges) {

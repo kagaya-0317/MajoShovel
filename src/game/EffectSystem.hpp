@@ -21,7 +21,11 @@ enum class EffectType {
 enum class ParticleVisual {
     Circle,
     RockShard,
-    Sparkle
+    Sparkle,
+    ImpactSpark,
+    ImpactBurst,
+    PoisonBubble,
+    WaterDrop
 };
 
 enum class EffectLayer {
@@ -41,7 +45,6 @@ enum class ParticleEffectId {
     DirtBreak,
     RockBreak,
     OreBreak,
-    RingTrail,
     EnemyHit,
     EnemyPoisonHit,
     EnemySlowHit,

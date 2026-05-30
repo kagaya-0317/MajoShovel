@@ -11,6 +11,7 @@
 #include "game/EntityStatusVisuals.hpp"
 #include "game/EffectSystem.hpp"
 #include "game/WorldDropSystem.hpp"
+#include "game/WetGroundSystem.hpp"
 #include "data/StageWeight.hpp"
 #include <algorithm>
 #include <array>
@@ -2603,9 +2604,6 @@ void drawEnemyVisual(Renderer& renderer, const Enemy& enemy, bool captureHighlig
     }
     if (enemy.death.active) {
         return;
-    }
-    if (enemy.dungeonEventSleeping) {
-        renderer.drawText(drawPosition + Vec2{visualRadius * 0.35f, -visualRadius - 18.0f}, "Z", {210, 235, 255, 235}, 2);
     }
     drawBossWeakPoint(renderer, enemy);
     renderEntityStatusOverlays(renderer, enemy.status, drawPosition, uiVisualRadius * 2.0f, enemy.behaviorTimer);
@@ -7215,6 +7213,23 @@ void EnemySystem::emitStatusParticles(EffectSystem& effects) const
             continue;
         }
         emitEntityStatusAuras(enemy.status, enemy.position, effects);
+    }
+}
+
+void EnemySystem::appendWetGroundEmitters(std::vector<WetGroundEmitter>& emitters) const
+{
+    for (const Enemy& enemy : enemies_.items()) {
+        if (!enemyVisible(enemy) || enemy.death.active || enemy.spawnTimer > 0.0f ||
+            !enemy.status.hasState("status_wet")) {
+            continue;
+        }
+
+        emitters.push_back(WetGroundEmitter{
+            .sourceKey = "enemy:" + std::to_string(enemy.id),
+            .position = enemy.position,
+            .radius = std::clamp(effectiveEnemyRadius(enemy) * 1.35f, 12.0f, 38.0f),
+            .strength = 1.0f,
+        });
     }
 }
 

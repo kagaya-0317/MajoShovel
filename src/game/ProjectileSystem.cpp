@@ -11,6 +11,7 @@
 #include <string>
 #include <string_view>
 #include <unordered_set>
+#include <utility>
 
 namespace majo {
 
@@ -18,6 +19,7 @@ namespace {
 
 struct ProjectilePrototype {
     std::string_view id;
+    std::string_view displayName;
     float speed = 180.0f;
     float radius = 4.0f;
     float lifetime = 2.0f;
@@ -27,19 +29,19 @@ struct ProjectilePrototype {
 };
 
 constexpr std::array<ProjectilePrototype, 13> Prototypes{{
-    {"stone_bullet", 190.0f, 4.5f, 2.4f, 1, "blunt", {"small", "stone"}},
-    {"big_stone_bullet", 150.0f, 7.5f, 2.6f, 3, "blunt", {"stone"}},
-    {"weapon_throw", 220.0f, 4.8f, 2.0f, 2, "blunt", {"metal", "small"}},
-    {"poison_spit", 155.0f, 5.0f, 2.8f, 1, "water", {"small", "poison"}},
-    {"paralyze_shot", 170.0f, 4.4f, 2.4f, 0, "none", {"small", "paralyze"}},
-    {"mud_blob", 150.0f, 5.8f, 2.6f, 0, "earth", {"mud", "poison"}},
-    {"cactus_needle", 260.0f, 2.5f, 1.8f, 1, "pierce", {"small", "needle"}},
-    {"water_shot", 210.0f, 4.0f, 2.2f, 1, "water", {"small", "water"}},
-    {"fire_breath", 145.0f, 7.0f, 1.2f, 2, "fire", {"fire", "short_range"}},
-    {"web_thread", 135.0f, 3.5f, 2.4f, 0, "none", {"small", "web"}},
-    {"wind_wave", 235.0f, 6.0f, 1.6f, 1, "wind", {"wind"}},
-    {"explosion_small", 80.0f, 10.0f, 0.55f, 2, "fire", {"explosion"}},
-    {"junk_chunk", 175.0f, 7.0f, 2.5f, 2, "blunt", {"metal", "heavy"}},
+    {"stone_bullet", "石つぶて", 190.0f, 4.5f, 2.4f, 1, "blunt", {"small", "stone"}},
+    {"big_stone_bullet", "大岩弾", 150.0f, 7.5f, 2.6f, 3, "blunt", {"stone"}},
+    {"weapon_throw", "投げ武器", 220.0f, 4.8f, 2.0f, 2, "blunt", {"metal", "small"}},
+    {"poison_spit", "毒液", 155.0f, 5.0f, 2.8f, 1, "water", {"small", "poison"}},
+    {"paralyze_shot", "しびれ弾", 170.0f, 4.4f, 2.4f, 0, "none", {"small", "paralyze"}},
+    {"mud_blob", "泥だんご", 150.0f, 5.8f, 2.6f, 0, "earth", {"mud", "poison"}},
+    {"cactus_needle", "サボテン針", 260.0f, 2.5f, 1.8f, 1, "pierce", {"small", "needle"}},
+    {"water_shot", "水弾", 210.0f, 4.0f, 2.2f, 1, "water", {"small", "water"}},
+    {"fire_breath", "火炎ブレス", 145.0f, 7.0f, 1.2f, 2, "fire", {"fire", "short_range"}},
+    {"web_thread", "クモ糸", 135.0f, 3.5f, 2.4f, 0, "none", {"small", "web"}},
+    {"wind_wave", "風波", 235.0f, 6.0f, 1.6f, 1, "wind", {"wind"}},
+    {"explosion_small", "小爆発", 80.0f, 10.0f, 0.55f, 2, "fire", {"explosion"}},
+    {"junk_chunk", "ガラクタ弾", 175.0f, 7.0f, 2.5f, 2, "blunt", {"metal", "heavy"}},
 }};
 
 constexpr float CapturedMagnetProjectileRadius = 170.0f;
@@ -65,6 +67,27 @@ bool hasPrototype(std::string_view id)
     return std::any_of(Prototypes.begin(), Prototypes.end(), [id](const ProjectilePrototype& prototype) {
         return prototype.id == id;
     });
+}
+
+std::vector<ProjectileDefinition> makeProjectileDefinitions()
+{
+    std::vector<ProjectileDefinition> definitions;
+    definitions.reserve(Prototypes.size());
+    for (const ProjectilePrototype& prototype : Prototypes) {
+        ProjectileDefinition definition;
+        definition.id = std::string(prototype.id);
+        definition.displayName = std::string(prototype.displayName);
+        definition.speed = prototype.speed;
+        definition.radius = prototype.radius;
+        definition.lifetime = prototype.lifetime;
+        definition.damage = prototype.damage;
+        definition.damageType = std::string(prototype.damageType);
+        for (std::string_view tag : prototype.tags) {
+            definition.tags.emplace_back(tag);
+        }
+        definitions.push_back(std::move(definition));
+    }
+    return definitions;
 }
 
 Color colorFor(std::string_view damageType)
@@ -471,6 +494,12 @@ void pushPlayer(Player& player, TileMap& map, Vec2 direction, float distance)
 
 }
 
+std::span<const ProjectileDefinition> projectileDefinitions()
+{
+    static const std::vector<ProjectileDefinition> Definitions = makeProjectileDefinitions();
+    return Definitions;
+}
+
 bool ProjectileSystem::spawn(std::string_view projectileId, Vec2 position, Vec2 direction, ProjectileOwnerType ownerType)
 {
     static const std::vector<EffectSpec> NoEffects;
@@ -521,6 +550,25 @@ bool ProjectileSystem::spawn(
     }
     projectile->effects = effects;
     return true;
+}
+
+void ProjectileSystem::updatePreview(float dt)
+{
+    if (dt <= 0.0f) {
+        return;
+    }
+
+    for (Projectile& projectile : projectiles_.items()) {
+        if (!projectile.active) {
+            continue;
+        }
+        projectile.lifetime -= dt;
+        if (projectile.lifetime <= 0.0f) {
+            projectile.active = false;
+            continue;
+        }
+        projectile.position += projectile.velocity * dt;
+    }
 }
 
 void ProjectileSystem::update(
@@ -865,6 +913,21 @@ void ProjectileSystem::appendRenderEntries(
 {
     for (const Projectile& projectile : projectiles_.items()) {
         if (!projectile.active || !map.isLit(projectile.position, playerLight, extraLights)) {
+            continue;
+        }
+        entries.push_back(DepthRenderEntry{
+            projectile.position.y,
+            [&renderer, &projectile]() {
+                drawProjectile(renderer, projectile);
+            },
+        });
+    }
+}
+
+void ProjectileSystem::appendPreviewRenderEntries(std::vector<DepthRenderEntry>& entries, Renderer& renderer) const
+{
+    for (const Projectile& projectile : projectiles_.items()) {
+        if (!projectile.active) {
             continue;
         }
         entries.push_back(DepthRenderEntry{

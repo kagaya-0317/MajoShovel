@@ -62,6 +62,7 @@ class TileMap {
 public:
     void updateAround(Vec2 worldCenter, float dt, const RuntimeBalance& config, const DungeonLayout& dungeonLayout);
     void render(Renderer& renderer, const Camera& camera, Vec2 lightCenter, const std::vector<LightSource>& extraLights);
+    void renderTilePreview(Renderer& renderer, Vec2 pos, int stageId, TileType type) const;
     void renderDarknessOverlay(
         Renderer& renderer,
         const Camera& camera,

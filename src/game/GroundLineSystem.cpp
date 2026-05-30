@@ -277,6 +277,31 @@ void GroundLineSystem::consumeSegments(std::span<const int> segmentIds)
         segments_.end());
 }
 
+int GroundLineSystem::eraseNear(Vec2 center, float radius)
+{
+    if (!finite(center) || radius <= 0.0f) {
+        return 0;
+    }
+
+    const std::size_t beforeSize = segments_.size();
+    segments_.erase(
+        std::remove_if(segments_.begin(), segments_.end(), [center, radius](const Segment& segment) {
+            const float effectiveRadius = radius + segment.width * 0.5f;
+            return distanceToSegmentSquared(center, segment.a, segment.b) <= effectiveRadius * effectiveRadius;
+        }),
+        segments_.end());
+
+    const float radiusSquared = radius * radius;
+    for (StrokeState& state : strokeStates_) {
+        if (state.hasLastPosition && distanceSquared(state.lastPosition, center) <= radiusSquared) {
+            state.hasLastPosition = false;
+            ++state.strokeId;
+        }
+    }
+
+    return static_cast<int>(beforeSize - segments_.size());
+}
+
 void GroundLineSystem::clearSource(std::string_view sourceKey)
 {
     if (sourceKey.empty()) {

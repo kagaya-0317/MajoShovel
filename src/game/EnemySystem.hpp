@@ -29,6 +29,7 @@ class EffectSystem;
 class MagicSystem;
 class WorldDropSystem;
 class EncyclopediaSystem;
+struct WetGroundEmitter;
 
 enum class EnemyEventType {
     Hit,
@@ -209,6 +210,7 @@ public:
         int highlightedEnemyId = 0,
         const EncyclopediaSystem* encyclopedia = nullptr) const;
     void emitStatusParticles(EffectSystem& effects) const;
+    void appendWetGroundEmitters(std::vector<WetGroundEmitter>& emitters) const;
     int activeCount() const { return enemies_.activeCount(); }
     bool bossActive() const;
     void appendMinimapMarkers(std::vector<EnemyMinimapMarker>& markers) const;

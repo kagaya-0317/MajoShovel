@@ -349,7 +349,7 @@ void Renderer::setColor(Color color)
 
 Vec2 Renderer::transform(Vec2 p) const
 {
-    p = camera_ ? camera_->worldToScreen(p) : p;
+    p = camera_ ? camera_->worldToScreen(p) + worldScreenOffset_ : p;
     for (const ScreenTransform& transform : screenTransforms_) {
         p = transform.origin + (p - transform.origin) * transform.scale;
     }
@@ -445,8 +445,49 @@ void Renderer::clear(Color color)
     SDL_RenderClear(renderer_);
 }
 
+void Renderer::setScreenBrightness(float brightness)
+{
+    screenBrightness_ = std::clamp(brightness, 0.5f, 1.5f);
+}
+
+void Renderer::applyScreenBrightnessOverlay()
+{
+    const float brightness = std::clamp(screenBrightness_, 0.5f, 1.5f);
+    if (std::abs(brightness - 1.0f) <= 0.001f) {
+        return;
+    }
+
+    int width = logicalPresentationWidth_;
+    int height = logicalPresentationHeight_;
+    if (logicalPresentationMode_ == LogicalPresentationMode::Disabled || width <= 0 || height <= 0) {
+        if (!SDL_GetRenderOutputSize(renderer_, &width, &height) || width <= 0 || height <= 0) {
+            return;
+        }
+    }
+
+    const Camera* previousCamera = camera_;
+    const Vec2 previousWorldOffset = worldScreenOffset_;
+    camera_ = nullptr;
+    worldScreenOffset_ = {};
+    SDL_SetRenderClipRect(renderer_, nullptr);
+
+    if (brightness < 1.0f) {
+        const auto alpha = static_cast<unsigned char>(std::clamp(std::lround((1.0f - brightness) * 255.0f), 0L, 255L));
+        fillRect({0.0f, 0.0f}, {static_cast<float>(width), static_cast<float>(height)}, {0, 0, 0, alpha});
+    } else {
+        const auto alpha = static_cast<unsigned char>(std::clamp(std::lround((brightness - 1.0f) * 255.0f), 0L, 255L));
+        fillRect({0.0f, 0.0f}, {static_cast<float>(width), static_cast<float>(height)}, {255, 255, 255, alpha});
+    }
+
+    camera_ = previousCamera;
+    worldScreenOffset_ = previousWorldOffset;
+    applyClipRect();
+}
+
 void Renderer::present()
 {
+    applyScreenBrightnessOverlay();
+
     if (pendingScreenshotPath_) {
         lastScreenshotResult_ = saveCurrentFramePng(*pendingScreenshotPath_);
         pendingScreenshotPath_.reset();
@@ -515,6 +556,7 @@ std::optional<Renderer::ScreenshotResult> Renderer::consumeScreenshotResult()
 void Renderer::setScreenSpace()
 {
     camera_ = nullptr;
+    worldScreenOffset_ = {};
 }
 
 void Renderer::fillRect(Vec2 pos, Vec2 size, Color color)

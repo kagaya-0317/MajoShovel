@@ -33,6 +33,7 @@ public:
         float searchRadius,
         std::string_view sourceKey) const;
     void consumeSegments(std::span<const int> segmentIds);
+    int eraseNear(Vec2 center, float radius);
     void clearSource(std::string_view sourceKey);
     void update(float dt);
     void appendRenderEntries(std::vector<DepthRenderEntry>& entries, Renderer& renderer) const;

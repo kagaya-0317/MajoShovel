@@ -36,7 +36,7 @@ DebugConsoleLayout makeDefaultDebugConsoleLayout()
                     "progress",
                     "ゲーム進行",
                     {
-                        {DebugControlKind::Dropdown, "launch_mode", "起動モード", "game launch-mode", 0, 0, {"タイトル前から", "拠点から", "ダンジョンから", "敵テスト", "エンディング後紙芝居", "エンディング後拠点"}, {"pre-title", "base", "dungeon", "enemy-test", "ending-kamishibai", "post-ending-base"}},
+                        {DebugControlKind::Dropdown, "launch_mode", "起動モード", "game launch-mode", 0, 0, {"タイトル前から", "拠点から", "ダンジョンから", "敵テスト", "弾テスト", "エンディング後紙芝居", "エンディング後拠点"}, {"pre-title", "base", "dungeon", "enemy-test", "projectile-test", "ending-kamishibai", "post-ending-base"}},
                         {DebugControlKind::Dropdown, "stage_unlock", "ステージ解放状態", "game stage-unlock", 0, 0, {"初期状態", "ステージ2解放", "ステージ3解放"}, {"initial", "stage2", "stage3"}},
                         {DebugControlKind::Button, "reset_data", "データ初期化", "game reset-data"},
                         {DebugControlKind::Button, "return_base", "拠点へ", "game return-base"},
@@ -122,6 +122,8 @@ DebugConsoleLayout makeDefaultDebugConsoleLayout()
                     {
                         {DebugControlKind::Button, "story_event_test", "イベントテスト", "game story-test events"},
                         {DebugControlKind::Button, "story_tutorial_test", "チュートリアルテスト", "game story-test tutorials"},
+                        {DebugControlKind::Button, "effect_test", "エフェクトテスト", "game effect-test"},
+                        {DebugControlKind::Button, "projectile_test", "弾テスト", "game projectile-test"},
                         {DebugControlKind::Button, "dungeon_focus_test", "カメラフォーカス", "game dungeon-focus test"},
                         {DebugControlKind::Button, "autosim_start", "オートシミュ開始", "autosim start"},
                         {DebugControlKind::Button, "autosim_stop", "オートシミュ停止", "autosim stop"},

@@ -17,8 +17,16 @@ struct InputHelpStyle {
     bool outlineEnabled = false;
 };
 
+enum class InputHelpDeviceMode {
+    Auto,
+    KeyboardMouse,
+    Gamepad,
+};
+
 void setInputHelpContext(const Input* input);
 [[nodiscard]] const Input* inputHelpContext();
+void setInputHelpDeviceMode(InputHelpDeviceMode mode);
+[[nodiscard]] InputHelpDeviceMode inputHelpDeviceMode();
 
 [[nodiscard]] Vec2 measureInputHelpText(
     Renderer& renderer,

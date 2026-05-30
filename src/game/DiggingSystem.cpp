@@ -185,14 +185,16 @@ void DiggingSystem::update(
             });
         }
         if ((item.hasCapturedBehavior("reward_drop") || item.hasCapturedBehavior("steal_or_dig")) &&
-            capturedRewardAllowed(item, totalTime) &&
-            rollCapturedReward(static_cast<float>(std::clamp(
-                item.hasCapturedBehavior("steal_or_dig")
-                    ? item.capturedBehaviorParamDouble("steal_or_dig", "chance", CapturedRewardChanceWall)
-                    : item.capturedBehaviorParamDouble("reward_drop", "chance", CapturedRewardChanceWall),
-                0.0,
-                1.0)))) {
-            recordCapturedReward(item, totalTime, digPosition, rewardDropRequests_);
+            capturedRewardAllowed(item, totalTime)) {
+            const double rewardChance = item.hasCapturedBehavior("steal_or_dig")
+                ? item.capturedBehaviorParamDouble(
+                      "steal_or_dig",
+                      "digChance",
+                      item.capturedBehaviorParamDouble("steal_or_dig", "chance", CapturedRewardChanceWall))
+                : item.capturedBehaviorParamDouble("reward_drop", "chance", CapturedRewardChanceWall);
+            if (rollCapturedReward(static_cast<float>(std::clamp(rewardChance, 0.0, 1.0)))) {
+                recordCapturedReward(item, totalTime, digPosition, rewardDropRequests_);
+            }
         }
         if (item.hasCapturedBehavior("charge_explode") && item.capturedExplodeSleepTimer <= 0.0f) {
             const int requiredHits = std::max(1, item.capturedBehaviorParamInt("charge_explode", "count", CapturedExplosionChargeLimit));

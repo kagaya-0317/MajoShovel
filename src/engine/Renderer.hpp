@@ -29,6 +29,7 @@ public:
 
     void clear(Color color);
     void present();
+    void setScreenBrightness(float brightness);
     bool setLogicalPresentation(
         int width,
         int height,
@@ -37,9 +38,9 @@ public:
     bool convertEventToRenderCoordinates(SDL_Event& event) const;
     void requestScreenshot(std::filesystem::path path);
     std::optional<ScreenshotResult> consumeScreenshotResult();
-    void setCamera(const Camera* camera) { camera_ = camera; }
+    void setCamera(const Camera* camera) { camera_ = camera; worldScreenOffset_ = {}; }
     void setScreenSpace();
-    void setWorldSpace(const Camera* camera) { camera_ = camera; }
+    void setWorldSpace(const Camera* camera, Vec2 screenOffset = {}) { camera_ = camera; worldScreenOffset_ = screenOffset; }
     void pushScreenTransform(Vec2 origin, float scale, float alpha);
     void popScreenTransform();
     void pushClipRect(Vec2 pos, Vec2 size);
@@ -197,6 +198,7 @@ private:
     Color transformColor(Color color) const;
     float screenScale() const;
     void applyClipRect();
+    void applyScreenBrightnessOverlay();
     void setColor(Color color);
     void drawGlyph(char c, Vec2 pos, Color color, int scale);
     bool drawNativeText(Vec2 pos, std::string_view text, Color color, int scale, TextStyle style);
@@ -242,6 +244,8 @@ private:
 
     SDL_Renderer* renderer_ = nullptr;
     const Camera* camera_ = nullptr;
+    Vec2 worldScreenOffset_{};
+    float screenBrightness_ = 1.0f;
     struct ScreenTransform {
         Vec2 origin{};
         float scale = 1.0f;

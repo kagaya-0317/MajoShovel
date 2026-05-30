@@ -69,7 +69,12 @@ private:
 
 class KamishibaiRenderer {
 public:
-    void render(Renderer& renderer, const KamishibaiPlayer& player, int screenWidth, int screenHeight) const;
+    void render(
+        Renderer& renderer,
+        const KamishibaiPlayer& player,
+        int screenWidth,
+        int screenHeight,
+        float shakeScale = 1.0f) const;
     void renderTitleScreen(Renderer& renderer, std::string_view imagePath, int screenWidth, int screenHeight) const;
 
 private:

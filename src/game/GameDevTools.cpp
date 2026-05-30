@@ -1,9 +1,13 @@
 ﻿#include "game/GameInternal.hpp"
 
 #include "engine/Audio.hpp"
+#include "game/EffectPreviewCatalog.hpp"
+#include "game/EnemyImageRenderer.hpp"
+#include "game/EntityStatusVisuals.hpp"
 #include "game/WorldIconRenderer.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <utility>
 #include <vector>
@@ -29,6 +33,19 @@ constexpr float ObjectImageScaleSearchGap = 10.0f;
 constexpr float DebugStoryTestDetailWidth = 360.0f;
 constexpr float DebugStoryTestRowHeight = 56.0f;
 constexpr float DebugStoryTestRowGap = 5.0f;
+constexpr float DebugPreviewTestPanelMargin = 22.0f;
+constexpr float DebugPreviewTestListWidth = 360.0f;
+constexpr float DebugPreviewTestPanelGap = 16.0f;
+constexpr float DebugPreviewTestFooterHeight = 62.0f;
+constexpr float DebugPreviewTestRowHeight = 48.0f;
+constexpr float DebugPreviewTestRowGap = 5.0f;
+constexpr float DebugPreviewTestHeaderHeight = 42.0f;
+constexpr float DebugPreviewTestTabRowGap = 4.0f;
+constexpr float DebugPreviewBackgroundLabelWidth = 52.0f;
+constexpr float DebugPreviewBackgroundSwatchSize = 28.0f;
+constexpr float DebugPreviewBackgroundSwatchGap = 7.0f;
+constexpr int DebugPreviewTestLoopFrames = 20;
+constexpr std::string_view DebugPreviewTestSlimeEnemyId = "slime";
 constexpr std::string_view DebugFinalStoryStageId = "stage_03_star_core";
 constexpr std::string_view DebugEndingSeenFlag = "ending_seen";
 constexpr std::string_view DebugEndingMainFlag = "story_ending_main";
@@ -395,6 +412,29 @@ struct DebugStoryTestLayout {
     float rowPitch = DebugStoryTestRowHeight + DebugStoryTestRowGap;
 };
 
+struct DebugPreviewTestLayout {
+    UiRect bounds{};
+    UiRect listPanel{};
+    UiRect tabs{};
+    UiRect list{};
+    UiRect preview{};
+    UiRect footer{};
+    UiRect closeButton{};
+    int tabRows = 0;
+};
+
+struct DebugPreviewListRow {
+    std::string label;
+    std::string group;
+};
+
+struct DebugPreviewBackgroundPreset {
+    std::string_view label;
+    Color fill;
+    Color guideMajor;
+    Color guideMinor;
+};
+
 struct AudioCueEditLayout {
     UiRect panel{};
     UiRect cueList{};
@@ -407,6 +447,14 @@ struct AudioCueManifestRow {
     AudioCueEditEntry entry;
     bool valid = false;
 };
+
+constexpr std::array<DebugPreviewBackgroundPreset, 5> DebugPreviewBackgroundPresets{{
+    {"暗", {10, 12, 18, 255}, {255, 255, 255, 26}, {255, 255, 255, 18}},
+    {"灰", {46, 48, 56, 255}, {255, 255, 255, 34}, {255, 255, 255, 22}},
+    {"明", {218, 216, 204, 255}, {38, 42, 52, 42}, {38, 42, 52, 28}},
+    {"洞", {36, 29, 24, 255}, {236, 204, 150, 32}, {236, 204, 150, 20}},
+    {"青", {16, 30, 46, 255}, {132, 204, 255, 38}, {132, 204, 255, 24}},
+}};
 
 UiScrollAreaStyle debugListScrollStyle(float wheelStep = 48.0f)
 {
@@ -445,6 +493,18 @@ UiScrollableListStyle debugStoryTestListStyle()
     return style;
 }
 
+UiScrollableListStyle debugPreviewTestListStyle()
+{
+    UiScrollableListStyle style;
+    style.rowHeight = DebugPreviewTestRowHeight;
+    style.rowGap = DebugPreviewTestRowGap;
+    style.leadingPadding = 8.0f;
+    style.trailingPadding = 8.0f;
+    style.rowInsetX = 8.0f;
+    style.scroll = debugListScrollStyle(DebugPreviewTestRowHeight + DebugPreviewTestRowGap);
+    return style;
+}
+
 UiRect audioCueEditListViewport(UiRect listPanel)
 {
     constexpr float HeaderHeight = 36.0f;
@@ -456,6 +516,559 @@ UiRect audioCueEditListViewport(UiRect listPanel)
         listPanel.size.x,
         std::max(1.0f, listPanel.size.y - HeaderHeight - BottomPadding),
     }};
+}
+
+int debugPreviewTestTabColumnCount(int tabCount)
+{
+    if (tabCount <= 0) {
+        return 0;
+    }
+    return std::min(3, std::max(1, tabCount));
+}
+
+int debugPreviewTestTabRowCount(int tabCount)
+{
+    const int columns = debugPreviewTestTabColumnCount(tabCount);
+    if (columns <= 0) {
+        return 0;
+    }
+    return (tabCount + columns - 1) / columns;
+}
+
+float debugPreviewTestTabsHeight(int tabCount)
+{
+    const int rows = debugPreviewTestTabRowCount(tabCount);
+    if (rows <= 0) {
+        return 0.0f;
+    }
+    return static_cast<float>(rows) * ui::ButtonHeight +
+        static_cast<float>(std::max(0, rows - 1)) * DebugPreviewTestTabRowGap +
+        DebugPreviewTestTabRowGap;
+}
+
+DebugPreviewTestLayout makeDebugPreviewTestLayout(int screenWidth, int screenHeight, int tabCount = 0)
+{
+    DebugPreviewTestLayout layout;
+    layout.bounds = {{0.0f, 0.0f}, {static_cast<float>(std::max(1, screenWidth)), static_cast<float>(std::max(1, screenHeight))}};
+    const float footerTop = std::max(DebugPreviewTestPanelMargin, layout.bounds.size.y - DebugPreviewTestFooterHeight - DebugPreviewTestPanelMargin);
+    layout.footer = {{
+        DebugPreviewTestPanelMargin,
+        footerTop,
+    }, {
+        std::max(1.0f, layout.bounds.size.x - DebugPreviewTestPanelMargin * 2.0f),
+        DebugPreviewTestFooterHeight,
+    }};
+    const float contentHeight = std::max(120.0f, footerTop - DebugPreviewTestPanelMargin - DebugPreviewTestPanelGap);
+    layout.listPanel = {{
+        DebugPreviewTestPanelMargin,
+        DebugPreviewTestPanelMargin,
+    }, {
+        std::min(DebugPreviewTestListWidth, std::max(220.0f, layout.bounds.size.x * 0.38f)),
+        contentHeight,
+    }};
+    layout.preview = {{
+        layout.listPanel.pos.x + layout.listPanel.size.x + DebugPreviewTestPanelGap,
+        DebugPreviewTestPanelMargin,
+    }, {
+        std::max(160.0f, layout.bounds.size.x - layout.listPanel.size.x - DebugPreviewTestPanelMargin * 2.0f - DebugPreviewTestPanelGap),
+        contentHeight,
+    }};
+    layout.tabRows = debugPreviewTestTabRowCount(tabCount);
+    const float tabsHeight = debugPreviewTestTabsHeight(tabCount);
+    layout.tabs = {{
+        layout.listPanel.pos.x + 6.0f,
+        layout.listPanel.pos.y + DebugPreviewTestHeaderHeight,
+    }, {
+        std::max(1.0f, layout.listPanel.size.x - 12.0f),
+        tabsHeight,
+    }};
+    layout.list = {{
+        layout.listPanel.pos.x,
+        layout.listPanel.pos.y + DebugPreviewTestHeaderHeight + tabsHeight,
+    }, {
+        layout.listPanel.size.x,
+        std::max(1.0f, layout.listPanel.size.y - DebugPreviewTestHeaderHeight - tabsHeight - 8.0f),
+    }};
+    layout.closeButton = {{
+        layout.footer.pos.x + layout.footer.size.x - 142.0f,
+        layout.footer.pos.y + 13.0f,
+    }, {
+        124.0f,
+        ui::ButtonHeight,
+    }};
+    return layout;
+}
+
+int normalizedDebugPreviewBackgroundIndex(int index)
+{
+    return std::clamp(index, 0, static_cast<int>(DebugPreviewBackgroundPresets.size()) - 1);
+}
+
+float debugPreviewBackgroundControlsWidth()
+{
+    return DebugPreviewBackgroundLabelWidth +
+        static_cast<float>(DebugPreviewBackgroundPresets.size()) * DebugPreviewBackgroundSwatchSize +
+        static_cast<float>(DebugPreviewBackgroundPresets.size() - 1) * DebugPreviewBackgroundSwatchGap;
+}
+
+UiRect debugPreviewBackgroundLabelRect(const DebugPreviewTestLayout& layout)
+{
+    const float controlsWidth = debugPreviewBackgroundControlsWidth();
+    return {{
+        layout.closeButton.pos.x - 20.0f - controlsWidth,
+        layout.footer.pos.y + 20.0f,
+    }, {
+        DebugPreviewBackgroundLabelWidth,
+        20.0f,
+    }};
+}
+
+UiRect debugPreviewBackgroundSwatchRect(const DebugPreviewTestLayout& layout, int index)
+{
+    const UiRect label = debugPreviewBackgroundLabelRect(layout);
+    const float x = label.pos.x + label.size.x +
+        static_cast<float>(index) * (DebugPreviewBackgroundSwatchSize + DebugPreviewBackgroundSwatchGap);
+    return {{
+        x,
+        layout.footer.pos.y + 17.0f,
+    }, {
+        DebugPreviewBackgroundSwatchSize,
+        DebugPreviewBackgroundSwatchSize,
+    }};
+}
+
+Vec2 effectTestTargetPosition(const DebugPreviewTestLayout& layout, EffectPreviewTarget target)
+{
+    const Vec2 center{
+        layout.preview.pos.x + layout.preview.size.x * 0.52f,
+        layout.preview.pos.y + layout.preview.size.y * 0.56f,
+    };
+    if (target == EffectPreviewTarget::Player) {
+        return center + Vec2{0.0f, 42.0f};
+    }
+    return center;
+}
+
+std::string effectTestTargetLabel(EffectPreviewTarget target)
+{
+    switch (target) {
+    case EffectPreviewTarget::Player:
+        return "プレイヤー";
+    case EffectPreviewTarget::EnemySlime:
+        return "敵: スライム";
+    case EffectPreviewTarget::WallTile:
+        return "壁: タイル1";
+    }
+    return "対象";
+}
+
+std::string effectTestPlaybackLabel(EffectPreviewPlayback playback)
+{
+    switch (playback) {
+    case EffectPreviewPlayback::BurstEvery20Frames:
+        return "20フレーム間隔";
+    case EffectPreviewPlayback::PersistentEmitter:
+        return "常駐再生";
+    case EffectPreviewPlayback::StatusLoop:
+        return "状態異常ループ";
+    }
+    return "再生";
+}
+
+Vec2 projectileTestSourcePosition(const DebugPreviewTestLayout& layout)
+{
+    return {
+        layout.preview.pos.x + std::min(160.0f, layout.preview.size.x * 0.24f),
+        layout.preview.pos.y + layout.preview.size.y * 0.58f,
+    };
+}
+
+Vec2 projectileTestFireOrigin(const DebugPreviewTestLayout& layout)
+{
+    return projectileTestSourcePosition(layout) + Vec2{32.0f, -4.0f};
+}
+
+std::string projectileTagsText(const ProjectileDefinition& projectile)
+{
+    std::string text;
+    for (const std::string& tag : projectile.tags) {
+        if (!text.empty()) {
+            text += ",";
+        }
+        text += tag;
+    }
+    return text.empty() ? "-" : text;
+}
+
+std::string_view projectileDisplayName(const ProjectileDefinition& projectile)
+{
+    return projectile.displayName.empty()
+        ? std::string_view(projectile.id.data(), projectile.id.size())
+        : std::string_view(projectile.displayName.data(), projectile.displayName.size());
+}
+
+std::string_view projectileDamageTypeLabel(std::string_view damageType)
+{
+    if (damageType == "blunt") {
+        return "打撃";
+    }
+    if (damageType == "pierce") {
+        return "刺突";
+    }
+    if (damageType == "fire") {
+        return "火";
+    }
+    if (damageType == "water") {
+        return "水";
+    }
+    if (damageType == "earth") {
+        return "土";
+    }
+    if (damageType == "wind") {
+        return "風";
+    }
+    if (damageType == "magic") {
+        return "魔法";
+    }
+    if (damageType == "none") {
+        return "なし";
+    }
+    return damageType;
+}
+
+std::string projectileTestRowGroup(const ProjectileDefinition& projectile)
+{
+    return "属性 " + std::string(projectileDamageTypeLabel(projectile.damageType)) + " / ダメージ " + std::to_string(projectile.damage);
+}
+
+std::string projectileTestDetail(const ProjectileDefinition& projectile)
+{
+    return "ProjectileSystem / " + projectile.id + " / 20フレーム間隔 / speed " + std::to_string(static_cast<int>(projectile.speed)) +
+        " / radius " + std::to_string(static_cast<int>(std::round(projectile.radius))) +
+        " / life " + std::to_string(static_cast<int>(std::round(projectile.lifetime * 100.0f))) + "cs" +
+        " / tags " + projectileTagsText(projectile);
+}
+
+const EffectPreviewEntry* effectTestEntryAt(const std::vector<const EffectPreviewEntry*>& entries, int index)
+{
+    if (index < 0 || index >= static_cast<int>(entries.size())) {
+        return nullptr;
+    }
+    return entries[static_cast<std::size_t>(index)];
+}
+
+const ProjectileDefinition* projectileTestEntryAt(const std::vector<const ProjectileDefinition*>& entries, int index)
+{
+    if (index < 0 || index >= static_cast<int>(entries.size())) {
+        return nullptr;
+    }
+    return entries[static_cast<std::size_t>(index)];
+}
+
+std::string effectTestTabLabelForGroup(std::string_view group)
+{
+    if (group == "EffectSystem / 粒子プリセット") {
+        return "粒子";
+    }
+    if (group == "EffectSystem / 高水準API") {
+        return "API";
+    }
+    if (group == "MagicFx / 常駐") {
+        return "魔法常駐";
+    }
+    if (group == "MagicFx / 単発") {
+        return "魔法単発";
+    }
+    if (group == "状態異常") {
+        return "状態異常";
+    }
+
+    const std::size_t slash = group.find('/');
+    if (slash != std::string_view::npos) {
+        std::string label(group.substr(slash + 1));
+        while (!label.empty() && label.front() == ' ') {
+            label.erase(label.begin());
+        }
+        return label.empty() ? std::string(group) : label;
+    }
+    return std::string(group);
+}
+
+bool effectTestEntryMatchesTab(const EffectPreviewEntry& entry, std::string_view tabKey)
+{
+    return tabKey.empty() || entry.group == tabKey;
+}
+
+std::vector<UiRect> debugPreviewTestTabRects(const DebugPreviewTestLayout& layout, int tabCount)
+{
+    std::vector<UiRect> rects;
+    if (tabCount <= 0 || layout.tabRows <= 0) {
+        return rects;
+    }
+
+    const int columns = debugPreviewTestTabColumnCount(tabCount);
+    const float columnWidth = layout.tabs.size.x / static_cast<float>(std::max(1, columns));
+    rects.reserve(static_cast<std::size_t>(tabCount));
+    for (int i = 0; i < tabCount; ++i) {
+        const int row = i / columns;
+        const int column = i % columns;
+        rects.push_back(UiRect{{
+            layout.tabs.pos.x + static_cast<float>(column) * columnWidth,
+            layout.tabs.pos.y + static_cast<float>(row) * (ui::ButtonHeight + DebugPreviewTestTabRowGap),
+        }, {
+            columnWidth,
+            ui::ButtonHeight,
+        }});
+    }
+    return rects;
+}
+
+std::vector<UiTabItem> debugPreviewTestTabItems(const std::vector<std::string>& labels)
+{
+    std::vector<UiTabItem> items;
+    items.reserve(labels.size());
+    for (const std::string& label : labels) {
+        items.push_back(UiTabItem{std::string_view(label.data(), label.size()), true});
+    }
+    return items;
+}
+
+UiTabsStyle debugPreviewTestTabStyle()
+{
+    UiTabsStyle style;
+    style.visualGap = 4.0f;
+    style.imageOutset = 8.0f;
+    style.activeScale = 1.0f;
+    return style;
+}
+
+int updateDebugPreviewTestTabs(
+    const Input& input,
+    UiContext& ui,
+    const DebugPreviewTestLayout& layout,
+    const std::vector<std::string>& labels,
+    UiTabsState& state,
+    int selectedIndex)
+{
+    if (labels.empty()) {
+        state.focusedIndex = -1;
+        return -1;
+    }
+
+    const std::vector<UiTabItem> items = debugPreviewTestTabItems(labels);
+    const std::vector<UiRect> rects = debugPreviewTestTabRects(layout, static_cast<int>(items.size()));
+    UiTabsInput tabsInput{};
+    tabsInput.focusDelta =
+        (input.pressed(InputAction::MoveRight) ? 1 : 0) -
+        (input.pressed(InputAction::MoveLeft) ? 1 : 0);
+    tabsInput.commit = tabsInput.focusDelta != 0;
+    return updateUiTabs(
+        state,
+        ui,
+        tabsInput,
+        selectedIndex,
+        items.data(),
+        static_cast<int>(items.size()),
+        rects.data(),
+        debugPreviewTestTabStyle());
+}
+
+void renderDebugPreviewTestTabs(
+    Renderer& renderer,
+    const DebugPreviewTestLayout& layout,
+    const std::vector<std::string>& labels,
+    const UiTabsState& state,
+    int selectedIndex)
+{
+    if (labels.empty()) {
+        return;
+    }
+
+    const std::vector<UiTabItem> items = debugPreviewTestTabItems(labels);
+    const std::vector<UiRect> rects = debugPreviewTestTabRects(layout, static_cast<int>(items.size()));
+    drawUiTabs(
+        renderer,
+        state,
+        selectedIndex,
+        items.data(),
+        static_cast<int>(items.size()),
+        rects.data(),
+        debugPreviewTestTabStyle());
+}
+
+bool updateDebugPreviewBackgroundControls(UiContext& ui, const DebugPreviewTestLayout& layout, int& backgroundIndex)
+{
+    bool changed = false;
+    for (int i = 0; i < static_cast<int>(DebugPreviewBackgroundPresets.size()); ++i) {
+        if (!ui.pressed(debugPreviewBackgroundSwatchRect(layout, i))) {
+            continue;
+        }
+        if (backgroundIndex != i) {
+            backgroundIndex = i;
+            ui.emitSound(UiSoundEvent::TabSwitch);
+            changed = true;
+        }
+        break;
+    }
+    backgroundIndex = normalizedDebugPreviewBackgroundIndex(backgroundIndex);
+    return changed;
+}
+
+void drawDebugPreviewBackgroundControls(Renderer& renderer, const DebugPreviewTestLayout& layout, int backgroundIndex)
+{
+    const int selectedIndex = normalizedDebugPreviewBackgroundIndex(backgroundIndex);
+    const UiRect labelRect = debugPreviewBackgroundLabelRect(layout);
+    renderer.drawText(labelRect.pos, "背景", ui::TextMuted, 2);
+
+    for (int i = 0; i < static_cast<int>(DebugPreviewBackgroundPresets.size()); ++i) {
+        const UiRect rect = debugPreviewBackgroundSwatchRect(layout, i);
+        const bool selected = i == selectedIndex;
+        const DebugPreviewBackgroundPreset& preset = DebugPreviewBackgroundPresets[static_cast<std::size_t>(i)];
+        renderer.fillRect(rect.pos, rect.size, preset.fill);
+        renderer.drawRect(rect.pos, rect.size, selected ? Color{255, 230, 150, 255} : Color{142, 154, 182, 210});
+        if (selected) {
+            renderer.drawRect(rect.pos - Vec2{2.0f, 2.0f}, rect.size + Vec2{4.0f, 4.0f}, {255, 246, 190, 230});
+        }
+        const Vec2 textSize = renderer.measureText(preset.label, 1);
+        renderer.drawText(
+            rect.pos + Vec2{
+                std::max(0.0f, (rect.size.x - textSize.x) * 0.5f),
+                rect.size.y + 4.0f,
+            },
+            preset.label,
+            selected ? Color{255, 246, 190, 255} : ui::TextMuted,
+            1);
+    }
+}
+
+UiScrollAreaLayout updateDebugPreviewTestList(
+    const Input& input,
+    UiContext& ui,
+    const DebugPreviewTestLayout& layout,
+    int itemCount,
+    int& selectedIndex,
+    float& scrollOffset,
+    UiScrollAreaState& scrollState,
+    bool& selectionChanged)
+{
+    const int previousSelection = selectedIndex;
+    if (itemCount > 0) {
+        selectedIndex = std::clamp(selectedIndex, 0, itemCount - 1);
+    } else {
+        selectedIndex = 0;
+    }
+
+    const UiScrollableListStyle listStyle = debugPreviewTestListStyle();
+    UiScrollAreaLayout listLayout = updateUiScrollableList(
+        ui,
+        input,
+        layout.list,
+        itemCount,
+        scrollOffset,
+        listStyle,
+        &scrollState);
+
+    if (input.pressed(InputAction::MoveUp) && itemCount > 0) {
+        selectedIndex = (selectedIndex + itemCount - 1) % itemCount;
+    }
+    if (input.pressed(InputAction::MoveDown) && itemCount > 0) {
+        selectedIndex = (selectedIndex + 1) % itemCount;
+    }
+
+    for (int i = 0; i < itemCount; ++i) {
+        const UiRect row = uiScrollableListItemRect(listLayout, i, listStyle);
+        if (!uiScrollAreaRectVisible(listLayout, row)) {
+            continue;
+        }
+        if (ui.pressed(row)) {
+            selectedIndex = i;
+            break;
+        }
+    }
+
+    selectionChanged = selectedIndex != previousSelection;
+    if (selectionChanged) {
+        keepUiScrollableListItemVisible(layout.list, selectedIndex, itemCount, scrollOffset, listStyle);
+        listLayout = makeUiScrollableListLayout(layout.list, itemCount, scrollOffset, listStyle);
+    }
+    return listLayout;
+}
+
+template <typename RowGetter>
+void renderDebugPreviewTestList(
+    Renderer& renderer,
+    const DebugPreviewTestLayout& layout,
+    std::string_view title,
+    int itemCount,
+    int selectedIndex,
+    float scrollOffset,
+    RowGetter rowGetter)
+{
+    renderer.drawText(layout.listPanel.pos + Vec2{14.0f, 12.0f}, title, {255, 230, 150, 255}, 2);
+
+    const UiScrollableListStyle listStyle = debugPreviewTestListStyle();
+    const UiScrollAreaLayout listLayout = makeUiScrollableListLayout(
+        layout.list,
+        itemCount,
+        scrollOffset,
+        listStyle);
+
+    renderer.pushClipRect(listLayout.viewport.pos, listLayout.viewport.size);
+    for (int i = 0; i < itemCount; ++i) {
+        const UiRect row = uiScrollableListItemRect(listLayout, i, listStyle);
+        if (!uiScrollAreaRectVisible(listLayout, row)) {
+            continue;
+        }
+        const DebugPreviewListRow rowText = rowGetter(i);
+        const bool selected = i == selectedIndex;
+        renderer.fillRect(row.pos, row.size, selected ? Color{58, 72, 104, 238} : Color{18, 26, 44, 210});
+        renderer.drawRect(row.pos, row.size, selected ? Color{255, 230, 150, 230} : Color{92, 104, 132, 180});
+        renderer.drawText(row.pos + Vec2{10.0f, 7.0f}, fittedSingleLineText(renderer, rowText.label, row.size.x - 20.0f, 2), ui::Text, 2);
+        renderer.drawText(row.pos + Vec2{10.0f, 29.0f}, fittedSingleLineText(renderer, rowText.group, row.size.x - 20.0f, 1), ui::TextMuted, 1);
+    }
+    renderer.popClipRect();
+    drawUiScrollAreaFrame(renderer, listLayout, listStyle.scroll);
+}
+
+void drawDebugPreviewBackground(Renderer& renderer, const DebugPreviewTestLayout& layout)
+{
+    renderer.fillRect(layout.bounds.pos, layout.bounds.size, {5, 7, 12, 255});
+    drawUiSubPanel(renderer, layout.listPanel);
+    drawUiSubPanel(renderer, layout.preview);
+    drawUiSubPanel(renderer, layout.footer);
+}
+
+void drawDebugPreviewGuide(Renderer& renderer, const DebugPreviewTestLayout& layout, int backgroundIndex)
+{
+    const DebugPreviewBackgroundPreset& preset =
+        DebugPreviewBackgroundPresets[static_cast<std::size_t>(normalizedDebugPreviewBackgroundIndex(backgroundIndex))];
+    renderer.fillRect(layout.preview.pos, layout.preview.size, preset.fill);
+    const Vec2 previewCenter{
+        layout.preview.pos.x + layout.preview.size.x * 0.5f,
+        layout.preview.pos.y + layout.preview.size.y * 0.5f,
+    };
+    renderer.drawLine({layout.preview.pos.x + 20.0f, previewCenter.y}, {layout.preview.pos.x + layout.preview.size.x - 20.0f, previewCenter.y}, preset.guideMajor);
+    renderer.drawLine({previewCenter.x, layout.preview.pos.y + 20.0f}, {previewCenter.x, layout.preview.pos.y + layout.preview.size.y - 20.0f}, preset.guideMinor);
+}
+
+void drawDebugPreviewFooter(
+    Renderer& renderer,
+    const DebugPreviewTestLayout& layout,
+    std::string_view label,
+    const std::string& detail,
+    std::string_view status,
+    int backgroundIndex)
+{
+    if (!label.empty()) {
+        const float textMaxWidth = std::max(120.0f, debugPreviewBackgroundLabelRect(layout).pos.x - layout.footer.pos.x - 36.0f);
+        renderer.drawText(layout.footer.pos + Vec2{18.0f, 13.0f}, fittedSingleLineText(renderer, std::string(label), textMaxWidth, 2), {255, 230, 150, 255}, 2);
+        renderer.drawText(layout.footer.pos + Vec2{18.0f, 38.0f}, fittedSingleLineText(renderer, detail, textMaxWidth, 1), ui::TextMuted, 1);
+    }
+    if (!status.empty()) {
+        renderer.drawText(layout.preview.pos + Vec2{16.0f, 14.0f}, fittedSingleLineText(renderer, std::string(status), layout.preview.size.x - 32.0f, 2), ui::TextMuted, 2);
+    }
+    drawDebugPreviewBackgroundControls(renderer, layout, backgroundIndex);
+    drawUiRectButton(renderer, layout.closeButton, "終了", false, uiCancelButtonStyle());
 }
 
 DebugItemPickerLayout makeDebugItemPickerLayout(int screenWidth, int screenHeight)
@@ -2931,6 +3544,7 @@ void Game::updateDebugStoryTest(const Input& input, UiContext& ui)
     if (uiCancelRequested(debugStoryTestCancelState_, input, ui, layout.panel) ||
         ui.pressed(debugStoryTestCloseButtonRect(layout.panel))) {
         closeDebugStoryTest();
+        closeEffectTestMode();
         return;
     }
 
@@ -3079,8 +3693,592 @@ void Game::renderDebugStoryTest(Renderer& renderer) const
     }
 }
 
+void Game::rebuildEffectTestEntries()
+{
+    const EffectPreviewEntry* selectedEntry = effectTestEntryAt(effectTestVisibleEntries_, effectTestSelectedIndex_);
+    const std::string preferredEntryId = selectedEntry != nullptr ? std::string(selectedEntry->id) : std::string{};
+    const std::string previousTabKey =
+        effectTestTabIndex_ >= 0 && effectTestTabIndex_ < static_cast<int>(effectTestTabKeys_.size())
+        ? effectTestTabKeys_[static_cast<std::size_t>(effectTestTabIndex_)]
+        : std::string{};
+
+    effectTestEntries_.clear();
+    effectTestVisibleEntries_.clear();
+    effectTestTabKeys_.clear();
+    effectTestTabLabels_.clear();
+    const auto appendEntries = [&](std::span<const EffectPreviewEntry> entries) {
+        for (const EffectPreviewEntry& entry : entries) {
+            effectTestEntries_.push_back(&entry);
+        }
+    };
+    appendEntries(effectSystemPreviewEntries());
+    appendEntries(magicFxPreviewEntries());
+    appendEntries(entityStatusPreviewEntries());
+
+    effectTestTabKeys_.push_back({});
+    effectTestTabLabels_.push_back("すべて");
+    for (const EffectPreviewEntry* entry : effectTestEntries_) {
+        if (entry == nullptr) {
+            continue;
+        }
+        const std::string key(entry->group);
+        if (std::find(effectTestTabKeys_.begin(), effectTestTabKeys_.end(), key) != effectTestTabKeys_.end()) {
+            continue;
+        }
+        effectTestTabKeys_.push_back(key);
+        effectTestTabLabels_.push_back(effectTestTabLabelForGroup(entry->group));
+    }
+
+    effectTestTabIndex_ = 0;
+    if (!previousTabKey.empty()) {
+        const auto tabIt = std::find(effectTestTabKeys_.begin(), effectTestTabKeys_.end(), previousTabKey);
+        if (tabIt != effectTestTabKeys_.end()) {
+            effectTestTabIndex_ = static_cast<int>(std::distance(effectTestTabKeys_.begin(), tabIt));
+        }
+    }
+    effectTestTabsState_.focusedIndex = effectTestTabIndex_;
+    rebuildEffectTestVisibleEntries(preferredEntryId);
+}
+
+void Game::rebuildEffectTestVisibleEntries(std::string_view preferredEntryId)
+{
+    effectTestVisibleEntries_.clear();
+    std::string_view tabKey;
+    if (effectTestTabIndex_ >= 0 && effectTestTabIndex_ < static_cast<int>(effectTestTabKeys_.size())) {
+        const std::string& key = effectTestTabKeys_[static_cast<std::size_t>(effectTestTabIndex_)];
+        tabKey = std::string_view(key.data(), key.size());
+    }
+
+    for (const EffectPreviewEntry* entry : effectTestEntries_) {
+        if (entry != nullptr && effectTestEntryMatchesTab(*entry, tabKey)) {
+            effectTestVisibleEntries_.push_back(entry);
+        }
+    }
+
+    if (effectTestEntries_.empty()) {
+        effectTestSelectedIndex_ = 0;
+        effectTestStatus_ = "エフェクト項目がありません";
+    } else if (effectTestVisibleEntries_.empty()) {
+        effectTestSelectedIndex_ = 0;
+        effectTestStatus_ = "このタブにはエフェクト項目がありません";
+    } else {
+        int preferredIndex = -1;
+        if (!preferredEntryId.empty()) {
+            for (int i = 0; i < static_cast<int>(effectTestVisibleEntries_.size()); ++i) {
+                const EffectPreviewEntry* entry = effectTestVisibleEntries_[static_cast<std::size_t>(i)];
+                if (entry != nullptr && entry->id == preferredEntryId) {
+                    preferredIndex = i;
+                    break;
+                }
+            }
+        }
+        effectTestSelectedIndex_ = preferredIndex >= 0
+            ? preferredIndex
+            : std::clamp(effectTestSelectedIndex_, 0, static_cast<int>(effectTestVisibleEntries_.size()) - 1);
+        effectTestStatus_ = "選択中のエフェクトを自動再生します";
+    }
+}
+
+void Game::resetEffectTestPlayback()
+{
+    if (effectTestEmitter_.valid()) {
+        magicFx_.stopEmitter(effectTestEmitter_);
+    }
+    effectTestEmitter_ = {};
+    effectTestFrame_ = 0;
+    effects_ = EffectSystem{};
+    magicFx_ = MagicFxSystem{};
+}
+
+void Game::enterEffectTestMode()
+{
+    if (projectileTestActive_) {
+        closeProjectileTestMode();
+    }
+    if (enemyTestActive_) {
+        exitEnemyTestToBase();
+    }
+
+    inventory_.setOpen(false);
+    inventory_.cancelGrab();
+    cancelRingGrab();
+    closeDebugItemPicker();
+    closeDebugStoryTest();
+    if (levels_.isChoosing()) {
+        levels_ = LevelSystem{};
+    }
+
+    mode_ = ScreenMode::Playing;
+    pausePage_ = PauseMenuPage::Main;
+    pauseReturnMode_ = ScreenMode::Playing;
+    inventoryReturnToPause_ = false;
+    effectTestActive_ = true;
+    effectTestScrollState_ = {};
+    rebuildEffectTestEntries();
+    resetEffectTestPlayback();
+}
+
+void Game::closeEffectTestMode()
+{
+    if (!effectTestActive_) {
+        return;
+    }
+    effectTestActive_ = false;
+    effectTestStatus_.clear();
+    effectTestScrollState_ = {};
+    effectTestScrollOffset_ = 0.0f;
+    effectTestTabsState_ = {};
+    effectTestTabIndex_ = 0;
+    effectTestVisibleEntries_.clear();
+    resetEffectTestPlayback();
+}
+
+void Game::exitEffectTestToBase()
+{
+    closeEffectTestMode();
+    clearTemporaryPlayerState(true);
+    enterBase();
+}
+
+void Game::triggerEffectTestPlayback(const EffectPreviewEntry& entry)
+{
+    const DebugPreviewTestLayout layout = makeDebugPreviewTestLayout(camera_.width(), camera_.height());
+    const Vec2 targetPosition = effectTestTargetPosition(layout, entry.target);
+    const Vec2 direction = lengthSquared(entry.direction) > 0.0001f ? normalize(entry.direction) : Vec2{1.0f, 0.0f};
+    constexpr Color StageOneWallColor{105, 68, 37, 255};
+
+    if (entry.source == EffectPreviewSource::EffectSystem) {
+        playEffectSystemPreview(effects_, entry, targetPosition, direction, TileType::Dirt, StageOneWallColor);
+    } else if (entry.source == EffectPreviewSource::MagicFx) {
+        if (entry.playback == EffectPreviewPlayback::PersistentEmitter) {
+            effectTestEmitter_ = startMagicFxPreview(magicFx_, entry, targetPosition, direction);
+        } else {
+            playMagicFxPreview(magicFx_, entry, targetPosition, direction);
+        }
+    } else if (entry.source == EffectPreviewSource::StatusVisual && !entry.argument.empty()) {
+        EntityStatus status;
+        (void)status.applyState(std::string(entry.argument), 1.0, -1.0, "effect_test");
+        emitEntityStatusAuras(status, targetPosition, effects_);
+    }
+}
+
+void Game::updateEffectTestScreen(const Input& input, UiContext& ui, float dt)
+{
+    if (!effectTestActive_) {
+        return;
+    }
+    if (effectTestEntries_.empty()) {
+        rebuildEffectTestEntries();
+    }
+
+    const DebugPreviewTestLayout layout = makeDebugPreviewTestLayout(
+        camera_.width(),
+        camera_.height(),
+        static_cast<int>(effectTestTabLabels_.size()));
+
+    const EffectPreviewEntry* previousEntry = effectTestEntryAt(effectTestVisibleEntries_, effectTestSelectedIndex_);
+    const std::string previousEntryId = previousEntry != nullptr ? std::string(previousEntry->id) : std::string{};
+    const int selectedTab = updateDebugPreviewTestTabs(
+        input,
+        ui,
+        layout,
+        effectTestTabLabels_,
+        effectTestTabsState_,
+        effectTestTabIndex_);
+    bool tabChanged = false;
+    if (selectedTab >= 0 && selectedTab != effectTestTabIndex_) {
+        effectTestTabIndex_ = std::clamp(selectedTab, 0, std::max(0, static_cast<int>(effectTestTabLabels_.size()) - 1));
+        effectTestScrollState_ = {};
+        effectTestScrollOffset_ = 0.0f;
+        rebuildEffectTestVisibleEntries(previousEntryId);
+        resetEffectTestPlayback();
+        tabChanged = true;
+    }
+
+    const int itemCount = static_cast<int>(effectTestVisibleEntries_.size());
+    bool selectionChanged = false;
+    (void)updateDebugPreviewTestList(
+        input,
+        ui,
+        layout,
+        itemCount,
+        effectTestSelectedIndex_,
+        effectTestScrollOffset_,
+        effectTestScrollState_,
+        selectionChanged);
+
+    if (selectionChanged && !tabChanged) {
+        resetEffectTestPlayback();
+    }
+
+    (void)updateDebugPreviewBackgroundControls(ui, layout, debugPreviewBackgroundIndex_);
+
+    if (ui.pressed(layout.closeButton) || input.backPressed() || input.pausePressed()) {
+        exitEffectTestToBase();
+        return;
+    }
+
+    const EffectPreviewEntry* entry = effectTestEntryAt(effectTestVisibleEntries_, effectTestSelectedIndex_);
+    if (entry != nullptr) {
+        if (entry->playback == EffectPreviewPlayback::PersistentEmitter) {
+            const Vec2 position = effectTestTargetPosition(layout, entry->target);
+            if (effectTestEmitter_.valid()) {
+                magicFx_.setEmitterPosition(effectTestEmitter_, position);
+            } else {
+                triggerEffectTestPlayback(*entry);
+            }
+        } else if (effectTestFrame_ % DebugPreviewTestLoopFrames == 0) {
+            triggerEffectTestPlayback(*entry);
+        }
+    }
+
+    magicFx_.update(std::max(0.0f, dt));
+    effects_.update(std::max(0.0f, dt));
+    ++effectTestFrame_;
+    ui.block(layout.bounds);
+}
+
+void Game::renderEffectTestScreen(Renderer& renderer, double totalSeconds)
+{
+    if (!effectTestActive_) {
+        return;
+    }
+
+    renderer.setScreenSpace();
+    const DebugPreviewTestLayout layout = makeDebugPreviewTestLayout(
+        camera_.width(),
+        camera_.height(),
+        static_cast<int>(effectTestTabLabels_.size()));
+    const EffectPreviewEntry* entry = effectTestEntryAt(effectTestVisibleEntries_, effectTestSelectedIndex_);
+
+    drawDebugPreviewBackground(renderer, layout);
+    renderDebugPreviewTestTabs(renderer, layout, effectTestTabLabels_, effectTestTabsState_, effectTestTabIndex_);
+    renderDebugPreviewTestList(
+        renderer,
+        layout,
+        "エフェクトテスト",
+        static_cast<int>(effectTestVisibleEntries_.size()),
+        effectTestSelectedIndex_,
+        effectTestScrollOffset_,
+        [&](int index) {
+            const EffectPreviewEntry* rowEntry = effectTestVisibleEntries_[static_cast<std::size_t>(index)];
+            return DebugPreviewListRow{
+                rowEntry != nullptr ? std::string(rowEntry->label) : std::string{},
+                rowEntry != nullptr ? std::string(rowEntry->group) : std::string{},
+            };
+        });
+
+    renderer.pushClipRect(layout.preview.pos, layout.preview.size);
+    drawDebugPreviewGuide(renderer, layout, debugPreviewBackgroundIndex_);
+    const Vec2 previewCenter{
+        layout.preview.pos.x + layout.preview.size.x * 0.5f,
+        layout.preview.pos.y + layout.preview.size.y * 0.5f,
+    };
+
+    const Vec2 targetPosition = entry != nullptr ? effectTestTargetPosition(layout, entry->target) : previewCenter;
+    EntityStatus previewStatus;
+    if (entry != nullptr && entry->source == EffectPreviewSource::StatusVisual && !entry->argument.empty()) {
+        (void)previewStatus.applyState(std::string(entry->argument), 1.0, -1.0, "effect_test");
+    }
+    const EntityStatusVisualStyle statusVisual = entityStatusVisualStyle(previewStatus);
+    const Vec2 jitter = entityStatusJitterOffset(previewStatus, totalSeconds);
+    effects_.renderShadows(renderer);
+
+    if (entry != nullptr && entry->target == EffectPreviewTarget::WallTile) {
+        const float tileSize = static_cast<float>(balance::TileSize);
+        tileMap_.renderTilePreview(renderer, targetPosition - Vec2{tileSize * 0.5f, tileSize * 0.5f}, 1, TileType::Dirt);
+    } else if (entry != nullptr && entry->target == EffectPreviewTarget::EnemySlime) {
+        Enemy previewEnemy;
+        const auto slimeIt = enemyCatalog_.enemiesById.find(std::string(DebugPreviewTestSlimeEnemyId));
+        if (slimeIt != enemyCatalog_.enemiesById.end()) {
+            const EnemyDefinition& definition = slimeIt->second;
+            previewEnemy.active = true;
+            previewEnemy.definition = &definition;
+            previewEnemy.enemyId = definition.id;
+            previewEnemy.enemyName = definition.name;
+            previewEnemy.radius = definition.radius > 0.0 ? static_cast<float>(definition.radius) : balance_.enemyRadius;
+            previewEnemy.position = targetPosition;
+            previewEnemy.facingAngle = Pi * 0.5f;
+            previewEnemy.behaviorTimer = static_cast<float>(totalSeconds);
+            previewEnemy.status = previewStatus;
+
+            EnemyImageDrawOptions options;
+            options.tint = statusVisual.hasTint ? statusVisual.tint : Color{255, 255, 255, 255};
+            options.flipY = statusVisual.flipVertical;
+            options.scaleMultiplier = statusVisual.scaleMultiplier;
+            Vec2 drawSize{};
+            const Vec2 drawPosition = targetPosition + jitter;
+            const bool sizeResolved = enemyImageDrawSize(renderer, previewEnemy, options, drawSize);
+            renderer.drawActorShadow(targetPosition, sizeResolved ? drawSize.y : previewEnemy.radius * 2.0f);
+            if (drawEnemyImage(renderer, previewEnemy, drawPosition, static_cast<float>(totalSeconds), options, &drawSize)) {
+                renderEntityStatusOverlays(renderer, previewStatus, drawPosition, drawSize.y, totalSeconds);
+            } else {
+                renderer.fillCircle(drawPosition, previewEnemy.radius, statusVisual.hasTint ? statusVisual.tint : Color{112, 204, 112, 255});
+                renderer.drawCircle(drawPosition, previewEnemy.radius + 3.0f, {42, 72, 48, 255});
+                renderEntityStatusOverlays(renderer, previewStatus, drawPosition, previewEnemy.radius * 2.0f, totalSeconds);
+            }
+        } else {
+            renderer.drawActorShadow(targetPosition, 42.0f);
+            renderer.fillCircle(targetPosition + jitter, 22.0f, statusVisual.hasTint ? statusVisual.tint : Color{112, 204, 112, 255});
+            renderer.drawCircle(targetPosition + jitter, 25.0f, {42, 72, 48, 255});
+            renderEntityStatusOverlays(renderer, previewStatus, targetPosition + jitter, 50.0f, totalSeconds);
+        }
+    } else {
+        const float playerSize = PlayerSpriteDrawSize * statusVisual.scaleMultiplier;
+        const Vec2 drawPosition = targetPosition + jitter;
+        renderer.drawActorShadow(targetPosition, playerSize);
+        if (renderer.hasPlayerSheet()) {
+            renderer.drawPlayerSprite(
+                0,
+                drawPosition,
+                playerSize,
+                false,
+                statusVisual.hasTint ? statusVisual.tint : Color{255, 255, 255, 255},
+                {PlayerSpriteAnchorX, PlayerSpriteAnchorY},
+                statusVisual.flipVertical);
+        } else {
+            renderer.fillCircle(drawPosition, player_.effectiveRadius(balance_.playerRadius), statusVisual.hasTint ? statusVisual.tint : Color{118, 72, 168, 255});
+            renderer.drawLine(drawPosition, drawPosition + Vec2{22.0f, 0.0f}, {235, 210, 255, 255});
+        }
+        renderEntityStatusOverlays(renderer, previewStatus, drawPosition, playerSize, totalSeconds);
+    }
+
+    std::vector<DepthRenderEntry> depthEntries;
+    effects_.appendRenderEntries(depthEntries, renderer);
+    magicFx_.appendRenderEntries(depthEntries, renderer);
+    std::stable_sort(depthEntries.begin(), depthEntries.end(), [](const DepthRenderEntry& left, const DepthRenderEntry& right) {
+        return left.sortY < right.sortY;
+    });
+    for (const DepthRenderEntry& depthEntry : depthEntries) {
+        depthEntry.draw();
+    }
+    effects_.render(renderer);
+    std::vector<DepthRenderEntry> foregroundEntries;
+    magicFx_.appendForegroundRenderEntries(foregroundEntries, renderer);
+    std::stable_sort(foregroundEntries.begin(), foregroundEntries.end(), [](const DepthRenderEntry& left, const DepthRenderEntry& right) {
+        return left.sortY < right.sortY;
+    });
+    for (const DepthRenderEntry& foregroundEntry : foregroundEntries) {
+        foregroundEntry.draw();
+    }
+    effects_.renderForeground(renderer);
+    renderer.popClipRect();
+
+    const std::string detail = entry != nullptr
+        ? std::string(entry->group) + " / " + effectTestTargetLabel(entry->target) + " / " + effectTestPlaybackLabel(entry->playback)
+        : std::string{};
+    drawDebugPreviewFooter(
+        renderer,
+        layout,
+        entry != nullptr ? entry->label : std::string_view{},
+        detail,
+        effectTestStatus_,
+        debugPreviewBackgroundIndex_);
+}
+
+void Game::rebuildProjectileTestEntries()
+{
+    projectileTestEntries_.clear();
+    for (const ProjectileDefinition& definition : projectileDefinitions()) {
+        projectileTestEntries_.push_back(&definition);
+    }
+
+    if (projectileTestEntries_.empty()) {
+        projectileTestSelectedIndex_ = 0;
+        projectileTestStatus_ = "弾項目がありません";
+    } else {
+        projectileTestSelectedIndex_ = std::clamp(projectileTestSelectedIndex_, 0, static_cast<int>(projectileTestEntries_.size()) - 1);
+        projectileTestStatus_ = "選択中の弾を自動再生します";
+    }
+}
+
+void Game::resetProjectileTestPlayback()
+{
+    projectileTestFrame_ = 0;
+    projectiles_ = ProjectileSystem{};
+}
+
+void Game::enterProjectileTestMode()
+{
+    if (effectTestActive_) {
+        closeEffectTestMode();
+    }
+    if (enemyTestActive_) {
+        exitEnemyTestToBase();
+    }
+
+    inventory_.setOpen(false);
+    inventory_.cancelGrab();
+    cancelRingGrab();
+    closeDebugItemPicker();
+    closeDebugStoryTest();
+    if (levels_.isChoosing()) {
+        levels_ = LevelSystem{};
+    }
+
+    mode_ = ScreenMode::Playing;
+    pausePage_ = PauseMenuPage::Main;
+    pauseReturnMode_ = ScreenMode::Playing;
+    inventoryReturnToPause_ = false;
+    projectileTestActive_ = true;
+    projectileTestScrollState_ = {};
+    rebuildProjectileTestEntries();
+    resetProjectileTestPlayback();
+}
+
+void Game::closeProjectileTestMode()
+{
+    if (!projectileTestActive_) {
+        return;
+    }
+    projectileTestActive_ = false;
+    projectileTestStatus_.clear();
+    projectileTestScrollState_ = {};
+    projectileTestScrollOffset_ = 0.0f;
+    resetProjectileTestPlayback();
+}
+
+void Game::exitProjectileTestToBase()
+{
+    closeProjectileTestMode();
+    clearTemporaryPlayerState(true);
+    enterBase();
+}
+
+void Game::triggerProjectileTestPlayback(const ProjectileDefinition& entry)
+{
+    const DebugPreviewTestLayout layout = makeDebugPreviewTestLayout(camera_.width(), camera_.height());
+    (void)projectiles_.spawn(entry.id, projectileTestFireOrigin(layout), {1.0f, 0.0f}, ProjectileOwnerType::Enemy);
+}
+
+void Game::updateProjectileTestScreen(const Input& input, UiContext& ui, float dt)
+{
+    if (!projectileTestActive_) {
+        return;
+    }
+    if (projectileTestEntries_.empty()) {
+        rebuildProjectileTestEntries();
+    }
+
+    const DebugPreviewTestLayout layout = makeDebugPreviewTestLayout(camera_.width(), camera_.height());
+    const int itemCount = static_cast<int>(projectileTestEntries_.size());
+    bool selectionChanged = false;
+    (void)updateDebugPreviewTestList(
+        input,
+        ui,
+        layout,
+        itemCount,
+        projectileTestSelectedIndex_,
+        projectileTestScrollOffset_,
+        projectileTestScrollState_,
+        selectionChanged);
+
+    if (selectionChanged) {
+        resetProjectileTestPlayback();
+    }
+
+    (void)updateDebugPreviewBackgroundControls(ui, layout, debugPreviewBackgroundIndex_);
+
+    if (ui.pressed(layout.closeButton) || input.backPressed() || input.pausePressed()) {
+        exitProjectileTestToBase();
+        return;
+    }
+
+    const ProjectileDefinition* entry = projectileTestEntryAt(projectileTestEntries_, projectileTestSelectedIndex_);
+    if (entry != nullptr && projectileTestFrame_ % DebugPreviewTestLoopFrames == 0) {
+        triggerProjectileTestPlayback(*entry);
+    }
+
+    projectiles_.updatePreview(std::max(0.0f, dt));
+    ++projectileTestFrame_;
+    ui.block(layout.bounds);
+}
+
+void Game::renderProjectileTestScreen(Renderer& renderer, double totalSeconds)
+{
+    if (!projectileTestActive_) {
+        return;
+    }
+
+    renderer.setScreenSpace();
+    const DebugPreviewTestLayout layout = makeDebugPreviewTestLayout(camera_.width(), camera_.height());
+    const ProjectileDefinition* entry = projectileTestEntryAt(projectileTestEntries_, projectileTestSelectedIndex_);
+
+    drawDebugPreviewBackground(renderer, layout);
+    renderDebugPreviewTestList(
+        renderer,
+        layout,
+        "弾テスト",
+        static_cast<int>(projectileTestEntries_.size()),
+        projectileTestSelectedIndex_,
+        projectileTestScrollOffset_,
+        [&](int index) {
+            const ProjectileDefinition* rowEntry = projectileTestEntries_[static_cast<std::size_t>(index)];
+            return DebugPreviewListRow{
+                rowEntry != nullptr ? std::string(projectileDisplayName(*rowEntry)) : std::string{},
+                rowEntry != nullptr ? projectileTestRowGroup(*rowEntry) : std::string{},
+            };
+        });
+
+    renderer.pushClipRect(layout.preview.pos, layout.preview.size);
+    drawDebugPreviewGuide(renderer, layout, debugPreviewBackgroundIndex_);
+    const Vec2 sourcePosition = projectileTestSourcePosition(layout);
+    const Vec2 origin = projectileTestFireOrigin(layout);
+    renderer.drawLine(origin, {layout.preview.pos.x + layout.preview.size.x - 44.0f, origin.y}, {255, 255, 255, 34});
+
+    Enemy previewEnemy;
+    const auto slimeIt = enemyCatalog_.enemiesById.find(std::string(DebugPreviewTestSlimeEnemyId));
+    if (slimeIt != enemyCatalog_.enemiesById.end()) {
+        const EnemyDefinition& definition = slimeIt->second;
+        previewEnemy.active = true;
+        previewEnemy.definition = &definition;
+        previewEnemy.enemyId = definition.id;
+        previewEnemy.enemyName = definition.name;
+        previewEnemy.radius = definition.radius > 0.0 ? static_cast<float>(definition.radius) : balance_.enemyRadius;
+        previewEnemy.position = sourcePosition;
+        previewEnemy.facingAngle = 0.0f;
+        previewEnemy.behaviorTimer = static_cast<float>(totalSeconds);
+
+        Vec2 drawSize{};
+        const bool sizeResolved = enemyImageDrawSize(renderer, previewEnemy, EnemyImageDrawOptions{}, drawSize);
+        renderer.drawActorShadow(sourcePosition, sizeResolved ? drawSize.y : previewEnemy.radius * 2.0f);
+        if (!drawEnemyImage(renderer, previewEnemy, sourcePosition, static_cast<float>(totalSeconds), EnemyImageDrawOptions{}, &drawSize)) {
+            renderer.fillCircle(sourcePosition, previewEnemy.radius, {112, 204, 112, 255});
+            renderer.drawCircle(sourcePosition, previewEnemy.radius + 3.0f, {42, 72, 48, 255});
+        }
+    } else {
+        renderer.drawActorShadow(sourcePosition, 42.0f);
+        renderer.fillCircle(sourcePosition, 22.0f, {112, 204, 112, 255});
+        renderer.drawCircle(sourcePosition, 25.0f, {42, 72, 48, 255});
+    }
+
+    std::vector<DepthRenderEntry> projectileEntries;
+    projectiles_.appendPreviewRenderEntries(projectileEntries, renderer);
+    std::stable_sort(projectileEntries.begin(), projectileEntries.end(), [](const DepthRenderEntry& left, const DepthRenderEntry& right) {
+        return left.sortY < right.sortY;
+    });
+    for (const DepthRenderEntry& projectileEntry : projectileEntries) {
+        projectileEntry.draw();
+    }
+    renderer.popClipRect();
+
+    drawDebugPreviewFooter(
+        renderer,
+        layout,
+        entry != nullptr ? projectileDisplayName(*entry) : std::string_view{},
+        entry != nullptr ? projectileTestDetail(*entry) : std::string{},
+        projectileTestStatus_,
+        debugPreviewBackgroundIndex_);
+}
+
 void Game::enterEnemyTestMode()
 {
+    if (effectTestActive_) {
+        closeEffectTestMode();
+    }
+    if (projectileTestActive_) {
+        closeProjectileTestMode();
+    }
     if (!enemyTestActive_ && mode_ == ScreenMode::Playing) {
         captureDungeonState();
     }
@@ -3107,6 +4305,7 @@ void Game::enterEnemyTestMode()
     effects_ = EffectSystem{};
     captureAbsorbAnimations_.clear();
     groundLines_ = GroundLineSystem{};
+    wetGround_ = WetGroundSystem{};
     enemies_ = EnemySystem{};
     projectiles_ = ProjectileSystem{};
     magic_ = MagicSystem{};
@@ -3153,6 +4352,7 @@ void Game::exitEnemyTestToBase()
     magic_ = MagicSystem{};
     magicFx_ = MagicFxSystem{};
     groundLines_ = GroundLineSystem{};
+    wetGround_ = WetGroundSystem{};
     worldDrops_ = WorldDropSystem{};
     worldDrops_.setDropLimit(balance_.worldDropLimitPerStage);
     clearTemporaryPlayerState(true);
@@ -3325,6 +4525,7 @@ void Game::clearEnemyTestArena()
     effects_ = EffectSystem{};
     captureAbsorbAnimations_.clear();
     groundLines_ = GroundLineSystem{};
+    wetGround_ = WetGroundSystem{};
     magic_ = MagicSystem{};
     magicFx_ = MagicFxSystem{};
     worldDrops_ = WorldDropSystem{};
@@ -5534,7 +6735,11 @@ bool Game::executeDebugCommand(std::string_view command)
     }
 
     const auto applyStageUnlockDebugCommand = [&](int unlockedStoryStages, std::string_view label) {
-        if (enemyTestActive_) {
+        if (effectTestActive_) {
+            exitEffectTestToBase();
+        } else if (projectileTestActive_) {
+            exitProjectileTestToBase();
+        } else if (enemyTestActive_) {
             exitEnemyTestToBase();
         } else if (!basePresentationActive() && mode_ != ScreenMode::OpeningKamishibai && mode_ != ScreenMode::EndingKamishibai && mode_ != ScreenMode::Title) {
             returnToBaseFromNormalStage(false, false);
@@ -5569,6 +6774,8 @@ bool Game::executeDebugCommand(std::string_view command)
         cancelRingGrab();
         closeDebugItemPicker();
         closeDebugStoryTest();
+        closeProjectileTestMode();
+        closeEffectTestMode();
         if (levels_.isChoosing()) {
             levels_ = LevelSystem{};
         }
@@ -5602,7 +6809,11 @@ bool Game::executeDebugCommand(std::string_view command)
             logWarning("Debug: stage not found: " + std::string(stageId));
             return false;
         }
-        if (enemyTestActive_) {
+        if (effectTestActive_) {
+            exitEffectTestToBase();
+        } else if (projectileTestActive_) {
+            exitProjectileTestToBase();
+        } else if (enemyTestActive_) {
             exitEnemyTestToBase();
         }
 
@@ -5657,7 +6868,11 @@ bool Game::executeDebugCommand(std::string_view command)
     };
 
     const auto enterDebugBase = [&]() {
-        if (enemyTestActive_) {
+        if (effectTestActive_) {
+            exitEffectTestToBase();
+        } else if (projectileTestActive_) {
+            exitProjectileTestToBase();
+        } else if (enemyTestActive_) {
             exitEnemyTestToBase();
         }
         enterBase();
@@ -6338,6 +7553,16 @@ bool Game::executeDebugCommand(std::string_view command)
     }
 
     if (normalized == "game return-base") {
+        if (effectTestActive_) {
+            exitEffectTestToBase();
+            logInfo("Debug: effect test exited to base.");
+            return true;
+        }
+        if (projectileTestActive_) {
+            exitProjectileTestToBase();
+            logInfo("Debug: projectile test exited to base.");
+            return true;
+        }
         if (enemyTestActive_) {
             exitEnemyTestToBase();
             logInfo("Debug: enemy test exited to base.");
@@ -6438,7 +7663,11 @@ bool Game::executeDebugCommand(std::string_view command)
     if (normalized == "game launch-mode pre-title" ||
         normalized == "game launch-mode before-title" ||
         normalized == "game launch-mode opening") {
-        if (enemyTestActive_) {
+        if (effectTestActive_) {
+            exitEffectTestToBase();
+        } else if (projectileTestActive_) {
+            exitProjectileTestToBase();
+        } else if (enemyTestActive_) {
             exitEnemyTestToBase();
         } else if (!basePresentationActive() && mode_ != ScreenMode::OpeningKamishibai && mode_ != ScreenMode::EndingKamishibai && mode_ != ScreenMode::Title) {
             returnToBaseFromNormalStage(false, false);
@@ -6451,7 +7680,11 @@ bool Game::executeDebugCommand(std::string_view command)
     }
 
     if (normalized == "game launch-mode base") {
-        if (enemyTestActive_) {
+        if (effectTestActive_) {
+            exitEffectTestToBase();
+        } else if (projectileTestActive_) {
+            exitProjectileTestToBase();
+        } else if (enemyTestActive_) {
             exitEnemyTestToBase();
         } else if (basePresentationActive() || mode_ == ScreenMode::OpeningKamishibai || mode_ == ScreenMode::EndingKamishibai || mode_ == ScreenMode::Title) {
             enterBase();
@@ -6463,7 +7696,11 @@ bool Game::executeDebugCommand(std::string_view command)
     }
 
     if (normalized == "game launch-mode dungeon") {
-        if (enemyTestActive_) {
+        if (effectTestActive_) {
+            exitEffectTestToBase();
+        } else if (projectileTestActive_) {
+            exitProjectileTestToBase();
+        } else if (enemyTestActive_) {
             exitEnemyTestToBase();
         }
         startMiningFromBase(false, false);
@@ -6474,6 +7711,13 @@ bool Game::executeDebugCommand(std::string_view command)
     if (normalized == "game launch-mode enemy-test") {
         enterEnemyTestMode();
         logInfo("Debug: launch mode set to enemy test.");
+        return true;
+    }
+
+    if (normalized == "game launch-mode projectile-test" ||
+        normalized == "game launch-mode bullet-test") {
+        enterProjectileTestMode();
+        logInfo("Debug: launch mode set to projectile test.");
         return true;
     }
 
@@ -6557,6 +7801,21 @@ bool Game::executeDebugCommand(std::string_view command)
     if (normalized == "game enemy-test") {
         enterEnemyTestMode();
         logInfo("Debug: enemy test mode started.");
+        return true;
+    }
+
+    if (normalized == "game effect-test" || normalized == "game effects-test") {
+        enterEffectTestMode();
+        logInfo("Debug: effect test mode started.");
+        return true;
+    }
+
+    if (normalized == "game projectile-test" ||
+        normalized == "game projectiles-test" ||
+        normalized == "game bullet-test" ||
+        normalized == "game bullets-test") {
+        enterProjectileTestMode();
+        logInfo("Debug: projectile test mode started.");
         return true;
     }
 

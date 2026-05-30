@@ -13,6 +13,22 @@ enum class WindowMode {
     BorderlessFullscreen,
 };
 
+inline constexpr float MinScreenBrightness = 0.70f;
+inline constexpr float MaxScreenBrightness = 1.30f;
+inline constexpr float DefaultScreenBrightness = 1.0f;
+
+enum class ScreenShakeSetting {
+    Off,
+    Low,
+    Standard,
+};
+
+enum class InputIconSetting {
+    Auto,
+    KeyboardMouse,
+    Gamepad,
+};
+
 struct AudioSettings {
     float masterVolume = 1.0f;
     float bgmVolume = 1.0f;
@@ -30,6 +46,12 @@ struct PerformanceSettings {
     bool lightweight = false;
 };
 
+struct PresentationSettings {
+    float brightness = DefaultScreenBrightness;
+    ScreenShakeSetting screenShake = ScreenShakeSetting::Standard;
+    InputIconSetting inputIcons = InputIconSetting::Auto;
+};
+
 struct InputSettings {
     InputBindingMap bindings = defaultInputBindings();
 };
@@ -39,11 +61,16 @@ struct GameSettings {
     AudioSettings audio;
     VideoSettings video;
     PerformanceSettings performance;
+    PresentationSettings presentation;
     InputSettings input;
 };
 
 const char* windowModeName(WindowMode mode);
 bool parseWindowMode(std::string_view text, WindowMode& outMode);
+const char* screenShakeSettingName(ScreenShakeSetting setting);
+bool parseScreenShakeSetting(std::string_view text, ScreenShakeSetting& outSetting);
+const char* inputIconSettingName(InputIconSetting setting);
+bool parseInputIconSetting(std::string_view text, InputIconSetting& outSetting);
 GameSettings sanitizeSettings(GameSettings settings);
 
 class SettingsStore {

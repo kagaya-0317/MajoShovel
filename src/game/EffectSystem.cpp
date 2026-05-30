@@ -1,12 +1,14 @@
 ﻿#include "game/EffectSystem.hpp"
 
 #include "game/ActorVisual.hpp"
+#include "game/EffectPreviewCatalog.hpp"
 
 #include <algorithm>
 #include <array>
 #include <cmath>
 #include <cstdio>
 #include <random>
+#include <vector>
 
 namespace majo {
 
@@ -37,19 +39,18 @@ struct ParticlePreset {
     ParticleVisual visual = ParticleVisual::Circle;
 };
 
-constexpr std::array<ParticlePreset, 30> ParticlePresets{{
-    {ParticleEffectId::DigDust, 4, {142, 104, 66, 220}, {102, 78, 54, 190}, 76.0f, 26.0f, Pi * 2.0f, 5.5f, 1.4f, 0.76f, 0.08f, {0.0f, 330.0f}, 1.45f, false, false, 4.0f, 14.0f, {184, 136, 76, 140}, ParticleVisual::RockShard},
+constexpr std::array<ParticlePreset, 29> ParticlePresets{{
+    {ParticleEffectId::DigDust, 4, {142, 104, 66, 220}, {102, 78, 54, 190}, 112.0f, 42.0f, Pi * 2.0f, 5.5f, 1.4f, 0.76f, 0.08f, {0.0f, 330.0f}, 1.45f, false, false, 4.0f, 14.0f, {184, 136, 76, 140}, ParticleVisual::RockShard},
     {ParticleEffectId::DirtBreak, 18, {154, 110, 66, 235}, {214, 150, 82, 205}, 126.0f, 58.0f, Pi * 2.0f, 7.4f, 2.4f, 0.84f, 0.10f, {0.0f, 390.0f}, 1.55f, false, false, 8.0f, 34.0f, {218, 164, 88, 205}, ParticleVisual::RockShard},
     {ParticleEffectId::RockBreak, 18, {122, 126, 132, 235}, {86, 88, 96, 205}, 118.0f, 48.0f, Pi * 2.0f, 8.4f, 2.6f, 0.92f, 0.12f, {0.0f, 420.0f}, 1.45f, false, false, 8.0f, 32.0f, {170, 174, 180, 190}, ParticleVisual::RockShard},
     {ParticleEffectId::OreBreak, 22, {244, 204, 84, 238}, {126, 218, 236, 215}, 142.0f, 62.0f, Pi * 2.0f, 7.6f, 2.7f, 0.88f, 0.12f, {0.0f, 380.0f}, 1.35f, false, false, 10.0f, 38.0f, {255, 222, 110, 220}, ParticleVisual::RockShard},
-    {ParticleEffectId::RingTrail, 4, {196, 172, 255, 135}, {244, 212, 116, 120}, 26.0f, 18.0f, 1.25f, 2.2f, 0.7f, 0.24f, 0.06f, {}, 1.5f, true, false},
-    {ParticleEffectId::EnemyHit, 7, {235, 62, 72, 220}, {255, 184, 158, 190}, 88.0f, 34.0f, Pi * 2.0f, 2.6f, 0.8f, 0.34f, 0.08f, {}, 3.0f, false, true, 5.0f, 18.0f, {255, 170, 170, 205}},
-    {ParticleEffectId::EnemyPoisonHit, 8, {82, 226, 92, 215}, {168, 78, 214, 180}, 68.0f, 34.0f, Pi * 2.0f, 2.4f, 0.9f, 0.46f, 0.12f, {0.0f, -12.0f}, 2.2f, false, true, 5.0f, 20.0f, {126, 240, 112, 185}},
-    {ParticleEffectId::EnemySlowHit, 8, {96, 176, 255, 220}, {210, 244, 255, 180}, 62.0f, 26.0f, Pi * 2.0f, 2.3f, 0.9f, 0.48f, 0.12f, {}, 2.5f, false, true, 5.0f, 20.0f, {142, 214, 255, 180}},
-    {ParticleEffectId::EnemyBleedHit, 9, {150, 24, 42, 230}, {238, 54, 78, 190}, 76.0f, 30.0f, Pi * 2.0f, 2.5f, 0.8f, 0.42f, 0.10f, {0.0f, 82.0f}, 2.6f, false, true, 4.0f, 17.0f, {180, 36, 58, 190}},
+    {ParticleEffectId::EnemyHit, 18, {255, 226, 74, 236}, {255, 108, 52, 204}, 156.0f, 66.0f, Pi * 2.0f, 2.1f, 0.7f, 0.34f, 0.08f, {}, 2.7f, false, false, 5.0f, 18.0f, {255, 232, 104, 232}, ParticleVisual::ImpactSpark},
+    {ParticleEffectId::EnemyPoisonHit, 14, {138, 255, 94, 222}, {178, 72, 228, 190}, 118.0f, 52.0f, Pi * 2.0f, 2.0f, 0.7f, 0.42f, 0.11f, {0.0f, -12.0f}, 2.4f, false, false, 5.0f, 20.0f, {170, 255, 104, 205}, ParticleVisual::ImpactSpark},
+    {ParticleEffectId::EnemySlowHit, 14, {102, 196, 255, 228}, {228, 252, 255, 188}, 112.0f, 44.0f, Pi * 2.0f, 2.0f, 0.7f, 0.44f, 0.11f, {}, 2.6f, false, false, 5.0f, 20.0f, {150, 222, 255, 205}, ParticleVisual::ImpactSpark},
+    {ParticleEffectId::EnemyBleedHit, 15, {226, 32, 56, 236}, {255, 114, 74, 198}, 132.0f, 52.0f, Pi * 2.0f, 2.0f, 0.7f, 0.38f, 0.10f, {0.0f, 42.0f}, 2.8f, false, false, 4.0f, 17.0f, {238, 46, 64, 210}, ParticleVisual::ImpactSpark},
     {ParticleEffectId::EnemyDeathSoul, 18, {180, 104, 255, 220}, {255, 98, 128, 205}, 76.0f, 42.0f, Pi * 2.0f, 3.2f, 1.1f, 0.70f, 0.18f, {0.0f, -82.0f}, 1.6f, false, true, 10.0f, 38.0f, {255, 92, 116, 230}},
-    {ParticleEffectId::CaptureSuccess, 24, {178, 112, 255, 225}, {255, 224, 130, 210}, 128.0f, 48.0f, 1.20f, 2.6f, 0.8f, 0.58f, 0.16f, {}, 2.0f, true, true, 12.0f, 40.0f, {202, 156, 255, 220}},
-    {ParticleEffectId::DropPickup, 10, {255, 232, 132, 220}, {142, 228, 248, 180}, 92.0f, 34.0f, 1.70f, 2.0f, 0.6f, 0.36f, 0.08f, {}, 2.4f, true, false},
+    {ParticleEffectId::CaptureSuccess, 24, {178, 112, 255, 225}, {255, 224, 130, 210}, 128.0f, 48.0f, Pi * 2.0f, 2.6f, 0.8f, 0.58f, 0.16f, {}, 2.0f, false, true, 12.0f, 40.0f, {202, 156, 255, 220}},
+    {ParticleEffectId::DropPickup, 10, {255, 232, 132, 220}, {142, 228, 248, 180}, 92.0f, 34.0f, Pi * 2.0f, 2.0f, 0.6f, 0.36f, 0.08f, {}, 2.4f, false, false},
     {ParticleEffectId::TorchFlicker, 3, {255, 172, 58, 160}, {255, 238, 120, 135}, 24.0f, 14.0f, 1.10f, 1.7f, 0.5f, 0.42f, 0.10f, {0.0f, -36.0f}, 1.2f, true, false},
     {ParticleEffectId::MagicFire, 11, {255, 84, 42, 225}, {255, 214, 84, 185}, 106.0f, 46.0f, 1.45f, 2.8f, 0.9f, 0.42f, 0.12f, {0.0f, -16.0f}, 2.0f, true, true, 7.0f, 24.0f, {255, 112, 58, 210}},
     {ParticleEffectId::MagicIce, 11, {92, 210, 255, 215}, {230, 250, 255, 180}, 88.0f, 32.0f, 1.35f, 2.6f, 0.9f, 0.48f, 0.12f, {}, 2.3f, true, true, 7.0f, 24.0f, {120, 210, 255, 205}},
@@ -59,7 +60,7 @@ constexpr std::array<ParticlePreset, 30> ParticlePresets{{
     {ParticleEffectId::MagicDefault, 10, {220, 210, 255, 210}, {255, 255, 255, 170}, 92.0f, 38.0f, 1.45f, 2.4f, 0.8f, 0.42f, 0.10f, {}, 2.2f, true, true, 7.0f, 22.0f, {235, 235, 255, 190}},
     {ParticleEffectId::PoisonAura, 4, {94, 218, 88, 120}, {180, 72, 220, 105}, 22.0f, 14.0f, Pi * 2.0f, 1.9f, 0.6f, 0.52f, 0.12f, {0.0f, -28.0f}, 1.0f, false, false},
     {ParticleEffectId::SlowAura, 4, {98, 176, 255, 130}, {220, 248, 255, 105}, 18.0f, 12.0f, Pi * 2.0f, 1.8f, 0.6f, 0.56f, 0.12f, {0.0f, -8.0f}, 1.2f, false, false},
-    {ParticleEffectId::BleedAura, 4, {190, 34, 54, 125}, {255, 76, 86, 95}, 20.0f, 12.0f, Pi * 2.0f, 1.9f, 0.6f, 0.48f, 0.10f, {0.0f, 42.0f}, 1.8f, false, false},
+    {ParticleEffectId::BleedAura, 9, {190, 34, 54, 135}, {255, 76, 86, 110}, 52.0f, 22.0f, Pi * 2.0f, 1.9f, 0.6f, 0.68f, 0.12f, {0.0f, 42.0f}, 1.15f, false, false},
     {ParticleEffectId::FrozenSparkle, 6, {140, 232, 255, 210}, {255, 255, 255, 185}, 26.0f, 16.0f, Pi * 2.0f, 3.8f, 1.2f, 0.64f, 0.14f, {0.0f, -14.0f}, 0.85f, false, false, 4.0f, 9.0f, {170, 236, 255, 180}, ParticleVisual::Sparkle},
     {ParticleEffectId::SpecialItemGlimmer, 3, {180, 224, 255, 125}, {255, 224, 128, 115}, 16.0f, 10.0f, Pi * 2.0f, 1.7f, 0.5f, 0.44f, 0.10f, {0.0f, -18.0f}, 1.2f, false, false},
     {ParticleEffectId::WarpCircle, 18, {112, 208, 255, 190}, {255, 224, 112, 170}, 62.0f, 24.0f, Pi * 2.0f, 2.4f, 0.8f, 0.72f, 0.18f, {0.0f, -24.0f}, 1.5f, false, true, 18.0f, 64.0f, {126, 208, 255, 150}},
@@ -98,6 +99,15 @@ unsigned char fadeAlpha(Color color, float t)
 
 unsigned char effectAlpha(const Effect& effect, Color color, float t)
 {
+    if (effect.visual == ParticleVisual::PoisonBubble) {
+        constexpr float PopStart = 0.82f;
+        if (t < PopStart) {
+            return color.a;
+        }
+        const float pop = clamp((t - PopStart) / (1.0f - PopStart), 0.0f, 1.0f);
+        return static_cast<unsigned char>(static_cast<float>(color.a) * (1.0f - pop));
+    }
+
     if (effect.visual != ParticleVisual::RockShard) {
         return fadeAlpha(color, t);
     }
@@ -131,6 +141,106 @@ const ParticlePreset& presetFor(ParticleEffectId id)
         return preset.id == id;
     });
     return it != ParticlePresets.end() ? *it : ParticlePresets.front();
+}
+
+std::string_view particleEffectPreviewId(ParticleEffectId id)
+{
+    switch (id) {
+    case ParticleEffectId::DigDust: return "dig_dust";
+    case ParticleEffectId::DirtBreak: return "dirt_break";
+    case ParticleEffectId::RockBreak: return "rock_break";
+    case ParticleEffectId::OreBreak: return "ore_break";
+    case ParticleEffectId::EnemyHit: return "enemy_hit";
+    case ParticleEffectId::EnemyPoisonHit: return "enemy_poison_hit";
+    case ParticleEffectId::EnemySlowHit: return "enemy_slow_hit";
+    case ParticleEffectId::EnemyBleedHit: return "enemy_bleed_hit";
+    case ParticleEffectId::EnemyDeathSoul: return "enemy_death_soul";
+    case ParticleEffectId::CaptureSuccess: return "capture_success";
+    case ParticleEffectId::DropPickup: return "drop_pickup";
+    case ParticleEffectId::TorchFlicker: return "torch_flicker";
+    case ParticleEffectId::MagicFire: return "magic_fire";
+    case ParticleEffectId::MagicIce: return "magic_ice";
+    case ParticleEffectId::MagicThunder: return "magic_thunder";
+    case ParticleEffectId::MagicWind: return "magic_wind";
+    case ParticleEffectId::MagicEarth: return "magic_earth";
+    case ParticleEffectId::MagicDefault: return "magic_default";
+    case ParticleEffectId::PoisonAura: return "poison_aura";
+    case ParticleEffectId::SlowAura: return "slow_aura";
+    case ParticleEffectId::BleedAura: return "bleed_aura";
+    case ParticleEffectId::FrozenSparkle: return "frozen_sparkle";
+    case ParticleEffectId::SpecialItemGlimmer: return "special_item_glimmer";
+    case ParticleEffectId::WarpCircle: return "warp_circle";
+    case ParticleEffectId::BossCircle: return "boss_circle";
+    case ParticleEffectId::ItemBreak: return "item_break";
+    case ParticleEffectId::WoodBreak: return "wood_break";
+    case ParticleEffectId::CeramicBreak: return "ceramic_break";
+    case ParticleEffectId::GlassBreak: return "glass_break";
+    }
+    return "particle_unknown";
+}
+
+std::string_view particleEffectPreviewLabel(ParticleEffectId id)
+{
+    switch (id) {
+    case ParticleEffectId::DigDust: return "掘削ヒット粉じん";
+    case ParticleEffectId::DirtBreak: return "土壁破壊";
+    case ParticleEffectId::RockBreak: return "岩壁破壊";
+    case ParticleEffectId::OreBreak: return "鉱石破壊";
+    case ParticleEffectId::EnemyHit: return "敵ヒット";
+    case ParticleEffectId::EnemyPoisonHit: return "敵ヒット: 毒";
+    case ParticleEffectId::EnemySlowHit: return "敵ヒット: 鈍足";
+    case ParticleEffectId::EnemyBleedHit: return "敵ヒット: 出血";
+    case ParticleEffectId::EnemyDeathSoul: return "敵死亡ソウル";
+    case ParticleEffectId::CaptureSuccess: return "捕獲成功";
+    case ParticleEffectId::DropPickup: return "ドロップ取得";
+    case ParticleEffectId::TorchFlicker: return "たいまつ火花";
+    case ParticleEffectId::MagicFire: return "魔法粒子: 火";
+    case ParticleEffectId::MagicIce: return "魔法粒子: 氷";
+    case ParticleEffectId::MagicThunder: return "魔法粒子: 雷";
+    case ParticleEffectId::MagicWind: return "魔法粒子: 風";
+    case ParticleEffectId::MagicEarth: return "魔法粒子: 土";
+    case ParticleEffectId::MagicDefault: return "魔法粒子: 汎用";
+    case ParticleEffectId::PoisonAura: return "毒オーラ";
+    case ParticleEffectId::SlowAura: return "鈍足オーラ";
+    case ParticleEffectId::BleedAura: return "出血オーラ";
+    case ParticleEffectId::FrozenSparkle: return "氷結きらめき";
+    case ParticleEffectId::SpecialItemGlimmer: return "特殊アイテム光";
+    case ParticleEffectId::WarpCircle: return "ワープ円";
+    case ParticleEffectId::BossCircle: return "ボス円";
+    case ParticleEffectId::ItemBreak: return "アイテム破壊";
+    case ParticleEffectId::WoodBreak: return "木製破壊";
+    case ParticleEffectId::CeramicBreak: return "陶器破壊";
+    case ParticleEffectId::GlassBreak: return "ガラス破壊";
+    }
+    return "粒子プリセット";
+}
+
+EffectPreviewTarget particleEffectPreviewTarget(ParticleEffectId id)
+{
+    switch (id) {
+    case ParticleEffectId::DigDust:
+    case ParticleEffectId::DirtBreak:
+    case ParticleEffectId::RockBreak:
+    case ParticleEffectId::OreBreak:
+    case ParticleEffectId::ItemBreak:
+    case ParticleEffectId::WoodBreak:
+    case ParticleEffectId::CeramicBreak:
+    case ParticleEffectId::GlassBreak:
+        return EffectPreviewTarget::WallTile;
+    case ParticleEffectId::EnemyHit:
+    case ParticleEffectId::EnemyPoisonHit:
+    case ParticleEffectId::EnemySlowHit:
+    case ParticleEffectId::EnemyBleedHit:
+    case ParticleEffectId::EnemyDeathSoul:
+    case ParticleEffectId::PoisonAura:
+    case ParticleEffectId::SlowAura:
+    case ParticleEffectId::BleedAura:
+    case ParticleEffectId::FrozenSparkle:
+        return EffectPreviewTarget::EnemySlime;
+    default:
+        break;
+    }
+    return EffectPreviewTarget::Player;
 }
 
 float randomRange(float minValue, float maxValue)
@@ -240,6 +350,42 @@ Color smokeHighlightColor(Color color)
     };
 }
 
+unsigned char scaledAlpha(unsigned char alpha, float scale)
+{
+    return static_cast<unsigned char>(
+        std::clamp(std::lround(static_cast<float>(alpha) * clamp(scale, 0.0f, 4.0f)), 0L, 255L));
+}
+
+Color withAlphaScale(Color color, float scale)
+{
+    color.a = scaledAlpha(color.a, scale);
+    return color;
+}
+
+Color colorTowardWhite(Color color, float amount, float alphaScale)
+{
+    return {
+        colorTowardWhite(color.r, amount),
+        colorTowardWhite(color.g, amount),
+        colorTowardWhite(color.b, amount),
+        scaledAlpha(color.a, alphaScale),
+    };
+}
+
+bool isEnemyHitBurstEffect(ParticleEffectId id)
+{
+    switch (id) {
+    case ParticleEffectId::EnemyHit:
+    case ParticleEffectId::EnemyPoisonHit:
+    case ParticleEffectId::EnemySlowHit:
+    case ParticleEffectId::EnemyBleedHit:
+        return true;
+    default:
+        break;
+    }
+    return false;
+}
+
 void renderSmokePuff(Renderer& renderer, const SmokePuff& smoke)
 {
     const float t = smoke.duration > 0.0f ? clamp(smoke.age / smoke.duration, 0.0f, 1.0f) : 1.0f;
@@ -274,6 +420,10 @@ Vec2 snapPoint(Vec2 point)
 
 Vec2 effectDrawPosition(const Effect& effect)
 {
+    if (effect.visual == ParticleVisual::PoisonBubble) {
+        const float wobble = std::sin(effect.age * effect.angularVelocity + effect.rotation) * effect.shardAspect;
+        return effect.position + Vec2{wobble, 0.0f};
+    }
     return effect.physicsShard ? elevatedDrawPosition(effect.position, effect.altitude) : effect.position;
 }
 
@@ -339,6 +489,206 @@ void renderSparkle(Renderer& renderer, const Effect& effect, Vec2 center, Color 
         {220, 250, 255, static_cast<unsigned char>(color.a * 3 / 4)});
 }
 
+void renderPoisonBubble(Renderer& renderer, const Effect& effect, Vec2 center, Color color, float radius, float t)
+{
+    if (radius <= 0.0f || color.a == 0) {
+        return;
+    }
+
+    constexpr float PopStart = 0.82f;
+    if (t < PopStart) {
+        const Color fill = color;
+        const Color rim = colorTowardWhite(color, 0.42f, 1.0f);
+        const Color highlight{236, 255, 214, scaledAlpha(color.a, 0.82f)};
+        renderer.fillSoftCircle(center, radius * 0.96f, fill);
+        renderer.drawCircle(center, radius, rim);
+        renderer.fillCircle(center + Vec2{-radius * 0.28f, -radius * 0.30f}, std::max(0.75f, radius * 0.22f), highlight);
+        return;
+    }
+
+    const float pop = clamp((t - PopStart) / (1.0f - PopStart), 0.0f, 1.0f);
+    const float popRadius = radius * lerp(1.0f, 2.35f, smooth01(pop));
+    const Color popColor = colorTowardWhite(color, 0.62f, 1.0f - pop);
+    renderer.drawCircle(center, popRadius, popColor);
+    for (int i = 0; i < 5; ++i) {
+        const float angle = effect.rotation + static_cast<float>(i) * Pi * 0.4f;
+        const Vec2 direction = fromAngle(angle);
+        renderer.drawLine(
+            center + direction * (popRadius * 0.70f),
+            center + direction * (popRadius * 1.12f),
+            popColor);
+    }
+}
+
+void renderWaterDrop(Renderer& renderer, const Effect& effect, Vec2 center, Color color, float radius)
+{
+    if (radius <= 0.0f || color.a == 0) {
+        return;
+    }
+
+    const float stretch = clamp(effect.shardAspect, 0.85f, 1.75f);
+    const Vec2 tip = center + Vec2{0.0f, -radius * 1.38f * stretch};
+    const Vec2 lower = center + Vec2{0.0f, radius * 0.30f * stretch};
+    const std::array<Vec2, 3> body{{
+        tip,
+        center + Vec2{-radius * 0.62f, radius * 0.16f * stretch},
+        center + Vec2{radius * 0.62f, radius * 0.16f * stretch},
+    }};
+    renderer.fillPolygon(body.data(), body.size(), color);
+    renderer.fillCircle(lower, radius * 0.72f, color);
+    renderer.fillSoftCircle(lower, radius * 1.12f, withAlphaScale(color, 0.32f));
+    renderer.fillCircle(
+        center + Vec2{-radius * 0.22f, -radius * 0.10f * stretch},
+        std::max(0.6f, radius * 0.18f),
+        colorTowardWhite(color, 0.70f, 0.82f));
+}
+
+void fillJaggedStarFan(
+    Renderer& renderer,
+    Vec2 center,
+    float rotation,
+    float outerRadius,
+    float innerRadius,
+    int points,
+    float phase,
+    Color color)
+{
+    if (outerRadius <= 0.0f || innerRadius <= 0.0f || color.a == 0) {
+        return;
+    }
+
+    constexpr int MaxSegments = 32;
+    const int segments = std::clamp(points * 2, 6, MaxSegments);
+    std::array<Vec2, MaxSegments + 1> vertices{};
+    std::array<int, MaxSegments * 3> indices{};
+    vertices[0] = snapPoint(center);
+    for (int i = 0; i < segments; ++i) {
+        const bool outer = i % 2 == 0;
+        const float angle = rotation + static_cast<float>(i) * Pi * 2.0f / static_cast<float>(segments);
+        const float wobble = 1.0f + 0.08f * std::sin(phase + static_cast<float>(i) * 1.731f);
+        const float radius = outer
+            ? outerRadius * wobble
+            : innerRadius * (1.0f - (wobble - 1.0f) * 0.45f);
+        vertices[static_cast<std::size_t>(i + 1)] = snapPoint(center + fromAngle(angle) * radius);
+    }
+
+    int cursor = 0;
+    for (int i = 0; i < segments; ++i) {
+        indices[static_cast<std::size_t>(cursor++)] = 0;
+        indices[static_cast<std::size_t>(cursor++)] = i + 1;
+        indices[static_cast<std::size_t>(cursor++)] = ((i + 1) % segments) + 1;
+    }
+    renderer.fillTriangleList(
+        vertices.data(),
+        static_cast<std::size_t>(segments + 1),
+        indices.data(),
+        static_cast<std::size_t>(segments * 3),
+        color);
+}
+
+void renderTaperedSpike(Renderer& renderer, Vec2 center, float angle, float length, float halfWidth, float backInset, Color color)
+{
+    if (length <= 0.0f || halfWidth <= 0.0f || color.a == 0) {
+        return;
+    }
+
+    const Vec2 direction = fromAngle(angle);
+    const Vec2 normal{-direction.y, direction.x};
+    const std::array<Vec2, 3> points{{
+        snapPoint(center + direction * -backInset + normal * halfWidth),
+        snapPoint(center + direction * length),
+        snapPoint(center + direction * -backInset + normal * -halfWidth),
+    }};
+    renderer.fillPolygon(points.data(), points.size(), color);
+}
+
+void renderImpactSpark(Renderer& renderer, const Effect& effect, Vec2 center, Color color, float radius)
+{
+    if (radius <= 0.0f || color.a == 0) {
+        return;
+    }
+
+    const float stretch = clamp(effect.shardAspect, 0.70f, 1.85f);
+    const float pulse = 0.86f + 0.14f * std::sin(effect.age * 30.0f + effect.rotation * 1.7f);
+    const float glowRadius = radius * (1.28f + stretch * 0.22f) * pulse;
+    const float coreRadius = std::max(0.8f, radius * (0.52f + stretch * 0.08f));
+    const Color glow = withAlphaScale(color, 0.38f);
+    const Color core = colorTowardWhite(color, 0.62f, 0.95f);
+    const Color hot{255, 252, 210, scaledAlpha(color.a, 0.76f)};
+
+    renderer.fillSoftCircle(center, glowRadius, glow);
+    renderer.fillCircle(center, coreRadius, core);
+    renderer.fillCircle(center, std::max(0.6f, coreRadius * 0.46f), hot);
+}
+
+void renderImpactBurst(Renderer& renderer, const Effect& effect, Vec2 center, Color color, float radius, float t)
+{
+    if (radius <= 0.0f || color.a == 0) {
+        return;
+    }
+
+    const float u = clamp(t, 0.0f, 1.0f);
+    const float attack = smooth01(clamp(u / 0.22f, 0.0f, 1.0f));
+    const float retract = u < 0.46f ? 1.0f : lerp(1.0f, 0.14f, smooth01((u - 0.46f) / 0.54f));
+    const float fade = std::pow(clamp((1.0f - u) / 0.96f, 0.0f, 1.0f), 0.58f);
+    const float bloom = lerp(0.56f, 1.06f, attack) * (1.0f + 0.05f * std::sin(effect.age * 52.0f + effect.rotation));
+    const float reach = bloom * retract;
+    const float coreScale = bloom * lerp(1.0f, 0.56f, smooth01(clamp((u - 0.64f) / 0.36f, 0.0f, 1.0f)));
+    const float phase = static_cast<float>(effect.shardVariant) * 0.713f + effect.rotation * 0.37f;
+    const float spin = effect.rotation;
+
+    const Color outer = withAlphaScale(color, 0.24f * fade);
+    const Color glow = withAlphaScale(color, 0.42f * fade);
+    const Color mid = withAlphaScale(color, 0.78f * fade);
+    const Color hot = colorTowardWhite(color, 0.82f, 0.94f * fade);
+    const Color white{255, 255, 236, scaledAlpha(color.a, 0.88f * fade)};
+
+    for (int i = 0; i < 16; ++i) {
+        const float rayPhase = phase + static_cast<float>(i) * 1.137f;
+        const float angle = spin + static_cast<float>(i) * Pi / 8.0f +
+            0.12f * std::sin(rayPhase) +
+            0.035f * std::sin(rayPhase * 2.37f);
+        const float lengthScale = 0.76f + 0.42f * (0.5f + 0.5f * std::sin(rayPhase * 1.37f));
+        const Vec2 direction = fromAngle(angle);
+        renderer.drawSoftLine(
+            center + direction * (radius * 0.10f * coreScale),
+            center + direction * (radius * (1.05f + lengthScale) * reach),
+            std::max(1.0f, radius * 0.055f),
+            outer);
+    }
+
+    for (int i = 0; i < 8; ++i) {
+        const bool major = i % 2 == 0;
+        const float spikePhase = phase + static_cast<float>(i) * 0.91f;
+        const float angle = spin + static_cast<float>(i) * Pi * 0.25f +
+            0.15f * std::sin(spikePhase * 1.43f) +
+            0.04f * std::sin(spikePhase * 3.11f);
+        const float length = radius * (major ? 1.96f : 1.34f) * reach * (0.96f + 0.08f * std::sin(spikePhase * 1.8f));
+        const float width = radius * (major ? 0.23f : 0.16f) * coreScale;
+        renderTaperedSpike(renderer, center, angle, length * 1.07f, width * 1.42f, radius * 0.10f, glow);
+        renderTaperedSpike(renderer, center, angle, length * 0.88f, width * 0.62f, radius * 0.04f, hot);
+    }
+
+    fillJaggedStarFan(renderer, center, spin + 0.16f, radius * 1.02f * reach, radius * 0.18f * coreScale, 12, phase, mid);
+    fillJaggedStarFan(renderer, center, spin - 0.05f, radius * 0.56f * reach, radius * 0.10f * coreScale, 10, phase + 2.1f, hot);
+    fillJaggedStarFan(renderer, center, spin + 0.42f, radius * 0.30f * coreScale, radius * 0.07f * coreScale, 8, phase + 4.3f, white);
+
+    constexpr int CoreRayCount = 5;
+    for (int i = 0; i < CoreRayCount; ++i) {
+        const float rayPhase = phase + 0.63f + static_cast<float>(i) * 1.417f;
+        const float angle = spin + static_cast<float>(i) * Pi * 2.0f / static_cast<float>(CoreRayCount) +
+            0.13f * std::sin(rayPhase) +
+            0.04f * std::sin(rayPhase * 2.91f);
+        const float rayLength = radius * (1.20f + 0.26f * std::sin(rayPhase * 1.61f)) * reach;
+        const Vec2 direction = fromAngle(angle);
+        renderer.drawSoftLine(
+            center + direction * (radius * 0.08f),
+            center + direction * rayLength,
+            std::max(1.0f, radius * 0.07f),
+            white);
+    }
+}
+
 bool isDepthSortedEffect(const Effect& effect)
 {
     return effect.type == EffectType::Particle && effect.visual == ParticleVisual::RockShard;
@@ -362,6 +712,14 @@ void renderEffectVisual(Renderer& renderer, const Effect& effect)
         renderRockShard(renderer, effect, drawPosition, color, std::max(1.0f, radius));
     } else if (effect.visual == ParticleVisual::Sparkle) {
         renderSparkle(renderer, effect, drawPosition, color, std::max(1.0f, radius));
+    } else if (effect.visual == ParticleVisual::ImpactSpark) {
+        renderImpactSpark(renderer, effect, drawPosition, color, std::max(1.0f, radius));
+    } else if (effect.visual == ParticleVisual::ImpactBurst) {
+        renderImpactBurst(renderer, effect, drawPosition, color, std::max(1.0f, radius), t);
+    } else if (effect.visual == ParticleVisual::PoisonBubble) {
+        renderPoisonBubble(renderer, effect, drawPosition, color, std::max(1.0f, radius), t);
+    } else if (effect.visual == ParticleVisual::WaterDrop) {
+        renderWaterDrop(renderer, effect, drawPosition, color, std::max(1.0f, radius));
     } else {
         renderer.fillCircle(drawPosition, std::max(0.8f, radius), color);
     }
@@ -792,6 +1150,51 @@ void EffectSystem::spawnBurst(Vec2 position, int count, Color color, float speed
 
 void EffectSystem::spawn(ParticleEffectId id, Vec2 position, Vec2 direction, float scale, EffectLayer layer, Color colorOverride)
 {
+    const float safeScale = std::max(0.1f, scale);
+    if (id == ParticleEffectId::PoisonAura) {
+        for (int i = 0; i < 4; ++i) {
+            Color color = mixColor({84, 232, 84, 255}, {168, 255, 112, 255}, randomRange(0.0f, 1.0f));
+            color = applyColorOverride(color, colorOverride);
+            Effect* bubble = spawnParticle(
+                position + Vec2{randomRange(-17.0f, 17.0f), randomRange(-2.0f, 14.0f)} * safeScale,
+                {randomRange(-3.0f, 3.0f) * safeScale, -randomRange(13.0f, 23.0f) * safeScale},
+                randomRange(2.5f, 4.2f) * safeScale,
+                color,
+                randomRange(0.95f, 1.32f),
+                {0.0f, -2.0f * safeScale},
+                0.18f,
+                layer,
+                ParticleVisual::PoisonBubble,
+                0,
+                randomRange(0.0f, Pi * 2.0f),
+                randomRange(4.3f, 6.8f),
+                randomRange(2.5f, 5.6f) * safeScale);
+            if (bubble != nullptr) {
+                bubble->endRadius = bubble->startRadius * randomRange(1.05f, 1.24f);
+            }
+        }
+        return;
+    }
+    if (id == ParticleEffectId::SlowAura) {
+        for (int i = 0; i < 7; ++i) {
+            Color color = mixColor({92, 176, 255, 180}, {226, 250, 255, 150}, randomRange(0.0f, 1.0f));
+            color = applyColorOverride(color, colorOverride);
+            Effect* drop = spawnParticle(
+                position + Vec2{randomRange(-30.0f, 30.0f), randomRange(-24.0f, 8.0f)} * safeScale,
+                {randomRange(-5.0f, 5.0f) * safeScale, randomRange(11.0f, 28.0f) * safeScale},
+                randomRange(1.4f, 2.6f) * safeScale,
+                color,
+                randomRange(0.82f, 1.18f),
+                {0.0f, 18.0f * safeScale},
+                0.24f,
+                layer);
+            if (drop != nullptr) {
+                drop->endRadius = drop->startRadius * randomRange(0.45f, 0.70f);
+            }
+        }
+        return;
+    }
+
     const ParticlePreset& preset = presetFor(id);
     const Vec2 forward = normalize(direction);
     const float baseAngle = std::atan2(forward.y, forward.x);
@@ -804,6 +1207,27 @@ void EffectSystem::spawn(ParticleEffectId id, Vec2 position, Vec2 direction, flo
             std::max(0.05f, preset.duration * 0.75f),
             layer);
     }
+    if (isEnemyHitBurstEffect(id)) {
+        Color burstColor = preset.ringColor.a != 0 ? preset.ringColor : preset.colorA;
+        burstColor = applyColorOverride(burstColor, colorOverride);
+        Effect* flash = spawnParticle(
+            position,
+            {},
+            16.5f * std::max(0.1f, scale),
+            burstColor,
+            std::max(0.18f, preset.duration * 0.95f),
+            {},
+            0.0f,
+            layer,
+            ParticleVisual::ImpactBurst,
+            randomInt(0, 127),
+            seedAngle(position) + randomRange(-0.28f, 0.28f),
+            0.0f,
+            randomRange(0.92f, 1.12f));
+        if (flash != nullptr) {
+            flash->endRadius = flash->startRadius * 1.22f;
+        }
+    }
 
     for (int i = 0; i < preset.count; ++i) {
         const float angleBase = preset.directional ? baseAngle : seedAngle(position);
@@ -812,18 +1236,21 @@ void EffectSystem::spawn(ParticleEffectId id, Vec2 position, Vec2 direction, flo
         const float radius = std::max(0.6f, preset.radius + randomRange(-preset.radiusJitter, preset.radiusJitter)) * scale;
         const float duration = std::max(0.06f, preset.duration + randomRange(-preset.durationJitter, preset.durationJitter));
         const bool rockShard = preset.visual == ParticleVisual::RockShard;
+        const bool impactSpark = preset.visual == ParticleVisual::ImpactSpark;
         const bool digHitShard = preset.id == ParticleEffectId::DigDust;
         const Vec2 shardScatterVelocity = rockShard
             ? Vec2{
                 randomRange(digHitShard ? -22.0f : -42.0f, digHitShard ? 22.0f : 42.0f) * scale,
                 randomRange(digHitShard ? -26.0f : -54.0f, digHitShard ? 26.0f : 54.0f) * scale}
             : Vec2{};
-        const float offsetRange = rockShard ? (digHitShard ? 5.0f : 9.0f) : 4.0f;
+        const float offsetRange = rockShard ? (digHitShard ? 5.0f : 9.0f) : (impactSpark ? 2.5f : 4.0f);
         const Vec2 offset = fromAngle(angle) * randomRange(0.0f, offsetRange * scale);
         const int shardVariant = rockShard ? randomInt(0, static_cast<int>(RockShardShapes.size() - 1)) : 0;
-        const float rotation = rockShard ? angle + randomRange(-Pi * 0.65f, Pi * 0.65f) : 0.0f;
+        const float rotation = rockShard
+            ? angle + randomRange(-Pi * 0.65f, Pi * 0.65f)
+            : (impactSpark ? angle + randomRange(-Pi * 0.12f, Pi * 0.12f) : 0.0f);
         const float angularVelocity = rockShard ? randomRange(-8.0f, 8.0f) : 0.0f;
-        const float shardAspect = rockShard ? randomRange(0.78f, 1.32f) : 1.0f;
+        const float shardAspect = rockShard ? randomRange(0.78f, 1.32f) : (impactSpark ? randomRange(0.78f, 1.62f) : 1.0f);
         const Color particleColor = applyColorOverride(
             mixColor(preset.colorA, preset.colorB, randomRange(0.0f, 1.0f)),
             colorOverride);
@@ -943,28 +1370,25 @@ void EffectSystem::spawnEnemyTransform(Vec2 position)
 
 void EffectSystem::spawnThrowStart(Vec2 position, Vec2 direction)
 {
-    const Vec2 forward = normalize(direction);
-    const Vec2 side{-forward.y, forward.x};
-    spawnRing(position, 10.0f, 30.0f, {225, 184, 84, 210}, 0.25f);
-    for (int i = -2; i <= 2; ++i) {
-        spawnParticle(position + side * static_cast<float>(i * 5), forward * 120.0f + side * static_cast<float>(i * 16), 2.6f, {246, 214, 128, 200}, 0.28f);
-    }
+    (void)position;
+    (void)direction;
 }
 
 void EffectSystem::spawnReturn(Vec2 position)
 {
-    spawnRing(position, 5.0f, 22.0f, {170, 142, 240, 190}, 0.22f);
-    spawnBurst(position, 6, {130, 125, 210, 180}, 58.0f, 2.2f, 0.28f);
+    (void)position;
 }
 
 void EffectSystem::spawnRingTrail(Vec2 position, Vec2 direction)
 {
-    spawn(ParticleEffectId::RingTrail, position, normalize(direction) * -1.0f);
+    (void)position;
+    (void)direction;
 }
 
 void EffectSystem::spawnForegroundRingTrail(Vec2 position, Vec2 direction)
 {
-    spawn(ParticleEffectId::RingTrail, position, normalize(direction) * -1.0f, 1.0f, EffectLayer::Foreground);
+    (void)position;
+    (void)direction;
 }
 
 void EffectSystem::spawnCaptureSuccess(Vec2 position, Vec2 direction)
@@ -1054,9 +1478,28 @@ void EffectSystem::spawnStatusAura(Vec2 position, std::string_view stateId)
     } else if (stateId == "status_paralyze") {
         spawn(ParticleEffectId::MagicThunder, position);
     } else if (stateId == "status_blind") {
-        spawn(ParticleEffectId::MagicDefault, position);
+        spawn(ParticleEffectId::SlowAura, position, {1.0f, 0.0f}, 1.0f, EffectLayer::World, {14, 14, 18, 255});
     } else if (stateId == "status_wet") {
-        spawn(ParticleEffectId::MagicIce, position);
+        for (int i = 0; i < 6; ++i) {
+            const Color color = mixColor({82, 184, 255, 220}, {196, 240, 255, 195}, randomRange(0.0f, 1.0f));
+            Effect* drop = spawnParticle(
+                position + Vec2{randomRange(-16.0f, 16.0f), randomRange(-32.0f, -8.0f)},
+                {randomRange(-2.5f, 2.5f), randomRange(24.0f, 52.0f)},
+                randomRange(1.2f, 2.3f),
+                color,
+                randomRange(0.48f, 0.78f),
+                {0.0f, 42.0f},
+                0.16f,
+                EffectLayer::World,
+                ParticleVisual::WaterDrop,
+                0,
+                0.0f,
+                0.0f,
+                randomRange(1.05f, 1.55f));
+            if (drop != nullptr) {
+                drop->endRadius = drop->startRadius * randomRange(0.42f, 0.62f);
+            }
+        }
     } else if (stateId == "status_hot") {
         spawn(ParticleEffectId::MagicFire, position);
     } else if (stateId == "status_frozen") {
@@ -1091,8 +1534,141 @@ void EffectSystem::spawnMagicCast(Vec2 origin, Vec2 direction, std::string_view 
     const Vec2 forward = normalize(direction);
     const Vec2 impact = origin + forward * (44.0f + power * 1.5f);
     spawn(magicEffectFor(element), impact, forward, 1.0f + power * 0.01f);
-    for (int i = 0; i < 4; ++i) {
-        spawn(ParticleEffectId::RingTrail, origin + forward * static_cast<float>(i * 8), forward, 0.8f);
+}
+
+std::span<const EffectPreviewEntry> effectSystemPreviewEntries()
+{
+    static const std::vector<EffectPreviewEntry> entries = [] {
+        std::vector<EffectPreviewEntry> result;
+        result.reserve(ParticlePresets.size() + 29);
+        for (const ParticlePreset& preset : ParticlePresets) {
+            result.push_back(EffectPreviewEntry{
+                .id = particleEffectPreviewId(preset.id),
+                .label = particleEffectPreviewLabel(preset.id),
+                .group = "EffectSystem / 粒子プリセット",
+                .source = EffectPreviewSource::EffectSystem,
+                .target = particleEffectPreviewTarget(preset.id),
+                .playback = EffectPreviewPlayback::BurstEvery20Frames,
+                .action = EffectPreviewAction::ParticlePreset,
+                .particleId = preset.id,
+                .direction = {1.0f, 0.0f},
+                .scale = 1.0f,
+            });
+        }
+
+        static constexpr std::array<EffectPreviewEntry, 29> ActionEntries{{
+            {.id = "dig_hit", .label = "掘削ヒット", .group = "EffectSystem / 高水準API", .source = EffectPreviewSource::EffectSystem, .target = EffectPreviewTarget::WallTile, .action = EffectPreviewAction::DigHit, .direction = {-1.0f, 0.0f}},
+            {.id = "tile_break", .label = "壁破壊", .group = "EffectSystem / 高水準API", .source = EffectPreviewSource::EffectSystem, .target = EffectPreviewTarget::WallTile, .action = EffectPreviewAction::TileBreak},
+            {.id = "enemy_hit_default", .label = "敵ヒット: 通常", .group = "EffectSystem / 高水準API", .source = EffectPreviewSource::EffectSystem, .target = EffectPreviewTarget::EnemySlime, .action = EffectPreviewAction::EnemyHit},
+            {.id = "enemy_hit_fire", .label = "敵ヒット: 火", .group = "EffectSystem / 高水準API", .source = EffectPreviewSource::EffectSystem, .target = EffectPreviewTarget::EnemySlime, .action = EffectPreviewAction::EnemyHit, .argument = "fire"},
+            {.id = "enemy_hit_ice", .label = "敵ヒット: 氷", .group = "EffectSystem / 高水準API", .source = EffectPreviewSource::EffectSystem, .target = EffectPreviewTarget::EnemySlime, .action = EffectPreviewAction::EnemyHit, .argument = "ice"},
+            {.id = "enemy_hit_thunder", .label = "敵ヒット: 雷", .group = "EffectSystem / 高水準API", .source = EffectPreviewSource::EffectSystem, .target = EffectPreviewTarget::EnemySlime, .action = EffectPreviewAction::EnemyHit, .argument = "thunder"},
+            {.id = "enemy_hit_wind", .label = "敵ヒット: 風", .group = "EffectSystem / 高水準API", .source = EffectPreviewSource::EffectSystem, .target = EffectPreviewTarget::EnemySlime, .action = EffectPreviewAction::EnemyHit, .argument = "wind"},
+            {.id = "enemy_hit_earth", .label = "敵ヒット: 土", .group = "EffectSystem / 高水準API", .source = EffectPreviewSource::EffectSystem, .target = EffectPreviewTarget::EnemySlime, .action = EffectPreviewAction::EnemyHit, .argument = "earth"},
+            {.id = "enemy_death", .label = "敵死亡", .group = "EffectSystem / 高水準API", .source = EffectPreviewSource::EffectSystem, .target = EffectPreviewTarget::EnemySlime, .action = EffectPreviewAction::EnemyDeath},
+            {.id = "enemy_transform", .label = "敵変身煙", .group = "EffectSystem / 高水準API", .source = EffectPreviewSource::EffectSystem, .target = EffectPreviewTarget::EnemySlime, .action = EffectPreviewAction::EnemyTransform},
+            {.id = "api_capture_success", .label = "捕獲成功", .group = "EffectSystem / 高水準API", .source = EffectPreviewSource::EffectSystem, .target = EffectPreviewTarget::EnemySlime, .action = EffectPreviewAction::CaptureSuccess, .direction = {0.0f, -1.0f}},
+            {.id = "api_drop_pickup", .label = "ドロップ取得", .group = "EffectSystem / 高水準API", .source = EffectPreviewSource::EffectSystem, .target = EffectPreviewTarget::Player, .action = EffectPreviewAction::DropPickup, .direction = {0.0f, -1.0f}},
+            {.id = "item_break_generic", .label = "アイテム破壊: 汎用", .group = "EffectSystem / 高水準API", .source = EffectPreviewSource::EffectSystem, .target = EffectPreviewTarget::WallTile, .action = EffectPreviewAction::ItemBreakGeneric},
+            {.id = "item_break_wood", .label = "アイテム破壊: 木", .group = "EffectSystem / 高水準API", .source = EffectPreviewSource::EffectSystem, .target = EffectPreviewTarget::WallTile, .action = EffectPreviewAction::ItemBreakWood},
+            {.id = "item_break_ceramic", .label = "アイテム破壊: 陶器", .group = "EffectSystem / 高水準API", .source = EffectPreviewSource::EffectSystem, .target = EffectPreviewTarget::WallTile, .action = EffectPreviewAction::ItemBreakCeramic},
+            {.id = "item_break_glass", .label = "アイテム破壊: ガラス", .group = "EffectSystem / 高水準API", .source = EffectPreviewSource::EffectSystem, .target = EffectPreviewTarget::WallTile, .action = EffectPreviewAction::ItemBreakGlass},
+            {.id = "material_float", .label = "素材浮遊", .group = "EffectSystem / 高水準API", .source = EffectPreviewSource::EffectSystem, .target = EffectPreviewTarget::Player, .action = EffectPreviewAction::MaterialFloat, .offset = {0.0f, -20.0f}},
+            {.id = "torch_flicker", .label = "たいまつ火花", .group = "EffectSystem / 高水準API", .source = EffectPreviewSource::EffectSystem, .target = EffectPreviewTarget::Player, .action = EffectPreviewAction::TorchFlicker, .offset = {0.0f, -38.0f}},
+            {.id = "torch_flicker_foreground", .label = "たいまつ火花: 前景", .group = "EffectSystem / 高水準API", .source = EffectPreviewSource::EffectSystem, .target = EffectPreviewTarget::Player, .action = EffectPreviewAction::ForegroundTorchFlicker, .offset = {0.0f, -38.0f}},
+            {.id = "special_item_glimmer", .label = "特殊アイテム光", .group = "EffectSystem / 高水準API", .source = EffectPreviewSource::EffectSystem, .target = EffectPreviewTarget::Player, .action = EffectPreviewAction::SpecialItemGlimmer, .offset = {0.0f, -28.0f}},
+            {.id = "warp_circle", .label = "ワープ円", .group = "EffectSystem / 高水準API", .source = EffectPreviewSource::EffectSystem, .target = EffectPreviewTarget::Player, .action = EffectPreviewAction::WarpCircle},
+            {.id = "boss_circle", .label = "ボス円", .group = "EffectSystem / 高水準API", .source = EffectPreviewSource::EffectSystem, .target = EffectPreviewTarget::EnemySlime, .action = EffectPreviewAction::BossCircle},
+            {.id = "area_pulse", .label = "範囲パルス", .group = "EffectSystem / 高水準API", .source = EffectPreviewSource::EffectSystem, .target = EffectPreviewTarget::Player, .action = EffectPreviewAction::AreaPulse, .radius = 70.0f},
+            {.id = "magic_cast_fire", .label = "魔法詠唱: 火", .group = "EffectSystem / 高水準API", .source = EffectPreviewSource::EffectSystem, .target = EffectPreviewTarget::EnemySlime, .action = EffectPreviewAction::MagicCast, .argument = "fire", .direction = {1.0f, 0.0f}},
+            {.id = "magic_cast_ice", .label = "魔法詠唱: 氷", .group = "EffectSystem / 高水準API", .source = EffectPreviewSource::EffectSystem, .target = EffectPreviewTarget::EnemySlime, .action = EffectPreviewAction::MagicCast, .argument = "ice", .direction = {1.0f, 0.0f}},
+            {.id = "magic_cast_thunder", .label = "魔法詠唱: 雷", .group = "EffectSystem / 高水準API", .source = EffectPreviewSource::EffectSystem, .target = EffectPreviewTarget::EnemySlime, .action = EffectPreviewAction::MagicCast, .argument = "thunder", .direction = {1.0f, 0.0f}},
+            {.id = "magic_cast_wind", .label = "魔法詠唱: 風", .group = "EffectSystem / 高水準API", .source = EffectPreviewSource::EffectSystem, .target = EffectPreviewTarget::EnemySlime, .action = EffectPreviewAction::MagicCast, .argument = "wind", .direction = {1.0f, 0.0f}},
+            {.id = "magic_cast_earth", .label = "魔法詠唱: 土", .group = "EffectSystem / 高水準API", .source = EffectPreviewSource::EffectSystem, .target = EffectPreviewTarget::EnemySlime, .action = EffectPreviewAction::MagicCast, .argument = "earth", .direction = {1.0f, 0.0f}},
+            {.id = "magic_cast_default", .label = "魔法詠唱: 汎用", .group = "EffectSystem / 高水準API", .source = EffectPreviewSource::EffectSystem, .target = EffectPreviewTarget::EnemySlime, .action = EffectPreviewAction::MagicCast, .argument = "magic", .direction = {1.0f, 0.0f}},
+        }};
+        result.insert(result.end(), ActionEntries.begin(), ActionEntries.end());
+        return result;
+    }();
+    return {entries.data(), entries.size()};
+}
+
+void playEffectSystemPreview(
+    EffectSystem& effects,
+    const EffectPreviewEntry& entry,
+    Vec2 position,
+    Vec2 direction,
+    TileType wallTileType,
+    Color wallTileColor)
+{
+    const Vec2 fallbackDirection = lengthSquared(direction) > 0.0001f ? normalize(direction) : Vec2{1.0f, 0.0f};
+    const Vec2 entryDirection = lengthSquared(entry.direction) > 0.0001f ? normalize(entry.direction) : fallbackDirection;
+    const Vec2 pos = position + entry.offset;
+
+    switch (entry.action) {
+    case EffectPreviewAction::ParticlePreset:
+        effects.spawn(entry.particleId, pos, entryDirection, entry.scale);
+        break;
+    case EffectPreviewAction::DigHit:
+        effects.spawnDigHit(pos, entryDirection, wallTileColor);
+        break;
+    case EffectPreviewAction::TileBreak:
+        effects.spawnTileBreak(pos, wallTileType, wallTileColor);
+        break;
+    case EffectPreviewAction::EnemyHit:
+        effects.spawnEnemyHit(pos, entry.argument);
+        break;
+    case EffectPreviewAction::EnemyDeath:
+        effects.spawnEnemyDeath(pos);
+        break;
+    case EffectPreviewAction::EnemyTransform:
+        effects.spawnEnemyTransform(pos);
+        break;
+    case EffectPreviewAction::CaptureSuccess:
+        effects.spawnCaptureSuccess(pos, entryDirection);
+        break;
+    case EffectPreviewAction::DropPickup:
+        effects.spawnDropPickup(pos, entryDirection);
+        break;
+    case EffectPreviewAction::ItemBreakGeneric:
+        effects.spawnItemBreak(pos, ItemBreakVisual::Generic, entry.scale);
+        break;
+    case EffectPreviewAction::ItemBreakWood:
+        effects.spawnItemBreak(pos, ItemBreakVisual::Wood, entry.scale);
+        break;
+    case EffectPreviewAction::ItemBreakCeramic:
+        effects.spawnItemBreak(pos, ItemBreakVisual::Ceramic, entry.scale);
+        break;
+    case EffectPreviewAction::ItemBreakGlass:
+        effects.spawnItemBreak(pos, ItemBreakVisual::Glass, entry.scale);
+        break;
+    case EffectPreviewAction::MaterialFloat:
+        effects.spawnMaterialFloat(pos, {150, 224, 255, 190});
+        break;
+    case EffectPreviewAction::TorchFlicker:
+        effects.spawnTorchFlicker(pos);
+        break;
+    case EffectPreviewAction::ForegroundTorchFlicker:
+        effects.spawnForegroundTorchFlicker(pos);
+        break;
+    case EffectPreviewAction::SpecialItemGlimmer:
+        effects.spawnSpecialItemGlimmer(pos);
+        break;
+    case EffectPreviewAction::ForegroundSpecialItemGlimmer:
+        effects.spawnForegroundSpecialItemGlimmer(pos);
+        break;
+    case EffectPreviewAction::WarpCircle:
+        effects.spawnWarpCircle(pos, false);
+        break;
+    case EffectPreviewAction::BossCircle:
+        effects.spawnWarpCircle(pos, true);
+        break;
+    case EffectPreviewAction::AreaPulse:
+        effects.spawnAreaPulse(pos, entry.radius, {126, 208, 255, 190});
+        break;
+    case EffectPreviewAction::MagicCast:
+        effects.spawnMagicCast(pos - entryDirection * 54.0f, entryDirection, entry.argument, 24.0f);
+        break;
     }
 }
 

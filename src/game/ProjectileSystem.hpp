@@ -12,6 +12,7 @@
 
 #include <string>
 #include <string_view>
+#include <span>
 #include <vector>
 
 namespace majo {
@@ -51,6 +52,19 @@ struct ProjectileSpawnTuning {
     float radiusScale = 1.0f;
 };
 
+struct ProjectileDefinition {
+    std::string id;
+    std::string displayName;
+    float speed = 180.0f;
+    float radius = 4.0f;
+    float lifetime = 2.0f;
+    int damage = 1;
+    std::string damageType = "blunt";
+    std::vector<std::string> tags;
+};
+
+[[nodiscard]] std::span<const ProjectileDefinition> projectileDefinitions();
+
 class ProjectileSystem {
 public:
     bool spawn(std::string_view projectileId, Vec2 position, Vec2 direction, ProjectileOwnerType ownerType);
@@ -62,6 +76,7 @@ public:
         ProjectileOwnerType ownerType,
         const std::vector<EffectSpec>& effects,
         const ProjectileSpawnTuning& tuning);
+    void updatePreview(float dt);
     void update(
         Player& player,
         SpellRingSystem& spellRing,
@@ -79,6 +94,7 @@ public:
         const TileMap& map,
         Vec2 playerLight,
         const std::vector<LightSource>& extraLights) const;
+    void appendPreviewRenderEntries(std::vector<DepthRenderEntry>& entries, Renderer& renderer) const;
     void clear();
     int activeCount() const { return projectiles_.activeCount(); }
     int activeCount(ProjectileOwnerType ownerType) const;

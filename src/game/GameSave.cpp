@@ -513,6 +513,108 @@ bool worldDropKindFromSaveName(std::string_view name, WorldDropKind& outKind)
     return false;
 }
 
+struct DiaryWarpCounts {
+    int discovered = 0;
+    int total = 0;
+};
+
+struct DiaryProgressSnapshot {
+    bool storyCleared = false;
+    std::string latestStageId;
+    std::string latestStageName;
+    int discoveredWarpPoints = 0;
+    int totalWarpPoints = 0;
+};
+
+std::vector<StageDefinition> diaryStoryStages(const StageCatalog& catalog)
+{
+    std::vector<StageDefinition> stages;
+    for (const StageDefinition& stage : catalog.getStagesSortedByDisplayOrder()) {
+        if (!isRoguelikeSaveStage(stage)) {
+            stages.push_back(stage);
+        }
+    }
+    return stages;
+}
+
+std::string diaryStageClearFlag(int storyStageIndex)
+{
+    return "stage_clear_" + std::to_string(storyStageIndex + 1);
+}
+
+bool containsStoryFlag(const std::unordered_set<std::string>& flags, std::string_view flag)
+{
+    return flags.find(std::string(flag)) != flags.end();
+}
+
+bool diaryStoryCleared(int unlockedStages, const std::unordered_set<std::string>& storyFlags, const std::vector<StageDefinition>& storyStages)
+{
+    if (storyStages.empty()) {
+        return false;
+    }
+    return unlockedStages > static_cast<int>(storyStages.size()) ||
+        containsStoryFlag(storyFlags, diaryStageClearFlag(static_cast<int>(storyStages.size()) - 1));
+}
+
+int diaryFallbackWarpTotal(const StageDefinition& stage)
+{
+    if (stage.warpPointCount > 0) {
+        return std::clamp(stage.warpPointCount, 1, MaxWarpPointsPerRun);
+    }
+    return MaxWarpPointsPerRun;
+}
+
+DiaryProgressSnapshot makeDiaryProgressSnapshot(
+    const StageCatalog& catalog,
+    int unlockedStages,
+    const std::unordered_set<std::string>& storyFlags,
+    const std::unordered_map<std::string, DiaryWarpCounts>& warpCountsByStage,
+    std::string_view currentStageId,
+    int currentStageUnlockedWarpPoints)
+{
+    DiaryProgressSnapshot snapshot;
+    const std::vector<StageDefinition> storyStages = diaryStoryStages(catalog);
+    if (storyStages.empty()) {
+        snapshot.latestStageName = "未設定";
+        return snapshot;
+    }
+
+    snapshot.storyCleared = diaryStoryCleared(unlockedStages, storyFlags, storyStages);
+    if (snapshot.storyCleared) {
+        return snapshot;
+    }
+
+    const int latestIndex = std::clamp(unlockedStages, 1, static_cast<int>(storyStages.size())) - 1;
+    const StageDefinition& latestStage = storyStages[static_cast<std::size_t>(latestIndex)];
+    snapshot.latestStageId = latestStage.id;
+    snapshot.latestStageName = latestStage.name.empty() ? latestStage.id : latestStage.name;
+    snapshot.totalWarpPoints = diaryFallbackWarpTotal(latestStage);
+
+    const auto warpIt = warpCountsByStage.find(latestStage.id);
+    if (warpIt != warpCountsByStage.end()) {
+        snapshot.totalWarpPoints = std::max(1, warpIt->second.total);
+        snapshot.discoveredWarpPoints = std::clamp(warpIt->second.discovered, 0, snapshot.totalWarpPoints);
+    } else if (latestStage.id == currentStageId) {
+        snapshot.discoveredWarpPoints = std::clamp(currentStageUnlockedWarpPoints, 0, snapshot.totalWarpPoints);
+    }
+    return snapshot;
+}
+
+int percentForCodexCount(int discoveredCount, int totalCount)
+{
+    if (totalCount <= 0) {
+        return 0;
+    }
+    return std::clamp(discoveredCount * 100 / totalCount, 0, 100);
+}
+
+bool enemyCatalogContains(const EnemyCatalog& catalog, std::string_view enemyId)
+{
+    return std::any_of(catalog.enemies.begin(), catalog.enemies.end(), [enemyId](const EnemyDefinition& enemy) {
+        return enemy.id == enemyId;
+    });
+}
+
 bool ringItemsContainInstanceId(
     const std::array<std::vector<SpellRingItem>, SpellRingCount>& ringItemsByRing,
     std::string_view instanceId)
@@ -558,6 +660,191 @@ int unlockedRingCountFromStageClearFlags(const std::vector<std::string>& storyFl
 
 }
 
+Game::DiarySaveSummary Game::currentDiarySaveSummary() const
+{
+    DiarySaveSummary summary;
+    summary.hasSave = true;
+    summary.playerLevel = std::max(1, player_.level);
+    summary.playTimeSeconds = static_cast<std::int64_t>(std::max(0.0, playTimeSeconds_));
+
+    std::unordered_set<std::string> storyFlags(storyFlags_.begin(), storyFlags_.end());
+    std::unordered_map<std::string, DiaryWarpCounts> warpCountsByStage;
+    const auto addWarpCounts = [&warpCountsByStage](
+        std::string_view stageId,
+        const std::vector<WarpPoint>& points,
+        int unlockedFallback) {
+        if (stageId.empty() || points.empty()) {
+            return;
+        }
+        DiaryWarpCounts counts;
+        counts.total = static_cast<int>(points.size());
+        for (const WarpPoint& point : points) {
+            if (point.discovered) {
+                ++counts.discovered;
+            }
+        }
+        counts.discovered = std::max(counts.discovered, std::max(0, unlockedFallback));
+        warpCountsByStage[std::string(stageId)] = counts;
+    };
+
+    for (const auto& [stageId, state] : dungeonStates_) {
+        if (!state.valid) {
+            continue;
+        }
+        const std::string& resolvedStageId = state.currentStageId.empty() ? stageId : state.currentStageId;
+        addWarpCounts(resolvedStageId, state.warpPoints, state.unlockedWarpPointCount);
+    }
+    addWarpCounts(currentStageId_, warpPoints_, unlockedWarpPointCount_);
+
+    const DiaryProgressSnapshot progress = makeDiaryProgressSnapshot(
+        stageCatalog_,
+        unlockedStages_,
+        storyFlags,
+        warpCountsByStage,
+        currentStageId_,
+        unlockedWarpPointCount_);
+    summary.storyCleared = progress.storyCleared;
+    summary.latestStageId = progress.latestStageId;
+    summary.latestStageName = progress.latestStageName;
+    summary.discoveredWarpPoints = progress.discoveredWarpPoints;
+    summary.totalWarpPoints = progress.totalWarpPoints;
+
+    int discoveredObjects = 0;
+    for (const ObjectDefinition& object : objectCatalog_.objects) {
+        const bool treasure = object.category == "宝";
+        if (encyclopedia_.objectStage(object.id, treasure) != EncyclopediaStage::Undiscovered) {
+            ++discoveredObjects;
+        }
+    }
+    summary.itemCodexPercent = percentForCodexCount(
+        discoveredObjects,
+        static_cast<int>(objectCatalog_.objects.size()));
+
+    int discoveredEnemies = 0;
+    for (const EnemyDefinition& enemy : enemyCatalog_.enemies) {
+        if (encyclopedia_.enemyStage(enemy.id) != EncyclopediaStage::Undiscovered) {
+            ++discoveredEnemies;
+        }
+    }
+    summary.enemyCodexPercent = percentForCodexCount(
+        discoveredEnemies,
+        static_cast<int>(enemyCatalog_.enemies.size()));
+    return summary;
+}
+
+Game::DiarySaveSummary Game::loadDiarySaveSummaryFromDisk() const
+{
+    DiarySaveSummary summary;
+    const std::filesystem::path path = saveDataPath();
+    std::ifstream file(path, std::ios::binary);
+    if (!file) {
+        return summary;
+    }
+
+    std::string line;
+    if (!std::getline(file, line)) {
+        return summary;
+    }
+    if (!line.empty() && line.back() == '\r') {
+        line.pop_back();
+    }
+    if (line != "MAJO_SHOVEL_SAVE_V1") {
+        return summary;
+    }
+
+    summary.hasSave = true;
+    int unlockedStages = 1;
+    int currentStageUnlockedWarpPoints = 0;
+    std::string currentStageId = currentStageId_;
+    std::unordered_set<std::string> storyFlags;
+    std::unordered_set<std::string> objectCodexIds;
+    std::unordered_set<std::string> enemyCodexIds;
+    std::unordered_map<std::string, DiaryWarpCounts> warpCountsByStage;
+
+    while (std::getline(file, line)) {
+        std::istringstream stream(line);
+        std::string key;
+        stream >> key;
+        if (key.empty()) {
+            continue;
+        }
+
+        if (key == "player_level") {
+            stream >> summary.playerLevel;
+            summary.playerLevel = std::max(1, summary.playerLevel);
+        } else if (key == "play_time_seconds") {
+            stream >> summary.playTimeSeconds;
+            summary.playTimeSeconds = std::max<std::int64_t>(0, summary.playTimeSeconds);
+        } else if (key == "unlocked_stages") {
+            stream >> unlockedStages;
+            unlockedStages = std::max(1, unlockedStages);
+        } else if (key == "current_stage_id") {
+            stream >> currentStageId;
+        } else if (key == "unlocked_warp_points") {
+            stream >> currentStageUnlockedWarpPoints;
+            currentStageUnlockedWarpPoints = std::max(0, currentStageUnlockedWarpPoints);
+        } else if (key == "story_flag") {
+            std::string flag;
+            stream >> flag;
+            if (!flag.empty()) {
+                storyFlags.insert(std::move(flag));
+            }
+        } else if (key == "codex_entry") {
+            std::string kindName;
+            std::string id;
+            int stageValue = 0;
+            stream >> kindName >> id >> stageValue;
+            EncyclopediaKind kind = EncyclopediaKind::Item;
+            if (!stream.fail() && !id.empty() && stageValue > 0 && encyclopediaKindFromSaveName(kindName, kind)) {
+                if (kind == EncyclopediaKind::Enemy) {
+                    if (enemyCatalogContains(enemyCatalog_, id)) {
+                        enemyCodexIds.insert(std::move(id));
+                    }
+                } else if (objectCatalog_.registry.findById(id) != nullptr) {
+                    objectCodexIds.insert(std::move(id));
+                }
+            }
+        } else if (key == "dungeon_warp_point") {
+            std::string stageId;
+            LoadedDungeonWarpPointSave point;
+            stream >> stageId
+                >> point.index
+                >> point.position.x
+                >> point.position.y
+                >> point.discovered
+                >> point.unlocked
+                >> point.snapshotCaptured;
+            if (!stream.fail() && !stageId.empty()) {
+                DiaryWarpCounts& counts = warpCountsByStage[stageId];
+                ++counts.total;
+                if (point.discovered) {
+                    ++counts.discovered;
+                }
+            }
+        }
+    }
+
+    const DiaryProgressSnapshot progress = makeDiaryProgressSnapshot(
+        stageCatalog_,
+        unlockedStages,
+        storyFlags,
+        warpCountsByStage,
+        currentStageId,
+        currentStageUnlockedWarpPoints);
+    summary.storyCleared = progress.storyCleared;
+    summary.latestStageId = progress.latestStageId;
+    summary.latestStageName = progress.latestStageName;
+    summary.discoveredWarpPoints = progress.discoveredWarpPoints;
+    summary.totalWarpPoints = progress.totalWarpPoints;
+    summary.itemCodexPercent = percentForCodexCount(
+        static_cast<int>(objectCodexIds.size()),
+        static_cast<int>(objectCatalog_.objects.size()));
+    summary.enemyCodexPercent = percentForCodexCount(
+        static_cast<int>(enemyCodexIds.size()),
+        static_cast<int>(enemyCatalog_.enemies.size()));
+    return summary;
+}
+
 bool Game::loadSaveData()
 {
     const std::filesystem::path path = saveDataPath();
@@ -589,6 +876,7 @@ bool Game::loadSaveData()
     std::vector<InventoryObjectStack> loadedWarehouseStacks;
     std::vector<InventoryObjectInstance> loadedWarehouseInstances;
     int loadedMoney = 0;
+    double loadedPlayTimeSeconds = 0.0;
     int loadedAstralHighScore = 0;
     int loadedCurrentStage = 0;
     std::string loadedCurrentStageId = currentStageId_;
@@ -642,6 +930,8 @@ bool Game::loadSaveData()
         }
         if (key == "money") {
             stream >> loadedMoney;
+        } else if (key == "play_time_seconds") {
+            stream >> loadedPlayTimeSeconds;
         } else if (key == "astral_high_score") {
             stream >> loadedAstralHighScore;
         } else if (key == "player_level") {
@@ -1317,6 +1607,7 @@ bool Game::loadSaveData()
     refreshEquipmentModifiers();
     refreshOrbitEffects();
     money_ = std::max(0, loadedMoney);
+    playTimeSeconds_ = std::max(0.0, loadedPlayTimeSeconds);
     astralHighScore_ = std::max(0, loadedAstralHighScore);
     unlockedStages_ = std::max(1, loadedUnlockedStages);
     const int migratedUnlockedRingCount = loadedUnlockedRingCountExplicit
@@ -1579,6 +1870,7 @@ bool Game::saveSaveData(std::string& message) const
 
     file << "MAJO_SHOVEL_SAVE_V1\n";
     file << "money " << money_ << "\n";
+    file << "play_time_seconds " << static_cast<std::int64_t>(std::max(0.0, playTimeSeconds_)) << "\n";
     file << "astral_high_score " << astralHighScore_ << "\n";
     file << "player_level " << player_.level << "\n";
     file << "player_xp " << player_.xp << "\n";
@@ -1673,6 +1965,8 @@ bool Game::saveSaveData(std::string& message) const
     std::string saveDungeonStageId = currentStageId_;
     int saveDungeonCurrentStage = currentStage_;
     if (mode_ == ScreenMode::Playing &&
+        !effectTestActive_ &&
+        !projectileTestActive_ &&
         !enemyTestActive_ &&
         hasSaveableDungeonLayout(dungeonLayout_) &&
         !isRoguelikeSaveStage(currentStageDefinition())) {

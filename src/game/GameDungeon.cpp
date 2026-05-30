@@ -52,6 +52,7 @@ constexpr int MicroFeatureMaxCount = 30;
 constexpr double DungeonMinimapRevealIntervalSeconds = 0.15;
 constexpr std::string_view FirstDungeonStageId = "stage_01_stardust";
 constexpr std::string_view MagnifyingGlassObjectId = "item_magnifying_glass";
+constexpr std::string_view CaptureNetObjectId = "item_capture_net";
 constexpr float MagnifyingGlassGuaranteedMaxDepthTiles = 100.0f;
 constexpr float MagnifyingGlassGuaranteedProgressFallback = 0.24f;
 constexpr std::string_view FinalStoryStageId = "stage_03_star_core";
@@ -78,6 +79,9 @@ constexpr float CaptureAbsorbSparkIntervalSeconds = 0.045f;
 constexpr float DigToolFailsafeSpawnCooldownSeconds = 12.0f;
 constexpr float DigToolFailsafeNearbyDropRadius = 220.0f;
 constexpr float FootstepPitchSideOffset = 0.025f;
+constexpr float WetGroundPlayerRadiusMultiplier = 1.45f;
+constexpr float WetGroundPlayerMinRadius = 16.0f;
+constexpr float WetGroundPlayerMaxRadius = 28.0f;
 constexpr float FootstepPitchRandomJitter = 0.015f;
 constexpr std::uint32_t IntroTutorialSeed = 0x1A57D00Du;
 constexpr float IntroTutorialExitInteractRadius = 58.0f;
@@ -2255,6 +2259,23 @@ void Game::updateCapturedUtilityBehaviors(float dt)
     }
 }
 
+void Game::updateWetGroundFromStatus()
+{
+    if (player_.status.hasState("status_wet")) {
+        const float playerWetRadius = std::clamp(
+            player_.effectiveRadius(balance_.playerRadius) * WetGroundPlayerRadiusMultiplier,
+            WetGroundPlayerMinRadius,
+            WetGroundPlayerMaxRadius);
+        wetGround_.touchSource("player", player_.position, playerWetRadius);
+    }
+
+    std::vector<WetGroundEmitter> emitters;
+    enemies_.appendWetGroundEmitters(emitters);
+    for (const WetGroundEmitter& emitter : emitters) {
+        wetGround_.touchSource(emitter.sourceKey, emitter.position, emitter.radius, emitter.strength);
+    }
+}
+
 void Game::updateAmbientParticleEffects(float dt)
 {
     if (dt <= 0.0f) {
@@ -2300,6 +2321,7 @@ void Game::updateAmbientParticleEffects(float dt)
 
     emitEntityStatusAuras(player_.status, player_.position, effects_);
     enemies_.emitStatusParticles(effects_);
+    updateWetGroundFromStatus();
 
     if (warpPointsEnabled_) {
         if (!lightweight) {
@@ -2726,6 +2748,7 @@ void Game::retryAfterGameOver()
     effects_ = EffectSystem{};
     captureAbsorbAnimations_.clear();
     groundLines_ = GroundLineSystem{};
+    wetGround_ = WetGroundSystem{};
     projectiles_ = ProjectileSystem{};
     magic_ = MagicSystem{};
     magicFx_ = MagicFxSystem{};
@@ -2881,6 +2904,7 @@ void Game::returnToBaseFromNormalStage(bool stageCleared, bool died)
     effects_ = EffectSystem{};
     captureAbsorbAnimations_.clear();
     groundLines_ = GroundLineSystem{};
+    wetGround_ = WetGroundSystem{};
     ringTrailEffectTimer_ = 0.0f;
     ambientParticleTimer_ = 0.0f;
     projectiles_ = ProjectileSystem{};
@@ -2902,12 +2926,16 @@ void Game::returnToBaseFromNormalStage(bool stageCleared, bool died)
     spawnedWarpPointCount_ = 0;
     placeBasePlayerAtMineExitReturnPoint();
     enterBase();
-    baseStatus_ = refreshMerchant ? "帰還しました。商人ワゴン更新あり" : "帰還しました";
+    baseStatus_ = testPlayMode_
+        ? (refreshMerchant ? "帰還しました。商人ワゴン更新あり" : "帰還しました")
+        : std::string{};
     if (autoSaveOnReturn_) {
         std::string message;
         if (saveSaveData(message)) {
-            baseStatus_ += " / 自動保存";
-        } else {
+            if (testPlayMode_) {
+                baseStatus_ += " / 自動保存";
+            }
+        } else if (testPlayMode_) {
             baseStatus_ += " / " + message;
         }
     }
@@ -3464,6 +3492,7 @@ void Game::completeIntroTutorialAndReturnToBase()
     effects_ = EffectSystem{};
     captureAbsorbAnimations_.clear();
     groundLines_ = GroundLineSystem{};
+    wetGround_ = WetGroundSystem{};
     ringTrailEffectTimer_ = 0.0f;
     ambientParticleTimer_ = 0.0f;
     projectiles_ = ProjectileSystem{};
@@ -3499,13 +3528,15 @@ void Game::completeIntroTutorialAndReturnToBase()
 
     placeBasePlayerAtMineExitReturnPoint();
     enterBase();
-    baseStatus_ = "脱出しました";
+    baseStatus_ = testPlayMode_ ? "脱出しました" : std::string{};
     pendingStoryTrigger_ = std::string(IntroTutorialBaseReturnTrigger);
     if (autoSaveOnReturn_) {
         std::string message;
         if (saveSaveData(message)) {
-            baseStatus_ += " / 自動保存";
-        } else {
+            if (testPlayMode_) {
+                baseStatus_ += " / 自動保存";
+            }
+        } else if (testPlayMode_) {
             baseStatus_ += " / " + message;
         }
     }
@@ -3605,6 +3636,7 @@ bool Game::restoreDungeonState(bool useLatestWarpPoint)
     effects_ = EffectSystem{};
     captureAbsorbAnimations_.clear();
     groundLines_ = GroundLineSystem{};
+    wetGround_ = WetGroundSystem{};
     projectiles_ = ProjectileSystem{};
     magic_ = MagicSystem{};
     magicFx_ = MagicFxSystem{};
@@ -6223,9 +6255,7 @@ void Game::initializeRewardNodesFromLayout()
         }
     };
 
-    if (std::string_view(currentStageId_) == FirstDungeonStageId &&
-        objectCatalog_.registry.findById(MagnifyingGlassObjectId) != nullptr &&
-        encyclopedia_.objectStage(MagnifyingGlassObjectId, false) == EncyclopediaStage::Undiscovered) {
+    if (std::string_view(currentStageId_) == FirstDungeonStageId) {
         const float pathLength = pathLengthTiles(dungeonLayout_.mainPathPoints);
         const float maxDepthProgress = pathLength > 1.0f
             ? MagnifyingGlassGuaranteedMaxDepthTiles / pathLength
@@ -6234,16 +6264,26 @@ void Game::initializeRewardNodesFromLayout()
             std::min(MagnifyingGlassGuaranteedProgressFallback, maxDepthProgress * 0.88f),
             WallPocketProgressStart,
             0.32f);
-        RewardNode node{
-            .tile = wallPocketTileAtProgress(dungeonLayout_, progress, WallPocketMinOffsetTiles, signDist(rng) == 1),
-            .visibility = PlacementVisibility::Exposed,
-            .rewardKind = "first_dungeon_magnifying_glass",
-            .objectId = std::string(MagnifyingGlassObjectId),
-            .revealed = true,
-            .spawned = false,
-            .collected = false,
+        const bool firstRewardRightSide = signDist(rng) == 1;
+        const auto placeFirstDungeonGuaranteedReward = [&](std::string_view objectId, std::string_view rewardKind, bool rightSide) {
+            if (objectCatalog_.registry.findById(objectId) == nullptr ||
+                encyclopedia_.objectStage(objectId, false) != EncyclopediaStage::Undiscovered) {
+                return;
+            }
+
+            RewardNode node{
+                .tile = wallPocketTileAtProgress(dungeonLayout_, progress, WallPocketMinOffsetTiles, rightSide),
+                .visibility = PlacementVisibility::Exposed,
+                .rewardKind = std::string(rewardKind),
+                .objectId = std::string(objectId),
+                .revealed = true,
+                .spawned = false,
+                .collected = false,
+            };
+            placeRewardNode(std::move(node));
         };
-        placeRewardNode(std::move(node));
+        placeFirstDungeonGuaranteedReward(MagnifyingGlassObjectId, "first_dungeon_magnifying_glass", firstRewardRightSide);
+        placeFirstDungeonGuaranteedReward(CaptureNetObjectId, "first_dungeon_capture_net", !firstRewardRightSide);
     }
 
     for (const SpecialRoomAnchor& room : dungeonLayout_.specialRoomAnchors) {
@@ -8531,6 +8571,7 @@ void Game::restoreRetrySnapshot()
     effects_ = EffectSystem{};
     captureAbsorbAnimations_.clear();
     groundLines_ = GroundLineSystem{};
+    wetGround_ = WetGroundSystem{};
     magic_ = MagicSystem{};
     magicFx_ = MagicFxSystem{};
     ringTrailEffectTimer_ = 0.0f;

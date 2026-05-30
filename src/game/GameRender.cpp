@@ -1257,7 +1257,7 @@ constexpr int OptionsPageVideo = 2;
 constexpr int OptionsPageCount = 3;
 constexpr int OperationSettingsCategoryCount = 4;
 constexpr int AudioSettingsRowCount = 3;
-constexpr int VideoSettingsRowCount = 4;
+constexpr int VideoSettingsRowCount = 7;
 
 struct OperationSettingsActionRow {
     InputAction action;
@@ -1417,8 +1417,15 @@ UiRect audioSettingsSliderRect(int index)
 
 UiRect videoSettingsRowRect(int index)
 {
-    const UiRect content = optionSettingsContentRect();
-    return {{content.pos.x, content.pos.y + static_cast<float>(index) * 72.0f}, {content.size.x, 58.0f}};
+    const UiRect panel = optionsPanelRect();
+    const UiRect content{{panel.pos.x + 74.0f, panel.pos.y + 166.0f}, {panel.size.x - 148.0f, 252.0f}};
+    return {{content.pos.x, content.pos.y + static_cast<float>(index) * 36.0f}, {content.size.x, 34.0f}};
+}
+
+UiRect videoBrightnessSliderRect()
+{
+    const UiRect row = videoSettingsRowRect(4);
+    return {{row.pos.x + 260.0f, row.pos.y + 9.0f}, {330.0f, 16.0f}};
 }
 
 UiRect optionsHelpWindowRect()
@@ -1547,6 +1554,9 @@ const char* videoSettingsRowLabel(int row)
     case 1: return "ウィンドウサイズ";
     case 2: return "VSync";
     case 3: return "軽量化";
+    case 4: return "明るさ";
+    case 5: return "画面揺れ";
+    case 6: return "入力アイコン";
     default: return "";
     }
 }
@@ -1560,6 +1570,55 @@ std::string windowModeDisplayName(WindowMode mode)
         return "フルスクリーン";
     }
     return "ウィンドウ";
+}
+
+std::string screenShakeDisplayName(ScreenShakeSetting setting)
+{
+    switch (setting) {
+    case ScreenShakeSetting::Off:
+        return "OFF";
+    case ScreenShakeSetting::Low:
+        return "弱";
+    case ScreenShakeSetting::Standard:
+        return "標準";
+    }
+    return "標準";
+}
+
+std::string inputIconSettingDisplayName(InputIconSetting setting)
+{
+    switch (setting) {
+    case InputIconSetting::Auto:
+        return "自動";
+    case InputIconSetting::KeyboardMouse:
+        return "キーボード";
+    case InputIconSetting::Gamepad:
+        return "ゲームパッド";
+    }
+    return "自動";
+}
+
+float clampedScreenBrightness(float brightness)
+{
+    return clamp(brightness, MinScreenBrightness, MaxScreenBrightness);
+}
+
+float screenBrightnessGaugeValue(float brightness)
+{
+    const float range = std::max(0.001f, MaxScreenBrightness - MinScreenBrightness);
+    return (clampedScreenBrightness(brightness) - MinScreenBrightness) / range;
+}
+
+std::string screenBrightnessPercentText(float brightness)
+{
+    char buffer[16];
+    std::snprintf(buffer, sizeof(buffer), "%3d%%", static_cast<int>(std::lround(clampedScreenBrightness(brightness) * 100.0f)));
+    return buffer;
+}
+
+void setScreenBrightnessValue(GameSettings& settings, float brightness)
+{
+    settings.presentation.brightness = clampedScreenBrightness(brightness);
 }
 
 std::string videoResolutionText(const VideoSettings& video)
@@ -1578,9 +1637,40 @@ std::string videoSettingsRowValueText(const GameSettings& settings, int row)
         return settings.video.vsync ? "ON" : "OFF";
     case 3:
         return settings.performance.lightweight ? "ON" : "OFF";
+    case 4:
+        return screenBrightnessPercentText(settings.presentation.brightness);
+    case 5:
+        return screenShakeDisplayName(settings.presentation.screenShake);
+    case 6:
+        return inputIconSettingDisplayName(settings.presentation.inputIcons);
     default:
         return "";
     }
+}
+
+void drawVideoBrightnessRow(Renderer& renderer, const GameSettings& settings, bool hot)
+{
+    const UiRect rowRect = videoSettingsRowRect(4);
+    renderer.fillRect(rowRect.pos, rowRect.size, hot ? Color{42, 58, 118, 224} : Color{20, 30, 68, 190});
+    renderer.drawRect(rowRect.pos, rowRect.size, hot ? Color{255, 230, 150, 255} : Color{112, 128, 178, 160});
+    if (hot) {
+        renderer.fillRect(rowRect.pos + Vec2{3.0f, 5.0f}, {5.0f, rowRect.size.y - 10.0f}, {255, 230, 150, 255});
+    }
+
+    renderer.drawText(rowRect.pos + Vec2{18.0f, 9.0f}, videoSettingsRowLabel(4), ui::Text, 2);
+    UiGaugeStyle gaugeStyle;
+    gaugeStyle.tickCount = 6;
+    gaugeStyle.fill.start = Color{236, 220, 150, 230};
+    gaugeStyle.fill.end = Color{255, 246, 210, 230};
+    drawUiGauge(renderer, videoBrightnessSliderRect(), screenBrightnessGaugeValue(settings.presentation.brightness), gaugeStyle);
+
+    const std::string percent = screenBrightnessPercentText(settings.presentation.brightness);
+    const Vec2 percentSize = renderer.measureText(percent, 2);
+    renderer.drawText(
+        {rowRect.pos.x + rowRect.size.x - percentSize.x - 22.0f, rowRect.pos.y + 9.0f},
+        percent,
+        ui::Text,
+        2);
 }
 
 int videoResolutionPresetIndex(const VideoSettings& video)
@@ -1606,6 +1696,37 @@ void cycleVideoResolution(GameSettings& settings, int delta)
     settings.video.windowHeight = VideoResolutionPresets[next].height;
 }
 
+void adjustScreenBrightness(GameSettings& settings, int delta)
+{
+    setScreenBrightnessValue(settings, settings.presentation.brightness + 0.05f * static_cast<float>(delta));
+}
+
+void cycleScreenShakeSetting(GameSettings& settings, int delta)
+{
+    constexpr std::array<ScreenShakeSetting, 3> Values{
+        ScreenShakeSetting::Off,
+        ScreenShakeSetting::Low,
+        ScreenShakeSetting::Standard,
+    };
+    auto it = std::find(Values.begin(), Values.end(), settings.presentation.screenShake);
+    const int current = it == Values.end() ? 2 : static_cast<int>(std::distance(Values.begin(), it));
+    const int next = (current + delta + static_cast<int>(Values.size())) % static_cast<int>(Values.size());
+    settings.presentation.screenShake = Values[static_cast<std::size_t>(next)];
+}
+
+void cycleInputIconSetting(GameSettings& settings, int delta)
+{
+    constexpr std::array<InputIconSetting, 3> Values{
+        InputIconSetting::Auto,
+        InputIconSetting::KeyboardMouse,
+        InputIconSetting::Gamepad,
+    };
+    auto it = std::find(Values.begin(), Values.end(), settings.presentation.inputIcons);
+    const int current = it == Values.end() ? 0 : static_cast<int>(std::distance(Values.begin(), it));
+    const int next = (current + delta + static_cast<int>(Values.size())) % static_cast<int>(Values.size());
+    settings.presentation.inputIcons = Values[static_cast<std::size_t>(next)];
+}
+
 void cycleVideoSetting(GameSettings& settings, int row, int delta)
 {
     if (delta == 0) {
@@ -1625,6 +1746,15 @@ void cycleVideoSetting(GameSettings& settings, int row, int delta)
         break;
     case 3:
         settings.performance.lightweight = !settings.performance.lightweight;
+        break;
+    case 4:
+        adjustScreenBrightness(settings, delta);
+        break;
+    case 5:
+        cycleScreenShakeSetting(settings, delta);
+        break;
+    case 6:
+        cycleInputIconSetting(settings, delta);
         break;
     default:
         break;
@@ -1656,6 +1786,12 @@ const char* videoSettingsHelpText(int row)
         return "VSyncはモニターの更新タイミングに描画を合わせる設定です。画面の裂けを抑えますが、入力遅延やFPSに影響することがあります。";
     case 3:
         return "ONにすると追加ライト、暗幕、影、常時エフェクト、粒子数を抑えて、ダンジョン中の負荷を下げます。";
+    case 4:
+        return "ゲージで画面全体の明るさを調整します。暗闇だけでなく、拠点、UI、紙芝居など画面全体に反映されます。";
+    case 5:
+        return "被弾やボス演出などの画面揺れの強さです。酔いやすい場合は弱またはOFFにしてください。";
+    case 6:
+        return "操作ヘルプに出す入力アイコンを選びます。自動では最後に使った入力機器に合わせて切り替えます。";
     default:
         return "";
     }
@@ -2511,6 +2647,7 @@ void Game::loadOptionsSettings()
         optionsSettings_.input.bindings = sanitizeInputBindings(inputBindingGetter_());
     }
     lightweightModeActive_ = optionsSettings_.performance.lightweight;
+    presentationSettingsActive_ = optionsSettings_.presentation;
     operationSettingsBindings_ = optionsSettings_.input.bindings;
     optionsSettingsLoaded_ = true;
     operationSettingsLoaded_ = true;
@@ -2527,6 +2664,7 @@ void Game::applyOptionsSettings(std::string status)
 {
     optionsSettings_ = sanitizeSettings(optionsSettings_);
     lightweightModeActive_ = optionsSettings_.performance.lightweight;
+    presentationSettingsActive_ = optionsSettings_.presentation;
     operationSettingsBindings_ = optionsSettings_.input.bindings;
     if (settingsApplier_) {
         settingsApplier_(optionsSettings_);
@@ -2899,6 +3037,12 @@ void Game::updateVideoSettings(const Input& input, UiContext& ui)
         cycleVideoSetting(optionsSettings_, row, delta);
         applyOptionsSettings(std::string(videoSettingsRowLabel(row)) + " " + videoSettingsRowValueText(optionsSettings_, row));
     };
+    const auto applyBrightnessSlider = [&](float normalizedValue) {
+        const float value = MinScreenBrightness +
+            (MaxScreenBrightness - MinScreenBrightness) * clamp(normalizedValue, 0.0f, 1.0f);
+        setScreenBrightnessValue(optionsSettings_, value);
+        applyOptionsSettings(std::string(videoSettingsRowLabel(4)) + " " + videoSettingsRowValueText(optionsSettings_, 4));
+    };
 
     if (input.pressed(InputAction::MoveLeft)) {
         applyVideoRow(videoSettingsSelection_, -1);
@@ -2913,6 +3057,20 @@ void Game::updateVideoSettings(const Input& input, UiContext& ui)
         const UiRect rowRect = videoSettingsRowRect(row);
         if (rowRect.contains(ui.mouse()) && !ui.pointerConsumed()) {
             videoSettingsSelection_ = row;
+        }
+        if (row == 4) {
+            const UiRect sliderRect = videoBrightnessSliderRect();
+            if (input.mouseLeftHeld() && sliderRect.contains(ui.mouse()) && !ui.pointerConsumed()) {
+                videoSettingsSelection_ = row;
+                applyBrightnessSlider((ui.mouse().x - sliderRect.pos.x) / std::max(1.0f, sliderRect.size.x));
+                ui.consumePointer();
+                return;
+            }
+            if (ui.pressed(rowRect)) {
+                videoSettingsSelection_ = row;
+                return;
+            }
+            continue;
         }
         if (ui.pressed(rowRect)) {
             videoSettingsSelection_ = row;
@@ -2932,6 +3090,7 @@ void Game::updateVideoSettings(const Input& input, UiContext& ui)
                 ui.emitSound(UiSoundEvent::Confirm);
                 optionsSettings_.video = VideoSettings{};
                 optionsSettings_.performance = PerformanceSettings{};
+                optionsSettings_.presentation = PresentationSettings{};
                 applyOptionsSettings("画面設定を初期化しました");
             }
             ui.block(panel);
@@ -3248,6 +3407,12 @@ std::string Game::currentMapDisplayName() const
     if (enemyTestActive_) {
         return "敵テスト";
     }
+    if (effectTestActive_) {
+        return "エフェクトテスト";
+    }
+    if (projectileTestActive_) {
+        return "弾テスト";
+    }
     if (!currentStageDefinition_.name.empty()) {
         return currentStageDefinition_.name;
     }
@@ -3346,12 +3511,12 @@ void Game::renderTopInfoBar(Renderer& renderer) const
 
 void Game::renderOpeningKamishibai(Renderer& renderer) const
 {
-    openingRenderer_.render(renderer, openingPlayer_, camera_.width(), camera_.height());
+    openingRenderer_.render(renderer, openingPlayer_, camera_.width(), camera_.height(), screenShakeScale());
 }
 
 void Game::renderEndingKamishibai(Renderer& renderer) const
 {
-    openingRenderer_.render(renderer, endingPlayer_, camera_.width(), camera_.height());
+    openingRenderer_.render(renderer, endingPlayer_, camera_.width(), camera_.height(), screenShakeScale());
 }
 
 void Game::renderTitleScreen(Renderer& renderer) const
@@ -4423,6 +4588,10 @@ void Game::renderAudioSettings(Renderer& renderer) const
 void Game::renderVideoSettings(Renderer& renderer) const
 {
     for (int row = 0; row < VideoSettingsRowCount; ++row) {
+        if (row == 4) {
+            drawVideoBrightnessRow(renderer, optionsSettings_, row == videoSettingsSelection_);
+            continue;
+        }
         drawUiSmallSelectButton(
             renderer,
             videoSettingsRowRect(row),
@@ -4972,6 +5141,7 @@ struct DungeonLightCandidate {
     LightSource light;
     int priority = 0;
     int order = 0;
+    bool preserveInLightweight = false;
 };
 
 std::vector<LightSource> finalizeDungeonLightSources(
@@ -4980,22 +5150,42 @@ std::vector<LightSource> finalizeDungeonLightSources(
     bool lightweight)
 {
     if (lightweight && static_cast<int>(candidates.size()) > LightweightDungeonExtraLightLimit) {
-        std::stable_sort(candidates.begin(), candidates.end(), [focus](const DungeonLightCandidate& a, const DungeonLightCandidate& b) {
-            const auto score = [focus](const DungeonLightCandidate& candidate) {
-                const Vec2 delta = candidate.light.position - focus;
-                const float distance = std::sqrt(delta.x * delta.x + delta.y * delta.y);
-                return static_cast<float>(candidate.priority) * 1000.0f +
-                    candidate.light.radius * 3.0f -
-                    distance * 0.45f;
-            };
+        const auto score = [focus](const DungeonLightCandidate& candidate) {
+            const Vec2 delta = candidate.light.position - focus;
+            const float distance = std::sqrt(delta.x * delta.x + delta.y * delta.y);
+            return static_cast<float>(candidate.priority) * 1000.0f +
+                candidate.light.radius * 3.0f -
+                distance * 0.45f;
+        };
+        const auto byScore = [&](const DungeonLightCandidate& a, const DungeonLightCandidate& b) {
             const float scoreA = score(a);
             const float scoreB = score(b);
             if (std::abs(scoreA - scoreB) > 0.001f) {
                 return scoreA > scoreB;
             }
             return a.order < b.order;
-        });
-        candidates.resize(LightweightDungeonExtraLightLimit);
+        };
+
+        std::vector<DungeonLightCandidate> preserved;
+        std::vector<DungeonLightCandidate> optional;
+        preserved.reserve(candidates.size());
+        optional.reserve(candidates.size());
+        for (const DungeonLightCandidate& candidate : candidates) {
+            if (candidate.preserveInLightweight) {
+                preserved.push_back(candidate);
+            } else {
+                optional.push_back(candidate);
+            }
+        }
+
+        const int optionalLimit = std::max(0, LightweightDungeonExtraLightLimit - static_cast<int>(preserved.size()));
+        if (static_cast<int>(optional.size()) > optionalLimit) {
+            std::stable_sort(optional.begin(), optional.end(), byScore);
+            optional.resize(static_cast<std::size_t>(optionalLimit));
+        }
+
+        candidates = std::move(preserved);
+        candidates.insert(candidates.end(), optional.begin(), optional.end());
         std::sort(candidates.begin(), candidates.end(), [](const DungeonLightCandidate& a, const DungeonLightCandidate& b) {
             return a.order < b.order;
         });
@@ -5023,8 +5213,8 @@ std::vector<LightSource> Game::collectDungeonLightSources(double totalSeconds) c
 
     std::vector<DungeonLightCandidate> lights;
     int lightOrder = 0;
-    const auto addLight = [&](LightSource light, int priority) {
-        lights.push_back({light, priority, lightOrder++});
+    const auto addLight = [&](LightSource light, int priority, bool preserveInLightweight = false) {
+        lights.push_back({light, priority, lightOrder++, preserveInLightweight});
     };
 
     int runtimeItemIndex = 0;
@@ -5048,13 +5238,13 @@ std::vector<LightSource> Game::collectDungeonLightSources(double totalSeconds) c
             addLight({
                 flickeredLightPosition(lightPosition, static_cast<float>(totalSeconds), phase),
                 flickeredLightRadius(itemPtr->lightRadius, static_cast<float>(totalSeconds), phase) * introLightScale,
-            }, DungeonLightPriorityRing);
+            }, DungeonLightPriorityRing, true);
         } else if (itemPtr->type == SpellRingItemType::Torch) {
             const float torchPhase = phase + 0.47f;
             addLight({
                 flickeredLightPosition(lightPosition, static_cast<float>(totalSeconds), torchPhase),
                 flickeredLightRadius(balance_.lightRadius, static_cast<float>(totalSeconds), torchPhase) * introLightScale,
-            }, DungeonLightPriorityRing);
+            }, DungeonLightPriorityRing, true);
         }
         if (itemPtr->magicAuraTimer > 0.0f && !itemPtr->magicAuraDamageType.empty()) {
             const float auraPhase = phase + 0.83f;
@@ -5064,7 +5254,7 @@ std::vector<LightSource> Game::collectDungeonLightSources(double totalSeconds) c
                     magicAuraLightRadius(itemPtr->magicAuraDamageType, itemPtr->hitRadius),
                     static_cast<float>(totalSeconds),
                     auraPhase) * introLightScale,
-            }, DungeonLightPriorityRingAura);
+            }, DungeonLightPriorityRingAura, true);
         }
         ++runtimeItemIndex;
     }
@@ -5179,6 +5369,22 @@ void Game::render(Renderer& renderer, const Time& time)
         renderer.present();
         return;
     }
+    if (effectTestActive_) {
+        renderEffectTestScreen(renderer, time.totalSeconds());
+        finishUiFrame(renderer);
+        renderDebugOverlay(renderer, time);
+        renderScreenTransitionOverlay(renderer);
+        renderer.present();
+        return;
+    }
+    if (projectileTestActive_) {
+        renderProjectileTestScreen(renderer, time.totalSeconds());
+        finishUiFrame(renderer);
+        renderDebugOverlay(renderer, time);
+        renderScreenTransitionOverlay(renderer);
+        renderer.present();
+        return;
+    }
     if (basePresentationActive()) {
         renderBaseScreen(renderer);
         inventory_.render(
@@ -5205,7 +5411,7 @@ void Game::render(Renderer& renderer, const Time& time)
         return;
     }
 
-    renderer.setWorldSpace(&camera_);
+    renderer.setWorldSpace(&camera_, screenShakeOffset(time.totalSeconds()));
 
     const std::vector<const SpellRingItem*> runtimeItems = spellRing_.runtimeItems();
     const bool ringIntroActive = dungeonRingIntroActive();
@@ -5218,6 +5424,7 @@ void Game::render(Renderer& renderer, const Time& time)
     if (!enemyTestActive_) {
         appendDungeonEventRenderEntries(worldDepthEntries, renderer, itemLights, time.totalSeconds());
     }
+    wetGround_.appendRenderEntries(worldDepthEntries, renderer);
     groundLines_.appendRenderEntries(worldDepthEntries, renderer);
     worldDrops_.appendRenderEntries(worldDepthEntries, renderer, tileMap_, objectCatalog_, playerLightCenter, itemLights);
     effects_.appendRenderEntries(worldDepthEntries, renderer);

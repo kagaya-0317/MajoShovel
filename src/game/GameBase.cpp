@@ -1,5 +1,6 @@
 ﻿#include "game/GameInternal.hpp"
 
+#include "engine/InputHelpGlyph.hpp"
 #include "game/EnemyImageRenderer.hpp"
 
 namespace majo {
@@ -9,6 +10,50 @@ namespace {
 bool isTutorialStoryTrigger(std::string_view trigger)
 {
     return trigger.rfind("tutorial:", 0) == 0;
+}
+
+void drawBaseControlHelp(Renderer& renderer, int screenWidth, int screenHeight, std::string help)
+{
+    if (help.empty()) {
+        return;
+    }
+
+    InputHelpStyle helpStyle;
+    helpStyle.text = {232, 232, 238, 235};
+    helpStyle.outline = {0, 0, 0, 190};
+    helpStyle.scale = 2;
+    helpStyle.outlinePx = 4;
+    helpStyle.iconHeight = 24.0f;
+    helpStyle.outlineEnabled = true;
+
+    const float screenW = static_cast<float>(screenWidth);
+    const float screenH = static_cast<float>(screenHeight);
+    const float maxWidth = std::max(120.0f, screenW - 32.0f);
+    help = fittedInputHelpText(renderer, std::move(help), maxWidth, helpStyle);
+    const Vec2 textSize = measureInputHelpText(renderer, help, helpStyle);
+    const Vec2 pos{
+        (screenW - textSize.x) * 0.5f,
+        std::max(TopInfoBarY + TopInfoBarHeight + 8.0f, screenH - textSize.y - 4.0f),
+    };
+    drawInputHelpText(renderer, pos, help, helpStyle);
+}
+
+std::string baseExplorationControlHelp(const BaseFacility* facility)
+{
+    if (facility == nullptr) {
+        return "WASD/方向キー 移動   Enter 近くの施設を調べる   Esc メニュー";
+    }
+
+    switch (facility->onInteract) {
+    case BaseFacilityAction::MonicaTalk:
+        return "Enter モニカと話す   左クリック 近くのNPCと話す   Esc メニュー";
+    case BaseFacilityAction::HomeEntrance:
+        return "Enter ルネの家に入る   左クリック 近くの入口を調べる   Esc メニュー";
+    case BaseFacilityAction::HomeExit:
+        return "Enter 屋外へ戻る   左クリック 近くの出口を調べる   Esc メニュー";
+    default:
+        return std::string("Enter ") + facility->displayName + "を調べる   左クリック 近くの施設を調べる   Esc メニュー";
+    }
 }
 
 int baseUpgradeWarehouseCapacityForLevel(int level)
@@ -715,16 +760,24 @@ UiRect smallActionDialogRect()
     return {{410.0f, 170.0f}, {460.0f, 330.0f}};
 }
 
-UiRect smallActionChoiceRect(int index)
+UiRect smallActionChoiceRectForDialog(UiRect dialog, int index)
 {
     constexpr float ChoiceGap = 16.0f;
-    const UiRect body = uiBodyRect(smallActionDialogRect());
-    const float left = body.pos.x + 8.0f;
-    const float right = body.pos.x + body.size.x - 36.0f;
+    constexpr float ButtonHorizontalInset = 22.0f;
+    const UiRect body = uiBodyRect(dialog);
+    const float width = std::max(0.0f, body.size.x - ButtonHorizontalInset * 2.0f);
     return {
-        {left, body.pos.y + 20.0f + static_cast<float>(index) * (ui::ButtonHeight + ChoiceGap)},
-        {right - left, ui::ButtonHeight},
+        {
+            body.pos.x + (body.size.x - width) * 0.5f,
+            body.pos.y + 20.0f + static_cast<float>(index) * (ui::ButtonHeight + ChoiceGap),
+        },
+        {width, ui::ButtonHeight},
     };
+}
+
+UiRect smallActionChoiceRect(int index)
+{
+    return smallActionChoiceRectForDialog(smallActionDialogRect(), index);
 }
 
 Vec2 smallActionInfoTextPos(UiRect panel)
@@ -735,12 +788,34 @@ Vec2 smallActionInfoTextPos(UiRect panel)
 
 UiRect storageActionDialogRect()
 {
-    return smallActionDialogRect();
+    UiRect rect = smallActionDialogRect();
+    rect.size.y += 48.0f;
+    return rect;
+}
+
+UiRect storageBulkDialogRect()
+{
+    UiRect rect = smallActionDialogRect();
+    rect.size.y += 120.0f;
+    return rect;
 }
 
 UiRect storageActionChoiceRect(int index)
 {
-    return smallActionChoiceRect(index);
+    return smallActionChoiceRectForDialog(storageActionDialogRect(), index);
+}
+
+UiRect storageBulkChoiceRect(int index)
+{
+    return smallActionChoiceRectForDialog(storageBulkDialogRect(), index);
+}
+
+std::string formatDiaryPlayTime(std::int64_t seconds)
+{
+    const std::int64_t totalMinutes = std::max<std::int64_t>(0, seconds) / 60;
+    const std::int64_t hours = totalMinutes / 60;
+    const std::int64_t minutes = totalMinutes % 60;
+    return std::to_string(hours) + "時間" + std::to_string(minutes) + "分";
 }
 
 UiRect merchantActionDialogRect()
@@ -5299,6 +5374,100 @@ void Game::updateBookshelfScreen(const Input& input, UiContext& ui)
     ui.block(panel);
 }
 
+void Game::openBaseDiary()
+{
+    baseDiaryActive_ = true;
+    baseDiaryMode_ = BaseDiaryMode::Confirm;
+    baseDiarySelection_ = 0;
+    baseDiarySummary_ = loadDiarySaveSummaryFromDisk();
+    baseDiaryMessage_.clear();
+    baseStatus_.clear();
+}
+
+void Game::closeBaseDiary()
+{
+    baseDiaryActive_ = false;
+    baseDiaryMode_ = BaseDiaryMode::Confirm;
+    baseDiarySelection_ = 0;
+    baseDiarySummary_ = {};
+    baseDiaryMessage_.clear();
+    baseStatus_.clear();
+}
+
+void Game::updateBaseDiaryScreen(const Input& input, UiContext& ui)
+{
+    const UiRect panel = basePanelRect();
+    if (uiCancelRequested(baseCancelState_, input, ui, panel)) {
+        closeBaseDiary();
+        ui.block(panel);
+        return;
+    }
+
+    if (baseDiaryMode_ == BaseDiaryMode::Saved) {
+        const UiRect closeButton = uiResultDialogOkButtonRect(panel);
+        if (ui.pressed(closeButton) || input.confirmPressed() || input.useItemPressed()) {
+            ui.emitSound(UiSoundEvent::Confirm);
+            closeBaseDiary();
+            ui.block(panel);
+            return;
+        }
+        ui.block(panel);
+        return;
+    }
+
+    if (ui.hovered(uiConfirmDialogButtonRect(panel, 0))) {
+        baseDiarySelection_ = 0;
+    } else if (ui.hovered(uiConfirmDialogButtonRect(panel, 1))) {
+        baseDiarySelection_ = 1;
+    }
+    if (input.pressed(InputAction::MoveLeft) || input.pressed(InputAction::MoveUp) || input.activeRingDelta() < 0) {
+        baseDiarySelection_ = 1;
+    }
+    if (input.pressed(InputAction::MoveRight) || input.pressed(InputAction::MoveDown) || input.activeRingDelta() > 0) {
+        baseDiarySelection_ = 0;
+    }
+
+    const auto saveDiary = [this, &ui]() {
+        std::string message;
+        if (saveSaveData(message)) {
+            ui.emitSound(UiSoundEvent::Confirm);
+            baseDiaryMode_ = BaseDiaryMode::Saved;
+            baseDiarySelection_ = 0;
+            baseDiaryMessage_ = "保存しました。";
+            baseDiarySummary_ = currentDiarySaveSummary();
+        } else {
+            ui.emitSound(UiSoundEvent::Cancel);
+            baseDiaryMode_ = BaseDiaryMode::Error;
+            baseDiarySelection_ = 0;
+            baseDiaryMessage_ = message.empty() ? "セーブに失敗しました。" : message;
+        }
+    };
+
+    if (ui.pressed(uiConfirmDialogButtonRect(panel, 0))) {
+        saveDiary();
+        ui.block(panel);
+        return;
+    }
+    if (ui.pressed(uiConfirmDialogButtonRect(panel, 1))) {
+        ui.emitSound(UiSoundEvent::Cancel);
+        closeBaseDiary();
+        ui.block(panel);
+        return;
+    }
+    if (input.confirmPressed() || input.useItemPressed()) {
+        if (baseDiarySelection_ == 0) {
+            saveDiary();
+        } else {
+            ui.emitSound(UiSoundEvent::Cancel);
+            closeBaseDiary();
+        }
+        ui.block(panel);
+        return;
+    }
+
+    ui.block(panel);
+}
+
 void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
 {
     baseRingPreviewAnimationTime_ = std::fmod(baseRingPreviewAnimationTime_ + std::max(0.0f, dt), 3600.0f);
@@ -5367,6 +5536,11 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
             baseStatus_.clear();
         }
         ui.block(confirmPanel);
+        return;
+    }
+
+    if (baseDiaryActive_) {
+        updateBaseDiaryScreen(input, ui);
         return;
     }
 
@@ -5610,7 +5784,7 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
             baseStorageMode_ == StorageUiMode::ChooseAction ||
             baseStorageMode_ == StorageUiMode::Bulk;
         const UiRect storageBounds = storageSmallDialog
-            ? storageActionDialogRect()
+            ? (baseStorageMode_ == StorageUiMode::Bulk ? storageBulkDialogRect() : storageActionDialogRect())
             : merchantPanelRect();
         const auto resetStoragePointerPress = [this]() {
             baseStoragePointerOperation_ = StorageQuantityOperation::None;
@@ -5885,7 +6059,7 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
             };
 
             for (int i = 0; i < ChoiceCount; ++i) {
-                const UiRect rect = storageActionChoiceRect(i);
+                const UiRect rect = storageBulkChoiceRect(i);
                 if (rect.contains(ui.mouse())) {
                     baseStorageBulkSelection_ = i;
                 }
@@ -7335,12 +7509,9 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
         case BaseFacilityAction::Bookshelf:
             openBookshelf();
             break;
-        case BaseFacilityAction::Diary: {
-            std::string message;
-            saveSaveData(message);
-            baseStatus_ = message;
+        case BaseFacilityAction::Diary:
+            openBaseDiary();
             break;
-        }
         case BaseFacilityAction::RingWorkshop:
             if (facility.unlocked) {
                 openRingWorkshop();
@@ -7746,6 +7917,77 @@ void Game::renderBookshelfScreen(Renderer& renderer) const
     }
 }
 
+void Game::renderBaseDiaryScreen(Renderer& renderer, UiRect panel) const
+{
+    const UiRect body = uiBodyRect(panel);
+    const DiarySaveSummary& summary = baseDiarySummary_;
+
+    const UiRect recordPanel{
+        body.pos + Vec2{12.0f, -26.0f},
+        {body.size.x - 24.0f, 280.0f},
+    };
+    drawUiSubPanel(renderer, recordPanel);
+    const UiRect recordContent = uiSubPanelContentRect(recordPanel);
+
+    float y = recordContent.pos.y + 6.0f;
+    constexpr float ValueXOffset = 142.0f;
+    constexpr float RowHeight = 44.0f;
+    const float labelX = recordContent.pos.x;
+    const float valueX = recordContent.pos.x + ValueXOffset;
+    const float rightX = recordContent.pos.x + recordContent.size.x;
+
+    const auto drawTextRow = [&](std::string_view label, std::string_view value, Color valueColor = ui::Text) {
+        renderer.drawText({labelX, y}, label, ui::TextMuted, 2);
+        renderer.drawText({valueX, y}, value, valueColor, 2);
+        y += RowHeight;
+    };
+
+    if (!summary.hasSave && baseDiaryMode_ != BaseDiaryMode::Saved) {
+        renderer.drawText({labelX, y}, "記録はありません", ui::TextMuted, 2);
+        y += RowHeight;
+    } else {
+        renderer.drawText({labelX, y}, "進行", ui::TextMuted, 2);
+        if (summary.storyCleared) {
+            renderer.drawText({valueX, y}, "ストーリークリア", Color{255, 230, 150, 255}, 2);
+        } else {
+            const std::string stageName = fittedSingleLineText(renderer, summary.latestStageName, 190.0f, 2);
+            renderer.drawText({valueX, y}, stageName, ui::Text, 2);
+
+            InlineItemTextStyle warpStyle;
+            warpStyle.text = ui::Text;
+            warpStyle.scale = 2;
+            warpStyle.iconTextGap = 6.0f;
+            warpStyle.iconScale = 24.0f / std::max(1.0f, renderer.measureText("0", warpStyle.scale).y);
+            const std::string warpText =
+                inlineWorldIconTag(worldIconKey(WorldIconId::WarpPoint)) +
+                std::to_string(std::max(0, summary.discoveredWarpPoints)) +
+                "/" +
+                std::to_string(std::max(1, summary.totalWarpPoints));
+            drawInlineItemTextRightAligned(renderer, objectCatalog_, {rightX, y}, warpText, warpStyle);
+        }
+        y += RowHeight;
+        drawTextRow("ルネ", "Lv." + std::to_string(std::max(1, summary.playerLevel)));
+        drawTextRow("アイテム図鑑", std::to_string(std::clamp(summary.itemCodexPercent, 0, 100)) + "%");
+        drawTextRow("モンスター図鑑", std::to_string(std::clamp(summary.enemyCodexPercent, 0, 100)) + "%");
+        drawTextRow("プレイ時間", formatDiaryPlayTime(summary.playTimeSeconds));
+    }
+
+    const Vec2 messagePos{recordPanel.pos.x + 22.0f, recordPanel.pos.y + recordPanel.size.y + 24.0f};
+    if (baseDiaryMode_ == BaseDiaryMode::Confirm) {
+        renderer.drawText(messagePos, "保存しますか？", ui::Text, 2);
+        drawUiButton(renderer, uiConfirmDialogButtonRect(panel, 1), "戻る", baseDiarySelection_ == 1, uiCancelButtonStyle());
+        drawUiButton(renderer, uiConfirmDialogButtonRect(panel, 0), "保存する", baseDiarySelection_ == 0, uiActionButtonStyle());
+    } else if (baseDiaryMode_ == BaseDiaryMode::Error) {
+        const std::string message = baseDiaryMessage_.empty() ? std::string("もう一度試すか、戻ってください。") : baseDiaryMessage_;
+        renderer.drawText(messagePos, message, Color{255, 190, 190, 255}, 2);
+        drawUiButton(renderer, uiConfirmDialogButtonRect(panel, 1), "戻る", baseDiarySelection_ == 1, uiCancelButtonStyle());
+        drawUiButton(renderer, uiConfirmDialogButtonRect(panel, 0), "再試行", baseDiarySelection_ == 0, uiActionButtonStyle());
+    } else {
+        renderer.drawText(messagePos, "保存しました。", Color{202, 255, 216, 255}, 2);
+        drawUiButton(renderer, uiResultDialogOkButtonRect(panel), "閉じる", true, uiActionButtonStyle());
+    }
+}
+
 void Game::updateBasePlayerSpriteAnimation(float dt, bool walking)
 {
     if (walking != basePlayerSpriteWalking_) {
@@ -7868,6 +8110,7 @@ void Game::renderBaseScreen(Renderer& renderer) const
 
     char buffer[256];
     const bool panelUiActive = baseRingWorkshopActive_ ||
+        baseDiaryActive_ ||
         baseBookshelfActive_ ||
         baseStorageActive_ ||
         baseProcessingActive_ ||
@@ -7881,8 +8124,10 @@ void Game::renderBaseScreen(Renderer& renderer) const
     const bool bookshelfWideActive = baseBookshelfActive_ && bookshelfPage_ != BookshelfPage::Menu;
     const bool ringWorkshopActionDialogActive = baseRingWorkshopActive_ && baseRingWorkshopMode_ == RingWorkshopMode::ChooseAction;
     const bool ringWorkshopWideActive = baseRingWorkshopActive_ && baseRingWorkshopMode_ != RingWorkshopMode::ChooseAction;
-    const UiRect panel = storageActionDialogActive
-        ? storageActionDialogRect()
+    const UiRect panel = baseDiaryActive_
+        ? basePanelRect()
+        : (storageActionDialogActive
+        ? (baseStorageMode_ == StorageUiMode::Bulk ? storageBulkDialogRect() : storageActionDialogRect())
         : (merchantActionDialogActive
         ? merchantActionDialogRect()
         : (bookshelfMenuDialogActive
@@ -7895,9 +8140,10 @@ void Game::renderBaseScreen(Renderer& renderer) const
         (baseStorageActive_ && !storageActionDialogActive) ||
         (baseSellActive_ && baseMerchantMode_ != MerchantUiMode::ChooseAction))
         ? merchantPanelRect()
-        : (baseUpgradeActive_ ? baseUpgradePanelRect() : basePanelRect())))));
+        : (baseUpgradeActive_ ? baseUpgradePanelRect() : basePanelRect()))))));
     std::optional<UiWindowScope> panelWindow;
     std::optional<UiCancelControlScope> panelCancelScope;
+    std::string baseControlHelp;
     if (panelUiActive) {
         const char* panelHelp = "F/Enter 決定  左クリック 決定  Esc/右クリック 戻る";
         if (baseBookshelfActive_) {
@@ -7928,6 +8174,10 @@ void Game::renderBaseScreen(Renderer& renderer) const
             } else if (baseRingWorkshopMode_ == RingWorkshopMode::Upgrade) {
                 panelHelp = "Q/E・方向キー 選択  F/Enter 強化  Esc/右クリック 戻る";
             }
+        } else if (baseDiaryActive_) {
+            panelHelp = baseDiaryMode_ == BaseDiaryMode::Saved
+                ? "F/Enter 閉じる  Esc/右クリック 閉じる"
+                : "F/Enter 決定  左クリック 決定  Esc/右クリック 戻る";
         } else if (baseMiningStartChoiceActive_) {
             panelHelp = baseWarpPointSelectActive_
                 ? "F/Enter 出発  Z/X・方向キー 選択  Esc/右クリック 戻る"
@@ -7962,6 +8212,8 @@ void Game::renderBaseScreen(Renderer& renderer) const
             }
         } else if (baseUpgradeActive_) {
             panelTitle = "拠点強化炉";
+        } else if (baseDiaryActive_) {
+            panelTitle = "日記";
         } else if (baseMiningStartChoiceActive_) {
             panelTitle = "ダンジョン入口";
         }
@@ -7969,10 +8221,13 @@ void Game::renderBaseScreen(Renderer& renderer) const
         if (panelCancelButton) {
             panelCancelScope.emplace(baseCancelState_);
         }
-        panelWindow.emplace(renderer, "base.panel", panel, panelTitle, panelHelp, UiWindowOptions{true, panelCancelButton});
+        baseControlHelp = panelHelp;
+        panelWindow.emplace(renderer, "base.panel", panel, panelTitle, "", UiWindowOptions{true, panelCancelButton});
     }
 
-    if (baseStorageActive_) {
+    if (baseDiaryActive_) {
+        renderBaseDiaryScreen(renderer, panel);
+    } else if (baseStorageActive_) {
         if (baseStorageMode_ == StorageUiMode::ChooseAction) {
             std::snprintf(buffer, sizeof(buffer), "収納数：%d/%d", warehouseUsedSlots(), warehouseCapacity());
             renderer.drawText(smallActionInfoTextPos(panel), buffer, {198, 198, 206, 255}, 2);
@@ -8003,7 +8258,7 @@ void Game::renderBaseScreen(Renderer& renderer) const
                 }
                 drawUiButton(
                     renderer,
-                    storageActionChoiceRect(i),
+                    storageBulkChoiceRect(i),
                     Choices[static_cast<std::size_t>(i)],
                     enabled && i == baseStorageBulkSelection_,
                     style);
@@ -9307,17 +9562,13 @@ void Game::renderBaseScreen(Renderer& renderer) const
             }
         }
     } else {
-        const char* promptName = interactionFacility != nullptr ? interactionFacility->displayName : "";
-        renderer.fillRect({280.0f, 644.0f}, {720.0f, 34.0f}, ui::FooterFill);
-        if (interactionFacility != nullptr) {
-            if (const char* specialPrompt = baseInteractionPrompt(*interactionFacility)) {
-                std::snprintf(buffer, sizeof(buffer), "%s", specialPrompt);
-            } else {
-                std::snprintf(buffer, sizeof(buffer), "Enter: %sを調べる / クリック: 近くの施設を調べる / Esc: メニュー", promptName);
-            }
-            renderer.drawText({300.0f, 652.0f}, buffer, {255, 230, 150, 255}, 2);
-        } else {
-            renderer.drawText({300.0f, 652.0f}, "Enter: 近くの施設を調べる  Esc: メニュー", {198, 198, 206, 255}, 2);
+        const bool modalOpen = baseBrokenRingDepartureConfirm_.open;
+        if (!modalOpen) {
+            drawBaseControlHelp(
+                renderer,
+                camera_.width(),
+                camera_.height(),
+                baseExplorationControlHelp(interactionFacility));
         }
         if (!baseStatus_.empty()) {
             UiSystemMessageStyle statusStyle;
@@ -9395,6 +9646,18 @@ void Game::renderBaseScreen(Renderer& renderer) const
             {{0.0f, 0.0f}, {static_cast<float>(camera_.width()), static_cast<float>(camera_.height())}},
             {0, 0, 0, 96});
         drawUiQuantityDialog(renderer, baseStorageQuantityDialog_, storageQuantityDialogRect(), "base.storage.quantity");
+    }
+
+    const bool modalHelpActive =
+        baseBrokenRingDepartureConfirm_.open ||
+        baseRegenerateConfirm_.open ||
+        baseProcessingConfirm_.open ||
+        baseResultDialog_.open ||
+        baseStorageQuantityDialog_.open;
+    panelCancelScope.reset();
+    panelWindow.reset();
+    if (!modalHelpActive && !baseControlHelp.empty()) {
+        drawBaseControlHelp(renderer, camera_.width(), camera_.height(), baseControlHelp);
     }
 }
 
