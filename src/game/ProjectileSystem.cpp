@@ -14,6 +14,7 @@
 #include <string_view>
 #include <unordered_set>
 #include <utility>
+#include <vector>
 
 namespace majo {
 
@@ -1056,16 +1057,19 @@ void emitProjectileFxEvent(std::vector<ProjectileFxParticle>& particles, const P
         const float speed = sampleFloat(tuning.speedMin, tuning.speedMax);
         const Vec2 radial = fromAngle(angle);
         ProjectileFxParticle particle;
-        particle.visual = event == ProjectileFxEvent::Launch ? trailVisualFor(projectile) : profile.particleVisual;
+        particle.visual = projectileFxVisualForEvent(projectile, event, profile);
         particle.position = projectile.position + radial * sampleFloat(0.0f, radius * 0.45f);
         particle.velocity = radial * speed + projectile.velocity * (event == ProjectileFxEvent::Launch ? -0.10f : 0.08f);
-        particle.startColor = i % 3 == 0 ? profile.flash : (i % 3 == 1 ? profile.debris : profile.glow);
+        particle.startColor = projectileFxParticleStartColor(projectile, profile, event, i);
         if (event == ProjectileFxEvent::Guard) {
             particle.startColor = mixColor(particle.startColor, {206, 226, 255, 220}, 0.55f);
         } else if (event == ProjectileFxEvent::Reflect) {
             particle.startColor = mixColor(particle.startColor, {255, 244, 170, 230}, 0.40f);
-        } else if (event == ProjectileFxEvent::Expire) {
-            particle.startColor = scaleAlpha(particle.startColor, 0.68f);
+        } else if (event == ProjectileFxEvent::Expire &&
+            projectile.projectileId != "paralyze_shot" &&
+            projectile.projectileId != "fire_breath" &&
+            projectile.projectileId != "web_thread") {
+            particle.startColor = scaleAlpha(particle.startColor, 0.82f);
         }
         particle.endColor = scaleAlpha(particle.startColor, 0.0f);
         particle.lifetime = sampleFloat(tuning.lifetimeMin, tuning.lifetimeMax);
@@ -1075,8 +1079,21 @@ void emitProjectileFxEvent(std::vector<ProjectileFxParticle>& particles, const P
         particle.angularVelocity = sampleFloat(-8.0f, 8.0f);
         particle.drag = sampleFloat(2.2f, 5.0f);
         particle.stretch = sampleFloat(0.8f, 1.8f);
-        if (projectile.projectileId == "web_thread") {
-            particle.stretch = sampleFloat(1.8f, 3.3f);
+        if (event == ProjectileFxEvent::Expire && (projectile.projectileId == "poison_spit" || projectile.projectileId == "water_shot")) {
+            particle.stretch = sampleFloat(1.7f, 3.2f);
+            particle.drag = sampleFloat(4.0f, 7.0f);
+        } else if (event == ProjectileFxEvent::Expire && projectile.projectileId == "paralyze_shot") {
+            particle.stretch = sampleFloat(1.9f, 3.0f);
+            particle.angularVelocity = sampleFloat(-18.0f, 18.0f);
+            particle.drag = sampleFloat(5.0f, 9.0f);
+        } else if (event == ProjectileFxEvent::Expire && projectile.projectileId == "fire_breath") {
+            particle.stretch = sampleFloat(1.1f, 2.1f);
+            particle.drag = sampleFloat(2.6f, 5.2f);
+        } else if (event == ProjectileFxEvent::Expire && projectile.projectileId == "web_thread") {
+            particle.stretch = sampleFloat(0.9f, 1.5f);
+            particle.drag = sampleFloat(7.0f, 12.0f);
+        } else if (projectile.projectileId == "web_thread") {
+            particle.stretch = sampleFloat(2.6f, 5.0f);
         } else if (projectile.projectileId == "cactus_needle") {
             particle.stretch = sampleFloat(1.5f, 2.8f);
         } else if (projectile.projectileId == "wind_wave") {
@@ -1114,11 +1131,22 @@ void emitProjectileTrail(std::vector<ProjectileFxParticle>& particles, Projectil
         particle.velocity =
             direction * sampleFloat(-42.0f, -8.0f) +
             side * sampleFloat(-22.0f, 22.0f);
+        if (projectile.projectileId == "web_thread") {
+            particle.position =
+                projectile.position -
+                direction * sampleFloat(radius * 1.25f, radius * 3.90f) +
+                side * sampleFloat(-radius * 0.54f, radius * 0.54f);
+            particle.velocity =
+                direction * sampleFloat(-58.0f, -14.0f) +
+                side * sampleFloat(-10.0f, 10.0f);
+        }
         particle.startColor = scaleAlpha(
             spawned % 2 == 0 ? profile.glow : profile.debris,
             projectileFadeScale(projectile));
         particle.endColor = scaleAlpha(particle.startColor, 0.0f);
-        particle.lifetime = sampleFloat(0.14f, projectile.projectileId == "web_thread" ? 0.44f : 0.30f);
+        particle.lifetime = projectile.projectileId == "web_thread"
+            ? sampleFloat(0.56f, 0.92f)
+            : sampleFloat(0.14f, 0.30f);
         particle.startRadius = sampleFloat(radius * 0.20f, radius * 0.56f);
         particle.endRadius = 0.0f;
         particle.rotation = angleOf(direction) + sampleFloat(-0.75f, 0.75f);
@@ -1128,7 +1156,11 @@ void emitProjectileTrail(std::vector<ProjectileFxParticle>& particles, Projectil
         if (projectile.projectileId == "fire_breath" || projectile.projectileId == "explosion_small") {
             particle.startRadius *= 1.32f;
             particle.lifetime += 0.08f;
-        } else if (projectile.projectileId == "cactus_needle" || projectile.projectileId == "web_thread") {
+        } else if (projectile.projectileId == "web_thread") {
+            particle.startRadius *= 1.12f;
+            particle.stretch = sampleFloat(3.5f, 6.4f);
+            particle.drag = sampleFloat(1.2f, 2.8f);
+        } else if (projectile.projectileId == "cactus_needle") {
             particle.stretch = sampleFloat(1.8f, 3.2f);
         }
         addProjectileFxParticle(particles, particle);

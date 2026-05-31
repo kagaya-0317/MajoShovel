@@ -653,7 +653,7 @@ void drawThunderArcParticle(Renderer& renderer, const MagicFxSystem::Particle& p
         points[static_cast<std::size_t>(i)] = center + forward * along + side * (bow + notch);
     }
 
-    const int frameIndex = electricFrameIndex(particle.age, hash01(seed + 5.0f), 10.0f);
+    const int frameIndex = electricFrameIndex(particle.age, hash01(seed + 5.0f), 6.0f);
     static constexpr std::array<float, 6> FrameAlpha{{1.0f, 0.72f, 0.96f, 0.64f, 0.90f, 0.78f}};
     const float frameAlpha = FrameAlpha[static_cast<std::size_t>(std::abs(frameIndex) % static_cast<int>(FrameAlpha.size()))];
     drawLightningPath(
@@ -747,22 +747,19 @@ void drawWindBlade(Renderer& renderer, const MagicFxSystem::Particle& particle, 
     const Vec2 side = perpendicular(forward);
     const float curveSign = particle.angularVelocity < 0.0f ? -1.0f : 1.0f;
     const float curveStrength = clamp(std::abs(particle.angularVelocity) * 0.28f, 0.32f, 2.20f);
-    const Color trailColor = scaleAlpha(color, 0.46f);
 
-    Vec2 previous = center;
-    constexpr int TrailSegments = 5;
-    for (int i = 1; i <= TrailSegments; ++i) {
-        const float t = static_cast<float>(i) / static_cast<float>(TrailSegments);
-        const float distance = size * particle.stretch * lerp(0.54f, 2.78f, t);
-        const float curve = size * curveStrength * std::sin(t * Pi * 0.55f) * curveSign;
-        const Vec2 next = center - forward * distance + side * curve;
-        const float alpha = lerp(0.86f, 0.18f, t);
-        const float width = std::max(1.2f, size * lerp(0.34f, 0.12f, t));
-        renderer.drawSoftLine(previous, next, width, scaleAlpha(trailColor, alpha));
-        previous = next;
+    constexpr int AfterimageCount = 4;
+    for (int i = AfterimageCount; i >= 1; --i) {
+        const float t = static_cast<float>(i) / static_cast<float>(AfterimageCount);
+        const float distance = size * particle.stretch * lerp(0.54f, 2.55f, t);
+        const float curve = size * curveStrength * std::sin(t * Pi * 0.58f) * curveSign;
+        const Vec2 ghostCenter = center - forward * distance + side * curve;
+        const float ghostSize = size * lerp(0.86f, 0.52f, t);
+        const float ghostStretch = particle.stretch * lerp(0.96f, 0.74f, t);
+        const Color ghostColor = scaleAlpha(color, lerp(0.34f, 0.08f, t));
+        drawWindCrescent(renderer, ghostCenter, ghostSize, std::atan2(forward.y, forward.x), ghostStretch, ghostColor);
     }
 
-    renderer.drawSoftLine(center - forward * (size * 0.38f), center + forward * (size * 1.52f), std::max(1.2f, size * 0.24f), scaleAlpha({236, 255, 220, color.a}, 0.58f));
     drawWindCrescent(renderer, center, size, std::atan2(forward.y, forward.x), particle.stretch, color);
 }
 
@@ -797,8 +794,8 @@ void drawParticle(Renderer& renderer, const MagicFxSystem::Particle& particle)
     Vec2 center = particleDrawPosition(particle);
     if (particle.shape == MagicFxParticleShape::DirtClod && particle.lifetime > 3.0f) {
         const float seed = particle.rotation * 4.37f + particle.startSize * 0.83f + particle.lifetime * 0.19f;
-        const float swayAmount = particle.startSize * (1.75f + 0.42f * std::sin(particle.age * 0.64f + seed));
-        center += fromAngle(seed + std::sin(particle.age * 0.58f + seed) * 1.15f) * swayAmount;
+        const float swayAmount = particle.startSize * (1.95f + 0.46f * std::sin(particle.age * 0.78f + seed));
+        center += fromAngle(seed + std::sin(particle.age * 0.72f + seed) * 1.28f) * swayAmount;
     }
     switch (particle.shape) {
     case MagicFxParticleShape::SoftCircle:
@@ -1102,7 +1099,7 @@ MagicFxEmitterHandle MagicFxSystem::startFireballLoop(Vec2 position, Vec2 direct
     body.endColor = {255, 96, 20, 222};
     body.speed = {0.0f, 0.0f};
     body.lifetime = {0.075f, 0.115f};
-    body.startSize = {std::max(1.5f, radius * 0.31f), std::max(2.4f, radius * 0.44f)};
+    body.startSize = {std::max(1.0f, radius * 0.20f), std::max(1.6f, radius * 0.30f)};
     body.endSize = body.startSize;
     body.rotation = {0.0f, Pi * 2.0f};
     body.fadeOutFraction = 0.10f;
@@ -1674,7 +1671,7 @@ MagicFxEmitterHandle MagicFxSystem::startThunderAura(Vec2 position, float radius
     arcs.startColor = {255, 244, 176, 232};
     arcs.endColor = {255, 232, 146, 0};
     arcs.speed = {3.0f, 14.0f};
-    arcs.lifetime = {0.28f, 0.44f};
+    arcs.lifetime = {0.32f, 0.52f};
     arcs.startSize = {std::max(2.4f, radius * 0.16f), std::max(4.2f, radius * 0.28f)};
     arcs.endSize = {std::max(1.2f, radius * 0.08f), std::max(2.4f, radius * 0.16f)};
     arcs.rotation = {0.0f, Pi * 2.0f};
@@ -1683,7 +1680,7 @@ MagicFxEmitterHandle MagicFxSystem::startThunderAura(Vec2 position, float radius
     arcs.stretch = 2.55f;
     arcs.fadeInFraction = 0.02f;
     arcs.fadeOutFraction = 0.68f;
-    arcs.emissionRate = 14.0f;
+    arcs.emissionRate = 8.0f;
     arcs.loop = true;
     arcs.depthSorted = true;
     return addEmitter(arcs);
@@ -2015,16 +2012,16 @@ MagicFxEmitterHandle MagicFxSystem::startEarthAura(Vec2 position, float radius)
     rocks.startColor = {178, 128, 78, 232};
     rocks.endColor = {138, 96, 62, 170};
     rocks.alphaScale = {0.62f, 1.0f};
-    rocks.speed = {0.0f, 0.65f};
+    rocks.speed = {0.2f, 1.6f};
     rocks.lifetime = {10.0f, 15.0f};
     rocks.startSize = {4.0f, 8.8f};
     rocks.endSize = {3.8f, 8.4f};
     rocks.rotation = {0.0f, Pi * 2.0f};
-    rocks.angularVelocity = {-0.20f, 0.20f};
+    rocks.angularVelocity = {-0.28f, 0.28f};
     rocks.height = {11.0f, 30.0f};
-    rocks.verticalVelocity = {-0.35f, 0.55f};
-    rocks.gravity = 0.03f;
-    rocks.drag = 0.12f;
+    rocks.verticalVelocity = {-0.75f, 0.95f};
+    rocks.gravity = 0.06f;
+    rocks.drag = 0.16f;
     rocks.spawnRadius = std::max(4.0f, radius * 0.62f);
     rocks.spreadRadians = Pi * 2.0f;
     rocks.fadeInFraction = 0.03f;
