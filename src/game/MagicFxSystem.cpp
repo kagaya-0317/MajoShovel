@@ -543,7 +543,8 @@ void buildElectricFramePath(
     int frameIndex,
     bool strong,
     float jitterScale,
-    std::array<Vec2, 12>& outPoints)
+    std::array<Vec2, 12>& outPoints,
+    bool jitterEndpoints = false)
 {
     if (points == nullptr || pointCount <= 0) {
         return;
@@ -565,8 +566,17 @@ void buildElectricFramePath(
     const float baseAmplitude = std::max(
         jitterScale * (strong ? 2.80f : 2.20f),
         averageStep * (strong ? 0.72f : 0.56f));
-    for (int i = 1; i < safeCount - 1; ++i) {
-        const Vec2 tangentSource = points[i + 1] - points[i - 1];
+    const int firstJitterPoint = jitterEndpoints ? 0 : 1;
+    const int lastJitterPoint = jitterEndpoints ? safeCount : safeCount - 1;
+    for (int i = firstJitterPoint; i < lastJitterPoint; ++i) {
+        Vec2 tangentSource{};
+        if (i == 0) {
+            tangentSource = points[1] - points[0];
+        } else if (i == safeCount - 1) {
+            tangentSource = points[i] - points[i - 1];
+        } else {
+            tangentSource = points[i + 1] - points[i - 1];
+        }
         if (lengthSquared(tangentSource) <= 0.0001f) {
             continue;
         }
@@ -574,7 +584,10 @@ void buildElectricFramePath(
         const Vec2 tangent = normalize(tangentSource);
         const Vec2 side = perpendicular(tangent);
         const float t = static_cast<float>(i) / static_cast<float>(safeCount - 1);
-        const float centerWeight = std::sin(t * Pi);
+        float centerWeight = std::sin(t * Pi);
+        if (jitterEndpoints) {
+            centerWeight = lerp(0.58f, 1.0f, centerWeight);
+        }
         const float seed = static_cast<float>(frameIndex * 191 + i * 271 + safeCount * 43);
         const float zigzagSign = hash01(seed + 5.0f) < 0.5f ? -1.0f : 1.0f;
         const float sideJitter =
@@ -586,7 +599,16 @@ void buildElectricFramePath(
     }
 }
 
-void drawLightningPath(Renderer& renderer, const Vec2* points, int pointCount, float outerWidth, float coreWidth, float alpha, bool strong, int frameIndex)
+void drawLightningPath(
+    Renderer& renderer,
+    const Vec2* points,
+    int pointCount,
+    float outerWidth,
+    float coreWidth,
+    float alpha,
+    bool strong,
+    int frameIndex,
+    bool jitterEndpoints = false)
 {
     if (points == nullptr || pointCount < 2 || alpha <= 0.0f) {
         return;
@@ -594,7 +616,7 @@ void drawLightningPath(Renderer& renderer, const Vec2* points, int pointCount, f
 
     std::array<Vec2, 12> framePoints{};
     const int safeCount = std::clamp(pointCount, 2, static_cast<int>(framePoints.size()));
-    buildElectricFramePath(points, safeCount, frameIndex, strong, outerWidth * 0.95f, framePoints);
+    buildElectricFramePath(points, safeCount, frameIndex, strong, outerWidth * 0.95f, framePoints, jitterEndpoints);
 
     const Color shell = scaleAlpha(strong ? Color{255, 242, 170, 226} : Color{255, 238, 188, 194}, alpha);
     const Color core = scaleAlpha(strong ? Color{255, 252, 214, 255} : Color{255, 250, 222, 232}, alpha);
@@ -691,7 +713,7 @@ void drawThunderSigilArc(Renderer& renderer, const MagicFxSystem::ThunderImpactA
     const int frameIndex = electricFrameIndex(arc.age - arc.startDelay, arc.phase);
     std::array<Vec2, 12> framePoints{};
     const int safeCount = std::clamp(arc.pointCount, 2, static_cast<int>(framePoints.size()));
-    buildElectricFramePath(arc.points.data(), safeCount, frameIndex, arc.strong, arc.outerWidth * 1.20f, framePoints);
+    buildElectricFramePath(arc.points.data(), safeCount, frameIndex, arc.strong, arc.outerWidth * 1.20f, framePoints, true);
 
     const Color line = scaleAlpha(arc.strong ? Color{255, 242, 176, 192} : Color{255, 238, 196, 156}, alpha);
     const Color core = scaleAlpha(Color{255, 252, 218, 230}, alpha);
@@ -733,7 +755,8 @@ void drawThunderImpactArc(Renderer& renderer, const MagicFxSystem::ThunderImpact
         arc.coreWidth,
         alpha,
         arc.strong,
-        electricFrameIndex(localAge, arc.phase));
+        electricFrameIndex(localAge, arc.phase),
+        true);
 }
 
 void drawWindBlade(Renderer& renderer, const MagicFxSystem::Particle& particle, Color color, float size)
@@ -877,8 +900,8 @@ void MagicFxSystem::playHealPulse(Vec2 position, float radius)
     ring.position = position;
     ring.particleShape = MagicFxParticleShape::Ring;
     ring.spawnShape = MagicFxSpawnShape::Point;
-    ring.startColor = {118, 255, 168, 220};
-    ring.endColor = {220, 255, 218, 0};
+    ring.startColor = {194, 255, 214, 220};
+    ring.endColor = {248, 255, 238, 0};
     ring.alphaScale = {0.82f, 1.0f};
     ring.lifetime = {0.62f, 0.82f};
     ring.startSize = {radius * 0.34f, radius * 0.44f};
@@ -893,8 +916,8 @@ void MagicFxSystem::playHealPulse(Vec2 position, float radius)
     glow.position = position;
     glow.particleShape = MagicFxParticleShape::SoftCircle;
     glow.spawnShape = MagicFxSpawnShape::Circle;
-    glow.startColor = {112, 255, 184, 146};
-    glow.endColor = {226, 255, 214, 0};
+    glow.startColor = {204, 255, 226, 150};
+    glow.endColor = {248, 255, 232, 0};
     glow.alphaScale = {0.72f, 1.0f};
     glow.speed = {4.0f, 18.0f};
     glow.lifetime = {0.56f, 1.02f};
@@ -919,8 +942,8 @@ void MagicFxSystem::playHealPulse(Vec2 position, float radius)
     motes.position = position;
     motes.particleShape = MagicFxParticleShape::Circle;
     motes.spawnShape = MagicFxSpawnShape::Ring;
-    motes.startColor = {198, 255, 146, 230};
-    motes.endColor = {102, 255, 202, 0};
+    motes.startColor = {242, 255, 218, 232};
+    motes.endColor = {208, 255, 236, 0};
     motes.alphaScale = {0.76f, 1.0f};
     motes.speed = {16.0f, 54.0f};
     motes.lifetime = {0.62f, 1.18f};
@@ -945,8 +968,8 @@ void MagicFxSystem::playHealPulse(Vec2 position, float radius)
     glints.position = position;
     glints.particleShape = MagicFxParticleShape::SparkLine;
     glints.spawnShape = MagicFxSpawnShape::Ring;
-    glints.startColor = {230, 255, 190, 238};
-    glints.endColor = {116, 255, 188, 0};
+    glints.startColor = {255, 255, 238, 238};
+    glints.endColor = {218, 255, 236, 0};
     glints.alphaScale = {0.78f, 1.0f};
     glints.speed = {24.0f, 76.0f};
     glints.lifetime = {0.34f, 0.72f};
@@ -1708,7 +1731,7 @@ void MagicFxSystem::playThunderStrike(Vec2 origin, Vec2 target, bool strong)
     }
     lightningStrikes_.push_back(strike);
 
-    const int groundArcCount = strong ? 10 : 7;
+    const int groundArcCount = strong ? 5 : 3;
     for (int i = 0; i < groundArcCount; ++i) {
         ThunderImpactArc arc;
         arc.active = true;
@@ -1717,14 +1740,14 @@ void MagicFxSystem::playThunderStrike(Vec2 origin, Vec2 target, bool strong)
         arc.strong = strong;
         arc.startDelay = sampleRange(strong ? MagicFxRange{0.010f, 0.105f} : MagicFxRange{0.015f, 0.13f});
         arc.lifetime = sampleRange(strong ? MagicFxRange{0.20f, 0.42f} : MagicFxRange{0.17f, 0.36f});
-        arc.outerWidth = sampleRange(strong ? MagicFxRange{2.6f, 5.4f} : MagicFxRange{2.0f, 4.1f});
-        arc.coreWidth = sampleRange(strong ? MagicFxRange{0.9f, 1.8f} : MagicFxRange{0.7f, 1.4f});
+        arc.outerWidth = sampleRange(strong ? MagicFxRange{2.2f, 4.5f} : MagicFxRange{1.8f, 3.3f});
+        arc.coreWidth = sampleRange(strong ? MagicFxRange{0.8f, 1.5f} : MagicFxRange{0.6f, 1.1f});
         arc.phase = random01();
-        arc.pointCount = 5 + static_cast<int>(random01() * 4.0f);
-        arc.pointCount = std::clamp(arc.pointCount, 5, static_cast<int>(arc.points.size()));
+        arc.pointCount = 4 + static_cast<int>(random01() * 3.0f);
+        arc.pointCount = std::clamp(arc.pointCount, 4, static_cast<int>(arc.points.size()));
         const float baseAngle = random01() * Pi * 2.0f;
-        const float totalLength = sampleRange(strong ? MagicFxRange{42.0f, 104.0f} : MagicFxRange{30.0f, 76.0f});
-        const float startRadius = sampleRange({2.0f, 8.0f});
+        const float totalLength = sampleRange(strong ? MagicFxRange{24.0f, 58.0f} : MagicFxRange{18.0f, 42.0f});
+        const float startRadius = sampleRange({0.0f, 4.0f});
         Vec2 current = target + fromAngle(baseAngle + sampleRange({-0.48f, 0.48f})) * startRadius;
         float angle = baseAngle + sampleRange({-0.96f, 0.96f});
         arc.points[0] = current;
@@ -1744,7 +1767,7 @@ void MagicFxSystem::playThunderStrike(Vec2 origin, Vec2 target, bool strong)
         addThunderImpactArc(arc);
     }
 
-    const int verticalArcCount = strong ? 5 : 3;
+    const int verticalArcCount = strong ? 2 : 1;
     for (int i = 0; i < verticalArcCount; ++i) {
         ThunderImpactArc arc;
         arc.active = true;
@@ -1753,26 +1776,26 @@ void MagicFxSystem::playThunderStrike(Vec2 origin, Vec2 target, bool strong)
         arc.strong = strong;
         arc.startDelay = sampleRange(strong ? MagicFxRange{0.0f, 0.07f} : MagicFxRange{0.0f, 0.09f});
         arc.lifetime = sampleRange(strong ? MagicFxRange{0.13f, 0.28f} : MagicFxRange{0.11f, 0.24f});
-        arc.outerWidth = sampleRange(strong ? MagicFxRange{2.1f, 4.2f} : MagicFxRange{1.5f, 3.2f});
-        arc.coreWidth = sampleRange(strong ? MagicFxRange{0.8f, 1.6f} : MagicFxRange{0.6f, 1.2f});
+        arc.outerWidth = sampleRange(strong ? MagicFxRange{1.9f, 3.6f} : MagicFxRange{1.4f, 2.8f});
+        arc.coreWidth = sampleRange(strong ? MagicFxRange{0.7f, 1.3f} : MagicFxRange{0.5f, 1.0f});
         arc.phase = random01();
         arc.pointCount = 4 + static_cast<int>(random01() * 3.0f);
         arc.pointCount = std::clamp(arc.pointCount, 4, static_cast<int>(arc.points.size()));
-        const float totalLength = sampleRange(strong ? MagicFxRange{32.0f, 74.0f} : MagicFxRange{22.0f, 54.0f});
-        const float horizontalDrift = sampleRange(strong ? MagicFxRange{-34.0f, 34.0f} : MagicFxRange{-22.0f, 22.0f});
-        Vec2 current = target + Vec2{sampleRange({-8.0f, 8.0f}), sampleRange({-2.0f, 5.0f})};
+        const float totalLength = sampleRange(strong ? MagicFxRange{20.0f, 46.0f} : MagicFxRange{14.0f, 32.0f});
+        const float horizontalDrift = sampleRange(strong ? MagicFxRange{-15.0f, 15.0f} : MagicFxRange{-9.0f, 9.0f});
+        Vec2 current = target + Vec2{sampleRange({-5.0f, 5.0f}), sampleRange({-3.0f, 3.0f})};
         arc.points[0] = current;
         for (int p = 1; p < arc.pointCount; ++p) {
             const float t = static_cast<float>(p) / static_cast<float>(arc.pointCount - 1);
-            const float y = target.y - totalLength * t + sampleRange({-9.0f, 7.0f});
-            const float x = target.x + horizontalDrift * t + sampleRange({-17.0f, 17.0f}) * (1.0f - t * 0.25f);
+            const float y = target.y - totalLength * t + sampleRange({-6.0f, 5.0f});
+            const float x = target.x + horizontalDrift * t + sampleRange({-8.0f, 8.0f}) * (1.0f - t * 0.25f);
             current = {x, y};
             arc.points[static_cast<std::size_t>(p)] = current;
         }
         addThunderImpactArc(arc);
     }
 
-    const int sigilArcCount = strong ? 4 : 2;
+    const int sigilArcCount = strong ? 2 : 1;
     for (int i = 0; i < sigilArcCount; ++i) {
         ThunderImpactArc arc;
         arc.active = true;
@@ -1784,9 +1807,9 @@ void MagicFxSystem::playThunderStrike(Vec2 origin, Vec2 target, bool strong)
         arc.outerWidth = sampleRange(strong ? MagicFxRange{1.1f, 2.2f} : MagicFxRange{0.9f, 1.7f});
         arc.coreWidth = sampleRange({0.8f, 1.2f});
         arc.phase = random01();
-        arc.pointCount = 5 + static_cast<int>(random01() * 4.0f);
-        arc.pointCount = std::clamp(arc.pointCount, 5, static_cast<int>(arc.points.size()));
-        const float radius = sampleRange(strong ? MagicFxRange{18.0f, 58.0f} : MagicFxRange{16.0f, 44.0f});
+        arc.pointCount = 4 + static_cast<int>(random01() * 3.0f);
+        arc.pointCount = std::clamp(arc.pointCount, 4, static_cast<int>(arc.points.size()));
+        const float radius = sampleRange(strong ? MagicFxRange{10.0f, 30.0f} : MagicFxRange{8.0f, 22.0f});
         const float startAngle = random01() * Pi * 2.0f;
         const float sweep = sampleRange({0.65f, 1.85f}) * (random01() < 0.5f ? -1.0f : 1.0f);
         for (int p = 0; p < arc.pointCount; ++p) {

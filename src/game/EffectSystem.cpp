@@ -287,6 +287,13 @@ int randomInt(int minValue, int maxValue)
     return dist(particleRng());
 }
 
+void delayEffect(Effect* effect, float delay)
+{
+    if (effect != nullptr) {
+        effect->age = -std::max(0.0f, delay);
+    }
+}
+
 void configureShardPhysics(Effect& effect, bool digHitShard, float scale)
 {
     const float safeScale = std::max(0.1f, scale);
@@ -583,6 +590,44 @@ void renderWaterDrop(Renderer& renderer, const Effect& effect, Vec2 center, Colo
         colorTowardWhite(color, 0.70f, 0.82f));
 }
 
+void renderThunderArc(Renderer& renderer, const Effect& effect, Vec2 center, Color color, float radius)
+{
+    if (radius <= 0.0f || color.a == 0) {
+        return;
+    }
+
+    const Vec2 forward = lengthSquared(effect.velocity) > 0.0001f ? normalize(effect.velocity) : fromAngle(effect.rotation);
+    const Vec2 side{-forward.y, forward.x};
+    const int pointCount = 4 + std::abs(effect.shardVariant) % 3;
+    const float visualLength = std::max(14.0f, radius * clamp(effect.shardAspect, 5.0f, 14.0f));
+    const int frame = static_cast<int>(std::floor(effect.age * 18.0f + effect.rotation * 3.0f + static_cast<float>(effect.shardVariant) * 0.37f));
+    std::array<Vec2, 8> points{};
+
+    for (int i = 0; i < pointCount; ++i) {
+        const float t = static_cast<float>(i) / static_cast<float>(pointCount - 1);
+        const float centerWeight = lerp(0.52f, 1.0f, std::sin(t * Pi));
+        const float seed = static_cast<float>(frame * 173 + i * 251 + effect.shardVariant * 41);
+        const float alternating = i % 2 == 0 ? -1.0f : 1.0f;
+        const float along =
+            (t - 0.5f) * visualLength +
+            (std::sin(seed * 0.019f) * visualLength * 0.10f * centerWeight);
+        const float kink =
+            alternating * visualLength * lerp(0.12f, 0.28f, std::sin(seed * 0.013f) * 0.5f + 0.5f) * centerWeight +
+            std::cos(seed * 0.017f) * visualLength * 0.10f * centerWeight;
+        points[static_cast<std::size_t>(i)] = snapPoint(center + forward * along + side * kink);
+    }
+
+    const float pulse = 0.72f + 0.28f * (static_cast<float>(std::abs(frame) % 4) / 3.0f);
+    const Color glow = withAlphaScale(color, 0.34f * pulse);
+    const Color line = withAlphaScale(color, 0.86f * pulse);
+    const Color core = colorTowardWhite(color, 0.78f, 0.98f * pulse);
+    for (int i = 1; i < pointCount; ++i) {
+        renderer.drawSoftLine(points[static_cast<std::size_t>(i - 1)], points[static_cast<std::size_t>(i)], std::max(1.4f, radius * 1.08f), glow);
+        renderer.drawSoftLine(points[static_cast<std::size_t>(i - 1)], points[static_cast<std::size_t>(i)], std::max(0.9f, radius * 0.44f), line);
+        renderer.drawLine(points[static_cast<std::size_t>(i - 1)], points[static_cast<std::size_t>(i)], core);
+    }
+}
+
 void fillJaggedStarFan(
     Renderer& renderer,
     Vec2 center,
@@ -741,6 +786,10 @@ bool isDepthSortedSmoke(const SmokePuff&)
 
 void renderEffectVisual(Renderer& renderer, const Effect& effect)
 {
+    if (effect.age < 0.0f) {
+        return;
+    }
+
     const float t = effect.duration > 0.0f ? effect.age / effect.duration : 1.0f;
     Color color = effect.color;
     color.a = effectAlpha(effect, color, t);
@@ -760,6 +809,8 @@ void renderEffectVisual(Renderer& renderer, const Effect& effect)
         renderPoisonBubble(renderer, effect, drawPosition, color, std::max(1.0f, radius), t);
     } else if (effect.visual == ParticleVisual::WaterDrop) {
         renderWaterDrop(renderer, effect, drawPosition, color, std::max(1.0f, radius));
+    } else if (effect.visual == ParticleVisual::ThunderArc) {
+        renderThunderArc(renderer, effect, drawPosition, color, std::max(1.0f, radius));
     } else {
         renderer.fillCircle(drawPosition, std::max(0.8f, radius), color);
     }
@@ -794,6 +845,9 @@ void EffectSystem::update(float dt)
             continue;
         }
         effect.age += dt;
+        if (effect.age < 0.0f) {
+            continue;
+        }
         if (effect.age >= effect.duration) {
             effect.active = false;
             continue;
@@ -853,7 +907,7 @@ void EffectSystem::render(Renderer& renderer)
 void EffectSystem::renderShadows(Renderer& renderer)
 {
     for (const Effect& effect : effects_.items()) {
-        if (!effect.active || !effect.physicsShard || !isDepthSortedEffect(effect)) {
+        if (!effect.active || effect.age < 0.0f || !effect.physicsShard || !isDepthSortedEffect(effect)) {
             continue;
         }
 
@@ -886,7 +940,7 @@ void EffectSystem::appendRenderEntries(std::vector<DepthRenderEntry>& entries, R
     }
 
     for (const Effect& effect : effects_.items()) {
-        if (!effect.active || !isDepthSortedEffect(effect)) {
+        if (!effect.active || effect.age < 0.0f || !isDepthSortedEffect(effect)) {
             continue;
         }
 
@@ -908,7 +962,7 @@ void EffectSystem::renderForeground(Renderer& renderer)
 void EffectSystem::renderLayer(Renderer& renderer, EffectLayer layer)
 {
     for (const Effect& effect : effects_.items()) {
-        if (!effect.active || effect.layer != layer) {
+        if (!effect.active || effect.age < 0.0f || effect.layer != layer) {
             continue;
         }
         if (isDepthSortedEffect(effect)) {
@@ -1230,6 +1284,7 @@ void EffectSystem::spawn(ParticleEffectId id, Vec2 position, Vec2 direction, flo
                 layer);
             if (drop != nullptr) {
                 drop->endRadius = drop->startRadius * randomRange(0.45f, 0.70f);
+                delayEffect(drop, randomRange(0.0f, 0.36f));
             }
         }
         return;
@@ -1508,7 +1563,29 @@ void EffectSystem::spawnStatusAura(Vec2 position, std::string_view stateId)
     } else if (stateId == "status_bleed") {
         spawn(ParticleEffectId::BleedAura, position);
     } else if (stateId == "status_paralyze") {
-        spawn(ParticleEffectId::MagicThunder, position);
+        for (int i = 0; i < 5; ++i) {
+            const float angle = seedAngle(position) + randomRange(0.0f, Pi * 2.0f);
+            const Vec2 direction = fromAngle(angle);
+            const Color color = mixColor({255, 236, 92, 225}, {255, 255, 218, 196}, randomRange(0.0f, 1.0f));
+            Effect* arc = spawnParticle(
+                position + direction * randomRange(3.0f, 18.0f) + Vec2{randomRange(-4.0f, 4.0f), randomRange(-24.0f, 4.0f)},
+                direction * randomRange(10.0f, 34.0f) + Vec2{randomRange(-9.0f, 9.0f), randomRange(-9.0f, 9.0f)},
+                randomRange(1.7f, 2.8f),
+                color,
+                randomRange(0.24f, 0.42f),
+                {},
+                1.9f,
+                EffectLayer::World,
+                ParticleVisual::ThunderArc,
+                randomInt(0, 127),
+                angle,
+                0.0f,
+                randomRange(7.0f, 11.0f));
+            if (arc != nullptr) {
+                arc->endRadius = arc->startRadius * 0.42f;
+                delayEffect(arc, randomRange(0.0f, 0.24f));
+            }
+        }
     } else if (stateId == "status_blind") {
         spawn(ParticleEffectId::SlowAura, position, {1.0f, 0.0f}, 1.0f, EffectLayer::World, {14, 14, 18, 255});
     } else if (stateId == "status_wet") {
@@ -1530,14 +1607,77 @@ void EffectSystem::spawnStatusAura(Vec2 position, std::string_view stateId)
                 randomRange(1.05f, 1.55f));
             if (drop != nullptr) {
                 drop->endRadius = drop->startRadius * randomRange(0.42f, 0.62f);
+                delayEffect(drop, randomRange(0.0f, 0.38f));
             }
         }
     } else if (stateId == "status_hot") {
-        spawn(ParticleEffectId::MagicFire, position);
+        spawnRing(position, 7.0f, 24.0f, {255, 132, 58, 150}, 0.30f);
+        for (int i = 0; i < 8; ++i) {
+            const float angle = seedAngle(position) + randomRange(0.0f, Pi * 2.0f);
+            const Vec2 direction = fromAngle(angle);
+            const Color color = mixColor({255, 92, 36, 222}, {255, 222, 92, 184}, randomRange(0.0f, 1.0f));
+            Effect* ember = spawnParticle(
+                position + direction * randomRange(2.0f, 16.0f) + Vec2{randomRange(-5.0f, 5.0f), randomRange(-18.0f, 8.0f)},
+                direction * randomRange(16.0f, 52.0f) + Vec2{randomRange(-8.0f, 8.0f), randomRange(-20.0f, 8.0f)},
+                randomRange(1.7f, 3.2f),
+                color,
+                randomRange(0.42f, 0.70f),
+                {0.0f, -12.0f},
+                1.55f,
+                EffectLayer::World);
+            if (ember != nullptr) {
+                ember->endRadius = ember->startRadius * randomRange(0.16f, 0.34f);
+                delayEffect(ember, randomRange(0.0f, 0.30f));
+            }
+        }
     } else if (stateId == "status_frozen") {
-        spawn(ParticleEffectId::FrozenSparkle, position);
+        for (int i = 0; i < 9; ++i) {
+            const float angle = seedAngle(position) + randomRange(0.0f, Pi * 2.0f);
+            const float distance = std::sqrt(randomRange(0.0f, 1.0f)) * randomRange(10.0f, 34.0f);
+            const Color color = mixColor({138, 232, 255, 216}, {255, 255, 255, 196}, randomRange(0.0f, 1.0f));
+            Effect* sparkle = spawnParticle(
+                position + fromAngle(angle) * distance + Vec2{randomRange(-5.0f, 5.0f), randomRange(-30.0f, 8.0f)},
+                {randomRange(-10.0f, 10.0f), randomRange(-22.0f, 8.0f)},
+                randomRange(2.6f, 4.8f),
+                color,
+                randomRange(0.74f, 1.12f),
+                {0.0f, -6.0f},
+                0.72f,
+                EffectLayer::World,
+                ParticleVisual::Sparkle,
+                0,
+                randomRange(0.0f, Pi * 2.0f),
+                randomRange(-2.4f, 2.4f),
+                1.0f);
+            if (sparkle != nullptr) {
+                sparkle->endRadius = sparkle->startRadius * randomRange(0.18f, 0.36f);
+                delayEffect(sparkle, randomRange(0.0f, 0.46f));
+            }
+        }
     } else if (stateId == "status_shocked") {
-        spawn(ParticleEffectId::MagicThunder, position);
+        for (int i = 0; i < 4; ++i) {
+            const float angle = seedAngle(position) + randomRange(0.0f, Pi * 2.0f);
+            const Vec2 direction = fromAngle(angle);
+            const Color color = mixColor({255, 236, 88, 232}, {255, 255, 226, 206}, randomRange(0.0f, 1.0f));
+            Effect* arc = spawnParticle(
+                position + direction * randomRange(3.0f, 16.0f) + Vec2{randomRange(-4.0f, 4.0f), randomRange(-22.0f, 5.0f)},
+                direction * randomRange(8.0f, 26.0f) + Vec2{randomRange(-7.0f, 7.0f), randomRange(-7.0f, 7.0f)},
+                randomRange(1.9f, 3.0f),
+                color,
+                randomRange(0.28f, 0.48f),
+                {},
+                1.65f,
+                EffectLayer::World,
+                ParticleVisual::ThunderArc,
+                randomInt(0, 127),
+                angle,
+                0.0f,
+                randomRange(8.5f, 13.0f));
+            if (arc != nullptr) {
+                arc->endRadius = arc->startRadius * 0.40f;
+                delayEffect(arc, randomRange(0.0f, 0.22f));
+            }
+        }
     }
 }
 

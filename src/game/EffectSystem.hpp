@@ -25,7 +25,8 @@ enum class ParticleVisual {
     ImpactSpark,
     ImpactBurst,
     PoisonBubble,
-    WaterDrop
+    WaterDrop,
+    ThunderArc
 };
 
 enum class EffectLayer {
