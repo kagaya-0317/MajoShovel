@@ -32,9 +32,9 @@ struct ProjectilePrototype {
 };
 
 constexpr std::array<ProjectilePrototype, 13> Prototypes{{
-    {"stone_bullet", "石つぶて", 190.0f, 4.5f, 2.4f, 1, "blunt", false, {"small", "stone"}},
-    {"big_stone_bullet", "大岩弾", 150.0f, 7.5f, 2.6f, 3, "blunt", false, {"stone"}},
-    {"weapon_throw", "投げ武器", 220.0f, 4.8f, 2.0f, 2, "blunt", false, {"metal", "small"}},
+    {"stone_bullet", "石つぶて", 245.0f, 6.0f, 2.4f, 1, "blunt", false, {"small", "stone"}},
+    {"big_stone_bullet", "大岩弾", 205.0f, 10.0f, 2.6f, 3, "blunt", false, {"stone"}},
+    {"weapon_throw", "投げ武器", 220.0f, 6.8f, 2.0f, 2, "blunt", false, {"metal", "small"}},
     {"poison_spit", "毒液", 155.0f, 5.0f, 2.8f, 1, "water", false, {"small", "poison"}},
     {"paralyze_shot", "しびれ弾", 170.0f, 4.4f, 2.4f, 0, "none", false, {"small", "paralyze"}},
     {"mud_blob", "泥だんご", 150.0f, 5.8f, 2.6f, 0, "earth", false, {"mud", "poison"}},
@@ -44,7 +44,7 @@ constexpr std::array<ProjectilePrototype, 13> Prototypes{{
     {"web_thread", "クモ糸", 135.0f, 3.5f, 2.4f, 0, "none", false, {"small", "web"}},
     {"wind_wave", "風波", 235.0f, 6.0f, 1.6f, 1, "wind", true, {"wind"}},
     {"explosion_small", "小爆発", 80.0f, 10.0f, 0.55f, 2, "fire", false, {"explosion"}},
-    {"junk_chunk", "ガラクタ弾", 175.0f, 7.0f, 2.5f, 2, "blunt", false, {"metal", "heavy"}},
+    {"junk_chunk", "ガラクタ弾", 235.0f, 9.5f, 2.5f, 2, "blunt", false, {"metal", "heavy"}},
 }};
 
 constexpr float CapturedMagnetProjectileRadius = 170.0f;
@@ -147,6 +147,15 @@ float sampleFloat(float minValue, float maxValue)
     return dist(projectileFxRng());
 }
 
+int sampleInt(int minValue, int maxValue)
+{
+    if (maxValue < minValue) {
+        std::swap(minValue, maxValue);
+    }
+    std::uniform_int_distribution<int> dist(minValue, maxValue);
+    return dist(projectileFxRng());
+}
+
 Vec2 perpendicular(Vec2 value)
 {
     return {-value.y, value.x};
@@ -179,6 +188,55 @@ Color mixColor(Color a, Color b, float t)
 float angleOf(Vec2 value)
 {
     return std::atan2(value.y, value.x);
+}
+
+int positiveModulo(int value, int divisor)
+{
+    if (divisor <= 0) {
+        return 0;
+    }
+    const int result = value % divisor;
+    return result < 0 ? result + divisor : result;
+}
+
+struct JunkColorSet {
+    Color core;
+    Color edge;
+    Color glow;
+    Color flash;
+    Color debris;
+};
+
+const std::array<JunkColorSet, 6>& junkColorPalette()
+{
+    static constexpr std::array<JunkColorSet, 6> Palette{{
+        {{164, 166, 156, 250}, {46, 48, 48, 230}, {214, 208, 164, 82}, {255, 226, 128, 226}, {112, 118, 116, 218}},
+        {{176, 116, 70, 250}, {64, 46, 34, 230}, {232, 144, 84, 78}, {255, 198, 118, 224}, {132, 82, 54, 220}},
+        {{94, 132, 170, 248}, {36, 54, 76, 230}, {112, 178, 232, 82}, {184, 228, 255, 224}, {72, 98, 128, 220}},
+        {{178, 160, 72, 248}, {70, 62, 30, 230}, {238, 214, 102, 78}, {255, 242, 148, 224}, {132, 116, 56, 220}},
+        {{98, 152, 112, 248}, {34, 64, 44, 230}, {116, 214, 138, 76}, {190, 250, 174, 220}, {72, 116, 84, 216}},
+        {{150, 104, 162, 248}, {58, 42, 70, 230}, {198, 138, 220, 76}, {238, 196, 255, 220}, {110, 78, 124, 216}},
+    }};
+    return Palette;
+}
+
+const JunkColorSet& junkColorSetFor(int variant)
+{
+    const auto& palette = junkColorPalette();
+    return palette[static_cast<std::size_t>(positiveModulo(variant, static_cast<int>(palette.size())))];
+}
+
+Color junkDebrisColor(int variant)
+{
+    return junkColorSetFor(variant).debris;
+}
+
+int projectileVisualVariantFor(std::string_view projectileId)
+{
+    if (projectileId == "junk_chunk") {
+        return sampleInt(0, static_cast<int>(junkColorPalette().size()) - 1);
+    }
+    return 0;
 }
 
 Color colorFor(std::string_view damageType)
@@ -329,7 +387,7 @@ ProjectileVisualProfile visualProfileFor(const Projectile& projectile)
             {255, 255, 246, 210},
             {204, 214, 210, 190},
             ProjectileFxVisual::Thread,
-            2.4f,
+            4.4f,
             0.24f,
             3.1f,
         };
@@ -361,14 +419,15 @@ ProjectileVisualProfile visualProfileFor(const Projectile& projectile)
         };
     }
     if (id == "junk_chunk") {
+        const JunkColorSet& colors = junkColorSetFor(projectile.visualVariant);
         return {
-            {164, 166, 156, 250},
-            {46, 48, 48, 230},
-            {214, 208, 164, 82},
-            {255, 226, 128, 226},
-            {112, 118, 116, 218},
+            colors.core,
+            colors.edge,
+            colors.glow,
+            colors.flash,
+            colors.debris,
             ProjectileFxVisual::Shard,
-            1.15f,
+            1.30f,
             0.72f,
             4.0f,
         };
@@ -407,6 +466,38 @@ void drawShardShape(Renderer& renderer, Vec2 center, float radius, float rotatio
     renderer.fillPolygon(points.data(), points.size(), color);
 }
 
+void drawNeedleTriangleShape(Renderer& renderer, Vec2 center, float length, float width, float rotation, Color color)
+{
+    const Vec2 forward = fromAngle(rotation);
+    const Vec2 side = perpendicular(forward);
+    const Vec2 tip = center + forward * (length * 0.62f);
+    const Vec2 rear = center - forward * (length * 0.48f);
+    const std::array<Vec2, 3> points{
+        tip,
+        rear + side * width,
+        rear - side * width,
+    };
+    renderer.fillPolygon(points.data(), points.size(), color);
+}
+
+void drawLightningBolt(Renderer& renderer, Vec2 center, float radius, float rotation, float phase, float stretch, Color color)
+{
+    const Vec2 forward = fromAngle(rotation);
+    const Vec2 side = perpendicular(forward);
+    const float length = radius * std::max(1.4f, stretch * 2.2f);
+    std::vector<Vec2> points;
+    points.reserve(5);
+    for (int i = 0; i < 5; ++i) {
+        const float t = static_cast<float>(i) / 4.0f;
+        const float axis = (t - 0.5f) * length;
+        const float endpointScale = (i == 0 || i == 4) ? 0.0f : 1.0f;
+        const float offset = std::sin(phase * 24.0f + rotation * 3.7f + static_cast<float>(i) * 2.15f) * radius * 0.74f * endpointScale;
+        points.push_back(center + forward * axis + side * offset);
+    }
+    renderer.drawSoftPolyline(points, std::max(2.2f, radius * 0.34f), scaleAlpha(color, 0.45f));
+    renderer.drawSoftPolyline(points, std::max(1.0f, radius * 0.14f), color);
+}
+
 void drawProjectileFxParticle(Renderer& renderer, const ProjectileFxParticle& particle)
 {
     if (!particle.active || particle.lifetime <= 0.0f) {
@@ -441,12 +532,49 @@ void drawProjectileFxParticle(Renderer& renderer, const ProjectileFxParticle& pa
         return;
     case ProjectileFxVisual::Needle:
         renderer.drawSoftLine(
-            particle.position - direction * (radius * stretch * 1.3f),
-            particle.position + direction * (radius * stretch * 1.3f),
-            std::max(1.0f, radius * 0.22f),
+            particle.position - direction * (radius * stretch * 0.74f),
+            particle.position + direction * (radius * stretch * 0.92f),
+            std::max(1.0f, radius * 0.44f),
+            scaleAlpha(color, 0.34f));
+        drawNeedleTriangleShape(
+            renderer,
+            particle.position,
+            radius * stretch * 2.2f,
+            std::max(1.0f, radius * 0.42f),
+            particle.rotation,
             color);
-        renderer.fillCircle(particle.position + direction * (radius * stretch * 1.35f), std::max(0.8f, radius * 0.28f), color);
         return;
+    case ProjectileFxVisual::Droplet:
+        renderer.drawSoftLine(
+            particle.position - direction * (radius * stretch * 0.35f),
+            particle.position + direction * (radius * stretch * 0.90f),
+            std::max(1.0f, radius * 0.46f),
+            scaleAlpha(color, 0.72f));
+        renderer.fillSoftCircle(particle.position + direction * (radius * stretch * 0.92f), radius * 0.70f, color);
+        renderer.fillCircle(particle.position - direction * (radius * stretch * 0.18f), radius * 0.34f, scaleAlpha(color, 0.82f));
+        return;
+    case ProjectileFxVisual::LightningBolt:
+        drawLightningBolt(renderer, particle.position, radius, particle.rotation, t, stretch, color);
+        return;
+    case ProjectileFxVisual::Flame:
+        renderer.drawSoftLine(
+            particle.position - direction * (radius * 0.28f),
+            particle.position + direction * (radius * stretch * 0.96f),
+            std::max(1.0f, radius * 0.70f),
+            scaleAlpha(color, 0.58f));
+        renderer.fillSoftCircle(particle.position + direction * (radius * stretch * 0.44f), radius * 0.86f, color);
+        renderer.fillCircle(particle.position + direction * (radius * stretch * 0.62f), radius * 0.34f, scaleAlpha({255, 232, 116, color.a}, 0.86f));
+        return;
+    case ProjectileFxVisual::StickySplat: {
+        renderer.fillSoftCircle(particle.position, radius * 1.22f, scaleAlpha(color, 0.72f));
+        renderer.fillCircle(particle.position, radius * 0.48f, color);
+        for (int i = 0; i < 4; ++i) {
+            const float angle = particle.rotation + static_cast<float>(i) * 1.72f + std::sin(t * 7.0f + static_cast<float>(i)) * 0.18f;
+            const Vec2 offset = fromAngle(angle) * radius * (0.42f + 0.20f * static_cast<float>(i % 2));
+            renderer.fillSoftCircle(particle.position + offset, radius * (0.22f + 0.07f * static_cast<float>(i % 3)), scaleAlpha(color, 0.82f));
+        }
+        return;
+    }
     case ProjectileFxVisual::Thread: {
         const Vec2 side = perpendicular(direction);
         renderer.drawSoftLine(
@@ -481,6 +609,20 @@ void drawProjectileFxParticle(Renderer& renderer, const ProjectileFxParticle& pa
     }
 }
 
+float projectileShardSpinSpeed(const Projectile& projectile)
+{
+    if (projectile.projectileId == "big_stone_bullet") {
+        return 11.0f;
+    }
+    if (projectile.projectileId == "stone_bullet") {
+        return 14.0f;
+    }
+    if (projectile.projectileId == "junk_chunk") {
+        return 13.0f;
+    }
+    return 5.0f;
+}
+
 void drawProjectile(Renderer& renderer, const Projectile& projectile)
 {
     const ProjectileVisualProfile profile = visualProfileFor(projectile);
@@ -507,15 +649,14 @@ void drawProjectile(Renderer& renderer, const Projectile& projectile)
     const std::string_view id = projectile.projectileId;
     if (id == "cactus_needle") {
         renderer.drawSoftLine(
-            projectile.position - direction * (radius * 2.7f),
-            projectile.position + direction * (radius * 2.9f),
-            std::max(1.0f, radius * 0.58f),
-            scaleAlpha(profile.glow, fade * 0.78f));
-        renderer.drawLine(
-            projectile.position - direction * (radius * 2.5f),
-            projectile.position + direction * (radius * 2.7f),
-            core);
-        renderer.fillCircle(projectile.position + direction * (radius * 2.9f), std::max(1.0f, radius * 0.46f), scaleAlpha(profile.flash, fade));
+            projectile.position - direction * (radius * 2.2f),
+            projectile.position + direction * (radius * 3.2f),
+            std::max(1.0f, radius * 0.82f),
+            scaleAlpha(profile.glow, fade * 0.76f));
+        const float rotation = angleOf(direction);
+        drawNeedleTriangleShape(renderer, projectile.position, radius * 6.7f, radius * 1.14f, rotation, edge);
+        drawNeedleTriangleShape(renderer, projectile.position + direction * (radius * 0.08f), radius * 5.9f, radius * 0.82f, rotation, core);
+        renderer.fillCircle(projectile.position + direction * (radius * 3.8f), std::max(1.0f, radius * 0.32f), scaleAlpha(profile.flash, fade));
         return;
     }
     if (id == "weapon_throw") {
@@ -532,12 +673,12 @@ void drawProjectile(Renderer& renderer, const Projectile& projectile)
     }
     if (id == "web_thread") {
         renderer.drawSoftLine(
-            projectile.position - direction * (radius * 3.0f),
-            projectile.position + direction * (radius * 1.8f),
-            std::max(1.0f, radius * 0.62f),
+            projectile.position - direction * (radius * 5.4f),
+            projectile.position + direction * (radius * 2.1f),
+            std::max(1.0f, radius * 0.70f),
             scaleAlpha(profile.glow, fade * 0.92f));
-        renderer.drawLine(projectile.position - direction * (radius * 2.8f), projectile.position + direction * (radius * 1.6f), core);
-        renderer.drawLine(projectile.position - side * (radius * 1.2f), projectile.position + side * (radius * 1.2f), scaleAlpha(profile.flash, fade * 0.55f));
+        renderer.drawLine(projectile.position - direction * (radius * 4.8f), projectile.position + direction * (radius * 1.8f), core);
+        renderer.drawLine(projectile.position - side * (radius * 1.4f), projectile.position + side * (radius * 1.4f), scaleAlpha(profile.flash, fade * 0.55f));
         renderer.fillCircle(projectile.position, radius * 0.62f, scaleAlpha(core, 0.85f));
         return;
     }
@@ -573,7 +714,8 @@ void drawProjectile(Renderer& renderer, const Projectile& projectile)
     }
 
     if (id == "stone_bullet" || id == "big_stone_bullet" || id == "junk_chunk") {
-        drawShardShape(renderer, projectile.position, radius * 0.92f, angleOf(direction) + projectile.age * 5.0f, core);
+        const float spinPhase = static_cast<float>(projectile.visualVariant) * 0.73f;
+        drawShardShape(renderer, projectile.position, radius * 0.98f, angleOf(direction) + projectile.age * projectileShardSpinSpeed(projectile) + spinPhase, core);
         renderer.drawCircle(projectile.position, radius + 1.8f, edge);
         renderer.fillCircle(projectile.position - direction * (radius * 0.25f) - side * (radius * 0.15f), radius * 0.32f, scaleAlpha(profile.flash, fade * 0.46f));
         return;
@@ -603,6 +745,22 @@ void addProjectileFxParticle(std::vector<ProjectileFxParticle>& particles, Proje
     particles.push_back(particle);
 }
 
+bool projectileExpireUsesRing(const Projectile& projectile)
+{
+    const std::string_view id = projectile.projectileId;
+    return !(id == "stone_bullet" ||
+        id == "big_stone_bullet" ||
+        id == "weapon_throw" ||
+        id == "poison_spit" ||
+        id == "paralyze_shot" ||
+        id == "mud_blob" ||
+        id == "cactus_needle" ||
+        id == "water_shot" ||
+        id == "fire_breath" ||
+        id == "web_thread" ||
+        id == "junk_chunk");
+}
+
 ProjectileFxEventTuning projectileFxTuning(const Projectile& projectile, ProjectileFxEvent event)
 {
     ProjectileFxEventTuning tuning;
@@ -626,6 +784,7 @@ ProjectileFxEventTuning projectileFxTuning(const Projectile& projectile, Project
         tuning.startSize = std::max(1.4f, projectile.radius * 0.42f);
         tuning.ringStartScale = 0.70f;
         tuning.ringEndScale = 2.6f;
+        tuning.ring = projectileExpireUsesRing(projectile);
     } else {
         tuning.count = 10;
         tuning.speedMin = 42.0f;
@@ -704,6 +863,64 @@ ProjectileFxEventTuning projectileFxTuning(const Projectile& projectile, Project
         tuning.ringEndScale += 0.7f;
     }
 
+    if (event == ProjectileFxEvent::Expire) {
+        if (id == "stone_bullet") {
+            tuning.count += 4;
+            tuning.speedMax += 54.0f;
+            tuning.startSize *= 1.78f;
+            tuning.lifetimeMax += 0.08f;
+        } else if (id == "big_stone_bullet") {
+            tuning.count += 5;
+            tuning.speedMax += 62.0f;
+            tuning.startSize *= 1.62f;
+            tuning.lifetimeMax += 0.12f;
+        } else if (id == "weapon_throw") {
+            tuning.count += 4;
+            tuning.speedMax += 62.0f;
+            tuning.startSize *= 1.18f;
+        } else if (id == "poison_spit" || id == "water_shot") {
+            tuning.count += 8;
+            tuning.speedMin += 40.0f;
+            tuning.speedMax += 96.0f;
+            tuning.startSize *= 1.16f;
+            tuning.lifetimeMax += 0.12f;
+        } else if (id == "paralyze_shot") {
+            tuning.count += 8;
+            tuning.speedMin += 22.0f;
+            tuning.speedMax += 84.0f;
+            tuning.startSize *= 1.88f;
+            tuning.lifetimeMin *= 0.70f;
+            tuning.lifetimeMax *= 0.80f;
+        } else if (id == "mud_blob") {
+            tuning.count += 5;
+            tuning.speedMax += 28.0f;
+            tuning.startSize *= 1.70f;
+            tuning.lifetimeMax += 0.16f;
+        } else if (id == "cactus_needle") {
+            tuning.count += 4;
+            tuning.speedMax += 64.0f;
+            tuning.startSize *= 3.15f;
+        } else if (id == "fire_breath") {
+            tuning.count += 10;
+            tuning.speedMin += 28.0f;
+            tuning.speedMax += 86.0f;
+            tuning.startSize *= 1.34f;
+            tuning.lifetimeMax += 0.10f;
+        } else if (id == "web_thread") {
+            tuning.count += 9;
+            tuning.speedMin = 6.0f;
+            tuning.speedMax = 46.0f;
+            tuning.startSize *= 2.70f;
+            tuning.endSize = std::max(tuning.endSize, projectile.radius * 1.32f);
+            tuning.lifetimeMax += 0.26f;
+        } else if (id == "junk_chunk") {
+            tuning.count += 7;
+            tuning.speedMax += 72.0f;
+            tuning.startSize *= 1.70f;
+            tuning.lifetimeMax += 0.10f;
+        }
+    }
+
     if (event == ProjectileFxEvent::Guard) {
         tuning.count = std::max(5, tuning.count - 2);
         tuning.ringEndScale *= 0.80f;
@@ -727,7 +944,7 @@ float projectileTrailInterval(const Projectile& projectile)
         return 0.040f;
     }
     if (id == "weapon_throw" || id == "cactus_needle" || id == "web_thread") {
-        return 0.055f;
+        return id == "web_thread" ? 0.030f : 0.055f;
     }
     if (id == "big_stone_bullet" || id == "junk_chunk" || id == "mud_blob") {
         return 0.075f;
@@ -754,6 +971,53 @@ ProjectileFxVisual trailVisualFor(const Projectile& projectile)
         return ProjectileFxVisual::Shard;
     }
     return ProjectileFxVisual::SoftCircle;
+}
+
+ProjectileFxVisual projectileFxVisualForEvent(const Projectile& projectile, ProjectileFxEvent event, const ProjectileVisualProfile& profile)
+{
+    if (event == ProjectileFxEvent::Launch) {
+        return trailVisualFor(projectile);
+    }
+    if (event == ProjectileFxEvent::Expire) {
+        const std::string_view id = projectile.projectileId;
+        if (id == "poison_spit" || id == "water_shot") {
+            return ProjectileFxVisual::Droplet;
+        }
+        if (id == "paralyze_shot") {
+            return ProjectileFxVisual::LightningBolt;
+        }
+        if (id == "fire_breath") {
+            return ProjectileFxVisual::Flame;
+        }
+        if (id == "web_thread") {
+            return ProjectileFxVisual::StickySplat;
+        }
+    }
+    return profile.particleVisual;
+}
+
+Color projectileFxParticleStartColor(
+    const Projectile& projectile,
+    const ProjectileVisualProfile& profile,
+    ProjectileFxEvent event,
+    int index)
+{
+    if (projectile.projectileId == "junk_chunk" && event != ProjectileFxEvent::Launch) {
+        const Color color = index % 3 == 0
+            ? junkColorSetFor(projectile.visualVariant + index).flash
+            : junkDebrisColor(projectile.visualVariant + index);
+        return scaleAlpha(color, event == ProjectileFxEvent::Expire ? 0.92f : 1.0f);
+    }
+    if (event == ProjectileFxEvent::Expire && projectile.projectileId == "paralyze_shot") {
+        return index % 2 == 0 ? Color{255, 255, 202, 235} : Color{112, 226, 255, 222};
+    }
+    if (event == ProjectileFxEvent::Expire && projectile.projectileId == "fire_breath") {
+        return index % 3 == 0 ? Color{255, 238, 118, 232} : (index % 3 == 1 ? profile.flash : profile.debris);
+    }
+    if (event == ProjectileFxEvent::Expire && projectile.projectileId == "web_thread") {
+        return index % 2 == 0 ? Color{238, 242, 234, 206} : Color{202, 214, 210, 190};
+    }
+    return index % 3 == 0 ? profile.flash : (index % 3 == 1 ? profile.debris : profile.glow);
 }
 
 void emitProjectileFxEvent(std::vector<ProjectileFxParticle>& particles, const Projectile& projectile, ProjectileFxEvent event)
@@ -1328,6 +1592,7 @@ bool ProjectileSystem::spawn(
     projectile->trailTimer = sampleFloat(0.0f, projectileTrailInterval(*projectile) * 0.65f);
     projectile->piercesTargets = prototype.piercesTargets;
     projectile->previewTargetHit = false;
+    projectile->visualVariant = projectileVisualVariantFor(prototype.id);
     const double baseDamage = static_cast<double>(tuning.damageOverride >= 0 ? tuning.damageOverride : prototype.damage);
     projectile->damage = std::max(0, static_cast<int>(std::ceil(baseDamage * std::max(0.0, tuning.damageMultiplier))));
     projectile->damageType = std::string(prototype.damageType);

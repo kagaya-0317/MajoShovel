@@ -43,6 +43,7 @@ struct Projectile {
     float trailTimer = 0.0f;
     bool piercesTargets = false;
     bool previewTargetHit = false;
+    int visualVariant = 0;
     ProjectileOwnerType ownerType = ProjectileOwnerType::Enemy;
     std::string projectileId;
     int damage = 1;
@@ -59,6 +60,10 @@ enum class ProjectileFxVisual {
     Needle,
     Thread,
     WindArc,
+    Droplet,
+    LightningBolt,
+    Flame,
+    StickySplat,
 };
 
 struct ProjectileFxParticle {
