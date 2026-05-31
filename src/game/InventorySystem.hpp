@@ -100,7 +100,8 @@ public:
         std::vector<EffectDiscoveryEvent>* discoveryEvents = nullptr,
         const EncyclopediaSystem* encyclopedia = nullptr,
         bool itemUseEnabled = true,
-        bool itemDiscardEnabled = true);
+        bool itemDiscardEnabled = true,
+        int unlockedRingCount = SpellRingCount);
     void update(
         const Input& input,
         UiContext& ui,
@@ -111,7 +112,8 @@ public:
         const ObjectCatalog& catalog,
         MagicSystem* magic = nullptr,
         std::vector<EffectDiscoveryEvent>* discoveryEvents = nullptr,
-        const EncyclopediaSystem* encyclopedia = nullptr);
+        const EncyclopediaSystem* encyclopedia = nullptr,
+        int unlockedRingCount = SpellRingCount);
     void render(
         Renderer& renderer,
         const Player& player,
@@ -120,7 +122,8 @@ public:
         const EncyclopediaSystem& encyclopedia,
         bool itemUseEnabled = true,
         bool itemDiscardEnabled = true,
-        float animationSeconds = 0.0f) const;
+        float animationSeconds = 0.0f,
+        int unlockedRingCount = SpellRingCount) const;
     UiRect shortcutHudPanelRect(int screenWidth, int screenHeight) const;
     void renderShortcutHud(Renderer& renderer, const SpellRingSystem& spellRing, int screenWidth, int screenHeight) const;
     bool isOpen() const { return open_; }
@@ -179,10 +182,16 @@ public:
     const InventoryObjectInstance* screenObjectInstanceAt(int index) const { return objectInstanceAtScreenIndex(index); }
     bool hasScreenItemAt(int index) const { return hasScreenItem(index); }
     bool screenItemCanAddToRing(int index, const SpellRingSystem& spellRing, std::optional<float> preferredAngle = std::nullopt) const;
+    bool screenItemCanAddToRingForRing(int index, const SpellRingSystem& spellRing, int ringIndex) const;
     bool addScreenItemToRing(
         int index,
         SpellRingSystem& spellRing,
         std::optional<float> preferredAngle = std::nullopt,
+        SpellRingAddResult* outResult = nullptr);
+    bool addScreenItemToRingForRing(
+        int index,
+        SpellRingSystem& spellRing,
+        int ringIndex,
         SpellRingAddResult* outResult = nullptr);
     bool addObjectToRing(
         std::string_view objectId,
@@ -285,6 +294,16 @@ private:
         int slotIndex,
         bool itemUseEnabled = true,
         bool itemDiscardEnabled = true) const;
+    std::array<UiCommandMenuItem, SpellRingCount> buildRingTargetCommandItems(
+        int slotIndex,
+        const SpellRingSystem& spellRing,
+        int unlockedRingCount) const;
+    void closeRingTargetCommandMenu();
+    void openRingTargetCommandMenu(
+        int slotIndex,
+        Vec2 anchor,
+        const SpellRingSystem& spellRing,
+        int unlockedRingCount);
     bool hasScreenItem(int index) const;
     bool moveScreenItem(int fromIndex, int toIndex);
     void syncPackedItemSlots() const;
@@ -315,6 +334,8 @@ private:
     int grabbedSlotOrigin_ = -1;
     UiCommandMenuState slotCommandMenu_{};
     int slotCommandMenuIndex_ = -1;
+    UiCommandMenuState ringTargetCommandMenu_{};
+    int ringTargetCommandSlotIndex_ = -1;
     UiConfirmDialogState discardConfirm_{};
     int discardConfirmSlotIndex_ = -1;
     int slotPointerPressIndex_ = -1;

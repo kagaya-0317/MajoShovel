@@ -66,9 +66,11 @@ public:
 
     Vec2 mouse() const { return mouse_; }
     bool pointerConsumed() const { return pointerConsumed_; }
+    bool backInputConsumed() const;
     bool hovered(UiRect rect) const;
     bool pressed(UiRect rect);
     void consumePointer() { pointerConsumed_ = true; }
+    void consumeBackInput();
     void block(UiRect rect);
     void emitSound(UiSoundEvent event);
     int soundEventCount(UiSoundEvent event) const;

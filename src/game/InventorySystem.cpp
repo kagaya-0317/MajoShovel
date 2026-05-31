@@ -86,6 +86,11 @@ UiRect inventoryScreenRect()
     return {{ScreenX, ScreenY}, {ScreenW, ScreenH}};
 }
 
+int clampedUnlockedRingCount(int unlockedRingCount)
+{
+    return std::clamp(unlockedRingCount, 1, SpellRingCount);
+}
+
 UiRect inventorySortButtonRect()
 {
     return uiBottomLeftButtonRect(inventoryScreenRect(), {150.0f, ui::ButtonHeight});
@@ -1668,6 +1673,22 @@ InventorySystem::SlotCommandList InventorySystem::buildSlotCommandItems(
     return list;
 }
 
+std::array<UiCommandMenuItem, SpellRingCount> InventorySystem::buildRingTargetCommandItems(
+    int slotIndex,
+    const SpellRingSystem& spellRing,
+    int unlockedRingCount) const
+{
+    std::array<UiCommandMenuItem, SpellRingCount> items{};
+    const int ringCount = clampedUnlockedRingCount(unlockedRingCount);
+    for (int ringIndex = 0; ringIndex < SpellRingCount; ++ringIndex) {
+        items[static_cast<std::size_t>(ringIndex)] = {
+            "リング" + std::to_string(ringIndex + 1),
+            ringIndex < ringCount && screenItemCanAddToRingForRing(slotIndex, spellRing, ringIndex),
+        };
+    }
+    return items;
+}
+
 bool InventorySystem::moveScreenItem(int fromIndex, int toIndex)
 {
     if (fromIndex < 0 || fromIndex >= ShortcutSlotCount || toIndex < 0 || toIndex >= ShortcutSlotCount) {
@@ -1768,8 +1789,10 @@ void InventorySystem::openSlotCommandMenu(int slotIndex, bool itemUseEnabled, bo
     if (!hasScreenItem(slotIndex)) {
         closeUiCommandMenu(slotCommandMenu_);
         slotCommandMenuIndex_ = -1;
+        closeRingTargetCommandMenu();
         return;
     }
+    closeRingTargetCommandMenu();
     const SlotCommandList commandItems = buildSlotCommandItems(slotIndex, itemUseEnabled, itemDiscardEnabled);
     slotCommandMenuIndex_ = slotIndex;
     const UiRect slotRect = inventorySlotRect(slotIndex);
@@ -1780,6 +1803,37 @@ void InventorySystem::openSlotCommandMenu(int slotIndex, bool itemUseEnabled, bo
         static_cast<int>(commandItems.items.size()),
         commandItems.items.data(),
         120.0f,
+        2);
+}
+
+void InventorySystem::closeRingTargetCommandMenu()
+{
+    closeUiCommandMenu(ringTargetCommandMenu_);
+    ringTargetCommandSlotIndex_ = -1;
+}
+
+void InventorySystem::openRingTargetCommandMenu(
+    int slotIndex,
+    Vec2 anchor,
+    const SpellRingSystem& spellRing,
+    int unlockedRingCount)
+{
+    if (!hasScreenItem(slotIndex)) {
+        closeRingTargetCommandMenu();
+        return;
+    }
+
+    const int ringCount = clampedUnlockedRingCount(unlockedRingCount);
+    const std::array<UiCommandMenuItem, SpellRingCount> items =
+        buildRingTargetCommandItems(slotIndex, spellRing, ringCount);
+    ringTargetCommandSlotIndex_ = slotIndex;
+    openUiCommandMenu(
+        ringTargetCommandMenu_,
+        anchor,
+        inventoryScreenRect(),
+        ringCount,
+        items.data(),
+        132.0f,
         2);
 }
 
@@ -1811,6 +1865,20 @@ bool InventorySystem::screenItemCanAddToRing(
         return preferredAngle
             ? spellRing.canAddObjectItemAtAngle(instance->item, instance->instance, *preferredAngle)
             : spellRing.canAddObjectItem(instance->item, instance->instance);
+    }
+    return false;
+}
+
+bool InventorySystem::screenItemCanAddToRingForRing(int index, const SpellRingSystem& spellRing, int ringIndex) const
+{
+    if (const InventoryObjectStack* stack = objectStackAtScreenIndex(index)) {
+        return stack->count > 0 && spellRing.canAddObjectItemForRing(ringIndex, stack->item);
+    }
+    if (const InventoryObjectInstance* instance = objectInstanceAtScreenIndex(index)) {
+        if (isStaffEquipped(instance->instance.instanceId)) {
+            return false;
+        }
+        return spellRing.canAddObjectItemForRing(ringIndex, instance->item, instance->instance);
     }
     return false;
 }
@@ -1871,6 +1939,74 @@ bool InventorySystem::addScreenItemToRing(
         }
 
         status_ = "リングに追加: " + instance->item.name;
+        const int instanceIndex = instanceIndexAtScreenIndex(index);
+        if (instanceIndex >= 0) {
+            removePackedSlotAtPackedIndex(static_cast<int>(objectStacks_.size()) + instanceIndex);
+            objectInstances_.erase(objectInstances_.begin() + instanceIndex);
+        }
+        return true;
+    }
+
+    status_ = "ショートカット空き";
+    return false;
+}
+
+bool InventorySystem::addScreenItemToRingForRing(
+    int index,
+    SpellRingSystem& spellRing,
+    int ringIndex,
+    SpellRingAddResult* outResult)
+{
+    if (ringIndex < 0 || ringIndex >= SpellRingCount) {
+        status_ = "リングへ配置できません";
+        return false;
+    }
+
+    const std::string ringLabel = "リング" + std::to_string(ringIndex + 1);
+    if (InventoryObjectStack* stack = objectStackAtScreenIndex(index)) {
+        if (stack->count <= 0) {
+            status_ = "ショートカット空き";
+            return false;
+        }
+        if (!screenItemCanAddToRingForRing(index, spellRing, ringIndex)) {
+            status_ = spellRing.canAddItemForRing(ringIndex) ? ringLabel + "へ配置できません" : ringLabel + "満杯";
+            return false;
+        }
+
+        ItemInstance instance = createDetachedObjectInstance(stack->item);
+        if (!spellRing.addObjectItemToRing(ringIndex, stack->item, instance, outResult)) {
+            status_ = ringLabel + "へ配置できません";
+            return false;
+        }
+
+        status_ = ringLabel + "に追加: " + stack->item.name;
+        --stack->count;
+        if (stack->count <= 0) {
+            const int objectIndex = stackIndexAtScreenIndex(index);
+            if (objectIndex >= 0) {
+                removePackedSlotAtPackedIndex(objectIndex);
+                objectStacks_.erase(objectStacks_.begin() + objectIndex);
+            }
+        }
+        return true;
+    }
+
+    if (InventoryObjectInstance* instance = objectInstanceAtScreenIndex(index)) {
+        if (isStaffEquipped(instance->instance.instanceId)) {
+            status_ = "装備中の杖はリングに乗せられません";
+            return false;
+        }
+        if (!screenItemCanAddToRingForRing(index, spellRing, ringIndex)) {
+            status_ = spellRing.canAddItemForRing(ringIndex) ? ringLabel + "へ配置できません" : ringLabel + "満杯";
+            return false;
+        }
+
+        if (!spellRing.addObjectItemToRing(ringIndex, instance->item, instance->instance, outResult)) {
+            status_ = ringLabel + "へ配置できません";
+            return false;
+        }
+
+        status_ = ringLabel + "に追加: " + instance->item.name;
         const int instanceIndex = instanceIndexAtScreenIndex(index);
         if (instanceIndex >= 0) {
             removePackedSlotAtPackedIndex(static_cast<int>(objectStacks_.size()) + instanceIndex);

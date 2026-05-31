@@ -39,15 +39,23 @@ struct ParticlePreset {
     ParticleVisual visual = ParticleVisual::Circle;
 };
 
-constexpr std::array<ParticlePreset, 29> ParticlePresets{{
+constexpr std::array<ParticlePreset, 37> ParticlePresets{{
     {ParticleEffectId::DigDust, 4, {142, 104, 66, 220}, {102, 78, 54, 190}, 112.0f, 42.0f, Pi * 2.0f, 5.5f, 1.4f, 0.76f, 0.08f, {0.0f, 330.0f}, 1.45f, false, false, 4.0f, 14.0f, {184, 136, 76, 140}, ParticleVisual::RockShard},
     {ParticleEffectId::DirtBreak, 18, {154, 110, 66, 235}, {214, 150, 82, 205}, 126.0f, 58.0f, Pi * 2.0f, 7.4f, 2.4f, 0.84f, 0.10f, {0.0f, 390.0f}, 1.55f, false, false, 8.0f, 34.0f, {218, 164, 88, 205}, ParticleVisual::RockShard},
     {ParticleEffectId::RockBreak, 18, {122, 126, 132, 235}, {86, 88, 96, 205}, 118.0f, 48.0f, Pi * 2.0f, 8.4f, 2.6f, 0.92f, 0.12f, {0.0f, 420.0f}, 1.45f, false, false, 8.0f, 32.0f, {170, 174, 180, 190}, ParticleVisual::RockShard},
     {ParticleEffectId::OreBreak, 22, {244, 204, 84, 238}, {126, 218, 236, 215}, 142.0f, 62.0f, Pi * 2.0f, 7.6f, 2.7f, 0.88f, 0.12f, {0.0f, 380.0f}, 1.35f, false, false, 10.0f, 38.0f, {255, 222, 110, 220}, ParticleVisual::RockShard},
     {ParticleEffectId::EnemyHit, 18, {255, 226, 74, 236}, {255, 108, 52, 204}, 156.0f, 66.0f, Pi * 2.0f, 2.1f, 0.7f, 0.34f, 0.08f, {}, 2.7f, false, false, 5.0f, 18.0f, {255, 232, 104, 232}, ParticleVisual::ImpactSpark},
     {ParticleEffectId::EnemyPoisonHit, 14, {138, 255, 94, 222}, {178, 72, 228, 190}, 118.0f, 52.0f, Pi * 2.0f, 2.0f, 0.7f, 0.42f, 0.11f, {0.0f, -12.0f}, 2.4f, false, false, 5.0f, 20.0f, {170, 255, 104, 205}, ParticleVisual::ImpactSpark},
-    {ParticleEffectId::EnemySlowHit, 14, {102, 196, 255, 228}, {228, 252, 255, 188}, 112.0f, 44.0f, Pi * 2.0f, 2.0f, 0.7f, 0.44f, 0.11f, {}, 2.6f, false, false, 5.0f, 20.0f, {150, 222, 255, 205}, ParticleVisual::ImpactSpark},
     {ParticleEffectId::EnemyBleedHit, 15, {226, 32, 56, 236}, {255, 114, 74, 198}, 132.0f, 52.0f, Pi * 2.0f, 2.0f, 0.7f, 0.38f, 0.10f, {0.0f, 42.0f}, 2.8f, false, false, 4.0f, 17.0f, {238, 46, 64, 210}, ParticleVisual::ImpactSpark},
+    {ParticleEffectId::EnemySleepHit, 14, {186, 134, 255, 226}, {112, 168, 255, 190}, 112.0f, 44.0f, Pi * 2.0f, 2.0f, 0.7f, 0.48f, 0.12f, {0.0f, -16.0f}, 2.5f, false, false, 5.0f, 20.0f, {206, 174, 255, 205}, ParticleVisual::ImpactSpark},
+    {ParticleEffectId::EnemyConfuseHit, 15, {255, 126, 230, 228}, {116, 226, 255, 194}, 122.0f, 50.0f, Pi * 2.0f, 2.0f, 0.7f, 0.42f, 0.11f, {}, 2.6f, false, false, 5.0f, 20.0f, {255, 154, 238, 210}, ParticleVisual::ImpactSpark},
+    {ParticleEffectId::EnemyBlindHit, 14, {70, 64, 118, 228}, {206, 190, 255, 188}, 110.0f, 44.0f, Pi * 2.0f, 2.1f, 0.7f, 0.44f, 0.11f, {}, 2.7f, false, false, 5.0f, 20.0f, {110, 96, 178, 205}, ParticleVisual::ImpactSpark},
+    {ParticleEffectId::EnemyFireHit, 16, {255, 86, 38, 236}, {255, 198, 74, 200}, 148.0f, 62.0f, Pi * 2.0f, 2.1f, 0.7f, 0.34f, 0.08f, {0.0f, -20.0f}, 2.8f, false, false, 5.0f, 18.0f, {255, 118, 50, 222}, ParticleVisual::ImpactSpark},
+    {ParticleEffectId::EnemyWaterHit, 15, {74, 186, 255, 228}, {174, 246, 255, 190}, 122.0f, 52.0f, Pi * 2.0f, 2.0f, 0.7f, 0.42f, 0.11f, {}, 2.5f, false, false, 5.0f, 20.0f, {108, 214, 255, 210}, ParticleVisual::ImpactSpark},
+    {ParticleEffectId::EnemyIceHit, 15, {128, 226, 255, 228}, {242, 255, 255, 190}, 112.0f, 46.0f, Pi * 2.0f, 2.1f, 0.7f, 0.46f, 0.12f, {}, 2.6f, false, false, 5.0f, 20.0f, {166, 238, 255, 210}, ParticleVisual::ImpactSpark},
+    {ParticleEffectId::EnemyThunderHit, 16, {255, 238, 82, 236}, {230, 250, 255, 196}, 150.0f, 64.0f, Pi * 2.0f, 2.0f, 0.7f, 0.30f, 0.08f, {}, 3.0f, false, false, 5.0f, 18.0f, {255, 242, 110, 224}, ParticleVisual::ImpactSpark},
+    {ParticleEffectId::EnemyWindHit, 14, {128, 246, 190, 222}, {226, 255, 224, 184}, 126.0f, 52.0f, Pi * 2.0f, 2.0f, 0.7f, 0.44f, 0.11f, {}, 2.4f, false, false, 5.0f, 20.0f, {152, 250, 198, 205}, ParticleVisual::ImpactSpark},
+    {ParticleEffectId::EnemyEarthHit, 15, {204, 142, 76, 230}, {246, 206, 132, 190}, 116.0f, 48.0f, Pi * 2.0f, 2.3f, 0.8f, 0.48f, 0.12f, {0.0f, 42.0f}, 2.6f, false, false, 5.0f, 20.0f, {214, 156, 86, 210}, ParticleVisual::ImpactSpark},
     {ParticleEffectId::EnemyDeathSoul, 18, {180, 104, 255, 220}, {255, 98, 128, 205}, 76.0f, 42.0f, Pi * 2.0f, 3.2f, 1.1f, 0.70f, 0.18f, {0.0f, -82.0f}, 1.6f, false, true, 10.0f, 38.0f, {255, 92, 116, 230}},
     {ParticleEffectId::CaptureSuccess, 24, {178, 112, 255, 225}, {255, 224, 130, 210}, 128.0f, 48.0f, Pi * 2.0f, 2.6f, 0.8f, 0.58f, 0.16f, {}, 2.0f, false, true, 12.0f, 40.0f, {202, 156, 255, 220}},
     {ParticleEffectId::DropPickup, 10, {255, 232, 132, 220}, {142, 228, 248, 180}, 92.0f, 34.0f, Pi * 2.0f, 2.0f, 0.6f, 0.36f, 0.08f, {}, 2.4f, false, false},
@@ -152,8 +160,16 @@ std::string_view particleEffectPreviewId(ParticleEffectId id)
     case ParticleEffectId::OreBreak: return "ore_break";
     case ParticleEffectId::EnemyHit: return "enemy_hit";
     case ParticleEffectId::EnemyPoisonHit: return "enemy_poison_hit";
-    case ParticleEffectId::EnemySlowHit: return "enemy_slow_hit";
     case ParticleEffectId::EnemyBleedHit: return "enemy_bleed_hit";
+    case ParticleEffectId::EnemySleepHit: return "enemy_sleep_hit";
+    case ParticleEffectId::EnemyConfuseHit: return "enemy_confuse_hit";
+    case ParticleEffectId::EnemyBlindHit: return "enemy_blind_hit";
+    case ParticleEffectId::EnemyFireHit: return "enemy_fire_hit";
+    case ParticleEffectId::EnemyWaterHit: return "enemy_water_hit";
+    case ParticleEffectId::EnemyIceHit: return "enemy_ice_hit";
+    case ParticleEffectId::EnemyThunderHit: return "enemy_thunder_hit";
+    case ParticleEffectId::EnemyWindHit: return "enemy_wind_hit";
+    case ParticleEffectId::EnemyEarthHit: return "enemy_earth_hit";
     case ParticleEffectId::EnemyDeathSoul: return "enemy_death_soul";
     case ParticleEffectId::CaptureSuccess: return "capture_success";
     case ParticleEffectId::DropPickup: return "drop_pickup";
@@ -188,8 +204,16 @@ std::string_view particleEffectPreviewLabel(ParticleEffectId id)
     case ParticleEffectId::OreBreak: return "鉱石破壊";
     case ParticleEffectId::EnemyHit: return "敵ヒット";
     case ParticleEffectId::EnemyPoisonHit: return "敵ヒット: 毒";
-    case ParticleEffectId::EnemySlowHit: return "敵ヒット: 鈍足";
     case ParticleEffectId::EnemyBleedHit: return "敵ヒット: 出血";
+    case ParticleEffectId::EnemySleepHit: return "敵ヒット: 睡眠";
+    case ParticleEffectId::EnemyConfuseHit: return "敵ヒット: 混乱";
+    case ParticleEffectId::EnemyBlindHit: return "敵ヒット: 盲目";
+    case ParticleEffectId::EnemyFireHit: return "敵ヒット: 火";
+    case ParticleEffectId::EnemyWaterHit: return "敵ヒット: 水";
+    case ParticleEffectId::EnemyIceHit: return "敵ヒット: 氷";
+    case ParticleEffectId::EnemyThunderHit: return "敵ヒット: 雷";
+    case ParticleEffectId::EnemyWindHit: return "敵ヒット: 風";
+    case ParticleEffectId::EnemyEarthHit: return "敵ヒット: 土";
     case ParticleEffectId::EnemyDeathSoul: return "敵死亡ソウル";
     case ParticleEffectId::CaptureSuccess: return "捕獲成功";
     case ParticleEffectId::DropPickup: return "ドロップ取得";
@@ -229,8 +253,16 @@ EffectPreviewTarget particleEffectPreviewTarget(ParticleEffectId id)
         return EffectPreviewTarget::WallTile;
     case ParticleEffectId::EnemyHit:
     case ParticleEffectId::EnemyPoisonHit:
-    case ParticleEffectId::EnemySlowHit:
     case ParticleEffectId::EnemyBleedHit:
+    case ParticleEffectId::EnemySleepHit:
+    case ParticleEffectId::EnemyConfuseHit:
+    case ParticleEffectId::EnemyBlindHit:
+    case ParticleEffectId::EnemyFireHit:
+    case ParticleEffectId::EnemyWaterHit:
+    case ParticleEffectId::EnemyIceHit:
+    case ParticleEffectId::EnemyThunderHit:
+    case ParticleEffectId::EnemyWindHit:
+    case ParticleEffectId::EnemyEarthHit:
     case ParticleEffectId::EnemyDeathSoul:
     case ParticleEffectId::PoisonAura:
     case ParticleEffectId::SlowAura:
@@ -377,8 +409,16 @@ bool isEnemyHitBurstEffect(ParticleEffectId id)
     switch (id) {
     case ParticleEffectId::EnemyHit:
     case ParticleEffectId::EnemyPoisonHit:
-    case ParticleEffectId::EnemySlowHit:
     case ParticleEffectId::EnemyBleedHit:
+    case ParticleEffectId::EnemySleepHit:
+    case ParticleEffectId::EnemyConfuseHit:
+    case ParticleEffectId::EnemyBlindHit:
+    case ParticleEffectId::EnemyFireHit:
+    case ParticleEffectId::EnemyWaterHit:
+    case ParticleEffectId::EnemyIceHit:
+    case ParticleEffectId::EnemyThunderHit:
+    case ParticleEffectId::EnemyWindHit:
+    case ParticleEffectId::EnemyEarthHit:
         return true;
     default:
         break;
@@ -1296,40 +1336,32 @@ void EffectSystem::spawnEnemyHit(Vec2 position, std::string_view effect)
     ParticleEffectId id = ParticleEffectId::EnemyHit;
     if (effect == "status_poison" || effect == "status_poison_chance") {
         id = ParticleEffectId::EnemyPoisonHit;
-    } else if (effect == "status_slow" || effect == "status_slow_chance") {
-        id = ParticleEffectId::EnemySlowHit;
-    } else if (effect == "status_glued") {
-        id = ParticleEffectId::EnemySlowHit;
     } else if (effect == "status_bleed" || effect == "status_bleed_chance") {
         id = ParticleEffectId::EnemyBleedHit;
-    } else if (effect == "status_giant") {
-        id = ParticleEffectId::MagicDefault;
     } else if (effect == "status_sleep" || effect == "status_sleep_chance") {
-        id = ParticleEffectId::MagicDefault;
+        id = ParticleEffectId::EnemySleepHit;
     } else if (effect == "status_confuse" || effect == "status_confuse_chance") {
-        id = ParticleEffectId::MagicDefault;
+        id = ParticleEffectId::EnemyConfuseHit;
     } else if (effect == "status_blind") {
-        id = ParticleEffectId::MagicDefault;
+        id = ParticleEffectId::EnemyBlindHit;
     } else if (effect == "status_wet") {
-        id = ParticleEffectId::MagicIce;
+        id = ParticleEffectId::EnemyWaterHit;
     } else if (effect == "status_hot") {
-        id = ParticleEffectId::MagicFire;
+        id = ParticleEffectId::EnemyFireHit;
     } else if (effect == "status_frozen") {
-        id = ParticleEffectId::MagicIce;
-    } else if (effect == "status_stun" || effect == "status_stun_chance") {
-        id = ParticleEffectId::EnemyHit;
+        id = ParticleEffectId::EnemyIceHit;
     } else if (effect == "fire" || effect == "break_fire_burst" || effect == "flame_burst" || effect == "hot_air" || effect == "dry_wet_bonus_damage") {
-        id = ParticleEffectId::MagicFire;
-    } else if (effect == "ice" || effect == "water" || effect == "water_spray") {
-        id = ParticleEffectId::MagicIce;
+        id = ParticleEffectId::EnemyFireHit;
+    } else if (effect == "water" || effect == "water_spray") {
+        id = ParticleEffectId::EnemyWaterHit;
+    } else if (effect == "ice") {
+        id = ParticleEffectId::EnemyIceHit;
     } else if (effect == "thunder" || effect == "status_paralyze" || effect == "status_paralyze_chance" || effect == "status_shocked" || effect == "shock_wet" || effect == "conduct_water_puddle") {
-        id = ParticleEffectId::MagicThunder;
+        id = ParticleEffectId::EnemyThunderHit;
     } else if (effect == "wind" || effect == "wind_push_light" || effect == "bounce_grounded") {
-        id = ParticleEffectId::MagicWind;
+        id = ParticleEffectId::EnemyWindHit;
     } else if (effect == "earth" || effect == "fall_damage_synergy") {
-        id = ParticleEffectId::MagicEarth;
-    } else if (effect == "magic" || effect == "complete_magic_circle" || effect == "sleeping_bonus_damage") {
-        id = ParticleEffectId::MagicDefault;
+        id = ParticleEffectId::EnemyEarthHit;
     }
     spawn(id, position);
 }
@@ -1540,7 +1572,7 @@ std::span<const EffectPreviewEntry> effectSystemPreviewEntries()
 {
     static const std::vector<EffectPreviewEntry> entries = [] {
         std::vector<EffectPreviewEntry> result;
-        result.reserve(ParticlePresets.size() + 29);
+        result.reserve(ParticlePresets.size() + 35);
         for (const ParticlePreset& preset : ParticlePresets) {
             result.push_back(EffectPreviewEntry{
                 .id = particleEffectPreviewId(preset.id),
@@ -1556,11 +1588,17 @@ std::span<const EffectPreviewEntry> effectSystemPreviewEntries()
             });
         }
 
-        static constexpr std::array<EffectPreviewEntry, 29> ActionEntries{{
+        static constexpr std::array<EffectPreviewEntry, 35> ActionEntries{{
             {.id = "dig_hit", .label = "掘削ヒット", .group = "EffectSystem / 高水準API", .source = EffectPreviewSource::EffectSystem, .target = EffectPreviewTarget::WallTile, .action = EffectPreviewAction::DigHit, .direction = {-1.0f, 0.0f}},
             {.id = "tile_break", .label = "壁破壊", .group = "EffectSystem / 高水準API", .source = EffectPreviewSource::EffectSystem, .target = EffectPreviewTarget::WallTile, .action = EffectPreviewAction::TileBreak},
             {.id = "enemy_hit_default", .label = "敵ヒット: 通常", .group = "EffectSystem / 高水準API", .source = EffectPreviewSource::EffectSystem, .target = EffectPreviewTarget::EnemySlime, .action = EffectPreviewAction::EnemyHit},
+            {.id = "enemy_hit_poison", .label = "敵ヒット: 毒", .group = "EffectSystem / 高水準API", .source = EffectPreviewSource::EffectSystem, .target = EffectPreviewTarget::EnemySlime, .action = EffectPreviewAction::EnemyHit, .argument = "status_poison"},
+            {.id = "enemy_hit_bleed", .label = "敵ヒット: 出血", .group = "EffectSystem / 高水準API", .source = EffectPreviewSource::EffectSystem, .target = EffectPreviewTarget::EnemySlime, .action = EffectPreviewAction::EnemyHit, .argument = "status_bleed"},
+            {.id = "enemy_hit_sleep", .label = "敵ヒット: 睡眠", .group = "EffectSystem / 高水準API", .source = EffectPreviewSource::EffectSystem, .target = EffectPreviewTarget::EnemySlime, .action = EffectPreviewAction::EnemyHit, .argument = "status_sleep"},
+            {.id = "enemy_hit_confuse", .label = "敵ヒット: 混乱", .group = "EffectSystem / 高水準API", .source = EffectPreviewSource::EffectSystem, .target = EffectPreviewTarget::EnemySlime, .action = EffectPreviewAction::EnemyHit, .argument = "status_confuse"},
+            {.id = "enemy_hit_blind", .label = "敵ヒット: 盲目", .group = "EffectSystem / 高水準API", .source = EffectPreviewSource::EffectSystem, .target = EffectPreviewTarget::EnemySlime, .action = EffectPreviewAction::EnemyHit, .argument = "status_blind"},
             {.id = "enemy_hit_fire", .label = "敵ヒット: 火", .group = "EffectSystem / 高水準API", .source = EffectPreviewSource::EffectSystem, .target = EffectPreviewTarget::EnemySlime, .action = EffectPreviewAction::EnemyHit, .argument = "fire"},
+            {.id = "enemy_hit_water", .label = "敵ヒット: 水", .group = "EffectSystem / 高水準API", .source = EffectPreviewSource::EffectSystem, .target = EffectPreviewTarget::EnemySlime, .action = EffectPreviewAction::EnemyHit, .argument = "water"},
             {.id = "enemy_hit_ice", .label = "敵ヒット: 氷", .group = "EffectSystem / 高水準API", .source = EffectPreviewSource::EffectSystem, .target = EffectPreviewTarget::EnemySlime, .action = EffectPreviewAction::EnemyHit, .argument = "ice"},
             {.id = "enemy_hit_thunder", .label = "敵ヒット: 雷", .group = "EffectSystem / 高水準API", .source = EffectPreviewSource::EffectSystem, .target = EffectPreviewTarget::EnemySlime, .action = EffectPreviewAction::EnemyHit, .argument = "thunder"},
             {.id = "enemy_hit_wind", .label = "敵ヒット: 風", .group = "EffectSystem / 高水準API", .source = EffectPreviewSource::EffectSystem, .target = EffectPreviewTarget::EnemySlime, .action = EffectPreviewAction::EnemyHit, .argument = "wind"},

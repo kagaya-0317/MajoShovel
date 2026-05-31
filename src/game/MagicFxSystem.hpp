@@ -73,6 +73,7 @@ struct MagicFxEmitterConfig {
     float fadeOutFraction = 0.45f;
     float emissionRate = 0.0f;
     float duration = 0.0f;
+    float startDelay = 0.0f;
     float bounceRestitution = 0.0f;
     float groundFriction = 0.0f;
     int burstCount = 0;

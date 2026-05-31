@@ -28,6 +28,7 @@ struct UiWindowState {
 };
 
 UiCancelControlState* activeCancelState = nullptr;
+bool backInputConsumedUntilRelease = false;
 
 std::unordered_map<std::string, UiWindowState> windowStates;
 
@@ -493,6 +494,19 @@ UiContext::UiContext(const Input& input)
     : mouse_(input.mouseScreen())
     , mouseLeftPressed_(input.mouseLeftPressed())
 {
+    if (!input.backHeld() && !input.backReleased()) {
+        backInputConsumedUntilRelease = false;
+    }
+}
+
+bool UiContext::backInputConsumed() const
+{
+    return backInputConsumedUntilRelease;
+}
+
+void UiContext::consumeBackInput()
+{
+    backInputConsumedUntilRelease = true;
 }
 
 void UiContext::emitSound(UiSoundEvent event)
@@ -747,7 +761,9 @@ UiRect uiCancelButtonRect(UiRect panel)
 
 bool uiCancelRequested(UiCancelControlState& state, const Input& input, UiContext& ui, UiRect panel)
 {
-    if (input.backPressed()) {
+    if (ui.backInputConsumed()) {
+        state.backArmed = false;
+    } else if (input.backPressed()) {
         state.backArmed = true;
     }
 
@@ -765,6 +781,7 @@ bool uiCancelRequested(UiCancelControlState& state, const Input& input, UiContex
 
     if (input.backReleased() && state.backArmed) {
         state.backArmed = false;
+        ui.consumeBackInput();
         ui.emitSound(UiSoundEvent::Cancel);
         return true;
     }
@@ -1539,10 +1556,11 @@ UiConfirmDialogResult updateUiConfirmDialog(UiConfirmDialogState& state, UiConte
         state.confirmEnabled &&
         (ui.pressed(uiConfirmDialogButtonRect(panel, 0)) ||
             ((input.confirmPressed() || input.useItemPressed()) && state.selection == 0));
+    const bool backPressed = input.backPressed() && !ui.backInputConsumed();
     const bool cancelRequested =
         ui.pressed(uiConfirmDialogButtonRect(panel, 1)) ||
         ui.pressed(uiCancelButtonRect(panel)) ||
-        input.backPressed() ||
+        backPressed ||
         ((input.confirmPressed() || input.useItemPressed()) && state.selection == 1);
 
     if (confirmRequested) {
@@ -1551,6 +1569,9 @@ UiConfirmDialogResult updateUiConfirmDialog(UiConfirmDialogState& state, UiConte
         return UiConfirmDialogResult::Confirmed;
     }
     if (cancelRequested) {
+        if (backPressed) {
+            ui.consumeBackInput();
+        }
         ui.emitSound(UiSoundEvent::Cancel);
         closeUiConfirmDialog(state);
         return UiConfirmDialogResult::Cancelled;
@@ -1655,7 +1676,11 @@ UiQuantityDialogResult updateUiQuantityDialog(UiQuantityDialogState& state, UiCo
         closeUiQuantityDialog(state);
         return UiQuantityDialogResult::Confirmed;
     }
-    if (ui.pressed(uiCancelButtonRect(panel)) || input.backPressed()) {
+    const bool backPressed = input.backPressed() && !ui.backInputConsumed();
+    if (ui.pressed(uiCancelButtonRect(panel)) || backPressed) {
+        if (backPressed) {
+            ui.consumeBackInput();
+        }
         ui.emitSound(UiSoundEvent::Cancel);
         closeUiQuantityDialog(state);
         return UiQuantityDialogResult::Cancelled;
@@ -1786,7 +1811,11 @@ int updateUiCommandMenu(UiCommandMenuState& state, UiContext& ui, const Input& i
         state.openSoundPending = false;
     }
 
-    if (input.pausePressed() || input.pressed(InputAction::OffsetRingCenter)) {
+    const bool backPressed = input.backPressed() && !ui.backInputConsumed();
+    if (backPressed || input.pressed(InputAction::OffsetRingCenter)) {
+        if (backPressed) {
+            ui.consumeBackInput();
+        }
         ui.emitSound(UiSoundEvent::Cancel);
         closeUiCommandMenu(state);
         return -1;
@@ -2481,7 +2510,8 @@ int updateUiDropdown(
         }
     }
 
-    if (input.backPressed()) {
+    if (input.backPressed() && !ui.backInputConsumed()) {
+        ui.consumeBackInput();
         state.open = false;
         ui.emitSound(UiSoundEvent::Cancel);
         return -1;

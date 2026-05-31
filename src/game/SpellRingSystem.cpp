@@ -1083,12 +1083,25 @@ void SpellRingSystem::setMaxEquippedWeightForRing(int ringIndex, float maxWeight
 
 bool SpellRingSystem::canAddItem() const
 {
-    return activeItems().size() < MaxSpellRingItems;
+    return canAddItemForRing(activeRingIndex_);
 }
 
 bool SpellRingSystem::canAddItem(const SpellRingItem& item) const
 {
-    return canAddItem() && totalEquippedWeight() + std::max(0.0f, item.weight) <= maxEquippedWeight();
+    return canAddItemForRing(activeRingIndex_, item);
+}
+
+bool SpellRingSystem::canAddItemForRing(int ringIndex) const
+{
+    return ringIndex >= 0 &&
+        ringIndex < SpellRingCount &&
+        itemsByRing_[static_cast<std::size_t>(ringIndex)].size() < MaxSpellRingItems;
+}
+
+bool SpellRingSystem::canAddItemForRing(int ringIndex, const SpellRingItem& item) const
+{
+    return canAddItemForRing(ringIndex) &&
+        totalEquippedWeightForRing(ringIndex) + std::max(0.0f, item.weight) <= maxEquippedWeightForRing(ringIndex);
 }
 
 bool SpellRingSystem::canPlaceItemAtAngle(int index, float angle) const
@@ -1141,23 +1154,29 @@ bool SpellRingSystem::addItem(SpellRingItemType type)
 
 bool SpellRingSystem::addItem(SpellRingItem item, SpellRingAddResult* outResult)
 {
-    if (!canAddItem(item)) {
+    return addItemToRing(activeRingIndex_, std::move(item), outResult);
+}
+
+bool SpellRingSystem::addItemToRing(int ringIndex, SpellRingItem item, SpellRingAddResult* outResult)
+{
+    if (ringIndex < 0 || ringIndex >= SpellRingCount || !canAddItemForRing(ringIndex, item)) {
         return false;
     }
-    const std::optional<float> angle = findBestPlacementAngle(item, -1, orbitTuning_);
+    const std::optional<float> angle = findBestPlacementAngleForRing(ringIndex, item, -1, orbitTuning_);
     if (!angle) {
         return false;
     }
-    item.ringIndex = activeRingIndex_;
+    std::vector<SpellRingItem>& ringItems = itemsByRing_[static_cast<std::size_t>(ringIndex)];
+    item.ringIndex = ringIndex;
     item.localAngle = *angle;
     const SpellRingAddResult result{
-        .ringIndex = activeRingIndex_,
-        .itemIndex = static_cast<int>(activeItems().size()),
+        .ringIndex = ringIndex,
+        .itemIndex = static_cast<int>(ringItems.size()),
         .localAngle = item.localAngle,
         .objectId = item.objectId,
         .instanceId = item.instanceId,
     };
-    activeItems().push_back(std::move(item));
+    ringItems.push_back(std::move(item));
     if (outResult != nullptr) {
         *outResult = result;
     }
@@ -1166,45 +1185,71 @@ bool SpellRingSystem::addItem(SpellRingItem item, SpellRingAddResult* outResult)
 
 bool SpellRingSystem::addObjectItem(const ItemData& item, SpellRingAddResult* outResult)
 {
-    if (!canAddItem() || item.id.empty()) {
+    return addObjectItemToRing(activeRingIndex_, item, outResult);
+}
+
+bool SpellRingSystem::addObjectItem(const ItemData& item, const ItemInstance& instance, SpellRingAddResult* outResult)
+{
+    return addObjectItemToRing(activeRingIndex_, item, instance, outResult);
+}
+
+bool SpellRingSystem::addObjectItemToRing(int ringIndex, const ItemData& item, SpellRingAddResult* outResult)
+{
+    if (item.id.empty()) {
         return false;
     }
 
     SpellRingItem ringItem = makeObjectRingItem(item.id);
     applyObjectDefinition(ringItem, item);
-    return addItem(std::move(ringItem), outResult);
+    return addItemToRing(ringIndex, std::move(ringItem), outResult);
 }
 
-bool SpellRingSystem::addObjectItem(const ItemData& item, const ItemInstance& instance, SpellRingAddResult* outResult)
+bool SpellRingSystem::addObjectItemToRing(
+    int ringIndex,
+    const ItemData& item,
+    const ItemInstance& instance,
+    SpellRingAddResult* outResult)
 {
-    if (!canAddItem() || item.id.empty() || instance.objectId != item.id) {
+    if (item.id.empty() || instance.objectId != item.id) {
         return false;
     }
 
     SpellRingItem ringItem = makeObjectRingItem(item.id);
     applyItemInstance(ringItem, instance);
     applyObjectDefinition(ringItem, item);
-    return addItem(std::move(ringItem), outResult);
+    return addItemToRing(ringIndex, std::move(ringItem), outResult);
 }
 
 bool SpellRingSystem::canAddObjectItem(const ItemData& item) const
+{
+    return canAddObjectItemForRing(activeRingIndex_, item);
+}
+
+bool SpellRingSystem::canAddObjectItem(const ItemData& item, const ItemInstance& instance) const
+{
+    return canAddObjectItemForRing(activeRingIndex_, item, instance);
+}
+
+bool SpellRingSystem::canAddObjectItemForRing(int ringIndex, const ItemData& item) const
 {
     if (item.id.empty()) {
         return false;
     }
 
     const SpellRingItem ringItem = makeObjectRingItemForAdd(item, nullptr);
-    return canAddItem(ringItem) && findBestPlacementAngle(ringItem, -1, orbitTuning_).has_value();
+    return canAddItemForRing(ringIndex, ringItem) &&
+        findBestPlacementAngleForRing(ringIndex, ringItem, -1, orbitTuning_).has_value();
 }
 
-bool SpellRingSystem::canAddObjectItem(const ItemData& item, const ItemInstance& instance) const
+bool SpellRingSystem::canAddObjectItemForRing(int ringIndex, const ItemData& item, const ItemInstance& instance) const
 {
     if (item.id.empty() || instance.objectId != item.id) {
         return false;
     }
 
     const SpellRingItem ringItem = makeObjectRingItemForAdd(item, &instance);
-    return canAddItem(ringItem) && findBestPlacementAngle(ringItem, -1, orbitTuning_).has_value();
+    return canAddItemForRing(ringIndex, ringItem) &&
+        findBestPlacementAngleForRing(ringIndex, ringItem, -1, orbitTuning_).has_value();
 }
 
 bool SpellRingSystem::canAddObjectItemAtAngle(const ItemData& item, float localAngle) const
@@ -1855,8 +1900,22 @@ float SpellRingSystem::weightSpeedMultiplierForRing(int ringIndex) const
 
 bool SpellRingSystem::canPlaceItemAtAngle(const SpellRingItem&, float angle, int ignoreIndex, const RingOrbitTuning& tuning) const
 {
-    const auto& ringItems = activeItems();
-    const RingShape shape = runtimeRingShape();
+    return canPlaceItemAtAngleForRing(activeRingIndex_, SpellRingItem{}, angle, ignoreIndex, tuning);
+}
+
+bool SpellRingSystem::canPlaceItemAtAngleForRing(
+    int ringIndex,
+    const SpellRingItem&,
+    float angle,
+    int ignoreIndex,
+    const RingOrbitTuning& tuning) const
+{
+    if (ringIndex < 0 || ringIndex >= SpellRingCount) {
+        return false;
+    }
+
+    const auto& ringItems = itemsByRing_[static_cast<std::size_t>(ringIndex)];
+    const RingShape shape = ringShapeForIndex(ringIndex);
     const float candidate = quantizeLocalParam(shape, angle, tuning);
     if (shape == RingShape::Circle) {
         for (std::size_t i = 0; i < ringItems.size(); ++i) {
@@ -1881,12 +1940,24 @@ bool SpellRingSystem::canPlaceItemAtAngle(const SpellRingItem&, float angle, int
     defaultBalance.cometLaneSpacing = tuning.cometLaneSpacing;
     defaultBalance.cometMaxArcDegrees = tuning.cometMaxArcDegrees;
     const int itemCount = static_cast<int>(ringItems.size());
-    const Vec2 candidatePos = sampleItemWorldPosition(candidate, ignoreIndex < 0 ? itemCount : ignoreIndex, itemCount, 1.0f, defaultBalance);
+    const Vec2 candidatePos = sampleItemWorldPositionForRing(
+        ringIndex,
+        candidate,
+        ignoreIndex < 0 ? itemCount : ignoreIndex,
+        itemCount,
+        1.0f,
+        defaultBalance);
     for (std::size_t i = 0; i < ringItems.size(); ++i) {
         if (static_cast<int>(i) == ignoreIndex) {
             continue;
         }
-        const Vec2 otherPos = sampleItemWorldPosition(ringItems[i].localAngle, static_cast<int>(i), itemCount, 1.0f, defaultBalance);
+        const Vec2 otherPos = sampleItemWorldPositionForRing(
+            ringIndex,
+            ringItems[i].localAngle,
+            static_cast<int>(i),
+            itemCount,
+            1.0f,
+            defaultBalance);
         if (distanceSquared(candidatePos, otherPos) < 13.0f * 13.0f) {
             return false;
         }
@@ -1896,20 +1967,33 @@ bool SpellRingSystem::canPlaceItemAtAngle(const SpellRingItem&, float angle, int
 
 std::optional<float> SpellRingSystem::findBestPlacementAngle(const SpellRingItem& item, int ignoreIndex, const RingOrbitTuning& tuning) const
 {
+    return findBestPlacementAngleForRing(activeRingIndex_, item, ignoreIndex, tuning);
+}
+
+std::optional<float> SpellRingSystem::findBestPlacementAngleForRing(
+    int ringIndex,
+    const SpellRingItem& item,
+    int ignoreIndex,
+    const RingOrbitTuning& tuning) const
+{
     (void)item;
-    const auto& ringItems = activeItems();
-    if (ringItems.empty() || (ringItems.size() == 1 && ignoreIndex == 0)) {
-        return runtimeRingShape() == RingShape::Comet ? 0.0f : 0.0f;
+    if (ringIndex < 0 || ringIndex >= SpellRingCount) {
+        return std::nullopt;
     }
 
-    const RingShape shape = runtimeRingShape();
+    const auto& ringItems = itemsByRing_[static_cast<std::size_t>(ringIndex)];
+    if (ringItems.empty() || (ringItems.size() == 1 && ignoreIndex == 0)) {
+        return ringShapeForIndex(ringIndex) == RingShape::Comet ? 0.0f : 0.0f;
+    }
+
+    const RingShape shape = ringShapeForIndex(ringIndex);
     const int stepCount = shape == RingShape::Comet ? 96 : 72;
     std::optional<float> bestAngle;
     float bestDistance = -1.0f;
     for (int step = 0; step < stepCount; ++step) {
         const float t01 = static_cast<float>(step) / static_cast<float>(stepCount - 1);
         const float candidate = quantizeLocalParam(shape, sampleParamForShape(shape, t01, tuning), tuning);
-        if (!canPlaceItemAtAngle(item, candidate, ignoreIndex, tuning)) {
+        if (!canPlaceItemAtAngleForRing(ringIndex, item, candidate, ignoreIndex, tuning)) {
             continue;
         }
 

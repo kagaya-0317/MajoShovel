@@ -97,7 +97,7 @@ Color scaleAlpha(Color color, float scale)
 
 int electricFrameIndex(float age, float phase = 0.0f)
 {
-    return static_cast<int>(std::floor((age + phase * 0.037f) * 36.0f));
+    return static_cast<int>(std::floor(age * 10.0f + phase * 6.0f));
 }
 
 float electricFrameAlpha(float age, float lifetime, float phase, bool strong)
@@ -106,7 +106,7 @@ float electricFrameAlpha(float age, float lifetime, float phase, bool strong)
         return 0.0f;
     }
 
-    static constexpr std::array<float, 8> Pattern{{1.0f, 0.42f, 0.86f, 0.0f, 0.72f, 0.24f, 0.94f, 0.0f}};
+    static constexpr std::array<float, 6> Pattern{{1.0f, 0.88f, 0.96f, 0.82f, 0.94f, 0.86f}};
     const int frame = electricFrameIndex(age, phase);
     const float frameAlpha = Pattern[static_cast<std::size_t>(std::abs(frame) % static_cast<int>(Pattern.size()))];
     if (frameAlpha <= 0.0f) {
@@ -530,24 +530,63 @@ void drawSharpLightningSegment(Renderer& renderer, Vec2 a, Vec2 b, float width, 
     renderer.fillPolygon(points.data(), points.size(), color);
 }
 
+void buildElectricFramePath(
+    const Vec2* points,
+    int pointCount,
+    int frameIndex,
+    bool strong,
+    float jitterScale,
+    std::array<Vec2, 12>& outPoints)
+{
+    if (points == nullptr || pointCount <= 0) {
+        return;
+    }
+
+    const int safeCount = std::clamp(pointCount, 1, static_cast<int>(outPoints.size()));
+    for (int i = 0; i < safeCount; ++i) {
+        outPoints[static_cast<std::size_t>(i)] = points[i];
+    }
+    if (safeCount <= 2) {
+        return;
+    }
+
+    const float baseAmplitude = std::max(1.0f, jitterScale * (strong ? 1.15f : 0.92f));
+    for (int i = 1; i < safeCount - 1; ++i) {
+        const Vec2 tangentSource = points[i + 1] - points[i - 1];
+        if (lengthSquared(tangentSource) <= 0.0001f) {
+            continue;
+        }
+
+        const Vec2 tangent = normalize(tangentSource);
+        const Vec2 side = perpendicular(tangent);
+        const float t = static_cast<float>(i) / static_cast<float>(safeCount - 1);
+        const float centerWeight = std::sin(t * Pi);
+        const float seed = static_cast<float>(frameIndex * 53 + i * 97 + safeCount * 19);
+        const float sideJitter = (hash01(seed) * 2.0f - 1.0f) * baseAmplitude * centerWeight;
+        const float forwardJitter = (hash01(seed + 17.0f) * 2.0f - 1.0f) * baseAmplitude * 0.24f * centerWeight;
+        outPoints[static_cast<std::size_t>(i)] = points[i] + side * sideJitter + tangent * forwardJitter;
+    }
+}
+
 void drawLightningPath(Renderer& renderer, const Vec2* points, int pointCount, float outerWidth, float coreWidth, float alpha, bool strong, int frameIndex)
 {
     if (points == nullptr || pointCount < 2 || alpha <= 0.0f) {
         return;
     }
 
-    const Color shell = scaleAlpha(strong ? Color{224, 246, 255, 226} : Color{214, 238, 255, 194}, alpha);
-    const Color core = scaleAlpha(Color{255, 255, 255, 255}, alpha);
-    for (int i = 1; i < pointCount; ++i) {
-        if (((frameIndex + i * 3) % 7) == 3) {
-            continue;
-        }
-        const float segmentT = static_cast<float>(i - 1) / static_cast<float>(std::max(1, pointCount - 2));
+    std::array<Vec2, 12> framePoints{};
+    const int safeCount = std::clamp(pointCount, 2, static_cast<int>(framePoints.size()));
+    buildElectricFramePath(points, safeCount, frameIndex, strong, outerWidth * 0.95f, framePoints);
+
+    const Color shell = scaleAlpha(strong ? Color{255, 242, 170, 226} : Color{255, 238, 188, 194}, alpha);
+    const Color core = scaleAlpha(strong ? Color{255, 252, 214, 255} : Color{255, 250, 222, 232}, alpha);
+    for (int i = 1; i < safeCount; ++i) {
+        const float segmentT = static_cast<float>(i - 1) / static_cast<float>(std::max(1, safeCount - 2));
         const float pulse = 0.72f + 0.48f * (static_cast<float>((frameIndex + i * 37) % 5) / 4.0f);
         const float taper = lerp(1.36f, 0.54f, segmentT);
         const float width = outerWidth * pulse * taper;
-        drawSharpLightningSegment(renderer, points[i - 1], points[i], width * 0.78f, shell);
-        drawSharpLightningSegment(renderer, points[i - 1], points[i], std::max(1.0f, coreWidth * pulse * taper), core);
+        drawSharpLightningSegment(renderer, framePoints[static_cast<std::size_t>(i - 1)], framePoints[static_cast<std::size_t>(i)], width * 0.78f, shell);
+        drawSharpLightningSegment(renderer, framePoints[static_cast<std::size_t>(i - 1)], framePoints[static_cast<std::size_t>(i)], std::max(1.0f, coreWidth * pulse * taper), core);
     }
 }
 
@@ -573,16 +612,17 @@ void drawLightningStrike(Renderer& renderer, const MagicFxSystem::LightningStrik
 void drawThunderSigilArc(Renderer& renderer, const MagicFxSystem::ThunderImpactArc& arc, float alpha)
 {
     const int frameIndex = electricFrameIndex(arc.age - arc.startDelay, arc.phase);
-    const Color line = scaleAlpha(arc.strong ? Color{224, 246, 255, 192} : Color{210, 236, 255, 156}, alpha);
-    const Color core = scaleAlpha(Color{255, 255, 255, 230}, alpha);
-    for (int i = 1; i < arc.pointCount; ++i) {
-        if (((frameIndex + i * 5) % 6) == 2) {
-            continue;
-        }
-        const float t = static_cast<float>(i - 1) / static_cast<float>(std::max(1, arc.pointCount - 2));
+    std::array<Vec2, 12> framePoints{};
+    const int safeCount = std::clamp(arc.pointCount, 2, static_cast<int>(framePoints.size()));
+    buildElectricFramePath(arc.points.data(), safeCount, frameIndex, arc.strong, arc.outerWidth * 1.20f, framePoints);
+
+    const Color line = scaleAlpha(arc.strong ? Color{255, 242, 176, 192} : Color{255, 238, 196, 156}, alpha);
+    const Color core = scaleAlpha(Color{255, 252, 218, 230}, alpha);
+    for (int i = 1; i < safeCount; ++i) {
+        const float t = static_cast<float>(i - 1) / static_cast<float>(std::max(1, safeCount - 2));
         const float width = arc.outerWidth * lerp(1.18f, 0.72f, t);
-        drawSharpLightningSegment(renderer, arc.points[static_cast<std::size_t>(i - 1)], arc.points[static_cast<std::size_t>(i)], width * 0.82f, line);
-        drawSharpLightningSegment(renderer, arc.points[static_cast<std::size_t>(i - 1)], arc.points[static_cast<std::size_t>(i)], std::max(1.0f, arc.coreWidth * 0.62f), core);
+        drawSharpLightningSegment(renderer, framePoints[static_cast<std::size_t>(i - 1)], framePoints[static_cast<std::size_t>(i)], width * 0.82f, line);
+        drawSharpLightningSegment(renderer, framePoints[static_cast<std::size_t>(i - 1)], framePoints[static_cast<std::size_t>(i)], std::max(1.0f, arc.coreWidth * 0.62f), core);
     }
 }
 
@@ -766,10 +806,12 @@ void MagicFxSystem::playHealPulse(Vec2 position, float radius)
     glow.spreadRadians = Pi * 1.35f;
     glow.fadeInFraction = 0.04f;
     glow.fadeOutFraction = 0.76f;
-    glow.burstCount = 18;
+    glow.emissionRate = 44.0f;
+    glow.duration = 0.44f;
+    glow.startDelay = 0.03f;
     glow.depthSorted = true;
     glow.foreground = true;
-    emitBurst(glow);
+    addEmitter(glow);
 
     MagicFxEmitterConfig motes;
     motes.position = position;
@@ -790,10 +832,12 @@ void MagicFxSystem::playHealPulse(Vec2 position, float radius)
     motes.spreadRadians = Pi * 1.50f;
     motes.fadeInFraction = 0.05f;
     motes.fadeOutFraction = 0.82f;
-    motes.burstCount = 12;
+    motes.emissionRate = 34.0f;
+    motes.duration = 0.42f;
+    motes.startDelay = 0.12f;
     motes.depthSorted = true;
     motes.foreground = true;
-    emitBurst(motes);
+    addEmitter(motes);
 
     MagicFxEmitterConfig glints;
     glints.position = position;
@@ -814,10 +858,12 @@ void MagicFxSystem::playHealPulse(Vec2 position, float radius)
     glints.spreadRadians = Pi * 1.65f;
     glints.stretch = 2.2f;
     glints.fadeOutFraction = 0.78f;
-    glints.burstCount = 10;
+    glints.emissionRate = 30.0f;
+    glints.duration = 0.34f;
+    glints.startDelay = 0.20f;
     glints.depthSorted = true;
     glints.foreground = true;
-    emitBurst(glints);
+    addEmitter(glints);
 }
 
 MagicFxEmitterHandle MagicFxSystem::startFireAura(Vec2 position, float radius)
@@ -1054,20 +1100,6 @@ void MagicFxSystem::playFireGroundBurn(Vec2 position, float radius, float durati
     ignition.burstCount = 82;
     ignition.depthSorted = true;
     emitBurst(ignition);
-
-    MagicFxEmitterConfig flash;
-    flash.position = position;
-    flash.particleShape = MagicFxParticleShape::Ring;
-    flash.spawnShape = MagicFxSpawnShape::Point;
-    flash.startColor = {255, 190, 70, 150};
-    flash.endColor = {255, 84, 20, 0};
-    flash.lifetime = {0.14f, 0.18f};
-    flash.startSize = {radius * 0.42f, radius * 0.56f};
-    flash.endSize = {radius * 0.78f, radius * 0.96f};
-    flash.fadeOutFraction = 0.86f;
-    flash.burstCount = 1;
-    flash.depthSorted = true;
-    emitBurst(flash);
 
     MagicFxEmitterConfig flames;
     flames.position = position;
@@ -2494,8 +2526,11 @@ void MagicFxSystem::updateEmitters(float dt)
         }
 
         emitter.age += dt;
-        const bool durationElapsed = emitter.config.duration > 0.0f && emitter.age >= emitter.config.duration;
-        const bool shouldEmit = emitter.config.loop || !durationElapsed;
+        const float startDelay = std::max(0.0f, emitter.config.startDelay);
+        const float localAge = emitter.age - startDelay;
+        const bool started = localAge >= 0.0f;
+        const bool durationElapsed = started && emitter.config.duration > 0.0f && localAge >= emitter.config.duration;
+        const bool shouldEmit = started && (emitter.config.loop || !durationElapsed);
         if (shouldEmit && emitter.config.emissionRate > 0.0f) {
             emitter.emitAccumulator += emitter.config.emissionRate * dt;
             const int emitCount = static_cast<int>(std::floor(emitter.emitAccumulator));
@@ -2508,7 +2543,7 @@ void MagicFxSystem::updateEmitters(float dt)
         if (!emitter.config.loop && durationElapsed) {
             emitter.active = false;
         }
-        if (!emitter.config.loop && emitter.config.duration <= 0.0f && emitter.config.emissionRate <= 0.0f) {
+        if (started && !emitter.config.loop && emitter.config.duration <= 0.0f && emitter.config.emissionRate <= 0.0f) {
             emitter.active = false;
         }
     }

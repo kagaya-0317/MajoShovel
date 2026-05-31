@@ -130,8 +130,16 @@ public:
     bool addItem(SpellRingItem item, SpellRingAddResult* outResult = nullptr);
     bool addObjectItem(const ItemData& item, SpellRingAddResult* outResult = nullptr);
     bool addObjectItem(const ItemData& item, const ItemInstance& instance, SpellRingAddResult* outResult = nullptr);
+    bool addObjectItemToRing(int ringIndex, const ItemData& item, SpellRingAddResult* outResult = nullptr);
+    bool addObjectItemToRing(
+        int ringIndex,
+        const ItemData& item,
+        const ItemInstance& instance,
+        SpellRingAddResult* outResult = nullptr);
     bool canAddObjectItem(const ItemData& item) const;
     bool canAddObjectItem(const ItemData& item, const ItemInstance& instance) const;
+    bool canAddObjectItemForRing(int ringIndex, const ItemData& item) const;
+    bool canAddObjectItemForRing(int ringIndex, const ItemData& item, const ItemInstance& instance) const;
     bool canAddObjectItemAtAngle(const ItemData& item, float localAngle) const;
     bool canAddObjectItemAtAngle(const ItemData& item, const ItemInstance& instance, float localAngle) const;
     bool addObjectItemAtAngle(const ItemData& item, float localAngle, SpellRingAddResult* outResult = nullptr);
@@ -153,6 +161,8 @@ public:
     bool consumeItemDurability(SpellRingItem& item, int amount = 1);
     std::vector<RingItemBreakEvent> consumeItemBreakEvents();
     bool canAddItem(const SpellRingItem& item) const;
+    bool canAddItemForRing(int ringIndex) const;
+    bool canAddItemForRing(int ringIndex, const SpellRingItem& item) const;
     bool canPlaceItemAtAngle(int index, float angle) const;
     std::optional<float> nearestPlaceableAngle(int index, float desiredAngle, float maxDeltaRadians) const;
     bool moveItemAngle(int index, float deltaRadians);
@@ -278,6 +288,7 @@ private:
 
     std::vector<SpellRingItem>& activeItems();
     const std::vector<SpellRingItem>& activeItems() const;
+    bool addItemToRing(int ringIndex, SpellRingItem item, SpellRingAddResult* outResult = nullptr);
     void advanceOrbitAngles(float dt, const RuntimeBalance& balance);
     void refreshItemWorldPositions(float dt, const RuntimeBalance& balance, bool advanceCapturedBehaviors);
     float throwTotalTimeForRing(int ringIndex) const;
@@ -291,7 +302,18 @@ private:
         const RingOrbitContext& context,
         float distanceOffset) const;
     bool canPlaceItemAtAngle(const SpellRingItem& item, float angle, int ignoreIndex, const RingOrbitTuning& tuning) const;
+    bool canPlaceItemAtAngleForRing(
+        int ringIndex,
+        const SpellRingItem& item,
+        float angle,
+        int ignoreIndex,
+        const RingOrbitTuning& tuning) const;
     std::optional<float> findBestPlacementAngle(const SpellRingItem& item, int ignoreIndex, const RingOrbitTuning& tuning) const;
+    std::optional<float> findBestPlacementAngleForRing(
+        int ringIndex,
+        const SpellRingItem& item,
+        int ignoreIndex,
+        const RingOrbitTuning& tuning) const;
 };
 
 }
