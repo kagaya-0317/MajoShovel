@@ -143,6 +143,18 @@ function Placeholder-Sample([string]$Kind, [double]$Time, [double]$Duration, [Sy
                 0.20 * [Math]::Sin($TwoPi * 990.0 * $Time) +
                 0.15 * [Math]::Sin($TwoPi * 1320.0 * $Time))
         }
+        "se.level_up.jingle" {
+            $notes = @(523.25, 659.25, 783.99, 1046.50)
+            $stepLength = 0.18
+            $step = [Math]::Min($notes.Length - 1, [int][Math]::Floor($Time / $stepLength))
+            $noteTime = $Time - ($step * $stepLength)
+            $env = Note-Envelope $noteTime 0.26
+            $tail = Decay $Time $Duration 0.70
+            $spark = 0.5 + 0.5 * [Math]::Sin($TwoPi * 19.0 * $Time)
+            return 0.34 * $env * [Math]::Sin($TwoPi * $notes[$step] * $Time) +
+                0.18 * $tail * [Math]::Sin($TwoPi * 1568.0 * $Time) +
+                0.12 * $spark * $tail * [Math]::Sin($TwoPi * 2093.0 * $Time)
+        }
         "se.transition" {
             $env = Decay $Time $Duration 1.2
             $freq = 180.0 + 420.0 * ($Time / $Duration)
@@ -331,6 +343,15 @@ function Placeholder-Sample([string]$Kind, [double]$Time, [double]$Duration, [Sy
             $env = Decay $Time $Duration 1.6
             $noise = ($Random.NextDouble() * 2.0 - 1.0) * 0.12
             return $env * (0.32 * [Math]::Sin($TwoPi * 170.0 * $Time) + 0.18 * [Math]::Sin($TwoPi * 92.0 * $Time) + $noise)
+        }
+        "se.player.pinch" {
+            $env = Decay $Time $Duration 0.95
+            $pulse = 0.68 + 0.32 * [Math]::Sin($TwoPi * 8.0 * $Time)
+            $fall = 740.0 - 250.0 * ($Time / $Duration)
+            return $env * $pulse * (
+                0.28 * [Math]::Sin($TwoPi * $fall * $Time) +
+                0.16 * [Math]::Sin($TwoPi * ($fall * 0.5) * $Time) +
+                0.07 * [Math]::Sin($TwoPi * 96.0 * $Time))
         }
         "se.ring.throw" {
             $env = Decay $Time $Duration 1.25
@@ -627,6 +648,12 @@ public static class MajoPlaceholderAudioHQ
                 return Ring(t, d, 520.0, 0.20, 1.55) + Ring(t, d, 780.0, 0.16, 1.7) + Sparkle(t, d, 1040.0, 0.08);
             case "se.ui.upgrade_select":
                 return Sparkle(t, d, 660.0, 0.18) + Sparkle(t, d, 990.0, 0.14) + Ring(t, d, 1320.0, 0.10, 1.2);
+            case "se.level_up.jingle":
+                return Sparkle(t, d, 523.25, 0.14) +
+                    Sparkle(t - 0.16, d * 0.86, 659.25, 0.16) +
+                    Sparkle(t - 0.32, d * 0.72, 783.99, 0.16) +
+                    Sparkle(t - 0.50, d * 0.56, 1046.50, 0.18) +
+                    0.10 * Ring(t, d, 1568.0, 0.12, 0.82);
             case "se.transition":
                 return Whoosh(t, d, rng, 160.0, 720.0, 0.075) + 0.10 * S(96.0, t) * Env(t, d, 0.02, 1.4);
 
@@ -699,6 +726,8 @@ public static class MajoPlaceholderAudioHQ
                 return Env(t, d, 0.006, 0.85) * (0.28 * Sweep(t, d, 360.0, 95.0) + 0.20 * S(196.0, t) + 0.10 * N(rng)) + Ring(t, d, 392.0, 0.12, 1.0);
             case "se.player.damage":
                 return Env(t, d, 0.002, 1.7) * (0.34 * S(140.0, t) + 0.18 * S(70.0, t) + 0.16 * N(rng));
+            case "se.player.pinch":
+                return Ring(t, d, 740.0, 0.22, 0.95) + 0.18 * Ring(t - 0.120, d * 0.72, 554.0, 0.90, 1.0) + 0.08 * S(96.0, t) * Env(t, d, 0.012, 0.8);
             case "se.ring.throw":
                 return Whoosh(t, d, rng, 260.0, 980.0, 0.055) + 0.10 * Ring(t, d, 1180.0, 0.12, 1.2);
             case "se.enemy.defeat":
@@ -817,6 +846,7 @@ $clips = @(
     @{ Path = Join-Path $SeRoot "ui_item_use_placeholder.wav"; Kind = "se.ui.item_use"; Duration = 0.20; Seed = 2007 },
     @{ Path = Join-Path $SeRoot "ui_ring_place_placeholder.wav"; Kind = "se.ui.ring_place"; Duration = 0.22; Seed = 2008 },
     @{ Path = Join-Path $SeRoot "ui_upgrade_select_placeholder.wav"; Kind = "se.ui.upgrade_select"; Duration = 0.30; Seed = 2009 },
+    @{ Path = Join-Path $SeRoot "level_up_jingle_placeholder.wav"; Kind = "se.level_up.jingle"; Duration = 1.16; Seed = 2072 },
     @{ Path = Join-Path $SeRoot "transition_placeholder.wav"; Kind = "se.transition"; Duration = 0.42; Seed = 2010 },
     @{ Path = Join-Path $SeRoot "footstep_base_outdoor_placeholder.wav"; Kind = "se.footstep.base_outdoor"; Duration = 0.16; Seed = 2040 },
     @{ Path = Join-Path $SeRoot "footstep_home_placeholder.wav"; Kind = "se.footstep.home"; Duration = 0.14; Seed = 2041 },
@@ -851,6 +881,7 @@ $clips = @(
     @{ Path = Join-Path $SeRoot "boss_defeat_placeholder.wav"; Kind = "se.boss.defeat"; Duration = 1.05; Seed = 2016 },
     @{ Path = Join-Path $SeRoot "dig_ore_break_placeholder.wav"; Kind = "se.dig.ore_break"; Duration = 0.24; Seed = 2017 },
     @{ Path = Join-Path $SeRoot "player_damage_placeholder.wav"; Kind = "se.player.damage"; Duration = 0.22; Seed = 2018 },
+    @{ Path = Join-Path $SeRoot "player_pinch_placeholder.wav"; Kind = "se.player.pinch"; Duration = 0.46; Seed = 2072 },
     @{ Path = Join-Path $SeRoot "ring_throw_placeholder.wav"; Kind = "se.ring.throw"; Duration = 0.24; Seed = 2019 },
     @{ Path = Join-Path $SeRoot "enemy_defeat_placeholder.wav"; Kind = "se.enemy.defeat"; Duration = 0.28; Seed = 2020 },
     @{ Path = Join-Path $SeRoot "enemy_spawn_placeholder.wav"; Kind = "se.enemy.spawn"; Duration = 0.32; Seed = 2021 },

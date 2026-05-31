@@ -12,6 +12,7 @@ se.ui.item_move	se	se/ui_item_move_placeholder.wav	0.62	false	55	アイテム移
 se.ui.item_use	se	se/ui_item_use_placeholder.wav	0.68	false	80	アイテム使用
 se.ui.ring_place	se	se/ui_ring_place_placeholder.wav	0.72	false	90	リング配置
 se.ui.upgrade_select	se	se/ui_upgrade_select_placeholder.wav	0.78	false	120	レベルアップ選択
+se.level_up.jingle	se	se/level_up_jingle_placeholder.wav	0.86	false	0	レベルアップジングル
 se.transition	se	se/transition_placeholder.wav	0.72	false	160	画面遷移
 se.footstep.base_outdoor	se	se/footstep_base_outdoor_placeholder.wav	0.38	false	60	足音 拠点外
 se.footstep.home	se	se/footstep_home_placeholder.wav	0.34	false	60	足音 家
@@ -46,6 +47,7 @@ se.pickup	se	se/pickup_placeholder.wav	0.72	false	45	拾得
 se.boss.spawn	se	se/boss_spawn_placeholder.wav	0.82	false	350	ボス出現
 se.boss.defeat	se	se/boss_defeat_placeholder.wav	0.88	false	400	ボス撃破
 se.player.damage	se	se/player_damage_placeholder.wav	0.82	false	150	プレイヤー被弾
+se.player.pinch	se	se/player_pinch_placeholder.wav	0.78	false	900	ピンチ警告
 se.ring.throw	se	se/ring_throw_placeholder.wav	0.72	false	120	リング投げ
 se.enemy.defeat	se	se/enemy_defeat_placeholder.wav	0.76	false	120	敵撃破
 se.enemy.spawn	se	se/enemy_spawn_placeholder.wav	0.70	false	180	敵出現

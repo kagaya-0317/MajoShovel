@@ -440,6 +440,18 @@ public:
         voices_.push_back(std::move(voice));
     }
 
+    float cueDurationSeconds(std::string_view id, AudioCueType type)
+    {
+        const std::string key(id);
+        std::scoped_lock lock(mutex_);
+        const Cue* cue = findCueLocked(key, type);
+        if (cue == nullptr || !cue->sound || cue->sound->sampleRate <= 0) {
+            return 0.0f;
+        }
+        return static_cast<float>(
+            static_cast<double>(cue->sound->frames) / static_cast<double>(cue->sound->sampleRate));
+    }
+
     void stopAll()
     {
         std::scoped_lock lock(mutex_);
@@ -879,6 +891,11 @@ void AudioEngine::stopBgm(float fadeSeconds)
 void AudioEngine::playSe(std::string_view id, float volumeScale, float pitchScale)
 {
     impl_->playSe(id, volumeScale, pitchScale);
+}
+
+float AudioEngine::cueDurationSeconds(std::string_view id, AudioCueType type)
+{
+    return impl_->cueDurationSeconds(id, type);
 }
 
 void AudioEngine::stopAll()

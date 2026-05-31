@@ -137,6 +137,14 @@ struct StatusTextPopup {
     StatusPopupTarget target = StatusPopupTarget::Enemy;
 };
 
+struct LevelUpTextPopup {
+    bool active = false;
+    Vec2 position{};
+    Vec2 velocity{};
+    float age = 0.0f;
+    float duration = 1.12f;
+};
+
 struct SmokeBurstOptions {
     int count = 10;
     float size = 22.0f;
@@ -188,6 +196,8 @@ public:
         Color colorOverride = {0, 0, 0, 0});
     void spawnDamagePopup(Vec2 position, int amount, DamagePopupStyle style = DamagePopupStyle::Enemy);
     void spawnStatusPopup(Vec2 position, std::string_view stateId, StatusPopupTarget target);
+    void spawnLevelUpPopup(Vec2 position);
+    void spawnLevelUpSparkles(Vec2 position);
     void spawnDigHit(Vec2 position, Vec2 direction = {1.0f, 0.0f}, Color colorOverride = {0, 0, 0, 0});
     void spawnTileBreak(Vec2 position, TileType tileType = TileType::Dirt, Color colorOverride = {0, 0, 0, 0});
     void spawnSmokeBurst(Vec2 position, SmokeBurstOptions options = {});
@@ -235,6 +245,7 @@ private:
     ObjectPool<SmokePuff, 192> smokePuffs_;
     ObjectPool<DamagePopup, 128> damagePopups_;
     ObjectPool<StatusTextPopup, 96> statusTextPopups_;
+    ObjectPool<LevelUpTextPopup, 8> levelUpTextPopups_;
     bool lightweightMode_ = false;
 };
 

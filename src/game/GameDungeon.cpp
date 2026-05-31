@@ -2753,6 +2753,7 @@ void Game::retryAfterGameOver()
     magic_ = MagicSystem{};
     magicFx_ = MagicFxSystem{};
     levels_ = LevelSystem{};
+    levelUpPresentation_ = {};
     tileMap_.updateAround(player_.position, 0.0f, runtimeBalanceForDungeon(), dungeonLayout_);
     normalizeOpenBuriedPlacementNodes();
     updateDungeonMinimap(0.0);
@@ -2853,6 +2854,7 @@ void Game::enterAstralResult(Game::AstralRunResult result)
     if (levels_.isChoosing()) {
         levels_ = LevelSystem{};
     }
+    levelUpPresentation_ = {};
     levelUpResultDialog_ = {};
 
     astralResult_ = makeAstralRunSummary(result);
@@ -2913,6 +2915,7 @@ void Game::returnToBaseFromNormalStage(bool stageCleared, bool died)
     worldDrops_ = WorldDropSystem{};
     worldDrops_.setDropLimit(balance_.worldDropLimitPerStage);
     levels_ = LevelSystem{};
+    levelUpPresentation_ = {};
     inventory_.setOpen(false);
     inventory_.cancelGrab();
     cancelRingGrab();
@@ -3501,6 +3504,7 @@ void Game::completeIntroTutorialAndReturnToBase()
     worldDrops_ = WorldDropSystem{};
     worldDrops_.setDropLimit(balance_.worldDropLimitPerStage);
     levels_ = LevelSystem{};
+    levelUpPresentation_ = {};
     dungeonEvents_.clear();
     rewardNodes_.clear();
     moneyNodes_.clear();
@@ -3641,6 +3645,7 @@ bool Game::restoreDungeonState(bool useLatestWarpPoint)
     magic_ = MagicSystem{};
     magicFx_ = MagicFxSystem{};
     levels_ = LevelSystem{};
+    levelUpPresentation_ = {};
     ringTrailEffectTimer_ = 0.0f;
     ambientParticleTimer_ = 0.0f;
 
@@ -8577,6 +8582,7 @@ void Game::restoreRetrySnapshot()
     ringTrailEffectTimer_ = 0.0f;
     ambientParticleTimer_ = 0.0f;
     levels_ = LevelSystem{};
+    levelUpPresentation_ = {};
     inventoryReturnToPause_ = false;
     gameOverStatus_.clear();
     tileMap_.updateAround(player_.position, 0.0f, runtimeBalanceForDungeon(), dungeonLayout_);

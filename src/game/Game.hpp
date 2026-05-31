@@ -288,6 +288,20 @@ private:
         double ratePerSecond = 0.0;
     };
 
+    struct AudioJingleState {
+        bool active = false;
+        float remainingSeconds = 0.0f;
+        float resumeFadeSeconds = 0.25f;
+        std::string resumeBgmCue;
+    };
+
+    struct LevelUpPresentationState {
+        bool active = false;
+        float elapsedSeconds = 0.0f;
+        float durationSeconds = 1.2f;
+        float sparkleTimer = 0.0f;
+    };
+
     enum class AstralDistortionKind {
         None,
         FadingStarlight,
@@ -830,7 +844,16 @@ private:
     float worldBuildProgress() const;
     std::string worldBuildStatusText() const;
     void playAudioBgm(std::string_view id, float fadeSeconds = 0.0f, bool restart = false);
+    void stopAudioBgm(float fadeSeconds = 0.0f);
     void playAudioSe(std::string_view id, float volumeScale = 1.0f, float pitchScale = 1.0f);
+    float playAudioJingle(
+        std::string_view id,
+        float fallbackDurationSeconds,
+        float bgmFadeOutSeconds = 0.08f,
+        float bgmFadeInSeconds = 0.25f,
+        float volumeScale = 1.0f,
+        float pitchScale = 1.0f);
+    void updateAudioJingle(float dt);
     void playUiSoundEvents(const UiContext& ui);
     void enterBase();
     void placeBasePlayerAtMineExitReturnPoint();
@@ -862,6 +885,9 @@ private:
     void applyPermanentUpgrades();
     LevelGainResult gainPlayerXp(int amount);
     void openLevelUpChoice(ScreenMode returnMode);
+    void startLevelUpPresentation();
+    void updateLevelUpPresentation(float dt);
+    Vec2 levelUpPresentationAnchor() const;
     void updateLevelUpScreen(const Input& input, UiContext& ui, float dt);
     bool applyLevelUpSelection(RingLevelUpgradeSelection selection);
     void refreshEquipmentModifiers();
@@ -1167,6 +1193,9 @@ private:
     void addScreenShake(float amplitude, float duration);
     void updateScreenShake(float dt);
     Vec2 screenShakeOffset(double totalSeconds) const;
+    void addPlayerDamageVignetteFlash(int damageAmount);
+    void updatePlayerDamageVignette(float dt);
+    void renderPlayerDamageVignette(Renderer& renderer, double totalSeconds) const;
     static const char* dungeonEventKindId(DungeonEventKind kind);
     static bool dungeonEventKindFromId(std::string_view id, DungeonEventKind& outKind);
     static const char* dungeonEventKindDisplayName(DungeonEventKind kind);
@@ -1498,6 +1527,7 @@ private:
     std::unordered_map<std::string, int> encyclopediaRingSyncSuppressCounts_;
     LevelSystem levels_;
     UpgradeSystem upgrades_;
+    LevelUpPresentationState levelUpPresentation_{};
     UiResultDialogState levelUpResultDialog_{};
     ScreenMode levelUpReturnMode_ = ScreenMode::Playing;
     DialoguePlayer dialogue_;
@@ -1694,6 +1724,8 @@ private:
     float screenShakeDuration_ = 0.0f;
     float screenShakeAmplitude_ = 0.0f;
     unsigned int screenShakeSeed_ = 0;
+    float playerDamageVignetteDanger_ = 0.0f;
+    float playerDamageVignetteFlash_ = 0.0f;
     bool enemyTestActive_ = false;
     bool enemyTestUiVisible_ = true;
     UiDropdownState enemyTestDropdown_{};
@@ -1896,6 +1928,7 @@ private:
     float hotReloadPollTimer_ = 0.0f;
     AudioEngine* audio_ = nullptr;
     std::string activeAudioBgmCue_;
+    AudioJingleState audioJingle_{};
     float ringTrailEffectTimer_ = 0.0f;
     float ambientParticleTimer_ = 0.0f;
     float reloadNoticeTimer_ = 0.0f;

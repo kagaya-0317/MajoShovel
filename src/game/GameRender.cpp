@@ -30,6 +30,11 @@ float smootherStep(float t)
     return t * t * t * (t * (t * 6.0f - 15.0f) + 10.0f);
 }
 
+constexpr float PlayerDamageVignetteMinAlpha = 1.0f;
+constexpr float PlayerDamageVignetteMaxAlpha = 132.0f;
+constexpr float PlayerDamageVignetteMinEdgeWidth = 86.0f;
+constexpr float PlayerDamageVignetteMaxEdgeWidth = 198.0f;
+
 float dotVec2(Vec2 a, Vec2 b)
 {
     return a.x * b.x + a.y * b.y;
@@ -3591,6 +3596,103 @@ void Game::renderScreenTransitionOverlay(Renderer& renderer)
         overlayColor);
 }
 
+void Game::renderPlayerDamageVignette(Renderer& renderer, double totalSeconds) const
+{
+    if (player_.maxHp <= 0 || player_.hp <= 0) {
+        return;
+    }
+    if (mode_ != ScreenMode::Playing &&
+        mode_ != ScreenMode::Inventory &&
+        mode_ != ScreenMode::PauseMenu &&
+        mode_ != ScreenMode::Ring) {
+        return;
+    }
+
+    const float danger = clamp(playerDamageVignetteDanger_, 0.0f, 1.0f);
+    const float flash = clamp(playerDamageVignetteFlash_, 0.0f, 1.0f);
+    if (danger <= 0.005f && flash <= 0.005f) {
+        return;
+    }
+
+    renderer.setScreenSpace();
+    const float screenWidth = static_cast<float>(camera_.width());
+    const float screenHeight = static_cast<float>(camera_.height());
+    const float shortSide = std::max(1.0f, std::min(screenWidth, screenHeight));
+    const float pulse = 0.5f + 0.5f * std::sin(static_cast<float>(totalSeconds) * (3.1f + danger * 2.4f));
+    const float dangerAlpha = danger * 34.0f + danger * danger * 74.0f + pulse * danger * danger * 20.0f;
+    const float flashAlpha = flash * (58.0f + 20.0f * (1.0f - flash));
+    const float edgeAlpha = std::clamp(dangerAlpha + flashAlpha, 0.0f, PlayerDamageVignetteMaxAlpha);
+    if (edgeAlpha < PlayerDamageVignetteMinAlpha) {
+        return;
+    }
+
+    const float edgeWidth = std::clamp(
+        shortSide * (0.15f + danger * 0.10f + flash * 0.025f),
+        PlayerDamageVignetteMinEdgeWidth,
+        PlayerDamageVignetteMaxEdgeWidth);
+    const Color edgeColor{188, 18, 36, alphaByte(edgeAlpha)};
+    const Color innerColor{188, 18, 36, 0};
+
+    renderer.fillGradientRect(
+        {0.0f, 0.0f},
+        {screenWidth, edgeWidth},
+        edgeColor,
+        innerColor,
+        GradientDirection::TopToBottom);
+    renderer.fillGradientRect(
+        {0.0f, screenHeight - edgeWidth},
+        {screenWidth, edgeWidth},
+        innerColor,
+        edgeColor,
+        GradientDirection::TopToBottom);
+    renderer.fillGradientRect(
+        {0.0f, 0.0f},
+        {edgeWidth, screenHeight},
+        edgeColor,
+        innerColor,
+        GradientDirection::LeftToRight);
+    renderer.fillGradientRect(
+        {screenWidth - edgeWidth, 0.0f},
+        {edgeWidth, screenHeight},
+        innerColor,
+        edgeColor,
+        GradientDirection::LeftToRight);
+
+    const float cornerAlpha = edgeAlpha * 0.42f;
+    const Color cornerColor{215, 24, 42, alphaByte(cornerAlpha)};
+    renderer.fillGradientRect(
+        {0.0f, 0.0f},
+        {edgeWidth, edgeWidth},
+        cornerColor,
+        innerColor,
+        GradientDirection::TopLeftToBottomRight);
+    renderer.fillGradientRect(
+        {screenWidth - edgeWidth, 0.0f},
+        {edgeWidth, edgeWidth},
+        innerColor,
+        cornerColor,
+        GradientDirection::BottomLeftToTopRight);
+    renderer.fillGradientRect(
+        {0.0f, screenHeight - edgeWidth},
+        {edgeWidth, edgeWidth},
+        cornerColor,
+        innerColor,
+        GradientDirection::BottomLeftToTopRight);
+    renderer.fillGradientRect(
+        {screenWidth - edgeWidth, screenHeight - edgeWidth},
+        {edgeWidth, edgeWidth},
+        innerColor,
+        cornerColor,
+        GradientDirection::TopLeftToBottomRight);
+
+    if (flash > 0.001f) {
+        renderer.fillRect(
+            {0.0f, 0.0f},
+            {screenWidth, screenHeight},
+            {160, 12, 24, alphaByte(10.0f * flash)});
+    }
+}
+
 void Game::renderDungeonStatusHud(Renderer& renderer) const
 {
     renderer.setScreenSpace();
@@ -5310,6 +5412,10 @@ std::vector<LightSource> Game::collectDungeonLightSources(double totalSeconds) c
 
 void Game::renderLevelUpOverlay(Renderer& renderer)
 {
+    if (levelUpPresentation_.active) {
+        return;
+    }
+
     upgrades_.render(renderer, levels_, spellRing_, levelRingUpgradePoints_, unlockedRingCount());
     if (!levelUpResultDialog_.open) {
         return;
@@ -5383,6 +5489,10 @@ void Game::render(Renderer& renderer, const Time& time)
     }
     if (basePresentationActive()) {
         renderBaseScreen(renderer);
+        if (levelUpPresentation_.active) {
+            effects_.renderForeground(renderer);
+            effects_.renderDamagePopups(renderer);
+        }
         inventory_.render(
             renderer,
             player_,
@@ -5608,6 +5718,9 @@ void Game::render(Renderer& renderer, const Time& time)
 
     renderer.setScreenSpace();
     const bool suppressDungeonUi = dungeonEventUiSuppressed();
+    if (!suppressDungeonUi) {
+        renderPlayerDamageVignette(renderer, time.totalSeconds());
+    }
     renderTopInfoBar(renderer);
     if (mode_ == ScreenMode::Playing && !suppressDungeonUi) {
         renderDungeonMinimap(renderer, itemLights);

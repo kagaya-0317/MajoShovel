@@ -78,6 +78,20 @@ float hash01(float value)
     return x - std::floor(x);
 }
 
+float smooth01(float value)
+{
+    value = clamp(value, 0.0f, 1.0f);
+    return value * value * (3.0f - 2.0f * value);
+}
+
+float lightningVisibleFraction(float progress)
+{
+    if (progress <= 0.58f) {
+        return 1.0f;
+    }
+    return clamp(1.0f - smooth01((progress - 0.58f) / 0.42f), 0.0f, 1.0f);
+}
+
 Color mixColor(Color a, Color b, float t)
 {
     t = clamp(t, 0.0f, 1.0f);
@@ -410,6 +424,112 @@ void drawEarthCrack(Renderer& renderer, const MagicFxSystem::Particle& particle,
     }
 }
 
+void drawEarthSpikeProfiled(Renderer& renderer, const MagicFxSystem::Particle& particle, Color color, float size)
+{
+    if (size <= 0.0f || color.a == 0) {
+        return;
+    }
+
+    const float progress = particle.lifetime > 0.0f ? clamp(particle.age / particle.lifetime, 0.0f, 1.0f) : 1.0f;
+    const float rise = progress < 0.18f ? 1.0f - std::pow(1.0f - progress / 0.18f, 3.0f) : 1.0f;
+    const Vec2 base = particle.position;
+    const Vec2 up = fromAngle(particle.rotation);
+    const Vec2 side = perpendicular(up);
+    const float seed = particle.rotation * 11.3f + particle.startSize * 0.27f + base.x * 0.015f + base.y * 0.018f;
+    const float spikeHeight = size * lerp(1.72f, 2.18f, hash01(seed + 1.0f)) * rise;
+    const float baseWidth = size * lerp(0.56f, 0.80f, hash01(seed + 2.0f));
+
+    constexpr int Count = 8;
+    constexpr std::array<float, Count> T{{0.00f, 0.12f, 0.27f, 0.43f, 0.60f, 0.76f, 0.90f, 1.00f}};
+    std::array<Vec2, Count> center{};
+    std::array<Vec2, Count> left{};
+    std::array<Vec2, Count> right{};
+    std::array<Vec2, Count> ridge{};
+
+    for (int i = 0; i < Count; ++i) {
+        const float t = T[static_cast<std::size_t>(i)];
+        const float taper = std::pow(1.0f - t, 0.76f);
+        float width = baseWidth * (0.08f + taper * lerp(0.78f, 1.08f, hash01(seed + 20.0f + static_cast<float>(i) * 2.77f)));
+        if (i == Count - 1) {
+            width = baseWidth * lerp(0.025f, 0.065f, hash01(seed + 101.0f));
+        } else if (hash01(seed + 35.0f + static_cast<float>(i) * 4.13f) < 0.32f) {
+            width *= lerp(0.70f, 0.90f, hash01(seed + 38.0f + static_cast<float>(i)));
+        }
+
+        const float bend = std::sin(t * Pi * 0.96f) * (hash01(seed + 50.0f) - 0.5f) * 0.46f + std::sin(t * Pi * 2.4f + seed) * 0.10f;
+        center[static_cast<std::size_t>(i)] = base + up * (spikeHeight * t) + side * (baseWidth * bend);
+        left[static_cast<std::size_t>(i)] = center[static_cast<std::size_t>(i)] - side * (width * lerp(0.86f, 1.34f, hash01(seed + 70.0f + static_cast<float>(i)))) + up * (baseWidth * (hash01(seed + 90.0f + static_cast<float>(i)) - 0.5f) * 0.10f);
+        right[static_cast<std::size_t>(i)] = center[static_cast<std::size_t>(i)] + side * (width * lerp(0.72f, 1.22f, hash01(seed + 80.0f + static_cast<float>(i)))) + up * (baseWidth * (hash01(seed + 100.0f + static_cast<float>(i)) - 0.5f) * 0.10f);
+        ridge[static_cast<std::size_t>(i)] = center[static_cast<std::size_t>(i)] + side * (width * (hash01(seed + 112.0f + static_cast<float>(i)) - 0.5f) * 0.26f);
+    }
+
+    const Vec2 tip = center.back() + up * (baseWidth * lerp(0.07f, 0.18f, hash01(seed + 120.0f))) + side * (baseWidth * (hash01(seed + 121.0f) - 0.5f) * 0.20f);
+    left.back() = tip - side * (baseWidth * lerp(0.018f, 0.050f, hash01(seed + 122.0f)));
+    right.back() = tip + side * (baseWidth * lerp(0.014f, 0.046f, hash01(seed + 123.0f)));
+    ridge.back() = tip;
+
+    std::array<Vec2, Count * 2> outline{};
+    std::array<Vec2, Count * 2> body{};
+    for (int i = 0; i < Count; ++i) {
+        const int ri = Count - 1 - i;
+        outline[static_cast<std::size_t>(i)] = right[static_cast<std::size_t>(ri)];
+        outline[static_cast<std::size_t>(Count + i)] = left[static_cast<std::size_t>(i)];
+        body[static_cast<std::size_t>(i)] = center[static_cast<std::size_t>(ri)] + (right[static_cast<std::size_t>(ri)] - center[static_cast<std::size_t>(ri)]) * 0.88f;
+        body[static_cast<std::size_t>(Count + i)] = center[static_cast<std::size_t>(i)] + (left[static_cast<std::size_t>(i)] - center[static_cast<std::size_t>(i)]) * 0.88f;
+    }
+
+    renderer.fillEllipse(base + up * (baseWidth * -0.02f), {baseWidth * 1.62f * rise, baseWidth * 0.34f * rise}, scaleAlpha({42, 28, 19, color.a}, 0.78f));
+    renderer.fillEllipse(base + up * (baseWidth * 0.06f), {baseWidth * 1.30f * rise, baseWidth * 0.25f * rise}, scaleAlpha({160, 96, 46, color.a}, 0.42f));
+    for (int i = 0; i < 16; ++i) {
+        const float s = seed + 180.0f + static_cast<float>(i) * 8.71f;
+        const float a = static_cast<float>(i) * Pi * 2.0f / 16.0f + (hash01(s + 5.0f) - 0.5f) * 0.42f;
+        const Vec2 pos = base + side * (std::cos(a) * baseWidth * lerp(0.72f, 1.52f, hash01(s))) + up * (std::sin(a) * baseWidth * lerp(0.08f, 0.27f, hash01(s + 1.0f)));
+        drawDirtClod(renderer, pos, baseWidth * lerp(0.07f, 0.19f, hash01(s + 2.0f)) * rise, particle.rotation + hash01(s + 4.0f) * Pi * 2.0f, scaleAlpha(mixColor({86, 56, 34, color.a}, {202, 132, 70, color.a}, hash01(s + 3.0f)), 0.78f));
+    }
+
+    renderer.fillPolygon(outline.data(), outline.size(), scaleAlpha({32, 23, 19, color.a}, 0.98f));
+    renderer.fillPolygon(body.data(), body.size(), scaleAlpha({126, 78, 45, color.a}, 0.94f));
+
+    for (int i = 0; i < Count - 1; ++i) {
+        const float salt = seed + 140.0f + static_cast<float>(i) * 8.0f;
+        const std::array<Vec2, 4> lf{body[static_cast<std::size_t>(Count + i)], body[static_cast<std::size_t>(Count + i + 1)], ridge[static_cast<std::size_t>(i + 1)], ridge[static_cast<std::size_t>(i)]};
+        const std::array<Vec2, 4> rf{ridge[static_cast<std::size_t>(i)], ridge[static_cast<std::size_t>(i + 1)], body[static_cast<std::size_t>(Count - 2 - i)], body[static_cast<std::size_t>(Count - 1 - i)]};
+        renderer.fillPolygon(lf.data(), lf.size(), scaleAlpha(mixColor({174, 108, 56, color.a}, {234, 166, 88, color.a}, hash01(salt)), 0.92f));
+        renderer.fillPolygon(rf.data(), rf.size(), scaleAlpha(mixColor({34, 27, 24, color.a}, {82, 54, 36, color.a}, hash01(salt + 2.0f)), 0.96f));
+    }
+
+    renderer.drawSoftLine(ridge.back(), ridge[1], std::max(1.3f, baseWidth * 0.075f), scaleAlpha({255, 206, 130, color.a}, 0.36f));
+    renderer.drawSoftLine(body[static_cast<std::size_t>(Count + 5)], body[static_cast<std::size_t>(Count + 2)], std::max(1.0f, baseWidth * 0.050f), scaleAlpha({238, 166, 88, color.a}, 0.26f));
+    renderer.drawSoftLine(body[1], body[5], std::max(1.2f, baseWidth * 0.060f), scaleAlpha({16, 13, 12, color.a}, 0.54f));
+
+    auto pointInside = [&](float t, float u) {
+        const float y = clamp(t, 0.0f, 0.999f);
+        int index = 0;
+        for (int j = 0; j < Count - 1; ++j) {
+            if (y >= T[static_cast<std::size_t>(j)] && y <= T[static_cast<std::size_t>(j + 1)]) {
+                index = j;
+                break;
+            }
+        }
+        const float local = clamp((y - T[static_cast<std::size_t>(index)]) / (T[static_cast<std::size_t>(index + 1)] - T[static_cast<std::size_t>(index)]), 0.0f, 1.0f);
+        const Vec2 l = left[static_cast<std::size_t>(index)] + (left[static_cast<std::size_t>(index + 1)] - left[static_cast<std::size_t>(index)]) * local;
+        const Vec2 r = right[static_cast<std::size_t>(index)] + (right[static_cast<std::size_t>(index + 1)] - right[static_cast<std::size_t>(index)]) * local;
+        return l + (r - l) * clamp(u, 0.0f, 1.0f);
+    };
+    for (int i = 0; i < 30; ++i) {
+        const float s = seed + 220.0f + static_cast<float>(i) * 6.37f;
+        const Vec2 p = pointInside(lerp(0.06f, 0.92f, hash01(s)), lerp(0.16f, 0.84f, hash01(s + 1.0f)));
+        const Color fleck = hash01(s + 3.0f) < 0.42f ? scaleAlpha({238, 168, 88, color.a}, 0.24f) : scaleAlpha({30, 22, 18, color.a}, 0.34f);
+        renderer.fillCircle(p, std::max(0.5f, baseWidth * lerp(0.018f, 0.055f, hash01(s + 2.0f))), fleck);
+    }
+    for (int i = 0; i < 15; ++i) {
+        const float s = seed + 360.0f + static_cast<float>(i) * 5.91f;
+        const float t = lerp(0.10f, 0.88f, hash01(s));
+        const float u = lerp(0.20f, 0.80f, hash01(s + 1.0f));
+        renderer.drawSoftLine(pointInside(t, u), pointInside(t + lerp(0.035f, 0.105f, hash01(s + 2.0f)), u + (hash01(s + 3.0f) - 0.5f) * 0.26f), std::max(0.7f, baseWidth * lerp(0.018f, 0.040f, hash01(s + 5.0f))), scaleAlpha({18, 13, 11, color.a}, 0.44f));
+    }
+}
+
 void drawEarthSpike(Renderer& renderer, const MagicFxSystem::Particle& particle, Color color, float size)
 {
     if (size <= 0.0f || color.a == 0) {
@@ -608,7 +728,8 @@ void drawLightningPath(
     float alpha,
     bool strong,
     int frameIndex,
-    bool jitterEndpoints = false)
+    bool jitterEndpoints = false,
+    float visibleFraction = 1.0f)
 {
     if (points == nullptr || pointCount < 2 || alpha <= 0.0f) {
         return;
@@ -617,16 +738,39 @@ void drawLightningPath(
     std::array<Vec2, 12> framePoints{};
     const int safeCount = std::clamp(pointCount, 2, static_cast<int>(framePoints.size()));
     buildElectricFramePath(points, safeCount, frameIndex, strong, outerWidth * 0.95f, framePoints, jitterEndpoints);
+    const float visible = clamp(visibleFraction, 0.0f, 1.0f);
+    if (visible <= 0.0f) {
+        return;
+    }
+
+    float totalLength = 0.0f;
+    for (int i = 1; i < safeCount; ++i) {
+        totalLength += length(framePoints[static_cast<std::size_t>(i)] - framePoints[static_cast<std::size_t>(i - 1)]);
+    }
+    float remainingLength = totalLength * visible;
 
     const Color shell = scaleAlpha(strong ? Color{255, 242, 170, 226} : Color{255, 238, 188, 194}, alpha);
     const Color core = scaleAlpha(strong ? Color{255, 252, 214, 255} : Color{255, 250, 222, 232}, alpha);
     for (int i = 1; i < safeCount; ++i) {
+        if (remainingLength <= 0.0f) {
+            break;
+        }
+        const Vec2 from = framePoints[static_cast<std::size_t>(i - 1)];
+        Vec2 to = framePoints[static_cast<std::size_t>(i)];
+        const float segmentLength = length(to - from);
+        if (segmentLength <= 0.0001f) {
+            continue;
+        }
+        if (remainingLength < segmentLength) {
+            to = from + (to - from) * (remainingLength / segmentLength);
+        }
         const float segmentT = static_cast<float>(i - 1) / static_cast<float>(std::max(1, safeCount - 2));
         const float pulse = 0.72f + 0.48f * (static_cast<float>((frameIndex + i * 37) % 5) / 4.0f);
         const float taper = lerp(1.36f, 0.54f, segmentT);
         const float width = outerWidth * pulse * taper;
-        drawSharpLightningSegment(renderer, framePoints[static_cast<std::size_t>(i - 1)], framePoints[static_cast<std::size_t>(i)], width * 0.78f, shell);
-        drawSharpLightningSegment(renderer, framePoints[static_cast<std::size_t>(i - 1)], framePoints[static_cast<std::size_t>(i)], std::max(1.0f, coreWidth * pulse * taper), core);
+        drawSharpLightningSegment(renderer, from, to, width * 0.78f, shell);
+        drawSharpLightningSegment(renderer, from, to, std::max(1.0f, coreWidth * pulse * taper), core);
+        remainingLength -= segmentLength;
     }
 }
 
@@ -705,23 +849,48 @@ void drawLightningStrike(Renderer& renderer, const MagicFxSystem::LightningStrik
         strike.coreWidth,
         alpha,
         strike.strong,
-        electricFrameIndex(strike.age, strike.strong ? 0.18f : 0.43f));
+        electricFrameIndex(strike.age, strike.strong ? 0.18f : 0.43f),
+        false,
+        lightningVisibleFraction(progress));
 }
 
-void drawThunderSigilArc(Renderer& renderer, const MagicFxSystem::ThunderImpactArc& arc, float alpha)
+void drawThunderSigilArc(Renderer& renderer, const MagicFxSystem::ThunderImpactArc& arc, float alpha, float visibleFraction)
 {
     const int frameIndex = electricFrameIndex(arc.age - arc.startDelay, arc.phase);
     std::array<Vec2, 12> framePoints{};
     const int safeCount = std::clamp(arc.pointCount, 2, static_cast<int>(framePoints.size()));
     buildElectricFramePath(arc.points.data(), safeCount, frameIndex, arc.strong, arc.outerWidth * 1.20f, framePoints, true);
+    const float visible = clamp(visibleFraction, 0.0f, 1.0f);
+    if (visible <= 0.0f) {
+        return;
+    }
+
+    float totalLength = 0.0f;
+    for (int i = 1; i < safeCount; ++i) {
+        totalLength += length(framePoints[static_cast<std::size_t>(i)] - framePoints[static_cast<std::size_t>(i - 1)]);
+    }
+    float remainingLength = totalLength * visible;
 
     const Color line = scaleAlpha(arc.strong ? Color{255, 242, 176, 192} : Color{255, 238, 196, 156}, alpha);
     const Color core = scaleAlpha(Color{255, 252, 218, 230}, alpha);
     for (int i = 1; i < safeCount; ++i) {
+        if (remainingLength <= 0.0f) {
+            break;
+        }
+        const Vec2 from = framePoints[static_cast<std::size_t>(i - 1)];
+        Vec2 to = framePoints[static_cast<std::size_t>(i)];
+        const float segmentLength = length(to - from);
+        if (segmentLength <= 0.0001f) {
+            continue;
+        }
+        if (remainingLength < segmentLength) {
+            to = from + (to - from) * (remainingLength / segmentLength);
+        }
         const float t = static_cast<float>(i - 1) / static_cast<float>(std::max(1, safeCount - 2));
         const float width = arc.outerWidth * lerp(1.18f, 0.72f, t);
-        drawSharpLightningSegment(renderer, framePoints[static_cast<std::size_t>(i - 1)], framePoints[static_cast<std::size_t>(i)], width * 0.82f, line);
-        drawSharpLightningSegment(renderer, framePoints[static_cast<std::size_t>(i - 1)], framePoints[static_cast<std::size_t>(i)], std::max(1.0f, arc.coreWidth * 0.62f), core);
+        drawSharpLightningSegment(renderer, from, to, width * 0.82f, line);
+        drawSharpLightningSegment(renderer, from, to, std::max(1.0f, arc.coreWidth * 0.62f), core);
+        remainingLength -= segmentLength;
     }
 }
 
@@ -743,7 +912,7 @@ void drawThunderImpactArc(Renderer& renderer, const MagicFxSystem::ThunderImpact
     }
 
     if (arc.style == MagicFxSystem::ThunderImpactArcStyle::Sigil) {
-        drawThunderSigilArc(renderer, arc, alpha);
+        drawThunderSigilArc(renderer, arc, alpha, lightningVisibleFraction(progress));
         return;
     }
 
@@ -756,7 +925,8 @@ void drawThunderImpactArc(Renderer& renderer, const MagicFxSystem::ThunderImpact
         alpha,
         arc.strong,
         electricFrameIndex(localAge, arc.phase),
-        true);
+        true,
+        lightningVisibleFraction(progress));
 }
 
 void drawWindBlade(Renderer& renderer, const MagicFxSystem::Particle& particle, Color color, float size)
@@ -842,7 +1012,7 @@ void drawParticle(Renderer& renderer, const MagicFxSystem::Particle& particle)
         drawWindSparkle(renderer, center, size, particle.rotation, color);
         break;
     case MagicFxParticleShape::EarthSpike:
-        drawEarthSpike(renderer, particle, color, size);
+        drawEarthSpikeProfiled(renderer, particle, color, size);
         break;
     case MagicFxParticleShape::EarthCrack:
         drawEarthCrack(renderer, particle, color, particle.startSize);
@@ -1821,11 +1991,46 @@ void MagicFxSystem::playThunderStrike(Vec2 origin, Vec2 target, bool strong)
         addThunderImpactArc(arc);
     }
 
-}
+    MagicFxEmitterConfig impactSparks;
+    impactSparks.position = target;
+    impactSparks.direction = {1.0f, 0.0f};
+    impactSparks.particleShape = MagicFxParticleShape::SparkLine;
+    impactSparks.spawnShape = MagicFxSpawnShape::Circle;
+    impactSparks.startColor = {255, 252, 214, 252};
+    impactSparks.endColor = {255, 210, 78, 0};
+    impactSparks.speed = strong ? MagicFxRange{72.0f, 190.0f} : MagicFxRange{48.0f, 138.0f};
+    impactSparks.lifetime = strong ? MagicFxRange{0.10f, 0.24f} : MagicFxRange{0.09f, 0.20f};
+    impactSparks.startSize = strong ? MagicFxRange{1.4f, 3.6f} : MagicFxRange{1.0f, 2.8f};
+    impactSparks.endSize = {0.0f, 0.5f};
+    impactSparks.spawnRadius = strong ? 8.0f : 5.5f;
+    impactSparks.spreadRadians = Pi * 2.0f;
+    impactSparks.stretch = strong ? 5.2f : 4.2f;
+    impactSparks.fadeOutFraction = 0.72f;
+    impactSparks.burstCount = strong ? 34 : 22;
+    impactSparks.depthSorted = true;
+    emitBurst(impactSparks);
 
-void MagicFxSystem::playThunderBolt(Vec2 origin, Vec2 target)
-{
-    playThunderStrike(origin, target, true);
+    MagicFxEmitterConfig impactMotes;
+    impactMotes.position = target;
+    impactMotes.direction = {1.0f, 0.0f};
+    impactMotes.particleShape = MagicFxParticleShape::Circle;
+    impactMotes.spawnShape = MagicFxSpawnShape::Circle;
+    impactMotes.startColor = {255, 250, 220, 240};
+    impactMotes.endColor = {255, 218, 96, 0};
+    impactMotes.speed = strong ? MagicFxRange{38.0f, 142.0f} : MagicFxRange{28.0f, 104.0f};
+    impactMotes.lifetime = strong ? MagicFxRange{0.14f, 0.34f} : MagicFxRange{0.12f, 0.28f};
+    impactMotes.startSize = strong ? MagicFxRange{0.8f, 2.2f} : MagicFxRange{0.6f, 1.7f};
+    impactMotes.endSize = {0.0f, 0.2f};
+    impactMotes.height = {0.0f, 4.0f};
+    impactMotes.verticalVelocity = strong ? MagicFxRange{8.0f, 42.0f} : MagicFxRange{5.0f, 30.0f};
+    impactMotes.gravity = 18.0f;
+    impactMotes.drag = 0.65f;
+    impactMotes.spawnRadius = strong ? 10.0f : 7.0f;
+    impactMotes.spreadRadians = Pi * 2.0f;
+    impactMotes.fadeOutFraction = 0.76f;
+    impactMotes.burstCount = strong ? 42 : 26;
+    impactMotes.depthSorted = true;
+    emitBurst(impactMotes);
 }
 
 void MagicFxSystem::playThunderSparkBurst(Vec2 position, float radius)
@@ -1873,7 +2078,7 @@ MagicFxEmitterHandle MagicFxSystem::startWindAura(Vec2 position, float radius)
     blades.stretch = 2.35f;
     blades.fadeInFraction = 0.06f;
     blades.fadeOutFraction = 0.76f;
-    blades.emissionRate = 16.0f;
+    blades.emissionRate = 7.5f;
     blades.loop = true;
     blades.depthSorted = true;
     const MagicFxEmitterHandle handle = addEmitter(blades);
@@ -1890,8 +2095,33 @@ MagicFxEmitterHandle MagicFxSystem::startWindAura(Vec2 position, float radius)
     smallBlades.spawnRadius = radius * 0.48f;
     smallBlades.spreadRadians = Pi * 1.32f;
     smallBlades.stretch = 2.05f;
-    smallBlades.emissionRate = 9.0f;
+    smallBlades.emissionRate = 3.5f;
     addEmitterWithParent(smallBlades, handle.id);
+
+    MagicFxEmitterConfig mist;
+    mist.position = position;
+    mist.direction = {0.0f, -1.0f};
+    mist.particleShape = MagicFxParticleShape::SoftCircle;
+    mist.spawnShape = MagicFxSpawnShape::Circle;
+    mist.startColor = {152, 255, 194, 64};
+    mist.endColor = {224, 255, 226, 0};
+    mist.alphaScale = {0.48f, 0.88f};
+    mist.speed = {0.8f, 4.8f};
+    mist.lifetime = {1.05f, 1.95f};
+    mist.startSize = {radius * 0.13f, radius * 0.28f};
+    mist.endSize = {radius * 0.34f, radius * 0.66f};
+    mist.height = {0.0f, 4.0f};
+    mist.verticalVelocity = {0.8f, 5.4f};
+    mist.gravity = 0.28f;
+    mist.drag = 0.72f;
+    mist.spawnRadius = radius * 0.42f;
+    mist.spreadRadians = Pi * 0.86f;
+    mist.fadeInFraction = 0.24f;
+    mist.fadeOutFraction = 0.76f;
+    mist.emissionRate = 18.0f;
+    mist.loop = true;
+    mist.depthSorted = true;
+    addEmitterWithParent(mist, handle.id);
 
     return handle;
 }
@@ -1925,90 +2155,6 @@ MagicFxEmitterHandle MagicFxSystem::startWindWaveLoop(Vec2 position, Vec2 direct
     crescent.loop = true;
     crescent.depthSorted = true;
     return addEmitter(crescent);
-}
-
-void MagicFxSystem::playWindImpact(Vec2 position, Vec2 direction, float radius)
-{
-    direction = normalize(direction);
-    radius = std::max(6.0f, radius);
-    const float angle = std::atan2(direction.y, direction.x);
-
-    MagicFxEmitterConfig crescents;
-    crescents.position = position;
-    crescents.direction = direction;
-    crescents.baseVelocity = direction * 26.0f;
-    crescents.particleShape = MagicFxParticleShape::WindCrescent;
-    crescents.spawnShape = MagicFxSpawnShape::Cone;
-    crescents.startColor = {205, 255, 218, 172};
-    crescents.endColor = {232, 255, 236, 0};
-    crescents.speed = {18.0f, 76.0f};
-    crescents.lifetime = {0.18f, 0.42f};
-    crescents.startSize = {radius * 0.38f, radius * 0.70f};
-    crescents.endSize = {radius * 0.10f, radius * 0.34f};
-    crescents.rotation = {angle - 0.12f, angle + 0.12f};
-    crescents.angularVelocity = {-0.8f, 0.8f};
-    crescents.spawnRadius = radius * 0.48f;
-    crescents.spreadRadians = Pi * 0.82f;
-    crescents.stretch = 2.45f;
-    crescents.fadeOutFraction = 0.86f;
-    crescents.burstCount = 8;
-    crescents.depthSorted = true;
-    emitBurst(crescents);
-
-    MagicFxEmitterConfig mist;
-    mist.position = position;
-    mist.direction = direction;
-    mist.particleShape = MagicFxParticleShape::SoftCircle;
-    mist.spawnShape = MagicFxSpawnShape::Cone;
-    mist.startColor = {176, 246, 204, 50};
-    mist.endColor = {232, 255, 236, 0};
-    mist.speed = {22.0f, 78.0f};
-    mist.lifetime = {0.18f, 0.46f};
-    mist.startSize = {0.75f, 1.8f};
-    mist.endSize = {1.2f, 3.2f};
-    mist.spawnRadius = radius * 0.86f;
-    mist.spreadRadians = Pi * 0.88f;
-    mist.fadeInFraction = 0.12f;
-    mist.fadeOutFraction = 0.76f;
-    mist.burstCount = 64;
-    mist.depthSorted = true;
-    emitBurst(mist);
-
-    MagicFxEmitterConfig ring;
-    ring.position = position;
-    ring.particleShape = MagicFxParticleShape::Ring;
-    ring.spawnShape = MagicFxSpawnShape::Point;
-    ring.startColor = {220, 255, 226, 70};
-    ring.endColor = {180, 244, 204, 0};
-    ring.lifetime = {0.16f, 0.26f};
-    ring.startSize = {radius * 0.34f, radius * 0.46f};
-    ring.endSize = {radius * 0.82f, radius * 1.08f};
-    ring.fadeOutFraction = 0.9f;
-    ring.burstCount = 1;
-    ring.depthSorted = true;
-    emitBurst(ring);
-
-    MagicFxEmitterConfig sparkle;
-    sparkle.position = position;
-    sparkle.direction = direction;
-    sparkle.baseVelocity = direction * 18.0f;
-    sparkle.particleShape = MagicFxParticleShape::WindSparkle;
-    sparkle.spawnShape = MagicFxSpawnShape::Cone;
-    sparkle.startColor = {248, 255, 232, 235};
-    sparkle.endColor = {142, 244, 188, 0};
-    sparkle.speed = {12.0f, 56.0f};
-    sparkle.lifetime = {0.10f, 0.26f};
-    sparkle.startSize = {0.8f, 2.1f};
-    sparkle.endSize = {0.0f, 0.24f};
-    sparkle.rotation = {angle - 0.55f, angle + 0.55f};
-    sparkle.angularVelocity = {-2.4f, 2.4f};
-    sparkle.spawnRadius = radius * 0.64f;
-    sparkle.spreadRadians = Pi * 0.86f;
-    sparkle.fadeInFraction = 0.10f;
-    sparkle.fadeOutFraction = 0.80f;
-    sparkle.burstCount = 22;
-    sparkle.depthSorted = true;
-    emitBurst(sparkle);
 }
 
 MagicFxEmitterHandle MagicFxSystem::startEarthAura(Vec2 position, float radius)
@@ -2836,7 +2982,7 @@ void MagicFxSystem::addThunderImpactArc(ThunderImpactArc arc)
 
 std::span<const EffectPreviewEntry> magicFxPreviewEntries()
 {
-    static constexpr std::array<EffectPreviewEntry, 18> Entries{{
+    static constexpr std::array<EffectPreviewEntry, 16> Entries{{
         {.id = "fire_aura", .label = "火オーラ", .group = "MagicFx / 常駐", .source = EffectPreviewSource::MagicFx, .target = EffectPreviewTarget::Player, .playback = EffectPreviewPlayback::PersistentEmitter, .radius = 34.0f},
         {.id = "fireball_loop", .label = "火球ループ", .group = "MagicFx / 常駐", .source = EffectPreviewSource::MagicFx, .target = EffectPreviewTarget::EnemySlime, .playback = EffectPreviewPlayback::PersistentEmitter, .direction = {1.0f, 0.0f}, .radius = 28.0f},
         {.id = "fire_ground_burn", .label = "火の地面燃焼", .group = "MagicFx / 単発", .source = EffectPreviewSource::MagicFx, .target = EffectPreviewTarget::WallTile, .radius = 38.0f},
@@ -2845,12 +2991,10 @@ std::span<const EffectPreviewEntry> magicFxPreviewEntries()
         {.id = "ice_shatter", .label = "氷砕け", .group = "MagicFx / 単発", .source = EffectPreviewSource::MagicFx, .target = EffectPreviewTarget::EnemySlime, .radius = 34.0f},
         {.id = "thunder_aura", .label = "雷オーラ", .group = "MagicFx / 常駐", .source = EffectPreviewSource::MagicFx, .target = EffectPreviewTarget::Player, .playback = EffectPreviewPlayback::PersistentEmitter, .radius = 36.0f},
         {.id = "thunder_strike", .label = "落雷", .group = "MagicFx / 単発", .source = EffectPreviewSource::MagicFx, .target = EffectPreviewTarget::EnemySlime, .radius = 40.0f},
-        {.id = "thunder_bolt", .label = "雷ボルト", .group = "MagicFx / 単発", .source = EffectPreviewSource::MagicFx, .target = EffectPreviewTarget::EnemySlime, .radius = 40.0f},
         {.id = "thunder_spark_burst", .label = "雷スパーク", .group = "MagicFx / 単発", .source = EffectPreviewSource::MagicFx, .target = EffectPreviewTarget::EnemySlime, .radius = 36.0f},
         {.id = "heal_pulse", .label = "回復パルス", .group = "MagicFx / 単発", .source = EffectPreviewSource::MagicFx, .target = EffectPreviewTarget::Player, .radius = 32.0f},
         {.id = "wind_aura", .label = "風オーラ", .group = "MagicFx / 常駐", .source = EffectPreviewSource::MagicFx, .target = EffectPreviewTarget::Player, .playback = EffectPreviewPlayback::PersistentEmitter, .radius = 38.0f},
         {.id = "wind_wave_loop", .label = "風波ループ", .group = "MagicFx / 常駐", .source = EffectPreviewSource::MagicFx, .target = EffectPreviewTarget::EnemySlime, .playback = EffectPreviewPlayback::PersistentEmitter, .direction = {1.0f, 0.0f}, .radius = 34.0f},
-        {.id = "wind_impact", .label = "風ヒット", .group = "MagicFx / 単発", .source = EffectPreviewSource::MagicFx, .target = EffectPreviewTarget::EnemySlime, .direction = {1.0f, 0.0f}, .radius = 36.0f},
         {.id = "earth_aura", .label = "土オーラ", .group = "MagicFx / 常駐", .source = EffectPreviewSource::MagicFx, .target = EffectPreviewTarget::Player, .playback = EffectPreviewPlayback::PersistentEmitter, .radius = 36.0f},
         {.id = "dirt_clod_loop", .label = "土塊ループ", .group = "MagicFx / 常駐", .source = EffectPreviewSource::MagicFx, .target = EffectPreviewTarget::EnemySlime, .playback = EffectPreviewPlayback::PersistentEmitter, .direction = {1.0f, 0.0f}, .radius = 32.0f},
         {.id = "earth_spike_rise", .label = "土の棘", .group = "MagicFx / 単発", .source = EffectPreviewSource::MagicFx, .target = EffectPreviewTarget::WallTile, .radius = 38.0f},
@@ -2903,7 +3047,7 @@ void playMagicFxPreview(
     Vec2 position,
     Vec2 direction)
 {
-    const Vec2 dir = lengthSquared(direction) > 0.0001f ? normalize(direction) : Vec2{1.0f, 0.0f};
+    (void)direction;
     const float radius = std::max(1.0f, entry.radius);
     if (entry.id == "fire_ground_burn") {
         magicFx.playFireGroundBurn(position, radius, 0.9f);
@@ -2911,14 +3055,10 @@ void playMagicFxPreview(
         magicFx.playIceShatter(position, radius);
     } else if (entry.id == "thunder_strike") {
         magicFx.playThunderStrike(position + Vec2{0.0f, -150.0f}, position, true);
-    } else if (entry.id == "thunder_bolt") {
-        magicFx.playThunderBolt(position - dir * 130.0f + Vec2{0.0f, -24.0f}, position + dir * 24.0f);
     } else if (entry.id == "thunder_spark_burst") {
         magicFx.playThunderSparkBurst(position, radius);
     } else if (entry.id == "heal_pulse") {
         magicFx.playHealPulse(position, radius);
-    } else if (entry.id == "wind_impact") {
-        magicFx.playWindImpact(position, dir, radius);
     } else if (entry.id == "earth_spike_rise") {
         magicFx.playEarthSpikeRise(position, radius);
     } else if (entry.id == "earth_debris_burst") {

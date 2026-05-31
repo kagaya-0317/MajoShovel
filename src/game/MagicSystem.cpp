@@ -823,9 +823,6 @@ void MagicSystem::playProjectileImpactFx(const MagicProjectile& projectile)
         });
         return;
     case ProjectileKind::WindWave:
-        if (magicFx_ != nullptr) {
-            magicFx_->playWindImpact(projectile.position, direction, projectile.radius);
-        }
         return;
     case ProjectileKind::DirtClod:
         if (magicFx_ != nullptr) {

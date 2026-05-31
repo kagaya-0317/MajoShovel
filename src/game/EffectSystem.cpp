@@ -896,6 +896,17 @@ void EffectSystem::update(float dt)
             continue;
         }
     }
+
+    for (LevelUpTextPopup& popup : levelUpTextPopups_.items()) {
+        if (!popup.active) {
+            continue;
+        }
+        popup.age += dt;
+        if (popup.age >= popup.duration) {
+            popup.active = false;
+            continue;
+        }
+    }
 }
 
 void EffectSystem::render(Renderer& renderer)
@@ -1078,6 +1089,37 @@ void EffectSystem::renderDamagePopups(Renderer& renderer)
         renderer.fillSoftCircle(center, std::max(size.x, size.y) * 0.42f, glowColor);
         renderer.drawOutlinedText(pos, popup.text, textColor, outlineColor, playerTarget ? 2 : 1, textScale, TextStyle::Italic);
     }
+
+    constexpr std::string_view LevelUpText = "Level UP!!";
+    for (const LevelUpTextPopup& popup : levelUpTextPopups_.items()) {
+        if (!popup.active) {
+            continue;
+        }
+
+        const float t = popup.duration > 0.0f ? clamp(popup.age / popup.duration, 0.0f, 1.0f) : 1.0f;
+        const float fadeIn = clamp(t / 0.12f, 0.0f, 1.0f);
+        const float fadeOut = t < 0.74f ? 1.0f : 1.0f - clamp((t - 0.74f) / 0.26f, 0.0f, 1.0f);
+        const float fade = fadeIn * fadeOut;
+        const unsigned char alpha = static_cast<unsigned char>(std::clamp(std::lround(255.0f * fade), 0L, 255L));
+        if (alpha == 0) {
+            continue;
+        }
+
+        const int textScale = t < 0.16f ? 6 : 5;
+        const Vec2 size = renderer.measureText(LevelUpText, textScale, TextStyle::Italic);
+        const float lift = std::sin(clamp(t / 0.68f, 0.0f, 1.0f) * Pi) * 22.0f + t * 18.0f;
+        const Vec2 center = popup.position + popup.velocity * popup.age - Vec2{0.0f, lift};
+        const Vec2 pos = center - Vec2{size.x * 0.5f, size.y * 0.5f};
+        const Color glowColor{255, 226, 118, static_cast<unsigned char>(std::clamp(std::lround(78.0f * fade), 0L, 255L))};
+        const Color outlineColor{42, 18, 62, static_cast<unsigned char>(std::clamp(std::lround(230.0f * fade), 0L, 255L))};
+        const Color textColor{255, 246, 178, alpha};
+        const Color shineColor{255, 255, 255, static_cast<unsigned char>(std::clamp(std::lround(150.0f * fadeIn * fadeOut), 0L, 255L))};
+
+        renderer.fillSoftCircle(center, std::max(size.x, size.y) * 0.42f, glowColor);
+        renderer.drawOutlinedText(pos + Vec2{0.0f, 3.0f}, LevelUpText, {196, 118, 255, alpha}, outlineColor, 2, textScale, TextStyle::Italic);
+        renderer.drawOutlinedText(pos, LevelUpText, textColor, outlineColor, 2, textScale, TextStyle::Italic);
+        renderer.drawText(pos + Vec2{std::max(2.0f, size.x * 0.08f), -2.0f}, LevelUpText, shineColor, textScale, TextStyle::Italic);
+    }
 }
 
 void EffectSystem::spawnSmokeBurst(Vec2 position, SmokeBurstOptions options)
@@ -1170,6 +1212,72 @@ void EffectSystem::spawnStatusPopup(Vec2 position, std::string_view stateId, Sta
     popup->text = std::string(displayName);
     popup->color = entityStatusPopupColor(stateId, target);
     popup->target = target;
+}
+
+void EffectSystem::spawnLevelUpPopup(Vec2 position)
+{
+    LevelUpTextPopup* popup = levelUpTextPopups_.acquire();
+    if (!popup) {
+        return;
+    }
+
+    popup->position = position + Vec2{randomRange(-3.0f, 3.0f), -78.0f + randomRange(-3.0f, 3.0f)};
+    popup->velocity = {randomRange(-3.0f, 3.0f), 0.0f};
+    popup->duration = 1.14f;
+}
+
+void EffectSystem::spawnLevelUpSparkles(Vec2 position)
+{
+    const Vec2 center = position + Vec2{0.0f, -30.0f};
+    spawnRing(center, 8.0f, 56.0f, {255, 232, 126, 168}, 0.56f, EffectLayer::Foreground);
+    spawnRing(center, 22.0f, 82.0f, {198, 156, 255, 118}, 0.72f, EffectLayer::Foreground);
+
+    for (int i = 0; i < 18; ++i) {
+        const float angle = randomRange(0.0f, Pi * 2.0f);
+        const float distance = randomRange(6.0f, 38.0f);
+        const Vec2 direction = fromAngle(angle);
+        const Color color = mixColor({255, 238, 132, 230}, {214, 244, 255, 205}, randomRange(0.0f, 1.0f));
+        Effect* sparkle = spawnParticle(
+            center + direction * distance + Vec2{randomRange(-4.0f, 4.0f), randomRange(-10.0f, 8.0f)},
+            direction * randomRange(18.0f, 58.0f) + Vec2{randomRange(-8.0f, 8.0f), -randomRange(24.0f, 68.0f)},
+            randomRange(2.8f, 5.2f),
+            color,
+            randomRange(0.62f, 0.92f),
+            {0.0f, -12.0f},
+            randomRange(0.65f, 1.25f),
+            EffectLayer::Foreground,
+            ParticleVisual::Sparkle,
+            0,
+            randomRange(0.0f, Pi * 2.0f),
+            randomRange(-3.5f, 3.5f),
+            randomRange(0.84f, 1.18f));
+        if (sparkle != nullptr) {
+            sparkle->endRadius = sparkle->startRadius * randomRange(0.24f, 0.42f);
+            delayEffect(sparkle, randomRange(0.0f, 0.12f));
+        }
+    }
+
+    for (int i = 0; i < 8; ++i) {
+        const float angle = randomRange(0.0f, Pi * 2.0f);
+        const Vec2 direction = fromAngle(angle);
+        Effect* spark = spawnParticle(
+            center + direction * randomRange(10.0f, 28.0f),
+            direction * randomRange(76.0f, 128.0f),
+            randomRange(1.8f, 3.0f),
+            mixColor({255, 255, 255, 235}, {255, 206, 102, 220}, randomRange(0.0f, 1.0f)),
+            randomRange(0.28f, 0.44f),
+            {},
+            2.6f,
+            EffectLayer::Foreground,
+            ParticleVisual::ImpactSpark,
+            0,
+            angle,
+            0.0f,
+            randomRange(1.0f, 1.8f));
+        if (spark != nullptr) {
+            spark->endRadius = spark->startRadius * 0.28f;
+        }
+    }
 }
 
 void EffectSystem::spawnRing(Vec2 position, float startRadius, float endRadius, Color color, float duration, EffectLayer layer)

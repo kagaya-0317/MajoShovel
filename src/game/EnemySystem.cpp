@@ -5093,7 +5093,17 @@ bool EnemySystem::spawnNodeEnemy(
         return false;
     }
 
-    spawnDefinitionAt(spawnPosition, chooseEnemyDefinition(enemyCatalog), balance, enemyCatalog, detectedOnSpawn, playerPosition, -1.0f, nullptr, lootStageId, lootDepthRank);
+    spawnDefinitionAt(
+        spawnPosition,
+        chooseDugSpawnEnemyDefinition(enemyCatalog, lootStageId, lootDepthRank),
+        balance,
+        enemyCatalog,
+        detectedOnSpawn,
+        playerPosition,
+        -1.0f,
+        nullptr,
+        lootStageId,
+        lootDepthRank);
     return true;
 }
 
@@ -5108,7 +5118,7 @@ bool EnemySystem::spawnFixedNodeEnemy(
     std::string_view lootStageId,
     int lootDepthRank)
 {
-    const EnemyDefinition* definition = chooseEnemyDefinition(enemyCatalog);
+    const EnemyDefinition* definition = chooseDugSpawnEnemyDefinition(enemyCatalog, lootStageId, lootDepthRank);
     float radius = balance.enemyRadius;
     if (definition != nullptr && definition->radius > 0.0 && std::isfinite(definition->radius)) {
         radius = static_cast<float>(definition->radius);

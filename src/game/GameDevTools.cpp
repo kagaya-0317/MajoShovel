@@ -3903,6 +3903,7 @@ void Game::enterEffectTestMode()
     if (levels_.isChoosing()) {
         levels_ = LevelSystem{};
     }
+    levelUpPresentation_ = {};
 
     mode_ = ScreenMode::Playing;
     pausePage_ = PauseMenuPage::Main;
@@ -4211,6 +4212,7 @@ void Game::enterProjectileTestMode()
     if (levels_.isChoosing()) {
         levels_ = LevelSystem{};
     }
+    levelUpPresentation_ = {};
 
     mode_ = ScreenMode::Playing;
     pausePage_ = PauseMenuPage::Main;
@@ -4389,6 +4391,7 @@ void Game::enterEnemyTestMode()
     if (levels_.isChoosing()) {
         levels_ = LevelSystem{};
     }
+    levelUpPresentation_ = {};
 
     enemyTestActive_ = true;
     enemyTestUiVisible_ = true;
@@ -5702,6 +5705,7 @@ GameTestSnapshot Game::makeTestSnapshot(GameTestSnapshotOptions options) const
     snapshot.levelUp.choiceActive =
         mode_ == ScreenMode::LevelUp &&
         levels_.isChoosing() &&
+        !levelUpPresentation_.active &&
         !levelUpResultDialog_.open;
     snapshot.levelUp.pendingChoices = levels_.pendingChoiceCount();
     snapshot.player.position = player_.position;
@@ -6766,7 +6770,7 @@ GameTestActionResult Game::applyTestAction(const GameTestAction& action)
 
     case GameTestActionKind::ChooseLevelUpUpgrade:
     {
-        if (mode_ != ScreenMode::LevelUp || !levels_.isChoosing() || levelUpResultDialog_.open) {
+        if (mode_ != ScreenMode::LevelUp || !levels_.isChoosing() || levelUpPresentation_.active || levelUpResultDialog_.open) {
             return result(false, "level up unavailable");
         }
         const std::optional<int> ringIndex = resolveUnlockedRingIndex(action.ringIndex);
@@ -6879,6 +6883,7 @@ bool Game::executeDebugCommand(std::string_view command)
         if (levels_.isChoosing()) {
             levels_ = LevelSystem{};
         }
+        levelUpPresentation_ = {};
         levelUpResultDialog_ = {};
         baseRegenerateConfirm_ = {};
         baseBrokenRingDepartureConfirm_ = {};
@@ -8113,6 +8118,7 @@ bool Game::executeDebugCommand(std::string_view command)
         }
         inventory_.setOpen(false);
         inventoryReturnToPause_ = false;
+        levelUpPresentation_ = {};
         levelUpResultDialog_ = {};
         openLevelUpChoice(baseContext ? ScreenMode::Base : ScreenMode::Playing);
         logInfo("Debug: forced level up to Lv " + std::to_string(player_.level) + ".");

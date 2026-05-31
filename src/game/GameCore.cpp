@@ -28,6 +28,7 @@ constexpr std::string_view AudioSeDigOreBreak = "se.dig.ore_break";
 constexpr std::string_view AudioSeAttackHit = "se.attack.hit";
 constexpr std::string_view AudioSePickup = "se.pickup";
 constexpr std::string_view AudioSePlayerDamage = "se.player.damage";
+constexpr std::string_view AudioSePlayerPinch = "se.player.pinch";
 constexpr std::string_view AudioSeRingThrow = "se.ring.throw";
 constexpr std::string_view AudioSeEnemyDefeat = "se.enemy.defeat";
 constexpr std::string_view AudioSeEnemySpawn = "se.enemy.spawn";
@@ -53,11 +54,18 @@ constexpr std::string_view AudioSeUiItemMove = "se.ui.item_move";
 constexpr std::string_view AudioSeUiItemUse = "se.ui.item_use";
 constexpr std::string_view AudioSeUiRingPlace = "se.ui.ring_place";
 constexpr std::string_view AudioSeUiUpgradeSelect = "se.ui.upgrade_select";
+constexpr std::string_view AudioSeLevelUpJingle = "se.level_up.jingle";
 constexpr std::string_view IntroTutorialChestLootInventoryTrigger = "intro_tutorial:chest_loot_inventory";
 constexpr std::string_view IntroTutorialChestLootRingTrigger = "intro_tutorial:chest_loot_ring";
 constexpr std::string_view LocalObjectsSnapshotPath = "Objects_with_rotation.tsv";
 constexpr std::string_view LocalEnemiesSnapshotPath = ".tmp_enemies.csv";
 constexpr std::string_view LocalEnemyBehaviorsSnapshotPath = ".tmp_behaviors.csv";
+constexpr float PlayerDamageVignetteStartHpRatio = 0.70f;
+constexpr float PlayerDamageVignetteMaxHpRatio = 0.20f;
+constexpr float PlayerDamageVignetteFlashDecayPerSecond = 3.4f;
+constexpr float LevelUpPresentationMinSeconds = 1.22f;
+constexpr float LevelUpPresentationSparkleIntervalSeconds = 0.22f;
+constexpr float LevelUpJingleFallbackSeconds = 1.18f;
 
 void stripUtf8Bom(std::string& text)
 {
@@ -376,12 +384,41 @@ bool playTimeCountsForMode(ScreenMode mode)
     }
 }
 
+float playerDamageVignetteTarget(int hp, int maxHp)
+{
+    if (maxHp <= 0 || hp <= 0) {
+        return 1.0f;
+    }
+    const float hpRatio = clamp(static_cast<float>(hp) / static_cast<float>(maxHp), 0.0f, 1.0f);
+    const float range = std::max(0.001f, PlayerDamageVignetteStartHpRatio - PlayerDamageVignetteMaxHpRatio);
+    return smoothStep01((PlayerDamageVignetteStartHpRatio - hpRatio) / range);
+}
+
+bool isPlayerPinchHp(int hp, int maxHp)
+{
+    if (maxHp <= 0 || hp <= 0) {
+        return false;
+    }
+    return static_cast<float>(hp) / static_cast<float>(maxHp) < PlayerDamageVignetteStartHpRatio;
+}
+
+bool shouldPlayPlayerPinchDamageSe(int hpAfter, int maxHp, int damageTaken)
+{
+    if (damageTaken <= 0 || maxHp <= 0 || hpAfter <= 0) {
+        return false;
+    }
+
+    const int hpBefore = std::min(maxHp, hpAfter + damageTaken);
+    return isPlayerPinchHp(hpBefore, maxHp) || isPlayerPinchHp(hpAfter, maxHp);
+}
+
 }
 
 void Game::setAudioEngine(AudioEngine* audio)
 {
     audio_ = audio;
     activeAudioBgmCue_.clear();
+    audioJingle_ = {};
 }
 
 void Game::setSettingsAccessors(
@@ -462,6 +499,31 @@ Vec2 Game::screenShakeOffset(double totalSeconds) const
     };
 }
 
+void Game::addPlayerDamageVignetteFlash(int damageAmount)
+{
+    if (damageAmount <= 0 || player_.maxHp <= 0) {
+        return;
+    }
+
+    const float damageRatio = static_cast<float>(damageAmount) / static_cast<float>(std::max(1, player_.maxHp));
+    const float flash = std::clamp(0.22f + damageRatio * 1.35f, 0.22f, 0.82f);
+    playerDamageVignetteFlash_ = std::max(playerDamageVignetteFlash_, flash);
+}
+
+void Game::updatePlayerDamageVignette(float dt)
+{
+    const float safeDt = std::max(0.0f, dt);
+    const float target = playerDamageVignetteTarget(player_.hp, player_.maxHp);
+    const float response = target > playerDamageVignetteDanger_ ? 7.5f : 2.6f;
+    const float blend = 1.0f - std::exp(-response * safeDt);
+    playerDamageVignetteDanger_ += (target - playerDamageVignetteDanger_) * blend;
+    playerDamageVignetteDanger_ = clamp(playerDamageVignetteDanger_, 0.0f, 1.0f);
+
+    playerDamageVignetteFlash_ = std::max(
+        0.0f,
+        playerDamageVignetteFlash_ - PlayerDamageVignetteFlashDecayPerSecond * safeDt);
+}
+
 void Game::setInputBindingAccessors(
     std::function<InputBindingMap()> getter,
     std::function<void(const InputBindingMap&)> applier)
@@ -517,16 +579,34 @@ void Game::setHotReloadEnabled(bool enabled)
 
 void Game::playAudioBgm(std::string_view id, float fadeSeconds, bool restart)
 {
-    if (audio_ == nullptr || id.empty()) {
+    if (id.empty()) {
         return;
     }
 
     const std::string cueId(id);
+    if (audioJingle_.active) {
+        audioJingle_.resumeBgmCue = cueId;
+        activeAudioBgmCue_.clear();
+        return;
+    }
+
+    if (audio_ == nullptr) {
+        return;
+    }
+
     if (!restart && activeAudioBgmCue_ == cueId) {
         return;
     }
     audio_->playBgm(cueId, fadeSeconds, restart);
     activeAudioBgmCue_ = cueId;
+}
+
+void Game::stopAudioBgm(float fadeSeconds)
+{
+    if (audio_ != nullptr) {
+        audio_->stopBgm(fadeSeconds);
+    }
+    activeAudioBgmCue_.clear();
 }
 
 void Game::playAudioSe(std::string_view id, float volumeScale, float pitchScale)
@@ -535,6 +615,54 @@ void Game::playAudioSe(std::string_view id, float volumeScale, float pitchScale)
         return;
     }
     audio_->playSe(id, volumeScale, pitchScale);
+}
+
+float Game::playAudioJingle(
+    std::string_view id,
+    float fallbackDurationSeconds,
+    float bgmFadeOutSeconds,
+    float bgmFadeInSeconds,
+    float volumeScale,
+    float pitchScale)
+{
+    const float safePitch = std::max(0.01f, pitchScale);
+    float duration = std::max(0.05f, fallbackDurationSeconds);
+    if (audio_ != nullptr && !id.empty()) {
+        const float cueDuration = audio_->cueDurationSeconds(id, AudioCueType::Se);
+        if (cueDuration > 0.0f) {
+            duration = cueDuration / safePitch;
+        }
+    }
+
+    const std::string resumeCue = audioJingle_.active
+        ? audioJingle_.resumeBgmCue
+        : activeAudioBgmCue_;
+    stopAudioBgm(bgmFadeOutSeconds);
+    audioJingle_.active = true;
+    audioJingle_.remainingSeconds = duration;
+    audioJingle_.resumeFadeSeconds = std::max(0.0f, bgmFadeInSeconds);
+    audioJingle_.resumeBgmCue = resumeCue;
+    playAudioSe(id, volumeScale, safePitch);
+    return duration;
+}
+
+void Game::updateAudioJingle(float dt)
+{
+    if (!audioJingle_.active) {
+        return;
+    }
+
+    audioJingle_.remainingSeconds -= std::max(0.0f, dt);
+    if (audioJingle_.remainingSeconds > 0.0f) {
+        return;
+    }
+
+    const std::string resumeCue = audioJingle_.resumeBgmCue;
+    const float fadeSeconds = audioJingle_.resumeFadeSeconds;
+    audioJingle_ = {};
+    if (!resumeCue.empty()) {
+        playAudioBgm(resumeCue, fadeSeconds, true);
+    }
 }
 
 void Game::playUiSoundEvents(const UiContext& ui)
@@ -854,6 +982,7 @@ void Game::resetWorldProgressionState()
 {
     resetInPlace(levels_);
     resetInPlace(upgrades_);
+    levelUpPresentation_ = {};
 }
 
 void Game::resetWorldInventoryState()
@@ -915,6 +1044,7 @@ void Game::resetWorldUiState()
     ringEmptyPressActive_ = false;
     ringItemMoveModeActive_ = false;
     ringItemMoveIndex_ = -1;
+    levelUpPresentation_ = {};
     levelUpResultDialog_ = {};
     levelUpReturnMode_ = ScreenMode::Playing;
     baseRingWorkshopActive_ = false;
@@ -1898,6 +2028,56 @@ LevelGainResult Game::gainPlayerXp(int amount)
     return result;
 }
 
+Vec2 Game::levelUpPresentationAnchor() const
+{
+    if (levelUpReturnMode_ == ScreenMode::Base || basePresentationActive()) {
+        return basePlayerPosition_;
+    }
+    return player_.position;
+}
+
+void Game::startLevelUpPresentation()
+{
+    levelUpPresentation_ = {};
+    levelUpPresentation_.active = true;
+    levelUpPresentation_.durationSeconds = LevelUpPresentationMinSeconds;
+    levelUpPresentation_.sparkleTimer = LevelUpPresentationSparkleIntervalSeconds;
+
+    const Vec2 anchor = levelUpPresentationAnchor();
+    effects_.spawnLevelUpPopup(anchor);
+    effects_.spawnLevelUpSparkles(anchor);
+    addScreenShake(2.2f, 0.18f);
+
+    const float jingleDuration = playAudioJingle(
+        AudioSeLevelUpJingle,
+        LevelUpJingleFallbackSeconds,
+        0.08f,
+        0.26f,
+        1.0f,
+        1.0f);
+    levelUpPresentation_.durationSeconds = std::max(levelUpPresentation_.durationSeconds, jingleDuration);
+}
+
+void Game::updateLevelUpPresentation(float dt)
+{
+    if (!levelUpPresentation_.active) {
+        return;
+    }
+
+    const float safeDt = std::max(0.0f, dt);
+    levelUpPresentation_.elapsedSeconds += safeDt;
+    levelUpPresentation_.sparkleTimer -= safeDt;
+    if (levelUpPresentation_.sparkleTimer <= 0.0f) {
+        effects_.spawnLevelUpSparkles(levelUpPresentationAnchor());
+        levelUpPresentation_.sparkleTimer = LevelUpPresentationSparkleIntervalSeconds;
+    }
+    effects_.update(safeDt);
+
+    if (levelUpPresentation_.elapsedSeconds >= levelUpPresentation_.durationSeconds) {
+        levelUpPresentation_.active = false;
+    }
+}
+
 void Game::openLevelUpChoice(ScreenMode returnMode)
 {
     if (!levels_.isChoosing()) {
@@ -1913,11 +2093,12 @@ void Game::openLevelUpChoice(ScreenMode returnMode)
         inventoryReturnToPause_ = false;
     }
     mode_ = ScreenMode::LevelUp;
+    startLevelUpPresentation();
 }
 
 bool Game::applyLevelUpSelection(RingLevelUpgradeSelection selection)
 {
-    if (!levels_.isChoosing() || levelUpResultDialog_.open) {
+    if (!levels_.isChoosing() || levelUpResultDialog_.open || levelUpPresentation_.active) {
         return false;
     }
 
@@ -1955,6 +2136,7 @@ bool Game::applyLevelUpSelection(RingLevelUpgradeSelection selection)
 void Game::updateLevelUpScreen(const Input& input, UiContext& ui, float dt)
 {
     const auto returnFromLevelUp = [this]() {
+        levelUpPresentation_ = {};
         levelUpResultDialog_ = {};
         if (levelUpReturnMode_ == ScreenMode::Base) {
             mode_ = ScreenMode::Base;
@@ -1966,6 +2148,14 @@ void Game::updateLevelUpScreen(const Input& input, UiContext& ui, float dt)
         pauseReturnMode_ = ScreenMode::Playing;
         inventoryReturnToPause_ = false;
     };
+
+    if (levelUpPresentation_.active) {
+        updateLevelUpPresentation(dt);
+        ui.block({{0.0f, 0.0f}, {static_cast<float>(camera_.width()), static_cast<float>(camera_.height())}});
+        return;
+    }
+
+    effects_.update(std::max(0.0f, dt));
 
     if (levelUpResultDialog_.open) {
         const UiRect resultPanel = levelUpResultDialogRect();
@@ -2713,6 +2903,7 @@ void Game::enterGameOver()
     if (levels_.isChoosing()) {
         levels_ = LevelSystem{};
     }
+    levelUpPresentation_ = {};
     levelUpResultDialog_ = {};
     mode_ = ScreenMode::GameOver;
     pausePage_ = PauseMenuPage::Main;
@@ -2746,6 +2937,7 @@ void Game::enterStageClear()
     if (levels_.isChoosing()) {
         levels_ = LevelSystem{};
     }
+    levelUpPresentation_ = {};
     levelUpResultDialog_ = {};
     mode_ = ScreenMode::StageClear;
     playAudioBgm(AudioBgmDungeon, 0.55f);
@@ -2773,6 +2965,7 @@ void Game::beginFinalBossEndingSequence()
     if (levels_.isChoosing()) {
         levels_ = LevelSystem{};
     }
+    levelUpPresentation_ = {};
     levelUpResultDialog_ = {};
     pausePage_ = PauseMenuPage::Main;
     pauseReturnMode_ = ScreenMode::Playing;
@@ -3209,6 +3402,8 @@ void Game::update(const Input& input, const Time& time)
     magicFx_.setLightweightMode(lightweight);
     wetGround_.setLightweightMode(lightweight);
     updateScreenShake(time.deltaSeconds());
+    updatePlayerDamageVignette(time.deltaSeconds());
+    updateAudioJingle(time.deltaSeconds());
 
     checkHotReload(time.deltaSeconds());
     reloadNoticeTimer_ = std::max(0.0f, reloadNoticeTimer_ - time.deltaSeconds());
@@ -3879,12 +4074,18 @@ void Game::update(const Input& input, const Time& time)
                 effects_.spawnDamagePopup(event.position, event.damageAmount, DamagePopupStyle::Enemy);
             }
         }
+        int playerDamageTotal = 0;
         for (const PlayerDamageEvent& event : player_.damageEvents) {
             effects_.spawnDamagePopup(event.position, event.amount, DamagePopupStyle::Player);
+            playerDamageTotal += std::max(0, event.amount);
         }
         if (!player_.damageEvents.empty()) {
             playAudioSe(AudioSePlayerDamage);
+            if (shouldPlayPlayerPinchDamageSe(player_.hp, player_.maxHp, playerDamageTotal)) {
+                playAudioSe(AudioSePlayerPinch);
+            }
             addScreenShake(4.5f, 0.16f);
+            addPlayerDamageVignetteFlash(playerDamageTotal);
         }
         player_.damageEvents.clear();
         for (const PlayerHealEvent& event : player_.healEvents) {
