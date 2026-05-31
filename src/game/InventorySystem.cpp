@@ -346,6 +346,7 @@ bool InventorySystem::sortByCatalogOrder(const ObjectCatalog& catalog)
 {
     closeUiCommandMenu(slotCommandMenu_);
     slotCommandMenuIndex_ = -1;
+    closeRingTargetCommandMenu();
     resetSlotPointerPress();
     if (grabbedSlotActive_) {
         cancelGrab();
@@ -438,6 +439,7 @@ void InventorySystem::setOpen(bool open)
     if (!open_) {
         closeUiCommandMenu(slotCommandMenu_);
         slotCommandMenuIndex_ = -1;
+        closeRingTargetCommandMenu();
         discardConfirm_ = {};
         discardConfirmSlotIndex_ = -1;
         resetSlotPointerPress();
@@ -1424,6 +1426,7 @@ void InventorySystem::openDiscardConfirmDialog(int slotIndex)
         1);
     closeUiCommandMenu(slotCommandMenu_);
     slotCommandMenuIndex_ = -1;
+    closeRingTargetCommandMenu();
     resetSlotPointerPress();
 }
 
@@ -2474,11 +2477,13 @@ void InventorySystem::updateScreen(
     std::vector<EffectDiscoveryEvent>* discoveryEvents,
     const EncyclopediaSystem* encyclopedia,
     bool itemUseEnabled,
-    bool itemDiscardEnabled)
+    bool itemDiscardEnabled,
+    int unlockedRingCount)
 {
     if (!open_) {
         return;
     }
+    const int ringTargetCount = clampedUnlockedRingCount(unlockedRingCount);
 
     if (discardConfirm_.open) {
         const UiRect confirmPanel = inventoryDiscardConfirmRect();
@@ -2489,6 +2494,41 @@ void InventorySystem::updateScreen(
         } else if (result == UiConfirmDialogResult::Cancelled) {
             discardConfirmSlotIndex_ = -1;
         }
+        ui.block(inventoryScreenRect());
+        return;
+    }
+
+    const int ringTargetSlotIndex = ringTargetCommandSlotIndex_ >= 0
+        ? ringTargetCommandSlotIndex_
+        : selectedShortcutIndex();
+    const std::array<UiCommandMenuItem, SpellRingCount> ringTargetItems =
+        buildRingTargetCommandItems(ringTargetSlotIndex, spellRing, ringTargetCount);
+    const bool ringTargetOpenBeforeUpdate = ringTargetCommandMenu_.open;
+    const int ringTargetSelection = updateUiCommandMenu(
+        ringTargetCommandMenu_,
+        ui,
+        input,
+        ringTargetItems.data(),
+        ringTargetCount);
+    if (ringTargetSelection >= 0 &&
+        ringTargetSelection < ringTargetCount &&
+        ringTargetCommandSlotIndex_ >= 0) {
+        selectShortcutIndex(ringTargetCommandSlotIndex_);
+        if (!addScreenItemToRingForRing(ringTargetCommandSlotIndex_, spellRing, ringTargetSelection)) {
+            ui.emitSound(UiSoundEvent::Cancel);
+        }
+        closeRingTargetCommandMenu();
+        resetSlotPointerPress();
+        ui.block(inventoryScreenRect());
+        return;
+    }
+    if (ringTargetOpenBeforeUpdate && !ringTargetCommandMenu_.open) {
+        ringTargetCommandSlotIndex_ = -1;
+        resetSlotPointerPress();
+        ui.block(inventoryScreenRect());
+        return;
+    }
+    if (ringTargetCommandMenu_.open) {
         ui.block(inventoryScreenRect());
         return;
     }
@@ -2519,8 +2559,14 @@ void InventorySystem::updateScreen(
         } else if (action == SlotCommandAction::AddToRing) {
             if (grabbedSlotActive_) {
                 status_ = "つかみ中はリング移動できません";
+            } else if (ringTargetCount > 1) {
+                const Vec2 submenuAnchor{
+                    slotCommandMenu_.panel.pos.x + slotCommandMenu_.panel.size.x,
+                    slotCommandMenu_.panel.pos.y - 12.0f,
+                };
+                openRingTargetCommandMenu(slotCommandMenuIndex_, submenuAnchor, spellRing, ringTargetCount);
             } else {
-                addShortcutSelectionToRing(spellRing);
+                addScreenItemToRingForRing(slotCommandMenuIndex_, spellRing, 0);
             }
         } else if (action == SlotCommandAction::ToggleStaffEquipment) {
             if (grabbedSlotActive_) {
@@ -2543,7 +2589,9 @@ void InventorySystem::updateScreen(
                 discardScreenItem(slotCommandMenuIndex_, itemDiscardEnabled);
             }
         }
-        slotCommandMenuIndex_ = -1;
+        if (!ringTargetCommandMenu_.open) {
+            slotCommandMenuIndex_ = -1;
+        }
         resetSlotPointerPress();
         ui.block(inventoryScreenRect());
         return;
@@ -2561,6 +2609,7 @@ void InventorySystem::updateScreen(
         if (slotCommandMenu_.open) {
             closeUiCommandMenu(slotCommandMenu_);
             slotCommandMenuIndex_ = -1;
+            closeRingTargetCommandMenu();
             resetSlotPointerPress();
             return;
         }
@@ -2569,6 +2618,7 @@ void InventorySystem::updateScreen(
         } else {
             closeUiCommandMenu(slotCommandMenu_);
             slotCommandMenuIndex_ = -1;
+            closeRingTargetCommandMenu();
             resetSlotPointerPress();
             open_ = false;
         }
@@ -2636,6 +2686,7 @@ void InventorySystem::updateScreen(
         slotPointerPressCanOpenMenu_ = false;
         closeUiCommandMenu(slotCommandMenu_);
         slotCommandMenuIndex_ = -1;
+        closeRingTargetCommandMenu();
     }
 
     if (slotPointerPressIndex_ >= 0 && input.mouseLeftReleased()) {
@@ -2654,6 +2705,7 @@ void InventorySystem::updateScreen(
     if (input.grabOrPlacePressed()) {
         closeUiCommandMenu(slotCommandMenu_);
         slotCommandMenuIndex_ = -1;
+        closeRingTargetCommandMenu();
         ui.emitSound(grabbedSlotActive_ || hasScreenItem(selectedShortcutIndex()) ? UiSoundEvent::ItemMove : UiSoundEvent::Cancel);
         grabOrPlaceSelected();
     }
@@ -2671,8 +2723,17 @@ void InventorySystem::updateScreen(
         if (grabbedSlotActive_) {
             ui.emitSound(UiSoundEvent::Cancel);
             status_ = "つかみ中は配置してください";
+        } else if (ringTargetCount > 1 && hasScreenItem(selectedShortcutIndex())) {
+            const UiRect slotRect = inventorySlotRect(selectedShortcutIndex());
+            openRingTargetCommandMenu(
+                selectedShortcutIndex(),
+                slotRect.pos + Vec2{slotRect.size.x - 20.0f, 0.0f},
+                spellRing,
+                ringTargetCount);
+            ui.block(inventoryScreenRect());
+            return;
         } else {
-            ui.emitSound(addShortcutSelectionToRing(spellRing) ? UiSoundEvent::RingPlace : UiSoundEvent::Cancel);
+            ui.emitSound(addScreenItemToRingForRing(selectedShortcutIndex(), spellRing, 0) ? UiSoundEvent::RingPlace : UiSoundEvent::Cancel);
         }
     }
     if (input.pressed(InputAction::ToggleProtection)) {
@@ -2698,12 +2759,14 @@ void InventorySystem::update(
     const ObjectCatalog& catalog,
     MagicSystem* magic,
     std::vector<EffectDiscoveryEvent>* discoveryEvents,
-    const EncyclopediaSystem* encyclopedia)
+    const EncyclopediaSystem* encyclopedia,
+    int unlockedRingCount)
 {
     if (input.inventoryPressed() && !blocked) {
         if (open_) {
             closeUiCommandMenu(slotCommandMenu_);
             slotCommandMenuIndex_ = -1;
+            closeRingTargetCommandMenu();
             resetSlotPointerPress();
             if (grabbedSlotActive_) {
                 cancelGrab();
@@ -2714,7 +2777,19 @@ void InventorySystem::update(
     if (!open_ || blocked) {
         return;
     }
-    updateScreen(input, ui, player, spellRing, effectDispatcher, catalog, magic, discoveryEvents, encyclopedia);
+    updateScreen(
+        input,
+        ui,
+        player,
+        spellRing,
+        effectDispatcher,
+        catalog,
+        magic,
+        discoveryEvents,
+        encyclopedia,
+        true,
+        true,
+        unlockedRingCount);
 }
 
 void InventorySystem::render(
