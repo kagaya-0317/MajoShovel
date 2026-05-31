@@ -46,13 +46,13 @@ std::string baseExplorationControlHelp(const BaseFacility* facility)
 
     switch (facility->onInteract) {
     case BaseFacilityAction::MonicaTalk:
-        return "Enter モニカと話す   左クリック 近くのNPCと話す   Esc メニュー";
+        return "Enter モニカと話す   Esc メニュー";
     case BaseFacilityAction::HomeEntrance:
-        return "Enter ルネの家に入る   左クリック 近くの入口を調べる   Esc メニュー";
+        return "Enter ルネの家に入る   Esc メニュー";
     case BaseFacilityAction::HomeExit:
-        return "Enter 屋外へ戻る   左クリック 近くの出口を調べる   Esc メニュー";
+        return "Enter 屋外へ戻る   Esc メニュー";
     default:
-        return std::string("Enter ") + facility->displayName + "を調べる   左クリック 近くの施設を調べる   Esc メニュー";
+        return std::string("Enter ") + facility->displayName + "を調べる   Esc メニュー";
     }
 }
 
@@ -8117,6 +8117,12 @@ void Game::renderBaseScreen(Renderer& renderer) const
         baseSellActive_ ||
         baseUpgradeActive_ ||
         baseMiningStartChoiceActive_;
+    const bool bottomControlHelpBlocked =
+        dialogue_.active() ||
+        pendingStoryTriggerDelayActive() ||
+        !pendingStoryTrigger_.empty() ||
+        !pendingStoryTriggers_.empty() ||
+        firstItemAcquisitionNoticeActive();
     const bool storageActionDialogActive = baseStorageActive_ &&
         (baseStorageMode_ == StorageUiMode::ChooseAction || baseStorageMode_ == StorageUiMode::Bulk);
     const bool merchantActionDialogActive = baseSellActive_ && baseMerchantMode_ == MerchantUiMode::ChooseAction;
@@ -8143,46 +8149,7 @@ void Game::renderBaseScreen(Renderer& renderer) const
         : (baseUpgradeActive_ ? baseUpgradePanelRect() : basePanelRect()))))));
     std::optional<UiWindowScope> panelWindow;
     std::optional<UiCancelControlScope> panelCancelScope;
-    std::string baseControlHelp;
     if (panelUiActive) {
-        const char* panelHelp = "F/Enter 決定  左クリック 決定  Esc/右クリック 戻る";
-        if (baseBookshelfActive_) {
-            panelHelp = bookshelfPage_ == BookshelfPage::Menu
-                ? "F/Enter 決定  左クリック 決定  Esc/右クリック 戻る"
-                : "方向キー 選択  Esc/右クリック 戻る";
-        } else if (baseSellActive_) {
-            panelHelp = baseMerchantMode_ == MerchantUiMode::Buy
-                ? "F/Enter 買う  Esc/右クリック 戻る"
-                : (baseMerchantMode_ == MerchantUiMode::Sell ? "F/Enter 売る  Z/X・1-5 対象/ページ切替  Esc/右クリック 戻る" : "F/Enter 決定  Esc/右クリック 戻る");
-        } else if (baseStorageActive_) {
-            panelHelp = baseStorageMode_ == StorageUiMode::Deposit
-                ? (baseItemSourceIsRing(baseStorageDepositSource_)
-                    ? "F/Enter コマンド  Z/X 対象切替  1-3 プリセット準備  Esc/右クリック 戻る"
-                    : "F/Enter コマンド  T 並び替え  Z/X 対象切替  1-3 プリセット準備  Esc/右クリック 戻る")
-                : (baseStorageMode_ == StorageUiMode::Withdraw
-                    ? "F/Enter コマンド  T 並び替え  Z/X 倉庫ページ  1-3 プリセット準備  Esc/右クリック 戻る"
-                    : (baseStorageMode_ == StorageUiMode::Bulk
-                        ? "F/Enter 実行  1-3 プリセット準備  Esc/右クリック 戻る"
-                        : "F/Enter 決定  Esc/右クリック 戻る"));
-        } else if (baseProcessingActive_) {
-            panelHelp = "F/Enter 確定/実行  Tab 作業選択  Z/X・1-5 対象/ページ切替  Esc/右クリック 戻る";
-        } else if (baseUpgradeActive_) {
-            panelHelp = "F/Enter 強化  Esc/右クリック 戻る";
-        } else if (baseRingWorkshopActive_) {
-            if (baseRingWorkshopMode_ == RingWorkshopMode::Respec) {
-                panelHelp = "Z/X・1-3 リング選択  Q/E・方向キー 選択  F/Enter 決定  Esc/右クリック 戻る";
-            } else if (baseRingWorkshopMode_ == RingWorkshopMode::Upgrade) {
-                panelHelp = "Q/E・方向キー 選択  F/Enter 強化  Esc/右クリック 戻る";
-            }
-        } else if (baseDiaryActive_) {
-            panelHelp = baseDiaryMode_ == BaseDiaryMode::Saved
-                ? "F/Enter 閉じる  Esc/右クリック 閉じる"
-                : "F/Enter 決定  左クリック 決定  Esc/右クリック 戻る";
-        } else if (baseMiningStartChoiceActive_) {
-            panelHelp = baseWarpPointSelectActive_
-                ? "F/Enter 出発  Z/X・方向キー 選択  Esc/右クリック 戻る"
-                : "F/Enter 決定  左クリック 決定  Esc/右クリック 戻る";
-        }
         const char* panelTitle = "魔女の拠点";
         if (baseBookshelfActive_) {
             panelTitle = bookshelfPage_ == BookshelfPage::Items
@@ -8221,7 +8188,6 @@ void Game::renderBaseScreen(Renderer& renderer) const
         if (panelCancelButton) {
             panelCancelScope.emplace(baseCancelState_);
         }
-        baseControlHelp = panelHelp;
         panelWindow.emplace(renderer, "base.panel", panel, panelTitle, "", UiWindowOptions{true, panelCancelButton});
     }
 
@@ -9516,7 +9482,7 @@ void Game::renderBaseScreen(Renderer& renderer) const
                 "base.warp_select",
                 warpPanel,
                 "ワープポイント選択",
-                "F/Enter 出発  Z/X・方向キー 選択  Esc/右クリック 戻る",
+                "F/Enter 出発  Z/X・方向キー 選択  Esc 戻る",
                 UiWindowOptions{true, false});
 
             renderer.drawText(warpPanel.pos + Vec2{48.0f, 74.0f}, "出発地点を選んでください", {198, 198, 206, 255}, 2);
@@ -9563,7 +9529,7 @@ void Game::renderBaseScreen(Renderer& renderer) const
         }
     } else {
         const bool modalOpen = baseBrokenRingDepartureConfirm_.open;
-        if (!modalOpen) {
+        if (!modalOpen && !bottomControlHelpBlocked) {
             drawBaseControlHelp(
                 renderer,
                 camera_.width(),
@@ -9648,17 +9614,6 @@ void Game::renderBaseScreen(Renderer& renderer) const
         drawUiQuantityDialog(renderer, baseStorageQuantityDialog_, storageQuantityDialogRect(), "base.storage.quantity");
     }
 
-    const bool modalHelpActive =
-        baseBrokenRingDepartureConfirm_.open ||
-        baseRegenerateConfirm_.open ||
-        baseProcessingConfirm_.open ||
-        baseResultDialog_.open ||
-        baseStorageQuantityDialog_.open;
-    panelCancelScope.reset();
-    panelWindow.reset();
-    if (!modalHelpActive && !baseControlHelp.empty()) {
-        drawBaseControlHelp(renderer, camera_.width(), camera_.height(), baseControlHelp);
-    }
 }
 
 } // namespace majo

@@ -1138,11 +1138,11 @@ const char* baseInteractionPrompt(const BaseFacility& facility)
 {
     switch (facility.onInteract) {
     case BaseFacilityAction::MonicaTalk:
-        return "Enter: モニカと話す / クリック: 近くのNPCと話す / Esc: メニュー";
+        return "Enter: モニカと話す / Esc: メニュー";
     case BaseFacilityAction::HomeEntrance:
-        return "Enter: ルネの家に入る / クリック: 近くの入口を調べる / Esc: メニュー";
+        return "Enter: ルネの家に入る / Esc: メニュー";
     case BaseFacilityAction::HomeExit:
-        return "Enter: 屋外へ戻る / クリック: 近くの出口を調べる / Esc: メニュー";
+        return "Enter: 屋外へ戻る / Esc: メニュー";
     default:
         return nullptr;
     }

@@ -31,7 +31,7 @@ UiCancelControlState* activeCancelState = nullptr;
 
 std::unordered_map<std::string, UiWindowState> windowStates;
 
-constexpr std::string_view ConfirmDialogHelpText = "F/Enter 決定  Esc/右クリック 戻る";
+constexpr std::string_view ConfirmDialogHelpText = "F/Enter 決定  Esc 戻る";
 float windowAnimationStep = 1.0f / ui::WindowAnimationFrames;
 
 std::string windowKey(std::string_view id, UiRect panel)

@@ -2365,8 +2365,8 @@ void Game::renderObjectImageScaleEditScreen(Renderer& renderer) const
     renderer.drawText(
         {22.0f, 58.0f},
         editingOthers
-            ? "Click: select  Wheel: scroll/scale  Up/Down: scale  Ctrl+S: save  Esc: exit"
-            : "Type: search  Click: select  Wheel: scroll/scale  Up/Down: scale  Ctrl+S: save  Esc: exit",
+            ? "Up/Down: scale  Ctrl+S: save  Esc: exit"
+            : "Type: search  Up/Down: scale  Ctrl+S: save  Esc: exit",
         {198, 206, 222, 255},
         2);
     if (!editingOthers) {
@@ -2910,7 +2910,7 @@ void Game::renderAudioCueEditScreen(Renderer& renderer) const
         audioCueEditMode_ == AudioCueEditMode::Bgm ? "audio.cue_edit.bgm" : "audio.cue_edit.se",
         layout.panel,
         title,
-        "クリック選択 / F適用 / Space試聴 / Ctrl+S保存 / Esc戻る",
+        "F適用 / Space試聴 / Ctrl+S保存 / Esc戻る",
         UiWindowOptions{true, true});
 
     drawUiSubPanel(renderer, layout.cueList);
@@ -3298,7 +3298,7 @@ void Game::renderDebugItemPicker(Renderer& renderer) const
         "debug.item_picker",
         layout.panel,
         "デバッグ: 任意アイテム追加",
-        "キーボード入力 検索  クリック/方向キー 選択  Enter 追加  Esc/右クリック 戻る",
+        "キーボード入力 検索  方向キー 選択  Enter 追加  Esc 戻る",
         UiWindowOptions{true, true});
 
     drawUiSubPanel(renderer, layout.grid);
@@ -3608,7 +3608,7 @@ void Game::renderDebugStoryTest(Renderer& renderer) const
         tutorials ? "debug.story_test.tutorials" : "debug.story_test.events",
         layout.panel,
         tutorials ? "デバッグ: チュートリアルテスト" : "デバッグ: イベントテスト",
-        "クリック/方向キー 選択  F/Enter 再生  Esc/右クリック 戻る",
+        "方向キー 選択  F/Enter 再生  Esc 戻る",
         UiWindowOptions{true, true});
 
     drawUiSubPanel(renderer, layout.list);
@@ -5097,7 +5097,7 @@ void Game::renderBaseEditOverlay(Renderer& renderer) const
     drawUiButton(renderer, baseEditModeButtonRect(1), "Passability", passabilityMode);
     drawUiButton(renderer, baseEditSaveButtonRect(), "Save", false, uiActionButtonStyle());
     renderer.drawText({898.0f, 132.0f}, baseEditDirty_ ? "Unsaved changes (*)" : "Saved", {255, 230, 150, 255}, 2);
-    renderer.drawText({898.0f, 158.0f}, "Ctrl+S save / Ctrl+Z undo / Shift+Click fill / Esc exit", {198, 198, 206, 255}, 2);
+    renderer.drawText({898.0f, 158.0f}, "Ctrl+S save / Ctrl+Z undo / Esc exit", {198, 198, 206, 255}, 2);
 }
 
 bool Game::handleBaseEditCommand(std::string_view normalized)

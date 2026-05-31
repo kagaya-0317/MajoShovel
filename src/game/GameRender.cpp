@@ -803,7 +803,7 @@ void drawRingPlaceWindow(
         "ring.place",
         panel,
         "アイテム配置",
-        "WASD/矢印 選択  F/Enter 配置  Esc/右クリック 戻る",
+        "WASD/矢印 選択  F/Enter 配置  Esc 戻る",
         UiWindowOptions{true, true});
 
     const int slotCount = std::min(inventory.screenSlotCount(), RingPlaceSlotCount);
@@ -4082,15 +4082,11 @@ void Game::renderDungeonLogs(Renderer& renderer) const
 void Game::renderDungeonControlHelp(Renderer& renderer) const
 {
     if (mode_ != ScreenMode::Playing ||
-        enemyTestActive_ ||
+        gameProgressPaused() ||
         screenTransition_.active() ||
         dungeonRingIntroActive() ||
         dungeonEventUiSuppressed() ||
-        firstItemAcquisitionNoticeActive() ||
-        levels_.isChoosing() ||
-        dungeonFocusActive() ||
-        dialogue_.active() ||
-        warpReturnConfirm_.open) {
+        levels_.isChoosing()) {
         return;
     }
 
@@ -4225,7 +4221,7 @@ void Game::renderRingScreen(Renderer& renderer, float totalTime) const
     UiCancelControlScope cancelScope(ringCancelState_);
     const int ringCount = unlockedRingCount();
     const std::string_view RingHelpText = ringItemMoveModeActive_
-        ? "WASD/矢印 位置変更  F/Enter 確定  Esc/右クリック キャンセル"
+        ? "WASD/矢印 位置変更  F/Enter 確定  Esc キャンセル"
         : (ringCount > 1
             ? "1-3 呼出  Shift+1-3 登録  Z/X リング  F/Enter 移動  T 整列  R 外す  Shift+R 全部取る  P 保護"
             : "1-3 呼出  Shift+1-3 登録  WASD/矢印 選択  F/Enter 移動  T 整列  R 外す  Shift+R 全部取る  P 保護");
@@ -4653,16 +4649,16 @@ void Game::renderPauseMenu(Renderer& renderer) const
         ? "ステータス"
         : (pausePage_ == PauseMenuPage::Options ? "オプション" : "PAUSED");
     const char* pauseHelp = pausePage_ == PauseMenuPage::Status
-        ? "Esc/右クリック 戻る"
+        ? "Esc 戻る"
         : (pausePage_ == PauseMenuPage::Ring
-            ? "Z/X でアクティブリング切替  Esc/右クリック 戻る"
+            ? "Z/X でアクティブリング切替  Esc 戻る"
             : (pausePage_ == PauseMenuPage::Options
                 ? (optionsPage_ == OptionsPageOperation
-                    ? "Z/X 設定切替  Q/E 分類切替  ↑/↓ 行選択  ←/→ 列選択  F/Enter 変更\nEsc/右クリック 戻る"
+                    ? "Z/X 設定切替  Q/E 分類切替  ↑/↓ 行選択  ←/→ 列選択  F/Enter 変更\nEsc 戻る"
                     : (optionsPage_ == OptionsPageAudio
-                        ? "Z/X 設定切替  ↑/↓ 項目選択  ←/→ 音量変更\nEsc/右クリック 戻る"
-                        : "Z/X 設定切替  ↑/↓ 項目選択  ←/→ 変更  F/Enter 切替\nEsc/右クリック 戻る"))
-                : "F/Enter 決定  Esc/右クリック 戻る"));
+                        ? "Z/X 設定切替  ↑/↓ 項目選択  ←/→ 音量変更\nEsc 戻る"
+                        : "Z/X 設定切替  ↑/↓ 項目選択  ←/→ 変更  F/Enter 切替\nEsc 戻る"))
+                : "F/Enter 決定  Esc 戻る"));
     UiWindowScope pauseWindow(
         renderer,
         "pause.main",

@@ -2606,7 +2606,7 @@ void InventorySystem::render(
         "inventory.main",
         {{ScreenX, ScreenY}, {ScreenW, ScreenH}},
         "アイテム",
-        "F/Enter 決定  R リングへ  P 保護  G つかむ/置く  T 並び替え  Esc/右クリック 戻る",
+        "F/Enter 決定  R リングへ  P 保護  G つかむ/置く  T 並び替え  Esc 戻る",
         UiWindowOptions{true, true});
 
     const auto entryViewForSlot = [this](int slotIndex) {

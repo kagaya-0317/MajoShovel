@@ -549,7 +549,7 @@ void KamishibaiRenderer::renderTitleScreen(Renderer& renderer, std::string_view 
     };
     renderer.drawOutlinedText(titlePos, title, {255, 248, 220, 255}, {0, 0, 0, 185}, 8, titleScale);
 
-    const std::string prompt = "Enter / F / Click";
+    const std::string prompt = "Enter / F";
     const int promptScale = width >= 800 ? 3 : 2;
     const Vec2 promptSize = renderer.measureText(prompt, promptScale);
     const Vec2 promptPos{

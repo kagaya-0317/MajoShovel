@@ -41,8 +41,8 @@ constexpr float DialogueMessageNameCenterY = 31.0f;
 constexpr float DialogueInactivePortraitBrightness = 0.68f;
 constexpr int DialogueTextScale = 3;
 constexpr std::string_view DialogueWindowId = "dialogue.message";
-constexpr std::string_view DialogueHelpText = "F/Enter/Click/Esc 文字送り";
-constexpr std::string_view MonicaCallHelpText = "F/Enter/Click/Esc 文字送り";
+constexpr std::string_view DialogueHelpText = "F/Enter/Esc 文字送り";
+constexpr std::string_view MonicaCallHelpText = "F/Enter/Esc 文字送り";
 
 enum class DialoguePortraitSide {
     Left,
