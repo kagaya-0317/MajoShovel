@@ -72,6 +72,12 @@ struct InventoryDiscardRequest {
     int quantity = 1;
 };
 
+struct InventoryUseEvent {
+    ItemData item;
+    std::optional<ItemInstance> instance;
+    int healedAmount = 0;
+};
+
 class InventorySystem {
 public:
     bool canAddObjectItem(const ObjectCatalog& catalog, std::string_view objectId) const;
@@ -140,6 +146,7 @@ public:
     void clearEquippedStaff();
     std::vector<RingEquipFxRequest> consumeRingEquipFxRequests();
     std::vector<InventoryDiscardRequest> consumeDiscardRequests();
+    std::vector<InventoryUseEvent> consumeUseEvents();
     std::vector<StatusPopupEvent> consumeStatusPopupEvents();
     void clearObjectStacks();
     bool setObjectItemCount(const ObjectCatalog& catalog, std::string_view objectId, int count);
@@ -324,6 +331,7 @@ private:
     MaterialInventory materials_;
     std::string equippedStaffInstanceId_;
     std::vector<InventoryDiscardRequest> discardRequests_;
+    std::vector<InventoryUseEvent> useEvents_;
     std::vector<StatusPopupEvent> statusPopupEvents_;
     unsigned long long nextInstanceId_ = 1;
     int selected_ = 0;

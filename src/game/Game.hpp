@@ -77,6 +77,7 @@ enum class ScreenMode {
     Inventory,
     Ring,
     ObjectImageScaleEdit,
+    EnemyHitboxEdit,
     AudioCueEdit,
     LevelUp,
     GameOver,
@@ -392,6 +393,7 @@ private:
         LoadSave,
         LoadBaseEdit,
         LoadImageScale,
+        LoadEnemyHitboxes,
         LoadOpening,
         LoadStoryEvents,
         LoadOpeningMeta,
@@ -1273,6 +1275,7 @@ private:
         std::string_view requiredTag = {});
     Vec2 safeLootLandingPosition(Vec2 center, std::mt19937& rng);
     void spawnInventoryDiscardRequests(std::vector<InventoryDiscardRequest> requests);
+    void consumeInventoryUseEvents();
     void updateDigToolFailsafe(float dt);
     bool hasUsableDigToolOnRing() const;
     bool hasUsableDigToolInInventory() const;
@@ -1355,6 +1358,16 @@ private:
     void exitObjectImageScaleEditMode();
     void updateObjectImageScaleEditScreen(const Input& input, UiContext& ui);
     void renderObjectImageScaleEditScreen(Renderer& renderer) const;
+    bool loadEnemyHitboxData();
+    bool saveEnemyHitboxData(std::string& message);
+    bool handleEnemyHitboxEditCommand(std::string_view normalized);
+    void rebuildEnemyHitboxEditList();
+    void applyEnemyHitboxEditFilter(std::string_view preferredSelection = {});
+    bool handleEnemyHitboxEditEvent(const SDL_Event& event);
+    void enterEnemyHitboxEditMode();
+    void exitEnemyHitboxEditMode();
+    void updateEnemyHitboxEditScreen(const Input& input, UiContext& ui);
+    void renderEnemyHitboxEditScreen(Renderer& renderer) const;
     bool loadAudioCueManifestForEdit();
     bool saveAudioCueManifestFromEdit(std::string& message);
     bool handleAudioCueEditCommand(std::string_view normalized);
@@ -1648,18 +1661,32 @@ private:
     bool baseEditDirty_ = false;
     std::unordered_map<std::string, float> objectImageScaleById_;
     std::unordered_map<std::string, float> otherImageScaleByKey_;
+    EnemyHitboxCatalog enemyHitboxes_;
     std::vector<std::string> objectImageScaleAllObjectIds_;
     std::vector<std::string> objectImageScaleObjectIds_;
     std::vector<std::string> otherImageScaleKeys_;
+    std::vector<std::string> enemyHitboxAllEnemyIds_;
+    std::vector<std::string> enemyHitboxEnemyIds_;
     UiTextInputState objectImageScaleSearchInput_;
+    UiTextInputState enemyHitboxSearchInput_;
     ScreenMode objectImageScaleReturnMode_ = ScreenMode::Playing;
+    ScreenMode enemyHitboxEditReturnMode_ = ScreenMode::Playing;
     ImageScaleEditTab imageScaleEditTab_ = ImageScaleEditTab::Objects;
     int objectImageScaleSelectedIndex_ = -1;
     int otherImageScaleSelectedIndex_ = -1;
+    int enemyHitboxSelectedEnemyIndex_ = -1;
+    int enemyHitboxSelectedCircleIndex_ = -1;
     float objectImageScaleScrollOffset_ = 0.0f;
     float otherImageScaleScrollOffset_ = 0.0f;
+    float enemyHitboxScrollOffset_ = 0.0f;
     bool objectImageScaleDirty_ = false;
+    bool enemyHitboxDirty_ = false;
+    bool enemyHitboxDraggingCircle_ = false;
+    Vec2 enemyHitboxDragStartMouse_{};
+    Vec2 enemyHitboxDragStartOffset_{};
+    std::vector<EnemyHitCircle> enemyHitboxClipboard_;
     std::string objectImageScaleStatus_;
+    std::string enemyHitboxStatus_;
     ScreenMode audioCueEditReturnMode_ = ScreenMode::Playing;
     AudioCueEditMode audioCueEditMode_ = AudioCueEditMode::Bgm;
     std::vector<AudioCueEditEntry> audioCueEditEntries_;

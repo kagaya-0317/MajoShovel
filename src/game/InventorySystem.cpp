@@ -426,6 +426,13 @@ std::vector<InventoryDiscardRequest> InventorySystem::consumeDiscardRequests()
     return requests;
 }
 
+std::vector<InventoryUseEvent> InventorySystem::consumeUseEvents()
+{
+    std::vector<InventoryUseEvent> events = std::move(useEvents_);
+    useEvents_.clear();
+    return events;
+}
+
 std::vector<StatusPopupEvent> InventorySystem::consumeStatusPopupEvents()
 {
     std::vector<StatusPopupEvent> consumed;
@@ -2256,11 +2263,14 @@ bool InventorySystem::useObjectStackAtIndex(
     }
 
     status_ = "使用: " + selected.item.name;
+    const ItemData usedItem = selected.item;
+    const int healedAmount = std::max(0, player.hp - beforeHp);
     --selected.count;
     if (selected.count <= 0) {
         removePackedSlotAtPackedIndex(stackIndex);
         objectStacks_.erase(objectStacks_.begin() + stackIndex);
     }
+    useEvents_.push_back(InventoryUseEvent{usedItem, std::nullopt, healedAmount});
     return true;
 }
 
@@ -2314,6 +2324,7 @@ bool InventorySystem::useObjectInstanceAtIndex(
         return false;
     }
 
+    const int beforeHp = player.hp;
     EffectContext context;
     context.owner = &player;
     context.magic = magic;
@@ -2326,6 +2337,10 @@ bool InventorySystem::useObjectInstanceAtIndex(
     effectDispatcher.dispatchNormalEffects(selected.item, context);
     effectDispatcher.dispatch(selected.instance.addedEffects, context);
     status_ = "使用: " + selected.item.name;
+    useEvents_.push_back(InventoryUseEvent{
+        selected.item,
+        std::optional<ItemInstance>{selected.instance},
+        std::max(0, player.hp - beforeHp)});
     return true;
 }
 

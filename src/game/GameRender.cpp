@@ -5463,6 +5463,14 @@ void Game::render(Renderer& renderer, const Time& time)
         renderer.present();
         return;
     }
+    if (mode_ == ScreenMode::EnemyHitboxEdit) {
+        renderEnemyHitboxEditScreen(renderer);
+        finishUiFrame(renderer);
+        renderDebugOverlay(renderer, time);
+        renderScreenTransitionOverlay(renderer);
+        renderer.present();
+        return;
+    }
     if (mode_ == ScreenMode::AudioCueEdit) {
         renderAudioCueEditScreen(renderer);
         finishUiFrame(renderer);

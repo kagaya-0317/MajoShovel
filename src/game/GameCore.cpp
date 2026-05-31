@@ -377,6 +377,7 @@ bool playTimeCountsForMode(ScreenMode mode)
     case ScreenMode::OpeningKamishibai:
     case ScreenMode::Title:
     case ScreenMode::ObjectImageScaleEdit:
+    case ScreenMode::EnemyHitboxEdit:
     case ScreenMode::AudioCueEdit:
         return false;
     default:
@@ -539,6 +540,9 @@ bool Game::handleEvent(const SDL_Event& event)
         return true;
     }
     if (handleObjectImageScaleEditEvent(event)) {
+        return true;
+    }
+    if (handleEnemyHitboxEditEvent(event)) {
         return true;
     }
     if (handleOperationSettingsEvent(event)) {
@@ -797,6 +801,11 @@ bool Game::advanceInitialize()
         loadObjectImageScaleData();
         setObjectImageScaleOverrides(&objectImageScaleById_);
         setWorldIconScaleOverrides(&otherImageScaleByKey_);
+        initializeJob_.step = InitializeStep::LoadEnemyHitboxes;
+        break;
+    case InitializeStep::LoadEnemyHitboxes:
+        loadEnemyHitboxData();
+        enemies_.setHitboxCatalog(&enemyHitboxes_);
         initializeJob_.step = InitializeStep::LoadOpening;
         break;
     case InitializeStep::LoadOpening:
@@ -835,7 +844,7 @@ bool Game::advanceInitialize()
 
 int Game::initializeStepCount() const
 {
-    return 16;
+    return 17;
 }
 
 int Game::initializeStepIndex() const
@@ -854,10 +863,11 @@ int Game::initializeStepIndex() const
     case InitializeStep::LoadSave: return 9;
     case InitializeStep::LoadBaseEdit: return 10;
     case InitializeStep::LoadImageScale: return 11;
-    case InitializeStep::LoadOpening: return 12;
-    case InitializeStep::LoadStoryEvents: return 13;
-    case InitializeStep::LoadOpeningMeta: return 14;
-    case InitializeStep::EnterInitialScreen: return 15;
+    case InitializeStep::LoadEnemyHitboxes: return 12;
+    case InitializeStep::LoadOpening: return 13;
+    case InitializeStep::LoadStoryEvents: return 14;
+    case InitializeStep::LoadOpeningMeta: return 15;
+    case InitializeStep::EnterInitialScreen: return 16;
     case InitializeStep::Done: return initializeStepCount();
     }
     return 0;
@@ -897,6 +907,8 @@ std::string Game::initializeStatusText() const
         return "Loading base layout";
     case InitializeStep::LoadImageScale:
         return "Loading image scale settings";
+    case InitializeStep::LoadEnemyHitboxes:
+        return "Loading enemy hitboxes";
     case InitializeStep::LoadOpening:
         return "Loading opening data";
     case InitializeStep::LoadStoryEvents:
@@ -965,6 +977,7 @@ void Game::resetWorldEffectState()
 void Game::resetWorldEnemyState()
 {
     resetInPlace(enemies_);
+    enemies_.setHitboxCatalog(&enemyHitboxes_);
 }
 
 void Game::resetWorldProjectileState()
@@ -1075,6 +1088,19 @@ void Game::resetWorldUiState()
     otherImageScaleScrollOffset_ = 0.0f;
     objectImageScaleDirty_ = false;
     objectImageScaleStatus_.clear();
+    enemyHitboxEditReturnMode_ = ScreenMode::Playing;
+    enemyHitboxAllEnemyIds_.clear();
+    enemyHitboxEnemyIds_.clear();
+    enemyHitboxSearchInput_ = {};
+    enemyHitboxSelectedEnemyIndex_ = -1;
+    enemyHitboxSelectedCircleIndex_ = -1;
+    enemyHitboxScrollOffset_ = 0.0f;
+    enemyHitboxDirty_ = false;
+    enemyHitboxDraggingCircle_ = false;
+    enemyHitboxDragStartMouse_ = {};
+    enemyHitboxDragStartOffset_ = {};
+    enemyHitboxClipboard_.clear();
+    enemyHitboxStatus_.clear();
     debugItemPickerActive_ = false;
     debugItemPickerAllObjectIds_.clear();
     debugItemPickerObjectIds_.clear();
@@ -3018,6 +3044,11 @@ void Game::updateScreenMode(
         return;
     }
 
+    if (mode_ == ScreenMode::EnemyHitboxEdit) {
+        updateEnemyHitboxEditScreen(input, ui);
+        return;
+    }
+
     if (mode_ == ScreenMode::AudioCueEdit) {
         updateAudioCueEditScreen(input, ui);
         return;
@@ -3204,6 +3235,9 @@ void Game::updateScreenMode(
         break;
     case ScreenMode::ObjectImageScaleEdit:
         updateObjectImageScaleEditScreen(input, ui);
+        break;
+    case ScreenMode::EnemyHitboxEdit:
+        updateEnemyHitboxEditScreen(input, ui);
         break;
     case ScreenMode::AudioCueEdit:
         updateAudioCueEditScreen(input, ui);
@@ -3460,6 +3494,7 @@ void Game::update(const Input& input, const Time& time)
         refreshEquipmentModifiers();
         applyPermanentUpgrades();
     }
+    consumeInventoryUseEvents();
     for (const RingEquipFxRequest& request : inventory_.consumeRingEquipFxRequests()) {
         spawnRingEquipFx(request);
     }
@@ -4167,6 +4202,14 @@ void Game::checkHotReload(float dt)
         if (mode_ == ScreenMode::EndingKamishibai) {
             endingPlayer_.start(endingPages_, hasStoryFlag(EndingSeenFlag));
         }
+        reloadNotice_ = "Hot reload: " + changedPath;
+        reloadNoticeTimer_ = 3.0f;
+        configureWatcher();
+        return;
+    } else if (fileName == "enemy_hitboxes.cfg") {
+        loadEnemyHitboxData();
+        enemies_.setHitboxCatalog(&enemyHitboxes_);
+        rebuildEnemyHitboxEditList();
         reloadNotice_ = "Hot reload: " + changedPath;
         reloadNoticeTimer_ = 3.0f;
         configureWatcher();

@@ -5952,7 +5952,9 @@ void Game::updateWarpPoints(float dt)
             }
         }
         if (distanceSquared(player_.position, point.position) <= WarpPointTouchRadius * WarpPointTouchRadius) {
-            player_.heal(player_.maxHp);
+            if (player_.heal(player_.maxHp) > 0) {
+                magicFx_.playHealPulse(player_.position, 30.0f);
+            }
             if (point.discovered) {
                 continue;
             }
@@ -7081,6 +7083,37 @@ void Game::spawnInventoryDiscardRequests(std::vector<InventoryDiscardRequest> re
                 : "";
             pushDungeonLog(icon + name + "を捨てた");
         }
+    }
+}
+
+void Game::consumeInventoryUseEvents()
+{
+    std::vector<InventoryUseEvent> events = inventory_.consumeUseEvents();
+    if (events.empty()) {
+        return;
+    }
+
+    const bool showDungeonFeedback =
+        mode_ == ScreenMode::Playing ||
+        (mode_ == ScreenMode::Inventory && pauseReturnMode_ != ScreenMode::Base);
+    if (!showDungeonFeedback) {
+        return;
+    }
+
+    for (const InventoryUseEvent& event : events) {
+        if (event.item.id.empty()) {
+            continue;
+        }
+
+        if (event.healedAmount > 0) {
+            magicFx_.playHealPulse(player_.position, 28.0f);
+        }
+
+        const std::string name = event.item.name.empty() ? event.item.id : event.item.name;
+        const std::string icon = objectCatalog_.registry.findById(event.item.id) != nullptr
+            ? inlineItemTag(event.item.id)
+            : "";
+        pushDungeonLog("ルネは" + icon + name + "を使った！");
     }
 }
 

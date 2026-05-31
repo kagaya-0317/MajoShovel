@@ -1087,6 +1087,7 @@ const char* screenModeName(ScreenMode mode)
     case ScreenMode::Inventory: return "Inventory";
     case ScreenMode::Ring: return "Ring";
     case ScreenMode::ObjectImageScaleEdit: return "ObjectImageScaleEdit";
+    case ScreenMode::EnemyHitboxEdit: return "EnemyHitboxEdit";
     case ScreenMode::AudioCueEdit: return "AudioCueEdit";
     case ScreenMode::LevelUp: return "LevelUp";
     case ScreenMode::GameOver: return "GameOver";

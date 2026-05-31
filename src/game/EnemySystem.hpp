@@ -9,6 +9,7 @@
 #include "game/DepthRender.hpp"
 #include "game/EffectDispatcher.hpp"
 #include "game/Enemy.hpp"
+#include "game/EnemyHitbox.hpp"
 #include "game/InventorySystem.hpp"
 #include "game/ItemModel.hpp"
 #include "game/RingImpactSound.hpp"
@@ -159,6 +160,7 @@ struct EnemyMinimapMarker {
 
 class EnemySystem {
 public:
+    void setHitboxCatalog(const EnemyHitboxCatalog* catalog) { hitboxCatalog_ = catalog; }
     void spawnFromDugTiles(
         const std::vector<DugEnemySpawnPoint>& dugTiles,
         TileMap& map,
@@ -383,6 +385,7 @@ private:
     int applyConductiveShock(Vec2 position, float radius, double value, double duration, int excludedEnemyId, std::string_view source);
 
     ObjectPool<Enemy, balance::MaxEnemies> enemies_;
+    const EnemyHitboxCatalog* hitboxCatalog_ = nullptr;
     std::vector<EnemyEvent> events_;
     std::vector<RingImpactSoundEvent> impactSoundEvents_;
     std::vector<CaptureResult> captureResults_;

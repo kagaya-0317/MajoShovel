@@ -19,6 +19,7 @@ enum class GameTestScreenMode {
     Inventory,
     Ring,
     ObjectImageScaleEdit,
+    EnemyHitboxEdit,
     AudioCueEdit,
     LevelUp,
     GameOver,

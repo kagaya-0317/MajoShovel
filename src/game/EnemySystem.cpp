@@ -6713,7 +6713,11 @@ void EnemySystem::update(
             enemy.bossAction.phase != BossActionPhase::Jump &&
             !isJunkCrabToppled(enemy) &&
             !isAstragnaBossAction(enemy);
-        bool touchedPlayer = contactEnabled && resolvePlayerOverlap(player, enemy, map, balance);
+        if (contactEnabled) {
+            resolvePlayerOverlap(player, enemy, map, balance);
+        }
+        bool touchedPlayer = contactEnabled &&
+            enemyHitboxOverlapsCircle(enemy, hitboxCatalog_, player.position, playerRadius);
         if (!touchedPlayer &&
             enemy.jumpLandingBuffTimer > 0.0f &&
             enemy.jumpLandingRadius > 0.0f &&
@@ -6844,7 +6848,7 @@ void EnemySystem::update(
             if (isAstragnaBossAction(enemy)) {
                 continue;
             }
-            const bool overlappingItem = circlesOverlap(enemy.position, effectiveEnemyRadius(enemy), item.worldPosition, capturedHitRadius);
+            const bool overlappingItem = enemyHitboxOverlapsCircle(enemy, hitboxCatalog_, item.worldPosition, capturedHitRadius);
             if (item.type == SpellRingItemType::Shovel && !overlappingItem) {
                 item.unlatchEnemy(enemy.id);
                 continue;
@@ -7280,7 +7284,7 @@ bool EnemySystem::hitByPlayerProjectile(
             }
             continue;
         }
-        if (!circlesOverlap(projectile.position, projectile.radius, enemy.position, effectiveEnemyRadius(enemy))) {
+        if (!enemyHitboxOverlapsCircle(enemy, hitboxCatalog_, projectile.position, projectile.radius)) {
             continue;
         }
 
@@ -7370,8 +7374,7 @@ int EnemySystem::applyColdAirAura(
         if (!enemyCanBeHit(enemy) || enemy.spawnTimer > 0.0f) {
             continue;
         }
-        const float effectiveRadius = radius + effectiveEnemyRadius(enemy);
-        if (distanceSquared(enemy.position, position) > effectiveRadius * effectiveRadius) {
+        if (!enemyHitboxOverlapsCircle(enemy, hitboxCatalog_, position, radius)) {
             continue;
         }
 
@@ -7427,8 +7430,7 @@ int EnemySystem::applyConductiveShock(Vec2 position, float radius, double value,
             continue;
         }
 
-        const float hitRadius = radius + effectiveEnemyRadius(enemy);
-        if (distanceSquared(enemy.position, position) > hitRadius * hitRadius) {
+        if (!enemyHitboxOverlapsCircle(enemy, hitboxCatalog_, position, radius)) {
             continue;
         }
         EntityStateApplyResult shockResult;
@@ -7478,8 +7480,7 @@ int EnemySystem::applyHotAir(
         if (!enemyCanBeHit(enemy) || enemy.spawnTimer > 0.0f) {
             continue;
         }
-        const float effectiveRadius = radius + effectiveEnemyRadius(enemy);
-        if (distanceSquared(enemy.position, position) > effectiveRadius * effectiveRadius) {
+        if (!enemyHitboxOverlapsCircle(enemy, hitboxCatalog_, position, radius)) {
             continue;
         }
 
@@ -7659,8 +7660,7 @@ int EnemySystem::applyMagicArea(const EnemyMagicHitSpec& spec, SpellRingSystem& 
         if (spec.excludedRuntimeId != 0 && enemy.id == spec.excludedRuntimeId) {
             continue;
         }
-        const float hitRadius = radius + effectiveEnemyRadius(enemy);
-        if (distanceSquared(enemy.position, spec.position) > hitRadius * hitRadius) {
+        if (!enemyHitboxOverlapsCircle(enemy, hitboxCatalog_, spec.position, radius)) {
             continue;
         }
 
@@ -8152,7 +8152,7 @@ Enemy* EnemySystem::findCaptureTarget(Vec2 targetWorld)
         if (!enemyCanBeHit(enemy)) {
             continue;
         }
-        const float targetRadius = std::max(CaptureTargetMinRadius, effectiveEnemyRadius(enemy) + CaptureTargetPadding);
+        const float targetRadius = std::max(CaptureTargetMinRadius, enemyHitboxBoundsRadius(enemy, hitboxCatalog_) + CaptureTargetPadding);
         const float targetDistanceSq = distanceSquared(enemy.position, targetWorld);
         if (targetDistanceSq <= targetRadius * targetRadius && targetDistanceSq <= bestDistanceSq) {
             bestDistanceSq = targetDistanceSq;
@@ -8196,7 +8196,7 @@ const Enemy* EnemySystem::findCaptureTarget(Vec2 targetWorld) const
         if (!enemyCanBeHit(enemy)) {
             continue;
         }
-        const float targetRadius = std::max(CaptureTargetMinRadius, effectiveEnemyRadius(enemy) + CaptureTargetPadding);
+        const float targetRadius = std::max(CaptureTargetMinRadius, enemyHitboxBoundsRadius(enemy, hitboxCatalog_) + CaptureTargetPadding);
         const float targetDistanceSq = distanceSquared(enemy.position, targetWorld);
         if (targetDistanceSq <= targetRadius * targetRadius && targetDistanceSq <= bestDistanceSq) {
             bestDistanceSq = targetDistanceSq;
@@ -8232,7 +8232,7 @@ const Enemy* EnemySystem::findCaptureTargetInDirection(Vec2 origin, Vec2 directi
 
         const float distanceSq = lengthSquared(toEnemy);
         const float perpendicularSq = std::max(0.0f, distanceSq - along * along);
-        const float targetRadius = std::max(CaptureTargetMinRadius, effectiveEnemyRadius(enemy) + CaptureTargetPadding);
+        const float targetRadius = std::max(CaptureTargetMinRadius, enemyHitboxBoundsRadius(enemy, hitboxCatalog_) + CaptureTargetPadding);
         if (perpendicularSq > targetRadius * targetRadius) {
             continue;
         }
