@@ -1677,6 +1677,7 @@ private:
     MagicFxEmitterHandle effectTestEmitter_{};
     std::string effectTestStatus_;
     bool projectileTestActive_ = false;
+    bool projectileTestTargetEnabled_ = false;
     std::vector<const ProjectileDefinition*> projectileTestEntries_;
     int projectileTestSelectedIndex_ = 0;
     int projectileTestFrame_ = 0;

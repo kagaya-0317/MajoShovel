@@ -10,6 +10,7 @@
 #include "game/SpellRingSystem.hpp"
 #include "game/TileMap.hpp"
 
+#include <optional>
 #include <string>
 #include <string_view>
 #include <span>
@@ -36,7 +37,12 @@ struct Projectile {
     Vec2 position{};
     Vec2 velocity{};
     float radius = 4.0f;
+    float age = 0.0f;
     float lifetime = 1.0f;
+    float initialLifetime = 1.0f;
+    float trailTimer = 0.0f;
+    bool piercesTargets = false;
+    bool previewTargetHit = false;
     ProjectileOwnerType ownerType = ProjectileOwnerType::Enemy;
     std::string projectileId;
     int damage = 1;
@@ -45,11 +51,44 @@ struct Projectile {
     std::vector<std::string> tags;
 };
 
+enum class ProjectileFxVisual {
+    SoftCircle,
+    Ring,
+    SparkLine,
+    Shard,
+    Needle,
+    Thread,
+    WindArc,
+};
+
+struct ProjectileFxParticle {
+    bool active = false;
+    ProjectileFxVisual visual = ProjectileFxVisual::SoftCircle;
+    Vec2 position{};
+    Vec2 velocity{};
+    Color startColor{255, 255, 255, 220};
+    Color endColor{255, 255, 255, 0};
+    float age = 0.0f;
+    float lifetime = 0.3f;
+    float startRadius = 2.0f;
+    float endRadius = 0.0f;
+    float rotation = 0.0f;
+    float angularVelocity = 0.0f;
+    float drag = 2.8f;
+    float stretch = 1.0f;
+};
+
 struct ProjectileSpawnTuning {
     float speedMultiplier = 1.0f;
     int damageOverride = -1;
     double damageMultiplier = 1.0;
     float radiusScale = 1.0f;
+};
+
+struct ProjectilePreviewTarget {
+    Vec2 position{};
+    float radius = 0.0f;
+    bool enabled = false;
 };
 
 struct ProjectileDefinition {
@@ -60,6 +99,7 @@ struct ProjectileDefinition {
     float lifetime = 2.0f;
     int damage = 1;
     std::string damageType = "blunt";
+    bool piercesTargets = false;
     std::vector<std::string> tags;
 };
 
@@ -77,6 +117,7 @@ public:
         const std::vector<EffectSpec>& effects,
         const ProjectileSpawnTuning& tuning);
     void updatePreview(float dt);
+    void updatePreview(float dt, std::optional<ProjectilePreviewTarget> target);
     void update(
         Player& player,
         SpellRingSystem& spellRing,
@@ -105,6 +146,7 @@ public:
 
 private:
     ObjectPool<Projectile, balance::MaxProjectiles> projectiles_;
+    std::vector<ProjectileFxParticle> projectileFx_;
     std::vector<ProjectileSoundEvent> soundEvents_;
     std::vector<StatusPopupEvent> statusPopupEvents_;
 };

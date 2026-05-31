@@ -263,9 +263,9 @@ private:
         54.0f,
     }};
     std::array<float, SpellRingCount> angularSpeeds_{{
-        2.72f,
-        2.72f,
-        2.72f,
+        2.176f,
+        2.176f,
+        2.176f,
     }};
     std::array<float, SpellRingCount> maxEquippedWeights_{{
         InitialMaxEquippedWeight,

@@ -49,6 +49,13 @@ Vec2 perpendicular(Vec2 value)
     return {-value.y, value.x};
 }
 
+Vec2 rotateVec(Vec2 value, float radians)
+{
+    const float c = std::cos(radians);
+    const float s = std::sin(radians);
+    return {value.x * c - value.y * s, value.x * s + value.y * c};
+}
+
 float wrapRadians(float angle)
 {
     while (angle > Pi) {
@@ -95,9 +102,9 @@ Color scaleAlpha(Color color, float scale)
     return color;
 }
 
-int electricFrameIndex(float age, float phase = 0.0f)
+int electricFrameIndex(float age, float phase = 0.0f, float framesPerSecond = 18.0f)
 {
-    return static_cast<int>(std::floor(age * 10.0f + phase * 6.0f));
+    return static_cast<int>(std::floor(age * framesPerSecond + phase * 11.0f));
 }
 
 float electricFrameAlpha(float age, float lifetime, float phase, bool strong)
@@ -550,7 +557,14 @@ void buildElectricFramePath(
         return;
     }
 
-    const float baseAmplitude = std::max(1.0f, jitterScale * (strong ? 1.15f : 0.92f));
+    float totalLength = 0.0f;
+    for (int i = 1; i < safeCount; ++i) {
+        totalLength += length(points[i] - points[i - 1]);
+    }
+    const float averageStep = totalLength / static_cast<float>(std::max(1, safeCount - 1));
+    const float baseAmplitude = std::max(
+        jitterScale * (strong ? 2.80f : 2.20f),
+        averageStep * (strong ? 0.72f : 0.56f));
     for (int i = 1; i < safeCount - 1; ++i) {
         const Vec2 tangentSource = points[i + 1] - points[i - 1];
         if (lengthSquared(tangentSource) <= 0.0001f) {
@@ -561,9 +575,13 @@ void buildElectricFramePath(
         const Vec2 side = perpendicular(tangent);
         const float t = static_cast<float>(i) / static_cast<float>(safeCount - 1);
         const float centerWeight = std::sin(t * Pi);
-        const float seed = static_cast<float>(frameIndex * 53 + i * 97 + safeCount * 19);
-        const float sideJitter = (hash01(seed) * 2.0f - 1.0f) * baseAmplitude * centerWeight;
-        const float forwardJitter = (hash01(seed + 17.0f) * 2.0f - 1.0f) * baseAmplitude * 0.24f * centerWeight;
+        const float seed = static_cast<float>(frameIndex * 191 + i * 271 + safeCount * 43);
+        const float zigzagSign = hash01(seed + 5.0f) < 0.5f ? -1.0f : 1.0f;
+        const float sideJitter =
+            ((hash01(seed) * 2.0f - 1.0f) * baseAmplitude +
+             zigzagSign * baseAmplitude * lerp(0.36f, 1.05f, hash01(seed + 9.0f))) *
+            centerWeight;
+        const float forwardJitter = (hash01(seed + 17.0f) * 2.0f - 1.0f) * baseAmplitude * 0.62f * centerWeight;
         outPoints[static_cast<std::size_t>(i)] = points[i] + side * sideJitter + tangent * forwardJitter;
     }
 }
@@ -588,6 +606,65 @@ void drawLightningPath(Renderer& renderer, const Vec2* points, int pointCount, f
         drawSharpLightningSegment(renderer, framePoints[static_cast<std::size_t>(i - 1)], framePoints[static_cast<std::size_t>(i)], width * 0.78f, shell);
         drawSharpLightningSegment(renderer, framePoints[static_cast<std::size_t>(i - 1)], framePoints[static_cast<std::size_t>(i)], std::max(1.0f, coreWidth * pulse * taper), core);
     }
+}
+
+void drawFireballCore(Renderer& renderer, const MagicFxSystem::Particle& particle, Color color, float size)
+{
+    if (color.a == 0 || size <= 0.0f) {
+        return;
+    }
+
+    const Vec2 center = particleDrawPosition(particle);
+    const float seed = particle.rotation * 13.7f + particle.startSize * 0.41f + center.x * 0.015f + center.y * 0.019f;
+    const float pulse =
+        1.0f +
+        std::sin(particle.age * Pi * 10.0f + seed) * 0.10f +
+        std::sin(particle.age * Pi * 6.0f + seed * 0.37f) * 0.055f;
+    const float coreSize = size * clamp(pulse, 0.84f, 1.18f);
+    renderer.fillSoftCircle(center, coreSize * 1.72f, scaleAlpha({255, 92, 20, color.a}, 0.44f));
+    renderer.fillSoftCircle(center, coreSize * 1.12f, scaleAlpha({255, 122, 28, color.a}, 0.78f));
+    renderer.fillCircle(center, coreSize * 0.78f, color);
+    renderer.fillSoftCircle(center + Vec2{-coreSize * 0.18f, -coreSize * 0.20f}, coreSize * 0.34f, scaleAlpha({255, 218, 88, color.a}, 0.72f));
+}
+
+void drawThunderArcParticle(Renderer& renderer, const MagicFxSystem::Particle& particle, Color color, float size)
+{
+    if (color.a == 0 || size <= 0.0f) {
+        return;
+    }
+
+    const Vec2 center = particleDrawPosition(particle);
+    const Vec2 forward = lengthSquared(particle.velocity) > 0.0001f ? normalize(particle.velocity) : fromAngle(particle.rotation);
+    const Vec2 side = perpendicular(forward);
+    const float seed = particle.rotation * 18.31f + particle.startSize * 0.37f + center.x * 0.019f + center.y * 0.023f;
+    const int pointCount = 6 + static_cast<int>(hash01(seed + 0.71f) * 4.0f);
+    const float length = std::max(7.0f, size * std::max(1.0f, particle.stretch) * 1.88f);
+    const float bendSign = hash01(seed + 1.37f) < 0.5f ? -1.0f : 1.0f;
+    std::array<Vec2, 12> points{};
+    for (int i = 0; i < pointCount; ++i) {
+        const float t = static_cast<float>(i) / static_cast<float>(pointCount - 1);
+        const float along = (t - 0.5f) * length;
+        const float centerWeight = std::sin(t * Pi);
+        const float alternating = (i % 2 == 0 ? -1.0f : 1.0f) * bendSign;
+        const float bow = centerWeight * length * lerp(0.16f, 0.34f, hash01(seed + 2.0f)) * bendSign;
+        const float notch =
+            alternating * centerWeight * length * lerp(0.13f, 0.30f, hash01(seed + 3.0f + static_cast<float>(i) * 1.9f)) +
+            (hash01(seed + 11.0f + static_cast<float>(i) * 2.3f) - 0.5f) * length * 0.12f * centerWeight;
+        points[static_cast<std::size_t>(i)] = center + forward * along + side * (bow + notch);
+    }
+
+    const int frameIndex = electricFrameIndex(particle.age, hash01(seed + 5.0f), 10.0f);
+    static constexpr std::array<float, 6> FrameAlpha{{1.0f, 0.72f, 0.96f, 0.64f, 0.90f, 0.78f}};
+    const float frameAlpha = FrameAlpha[static_cast<std::size_t>(std::abs(frameIndex) % static_cast<int>(FrameAlpha.size()))];
+    drawLightningPath(
+        renderer,
+        points.data(),
+        pointCount,
+        std::max(1.8f, size * 0.34f),
+        std::max(0.8f, size * 0.12f),
+        (static_cast<float>(color.a) / 255.0f) * frameAlpha,
+        false,
+        frameIndex);
 }
 
 void drawLightningStrike(Renderer& renderer, const MagicFxSystem::LightningStrike& strike)
@@ -659,6 +736,36 @@ void drawThunderImpactArc(Renderer& renderer, const MagicFxSystem::ThunderImpact
         electricFrameIndex(localAge, arc.phase));
 }
 
+void drawWindBlade(Renderer& renderer, const MagicFxSystem::Particle& particle, Color color, float size)
+{
+    if (color.a == 0 || size <= 0.0f) {
+        return;
+    }
+
+    const Vec2 center = particleDrawPosition(particle);
+    const Vec2 forward = lengthSquared(particle.velocity) > 0.0001f ? normalize(particle.velocity) : fromAngle(particle.rotation);
+    const Vec2 side = perpendicular(forward);
+    const float curveSign = particle.angularVelocity < 0.0f ? -1.0f : 1.0f;
+    const float curveStrength = clamp(std::abs(particle.angularVelocity) * 0.28f, 0.32f, 2.20f);
+    const Color trailColor = scaleAlpha(color, 0.46f);
+
+    Vec2 previous = center;
+    constexpr int TrailSegments = 5;
+    for (int i = 1; i <= TrailSegments; ++i) {
+        const float t = static_cast<float>(i) / static_cast<float>(TrailSegments);
+        const float distance = size * particle.stretch * lerp(0.54f, 2.78f, t);
+        const float curve = size * curveStrength * std::sin(t * Pi * 0.55f) * curveSign;
+        const Vec2 next = center - forward * distance + side * curve;
+        const float alpha = lerp(0.86f, 0.18f, t);
+        const float width = std::max(1.2f, size * lerp(0.34f, 0.12f, t));
+        renderer.drawSoftLine(previous, next, width, scaleAlpha(trailColor, alpha));
+        previous = next;
+    }
+
+    renderer.drawSoftLine(center - forward * (size * 0.38f), center + forward * (size * 1.52f), std::max(1.2f, size * 0.24f), scaleAlpha({236, 255, 220, color.a}, 0.58f));
+    drawWindCrescent(renderer, center, size, std::atan2(forward.y, forward.x), particle.stretch, color);
+}
+
 void drawParticleGroundShadow(Renderer& renderer, const MagicFxSystem::Particle& particle, float size)
 {
     if (particle.bouncesRemaining <= 0 && particle.height <= 0.5f) {
@@ -687,7 +794,12 @@ void drawParticle(Renderer& renderer, const MagicFxSystem::Particle& particle)
         return;
     }
     drawParticleGroundShadow(renderer, particle, size);
-    const Vec2 center = particleDrawPosition(particle);
+    Vec2 center = particleDrawPosition(particle);
+    if (particle.shape == MagicFxParticleShape::DirtClod && particle.lifetime > 3.0f) {
+        const float seed = particle.rotation * 4.37f + particle.startSize * 0.83f + particle.lifetime * 0.19f;
+        const float swayAmount = particle.startSize * (1.75f + 0.42f * std::sin(particle.age * 0.64f + seed));
+        center += fromAngle(seed + std::sin(particle.age * 0.58f + seed) * 1.15f) * swayAmount;
+    }
     switch (particle.shape) {
     case MagicFxParticleShape::SoftCircle:
         renderer.fillSoftCircle(center, size, color);
@@ -704,6 +816,12 @@ void drawParticle(Renderer& renderer, const MagicFxSystem::Particle& particle)
         renderer.drawSoftLine(center - half, center + half, std::max(1.0f, size * 0.32f), color);
         break;
     }
+    case MagicFxParticleShape::FireballCore:
+        drawFireballCore(renderer, particle, color, size);
+        break;
+    case MagicFxParticleShape::ThunderArc:
+        drawThunderArcParticle(renderer, particle, color, size);
+        break;
     case MagicFxParticleShape::Shard:
         drawShard(renderer, center, size, particle.rotation, color);
         break;
@@ -712,6 +830,9 @@ void drawParticle(Renderer& renderer, const MagicFxSystem::Particle& particle)
         break;
     case MagicFxParticleShape::WindCrescent:
         drawWindCrescent(renderer, center, size, particle.rotation, particle.stretch, color);
+        break;
+    case MagicFxParticleShape::WindBlade:
+        drawWindBlade(renderer, particle, color, size);
         break;
     case MagicFxParticleShape::WindSparkle:
         drawWindSparkle(renderer, center, size, particle.rotation, color);
@@ -875,21 +996,21 @@ MagicFxEmitterHandle MagicFxSystem::startFireAura(Vec2 position, float radius)
     outerFlame.direction = {0.0f, -1.0f};
     outerFlame.particleShape = MagicFxParticleShape::SoftCircle;
     outerFlame.spawnShape = MagicFxSpawnShape::Circle;
-    outerFlame.startColor = {255, 92, 24, 176};
-    outerFlame.endColor = {255, 178, 60, 0};
-    outerFlame.speed = {10.0f, 34.0f};
-    outerFlame.lifetime = {0.18f, 0.36f};
-    outerFlame.startSize = {std::max(1.8f, radius * 0.16f), std::max(3.2f, radius * 0.30f)};
-    outerFlame.endSize = {0.0f, std::max(0.8f, radius * 0.07f)};
+    outerFlame.startColor = {255, 118, 24, 188};
+    outerFlame.endColor = {255, 154, 42, 0};
+    outerFlame.speed = {6.0f, 22.0f};
+    outerFlame.lifetime = {0.82f, 1.35f};
+    outerFlame.startSize = {std::max(0.8f, radius * 0.055f), std::max(1.8f, radius * 0.125f)};
+    outerFlame.endSize = {0.0f, std::max(0.35f, radius * 0.028f)};
     outerFlame.height = {0.0f, 4.0f};
-    outerFlame.verticalVelocity = {12.0f, 34.0f};
-    outerFlame.gravity = 20.0f;
-    outerFlame.drag = 2.9f;
-    outerFlame.spawnRadius = radius * 0.62f;
+    outerFlame.verticalVelocity = {12.0f, 30.0f};
+    outerFlame.gravity = 12.0f;
+    outerFlame.drag = 1.45f;
+    outerFlame.spawnRadius = radius * 0.68f;
     outerFlame.spreadRadians = Pi * 0.92f;
     outerFlame.fadeInFraction = 0.04f;
-    outerFlame.fadeOutFraction = 0.72f;
-    outerFlame.emissionRate = 58.0f;
+    outerFlame.fadeOutFraction = 0.70f;
+    outerFlame.emissionRate = 84.0f;
     outerFlame.loop = true;
     outerFlame.depthSorted = true;
     const MagicFxEmitterHandle handle = addEmitter(outerFlame);
@@ -899,20 +1020,20 @@ MagicFxEmitterHandle MagicFxSystem::startFireAura(Vec2 position, float radius)
     core.direction = {0.0f, -1.0f};
     core.particleShape = MagicFxParticleShape::Circle;
     core.spawnShape = MagicFxSpawnShape::Circle;
-    core.startColor = {255, 238, 118, 220};
-    core.endColor = {255, 112, 28, 0};
-    core.speed = {6.0f, 24.0f};
-    core.lifetime = {0.10f, 0.22f};
-    core.startSize = {std::max(1.2f, radius * 0.08f), std::max(2.2f, radius * 0.16f)};
-    core.endSize = {0.0f, std::max(0.6f, radius * 0.04f)};
+    core.startColor = {255, 238, 104, 224};
+    core.endColor = {255, 184, 52, 0};
+    core.speed = {4.0f, 18.0f};
+    core.lifetime = {0.68f, 1.12f};
+    core.startSize = {std::max(0.7f, radius * 0.040f), std::max(1.5f, radius * 0.100f)};
+    core.endSize = {0.0f, std::max(0.28f, radius * 0.022f)};
     core.height = {0.0f, 2.0f};
-    core.verticalVelocity = {10.0f, 28.0f};
-    core.gravity = 16.0f;
-    core.drag = 3.4f;
-    core.spawnRadius = radius * 0.38f;
+    core.verticalVelocity = {14.0f, 34.0f};
+    core.gravity = 11.0f;
+    core.drag = 1.65f;
+    core.spawnRadius = radius * 0.36f;
     core.spreadRadians = Pi * 0.62f;
     core.fadeOutFraction = 0.72f;
-    core.emissionRate = 44.0f;
+    core.emissionRate = 68.0f;
     core.loop = true;
     core.depthSorted = true;
     addEmitterWithParent(core, handle.id);
@@ -920,23 +1041,22 @@ MagicFxEmitterHandle MagicFxSystem::startFireAura(Vec2 position, float radius)
     MagicFxEmitterConfig embers;
     embers.position = position;
     embers.direction = {0.0f, -1.0f};
-    embers.particleShape = MagicFxParticleShape::SparkLine;
+    embers.particleShape = MagicFxParticleShape::Circle;
     embers.spawnShape = MagicFxSpawnShape::Circle;
-    embers.startColor = {255, 224, 92, 205};
-    embers.endColor = {255, 64, 18, 0};
-    embers.speed = {24.0f, 70.0f};
-    embers.lifetime = {0.14f, 0.34f};
-    embers.startSize = {0.8f, 1.8f};
-    embers.endSize = {0.0f, 0.4f};
+    embers.startColor = {255, 216, 86, 190};
+    embers.endColor = {255, 88, 18, 0};
+    embers.speed = {14.0f, 44.0f};
+    embers.lifetime = {0.90f, 1.55f};
+    embers.startSize = {0.35f, 0.95f};
+    embers.endSize = {0.0f, 0.16f};
     embers.height = {0.0f, 3.0f};
-    embers.verticalVelocity = {6.0f, 20.0f};
-    embers.gravity = 10.0f;
-    embers.drag = 1.7f;
+    embers.verticalVelocity = {16.0f, 42.0f};
+    embers.gravity = 16.0f;
+    embers.drag = 1.15f;
     embers.spawnRadius = radius * 0.58f;
     embers.spreadRadians = Pi * 1.20f;
-    embers.stretch = 2.1f;
     embers.fadeOutFraction = 0.76f;
-    embers.emissionRate = 22.0f;
+    embers.emissionRate = 24.0f;
     embers.loop = true;
     embers.depthSorted = true;
     addEmitterWithParent(embers, handle.id);
@@ -960,7 +1080,7 @@ MagicFxEmitterHandle MagicFxSystem::startFireAura(Vec2 position, float radius)
     smoke.spreadRadians = Pi * 0.66f;
     smoke.fadeInFraction = 0.18f;
     smoke.fadeOutFraction = 0.74f;
-    smoke.emissionRate = 8.0f;
+    smoke.emissionRate = 16.0f;
     smoke.loop = true;
     smoke.depthSorted = true;
     addEmitterWithParent(smoke, handle.id);
@@ -973,29 +1093,47 @@ MagicFxEmitterHandle MagicFxSystem::startFireballLoop(Vec2 position, Vec2 direct
     direction = normalize(direction);
     radius = std::max(3.0f, radius * 0.72f);
 
+    MagicFxEmitterConfig body;
+    body.position = position;
+    body.direction = direction;
+    body.particleShape = MagicFxParticleShape::FireballCore;
+    body.spawnShape = MagicFxSpawnShape::Point;
+    body.startColor = {255, 126, 28, 240};
+    body.endColor = {255, 96, 20, 222};
+    body.speed = {0.0f, 0.0f};
+    body.lifetime = {0.075f, 0.115f};
+    body.startSize = {std::max(1.5f, radius * 0.31f), std::max(2.4f, radius * 0.44f)};
+    body.endSize = body.startSize;
+    body.rotation = {0.0f, Pi * 2.0f};
+    body.fadeOutFraction = 0.10f;
+    body.emissionRate = 58.0f;
+    body.loop = true;
+    body.depthSorted = true;
+    const MagicFxEmitterHandle handle = addEmitter(body);
+
     MagicFxEmitterConfig core;
     core.position = position;
     core.direction = direction * -1.0f;
     core.baseVelocity = direction * -28.0f;
     core.particleShape = MagicFxParticleShape::Circle;
     core.spawnShape = MagicFxSpawnShape::Circle;
-    core.startColor = {255, 246, 132, 238};
-    core.endColor = {255, 114, 30, 0};
-    core.speed = {10.0f, 36.0f};
-    core.lifetime = {0.09f, 0.20f};
-    core.startSize = {std::max(1.2f, radius * 0.16f), std::max(2.4f, radius * 0.30f)};
-    core.endSize = {0.0f, std::max(0.45f, radius * 0.05f)};
+    core.startColor = {255, 238, 104, 238};
+    core.endColor = {255, 178, 48, 0};
+    core.speed = {7.0f, 26.0f};
+    core.lifetime = {0.44f, 0.82f};
+    core.startSize = {std::max(0.8f, radius * 0.075f), std::max(1.8f, radius * 0.180f)};
+    core.endSize = {0.0f, std::max(0.28f, radius * 0.028f)};
     core.height = {0.0f, 3.0f};
-    core.verticalVelocity = {-2.0f, 8.0f};
+    core.verticalVelocity = {3.0f, 18.0f};
     core.gravity = 8.0f;
-    core.drag = 3.2f;
-    core.spawnRadius = std::max(1.0f, radius * 0.22f);
+    core.drag = 1.7f;
+    core.spawnRadius = std::max(1.0f, radius * 0.28f);
     core.spreadRadians = Pi * 1.25f;
     core.fadeOutFraction = 0.76f;
-    core.emissionRate = 118.0f;
+    core.emissionRate = 66.0f;
     core.loop = true;
     core.depthSorted = true;
-    const MagicFxEmitterHandle handle = addEmitter(core);
+    addEmitterWithParent(core, handle.id);
 
     MagicFxEmitterConfig outerFlame;
     outerFlame.position = position;
@@ -1003,20 +1141,20 @@ MagicFxEmitterHandle MagicFxSystem::startFireballLoop(Vec2 position, Vec2 direct
     outerFlame.baseVelocity = direction * -52.0f;
     outerFlame.particleShape = MagicFxParticleShape::SoftCircle;
     outerFlame.spawnShape = MagicFxSpawnShape::Circle;
-    outerFlame.startColor = {255, 104, 24, 205};
-    outerFlame.endColor = {255, 190, 66, 0};
-    outerFlame.speed = {22.0f, 78.0f};
-    outerFlame.lifetime = {0.16f, 0.34f};
-    outerFlame.startSize = {std::max(1.6f, radius * 0.20f), std::max(3.8f, radius * 0.46f)};
-    outerFlame.endSize = {0.0f, std::max(0.55f, radius * 0.08f)};
+    outerFlame.startColor = {255, 120, 26, 214};
+    outerFlame.endColor = {255, 154, 42, 0};
+    outerFlame.speed = {16.0f, 54.0f};
+    outerFlame.lifetime = {0.58f, 1.08f};
+    outerFlame.startSize = {std::max(0.9f, radius * 0.090f), std::max(2.2f, radius * 0.250f)};
+    outerFlame.endSize = {0.0f, std::max(0.32f, radius * 0.035f)};
     outerFlame.height = {0.0f, 5.0f};
-    outerFlame.verticalVelocity = {-5.0f, 12.0f};
+    outerFlame.verticalVelocity = {0.0f, 22.0f};
     outerFlame.gravity = 9.0f;
-    outerFlame.drag = 2.0f;
-    outerFlame.spawnRadius = std::max(1.4f, radius * 0.42f);
+    outerFlame.drag = 1.25f;
+    outerFlame.spawnRadius = std::max(1.4f, radius * 0.48f);
     outerFlame.spreadRadians = Pi * 1.55f;
     outerFlame.fadeOutFraction = 0.80f;
-    outerFlame.emissionRate = 96.0f;
+    outerFlame.emissionRate = 52.0f;
     outerFlame.loop = true;
     outerFlame.depthSorted = true;
     addEmitterWithParent(outerFlame, handle.id);
@@ -1025,23 +1163,22 @@ MagicFxEmitterHandle MagicFxSystem::startFireballLoop(Vec2 position, Vec2 direct
     sparks.position = position;
     sparks.direction = direction * -1.0f;
     sparks.baseVelocity = direction * -66.0f;
-    sparks.particleShape = MagicFxParticleShape::SparkLine;
+    sparks.particleShape = MagicFxParticleShape::Circle;
     sparks.spawnShape = MagicFxSpawnShape::Circle;
     sparks.startColor = {255, 236, 112, 230};
     sparks.endColor = {255, 64, 16, 0};
-    sparks.speed = {46.0f, 128.0f};
-    sparks.lifetime = {0.10f, 0.26f};
-    sparks.startSize = {0.55f, 1.35f};
-    sparks.endSize = {0.0f, 0.2f};
+    sparks.speed = {26.0f, 84.0f};
+    sparks.lifetime = {0.52f, 1.02f};
+    sparks.startSize = {0.28f, 0.85f};
+    sparks.endSize = {0.0f, 0.12f};
     sparks.height = {0.0f, 4.0f};
-    sparks.verticalVelocity = {-4.0f, 10.0f};
+    sparks.verticalVelocity = {4.0f, 24.0f};
     sparks.gravity = 12.0f;
     sparks.drag = 0.9f;
     sparks.spawnRadius = std::max(1.0f, radius * 0.34f);
     sparks.spreadRadians = Pi * 1.75f;
-    sparks.stretch = 2.8f;
     sparks.fadeOutFraction = 0.82f;
-    sparks.emissionRate = 42.0f;
+    sparks.emissionRate = 24.0f;
     sparks.loop = true;
     sparks.depthSorted = true;
     addEmitterWithParent(sparks, handle.id);
@@ -1055,9 +1192,9 @@ MagicFxEmitterHandle MagicFxSystem::startFireballLoop(Vec2 position, Vec2 direct
     smoke.startColor = {72, 58, 50, 52};
     smoke.endColor = {38, 34, 34, 0};
     smoke.speed = {6.0f, 20.0f};
-    smoke.lifetime = {0.28f, 0.56f};
-    smoke.startSize = {std::max(1.4f, radius * 0.16f), std::max(3.0f, radius * 0.32f)};
-    smoke.endSize = {std::max(2.2f, radius * 0.32f), std::max(4.8f, radius * 0.58f)};
+    smoke.lifetime = {0.46f, 0.92f};
+    smoke.startSize = {std::max(1.0f, radius * 0.12f), std::max(2.4f, radius * 0.26f)};
+    smoke.endSize = {std::max(1.8f, radius * 0.26f), std::max(4.2f, radius * 0.50f)};
     smoke.height = {2.0f, 7.0f};
     smoke.verticalVelocity = {4.0f, 16.0f};
     smoke.gravity = 2.0f;
@@ -1066,7 +1203,7 @@ MagicFxEmitterHandle MagicFxSystem::startFireballLoop(Vec2 position, Vec2 direct
     smoke.spreadRadians = Pi * 1.10f;
     smoke.fadeInFraction = 0.16f;
     smoke.fadeOutFraction = 0.78f;
-    smoke.emissionRate = 20.0f;
+    smoke.emissionRate = 12.0f;
     smoke.loop = true;
     smoke.depthSorted = true;
     addEmitterWithParent(smoke, handle.id);
@@ -1209,23 +1346,23 @@ MagicFxEmitterHandle MagicFxSystem::startIceAura(Vec2 position, float radius)
     frost.direction = {0.0f, -1.0f};
     frost.particleShape = MagicFxParticleShape::Shard;
     frost.spawnShape = MagicFxSpawnShape::Ring;
-    frost.startColor = {156, 226, 255, 176};
+    frost.startColor = {170, 232, 255, 190};
     frost.endColor = {228, 252, 255, 0};
-    frost.speed = {3.0f, 12.0f};
-    frost.lifetime = {0.40f, 0.78f};
-    frost.startSize = {std::max(1.6f, radius * 0.10f), std::max(2.8f, radius * 0.18f)};
-    frost.endSize = {0.0f, 0.8f};
+    frost.speed = {1.5f, 7.5f};
+    frost.lifetime = {1.10f, 1.85f};
+    frost.startSize = {std::max(1.4f, radius * 0.085f), std::max(2.5f, radius * 0.155f)};
+    frost.endSize = {0.0f, 0.55f};
     frost.rotation = {0.0f, Pi * 2.0f};
-    frost.angularVelocity = {-1.6f, 1.6f};
+    frost.angularVelocity = {-0.65f, 0.65f};
     frost.height = {0.0f, 5.0f};
-    frost.verticalVelocity = {1.0f, 7.0f};
-    frost.gravity = 2.0f;
-    frost.drag = 1.8f;
+    frost.verticalVelocity = {0.0f, 4.0f};
+    frost.gravity = 0.9f;
+    frost.drag = 1.0f;
     frost.spawnRadius = std::max(3.0f, radius * 0.82f);
     frost.spreadRadians = Pi * 1.05f;
     frost.fadeInFraction = 0.12f;
     frost.fadeOutFraction = 0.74f;
-    frost.emissionRate = 28.0f;
+    frost.emissionRate = 10.0f;
     frost.loop = true;
     frost.depthSorted = true;
     const MagicFxEmitterHandle handle = addEmitter(frost);
@@ -1235,21 +1372,21 @@ MagicFxEmitterHandle MagicFxSystem::startIceAura(Vec2 position, float radius)
     mist.direction = {0.0f, -1.0f};
     mist.particleShape = MagicFxParticleShape::SoftCircle;
     mist.spawnShape = MagicFxSpawnShape::Circle;
-    mist.startColor = {180, 236, 255, 48};
+    mist.startColor = {176, 236, 255, 78};
     mist.endColor = {234, 252, 255, 0};
-    mist.speed = {2.0f, 8.0f};
-    mist.lifetime = {0.42f, 0.86f};
-    mist.startSize = {radius * 0.12f, radius * 0.24f};
-    mist.endSize = {radius * 0.22f, radius * 0.44f};
+    mist.speed = {1.0f, 5.5f};
+    mist.lifetime = {1.15f, 2.10f};
+    mist.startSize = {radius * 0.16f, radius * 0.32f};
+    mist.endSize = {radius * 0.38f, radius * 0.72f};
     mist.height = {0.0f, 4.0f};
-    mist.verticalVelocity = {2.0f, 8.0f};
-    mist.gravity = 0.8f;
-    mist.drag = 1.2f;
-    mist.spawnRadius = radius * 0.56f;
+    mist.verticalVelocity = {1.0f, 6.0f};
+    mist.gravity = 0.35f;
+    mist.drag = 0.75f;
+    mist.spawnRadius = radius * 0.66f;
     mist.spreadRadians = Pi * 0.82f;
     mist.fadeInFraction = 0.24f;
     mist.fadeOutFraction = 0.76f;
-    mist.emissionRate = 16.0f;
+    mist.emissionRate = 24.0f;
     mist.loop = true;
     mist.depthSorted = true;
     addEmitterWithParent(mist, handle.id);
@@ -1261,21 +1398,21 @@ MagicFxEmitterHandle MagicFxSystem::startIceAura(Vec2 position, float radius)
     glints.spawnShape = MagicFxSpawnShape::Ring;
     glints.startColor = {248, 255, 255, 230};
     glints.endColor = {162, 226, 255, 0};
-    glints.speed = {0.0f, 8.0f};
-    glints.lifetime = {0.08f, 0.18f};
-    glints.startSize = {0.8f, 1.8f};
-    glints.endSize = {0.0f, 0.3f};
+    glints.speed = {0.0f, 4.0f};
+    glints.lifetime = {0.48f, 0.95f};
+    glints.startSize = {0.55f, 1.25f};
+    glints.endSize = {0.0f, 0.18f};
     glints.rotation = {0.0f, Pi * 2.0f};
     glints.height = {1.0f, 6.0f};
-    glints.verticalVelocity = {0.0f, 4.0f};
-    glints.gravity = 0.6f;
-    glints.drag = 1.0f;
+    glints.verticalVelocity = {0.0f, 2.0f};
+    glints.gravity = 0.2f;
+    glints.drag = 0.7f;
     glints.spawnRadius = radius * 0.86f;
     glints.spreadRadians = Pi * 2.0f;
     glints.stretch = 1.35f;
     glints.fadeInFraction = 0.18f;
     glints.fadeOutFraction = 0.70f;
-    glints.emissionRate = 14.0f;
+    glints.emissionRate = 6.0f;
     glints.loop = true;
     glints.depthSorted = true;
     addEmitterWithParent(glints, handle.id);
@@ -1292,24 +1429,24 @@ MagicFxEmitterHandle MagicFxSystem::startIceShardLoop(Vec2 position, Vec2 direct
     MagicFxEmitterConfig crystal;
     crystal.position = position;
     crystal.direction = direction * -1.0f;
-    crystal.baseVelocity = direction * -12.0f;
+    crystal.baseVelocity = direction * -4.0f;
     crystal.particleShape = MagicFxParticleShape::Crystal;
     crystal.spawnShape = MagicFxSpawnShape::Circle;
     crystal.startColor = {210, 246, 255, 232};
     crystal.endColor = {110, 204, 255, 0};
-    crystal.speed = {2.0f, 10.0f};
-    crystal.lifetime = {0.12f, 0.22f};
-    crystal.startSize = {std::max(4.4f, radius * 0.54f), std::max(7.0f, radius * 0.84f)};
-    crystal.endSize = {std::max(1.0f, radius * 0.12f), std::max(1.8f, radius * 0.20f)};
-    crystal.rotation = {forwardAngle - 0.08f, forwardAngle + 0.08f};
-    crystal.angularVelocity = {-0.45f, 0.45f};
-    crystal.height = {0.0f, 2.0f};
-    crystal.verticalVelocity = {-1.0f, 2.0f};
-    crystal.drag = 2.4f;
-    crystal.spawnRadius = std::max(0.9f, radius * 0.12f);
-    crystal.spreadRadians = Pi * 0.22f;
+    crystal.speed = {0.0f, 0.6f};
+    crystal.lifetime = {0.42f, 0.42f};
+    crystal.startSize = {std::max(5.0f, radius * 0.62f), std::max(5.0f, radius * 0.62f)};
+    crystal.endSize = crystal.startSize;
+    crystal.rotation = {forwardAngle, forwardAngle};
+    crystal.angularVelocity = {0.0f, 0.0f};
+    crystal.height = {0.0f, 0.8f};
+    crystal.verticalVelocity = {0.0f, 0.0f};
+    crystal.drag = 1.8f;
+    crystal.spawnRadius = std::max(0.2f, radius * 0.035f);
+    crystal.spreadRadians = Pi * 0.04f;
     crystal.fadeOutFraction = 0.66f;
-    crystal.emissionRate = 42.0f;
+    crystal.emissionRate = 34.0f;
     crystal.loop = true;
     crystal.depthSorted = true;
     const MagicFxEmitterHandle handle = addEmitter(crystal);
@@ -1317,24 +1454,24 @@ MagicFxEmitterHandle MagicFxSystem::startIceShardLoop(Vec2 position, Vec2 direct
     MagicFxEmitterConfig facets;
     facets.position = position;
     facets.direction = direction * -1.0f;
-    facets.baseVelocity = direction * -10.0f;
+    facets.baseVelocity = direction * -5.0f;
     facets.particleShape = MagicFxParticleShape::Shard;
     facets.spawnShape = MagicFxSpawnShape::Circle;
     facets.startColor = {246, 255, 255, 190};
     facets.endColor = {138, 222, 255, 0};
-    facets.speed = {4.0f, 20.0f};
-    facets.lifetime = {0.10f, 0.20f};
-    facets.startSize = {std::max(1.4f, radius * 0.18f), std::max(2.8f, radius * 0.30f)};
-    facets.endSize = {0.0f, 0.4f};
-    facets.rotation = {forwardAngle - 0.45f, forwardAngle + 0.45f};
-    facets.angularVelocity = {-1.4f, 1.4f};
-    facets.height = {0.0f, 3.0f};
-    facets.verticalVelocity = {-1.0f, 4.0f};
+    facets.speed = {0.0f, 2.0f};
+    facets.lifetime = {0.42f, 0.42f};
+    facets.startSize = {std::max(1.2f, radius * 0.16f), std::max(1.2f, radius * 0.16f)};
+    facets.endSize = facets.startSize;
+    facets.rotation = {forwardAngle, forwardAngle};
+    facets.angularVelocity = {0.0f, 0.0f};
+    facets.height = {0.0f, 1.0f};
+    facets.verticalVelocity = {0.0f, 0.0f};
     facets.drag = 1.8f;
-    facets.spawnRadius = std::max(1.4f, radius * 0.36f);
-    facets.spreadRadians = Pi * 0.78f;
+    facets.spawnRadius = std::max(0.4f, radius * 0.10f);
+    facets.spreadRadians = Pi * 0.10f;
     facets.fadeOutFraction = 0.76f;
-    facets.emissionRate = 32.0f;
+    facets.emissionRate = 2.0f;
     facets.loop = true;
     facets.depthSorted = true;
     addEmitterWithParent(facets, handle.id);
@@ -1342,22 +1479,21 @@ MagicFxEmitterHandle MagicFxSystem::startIceShardLoop(Vec2 position, Vec2 direct
     MagicFxEmitterConfig mist;
     mist.position = position;
     mist.direction = direction * -1.0f;
-    mist.baseVelocity = direction * -28.0f;
-    mist.particleShape = MagicFxParticleShape::SparkLine;
+    mist.baseVelocity = direction * -10.0f;
+    mist.particleShape = MagicFxParticleShape::SoftCircle;
     mist.spawnShape = MagicFxSpawnShape::Point;
     mist.startColor = {174, 232, 255, 158};
     mist.endColor = {224, 252, 255, 0};
-    mist.speed = {16.0f, 46.0f};
-    mist.lifetime = {0.16f, 0.32f};
-    mist.startSize = {std::max(1.0f, radius * 0.12f), std::max(2.0f, radius * 0.22f)};
-    mist.endSize = {0.0f, 0.55f};
+    mist.speed = {1.0f, 6.0f};
+    mist.lifetime = {0.34f, 0.74f};
+    mist.startSize = {std::max(0.8f, radius * 0.10f), std::max(1.8f, radius * 0.20f)};
+    mist.endSize = {std::max(0.8f, radius * 0.10f), std::max(2.8f, radius * 0.30f)};
     mist.height = {0.0f, 2.0f};
-    mist.verticalVelocity = {-2.0f, 4.0f};
-    mist.drag = 1.6f;
-    mist.spreadRadians = Pi * 0.68f;
-    mist.stretch = 3.0f;
+    mist.verticalVelocity = {0.0f, 1.2f};
+    mist.drag = 1.5f;
+    mist.spreadRadians = Pi * 0.20f;
     mist.fadeOutFraction = 0.78f;
-    mist.emissionRate = 40.0f;
+    mist.emissionRate = 10.0f;
     mist.loop = true;
     mist.depthSorted = true;
     addEmitterWithParent(mist, handle.id);
@@ -1365,23 +1501,23 @@ MagicFxEmitterHandle MagicFxSystem::startIceShardLoop(Vec2 position, Vec2 direct
     MagicFxEmitterConfig powder;
     powder.position = position;
     powder.direction = direction * -1.0f;
-    powder.baseVelocity = direction * -18.0f;
+    powder.baseVelocity = direction * -8.0f;
     powder.particleShape = MagicFxParticleShape::Circle;
     powder.spawnShape = MagicFxSpawnShape::Circle;
     powder.startColor = {244, 255, 255, 190};
     powder.endColor = {170, 230, 255, 0};
-    powder.speed = {8.0f, 30.0f};
-    powder.lifetime = {0.18f, 0.38f};
-    powder.startSize = {0.8f, 1.8f};
-    powder.endSize = {0.0f, 0.35f};
+    powder.speed = {1.0f, 7.0f};
+    powder.lifetime = {0.42f, 0.42f};
+    powder.startSize = {0.9f, 0.9f};
+    powder.endSize = powder.startSize;
     powder.height = {0.0f, 3.0f};
-    powder.verticalVelocity = {-1.0f, 5.0f};
-    powder.gravity = 1.0f;
+    powder.verticalVelocity = {0.0f, 1.0f};
+    powder.gravity = 0.2f;
     powder.drag = 1.6f;
-    powder.spawnRadius = std::max(1.4f, radius * 0.42f);
-    powder.spreadRadians = Pi * 1.10f;
+    powder.spawnRadius = std::max(0.6f, radius * 0.14f);
+    powder.spreadRadians = Pi * 0.24f;
     powder.fadeOutFraction = 0.82f;
-    powder.emissionRate = 26.0f;
+    powder.emissionRate = 4.0f;
     powder.loop = true;
     powder.depthSorted = true;
     addEmitterWithParent(powder, handle.id);
@@ -1389,24 +1525,24 @@ MagicFxEmitterHandle MagicFxSystem::startIceShardLoop(Vec2 position, Vec2 direct
     MagicFxEmitterConfig glints;
     glints.position = position;
     glints.direction = direction * -1.0f;
-    glints.baseVelocity = direction * -24.0f;
+    glints.baseVelocity = direction * -8.0f;
     glints.particleShape = MagicFxParticleShape::SparkLine;
     glints.spawnShape = MagicFxSpawnShape::Circle;
     glints.startColor = {255, 255, 255, 235};
     glints.endColor = {150, 224, 255, 0};
-    glints.speed = {18.0f, 58.0f};
-    glints.lifetime = {0.06f, 0.14f};
-    glints.startSize = {0.55f, 1.3f};
-    glints.endSize = {0.0f, 0.25f};
-    glints.rotation = {forwardAngle - 0.4f, forwardAngle + 0.4f};
+    glints.speed = {2.0f, 10.0f};
+    glints.lifetime = {0.28f, 0.28f};
+    glints.startSize = {0.65f, 0.65f};
+    glints.endSize = glints.startSize;
+    glints.rotation = {forwardAngle, forwardAngle};
     glints.height = {0.0f, 3.0f};
-    glints.verticalVelocity = {-1.0f, 4.0f};
-    glints.drag = 1.2f;
-    glints.spawnRadius = std::max(0.8f, radius * 0.24f);
-    glints.spreadRadians = Pi * 0.75f;
+    glints.verticalVelocity = {0.0f, 0.6f};
+    glints.drag = 1.4f;
+    glints.spawnRadius = std::max(0.4f, radius * 0.08f);
+    glints.spreadRadians = Pi * 0.12f;
     glints.stretch = 1.5f;
     glints.fadeOutFraction = 0.72f;
-    glints.emissionRate = 18.0f;
+    glints.emissionRate = 4.0f;
     glints.loop = true;
     glints.depthSorted = true;
     addEmitterWithParent(glints, handle.id);
@@ -1528,26 +1664,29 @@ void MagicFxSystem::playIceShatter(Vec2 position, float radius)
 
 MagicFxEmitterHandle MagicFxSystem::startThunderAura(Vec2 position, float radius)
 {
-    MagicFxEmitterConfig sparks;
-    sparks.position = position;
-    sparks.direction = {1.0f, 0.0f};
-    sparks.particleShape = MagicFxParticleShape::SparkLine;
-    sparks.spawnShape = MagicFxSpawnShape::Ring;
-    sparks.startColor = {255, 248, 148, 230};
-    sparks.endColor = {136, 202, 255, 0};
-    sparks.speed = {10.0f, 34.0f};
-    sparks.lifetime = {0.08f, 0.18f};
-    sparks.startSize = {1.8f, 3.2f};
-    sparks.endSize = {0.0f, 0.6f};
-    sparks.rotation = {0.0f, Pi * 2.0f};
-    sparks.spawnRadius = std::max(3.0f, radius * 0.82f);
-    sparks.spreadRadians = Pi * 2.0f;
-    sparks.stretch = 3.2f;
-    sparks.fadeOutFraction = 0.82f;
-    sparks.emissionRate = 42.0f;
-    sparks.loop = true;
-    sparks.depthSorted = true;
-    return addEmitter(sparks);
+    radius = std::max(4.0f, radius);
+
+    MagicFxEmitterConfig arcs;
+    arcs.position = position;
+    arcs.direction = {1.0f, 0.0f};
+    arcs.particleShape = MagicFxParticleShape::ThunderArc;
+    arcs.spawnShape = MagicFxSpawnShape::Ring;
+    arcs.startColor = {255, 244, 176, 232};
+    arcs.endColor = {255, 232, 146, 0};
+    arcs.speed = {3.0f, 14.0f};
+    arcs.lifetime = {0.28f, 0.44f};
+    arcs.startSize = {std::max(2.4f, radius * 0.16f), std::max(4.2f, radius * 0.28f)};
+    arcs.endSize = {std::max(1.2f, radius * 0.08f), std::max(2.4f, radius * 0.16f)};
+    arcs.rotation = {0.0f, Pi * 2.0f};
+    arcs.spawnRadius = std::max(2.0f, radius * 0.52f);
+    arcs.spreadRadians = Pi * 1.20f;
+    arcs.stretch = 2.55f;
+    arcs.fadeInFraction = 0.02f;
+    arcs.fadeOutFraction = 0.68f;
+    arcs.emissionRate = 14.0f;
+    arcs.loop = true;
+    arcs.depthSorted = true;
+    return addEmitter(arcs);
 }
 
 void MagicFxSystem::playThunderStrike(Vec2 origin, Vec2 target, bool strong)
@@ -1711,70 +1850,42 @@ MagicFxEmitterHandle MagicFxSystem::startWindAura(Vec2 position, float radius)
 {
     radius = std::max(4.0f, radius);
 
-    MagicFxEmitterConfig crescents;
-    crescents.position = position;
-    crescents.direction = {1.0f, 0.0f};
-    crescents.particleShape = MagicFxParticleShape::WindCrescent;
-    crescents.spawnShape = MagicFxSpawnShape::Ring;
-    crescents.startColor = {172, 252, 204, 118};
-    crescents.endColor = {232, 255, 238, 0};
-    crescents.speed = {6.0f, 20.0f};
-    crescents.lifetime = {0.28f, 0.56f};
-    crescents.startSize = {std::max(2.2f, radius * 0.18f), std::max(3.8f, radius * 0.32f)};
-    crescents.endSize = {0.0f, std::max(1.2f, radius * 0.12f)};
-    crescents.rotation = {0.0f, Pi * 2.0f};
-    crescents.angularVelocity = {-2.2f, 2.2f};
-    crescents.spawnRadius = radius * 0.90f;
-    crescents.spreadRadians = Pi * 2.0f;
-    crescents.stretch = 2.1f;
-    crescents.fadeInFraction = 0.14f;
-    crescents.fadeOutFraction = 0.70f;
-    crescents.emissionRate = 22.0f;
-    crescents.loop = true;
-    crescents.depthSorted = true;
-    const MagicFxEmitterHandle handle = addEmitter(crescents);
+    MagicFxEmitterConfig blades;
+    blades.position = position;
+    blades.direction = {1.0f, 0.0f};
+    blades.particleShape = MagicFxParticleShape::WindBlade;
+    blades.spawnShape = MagicFxSpawnShape::Ring;
+    blades.startColor = {190, 255, 210, 176};
+    blades.endColor = {232, 255, 238, 0};
+    blades.speed = {24.0f, 52.0f};
+    blades.lifetime = {0.46f, 0.82f};
+    blades.startSize = {std::max(2.4f, radius * 0.16f), std::max(4.6f, radius * 0.30f)};
+    blades.endSize = {std::max(1.0f, radius * 0.070f), std::max(2.2f, radius * 0.15f)};
+    blades.rotation = {0.0f, Pi * 2.0f};
+    blades.angularVelocity = {-7.4f, 7.4f};
+    blades.spawnRadius = radius * 0.40f;
+    blades.spreadRadians = Pi * 1.25f;
+    blades.stretch = 2.35f;
+    blades.fadeInFraction = 0.06f;
+    blades.fadeOutFraction = 0.76f;
+    blades.emissionRate = 13.0f;
+    blades.loop = true;
+    blades.depthSorted = true;
+    const MagicFxEmitterHandle handle = addEmitter(blades);
 
-    MagicFxEmitterConfig mist;
-    mist.position = position;
-    mist.direction = {1.0f, 0.0f};
-    mist.particleShape = MagicFxParticleShape::SoftCircle;
-    mist.spawnShape = MagicFxSpawnShape::Circle;
-    mist.startColor = {174, 246, 204, 38};
-    mist.endColor = {232, 255, 236, 0};
-    mist.speed = {4.0f, 18.0f};
-    mist.lifetime = {0.22f, 0.52f};
-    mist.startSize = {0.55f, 1.25f};
-    mist.endSize = {0.9f, 2.4f};
-    mist.spawnRadius = radius * 0.82f;
-    mist.spreadRadians = Pi * 2.0f;
-    mist.fadeInFraction = 0.18f;
-    mist.fadeOutFraction = 0.78f;
-    mist.emissionRate = 58.0f;
-    mist.loop = true;
-    mist.depthSorted = true;
-    addEmitterWithParent(mist, handle.id);
-
-    MagicFxEmitterConfig sparkle;
-    sparkle.position = position;
-    sparkle.direction = {1.0f, 0.0f};
-    sparkle.particleShape = MagicFxParticleShape::WindSparkle;
-    sparkle.spawnShape = MagicFxSpawnShape::Ring;
-    sparkle.startColor = {244, 255, 228, 210};
-    sparkle.endColor = {146, 246, 190, 0};
-    sparkle.speed = {2.0f, 12.0f};
-    sparkle.lifetime = {0.10f, 0.24f};
-    sparkle.startSize = {0.8f, 1.7f};
-    sparkle.endSize = {0.0f, 0.25f};
-    sparkle.rotation = {0.0f, Pi * 2.0f};
-    sparkle.angularVelocity = {-1.4f, 1.4f};
-    sparkle.spawnRadius = radius * 0.96f;
-    sparkle.spreadRadians = Pi * 2.0f;
-    sparkle.fadeInFraction = 0.16f;
-    sparkle.fadeOutFraction = 0.72f;
-    sparkle.emissionRate = 14.0f;
-    sparkle.loop = true;
-    sparkle.depthSorted = true;
-    addEmitterWithParent(sparkle, handle.id);
+    MagicFxEmitterConfig smallBlades = blades;
+    smallBlades.startColor = {224, 255, 218, 132};
+    smallBlades.endColor = {150, 246, 190, 0};
+    smallBlades.speed = {30.0f, 64.0f};
+    smallBlades.lifetime = {0.34f, 0.62f};
+    smallBlades.startSize = {std::max(1.4f, radius * 0.090f), std::max(2.8f, radius * 0.180f)};
+    smallBlades.endSize = {0.0f, std::max(1.0f, radius * 0.070f)};
+    smallBlades.angularVelocity = {-8.8f, 8.8f};
+    smallBlades.spawnRadius = radius * 0.48f;
+    smallBlades.spreadRadians = Pi * 1.32f;
+    smallBlades.stretch = 2.05f;
+    smallBlades.emissionRate = 7.0f;
+    addEmitterWithParent(smallBlades, handle.id);
 
     return handle;
 }
@@ -1788,72 +1899,26 @@ MagicFxEmitterHandle MagicFxSystem::startWindWaveLoop(Vec2 position, Vec2 direct
     MagicFxEmitterConfig crescent;
     crescent.position = position;
     crescent.direction = direction * -1.0f;
-    crescent.baseVelocity = direction * -18.0f;
+    crescent.baseVelocity = direction * -14.0f;
     crescent.particleShape = MagicFxParticleShape::WindCrescent;
     crescent.spawnShape = MagicFxSpawnShape::Circle;
-    crescent.startColor = {180, 255, 206, 152};
+    crescent.startColor = {190, 255, 210, 166};
     crescent.endColor = {235, 255, 238, 0};
-    crescent.speed = {0.0f, 6.0f};
-    crescent.lifetime = {0.26f, 0.42f};
-    crescent.startSize = {radius * 0.46f, radius * 0.66f};
-    crescent.endSize = {radius * 0.26f, radius * 0.46f};
+    crescent.speed = {0.0f, 3.0f};
+    crescent.lifetime = {0.32f, 0.52f};
+    crescent.startSize = {radius * 0.42f, radius * 0.60f};
+    crescent.endSize = {radius * 0.24f, radius * 0.40f};
     crescent.rotation = {angle, angle};
     crescent.angularVelocity = {0.0f, 0.0f};
-    crescent.spawnRadius = radius * 0.06f;
-    crescent.spreadRadians = Pi * 0.16f;
-    crescent.stretch = 2.85f;
-    crescent.fadeInFraction = 0.06f;
-    crescent.fadeOutFraction = 0.82f;
-    crescent.emissionRate = 18.0f;
+    crescent.spawnRadius = radius * 0.035f;
+    crescent.spreadRadians = Pi * 0.08f;
+    crescent.stretch = 2.70f;
+    crescent.fadeInFraction = 0.08f;
+    crescent.fadeOutFraction = 0.84f;
+    crescent.emissionRate = 16.0f;
     crescent.loop = true;
     crescent.depthSorted = true;
-    const MagicFxEmitterHandle handle = addEmitter(crescent);
-
-    MagicFxEmitterConfig mist;
-    mist.position = position;
-    mist.direction = direction * -1.0f;
-    mist.baseVelocity = direction * -22.0f;
-    mist.particleShape = MagicFxParticleShape::SoftCircle;
-    mist.spawnShape = MagicFxSpawnShape::Cone;
-    mist.startColor = {170, 246, 204, 44};
-    mist.endColor = {232, 255, 236, 0};
-    mist.speed = {10.0f, 34.0f};
-    mist.lifetime = {0.18f, 0.42f};
-    mist.startSize = {0.65f, 1.55f};
-    mist.endSize = {1.0f, 2.8f};
-    mist.spawnRadius = radius * 1.02f;
-    mist.spreadRadians = Pi * 0.95f;
-    mist.fadeInFraction = 0.18f;
-    mist.fadeOutFraction = 0.78f;
-    mist.emissionRate = 118.0f;
-    mist.loop = true;
-    mist.depthSorted = true;
-    addEmitterWithParent(mist, handle.id);
-
-    MagicFxEmitterConfig sparkle;
-    sparkle.position = position;
-    sparkle.direction = direction * -1.0f;
-    sparkle.baseVelocity = direction * -10.0f;
-    sparkle.particleShape = MagicFxParticleShape::WindSparkle;
-    sparkle.spawnShape = MagicFxSpawnShape::Cone;
-    sparkle.startColor = {246, 255, 230, 230};
-    sparkle.endColor = {132, 244, 184, 0};
-    sparkle.speed = {4.0f, 20.0f};
-    sparkle.lifetime = {0.08f, 0.20f};
-    sparkle.startSize = {0.75f, 1.85f};
-    sparkle.endSize = {0.0f, 0.22f};
-    sparkle.rotation = {angle - 0.35f, angle + 0.35f};
-    sparkle.angularVelocity = {-1.0f, 1.0f};
-    sparkle.spawnRadius = radius * 0.88f;
-    sparkle.spreadRadians = Pi * 0.70f;
-    sparkle.fadeInFraction = 0.12f;
-    sparkle.fadeOutFraction = 0.78f;
-    sparkle.emissionRate = 38.0f;
-    sparkle.loop = true;
-    sparkle.depthSorted = true;
-    addEmitterWithParent(sparkle, handle.id);
-
-    return handle;
+    return addEmitter(crescent);
 }
 
 void MagicFxSystem::playWindImpact(Vec2 position, Vec2 direction, float radius)
@@ -1947,48 +2012,74 @@ MagicFxEmitterHandle MagicFxSystem::startEarthAura(Vec2 position, float radius)
     rocks.direction = {0.0f, -1.0f};
     rocks.particleShape = MagicFxParticleShape::DirtClod;
     rocks.spawnShape = MagicFxSpawnShape::Ring;
-    rocks.startColor = {178, 128, 78, 225};
-    rocks.endColor = {96, 70, 48, 0};
+    rocks.startColor = {178, 128, 78, 232};
+    rocks.endColor = {138, 96, 62, 170};
     rocks.alphaScale = {0.62f, 1.0f};
-    rocks.speed = {1.0f, 7.0f};
-    rocks.lifetime = {0.52f, 0.92f};
-    rocks.startSize = {1.8f, 4.8f};
-    rocks.endSize = {1.0f, 2.8f};
+    rocks.speed = {0.0f, 0.65f};
+    rocks.lifetime = {10.0f, 15.0f};
+    rocks.startSize = {4.0f, 8.8f};
+    rocks.endSize = {3.8f, 8.4f};
     rocks.rotation = {0.0f, Pi * 2.0f};
-    rocks.angularVelocity = {-3.4f, 3.4f};
-    rocks.height = {3.0f, 11.0f};
-    rocks.verticalVelocity = {-5.0f, 7.0f};
-    rocks.gravity = 3.2f;
-    rocks.drag = 1.2f;
-    rocks.spawnRadius = std::max(4.0f, radius * 0.84f);
+    rocks.angularVelocity = {-0.20f, 0.20f};
+    rocks.height = {11.0f, 30.0f};
+    rocks.verticalVelocity = {-0.35f, 0.55f};
+    rocks.gravity = 0.03f;
+    rocks.drag = 0.12f;
+    rocks.spawnRadius = std::max(4.0f, radius * 0.62f);
     rocks.spreadRadians = Pi * 2.0f;
-    rocks.fadeInFraction = 0.12f;
-    rocks.fadeOutFraction = 0.62f;
-    rocks.emissionRate = 22.0f;
+    rocks.fadeInFraction = 0.03f;
+    rocks.fadeOutFraction = 0.06f;
+    rocks.emissionRate = 0.45f;
+    rocks.burstCount = 10;
     rocks.loop = true;
     rocks.depthSorted = true;
     const MagicFxEmitterHandle handle = addEmitter(rocks);
+
+    MagicFxEmitterConfig dustCloud;
+    dustCloud.position = position;
+    dustCloud.direction = {0.0f, -1.0f};
+    dustCloud.particleShape = MagicFxParticleShape::SoftCircle;
+    dustCloud.spawnShape = MagicFxSpawnShape::Circle;
+    dustCloud.startColor = {150, 112, 74, 82};
+    dustCloud.endColor = {104, 82, 62, 0};
+    dustCloud.alphaScale = {0.50f, 0.92f};
+    dustCloud.speed = {0.6f, 4.8f};
+    dustCloud.lifetime = {1.35f, 2.50f};
+    dustCloud.startSize = {radius * 0.14f, radius * 0.32f};
+    dustCloud.endSize = {radius * 0.36f, radius * 0.76f};
+    dustCloud.height = {0.0f, 7.0f};
+    dustCloud.verticalVelocity = {0.4f, 4.4f};
+    dustCloud.gravity = 0.18f;
+    dustCloud.drag = 0.75f;
+    dustCloud.spawnRadius = std::max(2.0f, radius * 0.46f);
+    dustCloud.spreadRadians = Pi * 0.90f;
+    dustCloud.fadeInFraction = 0.24f;
+    dustCloud.fadeOutFraction = 0.76f;
+    dustCloud.emissionRate = 22.0f;
+    dustCloud.loop = true;
+    dustCloud.depthSorted = true;
+    addEmitterWithParent(dustCloud, handle.id);
 
     MagicFxEmitterConfig sand;
     sand.position = position;
     sand.direction = {0.0f, 1.0f};
     sand.particleShape = MagicFxParticleShape::SoftCircle;
     sand.spawnShape = MagicFxSpawnShape::Ring;
-    sand.startColor = {178, 134, 82, 68};
+    sand.startColor = {178, 134, 82, 46};
     sand.endColor = {84, 64, 48, 0};
     sand.alphaScale = {0.35f, 0.86f};
-    sand.speed = {1.0f, 9.0f};
-    sand.lifetime = {0.32f, 0.72f};
+    sand.speed = {0.4f, 4.0f};
+    sand.lifetime = {0.82f, 1.42f};
     sand.startSize = {0.8f, 2.2f};
     sand.endSize = {0.0f, 0.6f};
     sand.height = {0.0f, 5.0f};
-    sand.verticalVelocity = {-10.0f, -1.0f};
-    sand.gravity = 14.0f;
+    sand.verticalVelocity = {-2.0f, 2.0f};
+    sand.gravity = 2.6f;
     sand.spawnRadius = std::max(3.0f, radius * 0.76f);
     sand.spreadRadians = Pi * 2.0f;
     sand.fadeInFraction = 0.12f;
     sand.fadeOutFraction = 0.74f;
-    sand.emissionRate = 28.0f;
+    sand.emissionRate = 5.0f;
     sand.loop = true;
     sand.depthSorted = true;
     addEmitterWithParent(sand, handle.id);
@@ -2008,17 +2099,17 @@ MagicFxEmitterHandle MagicFxSystem::startDirtClodLoop(Vec2 position, Vec2 direct
     rock.startColor = {166, 112, 66, 238};
     rock.endColor = {82, 58, 42, 0};
     rock.alphaScale = {0.70f, 1.0f};
-    rock.speed = {0.0f, 4.0f};
-    rock.lifetime = {0.09f, 0.16f};
-    rock.startSize = {radius * 0.82f, radius * 1.42f};
-    rock.endSize = {radius * 0.74f, radius * 1.22f};
+    rock.speed = {0.0f, 1.6f};
+    rock.lifetime = {0.24f, 0.42f};
+    rock.startSize = {radius * 0.78f, radius * 1.32f};
+    rock.endSize = {radius * 0.70f, radius * 1.12f};
     rock.rotation = {0.0f, Pi * 2.0f};
-    rock.angularVelocity = {-9.0f, 9.0f};
-    rock.spawnRadius = std::max(0.8f, radius * 0.18f);
+    rock.angularVelocity = {-0.65f, 0.65f};
+    rock.spawnRadius = std::max(0.8f, radius * 0.12f);
     rock.spreadRadians = Pi * 2.0f;
     rock.fadeInFraction = 0.04f;
-    rock.fadeOutFraction = 0.45f;
-    rock.emissionRate = 42.0f;
+    rock.fadeOutFraction = 0.62f;
+    rock.emissionRate = 22.0f;
     rock.loop = true;
     rock.depthSorted = true;
     const MagicFxEmitterHandle handle = addEmitter(rock);
@@ -2031,19 +2122,19 @@ MagicFxEmitterHandle MagicFxSystem::startDirtClodLoop(Vec2 position, Vec2 direct
     dust.spawnShape = MagicFxSpawnShape::Circle;
     dust.startColor = {150, 104, 66, 98};
     dust.endColor = {92, 70, 54, 0};
-    dust.speed = {4.0f, 24.0f};
-    dust.lifetime = {0.24f, 0.46f};
+    dust.speed = {2.0f, 12.0f};
+    dust.lifetime = {0.34f, 0.64f};
     dust.startSize = {radius * 0.42f, radius * 0.82f};
     dust.endSize = {radius * 0.72f, radius * 1.30f};
     dust.height = {0.0f, 2.0f};
-    dust.verticalVelocity = {2.0f, 10.0f};
-    dust.gravity = 8.0f;
-    dust.drag = 2.0f;
+    dust.verticalVelocity = {1.0f, 6.0f};
+    dust.gravity = 4.0f;
+    dust.drag = 1.6f;
     dust.spawnRadius = std::max(1.0f, radius * 0.45f);
     dust.spreadRadians = Pi * 0.95f;
     dust.fadeInFraction = 0.12f;
     dust.fadeOutFraction = 0.72f;
-    dust.emissionRate = 32.0f;
+    dust.emissionRate = 18.0f;
     dust.loop = true;
     dust.depthSorted = true;
     addEmitterWithParent(dust, handle.id);
@@ -2057,20 +2148,20 @@ MagicFxEmitterHandle MagicFxSystem::startDirtClodLoop(Vec2 position, Vec2 direct
     grit.startColor = {176, 124, 72, 205};
     grit.endColor = {80, 58, 42, 0};
     grit.alphaScale = {0.42f, 0.86f};
-    grit.speed = {8.0f, 38.0f};
-    grit.lifetime = {0.14f, 0.34f};
+    grit.speed = {4.0f, 20.0f};
+    grit.lifetime = {0.22f, 0.44f};
     grit.startSize = {1.0f, 3.2f};
     grit.endSize = {0.0f, 0.8f};
     grit.rotation = {0.0f, Pi * 2.0f};
-    grit.angularVelocity = {-8.0f, 8.0f};
+    grit.angularVelocity = {-1.4f, 1.4f};
     grit.height = {0.0f, 3.0f};
     grit.verticalVelocity = {1.0f, 14.0f};
-    grit.gravity = 34.0f;
+    grit.gravity = 14.0f;
     grit.drag = 1.3f;
     grit.spawnRadius = std::max(1.0f, radius * 0.26f);
     grit.spreadRadians = Pi * 0.86f;
     grit.fadeOutFraction = 0.78f;
-    grit.emissionRate = 26.0f;
+    grit.emissionRate = 10.0f;
     grit.loop = true;
     grit.depthSorted = true;
     addEmitterWithParent(grit, handle.id);
@@ -2569,6 +2660,9 @@ void MagicFxSystem::updateParticles(float dt)
         }
 
         particle.velocity += particle.acceleration * dt;
+        if (particle.shape == MagicFxParticleShape::WindBlade && lengthSquared(particle.velocity) > 0.0001f) {
+            particle.velocity = rotateVec(particle.velocity, particle.angularVelocity * dt * 1.55f);
+        }
         particle.position += particle.velocity * dt;
         particle.velocity = particle.velocity * std::max(0.0f, 1.0f - particle.drag * dt);
         particle.verticalVelocity -= particle.gravity * dt;
@@ -2592,7 +2686,11 @@ void MagicFxSystem::updateParticles(float dt)
                 particle.velocity = particle.velocity * std::max(0.0f, 1.0f - particle.groundFriction * dt);
             }
         }
-        particle.rotation += particle.angularVelocity * dt;
+        if (particle.shape == MagicFxParticleShape::WindBlade && lengthSquared(particle.velocity) > 0.0001f) {
+            particle.rotation = std::atan2(particle.velocity.y, particle.velocity.x);
+        } else {
+            particle.rotation += particle.angularVelocity * dt;
+        }
     }
 
     particles_.erase(

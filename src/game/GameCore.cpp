@@ -2938,7 +2938,18 @@ void Game::updateScreenMode(
             return;
         }
         updateRingStatusHud(ui);
-        inventory_.update(input, ui, player_, spellRing_, effectDispatcher_, false, objectCatalog_, &magic_, discoveryEvents, &encyclopedia_);
+        inventory_.update(
+            input,
+            ui,
+            player_,
+            spellRing_,
+            effectDispatcher_,
+            false,
+            objectCatalog_,
+            &magic_,
+            discoveryEvents,
+            &encyclopedia_,
+            unlockedRingCount());
         if (inventory_.isOpen()) {
             inventoryReturnToPause_ = false;
             mode_ = ScreenMode::Inventory;
@@ -2982,7 +2993,8 @@ void Game::updateScreenMode(
             discoveryEvents,
             &encyclopedia_,
             inventoryWorldActionsEnabled,
-            inventoryWorldActionsEnabled);
+            inventoryWorldActionsEnabled,
+            unlockedRingCount());
         std::vector<InventoryDiscardRequest> discardRequests = inventory_.consumeDiscardRequests();
         if (!discardRequests.empty()) {
             spawnInventoryDiscardRequests(std::move(discardRequests));

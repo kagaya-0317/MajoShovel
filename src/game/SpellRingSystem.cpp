@@ -30,7 +30,7 @@ constexpr std::array<float, SpellRingCount> RingBaseRadiusMultipliers{{
 constexpr std::array<float, SpellRingCount> RingBaseSpeedMultipliers{{
     1.0f,
     1.0f,
-    0.8f,
+    0.5f,
 }};
 constexpr float ThrowMorphOpenDurationRatio = 0.18f;
 constexpr float ThrowMorphCloseStartRatio = 0.70f;

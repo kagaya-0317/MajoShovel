@@ -688,6 +688,85 @@ Vec2 projectileTestFireOrigin(const DebugPreviewTestLayout& layout)
     return projectileTestSourcePosition(layout) + Vec2{32.0f, -4.0f};
 }
 
+Vec2 projectileTestTargetPosition(const DebugPreviewTestLayout& layout, const ProjectileDefinition* projectile)
+{
+    const Vec2 origin = projectileTestFireOrigin(layout);
+    const float range = projectile != nullptr
+        ? projectile->speed * projectile->lifetime
+        : 260.0f;
+    const float preferredDistance = std::clamp(range * 0.58f, 44.0f, 260.0f);
+    const float previewRight = layout.preview.pos.x + layout.preview.size.x - 42.0f;
+    const float minX = std::min(previewRight, origin.x + 42.0f);
+    return {
+        std::clamp(origin.x + preferredDistance, minX, std::max(minX, previewRight)),
+        projectileTestSourcePosition(layout).y,
+    };
+}
+
+UiRect projectileTestTargetToggleRect(const DebugPreviewTestLayout& layout)
+{
+    const float width = 142.0f;
+    const UiRect backgroundLabel = debugPreviewBackgroundLabelRect(layout);
+    const float maxX = backgroundLabel.pos.x - width - 12.0f;
+    return {{
+        std::max(layout.footer.pos.x + 18.0f, maxX),
+        layout.footer.pos.y + 13.0f,
+    }, {width, ui::ButtonHeight}};
+}
+
+std::string projectileTestDefaultStatus(bool targetEnabled)
+{
+    return targetEnabled
+        ? "ターゲットON: ヒット時エフェクトを確認できます"
+        : "ターゲットOFF: 寿命で消滅エフェクトを確認できます";
+}
+
+float projectileTestSlimeRadius(const EnemyCatalog& enemyCatalog, float fallbackRadius)
+{
+    const auto slimeIt = enemyCatalog.enemiesById.find(std::string(DebugPreviewTestSlimeEnemyId));
+    if (slimeIt != enemyCatalog.enemiesById.end() && slimeIt->second.radius > 0.0) {
+        return static_cast<float>(slimeIt->second.radius);
+    }
+    return fallbackRadius;
+}
+
+void drawProjectileTestSlime(
+    Renderer& renderer,
+    const EnemyCatalog& enemyCatalog,
+    Vec2 position,
+    float fallbackRadius,
+    float facingAngle,
+    double totalSeconds,
+    Color fallbackFill)
+{
+    Enemy previewEnemy;
+    const auto slimeIt = enemyCatalog.enemiesById.find(std::string(DebugPreviewTestSlimeEnemyId));
+    if (slimeIt != enemyCatalog.enemiesById.end()) {
+        const EnemyDefinition& definition = slimeIt->second;
+        previewEnemy.active = true;
+        previewEnemy.definition = &definition;
+        previewEnemy.enemyId = definition.id;
+        previewEnemy.enemyName = definition.name;
+        previewEnemy.radius = definition.radius > 0.0 ? static_cast<float>(definition.radius) : fallbackRadius;
+        previewEnemy.position = position;
+        previewEnemy.facingAngle = facingAngle;
+        previewEnemy.behaviorTimer = static_cast<float>(totalSeconds);
+
+        Vec2 drawSize{};
+        const bool sizeResolved = enemyImageDrawSize(renderer, previewEnemy, EnemyImageDrawOptions{}, drawSize);
+        renderer.drawActorShadow(position, sizeResolved ? drawSize.y : previewEnemy.radius * 2.0f);
+        if (!drawEnemyImage(renderer, previewEnemy, position, static_cast<float>(totalSeconds), EnemyImageDrawOptions{}, &drawSize)) {
+            renderer.fillCircle(position, previewEnemy.radius, fallbackFill);
+            renderer.drawCircle(position, previewEnemy.radius + 3.0f, {42, 72, 48, 255});
+        }
+        return;
+    }
+
+    renderer.drawActorShadow(position, fallbackRadius * 1.9f);
+    renderer.fillCircle(position, fallbackRadius, fallbackFill);
+    renderer.drawCircle(position, fallbackRadius + 3.0f, {42, 72, 48, 255});
+}
+
 std::string projectileTagsText(const ProjectileDefinition& projectile)
 {
     std::string text;
@@ -746,6 +825,7 @@ std::string projectileTestDetail(const ProjectileDefinition& projectile)
     return "ProjectileSystem / " + projectile.id + " / 20フレーム間隔 / speed " + std::to_string(static_cast<int>(projectile.speed)) +
         " / radius " + std::to_string(static_cast<int>(std::round(projectile.radius))) +
         " / life " + std::to_string(static_cast<int>(std::round(projectile.lifetime * 100.0f))) + "cs" +
+        " / target " + std::string(projectile.piercesTargets ? "貫通" : "停止") +
         " / tags " + projectileTagsText(projectile);
 }
 
@@ -1057,10 +1137,14 @@ void drawDebugPreviewFooter(
     std::string_view label,
     const std::string& detail,
     std::string_view status,
-    int backgroundIndex)
+    int backgroundIndex,
+    float detailRightLimit = -1.0f)
 {
     if (!label.empty()) {
-        const float textMaxWidth = std::max(120.0f, debugPreviewBackgroundLabelRect(layout).pos.x - layout.footer.pos.x - 36.0f);
+        const float textRight = detailRightLimit > 0.0f
+            ? std::min(detailRightLimit, debugPreviewBackgroundLabelRect(layout).pos.x)
+            : debugPreviewBackgroundLabelRect(layout).pos.x;
+        const float textMaxWidth = std::max(120.0f, textRight - layout.footer.pos.x - 36.0f);
         renderer.drawText(layout.footer.pos + Vec2{18.0f, 13.0f}, fittedSingleLineText(renderer, std::string(label), textMaxWidth, 2), {255, 230, 150, 255}, 2);
         renderer.drawText(layout.footer.pos + Vec2{18.0f, 38.0f}, fittedSingleLineText(renderer, detail, textMaxWidth, 1), ui::TextMuted, 1);
     }
@@ -1069,6 +1153,18 @@ void drawDebugPreviewFooter(
     }
     drawDebugPreviewBackgroundControls(renderer, layout, backgroundIndex);
     drawUiRectButton(renderer, layout.closeButton, "終了", false, uiCancelButtonStyle());
+}
+
+void drawProjectileTestTargetToggle(Renderer& renderer, const DebugPreviewTestLayout& layout, bool enabled)
+{
+    UiButtonStyle style = enabled ? uiActionButtonStyle() : UiButtonStyle{};
+    if (enabled) {
+        style.fill = {54, 88, 72, 224};
+        style.fillHot = {70, 116, 92, 238};
+        style.outline = {190, 244, 186, 235};
+        style.outlineHot = {226, 255, 210, 255};
+    }
+    drawUiRectButton(renderer, projectileTestTargetToggleRect(layout), enabled ? "ターゲット ON" : "ターゲット OFF", enabled, style);
 }
 
 DebugItemPickerLayout makeDebugItemPickerLayout(int screenWidth, int screenHeight)
@@ -4088,7 +4184,7 @@ void Game::rebuildProjectileTestEntries()
         projectileTestStatus_ = "弾項目がありません";
     } else {
         projectileTestSelectedIndex_ = std::clamp(projectileTestSelectedIndex_, 0, static_cast<int>(projectileTestEntries_.size()) - 1);
-        projectileTestStatus_ = "選択中の弾を自動再生します";
+        projectileTestStatus_ = projectileTestDefaultStatus(projectileTestTargetEnabled_);
     }
 }
 
@@ -4178,6 +4274,12 @@ void Game::updateProjectileTestScreen(const Input& input, UiContext& ui, float d
     }
 
     (void)updateDebugPreviewBackgroundControls(ui, layout, debugPreviewBackgroundIndex_);
+    if (ui.pressed(projectileTestTargetToggleRect(layout))) {
+        projectileTestTargetEnabled_ = !projectileTestTargetEnabled_;
+        projectileTestStatus_ = projectileTestDefaultStatus(projectileTestTargetEnabled_);
+        resetProjectileTestPlayback();
+        ui.emitSound(UiSoundEvent::Confirm);
+    }
 
     if (ui.pressed(layout.closeButton) || input.backPressed() || input.pausePressed()) {
         exitProjectileTestToBase();
@@ -4189,7 +4291,17 @@ void Game::updateProjectileTestScreen(const Input& input, UiContext& ui, float d
         triggerProjectileTestPlayback(*entry);
     }
 
-    projectiles_.updatePreview(std::max(0.0f, dt));
+    if (projectileTestTargetEnabled_) {
+        projectiles_.updatePreview(
+            std::max(0.0f, dt),
+            ProjectilePreviewTarget{
+                projectileTestTargetPosition(layout, entry),
+                projectileTestSlimeRadius(enemyCatalog_, balance_.enemyRadius),
+                true,
+            });
+    } else {
+        projectiles_.updatePreview(std::max(0.0f, dt));
+    }
     ++projectileTestFrame_;
     ui.block(layout.bounds);
 }
@@ -4226,30 +4338,15 @@ void Game::renderProjectileTestScreen(Renderer& renderer, double totalSeconds)
     const Vec2 origin = projectileTestFireOrigin(layout);
     renderer.drawLine(origin, {layout.preview.pos.x + layout.preview.size.x - 44.0f, origin.y}, {255, 255, 255, 34});
 
-    Enemy previewEnemy;
-    const auto slimeIt = enemyCatalog_.enemiesById.find(std::string(DebugPreviewTestSlimeEnemyId));
-    if (slimeIt != enemyCatalog_.enemiesById.end()) {
-        const EnemyDefinition& definition = slimeIt->second;
-        previewEnemy.active = true;
-        previewEnemy.definition = &definition;
-        previewEnemy.enemyId = definition.id;
-        previewEnemy.enemyName = definition.name;
-        previewEnemy.radius = definition.radius > 0.0 ? static_cast<float>(definition.radius) : balance_.enemyRadius;
-        previewEnemy.position = sourcePosition;
-        previewEnemy.facingAngle = 0.0f;
-        previewEnemy.behaviorTimer = static_cast<float>(totalSeconds);
-
-        Vec2 drawSize{};
-        const bool sizeResolved = enemyImageDrawSize(renderer, previewEnemy, EnemyImageDrawOptions{}, drawSize);
-        renderer.drawActorShadow(sourcePosition, sizeResolved ? drawSize.y : previewEnemy.radius * 2.0f);
-        if (!drawEnemyImage(renderer, previewEnemy, sourcePosition, static_cast<float>(totalSeconds), EnemyImageDrawOptions{}, &drawSize)) {
-            renderer.fillCircle(sourcePosition, previewEnemy.radius, {112, 204, 112, 255});
-            renderer.drawCircle(sourcePosition, previewEnemy.radius + 3.0f, {42, 72, 48, 255});
-        }
-    } else {
-        renderer.drawActorShadow(sourcePosition, 42.0f);
-        renderer.fillCircle(sourcePosition, 22.0f, {112, 204, 112, 255});
-        renderer.drawCircle(sourcePosition, 25.0f, {42, 72, 48, 255});
+    drawProjectileTestSlime(renderer, enemyCatalog_, sourcePosition, balance_.enemyRadius, 0.0f, totalSeconds, {112, 204, 112, 255});
+    if (projectileTestTargetEnabled_) {
+        const Vec2 targetPosition = projectileTestTargetPosition(layout, entry);
+        renderer.drawSoftRing(
+            targetPosition,
+            projectileTestSlimeRadius(enemyCatalog_, balance_.enemyRadius) + 9.0f,
+            2.0f,
+            {190, 244, 186, 118});
+        drawProjectileTestSlime(renderer, enemyCatalog_, targetPosition, balance_.enemyRadius, Pi, totalSeconds, {128, 218, 128, 255});
     }
 
     std::vector<DepthRenderEntry> projectileEntries;
@@ -4262,13 +4359,16 @@ void Game::renderProjectileTestScreen(Renderer& renderer, double totalSeconds)
     }
     renderer.popClipRect();
 
+    const UiRect targetToggle = projectileTestTargetToggleRect(layout);
     drawDebugPreviewFooter(
         renderer,
         layout,
         entry != nullptr ? projectileDisplayName(*entry) : std::string_view{},
         entry != nullptr ? projectileTestDetail(*entry) : std::string{},
         projectileTestStatus_,
-        debugPreviewBackgroundIndex_);
+        debugPreviewBackgroundIndex_,
+        targetToggle.pos.x);
+    drawProjectileTestTargetToggle(renderer, layout, projectileTestTargetEnabled_);
 }
 
 void Game::enterEnemyTestMode()

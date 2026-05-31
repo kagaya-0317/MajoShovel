@@ -2518,12 +2518,14 @@ void InventorySystem::updateScreen(
             ui.emitSound(UiSoundEvent::Cancel);
         }
         closeRingTargetCommandMenu();
+        slotCommandMenuIndex_ = -1;
         resetSlotPointerPress();
         ui.block(inventoryScreenRect());
         return;
     }
     if (ringTargetOpenBeforeUpdate && !ringTargetCommandMenu_.open) {
         ringTargetCommandSlotIndex_ = -1;
+        slotCommandMenuIndex_ = -1;
         resetSlotPointerPress();
         ui.block(inventoryScreenRect());
         return;
@@ -2800,7 +2802,8 @@ void InventorySystem::render(
     const EncyclopediaSystem& encyclopedia,
     bool itemUseEnabled,
     bool itemDiscardEnabled,
-    float animationSeconds) const
+    float animationSeconds,
+    int unlockedRingCount) const
 {
     (void)player;
     (void)spellRing;
@@ -2861,9 +2864,13 @@ void InventorySystem::render(
         }
     }
 
-    const int detailIndex = (slotCommandMenu_.open && slotCommandMenuIndex_ >= 0)
-        ? slotCommandMenuIndex_
-        : selectedShortcutIndex();
+    int detailIndex = selectedShortcutIndex();
+    if (slotCommandMenu_.open && slotCommandMenuIndex_ >= 0) {
+        detailIndex = slotCommandMenuIndex_;
+    }
+    if (ringTargetCommandMenu_.open && ringTargetCommandSlotIndex_ >= 0) {
+        detailIndex = ringTargetCommandSlotIndex_;
+    }
     const InventoryObjectStack* detailStack = objectStackAtScreenIndex(detailIndex);
     const InventoryObjectInstance* detailInstance = objectInstanceAtScreenIndex(detailIndex);
 
@@ -2898,6 +2905,17 @@ void InventorySystem::render(
         slotCommandMenu_,
         commandItems.items.data(),
         static_cast<int>(commandItems.items.size()));
+    const int ringTargetSlotIndex = ringTargetCommandSlotIndex_ >= 0
+        ? ringTargetCommandSlotIndex_
+        : selectedShortcutIndex();
+    const int ringTargetCount = clampedUnlockedRingCount(unlockedRingCount);
+    const std::array<UiCommandMenuItem, SpellRingCount> ringTargetItems =
+        buildRingTargetCommandItems(ringTargetSlotIndex, spellRing, ringTargetCount);
+    drawUiCommandMenu(
+        renderer,
+        ringTargetCommandMenu_,
+        ringTargetItems.data(),
+        ringTargetCount);
     drawDiscardConfirmDialog(renderer, catalog);
 
 }

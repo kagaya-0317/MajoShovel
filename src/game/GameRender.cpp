@@ -5391,7 +5391,8 @@ void Game::render(Renderer& renderer, const Time& time)
             encyclopedia_,
             pauseReturnMode_ != ScreenMode::Base,
             pauseReturnMode_ != ScreenMode::Base,
-            time.totalSeconds());
+            time.totalSeconds(),
+            unlockedRingCount());
         renderPauseMenu(renderer);
         renderRingScreen(renderer, time.totalSeconds());
         dialogue_.render(renderer, camera_.width(), camera_.height());
@@ -5621,7 +5622,16 @@ void Game::render(Renderer& renderer, const Time& time)
         renderer.drawText({28.0f, 208.0f}, "DEBUG PAUSED", {255, 230, 150, 255}, 2);
     }
     if (!suppressDungeonUi) {
-        inventory_.render(renderer, player_, spellRing_, objectCatalog_, encyclopedia_, true, true, time.totalSeconds());
+        inventory_.render(
+            renderer,
+            player_,
+            spellRing_,
+            objectCatalog_,
+            encyclopedia_,
+            true,
+            true,
+            time.totalSeconds(),
+            unlockedRingCount());
         renderLevelUpOverlay(renderer);
         if (mode_ == ScreenMode::Playing) {
             inventory_.renderShortcutHud(renderer, spellRing_, camera_.width(), camera_.height());
