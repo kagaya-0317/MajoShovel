@@ -744,22 +744,6 @@ void drawWindBlade(Renderer& renderer, const MagicFxSystem::Particle& particle, 
 
     const Vec2 center = particleDrawPosition(particle);
     const Vec2 forward = lengthSquared(particle.velocity) > 0.0001f ? normalize(particle.velocity) : fromAngle(particle.rotation);
-    const Vec2 side = perpendicular(forward);
-    const float curveSign = particle.angularVelocity < 0.0f ? -1.0f : 1.0f;
-    const float curveStrength = clamp(std::abs(particle.angularVelocity) * 0.28f, 0.32f, 2.20f);
-
-    constexpr int AfterimageCount = 4;
-    for (int i = AfterimageCount; i >= 1; --i) {
-        const float t = static_cast<float>(i) / static_cast<float>(AfterimageCount);
-        const float distance = size * particle.stretch * lerp(0.54f, 2.55f, t);
-        const float curve = size * curveStrength * std::sin(t * Pi * 0.58f) * curveSign;
-        const Vec2 ghostCenter = center - forward * distance + side * curve;
-        const float ghostSize = size * lerp(0.86f, 0.52f, t);
-        const float ghostStretch = particle.stretch * lerp(0.96f, 0.74f, t);
-        const Color ghostColor = scaleAlpha(color, lerp(0.34f, 0.08f, t));
-        drawWindCrescent(renderer, ghostCenter, ghostSize, std::atan2(forward.y, forward.x), ghostStretch, ghostColor);
-    }
-
     drawWindCrescent(renderer, center, size, std::atan2(forward.y, forward.x), particle.stretch, color);
 }
 
@@ -1670,17 +1654,17 @@ MagicFxEmitterHandle MagicFxSystem::startThunderAura(Vec2 position, float radius
     arcs.spawnShape = MagicFxSpawnShape::Ring;
     arcs.startColor = {255, 244, 176, 232};
     arcs.endColor = {255, 232, 146, 0};
-    arcs.speed = {3.0f, 14.0f};
+    arcs.speed = {10.0f, 22.0f};
     arcs.lifetime = {0.32f, 0.52f};
     arcs.startSize = {std::max(2.4f, radius * 0.16f), std::max(4.2f, radius * 0.28f)};
     arcs.endSize = {std::max(1.2f, radius * 0.08f), std::max(2.4f, radius * 0.16f)};
     arcs.rotation = {0.0f, Pi * 2.0f};
-    arcs.spawnRadius = std::max(2.0f, radius * 0.52f);
-    arcs.spreadRadians = Pi * 1.20f;
+    arcs.spawnRadius = std::max(2.0f, radius * 0.56f);
+    arcs.spreadRadians = Pi * 0.30f;
     arcs.stretch = 2.55f;
     arcs.fadeInFraction = 0.02f;
     arcs.fadeOutFraction = 0.68f;
-    arcs.emissionRate = 8.0f;
+    arcs.emissionRate = 7.0f;
     arcs.loop = true;
     arcs.depthSorted = true;
     return addEmitter(arcs);
@@ -1860,12 +1844,13 @@ MagicFxEmitterHandle MagicFxSystem::startWindAura(Vec2 position, float radius)
     blades.endSize = {std::max(1.0f, radius * 0.070f), std::max(2.2f, radius * 0.15f)};
     blades.rotation = {0.0f, Pi * 2.0f};
     blades.angularVelocity = {-7.4f, 7.4f};
+    blades.drag = 1.20f;
     blades.spawnRadius = radius * 0.40f;
     blades.spreadRadians = Pi * 1.25f;
     blades.stretch = 2.35f;
     blades.fadeInFraction = 0.06f;
     blades.fadeOutFraction = 0.76f;
-    blades.emissionRate = 13.0f;
+    blades.emissionRate = 16.0f;
     blades.loop = true;
     blades.depthSorted = true;
     const MagicFxEmitterHandle handle = addEmitter(blades);
@@ -1878,10 +1863,11 @@ MagicFxEmitterHandle MagicFxSystem::startWindAura(Vec2 position, float radius)
     smallBlades.startSize = {std::max(1.4f, radius * 0.090f), std::max(2.8f, radius * 0.180f)};
     smallBlades.endSize = {0.0f, std::max(1.0f, radius * 0.070f)};
     smallBlades.angularVelocity = {-8.8f, 8.8f};
+    smallBlades.drag = 1.35f;
     smallBlades.spawnRadius = radius * 0.48f;
     smallBlades.spreadRadians = Pi * 1.32f;
     smallBlades.stretch = 2.05f;
-    smallBlades.emissionRate = 7.0f;
+    smallBlades.emissionRate = 9.0f;
     addEmitterWithParent(smallBlades, handle.id);
 
     return handle;
@@ -2602,6 +2588,19 @@ void MagicFxSystem::spawnParticles(const MagicFxEmitterConfig& config, int count
         particle.bouncesRemaining = std::max(0, config.maxBounces);
         particle.depthSorted = config.depthSorted;
         particle.foreground = config.foreground;
+        if (particle.shape == MagicFxParticleShape::ThunderArc) {
+            Vec2 radial = particle.position - config.position;
+            if (lengthSquared(radial) <= 0.0001f) {
+                radial = fromAngle(particle.rotation);
+            } else {
+                radial = normalize(radial);
+            }
+            const float spinSign = random01() < 0.5f ? -1.0f : 1.0f;
+            const float orbitalSpeed = std::max(4.0f, length(particle.velocity));
+            particle.velocity = perpendicular(radial) * (spinSign * orbitalSpeed) + radial * sampleRange({-1.6f, 1.6f});
+            particle.rotation = std::atan2(particle.velocity.y, particle.velocity.x);
+            particle.angularVelocity = spinSign * sampleRange({1.2f, 2.2f});
+        }
         addParticle(particle);
     }
 }
@@ -2659,6 +2658,8 @@ void MagicFxSystem::updateParticles(float dt)
         particle.velocity += particle.acceleration * dt;
         if (particle.shape == MagicFxParticleShape::WindBlade && lengthSquared(particle.velocity) > 0.0001f) {
             particle.velocity = rotateVec(particle.velocity, particle.angularVelocity * dt * 1.55f);
+        } else if (particle.shape == MagicFxParticleShape::ThunderArc && lengthSquared(particle.velocity) > 0.0001f) {
+            particle.velocity = rotateVec(particle.velocity, particle.angularVelocity * dt * 0.58f);
         }
         particle.position += particle.velocity * dt;
         particle.velocity = particle.velocity * std::max(0.0f, 1.0f - particle.drag * dt);
@@ -2683,7 +2684,7 @@ void MagicFxSystem::updateParticles(float dt)
                 particle.velocity = particle.velocity * std::max(0.0f, 1.0f - particle.groundFriction * dt);
             }
         }
-        if (particle.shape == MagicFxParticleShape::WindBlade && lengthSquared(particle.velocity) > 0.0001f) {
+        if ((particle.shape == MagicFxParticleShape::WindBlade || particle.shape == MagicFxParticleShape::ThunderArc) && lengthSquared(particle.velocity) > 0.0001f) {
             particle.rotation = std::atan2(particle.velocity.y, particle.velocity.x);
         } else {
             particle.rotation += particle.angularVelocity * dt;
