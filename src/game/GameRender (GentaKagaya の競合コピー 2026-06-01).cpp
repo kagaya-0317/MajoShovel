@@ -3,7 +3,6 @@
 #include "engine/InputHelpGlyph.hpp"
 #include "game/EnemyImageRenderer.hpp"
 #include "game/EntityStatusVisuals.hpp"
-#include "game/ExplosionWarning.hpp"
 
 namespace majo {
 
@@ -419,59 +418,6 @@ void drawDetectionBadges(Renderer& renderer, const SpellRingItem& item, Vec2 anc
     }
     if (item.treasureDetectionRadius > 0.0f) {
         drawDetectionBadge(renderer, anchor, {255, 220, 92, 255}, index, visualScale, alphaScale);
-    }
-}
-
-ExplosionWarningVisual ringItemBreakExplosionWarningVisual(const SpellRingItem& item)
-{
-    if (!item.breakExplosion.active) {
-        return {};
-    }
-    return explosionWarningVisual(item.breakExplosion.initialDelay, item.breakExplosion.delay);
-}
-
-void drawRingItemBreakExplosionWarningAura(
-    Renderer& renderer,
-    Vec2 position,
-    float visualRadius,
-    const ExplosionWarningVisual& warning)
-{
-    if (!warning.active) {
-        return;
-    }
-
-    const float auraRadius = visualRadius * (1.70f + warning.urgency * 0.48f + warning.pulse * 0.24f);
-    const float outerRadius = visualRadius * (1.22f + warning.urgency * 0.22f + warning.pulse * 0.15f);
-    renderer.fillSoftCircle(position, auraRadius, withAlpha({255, 36, 28, 255}, 78.0f * warning.intensity));
-    renderer.fillSoftCircle(position, outerRadius, withAlpha({255, 86, 42, 255}, 54.0f + 88.0f * warning.intensity));
-
-    const float ringRadius = visualRadius + 5.0f + warning.urgency * 5.0f + warning.pulse * (3.0f + warning.urgency * 3.5f);
-    renderer.drawCircle(position, ringRadius, withAlpha({255, 54, 38, 255}, 58.0f + 116.0f * warning.intensity));
-    renderer.drawCircle(position, ringRadius + 3.5f + warning.pulse * 2.5f, withAlpha({255, 132, 76, 255}, 40.0f + 76.0f * warning.intensity));
-}
-
-void drawRingItemBreakExplosionWarningOverlay(
-    Renderer& renderer,
-    Vec2 position,
-    float visualRadius,
-    const ExplosionWarningVisual& warning)
-{
-    if (!warning.active) {
-        return;
-    }
-
-    const float coreRadius = visualRadius * (0.82f + warning.pulse * 0.12f);
-    renderer.fillSoftCircle(position, coreRadius, withAlpha({255, 24, 24, 255}, 44.0f + 118.0f * warning.intensity));
-    renderer.drawCircle(position, visualRadius + 2.0f + warning.pulse * 2.5f, withAlpha({255, 40, 32, 255}, 86.0f + 126.0f * warning.intensity));
-    renderer.drawCircle(position, visualRadius * (0.54f + warning.pulse * 0.10f), withAlpha({255, 214, 178, 255}, 48.0f + 82.0f * warning.intensity));
-
-    const float rayAngle = warning.elapsed * (2.8f + warning.urgency * 5.0f);
-    const float rayInner = visualRadius * (0.42f + warning.pulse * 0.08f);
-    const float rayOuter = visualRadius * (1.14f + warning.urgency * 0.24f + warning.pulse * 0.16f);
-    const Color rayColor = withAlpha({255, 76, 52, 255}, 46.0f + 92.0f * warning.intensity);
-    for (int i = 0; i < 4; ++i) {
-        const Vec2 ray = fromAngle(rayAngle + static_cast<float>(i) * Pi * 0.5f);
-        renderer.drawLine(position + ray * rayInner, position + ray * rayOuter, rayColor);
     }
 }
 
@@ -5230,9 +5176,6 @@ void Game::renderSpellRingForeground(
         const ItemData* object = objectForRingItem(objectCatalog_, item);
         const Vec2 outward = item.orbitOutward;
         const Vec2 maxImageSize{RingObjectImageMaxSize * cometVisualScale, RingObjectImageMaxSize * cometVisualScale};
-        const ExplosionWarningVisual breakExplosionWarning = ringItemBreakExplosionWarningVisual(item);
-        const float breakExplosionVisualRadius = std::max(10.0f, item.hitRadius * cometVisualScale);
-        drawRingItemBreakExplosionWarningAura(renderer, drawPosition, breakExplosionVisualRadius, breakExplosionWarning);
         if (item.type == SpellRingItemType::Shovel) {
             const bool drewImage = drawRingItemObjectImage(
                 renderer,
@@ -5276,7 +5219,6 @@ void Game::renderSpellRingForeground(
                 renderer.drawCircle(drawPosition, item.hitRadius * cometVisualScale + 3.0f, {160, 202, 255, 255});
             }
         }
-        drawRingItemBreakExplosionWarningOverlay(renderer, drawPosition, breakExplosionVisualRadius, breakExplosionWarning);
         drawDetectionBadges(renderer, item, drawPosition, cometVisualScale);
     }
 }
@@ -5696,9 +5638,6 @@ void Game::render(Renderer& renderer, const Time& time)
                     RingObjectImageMaxSize * cometVisualScale,
                     RingObjectImageMaxSize * cometVisualScale};
                 const float totalSeconds = static_cast<float>(time.totalSeconds());
-                const ExplosionWarningVisual breakExplosionWarning = ringItemBreakExplosionWarningVisual(item);
-                const float breakExplosionVisualRadius = std::max(10.0f, item.hitRadius * cometVisualScale);
-                drawRingItemBreakExplosionWarningAura(renderer, drawPosition, breakExplosionVisualRadius, breakExplosionWarning);
                 if (item.type == SpellRingItemType::Shovel) {
                     const bool drewImage = drawRingItemObjectImage(
                         renderer,
@@ -5742,7 +5681,6 @@ void Game::render(Renderer& renderer, const Time& time)
                         renderer.drawCircle(drawPosition, item.hitRadius * cometVisualScale + 3.0f, {160, 202, 255, 255});
                     }
                 }
-                drawRingItemBreakExplosionWarningOverlay(renderer, drawPosition, breakExplosionVisualRadius, breakExplosionWarning);
                 drawDetectionBadges(renderer, item, drawPosition, cometVisualScale);
                 if (item.magicAuraTimer > 0.0f && !item.magicAuraDamageType.empty() && item.magicAuraFxEmitterId == 0) {
                     drawMagicAura(

@@ -131,8 +131,16 @@ public:
     bool addItem(SpellRingItem item, SpellRingAddResult* outResult = nullptr);
     bool addObjectItem(const ItemData& item, SpellRingAddResult* outResult = nullptr);
     bool addObjectItem(const ItemData& item, const ItemInstance& instance, SpellRingAddResult* outResult = nullptr);
+    bool addObjectItemToRing(int ringIndex, const ItemData& item, SpellRingAddResult* outResult);
+    bool addObjectItemToRing(
+        int ringIndex,
+        const ItemData& item,
+        const ItemInstance& instance,
+        SpellRingAddResult* outResult);
     bool canAddObjectItem(const ItemData& item) const;
     bool canAddObjectItem(const ItemData& item, const ItemInstance& instance) const;
+    bool canAddObjectItemForRing(int ringIndex, const ItemData& item) const;
+    bool canAddObjectItemForRing(int ringIndex, const ItemData& item, const ItemInstance& instance) const;
     bool canAddObjectItemAtAngle(const ItemData& item, float localAngle) const;
     bool canAddObjectItemAtAngle(const ItemData& item, const ItemInstance& instance, float localAngle) const;
     bool addObjectItemAtAngle(const ItemData& item, float localAngle, SpellRingAddResult* outResult = nullptr);
@@ -141,7 +149,6 @@ public:
         const ItemInstance& instance,
         float localAngle,
         SpellRingAddResult* outResult = nullptr);
-    int applyExplosionDamageToItems(Vec2 position, float radius, int damage);
     bool repairItem(int ringIndex, int itemIndex);
     bool enhanceItem(
         int ringIndex,
@@ -153,17 +160,10 @@ public:
         const ObjectCatalog& catalog);
     bool canAddItem() const;
     bool consumeItemDurability(SpellRingItem& item, int amount = 1);
+    int applyExplosionDamageToItems(Vec2 position, float radius, int damage);
     std::vector<RingItemBreakEvent> consumeItemBreakEvents();
     bool canAddItem(const SpellRingItem& item) const;
     bool canAddItemForRing(int ringIndex) const;
-    bool addObjectItemToRing(int ringIndex, const ItemData& item, SpellRingAddResult* outResult);
-    bool addObjectItemToRing(
-        int ringIndex,
-        const ItemData& item,
-        const ItemInstance& instance,
-        SpellRingAddResult* outResult);
-    bool canAddObjectItemForRing(int ringIndex, const ItemData& item) const;
-    bool canAddObjectItemForRing(int ringIndex, const ItemData& item, const ItemInstance& instance) const;
     bool canPlaceItemAtAngle(int index, float angle) const;
     std::optional<float> nearestPlaceableAngle(int index, float desiredAngle, float maxDeltaRadians) const;
     bool moveItemAngle(int index, float deltaRadians);

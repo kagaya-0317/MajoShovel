@@ -3,6 +3,7 @@
 #include "engine/Math.hpp"
 #include "game/Enemy.hpp"
 
+#include <array>
 #include <filesystem>
 #include <string>
 #include <string_view>
@@ -12,6 +13,15 @@
 namespace majo {
 
 inline constexpr int HitboxMaxCircles = 8;
+inline constexpr int HitboxDirectionCount = 5;
+
+enum class HitboxDirection {
+    Default = 0,
+    Down = 1,
+    Left = 2,
+    Right = 3,
+    Up = 4,
+};
 
 struct HitCircle {
     Vec2 offset{};
@@ -31,20 +41,55 @@ struct HitboxProfile {
     bool operator==(const HitboxProfile&) const = default;
 };
 
+struct EnemyHitboxProfiles {
+    std::array<HitboxProfile, HitboxDirectionCount> directions;
+
+    bool operator==(const EnemyHitboxProfiles&) const = default;
+};
+
 struct HitboxCatalog {
-    std::unordered_map<std::string, HitboxProfile> enemies;
+    HitboxProfile player;
+    std::unordered_map<std::string, EnemyHitboxProfiles> enemies;
     std::unordered_map<std::string, HitboxProfile> objects;
 
     bool operator==(const HitboxCatalog&) const = default;
 };
 
+[[nodiscard]] int hitboxDirectionIndex(HitboxDirection direction);
+[[nodiscard]] std::string_view hitboxDirectionId(HitboxDirection direction);
+[[nodiscard]] std::string_view hitboxDirectionDisplayName(HitboxDirection direction);
+[[nodiscard]] Vec2 hitboxDirectionVector(HitboxDirection direction);
+[[nodiscard]] HitboxDirection enemyHitboxDirectionForFacing(float facingAngle);
 [[nodiscard]] HitboxProfile singleCircleHitbox(float radius);
 [[nodiscard]] const HitboxProfile* enemyHitboxProfileFor(
     const HitboxCatalog* catalog,
     const Enemy& enemy);
+[[nodiscard]] const HitboxProfile* enemyHitboxProfileFor(
+    const HitboxCatalog* catalog,
+    std::string_view enemyId,
+    HitboxDirection direction);
+[[nodiscard]] bool enemyHitboxHasProfile(
+    const HitboxCatalog& catalog,
+    std::string_view enemyId,
+    HitboxDirection direction);
+[[nodiscard]] bool enemyHitboxHasAnyProfile(
+    const HitboxCatalog& catalog,
+    std::string_view enemyId);
+[[nodiscard]] HitboxProfile& mutableEnemyHitboxProfile(
+    HitboxCatalog& catalog,
+    std::string_view enemyId,
+    HitboxDirection direction);
+bool eraseEnemyHitboxProfile(
+    HitboxCatalog& catalog,
+    std::string_view enemyId,
+    HitboxDirection direction);
 [[nodiscard]] const HitboxProfile* objectHitboxProfileFor(
     const HitboxCatalog* catalog,
     std::string_view objectId);
+[[nodiscard]] const HitboxProfile* playerHitboxProfileFor(const HitboxCatalog* catalog);
+[[nodiscard]] bool playerHitboxHasProfile(const HitboxCatalog& catalog);
+[[nodiscard]] HitboxProfile& mutablePlayerHitboxProfile(HitboxCatalog& catalog);
+bool erasePlayerHitboxProfile(HitboxCatalog& catalog);
 [[nodiscard]] HitCircle fallbackEnemyHitCircle(const Enemy& enemy);
 [[nodiscard]] float hitboxProfileBoundsRadius(
     const HitboxProfile& profile,

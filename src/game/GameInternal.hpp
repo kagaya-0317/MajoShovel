@@ -10,6 +10,7 @@
 #include "game/ItemImageRenderer.hpp"
 #include "game/ObjectImageRenderer.hpp"
 #include "game/ObjectVisualPose.hpp"
+#include "game/RingItemVisual.hpp"
 #include "game/WorldIconRenderer.hpp"
 
 #include <SDL3/SDL.h>
@@ -196,10 +197,6 @@ constexpr int BaseEditUndoLimit = 100;
 constexpr float BaseEditHandleSize = 12.0f;
 constexpr float BaseEditHandleHitPadding = 8.0f;
 constexpr float RingObjectImageMaxSize = 48.0f;
-constexpr float RingItemBaseAltitude = 8.0f;
-constexpr float RingItemBobAmplitude = 3.0f;
-constexpr float RingItemBobSpeed = 4.2f;
-constexpr float RingItemRotationWobbleDegrees = 4.0f;
 constexpr float ObjectImageScaleMin = 0.25f;
 constexpr float ObjectImageScaleMax = 4.0f;
 constexpr float ObjectImageScaleStep = 0.05f;
@@ -2220,44 +2217,6 @@ void drawSpellRingOrbitLayer(
                 });
         }
     }
-}
-
-float ringItemBobPhase(const SpellRingItem& item, float totalSeconds)
-{
-    return totalSeconds * RingItemBobSpeed + item.localAngle * 1.7f;
-}
-
-float ringItemAltitude(const SpellRingItem& item, float totalSeconds)
-{
-    return RingItemBaseAltitude + std::sin(ringItemBobPhase(item, totalSeconds)) * RingItemBobAmplitude;
-}
-
-float ringItemRotationWobbleDegrees(const SpellRingItem& item, float totalSeconds)
-{
-    return std::cos(ringItemBobPhase(item, totalSeconds)) * RingItemRotationWobbleDegrees;
-}
-
-Vec2 ringItemActionShakeOffset(const SpellRingItem& item, float totalSeconds)
-{
-    if (item.actionFlashTimer <= 0.0f) {
-        return {};
-    }
-
-    const float t = std::clamp(item.actionFlashTimer / SpellRingItemActionFlashSeconds, 0.0f, 1.0f);
-    const float eased = t * t * (3.0f - 2.0f * t);
-    const float amplitude = 3.6f * eased;
-    const float phase = item.localAngle * 17.0f + static_cast<float>(item.ringIndex) * 5.0f;
-    constexpr float ShakeSpeed = 86.0f;
-    return {
-        std::sin(totalSeconds * ShakeSpeed + phase) * amplitude,
-        std::cos(totalSeconds * ShakeSpeed * 1.27f + phase) * amplitude,
-    };
-}
-
-Vec2 ringItemDrawPosition(const SpellRingItem& item, float totalSeconds)
-{
-    return elevatedDrawPosition(item.worldPosition, ringItemAltitude(item, totalSeconds)) +
-        ringItemActionShakeOffset(item, totalSeconds);
 }
 
 float ringItemBaseShadowVisualSize(const SpellRingItem& item)

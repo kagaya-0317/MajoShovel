@@ -158,6 +158,7 @@ struct EnemyDeathRuntime {
     Vec2 knockbackVelocity{};
     float knockbackTimer = 0.0f;
     unsigned int shakeSeed = 0;
+    bool suppressRewards = false;
 };
 
 struct Enemy {

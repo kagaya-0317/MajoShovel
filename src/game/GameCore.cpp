@@ -64,6 +64,7 @@ constexpr std::string_view LocalEnemyBehaviorsSnapshotPath = ".tmp_behaviors.csv
 constexpr float PlayerDamageVignetteStartHpRatio = 0.70f;
 constexpr float PlayerDamageVignetteMaxHpRatio = 0.20f;
 constexpr float PlayerDamageVignetteFlashDecayPerSecond = 3.4f;
+constexpr float PlayerPinchSeHpRatio = 1.0f / 3.0f;
 constexpr float LevelUpPresentationMinSeconds = 1.22f;
 constexpr float LevelUpPresentationSparkleIntervalSeconds = 0.22f;
 constexpr float LevelUpJingleFallbackSeconds = 1.18f;
@@ -431,7 +432,7 @@ bool isPlayerPinchHp(int hp, int maxHp)
     if (maxHp <= 0 || hp <= 0) {
         return false;
     }
-    return static_cast<float>(hp) / static_cast<float>(maxHp) < PlayerDamageVignetteStartHpRatio;
+    return static_cast<float>(hp) / static_cast<float>(maxHp) <= PlayerPinchSeHpRatio;
 }
 
 bool shouldPlayPlayerPinchDamageSe(int hpAfter, int maxHp, int damageTaken)
@@ -441,7 +442,7 @@ bool shouldPlayPlayerPinchDamageSe(int hpAfter, int maxHp, int damageTaken)
     }
 
     const int hpBefore = std::min(maxHp, hpAfter + damageTaken);
-    return isPlayerPinchHp(hpBefore, maxHp) || isPlayerPinchHp(hpAfter, maxHp);
+    return !isPlayerPinchHp(hpBefore, maxHp) && isPlayerPinchHp(hpAfter, maxHp);
 }
 
 }
@@ -1121,18 +1122,24 @@ void Game::resetWorldUiState()
     objectImageScaleStatus_.clear();
     enemyHitboxEditReturnMode_ = ScreenMode::Playing;
     hitboxEditTab_ = HitboxEditTab::Enemies;
+    enemyHitboxDirection_ = HitboxDirection::Default;
     enemyHitboxAllEnemyIds_.clear();
     enemyHitboxEnemyIds_.clear();
     objectHitboxAllObjectIds_.clear();
     objectHitboxObjectIds_.clear();
+    playerHitboxAllIds_.clear();
+    playerHitboxIds_.clear();
     enemyHitboxSearchInput_ = {};
     enemyHitboxSelectedEnemyIndex_ = -1;
     objectHitboxSelectedObjectIndex_ = -1;
+    playerHitboxSelectedIndex_ = 0;
     enemyHitboxSelectedCircleIndex_ = -1;
     enemyHitboxScrollOffset_ = 0.0f;
     objectHitboxScrollOffset_ = 0.0f;
+    playerHitboxScrollOffset_ = 0.0f;
     enemyHitboxDirty_ = false;
     enemyHitboxDraggingCircle_ = false;
+    enemyHitboxDragUndoSnapshotPushed_ = false;
     enemyHitboxDragStartMouse_ = {};
     enemyHitboxDragStartOffset_ = {};
     enemyHitboxClipboard_.clear();
@@ -1489,6 +1496,7 @@ void Game::enterBase()
     inventory_.setOpen(false);
     inventory_.cancelGrab();
     cancelRingGrab();
+    spellRing_.clearActionFlashTimers();
     closeDebugItemPicker();
     closeDebugStoryTest();
     debugStoryTestReturnAfterDialogue_ = false;
@@ -4023,14 +4031,16 @@ void Game::update(const Input& input, const Time& time)
                 }
             } else if (event.type == EnemyEventType::Death || event.type == EnemyEventType::BossDeath) {
                 handleDungeonEventEnemyEvent(event);
-                ++runStats_.defeatedEnemies;
+                if (!event.suppressRewards) {
+                    ++runStats_.defeatedEnemies;
+                }
                 effects_.spawnEnemyDeath(event.position);
                 addScreenShake(event.type == EnemyEventType::BossDeath ? 8.0f : 1.5f, event.type == EnemyEventType::BossDeath ? 0.28f : 0.08f);
-                if (event.type == EnemyEventType::Death && !capturedEnemyThisFrame) {
+                if (event.type == EnemyEventType::Death && !capturedEnemyThisFrame && !event.suppressRewards) {
                     playAudioSe(AudioSeEnemyDefeat);
                 }
                 std::mt19937& rng = lootRuntimeRng();
-                if (event.moneyDrop > 0) {
+                if (!event.suppressRewards && event.moneyDrop > 0) {
                     worldDrops_.spawnMoneyDrop(
                         event.moneyDrop,
                         scatterLootPosition(event.position, rng),
@@ -4040,7 +4050,7 @@ void Game::update(const Input& input, const Time& time)
                 const bool bossDeath = event.type == EnemyEventType::BossDeath;
                 const float manaChance = bossDeath ? balance_.bossManaDropChance : balance_.enemyManaDropChance;
                 const float moonChance = bossDeath ? balance_.bossMoonFragmentChance : balance_.enemyMoonFragmentChance;
-                if (rollChance(manaChance, rng)) {
+                if (!event.suppressRewards && rollChance(manaChance, rng)) {
                     const int amount = bossDeath ? scaledLootAmount(std::uniform_int_distribution<int>(1, 3)(rng), 1.0f) : 1;
                     worldDrops_.spawnMaterialDrop(
                         MaterialType::ManaDrop,
@@ -4049,7 +4059,7 @@ void Game::update(const Input& input, const Time& time)
                         runStats_.elapsedSeconds,
                         makeWorldLootJumpMotion(event.position, rng));
                 }
-                if (rollChance(moonChance, rng)) {
+                if (!event.suppressRewards && rollChance(moonChance, rng)) {
                     const int amount = bossDeath ? scaledLootAmount(std::uniform_int_distribution<int>(1, 3)(rng), 1.0f) : 1;
                     worldDrops_.spawnMaterialDrop(
                         MaterialType::MoonFragment,
@@ -4058,7 +4068,7 @@ void Game::update(const Input& input, const Time& time)
                         runStats_.elapsedSeconds,
                         makeWorldLootJumpMotion(event.position, rng));
                 }
-                if (!event.enemyId.empty()) {
+                if (!event.suppressRewards && !event.enemyId.empty()) {
                     encyclopedia_.noteEnemyDefeated(event.enemyId, event.enemyName, event.position);
                 }
                 if (event.type == EnemyEventType::BossDeath) {

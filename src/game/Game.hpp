@@ -113,6 +113,7 @@ enum class ImageScaleEditTab {
 enum class HitboxEditTab {
     Enemies,
     Objects,
+    Player,
 };
 
 enum class AudioCueEditMode {
@@ -137,10 +138,16 @@ struct BaseEditSnapshot {
 struct HitboxEditSnapshot {
     HitboxCatalog catalog;
     HitboxEditTab tab = HitboxEditTab::Enemies;
+    HitboxDirection enemyDirection = HitboxDirection::Default;
     std::string selectedId;
     int selectedCircleIndex = -1;
 
     bool operator==(const HitboxEditSnapshot&) const = default;
+};
+
+struct EnemyHitboxDirectionClipboard {
+    std::array<std::vector<HitCircle>, HitboxDirectionCount> circles;
+    std::array<bool, HitboxDirectionCount> hasProfile{};
 };
 
 struct AudioCueEditEntry {
@@ -1379,12 +1386,20 @@ private:
     void enterEnemyHitboxEditMode();
     void exitEnemyHitboxEditMode();
     void updateEnemyHitboxEditScreen(const Input& input, UiContext& ui);
-    void renderEnemyHitboxEditScreen(Renderer& renderer) const;
+    void renderEnemyHitboxEditScreen(Renderer& renderer, double totalSeconds) const;
     HitboxEditSnapshot makeHitboxEditSnapshot() const;
     void restoreHitboxEditSnapshot(const HitboxEditSnapshot& snapshot);
     void pushHitboxEditUndoSnapshot();
     bool undoHitboxEdit();
     bool redoHitboxEdit();
+    const EnemyDefinition* selectedEnemyHitboxDefinitionForEdit() const;
+    const ObjectDefinition* selectedObjectHitboxDefinitionForEdit() const;
+    std::vector<HitCircle> selectedHitboxEditCircles() const;
+    HitboxProfile* ensureSelectedHitboxEditProfile();
+    bool copyCurrentHitboxEditProfile();
+    bool pasteCurrentHitboxEditProfile(bool mirrorX);
+    bool copyEnemyHitboxAllDirectionProfiles();
+    bool pasteEnemyHitboxAllDirectionProfiles(bool mirrorX);
     bool loadAudioCueManifestForEdit();
     bool saveAudioCueManifestFromEdit(std::string& message);
     bool handleAudioCueEditCommand(std::string_view normalized);
@@ -1433,6 +1448,7 @@ private:
     void spawnSelectedEnemyTestEnemy();
     bool spawnEnemyTestMimicChest(const EnemyDefinition& enemy, Vec2 desiredPosition);
     int spawnEnemyTestMagnetDrops(Vec2 center);
+    int spawnEnemyTestStealBaitDrops(const EnemyDefinition& enemy, Vec2 center);
     int spawnEnemyTestHealSlimes(Vec2 center);
     void clearEnemyTestArena();
     void updateEnemyTestUi(const Input& input, UiContext& ui);
@@ -1686,6 +1702,8 @@ private:
     std::vector<std::string> enemyHitboxEnemyIds_;
     std::vector<std::string> objectHitboxAllObjectIds_;
     std::vector<std::string> objectHitboxObjectIds_;
+    std::vector<std::string> playerHitboxAllIds_;
+    std::vector<std::string> playerHitboxIds_;
     std::vector<HitboxEditSnapshot> hitboxEditUndoStack_;
     std::vector<HitboxEditSnapshot> hitboxEditRedoStack_;
     UiTextInputState objectImageScaleSearchInput_;
@@ -1694,21 +1712,26 @@ private:
     ScreenMode enemyHitboxEditReturnMode_ = ScreenMode::Playing;
     ImageScaleEditTab imageScaleEditTab_ = ImageScaleEditTab::Objects;
     HitboxEditTab hitboxEditTab_ = HitboxEditTab::Enemies;
+    HitboxDirection enemyHitboxDirection_ = HitboxDirection::Default;
     int objectImageScaleSelectedIndex_ = -1;
     int otherImageScaleSelectedIndex_ = -1;
     int enemyHitboxSelectedEnemyIndex_ = -1;
     int objectHitboxSelectedObjectIndex_ = -1;
+    int playerHitboxSelectedIndex_ = 0;
     int enemyHitboxSelectedCircleIndex_ = -1;
     float objectImageScaleScrollOffset_ = 0.0f;
     float otherImageScaleScrollOffset_ = 0.0f;
     float enemyHitboxScrollOffset_ = 0.0f;
     float objectHitboxScrollOffset_ = 0.0f;
+    float playerHitboxScrollOffset_ = 0.0f;
     bool objectImageScaleDirty_ = false;
     bool enemyHitboxDirty_ = false;
     bool enemyHitboxDraggingCircle_ = false;
+    bool enemyHitboxDragUndoSnapshotPushed_ = false;
     Vec2 enemyHitboxDragStartMouse_{};
     Vec2 enemyHitboxDragStartOffset_{};
     std::vector<HitCircle> enemyHitboxClipboard_;
+    EnemyHitboxDirectionClipboard enemyHitboxAllDirectionClipboard_;
     std::string objectImageScaleStatus_;
     std::string enemyHitboxStatus_;
     ScreenMode audioCueEditReturnMode_ = ScreenMode::Playing;

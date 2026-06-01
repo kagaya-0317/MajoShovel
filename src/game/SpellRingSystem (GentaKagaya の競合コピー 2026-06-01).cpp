@@ -17,7 +17,6 @@ constexpr float CapturedJumpDuration = 0.24f;
 constexpr float CapturedJumpDistance = 18.0f;
 constexpr float CapturedPeriodicHealInterval = 8.0f;
 constexpr int CapturedPeriodicHealMaxPerPulse = 2;
-constexpr std::string_view BreakCountdownExplodeBehaviorId = "break_countdown_explode";
 constexpr float FullCircleRadians = Pi * 2.0f;
 constexpr double MinSlashDamageMultiplier = 0.05;
 constexpr double MaxSlashDamageMultiplier = 10.0;
@@ -42,33 +41,6 @@ float smoothStep01(float t)
 {
     t = clamp(t, 0.0f, 1.0f);
     return t * t * (3.0f - 2.0f * t);
-}
-
-void startBreakCountdownExplosion(SpellRingItem& item)
-{
-    RingItemBreakExplosionState state;
-    state.active = true;
-    state.delay = static_cast<float>(std::max(
-        0.0,
-        item.capturedBehaviorParamDouble(BreakCountdownExplodeBehaviorId, "delay", 4.0)));
-    state.initialDelay = std::max(0.001f, state.delay);
-    state.warningTickIndex = -1;
-    state.radius = static_cast<float>(std::max(
-        8.0,
-        item.capturedBehaviorParamDouble(BreakCountdownExplodeBehaviorId, "radius", state.radius)));
-    state.damage = std::max(
-        0,
-        item.capturedBehaviorParamInt(BreakCountdownExplodeBehaviorId, "damage", state.damage));
-    state.terrainRadius = static_cast<float>(std::max(
-        0.0,
-        item.capturedBehaviorParamDouble(BreakCountdownExplodeBehaviorId, "terrainRadius", state.terrainRadius)));
-    state.terrainDamage = std::max(
-        0,
-        item.capturedBehaviorParamInt(BreakCountdownExplodeBehaviorId, "terrainDamage", state.terrainDamage));
-    item.breakExplosion = state;
-    item.capturedExplodeCharge = 0;
-    item.capturedExplodeSleepTimer = 0.0f;
-    item.actionFlashTimer = SpellRingItemActionFlashSeconds;
 }
 
 float dotVec2(Vec2 a, Vec2 b)
@@ -1406,10 +1378,6 @@ bool SpellRingSystem::consumeItemDurability(SpellRingItem& item, int amount)
     const bool wasBroken = item.broken();
     const bool becameBroken = item.consumeDurability(amount);
     if (!wasBroken && becameBroken) {
-        if (item.hasCapturedBehavior(BreakCountdownExplodeBehaviorId)) {
-            startBreakCountdownExplosion(item);
-            return true;
-        }
         itemBreakEvents_.push_back(RingItemBreakEvent{
             .position = item.worldPosition,
             .type = item.type,
@@ -1473,7 +1441,6 @@ bool SpellRingSystem::repairItem(int ringIndex, int itemIndex)
 
     item.durability = item.maxDurability;
     item.isBroken = false;
-    item.breakExplosion = {};
     return true;
 }
 
@@ -1518,9 +1485,6 @@ bool SpellRingSystem::enhanceItem(
         }
     }
     item.isBroken = item.durability == 0;
-    if (!item.isBroken) {
-        item.breakExplosion = {};
-    }
     return true;
 }
 
@@ -1550,7 +1514,7 @@ void SpellRingSystem::removeBrokenItems()
     for (auto& ringItems : itemsByRing_) {
         ringItems.erase(
             std::remove_if(ringItems.begin(), ringItems.end(), [](const SpellRingItem& item) {
-                return item.broken() && !item.protectionEnabled && !item.breakExplosion.active;
+                return item.broken() && !item.protectionEnabled;
             }),
             ringItems.end());
     }

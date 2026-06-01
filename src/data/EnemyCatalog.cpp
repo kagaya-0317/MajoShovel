@@ -613,7 +613,7 @@ std::string mapLegacyBehaviorIdToCode(std::string_view legacyId)
         return "attack:wind_blow:none:2.5";
     }
     if (id == "countdown_explode") {
-        return "timer:countdown_explode:none:0";
+        return "timer:countdown_explode:delay=4.0:0";
     }
     if (id == "dig_move") {
         return "always:dig_move:none:0";
@@ -634,7 +634,7 @@ std::string mapLegacyBehaviorIdToCode(std::string_view legacyId)
         return "hit:charge_explode:none:0.2";
     }
     if (id == "break_countdown_explode") {
-        return "break:break_countdown_explode:delay=2.0,radius=44,damage=3,terrainRadius=28,terrainDamage=1:0";
+        return "break:break_countdown_explode:delay=4.0,radius=44,damage=3,terrainRadius=28,terrainDamage=1:0";
     }
     return {};
 }

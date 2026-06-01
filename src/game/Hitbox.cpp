@@ -13,7 +13,8 @@ namespace majo {
 
 namespace {
 
-constexpr std::string_view HitboxHeader = "MAJO_HITBOX_V1";
+constexpr std::string_view HitboxHeader = "MAJO_HITBOX_V2";
+constexpr std::string_view LegacyHitboxHeader = "MAJO_HITBOX_V1";
 constexpr std::string_view LegacyEnemyHitboxHeader = "MAJO_ENEMY_HITBOX_V1";
 constexpr float HitboxRadiusMin = 1.0f;
 constexpr float HitboxRadiusMax = 512.0f;
@@ -84,6 +85,11 @@ std::string formatHitboxFloat(float value)
     return text.empty() ? std::string("0") : text;
 }
 
+bool profileHasCircles(const HitboxProfile& profile)
+{
+    return !profile.circles.empty();
+}
+
 const HitboxProfile* profileFor(const std::unordered_map<std::string, HitboxProfile>& profiles, std::string_view id)
 {
     if (id.empty()) {
@@ -91,10 +97,53 @@ const HitboxProfile* profileFor(const std::unordered_map<std::string, HitboxProf
     }
 
     const auto it = profiles.find(std::string(id));
-    if (it == profiles.end() || it->second.circles.empty()) {
+    if (it == profiles.end() || !profileHasCircles(it->second)) {
         return nullptr;
     }
     return &it->second;
+}
+
+bool parseHitboxDirection(std::string_view token, HitboxDirection& outDirection)
+{
+    if (token == "default") {
+        outDirection = HitboxDirection::Default;
+        return true;
+    }
+    if (token == "down") {
+        outDirection = HitboxDirection::Down;
+        return true;
+    }
+    if (token == "left") {
+        outDirection = HitboxDirection::Left;
+        return true;
+    }
+    if (token == "right") {
+        outDirection = HitboxDirection::Right;
+        return true;
+    }
+    if (token == "up") {
+        outDirection = HitboxDirection::Up;
+        return true;
+    }
+    return false;
+}
+
+const HitboxProfile* enemyProfileSlot(
+    const std::unordered_map<std::string, EnemyHitboxProfiles>& enemies,
+    std::string_view id,
+    HitboxDirection direction)
+{
+    if (id.empty()) {
+        return nullptr;
+    }
+
+    const auto it = enemies.find(std::string(id));
+    if (it == enemies.end()) {
+        return nullptr;
+    }
+
+    const HitboxProfile& profile = it->second.directions[static_cast<std::size_t>(hitboxDirectionIndex(direction))];
+    return profileHasCircles(profile) ? &profile : nullptr;
 }
 
 void appendEntry(
@@ -107,6 +156,31 @@ void appendEntry(
     }
 
     HitboxProfile& profile = profiles[id];
+    if (static_cast<int>(profile.circles.size()) >= HitboxMaxCircles) {
+        return;
+    }
+    profile.circles.push_back(sanitizeCircle(circle));
+}
+
+void appendProfileEntry(HitboxProfile& profile, HitCircle circle)
+{
+    if (static_cast<int>(profile.circles.size()) >= HitboxMaxCircles) {
+        return;
+    }
+    profile.circles.push_back(sanitizeCircle(circle));
+}
+
+void appendEnemyEntry(
+    HitboxCatalog& catalog,
+    const std::string& id,
+    HitboxDirection direction,
+    HitCircle circle)
+{
+    if (id.empty()) {
+        return;
+    }
+
+    HitboxProfile& profile = catalog.enemies[id].directions[static_cast<std::size_t>(hitboxDirectionIndex(direction))];
     if (static_cast<int>(profile.circles.size()) >= HitboxMaxCircles) {
         return;
     }
@@ -126,7 +200,94 @@ void collectEntries(
     }
 }
 
+struct EnemyHitboxSaveEntry {
+    std::string id;
+    HitboxDirection direction = HitboxDirection::Default;
+    const HitboxProfile* profile = nullptr;
+};
+
+void collectEnemyEntries(
+    const std::unordered_map<std::string, EnemyHitboxProfiles>& enemies,
+    std::vector<EnemyHitboxSaveEntry>& entries)
+{
+    entries.reserve(entries.size() + enemies.size());
+    for (const auto& [id, profileSet] : enemies) {
+        if (id.empty()) {
+            continue;
+        }
+        for (int i = 0; i < HitboxDirectionCount; ++i) {
+            const HitboxProfile& profile = profileSet.directions[static_cast<std::size_t>(i)];
+            if (!profileHasCircles(profile)) {
+                continue;
+            }
+            entries.push_back({
+                id,
+                static_cast<HitboxDirection>(i),
+                &profile,
+            });
+        }
+    }
+}
+
 } // namespace
+
+int hitboxDirectionIndex(HitboxDirection direction)
+{
+    switch (direction) {
+    case HitboxDirection::Default: return 0;
+    case HitboxDirection::Down: return 1;
+    case HitboxDirection::Left: return 2;
+    case HitboxDirection::Right: return 3;
+    case HitboxDirection::Up: return 4;
+    }
+    return 0;
+}
+
+std::string_view hitboxDirectionId(HitboxDirection direction)
+{
+    switch (direction) {
+    case HitboxDirection::Default: return "default";
+    case HitboxDirection::Down: return "down";
+    case HitboxDirection::Left: return "left";
+    case HitboxDirection::Right: return "right";
+    case HitboxDirection::Up: return "up";
+    }
+    return "default";
+}
+
+std::string_view hitboxDirectionDisplayName(HitboxDirection direction)
+{
+    switch (direction) {
+    case HitboxDirection::Default: return "共通";
+    case HitboxDirection::Down: return "下";
+    case HitboxDirection::Left: return "左";
+    case HitboxDirection::Right: return "右";
+    case HitboxDirection::Up: return "上";
+    }
+    return "共通";
+}
+
+Vec2 hitboxDirectionVector(HitboxDirection direction)
+{
+    switch (direction) {
+    case HitboxDirection::Left: return {-1.0f, 0.0f};
+    case HitboxDirection::Right: return {1.0f, 0.0f};
+    case HitboxDirection::Up: return {0.0f, -1.0f};
+    case HitboxDirection::Default:
+    case HitboxDirection::Down:
+        return {0.0f, 1.0f};
+    }
+    return {0.0f, 1.0f};
+}
+
+HitboxDirection enemyHitboxDirectionForFacing(float facingAngle)
+{
+    const Vec2 direction{std::cos(facingAngle), std::sin(facingAngle)};
+    if (std::abs(direction.x) > std::abs(direction.y)) {
+        return direction.x >= 0.0f ? HitboxDirection::Right : HitboxDirection::Left;
+    }
+    return direction.y >= 0.0f ? HitboxDirection::Down : HitboxDirection::Up;
+}
 
 HitboxProfile singleCircleHitbox(float radius)
 {
@@ -137,12 +298,107 @@ HitboxProfile singleCircleHitbox(float radius)
 
 const HitboxProfile* enemyHitboxProfileFor(const HitboxCatalog* catalog, const Enemy& enemy)
 {
-    return catalog == nullptr ? nullptr : profileFor(catalog->enemies, enemy.enemyId);
+    if (catalog == nullptr) {
+        return nullptr;
+    }
+
+    const HitboxDirection direction = enemyHitboxDirectionForFacing(enemy.facingAngle);
+    if (const HitboxProfile* profile = enemyHitboxProfileFor(catalog, enemy.enemyId, direction)) {
+        return profile;
+    }
+    return enemyHitboxProfileFor(catalog, enemy.enemyId, HitboxDirection::Default);
+}
+
+const HitboxProfile* enemyHitboxProfileFor(
+    const HitboxCatalog* catalog,
+    std::string_view enemyId,
+    HitboxDirection direction)
+{
+    return catalog == nullptr ? nullptr : enemyProfileSlot(catalog->enemies, enemyId, direction);
+}
+
+bool enemyHitboxHasProfile(
+    const HitboxCatalog& catalog,
+    std::string_view enemyId,
+    HitboxDirection direction)
+{
+    return enemyHitboxProfileFor(&catalog, enemyId, direction) != nullptr;
+}
+
+bool enemyHitboxHasAnyProfile(const HitboxCatalog& catalog, std::string_view enemyId)
+{
+    if (enemyId.empty()) {
+        return false;
+    }
+
+    const auto it = catalog.enemies.find(std::string(enemyId));
+    if (it == catalog.enemies.end()) {
+        return false;
+    }
+
+    return std::any_of(it->second.directions.begin(), it->second.directions.end(), [](const HitboxProfile& profile) {
+        return profileHasCircles(profile);
+    });
+}
+
+HitboxProfile& mutableEnemyHitboxProfile(
+    HitboxCatalog& catalog,
+    std::string_view enemyId,
+    HitboxDirection direction)
+{
+    return catalog.enemies[std::string(enemyId)].directions[static_cast<std::size_t>(hitboxDirectionIndex(direction))];
+}
+
+bool eraseEnemyHitboxProfile(
+    HitboxCatalog& catalog,
+    std::string_view enemyId,
+    HitboxDirection direction)
+{
+    if (enemyId.empty()) {
+        return false;
+    }
+
+    const auto it = catalog.enemies.find(std::string(enemyId));
+    if (it == catalog.enemies.end()) {
+        return false;
+    }
+
+    HitboxProfile& profile = it->second.directions[static_cast<std::size_t>(hitboxDirectionIndex(direction))];
+    const bool hadProfile = profileHasCircles(profile);
+    profile.circles.clear();
+    if (std::none_of(it->second.directions.begin(), it->second.directions.end(), [](const HitboxProfile& candidate) {
+        return profileHasCircles(candidate);
+    })) {
+        catalog.enemies.erase(it);
+    }
+    return hadProfile;
 }
 
 const HitboxProfile* objectHitboxProfileFor(const HitboxCatalog* catalog, std::string_view objectId)
 {
     return catalog == nullptr ? nullptr : profileFor(catalog->objects, objectId);
+}
+
+const HitboxProfile* playerHitboxProfileFor(const HitboxCatalog* catalog)
+{
+    return catalog != nullptr && profileHasCircles(catalog->player) ? &catalog->player : nullptr;
+}
+
+bool playerHitboxHasProfile(const HitboxCatalog& catalog)
+{
+    return profileHasCircles(catalog.player);
+}
+
+HitboxProfile& mutablePlayerHitboxProfile(HitboxCatalog& catalog)
+{
+    return catalog.player;
+}
+
+bool erasePlayerHitboxProfile(HitboxCatalog& catalog)
+{
+    const bool hadProfile = profileHasCircles(catalog.player);
+    catalog.player.circles.clear();
+    return hadProfile;
 }
 
 HitCircle fallbackEnemyHitCircle(const Enemy& enemy)
@@ -296,6 +552,7 @@ bool loadHitboxCatalog(
     HitboxCatalog& outCatalog,
     std::string& outMessage)
 {
+    outCatalog.player.circles.clear();
     outCatalog.enemies.clear();
     outCatalog.objects.clear();
 
@@ -315,7 +572,7 @@ bool loadHitboxCatalog(
         if (firstLine) {
             firstLine = false;
             stripUtf8Bom(line);
-            if (line == HitboxHeader) {
+            if (line == HitboxHeader || line == LegacyHitboxHeader) {
                 continue;
             }
             if (line == LegacyEnemyHitboxHeader) {
@@ -330,15 +587,42 @@ bool loadHitboxCatalog(
         std::istringstream stream(line);
         std::string kind;
         std::string id;
-        std::string shape;
+        std::string token;
         HitCircle circle;
-        stream >> kind >> id >> shape >> circle.offset.x >> circle.offset.y >> circle.radius;
-        if (stream.fail() || id.empty() || shape != "circle") {
+        stream >> kind;
+        if (stream.fail()) {
+            continue;
+        }
+        if (kind == "player") {
+            std::string shape;
+            stream >> shape >> circle.offset.x >> circle.offset.y >> circle.radius;
+            if (!stream.fail() && shape == "circle") {
+                appendProfileEntry(outCatalog.player, circle);
+            }
+            continue;
+        }
+
+        stream >> id >> token;
+        if (stream.fail() || id.empty()) {
+            continue;
+        }
+
+        HitboxDirection direction = HitboxDirection::Default;
+        std::string shape = token;
+        if ((kind == "enemy" || legacyEnemyOnly) && token != "circle") {
+            if (!parseHitboxDirection(token, direction)) {
+                continue;
+            }
+            stream >> shape;
+        }
+
+        stream >> circle.offset.x >> circle.offset.y >> circle.radius;
+        if (stream.fail() || shape != "circle") {
             continue;
         }
 
         if (kind == "enemy" || legacyEnemyOnly) {
-            appendEntry(outCatalog.enemies, id, circle);
+            appendEnemyEntry(outCatalog, id, legacyEnemyOnly ? HitboxDirection::Default : direction, circle);
         } else if (kind == "object") {
             appendEntry(outCatalog.objects, id, circle);
         }
@@ -366,10 +650,18 @@ bool saveHitboxCatalog(
         return false;
     }
 
-    std::vector<std::tuple<std::string_view, std::string, const HitboxProfile*>> entries;
-    collectEntries(catalog.enemies, "enemy", entries);
-    collectEntries(catalog.objects, "object", entries);
-    std::sort(entries.begin(), entries.end(), [](const auto& lhs, const auto& rhs) {
+    std::vector<EnemyHitboxSaveEntry> enemyEntries;
+    collectEnemyEntries(catalog.enemies, enemyEntries);
+    std::sort(enemyEntries.begin(), enemyEntries.end(), [](const auto& lhs, const auto& rhs) {
+        if (lhs.id != rhs.id) {
+            return lhs.id < rhs.id;
+        }
+        return hitboxDirectionIndex(lhs.direction) < hitboxDirectionIndex(rhs.direction);
+    });
+
+    std::vector<std::tuple<std::string_view, std::string, const HitboxProfile*>> objectEntries;
+    collectEntries(catalog.objects, "object", objectEntries);
+    std::sort(objectEntries.begin(), objectEntries.end(), [](const auto& lhs, const auto& rhs) {
         if (std::get<0>(lhs) != std::get<0>(rhs)) {
             return std::get<0>(lhs) < std::get<0>(rhs);
         }
@@ -377,7 +669,39 @@ bool saveHitboxCatalog(
     });
 
     file << "\xEF\xBB\xBF" << HitboxHeader << "\n";
-    for (const auto& [kind, id, profile] : entries) {
+    {
+        int written = 0;
+        for (HitCircle circle : catalog.player.circles) {
+            if (written >= HitboxMaxCircles) {
+                break;
+            }
+            circle = sanitizeCircle(circle);
+            file << "player circle "
+                << formatHitboxFloat(circle.offset.x) << " "
+                << formatHitboxFloat(circle.offset.y) << " "
+                << formatHitboxFloat(circle.radius) << "\n";
+            ++written;
+        }
+    }
+    for (const EnemyHitboxSaveEntry& entry : enemyEntries) {
+        int written = 0;
+        for (HitCircle circle : entry.profile->circles) {
+            if (written >= HitboxMaxCircles) {
+                break;
+            }
+            circle = sanitizeCircle(circle);
+            file << "enemy " << entry.id << " ";
+            if (entry.direction != HitboxDirection::Default) {
+                file << hitboxDirectionId(entry.direction) << " ";
+            }
+            file << "circle "
+                << formatHitboxFloat(circle.offset.x) << " "
+                << formatHitboxFloat(circle.offset.y) << " "
+                << formatHitboxFloat(circle.radius) << "\n";
+            ++written;
+        }
+    }
+    for (const auto& [kind, id, profile] : objectEntries) {
         int written = 0;
         for (HitCircle circle : profile->circles) {
             if (written >= HitboxMaxCircles) {

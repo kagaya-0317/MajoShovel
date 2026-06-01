@@ -223,6 +223,9 @@ CueRule fallbackRule(const RingImpactSoundEvent& event)
 
 CueRule chooseCueRule(const RingImpactSoundEvent& event)
 {
+    if (event.result == RingImpactResult::Guard) {
+        return {"se.enemy.guard", 130, 1.0f, 1.0f, 0.018f};
+    }
     if (const CueRule rule = terrainRule(event); !rule.cueId.empty()) {
         return rule;
     }
@@ -246,7 +249,8 @@ float eventIntensity(const RingImpactSoundEvent& event)
     const float weightScore = clampFloat(event.sourceWeightKg / 3.6f, 0.0f, 1.0f);
     const float powerScore = clampFloat(event.impactPower / 24.0f, 0.0f, 1.0f);
     const float breakScore = event.result == RingImpactResult::Break ? 0.18f : 0.0f;
-    return clampFloat(speedScore * 0.35f + weightScore * 0.25f + powerScore * 0.25f + breakScore, 0.0f, 1.0f);
+    const float guardScore = event.result == RingImpactResult::Guard ? 0.22f : 0.0f;
+    return clampFloat(speedScore * 0.35f + weightScore * 0.25f + powerScore * 0.25f + breakScore + guardScore, 0.0f, 1.0f);
 }
 
 float sizePitchOffset(const RingImpactSoundEvent& event)

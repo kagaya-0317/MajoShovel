@@ -2,7 +2,7 @@
 
 最終更新: 2026-06-01
 追記内容: 共通画面フェード/クロスフェード、デバッグ起動モードのタイトル前起動追加、紙芝居形式オープニング、仮Title画面、初回導入ダンジョン、採掘開始時のWorldLoading段階化生成、Objectsタブ画像番号列対応、オブジェクトPNG共通描画導入、obj画像ホットリロード対応、1px固定アウトライン対応、ダンジョン小型テンプレート生成、鉱石を含む地形ノイズ強化、虫とりアミのリング接触捕獲アイテム化/捕獲吸収演出、ダンジョンミニマップ、レベル上限100とレベル別最大HPテーブル、レベルアップ演出強化/ジングル共通処理、回復パルス/アイテム使用ログ、AudioEngine基盤、採掘道具セーフティ、壊れたアイテム表示、共通タブUI画像、拠点でのアイテム使用無効化、アイテム捨て機能、ダンジョンイベント発見処理、ダンジョンイベント管理、戦闘系ダンジョンイベント、掘削・属性ギミック系ダンジョンイベント、魔女救助・依頼系ダンジョンイベント、魔女NPC会話、ダンジョンイベント統合調整、拠点/ルネの家の画像ベース描画、オプション設定UI、プレイヤー足音SE、リングアイテム衝突SE、操作説明入力アイコン、固定仮想解像度/レターボックス表示、テストプレイスクリーンショットPNG保存、デバッグ用弾テスト
-今回の追記: 回復パルス/アイテム使用ログ、レベルアップ演出強化/ジングル共通処理、みねうちの剣、非致死接触効果、操作説明入力アイコン、整理/整列ショートカット、起動ロード段階化、Google Sheet取得のテストプレイ限定化、固定仮想解像度表示、テストプレイスクリーンショットPNG保存、デバッグ用エフェクトテスト、デバッグ用弾テスト、帰還系ステータス表示のテストプレイ限定化、操作説明マウス表記整理、下部操作説明の表示抑制、D1敵経験値調整、固定敵ノードの敵出現重み参照、敵当たり判定の個別円集合化、当たり判定編集画面のObjects/Player対応
+今回の追記: 回復パルス/アイテム使用ログ、レベルアップ演出強化/ジングル共通処理、みねうちの剣、非致死接触効果、操作説明入力アイコン、整理/整列ショートカット、起動ロード段階化、Google Sheet取得のテストプレイ限定化、固定仮想解像度表示、テストプレイスクリーンショットPNG保存、デバッグ用エフェクトテスト、デバッグ用弾テスト、帰還系ステータス表示のテストプレイ限定化、操作説明マウス表記整理、下部操作説明の表示抑制、D1敵経験値調整、固定敵ノードの敵出現重み参照、敵当たり判定の個別円集合化、当たり判定編集画面のObjects対応、敵当たり判定の方向別編集、当たり判定編集の全方向コピー/左右反転貼付
 
 ## 概要
 
@@ -1606,7 +1606,7 @@ Objects DBに属さないワールド用アイコンは `WorldIconRenderer` で�
 
 デバッグの編集ツール `画像サイズ編集` は `Objects` / `Others` のタブを持ちます。`Objects` では `assets/objects/obj_番号.png` を使うObjects DBアイテムの個別表示倍率、`Others` では `assets/others/img_番号.png` を使うワールド用アイコンの個別表示倍率を編集します。保存先は `data/object_image_scale.cfg` で、現行形式は `MAJO_IMAGE_SCALE_V2`、行種別は `object <objectId> <scale>` と `other <worldIconKey> <scale>` です。旧形式 `MAJO_OBJECT_IMAGE_SCALE_V1` の `scale <objectId> <scale>` も読み込み互換として扱います。
 
-デバッグの編集ツール `当たり判定編集` は `Enemies` / `Objects` / `Player` タブを持ちます。`Enemies` では敵ごとの攻撃対象判定、`Objects` ではリング上アイテムごとの攻撃判定、`Player` では敵接触を受けるプレイヤー判定を編集します。保存先は `data/hitboxes.cfg` で、現行形式は `MAJO_HITBOX_V2`、行形式は `enemy <enemyId> [default|down|left|right|up] circle <offsetX> <offsetY> <radius>`、`object <objectId> circle <offsetX> <offsetY> <radius>`、`player circle <offsetX> <offsetY> <radius>` です。1対象/1方向につき最大8個の円を持てます。未定義の敵は従来の敵半径1円、未定義のリング上アイテムは従来の `hitRadius` 1円、未定義のプレイヤーは `player_radius` 1円へフォールバックします。捕獲敵由来のリング上アイテムはObjects側には表示せず、元敵の当たり判定をそのまま使用します。旧形式 `data/enemy_hitboxes.cfg` / `MAJO_ENEMY_HITBOX_V1` と `MAJO_HITBOX_V1` は読み込み互換として扱い、保存時は新形式へ出力します。
+デバッグの編集ツール `当たり判定編集` は `Enemies` / `Objects` タブを持ちます。`Enemies` では敵ごとの攻撃対象判定、`Objects` ではリング上アイテムごとの攻撃判定を編集します。保存先は `data/hitboxes.cfg` で、現行形式は `MAJO_HITBOX_V2`、行形式は `enemy <enemyId> circle <offsetX> <offsetY> <radius>`、方向別の `enemy <enemyId> <down|left|right|up> circle <offsetX> <offsetY> <radius>`、`object <objectId> circle <offsetX> <offsetY> <radius>` です。敵の方向未指定行は共通判定として扱い、方向別定義がない向きは共通判定へフォールバックします。1対象・1方向につき最大8個の円を持てます。未定義の敵は従来の敵半径1円、未定義のリング上アイテムは従来の `hitRadius` 1円へフォールバックします。捕獲してリングに乗せた敵は `Objects` タブには表示せず、リング上でも `object captured_*` 判定ではなく元の敵IDの `enemy` 判定をそのまま使います。読み込み時に古い `object captured_*` 判定があれば無視します。編集UIは単体コピー/貼付と敵専用の全方向コピー/貼付を分け、左右反転貼付も選べます。全方向コピーは定義済みの共通/方向別プロファイルだけを保持し、全方向貼付では貼付先の敵方向プロファイルをコピー元の構成へ置き換えます。左右反転の全方向貼付では左/右プロファイルを入れ替え、各円のXオフセットを反転します。旧形式 `MAJO_HITBOX_V1` と `data/enemy_hitboxes.cfg` / `MAJO_ENEMY_HITBOX_V1` は読み込み互換として扱い、保存時は新形式へ出力します。
 
 ワールドドロップでは、最初の候補カテゴリを `掘削`、`探索`、`回復`、`武器`、`盾`、`宝` に限定します。候補DB内にドロップ系特殊タグが存在する場合は、カテゴリに加えて `drop`、`dig_drop`、`drop_dig`、`ore_drop`、`treasure_drop`、`mining`、`loot`、`treasure`、`ドロップ`、`掘削ドロップ`、`宝` のいずれかのタグを持つアイテムだけを候補にします。該当タグがDB側にまだ存在しない場合は、初期データとの互換性を優先してカテゴリのみで候補化します。`no_drop`、`nodrop`、`shop_only`、`ショップ専用` タグを持つアイテムは除外します。
 
@@ -1721,7 +1721,7 @@ struct SpecialTagDefinition {
 6. ビルド成功時だけ実行中のゲームを停止し、新しいコピーを起動
 7. ビルド失敗時は現在のゲームを止めず、次の保存を待つ
 
-`data` と `assets` は実行中プロセス内で軽量ホットリロードします。`data/game_balance.cfg` はワールドやウィンドウを作り直さずにRuntimeBalanceへ反映し、`data/hitboxes.cfg` は敵・リング上アイテム・プレイヤーの当たり判定カタログへ反映します。旧互換用の `data/enemy_hitboxes.cfg` も変更検知時に読み込み対象へ含めます。`assets/majo.png`, `assets/UI_window1.png`, `assets/UI_messageWindow.png`, `assets/UI_window2.png`, `assets/UI_buttons.png`, `assets/UI_tubs.png`, `assets/fonts/craftmincho.otf` はSDLウィンドウを維持したまま再読み込みします。`assets/objects/obj_*.png`、`assets/others/img_*.png`、`assets/tiles/tile_1.png`〜`assets/tiles/tile_4.png`、`assets/taties/tatie_*.png` は任意PNGキャッシュを無効化し、次回描画時に再読込します。読み込みに失敗した画像は既存テクスチャを維持するか、地形タイルでは従来の色矩形描画へフォールバックします。
+`data` と `assets` は実行中プロセス内で軽量ホットリロードします。`data/game_balance.cfg` はワールドやウィンドウを作り直さずにRuntimeBalanceへ反映し、`data/hitboxes.cfg` は敵・リング上アイテムの当たり判定カタログへ反映します。旧互換用の `data/enemy_hitboxes.cfg` も変更検知時に読み込み対象へ含めます。`assets/majo.png`, `assets/UI_window1.png`, `assets/UI_messageWindow.png`, `assets/UI_window2.png`, `assets/UI_buttons.png`, `assets/UI_tubs.png`, `assets/fonts/craftmincho.otf` はSDLウィンドウを維持したまま再読み込みします。`assets/objects/obj_*.png`、`assets/others/img_*.png`、`assets/tiles/tile_1.png`〜`assets/tiles/tile_4.png`、`assets/taties/tatie_*.png` は任意PNGキャッシュを無効化し、次回描画時に再読込します。読み込みに失敗した画像は既存テクスチャを維持するか、地形タイルでは従来の色矩形描画へフォールバックします。
 
 これはC++バイナリをプロセス内で差し替えるホットリロードではありません。現在の段階では、安全で単純な「実行コピーを使い、成功ビルド後だけ再起動する」方式を採用しています。
 
@@ -1818,7 +1818,7 @@ struct SpecialTagDefinition {
 - `Inventory`: アイテム画面。ゲーム進行を止め、アイテム選択、使用、リング追加を解釈します。ただし `Base` から開いた場合は、使用コマンドを無効化し、リング追加や保護変更などの管理操作だけを扱います。
 - `Ring`: リング画面。ゲーム進行を止め、リング関連操作を解釈します。
 - `ObjectImageScaleEdit`: デバッグ用の画像サイズ編集画面。`Objects` / `Others` タブを切り替え、選択中カードを上下キーまたはホイールで拡大縮小し、`Ctrl+S` で `data/object_image_scale.cfg` へ保存します。
-- `EnemyHitboxEdit`: デバッグ用の当たり判定編集画面。`Enemies` / `Objects` / `Player` タブを切り替え、選択した敵、リング上アイテム、プレイヤーの円判定をプレビュー上でドラッグ移動、ホイールでサイズ変更、`A` で円追加、`Delete` で削除、`Ctrl+C` / `Ctrl+V` で対象間コピー、`Ctrl+Z` / `Ctrl+Y` で編集のUndo/Redo、`Ctrl+S` で `data/hitboxes.cfg` へ保存します。敵は方向別に編集でき、`Ctrl+Shift+C` / `Ctrl+Shift+V` は全方向コピー/貼付、`Ctrl+Alt+V` は左右反転貼付として扱います。
+- `EnemyHitboxEdit`: デバッグ用の当たり判定編集画面。`Enemies` / `Objects` タブを切り替え、選択した敵またはリング上アイテムの円判定をプレビュー上でドラッグ移動、ホイールでサイズ変更、`A` で円追加、`Delete` で削除、`Ctrl+C` / `Ctrl+V` で単体コピー/貼付、`Ctrl+Alt+V` で単体の左右反転貼付、`Ctrl+Shift+C` / `Ctrl+Shift+V` で敵の全方向コピー/貼付、`Ctrl+Shift+Alt+V` で全方向の左右反転貼付、`Ctrl+Z` / `Ctrl+Y` で編集のUndo/Redo、`Ctrl+S` で `data/hitboxes.cfg` へ保存します。`Enemies` では `共通` / `下` / `左` / `右` / `上` の方向ボタンを持ち、敵プレビューは選択中方向の歩行アニメーションで表示します。
 - `AudioCueEdit`: デバッグ用の音声差し替え画面。`BGM編集` は `assets/audio/bgm/`、`効果音編集` は `assets/audio/se/` のWAVを一覧化し、選択したcue IDの `path` を差し替えて `audio_manifest.tsv` へ保存します。
 - `LevelUp`: レベルアップ演出とレベルアップ選択。ゲーム進行を止め、演出中は入力を選択へ流さず、演出完了後に選択肢入力を解釈します。
 - `GameOver`: プレイヤーHPが0以下になった後の画面。ゲーム進行を止め、死因、リザルト表示、リトライ操作を解釈します。`Esc` では `Playing` に戻れません。
@@ -2571,8 +2571,8 @@ UIの見た目と配置は `src/engine/Ui.hpp` / `src/engine/Ui.cpp` の共通�
 - `AudioCueEdit` のcue IDリストとWAV候補リストは共通スクロールリストUIを使います。内容が表示領域を超える場合はスクロールバーを表示し、マウスホイール、スクロールバーのドラッグ、トラッククリックで表示位置を移動できます。リスト内容は枠内でクリップし、枠外にはみ出す行や文字は描画しません。ホイールスクロール中に選択中の行へ自動で戻さず、方向キーなどで選択を移動した時だけ選択行を表示範囲へ追従させます。
 - `BGM編集` は `assets/audio/bgm/`、`効果音編集` は `assets/audio/se/` を再帰スキャンします。新しい本番音源や比較用音源は、仮WAVと同じフォルダへ追加して `再スキャン` すれば候補に出ます。`custom/` などの別フォルダは現時点では使いません。
 - 音声編集画面では `試聴` で選択WAVを一時cueとして鳴らし、`適用` で選択中cue IDの実行時定義と画面上の `path` を差し替えます。`保存` または `Ctrl+S` で `audio_manifest.tsv` にUTF-8 BOM付きTSVとして書き戻し、`AudioEngine::reloadManifest()` を呼びます。変更対象は原則 `path` だけで、音を使う側の `playBgm("bgm.*")` / `playSe("se.*")` 呼び出しは変更しません。
-- 初期IDは `bgm.title`、`bgm.base`、`bgm.dungeon`、`bgm.boss`、`se.ui.confirm`、`se.ui.cancel`、`se.ui.menu_open`、`se.ui.tab_switch`、`se.ui.book_open`、`se.ui.item_move`、`se.ui.item_use`、`se.ui.ring_place`、`se.ui.upgrade_select`、`se.level_up.jingle`、`se.transition`、`se.dig.hit`、`se.dig.break`、`se.dig.ore_break`、`se.attack.hit`、`se.pickup`、`se.boss.spawn`、`se.boss.defeat`、`se.player.damage`、`se.player.pinch`、`se.ring.throw`、`se.enemy.defeat`、`se.enemy.spawn`、`se.enemy.alert`、`se.enemy.attack`、`se.enemy.shoot`、`se.enemy.heal`、`se.enemy.guard`、`se.projectile.impact`、`se.ring.guard`、`se.ring.reflect`、`se.magic.cast`、`se.magic.impact`、`se.capture.throw`、`se.capture.success`、`se.capture.fail`、`se.discovery`、`se.discovery.warp`、`se.chest.open`、`se.crate.break`、`se.item.break`、`se.explosion.tick`、`se.explosion.boom`、`se.explosion` です。リング戻り音は現時点では作りません。
-- 現在接続済みの音イベントは、Opening/Titleの `bgm.title`、Baseの `bgm.base`、Playingの `bgm.dungeon`、ボス戦の `bgm.boss`、共通画面遷移の `se.transition`、UIの決定/キャンセル/メニューオープン/タブ切替、本棚、アイテム移動/使用、リング配置、レベルアップ選択/ジングル、採掘ヒット/破壊/鉱石破壊、リング投げ、プレイヤー被弾、ピンチ警告、敵の出現/発見/攻撃/射撃/回復/通常撃破、敵命中、盾カブト系の正面ガード軽減、弾の壁衝突/リング防御/反射、魔法の発動/着弾、捕獲の成功/失敗、宝箱開封、木箱破壊、リングアイテム破損、隠し発見、ワープポイント発見、爆発予兆クリック、専用爆発、拾得、ボス出現/撃破です。
+- 初期IDは `bgm.title`、`bgm.base`、`bgm.dungeon`、`bgm.boss`、`se.ui.confirm`、`se.ui.cancel`、`se.ui.menu_open`、`se.ui.tab_switch`、`se.ui.book_open`、`se.ui.item_move`、`se.ui.item_use`、`se.ui.ring_place`、`se.ui.upgrade_select`、`se.level_up.jingle`、`se.transition`、`se.dig.hit`、`se.dig.break`、`se.dig.ore_break`、`se.attack.hit`、`se.pickup`、`se.boss.spawn`、`se.boss.defeat`、`se.player.damage`、`se.player.pinch`、`se.ring.throw`、`se.enemy.defeat`、`se.enemy.spawn`、`se.enemy.alert`、`se.enemy.attack`、`se.enemy.shoot`、`se.enemy.heal`、`se.projectile.impact`、`se.ring.guard`、`se.ring.reflect`、`se.magic.cast`、`se.magic.impact`、`se.capture.throw`、`se.capture.success`、`se.capture.fail`、`se.discovery`、`se.discovery.warp`、`se.chest.open`、`se.crate.break`、`se.item.break`、`se.explosion.tick`、`se.explosion.boom`、`se.explosion` です。リング戻り音は現時点では作りません。
+- 現在接続済みの音イベントは、Opening/Titleの `bgm.title`、Baseの `bgm.base`、Playingの `bgm.dungeon`、ボス戦の `bgm.boss`、共通画面遷移の `se.transition`、UIの決定/キャンセル/メニューオープン/タブ切替、本棚、アイテム移動/使用、リング配置、レベルアップ選択/ジングル、採掘ヒット/破壊/鉱石破壊、リング投げ、プレイヤー被弾、ピンチ警告、敵の出現/発見/攻撃/射撃/回復/通常撃破、敵命中、弾の壁衝突/リング防御/反射、魔法の発動/着弾、捕獲の成功/失敗、宝箱開封、木箱破壊、リングアイテム破損、隠し発見、ワープポイント発見、爆発予兆クリック、専用爆発、拾得、ボス出現/撃破です。
 - 採掘音は `DiggingSystem::hitTiles()` が空でなければ `se.dig.hit`、`dugTiles()` が空でなければ `se.dig.break` または鉱石用の `se.dig.ore_break` を鳴らします。連続採掘の鳴りすぎは `audio_manifest.tsv` の `cooldown_ms` で抑制し、初期値は `se.dig.hit` が70ms、`se.dig.break` が90ms、`se.dig.ore_break` が110msです。
 - アクション系SEは下位システムへ `AudioEngine` を渡さず、`EnemyEvent`、`ProjectileSoundEvent`、`MagicSoundEvent` などの意味イベントを `GameCore.cpp` で集約して再生します。直接 `Game` が状態を確定する宝箱、木箱、ワープ発見、アイテム破損などは `GameDungeon.cpp` からID再生します。
 - UI音は `UiContext` に `UiSoundEvent` を蓄積し、`Game::update` の終了時に `Game` 側で `AudioEngine` へ流します。`Ui.cpp` は音源IDや `AudioEngine` を直接知らず、共通UIヘルパーは意味イベントだけを発行します。
@@ -3170,7 +3170,7 @@ chance = clamp(0.15 + (1.0 - hpRate) * 0.75 - captureDifficulty * 0.04, 0.05, 0.
 - `dig_contact`: 捕獲後掘削力を使い、リング接触位置と外側の追加位置へ地形掘削判定を出します。捕獲後採掘専用として使い、`terrain_dig` などの新規挙動IDは増やしません。
 - `magic_guard`: magic系Projectileを広めの判定で消します。Objects効果コードの `reflect_magic` 系反射とは別枠の捕獲後防御挙動として扱います。
 - `rust_debuff`: 敵接触時、捕獲後軌道効果に `debuff_defense` がない場合は `enemy:debuff_defense:0.8:4` 相当の `EffectSpec` を生成して敵の防御倍率を下げます。
-- `shoot_web`: リングアイテム位置から外側方向へ `web_thread` を発射します。`web_thread` は小ダメージを持ち、敵命中時は `BehaviorDefinition::capturedDefaultEffects` を適用し、定義に鈍足がない場合も確定鈍足を付与します。
+- `shoot_web`: リングアイテム位置から外側方向へ `web_thread` を発射します。敵命中時は `BehaviorDefinition::capturedDefaultEffects` を適用し、定義に鈍足がない場合も確定鈍足を付与します。
 - `throw_stone`: リングアイテム位置から外側方向へ `stone_bullet` を発射します。
 - `shoot_poison`: リングアイテム位置から外側方向へ `poison_spit` を発射します。
 - `radial_spike`: リングアイテム位置から8方向へ `cactus_needle` を発射します。
@@ -3179,7 +3179,6 @@ chance = clamp(0.15 + (1.0 - hpRate) * 0.75 - captureDifficulty * 0.04, 0.05, 0.
 - `reward_drop`: 敵または壁に当たった時、低確率で既存ワールドドロップ候補から報酬を生成します。
 - `steal_or_dig`: 敵に当たると低確率でアイテムを盗み、壁・鉱石に当たると低確率でアイテムを掘り出します。実際の地形ダメージは捕獲後掘削力または軌道効果側に任せます。
 - `charge_explode`: 敵または地形への接触を4回蓄積すると小爆発を起こし、約2.4秒休眠してから再蓄積します。爆発は専用爆発エフェクトと `se.explosion.boom` を使い、半径内の敵、プレイヤー、リング上アイテムを巻き込みます。敵とプレイヤーは小ダメージを受け、爆心から外側へノックバックします。リング上アイテムは同じ値だけ耐久を消費しますが、ノックバックはしません。地形には半径約28px・ダメージ1の小さめ地形破壊を行い、プレイヤーへ即死級ダメージは与えません。
-- `break_countdown_explode`: リング上で耐久が0になった時点で通常の破損消滅を保留し、敵の `countdown_explode` と同じ赤い滑らかな点滅を開始します。赤く光るピークでは `se.explosion.tick` を鳴らし、爆発直前へ向けて点滅間隔を短くします。既定では約4.0秒後に専用爆発エフェクトと `se.explosion.boom` で爆発し、半径内の敵、プレイヤー、リング上アイテム、地形を巻き込みます。敵とプレイヤーはfire系ダメージを受けて爆心から外側へノックバックします。リング上アイテムは同じ値だけ耐久を消費しますが、ノックバックはしません。爆発後、保護OFFの個体はリングから消え、保護ONの個体は壊れた状態でリング上に残ります。爆弾ツチノコの捕獲後挙動はこの方式を使い、捕獲後耐久力は4です。
 - `magnet_pull`: `metal` タグを持つワールドドロップ、敵、Projectileだけをゆるく吸い寄せます。距離は約160-170px、対象数はドロップ6、敵4、Projectile6までです。`metal` タグだけでダメージや状態異常は発動しません。
 - `wind_deflect`: 約1.2秒ごとに風波を出し、近くの敵Projectileを最大5発まで少し横方向へ逸らします。プレイヤー操作、リング軌道、味方側Projectileは乱しません。敵弾を完全無効化する処理ではありません。
 
@@ -3209,7 +3208,7 @@ Projectileがプレイヤーへ命中した場合、Projectileに紐づく `Beha
 
 敵弾・捕獲後弾の共通基盤として `Projectile` / `ProjectileSystem` を追加しています。発射物は `ObjectPool<Projectile, balance::MaxProjectiles>` の固定容量プールで管理し、毎フレーム `new/delete` しません。
 
-`Projectile` は `active`, `position`, `velocity`, `radius`, `lifetime`, `ownerType`, `projectileId`, `damage`, `damageType`, `effects`, `tags` を保持します。`ownerType` は現時点では `enemy` と `player_orbit` 相当の区分です。`web_thread` は鈍足付与だけでなく小ダメージも与えます。
+`Projectile` は `active`, `position`, `velocity`, `radius`, `lifetime`, `ownerType`, `projectileId`, `damage`, `damageType`, `effects`, `tags` を保持します。`ownerType` は現時点では `enemy` と `player_orbit` 相当の区分です。
 
 発射物DBタブはまだ作らず、`projectileId` ごとの仮パラメータはコード内テーブルで管理します。対応IDは `stone_bullet`, `big_stone_bullet`, `weapon_throw`, `poison_spit`, `paralyze_shot`, `mud_blob`, `cactus_needle`, `water_shot`, `fire_breath`, `web_thread`, `wind_wave`, `explosion_small`, `junk_chunk` です。
 
@@ -3283,7 +3282,7 @@ Projectileがプレイヤーへ命中した場合、Projectileに紐づく `Beha
 
 `enemy_detected_vision_multiplier` は `data/game_balance.cfg` の共通設定です。既定値は `1.8` です。
 
-`facingAngle` は敵の向きを保持します。通常移動中は移動方向を向き、`idle` / `stationary` は最後の向きを保持します。`front_guard` 判定は `facingAngle` と整合した正面判定を使います。正面ガードでダメージが軽減されたリング命中は通常の敵命中衝突音ではなく、`se.enemy.guard` の金属的なガード音を鳴らします。
+`facingAngle` は敵の向きを保持します。通常移動中は移動方向を向き、`idle` / `stationary` は最後の向きを保持します。`front_guard` 判定は `facingAngle` と整合した正面判定を使います。
 
 ゴースト系の `phase_wander` / `phase_chase` は移動時のみ壁衝突を無視します。視認判定は従来どおり壁で遮蔽し、壁越し視認は行いません。
 
@@ -3314,7 +3313,7 @@ Projectileがプレイヤーへ命中した場合、Projectileに紐づく `Beha
 
 `steal_item` は金食いネズミ系の敵側盗み挙動です。敵本体が現在のカメラ表示範囲内にいる場合だけ、`radius` 内かつ同じ表示範囲内にあるワールドドロップから `target` に合う最寄り対象を盗みます。`target=money` はお金、`target=money|treasure` はお金と `treasure` タグ付きObjectsドロップを対象にします。素材ドロップは盗み対象外です。盗んだドロップはワールド上から消え、敵の保持ドロップになります。保持上限は `maxCarry` で、盗んだ保持ドロップは撃破時に必ず吐き出します。盗み成功時は右側ダンジョンログへ `敵名は[アイコン]アイテム名を盗んだ` と表示します。
 
-`countdown_explode` は準備開始時から赤く滑らかに点滅し、爆発直前へ向けて点滅間隔を短くします。赤く光るピークでは `se.explosion.tick` を鳴らし、爆発時は専用爆発エフェクトと `se.explosion.boom` を使います。既定の爆発待機は約4.0秒です。爆風内の敵、プレイヤー、リング上アイテムは敵味方を問わず巻き込まれ、敵とプレイヤーはfire系ダメージを受けて爆心から外側へノックバックします。リング上アイテムは同じ値の耐久ダメージを受けますが、ノックバックはしません。爆発元の敵自身だけは二重ヒットを避けるため敵ダメージ対象から除外します。自爆で消滅した個体は経験値、お金、素材、個別ドロップ、図鑑の撃破記録を発生させません。自爆前に倒した場合は通常どおり経験値とドロップを発生させます。
+`countdown_explode` は準備開始時から赤く滑らかに点滅し、爆発直前へ向けて点滅間隔を短くします。赤く光るピークでは `se.explosion.tick` を鳴らし、爆発時は専用爆発エフェクトと `se.explosion.boom` を使います。爆風内の敵、プレイヤー、リング上アイテムは敵味方を問わず巻き込まれ、敵とプレイヤーはfire系ダメージを受けて爆心から外側へノックバックします。リング上アイテムは同じ値の耐久ダメージを受けますが、ノックバックはしません。爆発元の敵自身だけは二重ヒットを避けるため敵ダメージ対象から除外します。
 
 `dig_move` は敵側の掘削移動専用です。`dig_wander` と `dig_chase` で壁に進路が塞がれた場合に既存地形掘削処理で掘り進みます。`terrain_dig` などの新規敵挙動IDは追加しません。
 
@@ -3330,7 +3329,7 @@ Projectileがプレイヤーへ命中した場合、Projectileに紐づく `Beha
 
 敵グラフィックは `Enemies` DB の画像番号から `assets/enemies/en_番号.png` を参照して描画します。画像がない敵は、敵IDから決まる色の円へフォールバックします。デバッグ表示にはアクティブ敵の名前、enemyId、HP、半径、AI、挙動IDを表示します。
 
-敵への攻撃・捕獲・観察・プレイヤー接触ダメージの命中判定は、敵ごとの円集合当たり判定を使います。円集合は敵の中心位置からの相対オフセットと半径で定義し、敵の巨大化/縮小ステータスに合わせてオフセットと半径を同じ倍率で拡縮します。リング上アイテムも `data/hitboxes.cfg` の `object` 定義があれば円集合を使い、リング描画の浮遊位置と同じ中心、リング描画の `リング角度` と同じ回転を適用し、アイテムの大きさ補正に合わせてオフセットと半径を拡縮します。捕獲敵由来のリング上アイテムは `object captured_*` ではなく、元敵の当たり判定を使います。プレイヤー接触ダメージと睡眠敵の接触起床は `player` 定義があればプレイヤー側も円集合として扱い、プレイヤーの巨大化/縮小ステータスに合わせて拡縮します。最初に円集合全体を包む外接半径で軽い広域判定を行い、その後に円同士の距離だけを確認します。未定義の敵は `Enemies` DBの `半径`、未定義のリング上アイテムは従来の `hitRadius`、未定義のプレイヤーは `player_radius` を中心1円として扱い、移動・壁衝突・スポーン間隔などの物理半径は従来どおり `半径` / `player_radius` を使います。
+敵への攻撃・捕獲・観察・プレイヤー接触ダメージの命中判定は、敵ごとの円集合当たり判定を使います。円集合は敵の中心位置からの相対オフセットと半径で定義し、敵の巨大化/縮小ステータスに合わせてオフセットと半径を同じ倍率で拡縮します。敵は現在の `facingAngle` から `down` / `left` / `right` / `up` の方向別円集合を選び、該当方向が未定義なら共通円集合、共通も未定義なら `Enemies` DBの `半径` 1円へフォールバックします。リング上アイテムも `data/hitboxes.cfg` の `object` 定義があれば円集合を使い、リング描画の `リング角度` と同じ回転を適用し、アイテムの大きさ補正に合わせてオフセットと半径を拡縮します。捕獲敵アイテムだけは `object` 判定を使わず、リング上で向いている外向き方向から元敵IDの方向別 `enemy` 判定を選びます。最初に円集合全体を包む外接半径で軽い広域判定を行い、その後に円同士の距離だけを確認します。移動・壁衝突・スポーン間隔などの物理半径は従来どおり `半径` を使います。
 
 未対応項目: 発射物DB、種族ごとの専用AI演出/戦術、敵特殊タグからの直接効果発動、画像未割当敵の追加アセット、反射の本格処理。
 
@@ -3396,7 +3395,6 @@ AS_E1 AS_E2 AS_E3 AS_E4 AS_E5 AS_E6 AS_E7 AS_E8 AS_E9
 - `reward_drop`: 敵/壁接触時の低確率報酬（interval/chance対応）
 - `steal_or_dig`: 敵/壁接触時の低確率報酬系トリガ（interval/chance対応）
 - `charge_explode`: 接触回数蓄積で爆発、`count` / `charges` / `radius` / `damage` / `terrainRadius` / `terrainDamage` / `rest` 対応
-- `break_countdown_explode`: 耐久0で時限爆発へ移行、`delay` / `radius` / `damage` / `terrainRadius` / `terrainDamage` 対応
 - `magnet_pull`: metal対象のdrop/enemy/projectileを緩く吸引（radius/strength/targetTag対応）
 - `wind_deflect`: 近傍敵Projectileを軽く逸らす（interval/radius/strength対応）
 - `dig_contact`: 地形接触時の掘削補助（probeDistance系params対応）
@@ -3451,7 +3449,7 @@ AS_E1 AS_E2 AS_E3 AS_E4 AS_E5 AS_E6 AS_E7 AS_E8 AS_E9
 
 - `capturedBehaviorSpecs`（trigger/params/interval）をリングアイテム実行時に参照。
 - 実装済み: `outward_guard`, `heavy_guard`, `magic_guard`, `jump_outward`, `contact_slow`,
-  `periodic_heal`, `rust_debuff`, `reward_drop`, `steal_or_dig`, `charge_explode`, `break_countdown_explode`,
+  `periodic_heal`, `rust_debuff`, `reward_drop`, `steal_or_dig`, `charge_explode`,
   `magnet_pull`, `wind_deflect`, `dig_contact`, `throw_object`, `shoot_poison`, `shoot_web`,
   `shoot_fire`, `shoot_water`, `radial_spike`。
 - バランス制限: periodic_heal共有クールダウンと上限、reward系クールダウン/窓制限、
@@ -3766,7 +3764,6 @@ AS_E1 AS_E2 AS_E3 AS_E4 AS_E5 AS_E6 AS_E7 AS_E8 AS_E9
 - マウスがドロップダウンのリスト上にある場合は、リスト内のどこでもマウスホイールで表示範囲をスクロールできる。
 - 表示行数を超える項目がある場合は、ドロップダウン右側にスクロールバーを表示する。
 - 敵を選択して `召喚` を押すと、プレイヤー前方付近にその敵IDを指定して召喚する。
-- `steal_item` を持つ金食いネズミ系を敵テストで召喚した場合、召喚位置の周囲に `target` に合う盗み対象ドロップを補助配置する。`target=money` はお金、`target=money|treasure` はお金と `treasure` タグまたは宝カテゴリのObjectsを配置する。
 - `UI非表示` を押すとテストUIを隠し、復帰用の小ボタンだけを残す。
 - 召喚敵は出現直後から発見済み状態にして、AI・挙動・弾・接触・リング攻撃を通常どおり確認できる。
 - `全消去` で敵と弾を消去する。

@@ -23,6 +23,7 @@ enum class RingImpactTargetKind {
 enum class RingImpactResult {
     Hit,
     Break,
+    Guard,
 };
 
 struct RingImpactSoundEvent {

@@ -42,7 +42,7 @@ constexpr std::array<ProjectilePrototype, 13> Prototypes{{
     {"cactus_needle", "サボテン針", 260.0f, 2.5f, 1.8f, 1, "pierce", true, {"small", "needle"}},
     {"water_shot", "水弾", 210.0f, 4.0f, 2.2f, 1, "water", false, {"small", "water"}},
     {"fire_breath", "火炎ブレス", 145.0f, 7.0f, 1.2f, 2, "fire", false, {"fire", "short_range"}},
-    {"web_thread", "クモ糸", 135.0f, 3.5f, 2.4f, 0, "none", false, {"small", "web"}},
+    {"web_thread", "クモ糸", 135.0f, 3.5f, 2.4f, 1, "blunt", false, {"small", "web"}},
     {"wind_wave", "風波", 235.0f, 6.0f, 1.6f, 1, "wind", true, {"wind"}},
     {"explosion_small", "小爆発", 80.0f, 10.0f, 0.55f, 2, "fire", false, {"explosion"}},
     {"junk_chunk", "ガラクタ弾", 235.0f, 9.5f, 2.5f, 2, "blunt", false, {"metal", "heavy"}},

@@ -73,6 +73,7 @@ struct EnemyEvent {
     int healAmount = 0;
     bool critical = false;
     bool ringItemImpact = false;
+    bool suppressRewards = false;
     int moneyDrop = 0;
     std::string objectDropId;
     std::string objectDropProfile;
@@ -388,7 +389,11 @@ private:
     Vec2 separationFor(const Enemy& enemy) const;
     void moveWithCollision(Enemy& enemy, TileMap& map, Vec2 desiredVelocity, float dt);
     bool resolvePlayerOverlap(Player& player, Enemy& enemy, TileMap& map, const RuntimeBalance& balance);
-    void beginEnemyDeath(Enemy& enemy, SpellRingSystem& spellRing, std::optional<Vec2> hitOrigin = std::nullopt);
+    void beginEnemyDeath(
+        Enemy& enemy,
+        SpellRingSystem& spellRing,
+        std::optional<Vec2> hitOrigin = std::nullopt,
+        bool suppressRewards = false);
     void updateEnemyDeath(Enemy& enemy, TileMap& map, SpellRingSystem& spellRing, float dt);
     void finishEnemyDeath(Enemy& enemy, SpellRingSystem& spellRing);
     int applyConductiveShock(Vec2 position, float radius, double value, double duration, int excludedEnemyId, std::string_view source);
