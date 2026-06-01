@@ -30,23 +30,29 @@ struct ProjectilePrototype {
     std::string_view damageType = "blunt";
     bool piercesTargets = false;
     std::initializer_list<std::string_view> tags;
+    std::string_view launchSeId;
+    std::string_view destroySeId;
 };
 
-constexpr std::array<ProjectilePrototype, 13> Prototypes{{
-    {"stone_bullet", "石つぶて", 245.0f, 6.0f, 2.4f, 1, "blunt", false, {"small", "stone"}},
-    {"big_stone_bullet", "大岩弾", 205.0f, 10.0f, 2.6f, 3, "blunt", false, {"stone"}},
-    {"weapon_throw", "投げ武器", 220.0f, 6.8f, 2.0f, 2, "blunt", false, {"metal", "small"}},
-    {"poison_spit", "毒液", 155.0f, 5.0f, 2.8f, 1, "water", false, {"small", "poison"}},
-    {"paralyze_shot", "しびれ弾", 170.0f, 4.4f, 2.4f, 0, "none", false, {"small", "paralyze"}},
-    {"mud_blob", "泥だんご", 150.0f, 5.8f, 2.6f, 0, "earth", false, {"mud", "poison"}},
-    {"cactus_needle", "サボテン針", 260.0f, 2.5f, 1.8f, 1, "pierce", true, {"small", "needle"}},
-    {"water_shot", "水弾", 210.0f, 4.0f, 2.2f, 1, "water", false, {"small", "water"}},
-    {"fire_breath", "火炎ブレス", 145.0f, 7.0f, 1.2f, 2, "fire", false, {"fire", "short_range"}},
-    {"web_thread", "クモ糸", 135.0f, 3.5f, 2.4f, 1, "blunt", false, {"small", "web"}},
-    {"wind_wave", "風波", 235.0f, 6.0f, 1.6f, 1, "wind", true, {"wind"}},
-    {"explosion_small", "小爆発", 80.0f, 10.0f, 0.55f, 2, "fire", false, {"explosion"}},
-    {"junk_chunk", "ガラクタ弾", 235.0f, 9.5f, 2.5f, 2, "blunt", false, {"metal", "heavy"}},
+constexpr std::array<ProjectilePrototype, 14> Prototypes{{
+    {"stone_bullet", "石つぶて", 245.0f, 6.0f, 2.4f, 1, "blunt", false, {"small", "stone"}, "se.projectile.stone.launch", "se.projectile.stone.destroy"},
+    {"big_stone_bullet", "大岩弾", 205.0f, 10.0f, 2.6f, 3, "blunt", false, {"stone"}, "se.projectile.stone.launch", "se.projectile.stone.destroy"},
+    {"weapon_throw", "投げ武器", 220.0f, 6.8f, 2.0f, 2, "blunt", false, {"metal", "small"}, "se.projectile.metal.launch", "se.projectile.metal.destroy"},
+    {"poison_spit", "毒液", 155.0f, 5.0f, 2.8f, 1, "water", false, {"small", "poison"}, "se.projectile.liquid.launch", "se.projectile.liquid.destroy"},
+    {"paralyze_shot", "しびれ弾", 170.0f, 4.4f, 2.4f, 0, "none", false, {"small", "paralyze"}, "se.projectile.magic.launch", "se.projectile.magic.destroy"},
+    {"mud_blob", "泥だんご", 150.0f, 5.8f, 2.6f, 0, "earth", false, {"mud", "poison"}, "se.projectile.liquid.launch", "se.projectile.liquid.destroy"},
+    {"cactus_needle", "サボテン針", 260.0f, 2.5f, 1.8f, 1, "pierce", true, {"small", "needle"}, "se.projectile.needle.launch", "se.projectile.needle.destroy"},
+    {"water_shot", "水弾", 210.0f, 4.0f, 2.2f, 1, "water", false, {"small", "water"}, "se.projectile.water.launch", "se.projectile.water.destroy"},
+    {"water_bubble", "泡", 68.0f, 5.4f, 3.0f, 1, "water", false, {"small", "water", "bubble"}, "se.projectile.water.launch", "se.projectile.water.destroy"},
+    {"fire_breath", "火炎ブレス", 145.0f, 7.0f, 1.2f, 2, "fire", false, {"fire", "short_range"}, "se.projectile.fire.launch", "se.projectile.fire.destroy"},
+    {"web_thread", "クモ糸", 135.0f, 3.5f, 2.4f, 1, "blunt", false, {"small", "web"}, "se.projectile.web.launch", "se.projectile.web.destroy"},
+    {"wind_wave", "風波", 235.0f, 6.0f, 1.6f, 1, "wind", true, {"wind"}, "se.projectile.wind.launch", "se.projectile.wind.destroy"},
+    {"explosion_small", "小爆発", 80.0f, 10.0f, 0.55f, 2, "fire", false, {"explosion"}, "se.projectile.explosion.launch", "se.projectile.explosion.destroy"},
+    {"junk_chunk", "ガラクタ弾", 235.0f, 9.5f, 2.5f, 2, "blunt", false, {"metal", "heavy"}, "se.projectile.metal.launch", "se.projectile.metal.destroy"},
 }};
+
+constexpr std::string_view AudioSeRingGuard = "se.ring.guard";
+constexpr std::string_view AudioSeRingReflect = "se.ring.reflect";
 
 constexpr float CapturedMagnetProjectileRadius = 170.0f;
 constexpr float CapturedMagnetProjectileAcceleration = 230.0f;
@@ -54,6 +60,7 @@ constexpr int CapturedMagnetProjectileLimit = 6;
 constexpr float CapturedWindDeflectRadius = 150.0f;
 constexpr float CapturedWindDeflectImpulse = 72.0f;
 constexpr int CapturedWindDeflectLimit = 5;
+constexpr float DirectionalWindProjectileAcceleration = 285.0f;
 constexpr std::size_t MaxProjectileFxParticles = 520;
 
 enum class ProjectileFxEvent {
@@ -88,6 +95,15 @@ struct ProjectileFxEventTuning {
     float ringStartScale = 0.85f;
     float ringEndScale = 2.8f;
     bool ring = true;
+};
+
+struct ProjectileMudZoneSpec {
+    bool enabled = false;
+    float radius = 0.0f;
+    float duration = 0.0f;
+    float speedMultiplier = 1.0f;
+    float damagePerSecond = 0.0f;
+    std::string damageType = "poison";
 };
 
 const ProjectilePrototype& prototypeFor(std::string_view id)
@@ -125,6 +141,8 @@ std::vector<ProjectileDefinition> makeProjectileDefinitions()
         for (std::string_view tag : prototype.tags) {
             definition.tags.emplace_back(tag);
         }
+        definition.launchSeId = std::string(prototype.launchSeId);
+        definition.destroySeId = std::string(prototype.destroySeId);
         definitions.push_back(std::move(definition));
     }
     return definitions;
@@ -237,6 +255,9 @@ int projectileVisualVariantFor(std::string_view projectileId)
     if (projectileId == "junk_chunk") {
         return sampleInt(0, static_cast<int>(junkColorPalette().size()) - 1);
     }
+    if (projectileId == "water_bubble") {
+        return sampleInt(0, 1023);
+    }
     return 0;
 }
 
@@ -258,6 +279,61 @@ Color colorFor(std::string_view damageType)
         return {184, 188, 198, 230};
     }
     return {220, 205, 160, 245};
+}
+
+ProjectileMudZoneSpec mudZoneSpecForProjectile(const Projectile& projectile)
+{
+    ProjectileMudZoneSpec mud;
+    for (const EffectSpec& spec : projectile.effects) {
+        for (const std::string& effect : spec.effects) {
+            if (effect == "mud_zone") {
+                if (spec.values.size() >= 1) {
+                    mud.radius = static_cast<float>(spec.values[0]);
+                }
+                if (spec.values.size() >= 2) {
+                    mud.speedMultiplier = static_cast<float>(spec.values[1]);
+                }
+                if (spec.values.size() >= 3) {
+                    mud.damagePerSecond = static_cast<float>(spec.values[2]);
+                }
+                mud.duration = static_cast<float>(spec.duration);
+                mud.enabled = true;
+            } else if (effect.rfind("mud_damage_type_", 0) == 0) {
+                mud.damageType = effect.substr(std::string("mud_damage_type_").size());
+            }
+        }
+    }
+    mud.enabled = mud.enabled && mud.duration > 0.0f && mud.radius > 0.0f;
+    return mud;
+}
+
+bool addProjectileMudZone(const Projectile& projectile, EnemySystem& enemies)
+{
+    const ProjectileMudZoneSpec mud = mudZoneSpecForProjectile(projectile);
+    if (!mud.enabled) {
+        return false;
+    }
+    enemies.addMudZone(
+        projectile.position,
+        mud.radius,
+        mud.duration,
+        mud.speedMultiplier,
+        mud.damagePerSecond,
+        mud.damageType,
+        DamageCause{
+            .source = DamageSource::Poison,
+            .actorName = projectile.sourceActorName,
+            .objectName = projectile.displayName,
+        });
+    return true;
+}
+
+ProjectileFxEvent projectileImpactFxEvent(const Projectile& projectile)
+{
+    if (projectile.projectileId == "water_bubble") {
+        return ProjectileFxEvent::Expire;
+    }
+    return ProjectileFxEvent::Impact;
 }
 
 ProjectileVisualProfile visualProfileFor(const Projectile& projectile)
@@ -365,6 +441,19 @@ ProjectileVisualProfile visualProfileFor(const Projectile& projectile)
             1.85f,
             0.58f,
             3.2f,
+        };
+    }
+    if (id == "water_bubble") {
+        return {
+            {166, 230, 255, 118},
+            {100, 188, 236, 168},
+            {142, 226, 255, 74},
+            {236, 252, 255, 210},
+            {126, 218, 255, 138},
+            ProjectileFxVisual::Ring,
+            0.0f,
+            0.0f,
+            3.8f,
         };
     }
     if (id == "fire_breath") {
@@ -705,6 +794,17 @@ void drawProjectile(Renderer& renderer, const Projectile& projectile)
         renderer.drawSoftRing(projectile.position, radius * 1.30f * pulse, std::max(1.0f, radius * 0.14f), scaleAlpha(profile.flash, fade * 0.70f));
         return;
     }
+    if (id == "water_bubble") {
+        const float wobble = 1.0f + 0.10f * std::sin(projectile.age * 8.0f + static_cast<float>(projectile.visualVariant) * 0.17f);
+        renderer.fillSoftCircle(projectile.position, radius * 2.05f * wobble, glow);
+        renderer.drawSoftRing(projectile.position, radius * 1.18f * wobble, std::max(1.0f, radius * 0.18f), core);
+        renderer.drawCircle(projectile.position, radius * wobble, edge);
+        renderer.fillCircle(
+            projectile.position - direction * (radius * 0.26f) - side * (radius * 0.24f),
+            std::max(1.0f, radius * 0.24f),
+            scaleAlpha(profile.flash, fade * 0.72f));
+        return;
+    }
 
     if (id == "fire_breath" || id == "poison_spit" || id == "water_shot" || id == "paralyze_shot" || id == "mud_blob") {
         renderer.fillSoftCircle(projectile.position, radius * 1.85f, glow);
@@ -757,9 +857,28 @@ bool projectileExpireUsesRing(const Projectile& projectile)
         id == "mud_blob" ||
         id == "cactus_needle" ||
         id == "water_shot" ||
+        id == "water_bubble" ||
         id == "fire_breath" ||
         id == "web_thread" ||
         id == "junk_chunk");
+}
+
+void updateProjectileMotion(Projectile& projectile, float dt)
+{
+    if (projectile.projectileId == "water_bubble" && lengthSquared(projectile.velocity) > 0.0001f) {
+        const Vec2 direction = normalize(projectile.velocity);
+        const Vec2 side = perpendicular(direction);
+        const float phase = projectile.age * 5.8f + static_cast<float>(projectile.visualVariant) * 0.13f;
+        projectile.velocity += side * (std::sin(phase) * 16.0f * dt);
+        const float speed = length(projectile.velocity);
+        if (speed > 84.0f) {
+            projectile.velocity = normalize(projectile.velocity) * 84.0f;
+        }
+        if (speed < 44.0f) {
+            projectile.velocity = normalize(projectile.velocity) * 44.0f;
+        }
+    }
+    projectile.position += projectile.velocity * dt;
 }
 
 ProjectileFxEventTuning projectileFxTuning(const Projectile& projectile, ProjectileFxEvent event)
@@ -833,6 +952,14 @@ ProjectileFxEventTuning projectileFxTuning(const Projectile& projectile, Project
         tuning.count += 5;
         tuning.speedMax += 16.0f;
         tuning.startSize *= 0.82f;
+    } else if (id == "water_bubble") {
+        tuning.count += 6;
+        tuning.speedMin *= 0.45f;
+        tuning.speedMax *= 0.70f;
+        tuning.lifetimeMin += 0.12f;
+        tuning.lifetimeMax += 0.28f;
+        tuning.startSize *= 1.20f;
+        tuning.ringEndScale += 0.8f;
     } else if (id == "fire_breath") {
         tuning.count += 6;
         tuning.speedMin += 10.0f;
@@ -885,6 +1012,15 @@ ProjectileFxEventTuning projectileFxTuning(const Projectile& projectile, Project
             tuning.speedMax += 96.0f;
             tuning.startSize *= 1.16f;
             tuning.lifetimeMax += 0.12f;
+        } else if (id == "water_bubble") {
+            tuning.count += 10;
+            tuning.speedMin = 26.0f;
+            tuning.speedMax = 86.0f;
+            tuning.startSize = std::max(1.2f, projectile.radius * 0.28f);
+            tuning.endSize = 0.0f;
+            tuning.lifetimeMin = 0.16f;
+            tuning.lifetimeMax = 0.34f;
+            tuning.ring = false;
         } else if (id == "paralyze_shot") {
             tuning.count += 8;
             tuning.speedMin += 22.0f;
@@ -941,6 +1077,9 @@ float projectileTrailInterval(const Projectile& projectile)
     if (id == "fire_breath" || id == "explosion_small") {
         return 0.025f;
     }
+    if (id == "water_bubble") {
+        return 0.055f;
+    }
     if (id == "water_shot" || id == "poison_spit" || id == "paralyze_shot" || id == "wind_wave") {
         return 0.040f;
     }
@@ -968,6 +1107,9 @@ ProjectileFxVisual trailVisualFor(const Projectile& projectile)
     if (id == "wind_wave") {
         return ProjectileFxVisual::WindArc;
     }
+    if (id == "water_bubble") {
+        return ProjectileFxVisual::Ring;
+    }
     if (id == "stone_bullet" || id == "big_stone_bullet" || id == "junk_chunk") {
         return ProjectileFxVisual::Shard;
     }
@@ -983,6 +1125,9 @@ ProjectileFxVisual projectileFxVisualForEvent(const Projectile& projectile, Proj
         const std::string_view id = projectile.projectileId;
         if (id == "poison_spit" || id == "water_shot") {
             return ProjectileFxVisual::Droplet;
+        }
+        if (id == "water_bubble") {
+            return ProjectileFxVisual::SoftCircle;
         }
         if (id == "paralyze_shot") {
             return ProjectileFxVisual::LightningBolt;
@@ -1017,6 +1162,9 @@ Color projectileFxParticleStartColor(
     }
     if (event == ProjectileFxEvent::Expire && projectile.projectileId == "web_thread") {
         return index % 2 == 0 ? Color{238, 242, 234, 206} : Color{202, 214, 210, 190};
+    }
+    if (event == ProjectileFxEvent::Expire && projectile.projectileId == "water_bubble") {
+        return index % 2 == 0 ? Color{232, 252, 255, 198} : Color{130, 220, 255, 150};
     }
     return index % 3 == 0 ? profile.flash : (index % 3 == 1 ? profile.debris : profile.glow);
 }
@@ -1082,6 +1230,9 @@ void emitProjectileFxEvent(std::vector<ProjectileFxParticle>& particles, const P
         if (event == ProjectileFxEvent::Expire && (projectile.projectileId == "poison_spit" || projectile.projectileId == "water_shot")) {
             particle.stretch = sampleFloat(1.7f, 3.2f);
             particle.drag = sampleFloat(4.0f, 7.0f);
+        } else if (event == ProjectileFxEvent::Expire && projectile.projectileId == "water_bubble") {
+            particle.stretch = sampleFloat(0.8f, 1.3f);
+            particle.drag = sampleFloat(3.0f, 6.0f);
         } else if (event == ProjectileFxEvent::Expire && projectile.projectileId == "paralyze_shot") {
             particle.stretch = sampleFloat(1.9f, 3.0f);
             particle.angularVelocity = sampleFloat(-18.0f, 18.0f);
@@ -1569,6 +1720,31 @@ void pushPlayer(Player& player, TileMap& map, Vec2 direction, float distance)
     }
 }
 
+void queueProjectileSound(
+    std::vector<ProjectileSoundEvent>& soundEvents,
+    std::string_view cueId,
+    float volumeScale = 1.0f,
+    float pitchScale = 1.0f)
+{
+    if (cueId.empty()) {
+        return;
+    }
+    soundEvents.push_back(ProjectileSoundEvent{
+        std::string(cueId),
+        volumeScale,
+        pitchScale,
+    });
+}
+
+void deactivateProjectile(Projectile& projectile, std::vector<ProjectileSoundEvent>& soundEvents)
+{
+    if (!projectile.active) {
+        return;
+    }
+    queueProjectileSound(soundEvents, projectile.destroySeId);
+    projectile.active = false;
+}
+
 }
 
 std::span<const ProjectileDefinition> projectileDefinitions()
@@ -1596,6 +1772,18 @@ bool ProjectileSystem::spawn(
     const std::vector<EffectSpec>& effects,
     const ProjectileSpawnTuning& tuning)
 {
+    return spawn(projectileId, position, direction, ownerType, effects, tuning, ProjectileSpawnMetadata{});
+}
+
+bool ProjectileSystem::spawn(
+    std::string_view projectileId,
+    Vec2 position,
+    Vec2 direction,
+    ProjectileOwnerType ownerType,
+    const std::vector<EffectSpec>& effects,
+    const ProjectileSpawnTuning& tuning,
+    const ProjectileSpawnMetadata& metadata)
+{
     if (!hasPrototype(projectileId)) {
         static std::unordered_set<std::string> loggedUnknownProjectileIds;
         if (loggedUnknownProjectileIds.insert(std::string(projectileId)).second) {
@@ -1621,6 +1809,8 @@ bool ProjectileSystem::spawn(
     projectile->initialLifetime = projectile->lifetime;
     projectile->ownerType = ownerType;
     projectile->projectileId = std::string(prototype.id);
+    projectile->sourceActorName = metadata.sourceActorName;
+    projectile->displayName = std::string(prototype.displayName);
     projectile->trailTimer = sampleFloat(0.0f, projectileTrailInterval(*projectile) * 0.65f);
     projectile->piercesTargets = prototype.piercesTargets;
     projectile->previewTargetHit = false;
@@ -1631,8 +1821,11 @@ bool ProjectileSystem::spawn(
     for (std::string_view tag : prototype.tags) {
         projectile->tags.emplace_back(tag);
     }
+    projectile->launchSeId = std::string(prototype.launchSeId);
+    projectile->destroySeId = std::string(prototype.destroySeId);
     projectile->effects = effects;
     emitProjectileFxEvent(projectileFx_, *projectile, ProjectileFxEvent::Launch);
+    queueProjectileSound(soundEvents_, projectile->launchSeId);
     return true;
 }
 
@@ -1657,16 +1850,16 @@ void ProjectileSystem::updatePreview(float dt, std::optional<ProjectilePreviewTa
         projectile.lifetime -= dt;
         if (projectile.lifetime <= 0.0f) {
             emitProjectileFxEvent(projectileFx_, projectile, ProjectileFxEvent::Expire);
-            projectile.active = false;
+            deactivateProjectile(projectile, soundEvents_);
             continue;
         }
-        projectile.position += projectile.velocity * dt;
+        updateProjectileMotion(projectile, dt);
         emitProjectileTrail(projectileFx_, projectile, dt);
         if (hasTarget && !projectile.previewTargetHit && circlesOverlap(projectile.position, projectile.radius, target->position, target->radius)) {
-            emitProjectileFxEvent(projectileFx_, projectile, ProjectileFxEvent::Impact);
+            emitProjectileFxEvent(projectileFx_, projectile, projectileImpactFxEvent(projectile));
             projectile.previewTargetHit = true;
             if (!projectile.piercesTargets) {
-                projectile.active = false;
+                deactivateProjectile(projectile, soundEvents_);
             }
         }
     }
@@ -1692,49 +1885,18 @@ void ProjectileSystem::update(
         projectile.age += dt;
         projectile.lifetime -= dt;
         if (projectile.lifetime <= 0.0f) {
+            addProjectileMudZone(projectile, enemies);
             emitProjectileFxEvent(projectileFx_, projectile, ProjectileFxEvent::Expire);
-            projectile.active = false;
+            deactivateProjectile(projectile, soundEvents_);
             continue;
         }
 
-        projectile.position += projectile.velocity * dt;
+        updateProjectileMotion(projectile, dt);
         emitProjectileTrail(projectileFx_, projectile, dt);
         if (map.isCircleBlocked(projectile.position, projectile.radius)) {
-            soundEvents_.push_back(ProjectileSoundEvent::Impact);
-            emitProjectileFxEvent(projectileFx_, projectile, ProjectileFxEvent::Impact);
-            double mudRadius = 0.0;
-            double mudSlow = 1.0;
-            double mudDamagePerSecond = 0.0;
-            double mudDuration = 0.0;
-            std::string mudDamageType = "poison";
-            for (const EffectSpec& spec : projectile.effects) {
-                for (const std::string& effect : spec.effects) {
-                    if (effect == "mud_zone") {
-                        if (spec.values.size() >= 1) {
-                            mudRadius = spec.values[0];
-                        }
-                        if (spec.values.size() >= 2) {
-                            mudSlow = spec.values[1];
-                        }
-                        if (spec.values.size() >= 3) {
-                            mudDamagePerSecond = spec.values[2];
-                        }
-                        mudDuration = spec.duration;
-                    } else if (effect.rfind("mud_damage_type_", 0) == 0) {
-                        mudDamageType = effect.substr(std::string("mud_damage_type_").size());
-                    }
-                }
-            }
-            if (mudDuration > 0.0 && mudRadius > 0.0) {
-                enemies.addMudZone(
-                    projectile.position,
-                    static_cast<float>(mudRadius),
-                    static_cast<float>(mudDuration),
-                    static_cast<float>(mudSlow),
-                    static_cast<float>(mudDamagePerSecond),
-                    mudDamageType);
-            }
-            projectile.active = false;
+            emitProjectileFxEvent(projectileFx_, projectile, projectileImpactFxEvent(projectile));
+            addProjectileMudZone(projectile, enemies);
+            deactivateProjectile(projectile, soundEvents_);
             continue;
         }
 
@@ -1809,7 +1971,7 @@ void ProjectileSystem::update(
             }
             if (consumedByRing) {
                 if (reflectedByRing && blockingItem != nullptr) {
-                    soundEvents_.push_back(ProjectileSoundEvent::Reflect);
+                    queueProjectileSound(soundEvents_, AudioSeRingReflect);
                     emitProjectileFxEvent(projectileFx_, projectile, ProjectileFxEvent::Reflect);
                     projectile.ownerType = ProjectileOwnerType::PlayerOrbit;
                     projectile.damage = std::max(
@@ -1827,7 +1989,7 @@ void ProjectileSystem::update(
                     projectile.velocity = reflectDirection * speed;
                     continue;
                 }
-                soundEvents_.push_back(ProjectileSoundEvent::Guard);
+                queueProjectileSound(soundEvents_, AudioSeRingGuard);
                 emitProjectileFxEvent(projectileFx_, projectile, ProjectileFxEvent::Guard);
                 if (blockingItem != nullptr && blockingObject != nullptr) {
                     pushDiscoveryEvent(
@@ -1836,7 +1998,7 @@ void ProjectileSystem::update(
                         guardEffectKey,
                         blockingItem->worldPosition);
                 }
-                projectile.active = false;
+                deactivateProjectile(projectile, soundEvents_);
                 continue;
             }
         }
@@ -1845,17 +2007,16 @@ void ProjectileSystem::update(
             circlesOverlap(projectile.position, projectile.radius, player.position, player.effectiveRadius(balance::PlayerRadius))) {
             player.applyDamage(
                 applyDefenseModifier(player.status, projectileDamage(projectile)),
-                DamageSource::Projectile);
+                DamageCause{
+                    .source = DamageSource::Projectile,
+                    .actorName = projectile.sourceActorName,
+                    .objectName = projectile.displayName,
+                });
             if (projectile.projectileId == "wind_wave") {
                 pushPlayer(player, map, projectile.velocity, 18.0f);
             }
             std::vector<EffectSpec> dispatchEffects;
             dispatchEffects.reserve(projectile.effects.size());
-            double mudRadius = 0.0;
-            double mudSlow = 1.0;
-            double mudDamagePerSecond = 0.0;
-            double mudDuration = 0.0;
-            std::string mudDamageType = "poison";
             for (const EffectSpec& spec : projectile.effects) {
                 bool customOnly = false;
                 for (const std::string& effect : spec.effects) {
@@ -1875,19 +2036,8 @@ void ProjectileSystem::update(
                             result);
                         customOnly = true;
                     } else if (effect == "mud_zone") {
-                        if (spec.values.size() >= 1) {
-                            mudRadius = spec.values[0];
-                        }
-                        if (spec.values.size() >= 2) {
-                            mudSlow = spec.values[1];
-                        }
-                        if (spec.values.size() >= 3) {
-                            mudDamagePerSecond = spec.values[2];
-                        }
-                        mudDuration = spec.duration;
                         customOnly = true;
                     } else if (effect.rfind("mud_damage_type_", 0) == 0) {
-                        mudDamageType = effect.substr(std::string("mud_damage_type_").size());
                         customOnly = true;
                     }
                 }
@@ -1895,15 +2045,7 @@ void ProjectileSystem::update(
                     dispatchEffects.push_back(spec);
                 }
             }
-            if (mudDuration > 0.0 && mudRadius > 0.0) {
-                enemies.addMudZone(
-                    projectile.position,
-                    static_cast<float>(mudRadius),
-                    static_cast<float>(mudDuration),
-                    static_cast<float>(mudSlow),
-                    static_cast<float>(mudDamagePerSecond),
-                    mudDamageType);
-            }
+            addProjectileMudZone(projectile, enemies);
             if (!dispatchEffects.empty()) {
                 EffectContext context;
                 context.owner = &player;
@@ -1914,8 +2056,8 @@ void ProjectileSystem::update(
                 context.logUnimplementedEffects = false;
                 effectDispatcher.dispatch(dispatchEffects, context);
             }
-            emitProjectileFxEvent(projectileFx_, projectile, ProjectileFxEvent::Impact);
-            projectile.active = false;
+            emitProjectileFxEvent(projectileFx_, projectile, projectileImpactFxEvent(projectile));
+            deactivateProjectile(projectile, soundEvents_);
             continue;
         }
 
@@ -1928,8 +2070,8 @@ void ProjectileSystem::update(
                 effectDispatcher,
                 discoveryEvents,
                 encyclopedia)) {
-            emitProjectileFxEvent(projectileFx_, projectile, ProjectileFxEvent::Impact);
-            projectile.active = false;
+            emitProjectileFxEvent(projectileFx_, projectile, projectileImpactFxEvent(projectile));
+            deactivateProjectile(projectile, soundEvents_);
         }
     }
 }
@@ -2000,6 +2142,33 @@ int ProjectileSystem::deflectEnemyProjectiles(Vec2 center, float dt, float radiu
         }
     }
     return deflected;
+}
+
+int ProjectileSystem::pushProjectilesInDirection(Vec2 center, Vec2 direction, float dt, float radius, float strength)
+{
+    if (dt <= 0.0f || radius <= 0.0f || strength <= 0.0f || lengthSquared(direction) <= 0.0001f) {
+        return 0;
+    }
+
+    const Vec2 windDirection = normalize(direction);
+    const float effectiveRadius = std::max(8.0f, radius);
+    const float radiusSq = effectiveRadius * effectiveRadius;
+    const float acceleration = DirectionalWindProjectileAcceleration * std::clamp(strength, 0.1f, 4.0f);
+    int pushed = 0;
+    for (Projectile& projectile : projectiles_.items()) {
+        if (!projectile.active) {
+            continue;
+        }
+        const float distanceSq = distanceSquared(projectile.position, center);
+        if (distanceSq > radiusSq) {
+            continue;
+        }
+        const float distance = std::sqrt(std::max(0.0f, distanceSq));
+        const float falloff = 0.35f + (1.0f - clamp(distance / effectiveRadius, 0.0f, 1.0f)) * 0.65f;
+        projectile.velocity += windDirection * (acceleration * falloff * dt);
+        ++pushed;
+    }
+    return pushed;
 }
 
 void ProjectileSystem::render(Renderer& renderer, const TileMap& map, Vec2 playerLight, const std::vector<LightSource>& extraLights) const

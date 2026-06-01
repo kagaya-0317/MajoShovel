@@ -37,6 +37,11 @@ constexpr float ThrowMorphOpenDurationRatio = 0.18f;
 constexpr float ThrowMorphCloseStartRatio = 0.70f;
 constexpr float ThrowMorphGapFraction = 0.18f;
 constexpr float ThrowPathSampleOffset = 0.006f;
+constexpr float RingWindAcceleration = 360.0f;
+constexpr float RingWindVelocityDamping = 8.5f;
+constexpr float RingWindReturnRate = 7.0f;
+constexpr float RingWindMaxOffset = 92.0f;
+constexpr float RingWindMaxVelocity = 260.0f;
 
 float smoothStep01(float t)
 {
@@ -760,16 +765,30 @@ void SpellRingSystem::refreshItemWorldPositions(float dt, const RuntimeBalance& 
 void SpellRingSystem::updatePresentation(const Player& player, float dt, const RuntimeBalance& balance)
 {
     updateActionFlashTimers(dt);
-    advanceOrbitAngles(dt, balance);
+    const float safeDt = std::max(0.0f, dt);
+    advanceOrbitAngles(safeDt, balance);
     const Vec2 normalCenter = getRingCenterWorldPosition(player.position, player.spellRingShiftDirection, player.spellRingShift);
     for (RingRuntimeState& runtime : ringRuntime_) {
         runtime.previousCenter = runtime.center;
-        runtime.homeCenter = normalCenter;
+        if (safeDt > 0.0f) {
+            runtime.externalWindOffset += runtime.externalWindVelocity * safeDt;
+            runtime.externalWindVelocity = runtime.externalWindVelocity * std::exp(-RingWindVelocityDamping * safeDt);
+            runtime.externalWindOffset = runtime.externalWindOffset * std::exp(-RingWindReturnRate * safeDt);
+            const float offsetLength = length(runtime.externalWindOffset);
+            if (offsetLength > RingWindMaxOffset) {
+                runtime.externalWindOffset = runtime.externalWindOffset / offsetLength * RingWindMaxOffset;
+            } else if (offsetLength <= 0.05f && lengthSquared(runtime.externalWindVelocity) <= 0.05f) {
+                runtime.externalWindOffset = {};
+                runtime.externalWindVelocity = {};
+            }
+        }
+        const Vec2 windCenter = normalCenter + runtime.externalWindOffset;
+        runtime.homeCenter = windCenter;
         if (runtime.state == SpellRingState::Normal) {
-            runtime.center = normalCenter;
+            runtime.center = windCenter;
         }
     }
-    refreshItemWorldPositions(dt, balance, false);
+    refreshItemWorldPositions(safeDt, balance, false);
 }
 
 void SpellRingSystem::resetRuntimeStateAtPlayer(const Player& player, const RuntimeBalance& balance)
@@ -847,21 +866,34 @@ void SpellRingSystem::update(Player& player, const Input& input, float dt, float
     for (int ringIndex = 0; ringIndex < SpellRingCount; ++ringIndex) {
         RingRuntimeState& runtime = ringRuntime_[static_cast<std::size_t>(ringIndex)];
         runtime.previousCenter = runtime.center;
-        runtime.homeCenter = normalCenter;
+        if (safeDt > 0.0f) {
+            runtime.externalWindOffset += runtime.externalWindVelocity * safeDt;
+            runtime.externalWindVelocity = runtime.externalWindVelocity * std::exp(-RingWindVelocityDamping * safeDt);
+            runtime.externalWindOffset = runtime.externalWindOffset * std::exp(-RingWindReturnRate * safeDt);
+            const float offsetLength = length(runtime.externalWindOffset);
+            if (offsetLength > RingWindMaxOffset) {
+                runtime.externalWindOffset = runtime.externalWindOffset / offsetLength * RingWindMaxOffset;
+            } else if (offsetLength <= 0.05f && lengthSquared(runtime.externalWindVelocity) <= 0.05f) {
+                runtime.externalWindOffset = {};
+                runtime.externalWindVelocity = {};
+            }
+        }
+        const Vec2 windCenter = normalCenter + runtime.externalWindOffset;
+        runtime.homeCenter = windCenter;
 
         if (runtime.state == SpellRingState::Normal) {
             if (input.ringOffsetHeld() && anchorStrength > 0.0 && safeDt > 0.0f) {
                 const float clampedAnchor = clamp(static_cast<float>(anchorStrength), 0.0f, 5.0f);
                 const float followRate = 14.0f / (1.0f + clampedAnchor * 2.5f);
-                runtime.center = lerp(runtime.center, normalCenter, 1.0f - std::exp(-followRate * safeDt));
-                const Vec2 toNormalCenter = normalCenter - runtime.center;
+                runtime.center = lerp(runtime.center, windCenter, 1.0f - std::exp(-followRate * safeDt));
+                const Vec2 toNormalCenter = windCenter - runtime.center;
                 const float lag = length(toNormalCenter);
                 const float maxLag = 16.0f + clampedAnchor * 32.0f;
                 if (lag > maxLag) {
-                    runtime.center = normalCenter - normalize(toNormalCenter) * maxLag;
+                    runtime.center = windCenter - normalize(toNormalCenter) * maxLag;
                 }
             } else {
-                runtime.center = normalCenter;
+                runtime.center = windCenter;
             }
             continue;
         }
@@ -875,7 +907,7 @@ void SpellRingSystem::update(Player& player, const Input& input, float dt, float
         }
         if (runtime.throwElapsed >= totalTime) {
             runtime.state = SpellRingState::Normal;
-            runtime.center = normalCenter;
+            runtime.center = windCenter;
             runtime.throwElapsed = 0.0f;
             runtime.throwPeakTime = 0.0f;
             runtime.throwReturnTime = 0.0f;
@@ -885,7 +917,7 @@ void SpellRingSystem::update(Player& player, const Input& input, float dt, float
             }
             motionEvents_.push_back({RingMotionEventKind::ReturnEnd, ringIndex, runtime.center, runtime.throwDirection});
         } else {
-            runtime.center = normalCenter + runtime.throwDirection * (runtime.throwDistance * throwReachForRing(ringIndex));
+            runtime.center = windCenter + runtime.throwDirection * (runtime.throwDistance * throwReachForRing(ringIndex));
         }
     }
 
@@ -1828,6 +1860,52 @@ double SpellRingSystem::ringDamageSpeedMultiplierForRing(int ringIndex) const
 double SpellRingSystem::digPowerMultiplierForRing(int ringIndex) const
 {
     return nonNegativeEquipmentMultiplier(equipmentModifiersForRing(ringIndex).digPowerMul);
+}
+
+int SpellRingSystem::applyDirectionalWind(Vec2 center, Vec2 direction, float dt, float radius, float strength)
+{
+    const float safeDt = std::max(0.0f, dt);
+    const float effectiveRadius = std::max(1.0f, radius);
+    const float clampedStrength = std::clamp(strength, 0.1f, 4.0f);
+    if (safeDt <= 0.0f || clampedStrength <= 0.0f || lengthSquared(direction) <= 0.0001f) {
+        return 0;
+    }
+
+    const Vec2 windDirection = safeNormalize(direction);
+    const float radiusSq = effectiveRadius * effectiveRadius;
+    int affected = 0;
+    for (int ringIndex = 0; ringIndex < SpellRingCount; ++ringIndex) {
+        float bestFalloff = 0.0f;
+        const auto considerPosition = [&](Vec2 position) {
+            const float distanceSq = distanceSquared(position, center);
+            if (distanceSq > radiusSq) {
+                return;
+            }
+            const float distance = std::sqrt(std::max(0.0f, distanceSq));
+            const float falloff = 0.35f + (1.0f - clamp(distance / effectiveRadius, 0.0f, 1.0f)) * 0.65f;
+            bestFalloff = std::max(bestFalloff, falloff);
+        };
+
+        RingRuntimeState& runtime = ringRuntime_[static_cast<std::size_t>(ringIndex)];
+        considerPosition(runtime.center);
+        for (const SpellRingItem& item : itemsByRing_[static_cast<std::size_t>(ringIndex)]) {
+            if (!item.broken()) {
+                considerPosition(item.worldPosition);
+            }
+        }
+
+        if (bestFalloff <= 0.0f) {
+            continue;
+        }
+
+        runtime.externalWindVelocity += windDirection * (RingWindAcceleration * clampedStrength * bestFalloff * safeDt);
+        const float velocityLength = length(runtime.externalWindVelocity);
+        if (velocityLength > RingWindMaxVelocity) {
+            runtime.externalWindVelocity = runtime.externalWindVelocity / velocityLength * RingWindMaxVelocity;
+        }
+        ++affected;
+    }
+    return affected;
 }
 
 Vec2 SpellRingSystem::centerForRing(int ringIndex) const

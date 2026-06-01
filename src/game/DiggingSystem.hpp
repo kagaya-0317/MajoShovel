@@ -33,6 +33,7 @@ struct CapturedExplosionRequest {
     int damage = 3;
     float terrainRadius = 28.0f;
     int terrainDamage = 1;
+    bool destroyTerrain = false;
 };
 
 class EncyclopediaSystem;

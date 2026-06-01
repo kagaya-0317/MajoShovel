@@ -25,6 +25,15 @@ constexpr std::array<ActorVisualKeyframe, 5> FireBreathHopKeys{{
     {0.45f, {{0.0f, 0.0f}, {1.00f, 1.00f}, 0.0f, 0.0f, 0.0f}, ActorVisualEase::EaseOut},
 }};
 
+constexpr std::array<ActorVisualKeyframe, 6> RadialSpikeSquashKeys{{
+    {0.00f, {{0.0f, 0.0f}, {1.00f, 1.00f}, 0.0f, 0.0f, 0.0f}, ActorVisualEase::EaseInOut},
+    {0.08f, {{0.0f, -1.0f}, {0.92f, 1.08f}, 0.0f, 0.0f, -1.5f}, ActorVisualEase::EaseIn},
+    {0.17f, {{0.0f, 4.0f}, {1.34f, 0.66f}, 0.0f, 0.0f, 2.0f}, ActorVisualEase::EaseOut},
+    {0.24f, {{0.0f, -4.0f}, {0.84f, 1.22f}, 0.0f, 7.0f, -2.5f}, ActorVisualEase::EaseInOut},
+    {0.34f, {{0.0f, 1.0f}, {1.08f, 0.92f}, 0.0f, 1.0f, 1.0f}, ActorVisualEase::EaseOut},
+    {0.46f, {{0.0f, 0.0f}, {1.00f, 1.00f}, 0.0f, 0.0f, 0.0f}, ActorVisualEase::EaseOut},
+}};
+
 constexpr std::array<ActorVisualKeyframe, 7> HealSlugHopKeys{{
     {0.00f, {{0.0f, 0.0f}, {1.00f, 1.00f}, 0.0f, 0.0f, 0.0f}, ActorVisualEase::EaseOut},
     {0.10f, {{0.0f, 1.0f}, {0.78f, 1.24f}, -2.0f, 0.0f, -1.5f}, ActorVisualEase::EaseInOut},
@@ -35,9 +44,10 @@ constexpr std::array<ActorVisualKeyframe, 7> HealSlugHopKeys{{
     {0.58f, {{0.0f, 0.0f}, {1.00f, 1.00f}, 0.0f, 0.0f, 0.0f}, ActorVisualEase::EaseOut},
 }};
 
-constexpr std::array<ActorVisualMotionClip, 3> Clips{{
+constexpr std::array<ActorVisualMotionClip, 4> Clips{{
     {"web_shoot", 0.32f, WebShootKeys},
     {"fire_breath_hop", 0.45f, FireBreathHopKeys},
+    {"radial_spike_squash", 0.46f, RadialSpikeSquashKeys},
     {"heal_slug_hop", 0.58f, HealSlugHopKeys},
 }};
 

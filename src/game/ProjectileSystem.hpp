@@ -26,10 +26,10 @@ enum class ProjectileOwnerType {
     PlayerOrbit,
 };
 
-enum class ProjectileSoundEvent {
-    Impact,
-    Guard,
-    Reflect,
+struct ProjectileSoundEvent {
+    std::string cueId;
+    float volumeScale = 1.0f;
+    float pitchScale = 1.0f;
 };
 
 struct Projectile {
@@ -48,8 +48,12 @@ struct Projectile {
     std::string projectileId;
     int damage = 1;
     std::string damageType = "blunt";
+    std::string sourceActorName;
+    std::string displayName;
     std::vector<EffectSpec> effects;
     std::vector<std::string> tags;
+    std::string launchSeId;
+    std::string destroySeId;
 };
 
 enum class ProjectileFxVisual {
@@ -90,6 +94,10 @@ struct ProjectileSpawnTuning {
     float radiusScale = 1.0f;
 };
 
+struct ProjectileSpawnMetadata {
+    std::string sourceActorName;
+};
+
 struct ProjectilePreviewTarget {
     Vec2 position{};
     float radius = 0.0f;
@@ -106,6 +114,8 @@ struct ProjectileDefinition {
     std::string damageType = "blunt";
     bool piercesTargets = false;
     std::vector<std::string> tags;
+    std::string launchSeId;
+    std::string destroySeId;
 };
 
 [[nodiscard]] std::span<const ProjectileDefinition> projectileDefinitions();
@@ -121,6 +131,14 @@ public:
         ProjectileOwnerType ownerType,
         const std::vector<EffectSpec>& effects,
         const ProjectileSpawnTuning& tuning);
+    bool spawn(
+        std::string_view projectileId,
+        Vec2 position,
+        Vec2 direction,
+        ProjectileOwnerType ownerType,
+        const std::vector<EffectSpec>& effects,
+        const ProjectileSpawnTuning& tuning,
+        const ProjectileSpawnMetadata& metadata);
     void updatePreview(float dt);
     void updatePreview(float dt, std::optional<ProjectilePreviewTarget> target);
     void update(
@@ -146,6 +164,7 @@ public:
     int activeCount(ProjectileOwnerType ownerType) const;
     int pullMetalProjectiles(Vec2 center, float dt, float radius = 170.0f);
     int deflectEnemyProjectiles(Vec2 center, float dt, float radius = 150.0f);
+    int pushProjectilesInDirection(Vec2 center, Vec2 direction, float dt, float radius, float strength = 1.0f);
     std::vector<ProjectileSoundEvent> consumeSoundEvents();
     std::vector<StatusPopupEvent> consumeStatusPopupEvents();
 

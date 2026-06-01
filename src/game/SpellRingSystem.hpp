@@ -233,6 +233,7 @@ public:
     int throwingRingIndex() const { return throwingRingIndex_; }
     int activeRingIndex() const { return activeRingIndex_; }
     float shapeRotation() const { return shapeRotationForRing(activeRingIndex_); }
+    int applyDirectionalWind(Vec2 center, Vec2 direction, float dt, float radius, float strength);
     float cooldownRatio(const Player& player, const RuntimeBalance& balance) const;
     std::vector<RingMotionEvent> consumeMotionEvents();
 
@@ -241,6 +242,8 @@ private:
         Vec2 homeCenter{};
         Vec2 center{};
         Vec2 previousCenter{};
+        Vec2 externalWindOffset{};
+        Vec2 externalWindVelocity{};
         Vec2 throwDirection{1.0f, 0.0f};
         Vec2 throwLaunchOffset{};
         Vec2 throwReturnOffset{};

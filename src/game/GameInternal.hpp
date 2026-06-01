@@ -2568,13 +2568,7 @@ std::string loadRingObjectId(std::string_view value)
 
 std::string playerDeathCauseText(const Player& player)
 {
-    if ((player.lastDamageSource == DamageSource::SlimeContact ||
-            player.lastDamageSource == DamageSource::SlimeAttack) &&
-        !player.lastDamageEnemyName.empty()) {
-        return player.lastDamageEnemyName +
-            (player.lastDamageSource == DamageSource::SlimeAttack ? "の攻撃で死亡" : "の接触で死亡");
-    }
-    return std::string(deathCauseText(player.lastDamageSource));
+    return deathCauseText(player.lastDamageCause);
 }
 
 ObjectDefinition makeCapturedObjectDefinition(const EnemyDefinition& enemy)

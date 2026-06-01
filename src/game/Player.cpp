@@ -25,15 +25,31 @@ int playerSpriteFrameIndex(float animationTime, bool walking)
     return IdleFrames[static_cast<std::size_t>(step % static_cast<int>(IdleFrames.size()))];
 }
 
-std::string_view deathCauseText(DamageSource source)
+namespace {
+
+std::string joinDeathCause(std::string_view actorName, std::string_view objectName, std::string_view fallbackObjectName)
+{
+    const std::string_view resolvedObjectName = objectName.empty() ? fallbackObjectName : objectName;
+    if (!actorName.empty() && !resolvedObjectName.empty()) {
+        return std::string(actorName) + "の" + std::string(resolvedObjectName) + "で死亡";
+    }
+    if (!resolvedObjectName.empty()) {
+        return std::string(resolvedObjectName) + "で死亡";
+    }
+    return {};
+}
+
+}
+
+std::string_view fallbackDeathCauseText(DamageSource source)
 {
     switch (source) {
     case DamageSource::Poison:
-        return "毒で死亡";
+        return "毒の継続ダメージで死亡";
     case DamageSource::Hot:
-        return "熱で死亡";
+        return "熱の継続ダメージで死亡";
     case DamageSource::Bleed:
-        return "出血で死亡";
+        return "出血の継続ダメージで死亡";
     case DamageSource::SlimeAttack:
         return "スライムの攻撃で死亡";
     case DamageSource::SlimeContact:
@@ -50,13 +66,50 @@ std::string_view deathCauseText(DamageSource source)
     return "不明なダメージで死亡";
 }
 
-void Player::applyDamage(int amount, DamageSource source)
+std::string deathCauseText(const DamageCause& cause)
+{
+    switch (cause.source) {
+    case DamageSource::SlimeAttack:
+        if (!cause.actorName.empty()) {
+            return cause.actorName + "の攻撃で死亡";
+        }
+        break;
+    case DamageSource::SlimeContact:
+        if (!cause.actorName.empty()) {
+            return cause.actorName + "の接触で死亡";
+        }
+        break;
+    case DamageSource::Projectile:
+        if (std::string text = joinDeathCause(cause.actorName, cause.objectName, "発射物"); !text.empty()) {
+            return text;
+        }
+        break;
+    case DamageSource::Explosion:
+        if (std::string text = joinDeathCause(cause.actorName, cause.objectName, "爆発"); !text.empty()) {
+            return text;
+        }
+        break;
+    case DamageSource::Trap:
+        if (std::string text = joinDeathCause(cause.actorName, cause.objectName, "罠"); !text.empty()) {
+            return text;
+        }
+        break;
+    case DamageSource::Poison:
+    case DamageSource::Hot:
+    case DamageSource::Bleed:
+    case DamageSource::Unknown:
+        break;
+    }
+    return std::string(fallbackDeathCauseText(cause.source));
+}
+
+void Player::applyDamage(int amount, const DamageCause& cause)
 {
     if (amount <= 0 || hp <= 0) {
         return;
     }
 
-    lastDamageSource = source;
+    lastDamageCause = cause;
     const int beforeHp = hp;
     const int damageFloor = std::clamp(minimumHpAfterDamage, 0, hp);
     hp = std::max(damageFloor, hp - amount);
@@ -66,6 +119,11 @@ void Player::applyDamage(int amount, DamageSource source)
         status.removeState("status_sleep");
         damageEvents.push_back({damageTaken, position});
     }
+}
+
+void Player::applyDamage(int amount, DamageSource source)
+{
+    applyDamage(amount, DamageCause{.source = source});
 }
 
 void Player::applyKnockback(Vec2 direction, float speed, float durationSeconds)

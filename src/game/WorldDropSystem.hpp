@@ -124,6 +124,13 @@ public:
         float dt,
         float radius,
         float strength = 1.0f);
+    int pushDropsInDirection(
+        const ObjectCatalog& catalog,
+        Vec2 center,
+        Vec2 direction,
+        float dt,
+        float radius,
+        float strength = 1.0f);
     int update(
         float dt,
         const Player& player,

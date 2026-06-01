@@ -31,6 +31,7 @@ enum class EffectPreviewAction {
     ParticlePreset,
     DigHit,
     TileBreak,
+    CrateBreak,
     EnemyHit,
     EnemyDeath,
     EnemyTransform,
@@ -48,6 +49,7 @@ enum class EffectPreviewAction {
     WarpCircle,
     BossCircle,
     AreaPulse,
+    Explosion,
     MagicCast,
 };
 

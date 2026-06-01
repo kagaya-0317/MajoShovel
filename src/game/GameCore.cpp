@@ -22,28 +22,18 @@ constexpr std::string_view AudioBgmTitle = "bgm.title";
 constexpr std::string_view AudioBgmBase = "bgm.base";
 constexpr std::string_view AudioBgmDungeon = "bgm.dungeon";
 constexpr std::string_view AudioSeTransition = "se.transition";
-constexpr std::string_view AudioSeDigHit = "se.dig.hit";
-constexpr std::string_view AudioSeDigBreak = "se.dig.break";
-constexpr std::string_view AudioSeDigOreBreak = "se.dig.ore_break";
-constexpr std::string_view AudioSeAttackHit = "se.attack.hit";
-constexpr std::string_view AudioSePickup = "se.pickup";
 constexpr std::string_view AudioSePlayerDamage = "se.player.damage";
 constexpr std::string_view AudioSePlayerPinch = "se.player.pinch";
 constexpr std::string_view AudioSeRingThrow = "se.ring.throw";
-constexpr std::string_view AudioSeEnemyDefeat = "se.enemy.defeat";
 constexpr std::string_view AudioSeEnemySpawn = "se.enemy.spawn";
 constexpr std::string_view AudioSeEnemyAlert = "se.enemy.alert";
 constexpr std::string_view AudioSeEnemyAttack = "se.enemy.attack";
 constexpr std::string_view AudioSeEnemyShoot = "se.enemy.shoot";
 constexpr std::string_view AudioSeEnemyHeal = "se.enemy.heal";
-constexpr std::string_view AudioSeProjectileImpact = "se.projectile.impact";
-constexpr std::string_view AudioSeRingGuard = "se.ring.guard";
-constexpr std::string_view AudioSeRingReflect = "se.ring.reflect";
+constexpr std::string_view AudioSeRingSlowBite = "se.ring.slow_bite";
 constexpr std::string_view AudioSeMagicCast = "se.magic.cast";
 constexpr std::string_view AudioSeMagicImpact = "se.magic.impact";
-constexpr std::string_view AudioSeCaptureSuccess = "se.capture.success";
 constexpr std::string_view AudioSeCaptureFail = "se.capture.fail";
-constexpr std::string_view AudioSeExplosion = "se.explosion.boom";
 constexpr std::string_view AudioSeExplosionTick = "se.explosion.tick";
 constexpr std::string_view AudioSeDiscovery = "se.discovery";
 constexpr std::string_view AudioSeUiConfirm = "se.ui.confirm";
@@ -1171,7 +1161,7 @@ void Game::resetWorldUiState()
     effectTestTabsState_ = {};
     effectTestTabIndex_ = 0;
     effectTestSelectedIndex_ = 0;
-    effectTestFrame_ = 0;
+    effectTestReplayTimerSeconds_ = 0.0f;
     effectTestScrollOffset_ = 0.0f;
     effectTestScrollState_ = {};
     effectTestEmitter_ = {};
@@ -1179,7 +1169,7 @@ void Game::resetWorldUiState()
     projectileTestActive_ = false;
     projectileTestEntries_.clear();
     projectileTestSelectedIndex_ = 0;
-    projectileTestFrame_ = 0;
+    projectileTestReplayTimerSeconds_ = 0.0f;
     projectileTestScrollOffset_ = 0.0f;
     projectileTestScrollState_ = {};
     projectileTestStatus_.clear();
@@ -3651,27 +3641,14 @@ void Game::update(const Input& input, const Time& time)
             for (const RingImpactSoundPlayback& sound : terrainImpactSounds) {
                 playAudioSe(sound.cueId, sound.volumeScale, sound.pitchScale);
             }
-        } else {
-            if (!digging_.dugTiles().empty()) {
-                bool brokeOre = false;
-                for (const DugTile& tile : digging_.dugTiles()) {
-                    if (tile.type == TileType::Ore) {
-                        brokeOre = true;
-                        break;
-                    }
-                }
-                playAudioSe(brokeOre ? AudioSeDigOreBreak : AudioSeDigBreak);
-            }
-            if (!digging_.hitTiles().empty()) {
-                playAudioSe(AudioSeDigHit);
-            }
         }
+        const bool playDigEffectSounds = terrainImpactSounds.empty();
         for (const TerrainHitTile& tile : digging_.hitTiles()) {
-            effects_.spawnDigHit(tile.center, tile.center - spellRing_.center(), tile.color);
+            effects_.spawnDigHit(tile.center, tile.center - spellRing_.center(), tile.color, playDigEffectSounds);
         }
         if (digging_.dugTiles().empty()) {
             for (Vec2 tile : digging_.openedTiles()) {
-                effects_.spawnTileBreak(tile, TileType::Dirt, tileMap_.tileColorAtWorld(tile));
+                effects_.spawnTileBreak(tile, TileType::Dirt, tileMap_.tileColorAtWorld(tile), playDigEffectSounds);
             }
         }
         if (!enemyTestActive_) {
@@ -3681,7 +3658,7 @@ void Game::update(const Input& input, const Time& time)
         }
         revealDungeonMinimapOpenedTiles(digging_.openedTiles());
         for (const DugTile& tile : digging_.dugTiles()) {
-            effects_.spawnTileBreak(tile.center, tile.type, tile.color);
+            effects_.spawnTileBreak(tile.center, tile.type, tile.color, playDigEffectSounds);
             ++runStats_.dugTiles;
 
             std::mt19937& rng = lootRuntimeRng();
@@ -3700,7 +3677,11 @@ void Game::update(const Input& input, const Time& time)
                     lootDepthMultiplier(balance_, currentStageId_, depthRank);
                 std::uniform_int_distribution<int> moneyDistribution(2, 6);
                 const int amount = scaledLootAmount(moneyDistribution(rng), multiplier);
-                if (worldDrops_.spawnMoneyDrop(amount, scatterLootPosition(tile.center, rng), runStats_.elapsedSeconds)) {
+                if (worldDrops_.spawnMoneyDrop(
+                        amount,
+                        scatterLootPosition(tile.center, rng),
+                        runStats_.elapsedSeconds,
+                        makeWorldLootJumpMotion(tile.center, rng))) {
                     runStats_.dugTilesSinceMoneyDrop = 0;
                 }
             }
@@ -3717,7 +3698,7 @@ void Game::update(const Input& input, const Time& time)
                         tile.center,
                         rng,
                         "DigItemLoot",
-                        false,
+                        true,
                         LootSourceKind::DigItem)) {
                     runStats_.dugTilesSinceItemDrop = 0;
                 }
@@ -3754,8 +3735,14 @@ void Game::update(const Input& input, const Time& time)
                 lootStageMultiplier(balance_, currentStageId_) *
                 lootDepthMultiplier(balance_, currentStageId_, depthRank);
             std::uniform_int_distribution<int> oreAmountDistribution(balance_.oreMaterialMin, balance_.oreMaterialMax);
-            const int amount = scaledLootAmount(oreAmountDistribution(lootRuntimeRng()), multiplier);
-            worldDrops_.spawnMaterialDrop(MaterialType::EnhancementOre, amount, tile.center, runStats_.elapsedSeconds);
+            std::mt19937& rng = lootRuntimeRng();
+            const int amount = scaledLootAmount(oreAmountDistribution(rng), multiplier);
+            worldDrops_.spawnMaterialDrop(
+                MaterialType::EnhancementOre,
+                amount,
+                scatterLootPosition(tile.center, rng),
+                runStats_.elapsedSeconds,
+                makeWorldLootJumpMotion(tile.center, rng));
         }
         for (const DugTile& tile : digging_.dugTiles()) {
             if (trySpawnFailsafeShovelDropFromWall(tile.center)) {
@@ -3815,9 +3802,6 @@ void Game::update(const Input& input, const Time& time)
             }
         }
         appendPickupLogs(pickupEvents);
-        if (!pickupEvents.empty()) {
-            playAudioSe(AudioSePickup);
-        }
         if (blockedObjectPickupCount > 0) {
             pushDungeonLog("リュックがいっぱいで拾えません", "pickup_inventory_full");
         }
@@ -3886,30 +3870,8 @@ void Game::update(const Input& input, const Time& time)
             &effectDiscoveries,
             &encyclopedia_);
         magic_.update(player_, spellRing_, enemies_, tileMap_, time.deltaSeconds());
-        bool projectileImpactSound = false;
-        bool ringGuardSound = false;
-        bool ringReflectSound = false;
-        for (ProjectileSoundEvent event : projectiles_.consumeSoundEvents()) {
-            switch (event) {
-            case ProjectileSoundEvent::Impact:
-                projectileImpactSound = true;
-                break;
-            case ProjectileSoundEvent::Guard:
-                ringGuardSound = true;
-                break;
-            case ProjectileSoundEvent::Reflect:
-                ringReflectSound = true;
-                break;
-            }
-        }
-        if (projectileImpactSound) {
-            playAudioSe(AudioSeProjectileImpact);
-        }
-        if (ringGuardSound) {
-            playAudioSe(AudioSeRingGuard);
-        }
-        if (ringReflectSound) {
-            playAudioSe(AudioSeRingReflect);
+        for (const ProjectileSoundEvent& event : projectiles_.consumeSoundEvents()) {
+            playAudioSe(event.cueId, event.volumeScale, event.pitchScale);
         }
         bool magicCastSound = false;
         bool magicImpactSound = false;
@@ -3978,8 +3940,8 @@ void Game::update(const Input& input, const Time& time)
             } else if (event.type == EnemyEventType::Alert) {
                 playAudioSe(AudioSeEnemyAlert);
             } else if (event.type == EnemyEventType::Attack) {
-                playAudioSe(AudioSeEnemyAttack);
-            } else if (event.type == EnemyEventType::Shoot) {
+                playAudioSe(event.effectId == "ring_slow_bite" ? AudioSeRingSlowBite : AudioSeEnemyAttack);
+            } else if (event.type == EnemyEventType::Shoot && event.effectId == "wind_blow") {
                 playAudioSe(AudioSeEnemyShoot);
             } else if (event.type == EnemyEventType::HealCast) {
                 playAudioSe(AudioSeEnemyHeal);
@@ -3994,7 +3956,6 @@ void Game::update(const Input& input, const Time& time)
             } else if (event.type == EnemyEventType::Explode) {
                 const float radius = event.effectRadius > 0.0f ? event.effectRadius : 48.0f;
                 effects_.spawnExplosion(event.position, radius);
-                playAudioSe(AudioSeExplosion);
                 addScreenShake(std::clamp(3.5f + radius * 0.035f, 4.5f, 8.0f), 0.20f);
             } else if (event.type == EnemyEventType::BossTelegraph) {
                 SmokeBurstOptions smoke;
@@ -4017,12 +3978,14 @@ void Game::update(const Input& input, const Time& time)
                 smoke.spreadRadius = wallStunImpact ? 16.0f : (burrowImpact ? 14.0f : 10.0f);
                 smoke.colorA = {192, 144, 82, 192};
                 smoke.colorB = {110, 82, 58, 150};
-                effects_.spawnSmokeBurst(event.position, smoke);
-                if (wallStunImpact) {
-                    playAudioSe(AudioSeAttackHit);
-                }
+                effects_.spawnAttackImpactBurst(event.position, smoke, wallStunImpact);
+            } else if (event.type == EnemyEventType::TerrainHit) {
+                const Vec2 direction = lengthSquared(event.effectDirection) > 0.0001f
+                    ? event.effectDirection
+                    : event.position - player_.position;
+                effects_.spawnDigHit(event.position, direction, event.terrainColor);
             } else if (event.type == EnemyEventType::TerrainBreak) {
-                effects_.spawnTileBreak(event.position, TileType::Dirt);
+                effects_.spawnTileBreak(event.position, event.terrainTileType, event.terrainColor);
             } else if (event.type == EnemyEventType::Inspected) {
                 const auto enemyIt = enemyCatalog_.enemiesById.find(event.enemyId);
                 if (enemyIt != enemyCatalog_.enemiesById.end() &&
@@ -4034,11 +3997,10 @@ void Game::update(const Input& input, const Time& time)
                 if (!event.suppressRewards) {
                     ++runStats_.defeatedEnemies;
                 }
-                effects_.spawnEnemyDeath(event.position);
+                const bool playEnemyDefeatSound =
+                    event.type == EnemyEventType::Death && !capturedEnemyThisFrame && !event.suppressRewards;
+                effects_.spawnEnemyDeath(event.position, playEnemyDefeatSound);
                 addScreenShake(event.type == EnemyEventType::BossDeath ? 8.0f : 1.5f, event.type == EnemyEventType::BossDeath ? 0.28f : 0.08f);
-                if (event.type == EnemyEventType::Death && !capturedEnemyThisFrame && !event.suppressRewards) {
-                    playAudioSe(AudioSeEnemyDefeat);
-                }
                 std::mt19937& rng = lootRuntimeRng();
                 if (!event.suppressRewards && event.moneyDrop > 0) {
                     worldDrops_.spawnMoneyDrop(
@@ -4172,10 +4134,7 @@ void Game::update(const Input& input, const Time& time)
             } else if (event.type == EnemyEventType::CapturedExplosion) {
                 continue;
             } else if (event.type == EnemyEventType::AttackHit) {
-                if (!event.ringItemImpact) {
-                    playAudioSe(AudioSeAttackHit);
-                }
-                effects_.spawnEnemyHit(event.position, event.effectId);
+                effects_.spawnEnemyHit(event.position, event.effectId, !event.ringItemImpact);
                 if (event.damageAmount >= 0) {
                     effects_.spawnDamagePopup(
                         event.position,
@@ -4212,6 +4171,9 @@ void Game::update(const Input& input, const Time& time)
         }
         for (const StatusPopupEvent& event : inventory_.consumeStatusPopupEvents()) {
             effects_.spawnStatusPopup(event.position, event.stateId, event.target);
+        }
+        for (const EffectSoundEvent& event : effects_.consumeSoundEvents()) {
+            playAudioSe(event.cueId, event.volumeScale, event.pitchScale);
         }
         applyEffectDiscoveries(effectDiscoveries);
         syncEncyclopediaFromInventoryAndRing();

@@ -43,6 +43,7 @@ constexpr float VacuumLightObjectMaxWeightKg = 1.0f;
 constexpr int VacuumLightDropLimit = 10;
 constexpr float WindLightDropAcceleration = 245.0f;
 constexpr int WindLightDropLimit = 10;
+constexpr float DirectionalWindDropAcceleration = 260.0f;
 constexpr std::string_view MoneyDropId = "money";
 
 constexpr std::array<std::string_view, 6> DropCategories = {
@@ -279,6 +280,35 @@ bool isLightDrop(const WorldDropItem& drop, const ObjectCatalog& catalog)
     }
     const ObjectDefinition* object = catalog.registry.findById(drop.id);
     return object != nullptr && isLightObjectDrop(*object);
+}
+
+float windMassMultiplierForDrop(const WorldDropItem& drop, const ObjectCatalog& catalog)
+{
+    if (drop.kind == WorldDropKind::Money || drop.kind == WorldDropKind::Material) {
+        return 1.10f;
+    }
+    if (drop.kind != WorldDropKind::Object) {
+        return 0.75f;
+    }
+
+    const ObjectDefinition* object = catalog.registry.findById(drop.id);
+    if (object == nullptr) {
+        return 0.75f;
+    }
+    if (hasObjectTag(*object, "small") || hasObjectTag(*object, "light")) {
+        return 1.15f;
+    }
+    float multiplier = 0.85f;
+    if (object->weightKg > 0.0) {
+        multiplier = std::clamp(1.0f / (1.0f + static_cast<float>(object->weightKg) * 0.45f), 0.28f, 1.15f);
+    }
+    if (hasObjectTag(*object, "heavy") ||
+        hasObjectTag(*object, "large") ||
+        hasObjectTag(*object, "massive") ||
+        hasObjectTag(*object, "huge")) {
+        multiplier = std::min(multiplier, 0.38f);
+    }
+    return multiplier;
 }
 
 bool hasAllowedCategory(const ObjectDefinition& object)
@@ -811,6 +841,40 @@ int WorldDropSystem::pushLightDrops(
         if (pushed >= WindLightDropLimit) {
             break;
         }
+    }
+    return pushed;
+}
+
+int WorldDropSystem::pushDropsInDirection(
+    const ObjectCatalog& catalog,
+    Vec2 center,
+    Vec2 direction,
+    float dt,
+    float radius,
+    float strength)
+{
+    if (dt <= 0.0f || radius <= 0.0f || strength <= 0.0f || lengthSquared(direction) <= 0.0001f) {
+        return 0;
+    }
+
+    int pushed = 0;
+    const Vec2 windDirection = normalize(direction);
+    const float effectiveRadius = std::max(DropPickupRadius, radius);
+    const float radiusSq = effectiveRadius * effectiveRadius;
+    const float acceleration = DirectionalWindDropAcceleration * std::clamp(strength, 0.1f, 4.0f);
+    for (WorldDropItem& drop : drops_) {
+        if (drop.jumpActive || drop.pickupDelaySeconds > 0.0f) {
+            continue;
+        }
+        const float distanceSq = distanceSquared(drop.position, center);
+        if (distanceSq > radiusSq) {
+            continue;
+        }
+        const float distance = std::sqrt(std::max(0.0f, distanceSq));
+        const float falloff = 0.35f + (1.0f - clamp(distance / effectiveRadius, 0.0f, 1.0f)) * 0.65f;
+        const float massMultiplier = windMassMultiplierForDrop(drop, catalog);
+        drop.velocity += windDirection * (acceleration * falloff * massMultiplier * dt);
+        ++pushed;
     }
     return pushed;
 }

@@ -16,6 +16,16 @@ namespace {
 
 constexpr int LightweightMaxEffects = 512;
 constexpr int LightweightMaxSmokePuffs = 96;
+constexpr std::string_view AudioSeDigHit = "se.dig.hit";
+constexpr std::string_view AudioSeDigBreak = "se.dig.break";
+constexpr std::string_view AudioSeDigOreBreak = "se.dig.ore_break";
+constexpr std::string_view AudioSeAttackHit = "se.attack.hit";
+constexpr std::string_view AudioSePickup = "se.pickup";
+constexpr std::string_view AudioSeEnemyDefeat = "se.enemy.defeat";
+constexpr std::string_view AudioSeCaptureSuccess = "se.capture.success";
+constexpr std::string_view AudioSeCrateBreak = "se.crate.break";
+constexpr std::string_view AudioSeItemBreak = "se.item.break";
+constexpr std::string_view AudioSeExplosion = "se.explosion.boom";
 
 struct ParticlePreset {
     ParticleEffectId id = ParticleEffectId::DigDust;
@@ -285,6 +295,14 @@ int randomInt(int minValue, int maxValue)
 {
     std::uniform_int_distribution<int> dist(minValue, maxValue);
     return dist(particleRng());
+}
+
+std::string_view tileBreakSoundFor(TileType tileType)
+{
+    if (tileType == TileType::Ore) {
+        return AudioSeDigOreBreak;
+    }
+    return AudioSeDigBreak;
 }
 
 void delayEffect(Effect* effect, float delay)
@@ -1122,6 +1140,25 @@ void EffectSystem::renderDamagePopups(Renderer& renderer)
     }
 }
 
+std::vector<EffectSoundEvent> EffectSystem::consumeSoundEvents()
+{
+    std::vector<EffectSoundEvent> events;
+    events.swap(soundEvents_);
+    return events;
+}
+
+void EffectSystem::queueSound(std::string_view cueId, float volumeScale, float pitchScale)
+{
+    if (cueId.empty()) {
+        return;
+    }
+    soundEvents_.push_back(EffectSoundEvent{
+        std::string(cueId),
+        volumeScale,
+        pitchScale,
+    });
+}
+
 void EffectSystem::spawnSmokeBurst(Vec2 position, SmokeBurstOptions options)
 {
     if (lightweightMode_ && smokePuffs_.activeCount() >= LightweightMaxSmokePuffs) {
@@ -1277,6 +1314,14 @@ void EffectSystem::spawnLevelUpSparkles(Vec2 position)
         if (spark != nullptr) {
             spark->endRadius = spark->startRadius * 0.28f;
         }
+    }
+}
+
+void EffectSystem::spawnAttackImpactBurst(Vec2 position, SmokeBurstOptions options, bool playSound)
+{
+    spawnSmokeBurst(position, options);
+    if (playSound) {
+        queueSound(AudioSeAttackHit);
     }
 }
 
@@ -1477,12 +1522,15 @@ void EffectSystem::spawn(ParticleEffectId id, Vec2 position, Vec2 direction, flo
     }
 }
 
-void EffectSystem::spawnDigHit(Vec2 position, Vec2 direction, Color colorOverride)
+void EffectSystem::spawnDigHit(Vec2 position, Vec2 direction, Color colorOverride, bool playSound)
 {
     spawn(ParticleEffectId::DigDust, position, normalize(direction) * -1.0f, 1.0f, EffectLayer::Foreground, colorOverride);
+    if (playSound) {
+        queueSound(AudioSeDigHit);
+    }
 }
 
-void EffectSystem::spawnTileBreak(Vec2 position, TileType tileType, Color colorOverride)
+void EffectSystem::spawnTileBreak(Vec2 position, TileType tileType, Color colorOverride, bool playSound)
 {
     ParticleEffectId id = ParticleEffectId::DirtBreak;
     if (tileType == TileType::Rock || tileType == TileType::HardRock) {
@@ -1492,9 +1540,20 @@ void EffectSystem::spawnTileBreak(Vec2 position, TileType tileType, Color colorO
     }
     spawnSmokeBurst(position);
     spawn(id, position, {1.0f, 0.0f}, 1.0f, EffectLayer::Foreground, colorOverride);
+    if (playSound) {
+        queueSound(tileBreakSoundFor(tileType));
+    }
 }
 
-void EffectSystem::spawnEnemyHit(Vec2 position, std::string_view effect)
+void EffectSystem::spawnCrateBreak(Vec2 position, Color colorOverride, bool playSound)
+{
+    spawnTileBreak(position, TileType::Dirt, colorOverride, false);
+    if (playSound) {
+        queueSound(AudioSeCrateBreak);
+    }
+}
+
+void EffectSystem::spawnEnemyHit(Vec2 position, std::string_view effect, bool playSound)
 {
     ParticleEffectId id = ParticleEffectId::EnemyHit;
     if (effect == "status_poison" || effect == "status_poison_chance") {
@@ -1527,9 +1586,12 @@ void EffectSystem::spawnEnemyHit(Vec2 position, std::string_view effect)
         id = ParticleEffectId::EnemyEarthHit;
     }
     spawn(id, position);
+    if (playSound) {
+        queueSound(AudioSeAttackHit);
+    }
 }
 
-void EffectSystem::spawnEnemyDeath(Vec2 position)
+void EffectSystem::spawnEnemyDeath(Vec2 position, bool playSound)
 {
     SmokeBurstOptions options;
     options.count = 12;
@@ -1544,6 +1606,9 @@ void EffectSystem::spawnEnemyDeath(Vec2 position)
     options.colorB = {92, 74, 132, 72};
     options.layer = EffectLayer::Foreground;
     spawnSmokeBurst(position, options);
+    if (playSound) {
+        queueSound(AudioSeEnemyDefeat);
+    }
 }
 
 void EffectSystem::spawnEnemyTransform(Vec2 position)
@@ -1586,17 +1651,23 @@ void EffectSystem::spawnForegroundRingTrail(Vec2 position, Vec2 direction)
     (void)direction;
 }
 
-void EffectSystem::spawnCaptureSuccess(Vec2 position, Vec2 direction)
+void EffectSystem::spawnCaptureSuccess(Vec2 position, Vec2 direction, bool playSound)
 {
     spawn(ParticleEffectId::CaptureSuccess, position, direction);
+    if (playSound) {
+        queueSound(AudioSeCaptureSuccess);
+    }
 }
 
-void EffectSystem::spawnDropPickup(Vec2 position, Vec2 direction)
+void EffectSystem::spawnDropPickup(Vec2 position, Vec2 direction, bool playSound)
 {
     spawn(ParticleEffectId::DropPickup, position, direction);
+    if (playSound) {
+        queueSound(AudioSePickup);
+    }
 }
 
-void EffectSystem::spawnItemBreak(Vec2 position, ItemBreakVisual visual, float scale)
+void EffectSystem::spawnItemBreak(Vec2 position, ItemBreakVisual visual, float scale, bool playSound)
 {
     SmokeBurstOptions options;
     options.count = 7;
@@ -1634,6 +1705,9 @@ void EffectSystem::spawnItemBreak(Vec2 position, ItemBreakVisual visual, float s
     options.speed *= visualScale;
     spawnSmokeBurst(position, options);
     spawn(particleId, position, {1.0f, 0.0f}, visualScale, EffectLayer::Foreground);
+    if (playSound) {
+        queueSound(AudioSeItemBreak);
+    }
 }
 
 void EffectSystem::spawnMaterialFloat(Vec2 position, Color color)
@@ -1809,13 +1883,16 @@ void EffectSystem::spawnAreaPulse(Vec2 position, float radius, Color color)
     spawnRing(position, std::max(4.0f, radius * 0.15f), std::max(10.0f, radius), color, 0.32f);
 }
 
-void EffectSystem::spawnExplosion(Vec2 position, float radius)
+void EffectSystem::spawnExplosion(Vec2 position, float radius, bool playSound)
 {
     const float safeRadius = std::max(12.0f, radius);
     const float scale = clamp(safeRadius / 48.0f, 0.55f, 2.0f);
     const int sparkCount = lightweightMode_ ? 16 : 30;
     const int emberCount = lightweightMode_ ? 10 : 22;
     const int shardCount = lightweightMode_ ? 8 : 16;
+    if (playSound) {
+        queueSound(AudioSeExplosion);
+    }
 
     spawnRing(position, safeRadius * 0.08f, safeRadius * 1.08f, {255, 220, 116, 188}, 0.26f, EffectLayer::Foreground);
     spawnRing(position, safeRadius * 0.26f, safeRadius * 1.34f, {255, 104, 44, 112}, 0.42f, EffectLayer::World);
@@ -1953,7 +2030,7 @@ std::span<const EffectPreviewEntry> effectSystemPreviewEntries()
 {
     static const std::vector<EffectPreviewEntry> entries = [] {
         std::vector<EffectPreviewEntry> result;
-        result.reserve(ParticlePresets.size() + 35);
+        result.reserve(ParticlePresets.size() + 37);
         for (const ParticlePreset& preset : ParticlePresets) {
             result.push_back(EffectPreviewEntry{
                 .id = particleEffectPreviewId(preset.id),
@@ -1969,9 +2046,10 @@ std::span<const EffectPreviewEntry> effectSystemPreviewEntries()
             });
         }
 
-        static constexpr std::array<EffectPreviewEntry, 35> ActionEntries{{
+        static constexpr std::array<EffectPreviewEntry, 37> ActionEntries{{
             {.id = "dig_hit", .label = "掘削ヒット", .group = "EffectSystem / 高水準API", .source = EffectPreviewSource::EffectSystem, .target = EffectPreviewTarget::WallTile, .action = EffectPreviewAction::DigHit, .direction = {-1.0f, 0.0f}},
             {.id = "tile_break", .label = "壁破壊", .group = "EffectSystem / 高水準API", .source = EffectPreviewSource::EffectSystem, .target = EffectPreviewTarget::WallTile, .action = EffectPreviewAction::TileBreak},
+            {.id = "crate_break", .label = "木箱破壊", .group = "EffectSystem / 高水準API", .source = EffectPreviewSource::EffectSystem, .target = EffectPreviewTarget::WallTile, .action = EffectPreviewAction::CrateBreak},
             {.id = "enemy_hit_default", .label = "敵ヒット: 通常", .group = "EffectSystem / 高水準API", .source = EffectPreviewSource::EffectSystem, .target = EffectPreviewTarget::EnemySlime, .action = EffectPreviewAction::EnemyHit},
             {.id = "enemy_hit_poison", .label = "敵ヒット: 毒", .group = "EffectSystem / 高水準API", .source = EffectPreviewSource::EffectSystem, .target = EffectPreviewTarget::EnemySlime, .action = EffectPreviewAction::EnemyHit, .argument = "status_poison"},
             {.id = "enemy_hit_bleed", .label = "敵ヒット: 出血", .group = "EffectSystem / 高水準API", .source = EffectPreviewSource::EffectSystem, .target = EffectPreviewTarget::EnemySlime, .action = EffectPreviewAction::EnemyHit, .argument = "status_bleed"},
@@ -1999,6 +2077,7 @@ std::span<const EffectPreviewEntry> effectSystemPreviewEntries()
             {.id = "warp_circle", .label = "ワープ円", .group = "EffectSystem / 高水準API", .source = EffectPreviewSource::EffectSystem, .target = EffectPreviewTarget::Player, .action = EffectPreviewAction::WarpCircle},
             {.id = "boss_circle", .label = "ボス円", .group = "EffectSystem / 高水準API", .source = EffectPreviewSource::EffectSystem, .target = EffectPreviewTarget::EnemySlime, .action = EffectPreviewAction::BossCircle},
             {.id = "area_pulse", .label = "範囲パルス", .group = "EffectSystem / 高水準API", .source = EffectPreviewSource::EffectSystem, .target = EffectPreviewTarget::Player, .action = EffectPreviewAction::AreaPulse, .radius = 70.0f},
+            {.id = "explosion", .label = "爆発", .group = "EffectSystem / 高水準API", .source = EffectPreviewSource::EffectSystem, .target = EffectPreviewTarget::WallTile, .action = EffectPreviewAction::Explosion, .radius = 52.0f},
             {.id = "magic_cast_fire", .label = "魔法詠唱: 火", .group = "EffectSystem / 高水準API", .source = EffectPreviewSource::EffectSystem, .target = EffectPreviewTarget::EnemySlime, .action = EffectPreviewAction::MagicCast, .argument = "fire", .direction = {1.0f, 0.0f}},
             {.id = "magic_cast_ice", .label = "魔法詠唱: 氷", .group = "EffectSystem / 高水準API", .source = EffectPreviewSource::EffectSystem, .target = EffectPreviewTarget::EnemySlime, .action = EffectPreviewAction::MagicCast, .argument = "ice", .direction = {1.0f, 0.0f}},
             {.id = "magic_cast_thunder", .label = "魔法詠唱: 雷", .group = "EffectSystem / 高水準API", .source = EffectPreviewSource::EffectSystem, .target = EffectPreviewTarget::EnemySlime, .action = EffectPreviewAction::MagicCast, .argument = "thunder", .direction = {1.0f, 0.0f}},
@@ -2033,6 +2112,9 @@ void playEffectSystemPreview(
         break;
     case EffectPreviewAction::TileBreak:
         effects.spawnTileBreak(pos, wallTileType, wallTileColor);
+        break;
+    case EffectPreviewAction::CrateBreak:
+        effects.spawnCrateBreak(pos, wallTileColor);
         break;
     case EffectPreviewAction::EnemyHit:
         effects.spawnEnemyHit(pos, entry.argument);
@@ -2084,6 +2166,9 @@ void playEffectSystemPreview(
         break;
     case EffectPreviewAction::AreaPulse:
         effects.spawnAreaPulse(pos, entry.radius, {126, 208, 255, 190});
+        break;
+    case EffectPreviewAction::Explosion:
+        effects.spawnExplosion(pos, entry.radius);
         break;
     case EffectPreviewAction::MagicCast:
         effects.spawnMagicCast(pos - entryDirection * 54.0f, entryDirection, entry.argument, 24.0f);

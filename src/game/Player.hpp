@@ -28,7 +28,14 @@ enum class DamageSource {
     Trap
 };
 
-std::string_view deathCauseText(DamageSource source);
+struct DamageCause {
+    DamageSource source = DamageSource::Unknown;
+    std::string actorName;
+    std::string objectName;
+};
+
+std::string deathCauseText(const DamageCause& cause);
+std::string_view fallbackDeathCauseText(DamageSource source);
 int playerSpriteFrameIndex(float animationTime, bool walking);
 inline constexpr float WitchSelfLightRadiusMultiplier = 2.0f;
 inline constexpr float WitchSelfLightCenterYOffset = -26.0f;
@@ -77,12 +84,12 @@ struct Player {
     double poisonDamageAccumulator = 0.0;
     double hotDamageAccumulator = 0.0;
     double bleedDamageAccumulator = 0.0;
-    DamageSource lastDamageSource = DamageSource::Unknown;
-    std::string lastDamageEnemyName;
+    DamageCause lastDamageCause{};
     std::vector<PlayerDamageEvent> damageEvents;
     std::vector<PlayerHealEvent> healEvents;
     EntityStatus status;
 
+    void applyDamage(int amount, const DamageCause& cause);
     void applyDamage(int amount, DamageSource source);
     void applyKnockback(Vec2 direction, float speed, float durationSeconds = 0.16f);
     int heal(int amount);

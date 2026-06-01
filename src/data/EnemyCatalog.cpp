@@ -381,7 +381,7 @@ constexpr std::array<std::string_view, 11> DefinedBehaviorTriggers = {
     "break",
 };
 
-constexpr std::array<std::string_view, 12> KnownProjectileIds = {
+constexpr std::array<std::string_view, 13> KnownProjectileIds = {
     "stone_bullet",
     "big_stone_bullet",
     "weapon_throw",
@@ -390,6 +390,7 @@ constexpr std::array<std::string_view, 12> KnownProjectileIds = {
     "mud_blob",
     "cactus_needle",
     "water_shot",
+    "water_bubble",
     "fire_breath",
     "web_thread",
     "wind_wave",
@@ -597,6 +598,12 @@ std::string mapLegacyBehaviorIdToCode(std::string_view legacyId)
     if (id == "shoot_water") {
         return "attack:shoot_water:none:2.0";
     }
+    if (id == "shoot_bubble") {
+        return "attack:shoot_bubble:none:2.4";
+    }
+    if (id == "shoot_water_bubble") {
+        return "attack:shoot_water_bubble:none:2.6";
+    }
     if (id == "shoot_poison") {
         return "attack:shoot_poison:none:2.3";
     }
@@ -610,7 +617,7 @@ std::string mapLegacyBehaviorIdToCode(std::string_view legacyId)
         return "attack:radial_spike:none:2.4";
     }
     if (id == "wind_blow") {
-        return "attack:wind_blow:none:2.5";
+        return "attack:wind_blow:radiusTiles=4,strength=1.0,duration=3.0:2.5";
     }
     if (id == "countdown_explode") {
         return "timer:countdown_explode:delay=4.0:0";

@@ -69,7 +69,12 @@ constexpr float DebugPreviewBackgroundLabelWidth = 52.0f;
 constexpr float DebugPreviewBackgroundSwatchSize = 28.0f;
 constexpr float DebugPreviewBackgroundSwatchGap = 7.0f;
 constexpr int DebugEffectPreviewTestLoopFrames = 40;
-constexpr int DebugProjectilePreviewTestLoopFrames = 20;
+constexpr int DebugProjectilePreviewReplayGapFrames = 40;
+constexpr float DebugPreviewAssumedFrameRate = 60.0f;
+constexpr float DebugEffectPreviewTestLoopSeconds =
+    static_cast<float>(DebugEffectPreviewTestLoopFrames) / DebugPreviewAssumedFrameRate;
+constexpr float DebugProjectilePreviewReplayGapSeconds =
+    static_cast<float>(DebugProjectilePreviewReplayGapFrames) / DebugPreviewAssumedFrameRate;
 constexpr std::string_view DebugPreviewTestSlimeEnemyId = "slime";
 constexpr std::string_view DebugFinalStoryStageId = "stage_03_star_core";
 constexpr std::string_view DebugEndingSeenFlag = "ending_seen";
@@ -99,6 +104,10 @@ constexpr float EnemyTestHealSlimeMinRadius = 46.0f;
 constexpr float EnemyTestHealSlimeMaxRadius = 92.0f;
 constexpr float EnemyTestHealSlimeLeashRadius = 125.0f;
 constexpr std::string_view EnemyTestHealSlimeEnemyId = "slime";
+constexpr int EnemyTestSwarmExtraCount = 5;
+constexpr float EnemyTestSwarmMinRadius = 34.0f;
+constexpr float EnemyTestSwarmMaxRadius = 92.0f;
+constexpr float EnemyTestSwarmLeashRadius = 150.0f;
 
 bool enemyDefinitionHasBehavior(const EnemyDefinition& enemy, std::string_view behaviorId)
 {
@@ -236,6 +245,19 @@ Vec2 randomEnemyTestHealSlimePosition(Vec2 center, std::mt19937& rng)
     std::uniform_real_distribution<float> angleDistribution(0.0f, Pi * 2.0f);
     std::uniform_real_distribution<float> radiusDistribution(EnemyTestHealSlimeMinRadius, EnemyTestHealSlimeMaxRadius);
     return center + fromAngle(angleDistribution(rng)) * radiusDistribution(rng);
+}
+
+Vec2 randomEnemyTestSwarmPosition(Vec2 center, TileMap& tileMap, std::mt19937& rng)
+{
+    std::uniform_real_distribution<float> angleDistribution(0.0f, Pi * 2.0f);
+    std::uniform_real_distribution<float> radiusDistribution(EnemyTestSwarmMinRadius, EnemyTestSwarmMaxRadius);
+    for (int attempt = 0; attempt < 16; ++attempt) {
+        const Vec2 candidate = center + fromAngle(angleDistribution(rng)) * radiusDistribution(rng);
+        if (!tileMap.isCircleBlocked(candidate, 10.0f)) {
+            return candidate;
+        }
+    }
+    return center + fromAngle(angleDistribution(rng)) * EnemyTestSwarmMinRadius;
 }
 
 GameTestTerrainKind gameTestTerrainKind(TileType type)
@@ -806,6 +828,39 @@ Vec2 projectileTestTargetPosition(const DebugPreviewTestLayout& layout, const Pr
     };
 }
 
+int previewSecondsToFrames(float seconds)
+{
+    return static_cast<int>(std::ceil(std::max(0.0f, seconds) * DebugPreviewAssumedFrameRate));
+}
+
+float projectileTestReplaySeconds(
+    const DebugPreviewTestLayout& layout,
+    const ProjectileDefinition& projectile,
+    bool targetEnabled)
+{
+    float activeSeconds = std::max(0.05f, projectile.lifetime);
+    if (targetEnabled && !projectile.piercesTargets && projectile.speed > 0.0f) {
+        const Vec2 origin = projectileTestFireOrigin(layout);
+        const Vec2 target = projectileTestTargetPosition(layout, &projectile);
+        const float travelSeconds =
+            length(target - origin) / std::max(1.0f, projectile.speed);
+        activeSeconds = std::min(activeSeconds, std::max(0.05f, travelSeconds) + 0.45f);
+    }
+    return std::max(
+        DebugProjectilePreviewReplayGapSeconds,
+        activeSeconds + DebugProjectilePreviewReplayGapSeconds);
+}
+
+int projectileTestReplayFrames(
+    const DebugPreviewTestLayout& layout,
+    const ProjectileDefinition& projectile,
+    bool targetEnabled)
+{
+    return std::max(
+        DebugProjectilePreviewReplayGapFrames,
+        previewSecondsToFrames(projectileTestReplaySeconds(layout, projectile, targetEnabled)));
+}
+
 UiRect projectileTestTargetToggleRect(const DebugPreviewTestLayout& layout)
 {
     const float width = 142.0f;
@@ -923,9 +978,9 @@ std::string projectileTestRowGroup(const ProjectileDefinition& projectile)
     return "属性 " + std::string(projectileDamageTypeLabel(projectile.damageType)) + " / ダメージ " + std::to_string(projectile.damage);
 }
 
-std::string projectileTestDetail(const ProjectileDefinition& projectile)
+std::string projectileTestDetail(const ProjectileDefinition& projectile, int replayFrames)
 {
-    return "ProjectileSystem / " + projectile.id + " / 20フレーム間隔 / speed " + std::to_string(static_cast<int>(projectile.speed)) +
+    return "ProjectileSystem / " + projectile.id + " / " + std::to_string(replayFrames) + "フレーム間隔 / speed " + std::to_string(static_cast<int>(projectile.speed)) +
         " / radius " + std::to_string(static_cast<int>(std::round(projectile.radius))) +
         " / life " + std::to_string(static_cast<int>(std::round(projectile.lifetime * 100.0f))) + "cs" +
         " / target " + std::string(projectile.piercesTargets ? "貫通" : "停止") +
@@ -5593,7 +5648,7 @@ void Game::resetEffectTestPlayback()
         magicFx_.stopEmitter(effectTestEmitter_);
     }
     effectTestEmitter_ = {};
-    effectTestFrame_ = 0;
+    effectTestReplayTimerSeconds_ = 0.0f;
     effects_ = EffectSystem{};
     magicFx_ = MagicFxSystem{};
 }
@@ -5730,6 +5785,7 @@ void Game::updateEffectTestScreen(const Input& input, UiContext& ui, float dt)
         return;
     }
 
+    const float safeDt = std::max(0.0f, dt);
     const EffectPreviewEntry* entry = effectTestEntryAt(effectTestVisibleEntries_, effectTestSelectedIndex_);
     if (entry != nullptr && !playbackResetThisFrame) {
         if (entry->playback == EffectPreviewPlayback::PersistentEmitter) {
@@ -5739,15 +5795,20 @@ void Game::updateEffectTestScreen(const Input& input, UiContext& ui, float dt)
             } else {
                 triggerEffectTestPlayback(*entry);
             }
-        } else if (effectTestFrame_ == 0 || effectTestFrame_ >= DebugEffectPreviewTestLoopFrames) {
+        } else if (effectTestReplayTimerSeconds_ <= 0.0f) {
             triggerEffectTestPlayback(*entry);
-            effectTestFrame_ = 0;
+            effectTestReplayTimerSeconds_ = DebugEffectPreviewTestLoopSeconds;
         }
     }
 
-    magicFx_.update(std::max(0.0f, dt));
-    effects_.update(std::max(0.0f, dt));
-    ++effectTestFrame_;
+    magicFx_.update(safeDt);
+    effects_.update(safeDt);
+    for (const EffectSoundEvent& event : effects_.consumeSoundEvents()) {
+        playAudioSe(event.cueId, event.volumeScale, event.pitchScale);
+    }
+    if (entry != nullptr && entry->playback != EffectPreviewPlayback::PersistentEmitter && effectTestReplayTimerSeconds_ > 0.0f) {
+        effectTestReplayTimerSeconds_ = std::max(0.0f, effectTestReplayTimerSeconds_ - safeDt);
+    }
     ui.block(layout.bounds);
 }
 
@@ -5907,7 +5968,7 @@ void Game::rebuildProjectileTestEntries()
 
 void Game::resetProjectileTestPlayback()
 {
-    projectileTestFrame_ = 0;
+    projectileTestReplayTimerSeconds_ = 0.0f;
     projectiles_ = ProjectileSystem{};
 }
 
@@ -6004,23 +6065,30 @@ void Game::updateProjectileTestScreen(const Input& input, UiContext& ui, float d
         return;
     }
 
+    const float safeDt = std::max(0.0f, dt);
     const ProjectileDefinition* entry = projectileTestEntryAt(projectileTestEntries_, projectileTestSelectedIndex_);
-    if (entry != nullptr && projectileTestFrame_ % DebugProjectilePreviewTestLoopFrames == 0) {
+    if (entry != nullptr && projectileTestReplayTimerSeconds_ <= 0.0f) {
         triggerProjectileTestPlayback(*entry);
+        projectileTestReplayTimerSeconds_ = projectileTestReplaySeconds(layout, *entry, projectileTestTargetEnabled_);
     }
 
     if (projectileTestTargetEnabled_) {
         projectiles_.updatePreview(
-            std::max(0.0f, dt),
+            safeDt,
             ProjectilePreviewTarget{
                 projectileTestTargetPosition(layout, entry),
                 projectileTestSlimeRadius(enemyCatalog_, balance_.enemyRadius),
                 true,
             });
     } else {
-        projectiles_.updatePreview(std::max(0.0f, dt));
+        projectiles_.updatePreview(safeDt);
     }
-    ++projectileTestFrame_;
+    for (const ProjectileSoundEvent& event : projectiles_.consumeSoundEvents()) {
+        playAudioSe(event.cueId, event.volumeScale, event.pitchScale);
+    }
+    if (projectileTestReplayTimerSeconds_ > 0.0f) {
+        projectileTestReplayTimerSeconds_ = std::max(0.0f, projectileTestReplayTimerSeconds_ - safeDt);
+    }
     ui.block(layout.bounds);
 }
 
@@ -6033,6 +6101,9 @@ void Game::renderProjectileTestScreen(Renderer& renderer, double totalSeconds)
     renderer.setScreenSpace();
     const DebugPreviewTestLayout layout = makeDebugPreviewTestLayout(camera_.width(), camera_.height());
     const ProjectileDefinition* entry = projectileTestEntryAt(projectileTestEntries_, projectileTestSelectedIndex_);
+    const int replayFrames = entry != nullptr
+        ? projectileTestReplayFrames(layout, *entry, projectileTestTargetEnabled_)
+        : DebugProjectilePreviewReplayGapFrames;
 
     drawDebugPreviewBackground(renderer, layout);
     renderDebugPreviewTestList(
@@ -6082,7 +6153,7 @@ void Game::renderProjectileTestScreen(Renderer& renderer, double totalSeconds)
         renderer,
         layout,
         entry != nullptr ? projectileDisplayName(*entry) : std::string_view{},
-        entry != nullptr ? projectileTestDetail(*entry) : std::string{},
+        entry != nullptr ? projectileTestDetail(*entry, replayFrames) : std::string{},
         projectileTestStatus_,
         debugPreviewBackgroundIndex_,
         targetToggle.pos.x);
@@ -6337,6 +6408,33 @@ int Game::spawnEnemyTestHealSlimes(Vec2 center)
     return spawned;
 }
 
+int Game::spawnEnemyTestSwarmMembers(const EnemyDefinition& enemy, Vec2 center)
+{
+    std::mt19937& rng = lootRuntimeRng();
+    int spawned = 0;
+    const int maxAttempts = EnemyTestSwarmExtraCount * 8;
+    for (int attempt = 0; attempt < maxAttempts && spawned < EnemyTestSwarmExtraCount; ++attempt) {
+        const Vec2 target = randomEnemyTestSwarmPosition(center, tileMap_, rng);
+        int runtimeId = 0;
+        if (!enemies_.spawnSpecificEnemy(
+                tileMap_,
+                enemy.id,
+                target,
+                player_.position,
+                balance_,
+                enemyCatalog_,
+                true,
+                true,
+                -1.0f,
+                &runtimeId)) {
+            continue;
+        }
+        enemies_.setRuntimeEnemyMovementLeash(runtimeId, center, EnemyTestSwarmLeashRadius);
+        ++spawned;
+    }
+    return spawned;
+}
+
 void Game::spawnSelectedEnemyTestEnemy()
 {
     if (enemyCatalog_.enemies.empty()) {
@@ -6395,6 +6493,14 @@ void Game::spawnSelectedEnemyTestEnemy()
                 enemyTestStatus_ += " / HP1スライム " + std::to_string(slimeCount) + "体";
             } else {
                 enemyTestStatus_ += " / スライム召喚なし";
+            }
+        }
+        if (enemyDefinitionHasBehavior(enemy, "swarm_alert")) {
+            const int swarmCount = spawnEnemyTestSwarmMembers(enemy, spawnedPosition);
+            if (swarmCount > 0) {
+                enemyTestStatus_ += " / 群れ " + std::to_string(swarmCount + 1) + "体";
+            } else {
+                enemyTestStatus_ += " / 群れ追加なし";
             }
         }
     }

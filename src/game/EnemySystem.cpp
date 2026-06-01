@@ -52,6 +52,9 @@ constexpr std::string_view JunkCrabPatternId = "junk_crab";
 constexpr std::string_view JunkCrabProjectileId = "junk_chunk";
 constexpr std::string_view AstragnaEnemyId = "astragna";
 constexpr std::string_view AstragnaPatternId = "astragna";
+constexpr std::string_view BombTsuchinokoEnemyId = "bomb_tsuchinoko";
+constexpr float CountdownExplodeDefaultDelaySeconds = 4.0f;
+constexpr float CountdownExplodeFallbackArmDistance = 120.0f;
 constexpr float StardustMoleDiveJumpSeconds = 0.28f;
 constexpr float StardustMoleDiveJumpHeight = 28.0f;
 constexpr float StardustMoleUndergroundMinSeconds = 0.90f;
@@ -128,6 +131,11 @@ constexpr float StealDropPickupDelaySeconds = 0.04f;
 constexpr int CapturedExplosionChargeLimit = 4;
 constexpr float CapturedExplosionSleepSeconds = 2.4f;
 constexpr float CapturedExplosionRadius = 44.0f;
+
+std::string enemyDisplayName(const Enemy& enemy)
+{
+    return enemy.enemyName.empty() ? std::string(DefaultEnemyName) : enemy.enemyName;
+}
 constexpr int CapturedExplosionDamage = 3;
 constexpr float CapturedExplosionTerrainRadius = 28.0f;
 constexpr int CapturedExplosionTerrainDamage = 1;
@@ -140,6 +148,11 @@ constexpr float VacuumLightEnemyFallbackRadius = 10.0f;
 constexpr int VacuumLightEnemyFallbackMaxHp = 3;
 constexpr float WindLightEnemyPushSpeed = 58.0f;
 constexpr int WindLightEnemyLimit = 5;
+constexpr std::size_t MaxEnemyWindPulses = 16;
+constexpr float WindBlowDefaultRadiusTiles = 4.0f;
+constexpr float WindBlowDefaultDurationSeconds = 3.0f;
+constexpr float WindBlowPlayerPushSpeed = 16.0f;
+constexpr float WindBlowEnemyPushSpeed = 28.0f;
 constexpr double HotAirStatusDurationSeconds = 12.0;
 constexpr float DefaultVisionDistance = 120.0f;
 constexpr float DefaultVisionAngle = 100.0f;
@@ -518,6 +531,8 @@ bool isSupportedBehavior(std::string_view behaviorId)
         behaviorId == "shoot_mud" ||
         behaviorId == "radial_spike" ||
         behaviorId == "shoot_water" ||
+        behaviorId == "shoot_bubble" ||
+        behaviorId == "shoot_water_bubble" ||
         behaviorId == "wind_blow" ||
         behaviorId == "enemy_heal" ||
         behaviorId == "countdown_explode" ||
@@ -529,6 +544,25 @@ bool hasBehavior(const Enemy& enemy, std::string_view behaviorId)
     return std::any_of(enemy.behaviorIds.begin(), enemy.behaviorIds.end(), [behaviorId](const std::string& value) {
         return value == behaviorId;
     });
+}
+
+bool isBombTsuchinokoFamily(const Enemy& enemy)
+{
+    return enemy.enemyId.find(BombTsuchinokoEnemyId.data()) != std::string::npos;
+}
+
+bool canArmCountdownExplosion(const Enemy& enemy, Vec2 playerPosition)
+{
+    if (enemy.awareness != EnemyAwarenessState::Detected ||
+        enemy.spawnTimer > 0.0f ||
+        enemy.bossAction.hidden ||
+        enemy.death.active) {
+        return false;
+    }
+
+    const float armDistance = std::max(0.0f, enemy.countdownExplodeArmDistance);
+    return armDistance <= 0.0f ||
+        distanceSquared(enemy.position, playerPosition) <= armDistance * armDistance;
 }
 
 const EnemyBehaviorSpec* findEnemyBehaviorSpec(const Enemy& enemy, std::string_view behaviorId)
@@ -777,6 +811,9 @@ EnemyActionProfile defaultRangedActionProfile(std::string_view behaviorId)
     }
     if (behaviorId == "shoot_fire") {
         return {"fire_breath_hop", 0.45f, 0.26f, true, true};
+    }
+    if (behaviorId == "radial_spike") {
+        return {"radial_spike_squash", 0.46f, 0.17f, true, true};
     }
     return {};
 }
@@ -1033,7 +1070,15 @@ bool isRangedBehavior(std::string_view behaviorId)
         behaviorId == "shoot_mud" ||
         behaviorId == "radial_spike" ||
         behaviorId == "shoot_water" ||
+        behaviorId == "shoot_bubble" ||
+        behaviorId == "shoot_water_bubble" ||
         behaviorId == "wind_blow";
+}
+
+bool isBubbleRangedBehavior(std::string_view behaviorId)
+{
+    return behaviorId == "shoot_bubble" ||
+        behaviorId == "shoot_water_bubble";
 }
 
 std::string_view fallbackProjectileForBehavior(std::string_view behaviorId)
@@ -1062,6 +1107,12 @@ std::string_view fallbackProjectileForBehavior(std::string_view behaviorId)
     if (behaviorId == "shoot_water") {
         return "water_shot";
     }
+    if (behaviorId == "shoot_bubble") {
+        return "water_bubble";
+    }
+    if (behaviorId == "shoot_water_bubble") {
+        return "water_shot";
+    }
     if (behaviorId == "wind_blow") {
         return "wind_wave";
     }
@@ -1087,8 +1138,11 @@ RangedEngagementRange rangedEngagementRange(std::string_view behaviorId)
     if (behaviorId == "throw_stone" || behaviorId == "throw_object") {
         return {90.0f, 260.0f};
     }
-    if (behaviorId == "shoot_water") {
+    if (behaviorId == "shoot_water" || behaviorId == "shoot_water_bubble") {
         return {90.0f, 250.0f};
+    }
+    if (behaviorId == "shoot_bubble") {
+        return {70.0f, 210.0f};
     }
     if (behaviorId == "wind_blow") {
         return {70.0f, 220.0f};
@@ -1176,7 +1230,10 @@ bool hasClearSightLine(TileMap& map, Vec2 from, Vec2 to)
 
 bool canFireEnemyProjectile(const Enemy& enemy, TileMap& map, float distanceToPlayer, Vec2 playerPosition)
 {
-    if (enemy.projectileId.empty() || enemy.rangedBehaviorId.empty()) {
+    if (enemy.rangedBehaviorId.empty()) {
+        return false;
+    }
+    if (enemy.projectileId.empty() && enemy.rangedBehaviorId != "wind_blow") {
         return false;
     }
     if (enemy.awareness != EnemyAwarenessState::Detected) {
@@ -1464,6 +1521,25 @@ EnemyEvent makeEnemyEventAt(EnemyEventType type, const Enemy& enemy, Vec2 positi
 {
     EnemyEvent event = makeEnemyEvent(type, enemy, std::move(effectId));
     event.position = position;
+    return event;
+}
+
+EnemyEvent makeTerrainEnemyEvent(
+    EnemyEventType type,
+    const Enemy& enemy,
+    Vec2 position,
+    Vec2 effectDirection,
+    TileType tileType,
+    Color tileColor)
+{
+    EnemyEvent event = makeEnemyEventAt(
+        type,
+        enemy,
+        position,
+        std::string(terrainAttributeCode(terrainAttributeForTileType(tileType))));
+    event.effectDirection = effectDirection;
+    event.terrainTileType = tileType;
+    event.terrainColor = tileColor;
     return event;
 }
 
@@ -2726,6 +2802,9 @@ void drawJunkCrabDebris(Renderer& renderer, const Enemy& enemy)
 
 int countdownExplosionWarningTickIndex(const Enemy& enemy)
 {
+    if (!enemy.countdownExplodeArmed) {
+        return -1;
+    }
     return explosionWarningTickIndex(enemy.countdownExplodeInitialDelay, enemy.countdownExplodeDelay);
 }
 
@@ -2733,6 +2812,7 @@ ExplosionWarningVisual countdownExplosionWarningVisual(const Enemy& enemy)
 {
     if (enemy.countdownExplodeRadius <= 0.0f ||
         enemy.countdownExplodeInitialDelay <= 0.0f ||
+        !enemy.countdownExplodeArmed ||
         enemy.countdownExploded ||
         enemy.death.active ||
         enemy.spawnTimer > 0.0f ||
@@ -3014,6 +3094,86 @@ float randomizedBossActionPhaseDuration(BossActionPhase phase, std::string_view 
 Vec2 safeDirection(Vec2 value, Vec2 fallback = {1.0f, 0.0f})
 {
     return lengthSquared(value) > 0.0001f ? normalize(value) : fallback;
+}
+
+float windBlowRadiusFor(const Enemy& enemy)
+{
+    const float defaultRadius = WindBlowDefaultRadiusTiles * static_cast<float>(balance::TileSize);
+    const double radiusTiles = behaviorParamDouble(enemy, "wind_blow", "radiusTiles", -1.0);
+    if (radiusTiles > 0.0) {
+        return static_cast<float>(std::max(0.25, radiusTiles) * static_cast<double>(balance::TileSize));
+    }
+    const double radius = behaviorParamDouble(enemy, "wind_blow", "radius", -1.0);
+    if (radius > 0.0) {
+        return std::max(defaultRadius, static_cast<float>(radius));
+    }
+    return defaultRadius;
+}
+
+float windBlowDurationFor(const Enemy& enemy)
+{
+    return static_cast<float>(std::clamp(
+        behaviorParamDouble(enemy, "wind_blow", "duration", WindBlowDefaultDurationSeconds),
+        0.05,
+        3.5));
+}
+
+float windBlowStrengthFor(const Enemy& enemy)
+{
+    return static_cast<float>(std::clamp(
+        behaviorParamDouble(enemy, "wind_blow", "strength", 1.0),
+        0.1,
+        4.0));
+}
+
+float directionalWindFalloff(Vec2 position, Vec2 center, float radius)
+{
+    if (radius <= 0.0f) {
+        return 0.0f;
+    }
+    const float distanceSq = distanceSquared(position, center);
+    const float radiusSq = radius * radius;
+    if (distanceSq > radiusSq) {
+        return 0.0f;
+    }
+    const float distance = std::sqrt(std::max(0.0f, distanceSq));
+    return 0.35f + (1.0f - clamp(distance / radius, 0.0f, 1.0f)) * 0.65f;
+}
+
+float windEnemyMassMultiplier(const Enemy& enemy)
+{
+    const bool windSensitive =
+        enemy.hoverAltitude > 0.0f ||
+        enemy.altitude > 1.0f ||
+        hasEnemyTagAny(enemy, {"flying", "hover", "airborne", "floating"});
+    const float airborneMultiplier = windSensitive ? 2.5f : 1.0f;
+    if (enemy.isBoss || hasEnemyTagAny(enemy, {"boss", "boss_only"})) {
+        return 0.12f * airborneMultiplier;
+    }
+    if (hasEnemyTagAny(enemy, {"heavy", "large", "massive", "huge"})) {
+        return 0.25f * airborneMultiplier;
+    }
+    if (hasEnemyTagAny(enemy, {"small", "light", "tiny", "lightweight"})) {
+        return 0.55f * airborneMultiplier;
+    }
+    if (effectiveEnemyRadius(enemy) >= 18.0f || enemy.maxHp >= 80) {
+        return 0.32f * airborneMultiplier;
+    }
+    return 0.38f * airborneMultiplier;
+}
+
+EnemyWindPulse makeEnemyWindPulse(const Enemy& enemy, Vec2 playerPosition)
+{
+    const float duration = windBlowDurationFor(enemy);
+    return EnemyWindPulse{
+        .center = playerPosition,
+        .direction = safeDirection(playerPosition - enemy.position, facingVector(enemy.facingAngle)),
+        .radius = windBlowRadiusFor(enemy),
+        .strength = windBlowStrengthFor(enemy),
+        .remainingSeconds = duration,
+        .initialSeconds = duration,
+        .sourceRuntimeId = enemy.id,
+    };
 }
 
 Vec2 chooseStardustMoleEmergePosition(const Enemy& enemy, const Player& player, TileMap& map)
@@ -3505,8 +3665,12 @@ void resolveJunkCrabClawStrike(Enemy& enemy, Player& player, TileMap& map, std::
     const int damage = std::max(
         1,
         static_cast<int>(std::ceil(enemy.status.applyModifiers(ModifierStat::Attack, baseAttackPower) * damageTypeMultiplier(enemy.contactDamageType))));
-    player.lastDamageEnemyName = enemy.enemyName.empty() ? std::string(DefaultEnemyName) : enemy.enemyName;
-    player.applyDamage(applyDefenseModifier(player.status, damage), DamageSource::SlimeAttack);
+    player.applyDamage(
+        applyDefenseModifier(player.status, damage),
+        DamageCause{
+            .source = DamageSource::SlimeAttack,
+            .actorName = enemyDisplayName(enemy),
+        });
 
     const Vec2 pushDirection = safeDirection(player.position - enemy.position);
     pushPlayerFromJunkCrab(player, map, pushDirection, 20.0f);
@@ -3536,12 +3700,13 @@ void fireJunkCrabThrowBurst(Enemy& enemy, Player& player, ProjectileSystem& proj
         behaviorParamDouble(enemy, "boss_sequence", "throwRadiusScale", 1.0)));
 
     static const std::vector<EffectSpec> NoEffects;
+    const ProjectileSpawnMetadata metadata{.sourceActorName = enemyDisplayName(enemy)};
     bool spawned = false;
     for (int i = 0; i < count; ++i) {
         const float angle = baseAngle + (startOffset + stepDegrees * static_cast<float>(i)) * (Pi / 180.0f);
         const Vec2 direction = fromAngle(angle);
         const Vec2 origin = enemy.position + direction * (effectiveEnemyRadius(enemy) + JunkCrabDebrisRadius + 8.0f);
-        spawned = projectiles.spawn(projectileId, origin, direction, ProjectileOwnerType::Enemy, NoEffects, tuning) || spawned;
+        spawned = projectiles.spawn(projectileId, origin, direction, ProjectileOwnerType::Enemy, NoEffects, tuning, metadata) || spawned;
     }
     if (spawned) {
         events.push_back(makeEnemyEvent(EnemyEventType::Shoot, enemy, "junk_throw"));
@@ -4721,9 +4886,11 @@ void EnemySystem::applyDefinition(Enemy& enemy, const EnemyDefinition* definitio
     enemy.countdownExplodeRadius = 0.0f;
     enemy.countdownExplodeDelay = 0.0f;
     enemy.countdownExplodeInitialDelay = 0.0f;
+    enemy.countdownExplodeArmDistance = 0.0f;
     enemy.countdownExplodeDamage = 0;
     enemy.countdownExplodeTerrainDamage = 0;
     enemy.countdownExplodeWarningTickIndex = -1;
+    enemy.countdownExplodeArmed = false;
     enemy.countdownExplodeOnce = false;
     enemy.countdownExploded = false;
     enemy.jumpAttackDistance = 0.0f;
@@ -4836,6 +5003,11 @@ void EnemySystem::applyDefinition(Enemy& enemy, const EnemyDefinition* definitio
                     enemy.projectileInterval = static_cast<float>(behaviorIt->second.defaultIntervalSeconds);
                 }
                 enemy.projectileEffects = behaviorIt->second.enemyDefaultEffects;
+            }
+            if (const EnemyBehaviorSpec* spec = findEnemyBehaviorSpec(enemy, behaviorId)) {
+                if (spec->intervalSeconds > 0.0) {
+                    enemy.projectileInterval = static_cast<float>(spec->intervalSeconds);
+                }
             }
             break;
         }
@@ -4956,11 +5128,22 @@ void EnemySystem::applyDefinition(Enemy& enemy, const EnemyDefinition* definitio
     }
     if (hasBehavior(enemy, "countdown_explode")) {
         enemy.countdownExplodeRadius = static_cast<float>(std::max(8.0, behaviorParamDouble(enemy, "countdown_explode", "radius", 44.0)));
-        enemy.countdownExplodeDelay = static_cast<float>(std::max(0.0, behaviorParamDouble(enemy, "countdown_explode", "delay", 4.0)));
+        double countdownDelay = behaviorParamDouble(enemy, "countdown_explode", "delay", CountdownExplodeDefaultDelaySeconds);
+        if (isBombTsuchinokoFamily(enemy)) {
+            countdownDelay = std::max(countdownDelay, static_cast<double>(CountdownExplodeDefaultDelaySeconds));
+        }
+        enemy.countdownExplodeDelay = static_cast<float>(std::max(0.0, countdownDelay));
         enemy.countdownExplodeInitialDelay = enemy.countdownExplodeDelay;
+        const double defaultArmDistance = enemy.visionDistance > 0.0f
+            ? static_cast<double>(enemy.visionDistance)
+            : static_cast<double>(CountdownExplodeFallbackArmDistance);
+        enemy.countdownExplodeArmDistance = static_cast<float>(std::max(
+            0.0,
+            behaviorParamDouble(enemy, "countdown_explode", "armDistance", defaultArmDistance)));
         enemy.countdownExplodeDamage = std::max(0, behaviorParamInt(enemy, "countdown_explode", "damage", 3));
         enemy.countdownExplodeTerrainDamage = std::max(0, behaviorParamInt(enemy, "countdown_explode", "terrainDamage", 1));
         enemy.countdownExplodeWarningTickIndex = -1;
+        enemy.countdownExplodeArmed = false;
         enemy.countdownExplodeOnce = behaviorParamInt(enemy, "countdown_explode", "once", 1) != 0;
         enemy.countdownExploded = false;
     }
@@ -5055,6 +5238,44 @@ void EnemySystem::applyDefinition(Enemy& enemy, const EnemyDefinition* definitio
             enemy.projectileBurstRemaining = enemy.projectileBurstCount;
             enemy.projectileBurstInterval = static_cast<float>(std::max(0.02, behaviorParamDouble(enemy, "shoot_water", "burstInterval", 0.14)));
             const int overrideDamage = behaviorParamInt(enemy, "shoot_water", "damage", NoDamageOverride);
+            if (overrideDamage != NoDamageOverride) {
+                enemy.projectileDamageOverride = std::max(0, overrideDamage);
+            }
+        } else if (enemy.rangedBehaviorId == "shoot_bubble") {
+            enemy.projectileId = "water_bubble";
+            const int bubbleCount = std::clamp(behaviorParamInt(enemy, "shoot_bubble", "count", 6), 3, 12);
+            enemy.fireVolleyCount = bubbleCount;
+            enemy.projectileBurstCount = bubbleCount;
+            enemy.projectileBurstRemaining = 0;
+            enemy.projectileBurstInterval = static_cast<float>(std::max(
+                0.02,
+                behaviorParamDouble(
+                    enemy,
+                    "shoot_bubble",
+                    "shotInterval",
+                    behaviorParamDouble(enemy, "shoot_bubble", "burstInterval", 0.11))));
+            enemy.fireSpreadDegrees = static_cast<float>(std::max(0.0, behaviorParamDouble(enemy, "shoot_bubble", "spread", 20.0)));
+            enemy.projectileRadiusScale = static_cast<float>(std::max(0.2, behaviorParamDouble(enemy, "shoot_bubble", "scale", 1.0)));
+            const int overrideDamage = behaviorParamInt(enemy, "shoot_bubble", "damage", NoDamageOverride);
+            if (overrideDamage != NoDamageOverride) {
+                enemy.projectileDamageOverride = std::max(0, overrideDamage);
+            }
+        } else if (enemy.rangedBehaviorId == "shoot_water_bubble") {
+            enemy.projectileId = "water_shot";
+            const int bubbleCount = std::clamp(behaviorParamInt(enemy, "shoot_water_bubble", "bubbleCount", 4), 1, 10);
+            enemy.fireVolleyCount = bubbleCount;
+            enemy.projectileBurstCount = bubbleCount;
+            enemy.projectileBurstRemaining = 0;
+            enemy.projectileBurstInterval = static_cast<float>(std::max(
+                0.02,
+                behaviorParamDouble(
+                    enemy,
+                    "shoot_water_bubble",
+                    "bubbleInterval",
+                    behaviorParamDouble(enemy, "shoot_water_bubble", "burstInterval", 0.10))));
+            enemy.fireSpreadDegrees = static_cast<float>(std::max(0.0, behaviorParamDouble(enemy, "shoot_water_bubble", "bubbleSpread", 18.0)));
+            enemy.projectileRadiusScale = static_cast<float>(std::max(0.2, behaviorParamDouble(enemy, "shoot_water_bubble", "scale", 1.0)));
+            const int overrideDamage = behaviorParamInt(enemy, "shoot_water_bubble", "damage", NoDamageOverride);
             if (overrideDamage != NoDamageOverride) {
                 enemy.projectileDamageOverride = std::max(0, overrideDamage);
             }
@@ -5884,6 +6105,75 @@ Vec2 EnemySystem::flowDirectionFor(TileMap& map, Vec2 enemyPosition, Vec2 player
     return normalize(bestTarget - enemyPosition);
 }
 
+Vec2 EnemySystem::fleeDirectionFor(TileMap& map, const Enemy& enemy, Vec2 playerPosition, Vec2 jitterDirection) const
+{
+    const Vec2 awayFromPlayer = enemy.position - playerPosition;
+    if (lengthSquared(awayFromPlayer) <= 0.0001f) {
+        return {};
+    }
+
+    const Vec2 away = normalize(awayFromPlayer);
+    const Vec2 jitter = lengthSquared(jitterDirection) > 0.0001f ? normalize(jitterDirection) : Vec2{};
+    const int enemyTileX = map.worldToTile(enemy.position.x);
+    const int enemyTileY = map.worldToTile(enemy.position.y);
+    const float radius = effectiveEnemyRadius(enemy);
+    auto inBounds = [&](int tx, int ty) {
+        return tx >= flowMinX_ && ty >= flowMinY_ && tx < flowMinX_ + flowWidth_ && ty < flowMinY_ + flowHeight_;
+    };
+    auto index = [&](int tx, int ty) {
+        return (ty - flowMinY_) * flowWidth_ + (tx - flowMinX_);
+    };
+
+    Vec2 bestDirection{};
+    float bestScore = -1.0e9f;
+    auto considerTarget = [&](Vec2 target, int distanceScore, float pathWeight) {
+        const Vec2 candidate = target - enemy.position;
+        if (lengthSquared(candidate) <= 0.0001f || map.isCircleBlocked(target, radius)) {
+            return;
+        }
+        const Vec2 direction = normalize(candidate);
+        const float score =
+            static_cast<float>(distanceScore) * pathWeight +
+            dot(direction, away) * 18.0f +
+            dot(direction, jitter) * 5.0f;
+        if (score > bestScore) {
+            bestScore = score;
+            bestDirection = direction;
+        }
+    };
+
+    if (!flowDistance_.empty() && inBounds(enemyTileX, enemyTileY)) {
+        const int current = flowDistance_[static_cast<std::size_t>(index(enemyTileX, enemyTileY))];
+        if (current >= 0) {
+            for (const FlowStep& step : FlowDirections) {
+                const int nx = enemyTileX + step.dx;
+                const int ny = enemyTileY + step.dy;
+                if (!inBounds(nx, ny) || !canUseFlowStep(map, enemyTileX, enemyTileY, step)) {
+                    continue;
+                }
+                const int candidate = flowDistance_[static_cast<std::size_t>(index(nx, ny))];
+                if (candidate < 0) {
+                    continue;
+                }
+                considerTarget(map.tileCenter(nx, ny), candidate - current, 2.2f);
+            }
+        }
+    }
+
+    if (lengthSquared(bestDirection) > 0.0001f) {
+        return bestDirection;
+    }
+
+    for (const FlowStep& step : FlowDirections) {
+        considerTarget(
+            map.tileCenter(enemyTileX + step.dx, enemyTileY + step.dy),
+            0,
+            0.0f);
+    }
+
+    return lengthSquared(bestDirection) > 0.0001f ? bestDirection : away;
+}
+
 Vec2 EnemySystem::separationFor(const Enemy& enemy) const
 {
     Vec2 separation{};
@@ -5974,17 +6264,50 @@ bool fireEnemyProjectile(Enemy& enemy, ProjectileSystem& projectiles, Vec2 playe
     if (enemy.projectileId.empty() || enemy.rangedBehaviorId.empty()) {
         return false;
     }
+    if (enemy.rangedBehaviorId == "wind_blow") {
+        return false;
+    }
 
     ProjectileSpawnTuning tuning;
     tuning.speedMultiplier = std::max(0.05f, enemy.projectileSpeedMultiplier);
     tuning.damageOverride = enemy.projectileDamageOverride;
     tuning.damageMultiplier = std::max(0.0, enemy.status.multiplierFor(ModifierStat::Attack));
     tuning.radiusScale = std::max(0.1f, enemy.projectileRadiusScale);
+    const ProjectileSpawnMetadata metadata{.sourceActorName = enemyDisplayName(enemy)};
 
     const Vec2 toPlayer = enemyAimDirection(enemy, playerPosition, rng);
     const float radius = effectiveEnemyRadius(enemy);
     const Vec2 origin = enemy.position + toPlayer * (radius + 6.0f);
     bool spawned = false;
+    if (isBubbleRangedBehavior(enemy.rangedBehaviorId)) {
+        const int bubbleCount = std::max(1, enemy.projectileBurstCount > 1 ? enemy.projectileBurstCount : enemy.fireVolleyCount);
+        const int remaining = std::clamp(
+            enemy.projectileBurstRemaining > 0 ? enemy.projectileBurstRemaining : bubbleCount,
+            1,
+            bubbleCount);
+        const int shotIndex = bubbleCount - remaining;
+        const float t = bubbleCount > 1
+            ? (static_cast<float>(shotIndex) / static_cast<float>(bubbleCount - 1) - 0.5f)
+            : 0.0f;
+        const float spreadRadians = clamp(enemy.fireSpreadDegrees, 0.0f, 42.0f) * (Pi / 180.0f);
+        const float baseAngle = std::atan2(toPlayer.y, toPlayer.x);
+        std::uniform_real_distribution<float> jitter(-0.025f, 0.025f);
+        const Vec2 dir = fromAngle(baseAngle + t * spreadRadians + jitter(rng));
+        ProjectileSpawnTuning bubbleTuning = tuning;
+        bubbleTuning.speedMultiplier *= std::uniform_real_distribution<float>(0.94f, 1.06f)(rng);
+        bubbleTuning.radiusScale *= std::uniform_real_distribution<float>(0.96f, 1.04f)(rng);
+        spawned = projectiles.spawn(
+            "water_bubble",
+            enemy.position + dir * (radius + 5.0f),
+            dir,
+            ProjectileOwnerType::Enemy,
+            enemy.projectileEffects,
+            bubbleTuning,
+            metadata) || spawned;
+        if (enemy.rangedBehaviorId == "shoot_bubble" || shotIndex > 0) {
+            return spawned;
+        }
+    }
     if (enemy.rangedBehaviorId == "radial_spike") {
         const int count = std::clamp(enemy.fireVolleyCount, 1, 24);
         for (int i = 0; i < count; ++i) {
@@ -5995,7 +6318,8 @@ bool fireEnemyProjectile(Enemy& enemy, ProjectileSystem& projectiles, Vec2 playe
                 fromAngle(angle),
                 ProjectileOwnerType::Enemy,
                 enemy.projectileEffects,
-                tuning) || spawned;
+                tuning,
+                metadata) || spawned;
         }
         return spawned;
     }
@@ -6009,12 +6333,12 @@ bool fireEnemyProjectile(Enemy& enemy, ProjectileSystem& projectiles, Vec2 playe
         for (int i = 0; i < count; ++i) {
             const float angle = baseAngle + start + step * static_cast<float>(i);
             const Vec2 dir = fromAngle(angle);
-            spawned = projectiles.spawn(enemy.projectileId, enemy.position + dir * (radius + 6.0f), dir, ProjectileOwnerType::Enemy, enemy.projectileEffects, tuning) || spawned;
+            spawned = projectiles.spawn(enemy.projectileId, enemy.position + dir * (radius + 6.0f), dir, ProjectileOwnerType::Enemy, enemy.projectileEffects, tuning, metadata) || spawned;
         }
         return spawned;
     }
 
-    return projectiles.spawn(enemy.projectileId, origin, toPlayer, ProjectileOwnerType::Enemy, enemy.projectileEffects, tuning);
+    return projectiles.spawn(enemy.projectileId, origin, toPlayer, ProjectileOwnerType::Enemy, enemy.projectileEffects, tuning, metadata);
 }
 
 float enemyProjectileCooldownSeconds(const Enemy& enemy)
@@ -6070,11 +6394,9 @@ struct EnemyActionUpdateResult {
 
 EnemyActionUpdateResult updateEnemyRangedAction(
     Enemy& enemy,
-    ProjectileSystem& projectiles,
     TileMap& map,
     Vec2 playerPosition,
     float distanceToPlayer,
-    std::mt19937& rng,
     float dt,
     bool attackBlocked)
 {
@@ -6101,8 +6423,7 @@ EnemyActionUpdateResult updateEnemyRangedAction(
         previousElapsed <= enemy.action.fireAtSeconds &&
         enemy.action.elapsedSeconds >= enemy.action.fireAtSeconds) {
         enemy.action.fired = true;
-        if (canFireEnemyProjectile(enemy, map, distanceToPlayer, playerPosition) &&
-            fireEnemyProjectile(enemy, projectiles, playerPosition, rng)) {
+        if (canFireEnemyProjectile(enemy, map, distanceToPlayer, playerPosition)) {
             result.fired = true;
         }
     }
@@ -6234,12 +6555,17 @@ void EnemySystem::update(
 
     float mudSlowMultiplier = 1.0f;
     double mudDamagePerSecond = 0.0;
+    DamageCause mudDamageCause{.source = DamageSource::Poison, .objectName = "毒の泥"};
     for (const MudZone& zone : mudZones_) {
         if (distanceSquared(player.position, zone.position) > zone.radius * zone.radius) {
             continue;
         }
         mudSlowMultiplier = std::min(mudSlowMultiplier, clamp(zone.speedMultiplier, 0.05f, 1.0f));
-        mudDamagePerSecond += std::max(0.0f, zone.damagePerSecond);
+        const float zoneDamagePerSecond = std::max(0.0f, zone.damagePerSecond);
+        if (zoneDamagePerSecond > 0.0f) {
+            mudDamagePerSecond += zoneDamagePerSecond;
+            mudDamageCause = zone.damageCause;
+        }
     }
     if (mudSlowMultiplier < 1.0f) {
         const EntityStateApplyResult result = player.status.applyState(
@@ -6259,7 +6585,9 @@ void EnemySystem::update(
         mudDamageAccumulator_ += mudDamagePerSecond * static_cast<double>(dt);
         const int mudDamage = static_cast<int>(std::floor(mudDamageAccumulator_));
         if (mudDamage > 0) {
-            player.applyDamage(mudDamage, DamageSource::Poison);
+            player.applyDamage(
+                mudDamage,
+                mudDamageCause);
             mudDamageAccumulator_ -= static_cast<double>(mudDamage);
         }
     } else {
@@ -6611,17 +6939,33 @@ void EnemySystem::update(
         const auto carriedCount = [&]() {
             return static_cast<int>(enemy.heldDrops.size());
         };
+        const auto fireRangedAttack = [&](Enemy& firingEnemy) {
+            if (firingEnemy.rangedBehaviorId == "wind_blow") {
+                if (windPulses_.size() >= MaxEnemyWindPulses) {
+                    windPulses_.erase(windPulses_.begin());
+                }
+                EnemyWindPulse pulse = makeEnemyWindPulse(firingEnemy, player.position);
+                EnemyEvent event = makeEnemyEventAt(EnemyEventType::Shoot, firingEnemy, pulse.center, "wind_blow");
+                event.effectRadius = pulse.radius;
+                windPulses_.push_back(std::move(pulse));
+                events_.push_back(std::move(event));
+                return true;
+            }
+            if (fireEnemyProjectile(firingEnemy, projectiles, player.position, rng_)) {
+                events_.push_back(makeEnemyEvent(EnemyEventType::Shoot, firingEnemy));
+                return true;
+            }
+            return false;
+        };
         const EnemyActionUpdateResult rangedActionResult = updateEnemyRangedAction(
             enemy,
-            projectiles,
             map,
             player.position,
             distanceToPlayer,
-            rng_,
             dt,
             attackBlocked);
         if (rangedActionResult.fired) {
-            events_.push_back(makeEnemyEvent(EnemyEventType::Shoot, enemy));
+            fireRangedAttack(enemy);
         }
         if (rangedActionResult.finished) {
             enemy.projectileTimer = std::max(
@@ -6683,12 +7027,20 @@ void EnemySystem::update(
             }
             return enemy.aiMoveDirection;
         };
+        const auto chooseFleeDirection = [&]() {
+            if (enemy.aiDecisionTimer <= 0.0f || lengthSquared(enemy.aiMoveDirection) <= 0.0001f) {
+                enemy.aiMoveDirection = randomDirection(rng_);
+                std::uniform_real_distribution<float> retarget(0.18f, 0.42f);
+                enemy.aiDecisionTimer = retarget(rng_);
+            }
+            return fleeDirectionFor(map, enemy, player.position, enemy.aiMoveDirection);
+        };
         if (aiId == "idle" || aiId == "stationary") {
             direction = {};
         } else if (aiId == "buried") {
             direction = {};
         } else if (aiId == "flee") {
-            direction = directToPlayer * -1.0f;
+            direction = chooseFleeDirection();
         } else if (aiId == "wander") {
             direction = chooseWanderDirection();
         } else if (aiId == "patrol") {
@@ -6791,7 +7143,7 @@ void EnemySystem::update(
             direction = flowDirectionFor(map, enemy.position, player.position);
         }
         if (enemy.stealItemEnabled && carriedCount() > 0 && distanceToPlayer < enemy.stealEscapeDistance) {
-            direction = directToPlayer * -1.0f;
+            direction = chooseFleeDirection();
         }
         if (confused) {
             if (enemy.aiDecisionTimer <= 0.0f || lengthSquared(enemy.aiMoveDirection) <= 0.0001f) {
@@ -6880,12 +7232,33 @@ void EnemySystem::update(
             if (distanceSquared(enemy.position, previousPosition) <= 0.0004f &&
                 enemy.aiDigTimer <= 0.0f &&
                 lengthSquared(enemy.velocity) > 0.0001f) {
-                const Vec2 ahead = enemy.position + normalize(enemy.velocity) * (enemyRadius + static_cast<float>(balance::TileSize) * 0.6f);
+                const Vec2 digDirection = normalize(enemy.velocity);
+                const Vec2 ahead = enemy.position + digDirection * (enemyRadius + static_cast<float>(balance::TileSize) * 0.6f);
                 const int tx = map.worldToTile(ahead.x);
                 const int ty = map.worldToTile(ahead.y);
-                Vec2 opened{};
-                if (map.damageTile(tx, ty, std::max(1, enemy.digMovePower), opened)) {
-                    events_.push_back(makeEnemyEvent(EnemyEventType::Hit, enemy));
+                const Vec2 tileCenter = map.tileCenter(tx, ty);
+                const TerrainDebugInfo terrain = map.terrainDebugAtWorld(tileCenter);
+                if (terrain.type != TileType::Empty) {
+                    const Color tileColor = map.tileColorAtTile(tx, ty);
+                    events_.push_back(makeTerrainEnemyEvent(
+                        EnemyEventType::TerrainHit,
+                        enemy,
+                        tileCenter,
+                        tileCenter - enemy.position,
+                        terrain.type,
+                        tileColor));
+
+                    Vec2 opened{};
+                    TileType openedType = terrain.type;
+                    if (map.damageTile(tx, ty, std::max(1, enemy.digMovePower), opened, &openedType)) {
+                        events_.push_back(makeTerrainEnemyEvent(
+                            EnemyEventType::TerrainBreak,
+                            enemy,
+                            opened,
+                            digDirection,
+                            openedType,
+                            tileColor));
+                    }
                 }
                 enemy.aiDigTimer = std::max(0.02f, enemy.digMoveIntervalSeconds);
             }
@@ -6903,7 +7276,13 @@ void EnemySystem::update(
         }
 
         if (!actionLocksMovement &&
-            (confused || aiId == "wander" || aiId == "patrol" || aiId == "item_seek" || aiId == "dig_wander") &&
+            (confused ||
+                aiId == "flee" ||
+                aiId == "wander" ||
+                aiId == "patrol" ||
+                aiId == "item_seek" ||
+                aiId == "dig_wander" ||
+                (enemy.stealItemEnabled && carriedCount() > 0)) &&
             distanceSquared(enemy.position, previousPosition) <= 0.0004f) {
             enemy.aiDecisionTimer = 0.0f;
             enemy.aiMoveDirection = randomDirection(rng_);
@@ -6922,10 +7301,20 @@ void EnemySystem::update(
             enemy.projectileTimer = std::max(0.0f, enemy.projectileTimer - dt);
             if (enemy.projectileTimer <= 0.0f) {
                 if (!beginEnemyRangedAction(enemy)) {
-                    if (fireEnemyProjectile(enemy, projectiles, player.position, rng_)) {
-                        events_.push_back(makeEnemyEvent(EnemyEventType::Shoot, enemy));
+                    const bool bubbleBurst = isBubbleRangedBehavior(enemy.rangedBehaviorId) && enemy.projectileBurstCount > 1;
+                    if (bubbleBurst && enemy.projectileBurstRemaining <= 0) {
+                        enemy.projectileBurstRemaining = enemy.projectileBurstCount;
                     }
-                    if (enemy.projectileBurstCount > 1 && enemy.rangedBehaviorId == "shoot_water") {
+                    fireRangedAttack(enemy);
+                    if (bubbleBurst) {
+                        if (enemy.projectileBurstRemaining > 1) {
+                            --enemy.projectileBurstRemaining;
+                            enemy.projectileTimer = std::max(0.02f, enemy.projectileBurstInterval);
+                        } else {
+                            enemy.projectileBurstRemaining = 0;
+                            enemy.projectileTimer = enemyProjectileCooldownSeconds(enemy);
+                        }
+                    } else if (enemy.projectileBurstCount > 1 && enemy.rangedBehaviorId == "shoot_water") {
                         if (enemy.projectileBurstRemaining <= 1) {
                             enemy.projectileBurstRemaining = enemy.projectileBurstCount;
                             enemy.projectileTimer = enemyProjectileCooldownSeconds(enemy);
@@ -6981,52 +7370,50 @@ void EnemySystem::update(
         }
 
         if (!attackBlocked && hasBehavior(enemy, "countdown_explode") && (!enemy.countdownExploded || !enemy.countdownExplodeOnce)) {
-            enemy.countdownExplodeDelay = std::max(0.0f, enemy.countdownExplodeDelay - dt);
-            if (enemy.countdownExplodeDelay > 0.0f) {
-                const int tickIndex = countdownExplosionWarningTickIndex(enemy);
-                if (tickIndex > enemy.countdownExplodeWarningTickIndex) {
-                    enemy.countdownExplodeWarningTickIndex = tickIndex;
-                    events_.push_back(makeEnemyEvent(EnemyEventType::ExplosionWarningTick, enemy));
-                }
+            if (!enemy.countdownExplodeArmed && canArmCountdownExplosion(enemy, player.position)) {
+                enemy.countdownExplodeArmed = true;
+                enemy.countdownExplodeDelay = std::max(0.0f, enemy.countdownExplodeInitialDelay);
+                enemy.countdownExplodeWarningTickIndex = -1;
             }
-            if (enemy.countdownExplodeDelay <= 0.0f) {
-                const float radius = std::max(8.0f, enemy.countdownExplodeRadius);
-                const float radiusSq = radius * radius;
-                const float playerExplosionRadius = radius + playerRadius;
-                if (enemy.countdownExplodeDamage > 0 &&
-                    distanceSquared(player.position, enemy.position) <= playerExplosionRadius * playerExplosionRadius) {
-                    player.lastDamageEnemyName = enemy.enemyName.empty() ? std::string(DefaultEnemyName) : enemy.enemyName;
-                    player.applyDamage(
-                        applyDefenseModifier(player.status, enemy.countdownExplodeDamage),
-                        DamageSource::Explosion);
-                    player.applyKnockback(
-                        player.position - enemy.position,
-                        std::clamp(132.0f + radius * 1.20f, 150.0f, 250.0f),
-                        0.16f);
-                }
-                if (enemy.countdownExplodeTerrainDamage > 0) {
-                    const int centerTx = map.worldToTile(enemy.position.x);
-                    const int centerTy = map.worldToTile(enemy.position.y);
-                    const int tileRadius = std::max(1, static_cast<int>(std::ceil(radius / static_cast<float>(balance::TileSize))));
-                    for (int dy = -tileRadius; dy <= tileRadius; ++dy) {
-                        for (int dx = -tileRadius; dx <= tileRadius; ++dx) {
-                            const Vec2 tileCenter = map.tileCenter(centerTx + dx, centerTy + dy);
-                            if (distanceSquared(tileCenter, enemy.position) > radiusSq) {
-                                continue;
-                            }
-                            Vec2 opened{};
-                            map.damageTile(centerTx + dx, centerTy + dy, enemy.countdownExplodeTerrainDamage, opened);
-                        }
+
+            if (enemy.countdownExplodeArmed) {
+                enemy.countdownExplodeDelay = std::max(0.0f, enemy.countdownExplodeDelay - dt);
+                if (enemy.countdownExplodeDelay > 0.0f) {
+                    const int tickIndex = countdownExplosionWarningTickIndex(enemy);
+                    if (tickIndex > enemy.countdownExplodeWarningTickIndex) {
+                        enemy.countdownExplodeWarningTickIndex = tickIndex;
+                        events_.push_back(makeEnemyEvent(EnemyEventType::ExplosionWarningTick, enemy));
                     }
                 }
-                enemy.countdownExploded = true;
-                EnemyEvent explodeEvent = makeEnemyEvent(EnemyEventType::Explode, enemy);
-                explodeEvent.effectRadius = radius;
-                explodeEvent.damageAmount = enemy.countdownExplodeDamage;
-                events_.push_back(std::move(explodeEvent));
-                applyExplosionDamage(enemy.position, radius, spellRing, enemy.countdownExplodeDamage, enemy.id);
-                processEnemyDeath(enemy, std::nullopt, true);
-                continue;
+                if (enemy.countdownExplodeDelay <= 0.0f) {
+                    const float radius = std::max(8.0f, enemy.countdownExplodeRadius);
+                    const float playerExplosionRadius = radius + playerRadius;
+                    if (enemy.countdownExplodeDamage > 0 &&
+                        distanceSquared(player.position, enemy.position) <= playerExplosionRadius * playerExplosionRadius) {
+                        player.applyDamage(
+                            applyDefenseModifier(player.status, enemy.countdownExplodeDamage),
+                            DamageCause{
+                                .source = DamageSource::Explosion,
+                                .actorName = enemyDisplayName(enemy),
+                                .objectName = "爆発",
+                            });
+                        player.applyKnockback(
+                            player.position - enemy.position,
+                            std::clamp(132.0f + radius * 1.20f, 150.0f, 250.0f),
+                            0.16f);
+                    }
+                    if (enemy.countdownExplodeTerrainDamage > 0) {
+                        map.destroyCircle(enemy.position, radius);
+                    }
+                    enemy.countdownExploded = true;
+                    EnemyEvent explodeEvent = makeEnemyEvent(EnemyEventType::Explode, enemy);
+                    explodeEvent.effectRadius = radius;
+                    explodeEvent.damageAmount = enemy.countdownExplodeDamage;
+                    events_.push_back(std::move(explodeEvent));
+                    applyExplosionDamage(enemy.position, radius, spellRing, enemy.countdownExplodeDamage, enemy.id);
+                    processEnemyDeath(enemy, std::nullopt, true);
+                    continue;
+                }
             }
         }
         }
@@ -7067,6 +7454,7 @@ void EnemySystem::update(
         }
         if (!attackBlocked && touchedPlayer && enemy.contactTimer <= 0.0f) {
             bool attackHit = true;
+            bool ringSlowBiteApplied = false;
             const double accuracy = enemy.status.attackAccuracyMultiplierFromStates();
             if (accuracy < 0.999) {
                 std::uniform_real_distribution<double> accuracyDist(0.0, 1.0);
@@ -7083,10 +7471,12 @@ void EnemySystem::update(
                     contactMultiplier *= std::max(1.0f, enemy.jumpLandingDamageMultiplier);
                 }
                 contactDamage = std::max(0, static_cast<int>(std::ceil(static_cast<double>(contactDamage) * contactMultiplier)));
-                player.lastDamageEnemyName = enemy.enemyName.empty() ? std::string(DefaultEnemyName) : enemy.enemyName;
                 player.applyDamage(
                     applyDefenseModifier(player.status, contactDamage),
-                    enemy.isBoss ? DamageSource::SlimeAttack : DamageSource::SlimeContact);
+                    DamageCause{
+                        .source = enemy.isBoss ? DamageSource::SlimeAttack : DamageSource::SlimeContact,
+                        .actorName = enemyDisplayName(enemy),
+                    });
                 if (hasBehavior(enemy, "rust_touch")) {
                     player.status.applyModifier(
                         "rust_touch",
@@ -7101,13 +7491,17 @@ void EnemySystem::update(
                     spellRing.applyEnemyOrbitSpeedDebuff(
                         enemy.ringSlowMultiplier > 0.0f ? enemy.ringSlowMultiplier : balance.enemyRingSlowBiteMultiplier,
                         enemy.ringSlowDurationSeconds >= 0.0f ? enemy.ringSlowDurationSeconds : balance.enemyRingSlowBiteDuration);
+                    ringSlowBiteApplied = true;
                 }
                 if (hasBehavior(enemy, "chest_bite") && enemy.chestBiteKnockback > 0.0f) {
                     const Vec2 push = normalize(player.position - enemy.position) * enemy.chestBiteKnockback;
                     tryMoveCircle(map, player.position, playerRadius, push);
                 }
             }
-            events_.push_back(makeEnemyEvent(EnemyEventType::Attack, enemy));
+            events_.push_back(makeEnemyEvent(
+                EnemyEventType::Attack,
+                enemy,
+                ringSlowBiteApplied ? std::string("ring_slow_bite") : std::string{}));
             enemy.contactTimer = enemy.isBoss ? 1.0f : 0.8f;
         }
 
@@ -7505,6 +7899,56 @@ void EnemySystem::update(
             }
         }
     }
+
+    if (!windPulses_.empty()) {
+        const float safeDt = std::max(0.0f, dt);
+        for (EnemyWindPulse& pulse : windPulses_) {
+            const float pulseDt = std::min(safeDt, std::max(0.0f, pulse.remainingSeconds));
+            if (pulseDt <= 0.0f || pulse.radius <= 0.0f || pulse.strength <= 0.0f) {
+                pulse.remainingSeconds = 0.0f;
+                continue;
+            }
+
+            const Vec2 windDirection = safeDirection(pulse.direction);
+            const float playerFalloff = directionalWindFalloff(player.position, pulse.center, pulse.radius);
+            if (playerFalloff > 0.0f) {
+                const Vec2 delta = windDirection * (WindBlowPlayerPushSpeed * pulse.strength * playerFalloff * pulseDt);
+                tryMoveCircle(map, player.position, effectivePlayerRadius(player, balance), delta);
+            }
+
+            for (Enemy& windEnemy : enemies_.items()) {
+                if (!windEnemy.active ||
+                    windEnemy.id == pulse.sourceRuntimeId ||
+                    windEnemy.death.active ||
+                    windEnemy.hp <= 0) {
+                    continue;
+                }
+                const float enemyFalloff = directionalWindFalloff(windEnemy.position, pulse.center, pulse.radius);
+                if (enemyFalloff <= 0.0f) {
+                    continue;
+                }
+                const float massMultiplier = windEnemyMassMultiplier(windEnemy);
+                if (massMultiplier <= 0.0f) {
+                    continue;
+                }
+                const Vec2 delta = windDirection * (WindBlowEnemyPushSpeed * pulse.strength * enemyFalloff * massMultiplier * pulseDt);
+                if (tryMoveCircle(map, windEnemy.position, effectiveEnemyRadius(windEnemy), delta)) {
+                    windEnemy.aiDecisionTimer = std::min(windEnemy.aiDecisionTimer, 0.08f);
+                }
+            }
+
+            worldDrops.pushDropsInDirection(objectCatalog, pulse.center, windDirection, pulseDt, pulse.radius, pulse.strength);
+            projectiles.pushProjectilesInDirection(pulse.center, windDirection, pulseDt, pulse.radius, pulse.strength);
+            spellRing.applyDirectionalWind(pulse.center, windDirection, pulseDt, pulse.radius, pulse.strength);
+            pulse.remainingSeconds = std::max(0.0f, pulse.remainingSeconds - safeDt);
+        }
+        windPulses_.erase(
+            std::remove_if(windPulses_.begin(), windPulses_.end(), [](const EnemyWindPulse& pulse) {
+                return pulse.remainingSeconds <= 0.0f || pulse.radius <= 0.0f;
+            }),
+            windPulses_.end());
+    }
+
     spellRing.removeBrokenItems();
 }
 
@@ -7550,6 +7994,70 @@ void EnemySystem::appendRenderEntries(
     int highlightedEnemyId,
     const EncyclopediaSystem* encyclopedia) const
 {
+    for (const MudZone& zone : mudZones_) {
+        if (zone.remainingSeconds <= 0.0f || zone.radius <= 0.0f) {
+            continue;
+        }
+        const Vec2 visualBounds{zone.radius * 2.0f, zone.radius * 1.2f};
+        if (!map.isRectLit(zone.position, visualBounds, playerLight, extraLights)) {
+            continue;
+        }
+        const MudZone drawable = zone;
+        entries.push_back(DepthRenderEntry{
+            zone.position.y - zone.radius * 0.30f,
+            [&renderer, drawable]() {
+                const float fade = clamp(drawable.remainingSeconds / 0.65f, 0.0f, 1.0f);
+                const bool poisonMud = drawable.damageType == "poison" || drawable.damagePerSecond > 0.0f;
+                const Color base = poisonMud ? Color{42, 86, 36, 112} : Color{76, 60, 42, 104};
+                const Color core = poisonMud ? Color{90, 128, 48, 72} : Color{112, 82, 48, 64};
+                const Color glint = poisonMud ? Color{156, 218, 74, 58} : Color{166, 128, 78, 48};
+                renderer.fillEllipse(drawable.position, {drawable.radius, drawable.radius * 0.56f}, scaleColorAlpha(base, fade));
+                renderer.fillEllipse(
+                    drawable.position + Vec2{-drawable.radius * 0.14f, -drawable.radius * 0.05f},
+                    {drawable.radius * 0.56f, drawable.radius * 0.26f},
+                    scaleColorAlpha(core, fade));
+                renderer.fillEllipse(
+                    drawable.position + Vec2{drawable.radius * 0.28f, drawable.radius * 0.08f},
+                    {drawable.radius * 0.24f, drawable.radius * 0.10f},
+                    scaleColorAlpha(glint, fade));
+            },
+        });
+    }
+
+    for (const EnemyWindPulse& pulse : windPulses_) {
+        if (pulse.remainingSeconds <= 0.0f || pulse.radius <= 0.0f) {
+            continue;
+        }
+        const Vec2 visualBounds{pulse.radius * 2.0f, pulse.radius * 2.0f};
+        if (!map.isRectLit(pulse.center, visualBounds, playerLight, extraLights)) {
+            continue;
+        }
+        const EnemyWindPulse drawable = pulse;
+        entries.push_back(DepthRenderEntry{
+            drawable.center.y - drawable.radius * 0.35f,
+            [&renderer, drawable]() {
+                const float fade = drawable.initialSeconds > 0.0f
+                    ? clamp(drawable.remainingSeconds / drawable.initialSeconds, 0.0f, 1.0f)
+                    : 1.0f;
+                const float phase = 1.0f - fade;
+                const Vec2 dir = safeDirection(drawable.direction);
+                const Vec2 side{-dir.y, dir.x};
+                const Color fieldColor = scaleColorAlpha({118, 220, 196, 74}, fade);
+                const Color ringColor = scaleColorAlpha({164, 246, 224, 132}, fade);
+                const Color lineColor = scaleColorAlpha({210, 255, 240, 116}, fade);
+                renderer.fillSoftCircle(drawable.center, drawable.radius, fieldColor);
+                renderer.drawSoftRing(drawable.center, drawable.radius * (0.82f + phase * 0.18f), std::max(3.0f, drawable.radius * 0.035f), ringColor);
+                for (int lane = -1; lane <= 1; ++lane) {
+                    const float laneOffset = static_cast<float>(lane) * drawable.radius * 0.24f;
+                    const float streamShift = (phase - 0.5f) * drawable.radius * 0.30f;
+                    const Vec2 start = drawable.center - dir * (drawable.radius * 0.58f) + side * laneOffset + dir * streamShift;
+                    const Vec2 end = drawable.center + dir * (drawable.radius * 0.58f) + side * (laneOffset + drawable.radius * 0.08f) + dir * streamShift;
+                    renderer.drawSoftLine(start, end, std::max(2.0f, drawable.radius * 0.025f), lineColor);
+                }
+            },
+        });
+    }
+
     for (const Enemy& enemy : enemies_.items()) {
         if (!enemy.active) {
             continue;
@@ -8180,7 +8688,14 @@ void EnemySystem::applyExplosionDamage(Vec2 position, float radius, SpellRingSys
     }
 }
 
-void EnemySystem::addMudZone(Vec2 position, float radius, float duration, float speedMultiplier, float damagePerSecond, std::string damageType)
+void EnemySystem::addMudZone(
+    Vec2 position,
+    float radius,
+    float duration,
+    float speedMultiplier,
+    float damagePerSecond,
+    std::string damageType,
+    DamageCause damageCause)
 {
     if (!(radius > 0.0f) || !(duration > 0.0f)) {
         return;
@@ -8192,6 +8707,7 @@ void EnemySystem::addMudZone(Vec2 position, float radius, float duration, float 
     zone.speedMultiplier = clamp(speedMultiplier, 0.05f, 1.0f);
     zone.damagePerSecond = std::max(0.0f, damagePerSecond);
     zone.damageType = std::move(damageType);
+    zone.damageCause = std::move(damageCause);
     mudZones_.push_back(std::move(zone));
 }
 
@@ -8478,6 +8994,7 @@ void EnemySystem::clearTemporaryState()
     statusPopupEvents_.clear();
     pendingXp_ = 0;
     mudZones_.clear();
+    windPulses_.clear();
     mudDamageAccumulator_ = 0.0;
     for (Enemy& enemy : enemies_.items()) {
         if (!enemy.active) {

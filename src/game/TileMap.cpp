@@ -1213,6 +1213,11 @@ std::vector<DamagedTile> TileMap::damageCircle(Vec2 center, float radius, int da
     return openedTiles;
 }
 
+std::vector<DamagedTile> TileMap::destroyCircle(Vec2 center, float radius)
+{
+    return damageCircle(center, radius, std::numeric_limits<int>::max());
+}
+
 bool TileMap::damageTile(int tx, int ty, int damage, Vec2& openedTileCenter, TileType* openedTileType)
 {
     Tile* tile = tileAtWorld(tx, ty);

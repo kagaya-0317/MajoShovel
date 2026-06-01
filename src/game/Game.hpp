@@ -1450,6 +1450,7 @@ private:
     int spawnEnemyTestMagnetDrops(Vec2 center);
     int spawnEnemyTestStealBaitDrops(const EnemyDefinition& enemy, Vec2 center);
     int spawnEnemyTestHealSlimes(Vec2 center);
+    int spawnEnemyTestSwarmMembers(const EnemyDefinition& enemy, Vec2 center);
     void clearEnemyTestArena();
     void updateEnemyTestUi(const Input& input, UiContext& ui);
     void renderEnemyTestUi(Renderer& renderer) const;
@@ -1775,7 +1776,7 @@ private:
     UiTabsState effectTestTabsState_{};
     int effectTestTabIndex_ = 0;
     int effectTestSelectedIndex_ = 0;
-    int effectTestFrame_ = 0;
+    float effectTestReplayTimerSeconds_ = 0.0f;
     float effectTestScrollOffset_ = 0.0f;
     UiScrollAreaState effectTestScrollState_{};
     MagicFxEmitterHandle effectTestEmitter_{};
@@ -1784,7 +1785,7 @@ private:
     bool projectileTestTargetEnabled_ = false;
     std::vector<const ProjectileDefinition*> projectileTestEntries_;
     int projectileTestSelectedIndex_ = 0;
-    int projectileTestFrame_ = 0;
+    float projectileTestReplayTimerSeconds_ = 0.0f;
     float projectileTestScrollOffset_ = 0.0f;
     UiScrollAreaState projectileTestScrollState_{};
     std::string projectileTestStatus_;

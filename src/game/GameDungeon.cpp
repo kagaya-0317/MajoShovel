@@ -61,15 +61,10 @@ constexpr std::string_view EndingSeenFlag = "ending_seen";
 constexpr std::string_view PostEndingIntroFlag = "story_post_ending_intro";
 constexpr std::string_view AudioBgmDungeon = "bgm.dungeon";
 constexpr std::string_view AudioSeChestOpen = "se.chest.open";
-constexpr std::string_view AudioSeCrateBreak = "se.crate.break";
-constexpr std::string_view AudioSeCaptureSuccess = "se.capture.success";
 constexpr std::string_view AudioSeCaptureFail = "se.capture.fail";
-constexpr std::string_view AudioSePickup = "se.pickup";
 constexpr std::string_view AudioSeEnemySpawn = "se.enemy.spawn";
-constexpr std::string_view AudioSeItemBreak = "se.item.break";
 constexpr std::string_view AudioSeDiscovery = "se.discovery";
 constexpr std::string_view AudioSeWarpDiscovery = "se.discovery.warp";
-constexpr std::string_view AudioSeExplosion = "se.explosion.boom";
 constexpr std::string_view AudioSeExplosionTick = "se.explosion.tick";
 constexpr std::string_view AudioSeFootstepBaseOutdoor = "se.footstep.base_outdoor";
 constexpr std::string_view AudioSeFootstepHomeInterior = "se.footstep.home";
@@ -2255,6 +2250,7 @@ void Game::updateCapturedUtilityBehaviors(float dt)
                 request.damage = item.breakExplosion.damage;
                 request.terrainRadius = item.breakExplosion.terrainRadius;
                 request.terrainDamage = item.breakExplosion.terrainDamage;
+                request.destroyTerrain = true;
                 breakExplosionRequests.push_back(request);
                 item.breakExplosion = {};
             }
@@ -2387,7 +2383,6 @@ bool Game::handleCaptureResult(const CaptureResult& capture)
     }
 
     if (capture.type == CaptureResultType::Success) {
-        playAudioSe(AudioSeCaptureSuccess);
         if (!capture.capturedEnemy.enemyId.empty()) {
             encyclopedia_.noteEnemyDiscovered(
                 capture.capturedEnemy.enemyId,
@@ -2485,7 +2480,6 @@ void Game::finalizeCaptureAbsorbAnimation(const CaptureAbsorbAnimation& animatio
     }
 
     effects_.spawnDropPickup(player_.position, animation.startPosition - player_.position);
-    playAudioSe(AudioSePickup);
 }
 
 void Game::updateCaptureAbsorbAnimations(float dt)
@@ -2526,14 +2520,21 @@ void Game::handleCapturedExplosion(const CapturedExplosionRequest& request)
 {
     const float radius = std::max(8.0f, request.radius);
     effects_.spawnExplosion(request.position, radius);
-    playAudioSe(AudioSeExplosion);
     addScreenShake(std::clamp(3.0f + radius * 0.035f, 4.0f, 7.0f), 0.18f);
 
-    const float terrainRadius = std::max(0.0f, request.terrainRadius);
+    const float requestedTerrainRadius = std::max(0.0f, request.terrainRadius);
+    const float terrainRadius = request.destroyTerrain
+        ? std::max(requestedTerrainRadius, radius)
+        : requestedTerrainRadius;
     const int terrainDamage = std::max(0, request.terrainDamage);
-    const std::vector<DamagedTile> openedTiles = terrainRadius > 0.0f && terrainDamage > 0
-        ? tileMap_.damageCircle(request.position, terrainRadius, terrainDamage)
-        : std::vector<DamagedTile>{};
+    std::vector<DamagedTile> openedTiles;
+    if (terrainRadius > 0.0f) {
+        if (request.destroyTerrain) {
+            openedTiles = tileMap_.destroyCircle(request.position, terrainRadius);
+        } else if (terrainDamage > 0) {
+            openedTiles = tileMap_.damageCircle(request.position, terrainRadius, terrainDamage);
+        }
+    }
     std::vector<Vec2> openedTileCenters;
     openedTileCenters.reserve(openedTiles.size());
     for (const DamagedTile& tile : openedTiles) {
@@ -2549,7 +2550,10 @@ void Game::handleCapturedExplosion(const CapturedExplosionRequest& request)
         if (distanceSquared(player_.position, request.position) <= playerExplosionRadius * playerExplosionRadius) {
             player_.applyDamage(
                 applyDefenseModifier(player_.status, explosionDamage),
-                DamageSource::Explosion);
+                DamageCause{
+                    .source = DamageSource::Explosion,
+                    .objectName = "爆発",
+                });
             player_.applyKnockback(
                 player_.position - request.position,
                 std::clamp(124.0f + radius * 1.15f, 145.0f, 230.0f),
@@ -2719,8 +2723,7 @@ void Game::clearTemporaryPlayerState(bool fullHeal)
     player_.hotDamageAccumulator = 0.0;
     player_.bleedDamageAccumulator = 0.0;
     player_.stunWakeTimer = 0.0f;
-    player_.lastDamageSource = DamageSource::Unknown;
-    player_.lastDamageEnemyName.clear();
+    player_.lastDamageCause = {};
     player_.damageFlash = 0.0f;
     player_.damageEvents.clear();
     player_.healEvents.clear();
@@ -4405,7 +4408,7 @@ void Game::updateDungeonEvents(float dt, double totalSeconds)
 
             object.hitCooldown = std::max(0.12f, item->hitInterval);
             item->actionFlashTimer = SpellRingItemActionFlashSeconds;
-            effects_.spawnEnemyHit(objectCenter, {});
+        effects_.spawnEnemyHit(objectCenter, {}, false);
             if (outDamage != nullptr) {
                 *outDamage = std::max(1, damage);
             }
@@ -4669,7 +4672,7 @@ void Game::updateDungeonEvents(float dt, double totalSeconds)
                         hole.hp = std::max(0, hole.hp - damage);
                         hole.hitCooldown = std::max(0.12f, item->hitInterval);
                         item->actionFlashTimer = SpellRingItemActionFlashSeconds;
-                        effects_.spawnEnemyHit(holeCenter, {});
+                        effects_.spawnEnemyHit(holeCenter, {}, false);
                         if (hole.hp <= 0) {
                             hole.destroyed = true;
                             playAudioSe("se.dig.break");
@@ -7561,8 +7564,7 @@ void Game::destroyCrateNode(CrateNode& node)
     node.destroyed = true;
 
     const Vec2 center = tileWorldCenter(node.tile);
-    effects_.spawnTileBreak(center, TileType::Dirt, CrateBreakParticleColor);
-    playAudioSe(AudioSeCrateBreak);
+    effects_.spawnCrateBreak(center, CrateBreakParticleColor);
 
     std::mt19937 rng(
         dungeonLayout_.seed ^
@@ -8707,8 +8709,7 @@ void Game::restoreRetrySnapshot()
     player_.hotDamageAccumulator = 0.0;
     player_.bleedDamageAccumulator = 0.0;
     player_.stunWakeTimer = 0.0f;
-    player_.lastDamageSource = DamageSource::Unknown;
-    player_.lastDamageEnemyName.clear();
+    player_.lastDamageCause = {};
     player_.status = EntityStatus{};
 
     tileMap_ = retrySnapshot_.tileMap;
@@ -9220,7 +9221,6 @@ void Game::handleRingItemBreakEvents(std::vector<EffectDiscoveryEvent>* discover
                 }
             }
         }
-        playAudioSe(AudioSeItemBreak);
         pushDungeonLog(message, mergeKey);
     }
 }

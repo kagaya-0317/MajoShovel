@@ -46,6 +46,7 @@ enum class EnemyEventType {
     Explode,
     BossTelegraph,
     BossImpact,
+    TerrainHit,
     TerrainBreak,
     Death,
     BossDeath,
@@ -61,6 +62,7 @@ enum class EnemyEventType {
 struct EnemyEvent {
     EnemyEventType type = EnemyEventType::Hit;
     Vec2 position{};
+    Vec2 effectDirection{};
     int enemyRuntimeId = 0;
     std::string dungeonEventId;
     std::string enemyId;
@@ -70,6 +72,8 @@ struct EnemyEvent {
     float effectRadius = 0.0f;
     float terrainRadius = 0.0f;
     int terrainDamage = -1;
+    TileType terrainTileType = TileType::Dirt;
+    Color terrainColor{0, 0, 0, 0};
     int healAmount = 0;
     bool critical = false;
     bool ringItemImpact = false;
@@ -163,6 +167,16 @@ struct EnemyMinimapMarker {
     float contactDamageMultiplier = 1.0f;
     bool ranged = false;
     bool boss = false;
+};
+
+struct EnemyWindPulse {
+    Vec2 center{};
+    Vec2 direction{1.0f, 0.0f};
+    float radius = 0.0f;
+    float strength = 1.0f;
+    float remainingSeconds = 0.0f;
+    float initialSeconds = 0.0f;
+    int sourceRuntimeId = 0;
 };
 
 class EnemySystem {
@@ -290,7 +304,14 @@ public:
     int applyMagicArea(const EnemyMagicHitSpec& spec, SpellRingSystem& spellRing);
     bool applyMagicNearest(Vec2 origin, float range, EnemyMagicHitSpec spec, SpellRingSystem& spellRing, Vec2* outTargetPosition = nullptr);
     void applyExplosionDamage(Vec2 position, float radius, SpellRingSystem& spellRing, int damage, int excludedEnemyRuntimeId = 0);
-    void addMudZone(Vec2 position, float radius, float duration, float speedMultiplier, float damagePerSecond, std::string damageType);
+    void addMudZone(
+        Vec2 position,
+        float radius,
+        float duration,
+        float speedMultiplier,
+        float damagePerSecond,
+        std::string damageType,
+        DamageCause damageCause = DamageCause{.source = DamageSource::Poison, .objectName = "毒の泥"});
     int pullMetalEnemies(Vec2 center, TileMap& map, float dt, float radius = 160.0f);
     int pullLightEnemies(Vec2 center, TileMap& map, float dt, float radius, float strength = 1.0f);
     int pushLightEnemies(Vec2 center, TileMap& map, float dt, float radius, float strength = 1.0f);
@@ -327,6 +348,7 @@ private:
         float speedMultiplier = 1.0f;
         float damagePerSecond = 0.0f;
         std::string damageType = "poison";
+        DamageCause damageCause{.source = DamageSource::Poison, .objectName = "毒の泥"};
     };
     struct CaptureAttemptOptions {
         bool requirePlayerReach = true;
@@ -386,6 +408,7 @@ private:
     bool updateBossActionSequence(Enemy& enemy, Player& player, TileMap& map, ProjectileSystem& projectiles, float dt);
     void rebuildFlowField(TileMap& map, Vec2 playerPosition);
     Vec2 flowDirectionFor(TileMap& map, Vec2 enemyPosition, Vec2 playerPosition) const;
+    Vec2 fleeDirectionFor(TileMap& map, const Enemy& enemy, Vec2 playerPosition, Vec2 jitterDirection) const;
     Vec2 separationFor(const Enemy& enemy) const;
     void moveWithCollision(Enemy& enemy, TileMap& map, Vec2 desiredVelocity, float dt);
     bool resolvePlayerOverlap(Player& player, Enemy& enemy, TileMap& map, const RuntimeBalance& balance);
@@ -420,6 +443,7 @@ private:
     float flowTimer_ = 0.0f;
     std::vector<int> flowDistance_;
     std::vector<MudZone> mudZones_;
+    std::vector<EnemyWindPulse> windPulses_;
     double mudDamageAccumulator_ = 0.0;
 };
 

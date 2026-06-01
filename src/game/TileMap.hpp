@@ -70,6 +70,7 @@ public:
         const std::vector<LightSource>& extraLights,
         bool lightweight = false) const;
     std::vector<DamagedTile> damageCircle(Vec2 center, float radius, int damage);
+    std::vector<DamagedTile> destroyCircle(Vec2 center, float radius);
     bool damageTile(int tx, int ty, int damage, Vec2& openedTileCenter, TileType* openedTileType = nullptr);
     bool isSolidAt(Vec2 world);
     bool isTileSolid(int tx, int ty);

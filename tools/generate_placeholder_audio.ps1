@@ -402,6 +402,18 @@ function Placeholder-Sample([string]$Kind, [double]$Time, [double]$Duration, [Sy
             $sweep = 560.0 + 520.0 * ($Time / $Duration)
             return $env * (0.26 * [Math]::Sin($TwoPi * $sweep * $Time) + 0.20 * [Math]::Sin($TwoPi * 1180.0 * $Time))
         }
+        "se.ring.slow_bite" {
+            $env = Decay $Time $Duration 1.65
+            $u = $Time / $Duration
+            $wobble = 1.0 + 0.06 * [Math]::Sin($TwoPi * 5.5 * $Time)
+            $freq = (315.0 - 190.0 * $u) * $wobble
+            $noise = ($Random.NextDouble() * 2.0 - 1.0) * 0.08
+            $snap = 0.0
+            if ($Time -lt 0.045) {
+                $snap = [Math]::Pow(1.0 - ($Time / 0.045), 2.2) * [Math]::Sin($TwoPi * 920.0 * $Time)
+            }
+            return $env * (0.34 * [Math]::Sin($TwoPi * $freq * $Time) + 0.24 * [Math]::Sin($TwoPi * ($freq * 0.48) * $Time) + $noise) + 0.20 * $snap
+        }
         "se.magic.cast" {
             $env = Decay $Time $Duration 1.2
             $shimmer = 0.5 + 0.5 * [Math]::Sin($TwoPi * 22.0 * $Time)
@@ -748,6 +760,12 @@ public static class MajoPlaceholderAudioHQ
                 return Ring(t, d, 360.0, 0.24, 1.25) + Ring(t, d, 720.0, 0.24, 1.4);
             case "se.ring.reflect":
                 return Ring(t, d, 560.0, 0.20, 1.1) + 0.24 * Env(t, d, 0.003, 1.2) * Sweep(t, d, 760.0, 1480.0);
+            case "se.ring.slow_bite":
+                return Env(t, d, 0.012, 1.55) * (
+                    0.30 * Sweep(t, d, 315.0, 125.0) +
+                    0.20 * S(92.0, t) +
+                    0.10 * N(rng) * (0.65 + 0.35 * S(22.0, t))) +
+                    0.16 * Burst(t, 0.000, 0.045, 2.2) * S(920.0, t);
             case "se.magic.cast":
                 return Sparkle(t, d, 660.0, 0.18) + 0.15 * Whoosh(t, d, rng, 320.0, 980.0, 0.04);
             case "se.magic.impact":
@@ -889,9 +907,30 @@ $clips = @(
     @{ Path = Join-Path $SeRoot "enemy_attack_placeholder.wav"; Kind = "se.enemy.attack"; Duration = 0.18; Seed = 2023 },
     @{ Path = Join-Path $SeRoot "enemy_shoot_placeholder.wav"; Kind = "se.enemy.shoot"; Duration = 0.14; Seed = 2024 },
     @{ Path = Join-Path $SeRoot "enemy_heal_placeholder.wav"; Kind = "se.enemy.heal"; Duration = 0.26; Seed = 2025 },
+    @{ Path = Join-Path $SeRoot "projectile_stone_launch_placeholder.wav"; Kind = "se.projectile.stone.launch"; Duration = 0.11; Seed = 2080 },
+    @{ Path = Join-Path $SeRoot "projectile_stone_destroy_placeholder.wav"; Kind = "se.projectile.stone.destroy"; Duration = 0.14; Seed = 2081 },
+    @{ Path = Join-Path $SeRoot "projectile_metal_launch_placeholder.wav"; Kind = "se.projectile.metal.launch"; Duration = 0.12; Seed = 2082 },
+    @{ Path = Join-Path $SeRoot "projectile_metal_destroy_placeholder.wav"; Kind = "se.projectile.metal.destroy"; Duration = 0.16; Seed = 2083 },
+    @{ Path = Join-Path $SeRoot "projectile_liquid_launch_placeholder.wav"; Kind = "se.projectile.liquid.launch"; Duration = 0.12; Seed = 2084 },
+    @{ Path = Join-Path $SeRoot "projectile_liquid_destroy_placeholder.wav"; Kind = "se.projectile.liquid.destroy"; Duration = 0.16; Seed = 2085 },
+    @{ Path = Join-Path $SeRoot "projectile_magic_launch_placeholder.wav"; Kind = "se.projectile.magic.launch"; Duration = 0.13; Seed = 2086 },
+    @{ Path = Join-Path $SeRoot "projectile_magic_destroy_placeholder.wav"; Kind = "se.projectile.magic.destroy"; Duration = 0.18; Seed = 2087 },
+    @{ Path = Join-Path $SeRoot "projectile_needle_launch_placeholder.wav"; Kind = "se.projectile.needle.launch"; Duration = 0.09; Seed = 2088 },
+    @{ Path = Join-Path $SeRoot "projectile_needle_destroy_placeholder.wav"; Kind = "se.projectile.needle.destroy"; Duration = 0.12; Seed = 2089 },
+    @{ Path = Join-Path $SeRoot "projectile_water_launch_placeholder.wav"; Kind = "se.projectile.water.launch"; Duration = 0.12; Seed = 2090 },
+    @{ Path = Join-Path $SeRoot "projectile_water_destroy_placeholder.wav"; Kind = "se.projectile.water.destroy"; Duration = 0.16; Seed = 2091 },
+    @{ Path = Join-Path $SeRoot "projectile_fire_launch_placeholder.wav"; Kind = "se.projectile.fire.launch"; Duration = 0.12; Seed = 2092 },
+    @{ Path = Join-Path $SeRoot "projectile_fire_destroy_placeholder.wav"; Kind = "se.projectile.fire.destroy"; Duration = 0.18; Seed = 2093 },
+    @{ Path = Join-Path $SeRoot "projectile_web_launch_placeholder.wav"; Kind = "se.projectile.web.launch"; Duration = 0.12; Seed = 2094 },
+    @{ Path = Join-Path $SeRoot "projectile_web_destroy_placeholder.wav"; Kind = "se.projectile.web.destroy"; Duration = 0.16; Seed = 2095 },
+    @{ Path = Join-Path $SeRoot "projectile_wind_launch_placeholder.wav"; Kind = "se.projectile.wind.launch"; Duration = 0.12; Seed = 2096 },
+    @{ Path = Join-Path $SeRoot "projectile_wind_destroy_placeholder.wav"; Kind = "se.projectile.wind.destroy"; Duration = 0.15; Seed = 2097 },
+    @{ Path = Join-Path $SeRoot "projectile_explosion_launch_placeholder.wav"; Kind = "se.projectile.explosion.launch"; Duration = 0.14; Seed = 2098 },
+    @{ Path = Join-Path $SeRoot "projectile_explosion_destroy_placeholder.wav"; Kind = "se.projectile.explosion.destroy"; Duration = 0.26; Seed = 2099 },
     @{ Path = Join-Path $SeRoot "projectile_impact_placeholder.wav"; Kind = "se.projectile.impact"; Duration = 0.16; Seed = 2026 },
     @{ Path = Join-Path $SeRoot "ring_guard_placeholder.wav"; Kind = "se.ring.guard"; Duration = 0.18; Seed = 2027 },
     @{ Path = Join-Path $SeRoot "ring_reflect_placeholder.wav"; Kind = "se.ring.reflect"; Duration = 0.22; Seed = 2028 },
+    @{ Path = Join-Path $SeRoot "ring_slow_bite_placeholder.wav"; Kind = "se.ring.slow_bite"; Duration = 0.42; Seed = 2100 },
     @{ Path = Join-Path $SeRoot "magic_cast_placeholder.wav"; Kind = "se.magic.cast"; Duration = 0.20; Seed = 2029 },
     @{ Path = Join-Path $SeRoot "magic_impact_placeholder.wav"; Kind = "se.magic.impact"; Duration = 0.22; Seed = 2030 },
     @{ Path = Join-Path $SeRoot "capture_throw_placeholder.wav"; Kind = "se.capture.throw"; Duration = 0.18; Seed = 2031 },
