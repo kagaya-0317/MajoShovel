@@ -1366,6 +1366,34 @@ bool SpellRingSystem::consumeItemDurability(SpellRingItem& item, int amount)
     return becameBroken;
 }
 
+int SpellRingSystem::applyExplosionDamageToItems(Vec2 position, float radius, int damage)
+{
+    const float safeRadius = std::max(0.0f, radius);
+    const int durabilityDamage = std::max(0, damage);
+    if (safeRadius <= 0.0f || durabilityDamage <= 0) {
+        return 0;
+    }
+
+    int damaged = 0;
+    for (SpellRingItem* itemPtr : runtimeItemsMutable()) {
+        if (itemPtr == nullptr || itemPtr->broken()) {
+            continue;
+        }
+
+        SpellRingItem& item = *itemPtr;
+        const float itemRadius = std::max(0.0f, item.hitRadius);
+        const float hitRadius = safeRadius + itemRadius;
+        if (distanceSquared(item.worldPosition, position) > hitRadius * hitRadius) {
+            continue;
+        }
+
+        item.actionFlashTimer = SpellRingItemActionFlashSeconds;
+        consumeItemDurability(item, durabilityDamage);
+        ++damaged;
+    }
+    return damaged;
+}
+
 std::vector<RingItemBreakEvent> SpellRingSystem::consumeItemBreakEvents()
 {
     std::vector<RingItemBreakEvent> events = std::move(itemBreakEvents_);

@@ -11,14 +11,13 @@ constexpr DungeonEventCavityProfile CombatTreasureCavity{6, 8, 0.58f, 3, 0.88f};
 constexpr DungeonEventCavityProfile CombatRoomCavity{6, 8, 0.60f, 3, 0.88f};
 constexpr DungeonEventCavityProfile BossRoomCavity{7, 9, 0.58f, 3, 0.92f};
 constexpr DungeonEventCavityProfile PuzzleRoomCavity{5, 7, 0.56f, 2, 0.76f};
-constexpr DungeonEventCavityProfile SafeCavernCavity{4, 6, 0.68f, 2, 0.70f};
 constexpr DungeonEventCavityProfile CoinRoomCavity{4, 6, 0.62f, 2, 0.66f};
 constexpr DungeonEventCavityProfile GuideCavity{3, 4, 0.68f, 1, 0.58f};
 constexpr DungeonEventCavityProfile BuriedWitchCavity{2, 3, 0.72f, 1, 0.45f};
 constexpr DungeonEventCavityProfile SurroundedWitchCavity{4, 5, 0.62f, 2, 0.65f};
 constexpr DungeonEventCavityProfile WitchCavity{3, 4, 0.66f, 1, 0.56f};
 
-constexpr std::array<DungeonEventDefinition, 15> Definitions{{
+constexpr std::array<DungeonEventDefinition, 14> Definitions{{
     {
         DungeonEventKind::SleepingEnemyTreasure,
         "sleeping_enemy_treasure",
@@ -102,20 +101,6 @@ constexpr std::array<DungeonEventDefinition, 15> Definitions{{
         5.0f,
         4.5f,
         PuzzleRoomCavity,
-    },
-    {
-        DungeonEventKind::SafeCavern,
-        "safe_cavern",
-        "休憩空洞",
-        DungeonEventCategory::SpecialRoom,
-        true,
-        false,
-        false,
-        false,
-        false,
-        4.0f,
-        3.6f,
-        SafeCavernCavity,
     },
     {
         DungeonEventKind::CoinRoom,
@@ -231,13 +216,12 @@ constexpr std::array<DungeonEventDefinition, 15> Definitions{{
     },
 }};
 
-constexpr std::array<DungeonEventKind, 12> FallbackCandidates{{
+constexpr std::array<DungeonEventKind, 11> FallbackCandidates{{
     DungeonEventKind::SleepingEnemyTreasure,
     DungeonEventKind::MonsterSwarmRoom,
     DungeonEventKind::NestRoom,
     DungeonEventKind::GlowingRockRoom,
     DungeonEventKind::ElectricCircuitRoom,
-    DungeonEventKind::WarpGuideMap,
     DungeonEventKind::BuriedWitch,
     DungeonEventKind::LostBaggageWitch,
     DungeonEventKind::ItemRequestWitch,
@@ -247,30 +231,27 @@ constexpr std::array<DungeonEventKind, 12> FallbackCandidates{{
 }};
 
 constexpr std::array<DungeonEventKind, 6> Stage01Candidates{{
-    DungeonEventKind::BuriedWitch,
-    DungeonEventKind::MonsterSwarmRoom,
     DungeonEventKind::GlowingRockRoom,
+    DungeonEventKind::BuriedWitch,
     DungeonEventKind::LostBaggageWitch,
-    DungeonEventKind::SleepingEnemyTreasure,
-    DungeonEventKind::SurroundedWitch,
-}};
-
-constexpr std::array<DungeonEventKind, 7> Stage02Candidates{{
+    DungeonEventKind::MonsterSwarmRoom,
     DungeonEventKind::ItemRequestWitch,
     DungeonEventKind::NestRoom,
-    DungeonEventKind::ElectricCircuitRoom,
+}};
+
+constexpr std::array<DungeonEventKind, 6> Stage02Candidates{{
     DungeonEventKind::HeavyRockWitch,
-    DungeonEventKind::SleepingEnemyTreasure,
     DungeonEventKind::ColdWitchCampfire,
+    DungeonEventKind::ElectricCircuitRoom,
+    DungeonEventKind::ItemRequestWitch,
+    DungeonEventKind::SurroundedWitch,
     DungeonEventKind::BossMonsterRoom,
 }};
 
-constexpr std::array<DungeonEventKind, 6> Stage03Candidates{{
-    DungeonEventKind::GlowingRockRoom,
-    DungeonEventKind::ElectricCircuitRoom,
+constexpr std::array<DungeonEventKind, 4> Stage03Candidates{{
     DungeonEventKind::SleepingEnemyTreasure,
-    DungeonEventKind::ColdWitchCampfire,
-    DungeonEventKind::HeavyRockWitch,
+    DungeonEventKind::MonsterSwarmRoom,
+    DungeonEventKind::NestRoom,
     DungeonEventKind::BossMonsterRoom,
 }};
 
@@ -284,6 +265,31 @@ constexpr std::array<DungeonEventKind, 9> Stage04Candidates{{
     DungeonEventKind::ColdWitchCampfire,
     DungeonEventKind::SurroundedWitch,
     DungeonEventKind::SleepingEnemyTreasure,
+}};
+
+constexpr std::array<DungeonEventFixedPlacement, 6> Stage01FixedPlacements{{
+    {DungeonEventKind::GlowingRockRoom, 0, 0.32f},
+    {DungeonEventKind::BuriedWitch, 0, 0.68f},
+    {DungeonEventKind::LostBaggageWitch, 1, 0.32f},
+    {DungeonEventKind::MonsterSwarmRoom, 1, 0.68f},
+    {DungeonEventKind::ItemRequestWitch, 2, 0.32f},
+    {DungeonEventKind::NestRoom, 2, 0.68f},
+}};
+
+constexpr std::array<DungeonEventFixedPlacement, 6> Stage02FixedPlacements{{
+    {DungeonEventKind::HeavyRockWitch, 0, 0.32f},
+    {DungeonEventKind::ColdWitchCampfire, 0, 0.68f},
+    {DungeonEventKind::ElectricCircuitRoom, 1, 0.32f},
+    {DungeonEventKind::ItemRequestWitch, 1, 0.68f},
+    {DungeonEventKind::SurroundedWitch, 2, 0.32f},
+    {DungeonEventKind::BossMonsterRoom, 2, 0.68f},
+}};
+
+constexpr std::array<DungeonEventFixedPlacement, 4> Stage03FixedPlacements{{
+    {DungeonEventKind::SleepingEnemyTreasure, 0, 0.32f},
+    {DungeonEventKind::MonsterSwarmRoom, 0, 0.68f},
+    {DungeonEventKind::NestRoom, 1, 0.50f},
+    {DungeonEventKind::BossMonsterRoom, 2, 0.50f},
 }};
 
 } // namespace
@@ -376,7 +382,7 @@ std::optional<DungeonEventKind> dungeonEventKindForSpecialRoom(SpecialRoomType t
     case SpecialRoomType::CoinRoom:
         return DungeonEventKind::CoinRoom;
     case SpecialRoomType::SafeCavern:
-        return DungeonEventKind::SafeCavern;
+        break;
     case SpecialRoomType::None:
         break;
     }
@@ -398,6 +404,20 @@ std::span<const DungeonEventKind> dungeonEventStageCandidateKinds(std::string_vi
         return Stage04Candidates;
     }
     return FallbackCandidates;
+}
+
+std::span<const DungeonEventFixedPlacement> dungeonEventFixedPlacements(std::string_view stageId)
+{
+    if (stageId == "stage_01_stardust") {
+        return Stage01FixedPlacements;
+    }
+    if (stageId == "stage_02_junk_magic") {
+        return Stage02FixedPlacements;
+    }
+    if (stageId == "stage_03_star_core") {
+        return Stage03FixedPlacements;
+    }
+    return {};
 }
 
 bool dungeonEventKindAllowedForStage(DungeonEventKind kind, std::string_view stageId)

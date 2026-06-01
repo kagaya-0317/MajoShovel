@@ -24,6 +24,7 @@ enum class DamageSource {
     SlimeAttack,
     SlimeContact,
     Projectile,
+    Explosion,
     Trap
 };
 
@@ -71,6 +72,8 @@ struct Player {
     bool spriteWalking = false;
     float damageFlash = 0.0f;
     float stunWakeTimer = 0.0f;
+    Vec2 knockbackVelocity{};
+    float knockbackTimer = 0.0f;
     double poisonDamageAccumulator = 0.0;
     double hotDamageAccumulator = 0.0;
     double bleedDamageAccumulator = 0.0;
@@ -81,6 +84,7 @@ struct Player {
     EntityStatus status;
 
     void applyDamage(int amount, DamageSource source);
+    void applyKnockback(Vec2 direction, float speed, float durationSeconds = 0.16f);
     int heal(int amount);
     [[nodiscard]] float effectiveRadius(float baseRadius) const;
     void update(

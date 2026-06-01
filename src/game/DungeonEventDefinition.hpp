@@ -15,7 +15,6 @@ enum class DungeonEventKind {
     BossMonsterRoom,
     GlowingRockRoom,
     ElectricCircuitRoom,
-    SafeCavern,
     CoinRoom,
     WarpGuideMap,
     BuriedWitch,
@@ -58,6 +57,12 @@ struct DungeonEventDefinition {
     DungeonEventCavityProfile cavity{};
 };
 
+struct DungeonEventFixedPlacement {
+    DungeonEventKind kind = DungeonEventKind::SleepingEnemyTreasure;
+    int sectionIndex = 0;
+    float sectionT = 0.5f;
+};
+
 std::span<const DungeonEventDefinition> dungeonEventDefinitions();
 const DungeonEventDefinition& dungeonEventDefinition(DungeonEventKind kind);
 const DungeonEventDefinition* findDungeonEventDefinitionById(std::string_view id);
@@ -74,5 +79,6 @@ DungeonEventCavityProfile dungeonEventCavityProfile(DungeonEventKind kind);
 std::optional<DungeonEventKind> dungeonEventKindForSpecialRoom(SpecialRoomType type, int index);
 std::span<const DungeonEventKind> dungeonEventStageCandidateKinds(std::string_view stageId);
 bool dungeonEventKindAllowedForStage(DungeonEventKind kind, std::string_view stageId);
+std::span<const DungeonEventFixedPlacement> dungeonEventFixedPlacements(std::string_view stageId);
 
 }

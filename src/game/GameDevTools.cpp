@@ -46,6 +46,7 @@ constexpr float EnemyHitboxCircleStep = 1.0f;
 constexpr float EnemyHitboxCircleRadiusStep = 1.0f;
 constexpr float EnemyHitboxMinRadius = 1.0f;
 constexpr float EnemyHitboxMaxRadius = 256.0f;
+constexpr int HitboxEditUndoLimit = 100;
 constexpr float DebugStoryTestDetailWidth = 360.0f;
 constexpr float DebugStoryTestRowHeight = 56.0f;
 constexpr float DebugStoryTestRowGap = 5.0f;
@@ -430,6 +431,7 @@ struct DebugStoryTestLayout {
 
 struct EnemyHitboxEditLayout {
     UiRect bounds{};
+    UiRect tabs{};
     UiRect listPanel{};
     UiRect search{};
     UiRect list{};
@@ -1351,7 +1353,12 @@ UiRect debugItemPickerSearchCountRect(const DebugItemPickerLayout& layout)
     return {{x, layout.search.pos.y}, {std::max(0.0f, layout.search.pos.x + layout.search.size.x - x), layout.search.size.y}};
 }
 
-std::filesystem::path enemyHitboxDataPath()
+std::filesystem::path hitboxDataPath()
+{
+    return std::filesystem::path("data") / "hitboxes.cfg";
+}
+
+std::filesystem::path legacyEnemyHitboxDataPath()
 {
     return std::filesystem::path("data") / "enemy_hitboxes.cfg";
 }
@@ -1362,6 +1369,7 @@ EnemyHitboxEditLayout makeEnemyHitboxEditLayout(int screenWidth, int screenHeigh
     const float height = static_cast<float>(screenHeight);
     EnemyHitboxEditLayout layout;
     layout.bounds = {{0.0f, 0.0f}, {width, height}};
+    layout.tabs = {{22.0f, 44.0f}, {280.0f, 30.0f}};
     layout.footer = {{0.0f, height - EnemyHitboxFooterHeight}, {width, EnemyHitboxFooterHeight}};
     const float top = EnemyHitboxHeaderHeight;
     const float bottom = height - EnemyHitboxFooterHeight - EnemyHitboxPanelMargin;
@@ -1427,6 +1435,7 @@ UiRect enemyHitboxListRowRect(const EnemyHitboxEditLayout& layout, int index, fl
 
 float enemyHitboxListContentHeight(const EnemyHitboxEditLayout& layout, int itemCount)
 {
+    (void)layout;
     if (itemCount <= 0) {
         return 0.0f;
     }
@@ -1471,6 +1480,16 @@ UiRect enemyHitboxDetailButtonRect(const EnemyHitboxEditLayout& layout, int inde
             layout.detail.pos.y + 114.0f + static_cast<float>(row) * (EnemyHitboxButtonHeight + EnemyHitboxButtonGap),
         },
         {width, EnemyHitboxButtonHeight},
+    };
+}
+
+UiRect hitboxEditTabRect(const EnemyHitboxEditLayout& layout, int index)
+{
+    constexpr float Gap = 8.0f;
+    const float width = (layout.tabs.size.x - Gap) * 0.5f;
+    return {
+        {layout.tabs.pos.x + static_cast<float>(index) * (width + Gap), layout.tabs.pos.y},
+        {width, layout.tabs.size.y},
     };
 }
 
@@ -1916,6 +1935,24 @@ bool objectImageScaleObjectMatchesSearch(const ObjectDefinition& object, std::st
     return uiSearchTextContains(objectImageScaleDisplayName(object), normalizedQuery);
 }
 
+bool objectHitboxObjectMatchesSearch(const ObjectDefinition& object, std::string_view normalizedQuery)
+{
+    return uiSearchTextContains(objectImageScaleDisplayName(object), normalizedQuery);
+}
+
+float objectHitboxDefaultRadiusFor(const ObjectDefinition& object)
+{
+    if (object.id == "item_torch") {
+        return 13.0f;
+    }
+    return 11.0f;
+}
+
+HitboxProfile fallbackObjectHitboxProfileFor(const ObjectDefinition& object)
+{
+    return singleCircleHitbox(objectHitboxDefaultRadiusFor(object));
+}
+
 std::string enemyHitboxDisplayName(const EnemyDefinition& enemy)
 {
     return enemy.name.empty() ? enemy.id : enemy.name;
@@ -1956,17 +1993,12 @@ Enemy makeEnemyHitboxPreviewEnemy(const EnemyDefinition& definition, const Runti
     return enemy;
 }
 
-EnemyHitboxProfile fallbackEnemyHitboxProfileFor(const EnemyDefinition& definition, const RuntimeBalance& balance)
+HitboxProfile fallbackHitboxProfileFor(const EnemyDefinition& definition, const RuntimeBalance& balance)
 {
-    EnemyHitboxProfile profile;
-    profile.circles.push_back({
-        {},
-        std::max(EnemyHitboxMinRadius, enemyHitboxDefaultRadiusFor(definition, balance)),
-    });
-    return profile;
+    return singleCircleHitbox(std::max(EnemyHitboxMinRadius, enemyHitboxDefaultRadiusFor(definition, balance)));
 }
 
-EnemyHitCircle clampEnemyHitboxEditorCircle(EnemyHitCircle circle)
+HitCircle clampEnemyHitboxEditorCircle(HitCircle circle)
 {
     circle.offset.x = clamp(circle.offset.x, -512.0f, 512.0f);
     circle.offset.y = clamp(circle.offset.y, -512.0f, 512.0f);
@@ -1974,16 +2006,27 @@ EnemyHitCircle clampEnemyHitboxEditorCircle(EnemyHitCircle circle)
     return circle;
 }
 
-std::vector<EnemyHitCircle> enemyHitboxEditCirclesFor(
-    const EnemyHitboxCatalog& catalog,
+std::vector<HitCircle> enemyHitboxEditCirclesFor(
+    const HitboxCatalog& catalog,
     const EnemyDefinition& definition,
     const RuntimeBalance& balance)
 {
-    const auto it = catalog.profiles.find(definition.id);
-    if (it != catalog.profiles.end() && !it->second.circles.empty()) {
+    const auto it = catalog.enemies.find(definition.id);
+    if (it != catalog.enemies.end() && !it->second.circles.empty()) {
         return it->second.circles;
     }
-    return fallbackEnemyHitboxProfileFor(definition, balance).circles;
+    return fallbackHitboxProfileFor(definition, balance).circles;
+}
+
+std::vector<HitCircle> objectHitboxEditCirclesFor(
+    const HitboxCatalog& catalog,
+    const ObjectDefinition& object)
+{
+    const auto it = catalog.objects.find(object.id);
+    if (it != catalog.objects.end() && !it->second.circles.empty()) {
+        return it->second.circles;
+    }
+    return fallbackObjectHitboxProfileFor(object).circles;
 }
 
 bool debugStoryTestIsTutorialTrigger(std::string_view trigger)
@@ -2794,40 +2837,50 @@ void Game::renderObjectImageScaleEditScreen(Renderer& renderer) const
     }
 }
 
-bool Game::loadEnemyHitboxData()
+bool Game::loadHitboxData()
 {
     std::string message;
-    const bool loaded = loadEnemyHitboxCatalog(enemyHitboxDataPath(), enemyHitboxes_, message);
-    enemies_.setHitboxCatalog(&enemyHitboxes_);
+    bool loaded = loadHitboxCatalog(hitboxDataPath(), hitboxes_, message);
+    if (!loaded && std::filesystem::exists(legacyEnemyHitboxDataPath())) {
+        loaded = loadHitboxCatalog(legacyEnemyHitboxDataPath(), hitboxes_, message);
+    }
+    enemies_.setHitboxCatalog(&hitboxes_);
     enemyHitboxDirty_ = false;
-    enemyHitboxStatus_ = loaded ? message : "Enemy hitbox fallback active";
+    hitboxEditUndoStack_.clear();
+    hitboxEditRedoStack_.clear();
+    enemyHitboxStatus_ = loaded ? message : "Hitbox fallback active";
     rebuildEnemyHitboxEditList();
     return loaded;
 }
 
-bool Game::saveEnemyHitboxData(std::string& message)
+bool Game::saveHitboxData(std::string& message)
 {
-    const bool saved = saveEnemyHitboxCatalog(enemyHitboxDataPath(), enemyHitboxes_, message);
+    const bool saved = saveHitboxCatalog(hitboxDataPath(), hitboxes_, message);
     if (saved) {
         enemyHitboxDirty_ = false;
     }
     enemyHitboxStatus_ = message;
-    enemies_.setHitboxCatalog(&enemyHitboxes_);
+    enemies_.setHitboxCatalog(&hitboxes_);
     return saved;
 }
 
 void Game::rebuildEnemyHitboxEditList()
 {
     std::string previousSelection;
-    if (enemyHitboxSelectedEnemyIndex_ >= 0 &&
+    if (hitboxEditTab_ == HitboxEditTab::Enemies &&
+        enemyHitboxSelectedEnemyIndex_ >= 0 &&
         enemyHitboxSelectedEnemyIndex_ < static_cast<int>(enemyHitboxEnemyIds_.size())) {
         previousSelection = enemyHitboxEnemyIds_[static_cast<std::size_t>(enemyHitboxSelectedEnemyIndex_)];
+    } else if (hitboxEditTab_ == HitboxEditTab::Objects &&
+        objectHitboxSelectedObjectIndex_ >= 0 &&
+        objectHitboxSelectedObjectIndex_ < static_cast<int>(objectHitboxObjectIds_.size())) {
+        previousSelection = objectHitboxObjectIds_[static_cast<std::size_t>(objectHitboxSelectedObjectIndex_)];
     }
 
     enemyHitboxAllEnemyIds_.clear();
     enemyHitboxAllEnemyIds_.reserve(enemyCatalog_.enemies.size());
     std::unordered_set<std::string> seen;
-    seen.reserve(enemyCatalog_.enemies.size());
+    seen.reserve(std::max(enemyCatalog_.enemies.size(), objectCatalog_.objects.size()));
     for (const EnemyDefinition& enemy : enemyCatalog_.enemies) {
         if (enemy.id.empty() || !seen.insert(enemy.id).second) {
             continue;
@@ -2847,19 +2900,45 @@ void Game::rebuildEnemyHitboxEditList()
         return left < right;
     });
 
+    seen.clear();
+    objectHitboxAllObjectIds_.clear();
+    objectHitboxAllObjectIds_.reserve(objectCatalog_.objects.size());
+    for (const ObjectDefinition& object : objectCatalog_.objects) {
+        if (object.id.empty() || !seen.insert(object.id).second) {
+            continue;
+        }
+        objectHitboxAllObjectIds_.push_back(object.id);
+    }
+    std::sort(objectHitboxAllObjectIds_.begin(), objectHitboxAllObjectIds_.end(), [this](const std::string& left, const std::string& right) {
+        const auto lhs = objectCatalog_.objectsById.find(left);
+        const auto rhs = objectCatalog_.objectsById.find(right);
+        if (lhs == objectCatalog_.objectsById.end() || rhs == objectCatalog_.objectsById.end()) {
+            return left < right;
+        }
+        if (lhs->second.imageNumber != rhs->second.imageNumber) {
+            return lhs->second.imageNumber < rhs->second.imageNumber;
+        }
+        return left < right;
+    });
+
     applyEnemyHitboxEditFilter(previousSelection);
 }
 
 void Game::applyEnemyHitboxEditFilter(std::string_view preferredSelection)
 {
     std::string previousSelection(preferredSelection);
-    if (previousSelection.empty() &&
+    if (previousSelection.empty() && hitboxEditTab_ == HitboxEditTab::Enemies &&
         enemyHitboxSelectedEnemyIndex_ >= 0 &&
         enemyHitboxSelectedEnemyIndex_ < static_cast<int>(enemyHitboxEnemyIds_.size())) {
         previousSelection = enemyHitboxEnemyIds_[static_cast<std::size_t>(enemyHitboxSelectedEnemyIndex_)];
+    } else if (previousSelection.empty() && hitboxEditTab_ == HitboxEditTab::Objects &&
+        objectHitboxSelectedObjectIndex_ >= 0 &&
+        objectHitboxSelectedObjectIndex_ < static_cast<int>(objectHitboxObjectIds_.size())) {
+        previousSelection = objectHitboxObjectIds_[static_cast<std::size_t>(objectHitboxSelectedObjectIndex_)];
     }
 
     enemyHitboxEnemyIds_.clear();
+    objectHitboxObjectIds_.clear();
     const std::string normalizedQuery = normalizedUiSearchText(enemyHitboxSearchInput_.text);
     for (const std::string& enemyId : enemyHitboxAllEnemyIds_) {
         const auto it = enemyCatalog_.enemiesById.find(enemyId);
@@ -2868,18 +2947,131 @@ void Game::applyEnemyHitboxEditFilter(std::string_view preferredSelection)
             enemyHitboxEnemyIds_.push_back(enemyId);
         }
     }
+    for (const std::string& objectId : objectHitboxAllObjectIds_) {
+        const auto it = objectCatalog_.objectsById.find(objectId);
+        if (it != objectCatalog_.objectsById.end() &&
+            objectHitboxObjectMatchesSearch(it->second, normalizedQuery)) {
+            objectHitboxObjectIds_.push_back(objectId);
+        }
+    }
 
     enemyHitboxSelectedEnemyIndex_ = -1;
+    objectHitboxSelectedObjectIndex_ = -1;
     if (!previousSelection.empty()) {
-        const auto it = std::find(enemyHitboxEnemyIds_.begin(), enemyHitboxEnemyIds_.end(), previousSelection);
-        if (it != enemyHitboxEnemyIds_.end()) {
-            enemyHitboxSelectedEnemyIndex_ = static_cast<int>(std::distance(enemyHitboxEnemyIds_.begin(), it));
+        if (hitboxEditTab_ == HitboxEditTab::Enemies) {
+            const auto it = std::find(enemyHitboxEnemyIds_.begin(), enemyHitboxEnemyIds_.end(), previousSelection);
+            if (it != enemyHitboxEnemyIds_.end()) {
+                enemyHitboxSelectedEnemyIndex_ = static_cast<int>(std::distance(enemyHitboxEnemyIds_.begin(), it));
+            }
+        } else {
+            const auto it = std::find(objectHitboxObjectIds_.begin(), objectHitboxObjectIds_.end(), previousSelection);
+            if (it != objectHitboxObjectIds_.end()) {
+                objectHitboxSelectedObjectIndex_ = static_cast<int>(std::distance(objectHitboxObjectIds_.begin(), it));
+            }
         }
     }
     if (enemyHitboxSelectedEnemyIndex_ < 0 && !enemyHitboxEnemyIds_.empty()) {
         enemyHitboxSelectedEnemyIndex_ = 0;
     }
+    if (objectHitboxSelectedObjectIndex_ < 0 && !objectHitboxObjectIds_.empty()) {
+        objectHitboxSelectedObjectIndex_ = 0;
+    }
     enemyHitboxSelectedCircleIndex_ = 0;
+}
+
+HitboxEditSnapshot Game::makeHitboxEditSnapshot() const
+{
+    HitboxEditSnapshot snapshot;
+    snapshot.catalog = hitboxes_;
+    snapshot.tab = hitboxEditTab_;
+    snapshot.selectedCircleIndex = enemyHitboxSelectedCircleIndex_;
+    if (hitboxEditTab_ == HitboxEditTab::Objects) {
+        if (objectHitboxSelectedObjectIndex_ >= 0 &&
+            objectHitboxSelectedObjectIndex_ < static_cast<int>(objectHitboxObjectIds_.size())) {
+            snapshot.selectedId = objectHitboxObjectIds_[static_cast<std::size_t>(objectHitboxSelectedObjectIndex_)];
+        }
+    } else if (enemyHitboxSelectedEnemyIndex_ >= 0 &&
+        enemyHitboxSelectedEnemyIndex_ < static_cast<int>(enemyHitboxEnemyIds_.size())) {
+        snapshot.selectedId = enemyHitboxEnemyIds_[static_cast<std::size_t>(enemyHitboxSelectedEnemyIndex_)];
+    }
+    return snapshot;
+}
+
+void Game::restoreHitboxEditSnapshot(const HitboxEditSnapshot& snapshot)
+{
+    hitboxes_ = snapshot.catalog;
+    hitboxEditTab_ = snapshot.tab;
+    enemyHitboxDraggingCircle_ = false;
+    applyEnemyHitboxEditFilter(snapshot.selectedId);
+
+    int circleCount = 0;
+    if (hitboxEditTab_ == HitboxEditTab::Objects) {
+        if (objectHitboxSelectedObjectIndex_ >= 0 &&
+            objectHitboxSelectedObjectIndex_ < static_cast<int>(objectHitboxObjectIds_.size())) {
+            const std::string& objectId = objectHitboxObjectIds_[static_cast<std::size_t>(objectHitboxSelectedObjectIndex_)];
+            const auto it = objectCatalog_.objectsById.find(objectId);
+            if (it != objectCatalog_.objectsById.end()) {
+                circleCount = static_cast<int>(objectHitboxEditCirclesFor(hitboxes_, it->second).size());
+            }
+        }
+    } else if (enemyHitboxSelectedEnemyIndex_ >= 0 &&
+        enemyHitboxSelectedEnemyIndex_ < static_cast<int>(enemyHitboxEnemyIds_.size())) {
+        const std::string& enemyId = enemyHitboxEnemyIds_[static_cast<std::size_t>(enemyHitboxSelectedEnemyIndex_)];
+        const auto it = enemyCatalog_.enemiesById.find(enemyId);
+        if (it != enemyCatalog_.enemiesById.end()) {
+            circleCount = static_cast<int>(enemyHitboxEditCirclesFor(hitboxes_, it->second, balance_).size());
+        }
+    }
+
+    enemyHitboxSelectedCircleIndex_ = circleCount > 0
+        ? std::clamp(snapshot.selectedCircleIndex, 0, circleCount - 1)
+        : -1;
+    enemyHitboxDirty_ = true;
+    enemies_.setHitboxCatalog(&hitboxes_);
+}
+
+void Game::pushHitboxEditUndoSnapshot()
+{
+    HitboxEditSnapshot snapshot = makeHitboxEditSnapshot();
+    if (!hitboxEditUndoStack_.empty() && hitboxEditUndoStack_.back() == snapshot) {
+        return;
+    }
+
+    hitboxEditUndoStack_.push_back(std::move(snapshot));
+    if (static_cast<int>(hitboxEditUndoStack_.size()) > HitboxEditUndoLimit) {
+        hitboxEditUndoStack_.erase(hitboxEditUndoStack_.begin());
+    }
+    hitboxEditRedoStack_.clear();
+}
+
+bool Game::undoHitboxEdit()
+{
+    if (hitboxEditUndoStack_.empty()) {
+        return false;
+    }
+
+    hitboxEditRedoStack_.push_back(makeHitboxEditSnapshot());
+    const HitboxEditSnapshot snapshot = std::move(hitboxEditUndoStack_.back());
+    hitboxEditUndoStack_.pop_back();
+    restoreHitboxEditSnapshot(snapshot);
+    return true;
+}
+
+bool Game::redoHitboxEdit()
+{
+    if (hitboxEditRedoStack_.empty()) {
+        return false;
+    }
+
+    hitboxEditUndoStack_.push_back(makeHitboxEditSnapshot());
+    if (static_cast<int>(hitboxEditUndoStack_.size()) > HitboxEditUndoLimit) {
+        hitboxEditUndoStack_.erase(hitboxEditUndoStack_.begin());
+    }
+
+    const HitboxEditSnapshot snapshot = std::move(hitboxEditRedoStack_.back());
+    hitboxEditRedoStack_.pop_back();
+    restoreHitboxEditSnapshot(snapshot);
+    return true;
 }
 
 bool Game::handleEnemyHitboxEditEvent(const SDL_Event& event)
@@ -2888,7 +3080,7 @@ bool Game::handleEnemyHitboxEditEvent(const SDL_Event& event)
         return false;
     }
 
-    auto selectedDefinition = [this]() -> const EnemyDefinition* {
+    auto selectedEnemyDefinition = [this]() -> const EnemyDefinition* {
         if (enemyHitboxSelectedEnemyIndex_ < 0 ||
             enemyHitboxSelectedEnemyIndex_ >= static_cast<int>(enemyHitboxEnemyIds_.size())) {
             return nullptr;
@@ -2897,14 +3089,51 @@ bool Game::handleEnemyHitboxEditEvent(const SDL_Event& event)
         const auto it = enemyCatalog_.enemiesById.find(enemyId);
         return it != enemyCatalog_.enemiesById.end() ? &it->second : nullptr;
     };
-    auto ensureProfile = [this, &selectedDefinition]() -> EnemyHitboxProfile* {
-        const EnemyDefinition* definition = selectedDefinition();
+    auto selectedObjectDefinition = [this]() -> const ObjectDefinition* {
+        if (objectHitboxSelectedObjectIndex_ < 0 ||
+            objectHitboxSelectedObjectIndex_ >= static_cast<int>(objectHitboxObjectIds_.size())) {
+            return nullptr;
+        }
+        const std::string& objectId = objectHitboxObjectIds_[static_cast<std::size_t>(objectHitboxSelectedObjectIndex_)];
+        const auto it = objectCatalog_.objectsById.find(objectId);
+        return it != objectCatalog_.objectsById.end() ? &it->second : nullptr;
+    };
+    auto selectedSubjectCircles = [this, &selectedEnemyDefinition, &selectedObjectDefinition]() -> std::vector<HitCircle> {
+        if (hitboxEditTab_ == HitboxEditTab::Objects) {
+            if (const ObjectDefinition* object = selectedObjectDefinition()) {
+                return objectHitboxEditCirclesFor(hitboxes_, *object);
+            }
+            return {};
+        }
+        if (const EnemyDefinition* definition = selectedEnemyDefinition()) {
+            return enemyHitboxEditCirclesFor(hitboxes_, *definition, balance_);
+        }
+        return {};
+    };
+    auto ensureProfile = [this, &selectedEnemyDefinition, &selectedObjectDefinition]() -> HitboxProfile* {
+        if (hitboxEditTab_ == HitboxEditTab::Objects) {
+            const ObjectDefinition* object = selectedObjectDefinition();
+            if (object == nullptr || object->id.empty()) {
+                return nullptr;
+            }
+            HitboxProfile& profile = hitboxes_.objects[object->id];
+            if (profile.circles.empty()) {
+                profile = fallbackObjectHitboxProfileFor(*object);
+            }
+            enemyHitboxSelectedCircleIndex_ = std::clamp(
+                enemyHitboxSelectedCircleIndex_,
+                0,
+                std::max(0, static_cast<int>(profile.circles.size()) - 1));
+            return &profile;
+        }
+
+        const EnemyDefinition* definition = selectedEnemyDefinition();
         if (definition == nullptr || definition->id.empty()) {
             return nullptr;
         }
-        EnemyHitboxProfile& profile = enemyHitboxes_.profiles[definition->id];
+        HitboxProfile& profile = hitboxes_.enemies[definition->id];
         if (profile.circles.empty()) {
-            profile = fallbackEnemyHitboxProfileFor(*definition, balance_);
+            profile = fallbackHitboxProfileFor(*definition, balance_);
         }
         enemyHitboxSelectedCircleIndex_ = std::clamp(
             enemyHitboxSelectedCircleIndex_,
@@ -2916,48 +3145,66 @@ bool Game::handleEnemyHitboxEditEvent(const SDL_Event& event)
     if (event.type == SDL_EVENT_KEY_DOWN && !event.key.repeat) {
         const SDL_Keymod mods = SDL_GetModState();
         const bool ctrlDown = (mods & SDL_KMOD_CTRL) != 0;
+        if (ctrlDown && event.key.scancode == SDL_SCANCODE_Z) {
+            enemyHitboxStatus_ = undoHitboxEdit() ? "Undo" : "Nothing to undo";
+            return true;
+        }
+        if (ctrlDown && event.key.scancode == SDL_SCANCODE_Y) {
+            enemyHitboxStatus_ = redoHitboxEdit() ? "Redo" : "Nothing to redo";
+            return true;
+        }
         if (ctrlDown && event.key.scancode == SDL_SCANCODE_C) {
-            if (const EnemyDefinition* definition = selectedDefinition()) {
-                enemyHitboxClipboard_ = enemyHitboxEditCirclesFor(enemyHitboxes_, *definition, balance_);
+            enemyHitboxClipboard_ = selectedSubjectCircles();
+            if (!enemyHitboxClipboard_.empty()) {
                 enemyHitboxStatus_ = "Hitbox copied";
             }
             return true;
         }
         if (ctrlDown && event.key.scancode == SDL_SCANCODE_V) {
-            const EnemyDefinition* definition = selectedDefinition();
-            if (definition != nullptr && !enemyHitboxClipboard_.empty()) {
-                EnemyHitboxProfile& profile = enemyHitboxes_.profiles[definition->id];
-                profile.circles = enemyHitboxClipboard_;
-                if (static_cast<int>(profile.circles.size()) > EnemyHitboxMaxCircles) {
-                    profile.circles.resize(EnemyHitboxMaxCircles);
+            if (!enemyHitboxClipboard_.empty() && !selectedSubjectCircles().empty()) {
+                pushHitboxEditUndoSnapshot();
+                HitboxProfile* targetProfile = ensureProfile();
+                if (targetProfile == nullptr) {
+                    return true;
                 }
-                for (EnemyHitCircle& circle : profile.circles) {
+                HitboxProfile& profile = *targetProfile;
+                profile.circles = enemyHitboxClipboard_;
+                if (static_cast<int>(profile.circles.size()) > HitboxMaxCircles) {
+                    profile.circles.resize(HitboxMaxCircles);
+                }
+                for (HitCircle& circle : profile.circles) {
                     circle = clampEnemyHitboxEditorCircle(circle);
                 }
                 enemyHitboxSelectedCircleIndex_ = 0;
                 enemyHitboxDirty_ = true;
-                enemies_.setHitboxCatalog(&enemyHitboxes_);
+                enemies_.setHitboxCatalog(&hitboxes_);
                 enemyHitboxStatus_ = "Hitbox pasted";
             }
             return true;
         }
         if (event.key.scancode == SDL_SCANCODE_A) {
-            if (EnemyHitboxProfile* profile = ensureProfile()) {
-                if (static_cast<int>(profile->circles.size()) < EnemyHitboxMaxCircles) {
+            const std::vector<HitCircle> currentCircles = selectedSubjectCircles();
+            if (!currentCircles.empty() && static_cast<int>(currentCircles.size()) < HitboxMaxCircles) {
+                pushHitboxEditUndoSnapshot();
+                if (HitboxProfile* profile = ensureProfile()) {
                     profile->circles.push_back({{}, 10.0f});
                     enemyHitboxSelectedCircleIndex_ = static_cast<int>(profile->circles.size()) - 1;
                     enemyHitboxDirty_ = true;
-                    enemies_.setHitboxCatalog(&enemyHitboxes_);
+                    enemies_.setHitboxCatalog(&hitboxes_);
                     enemyHitboxStatus_ = "Circle added";
                 }
+            } else if (!currentCircles.empty()) {
+                enemyHitboxStatus_ = "Circle limit reached";
             }
             return true;
         }
         if (event.key.scancode == SDL_SCANCODE_DELETE) {
-            if (EnemyHitboxProfile* profile = ensureProfile()) {
-                if (!profile->circles.empty() &&
-                    enemyHitboxSelectedCircleIndex_ >= 0 &&
-                    enemyHitboxSelectedCircleIndex_ < static_cast<int>(profile->circles.size())) {
+            const std::vector<HitCircle> currentCircles = selectedSubjectCircles();
+            if (!currentCircles.empty() &&
+                enemyHitboxSelectedCircleIndex_ >= 0 &&
+                enemyHitboxSelectedCircleIndex_ < static_cast<int>(currentCircles.size())) {
+                pushHitboxEditUndoSnapshot();
+                if (HitboxProfile* profile = ensureProfile()) {
                     profile->circles.erase(profile->circles.begin() + enemyHitboxSelectedCircleIndex_);
                     enemyHitboxSelectedCircleIndex_ = std::min(
                         enemyHitboxSelectedCircleIndex_,
@@ -2966,7 +3213,7 @@ bool Game::handleEnemyHitboxEditEvent(const SDL_Event& event)
                         enemyHitboxSelectedCircleIndex_ = -1;
                     }
                     enemyHitboxDirty_ = true;
-                    enemies_.setHitboxCatalog(&enemyHitboxes_);
+                    enemies_.setHitboxCatalog(&hitboxes_);
                     enemyHitboxStatus_ = "Circle deleted";
                 }
             }
@@ -2975,21 +3222,31 @@ bool Game::handleEnemyHitboxEditEvent(const SDL_Event& event)
     }
 
     std::string previousSelection;
-    if (enemyHitboxSelectedEnemyIndex_ >= 0 &&
+    if (hitboxEditTab_ == HitboxEditTab::Enemies &&
+        enemyHitboxSelectedEnemyIndex_ >= 0 &&
         enemyHitboxSelectedEnemyIndex_ < static_cast<int>(enemyHitboxEnemyIds_.size())) {
         previousSelection = enemyHitboxEnemyIds_[static_cast<std::size_t>(enemyHitboxSelectedEnemyIndex_)];
+    } else if (hitboxEditTab_ == HitboxEditTab::Objects &&
+        objectHitboxSelectedObjectIndex_ >= 0 &&
+        objectHitboxSelectedObjectIndex_ < static_cast<int>(objectHitboxObjectIds_.size())) {
+        previousSelection = objectHitboxObjectIds_[static_cast<std::size_t>(objectHitboxSelectedObjectIndex_)];
     }
     const std::string previousText = enemyHitboxSearchInput_.text;
     const bool consumed = handleUiTextInputEvent(enemyHitboxSearchInput_, event, 48);
     if (enemyHitboxSearchInput_.text != previousText) {
         applyEnemyHitboxEditFilter(previousSelection);
-        enemyHitboxScrollOffset_ = 0.0f;
+        float& scrollOffset = hitboxEditTab_ == HitboxEditTab::Objects ? objectHitboxScrollOffset_ : enemyHitboxScrollOffset_;
+        int selectedIndex = hitboxEditTab_ == HitboxEditTab::Objects ? objectHitboxSelectedObjectIndex_ : enemyHitboxSelectedEnemyIndex_;
+        int itemCount = hitboxEditTab_ == HitboxEditTab::Objects
+            ? static_cast<int>(objectHitboxObjectIds_.size())
+            : static_cast<int>(enemyHitboxEnemyIds_.size());
+        scrollOffset = 0.0f;
         const EnemyHitboxEditLayout layout = makeEnemyHitboxEditLayout(camera_.width(), camera_.height());
         keepEnemyHitboxSelectionVisible(
             layout,
-            enemyHitboxSelectedEnemyIndex_,
-            static_cast<int>(enemyHitboxEnemyIds_.size()),
-            enemyHitboxScrollOffset_);
+            selectedIndex,
+            itemCount,
+            scrollOffset);
     }
     return consumed;
 }
@@ -3021,9 +3278,8 @@ void Game::enterEnemyHitboxEditMode()
         enemyHitboxEditReturnMode_ = ScreenMode::Playing;
     }
     enemyHitboxScrollOffset_ = std::max(0.0f, enemyHitboxScrollOffset_);
-    enemyHitboxStatus_ = enemyHitboxEnemyIds_.empty()
-        ? "Enemies DB has no editable enemies"
-        : "Enemy hitbox edit";
+    objectHitboxScrollOffset_ = std::max(0.0f, objectHitboxScrollOffset_);
+    enemyHitboxStatus_ = "Hitbox edit";
     mode_ = ScreenMode::EnemyHitboxEdit;
     focusUiTextInput(enemyHitboxSearchInput_);
 }
@@ -3052,11 +3308,35 @@ void Game::updateEnemyHitboxEditScreen(const Input& input, UiContext& ui)
     }
 
     const EnemyHitboxEditLayout layout = makeEnemyHitboxEditLayout(camera_.width(), camera_.height());
-    int itemCount = static_cast<int>(enemyHitboxEnemyIds_.size());
-    float maxScroll = enemyHitboxMaxScroll(layout, itemCount);
-    enemyHitboxScrollOffset_ = clamp(enemyHitboxScrollOffset_, 0.0f, maxScroll);
+    if (ui.pressed(hitboxEditTabRect(layout, 0)) && hitboxEditTab_ != HitboxEditTab::Enemies) {
+        hitboxEditTab_ = HitboxEditTab::Enemies;
+        enemyHitboxSelectedCircleIndex_ = 0;
+        enemyHitboxDraggingCircle_ = false;
+        enemyHitboxStatus_ = "Enemies";
+        focusUiTextInput(enemyHitboxSearchInput_);
+    }
+    if (ui.pressed(hitboxEditTabRect(layout, 1)) && hitboxEditTab_ != HitboxEditTab::Objects) {
+        hitboxEditTab_ = HitboxEditTab::Objects;
+        enemyHitboxSelectedCircleIndex_ = 0;
+        enemyHitboxDraggingCircle_ = false;
+        enemyHitboxStatus_ = "Objects";
+        focusUiTextInput(enemyHitboxSearchInput_);
+    }
 
-    auto selectedDefinition = [this]() -> const EnemyDefinition* {
+    std::vector<std::string>& itemIds = hitboxEditTab_ == HitboxEditTab::Objects
+        ? objectHitboxObjectIds_
+        : enemyHitboxEnemyIds_;
+    int& selectedIndex = hitboxEditTab_ == HitboxEditTab::Objects
+        ? objectHitboxSelectedObjectIndex_
+        : enemyHitboxSelectedEnemyIndex_;
+    float& scrollOffset = hitboxEditTab_ == HitboxEditTab::Objects
+        ? objectHitboxScrollOffset_
+        : enemyHitboxScrollOffset_;
+    int itemCount = static_cast<int>(itemIds.size());
+    float maxScroll = enemyHitboxMaxScroll(layout, itemCount);
+    scrollOffset = clamp(scrollOffset, 0.0f, maxScroll);
+
+    auto selectedEnemyDefinition = [this]() -> const EnemyDefinition* {
         if (enemyHitboxSelectedEnemyIndex_ < 0 ||
             enemyHitboxSelectedEnemyIndex_ >= static_cast<int>(enemyHitboxEnemyIds_.size())) {
             return nullptr;
@@ -3065,14 +3345,51 @@ void Game::updateEnemyHitboxEditScreen(const Input& input, UiContext& ui)
         const auto it = enemyCatalog_.enemiesById.find(enemyId);
         return it != enemyCatalog_.enemiesById.end() ? &it->second : nullptr;
     };
-    auto ensureProfile = [this, &selectedDefinition]() -> EnemyHitboxProfile* {
-        const EnemyDefinition* definition = selectedDefinition();
+    auto selectedObjectDefinition = [this]() -> const ObjectDefinition* {
+        if (objectHitboxSelectedObjectIndex_ < 0 ||
+            objectHitboxSelectedObjectIndex_ >= static_cast<int>(objectHitboxObjectIds_.size())) {
+            return nullptr;
+        }
+        const std::string& objectId = objectHitboxObjectIds_[static_cast<std::size_t>(objectHitboxSelectedObjectIndex_)];
+        const auto it = objectCatalog_.objectsById.find(objectId);
+        return it != objectCatalog_.objectsById.end() ? &it->second : nullptr;
+    };
+    auto selectedSubjectCircles = [this, &selectedEnemyDefinition, &selectedObjectDefinition]() -> std::vector<HitCircle> {
+        if (hitboxEditTab_ == HitboxEditTab::Objects) {
+            if (const ObjectDefinition* object = selectedObjectDefinition()) {
+                return objectHitboxEditCirclesFor(hitboxes_, *object);
+            }
+            return {};
+        }
+        if (const EnemyDefinition* definition = selectedEnemyDefinition()) {
+            return enemyHitboxEditCirclesFor(hitboxes_, *definition, balance_);
+        }
+        return {};
+    };
+    auto ensureProfile = [this, &selectedEnemyDefinition, &selectedObjectDefinition]() -> HitboxProfile* {
+        if (hitboxEditTab_ == HitboxEditTab::Objects) {
+            const ObjectDefinition* object = selectedObjectDefinition();
+            if (object == nullptr || object->id.empty()) {
+                return nullptr;
+            }
+            HitboxProfile& profile = hitboxes_.objects[object->id];
+            if (profile.circles.empty()) {
+                profile = fallbackObjectHitboxProfileFor(*object);
+            }
+            enemyHitboxSelectedCircleIndex_ = std::clamp(
+                enemyHitboxSelectedCircleIndex_,
+                0,
+                std::max(0, static_cast<int>(profile.circles.size()) - 1));
+            return &profile;
+        }
+
+        const EnemyDefinition* definition = selectedEnemyDefinition();
         if (definition == nullptr || definition->id.empty()) {
             return nullptr;
         }
-        EnemyHitboxProfile& profile = enemyHitboxes_.profiles[definition->id];
+        HitboxProfile& profile = hitboxes_.enemies[definition->id];
         if (profile.circles.empty()) {
-            profile = fallbackEnemyHitboxProfileFor(*definition, balance_);
+            profile = fallbackHitboxProfileFor(*definition, balance_);
         }
         enemyHitboxSelectedCircleIndex_ = std::clamp(
             enemyHitboxSelectedCircleIndex_,
@@ -3083,61 +3400,66 @@ void Game::updateEnemyHitboxEditScreen(const Input& input, UiContext& ui)
     auto markDirty = [this](std::string status) {
         enemyHitboxDirty_ = true;
         enemyHitboxStatus_ = std::move(status);
-        enemies_.setHitboxCatalog(&enemyHitboxes_);
+        enemies_.setHitboxCatalog(&hitboxes_);
     };
 
     updateUiTextInput(enemyHitboxSearchInput_, ui, enemyHitboxSearchInputRect(layout));
     if (ui.pressed(enemyHitboxSearchClearButtonRect(layout))) {
         if (!enemyHitboxSearchInput_.text.empty()) {
             std::string previousSelection;
-            if (enemyHitboxSelectedEnemyIndex_ >= 0 &&
-                enemyHitboxSelectedEnemyIndex_ < static_cast<int>(enemyHitboxEnemyIds_.size())) {
-                previousSelection = enemyHitboxEnemyIds_[static_cast<std::size_t>(enemyHitboxSelectedEnemyIndex_)];
+            if (selectedIndex >= 0 && selectedIndex < static_cast<int>(itemIds.size())) {
+                previousSelection = itemIds[static_cast<std::size_t>(selectedIndex)];
             }
             enemyHitboxSearchInput_.text.clear();
             applyEnemyHitboxEditFilter(previousSelection);
-            enemyHitboxScrollOffset_ = 0.0f;
-            itemCount = static_cast<int>(enemyHitboxEnemyIds_.size());
+            itemCount = static_cast<int>(itemIds.size());
             maxScroll = enemyHitboxMaxScroll(layout, itemCount);
-            keepEnemyHitboxSelectionVisible(layout, enemyHitboxSelectedEnemyIndex_, itemCount, enemyHitboxScrollOffset_);
+            scrollOffset = 0.0f;
+            keepEnemyHitboxSelectionVisible(layout, selectedIndex, itemCount, scrollOffset);
         }
         focusUiTextInput(enemyHitboxSearchInput_);
     }
 
     if (input.saveShortcutPressed() || ui.pressed(enemyHitboxDetailButtonRect(layout, 0))) {
         std::string message;
-        if (saveEnemyHitboxData(message)) {
+        if (saveHitboxData(message)) {
             logInfo("Debug: " + message);
         } else {
             logWarning("Debug: " + message);
         }
     }
     if (ui.pressed(enemyHitboxDetailButtonRect(layout, 1))) {
-        if (EnemyHitboxProfile* profile = ensureProfile()) {
-            if (static_cast<int>(profile->circles.size()) < EnemyHitboxMaxCircles) {
+        const std::vector<HitCircle> currentCircles = selectedSubjectCircles();
+        if (!currentCircles.empty() && static_cast<int>(currentCircles.size()) < HitboxMaxCircles) {
+            pushHitboxEditUndoSnapshot();
+            if (HitboxProfile* profile = ensureProfile()) {
                 profile->circles.push_back({{}, 10.0f});
                 enemyHitboxSelectedCircleIndex_ = static_cast<int>(profile->circles.size()) - 1;
                 markDirty("Circle added");
-            } else {
-                enemyHitboxStatus_ = "Circle limit reached";
             }
+        } else if (!currentCircles.empty()) {
+            enemyHitboxStatus_ = "Circle limit reached";
         }
     }
     if (ui.pressed(enemyHitboxDetailButtonRect(layout, 2))) {
-        if (const EnemyDefinition* definition = selectedDefinition()) {
-            enemyHitboxClipboard_ = enemyHitboxEditCirclesFor(enemyHitboxes_, *definition, balance_);
+        enemyHitboxClipboard_ = selectedSubjectCircles();
+        if (!enemyHitboxClipboard_.empty()) {
             enemyHitboxStatus_ = "Hitbox copied";
         }
     }
     if (ui.pressed(enemyHitboxDetailButtonRect(layout, 3))) {
-        if (const EnemyDefinition* definition = selectedDefinition();
-            definition != nullptr && !enemyHitboxClipboard_.empty()) {
-            EnemyHitboxProfile& profile = enemyHitboxes_.profiles[definition->id];
-            profile.circles = enemyHitboxClipboard_;
-            if (static_cast<int>(profile.circles.size()) > EnemyHitboxMaxCircles) {
-                profile.circles.resize(EnemyHitboxMaxCircles);
+        if (!enemyHitboxClipboard_.empty() && !selectedSubjectCircles().empty()) {
+            pushHitboxEditUndoSnapshot();
+            HitboxProfile* targetProfile = ensureProfile();
+            if (targetProfile == nullptr) {
+                return;
             }
-            for (EnemyHitCircle& circle : profile.circles) {
+            HitboxProfile& profile = *targetProfile;
+            profile.circles = enemyHitboxClipboard_;
+            if (static_cast<int>(profile.circles.size()) > HitboxMaxCircles) {
+                profile.circles.resize(HitboxMaxCircles);
+            }
+            for (HitCircle& circle : profile.circles) {
                 circle = clampEnemyHitboxEditorCircle(circle);
             }
             enemyHitboxSelectedCircleIndex_ = 0;
@@ -3145,10 +3467,12 @@ void Game::updateEnemyHitboxEditScreen(const Input& input, UiContext& ui)
         }
     }
     if (ui.pressed(enemyHitboxDetailButtonRect(layout, 4))) {
-        if (EnemyHitboxProfile* profile = ensureProfile()) {
-            if (!profile->circles.empty() &&
-                enemyHitboxSelectedCircleIndex_ >= 0 &&
-                enemyHitboxSelectedCircleIndex_ < static_cast<int>(profile->circles.size())) {
+        const std::vector<HitCircle> currentCircles = selectedSubjectCircles();
+        if (!currentCircles.empty() &&
+            enemyHitboxSelectedCircleIndex_ >= 0 &&
+            enemyHitboxSelectedCircleIndex_ < static_cast<int>(currentCircles.size())) {
+            pushHitboxEditUndoSnapshot();
+            if (HitboxProfile* profile = ensureProfile()) {
                 profile->circles.erase(profile->circles.begin() + enemyHitboxSelectedCircleIndex_);
                 enemyHitboxSelectedCircleIndex_ = std::min(
                     enemyHitboxSelectedCircleIndex_,
@@ -3158,17 +3482,31 @@ void Game::updateEnemyHitboxEditScreen(const Input& input, UiContext& ui)
         }
     }
     if (ui.pressed(enemyHitboxDetailButtonRect(layout, 5))) {
-        if (const EnemyDefinition* definition = selectedDefinition()) {
-            enemyHitboxes_.profiles.erase(definition->id);
-            enemyHitboxSelectedCircleIndex_ = 0;
-            markDirty("Fallback restored");
+        if (hitboxEditTab_ == HitboxEditTab::Objects) {
+            if (const ObjectDefinition* object = selectedObjectDefinition()) {
+                if (hitboxes_.objects.find(object->id) != hitboxes_.objects.end()) {
+                    pushHitboxEditUndoSnapshot();
+                    hitboxes_.objects.erase(object->id);
+                    enemyHitboxSelectedCircleIndex_ = 0;
+                    markDirty("Fallback restored");
+                }
+            }
+        } else {
+            if (const EnemyDefinition* definition = selectedEnemyDefinition()) {
+                if (hitboxes_.enemies.find(definition->id) != hitboxes_.enemies.end()) {
+                    pushHitboxEditUndoSnapshot();
+                    hitboxes_.enemies.erase(definition->id);
+                    enemyHitboxSelectedCircleIndex_ = 0;
+                    markDirty("Fallback restored");
+                }
+            }
         }
     }
 
     for (int i = 0; i < itemCount; ++i) {
-        const UiRect rect = enemyHitboxListRowRect(layout, i, enemyHitboxScrollOffset_);
+        const UiRect rect = enemyHitboxListRowRect(layout, i, scrollOffset);
         if (layout.list.contains(ui.mouse()) && ui.pressed(rect)) {
-            enemyHitboxSelectedEnemyIndex_ = i;
+            selectedIndex = i;
             enemyHitboxSelectedCircleIndex_ = 0;
             break;
         }
@@ -3176,25 +3514,24 @@ void Game::updateEnemyHitboxEditScreen(const Input& input, UiContext& ui)
 
     const int wheel = input.mouseWheelDelta();
     if (wheel != 0 && layout.list.contains(ui.mouse())) {
-        enemyHitboxScrollOffset_ = clamp(
-            enemyHitboxScrollOffset_ + static_cast<float>(wheel) * 38.0f,
+        scrollOffset = clamp(
+            scrollOffset + static_cast<float>(wheel) * 38.0f,
             0.0f,
             maxScroll);
     }
 
-    const EnemyDefinition* definition = selectedDefinition();
+    const bool hasSubject = hitboxEditTab_ == HitboxEditTab::Objects
+        ? selectedObjectDefinition() != nullptr
+        : selectedEnemyDefinition() != nullptr;
     const float previewScale = 4.0f;
     const Vec2 previewCenter = layout.preview.pos + layout.preview.size * 0.5f;
-    std::vector<EnemyHitCircle> circles;
-    if (definition != nullptr) {
-        circles = enemyHitboxEditCirclesFor(enemyHitboxes_, *definition, balance_);
-    }
+    std::vector<HitCircle> circles = selectedSubjectCircles();
 
     const auto circleAtMouse = [&]() {
         int best = -1;
         float bestDistanceSq = std::numeric_limits<float>::max();
         for (int i = static_cast<int>(circles.size()) - 1; i >= 0; --i) {
-            const EnemyHitCircle circle = clampEnemyHitboxEditorCircle(circles[static_cast<std::size_t>(i)]);
+            const HitCircle circle = clampEnemyHitboxEditorCircle(circles[static_cast<std::size_t>(i)]);
             const Vec2 center = previewCenter + circle.offset * previewScale;
             const float radius = circle.radius * previewScale;
             const float distanceSq = distanceSquared(ui.mouse(), center);
@@ -3207,23 +3544,22 @@ void Game::updateEnemyHitboxEditScreen(const Input& input, UiContext& ui)
         return best;
     };
 
-    if (input.mouseLeftPressed() && !ui.pointerConsumed() && layout.preview.contains(ui.mouse()) && definition != nullptr) {
+    if (input.mouseLeftPressed() && !ui.pointerConsumed() && layout.preview.contains(ui.mouse()) && hasSubject) {
         const int pickedCircle = circleAtMouse();
         if (pickedCircle >= 0) {
-            if (EnemyHitboxProfile* profile = ensureProfile()) {
-                enemyHitboxSelectedCircleIndex_ = pickedCircle;
-                enemyHitboxDraggingCircle_ = true;
-                enemyHitboxDragStartMouse_ = ui.mouse();
-                enemyHitboxDragStartOffset_ = profile->circles[static_cast<std::size_t>(pickedCircle)].offset;
-                ui.consumePointer();
-            }
+            pushHitboxEditUndoSnapshot();
+            enemyHitboxSelectedCircleIndex_ = pickedCircle;
+            enemyHitboxDraggingCircle_ = true;
+            enemyHitboxDragStartMouse_ = ui.mouse();
+            enemyHitboxDragStartOffset_ = clampEnemyHitboxEditorCircle(circles[static_cast<std::size_t>(pickedCircle)]).offset;
+            ui.consumePointer();
         }
     }
     if (enemyHitboxDraggingCircle_ && input.mouseLeftHeld()) {
-        if (EnemyHitboxProfile* profile = ensureProfile()) {
+        if (HitboxProfile* profile = ensureProfile()) {
             if (enemyHitboxSelectedCircleIndex_ >= 0 &&
                 enemyHitboxSelectedCircleIndex_ < static_cast<int>(profile->circles.size())) {
-                EnemyHitCircle& circle = profile->circles[static_cast<std::size_t>(enemyHitboxSelectedCircleIndex_)];
+                HitCircle& circle = profile->circles[static_cast<std::size_t>(enemyHitboxSelectedCircleIndex_)];
                 circle.offset = enemyHitboxDragStartOffset_ + (ui.mouse() - enemyHitboxDragStartMouse_) / previewScale;
                 circle.offset.x = std::round(circle.offset.x * 2.0f) * 0.5f;
                 circle.offset.y = std::round(circle.offset.y * 2.0f) * 0.5f;
@@ -3236,11 +3572,13 @@ void Game::updateEnemyHitboxEditScreen(const Input& input, UiContext& ui)
         enemyHitboxDraggingCircle_ = false;
     }
 
-    if (definition != nullptr && layout.preview.contains(ui.mouse()) && input.mouseWheelDelta() != 0) {
-        if (EnemyHitboxProfile* profile = ensureProfile()) {
-            if (enemyHitboxSelectedCircleIndex_ >= 0 &&
-                enemyHitboxSelectedCircleIndex_ < static_cast<int>(profile->circles.size())) {
-                EnemyHitCircle& circle = profile->circles[static_cast<std::size_t>(enemyHitboxSelectedCircleIndex_)];
+    if (hasSubject && layout.preview.contains(ui.mouse()) && input.mouseWheelDelta() != 0) {
+        const std::vector<HitCircle> currentCircles = selectedSubjectCircles();
+        if (enemyHitboxSelectedCircleIndex_ >= 0 &&
+            enemyHitboxSelectedCircleIndex_ < static_cast<int>(currentCircles.size())) {
+            pushHitboxEditUndoSnapshot();
+            if (HitboxProfile* profile = ensureProfile()) {
+                HitCircle& circle = profile->circles[static_cast<std::size_t>(enemyHitboxSelectedCircleIndex_)];
                 circle.radius += -static_cast<float>(input.mouseWheelDelta()) * EnemyHitboxCircleRadiusStep;
                 circle = clampEnemyHitboxEditorCircle(circle);
                 markDirty("Circle resized");
@@ -3250,11 +3588,13 @@ void Game::updateEnemyHitboxEditScreen(const Input& input, UiContext& ui)
 
     const int moveX = (input.pressed(InputAction::MoveRight) ? 1 : 0) - (input.pressed(InputAction::MoveLeft) ? 1 : 0);
     const int moveY = (input.pressed(InputAction::MoveDown) ? 1 : 0) - (input.pressed(InputAction::MoveUp) ? 1 : 0);
-    if ((moveX != 0 || moveY != 0) && definition != nullptr) {
-        if (EnemyHitboxProfile* profile = ensureProfile()) {
-            if (enemyHitboxSelectedCircleIndex_ >= 0 &&
-                enemyHitboxSelectedCircleIndex_ < static_cast<int>(profile->circles.size())) {
-                EnemyHitCircle& circle = profile->circles[static_cast<std::size_t>(enemyHitboxSelectedCircleIndex_)];
+    if ((moveX != 0 || moveY != 0) && hasSubject) {
+        const std::vector<HitCircle> currentCircles = selectedSubjectCircles();
+        if (enemyHitboxSelectedCircleIndex_ >= 0 &&
+            enemyHitboxSelectedCircleIndex_ < static_cast<int>(currentCircles.size())) {
+            pushHitboxEditUndoSnapshot();
+            if (HitboxProfile* profile = ensureProfile()) {
+                HitCircle& circle = profile->circles[static_cast<std::size_t>(enemyHitboxSelectedCircleIndex_)];
                 circle.offset.x += static_cast<float>(moveX) * EnemyHitboxCircleStep;
                 circle.offset.y += static_cast<float>(moveY) * EnemyHitboxCircleStep;
                 circle = clampEnemyHitboxEditorCircle(circle);
@@ -3269,50 +3609,74 @@ void Game::renderEnemyHitboxEditScreen(Renderer& renderer) const
     renderer.setScreenSpace();
 
     const EnemyHitboxEditLayout layout = makeEnemyHitboxEditLayout(camera_.width(), camera_.height());
+    const bool editingObjects = hitboxEditTab_ == HitboxEditTab::Objects;
+    const std::vector<std::string>& itemIds = editingObjects ? objectHitboxObjectIds_ : enemyHitboxEnemyIds_;
+    const std::vector<std::string>& allIds = editingObjects ? objectHitboxAllObjectIds_ : enemyHitboxAllEnemyIds_;
+    const int selectedIndex = editingObjects ? objectHitboxSelectedObjectIndex_ : enemyHitboxSelectedEnemyIndex_;
+    const float scrollOffset = clamp(
+        editingObjects ? objectHitboxScrollOffset_ : enemyHitboxScrollOffset_,
+        0.0f,
+        enemyHitboxMaxScroll(layout, static_cast<int>(itemIds.size())));
+
     renderer.fillRect(layout.bounds.pos, layout.bounds.size, {10, 12, 18, 255});
     renderer.fillRect({0.0f, 0.0f}, {layout.bounds.size.x, EnemyHitboxHeaderHeight}, {18, 24, 38, 255});
     renderer.fillRect(layout.footer.pos, layout.footer.size, {18, 24, 38, 255});
     renderer.drawText({22.0f, 18.0f}, "当たり判定編集", {245, 245, 252, 255}, 3);
-    renderer.drawText({22.0f, 52.0f}, "Search / drag circle / wheel size / A add / Delete remove / Ctrl+C,V / Ctrl+S", {198, 206, 222, 255}, 2);
+    drawUiRectButton(renderer, hitboxEditTabRect(layout, 0), "Enemies", !editingObjects);
+    drawUiRectButton(renderer, hitboxEditTabRect(layout, 1), "Objects", editingObjects);
+    renderer.drawText({330.0f, 52.0f}, "Ctrl+S save / Ctrl+Z,Y undo redo / Ctrl+C,V copy paste", {198, 206, 222, 255}, 2);
 
     renderer.fillRect(layout.listPanel.pos, layout.listPanel.size, {18, 24, 36, 255});
     renderer.drawRect(layout.listPanel.pos, layout.listPanel.size, {72, 86, 112, 255});
-    drawUiTextInput(renderer, enemyHitboxSearchInputRect(layout), enemyHitboxSearchInput_, "敵名で検索", {});
+    drawUiTextInput(renderer, enemyHitboxSearchInputRect(layout), enemyHitboxSearchInput_, editingObjects ? "アイテム名で検索" : "敵名で検索", {});
     drawUiRectButton(renderer, enemyHitboxSearchClearButtonRect(layout), "消去", false);
-    const std::string countText = std::to_string(static_cast<int>(enemyHitboxEnemyIds_.size())) + "/" +
-        std::to_string(static_cast<int>(enemyHitboxAllEnemyIds_.size()));
+    const std::string countText = std::to_string(static_cast<int>(itemIds.size())) + "/" +
+        std::to_string(static_cast<int>(allIds.size()));
     renderer.drawText(enemyHitboxSearchCountRect(layout).pos + Vec2{2.0f, 11.0f}, countText, {198, 206, 222, 255}, 2);
 
     renderer.drawRect(layout.list.pos, layout.list.size, {78, 92, 116, 255});
     renderer.pushClipRect(layout.list.pos, layout.list.size);
-    for (int i = 0; i < static_cast<int>(enemyHitboxEnemyIds_.size()); ++i) {
-        const UiRect rect = enemyHitboxListRowRect(layout, i, enemyHitboxScrollOffset_);
+    for (int i = 0; i < static_cast<int>(itemIds.size()); ++i) {
+        const UiRect rect = enemyHitboxListRowRect(layout, i, scrollOffset);
         if (rect.pos.y + rect.size.y < layout.list.pos.y || rect.pos.y > layout.list.pos.y + layout.list.size.y) {
             continue;
         }
-        const bool selected = i == enemyHitboxSelectedEnemyIndex_;
-        const std::string& enemyId = enemyHitboxEnemyIds_[static_cast<std::size_t>(i)];
-        const auto enemyIt = enemyCatalog_.enemiesById.find(enemyId);
-        const bool customized = enemyHitboxes_.profiles.find(enemyId) != enemyHitboxes_.profiles.end();
-        std::string name = enemyId;
-        int imageNumber = 0;
-        if (enemyIt != enemyCatalog_.enemiesById.end()) {
-            name = enemyHitboxDisplayName(enemyIt->second);
-            imageNumber = enemyIt->second.imageNumber;
-        }
+        const bool selected = i == selectedIndex;
+        const std::string& id = itemIds[static_cast<std::size_t>(i)];
+        const bool customized = editingObjects
+            ? hitboxes_.objects.find(id) != hitboxes_.objects.end()
+            : hitboxes_.enemies.find(id) != hitboxes_.enemies.end();
+        std::string name = id;
         renderer.fillRect(rect.pos, rect.size, selected ? Color{44, 58, 92, 255} : Color{24, 30, 44, 255});
         renderer.drawRect(rect.pos, rect.size, selected ? Color{255, 228, 138, 255} : Color{74, 86, 108, 255});
-        if (imageNumber > 0) {
+        if (editingObjects) {
+            const auto objectIt = objectCatalog_.objectsById.find(id);
+            if (objectIt != objectCatalog_.objectsById.end()) {
+                name = objectImageScaleDisplayName(objectIt->second);
+                ObjectImageDrawOptions iconOptions;
+                iconOptions.allowUpscale = true;
+                iconOptions.outlineEnabled = false;
+                (void)drawItemImage(renderer, objectIt->second, rect.pos + Vec2{22.0f, 22.0f}, {34.0f, 34.0f}, iconOptions);
+            } else {
+                renderer.fillCircle(rect.pos + Vec2{22.0f, 22.0f}, 12.0f, {82, 92, 110, 255});
+            }
+        } else {
+            int imageNumber = 0;
+            const auto enemyIt = enemyCatalog_.enemiesById.find(id);
+            if (enemyIt != enemyCatalog_.enemiesById.end()) {
+                name = enemyHitboxDisplayName(enemyIt->second);
+                imageNumber = enemyIt->second.imageNumber;
+            }
             EnemyImageDrawOptions iconOptions;
             iconOptions.allowUpscale = true;
             iconOptions.outlineEnabled = false;
-            (void)drawEnemyImageIcon(renderer, imageNumber, rect.pos + Vec2{22.0f, 22.0f}, {34.0f, 34.0f}, 0.0f, iconOptions);
-        } else {
-            renderer.fillCircle(rect.pos + Vec2{22.0f, 22.0f}, 12.0f, {82, 92, 110, 255});
+            if (imageNumber <= 0 || !drawEnemyImageIcon(renderer, imageNumber, rect.pos + Vec2{22.0f, 22.0f}, {34.0f, 34.0f}, 0.0f, iconOptions)) {
+                renderer.fillCircle(rect.pos + Vec2{22.0f, 22.0f}, 12.0f, {82, 92, 110, 255});
+            }
         }
         const std::string title = fittedSingleLineText(renderer, name, rect.size.x - 62.0f, 2);
         renderer.drawText(rect.pos + Vec2{44.0f, 6.0f}, title, {232, 236, 245, 255}, 2);
-        const std::string subtitle = fittedSingleLineText(renderer, enemyId + (customized ? " *" : ""), rect.size.x - 62.0f, 1);
+        const std::string subtitle = fittedSingleLineText(renderer, id + (customized ? " *" : ""), rect.size.x - 62.0f, 1);
         renderer.drawText(rect.pos + Vec2{44.0f, 28.0f}, subtitle, customized ? Color{255, 226, 138, 255} : Color{146, 158, 178, 255}, 1);
     }
     renderer.popClipRect();
@@ -3325,38 +3689,68 @@ void Game::renderEnemyHitboxEditScreen(Renderer& renderer) const
     renderer.drawRect(layout.detail.pos, layout.detail.size, {78, 92, 116, 255});
 
     const EnemyDefinition* definition = nullptr;
-    if (enemyHitboxSelectedEnemyIndex_ >= 0 &&
+    const ObjectDefinition* object = nullptr;
+    if (!editingObjects && enemyHitboxSelectedEnemyIndex_ >= 0 &&
         enemyHitboxSelectedEnemyIndex_ < static_cast<int>(enemyHitboxEnemyIds_.size())) {
         const auto it = enemyCatalog_.enemiesById.find(enemyHitboxEnemyIds_[static_cast<std::size_t>(enemyHitboxSelectedEnemyIndex_)]);
         if (it != enemyCatalog_.enemiesById.end()) {
             definition = &it->second;
         }
+    } else if (editingObjects && objectHitboxSelectedObjectIndex_ >= 0 &&
+        objectHitboxSelectedObjectIndex_ < static_cast<int>(objectHitboxObjectIds_.size())) {
+        const auto it = objectCatalog_.objectsById.find(objectHitboxObjectIds_[static_cast<std::size_t>(objectHitboxSelectedObjectIndex_)]);
+        if (it != objectCatalog_.objectsById.end()) {
+            object = &it->second;
+        }
     }
 
-    if (definition == nullptr) {
-        renderer.drawText(layout.preview.pos + Vec2{18.0f, 18.0f}, "敵が選択されていません", {198, 206, 222, 255}, 2);
+    if (definition == nullptr && object == nullptr) {
+        renderer.drawText(layout.preview.pos + Vec2{18.0f, 18.0f}, editingObjects ? "アイテムが選択されていません" : "敵が選択されていません", {198, 206, 222, 255}, 2);
     } else {
-        const Enemy previewEnemy = makeEnemyHitboxPreviewEnemy(*definition, balance_);
         const Vec2 previewCenter = layout.preview.pos + layout.preview.size * 0.5f;
-        EnemyImageDrawOptions imageOptions;
-        imageOptions.allowUpscale = true;
-        imageOptions.scaleMultiplier = 4.0f;
-        imageOptions.selectedOutlineEnabled = true;
-        imageOptions.selectedOutlineColor = {255, 255, 255, 70};
-        imageOptions.selectedOutlinePx = 2;
-        imageOptions.directionOverrideEnabled = true;
-        imageOptions.directionOverride = {0.0f, 1.0f};
-        Vec2 imageSize{};
-        const bool drewImage = drawEnemyImage(renderer, previewEnemy, previewCenter, 0.0f, imageOptions, &imageSize);
-        if (!drewImage) {
-            renderer.fillCircle(previewCenter, enemyHitboxDefaultRadiusFor(*definition, balance_) * 4.0f, {92, 102, 120, 255});
+        std::vector<HitCircle> circles;
+        bool customized = false;
+        std::string title;
+        std::string id;
+        if (object != nullptr) {
+            ObjectImageDrawOptions imageOptions;
+            imageOptions.allowUpscale = true;
+            imageOptions.scaleMultiplier = 4.0f;
+            imageOptions.selectedOutlineEnabled = true;
+            imageOptions.selectedOutlineColor = {255, 255, 255, 70};
+            imageOptions.selectedOutlinePx = 2;
+            if (!drawItemImage(renderer, *object, previewCenter, {96.0f, 96.0f}, imageOptions)) {
+                renderer.fillCircle(previewCenter, objectHitboxDefaultRadiusFor(*object) * 4.0f, {92, 102, 120, 255});
+            }
+            circles = objectHitboxEditCirclesFor(hitboxes_, *object);
+            customized = hitboxes_.objects.find(object->id) != hitboxes_.objects.end();
+            title = objectImageScaleDisplayName(*object);
+            id = object->id;
+        } else {
+            const Enemy previewEnemy = makeEnemyHitboxPreviewEnemy(*definition, balance_);
+            EnemyImageDrawOptions imageOptions;
+            imageOptions.allowUpscale = true;
+            imageOptions.scaleMultiplier = 4.0f;
+            imageOptions.selectedOutlineEnabled = true;
+            imageOptions.selectedOutlineColor = {255, 255, 255, 70};
+            imageOptions.selectedOutlinePx = 2;
+            imageOptions.directionOverrideEnabled = true;
+            imageOptions.directionOverride = {0.0f, 1.0f};
+            Vec2 imageSize{};
+            const bool drewImage = drawEnemyImage(renderer, previewEnemy, previewCenter, 0.0f, imageOptions, &imageSize);
+            if (!drewImage) {
+                renderer.fillCircle(previewCenter, enemyHitboxDefaultRadiusFor(*definition, balance_) * 4.0f, {92, 102, 120, 255});
+            }
+            circles = enemyHitboxEditCirclesFor(hitboxes_, *definition, balance_);
+            customized = hitboxes_.enemies.find(definition->id) != hitboxes_.enemies.end();
+            title = enemyHitboxDisplayName(*definition);
+            id = definition->id;
         }
         renderer.drawLine({layout.preview.pos.x, previewCenter.y}, {layout.preview.pos.x + layout.preview.size.x, previewCenter.y}, {255, 255, 255, 26});
         renderer.drawLine({previewCenter.x, layout.preview.pos.y}, {previewCenter.x, layout.preview.pos.y + layout.preview.size.y}, {255, 255, 255, 26});
 
-        const std::vector<EnemyHitCircle> circles = enemyHitboxEditCirclesFor(enemyHitboxes_, *definition, balance_);
         for (int i = 0; i < static_cast<int>(circles.size()); ++i) {
-            const EnemyHitCircle circle = clampEnemyHitboxEditorCircle(circles[static_cast<std::size_t>(i)]);
+            const HitCircle circle = clampEnemyHitboxEditorCircle(circles[static_cast<std::size_t>(i)]);
             const bool selected = i == enemyHitboxSelectedCircleIndex_;
             const Vec2 center = previewCenter + circle.offset * 4.0f;
             const float radius = circle.radius * 4.0f;
@@ -3365,16 +3759,15 @@ void Game::renderEnemyHitboxEditScreen(Renderer& renderer) const
             renderer.fillCircle(center, 3.5f, selected ? Color{255, 245, 180, 255} : Color{150, 218, 255, 230});
         }
 
-        const bool customized = enemyHitboxes_.profiles.find(definition->id) != enemyHitboxes_.profiles.end();
-        const std::string title = fittedSingleLineText(renderer, enemyHitboxDisplayName(*definition), layout.detail.size.x - 18.0f, 2);
-        renderer.drawText(layout.detail.pos + Vec2{10.0f, 10.0f}, title, {232, 236, 245, 255}, 2);
-        renderer.drawText(layout.detail.pos + Vec2{10.0f, 36.0f}, definition->id, {146, 158, 178, 255}, 1);
+        const std::string fittedTitle = fittedSingleLineText(renderer, title, layout.detail.size.x - 18.0f, 2);
+        renderer.drawText(layout.detail.pos + Vec2{10.0f, 10.0f}, fittedTitle, {232, 236, 245, 255}, 2);
+        renderer.drawText(layout.detail.pos + Vec2{10.0f, 36.0f}, id, {146, 158, 178, 255}, 1);
         renderer.drawText(layout.detail.pos + Vec2{10.0f, 56.0f}, customized ? "custom" : "fallback", customized ? Color{255, 226, 138, 255} : Color{146, 158, 178, 255}, 2);
-        std::string circleText = "circles " + std::to_string(static_cast<int>(circles.size())) + "/" + std::to_string(EnemyHitboxMaxCircles);
+        std::string circleText = "circles " + std::to_string(static_cast<int>(circles.size())) + "/" + std::to_string(HitboxMaxCircles);
         renderer.drawText(layout.detail.pos + Vec2{10.0f, 82.0f}, circleText, {198, 206, 222, 255}, 2);
 
         if (enemyHitboxSelectedCircleIndex_ >= 0 && enemyHitboxSelectedCircleIndex_ < static_cast<int>(circles.size())) {
-            const EnemyHitCircle circle = clampEnemyHitboxEditorCircle(circles[static_cast<std::size_t>(enemyHitboxSelectedCircleIndex_)]);
+            const HitCircle circle = clampEnemyHitboxEditorCircle(circles[static_cast<std::size_t>(enemyHitboxSelectedCircleIndex_)]);
             char buffer[128];
             std::snprintf(buffer, sizeof(buffer), "x %.1f  y %.1f  r %.1f", circle.offset.x, circle.offset.y, circle.radius);
             renderer.drawText(layout.detail.pos + Vec2{10.0f, 276.0f}, buffer, {198, 206, 222, 255}, 2);
@@ -6173,26 +6566,26 @@ bool Game::handleEnemyHitboxEditCommand(std::string_view normalized)
     if (toggle) {
         if (mode_ == ScreenMode::EnemyHitboxEdit) {
             exitEnemyHitboxEditMode();
-            logInfo("Debug: enemy hitbox edit disabled.");
+            logInfo("Debug: hitbox edit disabled.");
         } else {
             enterEnemyHitboxEditMode();
-            logInfo("Debug: enemy hitbox edit enabled.");
+            logInfo("Debug: hitbox edit enabled.");
         }
         return true;
     }
     if (enable) {
         enterEnemyHitboxEditMode();
-        logInfo("Debug: enemy hitbox edit enabled.");
+        logInfo("Debug: hitbox edit enabled.");
         return true;
     }
     if (disable) {
         exitEnemyHitboxEditMode();
-        logInfo("Debug: enemy hitbox edit disabled.");
+        logInfo("Debug: hitbox edit disabled.");
         return true;
     }
     if (save) {
         std::string message;
-        if (saveEnemyHitboxData(message)) {
+        if (saveHitboxData(message)) {
             enemyHitboxStatus_ = message;
             logInfo("Debug: " + message);
         } else {
@@ -6202,15 +6595,15 @@ bool Game::handleEnemyHitboxEditCommand(std::string_view normalized)
         return true;
     }
     if (reload) {
-        if (loadEnemyHitboxData()) {
+        if (loadHitboxData()) {
             enemyHitboxStatus_ = "Hitboxes reloaded";
-            logInfo("Debug: enemy hitboxes reloaded.");
+            logInfo("Debug: hitboxes reloaded.");
         } else {
             enemyHitboxStatus_ = "Hitbox reload failed";
-            logWarning("Debug: enemy hitbox reload failed.");
+            logWarning("Debug: hitbox reload failed.");
         }
         rebuildEnemyHitboxEditList();
-        enemies_.setHitboxCatalog(&enemyHitboxes_);
+        enemies_.setHitboxCatalog(&hitboxes_);
         return true;
     }
 

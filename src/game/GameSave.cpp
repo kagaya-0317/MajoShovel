@@ -187,7 +187,6 @@ std::string_view dungeonEventObjectKindToken(Game::DungeonEventObjectKind kind)
     switch (kind) {
     case Game::DungeonEventObjectKind::GlowingRock: return "rock";
     case Game::DungeonEventObjectKind::ElectricReceiver: return "receiver";
-    case Game::DungeonEventObjectKind::BuriedDebris: return "debris";
     case Game::DungeonEventObjectKind::LostBaggage: return "baggage";
     case Game::DungeonEventObjectKind::Campfire: return "campfire";
     case Game::DungeonEventObjectKind::HeavyRock: return "heavy_rock";
@@ -203,10 +202,6 @@ bool parseDungeonEventObjectKind(std::string_view token, Game::DungeonEventObjec
     }
     if (token == "receiver") {
         outKind = Game::DungeonEventObjectKind::ElectricReceiver;
-        return true;
-    }
-    if (token == "debris") {
-        outKind = Game::DungeonEventObjectKind::BuriedDebris;
         return true;
     }
     if (token == "baggage") {
@@ -274,9 +269,6 @@ std::string serializedDungeonEventParams(const Game::DungeonEventInstance& event
     std::vector<std::string> parts;
     if (!event.data.empty()) {
         parts.push_back("source=" + event.data);
-    }
-    if (!event.selectedEnemyId.empty()) {
-        parts.push_back("enemy=" + event.selectedEnemyId);
     }
     parts.push_back("reward=" + tileSaveToken(event.rewardTile));
     parts.push_back(std::string("encounter=") + (event.encounterSpawned ? "1" : "0"));
@@ -352,8 +344,6 @@ void applyDungeonEventParams(Game::DungeonEventInstance& event, std::string_view
         const std::string_view value = part.substr(equals + 1);
         if (key == "source") {
             event.data = std::string(value);
-        } else if (key == "enemy") {
-            event.selectedEnemyId = std::string(value);
         } else if (key == "reward") {
             parseTileSaveToken(value, event.rewardTile);
         } else if (key == "encounter") {

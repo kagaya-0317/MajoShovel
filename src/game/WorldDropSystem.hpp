@@ -17,6 +17,7 @@ namespace majo {
 
 class InventorySystem;
 class EffectSystem;
+struct CollisionRect;
 struct Player;
 
 enum class WorldDropKind {
@@ -90,7 +91,13 @@ public:
     bool spawnMoneyDrop(int amount, Vec2 position, float spawnedAtSeconds = 0.0f, WorldDropSpawnMotion motion = {});
     bool spawnMaterialDrop(MaterialType type, int count, Vec2 position, float spawnedAtSeconds = 0.0f, WorldDropSpawnMotion motion = {});
     bool spawnRewardDrop(const ObjectCatalog& catalog, Vec2 position, float spawnedAtSeconds = 0.0f);
-    bool stealNearestDrop(const ObjectCatalog& catalog, Vec2 center, float radius, std::string_view targetFilter, WorldDropItem& outDrop);
+    bool stealNearestDrop(
+        const ObjectCatalog& catalog,
+        Vec2 center,
+        float radius,
+        std::string_view targetFilter,
+        WorldDropItem& outDrop,
+        const CollisionRect* allowedBounds = nullptr);
     int pullNearbyDrops(
         Vec2 center,
         float dt,

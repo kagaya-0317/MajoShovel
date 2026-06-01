@@ -4,6 +4,7 @@
 #include "engine/Log.hpp"
 #include "game/EffectSystem.hpp"
 #include "game/ActorVisual.hpp"
+#include "game/Collision.hpp"
 #include "game/InventorySystem.hpp"
 #include "game/ObjectImageRenderer.hpp"
 #include "game/ObjectVisualPose.hpp"
@@ -623,7 +624,13 @@ bool WorldDropSystem::spawnRewardDrop(const ObjectCatalog& catalog, Vec2 positio
     return true;
 }
 
-bool WorldDropSystem::stealNearestDrop(const ObjectCatalog& catalog, Vec2 center, float radius, std::string_view targetFilter, WorldDropItem& outDrop)
+bool WorldDropSystem::stealNearestDrop(
+    const ObjectCatalog& catalog,
+    Vec2 center,
+    float radius,
+    std::string_view targetFilter,
+    WorldDropItem& outDrop,
+    const CollisionRect* allowedBounds)
 {
     if (drops_.empty() || radius <= 0.0f) {
         return false;
@@ -634,6 +641,9 @@ bool WorldDropSystem::stealNearestDrop(const ObjectCatalog& catalog, Vec2 center
     for (std::size_t i = 0; i < drops_.size(); ++i) {
         const WorldDropItem& drop = drops_[i];
         if (!isDropStealTarget(drop, catalog, targetFilter)) {
+            continue;
+        }
+        if (allowedBounds != nullptr && !circleIntersectsRect(drop.position, DropVisualRadius, *allowedBounds)) {
             continue;
         }
         const float distanceSq = lengthSquared(drop.position - center);

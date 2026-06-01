@@ -40,6 +40,8 @@ std::string_view deathCauseText(DamageSource source)
         return "スライムの接触で死亡";
     case DamageSource::Projectile:
         return "発射物で死亡";
+    case DamageSource::Explosion:
+        return "爆発で死亡";
     case DamageSource::Trap:
         return "罠で死亡";
     case DamageSource::Unknown:
@@ -64,6 +66,22 @@ void Player::applyDamage(int amount, DamageSource source)
         status.removeState("status_sleep");
         damageEvents.push_back({damageTaken, position});
     }
+}
+
+void Player::applyKnockback(Vec2 direction, float speed, float durationSeconds)
+{
+    if (speed <= 0.0f || durationSeconds <= 0.0f) {
+        return;
+    }
+
+    const Vec2 fallback = lengthSquared(facing) > 0.0001f ? facing : Vec2{1.0f, 0.0f};
+    const Vec2 impulse = normalize(lengthSquared(direction) > 0.0001f ? direction : fallback) * speed;
+    knockbackVelocity += impulse;
+    const float maxSpeed = std::max(speed, 360.0f);
+    if (lengthSquared(knockbackVelocity) > maxSpeed * maxSpeed) {
+        knockbackVelocity = normalize(knockbackVelocity) * maxSpeed;
+    }
+    knockbackTimer = std::max(knockbackTimer, durationSeconds);
 }
 
 int Player::heal(int amount)
@@ -133,7 +151,17 @@ void Player::update(
         status.applyModifiers(ModifierStat::Speed, balance.playerSpeed) *
         status.movementMultiplierFromStates());
     const Vec2 moveAxis = input.moveAxis();
-    velocity = moveAxis * speed;
+    Vec2 knockbackMove{};
+    if (knockbackTimer > 0.0f) {
+        knockbackMove = knockbackVelocity;
+        knockbackTimer = std::max(0.0f, knockbackTimer - dt);
+        knockbackVelocity = knockbackVelocity * std::max(0.0f, 1.0f - 7.5f * dt);
+        if (knockbackTimer <= 0.0f || lengthSquared(knockbackVelocity) < 1.0f) {
+            knockbackTimer = 0.0f;
+            knockbackVelocity = {};
+        }
+    }
+    velocity = moveAxis * speed + knockbackMove;
     const double bleedDps = status.bleedDamagePerSecond();
     if (bleedDps > 0.0) {
         const double movementScale = lengthSquared(velocity) > 1.0f ? 1.5 : 0.5;
@@ -146,7 +174,7 @@ void Player::update(
     } else {
         bleedDamageAccumulator = 0.0;
     }
-    updateSpriteAnimation(dt, lengthSquared(moveAxis) > 0.0001f);
+    updateSpriteAnimation(dt, lengthSquared(moveAxis) > 0.0001f || lengthSquared(knockbackMove) > 1.0f);
     const Vec2 delta = velocity * dt;
     const float playerRadius = effectiveRadius(balance.playerRadius);
     const auto blocked = [&](Vec2 center) {

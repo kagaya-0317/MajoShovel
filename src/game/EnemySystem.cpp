@@ -10,6 +10,7 @@
 #include "game/EncyclopediaSystem.hpp"
 #include "game/EntityStatusVisuals.hpp"
 #include "game/EffectSystem.hpp"
+#include "game/ObjectVisualPose.hpp"
 #include "game/WorldDropSystem.hpp"
 #include "game/WetGroundSystem.hpp"
 #include "data/StageWeight.hpp"
@@ -125,6 +126,9 @@ constexpr float StealDropPickupDelaySeconds = 0.04f;
 constexpr int CapturedExplosionChargeLimit = 4;
 constexpr float CapturedExplosionSleepSeconds = 2.4f;
 constexpr float CapturedExplosionRadius = 44.0f;
+constexpr int CapturedExplosionDamage = 3;
+constexpr float CapturedExplosionTerrainRadius = 28.0f;
+constexpr int CapturedExplosionTerrainDamage = 1;
 constexpr float CapturedMagnetEnemyRadius = 160.0f;
 constexpr float CapturedMagnetEnemyPullSpeed = 58.0f;
 constexpr int CapturedMagnetEnemyLimit = 4;
@@ -134,7 +138,7 @@ constexpr float VacuumLightEnemyFallbackRadius = 10.0f;
 constexpr int VacuumLightEnemyFallbackMaxHp = 3;
 constexpr float WindLightEnemyPushSpeed = 58.0f;
 constexpr int WindLightEnemyLimit = 5;
-constexpr double HotAirStatusDurationSeconds = 1.15;
+constexpr double HotAirStatusDurationSeconds = 12.0;
 constexpr float DefaultVisionDistance = 120.0f;
 constexpr float DefaultVisionAngle = 100.0f;
 constexpr float DefaultLoseSightSeconds = 1.5f;
@@ -165,7 +169,7 @@ constexpr float ExternalBounceMaxDistance = 30.0f;
 constexpr double ExternalBounceMaxStrength = 3.0;
 constexpr double FallDamageSynergyMaxMultiplier = 5.0;
 constexpr double ShockedDefaultDurationSeconds = 1.2;
-constexpr double ShockedContactTransferDurationSeconds = 0.8;
+constexpr double ShockedContactTransferDurationSeconds = 4.0;
 constexpr float HoverChaseAltitude = 18.0f;
 constexpr float HoverKeepDistanceAltitude = 20.0f;
 constexpr float PhaseAltitude = 12.0f;
@@ -197,7 +201,7 @@ constexpr float MagnetDisturbMaxRadius = 320.0f;
 constexpr float ColdExposureFreezeThreshold = 1.0f;
 constexpr float ColdExposureRatePerSecond = 0.55f;
 constexpr float ColdExposureDecayPerSecond = 0.45f;
-constexpr double FrozenDefaultDurationSeconds = 2.5;
+constexpr double FrozenDefaultDurationSeconds = 8.0;
 constexpr float BlindProjectileMaxSpreadDegrees = 70.0f;
 constexpr int SwarmSpawnCountMax = 6;
 constexpr int FlowOrthogonalCost = 10;
@@ -656,6 +660,29 @@ WorldDropSpawnMotion makeStealDropMotion(Vec2 startPosition)
         .jumpArcHeight = StealDropFlyArcHeight,
         .pickupDelaySeconds = StealDropPickupDelaySeconds,
     };
+}
+
+bool enemyCanStealInView(const Enemy& enemy, const CollisionRect& stealViewBounds)
+{
+    return circleIntersectsRect(enemy.position, effectiveEnemyRadius(enemy), stealViewBounds);
+}
+
+EnemyEvent makeEnemyStealEvent(const Enemy& enemy, const WorldDropItem& stolenDrop)
+{
+    EnemyEvent event;
+    event.type = EnemyEventType::Steal;
+    event.position = enemy.position;
+    event.enemyRuntimeId = enemy.id;
+    event.dungeonEventId = enemy.dungeonEventId;
+    event.enemyId = enemy.enemyId;
+    event.enemyName = enemy.enemyName;
+    if (stolenDrop.kind == WorldDropKind::Money) {
+        event.moneyDrop = std::max(0, stolenDrop.quantity);
+    } else if (stolenDrop.kind == WorldDropKind::Object) {
+        event.objectDropId = stolenDrop.id;
+        event.objectDropCount = 1;
+    }
+    return event;
 }
 
 bool heldDropMatchesFilter(const EnemyHeldDrop& drop, const ObjectCatalog& catalog, std::string_view targetFilter)
@@ -1552,6 +1579,14 @@ struct InspectEnemySpec {
     float retryInterval = InspectEnemyDefaultRetryInterval;
 };
 
+struct RingItemHitboxSpec {
+    const HitboxProfile* profile = nullptr;
+    float profileRotationRadians = 0.0f;
+    float profileScale = 1.0f;
+    float profileRadiusPadding = 0.0f;
+    float fallbackCircleRadius = 1.0f;
+};
+
 bool captureNetTargetMatches(std::string_view target)
 {
     return target == "enemy" || target == "target";
@@ -1618,6 +1653,90 @@ InspectEnemySpec collectInspectEnemySpec(const ObjectDefinition* object)
         }
     }
     return result;
+}
+
+float ringItemHitboxScale(const SpellRingItem& item)
+{
+    const float scale = static_cast<float>(item.sizeModifier);
+    return std::isfinite(scale) ? std::clamp(scale, 0.05f, 8.0f) : 1.0f;
+}
+
+float ringItemExtraHitboxPadding(const SpellRingItem& item)
+{
+    if (item.hasCapturedBehavior("jump_outward") && item.capturedJumpTimer > 0.0f) {
+        return static_cast<float>(
+            std::max(2.0, item.capturedBehaviorParamDouble("jump_outward", "landingRadius", 5.0)));
+    }
+    return 0.0f;
+}
+
+RingItemHitboxSpec ringItemHitboxSpec(
+    const SpellRingItem& item,
+    const ObjectDefinition* object,
+    const HitboxCatalog* catalog,
+    float totalTime,
+    float radiusPadding)
+{
+    RingItemHitboxSpec spec;
+    spec.fallbackCircleRadius = std::max(0.0f, item.hitRadius + std::max(0.0f, radiusPadding));
+    spec.profileRadiusPadding = std::max(0.0f, radiusPadding);
+    spec.profileScale = ringItemHitboxScale(item);
+    spec.profile = objectHitboxProfileFor(catalog, item.objectId);
+    if (spec.profile != nullptr && object != nullptr) {
+        const ObjectImageDrawOptions imageOptions = objectRingImageOptions(
+            *object,
+            item.orbitOutward,
+            item.worldVelocity,
+            totalTime,
+            {});
+        spec.profileRotationRadians = imageOptions.rotationDegrees * (Pi / 180.0f);
+    }
+    return spec;
+}
+
+bool ringItemHitboxOverlapsEnemy(
+    const Enemy& enemy,
+    const HitboxCatalog* catalog,
+    const SpellRingItem& item,
+    const RingItemHitboxSpec& itemHitbox)
+{
+    if (itemHitbox.profile != nullptr) {
+        return enemyHitboxOverlapsProfile(
+            enemy,
+            catalog,
+            *itemHitbox.profile,
+            item.worldPosition,
+            itemHitbox.profileRotationRadians,
+            itemHitbox.profileScale,
+            itemHitbox.profileRadiusPadding);
+    }
+
+    return enemyHitboxOverlapsCircle(
+        enemy,
+        catalog,
+        item.worldPosition,
+        itemHitbox.fallbackCircleRadius);
+}
+
+bool ringItemHitboxOverlapsCircle(
+    const SpellRingItem& item,
+    const RingItemHitboxSpec& itemHitbox,
+    Vec2 circleCenter,
+    float circleRadius)
+{
+    if (itemHitbox.profile != nullptr) {
+        return hitboxProfileOverlapsCircle(
+            *itemHitbox.profile,
+            item.worldPosition,
+            itemHitbox.profileRotationRadians,
+            itemHitbox.profileScale,
+            itemHitbox.profileRadiusPadding,
+            circleCenter,
+            circleRadius);
+    }
+
+    const float radius = itemHitbox.fallbackCircleRadius + std::max(0.0f, circleRadius);
+    return distanceSquared(item.worldPosition, circleCenter) <= radius * radius;
 }
 
 bool enemyInspectionAlreadyQueued(const std::vector<EnemyEvent>& events, std::string_view enemyId)
@@ -2200,6 +2319,7 @@ void applyEnemyDamage(Enemy& enemy, int damage)
         return;
     }
     enemy.hp -= damage;
+    enemy.dungeonEventSleeping = false;
     enemy.status.removeState("status_sleep");
 }
 
@@ -2441,15 +2561,25 @@ bool bossWeakPointHit(const BossWeakPointSpec& weakPoint, Vec2 hitPosition, floa
         circlesOverlap(weakPoint.center, weakPoint.radius, hitPosition, std::max(0.0f, hitRadius));
 }
 
-BossDamageAdjustment adjustBossIncomingDamage(const Enemy& enemy, int damage, Vec2 hitPosition, float hitRadius)
+bool bossWeakPointHit(const BossWeakPointSpec& weakPoint, const SpellRingItem& item, const RingItemHitboxSpec& itemHitbox)
+{
+    return weakPoint.exposed &&
+        weakPoint.radius > 0.0f &&
+        ringItemHitboxOverlapsCircle(item, itemHitbox, weakPoint.center, weakPoint.radius);
+}
+
+BossDamageAdjustment adjustBossIncomingDamageWithWeakPoint(
+    const Enemy& enemy,
+    int damage,
+    const BossWeakPointSpec& weakPoint,
+    bool weakPointHit)
 {
     BossDamageAdjustment result{.damage = damage};
     if (damage <= 0) {
         return result;
     }
 
-    const BossWeakPointSpec weakPoint = bossWeakPointFor(enemy);
-    if (bossWeakPointHit(weakPoint, hitPosition, hitRadius)) {
+    if (weakPointHit) {
         result.damage = std::max(
             1,
             static_cast<int>(std::ceil(static_cast<double>(damage) * std::max(0.0, weakPoint.damageMultiplier))));
@@ -2471,6 +2601,30 @@ BossDamageAdjustment adjustBossIncomingDamage(const Enemy& enemy, int damage, Ve
             static_cast<int>(std::ceil(static_cast<double>(damage) * std::max(0.0, multiplier))));
     }
     return result;
+}
+
+BossDamageAdjustment adjustBossIncomingDamage(const Enemy& enemy, int damage, Vec2 hitPosition, float hitRadius)
+{
+    const BossWeakPointSpec weakPoint = bossWeakPointFor(enemy);
+    return adjustBossIncomingDamageWithWeakPoint(
+        enemy,
+        damage,
+        weakPoint,
+        bossWeakPointHit(weakPoint, hitPosition, hitRadius));
+}
+
+BossDamageAdjustment adjustBossIncomingDamage(
+    const Enemy& enemy,
+    int damage,
+    const SpellRingItem& item,
+    const RingItemHitboxSpec& itemHitbox)
+{
+    const BossWeakPointSpec weakPoint = bossWeakPointFor(enemy);
+    return adjustBossIncomingDamageWithWeakPoint(
+        enemy,
+        damage,
+        weakPoint,
+        bossWeakPointHit(weakPoint, item, itemHitbox));
 }
 
 void drawBossWeakPoint(Renderer& renderer, const Enemy& enemy)
@@ -2539,6 +2693,124 @@ void drawJunkCrabDebris(Renderer& renderer, const Enemy& enemy)
     }
 }
 
+struct CountdownExplosionWarningVisual {
+    bool active = false;
+    float elapsed = 0.0f;
+    float progress = 0.0f;
+    float urgency = 0.0f;
+    float pulse = 0.0f;
+    float intensity = 0.0f;
+};
+
+constexpr float CountdownExplosionWarningStartCyclesPerSecond = 1.45f;
+constexpr float CountdownExplosionWarningEndCyclesPerSecond = 10.60f;
+
+float countdownExplosionWarningEase(float t)
+{
+    t = clamp(t, 0.0f, 1.0f);
+    return t * t * (3.0f - 2.0f * t);
+}
+
+float countdownExplosionWarningPhaseCycles(float initial, float progress)
+{
+    progress = clamp(progress, 0.0f, 1.0f);
+    const float progressSq = progress * progress;
+    return std::max(0.001f, initial) * (
+        CountdownExplosionWarningStartCyclesPerSecond * progress +
+        (CountdownExplosionWarningEndCyclesPerSecond - CountdownExplosionWarningStartCyclesPerSecond) *
+            progressSq * progress / 3.0f);
+}
+
+int countdownExplosionWarningTickIndex(const Enemy& enemy)
+{
+    if (enemy.countdownExplodeInitialDelay <= 0.0f) {
+        return -1;
+    }
+
+    const float initial = std::max(0.001f, enemy.countdownExplodeInitialDelay);
+    const float remaining = clamp(enemy.countdownExplodeDelay, 0.0f, initial);
+    const float progress = clamp((initial - remaining) / initial, 0.0f, 1.0f);
+    const float phaseCycles = countdownExplosionWarningPhaseCycles(initial, progress);
+    if (phaseCycles < 0.5f) {
+        return -1;
+    }
+    return static_cast<int>(std::floor(phaseCycles - 0.5f));
+}
+
+CountdownExplosionWarningVisual countdownExplosionWarningVisual(const Enemy& enemy)
+{
+    CountdownExplosionWarningVisual visual;
+    if (enemy.countdownExplodeRadius <= 0.0f ||
+        enemy.countdownExplodeInitialDelay <= 0.0f ||
+        enemy.countdownExploded ||
+        enemy.death.active ||
+        enemy.spawnTimer > 0.0f ||
+        enemy.bossAction.hidden) {
+        return visual;
+    }
+
+    const float initial = std::max(0.001f, enemy.countdownExplodeInitialDelay);
+    const float remaining = clamp(enemy.countdownExplodeDelay, 0.0f, initial);
+    visual.active = true;
+    visual.elapsed = std::max(0.0f, initial - remaining);
+    visual.progress = clamp(visual.elapsed / initial, 0.0f, 1.0f);
+    visual.urgency = countdownExplosionWarningEase(visual.progress);
+
+    const float phaseCycles = countdownExplosionWarningPhaseCycles(initial, visual.progress);
+    const float phase = phaseCycles * Pi * 2.0f;
+    visual.pulse = 0.5f - 0.5f * std::cos(phase);
+    visual.intensity = clamp(
+        0.20f + visual.urgency * 0.30f + visual.pulse * (0.40f + visual.urgency * 0.38f),
+        0.0f,
+        1.0f);
+    return visual;
+}
+
+void drawCountdownExplosionWarningAura(
+    Renderer& renderer,
+    Vec2 position,
+    float visualRadius,
+    const CountdownExplosionWarningVisual& warning)
+{
+    if (!warning.active) {
+        return;
+    }
+
+    const float auraRadius = visualRadius * (1.55f + warning.urgency * 0.45f + warning.pulse * 0.25f);
+    const float outerRadius = visualRadius * (1.14f + warning.urgency * 0.20f + warning.pulse * 0.16f);
+    renderer.fillSoftCircle(position, auraRadius, scaleColorAlpha({255, 36, 28, 118}, warning.intensity));
+    renderer.fillSoftCircle(position, outerRadius, scaleColorAlpha({255, 78, 38, 92}, 0.30f + warning.intensity * 0.62f));
+
+    const float ringRadius = visualRadius + 6.0f + warning.urgency * 5.0f + warning.pulse * (3.5f + warning.urgency * 4.0f);
+    renderer.drawCircle(position, ringRadius, scaleColorAlpha({255, 52, 38, 170}, 0.26f + warning.intensity * 0.62f));
+    renderer.drawCircle(position, ringRadius + 4.0f + warning.pulse * 3.0f, scaleColorAlpha({255, 128, 76, 120}, warning.intensity * 0.56f));
+}
+
+void drawCountdownExplosionWarningOverlay(
+    Renderer& renderer,
+    Vec2 position,
+    float visualRadius,
+    const CountdownExplosionWarningVisual& warning)
+{
+    if (!warning.active) {
+        return;
+    }
+
+    const float coreRadius = visualRadius * (0.78f + warning.pulse * 0.12f);
+    renderer.fillSoftCircle(position, coreRadius, scaleColorAlpha({255, 32, 28, 92}, 0.20f + warning.intensity * 0.62f));
+    renderer.drawCircle(position, visualRadius + 2.0f + warning.pulse * 3.0f, scaleColorAlpha({255, 36, 30, 210}, 0.34f + warning.intensity * 0.58f));
+    renderer.drawCircle(position, visualRadius * (0.52f + warning.pulse * 0.10f), scaleColorAlpha({255, 206, 172, 160}, warning.intensity * 0.48f));
+
+    const float rayAngle = warning.elapsed * (2.8f + warning.urgency * 5.0f);
+    const float rayInner = visualRadius * (0.40f + warning.pulse * 0.08f);
+    const float rayOuter = visualRadius * (1.12f + warning.urgency * 0.26f + warning.pulse * 0.18f);
+    const Color rayColor = scaleColorAlpha({255, 72, 48, 150}, warning.intensity * 0.72f);
+    for (int i = 0; i < 4; ++i) {
+        const Vec2 ray = fromAngle(rayAngle + static_cast<float>(i) * Pi * 0.5f);
+        renderer.drawLine(position + ray * rayInner, position + ray * rayOuter, rayColor);
+    }
+}
+
 bool isAstragnaBossAction(const Enemy& enemy);
 void drawAstragnaBoss(Renderer& renderer, const Enemy& enemy);
 
@@ -2574,6 +2846,8 @@ void drawEnemyVisual(Renderer& renderer, const Enemy& enemy, bool captureHighlig
         color = darkenEnemyColorForDeath(color, enemy);
     }
     const float visualRadius = enemyVisualRadius(enemy);
+    const CountdownExplosionWarningVisual explosionWarning = countdownExplosionWarningVisual(enemy);
+    drawCountdownExplosionWarningAura(renderer, drawPosition, visualRadius, explosionWarning);
     if (enemy.dungeonEventBoss && !enemy.death.active) {
         renderer.drawCircle(drawPosition, visualRadius + 10.0f, {255, 188, 90, 190});
         renderer.drawCircle(drawPosition, visualRadius + 15.0f, {255, 94, 118, 115});
@@ -2601,6 +2875,9 @@ void drawEnemyVisual(Renderer& renderer, const Enemy& enemy, bool captureHighlig
         if (captureHighlighted && !enemy.death.active) {
             renderer.drawCircle(drawPosition, visualRadius + 6.0f, {255, 255, 255, 245});
         }
+    }
+    if (!astragnaVisual) {
+        drawCountdownExplosionWarningOverlay(renderer, drawPosition, visualRadius, explosionWarning);
     }
     if (enemy.death.active) {
         return;
@@ -3161,7 +3438,7 @@ bool tryHitJunkCrabDebris(
     Enemy& enemy,
     SpellRingItem& item,
     const ObjectDefinition* object,
-    float itemHitRadius,
+    const RingItemHitboxSpec& itemHitbox,
     SpellRingSystem& spellRing,
     std::vector<EnemyEvent>& events,
     std::vector<RingImpactSoundEvent>& impactSoundEvents)
@@ -3178,7 +3455,7 @@ bool tryHitJunkCrabDebris(
             continue;
         }
         const Vec2 debrisPosition = junkCrabDebrisPosition(enemy, debris);
-        if (!circlesOverlap(debrisPosition, JunkCrabDebrisRadius, item.worldPosition, itemHitRadius)) {
+        if (!ringItemHitboxOverlapsCircle(item, itemHitbox, debrisPosition, JunkCrabDebrisRadius)) {
             continue;
         }
 
@@ -3816,7 +4093,7 @@ bool tryHitAstragnaBossComponent(
     Enemy& enemy,
     SpellRingItem& item,
     const ObjectDefinition* object,
-    float itemHitRadius,
+    const RingItemHitboxSpec& itemHitbox,
     const Player& player,
     SpellRingSystem& spellRing,
     std::vector<EnemyEvent>& events,
@@ -3833,7 +4110,7 @@ bool tryHitAstragnaBossComponent(
             continue;
         }
         const Vec2 partPosition = astragnaSealPartPosition(enemy, part);
-        if (!circlesOverlap(partPosition, part.radius, item.worldPosition, itemHitRadius)) {
+        if (!ringItemHitboxOverlapsCircle(item, itemHitbox, partPosition, part.radius)) {
             continue;
         }
 
@@ -3877,7 +4154,7 @@ bool tryHitAstragnaBossComponent(
             continue;
         }
         const Vec2 blockPosition = astragnaShellBlockPosition(enemy, block);
-        if (!circlesOverlap(blockPosition, block.radius, item.worldPosition, itemHitRadius)) {
+        if (!ringItemHitboxOverlapsCircle(item, itemHitbox, blockPosition, block.radius)) {
             continue;
         }
 
@@ -4402,6 +4679,14 @@ void EnemySystem::forceDetectInSight(Enemy& enemy, Vec2 playerPosition, bool sho
     setAwareness(enemy, EnemyAwarenessState::Detected, showIcon);
 }
 
+void EnemySystem::wakeDungeonEventEnemy(Enemy& enemy, Vec2 playerPosition, bool showIcon)
+{
+    enemy.dungeonEventSleeping = false;
+    enemy.status.removeState("status_sleep");
+    enemy.manualDetectionOnly = false;
+    forceDetectInSight(enemy, playerPosition, showIcon);
+}
+
 void EnemySystem::applyDefinition(Enemy& enemy, const EnemyDefinition* definition, const RuntimeBalance& balance, const EnemyCatalog& enemyCatalog)
 {
     enemy.definition = definition;
@@ -4458,8 +4743,10 @@ void EnemySystem::applyDefinition(Enemy& enemy, const EnemyDefinition* definitio
     enemy.enemyHealTimer = 0.0f;
     enemy.countdownExplodeRadius = 0.0f;
     enemy.countdownExplodeDelay = 0.0f;
+    enemy.countdownExplodeInitialDelay = 0.0f;
     enemy.countdownExplodeDamage = 0;
     enemy.countdownExplodeTerrainDamage = 0;
+    enemy.countdownExplodeWarningTickIndex = -1;
     enemy.countdownExplodeOnce = false;
     enemy.countdownExploded = false;
     enemy.jumpAttackDistance = 0.0f;
@@ -4693,8 +4980,10 @@ void EnemySystem::applyDefinition(Enemy& enemy, const EnemyDefinition* definitio
     if (hasBehavior(enemy, "countdown_explode")) {
         enemy.countdownExplodeRadius = static_cast<float>(std::max(8.0, behaviorParamDouble(enemy, "countdown_explode", "radius", 44.0)));
         enemy.countdownExplodeDelay = static_cast<float>(std::max(0.0, behaviorParamDouble(enemy, "countdown_explode", "delay", 2.0)));
+        enemy.countdownExplodeInitialDelay = enemy.countdownExplodeDelay;
         enemy.countdownExplodeDamage = std::max(0, behaviorParamInt(enemy, "countdown_explode", "damage", 3));
         enemy.countdownExplodeTerrainDamage = std::max(0, behaviorParamInt(enemy, "countdown_explode", "terrainDamage", 1));
+        enemy.countdownExplodeWarningTickIndex = -1;
         enemy.countdownExplodeOnce = behaviorParamInt(enemy, "countdown_explode", "once", 1) != 0;
         enemy.countdownExploded = false;
     }
@@ -5940,6 +6229,7 @@ void EnemySystem::update(
     const EffectDispatcher& effectDispatcher,
     ProjectileSystem& projectiles,
     MagicSystem& magic,
+    const CollisionRect& stealViewBounds,
     bool allowBossCapture,
     std::string_view bossCaptureObjectId,
     std::vector<EffectDiscoveryEvent>* discoveryEvents,
@@ -6011,6 +6301,38 @@ void EnemySystem::update(
             itemPtr->unlatchEnemy(enemyId);
         }
     };
+    const auto sleepingEnemyWakeTriggered = [&](const Enemy& enemy) {
+        const float playerRadius = effectivePlayerRadius(player, balance);
+        if (enemyHitboxOverlapsCircle(enemy, hitboxCatalog_, player.position, playerRadius)) {
+            return true;
+        }
+        for (SpellRingItem* itemPtr : spellRing.runtimeItemsMutable()) {
+            if (itemPtr == nullptr) {
+                continue;
+            }
+            const SpellRingItem& item = *itemPtr;
+            if (item.broken()) {
+                continue;
+            }
+            const ObjectDefinition* hitObject = nullptr;
+            if (!item.objectId.empty()) {
+                const auto objectIt = objectCatalog.objectsById.find(item.objectId);
+                if (objectIt != objectCatalog.objectsById.end()) {
+                    hitObject = &objectIt->second;
+                }
+            }
+            const RingItemHitboxSpec itemHitbox = ringItemHitboxSpec(
+                item,
+                hitObject,
+                hitboxCatalog_,
+                totalTime,
+                ringItemExtraHitboxPadding(item));
+            if (ringItemHitboxOverlapsEnemy(enemy, hitboxCatalog_, item, itemHitbox)) {
+                return true;
+            }
+        }
+        return false;
+    };
 
     for (Enemy& enemy : enemies_.items()) {
         if (!enemy.active) {
@@ -6022,13 +6344,17 @@ void EnemySystem::update(
             continue;
         }
         if (enemy.dungeonEventSleeping) {
-            clearEnemyAction(enemy);
-            enemy.hitFlash = std::max(0.0f, enemy.hitFlash - dt);
-            enemy.hpBarTimer = std::max(0.0f, enemy.hpBarTimer - dt);
-            enemy.awarenessIconTimer = 0.0f;
-            enemy.awarenessIcon = EnemyAwarenessIcon::None;
-            enemy.velocity = {};
-            continue;
+            if (sleepingEnemyWakeTriggered(enemy) || !enemy.status.hasState("status_sleep")) {
+                wakeDungeonEventEnemy(enemy, player.position, true);
+            } else {
+                clearEnemyAction(enemy);
+                enemy.hitFlash = std::max(0.0f, enemy.hitFlash - dt);
+                enemy.hpBarTimer = std::max(0.0f, enemy.hpBarTimer - dt);
+                enemy.awarenessIconTimer = 0.0f;
+                enemy.awarenessIcon = EnemyAwarenessIcon::None;
+                enemy.velocity = {};
+                continue;
+            }
         }
         enemy.stunWakeTimer = std::max(0.0f, enemy.stunWakeTimer - dt);
         const bool wasStunned = enemy.status.hasState("status_stun");
@@ -6338,23 +6664,27 @@ void EnemySystem::update(
                 enemy.enemyHealIntervalSeconds - healActionResult.completedDurationSeconds);
         }
         const bool actionLocksMovement = enemy.action.active && enemy.action.lockMovement;
-        if (enemy.stealItemEnabled && carriedCount() < std::max(1, enemy.stealMaxCarry)) {
+        if (enemy.stealItemEnabled &&
+            carriedCount() < std::max(1, enemy.stealMaxCarry) &&
+            enemyCanStealInView(enemy, stealViewBounds)) {
             WorldDropItem stolenDrop;
             if (worldDrops.stealNearestDrop(
                     objectCatalog,
                     enemy.position,
                     std::max(8.0f, enemy.stealRadius),
                     enemy.stealTarget,
-                    stolenDrop)) {
+                    stolenDrop,
+                    &stealViewBounds)) {
+                bool stolen = false;
                 if (stolenDrop.kind == WorldDropKind::Money) {
-                    addHeldDropToEnemy(enemy, EnemyHeldDrop{
+                    stolen = addHeldDropToEnemy(enemy, EnemyHeldDrop{
                         .kind = EnemyHeldDropKind::Money,
                         .origin = EnemyHeldDropOrigin::PickedUp,
                         .quantity = std::max(0, stolenDrop.quantity),
                         .deathDropChance = 1.0f,
                     });
                 } else if (stolenDrop.kind == WorldDropKind::Object && !stolenDrop.id.empty()) {
-                    addHeldDropToEnemy(enemy, EnemyHeldDrop{
+                    stolen = addHeldDropToEnemy(enemy, EnemyHeldDrop{
                         .kind = EnemyHeldDropKind::Object,
                         .origin = EnemyHeldDropOrigin::PickedUp,
                         .objectId = stolenDrop.id,
@@ -6363,7 +6693,10 @@ void EnemySystem::update(
                         .instance = std::move(stolenDrop.instance),
                     });
                 }
-                setAwareness(enemy, EnemyAwarenessState::Detected, false);
+                if (stolen) {
+                    events_.push_back(makeEnemyStealEvent(enemy, stolenDrop));
+                    setAwareness(enemy, EnemyAwarenessState::Detected, false);
+                }
             }
         }
         const auto chooseWanderDirection = [&]() {
@@ -6673,15 +7006,27 @@ void EnemySystem::update(
 
         if (!attackBlocked && hasBehavior(enemy, "countdown_explode") && (!enemy.countdownExploded || !enemy.countdownExplodeOnce)) {
             enemy.countdownExplodeDelay = std::max(0.0f, enemy.countdownExplodeDelay - dt);
+            if (enemy.countdownExplodeDelay > 0.0f) {
+                const int tickIndex = countdownExplosionWarningTickIndex(enemy);
+                if (tickIndex > enemy.countdownExplodeWarningTickIndex) {
+                    enemy.countdownExplodeWarningTickIndex = tickIndex;
+                    events_.push_back(makeEnemyEvent(EnemyEventType::ExplosionWarningTick, enemy));
+                }
+            }
             if (enemy.countdownExplodeDelay <= 0.0f) {
                 const float radius = std::max(8.0f, enemy.countdownExplodeRadius);
                 const float radiusSq = radius * radius;
+                const float playerExplosionRadius = radius + playerRadius;
                 if (enemy.countdownExplodeDamage > 0 &&
-                    distanceSquared(player.position, enemy.position) <= radiusSq) {
+                    distanceSquared(player.position, enemy.position) <= playerExplosionRadius * playerExplosionRadius) {
                     player.lastDamageEnemyName = enemy.enemyName.empty() ? std::string(DefaultEnemyName) : enemy.enemyName;
                     player.applyDamage(
                         applyDefenseModifier(player.status, enemy.countdownExplodeDamage),
-                        DamageSource::Trap);
+                        DamageSource::Explosion);
+                    player.applyKnockback(
+                        player.position - enemy.position,
+                        std::clamp(132.0f + radius * 1.20f, 150.0f, 250.0f),
+                        0.16f);
                 }
                 if (enemy.countdownExplodeTerrainDamage > 0) {
                     const int centerTx = map.worldToTile(enemy.position.x);
@@ -6699,7 +7044,11 @@ void EnemySystem::update(
                     }
                 }
                 enemy.countdownExploded = true;
-                events_.push_back(makeEnemyEvent(EnemyEventType::Explode, enemy));
+                EnemyEvent explodeEvent = makeEnemyEvent(EnemyEventType::Explode, enemy);
+                explodeEvent.effectRadius = radius;
+                explodeEvent.damageAmount = enemy.countdownExplodeDamage;
+                events_.push_back(std::move(explodeEvent));
+                applyExplosionDamage(enemy.position, radius, spellRing, enemy.countdownExplodeDamage, enemy.id);
                 processEnemyDeath(enemy);
                 continue;
             }
@@ -6797,11 +7146,6 @@ void EnemySystem::update(
             if (item.broken()) {
                 continue;
             }
-            float capturedHitRadius = item.hitRadius;
-            if (item.hasCapturedBehavior("jump_outward") && item.capturedJumpTimer > 0.0f) {
-                const float bonusRadius = static_cast<float>(std::max(2.0, item.capturedBehaviorParamDouble("jump_outward", "landingRadius", 5.0)));
-                capturedHitRadius += bonusRadius;
-            }
             const ObjectDefinition* hitObject = nullptr;
             if (!item.objectId.empty()) {
                 const auto objectIt = objectCatalog.objectsById.find(item.objectId);
@@ -6809,6 +7153,12 @@ void EnemySystem::update(
                     hitObject = &objectIt->second;
                 }
             }
+            const RingItemHitboxSpec itemHitbox = ringItemHitboxSpec(
+                item,
+                hitObject,
+                hitboxCatalog_,
+                totalTime,
+                ringItemExtraHitboxPadding(item));
             const CaptureNetSpec captureNetSpec = collectCaptureNetSpec(hitObject);
             const InspectEnemySpec inspectEnemySpec = collectInspectEnemySpec(hitObject);
             const bool specialContactEffect = captureNetSpec.active || inspectEnemySpec.active;
@@ -6824,7 +7174,7 @@ void EnemySystem::update(
                     enemy,
                     item,
                     hitObject,
-                    capturedHitRadius,
+                    itemHitbox,
                     player,
                     spellRing,
                     events_,
@@ -6838,7 +7188,7 @@ void EnemySystem::update(
                     enemy,
                     item,
                     hitObject,
-                    capturedHitRadius,
+                    itemHitbox,
                     spellRing,
                     events_,
                     impactSoundEvents_)) {
@@ -6848,7 +7198,7 @@ void EnemySystem::update(
             if (isAstragnaBossAction(enemy)) {
                 continue;
             }
-            const bool overlappingItem = enemyHitboxOverlapsCircle(enemy, hitboxCatalog_, item.worldPosition, capturedHitRadius);
+            const bool overlappingItem = ringItemHitboxOverlapsEnemy(enemy, hitboxCatalog_, item, itemHitbox);
             if (item.type == SpellRingItemType::Shovel && !overlappingItem) {
                 item.unlatchEnemy(enemy.id);
                 continue;
@@ -6966,8 +7316,8 @@ void EnemySystem::update(
             const BossDamageAdjustment bossDamage = adjustBossIncomingDamage(
                 enemy,
                 adjustedDamage,
-                item.worldPosition,
-                capturedHitRadius);
+                item,
+                itemHitbox);
             adjustedDamage = bossDamage.damage;
             const bool nonlethalHit = nonlethalHitApplies(hitObject);
             int damageDealt = applyDefenseModifier(enemy.status, adjustedDamage);
@@ -7131,15 +7481,36 @@ void EnemySystem::update(
             }
             tryCapturedRewardFromEnemy(item, enemy, totalTime, events_);
             if (item.hasCapturedBehavior("charge_explode") && item.capturedExplodeSleepTimer <= 0.0f) {
-                const int requiredHits = std::max(1, item.capturedBehaviorParamInt("charge_explode", "count", CapturedExplosionChargeLimit));
+                const int requiredHits = std::max(
+                    1,
+                    item.capturedBehaviorParamInt(
+                        "charge_explode",
+                        "count",
+                        item.capturedBehaviorParamInt("charge_explode", "charges", CapturedExplosionChargeLimit)));
                 const float restSeconds = static_cast<float>(std::max(0.1, item.capturedBehaviorParamDouble("charge_explode", "rest", CapturedExplosionSleepSeconds)));
                 ++item.capturedExplodeCharge;
                 if (item.capturedExplodeCharge >= requiredHits) {
                     item.capturedExplodeCharge = 0;
                     item.capturedExplodeSleepTimer = restSeconds;
+                    const float explosionRadius = static_cast<float>(std::max(
+                        8.0,
+                        item.capturedBehaviorParamDouble("charge_explode", "radius", CapturedExplosionRadius)));
+                    const int explosionDamage = std::max(
+                        0,
+                        item.capturedBehaviorParamInt("charge_explode", "damage", CapturedExplosionDamage));
+                    const float terrainRadius = static_cast<float>(std::max(
+                        0.0,
+                        item.capturedBehaviorParamDouble("charge_explode", "terrainRadius", CapturedExplosionTerrainRadius)));
+                    const int terrainDamage = std::max(
+                        0,
+                        item.capturedBehaviorParamInt("charge_explode", "terrainDamage", CapturedExplosionTerrainDamage));
                     events_.push_back(EnemyEvent{
                         .type = EnemyEventType::CapturedExplosion,
                         .position = item.worldPosition,
+                        .damageAmount = explosionDamage,
+                        .effectRadius = explosionRadius,
+                        .terrainRadius = terrainRadius,
+                        .terrainDamage = terrainDamage,
                     });
                 }
             }
@@ -7779,11 +8150,18 @@ bool EnemySystem::applyMagicNearest(Vec2 origin, float range, EnemyMagicHitSpec 
     return true;
 }
 
-void EnemySystem::applyCapturedExplosion(Vec2 position, SpellRingSystem& spellRing, int damage)
+void EnemySystem::applyExplosionDamage(Vec2 position, float radius, SpellRingSystem& spellRing, int damage, int excludedEnemyRuntimeId)
 {
-    const float radiusSq = CapturedExplosionRadius * CapturedExplosionRadius;
+    const float safeRadius = std::max(0.0f, radius);
+    if (safeRadius <= 0.0f || damage <= 0) {
+        return;
+    }
+
+    spellRing.applyExplosionDamageToItems(position, safeRadius, damage);
+
+    const float radiusSq = safeRadius * safeRadius;
     for (Enemy& enemy : enemies_.items()) {
-        if (!enemyCanBeHit(enemy) || enemy.spawnTimer > 0.0f) {
+        if (!enemyCanBeHit(enemy) || enemy.spawnTimer > 0.0f || enemy.id == excludedEnemyRuntimeId) {
             continue;
         }
         if (isAstragnaBossAction(enemy)) {
@@ -7799,7 +8177,9 @@ void EnemySystem::applyCapturedExplosion(Vec2 position, SpellRingSystem& spellRi
         enemy.hitFlash = 0.18f;
         enemy.knockbackVelocity = normalize(enemy.position - position) * 110.0f;
         enemy.knockbackTimer = std::max(enemy.knockbackTimer, 0.14f);
-        events_.push_back(makeEnemyEvent(EnemyEventType::AttackHit, enemy, "fire", damageDealt));
+        EnemyEvent hitEvent = makeEnemyEvent(EnemyEventType::AttackHit, enemy, "fire", damageDealt);
+        hitEvent.ringItemImpact = true;
+        events_.push_back(std::move(hitEvent));
         if (enemy.hp <= 0) {
             beginEnemyDeath(enemy, spellRing, position);
         }
@@ -7955,10 +8335,7 @@ void EnemySystem::wakeDungeonEventEnemies(std::string_view eventId)
         if (!enemy.dungeonEventSleeping) {
             continue;
         }
-        enemy.dungeonEventSleeping = false;
-        enemy.status.removeState("status_sleep");
-        enemy.manualDetectionOnly = false;
-        forceDetectInSight(enemy, enemy.position + Vec2{1.0f, 0.0f}, true);
+        wakeDungeonEventEnemy(enemy, enemy.position + Vec2{1.0f, 0.0f}, true);
     }
 }
 
@@ -8034,6 +8411,20 @@ int EnemySystem::activeDungeonEventEnemyCount(std::string_view eventId) const
     int count = 0;
     for (const Enemy& enemy : enemies_.items()) {
         if (enemy.active && enemy.dungeonEventId == eventId) {
+            ++count;
+        }
+    }
+    return count;
+}
+
+int EnemySystem::activeSleepingDungeonEventEnemyCount(std::string_view eventId) const
+{
+    if (eventId.empty()) {
+        return 0;
+    }
+    int count = 0;
+    for (const Enemy& enemy : enemies_.items()) {
+        if (enemy.active && enemy.dungeonEventId == eventId && enemy.dungeonEventSleeping) {
             ++count;
         }
     }

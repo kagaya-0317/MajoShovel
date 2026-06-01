@@ -110,6 +110,11 @@ enum class ImageScaleEditTab {
     Others,
 };
 
+enum class HitboxEditTab {
+    Enemies,
+    Objects,
+};
+
 enum class AudioCueEditMode {
     Bgm,
     Se,
@@ -127,6 +132,15 @@ struct BaseEditSnapshot {
     std::unordered_map<std::string, BaseEditRect> homeFacilityRects;
     std::unordered_set<std::int64_t> outdoorBlockedTiles;
     std::unordered_set<std::int64_t> homeBlockedTiles;
+};
+
+struct HitboxEditSnapshot {
+    HitboxCatalog catalog;
+    HitboxEditTab tab = HitboxEditTab::Enemies;
+    std::string selectedId;
+    int selectedCircleIndex = -1;
+
+    bool operator==(const HitboxEditSnapshot&) const = default;
 };
 
 struct AudioCueEditEntry {
@@ -192,7 +206,6 @@ public:
     enum class DungeonEventObjectKind {
         GlowingRock,
         ElectricReceiver,
-        BuriedDebris,
         LostBaggage,
         Campfire,
         HeavyRock,
@@ -226,7 +239,6 @@ public:
         bool rewardClaimed = false;
         int bossEnemyRuntimeId = 0;
         float selfLightRadiusTiles = 4.0f;
-        std::string selectedEnemyId;
         std::vector<int> spawnedEnemyRuntimeIds;
         std::vector<DungeonEventNestHole> nestHoles;
         std::vector<DungeonEventObject> eventObjects;
@@ -393,7 +405,7 @@ private:
         LoadSave,
         LoadBaseEdit,
         LoadImageScale,
-        LoadEnemyHitboxes,
+        LoadHitboxes,
         LoadOpening,
         LoadStoryEvents,
         LoadOpeningMeta,
@@ -927,7 +939,7 @@ private:
     void updateCaptureAbsorbAnimations(float dt);
     void finalizeCaptureAbsorbAnimation(const CaptureAbsorbAnimation& animation);
     Vec2 captureAbsorbPosition(const CaptureAbsorbAnimation& animation, Vec2 targetPosition) const;
-    void handleCapturedExplosion(Vec2 position);
+    void handleCapturedExplosion(const CapturedExplosionRequest& request);
     enum class SellableKind {
         Stack,
         Instance,
@@ -1358,8 +1370,8 @@ private:
     void exitObjectImageScaleEditMode();
     void updateObjectImageScaleEditScreen(const Input& input, UiContext& ui);
     void renderObjectImageScaleEditScreen(Renderer& renderer) const;
-    bool loadEnemyHitboxData();
-    bool saveEnemyHitboxData(std::string& message);
+    bool loadHitboxData();
+    bool saveHitboxData(std::string& message);
     bool handleEnemyHitboxEditCommand(std::string_view normalized);
     void rebuildEnemyHitboxEditList();
     void applyEnemyHitboxEditFilter(std::string_view preferredSelection = {});
@@ -1368,6 +1380,11 @@ private:
     void exitEnemyHitboxEditMode();
     void updateEnemyHitboxEditScreen(const Input& input, UiContext& ui);
     void renderEnemyHitboxEditScreen(Renderer& renderer) const;
+    HitboxEditSnapshot makeHitboxEditSnapshot() const;
+    void restoreHitboxEditSnapshot(const HitboxEditSnapshot& snapshot);
+    void pushHitboxEditUndoSnapshot();
+    bool undoHitboxEdit();
+    bool redoHitboxEdit();
     bool loadAudioCueManifestForEdit();
     bool saveAudioCueManifestFromEdit(std::string& message);
     bool handleAudioCueEditCommand(std::string_view normalized);
@@ -1661,30 +1678,37 @@ private:
     bool baseEditDirty_ = false;
     std::unordered_map<std::string, float> objectImageScaleById_;
     std::unordered_map<std::string, float> otherImageScaleByKey_;
-    EnemyHitboxCatalog enemyHitboxes_;
+    HitboxCatalog hitboxes_;
     std::vector<std::string> objectImageScaleAllObjectIds_;
     std::vector<std::string> objectImageScaleObjectIds_;
     std::vector<std::string> otherImageScaleKeys_;
     std::vector<std::string> enemyHitboxAllEnemyIds_;
     std::vector<std::string> enemyHitboxEnemyIds_;
+    std::vector<std::string> objectHitboxAllObjectIds_;
+    std::vector<std::string> objectHitboxObjectIds_;
+    std::vector<HitboxEditSnapshot> hitboxEditUndoStack_;
+    std::vector<HitboxEditSnapshot> hitboxEditRedoStack_;
     UiTextInputState objectImageScaleSearchInput_;
     UiTextInputState enemyHitboxSearchInput_;
     ScreenMode objectImageScaleReturnMode_ = ScreenMode::Playing;
     ScreenMode enemyHitboxEditReturnMode_ = ScreenMode::Playing;
     ImageScaleEditTab imageScaleEditTab_ = ImageScaleEditTab::Objects;
+    HitboxEditTab hitboxEditTab_ = HitboxEditTab::Enemies;
     int objectImageScaleSelectedIndex_ = -1;
     int otherImageScaleSelectedIndex_ = -1;
     int enemyHitboxSelectedEnemyIndex_ = -1;
+    int objectHitboxSelectedObjectIndex_ = -1;
     int enemyHitboxSelectedCircleIndex_ = -1;
     float objectImageScaleScrollOffset_ = 0.0f;
     float otherImageScaleScrollOffset_ = 0.0f;
     float enemyHitboxScrollOffset_ = 0.0f;
+    float objectHitboxScrollOffset_ = 0.0f;
     bool objectImageScaleDirty_ = false;
     bool enemyHitboxDirty_ = false;
     bool enemyHitboxDraggingCircle_ = false;
     Vec2 enemyHitboxDragStartMouse_{};
     Vec2 enemyHitboxDragStartOffset_{};
-    std::vector<EnemyHitCircle> enemyHitboxClipboard_;
+    std::vector<HitCircle> enemyHitboxClipboard_;
     std::string objectImageScaleStatus_;
     std::string enemyHitboxStatus_;
     ScreenMode audioCueEditReturnMode_ = ScreenMode::Playing;

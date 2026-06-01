@@ -68,4 +68,6 @@ se.discovery.warp	se	se/discovery_warp_placeholder.wav	0.82	false	360	ワープ�
 se.chest.open	se	se/chest_open_placeholder.wav	0.78	false	180	宝箱開封
 se.crate.break	se	se/crate_break_placeholder.wav	0.76	false	120	木箱破壊
 se.item.break	se	se/item_break_placeholder.wav	0.80	false	160	アイテム破損
+se.explosion.tick	se	se/explosion_tick_placeholder.wav	0.62	false	25	爆発予兆クリック
+se.explosion.boom	se	se/explosion_boom_placeholder.wav	0.88	false	130	爆発ボォォン
 se.explosion	se	se/explosion_placeholder.wav	0.84	false	180	爆発

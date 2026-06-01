@@ -29,6 +29,14 @@ enum class WorldIconId {
     MoonFragment,
     ManaDrop,
     WarpPoint,
+    WarpGuidePedestal,
+    WarpGuideMap,
+    NestHole,
+    GlowingRock,
+    ElectricReceiver,
+    LostBaggage,
+    Campfire,
+    HeavyRock,
 };
 
 struct WorldIconDefinition {

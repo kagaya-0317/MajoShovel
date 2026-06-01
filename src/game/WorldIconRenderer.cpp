@@ -12,7 +12,7 @@ constexpr std::string_view WorldIconExtension = ".png";
 constexpr int MoneyMediumThreshold = 50;
 constexpr int MoneyLargeThreshold = 150;
 
-constexpr std::array<WorldIconDefinition, 15> WorldIconDefinitions{{
+constexpr std::array<WorldIconDefinition, 23> WorldIconDefinitions{{
     {WorldIconId::MoneySmall, "money_small", "お金 小額", 1},
     {WorldIconId::MoneyMedium, "money_medium", "お金 中額", 2},
     {WorldIconId::MoneyLarge, "money_large", "お金 高額", 3},
@@ -28,6 +28,14 @@ constexpr std::array<WorldIconDefinition, 15> WorldIconDefinitions{{
     {WorldIconId::MoonFragment, "moon_fragment", "月のカケラ", 13},
     {WorldIconId::ManaDrop, "mana_drop", "魔力のしずく", 14},
     {WorldIconId::WarpPoint, "warp_point", "ワープポイント", 15},
+    {WorldIconId::WarpGuidePedestal, "warp_guide_pedestal", "ワープ案内図 台座", 16},
+    {WorldIconId::WarpGuideMap, "warp_guide_map", "ワープ案内図 地図", 17},
+    {WorldIconId::NestHole, "nest_hole", "巣穴", 18},
+    {WorldIconId::GlowingRock, "glowing_rock", "光る岩", 19},
+    {WorldIconId::ElectricReceiver, "electric_receiver", "受電石", 20},
+    {WorldIconId::LostBaggage, "lost_baggage", "荷物", 21},
+    {WorldIconId::Campfire, "campfire", "焚き火", 22},
+    {WorldIconId::HeavyRock, "heavy_rock", "重い岩", 23},
 }};
 
 const std::unordered_map<std::string, float>* gWorldIconScaleOverrides = nullptr;

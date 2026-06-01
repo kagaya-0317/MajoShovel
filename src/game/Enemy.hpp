@@ -221,8 +221,10 @@ struct Enemy {
     float enemyHealTimer = 0.0f;
     float countdownExplodeRadius = 0.0f;
     float countdownExplodeDelay = 0.0f;
+    float countdownExplodeInitialDelay = 0.0f;
     int countdownExplodeDamage = 0;
     int countdownExplodeTerrainDamage = 0;
+    int countdownExplodeWarningTickIndex = -1;
     bool countdownExplodeOnce = false;
     bool countdownExploded = false;
     float jumpAttackDistance = 0.0f;

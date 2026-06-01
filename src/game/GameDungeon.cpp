@@ -68,6 +68,7 @@ constexpr std::string_view AudioSeEnemySpawn = "se.enemy.spawn";
 constexpr std::string_view AudioSeItemBreak = "se.item.break";
 constexpr std::string_view AudioSeDiscovery = "se.discovery";
 constexpr std::string_view AudioSeWarpDiscovery = "se.discovery.warp";
+constexpr std::string_view AudioSeExplosion = "se.explosion.boom";
 constexpr std::string_view AudioSeFootstepBaseOutdoor = "se.footstep.base_outdoor";
 constexpr std::string_view AudioSeFootstepHomeInterior = "se.footstep.home";
 constexpr std::string_view AudioSeFootstepDungeon = "se.footstep.dungeon";
@@ -91,6 +92,12 @@ constexpr float IntroTutorialMidwayCueTileX = 59.0f;
 constexpr float IntroTutorialEnemySpawnRadiusTiles = 9.0f;
 constexpr float IntroTutorialEnemyEncounterRadiusTiles = 5.6f;
 constexpr float IntroTutorialEnemyResolveRadiusTiles = 3.0f;
+constexpr std::array<DungeonTile, 4> BuriedWitchRockOffsets{{
+    {0, -1},
+    {-1, 0},
+    {1, 0},
+    {0, 1},
+}};
 
 float captureAbsorbFlyProgress(float elapsedSeconds, float flyDelaySeconds, float durationSeconds)
 {
@@ -109,6 +116,17 @@ Vec2 captureAbsorbCurvePosition(Vec2 start, Vec2 target, float flyProgress)
     const float arc = std::sin(t * Pi);
     return lerp(start, target, rush) + side * (arc * 12.0f) + Vec2{0.0f, -arc * 18.0f};
 }
+
+int applyDefenseModifier(const EntityStatus& status, int damage)
+{
+    if (damage <= 0) {
+        return 0;
+    }
+
+    const double defense = std::max(0.05, status.multiplierFor(ModifierStat::Defense));
+    return std::max(0, static_cast<int>(std::ceil(static_cast<double>(damage) / defense)));
+}
+
 constexpr float IntroTutorialSlimeLeashRadiusTiles = 2.4f;
 constexpr float IntroTutorialExitLightRadiusTiles = 4.2f;
 constexpr std::string_view IntroTutorialShovelObjectId = "item_shovel";
@@ -498,6 +516,17 @@ int dungeonEventStageMaxCount(std::string_view stageId)
     return 5;
 }
 
+float dungeonEventFixedPlacementProgress(const DungeonEventFixedPlacement& placement)
+{
+    constexpr float ProgressStart = 0.12f;
+    constexpr float ProgressEnd = 0.88f;
+    constexpr int SectionCount = 3;
+    const int sectionIndex = std::clamp(placement.sectionIndex, 0, SectionCount - 1);
+    const float sectionT = clamp(placement.sectionT, 0.0f, 1.0f);
+    const float sectionSpan = (ProgressEnd - ProgressStart) / static_cast<float>(SectionCount);
+    return ProgressStart + sectionSpan * (static_cast<float>(sectionIndex) + sectionT);
+}
+
 bool dungeonEventKindTooClose(const std::vector<Game::DungeonEventInstance>& instances, DungeonTile tile)
 {
     const float minDistSq = DungeonEventMinSpacingTiles * DungeonEventMinSpacingTiles;
@@ -532,6 +561,29 @@ DungeonTile dungeonEventObjectTile(DungeonTile centerTile, float angle, float ra
         centerTile,
         static_cast<int>(std::round(std::cos(angle) * radiusTiles)),
         static_cast<int>(std::round(std::sin(angle) * radiusTiles)));
+}
+
+bool buriedWitchRocksCleared(TileMap& tileMap, DungeonTile centerTile)
+{
+    for (DungeonTile offset : BuriedWitchRockOffsets) {
+        const DungeonTile tile = dungeonEventOffsetTile(centerTile, offset.x, offset.y);
+        if (tileMap.isTileSolid(tile.x, tile.y)) {
+            return false;
+        }
+    }
+    return true;
+}
+
+bool drawDungeonEventWorldIcon(
+    Renderer& renderer,
+    WorldIconId iconId,
+    Vec2 center,
+    Vec2 maxSize,
+    unsigned char alpha = 255)
+{
+    WorldIconDrawOptions options;
+    options.tint = {255, 255, 255, alpha};
+    return drawWorldIcon(renderer, iconId, center, maxSize, options);
 }
 
 std::uint32_t dungeonEventCavitySeed(std::uint32_t layoutSeed, const Game::DungeonEventInstance& event)
@@ -666,13 +718,7 @@ std::vector<DungeonTile> dungeonEventForcedCavityTiles(const Game::DungeonEventI
         break;
     }
     case Game::DungeonEventKind::BuriedWitch: {
-        constexpr std::array<DungeonTile, 4> Offsets{{
-            {0, -1},
-            {-1, 0},
-            {1, 0},
-            {0, 1},
-        }};
-        for (DungeonTile offset : Offsets) {
+        for (DungeonTile offset : BuriedWitchRockOffsets) {
             forced.push_back(dungeonEventOffsetTile(event.centerTile, offset.x, offset.y));
         }
         break;
@@ -700,7 +746,6 @@ std::vector<DungeonTile> dungeonEventForcedCavityTiles(const Game::DungeonEventI
     case Game::DungeonEventKind::HeavyRockWitch:
         forced.push_back(dungeonEventOffsetTile(event.centerTile, 1, 0));
         break;
-    case Game::DungeonEventKind::SafeCavern:
     case Game::DungeonEventKind::CoinRoom:
     case Game::DungeonEventKind::WarpGuideMap:
     case Game::DungeonEventKind::ItemRequestWitch:
@@ -1058,55 +1103,6 @@ DialogueSequence makeDungeonEventWitchDialogueSequence(
         dungeonEventWitchDialogueText(event, phase),
     });
     return sequence;
-}
-
-bool dungeonEventEnemyDefinitionExcluded(const EnemyDefinition& definition)
-{
-    for (const std::string& tag : definition.enemyTags) {
-        const std::string lower = lowerAscii(tag);
-        if (lower == "boss" ||
-            lower == "boss_only" ||
-            lower == "event_only" ||
-            lower == "fixed_only" ||
-            lower == "no_normal_spawn") {
-            return true;
-        }
-    }
-    return false;
-}
-
-std::string chooseDungeonEventEnemyId(
-    const EnemyCatalog& catalog,
-    std::string_view stageId,
-    int depthRank,
-    std::uint32_t seed)
-{
-    std::vector<const EnemyDefinition*> candidates;
-    std::vector<double> weights;
-    for (const EnemyDefinition& definition : catalog.enemies) {
-        if (definition.id.empty() || dungeonEventEnemyDefinitionExcluded(definition)) {
-            continue;
-        }
-        double weight = enemySpawnWeightFor(definition, stageId, depthRank);
-        if (weight <= 0.0) {
-            weight = 1.0;
-        }
-        candidates.push_back(&definition);
-        weights.push_back(weight);
-    }
-    if (candidates.empty()) {
-        for (const EnemyDefinition& definition : catalog.enemies) {
-            if (!definition.id.empty()) {
-                return definition.id;
-            }
-        }
-        return {};
-    }
-
-    std::mt19937 rng(seed);
-    std::discrete_distribution<std::size_t> distribution(weights.begin(), weights.end());
-    const std::size_t index = std::min<std::size_t>(distribution(rng), candidates.size() - 1);
-    return candidates[index]->id;
 }
 
 struct PlacementReservations {
@@ -2479,10 +2475,18 @@ void Game::updateCaptureAbsorbAnimations(float dt)
     captureAbsorbAnimations_.erase(removeBegin, captureAbsorbAnimations_.end());
 }
 
-void Game::handleCapturedExplosion(Vec2 position)
+void Game::handleCapturedExplosion(const CapturedExplosionRequest& request)
 {
-    effects_.spawnAreaPulse(position, 50.0f, {255, 128, 54, 190});
-    const std::vector<DamagedTile> openedTiles = tileMap_.damageCircle(position, CapturedExplosionTileRadius, CapturedExplosionTileDamage);
+    const float radius = std::max(8.0f, request.radius);
+    effects_.spawnExplosion(request.position, radius);
+    playAudioSe(AudioSeExplosion);
+    addScreenShake(std::clamp(3.0f + radius * 0.035f, 4.0f, 7.0f), 0.18f);
+
+    const float terrainRadius = std::max(0.0f, request.terrainRadius);
+    const int terrainDamage = std::max(0, request.terrainDamage);
+    const std::vector<DamagedTile> openedTiles = terrainRadius > 0.0f && terrainDamage > 0
+        ? tileMap_.damageCircle(request.position, terrainRadius, terrainDamage)
+        : std::vector<DamagedTile>{};
     std::vector<Vec2> openedTileCenters;
     openedTileCenters.reserve(openedTiles.size());
     for (const DamagedTile& tile : openedTiles) {
@@ -2491,7 +2495,21 @@ void Game::handleCapturedExplosion(Vec2 position)
         ++runStats_.dugTiles;
     }
     revealDungeonMinimapOpenedTiles(openedTileCenters);
-    enemies_.applyCapturedExplosion(position, spellRing_, CapturedExplosionEnemyDamage);
+    const int explosionDamage = std::max(0, request.damage);
+    if (explosionDamage > 0) {
+        const float playerRadius = player_.effectiveRadius(balance_.playerRadius);
+        const float playerExplosionRadius = radius + playerRadius;
+        if (distanceSquared(player_.position, request.position) <= playerExplosionRadius * playerExplosionRadius) {
+            player_.applyDamage(
+                applyDefenseModifier(player_.status, explosionDamage),
+                DamageSource::Explosion);
+            player_.applyKnockback(
+                player_.position - request.position,
+                std::clamp(124.0f + radius * 1.15f, 145.0f, 230.0f),
+                0.16f);
+        }
+    }
+    enemies_.applyExplosionDamage(request.position, radius, spellRing_, request.damage);
 }
 
 void Game::resize(int width, int height)
@@ -2647,6 +2665,8 @@ void Game::clearTemporaryPlayerState(bool fullHeal)
         player_.hp = std::max(1, player_.hp);
     }
     player_.velocity = {};
+    player_.knockbackVelocity = {};
+    player_.knockbackTimer = 0.0f;
     player_.throwCooldownRemaining = 0.0f;
     player_.poisonDamageAccumulator = 0.0;
     player_.hotDamageAccumulator = 0.0;
@@ -3931,9 +3951,17 @@ void Game::DungeonEventSystem::generateFromLayout(
     const auto countIf = [this](auto predicate) {
         return static_cast<int>(std::count_if(instances.begin(), instances.end(), predicate));
     };
-    const int maxEvents =
-        static_cast<int>(layout.specialRoomAnchors.size()) +
-        dungeonEventStageMaxCount(stageId);
+    const std::span<const DungeonEventFixedPlacement> fixedPlacements = dungeonEventFixedPlacements(stageId);
+    const bool usesFixedPlacements = !fixedPlacements.empty();
+    const int randomCoinRoomCount = static_cast<int>(std::count_if(
+        layout.specialRoomAnchors.begin(),
+        layout.specialRoomAnchors.end(),
+        [](const SpecialRoomAnchor& room) {
+            return room.type == SpecialRoomType::CoinRoom;
+        }));
+    const int maxEvents = usesFixedPlacements
+        ? static_cast<int>(fixedPlacements.size()) + randomCoinRoomCount + 1
+        : static_cast<int>(layout.specialRoomAnchors.size()) + dungeonEventStageMaxCount(stageId);
     const bool hasUndiscoveredWarpPoint = warpPointsEnabled &&
         std::any_of(warpPoints.begin(), warpPoints.end(), [](const WarpPoint& point) {
             return !point.discovered;
@@ -3991,6 +4019,10 @@ void Game::DungeonEventSystem::generateFromLayout(
         if (static_cast<int>(instances.size()) >= maxEvents) {
             break;
         }
+        if (usesFixedPlacements && room.type != SpecialRoomType::CoinRoom) {
+            ++eventIndex;
+            continue;
+        }
         const DungeonLayoutMetrics metrics = calculateDungeonLayoutMetrics(layout, room.center);
         const std::optional<DungeonEventKind> kind = dungeonEventKindForSpecialRoom(room.type, eventIndex);
         if (!kind) {
@@ -4008,7 +4040,20 @@ void Game::DungeonEventSystem::generateFromLayout(
         ++eventIndex;
     }
 
-    if (dungeonEventKindAllowedForStage(DungeonEventKind::BossMonsterRoom, stageId)) {
+    if (usesFixedPlacements) {
+        for (std::size_t i = 0; i < fixedPlacements.size(); ++i) {
+            const DungeonEventFixedPlacement& placement = fixedPlacements[i];
+            const float progress = dungeonEventFixedPlacementProgress(placement);
+            const DungeonTile tile = roundDungeonTile(pointAtPathProgress(layout.mainPathPoints, progress));
+            addInstance(
+                "fixed_" + std::to_string(placement.sectionIndex + 1) + "_" +
+                    std::to_string(i) + "_" + Game::dungeonEventKindId(placement.kind),
+                placement.kind,
+                tile,
+                tile,
+                "fixed_section_" + std::to_string(placement.sectionIndex + 1));
+        }
+    } else if (dungeonEventKindAllowedForStage(DungeonEventKind::BossMonsterRoom, stageId)) {
         const DungeonEventKind kind = DungeonEventKind::BossMonsterRoom;
         constexpr float BossRoomProgress = 0.76f;
         const DungeonTile bossRoomTile = roundDungeonTile(pointAtPathProgress(layout.mainPathPoints, BossRoomProgress));
@@ -4022,7 +4067,7 @@ void Game::DungeonEventSystem::generateFromLayout(
     if (hasUndiscoveredWarpPoint && guideRoll && static_cast<int>(instances.size()) < maxEvents) {
         const DungeonEventKind kind = DungeonEventKind::WarpGuideMap;
         const DungeonTile guideTile = roundDungeonTile(pointAtPathProgress(layout.mainPathPoints, 0.48f));
-        if (canAdd(kind, guideTile, 0.48f, true, true, true, true)) {
+        if (canAdd(kind, guideTile, 0.48f, true, true, true, false)) {
             addInstance("warp_guide_map_0", kind, guideTile, guideTile, "warp");
         }
     }
@@ -4041,23 +4086,25 @@ void Game::DungeonEventSystem::generateFromLayout(
         0.84f,
         0.88f,
     };
-    const std::span<const DungeonEventKind> fallbackKinds = dungeonEventStageCandidateKinds(stageId);
-    for (std::size_t i = 0; i < fallbackKinds.size() && static_cast<int>(instances.size()) < maxEvents; ++i) {
-        const DungeonEventKind kind = fallbackKinds[i];
-        if (kind == DungeonEventKind::WarpGuideMap && !hasUndiscoveredWarpPoint) {
-            continue;
+    if (!usesFixedPlacements) {
+        const std::span<const DungeonEventKind> fallbackKinds = dungeonEventStageCandidateKinds(stageId);
+        for (std::size_t i = 0; i < fallbackKinds.size() && static_cast<int>(instances.size()) < maxEvents; ++i) {
+            const DungeonEventKind kind = fallbackKinds[i];
+            if (kind == DungeonEventKind::WarpGuideMap) {
+                continue;
+            }
+            const float progress = FallbackProgress[std::min<std::size_t>(i, FallbackProgress.size() - 1)];
+            const DungeonTile tile = roundDungeonTile(pointAtPathProgress(layout.mainPathPoints, progress));
+            if (!canAdd(kind, tile, progress, true, true, true, true)) {
+                continue;
+            }
+            addInstance(
+                "path_" + std::to_string(i) + "_" + Game::dungeonEventKindId(kind),
+                kind,
+                tile,
+                tile,
+                "path");
         }
-        const float progress = FallbackProgress[std::min<std::size_t>(i, FallbackProgress.size() - 1)];
-        const DungeonTile tile = roundDungeonTile(pointAtPathProgress(layout.mainPathPoints, progress));
-        if (!canAdd(kind, tile, progress, true, true, true, true)) {
-            continue;
-        }
-        addInstance(
-            "path_" + std::to_string(i) + "_" + Game::dungeonEventKindId(kind),
-            kind,
-            tile,
-            tile,
-            "path");
     }
 
     if (instances.empty()) {
@@ -4121,7 +4168,6 @@ void Game::DungeonEventSystem::appendLightSources(std::vector<LightSource>& ligh
             case DungeonEventObjectKind::LostBaggage:
                 objectRadiusTiles = 2.25f;
                 break;
-            case DungeonEventObjectKind::BuriedDebris:
             case DungeonEventObjectKind::HeavyRock:
             case DungeonEventObjectKind::GlowingRock:
                 objectRadiusTiles = 2.75f;
@@ -4223,20 +4269,8 @@ void Game::updateDungeonEvents(float dt, double totalSeconds)
         });
         return lootDepthRankForProgress(currentStageId_, metrics.pathProgress);
     };
-    const auto ensureSelectedEnemy = [&](DungeonEventInstance& event) -> const std::string& {
-        if (event.selectedEnemyId.empty()) {
-            const std::uint32_t seed =
-                dungeonLayout_.seed ^
-                static_cast<std::uint32_t>(std::hash<std::string>{}(event.id)) ^
-                (static_cast<std::uint32_t>(event.centerTile.x) * 0x85EBCA6Bu) ^
-                (static_cast<std::uint32_t>(event.centerTile.y) * 0xC2B2AE35u);
-            event.selectedEnemyId = chooseDungeonEventEnemyId(enemyCatalog_, currentStageId_, eventDepthRank(event), seed);
-        }
-        return event.selectedEnemyId;
-    };
     const auto spawnEnemy = [&](DungeonEventInstance& event, Vec2 position, bool sleeping, bool bossVariant, int* outRuntimeId = nullptr) {
         EventEnemySpawnOptions options;
-        options.enemyId = ensureSelectedEnemy(event);
         options.dungeonEventId = event.id;
         options.stageId = currentStageId_;
         options.depthRank = eventDepthRank(event);
@@ -4248,7 +4282,7 @@ void Game::updateDungeonEvents(float dt, double totalSeconds)
         if (bossVariant) {
             options.hpMultiplier = 2.5f;
             options.contactDamageMultiplier = 1.5f;
-            options.radiusMultiplier = 1.2f;
+            options.radiusMultiplier = 1.5f;
             options.xpMultiplier = 3.0f;
         }
         int runtimeId = 0;
@@ -4462,29 +4496,13 @@ void Game::updateDungeonEvents(float dt, double totalSeconds)
                 event.encounterSpawned = true;
                 break;
             }
-            case DungeonEventKind::SafeCavern:
             case DungeonEventKind::CoinRoom:
                 event.encounterSpawned = true;
                 completeDungeonEvent(event, std::nullopt);
                 break;
             case DungeonEventKind::BuriedWitch: {
-                if (event.eventObjects.empty()) {
-                    event.rewardTile = centerTile;
-                    constexpr std::array<DungeonTile, 4> Offsets{{
-                        {0, -1},
-                        {-1, 0},
-                        {1, 0},
-                        {0, 1},
-                    }};
-                    for (DungeonTile offset : Offsets) {
-                        DungeonEventObject debris;
-                        debris.kind = DungeonEventObjectKind::BuriedDebris;
-                        debris.tile = dungeonEventOffsetTile(centerTile, offset.x, offset.y);
-                        debris.maxHp = 6;
-                        debris.hp = debris.maxHp;
-                        event.eventObjects.push_back(std::move(debris));
-                    }
-                }
+                event.rewardTile = centerTile;
+                event.eventObjects.clear();
                 event.encounterSpawned = true;
                 break;
             }
@@ -4562,7 +4580,13 @@ void Game::updateDungeonEvents(float dt, double totalSeconds)
                 enemies_.wakeDungeonEventEnemies(event.id);
                 pushDungeonLog("眠っていた敵が起きた", "dungeon_event_wake:" + event.id);
             }
-            if (event.activated && chestOpenedAt(event.rewardTile) && activeEventEnemies(event) <= 0) {
+            const int activeEnemies = activeEventEnemies(event);
+            if (!event.activated && activeEnemies > 0 &&
+                enemies_.activeSleepingDungeonEventEnemyCount(event.id) < activeEnemies) {
+                event.activated = true;
+                pushDungeonLog("眠っていた敵が起きた", "dungeon_event_wake:" + event.id);
+            }
+            if (event.activated && chestOpenedAt(event.rewardTile) && activeEnemies <= 0) {
                 completeDungeonEvent(event, std::nullopt);
             }
             continue;
@@ -4691,24 +4715,7 @@ void Game::updateDungeonEvents(float dt, double totalSeconds)
         }
 
         if (event.kind == DungeonEventKind::BuriedWitch) {
-            for (DungeonEventObject& object : event.eventObjects) {
-                if (object.kind != DungeonEventObjectKind::BuriedDebris || object.destroyed) {
-                    continue;
-                }
-                int hitDamage = 0;
-                if (hitEventObjectWithRing(object, DungeonEventHitRequirement::AnyDamage, &hitDamage)) {
-                    object.hp = std::max(0, object.hp - std::max(1, hitDamage));
-                    if (object.hp <= 0) {
-                        object.destroyed = true;
-                        playAudioSe("se.dig.break");
-                    }
-                }
-            }
-            const bool allDebrisCleared = !event.eventObjects.empty() &&
-                std::all_of(event.eventObjects.begin(), event.eventObjects.end(), [](const DungeonEventObject& object) {
-                    return object.kind != DungeonEventObjectKind::BuriedDebris || object.destroyed;
-                });
-            if (allDebrisCleared && !event.objectiveResolved) {
+            if (buriedWitchRocksCleared(tileMap_, event.centerTile) && !event.objectiveResolved) {
                 event.objectiveResolved = true;
                 pushDungeonLog("魔女を助け出せそう", "dungeon_event_witch_ready:" + event.id);
             }
@@ -5103,14 +5110,26 @@ void Game::appendDungeonEventRenderEntries(
         if (centerVisible && (event.kind == DungeonEventKind::WarpGuideMap || dungeonEventKindIsWitch(event.kind))) {
             entries.push_back(DepthRenderEntry{
                 center.y - 4.0f,
-                [&renderer, center, kind = event.kind, completed = event.completed, discovered = event.discovered]() {
+                [&renderer, center, kind = event.kind, completed = event.completed, discovered = event.discovered, totalSeconds]() {
                     const unsigned char alpha = static_cast<unsigned char>(completed ? 145 : 245);
                     if (kind == DungeonEventKind::WarpGuideMap) {
-                        const Color frame = discovered ? Color{150, 245, 210, 190} : Color{255, 230, 150, 190};
-                        renderer.fillRect(center + Vec2{-14.0f, -10.0f}, {28.0f, 20.0f}, {76, 126, 156, alpha});
-                        renderer.drawRect(center + Vec2{-14.0f, -10.0f}, {28.0f, 20.0f}, frame);
-                        renderer.drawLine(center + Vec2{-6.0f, -8.0f}, center + Vec2{-6.0f, 8.0f}, {190, 238, 222, alpha});
-                        renderer.drawLine(center + Vec2{5.0f, -8.0f}, center + Vec2{5.0f, 8.0f}, {190, 238, 222, alpha});
+                        const Vec2 pedestalCenter = center + Vec2{0.0f, 8.0f};
+                        const Vec2 mapCenter = center + Vec2{
+                            0.0f,
+                            -18.0f + std::sin(static_cast<float>(totalSeconds) * 2.6f) * 3.0f,
+                        };
+                        if (!drawDungeonEventWorldIcon(renderer, WorldIconId::WarpGuidePedestal, pedestalCenter, {42.0f, 42.0f}, alpha)) {
+                            renderer.fillRect(pedestalCenter + Vec2{-13.0f, -3.0f}, {26.0f, 17.0f}, {82, 92, 104, alpha});
+                            renderer.drawRect(pedestalCenter + Vec2{-13.0f, -3.0f}, {26.0f, 17.0f}, {178, 190, 204, alpha});
+                            renderer.fillRect(pedestalCenter + Vec2{-17.0f, -13.0f}, {34.0f, 10.0f}, {116, 126, 140, alpha});
+                        }
+                        if (!drawDungeonEventWorldIcon(renderer, WorldIconId::WarpGuideMap, mapCenter, {38.0f, 38.0f}, alpha)) {
+                            const Color frame = discovered ? Color{150, 245, 210, 190} : Color{255, 230, 150, 190};
+                            renderer.fillRect(mapCenter + Vec2{-14.0f, -10.0f}, {28.0f, 20.0f}, {76, 126, 156, alpha});
+                            renderer.drawRect(mapCenter + Vec2{-14.0f, -10.0f}, {28.0f, 20.0f}, frame);
+                            renderer.drawLine(mapCenter + Vec2{-6.0f, -8.0f}, mapCenter + Vec2{-6.0f, 8.0f}, {190, 238, 222, alpha});
+                            renderer.drawLine(mapCenter + Vec2{5.0f, -8.0f}, mapCenter + Vec2{5.0f, 8.0f}, {190, 238, 222, alpha});
+                        }
                         return;
                     }
 
@@ -5119,9 +5138,7 @@ void Game::appendDungeonEventRenderEntries(
                     renderer.drawLine(center + Vec2{-10.0f, -3.0f}, center + Vec2{10.0f, -3.0f}, {230, 202, 255, alpha});
                     renderer.drawLine(center + Vec2{-5.0f, 14.0f}, center + Vec2{-10.0f, 21.0f}, {96, 66, 132, alpha});
                     renderer.drawLine(center + Vec2{5.0f, 14.0f}, center + Vec2{10.0f, 21.0f}, {96, 66, 132, alpha});
-                    if (kind == DungeonEventKind::BuriedWitch) {
-                        renderer.fillCircle(center + Vec2{-14.0f, 7.0f}, 5.0f, {118, 96, 72, alpha});
-                    } else if (kind == DungeonEventKind::LostBaggageWitch) {
+                    if (kind == DungeonEventKind::LostBaggageWitch) {
                         renderer.fillRect(center + Vec2{10.0f, 6.0f}, {12.0f, 9.0f}, {174, 116, 68, alpha});
                     } else if (kind == DungeonEventKind::ItemRequestWitch) {
                         renderer.drawText(center + Vec2{11.0f, -20.0f}, "?", {255, 238, 150, alpha}, 2);
@@ -5144,8 +5161,10 @@ void Game::appendDungeonEventRenderEntries(
                     [&renderer, holeCenter, hp = hole.hp, maxHp = hole.maxHp, destroyed = hole.destroyed]() {
                         const unsigned char alpha = static_cast<unsigned char>(destroyed ? 120 : 245);
                         renderer.drawCircle(holeCenter, 18.0f, {150, 220, 130, alpha});
-                        renderer.fillCircle(holeCenter, 10.0f, destroyed ? Color{80, 86, 72, alpha} : Color{78, 118, 66, alpha});
-                        renderer.fillCircle(holeCenter, 5.0f, destroyed ? Color{42, 42, 38, alpha} : Color{22, 34, 24, alpha});
+                        if (!drawDungeonEventWorldIcon(renderer, WorldIconId::NestHole, holeCenter, {38.0f, 38.0f}, alpha)) {
+                            renderer.fillCircle(holeCenter, 10.0f, destroyed ? Color{80, 86, 72, alpha} : Color{78, 118, 66, alpha});
+                            renderer.fillCircle(holeCenter, 5.0f, destroyed ? Color{42, 42, 38, alpha} : Color{22, 34, 24, alpha});
+                        }
                         if (!destroyed && maxHp > 0 && hp < maxHp) {
                             const float ratio = clamp(static_cast<float>(hp) / static_cast<float>(maxHp), 0.0f, 1.0f);
                             renderer.fillRect(holeCenter + Vec2{-12.0f, -22.0f}, {24.0f, 3.0f}, {28, 16, 18, 210});
@@ -5176,49 +5195,60 @@ void Game::appendDungeonEventRenderEntries(
                     switch (kind) {
                     case DungeonEventObjectKind::GlowingRock:
                         renderer.drawCircle(objectCenter, 17.0f + pulse * 2.0f, {110, 242, 220, 230});
-                        renderer.fillCircle(objectCenter, 10.0f, {72, 174, 186, 238});
-                        renderer.drawLine(objectCenter + Vec2{-9.0f, 1.0f}, objectCenter + Vec2{-1.0f, -11.0f}, {224, 255, 246, 230});
-                        renderer.drawLine(objectCenter + Vec2{-1.0f, -11.0f}, objectCenter + Vec2{10.0f, 0.0f}, {224, 255, 246, 230});
-                        renderer.drawLine(objectCenter + Vec2{10.0f, 0.0f}, objectCenter + Vec2{1.0f, 11.0f}, {92, 118, 132, 210});
+                        if (!drawDungeonEventWorldIcon(renderer, WorldIconId::GlowingRock, objectCenter, {38.0f, 38.0f})) {
+                            renderer.fillCircle(objectCenter, 10.0f, {72, 174, 186, 238});
+                            renderer.drawLine(objectCenter + Vec2{-9.0f, 1.0f}, objectCenter + Vec2{-1.0f, -11.0f}, {224, 255, 246, 230});
+                            renderer.drawLine(objectCenter + Vec2{-1.0f, -11.0f}, objectCenter + Vec2{10.0f, 0.0f}, {224, 255, 246, 230});
+                            renderer.drawLine(objectCenter + Vec2{10.0f, 0.0f}, objectCenter + Vec2{1.0f, 11.0f}, {92, 118, 132, 210});
+                        }
                         break;
                     case DungeonEventObjectKind::ElectricReceiver: {
                         const Color core = powered ? Color{246, 250, 154, 245} : Color{94, 176, 232, 235};
                         const Color wire = powered ? Color{255, 238, 112, 230} : Color{94, 208, 255, 190};
                         renderer.drawCircle(objectCenter, 16.0f + pulse * 2.0f, wire);
-                        renderer.fillCircle(objectCenter, 7.0f, core);
-                        renderer.drawLine(objectCenter + Vec2{-15.0f, 0.0f}, objectCenter + Vec2{-6.0f, 0.0f}, wire);
-                        renderer.drawLine(objectCenter + Vec2{6.0f, 0.0f}, objectCenter + Vec2{15.0f, 0.0f}, wire);
-                        renderer.drawLine(objectCenter + Vec2{0.0f, -15.0f}, objectCenter + Vec2{0.0f, -6.0f}, wire);
-                        renderer.drawLine(objectCenter + Vec2{0.0f, 6.0f}, objectCenter + Vec2{0.0f, 15.0f}, wire);
+                        if (drawDungeonEventWorldIcon(renderer, WorldIconId::ElectricReceiver, objectCenter, {38.0f, 38.0f})) {
+                            if (powered) {
+                                renderer.drawCircle(objectCenter, 11.0f, wire);
+                            }
+                        } else {
+                            renderer.fillCircle(objectCenter, 7.0f, core);
+                            renderer.drawLine(objectCenter + Vec2{-15.0f, 0.0f}, objectCenter + Vec2{-6.0f, 0.0f}, wire);
+                            renderer.drawLine(objectCenter + Vec2{6.0f, 0.0f}, objectCenter + Vec2{15.0f, 0.0f}, wire);
+                            renderer.drawLine(objectCenter + Vec2{0.0f, -15.0f}, objectCenter + Vec2{0.0f, -6.0f}, wire);
+                            renderer.drawLine(objectCenter + Vec2{0.0f, 6.0f}, objectCenter + Vec2{0.0f, 15.0f}, wire);
+                        }
                         break;
                     }
-                    case DungeonEventObjectKind::BuriedDebris:
-                        renderer.drawCircle(objectCenter, 13.0f, {168, 134, 92, 210});
-                        renderer.fillCircle(objectCenter, 9.0f, {122, 94, 66, 235});
-                        renderer.drawLine(objectCenter + Vec2{-8.0f, 2.0f}, objectCenter + Vec2{6.0f, -6.0f}, {210, 188, 142, 220});
-                        break;
                     case DungeonEventObjectKind::LostBaggage:
                         renderer.drawCircle(objectCenter, 14.0f + pulse * 1.5f, {255, 218, 128, 210});
-                        renderer.fillRect(objectCenter + Vec2{-10.0f, -7.0f}, {20.0f, 15.0f}, {172, 106, 58, 238});
-                        renderer.drawRect(objectCenter + Vec2{-10.0f, -7.0f}, {20.0f, 15.0f}, {255, 222, 146, 225});
-                        renderer.drawLine(objectCenter + Vec2{-4.0f, -7.0f}, objectCenter + Vec2{4.0f, -7.0f}, {92, 56, 34, 230});
+                        if (!drawDungeonEventWorldIcon(renderer, WorldIconId::LostBaggage, objectCenter, {38.0f, 38.0f})) {
+                            renderer.fillRect(objectCenter + Vec2{-10.0f, -7.0f}, {20.0f, 15.0f}, {172, 106, 58, 238});
+                            renderer.drawRect(objectCenter + Vec2{-10.0f, -7.0f}, {20.0f, 15.0f}, {255, 222, 146, 225});
+                            renderer.drawLine(objectCenter + Vec2{-4.0f, -7.0f}, objectCenter + Vec2{4.0f, -7.0f}, {92, 56, 34, 230});
+                        }
                         break;
-                    case DungeonEventObjectKind::Campfire:
+                    case DungeonEventObjectKind::Campfire: {
                         renderer.drawCircle(objectCenter, powered ? 22.0f + pulse * 3.0f : 13.0f, powered ? Color{255, 182, 86, 220} : Color{122, 150, 170, 180});
-                        renderer.drawLine(objectCenter + Vec2{-11.0f, 8.0f}, objectCenter + Vec2{11.0f, -2.0f}, {116, 78, 48, 230});
-                        renderer.drawLine(objectCenter + Vec2{-11.0f, -2.0f}, objectCenter + Vec2{11.0f, 8.0f}, {116, 78, 48, 230});
+                        const bool drewCampfire = drawDungeonEventWorldIcon(renderer, WorldIconId::Campfire, objectCenter, {38.0f, 38.0f});
+                        if (!drewCampfire) {
+                            renderer.drawLine(objectCenter + Vec2{-11.0f, 8.0f}, objectCenter + Vec2{11.0f, -2.0f}, {116, 78, 48, 230});
+                            renderer.drawLine(objectCenter + Vec2{-11.0f, -2.0f}, objectCenter + Vec2{11.0f, 8.0f}, {116, 78, 48, 230});
+                        }
                         if (powered) {
                             renderer.fillCircle(objectCenter + Vec2{0.0f, -5.0f}, 7.0f, {255, 116, 54, 238});
                             renderer.fillCircle(objectCenter + Vec2{0.0f, -8.0f}, 4.0f, {255, 234, 112, 240});
-                        } else {
+                        } else if (!drewCampfire) {
                             renderer.fillCircle(objectCenter + Vec2{0.0f, -4.0f}, 5.0f, {70, 76, 82, 225});
                         }
                         break;
+                    }
                     case DungeonEventObjectKind::HeavyRock:
                         renderer.drawCircle(objectCenter, 17.0f, {138, 144, 154, 210});
-                        renderer.fillCircle(objectCenter, 12.0f, {92, 96, 106, 238});
-                        renderer.drawLine(objectCenter + Vec2{-10.0f, 3.0f}, objectCenter + Vec2{-2.0f, -10.0f}, {170, 178, 188, 210});
-                        renderer.drawLine(objectCenter + Vec2{-2.0f, -10.0f}, objectCenter + Vec2{10.0f, 0.0f}, {170, 178, 188, 210});
+                        if (!drawDungeonEventWorldIcon(renderer, WorldIconId::HeavyRock, objectCenter, {42.0f, 42.0f})) {
+                            renderer.fillCircle(objectCenter, 12.0f, {92, 96, 106, 238});
+                            renderer.drawLine(objectCenter + Vec2{-10.0f, 3.0f}, objectCenter + Vec2{-2.0f, -10.0f}, {170, 178, 188, 210});
+                            renderer.drawLine(objectCenter + Vec2{-2.0f, -10.0f}, objectCenter + Vec2{10.0f, 0.0f}, {170, 178, 188, 210});
+                        }
                         break;
                     }
                     if (maxHp > 1 && hp < maxHp) {
@@ -7695,6 +7725,11 @@ void Game::applyDungeonEventCavity(const DungeonEventInstance& event)
     for (DungeonTile tile : cavityTiles) {
         tileMap_.setTileOverride(tile, TileType::Empty);
     }
+    if (event.kind == DungeonEventKind::BuriedWitch) {
+        for (DungeonTile offset : BuriedWitchRockOffsets) {
+            tileMap_.setTileOverride(dungeonEventOffsetTile(event.centerTile, offset.x, offset.y), TileType::Rock);
+        }
+    }
 }
 
 void Game::clearKnownWarpPointTerrain()
@@ -8574,6 +8609,8 @@ void Game::restoreRetrySnapshot()
     player_.xp = retrySnapshot_.playerXp;
     player_.xpToNext = retrySnapshot_.playerXpToNext;
     player_.velocity = {};
+    player_.knockbackVelocity = {};
+    player_.knockbackTimer = 0.0f;
     player_.throwCooldownRemaining = 0.0f;
     player_.poisonDamageAccumulator = 0.0;
     player_.hotDamageAccumulator = 0.0;

@@ -9,7 +9,7 @@
 #include "game/DepthRender.hpp"
 #include "game/EffectDispatcher.hpp"
 #include "game/Enemy.hpp"
-#include "game/EnemyHitbox.hpp"
+#include "game/Hitbox.hpp"
 #include "game/InventorySystem.hpp"
 #include "game/ItemModel.hpp"
 #include "game/RingImpactSound.hpp"
@@ -30,6 +30,7 @@ class EffectSystem;
 class MagicSystem;
 class WorldDropSystem;
 class EncyclopediaSystem;
+struct CollisionRect;
 struct WetGroundEmitter;
 
 enum class EnemyEventType {
@@ -41,12 +42,14 @@ enum class EnemyEventType {
     Shoot,
     HealCast,
     Heal,
+    ExplosionWarningTick,
     Explode,
     BossTelegraph,
     BossImpact,
     TerrainBreak,
     Death,
     BossDeath,
+    Steal,
     RewardDrop,
     ObjectDrop,
     MoneyDrop,
@@ -64,6 +67,9 @@ struct EnemyEvent {
     std::string enemyName;
     std::string effectId;
     int damageAmount = -1;
+    float effectRadius = 0.0f;
+    float terrainRadius = 0.0f;
+    int terrainDamage = -1;
     int healAmount = 0;
     bool critical = false;
     bool ringItemImpact = false;
@@ -160,7 +166,7 @@ struct EnemyMinimapMarker {
 
 class EnemySystem {
 public:
-    void setHitboxCatalog(const EnemyHitboxCatalog* catalog) { hitboxCatalog_ = catalog; }
+    void setHitboxCatalog(const HitboxCatalog* catalog) { hitboxCatalog_ = catalog; }
     void spawnFromDugTiles(
         const std::vector<DugEnemySpawnPoint>& dugTiles,
         TileMap& map,
@@ -191,6 +197,7 @@ public:
         const EffectDispatcher& effectDispatcher,
         ProjectileSystem& projectiles,
         MagicSystem& magic,
+        const CollisionRect& stealViewBounds,
         bool allowBossCapture = true,
         std::string_view bossCaptureObjectId = {},
         std::vector<EffectDiscoveryEvent>* discoveryEvents = nullptr,
@@ -281,7 +288,7 @@ public:
         int* outDriedWetCount = nullptr);
     int applyMagicArea(const EnemyMagicHitSpec& spec, SpellRingSystem& spellRing);
     bool applyMagicNearest(Vec2 origin, float range, EnemyMagicHitSpec spec, SpellRingSystem& spellRing, Vec2* outTargetPosition = nullptr);
-    void applyCapturedExplosion(Vec2 position, SpellRingSystem& spellRing, int damage);
+    void applyExplosionDamage(Vec2 position, float radius, SpellRingSystem& spellRing, int damage, int excludedEnemyRuntimeId = 0);
     void addMudZone(Vec2 position, float radius, float duration, float speedMultiplier, float damagePerSecond, std::string damageType);
     int pullMetalEnemies(Vec2 center, TileMap& map, float dt, float radius = 160.0f);
     int pullLightEnemies(Vec2 center, TileMap& map, float dt, float radius, float strength = 1.0f);
@@ -309,6 +316,7 @@ public:
     bool setRuntimeEnemyHp(int runtimeId, int hp);
     int consumePendingXp();
     void clearTemporaryState();
+    int activeSleepingDungeonEventEnemyCount(std::string_view eventId) const;
 
 private:
     struct MudZone {
@@ -351,6 +359,7 @@ private:
 
     void setAwareness(Enemy& enemy, EnemyAwarenessState nextState, bool showIcon);
     void forceDetectInSight(Enemy& enemy, Vec2 playerPosition, bool showIcon);
+    void wakeDungeonEventEnemy(Enemy& enemy, Vec2 playerPosition, bool showIcon);
     const EnemyDefinition* chooseEnemyDefinition(const EnemyCatalog& enemyCatalog);
     const EnemyDefinition* chooseNormalRandomEnemyDefinition(const EnemyCatalog& enemyCatalog);
     const EnemyDefinition* chooseDugSpawnEnemyDefinition(const EnemyCatalog& enemyCatalog, std::string_view stageId, int depthRank);
@@ -385,7 +394,7 @@ private:
     int applyConductiveShock(Vec2 position, float radius, double value, double duration, int excludedEnemyId, std::string_view source);
 
     ObjectPool<Enemy, balance::MaxEnemies> enemies_;
-    const EnemyHitboxCatalog* hitboxCatalog_ = nullptr;
+    const HitboxCatalog* hitboxCatalog_ = nullptr;
     std::vector<EnemyEvent> events_;
     std::vector<RingImpactSoundEvent> impactSoundEvents_;
     std::vector<CaptureResult> captureResults_;

@@ -146,53 +146,53 @@ int branchCountForContext(const DungeonGenerationContext& context)
 SpecialRoomType chooseExtraRoomType(int stageId, std::string_view generationProfile, int index, float progress)
 {
     const std::array<SpecialRoomType, 5> stageOne{
-        SpecialRoomType::SafeCavern,
         SpecialRoomType::OreRoom,
         SpecialRoomType::CoinRoom,
         SpecialRoomType::TreasureRoom,
         SpecialRoomType::EnemyRoom,
+        SpecialRoomType::OreRoom,
     };
     const std::array<SpecialRoomType, 5> stageTwo{
         SpecialRoomType::CoinRoom,
         SpecialRoomType::TreasureRoom,
         SpecialRoomType::EnemyRoom,
         SpecialRoomType::OreRoom,
-        SpecialRoomType::SafeCavern,
+        SpecialRoomType::CoinRoom,
     };
     const std::array<SpecialRoomType, 5> stageThree{
         SpecialRoomType::TreasureRoom,
         SpecialRoomType::OreRoom,
         SpecialRoomType::EnemyRoom,
         SpecialRoomType::CoinRoom,
-        SpecialRoomType::SafeCavern,
+        SpecialRoomType::TreasureRoom,
     };
     const std::array<SpecialRoomType, 5> stageFour{
         SpecialRoomType::OreRoom,
-        SpecialRoomType::SafeCavern,
         SpecialRoomType::CoinRoom,
         SpecialRoomType::TreasureRoom,
         SpecialRoomType::EnemyRoom,
+        SpecialRoomType::OreRoom,
     };
     const std::array<SpecialRoomType, 5> junkLayer{
         SpecialRoomType::EnemyRoom,
         SpecialRoomType::TreasureRoom,
         SpecialRoomType::CoinRoom,
         SpecialRoomType::OreRoom,
-        SpecialRoomType::SafeCavern,
+        SpecialRoomType::EnemyRoom,
     };
     const std::array<SpecialRoomType, 5> starCore{
         SpecialRoomType::TreasureRoom,
         SpecialRoomType::EnemyRoom,
         SpecialRoomType::OreRoom,
-        SpecialRoomType::SafeCavern,
         SpecialRoomType::CoinRoom,
+        SpecialRoomType::TreasureRoom,
     };
     const std::array<SpecialRoomType, 5> astralRogue{
         SpecialRoomType::OreRoom,
         SpecialRoomType::EnemyRoom,
         SpecialRoomType::TreasureRoom,
-        SpecialRoomType::SafeCavern,
         SpecialRoomType::CoinRoom,
+        SpecialRoomType::EnemyRoom,
     };
 
     if (progress > 0.78f && index % 2 == 0) {
@@ -362,10 +362,10 @@ DungeonLayout generateDungeonLayout(const DungeonGenerationContext& context)
 
     const std::array<SpecialRoomType, 5> roomSequence{
         SpecialRoomType::OreRoom,
-        SpecialRoomType::SafeCavern,
         SpecialRoomType::CoinRoom,
         SpecialRoomType::TreasureRoom,
         SpecialRoomType::EnemyRoom,
+        SpecialRoomType::OreRoom,
     };
     int specialRoomCount = std::clamp(context.specialRoomCount, 0, 24);
     if (context.roguelike || isProfile(layout.generationProfile, "astral_rogue")) {

@@ -413,8 +413,6 @@ void MagicSystem::castThunder(Vec2 origin, int power)
         .origin = origin,
         .range = 126.0f + static_cast<float>(power) * 10.0f,
         .damage = std::max(1, power * 4),
-        .paralyzeChance = 35.0,
-        .paralyzeDuration = 1.0,
     });
 }
 
@@ -615,10 +613,6 @@ void MagicSystem::updateGroundAreas(EnemySystem& enemies, SpellRingSystem& spell
             hit.damage = area.damage;
             hit.damageType = "earth";
             hit.effectId = "earth";
-            hit.statusEffect = "status_stun";
-            hit.statusValue = 1.0;
-            hit.statusDuration = 0.6;
-            hit.statusChance = 100.0;
             enemies.applyMagicArea(hit, spellRing);
         }
     }
@@ -639,10 +633,6 @@ void MagicSystem::updateThunder(EnemySystem& enemies, SpellRingSystem& spellRing
         hit.damage = thunder.damage;
         hit.damageType = "thunder";
         hit.effectId = "thunder";
-        hit.statusEffect = "status_paralyze";
-        hit.statusValue = 1.0;
-        hit.statusDuration = thunder.paralyzeDuration;
-        hit.statusChance = thunder.paralyzeChance;
         Vec2 target{};
         if (enemies.applyMagicNearest(thunder.origin, thunder.range, hit, spellRing, &target)) {
             soundEvents_.push_back(MagicSoundEvent::Impact);

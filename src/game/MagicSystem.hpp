@@ -96,8 +96,6 @@ public:
         Vec2 origin{};
         float range = 120.0f;
         int damage = 1;
-        double paralyzeChance = 0.0;
-        double paralyzeDuration = 1.0;
     };
 
     struct MagicLight {

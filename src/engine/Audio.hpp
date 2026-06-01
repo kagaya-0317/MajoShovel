@@ -54,7 +54,6 @@ public:
     void playBgm(std::string_view id, float fadeSeconds = 0.0f, bool restart = false);
     void stopBgm(float fadeSeconds = 0.0f);
     void playSe(std::string_view id, float volumeScale = 1.0f, float pitchScale = 1.0f);
-    float cueDurationSeconds(std::string_view id, AudioCueType type);
     void stopAll();
 
     void setMasterVolume(float volume);

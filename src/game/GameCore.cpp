@@ -43,7 +43,8 @@ constexpr std::string_view AudioSeMagicCast = "se.magic.cast";
 constexpr std::string_view AudioSeMagicImpact = "se.magic.impact";
 constexpr std::string_view AudioSeCaptureSuccess = "se.capture.success";
 constexpr std::string_view AudioSeCaptureFail = "se.capture.fail";
-constexpr std::string_view AudioSeExplosion = "se.explosion";
+constexpr std::string_view AudioSeExplosion = "se.explosion.boom";
+constexpr std::string_view AudioSeExplosionTick = "se.explosion.tick";
 constexpr std::string_view AudioSeDiscovery = "se.discovery";
 constexpr std::string_view AudioSeUiConfirm = "se.ui.confirm";
 constexpr std::string_view AudioSeUiCancel = "se.ui.cancel";
@@ -75,6 +76,36 @@ void stripUtf8Bom(std::string& text)
         static_cast<unsigned char>(text[2]) == 0xBF) {
         text.erase(0, 3);
     }
+}
+
+CollisionRect cameraWorldRect(const Camera& camera)
+{
+    const Vec2 topLeft = camera.screenToWorld({0.0f, 0.0f});
+    const Vec2 bottomRight = camera.screenToWorld({
+        static_cast<float>(camera.width()),
+        static_cast<float>(camera.height()),
+    });
+    const float left = std::min(topLeft.x, bottomRight.x);
+    const float right = std::max(topLeft.x, bottomRight.x);
+    const float top = std::min(topLeft.y, bottomRight.y);
+    const float bottom = std::max(topLeft.y, bottomRight.y);
+    return {{left, top}, {right - left, bottom - top}};
+}
+
+std::string enemyStealLogLabel(const EnemyEvent& event, const ObjectCatalog& objectCatalog)
+{
+    if (event.moneyDrop > 0) {
+        return inlineWorldIconTag(worldIconKey(moneyWorldIconForAmount(event.moneyDrop))) + "お金";
+    }
+    if (!event.objectDropId.empty()) {
+        const ObjectDefinition* object = objectCatalog.registry.findById(event.objectDropId);
+        const std::string name = object != nullptr && !object->name.empty()
+            ? object->name
+            : event.objectDropId;
+        const std::string icon = object != nullptr ? inlineItemTag(event.objectDropId) : "";
+        return icon + name;
+    }
+    return {};
 }
 
 bool readTextFile(const std::filesystem::path& path, std::string& outText, std::string& outError)
@@ -801,11 +832,11 @@ bool Game::advanceInitialize()
         loadObjectImageScaleData();
         setObjectImageScaleOverrides(&objectImageScaleById_);
         setWorldIconScaleOverrides(&otherImageScaleByKey_);
-        initializeJob_.step = InitializeStep::LoadEnemyHitboxes;
+        initializeJob_.step = InitializeStep::LoadHitboxes;
         break;
-    case InitializeStep::LoadEnemyHitboxes:
-        loadEnemyHitboxData();
-        enemies_.setHitboxCatalog(&enemyHitboxes_);
+    case InitializeStep::LoadHitboxes:
+        loadHitboxData();
+        enemies_.setHitboxCatalog(&hitboxes_);
         initializeJob_.step = InitializeStep::LoadOpening;
         break;
     case InitializeStep::LoadOpening:
@@ -863,7 +894,7 @@ int Game::initializeStepIndex() const
     case InitializeStep::LoadSave: return 9;
     case InitializeStep::LoadBaseEdit: return 10;
     case InitializeStep::LoadImageScale: return 11;
-    case InitializeStep::LoadEnemyHitboxes: return 12;
+    case InitializeStep::LoadHitboxes: return 12;
     case InitializeStep::LoadOpening: return 13;
     case InitializeStep::LoadStoryEvents: return 14;
     case InitializeStep::LoadOpeningMeta: return 15;
@@ -907,8 +938,8 @@ std::string Game::initializeStatusText() const
         return "Loading base layout";
     case InitializeStep::LoadImageScale:
         return "Loading image scale settings";
-    case InitializeStep::LoadEnemyHitboxes:
-        return "Loading enemy hitboxes";
+    case InitializeStep::LoadHitboxes:
+        return "Loading hitboxes";
     case InitializeStep::LoadOpening:
         return "Loading opening data";
     case InitializeStep::LoadStoryEvents:
@@ -977,7 +1008,7 @@ void Game::resetWorldEffectState()
 void Game::resetWorldEnemyState()
 {
     resetInPlace(enemies_);
-    enemies_.setHitboxCatalog(&enemyHitboxes_);
+    enemies_.setHitboxCatalog(&hitboxes_);
 }
 
 void Game::resetWorldProjectileState()
@@ -1089,17 +1120,24 @@ void Game::resetWorldUiState()
     objectImageScaleDirty_ = false;
     objectImageScaleStatus_.clear();
     enemyHitboxEditReturnMode_ = ScreenMode::Playing;
+    hitboxEditTab_ = HitboxEditTab::Enemies;
     enemyHitboxAllEnemyIds_.clear();
     enemyHitboxEnemyIds_.clear();
+    objectHitboxAllObjectIds_.clear();
+    objectHitboxObjectIds_.clear();
     enemyHitboxSearchInput_ = {};
     enemyHitboxSelectedEnemyIndex_ = -1;
+    objectHitboxSelectedObjectIndex_ = -1;
     enemyHitboxSelectedCircleIndex_ = -1;
     enemyHitboxScrollOffset_ = 0.0f;
+    objectHitboxScrollOffset_ = 0.0f;
     enemyHitboxDirty_ = false;
     enemyHitboxDraggingCircle_ = false;
     enemyHitboxDragStartMouse_ = {};
     enemyHitboxDragStartOffset_ = {};
     enemyHitboxClipboard_.clear();
+    hitboxEditUndoStack_.clear();
+    hitboxEditRedoStack_.clear();
     enemyHitboxStatus_.clear();
     debugItemPickerActive_ = false;
     debugItemPickerAllObjectIds_.clear();
@@ -3802,6 +3840,7 @@ void Game::update(const Input& input, const Time& time)
         const std::string bossCaptureObjectId = currentStageCleared()
             ? currentStageBossCaptureObjectId()
             : std::string{};
+        const CollisionRect stealViewBounds = cameraWorldRect(camera_);
         enemies_.update(
             player_,
             spellRing_,
@@ -3818,12 +3857,13 @@ void Game::update(const Input& input, const Time& time)
             effectDispatcher_,
             projectiles_,
             magic_,
+            stealViewBounds,
             allowBossCapture,
             bossCaptureObjectId,
             &effectDiscoveries,
             &encyclopedia_);
-        for (Vec2 explosionPosition : digging_.capturedExplosionRequests()) {
-            handleCapturedExplosion(explosionPosition);
+        for (const CapturedExplosionRequest& explosionRequest : digging_.capturedExplosionRequests()) {
+            handleCapturedExplosion(explosionRequest);
         }
         updateCapturedUtilityBehaviors(time.deltaSeconds());
         updateCapturedProjectileBehaviors(time.deltaSeconds());
@@ -3889,18 +3929,33 @@ void Game::update(const Input& input, const Time& time)
         updateDungeonMinimap(time.totalSeconds());
         handleRingItemBreakEvents(&effectDiscoveries);
 
-        std::vector<Vec2> capturedExplosionPositions;
+        std::vector<CapturedExplosionRequest> capturedExplosionRequests;
         for (const EnemyEvent& event : enemies_.events()) {
             if (!event.enemyId.empty()) {
                 encyclopedia_.noteEnemyDiscovered(event.enemyId, event.enemyName, event.position);
             }
             if (event.type == EnemyEventType::CapturedExplosion) {
-                capturedExplosionPositions.push_back(event.position);
+                CapturedExplosionRequest request;
+                request.position = event.position;
+                if (event.effectRadius > 0.0f) {
+                    request.radius = event.effectRadius;
+                }
+                if (event.damageAmount >= 0) {
+                    request.damage = event.damageAmount;
+                }
+                if (event.terrainRadius > 0.0f) {
+                    request.terrainRadius = event.terrainRadius;
+                }
+                if (event.terrainDamage >= 0) {
+                    request.terrainDamage = event.terrainDamage;
+                }
+                capturedExplosionRequests.push_back(request);
             }
         }
-        for (Vec2 explosionPosition : capturedExplosionPositions) {
-            handleCapturedExplosion(explosionPosition);
+        for (const CapturedExplosionRequest& explosionRequest : capturedExplosionRequests) {
+            handleCapturedExplosion(explosionRequest);
         }
+        handleRingItemBreakEvents(&effectDiscoveries);
 
         bool bossDefeated = false;
         Vec2 bossDefeatPosition{};
@@ -3926,9 +3981,13 @@ void Game::update(const Input& input, const Time& time)
                     effects_.spawnDamagePopup(event.position, event.healAmount, DamagePopupStyle::Heal);
                 }
                 magicFx_.playHealPulse(event.position, 18.0f);
+            } else if (event.type == EnemyEventType::ExplosionWarningTick) {
+                playAudioSe(AudioSeExplosionTick);
             } else if (event.type == EnemyEventType::Explode) {
+                const float radius = event.effectRadius > 0.0f ? event.effectRadius : 48.0f;
+                effects_.spawnExplosion(event.position, radius);
                 playAudioSe(AudioSeExplosion);
-                addScreenShake(5.0f, 0.18f);
+                addScreenShake(std::clamp(3.5f + radius * 0.035f, 4.5f, 8.0f), 0.20f);
             } else if (event.type == EnemyEventType::BossTelegraph) {
                 SmokeBurstOptions smoke;
                 smoke.count = 18;
@@ -4005,6 +4064,14 @@ void Game::update(const Input& input, const Time& time)
                 if (event.type == EnemyEventType::BossDeath) {
                     bossDefeated = true;
                     bossDefeatPosition = event.position;
+                }
+            } else if (event.type == EnemyEventType::Steal) {
+                const std::string stolenLabel = enemyStealLogLabel(event, objectCatalog_);
+                if (!stolenLabel.empty()) {
+                    const std::string enemyName = !event.enemyName.empty()
+                        ? event.enemyName
+                        : (event.enemyId.empty() ? std::string("敵") : event.enemyId);
+                    pushDungeonLog(enemyName + "は" + stolenLabel + "を盗んだ");
                 }
             } else if (event.type == EnemyEventType::RewardDrop) {
                 std::mt19937& rng = lootRuntimeRng();
@@ -4206,9 +4273,9 @@ void Game::checkHotReload(float dt)
         reloadNoticeTimer_ = 3.0f;
         configureWatcher();
         return;
-    } else if (fileName == "enemy_hitboxes.cfg") {
-        loadEnemyHitboxData();
-        enemies_.setHitboxCatalog(&enemyHitboxes_);
+    } else if (fileName == "hitboxes.cfg" || fileName == "enemy_hitboxes.cfg") {
+        loadHitboxData();
+        enemies_.setHitboxCatalog(&hitboxes_);
         rebuildEnemyHitboxEditList();
         reloadNotice_ = "Hot reload: " + changedPath;
         reloadNoticeTimer_ = 3.0f;

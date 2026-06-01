@@ -1809,6 +1809,139 @@ void EffectSystem::spawnAreaPulse(Vec2 position, float radius, Color color)
     spawnRing(position, std::max(4.0f, radius * 0.15f), std::max(10.0f, radius), color, 0.32f);
 }
 
+void EffectSystem::spawnExplosion(Vec2 position, float radius)
+{
+    const float safeRadius = std::max(12.0f, radius);
+    const float scale = clamp(safeRadius / 48.0f, 0.55f, 2.0f);
+    const int sparkCount = lightweightMode_ ? 16 : 30;
+    const int emberCount = lightweightMode_ ? 10 : 22;
+    const int shardCount = lightweightMode_ ? 8 : 16;
+
+    spawnRing(position, safeRadius * 0.08f, safeRadius * 1.08f, {255, 220, 116, 188}, 0.26f, EffectLayer::Foreground);
+    spawnRing(position, safeRadius * 0.26f, safeRadius * 1.34f, {255, 104, 44, 112}, 0.42f, EffectLayer::World);
+    spawnRing(position, safeRadius * 0.50f, safeRadius * 1.72f, {80, 52, 34, 86}, 0.58f, EffectLayer::World);
+
+    Effect* flash = spawnParticle(
+        position,
+        {},
+        safeRadius * 0.42f,
+        {255, 120, 42, 235},
+        0.34f,
+        {},
+        0.0f,
+        EffectLayer::Foreground,
+        ParticleVisual::ImpactBurst,
+        randomInt(0, 127),
+        seedAngle(position) + randomRange(-0.22f, 0.22f),
+        0.0f,
+        1.08f);
+    if (flash != nullptr) {
+        flash->endRadius = flash->startRadius * 1.18f;
+    }
+
+    Effect* core = spawnParticle(
+        position + Vec2{0.0f, -2.0f * scale},
+        {},
+        safeRadius * 0.24f,
+        {255, 246, 198, 210},
+        0.18f,
+        {},
+        0.0f,
+        EffectLayer::Foreground,
+        ParticleVisual::ImpactSpark,
+        0,
+        seedAngle(position),
+        0.0f,
+        1.35f);
+    if (core != nullptr) {
+        core->endRadius = core->startRadius * 0.40f;
+    }
+
+    SmokeBurstOptions smoke;
+    smoke.count = lightweightMode_ ? 12 : 24;
+    smoke.size = 17.0f * scale;
+    smoke.sizeJitter = 0.52f;
+    smoke.spreadRadius = safeRadius * 0.22f;
+    smoke.speed = 42.0f * scale;
+    smoke.riseSpeed = 18.0f * scale;
+    smoke.duration = 0.78f;
+    smoke.durationJitter = 0.18f;
+    smoke.colorA = {96, 66, 48, 168};
+    smoke.colorB = {210, 116, 58, 126};
+    smoke.layer = EffectLayer::Foreground;
+    spawnSmokeBurst(position, smoke);
+
+    for (int i = 0; i < sparkCount; ++i) {
+        const float angle = seedAngle(position) + randomRange(0.0f, Pi * 2.0f);
+        const Vec2 direction = fromAngle(angle);
+        const float distance = randomRange(0.0f, safeRadius * 0.20f);
+        Effect* spark = spawnParticle(
+            position + direction * distance,
+            direction * randomRange(110.0f, 245.0f) * scale + Vec2{randomRange(-18.0f, 18.0f), randomRange(-32.0f, 14.0f)} * scale,
+            randomRange(1.8f, 3.8f) * scale,
+            mixColor({255, 245, 188, 236}, {255, 86, 34, 212}, randomRange(0.0f, 1.0f)),
+            randomRange(0.24f, 0.48f),
+            {},
+            2.2f,
+            EffectLayer::Foreground,
+            ParticleVisual::ImpactSpark,
+            0,
+            angle + randomRange(-0.18f, 0.18f),
+            0.0f,
+            randomRange(0.85f, 1.75f));
+        if (spark != nullptr) {
+            spark->endRadius = spark->startRadius * randomRange(0.12f, 0.30f);
+            delayEffect(spark, randomRange(0.0f, 0.05f));
+        }
+    }
+
+    for (int i = 0; i < emberCount; ++i) {
+        const float angle = seedAngle(position) + randomRange(0.0f, Pi * 2.0f);
+        const Vec2 direction = fromAngle(angle);
+        Effect* ember = spawnParticle(
+            position + direction * randomRange(4.0f, safeRadius * 0.42f),
+            direction * randomRange(36.0f, 118.0f) * scale + Vec2{randomRange(-16.0f, 16.0f), -randomRange(8.0f, 54.0f)} * scale,
+            randomRange(1.9f, 4.4f) * scale,
+            mixColor({255, 118, 38, 220}, {255, 226, 102, 188}, randomRange(0.0f, 1.0f)),
+            randomRange(0.48f, 0.88f),
+            {0.0f, -18.0f * scale},
+            1.1f,
+            EffectLayer::Foreground,
+            ParticleVisual::Circle,
+            0,
+            0.0f,
+            0.0f,
+            1.0f);
+        if (ember != nullptr) {
+            ember->endRadius = ember->startRadius * randomRange(0.08f, 0.24f);
+            delayEffect(ember, randomRange(0.04f, 0.18f));
+        }
+    }
+
+    for (int i = 0; i < shardCount; ++i) {
+        const float angle = seedAngle(position) + randomRange(0.0f, Pi * 2.0f);
+        const Vec2 direction = fromAngle(angle);
+        Effect* shard = spawnParticle(
+            position + direction * randomRange(3.0f, safeRadius * 0.24f),
+            direction * randomRange(70.0f, 155.0f) * scale + Vec2{randomRange(-24.0f, 24.0f), randomRange(-42.0f, 18.0f)} * scale,
+            randomRange(3.8f, 7.2f) * scale,
+            mixColor({74, 54, 46, 230}, {184, 112, 58, 214}, randomRange(0.0f, 1.0f)),
+            randomRange(0.72f, 1.06f),
+            {},
+            1.35f,
+            EffectLayer::Foreground,
+            ParticleVisual::RockShard,
+            randomInt(0, static_cast<int>(RockShardShapes.size() - 1)),
+            angle + randomRange(-Pi * 0.45f, Pi * 0.45f),
+            randomRange(-9.0f, 9.0f),
+            randomRange(0.80f, 1.36f));
+        if (shard != nullptr) {
+            configureShardPhysics(*shard, false, scale);
+            shard->endRadius = shard->startRadius * randomRange(0.54f, 0.80f);
+        }
+    }
+}
+
 void EffectSystem::spawnMagicCast(Vec2 origin, Vec2 direction, std::string_view element, float power)
 {
     const Vec2 forward = normalize(direction);

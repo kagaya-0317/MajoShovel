@@ -219,6 +219,7 @@ public:
     void spawnForegroundSpecialItemGlimmer(Vec2 position);
     void spawnWarpCircle(Vec2 position, bool boss);
     void spawnAreaPulse(Vec2 position, float radius, Color color);
+    void spawnExplosion(Vec2 position, float radius);
     void spawnMagicCast(Vec2 origin, Vec2 direction, std::string_view element, float power);
 
 private:
