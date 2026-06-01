@@ -13,6 +13,17 @@ constexpr float CapturedRewardWindowSeconds = 10.0f;
 constexpr int CapturedRewardWindowLimit = 3;
 constexpr int CapturedExplosionChargeLimit = 4;
 
+CapturedExplosionRequest makeCapturedExplosionRequest(const SpellRingItem& item, Vec2 position)
+{
+    CapturedExplosionRequest request;
+    request.position = position;
+    request.radius = static_cast<float>(std::max(8.0, item.capturedBehaviorParamDouble("charge_explode", "radius", request.radius)));
+    request.damage = std::max(0, item.capturedBehaviorParamInt("charge_explode", "damage", request.damage));
+    request.terrainRadius = static_cast<float>(std::max(0.0, item.capturedBehaviorParamDouble("charge_explode", "terrainRadius", request.terrainRadius)));
+    request.terrainDamage = std::max(0, item.capturedBehaviorParamInt("charge_explode", "terrainDamage", request.terrainDamage));
+    return request;
+}
+
 bool capturedRewardAllowed(SpellRingItem& item, float totalTime)
 {
     float interval = CapturedRewardCooldown;
@@ -197,13 +208,18 @@ void DiggingSystem::update(
             }
         }
         if (item.hasCapturedBehavior("charge_explode") && item.capturedExplodeSleepTimer <= 0.0f) {
-            const int requiredHits = std::max(1, item.capturedBehaviorParamInt("charge_explode", "count", CapturedExplosionChargeLimit));
+            const int requiredHits = std::max(
+                1,
+                item.capturedBehaviorParamInt(
+                    "charge_explode",
+                    "count",
+                    item.capturedBehaviorParamInt("charge_explode", "charges", CapturedExplosionChargeLimit)));
             const float restSeconds = static_cast<float>(std::max(0.1, item.capturedBehaviorParamDouble("charge_explode", "rest", 2.4)));
             ++item.capturedExplodeCharge;
             if (item.capturedExplodeCharge >= requiredHits) {
                 item.capturedExplodeCharge = 0;
                 item.capturedExplodeSleepTimer = restSeconds;
-                capturedExplosionRequests_.push_back(digPosition);
+                capturedExplosionRequests_.push_back(makeCapturedExplosionRequest(item, digPosition));
             }
         }
         if (terrainOpened) {

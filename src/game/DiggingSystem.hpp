@@ -27,6 +27,14 @@ struct CapturedRewardDropRequest {
     std::string profile;
 };
 
+struct CapturedExplosionRequest {
+    Vec2 position{};
+    float radius = 44.0f;
+    int damage = 3;
+    float terrainRadius = 28.0f;
+    int terrainDamage = 1;
+};
+
 class EncyclopediaSystem;
 class MagicSystem;
 
@@ -47,7 +55,7 @@ public:
     const std::vector<DugTile>& dugTiles() const { return dugTiles_; }
     const std::vector<RingImpactSoundEvent>& impactSoundEvents() const { return impactSoundEvents_; }
     const std::vector<CapturedRewardDropRequest>& rewardDropRequests() const { return rewardDropRequests_; }
-    const std::vector<Vec2>& capturedExplosionRequests() const { return capturedExplosionRequests_; }
+    const std::vector<CapturedExplosionRequest>& capturedExplosionRequests() const { return capturedExplosionRequests_; }
 
 private:
     std::vector<Vec2> openedTiles_;
@@ -55,7 +63,7 @@ private:
     std::vector<DugTile> dugTiles_;
     std::vector<RingImpactSoundEvent> impactSoundEvents_;
     std::vector<CapturedRewardDropRequest> rewardDropRequests_;
-    std::vector<Vec2> capturedExplosionRequests_;
+    std::vector<CapturedExplosionRequest> capturedExplosionRequests_;
 };
 
 }

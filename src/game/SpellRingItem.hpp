@@ -19,6 +19,17 @@ enum class SpellRingItemType {
 
 constexpr float SpellRingItemActionFlashSeconds = 0.10f;
 
+struct RingItemBreakExplosionState {
+    bool active = false;
+    float delay = 0.0f;
+    float initialDelay = 0.0f;
+    int warningTickIndex = -1;
+    float radius = 44.0f;
+    int damage = 3;
+    float terrainRadius = 28.0f;
+    int terrainDamage = 1;
+};
+
 struct SpellRingItem {
     SpellRingItemType type = SpellRingItemType::Shovel;
     int ringIndex = 0;
@@ -87,6 +98,7 @@ struct SpellRingItem {
     float capturedProjectileBurstInterval = 0.12f;
     int capturedExplodeCharge = 0;
     float capturedExplodeSleepTimer = 0.0f;
+    RingItemBreakExplosionState breakExplosion;
     float capturedMagnetVisualTimer = 0.0f;
     float capturedWindTimer = 0.0f;
     float capturedRewardLastTime = -100.0f;

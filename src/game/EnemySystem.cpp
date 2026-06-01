@@ -9,6 +9,7 @@
 #include "game/EnemyImageRenderer.hpp"
 #include "game/EncyclopediaSystem.hpp"
 #include "game/EntityStatusVisuals.hpp"
+#include "game/ExplosionWarning.hpp"
 #include "game/EffectSystem.hpp"
 #include "game/ObjectVisualPose.hpp"
 #include "game/WorldDropSystem.hpp"
@@ -2693,84 +2694,30 @@ void drawJunkCrabDebris(Renderer& renderer, const Enemy& enemy)
     }
 }
 
-struct CountdownExplosionWarningVisual {
-    bool active = false;
-    float elapsed = 0.0f;
-    float progress = 0.0f;
-    float urgency = 0.0f;
-    float pulse = 0.0f;
-    float intensity = 0.0f;
-};
-
-constexpr float CountdownExplosionWarningStartCyclesPerSecond = 1.45f;
-constexpr float CountdownExplosionWarningEndCyclesPerSecond = 10.60f;
-
-float countdownExplosionWarningEase(float t)
-{
-    t = clamp(t, 0.0f, 1.0f);
-    return t * t * (3.0f - 2.0f * t);
-}
-
-float countdownExplosionWarningPhaseCycles(float initial, float progress)
-{
-    progress = clamp(progress, 0.0f, 1.0f);
-    const float progressSq = progress * progress;
-    return std::max(0.001f, initial) * (
-        CountdownExplosionWarningStartCyclesPerSecond * progress +
-        (CountdownExplosionWarningEndCyclesPerSecond - CountdownExplosionWarningStartCyclesPerSecond) *
-            progressSq * progress / 3.0f);
-}
-
 int countdownExplosionWarningTickIndex(const Enemy& enemy)
 {
-    if (enemy.countdownExplodeInitialDelay <= 0.0f) {
-        return -1;
-    }
-
-    const float initial = std::max(0.001f, enemy.countdownExplodeInitialDelay);
-    const float remaining = clamp(enemy.countdownExplodeDelay, 0.0f, initial);
-    const float progress = clamp((initial - remaining) / initial, 0.0f, 1.0f);
-    const float phaseCycles = countdownExplosionWarningPhaseCycles(initial, progress);
-    if (phaseCycles < 0.5f) {
-        return -1;
-    }
-    return static_cast<int>(std::floor(phaseCycles - 0.5f));
+    return explosionWarningTickIndex(enemy.countdownExplodeInitialDelay, enemy.countdownExplodeDelay);
 }
 
-CountdownExplosionWarningVisual countdownExplosionWarningVisual(const Enemy& enemy)
+ExplosionWarningVisual countdownExplosionWarningVisual(const Enemy& enemy)
 {
-    CountdownExplosionWarningVisual visual;
     if (enemy.countdownExplodeRadius <= 0.0f ||
         enemy.countdownExplodeInitialDelay <= 0.0f ||
         enemy.countdownExploded ||
         enemy.death.active ||
         enemy.spawnTimer > 0.0f ||
         enemy.bossAction.hidden) {
-        return visual;
+        return {};
     }
 
-    const float initial = std::max(0.001f, enemy.countdownExplodeInitialDelay);
-    const float remaining = clamp(enemy.countdownExplodeDelay, 0.0f, initial);
-    visual.active = true;
-    visual.elapsed = std::max(0.0f, initial - remaining);
-    visual.progress = clamp(visual.elapsed / initial, 0.0f, 1.0f);
-    visual.urgency = countdownExplosionWarningEase(visual.progress);
-
-    const float phaseCycles = countdownExplosionWarningPhaseCycles(initial, visual.progress);
-    const float phase = phaseCycles * Pi * 2.0f;
-    visual.pulse = 0.5f - 0.5f * std::cos(phase);
-    visual.intensity = clamp(
-        0.20f + visual.urgency * 0.30f + visual.pulse * (0.40f + visual.urgency * 0.38f),
-        0.0f,
-        1.0f);
-    return visual;
+    return explosionWarningVisual(enemy.countdownExplodeInitialDelay, enemy.countdownExplodeDelay);
 }
 
 void drawCountdownExplosionWarningAura(
     Renderer& renderer,
     Vec2 position,
     float visualRadius,
-    const CountdownExplosionWarningVisual& warning)
+    const ExplosionWarningVisual& warning)
 {
     if (!warning.active) {
         return;
@@ -2790,7 +2737,7 @@ void drawCountdownExplosionWarningOverlay(
     Renderer& renderer,
     Vec2 position,
     float visualRadius,
-    const CountdownExplosionWarningVisual& warning)
+    const ExplosionWarningVisual& warning)
 {
     if (!warning.active) {
         return;
@@ -2846,7 +2793,7 @@ void drawEnemyVisual(Renderer& renderer, const Enemy& enemy, bool captureHighlig
         color = darkenEnemyColorForDeath(color, enemy);
     }
     const float visualRadius = enemyVisualRadius(enemy);
-    const CountdownExplosionWarningVisual explosionWarning = countdownExplosionWarningVisual(enemy);
+    const ExplosionWarningVisual explosionWarning = countdownExplosionWarningVisual(enemy);
     drawCountdownExplosionWarningAura(renderer, drawPosition, visualRadius, explosionWarning);
     if (enemy.dungeonEventBoss && !enemy.death.active) {
         renderer.drawCircle(drawPosition, visualRadius + 10.0f, {255, 188, 90, 190});

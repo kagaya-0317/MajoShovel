@@ -367,7 +367,7 @@ void parseEffectField(
     }
 }
 
-constexpr std::array<std::string_view, 10> DefinedBehaviorTriggers = {
+constexpr std::array<std::string_view, 11> DefinedBehaviorTriggers = {
     "always",
     "attack",
     "timer",
@@ -378,6 +378,7 @@ constexpr std::array<std::string_view, 10> DefinedBehaviorTriggers = {
     "spawn",
     "on_death",
     "interval",
+    "break",
 };
 
 constexpr std::array<std::string_view, 12> KnownProjectileIds = {
@@ -572,6 +573,9 @@ bool behaviorTriggerTokenMatches(std::string_view supportedTrigger, std::string_
     if (supported == "接触回数蓄積") {
         return trigger == "contact" || trigger == "hit";
     }
+    if (supported == "破損時") {
+        return trigger == "break";
+    }
     return false;
 }
 
@@ -625,6 +629,12 @@ std::string mapLegacyBehaviorIdToCode(std::string_view legacyId)
     }
     if (id == "magnet_pull") {
         return "always:magnet_pull:radius=170,strength=1.0,targetTag=metal:0";
+    }
+    if (id == "charge_explode") {
+        return "hit:charge_explode:none:0.2";
+    }
+    if (id == "break_countdown_explode") {
+        return "break:break_countdown_explode:delay=2.0,radius=44,damage=3,terrainRadius=28,terrainDamage=1:0";
     }
     return {};
 }

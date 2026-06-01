@@ -140,6 +140,7 @@ public:
         const ItemInstance& instance,
         float localAngle,
         SpellRingAddResult* outResult = nullptr);
+    int applyExplosionDamageToItems(Vec2 position, float radius, int damage);
     bool repairItem(int ringIndex, int itemIndex);
     bool enhanceItem(
         int ringIndex,

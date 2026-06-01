@@ -4,6 +4,7 @@
 #include "data/StageWeight.hpp"
 
 #include "game/EntityStatusVisuals.hpp"
+#include "game/ExplosionWarning.hpp"
 
 namespace majo {
 
@@ -69,6 +70,7 @@ constexpr std::string_view AudioSeItemBreak = "se.item.break";
 constexpr std::string_view AudioSeDiscovery = "se.discovery";
 constexpr std::string_view AudioSeWarpDiscovery = "se.discovery.warp";
 constexpr std::string_view AudioSeExplosion = "se.explosion.boom";
+constexpr std::string_view AudioSeExplosionTick = "se.explosion.tick";
 constexpr std::string_view AudioSeFootstepBaseOutdoor = "se.footstep.base_outdoor";
 constexpr std::string_view AudioSeFootstepHomeInterior = "se.footstep.home";
 constexpr std::string_view AudioSeFootstepDungeon = "se.footstep.dungeon";
@@ -2211,6 +2213,7 @@ void Game::updateCapturedUtilityBehaviors(float dt)
     }
 
     std::vector<SpellRingItem*> runtimeItems = spellRing_.runtimeItemsMutable();
+    std::vector<CapturedExplosionRequest> breakExplosionRequests;
     for (SpellRingItem* itemPtr : runtimeItems) {
         if (itemPtr == nullptr) {
             continue;
@@ -2218,6 +2221,29 @@ void Game::updateCapturedUtilityBehaviors(float dt)
         SpellRingItem& item = *itemPtr;
         item.capturedExplodeSleepTimer = std::max(0.0f, item.capturedExplodeSleepTimer - dt);
         item.capturedMagnetVisualTimer = std::max(0.0f, item.capturedMagnetVisualTimer - dt);
+
+        if (item.breakExplosion.active) {
+            item.breakExplosion.delay = std::max(0.0f, item.breakExplosion.delay - dt);
+            if (item.breakExplosion.delay > 0.0f) {
+                const int tickIndex = explosionWarningTickIndex(
+                    item.breakExplosion.initialDelay,
+                    item.breakExplosion.delay);
+                if (tickIndex > item.breakExplosion.warningTickIndex) {
+                    item.breakExplosion.warningTickIndex = tickIndex;
+                    playAudioSe(AudioSeExplosionTick);
+                }
+            }
+            if (item.breakExplosion.delay <= 0.0f) {
+                CapturedExplosionRequest request;
+                request.position = item.worldPosition;
+                request.radius = item.breakExplosion.radius;
+                request.damage = item.breakExplosion.damage;
+                request.terrainRadius = item.breakExplosion.terrainRadius;
+                request.terrainDamage = item.breakExplosion.terrainDamage;
+                breakExplosionRequests.push_back(request);
+                item.breakExplosion = {};
+            }
+        }
 
         if (item.broken()) {
             continue;
@@ -2252,6 +2278,12 @@ void Game::updateCapturedUtilityBehaviors(float dt)
         } else {
             item.capturedWindTimer = 0.0f;
         }
+    }
+    for (const CapturedExplosionRequest& request : breakExplosionRequests) {
+        handleCapturedExplosion(request);
+    }
+    if (!breakExplosionRequests.empty()) {
+        spellRing_.removeBrokenItems();
     }
 }
 
