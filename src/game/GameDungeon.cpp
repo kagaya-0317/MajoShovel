@@ -173,6 +173,9 @@ constexpr float DiscardThrowDurationMin = 0.48f;
 constexpr float DiscardThrowDurationMax = 0.62f;
 constexpr float DiscardThrowArcHeightMin = 52.0f;
 constexpr float DiscardThrowArcHeightMax = 72.0f;
+constexpr float PlayerDeathSequenceSeconds = 1.5f;
+constexpr float DeathRingLightItemWeightKg = 2.0f;
+constexpr float DeathRingDropPickupDelaySeconds = 1.2f;
 constexpr float BossDefeatPresentationSeconds = 1.85f;
 constexpr float DungeonFocusMoveSeconds = 0.72f;
 constexpr float DungeonFocusDefaultHoldSeconds = 2.0f;
@@ -1187,6 +1190,51 @@ bool inventoryInstanceIsUsableDigTool(const InventoryObjectInstance& instance)
     return instance.item.category == DigToolFailsafeDigCategory &&
         !instance.instance.isBroken &&
         instance.instance.currentDurability != 0;
+}
+
+ItemInstance makeDroppedRingItemInstance(const SpellRingItem& item, const ItemData& object, InventorySystem& inventory)
+{
+    ItemInstance instance = inventory.createDetachedObjectInstance(object);
+    if (!item.instanceId.empty()) {
+        instance.instanceId = item.instanceId;
+    }
+    instance.objectId = item.objectId;
+    instance.currentDurability = item.durability;
+    instance.maxDurability = item.maxDurability < 0
+        ? item.maxDurability
+        : std::max(0, item.maxDurability - item.durabilityBonus);
+    instance.enhanceLevel = item.enhanceLevel;
+    instance.attackBonus = item.attackBonus;
+    instance.digBonus = item.digBonus;
+    instance.durabilityBonus = item.durabilityBonus;
+    instance.weightModifier = item.weightModifier;
+    instance.sizeModifier = item.sizeModifier;
+    instance.protectionEnabled = item.protectionEnabled;
+    instance.isBroken = item.isBroken;
+    instance.addedEffects = item.addedEffects;
+    instance.addedTags = item.addedTags;
+    return instance;
+}
+
+WorldDropSpawnMotion makeDeathRingDropMotion(const SpellRingItem& item, std::mt19937& rng)
+{
+    std::uniform_real_distribution<float> smallOffset(-8.0f, 8.0f);
+    WorldDropSpawnMotion motion{
+        .jump = true,
+        .startPosition = item.worldPosition,
+        .jumpDurationSeconds = 0.16f,
+        .jumpArcHeight = 10.0f,
+        .pickupDelaySeconds = DeathRingDropPickupDelaySeconds,
+    };
+    motion.startPosition += Vec2{smallOffset(rng), smallOffset(rng) * 0.35f};
+    if (item.weight <= DeathRingLightItemWeightKg) {
+        std::uniform_int_distribution<int> bounceCount(1, 2);
+        motion.jumpDurationSeconds = 0.22f;
+        motion.jumpArcHeight = 24.0f;
+        motion.bounceCount = bounceCount(rng);
+        motion.bounceDamping = 0.52f;
+    }
+    return motion;
 }
 
 bool durabilityIsHalfOrBelow(int currentDurability, int maxDurability)
@@ -2809,6 +2857,104 @@ void Game::rebuildUnlockedWarpPointsForStart(Vec2 latestPosition)
         configureBossSpawnPointFromWarp(latestPosition);
     }
     clearKnownWarpPointTerrain();
+}
+
+bool Game::playerDeathSequenceActive() const
+{
+    return playerDeathSequence_.active;
+}
+
+float Game::playerDeathRingFadeAlpha() const
+{
+    if (!playerDeathSequence_.active || playerDeathSequence_.durationSeconds <= 0.0f) {
+        return 0.0f;
+    }
+    return 1.0f - smooth01(playerDeathSequence_.elapsedSeconds / playerDeathSequence_.durationSeconds);
+}
+
+void Game::dropSpellRingItemsForDeath()
+{
+    std::mt19937& rng = lootRuntimeRng();
+    for (int ringIndex = 0; ringIndex < SpellRingCount; ++ringIndex) {
+        std::vector<SpellRingItem>& ringItems = spellRing_.itemsForRing(ringIndex);
+        for (const SpellRingItem& item : ringItems) {
+            if (item.objectId.empty()) {
+                continue;
+            }
+            const ItemData* object = objectCatalog_.registry.findById(item.objectId);
+            if (object == nullptr) {
+                continue;
+            }
+            ItemInstance instance = makeDroppedRingItemInstance(item, *object, inventory_);
+            worldDrops_.spawnObjectInstanceDrop(
+                objectCatalog_,
+                std::move(instance),
+                item.worldPosition,
+                runStats_.elapsedSeconds,
+                makeDeathRingDropMotion(item, rng));
+        }
+        ringItems.clear();
+    }
+    cancelRingGrab();
+    spellRing_.clearActionFlashTimers();
+}
+
+void Game::beginPlayerDeathSequence()
+{
+    if (playerDeathSequence_.active || mode_ == ScreenMode::GameOver || mode_ == ScreenMode::AstralResult) {
+        return;
+    }
+
+    player_.hp = 0;
+    player_.velocity = {};
+    inventory_.setOpen(false);
+    inventory_.cancelGrab();
+    cancelRingGrab();
+    pendingStoryTrigger_.clear();
+    pendingStoryTriggerDelaySeconds_ = 0.0f;
+    pendingStoryTriggers_.clear();
+    pendingDialogueCompletion_ = {};
+    dialogue_.clear();
+
+    playerDeathSequence_ = {};
+    playerDeathSequence_.active = true;
+    playerDeathSequence_.durationSeconds = PlayerDeathSequenceSeconds;
+    playerDeathSequence_.roguelike = currentStageIsRoguelike();
+    for (int ringIndex = 0; ringIndex < SpellRingCount; ++ringIndex) {
+        if (!spellRing_.itemsForRing(ringIndex).empty()) {
+            playerDeathSequence_.ringFadePaths[static_cast<std::size_t>(ringIndex)] =
+                spellRing_.runtimePathSamplePointsForRing(ringIndex, balance_, 96);
+        }
+    }
+
+    playAudioJingle(
+        "se.game_over.jingle",
+        1.35f,
+        0.12f,
+        0.36f,
+        1.0f,
+        1.0f);
+    dropSpellRingItemsForDeath();
+}
+
+void Game::updatePlayerDeathSequence(float dt)
+{
+    if (!playerDeathSequence_.active) {
+        return;
+    }
+    player_.hp = 0;
+    player_.velocity = {};
+    player_.healEvents.clear();
+    playerRegenAccumulator_ = 0.0;
+    playerDeathSequence_.elapsedSeconds += std::max(0.0f, dt);
+    if (playerDeathSequence_.elapsedSeconds < playerDeathSequence_.durationSeconds ||
+        playerDeathSequence_.finalizing) {
+        return;
+    }
+
+    playerDeathSequence_.finalizing = true;
+    enterGameOver();
+    playerDeathSequence_ = {};
 }
 
 void Game::retryAfterGameOver()

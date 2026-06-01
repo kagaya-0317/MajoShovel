@@ -53,6 +53,9 @@ constexpr float EnemyHitboxCircleStep = 1.0f;
 constexpr float EnemyHitboxCircleRadiusStep = 1.0f;
 constexpr float EnemyHitboxMinRadius = 1.0f;
 constexpr float EnemyHitboxMaxRadius = 256.0f;
+constexpr float EnemyShadowOffsetStep = 1.0f;
+constexpr float EnemyShadowScaleStep = 0.05f;
+constexpr float EnemyShadowPreviewScale = 4.0f;
 constexpr int HitboxEditUndoLimit = 100;
 constexpr float DebugStoryTestDetailWidth = 360.0f;
 constexpr float DebugStoryTestRowHeight = 56.0f;
@@ -1491,6 +1494,11 @@ std::filesystem::path legacyEnemyHitboxDataPath()
     return std::filesystem::path("data") / "enemy_hitboxes.cfg";
 }
 
+std::filesystem::path enemyShadowDataPath()
+{
+    return std::filesystem::path("data") / "enemy_shadows.cfg";
+}
+
 EnemyHitboxEditLayout makeEnemyHitboxEditLayout(int screenWidth, int screenHeight)
 {
     const float width = static_cast<float>(screenWidth);
@@ -2774,6 +2782,9 @@ void Game::enterObjectImageScaleEditMode()
     }
     if (mode_ == ScreenMode::EnemyHitboxEdit) {
         exitEnemyHitboxEditMode();
+    }
+    if (mode_ == ScreenMode::EnemyShadowEdit) {
+        exitEnemyShadowEditMode();
     }
 
     objectImageScaleSearchInput_.text.clear();
@@ -4327,6 +4338,523 @@ void Game::renderEnemyHitboxEditScreen(Renderer& renderer, double totalSeconds) 
     }
 }
 
+bool Game::loadEnemyShadowData()
+{
+    std::string message;
+    const bool loaded = loadEnemyShadowCatalog(enemyShadowDataPath(), enemyShadows_, message);
+    enemies_.setShadowCatalog(&enemyShadows_);
+    enemyShadowDirty_ = false;
+    enemyShadowEditUndoStack_.clear();
+    enemyShadowEditRedoStack_.clear();
+    enemyShadowStatus_ = loaded ? message : "Enemy shadow fallback active";
+    rebuildEnemyShadowEditList();
+    return loaded;
+}
+
+bool Game::saveEnemyShadowData(std::string& message)
+{
+    const bool saved = saveEnemyShadowCatalog(enemyShadowDataPath(), enemyShadows_, message);
+    if (saved) {
+        enemyShadowDirty_ = false;
+    }
+    enemyShadowStatus_ = message;
+    enemies_.setShadowCatalog(&enemyShadows_);
+    return saved;
+}
+
+void Game::rebuildEnemyShadowEditList()
+{
+    std::string previousSelection;
+    if (enemyShadowSelectedEnemyIndex_ >= 0 &&
+        enemyShadowSelectedEnemyIndex_ < static_cast<int>(enemyShadowEnemyIds_.size())) {
+        previousSelection = enemyShadowEnemyIds_[static_cast<std::size_t>(enemyShadowSelectedEnemyIndex_)];
+    }
+
+    enemyShadowAllEnemyIds_.clear();
+    enemyShadowAllEnemyIds_.reserve(enemyCatalog_.enemies.size());
+    std::unordered_set<std::string> seen;
+    for (const EnemyDefinition& enemy : enemyCatalog_.enemies) {
+        if (!enemy.id.empty() && seen.insert(enemy.id).second) {
+            enemyShadowAllEnemyIds_.push_back(enemy.id);
+        }
+    }
+    std::sort(enemyShadowAllEnemyIds_.begin(), enemyShadowAllEnemyIds_.end(), [this](const std::string& left, const std::string& right) {
+        const auto lhs = enemyCatalog_.enemiesById.find(left);
+        const auto rhs = enemyCatalog_.enemiesById.find(right);
+        if (lhs == enemyCatalog_.enemiesById.end() || rhs == enemyCatalog_.enemiesById.end()) {
+            return left < right;
+        }
+        if (lhs->second.imageNumber != rhs->second.imageNumber) {
+            return lhs->second.imageNumber < rhs->second.imageNumber;
+        }
+        return left < right;
+    });
+
+    applyEnemyShadowEditFilter(previousSelection);
+}
+
+void Game::applyEnemyShadowEditFilter(std::string_view preferredSelection)
+{
+    std::string previousSelection(preferredSelection);
+    if (previousSelection.empty() &&
+        enemyShadowSelectedEnemyIndex_ >= 0 &&
+        enemyShadowSelectedEnemyIndex_ < static_cast<int>(enemyShadowEnemyIds_.size())) {
+        previousSelection = enemyShadowEnemyIds_[static_cast<std::size_t>(enemyShadowSelectedEnemyIndex_)];
+    }
+
+    enemyShadowEnemyIds_.clear();
+    const std::string normalizedQuery = normalizedUiSearchText(enemyShadowSearchInput_.text);
+    for (const std::string& enemyId : enemyShadowAllEnemyIds_) {
+        const auto it = enemyCatalog_.enemiesById.find(enemyId);
+        if (it != enemyCatalog_.enemiesById.end() && enemyHitboxEnemyMatchesSearch(it->second, normalizedQuery)) {
+            enemyShadowEnemyIds_.push_back(enemyId);
+        }
+    }
+
+    enemyShadowSelectedEnemyIndex_ = -1;
+    if (!previousSelection.empty()) {
+        const auto it = std::find(enemyShadowEnemyIds_.begin(), enemyShadowEnemyIds_.end(), previousSelection);
+        if (it != enemyShadowEnemyIds_.end()) {
+            enemyShadowSelectedEnemyIndex_ = static_cast<int>(std::distance(enemyShadowEnemyIds_.begin(), it));
+        }
+    }
+    if (enemyShadowSelectedEnemyIndex_ < 0 && !enemyShadowEnemyIds_.empty()) {
+        enemyShadowSelectedEnemyIndex_ = 0;
+    }
+}
+
+EnemyShadowEditSnapshot Game::makeEnemyShadowEditSnapshot() const
+{
+    EnemyShadowEditSnapshot snapshot;
+    snapshot.catalog = enemyShadows_;
+    if (enemyShadowSelectedEnemyIndex_ >= 0 &&
+        enemyShadowSelectedEnemyIndex_ < static_cast<int>(enemyShadowEnemyIds_.size())) {
+        snapshot.selectedId = enemyShadowEnemyIds_[static_cast<std::size_t>(enemyShadowSelectedEnemyIndex_)];
+    }
+    return snapshot;
+}
+
+void Game::restoreEnemyShadowEditSnapshot(const EnemyShadowEditSnapshot& snapshot)
+{
+    enemyShadows_ = snapshot.catalog;
+    enemyShadowDragging_ = false;
+    enemyShadowDragUndoSnapshotPushed_ = false;
+    applyEnemyShadowEditFilter(snapshot.selectedId);
+    enemyShadowDirty_ = true;
+    enemies_.setShadowCatalog(&enemyShadows_);
+}
+
+void Game::pushEnemyShadowEditUndoSnapshot()
+{
+    EnemyShadowEditSnapshot snapshot = makeEnemyShadowEditSnapshot();
+    if (!enemyShadowEditUndoStack_.empty() && enemyShadowEditUndoStack_.back() == snapshot) {
+        return;
+    }
+    enemyShadowEditUndoStack_.push_back(std::move(snapshot));
+    if (static_cast<int>(enemyShadowEditUndoStack_.size()) > HitboxEditUndoLimit) {
+        enemyShadowEditUndoStack_.erase(enemyShadowEditUndoStack_.begin());
+    }
+    enemyShadowEditRedoStack_.clear();
+}
+
+bool Game::undoEnemyShadowEdit()
+{
+    if (enemyShadowEditUndoStack_.empty()) {
+        return false;
+    }
+    enemyShadowEditRedoStack_.push_back(makeEnemyShadowEditSnapshot());
+    const EnemyShadowEditSnapshot snapshot = std::move(enemyShadowEditUndoStack_.back());
+    enemyShadowEditUndoStack_.pop_back();
+    restoreEnemyShadowEditSnapshot(snapshot);
+    return true;
+}
+
+bool Game::redoEnemyShadowEdit()
+{
+    if (enemyShadowEditRedoStack_.empty()) {
+        return false;
+    }
+    enemyShadowEditUndoStack_.push_back(makeEnemyShadowEditSnapshot());
+    if (static_cast<int>(enemyShadowEditUndoStack_.size()) > HitboxEditUndoLimit) {
+        enemyShadowEditUndoStack_.erase(enemyShadowEditUndoStack_.begin());
+    }
+    const EnemyShadowEditSnapshot snapshot = std::move(enemyShadowEditRedoStack_.back());
+    enemyShadowEditRedoStack_.pop_back();
+    restoreEnemyShadowEditSnapshot(snapshot);
+    return true;
+}
+
+const EnemyDefinition* Game::selectedEnemyShadowDefinitionForEdit() const
+{
+    if (enemyShadowSelectedEnemyIndex_ < 0 ||
+        enemyShadowSelectedEnemyIndex_ >= static_cast<int>(enemyShadowEnemyIds_.size())) {
+        return nullptr;
+    }
+    const std::string& enemyId = enemyShadowEnemyIds_[static_cast<std::size_t>(enemyShadowSelectedEnemyIndex_)];
+    const auto it = enemyCatalog_.enemiesById.find(enemyId);
+    return it != enemyCatalog_.enemiesById.end() ? &it->second : nullptr;
+}
+
+EnemyShadowSpec Game::selectedEnemyShadowSpecForEdit() const
+{
+    if (const EnemyDefinition* definition = selectedEnemyShadowDefinitionForEdit()) {
+        return resolvedEnemyShadowSpec(&enemyShadows_, definition->id);
+    }
+    return defaultEnemyShadowSpec();
+}
+
+EnemyShadowSpec& Game::mutableSelectedEnemyShadowSpecForEdit()
+{
+    static EnemyShadowSpec fallback = defaultEnemyShadowSpec();
+    const EnemyDefinition* definition = selectedEnemyShadowDefinitionForEdit();
+    if (definition == nullptr || definition->id.empty()) {
+        fallback = defaultEnemyShadowSpec();
+        return fallback;
+    }
+    EnemyShadowSpec& spec = enemyShadows_.enemies[definition->id];
+    spec = selectedEnemyShadowSpecForEdit();
+    return spec;
+}
+
+bool Game::handleEnemyShadowEditEvent(const SDL_Event& event)
+{
+    if (mode_ != ScreenMode::EnemyShadowEdit) {
+        return false;
+    }
+
+    if (event.type == SDL_EVENT_KEY_DOWN && !event.key.repeat) {
+        const SDL_Keymod mods = SDL_GetModState();
+        const bool ctrlDown = (mods & SDL_KMOD_CTRL) != 0;
+        if (ctrlDown && event.key.scancode == SDL_SCANCODE_Z) {
+            enemyShadowStatus_ = undoEnemyShadowEdit() ? "Undo" : "Nothing to undo";
+            return true;
+        }
+        if (ctrlDown && event.key.scancode == SDL_SCANCODE_Y) {
+            enemyShadowStatus_ = redoEnemyShadowEdit() ? "Redo" : "Nothing to redo";
+            return true;
+        }
+    }
+
+    std::string previousSelection;
+    if (enemyShadowSelectedEnemyIndex_ >= 0 &&
+        enemyShadowSelectedEnemyIndex_ < static_cast<int>(enemyShadowEnemyIds_.size())) {
+        previousSelection = enemyShadowEnemyIds_[static_cast<std::size_t>(enemyShadowSelectedEnemyIndex_)];
+    }
+    const std::string previousText = enemyShadowSearchInput_.text;
+    const bool consumed = handleUiTextInputEvent(enemyShadowSearchInput_, event, 48);
+    if (enemyShadowSearchInput_.text != previousText) {
+        applyEnemyShadowEditFilter(previousSelection);
+        enemyShadowScrollOffset_ = 0.0f;
+        const EnemyHitboxEditLayout layout = makeEnemyHitboxEditLayout(camera_.width(), camera_.height());
+        keepEnemyHitboxSelectionVisible(layout, enemyShadowSelectedEnemyIndex_, static_cast<int>(enemyShadowEnemyIds_.size()), enemyShadowScrollOffset_);
+    }
+    return consumed;
+}
+
+void Game::enterEnemyShadowEditMode()
+{
+    if (mode_ == ScreenMode::EnemyShadowEdit) {
+        return;
+    }
+    if (mode_ == ScreenMode::ObjectImageScaleEdit) {
+        exitObjectImageScaleEditMode();
+    }
+    if (mode_ == ScreenMode::EnemyHitboxEdit) {
+        exitEnemyHitboxEditMode();
+    }
+    if (mode_ == ScreenMode::AudioCueEdit) {
+        exitAudioCueEditMode();
+    }
+
+    closeDebugItemPicker();
+    closeDebugStoryTest();
+    if (baseEditEnabled_) {
+        exitBaseEditMode();
+    }
+    inventory_.setOpen(false);
+    inventory_.cancelGrab();
+    cancelRingGrab();
+    enemyShadowSearchInput_.text.clear();
+    rebuildEnemyShadowEditList();
+    enemyShadowEditReturnMode_ = mode_;
+    if (enemyShadowEditReturnMode_ == ScreenMode::EnemyShadowEdit) {
+        enemyShadowEditReturnMode_ = ScreenMode::Playing;
+    }
+    enemyShadowScrollOffset_ = std::max(0.0f, enemyShadowScrollOffset_);
+    enemyShadowStatus_ = "Shadow edit";
+    mode_ = ScreenMode::EnemyShadowEdit;
+    focusUiTextInput(enemyShadowSearchInput_);
+}
+
+void Game::exitEnemyShadowEditMode()
+{
+    if (mode_ != ScreenMode::EnemyShadowEdit) {
+        return;
+    }
+    blurUiTextInput(enemyShadowSearchInput_);
+    enemyShadowDragging_ = false;
+    enemyShadowDragUndoSnapshotPushed_ = false;
+    mode_ = enemyShadowEditReturnMode_;
+    if (mode_ == ScreenMode::EnemyShadowEdit) {
+        mode_ = ScreenMode::Playing;
+    }
+}
+
+void Game::updateEnemyShadowEditScreen(const Input& input, UiContext& ui)
+{
+    if (mode_ != ScreenMode::EnemyShadowEdit) {
+        return;
+    }
+    if (input.backPressed() || input.pausePressed()) {
+        exitEnemyShadowEditMode();
+        return;
+    }
+
+    const EnemyHitboxEditLayout layout = makeEnemyHitboxEditLayout(camera_.width(), camera_.height());
+    const int itemCount = static_cast<int>(enemyShadowEnemyIds_.size());
+    const float maxScroll = enemyHitboxMaxScroll(layout, itemCount);
+    enemyShadowScrollOffset_ = clamp(enemyShadowScrollOffset_, 0.0f, maxScroll);
+
+    auto markDirty = [this](std::string status) {
+        enemyShadowDirty_ = true;
+        enemyShadowStatus_ = std::move(status);
+        enemies_.setShadowCatalog(&enemyShadows_);
+    };
+
+    updateUiTextInput(enemyShadowSearchInput_, ui, enemyHitboxSearchInputRect(layout));
+    if (ui.pressed(enemyHitboxSearchClearButtonRect(layout))) {
+        if (!enemyShadowSearchInput_.text.empty()) {
+            std::string previousSelection;
+            if (enemyShadowSelectedEnemyIndex_ >= 0 && enemyShadowSelectedEnemyIndex_ < static_cast<int>(enemyShadowEnemyIds_.size())) {
+                previousSelection = enemyShadowEnemyIds_[static_cast<std::size_t>(enemyShadowSelectedEnemyIndex_)];
+            }
+            enemyShadowSearchInput_.text.clear();
+            applyEnemyShadowEditFilter(previousSelection);
+            enemyShadowScrollOffset_ = 0.0f;
+        }
+        focusUiTextInput(enemyShadowSearchInput_);
+    }
+
+    if (input.saveShortcutPressed() || ui.pressed(enemyHitboxDetailButtonRect(layout, 0))) {
+        std::string message;
+        if (saveEnemyShadowData(message)) {
+            logInfo("Debug: " + message);
+        } else {
+            logWarning("Debug: " + message);
+        }
+    }
+
+    const bool hasSubject = selectedEnemyShadowDefinitionForEdit() != nullptr;
+    if (hasSubject) {
+        auto adjustScale = [&](float dx, float dy, std::string status) {
+            pushEnemyShadowEditUndoSnapshot();
+            EnemyShadowSpec& spec = mutableSelectedEnemyShadowSpecForEdit();
+            spec.scale.x += dx;
+            spec.scale.y += dy;
+            spec = sanitizeEnemyShadowSpec(spec);
+            markDirty(std::move(status));
+        };
+        if (ui.pressed(enemyHitboxDetailButtonRect(layout, 1))) {
+            adjustScale(-EnemyShadowScaleStep, 0.0f, "Width resized");
+        }
+        if (ui.pressed(enemyHitboxDetailButtonRect(layout, 2))) {
+            adjustScale(EnemyShadowScaleStep, 0.0f, "Width resized");
+        }
+        if (ui.pressed(enemyHitboxDetailButtonRect(layout, 3))) {
+            adjustScale(0.0f, -EnemyShadowScaleStep, "Height resized");
+        }
+        if (ui.pressed(enemyHitboxDetailButtonRect(layout, 4))) {
+            adjustScale(0.0f, EnemyShadowScaleStep, "Height resized");
+        }
+        if (ui.pressed(enemyHitboxDetailButtonRect(layout, 5))) {
+            const EnemyDefinition* definition = selectedEnemyShadowDefinitionForEdit();
+            if (definition != nullptr && enemyShadows_.enemies.find(definition->id) != enemyShadows_.enemies.end()) {
+                pushEnemyShadowEditUndoSnapshot();
+                eraseEnemyShadowSpec(enemyShadows_, definition->id);
+                markDirty("Fallback restored");
+            }
+        }
+    }
+
+    for (int i = 0; i < itemCount; ++i) {
+        const UiRect rect = enemyHitboxListRowRect(layout, i, enemyShadowScrollOffset_);
+        if (layout.list.contains(ui.mouse()) && ui.pressed(rect)) {
+            enemyShadowSelectedEnemyIndex_ = i;
+            break;
+        }
+    }
+
+    const int wheel = input.mouseWheelDelta();
+    if (wheel != 0 && layout.list.contains(ui.mouse())) {
+        enemyShadowScrollOffset_ = clamp(enemyShadowScrollOffset_ + static_cast<float>(wheel) * 38.0f, 0.0f, maxScroll);
+    }
+
+    const Vec2 previewCenter = layout.preview.pos + layout.preview.size * 0.5f;
+    const EnemyShadowSpec currentSpec = selectedEnemyShadowSpecForEdit();
+    const Vec2 shadowCenter = previewCenter + currentSpec.offset * EnemyShadowPreviewScale;
+    const float pickRadius = 42.0f;
+    if (input.mouseLeftPressed() && !ui.pointerConsumed() && layout.preview.contains(ui.mouse()) && hasSubject) {
+        if (distanceSquared(ui.mouse(), shadowCenter) <= pickRadius * pickRadius) {
+            enemyShadowDragging_ = true;
+            enemyShadowDragUndoSnapshotPushed_ = false;
+            enemyShadowDragStartMouse_ = ui.mouse();
+            enemyShadowDragStartOffset_ = currentSpec.offset;
+            ui.consumePointer();
+        }
+    }
+    if (enemyShadowDragging_ && input.mouseLeftHeld()) {
+        const Vec2 dragOffset = (ui.mouse() - enemyShadowDragStartMouse_) / EnemyShadowPreviewScale;
+        if (lengthSquared(dragOffset) > 0.000001f) {
+            if (!enemyShadowDragUndoSnapshotPushed_) {
+                pushEnemyShadowEditUndoSnapshot();
+                enemyShadowDragUndoSnapshotPushed_ = true;
+            }
+            EnemyShadowSpec& spec = mutableSelectedEnemyShadowSpecForEdit();
+            spec.offset = enemyShadowDragStartOffset_ + dragOffset;
+            spec.offset.x = std::round(spec.offset.x * 2.0f) * 0.5f;
+            spec.offset.y = std::round(spec.offset.y * 2.0f) * 0.5f;
+            spec = sanitizeEnemyShadowSpec(spec);
+            markDirty("Shadow moved");
+        }
+    }
+    if (input.mouseLeftReleased()) {
+        enemyShadowDragging_ = false;
+        enemyShadowDragUndoSnapshotPushed_ = false;
+    }
+
+    if (hasSubject && layout.preview.contains(ui.mouse()) && input.mouseWheelDelta() != 0) {
+        pushEnemyShadowEditUndoSnapshot();
+        EnemyShadowSpec& spec = mutableSelectedEnemyShadowSpecForEdit();
+        const float delta = -static_cast<float>(input.mouseWheelDelta()) * EnemyShadowScaleStep;
+        spec.scale.x += delta;
+        spec.scale.y += delta;
+        spec = sanitizeEnemyShadowSpec(spec);
+        markDirty("Shadow resized");
+    }
+
+    const int moveX = (input.pressed(InputAction::MoveRight) ? 1 : 0) - (input.pressed(InputAction::MoveLeft) ? 1 : 0);
+    const int moveY = (input.pressed(InputAction::MoveDown) ? 1 : 0) - (input.pressed(InputAction::MoveUp) ? 1 : 0);
+    if ((moveX != 0 || moveY != 0) && hasSubject) {
+        pushEnemyShadowEditUndoSnapshot();
+        EnemyShadowSpec& spec = mutableSelectedEnemyShadowSpecForEdit();
+        spec.offset.x += static_cast<float>(moveX) * EnemyShadowOffsetStep;
+        spec.offset.y += static_cast<float>(moveY) * EnemyShadowOffsetStep;
+        spec = sanitizeEnemyShadowSpec(spec);
+        markDirty("Shadow moved");
+    }
+}
+
+void Game::renderEnemyShadowEditScreen(Renderer& renderer, double totalSeconds) const
+{
+    renderer.setScreenSpace();
+
+    const EnemyHitboxEditLayout layout = makeEnemyHitboxEditLayout(camera_.width(), camera_.height());
+    const int selectedIndex = enemyShadowSelectedEnemyIndex_;
+    const float scrollOffset = clamp(enemyShadowScrollOffset_, 0.0f, enemyHitboxMaxScroll(layout, static_cast<int>(enemyShadowEnemyIds_.size())));
+
+    renderer.fillRect(layout.bounds.pos, layout.bounds.size, {10, 12, 18, 255});
+    renderer.fillRect({0.0f, 0.0f}, {layout.bounds.size.x, EnemyHitboxHeaderHeight}, {18, 24, 38, 255});
+    renderer.fillRect(layout.footer.pos, layout.footer.size, {18, 24, 38, 255});
+    renderer.drawText({22.0f, 18.0f}, "影編集", {245, 245, 252, 255}, 3);
+    renderer.drawText({220.0f, 42.0f}, "Ctrl+S save / Ctrl+Z,Y undo redo", {198, 206, 222, 255}, 2);
+    renderer.drawText({220.0f, 62.0f}, "Drag shadow / Wheel scale / Arrow move", {198, 206, 222, 255}, 1);
+
+    renderer.fillRect(layout.listPanel.pos, layout.listPanel.size, {18, 24, 36, 255});
+    renderer.drawRect(layout.listPanel.pos, layout.listPanel.size, {72, 86, 112, 255});
+    drawUiTextInput(renderer, enemyHitboxSearchInputRect(layout), enemyShadowSearchInput_, "敵名で検索", {});
+    drawUiRectButton(renderer, enemyHitboxSearchClearButtonRect(layout), "消去", false);
+    const std::string countText = std::to_string(static_cast<int>(enemyShadowEnemyIds_.size())) + "/" + std::to_string(static_cast<int>(enemyShadowAllEnemyIds_.size()));
+    renderer.drawText(enemyHitboxSearchCountRect(layout).pos + Vec2{2.0f, 11.0f}, countText, {198, 206, 222, 255}, 2);
+
+    renderer.drawRect(layout.list.pos, layout.list.size, {78, 92, 116, 255});
+    renderer.pushClipRect(layout.list.pos, layout.list.size);
+    for (int i = 0; i < static_cast<int>(enemyShadowEnemyIds_.size()); ++i) {
+        const UiRect rect = enemyHitboxListRowRect(layout, i, scrollOffset);
+        if (rect.pos.y + rect.size.y < layout.list.pos.y || rect.pos.y > layout.list.pos.y + layout.list.size.y) {
+            continue;
+        }
+        const bool selected = i == selectedIndex;
+        const std::string& id = enemyShadowEnemyIds_[static_cast<std::size_t>(i)];
+        const bool customized = enemyShadows_.enemies.find(id) != enemyShadows_.enemies.end();
+        std::string name = id;
+        int imageNumber = 0;
+        const auto enemyIt = enemyCatalog_.enemiesById.find(id);
+        if (enemyIt != enemyCatalog_.enemiesById.end()) {
+            name = enemyHitboxDisplayName(enemyIt->second);
+            imageNumber = enemyIt->second.imageNumber;
+        }
+        renderer.fillRect(rect.pos, rect.size, selected ? Color{44, 58, 92, 255} : Color{24, 30, 44, 255});
+        renderer.drawRect(rect.pos, rect.size, selected ? Color{255, 228, 138, 255} : Color{74, 86, 108, 255});
+        EnemyImageDrawOptions iconOptions;
+        iconOptions.allowUpscale = true;
+        iconOptions.outlineEnabled = false;
+        if (imageNumber <= 0 || !drawEnemyImageIcon(renderer, imageNumber, rect.pos + Vec2{22.0f, 22.0f}, {34.0f, 34.0f}, 0.0f, iconOptions)) {
+            renderer.fillCircle(rect.pos + Vec2{22.0f, 22.0f}, 12.0f, {82, 92, 110, 255});
+        }
+        renderer.drawText(rect.pos + Vec2{44.0f, 6.0f}, fittedSingleLineText(renderer, name, rect.size.x - 62.0f, 2), {232, 236, 245, 255}, 2);
+        renderer.drawText(rect.pos + Vec2{44.0f, 28.0f}, fittedSingleLineText(renderer, id + (customized ? " *" : ""), rect.size.x - 62.0f, 1), customized ? Color{255, 226, 138, 255} : Color{146, 158, 178, 255}, 1);
+    }
+    renderer.popClipRect();
+
+    renderer.fillRect(layout.previewPanel.pos, layout.previewPanel.size, {16, 21, 32, 255});
+    renderer.drawRect(layout.previewPanel.pos, layout.previewPanel.size, {72, 86, 112, 255});
+    renderer.fillRect(layout.preview.pos, layout.preview.size, {8, 10, 16, 255});
+    renderer.drawRect(layout.preview.pos, layout.preview.size, {58, 70, 92, 255});
+    renderer.fillRect(layout.detail.pos, layout.detail.size, {20, 26, 38, 255});
+    renderer.drawRect(layout.detail.pos, layout.detail.size, {78, 92, 116, 255});
+
+    const EnemyDefinition* definition = selectedEnemyShadowDefinitionForEdit();
+    if (definition == nullptr) {
+        renderer.drawText(layout.preview.pos + Vec2{18.0f, 18.0f}, "敵が選択されていません", {198, 206, 222, 255}, 2);
+    } else {
+        const Vec2 previewCenter = layout.preview.pos + layout.preview.size * 0.5f;
+        const Enemy previewEnemy = makeEnemyHitboxPreviewEnemy(*definition, balance_);
+        const EnemyShadowSpec spec = selectedEnemyShadowSpecForEdit();
+        EnemyImageDrawOptions imageOptions;
+        imageOptions.allowUpscale = true;
+        imageOptions.scaleMultiplier = EnemyShadowPreviewScale;
+        imageOptions.selectedOutlineEnabled = true;
+        imageOptions.selectedOutlineColor = {255, 255, 255, 70};
+        imageOptions.selectedOutlinePx = 2;
+        Vec2 imageSize{};
+        const bool sizeResolved = enemyImageDrawSize(renderer, previewEnemy, imageOptions, imageSize);
+        if (!sizeResolved) {
+            const float fallbackRadius = enemyHitboxDefaultRadiusFor(*definition, balance_);
+            imageSize = {fallbackRadius * 2.0f * EnemyShadowPreviewScale, fallbackRadius * 2.0f * EnemyShadowPreviewScale};
+        }
+        const float baseSize = std::max(1.0f, std::max(imageSize.x, imageSize.y));
+        const Vec2 shadowAnchor = previewCenter + spec.offset * EnemyShadowPreviewScale;
+        renderer.drawActorShadow(shadowAnchor, baseSize, spec.scale, {0, 0, 0, 100});
+        renderer.drawCircle(shadowAnchor + Vec2{0.0f, baseSize * 0.02f}, 5.0f, {255, 228, 138, 255});
+        if (!drawEnemyImage(renderer, previewEnemy, previewCenter, static_cast<float>(totalSeconds), imageOptions, &imageSize)) {
+            const float fallbackRadius = enemyHitboxDefaultRadiusFor(*definition, balance_);
+            renderer.fillCircle(previewCenter, fallbackRadius * EnemyShadowPreviewScale, {92, 102, 120, 255});
+        }
+        renderer.drawLine({layout.preview.pos.x, previewCenter.y}, {layout.preview.pos.x + layout.preview.size.x, previewCenter.y}, {255, 255, 255, 26});
+        renderer.drawLine({previewCenter.x, layout.preview.pos.y}, {previewCenter.x, layout.preview.pos.y + layout.preview.size.y}, {255, 255, 255, 26});
+
+        const bool customized = enemyShadows_.enemies.find(definition->id) != enemyShadows_.enemies.end();
+        renderer.drawText(layout.detail.pos + Vec2{10.0f, 10.0f}, fittedSingleLineText(renderer, enemyHitboxDisplayName(*definition), layout.detail.size.x - 18.0f, 2), {232, 236, 245, 255}, 2);
+        renderer.drawText(layout.detail.pos + Vec2{10.0f, 36.0f}, definition->id, {146, 158, 178, 255}, 1);
+        renderer.drawText(layout.detail.pos + Vec2{10.0f, 56.0f}, customized ? "custom" : "fallback", customized ? Color{255, 226, 138, 255} : Color{146, 158, 178, 255}, 2);
+        char buffer[160];
+        std::snprintf(buffer, sizeof(buffer), "x %.1f  y %.1f", spec.offset.x, spec.offset.y);
+        renderer.drawText(layout.detail.pos + Vec2{10.0f, 86.0f}, buffer, {198, 206, 222, 255}, 2);
+        std::snprintf(buffer, sizeof(buffer), "w %.2f  h %.2f", spec.scale.x, spec.scale.y);
+        renderer.drawText(layout.detail.pos + Vec2{10.0f, 112.0f}, buffer, {198, 206, 222, 255}, 2);
+    }
+
+    const char* labels[] = {"保存", "横-", "横+", "縦-", "縦+", "戻す"};
+    for (int i = 0; i < static_cast<int>(sizeof(labels) / sizeof(labels[0])); ++i) {
+        drawUiRectButton(renderer, enemyHitboxDetailButtonRect(layout, i), labels[i], false);
+    }
+
+    const char* dirty = enemyShadowDirty_ ? "Unsaved (*)" : "Saved";
+    renderer.drawText(layout.footer.pos + Vec2{22.0f, 18.0f}, dirty, enemyShadowDirty_ ? Color{255, 230, 150, 255} : Color{170, 220, 170, 255}, 2);
+    if (!enemyShadowStatus_.empty()) {
+        renderer.drawText(layout.footer.pos + Vec2{190.0f, 18.0f}, enemyShadowStatus_, {198, 206, 222, 255}, 2);
+    }
+}
 bool Game::loadAudioCueManifestForEdit()
 {
     std::string previousId;
@@ -4501,6 +5029,9 @@ void Game::enterAudioCueEditMode(AudioCueEditMode editMode)
     if (mode_ == ScreenMode::EnemyHitboxEdit) {
         exitEnemyHitboxEditMode();
     }
+    if (mode_ == ScreenMode::EnemyShadowEdit) {
+        exitEnemyShadowEditMode();
+    }
 
     closeDebugItemPicker();
     closeDebugStoryTest();
@@ -4512,7 +5043,8 @@ void Game::enterAudioCueEditMode(AudioCueEditMode editMode)
     audioCueEditReturnMode_ = mode_;
     if (audioCueEditReturnMode_ == ScreenMode::AudioCueEdit ||
         audioCueEditReturnMode_ == ScreenMode::ObjectImageScaleEdit ||
-        audioCueEditReturnMode_ == ScreenMode::EnemyHitboxEdit) {
+        audioCueEditReturnMode_ == ScreenMode::EnemyHitboxEdit ||
+        audioCueEditReturnMode_ == ScreenMode::EnemyShadowEdit) {
         audioCueEditReturnMode_ = ScreenMode::Playing;
     }
     audioCueEditPreviousBgmCue_ = activeAudioBgmCue_;
@@ -4987,6 +5519,9 @@ void Game::openDebugItemPicker()
     if (mode_ == ScreenMode::EnemyHitboxEdit) {
         exitEnemyHitboxEditMode();
     }
+    if (mode_ == ScreenMode::EnemyShadowEdit) {
+        exitEnemyShadowEditMode();
+    }
     if (mode_ == ScreenMode::AudioCueEdit) {
         exitAudioCueEditMode();
     }
@@ -5325,6 +5860,9 @@ void Game::openDebugStoryTest(DebugStoryTestMode mode)
     }
     if (mode_ == ScreenMode::EnemyHitboxEdit) {
         exitEnemyHitboxEditMode();
+    }
+    if (mode_ == ScreenMode::EnemyShadowEdit) {
+        exitEnemyShadowEditMode();
     }
     if (mode_ == ScreenMode::AudioCueEdit) {
         exitAudioCueEditMode();
@@ -5803,6 +6341,9 @@ void Game::updateEffectTestScreen(const Input& input, UiContext& ui, float dt)
 
     magicFx_.update(safeDt);
     effects_.update(safeDt);
+    for (const MagicFxSoundEvent& event : magicFx_.consumeSoundEvents()) {
+        playAudioSe(event.cueId, event.volumeScale, event.pitchScale);
+    }
     for (const EffectSoundEvent& event : effects_.consumeSoundEvents()) {
         playAudioSe(event.cueId, event.volumeScale, event.pitchScale);
     }
@@ -7269,6 +7810,69 @@ bool Game::handleEnemyHitboxEditCommand(std::string_view normalized)
     return false;
 }
 
+bool Game::handleEnemyShadowEditCommand(std::string_view normalized)
+{
+    const bool toggle = normalized == "game enemy-shadow toggle" ||
+        normalized == "game enemy shadow toggle" ||
+        normalized == "game shadow toggle";
+    const bool enable = normalized == "game enemy-shadow on" ||
+        normalized == "game enemy shadow on" ||
+        normalized == "game shadow on";
+    const bool disable = normalized == "game enemy-shadow off" ||
+        normalized == "game enemy shadow off" ||
+        normalized == "game shadow off";
+    const bool save = normalized == "game enemy-shadow save" ||
+        normalized == "game enemy shadow save" ||
+        normalized == "game shadow save";
+    const bool reload = normalized == "game enemy-shadow reload" ||
+        normalized == "game enemy shadow reload" ||
+        normalized == "game shadow reload";
+
+    if (toggle) {
+        if (mode_ == ScreenMode::EnemyShadowEdit) {
+            exitEnemyShadowEditMode();
+            logInfo("Debug: shadow edit disabled.");
+        } else {
+            enterEnemyShadowEditMode();
+            logInfo("Debug: shadow edit enabled.");
+        }
+        return true;
+    }
+    if (enable) {
+        enterEnemyShadowEditMode();
+        logInfo("Debug: shadow edit enabled.");
+        return true;
+    }
+    if (disable) {
+        exitEnemyShadowEditMode();
+        logInfo("Debug: shadow edit disabled.");
+        return true;
+    }
+    if (save) {
+        std::string message;
+        if (saveEnemyShadowData(message)) {
+            enemyShadowStatus_ = message;
+            logInfo("Debug: " + message);
+        } else {
+            enemyShadowStatus_ = message;
+            logWarning("Debug: " + message);
+        }
+        return true;
+    }
+    if (reload) {
+        if (loadEnemyShadowData()) {
+            enemyShadowStatus_ = "Enemy shadows reloaded";
+            logInfo("Debug: enemy shadows reloaded.");
+        } else {
+            enemyShadowStatus_ = "Enemy shadow reload failed";
+            logWarning("Debug: enemy shadow reload failed.");
+        }
+        enemies_.setShadowCatalog(&enemyShadows_);
+        return true;
+    }
+
+    return false;
+}
 bool Game::handleAudioCueEditCommand(std::string_view normalized)
 {
     const bool bgm = normalized == "game audio-edit bgm" ||
@@ -7407,6 +8011,7 @@ GameTestSnapshot Game::makeTestSnapshot(GameTestSnapshotOptions options) const
         case ScreenMode::Ring: return GameTestScreenMode::Ring;
         case ScreenMode::ObjectImageScaleEdit: return GameTestScreenMode::ObjectImageScaleEdit;
         case ScreenMode::EnemyHitboxEdit: return GameTestScreenMode::EnemyHitboxEdit;
+        case ScreenMode::EnemyShadowEdit: return GameTestScreenMode::EnemyHitboxEdit;
         case ScreenMode::AudioCueEdit: return GameTestScreenMode::AudioCueEdit;
         case ScreenMode::LevelUp: return GameTestScreenMode::LevelUp;
         case ScreenMode::GameOver: return GameTestScreenMode::GameOver;
@@ -8751,6 +9356,9 @@ bool Game::executeDebugCommand(std::string_view command)
         return true;
     }
     if (handleEnemyHitboxEditCommand(normalized)) {
+        return true;
+    }
+    if (handleEnemyShadowEditCommand(normalized)) {
         return true;
     }
     if (handleAudioCueEditCommand(normalized)) {

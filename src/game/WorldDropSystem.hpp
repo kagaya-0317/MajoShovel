@@ -32,6 +32,8 @@ struct WorldDropSpawnMotion {
     float jumpDurationSeconds = 0.0f;
     float jumpArcHeight = 0.0f;
     float pickupDelaySeconds = 0.0f;
+    int bounceCount = 0;
+    float bounceDamping = 0.55f;
 };
 
 struct WorldDropItem {
@@ -53,6 +55,8 @@ struct WorldDropItem {
     float jumpElapsedSeconds = 0.0f;
     float jumpDurationSeconds = 0.0f;
     float jumpArcHeight = 0.0f;
+    int bounceCount = 0;
+    float bounceDamping = 0.55f;
     float pickupDelaySeconds = 0.0f;
     float materialParticleTimer = 0.0f;
     std::optional<ItemInstance> instance;

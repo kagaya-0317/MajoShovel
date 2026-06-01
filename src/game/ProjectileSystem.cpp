@@ -5,6 +5,8 @@
 #include "game/Collision.hpp"
 #include "game/EncyclopediaSystem.hpp"
 #include "game/EnemySystem.hpp"
+#include "game/ObjectImageRenderer.hpp"
+#include "game/ScaledImageRenderer.hpp"
 
 #include <algorithm>
 #include <array>
@@ -36,12 +38,12 @@ struct ProjectilePrototype {
 };
 
 constexpr std::array<ProjectilePrototype, 14> Prototypes{{
-    {"stone_bullet", "石つぶて", 255.0f, 6.0f, 2.05f, 1, "blunt", false, {"small", "stone"}, "se.projectile.pebble.launch", "se.projectile.stone.destroy"},
-    {"big_stone_bullet", "大岩弾", 220.0f, 10.0f, 2.20f, 3, "blunt", false, {"stone"}, "se.projectile.heavy.launch", "se.projectile.stone.destroy"},
-    {"weapon_throw", "投げ武器", 230.0f, 6.8f, 2.00f, 2, "blunt", false, {"metal", "small"}, "se.projectile.heavy.launch", "se.projectile.metal.destroy"},
-    {"poison_spit", "毒液", 155.0f, 6.7f, 1.55f, 1, "water", false, {"small", "poison"}, "se.projectile.frog.launch", "se.projectile.liquid.destroy"},
-    {"paralyze_shot", "しびれ弾", 170.0f, 6.0f, 1.45f, 0, "none", false, {"small", "paralyze"}, "se.projectile.frog.launch", "se.projectile.magic.destroy"},
-    {"mud_blob", "泥だんご", 150.0f, 7.4f, 1.50f, 0, "earth", false, {"mud", "poison"}, "se.projectile.frog.launch", "se.projectile.liquid.destroy"},
+    {"stone_bullet", "石つぶて", 255.0f, 9.0f, 2.05f, 1, "blunt", false, {"small", "stone"}, "se.projectile.pebble.launch", "se.projectile.stone.destroy"},
+    {"big_stone_bullet", "大岩弾", 220.0f, 15.0f, 2.20f, 3, "blunt", false, {"stone"}, "se.projectile.heavy.launch", "se.projectile.stone.destroy"},
+    {"weapon_throw", "投げ武器", 230.0f, 10.2f, 2.00f, 2, "blunt", false, {"metal", "small"}, "se.projectile.heavy.launch", "se.projectile.metal.destroy"},
+    {"poison_spit", "毒液", 155.0f, 10.1f, 1.55f, 1, "water", false, {"small", "poison"}, "se.projectile.frog.launch", "se.projectile.liquid.destroy"},
+    {"paralyze_shot", "しびれ弾", 170.0f, 9.0f, 1.45f, 0, "none", false, {"small", "paralyze"}, "se.projectile.frog.launch", "se.projectile.magic.destroy"},
+    {"mud_blob", "泥だんご", 150.0f, 11.1f, 1.50f, 0, "earth", false, {"mud", "poison"}, "se.projectile.frog.launch", "se.projectile.liquid.destroy"},
     {"cactus_needle", "サボテン針", 230.0f, 2.5f, 1.25f, 1, "pierce", true, {"small", "needle"}, "se.projectile.quick.launch", "se.projectile.needle.destroy"},
     {"water_shot", "水弾", 210.0f, 6.3f, 2.2f, 1, "water", false, {"small", "water"}, "se.projectile.water_pip.launch", "se.projectile.water.destroy"},
     {"water_bubble", "泡", 68.0f, 5.4f, 3.0f, 1, "water", false, {"small", "water", "bubble"}, "se.projectile.bubble.launch", "se.projectile.bubble.pop"},
@@ -256,10 +258,19 @@ int projectileVisualVariantFor(std::string_view projectileId)
     if (projectileId == "junk_chunk") {
         return sampleInt(0, static_cast<int>(junkColorPalette().size()) - 1);
     }
+    if (projectileId == "weapon_throw") {
+        return sampleInt(0, 2);
+    }
     if (projectileId == "water_bubble") {
         return sampleInt(0, 1023);
     }
     return 0;
+}
+
+int weaponThrowImageNumber(int variant)
+{
+    constexpr std::array<int, 3> ImageNumbers{{4, 39, 58}};
+    return ImageNumbers[static_cast<std::size_t>(positiveModulo(variant, static_cast<int>(ImageNumbers.size())))];
 }
 
 bool isBallisticProjectile(std::string_view projectileId)
@@ -817,6 +828,27 @@ void drawProjectile(Renderer& renderer, const Projectile& projectile)
     if (id == "weapon_throw") {
         const float spin = projectile.age * 18.0f;
         const Vec2 blade = fromAngle(spin);
+        ScaledImageDrawOptions imageOptions;
+        imageOptions.allowUpscale = true;
+        imageOptions.outlineEnabled = true;
+        imageOptions.outlineColor = scaleAlpha(profile.edge, fade);
+        imageOptions.outlinePx = 1;
+        imageOptions.tint = scaleAlpha({255, 255, 255, 255}, fade);
+        imageOptions.rotationDegrees = spin * 180.0f / Pi + 90.0f;
+        imageOptions.scaleMultiplier = 1.0f;
+        renderer.drawSoftLine(
+            drawPosition - blade * (radius * 2.8f),
+            drawPosition + blade * (radius * 2.8f),
+            std::max(1.0f, radius * 0.30f),
+            scaleAlpha(profile.glow, fade * 0.70f));
+        if (drawScaledImage(
+                renderer,
+                objectImagePathFromNumber(weaponThrowImageNumber(projectile.visualVariant)),
+                drawPosition,
+                {radius * 6.2f, radius * 6.2f},
+                imageOptions)) {
+            return;
+        }
         renderer.drawSoftLine(
             drawPosition - blade * (radius * 2.6f),
             drawPosition + blade * (radius * 2.6f),
@@ -1081,26 +1113,26 @@ ProjectileFxEventTuning projectileFxTuning(const Projectile& projectile, Project
 
     if (event == ProjectileFxEvent::Expire) {
         if (id == "stone_bullet") {
-            tuning.count += 4;
-            tuning.speedMax += 54.0f;
-            tuning.startSize *= 1.78f;
-            tuning.lifetimeMax += 0.08f;
-        } else if (id == "big_stone_bullet") {
-            tuning.count += 5;
-            tuning.speedMax += 62.0f;
-            tuning.startSize *= 1.62f;
+            tuning.count += 8;
+            tuning.speedMax += 78.0f;
+            tuning.startSize *= 2.12f;
             tuning.lifetimeMax += 0.12f;
+        } else if (id == "big_stone_bullet") {
+            tuning.count += 9;
+            tuning.speedMax += 92.0f;
+            tuning.startSize *= 2.05f;
+            tuning.lifetimeMax += 0.16f;
         } else if (id == "weapon_throw") {
-            tuning.count += 4;
-            tuning.speedMax += 62.0f;
-            tuning.startSize *= 1.18f;
+            tuning.count += 8;
+            tuning.speedMax += 92.0f;
+            tuning.startSize *= 1.78f;
         } else if (id == "poison_spit" || id == "water_shot") {
-            tuning.count += 12;
-            tuning.speedMin += 54.0f;
-            tuning.speedMax += 128.0f;
-            tuning.startSize *= 1.72f;
+            tuning.count += id == "poison_spit" ? 16 : 12;
+            tuning.speedMin += id == "poison_spit" ? 66.0f : 54.0f;
+            tuning.speedMax += id == "poison_spit" ? 156.0f : 128.0f;
+            tuning.startSize *= id == "poison_spit" ? 2.20f : 1.72f;
             tuning.ringEndScale += 1.1f;
-            tuning.lifetimeMax += 0.18f;
+            tuning.lifetimeMax += id == "poison_spit" ? 0.24f : 0.18f;
         } else if (id == "water_bubble") {
             tuning.count += 10;
             tuning.speedMin = 26.0f;
@@ -1111,20 +1143,20 @@ ProjectileFxEventTuning projectileFxTuning(const Projectile& projectile, Project
             tuning.lifetimeMax = 0.34f;
             tuning.ring = false;
         } else if (id == "paralyze_shot") {
-            tuning.count += 12;
-            tuning.speedMin += 42.0f;
-            tuning.speedMax += 118.0f;
-            tuning.startSize *= 2.30f;
-            tuning.ringEndScale += 1.0f;
+            tuning.count += 16;
+            tuning.speedMin += 56.0f;
+            tuning.speedMax += 148.0f;
+            tuning.startSize *= 2.85f;
+            tuning.ringEndScale += 1.35f;
             tuning.lifetimeMin *= 0.76f;
-            tuning.lifetimeMax *= 0.94f;
+            tuning.lifetimeMax *= 1.04f;
         } else if (id == "mud_blob") {
-            tuning.count += 11;
-            tuning.speedMin += 24.0f;
-            tuning.speedMax += 76.0f;
-            tuning.startSize *= 2.25f;
-            tuning.ringEndScale += 1.3f;
-            tuning.lifetimeMax += 0.22f;
+            tuning.count += 16;
+            tuning.speedMin += 34.0f;
+            tuning.speedMax += 108.0f;
+            tuning.startSize *= 2.85f;
+            tuning.ringEndScale += 1.7f;
+            tuning.lifetimeMax += 0.30f;
         } else if (id == "cactus_needle") {
             tuning.count += 4;
             tuning.speedMax += 64.0f;

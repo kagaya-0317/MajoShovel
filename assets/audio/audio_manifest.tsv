@@ -13,6 +13,8 @@ se.ui.item_use	se	se/ui_item_use_placeholder.wav	0.68	false	80	アイテム使�
 se.ui.ring_place	se	se/ui_ring_place_placeholder.wav	0.72	false	90	リング配置
 se.ui.upgrade_select	se	se/ui_upgrade_select_placeholder.wav	0.78	false	120	レベルアップ選択
 se.level_up.jingle	se	se/level_up_jingle_placeholder.wav	0.86	false	0	レベルアップジングル
+se.game_over.jingle	se	se/game_over_jingle_placeholder.wav	0.88	false	0	ゲームオーバージングル
+se.item.new.jingle	se	se/item_new_jingle_placeholder.wav	0.84	false	0	新規アイテム入手ジングル
 se.transition	se	se/transition_placeholder.wav	0.72	false	160	画面遷移
 se.footstep.base_outdoor	se	se/footstep_base_outdoor_placeholder.wav	0.38	false	60	足音 拠点外
 se.footstep.home	se	se/footstep_home_placeholder.wav	0.34	false	60	足音 家

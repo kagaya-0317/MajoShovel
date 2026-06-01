@@ -5529,6 +5529,14 @@ void Game::render(Renderer& renderer, const Time& time)
         renderer.present();
         return;
     }
+    if (mode_ == ScreenMode::EnemyShadowEdit) {
+        renderEnemyShadowEditScreen(renderer, time.totalSeconds());
+        finishUiFrame(renderer);
+        renderDebugOverlay(renderer, time);
+        renderScreenTransitionOverlay(renderer);
+        renderer.present();
+        return;
+    }
     if (mode_ == ScreenMode::AudioCueEdit) {
         renderAudioCueEditScreen(renderer);
         finishUiFrame(renderer);

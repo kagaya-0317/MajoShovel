@@ -2565,15 +2565,18 @@ float enemyShadowVisualSize(Renderer& renderer, const Enemy& enemy)
     return actorShadowVisualSizeForAltitude(baseSize, enemyVisualAltitude(enemy));
 }
 
-Vec2 enemyShadowBoundsSize(Renderer& renderer, const Enemy& enemy)
+
+Vec2 enemyShadowBoundsSize(Renderer& renderer, const Enemy& enemy, const EnemyShadowCatalog* shadowCatalog)
 {
     const float visualSize = enemyShadowVisualSize(renderer, enemy);
-    return {visualSize * 0.55f, visualSize * 0.25f};
+    const EnemyShadowSpec shadow = resolvedEnemyShadowSpec(shadowCatalog, enemy.enemyId);
+    return {visualSize * 0.55f * shadow.scale.x, visualSize * 0.25f * shadow.scale.y};
 }
 
-void drawEnemyShadow(Renderer& renderer, const Enemy& enemy)
+void drawEnemyShadow(Renderer& renderer, const Enemy& enemy, const EnemyShadowCatalog* shadowCatalog)
 {
-    renderer.drawActorShadow(actorShadowAnchor(enemy.position, EnemyShadowGroundOffsetY), enemyShadowVisualSize(renderer, enemy));
+    const EnemyShadowSpec shadow = resolvedEnemyShadowSpec(shadowCatalog, enemy.enemyId);
+    renderer.drawActorShadow(enemy.position + shadow.offset, enemyShadowVisualSize(renderer, enemy), shadow.scale);
 }
 
 void drawEnemyHpBar(Renderer& renderer, const Enemy& enemy, Vec2 drawPosition, float uiVisualRadius, bool detailsKnown)
@@ -5077,7 +5080,7 @@ void EnemySystem::applyDefinition(Enemy& enemy, const EnemyDefinition* definitio
             18.0,
             behaviorParamDouble(enemy, "chest_bite", "range", ChestBiteDefaultTriggerRange)));
         enemy.chestBiteJumpDistance = static_cast<float>(std::max(
-            JumpTargetMinDistance,
+            static_cast<double>(JumpTargetMinDistance),
             behaviorParamDouble(enemy, "chest_bite", "jumpDistance", ChestBiteDefaultJumpDistance)));
         enemy.chestBiteJumpDurationSeconds = static_cast<float>(std::clamp(
             behaviorParamDouble(enemy, "chest_bite", "jumpDuration", ChestBiteDefaultJumpDurationSeconds),
@@ -8134,11 +8137,11 @@ void EnemySystem::renderShadows(Renderer& renderer, const TileMap& map, Vec2 pla
         if (!enemyVisible(enemy)) {
             continue;
         }
-        const Vec2 shadowBounds = enemyShadowBoundsSize(renderer, enemy);
+        const Vec2 shadowBounds = enemyShadowBoundsSize(renderer, enemy, shadowCatalog_);
         if (!map.isRectLit(enemy.position, shadowBounds, playerLight, extraLights)) {
             continue;
         }
-        drawEnemyShadow(renderer, enemy);
+        drawEnemyShadow(renderer, enemy, shadowCatalog_);
     }
 }
 

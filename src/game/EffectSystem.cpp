@@ -70,7 +70,7 @@ constexpr std::array<ParticlePreset, 37> ParticlePresets{{
     {ParticleEffectId::EnemyWindHit, 14, {128, 246, 190, 222}, {226, 255, 224, 184}, 126.0f, 52.0f, Pi * 2.0f, 2.0f, 0.7f, 0.44f, 0.11f, {}, 2.4f, false, false, 5.0f, 20.0f, {152, 250, 198, 205}, ParticleVisual::ImpactSpark},
     {ParticleEffectId::EnemyEarthHit, 15, {204, 142, 76, 230}, {246, 206, 132, 190}, 116.0f, 48.0f, Pi * 2.0f, 2.3f, 0.8f, 0.48f, 0.12f, {0.0f, 42.0f}, 2.6f, false, false, 5.0f, 20.0f, {214, 156, 86, 210}, ParticleVisual::ImpactSpark},
     {ParticleEffectId::EnemyDeathSoul, 18, {180, 104, 255, 220}, {255, 98, 128, 205}, 76.0f, 42.0f, Pi * 2.0f, 3.2f, 1.1f, 0.70f, 0.18f, {0.0f, -82.0f}, 1.6f, false, true, 10.0f, 38.0f, {255, 92, 116, 230}},
-    {ParticleEffectId::CaptureSuccess, 24, {178, 112, 255, 225}, {255, 224, 130, 210}, 128.0f, 48.0f, Pi * 2.0f, 2.6f, 0.8f, 0.58f, 0.16f, {}, 2.0f, false, true, 16.0f, 58.0f, {216, 172, 255, 248}},
+    {ParticleEffectId::CaptureSuccess, 28, {178, 112, 255, 225}, {255, 224, 130, 210}, 134.0f, 52.0f, Pi * 2.0f, 2.8f, 0.9f, 0.62f, 0.16f, {}, 2.0f, false, true, 20.0f, 70.0f, {222, 178, 255, 252}},
     {ParticleEffectId::DropPickup, 10, {255, 232, 132, 220}, {142, 228, 248, 180}, 92.0f, 34.0f, Pi * 2.0f, 2.0f, 0.6f, 0.36f, 0.08f, {}, 2.4f, false, false},
     {ParticleEffectId::TorchFlicker, 3, {255, 172, 58, 160}, {255, 238, 120, 135}, 24.0f, 14.0f, 1.10f, 1.7f, 0.5f, 0.42f, 0.10f, {0.0f, -36.0f}, 1.2f, true, false},
     {ParticleEffectId::MagicFire, 11, {255, 84, 42, 225}, {255, 214, 84, 185}, 106.0f, 46.0f, 1.45f, 2.8f, 0.9f, 0.42f, 0.12f, {0.0f, -16.0f}, 2.0f, true, true, 7.0f, 24.0f, {255, 112, 58, 210}},
@@ -817,7 +817,8 @@ void renderEffectVisual(Renderer& renderer, const Effect& effect)
     const float radius = lerp(effect.startRadius, effect.endRadius, t);
     const Vec2 drawPosition = effectDrawPosition(effect);
     if (effect.type == EffectType::Ring) {
-        renderer.drawCircle(drawPosition, radius, color);
+        const float width = std::max(2.2f, radius * 0.075f);
+        renderer.drawSoftRing(drawPosition, radius, width, color);
     } else if (effect.visual == ParticleVisual::RockShard) {
         renderRockShard(renderer, effect, drawPosition, color, std::max(1.0f, radius));
     } else if (effect.visual == ParticleVisual::Sparkle) {
@@ -1900,7 +1901,7 @@ void EffectSystem::spawnAreaPulse(Vec2 position, float radius, Color color)
 
 void EffectSystem::spawnExplosion(Vec2 position, float radius, bool playSound)
 {
-    const float safeRadius = std::max(12.0f, radius);
+    const float safeRadius = std::max(12.0f, radius) * 1.18f;
     const float scale = clamp(safeRadius / 48.0f, 0.55f, 2.0f);
     const int sparkCount = lightweightMode_ ? 16 : 30;
     const int emberCount = lightweightMode_ ? 10 : 22;

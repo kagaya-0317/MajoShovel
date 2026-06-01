@@ -844,6 +844,19 @@ void Renderer::drawActorShadow(Vec2 actorAnchor, float visualSize, Color color)
         color);
 }
 
+void Renderer::drawActorShadow(Vec2 actorAnchor, float visualSize, Vec2 scale, Color color)
+{
+    const float size = std::max(1.0f, visualSize);
+    const Vec2 safeScale{
+        std::max(0.01f, scale.x),
+        std::max(0.01f, scale.y),
+    };
+    fillEllipse(
+        actorAnchor + Vec2{0.0f, size * ActorShadowOffsetYRatio},
+        {size * ActorShadowRadiusXRatio * safeScale.x, size * ActorShadowRadiusYRatio * safeScale.y},
+        color);
+}
+
 void Renderer::drawLine(Vec2 a, Vec2 b, Color color)
 {
     const Vec2 aa = transform(a);

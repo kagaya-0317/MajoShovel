@@ -5,6 +5,7 @@
 
 #include <array>
 #include <cstdint>
+#include <string>
 #include <vector>
 
 namespace majo {
@@ -86,6 +87,12 @@ struct MagicFxEmitterConfig {
     bool foreground = false;
 };
 
+struct MagicFxSoundEvent {
+    std::string cueId;
+    float volumeScale = 1.0f;
+    float pitchScale = 1.0f;
+};
+
 class MagicFxSystem {
 public:
     struct Particle {
@@ -150,6 +157,9 @@ public:
 
     MagicFxEmitterHandle addEmitter(const MagicFxEmitterConfig& config);
     void emitBurst(const MagicFxEmitterConfig& config);
+    void queueMagicCastSound();
+    void queueMagicImpactSound();
+    std::vector<MagicFxSoundEvent> consumeSoundEvents();
     MagicFxEmitterHandle startFireAura(Vec2 position, float radius);
     MagicFxEmitterHandle startFireballLoop(Vec2 position, Vec2 direction, float radius);
     void playFireGroundBurn(Vec2 position, float radius, float duration);
@@ -198,11 +208,13 @@ private:
     [[nodiscard]] Vec2 sampleVelocity(const MagicFxEmitterConfig& config);
     void addParticle(Particle particle);
     void addThunderImpactArc(ThunderImpactArc arc);
+    void queueSound(std::string_view cueId, float volumeScale = 1.0f, float pitchScale = 1.0f);
 
     std::vector<Particle> particles_;
     std::vector<Emitter> emitters_;
     std::vector<LightningStrike> lightningStrikes_;
     std::vector<ThunderImpactArc> thunderImpactArcs_;
+    std::vector<MagicFxSoundEvent> soundEvents_;
     bool lightweightMode_ = false;
     std::uint32_t nextEmitterId_ = 1;
 };

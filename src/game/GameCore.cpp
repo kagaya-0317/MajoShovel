@@ -47,6 +47,7 @@ constexpr std::string_view AudioSeUiItemUse = "se.ui.item_use";
 constexpr std::string_view AudioSeUiRingPlace = "se.ui.ring_place";
 constexpr std::string_view AudioSeUiUpgradeSelect = "se.ui.upgrade_select";
 constexpr std::string_view AudioSeLevelUpJingle = "se.level_up.jingle";
+constexpr std::string_view AudioSeGameOverJingle = "se.game_over.jingle";
 constexpr float ExplosionRadiusScale = 1.5f;
 constexpr std::string_view IntroTutorialChestLootInventoryTrigger = "intro_tutorial:chest_loot_inventory";
 constexpr std::string_view IntroTutorialChestLootRingTrigger = "intro_tutorial:chest_loot_ring";
@@ -60,6 +61,7 @@ constexpr float PlayerPinchSeHpRatio = 1.0f / 3.0f;
 constexpr float LevelUpPresentationMinSeconds = 1.22f;
 constexpr float LevelUpPresentationSparkleIntervalSeconds = 0.22f;
 constexpr float LevelUpJingleFallbackSeconds = 1.18f;
+constexpr float GameOverJingleFallbackSeconds = 1.35f;
 
 void stripUtf8Bom(std::string& text)
 {
@@ -402,6 +404,7 @@ bool playTimeCountsForMode(ScreenMode mode)
     case ScreenMode::Title:
     case ScreenMode::ObjectImageScaleEdit:
     case ScreenMode::EnemyHitboxEdit:
+    case ScreenMode::EnemyShadowEdit:
     case ScreenMode::AudioCueEdit:
         return false;
     default:
@@ -567,6 +570,9 @@ bool Game::handleEvent(const SDL_Event& event)
         return true;
     }
     if (handleEnemyHitboxEditEvent(event)) {
+        return true;
+    }
+    if (handleEnemyShadowEditEvent(event)) {
         return true;
     }
     if (handleOperationSettingsEvent(event)) {
@@ -829,7 +835,9 @@ bool Game::advanceInitialize()
         break;
     case InitializeStep::LoadHitboxes:
         loadHitboxData();
+        loadEnemyShadowData();
         enemies_.setHitboxCatalog(&hitboxes_);
+        enemies_.setShadowCatalog(&enemyShadows_);
         initializeJob_.step = InitializeStep::LoadOpening;
         break;
     case InitializeStep::LoadOpening:
@@ -1002,6 +1010,7 @@ void Game::resetWorldEnemyState()
 {
     resetInPlace(enemies_);
     enemies_.setHitboxCatalog(&hitboxes_);
+    enemies_.setShadowCatalog(&enemyShadows_);
 }
 
 void Game::resetWorldProjectileState()
@@ -2951,6 +2960,13 @@ void Game::enterGameOver()
     if (mode_ == ScreenMode::GameOver || mode_ == ScreenMode::StageClear || mode_ == ScreenMode::AstralResult) {
         return;
     }
+    playAudioJingle(
+        AudioSeGameOverJingle,
+        GameOverJingleFallbackSeconds,
+        0.12f,
+        0.36f,
+        1.0f,
+        1.0f);
     if (currentStageIsRoguelike()) {
         enterAstralResult(AstralRunResult::Died);
         return;
@@ -3084,6 +3100,11 @@ void Game::updateScreenMode(
 
     if (mode_ == ScreenMode::EnemyHitboxEdit) {
         updateEnemyHitboxEditScreen(input, ui);
+        return;
+    }
+
+    if (mode_ == ScreenMode::EnemyShadowEdit) {
+        updateEnemyShadowEditScreen(input, ui);
         return;
     }
 
@@ -3276,6 +3297,9 @@ void Game::updateScreenMode(
         break;
     case ScreenMode::EnemyHitboxEdit:
         updateEnemyHitboxEditScreen(input, ui);
+        break;
+    case ScreenMode::EnemyShadowEdit:
+        updateEnemyShadowEditScreen(input, ui);
         break;
     case ScreenMode::AudioCueEdit:
         updateAudioCueEditScreen(input, ui);
@@ -3893,6 +3917,9 @@ void Game::update(const Input& input, const Time& time)
         if (magicImpactSound) {
             playAudioSe(AudioSeMagicImpact);
         }
+        for (const MagicFxSoundEvent& event : magicFx_.consumeSoundEvents()) {
+            playAudioSe(event.cueId, event.volumeScale, event.pitchScale);
+        }
         bool capturedEnemyThisFrame = false;
         for (const CaptureResult& capture : enemies_.consumeCaptureResults()) {
             capturedEnemyThisFrame = handleCaptureResult(capture) || capturedEnemyThisFrame;
@@ -4183,6 +4210,9 @@ void Game::update(const Input& input, const Time& time)
         for (const EffectSoundEvent& event : effects_.consumeSoundEvents()) {
             playAudioSe(event.cueId, event.volumeScale, event.pitchScale);
         }
+        for (const MagicFxSoundEvent& event : magicFx_.consumeSoundEvents()) {
+            playAudioSe(event.cueId, event.volumeScale, event.pitchScale);
+        }
         applyEffectDiscoveries(effectDiscoveries);
         syncEncyclopediaFromInventoryAndRing();
         updateAmbientParticleEffects(time.deltaSeconds());
@@ -4257,6 +4287,14 @@ void Game::checkHotReload(float dt)
         loadHitboxData();
         enemies_.setHitboxCatalog(&hitboxes_);
         rebuildEnemyHitboxEditList();
+        reloadNotice_ = "Hot reload: " + changedPath;
+        reloadNoticeTimer_ = 3.0f;
+        configureWatcher();
+        return;
+    } else if (fileName == "enemy_shadows.cfg") {
+        loadEnemyShadowData();
+        enemies_.setShadowCatalog(&enemyShadows_);
+        rebuildEnemyShadowEditList();
         reloadNotice_ = "Hot reload: " + changedPath;
         reloadNoticeTimer_ = 3.0f;
         configureWatcher();

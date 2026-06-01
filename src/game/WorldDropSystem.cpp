@@ -405,11 +405,21 @@ void updateWorldDropPresentationMotion(WorldDropItem& drop, float dt, bool moveS
         drop.altitude = dropHoverAltitude(drop) + std::sin(t * Pi) * std::max(0.0f, drop.jumpArcHeight);
         if (t >= 1.0f) {
             drop.position = drop.jumpTargetPosition;
-            drop.jumpActive = false;
-            drop.jumpElapsedSeconds = 0.0f;
-            drop.jumpDurationSeconds = 0.0f;
-            drop.jumpArcHeight = 0.0f;
-            drop.altitude = dropHoverAltitude(drop);
+            if (drop.bounceCount > 0 && drop.jumpArcHeight > 2.0f) {
+                --drop.bounceCount;
+                drop.jumpElapsedSeconds = 0.0f;
+                drop.jumpDurationSeconds = std::max(0.08f, drop.jumpDurationSeconds * 0.68f);
+                drop.jumpArcHeight *= std::clamp(drop.bounceDamping, 0.15f, 0.85f);
+                drop.jumpStartPosition = drop.position;
+                drop.jumpTargetPosition = drop.position + drop.velocity * drop.jumpDurationSeconds;
+            } else {
+                drop.jumpActive = false;
+                drop.jumpElapsedSeconds = 0.0f;
+                drop.jumpDurationSeconds = 0.0f;
+                drop.jumpArcHeight = 0.0f;
+                drop.bounceCount = 0;
+                drop.altitude = dropHoverAltitude(drop);
+            }
         }
     } else {
         if (moveSettledDrops) {
@@ -441,6 +451,8 @@ void configureDropMotion(WorldDropItem& drop, const WorldDropSpawnMotion& motion
         drop.jumpElapsedSeconds = 0.0f;
         drop.jumpDurationSeconds = std::max(0.05f, motion.jumpDurationSeconds);
         drop.jumpArcHeight = std::max(0.0f, motion.jumpArcHeight);
+        drop.bounceCount = std::max(0, motion.bounceCount);
+        drop.bounceDamping = std::clamp(motion.bounceDamping, 0.15f, 0.85f);
         drop.pickupDelaySeconds = std::max(0.0f, motion.pickupDelaySeconds);
     }
 

@@ -87,6 +87,7 @@ DebugConsoleLayout makeDefaultDebugConsoleLayout()
                         {DebugControlKind::Button, "base_edit_toggle", "拠点編集", "game base-edit toggle"},
                         {DebugControlKind::Button, "obj_image_scale_toggle", "画像サイズ編集", "game obj-image-scale toggle"},
                         {DebugControlKind::Button, "hitbox_toggle", "当たり判定編集", "game hitbox toggle"},
+                        {DebugControlKind::Button, "enemy_shadow_toggle", "影編集", "game enemy-shadow toggle"},
                         {DebugControlKind::Button, "audio_bgm_edit", "BGM編集", "game audio-edit bgm"},
                         {DebugControlKind::Button, "audio_se_edit", "効果音編集", "game audio-edit se"},
                     },

@@ -277,7 +277,11 @@ void MagicSystem::cast(
         }
     }
 
-    soundEvents_.push_back(MagicSoundEvent::Cast);
+    if (magicFx_ != nullptr) {
+        magicFx_->queueMagicCastSound();
+    } else {
+        soundEvents_.push_back(MagicSoundEvent::Cast);
+    }
 
     switch (element) {
     case MagicElement::Fire:
@@ -493,9 +497,10 @@ void MagicSystem::updateProjectiles(EnemySystem& enemies, SpellRingSystem& spell
 
         if (!projectile.piercesWalls && map.isCircleBlocked(projectile.position, projectile.radius)) {
             if (projectile.kind == ProjectileKind::IceShard) {
-                soundEvents_.push_back(MagicSoundEvent::Impact);
                 if (magicFx_ != nullptr) {
                     magicFx_->playIceShatter(projectile.position, projectile.radius + 12.0f);
+                } else {
+                    soundEvents_.push_back(MagicSoundEvent::Impact);
                 }
                 addGroundArea(MagicGroundArea{
                     .kind = GroundKind::IceShatter,
@@ -549,7 +554,11 @@ void MagicSystem::updateProjectiles(EnemySystem& enemies, SpellRingSystem& spell
         }
 
         if (projectile.kind == ProjectileKind::Fireball && projectile.age > 0.12f && projectile.height <= 0.0f) {
-            soundEvents_.push_back(MagicSoundEvent::Impact);
+            if (magicFx_ != nullptr) {
+                magicFx_->queueMagicImpactSound();
+            } else {
+                soundEvents_.push_back(MagicSoundEvent::Impact);
+            }
             stopProjectileFx(projectile);
             projectile.active = false;
             spawnFirePatch(projectile.position, 28.0f, std::max(1, projectile.damage / 2));
@@ -606,7 +615,11 @@ void MagicSystem::updateGroundAreas(EnemySystem& enemies, SpellRingSystem& spell
 
         if (area.kind == GroundKind::EarthSpike && !area.triggered) {
             area.triggered = true;
-            soundEvents_.push_back(MagicSoundEvent::Impact);
+            if (magicFx_ != nullptr) {
+                magicFx_->queueMagicImpactSound();
+            } else {
+                soundEvents_.push_back(MagicSoundEvent::Impact);
+            }
             EnemyMagicHitSpec hit;
             hit.position = area.position;
             hit.radius = area.radius;
@@ -635,7 +648,9 @@ void MagicSystem::updateThunder(EnemySystem& enemies, SpellRingSystem& spellRing
         hit.effectId = "thunder";
         Vec2 target{};
         if (enemies.applyMagicNearest(thunder.origin, thunder.range, hit, spellRing, &target)) {
-            soundEvents_.push_back(MagicSoundEvent::Impact);
+            if (magicFx_ == nullptr) {
+                soundEvents_.push_back(MagicSoundEvent::Impact);
+            }
             addTransientLight(thunder.origin, 108.0f, 0.18f);
             addTransientLight((thunder.origin + target) * 0.5f, 126.0f, 0.17f);
             addGroundArea(MagicGroundArea{
@@ -653,7 +668,9 @@ void MagicSystem::updateThunder(EnemySystem& enemies, SpellRingSystem& spellRing
                 magicFx_->playThunderStrike(thunder.origin, target, true);
             }
         } else {
-            soundEvents_.push_back(MagicSoundEvent::Impact);
+            if (magicFx_ == nullptr) {
+                soundEvents_.push_back(MagicSoundEvent::Impact);
+            }
             addGroundArea(MagicGroundArea{
                 .kind = GroundKind::ThunderStrikeLight,
                 .position = thunder.origin,
@@ -792,7 +809,9 @@ void MagicSystem::updateProjectileFx(MagicProjectile& projectile)
 void MagicSystem::playProjectileImpactFx(const MagicProjectile& projectile)
 {
     const Vec2 direction = lengthSquared(projectile.velocity) > 0.0001f ? normalize(projectile.velocity) : Vec2{1.0f, 0.0f};
-    soundEvents_.push_back(MagicSoundEvent::Impact);
+    if (magicFx_ == nullptr) {
+        soundEvents_.push_back(MagicSoundEvent::Impact);
+    }
     switch (projectile.kind) {
     case ProjectileKind::Fireball:
         return;

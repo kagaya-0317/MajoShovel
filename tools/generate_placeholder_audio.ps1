@@ -155,6 +155,31 @@ function Placeholder-Sample([string]$Kind, [double]$Time, [double]$Duration, [Sy
                 0.18 * $tail * [Math]::Sin($TwoPi * 1568.0 * $Time) +
                 0.12 * $spark * $tail * [Math]::Sin($TwoPi * 2093.0 * $Time)
         }
+        "se.game_over.jingle" {
+            $notes = @(392.00, 329.63, 261.63, 196.00)
+            $stepLength = 0.24
+            $step = [Math]::Min($notes.Length - 1, [int][Math]::Floor($Time / $stepLength))
+            $noteTime = $Time - ($step * $stepLength)
+            $env = Note-Envelope $noteTime 0.34
+            $tail = Decay $Time $Duration 0.58
+            $rumble = ($Random.NextDouble() * 2.0 - 1.0) * 0.025
+            return 0.30 * $env * [Math]::Sin($TwoPi * $notes[$step] * $Time) +
+                0.16 * $tail * [Math]::Sin($TwoPi * 98.0 * $Time) +
+                0.08 * $tail * [Math]::Sin($TwoPi * 147.0 * $Time) +
+                $tail * $rumble
+        }
+        "se.item.new.jingle" {
+            $notes = @(659.25, 880.00, 1174.66)
+            $stepLength = 0.16
+            $step = [Math]::Min($notes.Length - 1, [int][Math]::Floor($Time / $stepLength))
+            $noteTime = $Time - ($step * $stepLength)
+            $env = Note-Envelope $noteTime 0.24
+            $tail = Decay $Time $Duration 0.74
+            $spark = 0.5 + 0.5 * [Math]::Sin($TwoPi * 23.0 * $Time)
+            return 0.30 * $env * [Math]::Sin($TwoPi * $notes[$step] * $Time) +
+                0.16 * $tail * [Math]::Sin($TwoPi * 1760.0 * $Time) +
+                0.10 * $spark * $tail * [Math]::Sin($TwoPi * 2349.32 * $Time)
+        }
         "se.transition" {
             $env = Decay $Time $Duration 1.2
             $freq = 180.0 + 420.0 * ($Time / $Duration)
@@ -741,6 +766,17 @@ public static class MajoPlaceholderAudioHQ
                     Sparkle(t - 0.32, d * 0.72, 783.99, 0.16) +
                     Sparkle(t - 0.50, d * 0.56, 1046.50, 0.18) +
                     0.10 * Ring(t, d, 1568.0, 0.12, 0.82);
+            case "se.game_over.jingle":
+                return Ring(t, d, 392.0, 0.18, 0.72) +
+                    Ring(t - 0.22, d * 0.82, 329.63, 0.16, 0.82) +
+                    Ring(t - 0.44, d * 0.66, 261.63, 0.16, 0.92) +
+                    Ring(t - 0.68, d * 0.50, 196.0, 0.20, 1.05) +
+                    0.10 * Env(t, d, 0.025, 0.72) * S(73.42, t);
+            case "se.item.new.jingle":
+                return Sparkle(t, d, 659.25, 0.15) +
+                    Sparkle(t - 0.14, d * 0.82, 880.0, 0.16) +
+                    Sparkle(t - 0.30, d * 0.64, 1174.66, 0.18) +
+                    0.12 * Ring(t, d, 1760.0, 0.10, 0.78);
             case "se.transition":
                 return Whoosh(t, d, rng, 160.0, 720.0, 0.075) + 0.10 * S(96.0, t) * Env(t, d, 0.02, 1.4);
 
@@ -964,6 +1000,8 @@ $clips = @(
     @{ Path = Join-Path $SeRoot "ui_ring_place_placeholder.wav"; Kind = "se.ui.ring_place"; Duration = 0.22; Seed = 2008 },
     @{ Path = Join-Path $SeRoot "ui_upgrade_select_placeholder.wav"; Kind = "se.ui.upgrade_select"; Duration = 0.30; Seed = 2009 },
     @{ Path = Join-Path $SeRoot "level_up_jingle_placeholder.wav"; Kind = "se.level_up.jingle"; Duration = 1.16; Seed = 2072 },
+    @{ Path = Join-Path $SeRoot "game_over_jingle_placeholder.wav"; Kind = "se.game_over.jingle"; Duration = 1.34; Seed = 2110 },
+    @{ Path = Join-Path $SeRoot "item_new_jingle_placeholder.wav"; Kind = "se.item.new.jingle"; Duration = 0.88; Seed = 2111 },
     @{ Path = Join-Path $SeRoot "transition_placeholder.wav"; Kind = "se.transition"; Duration = 0.42; Seed = 2010 },
     @{ Path = Join-Path $SeRoot "footstep_base_outdoor_placeholder.wav"; Kind = "se.footstep.base_outdoor"; Duration = 0.16; Seed = 2040 },
     @{ Path = Join-Path $SeRoot "footstep_home_placeholder.wav"; Kind = "se.footstep.home"; Duration = 0.14; Seed = 2041 },

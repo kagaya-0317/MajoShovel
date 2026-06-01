@@ -7,6 +7,9 @@ namespace majo {
 
 namespace {
 
+constexpr std::string_view AudioSeNewItemJingle = "se.item.new.jingle";
+constexpr float NewItemJingleFallbackSeconds = 0.92f;
+
 bool isTutorialStoryTrigger(std::string_view trigger)
 {
     return trigger.rfind("tutorial:", 0) == 0;
@@ -4922,11 +4925,21 @@ void Game::recordObjectObtainedForFirstNotice(
         return;
     }
 
+    const bool playJingle = firstItemAcquisitionNotices_.empty();
     firstItemAcquisitionNotices_.push_back(FirstItemAcquisitionNotice{
         .objectId = std::string(objectId),
         .instanceId = std::string(instanceId),
         .protectable = protectable && !instanceId.empty(),
     });
+    if (playJingle) {
+        playAudioJingle(
+            AudioSeNewItemJingle,
+            NewItemJingleFallbackSeconds,
+            0.06f,
+            0.22f,
+            1.0f,
+            1.0f);
+    }
 }
 
 bool Game::firstItemAcquisitionNoticeActive() const

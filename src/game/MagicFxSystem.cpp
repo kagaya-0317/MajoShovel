@@ -8,6 +8,7 @@
 #include <array>
 #include <cmath>
 #include <random>
+#include <string_view>
 
 namespace majo {
 
@@ -19,6 +20,8 @@ constexpr std::size_t MaxEmitters = 220;
 constexpr std::size_t MaxLightningStrikes = 32;
 constexpr std::size_t MaxThunderImpactArcs = 220;
 constexpr float MagicFxBounceStopSpeed = 32.0f;
+constexpr std::string_view AudioSeMagicCast = "se.magic.cast";
+constexpr std::string_view AudioSeMagicImpact = "se.magic.impact";
 
 std::mt19937& magicFxRng()
 {
@@ -303,8 +306,22 @@ void drawDirtClod(Renderer& renderer, Vec2 center, float size, float rotation, C
 
     const Vec2 highlightA = center + forward * (size * 0.42f) - side * (size * 0.30f);
     const Vec2 highlightB = center + forward * (size * 0.05f) + side * (size * 0.42f);
-    renderer.drawLine(highlightA, highlightB, scaleAlpha({210, 156, 92, color.a}, 0.42f));
-    renderer.drawLine(center - forward * (size * 0.18f) - side * (size * 0.48f), center - forward * (size * 0.46f), scaleAlpha({62, 42, 30, color.a}, 0.62f));
+    renderer.drawSoftLine(highlightA, highlightB, std::max(0.65f, size * 0.05f), scaleAlpha({210, 156, 92, color.a}, 0.24f));
+    renderer.drawSoftLine(
+        center - forward * (size * 0.18f) - side * (size * 0.48f),
+        center - forward * (size * 0.46f),
+        std::max(0.65f, size * 0.055f),
+        scaleAlpha({62, 42, 30, color.a}, 0.34f));
+    for (int i = 0; i < 10; ++i) {
+        const float s = seed + 40.0f + static_cast<float>(i) * 3.71f;
+        const Vec2 p = center +
+            forward * ((hash01(s) - 0.5f) * size * 1.06f) +
+            side * ((hash01(s + 1.0f) - 0.5f) * size * 0.86f);
+        const Color fleck = hash01(s + 2.0f) < 0.48f
+            ? scaleAlpha({206, 146, 82, color.a}, 0.22f)
+            : scaleAlpha({42, 30, 22, color.a}, 0.28f);
+        renderer.fillSoftCircle(p, std::max(0.45f, size * lerp(0.035f, 0.085f, hash01(s + 3.0f))), fleck);
+    }
 }
 
 void drawEarthCrack(Renderer& renderer, const MagicFxSystem::Particle& particle, Color color, float length)
@@ -516,17 +533,25 @@ void drawEarthSpikeProfiled(Renderer& renderer, const MagicFxSystem::Particle& p
         const Vec2 r = right[static_cast<std::size_t>(index)] + (right[static_cast<std::size_t>(index + 1)] - right[static_cast<std::size_t>(index)]) * local;
         return l + (r - l) * clamp(u, 0.0f, 1.0f);
     };
-    for (int i = 0; i < 30; ++i) {
+    for (int i = 0; i < 68; ++i) {
         const float s = seed + 220.0f + static_cast<float>(i) * 6.37f;
         const Vec2 p = pointInside(lerp(0.06f, 0.92f, hash01(s)), lerp(0.16f, 0.84f, hash01(s + 1.0f)));
-        const Color fleck = hash01(s + 3.0f) < 0.42f ? scaleAlpha({238, 168, 88, color.a}, 0.24f) : scaleAlpha({30, 22, 18, color.a}, 0.34f);
-        renderer.fillCircle(p, std::max(0.5f, baseWidth * lerp(0.018f, 0.055f, hash01(s + 2.0f))), fleck);
+        const float roll = hash01(s + 3.0f);
+        const Color fleck = roll < 0.30f
+            ? scaleAlpha({236, 166, 88, color.a}, 0.22f)
+            : (roll < 0.62f ? scaleAlpha({96, 60, 34, color.a}, 0.30f) : scaleAlpha({28, 20, 16, color.a}, 0.26f));
+        renderer.fillSoftCircle(p, std::max(0.55f, baseWidth * lerp(0.014f, 0.045f, hash01(s + 2.0f))), fleck);
     }
-    for (int i = 0; i < 15; ++i) {
+    for (int i = 0; i < 34; ++i) {
         const float s = seed + 360.0f + static_cast<float>(i) * 5.91f;
         const float t = lerp(0.10f, 0.88f, hash01(s));
         const float u = lerp(0.20f, 0.80f, hash01(s + 1.0f));
-        renderer.drawSoftLine(pointInside(t, u), pointInside(t + lerp(0.035f, 0.105f, hash01(s + 2.0f)), u + (hash01(s + 3.0f) - 0.5f) * 0.26f), std::max(0.7f, baseWidth * lerp(0.018f, 0.040f, hash01(s + 5.0f))), scaleAlpha({18, 13, 11, color.a}, 0.44f));
+        const bool bright = hash01(s + 4.0f) < 0.34f;
+        renderer.drawSoftLine(
+            pointInside(t, u),
+            pointInside(t + lerp(0.028f, 0.092f, hash01(s + 2.0f)), u + (hash01(s + 3.0f) - 0.5f) * 0.30f),
+            std::max(0.55f, baseWidth * lerp(0.012f, 0.034f, hash01(s + 5.0f))),
+            bright ? scaleAlpha({232, 158, 82, color.a}, 0.22f) : scaleAlpha({18, 13, 11, color.a}, 0.38f));
     }
 }
 
@@ -1062,8 +1087,38 @@ void MagicFxSystem::emitBurst(const MagicFxEmitterConfig& config)
     spawnParticles(config, std::max(0, config.burstCount));
 }
 
+void MagicFxSystem::queueSound(std::string_view cueId, float volumeScale, float pitchScale)
+{
+    if (cueId.empty()) {
+        return;
+    }
+    soundEvents_.push_back({
+        std::string(cueId),
+        std::max(0.0f, volumeScale),
+        std::max(0.01f, pitchScale),
+    });
+}
+
+void MagicFxSystem::queueMagicCastSound()
+{
+    queueSound(AudioSeMagicCast);
+}
+
+void MagicFxSystem::queueMagicImpactSound()
+{
+    queueSound(AudioSeMagicImpact);
+}
+
+std::vector<MagicFxSoundEvent> MagicFxSystem::consumeSoundEvents()
+{
+    std::vector<MagicFxSoundEvent> events = soundEvents_;
+    soundEvents_.clear();
+    return events;
+}
+
 void MagicFxSystem::playHealPulse(Vec2 position, float radius)
 {
+    queueSound(AudioSeMagicCast, 0.72f, 1.08f);
     radius = std::max(8.0f, radius);
 
     MagicFxEmitterConfig ring;
@@ -1387,6 +1442,7 @@ MagicFxEmitterHandle MagicFxSystem::startFireballLoop(Vec2 position, Vec2 direct
 
 void MagicFxSystem::playFireGroundBurn(Vec2 position, float radius, float duration)
 {
+    queueMagicImpactSound();
     radius = std::max(4.0f, radius);
     duration = std::max(0.05f, duration);
 
@@ -1726,6 +1782,7 @@ MagicFxEmitterHandle MagicFxSystem::startIceShardLoop(Vec2 position, Vec2 direct
 
 void MagicFxSystem::playIceShatter(Vec2 position, float radius)
 {
+    queueMagicImpactSound();
     radius = std::max(8.0f, radius * 1.22f);
 
     MagicFxEmitterConfig largeShards;
@@ -1865,6 +1922,7 @@ MagicFxEmitterHandle MagicFxSystem::startThunderAura(Vec2 position, float radius
 
 void MagicFxSystem::playThunderStrike(Vec2 origin, Vec2 target, bool strong)
 {
+    queueSound(AudioSeMagicImpact, strong ? 1.12f : 0.86f, strong ? 0.94f : 1.08f);
     LightningStrike strike;
     strike.active = true;
     strike.strong = strong;
@@ -2035,6 +2093,7 @@ void MagicFxSystem::playThunderStrike(Vec2 origin, Vec2 target, bool strong)
 
 void MagicFxSystem::playThunderSparkBurst(Vec2 position, float radius)
 {
+    queueSound(AudioSeMagicImpact, 0.82f, 1.18f);
     MagicFxEmitterConfig burst;
     burst.position = position;
     burst.direction = {1.0f, 0.0f};
@@ -2323,6 +2382,7 @@ MagicFxEmitterHandle MagicFxSystem::startDirtClodLoop(Vec2 position, Vec2 direct
 
 void MagicFxSystem::playEarthSpikeRise(Vec2 position, float radius)
 {
+    queueSound(AudioSeMagicImpact, 1.06f, 0.88f);
     radius = std::max(8.0f, radius);
     const float spikeLifetime = sampleRange({1.02f, 1.10f});
     constexpr float SpikeFadeOutFraction = 0.14f;
@@ -2518,6 +2578,7 @@ void MagicFxSystem::playEarthSpikeRise(Vec2 position, float radius)
 
 void MagicFxSystem::playEarthDebrisBurst(Vec2 position, float radius)
 {
+    queueSound(AudioSeMagicImpact, 0.96f, 0.92f);
     radius = std::max(5.0f, radius);
 
     MagicFxEmitterConfig debris;

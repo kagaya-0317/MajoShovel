@@ -63,6 +63,7 @@ public:
     void drawSoftRing(Vec2 center, float radius, float width, Color color);
     void fillEllipse(Vec2 center, Vec2 radius, Color color);
     void drawActorShadow(Vec2 actorAnchor, float visualSize, Color color = {0, 0, 0, 82});
+    void drawActorShadow(Vec2 actorAnchor, float visualSize, Vec2 scale, Color color = {0, 0, 0, 82});
     void drawLine(Vec2 a, Vec2 b, Color color);
     void drawSoftLine(Vec2 a, Vec2 b, float width, Color color);
     void drawSoftPolyline(const std::vector<Vec2>& points, float width, Color color);

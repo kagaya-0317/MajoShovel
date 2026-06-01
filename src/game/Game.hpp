@@ -78,6 +78,7 @@ enum class ScreenMode {
     Ring,
     ObjectImageScaleEdit,
     EnemyHitboxEdit,
+    EnemyShadowEdit,
     AudioCueEdit,
     LevelUp,
     GameOver,
@@ -148,6 +149,13 @@ struct HitboxEditSnapshot {
 struct EnemyHitboxDirectionClipboard {
     std::array<std::vector<HitCircle>, HitboxDirectionCount> circles;
     std::array<bool, HitboxDirectionCount> hasProfile{};
+};
+
+struct EnemyShadowEditSnapshot {
+    EnemyShadowCatalog catalog;
+    std::string selectedId;
+
+    bool operator==(const EnemyShadowEditSnapshot&) const = default;
 };
 
 struct AudioCueEditEntry {
@@ -320,6 +328,15 @@ private:
         float elapsedSeconds = 0.0f;
         float durationSeconds = 1.2f;
         float sparkleTimer = 0.0f;
+    };
+
+    struct PlayerDeathSequenceState {
+        bool active = false;
+        float elapsedSeconds = 0.0f;
+        float durationSeconds = 1.5f;
+        bool finalizing = false;
+        bool roguelike = false;
+        std::array<std::vector<Vec2>, SpellRingCount> ringFadePaths;
     };
 
     enum class AstralDistortionKind {
@@ -1143,6 +1160,12 @@ private:
     void openRingScreen();
     void updateRingScreen(const Input& input, UiContext& ui, float dt);
     void cancelRingGrab();
+    bool playerDeathSequenceActive() const;
+    float playerDeathRingFadeAlpha() const;
+    void beginPlayerDeathSequence();
+    void updatePlayerDeathSequence(float dt);
+    void dropSpellRingItemsForDeath();
+    void renderPlayerDeathRingFade(Renderer& renderer) const;
     void enterGameOver();
     void updateGameOverScreen(const Input& input, UiContext& ui);
     void retryAfterGameOver();
@@ -1401,6 +1424,24 @@ private:
     bool pasteCurrentHitboxEditProfile(bool mirrorX);
     bool copyEnemyHitboxAllDirectionProfiles();
     bool pasteEnemyHitboxAllDirectionProfiles(bool mirrorX);
+    bool loadEnemyShadowData();
+    bool saveEnemyShadowData(std::string& message);
+    bool handleEnemyShadowEditCommand(std::string_view normalized);
+    void rebuildEnemyShadowEditList();
+    void applyEnemyShadowEditFilter(std::string_view preferredSelection = {});
+    bool handleEnemyShadowEditEvent(const SDL_Event& event);
+    void enterEnemyShadowEditMode();
+    void exitEnemyShadowEditMode();
+    void updateEnemyShadowEditScreen(const Input& input, UiContext& ui);
+    void renderEnemyShadowEditScreen(Renderer& renderer, double totalSeconds) const;
+    EnemyShadowEditSnapshot makeEnemyShadowEditSnapshot() const;
+    void restoreEnemyShadowEditSnapshot(const EnemyShadowEditSnapshot& snapshot);
+    void pushEnemyShadowEditUndoSnapshot();
+    bool undoEnemyShadowEdit();
+    bool redoEnemyShadowEdit();
+    const EnemyDefinition* selectedEnemyShadowDefinitionForEdit() const;
+    EnemyShadowSpec selectedEnemyShadowSpecForEdit() const;
+    EnemyShadowSpec& mutableSelectedEnemyShadowSpecForEdit();
     bool loadAudioCueManifestForEdit();
     bool saveAudioCueManifestFromEdit(std::string& message);
     bool handleAudioCueEditCommand(std::string_view normalized);
@@ -1697,6 +1738,7 @@ private:
     std::unordered_map<std::string, float> objectImageScaleById_;
     std::unordered_map<std::string, float> otherImageScaleByKey_;
     HitboxCatalog hitboxes_;
+    EnemyShadowCatalog enemyShadows_;
     std::vector<std::string> objectImageScaleAllObjectIds_;
     std::vector<std::string> objectImageScaleObjectIds_;
     std::vector<std::string> otherImageScaleKeys_;
@@ -1706,12 +1748,18 @@ private:
     std::vector<std::string> objectHitboxObjectIds_;
     std::vector<std::string> playerHitboxAllIds_;
     std::vector<std::string> playerHitboxIds_;
+    std::vector<std::string> enemyShadowAllEnemyIds_;
+    std::vector<std::string> enemyShadowEnemyIds_;
     std::vector<HitboxEditSnapshot> hitboxEditUndoStack_;
     std::vector<HitboxEditSnapshot> hitboxEditRedoStack_;
+    std::vector<EnemyShadowEditSnapshot> enemyShadowEditUndoStack_;
+    std::vector<EnemyShadowEditSnapshot> enemyShadowEditRedoStack_;
     UiTextInputState objectImageScaleSearchInput_;
     UiTextInputState enemyHitboxSearchInput_;
+    UiTextInputState enemyShadowSearchInput_;
     ScreenMode objectImageScaleReturnMode_ = ScreenMode::Playing;
     ScreenMode enemyHitboxEditReturnMode_ = ScreenMode::Playing;
+    ScreenMode enemyShadowEditReturnMode_ = ScreenMode::Playing;
     ImageScaleEditTab imageScaleEditTab_ = ImageScaleEditTab::Objects;
     HitboxEditTab hitboxEditTab_ = HitboxEditTab::Enemies;
     HitboxDirection enemyHitboxDirection_ = HitboxDirection::Default;
@@ -1720,22 +1768,30 @@ private:
     int enemyHitboxSelectedEnemyIndex_ = -1;
     int objectHitboxSelectedObjectIndex_ = -1;
     int playerHitboxSelectedIndex_ = 0;
+    int enemyShadowSelectedEnemyIndex_ = -1;
     int enemyHitboxSelectedCircleIndex_ = -1;
     float objectImageScaleScrollOffset_ = 0.0f;
     float otherImageScaleScrollOffset_ = 0.0f;
     float enemyHitboxScrollOffset_ = 0.0f;
     float objectHitboxScrollOffset_ = 0.0f;
     float playerHitboxScrollOffset_ = 0.0f;
+    float enemyShadowScrollOffset_ = 0.0f;
     bool objectImageScaleDirty_ = false;
     bool enemyHitboxDirty_ = false;
+    bool enemyShadowDirty_ = false;
     bool enemyHitboxDraggingCircle_ = false;
     bool enemyHitboxDragUndoSnapshotPushed_ = false;
+    bool enemyShadowDragging_ = false;
+    bool enemyShadowDragUndoSnapshotPushed_ = false;
     Vec2 enemyHitboxDragStartMouse_{};
     Vec2 enemyHitboxDragStartOffset_{};
+    Vec2 enemyShadowDragStartMouse_{};
+    Vec2 enemyShadowDragStartOffset_{};
     std::vector<HitCircle> enemyHitboxClipboard_;
     EnemyHitboxDirectionClipboard enemyHitboxAllDirectionClipboard_;
     std::string objectImageScaleStatus_;
     std::string enemyHitboxStatus_;
+    std::string enemyShadowStatus_;
     ScreenMode audioCueEditReturnMode_ = ScreenMode::Playing;
     AudioCueEditMode audioCueEditMode_ = AudioCueEditMode::Bgm;
     std::vector<AudioCueEditEntry> audioCueEditEntries_;
@@ -1910,6 +1966,7 @@ private:
     double playerRegenPerSecond_ = 0.0;
     double playerRegenAccumulator_ = 0.0;
     std::vector<PlayerRegenSource> playerRegenSources_;
+    PlayerDeathSequenceState playerDeathSequence_{};
     int gameOverSelection_ = 0;
     std::string gameOverStatus_;
     bool bossSpawned_ = false;
