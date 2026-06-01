@@ -5206,7 +5206,8 @@ void Game::appendDungeonEventRenderEntries(
                         const Color core = powered ? Color{246, 250, 154, 245} : Color{94, 176, 232, 235};
                         const Color wire = powered ? Color{255, 238, 112, 230} : Color{94, 208, 255, 190};
                         renderer.drawCircle(objectCenter, 16.0f + pulse * 2.0f, wire);
-                        if (drawDungeonEventWorldIcon(renderer, WorldIconId::ElectricReceiver, objectCenter, {38.0f, 38.0f})) {
+                        const WorldIconId receiverIcon = powered ? WorldIconId::ElectricReceiverPowered : WorldIconId::ElectricReceiver;
+                        if (drawDungeonEventWorldIcon(renderer, receiverIcon, objectCenter, {38.0f, 38.0f})) {
                             if (powered) {
                                 renderer.drawCircle(objectCenter, 11.0f, wire);
                             }

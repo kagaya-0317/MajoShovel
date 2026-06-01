@@ -12,7 +12,7 @@ constexpr std::string_view WorldIconExtension = ".png";
 constexpr int MoneyMediumThreshold = 50;
 constexpr int MoneyLargeThreshold = 150;
 
-constexpr std::array<WorldIconDefinition, 23> WorldIconDefinitions{{
+constexpr std::array<WorldIconDefinition, 24> WorldIconDefinitions{{
     {WorldIconId::MoneySmall, "money_small", "お金 小額", 1},
     {WorldIconId::MoneyMedium, "money_medium", "お金 中額", 2},
     {WorldIconId::MoneyLarge, "money_large", "お金 高額", 3},
@@ -33,6 +33,7 @@ constexpr std::array<WorldIconDefinition, 23> WorldIconDefinitions{{
     {WorldIconId::NestHole, "nest_hole", "巣穴", 18},
     {WorldIconId::GlowingRock, "glowing_rock", "光る岩", 19},
     {WorldIconId::ElectricReceiver, "electric_receiver", "受電石", 20},
+    {WorldIconId::ElectricReceiverPowered, "electric_receiver_powered", "受電石 通電中", 24},
     {WorldIconId::LostBaggage, "lost_baggage", "荷物", 21},
     {WorldIconId::Campfire, "campfire", "焚き火", 22},
     {WorldIconId::HeavyRock, "heavy_rock", "重い岩", 23},

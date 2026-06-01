@@ -34,6 +34,7 @@ enum class WorldIconId {
     NestHole,
     GlowingRock,
     ElectricReceiver,
+    ElectricReceiverPowered,
     LostBaggage,
     Campfire,
     HeavyRock,
