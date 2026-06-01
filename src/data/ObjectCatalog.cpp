@@ -326,6 +326,9 @@ std::string formatDiscoveryPercent(double value)
 
 std::string statusNameJa(std::string_view effect)
 {
+    if (effect.find("defense_down") != std::string_view::npos) {
+        return "防御低下";
+    }
     if (effect.find("paralyze") != std::string_view::npos) {
         return "麻痺";
     }

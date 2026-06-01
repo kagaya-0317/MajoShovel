@@ -212,7 +212,7 @@ public:
     void spawnAttackImpactBurst(Vec2 position, SmokeBurstOptions options = {}, bool playSound = true);
     void spawnEnemyHit(Vec2 position, std::string_view effect = {}, bool playSound = true);
     void spawnEnemyDeath(Vec2 position, bool playSound = true);
-    void spawnEnemyTransform(Vec2 position);
+    void spawnEnemyTransform(Vec2 position, bool playSound = true);
     void spawnThrowStart(Vec2 position, Vec2 direction);
     void spawnReturn(Vec2 position);
     void spawnRingTrail(Vec2 position, Vec2 direction);

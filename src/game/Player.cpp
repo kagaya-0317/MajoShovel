@@ -95,8 +95,20 @@ std::string deathCauseText(const DamageCause& cause)
         }
         break;
     case DamageSource::Poison:
+        if (!cause.actorName.empty() || !cause.objectName.empty()) {
+            return joinDeathCause(cause.actorName, cause.objectName, "毒");
+        }
+        break;
     case DamageSource::Hot:
+        if (!cause.actorName.empty() || !cause.objectName.empty()) {
+            return joinDeathCause(cause.actorName, cause.objectName, "熱");
+        }
+        break;
     case DamageSource::Bleed:
+        if (!cause.actorName.empty() || !cause.objectName.empty()) {
+            return joinDeathCause(cause.actorName, cause.objectName, "出血");
+        }
+        break;
     case DamageSource::Unknown:
         break;
     }
@@ -187,7 +199,12 @@ void Player::update(
         poisonDamageAccumulator += poisonDps * static_cast<double>(dt);
         const int poisonDamage = static_cast<int>(std::floor(poisonDamageAccumulator));
         if (poisonDamage > 0) {
-            applyDamage(poisonDamage, DamageSource::Poison);
+            applyDamage(
+                poisonDamage,
+                DamageCause{
+                    .source = DamageSource::Poison,
+                    .objectName = "毒の継続ダメージ",
+                });
             poisonDamageAccumulator -= static_cast<double>(poisonDamage);
         }
     } else {
@@ -198,7 +215,12 @@ void Player::update(
         hotDamageAccumulator += hotDps * static_cast<double>(dt);
         const int hotDamage = static_cast<int>(std::floor(hotDamageAccumulator));
         if (hotDamage > 0) {
-            applyDamage(hotDamage, DamageSource::Hot);
+            applyDamage(
+                hotDamage,
+                DamageCause{
+                    .source = DamageSource::Hot,
+                    .objectName = "熱の継続ダメージ",
+                });
             hotDamageAccumulator -= static_cast<double>(hotDamage);
         }
     } else {
@@ -226,7 +248,12 @@ void Player::update(
         bleedDamageAccumulator += bleedDps * movementScale * static_cast<double>(dt);
         const int bleedDamage = static_cast<int>(std::floor(bleedDamageAccumulator));
         if (bleedDamage > 0) {
-            applyDamage(bleedDamage, DamageSource::Bleed);
+            applyDamage(
+                bleedDamage,
+                DamageCause{
+                    .source = DamageSource::Bleed,
+                    .objectName = "出血の継続ダメージ",
+                });
             bleedDamageAccumulator -= static_cast<double>(bleedDamage);
         }
     } else {

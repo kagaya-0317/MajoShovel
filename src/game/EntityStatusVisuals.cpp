@@ -22,7 +22,7 @@ struct StatusVisualDefinition {
     Color popupColor;
 };
 
-constexpr std::array<StatusVisualDefinition, 14> StatusVisualDefinitions{{
+constexpr std::array<StatusVisualDefinition, 15> StatusVisualDefinitions{{
     {"status_frozen", "氷結", {170, 232, 255, 255}, true, {118, 224, 255, 255}},
     {"status_shocked", "感電", {255, 238, 118, 255}, true, {255, 224, 74, 255}},
     {"status_paralyze", "しびれ", {255, 245, 150, 255}, true, {255, 236, 98, 255}},
@@ -31,6 +31,7 @@ constexpr std::array<StatusVisualDefinition, 14> StatusVisualDefinitions{{
     {"status_bleed", "出血", {255, 138, 150, 255}, true, {255, 86, 98, 255}},
     {"status_glued", "粘着", {226, 214, 166, 255}, true, {238, 214, 126, 255}},
     {"status_slow", "鈍足", {160, 190, 255, 255}, true, {122, 176, 255, 255}},
+    {"status_defense_down", "防御低下", {214, 178, 142, 255}, true, {226, 148, 86, 255}},
     {"status_blind", "暗闇", {205, 195, 255, 255}, true, {194, 170, 255, 255}},
     {"status_wet", "濡れ", {170, 230, 255, 255}, true, {112, 208, 255, 255}},
     {"status_sleep", "睡眠", {205, 224, 255, 255}, true, {176, 214, 255, 255}},

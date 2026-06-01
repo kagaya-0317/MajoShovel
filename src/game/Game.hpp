@@ -361,6 +361,7 @@ private:
         int score = 0;
         int highScore = 0;
         bool highScoreUpdated = false;
+        std::string deathCauseText;
     };
 
     struct DungeonLogEntry {
@@ -1296,9 +1297,9 @@ private:
     void spawnInventoryDiscardRequests(std::vector<InventoryDiscardRequest> requests);
     void consumeInventoryUseEvents();
     void updateDigToolFailsafe(float dt);
-    bool hasUsableDigToolOnRing() const;
-    bool hasUsableDigToolInInventory() const;
-    bool hasNearbyUsableDigToolDrop(float radius) const;
+    int countUsableDigToolsOnRing(bool& hasHalfDurabilityOrBelow) const;
+    int countUsableDigToolsInInventory(bool& hasHalfDurabilityOrBelow) const;
+    int countNearbyUsableDigToolDrops(float radius, bool& hasHalfDurabilityOrBelow) const;
     bool trySpawnFailsafeShovelDropFromWall(Vec2 wallCenter);
     bool spawnFailsafeShovelDropFromWall(Vec2 wallCenter);
     int rewardNodeCount() const;

@@ -379,6 +379,15 @@ function Placeholder-Sample([string]$Kind, [double]$Time, [double]$Duration, [Sy
             $noise = ($Random.NextDouble() * 2.0 - 1.0) * 0.16
             return $env * (0.34 * [Math]::Sin($TwoPi * 155.0 * $Time) + $noise)
         }
+        "se.enemy.mimic_bite" {
+            $env = Decay $Time $Duration 1.25
+            $u = $Time / $Duration
+            $sweep = 520.0 - 330.0 * $u
+            $snap = [Math]::Exp(-[Math]::Pow(($Time - 0.070) / 0.026, 2.0))
+            $noise = ($Random.NextDouble() * 2.0 - 1.0) * 0.14
+            return $env * (0.26 * [Math]::Sin($TwoPi * $sweep * $Time) + 0.18 * [Math]::Sin($TwoPi * 96.0 * $Time) + $noise) +
+                $snap * (0.22 * [Math]::Sin($TwoPi * 740.0 * $Time) + 0.12 * $noise)
+        }
         "se.enemy.shoot" {
             $env = Decay $Time $Duration 1.8
             $sweep = 480.0 - 180.0 * ($Time / $Duration)
@@ -388,10 +397,66 @@ function Placeholder-Sample([string]$Kind, [double]$Time, [double]$Duration, [Sy
             $env = Decay $Time $Duration 1.15
             return $env * (0.24 * [Math]::Sin($TwoPi * 520.0 * $Time) + 0.20 * [Math]::Sin($TwoPi * 780.0 * $Time) + 0.14 * [Math]::Sin($TwoPi * 1040.0 * $Time))
         }
+        "se.enemy.transform" {
+            $env = Decay $Time $Duration 1.2
+            $u = $Time / $Duration
+            $noise = ($Random.NextDouble() * 2.0 - 1.0) * 0.13
+            return $env * (0.26 * [Math]::Sin($TwoPi * (150.0 + 120.0 * $u) * $Time) + 0.18 * [Math]::Sin($TwoPi * 74.0 * $Time) + $noise)
+        }
         "se.projectile.impact" {
             $env = Decay $Time $Duration 2.2
             $noise = ($Random.NextDouble() * 2.0 - 1.0) * 0.18
             return $env * (0.30 * [Math]::Sin($TwoPi * 210.0 * $Time) + $noise)
+        }
+        "se.projectile.pebble.launch" {
+            $env = Decay $Time $Duration 2.1
+            $sweep = 980.0 + 520.0 * ($Time / $Duration)
+            $noise = ($Random.NextDouble() * 2.0 - 1.0) * 0.035
+            return $env * (0.34 * [Math]::Sin($TwoPi * $sweep * $Time) + 0.10 * [Math]::Sin($TwoPi * 1960.0 * $Time) + $noise)
+        }
+        "se.projectile.heavy.launch" {
+            $env = Decay $Time $Duration 1.35
+            $sweep = 310.0 - 180.0 * ($Time / $Duration)
+            $noise = ($Random.NextDouble() * 2.0 - 1.0) * 0.13
+            return $env * (0.42 * [Math]::Sin($TwoPi * $sweep * $Time) + 0.16 * [Math]::Sin($TwoPi * 86.0 * $Time) + $noise)
+        }
+        "se.projectile.frog.launch" {
+            $env = Decay $Time $Duration 1.45
+            $u = $Time / $Duration
+            $wobble = 1.0 + 0.14 * [Math]::Sin($TwoPi * 18.0 * $Time)
+            $freq = (185.0 - 52.0 * $u) * $wobble
+            $noise = ($Random.NextDouble() * 2.0 - 1.0) * 0.08
+            return $env * (0.38 * [Math]::Sin($TwoPi * $freq * $Time) + 0.22 * [Math]::Sin($TwoPi * ($freq * 0.52) * $Time) + $noise)
+        }
+        "se.projectile.quick.launch" {
+            $env = Decay $Time $Duration 2.4
+            $sweep = 1260.0 + 640.0 * ($Time / $Duration)
+            return $env * (0.30 * [Math]::Sin($TwoPi * $sweep * $Time) + 0.16 * [Math]::Sin($TwoPi * 2520.0 * $Time))
+        }
+        "se.projectile.water_pip.launch" {
+            $env = Decay $Time $Duration 1.9
+            $sweep = 720.0 + 180.0 * ($Time / $Duration)
+            $noise = ($Random.NextDouble() * 2.0 - 1.0) * 0.05
+            return $env * (0.28 * [Math]::Sin($TwoPi * $sweep * $Time) + 0.17 * [Math]::Sin($TwoPi * 1440.0 * $Time) + $noise)
+        }
+        "se.projectile.bubble.launch" {
+            $env = Decay $Time $Duration 1.25
+            $u = $Time / $Duration
+            $pop = if ($Time -lt 0.055) { [Math]::Pow(1.0 - ($Time / 0.055), 1.8) } else { 0.0 }
+            $noise = ($Random.NextDouble() * 2.0 - 1.0) * 0.09
+            return $env * (0.34 * [Math]::Sin($TwoPi * (238.0 - 78.0 * $u) * $Time) + 0.18 * $pop * [Math]::Sin($TwoPi * 760.0 * $Time) + $noise)
+        }
+        "se.projectile.bubble.pop" {
+            $env = Decay $Time $Duration 1.8
+            $snap = if ($Time -lt 0.030) { [Math]::Pow(1.0 - ($Time / 0.030), 2.1) } else { 0.0 }
+            $noise = ($Random.NextDouble() * 2.0 - 1.0) * 0.12
+            return $env * (0.30 * [Math]::Sin($TwoPi * 860.0 * $Time) + 0.20 * $snap * [Math]::Sin($TwoPi * 1640.0 * $Time) + $noise)
+        }
+        "se.projectile.fire_breath.launch" {
+            $env = Decay $Time $Duration 1.15
+            $u = $Time / $Duration
+            $noise = ($Random.NextDouble() * 2.0 - 1.0) * 0.18
+            return $env * (0.32 * [Math]::Sin($TwoPi * (96.0 - 24.0 * $u) * $Time) + 0.22 * [Math]::Sin($TwoPi * (182.0 - 64.0 * $u) * $Time) + $noise)
         }
         "se.ring.guard" {
             $env = Decay $Time $Duration 1.35
@@ -461,6 +526,16 @@ function Placeholder-Sample([string]$Kind, [double]$Time, [double]$Duration, [Sy
             $env = Decay $Time $Duration 1.55
             $noise = ($Random.NextDouble() * 2.0 - 1.0) * 0.12
             return $env * (0.22 * [Math]::Sin($TwoPi * 260.0 * $Time) + 0.18 * [Math]::Sin($TwoPi * 620.0 * $Time) + $noise)
+        }
+        "se.item.break.ceramic" {
+            $env = Decay $Time $Duration 1.45
+            $noise = ($Random.NextDouble() * 2.0 - 1.0) * 0.08
+            return $env * (0.24 * [Math]::Sin($TwoPi * 520.0 * $Time) + 0.20 * [Math]::Sin($TwoPi * 860.0 * $Time) + 0.12 * [Math]::Sin($TwoPi * 1280.0 * $Time) + $noise)
+        }
+        "se.item.break.glass" {
+            $env = Decay $Time $Duration 1.35
+            $noise = ($Random.NextDouble() * 2.0 - 1.0) * 0.05
+            return $env * (0.28 * [Math]::Sin($TwoPi * 1480.0 * $Time) + 0.20 * [Math]::Sin($TwoPi * 2220.0 * $Time) + 0.12 * [Math]::Sin($TwoPi * 2960.0 * $Time) + $noise)
         }
         "se.explosion" {
             $env = Decay $Time $Duration 1.1
@@ -750,12 +825,32 @@ public static class MajoPlaceholderAudioHQ
                 return Ring(t, d, 880.0, 0.26, 1.25) + Ring(t, d, 1320.0, 0.18, 1.35);
             case "se.enemy.attack":
                 return Whoosh(t, d, rng, 520.0, 150.0, 0.12) + 0.16 * Burst(t, 0.040, 0.05, 2.1) * S(190.0, t);
+            case "se.enemy.mimic_bite":
+                return Whoosh(t, d, rng, 620.0, 170.0, 0.13) + 0.22 * Burst(t, 0.070, 0.045, 2.2) * S(760.0, t) + 0.14 * Env(t, d, 0.002, 1.05) * S(88.0, t);
             case "se.enemy.shoot":
                 return Env(t, d, 0.002, 1.8) * (0.28 * Sweep(t, d, 720.0, 360.0) + 0.13 * S(1440.0, t));
             case "se.enemy.heal":
                 return Sparkle(t, d, 520.0, 0.16) + Sparkle(t, d, 780.0, 0.14) + Sparkle(t, d, 1040.0, 0.10);
+            case "se.enemy.transform":
+                return Whoosh(t, d, rng, 150.0, 270.0, 0.16) + 0.18 * Env(t, d, 0.002, 1.1) * S(74.0, t) + 0.08 * N(rng) * Env(t, d, 0.001, 1.4);
             case "se.projectile.impact":
                 return Env(t, d, 0.002, 2.0) * (0.30 * S(220.0, t) + 0.18 * N(rng)) + 0.08 * Ring(t, d, 660.0, 0.10, 1.8);
+            case "se.projectile.pebble.launch":
+                return Env(t, d, 0.001, 2.1) * (0.34 * Sweep(t, d, 980.0, 1500.0) + 0.10 * S(1960.0, t) + 0.035 * N(rng));
+            case "se.projectile.heavy.launch":
+                return Whoosh(t, d, rng, 310.0, 130.0, 0.11) + 0.18 * Env(t, d, 0.002, 1.2) * S(86.0, t);
+            case "se.projectile.frog.launch":
+                return Soft(t, d, rng, 168.0, 0.28, 0.08) + 0.12 * Env(t, d, 0.006, 1.2) * Sweep(t, d, 238.0, 132.0);
+            case "se.projectile.quick.launch":
+                return Env(t, d, 0.001, 2.4) * (0.30 * Sweep(t, d, 1260.0, 1900.0) + 0.16 * S(2520.0, t));
+            case "se.projectile.water_pip.launch":
+                return Env(t, d, 0.001, 1.9) * (0.28 * Sweep(t, d, 720.0, 900.0) + 0.17 * S(1440.0, t) + 0.05 * N(rng));
+            case "se.projectile.bubble.launch":
+                return Soft(t, d, rng, 210.0, 0.34, 0.06) + 0.18 * Burst(t, 0.000, 0.055, 1.8) * S(760.0, t);
+            case "se.projectile.bubble.pop":
+                return Env(t, d, 0.001, 1.8) * (0.30 * S(860.0, t) + 0.16 * N(rng)) + 0.20 * Burst(t, 0.000, 0.030, 2.1) * S(1640.0, t);
+            case "se.projectile.fire_breath.launch":
+                return Whoosh(t, d, rng, 96.0, 182.0, 0.18) + 0.18 * Env(t, d, 0.004, 1.05) * S(72.0, t);
             case "se.ring.guard":
                 return Ring(t, d, 360.0, 0.24, 1.25) + Ring(t, d, 720.0, 0.24, 1.4);
             case "se.ring.reflect":
@@ -786,6 +881,10 @@ public static class MajoPlaceholderAudioHQ
                 return Stone(t, d, rng, 120.0, 0.0) + 0.22 * Env(t, d, 0.002, 1.7) * N(rng);
             case "se.item.break":
                 return Ring(t, d, 260.0, 0.18, 1.45) + Ring(t, d, 620.0, 0.15, 1.6) + 0.10 * N(rng) * Env(t, d, 0.002, 1.8);
+            case "se.item.break.ceramic":
+                return Ring(t, d, 520.0, 0.20, 1.25) + Ring(t, d, 860.0, 0.17, 1.42) + 0.10 * Env(t, d, 0.001, 1.8) * N(rng);
+            case "se.item.break.glass":
+                return Ring(t, d, 1480.0, 0.26, 1.05) + Ring(t, d, 2220.0, 0.19, 1.25) + Ring(t, d, 2960.0, 0.10, 1.45) + 0.04 * N(rng) * Env(t, d, 0.001, 2.0);
             case "se.explosion":
                 return Env(t, d, 0.001, 1.05) * (0.34 * S(72.0, t) + 0.20 * S(144.0, t) + 0.34 * N(rng) * (1.0 - 0.65 * u));
         }
@@ -905,8 +1004,18 @@ $clips = @(
     @{ Path = Join-Path $SeRoot "enemy_spawn_placeholder.wav"; Kind = "se.enemy.spawn"; Duration = 0.32; Seed = 2021 },
     @{ Path = Join-Path $SeRoot "enemy_alert_placeholder.wav"; Kind = "se.enemy.alert"; Duration = 0.18; Seed = 2022 },
     @{ Path = Join-Path $SeRoot "enemy_attack_placeholder.wav"; Kind = "se.enemy.attack"; Duration = 0.18; Seed = 2023 },
+    @{ Path = Join-Path $SeRoot "enemy_mimic_bite_placeholder.wav"; Kind = "se.enemy.mimic_bite"; Duration = 0.28; Seed = 2110 },
     @{ Path = Join-Path $SeRoot "enemy_shoot_placeholder.wav"; Kind = "se.enemy.shoot"; Duration = 0.14; Seed = 2024 },
     @{ Path = Join-Path $SeRoot "enemy_heal_placeholder.wav"; Kind = "se.enemy.heal"; Duration = 0.26; Seed = 2025 },
+    @{ Path = Join-Path $SeRoot "enemy_transform_placeholder.wav"; Kind = "se.enemy.transform"; Duration = 0.30; Seed = 2107 },
+    @{ Path = Join-Path $SeRoot "projectile_pebble_launch_placeholder.wav"; Kind = "se.projectile.pebble.launch"; Duration = 0.10; Seed = 2101 },
+    @{ Path = Join-Path $SeRoot "projectile_heavy_launch_placeholder.wav"; Kind = "se.projectile.heavy.launch"; Duration = 0.16; Seed = 2102 },
+    @{ Path = Join-Path $SeRoot "projectile_frog_launch_placeholder.wav"; Kind = "se.projectile.frog.launch"; Duration = 0.18; Seed = 2103 },
+    @{ Path = Join-Path $SeRoot "projectile_quick_launch_placeholder.wav"; Kind = "se.projectile.quick.launch"; Duration = 0.085; Seed = 2104 },
+    @{ Path = Join-Path $SeRoot "projectile_water_pip_launch_placeholder.wav"; Kind = "se.projectile.water_pip.launch"; Duration = 0.095; Seed = 2105 },
+    @{ Path = Join-Path $SeRoot "projectile_bubble_launch_placeholder.wav"; Kind = "se.projectile.bubble.launch"; Duration = 0.14; Seed = 2106 },
+    @{ Path = Join-Path $SeRoot "projectile_bubble_pop_placeholder.wav"; Kind = "se.projectile.bubble.pop"; Duration = 0.12; Seed = 2108 },
+    @{ Path = Join-Path $SeRoot "projectile_fire_breath_launch_placeholder.wav"; Kind = "se.projectile.fire_breath.launch"; Duration = 0.20; Seed = 2109 },
     @{ Path = Join-Path $SeRoot "projectile_stone_launch_placeholder.wav"; Kind = "se.projectile.stone.launch"; Duration = 0.11; Seed = 2080 },
     @{ Path = Join-Path $SeRoot "projectile_stone_destroy_placeholder.wav"; Kind = "se.projectile.stone.destroy"; Duration = 0.14; Seed = 2081 },
     @{ Path = Join-Path $SeRoot "projectile_metal_launch_placeholder.wav"; Kind = "se.projectile.metal.launch"; Duration = 0.12; Seed = 2082 },
@@ -941,6 +1050,8 @@ $clips = @(
     @{ Path = Join-Path $SeRoot "chest_open_placeholder.wav"; Kind = "se.chest.open"; Duration = 0.32; Seed = 2036 },
     @{ Path = Join-Path $SeRoot "crate_break_placeholder.wav"; Kind = "se.crate.break"; Duration = 0.24; Seed = 2037 },
     @{ Path = Join-Path $SeRoot "item_break_placeholder.wav"; Kind = "se.item.break"; Duration = 0.28; Seed = 2038 },
+    @{ Path = Join-Path $SeRoot "item_break_ceramic_placeholder.wav"; Kind = "se.item.break.ceramic"; Duration = 0.24; Seed = 2108 },
+    @{ Path = Join-Path $SeRoot "item_break_glass_placeholder.wav"; Kind = "se.item.break.glass"; Duration = 0.22; Seed = 2109 },
     @{ Path = Join-Path $SeRoot "explosion_placeholder.wav"; Kind = "se.explosion"; Duration = 0.36; Seed = 2039 }
 )
 

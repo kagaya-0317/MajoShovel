@@ -592,6 +592,12 @@ std::string mapLegacyBehaviorIdToCode(std::string_view legacyId)
     if (id == "magnet_disturb") {
         return "aura:magnet_disturb:radius=120,strength=0.6,targetTag=metal:0";
     }
+    if (id == "chest_bite") {
+        return "attack:chest_bite:none:1.5";
+    }
+    if (id == "steal_item") {
+        return "contact:steal_item:none:0";
+    }
     if (id == "shoot_fire") {
         return "attack:shoot_fire:none:2.0";
     }
@@ -605,7 +611,7 @@ std::string mapLegacyBehaviorIdToCode(std::string_view legacyId)
         return "attack:shoot_water_bubble:none:2.6";
     }
     if (id == "shoot_poison") {
-        return "attack:shoot_poison:none:2.3";
+        return "attack:shoot_poison:none:2.0";
     }
     if (id == "shoot_web") {
         return "attack:shoot_web:none:2.3";
@@ -617,7 +623,7 @@ std::string mapLegacyBehaviorIdToCode(std::string_view legacyId)
         return "attack:radial_spike:none:2.4";
     }
     if (id == "wind_blow") {
-        return "attack:wind_blow:radiusTiles=4,strength=1.0,duration=3.0:2.5";
+        return "attack:wind_blow:radiusTiles=4,strength=1.0,duration=3.5:2.5";
     }
     if (id == "countdown_explode") {
         return "timer:countdown_explode:delay=4.0:0";

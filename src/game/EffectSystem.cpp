@@ -22,9 +22,12 @@ constexpr std::string_view AudioSeDigOreBreak = "se.dig.ore_break";
 constexpr std::string_view AudioSeAttackHit = "se.attack.hit";
 constexpr std::string_view AudioSePickup = "se.pickup";
 constexpr std::string_view AudioSeEnemyDefeat = "se.enemy.defeat";
+constexpr std::string_view AudioSeEnemyTransform = "se.enemy.transform";
 constexpr std::string_view AudioSeCaptureSuccess = "se.capture.success";
 constexpr std::string_view AudioSeCrateBreak = "se.crate.break";
 constexpr std::string_view AudioSeItemBreak = "se.item.break";
+constexpr std::string_view AudioSeItemBreakCeramic = "se.item.break.ceramic";
+constexpr std::string_view AudioSeItemBreakGlass = "se.item.break.glass";
 constexpr std::string_view AudioSeExplosion = "se.explosion.boom";
 
 struct ParticlePreset {
@@ -50,7 +53,7 @@ struct ParticlePreset {
 };
 
 constexpr std::array<ParticlePreset, 37> ParticlePresets{{
-    {ParticleEffectId::DigDust, 4, {142, 104, 66, 220}, {102, 78, 54, 190}, 112.0f, 42.0f, Pi * 2.0f, 5.5f, 1.4f, 0.76f, 0.08f, {0.0f, 330.0f}, 1.45f, false, false, 4.0f, 14.0f, {184, 136, 76, 140}, ParticleVisual::RockShard},
+    {ParticleEffectId::DigDust, 7, {142, 104, 66, 220}, {102, 78, 54, 190}, 138.0f, 66.0f, Pi * 2.0f, 5.2f, 1.5f, 0.76f, 0.08f, {0.0f, 330.0f}, 1.30f, false, false, 4.0f, 14.0f, {184, 136, 76, 140}, ParticleVisual::RockShard},
     {ParticleEffectId::DirtBreak, 18, {154, 110, 66, 235}, {214, 150, 82, 205}, 126.0f, 58.0f, Pi * 2.0f, 7.4f, 2.4f, 0.84f, 0.10f, {0.0f, 390.0f}, 1.55f, false, false, 8.0f, 34.0f, {218, 164, 88, 205}, ParticleVisual::RockShard},
     {ParticleEffectId::RockBreak, 18, {122, 126, 132, 235}, {86, 88, 96, 205}, 118.0f, 48.0f, Pi * 2.0f, 8.4f, 2.6f, 0.92f, 0.12f, {0.0f, 420.0f}, 1.45f, false, false, 8.0f, 32.0f, {170, 174, 180, 190}, ParticleVisual::RockShard},
     {ParticleEffectId::OreBreak, 22, {244, 204, 84, 238}, {126, 218, 236, 215}, 142.0f, 62.0f, Pi * 2.0f, 7.6f, 2.7f, 0.88f, 0.12f, {0.0f, 380.0f}, 1.35f, false, false, 10.0f, 38.0f, {255, 222, 110, 220}, ParticleVisual::RockShard},
@@ -67,7 +70,7 @@ constexpr std::array<ParticlePreset, 37> ParticlePresets{{
     {ParticleEffectId::EnemyWindHit, 14, {128, 246, 190, 222}, {226, 255, 224, 184}, 126.0f, 52.0f, Pi * 2.0f, 2.0f, 0.7f, 0.44f, 0.11f, {}, 2.4f, false, false, 5.0f, 20.0f, {152, 250, 198, 205}, ParticleVisual::ImpactSpark},
     {ParticleEffectId::EnemyEarthHit, 15, {204, 142, 76, 230}, {246, 206, 132, 190}, 116.0f, 48.0f, Pi * 2.0f, 2.3f, 0.8f, 0.48f, 0.12f, {0.0f, 42.0f}, 2.6f, false, false, 5.0f, 20.0f, {214, 156, 86, 210}, ParticleVisual::ImpactSpark},
     {ParticleEffectId::EnemyDeathSoul, 18, {180, 104, 255, 220}, {255, 98, 128, 205}, 76.0f, 42.0f, Pi * 2.0f, 3.2f, 1.1f, 0.70f, 0.18f, {0.0f, -82.0f}, 1.6f, false, true, 10.0f, 38.0f, {255, 92, 116, 230}},
-    {ParticleEffectId::CaptureSuccess, 24, {178, 112, 255, 225}, {255, 224, 130, 210}, 128.0f, 48.0f, Pi * 2.0f, 2.6f, 0.8f, 0.58f, 0.16f, {}, 2.0f, false, true, 12.0f, 40.0f, {202, 156, 255, 220}},
+    {ParticleEffectId::CaptureSuccess, 24, {178, 112, 255, 225}, {255, 224, 130, 210}, 128.0f, 48.0f, Pi * 2.0f, 2.6f, 0.8f, 0.58f, 0.16f, {}, 2.0f, false, true, 16.0f, 58.0f, {216, 172, 255, 248}},
     {ParticleEffectId::DropPickup, 10, {255, 232, 132, 220}, {142, 228, 248, 180}, 92.0f, 34.0f, Pi * 2.0f, 2.0f, 0.6f, 0.36f, 0.08f, {}, 2.4f, false, false},
     {ParticleEffectId::TorchFlicker, 3, {255, 172, 58, 160}, {255, 238, 120, 135}, 24.0f, 14.0f, 1.10f, 1.7f, 0.5f, 0.42f, 0.10f, {0.0f, -36.0f}, 1.2f, true, false},
     {ParticleEffectId::MagicFire, 11, {255, 84, 42, 225}, {255, 214, 84, 185}, 106.0f, 46.0f, 1.45f, 2.8f, 0.9f, 0.42f, 0.12f, {0.0f, -16.0f}, 2.0f, true, true, 7.0f, 24.0f, {255, 112, 58, 210}},
@@ -1611,7 +1614,7 @@ void EffectSystem::spawnEnemyDeath(Vec2 position, bool playSound)
     }
 }
 
-void EffectSystem::spawnEnemyTransform(Vec2 position)
+void EffectSystem::spawnEnemyTransform(Vec2 position, bool playSound)
 {
     SmokeBurstOptions options;
     options.count = 18;
@@ -1622,10 +1625,13 @@ void EffectSystem::spawnEnemyTransform(Vec2 position)
     options.riseSpeed = 26.0f;
     options.duration = 0.82f;
     options.durationJitter = 0.16f;
-    options.colorA = {154, 24, 32, 170};
-    options.colorB = {30, 14, 18, 154};
+    options.colorA = {176, 38, 48, 178};
+    options.colorB = {58, 16, 22, 164};
     options.layer = EffectLayer::Foreground;
     spawnSmokeBurst(position, options);
+    if (playSound) {
+        queueSound(AudioSeEnemyTransform);
+    }
 }
 
 void EffectSystem::spawnThrowStart(Vec2 position, Vec2 direction)
@@ -1707,6 +1713,13 @@ void EffectSystem::spawnItemBreak(Vec2 position, ItemBreakVisual visual, float s
     spawn(particleId, position, {1.0f, 0.0f}, visualScale, EffectLayer::Foreground);
     if (playSound) {
         queueSound(AudioSeItemBreak);
+        if (visual == ItemBreakVisual::Wood) {
+            queueSound(AudioSeCrateBreak, 0.78f);
+        } else if (visual == ItemBreakVisual::Ceramic) {
+            queueSound(AudioSeItemBreakCeramic, 0.86f);
+        } else if (visual == ItemBreakVisual::Glass) {
+            queueSound(AudioSeItemBreakGlass, 0.86f);
+        }
     }
 }
 
@@ -1742,6 +1755,8 @@ void EffectSystem::spawnStatusAura(Vec2 position, std::string_view stateId)
         spawn(ParticleEffectId::SlowAura, position);
     } else if (stateId == "status_glued") {
         spawn(ParticleEffectId::SlowAura, position);
+    } else if (stateId == "status_defense_down") {
+        spawn(ParticleEffectId::SlowAura, position, {1.0f, 0.0f}, 1.0f, EffectLayer::World, {214, 134, 82, 255});
     } else if (stateId == "status_bleed") {
         spawn(ParticleEffectId::BleedAura, position);
     } else if (stateId == "status_paralyze") {

@@ -270,6 +270,18 @@ double EntityStatus::movementMultiplierFromStates() const
     return result;
 }
 
+double EntityStatus::defenseMultiplierFromStates() const
+{
+    double result = 1.0;
+    for (const EntityState& state : states_) {
+        if (state.stateId == "status_defense_down") {
+            const double defenseMultiplier = state.value > 0.0 ? state.value : 0.8;
+            result *= std::clamp(defenseMultiplier, 0.05, 1.0);
+        }
+    }
+    return result;
+}
+
 double EntityStatus::attackAccuracyMultiplierFromStates() const
 {
     double result = 1.0;

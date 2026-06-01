@@ -320,10 +320,11 @@ struct StatusDefinition {
     double defaultValue = 1.0;
 };
 
-constexpr std::array<StatusDefinition, 14> StatusDefinitions{{
+constexpr std::array<StatusDefinition, 15> StatusDefinitions{{
     {"status_poison", 8.0, 1.0},
     {"status_slow", 8.0, 0.65},
     {"status_glued", 4.0, 0.45},
+    {"status_defense_down", 4.0, 0.8},
     {"status_bleed", 8.0, 1.0},
     {"status_giant", 8.0, 1.0},
     {"status_paralyze", 1.5, 1.0},
@@ -473,6 +474,12 @@ void applyModifierInvocation(const EffectInvocation& invocation)
 {
     EntityStatus* status = statusForInvocation(invocation);
     if (status == nullptr) {
+        return;
+    }
+
+    if (invocation.effect == "debuff_defense") {
+        const double stateValue = invocation.value > 0.0 ? invocation.value : 0.8;
+        applyStatus(invocation, "status_defense_down", std::clamp(stateValue, 0.05, 1.0));
         return;
     }
 
@@ -891,7 +898,7 @@ void EffectDispatcher::registerFoundationHandlers(const ObjectCatalog& catalog)
         }
     }
 
-    for (std::string_view effect : {"status_poison", "status_slow", "status_glued", "status_giant", "status_paralyze", "status_shocked", "status_sleep", "status_bleed", "status_stun", "status_confuse", "status_blind", "status_wet", "status_hot", "status_frozen"}) {
+    for (std::string_view effect : {"status_poison", "status_slow", "status_glued", "status_defense_down", "status_giant", "status_paralyze", "status_shocked", "status_sleep", "status_bleed", "status_stun", "status_confuse", "status_blind", "status_wet", "status_hot", "status_frozen"}) {
         registerHandler(std::string(effect), applyStateInvocation);
     }
 

@@ -69,6 +69,7 @@ constexpr std::string_view AudioSeExplosionTick = "se.explosion.tick";
 constexpr std::string_view AudioSeFootstepBaseOutdoor = "se.footstep.base_outdoor";
 constexpr std::string_view AudioSeFootstepHomeInterior = "se.footstep.home";
 constexpr std::string_view AudioSeFootstepDungeon = "se.footstep.dungeon";
+constexpr float ExplosionRadiusScale = 1.5f;
 constexpr std::string_view WaterShotEmitterProjectileId = "water_shot";
 constexpr std::string_view DigToolFailsafeShovelObjectId = "item_shovel";
 constexpr std::string_view DigToolFailsafeDigCategory = "\xE6\x8E\x98\xE5\x89\x8A";
@@ -121,7 +122,7 @@ int applyDefenseModifier(const EntityStatus& status, int damage)
         return 0;
     }
 
-    const double defense = std::max(0.05, status.multiplierFor(ModifierStat::Defense));
+    const double defense = std::max(0.05, status.multiplierFor(ModifierStat::Defense) * status.defenseMultiplierFromStates());
     return std::max(0, static_cast<int>(std::ceil(static_cast<double>(damage) / defense)));
 }
 
@@ -1186,6 +1187,36 @@ bool inventoryInstanceIsUsableDigTool(const InventoryObjectInstance& instance)
     return instance.item.category == DigToolFailsafeDigCategory &&
         !instance.instance.isBroken &&
         instance.instance.currentDurability != 0;
+}
+
+bool durabilityIsHalfOrBelow(int currentDurability, int maxDurability)
+{
+    return maxDurability > 0 &&
+        currentDurability > 0 &&
+        currentDurability <= maxDurability / 2;
+}
+
+bool ringDigToolIsHalfDurabilityOrBelow(const SpellRingItem& item)
+{
+    return durabilityIsHalfOrBelow(item.durability, item.maxDurability);
+}
+
+bool objectDefinitionIsHalfDurabilityOrBelow(const ItemData& item)
+{
+    return durabilityIsHalfOrBelow(item.durability, item.durability);
+}
+
+bool inventoryInstanceIsHalfDurabilityOrBelow(const InventoryObjectInstance& instance)
+{
+    return durabilityIsHalfOrBelow(instance.instance.currentDurability, instance.instance.maxDurability);
+}
+
+bool worldDropDigToolIsHalfDurabilityOrBelow(const WorldDropItem& drop, const ItemData& item)
+{
+    if (drop.instance.has_value()) {
+        return durabilityIsHalfOrBelow(drop.instance->currentDurability, drop.instance->maxDurability);
+    }
+    return objectDefinitionIsHalfDurabilityOrBelow(item);
 }
 
 Vec2 effectiveDropPosition(const WorldDropItem& drop)
@@ -2518,7 +2549,7 @@ void Game::updateCaptureAbsorbAnimations(float dt)
 
 void Game::handleCapturedExplosion(const CapturedExplosionRequest& request)
 {
-    const float radius = std::max(8.0f, request.radius);
+    const float radius = std::max(8.0f, request.radius * ExplosionRadiusScale);
     effects_.spawnExplosion(request.position, radius);
     addScreenShake(std::clamp(3.0f + radius * 0.035f, 4.0f, 7.0f), 0.18f);
 
@@ -2900,6 +2931,9 @@ Game::AstralRunSummary Game::makeAstralRunSummary(Game::AstralRunResult result) 
     summary.carriedOut = result != AstralRunResult::Died;
     summary.score = calculateAstralRunScore(summary);
     summary.highScore = astralHighScore_;
+    if (result == AstralRunResult::Died) {
+        summary.deathCauseText = playerDeathCauseText(player_);
+    }
     return summary;
 }
 
@@ -7207,37 +7241,43 @@ void Game::updateDigToolFailsafe(float dt)
     digToolFailsafeSpawnCooldown_ = std::max(0.0f, digToolFailsafeSpawnCooldown_ - dt);
 }
 
-bool Game::hasUsableDigToolOnRing() const
+int Game::countUsableDigToolsOnRing(bool& hasHalfDurabilityOrBelow) const
 {
+    int count = 0;
     for (const SpellRingItem* item : spellRing_.runtimeItems()) {
         if (item == nullptr || item->broken() || item->objectId.empty()) {
             continue;
         }
         const ItemData* object = objectCatalog_.registry.findById(item->objectId);
         if (object != nullptr && objectIsUsableDigTool(*object)) {
-            return true;
+            ++count;
+            hasHalfDurabilityOrBelow = hasHalfDurabilityOrBelow || ringDigToolIsHalfDurabilityOrBelow(*item);
         }
     }
-    return false;
+    return count;
 }
 
-bool Game::hasUsableDigToolInInventory() const
+int Game::countUsableDigToolsInInventory(bool& hasHalfDurabilityOrBelow) const
 {
+    int count = 0;
     for (const InventoryObjectStack& stack : inventory_.objectStacks()) {
         if (stack.count > 0 && objectIsUsableDigTool(stack.item)) {
-            return true;
+            count += stack.count;
+            hasHalfDurabilityOrBelow = hasHalfDurabilityOrBelow || objectDefinitionIsHalfDurabilityOrBelow(stack.item);
         }
     }
     for (const InventoryObjectInstance& instance : inventory_.objectInstances()) {
         if (inventoryInstanceIsUsableDigTool(instance)) {
-            return true;
+            ++count;
+            hasHalfDurabilityOrBelow = hasHalfDurabilityOrBelow || inventoryInstanceIsHalfDurabilityOrBelow(instance);
         }
     }
-    return false;
+    return count;
 }
 
-bool Game::hasNearbyUsableDigToolDrop(float radius) const
+int Game::countNearbyUsableDigToolDrops(float radius, bool& hasHalfDurabilityOrBelow) const
 {
+    int count = 0;
     const float radiusSq = std::max(0.0f, radius) * std::max(0.0f, radius);
     for (const WorldDropItem& drop : worldDrops_.drops()) {
         if (drop.kind != WorldDropKind::Object || distanceSquared(player_.position, effectiveDropPosition(drop)) > radiusSq) {
@@ -7245,20 +7285,26 @@ bool Game::hasNearbyUsableDigToolDrop(float radius) const
         }
         const ItemData* object = objectCatalog_.registry.findById(drop.id);
         if (object != nullptr && objectIsUsableDigTool(*object)) {
-            return true;
+            count += std::max(1, drop.quantity);
+            hasHalfDurabilityOrBelow = hasHalfDurabilityOrBelow || worldDropDigToolIsHalfDurabilityOrBelow(drop, *object);
         }
     }
-    return false;
+    return count;
 }
 
 bool Game::trySpawnFailsafeShovelDropFromWall(Vec2 wallCenter)
 {
+    bool hasHalfDurabilityOrBelow = false;
+    const int usableDigToolCount =
+        countUsableDigToolsOnRing(hasHalfDurabilityOrBelow) +
+        countUsableDigToolsInInventory(hasHalfDurabilityOrBelow) +
+        countNearbyUsableDigToolDrops(DigToolFailsafeNearbyDropRadius, hasHalfDurabilityOrBelow);
+
     if (enemyTestActive_ ||
         mode_ != ScreenMode::Playing ||
         digToolFailsafeSpawnCooldown_ > 0.0f ||
-        hasUsableDigToolOnRing() ||
-        hasUsableDigToolInInventory() ||
-        hasNearbyUsableDigToolDrop(DigToolFailsafeNearbyDropRadius)) {
+        usableDigToolCount != 1 ||
+        !hasHalfDurabilityOrBelow) {
         return false;
     }
 

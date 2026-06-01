@@ -44,11 +44,30 @@ constexpr std::array<ActorVisualKeyframe, 7> HealSlugHopKeys{{
     {0.58f, {{0.0f, 0.0f}, {1.00f, 1.00f}, 0.0f, 0.0f, 0.0f}, ActorVisualEase::EaseOut},
 }};
 
-constexpr std::array<ActorVisualMotionClip, 4> Clips{{
+constexpr std::array<ActorVisualKeyframe, 5> MimicBiteLungeKeys{{
+    {0.00f, {{0.0f, 0.0f}, {1.00f, 1.00f}, 0.0f, 0.0f, 0.0f}, ActorVisualEase::EaseOut},
+    {0.08f, {{0.0f, 2.0f}, {0.86f, 1.16f}, -2.0f, 0.0f, -2.0f}, ActorVisualEase::EaseInOut},
+    {0.18f, {{0.0f, -2.0f}, {1.18f, 0.82f}, 4.0f, 4.0f, 2.5f}, ActorVisualEase::EaseIn},
+    {0.28f, {{0.0f, 1.0f}, {1.34f, 0.68f}, 9.0f, 8.0f, 0.0f}, ActorVisualEase::EaseOut},
+    {0.42f, {{0.0f, 0.0f}, {1.00f, 1.00f}, 0.0f, 0.0f, 0.0f}, ActorVisualEase::EaseOut},
+}};
+
+constexpr std::array<ActorVisualKeyframe, 6> PoisonFrogSpitSquashKeys{{
+    {0.00f, {{0.0f, 0.0f}, {1.00f, 1.00f}, 0.0f, 0.0f, 0.0f}, ActorVisualEase::EaseOut},
+    {0.12f, {{0.0f, 1.5f}, {0.84f, 1.20f}, -1.0f, 0.0f, -1.0f}, ActorVisualEase::EaseInOut},
+    {0.26f, {{0.0f, 3.0f}, {0.76f, 1.32f}, -2.0f, 0.0f, 1.5f}, ActorVisualEase::EaseInOut},
+    {0.42f, {{0.0f, -2.0f}, {1.32f, 0.72f}, 6.0f, 3.0f, -1.0f}, ActorVisualEase::EaseOut},
+    {0.52f, {{0.0f, 1.0f}, {1.10f, 0.92f}, 2.0f, 0.0f, 0.5f}, ActorVisualEase::EaseOut},
+    {0.66f, {{0.0f, 0.0f}, {1.00f, 1.00f}, 0.0f, 0.0f, 0.0f}, ActorVisualEase::EaseOut},
+}};
+
+constexpr std::array<ActorVisualMotionClip, 6> Clips{{
     {"web_shoot", 0.32f, WebShootKeys},
     {"fire_breath_hop", 0.45f, FireBreathHopKeys},
     {"radial_spike_squash", 0.46f, RadialSpikeSquashKeys},
     {"heal_slug_hop", 0.58f, HealSlugHopKeys},
+    {"mimic_bite_lunge", 0.42f, MimicBiteLungeKeys},
+    {"poison_frog_spit_squash", 0.66f, PoisonFrogSpitSquashKeys},
 }};
 
 float easeValue(float t, ActorVisualEase ease)

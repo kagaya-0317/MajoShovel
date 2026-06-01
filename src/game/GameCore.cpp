@@ -30,6 +30,7 @@ constexpr std::string_view AudioSeEnemyAlert = "se.enemy.alert";
 constexpr std::string_view AudioSeEnemyAttack = "se.enemy.attack";
 constexpr std::string_view AudioSeEnemyShoot = "se.enemy.shoot";
 constexpr std::string_view AudioSeEnemyHeal = "se.enemy.heal";
+constexpr std::string_view AudioSeEnemyMimicBite = "se.enemy.mimic_bite";
 constexpr std::string_view AudioSeRingSlowBite = "se.ring.slow_bite";
 constexpr std::string_view AudioSeMagicCast = "se.magic.cast";
 constexpr std::string_view AudioSeMagicImpact = "se.magic.impact";
@@ -46,6 +47,7 @@ constexpr std::string_view AudioSeUiItemUse = "se.ui.item_use";
 constexpr std::string_view AudioSeUiRingPlace = "se.ui.ring_place";
 constexpr std::string_view AudioSeUiUpgradeSelect = "se.ui.upgrade_select";
 constexpr std::string_view AudioSeLevelUpJingle = "se.level_up.jingle";
+constexpr float ExplosionRadiusScale = 1.5f;
 constexpr std::string_view IntroTutorialChestLootInventoryTrigger = "intro_tutorial:chest_loot_inventory";
 constexpr std::string_view IntroTutorialChestLootRingTrigger = "intro_tutorial:chest_loot_ring";
 constexpr std::string_view LocalObjectsSnapshotPath = "Objects_with_rotation.tsv";
@@ -3940,7 +3942,13 @@ void Game::update(const Input& input, const Time& time)
             } else if (event.type == EnemyEventType::Alert) {
                 playAudioSe(AudioSeEnemyAlert);
             } else if (event.type == EnemyEventType::Attack) {
-                playAudioSe(event.effectId == "ring_slow_bite" ? AudioSeRingSlowBite : AudioSeEnemyAttack);
+                if (event.effectId == "ring_slow_bite") {
+                    playAudioSe(AudioSeRingSlowBite);
+                } else if (event.effectId == "chest_bite_lunge") {
+                    playAudioSe(AudioSeEnemyMimicBite);
+                } else {
+                    playAudioSe(AudioSeEnemyAttack);
+                }
             } else if (event.type == EnemyEventType::Shoot && event.effectId == "wind_blow") {
                 playAudioSe(AudioSeEnemyShoot);
             } else if (event.type == EnemyEventType::HealCast) {
@@ -3954,7 +3962,7 @@ void Game::update(const Input& input, const Time& time)
             } else if (event.type == EnemyEventType::ExplosionWarningTick) {
                 playAudioSe(AudioSeExplosionTick);
             } else if (event.type == EnemyEventType::Explode) {
-                const float radius = event.effectRadius > 0.0f ? event.effectRadius : 48.0f;
+                const float radius = event.effectRadius > 0.0f ? event.effectRadius : 48.0f * ExplosionRadiusScale;
                 effects_.spawnExplosion(event.position, radius);
                 addScreenShake(std::clamp(3.5f + radius * 0.035f, 4.5f, 8.0f), 0.20f);
             } else if (event.type == EnemyEventType::BossTelegraph) {

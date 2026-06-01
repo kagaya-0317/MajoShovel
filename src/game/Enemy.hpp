@@ -206,6 +206,12 @@ struct Enemy {
     float contactTimer = 0.0f;
     float contactDamageMultiplier = 1.0f;
     EnemyActionRuntime action;
+    float chestBiteIntervalSeconds = 0.0f;
+    float chestBiteTimer = 0.0f;
+    float chestBiteTriggerRange = 0.0f;
+    float chestBiteJumpDistance = 0.0f;
+    float chestBiteJumpDurationSeconds = 0.0f;
+    float chestBiteJumpArcHeight = 0.0f;
     BossActionRuntime bossAction;
     float frontGuardArcDegrees = 140.0f;
     float frontGuardDamageMultiplier = 0.35f;

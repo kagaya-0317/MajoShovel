@@ -74,6 +74,7 @@ public:
     [[nodiscard]] double flatBonusFor(ModifierStat stat) const;
     [[nodiscard]] double applyModifiers(ModifierStat stat, double baseValue) const;
     [[nodiscard]] double movementMultiplierFromStates() const;
+    [[nodiscard]] double defenseMultiplierFromStates() const;
     [[nodiscard]] double attackAccuracyMultiplierFromStates() const;
     [[nodiscard]] double sizeMultiplierFromStates() const;
     [[nodiscard]] double poisonDamagePerSecond() const;

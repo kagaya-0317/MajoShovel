@@ -53,9 +53,19 @@ se.enemy.defeat	se	se/enemy_defeat_placeholder.wav	0.76	false	120	敵撃破
 se.enemy.spawn	se	se/enemy_spawn_placeholder.wav	0.70	false	180	敵出現
 se.enemy.alert	se	se/enemy_alert_placeholder.wav	0.72	false	180	敵発見
 se.enemy.attack	se	se/enemy_attack_placeholder.wav	0.76	false	140	敵攻撃
+se.enemy.mimic_bite	se	se/enemy_mimic_bite_placeholder.wav	0.78	false	130	ミミック噛みつき
 se.enemy.shoot	se	se/enemy_shoot_placeholder.wav	0.66	false	90	敵射撃
 se.enemy.heal	se	se/enemy_heal_placeholder.wav	0.68	false	220	敵回復
 se.enemy.guard	se	se/enemy_guard_placeholder.wav	0.74	false	90	敵ガード
+se.enemy.transform	se	se/enemy_transform_placeholder.wav	0.72	false	180	敵変身煙
+se.projectile.pebble.launch	se	se/projectile_pebble_launch_placeholder.wav	0.62	false	30	弾 石つぶて 発射
+se.projectile.heavy.launch	se	se/projectile_heavy_launch_placeholder.wav	0.66	false	40	弾 重量物 発射
+se.projectile.frog.launch	se	se/projectile_frog_launch_placeholder.wav	0.64	false	55	弾 カエル発射
+se.projectile.quick.launch	se	se/projectile_quick_launch_placeholder.wav	0.58	false	25	弾 素早い発射
+se.projectile.water_pip.launch	se	se/projectile_water_pip_launch_placeholder.wav	0.60	false	30	弾 水弾 発射
+se.projectile.bubble.launch	se	se/projectile_bubble_launch_placeholder.wav	0.62	false	45	弾 泡 発射
+se.projectile.bubble.pop	se	se/projectile_bubble_pop_placeholder.wav	0.66	false	45	弾 泡 破裂
+se.projectile.fire_breath.launch	se	se/projectile_fire_breath_launch_placeholder.wav	0.70	false	35	弾 火炎ブレス 発射
 se.projectile.stone.launch	se	se/projectile_stone_launch_placeholder.wav	0.62	false	35	弾 石 発射
 se.projectile.stone.destroy	se	se/projectile_stone_destroy_placeholder.wav	0.66	false	45	弾 石 消滅
 se.projectile.metal.launch	se	se/projectile_metal_launch_placeholder.wav	0.66	false	35	弾 金属 発射
@@ -90,6 +100,8 @@ se.discovery.warp	se	se/discovery_warp_placeholder.wav	0.82	false	360	ワープ�
 se.chest.open	se	se/chest_open_placeholder.wav	0.78	false	180	宝箱開封
 se.crate.break	se	se/crate_break_placeholder.wav	0.76	false	120	木箱破壊
 se.item.break	se	se/item_break_placeholder.wav	0.80	false	160	アイテム破損
+se.item.break.ceramic	se	se/item_break_ceramic_placeholder.wav	0.78	false	130	陶器破損
+se.item.break.glass	se	se/item_break_glass_placeholder.wav	0.74	false	120	ガラス破損
 se.explosion.tick	se	se/explosion_tick_placeholder.wav	0.62	false	25	爆発予兆クリック
 se.explosion.boom	se	se/explosion_boom_placeholder.wav	0.88	false	130	爆発ボォォン
 se.explosion	se	se/explosion_placeholder.wav	0.84	false	180	爆発

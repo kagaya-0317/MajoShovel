@@ -40,7 +40,10 @@ struct Projectile {
     float age = 0.0f;
     float lifetime = 1.0f;
     float initialLifetime = 1.0f;
+    float altitude = 0.0f;
+    float arcHeight = 0.0f;
     float trailTimer = 0.0f;
+    bool ballistic = false;
     bool piercesTargets = false;
     bool previewTargetHit = false;
     int visualVariant = 0;

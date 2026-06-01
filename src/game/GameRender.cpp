@@ -5092,13 +5092,13 @@ void Game::renderAstralResultScreen(Renderer& renderer) const
         return;
     }
 
-    const char* resultText = "記録なし";
+    std::string resultText = "記録なし";
     switch (astralResult_.result) {
     case AstralRunResult::Returned:
         resultText = "帰還成功";
         break;
     case AstralRunResult::Died:
-        resultText = "死亡";
+        resultText = astralResult_.deathCauseText.empty() ? "死亡" : astralResult_.deathCauseText;
         break;
     case AstralRunResult::DragonDefeated:
         resultText = "星脈竜撃破";
@@ -5115,7 +5115,7 @@ void Game::renderAstralResultScreen(Renderer& renderer) const
     char buffer[192];
     float y = panel.pos.y + 128.0f;
     const float lineStep = 34.0f;
-    std::snprintf(buffer, sizeof(buffer), "結果      %s", resultText);
+    std::snprintf(buffer, sizeof(buffer), "結果      %s", resultText.c_str());
     renderer.drawText(panel.pos + Vec2{136.0f, y}, buffer, {255, 230, 150, 255}, 2);
     y += lineStep;
     std::snprintf(buffer, sizeof(buffer), "到達深度  深度 %d/%d   到達距離 %d",

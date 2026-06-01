@@ -119,6 +119,15 @@ constexpr std::string_view EnemyHealBehaviorId = "enemy_heal";
 constexpr std::string_view EnemyHealAnimationId = "heal_slug_hop";
 constexpr float EnemyHealActionDurationSeconds = 0.58f;
 constexpr float EnemyHealActionFireAtSeconds = 0.30f;
+constexpr std::string_view ChestBiteBehaviorId = "chest_bite";
+constexpr std::string_view ChestBiteAnimationId = "mimic_bite_lunge";
+constexpr float ChestBiteActionDurationSeconds = 0.42f;
+constexpr float ChestBiteActionFireAtSeconds = 0.28f;
+constexpr float ChestBiteDefaultIntervalSeconds = 1.5f;
+constexpr float ChestBiteDefaultTriggerRange = 86.0f;
+constexpr float ChestBiteDefaultJumpDistance = 74.0f;
+constexpr float ChestBiteDefaultJumpDurationSeconds = 0.22f;
+constexpr float ChestBiteDefaultJumpArcHeight = 22.0f;
 constexpr float CapturedRewardChanceEnemy = 0.10f;
 constexpr float CapturedStealChanceEnemy = 0.12f;
 constexpr float CapturedRewardCooldown = 0.80f;
@@ -150,9 +159,10 @@ constexpr float WindLightEnemyPushSpeed = 58.0f;
 constexpr int WindLightEnemyLimit = 5;
 constexpr std::size_t MaxEnemyWindPulses = 16;
 constexpr float WindBlowDefaultRadiusTiles = 4.0f;
-constexpr float WindBlowDefaultDurationSeconds = 3.0f;
+constexpr float WindBlowDefaultDurationSeconds = 3.5f;
 constexpr float WindBlowPlayerPushSpeed = 16.0f;
 constexpr float WindBlowEnemyPushSpeed = 28.0f;
+constexpr float ExplosionRadiusScale = 1.5f;
 constexpr double HotAirStatusDurationSeconds = 12.0;
 constexpr float DefaultVisionDistance = 120.0f;
 constexpr float DefaultVisionAngle = 100.0f;
@@ -420,7 +430,7 @@ int applyDefenseModifier(const EntityStatus& status, int damage)
         return 0;
     }
 
-    const double defense = std::max(0.05, status.multiplierFor(ModifierStat::Defense));
+    const double defense = std::max(0.05, status.multiplierFor(ModifierStat::Defense) * status.defenseMultiplierFromStates());
     return std::max(0, static_cast<int>(std::ceil(static_cast<double>(damage) / defense)));
 }
 
@@ -815,6 +825,9 @@ EnemyActionProfile defaultRangedActionProfile(std::string_view behaviorId)
     if (behaviorId == "radial_spike") {
         return {"radial_spike_squash", 0.46f, 0.17f, true, true};
     }
+    if (behaviorId == "shoot_poison") {
+        return {"poison_frog_spit_squash", 0.66f, 0.42f, true, true};
+    }
     return {};
 }
 
@@ -873,6 +886,14 @@ EnemyActionProfile healActionProfileFor(const Enemy& enemy)
         enemy,
         EnemyHealBehaviorId,
         {std::string(EnemyHealAnimationId), EnemyHealActionDurationSeconds, EnemyHealActionFireAtSeconds, true, true});
+}
+
+EnemyActionProfile chestBiteActionProfileFor(const Enemy& enemy)
+{
+    return applyBehaviorActionParams(
+        enemy,
+        ChestBiteBehaviorId,
+        {std::string(ChestBiteAnimationId), ChestBiteActionDurationSeconds, ChestBiteActionFireAtSeconds, true, true});
 }
 
 bool hasActionProfile(const EnemyActionProfile& profile)
@@ -1475,6 +1496,7 @@ std::string visualEffectIdFor(const std::vector<EffectSpec>& specs, std::string_
             if (effect == "status_poison" || effect == "status_poison_chance" ||
                 effect == "status_slow" || effect == "status_slow_chance" ||
                 effect == "status_glued" ||
+                effect == "status_defense_down" || effect == "debuff_defense" ||
                 effect == "status_paralyze" || effect == "status_paralyze_chance" ||
                 effect == "status_bleed" || effect == "status_bleed_chance" ||
                 effect == "status_sleep" || effect == "status_sleep_chance" ||
@@ -2301,12 +2323,14 @@ void dispatchCapturedContactEffect(
         effectDispatcher.dispatch({slow}, context);
     }
 
-    if (item.hasCapturedBehavior("rust_debuff") && !effectSpecsContain(object.orbitEffects, "debuff_defense")) {
+    if (item.hasCapturedBehavior("rust_debuff") &&
+        !effectSpecsContain(object.orbitEffects, "status_defense_down") &&
+        !effectSpecsContain(object.orbitEffects, "debuff_defense")) {
         const double defenseMultiplier = clamp(item.capturedBehaviorParamDouble("rust_debuff", "defenseMultiplier", 0.8), 0.05, 1.0);
         const double debuffDuration = std::max(0.1, item.capturedBehaviorParamDouble("rust_debuff", "duration", 4.0));
         EffectSpec rust;
         rust.target = "enemy";
-        rust.effects = {"debuff_defense"};
+        rust.effects = {"status_defense_down"};
         rust.values = {defenseMultiplier};
         rust.duration = debuffDuration;
         effectDispatcher.dispatch({rust}, context);
@@ -4870,6 +4894,12 @@ void EnemySystem::applyDefinition(Enemy& enemy, const EnemyDefinition* definitio
     enemy.contactDamageType = "blunt";
     enemy.facingAngle = 0.0f;
     enemy.contactDamageMultiplier = 1.0f;
+    enemy.chestBiteIntervalSeconds = 0.0f;
+    enemy.chestBiteTimer = 0.0f;
+    enemy.chestBiteTriggerRange = 0.0f;
+    enemy.chestBiteJumpDistance = 0.0f;
+    enemy.chestBiteJumpDurationSeconds = 0.0f;
+    enemy.chestBiteJumpArcHeight = 0.0f;
     enemy.frontGuardArcDegrees = 140.0f;
     enemy.frontGuardDamageMultiplier = 0.35f;
     enemy.physicalDamageMultiplier = 0.55f;
@@ -5038,6 +5068,24 @@ void EnemySystem::applyDefinition(Enemy& enemy, const EnemyDefinition* definitio
         const double biteMultiplier = behaviorParamDouble(enemy, "chest_bite", "damageMultiplier", 1.4);
         enemy.contactDamageMultiplier *= static_cast<float>(std::max(0.0, biteMultiplier));
         enemy.chestBiteKnockback = static_cast<float>(std::max(0.0, behaviorParamDouble(enemy, "chest_bite", "knockback", 52.0)));
+        const EnemyBehaviorSpec* spec = findEnemyBehaviorSpec(enemy, "chest_bite");
+        enemy.chestBiteIntervalSeconds = static_cast<float>(std::max(
+            0.2,
+            spec != nullptr && spec->intervalSeconds > 0.0 ? spec->intervalSeconds : static_cast<double>(ChestBiteDefaultIntervalSeconds)));
+        enemy.chestBiteTimer = enemy.chestBiteIntervalSeconds * 0.45f;
+        enemy.chestBiteTriggerRange = static_cast<float>(std::max(
+            18.0,
+            behaviorParamDouble(enemy, "chest_bite", "range", ChestBiteDefaultTriggerRange)));
+        enemy.chestBiteJumpDistance = static_cast<float>(std::max(
+            JumpTargetMinDistance,
+            behaviorParamDouble(enemy, "chest_bite", "jumpDistance", ChestBiteDefaultJumpDistance)));
+        enemy.chestBiteJumpDurationSeconds = static_cast<float>(std::clamp(
+            behaviorParamDouble(enemy, "chest_bite", "jumpDuration", ChestBiteDefaultJumpDurationSeconds),
+            static_cast<double>(JumpAttackDurationMin),
+            static_cast<double>(JumpAttackDurationMax)));
+        enemy.chestBiteJumpArcHeight = static_cast<float>(std::max(
+            0.0,
+            behaviorParamDouble(enemy, "chest_bite", "jumpHeight", ChestBiteDefaultJumpArcHeight)));
     }
     if (hasBehavior(enemy, "front_guard")) {
         enemy.frontGuardArcDegrees = static_cast<float>(clamp(behaviorParamDouble(enemy, "front_guard", "arc", 140.0), 10.0, 360.0));
@@ -5254,7 +5302,7 @@ void EnemySystem::applyDefinition(Enemy& enemy, const EnemyDefinition* definitio
                     "shoot_bubble",
                     "shotInterval",
                     behaviorParamDouble(enemy, "shoot_bubble", "burstInterval", 0.11))));
-            enemy.fireSpreadDegrees = static_cast<float>(std::max(0.0, behaviorParamDouble(enemy, "shoot_bubble", "spread", 20.0)));
+            enemy.fireSpreadDegrees = static_cast<float>(std::max(0.0, behaviorParamDouble(enemy, "shoot_bubble", "spread", 14.0)));
             enemy.projectileRadiusScale = static_cast<float>(std::max(0.2, behaviorParamDouble(enemy, "shoot_bubble", "scale", 1.0)));
             const int overrideDamage = behaviorParamInt(enemy, "shoot_bubble", "damage", NoDamageOverride);
             if (overrideDamage != NoDamageOverride) {
@@ -5273,7 +5321,7 @@ void EnemySystem::applyDefinition(Enemy& enemy, const EnemyDefinition* definitio
                     "shoot_water_bubble",
                     "bubbleInterval",
                     behaviorParamDouble(enemy, "shoot_water_bubble", "burstInterval", 0.10))));
-            enemy.fireSpreadDegrees = static_cast<float>(std::max(0.0, behaviorParamDouble(enemy, "shoot_water_bubble", "bubbleSpread", 18.0)));
+            enemy.fireSpreadDegrees = static_cast<float>(std::max(0.0, behaviorParamDouble(enemy, "shoot_water_bubble", "bubbleSpread", 12.0)));
             enemy.projectileRadiusScale = static_cast<float>(std::max(0.2, behaviorParamDouble(enemy, "shoot_water_bubble", "scale", 1.0)));
             const int overrideDamage = behaviorParamInt(enemy, "shoot_water_bubble", "damage", NoDamageOverride);
             if (overrideDamage != NoDamageOverride) {
@@ -6123,23 +6171,52 @@ Vec2 EnemySystem::fleeDirectionFor(TileMap& map, const Enemy& enemy, Vec2 player
     auto index = [&](int tx, int ty) {
         return (ty - flowMinY_) * flowWidth_ + (tx - flowMinX_);
     };
+    auto clearanceForDirection = [&](Vec2 direction) {
+        if (lengthSquared(direction) <= 0.0001f) {
+            return 0.0f;
+        }
+        const Vec2 normalized = normalize(direction);
+        float clearance = 0.0f;
+        constexpr std::array<float, 4> ProbeDistances{{0.45f, 0.80f, 1.15f, 1.50f}};
+        for (float probe : ProbeDistances) {
+            const Vec2 target = enemy.position + normalized * (radius + static_cast<float>(balance::TileSize) * probe);
+            if (map.isCircleBlocked(target, radius)) {
+                break;
+            }
+            clearance += 1.0f;
+        }
+        return clearance;
+    };
 
     Vec2 bestDirection{};
     float bestScore = -1.0e9f;
+    auto considerDirection = [&](Vec2 direction, int distanceScore, float pathWeight) {
+        if (lengthSquared(direction) <= 0.0001f) {
+            return;
+        }
+        direction = normalize(direction);
+        const float clearance = clearanceForDirection(direction);
+        if (clearance <= 0.0f) {
+            return;
+        }
+        const Vec2 lateral{-away.y, away.x};
+        const float score =
+            static_cast<float>(distanceScore) * pathWeight +
+            dot(direction, away) * 12.0f +
+            dot(direction, jitter) * 4.0f +
+            std::abs(dot(direction, lateral)) * 3.5f +
+            clearance * 8.0f;
+        if (score > bestScore) {
+            bestScore = score;
+            bestDirection = direction;
+        }
+    };
     auto considerTarget = [&](Vec2 target, int distanceScore, float pathWeight) {
         const Vec2 candidate = target - enemy.position;
         if (lengthSquared(candidate) <= 0.0001f || map.isCircleBlocked(target, radius)) {
             return;
         }
-        const Vec2 direction = normalize(candidate);
-        const float score =
-            static_cast<float>(distanceScore) * pathWeight +
-            dot(direction, away) * 18.0f +
-            dot(direction, jitter) * 5.0f;
-        if (score > bestScore) {
-            bestScore = score;
-            bestDirection = direction;
-        }
+        considerDirection(candidate, distanceScore, pathWeight);
     };
 
     if (!flowDistance_.empty() && inBounds(enemyTileX, enemyTileY)) {
@@ -6169,6 +6246,16 @@ Vec2 EnemySystem::fleeDirectionFor(TileMap& map, const Enemy& enemy, Vec2 player
             map.tileCenter(enemyTileX + step.dx, enemyTileY + step.dy),
             0,
             0.0f);
+    }
+
+    const float baseAngle = std::atan2(away.y, away.x);
+    for (int i = 0; i < 16; ++i) {
+        const float offset = (-0.5f + static_cast<float>(i) / 15.0f) * Pi * 1.45f;
+        considerDirection(fromAngle(baseAngle + offset), 0, 0.0f);
+    }
+    if (lengthSquared(jitter) > 0.0001f) {
+        considerDirection(normalize(away + jitter * 0.8f), 0, 0.0f);
+        considerDirection(normalize(away - jitter * 0.8f), 0, 0.0f);
     }
 
     return lengthSquared(bestDirection) > 0.0001f ? bestDirection : away;
@@ -6286,13 +6373,11 @@ bool fireEnemyProjectile(Enemy& enemy, ProjectileSystem& projectiles, Vec2 playe
             1,
             bubbleCount);
         const int shotIndex = bubbleCount - remaining;
-        const float t = bubbleCount > 1
-            ? (static_cast<float>(shotIndex) / static_cast<float>(bubbleCount - 1) - 0.5f)
-            : 0.0f;
         const float spreadRadians = clamp(enemy.fireSpreadDegrees, 0.0f, 42.0f) * (Pi / 180.0f);
         const float baseAngle = std::atan2(toPlayer.y, toPlayer.x);
-        std::uniform_real_distribution<float> jitter(-0.025f, 0.025f);
-        const Vec2 dir = fromAngle(baseAngle + t * spreadRadians + jitter(rng));
+        std::uniform_real_distribution<float> spreadDist(-spreadRadians * 0.5f, spreadRadians * 0.5f);
+        std::uniform_real_distribution<float> jitter(-0.018f, 0.018f);
+        const Vec2 dir = fromAngle(baseAngle + spreadDist(rng) + jitter(rng));
         ProjectileSpawnTuning bubbleTuning = tuning;
         bubbleTuning.speedMultiplier *= std::uniform_real_distribution<float>(0.94f, 1.06f)(rng);
         bubbleTuning.radiusScale *= std::uniform_real_distribution<float>(0.96f, 1.04f)(rng);
@@ -6386,26 +6471,36 @@ bool beginEnemyHealAction(Enemy& enemy)
     return true;
 }
 
+bool beginEnemyChestBiteAction(Enemy& enemy)
+{
+    const EnemyActionProfile profile = chestBiteActionProfileFor(enemy);
+    if (!hasActionProfile(profile)) {
+        return false;
+    }
+
+    beginEnemyAction(enemy, ChestBiteBehaviorId, profile);
+    enemy.chestBiteTimer = std::max(0.2f, enemy.chestBiteIntervalSeconds);
+    return true;
+}
+
 struct EnemyActionUpdateResult {
     bool fired = false;
     bool finished = false;
     float completedDurationSeconds = 0.0f;
 };
 
-EnemyActionUpdateResult updateEnemyRangedAction(
+EnemyActionUpdateResult updateEnemyTimedAction(
     Enemy& enemy,
-    TileMap& map,
-    Vec2 playerPosition,
-    float distanceToPlayer,
     float dt,
-    bool attackBlocked)
+    bool attackBlocked,
+    std::string_view behaviorId)
 {
     EnemyActionUpdateResult result;
     if (!enemy.action.active) {
         return result;
     }
 
-    if (enemy.action.behaviorId != enemy.rangedBehaviorId) {
+    if (std::string_view(enemy.action.behaviorId) != behaviorId) {
         return result;
     }
 
@@ -6423,15 +6518,28 @@ EnemyActionUpdateResult updateEnemyRangedAction(
         previousElapsed <= enemy.action.fireAtSeconds &&
         enemy.action.elapsedSeconds >= enemy.action.fireAtSeconds) {
         enemy.action.fired = true;
-        if (canFireEnemyProjectile(enemy, map, distanceToPlayer, playerPosition)) {
-            result.fired = true;
-        }
+        result.fired = true;
     }
 
     if (enemy.action.elapsedSeconds >= enemy.action.durationSeconds) {
         result.completedDurationSeconds = std::max(0.0f, enemy.action.durationSeconds);
         clearEnemyAction(enemy);
         result.finished = true;
+    }
+    return result;
+}
+
+EnemyActionUpdateResult updateEnemyRangedAction(
+    Enemy& enemy,
+    TileMap& map,
+    Vec2 playerPosition,
+    float distanceToPlayer,
+    float dt,
+    bool attackBlocked)
+{
+    EnemyActionUpdateResult result = updateEnemyTimedAction(enemy, dt, attackBlocked, enemy.rangedBehaviorId);
+    if (result.fired && !canFireEnemyProjectile(enemy, map, distanceToPlayer, playerPosition)) {
+        result.fired = false;
     }
     return result;
 }
@@ -6443,35 +6551,53 @@ EnemyActionUpdateResult updateEnemyHealAction(
     float dt,
     bool attackBlocked)
 {
-    EnemyActionUpdateResult result;
-    if (!enemy.action.active || std::string_view(enemy.action.behaviorId) != EnemyHealBehaviorId) {
-        return result;
-    }
+    EnemyActionUpdateResult result = updateEnemyTimedAction(enemy, dt, attackBlocked, EnemyHealBehaviorId);
 
-    if (attackBlocked) {
-        clearEnemyAction(enemy);
-        return result;
-    }
-
-    const float previousElapsed = enemy.action.elapsedSeconds;
-    enemy.action.elapsedSeconds = std::min(
-        std::max(0.0f, enemy.action.durationSeconds),
-        enemy.action.elapsedSeconds + std::max(0.0f, dt));
-
-    if (!enemy.action.fired &&
-        previousElapsed <= enemy.action.fireAtSeconds &&
-        enemy.action.elapsedSeconds >= enemy.action.fireAtSeconds) {
-        enemy.action.fired = true;
+    if (result.fired) {
         if (applyEnemyHealPulse(enemy, enemies, events)) {
             result.fired = true;
+        } else {
+            result.fired = false;
         }
     }
+    return result;
+}
 
-    if (enemy.action.elapsedSeconds >= enemy.action.durationSeconds) {
-        result.completedDurationSeconds = std::max(0.0f, enemy.action.durationSeconds);
-        clearEnemyAction(enemy);
-        result.finished = true;
+EnemyActionUpdateResult updateEnemyChestBiteAction(
+    Enemy& enemy,
+    TileMap& map,
+    Vec2 playerPosition,
+    float distanceToPlayer,
+    float dt,
+    bool attackBlocked,
+    std::vector<EnemyEvent>& events)
+{
+    EnemyActionUpdateResult result = updateEnemyTimedAction(enemy, dt, attackBlocked, ChestBiteBehaviorId);
+    if (!result.fired) {
+        return result;
     }
+
+    const Vec2 toPlayer = playerPosition - enemy.position;
+    if (lengthSquared(toPlayer) <= 0.0001f) {
+        result.fired = false;
+        return result;
+    }
+
+    const float lungeDistance = std::max(
+        JumpTargetMinDistance,
+        std::min(enemy.chestBiteJumpDistance, distanceToPlayer + 8.0f));
+    if (beginEnemyJump(
+            enemy,
+            map,
+            normalize(toPlayer),
+            lungeDistance,
+            enemy.chestBiteJumpDurationSeconds,
+            enemy.chestBiteJumpArcHeight)) {
+        events.push_back(makeEnemyEvent(EnemyEventType::Attack, enemy, "chest_bite_lunge"));
+        return result;
+    }
+
+    result.fired = false;
     return result;
 }
 
@@ -6929,6 +7055,7 @@ void EnemySystem::update(
 
         enemy.aiDecisionTimer = std::max(0.0f, enemy.aiDecisionTimer - dt);
         enemy.aiDigTimer = std::max(0.0f, enemy.aiDigTimer - dt);
+        enemy.chestBiteTimer = std::max(0.0f, enemy.chestBiteTimer - dt);
         const std::string_view aiId = enemy.awareness == EnemyAwarenessState::Detected
             ? (enemy.aiId.empty() ? std::string_view("chase") : std::string_view(enemy.aiId))
             : (enemy.unawareAiId.empty() ? std::string_view("idle") : std::string_view(enemy.unawareAiId));
@@ -6983,6 +7110,27 @@ void EnemySystem::update(
                 0.0f,
                 enemy.enemyHealIntervalSeconds - healActionResult.completedDurationSeconds);
         }
+        updateEnemyChestBiteAction(
+            enemy,
+            map,
+            player.position,
+            distanceToPlayer,
+            dt,
+            attackBlocked,
+            events_);
+        if (!enemy.action.active &&
+            !enemy.jumpActive &&
+            !attackBlocked &&
+            enemy.awareness == EnemyAwarenessState::Detected &&
+            hasBehavior(enemy, ChestBiteBehaviorId) &&
+            enemy.chestBiteTimer <= 0.0f &&
+            distanceToPlayer > enemyRadius + playerRadius + 2.0f &&
+            distanceToPlayer <= std::max(enemyRadius + playerRadius + 8.0f, enemy.chestBiteTriggerRange) &&
+            lengthSquared(directToPlayer) > 0.0001f &&
+            hasClearSightLine(map, enemy.position, player.position)) {
+            enemy.facingAngle = std::atan2(directToPlayer.y, directToPlayer.x);
+            beginEnemyChestBiteAction(enemy);
+        }
         const bool actionLocksMovement = enemy.action.active && enemy.action.lockMovement;
         if (enemy.stealItemEnabled &&
             carriedCount() < std::max(1, enemy.stealMaxCarry) &&
@@ -7030,11 +7178,12 @@ void EnemySystem::update(
         const auto chooseFleeDirection = [&]() {
             if (enemy.aiDecisionTimer <= 0.0f || lengthSquared(enemy.aiMoveDirection) <= 0.0001f) {
                 enemy.aiMoveDirection = randomDirection(rng_);
-                std::uniform_real_distribution<float> retarget(0.18f, 0.42f);
+                std::uniform_real_distribution<float> retarget(0.14f, 0.32f);
                 enemy.aiDecisionTimer = retarget(rng_);
             }
             return fleeDirectionFor(map, enemy, player.position, enemy.aiMoveDirection);
         };
+        bool stealEscaping = false;
         if (aiId == "idle" || aiId == "stationary") {
             direction = {};
         } else if (aiId == "buried") {
@@ -7144,6 +7293,7 @@ void EnemySystem::update(
         }
         if (enemy.stealItemEnabled && carriedCount() > 0 && distanceToPlayer < enemy.stealEscapeDistance) {
             direction = chooseFleeDirection();
+            stealEscaping = true;
         }
         if (confused) {
             if (enemy.aiDecisionTimer <= 0.0f || lengthSquared(enemy.aiMoveDirection) <= 0.0001f) {
@@ -7289,7 +7439,10 @@ void EnemySystem::update(
         }
 
         const bool actionLocksFacing = enemy.action.active && enemy.action.lockFacing;
-        if (!actionLocksFacing && !confused && enemy.awareness == EnemyAwarenessState::Detected && lengthSquared(toPlayer) > 0.0001f && aiId != "shield_chase") {
+        const bool faceMovementDirection = aiId == "flee" || stealEscaping;
+        if (!actionLocksFacing && faceMovementDirection && lengthSquared(enemy.velocity) > 0.0001f) {
+            enemy.facingAngle = std::atan2(enemy.velocity.y, enemy.velocity.x);
+        } else if (!actionLocksFacing && !confused && enemy.awareness == EnemyAwarenessState::Detected && lengthSquared(toPlayer) > 0.0001f && aiId != "shield_chase") {
             enemy.facingAngle = std::atan2(toPlayer.y, toPlayer.x);
         } else if (!actionLocksFacing && (confused || (aiId != "stationary" && aiId != "idle" && aiId != "buried")) && lengthSquared(enemy.velocity) > 0.0001f) {
             enemy.facingAngle = std::atan2(enemy.velocity.y, enemy.velocity.x);
@@ -7386,7 +7539,7 @@ void EnemySystem::update(
                     }
                 }
                 if (enemy.countdownExplodeDelay <= 0.0f) {
-                    const float radius = std::max(8.0f, enemy.countdownExplodeRadius);
+                    const float radius = std::max(8.0f, enemy.countdownExplodeRadius * ExplosionRadiusScale);
                     const float playerExplosionRadius = radius + playerRadius;
                     if (enemy.countdownExplodeDamage > 0 &&
                         distanceSquared(player.position, enemy.position) <= playerExplosionRadius * playerExplosionRadius) {
@@ -7478,14 +7631,18 @@ void EnemySystem::update(
                         .actorName = enemyDisplayName(enemy),
                     });
                 if (hasBehavior(enemy, "rust_touch")) {
-                    player.status.applyModifier(
-                        "rust_touch",
-                        ModifierStat::Defense,
+                    const EntityStateApplyResult rustResult = player.status.applyState(
+                        "status_defense_down",
                         clamp(enemy.rustDefenseMultiplier, 0.05f, 1.0f),
-                        0.0,
                         std::max(0.1f, enemy.rustDurationSeconds),
                         "enemy:rust_touch:" + enemy.enemyId,
                         StateApplyMode::KeepLonger);
+                    queueStatusPopupEvent(
+                        statusPopupEvents_,
+                        player.position,
+                        "status_defense_down",
+                        StatusPopupTarget::Player,
+                        rustResult);
                 }
                 if (hasBehavior(enemy, "ring_slow_bite")) {
                     spellRing.applyEnemyOrbitSpeedDebuff(
