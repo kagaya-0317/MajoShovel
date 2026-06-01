@@ -546,6 +546,12 @@ bool autoTextForEffectCode(
         outText = "壊れると水をまき散らし、周囲の敵を濡らす";
         return true;
     }
+    if (effectCode == "water_shot_emitter") {
+        outText = duration > 0.0
+            ? "一定間隔で外側へ水弾を放ち、当たった敵を水濡れにする（" + formatDiscoveryNumber(duration) + "秒）"
+            : "一定間隔で外側へ水弾を放ち、当たった敵を水濡れにする";
+        return true;
+    }
     if (effectCode == "hot_air") {
         outText = "回転中に熱気を出し、周囲の敵を熱々にする";
         return true;

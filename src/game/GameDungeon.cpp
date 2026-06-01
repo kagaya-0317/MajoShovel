@@ -74,6 +74,7 @@ constexpr std::string_view AudioSeExplosionTick = "se.explosion.tick";
 constexpr std::string_view AudioSeFootstepBaseOutdoor = "se.footstep.base_outdoor";
 constexpr std::string_view AudioSeFootstepHomeInterior = "se.footstep.home";
 constexpr std::string_view AudioSeFootstepDungeon = "se.footstep.dungeon";
+constexpr std::string_view WaterShotEmitterProjectileId = "water_shot";
 constexpr std::string_view DigToolFailsafeShovelObjectId = "item_shovel";
 constexpr std::string_view DigToolFailsafeDigCategory = "\xE6\x8E\x98\xE5\x89\x8A";
 constexpr float CaptureAbsorbDurationSeconds = 0.78f;
@@ -1422,6 +1423,18 @@ void appendObjectEffectDiscovery(
     });
 }
 
+std::vector<EffectSpec> waterShotEmitterEffects(float wetDuration)
+{
+    EffectSpec spec;
+    spec.target = "enemy";
+    spec.effects.emplace_back("status_wet");
+    spec.values.push_back(1.0);
+    spec.duration = static_cast<double>(std::max(0.1f, wetDuration));
+    std::vector<EffectSpec> effects;
+    effects.push_back(std::move(spec));
+    return effects;
+}
+
 void reserveLayoutAnchors(PlacementReservations& reservations, const DungeonLayout& layout)
 {
     reservations.reserve(layout.startTile, StartReservationRadiusTiles);
@@ -1968,6 +1981,8 @@ void Game::refreshOrbitEffects()
         item.windPushStrength = 0.0f;
         item.conductWaterPuddleRadius = 0.0f;
         item.conductWaterPuddleStrength = 0.0f;
+        item.waterShotInterval = 0.0f;
+        item.waterShotWetDuration = 0.0f;
         item.dryWetBonusDamage = 0;
         if (item.broken()) {
             continue;
@@ -8235,6 +8250,49 @@ void Game::updateOrbitAreaEffects(float dt, std::vector<EffectDiscoveryEvent>& d
         const ObjectDefinition* object = item.objectId.empty()
             ? nullptr
             : objectCatalog_.registry.findById(item.objectId);
+
+        if (item.waterShotInterval > 0.0f && item.waterShotWetDuration > 0.0f) {
+            item.waterShotTimer = std::max(0.0f, item.waterShotTimer - dt);
+            if (item.waterShotTimer <= 0.0f) {
+                if (projectiles_.activeCount(ProjectileOwnerType::PlayerOrbit) >= MaxPlayerOrbitProjectiles) {
+                    item.waterShotTimer = CapturedProjectileRetryInterval;
+                } else {
+                    const Vec2 direction = lengthSquared(item.orbitOutward) > 0.0001f
+                        ? normalize(item.orbitOutward)
+                        : Vec2{1.0f, 0.0f};
+                    const Vec2 origin = item.worldPosition + direction * (item.hitRadius + 5.0f);
+                    ProjectileSpawnTuning tuning;
+                    tuning.damageOverride = 0;
+                    const bool spawned = projectiles_.spawn(
+                        WaterShotEmitterProjectileId,
+                        origin,
+                        direction,
+                        ProjectileOwnerType::PlayerOrbit,
+                        waterShotEmitterEffects(item.waterShotWetDuration),
+                        tuning);
+                    if (spawned) {
+                        effects_.spawnMagicCast(
+                            origin,
+                            direction,
+                            particleElementForProjectile(WaterShotEmitterProjectileId),
+                            8.0f);
+                        item.waterShotTimer = item.waterShotInterval;
+                        if (object != nullptr) {
+                            appendObjectEffectDiscovery(
+                                &discoveryEvents,
+                                encyclopedia_,
+                                *object,
+                                "water_shot_emitter",
+                                item.worldPosition);
+                        }
+                    } else {
+                        item.waterShotTimer = CapturedProjectileRetryInterval;
+                    }
+                }
+            }
+        } else {
+            item.waterShotTimer = 0.0f;
+        }
 
         if (item.vacuumPullRadius > 0.0f && item.vacuumPullStrength > 0.0f) {
             const int pulledDrops = worldDrops_.pullLightDrops(

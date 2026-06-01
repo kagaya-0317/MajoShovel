@@ -639,6 +639,16 @@ void applyAreaInvocation(const EffectInvocation& invocation)
         invocation.context->orbitItem->conductWaterPuddleStrength += static_cast<float>(std::max(1.0, invocation.value));
         return;
     }
+    if (invocation.effect == "water_shot_emitter") {
+        SpellRingItem& item = *invocation.context->orbitItem;
+        const float interval = static_cast<float>(std::max(0.1, invocation.value > 0.0 ? invocation.value : 1.0));
+        const float wetDuration = static_cast<float>(std::max(0.1, invocation.duration > 0.0 ? invocation.duration : 4.0));
+        if (item.waterShotInterval <= 0.0f || interval < item.waterShotInterval) {
+            item.waterShotInterval = interval;
+        }
+        item.waterShotWetDuration = std::max(item.waterShotWetDuration, wetDuration);
+        return;
+    }
 }
 
 void applyGroundInvocation(const EffectInvocation& invocation)
@@ -857,7 +867,7 @@ void EffectDispatcher::registerFoundationHandlers(const ObjectCatalog& catalog)
         }
     }
 
-    for (std::string_view effect : {"light", "detect_hidden", "detect_treasure", "detect", "cold_air_aura", "vacuum_pull_light", "hot_air", "wind_push_light", "conduct_water_puddle"}) {
+    for (std::string_view effect : {"light", "detect_hidden", "detect_treasure", "detect", "cold_air_aura", "vacuum_pull_light", "hot_air", "wind_push_light", "conduct_water_puddle", "water_shot_emitter"}) {
         if (catalog.effectCodes.find(std::string(effect)) != catalog.effectCodes.end()) {
             registerHandler(std::string(effect), applyAreaInvocation);
         }
