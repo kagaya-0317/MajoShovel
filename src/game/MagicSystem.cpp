@@ -250,7 +250,7 @@ void MagicSystem::setFxSystem(MagicFxSystem* magicFx)
     magicFx_ = magicFx;
 }
 
-void MagicSystem::cast(
+bool MagicSystem::cast(
     MagicElement element,
     Vec2 origin,
     Vec2 direction,
@@ -262,7 +262,7 @@ void MagicSystem::cast(
     power = std::max(1, power);
     if (sourceItem != nullptr) {
         if (sourceItem->magicCastCooldownTimer > 0.0f) {
-            return;
+            return false;
         }
         sourceItem->magicAuraDamageType = std::string(magicElementDamageType(element));
         sourceItem->magicAuraTimer = std::max(sourceItem->magicAuraTimer, magicAuraSeconds(element));
@@ -286,20 +286,21 @@ void MagicSystem::cast(
     switch (element) {
     case MagicElement::Fire:
         castFire(origin, direction, power);
-        return;
+        return true;
     case MagicElement::Ice:
         castIce(origin, direction, power);
-        return;
+        return true;
     case MagicElement::Thunder:
         castThunder(origin, power);
-        return;
+        return true;
     case MagicElement::Wind:
         castWind(origin, direction, power);
-        return;
+        return true;
     case MagicElement::Earth:
         castEarth(origin, direction, power);
-        return;
+        return true;
     }
+    return false;
 }
 
 void MagicSystem::update(Player&, SpellRingSystem& spellRing, EnemySystem& enemies, TileMap& map, float dt)

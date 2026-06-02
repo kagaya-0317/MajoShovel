@@ -1110,6 +1110,8 @@ void Game::resetWorldUiState()
     baseUpgradeActive_ = false;
     baseUpgradeSelection_ = 0;
     baseUpgradeTabs_ = {};
+    dungeonMapOverlayOpen_ = false;
+    dungeonMapOverlayScroll_ = {};
     baseProcessingUiMode_ = ProcessingUiMode::Closed;
     baseProcessingActionSelection_ = 0;
     baseProcessingMode_ = 0;
@@ -1576,6 +1578,8 @@ void Game::enterBase()
     baseMerchantBuyCommandIndex_ = -1;
     baseUpgradeActive_ = false;
     baseUpgradeTabs_ = {};
+    dungeonMapOverlayOpen_ = false;
+    dungeonMapOverlayScroll_ = {};
     baseProcessingUiMode_ = ProcessingUiMode::Closed;
     baseProcessingActionSelection_ = 0;
     closeUiCommandMenu(baseProcessingCommandMenu_);
@@ -3296,6 +3300,92 @@ void Game::updateScreenMode(
         if (updateDungeonEventNpcInteraction(input, ui)) {
             return;
         }
+        if (dungeonMapOverlayOpen_) {
+            const UiRect mapPanel = dungeonMapOverlayPanelRect();
+            if (dungeonEventUiSuppressed() || input.pausePressed() ||
+                uiCancelRequested(pauseCancelState_, input, ui, mapPanel)) {
+                dungeonMapOverlayOpen_ = false;
+                dungeonMapOverlayScrollbarDragAxis_ = 0;
+                dungeonMapOverlayScrollbarDragOffset_ = 0.0f;
+                ui.emitSound(UiSoundEvent::Cancel);
+            }
+            const Vec2 maxScroll = dungeonMapOverlayMaxScroll();
+            if (input.mouseLeftReleased()) {
+                dungeonMapOverlayScrollbarDragAxis_ = 0;
+                dungeonMapOverlayScrollbarDragOffset_ = 0.0f;
+            }
+            if (dungeonMapOverlayScrollbarDragAxis_ != 0 && input.mouseLeftHeld()) {
+                if (dungeonMapOverlayScrollbarDragAxis_ == 1 && maxScroll.y > 0.0f) {
+                    const UiRect track = dungeonMapOverlayVerticalScrollTrackRect();
+                    const UiRect thumb = dungeonMapOverlayVerticalScrollThumbRect();
+                    const float movable = std::max(1.0f, track.size.y - thumb.size.y);
+                    const float thumbY = std::clamp(ui.mouse().y - dungeonMapOverlayScrollbarDragOffset_, track.pos.y, track.pos.y + movable);
+                    dungeonMapOverlayScroll_.y = ((thumbY - track.pos.y) / movable) * maxScroll.y;
+                } else if (dungeonMapOverlayScrollbarDragAxis_ == 2 && maxScroll.x > 0.0f) {
+                    const UiRect track = dungeonMapOverlayHorizontalScrollTrackRect();
+                    const UiRect thumb = dungeonMapOverlayHorizontalScrollThumbRect();
+                    const float movable = std::max(1.0f, track.size.x - thumb.size.x);
+                    const float thumbX = std::clamp(ui.mouse().x - dungeonMapOverlayScrollbarDragOffset_, track.pos.x, track.pos.x + movable);
+                    dungeonMapOverlayScroll_.x = ((thumbX - track.pos.x) / movable) * maxScroll.x;
+                }
+                ui.consumePointer();
+            } else if (input.mouseLeftPressed() && !ui.pointerConsumed()) {
+                const UiRect verticalTrack = dungeonMapOverlayVerticalScrollTrackRect();
+                const UiRect verticalThumb = dungeonMapOverlayVerticalScrollThumbRect();
+                const UiRect horizontalTrack = dungeonMapOverlayHorizontalScrollTrackRect();
+                const UiRect horizontalThumb = dungeonMapOverlayHorizontalScrollThumbRect();
+                if (maxScroll.y > 0.0f && verticalTrack.contains(ui.mouse())) {
+                    dungeonMapOverlayScrollbarDragAxis_ = 1;
+                    dungeonMapOverlayScrollbarDragOffset_ = verticalThumb.contains(ui.mouse())
+                        ? ui.mouse().y - verticalThumb.pos.y
+                        : verticalThumb.size.y * 0.5f;
+                    const float movable = std::max(1.0f, verticalTrack.size.y - verticalThumb.size.y);
+                    const float thumbY = std::clamp(ui.mouse().y - dungeonMapOverlayScrollbarDragOffset_, verticalTrack.pos.y, verticalTrack.pos.y + movable);
+                    dungeonMapOverlayScroll_.y = ((thumbY - verticalTrack.pos.y) / movable) * maxScroll.y;
+                    ui.consumePointer();
+                } else if (maxScroll.x > 0.0f && horizontalTrack.contains(ui.mouse())) {
+                    dungeonMapOverlayScrollbarDragAxis_ = 2;
+                    dungeonMapOverlayScrollbarDragOffset_ = horizontalThumb.contains(ui.mouse())
+                        ? ui.mouse().x - horizontalThumb.pos.x
+                        : horizontalThumb.size.x * 0.5f;
+                    const float movable = std::max(1.0f, horizontalTrack.size.x - horizontalThumb.size.x);
+                    const float thumbX = std::clamp(ui.mouse().x - dungeonMapOverlayScrollbarDragOffset_, horizontalTrack.pos.x, horizontalTrack.pos.x + movable);
+                    dungeonMapOverlayScroll_.x = ((thumbX - horizontalTrack.pos.x) / movable) * maxScroll.x;
+                    ui.consumePointer();
+                }
+            }
+            dungeonMapOverlayScroll_.x += static_cast<float>(input.shortcutCursorDelta()) * 22.0f;
+            if (dungeonMapOverlayViewportRect().contains(ui.mouse())) {
+                dungeonMapOverlayScroll_.y += static_cast<float>(input.mouseWheelDelta()) * 42.0f;
+            }
+            if (input.pressed(InputAction::MoveLeft)) {
+                dungeonMapOverlayScroll_.x -= 42.0f;
+            }
+            if (input.pressed(InputAction::MoveRight)) {
+                dungeonMapOverlayScroll_.x += 42.0f;
+            }
+            if (input.pressed(InputAction::MoveUp)) {
+                dungeonMapOverlayScroll_.y -= 42.0f;
+            }
+            if (input.pressed(InputAction::MoveDown)) {
+                dungeonMapOverlayScroll_.y += 42.0f;
+            }
+            dungeonMapOverlayScroll_.x = std::clamp(dungeonMapOverlayScroll_.x, 0.0f, maxScroll.x);
+            dungeonMapOverlayScroll_.y = std::clamp(dungeonMapOverlayScroll_.y, 0.0f, maxScroll.y);
+            ui.block({{0.0f, 0.0f}, {static_cast<float>(camera_.width()), static_cast<float>(camera_.height())}});
+            return;
+        }
+        if (!dungeonEventUiSuppressed() &&
+            !enemyTestActive_ &&
+            !dungeonMinimapCells_.empty() &&
+            ui.pressed(dungeonMinimapRect())) {
+            dungeonMapOverlayOpen_ = true;
+            dungeonMapOverlayScroll_ = {};
+            dungeonMapOverlayScrollbarDragAxis_ = 0;
+            dungeonMapOverlayScrollbarDragOffset_ = 0.0f;
+            ui.emitSound(UiSoundEvent::BookOpen);
+            return;
+        }
         if (input.pausePressed()) {
             ui.emitSound(UiSoundEvent::MenuOpen);
             mode_ = ScreenMode::PauseMenu;
@@ -3645,7 +3735,7 @@ void Game::update(const Input& input, const Time& time)
     }
     updateRingEquipFx(time.deltaSeconds());
     refreshOrbitEffects();
-    const bool paused = gameProgressPaused() || (wasPaused && mode_ == ScreenMode::Playing);
+    const bool paused = gameProgressPaused() || dungeonMapOverlayOpen_ || (wasPaused && mode_ == ScreenMode::Playing);
     if (paused && !effectDiscoveries.empty()) {
         applyEffectDiscoveries(effectDiscoveries);
     }

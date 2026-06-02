@@ -1247,6 +1247,9 @@ private:
     int nearestWarpPointIndex(Vec2 position) const;
     Vec2 safePlayerStartPosition(Vec2 preferredPosition);
     Vec2 dungeonEntrancePosition() const;
+    UiRect dungeonInspectableRect(Vec2 center, Vec2 size) const;
+    bool dungeonInspectableInRange(Vec2 center, Vec2 size) const;
+    bool dungeonInspectableHovered(Vec2 center, Vec2 size, Vec2 worldPosition) const;
     int nearbyDiscoveredWarpPointIndex() const;
     bool updateWarpReturnUi(const Input& input, UiContext& ui);
     bool unlockAllWarpPointsForCurrentDungeon();
@@ -1277,6 +1280,10 @@ private:
     void initializeDungeonEventInstancesFromLayout();
     void updateDungeonEvents(float dt, double totalSeconds);
     void handleDungeonEventEnemyEvent(const EnemyEvent& enemyEvent);
+    DungeonEventInstance* nearbyDungeonEventNpc();
+    const DungeonEventInstance* nearbyDungeonEventNpc() const;
+    DungeonEventInstance* pointedDungeonEventNpc(Vec2 worldPosition);
+    const DungeonEventInstance* pointedDungeonEventNpc(Vec2 worldPosition) const;
     bool updateDungeonEventNpcInteraction(const Input& input, UiContext& ui);
     std::string dungeonEventNpcPromptText() const;
     bool updateDungeonEventDiscovery(float dt);
@@ -1294,6 +1301,7 @@ private:
     bool debugPlaceDungeonEvent(DungeonEventKind kind);
     void flushPendingDebugDungeonEventPlacement();
     std::string nearestDungeonEventDebugText() const;
+    bool dumpDungeonDebugState();
     void resetDungeonFocus();
     bool updateDungeonFocus(float dt);
     bool dungeonFocusActive() const;
@@ -1606,7 +1614,17 @@ private:
     void renderRingScreen(Renderer& renderer, float totalTime) const;
     void renderRingStatusHud(Renderer& renderer) const;
     void renderFirstItemAcquisitionNotice(Renderer& renderer) const;
+    UiRect dungeonMinimapRect() const;
+    UiRect dungeonMapOverlayPanelRect() const;
+    UiRect dungeonMapOverlayViewportRect() const;
+    Vec2 dungeonMapOverlayMapSize(UiRect viewport) const;
+    Vec2 dungeonMapOverlayMaxScroll() const;
+    UiRect dungeonMapOverlayVerticalScrollTrackRect() const;
+    UiRect dungeonMapOverlayVerticalScrollThumbRect() const;
+    UiRect dungeonMapOverlayHorizontalScrollTrackRect() const;
+    UiRect dungeonMapOverlayHorizontalScrollThumbRect() const;
     void renderDungeonMinimap(Renderer& renderer, const std::vector<LightSource>& itemLights) const;
+    void renderDungeonMapOverlay(Renderer& renderer, const std::vector<LightSource>& itemLights) const;
     void renderDungeonStatusHud(Renderer& renderer) const;
     void renderDungeonLogs(Renderer& renderer) const;
     void renderDungeonControlHelp(Renderer& renderer) const;
@@ -2060,6 +2078,10 @@ private:
     RetrySnapshot retrySnapshot_{};
     std::unordered_map<std::string, DungeonState> dungeonStates_;
     DungeonMinimapCells dungeonMinimapCells_;
+    bool dungeonMapOverlayOpen_ = false;
+    Vec2 dungeonMapOverlayScroll_{};
+    int dungeonMapOverlayScrollbarDragAxis_ = 0;
+    float dungeonMapOverlayScrollbarDragOffset_ = 0.0f;
     double dungeonMinimapLastRevealSeconds_ = -1.0e9;
     int dungeonMinimapLastPlayerTileX_ = std::numeric_limits<int>::min();
     int dungeonMinimapLastPlayerTileY_ = std::numeric_limits<int>::min();
@@ -2073,6 +2095,8 @@ private:
     DungeonEventSystem dungeonEvents_;
     float dungeonEventDiscoveryCooldown_ = 0.0f;
     std::optional<DungeonEventKind> pendingDebugDungeonEventPlacement_;
+    std::string hoveredDungeonEventNpcId_;
+    int hoveredChestNodeIndex_ = -1;
     int spawnedWarpPointCount_ = 0;
     Vec2 bossSpawnPoint_{};
     bool hasBossSpawnPoint_ = false;

@@ -47,9 +47,6 @@ constexpr float RareChestMimicChance = 0.08f;
 constexpr float SuperRareChestMimicChance = 0.12f;
 constexpr float AppearingChestOpenLockSeconds = 40.0f / 60.0f;
 constexpr std::string_view DungeonEntranceImagePath = "assets/kyoten/move.png";
-constexpr float DungeonEntranceImageMaxWidth = 96.0f;
-constexpr float DungeonEntranceImageMaxHeight = 124.0f;
-constexpr float DungeonWarpPointImageSize = 48.0f;
 constexpr float ChestMimicSpawnWarmupSeconds = 0.18f;
 constexpr float MicroFeatureProgressStart = 0.08f;
 constexpr float MicroFeatureProgressSpan = 0.84f;
@@ -86,14 +83,14 @@ constexpr float CaptureAbsorbFlyDelaySeconds = 0.24f;
 constexpr float CaptureAbsorbSparkIntervalSeconds = 0.045f;
 constexpr float DigToolFailsafeSpawnCooldownSeconds = 12.0f;
 constexpr float DigToolFailsafeNearbyDropRadius = 220.0f;
-constexpr float WarpReturnClickRadius = 42.0f;
+constexpr Vec2 DungeonEventNpcInspectSize{42.0f, 58.0f};
+constexpr Vec2 DungeonChestInspectSize{42.0f, 42.0f};
 constexpr float FootstepPitchSideOffset = 0.025f;
 constexpr float WetGroundPlayerRadiusMultiplier = 1.45f;
 constexpr float WetGroundPlayerMinRadius = 16.0f;
 constexpr float WetGroundPlayerMaxRadius = 28.0f;
 constexpr float FootstepPitchRandomJitter = 0.015f;
 constexpr std::uint32_t IntroTutorialSeed = 0x1A57D00Du;
-constexpr float IntroTutorialExitInteractRadius = 58.0f;
 constexpr float IntroTutorialExitFoundRadiusTiles = 5.0f;
 constexpr float IntroTutorialDarkCueTileX = 13.0f;
 constexpr float IntroTutorialMidwayCueTileX = 59.0f;
@@ -196,7 +193,6 @@ constexpr float DungeonEventMinSpacingTiles = 8.0f;
 constexpr float DungeonEventMinWarpPointSpacingTiles = 12.0f;
 constexpr float DungeonEventDiscoveryCooldownSeconds = 2.4f;
 constexpr float DungeonEventDamageInterruptDelaySeconds = 1.1f;
-constexpr float DungeonEventNpcTalkRadiusTiles = 2.2f;
 constexpr std::string_view DungeonEventItemRequestHeal = "heal";
 constexpr std::string_view DungeonEventItemRequestBlade = "blade";
 constexpr std::string_view DungeonEventItemRequestTool = "tool";
@@ -3818,11 +3814,12 @@ bool Game::updateIntroTutorial(const Input& input, float)
             return false;
         }
 
-        const float exitInteractRadiusSq = IntroTutorialExitInteractRadius * IntroTutorialExitInteractRadius;
-        if (distanceToExitSq <= exitInteractRadiusSq) {
-            introTutorialExitHovered_ =
-                distanceSquared(camera_.screenToWorld(input.mouseScreen()), introTutorialExitPosition()) <=
-                IntroTutorialExitInteractRadius * IntroTutorialExitInteractRadius;
+        const Vec2 exitPosition = introTutorialExitPosition();
+        if (dungeonInspectableInRange(exitPosition, {DungeonEntranceImageMaxWidth, DungeonEntranceImageMaxHeight})) {
+            introTutorialExitHovered_ = dungeonInspectableHovered(
+                exitPosition,
+                {DungeonEntranceImageMaxWidth, DungeonEntranceImageMaxHeight},
+                camera_.screenToWorld(input.mouseScreen()));
             const bool exitClicked =
                 input.mouseLeftPressed() &&
                 introTutorialExitHovered_;
@@ -5091,7 +5088,13 @@ void Game::updateDungeonEvents(float dt, double totalSeconds)
                 if (hitEventObjectWithRing(object, DungeonEventHitRequirement::AnyDamage, &hitDamage)) {
                     object.hp = std::max(0, object.hp - std::max(1, hitDamage));
                     if (object.hp <= 0) {
+                        const Vec2 objectCenter = tileWorldCenter(object.tile);
                         object.destroyed = true;
+                        effects_.spawnTileBreak(
+                            objectCenter,
+                            TileType::Rock,
+                            tileMap_.tileColorAtWorld(objectCenter),
+                            false);
                         playAudioSe("se.dig.break");
                     }
                 }
@@ -5206,7 +5209,13 @@ void Game::updateDungeonEvents(float dt, double totalSeconds)
                 if (hitEventObjectWithRing(object, DungeonEventHitRequirement::HeavyImpact, &hitDamage)) {
                     object.hp = std::max(0, object.hp - std::max(1, hitDamage));
                     if (object.hp <= 0) {
+                        const Vec2 objectCenter = tileWorldCenter(object.tile);
                         object.destroyed = true;
+                        effects_.spawnTileBreak(
+                            objectCenter,
+                            TileType::Rock,
+                            tileMap_.tileColorAtWorld(objectCenter),
+                            false);
                         playAudioSe("se.dig.break");
                     }
                 }
@@ -5270,6 +5279,90 @@ void Game::handleDungeonEventEnemyEvent(const EnemyEvent& enemyEvent)
     }
 }
 
+Game::DungeonEventInstance* Game::nearbyDungeonEventNpc()
+{
+    DungeonEventInstance* target = nullptr;
+    float bestDistance = DungeonInspectableInteractionRange;
+    for (DungeonEventInstance& event : dungeonEvents_.mutableAll()) {
+        if (!event.discovered || !dungeonEventKindIsWitch(event.kind)) {
+            continue;
+        }
+        const float dist = distanceToRect(
+            player_.position,
+            dungeonInspectableRect(tileWorldCenter(event.focusTile), DungeonEventNpcInspectSize));
+        if (dist <= bestDistance) {
+            bestDistance = dist;
+            target = &event;
+        }
+    }
+    return target;
+}
+
+const Game::DungeonEventInstance* Game::nearbyDungeonEventNpc() const
+{
+    const DungeonEventInstance* target = nullptr;
+    float bestDistance = DungeonInspectableInteractionRange;
+    for (const DungeonEventInstance& event : dungeonEvents_.all()) {
+        if (!event.discovered || !dungeonEventKindIsWitch(event.kind)) {
+            continue;
+        }
+        const float dist = distanceToRect(
+            player_.position,
+            dungeonInspectableRect(tileWorldCenter(event.focusTile), DungeonEventNpcInspectSize));
+        if (dist <= bestDistance) {
+            bestDistance = dist;
+            target = &event;
+        }
+    }
+    return target;
+}
+
+Game::DungeonEventInstance* Game::pointedDungeonEventNpc(Vec2 worldPosition)
+{
+    DungeonEventInstance* target = nullptr;
+    float bestPointerDistance = std::numeric_limits<float>::max();
+    for (DungeonEventInstance& event : dungeonEvents_.mutableAll()) {
+        if (!event.discovered || !dungeonEventKindIsWitch(event.kind)) {
+            continue;
+        }
+        const Vec2 center = tileWorldCenter(event.focusTile);
+        const UiRect rect = dungeonInspectableRect(center, DungeonEventNpcInspectSize);
+        if (distanceToRect(player_.position, rect) > DungeonInspectableInteractionRange ||
+            !rect.contains(worldPosition)) {
+            continue;
+        }
+        const float pointerDistance = distanceToRect(worldPosition, rect);
+        if (pointerDistance <= bestPointerDistance) {
+            bestPointerDistance = pointerDistance;
+            target = &event;
+        }
+    }
+    return target;
+}
+
+const Game::DungeonEventInstance* Game::pointedDungeonEventNpc(Vec2 worldPosition) const
+{
+    const DungeonEventInstance* target = nullptr;
+    float bestPointerDistance = std::numeric_limits<float>::max();
+    for (const DungeonEventInstance& event : dungeonEvents_.all()) {
+        if (!event.discovered || !dungeonEventKindIsWitch(event.kind)) {
+            continue;
+        }
+        const Vec2 center = tileWorldCenter(event.focusTile);
+        const UiRect rect = dungeonInspectableRect(center, DungeonEventNpcInspectSize);
+        if (distanceToRect(player_.position, rect) > DungeonInspectableInteractionRange ||
+            !rect.contains(worldPosition)) {
+            continue;
+        }
+        const float pointerDistance = distanceToRect(worldPosition, rect);
+        if (pointerDistance <= bestPointerDistance) {
+            bestPointerDistance = pointerDistance;
+            target = &event;
+        }
+    }
+    return target;
+}
+
 bool Game::updateDungeonEventNpcInteraction(const Input& input, UiContext& ui)
 {
     if (mode_ != ScreenMode::Playing ||
@@ -5277,26 +5370,23 @@ bool Game::updateDungeonEventNpcInteraction(const Input& input, UiContext& ui)
         dungeonFocusActive() ||
         dialogue_.active() ||
         screenTransition_.active() ||
-        worldBuildActive() ||
-        !(input.confirmPressed() || input.useItemPressed())) {
+        worldBuildActive()) {
+        hoveredDungeonEventNpcId_.clear();
         return false;
     }
 
-    const float tileSize = static_cast<float>(balance::TileSize);
-    const float talkRadius = DungeonEventNpcTalkRadiusTiles * tileSize;
-    const float talkRadiusSq = talkRadius * talkRadius;
-    DungeonEventInstance* target = nullptr;
-    float bestDistanceSq = talkRadiusSq;
-    for (DungeonEventInstance& event : dungeonEvents_.mutableAll()) {
-        if (!event.discovered || !dungeonEventKindIsWitch(event.kind)) {
-            continue;
-        }
-        const float distSq = distanceSquared(player_.position, tileWorldCenter(event.focusTile));
-        if (distSq <= bestDistanceSq) {
-            bestDistanceSq = distSq;
-            target = &event;
-        }
+    DungeonEventInstance* pointedTarget = nullptr;
+    if (!ui.pointerConsumed()) {
+        pointedTarget = pointedDungeonEventNpc(camera_.screenToWorld(ui.mouse()));
     }
+    hoveredDungeonEventNpcId_ = pointedTarget != nullptr ? pointedTarget->id : std::string{};
+
+    const bool clickedNpc = input.mouseLeftPressed() && pointedTarget != nullptr;
+    if (!(input.confirmPressed() || input.useItemPressed() || clickedNpc)) {
+        return false;
+    }
+
+    DungeonEventInstance* target = clickedNpc ? pointedTarget : nearbyDungeonEventNpc();
     if (target == nullptr) {
         return false;
     }
@@ -5407,21 +5497,7 @@ std::string Game::dungeonEventNpcPromptText() const
         return {};
     }
 
-    const float tileSize = static_cast<float>(balance::TileSize);
-    const float talkRadius = DungeonEventNpcTalkRadiusTiles * tileSize;
-    const float talkRadiusSq = talkRadius * talkRadius;
-    const DungeonEventInstance* target = nullptr;
-    float bestDistanceSq = talkRadiusSq;
-    for (const DungeonEventInstance& event : dungeonEvents_.all()) {
-        if (!event.discovered || !dungeonEventKindIsWitch(event.kind)) {
-            continue;
-        }
-        const float distSq = distanceSquared(player_.position, tileWorldCenter(event.focusTile));
-        if (distSq <= bestDistanceSq) {
-            bestDistanceSq = distSq;
-            target = &event;
-        }
-    }
+    const DungeonEventInstance* target = nearbyDungeonEventNpc();
     if (target == nullptr) {
         return {};
     }
@@ -5532,7 +5608,16 @@ void Game::appendDungeonEventRenderEntries(
         if (centerVisible && (event.kind == DungeonEventKind::WarpGuideMap || dungeonEventKindIsWitch(event.kind))) {
             entries.push_back(DepthRenderEntry{
                 center.y - 4.0f,
-                [&renderer, center, kind = event.kind, completed = event.completed, discovered = event.discovered, totalSeconds]() {
+                [
+                    &renderer,
+                    center,
+                    kind = event.kind,
+                    completed = event.completed,
+                    discovered = event.discovered,
+                    inInteractionRange = dungeonInspectableInRange(center, DungeonEventNpcInspectSize),
+                    hovered = hoveredDungeonEventNpcId_ == event.id,
+                    totalSeconds
+                ]() {
                     const unsigned char alpha = static_cast<unsigned char>(completed ? 145 : 245);
                     if (kind == DungeonEventKind::WarpGuideMap) {
                         const Vec2 pedestalCenter = center + Vec2{0.0f, 8.0f};
@@ -5555,6 +5640,15 @@ void Game::appendDungeonEventRenderEntries(
                         return;
                     }
 
+                    if (inInteractionRange) {
+                        const Color outline = hovered
+                            ? DungeonInspectableHoverOutlineColor
+                            : DungeonInspectableOutlineColor;
+                        renderer.drawRect(
+                            center - DungeonEventNpcInspectSize * 0.5f,
+                            DungeonEventNpcInspectSize,
+                            outline);
+                    }
                     renderer.fillCircle(center + Vec2{0.0f, -9.0f}, 6.0f, {246, 218, 206, alpha});
                     renderer.fillRect(center + Vec2{-7.0f, -3.0f}, {14.0f, 17.0f}, {112, 78, 156, alpha});
                     renderer.drawLine(center + Vec2{-10.0f, -3.0f}, center + Vec2{10.0f, -3.0f}, {230, 202, 255, alpha});
@@ -6305,6 +6399,21 @@ Vec2 Game::dungeonEntrancePosition() const
     return tileWorldCenter(dungeonLayout_.startTile) + Vec2{0.0f, DungeonEntranceYOffset};
 }
 
+UiRect Game::dungeonInspectableRect(Vec2 center, Vec2 size) const
+{
+    return {center - size * 0.5f, size};
+}
+
+bool Game::dungeonInspectableInRange(Vec2 center, Vec2 size) const
+{
+    return distanceToRect(player_.position, dungeonInspectableRect(center, size)) <= DungeonInspectableInteractionRange;
+}
+
+bool Game::dungeonInspectableHovered(Vec2 center, Vec2 size, Vec2 worldPosition) const
+{
+    return dungeonInspectableInRange(center, size) && dungeonInspectableRect(center, size).contains(worldPosition);
+}
+
 int Game::nearbyDiscoveredWarpPointIndex() const
 {
     if (!warpPointsEnabled_) {
@@ -6312,15 +6421,17 @@ int Game::nearbyDiscoveredWarpPointIndex() const
     }
 
     int nearest = -1;
-    float nearestDistanceSq = WarpPointReturnRadius * WarpPointReturnRadius;
+    float nearestDistance = DungeonInspectableInteractionRange;
     for (int i = 0; i < static_cast<int>(warpPoints_.size()); ++i) {
         const WarpPoint& point = warpPoints_[static_cast<std::size_t>(i)];
         if (!point.discovered) {
             continue;
         }
-        const float distSq = distanceSquared(player_.position, point.position);
-        if (distSq <= nearestDistanceSq) {
-            nearestDistanceSq = distSq;
+        const float dist = distanceToRect(
+            player_.position,
+            dungeonInspectableRect(point.position, {DungeonWarpPointImageSize, DungeonWarpPointImageSize}));
+        if (dist <= nearestDistance) {
+            nearestDistance = dist;
             nearest = i;
         }
     }
@@ -6353,8 +6464,9 @@ bool Game::updateWarpReturnUi(const Input& input, UiContext& ui)
             return true;
         }
         if (result == UiConfirmDialogResult::Cancelled) {
-            const bool entranceNearby =
-                distanceSquared(player_.position, dungeonEntrancePosition()) <= WarpPointReturnRadius * WarpPointReturnRadius;
+            const bool entranceNearby = dungeonInspectableInRange(
+                dungeonEntrancePosition(),
+                {DungeonEntranceImageMaxWidth, DungeonEntranceImageMaxHeight});
             focusedWarpReturnPointIndex_ = entranceNearby
                 ? DungeonEntranceReturnFocusIndex
                 : nearbyDiscoveredWarpPointIndex();
@@ -6371,8 +6483,10 @@ bool Game::updateWarpReturnUi(const Input& input, UiContext& ui)
         }
 
         const Vec2 clickWorld = camera_.screenToWorld(ui.mouse());
-        if (distanceSquared(clickWorld, dungeonEntrancePosition()) <= WarpReturnClickRadius * WarpReturnClickRadius &&
-            distanceSquared(player_.position, dungeonEntrancePosition()) <= WarpPointReturnRadius * WarpPointReturnRadius) {
+        if (dungeonInspectableHovered(
+                dungeonEntrancePosition(),
+                {DungeonEntranceImageMaxWidth, DungeonEntranceImageMaxHeight},
+                clickWorld)) {
             return DungeonEntranceReturnFocusIndex;
         }
 
@@ -6381,16 +6495,18 @@ bool Game::updateWarpReturnUi(const Input& input, UiContext& ui)
         }
 
         int nearest = -1;
-        float nearestDistanceSq = WarpReturnClickRadius * WarpReturnClickRadius;
+        float nearestDistance = std::numeric_limits<float>::max();
         for (int i = 0; i < static_cast<int>(warpPoints_.size()); ++i) {
             const WarpPoint& point = warpPoints_[static_cast<std::size_t>(i)];
+            const UiRect rect = dungeonInspectableRect(point.position, {DungeonWarpPointImageSize, DungeonWarpPointImageSize});
             if (!point.discovered ||
-                distanceSquared(player_.position, point.position) > WarpPointReturnRadius * WarpPointReturnRadius) {
+                distanceToRect(player_.position, rect) > DungeonInspectableInteractionRange ||
+                !rect.contains(clickWorld)) {
                 continue;
             }
-            const float clickDistanceSq = distanceSquared(clickWorld, point.position);
-            if (clickDistanceSq <= nearestDistanceSq) {
-                nearestDistanceSq = clickDistanceSq;
+            const float clickDistance = distanceToRect(clickWorld, rect);
+            if (clickDistance <= nearestDistance) {
+                nearestDistance = clickDistance;
                 nearest = i;
             }
         }
@@ -6399,8 +6515,9 @@ bool Game::updateWarpReturnUi(const Input& input, UiContext& ui)
     hoveredWarpReturnPointIndex_ = pointedReturnFocusIndex;
     const int clickedReturnFocusIndex = input.mouseLeftPressed() ? pointedReturnFocusIndex : -1;
 
-    const bool entranceNearby =
-        distanceSquared(player_.position, dungeonEntrancePosition()) <= WarpPointReturnRadius * WarpPointReturnRadius;
+    const bool entranceNearby = dungeonInspectableInRange(
+        dungeonEntrancePosition(),
+        {DungeonEntranceImageMaxWidth, DungeonEntranceImageMaxHeight});
     focusedWarpReturnPointIndex_ = clickedReturnFocusIndex != -1
         ? clickedReturnFocusIndex
         : (entranceNearby ? DungeonEntranceReturnFocusIndex : nearbyDiscoveredWarpPointIndex());
@@ -7350,10 +7467,12 @@ float Game::chestVisualAltitude(const ChestNode& node) const
 
 void Game::updateChestNodes(float dt, const Input& input)
 {
-    const bool interact = input.confirmPressed() || input.useItemPressed();
-    const float interactRadiusSq = ChestInteractRadius * ChestInteractRadius;
+    const bool keyInteract = input.confirmPressed() || input.useItemPressed();
+    const Vec2 pointerWorld = camera_.screenToWorld(input.mouseScreen());
+    hoveredChestNodeIndex_ = -1;
 
-    for (ChestNode& node : chestNodes_) {
+    for (int i = 0; i < static_cast<int>(chestNodes_.size()); ++i) {
+        ChestNode& node = chestNodes_[static_cast<std::size_t>(i)];
         updateChestSpawnJump(node, dt);
         node.openLockSeconds = std::max(0.0f, node.openLockSeconds - std::max(0.0f, dt));
         if (node.opened) {
@@ -7378,7 +7497,15 @@ void Game::updateChestNodes(float dt, const Input& input)
         if (node.openLockSeconds > 0.0f) {
             continue;
         }
-        bool shouldOpen = interact && distanceSquared(player_.position, center) <= interactRadiusSq;
+        const UiRect inspectRect = dungeonInspectableRect(center, DungeonChestInspectSize);
+        const bool inInteractionRange =
+            distanceToRect(player_.position, inspectRect) <= DungeonInspectableInteractionRange;
+        const bool hovered = inInteractionRange && inspectRect.contains(pointerWorld);
+        if (hovered) {
+            hoveredChestNodeIndex_ = i;
+        }
+        const bool clicked = input.mouseLeftPressed() && hovered;
+        bool shouldOpen = (keyInteract && inInteractionRange) || clicked;
         if (!shouldOpen) {
             const std::vector<const SpellRingItem*> runtimeItems = spellRing_.runtimeItems();
             for (const SpellRingItem* itemPtr : runtimeItems) {
@@ -7611,6 +7738,7 @@ void Game::spawnInventoryDiscardRequests(std::vector<InventoryDiscardRequest> re
     }
     const bool canSpawnDiscardDrop =
         mode_ == ScreenMode::Playing ||
+        mode_ == ScreenMode::Ring ||
         (mode_ == ScreenMode::Inventory && pauseReturnMode_ != ScreenMode::Base);
     if (!canSpawnDiscardDrop) {
         return;
@@ -9775,21 +9903,20 @@ void Game::renderDungeonEntrance(Renderer& renderer) const
     }
 
     const Vec2 center = dungeonEntrancePosition();
+    const bool inInteractionRange = dungeonInspectableInRange(
+        center,
+        {DungeonEntranceImageMaxWidth, DungeonEntranceImageMaxHeight});
     const bool hovered =
         hoveredWarpReturnPointIndex_ == DungeonEntranceReturnFocusIndex ||
         (introTutorialActive() && introTutorialExitHovered_);
-    if (hovered) {
-        renderer.fillSoftCircle(center + Vec2{0.0f, 10.0f}, 82.0f, {170, 238, 255, 54});
-    }
     renderer.fillEllipse(center + Vec2{0.0f, 56.0f}, {42.0f, 12.0f}, {0, 0, 0, 112});
     renderer.fillSoftCircle(center + Vec2{0.0f, 12.0f}, 64.0f, {96, 190, 220, 36});
 
     ScaledImageDrawOptions entranceOptions;
-    entranceOptions.outlineColor = {34, 26, 18, 220};
-    entranceOptions.outlinePx = 1;
-    entranceOptions.selectedOutlineEnabled = hovered;
-    entranceOptions.selectedOutlineColor = {232, 252, 255, 245};
-    entranceOptions.selectedOutlinePx = 6;
+    entranceOptions.outlineColor = inInteractionRange
+        ? (hovered ? DungeonInspectableHoverOutlineColor : DungeonInspectableOutlineColor)
+        : Color{34, 26, 18, 220};
+    entranceOptions.outlinePx = DungeonInspectableOutlinePx;
     if (!drawScaledImage(
             renderer,
             DungeonEntranceImagePath,
@@ -9800,7 +9927,9 @@ void Game::renderDungeonEntrance(Renderer& renderer) const
         renderer.drawRect(
             center + Vec2{-42.0f, -50.0f},
             {84.0f, 110.0f},
-            hovered ? Color{232, 252, 255, 245} : Color{170, 186, 204, 210});
+            inInteractionRange
+                ? (hovered ? DungeonInspectableHoverOutlineColor : DungeonInspectableOutlineColor)
+                : Color{170, 186, 204, 210});
     }
 }
 
@@ -9813,23 +9942,22 @@ void Game::renderWarpPoints(Renderer& renderer) const
     for (const WarpPoint& point : warpPoints_) {
         const Color core = point.discovered ? Color{92, 236, 210, 255} : Color{255, 208, 92, 255};
         const Color ring = point.discovered ? Color{170, 255, 238, 220} : Color{255, 232, 150, 220};
+        const bool inInteractionRange =
+            point.discovered &&
+            dungeonInspectableInRange(point.position, {DungeonWarpPointImageSize, DungeonWarpPointImageSize});
         const bool hovered =
             point.discovered &&
             hoveredWarpReturnPointIndex_ >= 0 &&
             hoveredWarpReturnPointIndex_ < static_cast<int>(warpPoints_.size()) &&
             warpPoints_[static_cast<std::size_t>(hoveredWarpReturnPointIndex_)].index == point.index;
-        if (hovered) {
-            renderer.fillSoftCircle(point.position, 54.0f, {170, 255, 238, 54});
-        }
         renderer.fillSoftCircle(point.position, point.discovered ? 34.0f : 24.0f, {150, 210, 255, 42});
 
         WorldIconDrawOptions options;
         options.tint = point.discovered ? Color{255, 255, 255, 255} : Color{255, 228, 154, 238};
-        options.outlineColor = point.discovered ? Color{42, 76, 88, 210} : Color{116, 74, 24, 205};
-        options.outlinePx = 1;
-        options.selectedOutlineEnabled = hovered;
-        options.selectedOutlineColor = {232, 255, 248, 245};
-        options.selectedOutlinePx = 6;
+        options.outlineColor = inInteractionRange
+            ? (hovered ? DungeonInspectableHoverOutlineColor : DungeonInspectableOutlineColor)
+            : (point.discovered ? Color{42, 76, 88, 210} : Color{116, 74, 24, 205});
+        options.outlinePx = DungeonInspectableOutlinePx;
         if (!drawWorldIcon(
                 renderer,
                 WorldIconId::WarpPoint,
@@ -9838,7 +9966,7 @@ void Game::renderWarpPoints(Renderer& renderer) const
                 options)) {
             renderer.fillCircle(point.position, 12.0f, core);
             if (hovered) {
-                renderer.drawCircle(point.position, 17.0f, {232, 255, 248, 245});
+                renderer.drawCircle(point.position, 17.0f, DungeonInspectableHoverOutlineColor);
             }
             renderer.drawLine(point.position + Vec2{-18.0f, 0.0f}, point.position + Vec2{18.0f, 0.0f}, ring);
             renderer.drawLine(point.position + Vec2{0.0f, -18.0f}, point.position + Vec2{0.0f, 18.0f}, ring);
@@ -9971,7 +10099,8 @@ void Game::appendRewardNodeRenderEntries(
         });
     }
 
-    for (const ChestNode& node : chestNodes_) {
+    for (int i = 0; i < static_cast<int>(chestNodes_.size()); ++i) {
+        const ChestNode& node = chestNodes_[static_cast<std::size_t>(i)];
         if (node.mimicTriggered) {
             continue;
         }
@@ -10002,15 +10131,28 @@ void Game::appendRewardNodeRenderEntries(
                 center,
                 chestKind = node.chestKind,
                 visualOpened = chestVisualOpened(node.opened, node.lootSpawned, node.openingSeconds),
-                openingScale = chestOpeningScale(node.openingSeconds)]() {
+                openingScale = chestOpeningScale(node.openingSeconds),
+                inInteractionRange = !node.opened &&
+                    !node.spawnJumpActive &&
+                    distanceToRect(player_.position, dungeonInspectableRect(groundCenter, DungeonChestInspectSize)) <=
+                        DungeonInspectableInteractionRange,
+                hovered = hoveredChestNodeIndex_ == i]() {
                 if (chestKind == LootChestKind::SuperRare && !visualOpened) {
                     renderer.drawCircle(center, 20.0f, {255, 242, 164, 170});
                 }
                 WorldIconDrawOptions options;
                 options.sizeMultiplier = openingScale;
+                if (inInteractionRange) {
+                    options.outlineColor = hovered
+                        ? DungeonInspectableHoverOutlineColor
+                        : DungeonInspectableOutlineColor;
+                    options.outlinePx = DungeonInspectableOutlinePx;
+                }
                 if (!drawWorldIcon(renderer, chestWorldIcon(chestKind, visualOpened), center, {42.0f, 42.0f}, options)) {
                     const Color fill = chestFillColor(chestKind, visualOpened);
-                    const Color outline = chestOutlineColor(chestKind, visualOpened);
+                    const Color outline = inInteractionRange
+                        ? (hovered ? DungeonInspectableHoverOutlineColor : DungeonInspectableOutlineColor)
+                        : chestOutlineColor(chestKind, visualOpened);
                     const Vec2 bodySize{20.0f * openingScale.x, 13.0f * openingScale.y};
                     const Vec2 bodyPos = center - bodySize * 0.5f;
                     renderer.fillRect(bodyPos, bodySize, fill);

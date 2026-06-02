@@ -133,6 +133,11 @@ std::string statusEffectDiscoveryDescription(std::string_view statusEffect)
     return std::string(displayName) + "状態を付与する";
 }
 
+bool isMagicBookSource(const EffectContext& context)
+{
+    return context.sourceObject != nullptr && context.sourceObject->category == "魔導書";
+}
+
 bool isTerrainTarget(std::string_view target)
 {
     return target == "terrain" || target == "ground";
@@ -846,7 +851,13 @@ void applyCastMagicInvocation(const EffectInvocation& invocation)
     const float cooldownOverrideSeconds = invocation.duration > 0.0
         ? static_cast<float>(invocation.duration)
         : 0.0f;
-    context.magic->cast(element, origin, direction, power, context.orbitItem, cooldownOverrideSeconds);
+    const bool casted = context.magic->cast(element, origin, direction, power, context.orbitItem, cooldownOverrideSeconds);
+    if (!casted) {
+        return;
+    }
+    if (context.orbit != nullptr && context.orbitItem != nullptr && isMagicBookSource(context)) {
+        context.orbit->consumeItemDurability(*context.orbitItem, 1);
+    }
     recordEffectDiscovery(invocation, "属性魔法を発動する");
 }
 

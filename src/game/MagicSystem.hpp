@@ -35,7 +35,7 @@ bool magicElementFromCastEffect(std::string_view effect, MagicElement& outElemen
 class MagicSystem {
 public:
     void setFxSystem(MagicFxSystem* magicFx);
-    void cast(
+    bool cast(
         MagicElement element,
         Vec2 origin,
         Vec2 direction,

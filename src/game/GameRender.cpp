@@ -566,9 +566,53 @@ constexpr float RingPlaceGridW =
     static_cast<float>(RingPlaceColumns - 1) * RingPlaceSlotGap;
 constexpr float RingPlaceGridX = RingPlaceScreenX + (RingPlaceDetailX - RingPlaceScreenX - RingPlaceGridW) * 0.5f;
 
-std::array<UiCommandMenuItem, 1> ringCommandItems(bool placeCommand, bool enabled)
+enum class RingCommandAction {
+    Place,
+    Remove,
+    ToggleProtection,
+    Discard,
+};
+
+struct RingCommandMenuItems {
+    std::vector<UiCommandMenuItem> items;
+    std::vector<RingCommandAction> actions;
+};
+
+RingCommandMenuItems ringCommandItems(
+    bool placeCommand,
+    const SpellRingItem* item,
+    const ObjectCatalog& objectCatalog,
+    bool commandCanPlace,
+    bool commandCanRemove)
 {
-    return {{{placeCommand ? "アイテムを配置" : "リングから外す", enabled}}};
+    RingCommandMenuItems result;
+    if (placeCommand) {
+        result.items.push_back({"アイテムを配置", commandCanPlace});
+        result.actions.push_back(RingCommandAction::Place);
+        return result;
+    }
+
+    if (item == nullptr) {
+        result.items.push_back({"リングから外す", false});
+        result.actions.push_back(RingCommandAction::Remove);
+        result.items.push_back({"保護", false});
+        result.actions.push_back(RingCommandAction::ToggleProtection);
+        result.items.push_back({"捨てる", false});
+        result.actions.push_back(RingCommandAction::Discard);
+        return result;
+    }
+
+    const bool hasObject = !item->objectId.empty();
+    const bool protectable = hasObject && !item->instanceId.empty();
+    const ItemData* itemData = objectForRingItem(objectCatalog, *item);
+    const bool discardable = hasObject && itemData != nullptr && !item->protectionEnabled && !isImportantItem(*itemData);
+    result.items.push_back({"リングから外す", commandCanRemove});
+    result.actions.push_back(RingCommandAction::Remove);
+    result.items.push_back({item->protectionEnabled ? "保護を解除" : "保護", protectable});
+    result.actions.push_back(RingCommandAction::ToggleProtection);
+    result.items.push_back({"捨てる", discardable});
+    result.actions.push_back(RingCommandAction::Discard);
+    return result;
 }
 
 Vec2 ringPressedDirection(const Input& input)
@@ -1134,6 +1178,63 @@ bool removeRingItemToInventory(
     return true;
 }
 
+bool toggleRingItemProtection(std::vector<SpellRingItem>& items, int selection, std::string& status)
+{
+    if (selection < 0 || selection >= static_cast<int>(items.size())) {
+        status = "アイテム未選択です";
+        return false;
+    }
+
+    SpellRingItem& item = items[static_cast<std::size_t>(selection)];
+    if (item.objectId.empty() || item.instanceId.empty()) {
+        status = "個体アイテムのみ保護できます";
+        return false;
+    }
+
+    item.protectionEnabled = !item.protectionEnabled;
+    status = item.protectionEnabled ? "保護ON" : "保護OFF";
+    return true;
+}
+
+bool discardRingItem(
+    std::vector<SpellRingItem>& items,
+    int& selection,
+    InventorySystem& inventory,
+    const ObjectCatalog& objectCatalog,
+    std::vector<InventoryDiscardRequest>& outRequests,
+    std::string& status)
+{
+    if (selection < 0 || selection >= static_cast<int>(items.size())) {
+        status = "アイテム未選択です";
+        return false;
+    }
+
+    const SpellRingItem& selectedItem = items[static_cast<std::size_t>(selection)];
+    const ItemData* itemData = objectForRingItem(objectCatalog, selectedItem);
+    if (selectedItem.objectId.empty() || itemData == nullptr) {
+        status = "このアイテムは捨てられません";
+        return false;
+    }
+    if (selectedItem.protectionEnabled) {
+        status = "保護中は捨てられません";
+        return false;
+    }
+    if (isImportantItem(*itemData)) {
+        status = "重要アイテムは捨てられません";
+        return false;
+    }
+
+    outRequests.push_back(InventoryDiscardRequest{
+        .item = *itemData,
+        .instance = inventoryInstanceFromRingItem(inventory, objectCatalog, selectedItem),
+        .quantity = 1,
+    });
+    items.erase(items.begin() + selection);
+    selection = std::min(selection, std::max(0, static_cast<int>(items.size()) - 1));
+    status = "捨てた: " + itemData->name;
+    return true;
+}
+
 void drawDungeonRingIntroOrbit(
     Renderer& renderer,
     const SpellRingSystem& spellRing,
@@ -1283,6 +1384,22 @@ constexpr float DungeonMinimapYGap = 8.0f;
 constexpr float DungeonMinimapDiameter = 178.0f;
 constexpr float DungeonMinimapEdgeInset = 5.0f;
 constexpr float DungeonMinimapTilePx = 2.5f;
+constexpr float DungeonMapOverlayMargin = 46.0f;
+constexpr float DungeonMapOverlayHeaderHeight = 74.0f;
+constexpr float DungeonMapOverlayFooterHeight = 52.0f;
+constexpr float DungeonMapOverlayPadding = 28.0f;
+constexpr float DungeonMapOverlayScrollbarThickness = 6.0f;
+constexpr float DungeonMapOverlayScrollbarInset = 6.0f;
+constexpr float DungeonMapOverlayMinTilePx = 4.0f;
+constexpr float DungeonMapOverlayMaxTilePx = 12.0f;
+
+struct DungeonMinimapBounds {
+    int minX = 0;
+    int minY = 0;
+    int maxX = 0;
+    int maxY = 0;
+    bool valid = false;
+};
 
 Color dungeonMinimapTileColor(TileType type, bool lit)
 {
@@ -1304,6 +1421,40 @@ Color dungeonMinimapTileColor(TileType type, bool lit)
     case TileType::HardRock: return {30, 32, 40, 150};
     }
     return {58, 72, 92, 178};
+}
+
+template <typename Cells>
+DungeonMinimapBounds dungeonMinimapBounds(const Cells& cells)
+{
+    DungeonMinimapBounds bounds{};
+    const auto tileFromKey = [](std::int64_t key) {
+        const std::uint64_t raw = static_cast<std::uint64_t>(key);
+        const auto signedFromU32 = [](std::uint32_t value) {
+            if (value <= static_cast<std::uint32_t>(std::numeric_limits<int>::max())) {
+                return static_cast<int>(value);
+            }
+            return -1 - static_cast<int>(~value);
+        };
+        return DungeonTile{
+            signedFromU32(static_cast<std::uint32_t>(raw >> 32)),
+            signedFromU32(static_cast<std::uint32_t>(raw & 0xFFFFFFFFull)),
+        };
+    };
+    for (const auto& [key, cell] : cells) {
+        (void)cell;
+        const DungeonTile tile = tileFromKey(key);
+        if (!bounds.valid) {
+            bounds.minX = bounds.maxX = tile.x;
+            bounds.minY = bounds.maxY = tile.y;
+            bounds.valid = true;
+            continue;
+        }
+        bounds.minX = std::min(bounds.minX, tile.x);
+        bounds.minY = std::min(bounds.minY, tile.y);
+        bounds.maxX = std::max(bounds.maxX, tile.x);
+        bounds.maxY = std::max(bounds.maxY, tile.y);
+    }
+    return bounds;
 }
 
 constexpr int OperationSettingsColumnAction = 0;
@@ -2222,17 +2373,26 @@ void Game::updateRingScreen(const Input& input, UiContext& ui, float dt)
         !items[static_cast<std::size_t>(commandItemIndex)].objectId.empty();
     const bool commandCanPlace = ringCommandPlaceActive_ &&
         firstRingPlaceableSlot(inventory_, spellRing_, ringCommandPlaceAngle_) >= 0;
-    const std::array<UiCommandMenuItem, 1> commandItems = ringCommandItems(
+    const SpellRingItem* commandItem = !ringCommandPlaceActive_ && commandItemIndex >= 0 && commandItemIndex < static_cast<int>(items.size())
+        ? &items[static_cast<std::size_t>(commandItemIndex)]
+        : nullptr;
+    const RingCommandMenuItems commandMenuItems = ringCommandItems(
         ringCommandPlaceActive_,
-        ringCommandPlaceActive_ ? commandCanPlace : commandCanRemove);
+        commandItem,
+        objectCatalog_,
+        commandCanPlace,
+        commandCanRemove);
     const int commandSelection = updateUiCommandMenu(
         ringCommandMenu_,
         ui,
         input,
-        commandItems.data(),
-        static_cast<int>(commandItems.size()));
+        commandMenuItems.items.data(),
+        static_cast<int>(commandMenuItems.items.size()));
     if (commandSelection >= 0) {
-        if (ringCommandPlaceActive_) {
+        const RingCommandAction action = commandSelection < static_cast<int>(commandMenuItems.actions.size())
+            ? commandMenuItems.actions[static_cast<std::size_t>(commandSelection)]
+            : RingCommandAction::Remove;
+        if (action == RingCommandAction::Place) {
             const int firstSlot = firstRingPlaceableSlot(inventory_, spellRing_, ringCommandPlaceAngle_);
             if (firstSlot >= 0) {
                 ringPlaceModeActive_ = true;
@@ -2245,7 +2405,35 @@ void Game::updateRingScreen(const Input& input, UiContext& ui, float dt)
         } else if (ringCommandItemIndex_ >= 0) {
             ringSlotSelection_ = ringCommandItemIndex_;
             ringDetailShowsRing_ = false;
-            removeRingItemToInventory(items, ringSlotSelection_, inventory_, objectCatalog_, ringStatus_);
+            bool commandSucceeded = false;
+            switch (action) {
+            case RingCommandAction::Place:
+                break;
+            case RingCommandAction::Remove:
+                commandSucceeded = removeRingItemToInventory(items, ringSlotSelection_, inventory_, objectCatalog_, ringStatus_);
+                ui.emitSound(commandSucceeded ? UiSoundEvent::ItemMove : UiSoundEvent::Cancel);
+                break;
+            case RingCommandAction::ToggleProtection:
+                commandSucceeded = toggleRingItemProtection(items, ringSlotSelection_, ringStatus_);
+                ui.emitSound(commandSucceeded ? UiSoundEvent::Confirm : UiSoundEvent::Cancel);
+                break;
+            case RingCommandAction::Discard:
+            {
+                std::vector<InventoryDiscardRequest> discardRequests;
+                commandSucceeded = discardRingItem(
+                    items,
+                    ringSlotSelection_,
+                    inventory_,
+                    objectCatalog_,
+                    discardRequests,
+                    ringStatus_);
+                if (commandSucceeded) {
+                    spawnInventoryDiscardRequests(std::move(discardRequests));
+                }
+                ui.emitSound(commandSucceeded ? UiSoundEvent::ItemUse : UiSoundEvent::Cancel);
+                break;
+            }
+            }
         }
         ringCommandItemIndex_ = -1;
         ringCommandPlaceActive_ = false;
@@ -2529,13 +2717,18 @@ void Game::updateRingScreen(const Input& input, UiContext& ui, float dt)
                 ringCommandItemIndex_ = ringDragItemIndex_;
                 ringCommandPlaceActive_ = false;
                 const bool canRemove = !items[static_cast<std::size_t>(ringDragItemIndex_)].objectId.empty();
-                const std::array<UiCommandMenuItem, 1> menuItems = ringCommandItems(false, canRemove);
+                const RingCommandMenuItems menuItems = ringCommandItems(
+                    false,
+                    &items[static_cast<std::size_t>(ringDragItemIndex_)],
+                    objectCatalog_,
+                    false,
+                    canRemove);
                 openUiCommandMenu(
                     ringCommandMenu_,
                     input.mouseScreen(),
                     ringPanelRect(),
-                    static_cast<int>(menuItems.size()),
-                    menuItems.data(),
+                    static_cast<int>(menuItems.items.size()),
+                    menuItems.items.data(),
                     180.0f,
                     2);
                 ringStatus_.clear();
@@ -2565,13 +2758,13 @@ void Game::updateRingScreen(const Input& input, UiContext& ui, float dt)
                     ringCommandItemIndex_ = -1;
                     ringCommandPlaceActive_ = true;
                     ringCommandPlaceAngle_ = placeAngle;
-                    const std::array<UiCommandMenuItem, 1> menuItems = ringCommandItems(true, true);
+                    const RingCommandMenuItems menuItems = ringCommandItems(true, nullptr, objectCatalog_, true, false);
                     openUiCommandMenu(
                         ringCommandMenu_,
                         input.mouseScreen(),
                         ringPanelRect(),
-                        static_cast<int>(menuItems.size()),
-                        menuItems.data(),
+                        static_cast<int>(menuItems.items.size()),
+                        menuItems.items.data(),
                         190.0f,
                         2);
                     ringStatus_.clear();
@@ -2660,15 +2853,9 @@ void Game::updateRingScreen(const Input& input, UiContext& ui, float dt)
     if (input.pressed(InputAction::ToggleProtection)) {
         ringDetailShowsRing_ = false;
         if (ringSlotSelection_ < static_cast<int>(items.size())) {
-            SpellRingItem& item = items[ringSlotSelection_];
-            if (item.instanceId.empty()) {
-                ui.emitSound(UiSoundEvent::Cancel);
-                ringStatus_ = "個体アイテムのみ保護できます";
-            } else {
-                ui.emitSound(UiSoundEvent::Confirm);
-                item.protectionEnabled = !item.protectionEnabled;
-                ringStatus_ = item.protectionEnabled ? "保護ON" : "保護OFF";
-            }
+            ui.emitSound(toggleRingItemProtection(items, ringSlotSelection_, ringStatus_)
+                ? UiSoundEvent::Confirm
+                : UiSoundEvent::Cancel);
         } else {
             ui.emitSound(UiSoundEvent::Cancel);
             ringStatus_ = "アイテム未選択です";
@@ -4098,6 +4285,132 @@ void Game::appendCaptureAbsorbRenderEntries(
     }
 }
 
+UiRect Game::dungeonMinimapRect() const
+{
+    const float screenHeight = static_cast<float>(camera_.height());
+    const float minimapY = TopInfoBarY + TopInfoBarHeight + DungeonMinimapYGap;
+    const float minimapDiameter = std::min(DungeonMinimapDiameter, std::max(96.0f, screenHeight - minimapY - 8.0f));
+    return {{DungeonMinimapX, minimapY}, {minimapDiameter, minimapDiameter}};
+}
+
+UiRect Game::dungeonMapOverlayPanelRect() const
+{
+    const float screenWidth = static_cast<float>(camera_.width());
+    const float screenHeight = static_cast<float>(camera_.height());
+    return {{
+        DungeonMapOverlayMargin,
+        DungeonMapOverlayMargin,
+    }, {
+        std::max(240.0f, screenWidth - DungeonMapOverlayMargin * 2.0f),
+        std::max(180.0f, screenHeight - DungeonMapOverlayMargin * 2.0f),
+    }};
+}
+
+UiRect Game::dungeonMapOverlayViewportRect() const
+{
+    const UiRect panel = dungeonMapOverlayPanelRect();
+    return {{
+        panel.pos.x + DungeonMapOverlayPadding,
+        panel.pos.y + DungeonMapOverlayHeaderHeight,
+    }, {
+        std::max(1.0f, panel.size.x - DungeonMapOverlayPadding * 2.0f),
+        std::max(1.0f, panel.size.y - DungeonMapOverlayHeaderHeight - DungeonMapOverlayFooterHeight),
+    }};
+}
+
+Vec2 Game::dungeonMapOverlayMapSize(UiRect viewport) const
+{
+    const DungeonMinimapBounds bounds = dungeonMinimapBounds(dungeonMinimapCells_);
+    if (!bounds.valid) {
+        return viewport.size;
+    }
+
+    const int tileCountX = std::max(1, bounds.maxX - bounds.minX + 1);
+    const int tileCountY = std::max(1, bounds.maxY - bounds.minY + 1);
+    const float fitTilePx = std::min(
+        viewport.size.x / static_cast<float>(tileCountX),
+        viewport.size.y / static_cast<float>(tileCountY));
+    const float tilePx = std::clamp(fitTilePx, DungeonMapOverlayMinTilePx, DungeonMapOverlayMaxTilePx);
+    return {
+        static_cast<float>(tileCountX) * tilePx,
+        static_cast<float>(tileCountY) * tilePx,
+    };
+}
+
+Vec2 Game::dungeonMapOverlayMaxScroll() const
+{
+    const UiRect viewport = dungeonMapOverlayViewportRect();
+    const Vec2 mapSize = dungeonMapOverlayMapSize(viewport);
+    return {
+        std::max(0.0f, mapSize.x - viewport.size.x),
+        std::max(0.0f, mapSize.y - viewport.size.y),
+    };
+}
+
+UiRect Game::dungeonMapOverlayVerticalScrollTrackRect() const
+{
+    const UiRect viewport = dungeonMapOverlayViewportRect();
+    return {{
+        viewport.pos.x + viewport.size.x - DungeonMapOverlayScrollbarThickness - DungeonMapOverlayScrollbarInset,
+        viewport.pos.y + DungeonMapOverlayScrollbarInset,
+    }, {
+        DungeonMapOverlayScrollbarThickness,
+        std::max(1.0f, viewport.size.y - DungeonMapOverlayScrollbarInset * 2.0f),
+    }};
+}
+
+UiRect Game::dungeonMapOverlayVerticalScrollThumbRect() const
+{
+    const UiRect viewport = dungeonMapOverlayViewportRect();
+    const UiRect track = dungeonMapOverlayVerticalScrollTrackRect();
+    const Vec2 mapSize = dungeonMapOverlayMapSize(viewport);
+    const Vec2 maxScroll = dungeonMapOverlayMaxScroll();
+    if (maxScroll.y <= 0.0f || mapSize.y <= 0.0f) {
+        return {{track.pos.x, track.pos.y}, {track.size.x, track.size.y}};
+    }
+    const float thumbH = std::max(28.0f, track.size.y * std::min(1.0f, viewport.size.y / mapSize.y));
+    const float scrollY = std::clamp(dungeonMapOverlayScroll_.y, 0.0f, maxScroll.y);
+    return {{
+        track.pos.x,
+        track.pos.y + (track.size.y - thumbH) * (scrollY / maxScroll.y),
+    }, {
+        track.size.x,
+        thumbH,
+    }};
+}
+
+UiRect Game::dungeonMapOverlayHorizontalScrollTrackRect() const
+{
+    const UiRect viewport = dungeonMapOverlayViewportRect();
+    return {{
+        viewport.pos.x + DungeonMapOverlayScrollbarInset,
+        viewport.pos.y + viewport.size.y - DungeonMapOverlayScrollbarThickness - DungeonMapOverlayScrollbarInset,
+    }, {
+        std::max(1.0f, viewport.size.x - DungeonMapOverlayScrollbarInset * 2.0f),
+        DungeonMapOverlayScrollbarThickness,
+    }};
+}
+
+UiRect Game::dungeonMapOverlayHorizontalScrollThumbRect() const
+{
+    const UiRect viewport = dungeonMapOverlayViewportRect();
+    const UiRect track = dungeonMapOverlayHorizontalScrollTrackRect();
+    const Vec2 mapSize = dungeonMapOverlayMapSize(viewport);
+    const Vec2 maxScroll = dungeonMapOverlayMaxScroll();
+    if (maxScroll.x <= 0.0f || mapSize.x <= 0.0f) {
+        return {{track.pos.x, track.pos.y}, {track.size.x, track.size.y}};
+    }
+    const float thumbW = std::max(28.0f, track.size.x * std::min(1.0f, viewport.size.x / mapSize.x));
+    const float scrollX = std::clamp(dungeonMapOverlayScroll_.x, 0.0f, maxScroll.x);
+    return {{
+        track.pos.x + (track.size.x - thumbW) * (scrollX / maxScroll.x),
+        track.pos.y,
+    }, {
+        thumbW,
+        track.size.y,
+    }};
+}
+
 void Game::renderDungeonMinimap(Renderer& renderer, const std::vector<LightSource>& itemLights) const
 {
     if (enemyTestActive_ || dungeonMinimapCells_.empty()) {
@@ -4106,12 +4419,11 @@ void Game::renderDungeonMinimap(Renderer& renderer, const std::vector<LightSourc
 
     renderer.setScreenSpace();
 
-    const float screenHeight = static_cast<float>(camera_.height());
-    const float minimapY = TopInfoBarY + TopInfoBarHeight + DungeonMinimapYGap;
-    const float minimapDiameter = std::min(DungeonMinimapDiameter, std::max(96.0f, screenHeight - minimapY - 8.0f));
+    const UiRect minimapRect = dungeonMinimapRect();
+    const float minimapDiameter = minimapRect.size.x;
     const float minimapRadius = minimapDiameter * 0.5f;
     const float contentRadius = std::max(32.0f, minimapRadius - DungeonMinimapEdgeInset);
-    const Vec2 minimapCenter = {DungeonMinimapX + minimapRadius, minimapY + minimapRadius};
+    const Vec2 minimapCenter = minimapRect.pos + Vec2{minimapRadius, minimapRadius};
     const int playerTileX = tileMap_.worldToTile(player_.position.x);
     const int playerTileY = tileMap_.worldToTile(player_.position.y);
     const Vec2 playerLightCenter = witchSelfLightCenter(player_.position);
@@ -4218,6 +4530,154 @@ void Game::renderDungeonMinimap(Renderer& renderer, const std::vector<LightSourc
     }
 }
 
+void Game::renderDungeonMapOverlay(Renderer& renderer, const std::vector<LightSource>& itemLights) const
+{
+    if (!dungeonMapOverlayOpen_ || enemyTestActive_ || dungeonMinimapCells_.empty()) {
+        return;
+    }
+
+    renderer.setScreenSpace();
+
+    const float screenWidth = static_cast<float>(camera_.width());
+    const float screenHeight = static_cast<float>(camera_.height());
+    drawUiModalBackdrop(renderer, {{0.0f, 0.0f}, {screenWidth, screenHeight}}, {0, 0, 0, 176});
+
+    const UiRect panel = dungeonMapOverlayPanelRect();
+    UiWindowScope window(
+        renderer,
+        "dungeon.map_overlay",
+        panel,
+        "探索地図",
+        "Esc 閉じる   ホイール/WASD/矢印 スクロール",
+        UiWindowOptions{true, true});
+
+    const UiRect mapRect = dungeonMapOverlayViewportRect();
+    renderer.fillRect(mapRect.pos, mapRect.size, {4, 7, 12, 212});
+
+    const DungeonMinimapBounds bounds = dungeonMinimapBounds(dungeonMinimapCells_);
+    if (!bounds.valid) {
+        renderer.drawText(mapRect.pos + Vec2{20.0f, 20.0f}, "地図情報がありません", {170, 178, 190, 255}, 2);
+        return;
+    }
+
+    const int tileCountX = std::max(1, bounds.maxX - bounds.minX + 1);
+    const int tileCountY = std::max(1, bounds.maxY - bounds.minY + 1);
+    const Vec2 mapSize = dungeonMapOverlayMapSize(mapRect);
+    const float tilePx = std::min(
+        mapSize.x / static_cast<float>(tileCountX),
+        mapSize.y / static_cast<float>(tileCountY));
+    const Vec2 maxScroll = dungeonMapOverlayMaxScroll();
+    const Vec2 scroll{
+        std::clamp(dungeonMapOverlayScroll_.x, 0.0f, maxScroll.x),
+        std::clamp(dungeonMapOverlayScroll_.y, 0.0f, maxScroll.y),
+    };
+    const Vec2 origin = mapRect.pos + Vec2{
+        maxScroll.x <= 0.0f ? (mapRect.size.x - mapSize.x) * 0.5f : -scroll.x,
+        maxScroll.y <= 0.0f ? (mapRect.size.y - mapSize.y) * 0.5f : -scroll.y,
+    };
+    const auto tileToMap = [&](int tx, int ty) {
+        return origin + Vec2{
+            (static_cast<float>(tx - bounds.minX) + 0.5f) * tilePx,
+            (static_cast<float>(ty - bounds.minY) + 0.5f) * tilePx,
+        };
+    };
+
+    renderer.pushClipRect(mapRect.pos, mapRect.size);
+    const Vec2 playerLightCenter = witchSelfLightCenter(player_.position);
+    for (int ty = bounds.minY; ty <= bounds.maxY; ++ty) {
+        for (int tx = bounds.minX; tx <= bounds.maxX; ++tx) {
+            const auto cellIt = dungeonMinimapCells_.find(dungeonMinimapKey(tx, ty));
+            if (cellIt == dungeonMinimapCells_.end()) {
+                continue;
+            }
+            const bool lit = tileMap_.isLit(tileMap_.tileCenter(tx, ty), playerLightCenter, itemLights);
+            const Color color = dungeonMinimapTileColor(cellIt->second.type, lit);
+            const Vec2 drawPos = tileToMap(tx, ty) - Vec2{tilePx, tilePx} * 0.5f;
+            if (drawPos.x + tilePx < mapRect.pos.x ||
+                drawPos.y + tilePx < mapRect.pos.y ||
+                drawPos.x > mapRect.pos.x + mapRect.size.x ||
+                drawPos.y > mapRect.pos.y + mapRect.size.y) {
+                continue;
+            }
+            renderer.fillRect(drawPos, {tilePx + 0.35f, tilePx + 0.35f}, color);
+        }
+    }
+
+    if (warpPointsEnabled_) {
+        for (const WarpPoint& point : warpPoints_) {
+            if (!point.discovered || !dungeonMinimapTileSeen(point.tilePosition.x, point.tilePosition.y)) {
+                continue;
+            }
+            const Vec2 marker = tileToMap(point.tilePosition.x, point.tilePosition.y);
+            renderer.fillCircle(marker, std::max(3.0f, tilePx * 1.1f), {86, 238, 218, 238});
+            renderer.drawCircle(marker, std::max(5.0f, tilePx * 1.8f), {170, 255, 238, 176});
+        }
+    }
+
+    std::vector<EnemyMinimapMarker> enemyMarkers;
+    enemies_.appendMinimapMarkers(enemyMarkers);
+    for (const EnemyMinimapMarker& enemy : enemyMarkers) {
+        const int enemyTileX = tileMap_.worldToTile(enemy.position.x);
+        const int enemyTileY = tileMap_.worldToTile(enemy.position.y);
+        if (!dungeonMinimapTileSeen(enemyTileX, enemyTileY)) {
+            continue;
+        }
+        const Vec2 marker = tileToMap(enemyTileX, enemyTileY);
+        const Color fill = enemy.boss ? Color{255, 108, 64, 246} : Color{238, 72, 82, 236};
+        const Color ring = enemy.boss ? Color{255, 202, 112, 212} : Color{255, 152, 158, 182};
+        renderer.fillCircle(marker, enemy.boss ? std::max(4.0f, tilePx * 1.25f) : std::max(3.0f, tilePx), fill);
+        renderer.drawCircle(marker, enemy.boss ? std::max(6.0f, tilePx * 1.9f) : std::max(4.5f, tilePx * 1.45f), ring);
+    }
+
+    const int playerTileX = tileMap_.worldToTile(player_.position.x);
+    const int playerTileY = tileMap_.worldToTile(player_.position.y);
+    const Vec2 playerMarker = tileToMap(playerTileX, playerTileY);
+    const Vec2 facing = lengthSquared(player_.facing) > 0.0001f ? normalize(player_.facing) : Vec2{1.0f, 0.0f};
+    renderer.fillCircle(playerMarker, std::max(4.2f, tilePx * 1.45f), {246, 244, 214, 255});
+    renderer.drawCircle(playerMarker, std::max(7.0f, tilePx * 2.1f), {68, 96, 124, 226});
+    renderer.drawLine(playerMarker, playerMarker + facing * std::max(10.0f, tilePx * 3.0f), {246, 244, 214, 232});
+
+    if (warpPointsEnabled_) {
+        for (const DungeonEventInstance& event : dungeonEvents_.all()) {
+            if (event.kind != DungeonEventKind::WarpGuideMap ||
+                !event.activated ||
+                event.completed ||
+                event.guideRemainingSeconds <= 0.0f ||
+                event.guideTargetWarpPointIndex < 0 ||
+                event.guideTargetWarpPointIndex >= static_cast<int>(warpPoints_.size())) {
+                continue;
+            }
+            const WarpPoint& target = warpPoints_[static_cast<std::size_t>(event.guideTargetWarpPointIndex)];
+            if (target.discovered) {
+                continue;
+            }
+            const Vec2 toTarget = target.position - player_.position;
+            if (lengthSquared(toTarget) <= 0.0001f) {
+                continue;
+            }
+            const Vec2 direction = normalize(toTarget);
+            const float pulse = 0.5f + 0.5f * std::sin(std::max(0.0f, event.guideRemainingSeconds) * 7.4f);
+            drawWarpGuideMinimapIcon(renderer, playerMarker + direction * std::max(20.0f, tilePx * 5.0f), direction, pulse);
+            break;
+        }
+    }
+
+    renderer.popClipRect();
+
+    if (maxScroll.y > 0.0f) {
+        const UiRect track = dungeonMapOverlayVerticalScrollTrackRect();
+        const UiRect thumb = dungeonMapOverlayVerticalScrollThumbRect();
+        renderer.fillRect(track.pos, track.size, {0, 0, 0, 96});
+        renderer.fillRect(thumb.pos, thumb.size, {154, 178, 208, 190});
+    }
+    if (maxScroll.x > 0.0f) {
+        const UiRect track = dungeonMapOverlayHorizontalScrollTrackRect();
+        const UiRect thumb = dungeonMapOverlayHorizontalScrollThumbRect();
+        renderer.fillRect(track.pos, track.size, {0, 0, 0, 96});
+        renderer.fillRect(thumb.pos, thumb.size, {154, 178, 208, 190});
+    }
+}
+
 void Game::renderDungeonLogs(Renderer& renderer) const
 {
     if (dungeonLogs_.empty()) {
@@ -4309,10 +4769,10 @@ void Game::renderDungeonControlHelp(Renderer& renderer) const
     bool promptFocused = false;
     if (introTutorialActive()) {
         help = "WASD/方向キー 移動   Esc メニュー";
-        constexpr float IntroTutorialExitPromptRadius = 58.0f;
         if (introTutorialPhase_ == IntroTutorialPhase::FreeToExit &&
-            distanceSquared(player_.position, introTutorialExitPosition()) <=
-                IntroTutorialExitPromptRadius * IntroTutorialExitPromptRadius) {
+            dungeonInspectableInRange(
+                introTutorialExitPosition(),
+                {DungeonEntranceImageMaxWidth, DungeonEntranceImageMaxHeight})) {
             help = "出口   F/Enter 拠点へ帰還";
             promptFocused = true;
         }
@@ -4578,10 +5038,16 @@ void Game::renderRingScreen(Renderer& renderer, float totalTime) const
         !items[static_cast<std::size_t>(commandItemIndex)].objectId.empty();
     const bool commandCanPlace = ringCommandPlaceActive_ &&
         firstRingPlaceableSlot(inventory_, spellRing_, ringCommandPlaceAngle_) >= 0;
-    const std::array<UiCommandMenuItem, 1> commandItems = ringCommandItems(
+    const SpellRingItem* commandItem = !ringCommandPlaceActive_ && commandItemIndex >= 0 && commandItemIndex < static_cast<int>(items.size())
+        ? &items[static_cast<std::size_t>(commandItemIndex)]
+        : nullptr;
+    const RingCommandMenuItems commandItems = ringCommandItems(
         ringCommandPlaceActive_,
-        ringCommandPlaceActive_ ? commandCanPlace : commandCanRemove);
-    drawUiCommandMenu(renderer, ringCommandMenu_, commandItems.data(), static_cast<int>(commandItems.size()));
+        commandItem,
+        objectCatalog_,
+        commandCanPlace,
+        commandCanRemove);
+    drawUiCommandMenu(renderer, ringCommandMenu_, commandItems.items.data(), static_cast<int>(commandItems.items.size()));
 
     if (ringPlaceModeActive_) {
         drawUiModalBackdrop(
@@ -5886,7 +6352,9 @@ void Game::render(Renderer& renderer, const Time& time)
         renderPlayerDamageVignette(renderer, time.totalSeconds());
     }
     renderTopInfoBar(renderer);
-    if (mode_ == ScreenMode::Playing && !suppressDungeonUi) {
+    if (mode_ == ScreenMode::Playing && !suppressDungeonUi && dungeonMapOverlayOpen_) {
+        renderDungeonMapOverlay(renderer, itemLights);
+    } else if (mode_ == ScreenMode::Playing && !suppressDungeonUi) {
         renderDungeonMinimap(renderer, itemLights);
         if (!introTutorialActive()) {
             renderRingStatusHud(renderer);
@@ -5898,7 +6366,7 @@ void Game::render(Renderer& renderer, const Time& time)
         renderer.fillRect({18.0f, 202.0f}, {190.0f, 28.0f}, {0, 0, 0, 190});
         renderer.drawText({28.0f, 208.0f}, "DEBUG PAUSED", {255, 230, 150, 255}, 2);
     }
-    if (!suppressDungeonUi) {
+    if (!suppressDungeonUi && !dungeonMapOverlayOpen_) {
         inventory_.render(
             renderer,
             player_,
@@ -5926,7 +6394,7 @@ void Game::render(Renderer& renderer, const Time& time)
         renderAstralResultScreen(renderer);
         renderEnemyTestUi(renderer);
     }
-    if (!suppressDungeonUi && reloadNoticeTimer_ > 0.0f) {
+    if (!suppressDungeonUi && !dungeonMapOverlayOpen_ && reloadNoticeTimer_ > 0.0f) {
         renderer.fillRect({18.0f, 170.0f}, {430.0f, 26.0f}, {0, 0, 0, 180});
         InlineItemTextStyle noticeStyle;
         noticeStyle.text = {255, 235, 150, 255};
@@ -5935,7 +6403,7 @@ void Game::render(Renderer& renderer, const Time& time)
         noticeStyle.iconScale = 1.15f;
         drawInlineItemText(renderer, objectCatalog_, {26.0f, 176.0f}, reloadNotice_, noticeStyle);
     }
-    if (!suppressDungeonUi &&
+    if (!suppressDungeonUi && !dungeonMapOverlayOpen_ &&
         (mode_ == ScreenMode::Playing || mode_ == ScreenMode::Inventory || mode_ == ScreenMode::PauseMenu || mode_ == ScreenMode::Ring)) {
         std::vector<UiRect> encyclopediaAvoidRects;
         const float screenWidth = static_cast<float>(camera_.width());
@@ -5946,9 +6414,7 @@ void Game::render(Renderer& renderer, const Time& time)
         }
         if (mode_ == ScreenMode::Playing) {
             if (!enemyTestActive_ && !dungeonMinimapCells_.empty()) {
-                const float minimapY = TopInfoBarY + TopInfoBarHeight + DungeonMinimapYGap;
-                const float minimapDiameter = std::min(DungeonMinimapDiameter, std::max(96.0f, screenHeight - minimapY - 8.0f));
-                encyclopediaAvoidRects.push_back({{DungeonMinimapX, minimapY}, {minimapDiameter, minimapDiameter}});
+                encyclopediaAvoidRects.push_back(dungeonMinimapRect());
             }
 
             if (!introTutorialActive()) {

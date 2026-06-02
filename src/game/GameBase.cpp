@@ -1325,6 +1325,13 @@ UiRect merchantSellGridSlotRect(int index)
     return rect;
 }
 
+UiRect merchantSellSortButtonRect()
+{
+    UiRect rect = uiBottomLeftButtonRect(merchantPanelRect(), {180.0f, ui::ButtonHeight});
+    rect.pos.x = storageItemCircleLeftX();
+    return rect;
+}
+
 UiRect externalWarehouseSourceSlotRect(UiRect(*sourceSlotRect)(int), int index)
 {
     UiRect rect = sourceSlotRect(index);
@@ -7211,6 +7218,45 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
             const int ringIndex = std::clamp(ringIndexFromBaseItemSource(baseMerchantSellSource_), 0, SpellRingCount - 1);
             return static_cast<int>(spellRing_.itemsForRing(ringIndex).size());
         };
+        const auto sortMerchantSellSource = [&]() {
+            closeMerchantCommands();
+            baseSellSelection_ = 0;
+            if (baseMerchantSellSource_ == BaseBackpackSourceIndex) {
+                const bool sorted = inventory_.sortByCatalogOrder(objectCatalog_);
+                baseStatus_ = sorted ? "リュックを並び替えました" : "リュックは空です";
+                ui.emitSound(sorted ? UiSoundEvent::ItemMove : UiSoundEvent::Cancel);
+                return;
+            }
+            if (baseItemSourceIsWarehouse(baseMerchantSellSource_)) {
+                const bool hasItems = warehouseUsedSlots() > 0;
+                sortWarehouseByCatalogOrder();
+                ui.emitSound(hasItems ? UiSoundEvent::ItemMove : UiSoundEvent::Cancel);
+                return;
+            }
+            if (baseItemSourceIsRing(baseMerchantSellSource_)) {
+                const int ringIndex = std::clamp(ringIndexFromBaseItemSource(baseMerchantSellSource_), 0, SpellRingCount - 1);
+                std::vector<SpellRingItem>& ringItems = spellRing_.itemsForRing(ringIndex);
+                if (ringItems.empty()) {
+                    baseStatus_ = "リングは空です";
+                    ui.emitSound(UiSoundEvent::Cancel);
+                    return;
+                }
+                const auto order = buildObjectSortOrder(objectCatalog_);
+                std::stable_sort(ringItems.begin(), ringItems.end(), [&order](const SpellRingItem& a, const SpellRingItem& b) {
+                    const int orderA = objectSortOrder(order, a.objectId);
+                    const int orderB = objectSortOrder(order, b.objectId);
+                    if (orderA != orderB) {
+                        return orderA < orderB;
+                    }
+                    if (a.objectId != b.objectId) {
+                        return a.objectId < b.objectId;
+                    }
+                    return a.instanceId < b.instanceId;
+                });
+                baseStatus_ = "リングを並び替えました";
+                ui.emitSound(UiSoundEvent::ItemMove);
+            }
+        };
         const auto openSellCommand = [&](int slotIndex) {
             const MerchantSellTarget target = merchantSellTargetForScreenSlot(slotIndex);
             if (!target.valid) {
@@ -7393,6 +7439,12 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
                 baseMerchantSellSource_ = sourceSelection;
                 baseSellSelection_ = std::clamp(baseSellSelection_, 0, std::max(0, merchantSellSourceSlotCount() - 1));
                 closeMerchantCommands();
+                ui.block(merchantBounds);
+                return;
+            }
+
+            if (input.arrangeItemsPressed() || ui.pressed(merchantSellSortButtonRect())) {
+                sortMerchantSellSource();
                 ui.block(merchantBounds);
                 return;
             }
@@ -9431,6 +9483,7 @@ void Game::renderBaseScreen(Renderer& renderer) const
                     sourceTabs.data(),
                     sourceCount,
                     sourceTabRects.data());
+                drawUiButton(renderer, merchantSellSortButtonRect(), "並び替え", false, uiActionButtonStyle());
 
                 const bool warehouseSource = baseItemSourceIsWarehouse(baseMerchantSellSource_);
                 const bool ringSource = baseItemSourceIsRing(baseMerchantSellSource_);

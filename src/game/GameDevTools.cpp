@@ -9,7 +9,10 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <fstream>
+#include <iomanip>
 #include <limits>
+#include <sstream>
 #include <unordered_set>
 #include <utility>
 #include <vector>
@@ -78,6 +81,20 @@ constexpr float DebugPreviewBackgroundLabelWidth = 52.0f;
 constexpr float DebugPreviewBackgroundSwatchSize = 28.0f;
 constexpr float DebugPreviewBackgroundSwatchGap = 7.0f;
 constexpr int DebugEffectPreviewTestLoopFrames = 40;
+
+std::filesystem::path dungeonDebugDumpPath()
+{
+    return std::filesystem::path(".local") / "dungeon_dump_latest.txt";
+}
+
+float debugPathLengthTiles(const std::vector<Vec2>& points)
+{
+    float total = 0.0f;
+    for (std::size_t i = 1; i < points.size(); ++i) {
+        total += length(points[i] - points[i - 1]);
+    }
+    return total;
+}
 constexpr int DebugProjectilePreviewReplayGapFrames = 40;
 constexpr float DebugPreviewAssumedFrameRate = 60.0f;
 constexpr float DebugEffectPreviewTestLoopSeconds =
@@ -9340,7 +9357,8 @@ GameTestActionResult Game::applyTestAction(const GameTestAction& action)
             return result(false, "cannot return now");
         }
         const bool entranceNearby =
-            distanceSquared(player_.position, dungeonEntrancePosition()) <= WarpPointReturnRadius * WarpPointReturnRadius;
+            distanceSquared(player_.position, dungeonEntrancePosition()) <=
+            DungeonInspectableInteractionRange * DungeonInspectableInteractionRange;
         if (!entranceNearby && nearbyDiscoveredWarpPointIndex() < 0) {
             return result(false, "no nearby discovered warp");
         }
@@ -9808,6 +9826,144 @@ GameTestActionResult Game::applyTestAction(const GameTestAction& action)
     return result(false, "unknown action");
 }
 
+bool Game::dumpDungeonDebugState()
+{
+    std::error_code error;
+    std::filesystem::create_directories(".local", error);
+    if (error) {
+        logWarning("Debug: failed to create dungeon dump directory: " + error.message());
+        return false;
+    }
+
+    const std::filesystem::path path = dungeonDebugDumpPath();
+    std::ofstream file(path, std::ios::binary | std::ios::trunc);
+    if (!file) {
+        logWarning("Debug: failed to open dungeon dump: " + path.string());
+        return false;
+    }
+
+    const unsigned char bom[] = {0xEF, 0xBB, 0xBF};
+    file.write(reinterpret_cast<const char*>(bom), sizeof(bom));
+    file << std::fixed << std::setprecision(2);
+
+    const auto writeVec = [&](std::string_view label, Vec2 value) {
+        file << label << " world=(" << value.x << "," << value.y << ")"
+            << " tile=(" << tileMap_.worldToTile(value.x) << "," << tileMap_.worldToTile(value.y) << ")\n";
+    };
+    const auto writeTile = [&](std::string_view label, DungeonTile tile) {
+        file << label << " tile=(" << tile.x << "," << tile.y << ")"
+            << " world=(" << tileWorldCenter(tile).x << "," << tileWorldCenter(tile).y << ")\n";
+    };
+
+    file << "MajoShovel Dungeon Debug Dump\n";
+    file << "stageId=" << currentStageId_ << "\n";
+    file << "stageName=" << currentStageDefinition_.name << "\n";
+    file << "screenMode=" << static_cast<int>(mode_) << "\n";
+    file << "seed=" << dungeonLayout_.seed << "\n";
+    file << "runSeconds=" << runStats_.elapsedSeconds << "\n";
+    file << "warpPointsEnabled=" << (warpPointsEnabled_ ? "true" : "false") << "\n";
+    file << "worldBuildActive=" << (worldBuildActive() ? "true" : "false") << "\n";
+    file << "enemyTestActive=" << (enemyTestActive_ ? "true" : "false") << "\n";
+    file << "\n";
+
+    writeVec("player", player_.position);
+    writeVec("camera", camera_.position());
+    writeTile("start", dungeonLayout_.startTile);
+    writeTile("goal", dungeonLayout_.goalTile);
+    file << "\n";
+
+    file << "boss has=" << (hasBossSpawnPoint_ ? "true" : "false")
+        << " spawned=" << (bossSpawned_ ? "true" : "false")
+        << " capturedForStage=" << (hasCapturedBossForCurrentStage() ? "true" : "false") << "\n";
+    if (hasBossSpawnPoint_) {
+        writeVec("bossSpawnPoint", bossSpawnPoint_);
+        const DungeonLayoutMetrics bossMetrics = calculateDungeonLayoutMetrics(
+            dungeonLayout_,
+            {static_cast<float>(tileMap_.worldToTile(bossSpawnPoint_.x)), static_cast<float>(tileMap_.worldToTile(bossSpawnPoint_.y))});
+        file << "bossPath progress=" << bossMetrics.pathProgress
+            << " distFromMainPath=" << bossMetrics.distanceFromMainPath
+            << " distFromStart=" << bossMetrics.distanceFromStart << "\n";
+        file << "distancePlayerToBoss=" << length(player_.position - bossSpawnPoint_) << "\n";
+    }
+    file << "\n";
+
+    file << "warpPoints count=" << warpPoints_.size()
+        << " discovered=" << discoveredWarpPointCount()
+        << " unlocked=" << unlockedWarpPointCount_ << "\n";
+    for (const WarpPoint& point : warpPoints_) {
+        const DungeonLayoutMetrics metrics = calculateDungeonLayoutMetrics(dungeonLayout_, {
+            static_cast<float>(point.tilePosition.x),
+            static_cast<float>(point.tilePosition.y),
+        });
+        file << "warp index=" << point.index
+            << " discovered=" << (point.discovered ? "true" : "false")
+            << " unlocked=" << (point.unlocked ? "true" : "false")
+            << " snapshot=" << (point.snapshotCaptured ? "true" : "false")
+            << " pathProgress=" << metrics.pathProgress
+            << " tile=(" << point.tilePosition.x << "," << point.tilePosition.y << ")"
+            << " world=(" << point.position.x << "," << point.position.y << ")\n";
+    }
+    file << "\n";
+
+    file << "mainPath count=" << dungeonLayout_.mainPathPoints.size()
+        << " lengthTiles=" << debugPathLengthTiles(dungeonLayout_.mainPathPoints) << "\n";
+    for (std::size_t i = 0; i < dungeonLayout_.mainPathPoints.size(); ++i) {
+        const Vec2 point = dungeonLayout_.mainPathPoints[i];
+        file << "mainPath[" << i << "] tile=(" << point.x << "," << point.y << ")"
+            << " world=(" << tileWorldCenter(roundDungeonTile(point)).x << ","
+            << tileWorldCenter(roundDungeonTile(point)).y << ")\n";
+    }
+    file << "\n";
+
+    file << "events count=" << dungeonEvents_.size() << "\n";
+    for (const DungeonEventInstance& event : dungeonEvents_.all()) {
+        file << "event id=" << event.id
+            << " kind=" << dungeonEventKindId(event.kind)
+            << " discovered=" << (event.discovered ? "true" : "false")
+            << " completed=" << (event.completed ? "true" : "false")
+            << " encounterSpawned=" << (event.encounterSpawned ? "true" : "false")
+            << " activated=" << (event.activated ? "true" : "false")
+            << " center=(" << event.centerTile.x << "," << event.centerTile.y << ")"
+            << " focus=(" << event.focusTile.x << "," << event.focusTile.y << ")"
+            << " reward=(" << event.rewardTile.x << "," << event.rewardTile.y << ")"
+            << " objects=" << event.eventObjects.size()
+            << " nestHoles=" << event.nestHoles.size()
+            << " enemies=" << event.spawnedEnemyRuntimeIds.size() << "\n";
+        for (const DungeonEventNestHole& hole : event.nestHoles) {
+            file << "  nest tile=(" << hole.tile.x << "," << hole.tile.y << ")"
+                << " hp=" << hole.hp << "/" << hole.maxHp
+                << " destroyed=" << (hole.destroyed ? "true" : "false")
+                << " rewardSpawned=" << (hole.rewardSpawned ? "true" : "false") << "\n";
+        }
+        for (const DungeonEventObject& object : event.eventObjects) {
+            file << "  object kind=" << static_cast<int>(object.kind)
+                << " tile=(" << object.tile.x << "," << object.tile.y << ")"
+                << " hp=" << object.hp << "/" << object.maxHp
+                << " destroyed=" << (object.destroyed ? "true" : "false")
+                << " powered=" << (object.powered ? "true" : "false") << "\n";
+        }
+    }
+    file << "\n";
+
+    file << "nodes reward=" << rewardNodeCount()
+        << " money=" << moneyNodeCount()
+        << " chest=" << chestNodes_.size()
+        << " crate=" << crateNodes_.size()
+        << " exposedEnemies=" << exposedEnemyNodeCount()
+        << " buriedEnemies=" << buriedEnemyNodeCount()
+        << " spawnedEnemyNodes=" << spawnedEnemyNodeCount()
+        << " worldDrops=" << worldDrops_.size() << "\n";
+
+    file.flush();
+    if (!file) {
+        logWarning("Debug: failed while writing dungeon dump: " + path.string());
+        return false;
+    }
+
+    logInfo("Debug: dungeon dump written: " + path.string());
+    return true;
+}
+
 bool Game::executeDebugCommand(std::string_view command)
 {
     const std::string normalized = lowerAscii(trimAscii(std::string(command)));
@@ -9834,6 +9990,11 @@ bool Game::executeDebugCommand(std::string_view command)
         return true;
     }
     if (handleDebugStoryTestCommand(normalized)) {
+        return true;
+    }
+    if (normalized == "game dungeon-dump" ||
+        normalized == "game dungeon dump") {
+        dumpDungeonDebugState();
         return true;
     }
     constexpr std::string_view DungeonEventPlacePrefix = "game dungeon-event place ";
