@@ -105,6 +105,21 @@ bool hasSaveableDungeonLayout(const DungeonLayout& layout)
     return !layout.mainPathPoints.empty();
 }
 
+std::u8string toPathUtf8(std::string_view text)
+{
+    std::u8string result;
+    result.reserve(text.size());
+    for (unsigned char ch : text) {
+        result.push_back(static_cast<char8_t>(ch));
+    }
+    return result;
+}
+
+std::string fromPathUtf8(const std::u8string& text)
+{
+    return std::string(reinterpret_cast<const char*>(text.data()), text.size());
+}
+
 std::vector<std::string> splitSaveList(std::string_view text)
 {
     std::vector<std::string> values;
@@ -838,6 +853,11 @@ Game::DiarySaveSummary Game::loadDiarySaveSummaryFromDisk() const
 bool Game::loadSaveData()
 {
     const std::filesystem::path path = saveDataPath();
+    return loadSaveData(path);
+}
+
+bool Game::loadSaveData(const std::filesystem::path& path)
+{
     std::ifstream file(path, std::ios::binary);
     if (!file) {
         logError("[save] no save file: " + path.string());
@@ -901,6 +921,8 @@ bool Game::loadSaveData()
     int loadedWarehouseCapacityLevel = 0;
     int loadedProcessingUnlockLevel = 0;
     bool loadedRingWorkshopUnlocked = false;
+    int loadedRingPresetSlotLevel = 0;
+    bool loadedRingPresetSlotLevelExplicit = false;
     bool loadedAutoSaveOnReturn = false;
     std::string loadedEquippedStaffInstanceId;
     std::vector<std::string> loadedStoryFlags;
@@ -1003,6 +1025,9 @@ bool Game::loadSaveData()
             stream >> loadedProcessingUnlockLevel;
         } else if (key == "ring_workshop_unlocked") {
             stream >> loadedRingWorkshopUnlocked;
+        } else if (key == "ring_preset_slot_level") {
+            stream >> loadedRingPresetSlotLevel;
+            loadedRingPresetSlotLevelExplicit = !stream.fail();
         } else if (key == "unlocked_ring_count") {
             stream >> loadedUnlockedRingCount;
             loadedUnlockedRingCountExplicit = !stream.fail();
@@ -1523,10 +1548,22 @@ bool Game::loadSaveData()
         }
         return false;
     }();
+    const int migratedRingPresetSlotLevel = loadedRingPresetSlotLevelExplicit
+        ? loadedRingPresetSlotLevel
+        : [&loadedRingPresets]() {
+            int slotLevel = 0;
+            for (int presetIndex = 0; presetIndex < RingPresetSlotCount; ++presetIndex) {
+                if (loadedRingPresets.registered(presetIndex)) {
+                    slotLevel = presetIndex + 1;
+                }
+            }
+            return slotLevel;
+        }();
     const bool loadedSaveHasBaseProgress =
         loadedWarehouseCapacityLevel > 0 ||
         loadedProcessingUnlockLevel > 0 ||
         loadedRingWorkshopUnlocked ||
+        migratedRingPresetSlotLevel > 0 ||
         loadedAutoSaveOnReturn ||
         !loadedWarehouseStacks.empty() ||
         !loadedWarehouseInstances.empty() ||
@@ -1822,6 +1859,7 @@ bool Game::loadSaveData()
     warehouseCapacityLevel_ = std::clamp(loadedWarehouseCapacityLevel, 0, 4);
     processingUnlockLevel_ = std::clamp(loadedProcessingUnlockLevel, 0, 5);
     ringWorkshopUnlocked_ = loadedRingWorkshopUnlocked;
+    ringPresetSlotLevel_ = std::clamp(migratedRingPresetSlotLevel, 0, RingPresetSlotCount);
     autoSaveOnReturn_ = loadedAutoSaveOnReturn;
     storyFlags_ = std::move(loadedStoryFlags);
     encyclopedia_ = std::move(loadedEncyclopedia);
@@ -1843,6 +1881,11 @@ bool Game::loadSaveData()
 bool Game::saveSaveData(std::string& message) const
 {
     const std::filesystem::path path = saveDataPath();
+    return saveSaveData(path, message);
+}
+
+bool Game::saveSaveData(const std::filesystem::path& path, std::string& message) const
+{
     std::error_code error;
     if (path.has_parent_path()) {
         std::filesystem::create_directories(path.parent_path(), error);
@@ -1897,6 +1940,7 @@ bool Game::saveSaveData(std::string& message) const
     file << "warehouse_capacity_level " << warehouseCapacityLevel_ << "\n";
     file << "processing_unlock_level " << processingUnlockLevel_ << "\n";
     file << "ring_workshop_unlocked " << ringWorkshopUnlocked_ << "\n";
+    file << "ring_preset_slot_level " << ringPresetSlotLevel_ << "\n";
     file << "auto_save_on_return " << autoSaveOnReturn_ << "\n";
     file << "equipped_staff "
         << (inventory_.equippedStaffInstanceId().empty() ? "-" : inventory_.equippedStaffInstanceId())
@@ -2248,6 +2292,71 @@ bool Game::saveSaveData(std::string& message) const
 
     message = "セーブしました";
     return true;
+}
+
+std::filesystem::path Game::debugNamedSaveDataPath(std::string_view name) const
+{
+    std::string safeName = trimAscii(std::string(name));
+    for (char& ch : safeName) {
+        switch (ch) {
+        case '/':
+        case '\\':
+        case ':':
+        case '*':
+        case '?':
+        case '"':
+        case '<':
+        case '>':
+        case '|':
+            ch = '_';
+            break;
+        default:
+            break;
+        }
+    }
+    if (safeName.empty()) {
+        safeName = "debug_save";
+    }
+
+    std::filesystem::path directory = saveDataPath().parent_path();
+    if (directory.empty()) {
+        directory = std::filesystem::path(".");
+    }
+    return directory / "debug_saves" / std::filesystem::path(toPathUtf8(safeName + ".dat"));
+}
+
+std::vector<Game::DebugNamedSaveEntry> Game::listDebugNamedSaveData() const
+{
+    std::vector<DebugNamedSaveEntry> entries;
+    std::filesystem::path directory = saveDataPath().parent_path();
+    if (directory.empty()) {
+        directory = std::filesystem::path(".");
+    }
+    directory /= "debug_saves";
+
+    std::error_code error;
+    if (!std::filesystem::exists(directory, error) || error) {
+        return entries;
+    }
+
+    for (const std::filesystem::directory_entry& entry : std::filesystem::directory_iterator(directory, error)) {
+        if (error) {
+            break;
+        }
+        if (!entry.is_regular_file(error) || error || entry.path().extension() != ".dat") {
+            error.clear();
+            continue;
+        }
+        DebugNamedSaveEntry save;
+        save.name = fromPathUtf8(entry.path().stem().u8string());
+        save.path = entry.path();
+        entries.push_back(std::move(save));
+    }
+
+    std::sort(entries.begin(), entries.end(), [](const DebugNamedSaveEntry& left, const DebugNamedSaveEntry& right) {
+        return left.name < right.name;
+    });
+    return entries;
 }
 
 } // namespace majo

@@ -100,9 +100,15 @@ float findNearestRingPathParam(Vec2 worldPoint, Vec2 center, const RingOrbitCont
 class SpellRingSystem {
 public:
     static constexpr float InitialMaxEquippedWeight = 10.0f;
+    static constexpr std::array<float, SpellRingCount> InitialMaxEquippedWeightsByRing{{
+        6.0f,
+        8.0f,
+        10.0f,
+    }};
     static constexpr float LevelRingScaleUpgradeAmount = 0.1f;
     static constexpr float LevelWeightLimitUpgradeAmount = 1.0f;
     static float levelScaleMultiplierForPoints(int points);
+    static float initialMaxEquippedWeightForRing(int ringIndex);
 
     void initialize(const RuntimeBalance& balance);
     void update(Player& player, const Input& input, float dt, float totalTime, bool paused, bool blockPointerThrow, const RuntimeBalance& balance);
@@ -272,9 +278,9 @@ private:
         2.72f,
     }};
     std::array<float, SpellRingCount> maxEquippedWeights_{{
-        InitialMaxEquippedWeight,
-        InitialMaxEquippedWeight,
-        InitialMaxEquippedWeight,
+        InitialMaxEquippedWeightsByRing[0],
+        InitialMaxEquippedWeightsByRing[1],
+        InitialMaxEquippedWeightsByRing[2],
     }};
     std::array<float, SpellRingCount> baseEquippedWeights_{};
     std::array<float, SpellRingCount> baseAngles_{};

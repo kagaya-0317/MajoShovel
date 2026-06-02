@@ -65,7 +65,7 @@ constexpr float PlayerSpriteAnchorX = 0.5f;
 constexpr float PlayerSpriteAnchorY = 0.95f;
 constexpr int BaseMenuItemCount = 8;
 constexpr int BaseMiningStartChoiceCount = 3;
-constexpr int BaseUpgradeItemCount = 8;
+constexpr int BaseUpgradeItemCount = 9;
 constexpr int BaseProcessingModeCount = 7;
 constexpr int BaseWarehouseSourceIndex = 1;
 constexpr int BaseRingSourceOffset = 2;
@@ -1388,6 +1388,7 @@ UiRect baseUpgradeItemRect(int index)
         466.0f,
         512.0f,
         558.0f,
+        604.0f,
     }};
     const int clampedIndex = std::clamp(index, 0, BaseUpgradeItemCount - 1);
     return {{x, RowY[static_cast<std::size_t>(clampedIndex)]}, {w, h}};

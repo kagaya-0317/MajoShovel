@@ -50,6 +50,7 @@
 #include <array>
 #include <cstdint>
 #include <deque>
+#include <filesystem>
 #include <functional>
 #include <limits>
 #include <optional>
@@ -1129,6 +1130,7 @@ private:
         UiContext& ui,
         float dt,
         std::vector<EffectDiscoveryEvent>* discoveryEvents);
+    int unlockedRingPresetSlotCount() const;
     bool registerRingPresetShortcut(int presetIndex);
     bool applyRingPresetShortcut(int presetIndex);
     void updateBaseScreen(const Input& input, UiContext& ui, float dt);
@@ -1386,6 +1388,14 @@ private:
     void observeRingItemInstanceIds();
     bool loadSaveData();
     bool saveSaveData(std::string& message) const;
+    bool loadSaveData(const std::filesystem::path& path);
+    bool saveSaveData(const std::filesystem::path& path, std::string& message) const;
+    struct DebugNamedSaveEntry {
+        std::string name;
+        std::filesystem::path path;
+    };
+    std::vector<DebugNamedSaveEntry> listDebugNamedSaveData() const;
+    std::filesystem::path debugNamedSaveDataPath(std::string_view name) const;
     DiarySaveSummary currentDiarySaveSummary() const;
     DiarySaveSummary loadDiarySaveSummaryFromDisk() const;
     void loadBaseEditData();
@@ -1442,6 +1452,8 @@ private:
     const EnemyDefinition* selectedEnemyShadowDefinitionForEdit() const;
     EnemyShadowSpec selectedEnemyShadowSpecForEdit() const;
     EnemyShadowSpec& mutableSelectedEnemyShadowSpecForEdit();
+    bool copyCurrentEnemyShadowSpec();
+    bool pasteCurrentEnemyShadowSpec(bool mirrorX);
     bool loadAudioCueManifestForEdit();
     bool saveAudioCueManifestFromEdit(std::string& message);
     bool handleAudioCueEditCommand(std::string_view normalized);
@@ -1453,6 +1465,17 @@ private:
     void updateAudioCueEditScreen(const Input& input, UiContext& ui);
     void renderAudioCueEditScreen(Renderer& renderer) const;
     bool handleDebugItemPickerCommand(std::string_view normalized);
+    bool handleDebugNamedSaveCommand(std::string_view normalized);
+    bool handleDebugNamedSaveEvent(const SDL_Event& event);
+    void openDebugNamedSaveDialog();
+    void closeDebugNamedSaveDialog();
+    void openDebugNamedLoadDialog();
+    void closeDebugNamedLoadDialog();
+    void rebuildDebugNamedLoadEntries();
+    void commitDebugNamedSave();
+    void loadSelectedDebugNamedSave();
+    void updateDebugNamedSaveUi(const Input& input, UiContext& ui);
+    void renderDebugNamedSaveUi(Renderer& renderer) const;
     void rebuildDebugItemPickerList();
     void applyDebugItemPickerFilter(std::string_view preferredSelection = {});
     bool handleDebugItemPickerEvent(const SDL_Event& event);
@@ -1789,6 +1812,8 @@ private:
     Vec2 enemyShadowDragStartOffset_{};
     std::vector<HitCircle> enemyHitboxClipboard_;
     EnemyHitboxDirectionClipboard enemyHitboxAllDirectionClipboard_;
+    EnemyShadowSpec enemyShadowClipboard_;
+    bool enemyShadowClipboardValid_ = false;
     std::string objectImageScaleStatus_;
     std::string enemyHitboxStatus_;
     std::string enemyShadowStatus_;
@@ -1814,6 +1839,15 @@ private:
     float debugItemPickerScrollOffset_ = 0.0f;
     std::string debugItemPickerStatus_;
     mutable UiCancelControlState debugItemPickerCancelState_{};
+    bool debugNamedSaveInputActive_ = false;
+    bool debugNamedLoadActive_ = false;
+    UiTextInputState debugNamedSaveInput_;
+    std::vector<DebugNamedSaveEntry> debugNamedLoadEntries_;
+    int debugNamedLoadSelectedIndex_ = -1;
+    float debugNamedLoadScrollOffset_ = 0.0f;
+    UiScrollAreaState debugNamedLoadScrollState_{};
+    std::string debugNamedSaveStatus_;
+    mutable UiCancelControlState debugNamedSaveCancelState_{};
     bool debugStoryTestActive_ = false;
     DebugStoryTestMode debugStoryTestMode_ = DebugStoryTestMode::Events;
     std::vector<DebugStoryTestEntry> debugStoryTestEntries_;
@@ -1989,6 +2023,11 @@ private:
     int debugAstralStatItems_ = 0;
     int debugAstralStatMaterials_ = 0;
     int debugAstralStatMoney_ = 0;
+    int debugMoneyAddAmount_ = 10000;
+    int debugMaterialAddAmount_ = 100;
+    int debugRandomItemCount_ = 8;
+    int debugHpValue_ = 1;
+    int debugTargetLevel_ = 1;
     InventoryCarryState runStartInventoryState_{};
     RetrySnapshot retrySnapshot_{};
     std::unordered_map<std::string, DungeonState> dungeonStates_;
@@ -2020,6 +2059,8 @@ private:
     std::optional<Vec2> requestedWarpPointStartPosition_;
     UiConfirmDialogState warpReturnConfirm_{};
     int focusedWarpReturnPointIndex_ = -1;
+    int hoveredWarpReturnPointIndex_ = -1;
+    bool introTutorialExitHovered_ = false;
     int money_ = 0;
     double playTimeSeconds_ = 0.0;
     int maxHpUpgradeLevel_ = 0;
@@ -2039,6 +2080,7 @@ private:
     int warehouseCapacityLevel_ = 0;
     int processingUnlockLevel_ = 0;
     bool ringWorkshopUnlocked_ = false;
+    int ringPresetSlotLevel_ = 0;
     bool autoSaveOnReturn_ = false;
     std::vector<std::string> storyFlags_;
     std::vector<InventoryObjectStack> warehouseObjectStacks_;

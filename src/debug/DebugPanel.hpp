@@ -26,6 +26,8 @@ struct DebugControlDefinition {
     int maxValue = 100;
     std::vector<std::string> options;
     std::vector<std::string> optionCommands;
+    int initialValue = 0;
+    bool hasInitialValue = false;
 };
 
 struct DebugGroupDefinition {

@@ -544,10 +544,13 @@ bool matchPlainGlyph(std::string_view text, std::size_t offset, const Input* inp
     if (semantic("Z/X", SemanticGlyph::RingSwitch)) return true;
     if (semantic("Shift+R", SemanticGlyph::RingRemoveAll)) return true;
     if (literalGlyphs("Backspace/Delete", {keyGlyph("Back"), keyGlyph("Del")})) return true;
+    if (literalGlyphs("Shift+1-2", {keyGlyph("Shift"), keyGlyph("1-2")})) return true;
     if (literalGlyphs("Shift+1-3", {keyGlyph("Shift"), keyGlyph("1-3")})) return true;
     if (literalGlyphs("Ctrl+S", {keyGlyph("Ctrl"), keyGlyph("S")})) return true;
     if (literalGlyphs("1〜8", {keyGlyph("1-8")})) return true;
     if (literalGlyphs("1-8", {keyGlyph("1-8")})) return true;
+    if (literalGlyphs("1〜2", {keyGlyph("1-2")})) return true;
+    if (literalGlyphs("1-2", {keyGlyph("1-2")})) return true;
     if (literalGlyphs("1〜3", {keyGlyph("1-3")})) return true;
     if (literalGlyphs("1-3", {keyGlyph("1-3")})) return true;
     if (literalGlyphs("+1/-1", {keyGlyph("+1"), keyGlyph("-1")})) return true;

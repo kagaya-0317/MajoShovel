@@ -532,6 +532,17 @@ function Placeholder-Sample([string]$Kind, [double]$Time, [double]$Duration, [Sy
             $env = Decay $Time $Duration 1.1
             return $env * (0.22 * [Math]::Sin($TwoPi * 784.0 * $Time) + 0.18 * [Math]::Sin($TwoPi * 1174.66 * $Time) + 0.14 * [Math]::Sin($TwoPi * 1568.0 * $Time))
         }
+        "se.discovery.monster" {
+            $env = Decay $Time $Duration 0.95
+            $u = $Time / $Duration
+            $sweep = 880.0 + 1320.0 * $u
+            return $env * (0.28 * [Math]::Sin($TwoPi * $sweep * $Time) + 0.20 * [Math]::Sin($TwoPi * 1760.0 * $Time) + 0.14 * [Math]::Sin($TwoPi * 2349.32 * $Time))
+        }
+        "se.discovery.effect" {
+            $env = Decay $Time $Duration 0.9
+            $shimmer = 0.5 + 0.5 * [Math]::Sin($TwoPi * 18.0 * $Time)
+            return $env * (0.22 * [Math]::Sin($TwoPi * 1174.66 * $Time) + 0.20 * [Math]::Sin($TwoPi * 2093.0 * $Time) + 0.14 * $shimmer * [Math]::Sin($TwoPi * 3135.96 * $Time))
+        }
         "se.discovery.warp" {
             $env = Decay $Time $Duration 0.95
             $pulse = 0.5 + 0.5 * [Math]::Sin($TwoPi * 8.0 * $Time)
@@ -909,6 +920,10 @@ public static class MajoPlaceholderAudioHQ
                 return Env(t, d, 0.004, 1.55) * (0.30 * Sweep(t, d, 520.0, 220.0) + 0.14 * S(210.0, t));
             case "se.discovery":
                 return Sparkle(t, d, 784.0, 0.18) + Sparkle(t, d, 1174.66, 0.15) + Sparkle(t, d, 1568.0, 0.10);
+            case "se.discovery.monster":
+                return Sparkle(t, d, 880.0, 0.18) + Sparkle(t, d, 1318.51, 0.18) + Sparkle(t, d, 1760.0, 0.16) + 0.12 * Ring(t, d, 420.0, 0.18, 1.1);
+            case "se.discovery.effect":
+                return Sparkle(t, d, 1174.66, 0.16) + Sparkle(t, d, 1567.98, 0.16) + Sparkle(t, d, 2093.0, 0.14) + 0.09 * Ring(t, d, 3135.96, 0.10, 0.85);
             case "se.discovery.warp":
                 return Ring(t, d, 392.0, 0.18, 0.9) + Sparkle(t, d, 784.0, 0.15) + 0.10 * S(1174.66, t) * Env(t, d, 0.01, 0.9);
             case "se.chest.open":
@@ -1084,6 +1099,8 @@ $clips = @(
     @{ Path = Join-Path $SeRoot "capture_success_placeholder.wav"; Kind = "se.capture.success"; Duration = 0.32; Seed = 2032 },
     @{ Path = Join-Path $SeRoot "capture_fail_placeholder.wav"; Kind = "se.capture.fail"; Duration = 0.24; Seed = 2033 },
     @{ Path = Join-Path $SeRoot "discovery_placeholder.wav"; Kind = "se.discovery"; Duration = 0.30; Seed = 2034 },
+    @{ Path = Join-Path $SeRoot "discovery_monster_placeholder.wav"; Kind = "se.discovery.monster"; Duration = 0.46; Seed = 2111 },
+    @{ Path = Join-Path $SeRoot "discovery_effect_placeholder.wav"; Kind = "se.discovery.effect"; Duration = 0.52; Seed = 2112 },
     @{ Path = Join-Path $SeRoot "discovery_warp_placeholder.wav"; Kind = "se.discovery.warp"; Duration = 0.58; Seed = 2035 },
     @{ Path = Join-Path $SeRoot "chest_open_placeholder.wav"; Kind = "se.chest.open"; Duration = 0.32; Seed = 2036 },
     @{ Path = Join-Path $SeRoot "crate_break_placeholder.wav"; Kind = "se.crate.break"; Duration = 0.24; Seed = 2037 },

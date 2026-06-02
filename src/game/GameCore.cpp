@@ -17,6 +17,8 @@ constexpr float HotReloadPollIntervalSeconds = 0.50f;
 constexpr std::string_view DefaultShovelObjectId = "item_shovel";
 constexpr std::string_view DefaultTorchObjectId = "item_torch";
 constexpr std::string_view MagnifyingGlassObjectId = "item_magnifying_glass";
+constexpr std::string_view TutorialAppleObjectId = "item_apple";
+constexpr std::string_view MagicBookCategory = "魔導書";
 constexpr std::string_view EndingSeenFlag = "ending_seen";
 constexpr std::string_view AudioBgmTitle = "bgm.title";
 constexpr std::string_view AudioBgmBase = "bgm.base";
@@ -37,6 +39,7 @@ constexpr std::string_view AudioSeMagicImpact = "se.magic.impact";
 constexpr std::string_view AudioSeCaptureFail = "se.capture.fail";
 constexpr std::string_view AudioSeExplosionTick = "se.explosion.tick";
 constexpr std::string_view AudioSeDiscovery = "se.discovery";
+constexpr std::string_view AudioSeMonsterDiscovery = "se.discovery.monster";
 constexpr std::string_view AudioSeUiConfirm = "se.ui.confirm";
 constexpr std::string_view AudioSeUiCancel = "se.ui.cancel";
 constexpr std::string_view AudioSeUiMenuOpen = "se.ui.menu_open";
@@ -341,6 +344,24 @@ bool objectIdHasCaptureNetOrbitEffect(const ObjectCatalog& catalog, std::string_
     return objectHasCaptureNetOrbitEffect(item);
 }
 
+bool objectIdIsMagicBook(const ObjectCatalog& catalog, std::string_view objectId)
+{
+    if (objectId.empty()) {
+        return false;
+    }
+    const ItemData* item = catalog.registry.findById(objectId);
+    return item != nullptr && std::string_view(item->category) == MagicBookCategory;
+}
+
+bool objectIdIsEquippableStaff(const ObjectCatalog& catalog, std::string_view objectId)
+{
+    if (objectId.empty()) {
+        return false;
+    }
+    const ItemData* item = catalog.registry.findById(objectId);
+    return item != nullptr && isStaffObject(*item) && item->durability != 0;
+}
+
 UiResultDialogLine levelUpResultTextLine(std::string text)
 {
     UiResultDialogLine line;
@@ -563,6 +584,9 @@ void Game::setInputBindingAccessors(
 
 bool Game::handleEvent(const SDL_Event& event)
 {
+    if (handleDebugNamedSaveEvent(event)) {
+        return true;
+    }
     if (handleDebugItemPickerEvent(event)) {
         return true;
     }
@@ -1029,6 +1053,7 @@ void Game::resetWorldProgressionState()
     resetInPlace(levels_);
     resetInPlace(upgrades_);
     levelUpPresentation_ = {};
+    playerDeathSequence_ = {};
 }
 
 void Game::resetWorldInventoryState()
@@ -1048,6 +1073,8 @@ void Game::resetWorldUiState()
     baseWarpPointSelection_ = 0;
     warpReturnConfirm_ = {};
     focusedWarpReturnPointIndex_ = -1;
+    hoveredWarpReturnPointIndex_ = -1;
+    introTutorialExitHovered_ = false;
     resetDungeonFocus();
     baseStorageActive_ = false;
     baseStorageMode_ = StorageUiMode::Closed;
@@ -1281,6 +1308,8 @@ void Game::beginWorldBuildFromBase(
     baseBrokenRingDepartureConfirm_ = {};
     warpReturnConfirm_ = {};
     focusedWarpReturnPointIndex_ = -1;
+    hoveredWarpReturnPointIndex_ = -1;
+    introTutorialExitHovered_ = false;
     baseStatus_.clear();
     pausePage_ = PauseMenuPage::Main;
     pauseReturnMode_ = ScreenMode::Base;
@@ -1498,6 +1527,8 @@ void Game::enterBase()
     inventory_.cancelGrab();
     cancelRingGrab();
     spellRing_.clearActionFlashTimers();
+    closeDebugNamedSaveDialog();
+    closeDebugNamedLoadDialog();
     closeDebugItemPicker();
     closeDebugStoryTest();
     debugStoryTestReturnAfterDialogue_ = false;
@@ -1512,6 +1543,8 @@ void Game::enterBase()
     baseBrokenRingDepartureConfirm_ = {};
     warpReturnConfirm_ = {};
     focusedWarpReturnPointIndex_ = -1;
+    hoveredWarpReturnPointIndex_ = -1;
+    introTutorialExitHovered_ = false;
     baseStorageActive_ = false;
     baseStorageMode_ = StorageUiMode::Closed;
     baseStorageActionSelection_ = 0;
@@ -2292,7 +2325,7 @@ float Game::effectiveInitialRingWeightLimitForRing(int ringIndex, int levelWeigh
     const double staffWeightAdd = std::max(
         0.0,
         ringEquipmentModifiersForRing(equipmentModifiers_, ringIndex).ringWeightLimitAdd);
-    return SpellRingSystem::InitialMaxEquippedWeight +
+    return SpellRingSystem::initialMaxEquippedWeightForRing(ringIndex) +
         SpellRingSystem::LevelWeightLimitUpgradeAmount * static_cast<float>(std::max(0, levelWeightLimitPoints)) +
         static_cast<float>(staffWeightAdd);
 }
@@ -2340,9 +2373,22 @@ void Game::observeRingItemInstanceIds()
     }
 }
 
+int Game::unlockedRingPresetSlotCount() const
+{
+    return std::clamp(ringPresetSlotLevel_, 0, RingPresetSlotCount);
+}
+
 bool Game::registerRingPresetShortcut(int presetIndex)
 {
-    if (!ringPresets_.capturePreset(presetIndex, spellRing_)) {
+    const int presetSlotCount = unlockedRingPresetSlotCount();
+    if (presetIndex < 0 || presetIndex >= presetSlotCount) {
+        ringStatus_ = presetSlotCount <= 0
+            ? "リングプリセットは未解禁です"
+            : "プリセット" + std::to_string(presetIndex + 1) + "は未解禁です";
+        baseStatus_ = ringStatus_;
+        return false;
+    }
+    if (!ringPresets_.capturePreset(presetIndex, spellRing_, unlockedRingCount())) {
         ringStatus_ = "プリセット登録に失敗しました";
         return false;
     }
@@ -2353,11 +2399,20 @@ bool Game::registerRingPresetShortcut(int presetIndex)
 
 bool Game::applyRingPresetShortcut(int presetIndex)
 {
+    const int presetSlotCount = unlockedRingPresetSlotCount();
+    if (presetIndex < 0 || presetIndex >= presetSlotCount) {
+        ringStatus_ = presetSlotCount <= 0
+            ? "リングプリセットは未解禁です"
+            : "プリセット" + std::to_string(presetIndex + 1) + "は未解禁です";
+        baseStatus_ = ringStatus_;
+        return false;
+    }
     RingPresetApplyResult result = ringPresets_.applyPreset(
         presetIndex,
         inventory_,
         spellRing_,
-        objectCatalog_);
+        objectCatalog_,
+        unlockedRingCount());
     if (!result.status.empty()) {
         ringStatus_ = result.status;
         baseStatus_ = result.status;
@@ -2960,13 +3015,15 @@ void Game::enterGameOver()
     if (mode_ == ScreenMode::GameOver || mode_ == ScreenMode::StageClear || mode_ == ScreenMode::AstralResult) {
         return;
     }
-    playAudioJingle(
-        AudioSeGameOverJingle,
-        GameOverJingleFallbackSeconds,
-        0.12f,
-        0.36f,
-        1.0f,
-        1.0f);
+    if (!playerDeathSequenceActive()) {
+        playAudioJingle(
+            AudioSeGameOverJingle,
+            GameOverJingleFallbackSeconds,
+            0.12f,
+            0.36f,
+            1.0f,
+            1.0f);
+    }
     if (currentStageIsRoguelike()) {
         enterAstralResult(AstralRunResult::Died);
         return;
@@ -3078,8 +3135,22 @@ void Game::updateScreenMode(
         return;
     }
 
+    if (player_.hp <= 0 &&
+        !playerDeathSequenceActive() &&
+        mode_ != ScreenMode::GameOver &&
+        mode_ != ScreenMode::StageClear &&
+        mode_ != ScreenMode::AstralResult) {
+        beginPlayerDeathSequence();
+        return;
+    }
+
     if (firstItemAcquisitionNoticeActive()) {
         updateFirstItemAcquisitionNotice(input, ui);
+        return;
+    }
+
+    if (debugNamedSaveInputActive_ || debugNamedLoadActive_) {
+        updateDebugNamedSaveUi(input, ui);
         return;
     }
 
@@ -3145,7 +3216,7 @@ void Game::updateScreenMode(
         return;
     }
 
-    if (levels_.isChoosing() && mode_ != ScreenMode::LevelUp && mode_ != ScreenMode::WorldLoading) {
+    if (player_.hp > 0 && levels_.isChoosing() && mode_ != ScreenMode::LevelUp && mode_ != ScreenMode::WorldLoading) {
         openLevelUpChoice(basePresentationActive() ? ScreenMode::Base : ScreenMode::Playing);
     }
 
@@ -3155,10 +3226,12 @@ void Game::updateScreenMode(
     }
 
     if (player_.hp <= 0 &&
+        !playerDeathSequenceActive() &&
         mode_ != ScreenMode::GameOver &&
         mode_ != ScreenMode::StageClear &&
         mode_ != ScreenMode::AstralResult) {
-        enterGameOver();
+        beginPlayerDeathSequence();
+        return;
     }
     if (mode_ == ScreenMode::GameOver) {
         updateGameOverScreen(input, ui);
@@ -3575,6 +3648,7 @@ void Game::update(const Input& input, const Time& time)
         runStats_.elapsedSeconds += time.deltaSeconds();
         updateAstralRunProgress();
         updatePlayerFootstepDust(time.deltaSeconds());
+        bool deathActive = playerDeathSequenceActive();
         const RuntimeBalance dungeonBalance = runtimeBalanceForDungeon();
         const int playerChunkBeforeX = chunkCoordForWorld(player_.position.x);
         const int playerChunkBeforeY = chunkCoordForWorld(player_.position.y);
@@ -3589,26 +3663,29 @@ void Game::update(const Input& input, const Time& time)
         player_.spellRingShiftDistanceMultiplier = static_cast<float>(
             std::max(0.0, spellRing_.orbitShiftMultiplier()) *
             std::max(0.0, activeEquipment.ringShiftDistanceMul));
-        player_.update(
-            input,
-            camera_,
-            tileMap_,
-            time.deltaSeconds(),
-            false,
-            balance_,
-            std::span<const CollisionRect>{objectBlockers.data(), objectBlockers.size()});
-        maybeTriggerPlayerFootstep(
-            player_.position,
-            lengthSquared(player_.velocity) > 0.0001f ? player_.velocity : player_.facing,
-            player_.spriteWalking,
-            player_.spriteFrameIndex(),
-            previousPlayerDustFrame_,
-            PlayerFootstepSurface::Dungeon);
-        updatePlayerRegen(time.deltaSeconds(), effectDiscoveries);
+        if (!deathActive) {
+            player_.update(
+                input,
+                camera_,
+                tileMap_,
+                time.deltaSeconds(),
+                false,
+                balance_,
+                std::span<const CollisionRect>{objectBlockers.data(), objectBlockers.size()});
+            maybeTriggerPlayerFootstep(
+                player_.position,
+                lengthSquared(player_.velocity) > 0.0001f ? player_.velocity : player_.facing,
+                player_.spriteWalking,
+                player_.spriteFrameIndex(),
+                previousPlayerDustFrame_,
+                PlayerFootstepSurface::Dungeon);
+            updatePlayerRegen(time.deltaSeconds(), effectDiscoveries);
+        } else {
+            player_.velocity = {};
+        }
         if (player_.hp <= 0) {
-            enterGameOver();
-            refreshOrbitEffects();
-            return;
+            beginPlayerDeathSequence();
+            deathActive = true;
         }
         if (!enemyTestActive_) {
             updateWarpPoints(time.deltaSeconds());
@@ -3623,11 +3700,15 @@ void Game::update(const Input& input, const Time& time)
         updateRingEffectDiscoveries(effectDiscoveries);
         normalizeOpenBuriedPlacementNodes();
         camera_.follow(player_.position, time.deltaSeconds());
-        if (updateDungeonEventDiscovery(time.deltaSeconds())) {
+        if (!deathActive && updateDungeonEventDiscovery(time.deltaSeconds())) {
             return;
         }
 
-        spellRing_.update(player_, input, time.deltaSeconds(), time.totalSeconds(), false, ui.pointerConsumed(), balance_);
+        if (!deathActive) {
+            spellRing_.update(player_, input, time.deltaSeconds(), time.totalSeconds(), false, ui.pointerConsumed(), balance_);
+        } else {
+            spellRing_.updatePresentation(player_, time.deltaSeconds(), balance_);
+        }
         for (const RingMotionEvent& event : spellRing_.consumeMotionEvents()) {
             if (event.kind == RingMotionEventKind::ThrowStart) {
                 playAudioSe(AudioSeRingThrow);
@@ -3636,7 +3717,7 @@ void Game::update(const Input& input, const Time& time)
                 effects_.spawnReturn(event.position);
             }
         }
-        if (!introTutorialActive() && input.ringOffsetHeld()) {
+        if (!deathActive && !introTutorialActive() && input.ringOffsetHeld()) {
             queueStoryEventForTrigger("tutorial:ring_shift");
         }
         updateDungeonEvents(time.deltaSeconds(), time.totalSeconds());
@@ -3778,7 +3859,7 @@ void Game::update(const Input& input, const Time& time)
         std::vector<WorldDropPickupEvent> pickupEvents;
         int blockedObjectPickupCount = 0;
         const float collectionPullRadius = effectiveCollectionPullRadius(collectionRangeUpgradeLevel_);
-        if (collectionPullRadius > 0.0f) {
+        if (!deathActive && collectionPullRadius > 0.0f) {
             worldDrops_.pullNearbyDrops(
                 player_.position,
                 time.deltaSeconds(),
@@ -3788,15 +3869,19 @@ void Game::update(const Input& input, const Time& time)
                 &inventory_,
                 &objectCatalog_);
         }
-        runStats_.acquiredItems += worldDrops_.update(
-            time.deltaSeconds(),
-            player_,
-            inventory_,
-            money_,
-            objectCatalog_,
-            &effects_,
-            &pickupEvents,
-            &blockedObjectPickupCount);
+        if (deathActive) {
+            worldDrops_.updatePresentation(time.deltaSeconds());
+        } else {
+            runStats_.acquiredItems += worldDrops_.update(
+                time.deltaSeconds(),
+                player_,
+                inventory_,
+                money_,
+                objectCatalog_,
+                &effects_,
+                &pickupEvents,
+                &blockedObjectPickupCount);
+        }
         for (const WorldDropPickupEvent& event : pickupEvents) {
             if (event.kind == WorldDropKind::Object) {
                 runStats_.acquiredObjectItems += std::max(1, event.quantity);
@@ -3806,6 +3891,15 @@ void Game::update(const Input& input, const Time& time)
                 }
                 if (!introTutorialActive() && objectIdHasCaptureNetOrbitEffect(objectCatalog_, event.id)) {
                     queueStoryEventForTrigger("tutorial:capture_net");
+                }
+                if (!introTutorialActive() && objectIdIsMagicBook(objectCatalog_, event.id)) {
+                    queueStoryEventForTrigger("tutorial:magic_book");
+                }
+                if (!introTutorialActive() && objectIdIsEquippableStaff(objectCatalog_, event.id)) {
+                    queueStoryEventForTrigger("tutorial:staff_equip");
+                }
+                if (!introTutorialActive() && std::string_view(event.id) == TutorialAppleObjectId) {
+                    queueStoryEventForTrigger("tutorial:item_use");
                 }
             }
         }
@@ -4025,7 +4119,7 @@ void Game::update(const Input& input, const Time& time)
                 const auto enemyIt = enemyCatalog_.enemiesById.find(event.enemyId);
                 if (enemyIt != enemyCatalog_.enemiesById.end() &&
                     encyclopedia_.noteEnemyInspected(enemyIt->second, event.position)) {
-                    playAudioSe(AudioSeDiscovery);
+                    playAudioSe(AudioSeMonsterDiscovery);
                 }
             } else if (event.type == EnemyEventType::Death || event.type == EnemyEventType::BossDeath) {
                 handleDungeonEventEnemyEvent(event);
@@ -4222,18 +4316,19 @@ void Game::update(const Input& input, const Time& time)
         magicFx_.update(time.deltaSeconds());
         effects_.update(time.deltaSeconds());
         gainPlayerXp(enemies_.consumePendingXp());
-        if (updateIntroTutorial(input, time.deltaSeconds())) {
+        if (!deathActive && updateIntroTutorial(input, time.deltaSeconds())) {
             return;
         }
-        if (bossDefeated) {
+        if (!deathActive && bossDefeated) {
             beginBossDefeatSequence(bossDefeatPosition);
             return;
         }
         if (player_.hp <= 0) {
-            enterGameOver();
-            return;
+            beginPlayerDeathSequence();
+            deathActive = true;
         }
-        if (levels_.isChoosing()) {
+        updatePlayerDeathSequence(time.deltaSeconds());
+        if (!deathActive && levels_.isChoosing()) {
             openLevelUpChoice(ScreenMode::Playing);
         }
     }

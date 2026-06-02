@@ -98,6 +98,8 @@ se.capture.throw	se	se/capture_throw_placeholder.wav	0.66	false	120	捕獲投げ
 se.capture.success	se	se/capture_success_placeholder.wav	0.78	false	220	捕獲成功
 se.capture.fail	se	se/capture_fail_placeholder.wav	0.68	false	160	捕獲失敗
 se.discovery	se	se/discovery_placeholder.wav	0.76	false	220	発見
+se.discovery.monster	se	se/discovery_monster_placeholder.wav	0.88	false	220	モンスター発見
+se.discovery.effect	se	se/discovery_effect_placeholder.wav	0.86	false	220	効果発見
 se.discovery.warp	se	se/discovery_warp_placeholder.wav	0.82	false	360	ワープ発見
 se.chest.open	se	se/chest_open_placeholder.wav	0.78	false	180	宝箱開封
 se.crate.break	se	se/crate_break_placeholder.wav	0.76	false	120	木箱破壊

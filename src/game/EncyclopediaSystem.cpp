@@ -23,7 +23,7 @@ constexpr float PopupTopMargin = 58.0f;
 constexpr float PopupAvoidPadding = 8.0f;
 constexpr float PopupFadeInSeconds = 0.2f;
 constexpr float PopupFadeOutSeconds = 0.2f;
-constexpr float PopupHoldAfterRevealSeconds = 2.5f;
+constexpr float PopupHoldAfterRevealSeconds = 4.5f;
 constexpr float PopupRevealUnitsPerSecond = 34.0f;
 constexpr int PopupTextScale = 2;
 constexpr int MaxActiveDiscoveryPopups = 3;
@@ -507,12 +507,12 @@ void EncyclopediaSystem::noteItemEffect(const ObjectDefinition& object, std::str
     enqueueEffectPopup(lines);
 }
 
-void EncyclopediaSystem::noteEffectEvent(const EffectDiscoveryEvent& event, const ObjectCatalog& catalog)
+bool EncyclopediaSystem::noteEffectEvent(const EffectDiscoveryEvent& event, const ObjectCatalog& catalog)
 {
-    noteEffectEvents(std::span<const EffectDiscoveryEvent>(&event, 1), catalog);
+    return noteEffectEvents(std::span<const EffectDiscoveryEvent>(&event, 1), catalog) > 0;
 }
 
-void EncyclopediaSystem::noteEffectEvents(std::span<const EffectDiscoveryEvent> events, const ObjectCatalog& catalog)
+std::size_t EncyclopediaSystem::noteEffectEvents(std::span<const EffectDiscoveryEvent> events, const ObjectCatalog& catalog)
 {
     struct PopupGroup {
         std::vector<EffectPopupLine> lines;
@@ -537,6 +537,7 @@ void EncyclopediaSystem::noteEffectEvents(std::span<const EffectDiscoveryEvent> 
     for (const PopupGroup& group : groups) {
         enqueueEffectPopup(group.lines);
     }
+    return groups.size();
 }
 
 bool EncyclopediaSystem::discoverObjectEffect(
@@ -584,6 +585,9 @@ std::optional<EncyclopediaSystem::EffectPopupLine> EncyclopediaSystem::recordObj
 
     const std::size_t lineIndex = findEffectLineIndexByKey(object, canonicalKey);
     const bool hasCatalogLine = lineIndex != object.discoveryEffectLines.size();
+    if (hasCatalogLine && object.discoveryEffectLines[lineIndex].trigger == DiscoveryTrigger::NormalEffect) {
+        return std::nullopt;
+    }
     std::string lineText;
     if (hasCatalogLine) {
         lineText = object.discoveryEffectLines[lineIndex].text;

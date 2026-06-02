@@ -78,8 +78,8 @@ public:
     bool noteItemObtained(const ObjectDefinition& object, Vec2 position);
     void noteItemEquipped(const ObjectDefinition& object, Vec2 position);
     void noteItemEffect(const ObjectDefinition& object, std::string_view effectKey, std::string_view description, Vec2 position);
-    void noteEffectEvent(const EffectDiscoveryEvent& event, const ObjectCatalog& catalog);
-    void noteEffectEvents(std::span<const EffectDiscoveryEvent> events, const ObjectCatalog& catalog);
+    bool noteEffectEvent(const EffectDiscoveryEvent& event, const ObjectCatalog& catalog);
+    std::size_t noteEffectEvents(std::span<const EffectDiscoveryEvent> events, const ObjectCatalog& catalog);
     bool discoverObjectEffect(
         std::string_view objectId,
         std::string_view effectKey,

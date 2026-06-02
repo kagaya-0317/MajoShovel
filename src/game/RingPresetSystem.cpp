@@ -14,6 +14,11 @@ namespace {
 
 constexpr int NoMatchScore = std::numeric_limits<int>::max() / 4;
 
+int clampedPresetRingCount(int unlockedRingCount)
+{
+    return std::clamp(unlockedRingCount, 1, SpellRingCount);
+}
+
 enum class PresetCandidateSource {
     Ring,
     InventoryInstance,
@@ -126,10 +131,12 @@ std::vector<PresetCandidate> buildPresetCandidates(
     const RingPreset& preset,
     const InventorySystem& inventory,
     const SpellRingSystem& spellRing,
-    const ObjectCatalog& objectCatalog)
+    const ObjectCatalog& objectCatalog,
+    int ringCount)
 {
     std::unordered_map<std::string, int> wantedCounts;
-    for (const auto& ringItems : preset.rings) {
+    for (int ringIndex = 0; ringIndex < ringCount; ++ringIndex) {
+        const auto& ringItems = preset.rings[static_cast<std::size_t>(ringIndex)];
         for (const RingPresetItem& item : ringItems) {
             if (!item.objectId.empty()) {
                 ++wantedCounts[item.objectId];
@@ -138,7 +145,7 @@ std::vector<PresetCandidate> buildPresetCandidates(
     }
 
     std::vector<PresetCandidate> candidates;
-    for (int ringIndex = 0; ringIndex < SpellRingCount; ++ringIndex) {
+    for (int ringIndex = 0; ringIndex < ringCount; ++ringIndex) {
         const std::vector<SpellRingItem>& ringItems = spellRing.itemsForRing(ringIndex);
         for (int itemIndex = 0; itemIndex < static_cast<int>(ringItems.size()); ++itemIndex) {
             const SpellRingItem& item = ringItems[static_cast<std::size_t>(itemIndex)];
@@ -362,15 +369,16 @@ void RingPresetSystem::setPreset(int presetIndex, RingPreset preset)
     presets_[static_cast<std::size_t>(presetIndex)] = std::move(preset);
 }
 
-bool RingPresetSystem::capturePreset(int presetIndex, const SpellRingSystem& spellRing)
+bool RingPresetSystem::capturePreset(int presetIndex, const SpellRingSystem& spellRing, int unlockedRingCount)
 {
     if (!validPresetIndex(presetIndex)) {
         return false;
     }
 
+    const int ringCount = clampedPresetRingCount(unlockedRingCount);
     RingPreset captured;
     captured.registered = true;
-    for (int ringIndex = 0; ringIndex < SpellRingCount; ++ringIndex) {
+    for (int ringIndex = 0; ringIndex < ringCount; ++ringIndex) {
         const std::vector<SpellRingItem>& ringItems = spellRing.itemsForRing(ringIndex);
         auto& presetItems = captured.rings[static_cast<std::size_t>(ringIndex)];
         presetItems.reserve(ringItems.size());
@@ -390,7 +398,8 @@ RingPresetApplyResult RingPresetSystem::applyPreset(
     int presetIndex,
     InventorySystem& inventory,
     SpellRingSystem& spellRing,
-    const ObjectCatalog& objectCatalog) const
+    const ObjectCatalog& objectCatalog,
+    int unlockedRingCount) const
 {
     RingPresetApplyResult result;
     if (!registered(presetIndex)) {
@@ -398,17 +407,18 @@ RingPresetApplyResult RingPresetSystem::applyPreset(
         return result;
     }
 
+    const int ringCount = clampedPresetRingCount(unlockedRingCount);
     const RingPreset& targetPreset = preset(presetIndex);
-    std::vector<PresetCandidate> candidates = buildPresetCandidates(targetPreset, inventory, spellRing, objectCatalog);
+    std::vector<PresetCandidate> candidates = buildPresetCandidates(targetPreset, inventory, spellRing, objectCatalog, ringCount);
     InventorySystem workingInventory = inventory;
     SpellRingSystem workingRing = spellRing;
     const int previousActiveRing = spellRing.activeRingIndex();
-    for (int ringIndex = 0; ringIndex < SpellRingCount; ++ringIndex) {
+    for (int ringIndex = 0; ringIndex < ringCount; ++ringIndex) {
         workingRing.itemsForRing(ringIndex).clear();
     }
 
     std::vector<const PresetCandidate*> usedCandidates;
-    for (int ringIndex = 0; ringIndex < SpellRingCount; ++ringIndex) {
+    for (int ringIndex = 0; ringIndex < ringCount; ++ringIndex) {
         const auto& presetItems = targetPreset.rings[static_cast<std::size_t>(ringIndex)];
         for (const RingPresetItem& presetItem : presetItems) {
             PresetCandidate* candidate = bestCandidateForItem(presetItem, candidates);
@@ -453,7 +463,7 @@ RingPresetApplyResult RingPresetSystem::applyPreset(
     projectedSlots -= static_cast<int>(usedInventoryInstanceIds.size());
 
     std::vector<SpellRingItem> ringItemsToReturn;
-    for (int ringIndex = 0; ringIndex < SpellRingCount; ++ringIndex) {
+    for (int ringIndex = 0; ringIndex < ringCount; ++ringIndex) {
         const std::vector<SpellRingItem>& ringItems = spellRing.itemsForRing(ringIndex);
         for (int itemIndex = 0; itemIndex < static_cast<int>(ringItems.size()); ++itemIndex) {
             const SpellRingItem& item = ringItems[static_cast<std::size_t>(itemIndex)];
@@ -512,16 +522,19 @@ std::vector<RingPresetItem> RingPresetSystem::missingItemsForPreset(
     int presetIndex,
     const InventorySystem& inventory,
     const SpellRingSystem& spellRing,
-    const ObjectCatalog& objectCatalog) const
+    const ObjectCatalog& objectCatalog,
+    int unlockedRingCount) const
 {
     std::vector<RingPresetItem> missing;
     if (!registered(presetIndex)) {
         return missing;
     }
 
+    const int ringCount = clampedPresetRingCount(unlockedRingCount);
     const RingPreset& targetPreset = preset(presetIndex);
-    std::vector<PresetCandidate> candidates = buildPresetCandidates(targetPreset, inventory, spellRing, objectCatalog);
-    for (const auto& ringItems : targetPreset.rings) {
+    std::vector<PresetCandidate> candidates = buildPresetCandidates(targetPreset, inventory, spellRing, objectCatalog, ringCount);
+    for (int ringIndex = 0; ringIndex < ringCount; ++ringIndex) {
+        const auto& ringItems = targetPreset.rings[static_cast<std::size_t>(ringIndex)];
         for (const RingPresetItem& presetItem : ringItems) {
             PresetCandidate* candidate = bestCandidateForItem(presetItem, candidates);
             if (candidate == nullptr) {

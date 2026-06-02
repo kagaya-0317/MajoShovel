@@ -2,6 +2,8 @@
 
 #include "game/DungeonEventDefinition.hpp"
 
+#include <utility>
+
 namespace majo {
 
 namespace {
@@ -23,124 +25,169 @@ DebugControlDefinition makeDungeonEventPlacementControl()
     return control;
 }
 
+DebugControlDefinition makeNumberControl(
+    std::string id,
+    std::string label,
+    std::string command,
+    int minValue,
+    int maxValue,
+    int initialValue)
+{
+    DebugControlDefinition control;
+    control.kind = DebugControlKind::NumberInput;
+    control.id = std::move(id);
+    control.label = std::move(label);
+    control.command = std::move(command);
+    control.minValue = minValue;
+    control.maxValue = maxValue;
+    control.initialValue = initialValue;
+    control.hasInitialValue = true;
+    return control;
+}
+
 } // namespace
 
 DebugConsoleLayout makeDefaultDebugConsoleLayout()
 {
     return {{
         DebugTabDefinition{
-            "tab_game",
-            "タブ1",
+            "tab_progress",
+            "実行・進行",
             {
                 DebugGroupDefinition{
-                    "progress",
-                    "ゲーム進行",
+                    "launch",
+                    "起動",
                     {
                         {DebugControlKind::Dropdown, "launch_mode", "起動モード", "game launch-mode", 0, 0, {"タイトル前から", "拠点から", "ダンジョンから", "敵テスト", "弾テスト", "エンディング後紙芝居", "エンディング後拠点"}, {"pre-title", "base", "dungeon", "enemy-test", "projectile-test", "ending-kamishibai", "post-ending-base"}},
-                        {DebugControlKind::Dropdown, "stage_unlock", "ステージ解放状態", "game stage-unlock", 0, 0, {"初期状態", "ステージ2解放", "ステージ3解放"}, {"initial", "stage2", "stage3"}},
-                        {DebugControlKind::Button, "reset_data", "データ初期化", "game reset-data"},
                         {DebugControlKind::Button, "return_base", "拠点へ", "game return-base"},
-                        {DebugControlKind::Button, "unlock_all_warps", "ワープポイント全開放", "game warp-points unlock-all"},
                         {DebugControlKind::Button, "save_data", "セーブ", "game save"},
+                        {DebugControlKind::Button, "named_save_data", "名前を付けてセーブ", "game debug-save named"},
+                        {DebugControlKind::Button, "load_named_save_data", "ロード", "game debug-save load"},
+                        {DebugControlKind::Button, "reset_data", "データ初期化", "game reset-data"},
                     },
                 },
                 DebugGroupDefinition{
-                    "game_data",
-                    "ゲームデータ",
+                    "progress_state",
+                    "進行状態",
                     {
-                        {DebugControlKind::Button, "money_10000", "所持金 +10000", "game money add 10000"},
-                        {DebugControlKind::Button, "money_reset", "所持金リセット", "game money reset"},
-                        {DebugControlKind::Button, "materials_100", "強化素材 +100", "game materials add 100"},
-                        {DebugControlKind::Button, "materials_reset", "強化素材リセット", "game materials reset"},
-                        {DebugControlKind::Button, "ring_workshop_unlock", "リング工房解禁", "game ring-workshop unlock"},
-                        {DebugControlKind::Button, "ring_2_unlock", "リング2解禁", "game ring unlock 2"},
-                        {DebugControlKind::Button, "ring_3_unlock", "リング3解禁", "game ring unlock 3"},
-                        {DebugControlKind::Button, "ring_unlock_reset", "リング解禁リセット", "game ring unlock reset"},
-                        {DebugControlKind::Button, "random_items_8", "ランダムアイテム +8", "game items random8"},
-                        {DebugControlKind::Button, "item_picker", "任意アイテム追加", "game items picker"},
-                        {DebugControlKind::Button, "items_reset", "所持アイテムリセット", "game items reset"},
-                        {DebugControlKind::Button, "codex_reset", "図鑑リセット", "game codex reset"},
-                        {DebugControlKind::Button, "codex_complete", "図鑑完成", "game codex complete"},
-                    },
-                },
-                DebugGroupDefinition{
-                    "combat_data",
-                    "戦闘・ダンジョンデータ",
-                    {
-                        {DebugControlKind::Button, "hp_full", "HP最大", "game hp full"},
-                        {DebugControlKind::Button, "hp_one", "HP1", "game hp set 1"},
-                        {DebugControlKind::Button, "level_up", "レベルアップ", "game level-up"},
-                        {DebugControlKind::Button, "enemy_test", "敵テスト", "game enemy-test"},
-                        makeDungeonEventPlacementControl(),
+                        {DebugControlKind::Dropdown, "stage_unlock", "ステージ解放状態", "game stage-unlock", 0, 0, {"初期状態", "ステージ2解放", "ステージ3解放"}, {"initial", "stage2", "stage3"}},
+                        {DebugControlKind::Button, "unlock_all_warps", "ワープポイント全開放", "game warp-points unlock-all"},
+                        {DebugControlKind::DropdownButton, "codex_state", "図鑑状態", "game codex", 0, 0, {"リセット", "完成"}, {"reset", "complete"}},
                     },
                 },
             },
         },
         DebugTabDefinition{
-            "tab_tools",
-            "タブ2",
+            "tab_player_items",
+            "プレイヤー・所持品",
             {
                 DebugGroupDefinition{
-                    "edit_tools",
-                    "編集ツール",
+                    "player",
+                    "プレイヤー",
+                    {
+                        {DebugControlKind::Dropdown, "hp_state", "HP設定", "game hp", 0, 0, {"最大", "1"}, {"full", "set 1"}},
+                        makeNumberControl("hp_value", "HP値", "game debug hp-value", 1, 999, 1),
+                        {DebugControlKind::Button, "hp_set_value", "HP値を適用", "game hp set-debug"},
+                        {DebugControlKind::Button, "level_up", "レベル +1", "game level-up"},
+                        makeNumberControl("target_level", "目標Lv", "game debug target-level", 1, 100, 1),
+                        {DebugControlKind::Button, "level_set_target", "目標Lvに設定", "game level set-debug"},
+                    },
+                },
+                DebugGroupDefinition{
+                    "currency_materials",
+                    "通貨・素材",
+                    {
+                        makeNumberControl("money_amount", "所持金加算額", "game debug money-amount", 1, 999999, 10000),
+                        {DebugControlKind::Button, "money_add_amount", "所持金を加算", "game money add-debug"},
+                        {DebugControlKind::Button, "money_reset", "所持金リセット", "game money reset"},
+                        makeNumberControl("material_amount", "素材加算量", "game debug material-amount", 1, 99999, 100),
+                        {DebugControlKind::Button, "materials_add_amount", "強化素材を加算", "game materials add-debug"},
+                        {DebugControlKind::Button, "materials_reset", "強化素材リセット", "game materials reset"},
+                    },
+                },
+                DebugGroupDefinition{
+                    "ring_items",
+                    "リング・アイテム",
+                    {
+                        {DebugControlKind::Button, "ring_workshop_unlock", "リング工房解禁", "game ring-workshop unlock"},
+                        {DebugControlKind::Dropdown, "ring_unlock_state", "リング解禁状態", "game ring", 0, 0, {"リング1のみ", "リング2まで", "リング3まで"}, {"unlock reset", "unlock 2", "unlock 3"}},
+                        makeNumberControl("random_item_count", "ランダムアイテム数", "game debug random-item-count", 1, 99, 8),
+                        {DebugControlKind::Button, "random_items_add", "ランダムアイテム追加", "game items random-debug"},
+                        {DebugControlKind::Button, "item_picker", "任意アイテム追加", "game items picker"},
+                        {DebugControlKind::Button, "items_reset", "所持アイテムリセット", "game items reset"},
+                    },
+                },
+            },
+        },
+        DebugTabDefinition{
+            "tab_tests",
+            "テスト",
+            {
+                DebugGroupDefinition{
+                    "single_tests",
+                    "単体テスト",
+                    {
+                        {DebugControlKind::Button, "enemy_test", "敵テスト", "game enemy-test"},
+                        {DebugControlKind::Button, "effect_test", "エフェクトテスト", "game effect-test"},
+                        {DebugControlKind::Button, "projectile_test", "弾テスト", "game projectile-test"},
+                        {DebugControlKind::Button, "story_event_test", "イベントテスト", "game story-test events"},
+                        {DebugControlKind::Button, "story_tutorial_test", "チュートリアルテスト", "game story-test tutorials"},
+                        {DebugControlKind::Button, "dungeon_focus_test", "カメラフォーカス", "game dungeon-focus test"},
+                        makeDungeonEventPlacementControl(),
+                    },
+                },
+                DebugGroupDefinition{
+                    "boss_rematch",
+                    "ボス・再戦",
+                    {
+                        {DebugControlKind::Dropdown, "rematch_stage", "対象ステージ", "game rematch target", 0, 0, {"ステージ1", "ステージ2", "ステージ3", "星間廃坑"}, {"stage1", "stage2", "stage3", "stage4"}},
+                        {DebugControlKind::Button, "boss_flow_before", "ボス直前へ", "game boss-flow before"},
+                        {DebugControlKind::Button, "boss_flow_defeated", "撃破演出へ", "game boss-flow defeated"},
+                        {DebugControlKind::Button, "boss_flow_clear", "クリア結果へ", "game boss-flow clear"},
+                        {DebugControlKind::Button, "rematch_unlock_warps", "全ワープ発見済み", "game rematch unlock-warps"},
+                        {DebugControlKind::Button, "rematch_mark_clear", "クリア済みにする", "game rematch mark-clear"},
+                        {DebugControlKind::Button, "rematch_setup_regen", "再生成可能状態へ", "game rematch setup-regenerate"},
+                        {DebugControlKind::DropdownButton, "rematch_captured_boss", "捕獲ボス", "game rematch captured-boss", 0, 0, {"付与", "削除"}, {"add", "remove"}},
+                    },
+                },
+                DebugGroupDefinition{
+                    "autosim",
+                    "オートシミュ",
+                    {
+                        {DebugControlKind::Dropdown, "autosim_state", "状態", "autosim", 0, 0, {"開始", "停止"}, {"start", "stop"}},
+                        {DebugControlKind::Slider, "autosim_speed", "速度", "autosim speed", 1, 16},
+                        {DebugControlKind::Button, "autosim_report", "ログ", "autosim report"},
+                    },
+                },
+            },
+        },
+        DebugTabDefinition{
+            "tab_editing",
+            "編集",
+            {
+                DebugGroupDefinition{
+                    "map_collision",
+                    "マップ・判定",
                     {
                         {DebugControlKind::Button, "base_edit_toggle", "拠点編集", "game base-edit toggle"},
-                        {DebugControlKind::Button, "obj_image_scale_toggle", "画像サイズ編集", "game obj-image-scale toggle"},
                         {DebugControlKind::Button, "hitbox_toggle", "当たり判定編集", "game hitbox toggle"},
                         {DebugControlKind::Button, "enemy_shadow_toggle", "影編集", "game enemy-shadow toggle"},
+                    },
+                },
+                DebugGroupDefinition{
+                    "assets",
+                    "アセット",
+                    {
+                        {DebugControlKind::Button, "obj_image_scale_toggle", "画像サイズ編集", "game obj-image-scale toggle"},
                         {DebugControlKind::Button, "audio_bgm_edit", "BGM編集", "game audio-edit bgm"},
                         {DebugControlKind::Button, "audio_se_edit", "効果音編集", "game audio-edit se"},
                     },
                 },
                 DebugGroupDefinition{
-                    "rematch_test",
-                    "再戦確認",
+                    "development",
+                    "開発",
                     {
-                        {DebugControlKind::Dropdown, "rematch_stage", "対象ステージ", "game rematch target", 0, 0, {"ステージ1", "ステージ2", "ステージ3", "星間廃坑"}, {"stage1", "stage2", "stage3", "stage4"}},
-                        {DebugControlKind::Button, "rematch_unlock_warps", "全ワープ発見済み", "game rematch unlock-warps"},
-                        {DebugControlKind::Button, "rematch_mark_clear", "クリア済みにする", "game rematch mark-clear"},
-                        {DebugControlKind::Button, "rematch_setup_regen", "再生成可能状態へ", "game rematch setup-regenerate"},
-                        {DebugControlKind::Button, "rematch_boss_add", "捕獲ボス付与", "game rematch captured-boss add"},
-                        {DebugControlKind::Button, "rematch_boss_remove", "捕獲ボス削除", "game rematch captured-boss remove"},
-                    },
-                },
-                DebugGroupDefinition{
-                    "build_config",
-                    "Build Config",
-                    {
-                        {DebugControlKind::Button, "build_debug", "Build: Debug", "dev build-config debug"},
-                        {DebugControlKind::Button, "build_release", "Build: Release", "dev build-config release"},
-                    },
-                },
-            },
-        },
-        DebugTabDefinition{
-            "tab_test",
-            "タブ3",
-            {
-                DebugGroupDefinition{
-                    "test",
-                    "テスト",
-                    {
-                        {DebugControlKind::Button, "story_event_test", "イベントテスト", "game story-test events"},
-                        {DebugControlKind::Button, "story_tutorial_test", "チュートリアルテスト", "game story-test tutorials"},
-                        {DebugControlKind::Button, "effect_test", "エフェクトテスト", "game effect-test"},
-                        {DebugControlKind::Button, "projectile_test", "弾テスト", "game projectile-test"},
-                        {DebugControlKind::Button, "dungeon_focus_test", "カメラフォーカス", "game dungeon-focus test"},
-                        {DebugControlKind::Button, "autosim_start", "オートシミュ開始", "autosim start"},
-                        {DebugControlKind::Button, "autosim_stop", "オートシミュ停止", "autosim stop"},
-                        {DebugControlKind::Slider, "autosim_speed", "オートシミュ速度", "autosim speed", 1, 16},
-                        {DebugControlKind::Button, "autosim_report", "オートシミュログ", "autosim report"},
-                    },
-                },
-                DebugGroupDefinition{
-                    "boss_flow",
-                    "ボス確認",
-                    {
-                        {DebugControlKind::Dropdown, "boss_flow_stage", "対象ステージ", "game boss-flow target", 0, 0, {"ステージ1", "ステージ2", "ステージ3"}, {"stage1", "stage2", "stage3"}},
-                        {DebugControlKind::Button, "boss_flow_before", "ボス直前へ", "game boss-flow before"},
-                        {DebugControlKind::Button, "boss_flow_defeated", "撃破演出へ", "game boss-flow defeated"},
-                        {DebugControlKind::Button, "boss_flow_clear", "クリア結果へ", "game boss-flow clear"},
+                        {DebugControlKind::Dropdown, "build_config", "Build Config", "dev build-config", 0, 0, {"Debug", "Release"}, {"debug", "release"}},
                     },
                 },
             },
@@ -151,7 +198,7 @@ DebugConsoleLayout makeDefaultDebugConsoleLayout()
             {
                 DebugGroupDefinition{
                     "astral_run",
-                    "ラン・移動",
+                    "ラン",
                     {
                         {DebugControlKind::NumberInput, "astral_depth", "深度", "game astral depth", 1, 9},
                         {DebugControlKind::Dropdown, "astral_move_target", "移動先", "game astral move-target", 1, 0, {"入口", "指定深度", "ボス前", "帰還口"}, {"entrance", "depth", "boss", "return"}},
@@ -163,7 +210,7 @@ DebugConsoleLayout makeDefaultDebugConsoleLayout()
                 },
                 DebugGroupDefinition{
                     "astral_generation",
-                    "生成・歪み",
+                    "生成",
                     {
                         {DebugControlKind::Dropdown, "astral_distortion", "歪みモード", "game astral distortion", 0, 0, {"深度自動", "なし固定", "星明かり固定", "星硬化固定", "残響湧き固定"}, {"auto", "none", "fading-starlight", "star-hardened", "echo-spawn"}},
                         {DebugControlKind::Dropdown, "astral_room", "特殊部屋", "game astral room", 0, 0, {"鉱石", "安全", "コイン", "宝物", "敵"}, {"ore", "safe", "coin", "treasure", "enemy"}},
@@ -174,7 +221,7 @@ DebugConsoleLayout makeDefaultDebugConsoleLayout()
                 },
                 DebugGroupDefinition{
                     "astral_result",
-                    "終了・リザルト",
+                    "リザルト",
                     {
                         {DebugControlKind::Dropdown, "astral_result_kind", "終了結果", "game astral result", 0, 0, {"帰還成功", "死亡", "星脈竜撃破"}, {"returned", "died", "dragon-defeated"}},
                         {DebugControlKind::Toggle, "astral_stat_override", "統計オーバーライド", "game astral stat-override", 0, 1},

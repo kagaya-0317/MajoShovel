@@ -615,7 +615,10 @@ struct DebugConsole::Impl {
                         HWND label = createStatic(parent, utf8ToWide(control.label).c_str());
                         const int minValue = std::min(control.minValue, control.maxValue);
                         const int maxValue = std::max(control.minValue, control.maxValue);
-                        HWND number = createNumberInput(parent, controlId, std::clamp(control.minValue, minValue, maxValue));
+                        const int initialValue = control.hasInitialValue
+                            ? std::clamp(control.initialValue, minValue, maxValue)
+                            : std::clamp(control.minValue, minValue, maxValue);
+                        HWND number = createNumberInput(parent, controlId, initialValue);
                         ShowWindow(label, SW_HIDE);
                         ShowWindow(number, SW_HIDE);
                         groupUi.controls.push_back({control.kind, number, label, controlId, control.id, control.command});

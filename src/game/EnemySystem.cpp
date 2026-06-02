@@ -222,6 +222,10 @@ constexpr float ConfusedRetargetMaxSeconds = 0.65f;
 constexpr double ConfusedSpeedMultiplier = 0.75;
 constexpr float MudZoneTickSeconds = 0.20f;
 constexpr float MudZoneMaxDurationSeconds = 30.0f;
+constexpr float MudZoneVisualYScale = 0.56f;
+constexpr float MudZoneOutlineMinJitter = 0.78f;
+constexpr float MudZoneOutlineMaxJitter = 1.18f;
+constexpr float MudZoneOuterFadeSeconds = 0.85f;
 constexpr float MagnetDisturbMaxRadius = 320.0f;
 constexpr float ColdExposureFreezeThreshold = 1.0f;
 constexpr float ColdExposureRatePerSecond = 0.55f;
@@ -8158,7 +8162,7 @@ void EnemySystem::appendRenderEntries(
         if (zone.remainingSeconds <= 0.0f || zone.radius <= 0.0f) {
             continue;
         }
-        const Vec2 visualBounds{zone.radius * 2.0f, zone.radius * 1.2f};
+        const Vec2 visualBounds{zone.radius * 2.25f, zone.radius * 1.35f};
         if (!map.isRectLit(zone.position, visualBounds, playerLight, extraLights)) {
             continue;
         }
@@ -8166,20 +8170,49 @@ void EnemySystem::appendRenderEntries(
         entries.push_back(DepthRenderEntry{
             zone.position.y - zone.radius * 0.30f,
             [&renderer, drawable]() {
-                const float fade = clamp(drawable.remainingSeconds / 0.65f, 0.0f, 1.0f);
+                const float lifeRatio = drawable.initialSeconds > 0.0f
+                    ? clamp(drawable.remainingSeconds / drawable.initialSeconds, 0.0f, 1.0f)
+                    : 1.0f;
+                const float fade = std::min(1.0f, lifeRatio * 2.6f);
+                const float shapeScale = 0.86f + fade * 0.14f;
                 const bool poisonMud = drawable.damageType == "poison" || drawable.damagePerSecond > 0.0f;
-                const Color base = poisonMud ? Color{42, 86, 36, 112} : Color{76, 60, 42, 104};
-                const Color core = poisonMud ? Color{90, 128, 48, 72} : Color{112, 82, 48, 64};
-                const Color glint = poisonMud ? Color{156, 218, 74, 58} : Color{166, 128, 78, 48};
-                renderer.fillEllipse(drawable.position, {drawable.radius, drawable.radius * 0.56f}, scaleColorAlpha(base, fade));
+                const Color shadow = poisonMud ? Color{10, 20, 12, 88} : Color{20, 16, 12, 72};
+                const Color rim = poisonMud ? Color{92, 38, 112, 138} : Color{72, 46, 28, 120};
+                const Color base = poisonMud ? Color{42, 82, 30, 166} : Color{82, 62, 42, 144};
+                const Color core = poisonMud ? Color{112, 166, 38, 118} : Color{126, 92, 48, 94};
+                const Color acid = poisonMud ? Color{190, 255, 72, 106} : Color{184, 142, 72, 72};
+                const Color bubble = poisonMud ? Color{214, 255, 112, 132} : Color{198, 164, 104, 98};
+
+                renderer.fillSoftCircle(drawable.position, drawable.radius * 1.12f, scaleColorAlpha(shadow, fade));
+
+                decltype(drawable.outlineOffsets) outerPoints{};
+                decltype(drawable.outlineOffsets) innerPoints{};
+                for (std::size_t i = 0; i < drawable.outlineOffsets.size(); ++i) {
+                    outerPoints[i] = drawable.position + drawable.outlineOffsets[i] * (shapeScale * 1.07f);
+                    innerPoints[i] = drawable.position + drawable.outlineOffsets[i] * shapeScale;
+                }
+                renderer.fillPolygon(outerPoints.data(), outerPoints.size(), scaleColorAlpha(rim, fade));
+                renderer.fillPolygon(innerPoints.data(), innerPoints.size(), scaleColorAlpha(base, fade));
+
                 renderer.fillEllipse(
-                    drawable.position + Vec2{-drawable.radius * 0.14f, -drawable.radius * 0.05f},
-                    {drawable.radius * 0.56f, drawable.radius * 0.26f},
+                    drawable.position + Vec2{-drawable.radius * 0.18f, -drawable.radius * 0.03f},
+                    {drawable.radius * 0.58f * shapeScale, drawable.radius * 0.22f * shapeScale},
                     scaleColorAlpha(core, fade));
                 renderer.fillEllipse(
-                    drawable.position + Vec2{drawable.radius * 0.28f, drawable.radius * 0.08f},
-                    {drawable.radius * 0.24f, drawable.radius * 0.10f},
-                    scaleColorAlpha(glint, fade));
+                    drawable.position + Vec2{drawable.radius * 0.24f, drawable.radius * 0.08f},
+                    {drawable.radius * 0.34f * shapeScale, drawable.radius * 0.13f * shapeScale},
+                    scaleColorAlpha(acid, fade));
+
+                for (const MudZoneBubble& bubbleSpec : drawable.bubbles) {
+                    if (bubbleSpec.radius <= 0.0f) {
+                        continue;
+                    }
+                    const float pulse = 0.82f + 0.18f * std::sin((1.0f - lifeRatio) * Pi * 5.0f + bubbleSpec.phase);
+                    renderer.fillSoftCircle(
+                        drawable.position + bubbleSpec.offset * shapeScale,
+                        bubbleSpec.radius * pulse,
+                        scaleColorAlpha(bubble, fade));
+                }
             },
         });
     }
@@ -8863,11 +8896,48 @@ void EnemySystem::addMudZone(
     MudZone zone;
     zone.position = position;
     zone.radius = std::max(8.0f, radius);
-    zone.remainingSeconds = std::clamp(duration, 0.1f, MudZoneMaxDurationSeconds);
+    zone.initialSeconds = std::clamp(duration, 0.1f, MudZoneMaxDurationSeconds);
+    zone.remainingSeconds = zone.initialSeconds;
     zone.speedMultiplier = clamp(speedMultiplier, 0.05f, 1.0f);
     zone.damagePerSecond = std::max(0.0f, damagePerSecond);
     zone.damageType = std::move(damageType);
     zone.damageCause = std::move(damageCause);
+
+    std::uniform_real_distribution<float> rotationDistribution(0.0f, Pi * 2.0f);
+    std::uniform_real_distribution<float> outlineJitterDistribution(MudZoneOutlineMinJitter, MudZoneOutlineMaxJitter);
+    const float rotation = rotationDistribution(rng_);
+    const float cosRotation = std::cos(rotation);
+    const float sinRotation = std::sin(rotation);
+    for (std::size_t i = 0; i < zone.outlineOffsets.size(); ++i) {
+        const float angle = static_cast<float>(i) / static_cast<float>(zone.outlineOffsets.size()) * Pi * 2.0f;
+        const float pointRadius = zone.radius * outlineJitterDistribution(rng_);
+        const Vec2 local{
+            std::cos(angle) * pointRadius,
+            std::sin(angle) * pointRadius * MudZoneVisualYScale,
+        };
+        zone.outlineOffsets[i] = {
+            local.x * cosRotation - local.y * sinRotation,
+            local.x * sinRotation + local.y * cosRotation,
+        };
+    }
+
+    std::uniform_real_distribution<float> bubbleAngleDistribution(0.0f, Pi * 2.0f);
+    std::uniform_real_distribution<float> bubbleDistanceDistribution(0.10f, 0.72f);
+    std::uniform_real_distribution<float> bubbleRadiusDistribution(0.045f, 0.095f);
+    for (MudZoneBubble& bubble : zone.bubbles) {
+        const float angle = bubbleAngleDistribution(rng_);
+        const float distance = zone.radius * bubbleDistanceDistribution(rng_);
+        const Vec2 local{
+            std::cos(angle) * distance,
+            std::sin(angle) * distance * MudZoneVisualYScale,
+        };
+        bubble.offset = {
+            local.x * cosRotation - local.y * sinRotation,
+            local.x * sinRotation + local.y * cosRotation,
+        };
+        bubble.radius = zone.radius * bubbleRadiusDistribution(rng_);
+        bubble.phase = bubbleAngleDistribution(rng_);
+    }
     mudZones_.push_back(std::move(zone));
 }
 

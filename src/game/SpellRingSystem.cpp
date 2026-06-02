@@ -363,7 +363,11 @@ RingOrbitTuning makeRingOrbitTuning(const RuntimeBalance& balance)
 
 Vec2 getRingCenterWorldPosition(Vec2 playerPosition, Vec2 shiftDirection, float spellRingShift)
 {
-    return witchSelfLightCenter(playerPosition) + normalize(shiftDirection) * spellRingShift;
+    const Vec2 baseCenter = witchSelfLightCenter(playerPosition);
+    if (std::abs(spellRingShift) <= 0.001f) {
+        return baseCenter;
+    }
+    return baseCenter + safeNormalize(shiftDirection) * spellRingShift;
 }
 
 Vec2 getRingItemLocalPosition(float localAngle, const RingOrbitContext& context)
@@ -585,7 +589,7 @@ void SpellRingSystem::initialize(const RuntimeBalance& balance)
     radii_.fill(balance.spellRingRadius);
     angularSpeeds_.fill(balance.spellRingSpeed);
     orbitTuning_ = makeRingOrbitTuning(balance);
-    maxEquippedWeights_.fill(SpellRingSystem::InitialMaxEquippedWeight);
+    maxEquippedWeights_ = SpellRingSystem::InitialMaxEquippedWeightsByRing;
     resetBaseWeightToCurrent();
     baseAngles_.fill(0.0f);
     shapeRotations_.fill(0.0f);
@@ -604,6 +608,14 @@ void SpellRingSystem::initialize(const RuntimeBalance& balance)
 float SpellRingSystem::levelScaleMultiplierForPoints(int points)
 {
     return levelRingScaleMultiplierForPoints(points);
+}
+
+float SpellRingSystem::initialMaxEquippedWeightForRing(int ringIndex)
+{
+    if (ringIndex < 0 || ringIndex >= SpellRingCount) {
+        return InitialMaxEquippedWeight;
+    }
+    return InitialMaxEquippedWeightsByRing[static_cast<std::size_t>(ringIndex)];
 }
 
 void SpellRingSystem::upgradeRadius(float factor)

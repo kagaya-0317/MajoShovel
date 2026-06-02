@@ -4376,11 +4376,19 @@ void Game::renderRingScreen(Renderer& renderer, float totalTime) const
     const UiRect panel = ringPanelRect();
     UiCancelControlScope cancelScope(ringCancelState_);
     const int ringCount = unlockedRingCount();
-    const std::string_view RingHelpText = ringItemMoveModeActive_
-        ? "WASD/矢印 位置変更  F/Enter 確定  Esc キャンセル"
-        : (ringCount > 1
-            ? "1-3 呼出  Shift+1-3 登録  Z/X リング  F/Enter 移動  T 整列  R 外す  Shift+R 全部取る  P 保護"
-            : "1-3 呼出  Shift+1-3 登録  WASD/矢印 選択  F/Enter 移動  T 整列  R 外す  Shift+R 全部取る  P 保護");
+    const int presetSlotCount = unlockedRingPresetSlotCount();
+    std::string RingHelpText;
+    if (ringItemMoveModeActive_) {
+        RingHelpText = "WASD/矢印 位置変更  F/Enter 確定  Esc キャンセル";
+    } else {
+        if (presetSlotCount > 0) {
+            const std::string slotRange = presetSlotCount == 1 ? "1" : "1-" + std::to_string(presetSlotCount);
+            RingHelpText = slotRange + " 呼出  Shift+" + slotRange + " 登録  ";
+        }
+        RingHelpText += ringCount > 1
+            ? "Z/X リング  F/Enter 移動  T 整列  R 外す  Shift+R 全部取る  P 保護"
+            : "WASD/矢印 選択  F/Enter 移動  T 整列  R 外す  Shift+R 全部取る  P 保護";
+    }
     UiWindowScope ringWindow(renderer, "ring.manage", panel, "リング", RingHelpText, UiWindowOptions{true, true});
 
     char buffer[192];
@@ -5281,6 +5289,28 @@ void Game::renderSpellRingForeground(
     }
 }
 
+void Game::renderPlayerDeathRingFade(Renderer& renderer) const
+{
+    const float fadeAlpha = playerDeathRingFadeAlpha();
+    if (fadeAlpha <= 0.001f) {
+        return;
+    }
+
+    const unsigned char outerAlpha = alphaByte(92.0f * fadeAlpha);
+    const unsigned char innerAlpha = alphaByte(154.0f * fadeAlpha);
+    for (const std::vector<Vec2>& path : playerDeathSequence_.ringFadePaths) {
+        if (path.size() < 2) {
+            continue;
+        }
+        for (std::size_t i = 0; i < path.size(); ++i) {
+            const Vec2 a = path[i];
+            const Vec2 b = path[(i + 1) % path.size()];
+            renderer.drawLine(a, b, {98, 208, 236, outerAlpha});
+            renderer.drawLine(a, b, {236, 252, 255, innerAlpha});
+        }
+    }
+}
+
 namespace {
 
 constexpr int LightweightDungeonExtraLightLimit = 8;
@@ -5580,6 +5610,7 @@ void Game::render(Renderer& renderer, const Time& time)
         renderPauseMenu(renderer);
         renderRingScreen(renderer, time.totalSeconds());
         dialogue_.render(renderer, camera_.width(), camera_.height());
+        renderDebugNamedSaveUi(renderer);
         renderDebugItemPicker(renderer);
         renderDebugStoryTest(renderer);
         renderFirstItemAcquisitionNotice(renderer);
@@ -5626,6 +5657,7 @@ void Game::render(Renderer& renderer, const Time& time)
     if (ringCenterVisible && !ringIntroActive) {
         drawSpellRingOrbitLayer(renderer, spellRing_, balance_, time.totalSeconds(), 0.46f);
     }
+    renderPlayerDeathRingFade(renderer);
     if (spellRing_.state() != SpellRingState::Normal && ringCenterVisible) {
         renderer.drawLine(playerLightCenter, spellRing_.center(), {150, 110, 80, 100});
     }
@@ -5901,10 +5933,11 @@ void Game::render(Renderer& renderer, const Time& time)
     }
     dialogue_.render(renderer, camera_.width(), camera_.height());
     if (!suppressDungeonUi) {
+        renderDebugNamedSaveUi(renderer);
         renderDebugItemPicker(renderer);
         renderDebugStoryTest(renderer);
-        renderFirstItemAcquisitionNotice(renderer);
     }
+    renderFirstItemAcquisitionNotice(renderer);
     renderAutoSimulationIntentOverlay(renderer);
     finishUiFrame(renderer);
     renderDebugOverlay(renderer, time);

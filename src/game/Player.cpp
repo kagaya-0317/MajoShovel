@@ -27,6 +27,10 @@ int playerSpriteFrameIndex(float animationTime, bool walking)
 
 namespace {
 
+constexpr float RingShiftAimDeadzone = 0.15f;
+constexpr float RingShiftDirectionResponse = 18.0f;
+constexpr float RingShiftDistanceResponse = 14.0f;
+
 std::string joinDeathCause(std::string_view actorName, std::string_view objectName, std::string_view fallbackObjectName)
 {
     const std::string_view resolvedObjectName = objectName.empty() ? fallbackObjectName : objectName;
@@ -37,6 +41,25 @@ std::string joinDeathCause(std::string_view actorName, std::string_view objectNa
         return std::string(resolvedObjectName) + "で死亡";
     }
     return {};
+}
+
+Vec2 normalizedOr(Vec2 value, Vec2 fallback)
+{
+    if (lengthSquared(value) <= 0.0001f) {
+        return lengthSquared(fallback) > 0.0001f ? normalize(fallback) : Vec2{1.0f, 0.0f};
+    }
+    return normalize(value);
+}
+
+Vec2 smoothDirection(Vec2 current, Vec2 target, float response, float dt)
+{
+    const Vec2 fallback = normalizedOr(target, {1.0f, 0.0f});
+    const Vec2 from = normalizedOr(current, fallback);
+    if (dt <= 0.0f) {
+        return from;
+    }
+    const float alpha = 1.0f - std::exp(-std::max(0.0f, response) * dt);
+    return normalizedOr(lerp(from, fallback, alpha), fallback);
 }
 
 }
@@ -288,17 +311,26 @@ void Player::update(
         facing = normalize(velocity);
     }
 
+    Vec2 targetShiftDirection = normalizedOr(spellRingShiftDirection, facing);
     if (input.ringOffsetHeld()) {
-        spellRingShiftDirection = input.hasAimAxis() ? normalize(input.aimAxis()) : normalize(facing);
+        const Vec2 aimAxis = input.aimAxis();
+        if (input.hasAimAxis() && lengthSquared(aimAxis) >= RingShiftAimDeadzone * RingShiftAimDeadzone) {
+            targetShiftDirection = normalize(aimAxis);
+        } else {
+            targetShiftDirection = normalizedOr(facing, targetShiftDirection);
+        }
     } else if (lengthSquared(facing) > 0.0001f) {
-        spellRingShiftDirection = normalize(facing);
+        targetShiftDirection = normalize(facing);
     }
+    const float safeDt = std::max(0.0f, dt);
+    spellRingShiftDirection =
+        smoothDirection(spellRingShiftDirection, targetShiftDirection, RingShiftDirectionResponse, safeDt);
 
     const float shiftDistance =
         (balance.spellRingShiftDistance + spellRingShiftDistanceBonus) *
         clamp(spellRingShiftDistanceMultiplier, 0.25f, 3.0f);
     const float targetShift = input.ringOffsetHeld() ? shiftDistance : 0.0f;
-    spellRingShift = lerp(spellRingShift, targetShift, 1.0f - std::exp(-14.0f * dt));
+    spellRingShift = lerp(spellRingShift, targetShift, 1.0f - std::exp(-RingShiftDistanceResponse * safeDt));
     throwCooldownRemaining = std::max(0.0f, throwCooldownRemaining - dt);
 }
 

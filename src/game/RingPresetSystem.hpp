@@ -56,17 +56,19 @@ public:
     const RingPreset& preset(int presetIndex) const;
     RingPreset& preset(int presetIndex);
     void setPreset(int presetIndex, RingPreset preset);
-    bool capturePreset(int presetIndex, const SpellRingSystem& spellRing);
+    bool capturePreset(int presetIndex, const SpellRingSystem& spellRing, int unlockedRingCount);
     RingPresetApplyResult applyPreset(
         int presetIndex,
         InventorySystem& inventory,
         SpellRingSystem& spellRing,
-        const ObjectCatalog& objectCatalog) const;
+        const ObjectCatalog& objectCatalog,
+        int unlockedRingCount) const;
     std::vector<RingPresetItem> missingItemsForPreset(
         int presetIndex,
         const InventorySystem& inventory,
         const SpellRingSystem& spellRing,
-        const ObjectCatalog& objectCatalog) const;
+        const ObjectCatalog& objectCatalog,
+        int unlockedRingCount) const;
 
 private:
     std::array<RingPreset, PresetCount> presets_{};

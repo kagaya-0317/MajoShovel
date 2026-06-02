@@ -8,6 +8,8 @@ namespace majo {
 namespace {
 
 constexpr std::string_view AudioSeNewItemJingle = "se.item.new.jingle";
+constexpr std::string_view AudioSeEffectDiscovery = "se.discovery.effect";
+constexpr std::string_view BaseFacilityWindowHelpText = "↑/↓ 選択  F/Enter 決定  Esc 戻る";
 constexpr float NewItemJingleFallbackSeconds = 0.92f;
 
 bool isTutorialStoryTrigger(std::string_view trigger)
@@ -92,6 +94,16 @@ const char* baseUpgradeProcessingFeature(int level)
     }
 }
 
+const char* baseUpgradeRingPresetFeature(int level)
+{
+    switch (level) {
+    case 1: return "1枠";
+    case 2: return "2枠";
+    case 3: return "3枠";
+    default: return "未解禁";
+    }
+}
+
 std::unordered_map<std::string, int> buildObjectSortOrder(const ObjectCatalog& catalog)
 {
     std::unordered_map<std::string, int> order;
@@ -145,6 +157,7 @@ const char* baseUpgradeResultSubject(int index)
     case 5: return "リング半径";
     case 6: return "リング速度";
     case 7: return "収集術式";
+    case 8: return "リングプリセット";
     default: return "強化項目";
     }
 }
@@ -181,6 +194,11 @@ std::string baseUpgradeResultChangeLine(int index, int beforeLevel, int afterLev
         return buffer;
     case 7:
         std::snprintf(buffer, sizeof(buffer), "収集術式: Lv.%d → Lv.%d", beforeLevel, afterLevel);
+        return buffer;
+    case 8:
+        std::snprintf(buffer, sizeof(buffer), "プリセット枠: %s → %s",
+            baseUpgradeRingPresetFeature(beforeLevel),
+            baseUpgradeRingPresetFeature(afterLevel));
         return buffer;
     default:
         return {};
@@ -4236,6 +4254,13 @@ void Game::depositAllStorageItems()
 
 void Game::prepareRingPresetFromWarehouse(int presetIndex)
 {
+    const int presetSlotCount = unlockedRingPresetSlotCount();
+    if (presetIndex < 0 || presetIndex >= presetSlotCount) {
+        baseStatus_ = presetSlotCount <= 0
+            ? "リングプリセットは未解禁です"
+            : "プリセット" + std::to_string(presetIndex + 1) + "は未解禁です";
+        return;
+    }
     if (!ringPresets_.registered(presetIndex)) {
         baseStatus_ = "プリセット" + std::to_string(presetIndex + 1) + "は未登録です";
         return;
@@ -4245,7 +4270,8 @@ void Game::prepareRingPresetFromWarehouse(int presetIndex)
         presetIndex,
         inventory_,
         spellRing_,
-        objectCatalog_);
+        objectCatalog_,
+        unlockedRingCount());
     if (missingItems.empty()) {
         baseStatus_ = "プリセット" + std::to_string(presetIndex + 1) + "の必要アイテムは手元にあります";
         return;
@@ -4396,6 +4422,7 @@ int Game::upgradeCost(int index) const
     case 5: return 150 + ringRadiusUpgradeLevel_ * 75;
     case 6: return 150 + ringSpeedUpgradeLevel_ * 75;
     case 7: return 120 + collectionRangeUpgradeLevel_ * 80;
+    case 8: return 160 + ringPresetSlotLevel_ * 140;
     default: return 0;
     }
 }
@@ -4407,6 +4434,7 @@ MaterialType Game::upgradeMaterialType(int index) const
     case 1:
     case 2:
     case 3:
+    case 8:
         return MaterialType::OldWoodBuildingMaterial;
     case 4:
     case 5:
@@ -4429,6 +4457,7 @@ int Game::upgradeMaterialCost(int index) const
     case 5: return ringRadiusUpgradeLevel_ + 1;
     case 6: return ringSpeedUpgradeLevel_ + 1;
     case 7: return collectionRangeUpgradeLevel_ + 1;
+    case 8: return ringPresetSlotLevel_ + 3;
     default: return 0;
     }
 }
@@ -4444,6 +4473,7 @@ const char* Game::upgradeName(int index) const
     case 5: return "リング半径アップ";
     case 6: return "リング速度アップ";
     case 7: return "収集術式";
+    case 8: return "リングプリセット";
     default: return "";
     }
 }
@@ -4459,6 +4489,7 @@ int Game::upgradeLevel(int index) const
     case 5: return ringRadiusUpgradeLevel_;
     case 6: return ringSpeedUpgradeLevel_;
     case 7: return collectionRangeUpgradeLevel_;
+    case 8: return ringPresetSlotLevel_;
     default: return 0;
     }
 }
@@ -4475,6 +4506,8 @@ int Game::upgradeMaxLevel(int index) const
     case 6:
     case 7:
         return 5;
+    case 8:
+        return RingPresetSlotCount;
     default:
         return 0;
     }
@@ -4482,7 +4515,7 @@ int Game::upgradeMaxLevel(int index) const
 
 bool Game::upgradeImplemented(int index) const
 {
-    return index >= 0 && index <= 7;
+    return index >= 0 && index <= 8;
 }
 
 bool Game::upgradeMaxed(int index) const
@@ -4550,6 +4583,9 @@ void Game::buyUpgrade(int index)
         break;
     case 7:
         ++collectionRangeUpgradeLevel_;
+        break;
+    case 8:
+        ringPresetSlotLevel_ = std::min(RingPresetSlotCount, ringPresetSlotLevel_ + 1);
         break;
     default:
         break;
@@ -4905,7 +4941,9 @@ void Game::captureEncyclopediaSyncSuppressState()
 
 void Game::applyEffectDiscoveries(const std::vector<EffectDiscoveryEvent>& discoveries)
 {
-    encyclopedia_.noteEffectEvents(discoveries, objectCatalog_);
+    if (encyclopedia_.noteEffectEvents(discoveries, objectCatalog_) > 0) {
+        playAudioSe(AudioSeEffectDiscovery);
+    }
 }
 
 void Game::recordObjectObtainedForFirstNotice(
@@ -5123,6 +5161,9 @@ std::string Game::currentStageStoryTrigger(std::string_view triggerName) const
 
 bool Game::queueStoryEventForTrigger(std::string trigger)
 {
+    if (playerDeathSequenceActive()) {
+        return false;
+    }
     if (trigger.empty()) {
         return false;
     }
@@ -5170,6 +5211,9 @@ void Game::updateQueuedStoryEvents()
 
 bool Game::startStoryEvent(std::string_view id)
 {
+    if (playerDeathSequenceActive()) {
+        return false;
+    }
     const StoryEvent* event = findStoryEvent(id);
     if (event == nullptr) {
         logWarning("[story] event not found: " + std::string(id));
@@ -5192,6 +5236,9 @@ bool Game::startStoryEvent(std::string_view id)
 
 bool Game::startStoryEventWithCompletion(std::string_view id, std::function<void()> onComplete)
 {
+    if (playerDeathSequenceActive()) {
+        return false;
+    }
     if (dialogue_.active()) {
         return false;
     }
@@ -5210,6 +5257,9 @@ bool Game::startStoryEventWithCompletion(std::string_view id, std::function<void
 
 bool Game::startDialogueSequenceWithCompletion(DialogueSequence sequence, std::function<void()> onComplete)
 {
+    if (playerDeathSequenceActive()) {
+        return false;
+    }
     if (dialogue_.active()) {
         return false;
     }
@@ -6002,7 +6052,8 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
 
         const int storagePresetShortcut = input.shortcutSlotPressed();
         if (storagePresetShortcut >= 0 && storagePresetShortcut < RingPresetSlotCount) {
-            const bool registered = ringPresets_.registered(storagePresetShortcut);
+            const bool registered = storagePresetShortcut < unlockedRingPresetSlotCount() &&
+                ringPresets_.registered(storagePresetShortcut);
             prepareRingPresetFromWarehouse(storagePresetShortcut);
             ui.emitSound(registered ? UiSoundEvent::Confirm : UiSoundEvent::Cancel);
             ui.block(storageBounds);
@@ -6062,6 +6113,13 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
                     return;
                 }
                 const int presetIndex = selection - 1;
+                if (presetIndex >= unlockedRingPresetSlotCount()) {
+                    baseStatus_ = unlockedRingPresetSlotCount() <= 0
+                        ? "リングプリセットは未解禁です"
+                        : "プリセット" + std::to_string(presetIndex + 1) + "は未解禁です";
+                    ui.emitSound(UiSoundEvent::Cancel);
+                    return;
+                }
                 if (!ringPresets_.registered(presetIndex)) {
                     baseStatus_ = "プリセット" + std::to_string(presetIndex + 1) + "は未登録です";
                     ui.emitSound(UiSoundEvent::Cancel);
@@ -8201,7 +8259,7 @@ void Game::renderBaseScreen(Renderer& renderer) const
         if (panelCancelButton) {
             panelCancelScope.emplace(baseCancelState_);
         }
-        panelWindow.emplace(renderer, "base.panel", panel, panelTitle, "", UiWindowOptions{true, panelCancelButton});
+        panelWindow.emplace(renderer, "base.panel", panel, panelTitle, BaseFacilityWindowHelpText, UiWindowOptions{true, panelCancelButton});
     }
 
     if (baseDiaryActive_) {
@@ -8225,7 +8283,8 @@ void Game::renderBaseScreen(Renderer& renderer) const
             };
             for (int i = 0; i < static_cast<int>(Choices.size()); ++i) {
                 UiButtonStyle style = uiActionButtonStyle();
-                const bool enabled = i == 0 || ringPresets_.registered(i - 1);
+                const bool enabled = i == 0 ||
+                    (i - 1 < unlockedRingPresetSlotCount() && ringPresets_.registered(i - 1));
                 if (!enabled) {
                     style.fill = {18, 24, 42, 150};
                     style.fillHot = {18, 24, 42, 150};
@@ -9149,6 +9208,7 @@ void Game::renderBaseScreen(Renderer& renderer) const
             case 5: return "リング半径";
             case 6: return "リング速度";
             case 7: return "収集術式";
+            case 8: return "プリセット";
             default: return "";
             }
         };
@@ -9335,6 +9395,15 @@ void Game::renderBaseScreen(Renderer& renderer) const
                 std::snprintf(nextValue, sizeof(nextValue), "%.0fpx", effectiveCollectionPullRadius(nextLevel));
                 drawEffectChangeLine(detailY, "効果", "吸引半径: ", currentValue, nextValue);
                 drawDetailTextRow(detailY, "", "近くのドロップをプレイヤーへ吸い寄せます。", ui::TextMuted);
+                break;
+            case 8:
+                drawEffectChangeLine(
+                    detailY,
+                    "効果",
+                    "プリセット枠: ",
+                    baseUpgradeRingPresetFeature(level),
+                    baseUpgradeRingPresetFeature(nextLevel));
+                drawDetailTextRow(detailY, "", "リング画面で編成登録と呼び出しができます。", ui::TextMuted);
                 break;
             default:
                 break;

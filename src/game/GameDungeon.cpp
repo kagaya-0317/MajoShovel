@@ -52,10 +52,12 @@ constexpr int MicroFeatureMinCount = 10;
 constexpr int MicroFeatureMaxCount = 30;
 constexpr double DungeonMinimapRevealIntervalSeconds = 0.15;
 constexpr std::string_view FirstDungeonStageId = "stage_01_stardust";
+constexpr std::string_view TutorialAppleObjectId = "item_apple";
 constexpr std::string_view MagnifyingGlassObjectId = "item_magnifying_glass";
 constexpr std::string_view CaptureNetObjectId = "item_capture_net";
 constexpr float MagnifyingGlassGuaranteedMaxDepthTiles = 100.0f;
 constexpr float MagnifyingGlassGuaranteedProgressFallback = 0.24f;
+constexpr float TutorialAppleGuaranteedProgress = 0.12f;
 constexpr std::string_view FinalStoryStageId = "stage_03_star_core";
 constexpr std::string_view EndingSeenFlag = "ending_seen";
 constexpr std::string_view PostEndingIntroFlag = "story_post_ending_intro";
@@ -78,6 +80,7 @@ constexpr float CaptureAbsorbFlyDelaySeconds = 0.24f;
 constexpr float CaptureAbsorbSparkIntervalSeconds = 0.045f;
 constexpr float DigToolFailsafeSpawnCooldownSeconds = 12.0f;
 constexpr float DigToolFailsafeNearbyDropRadius = 220.0f;
+constexpr float WarpReturnClickRadius = 42.0f;
 constexpr float FootstepPitchSideOffset = 0.025f;
 constexpr float WetGroundPlayerRadiusMultiplier = 1.45f;
 constexpr float WetGroundPlayerMinRadius = 16.0f;
@@ -1190,6 +1193,11 @@ bool inventoryInstanceIsUsableDigTool(const InventoryObjectInstance& instance)
     return instance.item.category == DigToolFailsafeDigCategory &&
         !instance.instance.isBroken &&
         instance.instance.currentDurability != 0;
+}
+
+bool objectIsInventoryUsableItem(const ObjectDefinition& object)
+{
+    return !isStaffObject(object) && !object.normalEffects.empty();
 }
 
 ItemInstance makeDroppedRingItemInstance(const SpellRingItem& item, const ItemData& object, InventorySystem& inventory)
@@ -2907,6 +2915,7 @@ void Game::beginPlayerDeathSequence()
 
     player_.hp = 0;
     player_.velocity = {};
+    mode_ = ScreenMode::Playing;
     inventory_.setOpen(false);
     inventory_.cancelGrab();
     cancelRingGrab();
@@ -2959,6 +2968,7 @@ void Game::updatePlayerDeathSequence(float dt)
 
 void Game::retryAfterGameOver()
 {
+    playerDeathSequence_ = {};
     if (introTutorialActive()) {
         startIntroTutorialDungeon();
         return;
@@ -3012,6 +3022,7 @@ void Game::retryAfterGameOver()
 
 void Game::returnToBaseAfterGameOver()
 {
+    playerDeathSequence_ = {};
     if (introTutorialActive()) {
         startIntroTutorialDungeon();
         return;
@@ -3106,6 +3117,7 @@ void Game::enterAstralResult(Game::AstralRunResult result)
     }
     levelUpPresentation_ = {};
     levelUpResultDialog_ = {};
+    playerDeathSequence_ = {};
 
     astralResult_ = makeAstralRunSummary(result);
     if (astralResult_.carriedOut && astralResult_.score > astralHighScore_) {
@@ -3705,11 +3717,19 @@ bool Game::updateIntroTutorial(const Input& input, float)
 
         const float exitInteractRadiusSq = IntroTutorialExitInteractRadius * IntroTutorialExitInteractRadius;
         if (distanceToExitSq <= exitInteractRadiusSq) {
-            if (input.confirmPressed() || input.useItemPressed()) {
+            introTutorialExitHovered_ =
+                distanceSquared(camera_.screenToWorld(input.mouseScreen()), introTutorialExitPosition()) <=
+                IntroTutorialExitInteractRadius * IntroTutorialExitInteractRadius;
+            const bool exitClicked =
+                input.mouseLeftPressed() &&
+                introTutorialExitHovered_;
+            if (input.confirmPressed() || input.useItemPressed() || exitClicked) {
                 introTutorialPhase_ = IntroTutorialPhase::Returning;
                 requestScreenTransition(ScreenTransitionTarget::IntroTutorialToBase);
                 return true;
             }
+        } else {
+            introTutorialExitHovered_ = false;
         }
     }
 
@@ -6100,10 +6120,15 @@ bool Game::updateWarpReturnUi(const Input& input, UiContext& ui)
     if (mode_ != ScreenMode::Playing || enemyTestActive_ || introTutorialActive()) {
         warpReturnConfirm_ = {};
         focusedWarpReturnPointIndex_ = -1;
+        hoveredWarpReturnPointIndex_ = -1;
+        if (!introTutorialActive()) {
+            introTutorialExitHovered_ = false;
+        }
         return false;
     }
 
     if (warpReturnConfirm_.open) {
+        hoveredWarpReturnPointIndex_ = -1;
         const UiRect confirmPanel = warpReturnConfirmRect();
         const UiConfirmDialogResult result = updateUiConfirmDialog(warpReturnConfirm_, ui, input, confirmPanel);
         if (result == UiConfirmDialogResult::Confirmed) {
@@ -6128,15 +6153,50 @@ bool Game::updateWarpReturnUi(const Input& input, UiContext& ui)
         return true;
     }
 
+    const auto pointedReturnFocusIndex = [&]() {
+        if (ui.pointerConsumed()) {
+            return -1;
+        }
+
+        const Vec2 clickWorld = camera_.screenToWorld(ui.mouse());
+        if (distanceSquared(clickWorld, dungeonEntrancePosition()) <= WarpReturnClickRadius * WarpReturnClickRadius &&
+            distanceSquared(player_.position, dungeonEntrancePosition()) <= WarpPointReturnRadius * WarpPointReturnRadius) {
+            return DungeonEntranceReturnFocusIndex;
+        }
+
+        if (!warpPointsEnabled_) {
+            return -1;
+        }
+
+        int nearest = -1;
+        float nearestDistanceSq = WarpReturnClickRadius * WarpReturnClickRadius;
+        for (int i = 0; i < static_cast<int>(warpPoints_.size()); ++i) {
+            const WarpPoint& point = warpPoints_[static_cast<std::size_t>(i)];
+            if (!point.discovered ||
+                distanceSquared(player_.position, point.position) > WarpPointReturnRadius * WarpPointReturnRadius) {
+                continue;
+            }
+            const float clickDistanceSq = distanceSquared(clickWorld, point.position);
+            if (clickDistanceSq <= nearestDistanceSq) {
+                nearestDistanceSq = clickDistanceSq;
+                nearest = i;
+            }
+        }
+        return nearest;
+    }();
+    hoveredWarpReturnPointIndex_ = pointedReturnFocusIndex;
+    const int clickedReturnFocusIndex = input.mouseLeftPressed() ? pointedReturnFocusIndex : -1;
+
     const bool entranceNearby =
         distanceSquared(player_.position, dungeonEntrancePosition()) <= WarpPointReturnRadius * WarpPointReturnRadius;
-    focusedWarpReturnPointIndex_ = entranceNearby
-        ? DungeonEntranceReturnFocusIndex
-        : nearbyDiscoveredWarpPointIndex();
+    focusedWarpReturnPointIndex_ = clickedReturnFocusIndex != -1
+        ? clickedReturnFocusIndex
+        : (entranceNearby ? DungeonEntranceReturnFocusIndex : nearbyDiscoveredWarpPointIndex());
     const bool returnPromptFocused =
         focusedWarpReturnPointIndex_ >= 0 ||
         focusedWarpReturnPointIndex_ == DungeonEntranceReturnFocusIndex;
-    if (returnPromptFocused && (input.confirmPressed() || input.useItemPressed())) {
+    if (returnPromptFocused &&
+        (input.confirmPressed() || input.useItemPressed() || clickedReturnFocusIndex != -1)) {
         ui.emitSound(UiSoundEvent::MenuOpen);
         openUiConfirmDialog(
             warpReturnConfirm_,
@@ -6146,6 +6206,9 @@ bool Game::updateWarpReturnUi(const Input& input, UiContext& ui)
             "戻る",
             0);
         ui.block(warpReturnConfirmRect());
+        if (clickedReturnFocusIndex != -1) {
+            ui.consumePointer();
+        }
         return true;
     }
     return false;
@@ -6528,12 +6591,16 @@ void Game::initializeRewardNodesFromLayout()
         const float maxDepthProgress = pathLength > 1.0f
             ? MagnifyingGlassGuaranteedMaxDepthTiles / pathLength
             : MagnifyingGlassGuaranteedProgressFallback;
-        const float progress = clamp(
+        const float supportToolProgress = clamp(
             std::min(MagnifyingGlassGuaranteedProgressFallback, maxDepthProgress * 0.88f),
             WallPocketProgressStart,
             0.32f);
         const bool firstRewardRightSide = signDist(rng) == 1;
-        const auto placeFirstDungeonGuaranteedReward = [&](std::string_view objectId, std::string_view rewardKind, bool rightSide) {
+        const auto placeFirstDungeonGuaranteedReward = [&](
+            std::string_view objectId,
+            std::string_view rewardKind,
+            float progress,
+            bool rightSide) {
             if (objectCatalog_.registry.findById(objectId) == nullptr ||
                 encyclopedia_.objectStage(objectId, false) != EncyclopediaStage::Undiscovered) {
                 return;
@@ -6550,8 +6617,21 @@ void Game::initializeRewardNodesFromLayout()
             };
             placeRewardNode(std::move(node));
         };
-        placeFirstDungeonGuaranteedReward(MagnifyingGlassObjectId, "first_dungeon_magnifying_glass", firstRewardRightSide);
-        placeFirstDungeonGuaranteedReward(CaptureNetObjectId, "first_dungeon_capture_net", !firstRewardRightSide);
+        placeFirstDungeonGuaranteedReward(
+            TutorialAppleObjectId,
+            "first_dungeon_tutorial_apple",
+            TutorialAppleGuaranteedProgress,
+            firstRewardRightSide);
+        placeFirstDungeonGuaranteedReward(
+            MagnifyingGlassObjectId,
+            "first_dungeon_magnifying_glass",
+            supportToolProgress,
+            firstRewardRightSide);
+        placeFirstDungeonGuaranteedReward(
+            CaptureNetObjectId,
+            "first_dungeon_capture_net",
+            supportToolProgress,
+            !firstRewardRightSide);
     }
 
     for (const SpecialRoomAnchor& room : dungeonLayout_.specialRoomAnchors) {
@@ -7153,8 +7233,15 @@ bool Game::spawnWeightedObjectLoot(
 
     std::vector<const ObjectDefinition*> candidates;
     std::vector<double> weights;
+    const bool appleUseTutorialPending =
+        encyclopedia_.objectStage(TutorialAppleObjectId, false) == EncyclopediaStage::Undiscovered;
     for (const ObjectDefinition& object : objectCatalog_.objects) {
         if (!hasRequiredTag(object)) {
+            continue;
+        }
+        if (appleUseTutorialPending &&
+            object.id != TutorialAppleObjectId &&
+            objectIsInventoryUsableItem(object)) {
             continue;
         }
         const double baseWeight = lootWeightFor(object, currentStageId_, depthRank, chestKind);
@@ -9424,6 +9511,12 @@ void Game::renderDungeonEntrance(Renderer& renderer) const
     }
 
     const Vec2 center = dungeonEntrancePosition();
+    const bool hovered =
+        hoveredWarpReturnPointIndex_ == DungeonEntranceReturnFocusIndex ||
+        (introTutorialActive() && introTutorialExitHovered_);
+    if (hovered) {
+        renderer.fillSoftCircle(center + Vec2{0.0f, 10.0f}, 82.0f, {170, 238, 255, 54});
+    }
     renderer.fillEllipse(center + Vec2{0.0f, 44.0f}, {54.0f, 15.0f}, {0, 0, 0, 110});
     renderer.fillSoftCircle(center + Vec2{0.0f, 10.0f}, 68.0f, {96, 190, 220, 44});
 
@@ -9436,6 +9529,10 @@ void Game::renderDungeonEntrance(Renderer& renderer) const
     renderer.fillRect(center + Vec2{-32.0f, 13.0f}, {64.0f, 45.0f}, {8, 12, 22, 252});
     renderer.drawCircle(center + Vec2{0.0f, 13.0f}, 32.0f, {64, 180, 218, 150});
     renderer.drawRect(center + Vec2{-32.0f, 13.0f}, {64.0f, 45.0f}, {64, 180, 218, 150});
+    if (hovered) {
+        renderer.drawCircle(center + Vec2{0.0f, 6.0f}, 54.0f, {232, 252, 255, 245});
+        renderer.drawRect(center + Vec2{-54.0f, -2.0f}, {108.0f, 64.0f}, {232, 252, 255, 210});
+    }
 
     renderer.fillRect(center + Vec2{-42.0f, 52.0f}, {84.0f, 10.0f}, {122, 92, 62, 240});
     renderer.drawLine(center + Vec2{-38.0f, 52.0f}, center + Vec2{38.0f, 52.0f}, {234, 202, 132, 210});
@@ -9454,6 +9551,16 @@ void Game::renderWarpPoints(Renderer& renderer) const
     for (const WarpPoint& point : warpPoints_) {
         const Color core = point.discovered ? Color{92, 236, 210, 255} : Color{255, 208, 92, 255};
         const Color ring = point.discovered ? Color{170, 255, 238, 220} : Color{255, 232, 150, 220};
+        const bool hovered =
+            point.discovered &&
+            hoveredWarpReturnPointIndex_ >= 0 &&
+            hoveredWarpReturnPointIndex_ < static_cast<int>(warpPoints_.size()) &&
+            warpPoints_[static_cast<std::size_t>(hoveredWarpReturnPointIndex_)].index == point.index;
+        if (hovered) {
+            renderer.fillSoftCircle(point.position, 54.0f, {170, 255, 238, 54});
+            renderer.drawCircle(point.position, 39.0f, {232, 255, 248, 245});
+            renderer.drawCircle(point.position, 44.0f, {92, 236, 210, 170});
+        }
         renderer.drawCircle(point.position, point.discovered ? 34.0f : 24.0f, {150, 210, 255, 110});
         renderer.drawCircle(point.position, 20.0f, ring);
         if (!drawWorldIcon(renderer, WorldIconId::WarpPoint, point.position, {42.0f, 42.0f})) {

@@ -18,6 +18,7 @@
 #include "game/Player.hpp"
 #include "game/ProjectileSystem.hpp"
 #include "game/TileMap.hpp"
+#include <array>
 #include <random>
 #include <optional>
 #include <string>
@@ -343,14 +344,26 @@ public:
     int activeSleepingDungeonEventEnemyCount(std::string_view eventId) const;
 
 private:
+    static constexpr std::size_t MudZoneOutlinePointCount = 16;
+    static constexpr std::size_t MudZoneBubbleCount = 5;
+
+    struct MudZoneBubble {
+        Vec2 offset{};
+        float radius = 0.0f;
+        float phase = 0.0f;
+    };
+
     struct MudZone {
         Vec2 position{};
         float radius = 0.0f;
+        float initialSeconds = 0.0f;
         float remainingSeconds = 0.0f;
         float speedMultiplier = 1.0f;
         float damagePerSecond = 0.0f;
         std::string damageType = "poison";
         DamageCause damageCause{.source = DamageSource::Poison, .objectName = "毒の泥"};
+        std::array<Vec2, MudZoneOutlinePointCount> outlineOffsets{};
+        std::array<MudZoneBubble, MudZoneBubbleCount> bubbles{};
     };
     struct CaptureAttemptOptions {
         bool requirePlayerReach = true;

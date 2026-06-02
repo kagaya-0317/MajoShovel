@@ -30,6 +30,11 @@ constexpr float DebugItemPickerCardWidth = 118.0f;
 constexpr float DebugItemPickerCardHeight = 106.0f;
 constexpr float DebugItemPickerCardGap = 10.0f;
 constexpr float DebugItemPickerIconSize = 58.0f;
+constexpr float DebugNamedSavePanelWidth = 620.0f;
+constexpr float DebugNamedSaveInputPanelHeight = 260.0f;
+constexpr float DebugNamedSaveLoadPanelHeight = 520.0f;
+constexpr float DebugNamedSaveRowHeight = 46.0f;
+constexpr float DebugNamedSaveRowGap = 5.0f;
 constexpr float ObjectImageScaleSearchHeight = 42.0f;
 constexpr float ObjectImageScaleSearchGap = 10.0f;
 constexpr float EnemyHitboxHeaderHeight = 82.0f;
@@ -56,6 +61,7 @@ constexpr float EnemyHitboxMaxRadius = 256.0f;
 constexpr float EnemyShadowOffsetStep = 1.0f;
 constexpr float EnemyShadowScaleStep = 0.05f;
 constexpr float EnemyShadowPreviewScale = 4.0f;
+constexpr float EnemyShadowPreviewDirectionSeconds = 0.5f;
 constexpr int HitboxEditUndoLimit = 100;
 constexpr float DebugStoryTestDetailWidth = 360.0f;
 constexpr float DebugStoryTestRowHeight = 56.0f;
@@ -525,6 +531,16 @@ struct DebugStoryTestLayout {
     UiRect list{};
     UiRect detail{};
     float rowPitch = DebugStoryTestRowHeight + DebugStoryTestRowGap;
+};
+
+struct DebugNamedSaveLayout {
+    UiRect panel{};
+    UiRect input{};
+    UiRect list{};
+    UiRect primaryButton{};
+    UiRect secondaryButton{};
+    UiRect status{};
+    float rowPitch = DebugNamedSaveRowHeight + DebugNamedSaveRowGap;
 };
 
 struct EnemyHitboxEditLayout {
@@ -1401,6 +1417,63 @@ DebugStoryTestLayout makeDebugStoryTestLayout(int screenWidth, int screenHeight)
     return layout;
 }
 
+DebugNamedSaveLayout makeDebugNamedSaveInputLayout(int screenWidth, int screenHeight)
+{
+    DebugNamedSaveLayout layout;
+    const float width = std::min(DebugNamedSavePanelWidth, std::max(360.0f, static_cast<float>(screenWidth) - 48.0f));
+    const float height = std::min(DebugNamedSaveInputPanelHeight, std::max(220.0f, static_cast<float>(screenHeight) - 48.0f));
+    layout.panel = {{
+        std::max(0.0f, (static_cast<float>(screenWidth) - width) * 0.5f),
+        std::max(0.0f, (static_cast<float>(screenHeight) - height) * 0.5f),
+    }, {width, height}};
+    layout.input = {{layout.panel.pos.x + 36.0f, layout.panel.pos.y + 98.0f}, {layout.panel.size.x - 72.0f, 44.0f}};
+    layout.status = {{layout.panel.pos.x + 36.0f, layout.panel.pos.y + 150.0f}, {layout.panel.size.x - 72.0f, 28.0f}};
+    layout.primaryButton = {{layout.panel.pos.x + layout.panel.size.x - 200.0f, layout.panel.pos.y + layout.panel.size.y - 72.0f}, {156.0f, ui::ButtonHeight}};
+    layout.secondaryButton = {{layout.panel.pos.x + 44.0f, layout.panel.pos.y + layout.panel.size.y - 72.0f}, {156.0f, ui::ButtonHeight}};
+    return layout;
+}
+
+DebugNamedSaveLayout makeDebugNamedSaveLoadLayout(int screenWidth, int screenHeight)
+{
+    DebugNamedSaveLayout layout;
+    const float width = std::min(DebugNamedSavePanelWidth, std::max(360.0f, static_cast<float>(screenWidth) - 48.0f));
+    const float height = std::min(DebugNamedSaveLoadPanelHeight, std::max(300.0f, static_cast<float>(screenHeight) - 48.0f));
+    layout.panel = {{
+        std::max(0.0f, (static_cast<float>(screenWidth) - width) * 0.5f),
+        std::max(0.0f, (static_cast<float>(screenHeight) - height) * 0.5f),
+    }, {width, height}};
+    layout.list = {{layout.panel.pos.x + 32.0f, layout.panel.pos.y + 74.0f}, {layout.panel.size.x - 64.0f, layout.panel.size.y - 174.0f}};
+    layout.status = {{layout.panel.pos.x + 32.0f, layout.panel.pos.y + layout.panel.size.y - 92.0f}, {layout.panel.size.x - 64.0f, 28.0f}};
+    layout.primaryButton = {{layout.panel.pos.x + layout.panel.size.x - 200.0f, layout.panel.pos.y + layout.panel.size.y - 58.0f}, {156.0f, ui::ButtonHeight}};
+    layout.secondaryButton = {{layout.panel.pos.x + 44.0f, layout.panel.pos.y + layout.panel.size.y - 58.0f}, {156.0f, ui::ButtonHeight}};
+    return layout;
+}
+
+UiRect debugNamedSaveLoadRowRect(const DebugNamedSaveLayout& layout, int index, float scrollOffset)
+{
+    return {{
+        layout.list.pos.x + 10.0f,
+        layout.list.pos.y + 10.0f + static_cast<float>(index) * layout.rowPitch - scrollOffset,
+    }, {
+        std::max(1.0f, layout.list.size.x - 20.0f),
+        DebugNamedSaveRowHeight,
+    }};
+}
+
+float debugNamedSaveLoadContentHeight(const DebugNamedSaveLayout& layout, int itemCount)
+{
+    if (itemCount <= 0) {
+        return layout.list.size.y;
+    }
+    return 20.0f + static_cast<float>(itemCount) * DebugNamedSaveRowHeight +
+        static_cast<float>(std::max(0, itemCount - 1)) * DebugNamedSaveRowGap;
+}
+
+float debugNamedSaveLoadMaxScroll(const DebugNamedSaveLayout& layout, int itemCount)
+{
+    return std::max(0.0f, debugNamedSaveLoadContentHeight(layout, itemCount) - layout.list.size.y);
+}
+
 AudioCueEditLayout makeAudioCueEditLayout(int screenWidth, int screenHeight)
 {
     const float width = std::min(
@@ -2245,6 +2318,27 @@ std::vector<HitCircle> mirroredHitboxEditorCircles(std::vector<HitCircle> circle
     }
     normalizeHitboxEditorCircles(circles);
     return circles;
+}
+
+EnemyShadowSpec mirroredEnemyShadowSpec(EnemyShadowSpec spec)
+{
+    spec.offset.x = -spec.offset.x;
+    return sanitizeEnemyShadowSpec(spec);
+}
+
+float enemyShadowPreviewFacingAngle(double totalSeconds)
+{
+    const int step = static_cast<int>(std::floor(std::max(0.0, totalSeconds) / EnemyShadowPreviewDirectionSeconds)) % 4;
+    switch (step) {
+    case 1:
+        return 0.0f;
+    case 2:
+        return -Pi * 0.5f;
+    case 3:
+        return Pi;
+    default:
+        return Pi * 0.5f;
+    }
 }
 
 bool enemyHitboxDirectionClipboardHasAny(const EnemyHitboxDirectionClipboard& clipboard)
@@ -4516,6 +4610,41 @@ EnemyShadowSpec& Game::mutableSelectedEnemyShadowSpecForEdit()
     return spec;
 }
 
+bool Game::copyCurrentEnemyShadowSpec()
+{
+    if (selectedEnemyShadowDefinitionForEdit() == nullptr) {
+        enemyShadowStatus_ = "No target";
+        return false;
+    }
+
+    enemyShadowClipboard_ = sanitizeEnemyShadowSpec(selectedEnemyShadowSpecForEdit());
+    enemyShadowClipboardValid_ = true;
+    enemyShadowStatus_ = "Shadow copied";
+    return true;
+}
+
+bool Game::pasteCurrentEnemyShadowSpec(bool mirrorX)
+{
+    if (!enemyShadowClipboardValid_) {
+        enemyShadowStatus_ = "Shadow clipboard empty";
+        return false;
+    }
+    if (selectedEnemyShadowDefinitionForEdit() == nullptr) {
+        enemyShadowStatus_ = "No target";
+        return false;
+    }
+
+    pushEnemyShadowEditUndoSnapshot();
+    EnemyShadowSpec& targetSpec = mutableSelectedEnemyShadowSpecForEdit();
+    targetSpec = mirrorX
+        ? mirroredEnemyShadowSpec(enemyShadowClipboard_)
+        : sanitizeEnemyShadowSpec(enemyShadowClipboard_);
+    enemyShadowDirty_ = true;
+    enemies_.setShadowCatalog(&enemyShadows_);
+    enemyShadowStatus_ = mirrorX ? "Shadow mirrored" : "Shadow pasted";
+    return true;
+}
+
 bool Game::handleEnemyShadowEditEvent(const SDL_Event& event)
 {
     if (mode_ != ScreenMode::EnemyShadowEdit) {
@@ -4525,12 +4654,21 @@ bool Game::handleEnemyShadowEditEvent(const SDL_Event& event)
     if (event.type == SDL_EVENT_KEY_DOWN && !event.key.repeat) {
         const SDL_Keymod mods = SDL_GetModState();
         const bool ctrlDown = (mods & SDL_KMOD_CTRL) != 0;
+        const bool altDown = (mods & SDL_KMOD_ALT) != 0;
         if (ctrlDown && event.key.scancode == SDL_SCANCODE_Z) {
             enemyShadowStatus_ = undoEnemyShadowEdit() ? "Undo" : "Nothing to undo";
             return true;
         }
         if (ctrlDown && event.key.scancode == SDL_SCANCODE_Y) {
             enemyShadowStatus_ = redoEnemyShadowEdit() ? "Redo" : "Nothing to redo";
+            return true;
+        }
+        if (ctrlDown && event.key.scancode == SDL_SCANCODE_C) {
+            (void)copyCurrentEnemyShadowSpec();
+            return true;
+        }
+        if (ctrlDown && event.key.scancode == SDL_SCANCODE_V) {
+            (void)pasteCurrentEnemyShadowSpec(altDown);
             return true;
         }
     }
@@ -4667,6 +4805,15 @@ void Game::updateEnemyShadowEditScreen(const Input& input, UiContext& ui)
             adjustScale(0.0f, EnemyShadowScaleStep, "Height resized");
         }
         if (ui.pressed(enemyHitboxDetailButtonRect(layout, 5))) {
+            (void)copyCurrentEnemyShadowSpec();
+        }
+        if (ui.pressed(enemyHitboxDetailButtonRect(layout, 6))) {
+            (void)pasteCurrentEnemyShadowSpec(false);
+        }
+        if (ui.pressed(enemyHitboxDetailButtonRect(layout, 7))) {
+            (void)pasteCurrentEnemyShadowSpec(true);
+        }
+        if (ui.pressed(enemyHitboxDetailButtonRect(layout, 8))) {
             const EnemyDefinition* definition = selectedEnemyShadowDefinitionForEdit();
             if (definition != nullptr && enemyShadows_.enemies.find(definition->id) != enemyShadows_.enemies.end()) {
                 pushEnemyShadowEditUndoSnapshot();
@@ -4756,8 +4903,8 @@ void Game::renderEnemyShadowEditScreen(Renderer& renderer, double totalSeconds) 
     renderer.fillRect({0.0f, 0.0f}, {layout.bounds.size.x, EnemyHitboxHeaderHeight}, {18, 24, 38, 255});
     renderer.fillRect(layout.footer.pos, layout.footer.size, {18, 24, 38, 255});
     renderer.drawText({22.0f, 18.0f}, "影編集", {245, 245, 252, 255}, 3);
-    renderer.drawText({220.0f, 42.0f}, "Ctrl+S save / Ctrl+Z,Y undo redo", {198, 206, 222, 255}, 2);
-    renderer.drawText({220.0f, 62.0f}, "Drag shadow / Wheel scale / Arrow move", {198, 206, 222, 255}, 1);
+    renderer.drawText({220.0f, 42.0f}, "Ctrl+S save / Ctrl+Z,Y undo redo / Ctrl+C,V copy paste", {198, 206, 222, 255}, 2);
+    renderer.drawText({220.0f, 62.0f}, "Drag shadow / Wheel scale / Arrow move / Alt+Ctrl+V mirror paste", {198, 206, 222, 255}, 1);
 
     renderer.fillRect(layout.listPanel.pos, layout.listPanel.size, {18, 24, 36, 255});
     renderer.drawRect(layout.listPanel.pos, layout.listPanel.size, {72, 86, 112, 255});
@@ -4798,8 +4945,8 @@ void Game::renderEnemyShadowEditScreen(Renderer& renderer, double totalSeconds) 
 
     renderer.fillRect(layout.previewPanel.pos, layout.previewPanel.size, {16, 21, 32, 255});
     renderer.drawRect(layout.previewPanel.pos, layout.previewPanel.size, {72, 86, 112, 255});
-    renderer.fillRect(layout.preview.pos, layout.preview.size, {8, 10, 16, 255});
-    renderer.drawRect(layout.preview.pos, layout.preview.size, {58, 70, 92, 255});
+    renderer.fillRect(layout.preview.pos, layout.preview.size, {196, 202, 210, 255});
+    renderer.drawRect(layout.preview.pos, layout.preview.size, {110, 120, 132, 255});
     renderer.fillRect(layout.detail.pos, layout.detail.size, {20, 26, 38, 255});
     renderer.drawRect(layout.detail.pos, layout.detail.size, {78, 92, 116, 255});
 
@@ -4808,7 +4955,8 @@ void Game::renderEnemyShadowEditScreen(Renderer& renderer, double totalSeconds) 
         renderer.drawText(layout.preview.pos + Vec2{18.0f, 18.0f}, "敵が選択されていません", {198, 206, 222, 255}, 2);
     } else {
         const Vec2 previewCenter = layout.preview.pos + layout.preview.size * 0.5f;
-        const Enemy previewEnemy = makeEnemyHitboxPreviewEnemy(*definition, balance_);
+        Enemy previewEnemy = makeEnemyHitboxPreviewEnemy(*definition, balance_);
+        previewEnemy.facingAngle = enemyShadowPreviewFacingAngle(totalSeconds);
         const EnemyShadowSpec spec = selectedEnemyShadowSpecForEdit();
         EnemyImageDrawOptions imageOptions;
         imageOptions.allowUpscale = true;
@@ -4844,7 +4992,7 @@ void Game::renderEnemyShadowEditScreen(Renderer& renderer, double totalSeconds) 
         renderer.drawText(layout.detail.pos + Vec2{10.0f, 112.0f}, buffer, {198, 206, 222, 255}, 2);
     }
 
-    const char* labels[] = {"保存", "横-", "横+", "縦-", "縦+", "戻す"};
+    const char* labels[] = {"保存", "横-", "横+", "縦-", "縦+", "コピー", "貼付", "反転貼付", "戻す"};
     for (int i = 0; i < static_cast<int>(sizeof(labels) / sizeof(labels[0])); ++i) {
         drawUiRectButton(renderer, enemyHitboxDetailButtonRect(layout, i), labels[i], false);
     }
@@ -4855,6 +5003,7 @@ void Game::renderEnemyShadowEditScreen(Renderer& renderer, double totalSeconds) 
         renderer.drawText(layout.footer.pos + Vec2{190.0f, 18.0f}, enemyShadowStatus_, {198, 206, 222, 255}, 2);
     }
 }
+
 bool Game::loadAudioCueManifestForEdit()
 {
     std::string previousId;
@@ -5408,6 +5557,319 @@ void Game::renderAudioCueEditScreen(Renderer& renderer) const
         fittedSingleLineText(renderer, status, statusW, 2),
         audioCueEditDirty_ ? Color{255, 230, 150, 255} : ui::TextMuted,
         2);
+}
+
+bool Game::handleDebugNamedSaveCommand(std::string_view normalized)
+{
+    if (normalized == "game debug-save named" ||
+        normalized == "game debug save named" ||
+        normalized == "game named-save" ||
+        normalized == "game save named") {
+        openDebugNamedSaveDialog();
+        return true;
+    }
+    if (normalized == "game debug-save load" ||
+        normalized == "game debug save load" ||
+        normalized == "game named-load" ||
+        normalized == "game load named") {
+        openDebugNamedLoadDialog();
+        return true;
+    }
+    return false;
+}
+
+bool Game::handleDebugNamedSaveEvent(const SDL_Event& event)
+{
+    if (!debugNamedSaveInputActive_) {
+        return false;
+    }
+    return handleUiTextInputEvent(debugNamedSaveInput_, event, 48);
+}
+
+void Game::openDebugNamedSaveDialog()
+{
+    if (!testPlayMode_) {
+        logWarning("Debug: named save is available only in test-play mode.");
+        return;
+    }
+    if (mode_ == ScreenMode::OpeningKamishibai ||
+        mode_ == ScreenMode::EndingKamishibai ||
+        mode_ == ScreenMode::Title ||
+        mode_ == ScreenMode::WorldLoading) {
+        logWarning("Debug: named save requires an active game screen.");
+        return;
+    }
+
+    closeDebugItemPicker();
+    closeDebugStoryTest();
+    closeDebugNamedLoadDialog();
+    debugNamedSaveInput_.text.clear();
+    debugNamedSaveStatus_ = "保存名を入力してください";
+    debugNamedSaveCancelState_ = {};
+    debugNamedSaveInputActive_ = true;
+    focusUiTextInput(debugNamedSaveInput_);
+}
+
+void Game::closeDebugNamedSaveDialog()
+{
+    blurUiTextInput(debugNamedSaveInput_);
+    debugNamedSaveInputActive_ = false;
+    debugNamedSaveCancelState_ = {};
+}
+
+void Game::rebuildDebugNamedLoadEntries()
+{
+    std::string previousSelection;
+    if (debugNamedLoadSelectedIndex_ >= 0 &&
+        debugNamedLoadSelectedIndex_ < static_cast<int>(debugNamedLoadEntries_.size())) {
+        previousSelection = debugNamedLoadEntries_[static_cast<std::size_t>(debugNamedLoadSelectedIndex_)].name;
+    }
+
+    debugNamedLoadEntries_ = listDebugNamedSaveData();
+    debugNamedLoadSelectedIndex_ = -1;
+    if (!previousSelection.empty()) {
+        for (int i = 0; i < static_cast<int>(debugNamedLoadEntries_.size()); ++i) {
+            if (debugNamedLoadEntries_[static_cast<std::size_t>(i)].name == previousSelection) {
+                debugNamedLoadSelectedIndex_ = i;
+                break;
+            }
+        }
+    }
+    if (debugNamedLoadSelectedIndex_ < 0 && !debugNamedLoadEntries_.empty()) {
+        debugNamedLoadSelectedIndex_ = 0;
+    }
+}
+
+void Game::openDebugNamedLoadDialog()
+{
+    if (!testPlayMode_) {
+        logWarning("Debug: named save load is available only in test-play mode.");
+        return;
+    }
+    if (mode_ == ScreenMode::OpeningKamishibai ||
+        mode_ == ScreenMode::EndingKamishibai ||
+        mode_ == ScreenMode::Title ||
+        mode_ == ScreenMode::WorldLoading) {
+        logWarning("Debug: named save load requires an active game screen.");
+        return;
+    }
+
+    closeDebugItemPicker();
+    closeDebugStoryTest();
+    closeDebugNamedSaveDialog();
+    rebuildDebugNamedLoadEntries();
+    debugNamedLoadScrollOffset_ = 0.0f;
+    debugNamedSaveStatus_ = debugNamedLoadEntries_.empty()
+        ? "名前付きセーブがありません"
+        : "ロードするセーブを選択してください";
+    debugNamedSaveCancelState_ = {};
+    debugNamedLoadActive_ = true;
+}
+
+void Game::closeDebugNamedLoadDialog()
+{
+    debugNamedLoadActive_ = false;
+    debugNamedSaveCancelState_ = {};
+}
+
+void Game::commitDebugNamedSave()
+{
+    const std::string name = trimAscii(debugNamedSaveInput_.text);
+    if (name.empty()) {
+        debugNamedSaveStatus_ = "保存名が空です";
+        focusUiTextInput(debugNamedSaveInput_);
+        return;
+    }
+
+    std::string message;
+    const std::filesystem::path path = debugNamedSaveDataPath(name);
+    if (saveSaveData(path, message)) {
+        debugNamedSaveStatus_ = "保存しました: " + name;
+        reloadNotice_ = debugNamedSaveStatus_;
+        reloadNoticeTimer_ = 1.8f;
+        logInfo("Debug: named save created: " + path.string());
+        closeDebugNamedSaveDialog();
+    } else {
+        debugNamedSaveStatus_ = message.empty() ? "セーブ失敗" : message;
+        logWarning("Debug: named save failed: " + debugNamedSaveStatus_);
+        focusUiTextInput(debugNamedSaveInput_);
+    }
+}
+
+void Game::loadSelectedDebugNamedSave()
+{
+    if (debugNamedLoadSelectedIndex_ < 0 ||
+        debugNamedLoadSelectedIndex_ >= static_cast<int>(debugNamedLoadEntries_.size())) {
+        debugNamedSaveStatus_ = "ロードするセーブが選択されていません";
+        return;
+    }
+
+    const DebugNamedSaveEntry entry = debugNamedLoadEntries_[static_cast<std::size_t>(debugNamedLoadSelectedIndex_)];
+    closeDebugNamedLoadDialog();
+    if (!loadSaveData(entry.path)) {
+        debugNamedSaveStatus_ = "ロード失敗: " + entry.name;
+        reloadNotice_ = debugNamedSaveStatus_;
+        reloadNoticeTimer_ = 1.8f;
+        logWarning("Debug: named save load failed: " + entry.path.string());
+        return;
+    }
+
+    placeBasePlayerAtHomeDoorResumePoint();
+    enterBase();
+    baseStatus_ = "テストセーブをロードしました: " + entry.name;
+    reloadNotice_ = baseStatus_;
+    reloadNoticeTimer_ = 2.0f;
+    logInfo("Debug: named save loaded: " + entry.path.string());
+}
+
+void Game::updateDebugNamedSaveUi(const Input& input, UiContext& ui)
+{
+    if (debugNamedSaveInputActive_) {
+        const DebugNamedSaveLayout layout = makeDebugNamedSaveInputLayout(camera_.width(), camera_.height());
+        updateUiTextInput(debugNamedSaveInput_, ui, layout.input);
+        if (uiCancelRequested(debugNamedSaveCancelState_, input, ui, layout.panel) ||
+            ui.pressed(layout.secondaryButton)) {
+            closeDebugNamedSaveDialog();
+            return;
+        }
+        if (ui.pressed(layout.primaryButton) || input.confirmPressed() || input.useItemPressed()) {
+            commitDebugNamedSave();
+            return;
+        }
+        ui.block({{0.0f, 0.0f}, {static_cast<float>(camera_.width()), static_cast<float>(camera_.height())}});
+        return;
+    }
+
+    if (!debugNamedLoadActive_) {
+        return;
+    }
+
+    const DebugNamedSaveLayout layout = makeDebugNamedSaveLoadLayout(camera_.width(), camera_.height());
+    const int itemCount = static_cast<int>(debugNamedLoadEntries_.size());
+    if (itemCount > 0) {
+        debugNamedLoadSelectedIndex_ = std::clamp(debugNamedLoadSelectedIndex_, 0, itemCount - 1);
+    } else {
+        debugNamedLoadSelectedIndex_ = -1;
+    }
+
+    const float maxScroll = debugNamedSaveLoadMaxScroll(layout, itemCount);
+    debugNamedLoadScrollOffset_ = clamp(debugNamedLoadScrollOffset_, 0.0f, maxScroll);
+    const int wheel = input.shortcutCursorDelta();
+    if (wheel != 0) {
+        debugNamedLoadScrollOffset_ = clamp(
+            debugNamedLoadScrollOffset_ + static_cast<float>(wheel) * 42.0f,
+            0.0f,
+            maxScroll);
+    }
+
+    if (itemCount > 0) {
+        const int moveY =
+            (input.pressed(InputAction::MoveDown) ? 1 : 0) -
+            (input.pressed(InputAction::MoveUp) ? 1 : 0);
+        if (moveY != 0) {
+            debugNamedLoadSelectedIndex_ = std::clamp(debugNamedLoadSelectedIndex_ + moveY, 0, itemCount - 1);
+        }
+    }
+
+    for (int i = 0; i < itemCount; ++i) {
+        const UiRect row = debugNamedSaveLoadRowRect(layout, i, debugNamedLoadScrollOffset_);
+        if (row.pos.y + row.size.y < layout.list.pos.y ||
+            row.pos.y > layout.list.pos.y + layout.list.size.y) {
+            continue;
+        }
+        if (ui.pressed(row)) {
+            debugNamedLoadSelectedIndex_ = i;
+            break;
+        }
+    }
+
+    if (uiCancelRequested(debugNamedSaveCancelState_, input, ui, layout.panel) ||
+        ui.pressed(layout.secondaryButton)) {
+        closeDebugNamedLoadDialog();
+        return;
+    }
+    if (ui.pressed(layout.primaryButton) || input.confirmPressed() || input.useItemPressed()) {
+        loadSelectedDebugNamedSave();
+        return;
+    }
+
+    ui.block({{0.0f, 0.0f}, {static_cast<float>(camera_.width()), static_cast<float>(camera_.height())}});
+}
+
+void Game::renderDebugNamedSaveUi(Renderer& renderer) const
+{
+    if (!debugNamedSaveInputActive_ && !debugNamedLoadActive_) {
+        return;
+    }
+
+    renderer.setScreenSpace();
+    drawUiModalBackdrop(
+        renderer,
+        {{0.0f, 0.0f}, {static_cast<float>(camera_.width()), static_cast<float>(camera_.height())}},
+        {0, 0, 0, 142});
+
+    UiCancelControlScope cancelScope(debugNamedSaveCancelState_);
+    if (debugNamedSaveInputActive_) {
+        const DebugNamedSaveLayout layout = makeDebugNamedSaveInputLayout(camera_.width(), camera_.height());
+        UiWindowScope window(
+            renderer,
+            "debug.named_save.input",
+            layout.panel,
+            "デバッグ: 名前を付けてセーブ",
+            "キーボード入力  Enter 保存  Esc 戻る",
+            UiWindowOptions{true, true});
+
+        renderer.drawText(layout.panel.pos + Vec2{36.0f, 70.0f}, "保存名", ui::TextMuted, 2);
+        drawUiTextInput(renderer, layout.input, debugNamedSaveInput_, "例: boss_before_stage3", {});
+        renderer.drawText(layout.status.pos, fittedSingleLineText(renderer, debugNamedSaveStatus_, layout.status.size.x, 2), {255, 230, 150, 255}, 2);
+        drawUiRectButton(renderer, layout.secondaryButton, "キャンセル", false, uiCancelButtonStyle());
+        drawUiRectButton(renderer, layout.primaryButton, "保存", true, uiActionButtonStyle());
+        return;
+    }
+
+    const DebugNamedSaveLayout layout = makeDebugNamedSaveLoadLayout(camera_.width(), camera_.height());
+    const int itemCount = static_cast<int>(debugNamedLoadEntries_.size());
+    const float scrollOffset = clamp(debugNamedLoadScrollOffset_, 0.0f, debugNamedSaveLoadMaxScroll(layout, itemCount));
+    UiWindowScope window(
+        renderer,
+        "debug.named_save.load",
+        layout.panel,
+        "デバッグ: 名前付きセーブロード",
+        "方向キー 選択  Enter ロード  Esc 戻る",
+        UiWindowOptions{true, true});
+
+    drawUiSubPanel(renderer, layout.list);
+    if (itemCount <= 0) {
+        renderer.drawText(layout.list.pos + Vec2{22.0f, 22.0f}, "名前付きセーブがありません", ui::TextMuted, 2);
+    }
+
+    renderer.pushClipRect(layout.list.pos, layout.list.size);
+    for (int i = 0; i < itemCount; ++i) {
+        const UiRect row = debugNamedSaveLoadRowRect(layout, i, scrollOffset);
+        if (row.pos.y + row.size.y < layout.list.pos.y ||
+            row.pos.y > layout.list.pos.y + layout.list.size.y) {
+            continue;
+        }
+        const bool selected = i == debugNamedLoadSelectedIndex_;
+        renderer.fillRect(row.pos, row.size, selected ? Color{54, 44, 72, 232} : Color{18, 20, 30, 218});
+        renderer.drawRect(row.pos, row.size, selected ? Color{255, 230, 150, 255} : Color{92, 100, 126, 210});
+        const DebugNamedSaveEntry& entry = debugNamedLoadEntries_[static_cast<std::size_t>(i)];
+        renderer.drawText(row.pos + Vec2{14.0f, 10.0f}, fittedSingleLineText(renderer, entry.name, row.size.x - 28.0f, 2), selected ? Color{255, 236, 166, 255} : ui::Text, 2);
+    }
+    renderer.popClipRect();
+
+    const UiScrollAreaLayout scrollLayout = makeUiScrollAreaLayout(
+        layout.list,
+        debugNamedSaveLoadContentHeight(layout, itemCount),
+        scrollOffset);
+    drawUiScrollAreaFrame(renderer, scrollLayout);
+    renderer.drawText(layout.status.pos, fittedSingleLineText(renderer, debugNamedSaveStatus_, layout.status.size.x, 2), {255, 230, 150, 255}, 2);
+    drawUiRectButton(renderer, layout.secondaryButton, "キャンセル", false, uiCancelButtonStyle());
+    UiButtonStyle loadStyle = uiActionButtonStyle();
+    if (itemCount <= 0) {
+        loadStyle.text = ui::TextDisabled;
+    }
+    drawUiRectButton(renderer, layout.primaryButton, "ロード", itemCount > 0, loadStyle);
 }
 
 void Game::rebuildDebugItemPickerList()
@@ -8667,8 +9129,8 @@ GameTestSnapshot Game::makeTestSnapshot(GameTestSnapshotOptions options) const
     snapshot.base.materials.moonFragment = inventory_.materialCount(MaterialType::MoonFragment);
     snapshot.base.materials.manaDrop = inventory_.materialCount(MaterialType::ManaDrop);
     snapshot.base.ringWorkshopUnlocked = ringWorkshopUnlocked_;
-    snapshot.base.upgrades.reserve(8);
-    for (int index = 0; index < 8; ++index) {
+    snapshot.base.upgrades.reserve(BaseUpgradeItemCount);
+    for (int index = 0; index < BaseUpgradeItemCount; ++index) {
         const MaterialType materialType = upgradeMaterialType(index);
         const int materialCost = upgradeMaterialCost(index);
         const int moneyCost = upgradeCost(index);
@@ -9364,6 +9826,9 @@ bool Game::executeDebugCommand(std::string_view command)
     if (handleAudioCueEditCommand(normalized)) {
         return true;
     }
+    if (handleDebugNamedSaveCommand(normalized)) {
+        return true;
+    }
     if (handleDebugItemPickerCommand(normalized)) {
         return true;
     }
@@ -9666,6 +10131,56 @@ bool Game::executeDebugCommand(std::string_view command)
         } catch (...) {
             return fallback;
         }
+    };
+
+    const auto setPlayerHpForDebug = [&](int value) {
+        applyPermanentUpgrades();
+        player_.hp = std::clamp(value, 1, std::max(1, player_.maxHp));
+        player_.status = EntityStatus{};
+        player_.poisonDamageAccumulator = 0.0;
+        player_.hotDamageAccumulator = 0.0;
+        player_.bleedDamageAccumulator = 0.0;
+        logInfo("Debug: player HP set to " + std::to_string(player_.hp) + "/" + std::to_string(player_.maxHp) + ".");
+    };
+
+    const auto setPlayerLevelForDebug = [&](int value) {
+        player_.level = std::clamp(value, 1, PlayerMaxLevel);
+        player_.xp = 0;
+        applyPermanentUpgrades();
+        logInfo("Debug: player level set to Lv " + std::to_string(player_.level) + ".");
+    };
+
+    const auto addRandomDebugItems = [&](int count) {
+        const std::vector<ItemData>& objects = objectCatalog_.registry.items();
+        std::vector<std::string_view> candidateIds;
+        candidateIds.reserve(objects.size());
+        for (const ItemData& object : objects) {
+            if (!object.id.empty()) {
+                candidateIds.push_back(object.id);
+            }
+        }
+
+        if (candidateIds.empty()) {
+            logWarning("Debug: no object entries available; random item add skipped.");
+            return;
+        }
+
+        std::mt19937& rng = lootRuntimeRng();
+        std::uniform_int_distribution<std::size_t> pick(0, candidateIds.size() - 1);
+        int acquiredCount = 0;
+        int skippedCount = 0;
+        const int itemCount = std::clamp(count, 1, 99);
+        for (int i = 0; i < itemCount; ++i) {
+            const std::string_view objectId = candidateIds[pick(rng)];
+            if (inventory_.addObjectItem(objectCatalog_, objectId)) {
+                ++acquiredCount;
+            } else {
+                ++skippedCount;
+            }
+        }
+
+        logInfo("Debug: random object items added " + std::to_string(acquiredCount) +
+            " / skipped " + std::to_string(skippedCount) + ".");
     };
 
     const auto distortionLabel = [](AstralDistortionKind distortion) {
@@ -10107,6 +10622,7 @@ bool Game::executeDebugCommand(std::string_view command)
         warehouseCapacityLevel_ = 0;
         processingUnlockLevel_ = 0;
         ringWorkshopUnlocked_ = false;
+        ringPresetSlotLevel_ = 0;
         autoSaveOnReturn_ = false;
         storyFlags_.clear();
         warehouseObjectStacks_.clear();
@@ -10496,9 +11012,24 @@ bool Game::executeDebugCommand(std::string_view command)
         return true;
     }
 
-    if (normalized == "game money add 10000") {
-        money_ = std::max(0, money_ + 10000);
-        logInfo("Debug: money +10000 => " + std::to_string(money_) + "G");
+    constexpr std::string_view DebugMoneyAmountPrefix = "game debug money-amount ";
+    if (normalized.rfind(DebugMoneyAmountPrefix, 0) == 0) {
+        debugMoneyAddAmount_ = std::clamp(
+            parseDebugInt(std::string_view(normalized).substr(DebugMoneyAmountPrefix.size()), debugMoneyAddAmount_),
+            1,
+            999999);
+        logInfo("Debug: money add amount => " + std::to_string(debugMoneyAddAmount_) + "G.");
+        return true;
+    }
+
+    constexpr std::string_view MoneyAddPrefix = "game money add ";
+    if (normalized == "game money add-debug" || normalized.rfind(MoneyAddPrefix, 0) == 0) {
+        const int amount = normalized == "game money add-debug"
+            ? debugMoneyAddAmount_
+            : parseDebugInt(std::string_view(normalized).substr(MoneyAddPrefix.size()), debugMoneyAddAmount_);
+        const int clampedAmount = std::clamp(amount, 1, 999999);
+        money_ = std::max(0, money_ + clampedAmount);
+        logInfo("Debug: money +" + std::to_string(clampedAmount) + " => " + std::to_string(money_) + "G");
         return true;
     }
 
@@ -10509,11 +11040,26 @@ bool Game::executeDebugCommand(std::string_view command)
         return true;
     }
 
-    if (normalized == "game materials add 100") {
+    constexpr std::string_view DebugMaterialAmountPrefix = "game debug material-amount ";
+    if (normalized.rfind(DebugMaterialAmountPrefix, 0) == 0) {
+        debugMaterialAddAmount_ = std::clamp(
+            parseDebugInt(std::string_view(normalized).substr(DebugMaterialAmountPrefix.size()), debugMaterialAddAmount_),
+            1,
+            99999);
+        logInfo("Debug: material add amount => " + std::to_string(debugMaterialAddAmount_) + ".");
+        return true;
+    }
+
+    constexpr std::string_view MaterialsAddPrefix = "game materials add ";
+    if (normalized == "game materials add-debug" || normalized.rfind(MaterialsAddPrefix, 0) == 0) {
+        const int amount = normalized == "game materials add-debug"
+            ? debugMaterialAddAmount_
+            : parseDebugInt(std::string_view(normalized).substr(MaterialsAddPrefix.size()), debugMaterialAddAmount_);
+        const int clampedAmount = std::clamp(amount, 1, 99999);
         for (int index = 0; index < static_cast<int>(MaterialType::Count); ++index) {
-            inventory_.addMaterial(static_cast<MaterialType>(index), 100);
+            inventory_.addMaterial(static_cast<MaterialType>(index), clampedAmount);
         }
-        logInfo("Debug: all upgrade materials +100.");
+        logInfo("Debug: all upgrade materials +" + std::to_string(clampedAmount) + ".");
         return true;
     }
 
@@ -10564,36 +11110,26 @@ bool Game::executeDebugCommand(std::string_view command)
         return true;
     }
 
-    if (normalized == "game items random8") {
-        const std::vector<ItemData>& objects = objectCatalog_.registry.items();
-        std::vector<std::string_view> candidateIds;
-        candidateIds.reserve(objects.size());
-        for (const ItemData& object : objects) {
-            if (!object.id.empty()) {
-                candidateIds.push_back(object.id);
-            }
-        }
+    constexpr std::string_view DebugRandomItemCountPrefix = "game debug random-item-count ";
+    if (normalized.rfind(DebugRandomItemCountPrefix, 0) == 0) {
+        debugRandomItemCount_ = std::clamp(
+            parseDebugInt(std::string_view(normalized).substr(DebugRandomItemCountPrefix.size()), debugRandomItemCount_),
+            1,
+            99);
+        logInfo("Debug: random item count => " + std::to_string(debugRandomItemCount_) + ".");
+        return true;
+    }
 
-        if (candidateIds.empty()) {
-            logWarning("Debug: no object entries available; random item add skipped.");
-            return true;
-        }
-
-        std::mt19937& rng = lootRuntimeRng();
-        std::uniform_int_distribution<std::size_t> pick(0, candidateIds.size() - 1);
-        int acquiredCount = 0;
-        int skippedCount = 0;
-        for (int i = 0; i < 8; ++i) {
-            const std::string_view objectId = candidateIds[pick(rng)];
-            if (inventory_.addObjectItem(objectCatalog_, objectId)) {
-                ++acquiredCount;
-            } else {
-                ++skippedCount;
-            }
-        }
-
-        logInfo("Debug: random object items added " + std::to_string(acquiredCount) +
-            " / skipped " + std::to_string(skippedCount) + ".");
+    constexpr std::string_view ItemsRandomPrefix = "game items random ";
+    if (normalized == "game items random8" ||
+        normalized == "game items random-debug" ||
+        normalized.rfind(ItemsRandomPrefix, 0) == 0) {
+        const int count = normalized == "game items random8"
+            ? 8
+            : (normalized == "game items random-debug"
+                ? debugRandomItemCount_
+                : parseDebugInt(std::string_view(normalized).substr(ItemsRandomPrefix.size()), debugRandomItemCount_));
+        addRandomDebugItems(count);
         return true;
     }
 
@@ -10634,14 +11170,41 @@ bool Game::executeDebugCommand(std::string_view command)
         return true;
     }
 
-    if (normalized == "game hp set 1") {
-        applyPermanentUpgrades();
-        player_.hp = std::min(1, std::max(1, player_.maxHp));
-        player_.status = EntityStatus{};
-        player_.poisonDamageAccumulator = 0.0;
-        player_.hotDamageAccumulator = 0.0;
-        player_.bleedDamageAccumulator = 0.0;
-        logInfo("Debug: player HP set to 1.");
+    constexpr std::string_view DebugHpValuePrefix = "game debug hp-value ";
+    if (normalized.rfind(DebugHpValuePrefix, 0) == 0) {
+        debugHpValue_ = std::clamp(
+            parseDebugInt(std::string_view(normalized).substr(DebugHpValuePrefix.size()), debugHpValue_),
+            1,
+            999);
+        logInfo("Debug: HP value => " + std::to_string(debugHpValue_) + ".");
+        return true;
+    }
+
+    constexpr std::string_view HpSetPrefix = "game hp set ";
+    if (normalized == "game hp set-debug" || normalized.rfind(HpSetPrefix, 0) == 0) {
+        const int hp = normalized == "game hp set-debug"
+            ? debugHpValue_
+            : parseDebugInt(std::string_view(normalized).substr(HpSetPrefix.size()), debugHpValue_);
+        setPlayerHpForDebug(hp);
+        return true;
+    }
+
+    constexpr std::string_view DebugTargetLevelPrefix = "game debug target-level ";
+    if (normalized.rfind(DebugTargetLevelPrefix, 0) == 0) {
+        debugTargetLevel_ = std::clamp(
+            parseDebugInt(std::string_view(normalized).substr(DebugTargetLevelPrefix.size()), debugTargetLevel_),
+            1,
+            PlayerMaxLevel);
+        logInfo("Debug: target level => Lv " + std::to_string(debugTargetLevel_) + ".");
+        return true;
+    }
+
+    constexpr std::string_view LevelSetPrefix = "game level set ";
+    if (normalized == "game level set-debug" || normalized.rfind(LevelSetPrefix, 0) == 0) {
+        const int level = normalized == "game level set-debug"
+            ? debugTargetLevel_
+            : parseDebugInt(std::string_view(normalized).substr(LevelSetPrefix.size()), debugTargetLevel_);
+        setPlayerLevelForDebug(level);
         return true;
     }
 

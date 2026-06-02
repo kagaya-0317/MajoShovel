@@ -401,12 +401,9 @@ bool addProjectileMudZone(const Projectile& projectile, EnemySystem& enemies)
     return true;
 }
 
-ProjectileFxEvent projectileImpactFxEvent(const Projectile& projectile)
+ProjectileFxEvent projectileImpactFxEvent(const Projectile&)
 {
-    if (projectile.projectileId == "water_bubble") {
-        return ProjectileFxEvent::Expire;
-    }
-    return ProjectileFxEvent::Impact;
+    return ProjectileFxEvent::Expire;
 }
 
 ProjectileVisualProfile visualProfileFor(const Projectile& projectile)
@@ -904,6 +901,35 @@ void drawProjectile(Renderer& renderer, const Projectile& projectile)
     }
 
     if (id == "fire_breath" || id == "poison_spit" || id == "water_shot" || id == "paralyze_shot" || id == "mud_blob") {
+        if (id == "water_shot") {
+            const float phase = projectile.age * 18.0f + static_cast<float>(projectile.visualVariant) * 0.19f;
+            const Vec2 front = drawPosition + direction * (radius * 0.56f);
+            const Vec2 rear = drawPosition - direction * (radius * 0.62f);
+            renderer.drawSoftLine(
+                rear - direction * (radius * 0.42f),
+                front - direction * (radius * 0.18f),
+                std::max(1.0f, radius * 0.72f),
+                scaleAlpha(profile.glow, fade * 0.88f));
+            renderer.fillSoftCircle(front, radius * 1.34f, glow);
+            renderer.fillCircle(front, radius * 0.78f, core);
+            renderer.fillCircle(
+                front - direction * (radius * 0.16f) - side * (radius * 0.22f),
+                radius * 0.28f,
+                scaleAlpha(profile.flash, fade * 0.74f));
+            renderer.drawCircle(front, radius * 0.82f + 1.2f, edge);
+            for (int i = 0; i < 6; ++i) {
+                const float t = static_cast<float>(i) / 5.0f;
+                const float wobble = std::sin(phase + static_cast<float>(i) * 1.37f);
+                const Vec2 splashPos =
+                    rear -
+                    direction * (radius * (0.16f + t * 1.16f)) +
+                    side * (radius * (wobble * (0.18f + t * 0.56f)));
+                const float splashRadius = radius * (0.44f - t * 0.18f) * (0.82f + 0.16f * std::sin(phase * 0.7f + static_cast<float>(i)));
+                renderer.fillSoftCircle(splashPos, std::max(1.0f, splashRadius * 1.55f), scaleAlpha(profile.glow, fade * (0.72f - t * 0.22f)));
+                renderer.fillCircle(splashPos, std::max(0.9f, splashRadius), scaleAlpha(core, 0.76f - t * 0.22f));
+            }
+            return;
+        }
         if (id == "poison_spit" || id == "paralyze_shot" || id == "mud_blob") {
             const float spin = projectile.age * (id == "mud_blob" ? 7.2f : 8.8f) + static_cast<float>(projectile.visualVariant) * 0.41f;
             const Vec2 blobForward = fromAngle(spin);
