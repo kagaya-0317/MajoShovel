@@ -1,6 +1,7 @@
 ﻿#include "game/EncyclopediaSystem.hpp"
 
 #include "engine/Ui.hpp"
+#include "game/EntityStatusVisuals.hpp"
 #include "game/InventoryUiCommon.hpp"
 
 #include <algorithm>
@@ -368,7 +369,24 @@ std::string fallbackEffectDescription(std::string_view effectKey)
         return "HPを回復する";
     }
     if (effectKey.rfind("status_", 0) == 0) {
-        return "状態異常を付与する";
+        std::string statusKey(effectKey);
+        constexpr std::string_view ChanceSuffix = "_chance";
+        if (statusKey.size() > ChanceSuffix.size() &&
+            std::string_view(statusKey).substr(statusKey.size() - ChanceSuffix.size()) == ChanceSuffix) {
+            statusKey.resize(statusKey.size() - ChanceSuffix.size());
+        }
+        const std::string_view displayName = entityStatusDisplayName(statusKey);
+        if (displayName.empty()) {
+            return "状態異常を付与する";
+        }
+        if (statusKey == "status_defense_down") {
+            return effectKey.ends_with(ChanceSuffix)
+                ? "確率で敵の防御を低下させる"
+                : "敵の防御を低下させる";
+        }
+        return effectKey.ends_with(ChanceSuffix)
+            ? "確率で敵を" + std::string(displayName) + "にする"
+            : "敵を" + std::string(displayName) + "にする";
     }
     if (effectKey.rfind("buff_", 0) == 0 || effectKey.rfind("debuff_", 0) == 0) {
         return "能力変化を与える";

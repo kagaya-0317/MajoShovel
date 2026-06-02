@@ -60,6 +60,7 @@ struct WorldDropItem {
     float pickupDelaySeconds = 0.0f;
     float materialParticleTimer = 0.0f;
     std::optional<ItemInstance> instance;
+    std::optional<ItemData> runtimeItem;
     bool temporary = false;
 };
 
@@ -90,7 +91,8 @@ public:
         Vec2 position,
         float spawnedAtSeconds = 0.0f,
         WorldDropSpawnMotion motion = {},
-        bool temporary = false);
+        bool temporary = false,
+        const ItemData* runtimeItem = nullptr);
     bool spawnDigItemDrop(const ObjectCatalog& catalog, Vec2 position, float spawnedAtSeconds = 0.0f);
     bool spawnMoneyDrop(int amount, Vec2 position, float spawnedAtSeconds = 0.0f, WorldDropSpawnMotion motion = {});
     bool spawnMaterialDrop(MaterialType type, int count, Vec2 position, float spawnedAtSeconds = 0.0f, WorldDropSpawnMotion motion = {});

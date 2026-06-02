@@ -6,6 +6,7 @@
 #include "game/ActorVisual.hpp"
 #include "game/Collision.hpp"
 #include "game/InventorySystem.hpp"
+#include "game/ItemImageRenderer.hpp"
 #include "game/ObjectImageRenderer.hpp"
 #include "game/ObjectVisualPose.hpp"
 #include "game/Player.hpp"
@@ -172,7 +173,8 @@ Color colorForMaterial(MaterialType type);
 
 void drawWorldDrop(Renderer& renderer, const WorldDropItem& drop, const ObjectCatalog& catalog)
 {
-    const ItemData* object = drop.kind == WorldDropKind::Object ? catalog.registry.findById(drop.id) : nullptr;
+    const ItemData* catalogObject = drop.kind == WorldDropKind::Object ? catalog.registry.findById(drop.id) : nullptr;
+    const ItemData* object = catalogObject != nullptr ? catalogObject : (drop.runtimeItem ? &*drop.runtimeItem : nullptr);
     const Vec2 center = elevatedDrawPosition(drop.position, drop.altitude);
     MaterialType materialType = MaterialType::Count;
     const bool material = drop.kind == WorldDropKind::Material && materialTypeFromSaveName(drop.id, materialType);
@@ -187,12 +189,10 @@ void drawWorldDrop(Renderer& renderer, const WorldDropItem& drop, const ObjectCa
 
     bool drewImage = false;
     if (object != nullptr) {
-        drewImage = drawObjectImage(
-            renderer,
-            *object,
-            center,
-            DropObjectImageMaxSize,
-            objectGroundImageOptions(*object));
+        const ObjectImageDrawOptions options = objectGroundImageOptions(*object);
+        drewImage = catalogObject != nullptr
+            ? drawObjectImage(renderer, *object, center, DropObjectImageMaxSize, options)
+            : drawItemImage(renderer, *object, center, DropObjectImageMaxSize, options);
     } else if (drop.kind == WorldDropKind::Money) {
         drewImage = drawWorldIcon(renderer, moneyWorldIconForAmount(drop.quantity), center, DropObjectImageMaxSize);
     } else if (material) {
@@ -208,7 +208,7 @@ void drawWorldDrop(Renderer& renderer, const WorldDropItem& drop, const ObjectCa
 
 float dropShadowVisualSize(const WorldDropItem& drop, const ObjectCatalog& catalog)
 {
-    if (drop.kind == WorldDropKind::Object && catalog.registry.findById(drop.id) != nullptr) {
+    if (drop.kind == WorldDropKind::Object && (catalog.registry.findById(drop.id) != nullptr || drop.runtimeItem)) {
         return std::max(DropObjectImageMaxSize.x, DropObjectImageMaxSize.y);
     }
     if (drop.kind == WorldDropKind::Money) {
@@ -506,6 +506,7 @@ void WorldDropSystem::restoreDropsForSave(std::vector<WorldDropItem> drops)
         drop.jumpArcHeight = 0.0f;
         drop.pickupDelaySeconds = 0.0f;
         drop.instance.reset();
+        drop.runtimeItem.reset();
         drop.temporary = false;
         configureDropMotion(drop, {});
         drop.altitude = dropHoverAltitude(drop);
@@ -563,7 +564,8 @@ bool WorldDropSystem::spawnObjectInstanceDrop(
     Vec2 position,
     float spawnedAtSeconds,
     WorldDropSpawnMotion motion,
-    bool temporary)
+    bool temporary,
+    const ItemData* runtimeItem)
 {
     if (instance.objectId.empty()) {
         logDropWarning("discard requested an empty object_id; no item drop spawned");
@@ -588,6 +590,7 @@ bool WorldDropSystem::spawnObjectInstanceDrop(
         .spawnedAtSeconds = spawnedAtSeconds,
         .ageSeconds = 0.0f,
         .instance = std::move(instance),
+        .runtimeItem = runtimeItem != nullptr ? std::optional<ItemData>(*runtimeItem) : std::nullopt,
         .temporary = temporary,
     };
     configureDropMotion(drop, motion);
@@ -935,9 +938,12 @@ int WorldDropSystem::update(
             if (drop.instance) {
                 const std::string instanceId = drop.instance->instanceId;
                 const ObjectDefinition* object = catalog.registry.findById(drop.id);
-                pickedUp = inventory.addObjectInstance(catalog, *drop.instance);
+                const ItemData* runtimeItem = drop.runtimeItem ? &*drop.runtimeItem : nullptr;
+                pickedUp = runtimeItem != nullptr
+                    ? inventory.addRuntimeObjectInstance(*runtimeItem, *drop.instance)
+                    : inventory.addObjectInstance(catalog, *drop.instance);
                 if (!pickedUp) {
-                    if (blockedObjectPickupCount != nullptr && object != nullptr) {
+                    if (blockedObjectPickupCount != nullptr && (object != nullptr || runtimeItem != nullptr)) {
                         ++*blockedObjectPickupCount;
                     }
                     return false;
@@ -945,7 +951,7 @@ int WorldDropSystem::update(
                 pickupEvent.kind = drop.kind;
                 pickupEvent.id = drop.id;
                 pickupEvent.instanceId = instanceId;
-                pickupEvent.name = object != nullptr ? object->name : drop.id;
+                pickupEvent.name = runtimeItem != nullptr ? runtimeItem->name : (object != nullptr ? object->name : drop.id);
                 pickupEvent.quantity = 1;
                 pickupEvent.protectable = !instanceId.empty();
                 hasPickupEvent = true;

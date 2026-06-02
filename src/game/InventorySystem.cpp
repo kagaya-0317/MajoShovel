@@ -91,6 +91,11 @@ int clampedUnlockedRingCount(int unlockedRingCount)
     return std::clamp(unlockedRingCount, 1, SpellRingCount);
 }
 
+std::string_view protectionCommandLabel(const InventoryObjectInstance& instance)
+{
+    return instance.instance.protectionEnabled ? "保護を解除" : "保護";
+}
+
 UiRect inventorySortButtonRect()
 {
     return uiBottomLeftButtonRect(inventoryScreenRect(), {150.0f, ui::ButtonHeight});
@@ -527,6 +532,28 @@ bool InventorySystem::addObjectInstance(const ObjectCatalog& catalog, ItemInstan
         .instance = std::move(instance),
     });
     observeObjectInstanceId(objectInstances_.back().instance.instanceId);
+    return true;
+}
+
+bool InventorySystem::addRuntimeObjectInstance(const ItemData& item, ItemInstance instance)
+{
+    if (item.id.empty() || instance.instanceId.empty()) {
+        return false;
+    }
+    if (instance.objectId.empty()) {
+        instance.objectId = item.id;
+    }
+    if (static_cast<int>(objectStacks_.size() + objectInstances_.size()) >= ShortcutSlotCount) {
+        status_ = "インベントリ満杯";
+        return false;
+    }
+
+    objectInstances_.push_back(InventoryObjectInstance{
+        .item = item,
+        .instance = std::move(instance),
+    });
+    observeObjectInstanceId(objectInstances_.back().instance.instanceId);
+    status_ = "Picked up: " + item.name;
     return true;
 }
 
@@ -1676,7 +1703,7 @@ InventorySystem::SlotCommandList InventorySystem::buildSlotCommandItems(
         addCommand("リングへ", hasItem, SlotCommandAction::AddToRing);
     }
     if (objectInstance != nullptr) {
-        addCommand("保護", true, SlotCommandAction::ToggleProtection);
+        addCommand(protectionCommandLabel(*objectInstance), true, SlotCommandAction::ToggleProtection);
     }
     addCommand("捨てる", canDiscardScreenItem(slotIndex, itemDiscardEnabled), SlotCommandAction::Discard);
 

@@ -151,6 +151,7 @@ public:
     void clearObjectStacks();
     bool setObjectItemCount(const ObjectCatalog& catalog, std::string_view objectId, int count);
     bool addObjectInstance(const ObjectCatalog& catalog, ItemInstance instance);
+    bool addRuntimeObjectInstance(const ItemData& item, ItemInstance instance);
     ItemInstance createDetachedObjectInstance(const ItemData& item);
     void observeObjectInstanceId(std::string_view instanceId);
     std::optional<bool> objectInstanceProtectionEnabled(std::string_view instanceId) const;

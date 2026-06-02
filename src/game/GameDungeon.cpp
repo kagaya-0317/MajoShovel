@@ -44,6 +44,10 @@ constexpr float LootLandingRadiusStep = 18.0f;
 constexpr float CommonChestMimicChance = 0.05f;
 constexpr float RareChestMimicChance = 0.08f;
 constexpr float SuperRareChestMimicChance = 0.12f;
+constexpr std::string_view DungeonEntranceImagePath = "assets/kyoten/move.png";
+constexpr float DungeonEntranceImageMaxWidth = 96.0f;
+constexpr float DungeonEntranceImageMaxHeight = 124.0f;
+constexpr float DungeonWarpPointImageSize = 48.0f;
 constexpr float ChestMimicSpawnWarmupSeconds = 0.18f;
 constexpr float MicroFeatureProgressStart = 0.08f;
 constexpr float MicroFeatureProgressSpan = 0.84f;
@@ -217,6 +221,43 @@ float dungeonFocusHoldSeconds(float seconds)
         return DungeonFocusDefaultHoldSeconds;
     }
     return seconds;
+}
+
+unsigned char sparkleAlpha(float alpha)
+{
+    return static_cast<unsigned char>(std::clamp(std::lround(alpha), 0L, 255L));
+}
+
+void drawBuriedRewardSparkle(Renderer& renderer, Vec2 center, double totalSeconds)
+{
+    const float time = static_cast<float>(totalSeconds);
+    const float phase = center.x * 0.037f + center.y * 0.053f;
+    const float pulse = 0.5f + 0.5f * std::sin(time * 4.6f + phase);
+    const float flashBase = 0.5f + 0.5f * std::sin(time * 8.2f + phase * 1.73f);
+    const float flash = flashBase * flashBase * flashBase;
+    const float breath = 0.5f + 0.5f * std::sin(time * 2.1f + phase * 0.67f);
+    const float length = 7.2f + pulse * 2.6f + flash * 3.2f;
+    const float glowWidth = 3.4f + breath * 1.2f + flash * 1.8f;
+    const float coreAlpha = 178.0f + flash * 58.0f;
+    const float glowAlpha = 54.0f + pulse * 46.0f + flash * 52.0f;
+    const Color glow{255, 222, 96, sparkleAlpha(glowAlpha)};
+    const Color warm{255, 242, 164, sparkleAlpha(coreAlpha)};
+    const Color hot{255, 255, 222, sparkleAlpha(206.0f + flash * 49.0f)};
+
+    renderer.drawSoftLine(center + Vec2{-length, 0.0f}, center + Vec2{length, 0.0f}, glowWidth, glow);
+    renderer.drawSoftLine(center + Vec2{0.0f, -length}, center + Vec2{0.0f, length}, glowWidth, glow);
+    renderer.drawLine(center + Vec2{-length * 0.72f, 0.0f}, center + Vec2{length * 0.72f, 0.0f}, warm);
+    renderer.drawLine(center + Vec2{0.0f, -length * 0.72f}, center + Vec2{0.0f, length * 0.72f}, warm);
+    renderer.drawLine(center + Vec2{-2.4f, 0.0f}, center + Vec2{2.4f, 0.0f}, hot);
+    renderer.drawLine(center + Vec2{0.0f, -2.4f}, center + Vec2{0.0f, 2.4f}, hot);
+
+    if (flash > 0.36f) {
+        const float sideLength = 2.4f + flash * 2.2f;
+        const Vec2 sideCenter = center + Vec2{5.2f + breath * 1.3f, -5.8f + pulse * 1.2f};
+        const Color sideColor{255, 250, 194, sparkleAlpha((flash - 0.36f) / 0.64f * 185.0f)};
+        renderer.drawSoftLine(sideCenter + Vec2{-sideLength, 0.0f}, sideCenter + Vec2{sideLength, 0.0f}, 1.8f, sideColor);
+        renderer.drawSoftLine(sideCenter + Vec2{0.0f, -sideLength}, sideCenter + Vec2{0.0f, sideLength}, 1.8f, sideColor);
+    }
 }
 
 float dungeonFocusDurationSeconds(float seconds, float fallbackSeconds)
@@ -2554,7 +2595,9 @@ void Game::finalizeCaptureAbsorbAnimation(const CaptureAbsorbAnimation& animatio
             std::move(instance),
             dropPosition,
             runStats_.elapsedSeconds,
-            makeWorldLootJumpMotion(player_.position, rng));
+            makeWorldLootJumpMotion(player_.position, rng),
+            false,
+            &animation.item);
         if (dropped) {
             pushDungeonLog(
                 "リュックがいっぱいなので " + animation.enemy.enemyName + " は地面に落ちた",
@@ -7411,7 +7454,8 @@ void Game::spawnInventoryDiscardRequests(std::vector<InventoryDiscardRequest> re
                 target,
                 runStats_.elapsedSeconds,
                 motion,
-                true);
+                true,
+                &request.item);
         } else {
             for (int i = 0; i < request.quantity; ++i) {
                 spawned = worldDrops_.spawnObjectDrop(
@@ -9517,29 +9561,27 @@ void Game::renderDungeonEntrance(Renderer& renderer) const
     if (hovered) {
         renderer.fillSoftCircle(center + Vec2{0.0f, 10.0f}, 82.0f, {170, 238, 255, 54});
     }
-    renderer.fillEllipse(center + Vec2{0.0f, 44.0f}, {54.0f, 15.0f}, {0, 0, 0, 110});
-    renderer.fillSoftCircle(center + Vec2{0.0f, 10.0f}, 68.0f, {96, 190, 220, 44});
+    renderer.fillEllipse(center + Vec2{0.0f, 56.0f}, {42.0f, 12.0f}, {0, 0, 0, 112});
+    renderer.fillSoftCircle(center + Vec2{0.0f, 12.0f}, 64.0f, {96, 190, 220, 36});
 
-    renderer.fillCircle(center + Vec2{0.0f, 6.0f}, 48.0f, {58, 62, 78, 245});
-    renderer.fillRect(center + Vec2{-48.0f, 4.0f}, {96.0f, 54.0f}, {58, 62, 78, 245});
-    renderer.drawCircle(center + Vec2{0.0f, 6.0f}, 48.0f, {170, 186, 204, 210});
-    renderer.drawRect(center + Vec2{-48.0f, 4.0f}, {96.0f, 54.0f}, {170, 186, 204, 210});
-
-    renderer.fillCircle(center + Vec2{0.0f, 13.0f}, 32.0f, {8, 12, 22, 252});
-    renderer.fillRect(center + Vec2{-32.0f, 13.0f}, {64.0f, 45.0f}, {8, 12, 22, 252});
-    renderer.drawCircle(center + Vec2{0.0f, 13.0f}, 32.0f, {64, 180, 218, 150});
-    renderer.drawRect(center + Vec2{-32.0f, 13.0f}, {64.0f, 45.0f}, {64, 180, 218, 150});
-    if (hovered) {
-        renderer.drawCircle(center + Vec2{0.0f, 6.0f}, 54.0f, {232, 252, 255, 245});
-        renderer.drawRect(center + Vec2{-54.0f, -2.0f}, {108.0f, 64.0f}, {232, 252, 255, 210});
+    ScaledImageDrawOptions entranceOptions;
+    entranceOptions.outlineColor = {34, 26, 18, 220};
+    entranceOptions.outlinePx = 1;
+    entranceOptions.selectedOutlineEnabled = hovered;
+    entranceOptions.selectedOutlineColor = {232, 252, 255, 245};
+    entranceOptions.selectedOutlinePx = 6;
+    if (!drawScaledImage(
+            renderer,
+            DungeonEntranceImagePath,
+            center,
+            {DungeonEntranceImageMaxWidth, DungeonEntranceImageMaxHeight},
+            entranceOptions)) {
+        renderer.fillRect(center + Vec2{-42.0f, -50.0f}, {84.0f, 110.0f}, {58, 62, 78, 245});
+        renderer.drawRect(
+            center + Vec2{-42.0f, -50.0f},
+            {84.0f, 110.0f},
+            hovered ? Color{232, 252, 255, 245} : Color{170, 186, 204, 210});
     }
-
-    renderer.fillRect(center + Vec2{-42.0f, 52.0f}, {84.0f, 10.0f}, {122, 92, 62, 240});
-    renderer.drawLine(center + Vec2{-38.0f, 52.0f}, center + Vec2{38.0f, 52.0f}, {234, 202, 132, 210});
-    renderer.fillCircle(center + Vec2{-39.0f, 8.0f}, 6.0f, {134, 140, 154, 235});
-    renderer.fillCircle(center + Vec2{37.0f, 11.0f}, 5.0f, {134, 140, 154, 235});
-    renderer.fillCircle(center + Vec2{-24.0f, -24.0f}, 5.0f, {128, 134, 150, 225});
-    renderer.fillCircle(center + Vec2{22.0f, -27.0f}, 5.0f, {128, 134, 150, 225});
 }
 
 void Game::renderWarpPoints(Renderer& renderer) const
@@ -9558,13 +9600,26 @@ void Game::renderWarpPoints(Renderer& renderer) const
             warpPoints_[static_cast<std::size_t>(hoveredWarpReturnPointIndex_)].index == point.index;
         if (hovered) {
             renderer.fillSoftCircle(point.position, 54.0f, {170, 255, 238, 54});
-            renderer.drawCircle(point.position, 39.0f, {232, 255, 248, 245});
-            renderer.drawCircle(point.position, 44.0f, {92, 236, 210, 170});
         }
-        renderer.drawCircle(point.position, point.discovered ? 34.0f : 24.0f, {150, 210, 255, 110});
-        renderer.drawCircle(point.position, 20.0f, ring);
-        if (!drawWorldIcon(renderer, WorldIconId::WarpPoint, point.position, {42.0f, 42.0f})) {
+        renderer.fillSoftCircle(point.position, point.discovered ? 34.0f : 24.0f, {150, 210, 255, 42});
+
+        WorldIconDrawOptions options;
+        options.tint = point.discovered ? Color{255, 255, 255, 255} : Color{255, 228, 154, 238};
+        options.outlineColor = point.discovered ? Color{42, 76, 88, 210} : Color{116, 74, 24, 205};
+        options.outlinePx = 1;
+        options.selectedOutlineEnabled = hovered;
+        options.selectedOutlineColor = {232, 255, 248, 245};
+        options.selectedOutlinePx = 6;
+        if (!drawWorldIcon(
+                renderer,
+                WorldIconId::WarpPoint,
+                point.position,
+                {DungeonWarpPointImageSize, DungeonWarpPointImageSize},
+                options)) {
             renderer.fillCircle(point.position, 12.0f, core);
+            if (hovered) {
+                renderer.drawCircle(point.position, 17.0f, {232, 255, 248, 245});
+            }
             renderer.drawLine(point.position + Vec2{-18.0f, 0.0f}, point.position + Vec2{18.0f, 0.0f}, ring);
             renderer.drawLine(point.position + Vec2{0.0f, -18.0f}, point.position + Vec2{0.0f, 18.0f}, ring);
         }
@@ -9585,8 +9640,8 @@ void Game::appendRewardNodeRenderEntries(
 {
     const Color exposedReward{255, 222, 94, 255};
     const Color exposedMoney{246, 190, 64, 255};
-    const Color sparkle{255, 242, 164, 230};
     const Vec2 playerLightCenter = witchSelfLightCenter(player_.position);
+    const double totalSeconds = runStats_.elapsedSeconds;
 
     for (const RewardNode& node : rewardNodes_) {
         if (node.collected) {
@@ -9601,16 +9656,14 @@ void Game::appendRewardNodeRenderEntries(
         }
         entries.push_back(DepthRenderEntry{
             center.y,
-            [&renderer, center, visibility = node.visibility, exposedReward, sparkle]() {
+            [&renderer, center, visibility = node.visibility, exposedReward, totalSeconds]() {
                 if (visibility == PlacementVisibility::Exposed) {
                     renderer.fillCircle(center, 7.0f, exposedReward);
                     renderer.drawCircle(center, 12.0f, {255, 246, 180, 210});
                     renderer.drawLine(center + Vec2{-9.0f, 0.0f}, center + Vec2{9.0f, 0.0f}, {255, 250, 210, 220});
                     renderer.drawLine(center + Vec2{0.0f, -9.0f}, center + Vec2{0.0f, 9.0f}, {255, 250, 210, 220});
                 } else if (visibility == PlacementVisibility::BuriedVisible) {
-                    renderer.drawLine(center + Vec2{-8.0f, 0.0f}, center + Vec2{8.0f, 0.0f}, sparkle);
-                    renderer.drawLine(center + Vec2{0.0f, -8.0f}, center + Vec2{0.0f, 8.0f}, sparkle);
-                    renderer.fillCircle(center, 2.5f, {255, 255, 210, 240});
+                    drawBuriedRewardSparkle(renderer, center, totalSeconds);
                 }
             },
         });
@@ -9629,15 +9682,14 @@ void Game::appendRewardNodeRenderEntries(
         }
         entries.push_back(DepthRenderEntry{
             center.y,
-            [&renderer, center, visibility = node.visibility, amount = node.amount, exposedMoney, sparkle]() {
+            [&renderer, center, visibility = node.visibility, amount = node.amount, exposedMoney, totalSeconds]() {
                 if (visibility == PlacementVisibility::Exposed) {
                     if (!drawWorldIcon(renderer, moneyWorldIconForAmount(amount), center, {30.0f, 30.0f})) {
                         renderer.fillCircle(center, 5.5f, exposedMoney);
                         renderer.drawCircle(center, 8.5f, {255, 230, 120, 210});
                     }
                 } else if (visibility == PlacementVisibility::BuriedVisible) {
-                    renderer.drawLine(center + Vec2{-6.0f, -6.0f}, center + Vec2{6.0f, 6.0f}, sparkle);
-                    renderer.drawLine(center + Vec2{-6.0f, 6.0f}, center + Vec2{6.0f, -6.0f}, sparkle);
+                    drawBuriedRewardSparkle(renderer, center, totalSeconds);
                 }
             },
         });
@@ -9656,22 +9708,17 @@ void Game::appendRewardNodeRenderEntries(
         }
         entries.push_back(DepthRenderEntry{
             center.y,
-            [&renderer, center, visibility = node.visibility]() {
+            [&renderer, center, visibility = node.visibility, totalSeconds]() {
                 const Color moonFill{232, 224, 166, static_cast<unsigned char>(visibility == PlacementVisibility::Exposed ? 255 : 165)};
                 const Color moonGlow{255, 250, 198, static_cast<unsigned char>(visibility == PlacementVisibility::Exposed ? 210 : 135)};
                 if (visibility == PlacementVisibility::Exposed) {
-                    if (drawWorldIcon(renderer, materialWorldIcon(MaterialType::MoonFragment), center, {30.0f, 30.0f})) {
-                        renderer.drawCircle(center, 11.0f, moonGlow);
-                    } else {
+                    if (!drawWorldIcon(renderer, materialWorldIcon(MaterialType::MoonFragment), center, {30.0f, 30.0f})) {
                         renderer.fillCircle(center, 5.5f, moonFill);
                         renderer.drawCircle(center, 9.0f, moonGlow);
                         renderer.drawLine(center + Vec2{-7.0f, 0.0f}, center + Vec2{7.0f, 0.0f}, moonGlow);
                     }
                 } else if (visibility == PlacementVisibility::BuriedVisible) {
-                    renderer.drawCircle(center, 7.0f, moonGlow);
-                    renderer.fillCircle(center, 2.0f, moonFill);
-                    renderer.drawLine(center + Vec2{-5.0f, -5.0f}, center + Vec2{5.0f, 5.0f}, moonGlow);
-                    renderer.drawLine(center + Vec2{-5.0f, 5.0f}, center + Vec2{5.0f, -5.0f}, moonGlow);
+                    drawBuriedRewardSparkle(renderer, center, totalSeconds);
                 }
             },
         });
@@ -9713,15 +9760,8 @@ void Game::appendRewardNodeRenderEntries(
         if (node.visibility == PlacementVisibility::BuriedVisible && !node.opened) {
             entries.push_back(DepthRenderEntry{
                 groundCenter.y,
-                [&renderer, center, chestKind = node.chestKind]() {
-                    WorldIconDrawOptions options;
-                    options.tint = {255, 255, 255, 165};
-                    if (!drawWorldIcon(renderer, chestWorldIcon(chestKind, false), center, {30.0f, 30.0f}, options)) {
-                        const Color outline = chestOutlineColor(chestKind, false);
-                        renderer.drawLine(center + Vec2{-9.0f, -4.0f}, center + Vec2{9.0f, -4.0f}, outline);
-                        renderer.drawLine(center + Vec2{-9.0f, 4.0f}, center + Vec2{9.0f, 4.0f}, outline);
-                        renderer.fillCircle(center, 2.5f, outline);
-                    }
+                [&renderer, center, totalSeconds]() {
+                    drawBuriedRewardSparkle(renderer, center, totalSeconds);
                 },
             });
             continue;

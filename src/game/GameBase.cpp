@@ -61,6 +61,33 @@ std::string baseExplorationControlHelp(const BaseFacility* facility)
     }
 }
 
+const char* baseFacilityTutorialTrigger(BaseFacilityAction action)
+{
+    switch (action) {
+    case BaseFacilityAction::MineExit:
+        return nullptr;
+    case BaseFacilityAction::Storage:
+        return "tutorial:base_storage";
+    case BaseFacilityAction::Bookshelf:
+        return "tutorial:base_bookshelf";
+    case BaseFacilityAction::Merchant:
+        return "tutorial:base_merchant";
+    case BaseFacilityAction::Processing:
+        return "tutorial:base_processing";
+    case BaseFacilityAction::Forge:
+        return "tutorial:base_forge";
+    case BaseFacilityAction::Diary:
+        return "tutorial:base_diary";
+    case BaseFacilityAction::RingWorkshop:
+        return "tutorial:base_ring_workshop";
+    case BaseFacilityAction::HomeEntrance:
+    case BaseFacilityAction::HomeExit:
+    case BaseFacilityAction::MonicaTalk:
+        return nullptr;
+    }
+    return nullptr;
+}
+
 int baseUpgradeWarehouseCapacityForLevel(int level)
 {
     constexpr std::array<int, 5> Capacities{{48, 72, 100, 140, 200}};
@@ -68,18 +95,114 @@ int baseUpgradeWarehouseCapacityForLevel(int level)
     return Capacities[static_cast<std::size_t>(index)];
 }
 
+int merchantStockCountForLevel(int level)
+{
+    const int clampedLevel = std::clamp(level, 1, 7);
+    return 6 + (clampedLevel - 1) * 3;
+}
+
 const char* baseUpgradeMerchantFeature(int level)
 {
     switch (level) {
-    case 1: return "通常売買";
-    case 2: return "品揃え5枠";
-    case 3: return "品揃え6枠/買取+10%";
-    case 4: return "宝の高価買取";
-    case 5: return "品揃え8枠/レア増加";
-    case 6: return "品揃え9枠/買取+20%";
-    case 7: return "品揃え10枠/高レア増加";
+    case 1: return "品揃え6枠";
+    case 2: return "品揃え9枠";
+    case 3: return "品揃え12枠/買取+10%";
+    case 4: return "品揃え15枠/宝の高価買取";
+    case 5: return "品揃え18枠/レア増加";
+    case 6: return "品揃え21枠/買取+20%";
+    case 7: return "品揃え24枠/高レア増加";
     default: return "未解禁";
     }
+}
+
+enum class MerchantStockGroup {
+    Mining,
+    Exploration,
+    Recovery,
+    WeaponShield,
+    EnhanceDebuff,
+};
+
+constexpr std::array<MerchantStockGroup, 5> RequiredMerchantStockGroups{{
+    MerchantStockGroup::Mining,
+    MerchantStockGroup::Exploration,
+    MerchantStockGroup::Recovery,
+    MerchantStockGroup::WeaponShield,
+    MerchantStockGroup::EnhanceDebuff,
+}};
+
+const char* merchantStockGroupName(MerchantStockGroup group)
+{
+    switch (group) {
+    case MerchantStockGroup::Mining: return "mining";
+    case MerchantStockGroup::Exploration: return "exploration";
+    case MerchantStockGroup::Recovery: return "recovery";
+    case MerchantStockGroup::WeaponShield: return "weapon_shield";
+    case MerchantStockGroup::EnhanceDebuff: return "enhance_debuff";
+    }
+    return "unknown";
+}
+
+std::optional<MerchantStockGroup> merchantStockGroupForItem(const ItemData& item)
+{
+    if (item.category == "\xE6\x8E\x98\xE5\x89\x8A") {
+        return MerchantStockGroup::Mining;
+    }
+    if (item.category == "\xE6\x8E\xA2\xE7\xB4\xA2") {
+        return MerchantStockGroup::Exploration;
+    }
+    if (item.category == "\xE5\x9B\x9E\xE5\xBE\xA9") {
+        return MerchantStockGroup::Recovery;
+    }
+    if (item.category == "\xE6\xAD\xA6\xE5\x99\xA8" || item.category == "\xE7\x9B\xBE") {
+        return MerchantStockGroup::WeaponShield;
+    }
+    if (item.category == "\xE5\xBC\xB7\xE5\x8C\x96" || item.category == "\xE5\xBC\xB1\xE4\xBD\x93") {
+        return MerchantStockGroup::EnhanceDebuff;
+    }
+    return std::nullopt;
+}
+
+double merchantCandidateWeight(const ItemData& item, int merchantUpgradeLevel)
+{
+    const double commonWeight = static_cast<double>(std::max(1, 12 - std::clamp(item.rarity, 1, 10)));
+    const double rareWeight = merchantUpgradeLevel >= 7
+        ? static_cast<double>(std::clamp(item.rarity, 1, 10)) * 1.4
+        : (merchantUpgradeLevel >= 5 ? static_cast<double>(std::clamp(item.rarity, 1, 10)) * 0.65 : 0.0);
+    return commonWeight + rareWeight;
+}
+
+const ItemData* pickMerchantCandidate(
+    std::vector<const ItemData*>& pool,
+    int merchantUpgradeLevel,
+    std::mt19937& rng,
+    std::optional<MerchantStockGroup> requiredGroup = std::nullopt)
+{
+    std::vector<std::size_t> indexes;
+    indexes.reserve(pool.size());
+    for (std::size_t i = 0; i < pool.size(); ++i) {
+        if (requiredGroup.has_value()) {
+            const std::optional<MerchantStockGroup> group = merchantStockGroupForItem(*pool[i]);
+            if (!group.has_value() || *group != *requiredGroup) {
+                continue;
+            }
+        }
+        indexes.push_back(i);
+    }
+    if (indexes.empty()) {
+        return nullptr;
+    }
+
+    std::vector<double> weights;
+    weights.reserve(indexes.size());
+    for (std::size_t index : indexes) {
+        weights.push_back(merchantCandidateWeight(*pool[index], merchantUpgradeLevel));
+    }
+    std::discrete_distribution<int> distribution(weights.begin(), weights.end());
+    const std::size_t pickedPoolIndex = indexes[static_cast<std::size_t>(distribution(rng))];
+    const ItemData* item = pool[pickedPoolIndex];
+    pool.erase(pool.begin() + static_cast<std::ptrdiff_t>(pickedPoolIndex));
+    return item;
 }
 
 const char* baseUpgradeProcessingFeature(int level)
@@ -1975,6 +2098,7 @@ namespace {
 constexpr double LightenWeightMultiplier = 0.85;
 constexpr double EnlargeWeightMultiplier = 1.15;
 constexpr double EnlargeSizeMultiplier = 1.18;
+constexpr double SellPriceBaseMultiplier = 0.5;
 
 bool isTreasureObject(const ItemData& item)
 {
@@ -2042,7 +2166,7 @@ int Game::sellPrice(const ItemData& item, const ItemInstance* instance) const
             instance->sizeModifier,
             instance->isBroken);
     }
-    return std::max(0, static_cast<int>(std::ceil(static_cast<double>(item.price) * multiplier)));
+    return std::max(0, static_cast<int>(std::ceil(static_cast<double>(item.price) * SellPriceBaseMultiplier * multiplier)));
 }
 
 int Game::sellPrice(const ItemData& item, const SpellRingItem* ringItem) const
@@ -2069,7 +2193,7 @@ int Game::sellPrice(const ItemData& item, const SpellRingItem* ringItem) const
         ringItem->weightModifier,
         ringItem->sizeModifier,
         ringItem->broken());
-    return std::max(0, static_cast<int>(std::ceil(static_cast<double>(item.price) * multiplier)));
+    return std::max(0, static_cast<int>(std::ceil(static_cast<double>(item.price) * SellPriceBaseMultiplier * multiplier)));
 }
 
 bool Game::isHighValueBuyObject(const ItemData& item) const
@@ -2176,26 +2300,21 @@ void Game::refreshMerchantStock(bool force)
                 (merchantUpgradeLevel_ >= 2 ? 4 : 2)));
     for (const ObjectDefinition& object : objectCatalog_.objects) {
         const ItemData* item = objectCatalog_.registry.findById(object.id);
-        if (item == nullptr || item->id.empty() || item->price <= 0 || isStoryObject(*item) || isTreasureObject(*item)) {
+        if (item == nullptr || item->id.empty() || item->price <= 0 || isStoryObject(*item)) {
+            continue;
+        }
+        if (isTreasureObject(*item)) {
             continue;
         }
         if (item->rarity > maxRarity) {
             continue;
         }
-        const bool basicCategory =
-            item->category == "\xE5\x9B\x9E\xE5\xBE\xA9" ||
-            item->category == "\xE5\xBC\xB1\xE4\xBD\x93" ||
-            item->category == "\xE6\x8E\xA2\xE7\xB4\xA2" ||
-            item->category == "\xE5\xBC\xB7\xE5\x8C\x96";
-        const bool equipmentCategory =
-            item->category == "\xE6\x8E\x98\xE5\x89\x8A" ||
-            item->category == "\xE6\xAD\xA6\xE5\x99\xA8" ||
-            item->category == "\xE7\x9B\xBE" ||
-            item->category == "\xE9\xAD\x94\xE5\xB0\x8E\xE6\x9B\xB8";
+        const bool requiredCategory = merchantStockGroupForItem(*item).has_value();
+        const bool advancedEquipmentCategory = item->category == "\xE9\xAD\x94\xE5\xB0\x8E\xE6\x9B\xB8";
         const bool basicTag = std::any_of(item->tags.begin(), item->tags.end(), [](const std::string& tag) {
             return tag == "consumable" || tag == "potion" || tag == "food";
         });
-        if (basicCategory || basicTag || (merchantUpgradeLevel_ >= 4 && equipmentCategory)) {
+        if (requiredCategory || basicTag || (merchantUpgradeLevel_ >= 4 && advancedEquipmentCategory)) {
             candidates.push_back(item);
         }
     }
@@ -2213,25 +2332,41 @@ void Game::refreshMerchantStock(bool force)
     }
 
     ++merchantStockVersion_;
-    const int stockCount = std::min(3 + std::clamp(merchantUpgradeLevel_, 1, 7), static_cast<int>(candidates.size()));
+    const int stockCount = merchantStockCountForLevel(merchantUpgradeLevel_);
+    const int minimumPerRequiredGroup = std::max(1, (stockCount + 9) / 10);
     std::mt19937& rng = lootRuntimeRng();
     std::uniform_int_distribution<int> quantityDistribution(1, 5);
-    for (int i = 0; i < stockCount; ++i) {
-        std::vector<double> weights;
-        weights.reserve(candidates.size());
-        for (const ItemData* candidate : candidates) {
-            const double commonWeight = static_cast<double>(std::max(1, 12 - std::clamp(candidate->rarity, 1, 10)));
-            const double rareWeight = merchantUpgradeLevel_ >= 7
-                ? static_cast<double>(std::clamp(candidate->rarity, 1, 10)) * 1.4
-                : (merchantUpgradeLevel_ >= 5 ? static_cast<double>(std::clamp(candidate->rarity, 1, 10)) * 0.65 : 0.0);
-            weights.push_back(commonWeight + rareWeight);
+    const auto addProduct = [&](const ItemData& item) {
+        const int quantity = item.rarity >= 6 ? std::uniform_int_distribution<int>(1, 2)(rng) : quantityDistribution(rng);
+        merchantStock_.push_back(MerchantProduct{item.id, std::max(1, item.price), quantity});
+    };
+
+    std::vector<const ItemData*> uniquePool = candidates;
+    for (MerchantStockGroup group : RequiredMerchantStockGroups) {
+        for (int i = 0; i < minimumPerRequiredGroup && static_cast<int>(merchantStock_.size()) < stockCount; ++i) {
+            const ItemData* item = pickMerchantCandidate(uniquePool, merchantUpgradeLevel_, rng, group);
+            if (item == nullptr) {
+                std::vector<const ItemData*> duplicatePool = candidates;
+                item = pickMerchantCandidate(duplicatePool, merchantUpgradeLevel_, rng, group);
+            }
+            if (item == nullptr) {
+                logError("[warning] Merchant stock: no Objects candidates for required group \"" +
+                    std::string(merchantStockGroupName(group)) + "\"");
+                break;
+            }
+            addProduct(*item);
         }
-        std::discrete_distribution<int> distribution(weights.begin(), weights.end());
-        const int pickedIndex = distribution(rng);
-        const ItemData* item = candidates[static_cast<std::size_t>(pickedIndex)];
-        const int quantity = item->rarity >= 6 ? std::uniform_int_distribution<int>(1, 2)(rng) : quantityDistribution(rng);
-        merchantStock_.push_back(MerchantProduct{item->id, std::max(1, item->price), quantity});
-        candidates.erase(candidates.begin() + pickedIndex);
+    }
+
+    while (static_cast<int>(merchantStock_.size()) < stockCount) {
+        if (uniquePool.empty()) {
+            uniquePool = candidates;
+        }
+        const ItemData* item = pickMerchantCandidate(uniquePool, merchantUpgradeLevel_, rng);
+        if (item == nullptr) {
+            break;
+        }
+        addProduct(*item);
     }
 }
 
@@ -7490,105 +7625,137 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
         return;
     }
 
-    const auto interact = [this](const BaseFacility& facility) {
+    const auto startFacilityTutorialOrOpen = [this](const BaseFacility& facility, const std::function<void()>& openAction) {
+        if (!openAction) {
+            return;
+        }
+        if (const char* trigger = baseFacilityTutorialTrigger(facility.onInteract)) {
+            if (const StoryEvent* event = findStoryEventForTrigger(trigger)) {
+                std::function<void()> afterTutorial = openAction;
+                if (startStoryEventWithCompletion(event->id, std::move(afterTutorial))) {
+                    return;
+                }
+            }
+        }
+        openAction();
+    };
+
+    const auto interact = [this, &startFacilityTutorialOrOpen](const BaseFacility& facility) {
         if (!facility.enabled) {
             return;
         }
+        std::function<void()> openAction;
         switch (facility.onInteract) {
         case BaseFacilityAction::MineExit:
-            if (hasBrokenRingItemForDeparture()) {
-                openUiConfirmDialog(
-                    baseBrokenRingDepartureConfirm_,
-                    "出発確認",
-                    "壊れたアイテムがリングに乗っています。このまま出発しますか？",
-                    "はい",
-                    "いいえ",
-                    1);
-                baseStatus_.clear();
-            } else {
-                openBaseMiningStartChoice();
-            }
+            openAction = [this]() {
+                if (hasBrokenRingItemForDeparture()) {
+                    openUiConfirmDialog(
+                        baseBrokenRingDepartureConfirm_,
+                        "出発確認",
+                        "壊れたアイテムがリングに乗っています。このまま出発しますか？",
+                        "はい",
+                        "いいえ",
+                        1);
+                    baseStatus_.clear();
+                } else {
+                    openBaseMiningStartChoice();
+                }
+            };
             break;
         case BaseFacilityAction::Storage:
-            baseStorageActive_ = true;
-            baseStorageMode_ = StorageUiMode::ChooseAction;
-            baseStorageActionSelection_ = 0;
-            baseStorageBulkSelection_ = 0;
-            baseStorageDepositSource_ = static_cast<int>(BaseItemSource::Backpack);
-            baseStorageDepositSourceTabs_.focusedIndex = 0;
-            baseStorageDepositSelection_ = 0;
-            baseStorageWithdrawSelection_ = 0;
-            baseStorageWarehousePage_ = 0;
-            baseStorageQuantityDialog_ = {};
-            baseStorageQuantityPending_ = {};
-            closeUiCommandMenu(baseStorageCommandMenu_);
-            baseStorageCommandOperation_ = StorageQuantityOperation::None;
-            baseStorageCommandTarget_ = {};
-            baseStoragePointerOperation_ = StorageQuantityOperation::None;
-            baseStoragePointerTarget_ = {};
-            baseStoragePointerPressMouse_ = {};
-            baseStoragePointerPressCanOpenMenu_ = false;
-            baseStoragePointerDragTriggered_ = false;
-            baseStatus_.clear();
+            openAction = [this]() {
+                baseStorageActive_ = true;
+                baseStorageMode_ = StorageUiMode::ChooseAction;
+                baseStorageActionSelection_ = 0;
+                baseStorageBulkSelection_ = 0;
+                baseStorageDepositSource_ = static_cast<int>(BaseItemSource::Backpack);
+                baseStorageDepositSourceTabs_.focusedIndex = 0;
+                baseStorageDepositSelection_ = 0;
+                baseStorageWithdrawSelection_ = 0;
+                baseStorageWarehousePage_ = 0;
+                baseStorageQuantityDialog_ = {};
+                baseStorageQuantityPending_ = {};
+                closeUiCommandMenu(baseStorageCommandMenu_);
+                baseStorageCommandOperation_ = StorageQuantityOperation::None;
+                baseStorageCommandTarget_ = {};
+                baseStoragePointerOperation_ = StorageQuantityOperation::None;
+                baseStoragePointerTarget_ = {};
+                baseStoragePointerPressMouse_ = {};
+                baseStoragePointerPressCanOpenMenu_ = false;
+                baseStoragePointerDragTriggered_ = false;
+                baseStatus_.clear();
+            };
             break;
         case BaseFacilityAction::Merchant:
-            if (hasStoryFlag("ending_seen") && startStoryEventForTrigger("merchant:post_ending")) {
-                break;
-            }
-            if (merchantRefreshPending_) {
-                refreshMerchantStock(true);
-                merchantRefreshPending_ = false;
-            } else {
-                refreshMerchantStock(false);
-            }
-            baseSellActive_ = true;
-            baseMerchantMode_ = MerchantUiMode::ChooseAction;
-            baseMerchantActionSelection_ = 0;
-            baseMerchantSellSource_ = 0;
-            baseMerchantSellSourceTabs_.focusedIndex = baseMerchantSellSource_;
-            baseSellSelection_ = 0;
-            baseMerchantBuySelection_ = 0;
-            closeUiCommandMenu(baseMerchantSellCommandMenu_);
-            baseMerchantSellCommandSource_ = 0;
-            baseMerchantSellCommandIndex_ = -1;
-            closeUiCommandMenu(baseMerchantBuyCommandMenu_);
-            baseMerchantBuyCommandIndex_ = -1;
-            baseStatus_.clear();
+            openAction = [this]() {
+                if (hasStoryFlag("ending_seen") && startStoryEventForTrigger("merchant:post_ending")) {
+                    return;
+                }
+                if (merchantRefreshPending_) {
+                    refreshMerchantStock(true);
+                    merchantRefreshPending_ = false;
+                } else {
+                    refreshMerchantStock(false);
+                }
+                baseSellActive_ = true;
+                baseMerchantMode_ = MerchantUiMode::ChooseAction;
+                baseMerchantActionSelection_ = 0;
+                baseMerchantSellSource_ = 0;
+                baseMerchantSellSourceTabs_.focusedIndex = baseMerchantSellSource_;
+                baseSellSelection_ = 0;
+                baseMerchantBuySelection_ = 0;
+                closeUiCommandMenu(baseMerchantSellCommandMenu_);
+                baseMerchantSellCommandSource_ = 0;
+                baseMerchantSellCommandIndex_ = -1;
+                closeUiCommandMenu(baseMerchantBuyCommandMenu_);
+                baseMerchantBuyCommandIndex_ = -1;
+                baseStatus_.clear();
+            };
             break;
         case BaseFacilityAction::Forge:
-            baseUpgradeActive_ = true;
-            baseUpgradeSelection_ = 0;
-            baseUpgradeTabs_.focusedIndex = baseUpgradeSelection_;
-            baseStatus_.clear();
+            openAction = [this]() {
+                baseUpgradeActive_ = true;
+                baseUpgradeSelection_ = 0;
+                baseUpgradeTabs_.focusedIndex = baseUpgradeSelection_;
+                baseStatus_.clear();
+            };
             break;
         case BaseFacilityAction::Processing:
-            if (hasStoryFlag("ending_seen") && startStoryEventForTrigger("processing:post_ending")) {
-                break;
-            }
-            baseProcessingActive_ = true;
-            baseProcessingMode_ = 0;
-            baseProcessingTabs_.focusedIndex = baseProcessingMode_;
-            baseProcessingSource_ = 0;
-            baseProcessingSourceTabs_.focusedIndex = baseProcessingSource_;
-            baseProcessingSelection_ = 0;
-            closeUiCommandMenu(baseProcessingCommandMenu_);
-            baseProcessingCommandSlot_ = -1;
-            baseProcessingConfirm_ = {};
-            baseProcessingConfirmTarget_ = {};
-            baseStatus_.clear();
+            openAction = [this]() {
+                if (hasStoryFlag("ending_seen") && startStoryEventForTrigger("processing:post_ending")) {
+                    return;
+                }
+                baseProcessingActive_ = true;
+                baseProcessingMode_ = 0;
+                baseProcessingTabs_.focusedIndex = baseProcessingMode_;
+                baseProcessingSource_ = 0;
+                baseProcessingSourceTabs_.focusedIndex = baseProcessingSource_;
+                baseProcessingSelection_ = 0;
+                closeUiCommandMenu(baseProcessingCommandMenu_);
+                baseProcessingCommandSlot_ = -1;
+                baseProcessingConfirm_ = {};
+                baseProcessingConfirmTarget_ = {};
+                baseStatus_.clear();
+            };
             break;
         case BaseFacilityAction::Bookshelf:
-            openBookshelf();
+            openAction = [this]() {
+                openBookshelf();
+            };
             break;
         case BaseFacilityAction::Diary:
-            openBaseDiary();
+            openAction = [this]() {
+                openBaseDiary();
+            };
             break;
         case BaseFacilityAction::RingWorkshop:
-            if (facility.unlocked) {
-                openRingWorkshop();
-            } else {
-                baseStatus_ = "リング工房: まだ解禁されていません";
-            }
+            openAction = [this, unlocked = facility.unlocked]() {
+                if (unlocked) {
+                    openRingWorkshop();
+                } else {
+                    baseStatus_ = "リング工房: まだ解禁されていません";
+                }
+            };
             break;
         case BaseFacilityAction::HomeEntrance:
             baseOutdoorPlayerPosition_ = basePlayerPosition_;
@@ -7622,6 +7789,7 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
             startBaseMonicaDialogue();
             break;
         }
+        startFacilityTutorialOrOpen(facility, openAction);
     };
 
     std::vector<BaseFacility> facilities = baseFacilities(baseArea_, ringWorkshopUnlocked_);
@@ -9219,13 +9387,13 @@ void Game::renderBaseScreen(Renderer& renderer) const
         };
         const auto merchantFeature = [](int level) -> const char* {
             switch (level) {
-            case 1: return "通常売買";
-            case 2: return "品揃え5枠";
-            case 3: return "品揃え6枠/買取+10%";
-            case 4: return "宝の高価買取";
-            case 5: return "品揃え8枠/レア増加";
-            case 6: return "品揃え9枠/買取+20%";
-            case 7: return "品揃え10枠/高レア増加";
+            case 1: return "品揃え6枠";
+            case 2: return "品揃え9枠";
+            case 3: return "品揃え12枠/買取+10%";
+            case 4: return "品揃え15枠/高価買取";
+            case 5: return "品揃え18枠/レア増加";
+            case 6: return "品揃え21枠/買取+20%";
+            case 7: return "品揃え24枠/高レア増加";
             default: return "未解禁";
             }
         };
