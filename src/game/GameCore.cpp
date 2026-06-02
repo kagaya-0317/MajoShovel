@@ -677,6 +677,29 @@ void Game::playAudioSe(std::string_view id, float volumeScale, float pitchScale)
     audio_->playSe(id, volumeScale, pitchScale);
 }
 
+void Game::playAudioSeAt(std::string_view id, Vec2 worldPosition, float volumeScale, float pitchScale)
+{
+    if (audio_ == nullptr || id.empty()) {
+        return;
+    }
+    audio_->playSe(
+        id,
+        AudioSeParams{
+            .volumeScale = volumeScale,
+            .pitchScale = pitchScale,
+            .pan = audioPanForWorldPosition(worldPosition),
+        });
+}
+
+float Game::audioPanForWorldPosition(Vec2 worldPosition) const
+{
+    const int viewportWidth = std::max(1, camera_.width());
+    const Vec2 screenPosition = camera_.worldToScreen(worldPosition);
+    const float halfWidth = std::max(1.0f, static_cast<float>(viewportWidth) * 0.5f);
+    constexpr float MaxPan = 0.78f;
+    return std::clamp((screenPosition.x - halfWidth) / halfWidth, -1.0f, 1.0f) * MaxPan;
+}
+
 float Game::playAudioJingle(
     std::string_view id,
     float fallbackDurationSeconds,
@@ -3811,7 +3834,7 @@ void Game::update(const Input& input, const Time& time)
         }
         for (const RingMotionEvent& event : spellRing_.consumeMotionEvents()) {
             if (event.kind == RingMotionEventKind::ThrowStart) {
-                playAudioSe(AudioSeRingThrow);
+                playAudioSeAt(AudioSeRingThrow, event.position);
                 effects_.spawnThrowStart(event.position, event.direction);
             } else if (event.kind == RingMotionEventKind::ReturnEnd) {
                 effects_.spawnReturn(event.position);
@@ -3846,7 +3869,7 @@ void Game::update(const Input& input, const Time& time)
             resolveRingImpactSoundEvents(digging_.impactSoundEvents(), lootRuntimeRng(), 3);
         if (!terrainImpactSounds.empty()) {
             for (const RingImpactSoundPlayback& sound : terrainImpactSounds) {
-                playAudioSe(sound.cueId, sound.volumeScale, sound.pitchScale);
+                playAudioSeAt(sound.cueId, sound.position, sound.volumeScale, sound.pitchScale);
             }
         }
         const bool playDigEffectSounds = terrainImpactSounds.empty();
@@ -4091,7 +4114,7 @@ void Game::update(const Input& input, const Time& time)
             &encyclopedia_);
         magic_.update(player_, spellRing_, enemies_, tileMap_, time.deltaSeconds());
         for (const ProjectileSoundEvent& event : projectiles_.consumeSoundEvents()) {
-            playAudioSe(event.cueId, event.volumeScale, event.pitchScale);
+            playAudioSeAt(event.cueId, event.position, event.volumeScale, event.pitchScale);
         }
         bool magicCastSound = false;
         bool magicImpactSound = false;
@@ -4112,7 +4135,7 @@ void Game::update(const Input& input, const Time& time)
             playAudioSe(AudioSeMagicImpact);
         }
         for (const MagicFxSoundEvent& event : magicFx_.consumeSoundEvents()) {
-            playAudioSe(event.cueId, event.volumeScale, event.pitchScale);
+            playAudioSeAt(event.cueId, event.position, event.volumeScale, event.pitchScale);
         }
         bool capturedEnemyThisFrame = false;
         for (const CaptureResult& capture : enemies_.consumeCaptureResults()) {
@@ -4155,25 +4178,25 @@ void Game::update(const Input& input, const Time& time)
         const std::vector<RingImpactSoundPlayback> enemyImpactSounds =
             resolveRingImpactSoundEvents(enemies_.impactSoundEvents(), lootRuntimeRng(), 4);
         for (const RingImpactSoundPlayback& sound : enemyImpactSounds) {
-            playAudioSe(sound.cueId, sound.volumeScale, sound.pitchScale);
+            playAudioSeAt(sound.cueId, sound.position, sound.volumeScale, sound.pitchScale);
         }
         for (const EnemyEvent& event : enemies_.events()) {
             if (event.type == EnemyEventType::Spawn) {
-                playAudioSe(AudioSeEnemySpawn);
+                playAudioSeAt(AudioSeEnemySpawn, event.position);
             } else if (event.type == EnemyEventType::Alert) {
-                playAudioSe(AudioSeEnemyAlert);
+                playAudioSeAt(AudioSeEnemyAlert, event.position);
             } else if (event.type == EnemyEventType::Attack) {
                 if (event.effectId == "ring_slow_bite") {
-                    playAudioSe(AudioSeRingSlowBite);
+                    playAudioSeAt(AudioSeRingSlowBite, event.position);
                 } else if (event.effectId == "chest_bite_lunge") {
-                    playAudioSe(AudioSeEnemyMimicBite);
+                    playAudioSeAt(AudioSeEnemyMimicBite, event.position);
                 } else {
-                    playAudioSe(AudioSeEnemyAttack);
+                    playAudioSeAt(AudioSeEnemyAttack, event.position);
                 }
             } else if (event.type == EnemyEventType::Shoot && event.effectId == "wind_blow") {
-                playAudioSe(AudioSeEnemyShoot);
+                playAudioSeAt(AudioSeEnemyShoot, event.position);
             } else if (event.type == EnemyEventType::HealCast) {
-                playAudioSe(AudioSeEnemyHeal);
+                playAudioSeAt(AudioSeEnemyHeal, event.position);
                 magicFx_.playHealPulse(event.position, 24.0f);
             } else if (event.type == EnemyEventType::Heal) {
                 if (event.healAmount > 0) {
@@ -4181,7 +4204,7 @@ void Game::update(const Input& input, const Time& time)
                 }
                 magicFx_.playHealPulse(event.position, 18.0f);
             } else if (event.type == EnemyEventType::ExplosionWarningTick) {
-                playAudioSe(AudioSeExplosionTick);
+                playAudioSeAt(AudioSeExplosionTick, event.position);
             } else if (event.type == EnemyEventType::Explode) {
                 const float radius = event.effectRadius > 0.0f ? event.effectRadius : 48.0f * ExplosionRadiusScale;
                 effects_.spawnExplosion(event.position, radius);
@@ -4219,7 +4242,7 @@ void Game::update(const Input& input, const Time& time)
                 const auto enemyIt = enemyCatalog_.enemiesById.find(event.enemyId);
                 if (enemyIt != enemyCatalog_.enemiesById.end() &&
                     encyclopedia_.noteEnemyInspected(enemyIt->second, event.position)) {
-                    playAudioSe(AudioSeMonsterDiscovery);
+                    playAudioSeAt(AudioSeMonsterDiscovery, event.position);
                 }
             } else if (event.type == EnemyEventType::Death || event.type == EnemyEventType::BossDeath) {
                 handleDungeonEventEnemyEvent(event);
@@ -4380,9 +4403,9 @@ void Game::update(const Input& input, const Time& time)
             playerDamageTotal += std::max(0, event.amount);
         }
         if (!player_.damageEvents.empty()) {
-            playAudioSe(AudioSePlayerDamage);
+            playAudioSeAt(AudioSePlayerDamage, player_.position);
             if (shouldPlayPlayerPinchDamageSe(player_.hp, player_.maxHp, playerDamageTotal)) {
-                playAudioSe(AudioSePlayerPinch);
+                playAudioSeAt(AudioSePlayerPinch, player_.position);
             }
             addScreenShake(4.5f, 0.16f);
             addPlayerDamageVignetteFlash(playerDamageTotal);
@@ -4402,10 +4425,10 @@ void Game::update(const Input& input, const Time& time)
             effects_.spawnStatusPopup(event.position, event.stateId, event.target);
         }
         for (const EffectSoundEvent& event : effects_.consumeSoundEvents()) {
-            playAudioSe(event.cueId, event.volumeScale, event.pitchScale);
+            playAudioSeAt(event.cueId, event.position, event.volumeScale, event.pitchScale);
         }
         for (const MagicFxSoundEvent& event : magicFx_.consumeSoundEvents()) {
-            playAudioSe(event.cueId, event.volumeScale, event.pitchScale);
+            playAudioSeAt(event.cueId, event.position, event.volumeScale, event.pitchScale);
         }
         applyEffectDiscoveries(effectDiscoveries);
         syncEncyclopediaFromInventoryAndRing();

@@ -107,6 +107,11 @@ enum class BaseEditMode {
     Passability,
 };
 
+enum class BaseEditPassabilityLayer {
+    Locked,
+    Unlocked,
+};
+
 enum class ImageScaleEditTab {
     Objects,
     Others,
@@ -133,8 +138,10 @@ struct BaseEditRect {
 struct BaseEditSnapshot {
     std::unordered_map<std::string, BaseEditRect> outdoorFacilityRects;
     std::unordered_map<std::string, BaseEditRect> homeFacilityRects;
-    std::unordered_set<std::int64_t> outdoorBlockedTiles;
-    std::unordered_set<std::int64_t> homeBlockedTiles;
+    std::unordered_set<std::int64_t> outdoorBlockedTilesLocked;
+    std::unordered_set<std::int64_t> outdoorBlockedTilesUnlocked;
+    std::unordered_set<std::int64_t> homeBlockedTilesLocked;
+    std::unordered_set<std::int64_t> homeBlockedTilesUnlocked;
 };
 
 struct HitboxEditSnapshot {
@@ -894,6 +901,8 @@ private:
     void playAudioBgm(std::string_view id, float fadeSeconds = 0.0f, bool restart = false);
     void stopAudioBgm(float fadeSeconds = 0.0f);
     void playAudioSe(std::string_view id, float volumeScale = 1.0f, float pitchScale = 1.0f);
+    void playAudioSeAt(std::string_view id, Vec2 worldPosition, float volumeScale = 1.0f, float pitchScale = 1.0f);
+    float audioPanForWorldPosition(Vec2 worldPosition) const;
     float playAudioJingle(
         std::string_view id,
         float fallbackDurationSeconds,
@@ -1562,6 +1571,12 @@ private:
     bool redoBaseEdit();
     bool isBasePassabilityBlocked(BaseArea area, int tileX, int tileY) const;
     void setBasePassabilityBlocked(BaseArea area, int tileX, int tileY, bool blocked);
+    BaseEditPassabilityLayer currentBasePassabilityLayer() const;
+    BaseEditPassabilityLayer editedBasePassabilityLayer() const;
+    std::unordered_set<std::int64_t>& baseBlockedTilesFor(BaseArea area, BaseEditPassabilityLayer layer);
+    const std::unordered_set<std::int64_t>& baseBlockedTilesFor(BaseArea area, BaseEditPassabilityLayer layer) const;
+    bool copyBasePassabilityLayer();
+    bool pasteBasePassabilityLayer();
     BaseEditRect baseFacilityRectFor(BaseArea area, std::string_view facilityId, BaseEditRect fallback) const;
     void setBaseFacilityRectFor(BaseArea area, std::string_view facilityId, BaseEditRect rect);
     void updateBaseEditScreen(const Input& input, UiContext& ui, float dt);
@@ -1789,10 +1804,15 @@ private:
     BaseEditMode baseEditMode_ = BaseEditMode::None;
     std::unordered_map<std::string, BaseEditRect> baseFacilityRectsOutdoor_;
     std::unordered_map<std::string, BaseEditRect> baseFacilityRectsHome_;
-    std::unordered_set<std::int64_t> baseBlockedTilesOutdoor_;
-    std::unordered_set<std::int64_t> baseBlockedTilesHome_;
+    std::unordered_set<std::int64_t> baseBlockedTilesOutdoorLocked_;
+    std::unordered_set<std::int64_t> baseBlockedTilesOutdoorUnlocked_;
+    std::unordered_set<std::int64_t> baseBlockedTilesHomeLocked_;
+    std::unordered_set<std::int64_t> baseBlockedTilesHomeUnlocked_;
     std::vector<BaseEditSnapshot> baseEditUndoStack_;
     std::vector<BaseEditSnapshot> baseEditRedoStack_;
+    BaseEditPassabilityLayer baseEditPassabilityLayer_ = BaseEditPassabilityLayer::Locked;
+    std::unordered_set<std::int64_t> baseEditPassabilityClipboard_;
+    bool baseEditPassabilityClipboardValid_ = false;
     int baseEditSelectedFacilityIndex_ = -1;
     bool baseEditDraggingFacilityMove_ = false;
     bool baseEditDraggingFacilityResize_ = false;

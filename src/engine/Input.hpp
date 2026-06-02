@@ -72,6 +72,8 @@ public:
     bool saveShortcutPressed() const { return ctrlSavePressed_; }
     bool undoShortcutPressed() const { return ctrlUndoPressed_; }
     bool redoShortcutPressed() const { return ctrlRedoPressed_; }
+    bool copyShortcutPressed() const { return ctrlCopyPressed_; }
+    bool pasteShortcutPressed() const { return ctrlPastePressed_; }
     int ringPresetRegisterSlotPressed() const { return ringPresetRegisterSlotPressed_; }
     int shortcutCursorDelta() const { return shortcutCursorDelta_; }
     int mouseWheelDelta() const { return mouseWheelDelta_; }
@@ -119,6 +121,8 @@ private:
     bool ctrlSavePressed_ = false;
     bool ctrlUndoPressed_ = false;
     bool ctrlRedoPressed_ = false;
+    bool ctrlCopyPressed_ = false;
+    bool ctrlPastePressed_ = false;
     bool suppressDirectShortcutThisFrame_ = false;
     InputDeviceKind lastActiveDevice_ = InputDeviceKind::KeyboardMouse;
     SDL_Gamepad* gamepad_ = nullptr;

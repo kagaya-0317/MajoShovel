@@ -1,0 +1,76 @@
+﻿MajoShovel Dungeon Debug Dump
+stageId=stage_01_stardust
+stageName=星くずの浅坑
+screenMode=5
+seed=1807801951
+runSeconds=1.18
+warpPointsEnabled=true
+worldBuildActive=false
+enemyTestActive=false
+
+player world=(0.00,0.00) tile=(0,0)
+camera world=(0.00,0.00) tile=(0,0)
+start tile=(0,0) world=(24.00,24.00)
+goal tile=(261,-14) world=(12552.00,-648.00)
+
+boss has=false spawned=false capturedForStage=false
+
+warpPoints count=4 discovered=0 unlocked=0
+warp index=0 discovered=false unlocked=false snapshot=false pathProgress=0.20 tile=(67,-12) world=(3240.00,-552.00)
+warp index=1 discovered=false unlocked=false snapshot=false pathProgress=0.40 tile=(112,33) world=(5400.00,1608.00)
+warp index=2 discovered=false unlocked=false snapshot=false pathProgress=0.60 tile=(178,35) world=(8568.00,1704.00)
+warp index=3 discovered=false unlocked=false snapshot=false pathProgress=0.80 tile=(242,33) world=(11640.00,1608.00)
+
+mainPath count=35 lengthTiles=351.16
+mainPath[0] tile=(0.00,0.00) world=(24.00,24.00)
+mainPath[1] tile=(10.30,0.78) world=(504.00,72.00)
+mainPath[2] tile=(20.86,2.05) world=(1032.00,120.00)
+mainPath[3] tile=(31.44,2.42) world=(1512.00,120.00)
+mainPath[4] tile=(42.21,-2.63) world=(2040.00,-120.00)
+mainPath[5] tile=(51.74,-5.39) world=(2520.00,-216.00)
+mainPath[6] tile=(60.35,-9.02) world=(2904.00,-408.00)
+mainPath[7] tile=(67.97,-12.14) world=(3288.00,-552.00)
+mainPath[8] tile=(74.11,-8.62) world=(3576.00,-408.00)
+mainPath[9] tile=(79.21,2.01) world=(3816.00,120.00)
+mainPath[10] tile=(85.39,8.98) world=(4104.00,456.00)
+mainPath[11] tile=(93.35,10.84) world=(4488.00,552.00)
+mainPath[12] tile=(100.13,30.95) world=(4824.00,1512.00)
+mainPath[13] tile=(110.86,33.14) world=(5352.00,1608.00)
+mainPath[14] tile=(122.76,35.70) world=(5928.00,1752.00)
+mainPath[15] tile=(135.69,36.17) world=(6552.00,1752.00)
+mainPath[16] tile=(147.93,42.59) world=(7128.00,2088.00)
+mainPath[17] tile=(160.70,41.79) world=(7752.00,2040.00)
+mainPath[18] tile=(173.33,34.86) world=(8328.00,1704.00)
+mainPath[19] tile=(183.70,34.81) world=(8856.00,1704.00)
+mainPath[20] tile=(192.17,38.81) world=(9240.00,1896.00)
+mainPath[21] tile=(199.72,41.60) world=(9624.00,2040.00)
+mainPath[22] tile=(207.83,35.74) world=(10008.00,1752.00)
+mainPath[23] tile=(214.32,40.64) world=(10296.00,1992.00)
+mainPath[24] tile=(222.76,34.41) world=(10728.00,1656.00)
+mainPath[25] tile=(231.25,33.29) world=(11112.00,1608.00)
+mainPath[26] tile=(240.44,33.53) world=(11544.00,1656.00)
+mainPath[27] tile=(250.55,33.00) world=(12072.00,1608.00)
+mainPath[28] tile=(260.56,36.62) world=(12552.00,1800.00)
+mainPath[29] tile=(260.63,28.18) world=(12552.00,1368.00)
+mainPath[30] tile=(260.71,19.74) world=(12552.00,984.00)
+mainPath[31] tile=(260.78,11.31) world=(12552.00,552.00)
+mainPath[32] tile=(260.85,2.87) world=(12552.00,168.00)
+mainPath[33] tile=(260.93,-5.56) world=(12552.00,-264.00)
+mainPath[34] tile=(261.00,-14.00) world=(12552.00,-648.00)
+
+events count=8
+event id=room_1_coin_room kind=coin_room discovered=false completed=false encounterSpawned=false activated=false center=(113,62) focus=(113,62) reward=(113,62) objects=0 nestHoles=0 enemies=0
+event id=fixed_1_0_glowing_rock_room kind=glowing_rock_room discovered=false completed=false encounterSpawned=true activated=false center=(77,-3) focus=(77,-3) reward=(77,-6) objects=3 nestHoles=0 enemies=0
+  object kind=0 tile=(79,-3) hp=10/10 destroyed=false powered=false
+  object kind=0 tile=(76,-1) hp=10/10 destroyed=false powered=false
+  object kind=0 tile=(76,-5) hp=10/10 destroyed=false powered=false
+event id=fixed_1_1_buried_witch kind=buried_witch discovered=false completed=false encounterSpawned=true activated=false center=(89,10) focus=(89,10) reward=(89,10) objects=0 nestHoles=0 enemies=0
+event id=fixed_2_2_lost_baggage_witch kind=lost_baggage_witch discovered=false completed=false encounterSpawned=true activated=false center=(131,36) focus=(131,36) reward=(131,36) objects=1 nestHoles=0 enemies=0
+  object kind=2 tile=(128,35) hp=1/1 destroyed=false powered=false
+event id=fixed_2_3_monster_swarm_room kind=monster_swarm_room discovered=false completed=false encounterSpawned=true activated=true center=(161,42) focus=(161,42) reward=(161,39) objects=0 nestHoles=0 enemies=6
+event id=fixed_3_4_item_request_witch kind=item_request_witch discovered=false completed=false encounterSpawned=true activated=false center=(212,39) focus=(212,39) reward=(212,39) objects=0 nestHoles=0 enemies=0
+event id=fixed_3_5_nest_room kind=nest_room discovered=false completed=false encounterSpawned=true activated=true center=(255,35) focus=(255,35) reward=(255,35) objects=0 nestHoles=1 enemies=2
+  nest tile=(257,35) hp=18/18 destroyed=false rewardSpawned=false
+event id=warp_guide_map_0 kind=warp_guide_map discovered=false completed=false encounterSpawned=false activated=false center=(139,38) focus=(139,38) reward=(139,38) objects=0 nestHoles=0 enemies=0
+
+nodes reward=27 money=23 chest=23 crate=37 exposedEnemies=10 buriedEnemies=9 spawnedEnemyNodes=0 worldDrops=28

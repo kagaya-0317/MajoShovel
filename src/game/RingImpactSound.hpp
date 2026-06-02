@@ -41,6 +41,7 @@ struct RingImpactSoundEvent {
 
 struct RingImpactSoundPlayback {
     std::string cueId;
+    Vec2 position{};
     float volumeScale = 1.0f;
     float pitchScale = 1.0f;
     int priority = 0;

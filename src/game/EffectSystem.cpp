@@ -1151,15 +1151,16 @@ std::vector<EffectSoundEvent> EffectSystem::consumeSoundEvents()
     return events;
 }
 
-void EffectSystem::queueSound(std::string_view cueId, float volumeScale, float pitchScale)
+void EffectSystem::queueSound(std::string_view cueId, Vec2 position, float volumeScale, float pitchScale)
 {
     if (cueId.empty()) {
         return;
     }
     soundEvents_.push_back(EffectSoundEvent{
-        std::string(cueId),
-        volumeScale,
-        pitchScale,
+        .cueId = std::string(cueId),
+        .position = position,
+        .volumeScale = volumeScale,
+        .pitchScale = pitchScale,
     });
 }
 
@@ -1325,7 +1326,7 @@ void EffectSystem::spawnAttackImpactBurst(Vec2 position, SmokeBurstOptions optio
 {
     spawnSmokeBurst(position, options);
     if (playSound) {
-        queueSound(AudioSeAttackHit);
+        queueSound(AudioSeAttackHit, position);
     }
 }
 
@@ -1530,7 +1531,7 @@ void EffectSystem::spawnDigHit(Vec2 position, Vec2 direction, Color colorOverrid
 {
     spawn(ParticleEffectId::DigDust, position, normalize(direction) * -1.0f, 1.0f, EffectLayer::Foreground, colorOverride);
     if (playSound) {
-        queueSound(AudioSeDigHit);
+        queueSound(AudioSeDigHit, position);
     }
 }
 
@@ -1545,7 +1546,7 @@ void EffectSystem::spawnTileBreak(Vec2 position, TileType tileType, Color colorO
     spawnSmokeBurst(position);
     spawn(id, position, {1.0f, 0.0f}, 1.0f, EffectLayer::Foreground, colorOverride);
     if (playSound) {
-        queueSound(tileBreakSoundFor(tileType));
+        queueSound(tileBreakSoundFor(tileType), position);
     }
 }
 
@@ -1553,7 +1554,7 @@ void EffectSystem::spawnCrateBreak(Vec2 position, Color colorOverride, bool play
 {
     spawnTileBreak(position, TileType::Dirt, colorOverride, false);
     if (playSound) {
-        queueSound(AudioSeCrateBreak);
+        queueSound(AudioSeCrateBreak, position);
     }
 }
 
@@ -1591,7 +1592,7 @@ void EffectSystem::spawnEnemyHit(Vec2 position, std::string_view effect, bool pl
     }
     spawn(id, position);
     if (playSound) {
-        queueSound(AudioSeAttackHit);
+        queueSound(AudioSeAttackHit, position);
     }
 }
 
@@ -1611,7 +1612,7 @@ void EffectSystem::spawnEnemyDeath(Vec2 position, bool playSound)
     options.layer = EffectLayer::Foreground;
     spawnSmokeBurst(position, options);
     if (playSound) {
-        queueSound(AudioSeEnemyDefeat);
+        queueSound(AudioSeEnemyDefeat, position);
     }
 }
 
@@ -1631,7 +1632,7 @@ void EffectSystem::spawnEnemyTransform(Vec2 position, bool playSound)
     options.layer = EffectLayer::Foreground;
     spawnSmokeBurst(position, options);
     if (playSound) {
-        queueSound(AudioSeEnemyTransform);
+        queueSound(AudioSeEnemyTransform, position);
     }
 }
 
@@ -1662,7 +1663,7 @@ void EffectSystem::spawnCaptureSuccess(Vec2 position, Vec2 direction, bool playS
 {
     spawn(ParticleEffectId::CaptureSuccess, position, direction);
     if (playSound) {
-        queueSound(AudioSeCaptureSuccess);
+        queueSound(AudioSeCaptureSuccess, position);
     }
 }
 
@@ -1670,7 +1671,7 @@ void EffectSystem::spawnDropPickup(Vec2 position, Vec2 direction, bool playSound
 {
     spawn(ParticleEffectId::DropPickup, position, direction);
     if (playSound) {
-        queueSound(AudioSePickup);
+        queueSound(AudioSePickup, position);
     }
 }
 
@@ -1713,13 +1714,13 @@ void EffectSystem::spawnItemBreak(Vec2 position, ItemBreakVisual visual, float s
     spawnSmokeBurst(position, options);
     spawn(particleId, position, {1.0f, 0.0f}, visualScale, EffectLayer::Foreground);
     if (playSound) {
-        queueSound(AudioSeItemBreak);
+        queueSound(AudioSeItemBreak, position);
         if (visual == ItemBreakVisual::Wood) {
-            queueSound(AudioSeCrateBreak, 0.78f);
+            queueSound(AudioSeCrateBreak, position, 0.78f);
         } else if (visual == ItemBreakVisual::Ceramic) {
-            queueSound(AudioSeItemBreakCeramic, 0.86f);
+            queueSound(AudioSeItemBreakCeramic, position, 0.86f);
         } else if (visual == ItemBreakVisual::Glass) {
-            queueSound(AudioSeItemBreakGlass, 0.86f);
+            queueSound(AudioSeItemBreakGlass, position, 0.86f);
         }
     }
 }
@@ -1907,7 +1908,7 @@ void EffectSystem::spawnExplosion(Vec2 position, float radius, bool playSound)
     const int emberCount = lightweightMode_ ? 10 : 22;
     const int shardCount = lightweightMode_ ? 8 : 16;
     if (playSound) {
-        queueSound(AudioSeExplosion);
+        queueSound(AudioSeExplosion, position);
     }
 
     spawnRing(position, safeRadius * 0.08f, safeRadius * 1.08f, {255, 220, 116, 188}, 0.26f, EffectLayer::Foreground);

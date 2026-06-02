@@ -4439,6 +4439,8 @@ void Game::renderDungeonMinimap(Renderer& renderer, const std::vector<LightSourc
         };
     };
 
+    renderer.fillCircle(minimapCenter, contentRadius, {0, 0, 0, 255});
+
     const int minTileX = playerTileX - viewRadiusTiles;
     const int maxTileX = playerTileX + viewRadiusTiles;
     const int minTileY = playerTileY - viewRadiusTiles;

@@ -139,6 +139,7 @@ struct StatusTextPopup {
 
 struct EffectSoundEvent {
     std::string cueId;
+    Vec2 position{};
     float volumeScale = 1.0f;
     float pitchScale = 1.0f;
 };
@@ -232,7 +233,7 @@ public:
     void spawnMagicCast(Vec2 origin, Vec2 direction, std::string_view element, float power);
 
 private:
-    void queueSound(std::string_view cueId, float volumeScale = 1.0f, float pitchScale = 1.0f);
+    void queueSound(std::string_view cueId, Vec2 position, float volumeScale = 1.0f, float pitchScale = 1.0f);
     void renderLayer(Renderer& renderer, EffectLayer layer);
     void renderSmokeLayer(Renderer& renderer, EffectLayer layer);
     void spawnRing(Vec2 position, float startRadius, float endRadius, Color color, float duration, EffectLayer layer = EffectLayer::World);

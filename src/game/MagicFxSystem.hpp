@@ -89,6 +89,7 @@ struct MagicFxEmitterConfig {
 
 struct MagicFxSoundEvent {
     std::string cueId;
+    Vec2 position{};
     float volumeScale = 1.0f;
     float pitchScale = 1.0f;
 };
@@ -209,6 +210,7 @@ private:
     void addParticle(Particle particle);
     void addThunderImpactArc(ThunderImpactArc arc);
     void queueSound(std::string_view cueId, float volumeScale = 1.0f, float pitchScale = 1.0f);
+    void queueSoundAt(std::string_view cueId, Vec2 position, float volumeScale = 1.0f, float pitchScale = 1.0f);
 
     std::vector<Particle> particles_;
     std::vector<Emitter> emitters_;

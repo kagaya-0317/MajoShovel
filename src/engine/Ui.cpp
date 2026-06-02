@@ -1297,9 +1297,14 @@ float drawUiDetailHeader(Renderer& renderer, UiRect panel, std::string_view text
 
 void drawUiDetailText(Renderer& renderer, UiRect panel, float& y, std::string_view text)
 {
+    drawUiDetailText(renderer, panel, y, text, ui::Text);
+}
+
+void drawUiDetailText(Renderer& renderer, UiRect panel, float& y, std::string_view text, Color color)
+{
     constexpr float TextGap = 8.0f;
     const UiRect content = uiSubPanelContentRect(panel);
-    renderer.drawWrappedText({content.pos.x, y}, text, content.size.x, ui::Text, 2);
+    renderer.drawWrappedText({content.pos.x, y}, text, content.size.x, color, 2);
     y += renderer.measureWrappedText(text, content.size.x, 2).y + TextGap;
 }
 

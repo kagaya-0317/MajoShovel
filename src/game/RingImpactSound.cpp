@@ -270,6 +270,7 @@ RingImpactSoundPlayback makePlayback(const RingImpactSoundEvent& event, const Cu
     const float intensity = eventIntensity(event);
     return RingImpactSoundPlayback{
         .cueId = std::string(rule.cueId),
+        .position = event.position,
         .volumeScale = clampFloat(rule.volume * (0.82f + intensity * 0.30f), 0.45f, 1.18f),
         .pitchScale = clampFloat(rule.basePitch + sizePitchOffset(event) + pitchDist(rng), 0.72f, 1.28f),
         .priority = rule.priority,

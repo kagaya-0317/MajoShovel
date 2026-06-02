@@ -145,6 +145,8 @@ void Input::beginFrame()
     ctrlSavePressed_ = false;
     ctrlUndoPressed_ = false;
     ctrlRedoPressed_ = false;
+    ctrlCopyPressed_ = false;
+    ctrlPastePressed_ = false;
     suppressDirectShortcutThisFrame_ = false;
     shortcutCursorDelta_ = 0;
     mouseWheelDelta_ = 0;
@@ -185,6 +187,14 @@ void Input::handleEvent(const SDL_Event& event)
             }
             if (event.key.scancode == SDL_SCANCODE_Y) {
                 ctrlRedoPressed_ = true;
+                return;
+            }
+            if (event.key.scancode == SDL_SCANCODE_C) {
+                ctrlCopyPressed_ = true;
+                return;
+            }
+            if (event.key.scancode == SDL_SCANCODE_V) {
+                ctrlPastePressed_ = true;
                 return;
             }
         }

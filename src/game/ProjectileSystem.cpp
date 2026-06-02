@@ -1875,6 +1875,7 @@ void pushPlayer(Player& player, TileMap& map, Vec2 direction, float distance)
 void queueProjectileSound(
     std::vector<ProjectileSoundEvent>& soundEvents,
     std::string_view cueId,
+    Vec2 position,
     float volumeScale = 1.0f,
     float pitchScale = 1.0f)
 {
@@ -1882,9 +1883,10 @@ void queueProjectileSound(
         return;
     }
     soundEvents.push_back(ProjectileSoundEvent{
-        std::string(cueId),
-        volumeScale,
-        pitchScale,
+        .cueId = std::string(cueId),
+        .position = position,
+        .volumeScale = volumeScale,
+        .pitchScale = pitchScale,
     });
 }
 
@@ -1893,7 +1895,7 @@ void deactivateProjectile(Projectile& projectile, std::vector<ProjectileSoundEve
     if (!projectile.active) {
         return;
     }
-    queueProjectileSound(soundEvents, projectile.destroySeId);
+    queueProjectileSound(soundEvents, projectile.destroySeId, projectile.position);
     projectile.active = false;
 }
 
@@ -1980,7 +1982,7 @@ bool ProjectileSystem::spawn(
     projectile->destroySeId = std::string(prototype.destroySeId);
     projectile->effects = effects;
     emitProjectileFxEvent(projectileFx_, *projectile, ProjectileFxEvent::Launch);
-    queueProjectileSound(soundEvents_, projectile->launchSeId);
+    queueProjectileSound(soundEvents_, projectile->launchSeId, projectile->position);
     return true;
 }
 
@@ -2128,7 +2130,7 @@ void ProjectileSystem::update(
             }
             if (consumedByRing) {
                 if (reflectedByRing && blockingItem != nullptr) {
-                    queueProjectileSound(soundEvents_, AudioSeRingReflect);
+                    queueProjectileSound(soundEvents_, AudioSeRingReflect, projectile.position);
                     emitProjectileFxEvent(projectileFx_, projectile, ProjectileFxEvent::Reflect);
                     projectile.ownerType = ProjectileOwnerType::PlayerOrbit;
                     projectile.damage = std::max(
@@ -2146,7 +2148,7 @@ void ProjectileSystem::update(
                     projectile.velocity = reflectDirection * speed;
                     continue;
                 }
-                queueProjectileSound(soundEvents_, AudioSeRingGuard);
+                queueProjectileSound(soundEvents_, AudioSeRingGuard, projectile.position);
                 emitProjectileFxEvent(projectileFx_, projectile, ProjectileFxEvent::Guard);
                 if (blockingItem != nullptr && blockingObject != nullptr) {
                     pushDiscoveryEvent(

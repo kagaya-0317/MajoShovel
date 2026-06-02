@@ -4098,6 +4098,11 @@ void Game::initializeWarpPointsFromLayout()
         ++index;
     }
     spawnedWarpPointCount_ = static_cast<int>(warpPoints_.size());
+    if (!warpPoints_.empty() &&
+        discoveredWarpPointCount() >= static_cast<int>(warpPoints_.size()) &&
+        !hasBossSpawnPoint_) {
+        configureBossSpawnPointFromWarp(warpPoints_.back().position);
+    }
 }
 
 int Game::discoveredWarpPointCount() const
@@ -6629,6 +6634,11 @@ void Game::updateWarpPoints(float dt)
             playAudioSe(AudioSeWarpDiscovery);
             queueStoryEventForTrigger("tutorial:warp");
         }
+    }
+    if (!warpPoints_.empty() &&
+        discoveredWarpPointCount() >= static_cast<int>(warpPoints_.size()) &&
+        !hasBossSpawnPoint_) {
+        configureBossSpawnPointFromWarp(warpPoints_.back().position);
     }
 }
 
@@ -9167,17 +9177,32 @@ int Game::spawnedEnemyNodeCount() const
 void Game::configureBossSpawnPointFromWarp(Vec2 warpPosition)
 {
     if (dungeonLayout_.mainPathPoints.size() >= 2) {
-        const DungeonLayoutMetrics metrics = calculateDungeonLayoutMetrics(dungeonLayout_, {
+        const Vec2 warpTilePosition{
             static_cast<float>(tileMap_.worldToTile(warpPosition.x)),
             static_cast<float>(tileMap_.worldToTile(warpPosition.y)),
-        });
+        };
+        const DungeonLayoutMetrics metrics = calculateDungeonLayoutMetrics(dungeonLayout_, warpTilePosition);
         const float pathLength = pathLengthTiles(dungeonLayout_.mainPathPoints);
         if (pathLength > 0.0001f) {
-            const float bossProgress = clamp(
-                metrics.pathProgress + static_cast<float>(BossOffsetTiles) / pathLength,
-                metrics.pathProgress,
-                1.0f);
-            bossSpawnPoint_ = tileWorldCenter(roundDungeonTile(pointAtPathProgress(dungeonLayout_.mainPathPoints, bossProgress)));
+            const float baseDistance = metrics.pathProgress * pathLength;
+            const float minDistanceFromWarp = static_cast<float>(BossOffsetTiles);
+            const float minUpwardDeltaTiles = 4.0f;
+            Vec2 bossTilePoint = pointAtPathProgress(
+                dungeonLayout_.mainPathPoints,
+                clamp((baseDistance + minDistanceFromWarp) / pathLength, metrics.pathProgress, 1.0f));
+            for (float distanceAlongPath = baseDistance + minDistanceFromWarp;
+                distanceAlongPath <= pathLength + 0.001f;
+                distanceAlongPath += 2.0f) {
+                const Vec2 candidate = pointAtPathProgress(
+                    dungeonLayout_.mainPathPoints,
+                    clamp(distanceAlongPath / pathLength, metrics.pathProgress, 1.0f));
+                if (length(candidate - warpTilePosition) >= minDistanceFromWarp &&
+                    candidate.y <= warpTilePosition.y - minUpwardDeltaTiles) {
+                    bossTilePoint = candidate;
+                    break;
+                }
+            }
+            bossSpawnPoint_ = tileWorldCenter(roundDungeonTile(bossTilePoint));
             hasBossSpawnPoint_ = true;
             return;
         }

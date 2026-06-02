@@ -28,6 +28,7 @@ enum class ProjectileOwnerType {
 
 struct ProjectileSoundEvent {
     std::string cueId;
+    Vec2 position{};
     float volumeScale = 1.0f;
     float pitchScale = 1.0f;
 };

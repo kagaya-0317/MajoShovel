@@ -29,6 +29,7 @@ enum class InlineIconKind {
 constexpr std::string_view BrokenItemNamePrefix = "壊れた";
 constexpr Color BrokenItemImageTint{140, 140, 148, 220};
 constexpr Color BrokenItemFallbackColor{82, 82, 90, 255};
+constexpr Color InventoryEffectTextColor{255, 230, 150, 255};
 constexpr float TwoPi = 6.283185307f;
 
 struct InlineIconTag {
@@ -807,6 +808,33 @@ std::string joinInventoryUiEffectLines(const std::vector<std::string>& lines)
     return text;
 }
 
+std::string formatInventoryUiWeightText(const ItemData& item, const std::optional<InventoryUiItemStats>& stats)
+{
+    const double baseWeightKg = std::max(0.0, item.weightKg);
+    const double weightModifier = stats ? stats->weightModifier : 1.0;
+    const double effectiveWeightKg = std::max(0.0, baseWeightKg * weightModifier);
+
+    char buffer[96];
+    if (!stats || std::abs(weightModifier - 1.0) <= 0.001) {
+        std::snprintf(buffer, sizeof(buffer), "%.1fkg", effectiveWeightKg);
+        return buffer;
+    }
+
+    std::snprintf(
+        buffer,
+        sizeof(buffer),
+        "%.1fkg（元%.1fkg x%.0f%%）",
+        effectiveWeightKg,
+        baseWeightKg,
+        weightModifier * 100.0);
+    return buffer;
+}
+
+void drawInventoryUiEffectText(Renderer& renderer, UiRect panel, float& y, std::string_view text)
+{
+    drawUiDetailText(renderer, panel, y, text, InventoryEffectTextColor);
+}
+
 void drawItemEffectDetailSections(
     Renderer& renderer,
     UiRect panel,
@@ -822,22 +850,22 @@ void drawItemEffectDetailSections(
         std::vector<std::string> ringLines = sections.ringLines;
         applyStaffManualEquipmentEffectText(item, equipmentLines, ringLines.size());
         if (!equipmentLines.empty()) {
-            drawUiDetailText(renderer, panel, y, "装備時効果");
-            drawUiDetailText(renderer, panel, y, joinInventoryUiEffectLines(equipmentLines));
+            drawInventoryUiEffectText(renderer, panel, y, "装備時効果");
+            drawInventoryUiEffectText(renderer, panel, y, joinInventoryUiEffectLines(equipmentLines));
         }
         if (!ringLines.empty()) {
-            drawUiDetailText(renderer, panel, y, "リングに乗せたときの効果");
-            drawUiDetailText(renderer, panel, y, joinInventoryUiEffectLines(ringLines));
+            drawInventoryUiEffectText(renderer, panel, y, "リングに乗せたときの効果");
+            drawInventoryUiEffectText(renderer, panel, y, joinInventoryUiEffectLines(ringLines));
         }
         return;
     }
     if (!sections.useLines.empty()) {
-        drawUiDetailText(renderer, panel, y, "使用時の効果");
-        drawUiDetailText(renderer, panel, y, joinInventoryUiEffectLines(sections.useLines));
+        drawInventoryUiEffectText(renderer, panel, y, "使用時の効果");
+        drawInventoryUiEffectText(renderer, panel, y, joinInventoryUiEffectLines(sections.useLines));
     }
     if (!sections.ringLines.empty()) {
-        drawUiDetailText(renderer, panel, y, "リングに乗せたときの効果");
-        drawUiDetailText(renderer, panel, y, joinInventoryUiEffectLines(sections.ringLines));
+        drawInventoryUiEffectText(renderer, panel, y, "リングに乗せたときの効果");
+        drawInventoryUiEffectText(renderer, panel, y, joinInventoryUiEffectLines(sections.ringLines));
     }
 }
 
@@ -1318,9 +1346,7 @@ void drawInventoryUiDetailPanel(
     }
     drawUiDetailLine(renderer, panel, detailLineY, "耐久力", buffer);
 
-    const double weightKg = entry.item->weightKg * (stats ? stats->weightModifier : 1.0);
-    std::snprintf(buffer, sizeof(buffer), "%.1fkg", weightKg);
-    drawUiDetailLine(renderer, panel, detailLineY, "重さ", buffer);
+    drawUiDetailLine(renderer, panel, detailLineY, "重量", formatInventoryUiWeightText(*entry.item, stats));
 
     if (options.showEnhanceCount && stats && stats->enhanceLevel > 0) {
         std::snprintf(buffer, sizeof(buffer), "%d", stats->enhanceLevel);

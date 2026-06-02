@@ -502,6 +502,7 @@ void drawUiBodyMessageBelow(Renderer& renderer, UiRect anchor, std::string_view 
 void drawUiSystemMessage(Renderer& renderer, std::string_view message, Vec2 pos, const UiSystemMessageStyle& style = {});
 float drawUiDetailHeader(Renderer& renderer, UiRect panel, std::string_view text);
 void drawUiDetailText(Renderer& renderer, UiRect panel, float& y, std::string_view text);
+void drawUiDetailText(Renderer& renderer, UiRect panel, float& y, std::string_view text, Color color);
 void drawUiDetailLine(Renderer& renderer, UiRect panel, float& y, std::string_view label, std::string_view value, Color valueColor = ui::Text);
 void openUiResultDialog(UiResultDialogState& state, std::string title, std::vector<std::string> lines);
 void openUiResultDialog(UiResultDialogState& state, std::string title, std::vector<UiResultDialogLine> lines);

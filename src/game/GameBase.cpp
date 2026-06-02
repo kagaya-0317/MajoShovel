@@ -962,6 +962,14 @@ std::string formatDiaryPlayTime(std::int64_t seconds)
     return std::to_string(hours) + "時間" + std::to_string(minutes) + "分";
 }
 
+int codexCompletionPercent(int discoveredCount, int totalCount)
+{
+    if (totalCount <= 0) {
+        return 0;
+    }
+    return std::clamp(discoveredCount * 100 / totalCount, 0, 100);
+}
+
 UiRect merchantActionDialogRect()
 {
     return smallActionDialogRect();
@@ -8292,6 +8300,13 @@ void Game::renderBookshelfScreen(Renderer& renderer) const
 
     std::snprintf(buffer, sizeof(buffer), "%d/%d 記録", discoveredCount, totalCount);
     renderer.drawText(panel.pos + Vec2{28.0f, 62.0f}, buffer, {150, 150, 160, 255}, 2);
+    std::snprintf(buffer, sizeof(buffer), "完成度 %d%%", codexCompletionPercent(discoveredCount, totalCount));
+    const Vec2 completionTextSize = renderer.measureText(buffer, 2);
+    renderer.drawText(
+        panel.pos + Vec2{panel.size.x - 28.0f - completionTextSize.x, 62.0f},
+        buffer,
+        {255, 230, 150, 255},
+        2);
     if (totalCount <= 0) {
         renderer.drawText(panel.pos + Vec2{28.0f, 154.0f}, "記録対象がありません", {150, 150, 160, 255}, 2);
     } else if (bookshelfPage_ == BookshelfPage::Items) {

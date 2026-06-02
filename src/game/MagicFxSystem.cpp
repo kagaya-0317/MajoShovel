@@ -1089,11 +1089,17 @@ void MagicFxSystem::emitBurst(const MagicFxEmitterConfig& config)
 
 void MagicFxSystem::queueSound(std::string_view cueId, float volumeScale, float pitchScale)
 {
+    queueSoundAt(cueId, {}, volumeScale, pitchScale);
+}
+
+void MagicFxSystem::queueSoundAt(std::string_view cueId, Vec2 position, float volumeScale, float pitchScale)
+{
     if (cueId.empty()) {
         return;
     }
     soundEvents_.push_back({
         std::string(cueId),
+        position,
         std::max(0.0f, volumeScale),
         std::max(0.01f, pitchScale),
     });
@@ -1118,7 +1124,7 @@ std::vector<MagicFxSoundEvent> MagicFxSystem::consumeSoundEvents()
 
 void MagicFxSystem::playHealPulse(Vec2 position, float radius)
 {
-    queueSound(AudioSeMagicCast, 0.72f, 1.08f);
+    queueSoundAt(AudioSeMagicCast, position, 0.72f, 1.08f);
     radius = std::max(8.0f, radius);
 
     MagicFxEmitterConfig ring;
@@ -1922,7 +1928,7 @@ MagicFxEmitterHandle MagicFxSystem::startThunderAura(Vec2 position, float radius
 
 void MagicFxSystem::playThunderStrike(Vec2 origin, Vec2 target, bool strong)
 {
-    queueSound(AudioSeMagicImpact, strong ? 1.12f : 0.86f, strong ? 0.94f : 1.08f);
+    queueSoundAt(AudioSeMagicImpact, target, strong ? 1.12f : 0.86f, strong ? 0.94f : 1.08f);
     LightningStrike strike;
     strike.active = true;
     strike.strong = strong;
@@ -2093,7 +2099,7 @@ void MagicFxSystem::playThunderStrike(Vec2 origin, Vec2 target, bool strong)
 
 void MagicFxSystem::playThunderSparkBurst(Vec2 position, float radius)
 {
-    queueSound(AudioSeMagicImpact, 0.82f, 1.18f);
+    queueSoundAt(AudioSeMagicImpact, position, 0.82f, 1.18f);
     MagicFxEmitterConfig burst;
     burst.position = position;
     burst.direction = {1.0f, 0.0f};
@@ -2382,7 +2388,7 @@ MagicFxEmitterHandle MagicFxSystem::startDirtClodLoop(Vec2 position, Vec2 direct
 
 void MagicFxSystem::playEarthSpikeRise(Vec2 position, float radius)
 {
-    queueSound(AudioSeMagicImpact, 1.06f, 0.88f);
+    queueSoundAt(AudioSeMagicImpact, position, 1.06f, 0.88f);
     radius = std::max(8.0f, radius);
     const float spikeLifetime = sampleRange({1.02f, 1.10f});
     constexpr float SpikeFadeOutFraction = 0.14f;
@@ -2578,7 +2584,7 @@ void MagicFxSystem::playEarthSpikeRise(Vec2 position, float radius)
 
 void MagicFxSystem::playEarthDebrisBurst(Vec2 position, float radius)
 {
-    queueSound(AudioSeMagicImpact, 0.96f, 0.92f);
+    queueSoundAt(AudioSeMagicImpact, position, 0.96f, 0.92f);
     radius = std::max(5.0f, radius);
 
     MagicFxEmitterConfig debris;

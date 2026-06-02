@@ -2536,13 +2536,13 @@ void Game::setBaseFacilityRectFor(BaseArea area, std::string_view facilityId, Ba
 
 bool Game::isBasePassabilityBlocked(BaseArea area, int tileX, int tileY) const
 {
-    const auto& blocked = area == BaseArea::Outdoor ? baseBlockedTilesOutdoor_ : baseBlockedTilesHome_;
+    const auto& blocked = baseBlockedTilesFor(area, editedBasePassabilityLayer());
     return blocked.find(packBaseEditTile(tileX, tileY)) != blocked.end();
 }
 
 void Game::setBasePassabilityBlocked(BaseArea area, int tileX, int tileY, bool blocked)
 {
-    auto& table = area == BaseArea::Outdoor ? baseBlockedTilesOutdoor_ : baseBlockedTilesHome_;
+    auto& table = baseBlockedTilesFor(area, editedBasePassabilityLayer());
     const std::int64_t key = packBaseEditTile(tileX, tileY);
     if (blocked) {
         table.insert(key);
@@ -2551,17 +2551,76 @@ void Game::setBasePassabilityBlocked(BaseArea area, int tileX, int tileY, bool b
     }
 }
 
+BaseEditPassabilityLayer Game::currentBasePassabilityLayer() const
+{
+    return ringWorkshopUnlocked_ ? BaseEditPassabilityLayer::Unlocked : BaseEditPassabilityLayer::Locked;
+}
+
+BaseEditPassabilityLayer Game::editedBasePassabilityLayer() const
+{
+    return baseEditEnabled_ ? baseEditPassabilityLayer_ : currentBasePassabilityLayer();
+}
+
+std::unordered_set<std::int64_t>& Game::baseBlockedTilesFor(BaseArea area, BaseEditPassabilityLayer layer)
+{
+    if (area == BaseArea::Outdoor) {
+        return layer == BaseEditPassabilityLayer::Unlocked
+            ? baseBlockedTilesOutdoorUnlocked_
+            : baseBlockedTilesOutdoorLocked_;
+    }
+    return layer == BaseEditPassabilityLayer::Unlocked
+        ? baseBlockedTilesHomeUnlocked_
+        : baseBlockedTilesHomeLocked_;
+}
+
+const std::unordered_set<std::int64_t>& Game::baseBlockedTilesFor(BaseArea area, BaseEditPassabilityLayer layer) const
+{
+    if (area == BaseArea::Outdoor) {
+        return layer == BaseEditPassabilityLayer::Unlocked
+            ? baseBlockedTilesOutdoorUnlocked_
+            : baseBlockedTilesOutdoorLocked_;
+    }
+    return layer == BaseEditPassabilityLayer::Unlocked
+        ? baseBlockedTilesHomeUnlocked_
+        : baseBlockedTilesHomeLocked_;
+}
+
+bool Game::copyBasePassabilityLayer()
+{
+    baseEditPassabilityClipboard_ = baseBlockedTilesFor(baseArea_, editedBasePassabilityLayer());
+    baseEditPassabilityClipboardValid_ = true;
+    return true;
+}
+
+bool Game::pasteBasePassabilityLayer()
+{
+    if (!baseEditPassabilityClipboardValid_) {
+        return false;
+    }
+    auto& target = baseBlockedTilesFor(baseArea_, editedBasePassabilityLayer());
+    if (target == baseEditPassabilityClipboard_) {
+        return false;
+    }
+    pushBaseEditUndoSnapshot();
+    target = baseEditPassabilityClipboard_;
+    baseEditDirty_ = true;
+    return true;
+}
+
 void Game::loadBaseEditData()
 {
     baseFacilityRectsOutdoor_.clear();
     baseFacilityRectsHome_.clear();
-    baseBlockedTilesOutdoor_.clear();
-    baseBlockedTilesHome_.clear();
+    baseBlockedTilesOutdoorLocked_.clear();
+    baseBlockedTilesOutdoorUnlocked_.clear();
+    baseBlockedTilesHomeLocked_.clear();
+    baseBlockedTilesHomeUnlocked_.clear();
     baseEditDirty_ = false;
 
     for (BaseArea area : {BaseArea::Outdoor, BaseArea::HomeInterior}) {
         auto& facilityRects = area == BaseArea::Outdoor ? baseFacilityRectsOutdoor_ : baseFacilityRectsHome_;
-        auto& blockedTiles = area == BaseArea::Outdoor ? baseBlockedTilesOutdoor_ : baseBlockedTilesHome_;
+        auto& blockedLocked = baseBlockedTilesFor(area, BaseEditPassabilityLayer::Locked);
+        auto& blockedUnlocked = baseBlockedTilesFor(area, BaseEditPassabilityLayer::Unlocked);
         const std::filesystem::path path = baseEditDataPath(area);
         std::ifstream file(path, std::ios::binary);
         if (!file) {
@@ -2581,11 +2640,30 @@ void Game::loadBaseEditData()
                     facilityRects[id] = normalizeBaseEditRect(rect);
                 }
             } else if (key == "blocked") {
-                int tileX = 0;
-                int tileY = 0;
-                stream >> tileX >> tileY;
-                if (!stream.fail()) {
-                    blockedTiles.insert(packBaseEditTile(tileX, tileY));
+                std::string layerOrTileX;
+                stream >> layerOrTileX;
+                if (layerOrTileX == "locked" || layerOrTileX == "unlocked") {
+                    int tileX = 0;
+                    int tileY = 0;
+                    stream >> tileX >> tileY;
+                    if (!stream.fail()) {
+                        baseBlockedTilesFor(
+                            area,
+                            layerOrTileX == "unlocked"
+                                ? BaseEditPassabilityLayer::Unlocked
+                                : BaseEditPassabilityLayer::Locked).insert(packBaseEditTile(tileX, tileY));
+                    }
+                } else {
+                    int tileX = 0;
+                    int tileY = 0;
+                    std::istringstream tileStream(layerOrTileX);
+                    tileStream >> tileX;
+                    stream >> tileY;
+                    if (!tileStream.fail() && !stream.fail()) {
+                        const std::int64_t packed = packBaseEditTile(tileX, tileY);
+                        blockedLocked.insert(packed);
+                        blockedUnlocked.insert(packed);
+                    }
                 }
             }
         }
@@ -2609,7 +2687,7 @@ bool Game::saveBaseEditData(std::string& message)
             return false;
         }
 
-        file << "MAJO_BASE_EDIT_V1\n";
+        file << "MAJO_BASE_EDIT_V2\n";
 
         std::vector<BaseFacility> facilities = baseFacilities(area, ringWorkshopUnlocked_);
         for (BaseFacility& facility : facilities) {
@@ -2619,12 +2697,17 @@ bool Game::saveBaseEditData(std::string& message)
                 << rect.x << " " << rect.y << " " << rect.w << " " << rect.h << "\n";
         }
 
-        const auto& blocked = area == BaseArea::Outdoor ? baseBlockedTilesOutdoor_ : baseBlockedTilesHome_;
-        std::vector<std::int64_t> blockedSorted(blocked.begin(), blocked.end());
-        std::sort(blockedSorted.begin(), blockedSorted.end());
-        for (const std::int64_t packed : blockedSorted) {
-            file << "blocked " << baseEditTileXFromPacked(packed) << " " << baseEditTileYFromPacked(packed) << "\n";
-        }
+        const auto writeBlocked = [&](BaseEditPassabilityLayer layer, std::string_view layerName) {
+            const auto& blocked = baseBlockedTilesFor(area, layer);
+            std::vector<std::int64_t> blockedSorted(blocked.begin(), blocked.end());
+            std::sort(blockedSorted.begin(), blockedSorted.end());
+            for (const std::int64_t packed : blockedSorted) {
+                file << "blocked " << layerName << " " <<
+                    baseEditTileXFromPacked(packed) << " " << baseEditTileYFromPacked(packed) << "\n";
+            }
+        };
+        writeBlocked(BaseEditPassabilityLayer::Locked, "locked");
+        writeBlocked(BaseEditPassabilityLayer::Unlocked, "unlocked");
 
         if (!file) {
             message = "Base edit save failed while writing " + path.string();
@@ -7721,6 +7804,7 @@ void Game::enterBaseEditMode()
 
     baseEditEnabled_ = true;
     baseEditMode_ = BaseEditMode::Facility;
+    baseEditPassabilityLayer_ = currentBasePassabilityLayer();
     baseEditSelectedFacilityIndex_ = -1;
     resetBaseEditDragState();
 }
@@ -7738,8 +7822,10 @@ void Game::pushBaseEditUndoSnapshot()
     BaseEditSnapshot snapshot;
     snapshot.outdoorFacilityRects = baseFacilityRectsOutdoor_;
     snapshot.homeFacilityRects = baseFacilityRectsHome_;
-    snapshot.outdoorBlockedTiles = baseBlockedTilesOutdoor_;
-    snapshot.homeBlockedTiles = baseBlockedTilesHome_;
+    snapshot.outdoorBlockedTilesLocked = baseBlockedTilesOutdoorLocked_;
+    snapshot.outdoorBlockedTilesUnlocked = baseBlockedTilesOutdoorUnlocked_;
+    snapshot.homeBlockedTilesLocked = baseBlockedTilesHomeLocked_;
+    snapshot.homeBlockedTilesUnlocked = baseBlockedTilesHomeUnlocked_;
     baseEditUndoStack_.push_back(std::move(snapshot));
     if (static_cast<int>(baseEditUndoStack_.size()) > BaseEditUndoLimit) {
         baseEditUndoStack_.erase(baseEditUndoStack_.begin());
@@ -7756,16 +7842,20 @@ bool Game::undoBaseEdit()
     BaseEditSnapshot current;
     current.outdoorFacilityRects = baseFacilityRectsOutdoor_;
     current.homeFacilityRects = baseFacilityRectsHome_;
-    current.outdoorBlockedTiles = baseBlockedTilesOutdoor_;
-    current.homeBlockedTiles = baseBlockedTilesHome_;
+    current.outdoorBlockedTilesLocked = baseBlockedTilesOutdoorLocked_;
+    current.outdoorBlockedTilesUnlocked = baseBlockedTilesOutdoorUnlocked_;
+    current.homeBlockedTilesLocked = baseBlockedTilesHomeLocked_;
+    current.homeBlockedTilesUnlocked = baseBlockedTilesHomeUnlocked_;
     baseEditRedoStack_.push_back(std::move(current));
 
     const BaseEditSnapshot snapshot = std::move(baseEditUndoStack_.back());
     baseEditUndoStack_.pop_back();
     baseFacilityRectsOutdoor_ = snapshot.outdoorFacilityRects;
     baseFacilityRectsHome_ = snapshot.homeFacilityRects;
-    baseBlockedTilesOutdoor_ = snapshot.outdoorBlockedTiles;
-    baseBlockedTilesHome_ = snapshot.homeBlockedTiles;
+    baseBlockedTilesOutdoorLocked_ = snapshot.outdoorBlockedTilesLocked;
+    baseBlockedTilesOutdoorUnlocked_ = snapshot.outdoorBlockedTilesUnlocked;
+    baseBlockedTilesHomeLocked_ = snapshot.homeBlockedTilesLocked;
+    baseBlockedTilesHomeUnlocked_ = snapshot.homeBlockedTilesUnlocked;
     baseEditDirty_ = true;
     return true;
 }
@@ -7779,8 +7869,10 @@ bool Game::redoBaseEdit()
     BaseEditSnapshot current;
     current.outdoorFacilityRects = baseFacilityRectsOutdoor_;
     current.homeFacilityRects = baseFacilityRectsHome_;
-    current.outdoorBlockedTiles = baseBlockedTilesOutdoor_;
-    current.homeBlockedTiles = baseBlockedTilesHome_;
+    current.outdoorBlockedTilesLocked = baseBlockedTilesOutdoorLocked_;
+    current.outdoorBlockedTilesUnlocked = baseBlockedTilesOutdoorUnlocked_;
+    current.homeBlockedTilesLocked = baseBlockedTilesHomeLocked_;
+    current.homeBlockedTilesUnlocked = baseBlockedTilesHomeUnlocked_;
     baseEditUndoStack_.push_back(std::move(current));
     if (static_cast<int>(baseEditUndoStack_.size()) > BaseEditUndoLimit) {
         baseEditUndoStack_.erase(baseEditUndoStack_.begin());
@@ -7790,8 +7882,10 @@ bool Game::redoBaseEdit()
     baseEditRedoStack_.pop_back();
     baseFacilityRectsOutdoor_ = snapshot.outdoorFacilityRects;
     baseFacilityRectsHome_ = snapshot.homeFacilityRects;
-    baseBlockedTilesOutdoor_ = snapshot.outdoorBlockedTiles;
-    baseBlockedTilesHome_ = snapshot.homeBlockedTiles;
+    baseBlockedTilesOutdoorLocked_ = snapshot.outdoorBlockedTilesLocked;
+    baseBlockedTilesOutdoorUnlocked_ = snapshot.outdoorBlockedTilesUnlocked;
+    baseBlockedTilesHomeLocked_ = snapshot.homeBlockedTilesLocked;
+    baseBlockedTilesHomeUnlocked_ = snapshot.homeBlockedTilesUnlocked;
     baseEditDirty_ = true;
     return true;
 }
@@ -7948,6 +8042,32 @@ void Game::updateBaseEditScreen(const Input& input, UiContext& ui, float)
             resetBaseEditDragState();
         }
     } else if (baseEditMode_ == BaseEditMode::Passability) {
+        if (!baseEditPassPaintActive_ && input.toggleShortcutRowPressed()) {
+            baseEditPassabilityLayer_ = baseEditPassabilityLayer_ == BaseEditPassabilityLayer::Locked
+                ? BaseEditPassabilityLayer::Unlocked
+                : BaseEditPassabilityLayer::Locked;
+            baseStatus_ = baseEditPassabilityLayer_ == BaseEditPassabilityLayer::Unlocked
+                ? "Passability layer: unlocked"
+                : "Passability layer: locked";
+            resetBaseEditDragState();
+            return;
+        }
+        if (input.copyShortcutPressed()) {
+            copyBasePassabilityLayer();
+            baseStatus_ = "Passability copied";
+            return;
+        }
+        if (input.pasteShortcutPressed()) {
+            if (pasteBasePassabilityLayer()) {
+                baseStatus_ = "Passability pasted";
+            } else {
+                baseStatus_ = baseEditPassabilityClipboardValid_
+                    ? "Passability paste: no changes"
+                    : "Passability paste: clipboard empty";
+            }
+            return;
+        }
+
         const UiRect map = baseMapBounds();
         const auto toTile = [](Vec2 position) {
             return std::pair<int, int>{
@@ -8045,7 +8165,7 @@ void Game::renderBaseEditOverlay(Renderer& renderer) const
     const bool passabilityMode = baseEditMode_ == BaseEditMode::Passability;
 
     if (passabilityMode) {
-        const auto& blocked = baseArea_ == BaseArea::Outdoor ? baseBlockedTilesOutdoor_ : baseBlockedTilesHome_;
+        const auto& blocked = baseBlockedTilesFor(baseArea_, editedBasePassabilityLayer());
         for (const std::int64_t packed : blocked) {
             const float x = static_cast<float>(baseEditTileXFromPacked(packed) * BaseEditGridSize);
             const float y = static_cast<float>(baseEditTileYFromPacked(packed) * BaseEditGridSize);
@@ -8100,13 +8220,24 @@ void Game::renderBaseEditOverlay(Renderer& renderer) const
         }
     }
 
-    renderer.fillRect({884.0f, 38.0f}, {360.0f, 112.0f}, {10, 16, 28, 210});
-    renderer.drawRect({884.0f, 38.0f}, {360.0f, 112.0f}, {130, 168, 232, 255});
+    renderer.fillRect({884.0f, 38.0f}, {360.0f, passabilityMode ? 172.0f : 112.0f}, {10, 16, 28, 210});
+    renderer.drawRect({884.0f, 38.0f}, {360.0f, passabilityMode ? 172.0f : 112.0f}, {130, 168, 232, 255});
     drawUiButton(renderer, baseEditModeButtonRect(0), "Facility", facilityMode);
     drawUiButton(renderer, baseEditModeButtonRect(1), "Passability", passabilityMode);
     drawUiButton(renderer, baseEditSaveButtonRect(), "Save", false, uiActionButtonStyle());
-    renderer.drawText({898.0f, 132.0f}, baseEditDirty_ ? "Unsaved changes (*)" : "Saved", {255, 230, 150, 255}, 2);
-    renderer.drawText({898.0f, 158.0f}, "Ctrl+S save / Ctrl+Z undo / Esc exit", {198, 198, 206, 255}, 2);
+    if (passabilityMode) {
+        const std::string layer = baseEditPassabilityLayer_ == BaseEditPassabilityLayer::Unlocked
+            ? "Layer: unlocked"
+            : "Layer: locked";
+        renderer.drawText({898.0f, 132.0f}, layer + "   Tab switch", {218, 232, 255, 255}, 2);
+        renderer.drawText({898.0f, 158.0f}, "Ctrl+C copy / Ctrl+V paste", {198, 198, 206, 255}, 2);
+    } else {
+        renderer.drawText({898.0f, 132.0f}, baseEditDirty_ ? "Unsaved changes (*)" : "Saved", {255, 230, 150, 255}, 2);
+        renderer.drawText({898.0f, 158.0f}, "Ctrl+S save / Ctrl+Z undo / Esc exit", {198, 198, 206, 255}, 2);
+    }
+    if (passabilityMode) {
+        renderer.drawText({898.0f, 184.0f}, baseEditDirty_ ? "Unsaved changes (*)" : "Saved", {255, 230, 150, 255}, 2);
+    }
 }
 
 bool Game::handleBaseEditCommand(std::string_view normalized)

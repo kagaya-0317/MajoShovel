@@ -404,13 +404,13 @@ public:
         currentBgmId_.clear();
     }
 
-    void playSe(std::string_view id, float volumeScale, float pitchScale)
+    void playSe(std::string_view id, AudioSeParams params)
     {
-        if (volumeScale <= 0.0f) {
+        if (params.volumeScale <= 0.0f) {
             return;
         }
 
-        const float sanitizedPitchScale = sanitizePitchScale(pitchScale);
+        const float sanitizedPitchScale = sanitizePitchScale(params.pitchScale);
         const std::string key(id);
         std::scoped_lock lock(mutex_);
         const Cue* cue = findCueLocked(key, AudioCueType::Se);
@@ -434,9 +434,10 @@ public:
         voice.sound = cue->sound;
         voice.loop = false;
         voice.pitchScale = sanitizedPitchScale;
-        voice.baseVolume = clampVolume(cue->options.volume * volumeScale);
+        voice.baseVolume = clampVolume(cue->options.volume * params.volumeScale);
         voice.currentVolume = voice.baseVolume;
         voice.targetVolume = voice.baseVolume;
+        voice.pan = std::clamp(params.pan, -1.0f, 1.0f);
         voices_.push_back(std::move(voice));
     }
 
@@ -523,6 +524,7 @@ private:
         float currentVolume = 1.0f;
         float targetVolume = 1.0f;
         float fadeDeltaPerFrame = 0.0f;
+        float pan = 0.0f;
         int fadeRemainingFrames = 0;
         bool finished = false;
     };
@@ -581,6 +583,12 @@ private:
 
                 const float busVolume = voice.type == AudioCueType::Bgm ? bgmVolume_ : seVolume_;
                 const float voiceVolume = masterVolume_ * busVolume * voice.currentVolume;
+                const float leftPanGain = voice.type == AudioCueType::Se && settings_.channels >= 2
+                    ? (voice.pan > 0.0f ? 1.0f - voice.pan : 1.0f)
+                    : 1.0f;
+                const float rightPanGain = voice.type == AudioCueType::Se && settings_.channels >= 2
+                    ? (voice.pan < 0.0f ? 1.0f + voice.pan : 1.0f)
+                    : 1.0f;
                 const double sourceFramePosition = std::max(0.0, voice.framePosition);
                 const std::size_t sourceFrameA = static_cast<std::size_t>(sourceFramePosition);
                 std::size_t sourceFrameB = sourceFrameA + 1;
@@ -593,10 +601,11 @@ private:
                 const std::size_t outputBase = static_cast<std::size_t>(frame * settings_.channels);
                 for (int channel = 0; channel < settings_.channels; ++channel) {
                     const std::size_t channelIndex = static_cast<std::size_t>(channel);
+                    const float panGain = channel == 0 ? leftPanGain : (channel == 1 ? rightPanGain : 1.0f);
                     const float sampleA = voice.sound->samples[sourceBaseA + channelIndex];
                     const float sampleB = voice.sound->samples[sourceBaseB + channelIndex];
                     out[outputBase + static_cast<std::size_t>(channel)] +=
-                        (sampleA + (sampleB - sampleA) * blend) * voiceVolume;
+                        (sampleA + (sampleB - sampleA) * blend) * voiceVolume * panGain;
                 }
 
                 voice.framePosition += static_cast<double>(sanitizePitchScale(voice.pitchScale));
@@ -890,7 +899,12 @@ void AudioEngine::stopBgm(float fadeSeconds)
 
 void AudioEngine::playSe(std::string_view id, float volumeScale, float pitchScale)
 {
-    impl_->playSe(id, volumeScale, pitchScale);
+    impl_->playSe(id, AudioSeParams{.volumeScale = volumeScale, .pitchScale = pitchScale});
+}
+
+void AudioEngine::playSe(std::string_view id, AudioSeParams params)
+{
+    impl_->playSe(id, params);
 }
 
 float AudioEngine::cueDurationSeconds(std::string_view id, AudioCueType type)
