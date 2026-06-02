@@ -45,8 +45,10 @@ constexpr std::string_view AudioSeUiCancel = "se.ui.cancel";
 constexpr std::string_view AudioSeUiMenuOpen = "se.ui.menu_open";
 constexpr std::string_view AudioSeUiTabSwitch = "se.ui.tab_switch";
 constexpr std::string_view AudioSeUiBookOpen = "se.ui.book_open";
+constexpr std::string_view AudioSeUiCursorMove = "se.ui.cursor_move";
 constexpr std::string_view AudioSeUiItemMove = "se.ui.item_move";
 constexpr std::string_view AudioSeUiItemUse = "se.ui.item_use";
+constexpr std::string_view AudioSeUiEquip = "se.ui.equip";
 constexpr std::string_view AudioSeUiRingPlace = "se.ui.ring_place";
 constexpr std::string_view AudioSeUiUpgradeSelect = "se.ui.upgrade_select";
 constexpr std::string_view AudioSeLevelUpJingle = "se.level_up.jingle";
@@ -737,11 +739,17 @@ void Game::playUiSoundEvents(const UiContext& ui)
     if (ui.soundEventCount(UiSoundEvent::BookOpen) > 0) {
         playAudioSe(AudioSeUiBookOpen);
     }
+    if (ui.soundEventCount(UiSoundEvent::CursorMove) > 0) {
+        playAudioSe(AudioSeUiCursorMove);
+    }
     if (ui.soundEventCount(UiSoundEvent::ItemMove) > 0) {
         playAudioSe(AudioSeUiItemMove);
     }
     if (ui.soundEventCount(UiSoundEvent::ItemUse) > 0) {
         playAudioSe(AudioSeUiItemUse);
+    }
+    if (ui.soundEventCount(UiSoundEvent::Equip) > 0) {
+        playAudioSe(AudioSeUiEquip);
     }
     if (ui.soundEventCount(UiSoundEvent::RingPlace) > 0) {
         playAudioSe(AudioSeUiRingPlace);
@@ -1102,7 +1110,8 @@ void Game::resetWorldUiState()
     baseUpgradeActive_ = false;
     baseUpgradeSelection_ = 0;
     baseUpgradeTabs_ = {};
-    baseProcessingActive_ = false;
+    baseProcessingUiMode_ = ProcessingUiMode::Closed;
+    baseProcessingActionSelection_ = 0;
     baseProcessingMode_ = 0;
     baseProcessingTabs_ = {};
     baseProcessingSource_ = 0;
@@ -1567,7 +1576,8 @@ void Game::enterBase()
     baseMerchantBuyCommandIndex_ = -1;
     baseUpgradeActive_ = false;
     baseUpgradeTabs_ = {};
-    baseProcessingActive_ = false;
+    baseProcessingUiMode_ = ProcessingUiMode::Closed;
+    baseProcessingActionSelection_ = 0;
     closeUiCommandMenu(baseProcessingCommandMenu_);
     baseProcessingCommandSlot_ = -1;
     baseRingWorkshopActive_ = false;

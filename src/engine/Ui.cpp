@@ -518,6 +518,13 @@ void UiContext::emitSound(UiSoundEvent event)
     ++soundEventCounts_[index];
 }
 
+void UiContext::emitCursorMoveIfChanged(int previousIndex, int currentIndex)
+{
+    if (previousIndex != currentIndex) {
+        emitSound(UiSoundEvent::CursorMove);
+    }
+}
+
 int UiContext::soundEventCount(UiSoundEvent event) const
 {
     const int index = static_cast<int>(event);
@@ -1540,6 +1547,7 @@ UiConfirmDialogResult updateUiConfirmDialog(UiConfirmDialogState& state, UiConte
         return UiConfirmDialogResult::None;
     }
 
+    const int previousSelection = state.selection;
     if (ui.hovered(uiConfirmDialogButtonRect(panel, 0))) {
         state.selection = 0;
     } else if (ui.hovered(uiConfirmDialogButtonRect(panel, 1))) {
@@ -1551,6 +1559,7 @@ UiConfirmDialogResult updateUiConfirmDialog(UiConfirmDialogState& state, UiConte
     if (input.pressed(InputAction::MoveRight) || input.pressed(InputAction::MoveDown) || input.activeRingDelta() > 0) {
         state.selection = 0;
     }
+    ui.emitCursorMoveIfChanged(previousSelection, state.selection);
 
     const bool confirmRequested =
         state.confirmEnabled &&
@@ -1638,6 +1647,7 @@ UiQuantityDialogResult updateUiQuantityDialog(UiQuantityDialogState& state, UiCo
         return UiQuantityDialogResult::None;
     }
 
+    const int previousValue = state.value;
     const auto adjust = [&state](int delta) {
         if (delta == 0) {
             return;
@@ -1671,6 +1681,7 @@ UiQuantityDialogResult updateUiQuantityDialog(UiQuantityDialogState& state, UiCo
     if (state.value < state.maxValue && ui.pressed(uiQuantityUpButtonRect(panel))) {
         adjust(1);
     }
+    ui.emitCursorMoveIfChanged(previousValue, state.value);
     if (ui.pressed(uiQuantityConfirmButtonRect(panel)) || input.confirmPressed() || input.useItemPressed()) {
         ui.emitSound(UiSoundEvent::Confirm);
         closeUiQuantityDialog(state);
@@ -1825,6 +1836,7 @@ int updateUiCommandMenu(UiCommandMenuState& state, UiContext& ui, const Input& i
         state.hoveredIndex = 0;
     }
 
+    const int previousHoveredIndex = state.hoveredIndex;
     const int delta = (input.pressed(InputAction::MoveDown) || input.pressed(InputAction::MoveRight) ? 1 : 0) -
         (input.pressed(InputAction::MoveUp) || input.pressed(InputAction::MoveLeft) ? 1 : 0);
     if (delta != 0) {
@@ -1842,6 +1854,7 @@ int updateUiCommandMenu(UiCommandMenuState& state, UiContext& ui, const Input& i
     if (!hoveredByMouse && (state.hoveredIndex < 0 || state.hoveredIndex >= itemCount)) {
         state.hoveredIndex = 0;
     }
+    ui.emitCursorMoveIfChanged(previousHoveredIndex, state.hoveredIndex);
 
     if (input.confirmPressed() || input.useItemPressed()) {
         if (state.hoveredIndex < 0 || state.hoveredIndex >= itemCount || !items[state.hoveredIndex].enabled) {
@@ -2322,6 +2335,9 @@ UiSelectableTableResult updateUiSelectableTable(
     }
 
     result.selectionChanged = state.selectedRow != previousRow || state.selectedColumn != previousColumn;
+    ui.emitCursorMoveIfChanged(
+        previousRow * columnCount + previousColumn,
+        state.selectedRow * columnCount + state.selectedColumn);
     keepUiSelectableTableCellVisible(rect, state.selectedRow, rowCount, state.scrollOffset, style);
     return result;
 }
@@ -2463,6 +2479,7 @@ int updateUiDropdown(
     const UiRect listRect = uiDropdownListRect(buttonRect, count, style);
 
     if (count > 0) {
+        const int previousHighlightedIndex = state.highlightedIndex;
         int move = 0;
         if (input.pressed(InputAction::MoveDown) || input.pressed(InputAction::MoveRight)) {
             ++move;
@@ -2498,6 +2515,7 @@ int updateUiDropdown(
                 return selected;
             }
         }
+        ui.emitCursorMoveIfChanged(previousHighlightedIndex, state.highlightedIndex);
 
         if (input.confirmPressed() || input.useItemPressed()) {
             const int index = state.highlightedIndex;

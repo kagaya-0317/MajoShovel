@@ -120,6 +120,19 @@ void recordEffectDiscoveryWithNote(
     });
 }
 
+std::string statusEffectDiscoveryDescription(std::string_view statusEffect)
+{
+    if (statusEffect == "status_giant") {
+        return "巨大化状態を付与する";
+    }
+
+    const std::string_view displayName = entityStatusDisplayName(statusEffect);
+    if (displayName.empty()) {
+        return "状態異常を付与する";
+    }
+    return std::string(displayName) + "状態を付与する";
+}
+
 bool isTerrainTarget(std::string_view target)
 {
     return target == "terrain" || target == "ground";
@@ -371,7 +384,7 @@ void applyStatus(
         sourceIdFor(invocation),
         StateApplyMode::KeepLonger);
     emitStatusPopupForApplyResult(invocation, statusEffect, result);
-    recordEffectDiscovery(invocation, statusEffect == "status_giant" ? "巨大化状態を付与する" : "状態異常を付与する");
+    recordEffectDiscovery(invocation, statusEffectDiscoveryDescription(statusEffect));
 }
 
 void applyHealInvocation(const EffectInvocation& invocation)

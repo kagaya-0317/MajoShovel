@@ -7689,7 +7689,8 @@ void Game::enterBaseEditMode()
     closeUiCommandMenu(baseMerchantBuyCommandMenu_);
     baseMerchantBuyCommandIndex_ = -1;
     baseUpgradeActive_ = false;
-    baseProcessingActive_ = false;
+    baseProcessingUiMode_ = ProcessingUiMode::Closed;
+    baseProcessingActionSelection_ = 0;
     closeUiCommandMenu(baseProcessingCommandMenu_);
     baseProcessingCommandSlot_ = -1;
     baseRingWorkshopActive_ = false;

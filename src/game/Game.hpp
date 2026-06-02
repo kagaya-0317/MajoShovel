@@ -535,6 +535,7 @@ private:
         float spawnJumpElapsedSeconds = 0.0f;
         float spawnJumpDurationSeconds = 0.0f;
         float spawnJumpArcHeight = 0.0f;
+        float openLockSeconds = 0.0f;
     };
 
     struct CrateNode {
@@ -587,6 +588,7 @@ private:
     enum class DungeonEventRewardKind {
         ChestDrop,
         MultiChestDrop,
+        ObjectDrop,
         MaterialDrop,
         MoneyDrop,
     };
@@ -594,6 +596,7 @@ private:
     struct DungeonEventRewardRequest {
         DungeonEventRewardKind kind = DungeonEventRewardKind::MaterialDrop;
         LootChestKind chestKind = LootChestKind::Common;
+        std::string objectId;
         int count = 1;
         MaterialType materialType = MaterialType::EnhancementOre;
         int amount = 1;
@@ -704,6 +707,11 @@ private:
         ResetEnhancement,
         Lighten,
         Enlarge,
+    };
+    enum class ProcessingUiMode {
+        Closed,
+        ChooseAction,
+        Enhance,
     };
     enum class BaseItemSource {
         Backpack,
@@ -982,10 +990,19 @@ private:
         int price = 0;
         int quantity = 0;
     };
-    struct FirstItemAcquisitionNotice {
+    enum class AcquisitionNoticeKind {
+        Object,
+        Material,
+        Money,
+    };
+    struct AcquisitionNotice {
+        AcquisitionNoticeKind kind = AcquisitionNoticeKind::Object;
+        std::string title;
         std::string objectId;
         std::string instanceId;
         std::string statusText;
+        MaterialType materialType = MaterialType::EnhancementOre;
+        int amount = 1;
         bool protectable = false;
     };
     struct CaptureAbsorbAnimation {
@@ -1051,7 +1068,9 @@ private:
     int processingOreCost(StorageEntry entry, ProcessingMode mode, bool warehouseEntry = false) const;
     int processingMoneyCost(ProcessingTarget target, ProcessingMode mode) const;
     int processingOreCost(ProcessingTarget target, ProcessingMode mode) const;
+    std::vector<ProcessingMode> processingCommandModes(ProcessingTarget target) const;
     std::vector<UiCommandMenuItem> processingCommandItems(ProcessingTarget target) const;
+    void applyProcessingBulkRepair();
     void openProcessingConfirm(ProcessingTarget target, ProcessingMode mode);
     void drawProcessingConfirmDialog(Renderer& renderer, UiRect panel) const;
     void applyProcessing(int entryIndex);
@@ -1119,6 +1138,13 @@ private:
         std::string_view instanceId,
         bool protectable,
         Vec2 position);
+    void recordRewardObjectAcquisitionNotice(
+        std::string_view objectId,
+        std::string_view instanceId,
+        bool protectable,
+        Vec2 position);
+    void recordRewardMaterialAcquisitionNotice(MaterialType materialType, int amount);
+    void recordRewardMoneyAcquisitionNotice(int amount);
     bool firstItemAcquisitionNoticeActive() const;
     void closeFirstItemAcquisitionNotice();
     void queueIntroTutorialChestLootDialogueIfReady();
@@ -1287,6 +1313,7 @@ private:
     void revealRewardNodesFromOpenedTiles(const std::vector<Vec2>& openedTiles);
     void updateExposedMoonFragmentNodes();
     void revealMoonFragmentNodesFromOpenedTiles(const std::vector<Vec2>& openedTiles);
+    void materializeExposedPlacementDrops();
     void normalizeOpenBuriedPlacementNodes();
     void initializeChestNodesFromLayout();
     void updateChestNodes(float dt, const Input& input);
@@ -1633,7 +1660,7 @@ private:
     WorldDropSystem worldDrops_;
     EncyclopediaSystem encyclopedia_;
     InitializeJob initializeJob_;
-    std::deque<FirstItemAcquisitionNotice> firstItemAcquisitionNotices_;
+    std::deque<AcquisitionNotice> firstItemAcquisitionNotices_;
     std::vector<CaptureAbsorbAnimation> captureAbsorbAnimations_;
     std::unordered_map<std::string, int> encyclopediaOwnedSyncSuppressCounts_;
     std::unordered_map<std::string, int> encyclopediaRingSyncSuppressCounts_;
@@ -1711,7 +1738,8 @@ private:
     UiTabsState baseUpgradeTabs_{};
     UiResultDialogState baseResultDialog_{};
     UiConfirmDialogState baseRegenerateConfirm_{};
-    bool baseProcessingActive_ = false;
+    ProcessingUiMode baseProcessingUiMode_ = ProcessingUiMode::Closed;
+    int baseProcessingActionSelection_ = 0;
     int baseProcessingMode_ = 0;
     UiTabsState baseProcessingTabs_{};
     int baseProcessingSource_ = 0;

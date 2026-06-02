@@ -99,6 +99,12 @@ struct SpellRingItem {
     float capturedProjectileTimer = 0.0f;
     int capturedProjectileBurstRemaining = 0;
     float capturedProjectileBurstInterval = 0.12f;
+    std::string capturedProjectileActionBehaviorId;
+    std::string capturedProjectileActionAnimationId;
+    float capturedProjectileActionElapsedSeconds = 0.0f;
+    float capturedProjectileActionDurationSeconds = 0.0f;
+    float capturedProjectileActionFireAtSeconds = 0.0f;
+    bool capturedProjectileActionFired = false;
     int capturedExplodeCharge = 0;
     float capturedExplodeSleepTimer = 0.0f;
     RingItemBreakExplosionState breakExplosion;

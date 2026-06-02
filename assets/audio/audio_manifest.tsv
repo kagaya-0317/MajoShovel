@@ -8,8 +8,10 @@ se.ui.cancel	se	se/ui_cancel_placeholder.wav	0.68	false	60	UI キャンセル
 se.ui.menu_open	se	se/ui_menu_open_placeholder.wav	0.66	false	80	メニューを開く
 se.ui.tab_switch	se	se/ui_tab_switch_placeholder.wav	0.60	false	50	タブ切替
 se.ui.book_open	se	se/ui_book_open_placeholder.wav	0.68	false	120	本を開く
+se.ui.cursor_move	se	se/ui_cursor_move_placeholder.wav	0.58	false	35	カーソル移動
 se.ui.item_move	se	se/ui_item_move_placeholder.wav	0.62	false	55	アイテム移動
 se.ui.item_use	se	se/ui_item_use_placeholder.wav	0.68	false	80	アイテム使用
+se.ui.equip	se	se/ui_equip_placeholder.wav	0.74	false	90	装備
 se.ui.ring_place	se	se/ui_ring_place_placeholder.wav	0.72	false	90	リング配置
 se.ui.upgrade_select	se	se/ui_upgrade_select_placeholder.wav	0.78	false	120	レベルアップ選択
 se.level_up.jingle	se	se/level_up_jingle_placeholder.wav	0.86	false	0	レベルアップジングル

@@ -53,8 +53,10 @@ enum class UiSoundEvent {
     MenuOpen,
     TabSwitch,
     BookOpen,
+    CursorMove,
     ItemMove,
     ItemUse,
+    Equip,
     RingPlace,
     UpgradeSelect,
     Count,
@@ -73,6 +75,7 @@ public:
     void consumeBackInput();
     void block(UiRect rect);
     void emitSound(UiSoundEvent event);
+    void emitCursorMoveIfChanged(int previousIndex, int currentIndex);
     int soundEventCount(UiSoundEvent event) const;
     bool hasSoundEvents() const;
 

@@ -2480,6 +2480,7 @@ void InventorySystem::updateShortcuts(
         return;
     }
 
+    const int previousShortcutIndex = selectedShortcutIndex();
     if (input.shortcutCursorDelta() != 0) {
         moveShortcutCursor(input.shortcutCursorDelta());
     }
@@ -2487,6 +2488,7 @@ void InventorySystem::updateShortcuts(
     if (input.toggleShortcutRowPressed()) {
         toggleShortcutRow();
     }
+    ui.emitCursorMoveIfChanged(previousShortcutIndex, selectedShortcutIndex());
 
     if (input.useItemPressed()) {
         ui.emitSound(useShortcutSelection(player, spellRing, effectDispatcher, magic, discoveryEvents, encyclopedia)
@@ -2496,7 +2498,7 @@ void InventorySystem::updateShortcuts(
     if (input.addRingPressed()) {
         SpellRingAddResult result{};
         if (addShortcutSelectionToRing(spellRing, &result)) {
-            ui.emitSound(UiSoundEvent::RingPlace);
+            ui.emitSound(UiSoundEvent::Equip);
             queueRingEquipFx(shortcutHudSlotCenter(selectedShortcutColumn_, screenWidth, screenHeight), result);
         } else {
             ui.emitSound(UiSoundEvent::Cancel);
@@ -2556,7 +2558,9 @@ void InventorySystem::updateScreen(
         ringTargetSelection < ringTargetCount &&
         ringTargetCommandSlotIndex_ >= 0) {
         selectShortcutIndex(ringTargetCommandSlotIndex_);
-        if (!addScreenItemToRingForRing(ringTargetCommandSlotIndex_, spellRing, ringTargetSelection)) {
+        if (addScreenItemToRingForRing(ringTargetCommandSlotIndex_, spellRing, ringTargetSelection)) {
+            ui.emitSound(UiSoundEvent::Equip);
+        } else {
             ui.emitSound(UiSoundEvent::Cancel);
         }
         closeRingTargetCommandMenu();
@@ -2610,13 +2614,18 @@ void InventorySystem::updateScreen(
                 };
                 openRingTargetCommandMenu(slotCommandMenuIndex_, submenuAnchor, spellRing, ringTargetCount);
             } else {
-                addScreenItemToRingForRing(slotCommandMenuIndex_, spellRing, 0);
+                ui.emitSound(addScreenItemToRingForRing(slotCommandMenuIndex_, spellRing, 0)
+                    ? UiSoundEvent::Equip
+                    : UiSoundEvent::Cancel);
             }
         } else if (action == SlotCommandAction::ToggleStaffEquipment) {
             if (grabbedSlotActive_) {
                 status_ = "つかみ中は装備変更できません";
             } else {
-                toggleStaffEquipmentScreenItem(slotCommandMenuIndex_, spellRing);
+                const InventoryObjectInstance* objectInstance = objectInstanceAtScreenIndex(slotCommandMenuIndex_);
+                const bool wasEquipped = objectInstance != nullptr && isStaffEquipped(objectInstance->instance.instanceId);
+                const bool changed = toggleStaffEquipmentScreenItem(slotCommandMenuIndex_, spellRing);
+                ui.emitSound(changed ? (wasEquipped ? UiSoundEvent::Confirm : UiSoundEvent::Equip) : UiSoundEvent::Cancel);
             }
         } else if (action == SlotCommandAction::ToggleProtection) {
             if (grabbedSlotActive_) {
@@ -2680,6 +2689,7 @@ void InventorySystem::updateScreen(
         return;
     }
 
+    const int previousSelection = selectedShortcutIndex();
     if (input.pressed(InputAction::MoveLeft)) {
         moveShortcutCursorGrid(-1, 0);
     }
@@ -2706,6 +2716,7 @@ void InventorySystem::updateScreen(
             break;
         }
     }
+    ui.emitCursorMoveIfChanged(previousSelection, selectedShortcutIndex());
 
     if (input.mouseLeftPressed() && hoveredSlotIndex >= 0 && !ui.pointerConsumed()) {
         slotPointerPressIndex_ = hoveredSlotIndex;
@@ -2777,7 +2788,7 @@ void InventorySystem::updateScreen(
             ui.block(inventoryScreenRect());
             return;
         } else {
-            ui.emitSound(addScreenItemToRingForRing(selectedShortcutIndex(), spellRing, 0) ? UiSoundEvent::RingPlace : UiSoundEvent::Cancel);
+            ui.emitSound(addScreenItemToRingForRing(selectedShortcutIndex(), spellRing, 0) ? UiSoundEvent::Equip : UiSoundEvent::Cancel);
         }
     }
     if (input.pressed(InputAction::ToggleProtection)) {

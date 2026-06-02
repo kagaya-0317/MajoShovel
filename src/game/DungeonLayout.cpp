@@ -11,6 +11,11 @@ namespace majo {
 
 namespace {
 
+constexpr float MainPathTerminalUpMinTiles = 28.0f;
+constexpr float MainPathTerminalUpMaxTiles = 64.0f;
+constexpr float MainPathTerminalUpFraction = 0.16f;
+constexpr float MainPathTerminalUpReserveTiles = 24.0f;
+
 float dot(Vec2 a, Vec2 b)
 {
     return a.x * b.x + a.y * b.y;
@@ -80,6 +85,18 @@ std::vector<Vec2> makeWanderingPath(
         points.push_back(point);
     }
     return points;
+}
+
+void appendUpwardTerminalPath(std::vector<Vec2>& points, Vec2 from, Vec2 to, float terminalLength)
+{
+    if (points.empty()) {
+        points.push_back(from);
+    }
+    const int sampleCount = std::clamp(static_cast<int>(std::round(terminalLength / 8.0f)), 4, 10);
+    for (int i = 1; i <= sampleCount; ++i) {
+        const float t = static_cast<float>(i) / static_cast<float>(sampleCount);
+        points.push_back(lerp(from, to, t));
+    }
 }
 
 Vec2 pointAtProgress(const std::vector<Vec2>& points, float progress)
@@ -301,19 +318,31 @@ DungeonLayout generateDungeonLayout(const DungeonGenerationContext& context)
     const float goalDistance = static_cast<float>(std::clamp(context.goalDistanceTiles, 48, 1200)) *
         (0.96f + unitDist(rng) * 0.08f);
     const float goalAngle = angleDist(rng);
-    const Vec2 goal = fromAngle(goalAngle) * goalDistance;
+    const Vec2 coarseDirection = fromAngle(goalAngle);
+    const float maxTerminalLength = std::min(
+        MainPathTerminalUpMaxTiles,
+        std::max(8.0f, goalDistance - MainPathTerminalUpReserveTiles));
+    const float minTerminalLength = std::min(MainPathTerminalUpMinTiles, maxTerminalLength);
+    const float terminalLength = std::clamp(
+        goalDistance * MainPathTerminalUpFraction,
+        minTerminalLength,
+        maxTerminalLength);
+    const Vec2 terminalStart = coarseDirection * std::max(8.0f, goalDistance - terminalLength);
+    const Vec2 goal = terminalStart + Vec2{0.0f, -terminalLength};
     layout.goalTile = {
         static_cast<int>(std::round(goal.x)),
         static_cast<int>(std::round(goal.y)),
     };
 
+    const int sampleCount = std::clamp(static_cast<int>(std::round(goalDistance / 9.0f)), 32, 96);
     layout.mainPathPoints = makeWanderingPath(
         tileToVec(layout.startTile),
-        tileToVec(layout.goalTile),
+        terminalStart,
         rng,
-        std::clamp(static_cast<int>(std::round(goalDistance / 9.0f)), 32, 96),
+        std::max(8, sampleCount - 6),
         0.06f + clamp(context.detourRate, 0.0f, 1.0f) * 0.20f,
         0.02f + clamp(context.detourRate, 0.0f, 1.0f) * 0.06f);
+    appendUpwardTerminalPath(layout.mainPathPoints, terminalStart, tileToVec(layout.goalTile), terminalLength);
 
     std::vector<Vec2> roomCandidates;
     const int targetBranchCount = branchCountForContext(context);

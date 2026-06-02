@@ -2166,7 +2166,8 @@ int Game::sellPrice(const ItemData& item, const ItemInstance* instance) const
             instance->sizeModifier,
             instance->isBroken);
     }
-    return std::max(0, static_cast<int>(std::ceil(static_cast<double>(item.price) * SellPriceBaseMultiplier * multiplier)));
+    const double totalMultiplier = SellPriceBaseMultiplier * multiplier;
+    return std::max(0, static_cast<int>(std::ceil(static_cast<double>(item.price) * totalMultiplier)));
 }
 
 int Game::sellPrice(const ItemData& item, const SpellRingItem* ringItem) const
@@ -2193,7 +2194,8 @@ int Game::sellPrice(const ItemData& item, const SpellRingItem* ringItem) const
         ringItem->weightModifier,
         ringItem->sizeModifier,
         ringItem->broken());
-    return std::max(0, static_cast<int>(std::ceil(static_cast<double>(item.price) * SellPriceBaseMultiplier * multiplier)));
+    const double totalMultiplier = SellPriceBaseMultiplier * multiplier;
+    return std::max(0, static_cast<int>(std::ceil(static_cast<double>(item.price) * totalMultiplier)));
 }
 
 bool Game::isHighValueBuyObject(const ItemData& item) const
@@ -2885,6 +2887,9 @@ bool Game::processingEntryAvailable(StorageEntry entry, ProcessingMode mode, boo
     if (mode == ProcessingMode::Repair) {
         return instance->maxDurability >= 0 && (instance->isBroken || instance->currentDurability < instance->maxDurability);
     }
+    if (instance->isBroken) {
+        return false;
+    }
     if (mode == ProcessingMode::ResetEnhancement) {
         return instance->enhanceLevel > 0 ||
             instance->attackBonus != 0 ||
@@ -2935,6 +2940,9 @@ bool Game::processingTargetAvailable(ProcessingTarget target, ProcessingMode mod
     if (mode == ProcessingMode::Repair) {
         return item.maxDurability >= 0 && (item.broken() || item.durability < item.maxDurability);
     }
+    if (item.broken()) {
+        return false;
+    }
     if (mode == ProcessingMode::ResetEnhancement) {
         return item.enhanceLevel > 0 ||
             item.attackBonus != 0 ||
@@ -2953,7 +2961,8 @@ bool Game::processingTargetAvailable(ProcessingTarget target, ProcessingMode mod
 bool Game::processingTargetHasAvailableCommand(ProcessingTarget target) const
 {
     for (int i = 0; i < BaseProcessingModeCount; ++i) {
-        if (processingTargetAvailable(target, static_cast<ProcessingMode>(i))) {
+        const ProcessingMode mode = static_cast<ProcessingMode>(i);
+        if (mode != ProcessingMode::Repair && processingTargetAvailable(target, mode)) {
             return true;
         }
     }
@@ -3111,18 +3120,72 @@ int Game::processingOreCost(ProcessingTarget target, ProcessingMode mode) const
     return ringItem.enhanceLevel + 1;
 }
 
+std::vector<Game::ProcessingMode> Game::processingCommandModes(ProcessingTarget target) const
+{
+    (void)target;
+    std::vector<ProcessingMode> modes;
+    modes.reserve(BaseProcessingModeCount - 1);
+    for (int i = 0; i < BaseProcessingModeCount; ++i) {
+        const ProcessingMode mode = static_cast<ProcessingMode>(i);
+        if (mode != ProcessingMode::Repair) {
+            modes.push_back(mode);
+        }
+    }
+    return modes;
+}
+
 std::vector<UiCommandMenuItem> Game::processingCommandItems(ProcessingTarget target) const
 {
     std::vector<UiCommandMenuItem> items;
-    items.reserve(BaseProcessingModeCount);
-    for (int i = 0; i < BaseProcessingModeCount; ++i) {
-        const ProcessingMode mode = static_cast<ProcessingMode>(i);
+    const std::vector<ProcessingMode> modes = processingCommandModes(target);
+    items.reserve(modes.size());
+    for (ProcessingMode mode : modes) {
         items.push_back(UiCommandMenuItem{
             processingModeName(mode),
             processingTargetAvailable(target, mode),
         });
     }
     return items;
+}
+
+void Game::applyProcessingBulkRepair()
+{
+    int repairedCount = 0;
+
+    std::vector<std::string> backpackInstanceIds;
+    for (const InventoryObjectInstance& entry : inventory_.objectInstances()) {
+        const ItemInstance& instance = entry.instance;
+        if (instance.maxDurability >= 0 && (instance.isBroken || instance.currentDurability < instance.maxDurability)) {
+            backpackInstanceIds.push_back(instance.instanceId);
+        }
+    }
+    for (const std::string& instanceId : backpackInstanceIds) {
+        if (inventory_.repairObjectInstance(instanceId)) {
+            ++repairedCount;
+        }
+    }
+
+    for (int ringIndex = 0; ringIndex < SpellRingCount; ++ringIndex) {
+        const std::vector<SpellRingItem>& ringItems = spellRing_.itemsForRing(ringIndex);
+        for (int itemIndex = 0; itemIndex < static_cast<int>(ringItems.size()); ++itemIndex) {
+            const SpellRingItem& item = ringItems[static_cast<std::size_t>(itemIndex)];
+            if (item.maxDurability >= 0 && (item.broken() || item.durability < item.maxDurability) &&
+                spellRing_.repairItem(ringIndex, itemIndex)) {
+                ++repairedCount;
+            }
+        }
+    }
+
+    if (repairedCount > 0) {
+        baseStatus_.clear();
+        openUiResultDialog(
+            baseResultDialog_,
+            "一括修理完了",
+            {std::to_string(repairedCount) + "個のアイテムを修理しました"});
+        return;
+    }
+
+    baseStatus_ = "修理が必要なアイテムはありません";
 }
 
 void Game::openProcessingConfirm(ProcessingTarget target, ProcessingMode mode)
@@ -5099,10 +5162,93 @@ void Game::recordObjectObtainedForFirstNotice(
     }
 
     const bool playJingle = firstItemAcquisitionNotices_.empty();
-    firstItemAcquisitionNotices_.push_back(FirstItemAcquisitionNotice{
+    firstItemAcquisitionNotices_.push_back(AcquisitionNotice{
+        .kind = AcquisitionNoticeKind::Object,
+        .title = "はじめて入手した！",
         .objectId = std::string(objectId),
         .instanceId = std::string(instanceId),
         .protectable = protectable && !instanceId.empty(),
+    });
+    if (playJingle) {
+        playAudioJingle(
+            AudioSeNewItemJingle,
+            NewItemJingleFallbackSeconds,
+            0.06f,
+            0.22f,
+            1.0f,
+            1.0f);
+    }
+}
+
+void Game::recordRewardObjectAcquisitionNotice(
+    std::string_view objectId,
+    std::string_view instanceId,
+    bool protectable,
+    Vec2 position)
+{
+    if (objectId.empty()) {
+        return;
+    }
+    const ObjectDefinition* object = objectCatalog_.registry.findById(objectId);
+    if (object == nullptr) {
+        return;
+    }
+    (void)encyclopedia_.noteItemObtained(*object, position);
+
+    const bool playJingle = firstItemAcquisitionNotices_.empty();
+    firstItemAcquisitionNotices_.push_back(AcquisitionNotice{
+        .kind = AcquisitionNoticeKind::Object,
+        .title = "お礼をもらった！",
+        .objectId = std::string(objectId),
+        .instanceId = std::string(instanceId),
+        .protectable = protectable && !instanceId.empty(),
+    });
+    if (playJingle) {
+        playAudioJingle(
+            AudioSeNewItemJingle,
+            NewItemJingleFallbackSeconds,
+            0.06f,
+            0.22f,
+            1.0f,
+            1.0f);
+    }
+}
+
+void Game::recordRewardMaterialAcquisitionNotice(MaterialType materialType, int amount)
+{
+    if (amount <= 0 || materialType == MaterialType::Count) {
+        return;
+    }
+
+    const bool playJingle = firstItemAcquisitionNotices_.empty();
+    firstItemAcquisitionNotices_.push_back(AcquisitionNotice{
+        .kind = AcquisitionNoticeKind::Material,
+        .title = "お礼をもらった！",
+        .materialType = materialType,
+        .amount = amount,
+    });
+    if (playJingle) {
+        playAudioJingle(
+            AudioSeNewItemJingle,
+            NewItemJingleFallbackSeconds,
+            0.06f,
+            0.22f,
+            1.0f,
+            1.0f);
+    }
+}
+
+void Game::recordRewardMoneyAcquisitionNotice(int amount)
+{
+    if (amount <= 0) {
+        return;
+    }
+
+    const bool playJingle = firstItemAcquisitionNotices_.empty();
+    firstItemAcquisitionNotices_.push_back(AcquisitionNotice{
+        .kind = AcquisitionNoticeKind::Money,
+        .title = "お礼をもらった！",
+        .amount = amount,
     });
     if (playJingle) {
         playAudioJingle(
@@ -5677,6 +5823,52 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
         updateBaseEditScreen(input, ui, dt);
         return;
     }
+
+    const auto baseManualSelectionSnapshot = [this]() {
+        return std::array<int, 25>{{
+            baseMenuSelection_,
+            baseMiningStartSelection_,
+            baseWarpPointSelection_,
+            baseStorageActionSelection_,
+            baseStorageBulkSelection_,
+            baseStorageDepositSource_,
+            baseStorageDepositSelection_,
+            baseStorageWithdrawSelection_,
+            baseMerchantActionSelection_,
+            baseMerchantSellSource_,
+            baseSellSelection_,
+            baseMerchantBuySelection_,
+            baseMerchantSellCommandSource_,
+            baseMerchantSellCommandIndex_,
+            baseMerchantBuyCommandIndex_,
+            baseUpgradeSelection_,
+            baseProcessingActionSelection_,
+            baseProcessingMode_,
+            baseProcessingSource_,
+            baseProcessingSelection_,
+            baseRingWorkshopSelection_,
+            baseRingWorkshopRingIndex_,
+            bookshelfSelection_,
+            baseDiarySelection_,
+            baseEditSelectedFacilityIndex_,
+        }};
+    };
+    const auto previousBaseManualSelection = baseManualSelectionSnapshot();
+    struct BaseCursorMoveSoundGuard {
+        std::function<void()> emit;
+        ~BaseCursorMoveSoundGuard()
+        {
+            emit();
+        }
+    };
+    BaseCursorMoveSoundGuard baseCursorMoveSoundGuard{[this, &ui, previousBaseManualSelection, baseManualSelectionSnapshot]() {
+        if (ui.soundEventCount(UiSoundEvent::CursorMove) > 0) {
+            return;
+        }
+        if (baseManualSelectionSnapshot() != previousBaseManualSelection) {
+            ui.emitSound(UiSoundEvent::CursorMove);
+        }
+    }};
 
     if (baseResultDialog_.open) {
         const UiRect resultPanel = baseResultDialogRect();
@@ -6640,7 +6832,73 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
         return;
     }
 
-    if (baseProcessingActive_) {
+    if (baseProcessingUiMode_ != ProcessingUiMode::Closed) {
+        const UiRect processingBounds = baseProcessingUiMode_ == ProcessingUiMode::ChooseAction
+            ? merchantActionDialogRect()
+            : merchantPanelRect();
+        if (uiCancelRequested(baseCancelState_, input, ui, processingBounds)) {
+            if (baseProcessingUiMode_ == ProcessingUiMode::Enhance && baseProcessingCommandMenu_.open) {
+                closeUiCommandMenu(baseProcessingCommandMenu_);
+                baseProcessingCommandSlot_ = -1;
+            } else if (baseProcessingUiMode_ == ProcessingUiMode::Enhance) {
+                baseProcessingUiMode_ = ProcessingUiMode::ChooseAction;
+                baseProcessingConfirm_ = {};
+                baseProcessingConfirmTarget_ = {};
+                baseStatus_.clear();
+            } else {
+                baseProcessingUiMode_ = ProcessingUiMode::Closed;
+                baseStatus_.clear();
+            }
+            ui.block(processingBounds);
+            return;
+        }
+
+        if (baseProcessingUiMode_ == ProcessingUiMode::ChooseAction) {
+            closeUiCommandMenu(baseProcessingCommandMenu_);
+            baseProcessingCommandSlot_ = -1;
+            constexpr int ChoiceCount = 2;
+            baseProcessingActionSelection_ = std::clamp(baseProcessingActionSelection_, 0, ChoiceCount - 1);
+            if (input.pressed(InputAction::MoveUp)) {
+                baseProcessingActionSelection_ = (baseProcessingActionSelection_ + ChoiceCount - 1) % ChoiceCount;
+            }
+            if (input.pressed(InputAction::MoveDown)) {
+                baseProcessingActionSelection_ = (baseProcessingActionSelection_ + 1) % ChoiceCount;
+            }
+            const auto chooseProcessingAction = [this, &ui]() {
+                ui.emitSound(UiSoundEvent::Confirm);
+                if (baseProcessingActionSelection_ == 0) {
+                    applyProcessingBulkRepair();
+                } else {
+                    baseProcessingUiMode_ = ProcessingUiMode::Enhance;
+                    baseProcessingMode_ = static_cast<int>(ProcessingMode::Attack);
+                    baseProcessingTabs_.focusedIndex = baseProcessingMode_;
+                    baseProcessingSource_ = 0;
+                    baseProcessingSourceTabs_.focusedIndex = baseProcessingSource_;
+                    baseProcessingSelection_ = 0;
+                    baseStatus_.clear();
+                }
+            };
+            for (int i = 0; i < ChoiceCount; ++i) {
+                const UiRect rect = merchantActionChoiceRect(i);
+                if (rect.contains(ui.mouse())) {
+                    baseProcessingActionSelection_ = i;
+                }
+                if (ui.pressed(rect)) {
+                    baseProcessingActionSelection_ = i;
+                    chooseProcessingAction();
+                    ui.block(processingBounds);
+                    return;
+                }
+            }
+            if (input.confirmPressed() || input.useItemPressed()) {
+                chooseProcessingAction();
+                ui.block(processingBounds);
+                return;
+            }
+            ui.block(processingBounds);
+            return;
+        }
+
         const auto closeProcessingCommand = [this]() {
             closeUiCommandMenu(baseProcessingCommandMenu_);
             baseProcessingCommandSlot_ = -1;
@@ -6687,17 +6945,6 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
                 2);
             return true;
         };
-        if (uiCancelRequested(baseCancelState_, input, ui, merchantPanelRect())) {
-            if (baseProcessingCommandMenu_.open) {
-                closeProcessingCommand();
-            } else {
-                baseProcessingActive_ = false;
-                baseProcessingConfirm_ = {};
-                baseProcessingConfirmTarget_ = {};
-                baseStatus_.clear();
-            }
-            return;
-        }
         const ProcessingTarget commandTarget = baseProcessingCommandSlot_ >= 0
             ? processingTargetForScreenSlot(baseProcessingCommandSlot_)
             : ProcessingTarget{};
@@ -6710,8 +6957,12 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
             commandItems.data(),
             static_cast<int>(commandItems.size()));
         if (commandSelection >= 0 && baseProcessingCommandSlot_ >= 0) {
-            const ProcessingMode mode = static_cast<ProcessingMode>(std::clamp(commandSelection, 0, BaseProcessingModeCount - 1));
-            openProcessingConfirm(processingTargetForScreenSlot(baseProcessingCommandSlot_), mode);
+            const std::vector<ProcessingMode> commandModes = processingCommandModes(commandTarget);
+            if (commandSelection < static_cast<int>(commandModes.size())) {
+                openProcessingConfirm(
+                    processingTargetForScreenSlot(baseProcessingCommandSlot_),
+                    commandModes[static_cast<std::size_t>(commandSelection)]);
+            }
             closeProcessingCommand();
             ui.block(merchantPanelRect());
             return;
@@ -7725,8 +7976,9 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
                 if (hasStoryFlag("ending_seen") && startStoryEventForTrigger("processing:post_ending")) {
                     return;
                 }
-                baseProcessingActive_ = true;
-                baseProcessingMode_ = 0;
+                baseProcessingUiMode_ = ProcessingUiMode::ChooseAction;
+                baseProcessingActionSelection_ = 0;
+                baseProcessingMode_ = static_cast<int>(ProcessingMode::Attack);
                 baseProcessingTabs_.focusedIndex = baseProcessingMode_;
                 baseProcessingSource_ = 0;
                 baseProcessingSourceTabs_.focusedIndex = baseProcessingSource_;
@@ -8352,7 +8604,7 @@ void Game::renderBaseScreen(Renderer& renderer) const
         baseDiaryActive_ ||
         baseBookshelfActive_ ||
         baseStorageActive_ ||
-        baseProcessingActive_ ||
+        baseProcessingUiMode_ != ProcessingUiMode::Closed ||
         baseSellActive_ ||
         baseUpgradeActive_ ||
         baseMiningStartChoiceActive_;
@@ -8365,6 +8617,7 @@ void Game::renderBaseScreen(Renderer& renderer) const
     const bool storageActionDialogActive = baseStorageActive_ &&
         (baseStorageMode_ == StorageUiMode::ChooseAction || baseStorageMode_ == StorageUiMode::Bulk);
     const bool merchantActionDialogActive = baseSellActive_ && baseMerchantMode_ == MerchantUiMode::ChooseAction;
+    const bool processingActionDialogActive = baseProcessingUiMode_ == ProcessingUiMode::ChooseAction;
     const bool bookshelfMenuDialogActive = baseBookshelfActive_ && bookshelfPage_ == BookshelfPage::Menu;
     const bool bookshelfWideActive = baseBookshelfActive_ && bookshelfPage_ != BookshelfPage::Menu;
     const bool ringWorkshopActionDialogActive = baseRingWorkshopActive_ && baseRingWorkshopMode_ == RingWorkshopMode::ChooseAction;
@@ -8375,17 +8628,19 @@ void Game::renderBaseScreen(Renderer& renderer) const
         ? (baseStorageMode_ == StorageUiMode::Bulk ? storageBulkDialogRect() : storageActionDialogRect())
         : (merchantActionDialogActive
         ? merchantActionDialogRect()
+        : (processingActionDialogActive
+        ? merchantActionDialogRect()
         : (bookshelfMenuDialogActive
         ? bookshelfMenuPanelRect()
         : (ringWorkshopActionDialogActive
         ? ringWorkshopActionDialogRect()
-        : ((baseProcessingActive_ ||
+        : ((baseProcessingUiMode_ == ProcessingUiMode::Enhance ||
         bookshelfWideActive ||
         ringWorkshopWideActive ||
         (baseStorageActive_ && !storageActionDialogActive) ||
         (baseSellActive_ && baseMerchantMode_ != MerchantUiMode::ChooseAction))
         ? merchantPanelRect()
-        : (baseUpgradeActive_ ? baseUpgradePanelRect() : basePanelRect()))))));
+        : (baseUpgradeActive_ ? baseUpgradePanelRect() : basePanelRect())))))));
     std::optional<UiWindowScope> panelWindow;
     std::optional<UiCancelControlScope> panelCancelScope;
     if (panelUiActive) {
@@ -8396,7 +8651,7 @@ void Game::renderBaseScreen(Renderer& renderer) const
                 : (bookshelfPage_ == BookshelfPage::Enemies ? "モンスター図鑑" : "本棚");
         } else if (baseRingWorkshopActive_) {
             panelTitle = "リング工房";
-        } else if (baseProcessingActive_) {
+        } else if (baseProcessingUiMode_ != ProcessingUiMode::Closed) {
             panelTitle = "作業台";
         } else if (baseSellActive_) {
             if (baseMerchantMode_ == MerchantUiMode::Buy) {
@@ -8837,7 +9092,18 @@ void Game::renderBaseScreen(Renderer& renderer) const
                 false,
                 confirmStyle);
         }
-    } else if (baseProcessingActive_) {
+    } else if (baseProcessingUiMode_ == ProcessingUiMode::ChooseAction) {
+        renderer.drawText(smallActionInfoTextPos(panel), "作業台で何をしますか？", {198, 198, 206, 255}, 2);
+        constexpr std::array<std::string_view, 2> Choices{"一括修理", "強化"};
+        for (int i = 0; i < static_cast<int>(Choices.size()); ++i) {
+            drawUiButton(
+                renderer,
+                merchantActionChoiceRect(i),
+                Choices[static_cast<std::size_t>(i)],
+                i == baseProcessingActionSelection_,
+                uiActionButtonStyle());
+        }
+    } else if (baseProcessingUiMode_ == ProcessingUiMode::Enhance) {
         const int sourceCount = baseItemSourceCountForUnlockedRings(unlockedRingCount());
         std::array<UiTabItem, BaseProcessingSourceCount> sourceTabs{};
         std::array<UiRect, BaseProcessingSourceCount> sourceTabRects{};
@@ -9810,7 +10076,8 @@ void Game::renderBaseScreen(Renderer& renderer) const
                 panel,
                 baseStorageActive_,
                 baseSellActive_,
-                baseProcessingActive_ || (baseRingWorkshopActive_ && baseRingWorkshopMode_ != RingWorkshopMode::ChooseAction),
+                baseProcessingUiMode_ == ProcessingUiMode::Enhance ||
+                    (baseRingWorkshopActive_ && baseRingWorkshopMode_ != RingWorkshopMode::ChooseAction),
                 baseUpgradeActive_));
     }
     if (baseBrokenRingDepartureConfirm_.open) {

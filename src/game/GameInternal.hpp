@@ -6,6 +6,7 @@
 #include "engine/Renderer.hpp"
 #include "engine/Ui.hpp"
 #include "game/ActorVisual.hpp"
+#include "game/ActorVisualMotion.hpp"
 #include "game/InventoryUiCommon.hpp"
 #include "game/ItemImageRenderer.hpp"
 #include "game/ObjectImageRenderer.hpp"
@@ -1572,6 +1573,113 @@ struct CapturedProjectileBehaviorPlan {
     const CapturedBehaviorSpec* spec = nullptr;
 };
 
+struct CapturedProjectileActionProfile {
+    std::string animationId;
+    float durationSeconds = 0.0f;
+    float fireAtSeconds = 0.0f;
+};
+
+bool capturedProjectileActionProfileEnabled(const CapturedProjectileActionProfile& profile)
+{
+    return profile.durationSeconds > 0.0f ||
+        profile.fireAtSeconds > 0.0f;
+}
+
+bool capturedProjectileActionActive(const SpellRingItem& item)
+{
+    return !item.capturedProjectileActionBehaviorId.empty() &&
+        item.capturedProjectileActionDurationSeconds > 0.0f;
+}
+
+void clearCapturedProjectileAction(SpellRingItem& item)
+{
+    item.capturedProjectileActionBehaviorId.clear();
+    item.capturedProjectileActionAnimationId.clear();
+    item.capturedProjectileActionElapsedSeconds = 0.0f;
+    item.capturedProjectileActionDurationSeconds = 0.0f;
+    item.capturedProjectileActionFireAtSeconds = 0.0f;
+    item.capturedProjectileActionFired = false;
+}
+
+void beginCapturedProjectileAction(
+    SpellRingItem& item,
+    std::string_view behaviorId,
+    const CapturedProjectileActionProfile& profile)
+{
+    item.capturedProjectileActionBehaviorId = std::string(behaviorId);
+    item.capturedProjectileActionAnimationId = profile.animationId;
+    item.capturedProjectileActionElapsedSeconds = 0.0f;
+    item.capturedProjectileActionDurationSeconds = std::max(0.0f, profile.durationSeconds);
+    item.capturedProjectileActionFireAtSeconds = clamp(
+        profile.fireAtSeconds,
+        0.0f,
+        item.capturedProjectileActionDurationSeconds);
+    item.capturedProjectileActionFired = false;
+}
+
+CapturedProjectileActionProfile defaultCapturedProjectileActionProfile(std::string_view behaviorId)
+{
+    if (behaviorId == "shoot_web") {
+        return {"web_shoot", 0.32f, 0.18f};
+    }
+    if (behaviorId == "shoot_fire") {
+        return {"fire_breath_hop", 0.45f, 0.26f};
+    }
+    if (behaviorId == "radial_spike") {
+        return {"radial_spike_squash", 0.46f, 0.17f};
+    }
+    if (behaviorId == "shoot_poison") {
+        return {"poison_frog_spit_squash", 0.66f, 0.42f};
+    }
+    return {};
+}
+
+CapturedProjectileActionProfile capturedProjectileActionProfileFor(
+    const SpellRingItem& item,
+    std::string_view behaviorId)
+{
+    CapturedProjectileActionProfile profile = defaultCapturedProjectileActionProfile(behaviorId);
+    if (behaviorId.empty()) {
+        return profile;
+    }
+
+    const std::string configuredAnimation = item.capturedBehaviorParamString(behaviorId, "anim", profile.animationId);
+    profile.animationId = configuredAnimation == "none" || configuredAnimation == "-" ? std::string{} : configuredAnimation;
+
+    constexpr double MissingParam = -99999.0;
+    const double windup = item.capturedBehaviorParamDouble(behaviorId, "windup", MissingParam);
+    const double recovery = item.capturedBehaviorParamDouble(behaviorId, "recovery", MissingParam);
+    if (windup != MissingParam || recovery != MissingParam) {
+        const float fireAtSeconds = static_cast<float>(std::max(
+            0.0,
+            windup != MissingParam ? windup : static_cast<double>(profile.fireAtSeconds)));
+        const float defaultRecovery = std::max(0.0f, profile.durationSeconds - profile.fireAtSeconds);
+        const float recoverySeconds = static_cast<float>(std::max(
+            0.0,
+            recovery != MissingParam ? recovery : static_cast<double>(defaultRecovery)));
+        profile.fireAtSeconds = fireAtSeconds;
+        profile.durationSeconds = fireAtSeconds + recoverySeconds;
+    }
+
+    const double fireAt = item.capturedBehaviorParamDouble(behaviorId, "fireAt", MissingParam);
+    if (fireAt != MissingParam) {
+        profile.fireAtSeconds = static_cast<float>(std::max(0.0, fireAt));
+    }
+
+    const double duration = item.capturedBehaviorParamDouble(behaviorId, "duration", MissingParam);
+    if (duration != MissingParam) {
+        profile.durationSeconds = static_cast<float>(std::max(0.0, duration));
+    }
+
+    const float clipDuration = actorVisualMotionDuration(profile.animationId);
+    if (profile.durationSeconds <= 0.0f && clipDuration > 0.0f) {
+        profile.durationSeconds = clipDuration;
+    }
+    profile.durationSeconds = std::max(profile.durationSeconds, profile.fireAtSeconds);
+    profile.fireAtSeconds = clamp(profile.fireAtSeconds, 0.0f, std::max(0.0f, profile.durationSeconds));
+    return profile;
+}
+
 std::optional<CapturedProjectileBehaviorPlan> capturedProjectileBehaviorPlan(const SpellRingItem& item)
 {
     for (const CapturedBehaviorSpec& spec : item.capturedBehaviorSpecs) {
@@ -2260,6 +2368,31 @@ ObjectImageDrawOptions ringItemActionFlashOptions(const SpellRingItem& item, Obj
     return options;
 }
 
+ActorVisualPose capturedProjectileActionPose(const SpellRingItem& item)
+{
+    if (item.capturedProjectileActionAnimationId.empty() ||
+        item.capturedProjectileActionDurationSeconds <= 0.0f) {
+        return actorVisualPoseIdentity();
+    }
+    return sampleActorVisualMotion(
+        item.capturedProjectileActionAnimationId,
+        item.capturedProjectileActionElapsedSeconds);
+}
+
+Vec2 ringItemActionDrawPosition(const SpellRingItem& item, Vec2 center, Vec2 outward)
+{
+    const ActorVisualPose pose = capturedProjectileActionPose(item);
+    const Vec2 forward = ringItemOutwardDirection(item, outward);
+    return center + pose.offset + forward * pose.forwardOffset + Vec2{0.0f, -pose.visualAltitude};
+}
+
+ObjectImageDrawOptions ringItemActionPoseOptions(const SpellRingItem& item, ObjectImageDrawOptions options = {})
+{
+    const ActorVisualPose pose = capturedProjectileActionPose(item);
+    options.rotationDegrees += pose.rotationDegrees;
+    return options;
+}
+
 ItemImageDrawOptions ringWorldItemImageOptions(
     const SpellRingItem& item,
     Vec2 outward,
@@ -2271,14 +2404,16 @@ ItemImageDrawOptions ringWorldItemImageOptions(
     itemOptions.enemyAnimationTimeSeconds = totalSeconds;
     itemOptions.enemy.directionOverrideEnabled = true;
     itemOptions.enemy.directionOverride = ringItemOutwardDirection(item, outward);
-    itemOptions.enemy.rotationDegrees = 0.0f;
+    itemOptions.enemy.stretchScale = capturedProjectileActionPose(item).scale;
+    itemOptions.enemy.rotationDegrees = capturedProjectileActionPose(item).rotationDegrees;
     return itemOptions;
 }
 
-ItemImageDrawOptions ringScreenItemImageOptions(const ObjectImageDrawOptions& options)
+ItemImageDrawOptions ringScreenItemImageOptions(const SpellRingItem& item, const ObjectImageDrawOptions& options)
 {
     ItemImageDrawOptions itemOptions = itemImageOptionsFromObjectOptions(options);
     itemOptions.enemy.fitToMaxSize = false;
+    itemOptions.enemy.stretchScale = capturedProjectileActionPose(item).scale;
     return itemOptions;
 }
 
@@ -2294,6 +2429,7 @@ void drawRingItemShape(
     bool invalid = false,
     bool moveMode = false)
 {
+    center = ringItemActionDrawPosition(item, center, outward);
     const Color outline = moveMode
         ? Color{255, 142, 42, 255}
         : (selected
@@ -2303,7 +2439,8 @@ void drawRingItemShape(
 
     if (object != nullptr) {
         ObjectImageDrawOptions baseImageOptions = ringItemActionFlashOptions(item);
-        baseImageOptions.rotationDegrees = ringItemRotationWobbleDegrees(item, totalSeconds);
+        baseImageOptions = ringItemActionPoseOptions(item, baseImageOptions);
+        baseImageOptions.rotationDegrees += ringItemRotationWobbleDegrees(item, totalSeconds);
         ObjectImageDrawOptions imageOptions = objectRingImageOptions(
             *object,
             outward,
@@ -2319,12 +2456,13 @@ void drawRingItemShape(
                 *object,
                 center,
                 {RingObjectImageMaxSize, RingObjectImageMaxSize},
-                ringScreenItemImageOptions(imageOptions))) {
+                ringScreenItemImageOptions(item, imageOptions))) {
             return;
         }
     } else if (item.objectVisual.imageNumber > 0) {
         ObjectImageDrawOptions imageOptions = ringItemActionFlashOptions(item);
-        imageOptions.rotationDegrees = ringItemRotationWobbleDegrees(item, totalSeconds);
+        imageOptions = ringItemActionPoseOptions(item, imageOptions);
+        imageOptions.rotationDegrees += ringItemRotationWobbleDegrees(item, totalSeconds);
         imageOptions = itemImageOptionsWithBrokenState(imageOptions, broken);
         if (selected) {
             imageOptions = withSelectedItemOutline(imageOptions, outline, 6);
@@ -2334,7 +2472,7 @@ void drawRingItemShape(
                 item.objectVisual,
                 center,
                 {RingObjectImageMaxSize, RingObjectImageMaxSize},
-                ringScreenItemImageOptions(imageOptions))) {
+                ringScreenItemImageOptions(item, imageOptions))) {
             return;
         }
     }
@@ -2379,8 +2517,10 @@ bool drawRingItemObjectImage(
     float totalSeconds,
     const ObjectImageDrawOptions& baseOptions = {})
 {
+    center = ringItemActionDrawPosition(item, center, outward);
     if (object == nullptr) {
         ObjectImageDrawOptions options = ringItemActionFlashOptions(item, baseOptions);
+        options = ringItemActionPoseOptions(item, options);
         options.rotationDegrees += ringItemRotationWobbleDegrees(item, totalSeconds);
         options = itemImageOptionsWithBrokenState(options, item.broken());
         return drawItemVisual(
@@ -2391,6 +2531,7 @@ bool drawRingItemObjectImage(
             ringWorldItemImageOptions(item, outward, totalSeconds, options));
     }
     ObjectImageDrawOptions options = ringItemActionFlashOptions(item, baseOptions);
+    options = ringItemActionPoseOptions(item, options);
     options.rotationDegrees += ringItemRotationWobbleDegrees(item, totalSeconds);
     ObjectImageDrawOptions imageOptions = objectRingImageOptions(
         *object,
