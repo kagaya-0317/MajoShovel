@@ -5053,6 +5053,10 @@ void Game::openBookshelf()
 
 void Game::syncEncyclopediaFromInventoryAndRing()
 {
+    if (!gameplayRewardsEnabled()) {
+        return;
+    }
+
     std::unordered_map<std::string, int> ownedCounts;
     std::unordered_map<std::string, const ObjectDefinition*> ownedObjects;
     const auto addOwnedObject = [&ownedCounts, &ownedObjects](const ObjectDefinition& object, int count) {
@@ -5154,6 +5158,10 @@ void Game::captureEncyclopediaSyncSuppressState()
 
 void Game::applyEffectDiscoveries(const std::vector<EffectDiscoveryEvent>& discoveries)
 {
+    if (!gameplayRewardsEnabled()) {
+        return;
+    }
+
     if (encyclopedia_.noteEffectEvents(discoveries, objectCatalog_) > 0) {
         playAudioSe(AudioSeEffectDiscovery);
     }
@@ -5165,7 +5173,7 @@ void Game::recordObjectObtainedForFirstNotice(
     bool protectable,
     Vec2 position)
 {
-    if (objectId.empty()) {
+    if (!gameplayRewardsEnabled() || objectId.empty()) {
         return;
     }
     const ObjectDefinition* object = objectCatalog_.registry.findById(objectId);
@@ -5201,7 +5209,7 @@ void Game::recordRewardObjectAcquisitionNotice(
     bool protectable,
     Vec2 position)
 {
-    if (objectId.empty()) {
+    if (!gameplayRewardsEnabled() || objectId.empty()) {
         return;
     }
     const ObjectDefinition* object = objectCatalog_.registry.findById(objectId);
@@ -5231,7 +5239,7 @@ void Game::recordRewardObjectAcquisitionNotice(
 
 void Game::recordRewardMaterialAcquisitionNotice(MaterialType materialType, int amount)
 {
-    if (amount <= 0 || materialType == MaterialType::Count) {
+    if (!gameplayRewardsEnabled() || amount <= 0 || materialType == MaterialType::Count) {
         return;
     }
 
@@ -5255,7 +5263,7 @@ void Game::recordRewardMaterialAcquisitionNotice(MaterialType materialType, int 
 
 void Game::recordRewardMoneyAcquisitionNotice(int amount)
 {
-    if (amount <= 0) {
+    if (!gameplayRewardsEnabled() || amount <= 0) {
         return;
     }
 

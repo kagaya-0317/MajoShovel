@@ -1147,6 +1147,8 @@ void Game::resetWorldUiState()
     closeUiCommandMenu(ringCommandMenu_);
     ringCommandItemIndex_ = -1;
     ringCommandPlaceActive_ = false;
+    ringDiscardConfirm_ = {};
+    ringDiscardConfirmItemIndex_ = -1;
     ringPlaceModeActive_ = false;
     ringEmptyPressActive_ = false;
     ringItemMoveModeActive_ = false;
@@ -3759,7 +3761,7 @@ void Game::update(const Input& input, const Time& time)
     updateRingEquipFx(time.deltaSeconds());
     refreshOrbitEffects();
     const bool paused = gameProgressPaused() || dungeonMapOverlayOpen_ || (wasPaused && mode_ == ScreenMode::Playing);
-    if (paused && !effectDiscoveries.empty()) {
+    if (paused && gameplayRewardsEnabled() && !effectDiscoveries.empty()) {
         applyEffectDiscoveries(effectDiscoveries);
     }
     syncIntroTutorialTerrainDamageLocks();
@@ -3812,15 +3814,19 @@ void Game::update(const Input& input, const Time& time)
         }
         if (!enemyTestActive_) {
             updateWarpPoints(time.deltaSeconds());
-            updateExposedRewardNodes();
-            updateExposedMoonFragmentNodes();
+            if (gameplayRewardsEnabled()) {
+                updateExposedRewardNodes();
+                updateExposedMoonFragmentNodes();
+            }
             const int enemyCountBeforeExposedSpawn = enemies_.activeCount();
             updateExposedEnemyNodes();
             if (enemies_.activeCount() > enemyCountBeforeExposedSpawn) {
                 playAudioSe(AudioSeEnemySpawn);
             }
         }
-        updateRingEffectDiscoveries(effectDiscoveries);
+        if (gameplayRewardsEnabled()) {
+            updateRingEffectDiscoveries(effectDiscoveries);
+        }
         normalizeOpenBuriedPlacementNodes();
         camera_.follow(player_.position, time.deltaSeconds());
         if (!deathActive && updateDungeonEventDiscovery(time.deltaSeconds())) {
@@ -3843,9 +3849,13 @@ void Game::update(const Input& input, const Time& time)
         if (!deathActive && !introTutorialActive() && input.ringOffsetHeld()) {
             queueStoryEventForTrigger("tutorial:ring_shift");
         }
-        updateDungeonEvents(time.deltaSeconds(), time.totalSeconds());
-        updateChestNodes(time.deltaSeconds(), input);
-        if (!enemyTestActive_) {
+        if (gameplayRewardsEnabled()) {
+            updateDungeonEvents(time.deltaSeconds(), time.totalSeconds());
+        }
+        if (gameplayRewardsEnabled()) {
+            updateChestNodes(time.deltaSeconds(), input);
+        }
+        if (!enemyTestActive_ && gameplayRewardsEnabled()) {
             updateCrateNodes();
         }
 
@@ -3863,8 +3873,8 @@ void Game::update(const Input& input, const Time& time)
             objectCatalog_,
             effectDispatcher_,
             &magic_,
-            &effectDiscoveries,
-            &encyclopedia_);
+            gameplayRewardsEnabled() ? &effectDiscoveries : nullptr,
+            gameplayRewardsEnabled() ? &encyclopedia_ : nullptr);
         const std::vector<RingImpactSoundPlayback> terrainImpactSounds =
             resolveRingImpactSoundEvents(digging_.impactSoundEvents(), lootRuntimeRng(), 3);
         if (!terrainImpactSounds.empty()) {
@@ -3881,7 +3891,7 @@ void Game::update(const Input& input, const Time& time)
                 effects_.spawnTileBreak(tile, TileType::Dirt, tileMap_.tileColorAtWorld(tile), playDigEffectSounds);
             }
         }
-        if (!enemyTestActive_) {
+        if (!enemyTestActive_ && gameplayRewardsEnabled()) {
             revealRewardNodesFromOpenedTiles(digging_.openedTiles());
             revealMoonFragmentNodesFromOpenedTiles(digging_.openedTiles());
             revealChestNodesFromOpenedTiles(digging_.openedTiles());
@@ -3892,7 +3902,7 @@ void Game::update(const Input& input, const Time& time)
             ++runStats_.dugTiles;
 
             std::mt19937& rng = lootRuntimeRng();
-            if (digEventDue(
+            if (gameplayRewardsEnabled() && digEventDue(
                     runStats_.dugTilesSinceMoneyDrop,
                     balance_.digMoneyMinDugTiles,
                     balance_.digMoneyGuaranteeDugTiles,
@@ -3909,14 +3919,14 @@ void Game::update(const Input& input, const Time& time)
                 const int amount = scaledLootAmount(moneyDistribution(rng), multiplier);
                 if (worldDrops_.spawnMoneyDrop(
                         amount,
-                        scatterLootPosition(tile.center, rng),
+                        safeLootLandingPosition(tile.center, rng),
                         runStats_.elapsedSeconds,
                         makeWorldLootJumpMotion(tile.center, rng))) {
                     runStats_.dugTilesSinceMoneyDrop = 0;
                 }
             }
 
-            if (digEventDue(
+            if (gameplayRewardsEnabled() && digEventDue(
                     runStats_.dugTilesSinceItemDrop,
                     balance_.digItemMinDugTiles,
                     balance_.digItemGuaranteeDugTiles,
@@ -3935,6 +3945,9 @@ void Game::update(const Input& input, const Time& time)
             }
         }
         for (const CapturedRewardDropRequest& rewardRequest : digging_.rewardDropRequests()) {
+            if (!gameplayRewardsEnabled()) {
+                break;
+            }
             std::mt19937& rng = lootRuntimeRng();
             WeightedObjectLootProfile lootProfile;
             if (!weightedObjectLootProfileForDropProfile(rewardRequest.profile, lootProfile)) {
@@ -3953,6 +3966,9 @@ void Game::update(const Input& input, const Time& time)
                 lootProfile.requiredTag);
         }
         for (const DugTile& tile : digging_.dugTiles()) {
+            if (!gameplayRewardsEnabled()) {
+                break;
+            }
             if (tile.type != TileType::Ore) {
                 continue;
             }
@@ -3970,13 +3986,15 @@ void Game::update(const Input& input, const Time& time)
             worldDrops_.spawnMaterialDrop(
                 MaterialType::EnhancementOre,
                 amount,
-                scatterLootPosition(tile.center, rng),
+                safeLootLandingPosition(tile.center, rng),
                 runStats_.elapsedSeconds,
                 makeWorldLootJumpMotion(tile.center, rng));
         }
-        for (const DugTile& tile : digging_.dugTiles()) {
-            if (trySpawnFailsafeShovelDropFromWall(tile.center)) {
-                break;
+        if (gameplayRewardsEnabled()) {
+            for (const DugTile& tile : digging_.dugTiles()) {
+                if (trySpawnFailsafeShovelDropFromWall(tile.center)) {
+                    break;
+                }
             }
         }
         std::vector<WorldDropPickupEvent> pickupEvents;
@@ -4006,6 +4024,9 @@ void Game::update(const Input& input, const Time& time)
                 &blockedObjectPickupCount);
         }
         for (const WorldDropPickupEvent& event : pickupEvents) {
+            if (!gameplayRewardsEnabled()) {
+                break;
+            }
             if (event.kind == WorldDropKind::Object) {
                 runStats_.acquiredObjectItems += std::max(1, event.quantity);
                 recordObjectObtainedForFirstNotice(event.id, event.instanceId, event.protectable, player_.position);
@@ -4048,7 +4069,9 @@ void Game::update(const Input& input, const Time& time)
         if (blockedObjectPickupCount > 0) {
             pushDungeonLog("リュックがいっぱいで拾えません", "pickup_inventory_full");
         }
-        updateDigToolFailsafe(time.deltaSeconds());
+        if (gameplayRewardsEnabled()) {
+            updateDigToolFailsafe(time.deltaSeconds());
+        }
         if (!enemyTestActive_) {
             const std::vector<Vec2> randomEnemySpawnTiles = spawnHiddenEnemyNodesFromOpenedTiles(digging_.openedTiles());
             std::vector<DugEnemySpawnPoint> randomEnemySpawnPoints;
@@ -4067,8 +4090,10 @@ void Game::update(const Input& input, const Time& time)
             updateBossSpawn();
         }
 
-        updateOrbitAreaEffects(time.deltaSeconds(), effectDiscoveries);
-        updateOrbitGroundEffects(time.deltaSeconds(), effectDiscoveries);
+        if (gameplayRewardsEnabled()) {
+            updateOrbitAreaEffects(time.deltaSeconds(), effectDiscoveries);
+            updateOrbitGroundEffects(time.deltaSeconds(), effectDiscoveries);
+        }
 
         const bool capturedBossOwned = hasCapturedBossForCurrentStage();
         const bool allowBossCapture = currentStageCleared() && !capturedBossOwned;
@@ -4095,8 +4120,8 @@ void Game::update(const Input& input, const Time& time)
             stealViewBounds,
             allowBossCapture,
             bossCaptureObjectId,
-            &effectDiscoveries,
-            &encyclopedia_);
+            gameplayRewardsEnabled() ? &effectDiscoveries : nullptr,
+            gameplayRewardsEnabled() ? &encyclopedia_ : nullptr);
         for (const CapturedExplosionRequest& explosionRequest : digging_.capturedExplosionRequests()) {
             handleCapturedExplosion(explosionRequest);
         }
@@ -4110,44 +4135,51 @@ void Game::update(const Input& input, const Time& time)
             time.deltaSeconds(),
             effectDispatcher_,
             objectCatalog_,
-            &effectDiscoveries,
-            &encyclopedia_);
+            gameplayRewardsEnabled() ? &effectDiscoveries : nullptr,
+            gameplayRewardsEnabled() ? &encyclopedia_ : nullptr);
         magic_.update(player_, spellRing_, enemies_, tileMap_, time.deltaSeconds());
         for (const ProjectileSoundEvent& event : projectiles_.consumeSoundEvents()) {
             playAudioSeAt(event.cueId, event.position, event.volumeScale, event.pitchScale);
         }
         bool magicCastSound = false;
         bool magicImpactSound = false;
+        Vec2 magicCastSoundPosition{};
+        Vec2 magicImpactSoundPosition{};
         for (MagicSoundEvent event : magic_.consumeSoundEvents()) {
-            switch (event) {
-            case MagicSoundEvent::Cast:
+            switch (event.kind) {
+            case MagicSoundKind::Cast:
                 magicCastSound = true;
+                magicCastSoundPosition = event.position;
                 break;
-            case MagicSoundEvent::Impact:
+            case MagicSoundKind::Impact:
                 magicImpactSound = true;
+                magicImpactSoundPosition = event.position;
                 break;
             }
         }
         if (magicCastSound) {
-            playAudioSe(AudioSeMagicCast);
+            playAudioSeAt(AudioSeMagicCast, magicCastSoundPosition);
         }
         if (magicImpactSound) {
-            playAudioSe(AudioSeMagicImpact);
+            playAudioSeAt(AudioSeMagicImpact, magicImpactSoundPosition);
         }
         for (const MagicFxSoundEvent& event : magicFx_.consumeSoundEvents()) {
             playAudioSeAt(event.cueId, event.position, event.volumeScale, event.pitchScale);
         }
         bool capturedEnemyThisFrame = false;
         for (const CaptureResult& capture : enemies_.consumeCaptureResults()) {
+            if (!gameplayRewardsEnabled()) {
+                break;
+            }
             capturedEnemyThisFrame = handleCaptureResult(capture) || capturedEnemyThisFrame;
         }
         updateCaptureAbsorbAnimations(time.deltaSeconds());
         updateDungeonMinimap(time.totalSeconds());
-        handleRingItemBreakEvents(&effectDiscoveries);
+        handleRingItemBreakEvents(gameplayRewardsEnabled() ? &effectDiscoveries : nullptr);
 
         std::vector<CapturedExplosionRequest> capturedExplosionRequests;
         for (const EnemyEvent& event : enemies_.events()) {
-            if (!event.enemyId.empty()) {
+            if (gameplayRewardsEnabled() && !event.enemyId.empty()) {
                 encyclopedia_.noteEnemyDiscovered(event.enemyId, event.enemyName, event.position);
             }
             if (event.type == EnemyEventType::CapturedExplosion) {
@@ -4171,7 +4203,7 @@ void Game::update(const Input& input, const Time& time)
         for (const CapturedExplosionRequest& explosionRequest : capturedExplosionRequests) {
             handleCapturedExplosion(explosionRequest);
         }
-        handleRingItemBreakEvents(&effectDiscoveries);
+        handleRingItemBreakEvents(gameplayRewardsEnabled() ? &effectDiscoveries : nullptr);
 
         bool bossDefeated = false;
         Vec2 bossDefeatPosition{};
@@ -4240,52 +4272,54 @@ void Game::update(const Input& input, const Time& time)
                 effects_.spawnTileBreak(event.position, event.terrainTileType, event.terrainColor);
             } else if (event.type == EnemyEventType::Inspected) {
                 const auto enemyIt = enemyCatalog_.enemiesById.find(event.enemyId);
-                if (enemyIt != enemyCatalog_.enemiesById.end() &&
+                if (gameplayRewardsEnabled() &&
+                    enemyIt != enemyCatalog_.enemiesById.end() &&
                     encyclopedia_.noteEnemyInspected(enemyIt->second, event.position)) {
                     playAudioSeAt(AudioSeMonsterDiscovery, event.position);
                 }
             } else if (event.type == EnemyEventType::Death || event.type == EnemyEventType::BossDeath) {
                 handleDungeonEventEnemyEvent(event);
-                if (!event.suppressRewards) {
+                const bool eventRewardsEnabled = gameplayRewardsEnabled() && !event.suppressRewards;
+                if (eventRewardsEnabled) {
                     ++runStats_.defeatedEnemies;
                 }
                 const bool playEnemyDefeatSound =
-                    event.type == EnemyEventType::Death && !capturedEnemyThisFrame && !event.suppressRewards;
+                    event.type == EnemyEventType::Death && !capturedEnemyThisFrame && eventRewardsEnabled;
                 effects_.spawnEnemyDeath(event.position, playEnemyDefeatSound);
                 addScreenShake(event.type == EnemyEventType::BossDeath ? 8.0f : 1.5f, event.type == EnemyEventType::BossDeath ? 0.28f : 0.08f);
                 std::mt19937& rng = lootRuntimeRng();
-                if (!event.suppressRewards && event.moneyDrop > 0) {
+                if (eventRewardsEnabled && event.moneyDrop > 0) {
                     worldDrops_.spawnMoneyDrop(
                         event.moneyDrop,
-                        scatterLootPosition(event.position, rng),
+                        safeLootLandingPosition(event.position, rng),
                         runStats_.elapsedSeconds,
                         makeWorldLootJumpMotion(event.position, rng));
                 }
                 const bool bossDeath = event.type == EnemyEventType::BossDeath;
                 const float manaChance = bossDeath ? balance_.bossManaDropChance : balance_.enemyManaDropChance;
                 const float moonChance = bossDeath ? balance_.bossMoonFragmentChance : balance_.enemyMoonFragmentChance;
-                if (!event.suppressRewards && rollChance(manaChance, rng)) {
+                if (eventRewardsEnabled && rollChance(manaChance, rng)) {
                     const int amount = bossDeath ? scaledLootAmount(std::uniform_int_distribution<int>(1, 3)(rng), 1.0f) : 1;
                     worldDrops_.spawnMaterialDrop(
                         MaterialType::ManaDrop,
                         amount,
-                        scatterLootPosition(event.position, rng),
+                        safeLootLandingPosition(event.position, rng),
                         runStats_.elapsedSeconds,
                         makeWorldLootJumpMotion(event.position, rng));
                 }
-                if (!event.suppressRewards && rollChance(moonChance, rng)) {
+                if (eventRewardsEnabled && rollChance(moonChance, rng)) {
                     const int amount = bossDeath ? scaledLootAmount(std::uniform_int_distribution<int>(1, 3)(rng), 1.0f) : 1;
                     worldDrops_.spawnMaterialDrop(
                         MaterialType::MoonFragment,
                         amount,
-                        scatterLootPosition(event.position, rng),
+                        safeLootLandingPosition(event.position, rng),
                         runStats_.elapsedSeconds,
                         makeWorldLootJumpMotion(event.position, rng));
                 }
-                if (!event.suppressRewards && !event.enemyId.empty()) {
+                if (eventRewardsEnabled && !event.enemyId.empty()) {
                     encyclopedia_.noteEnemyDefeated(event.enemyId, event.enemyName, event.position);
                 }
-                if (event.type == EnemyEventType::BossDeath) {
+                if (eventRewardsEnabled && event.type == EnemyEventType::BossDeath) {
                     bossDefeated = true;
                     bossDefeatPosition = event.position;
                 }
@@ -4298,6 +4332,9 @@ void Game::update(const Input& input, const Time& time)
                     pushDungeonLog(enemyName + "は" + stolenLabel + "を盗んだ");
                 }
             } else if (event.type == EnemyEventType::RewardDrop) {
+                if (!gameplayRewardsEnabled()) {
+                    continue;
+                }
                 std::mt19937& rng = lootRuntimeRng();
                 WeightedObjectLootProfile lootProfile;
                 if (!weightedObjectLootProfileForDropProfile(event.objectDropProfile, lootProfile)) {
@@ -4315,16 +4352,19 @@ void Game::update(const Input& input, const Time& time)
                     LootSourceKind::CapturedReward,
                     lootProfile.requiredTag);
             } else if (event.type == EnemyEventType::MoneyDrop) {
-                if (event.moneyDrop <= 0) {
+                if (!gameplayRewardsEnabled() || event.moneyDrop <= 0) {
                     continue;
                 }
                 std::mt19937& rng = lootRuntimeRng();
                 worldDrops_.spawnMoneyDrop(
                     event.moneyDrop,
-                    scatterLootPosition(event.position, rng),
+                    safeLootLandingPosition(event.position, rng),
                     runStats_.elapsedSeconds,
                     makeWorldLootJumpMotion(event.position, rng));
             } else if (event.type == EnemyEventType::MaterialDrop) {
+                if (!gameplayRewardsEnabled()) {
+                    continue;
+                }
                 if (event.materialDropType == MaterialType::Count || event.materialDropCount <= 0) {
                     logError("[warning] EnemyMaterialDrop: invalid material drop event; no material drop");
                     continue;
@@ -4333,10 +4373,13 @@ void Game::update(const Input& input, const Time& time)
                 worldDrops_.spawnMaterialDrop(
                     event.materialDropType,
                     event.materialDropCount,
-                    event.position,
+                    safeLootLandingPosition(event.position, rng),
                     runStats_.elapsedSeconds,
                     makeWorldLootJumpMotion(event.position, rng));
             } else if (event.type == EnemyEventType::ObjectDrop) {
+                if (!gameplayRewardsEnabled()) {
+                    continue;
+                }
                 std::mt19937& rng = lootRuntimeRng();
                 const int dropCount = std::max(1, event.objectDropCount);
                 if (!event.objectDropProfile.empty()) {
@@ -4362,7 +4405,7 @@ void Game::update(const Input& input, const Time& time)
                         worldDrops_.spawnObjectInstanceDrop(
                             objectCatalog_,
                             *event.objectDropInstance,
-                            scatterLootPosition(event.position, rng),
+                            safeLootLandingPosition(event.position, rng),
                             runStats_.elapsedSeconds,
                             makeWorldLootJumpMotion(event.position, rng));
                     } else {
@@ -4370,7 +4413,7 @@ void Game::update(const Input& input, const Time& time)
                             worldDrops_.spawnObjectDrop(
                                 objectCatalog_,
                                 event.objectDropId,
-                                scatterLootPosition(event.position, rng),
+                                safeLootLandingPosition(event.position, rng),
                                 runStats_.elapsedSeconds,
                                 makeWorldLootJumpMotion(event.position, rng));
                         }
@@ -4379,7 +4422,7 @@ void Game::update(const Input& input, const Time& time)
                     worldDrops_.spawnObjectInstanceDrop(
                         objectCatalog_,
                         *event.objectDropInstance,
-                        scatterLootPosition(event.position, rng),
+                        safeLootLandingPosition(event.position, rng),
                         runStats_.elapsedSeconds,
                         makeWorldLootJumpMotion(event.position, rng));
                 }
@@ -4430,15 +4473,20 @@ void Game::update(const Input& input, const Time& time)
         for (const MagicFxSoundEvent& event : magicFx_.consumeSoundEvents()) {
             playAudioSeAt(event.cueId, event.position, event.volumeScale, event.pitchScale);
         }
-        applyEffectDiscoveries(effectDiscoveries);
-        syncEncyclopediaFromInventoryAndRing();
+        if (gameplayRewardsEnabled()) {
+            applyEffectDiscoveries(effectDiscoveries);
+            syncEncyclopediaFromInventoryAndRing();
+        }
         updateAmbientParticleEffects(time.deltaSeconds());
         wetGround_.update(time.deltaSeconds());
         wetGround_.erasePendingGroundLines(groundLines_);
         groundLines_.update(time.deltaSeconds());
         magicFx_.update(time.deltaSeconds());
         effects_.update(time.deltaSeconds());
-        gainPlayerXp(enemies_.consumePendingXp());
+        const int pendingXp = enemies_.consumePendingXp();
+        if (gameplayRewardsEnabled()) {
+            gainPlayerXp(pendingXp);
+        }
         if (!deathActive && updateIntroTutorial(input, time.deltaSeconds())) {
             return;
         }

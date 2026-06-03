@@ -39,6 +39,8 @@ constexpr float ScreenX = 44.0f;
 constexpr float ScreenY = 58.0f;
 constexpr float ScreenW = 1192.0f;
 constexpr float ScreenH = 610.0f;
+constexpr float LogicalScreenW = 1280.0f;
+constexpr float LogicalScreenH = 720.0f;
 constexpr float ScreenGridY = ScreenY + 84.0f;
 constexpr float ScreenSlotW = 88.0f;
 constexpr float ScreenSlotH = 76.0f;
@@ -84,6 +86,11 @@ UiRect closeButtonRect()
 UiRect inventoryScreenRect()
 {
     return {{ScreenX, ScreenY}, {ScreenW, ScreenH}};
+}
+
+UiRect inventoryModalBackdropRect()
+{
+    return {{0.0f, 0.0f}, {LogicalScreenW, LogicalScreenH}};
 }
 
 int clampedUnlockedRingCount(int unlockedRingCount)
@@ -1471,6 +1478,7 @@ void InventorySystem::drawDiscardConfirmDialog(Renderer& renderer, const ObjectC
     }
 
     const UiRect panel = inventoryDiscardConfirmRect();
+    drawUiModalBackdrop(renderer, inventoryModalBackdropRect(), {0, 0, 0, 96});
     UiWindowScope window(
         renderer,
         "inventory.discard.confirm",

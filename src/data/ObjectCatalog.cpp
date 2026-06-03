@@ -576,7 +576,7 @@ bool autoTextForEffectCode(
         return true;
     }
     if (effectCode == "inspect_enemy") {
-        outText = "敵に当たるとモンスターの詳細を記録する";
+        outText = "詳細未記録の敵に当たると耐久を1消費し、モンスターの詳細を記録する";
         return true;
     }
     if (effectCode == "bounce_grounded") {

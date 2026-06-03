@@ -22,6 +22,7 @@ struct LoadedRewardNodeSave {
     DungeonTile tile{};
     int visibility = 0;
     bool revealed = false;
+    bool detectorRevealed = false;
     bool spawned = false;
     bool collected = false;
 };
@@ -29,6 +30,7 @@ struct LoadedRewardNodeSave {
 struct LoadedMoneyNodeSave {
     DungeonTile tile{};
     int visibility = 0;
+    bool detectorRevealed = false;
     bool collected = false;
 };
 
@@ -42,6 +44,7 @@ struct LoadedChestNodeSave {
     DungeonTile tile{};
     int visibility = 0;
     bool revealed = false;
+    bool detectorRevealed = false;
     bool opened = false;
     bool lootSpawned = false;
     float openingSeconds = 0.0f;
@@ -1149,7 +1152,12 @@ bool Game::loadSaveData(const std::filesystem::path& path)
                 >> node.revealed
                 >> node.spawned
                 >> node.collected;
-            if (!stream.fail() && !stageId.empty() && validPlacementVisibilitySaveValue(visibilityValue)) {
+            const bool requiredFieldsOk = !stream.fail();
+            if (!(stream >> node.detectorRevealed)) {
+                node.detectorRevealed = false;
+                stream.clear();
+            }
+            if (requiredFieldsOk && !stageId.empty() && validPlacementVisibilitySaveValue(visibilityValue)) {
                 if (!loadedDungeonState.hasSeed || loadedDungeonState.stageId.empty() || loadedDungeonState.stageId == stageId) {
                     loadedDungeonState.stageId = std::move(stageId);
                     node.visibility = visibilityValue;
@@ -1165,7 +1173,12 @@ bool Game::loadSaveData(const std::filesystem::path& path)
                 >> node.tile.y
                 >> visibilityValue
                 >> node.collected;
-            if (!stream.fail() && !stageId.empty() && validPlacementVisibilitySaveValue(visibilityValue)) {
+            const bool requiredFieldsOk = !stream.fail();
+            if (!(stream >> node.detectorRevealed)) {
+                node.detectorRevealed = false;
+                stream.clear();
+            }
+            if (requiredFieldsOk && !stageId.empty() && validPlacementVisibilitySaveValue(visibilityValue)) {
                 if (!loadedDungeonState.hasSeed || loadedDungeonState.stageId.empty() || loadedDungeonState.stageId == stageId) {
                     loadedDungeonState.stageId = std::move(stageId);
                     node.visibility = visibilityValue;
@@ -1208,6 +1221,10 @@ bool Game::loadSaveData(const std::filesystem::path& path)
                 }
                 if (!(stream >> node.mimicTriggered)) {
                     node.mimicTriggered = false;
+                    stream.clear();
+                }
+                if (!(stream >> node.detectorRevealed)) {
+                    node.detectorRevealed = false;
                     stream.clear();
                 }
             } else {
@@ -1735,6 +1752,7 @@ bool Game::loadSaveData(const std::filesystem::path& path)
             }
             nodeIt->visibility = static_cast<PlacementVisibility>(savedNode.visibility);
             nodeIt->revealed = savedNode.revealed;
+            nodeIt->detectorRevealed = savedNode.detectorRevealed;
             nodeIt->spawned = savedNode.spawned;
             nodeIt->collected = savedNode.collected;
         }
@@ -1746,6 +1764,7 @@ bool Game::loadSaveData(const std::filesystem::path& path)
                 continue;
             }
             nodeIt->visibility = static_cast<PlacementVisibility>(savedNode.visibility);
+            nodeIt->detectorRevealed = savedNode.detectorRevealed;
             nodeIt->collected = savedNode.collected;
         }
         for (const LoadedMoonFragmentNodeSave& savedNode : loadedDungeonState.moonFragmentNodes) {
@@ -1767,6 +1786,7 @@ bool Game::loadSaveData(const std::filesystem::path& path)
             }
             nodeIt->visibility = static_cast<PlacementVisibility>(savedNode.visibility);
             nodeIt->revealed = savedNode.revealed;
+            nodeIt->detectorRevealed = savedNode.detectorRevealed;
             nodeIt->opened = savedNode.opened;
             nodeIt->lootSpawned = savedNode.lootSpawned;
             nodeIt->openingSeconds = savedNode.openingSeconds;
@@ -2081,7 +2101,8 @@ bool Game::saveSaveData(const std::filesystem::path& path, std::string& message)
                     << static_cast<int>(node.visibility) << " "
                     << node.revealed << " "
                     << node.spawned << " "
-                    << node.collected << "\n";
+                    << node.collected << " "
+                    << node.detectorRevealed << "\n";
             }
         }
         if (saveMoneyNodes != nullptr) {
@@ -2091,7 +2112,8 @@ bool Game::saveSaveData(const std::filesystem::path& path, std::string& message)
                     << node.tile.x << " "
                     << node.tile.y << " "
                     << static_cast<int>(node.visibility) << " "
-                    << node.collected << "\n";
+                    << node.collected << " "
+                    << node.detectorRevealed << "\n";
             }
         }
         if (saveMoonFragmentNodes != nullptr) {
@@ -2116,7 +2138,8 @@ bool Game::saveSaveData(const std::filesystem::path& path, std::string& message)
                     << node.lootSpawned << " "
                     << node.openingSeconds << " "
                     << (node.mimicEnemyId.empty() ? "-" : node.mimicEnemyId) << " "
-                    << node.mimicTriggered << "\n";
+                    << node.mimicTriggered << " "
+                    << node.detectorRevealed << "\n";
             }
         }
         if (saveCrateNodes != nullptr) {

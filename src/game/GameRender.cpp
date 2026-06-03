@@ -415,10 +415,6 @@ void drawDetectionBadges(Renderer& renderer, const SpellRingItem& item, Vec2 anc
     int index = 0;
     if (item.hiddenDetectionRadius > 0.0f) {
         drawDetectionBadge(renderer, anchor, {126, 208, 255, 255}, index, visualScale, alphaScale);
-        ++index;
-    }
-    if (item.treasureDetectionRadius > 0.0f) {
-        drawDetectionBadge(renderer, anchor, {255, 220, 92, 255}, index, visualScale, alphaScale);
     }
 }
 
@@ -755,6 +751,11 @@ UiRect ringPlaceWindowRect()
     return {{RingPlaceScreenX, RingPlaceScreenY}, {RingPlaceScreenW, RingPlaceScreenH}};
 }
 
+UiRect ringDiscardConfirmRect()
+{
+    return {{390.0f, 220.0f}, {500.0f, 280.0f}};
+}
+
 UiRect ringPlaceSlotRect(int index)
 {
     const int row = index / RingPlaceColumns;
@@ -937,6 +938,63 @@ void drawRingPlaceWindow(
     if (!status.empty()) {
         renderer.drawText(panel.pos + Vec2{32.0f, panel.size.y - 66.0f}, status, {255, 230, 150, 255}, 2);
     }
+}
+
+void drawRingDiscardConfirmDialog(
+    Renderer& renderer,
+    const UiConfirmDialogState& state,
+    const ObjectCatalog& objectCatalog,
+    const SpellRingItem* item)
+{
+    if (!state.open) {
+        return;
+    }
+
+    const UiRect panel = ringDiscardConfirmRect();
+    UiWindowScope window(
+        renderer,
+        "ring.discard.confirm",
+        panel,
+        state.title,
+        uiConfirmDialogHelpText(),
+        UiWindowOptions{true, true});
+
+    const std::string itemName = item != nullptr
+        ? ringItemDisplayName(objectCatalog, *item)
+        : std::string("アイテム");
+    const bool hasObject = item != nullptr && !item->objectId.empty() &&
+        objectCatalog.registry.findById(item->objectId) != nullptr;
+    const std::string iconPrefix = hasObject ? inlineItemTag(item->objectId) : "";
+
+    constexpr float ContentInset = 48.0f;
+    const float bodyTop = panel.pos.y + ui::HeaderHeight + 6.0f;
+    const UiRect body{{
+        panel.pos.x + ContentInset,
+        bodyTop,
+    }, {
+        panel.size.x - ContentInset * 2.0f,
+        std::max(0.0f, uiConfirmDialogButtonRect(panel, 0).pos.y - bodyTop - 16.0f),
+    }};
+
+    InlineItemTextStyle questionStyle;
+    questionStyle.text = ui::Text;
+    questionStyle.scale = 2;
+    const std::string question = fittedInlineItemText(
+        renderer,
+        iconPrefix + itemName + "を捨てますか？",
+        body.size.x,
+        questionStyle);
+    float y = body.pos.y;
+    drawInlineItemText(renderer, objectCatalog, {body.pos.x, y}, question, questionStyle);
+    y += measureInlineItemText(renderer, question, questionStyle).y + 18.0f;
+    renderer.drawWrappedText(
+        {body.pos.x, y},
+        "（捨てたアイテムは再入手できません）",
+        body.size.x,
+        {255, 224, 164, 255},
+        2);
+
+    drawUiConfirmDialogButtons(renderer, state, panel);
 }
 
 float cometArrangeArcRadians(const RingOrbitTuning& tuning)
@@ -1377,6 +1435,102 @@ void drawDungeonRingIntroItem(
     }
 
     drawDetectionBadges(renderer, item, drawPosition, popScale, reveal);
+}
+
+struct RingItemRenderRef {
+    const SpellRingItem* item = nullptr;
+    int sequenceIndex = 0;
+};
+
+std::vector<RingItemRenderRef> sortedRingItemRenderRefs(const std::vector<const SpellRingItem*>& runtimeItems)
+{
+    std::vector<RingItemRenderRef> result;
+    result.reserve(runtimeItems.size());
+
+    int sequenceIndex = 0;
+    for (const SpellRingItem* item : runtimeItems) {
+        if (item != nullptr) {
+            result.push_back({item, sequenceIndex});
+            ++sequenceIndex;
+        }
+    }
+
+    std::stable_sort(result.begin(), result.end(), [](const RingItemRenderRef& left, const RingItemRenderRef& right) {
+        return left.item->worldPosition.y < right.item->worldPosition.y;
+    });
+    return result;
+}
+
+float ringItemCometVisualScale(const SpellRingSystem& spellRing, const SpellRingItem& item)
+{
+    const int ringIndex = std::clamp(item.ringIndex, 0, SpellRingCount - 1);
+    const RingShape ringShape = spellRing.ringShapeForIndex(ringIndex);
+    const int ringItemCount = static_cast<int>(spellRing.itemsForRing(ringIndex).size());
+    return ringShape == RingShape::Comet
+        ? std::clamp(1.0f - std::max(0, ringItemCount - 10) * 0.014f, 0.76f, 1.0f)
+        : 1.0f;
+}
+
+void drawSpellRingItemWorldVisual(
+    Renderer& renderer,
+    const SpellRingSystem& spellRing,
+    const ObjectCatalog& objectCatalog,
+    const SpellRingItem& item,
+    float totalSeconds,
+    bool drawShadow,
+    bool drawMagicAuraOverlay)
+{
+    const float cometVisualScale = ringItemCometVisualScale(spellRing, item);
+    const Vec2 drawPosition = ringItemDrawPosition(item, totalSeconds);
+
+    if (drawShadow) {
+        renderer.drawActorShadow(
+            actorShadowAnchor(item.worldPosition, ItemShadowGroundOffsetY),
+            ringItemShadowVisualSize(item, totalSeconds) * cometVisualScale);
+    }
+
+    const ItemData* object = objectForRingItem(objectCatalog, item);
+    const Vec2 outward = item.orbitOutward;
+    const Vec2 maxImageSize{
+        RingObjectImageMaxSize * cometVisualScale,
+        RingObjectImageMaxSize * cometVisualScale};
+    const ExplosionWarningVisual breakExplosionWarning = ringItemBreakExplosionWarningVisual(item);
+    const float breakExplosionVisualRadius = std::max(10.0f, item.hitRadius * cometVisualScale);
+    drawRingItemBreakExplosionWarningAura(renderer, drawPosition, breakExplosionVisualRadius, breakExplosionWarning);
+
+    const bool drewImage = drawRingItemObjectImage(
+        renderer,
+        item,
+        object,
+        drawPosition,
+        maxImageSize,
+        outward,
+        item.worldVelocity,
+        totalSeconds);
+    if (!drewImage) {
+        if (item.type == SpellRingItemType::Shovel) {
+            renderer.fillCircle(drawPosition, item.hitRadius * cometVisualScale, {178, 184, 190, 255});
+            renderer.drawLine(drawPosition, drawPosition + outward * (15.0f * cometVisualScale), {90, 96, 102, 255});
+        } else if (item.type == SpellRingItemType::Torch) {
+            renderer.fillCircle(drawPosition, item.hitRadius * cometVisualScale, {242, 122, 25, 255});
+            renderer.fillCircle(drawPosition + Vec2{2.0f, -2.0f} * cometVisualScale, 4.0f * cometVisualScale, {255, 238, 98, 255});
+        } else {
+            renderer.fillCircle(drawPosition, item.hitRadius * cometVisualScale, {96, 122, 210, 255});
+            renderer.drawCircle(drawPosition, item.hitRadius * cometVisualScale + 3.0f, {160, 202, 255, 255});
+        }
+    }
+
+    drawRingItemBreakExplosionWarningOverlay(renderer, drawPosition, breakExplosionVisualRadius, breakExplosionWarning);
+    drawDetectionBadges(renderer, item, drawPosition, cometVisualScale);
+
+    if (drawMagicAuraOverlay && item.magicAuraTimer > 0.0f && !item.magicAuraDamageType.empty() && item.magicAuraFxEmitterId == 0) {
+        drawMagicAura(
+            renderer,
+            drawPosition,
+            std::max(8.0f, item.hitRadius * cometVisualScale),
+            item.magicAuraDamageType,
+            totalSeconds);
+    }
 }
 
 constexpr float DungeonMinimapX = 18.0f;
@@ -2305,6 +2459,8 @@ void Game::updateRingScreen(const Input& input, UiContext& ui, float dt)
         closeUiCommandMenu(ringCommandMenu_);
         ringCommandItemIndex_ = -1;
         ringCommandPlaceActive_ = false;
+        ringDiscardConfirm_ = {};
+        ringDiscardConfirmItemIndex_ = -1;
         ringPlaceModeActive_ = false;
         ringEmptyPressActive_ = false;
         ringItemMoveModeActive_ = false;
@@ -2357,6 +2513,41 @@ void Game::updateRingScreen(const Input& input, UiContext& ui, float dt)
         ringSlotSelection_ = std::clamp(ringSlotSelection_, 0, static_cast<int>(items.size()) - 1);
     } else {
         ringSlotSelection_ = 0;
+    }
+
+    if (ringDiscardConfirm_.open) {
+        if (pauseReturnMode_ != ScreenMode::Base ||
+            ringDiscardConfirmItemIndex_ < 0 ||
+            ringDiscardConfirmItemIndex_ >= static_cast<int>(items.size())) {
+            ringDiscardConfirm_ = {};
+            ringDiscardConfirmItemIndex_ = -1;
+            ui.block(ringPanelRect());
+            return;
+        }
+
+        const UiConfirmDialogResult result = updateUiConfirmDialog(
+            ringDiscardConfirm_,
+            ui,
+            input,
+            ringDiscardConfirmRect());
+        if (result == UiConfirmDialogResult::Confirmed) {
+            ringSlotSelection_ = ringDiscardConfirmItemIndex_;
+            std::vector<InventoryDiscardRequest> discardRequests;
+            const bool discarded = discardRingItem(
+                items,
+                ringSlotSelection_,
+                inventory_,
+                objectCatalog_,
+                discardRequests,
+                ringStatus_);
+            (void)discardRequests;
+            ui.emitSound(discarded ? UiSoundEvent::ItemUse : UiSoundEvent::Cancel);
+            ringDiscardConfirmItemIndex_ = -1;
+        } else if (result == UiConfirmDialogResult::Cancelled) {
+            ringDiscardConfirmItemIndex_ = -1;
+        }
+        ui.block(ringPanelRect());
+        return;
     }
 
     if (ringCommandMenu_.open && uiCancelRequested(ringCancelState_, input, ui, ringPanelRect())) {
@@ -2419,18 +2610,31 @@ void Game::updateRingScreen(const Input& input, UiContext& ui, float dt)
                 break;
             case RingCommandAction::Discard:
             {
-                std::vector<InventoryDiscardRequest> discardRequests;
-                commandSucceeded = discardRingItem(
-                    items,
-                    ringSlotSelection_,
-                    inventory_,
-                    objectCatalog_,
-                    discardRequests,
-                    ringStatus_);
-                if (commandSucceeded) {
-                    spawnInventoryDiscardRequests(std::move(discardRequests));
+                if (pauseReturnMode_ == ScreenMode::Base) {
+                    openUiConfirmDialog(
+                        ringDiscardConfirm_,
+                        "確認",
+                        "",
+                        "捨てる",
+                        "戻る",
+                        1);
+                    ringDiscardConfirmItemIndex_ = ringSlotSelection_;
+                    closeUiCommandMenu(ringCommandMenu_);
+                    commandSucceeded = true;
+                } else {
+                    std::vector<InventoryDiscardRequest> discardRequests;
+                    commandSucceeded = discardRingItem(
+                        items,
+                        ringSlotSelection_,
+                        inventory_,
+                        objectCatalog_,
+                        discardRequests,
+                        ringStatus_);
+                    if (commandSucceeded) {
+                        spawnInventoryDiscardRequests(std::move(discardRequests));
+                    }
+                    ui.emitSound(commandSucceeded ? UiSoundEvent::ItemUse : UiSoundEvent::Cancel);
                 }
-                ui.emitSound(commandSucceeded ? UiSoundEvent::ItemUse : UiSoundEvent::Cancel);
                 break;
             }
             }
@@ -5066,6 +5270,19 @@ void Game::renderRingScreen(Renderer& renderer, float totalTime) const
             ringStatus_,
             totalTime);
     }
+
+    if (ringDiscardConfirm_.open) {
+        const SpellRingItem* confirmItem =
+            ringDiscardConfirmItemIndex_ >= 0 &&
+                ringDiscardConfirmItemIndex_ < static_cast<int>(items.size())
+            ? &items[static_cast<std::size_t>(ringDiscardConfirmItemIndex_)]
+            : nullptr;
+        drawUiModalBackdrop(
+            renderer,
+            {{0.0f, 0.0f}, {static_cast<float>(camera_.width()), static_cast<float>(camera_.height())}},
+            {0, 0, 0, 96});
+        drawRingDiscardConfirmDialog(renderer, ringDiscardConfirm_, objectCatalog_, confirmItem);
+    }
 }
 
 void Game::renderOperationSettings(Renderer& renderer) const
@@ -5721,20 +5938,16 @@ void Game::renderSpellRingForeground(
     if (dungeonRingIntroActive()) {
         const float introProgress = dungeonRingIntroProgress();
         drawDungeonRingIntroOrbit(renderer, spellRing_, balance_, introProgress, totalSeconds);
-        int itemIndex = 0;
-        for (const SpellRingItem* itemPtr : runtimeItems) {
-            if (itemPtr == nullptr) {
-                continue;
-            }
+        const std::vector<RingItemRenderRef> sortedItems = sortedRingItemRenderRefs(runtimeItems);
+        for (const RingItemRenderRef& itemRef : sortedItems) {
             drawDungeonRingIntroItem(
                 renderer,
                 spellRing_,
                 objectCatalog_,
-                *itemPtr,
-                itemIndex,
+                *itemRef.item,
+                itemRef.sequenceIndex,
                 introProgress,
                 totalSeconds);
-            ++itemIndex;
         }
         return;
     }
@@ -5745,69 +5958,16 @@ void Game::renderSpellRingForeground(
         renderer.drawLine(witchSelfLightCenter(player_.position), spellRing_.center(), {150, 110, 80, 100});
     }
 
-    for (const SpellRingItem* itemPtr : runtimeItems) {
-        if (itemPtr == nullptr) {
-            continue;
-        }
-        const SpellRingItem& item = *itemPtr;
-        const int ringIndex = std::clamp(item.ringIndex, 0, SpellRingCount - 1);
-        const RingShape ringShape = spellRing_.ringShapeForIndex(ringIndex);
-        const int ringItemCount = static_cast<int>(spellRing_.itemsForRing(ringIndex).size());
-        const float cometVisualScale = ringShape == RingShape::Comet
-            ? std::clamp(1.0f - std::max(0, ringItemCount - 10) * 0.014f, 0.76f, 1.0f)
-            : 1.0f;
-        const Vec2 drawPosition = ringItemDrawPosition(item, totalSeconds);
-        const ItemData* object = objectForRingItem(objectCatalog_, item);
-        const Vec2 outward = item.orbitOutward;
-        const Vec2 maxImageSize{RingObjectImageMaxSize * cometVisualScale, RingObjectImageMaxSize * cometVisualScale};
-        const ExplosionWarningVisual breakExplosionWarning = ringItemBreakExplosionWarningVisual(item);
-        const float breakExplosionVisualRadius = std::max(10.0f, item.hitRadius * cometVisualScale);
-        drawRingItemBreakExplosionWarningAura(renderer, drawPosition, breakExplosionVisualRadius, breakExplosionWarning);
-        if (item.type == SpellRingItemType::Shovel) {
-            const bool drewImage = drawRingItemObjectImage(
-                renderer,
-                item,
-                object,
-                drawPosition,
-                maxImageSize,
-                outward,
-                item.worldVelocity,
-                totalSeconds);
-            if (!drewImage) {
-                renderer.fillCircle(drawPosition, item.hitRadius * cometVisualScale, {178, 184, 190, 255});
-                renderer.drawLine(drawPosition, drawPosition + outward * (15.0f * cometVisualScale), {90, 96, 102, 255});
-            }
-        } else if (item.type == SpellRingItemType::Torch) {
-            const bool drewImage = drawRingItemObjectImage(
-                renderer,
-                item,
-                object,
-                drawPosition,
-                maxImageSize,
-                outward,
-                item.worldVelocity,
-                totalSeconds);
-            if (!drewImage) {
-                renderer.fillCircle(drawPosition, item.hitRadius * cometVisualScale, {242, 122, 25, 255});
-                renderer.fillCircle(drawPosition + Vec2{2.0f, -2.0f} * cometVisualScale, 4.0f * cometVisualScale, {255, 238, 98, 255});
-            }
-        } else {
-            const bool drewImage = drawRingItemObjectImage(
-                renderer,
-                item,
-                object,
-                drawPosition,
-                maxImageSize,
-                outward,
-                item.worldVelocity,
-                totalSeconds);
-            if (!drewImage) {
-                renderer.fillCircle(drawPosition, item.hitRadius * cometVisualScale, {96, 122, 210, 255});
-                renderer.drawCircle(drawPosition, item.hitRadius * cometVisualScale + 3.0f, {160, 202, 255, 255});
-            }
-        }
-        drawRingItemBreakExplosionWarningOverlay(renderer, drawPosition, breakExplosionVisualRadius, breakExplosionWarning);
-        drawDetectionBadges(renderer, item, drawPosition, cometVisualScale);
+    const std::vector<RingItemRenderRef> sortedItems = sortedRingItemRenderRefs(runtimeItems);
+    for (const RingItemRenderRef& itemRef : sortedItems) {
+        drawSpellRingItemWorldVisual(
+            renderer,
+            spellRing_,
+            objectCatalog_,
+            *itemRef.item,
+            totalSeconds,
+            false,
+            false);
     }
 }
 
@@ -6148,6 +6308,7 @@ void Game::render(Renderer& renderer, const Time& time)
     renderer.setWorldSpace(&camera_, screenShakeOffset(time.totalSeconds()));
 
     const std::vector<const SpellRingItem*> runtimeItems = spellRing_.runtimeItems();
+    const std::vector<RingItemRenderRef> runtimeItemsByDepth = sortedRingItemRenderRefs(runtimeItems);
     const bool ringIntroActive = dungeonRingIntroActive();
     const bool lightweight = lightweightModeEnabled();
     const std::vector<LightSource> itemLights = collectDungeonLightSources(time.totalSeconds());
@@ -6237,83 +6398,20 @@ void Game::render(Renderer& renderer, const Time& time)
             if (ringIntroActive) {
                 return;
             }
-            for (const SpellRingItem* itemPtr : runtimeItems) {
-                if (itemPtr == nullptr || !tileMap_.isLit(itemPtr->worldPosition, playerLightCenter, itemLights)) {
+            const float totalSeconds = static_cast<float>(time.totalSeconds());
+            for (const RingItemRenderRef& itemRef : runtimeItemsByDepth) {
+                const SpellRingItem& item = *itemRef.item;
+                if (!tileMap_.isLit(item.worldPosition, playerLightCenter, itemLights)) {
                     continue;
                 }
-                const SpellRingItem& item = *itemPtr;
-                const int ringIndex = std::clamp(item.ringIndex, 0, SpellRingCount - 1);
-                const RingShape ringShape = spellRing_.ringShapeForIndex(ringIndex);
-                const int ringItemCount = static_cast<int>(spellRing_.itemsForRing(ringIndex).size());
-                const float cometVisualScale = ringShape == RingShape::Comet
-                    ? std::clamp(1.0f - std::max(0, ringItemCount - 10) * 0.014f, 0.76f, 1.0f)
-                    : 1.0f;
-                const Vec2 drawPosition = ringItemDrawPosition(item, time.totalSeconds());
-                renderer.drawActorShadow(
-                    actorShadowAnchor(item.worldPosition, ItemShadowGroundOffsetY),
-                    ringItemShadowVisualSize(item, time.totalSeconds()) * cometVisualScale);
-                const ItemData* object = objectForRingItem(objectCatalog_, item);
-                const Vec2 outward = item.orbitOutward;
-                const Vec2 maxImageSize{
-                    RingObjectImageMaxSize * cometVisualScale,
-                    RingObjectImageMaxSize * cometVisualScale};
-                const float totalSeconds = static_cast<float>(time.totalSeconds());
-                const ExplosionWarningVisual breakExplosionWarning = ringItemBreakExplosionWarningVisual(item);
-                const float breakExplosionVisualRadius = std::max(10.0f, item.hitRadius * cometVisualScale);
-                drawRingItemBreakExplosionWarningAura(renderer, drawPosition, breakExplosionVisualRadius, breakExplosionWarning);
-                if (item.type == SpellRingItemType::Shovel) {
-                    const bool drewImage = drawRingItemObjectImage(
-                        renderer,
-                        item,
-                        object,
-                        drawPosition,
-                        maxImageSize,
-                        outward,
-                        item.worldVelocity,
-                        totalSeconds);
-                    if (!drewImage) {
-                        renderer.fillCircle(drawPosition, item.hitRadius * cometVisualScale, {178, 184, 190, 255});
-                        renderer.drawLine(drawPosition, drawPosition + outward * (15.0f * cometVisualScale), {90, 96, 102, 255});
-                    }
-                } else if (item.type == SpellRingItemType::Torch) {
-                    const bool drewImage = drawRingItemObjectImage(
-                        renderer,
-                        item,
-                        object,
-                        drawPosition,
-                        maxImageSize,
-                        outward,
-                        item.worldVelocity,
-                        totalSeconds);
-                    if (!drewImage) {
-                        renderer.fillCircle(drawPosition, item.hitRadius * cometVisualScale, {242, 122, 25, 255});
-                        renderer.fillCircle(drawPosition + Vec2{2.0f, -2.0f} * cometVisualScale, 4.0f * cometVisualScale, {255, 238, 98, 255});
-                    }
-                } else {
-                    const bool drewImage = drawRingItemObjectImage(
-                        renderer,
-                        item,
-                        object,
-                        drawPosition,
-                        maxImageSize,
-                        outward,
-                        item.worldVelocity,
-                        totalSeconds);
-                    if (!drewImage) {
-                        renderer.fillCircle(drawPosition, item.hitRadius * cometVisualScale, {96, 122, 210, 255});
-                        renderer.drawCircle(drawPosition, item.hitRadius * cometVisualScale + 3.0f, {160, 202, 255, 255});
-                    }
-                }
-                drawRingItemBreakExplosionWarningOverlay(renderer, drawPosition, breakExplosionVisualRadius, breakExplosionWarning);
-                drawDetectionBadges(renderer, item, drawPosition, cometVisualScale);
-                if (item.magicAuraTimer > 0.0f && !item.magicAuraDamageType.empty() && item.magicAuraFxEmitterId == 0) {
-                    drawMagicAura(
-                        renderer,
-                        drawPosition,
-                        std::max(8.0f, item.hitRadius * cometVisualScale),
-                        item.magicAuraDamageType,
-                        static_cast<float>(time.totalSeconds()));
-                }
+                drawSpellRingItemWorldVisual(
+                    renderer,
+                    spellRing_,
+                    objectCatalog_,
+                    item,
+                    totalSeconds,
+                    true,
+                    true);
             }
         },
     });

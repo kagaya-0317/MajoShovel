@@ -509,6 +509,7 @@ private:
         std::string rewardKind = "placeholder";
         std::optional<std::string> objectId;
         bool revealed = false;
+        bool detectorRevealed = false;
         bool spawned = false;
         bool collected = false;
     };
@@ -517,6 +518,7 @@ private:
         DungeonTile tile{};
         int amount = 1;
         PlacementVisibility visibility = PlacementVisibility::Exposed;
+        bool detectorRevealed = false;
         bool collected = false;
     };
 
@@ -532,6 +534,7 @@ private:
         LootChestKind chestKind = LootChestKind::Common;
         int depthRank = 1;
         bool revealed = false;
+        bool detectorRevealed = false;
         bool opened = false;
         bool lootSpawned = false;
         float openingSeconds = 0.0f;
@@ -1198,6 +1201,7 @@ private:
     void updateRingScreen(const Input& input, UiContext& ui, float dt);
     void cancelRingGrab();
     bool playerDeathSequenceActive() const;
+    bool gameplayRewardsEnabled() const;
     float playerDeathRingFadeAlpha() const;
     void beginPlayerDeathSequence();
     void updatePlayerDeathSequence(float dt);
@@ -2001,6 +2005,8 @@ private:
     int ringCommandItemIndex_ = -1;
     bool ringCommandPlaceActive_ = false;
     float ringCommandPlaceAngle_ = 0.0f;
+    UiConfirmDialogState ringDiscardConfirm_{};
+    int ringDiscardConfirmItemIndex_ = -1;
     bool ringPlaceModeActive_ = false;
     int ringPlaceSelection_ = 0;
     float ringPlaceTargetAngle_ = 0.0f;

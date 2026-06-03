@@ -24,9 +24,14 @@ enum class MagicElement {
     Earth,
 };
 
-enum class MagicSoundEvent {
+enum class MagicSoundKind {
     Cast,
     Impact,
+};
+
+struct MagicSoundEvent {
+    MagicSoundKind kind = MagicSoundKind::Cast;
+    Vec2 position{};
 };
 
 std::string_view magicElementDamageType(MagicElement element);

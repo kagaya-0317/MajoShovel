@@ -191,8 +191,12 @@ constexpr float DungeonEventGuideSeconds = 45.0f;
 constexpr float DungeonEventObjectHitPaddingPx = 16.0f;
 constexpr float DungeonEventMinSpacingTiles = 8.0f;
 constexpr float DungeonEventMinWarpPointSpacingTiles = 12.0f;
+constexpr float DungeonEventBossRouteProgressPadding = 0.01f;
 constexpr float DungeonEventDiscoveryCooldownSeconds = 2.4f;
 constexpr float DungeonEventDamageInterruptDelaySeconds = 1.1f;
+constexpr float DungeonEventLostBaggageDistanceTiles = 7.0f;
+constexpr int DungeonEventLostBaggagePocketRadiusTiles = 1;
+constexpr int DungeonEventLostBaggageWallRadiusTiles = 2;
 constexpr std::string_view DungeonEventItemRequestHeal = "heal";
 constexpr std::string_view DungeonEventItemRequestBlade = "blade";
 constexpr std::string_view DungeonEventItemRequestTool = "tool";
@@ -227,7 +231,7 @@ unsigned char sparkleAlpha(float alpha)
     return static_cast<unsigned char>(std::clamp(std::lround(alpha), 0L, 255L));
 }
 
-void drawBuriedRewardSparkle(Renderer& renderer, Vec2 center, double totalSeconds)
+void drawBuriedRewardSparkle(Renderer& renderer, Vec2 center, double totalSeconds, bool detectorRevealed)
 {
     const float time = static_cast<float>(totalSeconds);
     const float phase = center.x * 0.037f + center.y * 0.053f;
@@ -239,9 +243,15 @@ void drawBuriedRewardSparkle(Renderer& renderer, Vec2 center, double totalSecond
     const float glowWidth = 3.4f + breath * 1.2f + flash * 1.8f;
     const float coreAlpha = 178.0f + flash * 58.0f;
     const float glowAlpha = 54.0f + pulse * 46.0f + flash * 52.0f;
-    const Color glow{255, 222, 96, sparkleAlpha(glowAlpha)};
-    const Color warm{255, 242, 164, sparkleAlpha(coreAlpha)};
-    const Color hot{255, 255, 222, sparkleAlpha(206.0f + flash * 49.0f)};
+    const Color glow = detectorRevealed
+        ? Color{92, 224, 255, sparkleAlpha(glowAlpha)}
+        : Color{255, 222, 96, sparkleAlpha(glowAlpha)};
+    const Color warm = detectorRevealed
+        ? Color{166, 246, 255, sparkleAlpha(coreAlpha)}
+        : Color{255, 242, 164, sparkleAlpha(coreAlpha)};
+    const Color hot = detectorRevealed
+        ? Color{226, 255, 255, sparkleAlpha(206.0f + flash * 49.0f)}
+        : Color{255, 255, 222, sparkleAlpha(206.0f + flash * 49.0f)};
 
     renderer.drawSoftLine(center + Vec2{-length, 0.0f}, center + Vec2{length, 0.0f}, glowWidth, glow);
     renderer.drawSoftLine(center + Vec2{0.0f, -length}, center + Vec2{0.0f, length}, glowWidth, glow);
@@ -257,6 +267,11 @@ void drawBuriedRewardSparkle(Renderer& renderer, Vec2 center, double totalSecond
         renderer.drawSoftLine(sideCenter + Vec2{-sideLength, 0.0f}, sideCenter + Vec2{sideLength, 0.0f}, 1.8f, sideColor);
         renderer.drawSoftLine(sideCenter + Vec2{0.0f, -sideLength}, sideCenter + Vec2{0.0f, sideLength}, 1.8f, sideColor);
     }
+}
+
+void drawBuriedRewardSparkle(Renderer& renderer, Vec2 center, double totalSeconds)
+{
+    drawBuriedRewardSparkle(renderer, center, totalSeconds, false);
 }
 
 float dungeonFocusDurationSeconds(float seconds, float fallbackSeconds)
@@ -621,6 +636,13 @@ DungeonTile dungeonEventObjectTile(DungeonTile centerTile, float angle, float ra
         static_cast<int>(std::round(std::sin(angle) * radiusTiles)));
 }
 
+DungeonTile dungeonEventLostBaggageTile(const Game::DungeonEventInstance& event)
+{
+    const std::size_t seed = std::hash<std::string>{}(event.id);
+    const float angle = (Pi * 2.0f) * (static_cast<float>(seed % 1009u) / 1009.0f);
+    return dungeonEventObjectTile(event.centerTile, angle, DungeonEventLostBaggageDistanceTiles);
+}
+
 bool buriedWitchRocksCleared(TileMap& tileMap, DungeonTile centerTile)
 {
     for (DungeonTile offset : BuriedWitchRockOffsets) {
@@ -792,9 +814,6 @@ std::vector<DungeonTile> dungeonEventForcedCavityTiles(const Game::DungeonEventI
         break;
     }
     case Game::DungeonEventKind::LostBaggageWitch: {
-        const std::size_t seed = std::hash<std::string>{}(event.id);
-        const float angle = (Pi * 2.0f) * (static_cast<float>(seed % 1009u) / 1009.0f);
-        forced.push_back(dungeonEventObjectTile(event.centerTile, angle, 3.0f));
         break;
     }
     case Game::DungeonEventKind::SurroundedWitch: {
@@ -879,6 +898,12 @@ std::vector<DungeonTile> buildDungeonEventCavityTiles(
     for (DungeonTile forced : dungeonEventForcedCavityTiles(event)) {
         addDungeonEventCavityLine(tiles, event.centerTile, forced);
         addDungeonEventCavityPocket(tiles, forced, event.kind == Game::DungeonEventKind::BuriedWitch ? 0 : 1);
+    }
+    if (event.kind == Game::DungeonEventKind::LostBaggageWitch) {
+        addDungeonEventCavityPocket(
+            tiles,
+            dungeonEventLostBaggageTile(event),
+            DungeonEventLostBaggagePocketRadiusTiles);
     }
     return tiles;
 }
@@ -2645,7 +2670,7 @@ void Game::finalizeCaptureAbsorbAnimation(const CaptureAbsorbAnimation& animatio
     } else {
         ItemInstance instance = inventory_.createDetachedObjectInstance(animation.item);
         std::mt19937& rng = lootRuntimeRng();
-        const Vec2 dropPosition = scatterLootPosition(player_.position, rng);
+        const Vec2 dropPosition = safeLootLandingPosition(player_.position, rng);
         const bool dropped = worldDrops_.spawnObjectInstanceDrop(
             objectCatalog_,
             std::move(instance),
@@ -2969,6 +2994,14 @@ void Game::rebuildUnlockedWarpPointsForStart(Vec2 latestPosition)
 bool Game::playerDeathSequenceActive() const
 {
     return playerDeathSequence_.active;
+}
+
+bool Game::gameplayRewardsEnabled() const
+{
+    return player_.hp > 0 &&
+        !playerDeathSequenceActive() &&
+        mode_ != ScreenMode::GameOver &&
+        mode_ != ScreenMode::AstralResult;
 }
 
 float Game::playerDeathRingFadeAlpha() const
@@ -4321,6 +4354,50 @@ void Game::DungeonEventSystem::generateFromLayout(
         std::any_of(warpPoints.begin(), warpPoints.end(), [](const WarpPoint& point) {
             return !point.discovered;
         });
+    const auto bossRouteProtectedProgressRange = [&]() -> std::optional<std::pair<float, float>> {
+        if (!warpPointsEnabled || warpPoints.empty() || layout.mainPathPoints.size() < 2) {
+            return std::nullopt;
+        }
+
+        const WarpPoint& lastWarpPoint = warpPoints.back();
+        const Vec2 warpTilePosition{
+            static_cast<float>(lastWarpPoint.tilePosition.x),
+            static_cast<float>(lastWarpPoint.tilePosition.y),
+        };
+        const DungeonLayoutMetrics metrics = calculateDungeonLayoutMetrics(layout, warpTilePosition);
+        const float pathLength = pathLengthTiles(layout.mainPathPoints);
+        if (pathLength <= 0.0001f) {
+            return std::nullopt;
+        }
+
+        const float baseDistance = metrics.pathProgress * pathLength;
+        const float minDistanceFromWarp = static_cast<float>(BossOffsetTiles);
+        const float minUpwardDeltaTiles = 4.0f;
+        float bossProgress = clamp((baseDistance + minDistanceFromWarp) / pathLength, metrics.pathProgress, 1.0f);
+        for (float distanceAlongPath = baseDistance + minDistanceFromWarp;
+            distanceAlongPath <= pathLength + 0.001f;
+            distanceAlongPath += 2.0f) {
+            const float candidateProgress = clamp(distanceAlongPath / pathLength, metrics.pathProgress, 1.0f);
+            const Vec2 candidate = pointAtPathProgress(layout.mainPathPoints, candidateProgress);
+            if (length(candidate - warpTilePosition) >= minDistanceFromWarp &&
+                candidate.y <= warpTilePosition.y - minUpwardDeltaTiles) {
+                bossProgress = candidateProgress;
+                break;
+            }
+        }
+
+        const float begin = std::min(metrics.pathProgress, bossProgress);
+        const float end = std::max(metrics.pathProgress, bossProgress);
+        return std::pair<float, float>{
+            clamp(begin - DungeonEventBossRouteProgressPadding, 0.0f, 1.0f),
+            clamp(end + DungeonEventBossRouteProgressPadding, 0.0f, 1.0f),
+        };
+    }();
+    const auto onBossRoute = [&](float pathProgress) {
+        return bossRouteProtectedProgressRange.has_value() &&
+            pathProgress >= bossRouteProtectedProgressRange->first &&
+            pathProgress <= bossRouteProtectedProgressRange->second;
+    };
     const auto tooCloseToWarpPoint = [&](DungeonTile tile) {
         if (!warpPointsEnabled || warpPoints.empty()) {
             return false;
@@ -4360,6 +4437,9 @@ void Game::DungeonEventSystem::generateFromLayout(
             return false;
         }
         if (enforceCategoryLimit && dungeonEventKindIsHighDanger(kind) && pathProgress < 0.28f) {
+            return false;
+        }
+        if (onBossRoute(pathProgress)) {
             return false;
         }
         if (tooCloseToWarpPoint(tile)) {
@@ -4449,7 +4529,7 @@ void Game::DungeonEventSystem::generateFromLayout(
                 false);
             if (!resolved.has_value()) {
                 logWarning(
-                    "[dungeon_event] fixed placement skipped near warp points kind=" +
+                    "[dungeon_event] fixed placement skipped by placement guards kind=" +
                     std::string(Game::dungeonEventKindId(placement.kind)) +
                     " stage=" + std::string(stageId));
                 continue;
@@ -4816,9 +4896,15 @@ void Game::updateDungeonEvents(float dt, double totalSeconds)
                     currentStageId_ == "stage_04_astral_mine" ? 10 :
                     currentStageId_ == "stage_01_stardust" ? 6 :
                     8;
+                int spawnedCount = 0;
                 for (int i = 0; i < SwarmCount; ++i) {
                     const float angle = (Pi * 2.0f) * (static_cast<float>(i) / static_cast<float>(SwarmCount));
-                    spawnEnemy(event, tileWorldCenter(centerTile) + fromAngle(angle) * (tileSize * 2.0f), false, false);
+                    if (spawnEnemy(event, tileWorldCenter(centerTile) + fromAngle(angle) * (tileSize * 2.0f), false, false)) {
+                        ++spawnedCount;
+                    }
+                }
+                if (spawnedCount <= 0) {
+                    break;
                 }
                 event.activated = true;
                 event.encounterSpawned = true;
@@ -4922,11 +5008,9 @@ void Game::updateDungeonEvents(float dt, double totalSeconds)
             case DungeonEventKind::LostBaggageWitch: {
                 if (event.eventObjects.empty()) {
                     event.rewardTile = centerTile;
-                    const std::size_t seed = std::hash<std::string>{}(event.id);
-                    const float angle = (Pi * 2.0f) * (static_cast<float>(seed % 1009u) / 1009.0f);
                     DungeonEventObject baggage;
                     baggage.kind = DungeonEventObjectKind::LostBaggage;
-                    baggage.tile = dungeonEventObjectTile(centerTile, angle, 3.0f);
+                    baggage.tile = dungeonEventLostBaggageTile(event);
                     baggage.maxHp = 1;
                     baggage.hp = baggage.maxHp;
                     event.eventObjects.push_back(std::move(baggage));
@@ -7657,10 +7741,7 @@ bool Game::spawnWeightedObjectLoot(
         return false;
     }
     const ObjectDefinition* object = candidates[*selected];
-    const bool safeLanding = sourceKind == LootSourceKind::Chest || sourceKind == LootSourceKind::CrateBonus;
-    const Vec2 target = safeLanding
-        ? safeLootLandingPosition(center, rng)
-        : scatterLootPosition(center, rng);
+    const Vec2 target = safeLootLandingPosition(center, rng);
     return worldDrops_.spawnObjectDrop(
         objectCatalog_,
         object->id,
@@ -7738,7 +7819,41 @@ Vec2 Game::safeLootLandingPosition(Vec2 center, std::mt19937& rng)
         }
     }
 
-    return scatterLootPosition(center, rng);
+    if (safe(center)) {
+        return center;
+    }
+
+    const DungeonTile centerTile{
+        tileMap_.worldToTile(center.x),
+        tileMap_.worldToTile(center.y),
+    };
+    for (int ring = 1; ring <= LootLandingRingCount; ++ring) {
+        bool found = false;
+        Vec2 best{};
+        float bestDistanceSq = std::numeric_limits<float>::max();
+        for (int dy = -ring; dy <= ring; ++dy) {
+            for (int dx = -ring; dx <= ring; ++dx) {
+                if (std::max(std::abs(dx), std::abs(dy)) != ring) {
+                    continue;
+                }
+                const Vec2 candidate = tileMap_.tileCenter(centerTile.x + dx, centerTile.y + dy);
+                if (!safe(candidate)) {
+                    continue;
+                }
+                const float distanceSq = distanceSquared(candidate, center);
+                if (!found || distanceSq < bestDistanceSq) {
+                    found = true;
+                    best = candidate;
+                    bestDistanceSq = distanceSq;
+                }
+            }
+        }
+        if (found) {
+            return best;
+        }
+    }
+
+    return center;
 }
 
 void Game::spawnInventoryDiscardRequests(std::vector<InventoryDiscardRequest> requests)
@@ -8443,6 +8558,27 @@ void Game::applyDungeonEventCavity(const DungeonEventInstance& event)
         for (DungeonTile offset : BuriedWitchRockOffsets) {
             tileMap_.setTileOverride(dungeonEventOffsetTile(event.centerTile, offset.x, offset.y), TileType::Rock);
         }
+    } else if (event.kind == DungeonEventKind::LostBaggageWitch) {
+        const DungeonTile baggageTile = dungeonEventLostBaggageTile(event);
+        for (int y = -DungeonEventLostBaggageWallRadiusTiles; y <= DungeonEventLostBaggageWallRadiusTiles; ++y) {
+            for (int x = -DungeonEventLostBaggageWallRadiusTiles; x <= DungeonEventLostBaggageWallRadiusTiles; ++x) {
+                if (x * x + y * y <= DungeonEventLostBaggagePocketRadiusTiles * DungeonEventLostBaggagePocketRadiusTiles) {
+                    continue;
+                }
+                if (x * x + y * y > DungeonEventLostBaggageWallRadiusTiles * DungeonEventLostBaggageWallRadiusTiles) {
+                    continue;
+                }
+                tileMap_.setTileOverride(dungeonEventOffsetTile(baggageTile, x, y), TileType::Rock);
+            }
+        }
+        for (int y = -DungeonEventLostBaggagePocketRadiusTiles; y <= DungeonEventLostBaggagePocketRadiusTiles; ++y) {
+            for (int x = -DungeonEventLostBaggagePocketRadiusTiles; x <= DungeonEventLostBaggagePocketRadiusTiles; ++x) {
+                if (x * x + y * y > DungeonEventLostBaggagePocketRadiusTiles * DungeonEventLostBaggagePocketRadiusTiles) {
+                    continue;
+                }
+                tileMap_.setTileOverride(dungeonEventOffsetTile(baggageTile, x, y), TileType::Empty);
+            }
+        }
     }
 }
 
@@ -8787,8 +8923,9 @@ void Game::updateRingEffectDiscoveries(std::vector<EffectDiscoveryEvent>& discov
             });
         }
 
-        bool detectedHidden = false;
-        if (itemPtr->hiddenDetectionRadius > 0.0f && !encyclopedia_.hasObjectEffect(object->id, "detect_hidden")) {
+        bool newlyDetectedHidden = false;
+        bool sensedHiddenEnemy = false;
+        if (itemPtr->hiddenDetectionRadius > 0.0f) {
             const float radiusSq = itemPtr->hiddenDetectionRadius * itemPtr->hiddenDetectionRadius;
             for (RewardNode& node : rewardNodes_) {
                 if (node.collected || node.visibility != PlacementVisibility::BuriedHidden) {
@@ -8799,7 +8936,8 @@ void Game::updateRingEffectDiscoveries(std::vector<EffectDiscoveryEvent>& discov
                 }
                 node.visibility = PlacementVisibility::BuriedVisible;
                 node.revealed = true;
-                detectedHidden = true;
+                node.detectorRevealed = true;
+                newlyDetectedHidden = true;
             }
             for (MoneyNode& node : moneyNodes_) {
                 if (node.collected || node.visibility != PlacementVisibility::BuriedHidden) {
@@ -8809,7 +8947,8 @@ void Game::updateRingEffectDiscoveries(std::vector<EffectDiscoveryEvent>& discov
                     continue;
                 }
                 node.visibility = PlacementVisibility::BuriedVisible;
-                detectedHidden = true;
+                node.detectorRevealed = true;
+                newlyDetectedHidden = true;
             }
             for (ChestNode& node : chestNodes_) {
                 if (node.opened || node.visibility != PlacementVisibility::BuriedHidden) {
@@ -8820,7 +8959,8 @@ void Game::updateRingEffectDiscoveries(std::vector<EffectDiscoveryEvent>& discov
                 }
                 node.visibility = PlacementVisibility::BuriedVisible;
                 node.revealed = true;
-                detectedHidden = true;
+                node.detectorRevealed = true;
+                newlyDetectedHidden = true;
             }
             for (const EnemyNode& node : enemyNodes_) {
                 if (node.spawned || node.placementType != EnemyPlacementType::BuriedHidden) {
@@ -8829,9 +8969,9 @@ void Game::updateRingEffectDiscoveries(std::vector<EffectDiscoveryEvent>& discov
                 if (distanceSquared(tileWorldCenter(node.tile), itemPtr->worldPosition) > radiusSq) {
                     continue;
                 }
-                detectedHidden = true;
+                sensedHiddenEnemy = true;
             }
-            if (detectedHidden) {
+            if ((newlyDetectedHidden || sensedHiddenEnemy) && !encyclopedia_.hasObjectEffect(object->id, "detect_hidden")) {
                 playAudioSe(AudioSeDiscovery);
                 discoveryEvents.push_back(EffectDiscoveryEvent{
                     .objectId = object->id,
@@ -8844,8 +8984,8 @@ void Game::updateRingEffectDiscoveries(std::vector<EffectDiscoveryEvent>& discov
             }
         }
 
-        if (itemPtr->treasureDetectionRadius > 0.0f && !encyclopedia_.hasObjectEffect(object->id, "detect_treasure")) {
-            bool detectedTreasure = false;
+        if (itemPtr->treasureDetectionRadius > 0.0f) {
+            bool newlyDetectedTreasure = false;
             const float radiusSq = itemPtr->treasureDetectionRadius * itemPtr->treasureDetectionRadius;
             for (RewardNode& node : rewardNodes_) {
                 if (node.collected) {
@@ -8858,11 +8998,13 @@ void Game::updateRingEffectDiscoveries(std::vector<EffectDiscoveryEvent>& discov
                 if (distanceSquared(tileWorldCenter(node.tile), itemPtr->worldPosition) > radiusSq) {
                     continue;
                 }
-                if (node.visibility == PlacementVisibility::BuriedHidden) {
-                    node.visibility = PlacementVisibility::BuriedVisible;
-                    node.revealed = true;
+                if (node.visibility != PlacementVisibility::BuriedHidden) {
+                    continue;
                 }
-                detectedTreasure = true;
+                node.visibility = PlacementVisibility::BuriedVisible;
+                node.revealed = true;
+                node.detectorRevealed = true;
+                newlyDetectedTreasure = true;
             }
             for (ChestNode& node : chestNodes_) {
                 if (node.opened) {
@@ -8871,13 +9013,15 @@ void Game::updateRingEffectDiscoveries(std::vector<EffectDiscoveryEvent>& discov
                 if (distanceSquared(tileWorldCenter(node.tile), itemPtr->worldPosition) > radiusSq) {
                     continue;
                 }
-                if (node.visibility == PlacementVisibility::BuriedHidden) {
-                    node.visibility = PlacementVisibility::BuriedVisible;
-                    node.revealed = true;
+                if (node.visibility != PlacementVisibility::BuriedHidden) {
+                    continue;
                 }
-                detectedTreasure = true;
+                node.visibility = PlacementVisibility::BuriedVisible;
+                node.revealed = true;
+                node.detectorRevealed = true;
+                newlyDetectedTreasure = true;
             }
-            if (detectedTreasure) {
+            if (newlyDetectedTreasure && !encyclopedia_.hasObjectEffect(object->id, "detect_treasure")) {
                 playAudioSe(AudioSeDiscovery);
                 discoveryEvents.push_back(EffectDiscoveryEvent{
                     .objectId = object->id,
@@ -9885,7 +10029,7 @@ void Game::handleRingItemBreakEvents(std::vector<EffectDiscoveryEvent>* discover
                     const int amount = objectBreakCoinSpillAmount(*object, effect.value);
                     if (worldDrops_.spawnMoneyDrop(
                             amount,
-                            scatterLootPosition(event.position, rng),
+                            safeLootLandingPosition(event.position, rng),
                             runStats_.elapsedSeconds,
                             makeWorldLootJumpMotion(event.position, rng))) {
                         effects_.spawnAreaPulse(event.position, 38.0f, {246, 214, 108, 142});
@@ -10031,7 +10175,7 @@ void Game::appendRewardNodeRenderEntries(
             : nullptr;
         entries.push_back(DepthRenderEntry{
             center.y,
-            [&renderer, center, visibility = node.visibility, object, totalSeconds]() {
+            [&renderer, center, visibility = node.visibility, object, detectorRevealed = node.detectorRevealed, totalSeconds]() {
                 if (visibility == PlacementVisibility::Exposed) {
                     ObjectImageDrawOptions options;
                     options.outlineEnabled = true;
@@ -10042,7 +10186,7 @@ void Game::appendRewardNodeRenderEntries(
                         (void)drewFallback;
                     }
                 } else if (visibility == PlacementVisibility::BuriedVisible) {
-                    drawBuriedRewardSparkle(renderer, center, totalSeconds);
+                    drawBuriedRewardSparkle(renderer, center, totalSeconds, detectorRevealed);
                 }
             },
         });
@@ -10061,14 +10205,14 @@ void Game::appendRewardNodeRenderEntries(
         }
         entries.push_back(DepthRenderEntry{
             center.y,
-            [&renderer, center, visibility = node.visibility, amount = node.amount, exposedMoney, totalSeconds]() {
+            [&renderer, center, visibility = node.visibility, amount = node.amount, exposedMoney, detectorRevealed = node.detectorRevealed, totalSeconds]() {
                 if (visibility == PlacementVisibility::Exposed) {
                     if (!drawWorldIcon(renderer, moneyWorldIconForAmount(amount), center, {30.0f, 30.0f})) {
                         renderer.fillCircle(center, 5.5f, exposedMoney);
                         renderer.drawCircle(center, 8.5f, {255, 230, 120, 210});
                     }
                 } else if (visibility == PlacementVisibility::BuriedVisible) {
-                    drawBuriedRewardSparkle(renderer, center, totalSeconds);
+                    drawBuriedRewardSparkle(renderer, center, totalSeconds, detectorRevealed);
                 }
             },
         });
@@ -10140,8 +10284,8 @@ void Game::appendRewardNodeRenderEntries(
         if (node.visibility == PlacementVisibility::BuriedVisible && !node.opened) {
             entries.push_back(DepthRenderEntry{
                 groundCenter.y,
-                [&renderer, center, totalSeconds]() {
-                    drawBuriedRewardSparkle(renderer, center, totalSeconds);
+                [&renderer, center, detectorRevealed = node.detectorRevealed, totalSeconds]() {
+                    drawBuriedRewardSparkle(renderer, center, totalSeconds, detectorRevealed);
                 },
             });
             continue;
