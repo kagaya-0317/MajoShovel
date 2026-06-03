@@ -16,6 +16,11 @@
 
 namespace majo {
 
+enum class TextFontRole {
+    Ui,
+    InputGlyph,
+};
+
 class Renderer {
 public:
     struct ScreenshotResult {
@@ -68,6 +73,13 @@ public:
     void drawSoftLine(Vec2 a, Vec2 b, float width, Color color);
     void drawSoftPolyline(const std::vector<Vec2>& points, float width, Color color);
     void drawText(Vec2 pos, std::string_view text, Color color, int scale = 2, TextStyle style = TextStyle::Regular);
+    void drawText(
+        Vec2 pos,
+        std::string_view text,
+        Color color,
+        int scale,
+        TextStyle style,
+        TextFontRole fontRole);
     void drawOutlinedText(
         Vec2 pos,
         std::string_view text,
@@ -77,9 +89,14 @@ public:
         int scale = 2,
         TextStyle style = TextStyle::Regular);
     Vec2 measureText(std::string_view text, int scale = 2, TextStyle style = TextStyle::Regular);
+    Vec2 measureText(
+        std::string_view text,
+        int scale,
+        TextStyle style,
+        TextFontRole fontRole);
     Vec2 measureWrappedText(std::string_view text, float maxWidth, int scale = 2, TextStyle style = TextStyle::Regular);
     void drawWrappedText(Vec2 pos, std::string_view text, float maxWidth, Color color, int scale = 2, TextStyle style = TextStyle::Regular);
-    bool loadTextFont(std::string_view path);
+    bool loadTextFont(std::string_view path, TextFontRole fontRole = TextFontRole::Ui);
     bool loadPlayerSheet(std::string_view path, int frameSize = 96, int columns = 3, int rows = 3);
     void unloadPlayerSheet();
     bool hasPlayerSheet() const { return playerSheet_.texture != nullptr; }
@@ -100,6 +117,9 @@ public:
     bool loadUiTabTexture(std::string_view path);
     void unloadUiTabTexture();
     bool hasUiTabTexture() const { return uiTabTexture_.texture != nullptr && uiTabTexture_.valid; }
+    bool loadUiHorizontalTabTexture(std::string_view path);
+    void unloadUiHorizontalTabTexture();
+    bool hasUiHorizontalTabTexture() const { return uiHorizontalTabTexture_.texture != nullptr && uiHorizontalTabTexture_.valid; }
     bool loadUiLineTexture(std::string_view path);
     void unloadUiLineTexture();
     bool hasUiLineTexture() const { return uiLineTexture_.texture != nullptr; }
@@ -124,6 +144,12 @@ public:
     void drawUiSubWindowFrame(Vec2 pos, Vec2 size, Color tint = {255, 255, 255, 255});
     void drawUiButtonFrame(Vec2 pos, float width, int variant, Color tint = {255, 255, 255, 255});
     void drawUiTabFrame(Vec2 pos, Vec2 size, bool selected, Color tint = {255, 255, 255, 255});
+    void drawUiHorizontalTabs(
+        const Vec2* positions,
+        const Vec2* sizes,
+        const int* selected,
+        const Color* tints,
+        int count);
     void drawUiLine(Vec2 pos, float width, Color tint = {255, 255, 255, 255});
     ImageHandle acquireImage(std::string_view path, TextureFilter filter = TextureFilter::Nearest);
     bool drawImage(ImageHandle handle, Vec2 center, Vec2 size, const ImageDrawOptions& options = {});
@@ -202,10 +228,10 @@ private:
     void applyScreenBrightnessOverlay();
     void setColor(Color color);
     void drawGlyph(char c, Vec2 pos, Color color, int scale);
-    bool drawNativeText(Vec2 pos, std::string_view text, Color color, int scale, TextStyle style);
+    bool drawNativeText(Vec2 pos, std::string_view text, Color color, int scale, TextStyle style, TextFontRole fontRole);
     bool drawNativeOutlinedText(Vec2 pos, std::string_view text, Color color, Color outline, int outlinePx, int scale, TextStyle style);
-    bool measureNativeText(std::string_view text, int scale, TextStyle style, Vec2& outSize);
-    bool renderNativeTextToTexture(std::string_view text, Color color, int scale, TextStyle style, TextTexture& outTexture);
+    bool measureNativeText(std::string_view text, int scale, TextStyle style, TextFontRole fontRole, Vec2& outSize);
+    bool renderNativeTextToTexture(std::string_view text, Color color, int scale, TextStyle style, TextFontRole fontRole, TextTexture& outTexture);
     bool renderNativeOutlinedTextToTexture(
         std::string_view text,
         Color color,
@@ -236,7 +262,7 @@ private:
     void destroyCachedImageTexture(CachedImageEntry& entry);
     void evictImageCacheIfNeeded();
     void eraseImageHandle(ImageHandle handle);
-    void drawTextureRegion(SDL_Texture* texture, RectF src, Vec2 pos, Vec2 size, Color tint);
+    void drawTextureRegion(SDL_Texture* texture, RectF src, Vec2 pos, Vec2 size, Color tint, bool flipHorizontal = false);
     void drawTextureTiled(SDL_Texture* texture, RectF src, Vec2 pos, Vec2 size, Color tint);
     void drawNineSliceFrame(const GuidedTexture& texture, Vec2 pos, Vec2 size, Color tint);
     void drawHorizontalSliceRow(const GuidedTexture& texture, int row, Vec2 pos, float width, Color tint);
@@ -261,8 +287,10 @@ private:
     GuidedTexture uiSubWindowTexture_;
     GuidedTexture uiButtonTexture_;
     GuidedTexture uiTabTexture_;
+    GuidedTexture uiHorizontalTabTexture_;
     ImageTexture uiLineTexture_;
     std::unique_ptr<NativeTextFont> nativeTextFont_;
+    std::unique_ptr<NativeTextFont> inputGlyphTextFont_;
     std::unordered_map<std::string, TextTexture> textCache_;
     std::unordered_map<std::string, Vec2> textMeasureCache_;
     std::unordered_map<std::string, std::string> wrappedTextCache_;

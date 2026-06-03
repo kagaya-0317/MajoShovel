@@ -79,6 +79,13 @@ struct Segment {
 
 const Input* currentInput = nullptr;
 InputHelpDeviceMode currentDeviceMode = InputHelpDeviceMode::Auto;
+constexpr float IconLabelOffsetX = 1.0f;
+constexpr float IconDrawOffsetY = -2.0f;
+constexpr float IconToTextSpacing = -4.0f;
+constexpr float TextToIconSpacing = 4.0f;
+constexpr float SlashOffsetX = 2.0f;
+constexpr float SlashOffsetY = 2.0f;
+constexpr float SlashNextIconSpacing = -1.0f;
 
 Color withAlpha(Color color, unsigned char alpha)
 {
@@ -624,14 +631,35 @@ int labelScaleForGlyph(const Glyph& glyph, const InputHelpStyle& style)
     return std::max(1, style.scale - 1);
 }
 
+int labelScaleForShoulderGlyph(const Glyph& glyph, const InputHelpStyle& style)
+{
+    if (glyph.label.size() == 2) {
+        return std::max(1, style.scale);
+    }
+    return std::max(1, style.scale - 1);
+}
+
+Vec2 measureIconLabel(Renderer& renderer, std::string_view label, int scale)
+{
+    return renderer.measureText(label, scale, TextStyle::Regular, TextFontRole::InputGlyph);
+}
+
+void drawIconLabel(Renderer& renderer, Vec2 pos, std::string_view label, Color color, int scale)
+{
+    renderer.drawText(pos, label, color, scale, TextStyle::Regular, TextFontRole::InputGlyph);
+}
+
 Vec2 glyphSize(Renderer& renderer, const Glyph& glyph, const InputHelpStyle& style)
 {
     const float h = std::max(16.0f, style.iconHeight);
     switch (glyph.kind) {
     case GlyphKind::Key: {
+        if (glyph.label.size() == 1) {
+            return {h, h};
+        }
         const int labelScale = labelScaleForGlyph(glyph, style);
-        const Vec2 labelSize = renderer.measureText(glyph.label, labelScale);
-        return {std::max(h + 8.0f, labelSize.x + 16.0f), h};
+        const Vec2 labelSize = measureIconLabel(renderer, glyph.label, labelScale);
+        return {std::max(h + 8.0f, labelSize.x + 2.0f), h};
     }
     case GlyphKind::Mouse:
         return {h * 0.78f, h};
@@ -639,8 +667,8 @@ Vec2 glyphSize(Renderer& renderer, const Glyph& glyph, const InputHelpStyle& sty
         return {h, h};
     case GlyphKind::Shoulder:
     case GlyphKind::Trigger: {
-        const Vec2 labelSize = renderer.measureText(glyph.label, std::max(1, style.scale - 1));
-        return {std::max(h * 1.42f, labelSize.x + 16.0f), h};
+        const Vec2 labelSize = measureIconLabel(renderer, glyph.label, labelScaleForShoulderGlyph(glyph, style));
+        return {std::max(h * 1.42f, labelSize.x), h};
     }
     case GlyphKind::Dpad:
         return {h * 1.18f, h};
@@ -652,7 +680,7 @@ Vec2 glyphSize(Renderer& renderer, const Glyph& glyph, const InputHelpStyle& sty
 
 float slashWidth(Renderer& renderer, const InputHelpStyle& style)
 {
-    return renderer.measureText("/", std::max(1, style.scale - 1)).x + 2.0f;
+    return measureIconLabel(renderer, "/", std::max(1, style.scale - 1)).x + 2.0f;
 }
 
 Vec2 glyphGroupSize(Renderer& renderer, const std::vector<Glyph>& glyphs, const InputHelpStyle& style)
@@ -663,11 +691,23 @@ Vec2 glyphGroupSize(Renderer& renderer, const std::vector<Glyph>& glyphs, const 
         const Vec2 size = glyphSize(renderer, glyphs[i], style);
         if (i > 0) {
             width += slashWidth(renderer, style);
+            width += SlashNextIconSpacing;
         }
         width += size.x;
         height = std::max(height, size.y);
     }
     return {width, height};
+}
+
+float segmentSpacing(const Segment& previous, const Segment& current)
+{
+    if (!previous.glyphs.empty() && !current.text.empty()) {
+        return IconToTextSpacing;
+    }
+    if (!previous.text.empty() && !current.glyphs.empty()) {
+        return TextToIconSpacing;
+    }
+    return 0.0f;
 }
 
 Vec2 measureLine(Renderer& renderer, const std::vector<Segment>& segments, std::size_t first, std::size_t last, const InputHelpStyle& style)
@@ -676,6 +716,9 @@ Vec2 measureLine(Renderer& renderer, const std::vector<Segment>& segments, std::
     float height = renderer.measureText("0", style.scale).y;
     for (std::size_t i = first; i < last; ++i) {
         const Segment& segment = segments[i];
+        if (i > first) {
+            width += segmentSpacing(segments[i - 1], segment);
+        }
         if (!segment.text.empty()) {
             const Vec2 size = renderer.measureText(segment.text, style.scale);
             width += size.x;
@@ -725,13 +768,14 @@ void fillSoftRoundedRect(Renderer& renderer, Vec2 pos, Vec2 size, float radius, 
 
 void drawCenteredText(Renderer& renderer, Vec2 pos, Vec2 size, std::string_view label, Color color, int scale)
 {
-    const Vec2 labelSize = renderer.measureText(label, scale);
+    const Vec2 labelSize = measureIconLabel(renderer, label, scale);
     const float scalePx = static_cast<float>(std::max(1, scale));
     const Vec2 opticalOffset{
-        scalePx,
-        scalePx * 2.25f,
+        scalePx + IconLabelOffsetX,
+        scalePx * 2.25f + (scale == 1 ? 2.0f : 0.0f),
     };
-    renderer.drawText(
+    drawIconLabel(
+        renderer,
         {
             pos.x + (size.x - labelSize.x) * 0.5f + opticalOffset.x,
             pos.y + (size.y - labelSize.y) * 0.5f + opticalOffset.y,
@@ -773,7 +817,7 @@ void drawShoulder(Renderer& renderer, Vec2 pos, Vec2 size, const Glyph& glyph, c
     fillSoftRoundedRect(renderer, pos, size, r, {198, 210, 232, 228});
     fillSoftRoundedRect(renderer, pos + Vec2{2.0f, 2.0f}, size - Vec2{4.0f, 5.0f}, r - 2.0f, {36, 44, 64, 248});
     renderer.drawSoftLine(pos + Vec2{r * 0.55f, 3.0f}, pos + Vec2{size.x - r * 0.55f, 3.0f}, 1.5f, {255, 255, 255, 105});
-    drawCenteredText(renderer, pos, size, glyph.label, {244, 248, 255, 255}, std::max(1, style.scale - 1));
+    drawCenteredText(renderer, pos, size, glyph.label, {244, 248, 255, 255}, labelScaleForShoulderGlyph(glyph, style));
 }
 
 void drawMouse(Renderer& renderer, Vec2 pos, Vec2 size, const Glyph& glyph)
@@ -807,8 +851,8 @@ void drawDpadButton(Renderer& renderer, Vec2 pos, Vec2 size, bool active, Color 
 {
     const float r = std::min(size.x, size.y) * 0.22f;
     fillSoftRoundedRect(renderer, pos + Vec2{0.0f, 1.0f}, size, r, {0, 0, 0, 64});
-    fillSoftRoundedRect(renderer, pos, size, r, active ? scaleAlpha(accent, 0.9f) : Color{54, 62, 78, 238});
-    fillSoftRoundedRect(renderer, pos + Vec2{1.6f, 1.6f}, size - Vec2{3.2f, 3.8f}, std::max(1.0f, r - 1.6f), active ? Color{45, 72, 96, 245} : Color{28, 34, 48, 245});
+    fillSoftRoundedRect(renderer, pos, size, r, active ? scaleAlpha(accent, 0.9f) : Color{104, 116, 138, 238});
+    fillSoftRoundedRect(renderer, pos + Vec2{1.6f, 1.6f}, size - Vec2{3.2f, 3.8f}, std::max(1.0f, r - 1.6f), active ? Color{45, 72, 96, 245} : Color{64, 76, 98, 245});
 }
 
 void drawDpad(Renderer& renderer, Vec2 pos, Vec2 size, const Glyph& glyph)
@@ -881,14 +925,15 @@ void drawTextRun(Renderer& renderer, Vec2 pos, std::string_view text, const Inpu
 
 void drawGlyphGroup(Renderer& renderer, Vec2 pos, const std::vector<Glyph>& glyphs, const InputHelpStyle& style)
 {
-    Vec2 cursor = pos;
+    Vec2 cursor{pos.x, pos.y + IconDrawOffsetY};
     const int slashScale = std::max(1, style.scale - 1);
     for (std::size_t i = 0; i < glyphs.size(); ++i) {
         if (i > 0) {
-            const Vec2 slashSize = renderer.measureText("/", slashScale);
-            const float slashY = pos.y + std::max(0.0f, (style.iconHeight - slashSize.y) * 0.5f);
-            renderer.drawText({cursor.x + 1.0f, slashY}, "/", style.text, slashScale);
+            const Vec2 slashSize = measureIconLabel(renderer, "/", slashScale);
+            const float slashY = cursor.y + std::max(0.0f, (style.iconHeight - slashSize.y) * 0.5f);
+            drawIconLabel(renderer, {cursor.x + 1.0f + SlashOffsetX, slashY + SlashOffsetY}, "/", style.text, slashScale);
             cursor.x += slashWidth(renderer, style);
+            cursor.x += SlashNextIconSpacing;
         }
         drawGlyph(renderer, cursor, glyphs[i], style);
         cursor.x += glyphSize(renderer, glyphs[i], style).x;
@@ -974,6 +1019,9 @@ void drawInputHelpText(Renderer& renderer, Vec2 pos, std::string_view text, cons
         Vec2 cursor{pos.x, y};
         for (std::size_t i = range.first; i < range.second; ++i) {
             const Segment& segment = segments[i];
+            if (i > range.first) {
+                cursor.x += segmentSpacing(segments[i - 1], segment);
+            }
             if (!segment.text.empty()) {
                 const Vec2 size = renderer.measureText(segment.text, style.scale);
                 drawTextRun(renderer, {cursor.x, y + (lineSize.y - size.y) * 0.5f}, segment.text, style);

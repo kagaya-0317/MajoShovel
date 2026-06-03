@@ -3328,7 +3328,7 @@ void Game::updateOperationSettings(const Input& input, UiContext& ui)
     const auto tabItems = operationSettingsTabItems();
     const auto tabRects = operationSettingsTabRects();
     UiTabsInput tabsInput{};
-    const int selectedTab = updateUiTabs(
+    const int selectedTab = updateUiSubTabs(
         operationSettingsTabs_,
         ui,
         tabsInput,
@@ -5290,7 +5290,7 @@ void Game::renderOperationSettings(Renderer& renderer) const
     const UiRect tableRect = operationSettingsTableRect();
     const auto tabItems = operationSettingsTabItems();
     const auto tabRects = operationSettingsTabRects();
-    drawUiTabs(
+    drawUiSubTabs(
         renderer,
         operationSettingsTabs_,
         operationSettingsCategory_,

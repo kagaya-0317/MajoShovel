@@ -375,6 +375,20 @@ struct UiTabsStyle {
     bool wrapKeyboard = true;
 };
 
+struct UiSubTabsStyle {
+    Color barFill{0, 0, 0, 118};
+    Color selectedFill{92, 218, 246, 218};
+    Color hoverFill{255, 255, 255, 82};
+    Color text{255, 255, 255, 255};
+    Color selectedText{12, 30, 50, 255};
+    Color disabledText = ui::TextDisabled;
+    float fadeWidth = 28.0f;
+    float sidePadding = 28.0f;
+    float textOffsetY = 2.0f;
+    int textScale = 2;
+    bool wrapKeyboard = true;
+};
+
 struct UiVerticalTabsStyle {
     UiTabsStyle tabs{};
     float textPaddingX = 18.0f;
@@ -639,6 +653,23 @@ void drawUiTabs(
     int itemCount,
     const UiRect* rects,
     const UiTabsStyle& style = {});
+int updateUiSubTabs(
+    UiTabsState& state,
+    UiContext& ui,
+    const UiTabsInput& input,
+    int selectedIndex,
+    const UiTabItem* items,
+    int itemCount,
+    const UiRect* rects,
+    const UiSubTabsStyle& style = {});
+void drawUiSubTabs(
+    Renderer& renderer,
+    const UiTabsState& state,
+    int selectedIndex,
+    const UiTabItem* items,
+    int itemCount,
+    const UiRect* rects,
+    const UiSubTabsStyle& style = {});
 int updateUiVerticalTabs(
     UiTabsState& state,
     UiContext& ui,

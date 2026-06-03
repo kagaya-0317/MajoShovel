@@ -661,11 +661,19 @@ bool App::loadAssets()
         logError(renderer_->lastAssetError());
         ok = false;
     }
+    if (!renderer_->loadUiHorizontalTabTexture("assets/UI_tubs2.png")) {
+        logError(renderer_->lastAssetError());
+        ok = false;
+    }
     if (!renderer_->loadUiLineTexture("assets/UI_line.png")) {
         logError(renderer_->lastAssetError());
         ok = false;
     }
     if (!renderer_->loadTextFont("assets/fonts/craftmincho.otf")) {
+        logError(renderer_->lastAssetError());
+        ok = false;
+    }
+    if (!renderer_->loadTextFont("assets/fonts/Poppins-ExtraBold.ttf", TextFontRole::InputGlyph)) {
         logError(renderer_->lastAssetError());
         ok = false;
     }
@@ -726,11 +734,21 @@ bool App::reloadAssetForPath(const std::string& changedPath)
     if (fileName == "ui_tubs.png") {
         return renderer_->loadUiTabTexture("assets/UI_tubs.png");
     }
+    if (fileName == "ui_tubs2.png") {
+        return renderer_->loadUiHorizontalTabTexture("assets/UI_tubs2.png");
+    }
     if (fileName == "ui_line.png") {
         return renderer_->loadUiLineTexture("assets/UI_line.png");
     }
     if (extension == ".otf" || extension == ".ttf") {
-        return renderer_->loadTextFont("assets/fonts/craftmincho.otf");
+        bool ok = true;
+        if (!renderer_->loadTextFont("assets/fonts/craftmincho.otf")) {
+            ok = false;
+        }
+        if (!renderer_->loadTextFont("assets/fonts/Poppins-ExtraBold.ttf", TextFontRole::InputGlyph)) {
+            ok = false;
+        }
+        return ok;
     }
     if (fileName == "audio_manifest.tsv" ||
         parentPath.find("assets/audio") != std::string::npos ||

@@ -179,6 +179,17 @@ int textStyleCacheValue(TextStyle style)
     return style == TextStyle::Italic ? 1 : 0;
 }
 
+int textFontRoleCacheValue(TextFontRole role)
+{
+    return role == TextFontRole::InputGlyph ? 1 : 0;
+}
+
+float nativeFontSizeForScale(int scale)
+{
+    const int normalizedScale = std::max(1, scale);
+    return static_cast<float>(normalizedScale == 1 ? 12 : normalizedScale * 8);
+}
+
 #ifdef _WIN32
 Gdiplus::FontStyle gdiplusFontStyle(TextStyle style)
 {
@@ -186,10 +197,10 @@ Gdiplus::FontStyle gdiplusFontStyle(TextStyle style)
 }
 #endif
 
-std::string textCacheKey(std::string_view text, Color color, int scale, TextStyle style)
+std::string textCacheKey(std::string_view text, Color color, int scale, TextStyle style, TextFontRole role)
 {
     std::ostringstream out;
-    out << scale << ':' << textStyleCacheValue(style) << ':'
+    out << textFontRoleCacheValue(role) << ':' << scale << ':' << textStyleCacheValue(style) << ':'
         << static_cast<int>(color.r) << ','
         << static_cast<int>(color.g) << ','
         << static_cast<int>(color.b) << ','
@@ -214,10 +225,10 @@ std::string outlinedTextCacheKey(std::string_view text, Color color, Color outli
     return out.str();
 }
 
-std::string textMeasureCacheKey(std::string_view text, int scale, TextStyle style)
+std::string textMeasureCacheKey(std::string_view text, int scale, TextStyle style, TextFontRole role)
 {
     std::ostringstream out;
-    out << scale << ':' << textStyleCacheValue(style) << ':' << text;
+    out << textFontRoleCacheValue(role) << ':' << scale << ':' << textStyleCacheValue(style) << ':' << text;
     return out.str();
 }
 
@@ -338,6 +349,7 @@ Renderer::~Renderer()
     unloadUiSubWindowTexture();
     unloadUiButtonTexture();
     unloadUiTabTexture();
+    unloadUiHorizontalTabTexture();
     unloadUiLineTexture();
 }
 
@@ -993,8 +1005,13 @@ void Renderer::drawGlyph(char c, Vec2 pos, Color color, int scale)
 
 void Renderer::drawText(Vec2 pos, std::string_view text, Color color, int scale, TextStyle style)
 {
+    drawText(pos, text, color, scale, style, TextFontRole::Ui);
+}
+
+void Renderer::drawText(Vec2 pos, std::string_view text, Color color, int scale, TextStyle style, TextFontRole fontRole)
+{
 #ifdef _WIN32
-    if (drawNativeText(pos, text, color, scale, style)) {
+    if (drawNativeText(pos, text, color, scale, style, fontRole)) {
         return;
     }
 #endif
@@ -1044,14 +1061,19 @@ void Renderer::drawOutlinedText(Vec2 pos, std::string_view text, Color color, Co
 
 Vec2 Renderer::measureText(std::string_view text, int scale, TextStyle style)
 {
-    const std::string key = textMeasureCacheKey(text, std::max(1, scale), style);
+    return measureText(text, scale, style, TextFontRole::Ui);
+}
+
+Vec2 Renderer::measureText(std::string_view text, int scale, TextStyle style, TextFontRole fontRole)
+{
+    const std::string key = textMeasureCacheKey(text, std::max(1, scale), style, fontRole);
     if (const auto it = textMeasureCache_.find(key); it != textMeasureCache_.end()) {
         return it->second;
     }
 
     Vec2 measured{};
 #ifdef _WIN32
-    if (measureNativeText(text, scale, style, measured)) {
+    if (measureNativeText(text, scale, style, fontRole, measured)) {
         if (textMeasureCache_.size() > 2048) {
             textMeasureCache_.clear();
         }
@@ -1090,7 +1112,7 @@ Vec2 Renderer::measureWrappedText(std::string_view text, float maxWidth, int sca
     return measureText(wrappedText(text, maxWidth, scale, style), scale, style);
 }
 
-bool Renderer::loadTextFont(std::string_view path)
+bool Renderer::loadTextFont(std::string_view path, TextFontRole fontRole)
 {
     lastAssetError_.clear();
     clearTextCache();
@@ -1134,7 +1156,11 @@ bool Renderer::loadTextFont(std::string_view path)
 
     font->familyName = familyName;
     font->loaded = true;
-    nativeTextFont_ = std::move(font);
+    if (fontRole == TextFontRole::InputGlyph) {
+        inputGlyphTextFont_ = std::move(font);
+    } else {
+        nativeTextFont_ = std::move(font);
+    }
     return true;
 #else
     lastAssetError_ = "TTF text rendering is only implemented on Windows";
@@ -1142,24 +1168,28 @@ bool Renderer::loadTextFont(std::string_view path)
 #endif
 }
 
-bool Renderer::drawNativeText(Vec2 pos, std::string_view text, Color color, int scale, TextStyle style)
+bool Renderer::drawNativeText(Vec2 pos, std::string_view text, Color color, int scale, TextStyle style, TextFontRole fontRole)
 {
 #ifdef _WIN32
-    if (!nativeTextFont_ || !nativeTextFont_->loaded) {
+    const NativeTextFont* fontSource =
+        fontRole == TextFontRole::InputGlyph && inputGlyphTextFont_ && inputGlyphTextFont_->loaded
+            ? inputGlyphTextFont_.get()
+            : nativeTextFont_.get();
+    if (!fontSource || !fontSource->loaded) {
         return false;
     }
 
     const Color drawColor = transformColor(color);
     Color cacheColor = color;
     cacheColor.a = 255;
-    const std::string key = textCacheKey(text, cacheColor, std::max(1, scale), style);
+    const std::string key = textCacheKey(text, cacheColor, std::max(1, scale), style, fontRole);
     auto it = textCache_.find(key);
     if (it == textCache_.end()) {
         if (textCache_.size() > 2048) {
             clearTextCache();
         }
         TextTexture texture{};
-        if (!renderNativeTextToTexture(text, cacheColor, scale, style, texture)) {
+        if (!renderNativeTextToTexture(text, cacheColor, scale, style, fontRole, texture)) {
             return false;
         }
         it = textCache_.emplace(key, texture).first;
@@ -1180,6 +1210,7 @@ bool Renderer::drawNativeText(Vec2 pos, std::string_view text, Color color, int 
     (void)color;
     (void)scale;
     (void)style;
+    (void)fontRole;
     return false;
 #endif
 }
@@ -1233,10 +1264,14 @@ bool Renderer::drawNativeOutlinedText(Vec2 pos, std::string_view text, Color col
 #endif
 }
 
-bool Renderer::measureNativeText(std::string_view text, int scale, TextStyle style, Vec2& outSize)
+bool Renderer::measureNativeText(std::string_view text, int scale, TextStyle style, TextFontRole fontRole, Vec2& outSize)
 {
 #ifdef _WIN32
-    if (!nativeTextFont_ || !nativeTextFont_->loaded) {
+    const NativeTextFont* fontSource =
+        fontRole == TextFontRole::InputGlyph && inputGlyphTextFont_ && inputGlyphTextFont_->loaded
+            ? inputGlyphTextFont_.get()
+            : nativeTextFont_.get();
+    if (!fontSource || !fontSource->loaded) {
         return false;
     }
 
@@ -1245,12 +1280,12 @@ bool Renderer::measureNativeText(std::string_view text, int scale, TextStyle sty
         return false;
     }
 
-    Gdiplus::FontFamily family(nativeTextFont_->familyName.c_str(), &nativeTextFont_->collection);
+    Gdiplus::FontFamily family(fontSource->familyName.c_str(), &fontSource->collection);
     if (!family.IsAvailable()) {
         return false;
     }
 
-    const float fontSize = static_cast<float>(std::max(1, scale) * 8);
+    const float fontSize = nativeFontSizeForScale(scale);
     Gdiplus::Font font(&family, fontSize, gdiplusFontStyle(style), Gdiplus::UnitPixel);
     Gdiplus::Bitmap measureBitmap(1, 1, PixelFormat32bppARGB);
     Gdiplus::Graphics measureGraphics(&measureBitmap);
@@ -1286,32 +1321,41 @@ bool Renderer::measureNativeText(std::string_view text, int scale, TextStyle sty
     (void)text;
     (void)scale;
     (void)style;
+    (void)fontRole;
     (void)outSize;
     return false;
 #endif
 }
 
-bool Renderer::renderNativeTextToTexture(std::string_view text, Color color, int scale, TextStyle style, TextTexture& outTexture)
+bool Renderer::renderNativeTextToTexture(std::string_view text, Color color, int scale, TextStyle style, TextFontRole fontRole, TextTexture& outTexture)
 {
 #ifdef _WIN32
+    const NativeTextFont* fontSource =
+        fontRole == TextFontRole::InputGlyph && inputGlyphTextFont_ && inputGlyphTextFont_->loaded
+            ? inputGlyphTextFont_.get()
+            : nativeTextFont_.get();
+    if (!fontSource || !fontSource->loaded) {
+        return false;
+    }
+
     std::wstring wideText;
     if (!utf8ToWide(text, wideText)) {
         return false;
     }
 
-    Gdiplus::FontFamily family(nativeTextFont_->familyName.c_str(), &nativeTextFont_->collection);
+    Gdiplus::FontFamily family(fontSource->familyName.c_str(), &fontSource->collection);
     if (!family.IsAvailable()) {
         return false;
     }
 
     Vec2 measured{};
-    if (!measureNativeText(text, scale, style, measured)) {
+    if (!measureNativeText(text, scale, style, fontRole, measured)) {
         return false;
     }
 
     const int bitmapWidth = std::max(1, static_cast<int>(std::ceil(measured.x)));
     const int bitmapHeight = std::max(1, static_cast<int>(std::ceil(measured.y)));
-    const float fontSize = static_cast<float>(std::max(1, scale) * 8);
+    const float fontSize = nativeFontSizeForScale(scale);
     Gdiplus::Font font(&family, fontSize, gdiplusFontStyle(style), Gdiplus::UnitPixel);
     Gdiplus::Bitmap measureBitmap(1, 1, PixelFormat32bppARGB);
     Gdiplus::Graphics measureGraphics(&measureBitmap);
@@ -1388,6 +1432,7 @@ bool Renderer::renderNativeTextToTexture(std::string_view text, Color color, int
     (void)color;
     (void)scale;
     (void)style;
+    (void)fontRole;
     (void)outTexture;
     return false;
 #endif
@@ -1414,14 +1459,14 @@ bool Renderer::renderNativeOutlinedTextToTexture(
     }
 
     Vec2 measured{};
-    if (!measureNativeText(text, scale, style, measured)) {
+    if (!measureNativeText(text, scale, style, TextFontRole::Ui, measured)) {
         return false;
     }
 
     const int margin = std::max(0, outlinePx) + 2;
     const int bitmapWidth = std::max(1, static_cast<int>(std::ceil(measured.x)) + margin * 2);
     const int bitmapHeight = std::max(1, static_cast<int>(std::ceil(measured.y)) + margin * 2);
-    const float fontSize = static_cast<float>(std::max(1, scale) * 8);
+    const float fontSize = nativeFontSizeForScale(scale);
     const Gdiplus::FontStyle fontStyle = gdiplusFontStyle(style);
     Gdiplus::Font font(&family, fontSize, fontStyle, Gdiplus::UnitPixel);
     Gdiplus::Bitmap measureBitmap(1, 1, PixelFormat32bppARGB);
@@ -1618,6 +1663,11 @@ void Renderer::unloadUiTabTexture()
     unloadGuidedTexture(uiTabTexture_);
 }
 
+void Renderer::unloadUiHorizontalTabTexture()
+{
+    unloadGuidedTexture(uiHorizontalTabTexture_);
+}
+
 void Renderer::unloadUiLineTexture()
 {
     unloadImageTexture(uiLineTexture_);
@@ -1782,6 +1832,11 @@ bool Renderer::loadUiButtonTexture(std::string_view path)
 bool Renderer::loadUiTabTexture(std::string_view path)
 {
     return loadGuidedTexture(path, 3, 2, false, "UI tab texture", uiTabTexture_, true);
+}
+
+bool Renderer::loadUiHorizontalTabTexture(std::string_view path)
+{
+    return loadGuidedTexture(path, 5, 3, false, "UI horizontal tab texture", uiHorizontalTabTexture_, true);
 }
 
 bool Renderer::loadUiLineTexture(std::string_view path)
@@ -2784,7 +2839,7 @@ bool Renderer::drawFrameSnapshot(const FrameSnapshot& snapshot, Vec2 pos, Vec2 s
     return SDL_RenderTexture(renderer_, snapshot.texture, nullptr, &dst);
 }
 
-void Renderer::drawTextureRegion(SDL_Texture* texture, RectF src, Vec2 pos, Vec2 size, Color tint)
+void Renderer::drawTextureRegion(SDL_Texture* texture, RectF src, Vec2 pos, Vec2 size, Color tint, bool flipHorizontal)
 {
     if (!texture || src.w <= 0.0f || src.h <= 0.0f || size.x <= 0.0f || size.y <= 0.0f) {
         return;
@@ -2797,7 +2852,11 @@ void Renderer::drawTextureRegion(SDL_Texture* texture, RectF src, Vec2 pos, Vec2
     SDL_SetTextureColorMod(texture, tint.r, tint.g, tint.b);
     SDL_SetTextureAlphaMod(texture, tint.a);
     const SDL_FRect srcRect = toSdlRect(src);
-    SDL_RenderTexture(renderer_, texture, &srcRect, &dst);
+    if (flipHorizontal) {
+        SDL_RenderTextureRotated(renderer_, texture, &srcRect, &dst, 0.0, nullptr, SDL_FLIP_HORIZONTAL);
+    } else {
+        SDL_RenderTexture(renderer_, texture, &srcRect, &dst);
+    }
 }
 
 void Renderer::drawTextureTiled(SDL_Texture* texture, RectF src, Vec2 pos, Vec2 size, Color tint)
@@ -2922,6 +2981,134 @@ void Renderer::drawUiTabFrame(Vec2 pos, Vec2 size, bool selected, Color tint)
         return;
     }
     drawHorizontalSliceRow(uiTabTexture_, selected ? 1 : 0, pos, size, tint);
+}
+
+void Renderer::drawUiHorizontalTabs(
+    const Vec2* positions,
+    const Vec2* sizes,
+    const int* selected,
+    const Color* tints,
+    int count)
+{
+    if (!hasUiHorizontalTabTexture() || positions == nullptr || sizes == nullptr || selected == nullptr || tints == nullptr ||
+        count <= 0) {
+        return;
+    }
+
+    const auto& tabs = uiHorizontalTabTexture_;
+    if (tabs.columns != 5 || tabs.rows != 3) {
+        return;
+    }
+
+    auto cell = [&](int row, int col) -> RectF {
+        return tabs.cells[static_cast<std::size_t>(row * tabs.columns + col)];
+    };
+    auto rowFor = [&](bool isSelected) {
+        return isSelected ? 1 : 0;
+    };
+
+    const float leftCapWidth = tabs.columnWidths[0];
+    const float rightCapWidth = tabs.columnWidths[4];
+    const float jointWidth = tabs.columnWidths[2];
+    const float jointHalfWidth = jointWidth * 0.5f;
+
+    auto drawHorizontalTiled = [&](RectF source, Vec2 pos, float width, Color tint) {
+        if (source.w <= 0.0f || source.h <= 0.0f || width <= 0.0f) {
+            return;
+        }
+        for (float x = 0.0f; x < width;) {
+            const float dstWidth = std::min(source.w, width - x);
+            drawTextureRegion(
+                tabs.texture,
+                {source.x, source.y, dstWidth, source.h},
+                {pos.x + x, pos.y},
+                {dstWidth, source.h},
+                tint);
+            x += dstWidth;
+        }
+    };
+    auto rowTop = [&](int index, int row) {
+        const float rowHeight = tabs.rowHeights[static_cast<std::size_t>(row)];
+        return positions[index].y + (sizes[index].y - rowHeight) * 0.5f;
+    };
+    auto jointCenterX = [&](int leftIndex) {
+        const float leftRight = positions[leftIndex].x + sizes[leftIndex].x;
+        const float rightLeft = positions[leftIndex + 1].x;
+        return (leftRight + rightLeft) * 0.5f;
+    };
+    auto drawBody = [&](int index, float left, float right) {
+        const float width = right - left;
+        if (width <= 0.0f || sizes[index].y <= 0.0f) {
+            return;
+        }
+        const int row = rowFor(selected[index] != 0);
+        const float y = rowTop(index, row);
+        const float midpoint = left + width * 0.5f;
+        const float leftWidth = std::max(0.0f, midpoint - left);
+        const float rightWidth = std::max(0.0f, right - midpoint);
+        drawHorizontalTiled(cell(row, 1), {left, y}, leftWidth, tints[index]);
+        drawHorizontalTiled(cell(row, 3), {midpoint, y}, rightWidth, tints[index]);
+    };
+
+    for (int i = 0; i < count; ++i) {
+        if (sizes[i].x <= 0.0f || sizes[i].y <= 0.0f) {
+            continue;
+        }
+
+        const bool isSelected = selected[i] != 0;
+        const int row = rowFor(isSelected);
+        const float left = positions[i].x;
+        const float right = positions[i].x + sizes[i].x;
+        const float bodyLeft = i == 0 ? left + std::min(leftCapWidth, sizes[i].x) : jointCenterX(i - 1) + jointHalfWidth;
+        const float bodyRight = i == count - 1 ? right - std::min(rightCapWidth, sizes[i].x) : jointCenterX(i) - jointHalfWidth;
+
+        if (i == 0) {
+            const float capWidth = std::min(leftCapWidth, sizes[i].x);
+            drawTextureRegion(tabs.texture, cell(row, 0), {left, rowTop(i, row)}, {capWidth, tabs.rowHeights[static_cast<std::size_t>(row)]}, tints[i]);
+        }
+        if (i == count - 1) {
+            const float capWidth = std::min(rightCapWidth, sizes[i].x);
+            drawTextureRegion(tabs.texture, cell(row, 4), {right - capWidth, rowTop(i, row)}, {capWidth, tabs.rowHeights[static_cast<std::size_t>(row)]}, tints[i]);
+        }
+        drawBody(i, bodyLeft, bodyRight);
+    }
+
+    for (int i = 0; i < count - 1; ++i) {
+        const float centerX = jointCenterX(i);
+        const bool leftSelected = selected[i] != 0;
+        const bool rightSelected = selected[i + 1] != 0;
+        const int row = leftSelected == rightSelected ? rowFor(leftSelected) : 2;
+        const bool flip = !leftSelected && rightSelected;
+        const float jointLayoutTop = std::min(positions[i].y, positions[i + 1].y);
+        const float jointLayoutHeight = std::max(positions[i].y + sizes[i].y, positions[i + 1].y + sizes[i + 1].y) - jointLayoutTop;
+        const float height = tabs.rowHeights[static_cast<std::size_t>(row)];
+        const float y = jointLayoutTop + (jointLayoutHeight - height) * 0.5f;
+
+        const RectF source = cell(row, 2);
+        const float leftWidth = jointHalfWidth;
+        const float rightWidth = jointWidth - leftWidth;
+        const RectF leftSource = flip
+            ? RectF{source.x + source.w - leftWidth, source.y, leftWidth, source.h}
+            : RectF{source.x, source.y, leftWidth, source.h};
+        const RectF rightSource = flip
+            ? RectF{source.x, source.y, rightWidth, source.h}
+            : RectF{source.x + source.w - rightWidth, source.y, rightWidth, source.h};
+
+        drawTextureRegion(
+            tabs.texture,
+            leftSource,
+            {centerX - jointHalfWidth, y},
+            {leftWidth, height},
+            tints[i],
+            flip);
+        drawTextureRegion(
+            tabs.texture,
+            rightSource,
+            {centerX - jointHalfWidth + leftWidth, y},
+            {rightWidth, height},
+            tints[i + 1],
+            flip);
+    }
 }
 
 void Renderer::drawUiLine(Vec2 pos, float width, Color tint)

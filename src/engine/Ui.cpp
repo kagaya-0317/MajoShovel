@@ -2726,6 +2726,86 @@ void drawUiTabs(
 
     constexpr float TabTextOffsetY = 2.0f;
 
+    if (renderer.hasUiHorizontalTabTexture()) {
+        std::vector<Vec2> imagePositions;
+        std::vector<Vec2> imageSizes;
+        std::vector<int> selectedFlags;
+        std::vector<Color> imageTints;
+        imagePositions.reserve(static_cast<std::size_t>(itemCount));
+        imageSizes.reserve(static_cast<std::size_t>(itemCount));
+        selectedFlags.reserve(static_cast<std::size_t>(itemCount));
+        imageTints.reserve(static_cast<std::size_t>(itemCount));
+
+        const float imageOutset = std::max(0.0f, style.imageOutset);
+        for (int i = 0; i < itemCount; ++i) {
+            UiButtonStyle buttonStyle = style.buttonStyle;
+            const bool selected = i == selectedIndex;
+            if (selected) {
+                buttonStyle.text = style.selectedText;
+                buttonStyle.imageTintHot = style.selectedImageTint;
+            }
+
+            UiRect rect = rects[i];
+            rect.size.y = ui::ButtonHeight;
+            const UiRect imageRect{
+                rect.pos - Vec2{imageOutset, imageOutset},
+                rect.size + Vec2{imageOutset * 2.0f, imageOutset * 2.0f},
+            };
+
+            Color tint = selected ? buttonStyle.imageTintHot : buttonStyle.imageTint;
+            const bool enabled = tabItemEnabled(items, i);
+            if (i == state.focusedIndex && enabled) {
+                tint = scaledColor(tint, 1.08f);
+            }
+            if (!enabled) {
+                tint = alphaScaledColor(tint, 0.55f);
+            }
+
+            imagePositions.push_back(imageRect.pos);
+            imageSizes.push_back(imageRect.size);
+            selectedFlags.push_back(selected ? 1 : 0);
+            imageTints.push_back(tint);
+        }
+
+        int runStart = 0;
+        for (int i = 1; i <= itemCount; ++i) {
+            const bool breakRun = i == itemCount ||
+                std::abs(imagePositions[i].y - imagePositions[i - 1].y) > 1.0f ||
+                imagePositions[i].x < imagePositions[i - 1].x;
+            if (!breakRun) {
+                continue;
+            }
+            renderer.drawUiHorizontalTabs(
+                imagePositions.data() + runStart,
+                imageSizes.data() + runStart,
+                selectedFlags.data() + runStart,
+                imageTints.data() + runStart,
+                i - runStart);
+            runStart = i;
+        }
+
+        for (int i = 0; i < itemCount; ++i) {
+            UiButtonStyle buttonStyle = style.buttonStyle;
+            const bool selected = i == selectedIndex;
+            if (selected) {
+                buttonStyle.text = style.selectedText;
+            }
+            if (!tabItemEnabled(items, i)) {
+                buttonStyle.text = ui::TextDisabled;
+            }
+
+            UiRect rect = rects[i];
+            rect.size.y = ui::ButtonHeight;
+            const Vec2 textSize = renderer.measureText(items[i].label, 2);
+            const Vec2 textPos{
+                rect.pos.x + std::max(0.0f, (rect.size.x - textSize.x) * 0.5f),
+                rect.pos.y + std::max(0.0f, (rect.size.y - textSize.y) * 0.5f) + TabTextOffsetY,
+            };
+            renderer.drawText(textPos, items[i].label, buttonStyle.text, 2);
+        }
+        return;
+    }
+
     auto drawTab = [&](int i) {
         UiButtonStyle buttonStyle = style.buttonStyle;
         if (i == selectedIndex) {
@@ -2792,6 +2872,99 @@ void drawUiTabs(
         if (active) {
             drawTab(i);
         }
+    }
+}
+
+int updateUiSubTabs(
+    UiTabsState& state,
+    UiContext& ui,
+    const UiTabsInput& input,
+    int selectedIndex,
+    const UiTabItem* items,
+    int itemCount,
+    const UiRect* rects,
+    const UiSubTabsStyle& style)
+{
+    UiTabsStyle inputStyle;
+    inputStyle.wrapKeyboard = style.wrapKeyboard;
+    return updateUiTabs(state, ui, input, selectedIndex, items, itemCount, rects, inputStyle);
+}
+
+void drawUiSubTabs(
+    Renderer& renderer,
+    const UiTabsState& state,
+    int selectedIndex,
+    const UiTabItem* items,
+    int itemCount,
+    const UiRect* rects,
+    const UiSubTabsStyle& style)
+{
+    if (items == nullptr || rects == nullptr || itemCount <= 0) {
+        return;
+    }
+
+    UiRect bounds = rects[0];
+    for (int i = 1; i < itemCount; ++i) {
+        const float left = std::min(bounds.pos.x, rects[i].pos.x);
+        const float top = std::min(bounds.pos.y, rects[i].pos.y);
+        const float right = std::max(bounds.pos.x + bounds.size.x, rects[i].pos.x + rects[i].size.x);
+        const float bottom = std::max(bounds.pos.y + bounds.size.y, rects[i].pos.y + rects[i].size.y);
+        bounds = {{left, top}, {right - left, bottom - top}};
+    }
+
+    const float fadeWidth = std::max(0.0f, style.fadeWidth);
+    const float sidePadding = std::max(fadeWidth, style.sidePadding);
+    const UiRect bar{
+        {bounds.pos.x - sidePadding, bounds.pos.y},
+        {bounds.size.x + sidePadding * 2.0f, bounds.size.y},
+    };
+
+    const float leftFadeWidth = std::min(fadeWidth, std::max(0.0f, bar.size.x * 0.5f));
+    const float rightFadeWidth = leftFadeWidth;
+    const float centerWidth = std::max(0.0f, bar.size.x - leftFadeWidth - rightFadeWidth);
+    const Color transparent{style.barFill.r, style.barFill.g, style.barFill.b, 0};
+    if (leftFadeWidth > 0.0f) {
+        renderer.fillGradientRect(bar.pos, {leftFadeWidth, bar.size.y}, transparent, style.barFill, GradientDirection::LeftToRight);
+    }
+    if (centerWidth > 0.0f) {
+        renderer.fillRect({bar.pos.x + leftFadeWidth, bar.pos.y}, {centerWidth, bar.size.y}, style.barFill);
+    }
+    if (rightFadeWidth > 0.0f) {
+        renderer.fillGradientRect(
+            {bar.pos.x + bar.size.x - rightFadeWidth, bar.pos.y},
+            {rightFadeWidth, bar.size.y},
+            style.barFill,
+            transparent,
+            GradientDirection::LeftToRight);
+    }
+
+    const int textScale = std::max(1, style.textScale);
+    for (int i = 0; i < itemCount; ++i) {
+        const bool enabled = tabItemEnabled(items, i);
+        const bool selected = i == selectedIndex;
+        const bool hovered = enabled && i == state.focusedIndex;
+        const UiRect rect = rects[i];
+
+        if (selected) {
+            renderer.fillRect(rect.pos, rect.size, hovered ? scaledColor(style.selectedFill, 1.08f) : style.selectedFill);
+        } else if (hovered) {
+            renderer.fillRect(rect.pos, rect.size, style.hoverFill);
+        }
+
+        const Color textColor = enabled
+            ? (selected ? style.selectedText : style.text)
+            : style.disabledText;
+        const std::string label = fittedUiText(
+            renderer,
+            items[i].label,
+            std::max(0.0f, rect.size.x - 16.0f),
+            textScale);
+        const Vec2 textSize = renderer.measureText(label, textScale);
+        const Vec2 textPos{
+            rect.pos.x + std::max(0.0f, (rect.size.x - textSize.x) * 0.5f),
+            rect.pos.y + std::max(0.0f, (rect.size.y - textSize.y) * 0.5f) + style.textOffsetY,
+        };
+        renderer.drawText(textPos, label, textColor, textScale);
     }
 }
 
