@@ -132,16 +132,69 @@ int merchantStockCountForLevel(int level)
     return 6 + (clampedLevel - 1) * 3;
 }
 
-const char* baseUpgradeMerchantFeature(int level)
+int baseUpgradeMerchantStockCountForUiLevel(int level)
+{
+    return 6 + std::clamp(level, 0, 6) * 3;
+}
+
+const char* baseUpgradeMerchantBuyPriceFeature(int level)
+{
+    if (level >= 5) {
+        return "+20%";
+    }
+    if (level >= 2) {
+        return "+10%";
+    }
+    return "通常";
+}
+
+const char* baseUpgradeMerchantTreasureFeature(int level)
+{
+    return level >= 3 ? "解禁" : "未解禁";
+}
+
+const char* baseUpgradeMerchantRareFeature(int level)
+{
+    if (level >= 6) {
+        return "高レア増加";
+    }
+    if (level >= 4) {
+        return "レア増加";
+    }
+    return "通常";
+}
+
+const char* baseUpgradeProcessingUnlockFeature(int level)
+{
+    if (level >= 3) {
+        return "大型化";
+    }
+    if (level >= 1) {
+        return "軽量化";
+    }
+    return "未解禁";
+}
+
+const char* baseUpgradeProcessingDiscountFeature(int level)
+{
+    if (level >= 5) {
+        return "-30%";
+    }
+    if (level >= 4) {
+        return "-20%";
+    }
+    if (level >= 2) {
+        return "-10%";
+    }
+    return "通常";
+}
+
+const char* baseUpgradeRingPresetFeature(int level)
 {
     switch (level) {
-    case 0: return "品揃え6枠";
-    case 1: return "品揃え9枠";
-    case 2: return "品揃え12枠/買取+10%";
-    case 3: return "品揃え15枠/宝の高価買取";
-    case 4: return "品揃え18枠/レア増加";
-    case 5: return "品揃え21枠/買取+20%";
-    case 6: return "品揃え24枠/高レア増加";
+    case 1: return "1枠";
+    case 2: return "2枠";
+    case 3: return "3枠";
     default: return "未解禁";
     }
 }
@@ -236,28 +289,6 @@ const ItemData* pickMerchantCandidate(
     return item;
 }
 
-const char* baseUpgradeProcessingFeature(int level)
-{
-    switch (level) {
-    case 1: return "軽量化";
-    case 2: return "作業台費用-10%";
-    case 3: return "大型化";
-    case 4: return "作業台費用-20%";
-    case 5: return "作業台費用-30%";
-    default: return "未解禁";
-    }
-}
-
-const char* baseUpgradeRingPresetFeature(int level)
-{
-    switch (level) {
-    case 1: return "1枠";
-    case 2: return "2枠";
-    case 3: return "3枠";
-    default: return "未解禁";
-    }
-}
-
 std::unordered_map<std::string, int> buildObjectSortOrder(const ObjectCatalog& catalog)
 {
     std::unordered_map<std::string, int> order;
@@ -316,47 +347,128 @@ const char* baseUpgradeResultSubject(int index)
     }
 }
 
-std::string baseUpgradeResultChangeLine(int index, int beforeLevel, int afterLevel)
+UiResultDialogLine baseUpgradeResultTextLine(std::string text)
 {
-    char buffer[192];
+    UiResultDialogLine line;
+    line.segments.push_back({std::move(text), ui::Text});
+    return line;
+}
+
+UiResultDialogLine baseUpgradeResultTextLine(std::string prefix, std::string text, Color textColor)
+{
+    UiResultDialogLine line;
+    line.segments.push_back({std::move(prefix), ui::Text});
+    line.segments.push_back({std::move(text), textColor});
+    return line;
+}
+
+void appendBaseUpgradeResultChangeLine(
+    std::vector<UiResultDialogLine>& lines,
+    std::string prefix,
+    std::string current,
+    std::string next,
+    bool showUnchanged = false)
+{
+    constexpr Color UpgradeValueColor{255, 230, 150, 255};
+    const bool changed = current != next;
+    if (!changed && !showUnchanged) {
+        return;
+    }
+
+    UiResultDialogLine line;
+    line.segments.push_back({std::move(prefix), ui::Text});
+    line.segments.push_back({std::move(current), ui::Text});
+    line.segments.push_back({" → ", ui::TextMuted});
+    line.segments.push_back({std::move(next), changed ? UpgradeValueColor : ui::Text});
+    lines.push_back(std::move(line));
+}
+
+std::vector<UiResultDialogLine> baseUpgradeResultLines(int index, int beforeLevel, int afterLevel)
+{
+    std::vector<UiResultDialogLine> lines;
+    lines.push_back(baseUpgradeResultTextLine(std::string(baseUpgradeResultSubject(index)) + "を強化しました"));
+
+    char currentValue[64];
+    char nextValue[64];
     switch (index) {
     case 0:
-        std::snprintf(buffer, sizeof(buffer), "収納箱容量: %d枠 → %d枠",
-            baseUpgradeWarehouseCapacityForLevel(beforeLevel),
-            baseUpgradeWarehouseCapacityForLevel(afterLevel));
-        return buffer;
+        std::snprintf(currentValue, sizeof(currentValue), "%d枠", baseUpgradeWarehouseCapacityForLevel(beforeLevel));
+        std::snprintf(nextValue, sizeof(nextValue), "%d枠", baseUpgradeWarehouseCapacityForLevel(afterLevel));
+        appendBaseUpgradeResultChangeLine(lines, "収納箱容量: ", currentValue, nextValue);
+        break;
     case 1:
-        std::snprintf(buffer, sizeof(buffer), "商人機能: %s → %s",
-            baseUpgradeMerchantFeature(beforeLevel),
-            baseUpgradeMerchantFeature(afterLevel));
-        return buffer;
+        std::snprintf(currentValue, sizeof(currentValue), "%d枠", baseUpgradeMerchantStockCountForUiLevel(beforeLevel));
+        std::snprintf(nextValue, sizeof(nextValue), "%d枠", baseUpgradeMerchantStockCountForUiLevel(afterLevel));
+        appendBaseUpgradeResultChangeLine(lines, "品揃え: ", currentValue, nextValue);
+        appendBaseUpgradeResultChangeLine(
+            lines,
+            "買取価格: ",
+            baseUpgradeMerchantBuyPriceFeature(beforeLevel),
+            baseUpgradeMerchantBuyPriceFeature(afterLevel),
+            std::string_view(baseUpgradeMerchantBuyPriceFeature(beforeLevel)) != "通常");
+        appendBaseUpgradeResultChangeLine(
+            lines,
+            "宝の高価買取: ",
+            baseUpgradeMerchantTreasureFeature(beforeLevel),
+            baseUpgradeMerchantTreasureFeature(afterLevel),
+            std::string_view(baseUpgradeMerchantTreasureFeature(beforeLevel)) != "未解禁");
+        appendBaseUpgradeResultChangeLine(
+            lines,
+            "レア商品: ",
+            baseUpgradeMerchantRareFeature(beforeLevel),
+            baseUpgradeMerchantRareFeature(afterLevel),
+            std::string_view(baseUpgradeMerchantRareFeature(beforeLevel)) != "通常");
+        break;
     case 2:
-        std::snprintf(buffer, sizeof(buffer), "加工解禁: %s → %s",
-            baseUpgradeProcessingFeature(beforeLevel),
-            baseUpgradeProcessingFeature(afterLevel));
-        return buffer;
+        appendBaseUpgradeResultChangeLine(
+            lines,
+            "加工機能: ",
+            baseUpgradeProcessingUnlockFeature(beforeLevel),
+            baseUpgradeProcessingUnlockFeature(afterLevel),
+            std::string_view(baseUpgradeProcessingUnlockFeature(beforeLevel)) != "未解禁");
+        appendBaseUpgradeResultChangeLine(
+            lines,
+            "作業台費用: ",
+            baseUpgradeProcessingDiscountFeature(beforeLevel),
+            baseUpgradeProcessingDiscountFeature(afterLevel),
+            std::string_view(baseUpgradeProcessingDiscountFeature(beforeLevel)) != "通常");
+        break;
     case 3:
-        return "リング工房: 未解禁 → 解禁";
+        appendBaseUpgradeResultChangeLine(lines, "リング工房: ", "未解禁", "解禁");
+        break;
     case 4:
-        std::snprintf(buffer, sizeof(buffer), "最大HP: +%d → +%d", beforeLevel * 2, afterLevel * 2);
-        return buffer;
+        std::snprintf(currentValue, sizeof(currentValue), "+%d", beforeLevel * 2);
+        std::snprintf(nextValue, sizeof(nextValue), "+%d", afterLevel * 2);
+        appendBaseUpgradeResultChangeLine(lines, "最大HP: ", currentValue, nextValue);
+        break;
     case 5:
-        std::snprintf(buffer, sizeof(buffer), "初期リング半径: +%d%% → +%d%%", beforeLevel * 8, afterLevel * 8);
-        return buffer;
+        std::snprintf(currentValue, sizeof(currentValue), "+%d%%", beforeLevel * 8);
+        std::snprintf(nextValue, sizeof(nextValue), "+%d%%", afterLevel * 8);
+        appendBaseUpgradeResultChangeLine(lines, "初期リング半径: ", currentValue, nextValue);
+        break;
     case 6:
-        std::snprintf(buffer, sizeof(buffer), "初期リング速度: +%d%% → +%d%%", beforeLevel * 8, afterLevel * 8);
-        return buffer;
+        std::snprintf(currentValue, sizeof(currentValue), "+%d%%", beforeLevel * 8);
+        std::snprintf(nextValue, sizeof(nextValue), "+%d%%", afterLevel * 8);
+        appendBaseUpgradeResultChangeLine(lines, "初期リング速度: ", currentValue, nextValue);
+        break;
     case 7:
-        std::snprintf(buffer, sizeof(buffer), "吸引強化: Lv.%d → Lv.%d", beforeLevel, afterLevel);
-        return buffer;
+        std::snprintf(currentValue, sizeof(currentValue), "Lv.%d", beforeLevel);
+        std::snprintf(nextValue, sizeof(nextValue), "Lv.%d", afterLevel);
+        appendBaseUpgradeResultChangeLine(lines, "吸引強化: ", currentValue, nextValue);
+        lines.push_back(baseUpgradeResultTextLine("対象: ", "近くのドロップ", ui::TextMuted));
+        break;
     case 8:
-        std::snprintf(buffer, sizeof(buffer), "プリセット枠: %s → %s",
+        appendBaseUpgradeResultChangeLine(
+            lines,
+            "プリセット枠: ",
             baseUpgradeRingPresetFeature(beforeLevel),
             baseUpgradeRingPresetFeature(afterLevel));
-        return buffer;
+        lines.push_back(baseUpgradeResultTextLine("用途: ", "リング編成登録/呼び出し", ui::TextMuted));
+        break;
     default:
-        return {};
+        break;
     }
+    return lines;
 }
 
 constexpr int RingLevelUpgradeKindCount = 3;
@@ -4878,6 +4990,32 @@ const char* Game::upgradeName(int index) const
     }
 }
 
+const char* baseUpgradeDescription(int index)
+{
+    switch (index) {
+    case 0:
+        return "収納箱に保管できるアイテム数を増やします。";
+    case 1:
+        return "商人ワゴンの商品枠と買取機能を強化します。";
+    case 2:
+        return "作業台で扱える加工と加工費用の割引を増やします。";
+    case 3:
+        return "リング工房を拠点に開き、リング専用の調整を可能にします。";
+    case 4:
+        return "ルネの最大HPを増やします。";
+    case 5:
+        return "採掘開始時のリング半径を広げます。";
+    case 6:
+        return "採掘開始時のリング速度を上げます。";
+    case 7:
+        return "近くのドロップをルネへ引き寄せる範囲を広げます。";
+    case 8:
+        return "リング編成を保存して呼び出せる枠を解禁します。";
+    default:
+        return "";
+    }
+}
+
 int Game::upgradeLevel(int index) const
 {
     switch (index) {
@@ -4995,10 +5133,7 @@ void Game::buyUpgrade(int index)
     openUiResultDialog(
         baseResultDialog_,
         "強化完了",
-        {
-            std::string(baseUpgradeResultSubject(index)) + "を強化しました",
-            baseUpgradeResultChangeLine(index, beforeLevel, afterLevel),
-        });
+        baseUpgradeResultLines(index, beforeLevel, afterLevel));
 }
 
 void Game::openRingWorkshop()
@@ -10172,9 +10307,8 @@ void Game::renderBaseScreen(Renderer& renderer) const
             return "通常";
         };
         const float listLabelX = panel.pos.x + 40.0f;
-        renderer.drawText({listLabelX, 148.0f}, "拠点機能", {198, 198, 206, 255}, 2);
-        renderer.drawText({listLabelX, 270.0f}, "施設解禁", {198, 198, 206, 255}, 2);
-        renderer.drawText({listLabelX, 392.0f}, "プレイ性能", {198, 198, 206, 255}, 2);
+        renderer.drawText({listLabelX, 128.0f}, "拠点の強化", {198, 198, 206, 255}, 2);
+        renderer.drawText({listLabelX, 342.0f}, "ルネの強化", {198, 198, 206, 255}, 2);
         std::array<UiVerticalTabItem, BaseUpgradeItemCount> upgradeTabs{};
         std::array<UiRect, BaseUpgradeItemCount> upgradeTabRects{};
         std::array<std::string, BaseUpgradeItemCount> upgradeTabValues{};
@@ -10240,6 +10374,12 @@ void Game::renderBaseScreen(Renderer& renderer) const
             renderer.drawWrappedText(pos, text, valueMaxWidth, color, 2);
             y += std::max(MinLineHeight, renderer.measureWrappedText(text, valueMaxWidth, 2).y + LineGap);
         };
+        const auto drawDetailDescription = [&](float& y, std::string_view text) {
+            constexpr float LineGap = 8.0f;
+            const UiRect content = uiSubPanelContentRect(detailPanel);
+            renderer.drawWrappedText(content.pos + Vec2{0.0f, y - content.pos.y}, text, content.size.x, ui::TextMuted, 2);
+            y += renderer.measureWrappedText(text, content.size.x, 2).y + LineGap;
+        };
         const auto drawMoneyCostLine = [&](float& y, std::string_view label, int cost) {
             Vec2 pos = beginDetailRow(y, label);
             const Color numberColor = money_ >= cost ? ui::Text : Color{238, 82, 82, 255};
@@ -10281,6 +10421,7 @@ void Game::renderBaseScreen(Renderer& renderer) const
         };
 
         float detailY = drawUiDetailHeader(renderer, detailPanel, upgradeName(selected));
+        drawDetailDescription(detailY, baseUpgradeDescription(selected));
 
         const bool implemented = upgradeImplemented(selected);
         const bool maxed = implemented && upgradeMaxed(selected);
@@ -10666,6 +10807,10 @@ void Game::renderBaseScreen(Renderer& renderer) const
     if (baseResultDialog_.open) {
         panelCancelScope.reset();
         panelWindow.reset();
+        drawUiModalBackdrop(
+            renderer,
+            {{0.0f, 0.0f}, {static_cast<float>(camera_.width()), static_cast<float>(camera_.height())}},
+            {0, 0, 0, 96});
         drawUiResultDialog(renderer, baseResultDialog_, baseResultDialogRect(), "base.result");
     }
     if (baseStorageQuantityDialog_.open) {

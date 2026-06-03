@@ -1180,7 +1180,7 @@ UiRect basePanelRect()
 
 UiRect baseUpgradePanelRect()
 {
-    return {{220.0f, 42.0f}, {840.0f, 628.0f}};
+    return {{220.0f, 42.0f}, {880.0f, 628.0f}};
 }
 
 UiRect baseResultDialogRect()
@@ -1384,18 +1384,18 @@ void drawMoneySummaryText(Renderer& renderer, Vec2 topRight, int money)
 UiRect baseUpgradeItemRect(int index)
 {
     constexpr float x = 260.0f;
-    constexpr float w = 292.0f;
+    constexpr float w = 332.0f;
     constexpr float h = 42.0f;
     constexpr std::array<float, BaseUpgradeItemCount> RowY{{
-        176.0f,
-        222.0f,
-        298.0f,
-        344.0f,
-        420.0f,
-        466.0f,
-        512.0f,
-        558.0f,
-        604.0f,
+        156.0f,
+        202.0f,
+        248.0f,
+        294.0f,
+        370.0f,
+        416.0f,
+        462.0f,
+        508.0f,
+        554.0f,
     }};
     const int clampedIndex = std::clamp(index, 0, BaseUpgradeItemCount - 1);
     return {{x, RowY[static_cast<std::size_t>(clampedIndex)]}, {w, h}};
@@ -1403,14 +1403,14 @@ UiRect baseUpgradeItemRect(int index)
 
 UiRect baseUpgradeDetailPanelRect()
 {
-    return {{580.0f, 150.0f}, {432.0f, 396.0f}};
+    return {{620.0f, 130.0f}, {432.0f, 396.0f}};
 }
 
 UiRect baseUpgradeConfirmRect()
 {
     const UiRect detail = baseUpgradeDetailPanelRect();
     const Vec2 size{208.0f, ui::ButtonHeight};
-    return {{detail.pos.x + (detail.size.x - size.x) * 0.5f, 568.0f}, size};
+    return {{detail.pos.x + (detail.size.x - size.x) * 0.5f, 548.0f}, size};
 }
 
 UiRect baseProcessingModeRect(int index)
