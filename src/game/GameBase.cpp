@@ -113,8 +113,17 @@ const char* baseFacilityTutorialTrigger(BaseFacilityAction action)
 int baseUpgradeWarehouseCapacityForLevel(int level)
 {
     constexpr std::array<int, 5> Capacities{{48, 72, 100, 140, 200}};
-    const int index = std::clamp(level - 1, 0, static_cast<int>(Capacities.size()) - 1);
+    const int index = std::clamp(level, 0, static_cast<int>(Capacities.size()) - 1);
     return Capacities[static_cast<std::size_t>(index)];
+}
+
+template <std::size_t N>
+int baseUpgradeCostForStep(int step, const std::array<int, N>& costs)
+{
+    if (step < 0 || step >= static_cast<int>(costs.size())) {
+        return 0;
+    }
+    return costs[static_cast<std::size_t>(step)];
 }
 
 int merchantStockCountForLevel(int level)
@@ -126,13 +135,13 @@ int merchantStockCountForLevel(int level)
 const char* baseUpgradeMerchantFeature(int level)
 {
     switch (level) {
-    case 1: return "品揃え6枠";
-    case 2: return "品揃え9枠";
-    case 3: return "品揃え12枠/買取+10%";
-    case 4: return "品揃え15枠/宝の高価買取";
-    case 5: return "品揃え18枠/レア増加";
-    case 6: return "品揃え21枠/買取+20%";
-    case 7: return "品揃え24枠/高レア増加";
+    case 0: return "品揃え6枠";
+    case 1: return "品揃え9枠";
+    case 2: return "品揃え12枠/買取+10%";
+    case 3: return "品揃え15枠/宝の高価買取";
+    case 4: return "品揃え18枠/レア増加";
+    case 5: return "品揃え21枠/買取+20%";
+    case 6: return "品揃え24枠/高レア増加";
     default: return "未解禁";
     }
 }
@@ -294,15 +303,15 @@ const std::string& warehouseEntrySortId(
 const char* baseUpgradeResultSubject(int index)
 {
     switch (index) {
-    case 0: return "倉庫容量";
+    case 0: return "収納箱容量";
     case 1: return "商人機能";
     case 2: return "作業台機能";
     case 3: return "リング工房";
     case 4: return "最大HP";
     case 5: return "リング半径";
     case 6: return "リング速度";
-    case 7: return "収集術式";
-    case 8: return "リングプリセット";
+    case 7: return "吸引強化";
+    case 8: return "リングプリセット解禁";
     default: return "強化項目";
     }
 }
@@ -312,7 +321,7 @@ std::string baseUpgradeResultChangeLine(int index, int beforeLevel, int afterLev
     char buffer[192];
     switch (index) {
     case 0:
-        std::snprintf(buffer, sizeof(buffer), "倉庫容量: %d枠 → %d枠",
+        std::snprintf(buffer, sizeof(buffer), "収納箱容量: %d枠 → %d枠",
             baseUpgradeWarehouseCapacityForLevel(beforeLevel),
             baseUpgradeWarehouseCapacityForLevel(afterLevel));
         return buffer;
@@ -338,7 +347,7 @@ std::string baseUpgradeResultChangeLine(int index, int beforeLevel, int afterLev
         std::snprintf(buffer, sizeof(buffer), "初期リング速度: +%d%% → +%d%%", beforeLevel * 8, afterLevel * 8);
         return buffer;
     case 7:
-        std::snprintf(buffer, sizeof(buffer), "収集術式: Lv.%d → Lv.%d", beforeLevel, afterLevel);
+        std::snprintf(buffer, sizeof(buffer), "吸引強化: Lv.%d → Lv.%d", beforeLevel, afterLevel);
         return buffer;
     case 8:
         std::snprintf(buffer, sizeof(buffer), "プリセット枠: %s → %s",
@@ -1753,6 +1762,8 @@ struct ProcessingResultSnapshot {
     bool isBroken = false;
     int currentDurability = -1;
     int maxDurability = -1;
+    int baseDurability = -1;
+    int rarity = 1;
     int enhanceLevel = 0;
     int attackBonus = 0;
     int digBonus = 0;
@@ -1872,6 +1883,8 @@ ProcessingResultSnapshot processingSnapshotFromStack(const InventoryObjectStack&
     snapshot.stackSource = true;
     snapshot.currentDurability = stack.item.durability;
     snapshot.maxDurability = stack.item.durability;
+    snapshot.baseDurability = stack.item.durability;
+    snapshot.rarity = std::clamp(stack.item.rarity, 1, 10);
     snapshot.isBroken = stack.item.durability == 0;
     snapshot.name = nonEmptyItemName(itemDisplayName(stack.item.name, snapshot.isBroken));
     return snapshot;
@@ -1884,6 +1897,8 @@ ProcessingResultSnapshot processingSnapshotFromInstance(const InventoryObjectIns
     snapshot.stackCount = 1;
     snapshot.currentDurability = entry.instance.currentDurability;
     snapshot.maxDurability = entry.instance.maxDurability;
+    snapshot.baseDurability = entry.item.durability;
+    snapshot.rarity = std::clamp(entry.item.rarity, 1, 10);
     snapshot.isBroken = entry.instance.isBroken;
     snapshot.name = nonEmptyItemName(itemDisplayName(entry.item.name, snapshot.isBroken));
     snapshot.enhanceLevel = entry.instance.enhanceLevel;
@@ -1903,6 +1918,10 @@ ProcessingResultSnapshot processingSnapshotFromRingItem(const ObjectCatalog& cat
     snapshot.stackCount = 1;
     snapshot.currentDurability = item.durability;
     snapshot.maxDurability = item.maxDurability;
+    if (const ItemData* object = catalog.registry.findById(item.objectId)) {
+        snapshot.baseDurability = object->durability;
+        snapshot.rarity = std::clamp(object->rarity, 1, 10);
+    }
     snapshot.isBroken = item.broken();
     snapshot.enhanceLevel = item.enhanceLevel;
     snapshot.attackBonus = item.attackBonus;
@@ -2136,6 +2155,124 @@ constexpr double LightenWeightMultiplier = 0.85;
 constexpr double EnlargeWeightMultiplier = 1.15;
 constexpr double EnlargeSizeMultiplier = 1.18;
 constexpr double SellPriceBaseMultiplier = 0.5;
+
+int processingDiscountCost(int rawCost, int processingUnlockLevel)
+{
+    double multiplier = 1.0;
+    if (processingUnlockLevel >= 5) {
+        multiplier = 0.70;
+    } else if (processingUnlockLevel >= 4) {
+        multiplier = 0.80;
+    } else if (processingUnlockLevel >= 2) {
+        multiplier = 0.90;
+    }
+    return std::max(1, static_cast<int>(std::ceil(static_cast<double>(std::max(1, rawCost)) * multiplier)));
+}
+
+int processingRarity(const ItemData* item)
+{
+    return std::clamp(item != nullptr ? item->rarity : 1, 1, 10);
+}
+
+int processingEnhanceMoneyCost(int rarity, int nextEnhanceLevel)
+{
+    constexpr std::array<int, 10> RarityBaseCosts{{80, 100, 120, 145, 170, 200, 230, 265, 305, 350}};
+    rarity = std::clamp(rarity, 1, 10);
+    nextEnhanceLevel = std::clamp(nextEnhanceLevel, 1, MaxItemEnhanceLevel);
+    return RarityBaseCosts[static_cast<std::size_t>(rarity - 1)] + nextEnhanceLevel * 60;
+}
+
+int processingEnhanceOreCost(int rarity, int nextEnhanceLevel)
+{
+    constexpr std::array<int, 10> RarityOreBonus{{0, 1, 1, 2, 2, 3, 3, 4, 5, 6}};
+    rarity = std::clamp(rarity, 1, 10);
+    nextEnhanceLevel = std::clamp(nextEnhanceLevel, 1, MaxItemEnhanceLevel);
+    return nextEnhanceLevel + RarityOreBonus[static_cast<std::size_t>(rarity - 1)];
+}
+
+int processingLightenMoneyCost(int rarity)
+{
+    rarity = std::clamp(rarity, 1, 10);
+    return 140 + rarity * 30;
+}
+
+int processingLightenOreCost(int rarity)
+{
+    rarity = std::clamp(rarity, 1, 10);
+    return 2 + (rarity + 1) / 2;
+}
+
+int processingEnlargeMoneyCost(int rarity)
+{
+    rarity = std::clamp(rarity, 1, 10);
+    return 190 + rarity * 45;
+}
+
+int processingEnlargeOreCost(int rarity)
+{
+    rarity = std::clamp(rarity, 1, 10);
+    return 3 + (rarity * 2 + 2) / 3;
+}
+
+int processingPowerEnhanceBonus(int rarity, int nextEnhanceLevel)
+{
+    constexpr std::array<int, 5> RarityOneBonuses{{1, 2, 2, 2, 3}};
+    constexpr std::array<int, 5> RarityTenBonuses{{5, 6, 6, 7, 7}};
+    rarity = std::clamp(rarity, 1, 10);
+    nextEnhanceLevel = std::clamp(nextEnhanceLevel, 1, MaxItemEnhanceLevel);
+    const int index = nextEnhanceLevel - 1;
+    const double t = static_cast<double>(rarity - 1) / 9.0;
+    const double value = static_cast<double>(RarityOneBonuses[static_cast<std::size_t>(index)]) +
+        static_cast<double>(RarityTenBonuses[static_cast<std::size_t>(index)] - RarityOneBonuses[static_cast<std::size_t>(index)]) * t;
+    return std::max(1, static_cast<int>(std::lround(value)));
+}
+
+int processingDurabilityEnhanceBonus(int baseDurability, int nextEnhanceLevel)
+{
+    if (baseDurability <= 0) {
+        return 0;
+    }
+    constexpr std::array<int, 5> PercentByLevel{{20, 20, 30, 40, 40}};
+    nextEnhanceLevel = std::clamp(nextEnhanceLevel, 1, MaxItemEnhanceLevel);
+    const int percent = PercentByLevel[static_cast<std::size_t>(nextEnhanceLevel - 1)];
+    return std::max(0, static_cast<int>(std::lround(static_cast<double>(baseDurability) * static_cast<double>(percent) / 100.0)));
+}
+
+bool processingDurabilityEnhanceAvailable(const ItemData* item)
+{
+    return item != nullptr && processingDurabilityEnhanceBonus(item->durability, 1) > 0;
+}
+
+bool processingDurabilityEnhanceAvailable(int baseDurability)
+{
+    return processingDurabilityEnhanceBonus(baseDurability, 1) > 0;
+}
+
+struct ProcessingEnhanceBonuses {
+    int attack = 0;
+    int dig = 0;
+    int durability = 0;
+};
+
+ProcessingEnhanceBonuses processingEnhanceBonuses(
+    bool attackMode,
+    bool digMode,
+    bool durabilityMode,
+    int rarity,
+    int baseDurability,
+    int enhanceLevel)
+{
+    ProcessingEnhanceBonuses bonuses{};
+    const int nextEnhanceLevel = std::clamp(enhanceLevel + 1, 1, MaxItemEnhanceLevel);
+    if (attackMode) {
+        bonuses.attack = processingPowerEnhanceBonus(rarity, nextEnhanceLevel);
+    } else if (digMode) {
+        bonuses.dig = processingPowerEnhanceBonus(rarity, nextEnhanceLevel);
+    } else if (durabilityMode) {
+        bonuses.durability = processingDurabilityEnhanceBonus(baseDurability, nextEnhanceLevel);
+    }
+    return bonuses;
+}
 
 bool isTreasureObject(const ItemData& item)
 {
@@ -2915,6 +3052,10 @@ bool Game::processingEntryAvailable(StorageEntry entry, ProcessingMode mode, boo
         return false;
     }
     if (entry.kind == StorageEntryKind::Stack) {
+        if (mode == ProcessingMode::Durability) {
+            const ItemData* item = storageEntryItem(entry, warehouseEntry);
+            return processingDurabilityEnhanceAvailable(item);
+        }
         return mode != ProcessingMode::Repair && mode != ProcessingMode::ResetEnhancement;
     }
     const ItemInstance* instance = storageEntryInstance(entry, warehouseEntry);
@@ -2938,6 +3079,10 @@ bool Game::processingEntryAvailable(StorageEntry entry, ProcessingMode mode, boo
     }
     if (mode == ProcessingMode::Enlarge) {
         return instance->sizeModifier <= 1.001;
+    }
+    if (mode == ProcessingMode::Durability) {
+        const ItemData* item = storageEntryItem(entry, warehouseEntry);
+        return instance->enhanceLevel < MaxItemEnhanceLevel && processingDurabilityEnhanceAvailable(item);
     }
     return instance->enhanceLevel < MaxItemEnhanceLevel;
 }
@@ -2992,6 +3137,10 @@ bool Game::processingTargetAvailable(ProcessingTarget target, ProcessingMode mod
     if (mode == ProcessingMode::Enlarge) {
         return item.sizeModifier <= 1.001;
     }
+    if (mode == ProcessingMode::Durability) {
+        const ItemData* object = objectCatalog_.registry.findById(item.objectId);
+        return item.enhanceLevel < MaxItemEnhanceLevel && processingDurabilityEnhanceAvailable(object);
+    }
     return item.enhanceLevel < MaxItemEnhanceLevel;
 }
 
@@ -3019,16 +3168,9 @@ int Game::processingMoneyCost(StorageEntry entry, ProcessingMode mode, bool ware
 {
     const ItemData* item = storageEntryItem(entry, warehouseEntry);
     const int basePrice = std::max(1, item != nullptr ? item->price : 0);
+    const int rarity = processingRarity(item);
     const auto discountCost = [this](int rawCost) {
-        double multiplier = 1.0;
-        if (processingUnlockLevel_ >= 5) {
-            multiplier = 0.70;
-        } else if (processingUnlockLevel_ >= 4) {
-            multiplier = 0.80;
-        } else if (processingUnlockLevel_ >= 2) {
-            multiplier = 0.90;
-        }
-        return std::max(1, static_cast<int>(std::ceil(static_cast<double>(std::max(1, rawCost)) * multiplier)));
+        return processingDiscountCost(rawCost, processingUnlockLevel_);
     };
     if (mode == ProcessingMode::Repair) {
         const ItemInstance* instance = storageEntryInstance(entry, warehouseEntry);
@@ -3049,35 +3191,37 @@ int Game::processingMoneyCost(StorageEntry entry, ProcessingMode mode, bool ware
         return discountCost(std::max(20, basePrice / 4));
     }
     if (mode == ProcessingMode::Lighten) {
-        return discountCost(std::max(80, basePrice / 2 + 90));
+        return discountCost(processingLightenMoneyCost(rarity));
     }
     if (mode == ProcessingMode::Enlarge) {
-        return discountCost(std::max(120, basePrice / 2 + 140));
+        return discountCost(processingEnlargeMoneyCost(rarity));
     }
 
     int enhanceLevel = 0;
     if (const ItemInstance* instance = storageEntryInstance(entry, warehouseEntry)) {
         enhanceLevel = instance->enhanceLevel;
     }
-    return discountCost(std::max(20, basePrice / 2 + (enhanceLevel + 1) * 50));
+    return discountCost(processingEnhanceMoneyCost(rarity, enhanceLevel + 1));
 }
 
 int Game::processingOreCost(StorageEntry entry, ProcessingMode mode, bool warehouseEntry) const
 {
+    const ItemData* item = storageEntryItem(entry, warehouseEntry);
+    const int rarity = processingRarity(item);
     if (mode == ProcessingMode::Repair || mode == ProcessingMode::ResetEnhancement) {
         return 0;
     }
     if (mode == ProcessingMode::Lighten) {
-        return 2;
+        return processingLightenOreCost(rarity);
     }
     if (mode == ProcessingMode::Enlarge) {
-        return 3;
+        return processingEnlargeOreCost(rarity);
     }
     int enhanceLevel = 0;
     if (const ItemInstance* instance = storageEntryInstance(entry, warehouseEntry)) {
         enhanceLevel = instance->enhanceLevel;
     }
-    return enhanceLevel + 1;
+    return processingEnhanceOreCost(rarity, enhanceLevel + 1);
 }
 
 int Game::processingMoneyCost(ProcessingTarget target, ProcessingMode mode) const
@@ -3096,16 +3240,9 @@ int Game::processingMoneyCost(ProcessingTarget target, ProcessingMode mode) cons
     const SpellRingItem& ringItem = ringItems[static_cast<std::size_t>(target.ringItemIndex)];
     const ItemData* item = objectForRingItem(objectCatalog_, ringItem);
     const int basePrice = std::max(1, item != nullptr ? item->price : 0);
+    const int rarity = processingRarity(item);
     const auto discountCost = [this](int rawCost) {
-        double multiplier = 1.0;
-        if (processingUnlockLevel_ >= 5) {
-            multiplier = 0.70;
-        } else if (processingUnlockLevel_ >= 4) {
-            multiplier = 0.80;
-        } else if (processingUnlockLevel_ >= 2) {
-            multiplier = 0.90;
-        }
-        return std::max(1, static_cast<int>(std::ceil(static_cast<double>(std::max(1, rawCost)) * multiplier)));
+        return processingDiscountCost(rawCost, processingUnlockLevel_);
     };
     if (mode == ProcessingMode::Repair) {
         if (ringItem.maxDurability <= 0) {
@@ -3125,25 +3262,19 @@ int Game::processingMoneyCost(ProcessingTarget target, ProcessingMode mode) cons
         return discountCost(std::max(20, basePrice / 4));
     }
     if (mode == ProcessingMode::Lighten) {
-        return discountCost(std::max(80, basePrice / 2 + 90));
+        return discountCost(processingLightenMoneyCost(rarity));
     }
     if (mode == ProcessingMode::Enlarge) {
-        return discountCost(std::max(120, basePrice / 2 + 140));
+        return discountCost(processingEnlargeMoneyCost(rarity));
     }
 
-    return discountCost(std::max(20, basePrice / 2 + (ringItem.enhanceLevel + 1) * 50));
+    return discountCost(processingEnhanceMoneyCost(rarity, ringItem.enhanceLevel + 1));
 }
 
 int Game::processingOreCost(ProcessingTarget target, ProcessingMode mode) const
 {
     if (mode == ProcessingMode::Repair || mode == ProcessingMode::ResetEnhancement || !target.valid) {
         return 0;
-    }
-    if (mode == ProcessingMode::Lighten) {
-        return 2;
-    }
-    if (mode == ProcessingMode::Enlarge) {
-        return 3;
     }
     if (target.source == BaseItemSource::Backpack || target.source == BaseItemSource::Warehouse) {
         return processingOreCost(target.backpackEntry, mode, target.warehouseEntry);
@@ -3154,7 +3285,15 @@ int Game::processingOreCost(ProcessingTarget target, ProcessingMode mode) const
         return 0;
     }
     const SpellRingItem& ringItem = ringItems[static_cast<std::size_t>(target.ringItemIndex)];
-    return ringItem.enhanceLevel + 1;
+    const ItemData* item = objectForRingItem(objectCatalog_, ringItem);
+    const int rarity = processingRarity(item);
+    if (mode == ProcessingMode::Lighten) {
+        return processingLightenOreCost(rarity);
+    }
+    if (mode == ProcessingMode::Enlarge) {
+        return processingEnlargeOreCost(rarity);
+    }
+    return processingEnhanceOreCost(rarity, ringItem.enhanceLevel + 1);
 }
 
 std::vector<Game::ProcessingMode> Game::processingCommandModes(ProcessingTarget target) const
@@ -3299,16 +3438,14 @@ void Game::drawProcessingConfirmDialog(Renderer& renderer, UiRect panel) const
     const ProcessingMode mode = baseProcessingConfirmMode_;
     const ProcessingResultSnapshot before = targetSnapshot(baseProcessingConfirmTarget_);
     ProcessingResultSnapshot after = before;
-    int attackBonus = 0;
-    int digBonus = 0;
-    int durabilityBonus = 0;
-    if (mode == ProcessingMode::Attack) {
-        attackBonus = 1;
-    } else if (mode == ProcessingMode::Dig) {
-        digBonus = 1;
-    } else if (mode == ProcessingMode::Durability) {
-        durabilityBonus = 2;
-    }
+    const ProcessingEnhanceBonuses enhanceBonuses =
+        processingEnhanceBonuses(
+            mode == ProcessingMode::Attack,
+            mode == ProcessingMode::Dig,
+            mode == ProcessingMode::Durability,
+            before.rarity,
+            before.baseDurability,
+            before.enhanceLevel);
 
     if (mode == ProcessingMode::Repair) {
         if (after.maxDurability >= 0) {
@@ -3323,7 +3460,7 @@ void Game::drawProcessingConfirmDialog(Renderer& renderer, UiRect panel) const
             mode == ProcessingMode::Lighten ? LightenWeightMultiplier : EnlargeWeightMultiplier,
             mode == ProcessingMode::Lighten ? 1.0 : EnlargeSizeMultiplier);
     } else {
-        after = processingEnhancedSnapshot(after, attackBonus, digBonus, durabilityBonus);
+        after = processingEnhancedSnapshot(after, enhanceBonuses.attack, enhanceBonuses.dig, enhanceBonuses.durability);
     }
 
     std::vector<ProcessingPreviewRow> previewRows;
@@ -3486,28 +3623,26 @@ void Game::applyProcessingEntry(StorageEntry entry, ProcessingMode mode, bool wa
         return processingSnapshotFromInstance(instance);
     };
     const ProcessingResultSnapshot beforeSnapshot = entrySnapshot(entry);
-    int attackBonus = 0;
-    int digBonus = 0;
-    int durabilityBonus = 0;
-    if (mode == ProcessingMode::Attack) {
-        attackBonus = 1;
-    } else if (mode == ProcessingMode::Dig) {
-        digBonus = 1;
-    } else if (mode == ProcessingMode::Durability) {
-        durabilityBonus = 2;
-    }
+    const ProcessingEnhanceBonuses enhanceBonuses =
+        processingEnhanceBonuses(
+            mode == ProcessingMode::Attack,
+            mode == ProcessingMode::Dig,
+            mode == ProcessingMode::Durability,
+            beforeSnapshot.rarity,
+            beforeSnapshot.baseDurability,
+            beforeSnapshot.enhanceLevel);
 
     const auto applyEnhancement = [&](ItemInstance& instance) {
         if (instance.enhanceLevel >= MaxItemEnhanceLevel) {
             return false;
         }
         ++instance.enhanceLevel;
-        instance.attackBonus += attackBonus;
-        instance.digBonus += digBonus;
-        instance.durabilityBonus += durabilityBonus;
-        if (durabilityBonus > 0 && instance.maxDurability >= 0) {
-            instance.maxDurability += durabilityBonus;
-            instance.currentDurability = std::min(instance.maxDurability, std::max(0, instance.currentDurability + durabilityBonus));
+        instance.attackBonus += enhanceBonuses.attack;
+        instance.digBonus += enhanceBonuses.dig;
+        instance.durabilityBonus += enhanceBonuses.durability;
+        if (enhanceBonuses.durability > 0 && instance.maxDurability >= 0) {
+            instance.maxDurability += enhanceBonuses.durability;
+            instance.currentDurability = std::min(instance.maxDurability, std::max(0, instance.currentDurability + enhanceBonuses.durability));
         }
         return true;
     };
@@ -3598,10 +3733,20 @@ void Game::applyProcessingEntry(StorageEntry entry, ProcessingMode mode, bool wa
     } else if (!warehouseEntry) {
         if (entry.kind == StorageEntryKind::Stack) {
             const InventoryObjectStack& stack = inventory_.objectStacks()[static_cast<std::size_t>(entry.index)];
-            processed = inventory_.enhanceObjectStackItem(stack.objectId, attackBonus, digBonus, durabilityBonus, MaxItemEnhanceLevel);
+            processed = inventory_.enhanceObjectStackItem(
+                stack.objectId,
+                enhanceBonuses.attack,
+                enhanceBonuses.dig,
+                enhanceBonuses.durability,
+                MaxItemEnhanceLevel);
         } else {
             const InventoryObjectInstance& instance = inventory_.objectInstances()[static_cast<std::size_t>(entry.index)];
-            processed = inventory_.enhanceObjectInstance(instance.instance.instanceId, attackBonus, digBonus, durabilityBonus, MaxItemEnhanceLevel);
+            processed = inventory_.enhanceObjectInstance(
+                instance.instance.instanceId,
+                enhanceBonuses.attack,
+                enhanceBonuses.dig,
+                enhanceBonuses.durability,
+                MaxItemEnhanceLevel);
         }
     } else if (mode == ProcessingMode::Repair) {
         ItemInstance& instance = warehouseObjectInstances_[static_cast<std::size_t>(entry.index)].instance;
@@ -3670,7 +3815,11 @@ void Game::applyProcessingEntry(StorageEntry entry, ProcessingMode mode, bool wa
         openUiResultDialog(baseResultDialog_, "作業完了", processingShapeResultLines(beforeSnapshot, afterSnapshot, mode == ProcessingMode::Lighten));
     } else {
         const ProcessingResultSnapshot afterSnapshot = entry.kind == StorageEntryKind::Stack
-            ? processingEnhancedSnapshot(beforeSnapshot, attackBonus, digBonus, durabilityBonus)
+            ? processingEnhancedSnapshot(
+                beforeSnapshot,
+                enhanceBonuses.attack,
+                enhanceBonuses.dig,
+                enhanceBonuses.durability)
             : entrySnapshot(entry);
         openUiResultDialog(
             baseResultDialog_,
@@ -3730,16 +3879,14 @@ void Game::applyProcessingTarget(ProcessingTarget target, ProcessingMode mode)
     const std::vector<SpellRingItem>& ringItemsBefore = spellRing_.itemsForRing(target.ringIndex);
     const ProcessingResultSnapshot beforeSnapshot =
         processingSnapshotFromRingItem(objectCatalog_, ringItemsBefore[static_cast<std::size_t>(target.ringItemIndex)]);
-    int attackBonus = 0;
-    int digBonus = 0;
-    int durabilityBonus = 0;
-    if (mode == ProcessingMode::Attack) {
-        attackBonus = 1;
-    } else if (mode == ProcessingMode::Dig) {
-        digBonus = 1;
-    } else if (mode == ProcessingMode::Durability) {
-        durabilityBonus = 2;
-    }
+    const ProcessingEnhanceBonuses enhanceBonuses =
+        processingEnhanceBonuses(
+            mode == ProcessingMode::Attack,
+            mode == ProcessingMode::Dig,
+            mode == ProcessingMode::Durability,
+            beforeSnapshot.rarity,
+            beforeSnapshot.baseDurability,
+            beforeSnapshot.enhanceLevel);
 
     bool processed = false;
     if (mode == ProcessingMode::Repair) {
@@ -3788,9 +3935,9 @@ void Game::applyProcessingTarget(ProcessingTarget target, ProcessingMode mode)
         processed = spellRing_.enhanceItem(
             target.ringIndex,
             target.ringItemIndex,
-            attackBonus,
-            digBonus,
-            durabilityBonus,
+            enhanceBonuses.attack,
+            enhanceBonuses.dig,
+            enhanceBonuses.durability,
             MaxItemEnhanceLevel,
             objectCatalog_);
     }
@@ -4648,16 +4795,25 @@ void Game::prepareRingPresetFromWarehouse(int presetIndex)
 
 int Game::upgradeCost(int index) const
 {
+    constexpr std::array<int, 4> StorageCosts{{500, 1000, 2000, 4000}};
+    constexpr std::array<int, 6> MerchantCosts{{400, 800, 1600, 3200, 6400, 12000}};
+    constexpr std::array<int, 5> ProcessingCosts{{300, 700, 1500, 3000, 5000}};
+    constexpr std::array<int, 5> MaxHpCosts{{600, 1200, 2400, 4800, 8000}};
+    constexpr std::array<int, 5> RingRadiusCosts{{1200, 2400, 4800, 9000, 15000}};
+    constexpr std::array<int, 5> RingSpeedCosts{{1200, 2400, 4800, 9000, 15000}};
+    constexpr std::array<int, 5> CollectionRangeCosts{{750, 1500, 3000, 5500, 9000}};
+    constexpr std::array<int, 3> RingPresetCosts{{2000, 4000, 8000}};
+
     switch (index) {
-    case 0: return 150 + warehouseCapacityLevel_ * 100;
-    case 1: return 120 + (merchantUpgradeLevel_ - 1) * 120;
-    case 2: return 180 + processingUnlockLevel_ * 140;
-    case 3: return 300;
-    case 4: return 100 + maxHpUpgradeLevel_ * 50;
-    case 5: return 150 + ringRadiusUpgradeLevel_ * 75;
-    case 6: return 150 + ringSpeedUpgradeLevel_ * 75;
-    case 7: return 120 + collectionRangeUpgradeLevel_ * 80;
-    case 8: return 160 + ringPresetSlotLevel_ * 140;
+    case 0: return baseUpgradeCostForStep(warehouseCapacityLevel_, StorageCosts);
+    case 1: return baseUpgradeCostForStep(std::max(0, merchantUpgradeLevel_ - 1), MerchantCosts);
+    case 2: return baseUpgradeCostForStep(processingUnlockLevel_, ProcessingCosts);
+    case 3: return ringWorkshopUnlocked_ ? 0 : 10000;
+    case 4: return baseUpgradeCostForStep(maxHpUpgradeLevel_, MaxHpCosts);
+    case 5: return baseUpgradeCostForStep(ringRadiusUpgradeLevel_, RingRadiusCosts);
+    case 6: return baseUpgradeCostForStep(ringSpeedUpgradeLevel_, RingSpeedCosts);
+    case 7: return baseUpgradeCostForStep(collectionRangeUpgradeLevel_, CollectionRangeCosts);
+    case 8: return baseUpgradeCostForStep(ringPresetSlotLevel_, RingPresetCosts);
     default: return 0;
     }
 }
@@ -4669,12 +4825,12 @@ MaterialType Game::upgradeMaterialType(int index) const
     case 1:
     case 2:
     case 3:
-    case 8:
         return MaterialType::OldWoodBuildingMaterial;
     case 4:
     case 5:
     case 6:
     case 7:
+    case 8:
         return MaterialType::ManaDrop;
     default:
         return MaterialType::OldWoodBuildingMaterial;
@@ -4683,16 +4839,25 @@ MaterialType Game::upgradeMaterialType(int index) const
 
 int Game::upgradeMaterialCost(int index) const
 {
+    constexpr std::array<int, 4> StorageMaterialCosts{{9, 15, 24, 36}};
+    constexpr std::array<int, 6> MerchantMaterialCosts{{6, 12, 21, 30, 42, 54}};
+    constexpr std::array<int, 5> ProcessingMaterialCosts{{6, 12, 18, 27, 36}};
+    constexpr std::array<int, 5> MaxHpMaterialCosts{{4, 8, 14, 20, 28}};
+    constexpr std::array<int, 5> RingRadiusMaterialCosts{{8, 14, 22, 32, 44}};
+    constexpr std::array<int, 5> RingSpeedMaterialCosts{{8, 14, 22, 32, 44}};
+    constexpr std::array<int, 5> CollectionRangeMaterialCosts{{6, 10, 16, 24, 34}};
+    constexpr std::array<int, 3> RingPresetMaterialCosts{{12, 20, 30}};
+
     switch (index) {
-    case 0: return warehouseCapacityLevel_ + 2;
-    case 1: return merchantUpgradeLevel_ + 1;
-    case 2: return processingUnlockLevel_ + 2;
-    case 3: return ringWorkshopUnlocked_ ? 0 : 5;
-    case 4: return maxHpUpgradeLevel_ + 1;
-    case 5: return ringRadiusUpgradeLevel_ + 1;
-    case 6: return ringSpeedUpgradeLevel_ + 1;
-    case 7: return collectionRangeUpgradeLevel_ + 1;
-    case 8: return ringPresetSlotLevel_ + 3;
+    case 0: return baseUpgradeCostForStep(warehouseCapacityLevel_, StorageMaterialCosts);
+    case 1: return baseUpgradeCostForStep(std::max(0, merchantUpgradeLevel_ - 1), MerchantMaterialCosts);
+    case 2: return baseUpgradeCostForStep(processingUnlockLevel_, ProcessingMaterialCosts);
+    case 3: return ringWorkshopUnlocked_ ? 0 : 60;
+    case 4: return baseUpgradeCostForStep(maxHpUpgradeLevel_, MaxHpMaterialCosts);
+    case 5: return baseUpgradeCostForStep(ringRadiusUpgradeLevel_, RingRadiusMaterialCosts);
+    case 6: return baseUpgradeCostForStep(ringSpeedUpgradeLevel_, RingSpeedMaterialCosts);
+    case 7: return baseUpgradeCostForStep(collectionRangeUpgradeLevel_, CollectionRangeMaterialCosts);
+    case 8: return baseUpgradeCostForStep(ringPresetSlotLevel_, RingPresetMaterialCosts);
     default: return 0;
     }
 }
@@ -4700,15 +4865,15 @@ int Game::upgradeMaterialCost(int index) const
 const char* Game::upgradeName(int index) const
 {
     switch (index) {
-    case 0: return "倉庫容量強化";
+    case 0: return "収納箱容量強化";
     case 1: return "商人機能強化";
     case 2: return "作業台機能解禁";
     case 3: return "リング工房解禁";
     case 4: return "最大HPアップ";
     case 5: return "リング半径アップ";
     case 6: return "リング速度アップ";
-    case 7: return "収集術式";
-    case 8: return "リングプリセット";
+    case 7: return "吸引強化";
+    case 8: return "リングプリセット解禁";
     default: return "";
     }
 }
@@ -4716,8 +4881,8 @@ const char* Game::upgradeName(int index) const
 int Game::upgradeLevel(int index) const
 {
     switch (index) {
-    case 0: return warehouseCapacityLevel_ + 1;
-    case 1: return merchantUpgradeLevel_;
+    case 0: return warehouseCapacityLevel_;
+    case 1: return std::max(0, merchantUpgradeLevel_ - 1);
     case 2: return processingUnlockLevel_;
     case 3: return ringWorkshopUnlocked_ ? 1 : 0;
     case 4: return maxHpUpgradeLevel_;
@@ -4732,8 +4897,8 @@ int Game::upgradeLevel(int index) const
 int Game::upgradeMaxLevel(int index) const
 {
     switch (index) {
-    case 0: return 5;
-    case 1: return 7;
+    case 0: return 4;
+    case 1: return 6;
     case 2: return 5;
     case 3: return 1;
     case 4:
@@ -9956,46 +10121,55 @@ void Game::renderBaseScreen(Renderer& renderer) const
         }
     } else if (baseUpgradeActive_) {
         const int selected = std::clamp(baseUpgradeSelection_, 0, BaseUpgradeItemCount - 1);
-        const auto shortName = [](int index) -> const char* {
-            switch (index) {
-            case 0: return "倉庫容量";
-            case 1: return "商人機能";
-            case 2: return "作業台機能";
-            case 3: return "リング工房";
-            case 4: return "最大HP";
-            case 5: return "リング半径";
-            case 6: return "リング速度";
-            case 7: return "収集術式";
-            case 8: return "プリセット";
-            default: return "";
-            }
-        };
         const auto warehouseCapacityForUiLevel = [](int level) {
             constexpr std::array<int, 5> Capacities{{48, 72, 100, 140, 200}};
-            const int index = std::clamp(level - 1, 0, static_cast<int>(Capacities.size()) - 1);
+            const int index = std::clamp(level, 0, static_cast<int>(Capacities.size()) - 1);
             return Capacities[static_cast<std::size_t>(index)];
         };
-        const auto merchantFeature = [](int level) -> const char* {
-            switch (level) {
-            case 1: return "品揃え6枠";
-            case 2: return "品揃え9枠";
-            case 3: return "品揃え12枠/買取+10%";
-            case 4: return "品揃え15枠/高価買取";
-            case 5: return "品揃え18枠/レア増加";
-            case 6: return "品揃え21枠/買取+20%";
-            case 7: return "品揃え24枠/高レア増加";
-            default: return "未解禁";
-            }
+        const auto merchantStockCountForUiLevel = [](int level) {
+            return 6 + std::clamp(level, 0, 6) * 3;
         };
-        const auto processingFeature = [](int level) -> const char* {
-            switch (level) {
-            case 1: return "軽量化";
-            case 2: return "作業台費用-10%";
-            case 3: return "大型化";
-            case 4: return "作業台費用-20%";
-            case 5: return "作業台費用-30%";
-            default: return "未解禁";
+        const auto merchantBuyPriceFeature = [](int level) -> const char* {
+            if (level >= 5) {
+                return "+20%";
             }
+            if (level >= 2) {
+                return "+10%";
+            }
+            return "通常";
+        };
+        const auto merchantTreasureFeature = [](int level) -> const char* {
+            return level >= 3 ? "解禁" : "未解禁";
+        };
+        const auto merchantRareFeature = [](int level) -> const char* {
+            if (level >= 6) {
+                return "高レア増加";
+            }
+            if (level >= 4) {
+                return "レア増加";
+            }
+            return "通常";
+        };
+        const auto processingUnlockFeature = [](int level) -> const char* {
+            if (level >= 3) {
+                return "大型化";
+            }
+            if (level >= 1) {
+                return "軽量化";
+            }
+            return "未解禁";
+        };
+        const auto processingDiscountFeature = [](int level) -> const char* {
+            if (level >= 5) {
+                return "-30%";
+            }
+            if (level >= 4) {
+                return "-20%";
+            }
+            if (level >= 2) {
+                return "-10%";
+            }
+            return "通常";
         };
         const float listLabelX = panel.pos.x + 40.0f;
         renderer.drawText({listLabelX, 148.0f}, "拠点機能", {198, 198, 206, 255}, 2);
@@ -10016,20 +10190,23 @@ void Game::renderBaseScreen(Renderer& renderer) const
                 upgradeTabValues[static_cast<std::size_t>(i)] = buffer;
             }
             upgradeTabs[static_cast<std::size_t>(i)] = {
-                shortName(i),
+                upgradeName(i),
                 upgradeTabValues[static_cast<std::size_t>(i)],
                 implemented,
                 maxed ? Color{160, 220, 190, 255} : ui::TextMuted,
             };
             upgradeTabRects[static_cast<std::size_t>(i)] = baseUpgradeItemRect(i);
         }
+        UiVerticalTabsStyle upgradeTabStyle;
+        upgradeTabStyle.labelScale = 2;
         drawUiVerticalTabs(
             renderer,
             baseUpgradeTabs_,
             selected,
             upgradeTabs.data(),
             static_cast<int>(upgradeTabs.size()),
-            upgradeTabRects.data());
+            upgradeTabRects.data(),
+            upgradeTabStyle);
 
         const UiRect detailPanel = baseUpgradeDetailPanelRect();
         drawUiSubPanel(renderer, detailPanel);
@@ -10078,18 +10255,28 @@ void Game::renderBaseScreen(Renderer& renderer) const
             Vec2 pos = beginDetailRow(y, label);
             drawInlineTextRun(pos, inlineMaterialIconTag(type) + std::string(materialTypeDisplayName(type)) + " ×", ui::Text);
             drawTextRun(pos, std::to_string(cost), numberColor, 2);
-            drawTextRun(pos, " (", ui::Text, 2);
+            drawTextRun(pos, "（", ui::TextMuted, 2);
             drawTextRun(pos, std::to_string(owned), numberColor, 2);
-            drawTextRun(pos, ")", ui::Text, 2);
+            drawTextRun(pos, "）", ui::TextMuted, 2);
             y += 31.0f;
         };
-        const auto drawEffectChangeLine = [&](float& y, std::string_view label, std::string_view prefix, std::string_view current, std::string_view next) {
+        const auto drawEffectChangeLine = [&](float& y, std::string_view label, std::string_view prefix, std::string_view current, std::string_view next, bool showUnchanged = false) {
             constexpr Color UpgradeValueColor{255, 230, 150, 255};
+            const bool changed = current != next;
+            if (!changed && !showUnchanged) {
+                return;
+            }
             Vec2 pos = beginDetailRow(y, label);
             drawTextRun(pos, prefix, ui::Text, 2);
             drawTextRun(pos, current, ui::Text, 2);
             drawTextRun(pos, " → ", ui::TextMuted, 2);
-            drawTextRun(pos, next, UpgradeValueColor, 2);
+            drawTextRun(pos, next, changed ? UpgradeValueColor : ui::Text, 2);
+            y += 31.0f;
+        };
+        const auto drawEffectTextLine = [&](float& y, std::string_view label, std::string_view prefix, std::string_view text, Color color) {
+            Vec2 pos = beginDetailRow(y, label);
+            drawTextRun(pos, prefix, ui::Text, 2);
+            drawTextRun(pos, text, color, 2);
             y += 31.0f;
         };
 
@@ -10122,16 +10309,52 @@ void Game::renderBaseScreen(Renderer& renderer) const
             case 0:
                 std::snprintf(currentValue, sizeof(currentValue), "%d枠", warehouseCapacityForUiLevel(level));
                 std::snprintf(nextValue, sizeof(nextValue), "%d枠", warehouseCapacityForUiLevel(nextLevel));
-                drawEffectChangeLine(detailY, "効果", "倉庫容量: ", currentValue, nextValue);
+                drawEffectChangeLine(detailY, "効果", "収納箱容量: ", currentValue, nextValue);
                 break;
             case 1:
-                drawEffectChangeLine(detailY, "効果", "商人機能: ", merchantFeature(level), merchantFeature(nextLevel));
+                std::snprintf(currentValue, sizeof(currentValue), "%d枠", merchantStockCountForUiLevel(level));
+                std::snprintf(nextValue, sizeof(nextValue), "%d枠", merchantStockCountForUiLevel(nextLevel));
+                drawEffectChangeLine(detailY, "効果", "品揃え: ", currentValue, nextValue);
+                drawEffectChangeLine(
+                    detailY,
+                    "",
+                    "買取価格: ",
+                    merchantBuyPriceFeature(level),
+                    merchantBuyPriceFeature(nextLevel),
+                    std::string_view(merchantBuyPriceFeature(level)) != "通常");
+                drawEffectChangeLine(
+                    detailY,
+                    "",
+                    "宝の高価買取: ",
+                    merchantTreasureFeature(level),
+                    merchantTreasureFeature(nextLevel),
+                    std::string_view(merchantTreasureFeature(level)) != "未解禁");
+                drawEffectChangeLine(
+                    detailY,
+                    "",
+                    "レア商品: ",
+                    merchantRareFeature(level),
+                    merchantRareFeature(nextLevel),
+                    std::string_view(merchantRareFeature(level)) != "通常");
                 break;
             case 2:
-                drawEffectChangeLine(detailY, "効果", "加工解禁: ", processingFeature(level), processingFeature(nextLevel));
+                drawEffectChangeLine(
+                    detailY,
+                    "効果",
+                    "加工機能: ",
+                    processingUnlockFeature(level),
+                    processingUnlockFeature(nextLevel),
+                    std::string_view(processingUnlockFeature(level)) != "未解禁");
+                drawEffectChangeLine(
+                    detailY,
+                    "",
+                    "作業台費用: ",
+                    processingDiscountFeature(level),
+                    processingDiscountFeature(nextLevel),
+                    std::string_view(processingDiscountFeature(level)) != "通常");
                 break;
             case 3:
-                drawDetailTextRow(detailY, "効果", "リング工房を解禁", Color{255, 230, 150, 255});
+                drawEffectChangeLine(detailY, "効果", "リング工房: ", "未解禁", "解禁");
                 break;
             case 4:
                 std::snprintf(currentValue, sizeof(currentValue), "+%d", level * 2);
@@ -10152,7 +10375,7 @@ void Game::renderBaseScreen(Renderer& renderer) const
                 std::snprintf(currentValue, sizeof(currentValue), "%.0fpx", effectiveCollectionPullRadius(level));
                 std::snprintf(nextValue, sizeof(nextValue), "%.0fpx", effectiveCollectionPullRadius(nextLevel));
                 drawEffectChangeLine(detailY, "効果", "吸引半径: ", currentValue, nextValue);
-                drawDetailTextRow(detailY, "", "近くのドロップをプレイヤーへ吸い寄せます。", ui::TextMuted);
+                drawEffectTextLine(detailY, "", "対象: ", "近くのドロップ", ui::TextMuted);
                 break;
             case 8:
                 drawEffectChangeLine(
@@ -10161,7 +10384,7 @@ void Game::renderBaseScreen(Renderer& renderer) const
                     "プリセット枠: ",
                     baseUpgradeRingPresetFeature(level),
                     baseUpgradeRingPresetFeature(nextLevel));
-                drawDetailTextRow(detailY, "", "リング画面で編成登録と呼び出しができます。", ui::TextMuted);
+                drawEffectTextLine(detailY, "", "用途: ", "リング編成登録/呼び出し", ui::TextMuted);
                 break;
             default:
                 break;

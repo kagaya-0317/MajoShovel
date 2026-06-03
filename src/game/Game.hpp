@@ -1221,6 +1221,7 @@ private:
     void updateRingScreen(const Input& input, UiContext& ui, float dt);
     void cancelRingGrab();
     bool playerDeathSequenceActive() const;
+    bool liveSpellRingHiddenForDeath() const;
     bool gameplayRewardsEnabled() const;
     float playerDeathRingFadeAlpha() const;
     void beginPlayerDeathSequence();

@@ -2406,6 +2406,11 @@ ItemImageDrawOptions ringWorldItemImageOptions(
     const ObjectImageDrawOptions& options)
 {
     ItemImageDrawOptions itemOptions = itemImageOptionsFromObjectOptions(options);
+    const float sizeScale = std::isfinite(static_cast<float>(item.sizeModifier))
+        ? static_cast<float>(item.sizeModifier)
+        : 1.0f;
+    itemOptions.object.scaleMultiplier *= sizeScale;
+    itemOptions.enemy.scaleMultiplier *= sizeScale;
     itemOptions.enemy.fitToMaxSize = false;
     itemOptions.enemyAnimationTimeSeconds = totalSeconds;
     itemOptions.enemy.directionOverrideEnabled = true;
@@ -2418,6 +2423,11 @@ ItemImageDrawOptions ringWorldItemImageOptions(
 ItemImageDrawOptions ringScreenItemImageOptions(const SpellRingItem& item, const ObjectImageDrawOptions& options)
 {
     ItemImageDrawOptions itemOptions = itemImageOptionsFromObjectOptions(options);
+    const float sizeScale = std::isfinite(static_cast<float>(item.sizeModifier))
+        ? static_cast<float>(item.sizeModifier)
+        : 1.0f;
+    itemOptions.object.scaleMultiplier *= sizeScale;
+    itemOptions.enemy.scaleMultiplier *= sizeScale;
     itemOptions.enemy.fitToMaxSize = false;
     itemOptions.enemy.stretchScale = capturedProjectileActionPose(item).scale;
     return itemOptions;

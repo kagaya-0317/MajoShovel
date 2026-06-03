@@ -5935,6 +5935,10 @@ void Game::renderSpellRingForeground(
     const std::vector<LightSource>&,
     float totalSeconds) const
 {
+    if (liveSpellRingHiddenForDeath()) {
+        return;
+    }
+
     if (dungeonRingIntroActive()) {
         const float introProgress = dungeonRingIntroProgress();
         drawDungeonRingIntroOrbit(renderer, spellRing_, balance_, introProgress, totalSeconds);
@@ -6071,7 +6075,10 @@ std::vector<LightSource> finalizeDungeonLightSources(
 
 std::vector<LightSource> Game::collectDungeonLightSources(double totalSeconds) const
 {
-    const std::vector<const SpellRingItem*> runtimeItems = spellRing_.runtimeItems();
+    const bool liveRingHiddenForDeath = liveSpellRingHiddenForDeath();
+    const std::vector<const SpellRingItem*> runtimeItems = liveRingHiddenForDeath
+        ? std::vector<const SpellRingItem*>{}
+        : spellRing_.runtimeItems();
     const bool ringIntroActive = dungeonRingIntroActive();
     const bool miningStartTransitionInDungeon =
         mode_ == ScreenMode::Playing &&
@@ -6307,7 +6314,10 @@ void Game::render(Renderer& renderer, const Time& time)
 
     renderer.setWorldSpace(&camera_, screenShakeOffset(time.totalSeconds()));
 
-    const std::vector<const SpellRingItem*> runtimeItems = spellRing_.runtimeItems();
+    const bool liveRingHiddenForDeath = liveSpellRingHiddenForDeath();
+    const std::vector<const SpellRingItem*> runtimeItems = liveRingHiddenForDeath
+        ? std::vector<const SpellRingItem*>{}
+        : spellRing_.runtimeItems();
     const std::vector<RingItemRenderRef> runtimeItemsByDepth = sortedRingItemRenderRefs(runtimeItems);
     const bool ringIntroActive = dungeonRingIntroActive();
     const bool lightweight = lightweightModeEnabled();
@@ -6331,7 +6341,8 @@ void Game::render(Renderer& renderer, const Time& time)
 
     bool ringCenterVisible = false;
     for (int ringIndex = 0; ringIndex < SpellRingCount; ++ringIndex) {
-        if (!spellRing_.itemsForRing(ringIndex).empty() &&
+        if (!liveRingHiddenForDeath &&
+            !spellRing_.itemsForRing(ringIndex).empty() &&
             tileMap_.isLit(spellRing_.centerForRing(ringIndex), playerLightCenter, itemLights)) {
             ringCenterVisible = true;
             break;
@@ -6341,7 +6352,7 @@ void Game::render(Renderer& renderer, const Time& time)
         drawSpellRingOrbitLayer(renderer, spellRing_, balance_, time.totalSeconds(), 0.46f);
     }
     renderPlayerDeathRingFade(renderer);
-    if (spellRing_.state() != SpellRingState::Normal && ringCenterVisible) {
+    if (!liveRingHiddenForDeath && spellRing_.state() != SpellRingState::Normal && ringCenterVisible) {
         renderer.drawLine(playerLightCenter, spellRing_.center(), {150, 110, 80, 100});
     }
 
@@ -6395,7 +6406,7 @@ void Game::render(Renderer& renderer, const Time& time)
             }
             renderEntityStatusOverlays(renderer, player_.status, playerVisualFootAnchor, playerSpriteDrawSize, time.totalSeconds());
 
-            if (ringIntroActive) {
+            if (ringIntroActive || liveRingHiddenForDeath) {
                 return;
             }
             const float totalSeconds = static_cast<float>(time.totalSeconds());

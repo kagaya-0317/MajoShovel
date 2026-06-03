@@ -3020,6 +3020,11 @@ bool Game::playerDeathSequenceActive() const
     return playerDeathSequence_.active;
 }
 
+bool Game::liveSpellRingHiddenForDeath() const
+{
+    return playerDeathSequence_.active || mode_ == ScreenMode::GameOver;
+}
+
 bool Game::gameplayRewardsEnabled() const
 {
     return player_.hp > 0 &&
