@@ -65,6 +65,7 @@ struct Player {
     Vec2 velocity{};
     Vec2 facing{1.0f, 0.0f};
     Vec2 spellRingShiftDirection{1.0f, 0.0f};
+    Vec2 spellRingShiftDragAnchorScreen{};
     int hp = 10;
     int maxHp = 10;
     int minimumHpAfterDamage = 0;
@@ -77,6 +78,7 @@ struct Player {
     float throwCooldownRemaining = 0.0f;
     float spriteAnimationTime = 0.0f;
     bool spriteWalking = false;
+    bool spellRingShiftDragActive = false;
     float damageFlash = 0.0f;
     float stunWakeTimer = 0.0f;
     Vec2 knockbackVelocity{};

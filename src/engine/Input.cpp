@@ -398,6 +398,11 @@ bool Input::held(InputAction action) const
     return held_[actionIndex(action)];
 }
 
+bool Input::ringOffsetPointerHeld() const
+{
+    return sourceHeld(InputSource::Mouse, InputAction::OffsetRingCenter);
+}
+
 bool Input::removeAllRingItemsPressed() const
 {
     const bool shiftHeld = (SDL_GetModState() & SDL_KMOD_SHIFT) != 0;

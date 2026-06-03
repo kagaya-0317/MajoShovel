@@ -1,5 +1,7 @@
 ﻿#include "devtools/autosim/AutoSimulationPlanner.hpp"
 
+#include "devtools/autosim/AutoSimulationItemEvaluator.hpp"
+
 #include <algorithm>
 #include <cmath>
 #include <limits>
@@ -12,6 +14,7 @@ namespace majo::autosim {
 namespace {
 
 constexpr float DropAcquireRadius = 420.0f;
+constexpr float EmergencyDropAcquireRadius = 900.0f;
 constexpr float ChestAcquireRadius = 420.0f;
 constexpr float UnlimitedTargetRadius = 100000.0f;
 constexpr float RouteActionDistance = 150.0f;
@@ -211,6 +214,137 @@ bool bossPresent(const GameTestSnapshot& snapshot)
     return std::any_of(snapshot.enemies.begin(), snapshot.enemies.end(), [](const GameTestEnemySnapshot& enemy) {
         return enemy.boss;
     });
+}
+
+bool dropRestoresMissingDig(const GameTestSnapshot& snapshot, const GameTestDropSnapshot& drop)
+{
+    return drop.kind == GameTestDropKind::Object &&
+        drop.digPower > 0 &&
+        (!snapshot.ring.hasDigTool || snapshot.ring.bestDigPower <= 0);
+}
+
+bool dropRestoresMissingCombat(const GameTestSnapshot& snapshot, const GameTestDropSnapshot& drop)
+{
+    return drop.kind == GameTestDropKind::Object &&
+        drop.attackPower > 0 &&
+        !snapshot.ring.hasCombatTool;
+}
+
+bool dropRestoresMissingLight(const GameTestSnapshot& snapshot, const GameTestDropSnapshot& drop)
+{
+    return drop.kind == GameTestDropKind::Object &&
+        drop.lightRadius > 0.0f &&
+        (!snapshot.ring.hasLightTool || snapshot.ring.bestLightRadius < 120.0f);
+}
+
+GameTestObjectEntrySnapshot objectEntryForDrop(const GameTestDropSnapshot& drop)
+{
+    GameTestObjectEntrySnapshot item;
+    item.location = GameTestInventoryLocation::Backpack;
+    item.kind = GameTestObjectEntryKind::Stack;
+    item.objectId = drop.id;
+    item.name = drop.displayName;
+    item.category = drop.category;
+    item.damageType = drop.damageType;
+    item.tags = drop.tags;
+    item.count = 1;
+    item.rarity = drop.rarity;
+    item.price = drop.price;
+    item.attackPower = drop.attackPower;
+    item.digPower = drop.digPower;
+    item.lightRadius = drop.lightRadius;
+    item.durability = drop.durability;
+    item.weightKg = drop.weightKg;
+    item.currentDurability = drop.durability;
+    item.maxDurability = drop.durability;
+    item.broken = drop.durability == 0;
+    item.codexStage = GameTestCodexStage::Obtained;
+    return item;
+}
+
+float objectDropAcquireScore(
+    const GameTestSnapshot& snapshot,
+    const GameTestDropSnapshot& drop,
+    const AutoSimulationItemEvaluator& evaluator,
+    const AutoSimulationItemEvaluationContext& itemContext)
+{
+    if (backpackFull(snapshot)) {
+        return -std::numeric_limits<float>::max();
+    }
+
+    const AutoSimulationItemScore itemScore = evaluator.evaluate(objectEntryForDrop(drop), itemContext);
+    float score = 48.0f;
+    score += std::min(78.0f, itemScore.keep * 0.48f);
+    score += std::min(92.0f, itemScore.loadout * 0.66f);
+    score += std::min(42.0f, itemScore.investment * 0.20f);
+
+    if (dropRestoresMissingDig(snapshot, drop)) {
+        score += 210.0f + static_cast<float>(std::max(0, drop.digPower)) * 18.0f;
+    }
+    if (dropRestoresMissingCombat(snapshot, drop)) {
+        score += 130.0f + static_cast<float>(std::max(0, drop.attackPower)) * 9.0f;
+    }
+    if (dropRestoresMissingLight(snapshot, drop)) {
+        score += 118.0f + std::min(52.0f, drop.lightRadius * 0.20f);
+    }
+    if (drop.digPower > snapshot.ring.bestDigPower && snapshot.ring.bestDigPower > 0) {
+        score += static_cast<float>(drop.digPower - snapshot.ring.bestDigPower) * 18.0f;
+    }
+    if (drop.attackPower > snapshot.ring.bestDamage && snapshot.ring.bestDamage > 0) {
+        score += static_cast<float>(drop.attackPower - snapshot.ring.bestDamage) * 10.0f;
+    }
+    return score;
+}
+
+float dropAcquireScore(
+    const GameTestSnapshot& snapshot,
+    const GameTestDropSnapshot& drop,
+    const AutoSimulationItemEvaluator& evaluator,
+    const AutoSimulationItemEvaluationContext& itemContext)
+{
+    switch (drop.kind) {
+    case GameTestDropKind::Object:
+        return objectDropAcquireScore(snapshot, drop, evaluator, itemContext);
+    case GameTestDropKind::Material:
+        return 50.0f + std::min(26.0f, static_cast<float>(std::max(1, drop.quantity)) * 2.0f);
+    case GameTestDropKind::Money:
+        return 42.0f + std::min(34.0f, static_cast<float>(std::max(1, drop.quantity)) * 0.12f);
+    }
+    return 0.0f;
+}
+
+float dropAcquireRadius(const GameTestSnapshot& snapshot, const GameTestDropSnapshot& drop)
+{
+    if (dropRestoresMissingDig(snapshot, drop) ||
+        dropRestoresMissingCombat(snapshot, drop) ||
+        dropRestoresMissingLight(snapshot, drop)) {
+        return EmergencyDropAcquireRadius;
+    }
+    return DropAcquireRadius;
+}
+
+std::string dropAcquireReason(const GameTestSnapshot& snapshot, const GameTestDropSnapshot& drop)
+{
+    std::string reason = "drop";
+    if (drop.kind == GameTestDropKind::Object) {
+        reason += "_object";
+        if (dropRestoresMissingDig(snapshot, drop)) {
+            reason += "_need_dig";
+        } else if (dropRestoresMissingCombat(snapshot, drop)) {
+            reason += "_need_combat";
+        } else if (dropRestoresMissingLight(snapshot, drop)) {
+            reason += "_need_light";
+        }
+        if (!drop.id.empty()) {
+            reason += "_";
+            reason += drop.id;
+        }
+    } else if (drop.kind == GameTestDropKind::Material) {
+        reason += "_material";
+    } else if (drop.kind == GameTestDropKind::Money) {
+        reason += "_money";
+    }
+    return reason;
 }
 
 bool softDigPreferenceReason(const std::string& reason)
@@ -507,20 +641,17 @@ AutoSimulationPlan AutoSimulationPlanner::makePlan(const GameTestSnapshot& snaps
         keepBetterPlan(bestPlan, snapshot, *combatPlan, 72.0f);
     }
 
-    const GameTestDropSnapshot* drop = bestAcceptedByRoute(
-        snapshot.drops,
-        pathfinder_,
-        pathField,
-        snapshot.player.position,
-        DropAcquireRadius,
-        [](const GameTestDropSnapshot& value) { return value.position; },
-        [](const GameTestDropSnapshot&) { return true; });
-    if (drop != nullptr) {
-        float baseScore = 46.0f;
-        if (drop->kind == GameTestDropKind::Object) {
-            baseScore += 8.0f;
-        } else if (drop->kind == GameTestDropKind::Material) {
-            baseScore += 5.0f;
+    AutoSimulationItemEvaluator itemEvaluator;
+    const AutoSimulationItemEvaluationContext itemContext =
+        autoSimulationItemEvaluationContextForSnapshot(snapshot);
+    for (const GameTestDropSnapshot& drop : snapshot.drops) {
+        const float acquireRadius = dropAcquireRadius(snapshot, drop);
+        if (distanceSquared(snapshot.player.position, drop.position) > acquireRadius * acquireRadius) {
+            continue;
+        }
+        const float baseScore = dropAcquireScore(snapshot, drop, itemEvaluator, itemContext);
+        if (baseScore <= -std::numeric_limits<float>::max() * 0.5f) {
+            continue;
         }
         keepBetterPlan(
             bestPlan,
@@ -529,8 +660,8 @@ AutoSimulationPlan AutoSimulationPlanner::makePlan(const GameTestSnapshot& snaps
                 snapshot,
                 pathField,
                 AutoSimulationGoal::CollectDrop,
-                drop->position,
-                "drop",
+                drop.position,
+                dropAcquireReason(snapshot, drop),
                 false,
                 false,
                 AutoSimulationRingRole::Utility),

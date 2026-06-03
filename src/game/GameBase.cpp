@@ -10,11 +10,33 @@ namespace {
 constexpr std::string_view AudioSeNewItemJingle = "se.item.new.jingle";
 constexpr std::string_view AudioSeEffectDiscovery = "se.discovery.effect";
 constexpr std::string_view BaseFacilityWindowHelpText = "↑/↓ 選択  F/Enter 決定  Esc 戻る";
+constexpr std::string_view MiningToolCategory = "\xE6\x8E\x98\xE5\x89\x8A";
+constexpr std::string_view RescueShovelObjectId = "item_shovel";
+constexpr std::string_view RescueTorchObjectId = "item_torch";
+constexpr float BaseMiningRescueDropDurationSeconds = 1.05f;
+constexpr float BaseMiningRescueDropEndSeconds = 1.55f;
 constexpr float NewItemJingleFallbackSeconds = 0.92f;
 
 bool isTutorialStoryTrigger(std::string_view trigger)
 {
     return trigger.rfind("tutorial:", 0) == 0;
+}
+
+bool isMiningToolObject(const ItemData& item)
+{
+    return item.category == MiningToolCategory;
+}
+
+bool isMerchantMiningCandidate(const ItemData& item, int merchantUpgradeLevel)
+{
+    if (item.id.empty() || item.price <= 0 || item.category != MiningToolCategory) {
+        return false;
+    }
+    const int maxRarity = merchantUpgradeLevel >= 7 ? 10 :
+        (merchantUpgradeLevel >= 5 ? 7 :
+            (merchantUpgradeLevel >= 4 ? 5 :
+                (merchantUpgradeLevel >= 2 ? 4 : 2)));
+    return item.rarity <= maxRarity;
 }
 
 void drawBaseControlHelp(Renderer& renderer, int screenWidth, int screenHeight, std::string help)
@@ -5349,6 +5371,171 @@ void Game::openBaseMiningStartChoice()
     baseStatus_.clear();
 }
 
+bool Game::hasAnyMiningToolForBaseRescue() const
+{
+    const auto hasMiningStack = [](const InventoryObjectStack& stack) {
+        return stack.count > 0 && isMiningToolObject(stack.item);
+    };
+    const auto hasMiningInstance = [](const InventoryObjectInstance& instance) {
+        return isMiningToolObject(instance.item);
+    };
+
+    if (std::any_of(inventory_.objectStacks().begin(), inventory_.objectStacks().end(), hasMiningStack) ||
+        std::any_of(inventory_.objectInstances().begin(), inventory_.objectInstances().end(), hasMiningInstance) ||
+        std::any_of(warehouseObjectStacks_.begin(), warehouseObjectStacks_.end(), hasMiningStack) ||
+        std::any_of(warehouseObjectInstances_.begin(), warehouseObjectInstances_.end(), hasMiningInstance)) {
+        return true;
+    }
+
+    for (int ringIndex = 0; ringIndex < SpellRingCount; ++ringIndex) {
+        for (const SpellRingItem& item : spellRing_.itemsForRing(ringIndex)) {
+            if (item.type == SpellRingItemType::Shovel) {
+                return true;
+            }
+            const ItemData* object = objectForRingItem(objectCatalog_, item);
+            if (object != nullptr && isMiningToolObject(*object)) {
+                return true;
+            }
+        }
+    }
+
+    return false;
+}
+
+bool Game::canAffordMerchantMiningToolForBaseRescue() const
+{
+    for (const MerchantProduct& product : merchantStock_) {
+        if (product.quantity <= 0 || product.price <= 0) {
+            continue;
+        }
+        const ItemData* item = objectCatalog_.registry.findById(product.objectId);
+        if (item != nullptr && isMiningToolObject(*item) && money_ >= product.price) {
+            return true;
+        }
+    }
+
+    for (const ObjectDefinition& object : objectCatalog_.objects) {
+        const ItemData* item = objectCatalog_.registry.findById(object.id);
+        if (item != nullptr &&
+            isMerchantMiningCandidate(*item, merchantUpgradeLevel_) &&
+            !isStoryObject(*item) &&
+            money_ >= std::max(1, item->price)) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+bool Game::shouldStartBaseMiningRescueDropEvent() const
+{
+    return mode_ == ScreenMode::Base &&
+        baseArea_ == BaseArea::Outdoor &&
+        !baseMiningRescueDrop_.active &&
+        !dialogue_.active() &&
+        !pendingStoryTriggerDelayActive() &&
+        pendingStoryTrigger_.empty() &&
+        pendingStoryTriggers_.empty() &&
+        !firstItemAcquisitionNoticeActive() &&
+        !screenTransition_.active() &&
+        !hasAnyMiningToolForBaseRescue() &&
+        !canAffordMerchantMiningToolForBaseRescue();
+}
+
+void Game::startBaseMiningRescueDropEvent()
+{
+    const UiRect bounds = baseMapBounds();
+    const Vec2 baseTarget = {
+        std::clamp(basePlayerPosition_.x, bounds.pos.x + 90.0f, bounds.pos.x + bounds.size.x - 90.0f),
+        std::clamp(basePlayerPosition_.y + 58.0f, bounds.pos.y + 100.0f, bounds.pos.y + bounds.size.y - 50.0f),
+    };
+    const std::array<Vec2, 2> offsets{{
+        {-34.0f, 0.0f},
+        {34.0f, 12.0f},
+    }};
+
+    baseMiningRescueDrop_ = {};
+    baseMiningRescueDrop_.active = true;
+    baseMiningRescueDrop_.items[0] = BaseMiningRescueDropItem{
+        .objectId = std::string(RescueShovelObjectId),
+        .startPosition = baseTarget + offsets[0] + Vec2{-36.0f, -430.0f},
+        .targetPosition = baseTarget + offsets[0],
+        .delaySeconds = 0.0f,
+    };
+    baseMiningRescueDrop_.items[1] = BaseMiningRescueDropItem{
+        .objectId = std::string(RescueTorchObjectId),
+        .startPosition = baseTarget + offsets[1] + Vec2{42.0f, -450.0f},
+        .targetPosition = baseTarget + offsets[1],
+        .delaySeconds = 0.12f,
+    };
+    baseStatus_ = "空からスコップと松明が降ってきた！";
+}
+
+bool Game::grantBaseMiningRescueTool(std::string_view objectId)
+{
+    const ItemData* item = objectCatalog_.registry.findById(objectId);
+    SpellRingItem fallbackRingItem = objectId == RescueTorchObjectId ? makeTorch() : makeShovel();
+    fallbackRingItem.objectId = std::string(objectId);
+
+    const int ringCount = std::clamp(unlockedRingCount(), 1, SpellRingCount);
+    if (item != nullptr) {
+        for (int ringIndex = 0; ringIndex < ringCount; ++ringIndex) {
+            SpellRingAddResult addResult{};
+            if (spellRing_.addObjectItemToRing(ringIndex, *item, &addResult)) {
+                spellRing_.resetBaseWeightToCurrent();
+                refreshOrbitEffects();
+                syncEncyclopediaFromInventoryAndRing();
+                return true;
+            }
+        }
+
+        if (inventory_.addObjectItem(objectCatalog_, objectId)) {
+            syncEncyclopediaFromInventoryAndRing();
+            return true;
+        }
+
+        if (warehouseUsedSlots() < warehouseCapacity()) {
+            ItemInstance instance = inventory_.createDetachedObjectInstance(*item);
+            warehouseObjectInstances_.push_back(InventoryObjectInstance{*item, std::move(instance)});
+            syncWarehouseDisplaySlots();
+            syncEncyclopediaFromInventoryAndRing();
+            return true;
+        }
+    }
+
+    std::vector<SpellRingItem>& ringItems = spellRing_.itemsForRing(0);
+    fallbackRingItem.ringIndex = 0;
+    fallbackRingItem.localAngle = static_cast<float>(ringItems.size()) * Pi * 0.618f;
+    ringItems.push_back(std::move(fallbackRingItem));
+    spellRing_.resetBaseWeightToCurrent();
+    refreshOrbitEffects();
+    syncEncyclopediaFromInventoryAndRing();
+    return true;
+}
+
+void Game::updateBaseMiningRescueDropEvent(float dt, UiContext& ui)
+{
+    if (!baseMiningRescueDrop_.active) {
+        return;
+    }
+
+    baseMiningRescueDrop_.elapsedSeconds += std::max(0.0f, dt);
+    bool allGranted = true;
+    for (BaseMiningRescueDropItem& item : baseMiningRescueDrop_.items) {
+        const float landSeconds = item.delaySeconds + BaseMiningRescueDropDurationSeconds;
+        if (!item.granted && baseMiningRescueDrop_.elapsedSeconds >= landSeconds) {
+            item.granted = grantBaseMiningRescueTool(item.objectId);
+            ui.emitSound(UiSoundEvent::ItemUse);
+        }
+        allGranted = allGranted && item.granted;
+    }
+
+    if (allGranted && baseMiningRescueDrop_.elapsedSeconds >= BaseMiningRescueDropEndSeconds) {
+        baseMiningRescueDrop_ = {};
+        baseStatus_ = "スコップと松明を受け取りました";
+    }
+}
+
 void Game::maybeQueueStageStartStory()
 {
     if (currentStageId_.empty()) {
@@ -7936,6 +8123,19 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
         return;
     }
 
+    if (baseMiningRescueDrop_.active) {
+        updateBaseMiningRescueDropEvent(dt, ui);
+        ui.block({{0.0f, 0.0f}, {static_cast<float>(camera_.width()), static_cast<float>(camera_.height())}});
+        return;
+    }
+    if (shouldStartBaseMiningRescueDropEvent()) {
+        ui.emitSound(UiSoundEvent::MenuOpen);
+        startBaseMiningRescueDropEvent();
+        updateBaseMiningRescueDropEvent(dt, ui);
+        ui.block({{0.0f, 0.0f}, {static_cast<float>(camera_.width()), static_cast<float>(camera_.height())}});
+        return;
+    }
+
     if (input.pausePressed()) {
         ui.emitSound(UiSoundEvent::MenuOpen);
         mode_ = ScreenMode::PauseMenu;
@@ -8554,6 +8754,51 @@ void Game::renderBaseDiaryScreen(Renderer& renderer, UiRect panel) const
     }
 }
 
+void Game::renderBaseMiningRescueDropEvent(Renderer& renderer) const
+{
+    if (!baseMiningRescueDrop_.active) {
+        return;
+    }
+
+    for (const BaseMiningRescueDropItem& item : baseMiningRescueDrop_.items) {
+        const float rawProgress =
+            (baseMiningRescueDrop_.elapsedSeconds - item.delaySeconds) / BaseMiningRescueDropDurationSeconds;
+        const float progress = clamp(rawProgress, 0.0f, 1.0f);
+        const float eased = smooth01(progress);
+        const Vec2 center = lerp(item.startPosition, item.targetPosition, eased) +
+            Vec2{std::sin(eased * Pi * 2.0f) * 8.0f, -std::sin(eased * Pi) * 22.0f};
+
+        const float shadowAlpha = 34.0f + eased * 88.0f;
+        renderer.fillCircle(
+            item.targetPosition + Vec2{0.0f, 14.0f},
+            8.0f + eased * 16.0f,
+            {0, 0, 0, static_cast<unsigned char>(std::clamp(shadowAlpha, 0.0f, 130.0f))});
+
+        ObjectImageDrawOptions imageOptions;
+        imageOptions.allowUpscale = true;
+        imageOptions.rotationDegrees = (item.objectId == RescueTorchObjectId ? -9.0f : 12.0f) +
+            std::sin(baseMiningRescueDrop_.elapsedSeconds * 10.0f + item.delaySeconds * 18.0f) * 4.0f;
+        const ItemData* object = objectCatalog_.registry.findById(item.objectId);
+        if (object == nullptr || !drawItemImage(renderer, *object, center, {58.0f, 58.0f}, imageOptions)) {
+            const Color core = item.objectId == RescueTorchObjectId
+                ? Color{255, 176, 64, 255}
+                : Color{178, 184, 190, 255};
+            renderer.fillCircle(center, 17.0f, core);
+            renderer.drawCircle(center, 21.0f, {255, 246, 190, 220});
+        }
+
+        const float glint = 0.5f + 0.5f * std::sin(baseMiningRescueDrop_.elapsedSeconds * 16.0f + item.delaySeconds * 31.0f);
+        renderer.fillCircle(
+            center + Vec2{-18.0f, -24.0f},
+            2.0f + glint * 2.2f,
+            {255, 248, 188, static_cast<unsigned char>(150.0f + glint * 80.0f)});
+        renderer.fillCircle(
+            center + Vec2{20.0f, -12.0f},
+            1.5f + (1.0f - glint) * 2.0f,
+            {184, 232, 255, static_cast<unsigned char>(130.0f + (1.0f - glint) * 70.0f)});
+    }
+}
+
 void Game::updateBasePlayerSpriteAnimation(float dt, bool walking)
 {
     if (walking != basePlayerSpriteWalking_) {
@@ -8613,6 +8858,7 @@ void Game::renderBaseBackdrop(Renderer& renderer) const
         renderer.drawLine(basePlayerPosition_, basePlayerPosition_ + basePlayerFacing_ * 22.0f, {235, 210, 255, 255});
     }
 
+    renderBaseMiningRescueDropEvent(renderer);
     renderTopInfoBar(renderer);
 }
 
@@ -8672,6 +8918,7 @@ void Game::renderBaseScreen(Renderer& renderer) const
         renderer.drawLine(basePlayerPosition_, basePlayerPosition_ + basePlayerFacing_ * 22.0f, {235, 210, 255, 255});
     }
 
+    renderBaseMiningRescueDropEvent(renderer);
     renderTopInfoBar(renderer);
 
     char buffer[256];
@@ -8689,6 +8936,7 @@ void Game::renderBaseScreen(Renderer& renderer) const
         !pendingStoryTrigger_.empty() ||
         !pendingStoryTriggers_.empty() ||
         firstItemAcquisitionNoticeActive();
+    const bool rescueDropActive = baseMiningRescueDrop_.active;
     const bool storageActionDialogActive = baseStorageActive_ &&
         (baseStorageMode_ == StorageUiMode::ChooseAction || baseStorageMode_ == StorageUiMode::Bulk);
     const bool merchantActionDialogActive = baseSellActive_ && baseMerchantMode_ == MerchantUiMode::ChooseAction;
@@ -10121,7 +10369,7 @@ void Game::renderBaseScreen(Renderer& renderer) const
         }
     } else {
         const bool modalOpen = baseBrokenRingDepartureConfirm_.open;
-        if (!modalOpen && !bottomControlHelpBlocked) {
+        if (!modalOpen && !bottomControlHelpBlocked && !rescueDropActive) {
             drawBaseControlHelp(
                 renderer,
                 camera_.width(),

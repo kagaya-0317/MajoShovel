@@ -261,6 +261,7 @@ public:
         bool objectiveResolved = false;
         bool rewardClaimed = false;
         int bossEnemyRuntimeId = 0;
+        int encounterSpawnCount = 0;
         float selfLightRadiusTiles = 4.0f;
         std::vector<int> spawnedEnemyRuntimeIds;
         std::vector<DungeonEventNestHole> nestHoles;
@@ -1036,6 +1037,18 @@ private:
         int ringItemIndex = -1;
         bool valid = false;
     };
+    struct BaseMiningRescueDropItem {
+        std::string objectId;
+        Vec2 startPosition{};
+        Vec2 targetPosition{};
+        float delaySeconds = 0.0f;
+        bool granted = false;
+    };
+    struct BaseMiningRescueDropState {
+        bool active = false;
+        float elapsedSeconds = 0.0f;
+        std::array<BaseMiningRescueDropItem, 2> items{};
+    };
     enum class MerchantUiMode {
         Closed,
         ChooseAction,
@@ -1171,6 +1184,13 @@ private:
     int unlockedRingPresetSlotCount() const;
     bool registerRingPresetShortcut(int presetIndex);
     bool applyRingPresetShortcut(int presetIndex);
+    bool hasAnyMiningToolForBaseRescue() const;
+    bool canAffordMerchantMiningToolForBaseRescue() const;
+    bool shouldStartBaseMiningRescueDropEvent() const;
+    void startBaseMiningRescueDropEvent();
+    void updateBaseMiningRescueDropEvent(float dt, UiContext& ui);
+    bool grantBaseMiningRescueTool(std::string_view objectId);
+    void renderBaseMiningRescueDropEvent(Renderer& renderer) const;
     void updateBaseScreen(const Input& input, UiContext& ui, float dt);
     void openBaseDiary();
     void closeBaseDiary();
@@ -2160,6 +2180,7 @@ private:
     bool ringWorkshopUnlocked_ = false;
     int ringPresetSlotLevel_ = 0;
     bool autoSaveOnReturn_ = false;
+    BaseMiningRescueDropState baseMiningRescueDrop_{};
     std::vector<std::string> storyFlags_;
     std::vector<InventoryObjectStack> warehouseObjectStacks_;
     std::vector<InventoryObjectInstance> warehouseObjectInstances_;

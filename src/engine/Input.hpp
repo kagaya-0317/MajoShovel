@@ -65,6 +65,7 @@ public:
     bool backReleased() const { return released(InputAction::Cancel) || released(InputAction::Pause); }
     bool backHeld() const { return held(InputAction::Cancel) || held(InputAction::Pause); }
     bool ringOffsetHeld() const { return held(InputAction::OffsetRingCenter); }
+    bool ringOffsetPointerHeld() const;
     bool upgradePressed(int option) const;
     bool mouseLeftPressed() const { return mouseLeftPressed_; }
     bool mouseLeftReleased() const { return mouseLeftReleased_; }

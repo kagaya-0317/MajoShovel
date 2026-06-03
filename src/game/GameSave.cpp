@@ -296,6 +296,7 @@ std::string serializedDungeonEventParams(const Game::DungeonEventInstance& event
     parts.push_back(std::string("objectiveResolved=") + (event.objectiveResolved ? "1" : "0"));
     parts.push_back(std::string("rewardClaimed=") + (event.rewardClaimed ? "1" : "0"));
     parts.push_back("bossId=" + std::to_string(event.bossEnemyRuntimeId));
+    parts.push_back("spawnCount=" + std::to_string(event.encounterSpawnCount));
     if (!event.requestKey.empty()) {
         parts.push_back("request=" + event.requestKey);
     }
@@ -381,6 +382,12 @@ void applyDungeonEventParams(Game::DungeonEventInstance& event, std::string_view
                 event.bossEnemyRuntimeId = std::stoi(std::string(value));
             } catch (...) {
                 event.bossEnemyRuntimeId = 0;
+            }
+        } else if (key == "spawnCount") {
+            try {
+                event.encounterSpawnCount = std::max(0, std::stoi(std::string(value)));
+            } catch (...) {
+                event.encounterSpawnCount = 0;
             }
         } else if (key == "request") {
             event.requestKey = std::string(value);

@@ -28,6 +28,7 @@ int playerSpriteFrameIndex(float animationTime, bool walking)
 namespace {
 
 constexpr float RingShiftAimDeadzone = 0.15f;
+constexpr float RingShiftPointerDeadzonePx = 2.0f;
 constexpr float RingShiftDirectionResponse = 18.0f;
 constexpr float RingShiftDistanceResponse = 14.0f;
 
@@ -311,25 +312,51 @@ void Player::update(
         facing = normalize(velocity);
     }
 
+    const float shiftDistance =
+        (balance.spellRingShiftDistance + spellRingShiftDistanceBonus) *
+        clamp(spellRingShiftDistanceMultiplier, 0.25f, 3.0f);
+
     Vec2 targetShiftDirection = normalizedOr(spellRingShiftDirection, facing);
-    if (input.ringOffsetHeld()) {
-        const Vec2 aimAxis = input.aimAxis();
-        if (input.hasAimAxis() && lengthSquared(aimAxis) >= RingShiftAimDeadzone * RingShiftAimDeadzone) {
-            targetShiftDirection = normalize(aimAxis);
+    float targetShift = 0.0f;
+    if (input.ringOffsetPointerHeld()) {
+        const Vec2 mouse = input.mouseScreen();
+        if (!spellRingShiftDragActive) {
+            spellRingShiftDragActive = true;
+            spellRingShiftDragAnchorScreen = mouse;
+        }
+
+        Vec2 pointerOffset = mouse - spellRingShiftDragAnchorScreen;
+        const float pointerDistance = length(pointerOffset);
+        if (pointerDistance > shiftDistance && pointerDistance > 0.0001f) {
+            pointerOffset = pointerOffset * (shiftDistance / pointerDistance);
+            spellRingShiftDragAnchorScreen = mouse - pointerOffset;
+        }
+
+        targetShift = length(pointerOffset);
+        if (targetShift >= RingShiftPointerDeadzonePx) {
+            targetShiftDirection = normalize(pointerOffset);
         } else {
+            targetShift = 0.0f;
             targetShiftDirection = normalizedOr(facing, targetShiftDirection);
         }
-    } else if (lengthSquared(facing) > 0.0001f) {
-        targetShiftDirection = normalize(facing);
+    } else {
+        spellRingShiftDragActive = false;
+        if (input.ringOffsetHeld()) {
+            const Vec2 aimAxis = input.aimAxis();
+            if (input.hasAimAxis() && lengthSquared(aimAxis) >= RingShiftAimDeadzone * RingShiftAimDeadzone) {
+                targetShiftDirection = normalize(aimAxis);
+            } else {
+                targetShiftDirection = normalizedOr(facing, targetShiftDirection);
+            }
+            targetShift = shiftDistance;
+        } else if (lengthSquared(facing) > 0.0001f) {
+            targetShiftDirection = normalize(facing);
+        }
     }
     const float safeDt = std::max(0.0f, dt);
     spellRingShiftDirection =
         smoothDirection(spellRingShiftDirection, targetShiftDirection, RingShiftDirectionResponse, safeDt);
 
-    const float shiftDistance =
-        (balance.spellRingShiftDistance + spellRingShiftDistanceBonus) *
-        clamp(spellRingShiftDistanceMultiplier, 0.25f, 3.0f);
-    const float targetShift = input.ringOffsetHeld() ? shiftDistance : 0.0f;
     spellRingShift = lerp(spellRingShift, targetShift, 1.0f - std::exp(-RingShiftDistanceResponse * safeDt));
     throwCooldownRemaining = std::max(0.0f, throwCooldownRemaining - dt);
 }

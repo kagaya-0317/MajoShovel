@@ -9101,11 +9101,33 @@ GameTestSnapshot Game::makeTestSnapshot(GameTestSnapshotOptions options) const
     snapshot.drops.reserve(drops.size());
     for (const WorldDropItem& drop : drops) {
         std::string displayName = drop.id;
+        std::string category;
+        std::string damageType;
+        std::vector<std::string> tags;
         GameTestIconKind iconKind = GameTestIconKind::None;
         std::string iconKey;
+        int rarity = 0;
+        int price = 0;
+        int attackPower = 0;
+        int digPower = 0;
+        float lightRadius = 0.0f;
+        int durability = -1;
+        double weightKg = 0.0;
         if (drop.kind == WorldDropKind::Object) {
             const ItemData* object = objectCatalog_.registry.findById(drop.id);
             displayName = object != nullptr ? object->name : drop.id;
+            if (object != nullptr) {
+                category = object->category;
+                damageType = object->damageType;
+                tags = object->tags;
+                rarity = object->rarity;
+                price = object->price;
+                attackPower = object->attackPower;
+                digPower = object->digPower;
+                lightRadius = expectedLoadoutLightRadius(*object);
+                durability = object->durability;
+                weightKg = object->weightKg;
+            }
             iconKind = GameTestIconKind::Object;
             iconKey = drop.id;
         } else if (drop.kind == WorldDropKind::Money) {
@@ -9124,10 +9146,20 @@ GameTestSnapshot Game::makeTestSnapshot(GameTestSnapshotOptions options) const
             .kind = dropKind(drop.kind),
             .id = drop.id,
             .displayName = std::move(displayName),
+            .category = std::move(category),
+            .damageType = std::move(damageType),
+            .tags = std::move(tags),
             .iconKind = iconKind,
             .iconKey = std::move(iconKey),
             .position = drop.position,
             .quantity = drop.quantity,
+            .rarity = rarity,
+            .price = price,
+            .attackPower = attackPower,
+            .digPower = digPower,
+            .lightRadius = lightRadius,
+            .durability = durability,
+            .weightKg = weightKg,
         });
     }
 

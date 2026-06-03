@@ -34,7 +34,9 @@ int playerXpToNextForLevel(int level, const RuntimeBalance& balance)
     if (clampedLevel >= PlayerMaxLevel) {
         return 0;
     }
-    return std::max(1, balance.xpBase + clampedLevel * balance.xpPerLevel);
+    const int curveLevel = std::max(0, clampedLevel - 2);
+    const int curveBonus = curveLevel * curveLevel * 3;
+    return std::max(1, balance.xpBase + clampedLevel * balance.xpPerLevel + curveBonus);
 }
 
 bool playerAtMaxLevel(const Player& player)

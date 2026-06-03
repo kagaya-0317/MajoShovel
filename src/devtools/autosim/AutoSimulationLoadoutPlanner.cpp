@@ -22,6 +22,9 @@ constexpr float ReplaceGainScore = 26.0f;
 constexpr float BrokenProtectedReplaceGainScore = 6.0f;
 constexpr float StaffReplaceGainScore = 8.0f;
 constexpr float LowHpDiscardAvoidRatio = 0.55f;
+constexpr float PreferredUtilityRingScore = 260.0f;
+constexpr std::string_view MagnifyingGlassObjectId = "item_magnifying_glass";
+constexpr std::string_view CaptureNetObjectId = "item_capture_net";
 
 struct LoadoutProfile {
     float digWeight = 1.0f;
@@ -53,7 +56,11 @@ bool canEquipFromBackpack(const GameTestObjectEntrySnapshot& item)
         !item.equipped &&
         !item.broken &&
         item.category != "杖" &&
-        (item.attackPower + item.attackBonus > 0 || item.digPower + item.digBonus > 0 || item.lightRadius > 0.0f);
+        (item.attackPower + item.attackBonus > 0 ||
+            item.digPower + item.digBonus > 0 ||
+            item.lightRadius > 0.0f ||
+            item.objectId == MagnifyingGlassObjectId ||
+            item.objectId == CaptureNetObjectId);
 }
 
 bool canAddToRing(const GameTestObjectEntrySnapshot& item, int ringIndex)
@@ -66,6 +73,21 @@ bool hasTag(const std::vector<std::string>& tags, std::string_view tag)
 {
     return std::any_of(tags.begin(), tags.end(), [tag](const std::string& value) {
         return value == tag;
+    });
+}
+
+bool preferredUtilityRingItem(std::string_view objectId)
+{
+    return objectId == MagnifyingGlassObjectId || objectId == CaptureNetObjectId;
+}
+
+bool ringAlreadyHasObject(const GameTestSnapshot& snapshot, std::string_view objectId)
+{
+    if (objectId.empty()) {
+        return false;
+    }
+    return std::any_of(snapshot.ring.items.begin(), snapshot.ring.items.end(), [objectId](const GameTestRingItemSnapshot& item) {
+        return item.objectId == objectId;
     });
 }
 
@@ -275,6 +297,9 @@ LoadoutScore scoreBackpackItem(const GameTestObjectEntrySnapshot& item, const Lo
         item.broken,
         item.weightKg);
     score.utility = utilityScore(item.rarity, item.price, item.enhanceLevel, item.protectionEnabled, item.tags);
+    if (preferredUtilityRingItem(item.objectId)) {
+        score.utility += PreferredUtilityRingScore;
+    }
     return makeTotalScore(score, profile);
 }
 
@@ -307,6 +332,9 @@ LoadoutScore scoreRingItem(const GameTestRingItemSnapshot& item, const LoadoutPr
         item.broken,
         item.weightKg);
     score.utility = utilityScore(item.rarity, item.price, item.enhanceLevel, item.protectionEnabled, item.tags);
+    if (preferredUtilityRingItem(item.objectId)) {
+        score.utility += PreferredUtilityRingScore;
+    }
     return makeTotalScore(score, profile);
 }
 
@@ -774,6 +802,9 @@ std::optional<GameTestAction> AutoSimulationLoadoutPlanner::chooseAction(const G
 
         for (const GameTestObjectEntrySnapshot& item : snapshot.inventory.backpackItems) {
             if (!canEquipFromBackpack(item)) {
+                continue;
+            }
+            if (preferredUtilityRingItem(item.objectId) && ringAlreadyHasObject(snapshot, item.objectId)) {
                 continue;
             }
 

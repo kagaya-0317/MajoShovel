@@ -233,10 +233,20 @@ struct GameTestDropSnapshot {
     GameTestDropKind kind = GameTestDropKind::Object;
     std::string id;
     std::string displayName;
+    std::string category;
+    std::string damageType;
+    std::vector<std::string> tags;
     GameTestIconKind iconKind = GameTestIconKind::None;
     std::string iconKey;
     Vec2 position{};
     int quantity = 1;
+    int rarity = 0;
+    int price = 0;
+    int attackPower = 0;
+    int digPower = 0;
+    float lightRadius = 0.0f;
+    int durability = -1;
+    double weightKg = 0.0;
 };
 
 struct GameTestMineTileSnapshot {

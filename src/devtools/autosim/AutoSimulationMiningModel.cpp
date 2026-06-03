@@ -21,6 +21,9 @@ constexpr float MiningRangeSlack = 10.0f;
 constexpr float MovementProbeDistance = 132.0f;
 constexpr float MovementProbeExtraRadius = 6.0f;
 constexpr float BlockedStandPenalty = 140.0f;
+constexpr float PatchProbeTileDepthBehind = 2.0f;
+constexpr float PatchProbeTileDepthAhead = 7.5f;
+constexpr float PatchProbeTileHalfWidth = 2.25f;
 
 struct MiningCandidate {
     const GameTestMineTileSnapshot* tile = nullptr;
@@ -223,6 +226,115 @@ bool preferSoftDigReason(std::string_view reason)
         reasonContains(reason, "map_clue");
 }
 
+bool isDirtLikeWall(const GameTestMineTileSnapshot& tile)
+{
+    return tile.terrainKind == GameTestTerrainKind::Dirt;
+}
+
+bool isSoftDirtWall(const GameTestMineTileSnapshot& tile)
+{
+    return tile.terrainKind == GameTestTerrainKind::Dirt &&
+        tile.terrainAttribute == GameTestTerrainAttribute::Soft;
+}
+
+bool isDenseHardWall(const GameTestMineTileSnapshot& tile)
+{
+    return tile.terrainKind == GameTestTerrainKind::Rock ||
+        tile.terrainKind == GameTestTerrainKind::Ore ||
+        tile.terrainKind == GameTestTerrainKind::HardRock;
+}
+
+float softWallWeight(const GameTestMineTileSnapshot& tile)
+{
+    if (isSoftDirtWall(tile)) {
+        return 1.45f;
+    }
+    if (isDirtLikeWall(tile)) {
+        return 1.0f;
+    }
+    return 0.0f;
+}
+
+float hardWallWeight(const GameTestMineTileSnapshot& tile)
+{
+    switch (tile.terrainKind) {
+    case GameTestTerrainKind::HardRock: return 2.4f;
+    case GameTestTerrainKind::Rock: return 1.25f;
+    case GameTestTerrainKind::Ore: return 1.15f;
+    case GameTestTerrainKind::Dirt:
+    case GameTestTerrainKind::Empty:
+        break;
+    }
+    return 0.0f;
+}
+
+float surroundingDigPatchScore(
+    const GameTestSnapshot& snapshot,
+    const GameTestMineTileSnapshot& target,
+    Vec2 direction,
+    bool preferSoftDig)
+{
+    float softCorridor = softWallWeight(target);
+    float hardCorridor = 0.0f;
+    float nearbyHard = 0.0f;
+    int adjacentSoft = 0;
+    int adjacentHard = 0;
+
+    for (const GameTestMineTileSnapshot& tile : snapshot.nearbyMineTiles) {
+        if (!tile.solid || sameTile(tile, target)) {
+            continue;
+        }
+
+        const int dx = tile.tileX - target.tileX;
+        const int dy = tile.tileY - target.tileY;
+        if (std::abs(dx) <= 1 && std::abs(dy) <= 1) {
+            if (isDirtLikeWall(tile)) {
+                ++adjacentSoft;
+            }
+            if (isDenseHardWall(tile)) {
+                ++adjacentHard;
+            }
+        }
+
+        const Vec2 relative = tile.center - target.center;
+        const float forwardTiles = dot(relative, direction) / static_cast<float>(balance::TileSize);
+        const float lateralTiles = std::abs(cross(direction, relative)) / static_cast<float>(balance::TileSize);
+        if (forwardTiles >= -PatchProbeTileDepthBehind &&
+            forwardTiles <= PatchProbeTileDepthAhead &&
+            lateralTiles <= PatchProbeTileHalfWidth) {
+            const float forwardWeight = forwardTiles >= -0.25f ? 1.0f : 0.65f;
+            softCorridor += softWallWeight(tile) * forwardWeight;
+            hardCorridor += hardWallWeight(tile) * forwardWeight;
+        }
+
+        const float tileDistanceSquared =
+            static_cast<float>(dx * dx + dy * dy);
+        if (tileDistanceSquared <= 10.0f) {
+            nearbyHard += hardWallWeight(tile);
+        }
+    }
+
+    const float softScale = preferSoftDig ? 1.0f : 0.45f;
+    float score = 0.0f;
+    score -= std::min(softCorridor, 9.0f) * 24.0f * softScale;
+    score -= static_cast<float>(adjacentSoft) * 14.0f * softScale;
+    score += hardCorridor * (preferSoftDig ? 46.0f : 28.0f);
+    score += nearbyHard * (preferSoftDig ? 14.0f : 9.0f);
+    score += static_cast<float>(adjacentHard) * (preferSoftDig ? 34.0f : 22.0f);
+
+    if (isDirtLikeWall(target) && adjacentHard >= 4 && adjacentSoft <= 1) {
+        score += preferSoftDig ? 260.0f : 160.0f;
+    }
+    if (hardCorridor >= 5.0f && softCorridor <= 2.0f) {
+        score += preferSoftDig ? 220.0f : 130.0f;
+    }
+    if (isDirtLikeWall(target) && softCorridor >= 4.0f && adjacentSoft >= 2) {
+        score -= preferSoftDig ? 120.0f : 50.0f;
+    }
+
+    return score;
+}
+
 float softDigTerrainBias(std::string_view reason, const GameTestMineTileSnapshot& tile)
 {
     if (!preferSoftDigReason(reason)) {
@@ -304,6 +416,7 @@ std::optional<MiningCandidate> bestBlockingTile(
             terrainKindCost(tile.terrainKind) +
             terrainAttributeCost(tile.terrainAttribute) +
             softDigTerrainBias(reason, tile) +
+            surroundingDigPatchScore(snapshot, tile, direction, preferSoftDigReason(reason)) +
             expectedBreakHits(snapshot, tile) * 22.0f +
             std::max(0.0f, tile.localHardnessMultiplier - 1.0f) * 42.0f +
             std::clamp(tile.distanceFromMainPath, 0.0f, 8.0f) * 3.0f +

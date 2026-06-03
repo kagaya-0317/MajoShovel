@@ -103,6 +103,25 @@ constexpr std::array<DungeonTile, 4> BuriedWitchRockOffsets{{
     {1, 0},
     {0, 1},
 }};
+constexpr std::array<DungeonTile, 17> MonsterSwarmSpawnOffsets{{
+    {0, 0},
+    {-1, 0},
+    {1, 0},
+    {0, -1},
+    {0, 1},
+    {-1, -1},
+    {1, -1},
+    {-1, 1},
+    {1, 1},
+    {-2, 0},
+    {2, 0},
+    {0, -2},
+    {0, 2},
+    {-2, -1},
+    {2, -1},
+    {-2, 1},
+    {2, 1},
+}};
 
 float captureAbsorbFlyProgress(float elapsedSeconds, float flyDelaySeconds, float durationSeconds)
 {
@@ -766,9 +785,8 @@ std::vector<DungeonTile> dungeonEventForcedCavityTiles(const Game::DungeonEventI
     }
     case Game::DungeonEventKind::MonsterSwarmRoom: {
         forced.push_back(dungeonEventOffsetTile(event.centerTile, 0, -3));
-        for (int i = 0; i < 8; ++i) {
-            const float angle = (Pi * 2.0f) * (static_cast<float>(i) / 8.0f);
-            forced.push_back(dungeonEventObjectTile(event.centerTile, angle, 2.0f));
+        for (DungeonTile offset : MonsterSwarmSpawnOffsets) {
+            forced.push_back(dungeonEventOffsetTile(event.centerTile, offset.x, offset.y));
         }
         break;
     }
@@ -2587,6 +2605,9 @@ void Game::updateAmbientParticleEffects(float dt)
 
 bool Game::handleCaptureResult(const CaptureResult& capture)
 {
+    if (!gameplayRewardsEnabled()) {
+        return false;
+    }
     if (capture.type == CaptureResultType::NoTarget) {
         return false;
     }
@@ -2652,6 +2673,9 @@ Vec2 Game::captureAbsorbPosition(const CaptureAbsorbAnimation& animation, Vec2 t
 void Game::finalizeCaptureAbsorbAnimation(const CaptureAbsorbAnimation& animation)
 {
     if (animation.item.id.empty()) {
+        return;
+    }
+    if (!gameplayRewardsEnabled()) {
         return;
     }
 
@@ -3031,9 +3055,10 @@ void Game::dropSpellRingItemsForDeath()
                 std::move(instance),
                 item.worldPosition,
                 runStats_.elapsedSeconds,
-                makeDeathRingDropMotion(item, rng));
+                makeDeathRingDropMotion(item, rng),
+                true,
+                object);
         }
-        ringItems.clear();
     }
     cancelRingGrab();
     spellRing_.clearActionFlashTimers();
@@ -3101,6 +3126,7 @@ void Game::updatePlayerDeathSequence(float dt)
 void Game::retryAfterGameOver()
 {
     playerDeathSequence_ = {};
+    worldDrops_.removeTemporaryDrops();
     if (introTutorialActive()) {
         startIntroTutorialDungeon();
         return;
@@ -3155,6 +3181,7 @@ void Game::retryAfterGameOver()
 void Game::returnToBaseAfterGameOver()
 {
     playerDeathSequence_ = {};
+    worldDrops_.removeTemporaryDrops();
     if (introTutorialActive()) {
         startIntroTutorialDungeon();
         return;
@@ -4784,6 +4811,7 @@ void Game::updateDungeonEvents(float dt, double totalSeconds)
         if (outRuntimeId != nullptr) {
             *outRuntimeId = runtimeId;
         }
+        ++event.encounterSpawnCount;
         return true;
     };
     const auto chestOpenedAt = [&](DungeonTile tile) {
@@ -4865,6 +4893,8 @@ void Game::updateDungeonEvents(float dt, double totalSeconds)
 
         if (!event.encounterSpawned) {
             const DungeonTile centerTile = event.centerTile;
+            event.encounterSpawnCount = 0;
+            event.spawnedEnemyRuntimeIds.clear();
             switch (event.kind) {
             case DungeonEventKind::SleepingEnemyTreasure: {
                 event.rewardTile = dungeonEventOffsetTile(centerTile, 0, -2);
@@ -4897,13 +4927,25 @@ void Game::updateDungeonEvents(float dt, double totalSeconds)
                     currentStageId_ == "stage_01_stardust" ? 6 :
                     8;
                 int spawnedCount = 0;
-                for (int i = 0; i < SwarmCount; ++i) {
-                    const float angle = (Pi * 2.0f) * (static_cast<float>(i) / static_cast<float>(SwarmCount));
-                    if (spawnEnemy(event, tileWorldCenter(centerTile) + fromAngle(angle) * (tileSize * 2.0f), false, false)) {
+                const auto trySpawnAt = [&](Vec2 position) {
+                    if (spawnedCount >= SwarmCount) {
+                        return;
+                    }
+                    if (spawnEnemy(event, position, false, false)) {
                         ++spawnedCount;
                     }
+                };
+                for (DungeonTile offset : MonsterSwarmSpawnOffsets) {
+                    trySpawnAt(tileWorldCenter(dungeonEventOffsetTile(centerTile, offset.x, offset.y)));
+                }
+                for (int i = 0; i < SwarmCount * 2 && spawnedCount < SwarmCount; ++i) {
+                    const float angle = (Pi * 2.0f) * (static_cast<float>(i) / static_cast<float>(SwarmCount));
+                    const float radius = tileSize * (i < SwarmCount ? 2.0f : 2.75f);
+                    trySpawnAt(tileWorldCenter(centerTile) + fromAngle(angle) * radius);
                 }
                 if (spawnedCount <= 0) {
+                    event.encounterSpawnCount = 0;
+                    event.spawnedEnemyRuntimeIds.clear();
                     break;
                 }
                 event.activated = true;
@@ -5094,7 +5136,14 @@ void Game::updateDungeonEvents(float dt, double totalSeconds)
         }
 
         if (event.kind == DungeonEventKind::MonsterSwarmRoom) {
-            if (event.activated && activeEventEnemies(event) <= 0) {
+            const int activeEnemies = activeEventEnemies(event);
+            if (event.activated && event.encounterSpawned && event.encounterSpawnCount <= 0 && activeEnemies <= 0) {
+                event.activated = false;
+                event.encounterSpawned = false;
+                event.spawnedEnemyRuntimeIds.clear();
+                continue;
+            }
+            if (event.activated && event.encounterSpawned && event.encounterSpawnCount > 0 && activeEnemies <= 0) {
                 ensureRewardChest(event, event.rewardTile, LootChestKind::Rare);
                 completeDungeonEvent(event, std::nullopt);
             }
@@ -5873,6 +5922,9 @@ void Game::appendDungeonEventRenderEntries(
 
 bool Game::spawnDungeonEventReward(DungeonEventInstance& event, const DungeonEventRewardRequest& request)
 {
+    if (!gameplayRewardsEnabled()) {
+        return false;
+    }
     if (event.rewardSpawned) {
         return false;
     }

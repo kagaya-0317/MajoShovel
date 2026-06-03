@@ -1100,6 +1100,7 @@ void Game::resetWorldUiState()
     baseMiningStartSelection_ = 0;
     baseRegenerateConfirm_ = {};
     baseBrokenRingDepartureConfirm_ = {};
+    baseMiningRescueDrop_ = {};
     baseWarpPointSelectActive_ = false;
     baseWarpPointSelection_ = 0;
     warpReturnConfirm_ = {};
@@ -1342,6 +1343,7 @@ void Game::beginWorldBuildFromBase(
     baseWarpPointSelectActive_ = false;
     baseRegenerateConfirm_ = {};
     baseBrokenRingDepartureConfirm_ = {};
+    baseMiningRescueDrop_ = {};
     warpReturnConfirm_ = {};
     focusedWarpReturnPointIndex_ = -1;
     hoveredWarpReturnPointIndex_ = -1;
@@ -2154,6 +2156,10 @@ void Game::refreshEquipmentModifiers()
 
 LevelGainResult Game::gainPlayerXp(int amount)
 {
+    if (amount <= 0 || !gameplayRewardsEnabled()) {
+        return {};
+    }
+
     const int beforeMaxHp = player_.maxHp;
     const LevelGainResult result = levels_.addXp(player_, amount, balance_);
     if (result.levelsGained <= 0) {
@@ -4175,7 +4181,9 @@ void Game::update(const Input& input, const Time& time)
         }
         updateCaptureAbsorbAnimations(time.deltaSeconds());
         updateDungeonMinimap(time.totalSeconds());
-        handleRingItemBreakEvents(gameplayRewardsEnabled() ? &effectDiscoveries : nullptr);
+        if (gameplayRewardsEnabled()) {
+            handleRingItemBreakEvents(&effectDiscoveries);
+        }
 
         std::vector<CapturedExplosionRequest> capturedExplosionRequests;
         for (const EnemyEvent& event : enemies_.events()) {
@@ -4203,7 +4211,9 @@ void Game::update(const Input& input, const Time& time)
         for (const CapturedExplosionRequest& explosionRequest : capturedExplosionRequests) {
             handleCapturedExplosion(explosionRequest);
         }
-        handleRingItemBreakEvents(gameplayRewardsEnabled() ? &effectDiscoveries : nullptr);
+        if (gameplayRewardsEnabled()) {
+            handleRingItemBreakEvents(&effectDiscoveries);
+        }
 
         bool bossDefeated = false;
         Vec2 bossDefeatPosition{};
