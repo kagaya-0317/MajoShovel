@@ -575,6 +575,10 @@ bool autoTextForEffectCode(
         outText = "敵にとどめを刺さない";
         return true;
     }
+    if (effectCode == "capture_net") {
+        outText = "敵の捕獲を試みるたびに耐久を1消費する";
+        return true;
+    }
     if (effectCode == "inspect_enemy") {
         outText = "詳細未記録の敵に当たると耐久を1消費し、モンスターの詳細を記録する";
         return true;

@@ -1391,11 +1391,11 @@ UiRect baseUpgradeItemRect(int index)
         202.0f,
         248.0f,
         294.0f,
-        370.0f,
-        416.0f,
-        462.0f,
-        508.0f,
-        554.0f,
+        378.0f,
+        424.0f,
+        470.0f,
+        516.0f,
+        562.0f,
     }};
     const int clampedIndex = std::clamp(index, 0, BaseUpgradeItemCount - 1);
     return {{x, RowY[static_cast<std::size_t>(clampedIndex)]}, {w, h}};
@@ -2639,6 +2639,9 @@ ItemInstance inventoryInstanceFromRingItem(
     instance.currentDurability = item.durability;
     instance.maxDurability = item.maxDurability;
     instance.enhanceLevel = item.enhanceLevel;
+    instance.attackEnhanceLevel = item.attackEnhanceLevel;
+    instance.digEnhanceLevel = item.digEnhanceLevel;
+    instance.durabilityEnhanceLevel = item.durabilityEnhanceLevel;
     instance.attackBonus = item.attackBonus;
     instance.digBonus = item.digBonus;
     instance.durabilityBonus = item.durabilityBonus;

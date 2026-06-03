@@ -1877,6 +1877,9 @@ struct ProcessingResultSnapshot {
     int baseDurability = -1;
     int rarity = 1;
     int enhanceLevel = 0;
+    int attackEnhanceLevel = 0;
+    int digEnhanceLevel = 0;
+    int durabilityEnhanceLevel = 0;
     int attackBonus = 0;
     int digBonus = 0;
     int durabilityBonus = 0;
@@ -2014,6 +2017,9 @@ ProcessingResultSnapshot processingSnapshotFromInstance(const InventoryObjectIns
     snapshot.isBroken = entry.instance.isBroken;
     snapshot.name = nonEmptyItemName(itemDisplayName(entry.item.name, snapshot.isBroken));
     snapshot.enhanceLevel = entry.instance.enhanceLevel;
+    snapshot.attackEnhanceLevel = entry.instance.attackEnhanceLevel;
+    snapshot.digEnhanceLevel = entry.instance.digEnhanceLevel;
+    snapshot.durabilityEnhanceLevel = entry.instance.durabilityEnhanceLevel;
     snapshot.attackBonus = entry.instance.attackBonus;
     snapshot.digBonus = entry.instance.digBonus;
     snapshot.durabilityBonus = entry.instance.durabilityBonus;
@@ -2036,6 +2042,9 @@ ProcessingResultSnapshot processingSnapshotFromRingItem(const ObjectCatalog& cat
     }
     snapshot.isBroken = item.broken();
     snapshot.enhanceLevel = item.enhanceLevel;
+    snapshot.attackEnhanceLevel = item.attackEnhanceLevel;
+    snapshot.digEnhanceLevel = item.digEnhanceLevel;
+    snapshot.durabilityEnhanceLevel = item.durabilityEnhanceLevel;
     snapshot.attackBonus = item.attackBonus;
     snapshot.digBonus = item.digBonus;
     snapshot.durabilityBonus = item.durabilityBonus;
@@ -2052,7 +2061,16 @@ ProcessingResultSnapshot processingEnhancedSnapshot(
 {
     snapshot.stackCount = 1;
     snapshot.stackSource = false;
-    snapshot.enhanceLevel = std::min(MaxItemEnhanceLevel, snapshot.enhanceLevel + 1);
+    ++snapshot.enhanceLevel;
+    if (attackBonus > 0) {
+        ++snapshot.attackEnhanceLevel;
+    }
+    if (digBonus > 0) {
+        ++snapshot.digEnhanceLevel;
+    }
+    if (durabilityBonus > 0) {
+        ++snapshot.durabilityEnhanceLevel;
+    }
     snapshot.attackBonus += attackBonus;
     snapshot.digBonus += digBonus;
     snapshot.durabilityBonus += durabilityBonus;
@@ -2066,6 +2084,9 @@ ProcessingResultSnapshot processingEnhancedSnapshot(
 ProcessingResultSnapshot processingResetSnapshot(ProcessingResultSnapshot snapshot)
 {
     snapshot.enhanceLevel = 0;
+    snapshot.attackEnhanceLevel = 0;
+    snapshot.digEnhanceLevel = 0;
+    snapshot.durabilityEnhanceLevel = 0;
     snapshot.attackBonus = 0;
     snapshot.digBonus = 0;
     snapshot.durabilityBonus = 0;
@@ -2372,10 +2393,10 @@ ProcessingEnhanceBonuses processingEnhanceBonuses(
     bool durabilityMode,
     int rarity,
     int baseDurability,
-    int enhanceLevel)
+    int currentModeEnhanceLevel)
 {
     ProcessingEnhanceBonuses bonuses{};
-    const int nextEnhanceLevel = std::clamp(enhanceLevel + 1, 1, MaxItemEnhanceLevel);
+    const int nextEnhanceLevel = std::clamp(currentModeEnhanceLevel + 1, 1, MaxItemEnhanceLevel);
     if (attackMode) {
         bonuses.attack = processingPowerEnhanceBonus(rarity, nextEnhanceLevel);
     } else if (digMode) {
@@ -3182,6 +3203,9 @@ bool Game::processingEntryAvailable(StorageEntry entry, ProcessingMode mode, boo
     }
     if (mode == ProcessingMode::ResetEnhancement) {
         return instance->enhanceLevel > 0 ||
+            instance->attackEnhanceLevel > 0 ||
+            instance->digEnhanceLevel > 0 ||
+            instance->durabilityEnhanceLevel > 0 ||
             instance->attackBonus != 0 ||
             instance->digBonus != 0 ||
             instance->durabilityBonus != 0;
@@ -3194,9 +3218,15 @@ bool Game::processingEntryAvailable(StorageEntry entry, ProcessingMode mode, boo
     }
     if (mode == ProcessingMode::Durability) {
         const ItemData* item = storageEntryItem(entry, warehouseEntry);
-        return instance->enhanceLevel < MaxItemEnhanceLevel && processingDurabilityEnhanceAvailable(item);
+        return instance->durabilityEnhanceLevel < MaxItemEnhanceLevel && processingDurabilityEnhanceAvailable(item);
     }
-    return instance->enhanceLevel < MaxItemEnhanceLevel;
+    if (mode == ProcessingMode::Attack) {
+        return instance->attackEnhanceLevel < MaxItemEnhanceLevel;
+    }
+    if (mode == ProcessingMode::Dig) {
+        return instance->digEnhanceLevel < MaxItemEnhanceLevel;
+    }
+    return false;
 }
 
 bool Game::processingScreenSlotAvailable(int slotIndex) const
@@ -3239,6 +3269,9 @@ bool Game::processingTargetAvailable(ProcessingTarget target, ProcessingMode mod
     }
     if (mode == ProcessingMode::ResetEnhancement) {
         return item.enhanceLevel > 0 ||
+            item.attackEnhanceLevel > 0 ||
+            item.digEnhanceLevel > 0 ||
+            item.durabilityEnhanceLevel > 0 ||
             item.attackBonus != 0 ||
             item.digBonus != 0 ||
             item.durabilityBonus != 0;
@@ -3251,9 +3284,15 @@ bool Game::processingTargetAvailable(ProcessingTarget target, ProcessingMode mod
     }
     if (mode == ProcessingMode::Durability) {
         const ItemData* object = objectCatalog_.registry.findById(item.objectId);
-        return item.enhanceLevel < MaxItemEnhanceLevel && processingDurabilityEnhanceAvailable(object);
+        return item.durabilityEnhanceLevel < MaxItemEnhanceLevel && processingDurabilityEnhanceAvailable(object);
     }
-    return item.enhanceLevel < MaxItemEnhanceLevel;
+    if (mode == ProcessingMode::Attack) {
+        return item.attackEnhanceLevel < MaxItemEnhanceLevel;
+    }
+    if (mode == ProcessingMode::Dig) {
+        return item.digEnhanceLevel < MaxItemEnhanceLevel;
+    }
+    return false;
 }
 
 bool Game::processingTargetHasAvailableCommand(ProcessingTarget target) const
@@ -3311,7 +3350,13 @@ int Game::processingMoneyCost(StorageEntry entry, ProcessingMode mode, bool ware
 
     int enhanceLevel = 0;
     if (const ItemInstance* instance = storageEntryInstance(entry, warehouseEntry)) {
-        enhanceLevel = instance->enhanceLevel;
+        if (mode == ProcessingMode::Attack) {
+            enhanceLevel = instance->attackEnhanceLevel;
+        } else if (mode == ProcessingMode::Dig) {
+            enhanceLevel = instance->digEnhanceLevel;
+        } else if (mode == ProcessingMode::Durability) {
+            enhanceLevel = instance->durabilityEnhanceLevel;
+        }
     }
     return discountCost(processingEnhanceMoneyCost(rarity, enhanceLevel + 1));
 }
@@ -3331,7 +3376,13 @@ int Game::processingOreCost(StorageEntry entry, ProcessingMode mode, bool wareho
     }
     int enhanceLevel = 0;
     if (const ItemInstance* instance = storageEntryInstance(entry, warehouseEntry)) {
-        enhanceLevel = instance->enhanceLevel;
+        if (mode == ProcessingMode::Attack) {
+            enhanceLevel = instance->attackEnhanceLevel;
+        } else if (mode == ProcessingMode::Dig) {
+            enhanceLevel = instance->digEnhanceLevel;
+        } else if (mode == ProcessingMode::Durability) {
+            enhanceLevel = instance->durabilityEnhanceLevel;
+        }
     }
     return processingEnhanceOreCost(rarity, enhanceLevel + 1);
 }
@@ -3380,7 +3431,12 @@ int Game::processingMoneyCost(ProcessingTarget target, ProcessingMode mode) cons
         return discountCost(processingEnlargeMoneyCost(rarity));
     }
 
-    return discountCost(processingEnhanceMoneyCost(rarity, ringItem.enhanceLevel + 1));
+    const int enhanceLevel =
+        mode == ProcessingMode::Attack ? ringItem.attackEnhanceLevel :
+        mode == ProcessingMode::Dig ? ringItem.digEnhanceLevel :
+        mode == ProcessingMode::Durability ? ringItem.durabilityEnhanceLevel :
+        ringItem.enhanceLevel;
+    return discountCost(processingEnhanceMoneyCost(rarity, enhanceLevel + 1));
 }
 
 int Game::processingOreCost(ProcessingTarget target, ProcessingMode mode) const
@@ -3405,7 +3461,12 @@ int Game::processingOreCost(ProcessingTarget target, ProcessingMode mode) const
     if (mode == ProcessingMode::Enlarge) {
         return processingEnlargeOreCost(rarity);
     }
-    return processingEnhanceOreCost(rarity, ringItem.enhanceLevel + 1);
+    const int enhanceLevel =
+        mode == ProcessingMode::Attack ? ringItem.attackEnhanceLevel :
+        mode == ProcessingMode::Dig ? ringItem.digEnhanceLevel :
+        mode == ProcessingMode::Durability ? ringItem.durabilityEnhanceLevel :
+        ringItem.enhanceLevel;
+    return processingEnhanceOreCost(rarity, enhanceLevel + 1);
 }
 
 std::vector<Game::ProcessingMode> Game::processingCommandModes(ProcessingTarget target) const
@@ -3550,6 +3611,11 @@ void Game::drawProcessingConfirmDialog(Renderer& renderer, UiRect panel) const
     const ProcessingMode mode = baseProcessingConfirmMode_;
     const ProcessingResultSnapshot before = targetSnapshot(baseProcessingConfirmTarget_);
     ProcessingResultSnapshot after = before;
+    const int beforeModeEnhanceLevel =
+        mode == ProcessingMode::Attack ? before.attackEnhanceLevel :
+        mode == ProcessingMode::Dig ? before.digEnhanceLevel :
+        mode == ProcessingMode::Durability ? before.durabilityEnhanceLevel :
+        before.enhanceLevel;
     const ProcessingEnhanceBonuses enhanceBonuses =
         processingEnhanceBonuses(
             mode == ProcessingMode::Attack,
@@ -3557,7 +3623,7 @@ void Game::drawProcessingConfirmDialog(Renderer& renderer, UiRect panel) const
             mode == ProcessingMode::Durability,
             before.rarity,
             before.baseDurability,
-            before.enhanceLevel);
+            beforeModeEnhanceLevel);
 
     if (mode == ProcessingMode::Repair) {
         if (after.maxDurability >= 0) {
@@ -3735,6 +3801,11 @@ void Game::applyProcessingEntry(StorageEntry entry, ProcessingMode mode, bool wa
         return processingSnapshotFromInstance(instance);
     };
     const ProcessingResultSnapshot beforeSnapshot = entrySnapshot(entry);
+    const int beforeModeEnhanceLevel =
+        mode == ProcessingMode::Attack ? beforeSnapshot.attackEnhanceLevel :
+        mode == ProcessingMode::Dig ? beforeSnapshot.digEnhanceLevel :
+        mode == ProcessingMode::Durability ? beforeSnapshot.durabilityEnhanceLevel :
+        beforeSnapshot.enhanceLevel;
     const ProcessingEnhanceBonuses enhanceBonuses =
         processingEnhanceBonuses(
             mode == ProcessingMode::Attack,
@@ -3742,13 +3813,18 @@ void Game::applyProcessingEntry(StorageEntry entry, ProcessingMode mode, bool wa
             mode == ProcessingMode::Durability,
             beforeSnapshot.rarity,
             beforeSnapshot.baseDurability,
-            beforeSnapshot.enhanceLevel);
+            beforeModeEnhanceLevel);
 
     const auto applyEnhancement = [&](ItemInstance& instance) {
-        if (instance.enhanceLevel >= MaxItemEnhanceLevel) {
+        int& modeEnhanceLevel =
+            mode == ProcessingMode::Attack ? instance.attackEnhanceLevel :
+            mode == ProcessingMode::Dig ? instance.digEnhanceLevel :
+            instance.durabilityEnhanceLevel;
+        if (modeEnhanceLevel >= MaxItemEnhanceLevel) {
             return false;
         }
         ++instance.enhanceLevel;
+        ++modeEnhanceLevel;
         instance.attackBonus += enhanceBonuses.attack;
         instance.digBonus += enhanceBonuses.dig;
         instance.durabilityBonus += enhanceBonuses.durability;
@@ -3760,6 +3836,9 @@ void Game::applyProcessingEntry(StorageEntry entry, ProcessingMode mode, bool wa
     };
     const auto resetEnhancement = [this](ItemInstance& instance) {
         if (instance.enhanceLevel <= 0 &&
+            instance.attackEnhanceLevel <= 0 &&
+            instance.digEnhanceLevel <= 0 &&
+            instance.durabilityEnhanceLevel <= 0 &&
             instance.attackBonus == 0 &&
             instance.digBonus == 0 &&
             instance.durabilityBonus == 0) {
@@ -3768,6 +3847,9 @@ void Game::applyProcessingEntry(StorageEntry entry, ProcessingMode mode, bool wa
         const ItemData* item = objectCatalog_.registry.findById(instance.objectId);
         const int baseDurability = item != nullptr ? item->durability : std::max(-1, instance.maxDurability - instance.durabilityBonus);
         instance.enhanceLevel = 0;
+        instance.attackEnhanceLevel = 0;
+        instance.digEnhanceLevel = 0;
+        instance.durabilityEnhanceLevel = 0;
         instance.attackBonus = 0;
         instance.digBonus = 0;
         instance.durabilityBonus = 0;
@@ -3850,6 +3932,9 @@ void Game::applyProcessingEntry(StorageEntry entry, ProcessingMode mode, bool wa
                 enhanceBonuses.attack,
                 enhanceBonuses.dig,
                 enhanceBonuses.durability,
+                mode == ProcessingMode::Attack ? 1 : 0,
+                mode == ProcessingMode::Dig ? 1 : 0,
+                mode == ProcessingMode::Durability ? 1 : 0,
                 MaxItemEnhanceLevel);
         } else {
             const InventoryObjectInstance& instance = inventory_.objectInstances()[static_cast<std::size_t>(entry.index)];
@@ -3858,6 +3943,9 @@ void Game::applyProcessingEntry(StorageEntry entry, ProcessingMode mode, bool wa
                 enhanceBonuses.attack,
                 enhanceBonuses.dig,
                 enhanceBonuses.durability,
+                mode == ProcessingMode::Attack ? 1 : 0,
+                mode == ProcessingMode::Dig ? 1 : 0,
+                mode == ProcessingMode::Durability ? 1 : 0,
                 MaxItemEnhanceLevel);
         }
     } else if (mode == ProcessingMode::Repair) {
@@ -3991,6 +4079,11 @@ void Game::applyProcessingTarget(ProcessingTarget target, ProcessingMode mode)
     const std::vector<SpellRingItem>& ringItemsBefore = spellRing_.itemsForRing(target.ringIndex);
     const ProcessingResultSnapshot beforeSnapshot =
         processingSnapshotFromRingItem(objectCatalog_, ringItemsBefore[static_cast<std::size_t>(target.ringItemIndex)]);
+    const int beforeModeEnhanceLevel =
+        mode == ProcessingMode::Attack ? beforeSnapshot.attackEnhanceLevel :
+        mode == ProcessingMode::Dig ? beforeSnapshot.digEnhanceLevel :
+        mode == ProcessingMode::Durability ? beforeSnapshot.durabilityEnhanceLevel :
+        beforeSnapshot.enhanceLevel;
     const ProcessingEnhanceBonuses enhanceBonuses =
         processingEnhanceBonuses(
             mode == ProcessingMode::Attack,
@@ -3998,7 +4091,7 @@ void Game::applyProcessingTarget(ProcessingTarget target, ProcessingMode mode)
             mode == ProcessingMode::Durability,
             beforeSnapshot.rarity,
             beforeSnapshot.baseDurability,
-            beforeSnapshot.enhanceLevel);
+            beforeModeEnhanceLevel);
 
     bool processed = false;
     if (mode == ProcessingMode::Repair) {
@@ -4013,6 +4106,9 @@ void Game::applyProcessingTarget(ProcessingTarget target, ProcessingMode mode)
                 const ItemData* object = objectCatalog_.registry.findById(item.objectId);
                 const int baseDurability = object != nullptr ? object->durability : std::max(-1, item.maxDurability - item.durabilityBonus);
                 item.enhanceLevel = 0;
+                item.attackEnhanceLevel = 0;
+                item.digEnhanceLevel = 0;
+                item.durabilityEnhanceLevel = 0;
                 item.attackBonus = 0;
                 item.digBonus = 0;
                 item.durabilityBonus = 0;
@@ -4050,6 +4146,9 @@ void Game::applyProcessingTarget(ProcessingTarget target, ProcessingMode mode)
             enhanceBonuses.attack,
             enhanceBonuses.dig,
             enhanceBonuses.durability,
+            mode == ProcessingMode::Attack ? 1 : 0,
+            mode == ProcessingMode::Dig ? 1 : 0,
+            mode == ProcessingMode::Durability ? 1 : 0,
             MaxItemEnhanceLevel,
             objectCatalog_);
     }
@@ -8724,6 +8823,8 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
     const BaseFacility* interactionFacility = selectBaseInteractionFacility(basePlayerPosition_, basePlayerFacing_, baseArea_, facilities);
 
     if (input.mouseLeftPressed() && !ui.pointerConsumed()) {
+        const SDL_Keymod mods = SDL_GetModState();
+        const bool testClickAnywhere = (mods & SDL_KMOD_CTRL) != 0;
         for (const BaseFacility& facility : facilities) {
             if (baseFacilityHiddenInNormalView(baseArea_, facility)) {
                 continue;
@@ -8732,7 +8833,8 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
                 continue;
             }
             ui.consumePointer();
-            if (baseInteractionAvailable(basePlayerPosition_, facility)) {
+            if (baseInteractionAvailable(basePlayerPosition_, facility) ||
+                (testClickAnywhere && facility.enabled)) {
                 ui.emitSound(facility.onInteract == BaseFacilityAction::Bookshelf ? UiSoundEvent::BookOpen : UiSoundEvent::Confirm);
                 interact(facility);
             } else if (facility.enabled) {
@@ -10306,9 +10408,9 @@ void Game::renderBaseScreen(Renderer& renderer) const
             }
             return "通常";
         };
-        const float listLabelX = panel.pos.x + 40.0f;
+        const float listLabelX = panel.pos.x + 38.0f;
         renderer.drawText({listLabelX, 128.0f}, "拠点の強化", {198, 198, 206, 255}, 2);
-        renderer.drawText({listLabelX, 342.0f}, "ルネの強化", {198, 198, 206, 255}, 2);
+        renderer.drawText({listLabelX, 350.0f}, "ルネの強化", {198, 198, 206, 255}, 2);
         std::array<UiVerticalTabItem, BaseUpgradeItemCount> upgradeTabs{};
         std::array<UiRect, BaseUpgradeItemCount> upgradeTabRects{};
         std::array<std::string, BaseUpgradeItemCount> upgradeTabValues{};

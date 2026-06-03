@@ -177,8 +177,24 @@ public:
     bool takeObjectInstance(std::string_view instanceId, InventoryObjectInstance& outInstance);
     bool repairObjectInstance(std::string_view instanceId);
     bool resetObjectInstanceEnhancement(std::string_view instanceId, const ObjectCatalog& catalog);
-    bool enhanceObjectInstance(std::string_view instanceId, int attackBonus, int digBonus, int durabilityBonus, int maxEnhanceLevel);
-    bool enhanceObjectStackItem(std::string_view objectId, int attackBonus, int digBonus, int durabilityBonus, int maxEnhanceLevel);
+    bool enhanceObjectInstance(
+        std::string_view instanceId,
+        int attackBonus,
+        int digBonus,
+        int durabilityBonus,
+        int attackLevelDelta,
+        int digLevelDelta,
+        int durabilityLevelDelta,
+        int maxEnhanceLevel);
+    bool enhanceObjectStackItem(
+        std::string_view objectId,
+        int attackBonus,
+        int digBonus,
+        int durabilityBonus,
+        int attackLevelDelta,
+        int digLevelDelta,
+        int durabilityLevelDelta,
+        int maxEnhanceLevel);
     bool modifyObjectInstanceShape(std::string_view instanceId, double weightMultiplier, double sizeMultiplier);
     bool modifyObjectStackItemShape(std::string_view objectId, double weightMultiplier, double sizeMultiplier);
     bool enhanceSelectedObjectInstance(int attackBonus, int digBonus, int durabilityBonus);

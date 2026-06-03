@@ -20,6 +20,9 @@ struct InventoryUiItemStats {
     int currentDurability = -1;
     int maxDurability = -1;
     int enhanceLevel = 0;
+    int attackEnhanceLevel = 0;
+    int digEnhanceLevel = 0;
+    int durabilityEnhanceLevel = 0;
     int attackBonus = 0;
     int digBonus = 0;
     int durabilityBonus = 0;

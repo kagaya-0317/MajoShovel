@@ -813,6 +813,9 @@ bool InventorySystem::resetObjectInstanceEnhancement(std::string_view instanceId
 
     ItemInstance& instance = it->instance;
     if (instance.enhanceLevel <= 0 &&
+        instance.attackEnhanceLevel <= 0 &&
+        instance.digEnhanceLevel <= 0 &&
+        instance.durabilityEnhanceLevel <= 0 &&
         instance.attackBonus == 0 &&
         instance.digBonus == 0 &&
         instance.durabilityBonus == 0) {
@@ -823,6 +826,9 @@ bool InventorySystem::resetObjectInstanceEnhancement(std::string_view instanceId
     const ItemData* item = catalog.registry.findById(instance.objectId);
     const int baseDurability = item != nullptr ? item->durability : std::max(-1, instance.maxDurability - instance.durabilityBonus);
     instance.enhanceLevel = 0;
+    instance.attackEnhanceLevel = 0;
+    instance.digEnhanceLevel = 0;
+    instance.durabilityEnhanceLevel = 0;
     instance.attackBonus = 0;
     instance.digBonus = 0;
     instance.durabilityBonus = 0;
@@ -837,7 +843,15 @@ bool InventorySystem::resetObjectInstanceEnhancement(std::string_view instanceId
     return true;
 }
 
-bool InventorySystem::enhanceObjectInstance(std::string_view instanceId, int attackBonus, int digBonus, int durabilityBonus, int maxEnhanceLevel)
+bool InventorySystem::enhanceObjectInstance(
+    std::string_view instanceId,
+    int attackBonus,
+    int digBonus,
+    int durabilityBonus,
+    int attackLevelDelta,
+    int digLevelDelta,
+    int durabilityLevelDelta,
+    int maxEnhanceLevel)
 {
     if (instanceId.empty()) {
         return false;
@@ -850,11 +864,18 @@ bool InventorySystem::enhanceObjectInstance(std::string_view instanceId, int att
     }
 
     ItemInstance& instance = it->instance;
-    if (instance.enhanceLevel >= maxEnhanceLevel) {
+    int& modeEnhanceLevel =
+        attackLevelDelta > 0 ? instance.attackEnhanceLevel :
+        digLevelDelta > 0 ? instance.digEnhanceLevel :
+        instance.durabilityEnhanceLevel;
+    if (modeEnhanceLevel >= maxEnhanceLevel) {
         status_ = "強化上限です";
         return false;
     }
     ++instance.enhanceLevel;
+    instance.attackEnhanceLevel += attackLevelDelta;
+    instance.digEnhanceLevel += digLevelDelta;
+    instance.durabilityEnhanceLevel += durabilityLevelDelta;
     instance.attackBonus += attackBonus;
     instance.digBonus += digBonus;
     instance.durabilityBonus += durabilityBonus;
@@ -866,7 +887,15 @@ bool InventorySystem::enhanceObjectInstance(std::string_view instanceId, int att
     return true;
 }
 
-bool InventorySystem::enhanceObjectStackItem(std::string_view objectId, int attackBonus, int digBonus, int durabilityBonus, int maxEnhanceLevel)
+bool InventorySystem::enhanceObjectStackItem(
+    std::string_view objectId,
+    int attackBonus,
+    int digBonus,
+    int durabilityBonus,
+    int attackLevelDelta,
+    int digLevelDelta,
+    int durabilityLevelDelta,
+    int maxEnhanceLevel)
 {
     if (objectId.empty()) {
         return false;
@@ -885,10 +914,17 @@ bool InventorySystem::enhanceObjectStackItem(std::string_view objectId, int atta
 
     createObjectInstance(it->item);
     ItemInstance& itemInstance = objectInstances_.back().instance;
-    if (itemInstance.enhanceLevel >= maxEnhanceLevel) {
+    int& modeEnhanceLevel =
+        attackLevelDelta > 0 ? itemInstance.attackEnhanceLevel :
+        digLevelDelta > 0 ? itemInstance.digEnhanceLevel :
+        itemInstance.durabilityEnhanceLevel;
+    if (modeEnhanceLevel >= maxEnhanceLevel) {
         return false;
     }
     ++itemInstance.enhanceLevel;
+    itemInstance.attackEnhanceLevel += attackLevelDelta;
+    itemInstance.digEnhanceLevel += digLevelDelta;
+    itemInstance.durabilityEnhanceLevel += durabilityLevelDelta;
     itemInstance.attackBonus += attackBonus;
     itemInstance.digBonus += digBonus;
     itemInstance.durabilityBonus += durabilityBonus;
@@ -983,6 +1019,15 @@ bool InventorySystem::enhanceSelectedObjectInstance(int attackBonus, int digBonu
 
     ItemInstance& instance = selectedInstance->instance;
     ++instance.enhanceLevel;
+    if (attackBonus > 0) {
+        ++instance.attackEnhanceLevel;
+    }
+    if (digBonus > 0) {
+        ++instance.digEnhanceLevel;
+    }
+    if (durabilityBonus > 0) {
+        ++instance.durabilityEnhanceLevel;
+    }
     instance.attackBonus += attackBonus;
     instance.digBonus += digBonus;
     instance.durabilityBonus += durabilityBonus;

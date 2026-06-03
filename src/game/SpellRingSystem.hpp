@@ -155,6 +155,9 @@ public:
         int attackBonus,
         int digBonus,
         int durabilityBonus,
+        int attackLevelDelta,
+        int digLevelDelta,
+        int durabilityLevelDelta,
         int maxEnhanceLevel,
         const ObjectCatalog& catalog);
     bool canAddItem() const;

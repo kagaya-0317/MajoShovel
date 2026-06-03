@@ -1318,6 +1318,9 @@ ItemInstance makeDroppedRingItemInstance(const SpellRingItem& item, const ItemDa
         ? item.maxDurability
         : std::max(0, item.maxDurability - item.durabilityBonus);
     instance.enhanceLevel = item.enhanceLevel;
+    instance.attackEnhanceLevel = item.attackEnhanceLevel;
+    instance.digEnhanceLevel = item.digEnhanceLevel;
+    instance.durabilityEnhanceLevel = item.durabilityEnhanceLevel;
     instance.attackBonus = item.attackBonus;
     instance.digBonus = item.digBonus;
     instance.durabilityBonus = item.durabilityBonus;

@@ -63,6 +63,120 @@ struct LoadedEnemyNodeSave {
     bool spawned = false;
 };
 
+void normalizeEnhanceLevels(ItemInstance& instance)
+{
+    instance.attackEnhanceLevel = std::clamp(instance.attackEnhanceLevel, 0, MaxItemEnhanceLevel);
+    instance.digEnhanceLevel = std::clamp(instance.digEnhanceLevel, 0, MaxItemEnhanceLevel);
+    instance.durabilityEnhanceLevel = std::clamp(instance.durabilityEnhanceLevel, 0, MaxItemEnhanceLevel);
+    const int levelSum = instance.attackEnhanceLevel + instance.digEnhanceLevel + instance.durabilityEnhanceLevel;
+    instance.enhanceLevel = std::max(0, std::max(instance.enhanceLevel, levelSum));
+}
+
+void migrateLegacyEnhanceLevels(ItemInstance& instance)
+{
+    const int legacyLevel = std::clamp(instance.enhanceLevel, 0, MaxItemEnhanceLevel);
+    if (legacyLevel <= 0) {
+        normalizeEnhanceLevels(instance);
+        return;
+    }
+    if (instance.attackBonus > 0 && instance.attackEnhanceLevel <= 0) {
+        instance.attackEnhanceLevel = legacyLevel;
+    }
+    if (instance.digBonus > 0 && instance.digEnhanceLevel <= 0) {
+        instance.digEnhanceLevel = legacyLevel;
+    }
+    if (instance.durabilityBonus > 0 && instance.durabilityEnhanceLevel <= 0) {
+        instance.durabilityEnhanceLevel = legacyLevel;
+    }
+    normalizeEnhanceLevels(instance);
+}
+
+void readOptionalEnhanceLevels(std::istream& stream, ItemInstance& instance)
+{
+    if (stream >> instance.attackEnhanceLevel >> instance.digEnhanceLevel >> instance.durabilityEnhanceLevel) {
+        normalizeEnhanceLevels(instance);
+        return;
+    }
+    stream.clear();
+    migrateLegacyEnhanceLevels(instance);
+}
+
+void normalizeEnhanceLevels(SpellRingItem& item)
+{
+    item.attackEnhanceLevel = std::clamp(item.attackEnhanceLevel, 0, MaxItemEnhanceLevel);
+    item.digEnhanceLevel = std::clamp(item.digEnhanceLevel, 0, MaxItemEnhanceLevel);
+    item.durabilityEnhanceLevel = std::clamp(item.durabilityEnhanceLevel, 0, MaxItemEnhanceLevel);
+    const int levelSum = item.attackEnhanceLevel + item.digEnhanceLevel + item.durabilityEnhanceLevel;
+    item.enhanceLevel = std::max(0, std::max(item.enhanceLevel, levelSum));
+}
+
+void migrateLegacyEnhanceLevels(SpellRingItem& item)
+{
+    const int legacyLevel = std::clamp(item.enhanceLevel, 0, MaxItemEnhanceLevel);
+    if (legacyLevel <= 0) {
+        normalizeEnhanceLevels(item);
+        return;
+    }
+    if (item.attackBonus > 0 && item.attackEnhanceLevel <= 0) {
+        item.attackEnhanceLevel = legacyLevel;
+    }
+    if (item.digBonus > 0 && item.digEnhanceLevel <= 0) {
+        item.digEnhanceLevel = legacyLevel;
+    }
+    if (item.durabilityBonus > 0 && item.durabilityEnhanceLevel <= 0) {
+        item.durabilityEnhanceLevel = legacyLevel;
+    }
+    normalizeEnhanceLevels(item);
+}
+
+void readOptionalEnhanceLevels(std::istream& stream, SpellRingItem& item)
+{
+    if (stream >> item.attackEnhanceLevel >> item.digEnhanceLevel >> item.durabilityEnhanceLevel) {
+        normalizeEnhanceLevels(item);
+        return;
+    }
+    stream.clear();
+    migrateLegacyEnhanceLevels(item);
+}
+
+void normalizeEnhanceLevels(RingPresetItem& item)
+{
+    item.attackEnhanceLevel = std::clamp(item.attackEnhanceLevel, 0, MaxItemEnhanceLevel);
+    item.digEnhanceLevel = std::clamp(item.digEnhanceLevel, 0, MaxItemEnhanceLevel);
+    item.durabilityEnhanceLevel = std::clamp(item.durabilityEnhanceLevel, 0, MaxItemEnhanceLevel);
+    const int levelSum = item.attackEnhanceLevel + item.digEnhanceLevel + item.durabilityEnhanceLevel;
+    item.enhanceLevel = std::max(0, std::max(item.enhanceLevel, levelSum));
+}
+
+void migrateLegacyEnhanceLevels(RingPresetItem& item)
+{
+    const int legacyLevel = std::clamp(item.enhanceLevel, 0, MaxItemEnhanceLevel);
+    if (legacyLevel <= 0) {
+        normalizeEnhanceLevels(item);
+        return;
+    }
+    if (item.attackBonus > 0 && item.attackEnhanceLevel <= 0) {
+        item.attackEnhanceLevel = legacyLevel;
+    }
+    if (item.digBonus > 0 && item.digEnhanceLevel <= 0) {
+        item.digEnhanceLevel = legacyLevel;
+    }
+    if (item.durabilityBonus > 0 && item.durabilityEnhanceLevel <= 0) {
+        item.durabilityEnhanceLevel = legacyLevel;
+    }
+    normalizeEnhanceLevels(item);
+}
+
+void readOptionalEnhanceLevels(std::istream& stream, RingPresetItem& item)
+{
+    if (stream >> item.attackEnhanceLevel >> item.digEnhanceLevel >> item.durabilityEnhanceLevel) {
+        normalizeEnhanceLevels(item);
+        return;
+    }
+    stream.clear();
+    migrateLegacyEnhanceLevels(item);
+}
+
 struct LoadedDungeonEventInstanceSave {
     std::string id;
     std::string kindName;
@@ -1367,6 +1481,9 @@ bool Game::loadSaveData(const std::filesystem::path& path)
                 >> instance.protectionEnabled
                 >> instance.isBroken;
             if (!stream.fail()) {
+                readOptionalEnhanceLevels(stream, instance);
+            }
+            if (!stream.fail()) {
                 if (objectCatalog_.registry.findById(instance.objectId) == nullptr) {
                     ++warningCount;
                 }
@@ -1400,6 +1517,9 @@ bool Game::loadSaveData(const std::filesystem::path& path)
                 >> instance.sizeModifier
                 >> instance.protectionEnabled
                 >> instance.isBroken;
+            if (!stream.fail()) {
+                readOptionalEnhanceLevels(stream, instance);
+            }
             const ItemData* item = objectCatalog_.registry.findById(instance.objectId);
             if (!stream.fail()) {
                 if (item == nullptr) {
@@ -1491,6 +1611,7 @@ bool Game::loadSaveData(const std::filesystem::path& path)
                 }
                 loadedRingIndex = std::clamp(loadedRingIndex, 0, SpellRingCount - 1);
                 item.ringIndex = loadedRingIndex;
+                readOptionalEnhanceLevels(stream, item);
                 loadedRingItemsByRing[static_cast<std::size_t>(loadedRingIndex)].push_back(item);
             }
         } else if (key == "ring_preset") {
@@ -1526,6 +1647,9 @@ bool Game::loadSaveData(const std::filesystem::path& path)
                 >> item.sizeModifier
                 >> item.protectionEnabled
                 >> item.isBroken;
+            if (!stream.fail()) {
+                readOptionalEnhanceLevels(stream, item);
+            }
             const int presetIndex = presetNumber - 1;
             const int ringIndex = ringNumber - 1;
             if (!stream.fail() &&
@@ -2228,7 +2352,10 @@ bool Game::saveSaveData(const std::filesystem::path& path, std::string& message)
                 << instance.weightModifier << " "
                 << instance.sizeModifier << " "
                 << instance.protectionEnabled << " "
-                << instance.isBroken << "\n";
+                << instance.isBroken << " "
+                << instance.attackEnhanceLevel << " "
+                << instance.digEnhanceLevel << " "
+                << instance.durabilityEnhanceLevel << "\n";
         }
     }
     for (const InventoryObjectStack& stack : warehouseObjectStacks_) {
@@ -2251,7 +2378,10 @@ bool Game::saveSaveData(const std::filesystem::path& path, std::string& message)
                 << instance.weightModifier << " "
                 << instance.sizeModifier << " "
                 << instance.protectionEnabled << " "
-                << instance.isBroken << "\n";
+                << instance.isBroken << " "
+                << instance.attackEnhanceLevel << " "
+                << instance.digEnhanceLevel << " "
+                << instance.durabilityEnhanceLevel << "\n";
         }
     }
     for (int index = 0; index < static_cast<int>(MaterialType::Count); ++index) {
@@ -2281,7 +2411,10 @@ bool Game::saveSaveData(const std::filesystem::path& path, std::string& message)
                 << item.sizeModifier << " "
                 << item.protectionEnabled << " "
                 << item.isBroken << " "
-                << ringIndex << "\n";
+                << ringIndex << " "
+                << item.attackEnhanceLevel << " "
+                << item.digEnhanceLevel << " "
+                << item.durabilityEnhanceLevel << "\n";
         }
     }
     for (int presetIndex = 0; presetIndex < RingPresetSlotCount; ++presetIndex) {
@@ -2310,7 +2443,10 @@ bool Game::saveSaveData(const std::filesystem::path& path, std::string& message)
                     << item.weightModifier << " "
                     << item.sizeModifier << " "
                     << item.protectionEnabled << " "
-                    << item.isBroken << "\n";
+                    << item.isBroken << " "
+                    << item.attackEnhanceLevel << " "
+                    << item.digEnhanceLevel << " "
+                    << item.durabilityEnhanceLevel << "\n";
             }
         }
     }

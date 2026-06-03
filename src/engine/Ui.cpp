@@ -1480,11 +1480,27 @@ void openUiResultDialog(UiResultDialogState& state, std::string title, std::vect
     (void)title;
 }
 
+UiRect fitUiResultDialogRect(const UiResultDialogState& state, UiRect basePanel)
+{
+    constexpr int BaseLineCount = 2;
+    constexpr float ExtraHeightPerLine = 32.0f;
+    const int extraLines = std::max(0, static_cast<int>(state.lines.size()) - BaseLineCount);
+    const float extraHeight = static_cast<float>(extraLines) * ExtraHeightPerLine;
+    if (extraHeight <= 0.0f) {
+        return basePanel;
+    }
+
+    basePanel.pos.y -= extraHeight * 0.5f;
+    basePanel.size.y += extraHeight;
+    return basePanel;
+}
+
 bool updateUiResultDialog(UiResultDialogState& state, UiContext& ui, const Input& input, UiRect panel)
 {
     if (!state.open) {
         return false;
     }
+    panel = fitUiResultDialogRect(state, panel);
     if (ui.pressed(uiResultDialogOkButtonRect(panel)) || input.confirmPressed() || input.useItemPressed()) {
         ui.emitSound(UiSoundEvent::Confirm);
         state.open = false;
@@ -1500,6 +1516,7 @@ void drawUiResultDialog(Renderer& renderer, const UiResultDialogState& state, Ui
     if (!state.open) {
         return;
     }
+    panel = fitUiResultDialogRect(state, panel);
 
     UiWindowScope window(renderer, id, panel, "", "F/Enter OK", UiWindowOptions{true, false});
     const UiRect body = uiResultDialogTextRect(panel);

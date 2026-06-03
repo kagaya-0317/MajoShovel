@@ -269,6 +269,9 @@ void applyItemInstance(SpellRingItem& item, const ItemInstance& instance)
 {
     item.instanceId = instance.instanceId;
     item.enhanceLevel = instance.enhanceLevel;
+    item.attackEnhanceLevel = instance.attackEnhanceLevel;
+    item.digEnhanceLevel = instance.digEnhanceLevel;
+    item.durabilityEnhanceLevel = instance.durabilityEnhanceLevel;
     item.attackBonus = instance.attackBonus;
     item.digBonus = instance.digBonus;
     item.durabilityBonus = instance.durabilityBonus;
@@ -1527,6 +1530,9 @@ bool SpellRingSystem::enhanceItem(
     int attackBonus,
     int digBonus,
     int durabilityBonus,
+    int attackLevelDelta,
+    int digLevelDelta,
+    int durabilityLevelDelta,
     int maxEnhanceLevel,
     const ObjectCatalog& catalog)
 {
@@ -1539,11 +1545,18 @@ bool SpellRingSystem::enhanceItem(
     }
 
     SpellRingItem& item = ringItems[static_cast<std::size_t>(itemIndex)];
-    if (item.enhanceLevel >= maxEnhanceLevel) {
+    int& modeEnhanceLevel =
+        attackLevelDelta > 0 ? item.attackEnhanceLevel :
+        digLevelDelta > 0 ? item.digEnhanceLevel :
+        item.durabilityEnhanceLevel;
+    if (modeEnhanceLevel >= maxEnhanceLevel) {
         return false;
     }
 
     ++item.enhanceLevel;
+    item.attackEnhanceLevel += attackLevelDelta;
+    item.digEnhanceLevel += digLevelDelta;
+    item.durabilityEnhanceLevel += durabilityLevelDelta;
     item.attackBonus += attackBonus;
     item.digBonus += digBonus;
     item.durabilityBonus += durabilityBonus;

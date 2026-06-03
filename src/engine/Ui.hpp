@@ -508,6 +508,7 @@ void openUiResultDialog(UiResultDialogState& state, std::string title, std::vect
 void openUiResultDialog(UiResultDialogState& state, std::string title, std::vector<UiResultDialogLine> lines);
 bool updateUiResultDialog(UiResultDialogState& state, UiContext& ui, const Input& input, UiRect panel);
 void drawUiResultDialog(Renderer& renderer, const UiResultDialogState& state, UiRect panel, std::string_view id);
+UiRect fitUiResultDialogRect(const UiResultDialogState& state, UiRect basePanel);
 UiRect uiResultDialogOkButtonRect(UiRect panel);
 void openUiConfirmDialog(
     UiConfirmDialogState& state,

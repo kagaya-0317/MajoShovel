@@ -7759,8 +7759,6 @@ void EnemySystem::update(
                     RingImpactResult::Hit,
                     enemy.position,
                     0.0f));
-                item.actionFlashTimer = SpellRingItemActionFlashSeconds;
-                spellRing.consumeItemDurability(item);
                 CaptureResult capture = tryCaptureTarget(
                     &enemy,
                     player,
@@ -7773,6 +7771,8 @@ void EnemySystem::update(
                         .chanceMultiplier = captureNetSpec.chanceMultiplier,
                     });
                 if (capture.type != CaptureResultType::NoTarget) {
+                    item.actionFlashTimer = SpellRingItemActionFlashSeconds;
+                    spellRing.consumeItemDurability(item);
                     captureResults_.push_back(std::move(capture));
                 }
                 if (!enemy.active || enemy.hp <= 0) {

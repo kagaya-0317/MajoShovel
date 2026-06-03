@@ -84,6 +84,9 @@ ItemInstance instanceFromRingItem(const SpellRingItem& item, InventorySystem& in
     instance.currentDurability = item.durability;
     instance.maxDurability = item.maxDurability;
     instance.enhanceLevel = item.enhanceLevel;
+    instance.attackEnhanceLevel = item.attackEnhanceLevel;
+    instance.digEnhanceLevel = item.digEnhanceLevel;
+    instance.durabilityEnhanceLevel = item.durabilityEnhanceLevel;
     instance.attackBonus = item.attackBonus;
     instance.digBonus = item.digBonus;
     instance.durabilityBonus = item.durabilityBonus;
@@ -165,6 +168,9 @@ std::vector<PresetCandidate> buildPresetCandidates(
                     .currentDurability = item.durability,
                     .maxDurability = item.maxDurability,
                     .enhanceLevel = item.enhanceLevel,
+                    .attackEnhanceLevel = item.attackEnhanceLevel,
+                    .digEnhanceLevel = item.digEnhanceLevel,
+                    .durabilityEnhanceLevel = item.durabilityEnhanceLevel,
                     .attackBonus = item.attackBonus,
                     .digBonus = item.digBonus,
                     .durabilityBonus = item.durabilityBonus,
@@ -297,6 +303,9 @@ RingPresetItem ringPresetItemFromRingItem(const SpellRingItem& item, int ringInd
     presetItem.currentDurability = item.durability;
     presetItem.maxDurability = item.maxDurability;
     presetItem.enhanceLevel = item.enhanceLevel;
+    presetItem.attackEnhanceLevel = item.attackEnhanceLevel;
+    presetItem.digEnhanceLevel = item.digEnhanceLevel;
+    presetItem.durabilityEnhanceLevel = item.durabilityEnhanceLevel;
     presetItem.attackBonus = item.attackBonus;
     presetItem.digBonus = item.digBonus;
     presetItem.durabilityBonus = item.durabilityBonus;
