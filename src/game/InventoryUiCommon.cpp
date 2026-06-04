@@ -857,7 +857,7 @@ void drawInventoryEnhancementLine(Renderer& renderer, UiRect panel, float& y, co
             x = valueX;
             rowY += BadgeHeight + RowGap;
         }
-        drawEnhancementBadge(renderer, {{x, rowY}, {badgeWidth, BadgeHeight}}, badge);
+        drawEnhancementBadge(renderer, {{x, rowY - 3.0f}, {badgeWidth, BadgeHeight}}, badge);
         x += badgeWidth + BadgeGap;
         bottomY = std::max(bottomY, rowY + BadgeHeight);
     }

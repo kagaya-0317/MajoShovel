@@ -1221,8 +1221,7 @@ std::string enemyContactAttackText(const EnemyDefinition& enemy)
 }
 
 constexpr int RingWorkshopActionCount = 2;
-constexpr int RingWorkshopUpgradeFutureCount = 0;
-constexpr int RingWorkshopUpgradeDisplayCount = RingWorkshopImplementedUpgradeCount + RingWorkshopUpgradeFutureCount;
+constexpr int RingWorkshopUpgradeDisplayCount = RingWorkshopImplementedUpgradeCount;
 
 UiRect homeInteriorMapRect()
 {
@@ -1264,12 +1263,12 @@ UiRect ringWorkshopActionChoiceRect(int index)
 
 UiRect ringWorkshopPanelRect()
 {
-    return merchantPanelRect();
+    return baseUpgradePanelRect();
 }
 
 UiRect ringWorkshopDetailPanelRect()
 {
-    return merchantDetailPanelRect();
+    return baseUpgradeDetailPanelRect();
 }
 
 UiRect ringWorkshopRingTabRect(int index, int unlockedRingCount = SpellRingCount)
@@ -1317,14 +1316,13 @@ UiRect ringWorkshopRespecKindRect(int index)
 
 UiRect ringWorkshopRespecConfirmRect()
 {
-    const UiRect panel = ringWorkshopPanelRect();
     const UiRect detail = ringWorkshopDetailPanelRect();
     const Vec2 size{220.0f, ui::ButtonHeight};
-    const float leftAreaLeft = panel.pos.x + 72.0f;
+    const float leftAreaLeft = ringWorkshopPanelRect().pos.x + 72.0f;
     const float leftAreaRight = detail.pos.x - 24.0f;
     return {{
         leftAreaLeft + (leftAreaRight - leftAreaLeft - size.x) * 0.5f,
-        panel.pos.y + panel.size.y - 74.0f,
+        baseUpgradeConfirmRect().pos.y,
     }, size};
 }
 
@@ -1333,36 +1331,31 @@ UiRect ringWorkshopUpgradeListPanelRect()
     const UiRect panel = ringWorkshopPanelRect();
     const UiRect detail = ringWorkshopDetailPanelRect();
     return {{
-        panel.pos.x + 72.0f,
-        panel.pos.y + 96.0f,
+        panel.pos.x + 38.0f,
+        panel.pos.y + 86.0f,
     }, {
-        detail.pos.x - panel.pos.x - 108.0f,
-        420.0f,
+        detail.pos.x - panel.pos.x - 66.0f,
+        404.0f,
     }};
 }
 
 UiRect ringWorkshopUpgradeItemRect(int index)
 {
-    constexpr float RowGap = 10.0f;
     constexpr float RowHeight = 42.0f;
-    const UiRect panel = ringWorkshopUpgradeListPanelRect();
+    constexpr float RowPitch = 46.0f;
+    const UiRect list = ringWorkshopUpgradeListPanelRect();
     return {{
-        panel.pos.x + 24.0f,
-        panel.pos.y + 58.0f + static_cast<float>(index) * (RowHeight + RowGap),
+        list.pos.x,
+        156.0f + static_cast<float>(index) * RowPitch,
     }, {
-        panel.size.x - 48.0f,
+        332.0f,
         RowHeight,
     }};
 }
 
 UiRect ringWorkshopUpgradeConfirmRect()
 {
-    const UiRect detail = ringWorkshopDetailPanelRect();
-    const Vec2 size{208.0f, ui::ButtonHeight};
-    return {{
-        detail.pos.x + (detail.size.x - size.x) * 0.5f,
-        ringWorkshopPanelRect().pos.y + ringWorkshopPanelRect().size.y - 74.0f,
-    }, size};
+    return baseUpgradeConfirmRect();
 }
 
 RingLevelUpgradeKind ringWorkshopKindForIndex(int index)
@@ -1401,15 +1394,25 @@ const char* ringWorkshopUpgradeShortName(int index)
     }
 }
 
-const char* ringWorkshopFutureUpgradeName(int index)
+const char* ringWorkshopUpgradeDescription(int index)
 {
     switch (index) {
-    case 3: return "リング投げ距離強化";
-    case 4: return "リング投げクールダウン短縮";
-    case 5: return "リング重量ペナルティ軽減";
-    case 6: return "リング装着枠増加";
-    default: return "未解禁項目";
+    case 0:
+        return "探索開始時のリング半径を広げます。広い範囲にアイテムを配置しやすくなります。";
+    case 1:
+        return "探索開始時のリング回転速度を上げます。配置したアイテムの発動機会が増えます。";
+    case 2:
+        return "リング位置をずらす距離を伸ばします。状況に合わせてリングを動かしやすくなります。";
+    case 3:
+        return "リングを投げられる距離を伸ばします。離れた位置へリングを展開しやすくなります。";
+    case 4:
+        return "リング投げの再使用時間を短縮します。投げ直しの隙が小さくなります。";
+    case 5:
+        return "リングが重いときの停止ペナルティを軽減します。重い構成でも動きを保ちやすくなります。";
+    case 6:
+        return "リングに装着できるアイテム枠を増やします。より多くのアイテムを組み込めます。";
     }
+    return "";
 }
 
 std::string formatRingWorkshopValue(RingLevelUpgradeKind kind, float value)
@@ -1762,6 +1765,16 @@ void drawBaseRingPreview(
 {
     const std::vector<SpellRingItem>& items = spellRing.itemsForRing(ringIndex);
     const RingShape shape = spellRing.ringShapeForIndex(ringIndex);
+    const float previewRadius = baseRingPreviewRadius(shape, previewScale);
+    char weightBuffer[64];
+    const float ringWeight = spellRing.totalEquippedWeightForRing(ringIndex);
+    const float ringWeightLimit = spellRing.maxEquippedWeightForRing(ringIndex);
+    std::snprintf(weightBuffer, sizeof(weightBuffer), "重量 %.1f / %.1fkg", ringWeight, ringWeightLimit);
+    const Color weightTextColor = ringWeight > ringWeightLimit
+        ? Color{255, 206, 116, 255}
+        : Color{188, 202, 224, 255};
+    renderer.drawText(center + Vec2{-previewRadius - 52.0f, -previewRadius - 36.0f}, weightBuffer, weightTextColor, 2);
+
     RingOrbitContext context = baseRingPreviewOrbitContext(spellRing, balance, ringIndex, 0, static_cast<int>(items.size()), previewScale);
     std::vector<Vec2> orbitPath = getRingPathSamplePoints(center, context, 160);
     for (Vec2& point : orbitPath) {
@@ -9450,13 +9463,14 @@ void Game::renderBaseScreen(Renderer& renderer) const
         ? bookshelfMenuPanelRect()
         : (ringWorkshopActionDialogActive
         ? ringWorkshopActionDialogRect()
+        : (ringWorkshopWideActive
+        ? ringWorkshopPanelRect()
         : ((baseProcessingUiMode_ == ProcessingUiMode::Enhance ||
         bookshelfWideActive ||
-        ringWorkshopWideActive ||
         (baseStorageActive_ && !storageActionDialogActive) ||
         (baseSellActive_ && baseMerchantMode_ != MerchantUiMode::ChooseAction))
         ? merchantPanelRect()
-        : (baseUpgradeActive_ ? baseUpgradePanelRect() : basePanelRect())))))));
+        : (baseUpgradeActive_ ? baseUpgradePanelRect() : basePanelRect()))))))));
     std::optional<UiWindowScope> panelWindow;
     std::optional<UiCancelControlScope> panelCancelScope;
     if (panelUiActive) {
@@ -9811,33 +9825,47 @@ void Game::renderBaseScreen(Renderer& renderer) const
                 confirmStyle);
         } else if (baseRingWorkshopMode_ == RingWorkshopMode::Upgrade) {
             const UiRect listPanel = ringWorkshopUpgradeListPanelRect();
-            drawUiSubPanel(renderer, listPanel);
-            renderer.drawText(listPanel.pos + Vec2{24.0f, 22.0f}, "工房強化", ui::Text, 3);
+            renderer.drawText({listPanel.pos.x, 128.0f}, "リング工房強化", {198, 198, 206, 255}, 2);
+            std::array<UiVerticalTabItem, RingWorkshopUpgradeDisplayCount> upgradeTabs{};
+            std::array<UiRect, RingWorkshopUpgradeDisplayCount> upgradeTabRects{};
+            std::array<std::string, RingWorkshopUpgradeDisplayCount> upgradeTabValues{};
             for (int i = 0; i < RingWorkshopUpgradeDisplayCount; ++i) {
                 const bool implemented = i < RingWorkshopImplementedUpgradeCount;
-                UiSmallSelectButtonStyle style;
-                const char* value = "未解禁";
                 if (implemented) {
                     const auto upgrade = static_cast<RingWorkshopUpgrade>(i);
                     const int level = ringWorkshopUpgradeLevel(upgrade);
                     const int maxLevel = ringWorkshopUpgradeMaxLevel(upgrade);
                     if (level >= maxLevel) {
-                        value = "上限";
-                        style.valueText = Color{160, 220, 190, 255};
+                        upgradeTabValues[static_cast<std::size_t>(i)] = "上限";
                     } else {
                         std::snprintf(buffer, sizeof(buffer), "Lv.%d/%d", level, maxLevel);
-                        value = buffer;
+                        upgradeTabValues[static_cast<std::size_t>(i)] = buffer;
                     }
+                } else {
+                    upgradeTabValues[static_cast<std::size_t>(i)] = "未実装";
                 }
-                drawUiSmallSelectButton(
-                    renderer,
-                    ringWorkshopUpgradeItemRect(i),
+                const bool maxed = implemented &&
+                    ringWorkshopUpgradeLevel(static_cast<RingWorkshopUpgrade>(i)) >= ringWorkshopUpgradeMaxLevel(static_cast<RingWorkshopUpgrade>(i));
+                upgradeTabs[static_cast<std::size_t>(i)] = {
                     ringWorkshopUpgradeShortName(i),
-                    value,
-                    i == baseRingWorkshopSelection_,
-                    !implemented,
-                    style);
+                    upgradeTabValues[static_cast<std::size_t>(i)],
+                    implemented,
+                    maxed ? Color{160, 220, 190, 255} : ui::TextMuted,
+                };
+                upgradeTabRects[static_cast<std::size_t>(i)] = ringWorkshopUpgradeItemRect(i);
             }
+            UiTabsState upgradeTabState{};
+            upgradeTabState.focusedIndex = baseRingWorkshopSelection_;
+            UiVerticalTabsStyle upgradeTabStyle;
+            upgradeTabStyle.labelScale = 2;
+            drawUiVerticalTabs(
+                renderer,
+                upgradeTabState,
+                baseRingWorkshopSelection_,
+                upgradeTabs.data(),
+                static_cast<int>(upgradeTabs.size()),
+                upgradeTabRects.data(),
+                upgradeTabStyle);
 
             const UiRect detailPanel = ringWorkshopDetailPanelRect();
             drawUiSubPanel(renderer, detailPanel);
@@ -9874,6 +9902,14 @@ void Game::renderBaseScreen(Renderer& renderer) const
                 const int maxLevel = ringWorkshopUpgradeMaxLevel(upgrade);
                 const bool maxed = level >= maxLevel;
                 float detailY = drawUiDetailHeader(renderer, detailPanel, ringWorkshopUpgradeName(upgrade));
+                const UiRect detailContent = uiSubPanelContentRect(detailPanel);
+                renderer.drawWrappedText(
+                    {detailContent.pos.x, detailY},
+                    ringWorkshopUpgradeDescription(selected),
+                    detailContent.size.x,
+                    ui::TextMuted,
+                    2);
+                detailY += renderer.measureWrappedText(ringWorkshopUpgradeDescription(selected), detailContent.size.x, 2).y + 8.0f;
                 std::snprintf(buffer, sizeof(buffer), "Lv.%d/%d", level, maxLevel);
                 drawUiDetailLine(renderer, detailPanel, detailY, "段階", buffer, maxed ? Color{160, 220, 190, 255} : ui::Text);
                 if (maxed) {
@@ -9905,10 +9941,10 @@ void Game::renderBaseScreen(Renderer& renderer) const
                         inventory_.materialCount(MaterialType::MoonFragment) >= ringWorkshopUpgradeMoonCost(upgrade) ? ui::Text : Color{238, 82, 82, 255});
                 }
             } else {
-                float detailY = drawUiDetailHeader(renderer, detailPanel, ringWorkshopFutureUpgradeName(selected));
-                drawUiDetailLine(renderer, detailPanel, detailY, "状態", "未解禁", ui::TextMuted);
-                drawUiDetailText(renderer, detailPanel, detailY, "今後の工房拡張で利用予定です。");
-                confirmLabel = "未解禁";
+                float detailY = drawUiDetailHeader(renderer, detailPanel, "工房強化");
+                drawUiDetailLine(renderer, detailPanel, detailY, "状態", "未実装", ui::TextMuted);
+                drawUiDetailText(renderer, detailPanel, detailY, "この項目は現在利用できません。");
+                confirmLabel = "未実装";
                 confirmStyle.text = ui::TextDisabled;
             }
             drawUiButton(
@@ -10051,36 +10087,6 @@ void Game::renderBaseScreen(Renderer& renderer) const
             float detailLineY = drawUiDetailHeader(renderer, detailPanel, "アイテム未選択");
             drawUiDetailText(renderer, detailPanel, detailLineY, "加工するアイテムを選択してください。");
         } else {
-            std::optional<InventoryUiItemStats> stats = inventoryUiEntryStats(detailEntry);
-            if (!stats && selectedRingItem != nullptr) {
-                stats = inventoryUiStatsFromRingItem(*selectedRingItem);
-            }
-            const int attackBonus = stats ? stats->attackBonus : 0;
-            const int digBonus = stats ? stats->digBonus : 0;
-            const int durabilityBonus = stats ? stats->durabilityBonus : 0;
-            const double weightModifier = stats ? stats->weightModifier : 1.0;
-            const double sizeModifier = stats ? stats->sizeModifier : 1.0;
-
-            std::vector<InventoryUiDetailExtraLine> extraLines;
-            std::snprintf(buffer, sizeof(buffer), "攻撃+%d / 掘削+%d / 耐久+%d", attackBonus, digBonus, durabilityBonus);
-            extraLines.push_back({"強化", buffer, ui::Text});
-
-            std::string processingText;
-            if (std::abs(weightModifier - 1.0) > 0.001) {
-                std::snprintf(buffer, sizeof(buffer), "重量%.0f%%", weightModifier * 100.0);
-                processingText = buffer;
-            }
-            if (std::abs(sizeModifier - 1.0) > 0.001) {
-                std::snprintf(buffer, sizeof(buffer), "大きさ%.0f%%", sizeModifier * 100.0);
-                if (!processingText.empty()) {
-                    processingText += " / ";
-                }
-                processingText += buffer;
-            }
-            if (!processingText.empty()) {
-                extraLines.push_back({"加工", processingText, ui::Text});
-            }
-
             if (detailEntry.item != nullptr) {
                 drawInventoryUiDetailPanel(
                     renderer,
@@ -10088,8 +10094,7 @@ void Game::renderBaseScreen(Renderer& renderer) const
                     detailEntry,
                     objectCatalog_,
                     encyclopedia_,
-                    InventoryUiDetailOptions{.showEnhanceCount = false, .animationSeconds = ringPreviewSeconds},
-                    extraLines);
+                    InventoryUiDetailOptions{.animationSeconds = ringPreviewSeconds});
             } else {
                 drawUiSubPanel(renderer, detailPanel);
                 float detailLineY = drawUiDetailHeader(renderer, detailPanel, ringItemDisplayName(objectCatalog_, *selectedRingItem));

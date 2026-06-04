@@ -380,8 +380,14 @@ void UpgradeSystem::render(
     for (int i = 0; i < 3; ++i) {
         const UiRect card = optionRect(i);
         const bool selected = i == selectedOption_;
-        renderer.fillRect(card.pos, card.size, selected ? Color{54, 46, 76, 245} : Color{22, 22, 32, 232});
-        renderer.drawRect(card.pos, card.size, selected ? ui::WindowBorder : Color{104, 94, 128, 255});
+        UiButtonStyle cardStyle;
+        cardStyle.imageTint = {232, 232, 238, 245};
+        cardStyle.imageTintHot = {255, 255, 235, 255};
+        cardStyle.fill = {22, 22, 32, 232};
+        cardStyle.fillHot = {54, 46, 76, 245};
+        cardStyle.outline = {104, 94, 128, 255};
+        cardStyle.outlineHot = ui::WindowBorder;
+        drawUiFlexibleButtonFrame(renderer, card, selected, cardStyle);
         drawCenteredText(renderer, card, card.pos.y + 36.0f, upgradeName(i), ui::Text, 3);
         drawCenteredText(renderer, card, card.pos.y + 90.0f, upgradeDescription(i), ui::Text, 2);
         drawUpgradeValueLine(

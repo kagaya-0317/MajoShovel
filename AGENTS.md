@@ -14,6 +14,55 @@
 - 2 分を超えても完了しないビルドは待ち続けずに中断し、タイムアウトしたことを報告する。
 - 何度も失敗しているビルドや時間のかかるフルビルドは、必要性を確認してから実行する。
 
+## Build
+
+通常開発では prebuilt SDL3 を使うビルド経路を使う。
+
+```powershell
+.\build_game.bat
+```
+
+または CMake preset を直接使う。
+
+```powershell
+cmake --preset windows-release
+cmake --build --preset windows-release
+```
+
+ビルド出力は Dropbox リポジトリ直下ではなく `%LOCALAPPDATA%\MajoShovel` 以下に置く。
+Dropbox の同期ロックを避け、リビルドを速く保つため。
+
+### Parallel Builds
+
+MSVC ビルドでは並列化を一層だけにする。このプロジェクトでは CMake/MSBuild の job 数で並列化する。
+
+```powershell
+.\tools\build.ps1 -Jobs 12
+.\tools\dev_auto_reload.ps1 -Jobs 12
+```
+
+`cmake --build --parallel` または上記 `-Jobs` スクリプトを使う場合、`CMakeLists.txt` に MSVC `/MP` を追加しない。
+外側のビルド並列と `/MP` を併用すると `cl.exe` の子プロセスが増えすぎ、以下で失敗することがある。
+
+```text
+cl : command line error D8040
+```
+
+この場合、リンク工程が完了せず `%LOCALAPPDATA%\MajoShovel\build-nopch\Release\MajoShovel.exe` が存在しないことがある。
+これはビルド失敗または中断の結果であり、別個のランタイム問題ではない。
+
+`dev_auto_reload.ps1` が同じ出力先をビルド中に、手動で `build.ps1` を重ねて実行しない。
+ビルドを中断する必要がある場合は、自分が起動したビルドだけを止める。
+すべての `cl.exe` / `MSBuild.exe` をまとめて kill すると、dev watcher 側のビルドも中断し、実行ファイルが欠けた状態になる。
+
+通常ビルドは `external/SDL3-prebuilt` を使い、`external/SDL` はビルドしない。
+prebuilt パッケージを置き換える必要がある場合のみ、vendored SDL source fallback を有効にする。
+
+```powershell
+cmake -S . -B "%LOCALAPPDATA%\MajoShovel\build-sdl-source" -DMAJOSHOVEL_VENDOR_SDL=ON -DMAJOSHOVEL_USE_PREBUILT_SDL=OFF
+cmake --build "%LOCALAPPDATA%\MajoShovel\build-sdl-source" --config Release --target MajoShovel
+```
+
 ## Game.cpp Split Policy
 
 `src/game/Game.cpp` の実装は機能別の `Game*.cpp` に分割している。

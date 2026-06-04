@@ -1074,6 +1074,32 @@ void drawUiButton(Renderer& renderer, UiRect rect, std::string_view label, bool 
     renderer.popScreenTransform();
 }
 
+void drawUiFlexibleButtonFrame(Renderer& renderer, UiRect rect, bool selected, const UiButtonStyle& style)
+{
+    if (renderer.hasUiButtonTexture()) {
+        const Color tint = selected ? style.imageTintHot : style.imageTint;
+        renderer.drawUiButtonFrame(rect.pos, rect.size, selected ? 1 : 0, tint);
+        return;
+    }
+
+    const Color fill = selected ? style.fillHot : style.fill;
+    const Color outline = selected ? scaledColor(style.outlineHot, 1.04f) : style.outline;
+    renderer.fillRect(rect.pos, rect.size, fill);
+    renderer.drawRect(rect.pos, rect.size, outline);
+}
+
+void drawUiFlexibleButton(Renderer& renderer, UiRect rect, std::string_view label, bool selected, const UiButtonStyle& style)
+{
+    drawUiFlexibleButtonFrame(renderer, rect, selected, style);
+
+    const Vec2 textSize = renderer.measureText(label, 2);
+    const Vec2 textPos{
+        rect.pos.x + std::max(0.0f, (rect.size.x - textSize.x) * 0.5f),
+        rect.pos.y + std::max(0.0f, (rect.size.y - textSize.y) * 0.5f),
+    };
+    renderer.drawText(textPos, label, style.text, 2);
+}
+
 void drawUiRectButton(Renderer& renderer, UiRect rect, std::string_view label, bool hot, const UiButtonStyle& style)
 {
     const bool selected = hot;
@@ -2749,9 +2775,25 @@ void drawUiTabs(
 
             UiRect rect = rects[i];
             rect.size.y = ui::ButtonHeight;
+            const auto sameTabRow = [&](int leftIndex, int rightIndex) {
+                return leftIndex >= 0 &&
+                    rightIndex >= 0 &&
+                    leftIndex < itemCount &&
+                    rightIndex < itemCount &&
+                    std::abs(rects[leftIndex].pos.y - rects[rightIndex].pos.y) <= 1.0f &&
+                    rects[rightIndex].pos.x >= rects[leftIndex].pos.x;
+            };
+            const bool hasPreviousInRow = sameTabRow(i - 1, i);
+            const bool hasNextInRow = sameTabRow(i, i + 1);
+            const float leadingExtension = !hasPreviousInRow && hasNextInRow
+                ? std::max(0.0f, rects[i + 1].pos.x - (rect.pos.x + rect.size.x)) * 0.5f
+                : 0.0f;
+            const float trailingExtension = hasPreviousInRow && !hasNextInRow
+                ? std::max(0.0f, rect.pos.x - (rects[i - 1].pos.x + rects[i - 1].size.x)) * 0.5f
+                : 0.0f;
             const UiRect imageRect{
-                rect.pos - Vec2{imageOutset, imageOutset},
-                rect.size + Vec2{imageOutset * 2.0f, imageOutset * 2.0f},
+                rect.pos - Vec2{imageOutset + leadingExtension, imageOutset},
+                rect.size + Vec2{imageOutset * 2.0f + leadingExtension + trailingExtension, imageOutset * 2.0f},
             };
 
             Color tint = selected ? buttonStyle.imageTintHot : buttonStyle.imageTint;

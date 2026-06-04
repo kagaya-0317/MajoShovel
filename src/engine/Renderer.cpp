@@ -2975,6 +2975,14 @@ void Renderer::drawUiButtonFrame(Vec2 pos, float width, int variant, Color tint)
     drawHorizontalSliceRow(uiButtonTexture_, std::clamp(variant, 0, 2), pos, width, tint);
 }
 
+void Renderer::drawUiButtonFrame(Vec2 pos, Vec2 size, int variant, Color tint)
+{
+    if (!hasUiButtonTexture()) {
+        return;
+    }
+    drawHorizontalSliceRow(uiButtonTexture_, std::clamp(variant, 0, 2), pos, size, tint);
+}
+
 void Renderer::drawUiTabFrame(Vec2 pos, Vec2 size, bool selected, Color tint)
 {
     if (!hasUiTabTexture()) {

@@ -150,7 +150,7 @@ add_custom_command(TARGET MajoShovel POST_BUILD
 )
 
 if(MSVC)
-    target_compile_options(MajoShovel PRIVATE /W4 /permissive- /utf-8 /MP)
+    target_compile_options(MajoShovel PRIVATE /W4 /permissive- /utf-8)
     target_link_options(MajoShovel PRIVATE
         /STACK:8388608
         $<$<CONFIG:Debug>:/DEBUG:FASTLINK>

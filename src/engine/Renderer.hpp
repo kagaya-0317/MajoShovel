@@ -143,6 +143,7 @@ public:
     void drawUiMessageWindowFrame(Vec2 pos, Vec2 size, Color tint = {255, 255, 255, 255});
     void drawUiSubWindowFrame(Vec2 pos, Vec2 size, Color tint = {255, 255, 255, 255});
     void drawUiButtonFrame(Vec2 pos, float width, int variant, Color tint = {255, 255, 255, 255});
+    void drawUiButtonFrame(Vec2 pos, Vec2 size, int variant, Color tint = {255, 255, 255, 255});
     void drawUiTabFrame(Vec2 pos, Vec2 size, bool selected, Color tint = {255, 255, 255, 255});
     void drawUiHorizontalTabs(
         const Vec2* positions,

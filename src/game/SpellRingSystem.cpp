@@ -1252,7 +1252,7 @@ std::optional<float> SpellRingSystem::nearestPlaceableAngle(int index, float des
     }
 
     const float stepRadians = shape == RingShape::Comet
-        ? std::max(Pi / 180.0f, clampCometArcRadians(tuning) / static_cast<float>(MaxSpellRingItems * 2))
+        ? std::max(Pi / 180.0f, clampCometArcRadians(tuning) / static_cast<float>(maxItemCount() * 2))
         : PlacementStepRadians;
     const int maxSteps = static_cast<int>(std::floor(maxDeltaRadians / stepRadians + 0.0001f));
     for (int step = 1; step <= maxSteps; ++step) {
