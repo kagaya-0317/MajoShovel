@@ -360,6 +360,7 @@ struct UiTabsInput {
 
 struct UiTabsState {
     int focusedIndex = -1;
+    int hoveredIndex = -1;
 };
 
 struct UiTabsStyle {
@@ -384,6 +385,7 @@ struct UiSubTabsStyle {
     Color disabledText = ui::TextDisabled;
     float fadeWidth = 28.0f;
     float sidePadding = 28.0f;
+    float tabFadeWidth = 30.0f;
     float textOffsetY = 2.0f;
     int textScale = 2;
     bool wrapKeyboard = true;

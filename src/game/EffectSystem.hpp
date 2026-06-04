@@ -221,6 +221,7 @@ public:
     void spawnCaptureSuccess(Vec2 position, Vec2 direction, bool playSound = true);
     void spawnDropPickup(Vec2 position, Vec2 direction, bool playSound = true);
     void spawnItemBreak(Vec2 position, ItemBreakVisual visual = ItemBreakVisual::Generic, float scale = 1.0f, bool playSound = true);
+    void spawnBrokenItemSmoke(Vec2 position, float scale = 1.0f);
     void spawnMaterialFloat(Vec2 position, Color color);
     void spawnTorchFlicker(Vec2 position);
     void spawnForegroundTorchFlicker(Vec2 position);

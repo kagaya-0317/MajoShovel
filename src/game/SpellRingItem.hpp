@@ -93,6 +93,7 @@ struct SpellRingItem {
     Vec2 orbitOutward{1.0f, 0.0f};
     Vec2 orbitTangent{0.0f, 1.0f};
     float orbitMotionSpeed = 0.0f;
+    float brokenSmokeTimer = 0.0f;
     std::array<int, balance::MaxEnemies> latchedEnemyIds{};
     std::string capturedBehaviorId;
     std::vector<std::string> capturedBehaviorIds;

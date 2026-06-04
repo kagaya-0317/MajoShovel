@@ -9664,7 +9664,6 @@ GameTestActionResult Game::applyTestAction(const GameTestAction& action)
         }
 
         ringItems.erase(ringItems.begin() + action.ringItemIndex);
-        spellRing_.resetBaseWeightToCurrent();
         refreshOrbitEffects();
         baseStatus_ = "リングから外しました";
         return result(true, "removed ring item to backpack");
@@ -11475,7 +11474,6 @@ bool Game::executeDebugCommand(std::string_view command)
         refreshEquipmentModifiers();
         applyPermanentUpgrades();
         spellRing_.applyObjectParameters(objectCatalog_);
-        spellRing_.resetBaseWeightToCurrent();
         refreshOrbitEffects();
         captureRunStartInventoryState();
 

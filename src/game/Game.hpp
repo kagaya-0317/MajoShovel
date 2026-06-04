@@ -769,6 +769,10 @@ private:
         InitialRadius,
         InitialSpeed,
         ShiftDistance,
+        ThrowDistance,
+        ThrowCooldown,
+        WeightPenalty,
+        EquipSlot,
     };
     enum class RingWorkshopMode {
         ChooseAction,
@@ -832,6 +836,8 @@ private:
         Vec2 targetBasePlayerPosition{};
         Vec2 targetBasePlayerFacing{0.0f, 1.0f};
         std::string targetBaseStatus;
+
+        bool closeBaseUi = false;
 
         [[nodiscard]] bool active() const { return phase != ScreenTransitionPhase::Idle; }
     };
@@ -934,6 +940,7 @@ private:
     void requestMiningStartTransition(bool useLatestWarpPoint, bool forceRegenerate);
     void requestReturnToBaseTransition(bool stageCleared, bool died);
     void requestBaseAreaCrossfade(BaseArea targetArea, Vec2 playerPosition, Vec2 playerFacing, std::string status);
+    void requestBaseAreaFade(BaseArea targetArea, Vec2 playerPosition, Vec2 playerFacing, std::string status, bool closeBaseUi);
     void startScreenTransition(ScreenTransitionTarget target, ScreenTransitionPhase phase);
     static ScreenTransitionFadeColor fadeColorForScreenTransitionTarget(ScreenTransitionTarget target);
     static float holdSecondsForScreenTransitionTarget(ScreenTransitionTarget target);
@@ -1138,6 +1145,7 @@ private:
     bool upgradeImplemented(int index) const;
     bool upgradeMaxed(int index) const;
     void buyUpgrade(int index);
+    void closeBaseFacilityScreens();
     void openRingWorkshop();
     void resetRingWorkshopDraft();
     int ringLevelUpgradePointTotal() const;
@@ -2170,6 +2178,10 @@ private:
     int workshopInitialRadiusLevel_ = 0;
     int workshopInitialSpeedLevel_ = 0;
     int workshopShiftDistanceLevel_ = 0;
+    int workshopThrowDistanceLevel_ = 0;
+    int workshopThrowCooldownLevel_ = 0;
+    int workshopWeightPenaltyLevel_ = 0;
+    int workshopEquipSlotLevel_ = 0;
     bool merchantRefreshPending_ = false;
     int merchantUpgradeLevel_ = 1;
     int merchantStockVersion_ = 0;

@@ -2678,10 +2678,12 @@ int updateUiTabs(
     }
 
     clampTabFocus(state, selectedIndex, items, itemCount);
+    state.hoveredIndex = -1;
 
     for (int i = 0; i < itemCount; ++i) {
         if (tabItemEnabled(items, i) && ui.hovered(rects[i])) {
             state.focusedIndex = i;
+            state.hoveredIndex = i;
         }
         if (ui.pressed(rects[i])) {
             if (!tabItemEnabled(items, i)) {
@@ -2938,17 +2940,39 @@ void drawUiSubTabs(
             GradientDirection::LeftToRight);
     }
 
+    const auto fillFadedTab = [&](UiRect rect, Color color) {
+        const float tabFadeWidth = std::min(
+            std::max(0.0f, style.tabFadeWidth),
+            std::max(0.0f, rect.size.x * 0.5f));
+        const float tabCenterWidth = std::max(0.0f, rect.size.x - tabFadeWidth * 2.0f);
+        const Color tabTransparent{color.r, color.g, color.b, 0};
+        if (tabFadeWidth > 0.0f) {
+            renderer.fillGradientRect(rect.pos, {tabFadeWidth, rect.size.y}, tabTransparent, color, GradientDirection::LeftToRight);
+        }
+        if (tabCenterWidth > 0.0f) {
+            renderer.fillRect({rect.pos.x + tabFadeWidth, rect.pos.y}, {tabCenterWidth, rect.size.y}, color);
+        }
+        if (tabFadeWidth > 0.0f) {
+            renderer.fillGradientRect(
+                {rect.pos.x + rect.size.x - tabFadeWidth, rect.pos.y},
+                {tabFadeWidth, rect.size.y},
+                color,
+                tabTransparent,
+                GradientDirection::LeftToRight);
+        }
+    };
+
     const int textScale = std::max(1, style.textScale);
     for (int i = 0; i < itemCount; ++i) {
         const bool enabled = tabItemEnabled(items, i);
         const bool selected = i == selectedIndex;
-        const bool hovered = enabled && i == state.focusedIndex;
+        const bool hovered = enabled && i == state.hoveredIndex;
         const UiRect rect = rects[i];
 
         if (selected) {
-            renderer.fillRect(rect.pos, rect.size, hovered ? scaledColor(style.selectedFill, 1.08f) : style.selectedFill);
+            fillFadedTab(rect, hovered ? scaledColor(style.selectedFill, 1.08f) : style.selectedFill);
         } else if (hovered) {
-            renderer.fillRect(rect.pos, rect.size, style.hoverFill);
+            fillFadedTab(rect, style.hoverFill);
         }
 
         const Color textColor = enabled

@@ -1725,6 +1725,38 @@ void EffectSystem::spawnItemBreak(Vec2 position, ItemBreakVisual visual, float s
     }
 }
 
+void EffectSystem::spawnBrokenItemSmoke(Vec2 position, float scale)
+{
+    const float visualScale = std::clamp(scale, 0.55f, 1.8f);
+    const int count = lightweightMode_ ? 1 : 2;
+    for (int i = 0; i < count; ++i) {
+        Color color = mixColor(
+            Color{12, 12, 16, 188},
+            Color{54, 50, 60, 146},
+            randomRange(0.0f, 1.0f));
+        const Vec2 offset{
+            randomRange(-7.0f, 7.0f) * visualScale,
+            randomRange(-5.0f, 3.0f) * visualScale,
+        };
+        Effect* smoke = spawnParticle(
+            position + offset,
+            {
+                randomRange(-8.0f, 8.0f) * visualScale,
+                randomRange(-48.0f, -28.0f) * visualScale,
+            },
+            randomRange(1.8f, 3.4f) * visualScale,
+            color,
+            randomRange(0.62f, 0.88f),
+            {0.0f, randomRange(-9.0f, -3.0f) * visualScale},
+            randomRange(0.65f, 1.10f),
+            EffectLayer::Foreground,
+            ParticleVisual::Circle);
+        if (smoke != nullptr) {
+            smoke->endRadius = smoke->startRadius * randomRange(1.7f, 2.6f);
+        }
+    }
+}
+
 void EffectSystem::spawnMaterialFloat(Vec2 position, Color color)
 {
     color.a = static_cast<unsigned char>(std::clamp(static_cast<int>(color.a), 40, 220));

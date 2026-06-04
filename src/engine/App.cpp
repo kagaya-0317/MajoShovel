@@ -1317,7 +1317,7 @@ void App::renderStartupFrame()
 
 std::filesystem::path App::screenshotDirectory() const
 {
-    return devSettingsRootPath() / "screenshots";
+    return std::filesystem::path(LR"(C:\Users\kgygn\Dropbox\ゲーム\MajoShovel)") / "screenshots";
 }
 
 std::filesystem::path App::makeScreenshotPath() const

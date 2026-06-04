@@ -6,9 +6,11 @@
 #include "game/ObjectImageRenderer.hpp"
 #include "game/ObjectVisualPose.hpp"
 #include "game/OrbitModifiers.hpp"
+#include "game/SpellRingSystem.hpp"
 #include "game/WorldIconRenderer.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cctype>
 #include <cmath>
 #include <cstddef>
@@ -26,11 +28,27 @@ enum class InlineIconKind {
     World,
 };
 
+enum class EnhancementBadgeKind {
+    Attack,
+    Dig,
+    Durability,
+    Lighten,
+    Enlarge,
+};
+
+struct EnhancementBadge {
+    EnhancementBadgeKind kind = EnhancementBadgeKind::Attack;
+    int count = 1;
+};
+
 constexpr std::string_view BrokenItemNamePrefix = "壊れた";
-constexpr Color BrokenItemImageTint{140, 140, 148, 220};
-constexpr Color BrokenItemFallbackColor{82, 82, 90, 255};
+constexpr Color BrokenItemImageTint{72, 72, 80, 238};
+constexpr Color BrokenItemFallbackColor{42, 42, 48, 255};
 constexpr Color InventoryEffectTextColor{255, 230, 150, 255};
 constexpr float TwoPi = 6.283185307f;
+constexpr float DetailLabelWidth = 106.0f;
+constexpr float DetailMinLineHeight = 31.0f;
+constexpr float DetailLineGap = 4.0f;
 
 struct InlineIconTag {
     InlineIconKind kind = InlineIconKind::Item;
@@ -99,6 +117,15 @@ std::string signedPercentText(double multiplier)
     const int percent = static_cast<int>(std::round((multiplier - 1.0) * 100.0));
     char buffer[32];
     std::snprintf(buffer, sizeof(buffer), "%+d%%", percent);
+    return buffer;
+}
+
+std::string signedWeightStopRatioText(double multiplier)
+{
+    const double delta = static_cast<double>(SpellRingSystem::weightStopRatioForPenaltyMultiplier(multiplier)) -
+        static_cast<double>(SpellRingSystem::BaseWeightStopRatio);
+    char buffer[32];
+    std::snprintf(buffer, sizeof(buffer), "%+.2f倍", delta);
     return buffer;
 }
 
@@ -193,8 +220,8 @@ std::string staffEquipmentEffectLine(
         line += "反射確率";
         line += signedAddText(value, "%");
     } else if (effect == "metal_weight_penalty_mul") {
-        line += "重量ペナルティ";
-        line += signedPercentText(multiplier);
+        line += "過積載停止";
+        line += signedWeightStopRatioText(multiplier);
     } else if (effect == "dig_power_mul") {
         line += "掘削力";
         line += signedPercentText(multiplier);
@@ -694,6 +721,147 @@ void drawExtraLines(
     for (const InventoryUiDetailExtraLine& line : extraLines) {
         drawUiDetailLine(renderer, panel, y, line.label, line.value, line.valueColor);
     }
+}
+
+Color enhancementBadgeColor(EnhancementBadgeKind kind)
+{
+    switch (kind) {
+    case EnhancementBadgeKind::Attack:
+        return {238, 76, 72, 255};
+    case EnhancementBadgeKind::Dig:
+        return {76, 154, 246, 255};
+    case EnhancementBadgeKind::Durability:
+        return {238, 204, 72, 255};
+    case EnhancementBadgeKind::Lighten:
+        return {72, 174, 96, 255};
+    case EnhancementBadgeKind::Enlarge:
+        return {142, 92, 214, 255};
+    }
+    return ui::Text;
+}
+
+std::vector<EnhancementBadge> enhancementBadgesFor(const InventoryUiItemStats& stats)
+{
+    std::vector<EnhancementBadge> badges;
+    if (stats.attackEnhanceLevel > 0) {
+        badges.push_back({EnhancementBadgeKind::Attack, stats.attackEnhanceLevel});
+    }
+    if (stats.digEnhanceLevel > 0) {
+        badges.push_back({EnhancementBadgeKind::Dig, stats.digEnhanceLevel});
+    }
+    if (stats.durabilityEnhanceLevel > 0) {
+        badges.push_back({EnhancementBadgeKind::Durability, stats.durabilityEnhanceLevel});
+    }
+    if (stats.weightModifier < 0.999) {
+        badges.push_back({EnhancementBadgeKind::Lighten, 1});
+    }
+    if (stats.sizeModifier > 1.001) {
+        badges.push_back({EnhancementBadgeKind::Enlarge, 1});
+    }
+    return badges;
+}
+
+float enhancementBadgeWidth(const EnhancementBadge& badge)
+{
+    if (badge.kind == EnhancementBadgeKind::Lighten || badge.kind == EnhancementBadgeKind::Enlarge) {
+        return 24.0f;
+    }
+    return badge.count >= 2 ? 36.0f : 24.0f;
+}
+
+void drawArrowEnhancementBadge(Renderer& renderer, UiRect rect, Color color, int count)
+{
+    const Vec2 center = rect.pos + rect.size * 0.5f;
+    const float arrowX = count >= 2 ? rect.pos.x + 10.0f : center.x;
+    const Color shadow{0, 0, 0, 120};
+    const Color stemColor = mixColor(color, {255, 255, 255, color.a}, 0.08f);
+    const std::array<Vec2, 3> shadowHead{{
+        {arrowX, rect.pos.y + 4.0f},
+        {arrowX - 6.0f, rect.pos.y + 12.0f},
+        {arrowX + 6.0f, rect.pos.y + 12.0f},
+    }};
+    const std::array<Vec2, 3> head{{
+        {arrowX, rect.pos.y + 3.0f},
+        {arrowX - 6.0f, rect.pos.y + 11.0f},
+        {arrowX + 6.0f, rect.pos.y + 11.0f},
+    }};
+    renderer.fillPolygon(shadowHead.data(), shadowHead.size(), shadow);
+    renderer.fillRect({arrowX - 3.0f, rect.pos.y + 10.0f}, {6.0f, 11.0f}, shadow);
+    renderer.fillPolygon(head.data(), head.size(), stemColor);
+    renderer.fillRect({arrowX - 3.0f, rect.pos.y + 9.0f}, {6.0f, 11.0f}, stemColor);
+    if (count >= 2) {
+        const std::string countText = std::to_string(count);
+        const Vec2 textSize = renderer.measureText(countText, 2);
+        const Vec2 textPos{
+            rect.pos.x + rect.size.x - textSize.x - 3.0f,
+            rect.pos.y + (rect.size.y - textSize.y) * 0.5f,
+        };
+        renderer.drawText(textPos + Vec2{1.0f, 1.0f}, countText, {0, 0, 0, 170}, 2);
+        renderer.drawText(textPos, countText, ui::Text, 2);
+    }
+}
+
+void drawSquareEnhancementBadge(Renderer& renderer, UiRect rect, Color color, std::string_view text)
+{
+    renderer.fillRect(rect.pos, rect.size, color);
+    const Vec2 textSize = renderer.measureText(text, 2);
+    const Vec2 textPos{
+        rect.pos.x + (rect.size.x - textSize.x) * 0.5f,
+        rect.pos.y + (rect.size.y - textSize.y) * 0.5f,
+    };
+    renderer.drawText(textPos + Vec2{1.0f, 1.0f}, text, {0, 0, 0, 150}, 2);
+    renderer.drawText(textPos, text, ui::Text, 2);
+}
+
+void drawEnhancementBadge(Renderer& renderer, UiRect rect, const EnhancementBadge& badge)
+{
+    const Color color = enhancementBadgeColor(badge.kind);
+    switch (badge.kind) {
+    case EnhancementBadgeKind::Attack:
+    case EnhancementBadgeKind::Dig:
+    case EnhancementBadgeKind::Durability:
+        drawArrowEnhancementBadge(renderer, rect, color, badge.count);
+        break;
+    case EnhancementBadgeKind::Lighten:
+        drawSquareEnhancementBadge(renderer, rect, color, "軽");
+        break;
+    case EnhancementBadgeKind::Enlarge:
+        drawSquareEnhancementBadge(renderer, rect, color, "大");
+        break;
+    }
+}
+
+void drawInventoryEnhancementLine(Renderer& renderer, UiRect panel, float& y, const InventoryUiItemStats& stats)
+{
+    constexpr float BadgeHeight = 24.0f;
+    constexpr float BadgeGap = 5.0f;
+    constexpr float RowGap = 5.0f;
+    const float labelX = panel.pos.x + ui::SubPanelPadding.x;
+    const float valueX = labelX + DetailLabelWidth;
+    const float valueMaxX = panel.pos.x + panel.size.x - ui::SubPanelPadding.x;
+    renderer.drawText({labelX, y}, "強化", ui::TextMuted, 2);
+
+    const std::vector<EnhancementBadge> badges = enhancementBadgesFor(stats);
+    if (badges.empty()) {
+        renderer.drawText({valueX, y}, "なし", ui::TextMuted, 2);
+        y += DetailMinLineHeight;
+        return;
+    }
+
+    float x = valueX;
+    float rowY = y;
+    float bottomY = y + BadgeHeight;
+    for (const EnhancementBadge& badge : badges) {
+        const float badgeWidth = enhancementBadgeWidth(badge);
+        if (x > valueX && x + badgeWidth > valueMaxX) {
+            x = valueX;
+            rowY += BadgeHeight + RowGap;
+        }
+        drawEnhancementBadge(renderer, {{x, rowY}, {badgeWidth, BadgeHeight}}, badge);
+        x += badgeWidth + BadgeGap;
+        bottomY = std::max(bottomY, rowY + BadgeHeight);
+    }
+    y += std::max(DetailMinLineHeight, bottomY - y + DetailLineGap);
 }
 
 }
@@ -1354,9 +1522,8 @@ void drawInventoryUiDetailPanel(
 
     drawUiDetailLine(renderer, panel, detailLineY, "重量", formatInventoryUiWeightText(*entry.item, stats));
 
-    if (options.showEnhanceCount && stats && stats->enhanceLevel > 0) {
-        std::snprintf(buffer, sizeof(buffer), "%d", stats->enhanceLevel);
-        drawUiDetailLine(renderer, panel, detailLineY, "強化回数", buffer);
+    if (options.showEnhanceCount && stats) {
+        drawInventoryEnhancementLine(renderer, panel, detailLineY, *stats);
     }
 
     drawExtraLines(renderer, panel, detailLineY, extraLines, options.showExtraLineSeparator);

@@ -34,6 +34,13 @@ enum class RingMotionEventKind {
 
 constexpr int SpellRingCount = 3;
 
+struct RingWorkshopModifiers {
+    float throwDistanceMultiplier = 1.0f;
+    float throwCooldownMultiplier = 1.0f;
+    float weightStopRatioBonus = 0.0f;
+    int extraEquipSlots = 0;
+};
+
 struct RingMotionEvent {
     RingMotionEventKind kind = RingMotionEventKind::ThrowStart;
     int ringIndex = 0;
@@ -107,14 +114,19 @@ public:
     }};
     static constexpr float LevelRingScaleUpgradeAmount = 0.1f;
     static constexpr float LevelWeightLimitUpgradeAmount = 1.0f;
+    static constexpr float OverweightEquipLimitRatio = 2.0f;
+    static constexpr float BaseWeightStopRatio = 1.5f;
+    static constexpr float MaxWeightStopRatio = 2.0f;
     static float levelScaleMultiplierForPoints(int points);
     static float initialMaxEquippedWeightForRing(int ringIndex);
+    static float weightStopRatioForPenaltyMultiplier(double penaltyMultiplier);
 
     void initialize(const RuntimeBalance& balance);
     void update(Player& player, const Input& input, float dt, float totalTime, bool paused, bool blockPointerThrow, const RuntimeBalance& balance);
     void updatePresentation(const Player& player, float dt, const RuntimeBalance& balance);
     void resetRuntimeStateAtPlayer(const Player& player, const RuntimeBalance& balance);
     void clearActionFlashTimers();
+    void setWorkshopModifiers(const RingWorkshopModifiers& modifiers);
     void upgradeRadius(float factor);
     void upgradeSpeed(float factor);
     void upgradeRadiusForRing(int ringIndex, float factor);
@@ -180,7 +192,6 @@ public:
     void switchActiveRing(int delta);
     void applyObjectParameters(const ObjectCatalog& catalog);
     void removeBrokenItems();
-    void resetBaseWeightToCurrent();
     void setRingShapeForIndex(int ringIndex, RingShape shape);
     RingShape ringShapeForIndex(int ringIndex) const;
     RingShape activeRingShape() const;
@@ -221,9 +232,11 @@ public:
     float totalEquippedWeightForRing(int ringIndex) const;
     float maxEquippedWeight() const;
     float maxEquippedWeightForRing(int ringIndex) const;
+    float overweightEquipLimitForRing(int ringIndex) const;
     int maxItemCount() const;
     float weightSpeedMultiplier() const;
     float weightSpeedMultiplierForRing(int ringIndex) const;
+    float weightStopRatioForRing(int ringIndex) const;
     double effectivePowerMultiplier() const { return orbitModifiers_.powerMultiplier; }
     double effectiveGravityMultiplier() const { return orbitModifiers_.gravityMultiplier; }
     double effectiveAntigravityMultiplier() const { return orbitModifiers_.antigravityMultiplier; }
@@ -285,7 +298,6 @@ private:
         InitialMaxEquippedWeightsByRing[1],
         InitialMaxEquippedWeightsByRing[2],
     }};
-    std::array<float, SpellRingCount> baseEquippedWeights_{};
     std::array<float, SpellRingCount> baseAngles_{};
     std::array<float, SpellRingCount> shapeRotations_{};
     float capturedHealTimer_ = 0.0f;
@@ -295,6 +307,7 @@ private:
     int throwingRingIndex_ = -1;
     OrbitModifiers orbitModifiers_{};
     EquipmentModifiers equipmentModifiers_{};
+    RingWorkshopModifiers workshopModifiers_{};
     RingOrbitTuning orbitTuning_{};
     std::vector<RingItemBreakEvent> itemBreakEvents_;
     std::vector<RingMotionEvent> motionEvents_;

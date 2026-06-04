@@ -2937,7 +2937,6 @@ void Game::restoreInventoryCarryState(const InventoryCarryState& state)
     spellRing_.applyObjectParameters(objectCatalog_);
     spellRing_.normalizeItemPlacements();
     observeRingItemInstanceIds();
-    spellRing_.resetBaseWeightToCurrent();
     refreshOrbitEffects();
 }
 
@@ -3484,7 +3483,6 @@ void Game::startIntroTutorialDungeon()
     refreshEquipmentModifiers();
     applyPermanentUpgrades();
     spellRing_.applyObjectParameters(objectCatalog_);
-    spellRing_.resetBaseWeightToCurrent();
     refreshOrbitEffects();
     spellRing_.resetRuntimeStateAtPlayer(player_, balance_);
 
@@ -3564,7 +3562,6 @@ void Game::equipIntroTutorialStartingTools()
     applyPermanentUpgrades();
     spellRing_.applyObjectParameters(objectCatalog_);
     observeRingItemInstanceIds();
-    spellRing_.resetBaseWeightToCurrent();
     refreshOrbitEffects();
     beginDungeonRingIntro();
     introTutorialPhase_ = IntroTutorialPhase::ShovelRingIntro;
@@ -3587,7 +3584,6 @@ void Game::addIntroTutorialTorchToRing()
     applyPermanentUpgrades();
     spellRing_.applyObjectParameters(objectCatalog_);
     observeRingItemInstanceIds();
-    spellRing_.resetBaseWeightToCurrent();
     refreshOrbitEffects();
     beginDungeonRingIntro();
     introTutorialPhase_ = IntroTutorialPhase::TorchRingIntro;
@@ -9114,8 +9110,17 @@ void Game::updateOrbitAreaEffects(float dt, std::vector<EffectDiscoveryEvent>& d
         item.hotAirFxTimer = std::max(0.0f, item.hotAirFxTimer - dt);
         item.windPushFxTimer = std::max(0.0f, item.windPushFxTimer - dt);
         if (item.broken()) {
+            item.brokenSmokeTimer -= dt;
+            if (item.brokenSmokeTimer <= 0.0f) {
+                const float itemScale = std::clamp(item.hitRadius / 12.0f, 0.7f, 1.35f);
+                const Vec2 smokePosition = item.worldPosition + Vec2{0.0f, -std::max(8.0f, item.hitRadius * 0.55f)};
+                effects_.spawnBrokenItemSmoke(smokePosition, itemScale);
+                const float phase = std::sin(item.localAngle * 2.7f + item.worldPosition.x * 0.011f + item.worldPosition.y * 0.017f);
+                item.brokenSmokeTimer = 0.11f + (phase * 0.5f + 0.5f) * 0.05f;
+            }
             continue;
         }
+        item.brokenSmokeTimer = 0.0f;
 
         const ObjectDefinition* object = item.objectId.empty()
             ? nullptr

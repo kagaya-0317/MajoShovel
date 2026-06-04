@@ -1036,6 +1036,10 @@ bool Game::loadSaveData(const std::filesystem::path& path)
     int loadedWorkshopInitialRadiusLevel = 0;
     int loadedWorkshopInitialSpeedLevel = 0;
     int loadedWorkshopShiftDistanceLevel = 0;
+    int loadedWorkshopThrowDistanceLevel = 0;
+    int loadedWorkshopThrowCooldownLevel = 0;
+    int loadedWorkshopWeightPenaltyLevel = 0;
+    int loadedWorkshopEquipSlotLevel = 0;
     bool loadedMerchantRefreshPending = false;
     int loadedMerchantUpgradeLevel = 1;
     int loadedMerchantStockVersion = 0;
@@ -1107,6 +1111,14 @@ bool Game::loadSaveData(const std::filesystem::path& path)
             stream >> loadedWorkshopInitialSpeedLevel;
         } else if (key == "workshop_shift_distance_level") {
             stream >> loadedWorkshopShiftDistanceLevel;
+        } else if (key == "workshop_throw_distance_level") {
+            stream >> loadedWorkshopThrowDistanceLevel;
+        } else if (key == "workshop_throw_cooldown_level") {
+            stream >> loadedWorkshopThrowCooldownLevel;
+        } else if (key == "workshop_weight_penalty_level") {
+            stream >> loadedWorkshopWeightPenaltyLevel;
+        } else if (key == "workshop_equip_slot_level") {
+            stream >> loadedWorkshopEquipSlotLevel;
         } else if (key == "merchant_refresh_pending") {
             stream >> loadedMerchantRefreshPending;
         } else if (key == "merchant_upgrade_level") {
@@ -1778,7 +1790,6 @@ bool Game::loadSaveData(const std::filesystem::path& path)
     spellRing_.applyObjectParameters(objectCatalog_);
     spellRing_.normalizeItemPlacements();
     observeRingItemInstanceIds();
-    spellRing_.resetBaseWeightToCurrent();
     refreshEquipmentModifiers();
     refreshOrbitEffects();
     money_ = std::max(0, loadedMoney);
@@ -2001,6 +2012,10 @@ bool Game::loadSaveData(const std::filesystem::path& path)
     workshopInitialRadiusLevel_ = std::clamp(loadedWorkshopInitialRadiusLevel, 0, 5);
     workshopInitialSpeedLevel_ = std::clamp(loadedWorkshopInitialSpeedLevel, 0, 5);
     workshopShiftDistanceLevel_ = std::clamp(loadedWorkshopShiftDistanceLevel, 0, 5);
+    workshopThrowDistanceLevel_ = std::clamp(loadedWorkshopThrowDistanceLevel, 0, 5);
+    workshopThrowCooldownLevel_ = std::clamp(loadedWorkshopThrowCooldownLevel, 0, 5);
+    workshopWeightPenaltyLevel_ = std::clamp(loadedWorkshopWeightPenaltyLevel, 0, 5);
+    workshopEquipSlotLevel_ = std::clamp(loadedWorkshopEquipSlotLevel, 0, 5);
     merchantRefreshPending_ = loadedMerchantRefreshPending;
     merchantUpgradeLevel_ = std::clamp(loadedMerchantUpgradeLevel, 1, 7);
     merchantStockVersion_ = std::max(0, loadedMerchantStockVersion);
@@ -2075,6 +2090,10 @@ bool Game::saveSaveData(const std::filesystem::path& path, std::string& message)
     file << "workshop_initial_radius_level " << workshopInitialRadiusLevel_ << "\n";
     file << "workshop_initial_speed_level " << workshopInitialSpeedLevel_ << "\n";
     file << "workshop_shift_distance_level " << workshopShiftDistanceLevel_ << "\n";
+    file << "workshop_throw_distance_level " << workshopThrowDistanceLevel_ << "\n";
+    file << "workshop_throw_cooldown_level " << workshopThrowCooldownLevel_ << "\n";
+    file << "workshop_weight_penalty_level " << workshopWeightPenaltyLevel_ << "\n";
+    file << "workshop_equip_slot_level " << workshopEquipSlotLevel_ << "\n";
     file << "merchant_refresh_pending " << merchantRefreshPending_ << "\n";
     file << "merchant_upgrade_level " << merchantUpgradeLevel_ << "\n";
     file << "merchant_stock_version " << merchantStockVersion_ << "\n";

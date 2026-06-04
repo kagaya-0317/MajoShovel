@@ -519,7 +519,6 @@ RingPresetApplyResult RingPresetSystem::applyPreset(
 
     inventory = std::move(workingInventory);
     setWorkingActiveRing(workingRing, previousActiveRing);
-    workingRing.resetBaseWeightToCurrent();
     spellRing = std::move(workingRing);
 
     result.applied = true;

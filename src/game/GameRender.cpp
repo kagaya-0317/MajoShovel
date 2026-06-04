@@ -184,6 +184,17 @@ std::string weightModifierSuffix(double value)
     return "（" + signedWeightShort(value) + "）";
 }
 
+std::string weightStopRatioModifierSuffix(double multiplier)
+{
+    if (std::fabs(multiplier - 1.0) < 0.005) {
+        return {};
+    }
+    const float stopRatio = SpellRingSystem::weightStopRatioForPenaltyMultiplier(multiplier);
+    char buffer[48];
+    std::snprintf(buffer, sizeof(buffer), "（停止%.2f倍）", stopRatio);
+    return buffer;
+}
+
 void drawRingDetailLineWithModifier(
     Renderer& renderer,
     UiRect panel,
@@ -277,6 +288,20 @@ void drawRingDetailPanel(
         buffer,
         weightModifierSuffix(ringModifiers.ringWeightLimitAdd));
 
+    std::snprintf(
+        buffer,
+        sizeof(buffer),
+        "停止%.1f/限界%.1fkg",
+        spellRing.maxEquippedWeightForRing(ringIndex) * spellRing.weightStopRatioForRing(ringIndex),
+        spellRing.overweightEquipLimitForRing(ringIndex));
+    drawRingDetailLineWithModifier(
+        renderer,
+        panel,
+        y,
+        "過積載",
+        buffer,
+        weightStopRatioModifierSuffix(ringModifiers.metalWeightPenaltyMul));
+
     std::snprintf(buffer, sizeof(buffer), "%.2f", spellRing.weightSpeedMultiplierForRing(ringIndex));
     drawRingDetailLineWithModifier(
         renderer,
@@ -284,7 +309,7 @@ void drawRingDetailPanel(
         y,
         "重量補正",
         buffer,
-        percentModifierSuffix(ringModifiers.metalWeightPenaltyMul));
+        {});
 
 }
 
@@ -866,7 +891,7 @@ std::string ringPlacementUnavailableStatus(const InventorySystem& inventory, con
         return "リング満杯です";
     }
     if (!ringInventoryHasAnyAutoPlaceableItem(inventory, spellRing)) {
-        return "重量上限のため配置できません";
+        return "過積載限界のため配置できません";
     }
     return "この位置には配置できません";
 }
@@ -1736,13 +1761,15 @@ UiRect operationSettingsTabRect(int index)
 {
     const UiRect panel = optionsPanelRect();
     constexpr float Gap = 10.0f;
-    const float totalWidth = panel.size.x - 84.0f;
+    constexpr float WidthReduction = 70.0f;
+    constexpr float HeightReduction = 16.0f;
+    const float totalWidth = panel.size.x - 84.0f - WidthReduction;
     const float width = (totalWidth - Gap * static_cast<float>(OperationSettingsCategoryCount - 1)) /
         static_cast<float>(OperationSettingsCategoryCount);
     return {{
-        panel.pos.x + 42.0f + static_cast<float>(index) * (width + Gap),
+        panel.pos.x + 42.0f + WidthReduction * 0.5f + static_cast<float>(index) * (width + Gap),
         panel.pos.y + 164.0f,
-    }, {width, ui::ButtonHeight}};
+    }, {width, ui::ButtonHeight - HeightReduction}};
 }
 
 UiRect optionsFooterButtonRect(int index, int count, float width = 150.0f)

@@ -593,12 +593,12 @@ void SpellRingSystem::initialize(const RuntimeBalance& balance)
     angularSpeeds_.fill(balance.spellRingSpeed);
     orbitTuning_ = makeRingOrbitTuning(balance);
     maxEquippedWeights_ = SpellRingSystem::InitialMaxEquippedWeightsByRing;
-    resetBaseWeightToCurrent();
     baseAngles_.fill(0.0f);
     shapeRotations_.fill(0.0f);
     ringRuntime_ = {};
     orbitModifiers_ = OrbitModifiers{};
     equipmentModifiers_ = EquipmentModifiers{};
+    workshopModifiers_ = RingWorkshopModifiers{};
     capturedHealTimer_ = CapturedPeriodicHealInterval;
     enemyOrbitSpeedDebuffMultiplier_ = 1.0f;
     enemyOrbitSpeedDebuffTimer_ = 0.0f;
@@ -619,6 +619,18 @@ float SpellRingSystem::initialMaxEquippedWeightForRing(int ringIndex)
         return InitialMaxEquippedWeight;
     }
     return InitialMaxEquippedWeightsByRing[static_cast<std::size_t>(ringIndex)];
+}
+
+float SpellRingSystem::weightStopRatioForPenaltyMultiplier(double penaltyMultiplier)
+{
+    penaltyMultiplier = nonNegativeEquipmentMultiplier(penaltyMultiplier);
+    if (penaltyMultiplier <= 0.0) {
+        return MaxWeightStopRatio;
+    }
+
+    const float penaltyRange = BaseWeightStopRatio - 1.0f;
+    const float adjustedStopRatio = 1.0f + penaltyRange / static_cast<float>(penaltyMultiplier);
+    return std::clamp(adjustedStopRatio, 1.0f, MaxWeightStopRatio);
 }
 
 void SpellRingSystem::upgradeRadius(float factor)
@@ -833,6 +845,17 @@ void SpellRingSystem::clearActionFlashTimers()
     }
 }
 
+void SpellRingSystem::setWorkshopModifiers(const RingWorkshopModifiers& modifiers)
+{
+    workshopModifiers_.throwDistanceMultiplier = std::max(0.0f, modifiers.throwDistanceMultiplier);
+    workshopModifiers_.throwCooldownMultiplier = std::max(0.02f, modifiers.throwCooldownMultiplier);
+    workshopModifiers_.weightStopRatioBonus = std::clamp(
+        modifiers.weightStopRatioBonus,
+        0.0f,
+        MaxWeightStopRatio - BaseWeightStopRatio);
+    workshopModifiers_.extraEquipSlots = std::clamp(modifiers.extraEquipSlots, 0, 10);
+}
+
 void SpellRingSystem::updateActionFlashTimers(float dt)
 {
     const float safeDt = std::max(0.0f, dt);
@@ -869,10 +892,12 @@ void SpellRingSystem::update(Player& player, const Input& input, float dt, float
     const RingEquipmentModifiers& activeEquipment = equipmentModifiersForRing(activeRingIndex_);
     const float throwCooldown = scaledAtLeast(
         balance.spellRingThrowCooldown,
-        activeEquipment.ringThrowCooldownMul,
+        activeEquipment.ringThrowCooldownMul * workshopModifiers_.throwCooldownMultiplier,
         0.02f);
     const float throwSpeed = scaledNonNegative(balance.spellRingThrowSpeed, activeEquipment.ringThrowSpeedMul);
-    const float throwDistance = scaledNonNegative(balance.spellRingThrowDistance, activeEquipment.ringThrowDistanceMul);
+    const float throwDistance = scaledNonNegative(
+        balance.spellRingThrowDistance,
+        activeEquipment.ringThrowDistanceMul * workshopModifiers_.throwDistanceMultiplier);
     const float returnSpeed = scaledNonNegative(balance.spellRingReturnSpeed, activeEquipment.ringReturnSpeedMul);
 
     const double anchorStrength = std::max(
@@ -1193,13 +1218,13 @@ bool SpellRingSystem::canAddItemForRing(int ringIndex) const
 {
     return ringIndex >= 0 &&
         ringIndex < SpellRingCount &&
-        itemsByRing_[static_cast<std::size_t>(ringIndex)].size() < MaxSpellRingItems;
+        itemsByRing_[static_cast<std::size_t>(ringIndex)].size() < static_cast<std::size_t>(maxItemCount());
 }
 
 bool SpellRingSystem::canAddItemForRing(int ringIndex, const SpellRingItem& item) const
 {
     return canAddItemForRing(ringIndex) &&
-        totalEquippedWeightForRing(ringIndex) + std::max(0.0f, item.weight) <= maxEquippedWeightForRing(ringIndex);
+        totalEquippedWeightForRing(ringIndex) + std::max(0.0f, item.weight) <= overweightEquipLimitForRing(ringIndex);
 }
 
 bool SpellRingSystem::canPlaceItemAtAngle(int index, float angle) const
@@ -1640,9 +1665,9 @@ void SpellRingSystem::normalizeItemPlacements()
         std::vector<SpellRingItem> original = std::move(activeItems());
         std::vector<SpellRingItem>& normalized = activeItems();
         normalized.clear();
-        normalized.reserve(std::min(original.size(), MaxSpellRingItems));
+        normalized.reserve(std::min(original.size(), static_cast<std::size_t>(maxItemCount())));
         for (SpellRingItem& item : original) {
-            if (normalized.size() >= MaxSpellRingItems) {
+            if (normalized.size() >= static_cast<std::size_t>(maxItemCount())) {
                 break;
             }
             item.ringIndex = ringIndex;
@@ -1658,13 +1683,6 @@ void SpellRingSystem::normalizeItemPlacements()
         }
     }
     activeRingIndex_ = std::clamp(previousActiveRing, 0, SpellRingCount - 1);
-}
-
-void SpellRingSystem::resetBaseWeightToCurrent()
-{
-    for (int ringIndex = 0; ringIndex < SpellRingCount; ++ringIndex) {
-        baseEquippedWeights_[static_cast<std::size_t>(ringIndex)] = totalEquippedWeightForRing(ringIndex);
-    }
 }
 
 void SpellRingSystem::switchActiveRing(int delta)
@@ -1848,7 +1866,7 @@ float SpellRingSystem::cooldownRatio(const Player& player, const RuntimeBalance&
 {
     const float cooldown = scaledAtLeast(
         balance.spellRingThrowCooldown,
-        equipmentModifiersForRing(activeRingIndex_).ringThrowCooldownMul,
+        equipmentModifiersForRing(activeRingIndex_).ringThrowCooldownMul * workshopModifiers_.throwCooldownMultiplier,
         0.02f);
     return clamp(player.throwCooldownRemaining / cooldown, 0.0f, 1.0f);
 }
@@ -2062,9 +2080,14 @@ float SpellRingSystem::maxEquippedWeightForRing(int ringIndex) const
     return maxEquippedWeights_[static_cast<std::size_t>(ringIndex)];
 }
 
+float SpellRingSystem::overweightEquipLimitForRing(int ringIndex) const
+{
+    return maxEquippedWeightForRing(ringIndex) * OverweightEquipLimitRatio;
+}
+
 int SpellRingSystem::maxItemCount() const
 {
-    return static_cast<int>(MaxSpellRingItems);
+    return static_cast<int>(MaxSpellRingItems) + std::clamp(workshopModifiers_.extraEquipSlots, 0, 10);
 }
 
 float SpellRingSystem::weightSpeedMultiplier() const
@@ -2078,14 +2101,35 @@ float SpellRingSystem::weightSpeedMultiplierForRing(int ringIndex) const
         return 1.0f;
     }
 
-    const std::size_t index = static_cast<std::size_t>(ringIndex);
-    const RingEquipmentModifiers& equipment = equipmentModifiersForRing(ringIndex);
-    const float staffWeightAllowance = static_cast<float>(std::max(0.0, equipment.ringWeightLimitAdd));
-    const float excessWeight = std::max(
-        0.0f,
-        totalEquippedWeightForRing(ringIndex) - baseEquippedWeights_[index] - staffWeightAllowance);
-    const float penaltyRate = 0.035f * static_cast<float>(nonNegativeEquipmentMultiplier(equipment.metalWeightPenaltyMul));
-    return 1.0f / (1.0f + excessWeight * penaltyRate);
+    const float limit = maxEquippedWeightForRing(ringIndex);
+    if (limit <= 0.0f) {
+        return totalEquippedWeightForRing(ringIndex) <= 0.0f ? 1.0f : 0.0f;
+    }
+
+    const float weightRatio = totalEquippedWeightForRing(ringIndex) / limit;
+    if (weightRatio <= 1.0f) {
+        return 1.0f;
+    }
+
+    const float stopRatio = weightStopRatioForRing(ringIndex);
+    if (stopRatio <= 1.0f) {
+        return 0.0f;
+    }
+
+    const float progress = (weightRatio - 1.0f) / (stopRatio - 1.0f);
+    return std::clamp(1.0f - progress, 0.0f, 1.0f);
+}
+
+float SpellRingSystem::weightStopRatioForRing(int ringIndex) const
+{
+    if (ringIndex < 0 || ringIndex >= SpellRingCount) {
+        return BaseWeightStopRatio;
+    }
+
+    const float equipmentStopRatio = weightStopRatioForPenaltyMultiplier(
+        equipmentModifiersForRing(ringIndex).metalWeightPenaltyMul);
+    const float workshopStopRatio = BaseWeightStopRatio + workshopModifiers_.weightStopRatioBonus;
+    return std::clamp(std::max(equipmentStopRatio, workshopStopRatio), 1.0f, MaxWeightStopRatio);
 }
 
 bool SpellRingSystem::canPlaceItemAtAngle(const SpellRingItem&, float angle, int ignoreIndex, const RingOrbitTuning& tuning) const

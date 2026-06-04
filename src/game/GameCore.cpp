@@ -856,7 +856,6 @@ bool Game::advanceInitialize()
         refreshEquipmentModifiers();
         applyPermanentUpgrades();
         spellRing_.applyObjectParameters(objectCatalog_);
-        spellRing_.resetBaseWeightToCurrent();
         refreshOrbitEffects();
         initializeJob_.step = InitializeStep::LoadSave;
         break;
@@ -1306,7 +1305,6 @@ void Game::buildWorldForRun(bool captureRunStartInventory)
     refreshEquipmentModifiers();
     applyPermanentUpgrades();
     spellRing_.applyObjectParameters(objectCatalog_);
-    spellRing_.resetBaseWeightToCurrent();
     refreshOrbitEffects();
     // Future connection: TileMap chunk initialization will consult
     // currentStageDefinition().terrainProfile and terrainHardnessMultiplier.
@@ -1420,7 +1418,6 @@ void Game::advanceWorldBuildOneStep()
         refreshEquipmentModifiers();
         applyPermanentUpgrades();
         spellRing_.applyObjectParameters(objectCatalog_);
-        spellRing_.resetBaseWeightToCurrent();
         refreshOrbitEffects();
         worldBuildJob_.step = WorldBuildStep::WarmInitialTiles;
         break;
@@ -1892,6 +1889,21 @@ void Game::requestBaseAreaCrossfade(BaseArea targetArea, Vec2 playerPosition, Ve
     playAudioSe(AudioSeTransition);
 }
 
+void Game::requestBaseAreaFade(BaseArea targetArea, Vec2 playerPosition, Vec2 playerFacing, std::string status, bool closeBaseUi)
+{
+    if (screenTransition_.active()) {
+        return;
+    }
+
+    startScreenTransition(ScreenTransitionTarget::BaseArea, ScreenTransitionPhase::FadingOut);
+    screenTransition_.targetBaseArea = targetArea;
+    screenTransition_.targetBasePlayerPosition = playerPosition;
+    screenTransition_.targetBasePlayerFacing = playerFacing;
+    screenTransition_.targetBaseStatus = testPlayMode_ ? std::move(status) : std::string{};
+    screenTransition_.closeBaseUi = closeBaseUi;
+    playAudioSe(AudioSeTransition);
+}
+
 void Game::updateScreenTransition(float dt)
 {
     if (!screenTransition_.active()) {
@@ -1989,6 +2001,12 @@ void Game::applyScreenTransitionTarget(ScreenTransitionTarget target)
         baseArea_ = screenTransition_.targetBaseArea;
         basePlayerPosition_ = screenTransition_.targetBasePlayerPosition;
         basePlayerFacing_ = screenTransition_.targetBasePlayerFacing;
+        if (baseArea_ == BaseArea::Outdoor) {
+            baseOutdoorPlayerPosition_ = basePlayerPosition_;
+        }
+        if (screenTransition_.closeBaseUi) {
+            closeBaseFacilityScreens();
+        }
         resetPlayerFootstepDust();
         baseStatus_ = std::move(screenTransition_.targetBaseStatus);
         break;
@@ -2092,6 +2110,12 @@ void Game::startMiningFromBase(bool useLatestWarpPoint, bool forceRegenerate)
 void Game::applyPermanentUpgrades()
 {
     spellRing_.setEquipmentModifiers(equipmentModifiers_);
+    spellRing_.setWorkshopModifiers(RingWorkshopModifiers{
+        1.0f + static_cast<float>(workshopThrowDistanceLevel_) * 0.08f,
+        std::max(0.02f, 1.0f - static_cast<float>(workshopThrowCooldownLevel_) * 0.06f),
+        static_cast<float>(workshopWeightPenaltyLevel_) * 0.10f,
+        workshopEquipSlotLevel_ * 2,
+    });
     player_.level = std::clamp(player_.level, 1, PlayerMaxLevel);
     player_.xpToNext = playerXpToNextForLevel(player_.level, balance_);
     if (playerAtMaxLevel(player_)) {
@@ -2468,7 +2492,6 @@ bool Game::applyRingPresetShortcut(int presetIndex)
 
     spellRing_.applyObjectParameters(objectCatalog_);
     spellRing_.normalizeItemPlacements();
-    spellRing_.resetBaseWeightToCurrent();
     observeRingItemInstanceIds();
     refreshEquipmentModifiers();
     refreshOrbitEffects();

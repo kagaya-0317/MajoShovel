@@ -910,6 +910,16 @@ Vec2 homeInteriorEntryPosition(UiRect homeExitRect, float playerRadius)
     return position;
 }
 
+Vec2 baseHomeScreenDefaultPosition(float playerRadius)
+{
+    constexpr Vec2 DefaultPosition{640.0f, 360.0f};
+    const UiRect bounds = baseMapBounds();
+    return {
+        std::clamp(DefaultPosition.x, bounds.pos.x + playerRadius, bounds.pos.x + bounds.size.x - playerRadius),
+        std::clamp(DefaultPosition.y, bounds.pos.y + playerRadius, bounds.pos.y + bounds.size.y - playerRadius),
+    };
+}
+
 UiRect merchantSellSourceRect(int index, int tabCount = BaseItemSourceCount)
 {
     return baseItemSourceTabRect(index, 116.0f + MerchantSellSourceYOffset, tabCount);
@@ -1211,7 +1221,7 @@ std::string enemyContactAttackText(const EnemyDefinition& enemy)
 }
 
 constexpr int RingWorkshopActionCount = 2;
-constexpr int RingWorkshopUpgradeFutureCount = 4;
+constexpr int RingWorkshopUpgradeFutureCount = 0;
 constexpr int RingWorkshopUpgradeDisplayCount = RingWorkshopImplementedUpgradeCount + RingWorkshopUpgradeFutureCount;
 
 UiRect homeInteriorMapRect()
@@ -2953,7 +2963,6 @@ void Game::sellMerchantTarget(MerchantSellTarget target, int count)
 
     money_ += sellPrice(*item, &ringItems[static_cast<std::size_t>(target.ringItemIndex)]);
     ringItems.erase(ringItems.begin() + target.ringItemIndex);
-    spellRing_.resetBaseWeightToCurrent();
     refreshOrbitEffects();
     baseSellSelection_ = std::clamp(baseSellSelection_, 0, std::max(0, static_cast<int>(ringItems.size()) - 1));
     baseStatus_ = "売却しました";
@@ -3472,13 +3481,21 @@ int Game::processingOreCost(ProcessingTarget target, ProcessingMode mode) const
 std::vector<Game::ProcessingMode> Game::processingCommandModes(ProcessingTarget target) const
 {
     (void)target;
+    constexpr std::array<ProcessingMode, BaseProcessingModeCount - 1> CommandOrder{{
+        ProcessingMode::Attack,
+        ProcessingMode::Dig,
+        ProcessingMode::Durability,
+        ProcessingMode::Lighten,
+        ProcessingMode::Enlarge,
+        ProcessingMode::ResetEnhancement,
+    }};
     std::vector<ProcessingMode> modes;
-    modes.reserve(BaseProcessingModeCount - 1);
-    for (int i = 0; i < BaseProcessingModeCount; ++i) {
-        const ProcessingMode mode = static_cast<ProcessingMode>(i);
-        if (mode != ProcessingMode::Repair) {
-            modes.push_back(mode);
+    modes.reserve(CommandOrder.size());
+    for (ProcessingMode mode : CommandOrder) {
+        if (!processingModeUnlocked(mode)) {
+            continue;
         }
+        modes.push_back(mode);
     }
     return modes;
 }
@@ -4162,7 +4179,6 @@ void Game::applyProcessingTarget(ProcessingTarget target, ProcessingMode mode)
         const bool spentOre = inventory_.materials().spend(MaterialType::EnhancementOre, oreCost);
         (void)spentOre;
     }
-    spellRing_.resetBaseWeightToCurrent();
     refreshOrbitEffects();
     const std::vector<SpellRingItem>& ringItemsAfter = spellRing_.itemsForRing(target.ringIndex);
     const ProcessingResultSnapshot afterSnapshot =
@@ -4680,7 +4696,6 @@ void Game::depositStorageTarget(StorageTransferTarget target, int count)
         std::move(instance),
     });
     ringItems.erase(ringItems.begin() + target.ringItemIndex);
-    spellRing_.resetBaseWeightToCurrent();
     refreshOrbitEffects();
     baseStorageDepositSelection_ = std::clamp(baseStorageDepositSelection_, 0, std::max(0, static_cast<int>(ringItems.size()) - 1));
     baseStatus_ = "収納箱にしまいました";
@@ -4820,7 +4835,6 @@ void Game::depositAllStorageItems()
 
     syncWarehouseDisplaySlots();
     if (ringChanged) {
-        spellRing_.resetBaseWeightToCurrent();
         refreshOrbitEffects();
     }
     syncEncyclopediaFromInventoryAndRing();
@@ -5161,6 +5175,32 @@ bool Game::upgradeMaxed(int index) const
     return maxLevel <= 0 || upgradeLevel(index) >= maxLevel;
 }
 
+void Game::closeBaseFacilityScreens()
+{
+    baseMiningStartChoiceActive_ = false;
+    baseWarpPointSelectActive_ = false;
+    baseRegenerateConfirm_ = {};
+    baseBrokenRingDepartureConfirm_ = {};
+    baseStorageActive_ = false;
+    baseStorageMode_ = StorageUiMode::Closed;
+    baseStorageQuantityDialog_ = {};
+    baseStorageQuantityPending_ = {};
+    closeUiCommandMenu(baseStorageCommandMenu_);
+    baseSellActive_ = false;
+    baseMerchantMode_ = MerchantUiMode::Closed;
+    closeUiCommandMenu(baseMerchantSellCommandMenu_);
+    closeUiCommandMenu(baseMerchantBuyCommandMenu_);
+    baseUpgradeActive_ = false;
+    baseResultDialog_ = {};
+    baseProcessingUiMode_ = ProcessingUiMode::Closed;
+    closeUiCommandMenu(baseProcessingCommandMenu_);
+    baseProcessingConfirm_ = {};
+    baseRingWorkshopActive_ = false;
+    baseRingWorkshopMode_ = RingWorkshopMode::ChooseAction;
+    baseBookshelfActive_ = false;
+    baseDiaryActive_ = false;
+}
+
 void Game::buyUpgrade(int index)
 {
     if (!upgradeImplemented(index)) {
@@ -5229,6 +5269,15 @@ void Game::buyUpgrade(int index)
     }
     const int afterLevel = upgradeLevel(index);
     baseStatus_.clear();
+    if (index == 3 && beforeLevel == 0 && afterLevel > beforeLevel) {
+        requestBaseAreaFade(
+            BaseArea::Outdoor,
+            baseHomeScreenDefaultPosition(balance_.playerRadius),
+            {0.0f, 1.0f},
+            "リング工房を建設しました",
+            true);
+        return;
+    }
     openUiResultDialog(
         baseResultDialog_,
         "強化完了",
@@ -5348,6 +5397,14 @@ const char* Game::ringWorkshopUpgradeName(RingWorkshopUpgrade upgrade) const
         return "初期リング速度強化";
     case RingWorkshopUpgrade::ShiftDistance:
         return "ずらし距離強化";
+    case RingWorkshopUpgrade::ThrowDistance:
+        return "リング投げ距離強化";
+    case RingWorkshopUpgrade::ThrowCooldown:
+        return "リング投げクールダウン短縮";
+    case RingWorkshopUpgrade::WeightPenalty:
+        return "リング重量ペナルティ軽減";
+    case RingWorkshopUpgrade::EquipSlot:
+        return "リング装着枠増加";
     }
     return "";
 }
@@ -5361,6 +5418,14 @@ int Game::ringWorkshopUpgradeLevel(RingWorkshopUpgrade upgrade) const
         return workshopInitialSpeedLevel_;
     case RingWorkshopUpgrade::ShiftDistance:
         return workshopShiftDistanceLevel_;
+    case RingWorkshopUpgrade::ThrowDistance:
+        return workshopThrowDistanceLevel_;
+    case RingWorkshopUpgrade::ThrowCooldown:
+        return workshopThrowCooldownLevel_;
+    case RingWorkshopUpgrade::WeightPenalty:
+        return workshopWeightPenaltyLevel_;
+    case RingWorkshopUpgrade::EquipSlot:
+        return workshopEquipSlotLevel_;
     }
     return 0;
 }
@@ -5397,6 +5462,14 @@ float Game::ringWorkshopUpgradeCurrentValue(RingWorkshopUpgrade upgrade) const
         return effectiveInitialRingSpeedForRing(0, levelRingUpgradePoints_[0].speed);
     case RingWorkshopUpgrade::ShiftDistance:
         return effectiveRingShiftDistance();
+    case RingWorkshopUpgrade::ThrowDistance:
+        return balance_.spellRingThrowDistance * (1.0f + static_cast<float>(workshopThrowDistanceLevel_) * 0.08f);
+    case RingWorkshopUpgrade::ThrowCooldown:
+        return balance_.spellRingThrowCooldown * std::max(0.02f, 1.0f - static_cast<float>(workshopThrowCooldownLevel_) * 0.06f);
+    case RingWorkshopUpgrade::WeightPenalty:
+        return SpellRingSystem::BaseWeightStopRatio + static_cast<float>(workshopWeightPenaltyLevel_) * 0.10f;
+    case RingWorkshopUpgrade::EquipSlot:
+        return static_cast<float>(24 + workshopEquipSlotLevel_ * 2);
     }
     return 0.0f;
 }
@@ -5422,6 +5495,14 @@ float Game::ringWorkshopUpgradeNextValue(RingWorkshopUpgrade upgrade) const
     }
     case RingWorkshopUpgrade::ShiftDistance:
         return balance_.spellRingShiftDistance + static_cast<float>(currentLevel + 1) * 8.0f;
+    case RingWorkshopUpgrade::ThrowDistance:
+        return balance_.spellRingThrowDistance * (1.0f + static_cast<float>(currentLevel + 1) * 0.08f);
+    case RingWorkshopUpgrade::ThrowCooldown:
+        return balance_.spellRingThrowCooldown * std::max(0.02f, 1.0f - static_cast<float>(currentLevel + 1) * 0.06f);
+    case RingWorkshopUpgrade::WeightPenalty:
+        return SpellRingSystem::BaseWeightStopRatio + static_cast<float>(currentLevel + 1) * 0.10f;
+    case RingWorkshopUpgrade::EquipSlot:
+        return static_cast<float>(24 + (currentLevel + 1) * 2);
     }
     return 0.0f;
 }
@@ -5454,6 +5535,18 @@ void Game::buyRingWorkshopUpgrade(RingWorkshopUpgrade upgrade)
         break;
     case RingWorkshopUpgrade::ShiftDistance:
         ++workshopShiftDistanceLevel_;
+        break;
+    case RingWorkshopUpgrade::ThrowDistance:
+        ++workshopThrowDistanceLevel_;
+        break;
+    case RingWorkshopUpgrade::ThrowCooldown:
+        ++workshopThrowCooldownLevel_;
+        break;
+    case RingWorkshopUpgrade::WeightPenalty:
+        ++workshopWeightPenaltyLevel_;
+        break;
+    case RingWorkshopUpgrade::EquipSlot:
+        ++workshopEquipSlotLevel_;
         break;
     }
     applyPermanentUpgrades();
@@ -5881,7 +5974,6 @@ bool Game::grantBaseMiningRescueTool(std::string_view objectId)
         for (int ringIndex = 0; ringIndex < ringCount; ++ringIndex) {
             SpellRingAddResult addResult{};
             if (spellRing_.addObjectItemToRing(ringIndex, *item, &addResult)) {
-                spellRing_.resetBaseWeightToCurrent();
                 refreshOrbitEffects();
                 syncEncyclopediaFromInventoryAndRing();
                 return true;
@@ -5906,7 +5998,6 @@ bool Game::grantBaseMiningRescueTool(std::string_view objectId)
     fallbackRingItem.ringIndex = 0;
     fallbackRingItem.localAngle = static_cast<float>(ringItems.size()) * Pi * 0.618f;
     ringItems.push_back(std::move(fallbackRingItem));
-    spellRing_.resetBaseWeightToCurrent();
     refreshOrbitEffects();
     syncEncyclopediaFromInventoryAndRing();
     return true;
@@ -9757,10 +9848,20 @@ void Game::renderBaseScreen(Renderer& renderer) const
                 switch (upgrade) {
                 case RingWorkshopUpgrade::InitialRadius:
                 case RingWorkshopUpgrade::ShiftDistance:
+                case RingWorkshopUpgrade::ThrowDistance:
                     std::snprintf(valueBuffer, sizeof(valueBuffer), "%.0fpx", value);
                     break;
                 case RingWorkshopUpgrade::InitialSpeed:
                     std::snprintf(valueBuffer, sizeof(valueBuffer), "%.2f", value);
+                    break;
+                case RingWorkshopUpgrade::ThrowCooldown:
+                    std::snprintf(valueBuffer, sizeof(valueBuffer), "%.2fs", value);
+                    break;
+                case RingWorkshopUpgrade::WeightPenalty:
+                    std::snprintf(valueBuffer, sizeof(valueBuffer), "%.2f倍", value);
+                    break;
+                case RingWorkshopUpgrade::EquipSlot:
+                    std::snprintf(valueBuffer, sizeof(valueBuffer), "%.0f枠", value);
                     break;
                 }
                 return std::string(valueBuffer);
