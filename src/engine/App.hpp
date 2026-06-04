@@ -13,6 +13,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <string>
+#include <string_view>
 
 namespace majo {
 
@@ -27,6 +28,8 @@ public:
 
 private:
     bool loadAssets();
+    bool loadGameCursor(std::string_view path);
+    void unloadGameCursor();
     void configureAssetWatcher();
     void setRuntimeHotReloadEnabled(bool enabled);
     void checkAssetHotReload();
@@ -64,6 +67,7 @@ private:
 
     SDL_Window* window_ = nullptr;
     SDL_Renderer* sdlRenderer_ = nullptr;
+    SDL_Cursor* gameCursor_ = nullptr;
     Renderer* renderer_ = nullptr;
     AudioEngine audio_;
     SettingsStore settingsStore_;

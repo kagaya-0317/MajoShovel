@@ -2524,6 +2524,22 @@ bool Renderer::loadGuidedTexture(
                 static_cast<float>(right - x),
                 static_cast<float>(bottom - y),
             };
+            int contentLeft = right;
+            int contentRight = x - 1;
+            for (int py = y; py < bottom; ++py) {
+                for (int px = x; px < right; ++px) {
+                    const auto* pixel = pixels.data() + (static_cast<std::size_t>(py) * static_cast<std::size_t>(width) + static_cast<std::size_t>(px)) * 4U;
+                    if (!isGuide(pixel) && pixel[3] > 16) {
+                        contentLeft = std::min(contentLeft, px);
+                        contentRight = std::max(contentRight, px);
+                    }
+                }
+            }
+            const std::size_t cellIndex = static_cast<std::size_t>(row * columns + col);
+            if (contentRight >= contentLeft) {
+                loaded.contentLeftInsets[cellIndex] = static_cast<float>(contentLeft - x);
+                loaded.contentRightInsets[cellIndex] = static_cast<float>(right - 1 - contentRight);
+            }
         }
     }
     unloadGuidedTexture(target);
@@ -2975,14 +2991,6 @@ void Renderer::drawUiButtonFrame(Vec2 pos, float width, int variant, Color tint)
     drawHorizontalSliceRow(uiButtonTexture_, std::clamp(variant, 0, 2), pos, width, tint);
 }
 
-void Renderer::drawUiButtonFrame(Vec2 pos, Vec2 size, int variant, Color tint)
-{
-    if (!hasUiButtonTexture()) {
-        return;
-    }
-    drawHorizontalSliceRow(uiButtonTexture_, std::clamp(variant, 0, 2), pos, size, tint);
-}
-
 void Renderer::drawUiTabFrame(Vec2 pos, Vec2 size, bool selected, Color tint)
 {
     if (!hasUiTabTexture()) {
@@ -3010,6 +3018,12 @@ void Renderer::drawUiHorizontalTabs(
 
     auto cell = [&](int row, int col) -> RectF {
         return tabs.cells[static_cast<std::size_t>(row * tabs.columns + col)];
+    };
+    auto contentLeftInset = [&](int row, int col) {
+        return tabs.contentLeftInsets[static_cast<std::size_t>(row * tabs.columns + col)];
+    };
+    auto contentRightInset = [&](int row, int col) {
+        return tabs.contentRightInsets[static_cast<std::size_t>(row * tabs.columns + col)];
     };
     auto rowFor = [&](bool isSelected) {
         return isSelected ? 1 : 0;
@@ -3067,16 +3081,33 @@ void Renderer::drawUiHorizontalTabs(
         const int row = rowFor(isSelected);
         const float left = positions[i].x;
         const float right = positions[i].x + sizes[i].x;
-        const float bodyLeft = i == 0 ? left + std::min(leftCapWidth, sizes[i].x) : jointCenterX(i - 1) + jointHalfWidth;
-        const float bodyRight = i == count - 1 ? right - std::min(rightCapWidth, sizes[i].x) : jointCenterX(i) - jointHalfWidth;
+        const float leftCapLayoutWidth = std::max(0.0f, leftCapWidth - contentLeftInset(row, 0));
+        const float rightCapLayoutWidth = std::max(0.0f, rightCapWidth - contentRightInset(row, 4));
+        const float bodyLeft = i == 0 ? left + std::min(leftCapLayoutWidth, sizes[i].x) : jointCenterX(i - 1) + jointHalfWidth;
+        const float bodyRight = i == count - 1 ? right - std::min(rightCapLayoutWidth, sizes[i].x) : jointCenterX(i) - jointHalfWidth;
 
         if (i == 0) {
-            const float capWidth = std::min(leftCapWidth, sizes[i].x);
-            drawTextureRegion(tabs.texture, cell(row, 0), {left, rowTop(i, row)}, {capWidth, tabs.rowHeights[static_cast<std::size_t>(row)]}, tints[i]);
+            const RectF source = cell(row, 0);
+            const float sourceInset = std::min(contentLeftInset(row, 0), source.w);
+            const float capWidth = std::min(std::max(0.0f, source.w - sourceInset), sizes[i].x);
+            drawTextureRegion(
+                tabs.texture,
+                {source.x + sourceInset, source.y, capWidth, source.h},
+                {left, rowTop(i, row)},
+                {capWidth, tabs.rowHeights[static_cast<std::size_t>(row)]},
+                tints[i]);
         }
         if (i == count - 1) {
-            const float capWidth = std::min(rightCapWidth, sizes[i].x);
-            drawTextureRegion(tabs.texture, cell(row, 4), {right - capWidth, rowTop(i, row)}, {capWidth, tabs.rowHeights[static_cast<std::size_t>(row)]}, tints[i]);
+            const RectF source = cell(row, 4);
+            const float sourceInset = std::min(contentRightInset(row, 4), source.w);
+            const float sourceWidth = std::max(0.0f, source.w - sourceInset);
+            const float capWidth = std::min(sourceWidth, sizes[i].x);
+            drawTextureRegion(
+                tabs.texture,
+                {source.x + sourceWidth - capWidth, source.y, capWidth, source.h},
+                {right - capWidth, rowTop(i, row)},
+                {capWidth, tabs.rowHeights[static_cast<std::size_t>(row)]},
+                tints[i]);
         }
         drawBody(i, bodyLeft, bodyRight);
     }

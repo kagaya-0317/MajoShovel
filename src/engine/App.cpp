@@ -12,16 +12,26 @@
 #include <cmath>
 #include <ctime>
 #include <cstdlib>
+#include <cstring>
 #include <exception>
 #include <filesystem>
 #include <fstream>
 #include <iomanip>
+#include <memory>
 #include <optional>
 #include <sstream>
 #include <string>
 #include <string_view>
 #include <system_error>
 #include <vector>
+
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#include <gdiplus.h>
+#endif
 
 namespace majo {
 
@@ -32,6 +42,108 @@ constexpr float AutoSimulationMaxDebtSeconds = 0.75f;
 constexpr int AutoSimulationMaxStepsPerFrame = 16;
 constexpr int LogicalScreenWidth = balance::ScreenWidth;
 constexpr int LogicalScreenHeight = balance::ScreenHeight;
+constexpr std::string_view GameCursorPath = "assets/UI_cursor.png";
+constexpr int GameCursorHotspotX = 3;
+constexpr int GameCursorHotspotY = 3;
+
+#ifdef _WIN32
+class GdiPlusSession {
+public:
+    GdiPlusSession()
+    {
+        Gdiplus::GdiplusStartupInput input;
+        initialized_ = Gdiplus::GdiplusStartup(&token_, &input, nullptr) == Gdiplus::Ok;
+    }
+
+    ~GdiPlusSession()
+    {
+        if (initialized_) {
+            Gdiplus::GdiplusShutdown(token_);
+        }
+    }
+
+    bool initialized() const { return initialized_; }
+
+private:
+    ULONG_PTR token_ = 0;
+    bool initialized_ = false;
+};
+
+bool utf8ToWide(std::string_view text, std::wstring& out)
+{
+    const int size = MultiByteToWideChar(CP_UTF8, 0, text.data(), static_cast<int>(text.size()), nullptr, 0);
+    if (size <= 0) {
+        return false;
+    }
+    out.resize(static_cast<std::size_t>(size));
+    return MultiByteToWideChar(CP_UTF8, 0, text.data(), static_cast<int>(text.size()), out.data(), size) == size;
+}
+#endif
+
+std::unique_ptr<SDL_Surface, decltype(&SDL_DestroySurface)> loadPngSurface(std::string_view path, std::string& outError)
+{
+    outError.clear();
+    const std::string pathString(path);
+
+#ifdef _WIN32
+    static GdiPlusSession gdiPlus;
+    if (!gdiPlus.initialized()) {
+        outError = "GDI+ startup failed";
+        return {nullptr, SDL_DestroySurface};
+    }
+
+    std::wstring widePath;
+    if (!utf8ToWide(pathString, widePath)) {
+        outError = "Invalid UTF-8 image path: " + pathString;
+        return {nullptr, SDL_DestroySurface};
+    }
+
+    Gdiplus::Bitmap bitmap(widePath.c_str());
+    if (bitmap.GetLastStatus() != Gdiplus::Ok) {
+        outError = "Failed to load PNG image: " + pathString;
+        return {nullptr, SDL_DestroySurface};
+    }
+
+    const int width = static_cast<int>(bitmap.GetWidth());
+    const int height = static_cast<int>(bitmap.GetHeight());
+    if (width <= 0 || height <= 0) {
+        outError = "Invalid PNG image size: " + pathString;
+        return {nullptr, SDL_DestroySurface};
+    }
+
+    auto surface = std::unique_ptr<SDL_Surface, decltype(&SDL_DestroySurface)>(
+        SDL_CreateSurface(width, height, SDL_PIXELFORMAT_BGRA32),
+        SDL_DestroySurface);
+    if (!surface) {
+        outError = std::string("SDL_CreateSurface failed: ") + SDL_GetError();
+        return {nullptr, SDL_DestroySurface};
+    }
+
+    Gdiplus::Rect rect(0, 0, width, height);
+    Gdiplus::BitmapData locked{};
+    if (bitmap.LockBits(&rect, Gdiplus::ImageLockModeRead, PixelFormat32bppARGB, &locked) != Gdiplus::Ok) {
+        outError = "Failed to lock PNG image pixels: " + pathString;
+        return {nullptr, SDL_DestroySurface};
+    }
+
+    auto* target = static_cast<unsigned char*>(surface->pixels);
+    const auto* source = static_cast<const unsigned char*>(locked.Scan0);
+    const int sourceStride = locked.Stride;
+    const int rowBytes = width * 4;
+    for (int y = 0; y < height; ++y) {
+        const int sourceY = sourceStride < 0 ? height - 1 - y : y;
+        const unsigned char* sourceRow = source + sourceY * std::abs(sourceStride);
+        unsigned char* targetRow = target + static_cast<std::size_t>(y) * static_cast<std::size_t>(surface->pitch);
+        std::memcpy(targetRow, sourceRow, static_cast<std::size_t>(rowBytes));
+    }
+    bitmap.UnlockBits(&locked);
+
+    return surface;
+#else
+    outError = "PNG image loading is only implemented on Windows";
+    return {nullptr, SDL_DestroySurface};
+#endif
+}
 
 InputHelpDeviceMode inputHelpDeviceModeForSetting(InputIconSetting setting)
 {
@@ -461,6 +573,7 @@ App::~App()
     audio_.shutdown();
     debugConsole_.shutdown();
     input_.shutdown();
+    unloadGameCursor();
     delete renderer_;
     if (sdlRenderer_) {
         SDL_DestroyRenderer(sdlRenderer_);
@@ -633,6 +746,9 @@ bool App::initialize(const char* title, int width, int height, bool testPlayMode
 bool App::loadAssets()
 {
     bool ok = true;
+    if (!loadGameCursor(GameCursorPath)) {
+        ok = false;
+    }
     if (!renderer_->loadPlayerSheet("assets/majo.png")) {
         logError(renderer_->lastAssetError());
         ok = false;
@@ -678,6 +794,43 @@ bool App::loadAssets()
         ok = false;
     }
     return ok;
+}
+
+bool App::loadGameCursor(std::string_view path)
+{
+    std::string error;
+    auto surface = loadPngSurface(path, error);
+    if (!surface) {
+        logError("Mouse cursor load failed: " + error);
+        return false;
+    }
+
+    SDL_Cursor* cursor = SDL_CreateColorCursor(surface.get(), GameCursorHotspotX, GameCursorHotspotY);
+    if (cursor == nullptr) {
+        logError(std::string("SDL_CreateColorCursor failed: ") + SDL_GetError());
+        return false;
+    }
+
+    SDL_Cursor* oldCursor = gameCursor_;
+    gameCursor_ = cursor;
+    if (!SDL_SetCursor(gameCursor_)) {
+        logWarning(std::string("SDL_SetCursor failed: ") + SDL_GetError());
+    }
+    if (oldCursor != nullptr) {
+        SDL_DestroyCursor(oldCursor);
+    }
+    return true;
+}
+
+void App::unloadGameCursor()
+{
+    if (gameCursor_ == nullptr) {
+        return;
+    }
+
+    SDL_SetCursor(SDL_GetDefaultCursor());
+    SDL_DestroyCursor(gameCursor_);
+    gameCursor_ = nullptr;
 }
 
 void App::configureAssetWatcher()
@@ -731,6 +884,10 @@ bool App::reloadAssetForPath(const std::string& changedPath)
     if (fileName == "ui_buttons.png") {
         return renderer_->loadUiButtonTexture("assets/UI_buttons.png");
     }
+    if (fileName == "ui_buttons2.png") {
+        renderer_->invalidateImage("assets/UI_buttons2.png");
+        return true;
+    }
     if (fileName == "ui_tubs.png") {
         return renderer_->loadUiTabTexture("assets/UI_tubs.png");
     }
@@ -739,6 +896,9 @@ bool App::reloadAssetForPath(const std::string& changedPath)
     }
     if (fileName == "ui_line.png") {
         return renderer_->loadUiLineTexture("assets/UI_line.png");
+    }
+    if (fileName == "ui_cursor.png") {
+        return loadGameCursor(GameCursorPath);
     }
     if (extension == ".otf" || extension == ".ttf") {
         bool ok = true;

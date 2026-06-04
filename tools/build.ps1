@@ -1,4 +1,4 @@
-param(
+﻿param(
     [string]$BuildDir = "",
     [string]$Config = "Release",
     [int]$Jobs = 0,
@@ -36,6 +36,17 @@ function Resolve-BuildPath([string]$Path) {
         if ([string]::IsNullOrWhiteSpace($base)) {
             $base = Join-Path $Root ".local"
         }
+
+        if ($env:CODEX_SHELL -eq "1") {
+            $codexBuildId = $env:CODEX_THREAD_ID
+            if ([string]::IsNullOrWhiteSpace($codexBuildId)) {
+                $codexBuildId = "pid-$PID"
+            }
+
+            $safeCodexBuildId = $codexBuildId -replace '[^A-Za-z0-9_.-]', '_'
+            return Join-Path $base "MajoShovel\build-codex\$safeCodexBuildId"
+        }
+
         return Join-Path $base "MajoShovel\build-nopch"
     }
 

@@ -51,6 +51,22 @@ inline std::mt19937& lootRuntimeRng()
     return rng;
 }
 
+inline Color ringWeightLimitTextColor(float weight, float limit)
+{
+    return weight > limit
+        ? Color{255, 206, 116, 255}
+        : Color{188, 202, 224, 255};
+}
+
+inline void drawRingWeightLimitText(Renderer& renderer, Vec2 pos, const SpellRingSystem& spellRing, int ringIndex)
+{
+    char buffer[64];
+    const float weight = spellRing.totalEquippedWeightForRing(ringIndex);
+    const float limit = spellRing.maxEquippedWeightForRing(ringIndex);
+    std::snprintf(buffer, sizeof(buffer), "重量 %.1f / %.1fkg", weight, limit);
+    renderer.drawText(pos, buffer, ringWeightLimitTextColor(weight, limit), 2);
+}
+
 
 namespace {
 template <typename T>

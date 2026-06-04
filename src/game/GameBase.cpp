@@ -1555,9 +1555,20 @@ Vec2 baseRingPreviewCenterFromGrid(UiRect(*slotRect)(int), float yOffset)
     };
 }
 
+Vec2 baseRingPreviewWeightTextPosFromGrid(UiRect(*slotRect)(int), float yOffset)
+{
+    const UiRect first = slotRect(0);
+    return first.pos + Vec2{18.0f, yOffset - 52.0f};
+}
+
 Vec2 baseProcessingRingPreviewCenter()
 {
     return baseRingPreviewCenterFromGrid(baseProcessingGridSlotRect, BaseProcessingRingYOffset);
+}
+
+Vec2 baseProcessingRingPreviewWeightTextPos()
+{
+    return baseRingPreviewWeightTextPosFromGrid(baseProcessingGridSlotRect, BaseProcessingRingYOffset);
 }
 
 Vec2 merchantSellRingPreviewCenter()
@@ -1565,9 +1576,19 @@ Vec2 merchantSellRingPreviewCenter()
     return baseRingPreviewCenterFromGrid(merchantGridSlotRect, MerchantSellRingYOffset);
 }
 
+Vec2 merchantSellRingPreviewWeightTextPos()
+{
+    return baseRingPreviewWeightTextPosFromGrid(merchantGridSlotRect, MerchantSellRingYOffset);
+}
+
 Vec2 storageRingPreviewCenter()
 {
     return baseRingPreviewCenterFromGrid(storageTransferGridSlotRect, MerchantSellRingYOffset) + Vec2{0.0f, -60.0f};
+}
+
+Vec2 storageRingPreviewWeightTextPos()
+{
+    return baseRingPreviewWeightTextPosFromGrid(storageTransferGridSlotRect, MerchantSellRingYOffset - 60.0f);
 }
 
 Vec2 baseRingPreviewCenterForShape(Vec2 center, RingShape shape)
@@ -1758,6 +1779,7 @@ void drawBaseRingPreview(
     const ObjectCatalog& objectCatalog,
     const RuntimeBalance& balance,
     Vec2 center,
+    Vec2 weightTextPos,
     int ringIndex,
     int selectedIndex,
     float previewScale,
@@ -1765,15 +1787,7 @@ void drawBaseRingPreview(
 {
     const std::vector<SpellRingItem>& items = spellRing.itemsForRing(ringIndex);
     const RingShape shape = spellRing.ringShapeForIndex(ringIndex);
-    const float previewRadius = baseRingPreviewRadius(shape, previewScale);
-    char weightBuffer[64];
-    const float ringWeight = spellRing.totalEquippedWeightForRing(ringIndex);
-    const float ringWeightLimit = spellRing.maxEquippedWeightForRing(ringIndex);
-    std::snprintf(weightBuffer, sizeof(weightBuffer), "重量 %.1f / %.1fkg", ringWeight, ringWeightLimit);
-    const Color weightTextColor = ringWeight > ringWeightLimit
-        ? Color{255, 206, 116, 255}
-        : Color{188, 202, 224, 255};
-    renderer.drawText(center + Vec2{-previewRadius - 52.0f, -previewRadius - 36.0f}, weightBuffer, weightTextColor, 2);
+    drawRingWeightLimitText(renderer, weightTextPos, spellRing, ringIndex);
 
     RingOrbitContext context = baseRingPreviewOrbitContext(spellRing, balance, ringIndex, 0, static_cast<int>(items.size()), previewScale);
     std::vector<Vec2> orbitPath = getRingPathSamplePoints(center, context, 160);
@@ -1841,6 +1855,7 @@ void drawBaseProcessingRingPreview(
         objectCatalog,
         balance,
         baseProcessingRingPreviewCenter(spellRing, ringIndex),
+        baseProcessingRingPreviewWeightTextPos(),
         ringIndex,
         selectedIndex,
         BaseRingPreviewScale,
@@ -1862,6 +1877,7 @@ void drawMerchantSellRingPreview(
         objectCatalog,
         balance,
         merchantSellRingPreviewCenter(spellRing, ringIndex),
+        merchantSellRingPreviewWeightTextPos(),
         ringIndex,
         selectedIndex,
         MerchantSellRingPreviewScale,
@@ -1883,6 +1899,7 @@ void drawStorageRingPreview(
         objectCatalog,
         balance,
         storageRingPreviewCenter(spellRing, ringIndex),
+        storageRingPreviewWeightTextPos(),
         ringIndex,
         selectedIndex,
         StorageRingPreviewScale,

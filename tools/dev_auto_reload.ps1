@@ -1,4 +1,4 @@
-param(
+﻿param(
     [string]$BuildDir = "",
     [string]$Config = "Release",
     [int]$Jobs = 0
@@ -96,6 +96,54 @@ function Test-ConfigureNeeded([string]$Path) {
     }
 
     return $false
+}
+
+function ConvertTo-CommandLineArgument([string]$Value) {
+    if ($null -eq $Value) {
+        return '""'
+    }
+
+    if ($Value.Length -eq 0 -or $Value.IndexOfAny([char[]]" `t`n`r`"") -ge 0) {
+        return '"' + ($Value -replace '"', '\"') + '"'
+    }
+
+    return $Value
+}
+
+function Join-CommandLineArguments([string[]]$Arguments) {
+    return ($Arguments | ForEach-Object { ConvertTo-CommandLineArgument $_ }) -join " "
+}
+
+function Invoke-NativeCommandWithProgress([string]$FilePath, [string[]]$Arguments, [string]$Activity) {
+    $process = New-Object System.Diagnostics.Process
+    $process.StartInfo.FileName = $FilePath
+    $process.StartInfo.Arguments = Join-CommandLineArguments $Arguments
+    $process.StartInfo.WorkingDirectory = $Root
+    $process.StartInfo.UseShellExecute = $false
+
+    $startedAt = Get-Date
+    $frames = @("|", "/", "-", "\")
+    $exitCode = 1
+    [void]$process.Start()
+
+    try {
+        while (-not $process.WaitForExit(200)) {
+            $elapsed = (Get-Date) - $startedAt
+            $frame = $frames[[int]($elapsed.TotalMilliseconds / 200) % $frames.Count]
+            $percent = [int](($elapsed.TotalSeconds * 8) % 100)
+            Write-Progress -Activity $Activity -Status "$frame elapsed $([int]$elapsed.TotalSeconds)s" -PercentComplete $percent
+        }
+        $exitCode = $process.ExitCode
+    }
+    finally {
+        Write-Progress -Activity $Activity -Completed
+        if (-not $process.HasExited) {
+            $process.Kill()
+        }
+        $process.Dispose()
+    }
+
+    return $exitCode
 }
 
 function Get-DevBuildConfigPath {
@@ -328,8 +376,8 @@ function Invoke-GameBuild {
         }
 
         Write-Host "[dev] building with $Jobs job(s)..."
-        & $cmake --build $BuildPath --config $Config --target $TargetName --parallel $Jobs
-        if ($LASTEXITCODE -ne 0) {
+        $buildExitCode = Invoke-NativeCommandWithProgress $cmake @("--build", $BuildPath, "--config", $Config, "--target", $TargetName, "--parallel", "$Jobs") "[dev] building with $Jobs job(s)"
+        if ($buildExitCode -ne 0) {
             Write-Host "[dev] build failed. Fix errors and save again."
             return $false
         }

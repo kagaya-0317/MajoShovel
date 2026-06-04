@@ -8,6 +8,14 @@
 - 新規作成・編集したテキストファイルは UTF-8 BOM 付きで保存する。
 - コード内の日本語コメント・文字列が文字化けしないよう、編集後に必要なら BOM を確認する。
 
+## Implementation Policy
+
+- とにかく綺麗に実装する。場当たり的な分岐やコピペで済ませず、後から読んだ時に意図と責務が分かる形にする。
+- 既に実装済みで使える関数、型、データ構造、描画処理、UI 部品、ユーティリティがある場合は、新しく似たものを作る前にそれを優先して使う。
+- 同じ意味の処理や定数を複数箇所に散らさない。共通化できるものは共通化し、仕様変更や調整時に個別で何箇所も直す必要が出ないようにする。
+- ただし、共通化のためだけに責務の違う処理を無理にまとめない。実際に重複を減らし、保守しやすくなる範囲で抽象化する。
+- 修正は既存の設計、命名、ファイル分割、ヘルパー配置に合わせる。新しい実装方針を持ち込む場合は、局所的な都合ではなく長期的な保守性を優先する。
+
 ## Build Timeout
 
 - Codex がビルドを実行する場合は、原則として 2 分程度でタイムアウトを設定する。
@@ -31,6 +39,11 @@ cmake --build --preset windows-release
 
 ビルド出力は Dropbox リポジトリ直下ではなく `%LOCALAPPDATA%\MajoShovel` 以下に置く。
 Dropbox の同期ロックを避け、リビルドを速く保つため。
+
+Codex が `tools\build.ps1` または `build_game.bat` で検証ビルドを実行する場合、既定の出力先は
+`%LOCALAPPDATA%\MajoShovel\build-codex\<CODEX_THREAD_ID>` になる。
+`dev_auto_reload.ps1` の `%LOCALAPPDATA%\MajoShovel\build-nopch` と衝突させないため、Codex 検証で
+`-BuildDir` を指定する場合も `build-nopch` は使わない。
 
 ### Parallel Builds
 

@@ -5161,13 +5161,7 @@ void Game::renderRingScreen(Renderer& renderer, float totalTime) const
 
     renderer.drawText(panel.pos + Vec2{48.0f, 160.0f}, "リング配置", {246, 248, 255, 255}, 3);
     const int activeRingIndex = spellRing_.activeRingIndex();
-    const float activeRingWeight = spellRing_.totalEquippedWeightForRing(activeRingIndex);
-    const float activeRingWeightLimit = spellRing_.maxEquippedWeightForRing(activeRingIndex);
-    std::snprintf(buffer, sizeof(buffer), "重量 %.1f / %.1fkg", activeRingWeight, activeRingWeightLimit);
-    const Color weightTextColor = activeRingWeight > activeRingWeightLimit
-        ? Color{255, 206, 116, 255}
-        : Color{188, 202, 224, 255};
-    renderer.drawText(panel.pos + Vec2{50.0f, 198.0f}, buffer, weightTextColor, 2);
+    drawRingWeightLimitText(renderer, panel.pos + Vec2{50.0f, 198.0f}, spellRing_, activeRingIndex);
     const Vec2 orbitCenter = ringUiOrbitCenter(spellRing_);
     std::vector<Vec2> orbitPath = getRingPathSamplePoints(
         spellRing_.center(),

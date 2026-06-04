@@ -154,6 +154,67 @@ void drawCapsuleOutline(Renderer& renderer, UiRect rect, float radius, Color col
     }
 }
 
+bool drawUiFlexibleButtonImage(Renderer& renderer, UiRect rect, bool selected, Color tint)
+{
+    constexpr std::string_view FlexibleButtonPath = "assets/UI_buttons2.png";
+    Vec2 imageSize{};
+    if (!renderer.getImageSize(FlexibleButtonPath, imageSize, TextureFilter::Nearest) ||
+        imageSize.x <= 0.0f || imageSize.y <= 0.0f) {
+        return false;
+    }
+
+    const ImageHandle handle = renderer.acquireImage(FlexibleButtonPath, TextureFilter::Nearest);
+    if (!handle.valid()) {
+        return false;
+    }
+
+    const float sx = imageSize.x / 300.0f;
+    const float sy = imageSize.y / 600.0f;
+    const float stateY = selected ? 300.0f * sy : 0.0f;
+    const float topHeight = selected ? 123.0f * sy : 120.0f * sy;
+    const float centerY = stateY + (selected ? 124.0f * sy : 121.0f * sy);
+    const float centerHeight = selected ? 55.0f * sy : 56.0f * sy;
+    const float bottomY = stateY + (selected ? 180.0f * sy : 178.0f * sy);
+    const float bottomHeight = selected ? 120.0f * sy : 122.0f * sy;
+    const float leftWidth = 120.0f * sx;
+    const float centerX = 121.0f * sx;
+    const float centerWidth = 56.0f * sx;
+    const float rightX = 178.0f * sx;
+    const float rightWidth = 122.0f * sx;
+
+    const float fixedWidth = leftWidth + rightWidth;
+    const float fixedHeight = topHeight + bottomHeight;
+    const float scaleX = fixedWidth > 0.0f ? std::min(1.0f, rect.size.x / fixedWidth) : 1.0f;
+    const float scaleY = fixedHeight > 0.0f ? std::min(1.0f, rect.size.y / fixedHeight) : 1.0f;
+    const float dstLeftWidth = leftWidth * scaleX;
+    const float dstRightWidth = rightWidth * scaleX;
+    const float dstTopHeight = topHeight * scaleY;
+    const float dstBottomHeight = bottomHeight * scaleY;
+    const float dstCenterWidth = std::max(0.0f, rect.size.x - dstLeftWidth - dstRightWidth);
+    const float dstCenterHeight = std::max(0.0f, rect.size.y - dstTopHeight - dstBottomHeight);
+    const float dstRightX = rect.pos.x + rect.size.x - dstRightWidth;
+    const float dstBottomY = rect.pos.y + rect.size.y - dstBottomHeight;
+
+    const ImageDrawOptions options{{0.0f, 0.0f}, tint};
+    const auto drawCell = [&](RectF source, Vec2 pos, Vec2 size) {
+        if (source.w <= 0.0f || source.h <= 0.0f || size.x <= 0.0f || size.y <= 0.0f) {
+            return;
+        }
+        renderer.drawImageRegion(handle, source, pos, size, options);
+    };
+
+    drawCell({0.0f, stateY, leftWidth, topHeight}, rect.pos, {dstLeftWidth, dstTopHeight});
+    drawCell({centerX, stateY, centerWidth, topHeight}, {rect.pos.x + dstLeftWidth, rect.pos.y}, {dstCenterWidth, dstTopHeight});
+    drawCell({rightX, stateY, rightWidth, topHeight}, {dstRightX, rect.pos.y}, {dstRightWidth, dstTopHeight});
+    drawCell({0.0f, centerY, leftWidth, centerHeight}, {rect.pos.x, rect.pos.y + dstTopHeight}, {dstLeftWidth, dstCenterHeight});
+    drawCell({centerX, centerY, centerWidth, centerHeight}, {rect.pos.x + dstLeftWidth, rect.pos.y + dstTopHeight}, {dstCenterWidth, dstCenterHeight});
+    drawCell({rightX, centerY, rightWidth, centerHeight}, {dstRightX, rect.pos.y + dstTopHeight}, {dstRightWidth, dstCenterHeight});
+    drawCell({0.0f, bottomY, leftWidth, bottomHeight}, {rect.pos.x, dstBottomY}, {dstLeftWidth, dstBottomHeight});
+    drawCell({centerX, bottomY, centerWidth, bottomHeight}, {rect.pos.x + dstLeftWidth, dstBottomY}, {dstCenterWidth, dstBottomHeight});
+    drawCell({rightX, bottomY, rightWidth, bottomHeight}, {dstRightX, dstBottomY}, {dstRightWidth, dstBottomHeight});
+    return true;
+}
+
 constexpr float CommandMenuItemHeight = 36.0f;
 constexpr float CommandMenuPaddingX = 28.0f;
 constexpr float CommandMenuPaddingY = 24.0f;
@@ -1076,9 +1137,8 @@ void drawUiButton(Renderer& renderer, UiRect rect, std::string_view label, bool 
 
 void drawUiFlexibleButtonFrame(Renderer& renderer, UiRect rect, bool selected, const UiButtonStyle& style)
 {
-    if (renderer.hasUiButtonTexture()) {
-        const Color tint = selected ? style.imageTintHot : style.imageTint;
-        renderer.drawUiButtonFrame(rect.pos, rect.size, selected ? 1 : 0, tint);
+    const Color tint = selected ? style.imageTintHot : style.imageTint;
+    if (drawUiFlexibleButtonImage(renderer, rect, selected, tint)) {
         return;
     }
 
@@ -2775,25 +2835,9 @@ void drawUiTabs(
 
             UiRect rect = rects[i];
             rect.size.y = ui::ButtonHeight;
-            const auto sameTabRow = [&](int leftIndex, int rightIndex) {
-                return leftIndex >= 0 &&
-                    rightIndex >= 0 &&
-                    leftIndex < itemCount &&
-                    rightIndex < itemCount &&
-                    std::abs(rects[leftIndex].pos.y - rects[rightIndex].pos.y) <= 1.0f &&
-                    rects[rightIndex].pos.x >= rects[leftIndex].pos.x;
-            };
-            const bool hasPreviousInRow = sameTabRow(i - 1, i);
-            const bool hasNextInRow = sameTabRow(i, i + 1);
-            const float leadingExtension = !hasPreviousInRow && hasNextInRow
-                ? std::max(0.0f, rects[i + 1].pos.x - (rect.pos.x + rect.size.x)) * 0.5f
-                : 0.0f;
-            const float trailingExtension = hasPreviousInRow && !hasNextInRow
-                ? std::max(0.0f, rect.pos.x - (rects[i - 1].pos.x + rects[i - 1].size.x)) * 0.5f
-                : 0.0f;
             const UiRect imageRect{
-                rect.pos - Vec2{imageOutset + leadingExtension, imageOutset},
-                rect.size + Vec2{imageOutset * 2.0f + leadingExtension + trailingExtension, imageOutset * 2.0f},
+                rect.pos - Vec2{imageOutset, imageOutset},
+                rect.size + Vec2{imageOutset * 2.0f, imageOutset * 2.0f},
             };
 
             Color tint = selected ? buttonStyle.imageTintHot : buttonStyle.imageTint;

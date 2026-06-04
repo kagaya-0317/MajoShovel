@@ -12,31 +12,39 @@ namespace {
 
 UiRect panelRect()
 {
-    return {{160.0f, 150.0f}, {960.0f, 430.0f}};
+    return {{192.0f, 70.0f}, {896.0f, 536.0f}};
 }
 
-UiRect optionRect(int index)
-{
-    constexpr float CardWidth = 270.0f;
-    constexpr float CardHeight = 206.0f;
-    constexpr float CardGap = 32.0f;
-    constexpr float CardY = 252.0f;
-    const UiRect panel = panelRect();
-    const float totalWidth = CardWidth * 3.0f + CardGap * 2.0f;
-    const float startX = panel.pos.x + (panel.size.x - totalWidth) * 0.5f;
-    return {{startX + static_cast<float>(index) * (CardWidth + CardGap), CardY}, {CardWidth, CardHeight}};
-}
+constexpr Vec2 LevelUpCardSize{310.0f, 238.0f};
+constexpr float LevelUpCardGap = -38.0f;
 
 int clampedUnlockedRingCount(int unlockedRingCount)
 {
     return std::clamp(unlockedRingCount, 1, SpellRingCount);
 }
 
+float ringPromptY(int unlockedRingCount)
+{
+    return clampedUnlockedRingCount(unlockedRingCount) <= 1 ? 208.0f : 244.0f;
+}
+
+UiRect optionRect(int index, int unlockedRingCount)
+{
+    constexpr float PromptCardGap = 0.0f;
+    const UiRect panel = panelRect();
+    const float totalWidth = LevelUpCardSize.x * 3.0f + LevelUpCardGap * 2.0f;
+    const float startX = panel.pos.x + (panel.size.x - totalWidth) * 0.5f;
+    return {{
+        startX + static_cast<float>(index) * (LevelUpCardSize.x + LevelUpCardGap),
+        ringPromptY(unlockedRingCount) + PromptCardGap,
+    }, LevelUpCardSize};
+}
+
 UiRect ringTabRect(int index, int unlockedRingCount)
 {
-    constexpr float TabWidth = 164.0f;
-    constexpr float TabGap = 18.0f;
-    constexpr float TabY = 208.0f;
+    constexpr float TabWidth = 210.0f;
+    constexpr float TabGap = 14.0f;
+    constexpr float TabY = 174.0f;
     const UiRect panel = panelRect();
     const int tabCount = clampedUnlockedRingCount(unlockedRingCount);
     const float totalWidth = TabWidth * static_cast<float>(tabCount) + TabGap * static_cast<float>(std::max(0, tabCount - 1));
@@ -44,15 +52,15 @@ UiRect ringTabRect(int index, int unlockedRingCount)
     return {{startX + static_cast<float>(index) * (TabWidth + TabGap), TabY}, {TabWidth, ui::ButtonHeight}};
 }
 
-UiRect okButtonRect()
+UiRect okButtonRect(int unlockedRingCount)
 {
     constexpr Vec2 Size{180.0f, ui::ButtonHeight};
-    constexpr float BottomGap = 10.0f;
-    constexpr std::string_view HelpText = "Z/X リング選択  Q/E カード選択  F/Enter OK";
+    constexpr float CardGap = -48.0f;
     const UiRect panel = panelRect();
+    const UiRect card = optionRect(0, unlockedRingCount);
     return {{
         panel.pos.x + (panel.size.x - Size.x) * 0.5f,
-        panel.pos.y + panel.size.y - uiFooterHeight(HelpText) - Size.y - BottomGap,
+        card.pos.y + card.size.y + CardGap,
     }, Size};
 }
 
@@ -157,7 +165,19 @@ void drawLevelUpSubtitle(Renderer& renderer, UiRect panel)
     const Vec2 titlePadding = renderer.hasUiWindowTexture()
         ? ui::ImageWindowHeaderTitlePadding
         : ui::HeaderTitlePadding;
-    renderer.drawText(header.pos + titlePadding + Vec2{0.0f, 34.0f}, "リングの強化を選ぼう", ui::TextMuted, 2);
+    renderer.drawText(header.pos + titlePadding + Vec2{0.0f, 42.0f}, "強化するリングを選ぼう", ui::TextMuted, 2);
+}
+
+void drawUpgradePrompt(Renderer& renderer, UiRect panel, int unlockedRingCount)
+{
+    const Vec2 titlePadding = renderer.hasUiWindowTexture()
+        ? ui::ImageWindowHeaderTitlePadding
+        : ui::HeaderTitlePadding;
+    renderer.drawText(
+        {panel.pos.x + titlePadding.x, ringPromptY(unlockedRingCount)},
+        "リングの強化を選ぼう",
+        ui::TextMuted,
+        2);
 }
 
 std::string levelUpHelpText(int unlockedRingCount, bool ringSelected)
@@ -278,7 +298,7 @@ std::optional<RingLevelUpgradeSelection> UpgradeSystem::update(
     }
 
     for (int i = 0; i < 3; ++i) {
-        const UiRect rect = optionRect(i);
+        const UiRect rect = optionRect(i, ringCount);
         if (ui.pressed(rect)) {
             if (selectedOption_ != i) {
                 ui.emitSound(UiSoundEvent::TabSwitch);
@@ -307,7 +327,7 @@ std::optional<RingLevelUpgradeSelection> UpgradeSystem::update(
         selectedOption_ = 2;
     }
 
-    if (ui.pressed(okButtonRect()) || input.useItemPressed() || input.confirmPressed()) {
+    if (ui.pressed(okButtonRect(ringCount)) || input.useItemPressed() || input.confirmPressed()) {
         ui.block(panelRect());
         return chooseUpgrade(selectedOption_);
     }
@@ -352,7 +372,9 @@ void UpgradeSystem::render(
     const int ringIndex = std::clamp(ringSelected ? selectedRingIndex_ : 0, 0, ringCount - 1);
     const RingLevelUpgradePoints& points = levelRingUpgradePoints[static_cast<std::size_t>(ringIndex)];
     UiWindowScope levelUpWindow(renderer, "level_up", panel, "レベルアップ", levelUpHelpText(ringCount, ringSelected));
-    drawLevelUpSubtitle(renderer, panel);
+    if (ringCount > 1) {
+        drawLevelUpSubtitle(renderer, panel);
+    }
 
     if (ringCount > 1) {
         std::array<UiTabItem, SpellRingCount> ringTabs{};
@@ -371,6 +393,7 @@ void UpgradeSystem::render(
             ringCount,
             ringTabRects.data());
     }
+    drawUpgradePrompt(renderer, panel, ringCount);
 
     if (cardFade_ <= 0.0f) {
         return;
@@ -378,7 +401,7 @@ void UpgradeSystem::render(
 
     renderer.pushScreenTransform({0.0f, 0.0f}, 1.0f, clamp(cardFade_, 0.0f, 1.0f));
     for (int i = 0; i < 3; ++i) {
-        const UiRect card = optionRect(i);
+        const UiRect card = optionRect(i, ringCount);
         const bool selected = i == selectedOption_;
         UiButtonStyle cardStyle;
         cardStyle.imageTint = {232, 232, 238, 245};
@@ -388,12 +411,12 @@ void UpgradeSystem::render(
         cardStyle.outline = {104, 94, 128, 255};
         cardStyle.outlineHot = ui::WindowBorder;
         drawUiFlexibleButtonFrame(renderer, card, selected, cardStyle);
-        drawCenteredText(renderer, card, card.pos.y + 36.0f, upgradeName(i), ui::Text, 3);
+        drawCenteredText(renderer, card, card.pos.y + 42.0f, upgradeName(i), ui::Text, 3);
         drawCenteredText(renderer, card, card.pos.y + 90.0f, upgradeDescription(i), ui::Text, 2);
         drawUpgradeValueLine(
             renderer,
             card,
-            card.pos.y + 136.0f,
+            card.pos.y + 134.0f,
             upgradeCurrentValueText(i, spellRing, ringIndex),
             upgradeNextValueText(i, spellRing, ringIndex, points),
             selected ? ui::Text : ui::TextMuted,
@@ -402,12 +425,12 @@ void UpgradeSystem::render(
         drawCenteredText(
             renderer,
             card,
-            card.pos.y + 168.0f,
+            card.pos.y + 212.0f,
             "強化回数：" + std::to_string(currentStage),
             selected ? ui::Text : ui::TextMuted,
             2);
     }
-    drawUiButton(renderer, okButtonRect(), "OK", true, uiActionButtonStyle());
+    drawUiButton(renderer, okButtonRect(ringCount), "OK", true, uiActionButtonStyle());
     renderer.popScreenTransform();
 }
 
