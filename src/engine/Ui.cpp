@@ -33,7 +33,25 @@ bool backInputConsumedUntilRelease = false;
 std::unordered_map<std::string, UiWindowState> windowStates;
 
 constexpr std::string_view ConfirmDialogHelpText = "F/Enter 決定  Esc 戻る";
+constexpr std::string_view UiSelectionCursorPath = "assets/UI_cursor2.png";
+constexpr Vec2 UiSelectionCursorSize{58.0f, 58.0f};
+constexpr Vec2 UiSelectionCursorTargetOffset{8.0f, -5.0f};
+constexpr float UiSelectionCursorMoveResponsiveness = 14.0f;
+constexpr float UiSelectionCursorBobAmplitude = 3.0f;
+constexpr float UiSelectionCursorBobSpeed = 3.2f;
 float windowAnimationStep = 1.0f / ui::WindowAnimationFrames;
+
+struct UiSelectionCursorState {
+    bool enabled = false;
+    bool targetThisFrame = false;
+    bool hasPosition = false;
+    Vec2 target{};
+    Vec2 position{};
+    float frameDt = 0.0f;
+    float time = 0.0f;
+};
+
+UiSelectionCursorState selectionCursor;
 
 std::string windowKey(std::string_view id, UiRect panel)
 {
@@ -152,6 +170,42 @@ void drawCapsuleOutline(Renderer& renderer, UiRect rect, float radius, Color col
         renderer.drawLine(pointOnCircle(leftCenter, leftA0), pointOnCircle(leftCenter, leftA1), color);
         renderer.drawLine(pointOnCircle(rightCenter, rightA0), pointOnCircle(rightCenter, rightA1), color);
     }
+}
+
+void requestUiSelectionCursor(UiRect rect)
+{
+    if (!selectionCursor.enabled || rect.size.x <= 0.0f || rect.size.y <= 0.0f) {
+        return;
+    }
+
+    selectionCursor.target = {
+        rect.pos.x + rect.size.x + UiSelectionCursorTargetOffset.x,
+        rect.pos.y + UiSelectionCursorTargetOffset.y,
+    };
+    selectionCursor.targetThisFrame = true;
+}
+
+void drawUiSelectionCursor(Renderer& renderer)
+{
+    if (!selectionCursor.enabled || !selectionCursor.targetThisFrame) {
+        selectionCursor.hasPosition = false;
+        return;
+    }
+
+    if (!selectionCursor.hasPosition) {
+        selectionCursor.position = selectionCursor.target;
+        selectionCursor.hasPosition = true;
+    } else {
+        const float t = 1.0f - std::exp(-UiSelectionCursorMoveResponsiveness * std::max(0.0f, selectionCursor.frameDt));
+        selectionCursor.position = selectionCursor.position + (selectionCursor.target - selectionCursor.position) * t;
+    }
+
+    const float bob = std::sin(selectionCursor.time * UiSelectionCursorBobSpeed) * UiSelectionCursorBobAmplitude;
+    const Vec2 drawCenter = selectionCursor.position + Vec2{0.0f, bob};
+    ImageDrawOptions options;
+    options.anchor = {0.5f, 0.5f};
+    options.tint = {255, 255, 255, 235};
+    renderer.drawImage(UiSelectionCursorPath, drawCenter, UiSelectionCursorSize, options, TextureFilter::Linear);
 }
 
 bool drawUiFlexibleButtonImage(Renderer& renderer, UiRect rect, bool selected, Color tint)
@@ -605,8 +659,12 @@ bool UiContext::hasSoundEvents() const
     return false;
 }
 
-void beginUiFrame(float dt)
+void beginUiFrame(float dt, bool gamepadCursorEnabled)
 {
+    selectionCursor.enabled = gamepadCursorEnabled;
+    selectionCursor.targetThisFrame = false;
+    selectionCursor.frameDt = std::max(0.0f, dt);
+    selectionCursor.time += selectionCursor.frameDt;
     const float duration = std::max(0.001f, ui::WindowAnimationSeconds);
     windowAnimationStep = clamp(dt / duration, 0.0f, 1.0f);
     for (auto& entry : windowStates) {
@@ -638,6 +696,7 @@ void finishUiFrame(Renderer& renderer)
     for (const std::string& key : finished) {
         windowStates.erase(key);
     }
+    drawUiSelectionCursor(renderer);
 }
 
 UiWindowScope::UiWindowScope(
@@ -1133,6 +1192,9 @@ void drawUiButton(Renderer& renderer, UiRect rect, std::string_view label, bool 
     };
     renderer.drawText(textPos, label, style.text, 2);
     renderer.popScreenTransform();
+    if (selected) {
+        requestUiSelectionCursor(rect);
+    }
 }
 
 void drawUiFlexibleButtonFrame(Renderer& renderer, UiRect rect, bool selected, const UiButtonStyle& style)
@@ -1158,6 +1220,9 @@ void drawUiFlexibleButton(Renderer& renderer, UiRect rect, std::string_view labe
         rect.pos.y + std::max(0.0f, (rect.size.y - textSize.y) * 0.5f),
     };
     renderer.drawText(textPos, label, style.text, 2);
+    if (selected) {
+        requestUiSelectionCursor(rect);
+    }
 }
 
 void drawUiRectButton(Renderer& renderer, UiRect rect, std::string_view label, bool hot, const UiButtonStyle& style)
@@ -1179,6 +1244,9 @@ void drawUiRectButton(Renderer& renderer, UiRect rect, std::string_view label, b
     };
     renderer.drawText(textPos, label, style.text, 2);
     renderer.popScreenTransform();
+    if (selected) {
+        requestUiSelectionCursor(rect);
+    }
 }
 
 void drawUiSmallSelectButton(
@@ -2026,6 +2094,7 @@ void drawUiCommandMenu(Renderer& renderer, const UiCommandMenuState& state, cons
                 {std::max(0.0f, rect.size.x - 4.0f), std::max(0.0f, rect.size.y - 4.0f)},
             };
             fillRoundedRect(renderer, cursorRect, 8.0f, fill);
+            requestUiSelectionCursor(rect);
         }
         const int textScale = std::max(1, state.textScale);
         const Vec2 textSize = renderer.measureText(items[i].label, textScale);
@@ -2715,6 +2784,7 @@ void drawUiDropdown(
         const bool highlighted = itemIndex == state.highlightedIndex;
         if (highlighted) {
             renderer.fillRect(rowBody.pos, rowBody.size, style.fillHot);
+            requestUiSelectionCursor(rowBody);
         }
         const Color textColor = items[itemIndex].enabled ? style.text : style.textDisabled;
         const std::string label = fittedUiText(
@@ -2875,10 +2945,11 @@ void drawUiTabs(
         for (int i = 0; i < itemCount; ++i) {
             UiButtonStyle buttonStyle = style.buttonStyle;
             const bool selected = i == selectedIndex;
+            const bool enabled = tabItemEnabled(items, i);
             if (selected) {
                 buttonStyle.text = style.selectedText;
             }
-            if (!tabItemEnabled(items, i)) {
+            if (!enabled) {
                 buttonStyle.text = ui::TextDisabled;
             }
 
@@ -2890,6 +2961,9 @@ void drawUiTabs(
                 rect.pos.y + std::max(0.0f, (rect.size.y - textSize.y) * 0.5f) + TabTextOffsetY,
             };
             renderer.drawText(textPos, items[i].label, buttonStyle.text, 2);
+            if (i == state.focusedIndex && enabled) {
+                requestUiSelectionCursor(rect);
+            }
         }
         return;
     }
@@ -2947,6 +3021,9 @@ void drawUiTabs(
             renderer.drawText(textPos, items[i].label, buttonStyle.text, 2);
         }
         renderer.popScreenTransform();
+        if (active) {
+            requestUiSelectionCursor(rect);
+        }
     };
 
     for (int i = 0; i < itemCount; ++i) {
@@ -3075,6 +3152,9 @@ void drawUiSubTabs(
             rect.pos.y + std::max(0.0f, (rect.size.y - textSize.y) * 0.5f) + style.textOffsetY,
         };
         renderer.drawText(textPos, label, textColor, textScale);
+        if (enabled && (i == state.focusedIndex || selected)) {
+            requestUiSelectionCursor(rect);
+        }
     }
 }
 

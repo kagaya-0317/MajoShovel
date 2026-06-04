@@ -16,6 +16,30 @@ constexpr std::string_view RescueTorchObjectId = "item_torch";
 constexpr float BaseMiningRescueDropDurationSeconds = 1.05f;
 constexpr float BaseMiningRescueDropEndSeconds = 1.55f;
 constexpr float NewItemJingleFallbackSeconds = 0.92f;
+constexpr float RingWorkshopRadiusMetersPerLevel = 0.05f;
+constexpr float RingWorkshopSpeedMetersPerSecondPerLevel = 0.10f;
+constexpr float RingWorkshopThrowDistanceMetersPerLevel = 0.40f;
+constexpr float RingWorkshopThrowCooldownSecondsPerLevel = 0.18f;
+
+float metersToWorldDistance(float meters)
+{
+    return meters * static_cast<float>(balance::TileSize);
+}
+
+float worldDistanceToMeters(float distance)
+{
+    return distance / static_cast<float>(balance::TileSize);
+}
+
+float linearMetersPerSecondForAngularSpeed(float angularSpeed, float radius)
+{
+    return angularSpeed * worldDistanceToMeters(radius);
+}
+
+float ringWeightPenaltyReliefPercentForLevel(int level)
+{
+    return static_cast<float>(std::max(0, level)) * 10.0f;
+}
 
 bool isTutorialStoryTrigger(std::string_view trigger)
 {
@@ -442,14 +466,34 @@ std::vector<UiResultDialogLine> baseUpgradeResultLines(int index, int beforeLeve
         appendBaseUpgradeResultChangeLine(lines, "最大HP: ", currentValue, nextValue);
         break;
     case 5:
-        std::snprintf(currentValue, sizeof(currentValue), "+%d%%", beforeLevel * 8);
-        std::snprintf(nextValue, sizeof(nextValue), "+%d%%", afterLevel * 8);
-        appendBaseUpgradeResultChangeLine(lines, "初期リング半径: ", currentValue, nextValue);
+        std::snprintf(
+            currentValue,
+            sizeof(currentValue),
+            "%.2fm",
+            static_cast<float>(balance::SpellRingRadius) *
+                (1.0f + static_cast<float>(beforeLevel) * 0.08f) /
+                static_cast<float>(balance::TileSize));
+        std::snprintf(
+            nextValue,
+            sizeof(nextValue),
+            "%.2fm",
+            static_cast<float>(balance::SpellRingRadius) *
+                (1.0f + static_cast<float>(afterLevel) * 0.08f) /
+                static_cast<float>(balance::TileSize));
+        appendBaseUpgradeResultChangeLine(lines, "リング半径: ", currentValue, nextValue);
         break;
     case 6:
-        std::snprintf(currentValue, sizeof(currentValue), "+%d%%", beforeLevel * 8);
-        std::snprintf(nextValue, sizeof(nextValue), "+%d%%", afterLevel * 8);
-        appendBaseUpgradeResultChangeLine(lines, "初期リング速度: ", currentValue, nextValue);
+        std::snprintf(
+            currentValue,
+            sizeof(currentValue),
+            "%.2fm/s",
+            balance::SpellRingSpeed * (1.0f + static_cast<float>(beforeLevel) * 0.08f));
+        std::snprintf(
+            nextValue,
+            sizeof(nextValue),
+            "%.2fm/s",
+            balance::SpellRingSpeed * (1.0f + static_cast<float>(afterLevel) * 0.08f));
+        appendBaseUpgradeResultChangeLine(lines, "リング速度: ", currentValue, nextValue);
         break;
     case 7:
         std::snprintf(currentValue, sizeof(currentValue), "Lv.%d", beforeLevel);
@@ -1383,8 +1427,8 @@ const char* ringWorkshopActionLabel(int index)
 const char* ringWorkshopUpgradeShortName(int index)
 {
     switch (index) {
-    case 0: return "初期半径";
-    case 1: return "初期速度";
+    case 0: return "リング半径";
+    case 1: return "リング速度";
     case 2: return "ずらし距離";
     case 3: return "投げ距離";
     case 4: return "投げ短縮";
@@ -1398,9 +1442,9 @@ const char* ringWorkshopUpgradeDescription(int index)
 {
     switch (index) {
     case 0:
-        return "探索開始時のリング半径を広げます。広い範囲にアイテムを配置しやすくなります。";
+        return "リング半径を広げます。広い範囲にアイテムを配置しやすくなります。";
     case 1:
-        return "探索開始時のリング回転速度を上げます。配置したアイテムの発動機会が増えます。";
+        return "リング速度を上げます。配置したアイテムの発動機会が増えます。";
     case 2:
         return "リング位置をずらす距離を伸ばします。状況に合わせてリングを動かしやすくなります。";
     case 3:
@@ -1420,10 +1464,10 @@ std::string formatRingWorkshopValue(RingLevelUpgradeKind kind, float value)
     char buffer[64];
     switch (kind) {
     case RingLevelUpgradeKind::Radius:
-        std::snprintf(buffer, sizeof(buffer), "%.0fpx", value);
+        std::snprintf(buffer, sizeof(buffer), "%.2fm", worldDistanceToMeters(value));
         break;
     case RingLevelUpgradeKind::Speed:
-        std::snprintf(buffer, sizeof(buffer), "%.2f", value);
+        std::snprintf(buffer, sizeof(buffer), "%.2fm/s", value);
         break;
     case RingLevelUpgradeKind::WeightLimit:
         std::snprintf(buffer, sizeof(buffer), "%.1fkg", value);
@@ -5147,9 +5191,9 @@ const char* baseUpgradeDescription(int index)
     case 4:
         return "ルネの最大HPを増やします。";
     case 5:
-        return "採掘開始時のリング半径を広げます。";
+        return "リング半径を広げます。";
     case 6:
-        return "採掘開始時のリング速度を上げます。";
+        return "リング速度を上げます。";
     case 7:
         return "近くのドロップをルネへ引き寄せる範囲を広げます。";
     case 8:
@@ -5422,9 +5466,9 @@ const char* Game::ringWorkshopUpgradeName(RingWorkshopUpgrade upgrade) const
 {
     switch (upgrade) {
     case RingWorkshopUpgrade::InitialRadius:
-        return "初期リング半径強化";
+        return "リング半径強化";
     case RingWorkshopUpgrade::InitialSpeed:
-        return "初期リング速度強化";
+        return "リング速度強化";
     case RingWorkshopUpgrade::ShiftDistance:
         return "ずらし距離強化";
     case RingWorkshopUpgrade::ThrowDistance:
@@ -5467,20 +5511,52 @@ int Game::ringWorkshopUpgradeMaxLevel(RingWorkshopUpgrade) const
 
 int Game::ringWorkshopUpgradeMoneyCost(RingWorkshopUpgrade upgrade) const
 {
+    constexpr std::array<int, 5> PremiumCosts{{800, 1500, 2600, 4200, 6500}};
+    constexpr std::array<int, 5> StandardCosts{{650, 1200, 2100, 3400, 5400}};
+    constexpr std::array<int, 5> UtilityCosts{{450, 850, 1500, 2500, 4000}};
+
     const int level = ringWorkshopUpgradeLevel(upgrade);
     if (level >= ringWorkshopUpgradeMaxLevel(upgrade)) {
         return 0;
     }
-    return 120 + level * 90;
+    switch (upgrade) {
+    case RingWorkshopUpgrade::InitialRadius:
+    case RingWorkshopUpgrade::InitialSpeed:
+    case RingWorkshopUpgrade::EquipSlot:
+        return PremiumCosts[static_cast<std::size_t>(level)];
+    case RingWorkshopUpgrade::ThrowDistance:
+    case RingWorkshopUpgrade::ThrowCooldown:
+    case RingWorkshopUpgrade::WeightPenalty:
+        return StandardCosts[static_cast<std::size_t>(level)];
+    case RingWorkshopUpgrade::ShiftDistance:
+        return UtilityCosts[static_cast<std::size_t>(level)];
+    }
+    return 0;
 }
 
 int Game::ringWorkshopUpgradeMoonCost(RingWorkshopUpgrade upgrade) const
 {
+    constexpr std::array<int, 5> PremiumCosts{{5, 9, 14, 20, 28}};
+    constexpr std::array<int, 5> StandardCosts{{4, 7, 11, 16, 23}};
+    constexpr std::array<int, 5> UtilityCosts{{3, 5, 8, 12, 18}};
+
     const int level = ringWorkshopUpgradeLevel(upgrade);
     if (level >= ringWorkshopUpgradeMaxLevel(upgrade)) {
         return 0;
     }
-    return level + 1;
+    switch (upgrade) {
+    case RingWorkshopUpgrade::InitialRadius:
+    case RingWorkshopUpgrade::InitialSpeed:
+    case RingWorkshopUpgrade::EquipSlot:
+        return PremiumCosts[static_cast<std::size_t>(level)];
+    case RingWorkshopUpgrade::ThrowDistance:
+    case RingWorkshopUpgrade::ThrowCooldown:
+    case RingWorkshopUpgrade::WeightPenalty:
+        return StandardCosts[static_cast<std::size_t>(level)];
+    case RingWorkshopUpgrade::ShiftDistance:
+        return UtilityCosts[static_cast<std::size_t>(level)];
+    }
+    return 0;
 }
 
 float Game::ringWorkshopUpgradeCurrentValue(RingWorkshopUpgrade upgrade) const
@@ -5489,15 +5565,21 @@ float Game::ringWorkshopUpgradeCurrentValue(RingWorkshopUpgrade upgrade) const
     case RingWorkshopUpgrade::InitialRadius:
         return effectiveInitialRingRadiusForRing(0, levelRingUpgradePoints_[0].radius);
     case RingWorkshopUpgrade::InitialSpeed:
-        return effectiveInitialRingSpeedForRing(0, levelRingUpgradePoints_[0].speed);
+        return linearMetersPerSecondForAngularSpeed(
+            effectiveInitialRingSpeedForRing(0, levelRingUpgradePoints_[0].speed),
+            effectiveInitialRingRadiusForRing(0, levelRingUpgradePoints_[0].radius));
     case RingWorkshopUpgrade::ShiftDistance:
         return effectiveRingShiftDistance();
     case RingWorkshopUpgrade::ThrowDistance:
-        return balance_.spellRingThrowDistance * (1.0f + static_cast<float>(workshopThrowDistanceLevel_) * 0.08f);
+        return balance_.spellRingThrowDistance +
+            metersToWorldDistance(static_cast<float>(workshopThrowDistanceLevel_) * RingWorkshopThrowDistanceMetersPerLevel);
     case RingWorkshopUpgrade::ThrowCooldown:
-        return balance_.spellRingThrowCooldown * std::max(0.02f, 1.0f - static_cast<float>(workshopThrowCooldownLevel_) * 0.06f);
+        return std::max(
+            0.02f,
+            balance_.spellRingThrowCooldown -
+                static_cast<float>(workshopThrowCooldownLevel_) * RingWorkshopThrowCooldownSecondsPerLevel);
     case RingWorkshopUpgrade::WeightPenalty:
-        return SpellRingSystem::BaseWeightStopRatio + static_cast<float>(workshopWeightPenaltyLevel_) * 0.10f;
+        return ringWeightPenaltyReliefPercentForLevel(workshopWeightPenaltyLevel_);
     case RingWorkshopUpgrade::EquipSlot:
         return static_cast<float>(24 + workshopEquipSlotLevel_ * 2);
     }
@@ -5511,26 +5593,27 @@ float Game::ringWorkshopUpgradeNextValue(RingWorkshopUpgrade upgrade) const
         return ringWorkshopUpgradeCurrentValue(upgrade);
     }
     switch (upgrade) {
-    case RingWorkshopUpgrade::InitialRadius: {
-        const float baseUpgradeMultiplier = 1.0f + static_cast<float>(ringRadiusUpgradeLevel_) * 0.08f;
-        const float workshopMultiplier = 1.0f + static_cast<float>(currentLevel + 1) * 0.05f;
-        const float levelMultiplier = SpellRingSystem::levelScaleMultiplierForPoints(levelRingUpgradePoints_[0].radius);
-        return balance_.spellRingRadius * baseUpgradeMultiplier * workshopMultiplier * levelMultiplier;
-    }
+    case RingWorkshopUpgrade::InitialRadius:
+        return ringWorkshopUpgradeCurrentValue(upgrade) +
+            metersToWorldDistance(RingWorkshopRadiusMetersPerLevel) *
+                static_cast<float>(std::max(0.0, ringEquipmentModifiersForRing(equipmentModifiers_, 0).ringRadiusMul));
     case RingWorkshopUpgrade::InitialSpeed: {
-        const float baseUpgradeMultiplier = 1.0f + static_cast<float>(ringSpeedUpgradeLevel_) * 0.08f;
-        const float workshopMultiplier = 1.0f + static_cast<float>(currentLevel + 1) * 0.05f;
-        const float levelMultiplier = SpellRingSystem::levelScaleMultiplierForPoints(levelRingUpgradePoints_[0].speed);
-        return balance_.spellRingSpeed * baseUpgradeMultiplier * workshopMultiplier * levelMultiplier;
+        return ringWorkshopUpgradeCurrentValue(upgrade) +
+            RingWorkshopSpeedMetersPerSecondPerLevel *
+                static_cast<float>(std::max(0.0, ringEquipmentModifiersForRing(equipmentModifiers_, 0).ringSpeedMul));
     }
     case RingWorkshopUpgrade::ShiftDistance:
         return balance_.spellRingShiftDistance + static_cast<float>(currentLevel + 1) * 8.0f;
     case RingWorkshopUpgrade::ThrowDistance:
-        return balance_.spellRingThrowDistance * (1.0f + static_cast<float>(currentLevel + 1) * 0.08f);
+        return balance_.spellRingThrowDistance +
+            metersToWorldDistance(static_cast<float>(currentLevel + 1) * RingWorkshopThrowDistanceMetersPerLevel);
     case RingWorkshopUpgrade::ThrowCooldown:
-        return balance_.spellRingThrowCooldown * std::max(0.02f, 1.0f - static_cast<float>(currentLevel + 1) * 0.06f);
+        return std::max(
+            0.02f,
+            balance_.spellRingThrowCooldown -
+                static_cast<float>(currentLevel + 1) * RingWorkshopThrowCooldownSecondsPerLevel);
     case RingWorkshopUpgrade::WeightPenalty:
-        return SpellRingSystem::BaseWeightStopRatio + static_cast<float>(currentLevel + 1) * 0.10f;
+        return ringWeightPenaltyReliefPercentForLevel(currentLevel + 1);
     case RingWorkshopUpgrade::EquipSlot:
         return static_cast<float>(24 + (currentLevel + 1) * 2);
     }
@@ -9626,14 +9709,7 @@ void Game::renderBaseScreen(Renderer& renderer) const
                         labelRect.size.y += MerchantSellRingItemLabelExtraHeight;
                         drawInventoryUiSlotBottomLabel(renderer, labelRect, "収納不可", ui::TextDisabled);
                     }
-                    if (ringItems.empty()) {
-                        const Vec2 emptySize = renderer.measureText("アイテム未配置", 2);
-                        renderer.drawText(
-                            storageRingPreviewCenter(spellRing_, ringIndex) - emptySize * 0.5f,
-                            "アイテム未配置",
-                            ui::TextMuted,
-                            2);
-                    } else if (selectedRingIndex >= 0) {
+                    if (!ringItems.empty() && selectedRingIndex >= 0) {
                         selectedRingItem = &ringItems[static_cast<std::size_t>(selectedRingIndex)];
                         detailEntry = storageTransferTargetView(storageDepositTargetForSourceSlot(baseStorageDepositSource_, selectedRingIndex));
                     }
@@ -9773,7 +9849,9 @@ void Game::renderBaseScreen(Renderer& renderer) const
                 case RingLevelUpgradeKind::Radius:
                     return effectiveInitialRingRadiusForRing(selectedRing, points.radius);
                 case RingLevelUpgradeKind::Speed:
-                    return effectiveInitialRingSpeedForRing(selectedRing, points.speed);
+                    return linearMetersPerSecondForAngularSpeed(
+                        effectiveInitialRingSpeedForRing(selectedRing, points.speed),
+                        effectiveInitialRingRadiusForRing(selectedRing, points.radius));
                 case RingLevelUpgradeKind::WeightLimit:
                     return effectiveInitialRingWeightLimitForRing(selectedRing, points.weightLimit);
                 }
@@ -9894,16 +9972,16 @@ void Game::renderBaseScreen(Renderer& renderer) const
                 case RingWorkshopUpgrade::InitialRadius:
                 case RingWorkshopUpgrade::ShiftDistance:
                 case RingWorkshopUpgrade::ThrowDistance:
-                    std::snprintf(valueBuffer, sizeof(valueBuffer), "%.0fpx", value);
+                    std::snprintf(valueBuffer, sizeof(valueBuffer), "%.2fm", worldDistanceToMeters(value));
                     break;
                 case RingWorkshopUpgrade::InitialSpeed:
-                    std::snprintf(valueBuffer, sizeof(valueBuffer), "%.2f", value);
+                    std::snprintf(valueBuffer, sizeof(valueBuffer), "%.2fm/s", value);
                     break;
                 case RingWorkshopUpgrade::ThrowCooldown:
                     std::snprintf(valueBuffer, sizeof(valueBuffer), "%.2fs", value);
                     break;
                 case RingWorkshopUpgrade::WeightPenalty:
-                    std::snprintf(valueBuffer, sizeof(valueBuffer), "%.2f倍", value);
+                    std::snprintf(valueBuffer, sizeof(valueBuffer), "%.0f%%", value);
                     break;
                 case RingWorkshopUpgrade::EquipSlot:
                     std::snprintf(valueBuffer, sizeof(valueBuffer), "%.0f枠", value);
@@ -10034,14 +10112,6 @@ void Game::renderBaseScreen(Renderer& renderer) const
                 ringIndex,
                 selectedRingItem,
                 ringPreviewSeconds);
-            if (ringItems.empty()) {
-                const Vec2 emptySize = renderer.measureText("アイテム未配置", 2);
-                renderer.drawText(
-                    baseProcessingRingPreviewCenter(spellRing_, ringIndex) - emptySize * 0.5f,
-                    "アイテム未配置",
-                    ui::TextMuted,
-                    2);
-            }
         } else if (warehouseSource) {
             const int warehousePageCount = std::max(1, (warehouseCapacity() + StoragePaneSlotCount - 1) / StoragePaneSlotCount);
             const int warehousePage = std::clamp(baseStorageWarehousePage_, 0, warehousePageCount - 1);
@@ -10362,14 +10432,7 @@ void Game::renderBaseScreen(Renderer& renderer) const
                             drawHighValueLabel(labelRect);
                         }
                     }
-                    if (ringItems.empty()) {
-                        const Vec2 emptySize = renderer.measureText("アイテム未配置", 2);
-                        renderer.drawText(
-                            merchantSellRingPreviewCenter(spellRing_, ringIndex) - emptySize * 0.5f,
-                            "アイテム未配置",
-                            ui::TextMuted,
-                            2);
-                    } else if (selectedRingIndex >= 0) {
+                    if (!ringItems.empty() && selectedRingIndex >= 0) {
                         selectedRingItem = &ringItems[static_cast<std::size_t>(selectedRingIndex)];
                     }
                 } else if (warehouseSource) {
@@ -10728,14 +10791,30 @@ void Game::renderBaseScreen(Renderer& renderer) const
                 drawEffectChangeLine(detailY, "効果", "最大HP: ", currentValue, nextValue);
                 break;
             case 5:
-                std::snprintf(currentValue, sizeof(currentValue), "+%d%%", level * 8);
-                std::snprintf(nextValue, sizeof(nextValue), "+%d%%", nextLevel * 8);
-                drawEffectChangeLine(detailY, "効果", "初期リング半径: ", currentValue, nextValue);
+                std::snprintf(
+                    currentValue,
+                    sizeof(currentValue),
+                    "%.2fm",
+                    worldDistanceToMeters(balance_.spellRingRadius * (1.0f + static_cast<float>(level) * 0.08f)));
+                std::snprintf(
+                    nextValue,
+                    sizeof(nextValue),
+                    "%.2fm",
+                    worldDistanceToMeters(balance_.spellRingRadius * (1.0f + static_cast<float>(nextLevel) * 0.08f)));
+                drawEffectChangeLine(detailY, "効果", "リング半径: ", currentValue, nextValue);
                 break;
             case 6:
-                std::snprintf(currentValue, sizeof(currentValue), "+%d%%", level * 8);
-                std::snprintf(nextValue, sizeof(nextValue), "+%d%%", nextLevel * 8);
-                drawEffectChangeLine(detailY, "効果", "初期リング速度: ", currentValue, nextValue);
+                std::snprintf(
+                    currentValue,
+                    sizeof(currentValue),
+                    "%.2fm/s",
+                    balance_.spellRingSpeed * (1.0f + static_cast<float>(level) * 0.08f));
+                std::snprintf(
+                    nextValue,
+                    sizeof(nextValue),
+                    "%.2fm/s",
+                    balance_.spellRingSpeed * (1.0f + static_cast<float>(nextLevel) * 0.08f));
+                drawEffectChangeLine(detailY, "効果", "リング速度: ", currentValue, nextValue);
                 break;
             case 7:
                 std::snprintf(currentValue, sizeof(currentValue), "%.0fpx", effectiveCollectionPullRadius(level));

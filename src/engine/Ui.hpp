@@ -443,7 +443,7 @@ inline UiButtonStyle uiCancelButtonStyle()
     return style;
 }
 
-void beginUiFrame(float dt);
+void beginUiFrame(float dt, bool gamepadCursorEnabled = false);
 void finishUiFrame(Renderer& renderer);
 
 class UiWindowScope {

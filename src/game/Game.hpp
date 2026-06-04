@@ -2212,6 +2212,7 @@ private:
     bool debugPaused_ = false;
     bool autoReloadBlocked_ = false;
     bool hotReloadEnabled_ = false;
+    bool gamepadUiCursorEnabled_ = false;
     float hotReloadPollTimer_ = 0.0f;
     AudioEngine* audio_ = nullptr;
     std::string activeAudioBgmCue_;

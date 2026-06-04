@@ -249,6 +249,24 @@ std::string toUtf8String(const std::filesystem::path& path)
 #endif
 }
 
+std::filesystem::path pathFromUtf8String(std::string_view path)
+{
+#ifdef _WIN32
+    std::wstring widePath;
+    if (!utf8ToWide(path, widePath)) {
+        return std::filesystem::path(std::string(path));
+    }
+    return std::filesystem::path(widePath);
+#else
+    std::u8string encoded;
+    encoded.reserve(path.size());
+    for (const char ch : path) {
+        encoded.push_back(static_cast<char8_t>(static_cast<unsigned char>(ch)));
+    }
+    return std::filesystem::path(encoded);
+#endif
+}
+
 std::string normalizedImagePathKey(std::string_view path)
 {
     if (path.empty()) {
@@ -257,7 +275,7 @@ std::string normalizedImagePathKey(std::string_view path)
 
     try {
         std::error_code ec;
-        std::filesystem::path normalized = std::filesystem::u8path(path.begin(), path.end()).lexically_normal();
+        std::filesystem::path normalized = pathFromUtf8String(path).lexically_normal();
         const std::filesystem::path absolute = std::filesystem::absolute(normalized, ec);
         if (!ec) {
             normalized = absolute.lexically_normal();

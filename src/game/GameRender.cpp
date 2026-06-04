@@ -92,6 +92,25 @@ std::string signedWeightShort(double value)
     return buffer;
 }
 
+float worldDistanceToMeters(float distance)
+{
+    return distance / static_cast<float>(balance::TileSize);
+}
+
+float linearMetersPerSecondForAngularSpeed(float angularSpeed, float radius)
+{
+    return angularSpeed * worldDistanceToMeters(radius);
+}
+
+float weightPenaltyReliefPercentForStopRatio(float stopRatio)
+{
+    const float range = SpellRingSystem::MaxWeightStopRatio - SpellRingSystem::BaseWeightStopRatio;
+    return clamp(
+        (stopRatio - SpellRingSystem::BaseWeightStopRatio) / range * 100.0f,
+        0.0f,
+        100.0f);
+}
+
 float projectedDungeonRouteDistanceTiles(const DungeonLayout& layout, Vec2 tilePosition)
 {
     if (layout.mainPathPoints.size() < 2) {
@@ -191,7 +210,7 @@ std::string weightStopRatioModifierSuffix(double multiplier)
     }
     const float stopRatio = SpellRingSystem::weightStopRatioForPenaltyMultiplier(multiplier);
     char buffer[48];
-    std::snprintf(buffer, sizeof(buffer), "（停止%.2f倍）", stopRatio);
+    std::snprintf(buffer, sizeof(buffer), "（軽減%.0f%%）", weightPenaltyReliefPercentForStopRatio(stopRatio));
     return buffer;
 }
 
@@ -256,7 +275,8 @@ void drawRingDetailPanel(
     std::snprintf(buffer, sizeof(buffer), "%02d/%02d", static_cast<int>(items.size()), spellRing.maxItemCount());
     drawRingDetailLineWithModifier(renderer, panel, y, "装着", buffer);
 
-    std::snprintf(buffer, sizeof(buffer), "%.0f", spellRing.radiusForRing(ringIndex));
+    const float orbitRadius = spellRing.orbitRadiusForRing(ringIndex);
+    std::snprintf(buffer, sizeof(buffer), "%.2fm", worldDistanceToMeters(orbitRadius));
     drawRingDetailLineWithModifier(
         renderer,
         panel,
@@ -265,7 +285,13 @@ void drawRingDetailPanel(
         buffer,
         percentModifierSuffix(ringModifiers.ringRadiusMul));
 
-    std::snprintf(buffer, sizeof(buffer), "%.2f", spellRing.effectiveAngularSpeedForRing(ringIndex));
+    std::snprintf(
+        buffer,
+        sizeof(buffer),
+            "%.2fm/s",
+            linearMetersPerSecondForAngularSpeed(
+            spellRing.ringAngularSpeedForIndex(ringIndex, balance),
+            orbitRadius));
     drawRingDetailLineWithModifier(
         renderer,
         panel,
@@ -5987,10 +6013,6 @@ void Game::renderSpellRingForeground(
 
     drawSpellRingOrbitLayer(renderer, spellRing_, balance_, totalSeconds, 0.78f);
 
-    if (spellRing_.state() != SpellRingState::Normal) {
-        renderer.drawLine(witchSelfLightCenter(player_.position), spellRing_.center(), {150, 110, 80, 100});
-    }
-
     const std::vector<RingItemRenderRef> sortedItems = sortedRingItemRenderRefs(runtimeItems);
     for (const RingItemRenderRef& itemRef : sortedItems) {
         drawSpellRingItemWorldVisual(
@@ -6236,7 +6258,7 @@ void Game::renderLevelUpOverlay(Renderer& renderer)
 void Game::render(Renderer& renderer, const Time& time)
 {
     renderer.clear({5, 5, 8, 255});
-    beginUiFrame(time.deltaSeconds());
+    beginUiFrame(time.deltaSeconds(), gamepadUiCursorEnabled_);
     if (mode_ == ScreenMode::OpeningKamishibai) {
         renderOpeningKamishibai(renderer);
         finishUiFrame(renderer);

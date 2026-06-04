@@ -224,6 +224,7 @@ public:
     Vec2 centerForRing(int ringIndex) const;
     float radius() const { return radiusForRing(activeRingIndex_); }
     float radiusForRing(int ringIndex) const;
+    float orbitRadiusForRing(int ringIndex) const;
     float angularSpeed() const { return angularSpeedForRing(activeRingIndex_); }
     float angularSpeedForRing(int ringIndex) const;
     float effectiveAngularSpeed() const;

@@ -1,5 +1,7 @@
 ﻿#include "game/UpgradeSystem.hpp"
 
+#include "data/GameBalance.hpp"
+
 #include <algorithm>
 #include <array>
 #include <cstdio>
@@ -12,7 +14,7 @@ namespace {
 
 UiRect panelRect()
 {
-    return {{192.0f, 70.0f}, {896.0f, 536.0f}};
+    return {{192.0f, 70.0f}, {896.0f, 524.0f}};
 }
 
 constexpr Vec2 LevelUpCardSize{310.0f, 238.0f};
@@ -23,6 +25,16 @@ int clampedUnlockedRingCount(int unlockedRingCount)
     return std::clamp(unlockedRingCount, 1, SpellRingCount);
 }
 
+float worldDistanceToMeters(float distance)
+{
+    return distance / static_cast<float>(balance::TileSize);
+}
+
+float linearMetersPerSecondForAngularSpeed(float angularSpeed, float radius)
+{
+    return angularSpeed * worldDistanceToMeters(radius);
+}
+
 float ringPromptY(int unlockedRingCount)
 {
     return clampedUnlockedRingCount(unlockedRingCount) <= 1 ? 208.0f : 244.0f;
@@ -30,7 +42,7 @@ float ringPromptY(int unlockedRingCount)
 
 UiRect optionRect(int index, int unlockedRingCount)
 {
-    constexpr float PromptCardGap = 0.0f;
+    constexpr float PromptCardGap = 4.0f;
     const UiRect panel = panelRect();
     const float totalWidth = LevelUpCardSize.x * 3.0f + LevelUpCardGap * 2.0f;
     const float startX = panel.pos.x + (panel.size.x - totalWidth) * 0.5f;
@@ -44,7 +56,7 @@ UiRect ringTabRect(int index, int unlockedRingCount)
 {
     constexpr float TabWidth = 210.0f;
     constexpr float TabGap = 14.0f;
-    constexpr float TabY = 174.0f;
+    constexpr float TabY = 178.0f;
     const UiRect panel = panelRect();
     const int tabCount = clampedUnlockedRingCount(unlockedRingCount);
     const float totalWidth = TabWidth * static_cast<float>(tabCount) + TabGap * static_cast<float>(std::max(0, tabCount - 1));
@@ -55,7 +67,7 @@ UiRect ringTabRect(int index, int unlockedRingCount)
 UiRect okButtonRect(int unlockedRingCount)
 {
     constexpr Vec2 Size{180.0f, ui::ButtonHeight};
-    constexpr float CardGap = -48.0f;
+    constexpr float CardGap = -8.0f;
     const UiRect panel = panelRect();
     const UiRect card = optionRect(0, unlockedRingCount);
     return {{
@@ -78,7 +90,7 @@ const char* upgradeDescription(int option)
 {
     switch (option) {
     case 0: return "リングの半径が広がる";
-    case 1: return "リングの回転速度が上がる";
+    case 1: return "リングの速度が上がる";
     case 2: return "リングの重量上限が上がる";
     default: return "";
     }
@@ -97,15 +109,21 @@ RingLevelUpgradeKind upgradeKindForOption(int option)
     }
 }
 
-std::string upgradeCurrentValueText(int option, const SpellRingSystem& spellRing, int ringIndex)
+std::string upgradeCurrentValueText(int option, const SpellRingSystem& spellRing, int ringIndex, const RuntimeBalance& balance)
 {
     char buffer[64];
     switch (option) {
     case 0:
-        std::snprintf(buffer, sizeof(buffer), "半径 %.0f", spellRing.radiusForRing(ringIndex));
+        std::snprintf(buffer, sizeof(buffer), "半径 %.2fm", worldDistanceToMeters(spellRing.orbitRadiusForRing(ringIndex)));
         break;
     case 1:
-        std::snprintf(buffer, sizeof(buffer), "速度 %.2f", spellRing.angularSpeedForRing(ringIndex));
+        std::snprintf(
+            buffer,
+            sizeof(buffer),
+            "速度 %.2fm/s",
+            linearMetersPerSecondForAngularSpeed(
+                spellRing.ringAngularSpeedForIndex(ringIndex, balance),
+                spellRing.orbitRadiusForRing(ringIndex)));
         break;
     case 2:
         std::snprintf(buffer, sizeof(buffer), "重量 %.1fkg", spellRing.maxEquippedWeightForRing(ringIndex));
@@ -128,15 +146,26 @@ std::string upgradeNextValueText(
     int option,
     const SpellRingSystem& spellRing,
     int ringIndex,
-    const RingLevelUpgradePoints& points)
+    const RingLevelUpgradePoints& points,
+    const RuntimeBalance& balance)
 {
     char buffer[64];
     switch (option) {
     case 0:
-        std::snprintf(buffer, sizeof(buffer), "%.0f", spellRing.radiusForRing(ringIndex) * nextLevelScaleFactor(points.radius));
+        std::snprintf(
+            buffer,
+            sizeof(buffer),
+            "%.2fm",
+            worldDistanceToMeters(spellRing.orbitRadiusForRing(ringIndex) * nextLevelScaleFactor(points.radius)));
         break;
     case 1:
-        std::snprintf(buffer, sizeof(buffer), "%.2f", spellRing.angularSpeedForRing(ringIndex) * nextLevelScaleFactor(points.speed));
+        std::snprintf(
+            buffer,
+            sizeof(buffer),
+            "%.2fm/s",
+            linearMetersPerSecondForAngularSpeed(
+                spellRing.ringAngularSpeedForIndex(ringIndex, balance) * nextLevelScaleFactor(points.speed),
+                spellRing.orbitRadiusForRing(ringIndex)));
         break;
     case 2:
         std::snprintf(buffer, sizeof(buffer), "%.1fkg", spellRing.maxEquippedWeightForRing(ringIndex) + SpellRingSystem::LevelWeightLimitUpgradeAmount);
@@ -417,15 +446,15 @@ void UpgradeSystem::render(
             renderer,
             card,
             card.pos.y + 134.0f,
-            upgradeCurrentValueText(i, spellRing, ringIndex),
-            upgradeNextValueText(i, spellRing, ringIndex, points),
+            upgradeCurrentValueText(i, spellRing, ringIndex, balance_),
+            upgradeNextValueText(i, spellRing, ringIndex, points, balance_),
             selected ? ui::Text : ui::TextMuted,
             2);
         const int currentStage = upgradeStageForOption(i, points);
         drawCenteredText(
             renderer,
             card,
-            card.pos.y + 212.0f,
+            card.pos.y + 182.0f,
             "強化回数：" + std::to_string(currentStage),
             selected ? ui::Text : ui::TextMuted,
             2);

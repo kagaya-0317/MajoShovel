@@ -36,6 +36,7 @@ constexpr std::array<float, SpellRingCount> RingBaseSpeedMultipliers{{
 constexpr float ThrowMorphOpenDurationRatio = 0.18f;
 constexpr float ThrowMorphCloseStartRatio = 0.70f;
 constexpr float ThrowMorphGapFraction = 0.18f;
+constexpr float ThrowCurveBulgeScale = 1.0f;
 constexpr float ThrowPathSampleOffset = 0.006f;
 constexpr float RingWindAcceleration = 360.0f;
 constexpr float RingWindVelocityDamping = 8.5f;
@@ -559,6 +560,14 @@ float pathTClosestToDirection(Vec2 center, Vec2 direction, const RingOrbitContex
         }
     }
     return bestT;
+}
+
+Vec2 throwCurvePathPoint(Vec2 launchAnchor, Vec2 returnAnchor, Vec2 direction, float reachDistance, float pathT)
+{
+    const float curveT = smoothStep01(pathT);
+    const Vec2 base = lerp(launchAnchor, returnAnchor, curveT);
+    const float bulge = std::sin(curveT * Pi) * reachDistance * ThrowCurveBulgeScale;
+    return base + direction * bulge;
 }
 
 std::vector<SpellRingItem>& SpellRingSystem::activeItems()
@@ -1111,15 +1120,10 @@ Vec2 SpellRingSystem::throwMorphPathPointForRing(
     const Vec2 openPoint = getRingItemWorldPosition(runtime.homeCenter, openParam, openContext);
     const float lineMix = throwLineMixForRing(clampedRingIndex);
     const float reachDistance = runtime.throwDistance * throwReachForRing(clampedRingIndex);
-    const float lineT = smoothStep01(pathT);
-    const float peakTime = std::max(0.02f, runtime.throwPeakTime);
-    const float returnTime = std::max(0.02f, runtime.throwReturnTime);
-    const float returnProgress = smoothStep01((runtime.throwElapsed - peakTime) / returnTime);
     const Vec2 launchAnchor = runtime.homeCenter + runtime.throwLaunchOffset;
     const Vec2 returnAnchor = runtime.homeCenter + runtime.throwReturnOffset;
-    const Vec2 lineAnchor = lerp(launchAnchor, returnAnchor, returnProgress);
-    const Vec2 linePoint = lineAnchor + direction * (reachDistance * lineT);
-    const Vec2 morphed = lerp(openPoint, linePoint, lineMix);
+    const Vec2 curvePoint = throwCurvePathPoint(launchAnchor, returnAnchor, direction, reachDistance, pathT);
+    const Vec2 morphed = lerp(openPoint, curvePoint, lineMix);
     const Vec2 outward = safeNormalize(lerp(openPoint - runtime.homeCenter, direction, lineMix), direction);
     return morphed + outward * distanceOffset;
 }
@@ -1990,6 +1994,11 @@ float SpellRingSystem::radiusForRing(int ringIndex) const
         return radii_[0];
     }
     return radii_[static_cast<std::size_t>(ringIndex)];
+}
+
+float SpellRingSystem::orbitRadiusForRing(int ringIndex) const
+{
+    return radiusForRing(ringIndex) * ringBaseRadiusMultiplierForIndex(ringIndex);
 }
 
 float SpellRingSystem::angularSpeedForRing(int ringIndex) const

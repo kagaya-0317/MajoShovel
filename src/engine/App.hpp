@@ -30,6 +30,7 @@ private:
     bool loadAssets();
     bool loadGameCursor(std::string_view path);
     void unloadGameCursor();
+    void updateGameCursorPressed(bool pressed);
     void configureAssetWatcher();
     void setRuntimeHotReloadEnabled(bool enabled);
     void checkAssetHotReload();
@@ -68,6 +69,7 @@ private:
     SDL_Window* window_ = nullptr;
     SDL_Renderer* sdlRenderer_ = nullptr;
     SDL_Cursor* gameCursor_ = nullptr;
+    SDL_Cursor* gameCursorPressed_ = nullptr;
     Renderer* renderer_ = nullptr;
     AudioEngine audio_;
     SettingsStore settingsStore_;
@@ -85,6 +87,7 @@ private:
     bool autoReloadBlocked_ = false;
     bool runtimeHotReloadEnabled_ = false;
     std::uint64_t nextAssetHotReloadPollTicks_ = 0;
+    bool gameCursorPressedActive_ = false;
     bool testFreezePaused_ = false;
     bool restartRequested_ = false;
     bool settingsSavePending_ = false;

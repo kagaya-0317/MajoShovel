@@ -58,6 +58,11 @@ constexpr float DetailW = 330.0f;
 constexpr float DetailH = 520.0f;
 constexpr float ScreenGridW = static_cast<float>(InventoryColumns) * ScreenSlotW + static_cast<float>(InventoryColumns - 1) * ScreenSlotGap;
 constexpr float ScreenGridX = ScreenX + (DetailX - ScreenX - ScreenGridW) * 0.5f;
+constexpr std::array<std::string_view, SpellRingCount> RingTargetCommandLabels{{
+    "リング1",
+    "リング2",
+    "リング3",
+}};
 UiRect panelRect()
 {
     return {{PanelX, PanelY}, {PanelW, PanelH}};
@@ -1772,7 +1777,7 @@ std::array<UiCommandMenuItem, SpellRingCount> InventorySystem::buildRingTargetCo
     const int ringCount = clampedUnlockedRingCount(unlockedRingCount);
     for (int ringIndex = 0; ringIndex < SpellRingCount; ++ringIndex) {
         items[static_cast<std::size_t>(ringIndex)] = {
-            "リング" + std::to_string(ringIndex + 1),
+            RingTargetCommandLabels[static_cast<std::size_t>(ringIndex)],
             ringIndex < ringCount && screenItemCanAddToRingForRing(slotIndex, spellRing, ringIndex),
         };
     }

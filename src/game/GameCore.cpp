@@ -67,6 +67,33 @@ constexpr float LevelUpPresentationMinSeconds = 1.22f;
 constexpr float LevelUpPresentationSparkleIntervalSeconds = 0.22f;
 constexpr float LevelUpJingleFallbackSeconds = 1.18f;
 constexpr float GameOverJingleFallbackSeconds = 1.35f;
+constexpr float RingWorkshopRadiusMetersPerLevel = 0.05f;
+constexpr float RingWorkshopSpeedMetersPerSecondPerLevel = 0.10f;
+constexpr float RingWorkshopThrowDistanceMetersPerLevel = 0.40f;
+constexpr float RingWorkshopThrowCooldownSecondsPerLevel = 0.18f;
+
+float metersToWorldDistance(float meters)
+{
+    return meters * static_cast<float>(balance::TileSize);
+}
+
+float worldDistanceToMeters(float distance)
+{
+    return distance / static_cast<float>(balance::TileSize);
+}
+
+float angularSpeedForLinearMetersPerSecond(float speedMetersPerSecond, float radius)
+{
+    if (radius <= 0.001f) {
+        return 0.0f;
+    }
+    return speedMetersPerSecond * static_cast<float>(balance::TileSize) / radius;
+}
+
+float linearMetersPerSecondForAngularSpeed(float angularSpeed, float radius)
+{
+    return angularSpeed * worldDistanceToMeters(radius);
+}
 
 void stripUtf8Bom(std::string& text)
 {
@@ -388,14 +415,14 @@ std::vector<UiResultDialogLine> levelUpResultLines(RingLevelUpgradeSelection sel
     switch (selection.kind) {
     case RingLevelUpgradeKind::Radius:
         lines.push_back(levelUpResultTextLine("リング" + std::to_string(displayRingIndex) + "のサイズが大きくなった！"));
-        std::snprintf(prefix, sizeof(prefix), "リング%d 半径: %.0f → ", displayRingIndex, beforeValue);
-        std::snprintf(after, sizeof(after), "%.0f", afterValue);
+        std::snprintf(prefix, sizeof(prefix), "リング%d 半径: %.2fm → ", displayRingIndex, beforeValue);
+        std::snprintf(after, sizeof(after), "%.2fm", afterValue);
         lines.push_back(levelUpResultChangeLine(prefix, after));
         break;
     case RingLevelUpgradeKind::Speed:
-        lines.push_back(levelUpResultTextLine("リング" + std::to_string(displayRingIndex) + "の回転速度が速くなった！"));
-        std::snprintf(prefix, sizeof(prefix), "リング%d 回転速度: %.2f → ", displayRingIndex, beforeValue);
-        std::snprintf(after, sizeof(after), "%.2f", afterValue);
+        lines.push_back(levelUpResultTextLine("リング" + std::to_string(displayRingIndex) + "の速度が速くなった！"));
+        std::snprintf(prefix, sizeof(prefix), "リング%d 速度: %.2fm/s → ", displayRingIndex, beforeValue);
+        std::snprintf(after, sizeof(after), "%.2fm/s", afterValue);
         lines.push_back(levelUpResultChangeLine(prefix, after));
         break;
     case RingLevelUpgradeKind::WeightLimit:
@@ -2109,10 +2136,16 @@ void Game::startMiningFromBase(bool useLatestWarpPoint, bool forceRegenerate)
 
 void Game::applyPermanentUpgrades()
 {
+    const float workshopThrowDistance = balance_.spellRingThrowDistance +
+        metersToWorldDistance(static_cast<float>(workshopThrowDistanceLevel_) * RingWorkshopThrowDistanceMetersPerLevel);
+    const float workshopThrowCooldown = std::max(
+        0.02f,
+        balance_.spellRingThrowCooldown -
+            static_cast<float>(workshopThrowCooldownLevel_) * RingWorkshopThrowCooldownSecondsPerLevel);
     spellRing_.setEquipmentModifiers(equipmentModifiers_);
     spellRing_.setWorkshopModifiers(RingWorkshopModifiers{
-        1.0f + static_cast<float>(workshopThrowDistanceLevel_) * 0.08f,
-        std::max(0.02f, 1.0f - static_cast<float>(workshopThrowCooldownLevel_) * 0.06f),
+        workshopThrowDistance / std::max(0.001f, balance_.spellRingThrowDistance),
+        workshopThrowCooldown / std::max(0.001f, balance_.spellRingThrowCooldown),
         static_cast<float>(workshopWeightPenaltyLevel_) * 0.10f,
         workshopEquipSlotLevel_ * 2,
     });
@@ -2282,9 +2315,11 @@ bool Game::applyLevelUpSelection(RingLevelUpgradeSelection selection)
         return false;
     }
     const RingLevelUpgradeKind kind = selection.kind;
-    float beforeValue = spellRing_.radiusForRing(ringIndex);
+    float beforeValue = worldDistanceToMeters(spellRing_.radiusForRing(ringIndex));
     if (kind == RingLevelUpgradeKind::Speed) {
-        beforeValue = spellRing_.angularSpeedForRing(ringIndex);
+        beforeValue = linearMetersPerSecondForAngularSpeed(
+            spellRing_.angularSpeedForRing(ringIndex),
+            spellRing_.radiusForRing(ringIndex));
     } else if (kind == RingLevelUpgradeKind::WeightLimit) {
         beforeValue = spellRing_.maxEquippedWeightForRing(ringIndex);
     }
@@ -2294,9 +2329,11 @@ bool Game::applyLevelUpSelection(RingLevelUpgradeSelection selection)
     levels_.finishChoice();
     applyPermanentUpgrades();
 
-    float afterValue = spellRing_.radiusForRing(ringIndex);
+    float afterValue = worldDistanceToMeters(spellRing_.radiusForRing(ringIndex));
     if (kind == RingLevelUpgradeKind::Speed) {
-        afterValue = spellRing_.angularSpeedForRing(ringIndex);
+        afterValue = linearMetersPerSecondForAngularSpeed(
+            spellRing_.angularSpeedForRing(ringIndex),
+            spellRing_.radiusForRing(ringIndex));
     } else if (kind == RingLevelUpgradeKind::WeightLimit) {
         afterValue = spellRing_.maxEquippedWeightForRing(ringIndex);
     }
@@ -2362,30 +2399,33 @@ void Game::updateLevelUpScreen(const Input& input, UiContext& ui, float dt)
 float Game::effectiveInitialRingRadiusForRing(int ringIndex, int levelRadiusPoints) const
 {
     const float baseUpgradeMultiplier = 1.0f + static_cast<float>(ringRadiusUpgradeLevel_) * 0.08f;
-    const float workshopMultiplier = 1.0f + static_cast<float>(workshopInitialRadiusLevel_) * 0.05f;
     const float levelMultiplier = SpellRingSystem::levelScaleMultiplierForPoints(levelRadiusPoints);
     const double staffMultiplier = std::max(
         0.0,
         ringEquipmentModifiersForRing(equipmentModifiers_, ringIndex).ringRadiusMul);
-    return balance_.spellRingRadius *
+    const float radiusBeforeStaff = balance_.spellRingRadius *
         baseUpgradeMultiplier *
-        workshopMultiplier *
-        levelMultiplier *
-        static_cast<float>(staffMultiplier);
+        levelMultiplier +
+        metersToWorldDistance(static_cast<float>(workshopInitialRadiusLevel_) * RingWorkshopRadiusMetersPerLevel);
+    return radiusBeforeStaff * static_cast<float>(staffMultiplier);
 }
 
 float Game::effectiveInitialRingSpeedForRing(int ringIndex, int levelSpeedPoints) const
 {
     const float baseUpgradeMultiplier = 1.0f + static_cast<float>(ringSpeedUpgradeLevel_) * 0.08f;
-    const float workshopMultiplier = 1.0f + static_cast<float>(workshopInitialSpeedLevel_) * 0.05f;
     const float levelMultiplier = SpellRingSystem::levelScaleMultiplierForPoints(levelSpeedPoints);
     const double staffMultiplier = std::max(
         0.0,
         ringEquipmentModifiersForRing(equipmentModifiers_, ringIndex).ringSpeedMul);
-    return balance_.spellRingSpeed *
-        baseUpgradeMultiplier *
-        workshopMultiplier *
-        levelMultiplier *
+    const int radiusPoints = ringIndex >= 0 && ringIndex < SpellRingCount
+        ? clampedRingLevelUpgradePoints(levelRingUpgradePoints_[static_cast<std::size_t>(ringIndex)]).radius
+        : 0;
+    const float radius = effectiveInitialRingRadiusForRing(ringIndex, radiusPoints);
+    const float speedBeforeWorkshop = balance_.spellRingSpeed * baseUpgradeMultiplier * levelMultiplier;
+    const float linearSpeedBeforeStaff =
+        linearMetersPerSecondForAngularSpeed(speedBeforeWorkshop, radius) +
+        static_cast<float>(workshopInitialSpeedLevel_) * RingWorkshopSpeedMetersPerSecondPerLevel;
+    return angularSpeedForLinearMetersPerSecond(linearSpeedBeforeStaff, radius) *
         static_cast<float>(staffMultiplier);
 }
 
@@ -3717,6 +3757,7 @@ void Game::switchActiveRingWithLog(int delta)
 
 void Game::update(const Input& input, const Time& time)
 {
+    gamepadUiCursorEnabled_ = input.lastActiveDevice() == InputDeviceKind::Gamepad;
     const GameSettings currentSettings = settingsGetter_ ? settingsGetter_() : optionsSettings_;
     lightweightModeActive_ = currentSettings.performance.lightweight;
     presentationSettingsActive_ = currentSettings.presentation;

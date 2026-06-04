@@ -80,10 +80,18 @@ bool utf8ToWide(std::string_view text, std::wstring& out)
 }
 #endif
 
-std::unique_ptr<SDL_Surface, decltype(&SDL_DestroySurface)> loadPngSurface(std::string_view path, std::string& outError)
+std::unique_ptr<SDL_Surface, decltype(&SDL_DestroySurface)> loadPngSurfaceFrame(
+    std::string_view path,
+    int frameIndex,
+    int frameCount,
+    std::string& outError)
 {
     outError.clear();
     const std::string pathString(path);
+    if (frameIndex < 0 || frameCount <= 0 || frameIndex >= frameCount) {
+        outError = "Invalid PNG frame index";
+        return {nullptr, SDL_DestroySurface};
+    }
 
 #ifdef _WIN32
     static GdiPlusSession gdiPlus;
@@ -110,9 +118,15 @@ std::unique_ptr<SDL_Surface, decltype(&SDL_DestroySurface)> loadPngSurface(std::
         outError = "Invalid PNG image size: " + pathString;
         return {nullptr, SDL_DestroySurface};
     }
+    if (width % frameCount != 0) {
+        outError = "PNG image width is not divisible by frame count: " + pathString;
+        return {nullptr, SDL_DestroySurface};
+    }
 
+    const int frameWidth = width / frameCount;
+    const int sourceX = frameWidth * frameIndex;
     auto surface = std::unique_ptr<SDL_Surface, decltype(&SDL_DestroySurface)>(
-        SDL_CreateSurface(width, height, SDL_PIXELFORMAT_BGRA32),
+        SDL_CreateSurface(frameWidth, height, SDL_PIXELFORMAT_BGRA32),
         SDL_DestroySurface);
     if (!surface) {
         outError = std::string("SDL_CreateSurface failed: ") + SDL_GetError();
@@ -129,10 +143,10 @@ std::unique_ptr<SDL_Surface, decltype(&SDL_DestroySurface)> loadPngSurface(std::
     auto* target = static_cast<unsigned char*>(surface->pixels);
     const auto* source = static_cast<const unsigned char*>(locked.Scan0);
     const int sourceStride = locked.Stride;
-    const int rowBytes = width * 4;
+    const int rowBytes = frameWidth * 4;
     for (int y = 0; y < height; ++y) {
         const int sourceY = sourceStride < 0 ? height - 1 - y : y;
-        const unsigned char* sourceRow = source + sourceY * std::abs(sourceStride);
+        const unsigned char* sourceRow = source + sourceY * std::abs(sourceStride) + sourceX * 4;
         unsigned char* targetRow = target + static_cast<std::size_t>(y) * static_cast<std::size_t>(surface->pitch);
         std::memcpy(targetRow, sourceRow, static_cast<std::size_t>(rowBytes));
     }
@@ -799,38 +813,74 @@ bool App::loadAssets()
 bool App::loadGameCursor(std::string_view path)
 {
     std::string error;
-    auto surface = loadPngSurface(path, error);
-    if (!surface) {
+    auto normalSurface = loadPngSurfaceFrame(path, 0, 2, error);
+    if (!normalSurface) {
         logError("Mouse cursor load failed: " + error);
         return false;
     }
+    auto pressedSurface = loadPngSurfaceFrame(path, 1, 2, error);
+    if (!pressedSurface) {
+        logError("Mouse cursor pressed-frame load failed: " + error);
+        return false;
+    }
 
-    SDL_Cursor* cursor = SDL_CreateColorCursor(surface.get(), GameCursorHotspotX, GameCursorHotspotY);
-    if (cursor == nullptr) {
+    SDL_Cursor* normalCursor = SDL_CreateColorCursor(normalSurface.get(), GameCursorHotspotX, GameCursorHotspotY);
+    if (normalCursor == nullptr) {
+        logError(std::string("SDL_CreateColorCursor failed: ") + SDL_GetError());
+        return false;
+    }
+    SDL_Cursor* pressedCursor = SDL_CreateColorCursor(pressedSurface.get(), GameCursorHotspotX, GameCursorHotspotY);
+    if (pressedCursor == nullptr) {
+        SDL_DestroyCursor(normalCursor);
         logError(std::string("SDL_CreateColorCursor failed: ") + SDL_GetError());
         return false;
     }
 
     SDL_Cursor* oldCursor = gameCursor_;
-    gameCursor_ = cursor;
-    if (!SDL_SetCursor(gameCursor_)) {
+    SDL_Cursor* oldPressedCursor = gameCursorPressed_;
+    gameCursor_ = normalCursor;
+    gameCursorPressed_ = pressedCursor;
+    SDL_Cursor* activeCursor = gameCursorPressedActive_ ? gameCursorPressed_ : gameCursor_;
+    if (!SDL_SetCursor(activeCursor)) {
         logWarning(std::string("SDL_SetCursor failed: ") + SDL_GetError());
     }
     if (oldCursor != nullptr) {
         SDL_DestroyCursor(oldCursor);
+    }
+    if (oldPressedCursor != nullptr) {
+        SDL_DestroyCursor(oldPressedCursor);
     }
     return true;
 }
 
 void App::unloadGameCursor()
 {
-    if (gameCursor_ == nullptr) {
+    if (gameCursor_ == nullptr && gameCursorPressed_ == nullptr) {
         return;
     }
 
     SDL_SetCursor(SDL_GetDefaultCursor());
-    SDL_DestroyCursor(gameCursor_);
+    if (gameCursor_ != nullptr) {
+        SDL_DestroyCursor(gameCursor_);
+    }
+    if (gameCursorPressed_ != nullptr) {
+        SDL_DestroyCursor(gameCursorPressed_);
+    }
     gameCursor_ = nullptr;
+    gameCursorPressed_ = nullptr;
+    gameCursorPressedActive_ = false;
+}
+
+void App::updateGameCursorPressed(bool pressed)
+{
+    if (gameCursorPressedActive_ == pressed) {
+        return;
+    }
+    gameCursorPressedActive_ = pressed;
+    SDL_Cursor* cursor = gameCursorPressedActive_ ? gameCursorPressed_ : gameCursor_;
+    if (cursor != nullptr && !SDL_SetCursor(cursor)) {
+        logWarning(std::string("SDL_SetCursor failed: ") + SDL_GetError());
+    }
 }
 
 void App::configureAssetWatcher()
@@ -899,6 +949,10 @@ bool App::reloadAssetForPath(const std::string& changedPath)
     }
     if (fileName == "ui_cursor.png") {
         return loadGameCursor(GameCursorPath);
+    }
+    if (fileName == "ui_cursor2.png") {
+        renderer_->invalidateImage("assets/UI_cursor2.png");
+        return true;
     }
     if (extension == ".otf" || extension == ".ttf") {
         bool ok = true;
@@ -1626,6 +1680,11 @@ void App::run()
         input_.beginFrame();
         SDL_Event event;
         while (SDL_PollEvent(&event)) {
+            if (event.type == SDL_EVENT_MOUSE_BUTTON_DOWN && event.button.button == SDL_BUTTON_LEFT) {
+                updateGameCursorPressed(true);
+            } else if (event.type == SDL_EVENT_MOUSE_BUTTON_UP && event.button.button == SDL_BUTTON_LEFT) {
+                updateGameCursorPressed(false);
+            }
             SDL_Event renderEvent = event;
             if (renderer_ != nullptr) {
                 renderer_->convertEventToRenderCoordinates(renderEvent);
