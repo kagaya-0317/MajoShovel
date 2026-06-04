@@ -6406,10 +6406,6 @@ void Game::render(Renderer& renderer, const Time& time)
         drawSpellRingOrbitLayer(renderer, spellRing_, balance_, time.totalSeconds(), 0.46f);
     }
     renderPlayerDeathRingFade(renderer);
-    if (!liveRingHiddenForDeath && spellRing_.state() != SpellRingState::Normal && ringCenterVisible) {
-        renderer.drawLine(playerLightCenter, spellRing_.center(), {150, 110, 80, 100});
-    }
-
     const Vec2 playerFootAnchor = player_.position;
     const EntityStatusVisualStyle playerStatusVisual = entityStatusVisualStyle(player_.status);
     const Vec2 playerVisualFootAnchor = playerFootAnchor +

@@ -7798,6 +7798,9 @@ void Game::enterBaseEditMode()
     baseRingWorkshopSelection_ = 0;
     baseRingWorkshopRingIndex_ = 0;
     baseRingWorkshopRingTabs_ = {};
+    baseRingWorkshopUpgradeTabs_ = {};
+    baseRingWorkshopUpgradeScrollOffset_ = 0.0f;
+    baseRingWorkshopUpgradeScroll_ = {};
     baseBookshelfActive_ = false;
     bookshelfScrollOffset_ = 0.0f;
     bookshelfScrollState_ = {};

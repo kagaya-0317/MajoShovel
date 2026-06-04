@@ -1165,6 +1165,13 @@ private:
     int ringWorkshopUpgradeMoonCost(RingWorkshopUpgrade upgrade) const;
     float ringWorkshopUpgradeCurrentValue(RingWorkshopUpgrade upgrade) const;
     float ringWorkshopUpgradeNextValue(RingWorkshopUpgrade upgrade) const;
+    std::string ringWorkshopUpgradeValueText(RingWorkshopUpgrade upgrade, float value) const;
+    std::vector<UiResultDialogLine> ringWorkshopUpgradeResultLines(
+        RingWorkshopUpgrade upgrade,
+        int ringIndex,
+        float beforeValue,
+        float afterValue) const;
+    RingWorkshopUpgrade ringWorkshopUpgradeForDisplayIndex(int index) const;
     float ringWorkshopRadiusMinForRing(int ringIndex) const;
     float ringWorkshopRadiusMaxForRing(int ringIndex) const;
     float ringWorkshopRadiusSettingForRing(int ringIndex) const;
@@ -1829,6 +1836,9 @@ private:
     int baseRingWorkshopSelection_ = 0;
     int baseRingWorkshopRingIndex_ = 0;
     UiTabsState baseRingWorkshopRingTabs_{};
+    UiTabsState baseRingWorkshopUpgradeTabs_{};
+    float baseRingWorkshopUpgradeScrollOffset_ = 0.0f;
+    UiScrollAreaState baseRingWorkshopUpgradeScroll_{};
     std::optional<RingLevelUpgradeSelection> ringWorkshopRespecSource_;
     RingLevelUpgradePointTable ringWorkshopDraftUpgradePoints_{};
     bool baseBookshelfActive_ = false;

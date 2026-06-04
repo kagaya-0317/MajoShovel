@@ -276,6 +276,7 @@ private:
         Vec2 throwReturnOffset{};
         float throwCutPathT = 0.0f;
         float throwReturnPathT = 0.5f;
+        float throwShapeRotation = 0.0f;
         float throwElapsed = 0.0f;
         float throwPeakTime = 0.0f;
         float throwReturnTime = 0.0f;
@@ -324,16 +325,9 @@ private:
     void updateActionFlashTimers(float dt);
     void advanceOrbitAngles(float dt, const RuntimeBalance& balance);
     void refreshItemWorldPositions(float dt, const RuntimeBalance& balance, bool advanceCapturedBehaviors);
-    float throwTotalTimeForRing(int ringIndex) const;
-    float throwProgressForRing(int ringIndex) const;
     float throwReachForRing(int ringIndex) const;
-    float throwLineMixForRing(int ringIndex) const;
-    float throwPathTForItem(int ringIndex, float pathParam, const RingOrbitContext& context) const;
-    Vec2 throwMorphPathPointForRing(
-        int ringIndex,
-        float pathT,
-        const RingOrbitContext& context,
-        float distanceOffset) const;
+    float throwOutboundPhaseForRing(int ringIndex) const;
+    float throwReturnPhaseForRing(int ringIndex) const;
     bool canAddItemForRing(int ringIndex, const SpellRingItem& item) const;
     bool addItemToRing(int ringIndex, SpellRingItem item, SpellRingAddResult* outResult);
     bool canPlaceItemAtAngle(const SpellRingItem& item, float angle, int ignoreIndex, const RingOrbitTuning& tuning) const;

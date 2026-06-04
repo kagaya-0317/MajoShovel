@@ -97,7 +97,7 @@ public:
     Vec2 measureWrappedText(std::string_view text, float maxWidth, int scale = 2, TextStyle style = TextStyle::Regular);
     void drawWrappedText(Vec2 pos, std::string_view text, float maxWidth, Color color, int scale = 2, TextStyle style = TextStyle::Regular);
     bool loadTextFont(std::string_view path, TextFontRole fontRole = TextFontRole::Ui);
-    bool loadPlayerSheet(std::string_view path, int frameSize = 96, int columns = 3, int rows = 3);
+    bool loadPlayerSheet(std::string_view path, int frameSize = 0, int columns = 3, int rows = 3);
     void unloadPlayerSheet();
     bool hasPlayerSheet() const { return playerSheet_.texture != nullptr; }
     bool loadUiWindowTexture(std::string_view path);
@@ -177,7 +177,8 @@ public:
 private:
     struct SpriteSheet {
         SDL_Texture* texture = nullptr;
-        int frameSize = 32;
+        int frameWidth = 32;
+        int frameHeight = 32;
         int columns = 0;
         int rows = 0;
     };

@@ -33,12 +33,11 @@ constexpr std::array<float, SpellRingCount> RingBaseSpeedMultipliers{{
     1.0f,
     0.5f,
 }};
-constexpr float ThrowMorphOpenDurationRatio = 0.18f;
-constexpr float ThrowMorphCloseStartRatio = 0.70f;
-constexpr float ThrowMorphGapFraction = 0.18f;
-constexpr float ThrowRibbonReleaseDurationRatio = 0.44f;
-constexpr float ThrowRibbonReleaseWindow = 0.18f;
-constexpr float ThrowPathSampleOffset = 0.006f;
+constexpr int ThrowGuideFrontSamples = 128;
+constexpr int ThrowGuideRearSamples = 128;
+constexpr float ThrowGuidePointMergeDistanceSq = 0.01f;
+constexpr float ThrowGuideTangentSampleDistance = 3.0f;
+constexpr float ThrowGuideVisibleSampleSpacing = 4.0f;
 constexpr float RingWindAcceleration = 360.0f;
 constexpr float RingWindVelocityDamping = 8.5f;
 constexpr float RingWindReturnRate = 7.0f;
@@ -526,28 +525,6 @@ float pathParamForT(RingShape shape, float t, const RingOrbitTuning& tuning)
     return wrap01(t) * FullCircleRadians;
 }
 
-float openPathParamForT(RingShape shape, float t, float gapCenterT, const RingOrbitTuning& tuning)
-{
-    if (shape == RingShape::Comet) {
-        return cometPathParamForT(t, tuning);
-    }
-
-    const float gap = std::clamp(ThrowMorphGapFraction, 0.02f, 0.42f);
-    const float phase = wrap01(gapCenterT + gap * 0.5f + clamp(t, 0.0f, 1.0f) * (1.0f - gap));
-    return phase * FullCircleRadians;
-}
-
-float pathTForOpenPathParam(RingShape shape, float param, float gapCenterT, const RingOrbitTuning& tuning)
-{
-    if (shape == RingShape::Comet) {
-        return pathTForParam(shape, param, tuning);
-    }
-
-    const float gap = std::clamp(ThrowMorphGapFraction, 0.02f, 0.42f);
-    const float rawT = pathTForParam(shape, param, tuning);
-    return clamp(wrap01(rawT - wrap01(gapCenterT + gap * 0.5f)) / (1.0f - gap), 0.0f, 1.0f);
-}
-
 float pathTClosestToDirection(Vec2 center, Vec2 direction, const RingOrbitContext& context)
 {
     if (context.shape == RingShape::Comet) {
@@ -576,16 +553,6 @@ Vec2 screenCounterClockwise(Vec2 direction)
     return safeNormalize(Vec2{direction.y, -direction.x}, Vec2{0.0f, -1.0f});
 }
 
-float throwRibbonHead(float throwProgress)
-{
-    return smoothStep01(throwProgress / ThrowRibbonReleaseDurationRatio) * (1.0f + ThrowRibbonReleaseWindow);
-}
-
-float throwRibbonMix(float ribbonHead, float pathT)
-{
-    return smoothStep01((ribbonHead - pathT) / ThrowRibbonReleaseWindow);
-}
-
 Vec2 throwFlightPathPoint(
     Vec2 homeCenter,
     Vec2 launchOffset,
@@ -596,7 +563,287 @@ Vec2 throwFlightPathPoint(
 {
     const float t = clamp(pathT, 0.0f, 1.0f);
     const Vec2 anchor = homeCenter + lerp(launchOffset, returnOffset, t);
-    return anchor + direction * (std::sin(t * Pi) * reachDistance);
+    return anchor + direction * (4.0f * t * (1.0f - t) * reachDistance);
+}
+
+struct SourceMaterialPath {
+    std::vector<Vec2> points;
+    std::vector<float> sourceU;
+    std::vector<float> cumulativeLengths;
+    float totalLength = 0.0f;
+};
+
+struct ThrowGuidePath {
+    std::vector<Vec2> points;
+    std::vector<float> cumulativeLengths;
+    SourceMaterialPath source;
+    float totalLength = 0.0f;
+    float materialLength = 0.0f;
+    float frontLength = 0.0f;
+    float headDistance = 0.0f;
+    bool closed = false;
+};
+
+void appendGuidePathPoint(ThrowGuidePath& path, Vec2 point)
+{
+    if (path.points.empty()) {
+        path.points.push_back(point);
+        path.cumulativeLengths.push_back(0.0f);
+        return;
+    }
+
+    const float segmentLength = length(point - path.points.back());
+    if (segmentLength * segmentLength <= ThrowGuidePointMergeDistanceSq) {
+        path.points.back() = point;
+        return;
+    }
+
+    path.totalLength += segmentLength;
+    path.points.push_back(point);
+    path.cumulativeLengths.push_back(path.totalLength);
+}
+
+void appendSourceMaterialPoint(SourceMaterialPath& path, float sourceU, Vec2 point)
+{
+    const float clampedU = clamp(sourceU, 0.0f, 1.0f);
+    if (path.points.empty()) {
+        path.points.push_back(point);
+        path.sourceU.push_back(clampedU);
+        path.cumulativeLengths.push_back(0.0f);
+        return;
+    }
+
+    path.totalLength += length(point - path.points.back());
+    path.points.push_back(point);
+    path.sourceU.push_back(clampedU);
+    path.cumulativeLengths.push_back(path.totalLength);
+}
+
+float closedPathSpan(float fromPathT, float toPathT)
+{
+    const float span = wrap01(toPathT - fromPathT);
+    return span > 0.0001f ? span : 1.0f;
+}
+
+float throwFrontPathTForU(RingShape shape, float launchPathT, float returnPathT, float u)
+{
+    const float clampedU = clamp(u, 0.0f, 1.0f);
+    if (shape == RingShape::Comet) {
+        return lerp(launchPathT, returnPathT, clampedU);
+    }
+
+    return wrap01(launchPathT + closedPathSpan(launchPathT, returnPathT) * clampedU);
+}
+
+float throwRearPathTForU(float launchPathT, float returnPathT, float u)
+{
+    return wrap01(returnPathT + closedPathSpan(returnPathT, launchPathT) * clamp(u, 0.0f, 1.0f));
+}
+
+float throwSourceUForPathT(RingShape shape, float pathT, float launchPathT, float returnPathT)
+{
+    if (shape == RingShape::Comet) {
+        const float span = returnPathT - launchPathT;
+        return std::abs(span) > 0.0001f ? clamp((pathT - launchPathT) / span, 0.0f, 1.0f) : 0.0f;
+    }
+
+    return wrap01(pathT - launchPathT);
+}
+
+Vec2 ringPathPointAtT(Vec2 center, const RingOrbitContext& context, float pathT)
+{
+    return getRingItemWorldPosition(center, pathParamForT(context.shape, pathT, context.tuning), context);
+}
+
+float sampleSourceMaterialDistance(const ThrowGuidePath& guide, RingShape shape, float pathT, float launchPathT, float returnPathT)
+{
+    if (guide.source.sourceU.empty() || guide.source.cumulativeLengths.empty()) {
+        return 0.0f;
+    }
+
+    const float sourceU = throwSourceUForPathT(shape, pathT, launchPathT, returnPathT);
+    const auto upper = std::lower_bound(guide.source.sourceU.begin(), guide.source.sourceU.end(), sourceU);
+    if (upper == guide.source.sourceU.begin()) {
+        return guide.source.cumulativeLengths.front();
+    }
+    if (upper == guide.source.sourceU.end()) {
+        return guide.source.cumulativeLengths.back();
+    }
+
+    const std::size_t index = static_cast<std::size_t>(upper - guide.source.sourceU.begin());
+    const float u0 = guide.source.sourceU[index - 1];
+    const float u1 = guide.source.sourceU[index];
+    const float d0 = guide.source.cumulativeLengths[index - 1];
+    const float d1 = guide.source.cumulativeLengths[index];
+    if (std::abs(u1 - u0) <= 0.0001f) {
+        return d1;
+    }
+
+    return lerp(d0, d1, clamp((sourceU - u0) / (u1 - u0), 0.0f, 1.0f));
+}
+
+float wrapPathDistance(float distance, float totalLength)
+{
+    if (totalLength <= 0.0001f) {
+        return 0.0f;
+    }
+
+    distance = std::fmod(distance, totalLength);
+    if (distance < 0.0f) {
+        distance += totalLength;
+    }
+    return distance;
+}
+
+Vec2 sampleGuidePathByDistance(const ThrowGuidePath& guide, float distance)
+{
+    if (guide.points.empty()) {
+        return {};
+    }
+    if (guide.points.size() == 1 || guide.totalLength <= 0.0001f) {
+        return guide.points.front();
+    }
+
+    const float clampedDistance = guide.closed
+        ? wrapPathDistance(distance, guide.totalLength)
+        : clamp(distance, 0.0f, guide.totalLength);
+    if (!guide.closed && clampedDistance >= guide.totalLength) {
+        return guide.points.back();
+    }
+
+    const auto upper = std::lower_bound(guide.cumulativeLengths.begin(), guide.cumulativeLengths.end(), clampedDistance);
+    if (upper == guide.cumulativeLengths.begin()) {
+        return guide.points.front();
+    }
+    if (upper == guide.cumulativeLengths.end()) {
+        return guide.points.back();
+    }
+
+    const std::size_t index = static_cast<std::size_t>(upper - guide.cumulativeLengths.begin());
+    const float d0 = guide.cumulativeLengths[index - 1];
+    const float d1 = guide.cumulativeLengths[index];
+    if (d1 - d0 <= 0.0001f) {
+        return guide.points[index];
+    }
+
+    return lerp(guide.points[index - 1], guide.points[index], (clampedDistance - d0) / (d1 - d0));
+}
+
+float throwGuideTailDistance(const ThrowGuidePath& guide)
+{
+    if (guide.totalLength <= 0.0001f || guide.materialLength <= 0.0001f) {
+        return 0.0f;
+    }
+
+    if (guide.closed) {
+        return wrapPathDistance(guide.headDistance - guide.materialLength, guide.totalLength);
+    }
+
+    return std::max(0.0f, guide.totalLength - guide.materialLength);
+}
+
+float throwGuideDistanceForMaterialDistance(const ThrowGuidePath& guide, float materialDistance)
+{
+    if (guide.totalLength <= 0.0001f || guide.materialLength <= 0.0001f) {
+        return 0.0f;
+    }
+
+    const float tailDistance = throwGuideTailDistance(guide);
+    const float clampedMaterialDistance = clamp(materialDistance, 0.0f, guide.materialLength);
+    if (guide.closed) {
+        return wrapPathDistance(tailDistance + clampedMaterialDistance, guide.totalLength);
+    }
+
+    return clamp(tailDistance + clampedMaterialDistance, 0.0f, guide.totalLength);
+}
+
+Vec2 sampleThrowGuidePathPoint(
+    const ThrowGuidePath& guide,
+    float materialDistance,
+    Vec2 homeCenter,
+    Vec2 fallbackOutward,
+    float distanceOffset)
+{
+    const Vec2 point = sampleGuidePathByDistance(guide, throwGuideDistanceForMaterialDistance(guide, materialDistance));
+    if (std::abs(distanceOffset) <= 0.001f) {
+        return point;
+    }
+
+    return point + safeNormalize(point - homeCenter, fallbackOutward) * distanceOffset;
+}
+
+std::vector<Vec2> sampleThrowGuideVisiblePoints(const ThrowGuidePath& guide, Vec2 homeCenter, Vec2 fallbackOutward, int sampleCount)
+{
+    if (guide.points.size() < 2 || guide.materialLength <= 0.0001f) {
+        return guide.points;
+    }
+
+    const int count = std::max(
+        8,
+        std::max(
+            sampleCount,
+            static_cast<int>(std::ceil(guide.materialLength / ThrowGuideVisibleSampleSpacing)) + 1));
+    std::vector<Vec2> points;
+    points.reserve(static_cast<std::size_t>(count));
+    for (int i = 0; i < count; ++i) {
+        const float t = static_cast<float>(i) / static_cast<float>(count - 1);
+        points.push_back(sampleThrowGuidePathPoint(guide, guide.materialLength * t, homeCenter, fallbackOutward, 0.0f));
+    }
+    return points;
+}
+
+ThrowGuidePath makeThrowGuidePath(
+    Vec2 homeCenter,
+    const RingOrbitContext& context,
+    Vec2 direction,
+    Vec2 launchOffset,
+    Vec2 returnOffset,
+    float launchPathT,
+    float returnPathT,
+    float reachDistance,
+    float reachBlend,
+    float outboundPhase,
+    bool returning)
+{
+    ThrowGuidePath guide;
+    guide.closed = context.shape != RingShape::Comet;
+    const Vec2 unitDirection = safeNormalize(direction);
+    const float frontSpan = guide.closed ? closedPathSpan(launchPathT, returnPathT) : 1.0f;
+    const float rearSpan = guide.closed ? closedPathSpan(returnPathT, launchPathT) : 0.0f;
+    const float clampedReachBlend = clamp(reachBlend, 0.0f, 1.0f);
+
+    for (int i = 0; i <= ThrowGuideFrontSamples; ++i) {
+        const float u = static_cast<float>(i) / static_cast<float>(ThrowGuideFrontSamples);
+        const float pathT = throwFrontPathTForU(context.shape, launchPathT, returnPathT, u);
+        const Vec2 sourcePoint = ringPathPointAtT(homeCenter, context, pathT);
+        const Vec2 flightPoint = throwFlightPathPoint(
+            homeCenter,
+            launchOffset,
+            returnOffset,
+            unitDirection,
+            reachDistance,
+            u);
+        const float sourceU = guide.closed ? frontSpan * u : u;
+        appendSourceMaterialPoint(guide.source, sourceU, sourcePoint);
+        appendGuidePathPoint(guide, lerp(sourcePoint, flightPoint, clampedReachBlend));
+    }
+
+    guide.frontLength = guide.totalLength;
+    if (guide.closed) {
+        for (int i = 1; i <= ThrowGuideRearSamples; ++i) {
+            const float u = static_cast<float>(i) / static_cast<float>(ThrowGuideRearSamples);
+            const float pathT = throwRearPathTForU(launchPathT, returnPathT, u);
+            const Vec2 sourcePoint = ringPathPointAtT(homeCenter, context, pathT);
+            appendSourceMaterialPoint(guide.source, frontSpan + rearSpan * u, sourcePoint);
+            appendGuidePathPoint(guide, sourcePoint);
+        }
+    }
+
+    guide.materialLength = guide.source.totalLength;
+    guide.headDistance = guide.closed
+        ? guide.frontLength * (returning ? 1.0f : smoothStep01(outboundPhase))
+        : guide.totalLength;
+    return guide;
 }
 
 std::vector<SpellRingItem>& SpellRingSystem::activeItems()
@@ -814,22 +1061,48 @@ void SpellRingSystem::refreshItemWorldPositions(float dt, const RuntimeBalance& 
                     context,
                     item.orbitDistanceOffset);
             } else {
-                const float pathT = throwPathTForItem(ringIndex, param, context);
-                item.worldPosition = throwMorphPathPointForRing(ringIndex, pathT, context, item.orbitDistanceOffset);
-                const Vec2 before = throwMorphPathPointForRing(
-                    ringIndex,
-                    pathT - ThrowPathSampleOffset,
-                    context,
+                RingOrbitContext throwContext = context;
+                throwContext.shapeRotation = runtime.throwShapeRotation;
+                const float reach = throwReachForRing(ringIndex);
+                const ThrowGuidePath guide = makeThrowGuidePath(
+                    runtime.homeCenter,
+                    throwContext,
+                    runtime.throwDirection,
+                    runtime.throwLaunchOffset,
+                    runtime.throwReturnOffset,
+                    runtime.throwCutPathT,
+                    runtime.throwReturnPathT,
+                    runtime.throwDistance * reach,
+                    reach,
+                    throwOutboundPhaseForRing(ringIndex),
+                    runtime.state == SpellRingState::Returning);
+                const float pathT = pathTForParam(ringShape, param, context.tuning);
+                const float materialDistance = sampleSourceMaterialDistance(
+                    guide,
+                    ringShape,
+                    pathT,
+                    runtime.throwCutPathT,
+                    runtime.throwReturnPathT);
+                item.worldPosition = sampleThrowGuidePathPoint(
+                    guide,
+                    materialDistance,
+                    runtime.homeCenter,
+                    runtime.throwDirection,
                     item.orbitDistanceOffset);
-                const Vec2 after = throwMorphPathPointForRing(
-                    ringIndex,
-                    pathT + ThrowPathSampleOffset,
-                    context,
+                const Vec2 before = sampleThrowGuidePathPoint(
+                    guide,
+                    materialDistance - ThrowGuideTangentSampleDistance,
+                    runtime.homeCenter,
+                    runtime.throwDirection,
+                    item.orbitDistanceOffset);
+                const Vec2 after = sampleThrowGuidePathPoint(
+                    guide,
+                    materialDistance + ThrowGuideTangentSampleDistance,
+                    runtime.homeCenter,
+                    runtime.throwDirection,
                     item.orbitDistanceOffset);
                 item.orbitTangent = safeNormalize(after - before, runtime.throwDirection);
-                item.orbitOutward = safeNormalize(
-                    lerp(item.worldPosition - runtime.homeCenter, runtime.throwDirection, throwLineMixForRing(ringIndex)),
-                    runtime.throwDirection);
+                item.orbitOutward = safeNormalize(item.worldPosition - runtime.homeCenter, runtime.throwDirection);
                 item.worldVelocity = safeDt > 0.0f ? (item.worldPosition - previousWorldPosition) / safeDt : centerVelocity;
             }
             item.orbitMotionSpeed = length(item.worldVelocity) / std::max(1.0f, radiusForRing(ringIndex));
@@ -1004,9 +1277,14 @@ void SpellRingSystem::update(Player& player, const Input& input, float dt, float
         const float totalTime = std::max(peakTime + std::max(0.02f, runtime.throwReturnTime), 0.04f);
         if (runtime.state == SpellRingState::Thrown && runtime.throwElapsed >= peakTime) {
             runtime.state = SpellRingState::Returning;
-            motionEvents_.push_back({RingMotionEventKind::ReturnStart, ringIndex, runtime.center, runtime.throwDirection});
+            motionEvents_.push_back({
+                RingMotionEventKind::ReturnStart,
+                ringIndex,
+                runtime.homeCenter + runtime.throwReturnOffset,
+                runtime.throwDirection});
         }
         if (runtime.throwElapsed >= totalTime) {
+            const Vec2 returnEndPosition = runtime.homeCenter + runtime.throwReturnOffset;
             runtime.state = SpellRingState::Normal;
             runtime.center = windCenter;
             runtime.throwElapsed = 0.0f;
@@ -1017,10 +1295,11 @@ void SpellRingSystem::update(Player& player, const Input& input, float dt, float
             runtime.throwReturnOffset = {};
             runtime.throwCutPathT = 0.0f;
             runtime.throwReturnPathT = 0.5f;
+            runtime.throwShapeRotation = 0.0f;
             if (throwingRingIndex_ == ringIndex) {
                 throwingRingIndex_ = -1;
             }
-            motionEvents_.push_back({RingMotionEventKind::ReturnEnd, ringIndex, runtime.center, runtime.throwDirection});
+            motionEvents_.push_back({RingMotionEventKind::ReturnEnd, ringIndex, returnEndPosition, runtime.throwDirection});
         } else {
             runtime.center = windCenter + runtime.throwDirection * (runtime.throwDistance * throwReachForRing(ringIndex));
         }
@@ -1051,13 +1330,18 @@ void SpellRingSystem::update(Player& player, const Input& input, float dt, float
             runtime.throwReturnOffset = getRingItemWorldPosition(runtime.homeCenter, returnParam, throwContext) - runtime.homeCenter;
             runtime.throwCutPathT = launchPathT;
             runtime.throwReturnPathT = returnPathT;
+            runtime.throwShapeRotation = throwContext.shapeRotation;
             runtime.throwElapsed = 0.0f;
             runtime.throwPeakTime = peakTime;
             runtime.throwReturnTime = returnTime;
             runtime.throwDistance = throwDistance;
             throwingRingIndex_ = activeRingIndex_;
             player.throwCooldownRemaining = throwCooldown;
-            motionEvents_.push_back({RingMotionEventKind::ThrowStart, activeRingIndex_, runtime.center, runtime.throwDirection});
+            motionEvents_.push_back({
+                RingMotionEventKind::ThrowStart,
+                activeRingIndex_,
+                runtime.homeCenter + runtime.throwLaunchOffset,
+                runtime.throwDirection});
         }
     }
 
@@ -1096,24 +1380,6 @@ void SpellRingSystem::update(Player& player, const Input& input, float dt, float
     refreshItemWorldPositions(safeDt, balance, true);
 }
 
-float SpellRingSystem::throwTotalTimeForRing(int ringIndex) const
-{
-    if (ringIndex < 0 || ringIndex >= SpellRingCount) {
-        return 0.0f;
-    }
-    const RingRuntimeState& runtime = ringRuntime_[static_cast<std::size_t>(ringIndex)];
-    return std::max(0.0f, runtime.throwPeakTime) + std::max(0.0f, runtime.throwReturnTime);
-}
-
-float SpellRingSystem::throwProgressForRing(int ringIndex) const
-{
-    const float totalTime = throwTotalTimeForRing(ringIndex);
-    if (totalTime <= 0.001f || ringIndex < 0 || ringIndex >= SpellRingCount) {
-        return 0.0f;
-    }
-    return clamp(ringRuntime_[static_cast<std::size_t>(ringIndex)].throwElapsed / totalTime, 0.0f, 1.0f);
-}
-
 float SpellRingSystem::throwReachForRing(int ringIndex) const
 {
     if (ringIndex < 0 || ringIndex >= SpellRingCount) {
@@ -1134,60 +1400,29 @@ float SpellRingSystem::throwReachForRing(int ringIndex) const
     return 1.0f - smoothStep01((runtime.throwElapsed - peakTime) / returnTime);
 }
 
-float SpellRingSystem::throwLineMixForRing(int ringIndex) const
+float SpellRingSystem::throwOutboundPhaseForRing(int ringIndex) const
 {
     if (ringIndex < 0 || ringIndex >= SpellRingCount ||
         ringRuntime_[static_cast<std::size_t>(ringIndex)].state == SpellRingState::Normal) {
         return 0.0f;
     }
 
-    const float progress = throwProgressForRing(ringIndex);
-    const float open = smoothStep01(progress / ThrowMorphOpenDurationRatio);
-    const float close = 1.0f - smoothStep01((progress - ThrowMorphCloseStartRatio) / (1.0f - ThrowMorphCloseStartRatio));
-    return clamp(open * close, 0.0f, 1.0f);
-}
-
-float SpellRingSystem::throwPathTForItem(int ringIndex, float pathParam, const RingOrbitContext& context) const
-{
-    if (ringIndex < 0 || ringIndex >= SpellRingCount) {
-        return pathTForParam(context.shape, pathParam, context.tuning);
-    }
     const RingRuntimeState& runtime = ringRuntime_[static_cast<std::size_t>(ringIndex)];
-    const float gapCenterT = runtime.throwCutPathT;
-    return pathTForOpenPathParam(context.shape, pathParam, gapCenterT, context.tuning);
+    const float peakTime = std::max(0.02f, runtime.throwPeakTime);
+    return clamp(runtime.throwElapsed / peakTime, 0.0f, 1.0f);
 }
 
-Vec2 SpellRingSystem::throwMorphPathPointForRing(
-    int ringIndex,
-    float pathT,
-    const RingOrbitContext& context,
-    float distanceOffset) const
+float SpellRingSystem::throwReturnPhaseForRing(int ringIndex) const
 {
-    const int clampedRingIndex = std::clamp(ringIndex, 0, SpellRingCount - 1);
-    const RingRuntimeState& runtime = ringRuntime_[static_cast<std::size_t>(clampedRingIndex)];
-    const Vec2 direction = safeNormalize(runtime.throwDirection);
-    RingOrbitContext openContext = context;
-    if (openContext.shape == RingShape::Comet) {
-        openContext.shapeRotation = std::atan2(direction.y, direction.x);
+    if (ringIndex < 0 || ringIndex >= SpellRingCount ||
+        ringRuntime_[static_cast<std::size_t>(ringIndex)].state != SpellRingState::Returning) {
+        return 0.0f;
     }
 
-    const float gapCenterT = runtime.throwCutPathT;
-    const float openParam = openPathParamForT(openContext.shape, pathT, gapCenterT, openContext.tuning);
-    const Vec2 openPoint = getRingItemWorldPosition(runtime.homeCenter, openParam, openContext);
-    const float lineMix = throwLineMixForRing(clampedRingIndex);
-    const float reachDistance = runtime.throwDistance * throwReachForRing(clampedRingIndex);
-    const float ribbonHead = throwRibbonHead(throwProgressForRing(clampedRingIndex));
-    const float ribbonMix = lineMix * throwRibbonMix(ribbonHead, pathT);
-    const Vec2 flightPoint = throwFlightPathPoint(
-        runtime.homeCenter,
-        runtime.throwLaunchOffset,
-        runtime.throwReturnOffset,
-        direction,
-        reachDistance,
-        pathT);
-    const Vec2 morphed = lerp(openPoint, flightPoint, ribbonMix);
-    const Vec2 outward = safeNormalize(lerp(openPoint - runtime.homeCenter, direction, ribbonMix), direction);
-    return morphed + outward * distanceOffset;
+    const RingRuntimeState& runtime = ringRuntime_[static_cast<std::size_t>(ringIndex)];
+    const float peakTime = std::max(0.02f, runtime.throwPeakTime);
+    const float returnTime = std::max(0.02f, runtime.throwReturnTime);
+    return clamp((runtime.throwElapsed - peakTime) / returnTime, 0.0f, 1.0f);
 }
 
 void SpellRingSystem::clearOrbitModifiers()
@@ -1906,35 +2141,21 @@ std::vector<Vec2> SpellRingSystem::runtimePathSamplePointsForRing(
         return getRingPathSamplePoints(runtime.center, context, sampleCount);
     }
 
-    const float lineMix = throwLineMixForRing(clampedRingIndex);
-    if (lineMix <= 0.04f) {
-        return getRingPathSamplePoints(runtime.center, context, sampleCount);
-    }
-
-    const int count = std::max(8, sampleCount);
-    const float ribbonHead = throwRibbonHead(throwProgressForRing(clampedRingIndex));
-    const float visibleEnd = clamp(ribbonHead, 0.0f, 1.0f);
-    if (visibleEnd <= 0.001f) {
-        return getRingPathSamplePoints(runtime.center, context, sampleCount);
-    }
-
-    const Vec2 direction = safeNormalize(runtime.throwDirection);
-    const float reachDistance = runtime.throwDistance * throwReachForRing(clampedRingIndex);
-
-    std::vector<Vec2> points;
-    points.reserve(static_cast<std::size_t>(count));
-    for (int i = 0; i < count; ++i) {
-        const float sampleT = static_cast<float>(i) / static_cast<float>(count - 1);
-        const float t = lerp(0.0f, visibleEnd, sampleT);
-        points.push_back(throwFlightPathPoint(
-            runtime.homeCenter,
-            runtime.throwLaunchOffset,
-            runtime.throwReturnOffset,
-            direction,
-            reachDistance,
-            t));
-    }
-    return points;
+    context.shapeRotation = runtime.throwShapeRotation;
+    const float reach = throwReachForRing(clampedRingIndex);
+    const ThrowGuidePath guide = makeThrowGuidePath(
+        runtime.homeCenter,
+        context,
+        runtime.throwDirection,
+        runtime.throwLaunchOffset,
+        runtime.throwReturnOffset,
+        runtime.throwCutPathT,
+        runtime.throwReturnPathT,
+        runtime.throwDistance * reach,
+        reach,
+        throwOutboundPhaseForRing(clampedRingIndex),
+        runtime.state == SpellRingState::Returning);
+    return sampleThrowGuideVisiblePoints(guide, runtime.homeCenter, runtime.throwDirection, sampleCount);
 }
 
 float SpellRingSystem::normalizeLocalAngle(float angle, const RuntimeBalance& balance) const

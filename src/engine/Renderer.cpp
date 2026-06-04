@@ -1699,6 +1699,8 @@ void Renderer::unloadSpriteSheet(SpriteSheet& sheet)
     }
     sheet.columns = 0;
     sheet.rows = 0;
+    sheet.frameWidth = 0;
+    sheet.frameHeight = 0;
 }
 
 bool Renderer::loadSpriteSheet(std::string_view path, int frameSize, int columns, int rows, std::string_view label, SpriteSheet& sheet)
@@ -1706,14 +1708,15 @@ bool Renderer::loadSpriteSheet(std::string_view path, int frameSize, int columns
     lastAssetError_.clear();
 
     const std::string labelString(label);
-    if (frameSize <= 0 || columns <= 0 || rows <= 0) {
+    if (columns <= 0 || rows <= 0) {
         lastAssetError_ = "Invalid " + labelString + " layout";
         return false;
     }
 
     const std::string pathString(path);
-    const int expectedWidth = frameSize * columns;
-    const int expectedHeight = frameSize * rows;
+    const bool fixedFrameSize = frameSize > 0;
+    const int expectedWidth = fixedFrameSize ? frameSize * columns : 0;
+    const int expectedHeight = fixedFrameSize ? frameSize * rows : 0;
 
 #ifdef _WIN32
     static GdiPlusSession gdiPlus;
@@ -1736,11 +1739,18 @@ bool Renderer::loadSpriteSheet(std::string_view path, int frameSize, int columns
 
     const int width = static_cast<int>(bitmap.GetWidth());
     const int height = static_cast<int>(bitmap.GetHeight());
-    if (width != expectedWidth || height != expectedHeight) {
+    if (fixedFrameSize && (width != expectedWidth || height != expectedHeight)) {
         lastAssetError_ = labelString + " must be " + std::to_string(expectedWidth) + "x" + std::to_string(expectedHeight) +
             " pixels, got " + std::to_string(width) + "x" + std::to_string(height);
         return false;
     }
+    if (!fixedFrameSize && (width <= 0 || height <= 0 || width % columns != 0 || height % rows != 0)) {
+        lastAssetError_ = labelString + " size must be divisible into " + std::to_string(columns) + "x" + std::to_string(rows) +
+            " frames, got " + std::to_string(width) + "x" + std::to_string(height);
+        return false;
+    }
+    const int frameWidth = fixedFrameSize ? frameSize : width / columns;
+    const int frameHeight = fixedFrameSize ? frameSize : height / rows;
 
     Gdiplus::Rect rect(0, 0, width, height);
     Gdiplus::BitmapData locked{};
@@ -1779,7 +1789,8 @@ bool Renderer::loadSpriteSheet(std::string_view path, int frameSize, int columns
 
     unloadSpriteSheet(sheet);
     sheet.texture = texture;
-    sheet.frameSize = frameSize;
+    sheet.frameWidth = frameWidth;
+    sheet.frameHeight = frameHeight;
     sheet.columns = columns;
     sheet.rows = rows;
     return true;
@@ -2687,13 +2698,13 @@ void Renderer::drawPlayerSprite(int index, Vec2 anchorPosition, float size, bool
         return;
     }
 
-    const int sourceX = (index % playerSheet_.columns) * playerSheet_.frameSize;
-    const int sourceY = (index / playerSheet_.columns) * playerSheet_.frameSize;
+    const int sourceX = (index % playerSheet_.columns) * playerSheet_.frameWidth;
+    const int sourceY = (index / playerSheet_.columns) * playerSheet_.frameHeight;
     const SDL_FRect src{
         static_cast<float>(sourceX),
         static_cast<float>(sourceY),
-        static_cast<float>(playerSheet_.frameSize),
-        static_cast<float>(playerSheet_.frameSize)
+        static_cast<float>(playerSheet_.frameWidth),
+        static_cast<float>(playerSheet_.frameHeight)
     };
     const Vec2 p = transform(anchorPosition - Vec2{size * anchor.x, size * anchor.y});
     const Vec2 s = transformSize({size, size});

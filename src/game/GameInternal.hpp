@@ -92,7 +92,7 @@ constexpr float BaseItemSourceTabOuterGap = 24.0f;
 constexpr float BaseItemSourceTabInnerGap = 13.0f;
 constexpr int BookshelfMenuItemCount = 2;
 constexpr int BookshelfVisibleRows = 8;
-constexpr int RingWorkshopImplementedUpgradeCount = 10;
+constexpr int RingWorkshopImplementedUpgradeCount = 9;
 constexpr int MaxItemEnhanceLevel = 5;
 constexpr int MerchantRefreshDugTileThreshold = 10;
 constexpr int StorageColumns = 8;
@@ -2059,6 +2059,7 @@ struct MagicOrbitDrawOptions {
     int ringIndex = 0;
     float totalSeconds = 0.0f;
     float alphaScale = 1.0f;
+    bool closedPath = true;
 };
 
 constexpr std::array<RingShape, 3> MagicRingShapeRenderOrder{{
@@ -2131,6 +2132,11 @@ Vec2 pathTangentAt(const std::vector<Vec2>& points, float t01, bool wrap)
     return normalize(after - before);
 }
 
+bool magicOrbitPathWraps(const MagicOrbitDrawOptions& options)
+{
+    return options.closedPath && options.shape != RingShape::Comet;
+}
+
 void drawMagicStar(Renderer& renderer, Vec2 center, float radius, Color color, float rotation)
 {
     if (radius <= 0.0f || color.a == 0) {
@@ -2151,7 +2157,7 @@ void drawMagicOrbitRunes(Renderer& renderer, const std::vector<Vec2>& orbitPath,
     }
 
     const int runeCount = options.screenPresentation ? 18 : 11;
-    const bool wrap = options.shape != RingShape::Comet;
+    const bool wrap = magicOrbitPathWraps(options);
     const float lengthScale = options.screenPresentation ? 1.25f : 1.0f;
     for (int i = 0; i < runeCount; ++i) {
         if (!options.active && ((i + options.ringIndex) % 3) != 0) {
@@ -2176,7 +2182,7 @@ void drawMagicOrbitFlow(Renderer& renderer, const std::vector<Vec2>& orbitPath, 
         return;
     }
 
-    const bool wrap = options.shape != RingShape::Comet;
+    const bool wrap = magicOrbitPathWraps(options);
     const int beadCount = options.screenPresentation
         ? (options.active ? 6 : 4)
         : (options.active ? 3 : 2);
@@ -2200,7 +2206,7 @@ void drawMagicOrbitSparkles(Renderer& renderer, const std::vector<Vec2>& orbitPa
         return;
     }
 
-    const bool wrap = options.shape != RingShape::Comet;
+    const bool wrap = magicOrbitPathWraps(options);
     const int sparkleCount = options.screenPresentation
         ? (options.active ? 7 : 4)
         : (options.active ? 3 : 1);
@@ -2330,6 +2336,7 @@ void drawSpellRingOrbitLayer(
 
             const Vec2 center = spellRing.centerForRing(ringIndex);
             std::vector<Vec2> orbitPath = spellRing.runtimePathSamplePointsForRing(ringIndex, balance, 160);
+            const bool ringInFlight = spellRing.stateForRing(ringIndex) != SpellRingState::Normal;
             drawMagicOrbitPath(
                 renderer,
                 orbitPath,
@@ -2337,12 +2344,13 @@ void drawSpellRingOrbitLayer(
                 MagicOrbitDrawOptions{
                     shapePass,
                     ringIndex == spellRing.activeRingIndex(),
-                    spellRing.stateForRing(ringIndex) != SpellRingState::Normal,
+                    ringInFlight,
                     false,
                     false,
                     ringIndex,
                     totalSeconds,
                     alphaScale,
+                    !ringInFlight,
                 });
         }
     }
