@@ -1040,6 +1040,8 @@ bool Game::loadSaveData(const std::filesystem::path& path)
     int loadedWorkshopThrowCooldownLevel = 0;
     int loadedWorkshopWeightPenaltyLevel = 0;
     int loadedWorkshopEquipSlotLevel = 0;
+    std::array<RingWorkshopRingUpgrades, SpellRingCount> loadedWorkshopRingUpgrades{};
+    bool loadedWorkshopRingUpgradeTable = false;
     bool loadedMerchantRefreshPending = false;
     int loadedMerchantUpgradeLevel = 1;
     int loadedMerchantStockVersion = 0;
@@ -1119,6 +1121,24 @@ bool Game::loadSaveData(const std::filesystem::path& path)
             stream >> loadedWorkshopWeightPenaltyLevel;
         } else if (key == "workshop_equip_slot_level") {
             stream >> loadedWorkshopEquipSlotLevel;
+        } else if (key == "workshop_ring_upgrade") {
+            int ringNumber = 0;
+            RingWorkshopRingUpgrades upgrades;
+            stream >> ringNumber
+                >> upgrades.radiusMaxLevel
+                >> upgrades.radiusMinLevel
+                >> upgrades.speedLevel
+                >> upgrades.weightLimitLevel
+                >> upgrades.shiftDistanceLevel
+                >> upgrades.throwDistanceLevel
+                >> upgrades.throwCooldownLevel
+                >> upgrades.weightPenaltyLevel
+                >> upgrades.equipSlotLevel
+                >> upgrades.radiusSettingMeters;
+            if (!stream.fail() && ringNumber >= 1 && ringNumber <= SpellRingCount) {
+                loadedWorkshopRingUpgrades[static_cast<std::size_t>(ringNumber - 1)] = upgrades;
+                loadedWorkshopRingUpgradeTable = true;
+            }
         } else if (key == "merchant_refresh_pending") {
             stream >> loadedMerchantRefreshPending;
         } else if (key == "merchant_upgrade_level") {
@@ -2009,13 +2029,35 @@ bool Game::loadSaveData(const std::filesystem::path& path)
     }
     levelRingUpgradePoints_ = loadedLevelRingUpgradePoints;
     levels_.setPendingChoiceCount(loadedPendingLevelBonusChoices);
-    workshopInitialRadiusLevel_ = std::clamp(loadedWorkshopInitialRadiusLevel, 0, 5);
-    workshopInitialSpeedLevel_ = std::clamp(loadedWorkshopInitialSpeedLevel, 0, 5);
-    workshopShiftDistanceLevel_ = std::clamp(loadedWorkshopShiftDistanceLevel, 0, 5);
-    workshopThrowDistanceLevel_ = std::clamp(loadedWorkshopThrowDistanceLevel, 0, 5);
-    workshopThrowCooldownLevel_ = std::clamp(loadedWorkshopThrowCooldownLevel, 0, 5);
-    workshopWeightPenaltyLevel_ = std::clamp(loadedWorkshopWeightPenaltyLevel, 0, 5);
-    workshopEquipSlotLevel_ = std::clamp(loadedWorkshopEquipSlotLevel, 0, 5);
+    if (!loadedWorkshopRingUpgradeTable) {
+        RingWorkshopRingUpgrades legacyUpgrades;
+        legacyUpgrades.radiusMaxLevel = std::clamp(loadedWorkshopInitialRadiusLevel, 0, 5);
+        legacyUpgrades.speedLevel = std::clamp(loadedWorkshopInitialSpeedLevel, 0, 5);
+        legacyUpgrades.shiftDistanceLevel = std::clamp(loadedWorkshopShiftDistanceLevel, 0, 5);
+        legacyUpgrades.throwDistanceLevel = std::clamp(loadedWorkshopThrowDistanceLevel, 0, 5);
+        legacyUpgrades.throwCooldownLevel = std::clamp(loadedWorkshopThrowCooldownLevel, 0, 5);
+        legacyUpgrades.weightPenaltyLevel = std::clamp(loadedWorkshopWeightPenaltyLevel, 0, 5);
+        legacyUpgrades.equipSlotLevel = std::clamp(loadedWorkshopEquipSlotLevel, 0, 5);
+        loadedWorkshopRingUpgrades.fill(legacyUpgrades);
+    }
+    workshopRingUpgrades_ = loadedWorkshopRingUpgrades;
+    for (int ringIndex = 0; ringIndex < SpellRingCount; ++ringIndex) {
+        RingWorkshopRingUpgrades& upgrades = workshopRingUpgrades_[static_cast<std::size_t>(ringIndex)];
+        upgrades.radiusMaxLevel = std::clamp(upgrades.radiusMaxLevel, 0, 5);
+        upgrades.radiusMinLevel = std::clamp(upgrades.radiusMinLevel, 0, 5);
+        upgrades.speedLevel = std::clamp(upgrades.speedLevel, 0, 5);
+        upgrades.weightLimitLevel = std::clamp(upgrades.weightLimitLevel, 0, 5);
+        upgrades.shiftDistanceLevel = std::clamp(upgrades.shiftDistanceLevel, 0, 5);
+        upgrades.throwDistanceLevel = std::clamp(upgrades.throwDistanceLevel, 0, 5);
+        upgrades.throwCooldownLevel = std::clamp(upgrades.throwCooldownLevel, 0, 5);
+        upgrades.weightPenaltyLevel = std::clamp(upgrades.weightPenaltyLevel, 0, 5);
+        upgrades.equipSlotLevel = std::clamp(upgrades.equipSlotLevel, 0, 5);
+        if (!loadedWorkshopRingUpgradeTable && upgrades.radiusMaxLevel > 0) {
+            upgrades.radiusSettingMeters = ringWorkshopRadiusMaxForRing(ringIndex);
+        } else {
+            upgrades.radiusSettingMeters = ringWorkshopRadiusSettingForRing(ringIndex);
+        }
+    }
     merchantRefreshPending_ = loadedMerchantRefreshPending;
     merchantUpgradeLevel_ = std::clamp(loadedMerchantUpgradeLevel, 1, 7);
     merchantStockVersion_ = std::max(0, loadedMerchantStockVersion);
@@ -2087,13 +2129,20 @@ bool Game::saveSaveData(const std::filesystem::path& path, std::string& message)
             << points.speed << " "
             << points.weightLimit << "\n";
     }
-    file << "workshop_initial_radius_level " << workshopInitialRadiusLevel_ << "\n";
-    file << "workshop_initial_speed_level " << workshopInitialSpeedLevel_ << "\n";
-    file << "workshop_shift_distance_level " << workshopShiftDistanceLevel_ << "\n";
-    file << "workshop_throw_distance_level " << workshopThrowDistanceLevel_ << "\n";
-    file << "workshop_throw_cooldown_level " << workshopThrowCooldownLevel_ << "\n";
-    file << "workshop_weight_penalty_level " << workshopWeightPenaltyLevel_ << "\n";
-    file << "workshop_equip_slot_level " << workshopEquipSlotLevel_ << "\n";
+    for (int ringIndex = 0; ringIndex < SpellRingCount; ++ringIndex) {
+        const RingWorkshopRingUpgrades& upgrades = workshopRingUpgrades_[static_cast<std::size_t>(ringIndex)];
+        file << "workshop_ring_upgrade " << (ringIndex + 1) << " "
+            << upgrades.radiusMaxLevel << " "
+            << upgrades.radiusMinLevel << " "
+            << upgrades.speedLevel << " "
+            << upgrades.weightLimitLevel << " "
+            << upgrades.shiftDistanceLevel << " "
+            << upgrades.throwDistanceLevel << " "
+            << upgrades.throwCooldownLevel << " "
+            << upgrades.weightPenaltyLevel << " "
+            << upgrades.equipSlotLevel << " "
+            << ringWorkshopRadiusSettingForRing(ringIndex) << "\n";
+    }
     file << "merchant_refresh_pending " << merchantRefreshPending_ << "\n";
     file << "merchant_upgrade_level " << merchantUpgradeLevel_ << "\n";
     file << "merchant_stock_version " << merchantStockVersion_ << "\n";

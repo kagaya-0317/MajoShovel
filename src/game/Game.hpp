@@ -766,8 +766,11 @@ private:
         StorageTransferTarget target{};
     };
     enum class RingWorkshopUpgrade {
-        InitialRadius,
-        InitialSpeed,
+        RadiusAdjust,
+        RadiusMax,
+        RadiusMin,
+        Speed,
+        WeightLimit,
         ShiftDistance,
         ThrowDistance,
         ThrowCooldown,
@@ -962,6 +965,7 @@ private:
     float effectiveInitialRingRadiusForRing(int ringIndex, int levelRadiusPoints) const;
     float effectiveInitialRingSpeedForRing(int ringIndex, int levelSpeedPoints) const;
     float effectiveInitialRingWeightLimitForRing(int ringIndex, int levelWeightLimitPoints) const;
+    float effectiveRingShiftDistanceForRing(int ringIndex) const;
     float effectiveRingShiftDistance() const;
     float effectiveCollectionPullRadius(int collectionLevel) const;
     void configureWatcher();
@@ -1161,6 +1165,10 @@ private:
     int ringWorkshopUpgradeMoonCost(RingWorkshopUpgrade upgrade) const;
     float ringWorkshopUpgradeCurrentValue(RingWorkshopUpgrade upgrade) const;
     float ringWorkshopUpgradeNextValue(RingWorkshopUpgrade upgrade) const;
+    float ringWorkshopRadiusMinForRing(int ringIndex) const;
+    float ringWorkshopRadiusMaxForRing(int ringIndex) const;
+    float ringWorkshopRadiusSettingForRing(int ringIndex) const;
+    bool setRingWorkshopRadiusSettingForRing(int ringIndex, float meters);
     void buyRingWorkshopUpgrade(RingWorkshopUpgrade upgrade);
     void openBookshelf();
     void syncEncyclopediaFromInventoryAndRing();
@@ -2175,13 +2183,19 @@ private:
     int ringSpeedUpgradeLevel_ = 0;
     int collectionRangeUpgradeLevel_ = 0;
     RingLevelUpgradePointTable levelRingUpgradePoints_{};
-    int workshopInitialRadiusLevel_ = 0;
-    int workshopInitialSpeedLevel_ = 0;
-    int workshopShiftDistanceLevel_ = 0;
-    int workshopThrowDistanceLevel_ = 0;
-    int workshopThrowCooldownLevel_ = 0;
-    int workshopWeightPenaltyLevel_ = 0;
-    int workshopEquipSlotLevel_ = 0;
+    struct RingWorkshopRingUpgrades {
+        int radiusMaxLevel = 0;
+        int radiusMinLevel = 0;
+        int speedLevel = 0;
+        int weightLimitLevel = 0;
+        int shiftDistanceLevel = 0;
+        int throwDistanceLevel = 0;
+        int throwCooldownLevel = 0;
+        int weightPenaltyLevel = 0;
+        int equipSlotLevel = 0;
+        float radiusSettingMeters = 0.0f;
+    };
+    std::array<RingWorkshopRingUpgrades, SpellRingCount> workshopRingUpgrades_{};
     bool merchantRefreshPending_ = false;
     int merchantUpgradeLevel_ = 1;
     int merchantStockVersion_ = 0;

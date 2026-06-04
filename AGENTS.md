@@ -54,6 +54,16 @@ MSVC ビルドでは並列化を一層だけにする。このプロジェクト
 .\tools\dev_auto_reload.ps1 -Jobs 12
 ```
 
+PowerShell の実行ポリシーにより `.\tools\build.ps1` や `.\tools\dev_auto_reload.ps1` の直接起動が拒否される場合がある。
+その場合は PC 全体のポリシーを変更せず、プロセス単位の一時的な Bypass で同じスクリプトを実行する。
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\tools\build.ps1 -Jobs 12
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\tools\dev_auto_reload.ps1 -Jobs 12
+```
+
+`build_game.bat` と `★dev_auto_reload.bat` もこの方式で PowerShell スクリプトを呼び出している。
+
 `cmake --build --parallel` または上記 `-Jobs` スクリプトを使う場合、`CMakeLists.txt` に MSVC `/MP` を追加しない。
 外側のビルド並列と `/MP` を併用すると `cl.exe` の子プロセスが増えすぎ、以下で失敗することがある。
 

@@ -120,6 +120,8 @@ public:
     static float levelScaleMultiplierForPoints(int points);
     static float initialMaxEquippedWeightForRing(int ringIndex);
     static float weightStopRatioForPenaltyMultiplier(double penaltyMultiplier);
+    static float baseRadiusMultiplierForRing(int ringIndex);
+    static float baseSpeedMultiplierForRing(int ringIndex);
 
     void initialize(const RuntimeBalance& balance);
     void update(Player& player, const Input& input, float dt, float totalTime, bool paused, bool blockPointerThrow, const RuntimeBalance& balance);
@@ -127,6 +129,7 @@ public:
     void resetRuntimeStateAtPlayer(const Player& player, const RuntimeBalance& balance);
     void clearActionFlashTimers();
     void setWorkshopModifiers(const RingWorkshopModifiers& modifiers);
+    void setWorkshopModifiersForRing(int ringIndex, const RingWorkshopModifiers& modifiers);
     void upgradeRadius(float factor);
     void upgradeSpeed(float factor);
     void upgradeRadiusForRing(int ringIndex, float factor);
@@ -235,6 +238,7 @@ public:
     float maxEquippedWeightForRing(int ringIndex) const;
     float overweightEquipLimitForRing(int ringIndex) const;
     int maxItemCount() const;
+    int maxItemCountForRing(int ringIndex) const;
     float weightSpeedMultiplier() const;
     float weightSpeedMultiplierForRing(int ringIndex) const;
     float weightStopRatioForRing(int ringIndex) const;
@@ -270,6 +274,8 @@ private:
         Vec2 throwDirection{1.0f, 0.0f};
         Vec2 throwLaunchOffset{};
         Vec2 throwReturnOffset{};
+        float throwCutPathT = 0.0f;
+        float throwReturnPathT = 0.5f;
         float throwElapsed = 0.0f;
         float throwPeakTime = 0.0f;
         float throwReturnTime = 0.0f;
@@ -308,7 +314,7 @@ private:
     int throwingRingIndex_ = -1;
     OrbitModifiers orbitModifiers_{};
     EquipmentModifiers equipmentModifiers_{};
-    RingWorkshopModifiers workshopModifiers_{};
+    std::array<RingWorkshopModifiers, SpellRingCount> workshopModifiersByRing_{};
     RingOrbitTuning orbitTuning_{};
     std::vector<RingItemBreakEvent> itemBreakEvents_;
     std::vector<RingMotionEvent> motionEvents_;

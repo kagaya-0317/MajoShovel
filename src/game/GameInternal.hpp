@@ -92,7 +92,7 @@ constexpr float BaseItemSourceTabOuterGap = 24.0f;
 constexpr float BaseItemSourceTabInnerGap = 13.0f;
 constexpr int BookshelfMenuItemCount = 2;
 constexpr int BookshelfVisibleRows = 8;
-constexpr int RingWorkshopImplementedUpgradeCount = 7;
+constexpr int RingWorkshopImplementedUpgradeCount = 10;
 constexpr int MaxItemEnhanceLevel = 5;
 constexpr int MerchantRefreshDugTileThreshold = 10;
 constexpr int StorageColumns = 8;
@@ -2226,11 +2226,8 @@ void drawMagicOrbitSparkles(Renderer& renderer, const std::vector<Vec2>& orbitPa
 void drawMagicOrbitCenter(Renderer& renderer, Vec2 center, const MagicOrbitDrawOptions& options)
 {
     const float alpha = (options.active ? 118.0f : 62.0f) * options.alphaScale;
-    const Color glow = withAlpha(options.energized ? Color{255, 210, 104, 255} : Color{150, 220, 255, 255}, alpha * 0.55f);
     const Color core = withAlpha(Color{255, 248, 196, 255}, alpha);
-    renderer.fillCircle(center, options.screenPresentation ? 4.6f : 2.4f, glow);
-    renderer.drawCircle(center, options.screenPresentation ? 7.6f : 4.4f, withAlpha(core, alpha * 0.64f));
-    drawMagicStar(renderer, center, options.screenPresentation ? 5.8f : 3.3f, withAlpha(core, alpha), options.totalSeconds * 0.8f);
+    drawMagicStar(renderer, center, options.screenPresentation ? 7.2f : 4.2f, withAlpha(core, alpha), options.totalSeconds * 0.8f);
 }
 
 void drawTaperedMagicPolyline(Renderer& renderer, const std::vector<Vec2>& points, float tailWidth, float headWidth, Color color)

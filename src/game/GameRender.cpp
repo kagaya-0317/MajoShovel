@@ -255,6 +255,7 @@ void drawRingDetailPanel(
     UiRect panel,
     const SpellRingSystem& spellRing,
     const EquipmentModifiers& modifiers,
+    const RuntimeBalance& balance,
     int ringIndex)
 {
     ringIndex = std::clamp(ringIndex, 0, SpellRingCount - 1);
@@ -272,7 +273,7 @@ void drawRingDetailPanel(
         "形状",
         ringShapeDisplayName(spellRing.ringShapeForIndex(ringIndex)));
 
-    std::snprintf(buffer, sizeof(buffer), "%02d/%02d", static_cast<int>(items.size()), spellRing.maxItemCount());
+    std::snprintf(buffer, sizeof(buffer), "%02d/%02d", static_cast<int>(items.size()), spellRing.maxItemCountForRing(ringIndex));
     drawRingDetailLineWithModifier(renderer, panel, y, "装着", buffer);
 
     const float orbitRadius = spellRing.orbitRadiusForRing(ringIndex);
@@ -288,8 +289,8 @@ void drawRingDetailPanel(
     std::snprintf(
         buffer,
         sizeof(buffer),
-            "%.2fm/s",
-            linearMetersPerSecondForAngularSpeed(
+        "%.2fm/s",
+        linearMetersPerSecondForAngularSpeed(
             spellRing.ringAngularSpeedForIndex(ringIndex, balance),
             orbitRadius));
     drawRingDetailLineWithModifier(
@@ -2884,6 +2885,8 @@ void Game::updateRingScreen(const Input& input, UiContext& ui, float dt)
         ringDetailShowsRing_ = true;
         if (ringTabSelection != spellRing_.activeRingIndex()) {
             spellRing_.switchActiveRing(ringTabSelection - spellRing_.activeRingIndex());
+            player_.spellRingShiftDistanceBonus = effectiveRingShiftDistanceForRing(spellRing_.activeRingIndex()) -
+                balance_.spellRingShiftDistance;
             closeUiCommandMenu(ringCommandMenu_);
             ringCommandItemIndex_ = -1;
             ringCommandPlaceActive_ = false;
@@ -5258,7 +5261,7 @@ void Game::renderRingScreen(Renderer& renderer, float totalTime) const
 
     const UiRect ringDetailPanel = ringDetailRect();
     if (ringDetailShowsRing_ || ringSlotSelection_ >= static_cast<int>(items.size())) {
-        drawRingDetailPanel(renderer, ringDetailPanel, spellRing_, equipmentModifiers_, spellRing_.activeRingIndex());
+        drawRingDetailPanel(renderer, ringDetailPanel, spellRing_, equipmentModifiers_, balance_, spellRing_.activeRingIndex());
     } else if (ringSlotSelection_ < static_cast<int>(items.size())) {
         const SpellRingItem& item = items[ringSlotSelection_];
         const ItemData* object = objectForRingItem(objectCatalog_, item);
@@ -5765,7 +5768,7 @@ void Game::renderPauseMenu(Renderer& renderer) const
                 sizeof(buffer),
                 "装着 %02d/%02d",
                 static_cast<int>(items.size()),
-                spellRing_.maxItemCount());
+                spellRing_.maxItemCountForRing(ringIndex));
             renderer.drawText({ringContent.pos.x + 104.0f, y}, buffer, ui::TextMuted, 2);
 
             std::snprintf(
@@ -6244,7 +6247,7 @@ void Game::renderLevelUpOverlay(Renderer& renderer)
         return;
     }
 
-    upgrades_.render(renderer, levels_, spellRing_, levelRingUpgradePoints_, unlockedRingCount());
+    upgrades_.render(renderer, levels_, spellRing_, levelRingUpgradePoints_, balance_, unlockedRingCount());
     if (!levelUpResultDialog_.open) {
         return;
     }

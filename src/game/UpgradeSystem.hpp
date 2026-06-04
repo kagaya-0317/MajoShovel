@@ -3,6 +3,7 @@
 #include "engine/Input.hpp"
 #include "engine/Renderer.hpp"
 #include "engine/Ui.hpp"
+#include "data/RuntimeBalance.hpp"
 #include "game/LevelSystem.hpp"
 #include "game/RingLevelUpgrade.hpp"
 #include "game/SpellRingSystem.hpp"
@@ -24,6 +25,7 @@ public:
         const LevelSystem& level,
         const SpellRingSystem& spellRing,
         const RingLevelUpgradePointTable& levelRingUpgradePoints,
+        const RuntimeBalance& balance,
         int unlockedRingCount);
 
 private:

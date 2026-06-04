@@ -370,6 +370,7 @@ void UpgradeSystem::render(
     const LevelSystem& level,
     const SpellRingSystem& spellRing,
     const RingLevelUpgradePointTable& levelRingUpgradePoints,
+    const RuntimeBalance& balance,
     int unlockedRingCount)
 {
     if (!level.isChoosing()) {
@@ -446,8 +447,8 @@ void UpgradeSystem::render(
             renderer,
             card,
             card.pos.y + 134.0f,
-            upgradeCurrentValueText(i, spellRing, ringIndex, balance_),
-            upgradeNextValueText(i, spellRing, ringIndex, points, balance_),
+            upgradeCurrentValueText(i, spellRing, ringIndex, balance),
+            upgradeNextValueText(i, spellRing, ringIndex, points, balance),
             selected ? ui::Text : ui::TextMuted,
             2);
         const int currentStage = upgradeStageForOption(i, points);

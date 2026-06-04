@@ -36,7 +36,8 @@ constexpr std::array<float, SpellRingCount> RingBaseSpeedMultipliers{{
 constexpr float ThrowMorphOpenDurationRatio = 0.18f;
 constexpr float ThrowMorphCloseStartRatio = 0.70f;
 constexpr float ThrowMorphGapFraction = 0.18f;
-constexpr float ThrowCurveBulgeScale = 1.0f;
+constexpr float ThrowRibbonReleaseDurationRatio = 0.44f;
+constexpr float ThrowRibbonReleaseWindow = 0.18f;
 constexpr float ThrowPathSampleOffset = 0.006f;
 constexpr float RingWindAcceleration = 360.0f;
 constexpr float RingWindVelocityDamping = 8.5f;
@@ -517,6 +518,14 @@ float cometPathParamForT(float t, const RingOrbitTuning& tuning)
     return -arc * 0.5f + arc * clamp(t, 0.0f, 1.0f);
 }
 
+float pathParamForT(RingShape shape, float t, const RingOrbitTuning& tuning)
+{
+    if (shape == RingShape::Comet) {
+        return cometPathParamForT(t, tuning);
+    }
+    return wrap01(t) * FullCircleRadians;
+}
+
 float openPathParamForT(RingShape shape, float t, float gapCenterT, const RingOrbitTuning& tuning)
 {
     if (shape == RingShape::Comet) {
@@ -562,12 +571,32 @@ float pathTClosestToDirection(Vec2 center, Vec2 direction, const RingOrbitContex
     return bestT;
 }
 
-Vec2 throwCurvePathPoint(Vec2 launchAnchor, Vec2 returnAnchor, Vec2 direction, float reachDistance, float pathT)
+Vec2 screenCounterClockwise(Vec2 direction)
 {
-    const float curveT = smoothStep01(pathT);
-    const Vec2 base = lerp(launchAnchor, returnAnchor, curveT);
-    const float bulge = std::sin(curveT * Pi) * reachDistance * ThrowCurveBulgeScale;
-    return base + direction * bulge;
+    return safeNormalize(Vec2{direction.y, -direction.x}, Vec2{0.0f, -1.0f});
+}
+
+float throwRibbonHead(float throwProgress)
+{
+    return smoothStep01(throwProgress / ThrowRibbonReleaseDurationRatio) * (1.0f + ThrowRibbonReleaseWindow);
+}
+
+float throwRibbonMix(float ribbonHead, float pathT)
+{
+    return smoothStep01((ribbonHead - pathT) / ThrowRibbonReleaseWindow);
+}
+
+Vec2 throwFlightPathPoint(
+    Vec2 homeCenter,
+    Vec2 launchOffset,
+    Vec2 returnOffset,
+    Vec2 direction,
+    float reachDistance,
+    float pathT)
+{
+    const float t = clamp(pathT, 0.0f, 1.0f);
+    const Vec2 anchor = homeCenter + lerp(launchOffset, returnOffset, t);
+    return anchor + direction * (std::sin(t * Pi) * reachDistance);
 }
 
 std::vector<SpellRingItem>& SpellRingSystem::activeItems()
@@ -607,7 +636,7 @@ void SpellRingSystem::initialize(const RuntimeBalance& balance)
     ringRuntime_ = {};
     orbitModifiers_ = OrbitModifiers{};
     equipmentModifiers_ = EquipmentModifiers{};
-    workshopModifiers_ = RingWorkshopModifiers{};
+    workshopModifiersByRing_.fill(RingWorkshopModifiers{});
     capturedHealTimer_ = CapturedPeriodicHealInterval;
     enemyOrbitSpeedDebuffMultiplier_ = 1.0f;
     enemyOrbitSpeedDebuffTimer_ = 0.0f;
@@ -640,6 +669,16 @@ float SpellRingSystem::weightStopRatioForPenaltyMultiplier(double penaltyMultipl
     const float penaltyRange = BaseWeightStopRatio - 1.0f;
     const float adjustedStopRatio = 1.0f + penaltyRange / static_cast<float>(penaltyMultiplier);
     return std::clamp(adjustedStopRatio, 1.0f, MaxWeightStopRatio);
+}
+
+float SpellRingSystem::baseRadiusMultiplierForRing(int ringIndex)
+{
+    return ringBaseRadiusMultiplierForIndex(ringIndex);
+}
+
+float SpellRingSystem::baseSpeedMultiplierForRing(int ringIndex)
+{
+    return ringBaseSpeedMultiplierForIndex(ringIndex);
 }
 
 void SpellRingSystem::upgradeRadius(float factor)
@@ -856,13 +895,25 @@ void SpellRingSystem::clearActionFlashTimers()
 
 void SpellRingSystem::setWorkshopModifiers(const RingWorkshopModifiers& modifiers)
 {
-    workshopModifiers_.throwDistanceMultiplier = std::max(0.0f, modifiers.throwDistanceMultiplier);
-    workshopModifiers_.throwCooldownMultiplier = std::max(0.02f, modifiers.throwCooldownMultiplier);
-    workshopModifiers_.weightStopRatioBonus = std::clamp(
+    for (int ringIndex = 0; ringIndex < SpellRingCount; ++ringIndex) {
+        setWorkshopModifiersForRing(ringIndex, modifiers);
+    }
+}
+
+void SpellRingSystem::setWorkshopModifiersForRing(int ringIndex, const RingWorkshopModifiers& modifiers)
+{
+    if (ringIndex < 0 || ringIndex >= SpellRingCount) {
+        return;
+    }
+    RingWorkshopModifiers sanitized{};
+    sanitized.throwDistanceMultiplier = std::max(0.0f, modifiers.throwDistanceMultiplier);
+    sanitized.throwCooldownMultiplier = std::max(0.02f, modifiers.throwCooldownMultiplier);
+    sanitized.weightStopRatioBonus = std::clamp(
         modifiers.weightStopRatioBonus,
         0.0f,
         MaxWeightStopRatio - BaseWeightStopRatio);
-    workshopModifiers_.extraEquipSlots = std::clamp(modifiers.extraEquipSlots, 0, 10);
+    sanitized.extraEquipSlots = std::clamp(modifiers.extraEquipSlots, 0, 10);
+    workshopModifiersByRing_[static_cast<std::size_t>(ringIndex)] = sanitized;
 }
 
 void SpellRingSystem::updateActionFlashTimers(float dt)
@@ -899,14 +950,15 @@ void SpellRingSystem::update(Player& player, const Input& input, float dt, float
 
     const Vec2 normalCenter = getRingCenterWorldPosition(player.position, player.spellRingShiftDirection, player.spellRingShift);
     const RingEquipmentModifiers& activeEquipment = equipmentModifiersForRing(activeRingIndex_);
+    const RingWorkshopModifiers& activeWorkshop = workshopModifiersByRing_[static_cast<std::size_t>(activeRingIndex_)];
     const float throwCooldown = scaledAtLeast(
         balance.spellRingThrowCooldown,
-        activeEquipment.ringThrowCooldownMul * workshopModifiers_.throwCooldownMultiplier,
+        activeEquipment.ringThrowCooldownMul * activeWorkshop.throwCooldownMultiplier,
         0.02f);
     const float throwSpeed = scaledNonNegative(balance.spellRingThrowSpeed, activeEquipment.ringThrowSpeedMul);
     const float throwDistance = scaledNonNegative(
         balance.spellRingThrowDistance,
-        activeEquipment.ringThrowDistanceMul * workshopModifiers_.throwDistanceMultiplier);
+        activeEquipment.ringThrowDistanceMul * activeWorkshop.throwDistanceMultiplier);
     const float returnSpeed = scaledNonNegative(balance.spellRingReturnSpeed, activeEquipment.ringReturnSpeedMul);
 
     const double anchorStrength = std::max(
@@ -961,6 +1013,10 @@ void SpellRingSystem::update(Player& player, const Input& input, float dt, float
             runtime.throwPeakTime = 0.0f;
             runtime.throwReturnTime = 0.0f;
             runtime.throwDistance = 0.0f;
+            runtime.throwLaunchOffset = {};
+            runtime.throwReturnOffset = {};
+            runtime.throwCutPathT = 0.0f;
+            runtime.throwReturnPathT = 0.5f;
             if (throwingRingIndex_ == ringIndex) {
                 throwingRingIndex_ = -1;
             }
@@ -986,15 +1042,15 @@ void SpellRingSystem::update(Player& player, const Input& input, float dt, float
             if (throwContext.shape == RingShape::Comet) {
                 throwContext.shapeRotation = std::atan2(runtime.throwDirection.y, runtime.throwDirection.x);
             }
-            const float launchPathT = pathTClosestToDirection(runtime.homeCenter, runtime.throwDirection, throwContext);
-            const float launchParam = throwContext.shape == RingShape::Comet
-                ? cometPathParamForT(1.0f, throwContext.tuning)
-                : launchPathT * FullCircleRadians;
-            const float returnParam = throwContext.shape == RingShape::Comet
-                ? cometPathParamForT(0.0f, throwContext.tuning)
-                : wrap01(launchPathT + 0.5f) * FullCircleRadians;
+            const Vec2 cutDirection = screenCounterClockwise(runtime.throwDirection);
+            const float launchPathT = pathTClosestToDirection(runtime.homeCenter, cutDirection, throwContext);
+            const float returnPathT = throwContext.shape == RingShape::Comet ? 0.0f : wrap01(launchPathT + 0.5f);
+            const float launchParam = pathParamForT(throwContext.shape, launchPathT, throwContext.tuning);
+            const float returnParam = pathParamForT(throwContext.shape, returnPathT, throwContext.tuning);
             runtime.throwLaunchOffset = getRingItemWorldPosition(runtime.homeCenter, launchParam, throwContext) - runtime.homeCenter;
             runtime.throwReturnOffset = getRingItemWorldPosition(runtime.homeCenter, returnParam, throwContext) - runtime.homeCenter;
+            runtime.throwCutPathT = launchPathT;
+            runtime.throwReturnPathT = returnPathT;
             runtime.throwElapsed = 0.0f;
             runtime.throwPeakTime = peakTime;
             runtime.throwReturnTime = returnTime;
@@ -1097,7 +1153,7 @@ float SpellRingSystem::throwPathTForItem(int ringIndex, float pathParam, const R
         return pathTForParam(context.shape, pathParam, context.tuning);
     }
     const RingRuntimeState& runtime = ringRuntime_[static_cast<std::size_t>(ringIndex)];
-    const float gapCenterT = pathTClosestToDirection(runtime.homeCenter, runtime.throwDirection, context);
+    const float gapCenterT = runtime.throwCutPathT;
     return pathTForOpenPathParam(context.shape, pathParam, gapCenterT, context.tuning);
 }
 
@@ -1115,16 +1171,22 @@ Vec2 SpellRingSystem::throwMorphPathPointForRing(
         openContext.shapeRotation = std::atan2(direction.y, direction.x);
     }
 
-    const float gapCenterT = pathTClosestToDirection(runtime.homeCenter, direction, openContext);
+    const float gapCenterT = runtime.throwCutPathT;
     const float openParam = openPathParamForT(openContext.shape, pathT, gapCenterT, openContext.tuning);
     const Vec2 openPoint = getRingItemWorldPosition(runtime.homeCenter, openParam, openContext);
     const float lineMix = throwLineMixForRing(clampedRingIndex);
     const float reachDistance = runtime.throwDistance * throwReachForRing(clampedRingIndex);
-    const Vec2 launchAnchor = runtime.homeCenter + runtime.throwLaunchOffset;
-    const Vec2 returnAnchor = runtime.homeCenter + runtime.throwReturnOffset;
-    const Vec2 curvePoint = throwCurvePathPoint(launchAnchor, returnAnchor, direction, reachDistance, pathT);
-    const Vec2 morphed = lerp(openPoint, curvePoint, lineMix);
-    const Vec2 outward = safeNormalize(lerp(openPoint - runtime.homeCenter, direction, lineMix), direction);
+    const float ribbonHead = throwRibbonHead(throwProgressForRing(clampedRingIndex));
+    const float ribbonMix = lineMix * throwRibbonMix(ribbonHead, pathT);
+    const Vec2 flightPoint = throwFlightPathPoint(
+        runtime.homeCenter,
+        runtime.throwLaunchOffset,
+        runtime.throwReturnOffset,
+        direction,
+        reachDistance,
+        pathT);
+    const Vec2 morphed = lerp(openPoint, flightPoint, ribbonMix);
+    const Vec2 outward = safeNormalize(lerp(openPoint - runtime.homeCenter, direction, ribbonMix), direction);
     return morphed + outward * distanceOffset;
 }
 
@@ -1222,7 +1284,7 @@ bool SpellRingSystem::canAddItemForRing(int ringIndex) const
 {
     return ringIndex >= 0 &&
         ringIndex < SpellRingCount &&
-        itemsByRing_[static_cast<std::size_t>(ringIndex)].size() < static_cast<std::size_t>(maxItemCount());
+        itemsByRing_[static_cast<std::size_t>(ringIndex)].size() < static_cast<std::size_t>(maxItemCountForRing(ringIndex));
 }
 
 bool SpellRingSystem::canAddItemForRing(int ringIndex, const SpellRingItem& item) const
@@ -1669,9 +1731,9 @@ void SpellRingSystem::normalizeItemPlacements()
         std::vector<SpellRingItem> original = std::move(activeItems());
         std::vector<SpellRingItem>& normalized = activeItems();
         normalized.clear();
-        normalized.reserve(std::min(original.size(), static_cast<std::size_t>(maxItemCount())));
+        normalized.reserve(std::min(original.size(), static_cast<std::size_t>(maxItemCountForRing(ringIndex))));
         for (SpellRingItem& item : original) {
-            if (normalized.size() >= static_cast<std::size_t>(maxItemCount())) {
+            if (normalized.size() >= static_cast<std::size_t>(maxItemCountForRing(ringIndex))) {
                 break;
             }
             item.ringIndex = ringIndex;
@@ -1844,12 +1906,33 @@ std::vector<Vec2> SpellRingSystem::runtimePathSamplePointsForRing(
         return getRingPathSamplePoints(runtime.center, context, sampleCount);
     }
 
+    const float lineMix = throwLineMixForRing(clampedRingIndex);
+    if (lineMix <= 0.04f) {
+        return getRingPathSamplePoints(runtime.center, context, sampleCount);
+    }
+
     const int count = std::max(8, sampleCount);
+    const float ribbonHead = throwRibbonHead(throwProgressForRing(clampedRingIndex));
+    const float visibleEnd = clamp(ribbonHead, 0.0f, 1.0f);
+    if (visibleEnd <= 0.001f) {
+        return getRingPathSamplePoints(runtime.center, context, sampleCount);
+    }
+
+    const Vec2 direction = safeNormalize(runtime.throwDirection);
+    const float reachDistance = runtime.throwDistance * throwReachForRing(clampedRingIndex);
+
     std::vector<Vec2> points;
     points.reserve(static_cast<std::size_t>(count));
     for (int i = 0; i < count; ++i) {
-        const float t = static_cast<float>(i) / static_cast<float>(count - 1);
-        points.push_back(throwMorphPathPointForRing(clampedRingIndex, t, context, 0.0f));
+        const float sampleT = static_cast<float>(i) / static_cast<float>(count - 1);
+        const float t = lerp(0.0f, visibleEnd, sampleT);
+        points.push_back(throwFlightPathPoint(
+            runtime.homeCenter,
+            runtime.throwLaunchOffset,
+            runtime.throwReturnOffset,
+            direction,
+            reachDistance,
+            t));
     }
     return points;
 }
@@ -1868,9 +1951,10 @@ float SpellRingSystem::quantizeLocalAngle(float angle, const RuntimeBalance& bal
 
 float SpellRingSystem::cooldownRatio(const Player& player, const RuntimeBalance& balance) const
 {
+    const RingWorkshopModifiers& activeWorkshop = workshopModifiersByRing_[static_cast<std::size_t>(activeRingIndex_)];
     const float cooldown = scaledAtLeast(
         balance.spellRingThrowCooldown,
-        equipmentModifiersForRing(activeRingIndex_).ringThrowCooldownMul * workshopModifiers_.throwCooldownMultiplier,
+        equipmentModifiersForRing(activeRingIndex_).ringThrowCooldownMul * activeWorkshop.throwCooldownMultiplier,
         0.02f);
     return clamp(player.throwCooldownRemaining / cooldown, 0.0f, 1.0f);
 }
@@ -2096,7 +2180,16 @@ float SpellRingSystem::overweightEquipLimitForRing(int ringIndex) const
 
 int SpellRingSystem::maxItemCount() const
 {
-    return static_cast<int>(MaxSpellRingItems) + std::clamp(workshopModifiers_.extraEquipSlots, 0, 10);
+    return maxItemCountForRing(activeRingIndex_);
+}
+
+int SpellRingSystem::maxItemCountForRing(int ringIndex) const
+{
+    if (ringIndex < 0 || ringIndex >= SpellRingCount) {
+        return static_cast<int>(MaxSpellRingItems);
+    }
+    const RingWorkshopModifiers& modifiers = workshopModifiersByRing_[static_cast<std::size_t>(ringIndex)];
+    return static_cast<int>(MaxSpellRingItems) + std::clamp(modifiers.extraEquipSlots, 0, 10);
 }
 
 float SpellRingSystem::weightSpeedMultiplier() const
@@ -2137,7 +2230,8 @@ float SpellRingSystem::weightStopRatioForRing(int ringIndex) const
 
     const float equipmentStopRatio = weightStopRatioForPenaltyMultiplier(
         equipmentModifiersForRing(ringIndex).metalWeightPenaltyMul);
-    const float workshopStopRatio = BaseWeightStopRatio + workshopModifiers_.weightStopRatioBonus;
+    const float workshopStopRatio = BaseWeightStopRatio +
+        workshopModifiersByRing_[static_cast<std::size_t>(ringIndex)].weightStopRatioBonus;
     return std::clamp(std::max(equipmentStopRatio, workshopStopRatio), 1.0f, MaxWeightStopRatio);
 }
 

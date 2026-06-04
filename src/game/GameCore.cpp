@@ -67,8 +67,11 @@ constexpr float LevelUpPresentationMinSeconds = 1.22f;
 constexpr float LevelUpPresentationSparkleIntervalSeconds = 0.22f;
 constexpr float LevelUpJingleFallbackSeconds = 1.18f;
 constexpr float GameOverJingleFallbackSeconds = 1.35f;
-constexpr float RingWorkshopRadiusMetersPerLevel = 0.05f;
-constexpr float RingWorkshopSpeedMetersPerSecondPerLevel = 0.10f;
+constexpr std::array<float, SpellRingCount> RingWorkshopRadiusMaxMetersPerLevel{{0.12f, 0.18f, 0.24f}};
+constexpr std::array<float, SpellRingCount> RingWorkshopRadiusMinMetersPerLevel{{0.08f, 0.12f, 0.16f}};
+constexpr std::array<float, SpellRingCount> RingWorkshopSpeedMetersPerSecondPerLevel{{0.20f, 0.30f, 0.25f}};
+constexpr float RingWorkshopWeightLimitKgPerLevel = 1.0f;
+constexpr float RingWorkshopShiftDistanceMetersPerLevel = 0.50f;
 constexpr float RingWorkshopThrowDistanceMetersPerLevel = 0.40f;
 constexpr float RingWorkshopThrowCooldownSecondsPerLevel = 0.18f;
 
@@ -2136,19 +2139,7 @@ void Game::startMiningFromBase(bool useLatestWarpPoint, bool forceRegenerate)
 
 void Game::applyPermanentUpgrades()
 {
-    const float workshopThrowDistance = balance_.spellRingThrowDistance +
-        metersToWorldDistance(static_cast<float>(workshopThrowDistanceLevel_) * RingWorkshopThrowDistanceMetersPerLevel);
-    const float workshopThrowCooldown = std::max(
-        0.02f,
-        balance_.spellRingThrowCooldown -
-            static_cast<float>(workshopThrowCooldownLevel_) * RingWorkshopThrowCooldownSecondsPerLevel);
     spellRing_.setEquipmentModifiers(equipmentModifiers_);
-    spellRing_.setWorkshopModifiers(RingWorkshopModifiers{
-        workshopThrowDistance / std::max(0.001f, balance_.spellRingThrowDistance),
-        workshopThrowCooldown / std::max(0.001f, balance_.spellRingThrowCooldown),
-        static_cast<float>(workshopWeightPenaltyLevel_) * 0.10f,
-        workshopEquipSlotLevel_ * 2,
-    });
     player_.level = std::clamp(player_.level, 1, PlayerMaxLevel);
     player_.xpToNext = playerXpToNextForLevel(player_.level, balance_);
     if (playerAtMaxLevel(player_)) {
@@ -2156,8 +2147,23 @@ void Game::applyPermanentUpgrades()
     }
     player_.maxHp = playerMaxHpForLevel(player_.level) + maxHpUpgradeLevel_ * 2;
     player_.hp = std::min(player_.hp, player_.maxHp);
-    player_.spellRingShiftDistanceBonus = effectiveRingShiftDistance() - balance_.spellRingShiftDistance;
+    player_.spellRingShiftDistanceBonus = effectiveRingShiftDistanceForRing(spellRing_.activeRingIndex()) -
+        balance_.spellRingShiftDistance;
     for (int ringIndex = 0; ringIndex < SpellRingCount; ++ringIndex) {
+        const RingWorkshopRingUpgrades& upgrades = workshopRingUpgrades_[static_cast<std::size_t>(ringIndex)];
+        const float workshopThrowDistance = balance_.spellRingThrowDistance +
+            metersToWorldDistance(static_cast<float>(upgrades.throwDistanceLevel) * RingWorkshopThrowDistanceMetersPerLevel);
+        const float workshopThrowCooldown = std::max(
+            0.02f,
+            balance_.spellRingThrowCooldown -
+                static_cast<float>(upgrades.throwCooldownLevel) * RingWorkshopThrowCooldownSecondsPerLevel);
+        spellRing_.setWorkshopModifiersForRing(ringIndex, RingWorkshopModifiers{
+            workshopThrowDistance / std::max(0.001f, balance_.spellRingThrowDistance),
+            workshopThrowCooldown / std::max(0.001f, balance_.spellRingThrowCooldown),
+            static_cast<float>(upgrades.weightPenaltyLevel) * 0.10f,
+            upgrades.equipSlotLevel * 2,
+        });
+
         const RingLevelUpgradePoints points = clampedRingLevelUpgradePoints(
             levelRingUpgradePoints_[static_cast<std::size_t>(ringIndex)]);
         spellRing_.setRadiusForRing(ringIndex, effectiveInitialRingRadiusForRing(ringIndex, points.radius));
@@ -2315,11 +2321,11 @@ bool Game::applyLevelUpSelection(RingLevelUpgradeSelection selection)
         return false;
     }
     const RingLevelUpgradeKind kind = selection.kind;
-    float beforeValue = worldDistanceToMeters(spellRing_.radiusForRing(ringIndex));
+    float beforeValue = worldDistanceToMeters(spellRing_.orbitRadiusForRing(ringIndex));
     if (kind == RingLevelUpgradeKind::Speed) {
         beforeValue = linearMetersPerSecondForAngularSpeed(
-            spellRing_.angularSpeedForRing(ringIndex),
-            spellRing_.radiusForRing(ringIndex));
+            spellRing_.ringAngularSpeedForIndex(ringIndex, balance_),
+            spellRing_.orbitRadiusForRing(ringIndex));
     } else if (kind == RingLevelUpgradeKind::WeightLimit) {
         beforeValue = spellRing_.maxEquippedWeightForRing(ringIndex);
     }
@@ -2329,11 +2335,11 @@ bool Game::applyLevelUpSelection(RingLevelUpgradeSelection selection)
     levels_.finishChoice();
     applyPermanentUpgrades();
 
-    float afterValue = worldDistanceToMeters(spellRing_.radiusForRing(ringIndex));
+    float afterValue = worldDistanceToMeters(spellRing_.orbitRadiusForRing(ringIndex));
     if (kind == RingLevelUpgradeKind::Speed) {
         afterValue = linearMetersPerSecondForAngularSpeed(
-            spellRing_.angularSpeedForRing(ringIndex),
-            spellRing_.radiusForRing(ringIndex));
+            spellRing_.ringAngularSpeedForIndex(ringIndex, balance_),
+            spellRing_.orbitRadiusForRing(ringIndex));
     } else if (kind == RingLevelUpgradeKind::WeightLimit) {
         afterValue = spellRing_.maxEquippedWeightForRing(ringIndex);
     }
@@ -2398,50 +2404,81 @@ void Game::updateLevelUpScreen(const Input& input, UiContext& ui, float dt)
 
 float Game::effectiveInitialRingRadiusForRing(int ringIndex, int levelRadiusPoints) const
 {
+    const int clampedRingIndex = std::clamp(ringIndex, 0, SpellRingCount - 1);
     const float baseUpgradeMultiplier = 1.0f + static_cast<float>(ringRadiusUpgradeLevel_) * 0.08f;
     const float levelMultiplier = SpellRingSystem::levelScaleMultiplierForPoints(levelRadiusPoints);
     const double staffMultiplier = std::max(
         0.0,
-        ringEquipmentModifiersForRing(equipmentModifiers_, ringIndex).ringRadiusMul);
-    const float radiusBeforeStaff = balance_.spellRingRadius *
+        ringEquipmentModifiersForRing(equipmentModifiers_, clampedRingIndex).ringRadiusMul);
+    const float defaultRadiusBeforeStaff = balance_.spellRingRadius *
         baseUpgradeMultiplier *
-        levelMultiplier +
-        metersToWorldDistance(static_cast<float>(workshopInitialRadiusLevel_) * RingWorkshopRadiusMetersPerLevel);
-    return radiusBeforeStaff * static_cast<float>(staffMultiplier);
+        levelMultiplier;
+    const float baseRadiusMultiplier = SpellRingSystem::baseRadiusMultiplierForRing(clampedRingIndex);
+    const float defaultOrbitRadiusMeters = worldDistanceToMeters(
+        defaultRadiusBeforeStaff * baseRadiusMultiplier * static_cast<float>(staffMultiplier));
+    const float radiusMaxMeters = defaultOrbitRadiusMeters +
+        static_cast<float>(workshopRingUpgrades_[static_cast<std::size_t>(clampedRingIndex)].radiusMaxLevel) *
+            RingWorkshopRadiusMaxMetersPerLevel[static_cast<std::size_t>(clampedRingIndex)];
+    const float radiusMinMeters = std::max(
+        0.10f,
+        defaultOrbitRadiusMeters -
+            static_cast<float>(workshopRingUpgrades_[static_cast<std::size_t>(clampedRingIndex)].radiusMinLevel) *
+                RingWorkshopRadiusMinMetersPerLevel[static_cast<std::size_t>(clampedRingIndex)]);
+    const float radiusSettingMeters = ringWorkshopRadiusSettingForRing(clampedRingIndex);
+    const float adjustedMeters = std::clamp(radiusSettingMeters, radiusMinMeters, std::max(radiusMinMeters, radiusMaxMeters));
+    return metersToWorldDistance(adjustedMeters) / std::max(0.001f, baseRadiusMultiplier);
 }
 
 float Game::effectiveInitialRingSpeedForRing(int ringIndex, int levelSpeedPoints) const
 {
+    const int clampedRingIndex = std::clamp(ringIndex, 0, SpellRingCount - 1);
     const float baseUpgradeMultiplier = 1.0f + static_cast<float>(ringSpeedUpgradeLevel_) * 0.08f;
     const float levelMultiplier = SpellRingSystem::levelScaleMultiplierForPoints(levelSpeedPoints);
     const double staffMultiplier = std::max(
         0.0,
-        ringEquipmentModifiersForRing(equipmentModifiers_, ringIndex).ringSpeedMul);
-    const int radiusPoints = ringIndex >= 0 && ringIndex < SpellRingCount
-        ? clampedRingLevelUpgradePoints(levelRingUpgradePoints_[static_cast<std::size_t>(ringIndex)]).radius
+        ringEquipmentModifiersForRing(equipmentModifiers_, clampedRingIndex).ringSpeedMul);
+    const int radiusPoints = clampedRingIndex >= 0 && clampedRingIndex < SpellRingCount
+        ? clampedRingLevelUpgradePoints(levelRingUpgradePoints_[static_cast<std::size_t>(clampedRingIndex)]).radius
         : 0;
-    const float radius = effectiveInitialRingRadiusForRing(ringIndex, radiusPoints);
+    const float orbitRadius = effectiveInitialRingRadiusForRing(clampedRingIndex, radiusPoints) *
+        SpellRingSystem::baseRadiusMultiplierForRing(clampedRingIndex);
+    const float baseSpeedMultiplier = SpellRingSystem::baseSpeedMultiplierForRing(clampedRingIndex);
     const float speedBeforeWorkshop = balance_.spellRingSpeed * baseUpgradeMultiplier * levelMultiplier;
     const float linearSpeedBeforeStaff =
-        linearMetersPerSecondForAngularSpeed(speedBeforeWorkshop, radius) +
-        static_cast<float>(workshopInitialSpeedLevel_) * RingWorkshopSpeedMetersPerSecondPerLevel;
-    return angularSpeedForLinearMetersPerSecond(linearSpeedBeforeStaff, radius) *
+        linearMetersPerSecondForAngularSpeed(speedBeforeWorkshop * baseSpeedMultiplier, orbitRadius) +
+        static_cast<float>(workshopRingUpgrades_[static_cast<std::size_t>(clampedRingIndex)].speedLevel) *
+            RingWorkshopSpeedMetersPerSecondPerLevel[static_cast<std::size_t>(clampedRingIndex)];
+    return angularSpeedForLinearMetersPerSecond(
+        linearSpeedBeforeStaff / std::max(0.001f, baseSpeedMultiplier),
+        orbitRadius) *
         static_cast<float>(staffMultiplier);
 }
 
 float Game::effectiveInitialRingWeightLimitForRing(int ringIndex, int levelWeightLimitPoints) const
 {
+    const int clampedRingIndex = std::clamp(ringIndex, 0, SpellRingCount - 1);
     const double staffWeightAdd = std::max(
         0.0,
-        ringEquipmentModifiersForRing(equipmentModifiers_, ringIndex).ringWeightLimitAdd);
-    return SpellRingSystem::initialMaxEquippedWeightForRing(ringIndex) +
+        ringEquipmentModifiersForRing(equipmentModifiers_, clampedRingIndex).ringWeightLimitAdd);
+    return SpellRingSystem::initialMaxEquippedWeightForRing(clampedRingIndex) +
         SpellRingSystem::LevelWeightLimitUpgradeAmount * static_cast<float>(std::max(0, levelWeightLimitPoints)) +
+        static_cast<float>(workshopRingUpgrades_[static_cast<std::size_t>(clampedRingIndex)].weightLimitLevel) *
+            RingWorkshopWeightLimitKgPerLevel +
         static_cast<float>(staffWeightAdd);
+}
+
+float Game::effectiveRingShiftDistanceForRing(int ringIndex) const
+{
+    const int clampedRingIndex = std::clamp(ringIndex, 0, SpellRingCount - 1);
+    return balance_.spellRingShiftDistance +
+        metersToWorldDistance(
+            static_cast<float>(workshopRingUpgrades_[static_cast<std::size_t>(clampedRingIndex)].shiftDistanceLevel) *
+            RingWorkshopShiftDistanceMetersPerLevel);
 }
 
 float Game::effectiveRingShiftDistance() const
 {
-    return balance_.spellRingShiftDistance + static_cast<float>(workshopShiftDistanceLevel_) * 8.0f;
+    return effectiveRingShiftDistanceForRing(spellRing_.activeRingIndex());
 }
 
 void Game::initializeDefaultSpellRing()
@@ -2886,6 +2923,8 @@ void Game::clampActiveRingToUnlocked()
 
     const int targetRing = std::clamp(activeRing, 0, ringCount - 1);
     spellRing_.switchActiveRing(targetRing - activeRing);
+    player_.spellRingShiftDistanceBonus = effectiveRingShiftDistanceForRing(spellRing_.activeRingIndex()) -
+        balance_.spellRingShiftDistance;
 }
 
 void Game::setUnlockedRingCount(int count)
@@ -3750,6 +3789,8 @@ void Game::switchActiveRingWithLog(int delta)
     }
     spellRing_.switchActiveRing(targetRing - previousRing);
     const int currentRing = spellRing_.activeRingIndex();
+    player_.spellRingShiftDistanceBonus = effectiveRingShiftDistanceForRing(currentRing) -
+        balance_.spellRingShiftDistance;
     if (currentRing != previousRing && mode_ == ScreenMode::Playing) {
         pushDungeonLog("Ring " + std::to_string(currentRing + 1) + " に切替", "ring_switch");
     }

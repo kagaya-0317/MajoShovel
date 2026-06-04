@@ -8914,7 +8914,7 @@ GameTestSnapshot Game::makeTestSnapshot(GameTestSnapshotOptions options) const
         (balance_.spellRingShiftDistance + player_.spellRingShiftDistanceBonus) *
         clamp(player_.spellRingShiftDistanceMultiplier, 0.25f, 3.0f);
     snapshot.ring.activeItemCount = static_cast<int>(spellRing_.items().size());
-    snapshot.ring.activeMaxItemCount = spellRing_.maxItemCount();
+    snapshot.ring.activeMaxItemCount = spellRing_.maxItemCountForRing(spellRing_.activeRingIndex());
     snapshot.ring.activeCanAddItem = spellRing_.canAddItem();
     snapshot.ring.rings.reserve(ringCount);
     for (int ringIndex = 0; ringIndex < ringCount; ++ringIndex) {
@@ -8927,7 +8927,7 @@ GameTestSnapshot Game::makeTestSnapshot(GameTestSnapshotOptions options) const
         ring.weight = spellRing_.totalEquippedWeightForRing(ringIndex);
         ring.maxWeight = spellRing_.maxEquippedWeightForRing(ringIndex);
         ring.itemCount = static_cast<int>(spellRing_.itemsForRing(ringIndex).size());
-        ring.maxItemCount = spellRing_.maxItemCount();
+        ring.maxItemCount = spellRing_.maxItemCountForRing(ringIndex);
         ring.radiusUpgradePoints = points.radius;
         ring.speedUpgradePoints = points.speed;
         ring.weightLimitUpgradePoints = points.weightLimit;
@@ -9629,7 +9629,7 @@ GameTestActionResult Game::applyTestAction(const GameTestAction& action)
         }
         const int targetRing = *resolvedRing;
         if (targetRing != spellRing_.activeRingIndex()) {
-            spellRing_.switchActiveRing(targetRing - spellRing_.activeRingIndex());
+            switchActiveRingWithLog(targetRing - spellRing_.activeRingIndex());
         }
         SpellRingAddResult addResult{};
         std::string status;
@@ -10934,9 +10934,7 @@ bool Game::executeDebugCommand(std::string_view command)
         ringSpeedUpgradeLevel_ = 0;
         collectionRangeUpgradeLevel_ = 0;
         levelRingUpgradePoints_ = {};
-        workshopInitialRadiusLevel_ = 0;
-        workshopInitialSpeedLevel_ = 0;
-        workshopShiftDistanceLevel_ = 0;
+        workshopRingUpgrades_ = {};
         merchantRefreshPending_ = false;
         merchantUpgradeLevel_ = 1;
         merchantStockVersion_ = 0;

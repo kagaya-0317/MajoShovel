@@ -16,8 +16,11 @@ constexpr std::string_view RescueTorchObjectId = "item_torch";
 constexpr float BaseMiningRescueDropDurationSeconds = 1.05f;
 constexpr float BaseMiningRescueDropEndSeconds = 1.55f;
 constexpr float NewItemJingleFallbackSeconds = 0.92f;
-constexpr float RingWorkshopRadiusMetersPerLevel = 0.05f;
-constexpr float RingWorkshopSpeedMetersPerSecondPerLevel = 0.10f;
+constexpr std::array<float, SpellRingCount> RingWorkshopRadiusMaxMetersPerLevel{{0.12f, 0.18f, 0.24f}};
+constexpr std::array<float, SpellRingCount> RingWorkshopRadiusMinMetersPerLevel{{0.08f, 0.12f, 0.16f}};
+constexpr std::array<float, SpellRingCount> RingWorkshopSpeedMetersPerSecondPerLevel{{0.20f, 0.30f, 0.25f}};
+constexpr float RingWorkshopWeightLimitKgPerLevel = 1.0f;
+constexpr float RingWorkshopShiftDistanceMetersPerLevel = 0.50f;
 constexpr float RingWorkshopThrowDistanceMetersPerLevel = 0.40f;
 constexpr float RingWorkshopThrowCooldownSecondsPerLevel = 0.18f;
 
@@ -1374,23 +1377,24 @@ UiRect ringWorkshopUpgradeListPanelRect()
 {
     const UiRect panel = ringWorkshopPanelRect();
     const UiRect detail = ringWorkshopDetailPanelRect();
+    const UiRect firstTab = ringWorkshopRingTabRect(0);
     return {{
         panel.pos.x + 38.0f,
-        panel.pos.y + 86.0f,
+        firstTab.pos.y + firstTab.size.y + 22.0f,
     }, {
         detail.pos.x - panel.pos.x - 66.0f,
-        404.0f,
+        382.0f,
     }};
 }
 
 UiRect ringWorkshopUpgradeItemRect(int index)
 {
-    constexpr float RowHeight = 42.0f;
-    constexpr float RowPitch = 46.0f;
+    constexpr float RowHeight = 34.0f;
+    constexpr float RowPitch = 36.0f;
     const UiRect list = ringWorkshopUpgradeListPanelRect();
     return {{
         list.pos.x,
-        156.0f + static_cast<float>(index) * RowPitch,
+        list.pos.y + 18.0f + static_cast<float>(index) * RowPitch,
     }, {
         332.0f,
         RowHeight,
@@ -1400,6 +1404,13 @@ UiRect ringWorkshopUpgradeItemRect(int index)
 UiRect ringWorkshopUpgradeConfirmRect()
 {
     return baseUpgradeConfirmRect();
+}
+
+UiRect ringWorkshopRadiusGaugeRect()
+{
+    const UiRect detail = ringWorkshopDetailPanelRect();
+    const UiRect content = uiSubPanelContentRect(detail);
+    return {{content.pos.x, content.pos.y + 154.0f}, {content.size.x, 14.0f}};
 }
 
 RingLevelUpgradeKind ringWorkshopKindForIndex(int index)
@@ -1418,8 +1429,8 @@ RingLevelUpgradeKind ringWorkshopKindForIndex(int index)
 const char* ringWorkshopActionLabel(int index)
 {
     switch (index) {
-    case 0: return "配分再調整";
-    case 1: return "工房強化";
+    case 0: return "リング調整・強化";
+    case 1: return "レベルアップ配分調整";
     default: return "";
     }
 }
@@ -1427,13 +1438,16 @@ const char* ringWorkshopActionLabel(int index)
 const char* ringWorkshopUpgradeShortName(int index)
 {
     switch (index) {
-    case 0: return "リング半径";
-    case 1: return "リング速度";
-    case 2: return "ずらし距離";
-    case 3: return "投げ距離";
-    case 4: return "投げ短縮";
-    case 5: return "重量軽減";
-    case 6: return "装着枠";
+    case 0: return "半径調整";
+    case 1: return "半径上限";
+    case 2: return "半径下限";
+    case 3: return "リング速度";
+    case 4: return "重量制限";
+    case 5: return "ずらし距離";
+    case 6: return "投げ距離";
+    case 7: return "投げ短縮";
+    case 8: return "重量軽減";
+    case 9: return "装着枠";
     default: return "未解禁";
     }
 }
@@ -1442,18 +1456,24 @@ const char* ringWorkshopUpgradeDescription(int index)
 {
     switch (index) {
     case 0:
-        return "リング半径を広げます。広い範囲にアイテムを配置しやすくなります。";
+        return "リング半径を下限から上限の範囲で調整します。";
     case 1:
-        return "リング速度を上げます。配置したアイテムの発動機会が増えます。";
+        return "リング半径の上限を広げます。広い範囲にアイテムを配置しやすくなります。";
     case 2:
-        return "リング位置をずらす距離を伸ばします。状況に合わせてリングを動かしやすくなります。";
+        return "リング半径の下限を下げます。小さく締めたリングを使いやすくなります。";
     case 3:
-        return "リングを投げられる距離を伸ばします。離れた位置へリングを展開しやすくなります。";
+        return "リング速度を上げます。配置したアイテムの発動機会が増えます。";
     case 4:
-        return "リング投げの再使用時間を短縮します。投げ直しの隙が小さくなります。";
+        return "リングの重量制限を増やします。重いアイテムを装着しやすくなります。";
     case 5:
-        return "リングが重いときの停止ペナルティを軽減します。重い構成でも動きを保ちやすくなります。";
+        return "リング位置をずらす距離を伸ばします。状況に合わせてリングを動かしやすくなります。";
     case 6:
+        return "リングを投げられる距離を伸ばします。離れた位置へリングを展開しやすくなります。";
+    case 7:
+        return "リング投げの再使用時間を短縮します。投げ直しの隙が小さくなります。";
+    case 8:
+        return "リングが重いときの停止ペナルティを軽減します。重い構成でも動きを保ちやすくなります。";
+    case 9:
         return "リングに装着できるアイテム枠を増やします。より多くのアイテムを組み込めます。";
     }
     return "";
@@ -5465,10 +5485,16 @@ void Game::confirmRingWorkshopRespec()
 const char* Game::ringWorkshopUpgradeName(RingWorkshopUpgrade upgrade) const
 {
     switch (upgrade) {
-    case RingWorkshopUpgrade::InitialRadius:
-        return "リング半径強化";
-    case RingWorkshopUpgrade::InitialSpeed:
+    case RingWorkshopUpgrade::RadiusAdjust:
+        return "半径調整";
+    case RingWorkshopUpgrade::RadiusMax:
+        return "リング半径の上限強化";
+    case RingWorkshopUpgrade::RadiusMin:
+        return "リング半径の下限強化";
+    case RingWorkshopUpgrade::Speed:
         return "リング速度強化";
+    case RingWorkshopUpgrade::WeightLimit:
+        return "リング重量制限強化";
     case RingWorkshopUpgrade::ShiftDistance:
         return "ずらし距離強化";
     case RingWorkshopUpgrade::ThrowDistance:
@@ -5485,103 +5511,134 @@ const char* Game::ringWorkshopUpgradeName(RingWorkshopUpgrade upgrade) const
 
 int Game::ringWorkshopUpgradeLevel(RingWorkshopUpgrade upgrade) const
 {
+    const int ringIndex = std::clamp(baseRingWorkshopRingIndex_, 0, SpellRingCount - 1);
+    const RingWorkshopRingUpgrades& upgrades = workshopRingUpgrades_[static_cast<std::size_t>(ringIndex)];
     switch (upgrade) {
-    case RingWorkshopUpgrade::InitialRadius:
-        return workshopInitialRadiusLevel_;
-    case RingWorkshopUpgrade::InitialSpeed:
-        return workshopInitialSpeedLevel_;
+    case RingWorkshopUpgrade::RadiusAdjust:
+        return 0;
+    case RingWorkshopUpgrade::RadiusMax:
+        return upgrades.radiusMaxLevel;
+    case RingWorkshopUpgrade::RadiusMin:
+        return upgrades.radiusMinLevel;
+    case RingWorkshopUpgrade::Speed:
+        return upgrades.speedLevel;
+    case RingWorkshopUpgrade::WeightLimit:
+        return upgrades.weightLimitLevel;
     case RingWorkshopUpgrade::ShiftDistance:
-        return workshopShiftDistanceLevel_;
+        return upgrades.shiftDistanceLevel;
     case RingWorkshopUpgrade::ThrowDistance:
-        return workshopThrowDistanceLevel_;
+        return upgrades.throwDistanceLevel;
     case RingWorkshopUpgrade::ThrowCooldown:
-        return workshopThrowCooldownLevel_;
+        return upgrades.throwCooldownLevel;
     case RingWorkshopUpgrade::WeightPenalty:
-        return workshopWeightPenaltyLevel_;
+        return upgrades.weightPenaltyLevel;
     case RingWorkshopUpgrade::EquipSlot:
-        return workshopEquipSlotLevel_;
+        return upgrades.equipSlotLevel;
     }
     return 0;
 }
 
-int Game::ringWorkshopUpgradeMaxLevel(RingWorkshopUpgrade) const
+int Game::ringWorkshopUpgradeMaxLevel(RingWorkshopUpgrade upgrade) const
 {
+    if (upgrade == RingWorkshopUpgrade::RadiusAdjust) {
+        return 0;
+    }
     return 5;
 }
 
 int Game::ringWorkshopUpgradeMoneyCost(RingWorkshopUpgrade upgrade) const
 {
-    constexpr std::array<int, 5> PremiumCosts{{800, 1500, 2600, 4200, 6500}};
-    constexpr std::array<int, 5> StandardCosts{{650, 1200, 2100, 3400, 5400}};
-    constexpr std::array<int, 5> UtilityCosts{{450, 850, 1500, 2500, 4000}};
+    constexpr std::array<int, 5> PremiumCosts{{500, 900, 1600, 2600, 4000}};
+    constexpr std::array<int, 5> StandardCosts{{400, 750, 1300, 2100, 3300}};
+    constexpr std::array<int, 5> UtilityCosts{{300, 550, 950, 1550, 2400}};
 
     const int level = ringWorkshopUpgradeLevel(upgrade);
     if (level >= ringWorkshopUpgradeMaxLevel(upgrade)) {
         return 0;
     }
     switch (upgrade) {
-    case RingWorkshopUpgrade::InitialRadius:
-    case RingWorkshopUpgrade::InitialSpeed:
+    case RingWorkshopUpgrade::RadiusMax:
+    case RingWorkshopUpgrade::RadiusMin:
+    case RingWorkshopUpgrade::Speed:
     case RingWorkshopUpgrade::EquipSlot:
         return PremiumCosts[static_cast<std::size_t>(level)];
+    case RingWorkshopUpgrade::WeightLimit:
     case RingWorkshopUpgrade::ThrowDistance:
     case RingWorkshopUpgrade::ThrowCooldown:
     case RingWorkshopUpgrade::WeightPenalty:
         return StandardCosts[static_cast<std::size_t>(level)];
     case RingWorkshopUpgrade::ShiftDistance:
         return UtilityCosts[static_cast<std::size_t>(level)];
+    case RingWorkshopUpgrade::RadiusAdjust:
+        return 0;
     }
     return 0;
 }
 
 int Game::ringWorkshopUpgradeMoonCost(RingWorkshopUpgrade upgrade) const
 {
-    constexpr std::array<int, 5> PremiumCosts{{5, 9, 14, 20, 28}};
-    constexpr std::array<int, 5> StandardCosts{{4, 7, 11, 16, 23}};
-    constexpr std::array<int, 5> UtilityCosts{{3, 5, 8, 12, 18}};
+    constexpr std::array<int, 5> PremiumCosts{{3, 5, 8, 12, 17}};
+    constexpr std::array<int, 5> StandardCosts{{2, 4, 6, 9, 13}};
+    constexpr std::array<int, 5> UtilityCosts{{2, 3, 5, 7, 10}};
 
     const int level = ringWorkshopUpgradeLevel(upgrade);
     if (level >= ringWorkshopUpgradeMaxLevel(upgrade)) {
         return 0;
     }
     switch (upgrade) {
-    case RingWorkshopUpgrade::InitialRadius:
-    case RingWorkshopUpgrade::InitialSpeed:
+    case RingWorkshopUpgrade::RadiusMax:
+    case RingWorkshopUpgrade::RadiusMin:
+    case RingWorkshopUpgrade::Speed:
     case RingWorkshopUpgrade::EquipSlot:
         return PremiumCosts[static_cast<std::size_t>(level)];
+    case RingWorkshopUpgrade::WeightLimit:
     case RingWorkshopUpgrade::ThrowDistance:
     case RingWorkshopUpgrade::ThrowCooldown:
     case RingWorkshopUpgrade::WeightPenalty:
         return StandardCosts[static_cast<std::size_t>(level)];
     case RingWorkshopUpgrade::ShiftDistance:
         return UtilityCosts[static_cast<std::size_t>(level)];
+    case RingWorkshopUpgrade::RadiusAdjust:
+        return 0;
     }
     return 0;
 }
 
 float Game::ringWorkshopUpgradeCurrentValue(RingWorkshopUpgrade upgrade) const
 {
+    const int ringIndex = std::clamp(baseRingWorkshopRingIndex_, 0, SpellRingCount - 1);
+    const RingWorkshopRingUpgrades& upgrades = workshopRingUpgrades_[static_cast<std::size_t>(ringIndex)];
+    const RingLevelUpgradePoints points = clampedRingLevelUpgradePoints(
+        levelRingUpgradePoints_[static_cast<std::size_t>(ringIndex)]);
     switch (upgrade) {
-    case RingWorkshopUpgrade::InitialRadius:
-        return effectiveInitialRingRadiusForRing(0, levelRingUpgradePoints_[0].radius);
-    case RingWorkshopUpgrade::InitialSpeed:
+    case RingWorkshopUpgrade::RadiusAdjust:
+        return metersToWorldDistance(ringWorkshopRadiusSettingForRing(ringIndex));
+    case RingWorkshopUpgrade::RadiusMax:
+        return metersToWorldDistance(ringWorkshopRadiusMaxForRing(ringIndex));
+    case RingWorkshopUpgrade::RadiusMin:
+        return metersToWorldDistance(ringWorkshopRadiusMinForRing(ringIndex));
+    case RingWorkshopUpgrade::Speed:
         return linearMetersPerSecondForAngularSpeed(
-            effectiveInitialRingSpeedForRing(0, levelRingUpgradePoints_[0].speed),
-            effectiveInitialRingRadiusForRing(0, levelRingUpgradePoints_[0].radius));
+            effectiveInitialRingSpeedForRing(ringIndex, points.speed) *
+                SpellRingSystem::baseSpeedMultiplierForRing(ringIndex),
+            effectiveInitialRingRadiusForRing(ringIndex, points.radius) *
+                SpellRingSystem::baseRadiusMultiplierForRing(ringIndex));
+    case RingWorkshopUpgrade::WeightLimit:
+        return effectiveInitialRingWeightLimitForRing(ringIndex, points.weightLimit);
     case RingWorkshopUpgrade::ShiftDistance:
-        return effectiveRingShiftDistance();
+        return effectiveRingShiftDistanceForRing(ringIndex);
     case RingWorkshopUpgrade::ThrowDistance:
         return balance_.spellRingThrowDistance +
-            metersToWorldDistance(static_cast<float>(workshopThrowDistanceLevel_) * RingWorkshopThrowDistanceMetersPerLevel);
+            metersToWorldDistance(static_cast<float>(upgrades.throwDistanceLevel) * RingWorkshopThrowDistanceMetersPerLevel);
     case RingWorkshopUpgrade::ThrowCooldown:
         return std::max(
             0.02f,
             balance_.spellRingThrowCooldown -
-                static_cast<float>(workshopThrowCooldownLevel_) * RingWorkshopThrowCooldownSecondsPerLevel);
+                static_cast<float>(upgrades.throwCooldownLevel) * RingWorkshopThrowCooldownSecondsPerLevel);
     case RingWorkshopUpgrade::WeightPenalty:
-        return ringWeightPenaltyReliefPercentForLevel(workshopWeightPenaltyLevel_);
+        return ringWeightPenaltyReliefPercentForLevel(upgrades.weightPenaltyLevel);
     case RingWorkshopUpgrade::EquipSlot:
-        return static_cast<float>(24 + workshopEquipSlotLevel_ * 2);
+        return static_cast<float>(24 + upgrades.equipSlotLevel * 2);
     }
     return 0.0f;
 }
@@ -5593,17 +5650,29 @@ float Game::ringWorkshopUpgradeNextValue(RingWorkshopUpgrade upgrade) const
         return ringWorkshopUpgradeCurrentValue(upgrade);
     }
     switch (upgrade) {
-    case RingWorkshopUpgrade::InitialRadius:
+    case RingWorkshopUpgrade::RadiusAdjust:
+        return ringWorkshopUpgradeCurrentValue(upgrade);
+    case RingWorkshopUpgrade::RadiusMax:
+        return metersToWorldDistance(
+            ringWorkshopRadiusMaxForRing(baseRingWorkshopRingIndex_) +
+            RingWorkshopRadiusMaxMetersPerLevel[static_cast<std::size_t>(std::clamp(baseRingWorkshopRingIndex_, 0, SpellRingCount - 1))]);
+    case RingWorkshopUpgrade::RadiusMin:
+        return metersToWorldDistance(
+            std::max(
+                0.10f,
+                ringWorkshopRadiusMinForRing(baseRingWorkshopRingIndex_) -
+                    RingWorkshopRadiusMinMetersPerLevel[static_cast<std::size_t>(std::clamp(baseRingWorkshopRingIndex_, 0, SpellRingCount - 1))]));
+    case RingWorkshopUpgrade::Speed: {
+        const int ringIndex = std::clamp(baseRingWorkshopRingIndex_, 0, SpellRingCount - 1);
         return ringWorkshopUpgradeCurrentValue(upgrade) +
-            metersToWorldDistance(RingWorkshopRadiusMetersPerLevel) *
-                static_cast<float>(std::max(0.0, ringEquipmentModifiersForRing(equipmentModifiers_, 0).ringRadiusMul));
-    case RingWorkshopUpgrade::InitialSpeed: {
-        return ringWorkshopUpgradeCurrentValue(upgrade) +
-            RingWorkshopSpeedMetersPerSecondPerLevel *
-                static_cast<float>(std::max(0.0, ringEquipmentModifiersForRing(equipmentModifiers_, 0).ringSpeedMul));
+            RingWorkshopSpeedMetersPerSecondPerLevel[static_cast<std::size_t>(ringIndex)] *
+                static_cast<float>(std::max(0.0, ringEquipmentModifiersForRing(equipmentModifiers_, ringIndex).ringSpeedMul));
     }
+    case RingWorkshopUpgrade::WeightLimit:
+        return ringWorkshopUpgradeCurrentValue(upgrade) + RingWorkshopWeightLimitKgPerLevel;
     case RingWorkshopUpgrade::ShiftDistance:
-        return balance_.spellRingShiftDistance + static_cast<float>(currentLevel + 1) * 8.0f;
+        return balance_.spellRingShiftDistance +
+            metersToWorldDistance(static_cast<float>(currentLevel + 1) * RingWorkshopShiftDistanceMetersPerLevel);
     case RingWorkshopUpgrade::ThrowDistance:
         return balance_.spellRingThrowDistance +
             metersToWorldDistance(static_cast<float>(currentLevel + 1) * RingWorkshopThrowDistanceMetersPerLevel);
@@ -5620,8 +5689,90 @@ float Game::ringWorkshopUpgradeNextValue(RingWorkshopUpgrade upgrade) const
     return 0.0f;
 }
 
+float Game::ringWorkshopRadiusMinForRing(int ringIndex) const
+{
+    const int clampedRingIndex = std::clamp(ringIndex, 0, SpellRingCount - 1);
+    const RingLevelUpgradePoints points = clampedRingLevelUpgradePoints(
+        levelRingUpgradePoints_[static_cast<std::size_t>(clampedRingIndex)]);
+    const float baseUpgradeMultiplier = 1.0f + static_cast<float>(ringRadiusUpgradeLevel_) * 0.08f;
+    const float levelMultiplier = SpellRingSystem::levelScaleMultiplierForPoints(points.radius);
+    const float staffMultiplier = static_cast<float>(std::max(
+        0.0,
+        ringEquipmentModifiersForRing(equipmentModifiers_, clampedRingIndex).ringRadiusMul));
+    const float defaultOrbitMeters = worldDistanceToMeters(
+        balance_.spellRingRadius *
+        baseUpgradeMultiplier *
+        levelMultiplier *
+        SpellRingSystem::baseRadiusMultiplierForRing(clampedRingIndex) *
+        staffMultiplier);
+    return std::max(
+        0.10f,
+        defaultOrbitMeters -
+            static_cast<float>(workshopRingUpgrades_[static_cast<std::size_t>(clampedRingIndex)].radiusMinLevel) *
+                RingWorkshopRadiusMinMetersPerLevel[static_cast<std::size_t>(clampedRingIndex)]);
+}
+
+float Game::ringWorkshopRadiusMaxForRing(int ringIndex) const
+{
+    const int clampedRingIndex = std::clamp(ringIndex, 0, SpellRingCount - 1);
+    const RingLevelUpgradePoints points = clampedRingLevelUpgradePoints(
+        levelRingUpgradePoints_[static_cast<std::size_t>(clampedRingIndex)]);
+    const float baseUpgradeMultiplier = 1.0f + static_cast<float>(ringRadiusUpgradeLevel_) * 0.08f;
+    const float levelMultiplier = SpellRingSystem::levelScaleMultiplierForPoints(points.radius);
+    const float staffMultiplier = static_cast<float>(std::max(
+        0.0,
+        ringEquipmentModifiersForRing(equipmentModifiers_, clampedRingIndex).ringRadiusMul));
+    const float defaultOrbitMeters = worldDistanceToMeters(
+        balance_.spellRingRadius *
+        baseUpgradeMultiplier *
+        levelMultiplier *
+        SpellRingSystem::baseRadiusMultiplierForRing(clampedRingIndex) *
+        staffMultiplier);
+    return std::max(
+        ringWorkshopRadiusMinForRing(clampedRingIndex),
+        defaultOrbitMeters +
+            static_cast<float>(workshopRingUpgrades_[static_cast<std::size_t>(clampedRingIndex)].radiusMaxLevel) *
+                RingWorkshopRadiusMaxMetersPerLevel[static_cast<std::size_t>(clampedRingIndex)]);
+}
+
+float Game::ringWorkshopRadiusSettingForRing(int ringIndex) const
+{
+    const int clampedRingIndex = std::clamp(ringIndex, 0, SpellRingCount - 1);
+    const float minMeters = ringWorkshopRadiusMinForRing(clampedRingIndex);
+    const float maxMeters = ringWorkshopRadiusMaxForRing(clampedRingIndex);
+    float setting = workshopRingUpgrades_[static_cast<std::size_t>(clampedRingIndex)].radiusSettingMeters;
+    if (setting <= 0.0f) {
+        setting = minMeters;
+    }
+    return std::clamp(setting, minMeters, maxMeters);
+}
+
+bool Game::setRingWorkshopRadiusSettingForRing(int ringIndex, float meters)
+{
+    const int clampedRingIndex = std::clamp(ringIndex, 0, SpellRingCount - 1);
+    const float minMeters = ringWorkshopRadiusMinForRing(clampedRingIndex);
+    const float maxMeters = ringWorkshopRadiusMaxForRing(clampedRingIndex);
+    if (maxMeters <= minMeters + 0.001f) {
+        workshopRingUpgrades_[static_cast<std::size_t>(clampedRingIndex)].radiusSettingMeters = minMeters;
+        return false;
+    }
+    const float clamped = std::clamp(meters, minMeters, maxMeters);
+    float& setting = workshopRingUpgrades_[static_cast<std::size_t>(clampedRingIndex)].radiusSettingMeters;
+    const bool changed = std::abs(setting - clamped) > 0.001f;
+    setting = clamped;
+    if (changed) {
+        applyPermanentUpgrades();
+        baseStatus_ = "リング半径を調整しました";
+    }
+    return changed;
+}
+
 void Game::buyRingWorkshopUpgrade(RingWorkshopUpgrade upgrade)
 {
+    if (upgrade == RingWorkshopUpgrade::RadiusAdjust) {
+        baseStatus_ = "半径はゲージで調整してください";
+        return;
+    }
     if (ringWorkshopUpgradeLevel(upgrade) >= ringWorkshopUpgradeMaxLevel(upgrade)) {
         baseStatus_ = "この強化は上限です";
         return;
@@ -5639,32 +5790,44 @@ void Game::buyRingWorkshopUpgrade(RingWorkshopUpgrade upgrade)
     money_ -= moneyCost;
     const bool spent = inventory_.materials().spend(MaterialType::MoonFragment, moonCost);
     (void)spent;
+    const int ringIndex = std::clamp(baseRingWorkshopRingIndex_, 0, SpellRingCount - 1);
+    RingWorkshopRingUpgrades& upgrades = workshopRingUpgrades_[static_cast<std::size_t>(ringIndex)];
     switch (upgrade) {
-    case RingWorkshopUpgrade::InitialRadius:
-        ++workshopInitialRadiusLevel_;
+    case RingWorkshopUpgrade::RadiusMax:
+        ++upgrades.radiusMaxLevel;
+        upgrades.radiusSettingMeters = ringWorkshopRadiusMaxForRing(ringIndex);
         break;
-    case RingWorkshopUpgrade::InitialSpeed:
-        ++workshopInitialSpeedLevel_;
+    case RingWorkshopUpgrade::RadiusMin:
+        ++upgrades.radiusMinLevel;
+        upgrades.radiusSettingMeters = ringWorkshopRadiusSettingForRing(ringIndex);
+        break;
+    case RingWorkshopUpgrade::Speed:
+        ++upgrades.speedLevel;
+        break;
+    case RingWorkshopUpgrade::WeightLimit:
+        ++upgrades.weightLimitLevel;
         break;
     case RingWorkshopUpgrade::ShiftDistance:
-        ++workshopShiftDistanceLevel_;
+        ++upgrades.shiftDistanceLevel;
         break;
     case RingWorkshopUpgrade::ThrowDistance:
-        ++workshopThrowDistanceLevel_;
+        ++upgrades.throwDistanceLevel;
         break;
     case RingWorkshopUpgrade::ThrowCooldown:
-        ++workshopThrowCooldownLevel_;
+        ++upgrades.throwCooldownLevel;
         break;
     case RingWorkshopUpgrade::WeightPenalty:
-        ++workshopWeightPenaltyLevel_;
+        ++upgrades.weightPenaltyLevel;
         break;
     case RingWorkshopUpgrade::EquipSlot:
-        ++workshopEquipSlotLevel_;
+        ++upgrades.equipSlotLevel;
+        break;
+    case RingWorkshopUpgrade::RadiusAdjust:
         break;
     }
     applyPermanentUpgrades();
     resetRingWorkshopDraft();
-    baseStatus_ = "リング工房強化を行いました";
+    baseStatus_ = "リング " + std::to_string(ringIndex + 1) + " を強化しました";
 }
 
 void Game::openBookshelf()
@@ -6786,6 +6949,14 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
             const auto chooseAction = [this, &ui](int item) {
                 ui.emitSound(UiSoundEvent::Confirm);
                 if (item == 0) {
+                    baseRingWorkshopMode_ = RingWorkshopMode::Upgrade;
+                    baseRingWorkshopSelection_ = 0;
+                    baseRingWorkshopRingIndex_ = std::clamp(spellRing_.activeRingIndex(), 0, unlockedRingCount() - 1);
+                    baseRingWorkshopRingTabs_ = {};
+                    baseStatus_.clear();
+                    return;
+                }
+                if (item == 1) {
                     baseRingWorkshopMode_ = RingWorkshopMode::Respec;
                     baseRingWorkshopSelection_ = 0;
                     baseRingWorkshopRingIndex_ = std::clamp(spellRing_.activeRingIndex(), 0, unlockedRingCount() - 1);
@@ -6794,9 +6965,6 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
                     baseStatus_.clear();
                     return;
                 }
-                baseRingWorkshopMode_ = RingWorkshopMode::Upgrade;
-                baseRingWorkshopSelection_ = 0;
-                baseStatus_.clear();
             };
             if (input.pressed(InputAction::MoveUp)) {
                 baseRingWorkshopSelection_ = (baseRingWorkshopSelection_ + RingWorkshopActionCount - 1) % RingWorkshopActionCount;
@@ -6930,20 +7098,89 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
         }
 
         if (baseRingWorkshopMode_ == RingWorkshopMode::Upgrade) {
+            const int ringCount = unlockedRingCount();
+            baseRingWorkshopRingIndex_ = std::clamp(baseRingWorkshopRingIndex_, 0, ringCount - 1);
             baseRingWorkshopSelection_ = std::clamp(baseRingWorkshopSelection_, 0, RingWorkshopUpgradeDisplayCount - 1);
+
+            std::array<UiTabItem, SpellRingCount> ringTabs{};
+            std::array<UiRect, SpellRingCount> ringTabRects{};
+            std::array<std::string, SpellRingCount> ringTabLabels{};
+            for (int i = 0; i < ringCount; ++i) {
+                ringTabLabels[static_cast<std::size_t>(i)] = "リング " + std::to_string(i + 1);
+                ringTabs[static_cast<std::size_t>(i)] = {ringTabLabels[static_cast<std::size_t>(i)], true};
+                ringTabRects[static_cast<std::size_t>(i)] = ringWorkshopRingTabRect(i, ringCount);
+            }
+            UiTabsInput ringTabsInput{};
+            ringTabsInput.focusDelta = input.activeRingDelta();
+            const int directRingFocus = input.shortcutSlotPressed();
+            if (directRingFocus >= 0 && directRingFocus < ringCount) {
+                ringTabsInput.directFocusIndex = directRingFocus;
+            }
+            ringTabsInput.commit = ringTabsInput.focusDelta != 0 || ringTabsInput.directFocusIndex >= 0;
+            const int ringSelection = updateUiTabs(
+                baseRingWorkshopRingTabs_,
+                ui,
+                ringTabsInput,
+                baseRingWorkshopRingIndex_,
+                ringTabs.data(),
+                ringCount,
+                ringTabRects.data());
+            if (ringSelection >= 0) {
+                baseRingWorkshopRingIndex_ = ringSelection;
+                ui.block(workshopBounds);
+                return;
+            }
+
+            const auto selectedUpgrade = static_cast<RingWorkshopUpgrade>(baseRingWorkshopSelection_);
+            const bool selectedRadiusAdjust = selectedUpgrade == RingWorkshopUpgrade::RadiusAdjust;
             int move = 0;
-            if (input.pressed(InputAction::MoveUp) || input.pressed(InputAction::MoveLeft) || input.shortcutCursorDelta() < 0) {
+            if (input.pressed(InputAction::MoveUp) || (!selectedRadiusAdjust && input.pressed(InputAction::MoveLeft)) ||
+                (!selectedRadiusAdjust && input.shortcutCursorDelta() < 0)) {
                 --move;
             }
-            if (input.pressed(InputAction::MoveDown) || input.pressed(InputAction::MoveRight) || input.shortcutCursorDelta() > 0) {
+            if (input.pressed(InputAction::MoveDown) || (!selectedRadiusAdjust && input.pressed(InputAction::MoveRight)) ||
+                (!selectedRadiusAdjust && input.shortcutCursorDelta() > 0)) {
                 ++move;
             }
             if (move != 0) {
                 baseRingWorkshopSelection_ = (baseRingWorkshopSelection_ + move + RingWorkshopUpgradeDisplayCount) % RingWorkshopUpgradeDisplayCount;
             }
 
+            if (selectedRadiusAdjust) {
+                const int ringIndex = std::clamp(baseRingWorkshopRingIndex_, 0, SpellRingCount - 1);
+                const float minMeters = ringWorkshopRadiusMinForRing(ringIndex);
+                const float maxMeters = ringWorkshopRadiusMaxForRing(ringIndex);
+                const bool adjustable = maxMeters > minMeters + 0.001f;
+                if (adjustable) {
+                    float nextMeters = ringWorkshopRadiusSettingForRing(ringIndex);
+                    if (input.pressed(InputAction::MoveLeft) || input.shortcutCursorDelta() < 0) {
+                        nextMeters -= 0.05f;
+                    }
+                    if (input.pressed(InputAction::MoveRight) || input.shortcutCursorDelta() > 0) {
+                        nextMeters += 0.05f;
+                    }
+                    if (std::abs(nextMeters - ringWorkshopRadiusSettingForRing(ringIndex)) > 0.001f) {
+                        setRingWorkshopRadiusSettingForRing(ringIndex, nextMeters);
+                    }
+
+                    const UiRect gaugeRect = ringWorkshopRadiusGaugeRect();
+                    if (input.mouseLeftHeld() && gaugeRect.contains(ui.mouse()) && !ui.pointerConsumed()) {
+                        const float ratio = clamp((ui.mouse().x - gaugeRect.pos.x) / std::max(1.0f, gaugeRect.size.x), 0.0f, 1.0f);
+                        setRingWorkshopRadiusSettingForRing(ringIndex, minMeters + (maxMeters - minMeters) * ratio);
+                        ui.block(gaugeRect);
+                        ui.block(workshopBounds);
+                        return;
+                    }
+                }
+            }
+
             const auto chooseUpgradeItem = [this, &ui](int item) {
                 if (item >= 0 && item < RingWorkshopImplementedUpgradeCount) {
+                    if (static_cast<RingWorkshopUpgrade>(item) == RingWorkshopUpgrade::RadiusAdjust) {
+                        ui.emitSound(UiSoundEvent::Cancel);
+                        baseStatus_ = "半径はゲージで調整してください";
+                        return;
+                    }
                     ui.emitSound(UiSoundEvent::Confirm);
                     buyRingWorkshopUpgrade(static_cast<RingWorkshopUpgrade>(item));
                     return;
@@ -9814,7 +10051,7 @@ void Game::renderBaseScreen(Renderer& renderer) const
 
             const UiRect respecPanel = ringWorkshopRespecPanelRect();
             drawUiSubPanel(renderer, respecPanel);
-            renderer.drawText(respecPanel.pos + Vec2{24.0f, 22.0f}, "配分再調整", ui::Text, 3);
+            renderer.drawText(respecPanel.pos + Vec2{24.0f, 22.0f}, "レベルアップ配分調整", ui::Text, 3);
             std::snprintf(buffer, sizeof(buffer), "合計強化点 %d", ringLevelUpgradePointTotal());
             renderer.drawText(respecPanel.pos + Vec2{respecPanel.size.x - 168.0f, 29.0f}, buffer, ui::TextMuted, 2);
 
@@ -9847,11 +10084,14 @@ void Game::renderBaseScreen(Renderer& renderer) const
             const auto valueForPoints = [this](int selectedRing, RingLevelUpgradeKind kind, const RingLevelUpgradePoints& points) {
                 switch (kind) {
                 case RingLevelUpgradeKind::Radius:
-                    return effectiveInitialRingRadiusForRing(selectedRing, points.radius);
+                    return effectiveInitialRingRadiusForRing(selectedRing, points.radius) *
+                        SpellRingSystem::baseRadiusMultiplierForRing(selectedRing);
                 case RingLevelUpgradeKind::Speed:
                     return linearMetersPerSecondForAngularSpeed(
-                        effectiveInitialRingSpeedForRing(selectedRing, points.speed),
-                        effectiveInitialRingRadiusForRing(selectedRing, points.radius));
+                        effectiveInitialRingSpeedForRing(selectedRing, points.speed) *
+                            SpellRingSystem::baseSpeedMultiplierForRing(selectedRing),
+                        effectiveInitialRingRadiusForRing(selectedRing, points.radius) *
+                            SpellRingSystem::baseRadiusMultiplierForRing(selectedRing));
                 case RingLevelUpgradeKind::WeightLimit:
                     return effectiveInitialRingWeightLimitForRing(selectedRing, points.weightLimit);
                 }
@@ -9919,8 +10159,26 @@ void Game::renderBaseScreen(Renderer& renderer) const
                 baseRingWorkshopSelection_ == RingLevelUpgradeKindCount,
                 confirmStyle);
         } else if (baseRingWorkshopMode_ == RingWorkshopMode::Upgrade) {
+            const int ringCount = unlockedRingCount();
+            const int ringIndex = std::clamp(baseRingWorkshopRingIndex_, 0, ringCount - 1);
+            std::array<UiTabItem, SpellRingCount> ringTabs{};
+            std::array<UiRect, SpellRingCount> ringTabRects{};
+            std::array<std::string, SpellRingCount> ringTabLabels{};
+            for (int i = 0; i < ringCount; ++i) {
+                ringTabLabels[static_cast<std::size_t>(i)] = "リング " + std::to_string(i + 1);
+                ringTabs[static_cast<std::size_t>(i)] = {ringTabLabels[static_cast<std::size_t>(i)], true};
+                ringTabRects[static_cast<std::size_t>(i)] = ringWorkshopRingTabRect(i, ringCount);
+            }
+            drawUiTabs(
+                renderer,
+                baseRingWorkshopRingTabs_,
+                ringIndex,
+                ringTabs.data(),
+                ringCount,
+                ringTabRects.data());
+
             const UiRect listPanel = ringWorkshopUpgradeListPanelRect();
-            renderer.drawText({listPanel.pos.x, 128.0f}, "リング工房強化", {198, 198, 206, 255}, 2);
+            renderer.drawText({listPanel.pos.x, listPanel.pos.y - 26.0f}, "リング調整・強化", {198, 198, 206, 255}, 2);
             std::array<UiVerticalTabItem, RingWorkshopUpgradeDisplayCount> upgradeTabs{};
             std::array<UiRect, RingWorkshopUpgradeDisplayCount> upgradeTabRects{};
             std::array<std::string, RingWorkshopUpgradeDisplayCount> upgradeTabValues{};
@@ -9928,18 +10186,23 @@ void Game::renderBaseScreen(Renderer& renderer) const
                 const bool implemented = i < RingWorkshopImplementedUpgradeCount;
                 if (implemented) {
                     const auto upgrade = static_cast<RingWorkshopUpgrade>(i);
-                    const int level = ringWorkshopUpgradeLevel(upgrade);
-                    const int maxLevel = ringWorkshopUpgradeMaxLevel(upgrade);
-                    if (level >= maxLevel) {
-                        upgradeTabValues[static_cast<std::size_t>(i)] = "上限";
+                    if (upgrade == RingWorkshopUpgrade::RadiusAdjust) {
+                        upgradeTabValues[static_cast<std::size_t>(i)] = "調整";
                     } else {
-                        std::snprintf(buffer, sizeof(buffer), "Lv.%d/%d", level, maxLevel);
-                        upgradeTabValues[static_cast<std::size_t>(i)] = buffer;
+                        const int level = ringWorkshopUpgradeLevel(upgrade);
+                        const int maxLevel = ringWorkshopUpgradeMaxLevel(upgrade);
+                        if (level >= maxLevel) {
+                            upgradeTabValues[static_cast<std::size_t>(i)] = "上限";
+                        } else {
+                            std::snprintf(buffer, sizeof(buffer), "Lv.%d/%d", level, maxLevel);
+                            upgradeTabValues[static_cast<std::size_t>(i)] = buffer;
+                        }
                     }
                 } else {
                     upgradeTabValues[static_cast<std::size_t>(i)] = "未実装";
                 }
                 const bool maxed = implemented &&
+                    static_cast<RingWorkshopUpgrade>(i) != RingWorkshopUpgrade::RadiusAdjust &&
                     ringWorkshopUpgradeLevel(static_cast<RingWorkshopUpgrade>(i)) >= ringWorkshopUpgradeMaxLevel(static_cast<RingWorkshopUpgrade>(i));
                 upgradeTabs[static_cast<std::size_t>(i)] = {
                     ringWorkshopUpgradeShortName(i),
@@ -9969,13 +10232,18 @@ void Game::renderBaseScreen(Renderer& renderer) const
             const auto formatUpgradeValue = [](RingWorkshopUpgrade upgrade, float value) {
                 char valueBuffer[64];
                 switch (upgrade) {
-                case RingWorkshopUpgrade::InitialRadius:
+                case RingWorkshopUpgrade::RadiusAdjust:
+                case RingWorkshopUpgrade::RadiusMax:
+                case RingWorkshopUpgrade::RadiusMin:
                 case RingWorkshopUpgrade::ShiftDistance:
                 case RingWorkshopUpgrade::ThrowDistance:
                     std::snprintf(valueBuffer, sizeof(valueBuffer), "%.2fm", worldDistanceToMeters(value));
                     break;
-                case RingWorkshopUpgrade::InitialSpeed:
+                case RingWorkshopUpgrade::Speed:
                     std::snprintf(valueBuffer, sizeof(valueBuffer), "%.2fm/s", value);
+                    break;
+                case RingWorkshopUpgrade::WeightLimit:
+                    std::snprintf(valueBuffer, sizeof(valueBuffer), "%.1fkg", value);
                     break;
                 case RingWorkshopUpgrade::ThrowCooldown:
                     std::snprintf(valueBuffer, sizeof(valueBuffer), "%.2fs", value);
@@ -9993,50 +10261,83 @@ void Game::renderBaseScreen(Renderer& renderer) const
             UiButtonStyle confirmStyle = uiActionButtonStyle();
             if (implemented) {
                 const auto upgrade = static_cast<RingWorkshopUpgrade>(selected);
-                const int level = ringWorkshopUpgradeLevel(upgrade);
-                const int maxLevel = ringWorkshopUpgradeMaxLevel(upgrade);
-                const bool maxed = level >= maxLevel;
-                float detailY = drawUiDetailHeader(renderer, detailPanel, ringWorkshopUpgradeName(upgrade));
-                const UiRect detailContent = uiSubPanelContentRect(detailPanel);
-                renderer.drawWrappedText(
-                    {detailContent.pos.x, detailY},
-                    ringWorkshopUpgradeDescription(selected),
-                    detailContent.size.x,
-                    ui::TextMuted,
-                    2);
-                detailY += renderer.measureWrappedText(ringWorkshopUpgradeDescription(selected), detailContent.size.x, 2).y + 8.0f;
-                std::snprintf(buffer, sizeof(buffer), "Lv.%d/%d", level, maxLevel);
-                drawUiDetailLine(renderer, detailPanel, detailY, "段階", buffer, maxed ? Color{160, 220, 190, 255} : ui::Text);
-                if (maxed) {
-                    drawUiDetailLine(renderer, detailPanel, detailY, "効果", "上限到達済み", ui::TextMuted);
-                    drawUiDetailLine(renderer, detailPanel, detailY, "必要素材", "なし", ui::TextMuted);
-                    confirmLabel = "上限";
+                if (upgrade == RingWorkshopUpgrade::RadiusAdjust) {
+                    float detailY = drawUiDetailHeader(renderer, detailPanel, ringWorkshopUpgradeName(upgrade));
+                    const UiRect detailContent = uiSubPanelContentRect(detailPanel);
+                    renderer.drawWrappedText(
+                        {detailContent.pos.x, detailY},
+                        ringWorkshopUpgradeDescription(selected),
+                        detailContent.size.x,
+                        ui::TextMuted,
+                        2);
+                    detailY += renderer.measureWrappedText(ringWorkshopUpgradeDescription(selected), detailContent.size.x, 2).y + 8.0f;
+                    const float minMeters = ringWorkshopRadiusMinForRing(ringIndex);
+                    const float maxMeters = ringWorkshopRadiusMaxForRing(ringIndex);
+                    const float currentMeters = ringWorkshopRadiusSettingForRing(ringIndex);
+                    std::snprintf(buffer, sizeof(buffer), "リング %d", ringIndex + 1);
+                    drawUiDetailLine(renderer, detailPanel, detailY, "対象", buffer);
+                    std::snprintf(buffer, sizeof(buffer), "%.2fm", currentMeters);
+                    drawUiDetailLine(renderer, detailPanel, detailY, "半径", buffer, Color{255, 230, 150, 255});
+                    std::snprintf(buffer, sizeof(buffer), "%.2fm - %.2fm", minMeters, maxMeters);
+                    drawUiDetailLine(renderer, detailPanel, detailY, "範囲", buffer, maxMeters > minMeters + 0.001f ? ui::Text : ui::TextMuted);
+                    UiGaugeStyle gaugeStyle;
+                    gaugeStyle.tickCount = 6;
+                    gaugeStyle.fill.start = maxMeters > minMeters + 0.001f ? Color{132, 230, 250, 230} : ui::TextDisabled;
+                    gaugeStyle.fill.end = maxMeters > minMeters + 0.001f ? Color{190, 246, 220, 230} : ui::TextDisabled;
+                    const float ratio = maxMeters > minMeters + 0.001f
+                        ? (currentMeters - minMeters) / std::max(0.001f, maxMeters - minMeters)
+                        : 0.0f;
+                    drawUiGauge(renderer, ringWorkshopRadiusGaugeRect(), ratio, gaugeStyle);
+                    confirmLabel = maxMeters > minMeters + 0.001f ? "調整中" : "固定";
                     confirmStyle.text = ui::TextMuted;
                 } else {
-                    const std::string currentValue = formatUpgradeValue(upgrade, ringWorkshopUpgradeCurrentValue(upgrade));
-                    const std::string nextValue = formatUpgradeValue(upgrade, ringWorkshopUpgradeNextValue(upgrade));
-                    drawUiDetailLine(renderer, detailPanel, detailY, "効果", currentValue + " -> " + nextValue, Color{255, 230, 150, 255});
-                    std::snprintf(buffer, sizeof(buffer), "%dG", ringWorkshopUpgradeMoneyCost(upgrade));
-                    drawUiDetailLine(
-                        renderer,
-                        detailPanel,
-                        detailY,
-                        "費用",
-                        buffer,
-                        money_ >= ringWorkshopUpgradeMoneyCost(upgrade) ? ui::Text : Color{238, 82, 82, 255});
-                    std::snprintf(buffer, sizeof(buffer), "%d / 所持 %d",
-                        ringWorkshopUpgradeMoonCost(upgrade),
-                        inventory_.materialCount(MaterialType::MoonFragment));
-                    drawUiDetailLine(
-                        renderer,
-                        detailPanel,
-                        detailY,
-                        "月のカケラ",
-                        buffer,
-                        inventory_.materialCount(MaterialType::MoonFragment) >= ringWorkshopUpgradeMoonCost(upgrade) ? ui::Text : Color{238, 82, 82, 255});
+                    const int level = ringWorkshopUpgradeLevel(upgrade);
+                    const int maxLevel = ringWorkshopUpgradeMaxLevel(upgrade);
+                    const bool maxed = level >= maxLevel;
+                    float detailY = drawUiDetailHeader(renderer, detailPanel, ringWorkshopUpgradeName(upgrade));
+                    const UiRect detailContent = uiSubPanelContentRect(detailPanel);
+                    renderer.drawWrappedText(
+                        {detailContent.pos.x, detailY},
+                        ringWorkshopUpgradeDescription(selected),
+                        detailContent.size.x,
+                        ui::TextMuted,
+                        2);
+                    detailY += renderer.measureWrappedText(ringWorkshopUpgradeDescription(selected), detailContent.size.x, 2).y + 8.0f;
+                    std::snprintf(buffer, sizeof(buffer), "リング %d", ringIndex + 1);
+                    drawUiDetailLine(renderer, detailPanel, detailY, "対象", buffer);
+                    std::snprintf(buffer, sizeof(buffer), "Lv.%d/%d", level, maxLevel);
+                    drawUiDetailLine(renderer, detailPanel, detailY, "段階", buffer, maxed ? Color{160, 220, 190, 255} : ui::Text);
+                    if (maxed) {
+                        drawUiDetailLine(renderer, detailPanel, detailY, "効果", "上限到達済み", ui::TextMuted);
+                        drawUiDetailLine(renderer, detailPanel, detailY, "必要素材", "なし", ui::TextMuted);
+                        confirmLabel = "上限";
+                        confirmStyle.text = ui::TextMuted;
+                    } else {
+                        const std::string currentValue = formatUpgradeValue(upgrade, ringWorkshopUpgradeCurrentValue(upgrade));
+                        const std::string nextValue = formatUpgradeValue(upgrade, ringWorkshopUpgradeNextValue(upgrade));
+                        drawUiDetailLine(renderer, detailPanel, detailY, "効果", currentValue + " -> " + nextValue, Color{255, 230, 150, 255});
+                        std::snprintf(buffer, sizeof(buffer), "%dG", ringWorkshopUpgradeMoneyCost(upgrade));
+                        drawUiDetailLine(
+                            renderer,
+                            detailPanel,
+                            detailY,
+                            "費用",
+                            buffer,
+                            money_ >= ringWorkshopUpgradeMoneyCost(upgrade) ? ui::Text : Color{238, 82, 82, 255});
+                        std::snprintf(buffer, sizeof(buffer), "%d / 所持 %d",
+                            ringWorkshopUpgradeMoonCost(upgrade),
+                            inventory_.materialCount(MaterialType::MoonFragment));
+                        drawUiDetailLine(
+                            renderer,
+                            detailPanel,
+                            detailY,
+                            "月のカケラ",
+                            buffer,
+                            inventory_.materialCount(MaterialType::MoonFragment) >= ringWorkshopUpgradeMoonCost(upgrade) ? ui::Text : Color{238, 82, 82, 255});
+                    }
                 }
             } else {
-                float detailY = drawUiDetailHeader(renderer, detailPanel, "工房強化");
+                float detailY = drawUiDetailHeader(renderer, detailPanel, "リング調整・強化");
                 drawUiDetailLine(renderer, detailPanel, detailY, "状態", "未実装", ui::TextMuted);
                 drawUiDetailText(renderer, detailPanel, detailY, "この項目は現在利用できません。");
                 confirmLabel = "未実装";
