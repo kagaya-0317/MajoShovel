@@ -1893,7 +1893,7 @@ void InventorySystem::openSlotCommandMenu(int slotIndex, bool itemUseEnabled, bo
     const UiRect slotRect = inventorySlotRect(slotIndex);
     openUiCommandMenu(
         slotCommandMenu_,
-        slotRect.pos + Vec2{slotRect.size.x - 20.0f, 0.0f},
+        uiCommandMenuAnchorForSlot(slotRect),
         inventoryScreenRect(),
         static_cast<int>(commandItems.items.size()),
         commandItems.items.data(),
@@ -2840,7 +2840,7 @@ void InventorySystem::updateScreen(
             const UiRect slotRect = inventorySlotRect(selectedShortcutIndex());
             openRingTargetCommandMenu(
                 selectedShortcutIndex(),
-                slotRect.pos + Vec2{slotRect.size.x - 20.0f, 0.0f},
+                uiCommandMenuAnchorForSlot(slotRect),
                 spellRing,
                 ringTargetCount);
             ui.block(inventoryScreenRect());

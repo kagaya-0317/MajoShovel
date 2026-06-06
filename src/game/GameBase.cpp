@@ -62,9 +62,30 @@ bool isMerchantMiningCandidate(const ItemData& item, int merchantUpgradeLevel)
     const int maxRarity = merchantUpgradeLevel >= 7 ? 10 :
         (merchantUpgradeLevel >= 5 ? 7 :
             (merchantUpgradeLevel >= 4 ? 5 :
-                (merchantUpgradeLevel >= 2 ? 4 : 2)));
+            (merchantUpgradeLevel >= 2 ? 4 : 2)));
     return item.rarity <= maxRarity;
 }
+
+constexpr std::string_view BaseReturnCount1Flag = "base_return_count_1";
+constexpr std::string_view BaseReturnCount2Flag = "base_return_count_2";
+constexpr std::string_view BaseStorageTutorialFlag = "story_tutorial_base_storage";
+constexpr std::string_view BaseMerchantTutorialFlag = "story_tutorial_base_merchant";
+constexpr std::string_view BaseProcessingTutorialFlag = "story_tutorial_base_processing";
+constexpr std::string_view BaseForgeTutorialFlag = "story_tutorial_base_forge";
+constexpr std::string_view BaseBookshelfTutorialFlag = "story_tutorial_base_bookshelf";
+constexpr std::string_view BaseDiaryTutorialFlag = "story_tutorial_base_diary";
+constexpr int BaseHintMoneyThreshold = 5000;
+constexpr int BaseHintMaterialThreshold = 10;
+constexpr int BaseUpgradeRingWorkshopIndex = 3;
+constexpr int BaseUpgradeRingPresetIndex = 8;
+constexpr std::string_view BaseHintStorageFullTrigger = "base_hint:storage_full";
+constexpr std::string_view BaseHintMerchantFullTrigger = "base_hint:merchant_full";
+constexpr std::string_view BaseHintProcessingReadyTrigger = "base_hint:processing_ready";
+constexpr std::string_view BaseHintForgeReadyTrigger = "base_hint:forge_ready";
+constexpr std::string_view BaseHintRingWorkshopBuildableTrigger = "base_hint:ring_workshop_buildable";
+constexpr std::string_view BaseHintRingPresetReadyTrigger = "base_hint:ring_preset_ready";
+constexpr std::string_view BaseHintDiarySaveTrigger = "base_hint:diary_save";
+constexpr std::string_view BaseHintBookshelfStage1Trigger = "base_hint:bookshelf_stage1";
 
 void drawBaseControlHelp(Renderer& renderer, int screenWidth, int screenHeight, std::string help)
 {
@@ -519,11 +540,102 @@ std::vector<UiResultDialogLine> baseUpgradeResultLines(int index, int beforeLeve
 }
 
 constexpr int RingLevelUpgradeKindCount = 3;
+constexpr int RingWorkshopRespecBaseMoneyCost = 120;
+constexpr int RingWorkshopRespecMoneyCostPerTotalPoint = 20;
+constexpr int RingWorkshopRespecMoneyCostPerMovedPoint = 80;
+constexpr int RingWorkshopRespecBaseMoonCost = 1;
+constexpr int RingWorkshopRespecMovedPointsPerExtraMoon = 4;
 constexpr int BaseBackpackSourceIndex = 0;
 
 bool sameRingLevelUpgradeSelection(RingLevelUpgradeSelection left, RingLevelUpgradeSelection right)
 {
     return left.ringIndex == right.ringIndex && left.kind == right.kind;
+}
+
+Vec2 beginBaseDetailRow(Renderer& renderer, UiRect detailPanel, float y, std::string_view label)
+{
+    constexpr float LabelWidth = 96.0f;
+    const UiRect content = uiSubPanelContentRect(detailPanel);
+    renderer.drawText({content.pos.x, y}, label, ui::TextMuted, 2);
+    return {content.pos.x + LabelWidth, y};
+}
+
+void drawBaseDetailTextRun(Renderer& renderer, Vec2& pos, std::string_view text, Color color, int scale)
+{
+    renderer.drawText(pos, text, color, scale);
+    pos.x += renderer.measureText(text, scale).x;
+}
+
+void drawBaseDetailInlineItemTextRun(
+    Renderer& renderer,
+    const ObjectCatalog& objectCatalog,
+    Vec2& pos,
+    std::string_view text,
+    Color color)
+{
+    InlineItemTextStyle inlineStyle;
+    inlineStyle.scale = 2;
+    inlineStyle.iconTextGap = 4.0f;
+    inlineStyle.iconScale = 1.15f;
+    inlineStyle.text = color;
+    drawInlineItemText(renderer, objectCatalog, pos, text, inlineStyle);
+    pos.x += measureInlineItemText(renderer, text, inlineStyle).x;
+}
+
+void drawBaseDetailMoneyCostLine(
+    Renderer& renderer,
+    const ObjectCatalog& objectCatalog,
+    UiRect detailPanel,
+    float& y,
+    std::string_view label,
+    int cost,
+    int ownedMoney)
+{
+    Vec2 pos = beginBaseDetailRow(renderer, detailPanel, y, label);
+    const Color numberColor = ownedMoney >= cost ? ui::Text : Color{238, 82, 82, 255};
+    drawBaseDetailInlineItemTextRun(renderer, objectCatalog, pos, inlineWorldIconTag(worldIconKey(WorldIconId::MoneyLarge)) + " ", ui::Text);
+    drawBaseDetailTextRun(renderer, pos, std::to_string(cost), numberColor, 2);
+    drawBaseDetailTextRun(renderer, pos, "G", ui::Text, 2);
+    y += 31.0f;
+}
+
+void drawBaseDetailMaterialCostLine(
+    Renderer& renderer,
+    const ObjectCatalog& objectCatalog,
+    UiRect detailPanel,
+    float& y,
+    std::string_view label,
+    MaterialType type,
+    int cost,
+    int owned)
+{
+    const Color numberColor = owned >= cost ? ui::Text : Color{238, 82, 82, 255};
+    Vec2 pos = beginBaseDetailRow(renderer, detailPanel, y, label);
+    drawBaseDetailInlineItemTextRun(renderer, objectCatalog, pos, inlineMaterialIconTag(type) + std::string(materialTypeDisplayName(type)) + " ×", ui::Text);
+    drawBaseDetailTextRun(renderer, pos, std::to_string(cost), numberColor, 2);
+    drawBaseDetailTextRun(renderer, pos, "（", ui::TextMuted, 2);
+    drawBaseDetailTextRun(renderer, pos, std::to_string(owned), numberColor, 2);
+    drawBaseDetailTextRun(renderer, pos, "）", ui::TextMuted, 2);
+    y += 31.0f;
+}
+
+int ringWorkshopRespecMovedPointCount(
+    const RingLevelUpgradePointTable& current,
+    const RingLevelUpgradePointTable& draft)
+{
+    const auto absoluteDifference = [](int left, int right) {
+        return left >= right ? left - right : right - left;
+    };
+
+    int changedPointSides = 0;
+    for (std::size_t i = 0; i < current.size(); ++i) {
+        const RingLevelUpgradePoints before = clampedRingLevelUpgradePoints(current[i]);
+        const RingLevelUpgradePoints after = clampedRingLevelUpgradePoints(draft[i]);
+        changedPointSides += absoluteDifference(before.radius, after.radius);
+        changedPointSides += absoluteDifference(before.speed, after.speed);
+        changedPointSides += absoluteDifference(before.weightLimit, after.weightLimit);
+    }
+    return changedPointSides / 2;
 }
 
 constexpr std::array<std::string_view, BaseItemSourceCount> BaseItemSourceLabels{{
@@ -1403,24 +1515,34 @@ UiRect ringWorkshopRespecPanelRect()
     }};
 }
 
+UiRect ringWorkshopRespecDetailPanelRect()
+{
+    UiRect detail = ringWorkshopDetailPanelRect();
+    detail.pos.y = ringWorkshopRespecPanelRect().pos.y;
+    return detail;
+}
+
 UiRect ringWorkshopRespecKindRect(int index)
 {
-    constexpr float TopGap = 58.0f;
+    constexpr float TopGap = 42.0f;
     constexpr float RowGap = 16.0f;
-    constexpr float RowHeight = 54.0f;
+    constexpr float RowHeight = 60.0f;
     const UiRect panel = ringWorkshopRespecPanelRect();
+    const UiRect detail = ringWorkshopRespecDetailPanelRect();
+    const float left = panel.pos.x + 24.0f;
+    const float right = detail.pos.x - 28.0f;
     return {{
-        panel.pos.x + 24.0f,
+        left,
         panel.pos.y + TopGap + static_cast<float>(index) * (RowHeight + RowGap),
     }, {
-        panel.size.x - 48.0f,
+        std::max(1.0f, right - left),
         RowHeight,
     }};
 }
 
 UiRect ringWorkshopRespecConfirmRect()
 {
-    const UiRect detail = ringWorkshopDetailPanelRect();
+    const UiRect detail = ringWorkshopRespecDetailPanelRect();
     const Vec2 size{220.0f, ui::ButtonHeight};
     const float leftAreaLeft = ringWorkshopPanelRect().pos.x + 72.0f;
     const float leftAreaRight = detail.pos.x - 24.0f;
@@ -5488,7 +5610,10 @@ int Game::ringWorkshopRespecMoneyCost() const
     if (!ringWorkshopRespecChanged()) {
         return 0;
     }
-    return 80 + ringLevelUpgradePointTotal() * 20;
+    const int movedPoints = ringWorkshopRespecMovedPointCount(levelRingUpgradePoints_, ringWorkshopDraftUpgradePoints_);
+    return RingWorkshopRespecBaseMoneyCost +
+        ringLevelUpgradePointTotal() * RingWorkshopRespecMoneyCostPerTotalPoint +
+        movedPoints * RingWorkshopRespecMoneyCostPerMovedPoint;
 }
 
 int Game::ringWorkshopRespecMoonCost() const
@@ -5496,7 +5621,9 @@ int Game::ringWorkshopRespecMoonCost() const
     if (!ringWorkshopRespecChanged()) {
         return 0;
     }
-    return 1 + ringLevelUpgradePointTotal() / 3;
+    const int movedPoints = ringWorkshopRespecMovedPointCount(levelRingUpgradePoints_, ringWorkshopDraftUpgradePoints_);
+    return RingWorkshopRespecBaseMoonCost +
+        std::max(0, movedPoints - 1) / RingWorkshopRespecMovedPointsPerExtraMoon;
 }
 
 bool Game::adjustRingWorkshopRespec(RingLevelUpgradeSelection from, RingLevelUpgradeSelection to)
@@ -6252,6 +6379,75 @@ void Game::addStoryFlag(std::string flag)
 bool Game::hasStoryFlag(std::string_view flag) const
 {
     return std::find(storyFlags_.begin(), storyFlags_.end(), std::string(flag)) != storyFlags_.end();
+}
+
+void Game::recordBaseHintDungeonReturn()
+{
+    if (!hasStoryFlag(BaseReturnCount1Flag)) {
+        addStoryFlag(std::string(BaseReturnCount1Flag));
+    } else if (!hasStoryFlag(BaseReturnCount2Flag)) {
+        addStoryFlag(std::string(BaseReturnCount2Flag));
+    }
+}
+
+bool Game::queueBaseHintEventOnReturn(std::string_view returnedStageId, bool stageCleared)
+{
+    const auto canBuyUpgrade = [this](int index) {
+        if (!upgradeImplemented(index) || upgradeMaxed(index)) {
+            return false;
+        }
+
+        const int moneyCost = upgradeCost(index);
+        const int materialCost = upgradeMaterialCost(index);
+        const MaterialType materialType = upgradeMaterialType(index);
+        return moneyCost > 0 &&
+            money_ >= moneyCost &&
+            (materialCost <= 0 || inventory_.materialCount(materialType) >= materialCost);
+    };
+
+    const auto queueHint = [this](std::string_view trigger) {
+        return queueStoryEventForTrigger(std::string(trigger));
+    };
+
+    const bool backpackFull = backpackUsedSlots() >= inventory_.screenSlotCount();
+    if (backpackFull) {
+        if (!hasStoryFlag(BaseStorageTutorialFlag) && queueHint(BaseHintStorageFullTrigger)) {
+            return true;
+        }
+        if (!hasStoryFlag(BaseMerchantTutorialFlag) && queueHint(BaseHintMerchantFullTrigger)) {
+            return true;
+        }
+    }
+
+    if (canBuyUpgrade(BaseUpgradeRingWorkshopIndex) && queueHint(BaseHintRingWorkshopBuildableTrigger)) {
+        return true;
+    }
+    if (canBuyUpgrade(BaseUpgradeRingPresetIndex) && queueHint(BaseHintRingPresetReadyTrigger)) {
+        return true;
+    }
+    if (!hasStoryFlag(BaseProcessingTutorialFlag) &&
+        money_ >= BaseHintMoneyThreshold &&
+        inventory_.materialCount(MaterialType::EnhancementOre) >= BaseHintMaterialThreshold &&
+        queueHint(BaseHintProcessingReadyTrigger)) {
+        return true;
+    }
+    if (!hasStoryFlag(BaseForgeTutorialFlag) &&
+        money_ >= BaseHintMoneyThreshold &&
+        (inventory_.materialCount(MaterialType::OldWoodBuildingMaterial) >= BaseHintMaterialThreshold ||
+            inventory_.materialCount(MaterialType::ManaDrop) >= BaseHintMaterialThreshold) &&
+        queueHint(BaseHintForgeReadyTrigger)) {
+        return true;
+    }
+    if (!hasStoryFlag(BaseDiaryTutorialFlag) &&
+        hasStoryFlag(BaseReturnCount2Flag) &&
+        queueHint(BaseHintDiarySaveTrigger)) {
+        return true;
+    }
+
+    const bool stage1ClearedNow = stageCleared && stageClearFlagForStage(returnedStageId) == "stage_clear_1";
+    return stage1ClearedNow &&
+        !hasStoryFlag(BaseBookshelfTutorialFlag) &&
+        queueHint(BaseHintBookshelfStage1Trigger);
 }
 
 void Game::startBaseMonicaDialogue()
@@ -7221,13 +7417,23 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
                 adjustRingWorkshopRespec(*ringWorkshopRespecSource_, selection);
             };
 
+            std::array<UiVerticalTabItem, RingLevelUpgradeKindCount> respecTabs{};
+            std::array<UiRect, RingLevelUpgradeKindCount> respecTabRects{};
             for (int i = 0; i < RingLevelUpgradeKindCount; ++i) {
-                const UiRect rect = ringWorkshopRespecKindRect(i);
-                if (updateClickSelection(ui, rect, i, baseRingWorkshopSelection_)) {
-                    chooseRespecKind(i);
-                    ui.block(workshopBounds);
-                    return;
-                }
+                respecTabs[static_cast<std::size_t>(i)] = {ringLevelUpgradeKindName(ringWorkshopKindForIndex(i)), "", true};
+                respecTabRects[static_cast<std::size_t>(i)] = ringWorkshopRespecKindRect(i);
+            }
+            const int selectedTab = updateVerticalTabClickSelection(
+                baseRingWorkshopUpgradeTabs_,
+                ui,
+                std::clamp(baseRingWorkshopSelection_, 0, RingLevelUpgradeKindCount - 1),
+                respecTabs,
+                respecTabRects);
+            if (selectedTab >= 0) {
+                baseRingWorkshopSelection_ = selectedTab;
+                chooseRespecKind(selectedTab);
+                ui.block(workshopBounds);
+                return;
             }
             const UiRect confirmRect = ringWorkshopRespecConfirmRect();
             if (updateClickSelection(ui, confirmRect, RingLevelUpgradeKindCount, baseRingWorkshopSelection_)) {
@@ -8127,9 +8333,10 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
             }
             const std::vector<UiCommandMenuItem> items = processingCommandItems(target);
             baseProcessingCommandSlot_ = slotIndex;
-            Vec2 commandAnchor = baseProcessingGridSlotRect(slotIndex).pos;
+            Vec2 commandAnchor = uiCommandMenuAnchorForSlot(baseProcessingGridSlotRect(slotIndex));
             if (target.source == BaseItemSource::Warehouse) {
-                commandAnchor = externalWarehouseSourceSlotRect(baseProcessingGridSlotRect, slotIndex).pos;
+                commandAnchor = uiCommandMenuAnchorForSlot(
+                    externalWarehouseSourceSlotRect(baseProcessingGridSlotRect, slotIndex));
             } else if (target.source != BaseItemSource::Backpack &&
                 target.ringIndex >= 0 &&
                 target.ringIndex < SpellRingCount) {
@@ -8477,9 +8684,10 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
                 (target.source == BaseItemSource::Warehouse && target.storageEntry.kind == StorageEntryKind::Stack);
             baseMerchantSellCommandIndex_ = slotIndex;
             baseMerchantSellCommandSource_ = baseMerchantSellSource_;
-            Vec2 commandAnchor = merchantSellGridSlotRect(slotIndex).pos;
+            Vec2 commandAnchor = uiCommandMenuAnchorForSlot(merchantSellGridSlotRect(slotIndex));
             if (target.source == BaseItemSource::Warehouse) {
-                commandAnchor = externalWarehouseSourceSlotRect(merchantSellGridSlotRect, slotIndex).pos;
+                commandAnchor = uiCommandMenuAnchorForSlot(
+                    externalWarehouseSourceSlotRect(merchantSellGridSlotRect, slotIndex));
             } else if (target.source != BaseItemSource::Backpack &&
                 target.ringIndex >= 0 &&
                 target.ringIndex < SpellRingCount) {
@@ -8515,7 +8723,7 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
             const std::array<UiCommandMenuItem, 1> items{{{"買う", canBuyMerchantProduct(merchantStock_[static_cast<std::size_t>(index)])}}};
             openUiCommandMenu(
                 baseMerchantBuyCommandMenu_,
-                merchantGridSlotRect(index).pos,
+                uiCommandMenuAnchorForSlot(merchantGridSlotRect(index)),
                 merchantPanelRect(),
                 static_cast<int>(items.size()),
                 items.data(),
@@ -9842,13 +10050,14 @@ void Game::renderBaseBackdrop(Renderer& renderer) const
     renderBaseEditOverlay(renderer);
 
     const Vec2 basePlayerFootAnchor = playerSpriteFootAnchor(basePlayerPosition_);
-    renderer.drawActorShadow(basePlayerFootAnchor, PlayerSpriteDrawSize);
+    const float basePlayerSpriteVisualSize = playerSpriteNaturalVisualSize(renderer);
+    renderer.drawActorShadow(basePlayerFootAnchor, basePlayerSpriteVisualSize);
     renderPlayerFootstepDust(renderer);
     if (renderer.hasPlayerSheet()) {
-        renderer.drawPlayerSprite(
+        renderer.drawPlayerSpriteNaturalSize(
             playerSpriteFrameIndex(basePlayerSpriteAnimationTime_, basePlayerSpriteWalking_),
             basePlayerFootAnchor,
-            PlayerSpriteDrawSize,
+            1.0f,
             basePlayerFacing_.x > 0.0f,
             {255, 255, 255, 255},
             {PlayerSpriteAnchorX, PlayerSpriteAnchorY});
@@ -9902,13 +10111,14 @@ void Game::renderBaseScreen(Renderer& renderer) const
     renderBaseEditOverlay(renderer);
 
     const Vec2 basePlayerFootAnchor = playerSpriteFootAnchor(basePlayerPosition_);
-    renderer.drawActorShadow(basePlayerFootAnchor, PlayerSpriteDrawSize);
+    const float basePlayerSpriteVisualSize = playerSpriteNaturalVisualSize(renderer);
+    renderer.drawActorShadow(basePlayerFootAnchor, basePlayerSpriteVisualSize);
     renderPlayerFootstepDust(renderer);
     if (renderer.hasPlayerSheet()) {
-        renderer.drawPlayerSprite(
+        renderer.drawPlayerSpriteNaturalSize(
             playerSpriteFrameIndex(basePlayerSpriteAnimationTime_, basePlayerSpriteWalking_),
             basePlayerFootAnchor,
-            PlayerSpriteDrawSize,
+            1.0f,
             basePlayerFacing_.x > 0.0f,
             {255, 255, 255, 255},
             {PlayerSpriteAnchorX, PlayerSpriteAnchorY});
@@ -9973,7 +10183,9 @@ void Game::renderBaseScreen(Renderer& renderer) const
                 ? "アイテム図鑑"
                 : (bookshelfPage_ == BookshelfPage::Enemies ? "モンスター図鑑" : "本棚");
         } else if (baseRingWorkshopActive_) {
-            panelTitle = "リング工房";
+            panelTitle = baseRingWorkshopMode_ == RingWorkshopMode::Respec
+                ? "レベルアップ配分調整"
+                : "リング工房";
         } else if (baseProcessingUiMode_ != ProcessingUiMode::Closed) {
             panelTitle = "作業台";
         } else if (baseSellActive_) {
@@ -10206,13 +10418,14 @@ void Game::renderBaseScreen(Renderer& renderer) const
                 ringTabRects.data());
 
             const UiRect respecPanel = ringWorkshopRespecPanelRect();
-            drawUiSubPanel(renderer, respecPanel);
-            renderer.drawText(respecPanel.pos + Vec2{24.0f, 22.0f}, "レベルアップ配分調整", ui::Text, 3);
             std::snprintf(buffer, sizeof(buffer), "合計強化点 %d", ringLevelUpgradePointTotal());
-            renderer.drawText(respecPanel.pos + Vec2{respecPanel.size.x - 168.0f, 29.0f}, buffer, ui::TextMuted, 2);
+            renderer.drawText(respecPanel.pos + Vec2{24.0f, 6.0f}, buffer, ui::TextMuted, 2);
 
             const RingLevelUpgradePoints& currentRingPoints = levelRingUpgradePoints_[static_cast<std::size_t>(ringIndex)];
             const RingLevelUpgradePoints& draftRingPoints = ringWorkshopDraftUpgradePoints_[static_cast<std::size_t>(ringIndex)];
+            std::array<UiVerticalTabItem, RingLevelUpgradeKindCount> respecTabs{};
+            std::array<UiRect, RingLevelUpgradeKindCount> respecTabRects{};
+            std::array<std::string, RingLevelUpgradeKindCount> respecTabValues{};
             for (int i = 0; i < RingLevelUpgradeKindCount; ++i) {
                 const RingLevelUpgradeKind kind = ringWorkshopKindForIndex(i);
                 const int currentPoints = ringLevelUpgradePoint(currentRingPoints, kind);
@@ -10221,19 +10434,35 @@ void Game::renderBaseScreen(Renderer& renderer) const
                 const bool sourceSelected = ringWorkshopRespecSource_ &&
                     sameRingLevelUpgradeSelection(*ringWorkshopRespecSource_, selection);
                 std::snprintf(buffer, sizeof(buffer), "%d -> %d", currentPoints, draftPoints);
-                UiSmallSelectButtonStyle style;
-                style.valueText = sourceSelected ? Color{255, 230, 150, 255} : ui::TextMuted;
-                drawUiSmallSelectButton(
-                    renderer,
-                    ringWorkshopRespecKindRect(i),
+                respecTabValues[static_cast<std::size_t>(i)] = buffer;
+                respecTabs[static_cast<std::size_t>(i)] = {
                     ringLevelUpgradeKindName(kind),
-                    buffer,
-                    i == baseRingWorkshopSelection_ || sourceSelected,
-                    false,
-                    style);
+                    respecTabValues[static_cast<std::size_t>(i)],
+                    true,
+                    sourceSelected ? Color{255, 230, 150, 255} : ui::TextMuted,
+                };
+                respecTabRects[static_cast<std::size_t>(i)] = ringWorkshopRespecKindRect(i);
             }
+            UiVerticalTabsStyle respecTabStyle;
+            respecTabStyle.labelScale = 3;
+            respecTabStyle.valueScale = 2;
+            UiTabsState respecTabsState = baseRingWorkshopUpgradeTabs_;
+            const int selectedRespecTab = baseRingWorkshopSelection_ < RingLevelUpgradeKindCount
+                ? baseRingWorkshopSelection_
+                : -1;
+            if (selectedRespecTab < 0) {
+                respecTabsState.focusedIndex = -1;
+            }
+            drawUiVerticalTabs(
+                renderer,
+                respecTabsState,
+                selectedRespecTab,
+                respecTabs.data(),
+                static_cast<int>(respecTabs.size()),
+                respecTabRects.data(),
+                respecTabStyle);
 
-            const UiRect detailPanel = ringWorkshopDetailPanelRect();
+            const UiRect detailPanel = ringWorkshopRespecDetailPanelRect();
             drawUiSubPanel(renderer, detailPanel);
             const int selectedKindIndex = std::clamp(baseRingWorkshopSelection_, 0, RingLevelUpgradeKindCount - 1);
             const RingLevelUpgradeKind selectedKind = ringWorkshopKindForIndex(selectedKindIndex);
@@ -10285,24 +10514,23 @@ void Game::renderBaseScreen(Renderer& renderer) const
                 drawUiDetailLine(renderer, detailPanel, detailY, "移動元", "未選択", ui::TextMuted);
                 drawUiDetailText(renderer, detailPanel, detailY, "ポイントがある項目を選ぶと移動元になります。");
             }
-            std::snprintf(buffer, sizeof(buffer), "%dG", ringWorkshopRespecMoneyCost());
-            drawUiDetailLine(
+            drawBaseDetailMoneyCostLine(
                 renderer,
+                objectCatalog_,
                 detailPanel,
                 detailY,
-                "費用",
-                buffer,
-                money_ >= ringWorkshopRespecMoneyCost() ? ui::Text : Color{238, 82, 82, 255});
-            std::snprintf(buffer, sizeof(buffer), "%d / 所持 %d",
+                "必要素材",
+                ringWorkshopRespecMoneyCost(),
+                money_);
+            drawBaseDetailMaterialCostLine(
+                renderer,
+                objectCatalog_,
+                detailPanel,
+                detailY,
+                "",
+                MaterialType::MoonFragment,
                 ringWorkshopRespecMoonCost(),
                 inventory_.materialCount(MaterialType::MoonFragment));
-            drawUiDetailLine(
-                renderer,
-                detailPanel,
-                detailY,
-                "月のカケラ",
-                buffer,
-                inventory_.materialCount(MaterialType::MoonFragment) >= ringWorkshopRespecMoonCost() ? ui::Text : Color{238, 82, 82, 255});
 
             UiButtonStyle confirmStyle = uiActionButtonStyle();
             if (!ringWorkshopRespecChanged()) {

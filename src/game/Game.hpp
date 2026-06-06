@@ -1278,6 +1278,8 @@ private:
     int astralRunMaterialDeltaFromStart() const;
     int astralRunMoneyDeltaFromStart() const;
     bool shouldRefreshMerchantOnReturn(bool stageCleared, bool died) const;
+    void recordBaseHintDungeonReturn();
+    bool queueBaseHintEventOnReturn(std::string_view returnedStageId, bool stageCleared);
     void returnToBaseFromNormalStage(bool stageCleared, bool died);
     InventoryCarryState captureInventoryCarryState() const;
     void restoreInventoryCarryState(const InventoryCarryState& state);
@@ -1367,6 +1369,7 @@ private:
     void resetAstralRunState();
     void initializeAstralRunForLayout();
     void updateAstralRunProgress();
+    void updateDungeonDepthTutorials();
     void applyAstralDistortionToLayout();
     AstralDistortionKind chooseAstralDistortionForDepth(int depth, AstralDistortionKind previous) const;
     float astralLightRadiusMultiplier() const;

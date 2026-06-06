@@ -1,11 +1,11 @@
 ﻿Auto simulation summary
-csv=.local\auto_sim\runs_20260603_185314.csv
-runs=2
+csv=.local\auto_sim\runs_20260606_160120.csv
+runs=1
 last_result=stopped
 last_stage=stage_01_stardust
-last_seed=3847791169
-last_elapsed_seconds=2.08
-last_dug_tiles=978
-last_defeated_enemies=82
-last_acquired_items=176
+last_seed=3292469091
+last_elapsed_seconds=5.50
+last_dug_tiles=31
+last_defeated_enemies=0
+last_acquired_items=5
 last_stuck_count=0

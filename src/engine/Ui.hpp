@@ -558,6 +558,7 @@ void openUiCommandMenu(
     const UiCommandMenuItem* items = nullptr,
     float minWidth = 120.0f,
     int textScale = 2);
+Vec2 uiCommandMenuAnchorForSlot(UiRect slotRect);
 void closeUiCommandMenu(UiCommandMenuState& state);
 int updateUiCommandMenu(UiCommandMenuState& state, UiContext& ui, const Input& input, const UiCommandMenuItem* items, int itemCount);
 void drawUiCommandMenu(Renderer& renderer, const UiCommandMenuState& state, const UiCommandMenuItem* items, int itemCount);

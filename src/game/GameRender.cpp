@@ -41,11 +41,6 @@ float dotVec2(Vec2 a, Vec2 b)
     return a.x * b.x + a.y * b.y;
 }
 
-Vec2 dungeonTileVec(DungeonTile tile)
-{
-    return {static_cast<float>(tile.x), static_cast<float>(tile.y)};
-}
-
 float stunWakeHopOffset(float stunWakeTimer)
 {
     if (stunWakeTimer <= 0.0f) {
@@ -109,36 +104,6 @@ float weightPenaltyReliefPercentForStopRatio(float stopRatio)
         (stopRatio - SpellRingSystem::BaseWeightStopRatio) / range * 100.0f,
         0.0f,
         100.0f);
-}
-
-float projectedDungeonRouteDistanceTiles(const DungeonLayout& layout, Vec2 tilePosition)
-{
-    if (layout.mainPathPoints.size() < 2) {
-        return length(tilePosition - dungeonTileVec(layout.startTile));
-    }
-
-    float bestDistanceSq = std::numeric_limits<float>::max();
-    float bestRouteDistance = 0.0f;
-    float traveled = 0.0f;
-    for (std::size_t i = 1; i < layout.mainPathPoints.size(); ++i) {
-        const Vec2 a = layout.mainPathPoints[i - 1];
-        const Vec2 b = layout.mainPathPoints[i];
-        const Vec2 ab = b - a;
-        const float segmentLengthSq = lengthSquared(ab);
-        const float segmentT = segmentLengthSq > 0.0001f
-            ? clamp(dotVec2(tilePosition - a, ab) / segmentLengthSq, 0.0f, 1.0f)
-            : 0.0f;
-        const Vec2 projected = a + ab * segmentT;
-        const float distanceSq = distanceSquared(tilePosition, projected);
-        const float segmentLength = std::sqrt(segmentLengthSq);
-        if (distanceSq < bestDistanceSq) {
-            bestDistanceSq = distanceSq;
-            bestRouteDistance = traveled + segmentLength * segmentT;
-        }
-        traveled += segmentLength;
-    }
-
-    return std::max(0.0f, bestRouteDistance);
 }
 
 std::string dungeonDepthTopInfoEntry(const DungeonLayout& layout, Vec2 tilePosition)
@@ -6412,9 +6377,9 @@ void Game::render(Renderer& renderer, const Time& time)
         entityStatusJitterOffset(player_.status, time.totalSeconds()) +
         Vec2{0.0f, -stunWakeHopOffset(player_.stunWakeTimer)};
     const float playerSizeMultiplier = playerStatusVisual.scaleMultiplier;
-    const float playerSpriteDrawSize = PlayerSpriteDrawSize * playerSizeMultiplier;
+    const float playerSpriteVisualSize = playerSpriteNaturalVisualSize(renderer, playerSizeMultiplier);
     const Color playerStatusTint = playerStatusVisual.hasTint ? playerStatusVisual.tint : Color{255, 255, 255, 255};
-    renderer.drawActorShadow(playerFootAnchor, playerSpriteDrawSize);
+    renderer.drawActorShadow(playerFootAnchor, playerSpriteVisualSize);
     if (!lightweight) {
         worldDrops_.renderShadows(renderer, tileMap_, objectCatalog_, playerLightCenter, itemLights);
         enemies_.renderShadows(renderer, tileMap_, playerLightCenter, itemLights);
@@ -6427,10 +6392,10 @@ void Game::render(Renderer& renderer, const Time& time)
             if (renderer.hasPlayerSheet()) {
                 const int playerFrame = player_.spriteFrameIndex();
                 const bool playerFlip = player_.facing.x > 0.0f;
-                renderer.drawPlayerSprite(
+                renderer.drawPlayerSpriteNaturalSize(
                     playerFrame,
                     playerVisualFootAnchor,
-                    playerSpriteDrawSize,
+                    playerSizeMultiplier,
                     playerFlip,
                     playerStatusTint,
                     {PlayerSpriteAnchorX, PlayerSpriteAnchorY},
@@ -6438,10 +6403,10 @@ void Game::render(Renderer& renderer, const Time& time)
                 if (player_.damageFlash > 0.0f) {
                     const float flash = clamp(player_.damageFlash / 0.16f, 0.0f, 1.0f);
                     const unsigned char alpha = static_cast<unsigned char>(std::round(185.0f * flash));
-                    renderer.drawPlayerSprite(
+                    renderer.drawPlayerSpriteNaturalSize(
                         playerFrame,
                         playerVisualFootAnchor,
-                        playerSpriteDrawSize,
+                        playerSizeMultiplier,
                         playerFlip,
                         {255, 52, 52, alpha},
                         {PlayerSpriteAnchorX, PlayerSpriteAnchorY},
@@ -6454,7 +6419,7 @@ void Game::render(Renderer& renderer, const Time& time)
                 renderer.fillCircle(playerVisualFootAnchor, player_.effectiveRadius(balance_.playerRadius), playerColor);
                 renderer.drawLine(playerVisualFootAnchor, playerVisualFootAnchor + player_.facing * (22.0f * playerSizeMultiplier), {235, 210, 255, 255});
             }
-            renderEntityStatusOverlays(renderer, player_.status, playerVisualFootAnchor, playerSpriteDrawSize, time.totalSeconds());
+            renderEntityStatusOverlays(renderer, player_.status, playerVisualFootAnchor, playerSpriteVisualSize, time.totalSeconds());
 
             if (ringIntroActive || liveRingHiddenForDeath) {
                 return;

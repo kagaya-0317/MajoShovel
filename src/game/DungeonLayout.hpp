@@ -76,6 +76,7 @@ struct SpecialRoomMetrics {
 
 DungeonLayout generateDungeonLayout(const DungeonGenerationContext& context);
 DungeonLayoutMetrics calculateDungeonLayoutMetrics(const DungeonLayout& layout, Vec2 tilePosition);
+float projectedDungeonRouteDistanceTiles(const DungeonLayout& layout, Vec2 tilePosition);
 SpecialRoomMetrics calculateSpecialRoomMetrics(const DungeonLayout& layout, Vec2 tilePosition);
 const char* specialRoomTypeName(SpecialRoomType type);
 

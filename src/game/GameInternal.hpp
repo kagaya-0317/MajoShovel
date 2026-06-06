@@ -318,6 +318,22 @@ Vec2 playerSpriteFootAnchor(Vec2 actorCenter)
     return actorCenter + Vec2{0.0f, PlayerSpriteDrawSize * (PlayerSpriteAnchorY - 0.5f)};
 }
 
+Vec2 playerSpriteNaturalDrawSize(const Renderer& renderer, float scale = 1.0f)
+{
+    Vec2 size = renderer.playerSpriteFrameSize();
+    if (size.x <= 0.0f || size.y <= 0.0f) {
+        size = {PlayerSpriteDrawSize, PlayerSpriteDrawSize};
+    }
+    const float safeScale = std::max(0.0f, scale);
+    return {size.x * safeScale, size.y * safeScale};
+}
+
+float playerSpriteNaturalVisualSize(const Renderer& renderer, float scale = 1.0f)
+{
+    const Vec2 size = playerSpriteNaturalDrawSize(renderer, scale);
+    return std::max(size.x, size.y);
+}
+
 std::string fittedSingleLineText(Renderer& renderer, std::string text, float maxWidth, int scale)
 {
     if (maxWidth <= 0.0f) {

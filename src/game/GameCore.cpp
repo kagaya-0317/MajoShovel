@@ -3929,6 +3929,9 @@ void Game::update(const Input& input, const Time& time)
             beginPlayerDeathSequence();
             deathActive = true;
         }
+        if (!deathActive) {
+            updateDungeonDepthTutorials();
+        }
         if (!enemyTestActive_) {
             updateWarpPoints(time.deltaSeconds());
             if (gameplayRewardsEnabled()) {
@@ -3962,9 +3965,6 @@ void Game::update(const Input& input, const Time& time)
             } else if (event.kind == RingMotionEventKind::ReturnEnd) {
                 effects_.spawnReturn(event.position);
             }
-        }
-        if (!deathActive && !introTutorialActive() && input.ringOffsetHeld()) {
-            queueStoryEventForTrigger("tutorial:ring_shift");
         }
         if (gameplayRewardsEnabled()) {
             updateDungeonEvents(time.deltaSeconds(), time.totalSeconds());

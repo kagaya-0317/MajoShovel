@@ -479,6 +479,31 @@ DungeonLayoutMetrics calculateDungeonLayoutMetrics(const DungeonLayout& layout, 
     return metrics;
 }
 
+float projectedDungeonRouteDistanceTiles(const DungeonLayout& layout, Vec2 tilePosition)
+{
+    if (layout.mainPathPoints.size() < 2) {
+        return length(tilePosition - tileToVec(layout.startTile));
+    }
+
+    float bestDistance = 1.0e30f;
+    float bestRouteDistance = 0.0f;
+    float traveled = 0.0f;
+    for (std::size_t i = 1; i < layout.mainPathPoints.size(); ++i) {
+        float segmentT = 0.0f;
+        const Vec2 a = layout.mainPathPoints[i - 1];
+        const Vec2 b = layout.mainPathPoints[i];
+        const float distance = distancePointSegment(tilePosition, a, b, &segmentT);
+        const float segmentLength = length(b - a);
+        if (distance < bestDistance) {
+            bestDistance = distance;
+            bestRouteDistance = traveled + segmentLength * segmentT;
+        }
+        traveled += segmentLength;
+    }
+
+    return std::max(0.0f, bestRouteDistance);
+}
+
 SpecialRoomMetrics calculateSpecialRoomMetrics(const DungeonLayout& layout, Vec2 tilePosition)
 {
     SpecialRoomMetrics metrics;

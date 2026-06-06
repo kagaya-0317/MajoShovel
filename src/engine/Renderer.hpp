@@ -100,6 +100,7 @@ public:
     bool loadPlayerSheet(std::string_view path, int frameSize = 0, int columns = 3, int rows = 3);
     void unloadPlayerSheet();
     bool hasPlayerSheet() const { return playerSheet_.texture != nullptr; }
+    Vec2 playerSpriteFrameSize() const;
     bool loadUiWindowTexture(std::string_view path);
     void unloadUiWindowTexture();
     bool hasUiWindowTexture() const { return uiWindowTexture_.texture != nullptr && uiWindowTexture_.valid; }
@@ -131,6 +132,14 @@ public:
         int index,
         Vec2 anchorPosition,
         float size,
+        bool flipHorizontal,
+        Color tint = {255, 255, 255, 255},
+        Vec2 anchor = {0.5f, 0.82f},
+        bool flipVertical = false);
+    void drawPlayerSpriteNaturalSize(
+        int index,
+        Vec2 anchorPosition,
+        float scale,
         bool flipHorizontal,
         Color tint = {255, 255, 255, 255},
         Vec2 anchor = {0.5f, 0.82f},

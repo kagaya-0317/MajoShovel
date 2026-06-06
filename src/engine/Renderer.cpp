@@ -1656,6 +1656,14 @@ bool Renderer::loadPlayerSheet(std::string_view path, int frameSize, int columns
     return loadSpriteSheet(path, frameSize, columns, rows, "player sheet", playerSheet_);
 }
 
+Vec2 Renderer::playerSpriteFrameSize() const
+{
+    if (!playerSheet_.texture || playerSheet_.frameWidth <= 0 || playerSheet_.frameHeight <= 0) {
+        return {};
+    }
+    return {static_cast<float>(playerSheet_.frameWidth), static_cast<float>(playerSheet_.frameHeight)};
+}
+
 void Renderer::unloadUiWindowTexture()
 {
     unloadGuidedTexture(uiWindowTexture_);
@@ -2697,6 +2705,9 @@ void Renderer::drawPlayerSprite(int index, Vec2 anchorPosition, float size, bool
     if (!playerSheet_.texture || index < 0 || index >= playerSheet_.columns * playerSheet_.rows) {
         return;
     }
+    if (size <= 0.0f) {
+        return;
+    }
 
     const int sourceX = (index % playerSheet_.columns) * playerSheet_.frameWidth;
     const int sourceY = (index / playerSheet_.columns) * playerSheet_.frameHeight;
@@ -2708,6 +2719,53 @@ void Renderer::drawPlayerSprite(int index, Vec2 anchorPosition, float size, bool
     };
     const Vec2 p = transform(anchorPosition - Vec2{size * anchor.x, size * anchor.y});
     const Vec2 s = transformSize({size, size});
+    const SDL_FRect dst{p.x, p.y, s.x, s.y};
+
+    tint = transformColor(tint);
+    SDL_SetTextureColorMod(playerSheet_.texture, tint.r, tint.g, tint.b);
+    SDL_SetTextureAlphaMod(playerSheet_.texture, tint.a);
+    SDL_RenderTextureRotated(
+        renderer_,
+        playerSheet_.texture,
+        &src,
+        &dst,
+        0.0,
+        nullptr,
+        imageFlipMode(flipHorizontal, flipVertical));
+}
+
+void Renderer::drawPlayerSpriteNaturalSize(
+    int index,
+    Vec2 anchorPosition,
+    float scale,
+    bool flipHorizontal,
+    Color tint,
+    Vec2 anchor,
+    bool flipVertical)
+{
+    if (!playerSheet_.texture || index < 0 || index >= playerSheet_.columns * playerSheet_.rows) {
+        return;
+    }
+
+    const float safeScale = std::max(0.0f, scale);
+    if (safeScale <= 0.0f) {
+        return;
+    }
+
+    const int sourceX = (index % playerSheet_.columns) * playerSheet_.frameWidth;
+    const int sourceY = (index / playerSheet_.columns) * playerSheet_.frameHeight;
+    const SDL_FRect src{
+        static_cast<float>(sourceX),
+        static_cast<float>(sourceY),
+        static_cast<float>(playerSheet_.frameWidth),
+        static_cast<float>(playerSheet_.frameHeight)
+    };
+    const Vec2 drawSize{
+        static_cast<float>(playerSheet_.frameWidth) * safeScale,
+        static_cast<float>(playerSheet_.frameHeight) * safeScale
+    };
+    const Vec2 p = transform(anchorPosition - Vec2{drawSize.x * anchor.x, drawSize.y * anchor.y});
+    const Vec2 s = transformSize(drawSize);
     const SDL_FRect dst{p.x, p.y, s.x, s.y};
 
     tint = transformColor(tint);

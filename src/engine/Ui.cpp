@@ -1957,6 +1957,11 @@ void openUiCommandMenu(
     state.openSoundPending = true;
 }
 
+Vec2 uiCommandMenuAnchorForSlot(UiRect slotRect)
+{
+    return slotRect.pos + Vec2{slotRect.size.x - 20.0f, 0.0f};
+}
+
 void closeUiCommandMenu(UiCommandMenuState& state)
 {
     state.open = false;

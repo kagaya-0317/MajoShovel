@@ -55,6 +55,8 @@ constexpr int MicroFeatureMinCount = 10;
 constexpr int MicroFeatureMaxCount = 30;
 constexpr double DungeonMinimapRevealIntervalSeconds = 0.15;
 constexpr std::string_view FirstDungeonStageId = "stage_01_stardust";
+constexpr std::string_view RingShiftTutorialTrigger = "tutorial:ring_shift";
+constexpr float RingShiftTutorialDepthMeters = 50.0f;
 constexpr std::string_view TutorialAppleObjectId = "item_apple";
 constexpr std::string_view MagnifyingGlassObjectId = "item_magnifying_glass";
 constexpr std::string_view CaptureNetObjectId = "item_capture_net";
@@ -2141,6 +2143,23 @@ void Game::updateAstralRunProgress()
     pushDungeonLog(std::string("星の歪み: ") + distortionName, "astral_distortion");
 }
 
+void Game::updateDungeonDepthTutorials()
+{
+    if (introTutorialActive()) {
+        return;
+    }
+
+    const Vec2 playerTilePosition{
+        static_cast<float>(tileMap_.worldToTile(player_.position.x)),
+        static_cast<float>(tileMap_.worldToTile(player_.position.y)),
+    };
+    if (projectedDungeonRouteDistanceTiles(dungeonLayout_, playerTilePosition) < RingShiftTutorialDepthMeters) {
+        return;
+    }
+
+    queueStoryEventForTrigger(std::string(RingShiftTutorialTrigger));
+}
+
 void Game::refreshOrbitEffects()
 {
     spellRing_.applyObjectParameters(objectCatalog_);
@@ -3357,6 +3376,7 @@ void Game::returnToBaseFromNormalStage(bool stageCleared, bool died)
     spawnedWarpPointCount_ = 0;
     placeBasePlayerAtMineExitReturnPoint();
     enterBase();
+    recordBaseHintDungeonReturn();
     baseStatus_ = testPlayMode_
         ? (refreshMerchant ? "帰還しました。商人ワゴン更新あり" : "帰還しました")
         : std::string{};
@@ -3381,6 +3401,7 @@ void Game::returnToBaseFromNormalStage(bool stageCleared, bool died)
         }
         queueStoryEventForTrigger("stage_clear:" + returnedStageId);
     }
+    queueBaseHintEventOnReturn(returnedStageId, stageCleared);
 }
 
 void Game::startIntroTutorialDungeon()
