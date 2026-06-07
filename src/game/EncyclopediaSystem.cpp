@@ -597,7 +597,11 @@ std::optional<EncyclopediaSystem::EffectPopupLine> EncyclopediaSystem::recordObj
     bool allowGenericFallback)
 {
     const std::string canonicalKey = canonicalEffectKey(effectKey);
-    if (object.id.empty() || canonicalKey.empty() || isNoEffectKey(canonicalKey) || isNoEffectText(description)) {
+    if (object.id.empty() ||
+        isCodexHiddenObject(object) ||
+        canonicalKey.empty() ||
+        isNoEffectKey(canonicalKey) ||
+        isNoEffectText(description)) {
         return std::nullopt;
     }
 
@@ -888,7 +892,7 @@ std::size_t EncyclopediaSystem::findEffectLineIndexByKey(const ObjectDefinition&
 
 bool EncyclopediaSystem::raiseObjectStage(const ObjectDefinition& object, EncyclopediaStage stage, Vec2 position, bool popup)
 {
-    if (object.id.empty()) {
+    if (object.id.empty() || isCodexHiddenObject(object)) {
         return false;
     }
     auto& stages = isTreasure(object) ? treasureStages_ : itemStages_;

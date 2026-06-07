@@ -31,6 +31,7 @@ constexpr float RingShiftAimDeadzone = 0.15f;
 constexpr float RingShiftPointerDeadzonePx = 2.0f;
 constexpr float RingShiftDirectionResponse = 18.0f;
 constexpr float RingShiftDistanceResponse = 14.0f;
+constexpr float SpriteHorizontalFacingEpsilon = 0.05f;
 
 std::string joinDeathCause(std::string_view actorName, std::string_view objectName, std::string_view fallbackObjectName)
 {
@@ -311,6 +312,7 @@ void Player::update(
     } else if (lengthSquared(velocity) > 1.0f) {
         facing = normalize(velocity);
     }
+    updateSpriteFlipFromFacing();
 
     const float shiftDistance =
         (balance.spellRingShiftDistance + spellRingShiftDistanceBonus) *
@@ -368,6 +370,15 @@ void Player::updateSpriteAnimation(float dt, bool walking)
         spriteAnimationTime = 0.0f;
     } else {
         spriteAnimationTime += std::max(0.0f, dt);
+    }
+}
+
+void Player::updateSpriteFlipFromFacing()
+{
+    if (facing.x > SpriteHorizontalFacingEpsilon) {
+        spriteFlipHorizontal = true;
+    } else if (facing.x < -SpriteHorizontalFacingEpsilon) {
+        spriteFlipHorizontal = false;
     }
 }
 

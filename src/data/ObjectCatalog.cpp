@@ -1410,6 +1410,16 @@ bool isStaffEquipTarget(std::string_view target)
         target == "equip_ring3";
 }
 
+bool isCodexHiddenObject(const ObjectDefinition& object)
+{
+    return std::any_of(object.tags.begin(), object.tags.end(), [](const std::string& tag) {
+        return tag == "codex_hidden" ||
+            tag == "no_codex" ||
+            tag == "codex_excluded" ||
+            tag == "図鑑非表示";
+    });
+}
+
 bool isDamageTypeAllowed(std::string_view value)
 {
     const std::string normalized = lowerAscii(trim(value));

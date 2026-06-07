@@ -1,6 +1,34 @@
 ﻿#include "game/ItemImageRenderer.hpp"
 
+#include "game/Enemy.hpp"
+
 namespace majo {
+
+namespace {
+
+Color multiplyRgb(Color color, Color multiplier)
+{
+    color.r = static_cast<unsigned char>(static_cast<int>(color.r) * static_cast<int>(multiplier.r) / 255);
+    color.g = static_cast<unsigned char>(static_cast<int>(color.g) * static_cast<int>(multiplier.g) / 255);
+    color.b = static_cast<unsigned char>(static_cast<int>(color.b) * static_cast<int>(multiplier.b) / 255);
+    return color;
+}
+
+EnemyImageDrawOptions applyEnemyVariantVisual(
+    const ItemVisualRef& visual,
+    EnemyImageDrawOptions options)
+{
+    if (visual.enemyVariantLevelBonus >= EnemyAbyssVariantLevelBonus) {
+        options.tint = multiplyRgb(options.tint, {118, 118, 142, 255});
+        options.outlineColor = {24, 20, 34, options.outlineColor.a};
+    } else if (visual.enemyVariantLevelBonus >= EnemyDeepVariantLevelBonus) {
+        options.tint = multiplyRgb(options.tint, {170, 170, 192, 255});
+        options.outlineColor = {42, 34, 58, options.outlineColor.a};
+    }
+    return options;
+}
+
+}
 
 ItemImageDrawOptions itemImageOptionsFromObjectOptions(const ObjectImageDrawOptions& options)
 {
@@ -32,13 +60,14 @@ bool drawItemVisual(
     const ItemImageDrawOptions& options)
 {
     if (visual.source == ItemVisualSource::Enemy) {
+        EnemyImageDrawOptions enemyOptions = applyEnemyVariantVisual(visual, options.enemy);
         return drawEnemyImageIcon(
             renderer,
             visual.imageNumber,
             center,
             maxSize,
             options.enemyAnimationTimeSeconds,
-            options.enemy);
+            enemyOptions);
     }
 
     if (visual.imageNumber <= 0) {

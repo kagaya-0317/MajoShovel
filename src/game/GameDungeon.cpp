@@ -2636,9 +2636,14 @@ bool Game::handleCaptureResult(const CaptureResult& capture)
 
     if (capture.type == CaptureResultType::Success) {
         if (!capture.capturedEnemy.enemyId.empty()) {
+            std::string codexEnemyName = capture.capturedEnemy.enemyName;
+            const auto enemyIt = enemyCatalog_.enemiesById.find(capture.capturedEnemy.enemyId);
+            if (enemyIt != enemyCatalog_.enemiesById.end()) {
+                codexEnemyName = enemyIt->second.name.empty() ? enemyIt->second.id : enemyIt->second.name;
+            }
             encyclopedia_.noteEnemyDiscovered(
                 capture.capturedEnemy.enemyId,
-                capture.capturedEnemy.enemyName,
+                codexEnemyName,
                 capture.position);
         }
         startCaptureAbsorbAnimation(capture);

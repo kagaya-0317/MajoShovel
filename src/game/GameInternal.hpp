@@ -2770,11 +2770,13 @@ std::string playerDeathCauseText(const Player& player)
     return deathCauseText(player.lastDamageCause);
 }
 
-ObjectDefinition makeCapturedObjectDefinition(const EnemyDefinition& enemy)
+ObjectDefinition makeCapturedObjectDefinition(const EnemyDefinition& enemy, EnemyVariantTier variantTier = EnemyVariantTier::Normal)
 {
     ObjectDefinition item;
-    item.id = "captured_" + enemy.id;
-    item.name = enemy.name;
+    item.id = "captured_" + std::string(enemyVariantObjectIdSegment(variantTier)) + enemy.id;
+    item.name = variantTier == EnemyVariantTier::Normal
+        ? enemy.name
+        : enemyVariantDisplayName(enemy.name.empty() ? enemy.id : enemy.name, variantTier);
     item.category = "\xE8\xBB\x8C\xE9\x81\x93";
     item.description = enemy.capturedDescription;
     item.rarity = 1;
@@ -2782,6 +2784,7 @@ ObjectDefinition makeCapturedObjectDefinition(const EnemyDefinition& enemy)
     item.visual.source = ItemVisualSource::Enemy;
     item.visual.imageNumber = enemy.imageNumber;
     item.visual.sourceId = enemy.id;
+    item.visual.enemyVariantLevelBonus = enemyVariantLevelBonus(variantTier);
     item.normalEffects = enemy.capturedNormalEffects;
     item.orbitEffects = enemy.capturedOrbitEffects;
     item.attackPower = enemy.capturedAttackPower;
@@ -2802,6 +2805,12 @@ ObjectDefinition makeCapturedObjectDefinition(const EnemyDefinition& enemy)
     item.durability = enemy.capturedDurability;
     item.weightKg = enemy.capturedWeight;
     item.tags = enemy.capturedTags;
+    if (variantTier != EnemyVariantTier::Normal) {
+        item.tags.push_back("captured_variant");
+        item.tags.push_back(variantTier == EnemyVariantTier::Abyss ? "captured_abyss" : "captured_deep");
+        item.tags.push_back("codex_hidden");
+        item.tags.push_back("no_drop");
+    }
     item.effectText = enemy.capturedEffectText;
     item.capturedBehaviorIds = enemy.capturedBehaviorIds;
     item.discoveryEffectLines = buildDiscoveryEffectLines(item);

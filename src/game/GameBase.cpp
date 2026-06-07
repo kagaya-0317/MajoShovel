@@ -1282,6 +1282,16 @@ int codexCompletionPercent(int discoveredCount, int totalCount)
     return std::clamp(discoveredCount * 100 / totalCount, 0, 100);
 }
 
+int itemCodexObjectCount(const ObjectCatalog& catalog)
+{
+    return static_cast<int>(std::count_if(
+        catalog.objects.begin(),
+        catalog.objects.end(),
+        [](const ObjectDefinition& object) {
+            return !isCodexHiddenObject(object);
+        }));
+}
+
 UiRect merchantActionDialogRect()
 {
     return smallActionDialogRect();
@@ -6130,7 +6140,7 @@ void Game::syncEncyclopediaFromInventoryAndRing()
     std::unordered_map<std::string, int> ownedCounts;
     std::unordered_map<std::string, const ObjectDefinition*> ownedObjects;
     const auto addOwnedObject = [&ownedCounts, &ownedObjects](const ObjectDefinition& object, int count) {
-        if (object.id.empty() || count <= 0) {
+        if (object.id.empty() || count <= 0 || isCodexHiddenObject(object)) {
             return;
         }
         ownedCounts[object.id] += count;
@@ -6179,7 +6189,7 @@ void Game::syncEncyclopediaFromInventoryAndRing()
             continue;
         }
         const ObjectDefinition* object = objectCatalog_.registry.findById(itemPtr->objectId);
-        if (object != nullptr) {
+        if (object != nullptr && !isCodexHiddenObject(*object)) {
             ringCounts[object->id] += 1;
             ringObjects.try_emplace(object->id, object);
         }
@@ -6208,6 +6218,10 @@ void Game::captureEncyclopediaSyncSuppressState()
         if (objectId.empty() || count <= 0) {
             return;
         }
+        const ObjectDefinition* object = objectCatalog_.registry.findById(objectId);
+        if (object != nullptr && isCodexHiddenObject(*object)) {
+            return;
+        }
         encyclopediaOwnedSyncSuppressCounts_[std::string(objectId)] += count;
     };
     for (const InventoryObjectStack& stack : inventory_.objectStacks()) {
@@ -6220,6 +6234,10 @@ void Game::captureEncyclopediaSyncSuppressState()
     const std::vector<const SpellRingItem*> runtimeItems = spellRing_.runtimeItems();
     for (const SpellRingItem* itemPtr : runtimeItems) {
         if (itemPtr == nullptr || itemPtr->objectId.empty()) {
+            continue;
+        }
+        const ObjectDefinition* object = objectCatalog_.registry.findById(itemPtr->objectId);
+        if (object != nullptr && isCodexHiddenObject(*object)) {
             continue;
         }
         encyclopediaRingSyncSuppressCounts_[itemPtr->objectId] += 1;
@@ -6250,14 +6268,15 @@ void Game::recordObjectObtainedForFirstNotice(
     if (object == nullptr) {
         return;
     }
-    if (!encyclopedia_.noteItemObtained(*object, position)) {
+    const bool codexHidden = isCodexHiddenObject(*object);
+    if (!codexHidden && !encyclopedia_.noteItemObtained(*object, position)) {
         return;
     }
 
     const bool playJingle = firstItemAcquisitionNotices_.empty();
     firstItemAcquisitionNotices_.push_back(AcquisitionNotice{
         .kind = AcquisitionNoticeKind::Object,
-        .title = "はじめて入手した！",
+        .title = codexHidden ? "入手した！" : "はじめて入手した！",
         .objectId = std::string(objectId),
         .instanceId = std::string(instanceId),
         .protectable = protectable && !instanceId.empty(),
@@ -6679,6 +6698,7 @@ void Game::placeBasePlayerAtMineExitReturnPoint()
         bounds.pos.y + bounds.size.y - balance_.playerRadius);
     baseOutdoorPlayerPosition_ = basePlayerPosition_;
     basePlayerFacing_ = {0.0f, 1.0f};
+    updateBasePlayerSpriteFlipFromFacing();
 }
 
 std::vector<Game::WarpPoint> Game::selectableWarpPointsForCurrentStageStart() const
@@ -6732,6 +6752,7 @@ void Game::placeBasePlayerAtHomeDoorResumePoint()
         balance_.playerRadius);
     baseOutdoorPlayerPosition_ = basePlayerPosition_;
     basePlayerFacing_ = {0.0f, -1.0f};
+    updateBasePlayerSpriteFlipFromFacing();
 }
 
 const StoryEvent* Game::findStoryEvent(std::string_view id) const
@@ -6921,7 +6942,7 @@ void Game::updateBookshelfScreen(const Input& input, UiContext& ui)
         case BookshelfPage::Menu:
             return BookshelfMenuItemCount;
         case BookshelfPage::Items:
-            return static_cast<int>(objectCatalog_.objects.size());
+            return itemCodexObjectCount(objectCatalog_);
         case BookshelfPage::Enemies:
             return static_cast<int>(enemyCatalog_.enemies.size());
         }
@@ -9576,6 +9597,7 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
         baseFootstepSurface);
     if (lengthSquared(moveAxis) > 0.0001f) {
         basePlayerFacing_ = normalize(moveAxis);
+        updateBasePlayerSpriteFlipFromFacing();
         const Vec2 delta = moveAxis * balance_.playerSpeed * dt;
         Vec2 next = basePlayerPosition_ + Vec2{delta.x, 0.0f};
         if (!baseCollision(next)) {
@@ -9660,6 +9682,14 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
 void Game::renderBookshelfScreen(Renderer& renderer) const
 {
     char buffer[256];
+    std::vector<const ObjectDefinition*> itemCodexObjects;
+    itemCodexObjects.reserve(objectCatalog_.objects.size());
+    for (const ObjectDefinition& object : objectCatalog_.objects) {
+        if (!isCodexHiddenObject(object)) {
+            itemCodexObjects.push_back(&object);
+        }
+    }
+
     const auto menuName = [](int index) {
         switch (index) {
         case 0:
@@ -9670,11 +9700,11 @@ void Game::renderBookshelfScreen(Renderer& renderer) const
             return "";
         }
     };
-    const auto objectAt = [this](int targetIndex) -> const ObjectDefinition* {
-        if (targetIndex < 0 || targetIndex >= static_cast<int>(objectCatalog_.objects.size())) {
+    const auto objectAt = [&itemCodexObjects](int targetIndex) -> const ObjectDefinition* {
+        if (targetIndex < 0 || targetIndex >= static_cast<int>(itemCodexObjects.size())) {
             return nullptr;
         }
-        return &objectCatalog_.objects[static_cast<std::size_t>(targetIndex)];
+        return itemCodexObjects[static_cast<std::size_t>(targetIndex)];
     };
 
     if (bookshelfPage_ == BookshelfPage::Menu) {
@@ -9692,7 +9722,7 @@ void Game::renderBookshelfScreen(Renderer& renderer) const
     const UiRect gridViewport = bookshelfGridViewport();
     const int totalCount = bookshelfPage_ == BookshelfPage::Enemies
         ? static_cast<int>(enemyCatalog_.enemies.size())
-        : static_cast<int>(objectCatalog_.objects.size());
+        : static_cast<int>(itemCodexObjects.size());
     const UiScrollAreaLayout gridLayout =
         makeInventoryUiGridLayout(gridViewport, totalCount, bookshelfScrollOffset_, gridStyle);
     int discoveredCount = 0;
@@ -9704,9 +9734,9 @@ void Game::renderBookshelfScreen(Renderer& renderer) const
             }
         }
     } else {
-        for (const ObjectDefinition& object : objectCatalog_.objects) {
-            const bool treasure = object.category == "\xE5\xAE\x9D";
-            const EncyclopediaStage stage = encyclopedia_.objectStage(object.id, treasure);
+        for (const ObjectDefinition* object : itemCodexObjects) {
+            const bool treasure = object->category == "\xE5\xAE\x9D";
+            const EncyclopediaStage stage = encyclopedia_.objectStage(object->id, treasure);
             if (stage != EncyclopediaStage::Undiscovered) {
                 ++discoveredCount;
             }
@@ -9726,12 +9756,12 @@ void Game::renderBookshelfScreen(Renderer& renderer) const
         renderer.drawText(panel.pos + Vec2{28.0f, 154.0f}, "記録対象がありません", {150, 150, 160, 255}, 2);
     } else if (bookshelfPage_ == BookshelfPage::Items) {
         std::vector<InventoryUiEntryView> entries;
-        entries.reserve(objectCatalog_.objects.size());
-        for (const ObjectDefinition& object : objectCatalog_.objects) {
+        entries.reserve(itemCodexObjects.size());
+        for (const ObjectDefinition* object : itemCodexObjects) {
             InventoryUiEntryView entry{};
-            const bool treasure = object.category == "\xE5\xAE\x9D";
-            if (encyclopedia_.objectStage(object.id, treasure) != EncyclopediaStage::Undiscovered) {
-                entry.item = &object;
+            const bool treasure = object->category == "\xE5\xAE\x9D";
+            if (encyclopedia_.objectStage(object->id, treasure) != EncyclopediaStage::Undiscovered) {
+                entry.item = object;
                 entry.stackCount = 1;
             }
             entries.push_back(entry);
@@ -10016,6 +10046,16 @@ void Game::updateBasePlayerSpriteAnimation(float dt, bool walking)
     }
 }
 
+void Game::updateBasePlayerSpriteFlipFromFacing()
+{
+    constexpr float SpriteHorizontalFacingEpsilon = 0.05f;
+    if (basePlayerFacing_.x > SpriteHorizontalFacingEpsilon) {
+        basePlayerSpriteFlipHorizontal_ = true;
+    } else if (basePlayerFacing_.x < -SpriteHorizontalFacingEpsilon) {
+        basePlayerSpriteFlipHorizontal_ = false;
+    }
+}
+
 void Game::renderBaseBackdrop(Renderer& renderer) const
 {
     renderer.fillRect({0.0f, 0.0f}, {static_cast<float>(camera_.width()), static_cast<float>(camera_.height())}, {24, 28, 32, 255});
@@ -10058,7 +10098,7 @@ void Game::renderBaseBackdrop(Renderer& renderer) const
             playerSpriteFrameIndex(basePlayerSpriteAnimationTime_, basePlayerSpriteWalking_),
             basePlayerFootAnchor,
             1.0f,
-            basePlayerFacing_.x > 0.0f,
+            basePlayerSpriteFlipHorizontal_,
             {255, 255, 255, 255},
             {PlayerSpriteAnchorX, PlayerSpriteAnchorY});
     } else {
@@ -10119,7 +10159,7 @@ void Game::renderBaseScreen(Renderer& renderer) const
             playerSpriteFrameIndex(basePlayerSpriteAnimationTime_, basePlayerSpriteWalking_),
             basePlayerFootAnchor,
             1.0f,
-            basePlayerFacing_.x > 0.0f,
+            basePlayerSpriteFlipHorizontal_,
             {255, 255, 255, 255},
             {PlayerSpriteAnchorX, PlayerSpriteAnchorY});
     } else {

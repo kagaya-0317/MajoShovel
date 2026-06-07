@@ -78,6 +78,7 @@ struct Player {
     float throwCooldownRemaining = 0.0f;
     float spriteAnimationTime = 0.0f;
     bool spriteWalking = false;
+    bool spriteFlipHorizontal = true;
     bool spellRingShiftDragActive = false;
     float damageFlash = 0.0f;
     float stunWakeTimer = 0.0f;
@@ -105,6 +106,7 @@ struct Player {
         const RuntimeBalance& balance,
         std::span<const CollisionRect> objectBlockers = {});
     void updateSpriteAnimation(float dt, bool walking);
+    void updateSpriteFlipFromFacing();
     int spriteFrameIndex() const;
 };
 

@@ -496,6 +496,27 @@ bool matchExplicitTag(std::string_view text, std::size_t offset, const Input* in
         else if (button == "east") outGlyphs = {padButtonGlyph("B", {244, 116, 116, 255})};
         else if (button == "west") outGlyphs = {padButtonGlyph("X", {110, 174, 255, 255})};
         else if (button == "north") outGlyphs = {padButtonGlyph("Y", {248, 210, 96, 255})};
+        else if (button == "back") outGlyphs = {shoulderGlyph("View")};
+        else if (button == "start") outGlyphs = {shoulderGlyph("Menu")};
+        else if (button == "left_stick") outGlyphs = {stickGlyph("L3", DirAll)};
+        else if (button == "right_stick") outGlyphs = {stickGlyph("R3", DirAll)};
+        else if (button == "left_shoulder") outGlyphs = {shoulderGlyph("LB")};
+        else if (button == "right_shoulder") outGlyphs = {shoulderGlyph("RB")};
+        else if (button == "dpad_up") outGlyphs = {dpadGlyph(DirUp)};
+        else if (button == "dpad_down") outGlyphs = {dpadGlyph(DirDown)};
+        else if (button == "dpad_left") outGlyphs = {dpadGlyph(DirLeft)};
+        else if (button == "dpad_right") outGlyphs = {dpadGlyph(DirRight)};
+    } else if (body.rfind("axis:", 0) == 0) {
+        const std::string_view rest = body.substr(5);
+        const std::size_t separator = rest.find(':');
+        const std::string_view axis = separator == std::string_view::npos ? rest : rest.substr(0, separator);
+        const bool negative = separator != std::string_view::npos && rest.substr(separator + 1) == "-";
+        if (axis == "leftx") outGlyphs = {stickGlyph("L", negative ? DirLeft : DirRight)};
+        else if (axis == "lefty") outGlyphs = {stickGlyph("L", negative ? DirUp : DirDown)};
+        else if (axis == "rightx") outGlyphs = {stickGlyph("R", negative ? DirLeft : DirRight)};
+        else if (axis == "righty") outGlyphs = {stickGlyph("R", negative ? DirUp : DirDown)};
+        else if (axis == "left_trigger") outGlyphs = {triggerGlyph("LT")};
+        else if (axis == "right_trigger") outGlyphs = {triggerGlyph("RT")};
     }
 
     if (outGlyphs.empty()) {
@@ -625,6 +646,9 @@ std::vector<Segment> parseSegments(std::string_view text, const Input* input)
 
 int labelScaleForGlyph(const Glyph& glyph, const InputHelpStyle& style)
 {
+    if (glyph.label == "Up") {
+        return std::max(1, style.scale - 1);
+    }
     if (glyph.label.size() <= 2) {
         return std::max(1, style.scale);
     }

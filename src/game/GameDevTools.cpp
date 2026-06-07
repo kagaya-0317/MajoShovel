@@ -7327,6 +7327,7 @@ void Game::enterEnemyTestMode()
     player_.position = tileWorldCenter(dungeonLayout_.startTile);
     player_.velocity = {};
     player_.facing = {1.0f, 0.0f};
+    player_.updateSpriteFlipFromFacing();
     applyPermanentUpgrades();
     clearTemporaryPlayerState(true);
     resetPlayerFootstepDust();
@@ -10352,6 +10353,7 @@ bool Game::executeDebugCommand(std::string_view command)
         }
         player_.position = bossSpawnPoint_ - direction * (BossSpawnTriggerRadius + 18.0f);
         player_.facing = direction;
+        player_.updateSpriteFlipFromFacing();
         tileMap_.updateAround(player_.position, 0.0f, balance_, dungeonLayout_);
         normalizeOpenBuriedPlacementNodes();
         updateDungeonMinimap(0.0);
@@ -10999,7 +11001,7 @@ bool Game::executeDebugCommand(std::string_view command)
 
         int objectCount = 0;
         for (const ItemData& object : objectCatalog_.registry.items()) {
-            if (object.id.empty()) {
+            if (object.id.empty() || isCodexHiddenObject(object)) {
                 continue;
             }
             const bool treasure = object.category == "宝";

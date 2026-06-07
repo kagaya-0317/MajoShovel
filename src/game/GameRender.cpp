@@ -5,6 +5,8 @@
 #include "game/EntityStatusVisuals.hpp"
 #include "game/ExplosionWarning.hpp"
 
+#include <cctype>
+
 namespace majo {
 
 namespace {
@@ -1639,6 +1641,9 @@ constexpr int OptionsPageCount = 3;
 constexpr int OperationSettingsCategoryCount = 4;
 constexpr int AudioSettingsRowCount = 3;
 constexpr int VideoSettingsRowCount = 7;
+constexpr float OptionsContentYOffset = -16.0f;
+constexpr float OptionsStandardContentYOffset = OptionsContentYOffset + 8.0f;
+constexpr float OptionsStandardContentHeightBonus = 16.0f;
 
 struct OperationSettingsActionRow {
     InputAction action;
@@ -1739,39 +1744,67 @@ UiRect optionsPageTabRect(int index)
         static_cast<float>(OptionsPageCount);
     return {{
         panel.pos.x + 42.0f + static_cast<float>(index) * (width + Gap),
-        panel.pos.y + 104.0f,
+        panel.pos.y + 104.0f + OptionsContentYOffset,
     }, {width, ui::ButtonHeight}};
+}
+
+UiRect optionsLeftContentRect()
+{
+    const UiRect panel = optionsPanelRect();
+    return {{
+        panel.pos.x + 46.0f,
+        panel.pos.y + 166.0f + OptionsStandardContentYOffset,
+    }, {570.0f, 332.0f + OptionsStandardContentHeightBonus}};
+}
+
+UiRect optionsRightHelpWindowRect()
+{
+    const UiRect panel = optionsPanelRect();
+    return {{
+        panel.pos.x + 650.0f,
+        panel.pos.y + 166.0f + OptionsStandardContentYOffset,
+    }, {284.0f, 332.0f + OptionsStandardContentHeightBonus}};
 }
 
 UiRect operationSettingsTableRect()
 {
     const UiRect panel = optionsPanelRect();
-    return {{panel.pos.x + 42.0f, panel.pos.y + 220.0f}, {panel.size.x - 84.0f, 200.0f}};
+    return {{
+        panel.pos.x + 46.0f,
+        panel.pos.y + 220.0f + OptionsContentYOffset,
+    }, {580.0f, 278.0f + 24.0f}};
 }
 
 UiRect operationSettingsTabRect(int index)
 {
     const UiRect panel = optionsPanelRect();
-    constexpr float Gap = 10.0f;
-    constexpr float WidthReduction = 70.0f;
-    constexpr float HeightReduction = 16.0f;
-    const float totalWidth = panel.size.x - 84.0f - WidthReduction;
+    constexpr float Gap = 8.0f;
+    const float totalWidth = panel.size.x - 92.0f;
     const float width = (totalWidth - Gap * static_cast<float>(OperationSettingsCategoryCount - 1)) /
         static_cast<float>(OperationSettingsCategoryCount);
     return {{
-        panel.pos.x + 42.0f + WidthReduction * 0.5f + static_cast<float>(index) * (width + Gap),
-        panel.pos.y + 164.0f,
-    }, {width, ui::ButtonHeight - HeightReduction}};
+        panel.pos.x + 46.0f + static_cast<float>(index) * (width + Gap),
+        panel.pos.y + 166.0f + OptionsContentYOffset,
+    }, {width, 42.0f}};
 }
 
-UiRect optionsFooterButtonRect(int index, int count, float width = 150.0f)
+UiRect operationSettingsHelpWindowRect()
+{
+    const UiRect panel = optionsPanelRect();
+    return {{
+        panel.pos.x + 650.0f,
+        panel.pos.y + 220.0f + OptionsContentYOffset,
+    }, {284.0f, 278.0f + 24.0f}};
+}
+
+UiRect optionsFooterButtonRect(int index, int count, float width = 225.0f)
 {
     const UiRect panel = optionsPanelRect();
     constexpr float Gap = 10.0f;
     const float totalWidth = width * static_cast<float>(count) + Gap * static_cast<float>(std::max(0, count - 1));
     return {{
         panel.pos.x + (panel.size.x - totalWidth) * 0.5f + static_cast<float>(index) * (width + Gap),
-        panel.pos.y + panel.size.y - uiFooterHeight("x\nx") - ui::ButtonHeight - 12.0f,
+        panel.pos.y + panel.size.y - uiFooterHeight("x") - ui::ButtonHeight - 12.0f,
     }, {width, ui::ButtonHeight}};
 }
 
@@ -1782,39 +1815,36 @@ UiRect operationSettingsDialogRect()
 
 UiRect optionSettingsContentRect()
 {
-    const UiRect panel = optionsPanelRect();
-    return {{panel.pos.x + 74.0f, panel.pos.y + 176.0f}, {panel.size.x - 148.0f, 286.0f}};
+    return optionsLeftContentRect();
 }
 
 UiRect audioSettingsRowRect(int index)
 {
     const UiRect content = optionSettingsContentRect();
-    return {{content.pos.x, content.pos.y + static_cast<float>(index) * 76.0f}, {content.size.x, 58.0f}};
+    return {{content.pos.x, content.pos.y + static_cast<float>(index) * 60.0f}, {content.size.x, 50.0f}};
 }
 
 UiRect audioSettingsSliderRect(int index)
 {
     const UiRect row = audioSettingsRowRect(index);
-    return {{row.pos.x + 260.0f, row.pos.y + 16.0f}, {360.0f, 26.0f}};
+    return {{row.pos.x + 202.0f, row.pos.y + 15.0f}, {280.0f, 20.0f}};
 }
 
 UiRect videoSettingsRowRect(int index)
 {
-    const UiRect panel = optionsPanelRect();
-    const UiRect content{{panel.pos.x + 74.0f, panel.pos.y + 166.0f}, {panel.size.x - 148.0f, 252.0f}};
-    return {{content.pos.x, content.pos.y + static_cast<float>(index) * 36.0f}, {content.size.x, 34.0f}};
+    const UiRect content = optionSettingsContentRect();
+    return {{content.pos.x, content.pos.y + static_cast<float>(index) * 42.0f}, {content.size.x, 38.0f}};
 }
 
 UiRect videoBrightnessSliderRect()
 {
     const UiRect row = videoSettingsRowRect(4);
-    return {{row.pos.x + 260.0f, row.pos.y + 9.0f}, {330.0f, 16.0f}};
+    return {{row.pos.x + 202.0f, row.pos.y + 11.0f}, {250.0f, 16.0f}};
 }
 
 UiRect optionsHelpWindowRect()
 {
-    const UiRect panel = optionsPanelRect();
-    return {{panel.pos.x + 74.0f, panel.pos.y + 423.0f}, {panel.size.x - 148.0f, 88.0f}};
+    return optionsRightHelpWindowRect();
 }
 
 UiTabItem optionsPageTabItem(int index)
@@ -1862,25 +1892,55 @@ std::vector<OperationSettingsActionRow> operationSettingsRowsForCategory(int cat
     return rows;
 }
 
-UiTabItem operationSettingsTabItem(int index)
-{
-    return {OperationSettingsCategoryLabels[std::clamp(index, 0, OperationSettingsCategoryCount - 1)], true};
-}
-
-std::array<UiTabItem, OperationSettingsCategoryCount> operationSettingsTabItems()
-{
-    std::array<UiTabItem, OperationSettingsCategoryCount> items{};
-    for (int i = 0; i < OperationSettingsCategoryCount; ++i) {
-        items[static_cast<std::size_t>(i)] = operationSettingsTabItem(i);
-    }
-    return items;
-}
-
 std::array<UiRect, OperationSettingsCategoryCount> operationSettingsTabRects()
 {
     std::array<UiRect, OperationSettingsCategoryCount> rects{};
     for (int i = 0; i < OperationSettingsCategoryCount; ++i) {
         rects[static_cast<std::size_t>(i)] = operationSettingsTabRect(i);
+    }
+    return rects;
+}
+
+UiVerticalTabsStyle optionsVerticalTabStyle()
+{
+    UiVerticalTabsStyle style;
+    style.labelScale = 2;
+    style.valueScale = 2;
+    style.textPaddingX = 18.0f;
+    style.valuePaddingX = 18.0f;
+    style.valueGap = 12.0f;
+    style.tabs.activeScale = 1.0f;
+    style.tabs.imageOutset = 16.0f;
+    return style;
+}
+
+int updateClickedVerticalTabSelection(UiContext& ui, const UiVerticalTabItem* items, const UiRect* rects, int itemCount)
+{
+    if (items == nullptr || rects == nullptr || itemCount <= 0) {
+        return -1;
+    }
+    for (int i = 0; i < itemCount; ++i) {
+        if (items[i].enabled && ui.pressed(rects[i])) {
+            return i;
+        }
+    }
+    return -1;
+}
+
+std::array<UiRect, AudioSettingsRowCount> audioSettingsRowRects()
+{
+    std::array<UiRect, AudioSettingsRowCount> rects{};
+    for (int i = 0; i < AudioSettingsRowCount; ++i) {
+        rects[static_cast<std::size_t>(i)] = audioSettingsRowRect(i);
+    }
+    return rects;
+}
+
+std::array<UiRect, VideoSettingsRowCount> videoSettingsRowRects()
+{
+    std::array<UiRect, VideoSettingsRowCount> rects{};
+    for (int i = 0; i < VideoSettingsRowCount; ++i) {
+        rects[static_cast<std::size_t>(i)] = videoSettingsRowRect(i);
     }
     return rects;
 }
@@ -1928,6 +1988,25 @@ std::string volumePercentText(float value)
     char buffer[16];
     std::snprintf(buffer, sizeof(buffer), "%3d%%", static_cast<int>(std::lround(clamp(value, 0.0f, 1.0f) * 100.0f)));
     return buffer;
+}
+
+std::array<std::string, AudioSettingsRowCount> audioSettingsRowValueTexts(const GameSettings& settings)
+{
+    std::array<std::string, AudioSettingsRowCount> values{};
+    for (int i = 0; i < AudioSettingsRowCount; ++i) {
+        values[static_cast<std::size_t>(i)] = volumePercentText(audioSettingsRowValue(settings, i));
+    }
+    return values;
+}
+
+std::array<UiVerticalTabItem, AudioSettingsRowCount> audioSettingsTabItems(
+    const std::array<std::string, AudioSettingsRowCount>& values)
+{
+    std::array<UiVerticalTabItem, AudioSettingsRowCount> items{};
+    for (int i = 0; i < AudioSettingsRowCount; ++i) {
+        items[static_cast<std::size_t>(i)] = {audioSettingsRowLabel(i), values[static_cast<std::size_t>(i)], true};
+    }
+    return items;
 }
 
 const char* videoSettingsRowLabel(int row)
@@ -2031,29 +2110,23 @@ std::string videoSettingsRowValueText(const GameSettings& settings, int row)
     }
 }
 
-void drawVideoBrightnessRow(Renderer& renderer, const GameSettings& settings, bool hot)
+std::array<std::string, VideoSettingsRowCount> videoSettingsRowValueTexts(const GameSettings& settings)
 {
-    const UiRect rowRect = videoSettingsRowRect(4);
-    renderer.fillRect(rowRect.pos, rowRect.size, hot ? Color{42, 58, 118, 224} : Color{20, 30, 68, 190});
-    renderer.drawRect(rowRect.pos, rowRect.size, hot ? Color{255, 230, 150, 255} : Color{112, 128, 178, 160});
-    if (hot) {
-        renderer.fillRect(rowRect.pos + Vec2{3.0f, 5.0f}, {5.0f, rowRect.size.y - 10.0f}, {255, 230, 150, 255});
+    std::array<std::string, VideoSettingsRowCount> values{};
+    for (int i = 0; i < VideoSettingsRowCount; ++i) {
+        values[static_cast<std::size_t>(i)] = videoSettingsRowValueText(settings, i);
     }
+    return values;
+}
 
-    renderer.drawText(rowRect.pos + Vec2{18.0f, 9.0f}, videoSettingsRowLabel(4), ui::Text, 2);
-    UiGaugeStyle gaugeStyle;
-    gaugeStyle.tickCount = 6;
-    gaugeStyle.fill.start = Color{236, 220, 150, 230};
-    gaugeStyle.fill.end = Color{255, 246, 210, 230};
-    drawUiGauge(renderer, videoBrightnessSliderRect(), screenBrightnessGaugeValue(settings.presentation.brightness), gaugeStyle);
-
-    const std::string percent = screenBrightnessPercentText(settings.presentation.brightness);
-    const Vec2 percentSize = renderer.measureText(percent, 2);
-    renderer.drawText(
-        {rowRect.pos.x + rowRect.size.x - percentSize.x - 22.0f, rowRect.pos.y + 9.0f},
-        percent,
-        ui::Text,
-        2);
+std::array<UiVerticalTabItem, VideoSettingsRowCount> videoSettingsTabItems(
+    const std::array<std::string, VideoSettingsRowCount>& values)
+{
+    std::array<UiVerticalTabItem, VideoSettingsRowCount> items{};
+    for (int i = 0; i < VideoSettingsRowCount; ++i) {
+        items[static_cast<std::size_t>(i)] = {videoSettingsRowLabel(i), values[static_cast<std::size_t>(i)], true};
+    }
+    return items;
 }
 
 int videoResolutionPresetIndex(const VideoSettings& video)
@@ -2258,9 +2331,8 @@ const char* operationSettingsActionHelpText(InputAction action)
 
 std::string operationSettingsHelpTitle(const OperationSettingsActionRow& row, int column)
 {
-    std::string title = row.label;
-    title += column == OperationSettingsColumnGamepad ? " / ゲームパッド" : " / キーボード/マウス";
-    return title;
+    (void)column;
+    return row.label;
 }
 
 std::string operationSettingsHelpDescription(InputAction action, int column)
@@ -2274,15 +2346,14 @@ std::string operationSettingsHelpDescription(InputAction action, int column)
 
 void drawOptionsHelpWindow(
     Renderer& renderer,
+    UiRect rect,
     std::string_view title,
     std::string_view description,
     std::string_view status)
 {
-    const UiRect rect = optionsHelpWindowRect();
     drawUiSubPanel(renderer, rect);
-    renderer.fillRect(rect.pos + Vec2{3.0f, 8.0f}, {5.0f, rect.size.y - 16.0f}, {255, 230, 150, 230});
 
-    const std::string header = "ヘルプ: " + std::string(title);
+    const std::string header(title);
     const Vec2 headerPos = rect.pos + Vec2{20.0f, 12.0f};
     renderer.drawText(headerPos, header, ui::Text, 2);
 
@@ -2303,12 +2374,23 @@ void drawOptionsHelpWindow(
         2);
 }
 
+void drawOptionsHelpWindow(
+    Renderer& renderer,
+    std::string_view title,
+    std::string_view description,
+    std::string_view status)
+{
+    drawOptionsHelpWindow(renderer, optionsHelpWindowRect(), title, description, status);
+}
+
 std::array<UiSelectableTableColumn, OperationSettingsColumnCount> operationSettingsTableColumns()
 {
     const UiRect table = operationSettingsTableRect();
-    constexpr float ActionWidth = 210.0f;
+    constexpr float ScrollbarReserve = 20.0f;
+    constexpr float ActionWidth = 188.0f;
     constexpr float GapTotal = 8.0f * static_cast<float>(OperationSettingsColumnCount - 1);
-    const float bindingWidth = std::max(1.0f, (table.size.x - ActionWidth - GapTotal) * 0.5f);
+    const float contentWidth = std::max(1.0f, table.size.x - ScrollbarReserve);
+    const float bindingWidth = std::max(1.0f, (contentWidth - ActionWidth - GapTotal) * 0.5f);
     return {{
         UiSelectableTableColumn{"操作", ActionWidth, false},
         UiSelectableTableColumn{"キーボード/マウス", bindingWidth, true},
@@ -2349,18 +2431,79 @@ std::string operationSettingsBindingDisplayName(const InputBinding& binding)
     return "Unknown";
 }
 
-std::string operationSettingsBindingText(const InputBindingMap& bindings, InputAction action, int column)
+std::string operationSettingsKeyboardGlyphLabel(int scancode)
+{
+    switch (static_cast<SDL_Scancode>(scancode)) {
+    case SDL_SCANCODE_RETURN:
+    case SDL_SCANCODE_KP_ENTER:
+        return "Enter";
+    case SDL_SCANCODE_ESCAPE:
+        return "Esc";
+    case SDL_SCANCODE_BACKSPACE:
+        return "Back";
+    case SDL_SCANCODE_DELETE:
+        return "Del";
+    case SDL_SCANCODE_SPACE:
+        return "Space";
+    case SDL_SCANCODE_TAB:
+        return "Tab";
+    case SDL_SCANCODE_LSHIFT:
+    case SDL_SCANCODE_RSHIFT:
+        return "Shift";
+    case SDL_SCANCODE_LCTRL:
+    case SDL_SCANCODE_RCTRL:
+        return "Ctrl";
+    case SDL_SCANCODE_LALT:
+    case SDL_SCANCODE_RALT:
+        return "Alt";
+    default:
+        break;
+    }
+
+    std::string label = keyboardScancodeName(scancode);
+    if (label.size() == 1) {
+        label[0] = static_cast<char>(std::toupper(static_cast<unsigned char>(label[0])));
+    }
+    return label;
+}
+
+std::string operationSettingsBindingGlyphToken(const InputBinding& binding)
+{
+    switch (binding.device) {
+    case InputBindingDevice::Keyboard:
+        return "{key:" + operationSettingsKeyboardGlyphLabel(binding.code) + "}";
+    case InputBindingDevice::MouseButton:
+        if (binding.code == SDL_BUTTON_RIGHT) {
+            return "{mouse:right}";
+        }
+        if (binding.code == SDL_BUTTON_MIDDLE) {
+            return "{mouse:middle}";
+        }
+        return "{mouse:left}";
+    case InputBindingDevice::GamepadButton:
+        return "{pad:" + gamepadButtonName(binding.code) + "}";
+    case InputBindingDevice::GamepadAxis:
+        return "{axis:" + gamepadAxisName(binding.code) + ":" + (binding.direction < 0 ? "-" : "+") + "}";
+    }
+    return "";
+}
+
+std::string operationSettingsBindingGlyphText(const InputBindingMap& bindings, InputAction action, int column)
 {
     std::string text;
-    const auto& actionBindings = bindings[inputActionIndex(action)];
+    const std::vector<InputBinding>& actionBindings = bindings[inputActionIndex(action)];
     for (const InputBinding& binding : actionBindings) {
         if (!operationSettingsColumnMatchesBinding(column, binding)) {
+            continue;
+        }
+        const std::string token = operationSettingsBindingGlyphToken(binding);
+        if (token.empty()) {
             continue;
         }
         if (!text.empty()) {
             text += " / ";
         }
-        text += operationSettingsBindingDisplayName(binding);
+        text += token;
     }
     return text.empty() ? "未設定" : text;
 }
@@ -2450,6 +2593,133 @@ void drawOperationSettingsCellText(
         cell.pos.y + std::max(0.0f, (cell.size.y - textSize.y) * 0.5f),
     };
     renderer.drawText(textPos, text, color, scale);
+}
+
+void drawOperationSettingsBindingCell(
+    Renderer& renderer,
+    UiRect cell,
+    std::string text,
+    Color color,
+    float paddingX)
+{
+    if (text == "未設定") {
+        drawOperationSettingsCellText(renderer, cell, text, color, 2, paddingX);
+        return;
+    }
+
+    InputHelpStyle helpStyle;
+    helpStyle.text = color;
+    helpStyle.scale = 2;
+    helpStyle.iconHeight = 24.0f;
+    const float maxWidth = std::max(1.0f, cell.size.x - paddingX * 2.0f);
+    text = fittedInputHelpText(renderer, std::move(text), maxWidth, helpStyle);
+    const Vec2 size = measureInputHelpText(renderer, text, helpStyle);
+    const Vec2 pos{
+        cell.pos.x + std::max(paddingX, (cell.size.x - size.x) * 0.5f),
+        cell.pos.y + std::max(0.0f, (cell.size.y - size.y) * 0.5f),
+    };
+    drawInputHelpText(renderer, pos, text, helpStyle);
+}
+
+bool moveOperationSettingsTableColumn(UiSelectableTableState& state, int delta)
+{
+    if (delta == 0) {
+        return false;
+    }
+    const int previous = std::clamp(
+        state.selectedColumn,
+        OperationSettingsColumnKeyboardMouse,
+        OperationSettingsColumnGamepad);
+    state.selectedColumn = delta > 0
+        ? OperationSettingsColumnGamepad
+        : OperationSettingsColumnKeyboardMouse;
+    return state.selectedColumn != previous;
+}
+
+UiSelectableTableResult updateOperationSettingsTableClickSelection(
+    UiSelectableTableState& state,
+    UiContext& ui,
+    const Input& input,
+    UiRect rect,
+    int rowCount,
+    const UiSelectableTableColumn* columns,
+    int columnCount,
+    const UiSelectableTableStyle& style)
+{
+    UiSelectableTableResult result;
+    if (rowCount <= 0 || columns == nullptr || columnCount <= 0) {
+        state.selectedRow = 0;
+        state.selectedColumn = OperationSettingsColumnKeyboardMouse;
+        state.scrollOffset = 0.0f;
+        return result;
+    }
+
+    state.selectedRow = std::clamp(state.selectedRow, 0, rowCount - 1);
+    if (state.selectedColumn < OperationSettingsColumnKeyboardMouse ||
+        state.selectedColumn > OperationSettingsColumnGamepad) {
+        state.selectedColumn = OperationSettingsColumnKeyboardMouse;
+    }
+
+    UiSelectableTableLayout layout = makeUiSelectableTableLayout(rect, rowCount, state.scrollOffset, style);
+    layout.scroll = updateUiScrollArea(
+        ui,
+        input,
+        layout.scroll.viewport,
+        uiSelectableTableContentHeight(rowCount, style),
+        state.scrollOffset,
+        style.scroll,
+        &state.scroll);
+    layout = makeUiSelectableTableLayout(rect, rowCount, state.scrollOffset, style);
+
+    const int previousRow = state.selectedRow;
+    const int previousColumn = state.selectedColumn;
+    bool keyboardSelectionChanged = false;
+    if (input.pressed(InputAction::MoveUp)) {
+        state.selectedRow = (state.selectedRow + rowCount - 1) % rowCount;
+        keyboardSelectionChanged = true;
+    }
+    if (input.pressed(InputAction::MoveDown)) {
+        state.selectedRow = (state.selectedRow + 1) % rowCount;
+        keyboardSelectionChanged = true;
+    }
+    if (input.pressed(InputAction::MoveLeft)) {
+        keyboardSelectionChanged = moveOperationSettingsTableColumn(state, -1) || keyboardSelectionChanged;
+    }
+    if (input.pressed(InputAction::MoveRight)) {
+        keyboardSelectionChanged = moveOperationSettingsTableColumn(state, 1) || keyboardSelectionChanged;
+    }
+
+    for (int row = 0; row < rowCount; ++row) {
+        const UiRect rowRect = uiSelectableTableRowRect(layout, row, style);
+        if (!uiScrollAreaRectVisible(layout.scroll, rowRect)) {
+            continue;
+        }
+        for (int column = OperationSettingsColumnAction; column <= OperationSettingsColumnGamepad; ++column) {
+            const UiRect cellRect = uiSelectableTableCellRect(layout, columns, columnCount, row, column, style);
+            if (ui.pressed(cellRect)) {
+                const bool sameRow = state.selectedRow == row;
+                state.selectedRow = row;
+                result.pressedRow = row;
+                if (column >= OperationSettingsColumnKeyboardMouse) {
+                    if (sameRow && state.selectedColumn == column) {
+                        result.pressedColumn = column;
+                    }
+                    state.selectedColumn = column;
+                } else {
+                    result.pressedColumn = OperationSettingsColumnAction;
+                }
+            }
+        }
+    }
+
+    result.selectionChanged = state.selectedRow != previousRow || state.selectedColumn != previousColumn;
+    ui.emitCursorMoveIfChanged(
+        previousRow * columnCount + previousColumn,
+        state.selectedRow * columnCount + state.selectedColumn);
+    if (keyboardSelectionChanged || result.pressedRow >= 0) {
+        keepUiSelectableTableCellVisible(rect, state.selectedRow, rowCount, state.scrollOffset, style);
+    }
+    return result;
 }
 
 } // namespace
@@ -3346,7 +3616,10 @@ void Game::updateOperationSettings(const Input& input, UiContext& ui)
         ui.emitSound(UiSoundEvent::TabSwitch);
     }
 
-    const auto tabItems = operationSettingsTabItems();
+    std::array<UiTabItem, OperationSettingsCategoryCount> tabItems{};
+    for (int i = 0; i < OperationSettingsCategoryCount; ++i) {
+        tabItems[static_cast<std::size_t>(i)] = {OperationSettingsCategoryLabels[i], true};
+    }
     const auto tabRects = operationSettingsTabRects();
     UiTabsInput tabsInput{};
     const int selectedTab = updateUiSubTabs(
@@ -3373,7 +3646,7 @@ void Game::updateOperationSettings(const Input& input, UiContext& ui)
     }
 
     const auto columns = operationSettingsTableColumns();
-    const UiSelectableTableResult tableResult = updateUiSelectableTable(
+    const UiSelectableTableResult tableResult = updateOperationSettingsTableClickSelection(
         operationSettingsTable_,
         ui,
         input,
@@ -3383,7 +3656,8 @@ void Game::updateOperationSettings(const Input& input, UiContext& ui)
         static_cast<int>(columns.size()),
         operationSettingsTableStyle());
 
-    const bool tableCommitted = tableResult.pressedRow >= 0 ||
+    const bool tableCommitted =
+        tableResult.pressedColumn >= OperationSettingsColumnKeyboardMouse ||
         input.confirmPressed() ||
         input.useItemPressed();
     if (tableCommitted && !rows.empty()) {
@@ -3404,20 +3678,16 @@ void Game::updateOperationSettings(const Input& input, UiContext& ui)
         return;
     }
 
-    constexpr int ButtonCount = 5;
+    constexpr int ButtonCount = 3;
     const InputAction selectedAction = operationSettingsSelectedAction(operationSettingsTable_, operationSettingsCategory_);
     for (int i = 0; i < ButtonCount; ++i) {
         const UiRect button = optionsFooterButtonRect(i, ButtonCount);
         if (ui.pressed(button)) {
-            ui.emitSound(i == 0 ? UiSoundEvent::Cancel : UiSoundEvent::Confirm);
+            ui.emitSound(UiSoundEvent::Confirm);
             if (i == 0) {
-                leavePausePage();
-            } else if (i == 1) {
                 clearOperationSettingsBinding(selectedAction, operationSettingsTable_.selectedColumn);
-            } else if (i == 2) {
+            } else if (i == 1) {
                 resetOperationSettingsAction(selectedAction);
-            } else if (i == 3) {
-                resetOperationSettingsCategory();
             } else {
                 openUiConfirmDialog(
                     operationSettingsResetAllConfirm_,
@@ -3462,12 +3732,22 @@ void Game::updateAudioSettings(const Input& input, UiContext& ui)
         ui.emitSound(UiSoundEvent::Confirm);
     }
 
+    const auto values = audioSettingsRowValueTexts(optionsSettings_);
+    const auto tabItems = audioSettingsTabItems(values);
+    const auto tabRects = audioSettingsRowRects();
+    const int clickedRow = updateClickedVerticalTabSelection(
+        ui,
+        tabItems.data(),
+        tabRects.data(),
+        static_cast<int>(tabItems.size()));
+    if (clickedRow >= 0) {
+        audioSettingsSelection_ = clickedRow;
+        ui.emitCursorMoveIfChanged(previousSelection, audioSettingsSelection_);
+        return;
+    }
+
     for (int row = 0; row < AudioSettingsRowCount; ++row) {
-        const UiRect rowRect = audioSettingsRowRect(row);
         const UiRect sliderRect = audioSettingsSliderRect(row);
-        if (rowRect.contains(ui.mouse()) && !ui.pointerConsumed()) {
-            audioSettingsSelection_ = row;
-        }
         if (input.mouseLeftHeld() && sliderRect.contains(ui.mouse()) && !ui.pointerConsumed()) {
             audioSettingsSelection_ = row;
             const float value = clamp((ui.mouse().x - sliderRect.pos.x) / std::max(1.0f, sliderRect.size.x), 0.0f, 1.0f);
@@ -3476,25 +3756,15 @@ void Game::updateAudioSettings(const Input& input, UiContext& ui)
             ui.emitCursorMoveIfChanged(previousSelection, audioSettingsSelection_);
             return;
         }
-        if (ui.pressed(rowRect)) {
-            audioSettingsSelection_ = row;
-            ui.emitCursorMoveIfChanged(previousSelection, audioSettingsSelection_);
-            return;
-        }
     }
 
     ui.emitCursorMoveIfChanged(previousSelection, audioSettingsSelection_);
-    constexpr int ButtonCount = 2;
+    constexpr int ButtonCount = 1;
     for (int i = 0; i < ButtonCount; ++i) {
         if (ui.pressed(optionsFooterButtonRect(i, ButtonCount))) {
-            if (i == 0) {
-                ui.emitSound(UiSoundEvent::Cancel);
-                leavePausePage();
-            } else {
-                ui.emitSound(UiSoundEvent::Confirm);
-                optionsSettings_.audio = AudioSettings{};
-                applyOptionsSettings("音量を初期化しました");
-            }
+            ui.emitSound(UiSoundEvent::Confirm);
+            optionsSettings_.audio = AudioSettings{};
+            applyOptionsSettings("音量を初期化しました");
             ui.block(panel);
             return;
         }
@@ -3536,11 +3806,25 @@ void Game::updateVideoSettings(const Input& input, UiContext& ui)
         ui.emitSound(UiSoundEvent::Confirm);
     }
 
-    for (int row = 0; row < VideoSettingsRowCount; ++row) {
-        const UiRect rowRect = videoSettingsRowRect(row);
-        if (rowRect.contains(ui.mouse()) && !ui.pointerConsumed()) {
-            videoSettingsSelection_ = row;
+    const auto values = videoSettingsRowValueTexts(optionsSettings_);
+    const auto tabItems = videoSettingsTabItems(values);
+    const auto tabRects = videoSettingsRowRects();
+    const int clickedRow = updateClickedVerticalTabSelection(
+        ui,
+        tabItems.data(),
+        tabRects.data(),
+        static_cast<int>(tabItems.size()));
+    if (clickedRow >= 0) {
+        videoSettingsSelection_ = clickedRow;
+        if (clickedRow != 4) {
+            applyVideoRow(clickedRow, 1);
+            ui.emitSound(UiSoundEvent::Confirm);
         }
+        ui.emitCursorMoveIfChanged(previousSelection, videoSettingsSelection_);
+        return;
+    }
+
+    for (int row = 0; row < VideoSettingsRowCount; ++row) {
         if (row == 4) {
             const UiRect sliderRect = videoBrightnessSliderRect();
             if (input.mouseLeftHeld() && sliderRect.contains(ui.mouse()) && !ui.pointerConsumed()) {
@@ -3550,36 +3834,19 @@ void Game::updateVideoSettings(const Input& input, UiContext& ui)
                 ui.emitCursorMoveIfChanged(previousSelection, videoSettingsSelection_);
                 return;
             }
-            if (ui.pressed(rowRect)) {
-                videoSettingsSelection_ = row;
-                ui.emitCursorMoveIfChanged(previousSelection, videoSettingsSelection_);
-                return;
-            }
             continue;
-        }
-        if (ui.pressed(rowRect)) {
-            videoSettingsSelection_ = row;
-            applyVideoRow(row, 1);
-            ui.emitSound(UiSoundEvent::Confirm);
-            ui.emitCursorMoveIfChanged(previousSelection, videoSettingsSelection_);
-            return;
         }
     }
 
     ui.emitCursorMoveIfChanged(previousSelection, videoSettingsSelection_);
-    constexpr int ButtonCount = 2;
+    constexpr int ButtonCount = 1;
     for (int i = 0; i < ButtonCount; ++i) {
         if (ui.pressed(optionsFooterButtonRect(i, ButtonCount))) {
-            if (i == 0) {
-                ui.emitSound(UiSoundEvent::Cancel);
-                leavePausePage();
-            } else {
-                ui.emitSound(UiSoundEvent::Confirm);
-                optionsSettings_.video = VideoSettings{};
-                optionsSettings_.performance = PerformanceSettings{};
-                optionsSettings_.presentation = PresentationSettings{};
-                applyOptionsSettings("画面設定を初期化しました");
-            }
+            ui.emitSound(UiSoundEvent::Confirm);
+            optionsSettings_.video = VideoSettings{};
+            optionsSettings_.performance = PerformanceSettings{};
+            optionsSettings_.presentation = PresentationSettings{};
+            applyOptionsSettings("画面設定を初期化しました");
             ui.block(panel);
             return;
         }
@@ -5311,7 +5578,10 @@ void Game::renderRingScreen(Renderer& renderer, float totalTime) const
 void Game::renderOperationSettings(Renderer& renderer) const
 {
     const UiRect tableRect = operationSettingsTableRect();
-    const auto tabItems = operationSettingsTabItems();
+    std::array<UiTabItem, OperationSettingsCategoryCount> tabItems{};
+    for (int i = 0; i < OperationSettingsCategoryCount; ++i) {
+        tabItems[static_cast<std::size_t>(i)] = {OperationSettingsCategoryLabels[i], true};
+    }
     const auto tabRects = operationSettingsTabRects();
     drawUiSubTabs(
         renderer,
@@ -5329,20 +5599,36 @@ void Game::renderOperationSettings(Renderer& renderer) const
         static_cast<int>(rows.size()),
         operationSettingsTable_.scrollOffset,
         tableStyle);
-    drawUiSelectableTableFrame(
-        renderer,
-        tableLayout,
-        columns.data(),
-        static_cast<int>(columns.size()),
-        tableStyle);
+    renderer.fillRect(tableLayout.header.pos, tableLayout.header.size, tableStyle.headerFill);
+    for (int column = 0; column < OperationSettingsColumnCount; ++column) {
+        const UiRect cell{
+            {
+                tableLayout.scroll.content.pos.x +
+                    (column == 0 ? 0.0f :
+                        columns[0].width + tableStyle.columnGap +
+                            (column == 1 ? 0.0f : columns[1].width + tableStyle.columnGap)),
+                tableLayout.header.pos.y,
+            },
+            {columns[static_cast<std::size_t>(column)].width, tableLayout.header.size.y},
+        };
+        const Vec2 textSize = renderer.measureText(columns[static_cast<std::size_t>(column)].label, tableStyle.headerTextScale);
+        const Vec2 textPos{
+            cell.pos.x + std::max(0.0f, (cell.size.x - textSize.x) * 0.5f),
+            cell.pos.y + std::max(0.0f, (cell.size.y - textSize.y) * 0.5f),
+        };
+        renderer.drawText(textPos, columns[static_cast<std::size_t>(column)].label, tableStyle.headerText, tableStyle.headerTextScale);
+    }
 
+    renderer.pushClipRect(tableLayout.scroll.viewport.pos, tableLayout.scroll.viewport.size);
     for (int row = 0; row < static_cast<int>(rows.size()); ++row) {
         const UiRect rowRect = uiSelectableTableRowRect(tableLayout, row, tableStyle);
         if (!uiScrollAreaRectVisible(tableLayout.scroll, rowRect)) {
             continue;
         }
         const bool selectedRow = row == operationSettingsTable_.selectedRow;
-        renderer.fillRect(rowRect.pos, rowRect.size, selectedRow ? tableStyle.rowFillHot : tableStyle.rowFill);
+        if (selectedRow) {
+            renderer.fillRect(rowRect.pos, rowRect.size, tableStyle.rowFillHot);
+        }
         for (int column = 0; column < OperationSettingsColumnCount; ++column) {
             const UiRect cell = uiSelectableTableCellRect(
                 tableLayout,
@@ -5352,7 +5638,9 @@ void Game::renderOperationSettings(Renderer& renderer) const
                 column,
                 tableStyle);
             const bool selectedCell = selectedRow && column == operationSettingsTable_.selectedColumn;
-            renderer.drawRect(cell.pos, cell.size, selectedCell ? tableStyle.cellOutlineHot : tableStyle.cellOutline);
+            if (selectedCell) {
+                renderer.fillRect(cell.pos, cell.size, Color{56, 76, 154, 190});
+            }
             if (column == OperationSettingsColumnAction) {
                 drawOperationSettingsCellText(
                     renderer,
@@ -5362,21 +5650,21 @@ void Game::renderOperationSettings(Renderer& renderer) const
                     tableStyle.cellTextScale,
                     tableStyle.cellPaddingX);
             } else {
-                const std::string text = operationSettingsBindingText(
+                const std::string text = operationSettingsBindingGlyphText(
                     operationSettingsBindings_,
                     rows[static_cast<std::size_t>(row)].action,
                     column);
                 const Color color = text == "未設定" ? tableStyle.disabledText : tableStyle.text;
-                drawOperationSettingsCellText(
+                drawOperationSettingsBindingCell(
                     renderer,
                     cell,
                     text,
                     color,
-                    tableStyle.cellTextScale,
                     tableStyle.cellPaddingX);
             }
         }
     }
+    renderer.popClipRect();
     drawUiScrollAreaScrollbar(renderer, tableLayout.scroll, tableStyle.scroll);
 
     if (!rows.empty()) {
@@ -5388,18 +5676,17 @@ void Game::renderOperationSettings(Renderer& renderer) const
         const OperationSettingsActionRow& selectedRow = rows[static_cast<std::size_t>(row)];
         drawOptionsHelpWindow(
             renderer,
+            operationSettingsHelpWindowRect(),
             operationSettingsHelpTitle(selectedRow, column),
             operationSettingsHelpDescription(selectedRow.action, column),
             operationSettingsStatus_);
     }
 
-    constexpr int ButtonCount = 5;
+    constexpr int ButtonCount = 3;
     constexpr const char* ButtonLabels[ButtonCount] = {
-        "戻る",
         "削除",
-        "項目初期化",
-        "分類初期化",
-        "全初期化",
+        "選択中の操作を初期化",
+        "操作設定を全初期化",
     };
     for (int i = 0; i < ButtonCount; ++i) {
         const bool hot = false;
@@ -5408,7 +5695,7 @@ void Game::renderOperationSettings(Renderer& renderer) const
             optionsFooterButtonRect(i, ButtonCount),
             ButtonLabels[i],
             hot,
-            i == 0 ? uiCancelButtonStyle() : uiActionButtonStyle());
+            uiActionButtonStyle());
     }
 
     if (operationSettingsCapture_.active()) {
@@ -5463,30 +5750,26 @@ void Game::renderOperationSettings(Renderer& renderer) const
 
 void Game::renderAudioSettings(Renderer& renderer) const
 {
-    for (int row = 0; row < AudioSettingsRowCount; ++row) {
-        const UiRect rowRect = audioSettingsRowRect(row);
-        const bool hot = row == audioSettingsSelection_;
-        renderer.fillRect(rowRect.pos, rowRect.size, hot ? Color{42, 58, 118, 224} : Color{20, 30, 68, 190});
-        renderer.drawRect(rowRect.pos, rowRect.size, hot ? Color{255, 230, 150, 255} : Color{112, 128, 178, 160});
-        if (hot) {
-            renderer.fillRect(rowRect.pos + Vec2{3.0f, 6.0f}, {5.0f, rowRect.size.y - 12.0f}, {255, 230, 150, 255});
-        }
+    const auto values = audioSettingsRowValueTexts(optionsSettings_);
+    const auto tabItems = audioSettingsTabItems(values);
+    const auto tabRects = audioSettingsRowRects();
+    drawUiVerticalTabs(
+        renderer,
+        UiTabsState{},
+        audioSettingsSelection_,
+        tabItems.data(),
+        static_cast<int>(tabItems.size()),
+        tabRects.data(),
+        optionsVerticalTabStyle());
 
+    for (int row = 0; row < AudioSettingsRowCount; ++row) {
         const float value = audioSettingsRowValue(optionsSettings_, row);
         const UiRect slider = audioSettingsSliderRect(row);
-        renderer.drawText(rowRect.pos + Vec2{20.0f, 17.0f}, audioSettingsRowLabel(row), ui::Text, 2);
         UiGaugeStyle gaugeStyle;
         gaugeStyle.tickCount = 10;
         gaugeStyle.fill.start = row == 0 ? Color{132, 230, 250, 230} : (row == 1 ? Color{160, 206, 255, 230} : Color{255, 206, 132, 230});
         gaugeStyle.fill.end = row == 0 ? Color{190, 246, 220, 230} : (row == 1 ? Color{132, 230, 250, 230} : Color{255, 230, 150, 230});
         drawUiGauge(renderer, slider, value, gaugeStyle);
-        const std::string percent = volumePercentText(value);
-        const Vec2 percentSize = renderer.measureText(percent, 2);
-        renderer.drawText(
-            {rowRect.pos.x + rowRect.size.x - percentSize.x - 22.0f, rowRect.pos.y + 17.0f},
-            percent,
-            ui::Text,
-            2);
     }
 
     drawOptionsHelpWindow(
@@ -5495,33 +5778,41 @@ void Game::renderAudioSettings(Renderer& renderer) const
         audioSettingsHelpText(audioSettingsSelection_),
         optionsStatus_);
 
-    constexpr int ButtonCount = 2;
-    constexpr const char* ButtonLabels[ButtonCount] = {"戻る", "音量初期化"};
+    constexpr int ButtonCount = 1;
+    constexpr const char* ButtonLabels[ButtonCount] = {"音量設定を全初期化"};
     for (int i = 0; i < ButtonCount; ++i) {
         drawUiButton(
             renderer,
             optionsFooterButtonRect(i, ButtonCount),
             ButtonLabels[i],
             false,
-            i == 0 ? uiCancelButtonStyle() : uiActionButtonStyle());
+            uiActionButtonStyle());
     }
 }
 
 void Game::renderVideoSettings(Renderer& renderer) const
 {
-    for (int row = 0; row < VideoSettingsRowCount; ++row) {
-        if (row == 4) {
-            drawVideoBrightnessRow(renderer, optionsSettings_, row == videoSettingsSelection_);
-            continue;
-        }
-        drawUiSmallSelectButton(
-            renderer,
-            videoSettingsRowRect(row),
-            videoSettingsRowLabel(row),
-            videoSettingsRowValueText(optionsSettings_, row),
-            row == videoSettingsSelection_,
-            false);
-    }
+    const auto values = videoSettingsRowValueTexts(optionsSettings_);
+    const auto tabItems = videoSettingsTabItems(values);
+    const auto tabRects = videoSettingsRowRects();
+    drawUiVerticalTabs(
+        renderer,
+        UiTabsState{},
+        videoSettingsSelection_,
+        tabItems.data(),
+        static_cast<int>(tabItems.size()),
+        tabRects.data(),
+        optionsVerticalTabStyle());
+
+    UiGaugeStyle brightnessGaugeStyle;
+    brightnessGaugeStyle.tickCount = 6;
+    brightnessGaugeStyle.fill.start = Color{236, 220, 150, 230};
+    brightnessGaugeStyle.fill.end = Color{255, 246, 210, 230};
+    drawUiGauge(
+        renderer,
+        videoBrightnessSliderRect(),
+        screenBrightnessGaugeValue(optionsSettings_.presentation.brightness),
+        brightnessGaugeStyle);
 
     drawOptionsHelpWindow(
         renderer,
@@ -5529,15 +5820,15 @@ void Game::renderVideoSettings(Renderer& renderer) const
         videoSettingsHelpText(videoSettingsSelection_),
         optionsStatus_);
 
-    constexpr int ButtonCount = 2;
-    constexpr const char* ButtonLabels[ButtonCount] = {"戻る", "画面初期化"};
+    constexpr int ButtonCount = 1;
+    constexpr const char* ButtonLabels[ButtonCount] = {"画面設定を全初期化"};
     for (int i = 0; i < ButtonCount; ++i) {
         drawUiButton(
             renderer,
             optionsFooterButtonRect(i, ButtonCount),
             ButtonLabels[i],
             false,
-            i == 0 ? uiCancelButtonStyle() : uiActionButtonStyle());
+            uiActionButtonStyle());
     }
 }
 
@@ -5580,10 +5871,10 @@ void Game::renderPauseMenu(Renderer& renderer) const
             ? "Z/X でアクティブリング切替  Esc 戻る"
             : (pausePage_ == PauseMenuPage::Options
                 ? (optionsPage_ == OptionsPageOperation
-                    ? "Z/X 設定切替  Q/E 分類切替  ↑/↓ 行選択  ←/→ 列選択  F/Enter 変更\nEsc 戻る"
+                    ? "Z/X 設定切替  Q/E 分類切替  ↑/↓ 行選択  ←/→ 列選択  F/Enter 変更  Esc 戻る"
                     : (optionsPage_ == OptionsPageAudio
-                        ? "Z/X 設定切替  ↑/↓ 項目選択  ←/→ 音量変更\nEsc 戻る"
-                        : "Z/X 設定切替  ↑/↓ 項目選択  ←/→ 変更  F/Enter 切替\nEsc 戻る"))
+                        ? "Z/X 設定切替  ↑/↓ 項目選択  ←/→ 音量変更  Esc 戻る"
+                        : "Z/X 設定切替  ↑/↓ 項目選択  ←/→ 変更  F/Enter 切替  Esc 戻る"))
                 : "F/Enter 決定  Esc 戻る"));
     UiWindowScope pauseWindow(
         renderer,
@@ -6391,7 +6682,7 @@ void Game::render(Renderer& renderer, const Time& time)
         [&]() {
             if (renderer.hasPlayerSheet()) {
                 const int playerFrame = player_.spriteFrameIndex();
-                const bool playerFlip = player_.facing.x > 0.0f;
+                const bool playerFlip = player_.spriteFlipHorizontal;
                 renderer.drawPlayerSpriteNaturalSize(
                     playerFrame,
                     playerVisualFootAnchor,

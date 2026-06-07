@@ -985,6 +985,7 @@ struct EnemyColumns {
     int name = -1;
     int description = -1;
     int imageNumber = -1;
+    int baseLevel = -1;
     int hp = -1;
     int contactAttackPower = -1;
     int contactDamageType = -1;
@@ -1024,6 +1025,7 @@ bool findEnemyColumns(const GoogleSheetRow& headers, EnemyColumns& outColumns, s
     columns.name = findColumn(headers, {"名前", "name"});
     columns.description = findColumn(headers, {"説明文", "description"});
     columns.imageNumber = findColumn(headers, {"画像番号", "image_number", "imageNumber"});
+    columns.baseLevel = findColumn(headers, {"基準レベル", "base_level", "baseLevel"});
     columns.hp = findColumn(headers, {"HP", "hp"});
     columns.contactAttackPower = findColumn(headers, {"接触攻撃力", "contact_attack_power"});
     columns.contactDamageType = findColumn(headers, {"接触ダメージ種別", "contact_damage_type"});
@@ -1263,6 +1265,18 @@ bool parseEnemies(
         enemy.name = cellAt(row, columns.name);
         enemy.description = cellAt(row, columns.description);
         enemy.imageNumber = parseIntColumnOrDefault(cellAt(row, columns.imageNumber), 0, "Enemies", rowIndex, enemy.id, "画像番号", catalog);
+        enemy.baseLevel = columns.baseLevel >= 0
+            ? parseIntColumnOrDefault(cellAt(row, columns.baseLevel), 1, "Enemies", rowIndex, enemy.id, "基準レベル", catalog)
+            : 1;
+        if (enemy.baseLevel <= 0) {
+            addIssue(
+                catalog,
+                DbValidationSeverity::Warning,
+                DbValidationCategory::NumericValue,
+                "Enemies row " + std::to_string(rowIndex + 1) + " id=\"" + enemy.id +
+                    "\" 基準レベル: must be > 0; using 1");
+            enemy.baseLevel = 1;
+        }
         enemy.hp = parseIntColumnOrDefault(cellAt(row, columns.hp), 1, "Enemies", rowIndex, enemy.id, "HP", catalog);
         enemy.contactAttackPower = parseIntColumnOrDefault(cellAt(row, columns.contactAttackPower), 0, "Enemies", rowIndex, enemy.id, "接触攻撃力", catalog);
         enemy.contactDamageType = cellAt(row, columns.contactDamageType);

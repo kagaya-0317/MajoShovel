@@ -8,9 +8,65 @@
 #include <array>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace majo {
+
+enum class EnemyVariantTier {
+    Normal,
+    Deep,
+    Abyss,
+};
+
+inline constexpr int EnemyDeepVariantLevelBonus = 35;
+inline constexpr int EnemyAbyssVariantLevelBonus = 70;
+
+inline int enemyVariantLevelBonus(EnemyVariantTier tier)
+{
+    switch (tier) {
+    case EnemyVariantTier::Deep:
+        return EnemyDeepVariantLevelBonus;
+    case EnemyVariantTier::Abyss:
+        return EnemyAbyssVariantLevelBonus;
+    case EnemyVariantTier::Normal:
+        break;
+    }
+    return 0;
+}
+
+inline std::string_view enemyVariantNamePrefix(EnemyVariantTier tier)
+{
+    switch (tier) {
+    case EnemyVariantTier::Deep:
+        return "深層の";
+    case EnemyVariantTier::Abyss:
+        return "奈落の";
+    case EnemyVariantTier::Normal:
+        break;
+    }
+    return {};
+}
+
+inline std::string_view enemyVariantObjectIdSegment(EnemyVariantTier tier)
+{
+    switch (tier) {
+    case EnemyVariantTier::Deep:
+        return "deep_";
+    case EnemyVariantTier::Abyss:
+        return "abyss_";
+    case EnemyVariantTier::Normal:
+        break;
+    }
+    return {};
+}
+
+inline std::string enemyVariantDisplayName(std::string_view baseName, EnemyVariantTier tier)
+{
+    std::string name(enemyVariantNamePrefix(tier));
+    name += baseName;
+    return name;
+}
 
 enum class EnemyAwarenessState {
     Unaware,
@@ -171,6 +227,8 @@ struct Enemy {
     std::string enemyId;
     std::string enemyName;
     const EnemyDefinition* definition = nullptr;
+    EnemyVariantTier variantTier = EnemyVariantTier::Normal;
+    int effectiveBaseLevel = 1;
     std::string behaviorId;
     std::vector<std::string> behaviorIds;
     std::string projectileId;

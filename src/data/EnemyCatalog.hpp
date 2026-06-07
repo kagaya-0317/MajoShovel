@@ -25,6 +25,7 @@ struct EnemyDefinition {
     std::string name;
     std::string description;
     int imageNumber = 0;
+    int baseLevel = 1;
     int hp = 1;
     int contactAttackPower = 0;
     std::string contactDamageType = "none";

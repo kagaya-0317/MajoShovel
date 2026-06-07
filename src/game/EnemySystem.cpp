@@ -21,6 +21,7 @@
 #include <cctype>
 #include <charconv>
 #include <cmath>
+#include <cstddef>
 #include <cstdint>
 #include <cstdlib>
 #include <initializer_list>
@@ -426,6 +427,188 @@ bool isExcludedFromNormalDugSpawn(const EnemyDefinition& definition)
         definition.name.find("ジャンクラブ") != std::string::npos ||
         definition.name.find("アストラグナ") != std::string::npos ||
         definition.name.find("星脈竜") != std::string::npos;
+}
+
+bool isRoguelikeEnemyLevelSelectionStage(std::string_view stageId)
+{
+    return stageId == "stage_04_astral_mine";
+}
+
+int roguelikeTargetBaseLevelForDepthRank(int depthRank)
+{
+    constexpr std::array<int, 9> InitialLevels{{3, 7, 11, 15, 20, 25, 30, 35, 40}};
+    const int rank = std::max(1, depthRank);
+    if (rank <= static_cast<int>(InitialLevels.size())) {
+        return InitialLevels[static_cast<std::size_t>(rank - 1)];
+    }
+    return std::min(100, InitialLevels.back() + (rank - static_cast<int>(InitialLevels.size())) * 5);
+}
+
+std::string roguelikeEnemyPoolKey(std::string_view stageId, int depthRank)
+{
+    return std::string(stageId) + ":" + std::to_string(std::max(1, depthRank));
+}
+
+std::array<EnemyVariantTier, 3> enemySpawnVariantTiers()
+{
+    return {EnemyVariantTier::Normal, EnemyVariantTier::Deep, EnemyVariantTier::Abyss};
+}
+
+std::string baseEnemyName(const EnemyDefinition& definition)
+{
+    return definition.name.empty() ? definition.id : definition.name;
+}
+
+Color multiplyRgb(Color color, Color multiplier)
+{
+    color.r = static_cast<unsigned char>(static_cast<int>(color.r) * static_cast<int>(multiplier.r) / 255);
+    color.g = static_cast<unsigned char>(static_cast<int>(color.g) * static_cast<int>(multiplier.g) / 255);
+    color.b = static_cast<unsigned char>(static_cast<int>(color.b) * static_cast<int>(multiplier.b) / 255);
+    return color;
+}
+
+Color enemyVariantTintMultiplier(EnemyVariantTier tier)
+{
+    switch (tier) {
+    case EnemyVariantTier::Deep:
+        return {170, 170, 192, 255};
+    case EnemyVariantTier::Abyss:
+        return {118, 118, 142, 255};
+    case EnemyVariantTier::Normal:
+        break;
+    }
+    return {255, 255, 255, 255};
+}
+
+Color enemyVariantOutlineColor(EnemyVariantTier tier, Color fallback)
+{
+    switch (tier) {
+    case EnemyVariantTier::Deep:
+        return {42, 34, 58, fallback.a};
+    case EnemyVariantTier::Abyss:
+        return {24, 20, 34, fallback.a};
+    case EnemyVariantTier::Normal:
+        break;
+    }
+    return fallback;
+}
+
+enum class EnemyStatKind {
+    Hp,
+    ContactAttack,
+    Xp,
+    Money,
+};
+
+int enemyStatValue(const EnemyDefinition& definition, EnemyStatKind kind)
+{
+    switch (kind) {
+    case EnemyStatKind::Hp:
+        return definition.hp;
+    case EnemyStatKind::ContactAttack:
+        return definition.contactAttackPower;
+    case EnemyStatKind::Xp:
+        return definition.xp;
+    case EnemyStatKind::Money:
+        return definition.money;
+    }
+    return 0;
+}
+
+double enemyStatFallbackGrowthPerLevel(EnemyStatKind kind)
+{
+    switch (kind) {
+    case EnemyStatKind::Hp:
+        return 0.060;
+    case EnemyStatKind::ContactAttack:
+        return 0.040;
+    case EnemyStatKind::Xp:
+    case EnemyStatKind::Money:
+        return 0.045;
+    }
+    return 0.045;
+}
+
+struct EnemyStatRegression {
+    bool valid = false;
+    double intercept = 0.0;
+    double slope = 0.0;
+
+    double estimate(int level, double fallback) const
+    {
+        if (!valid) {
+            return std::max(1.0, fallback);
+        }
+        return std::max(1.0, intercept + slope * static_cast<double>(std::max(1, level)));
+    }
+};
+
+EnemyStatRegression buildEnemyStatRegression(const EnemyCatalog& catalog, EnemyStatKind kind)
+{
+    double count = 0.0;
+    double sumX = 0.0;
+    double sumY = 0.0;
+    double sumXX = 0.0;
+    double sumXY = 0.0;
+    for (const EnemyDefinition& definition : catalog.enemies) {
+        if (isExcludedFromNormalDugSpawn(definition) || definition.baseLevel <= 0) {
+            continue;
+        }
+        const int value = enemyStatValue(definition, kind);
+        if (value <= 0) {
+            continue;
+        }
+        const double x = static_cast<double>(definition.baseLevel);
+        const double y = static_cast<double>(value);
+        count += 1.0;
+        sumX += x;
+        sumY += y;
+        sumXX += x * x;
+        sumXY += x * y;
+    }
+    if (count < 2.0) {
+        return {};
+    }
+
+    const double denom = count * sumXX - sumX * sumX;
+    if (std::abs(denom) < 0.0001) {
+        return {.valid = true, .intercept = sumY / count, .slope = 0.0};
+    }
+    const double slope = std::max(0.0, (count * sumXY - sumX * sumY) / denom);
+    const double intercept = (sumY - slope * sumX) / count;
+    return {.valid = true, .intercept = intercept, .slope = slope};
+}
+
+int scaledEnemyStatForEffectiveLevel(
+    const EnemyCatalog& catalog,
+    const EnemyDefinition& definition,
+    EnemyStatKind kind,
+    int baseValue,
+    int effectiveBaseLevel)
+{
+    if (baseValue <= 0) {
+        return 0;
+    }
+    const int baseLevel = std::max(1, definition.baseLevel);
+    const int targetLevel = std::max(baseLevel, effectiveBaseLevel);
+    if (targetLevel <= baseLevel) {
+        return baseValue;
+    }
+
+    const EnemyStatRegression regression = buildEnemyStatRegression(catalog, kind);
+    const double baseExpected = regression.estimate(baseLevel, static_cast<double>(baseValue));
+    double targetExpected = regression.estimate(targetLevel, static_cast<double>(baseValue));
+    if (targetExpected <= baseExpected) {
+        targetExpected = baseExpected *
+            (1.0 + static_cast<double>(targetLevel - baseLevel) * enemyStatFallbackGrowthPerLevel(kind));
+    }
+
+    const double relative = std::clamp(
+        static_cast<double>(baseValue) / std::max(1.0, baseExpected),
+        0.35,
+        kind == EnemyStatKind::ContactAttack ? 4.0 : 3.0);
+    const int scaled = static_cast<int>(std::lround(targetExpected * relative));
+    return std::max(baseValue + 1, scaled);
 }
 
 int applyDefenseModifier(const EntityStatus& status, int damage)
@@ -1434,7 +1617,9 @@ float captureChanceFor(const Enemy& enemy, float chanceMultiplier = 1.0f)
 
 std::string capturedObjectIdFor(const Enemy& enemy)
 {
-    return "captured_" + (enemy.enemyId.empty() ? std::string(DefaultEnemyId) : enemy.enemyId);
+    return "captured_" +
+        std::string(enemyVariantObjectIdSegment(enemy.variantTier)) +
+        (enemy.enemyId.empty() ? std::string(DefaultEnemyId) : enemy.enemyId);
 }
 
 ItemData makeCapturedItemData(const Enemy& enemy)
@@ -1455,6 +1640,7 @@ ItemData makeCapturedItemData(const Enemy& enemy)
     item.visual.source = ItemVisualSource::Enemy;
     item.visual.imageNumber = definition.imageNumber;
     item.visual.sourceId = definition.id.empty() ? item.id : definition.id;
+    item.visual.enemyVariantLevelBonus = enemyVariantLevelBonus(enemy.variantTier);
     item.description = definition.capturedDescription;
     item.normalEffects = definition.capturedNormalEffects;
     item.orbitEffects = definition.capturedOrbitEffects;
@@ -1479,6 +1665,12 @@ ItemData makeCapturedItemData(const Enemy& enemy)
     item.durability = definition.capturedDurability;
     item.weightKg = definition.capturedWeight;
     item.tags = definition.capturedTags;
+    if (enemy.variantTier != EnemyVariantTier::Normal) {
+        item.tags.push_back("captured_variant");
+        item.tags.push_back(enemy.variantTier == EnemyVariantTier::Abyss ? "captured_abyss" : "captured_deep");
+        item.tags.push_back("codex_hidden");
+        item.tags.push_back("no_drop");
+    }
     item.effectText = definition.capturedEffectText;
     item.capturedBehaviorIds = definition.capturedBehaviorIds;
     item.capturedBehaviorSpecs.reserve(definition.capturedBehaviorSpecs.size());
@@ -2533,6 +2725,10 @@ EnemyImageDrawOptions enemyImageOptionsFor(const Enemy& enemy)
         imageOptions.tint = statusVisual.tint;
     }
     imageOptions.outlineColor = enemy.isBoss ? Color{255, 210, 96, 255} : Color{80, 18, 28, 255};
+    if (enemy.hitFlash <= 0.0f && !enemy.death.active && enemy.variantTier != EnemyVariantTier::Normal) {
+        imageOptions.tint = multiplyRgb(imageOptions.tint, enemyVariantTintMultiplier(enemy.variantTier));
+        imageOptions.outlineColor = enemyVariantOutlineColor(enemy.variantTier, imageOptions.outlineColor);
+    }
     if (enemy.death.active) {
         const unsigned char shade = enemyDeathShade(enemy);
         imageOptions.tint = {shade, shade, shade, 255};
@@ -2919,7 +3115,10 @@ void drawEnemyVisual(Renderer& renderer, const Enemy& enemy, bool captureHighlig
         const float ratio = enemy.spawnDuration > 0.0f ? enemy.spawnTimer / enemy.spawnDuration : 0.0f;
         const float pulse = 1.0f + (1.0f - ratio) * 0.9f;
         const float visualRadius = enemyVisualRadius(enemy);
-        const Color spawnColor = enemy.isBoss ? Color{255, 180, 80, 230} : colorForEnemy(enemy);
+        Color spawnColor = enemy.isBoss ? Color{255, 180, 80, 230} : colorForEnemy(enemy);
+        if (enemy.variantTier != EnemyVariantTier::Normal) {
+            spawnColor = multiplyRgb(spawnColor, enemyVariantTintMultiplier(enemy.variantTier));
+        }
         renderer.drawCircle(drawPosition, visualRadius * pulse + 4.0f, spawnColor);
         renderer.drawCircle(drawPosition, visualRadius * 0.55f, enemy.isBoss ? Color{255, 232, 140, 210} : Color{255, 160, 110, 190});
         drawAwarenessIcon(visualRadius);
@@ -2932,6 +3131,9 @@ void drawEnemyVisual(Renderer& renderer, const Enemy& enemy, bool captureHighlig
     }
     if (enemy.death.active) {
         color = darkenEnemyColorForDeath(color, enemy);
+    }
+    if (enemy.hitFlash <= 0.0f && !enemy.death.active && enemy.variantTier != EnemyVariantTier::Normal) {
+        color = multiplyRgb(color, enemyVariantTintMultiplier(enemy.variantTier));
     }
     const float visualRadius = enemyVisualRadius(enemy);
     const ExplosionWarningVisual explosionWarning = countdownExplosionWarningVisual(enemy);
@@ -4509,13 +4711,137 @@ const EnemyDefinition* EnemySystem::chooseNormalRandomEnemyDefinition(const Enem
     return candidates[*selected];
 }
 
-const EnemyDefinition* EnemySystem::chooseDugSpawnEnemyDefinition(const EnemyCatalog& enemyCatalog, std::string_view stageId, int depthRank)
+EnemySystem::EnemySpawnSelection EnemySystem::chooseDugSpawnEnemy(const EnemyCatalog& enemyCatalog, std::string_view stageId, int depthRank)
 {
     if (enemyCatalog.enemies.empty()) {
         logSpawnWeightFallbackOnce(
             "empty_catalog",
             "Enemy spawn weight fallback: EnemyCatalog is empty; using default runtime enemy");
-        return nullptr;
+        return {};
+    }
+
+    if (isRoguelikeEnemyLevelSelectionStage(stageId)) {
+        const int targetBaseLevel = roguelikeTargetBaseLevelForDepthRank(depthRank);
+        const std::string poolKey = roguelikeEnemyPoolKey(stageId, depthRank);
+
+        auto poolIt = roguelikeEnemyPools_.find(poolKey);
+        if (poolIt == roguelikeEnemyPools_.end()) {
+            struct Candidate {
+                const EnemyDefinition* definition = nullptr;
+                EnemyVariantTier variantTier = EnemyVariantTier::Normal;
+                int effectiveBaseLevel = 1;
+                int distance = 0;
+            };
+
+            std::vector<Candidate> allCandidates;
+            allCandidates.reserve(enemyCatalog.enemies.size() * enemySpawnVariantTiers().size());
+            for (const EnemyDefinition& definition : enemyCatalog.enemies) {
+                if (isExcludedFromNormalDugSpawn(definition) || definition.id.empty() || definition.baseLevel <= 0) {
+                    continue;
+                }
+                for (EnemyVariantTier tier : enemySpawnVariantTiers()) {
+                    const int effectiveLevel = definition.baseLevel + enemyVariantLevelBonus(tier);
+                    allCandidates.push_back(Candidate{
+                        .definition = &definition,
+                        .variantTier = tier,
+                        .effectiveBaseLevel = effectiveLevel,
+                        .distance = std::abs(effectiveLevel - targetBaseLevel),
+                    });
+                }
+            }
+
+            std::vector<Candidate> filtered;
+            constexpr int MinPoolSize = 6;
+            constexpr int MaxPoolSize = 8;
+            for (int range = 1; range <= 70; ++range) {
+                filtered.clear();
+                for (const Candidate& candidate : allCandidates) {
+                    if (candidate.distance <= range) {
+                        filtered.push_back(candidate);
+                    }
+                }
+                if (static_cast<int>(filtered.size()) >= MinPoolSize || range == 70) {
+                    break;
+                }
+            }
+
+            std::vector<RoguelikeEnemyPoolEntry> pool;
+            if (!filtered.empty()) {
+                const int poolSize = std::min(
+                    static_cast<int>(filtered.size()),
+                    std::uniform_int_distribution<int>(MinPoolSize, MaxPoolSize)(rng_));
+                pool.reserve(static_cast<std::size_t>(poolSize));
+                while (static_cast<int>(pool.size()) < poolSize && !filtered.empty()) {
+                    std::vector<double> weights;
+                    weights.reserve(filtered.size());
+                    for (const Candidate& candidate : filtered) {
+                        weights.push_back(
+                            std::max(0.0, spawnBiasMultiplierFor(*candidate.definition)) *
+                            (1.0 / (1.0 + static_cast<double>(candidate.distance))));
+                    }
+                    const auto selected = selectWeightedIndex(weights, rng_);
+                    if (!selected || *selected >= filtered.size()) {
+                        break;
+                    }
+                    const Candidate& candidate = filtered[*selected];
+                    pool.push_back(RoguelikeEnemyPoolEntry{
+                        .enemyId = candidate.definition->id,
+                        .variantTier = candidate.variantTier,
+                        .effectiveBaseLevel = candidate.effectiveBaseLevel,
+                    });
+                    filtered.erase(filtered.begin() + static_cast<std::ptrdiff_t>(*selected));
+                }
+            }
+
+            poolIt = roguelikeEnemyPools_.emplace(poolKey, std::move(pool)).first;
+            if (poolIt->second.empty()) {
+                logSpawnWeightFallbackOnce(
+                    "roguelike_no_candidates:" + poolKey,
+                    "Enemy spawn weight fallback: no roguelike level candidates stage=\"" + std::string(stageId) +
+                        "\" depth=" + std::to_string(std::max(1, depthRank)) +
+                        " target_level=" + std::to_string(targetBaseLevel) +
+                        "; using simple random");
+            }
+        }
+
+        if (!poolIt->second.empty()) {
+            std::vector<const RoguelikeEnemyPoolEntry*> candidates;
+            std::vector<double> weights;
+            candidates.reserve(poolIt->second.size());
+            weights.reserve(poolIt->second.size());
+            for (const RoguelikeEnemyPoolEntry& entry : poolIt->second) {
+                const auto definitionIt = enemyCatalog.enemiesById.find(entry.enemyId);
+                if (definitionIt == enemyCatalog.enemiesById.end()) {
+                    continue;
+                }
+                const double weight = std::max(0.0, spawnBiasMultiplierFor(definitionIt->second)) *
+                    (1.0 / (1.0 + static_cast<double>(std::abs(entry.effectiveBaseLevel - targetBaseLevel))));
+                if (weight <= 0.0) {
+                    continue;
+                }
+                candidates.push_back(&entry);
+                weights.push_back(weight);
+            }
+            const auto selected = selectWeightedIndex(weights, rng_);
+            if (selected && *selected < candidates.size()) {
+                const RoguelikeEnemyPoolEntry& entry = *candidates[*selected];
+                const auto definitionIt = enemyCatalog.enemiesById.find(entry.enemyId);
+                if (definitionIt != enemyCatalog.enemiesById.end()) {
+                    return EnemySpawnSelection{
+                        .definition = &definitionIt->second,
+                        .variantTier = entry.variantTier,
+                        .effectiveBaseLevel = std::max(1, entry.effectiveBaseLevel),
+                    };
+                }
+            }
+        }
+
+        const EnemyDefinition* fallback = chooseNormalRandomEnemyDefinition(enemyCatalog);
+        return EnemySpawnSelection{
+            .definition = fallback,
+            .variantTier = EnemyVariantTier::Normal,
+            .effectiveBaseLevel = fallback != nullptr ? std::max(1, fallback->baseLevel) : 1,
+        };
     }
 
     const std::string columnName = resolveEnemySpawnWeightColumnName(stageId, depthRank);
@@ -4523,7 +4849,12 @@ const EnemyDefinition* EnemySystem::chooseDugSpawnEnemyDefinition(const EnemyCat
         logSpawnWeightFallbackOnce(
             "unknown_stage:" + std::string(stageId),
             "Enemy spawn weight fallback: unknown stageId=\"" + std::string(stageId) + "\"; using simple random");
-        return chooseNormalRandomEnemyDefinition(enemyCatalog);
+        const EnemyDefinition* fallback = chooseNormalRandomEnemyDefinition(enemyCatalog);
+        return EnemySpawnSelection{
+            .definition = fallback,
+            .variantTier = EnemyVariantTier::Normal,
+            .effectiveBaseLevel = fallback != nullptr ? std::max(1, fallback->baseLevel) : 1,
+        };
     }
 
     std::vector<const EnemyDefinition*> candidates;
@@ -4550,7 +4881,12 @@ const EnemyDefinition* EnemySystem::chooseDugSpawnEnemyDefinition(const EnemyCat
         logSpawnWeightFallbackOnce(
             "no_candidates:" + columnName,
             "Enemy spawn weight fallback: no candidates for column=\"" + columnName + "\"; using simple random");
-        return chooseNormalRandomEnemyDefinition(enemyCatalog);
+        const EnemyDefinition* fallback = chooseNormalRandomEnemyDefinition(enemyCatalog);
+        return EnemySpawnSelection{
+            .definition = fallback,
+            .variantTier = EnemyVariantTier::Normal,
+            .effectiveBaseLevel = fallback != nullptr ? std::max(1, fallback->baseLevel) : 1,
+        };
     }
 
     const auto selected = selectWeightedIndex(weights, rng_);
@@ -4558,9 +4894,27 @@ const EnemyDefinition* EnemySystem::chooseDugSpawnEnemyDefinition(const EnemyCat
         logSpawnWeightFallbackOnce(
             "select_failed:" + columnName,
             "Enemy spawn weight fallback: weighted selection failed for column=\"" + columnName + "\"; using simple random");
-        return chooseNormalRandomEnemyDefinition(enemyCatalog);
+        const EnemyDefinition* fallback = chooseNormalRandomEnemyDefinition(enemyCatalog);
+        return EnemySpawnSelection{
+            .definition = fallback,
+            .variantTier = EnemyVariantTier::Normal,
+            .effectiveBaseLevel = fallback != nullptr ? std::max(1, fallback->baseLevel) : 1,
+        };
     }
-    return candidates[*selected];
+    const EnemyDefinition* selectedDefinition = candidates[*selected];
+    return EnemySpawnSelection{
+        .definition = selectedDefinition,
+        .variantTier = EnemyVariantTier::Normal,
+        .effectiveBaseLevel = selectedDefinition != nullptr ? std::max(1, selectedDefinition->baseLevel) : 1,
+    };
+}
+
+const EnemyDefinition* EnemySystem::chooseDugSpawnEnemyDefinition(
+    const EnemyCatalog& enemyCatalog,
+    std::string_view stageId,
+    int depthRank)
+{
+    return chooseDugSpawnEnemy(enemyCatalog, stageId, depthRank).definition;
 }
 
 double EnemySystem::spawnBiasMultiplierFor(const EnemyDefinition& definition) const
@@ -5378,6 +5732,51 @@ void EnemySystem::applyDefinition(Enemy& enemy, const EnemyDefinition* definitio
     }
 }
 
+void applyEnemyVariant(
+    Enemy& enemy,
+    const EnemyCatalog& enemyCatalog,
+    EnemyVariantTier variantTier,
+    int effectiveBaseLevel)
+{
+    enemy.variantTier = variantTier;
+    const int fallbackLevel = enemy.definition != nullptr
+        ? std::max(1, enemy.definition->baseLevel + enemyVariantLevelBonus(variantTier))
+        : std::max(1, effectiveBaseLevel);
+    enemy.effectiveBaseLevel = std::max(1, effectiveBaseLevel > 0 ? effectiveBaseLevel : fallbackLevel);
+
+    if (enemy.definition == nullptr || variantTier == EnemyVariantTier::Normal) {
+        return;
+    }
+
+    const EnemyDefinition& definition = *enemy.definition;
+    enemy.enemyName = enemyVariantDisplayName(baseEnemyName(definition), variantTier);
+    enemy.maxHp = scaledEnemyStatForEffectiveLevel(
+        enemyCatalog,
+        definition,
+        EnemyStatKind::Hp,
+        std::max(1, definition.hp),
+        enemy.effectiveBaseLevel);
+    enemy.hp = enemy.maxHp;
+    enemy.contactAttackPower = scaledEnemyStatForEffectiveLevel(
+        enemyCatalog,
+        definition,
+        EnemyStatKind::ContactAttack,
+        std::max(0, definition.contactAttackPower),
+        enemy.effectiveBaseLevel);
+    enemy.xp = scaledEnemyStatForEffectiveLevel(
+        enemyCatalog,
+        definition,
+        EnemyStatKind::Xp,
+        std::max(0, definition.xp),
+        enemy.effectiveBaseLevel);
+    enemy.moneyDrop = scaledEnemyStatForEffectiveLevel(
+        enemyCatalog,
+        definition,
+        EnemyStatKind::Money,
+        std::max(0, definition.money),
+        enemy.effectiveBaseLevel);
+}
+
 bool EnemySystem::spawnDefinitionAt(
     Vec2 position,
     const EnemyDefinition* definition,
@@ -5388,7 +5787,9 @@ bool EnemySystem::spawnDefinitionAt(
     float spawnWarmupOverride,
     int* outRuntimeId,
     std::string_view lootStageId,
-    int lootDepthRank)
+    int lootDepthRank,
+    EnemyVariantTier variantTier,
+    int effectiveBaseLevel)
 {
     Enemy* enemy = enemies_.acquire();
     if (!enemy) {
@@ -5400,6 +5801,7 @@ bool EnemySystem::spawnDefinitionAt(
     enemy->isBoss = false;
     enemy->position = position;
     applyDefinition(*enemy, definition, balance, enemyCatalog);
+    applyEnemyVariant(*enemy, enemyCatalog, variantTier, effectiveBaseLevel);
     enemy->lootStageId = std::string(lootStageId);
     enemy->lootDepthRank = std::max(1, lootDepthRank);
     const float spawnWarmup = spawnWarmupOverride >= 0.0f
@@ -5596,9 +5998,10 @@ void EnemySystem::spawnFromDugTiles(
         if (!findSpawnPosition(map, spawnPoint.tileCenter, playerPosition, balance, spawnPosition)) {
             continue;
         }
+        const EnemySpawnSelection selection = chooseDugSpawnEnemy(enemyCatalog, stageId, spawnPoint.depthRank);
         spawnDefinitionAt(
             spawnPosition,
-            chooseDugSpawnEnemyDefinition(enemyCatalog, stageId, spawnPoint.depthRank),
+            selection.definition,
             balance,
             enemyCatalog,
             true,
@@ -5606,7 +6009,9 @@ void EnemySystem::spawnFromDugTiles(
             -1.0f,
             nullptr,
             stageId,
-            spawnPoint.depthRank);
+            spawnPoint.depthRank,
+            selection.variantTier,
+            selection.effectiveBaseLevel);
         dugSpawnCounter_ = 0;
         if (activeCount() >= balance.enemySoftCap) {
             return;
@@ -5635,9 +6040,10 @@ bool EnemySystem::spawnNodeEnemy(
         return false;
     }
 
+    const EnemySpawnSelection selection = chooseDugSpawnEnemy(enemyCatalog, lootStageId, lootDepthRank);
     spawnDefinitionAt(
         spawnPosition,
-        chooseDugSpawnEnemyDefinition(enemyCatalog, lootStageId, lootDepthRank),
+        selection.definition,
         balance,
         enemyCatalog,
         detectedOnSpawn,
@@ -5645,7 +6051,9 @@ bool EnemySystem::spawnNodeEnemy(
         -1.0f,
         nullptr,
         lootStageId,
-        lootDepthRank);
+        lootDepthRank,
+        selection.variantTier,
+        selection.effectiveBaseLevel);
     return true;
 }
 
@@ -5660,7 +6068,8 @@ bool EnemySystem::spawnFixedNodeEnemy(
     std::string_view lootStageId,
     int lootDepthRank)
 {
-    const EnemyDefinition* definition = chooseDugSpawnEnemyDefinition(enemyCatalog, lootStageId, lootDepthRank);
+    const EnemySpawnSelection selection = chooseDugSpawnEnemy(enemyCatalog, lootStageId, lootDepthRank);
+    const EnemyDefinition* definition = selection.definition;
     float radius = balance.enemyRadius;
     if (definition != nullptr && definition->radius > 0.0 && std::isfinite(definition->radius)) {
         radius = static_cast<float>(definition->radius);
@@ -5690,7 +6099,9 @@ bool EnemySystem::spawnFixedNodeEnemy(
         0.0f,
         outRuntimeId,
         lootStageId,
-        lootDepthRank);
+        lootDepthRank,
+        selection.variantTier,
+        selection.effectiveBaseLevel);
 }
 
 bool EnemySystem::spawnSpecificEnemy(
@@ -5803,18 +6214,23 @@ bool EnemySystem::spawnEventEnemy(
         return false;
     }
 
-    const EnemyDefinition* definition = nullptr;
+    EnemySpawnSelection selection;
     if (!options.enemyId.empty()) {
         const auto it = enemyCatalog.enemiesById.find(options.enemyId);
         if (it != enemyCatalog.enemiesById.end()) {
-            definition = &it->second;
+            selection.definition = &it->second;
+            selection.effectiveBaseLevel = std::max(1, it->second.baseLevel);
         }
     }
-    if (definition == nullptr) {
-        definition = options.stageId.empty()
-            ? chooseEnemyDefinition(enemyCatalog)
-            : chooseDugSpawnEnemyDefinition(enemyCatalog, options.stageId, options.depthRank);
+    if (selection.definition == nullptr) {
+        if (options.stageId.empty()) {
+            selection.definition = chooseEnemyDefinition(enemyCatalog);
+            selection.effectiveBaseLevel = selection.definition != nullptr ? std::max(1, selection.definition->baseLevel) : 1;
+        } else {
+            selection = chooseDugSpawnEnemy(enemyCatalog, options.stageId, options.depthRank);
+        }
     }
+    const EnemyDefinition* definition = selection.definition;
 
     float radius = balance.enemyRadius;
     if (definition != nullptr && definition->radius > 0.0 && std::isfinite(definition->radius)) {
@@ -5854,7 +6270,9 @@ bool EnemySystem::spawnEventEnemy(
             options.sleeping ? 0.0f : -1.0f,
             &runtimeId,
             options.stageId,
-            options.depthRank)) {
+            options.depthRank,
+            selection.variantTier,
+            selection.effectiveBaseLevel)) {
         return false;
     }
     Enemy* enemy = findRuntimeEnemy(runtimeId);

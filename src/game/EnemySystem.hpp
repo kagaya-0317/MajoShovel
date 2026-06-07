@@ -369,6 +369,16 @@ private:
         bool requirePlayerReach = true;
         float chanceMultiplier = 1.0f;
     };
+    struct EnemySpawnSelection {
+        const EnemyDefinition* definition = nullptr;
+        EnemyVariantTier variantTier = EnemyVariantTier::Normal;
+        int effectiveBaseLevel = 1;
+    };
+    struct RoguelikeEnemyPoolEntry {
+        std::string enemyId;
+        EnemyVariantTier variantTier = EnemyVariantTier::Normal;
+        int effectiveBaseLevel = 1;
+    };
 
     void queueEnemyObjectDrops(Enemy& enemy);
     void queueEnemyHeldDrops(Enemy& enemy);
@@ -400,6 +410,7 @@ private:
     void wakeDungeonEventEnemy(Enemy& enemy, Vec2 playerPosition, bool showIcon);
     const EnemyDefinition* chooseEnemyDefinition(const EnemyCatalog& enemyCatalog);
     const EnemyDefinition* chooseNormalRandomEnemyDefinition(const EnemyCatalog& enemyCatalog);
+    EnemySpawnSelection chooseDugSpawnEnemy(const EnemyCatalog& enemyCatalog, std::string_view stageId, int depthRank);
     const EnemyDefinition* chooseDugSpawnEnemyDefinition(const EnemyCatalog& enemyCatalog, std::string_view stageId, int depthRank);
     double spawnBiasMultiplierFor(const EnemyDefinition& definition) const;
     void logSpawnWeightFallbackOnce(std::string key, std::string message);
@@ -414,7 +425,9 @@ private:
         float spawnWarmupOverride = -1.0f,
         int* outRuntimeId = nullptr,
         std::string_view lootStageId = {},
-        int lootDepthRank = 1);
+        int lootDepthRank = 1,
+        EnemyVariantTier variantTier = EnemyVariantTier::Normal,
+        int effectiveBaseLevel = 0);
     void spawnAt(Vec2 position, const RuntimeBalance& balance, const EnemyCatalog& enemyCatalog, bool detectedOnSpawn = false, Vec2 detectedTarget = {});
     bool spawnBossAt(Vec2 position, const RuntimeBalance& balance, const EnemyCatalog& enemyCatalog, std::string_view bossEnemyId = {}, bool detectedOnSpawn = false, Vec2 detectedTarget = {});
     bool findSpawnPosition(TileMap& map, Vec2 desiredPosition, Vec2 playerPosition, const RuntimeBalance& balance, Vec2& outPosition) const;
@@ -452,6 +465,7 @@ private:
     std::unordered_set<std::string> loggedUnsupportedBehavior_;
     std::unordered_set<std::string> loggedSpawnWeightFallbacks_;
     std::unordered_map<std::string, double> spawnBiasMultipliers_;
+    std::unordered_map<std::string, std::vector<RoguelikeEnemyPoolEntry>> roguelikeEnemyPools_;
     int flowMinX_ = 0;
     int flowMinY_ = 0;
     int flowWidth_ = 0;

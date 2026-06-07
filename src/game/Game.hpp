@@ -1219,6 +1219,7 @@ private:
     void closeBaseDiary();
     void updateBaseDiaryScreen(const Input& input, UiContext& ui);
     void updateBasePlayerSpriteAnimation(float dt, bool walking);
+    void updateBasePlayerSpriteFlipFromFacing();
     void updatePauseMenu(const Input& input, UiContext& ui);
     void choosePauseMenuItem(int item);
     void leavePausePage();
@@ -1780,6 +1781,7 @@ private:
     float basePlayerSpriteAnimationTime_ = 0.0f;
     float baseRingPreviewAnimationTime_ = 0.0f;
     bool basePlayerSpriteWalking_ = false;
+    bool basePlayerSpriteFlipHorizontal_ = false;
     int baseMenuSelection_ = 0;
     bool baseMiningStartChoiceActive_ = false;
     int baseMiningStartSelection_ = 0;

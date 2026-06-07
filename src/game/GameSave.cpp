@@ -642,6 +642,15 @@ bool worldDropKindFromSaveName(std::string_view name, WorldDropKind& outKind)
     return false;
 }
 
+std::filesystem::path debugNamedSaveDataDirectory()
+{
+#ifdef _WIN32
+    return std::filesystem::path(LR"(C:\Users\kgygn\Dropbox\ゲーム\MajoShovel)") / "debug_saves";
+#else
+    return std::filesystem::current_path() / "debug_saves";
+#endif
+}
+
 struct DiaryWarpCounts {
     int discovered = 0;
     int total = 0;
@@ -735,6 +744,22 @@ int percentForCodexCount(int discoveredCount, int totalCount)
         return 0;
     }
     return std::clamp(discoveredCount * 100 / totalCount, 0, 100);
+}
+
+int itemCodexObjectCount(const ObjectCatalog& catalog)
+{
+    return static_cast<int>(std::count_if(
+        catalog.objects.begin(),
+        catalog.objects.end(),
+        [](const ObjectDefinition& object) {
+            return !isCodexHiddenObject(object);
+        }));
+}
+
+bool hiddenObjectCodexId(const ObjectCatalog& catalog, std::string_view objectId)
+{
+    const ObjectDefinition* object = catalog.registry.findById(objectId);
+    return object != nullptr && isCodexHiddenObject(*object);
 }
 
 bool enemyCatalogContains(const EnemyCatalog& catalog, std::string_view enemyId)
@@ -839,7 +864,12 @@ Game::DiarySaveSummary Game::currentDiarySaveSummary() const
     summary.totalWarpPoints = progress.totalWarpPoints;
 
     int discoveredObjects = 0;
+    int totalObjects = 0;
     for (const ObjectDefinition& object : objectCatalog_.objects) {
+        if (isCodexHiddenObject(object)) {
+            continue;
+        }
+        ++totalObjects;
         const bool treasure = object.category == "宝";
         if (encyclopedia_.objectStage(object.id, treasure) != EncyclopediaStage::Undiscovered) {
             ++discoveredObjects;
@@ -847,7 +877,7 @@ Game::DiarySaveSummary Game::currentDiarySaveSummary() const
     }
     summary.itemCodexPercent = percentForCodexCount(
         discoveredObjects,
-        static_cast<int>(objectCatalog_.objects.size()));
+        totalObjects);
 
     int discoveredEnemies = 0;
     for (const EnemyDefinition& enemy : enemyCatalog_.enemies) {
@@ -929,7 +959,8 @@ Game::DiarySaveSummary Game::loadDiarySaveSummaryFromDisk() const
                     if (enemyCatalogContains(enemyCatalog_, id)) {
                         enemyCodexIds.insert(std::move(id));
                     }
-                } else if (objectCatalog_.registry.findById(id) != nullptr) {
+                } else if (objectCatalog_.registry.findById(id) != nullptr &&
+                    !hiddenObjectCodexId(objectCatalog_, id)) {
                     objectCodexIds.insert(std::move(id));
                 }
             }
@@ -967,7 +998,7 @@ Game::DiarySaveSummary Game::loadDiarySaveSummaryFromDisk() const
     summary.totalWarpPoints = progress.totalWarpPoints;
     summary.itemCodexPercent = percentForCodexCount(
         static_cast<int>(objectCodexIds.size()),
-        static_cast<int>(objectCatalog_.objects.size()));
+        itemCodexObjectCount(objectCatalog_));
     summary.enemyCodexPercent = percentForCodexCount(
         static_cast<int>(enemyCodexIds.size()),
         static_cast<int>(enemyCatalog_.enemies.size()));
@@ -1206,28 +1237,31 @@ bool Game::loadSaveData(const std::filesystem::path& path)
             int stage = 0;
             stream >> kindName >> id >> stage;
             EncyclopediaKind kind = EncyclopediaKind::Item;
-            if (!stream.fail() && encyclopediaKindFromSaveName(kindName, kind)) {
+            if (!stream.fail() &&
+                !id.empty() &&
+                encyclopediaKindFromSaveName(kindName, kind) &&
+                (kind == EncyclopediaKind::Enemy || !hiddenObjectCodexId(objectCatalog_, id))) {
                 loadedEncyclopedia.loadEntry(kind, std::move(id), encyclopediaStageFromInt(stage));
             }
         } else if (key == "codex_effect") {
             std::string objectId;
             std::string effectKey;
             stream >> objectId >> effectKey;
-            if (!stream.fail()) {
+            if (!stream.fail() && !hiddenObjectCodexId(objectCatalog_, objectId)) {
                 loadedEncyclopedia.loadEffect(std::move(objectId), std::move(effectKey));
             }
         } else if (key == "codex_sync_suppress_owned") {
             std::string objectId;
             int count = 0;
             stream >> objectId >> count;
-            if (!stream.fail() && !objectId.empty() && count > 0) {
+            if (!stream.fail() && !objectId.empty() && count > 0 && !hiddenObjectCodexId(objectCatalog_, objectId)) {
                 loadedEncyclopediaOwnedSyncSuppressCounts[std::move(objectId)] = count;
             }
         } else if (key == "codex_sync_suppress_ring") {
             std::string objectId;
             int count = 0;
             stream >> objectId >> count;
-            if (!stream.fail() && !objectId.empty() && count > 0) {
+            if (!stream.fail() && !objectId.empty() && count > 0 && !hiddenObjectCodexId(objectCatalog_, objectId)) {
                 loadedEncyclopediaRingSyncSuppressCounts[std::move(objectId)] = count;
             }
         } else if (key == "current_stage") {
@@ -2173,7 +2207,8 @@ bool Game::saveSaveData(const std::filesystem::path& path, std::string& message)
         }
     }
     for (const EncyclopediaEntrySave& entry : encyclopedia_.saveEntries()) {
-        if (!entry.id.empty()) {
+        if (!entry.id.empty() &&
+            (entry.kind == EncyclopediaKind::Enemy || !hiddenObjectCodexId(objectCatalog_, entry.id))) {
             file << "codex_entry "
                 << encyclopediaKindSaveName(entry.kind) << " "
                 << entry.id << " "
@@ -2181,17 +2216,19 @@ bool Game::saveSaveData(const std::filesystem::path& path, std::string& message)
         }
     }
     for (const EncyclopediaEffectSave& effect : encyclopedia_.saveEffects()) {
-        if (!effect.objectId.empty() && !effect.effectKey.empty()) {
+        if (!effect.objectId.empty() &&
+            !effect.effectKey.empty() &&
+            !hiddenObjectCodexId(objectCatalog_, effect.objectId)) {
             file << "codex_effect " << effect.objectId << " " << effect.effectKey << "\n";
         }
     }
     for (const auto& [objectId, count] : encyclopediaOwnedSyncSuppressCounts_) {
-        if (!objectId.empty() && count > 0) {
+        if (!objectId.empty() && count > 0 && !hiddenObjectCodexId(objectCatalog_, objectId)) {
             file << "codex_sync_suppress_owned " << objectId << " " << count << "\n";
         }
     }
     for (const auto& [objectId, count] : encyclopediaRingSyncSuppressCounts_) {
-        if (!objectId.empty() && count > 0) {
+        if (!objectId.empty() && count > 0 && !hiddenObjectCodexId(objectCatalog_, objectId)) {
             file << "codex_sync_suppress_ring " << objectId << " " << count << "\n";
         }
     }
@@ -2552,21 +2589,13 @@ std::filesystem::path Game::debugNamedSaveDataPath(std::string_view name) const
         safeName = "debug_save";
     }
 
-    std::filesystem::path directory = saveDataPath().parent_path();
-    if (directory.empty()) {
-        directory = std::filesystem::path(".");
-    }
-    return directory / "debug_saves" / std::filesystem::path(toPathUtf8(safeName + ".dat"));
+    return debugNamedSaveDataDirectory() / std::filesystem::path(toPathUtf8(safeName + ".dat"));
 }
 
 std::vector<Game::DebugNamedSaveEntry> Game::listDebugNamedSaveData() const
 {
     std::vector<DebugNamedSaveEntry> entries;
-    std::filesystem::path directory = saveDataPath().parent_path();
-    if (directory.empty()) {
-        directory = std::filesystem::path(".");
-    }
-    directory /= "debug_saves";
+    const std::filesystem::path directory = debugNamedSaveDataDirectory();
 
     std::error_code error;
     if (!std::filesystem::exists(directory, error) || error) {

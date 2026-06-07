@@ -908,6 +908,7 @@ bool Game::advanceInitialize()
             basePlayerPosition_ = {640.0f, 360.0f};
             baseOutdoorPlayerPosition_ = basePlayerPosition_;
             basePlayerFacing_ = {0.0f, 1.0f};
+            updateBasePlayerSpriteFlipFromFacing();
         }
         initializeJob_.step = InitializeStep::LoadImageScale;
         break;
@@ -2037,6 +2038,7 @@ void Game::applyScreenTransitionTarget(ScreenTransitionTarget target)
         baseArea_ = screenTransition_.targetBaseArea;
         basePlayerPosition_ = screenTransition_.targetBasePlayerPosition;
         basePlayerFacing_ = screenTransition_.targetBasePlayerFacing;
+        updateBasePlayerSpriteFlipFromFacing();
         if (baseArea_ == BaseArea::Outdoor) {
             baseOutdoorPlayerPosition_ = basePlayerPosition_;
         }
@@ -3120,6 +3122,8 @@ bool Game::loadEnemiesFromSheet()
     enemyCatalog_ = std::move(loaded);
     for (const EnemyDefinition& enemy : enemyCatalog_.enemies) {
         upsertObjectDefinition(objectCatalog_, makeCapturedObjectDefinition(enemy));
+        upsertObjectDefinition(objectCatalog_, makeCapturedObjectDefinition(enemy, EnemyVariantTier::Deep));
+        upsertObjectDefinition(objectCatalog_, makeCapturedObjectDefinition(enemy, EnemyVariantTier::Abyss));
     }
     logEnemyDbValidationReport(enemyCatalog_);
     logError(std::string(loadedFromLocalSnapshot ? "Local Enemies snapshot loaded: " : "Enemies sheet loaded: ") +
@@ -3139,7 +3143,8 @@ bool Game::loadEnemiesFromSheet()
         std::ostringstream line;
         line << "  enemy id=\"" << enemy.id
             << "\" name=\"" << enemy.name
-            << "\" hp=" << enemy.hp
+            << "\" base_level=" << enemy.baseLevel
+            << " hp=" << enemy.hp
             << " contact_attack=" << enemy.contactAttackPower
             << " damage_type=\"" << enemy.contactDamageType
             << "\" move_speed=" << enemy.moveSpeed
@@ -4297,9 +4302,16 @@ void Game::update(const Input& input, const Time& time)
         }
 
         std::vector<CapturedExplosionRequest> capturedExplosionRequests;
+        const auto codexEnemyNameForEvent = [this](const EnemyEvent& event) {
+            const auto enemyIt = enemyCatalog_.enemiesById.find(event.enemyId);
+            if (enemyIt == enemyCatalog_.enemiesById.end()) {
+                return event.enemyName;
+            }
+            return enemyIt->second.name.empty() ? enemyIt->second.id : enemyIt->second.name;
+        };
         for (const EnemyEvent& event : enemies_.events()) {
             if (gameplayRewardsEnabled() && !event.enemyId.empty()) {
-                encyclopedia_.noteEnemyDiscovered(event.enemyId, event.enemyName, event.position);
+                encyclopedia_.noteEnemyDiscovered(event.enemyId, codexEnemyNameForEvent(event), event.position);
             }
             if (event.type == EnemyEventType::CapturedExplosion) {
                 CapturedExplosionRequest request;
@@ -4438,7 +4450,7 @@ void Game::update(const Input& input, const Time& time)
                         makeWorldLootJumpMotion(event.position, rng));
                 }
                 if (eventRewardsEnabled && !event.enemyId.empty()) {
-                    encyclopedia_.noteEnemyDefeated(event.enemyId, event.enemyName, event.position);
+                    encyclopedia_.noteEnemyDefeated(event.enemyId, codexEnemyNameForEvent(event), event.position);
                 }
                 if (eventRewardsEnabled && event.type == EnemyEventType::BossDeath) {
                     bossDefeated = true;

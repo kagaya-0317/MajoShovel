@@ -90,6 +90,7 @@ struct ItemVisualRef {
     ItemVisualSource source = ItemVisualSource::Object;
     int imageNumber = 0;
     std::string sourceId;
+    int enemyVariantLevelBonus = 0;
 
     bool operator==(const ItemVisualRef&) const = default;
 };
@@ -237,6 +238,7 @@ double lootWeightFor(const ObjectDefinition& object, std::string_view stageId, i
 bool isStaffObjectCategory(std::string_view category);
 bool isStaffObject(const ObjectDefinition& object);
 bool isStaffEquipTarget(std::string_view target);
+bool isCodexHiddenObject(const ObjectDefinition& object);
 bool isDamageTypeAllowed(std::string_view value);
 bool isPhysicalDamageType(std::string_view value);
 std::string normalizeDamageType(std::string_view value);
