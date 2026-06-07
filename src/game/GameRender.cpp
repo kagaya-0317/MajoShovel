@@ -5283,6 +5283,12 @@ void Game::renderDungeonControlHelp(Renderer& renderer) const
             }
         }
     }
+    if (!promptFocused && currentStageIsRoguelike() && roguelikeBigHole_.active && focusedRoguelikeBigHole_ != 0) {
+        help = roguelikeBigHole_.unlocked
+            ? "大穴   F/Enter 調べる"
+            : "大穴   星脈竜を倒すと進める";
+        promptFocused = true;
+    }
     if (!promptFocused) {
         const std::string npcPrompt = dungeonEventNpcPromptText();
         if (!npcPrompt.empty()) {
@@ -5573,6 +5579,23 @@ void Game::renderRingScreen(Renderer& renderer, float totalTime) const
             {0, 0, 0, 96});
         drawRingDiscardConfirmDialog(renderer, ringDiscardConfirm_, objectCatalog_, confirmItem);
     }
+}
+
+void Game::renderRoguelikeBigHoleUi(Renderer& renderer) const
+{
+    if (mode_ != ScreenMode::Playing || enemyTestActive_ || !currentStageIsRoguelike()) {
+        return;
+    }
+    if (!roguelikeBigHoleMenu_.visible) {
+        return;
+    }
+
+    const std::array<UiCommandMenuItem, 2> items{{
+        {"さらに進む", roguelikeBigHole_.unlocked},
+        {"地上に戻る", true},
+    }};
+    renderer.setScreenSpace();
+    drawUiCommandMenu(renderer, roguelikeBigHoleMenu_, items.data(), static_cast<int>(items.size()));
 }
 
 void Game::renderOperationSettings(Renderer& renderer) const
@@ -6164,6 +6187,9 @@ void Game::renderAstralResultScreen(Renderer& renderer) const
     case AstralRunResult::DragonDefeated:
         resultText = "星脈竜撃破";
         break;
+    case AstralRunResult::Completed:
+        resultText = "10000m到達";
+        break;
     case AstralRunResult::None:
         break;
     }
@@ -6647,6 +6673,7 @@ void Game::render(Renderer& renderer, const Time& time)
     if (!enemyTestActive_) {
         renderDungeonEntrance(renderer);
         renderWarpPoints(renderer);
+        renderRoguelikeBigHole(renderer);
     }
 
     bool ringCenterVisible = false;
@@ -6803,6 +6830,7 @@ void Game::render(Renderer& renderer, const Time& time)
             renderDungeonLogs(renderer);
         }
         renderWarpReturnUi(renderer);
+        renderRoguelikeBigHoleUi(renderer);
         renderPauseMenu(renderer);
         renderRingScreen(renderer, time.totalSeconds());
         renderBossDefeatPresentation(renderer);

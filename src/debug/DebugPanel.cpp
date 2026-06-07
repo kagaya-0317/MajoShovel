@@ -223,7 +223,7 @@ DebugConsoleLayout makeDefaultDebugConsoleLayout()
                     "astral_result",
                     "リザルト",
                     {
-                        {DebugControlKind::Dropdown, "astral_result_kind", "終了結果", "game astral result", 0, 0, {"帰還成功", "死亡", "星脈竜撃破"}, {"returned", "died", "dragon-defeated"}},
+                        {DebugControlKind::Dropdown, "astral_result_kind", "終了結果", "game astral result", 0, 0, {"帰還成功", "死亡", "星脈竜撃破", "10000m到達"}, {"returned", "died", "dragon-defeated", "completed"}},
                         {DebugControlKind::Toggle, "astral_stat_override", "統計オーバーライド", "game astral stat-override", 0, 1},
                         {DebugControlKind::NumberInput, "astral_stat_kills", "撃破数", "game astral stat kills", 0, 9999},
                         {DebugControlKind::NumberInput, "astral_stat_dug", "掘削数", "game astral stat dug", 0, 99999},

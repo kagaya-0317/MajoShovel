@@ -197,8 +197,23 @@ public:
     bool spawnSpecificEnemy(TileMap& map, std::string_view enemyId, Vec2 desiredPosition, Vec2 playerPosition, const RuntimeBalance& balance, const EnemyCatalog& enemyCatalog, bool allowNearPlayer, bool detectedOnSpawn = false, float spawnWarmupOverride = -1.0f, int* outRuntimeId = nullptr, std::string_view lootStageId = {}, int lootDepthRank = 1);
     bool spawnSpecificEnemyAtPosition(TileMap& map, std::string_view enemyId, Vec2 position, Vec2 playerPosition, const RuntimeBalance& balance, const EnemyCatalog& enemyCatalog, bool detectedOnSpawn = false, float spawnWarmupOverride = -1.0f, int* outRuntimeId = nullptr, std::string_view lootStageId = {}, int lootDepthRank = 1);
     bool spawnEventEnemy(TileMap& map, Vec2 desiredPosition, Vec2 playerPosition, const RuntimeBalance& balance, const EnemyCatalog& enemyCatalog, const EventEnemySpawnOptions& options, int* outRuntimeId = nullptr);
-    bool spawnBoss(TileMap& map, Vec2 playerPosition, const RuntimeBalance& balance, const EnemyCatalog& enemyCatalog, std::string_view bossEnemyId = {});
-    bool spawnBossNear(TileMap& map, Vec2 desiredPosition, Vec2 playerPosition, const RuntimeBalance& balance, const EnemyCatalog& enemyCatalog, std::string_view bossEnemyId = {});
+    bool spawnBoss(
+        TileMap& map,
+        Vec2 playerPosition,
+        const RuntimeBalance& balance,
+        const EnemyCatalog& enemyCatalog,
+        std::string_view bossEnemyId = {},
+        EnemyVariantTier variantTier = EnemyVariantTier::Normal,
+        int effectiveBaseLevel = 0);
+    bool spawnBossNear(
+        TileMap& map,
+        Vec2 desiredPosition,
+        Vec2 playerPosition,
+        const RuntimeBalance& balance,
+        const EnemyCatalog& enemyCatalog,
+        std::string_view bossEnemyId = {},
+        EnemyVariantTier variantTier = EnemyVariantTier::Normal,
+        int effectiveBaseLevel = 0);
     void update(
         Player& player,
         SpellRingSystem& spellRing,
@@ -429,7 +444,15 @@ private:
         EnemyVariantTier variantTier = EnemyVariantTier::Normal,
         int effectiveBaseLevel = 0);
     void spawnAt(Vec2 position, const RuntimeBalance& balance, const EnemyCatalog& enemyCatalog, bool detectedOnSpawn = false, Vec2 detectedTarget = {});
-    bool spawnBossAt(Vec2 position, const RuntimeBalance& balance, const EnemyCatalog& enemyCatalog, std::string_view bossEnemyId = {}, bool detectedOnSpawn = false, Vec2 detectedTarget = {});
+    bool spawnBossAt(
+        Vec2 position,
+        const RuntimeBalance& balance,
+        const EnemyCatalog& enemyCatalog,
+        std::string_view bossEnemyId = {},
+        bool detectedOnSpawn = false,
+        Vec2 detectedTarget = {},
+        EnemyVariantTier variantTier = EnemyVariantTier::Normal,
+        int effectiveBaseLevel = 0);
     bool findSpawnPosition(TileMap& map, Vec2 desiredPosition, Vec2 playerPosition, const RuntimeBalance& balance, Vec2& outPosition) const;
     bool findSpawnPosition(TileMap& map, Vec2 desiredPosition, Vec2 playerPosition, float radius, float minPlayerDistance, Vec2& outPosition) const;
     bool findBossSpawnPosition(TileMap& map, Vec2 playerPosition, const RuntimeBalance& balance, Vec2& outPosition) const;

@@ -5829,7 +5829,9 @@ bool EnemySystem::spawnBossAt(
     const EnemyCatalog& enemyCatalog,
     std::string_view bossEnemyId,
     bool detectedOnSpawn,
-    Vec2 detectedTarget)
+    Vec2 detectedTarget,
+    EnemyVariantTier variantTier,
+    int effectiveBaseLevel)
 {
     Enemy* enemy = enemies_.acquire();
     if (!enemy) {
@@ -5848,6 +5850,7 @@ bool EnemySystem::spawnBossAt(
     if (definition == nullptr || (!bossEnemyId.empty() && enemy->enemyId != bossEnemyId)) {
         applyFallbackBossDefinition(*enemy, bossEnemyId, balance);
     }
+    applyEnemyVariant(*enemy, enemyCatalog, variantTier, effectiveBaseLevel);
     enableDefaultBossActionIfNeeded(*enemy, bossEnemyId);
     enemy->radius *= BossRadiusMultiplier;
     enemy->maxHp = std::max(12, enemy->maxHp * BossHpMultiplier);
@@ -6311,7 +6314,9 @@ bool EnemySystem::spawnBoss(
     Vec2 playerPosition,
     const RuntimeBalance& balance,
     const EnemyCatalog& enemyCatalog,
-    std::string_view bossEnemyId)
+    std::string_view bossEnemyId,
+    EnemyVariantTier variantTier,
+    int effectiveBaseLevel)
 {
     if (bossActive()) {
         return false;
@@ -6322,7 +6327,7 @@ bool EnemySystem::spawnBoss(
         return false;
     }
 
-    return spawnBossAt(spawnPosition, balance, enemyCatalog, bossEnemyId);
+    return spawnBossAt(spawnPosition, balance, enemyCatalog, bossEnemyId, false, {}, variantTier, effectiveBaseLevel);
 }
 
 bool EnemySystem::spawnBossNear(
@@ -6331,7 +6336,9 @@ bool EnemySystem::spawnBossNear(
     Vec2 playerPosition,
     const RuntimeBalance& balance,
     const EnemyCatalog& enemyCatalog,
-    std::string_view bossEnemyId)
+    std::string_view bossEnemyId,
+    EnemyVariantTier variantTier,
+    int effectiveBaseLevel)
 {
     if (bossActive()) {
         return false;
@@ -6348,7 +6355,7 @@ bool EnemySystem::spawnBossNear(
         return false;
     }
 
-    return spawnBossAt(spawnPosition, balance, enemyCatalog, bossEnemyId);
+    return spawnBossAt(spawnPosition, balance, enemyCatalog, bossEnemyId, false, {}, variantTier, effectiveBaseLevel);
 }
 
 bool EnemySystem::bossActive() const

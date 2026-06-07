@@ -35,6 +35,14 @@ constexpr int ExposedPlacementReservationRadiusTiles = 1;
 constexpr int SolidPlacementReservationRadiusTiles = 1;
 constexpr int PlacementSearchRadiusTiles = 8;
 constexpr int SolidPlacementSearchRadiusTiles = 10;
+constexpr int RoguelikeMetersPerArea = 500;
+constexpr int RoguelikeSectionsPerArea = 3;
+constexpr int RoguelikeCompletionDepthMeters = 10000;
+constexpr int RoguelikeCompletionSectionRank =
+    (RoguelikeCompletionDepthMeters / RoguelikeMetersPerArea) * RoguelikeSectionsPerArea;
+constexpr float RoguelikeBigHoleProgress = 0.965f;
+constexpr float RoguelikeGateBossProgress = 0.895f;
+constexpr float RoguelikeBigHoleImageSize = 58.0f;
 constexpr float LootLandingCollisionRadius = 14.0f;
 constexpr float LootLandingDropSpacing = 28.0f;
 constexpr float LootLandingWarpClearance = 42.0f;
@@ -88,6 +96,16 @@ constexpr float DigToolFailsafeNearbyDropRadius = 220.0f;
 constexpr Vec2 DungeonEventNpcInspectSize{42.0f, 58.0f};
 constexpr Vec2 DungeonChestInspectSize{42.0f, 42.0f};
 constexpr float FootstepPitchSideOffset = 0.025f;
+
+int roguelikeTargetBaseLevelForSectionRank(int depthRank)
+{
+    constexpr std::array<int, 9> InitialLevels{{3, 7, 11, 15, 20, 25, 30, 35, 40}};
+    const int rank = std::max(1, depthRank);
+    if (rank <= static_cast<int>(InitialLevels.size())) {
+        return InitialLevels[static_cast<std::size_t>(rank - 1)];
+    }
+    return std::min(100, InitialLevels.back() + (rank - static_cast<int>(InitialLevels.size())) * 5);
+}
 constexpr float WetGroundPlayerRadiusMultiplier = 1.45f;
 constexpr float WetGroundPlayerMinRadius = 16.0f;
 constexpr float WetGroundPlayerMaxRadius = 28.0f;
@@ -1932,9 +1950,15 @@ DungeonGenerationContext Game::makeDungeonGenerationContext() const
     const int stageId = currentStage_ + 1;
     const StageDefinition& stage = currentStageDefinition();
     const bool stageIsRoguelike = stage.type == "ローグライク" || stage.generationProfile == "astral_rogue";
+    std::uint32_t seed = makeDungeonSeed(stageId, roguelikeDungeon_ || stageIsRoguelike);
+    if (stageIsRoguelike || roguelikeDungeon_) {
+        const std::uint32_t areaSalt =
+            static_cast<std::uint32_t>(std::max(0, astralRun_.areaIndex)) * 0x9E3779B1u;
+        seed ^= areaSalt ^ (areaSalt >> 13);
+    }
     return DungeonGenerationContext{
         .stageId = stageId,
-        .seed = makeDungeonSeed(stageId, roguelikeDungeon_ || stageIsRoguelike),
+        .seed = seed,
         .stageHardnessMultiplier = static_cast<float>(std::max(0.25, stage.terrainHardnessMultiplier)),
         .goalDistanceTiles = stage.goalDistanceTiles,
         .detourRate = static_cast<float>(stage.detourRate),
@@ -1963,7 +1987,15 @@ void Game::resetAstralRunState()
 {
     astralRun_ = AstralRunState{};
     astralRun_.active = currentStageIsRoguelike();
-    astralRun_.maxDepth = lootMaxDepthForStage(currentStageId_);
+    astralRun_.areaIndex = 0;
+    astralRun_.sectionRankOffset = 0;
+    astralRun_.currentDepthMeters = 0;
+    astralRun_.nextHoleDepthMeters = RoguelikeMetersPerArea;
+    astralRun_.deepestDepthMeters = 0;
+    astralRun_.completionDepthMeters = RoguelikeCompletionDepthMeters;
+    astralRun_.maxDepth = currentStageIsRoguelike()
+        ? std::max(lootMaxDepthForStage(currentStageId_), RoguelikeCompletionSectionRank)
+        : lootMaxDepthForStage(currentStageId_);
     astralRun_.maxReachedDepth = 1;
     astralRun_.currentDepth = 1;
     astralRun_.distortion = AstralDistortionKind::None;
@@ -2073,17 +2105,30 @@ void Game::initializeAstralRunForLayout()
 {
     if (!currentStageIsRoguelike()) {
         astralRun_ = AstralRunState{};
+        clearRoguelikeBigHoleState();
         return;
     }
 
     astralRun_.active = true;
-    astralRun_.currentDepth = 1;
-    astralRun_.maxReachedDepth = 1;
-    astralRun_.maxDepth = lootMaxDepthForStage(currentStageId_);
-    astralRun_.maxReachedDistanceTiles = 0;
-    astralRun_.distortionChanges = 1;
+    astralRun_.sectionRankOffset = std::max(0, astralRun_.areaIndex * RoguelikeSectionsPerArea);
+    astralRun_.currentDepthMeters = std::max(0, astralRun_.areaIndex * RoguelikeMetersPerArea);
+    astralRun_.nextHoleDepthMeters = std::min(
+        RoguelikeCompletionDepthMeters,
+        astralRun_.currentDepthMeters + RoguelikeMetersPerArea);
+    astralRun_.completionDepthMeters = RoguelikeCompletionDepthMeters;
+    astralRun_.maxDepth = std::max(lootMaxDepthForStage(currentStageId_), RoguelikeCompletionSectionRank);
+    const int startingDepth = std::max(1, astralRun_.sectionRankOffset + 1);
+    if (astralRun_.areaIndex == 0) {
+        astralRun_.currentDepth = startingDepth;
+        astralRun_.maxReachedDepth = startingDepth;
+        astralRun_.maxReachedDistanceTiles = 0;
+        astralRun_.distortionChanges = 1;
+    } else {
+        astralRun_.currentDepth = std::max(astralRun_.currentDepth, startingDepth);
+        astralRun_.maxReachedDepth = std::max(astralRun_.maxReachedDepth, startingDepth);
+    }
     astralRun_.baseStageHardnessMultiplier = dungeonLayout_.stageHardnessMultiplier;
-    astralRun_.distortion = chooseAstralDistortionForDepth(1, AstralDistortionKind::None);
+    astralRun_.distortion = chooseAstralDistortionForDepth(startingDepth, astralRun_.distortion);
     applyAstralDistortionToLayout();
     const char* distortionName = "なし";
     switch (astralRun_.distortion) {
@@ -2112,11 +2157,13 @@ void Game::updateAstralRunProgress()
         static_cast<float>(tileMap_.worldToTile(player_.position.x)),
         static_cast<float>(tileMap_.worldToTile(player_.position.y)),
     });
-    const int depth = lootDepthRankForProgress(currentStageId_, metrics.pathProgress);
+    const int depth = roguelikeAdjustedDepthRank(lootDepthRankForProgress(currentStageId_, metrics.pathProgress));
     astralRun_.maxReachedDepth = std::max(astralRun_.maxReachedDepth, depth);
+    const int areaDistanceOffset =
+        astralRun_.areaIndex * std::max(1, currentStageDefinition().goalDistanceTiles);
     astralRun_.maxReachedDistanceTiles = std::max(
         astralRun_.maxReachedDistanceTiles,
-        static_cast<int>(std::round(metrics.distanceFromStart)));
+        areaDistanceOffset + static_cast<int>(std::round(metrics.distanceFromStart)));
 
     if (depth <= astralRun_.currentDepth) {
         return;
@@ -2141,6 +2188,21 @@ void Game::updateAstralRunProgress()
         break;
     }
     pushDungeonLog(std::string("星の歪み: ") + distortionName, "astral_distortion");
+}
+
+int Game::roguelikeAdjustedDepthRank(int localDepthRank) const
+{
+    if (!astralRunActive()) {
+        return std::max(1, localDepthRank);
+    }
+    const int localSection = std::clamp((std::max(1, localDepthRank) - 1) / 3 + 1, 1, RoguelikeSectionsPerArea);
+    return std::max(1, astralRun_.sectionRankOffset + localSection);
+}
+
+int Game::roguelikeDepthRankForWorldPosition(Vec2 position) const
+{
+    const int localDepthRank = lootDepthRankForWorldPosition(tileMap_, dungeonLayout_, currentStageId_, position);
+    return roguelikeAdjustedDepthRank(localDepthRank);
 }
 
 void Game::updateDungeonDepthTutorials()
@@ -3251,7 +3313,9 @@ int Game::calculateAstralRunScore(const Game::AstralRunSummary& summary) const
         return 0;
     }
 
-    const int resultBonus = summary.result == AstralRunResult::DragonDefeated ? 10000 : 3000;
+    const int resultBonus = summary.result == AstralRunResult::Completed
+        ? 30000
+        : (summary.result == AstralRunResult::DragonDefeated ? 10000 : 3000);
     return std::max(0,
         summary.reachedDepth * 1000 +
         summary.reachedDistanceTiles * 2 +
@@ -3325,7 +3389,9 @@ void Game::enterAstralResult(Game::AstralRunResult result)
 
 void Game::returnToBaseAfterAstralResult()
 {
-    const bool dragonDefeated = astralResult_.result == AstralRunResult::DragonDefeated;
+    const bool dragonDefeated =
+        astralResult_.result == AstralRunResult::DragonDefeated ||
+        astralResult_.result == AstralRunResult::Completed;
     const bool died = astralResult_.result == AstralRunResult::Died;
     requestReturnToBaseTransition(dragonDefeated, died);
 }
@@ -4814,7 +4880,7 @@ void Game::updateDungeonEvents(float dt, double totalSeconds)
             static_cast<float>(event.centerTile.x),
             static_cast<float>(event.centerTile.y),
         });
-        return lootDepthRankForProgress(currentStageId_, metrics.pathProgress);
+        return roguelikeAdjustedDepthRank(lootDepthRankForProgress(currentStageId_, metrics.pathProgress));
     };
     const auto spawnEnemy = [&](DungeonEventInstance& event, Vec2 position, bool sleeping, bool bossVariant, int* outRuntimeId = nullptr) {
         const bool spawnSleeping = sleeping || !event.discovered;
@@ -6095,7 +6161,7 @@ bool Game::ensureDungeonEventChest(DungeonEventInstance& event, DungeonTile tile
         return false;
     }
 
-    const int depthRank = lootDepthRankForWorldPosition(tileMap_, dungeonLayout_, currentStageId_, tileWorldCenter(tile));
+    const int depthRank = roguelikeDepthRankForWorldPosition(tileWorldCenter(tile));
     const bool spawned = spawnAppearingChestNode(
         tile,
         chestKind,
@@ -6583,6 +6649,201 @@ bool Game::dungeonInspectableInRange(Vec2 center, Vec2 size) const
 bool Game::dungeonInspectableHovered(Vec2 center, Vec2 size, Vec2 worldPosition) const
 {
     return dungeonInspectableInRange(center, size) && dungeonInspectableRect(center, size).contains(worldPosition);
+}
+
+void Game::clearRoguelikeBigHoleState()
+{
+    roguelikeBigHole_ = RoguelikeBigHoleState{};
+    closeUiCommandMenu(roguelikeBigHoleMenu_);
+    focusedRoguelikeBigHole_ = 0;
+    hoveredRoguelikeBigHole_ = false;
+}
+
+void Game::configureBossSpawnPointFromRoguelikeBigHole()
+{
+    hasBossSpawnPoint_ = false;
+    bossSpawned_ = false;
+    if (!roguelikeBigHole_.active || roguelikeBigHole_.unlocked) {
+        return;
+    }
+    if (dungeonLayout_.mainPathPoints.size() >= 2) {
+        bossSpawnPoint_ = tileWorldCenter(roundDungeonTile(pointAtPathProgress(
+            dungeonLayout_.mainPathPoints,
+            RoguelikeGateBossProgress)));
+    } else {
+        Vec2 direction = normalize(roguelikeBigHole_.position - tileWorldCenter(dungeonLayout_.startTile));
+        if (lengthSquared(direction) <= 0.0001f) {
+            direction = {0.0f, -1.0f};
+        }
+        bossSpawnPoint_ = roguelikeBigHole_.position - direction * static_cast<float>(BossOffsetTiles * balance::TileSize);
+    }
+    hasBossSpawnPoint_ = true;
+}
+
+void Game::initializeRoguelikeBigHoleFromLayout()
+{
+    if (!currentStageIsRoguelike()) {
+        clearRoguelikeBigHoleState();
+        return;
+    }
+
+    closeUiCommandMenu(roguelikeBigHoleMenu_);
+    focusedRoguelikeBigHole_ = 0;
+    hoveredRoguelikeBigHole_ = false;
+
+    const Vec2 tilePoint = dungeonLayout_.mainPathPoints.empty()
+        ? Vec2{static_cast<float>(dungeonLayout_.goalTile.x), static_cast<float>(dungeonLayout_.goalTile.y)}
+        : pointAtPathProgress(dungeonLayout_.mainPathPoints, RoguelikeBigHoleProgress);
+    roguelikeBigHole_.active = true;
+    roguelikeBigHole_.unlocked = false;
+    roguelikeBigHole_.tile = roundDungeonTile(tilePoint);
+    roguelikeBigHole_.position = tileWorldCenter(roguelikeBigHole_.tile);
+    roguelikeBigHole_.depthMeters = std::min(RoguelikeCompletionDepthMeters, std::max(
+        RoguelikeMetersPerArea,
+        astralRun_.nextHoleDepthMeters));
+    configureBossSpawnPointFromRoguelikeBigHole();
+}
+
+void Game::advanceRoguelikeAreaFromBigHole()
+{
+    if (!astralRunActive() || !roguelikeBigHole_.active || !roguelikeBigHole_.unlocked) {
+        return;
+    }
+
+    astralRun_.deepestDepthMeters = std::max(astralRun_.deepestDepthMeters, roguelikeBigHole_.depthMeters);
+    if (roguelikeBigHole_.depthMeters >= RoguelikeCompletionDepthMeters) {
+        astralRun_.currentDepth = RoguelikeCompletionSectionRank;
+        astralRun_.maxReachedDepth = std::max(astralRun_.maxReachedDepth, RoguelikeCompletionSectionRank);
+        enterAstralResult(AstralRunResult::Completed);
+        return;
+    }
+
+    ++astralRun_.areaIndex;
+    astralRun_.sectionRankOffset = astralRun_.areaIndex * RoguelikeSectionsPerArea;
+    astralRun_.currentDepthMeters = astralRun_.areaIndex * RoguelikeMetersPerArea;
+    astralRun_.nextHoleDepthMeters = std::min(
+        RoguelikeCompletionDepthMeters,
+        astralRun_.currentDepthMeters + RoguelikeMetersPerArea);
+
+    inventory_.setOpen(false);
+    inventory_.cancelGrab();
+    cancelRingGrab();
+    resetBossEncounter();
+    bossSpawned_ = false;
+    hasBossSpawnPoint_ = false;
+    clearRoguelikeBigHoleState();
+    resetWorldEffectState();
+    resetWorldEnemyState();
+    resetWorldProjectileState();
+    resetInPlace(magic_);
+    resetInPlace(magicFx_);
+    resetWorldDropState();
+    rewardNodes_.clear();
+    moneyNodes_.clear();
+    moonFragmentNodes_.clear();
+    chestNodes_.clear();
+    crateNodes_.clear();
+    enemyNodes_.clear();
+    dungeonEvents_.clear();
+    resetInPlace(tileMap_);
+    resetDungeonMinimap();
+
+    generateDungeonLayoutForRun();
+    resetWarpPointRunState();
+    initializeMoonFragmentNodesFromWarpPoints();
+    initializeRewardNodesFromLayout();
+    initializeChestNodesFromLayout();
+    initializeCrateNodesFromLayout();
+    initializeEnemyNodesFromLayout();
+    initializeDungeonEventInstancesFromLayout();
+    initializeRoguelikeBigHoleFromLayout();
+    applyPlacementTerrainOverrides();
+    refreshEquipmentModifiers();
+    applyPermanentUpgrades();
+    spellRing_.applyObjectParameters(objectCatalog_);
+    refreshOrbitEffects();
+    player_.position = safePlayerStartPosition(tileWorldCenter(dungeonLayout_.startTile));
+    tileMap_.updateAround(player_.position, 0.0f, runtimeBalanceForDungeon(), dungeonLayout_);
+    normalizeOpenBuriedPlacementNodes();
+    updateDungeonMinimap(0.0);
+    camera_.follow(player_.position, 1.0f);
+    resetPlayerFootstepDust();
+    pushDungeonLog(std::to_string(astralRun_.currentDepthMeters) + "m地点へ進んだ", "roguelike_area_advance");
+}
+
+bool Game::updateRoguelikeBigHoleUi(const Input& input, UiContext& ui)
+{
+    if (mode_ != ScreenMode::Playing || enemyTestActive_ || introTutorialActive() || !currentStageIsRoguelike()) {
+        clearRoguelikeBigHoleState();
+        return false;
+    }
+    if (!roguelikeBigHole_.active) {
+        closeUiCommandMenu(roguelikeBigHoleMenu_);
+        focusedRoguelikeBigHole_ = 0;
+        hoveredRoguelikeBigHole_ = false;
+        return false;
+    }
+
+    const std::array<UiCommandMenuItem, 2> items{{
+        {"さらに進む", roguelikeBigHole_.unlocked},
+        {"地上に戻る", true},
+    }};
+    if (roguelikeBigHoleMenu_.open) {
+        hoveredRoguelikeBigHole_ = false;
+        const bool wasOpen = roguelikeBigHoleMenu_.open;
+        const int selected = updateUiCommandMenu(
+            roguelikeBigHoleMenu_,
+            ui,
+            input,
+            items.data(),
+            static_cast<int>(items.size()));
+        if (selected == 0) {
+            advanceRoguelikeAreaFromBigHole();
+            ui.emitSound(UiSoundEvent::Confirm);
+            return true;
+        }
+        if (selected == 1) {
+            enterAstralResult(AstralRunResult::Returned);
+            ui.emitSound(UiSoundEvent::Confirm);
+            return true;
+        }
+        return wasOpen;
+    }
+
+    int clicked = 0;
+    if (!ui.pointerConsumed()) {
+        const Vec2 clickWorld = camera_.screenToWorld(ui.mouse());
+        if (dungeonInspectableHovered(
+                roguelikeBigHole_.position,
+                {RoguelikeBigHoleImageSize, RoguelikeBigHoleImageSize},
+                clickWorld)) {
+            clicked = 1;
+        }
+    }
+    const bool nearby = dungeonInspectableInRange(
+        roguelikeBigHole_.position,
+        {RoguelikeBigHoleImageSize, RoguelikeBigHoleImageSize});
+    hoveredRoguelikeBigHole_ = clicked != 0;
+    focusedRoguelikeBigHole_ = nearby ? 1 : 0;
+    if (!nearby && clicked == 0) {
+        return false;
+    }
+    if (input.confirmPressed() || input.useItemPressed() || clicked != 0) {
+        const Vec2 anchor = camera_.worldToScreen(roguelikeBigHole_.position + Vec2{0.0f, -RoguelikeBigHoleImageSize * 0.5f});
+        openUiCommandMenu(
+            roguelikeBigHoleMenu_,
+            anchor,
+            UiRect{{0.0f, 0.0f}, {static_cast<float>(camera_.width()), static_cast<float>(camera_.height())}},
+            static_cast<int>(items.size()),
+            items.data(),
+            180.0f);
+        ui.emitSound(UiSoundEvent::MenuOpen);
+        if (clicked != 0) {
+            ui.consumePointer();
+        }
+        return true;
+    }
+    return false;
 }
 
 int Game::nearbyDiscoveredWarpPointIndex() const
@@ -8157,7 +8418,7 @@ bool Game::tryTriggerChestMimic(ChestNode& node)
 
     const Vec2 center = tileWorldCenter(node.tile);
     const RuntimeBalance dungeonBalance = runtimeBalanceForDungeon();
-    const int lootDepthRank = lootDepthRankForWorldPosition(tileMap_, dungeonLayout_, currentStageId_, center);
+    const int lootDepthRank = roguelikeDepthRankForWorldPosition(center);
     int spawnedRuntimeId = 0;
     if (!enemies_.spawnSpecificEnemyAtPosition(
             tileMap_,
@@ -8889,7 +9150,7 @@ void Game::updateExposedEnemyNodes()
         }
         bool spawned = false;
         int spawnedRuntimeId = 0;
-        const int lootDepthRank = lootDepthRankForWorldPosition(tileMap_, dungeonLayout_, currentStageId_, center);
+        const int lootDepthRank = roguelikeDepthRankForWorldPosition(center);
         if (introTutorialSlimeNode) {
             const std::string slimeId = introTutorialSlimeEnemyId(enemyCatalog_);
             if (!slimeId.empty()) {
@@ -9373,7 +9634,7 @@ std::vector<Vec2> Game::spawnHiddenEnemyNodesFromOpenedTiles(const std::vector<V
 
             consumedByHiddenNode = true;
             const Vec2 center = tileWorldCenter(node.tile);
-            const int lootDepthRank = lootDepthRankForWorldPosition(tileMap_, dungeonLayout_, currentStageId_, center);
+            const int lootDepthRank = roguelikeDepthRankForWorldPosition(center);
             if (enemies_.spawnNodeEnemy(tileMap_, center, player_.position, balance_, enemyCatalog_, true, true, currentStageId_, lootDepthRank)) {
                 node.spawned = true;
             }
@@ -9473,9 +9734,34 @@ float Game::bossDefeatPresentationProgress() const
 
 bool Game::beginBossFightForCurrentEncounter()
 {
-    if (!hasBossSpawnPoint_ || bossSpawned_ || !warpPointsEnabled_ || hasCapturedBossForCurrentStage()) {
+    const bool roguelikeGate = bossEncounter_.purpose == BossEncounterPurpose::RoguelikeGate;
+    if (!hasBossSpawnPoint_ || bossSpawned_) {
         resetBossEncounter();
         return false;
+    }
+    if (!roguelikeGate && (!warpPointsEnabled_ || hasCapturedBossForCurrentStage())) {
+        resetBossEncounter();
+        return false;
+    }
+    if (roguelikeGate && (!currentStageIsRoguelike() || !roguelikeBigHole_.active || roguelikeBigHole_.unlocked)) {
+        resetBossEncounter();
+        return false;
+    }
+
+    EnemyVariantTier bossVariantTier = EnemyVariantTier::Normal;
+    int effectiveBaseLevel = 0;
+    if (roguelikeGate) {
+        if (roguelikeBigHole_.depthMeters >= RoguelikeMetersPerArea * 3) {
+            bossVariantTier = EnemyVariantTier::Abyss;
+        } else if (roguelikeBigHole_.depthMeters >= RoguelikeMetersPerArea * 2) {
+            bossVariantTier = EnemyVariantTier::Deep;
+        }
+        const int gateSectionRank =
+            astralRun_.sectionRankOffset + RoguelikeSectionsPerArea;
+        effectiveBaseLevel =
+            roguelikeTargetBaseLevelForSectionRank(gateSectionRank) +
+            enemyVariantLevelBonus(bossVariantTier) +
+            std::max(0, astralRun_.areaIndex - 2) * 4;
     }
 
     bossSpawned_ = enemies_.spawnBossNear(
@@ -9484,7 +9770,9 @@ bool Game::beginBossFightForCurrentEncounter()
         player_.position,
         balance_,
         enemyCatalog_,
-        currentStageDefinition().bossEnemyId);
+        currentStageDefinition().bossEnemyId,
+        bossVariantTier,
+        effectiveBaseLevel);
     if (!bossSpawned_) {
         resetBossEncounter();
         return false;
@@ -9501,11 +9789,16 @@ bool Game::beginBossFightForCurrentEncounter()
 void Game::beginBossDefeatSequence(Vec2 position)
 {
     pendingStoryTriggers_.clear();
+    const BossEncounterPurpose purpose = bossEncounter_.purpose;
     bossEncounter_.phase = BossEncounterPhase::DefeatPresentation;
+    bossEncounter_.purpose = purpose;
     bossEncounter_.stageId = currentStageId_;
     bossEncounter_.defeatPosition = position;
     bossEncounter_.timer = 0.0f;
-    bossEncounter_.finalBoss = currentStageId_ == FinalStoryStageId && !hasStoryFlag(EndingSeenFlag);
+    bossEncounter_.finalBoss =
+        purpose == BossEncounterPurpose::StageClear &&
+        currentStageId_ == FinalStoryStageId &&
+        !hasStoryFlag(EndingSeenFlag);
     playAudioSe("se.boss.defeat");
     playAudioBgm("bgm.dungeon", 0.70f);
     effects_.spawnAreaPulse(position, 92.0f, {255, 214, 110, 210});
@@ -9514,9 +9807,16 @@ void Game::beginBossDefeatSequence(Vec2 position)
 void Game::finishBossEncounterAfterDialogue()
 {
     const bool finalBoss = bossEncounter_.finalBoss;
+    const bool roguelikeGate = bossEncounter_.purpose == BossEncounterPurpose::RoguelikeGate;
     resetBossEncounter();
     if (finalBoss) {
         beginFinalBossEndingSequence();
+    } else if (roguelikeGate) {
+        roguelikeBigHole_.unlocked = true;
+        hasBossSpawnPoint_ = false;
+        bossSpawned_ = false;
+        effects_.spawnAreaPulse(roguelikeBigHole_.position, 82.0f, {150, 210, 255, 170});
+        pushDungeonLog("大穴への道が開いた", "roguelike_big_hole_unlocked");
     } else if (currentStageIsRoguelike()) {
         enterAstralResult(AstralRunResult::DragonDefeated);
     } else {
@@ -9545,7 +9845,8 @@ bool Game::updateBossEncounterFlow(float dt)
         }
         bossEncounter_.phase = BossEncounterPhase::WaitingAfterDialogue;
         bossEncounter_.timer = 0.0f;
-        if (!queueStoryEventForCurrentStage("boss_after")) {
+        if (bossEncounter_.purpose == BossEncounterPurpose::RoguelikeGate ||
+            !queueStoryEventForCurrentStage("boss_after")) {
             finishBossEncounterAfterDialogue();
         }
         return true;
@@ -9561,10 +9862,14 @@ bool Game::updateBossEncounterFlow(float dt)
 
 void Game::updateBossSpawn()
 {
-    if (!hasBossSpawnPoint_ || bossSpawned_ || !warpPointsEnabled_) {
+    const bool roguelikeGate =
+        currentStageIsRoguelike() &&
+        roguelikeBigHole_.active &&
+        !roguelikeBigHole_.unlocked;
+    if (!hasBossSpawnPoint_ || bossSpawned_ || (!warpPointsEnabled_ && !roguelikeGate)) {
         return;
     }
-    if (hasCapturedBossForCurrentStage()) {
+    if (!roguelikeGate && hasCapturedBossForCurrentStage()) {
         resetBossEncounter();
         return;
     }
@@ -9577,9 +9882,10 @@ void Game::updateBossSpawn()
 
     bossEncounter_ = BossEncounterState{};
     bossEncounter_.phase = BossEncounterPhase::WaitingBeforeDialogue;
+    bossEncounter_.purpose = roguelikeGate ? BossEncounterPurpose::RoguelikeGate : BossEncounterPurpose::StageClear;
     bossEncounter_.stageId = currentStageId_;
     bossEncounter_.spawnPoint = bossSpawnPoint_;
-    if (queueStoryEventForCurrentStage("boss_before")) {
+    if (!roguelikeGate && queueStoryEventForCurrentStage("boss_before")) {
         return;
     }
 
@@ -10195,49 +10501,92 @@ void Game::renderDungeonEntrance(Renderer& renderer) const
 
 void Game::renderWarpPoints(Renderer& renderer) const
 {
-    if (!warpPointsEnabled_) {
+    const bool roguelikeGate =
+        currentStageIsRoguelike() &&
+        roguelikeBigHole_.active &&
+        !roguelikeBigHole_.unlocked;
+    if (!warpPointsEnabled_ && !roguelikeGate) {
         return;
     }
 
-    for (const WarpPoint& point : warpPoints_) {
-        const Color core = point.discovered ? Color{92, 236, 210, 255} : Color{255, 208, 92, 255};
-        const Color ring = point.discovered ? Color{170, 255, 238, 220} : Color{255, 232, 150, 220};
-        const bool inInteractionRange =
-            point.discovered &&
-            dungeonInspectableInRange(point.position, {DungeonWarpPointImageSize, DungeonWarpPointImageSize});
-        const bool hovered =
-            point.discovered &&
-            hoveredWarpReturnPointIndex_ >= 0 &&
-            hoveredWarpReturnPointIndex_ < static_cast<int>(warpPoints_.size()) &&
-            warpPoints_[static_cast<std::size_t>(hoveredWarpReturnPointIndex_)].index == point.index;
-        renderer.fillSoftCircle(point.position, point.discovered ? 34.0f : 24.0f, {150, 210, 255, 42});
+    if (warpPointsEnabled_) {
+        for (const WarpPoint& point : warpPoints_) {
+            const Color core = point.discovered ? Color{92, 236, 210, 255} : Color{255, 208, 92, 255};
+            const Color ring = point.discovered ? Color{170, 255, 238, 220} : Color{255, 232, 150, 220};
+            const bool inInteractionRange =
+                point.discovered &&
+                dungeonInspectableInRange(point.position, {DungeonWarpPointImageSize, DungeonWarpPointImageSize});
+            const bool hovered =
+                point.discovered &&
+                hoveredWarpReturnPointIndex_ >= 0 &&
+                hoveredWarpReturnPointIndex_ < static_cast<int>(warpPoints_.size()) &&
+                warpPoints_[static_cast<std::size_t>(hoveredWarpReturnPointIndex_)].index == point.index;
+            renderer.fillSoftCircle(point.position, point.discovered ? 34.0f : 24.0f, {150, 210, 255, 42});
 
-        WorldIconDrawOptions options;
-        options.tint = point.discovered ? Color{255, 255, 255, 255} : Color{255, 228, 154, 238};
-        options.outlineColor = inInteractionRange
-            ? (hovered ? DungeonInspectableHoverOutlineColor : DungeonInspectableOutlineColor)
-            : (point.discovered ? Color{42, 76, 88, 210} : Color{116, 74, 24, 205});
-        options.outlinePx = DungeonInspectableOutlinePx;
-        if (!drawWorldIcon(
-                renderer,
-                WorldIconId::WarpPoint,
-                point.position,
-                {DungeonWarpPointImageSize, DungeonWarpPointImageSize},
-                options)) {
-            renderer.fillCircle(point.position, 12.0f, core);
-            if (hovered) {
-                renderer.drawCircle(point.position, 17.0f, DungeonInspectableHoverOutlineColor);
+            WorldIconDrawOptions options;
+            options.tint = point.discovered ? Color{255, 255, 255, 255} : Color{255, 228, 154, 238};
+            options.outlineColor = inInteractionRange
+                ? (hovered ? DungeonInspectableHoverOutlineColor : DungeonInspectableOutlineColor)
+                : (point.discovered ? Color{42, 76, 88, 210} : Color{116, 74, 24, 205});
+            options.outlinePx = DungeonInspectableOutlinePx;
+            if (!drawWorldIcon(
+                    renderer,
+                    WorldIconId::WarpPoint,
+                    point.position,
+                    {DungeonWarpPointImageSize, DungeonWarpPointImageSize},
+                    options)) {
+                renderer.fillCircle(point.position, 12.0f, core);
+                if (hovered) {
+                    renderer.drawCircle(point.position, 17.0f, DungeonInspectableHoverOutlineColor);
+                }
+                renderer.drawLine(point.position + Vec2{-18.0f, 0.0f}, point.position + Vec2{18.0f, 0.0f}, ring);
+                renderer.drawLine(point.position + Vec2{0.0f, -18.0f}, point.position + Vec2{0.0f, 18.0f}, ring);
             }
-            renderer.drawLine(point.position + Vec2{-18.0f, 0.0f}, point.position + Vec2{18.0f, 0.0f}, ring);
-            renderer.drawLine(point.position + Vec2{0.0f, -18.0f}, point.position + Vec2{0.0f, 18.0f}, ring);
         }
     }
 
-    if (hasBossSpawnPoint_ && !bossSpawned_ && !hasCapturedBossForCurrentStage()) {
+    if (hasBossSpawnPoint_ && !bossSpawned_ && (roguelikeGate || !hasCapturedBossForCurrentStage())) {
         renderer.drawCircle(bossSpawnPoint_, BossSpawnTriggerRadius, {255, 98, 92, 150});
         renderer.drawCircle(bossSpawnPoint_, 18.0f, {255, 180, 80, 230});
         renderer.drawLine(bossSpawnPoint_ + Vec2{-22.0f, -22.0f}, bossSpawnPoint_ + Vec2{22.0f, 22.0f}, {255, 120, 90, 210});
         renderer.drawLine(bossSpawnPoint_ + Vec2{-22.0f, 22.0f}, bossSpawnPoint_ + Vec2{22.0f, -22.0f}, {255, 120, 90, 210});
+    }
+}
+
+void Game::renderRoguelikeBigHole(Renderer& renderer) const
+{
+    if (!currentStageIsRoguelike() || !roguelikeBigHole_.active) {
+        return;
+    }
+
+    const bool inInteractionRange = dungeonInspectableInRange(
+        roguelikeBigHole_.position,
+        {RoguelikeBigHoleImageSize, RoguelikeBigHoleImageSize});
+    const bool hovered = hoveredRoguelikeBigHole_ || (focusedRoguelikeBigHole_ != 0 && inInteractionRange);
+    const Color glow = roguelikeBigHole_.unlocked
+        ? Color{128, 194, 255, 74}
+        : Color{120, 82, 150, 48};
+    renderer.fillSoftCircle(roguelikeBigHole_.position, 42.0f, glow);
+
+    WorldIconDrawOptions options;
+    options.tint = roguelikeBigHole_.unlocked
+        ? Color{210, 220, 238, 255}
+        : Color{118, 108, 132, 238};
+    options.outlineColor = inInteractionRange
+        ? (hovered ? DungeonInspectableHoverOutlineColor : DungeonInspectableOutlineColor)
+        : Color{38, 28, 48, 220};
+    options.outlinePx = DungeonInspectableOutlinePx;
+    if (!drawWorldIcon(
+            renderer,
+            WorldIconId::NestHole,
+            roguelikeBigHole_.position,
+            {RoguelikeBigHoleImageSize, RoguelikeBigHoleImageSize},
+            options)) {
+        renderer.fillCircle(roguelikeBigHole_.position, 22.0f, {18, 16, 26, 245});
+        renderer.drawCircle(
+            roguelikeBigHole_.position,
+            28.0f,
+            inInteractionRange ? options.outlineColor : Color{92, 78, 116, 220});
     }
 }
 

@@ -10533,6 +10533,9 @@ bool Game::executeDebugCommand(std::string_view command)
         if (token == "dragon-defeated" || token == "dragon") {
             return AstralRunResult::DragonDefeated;
         }
+        if (token == "completed" || token == "complete" || token == "10000m") {
+            return AstralRunResult::Completed;
+        }
         return AstralRunResult::Returned;
     };
 
@@ -10544,6 +10547,8 @@ bool Game::executeDebugCommand(std::string_view command)
             return "死亡";
         case AstralRunResult::DragonDefeated:
             return "星脈竜撃破";
+        case AstralRunResult::Completed:
+            return "10000m到達";
         case AstralRunResult::None:
             break;
         }
@@ -10672,7 +10677,7 @@ bool Game::executeDebugCommand(std::string_view command)
     constexpr std::string_view AstralResultPrefix = "game astral result ";
     if (normalized.rfind(AstralResultPrefix, 0) == 0) {
         const std::string token = trimAscii(normalized.substr(AstralResultPrefix.size()));
-        if (token == "returned" || token == "died" || token == "dragon-defeated") {
+        if (token == "returned" || token == "died" || token == "dragon-defeated" || token == "completed") {
             debugAstralResultKind_ = token;
             logInfo("Debug: astral result target => " + token + ".");
         } else {

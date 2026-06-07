@@ -1308,6 +1308,7 @@ void Game::resetWorldRunState()
     bossSpawned_ = false;
     hasBossSpawnPoint_ = false;
     resetBossEncounter();
+    clearRoguelikeBigHoleState();
     dungeonEvents_.clear();
     stageClearSelection_ = 0;
     stageClearStatus_.clear();
@@ -1334,6 +1335,7 @@ void Game::buildWorldForRun(bool captureRunStartInventory)
     initializeCrateNodesFromLayout();
     initializeEnemyNodesFromLayout();
     initializeDungeonEventInstancesFromLayout();
+    initializeRoguelikeBigHoleFromLayout();
     applyPlacementTerrainOverrides();
     initializeDefaultSpellRing();
     refreshEquipmentModifiers();
@@ -1377,8 +1379,11 @@ void Game::beginWorldBuildFromBase(
     baseBrokenRingDepartureConfirm_ = {};
     baseMiningRescueDrop_ = {};
     warpReturnConfirm_ = {};
+    closeUiCommandMenu(roguelikeBigHoleMenu_);
     focusedWarpReturnPointIndex_ = -1;
     hoveredWarpReturnPointIndex_ = -1;
+    focusedRoguelikeBigHole_ = 0;
+    hoveredRoguelikeBigHole_ = false;
     introTutorialExitHovered_ = false;
     baseStatus_.clear();
     pausePage_ = PauseMenuPage::Main;
@@ -1444,6 +1449,7 @@ void Game::advanceWorldBuildOneStep()
     case WorldBuildStep::InitializeEnemies:
         initializeEnemyNodesFromLayout();
         initializeDungeonEventInstancesFromLayout();
+        initializeRoguelikeBigHoleFromLayout();
         applyPlacementTerrainOverrides();
         worldBuildJob_.step = WorldBuildStep::InitializeRing;
         break;
@@ -1488,6 +1494,7 @@ void Game::finishWorldBuild()
 
     resetWarpPointRunState();
     initializeMoonFragmentNodesFromWarpPoints();
+    initializeRoguelikeBigHoleFromLayout();
     applyPlacementTerrainOverrides();
     if (job.useLatestWarpPoint) {
         const Vec2 warpStartPosition = warpPointStartPositionForCurrentRequest();
@@ -3441,6 +3448,9 @@ void Game::updateScreenMode(
         if (updateWarpReturnUi(input, ui)) {
             return;
         }
+        if (updateRoguelikeBigHoleUi(input, ui)) {
+            return;
+        }
         if (updateDungeonEventNpcInteraction(input, ui)) {
             return;
         }
@@ -3669,6 +3679,7 @@ bool Game::gameProgressPaused() const
         bossEncounterBlocksProgress() ||
         endingKamishibaiPending_ ||
         warpReturnConfirm_.open ||
+        roguelikeBigHoleMenu_.open ||
         mode_ != ScreenMode::Playing;
 }
 
@@ -4201,7 +4212,7 @@ void Game::update(const Input& input, const Time& time)
             for (Vec2 spawnTile : randomEnemySpawnTiles) {
                 randomEnemySpawnPoints.push_back(DugEnemySpawnPoint{
                     .tileCenter = spawnTile,
-                    .depthRank = lootDepthRankForWorldPosition(tileMap_, dungeonLayout_, currentStageId_, spawnTile),
+                    .depthRank = roguelikeDepthRankForWorldPosition(spawnTile),
                 });
             }
             const int enemyCountBeforeDugSpawn = enemies_.activeCount();

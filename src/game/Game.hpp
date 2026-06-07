@@ -360,17 +360,32 @@ private:
         Returned,
         Died,
         DragonDefeated,
+        Completed,
     };
 
     struct AstralRunState {
         bool active = false;
         AstralDistortionKind distortion = AstralDistortionKind::None;
+        int areaIndex = 0;
+        int sectionRankOffset = 0;
+        int currentDepthMeters = 0;
+        int nextHoleDepthMeters = 500;
+        int deepestDepthMeters = 0;
+        int completionDepthMeters = 10000;
         int currentDepth = 1;
         int maxReachedDepth = 1;
         int maxDepth = 9;
         int maxReachedDistanceTiles = 0;
         int distortionChanges = 0;
         float baseStageHardnessMultiplier = 1.0f;
+    };
+
+    struct RoguelikeBigHoleState {
+        bool active = false;
+        bool unlocked = false;
+        Vec2 position{};
+        DungeonTile tile{};
+        int depthMeters = 500;
     };
 
     struct AstralRunSummary {
@@ -874,8 +889,13 @@ private:
         DefeatPresentation,
         WaitingAfterDialogue,
     };
+    enum class BossEncounterPurpose {
+        StageClear,
+        RoguelikeGate,
+    };
     struct BossEncounterState {
         BossEncounterPhase phase = BossEncounterPhase::None;
+        BossEncounterPurpose purpose = BossEncounterPurpose::StageClear;
         std::string stageId;
         std::string bossEnemyId;
         Vec2 spawnPoint{};
@@ -1370,6 +1390,13 @@ private:
     void resetAstralRunState();
     void initializeAstralRunForLayout();
     void updateAstralRunProgress();
+    int roguelikeAdjustedDepthRank(int localDepthRank) const;
+    int roguelikeDepthRankForWorldPosition(Vec2 position) const;
+    void initializeRoguelikeBigHoleFromLayout();
+    void clearRoguelikeBigHoleState();
+    bool updateRoguelikeBigHoleUi(const Input& input, UiContext& ui);
+    void advanceRoguelikeAreaFromBigHole();
+    void configureBossSpawnPointFromRoguelikeBigHole();
     void updateDungeonDepthTutorials();
     void applyAstralDistortionToLayout();
     AstralDistortionKind chooseAstralDistortionForDepth(int depth, AstralDistortionKind previous) const;
@@ -1451,6 +1478,7 @@ private:
     void restoreRetrySnapshot();
     void renderDungeonEntrance(Renderer& renderer) const;
     void renderWarpPoints(Renderer& renderer) const;
+    void renderRoguelikeBigHole(Renderer& renderer) const;
     void appendRewardNodeRenderEntries(
         std::vector<DepthRenderEntry>& entries,
         Renderer& renderer,
@@ -1696,6 +1724,7 @@ private:
     void renderDungeonLogs(Renderer& renderer) const;
     void renderDungeonControlHelp(Renderer& renderer) const;
     void renderWarpReturnUi(Renderer& renderer) const;
+    void renderRoguelikeBigHoleUi(Renderer& renderer) const;
     void renderWorldLoadingScreen(Renderer& renderer, float totalSeconds) const;
     void renderGameOverScreen(Renderer& renderer) const;
     void renderStageClearScreen(Renderer& renderer) const;
@@ -2135,6 +2164,10 @@ private:
     AstralRunSummary astralResult_{};
     int astralResultSelection_ = 0;
     int astralHighScore_ = 0;
+    RoguelikeBigHoleState roguelikeBigHole_{};
+    UiCommandMenuState roguelikeBigHoleMenu_{};
+    int focusedRoguelikeBigHole_ = 0;
+    bool hoveredRoguelikeBigHole_ = false;
     int debugAstralDepth_ = 1;
     std::string debugAstralMoveTarget_ = "depth";
     std::string debugAstralDistortionMode_ = "auto";
