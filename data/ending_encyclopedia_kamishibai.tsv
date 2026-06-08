@@ -1,0 +1,3 @@
+﻿id	image	text	duration	effect	note
+encyclopedia_1	assets/ending/encyclopedia_1.png	本棚の最後の空白が、静かに埋まりました。|ルネが見つけたもの、倒したもの、持ち帰ったもの。|地下に眠っていた名前が、ひとつ残らず記されます。[[next]]ルネ「……これで、全部？」|モニカ「うん。ルネがちゃんと、全部見つけたんだよ。」	6.5	none	図鑑完成
+encyclopedia_2	assets/ending/encyclopedia_2.png	それは、ただの収集記録ではありません。|忘れられていた地底世界を、もう一度たしかに呼ぶための本でした。[[next]]村長「この本は、きっと次の誰かを助けるでしょう。」|ルネ「じゃあ、ちゃんと残せたんだね。」||ルネの図鑑は、完成しました。	7.5	title_fade	地下世界の記録

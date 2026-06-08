@@ -21,6 +21,7 @@ struct KamishibaiPage {
     std::string id;
     std::string imagePath;
     std::string text;
+    std::vector<std::string> textSteps;
     float duration = 3.0f;
     KamishibaiEffect effect = KamishibaiEffect::None;
     std::string effectName = "none";
@@ -49,10 +50,14 @@ public:
     [[nodiscard]] int currentIndex() const { return currentIndex_; }
     [[nodiscard]] int previousIndex() const { return previousIndex_; }
     [[nodiscard]] float pageElapsed() const { return pageElapsed_; }
+    [[nodiscard]] float textStepElapsed() const { return textStepElapsed_; }
+    [[nodiscard]] int currentTextStepIndex() const { return currentTextStepIndex_; }
     [[nodiscard]] float pageProgress() const;
     [[nodiscard]] float transitionProgress() const;
     [[nodiscard]] const KamishibaiPage* currentPage() const;
     [[nodiscard]] const KamishibaiPage* previousPage() const;
+    [[nodiscard]] std::string_view currentText() const;
+    bool advance();
 
 private:
     void advancePage();
@@ -60,7 +65,9 @@ private:
     std::vector<KamishibaiPage> pages_;
     int currentIndex_ = -1;
     int previousIndex_ = -1;
+    int currentTextStepIndex_ = 0;
     float pageElapsed_ = 0.0f;
+    float textStepElapsed_ = 0.0f;
     float transitionElapsed_ = 0.0f;
     bool transitionActive_ = false;
     bool finished_ = true;

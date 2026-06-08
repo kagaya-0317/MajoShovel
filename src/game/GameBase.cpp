@@ -119,16 +119,17 @@ std::string baseExplorationControlHelp(const BaseFacility* facility)
         return "WASD/方向キー 移動   Enter 近くの施設を調べる   Esc メニュー";
     }
 
-    switch (facility->onInteract) {
-    case BaseFacilityAction::MonicaTalk:
-        return "Enter モニカと話す   Esc メニュー";
-    case BaseFacilityAction::HomeEntrance:
-        return "Enter ルネの家に入る   Esc メニュー";
-    case BaseFacilityAction::HomeExit:
-        return "Enter 屋外へ戻る   Esc メニュー";
-    default:
+    switch (facility->verb) {
+    case BaseInteractionVerb::Inspect:
         return std::string("Enter ") + facility->displayName + "を調べる   Esc メニュー";
+    case BaseInteractionVerb::Talk:
+        return std::string("Enter ") + facility->displayName + "と話す   Esc メニュー";
+    case BaseInteractionVerb::Enter:
+        return std::string("Enter ") + facility->displayName + "に入る   Esc メニュー";
+    case BaseInteractionVerb::Exit:
+        return "Enter 屋外へ戻る   Esc メニュー";
     }
+    return std::string("Enter ") + facility->displayName + "を調べる   Esc メニュー";
 }
 
 const char* baseFacilityTutorialTrigger(BaseFacilityAction action)
@@ -153,6 +154,7 @@ const char* baseFacilityTutorialTrigger(BaseFacilityAction action)
     case BaseFacilityAction::HomeEntrance:
     case BaseFacilityAction::HomeExit:
     case BaseFacilityAction::MonicaTalk:
+    case BaseFacilityAction::ElderTalk:
         return nullptr;
     }
     return nullptr;
@@ -638,6 +640,37 @@ int ringWorkshopRespecMovedPointCount(
     return changedPointSides / 2;
 }
 
+constexpr std::array<int, 4> RoguelikeTrainerUpgradeIndices{{4, 5, 6, 7}};
+
+int baseUpgradeDisplayCount(bool roguelikeTrainer)
+{
+    return roguelikeTrainer
+        ? static_cast<int>(RoguelikeTrainerUpgradeIndices.size())
+        : BaseUpgradeItemCount;
+}
+
+int baseUpgradeIndexForDisplay(bool roguelikeTrainer, int displayIndex)
+{
+    if (!roguelikeTrainer) {
+        return std::clamp(displayIndex, 0, BaseUpgradeItemCount - 1);
+    }
+    const int clamped = std::clamp(displayIndex, 0, static_cast<int>(RoguelikeTrainerUpgradeIndices.size()) - 1);
+    return RoguelikeTrainerUpgradeIndices[static_cast<std::size_t>(clamped)];
+}
+
+int baseUpgradeDisplayForIndex(bool roguelikeTrainer, int upgradeIndex)
+{
+    if (!roguelikeTrainer) {
+        return std::clamp(upgradeIndex, 0, BaseUpgradeItemCount - 1);
+    }
+    for (int i = 0; i < static_cast<int>(RoguelikeTrainerUpgradeIndices.size()); ++i) {
+        if (RoguelikeTrainerUpgradeIndices[static_cast<std::size_t>(i)] == upgradeIndex) {
+            return i;
+        }
+    }
+    return 0;
+}
+
 constexpr std::array<std::string_view, BaseItemSourceCount> BaseItemSourceLabels{{
     "リュック",
     "収納箱",
@@ -705,11 +738,13 @@ struct BaseFacilityVisual {
     UiRect rect{};
 };
 
-constexpr std::array<BaseFacilityVisual, 7> OutdoorBaseFacilityVisuals{{
+constexpr std::array<BaseFacilityVisual, 9> OutdoorBaseFacilityVisuals{{
     {"mine_exit", "assets/kyoten/move.png", {{578.0f, 530.0f}, {148.0f, 190.0f}}},
     {"storage_chest", "assets/kyoten/box.png", {{593.0f, 445.0f}, {60.0f, 53.0f}}},
     {"merchant_wagon", "assets/kyoten/wagon.png", {{928.0f, 65.0f}, {206.0f, 185.0f}}},
+    {"merchant_npc", "assets/taties/tatie_5.png", {{874.0f, 154.0f}, {62.0f, 106.0f}}},
     {"processing_table", "assets/kyoten/sagyodai.png", {{512.0f, 154.0f}, {183.0f, 106.0f}}},
+    {"processor_npc", "assets/taties/tatie_6.png", {{714.0f, 164.0f}, {62.0f, 106.0f}}},
     {"upgrade_forge", "assets/kyoten/kyokaro.png", {{968.0f, 355.0f}, {217.0f, 226.0f}}},
     {"ring_workshop", "assets/kyoten/ring-kobo.png", {{842.0f, 470.0f}, {115.0f, 93.0f}}},
     {"home", "assets/kyoten/house.png", {{113.0f, 11.0f}, {301.0f, 308.0f}}},
@@ -847,6 +882,40 @@ bool baseFacilityHiddenInNormalView(BaseArea area, const BaseFacility& facility)
     return !facility.unlocked && facilityId == "ring_workshop";
 }
 
+std::string_view baseFacilityInteractionGroupId(const BaseFacility& facility)
+{
+    const std::string_view groupId = facility.interactionGroupId;
+    return groupId.empty() ? std::string_view(facility.facilityId) : groupId;
+}
+
+bool baseInteractionGroupAvailable(
+    Vec2 playerPosition,
+    BaseArea area,
+    const std::vector<BaseFacility>& facilities,
+    const BaseFacility& facility)
+{
+    if (!facility.enabled) {
+        return false;
+    }
+
+    const std::string_view groupId = baseFacilityInteractionGroupId(facility);
+    for (const BaseFacility& candidate : facilities) {
+        if (!candidate.enabled) {
+            continue;
+        }
+        if (baseFacilityHiddenInNormalView(area, candidate)) {
+            continue;
+        }
+        if (baseFacilityInteractionGroupId(candidate) != groupId) {
+            continue;
+        }
+        if (baseInteractionAvailable(playerPosition, candidate)) {
+            return true;
+        }
+    }
+    return false;
+}
+
 void drawBaseFacilityNameLabel(
     Renderer& renderer,
     const BaseFacility& facility,
@@ -905,7 +974,7 @@ const BaseFacility* selectBaseInteractionFacility(
         if (baseFacilityHiddenInNormalView(area, facility)) {
             continue;
         }
-        if (!baseInteractionAvailable(playerPosition, facility)) {
+        if (!baseInteractionGroupAvailable(playerPosition, area, facilities, facility)) {
             continue;
         }
 
@@ -963,11 +1032,13 @@ void drawBaseFacilityFallbackRect(
     renderer.fillRect(facility.rect.pos, facility.rect.size, fill);
     renderer.drawRect(facility.rect.pos, facility.rect.size, outline);
     if (!inInteractionRange || !facility.enabled) {
-        renderer.drawText(
-            facility.rect.pos + Vec2{8.0f, 8.0f},
-            facility.displayName,
-            facility.enabled ? Color{248, 238, 214, 255} : Color{154, 146, 138, 255},
-            2);
+        if (facility.showNameLabel) {
+            renderer.drawText(
+                facility.rect.pos + Vec2{8.0f, 8.0f},
+                facility.displayName,
+                facility.enabled ? Color{248, 238, 214, 255} : Color{154, 146, 138, 255},
+                2);
+        }
     }
 }
 
@@ -995,8 +1066,8 @@ void drawBaseFacilities(
                 continue;
             }
 
-            const bool inInteractionRange = baseInteractionAvailable(playerPosition, facility);
-            const bool labelVisible = inInteractionRange && facility.enabled;
+            const bool inInteractionRange = baseInteractionGroupAvailable(playerPosition, area, facilities, facility);
+            const bool labelVisible = inInteractionRange && facility.enabled && facility.showNameLabel;
             const BaseFacilityVisual* visual = baseFacilityVisual(area, facility.facilityId);
 
             if (visual == nullptr) {
@@ -1292,6 +1363,29 @@ int itemCodexObjectCount(const ObjectCatalog& catalog)
         }));
 }
 
+bool baseFacilityIsPerson(std::string_view facilityId)
+{
+    return facilityId == "monica" ||
+        facilityId == "merchant_npc" ||
+        facilityId == "processor_npc" ||
+        facilityId == "elder";
+}
+
+void removeHiddenEndingPeople(std::vector<BaseFacility>& facilities, bool peopleGone)
+{
+    if (!peopleGone) {
+        return;
+    }
+    facilities.erase(
+        std::remove_if(
+            facilities.begin(),
+            facilities.end(),
+            [](const BaseFacility& facility) {
+                return baseFacilityIsPerson(facility.facilityId);
+            }),
+        facilities.end());
+}
+
 UiRect merchantActionDialogRect()
 {
     return smallActionDialogRect();
@@ -1418,6 +1512,32 @@ int updateVerticalTabClickSelection(
         selectedIndex,
         items.data(),
         static_cast<int>(items.size()),
+        rects.data());
+}
+
+template <std::size_t N>
+int updateVerticalTabClickSelection(
+    UiTabsState& state,
+    UiContext& ui,
+    int selectedIndex,
+    const std::array<UiVerticalTabItem, N>& items,
+    const std::array<UiRect, N>& rects,
+    int itemCount)
+{
+    UiTabsInput input{};
+    const int clampedCount = std::clamp(itemCount, 0, static_cast<int>(N));
+    if (clampedCount <= 0) {
+        state.focusedIndex = -1;
+        return -1;
+    }
+    state.focusedIndex = std::clamp(selectedIndex, 0, clampedCount - 1);
+    return updateUiVerticalTabs(
+        state,
+        ui,
+        input,
+        selectedIndex,
+        items.data(),
+        clampedCount,
         rects.data());
 }
 
@@ -3629,6 +3749,11 @@ int Game::processingMoneyCost(StorageEntry entry, ProcessingMode mode, bool ware
     const auto discountCost = [this](int rawCost) {
         return processingDiscountCost(rawCost, processingUnlockLevel_);
     };
+    const auto facilityCost = [this, mode](int cost) {
+        return roguelikeFacilityUiMode_ == RoguelikeFacilityUiMode::Artisan && mode != ProcessingMode::Repair
+            ? roguelikeAdjustedFacilityMoneyCost(cost)
+            : cost;
+    };
     if (mode == ProcessingMode::Repair) {
         const ItemInstance* instance = storageEntryInstance(entry, warehouseEntry);
         if (instance == nullptr || instance->maxDurability <= 0) {
@@ -3645,13 +3770,13 @@ int Game::processingMoneyCost(StorageEntry entry, ProcessingMode mode, bool ware
         return discountCost(static_cast<int>(std::ceil(static_cast<double>(basePrice) * ratio * 0.4)));
     }
     if (mode == ProcessingMode::ResetEnhancement) {
-        return discountCost(std::max(20, basePrice / 4));
+        return facilityCost(discountCost(std::max(20, basePrice / 4)));
     }
     if (mode == ProcessingMode::Lighten) {
-        return discountCost(processingLightenMoneyCost(rarity));
+        return facilityCost(discountCost(processingLightenMoneyCost(rarity)));
     }
     if (mode == ProcessingMode::Enlarge) {
-        return discountCost(processingEnlargeMoneyCost(rarity));
+        return facilityCost(discountCost(processingEnlargeMoneyCost(rarity)));
     }
 
     int enhanceLevel = 0;
@@ -3664,21 +3789,26 @@ int Game::processingMoneyCost(StorageEntry entry, ProcessingMode mode, bool ware
             enhanceLevel = instance->durabilityEnhanceLevel;
         }
     }
-    return discountCost(processingEnhanceMoneyCost(rarity, enhanceLevel + 1));
+    return facilityCost(discountCost(processingEnhanceMoneyCost(rarity, enhanceLevel + 1)));
 }
 
 int Game::processingOreCost(StorageEntry entry, ProcessingMode mode, bool warehouseEntry) const
 {
     const ItemData* item = storageEntryItem(entry, warehouseEntry);
     const int rarity = processingRarity(item);
+    const auto facilityCost = [this, mode](int cost) {
+        return roguelikeFacilityUiMode_ == RoguelikeFacilityUiMode::Artisan && mode != ProcessingMode::Repair
+            ? roguelikeAdjustedFacilityMaterialCost(cost)
+            : cost;
+    };
     if (mode == ProcessingMode::Repair || mode == ProcessingMode::ResetEnhancement) {
         return 0;
     }
     if (mode == ProcessingMode::Lighten) {
-        return processingLightenOreCost(rarity);
+        return facilityCost(processingLightenOreCost(rarity));
     }
     if (mode == ProcessingMode::Enlarge) {
-        return processingEnlargeOreCost(rarity);
+        return facilityCost(processingEnlargeOreCost(rarity));
     }
     int enhanceLevel = 0;
     if (const ItemInstance* instance = storageEntryInstance(entry, warehouseEntry)) {
@@ -3690,7 +3820,7 @@ int Game::processingOreCost(StorageEntry entry, ProcessingMode mode, bool wareho
             enhanceLevel = instance->durabilityEnhanceLevel;
         }
     }
-    return processingEnhanceOreCost(rarity, enhanceLevel + 1);
+    return facilityCost(processingEnhanceOreCost(rarity, enhanceLevel + 1));
 }
 
 int Game::processingMoneyCost(ProcessingTarget target, ProcessingMode mode) const
@@ -3713,6 +3843,11 @@ int Game::processingMoneyCost(ProcessingTarget target, ProcessingMode mode) cons
     const auto discountCost = [this](int rawCost) {
         return processingDiscountCost(rawCost, processingUnlockLevel_);
     };
+    const auto facilityCost = [this, mode](int cost) {
+        return roguelikeFacilityUiMode_ == RoguelikeFacilityUiMode::Artisan && mode != ProcessingMode::Repair
+            ? roguelikeAdjustedFacilityMoneyCost(cost)
+            : cost;
+    };
     if (mode == ProcessingMode::Repair) {
         if (ringItem.maxDurability <= 0) {
             return 0;
@@ -3728,13 +3863,13 @@ int Game::processingMoneyCost(ProcessingTarget target, ProcessingMode mode) cons
         return discountCost(static_cast<int>(std::ceil(static_cast<double>(basePrice) * ratio * 0.4)));
     }
     if (mode == ProcessingMode::ResetEnhancement) {
-        return discountCost(std::max(20, basePrice / 4));
+        return facilityCost(discountCost(std::max(20, basePrice / 4)));
     }
     if (mode == ProcessingMode::Lighten) {
-        return discountCost(processingLightenMoneyCost(rarity));
+        return facilityCost(discountCost(processingLightenMoneyCost(rarity)));
     }
     if (mode == ProcessingMode::Enlarge) {
-        return discountCost(processingEnlargeMoneyCost(rarity));
+        return facilityCost(discountCost(processingEnlargeMoneyCost(rarity)));
     }
 
     const int enhanceLevel =
@@ -3742,7 +3877,7 @@ int Game::processingMoneyCost(ProcessingTarget target, ProcessingMode mode) cons
         mode == ProcessingMode::Dig ? ringItem.digEnhanceLevel :
         mode == ProcessingMode::Durability ? ringItem.durabilityEnhanceLevel :
         ringItem.enhanceLevel;
-    return discountCost(processingEnhanceMoneyCost(rarity, enhanceLevel + 1));
+    return facilityCost(discountCost(processingEnhanceMoneyCost(rarity, enhanceLevel + 1)));
 }
 
 int Game::processingOreCost(ProcessingTarget target, ProcessingMode mode) const
@@ -3761,18 +3896,23 @@ int Game::processingOreCost(ProcessingTarget target, ProcessingMode mode) const
     const SpellRingItem& ringItem = ringItems[static_cast<std::size_t>(target.ringItemIndex)];
     const ItemData* item = objectForRingItem(objectCatalog_, ringItem);
     const int rarity = processingRarity(item);
+    const auto facilityCost = [this, mode](int cost) {
+        return roguelikeFacilityUiMode_ == RoguelikeFacilityUiMode::Artisan && mode != ProcessingMode::Repair
+            ? roguelikeAdjustedFacilityMaterialCost(cost)
+            : cost;
+    };
     if (mode == ProcessingMode::Lighten) {
-        return processingLightenOreCost(rarity);
+        return facilityCost(processingLightenOreCost(rarity));
     }
     if (mode == ProcessingMode::Enlarge) {
-        return processingEnlargeOreCost(rarity);
+        return facilityCost(processingEnlargeOreCost(rarity));
     }
     const int enhanceLevel =
         mode == ProcessingMode::Attack ? ringItem.attackEnhanceLevel :
         mode == ProcessingMode::Dig ? ringItem.digEnhanceLevel :
         mode == ProcessingMode::Durability ? ringItem.durabilityEnhanceLevel :
         ringItem.enhanceLevel;
-    return processingEnhanceOreCost(rarity, enhanceLevel + 1);
+    return facilityCost(processingEnhanceOreCost(rarity, enhanceLevel + 1));
 }
 
 std::vector<Game::ProcessingMode> Game::processingCommandModes(ProcessingTarget target) const
@@ -3811,8 +3951,106 @@ std::vector<UiCommandMenuItem> Game::processingCommandItems(ProcessingTarget tar
     return items;
 }
 
+int Game::processingBulkRepairTargetCount() const
+{
+    int count = 0;
+    for (const InventoryObjectInstance& entry : inventory_.objectInstances()) {
+        const ItemInstance& instance = entry.instance;
+        if (instance.maxDurability >= 0 && (instance.isBroken || instance.currentDurability < instance.maxDurability)) {
+            ++count;
+        }
+    }
+    for (int ringIndex = 0; ringIndex < SpellRingCount; ++ringIndex) {
+        const std::vector<SpellRingItem>& ringItems = spellRing_.itemsForRing(ringIndex);
+        for (const SpellRingItem& item : ringItems) {
+            if (item.maxDurability >= 0 && (item.broken() || item.durability < item.maxDurability)) {
+                ++count;
+            }
+        }
+    }
+    return count;
+}
+
+int Game::processingBulkRepairMoneyCost() const
+{
+    if (roguelikeFacilityUiMode_ != RoguelikeFacilityUiMode::Artisan) {
+        return 0;
+    }
+
+    int rawCost = 0;
+    const auto addRepairCost = [&](ProcessingTarget target) {
+        if (!target.valid) {
+            return;
+        }
+        const int cost = processingMoneyCost(target, ProcessingMode::Repair);
+        rawCost += std::max(10, cost);
+    };
+
+    const auto& instances = inventory_.objectInstances();
+    for (int i = 0; i < static_cast<int>(instances.size()); ++i) {
+        const ItemInstance& instance = instances[static_cast<std::size_t>(i)].instance;
+        if (instance.maxDurability < 0 || (!instance.isBroken && instance.currentDurability >= instance.maxDurability)) {
+            continue;
+        }
+        ProcessingTarget target{};
+        target.source = BaseItemSource::Backpack;
+        target.slotIndex = i;
+        target.backpackEntry = StorageEntry{StorageEntryKind::Instance, i};
+        target.valid = true;
+        addRepairCost(target);
+    }
+
+    for (int ringIndex = 0; ringIndex < SpellRingCount; ++ringIndex) {
+        const std::vector<SpellRingItem>& ringItems = spellRing_.itemsForRing(ringIndex);
+        for (int itemIndex = 0; itemIndex < static_cast<int>(ringItems.size()); ++itemIndex) {
+            const SpellRingItem& item = ringItems[static_cast<std::size_t>(itemIndex)];
+            if (item.maxDurability < 0 || (!item.broken() && item.durability >= item.maxDurability)) {
+                continue;
+            }
+            ProcessingTarget target{};
+            target.source = static_cast<BaseItemSource>(BaseRingSourceOffset + ringIndex);
+            target.slotIndex = itemIndex;
+            target.ringIndex = ringIndex;
+            target.ringItemIndex = itemIndex;
+            target.valid = true;
+            addRepairCost(target);
+        }
+    }
+
+    return roguelikeAdjustedFacilityMoneyCost(rawCost);
+}
+
+int Game::processingBulkRepairOreCost() const
+{
+    if (roguelikeFacilityUiMode_ != RoguelikeFacilityUiMode::Artisan) {
+        return 0;
+    }
+    const int count = processingBulkRepairTargetCount();
+    if (count <= 0) {
+        return 0;
+    }
+    return std::max(1, (count + 1) / 2 + roguelikeFacilityCostStep() / 2);
+}
+
 void Game::applyProcessingBulkRepair()
 {
+    const int targetCount = processingBulkRepairTargetCount();
+    if (targetCount <= 0) {
+        baseStatus_ = "修理が必要なアイテムはありません";
+        return;
+    }
+
+    const int moneyCost = processingBulkRepairMoneyCost();
+    const int oreCost = processingBulkRepairOreCost();
+    if (money_ < moneyCost) {
+        baseStatus_ = "所持金が足りません";
+        return;
+    }
+    if (inventory_.materialCount(MaterialType::EnhancementOre) < oreCost) {
+        baseStatus_ = "強化鉱石が足りません";
+        return;
+    }
+
     int repairedCount = 0;
 
     std::vector<std::string> backpackInstanceIds;
@@ -3840,11 +4078,27 @@ void Game::applyProcessingBulkRepair()
     }
 
     if (repairedCount > 0) {
+        if (moneyCost > 0) {
+            money_ -= moneyCost;
+        }
+        if (oreCost > 0) {
+            const bool spent = inventory_.materials().spend(MaterialType::EnhancementOre, oreCost);
+            (void)spent;
+        }
+        std::vector<std::string> lines;
+        lines.push_back(std::to_string(repairedCount) + "個のアイテムを修理しました");
+        if (moneyCost > 0 || oreCost > 0) {
+            lines.push_back(
+                "費用: " +
+                std::to_string(moneyCost) +
+                "G / 強化鉱石 x" +
+                std::to_string(oreCost));
+        }
         baseStatus_.clear();
         openUiResultDialog(
             baseResultDialog_,
             "一括修理完了",
-            {std::to_string(repairedCount) + "個のアイテムを修理しました"});
+            lines);
         return;
     }
 
@@ -5326,18 +5580,22 @@ int Game::upgradeCost(int index) const
     constexpr std::array<int, 5> CollectionRangeCosts{{750, 1500, 3000, 5500, 9000}};
     constexpr std::array<int, 3> RingPresetCosts{{2000, 4000, 8000}};
 
+    int cost = 0;
     switch (index) {
-    case 0: return baseUpgradeCostForStep(warehouseCapacityLevel_, StorageCosts);
-    case 1: return baseUpgradeCostForStep(std::max(0, merchantUpgradeLevel_ - 1), MerchantCosts);
-    case 2: return baseUpgradeCostForStep(processingUnlockLevel_, ProcessingCosts);
-    case 3: return ringWorkshopUnlocked_ ? 0 : 10000;
-    case 4: return baseUpgradeCostForStep(maxHpUpgradeLevel_, MaxHpCosts);
-    case 5: return baseUpgradeCostForStep(ringRadiusUpgradeLevel_, RingRadiusCosts);
-    case 6: return baseUpgradeCostForStep(ringSpeedUpgradeLevel_, RingSpeedCosts);
-    case 7: return baseUpgradeCostForStep(collectionRangeUpgradeLevel_, CollectionRangeCosts);
-    case 8: return baseUpgradeCostForStep(ringPresetSlotLevel_, RingPresetCosts);
-    default: return 0;
+    case 0: cost = baseUpgradeCostForStep(warehouseCapacityLevel_, StorageCosts); break;
+    case 1: cost = baseUpgradeCostForStep(std::max(0, merchantUpgradeLevel_ - 1), MerchantCosts); break;
+    case 2: cost = baseUpgradeCostForStep(processingUnlockLevel_, ProcessingCosts); break;
+    case 3: cost = ringWorkshopUnlocked_ ? 0 : 10000; break;
+    case 4: cost = baseUpgradeCostForStep(maxHpUpgradeLevel_, MaxHpCosts); break;
+    case 5: cost = baseUpgradeCostForStep(ringRadiusUpgradeLevel_, RingRadiusCosts); break;
+    case 6: cost = baseUpgradeCostForStep(ringSpeedUpgradeLevel_, RingSpeedCosts); break;
+    case 7: cost = baseUpgradeCostForStep(collectionRangeUpgradeLevel_, CollectionRangeCosts); break;
+    case 8: cost = baseUpgradeCostForStep(ringPresetSlotLevel_, RingPresetCosts); break;
+    default: cost = 0; break;
     }
+    return roguelikeFacilityUiMode_ == RoguelikeFacilityUiMode::Trainer
+        ? roguelikeAdjustedFacilityMoneyCost(cost)
+        : cost;
 }
 
 MaterialType Game::upgradeMaterialType(int index) const
@@ -5370,18 +5628,22 @@ int Game::upgradeMaterialCost(int index) const
     constexpr std::array<int, 5> CollectionRangeMaterialCosts{{6, 10, 16, 24, 34}};
     constexpr std::array<int, 3> RingPresetMaterialCosts{{12, 20, 30}};
 
+    int cost = 0;
     switch (index) {
-    case 0: return baseUpgradeCostForStep(warehouseCapacityLevel_, StorageMaterialCosts);
-    case 1: return baseUpgradeCostForStep(std::max(0, merchantUpgradeLevel_ - 1), MerchantMaterialCosts);
-    case 2: return baseUpgradeCostForStep(processingUnlockLevel_, ProcessingMaterialCosts);
-    case 3: return ringWorkshopUnlocked_ ? 0 : 60;
-    case 4: return baseUpgradeCostForStep(maxHpUpgradeLevel_, MaxHpMaterialCosts);
-    case 5: return baseUpgradeCostForStep(ringRadiusUpgradeLevel_, RingRadiusMaterialCosts);
-    case 6: return baseUpgradeCostForStep(ringSpeedUpgradeLevel_, RingSpeedMaterialCosts);
-    case 7: return baseUpgradeCostForStep(collectionRangeUpgradeLevel_, CollectionRangeMaterialCosts);
-    case 8: return baseUpgradeCostForStep(ringPresetSlotLevel_, RingPresetMaterialCosts);
-    default: return 0;
+    case 0: cost = baseUpgradeCostForStep(warehouseCapacityLevel_, StorageMaterialCosts); break;
+    case 1: cost = baseUpgradeCostForStep(std::max(0, merchantUpgradeLevel_ - 1), MerchantMaterialCosts); break;
+    case 2: cost = baseUpgradeCostForStep(processingUnlockLevel_, ProcessingMaterialCosts); break;
+    case 3: cost = ringWorkshopUnlocked_ ? 0 : 60; break;
+    case 4: cost = baseUpgradeCostForStep(maxHpUpgradeLevel_, MaxHpMaterialCosts); break;
+    case 5: cost = baseUpgradeCostForStep(ringRadiusUpgradeLevel_, RingRadiusMaterialCosts); break;
+    case 6: cost = baseUpgradeCostForStep(ringSpeedUpgradeLevel_, RingSpeedMaterialCosts); break;
+    case 7: cost = baseUpgradeCostForStep(collectionRangeUpgradeLevel_, CollectionRangeMaterialCosts); break;
+    case 8: cost = baseUpgradeCostForStep(ringPresetSlotLevel_, RingPresetMaterialCosts); break;
+    default: cost = 0; break;
     }
+    return roguelikeFacilityUiMode_ == RoguelikeFacilityUiMode::Trainer
+        ? roguelikeAdjustedFacilityMaterialCost(cost)
+        : cost;
 }
 
 const char* Game::upgradeName(int index) const
@@ -5496,6 +5758,160 @@ void Game::closeBaseFacilityScreens()
     baseRingWorkshopMode_ = RingWorkshopMode::ChooseAction;
     baseBookshelfActive_ = false;
     baseDiaryActive_ = false;
+}
+
+bool Game::roguelikeFacilityUiActive() const
+{
+    return roguelikeFacilityUiMode_ != RoguelikeFacilityUiMode::None;
+}
+
+int Game::roguelikeFacilityCostStep() const
+{
+    return astralRunActive() ? std::max(0, astralRun_.areaIndex) : 0;
+}
+
+int Game::roguelikeAdjustedFacilityMoneyCost(int baseCost) const
+{
+    if (baseCost <= 0) {
+        return 0;
+    }
+    const double multiplier = 1.0 + static_cast<double>(roguelikeFacilityCostStep()) * 0.10;
+    return std::max(1, static_cast<int>(std::ceil(static_cast<double>(baseCost) * multiplier)));
+}
+
+int Game::roguelikeAdjustedFacilityMaterialCost(int baseCost) const
+{
+    if (baseCost <= 0) {
+        return 0;
+    }
+    const int step = roguelikeFacilityCostStep();
+    return std::max(1, baseCost + (baseCost * step + 5) / 10);
+}
+
+int Game::roguelikeMerchantStockLimit() const
+{
+    return std::clamp(4 + roguelikeFacilityCostStep() / 2, 4, 8);
+}
+
+void Game::prepareRoguelikeMerchantStock()
+{
+    if (!roguelikeMerchantStockSuspended_) {
+        suspendedMerchantStock_ = merchantStock_;
+        suspendedMerchantStockVersion_ = merchantStockVersion_;
+        roguelikeMerchantStockSuspended_ = true;
+    }
+    refreshMerchantStock(true);
+    const int limit = roguelikeMerchantStockLimit();
+    if (static_cast<int>(merchantStock_.size()) > limit) {
+        merchantStock_.resize(static_cast<std::size_t>(limit));
+    }
+    baseMerchantBuySelection_ = std::clamp(baseMerchantBuySelection_, 0, std::max(0, static_cast<int>(merchantStock_.size()) - 1));
+}
+
+void Game::restoreRoguelikeMerchantStock()
+{
+    if (!roguelikeMerchantStockSuspended_) {
+        return;
+    }
+    merchantStock_ = std::move(suspendedMerchantStock_);
+    suspendedMerchantStock_.clear();
+    merchantStockVersion_ = suspendedMerchantStockVersion_;
+    suspendedMerchantStockVersion_ = 0;
+    roguelikeMerchantStockSuspended_ = false;
+}
+
+void Game::openRoguelikeFacility(RoguelikeFacilityKind kind, std::string_view facilityId)
+{
+    closeBaseFacilityScreens();
+    activeRoguelikeFacilityId_ = std::string(facilityId);
+    switch (kind) {
+    case RoguelikeFacilityKind::Merchant:
+        roguelikeFacilityUiMode_ = RoguelikeFacilityUiMode::Merchant;
+        prepareRoguelikeMerchantStock();
+        baseSellActive_ = true;
+        baseMerchantMode_ = MerchantUiMode::ChooseAction;
+        baseMerchantActionSelection_ = 0;
+        baseMerchantSellSource_ = 0;
+        baseMerchantSellSourceTabs_.focusedIndex = baseMerchantSellSource_;
+        baseSellSelection_ = 0;
+        baseMerchantBuySelection_ = 0;
+        closeUiCommandMenu(baseMerchantSellCommandMenu_);
+        baseMerchantSellCommandSource_ = 0;
+        baseMerchantSellCommandIndex_ = -1;
+        closeUiCommandMenu(baseMerchantBuyCommandMenu_);
+        baseMerchantBuyCommandIndex_ = -1;
+        break;
+    case RoguelikeFacilityKind::Artisan:
+        roguelikeFacilityUiMode_ = RoguelikeFacilityUiMode::Artisan;
+        baseProcessingUiMode_ = ProcessingUiMode::ChooseAction;
+        baseProcessingActionSelection_ = 0;
+        baseProcessingMode_ = static_cast<int>(ProcessingMode::Attack);
+        baseProcessingTabs_.focusedIndex = baseProcessingMode_;
+        baseProcessingSource_ = 0;
+        baseProcessingSourceTabs_.focusedIndex = baseProcessingSource_;
+        baseProcessingSelection_ = 0;
+        closeUiCommandMenu(baseProcessingCommandMenu_);
+        baseProcessingCommandSlot_ = -1;
+        baseProcessingConfirm_ = {};
+        baseProcessingConfirmTarget_ = {};
+        break;
+    case RoguelikeFacilityKind::Trainer:
+        roguelikeFacilityUiMode_ = RoguelikeFacilityUiMode::Trainer;
+        baseUpgradeActive_ = true;
+        baseUpgradeSelection_ = baseUpgradeIndexForDisplay(true, 0);
+        baseUpgradeTabs_ = {};
+        baseUpgradeTabs_.focusedIndex = 0;
+        break;
+    }
+    baseStatus_.clear();
+}
+
+void Game::closeRoguelikeFacilityUi()
+{
+    restoreRoguelikeMerchantStock();
+    roguelikeFacilityUiMode_ = RoguelikeFacilityUiMode::None;
+    activeRoguelikeFacilityId_.clear();
+    baseSellActive_ = false;
+    baseMerchantMode_ = MerchantUiMode::Closed;
+    closeUiCommandMenu(baseMerchantSellCommandMenu_);
+    closeUiCommandMenu(baseMerchantBuyCommandMenu_);
+    baseProcessingUiMode_ = ProcessingUiMode::Closed;
+    closeUiCommandMenu(baseProcessingCommandMenu_);
+    baseProcessingConfirm_ = {};
+    baseProcessingConfirmTarget_ = {};
+    baseUpgradeActive_ = false;
+}
+
+bool Game::updateRoguelikeFacilityUi(const Input& input, UiContext& ui, float dt)
+{
+    if (!roguelikeFacilityUiActive()) {
+        return false;
+    }
+
+    if (roguelikeFacilityUiMode_ == RoguelikeFacilityUiMode::Merchant &&
+        baseItemSourceIsWarehouse(baseMerchantSellSource_)) {
+        baseMerchantSellSource_ = BaseBackpackSourceIndex;
+        baseMerchantSellSourceTabs_.focusedIndex = baseMerchantSellSource_;
+    }
+    if (roguelikeFacilityUiMode_ == RoguelikeFacilityUiMode::Artisan &&
+        baseItemSourceIsWarehouse(baseProcessingSource_)) {
+        baseProcessingSource_ = BaseBackpackSourceIndex;
+        baseProcessingSourceTabs_.focusedIndex = baseProcessingSource_;
+    }
+
+    updateBaseScreen(input, ui, dt);
+
+    const bool panelStillOpen =
+        baseSellActive_ ||
+        baseProcessingUiMode_ != ProcessingUiMode::Closed ||
+        baseUpgradeActive_ ||
+        baseProcessingConfirm_.open ||
+        baseResultDialog_.open;
+    if (!panelStillOpen) {
+        closeRoguelikeFacilityUi();
+        baseStatus_.clear();
+    }
+    return true;
 }
 
 void Game::buyUpgrade(int index)
@@ -6122,13 +6538,41 @@ void Game::buyRingWorkshopUpgrade(RingWorkshopUpgrade upgrade)
 
 void Game::openBookshelf()
 {
+    syncEncyclopediaFromInventoryAndRing();
+    if (encyclopediaComplete() && !hasStoryFlag(StoryEndingEncyclopediaCompleteFlag)) {
+        requestEndingKamishibai(EndingKind::EncyclopediaComplete);
+        return;
+    }
+
     baseBookshelfActive_ = true;
     bookshelfPage_ = BookshelfPage::Menu;
     bookshelfSelection_ = 0;
     bookshelfScrollOffset_ = 0.0f;
     bookshelfScrollState_ = {};
     baseStatus_.clear();
-    syncEncyclopediaFromInventoryAndRing();
+}
+
+bool Game::encyclopediaComplete() const
+{
+    int targetCount = 0;
+    int discoveredCount = 0;
+    for (const ObjectDefinition& object : objectCatalog_.objects) {
+        if (isCodexHiddenObject(object)) {
+            continue;
+        }
+        ++targetCount;
+        const bool treasure = object.category == "\xE5\xAE\x9D";
+        if (encyclopedia_.objectStage(object.id, treasure) != EncyclopediaStage::Undiscovered) {
+            ++discoveredCount;
+        }
+    }
+    for (const EnemyDefinition& enemy : enemyCatalog_.enemies) {
+        ++targetCount;
+        if (encyclopedia_.enemyStage(enemy.id) != EncyclopediaStage::Undiscovered) {
+            ++discoveredCount;
+        }
+    }
+    return targetCount > 0 && discoveredCount >= targetCount;
 }
 
 void Game::syncEncyclopediaFromInventoryAndRing()
@@ -6472,14 +6916,52 @@ bool Game::queueBaseHintEventOnReturn(std::string_view returnedStageId, bool sta
 void Game::startBaseMonicaDialogue()
 {
     baseStatus_.clear();
-    if (hasStoryFlag("ending_seen") && startStoryEventForTrigger("monica_base:post_ending")) {
-        return;
-    }
-    const int progress = std::clamp(unlockedStages_, 1, 4);
-    if (startStoryEventForTrigger("monica_base:progress_" + std::to_string(progress))) {
+    if (startBaseTalkStoryEvent("monica", {})) {
         return;
     }
     dialogue_.start(baseMonicaDialogue());
+}
+
+void Game::startBaseElderDialogue()
+{
+    baseStatus_.clear();
+    if (startBaseTalkStoryEvent("elder", {})) {
+        return;
+    }
+    dialogue_.start(baseElderDialogue());
+}
+
+std::string Game::baseTalkStoryTrigger(std::string_view speakerId) const
+{
+    if (speakerId.empty()) {
+        return {};
+    }
+
+    const std::string speaker{speakerId};
+    if (hasStoryFlag("ending_seen")) {
+        const std::string postEndingTrigger = "base_talk:" + speaker + ":post_ending";
+        if (findStoryEventForTrigger(postEndingTrigger) != nullptr) {
+            return postEndingTrigger;
+        }
+    }
+
+    const int progress = std::clamp(unlockedStages_, 1, 4);
+    return "base_talk:" + speaker + ":progress_" + std::to_string(progress);
+}
+
+bool Game::startBaseTalkStoryEvent(std::string_view speakerId, std::function<void()> onComplete)
+{
+    const std::string trigger = baseTalkStoryTrigger(speakerId);
+    if (trigger.empty()) {
+        return false;
+    }
+
+    const StoryEvent* event = findStoryEventForTrigger(trigger);
+    if (event == nullptr) {
+        return false;
+    }
+
+    return startStoryEventWithCompletion(event->id, std::move(onComplete));
 }
 
 bool Game::hasBrokenRingItemForDeparture() const
@@ -8414,10 +8896,16 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
 
         const int sourceCount = baseItemSourceCountForUnlockedRings(unlockedRingCount());
         baseProcessingSource_ = clampBaseItemSourceForUnlockedRings(baseProcessingSource_, unlockedRingCount());
+        if (roguelikeFacilityUiMode_ == RoguelikeFacilityUiMode::Artisan &&
+            baseItemSourceIsWarehouse(baseProcessingSource_)) {
+            baseProcessingSource_ = BaseBackpackSourceIndex;
+        }
         std::array<UiTabItem, BaseProcessingSourceCount> sourceTabs{};
         std::array<UiRect, BaseProcessingSourceCount> sourceTabRects{};
         for (int i = 0; i < sourceCount; ++i) {
-            sourceTabs[static_cast<std::size_t>(i)] = {BaseItemSourceLabels[static_cast<std::size_t>(i)], true};
+            const bool enabled = !(roguelikeFacilityUiMode_ == RoguelikeFacilityUiMode::Artisan &&
+                baseItemSourceIsWarehouse(i));
+            sourceTabs[static_cast<std::size_t>(i)] = {BaseItemSourceLabels[static_cast<std::size_t>(i)], enabled};
             sourceTabRects[static_cast<std::size_t>(i)] = baseProcessingSourceRect(i, sourceCount);
         }
         UiTabsInput sourceTabsInput{};
@@ -8842,10 +9330,16 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
 
             const int sourceCount = baseItemSourceCountForUnlockedRings(unlockedRingCount());
             baseMerchantSellSource_ = clampBaseItemSourceForUnlockedRings(baseMerchantSellSource_, unlockedRingCount());
+            if (roguelikeFacilityUiMode_ == RoguelikeFacilityUiMode::Merchant &&
+                baseItemSourceIsWarehouse(baseMerchantSellSource_)) {
+                baseMerchantSellSource_ = BaseBackpackSourceIndex;
+            }
             std::array<UiTabItem, BaseItemSourceCount> sourceTabs{};
             std::array<UiRect, BaseItemSourceCount> sourceTabRects{};
             for (int i = 0; i < sourceCount; ++i) {
-                sourceTabs[static_cast<std::size_t>(i)] = {BaseItemSourceLabels[static_cast<std::size_t>(i)], true};
+                const bool enabled = !(roguelikeFacilityUiMode_ == RoguelikeFacilityUiMode::Merchant &&
+                    baseItemSourceIsWarehouse(i));
+                sourceTabs[static_cast<std::size_t>(i)] = {BaseItemSourceLabels[static_cast<std::size_t>(i)], enabled};
                 sourceTabRects[static_cast<std::size_t>(i)] = merchantSellSourceRect(i, sourceCount);
             }
             UiTabsInput sourceTabsInput{};
@@ -9062,31 +9556,42 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
 
     if (baseUpgradeActive_) {
         const UiRect upgradePanel = baseUpgradePanelRect();
+        const bool roguelikeTrainer = roguelikeFacilityUiMode_ == RoguelikeFacilityUiMode::Trainer;
+        const int upgradeDisplayCount = baseUpgradeDisplayCount(roguelikeTrainer);
+        int displaySelection = baseUpgradeDisplayForIndex(roguelikeTrainer, baseUpgradeSelection_);
+        baseUpgradeSelection_ = baseUpgradeIndexForDisplay(roguelikeTrainer, displaySelection);
+        baseUpgradeTabs_.focusedIndex = displaySelection;
         if (uiCancelRequested(baseCancelState_, input, ui, upgradePanel)) {
             baseUpgradeActive_ = false;
             baseStatus_.clear();
             return;
         }
         if (input.pressed(InputAction::MoveUp)) {
-            baseUpgradeSelection_ = (baseUpgradeSelection_ + BaseUpgradeItemCount - 1) % BaseUpgradeItemCount;
+            displaySelection = (displaySelection + upgradeDisplayCount - 1) % upgradeDisplayCount;
+            baseUpgradeSelection_ = baseUpgradeIndexForDisplay(roguelikeTrainer, displaySelection);
+            baseUpgradeTabs_.focusedIndex = displaySelection;
         }
         if (input.pressed(InputAction::MoveDown)) {
-            baseUpgradeSelection_ = (baseUpgradeSelection_ + 1) % BaseUpgradeItemCount;
+            displaySelection = (displaySelection + 1) % upgradeDisplayCount;
+            baseUpgradeSelection_ = baseUpgradeIndexForDisplay(roguelikeTrainer, displaySelection);
+            baseUpgradeTabs_.focusedIndex = displaySelection;
         }
         std::array<UiVerticalTabItem, BaseUpgradeItemCount> upgradeTabs{};
         std::array<UiRect, BaseUpgradeItemCount> upgradeTabRects{};
-        for (int i = 0; i < BaseUpgradeItemCount; ++i) {
-            upgradeTabs[static_cast<std::size_t>(i)] = {"", "", upgradeImplemented(i)};
+        for (int i = 0; i < upgradeDisplayCount; ++i) {
+            const int upgradeIndex = baseUpgradeIndexForDisplay(roguelikeTrainer, i);
+            upgradeTabs[static_cast<std::size_t>(i)] = {"", "", upgradeImplemented(upgradeIndex)};
             upgradeTabRects[static_cast<std::size_t>(i)] = baseUpgradeItemRect(i);
         }
         const int selectedTab = updateVerticalTabClickSelection(
             baseUpgradeTabs_,
             ui,
-            baseUpgradeSelection_,
+            displaySelection,
             upgradeTabs,
-            upgradeTabRects);
+            upgradeTabRects,
+            upgradeDisplayCount);
         if (selectedTab >= 0) {
-            baseUpgradeSelection_ = selectedTab;
+            baseUpgradeSelection_ = baseUpgradeIndexForDisplay(roguelikeTrainer, selectedTab);
             ui.block(upgradePanel);
             return;
         }
@@ -9369,7 +9874,7 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
         return;
     }
 
-    const auto startFacilityTutorialOrOpen = [this](const BaseFacility& facility, const std::function<void()>& openAction) {
+    const auto startFacilityInteractionSequence = [this](const BaseFacility& facility, const std::function<void()>& openAction) {
         if (!openAction) {
             return;
         }
@@ -9381,10 +9886,13 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
                 }
             }
         }
+        if (startBaseTalkStoryEvent(facility.speakerId, openAction)) {
+            return;
+        }
         openAction();
     };
 
-    const auto interact = [this, &startFacilityTutorialOrOpen](const BaseFacility& facility) {
+    const auto interact = [this, &startFacilityInteractionSequence](const BaseFacility& facility) {
         if (!facility.enabled) {
             return;
         }
@@ -9432,9 +9940,6 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
             break;
         case BaseFacilityAction::Merchant:
             openAction = [this]() {
-                if (hasStoryFlag("ending_seen") && startStoryEventForTrigger("merchant:post_ending")) {
-                    return;
-                }
                 if (merchantRefreshPending_) {
                     refreshMerchantStock(true);
                     merchantRefreshPending_ = false;
@@ -9466,9 +9971,6 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
             break;
         case BaseFacilityAction::Processing:
             openAction = [this]() {
-                if (hasStoryFlag("ending_seen") && startStoryEventForTrigger("processing:post_ending")) {
-                    return;
-                }
                 baseProcessingUiMode_ = ProcessingUiMode::ChooseAction;
                 baseProcessingActionSelection_ = 0;
                 baseProcessingMode_ = static_cast<int>(ProcessingMode::Attack);
@@ -9533,11 +10035,15 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
         case BaseFacilityAction::MonicaTalk:
             startBaseMonicaDialogue();
             break;
+        case BaseFacilityAction::ElderTalk:
+            startBaseElderDialogue();
+            break;
         }
-        startFacilityTutorialOrOpen(facility, openAction);
+        startFacilityInteractionSequence(facility, openAction);
     };
 
     std::vector<BaseFacility> facilities = baseFacilities(baseArea_, ringWorkshopUnlocked_);
+    removeHiddenEndingPeople(facilities, hasStoryFlag(HiddenEndingPeopleGoneFlag));
     for (BaseFacility& facility : facilities) {
         facility.rect = toUiRect(baseFacilityRectFor(baseArea_, facility.facilityId, toBaseEditRect(facility.rect)));
     }
@@ -9660,7 +10166,7 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
                 continue;
             }
             ui.consumePointer();
-            if (baseInteractionAvailable(basePlayerPosition_, facility) ||
+            if (baseInteractionGroupAvailable(basePlayerPosition_, baseArea_, facilities, facility) ||
                 (testClickAnywhere && facility.enabled)) {
                 ui.emitSound(facility.onInteract == BaseFacilityAction::Bookshelf ? UiSoundEvent::BookOpen : UiSoundEvent::Confirm);
                 interact(facility);
@@ -10079,6 +10585,7 @@ void Game::renderBaseBackdrop(Renderer& renderer) const
     }
 
     std::vector<BaseFacility> facilities = baseFacilities(baseArea_, ringWorkshopUnlocked_);
+    removeHiddenEndingPeople(facilities, hasStoryFlag(HiddenEndingPeopleGoneFlag));
     for (BaseFacility& facility : facilities) {
         facility.rect = toUiRect(baseFacilityRectFor(baseArea_, facility.facilityId, toBaseEditRect(facility.rect)));
     }
@@ -10112,12 +10619,15 @@ void Game::renderBaseBackdrop(Renderer& renderer) const
 
 void Game::renderBaseScreen(Renderer& renderer) const
 {
-    if (!basePresentationActive()) {
+    const bool roguelikeOverlay = roguelikeFacilityUiActive();
+    if (!basePresentationActive() && !roguelikeOverlay) {
         return;
     }
 
     renderer.setScreenSpace();
+    const BaseFacility* interactionFacility = nullptr;
     const float ringPreviewSeconds = baseRingPreviewAnimationTime_;
+    if (!roguelikeOverlay) {
     renderer.fillRect({0.0f, 0.0f}, {static_cast<float>(camera_.width()), static_cast<float>(camera_.height())}, {24, 28, 32, 255});
     const UiRect map = baseMapBounds();
     if (baseArea_ == BaseArea::HomeInterior) {
@@ -10139,6 +10649,7 @@ void Game::renderBaseScreen(Renderer& renderer) const
     }
 
     std::vector<BaseFacility> facilities = baseFacilities(baseArea_, ringWorkshopUnlocked_);
+    removeHiddenEndingPeople(facilities, hasStoryFlag(HiddenEndingPeopleGoneFlag));
     for (BaseFacility& facility : facilities) {
         facility.rect = toUiRect(baseFacilityRectFor(baseArea_, facility.facilityId, toBaseEditRect(facility.rect)));
     }
@@ -10146,7 +10657,7 @@ void Game::renderBaseScreen(Renderer& renderer) const
     float mouseY = 0.0f;
     SDL_GetMouseState(&mouseX, &mouseY);
     const Vec2 mouse{mouseX, mouseY};
-    const BaseFacility* interactionFacility = selectBaseInteractionFacility(basePlayerPosition_, basePlayerFacing_, baseArea_, facilities);
+    interactionFacility = selectBaseInteractionFacility(basePlayerPosition_, basePlayerFacing_, baseArea_, facilities);
     drawBaseFacilities(renderer, facilities, baseArea_, ringWorkshopUnlocked_, basePlayerPosition_, mouse);
     renderBaseEditOverlay(renderer);
 
@@ -10169,6 +10680,7 @@ void Game::renderBaseScreen(Renderer& renderer) const
 
     renderBaseMiningRescueDropEvent(renderer);
     renderTopInfoBar(renderer);
+    }
 
     char buffer[256];
     const bool panelUiActive = baseRingWorkshopActive_ ||
@@ -10218,7 +10730,19 @@ void Game::renderBaseScreen(Renderer& renderer) const
     std::optional<UiCancelControlScope> panelCancelScope;
     if (panelUiActive) {
         const char* panelTitle = "魔女の拠点";
-        if (baseBookshelfActive_) {
+        if (roguelikeOverlay && baseSellActive_) {
+            if (baseMerchantMode_ == MerchantUiMode::Buy) {
+                panelTitle = "野良商人 購入";
+            } else if (baseMerchantMode_ == MerchantUiMode::Sell) {
+                panelTitle = "野良商人 売却";
+            } else {
+                panelTitle = "野良商人";
+            }
+        } else if (roguelikeOverlay && baseProcessingUiMode_ != ProcessingUiMode::Closed) {
+            panelTitle = "野良加工職人";
+        } else if (roguelikeOverlay && baseUpgradeActive_) {
+            panelTitle = "修練者";
+        } else if (baseBookshelfActive_) {
             panelTitle = bookshelfPage_ == BookshelfPage::Items
                 ? "アイテム図鑑"
                 : (bookshelfPage_ == BookshelfPage::Enemies ? "モンスター図鑑" : "本棚");
@@ -10784,12 +11308,31 @@ void Game::renderBaseScreen(Renderer& renderer) const
                 i == baseProcessingActionSelection_,
                 uiActionButtonStyle());
         }
+        if (roguelikeFacilityUiMode_ == RoguelikeFacilityUiMode::Artisan) {
+            const int targetCount = processingBulkRepairTargetCount();
+            const int moneyCost = processingBulkRepairMoneyCost();
+            const int oreCost = processingBulkRepairOreCost();
+            std::snprintf(
+                buffer,
+                sizeof(buffer),
+                "一括修理: 対象%d個 / %dG / 強化鉱石×%d",
+                targetCount,
+                moneyCost,
+                oreCost);
+            const Color textColor =
+                money_ >= moneyCost && inventory_.materialCount(MaterialType::EnhancementOre) >= oreCost
+                    ? ui::TextMuted
+                    : Color{238, 82, 82, 255};
+            renderer.drawText(smallActionInfoTextPos(panel) + Vec2{0.0f, 124.0f}, buffer, textColor, 2);
+        }
     } else if (baseProcessingUiMode_ == ProcessingUiMode::Enhance) {
         const int sourceCount = baseItemSourceCountForUnlockedRings(unlockedRingCount());
         std::array<UiTabItem, BaseProcessingSourceCount> sourceTabs{};
         std::array<UiRect, BaseProcessingSourceCount> sourceTabRects{};
         for (int i = 0; i < sourceCount; ++i) {
-            sourceTabs[static_cast<std::size_t>(i)] = {BaseItemSourceLabels[static_cast<std::size_t>(i)], true};
+            const bool enabled = !(roguelikeFacilityUiMode_ == RoguelikeFacilityUiMode::Artisan &&
+                baseItemSourceIsWarehouse(i));
+            sourceTabs[static_cast<std::size_t>(i)] = {BaseItemSourceLabels[static_cast<std::size_t>(i)], enabled};
             sourceTabRects[static_cast<std::size_t>(i)] = baseProcessingSourceRect(i, sourceCount);
         }
         drawUiTabs(
@@ -11063,7 +11606,9 @@ void Game::renderBaseScreen(Renderer& renderer) const
                 std::array<UiTabItem, BaseItemSourceCount> sourceTabs{};
                 std::array<UiRect, BaseItemSourceCount> sourceTabRects{};
                 for (int i = 0; i < sourceCount; ++i) {
-                    sourceTabs[static_cast<std::size_t>(i)] = {BaseItemSourceLabels[static_cast<std::size_t>(i)], true};
+                    const bool enabled = !(roguelikeFacilityUiMode_ == RoguelikeFacilityUiMode::Merchant &&
+                        baseItemSourceIsWarehouse(i));
+                    sourceTabs[static_cast<std::size_t>(i)] = {BaseItemSourceLabels[static_cast<std::size_t>(i)], enabled};
                     sourceTabRects[static_cast<std::size_t>(i)] = merchantSellSourceRect(i, sourceCount);
                 }
                 drawUiTabs(
@@ -11267,7 +11812,10 @@ void Game::renderBaseScreen(Renderer& renderer) const
             }
         }
     } else if (baseUpgradeActive_) {
-        const int selected = std::clamp(baseUpgradeSelection_, 0, BaseUpgradeItemCount - 1);
+        const bool roguelikeTrainer = roguelikeFacilityUiMode_ == RoguelikeFacilityUiMode::Trainer;
+        const int upgradeDisplayCount = baseUpgradeDisplayCount(roguelikeTrainer);
+        const int displaySelection = baseUpgradeDisplayForIndex(roguelikeTrainer, baseUpgradeSelection_);
+        const int selected = baseUpgradeIndexForDisplay(roguelikeTrainer, displaySelection);
         const auto warehouseCapacityForUiLevel = [](int level) {
             constexpr std::array<int, 5> Capacities{{48, 72, 100, 140, 200}};
             const int index = std::clamp(level, 0, static_cast<int>(Capacities.size()) - 1);
@@ -11319,24 +11867,29 @@ void Game::renderBaseScreen(Renderer& renderer) const
             return "通常";
         };
         const float listLabelX = panel.pos.x + 38.0f;
-        renderer.drawText({listLabelX, 128.0f}, "拠点の強化", {198, 198, 206, 255}, 2);
-        renderer.drawText({listLabelX, 350.0f}, "ルネの強化", {198, 198, 206, 255}, 2);
+        if (roguelikeTrainer) {
+            renderer.drawText({listLabelX, 128.0f}, "ルネの強化", {198, 198, 206, 255}, 2);
+        } else {
+            renderer.drawText({listLabelX, 128.0f}, "拠点の強化", {198, 198, 206, 255}, 2);
+            renderer.drawText({listLabelX, 350.0f}, "ルネの強化", {198, 198, 206, 255}, 2);
+        }
         std::array<UiVerticalTabItem, BaseUpgradeItemCount> upgradeTabs{};
         std::array<UiRect, BaseUpgradeItemCount> upgradeTabRects{};
         std::array<std::string, BaseUpgradeItemCount> upgradeTabValues{};
-        for (int i = 0; i < BaseUpgradeItemCount; ++i) {
-            const bool implemented = upgradeImplemented(i);
-            const bool maxed = implemented && upgradeMaxed(i);
+        for (int i = 0; i < upgradeDisplayCount; ++i) {
+            const int upgradeIndex = baseUpgradeIndexForDisplay(roguelikeTrainer, i);
+            const bool implemented = upgradeImplemented(upgradeIndex);
+            const bool maxed = implemented && upgradeMaxed(upgradeIndex);
             if (!implemented) {
                 upgradeTabValues[static_cast<std::size_t>(i)] = "未実装";
             } else if (maxed) {
                 upgradeTabValues[static_cast<std::size_t>(i)] = "上限";
             } else {
-                std::snprintf(buffer, sizeof(buffer), "Lv.%d/%d", upgradeLevel(i), upgradeMaxLevel(i));
+                std::snprintf(buffer, sizeof(buffer), "Lv.%d/%d", upgradeLevel(upgradeIndex), upgradeMaxLevel(upgradeIndex));
                 upgradeTabValues[static_cast<std::size_t>(i)] = buffer;
             }
             upgradeTabs[static_cast<std::size_t>(i)] = {
-                upgradeName(i),
+                upgradeName(upgradeIndex),
                 upgradeTabValues[static_cast<std::size_t>(i)],
                 implemented,
                 maxed ? Color{160, 220, 190, 255} : ui::TextMuted,
@@ -11348,9 +11901,9 @@ void Game::renderBaseScreen(Renderer& renderer) const
         drawUiVerticalTabs(
             renderer,
             baseUpgradeTabs_,
-            selected,
+            displaySelection,
             upgradeTabs.data(),
-            static_cast<int>(upgradeTabs.size()),
+            upgradeDisplayCount,
             upgradeTabRects.data(),
             upgradeTabStyle);
 

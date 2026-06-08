@@ -5290,6 +5290,13 @@ void Game::renderDungeonControlHelp(Renderer& renderer) const
         promptFocused = true;
     }
     if (!promptFocused) {
+        const std::string facilityPrompt = roguelikeFacilityPromptText();
+        if (!facilityPrompt.empty()) {
+            help = facilityPrompt;
+            promptFocused = true;
+        }
+    }
+    if (!promptFocused) {
         const std::string npcPrompt = dungeonEventNpcPromptText();
         if (!npcPrompt.empty()) {
             help = npcPrompt;
@@ -6509,6 +6516,25 @@ std::vector<LightSource> Game::collectDungeonLightSources(double totalSeconds) c
     for (const LightSource& light : eventLights) {
         addLight(light, DungeonLightPriorityEvent);
     }
+    const auto facilityLightPhaseIndex = [](RoguelikeFacilityKind kind) {
+        switch (kind) {
+        case RoguelikeFacilityKind::Merchant: return 0;
+        case RoguelikeFacilityKind::Artisan: return 1;
+        case RoguelikeFacilityKind::Trainer: return 2;
+        }
+        return 0;
+    };
+    for (const RoguelikeFacilityInstance& facility : roguelikeFacilities_) {
+        const float phase = static_cast<float>(facilityLightPhaseIndex(facility.kind)) * 1.37f +
+            static_cast<float>(facility.depthMeters) * 0.001f;
+        addLight({
+            flickeredLightPosition(facility.centerPosition, static_cast<float>(totalSeconds), phase),
+            flickeredLightRadius(
+                facility.lightRadiusTiles * static_cast<float>(balance::TileSize),
+                static_cast<float>(totalSeconds),
+                phase),
+        }, DungeonLightPriorityEvent);
+    }
     std::vector<LightSource> magicLights;
     magic_.appendLightSources(magicLights);
     for (const LightSource& light : magicLights) {
@@ -6674,6 +6700,7 @@ void Game::render(Renderer& renderer, const Time& time)
         renderDungeonEntrance(renderer);
         renderWarpPoints(renderer);
         renderRoguelikeBigHole(renderer);
+        renderRoguelikeFacilities(renderer);
     }
 
     bool ringCenterVisible = false;
@@ -6831,6 +6858,9 @@ void Game::render(Renderer& renderer, const Time& time)
         }
         renderWarpReturnUi(renderer);
         renderRoguelikeBigHoleUi(renderer);
+        if (roguelikeFacilityUiActive()) {
+            renderBaseScreen(renderer);
+        }
         renderPauseMenu(renderer);
         renderRingScreen(renderer, time.totalSeconds());
         renderBossDefeatPresentation(renderer);

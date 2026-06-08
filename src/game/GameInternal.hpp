@@ -44,6 +44,11 @@ inline constexpr std::string_view IntroTutorialCompletedFlag = "intro_tutorial_c
 inline constexpr std::string_view IntroTutorialFallTrigger = "intro_tutorial:fall";
 inline constexpr std::string_view IntroTutorialBaseReturnTrigger = "intro_tutorial:base_return";
 inline constexpr std::string_view IntroTutorialGenerationProfile = "intro_tutorial";
+inline constexpr std::string_view StoryEndingEncyclopediaCompleteFlag = "story_ending_encyclopedia_complete";
+inline constexpr std::string_view StoryEndingAstralClearFlag = "story_ending_astral_clear";
+inline constexpr std::string_view StoryHiddenEndingEverythingOrbitsFlag = "story_hidden_ending_everything_orbits";
+inline constexpr std::string_view HiddenEndingPeopleGoneFlag = "hidden_ending_people_gone";
+inline constexpr int HiddenEndingCapturedBreakThreshold = 100;
 
 inline std::mt19937& lootRuntimeRng()
 {
@@ -387,6 +392,14 @@ enum class BaseFacilityAction {
     HomeEntrance,
     HomeExit,
     MonicaTalk,
+    ElderTalk,
+};
+
+enum class BaseInteractionVerb {
+    Inspect,
+    Talk,
+    Enter,
+    Exit,
 };
 
 struct BaseFacility {
@@ -397,6 +410,10 @@ struct BaseFacility {
     bool enabled = true;
     bool unlocked = true;
     BaseFacilityAction onInteract = BaseFacilityAction::MineExit;
+    BaseInteractionVerb verb = BaseInteractionVerb::Inspect;
+    const char* speakerId = "";
+    const char* interactionGroupId = "";
+    bool showNameLabel = true;
 };
 
 Vec2 tileWorldCenter(DungeonTile tile)
@@ -748,6 +765,24 @@ MaterialType rollChestMaterial(std::mt19937& rng)
     return Materials[static_cast<std::size_t>(distribution(rng))];
 }
 
+bool roguelikeMaterialDropAllowed(MaterialType type)
+{
+    return type == MaterialType::EnhancementOre || type == MaterialType::ManaDrop;
+}
+
+MaterialType normalizeRoguelikeMaterialDrop(MaterialType type, std::mt19937& rng)
+{
+    if (roguelikeMaterialDropAllowed(type)) {
+        return type;
+    }
+    constexpr std::array<MaterialType, 2> Materials{
+        MaterialType::EnhancementOre,
+        MaterialType::ManaDrop,
+    };
+    std::uniform_int_distribution<int> distribution(0, static_cast<int>(Materials.size()) - 1);
+    return Materials[static_cast<std::size_t>(distribution(rng))];
+}
+
 Vec2 scatterLootPosition(Vec2 center, std::mt19937& rng)
 {
     std::uniform_real_distribution<float> angleDistribution(0.0f, Pi * 2.0f);
@@ -871,6 +906,29 @@ std::filesystem::path openingKamishibaiDataPath()
 std::filesystem::path endingKamishibaiDataPath()
 {
     return std::filesystem::path("data") / "ending_kamishibai.tsv";
+}
+
+std::filesystem::path endingKamishibaiDataPath(EndingKind kind)
+{
+    switch (kind) {
+    case EndingKind::Main:
+        return endingKamishibaiDataPath();
+    case EndingKind::EncyclopediaComplete:
+        return std::filesystem::path("data") / "ending_encyclopedia_kamishibai.tsv";
+    case EndingKind::AstralClear:
+        return std::filesystem::path("data") / "ending_astral_kamishibai.tsv";
+    case EndingKind::HiddenBad:
+        return std::filesystem::path("data") / "ending_hidden_bad_kamishibai.tsv";
+    }
+    return endingKamishibaiDataPath();
+}
+
+bool isEndingKamishibaiDataFileName(std::string_view fileName)
+{
+    return fileName == "ending_kamishibai.tsv" ||
+        fileName == "ending_encyclopedia_kamishibai.tsv" ||
+        fileName == "ending_astral_kamishibai.tsv" ||
+        fileName == "ending_hidden_bad_kamishibai.tsv";
 }
 
 std::filesystem::path storyEventDataDirectory()
@@ -1149,7 +1207,7 @@ std::vector<BaseFacility> baseFacilities(BaseArea area, bool ringWorkshopUnlocke
         return {
             BaseFacility{"bookshelf", "本棚", {{368.0f, 322.0f}, {127.0f, 213.0f}}, 72.0f, true, true, BaseFacilityAction::Bookshelf},
             BaseFacility{"diary", "日記", {{760.0f, 416.0f}, {179.0f, 142.0f}}, 64.0f, true, true, BaseFacilityAction::Diary},
-            BaseFacility{"home_exit", "屋外へ戻る出口", {{592.0f, 540.0f}, {96.0f, 42.0f}}, 0.0f, false, true, BaseFacilityAction::HomeExit},
+            BaseFacility{"home_exit", "屋外へ戻る出口", {{592.0f, 540.0f}, {96.0f, 42.0f}}, 0.0f, false, true, BaseFacilityAction::HomeExit, BaseInteractionVerb::Exit},
             BaseFacility{"bed", "ベッド", {{680.0f, 188.0f}, {178.0f, 195.0f}}, 0.0f, false, true, BaseFacilityAction::Bookshelf},
         };
     }
@@ -1157,33 +1215,22 @@ std::vector<BaseFacility> baseFacilities(BaseArea area, bool ringWorkshopUnlocke
     return {
         BaseFacility{"mine_exit", "ダンジョン入口", {{494.0f, 553.0f}, {289.0f, 167.0f}}, 78.0f, true, true, BaseFacilityAction::MineExit},
         BaseFacility{"storage_chest", "収納箱", {{578.0f, 430.0f}, {98.0f, 72.0f}}, 68.0f, true, true, BaseFacilityAction::Storage},
-        BaseFacility{"merchant_wagon", "商人ワゴン", {{936.0f, 99.0f}, {227.0f, 152.0f}}, 78.0f, true, true, BaseFacilityAction::Merchant},
-        BaseFacility{"processing_table", "作業台", {{506.0f, 169.0f}, {217.0f, 94.0f}}, 70.0f, true, true, BaseFacilityAction::Processing},
+        BaseFacility{"merchant_wagon", "商人ワゴン", {{936.0f, 99.0f}, {227.0f, 152.0f}}, 78.0f, true, true, BaseFacilityAction::Merchant, BaseInteractionVerb::Inspect, "merchant", "merchant"},
+        BaseFacility{"merchant_npc", "商人", {{874.0f, 154.0f}, {62.0f, 106.0f}}, 72.0f, true, true, BaseFacilityAction::Merchant, BaseInteractionVerb::Talk, "merchant", "merchant", false},
+        BaseFacility{"processing_table", "作業台", {{506.0f, 169.0f}, {217.0f, 94.0f}}, 70.0f, true, true, BaseFacilityAction::Processing, BaseInteractionVerb::Inspect, "processor", "processing"},
+        BaseFacility{"processor_npc", "加工職人", {{714.0f, 164.0f}, {62.0f, 106.0f}}, 72.0f, true, true, BaseFacilityAction::Processing, BaseInteractionVerb::Talk, "processor", "processing", false},
         BaseFacility{"upgrade_forge", "拠点強化炉", {{968.0f, 355.0f}, {217.0f, 226.0f}}, 76.0f, true, true, BaseFacilityAction::Forge},
         BaseFacility{"ring_workshop", "リング工房", {{837.0f, 468.0f}, {102.0f, 87.0f}}, 82.0f, true, ringWorkshopUnlocked, BaseFacilityAction::RingWorkshop},
-        BaseFacility{"monica", "モニカ", {{841.0f, 245.0f}, {74.0f, 86.0f}}, 72.0f, true, true, BaseFacilityAction::MonicaTalk},
-        BaseFacility{"home", "ルネの家", {{113.0f, 11.0f}, {301.0f, 308.0f}}, 90.0f, true, true, BaseFacilityAction::HomeEntrance},
-        BaseFacility{"home_entrance", "ルネの家の入口", {{265.0f, 274.0f}, {60.0f, 44.0f}}, 0.0f, false, true, BaseFacilityAction::HomeEntrance},
+        BaseFacility{"monica", "モニカ", {{841.0f, 245.0f}, {74.0f, 86.0f}}, 72.0f, true, true, BaseFacilityAction::MonicaTalk, BaseInteractionVerb::Talk, "monica", "", false},
+        BaseFacility{"elder", "村長", {{420.0f, 322.0f}, {74.0f, 86.0f}}, 72.0f, true, true, BaseFacilityAction::ElderTalk, BaseInteractionVerb::Talk, "elder", "", false},
+        BaseFacility{"home", "ルネの家", {{113.0f, 11.0f}, {301.0f, 308.0f}}, 90.0f, true, true, BaseFacilityAction::HomeEntrance, BaseInteractionVerb::Enter},
+        BaseFacility{"home_entrance", "ルネの家の入口", {{265.0f, 274.0f}, {60.0f, 44.0f}}, 0.0f, false, true, BaseFacilityAction::HomeEntrance, BaseInteractionVerb::Enter},
     };
 }
 
 bool baseInteractionAvailable(Vec2 playerPosition, const BaseFacility& facility)
 {
     return facility.enabled && distanceToRect(playerPosition, facility.rect) <= facility.interactionRange;
-}
-
-const char* baseInteractionPrompt(const BaseFacility& facility)
-{
-    switch (facility.onInteract) {
-    case BaseFacilityAction::MonicaTalk:
-        return "Enter: モニカと話す / Esc: メニュー";
-    case BaseFacilityAction::HomeEntrance:
-        return "Enter: ルネの家に入る / Esc: メニュー";
-    case BaseFacilityAction::HomeExit:
-        return "Enter: 屋外へ戻る / Esc: メニュー";
-    default:
-        return nullptr;
-    }
 }
 
 DialogueSequence baseMonicaDialogue()
@@ -1201,6 +1248,25 @@ DialogueSequence baseMonicaDialogue()
         "モニカ",
         "",
         "チコリが反応したら、近くに星くずか古い魔導具があるかも。壁の色も見てみて。",
+    });
+    return sequence;
+}
+
+DialogueSequence baseElderDialogue()
+{
+    DialogueSequence sequence;
+    sequence.id = "base_elder_default";
+    sequence.lines.push_back(DialogueLine{
+        "elder",
+        "村長",
+        "",
+        "焦らず、まずは拠点で支度を整えるのじゃ。",
+    });
+    sequence.lines.push_back(DialogueLine{
+        "elder",
+        "村長",
+        "",
+        "商人ワゴンと作業台も使って、無理のない採掘にするのじゃぞ。",
     });
     return sequence;
 }

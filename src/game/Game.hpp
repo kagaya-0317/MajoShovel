@@ -87,6 +87,13 @@ enum class ScreenMode {
     AstralResult
 };
 
+enum class EndingKind {
+    Main,
+    EncyclopediaComplete,
+    AstralClear,
+    HiddenBad,
+};
+
 enum class BaseArea {
     Outdoor,
     HomeInterior
@@ -388,6 +395,34 @@ private:
         int depthMeters = 500;
     };
 
+public:
+    enum class RoguelikeFacilityKind {
+        Merchant,
+        Artisan,
+        Trainer,
+    };
+
+    enum class RoguelikeFacilityUiMode {
+        None,
+        Merchant,
+        Artisan,
+        Trainer,
+    };
+
+    struct RoguelikeFacilityInstance {
+        std::string id;
+        RoguelikeFacilityKind kind = RoguelikeFacilityKind::Merchant;
+        DungeonTile centerTile{};
+        DungeonTile npcTile{};
+        DungeonTile propTile{};
+        Vec2 centerPosition{};
+        Vec2 npcPosition{};
+        Vec2 propPosition{};
+        int depthMeters = 0;
+        float lightRadiusTiles = 5.0f;
+    };
+
+private:
     struct AstralRunSummary {
         AstralRunResult result = AstralRunResult::None;
         int reachedDepth = 1;
@@ -955,7 +990,8 @@ private:
     void startOpeningKamishibai();
     void finishOpeningKamishibai(bool completedPlayback);
     void updateOpeningKamishibai(const Input& input, float dt);
-    void startEndingKamishibai();
+    void requestEndingKamishibai(EndingKind kind);
+    void startEndingKamishibai(EndingKind kind = EndingKind::Main);
     void finishEndingKamishibai(bool completedPlayback);
     void updateEndingKamishibai(const Input& input, float dt);
     void updateTitleScreen(const Input& input, UiContext& ui);
@@ -1198,6 +1234,7 @@ private:
     bool setRingWorkshopRadiusSettingForRing(int ringIndex, float meters);
     void buyRingWorkshopUpgrade(RingWorkshopUpgrade upgrade);
     void openBookshelf();
+    bool encyclopediaComplete() const;
     void syncEncyclopediaFromInventoryAndRing();
     void captureEncyclopediaSyncSuppressState();
     void applyEffectDiscoveries(const std::vector<EffectDiscoveryEvent>& discoveries);
@@ -1397,6 +1434,23 @@ private:
     bool updateRoguelikeBigHoleUi(const Input& input, UiContext& ui);
     void advanceRoguelikeAreaFromBigHole();
     void configureBossSpawnPointFromRoguelikeBigHole();
+    void initializeRoguelikeFacilitiesFromLayout();
+    void clearRoguelikeFacilities();
+    bool roguelikeFacilityUiActive() const;
+    bool updateRoguelikeFacilityUi(const Input& input, UiContext& ui, float dt);
+    bool updateRoguelikeFacilityInteraction(const Input& input, UiContext& ui);
+    std::string roguelikeFacilityPromptText() const;
+    void openRoguelikeFacility(RoguelikeFacilityKind kind, std::string_view facilityId);
+    void closeRoguelikeFacilityUi();
+    void prepareRoguelikeMerchantStock();
+    void restoreRoguelikeMerchantStock();
+    int roguelikeMerchantStockLimit() const;
+    int roguelikeFacilityCostStep() const;
+    int roguelikeAdjustedFacilityMoneyCost(int baseCost) const;
+    int roguelikeAdjustedFacilityMaterialCost(int baseCost) const;
+    int processingBulkRepairTargetCount() const;
+    int processingBulkRepairMoneyCost() const;
+    int processingBulkRepairOreCost() const;
     void updateDungeonDepthTutorials();
     void applyAstralDistortionToLayout();
     AstralDistortionKind chooseAstralDistortionForDepth(int depth, AstralDistortionKind previous) const;
@@ -1479,6 +1533,7 @@ private:
     void renderDungeonEntrance(Renderer& renderer) const;
     void renderWarpPoints(Renderer& renderer) const;
     void renderRoguelikeBigHole(Renderer& renderer) const;
+    void renderRoguelikeFacilities(Renderer& renderer) const;
     void appendRewardNodeRenderEntries(
         std::vector<DepthRenderEntry>& entries,
         Renderer& renderer,
@@ -1665,7 +1720,10 @@ private:
     bool dungeonEventUiSuppressed() const;
     void updatePausedDungeonPresentation(float dt);
     bool basePresentationActive() const;
+    std::string baseTalkStoryTrigger(std::string_view speakerId) const;
+    bool startBaseTalkStoryEvent(std::string_view speakerId, std::function<void()> onComplete);
     void startBaseMonicaDialogue();
+    void startBaseElderDialogue();
     bool hasBrokenRingItemForDeparture() const;
     void openBaseMiningStartChoice();
     void maybeQueueStageStartStory();
@@ -1690,6 +1748,8 @@ private:
     void updateDungeonLogs(float dt);
     void appendPickupLogs(const std::vector<WorldDropPickupEvent>& pickupEvents);
     void handleRingItemBreakEvents(std::vector<EffectDiscoveryEvent>* discoveryEvents = nullptr);
+    void recordCapturedMonsterRingBreak(std::string_view objectId);
+    bool hiddenBadEndingReady() const;
     void switchActiveRingWithLog(int delta);
     int unlockedRingHudCount() const;
     UiRect ringStatusHudRect(int ringIndex, int unlockedRingCount) const;
@@ -2118,6 +2178,7 @@ private:
     bool dungeonRingIntroStartPending_ = false;
     bool stageStartStoryPendingAfterRingIntro_ = false;
     bool endingKamishibaiPending_ = false;
+    EndingKind endingKamishibaiKind_ = EndingKind::Main;
     IntroTutorialPhase introTutorialPhase_ = IntroTutorialPhase::Inactive;
     bool introTutorialLightTutorialQueued_ = false;
     bool introTutorialFirstEnemySpawned_ = false;
@@ -2164,10 +2225,20 @@ private:
     AstralRunSummary astralResult_{};
     int astralResultSelection_ = 0;
     int astralHighScore_ = 0;
+    std::array<int, 3> capturedMonsterRingBreaksBeforeStageClear_{};
     RoguelikeBigHoleState roguelikeBigHole_{};
     UiCommandMenuState roguelikeBigHoleMenu_{};
     int focusedRoguelikeBigHole_ = 0;
     bool hoveredRoguelikeBigHole_ = false;
+    std::vector<RoguelikeFacilityInstance> roguelikeFacilities_;
+    std::array<int, 3> roguelikeFacilityLastDepthMeters_{};
+    RoguelikeFacilityUiMode roguelikeFacilityUiMode_ = RoguelikeFacilityUiMode::None;
+    std::string activeRoguelikeFacilityId_;
+    int focusedRoguelikeFacilityIndex_ = -1;
+    int hoveredRoguelikeFacilityIndex_ = -1;
+    bool roguelikeMerchantStockSuspended_ = false;
+    std::vector<MerchantProduct> suspendedMerchantStock_;
+    int suspendedMerchantStockVersion_ = 0;
     int debugAstralDepth_ = 1;
     std::string debugAstralMoveTarget_ = "depth";
     std::string debugAstralDistortionMode_ = "auto";

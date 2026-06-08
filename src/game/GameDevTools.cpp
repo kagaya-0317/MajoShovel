@@ -2687,7 +2687,7 @@ bool Game::saveBaseEditData(std::string& message)
             return false;
         }
 
-        file << "MAJO_BASE_EDIT_V2\n";
+        file << "\xEF\xBB\xBF" << "MAJO_BASE_EDIT_V2\n";
 
         std::vector<BaseFacility> facilities = baseFacilities(area, ringWorkshopUnlocked_);
         for (BaseFacility& facility : facilities) {

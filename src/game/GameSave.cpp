@@ -1043,6 +1043,7 @@ bool Game::loadSaveData(const std::filesystem::path& path)
     int loadedMoney = 0;
     double loadedPlayTimeSeconds = 0.0;
     int loadedAstralHighScore = 0;
+    std::array<int, 3> loadedCapturedMonsterRingBreaksBeforeStageClear{};
     int loadedCurrentStage = 0;
     std::string loadedCurrentStageId = currentStageId_;
     int loadedUnlockedStages = 1;
@@ -1107,6 +1108,14 @@ bool Game::loadSaveData(const std::filesystem::path& path)
             stream >> loadedPlayTimeSeconds;
         } else if (key == "astral_high_score") {
             stream >> loadedAstralHighScore;
+        } else if (key == "captured_monster_ring_breaks_before_stage_clear") {
+            int stageNumber = 0;
+            int count = 0;
+            stream >> stageNumber >> count;
+            if (!stream.fail() && stageNumber >= 1 && stageNumber <= static_cast<int>(loadedCapturedMonsterRingBreaksBeforeStageClear.size())) {
+                loadedCapturedMonsterRingBreaksBeforeStageClear[static_cast<std::size_t>(stageNumber - 1)] =
+                    std::clamp(count, 0, 999999);
+            }
         } else if (key == "player_level") {
             stream >> loadedPlayerLevel;
         } else if (key == "player_xp") {
@@ -1792,6 +1801,10 @@ bool Game::loadSaveData(const std::filesystem::path& path)
     const bool loadedSaveHasPlayerProgress =
         loadedMoney > 0 ||
         loadedAstralHighScore > 0 ||
+        std::any_of(
+            loadedCapturedMonsterRingBreaksBeforeStageClear.begin(),
+            loadedCapturedMonsterRingBreaksBeforeStageClear.end(),
+            [](int count) { return count > 0; }) ||
         loadedPlayerLevel > 1 ||
         loadedPlayerXp > 0 ||
         loadedPendingLevelBonusChoices > 0;
@@ -1849,6 +1862,7 @@ bool Game::loadSaveData(const std::filesystem::path& path)
     money_ = std::max(0, loadedMoney);
     playTimeSeconds_ = std::max(0.0, loadedPlayTimeSeconds);
     astralHighScore_ = std::max(0, loadedAstralHighScore);
+    capturedMonsterRingBreaksBeforeStageClear_ = loadedCapturedMonsterRingBreaksBeforeStageClear;
     unlockedStages_ = std::max(1, loadedUnlockedStages);
     const int migratedUnlockedRingCount = loadedUnlockedRingCountExplicit
         ? loadedUnlockedRingCount
@@ -2147,6 +2161,11 @@ bool Game::saveSaveData(const std::filesystem::path& path, std::string& message)
     file << "money " << money_ << "\n";
     file << "play_time_seconds " << static_cast<std::int64_t>(std::max(0.0, playTimeSeconds_)) << "\n";
     file << "astral_high_score " << astralHighScore_ << "\n";
+    for (int stageIndex = 0; stageIndex < static_cast<int>(capturedMonsterRingBreaksBeforeStageClear_.size()); ++stageIndex) {
+        file << "captured_monster_ring_breaks_before_stage_clear "
+            << (stageIndex + 1) << " "
+            << std::max(0, capturedMonsterRingBreaksBeforeStageClear_[static_cast<std::size_t>(stageIndex)]) << "\n";
+    }
     file << "player_level " << player_.level << "\n";
     file << "player_xp " << player_.xp << "\n";
     file << "player_xp_to_next " << player_.xpToNext << "\n";

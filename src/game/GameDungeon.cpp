@@ -43,6 +43,26 @@ constexpr int RoguelikeCompletionSectionRank =
 constexpr float RoguelikeBigHoleProgress = 0.965f;
 constexpr float RoguelikeGateBossProgress = 0.895f;
 constexpr float RoguelikeBigHoleImageSize = 58.0f;
+constexpr int RoguelikeFacilityKindCount = 3;
+constexpr int RoguelikeFacilityMinRoomsPerArea = 1;
+constexpr int RoguelikeFacilityMaxRoomsPerArea = 3;
+constexpr int RoguelikeFacilityGuaranteeMeters = 800;
+constexpr int RoguelikeFacilityCavityRadiusTiles = 4;
+constexpr float RoguelikeFacilityProgressStart = 0.18f;
+constexpr float RoguelikeFacilityProgressSpan = 0.60f;
+constexpr float RoguelikeFacilitySideOffsetTiles = 6.8f;
+constexpr float RoguelikeFacilityLightRadiusTiles = 5.8f;
+constexpr Vec2 RoguelikeFacilityNpcInspectSize{42.0f, 66.0f};
+constexpr Vec2 RoguelikeFacilityPropInspectSize{78.0f, 58.0f};
+constexpr Vec2 RoguelikeFacilityNpcImageSize{46.0f, 76.0f};
+constexpr Vec2 RoguelikeFacilityWagonImageSize{92.0f, 82.0f};
+constexpr Vec2 RoguelikeFacilityWorkbenchImageSize{88.0f, 52.0f};
+constexpr Vec2 RoguelikeFacilityMagicCircleSize{74.0f, 42.0f};
+constexpr std::string_view RoguelikeFacilityMerchantNpcImagePath = "assets/taties/tatie_5.png";
+constexpr std::string_view RoguelikeFacilityArtisanNpcImagePath = "assets/taties/tatie_6.png";
+constexpr std::string_view RoguelikeFacilityTrainerNpcImagePath = "assets/taties/tatie_4.png";
+constexpr std::string_view RoguelikeFacilityWagonImagePath = "assets/kyoten/wagon.png";
+constexpr std::string_view RoguelikeFacilityWorkbenchImagePath = "assets/kyoten/sagyodai.png";
 constexpr float LootLandingCollisionRadius = 14.0f;
 constexpr float LootLandingDropSpacing = 28.0f;
 constexpr float LootLandingWarpClearance = 42.0f;
@@ -97,6 +117,25 @@ constexpr Vec2 DungeonEventNpcInspectSize{42.0f, 58.0f};
 constexpr Vec2 DungeonChestInspectSize{42.0f, 42.0f};
 constexpr float FootstepPitchSideOffset = 0.025f;
 
+std::optional<int> hiddenEndingStoryStageIndex(std::string_view stageId)
+{
+    if (stageId == "stage_01_stardust") {
+        return 0;
+    }
+    if (stageId == "stage_02_junk_magic") {
+        return 1;
+    }
+    if (stageId == "stage_03_star_core") {
+        return 2;
+    }
+    return std::nullopt;
+}
+
+bool isCapturedMonsterObjectId(std::string_view objectId)
+{
+    return objectId.rfind("captured_", 0) == 0;
+}
+
 int roguelikeTargetBaseLevelForSectionRank(int depthRank)
 {
     constexpr std::array<int, 9> InitialLevels{{3, 7, 11, 15, 20, 25, 30, 35, 40}};
@@ -106,6 +145,87 @@ int roguelikeTargetBaseLevelForSectionRank(int depthRank)
     }
     return std::min(100, InitialLevels.back() + (rank - static_cast<int>(InitialLevels.size())) * 5);
 }
+
+constexpr std::array<Game::RoguelikeFacilityKind, RoguelikeFacilityKindCount> RoguelikeFacilityKinds{{
+    Game::RoguelikeFacilityKind::Merchant,
+    Game::RoguelikeFacilityKind::Artisan,
+    Game::RoguelikeFacilityKind::Trainer,
+}};
+
+int roguelikeFacilityKindIndex(Game::RoguelikeFacilityKind kind)
+{
+    switch (kind) {
+    case Game::RoguelikeFacilityKind::Merchant: return 0;
+    case Game::RoguelikeFacilityKind::Artisan: return 1;
+    case Game::RoguelikeFacilityKind::Trainer: return 2;
+    }
+    return 0;
+}
+
+const char* roguelikeFacilityName(Game::RoguelikeFacilityKind kind)
+{
+    switch (kind) {
+    case Game::RoguelikeFacilityKind::Merchant: return "野良商人";
+    case Game::RoguelikeFacilityKind::Artisan: return "野良加工職人";
+    case Game::RoguelikeFacilityKind::Trainer: return "修練者";
+    }
+    return "施設";
+}
+
+const char* roguelikeFacilityPromptVerb(Game::RoguelikeFacilityKind kind)
+{
+    switch (kind) {
+    case Game::RoguelikeFacilityKind::Merchant:
+    case Game::RoguelikeFacilityKind::Artisan:
+    case Game::RoguelikeFacilityKind::Trainer:
+        return "F/Enter 調べる";
+    }
+    return "F/Enter 調べる";
+}
+
+std::string roguelikeFacilityId(Game::RoguelikeFacilityKind kind, int areaIndex, int index)
+{
+    const char* key = "merchant";
+    switch (kind) {
+    case Game::RoguelikeFacilityKind::Merchant:
+        key = "merchant";
+        break;
+    case Game::RoguelikeFacilityKind::Artisan:
+        key = "artisan";
+        break;
+    case Game::RoguelikeFacilityKind::Trainer:
+        key = "trainer";
+        break;
+    }
+    return "roguelike_facility_" + std::to_string(std::max(0, areaIndex)) + "_" + std::to_string(index) + "_" + key;
+}
+
+std::string_view roguelikeFacilityNpcImagePath(Game::RoguelikeFacilityKind kind)
+{
+    switch (kind) {
+    case Game::RoguelikeFacilityKind::Merchant:
+        return RoguelikeFacilityMerchantNpcImagePath;
+    case Game::RoguelikeFacilityKind::Artisan:
+        return RoguelikeFacilityArtisanNpcImagePath;
+    case Game::RoguelikeFacilityKind::Trainer:
+        return RoguelikeFacilityTrainerNpcImagePath;
+    }
+    return RoguelikeFacilityMerchantNpcImagePath;
+}
+
+Vec2 roguelikeFacilityPropImageSize(Game::RoguelikeFacilityKind kind)
+{
+    switch (kind) {
+    case Game::RoguelikeFacilityKind::Merchant:
+        return RoguelikeFacilityWagonImageSize;
+    case Game::RoguelikeFacilityKind::Artisan:
+        return RoguelikeFacilityWorkbenchImageSize;
+    case Game::RoguelikeFacilityKind::Trainer:
+        return RoguelikeFacilityMagicCircleSize;
+    }
+    return RoguelikeFacilityWagonImageSize;
+}
+
 constexpr float WetGroundPlayerRadiusMultiplier = 1.45f;
 constexpr float WetGroundPlayerMinRadius = 16.0f;
 constexpr float WetGroundPlayerMaxRadius = 28.0f;
@@ -1999,6 +2119,7 @@ void Game::resetAstralRunState()
     astralRun_.maxReachedDepth = 1;
     astralRun_.currentDepth = 1;
     astralRun_.distortion = AstralDistortionKind::None;
+    roguelikeFacilityLastDepthMeters_.fill(-RoguelikeFacilityGuaranteeMeters);
 }
 
 Game::AstralDistortionKind Game::chooseAstralDistortionForDepth(int depth, Game::AstralDistortionKind previous) const
@@ -3413,6 +3534,9 @@ void Game::returnToBaseFromNormalStage(bool stageCleared, bool died)
     }
 
     const std::string returnedStageId = currentStageId_;
+    const bool astralCompletedOnReturn =
+        returnedStageId == "stage_04_astral_mine" &&
+        astralResult_.result == AstralRunResult::Completed;
     if (currentStageIsRoguelike() && died && restoreRunStartInventoryOnDeath_ && runStartInventoryState_.valid) {
         restoreInventoryCarryState(runStartInventoryState_);
     }
@@ -3451,6 +3575,10 @@ void Game::returnToBaseFromNormalStage(bool stageCleared, bool died)
     baseStatus_ = testPlayMode_
         ? (refreshMerchant ? "帰還しました。商人ワゴン更新あり" : "帰還しました")
         : std::string{};
+    if (hiddenBadEndingReady()) {
+        requestEndingKamishibai(EndingKind::HiddenBad);
+        return;
+    }
     if (autoSaveOnReturn_) {
         std::string message;
         if (saveSaveData(message)) {
@@ -3471,6 +3599,9 @@ void Game::returnToBaseFromNormalStage(bool stageCleared, bool died)
             return;
         }
         queueStoryEventForTrigger("stage_clear:" + returnedStageId);
+    }
+    if (astralCompletedOnReturn && !hasStoryFlag(StoryEndingAstralClearFlag)) {
+        requestEndingKamishibai(EndingKind::AstralClear);
     }
     queueBaseHintEventOnReturn(returnedStageId, stageCleared);
 }
@@ -6103,9 +6234,12 @@ bool Game::spawnDungeonEventReward(DungeonEventInstance& event, const DungeonEve
     }
     case DungeonEventRewardKind::MaterialDrop: {
         const int amount = std::max(1, request.amount);
-        inventory_.addMaterial(request.materialType, amount);
+        const MaterialType materialType = currentStageIsRoguelike()
+            ? normalizeRoguelikeMaterialDrop(request.materialType, rng)
+            : request.materialType;
+        inventory_.addMaterial(materialType, amount);
         ++runStats_.acquiredItems;
-        recordRewardMaterialAcquisitionNotice(request.materialType, amount);
+        recordRewardMaterialAcquisitionNotice(materialType, amount);
         spawned = true;
         break;
     }
@@ -6659,6 +6793,139 @@ void Game::clearRoguelikeBigHoleState()
     hoveredRoguelikeBigHole_ = false;
 }
 
+void Game::clearRoguelikeFacilities()
+{
+    roguelikeFacilities_.clear();
+    focusedRoguelikeFacilityIndex_ = -1;
+    hoveredRoguelikeFacilityIndex_ = -1;
+    closeRoguelikeFacilityUi();
+}
+
+void Game::initializeRoguelikeFacilitiesFromLayout()
+{
+    roguelikeFacilities_.clear();
+    focusedRoguelikeFacilityIndex_ = -1;
+    hoveredRoguelikeFacilityIndex_ = -1;
+
+    if (!currentStageIsRoguelike() || dungeonLayout_.mainPathPoints.size() < 2) {
+        return;
+    }
+
+    std::mt19937 rng(
+        dungeonLayout_.seed ^
+        (static_cast<std::uint32_t>(std::max(0, astralRun_.areaIndex)) * 0x6C8E9CF5u) ^
+        0x45A11F3Bu);
+    std::uniform_int_distribution<int> countDistribution(
+        RoguelikeFacilityMinRoomsPerArea,
+        RoguelikeFacilityMaxRoomsPerArea);
+    std::uniform_real_distribution<float> progressJitter(-0.035f, 0.035f);
+    std::uniform_real_distribution<float> sideJitter(-0.9f, 0.9f);
+    std::uniform_int_distribution<int> sideSign(0, 1);
+
+    struct FacilityKindPlan {
+        RoguelikeFacilityKind kind = RoguelikeFacilityKind::Merchant;
+        bool guarantee = false;
+    };
+
+    std::vector<FacilityKindPlan> facilityPlans;
+    const int areaStartMeters = std::max(0, astralRun_.currentDepthMeters);
+    const int areaEndMeters = std::max(RoguelikeMetersPerArea, astralRun_.nextHoleDepthMeters);
+    const int areaLengthMeters = std::max(1, areaEndMeters - areaStartMeters);
+    for (RoguelikeFacilityKind kind : RoguelikeFacilityKinds) {
+        const int index = roguelikeFacilityKindIndex(kind);
+        if (index >= 0 && index < static_cast<int>(roguelikeFacilityLastDepthMeters_.size()) &&
+            areaEndMeters - roguelikeFacilityLastDepthMeters_[static_cast<std::size_t>(index)] >= RoguelikeFacilityGuaranteeMeters) {
+            facilityPlans.push_back({kind, true});
+        }
+    }
+
+    const int targetCount = std::max(static_cast<int>(facilityPlans.size()), countDistribution(rng));
+    std::vector<RoguelikeFacilityKind> shuffledKinds(RoguelikeFacilityKinds.begin(), RoguelikeFacilityKinds.end());
+    std::shuffle(shuffledKinds.begin(), shuffledKinds.end(), rng);
+    for (RoguelikeFacilityKind kind : shuffledKinds) {
+        if (static_cast<int>(facilityPlans.size()) >= targetCount) {
+            break;
+        }
+        const auto planned = std::find_if(facilityPlans.begin(), facilityPlans.end(), [kind](const FacilityKindPlan& plan) {
+            return plan.kind == kind;
+        });
+        if (planned == facilityPlans.end()) {
+            facilityPlans.push_back({kind, false});
+        }
+    }
+
+    PlacementReservations reservations;
+    reserveLayoutAnchors(reservations, dungeonLayout_);
+    for (const DungeonEventInstance& event : dungeonEvents_.all()) {
+        reservations.reserve(event.centerTile, RoguelikeFacilityCavityRadiusTiles + 1);
+    }
+    if (roguelikeBigHole_.active) {
+        reservations.reserve(roguelikeBigHole_.tile, RoguelikeFacilityCavityRadiusTiles + 2);
+    }
+
+    for (int i = 0; i < static_cast<int>(facilityPlans.size()); ++i) {
+        const FacilityKindPlan& plan = facilityPlans[static_cast<std::size_t>(i)];
+        const float t = static_cast<float>(i + 1) / static_cast<float>(facilityPlans.size() + 1);
+        float progress = clamp(
+            RoguelikeFacilityProgressStart + RoguelikeFacilityProgressSpan * t + progressJitter(rng),
+            0.14f,
+            0.82f);
+        const int planKindIndex = roguelikeFacilityKindIndex(plan.kind);
+        if (plan.guarantee &&
+            planKindIndex >= 0 &&
+            planKindIndex < static_cast<int>(roguelikeFacilityLastDepthMeters_.size())) {
+            const int lastDepth = roguelikeFacilityLastDepthMeters_[static_cast<std::size_t>(planKindIndex)];
+            if (lastDepth >= 0) {
+                const float guaranteedProgress =
+                    static_cast<float>((lastDepth + RoguelikeFacilityGuaranteeMeters) - areaStartMeters) /
+                    static_cast<float>(areaLengthMeters);
+                progress = std::min(progress, clamp(guaranteedProgress, 0.14f, 0.82f));
+            }
+        }
+        const Vec2 anchor = pointAtPathProgress(dungeonLayout_.mainPathPoints, progress);
+        const Vec2 tangent = tangentAtPathProgress(dungeonLayout_.mainPathPoints, progress);
+        Vec2 side = perpendicular(tangent);
+        if (sideSign(rng) == 0) {
+            side = side * -1.0f;
+        }
+        const DungeonTile tangentStep = cardinalStep(tangent);
+        DungeonTile centerTile = roundDungeonTile(anchor + side * (RoguelikeFacilitySideOffsetTiles + sideJitter(rng)));
+        if (!reservations.reserveNearest(
+                centerTile,
+                RoguelikeFacilityCavityRadiusTiles,
+                PlacementSearchRadiusTiles,
+                centerTile)) {
+            continue;
+        }
+
+        RoguelikeFacilityInstance facility;
+        facility.kind = plan.kind;
+        facility.id = roguelikeFacilityId(facility.kind, astralRun_.areaIndex, i);
+        facility.centerTile = centerTile;
+        facility.depthMeters = std::clamp(
+            areaStartMeters + static_cast<int>(std::round(progress * static_cast<float>(areaLengthMeters))),
+            areaStartMeters,
+            areaEndMeters);
+        facility.lightRadiusTiles = RoguelikeFacilityLightRadiusTiles;
+        if (facility.kind == RoguelikeFacilityKind::Trainer) {
+            facility.propTile = centerTile;
+            facility.npcTile = addTile(centerTile, tangentStep, 2);
+        } else {
+            facility.propTile = addTile(centerTile, tangentStep, -1);
+            facility.npcTile = addTile(centerTile, tangentStep, 2);
+        }
+        facility.centerPosition = tileWorldCenter(facility.centerTile);
+        facility.npcPosition = tileWorldCenter(facility.npcTile);
+        facility.propPosition = tileWorldCenter(facility.propTile);
+        roguelikeFacilities_.push_back(std::move(facility));
+
+        const int kindIndex = roguelikeFacilityKindIndex(plan.kind);
+        if (kindIndex >= 0 && kindIndex < static_cast<int>(roguelikeFacilityLastDepthMeters_.size())) {
+            roguelikeFacilityLastDepthMeters_[static_cast<std::size_t>(kindIndex)] = roguelikeFacilities_.back().depthMeters;
+        }
+    }
+}
+
 void Game::configureBossSpawnPointFromRoguelikeBigHole()
 {
     hasBossSpawnPoint_ = false;
@@ -6744,6 +7011,7 @@ void Game::advanceRoguelikeAreaFromBigHole()
     chestNodes_.clear();
     crateNodes_.clear();
     enemyNodes_.clear();
+    roguelikeFacilities_.clear();
     dungeonEvents_.clear();
     resetInPlace(tileMap_);
     resetDungeonMinimap();
@@ -6756,6 +7024,7 @@ void Game::advanceRoguelikeAreaFromBigHole()
     initializeCrateNodesFromLayout();
     initializeEnemyNodesFromLayout();
     initializeDungeonEventInstancesFromLayout();
+    initializeRoguelikeFacilitiesFromLayout();
     initializeRoguelikeBigHoleFromLayout();
     applyPlacementTerrainOverrides();
     refreshEquipmentModifiers();
@@ -6844,6 +7113,83 @@ bool Game::updateRoguelikeBigHoleUi(const Input& input, UiContext& ui)
         return true;
     }
     return false;
+}
+
+bool Game::updateRoguelikeFacilityInteraction(const Input& input, UiContext& ui)
+{
+    if (mode_ != ScreenMode::Playing || enemyTestActive_ || introTutorialActive() || !currentStageIsRoguelike()) {
+        focusedRoguelikeFacilityIndex_ = -1;
+        hoveredRoguelikeFacilityIndex_ = -1;
+        return false;
+    }
+    if (roguelikeFacilityUiActive() || roguelikeFacilities_.empty()) {
+        focusedRoguelikeFacilityIndex_ = -1;
+        hoveredRoguelikeFacilityIndex_ = -1;
+        return false;
+    }
+
+    int clickedIndex = -1;
+    if (!ui.pointerConsumed()) {
+        const Vec2 clickWorld = camera_.screenToWorld(ui.mouse());
+        for (int i = 0; i < static_cast<int>(roguelikeFacilities_.size()); ++i) {
+            const RoguelikeFacilityInstance& facility = roguelikeFacilities_[static_cast<std::size_t>(i)];
+            if (dungeonInspectableHovered(facility.npcPosition, RoguelikeFacilityNpcInspectSize, clickWorld) ||
+                dungeonInspectableHovered(facility.propPosition, RoguelikeFacilityPropInspectSize, clickWorld)) {
+                clickedIndex = i;
+                break;
+            }
+        }
+    }
+
+    int nearbyIndex = -1;
+    float nearbyDistance = DungeonInspectableInteractionRange;
+    for (int i = 0; i < static_cast<int>(roguelikeFacilities_.size()); ++i) {
+        const RoguelikeFacilityInstance& facility = roguelikeFacilities_[static_cast<std::size_t>(i)];
+        const float npcDistance = distanceToRect(
+            player_.position,
+            dungeonInspectableRect(facility.npcPosition, RoguelikeFacilityNpcInspectSize));
+        const float propDistance = distanceToRect(
+            player_.position,
+            dungeonInspectableRect(facility.propPosition, RoguelikeFacilityPropInspectSize));
+        const float distance = std::min(npcDistance, propDistance);
+        if (distance <= nearbyDistance) {
+            nearbyDistance = distance;
+            nearbyIndex = i;
+        }
+    }
+
+    hoveredRoguelikeFacilityIndex_ = clickedIndex;
+    focusedRoguelikeFacilityIndex_ = nearbyIndex;
+    if (nearbyIndex < 0 && clickedIndex < 0) {
+        return false;
+    }
+
+    const int targetIndex = clickedIndex >= 0 ? clickedIndex : nearbyIndex;
+    if (targetIndex < 0 || targetIndex >= static_cast<int>(roguelikeFacilities_.size())) {
+        return false;
+    }
+
+    if (input.confirmPressed() || input.useItemPressed() || clickedIndex >= 0) {
+        const RoguelikeFacilityInstance& facility = roguelikeFacilities_[static_cast<std::size_t>(targetIndex)];
+        openRoguelikeFacility(facility.kind, facility.id);
+        ui.emitSound(UiSoundEvent::MenuOpen);
+        if (clickedIndex >= 0) {
+            ui.consumePointer();
+        }
+        return true;
+    }
+    return false;
+}
+
+std::string Game::roguelikeFacilityPromptText() const
+{
+    if (!currentStageIsRoguelike() ||
+        focusedRoguelikeFacilityIndex_ < 0 ||
+        focusedRoguelikeFacilityIndex_ >= static_cast<int>(roguelikeFacilities_.size())) {
+        return {};
+    }
+    const RoguelikeFacilityInstance& facility = roguelikeFacilities_[static_cast<std::size_t>(focusedRoguelikeFacilityIndex_)];
+    return std::string(roguelikeFacilityName(facility.kind)) + "   " + roguelikeFacilityPromptVerb(facility.kind);
 }
 
 int Game::nearbyDiscoveredWarpPointIndex() const
@@ -7072,7 +7418,7 @@ void Game::updateWarpPoints(float dt)
 void Game::initializeMoonFragmentNodesFromWarpPoints()
 {
     moonFragmentNodes_.clear();
-    if (!warpPointsEnabled_ || warpPoints_.empty()) {
+    if (currentStageIsRoguelike() || !warpPointsEnabled_ || warpPoints_.empty()) {
         return;
     }
 
@@ -7288,7 +7634,8 @@ void Game::initializeRewardNodesFromLayout()
 
     for (const MicroFeature& feature : microFeaturesForLayout(dungeonLayout_)) {
         if (feature.kind == MicroFeatureKind::DoublePocketTreasure) {
-            if (doublePocketLootKind(feature, dungeonLayout_.seed) == DoublePocketLootKind::Money) {
+            const DoublePocketLootKind lootKind = doublePocketLootKind(feature, dungeonLayout_.seed);
+            if (lootKind == DoublePocketLootKind::Money || currentStageIsRoguelike()) {
                 MoneyNode node{
                     .tile = feature.center,
                     .amount = std::max(3, moneyDist(rng) + dungeonLayout_.stageId),
@@ -7298,7 +7645,7 @@ void Game::initializeRewardNodesFromLayout()
                 if (reservations.tryReserve(node.tile, nodeRadius(node.visibility))) {
                     moneyNodes_.push_back(node);
                 }
-            } else if (doublePocketLootKind(feature, dungeonLayout_.seed) == DoublePocketLootKind::MoonFragment) {
+            } else if (lootKind == DoublePocketLootKind::MoonFragment) {
                 MoonFragmentNode node{
                     .tile = feature.center,
                     .visibility = PlacementVisibility::Exposed,
@@ -8530,7 +8877,9 @@ void Game::spawnChestLoot(ChestNode& node)
         std::uniform_int_distribution<int> materialDistribution(1, 3);
         const int amount = scaledLootAmount(materialDistribution(rng), totalMultiplier);
         const Vec2 target = safeLootLandingPosition(center, rng);
-        const MaterialType materialType = rollChestMaterial(rng);
+        const MaterialType materialType = currentStageIsRoguelike()
+            ? normalizeRoguelikeMaterialDrop(rollChestMaterial(rng), rng)
+            : rollChestMaterial(rng);
         worldDrops_.spawnMaterialDrop(
             materialType,
             amount,
@@ -8702,8 +9051,11 @@ void Game::destroyCrateNode(CrateNode& node)
     std::uniform_int_distribution<int> materialDistribution(1, 3);
     const int materialAmount = scaledLootAmount(materialDistribution(rng), totalMultiplier);
     const Vec2 materialTarget = safeLootLandingPosition(center, rng);
+    const MaterialType materialType = currentStageIsRoguelike()
+        ? normalizeRoguelikeMaterialDrop(MaterialType::OldWoodBuildingMaterial, rng)
+        : MaterialType::OldWoodBuildingMaterial;
     worldDrops_.spawnMaterialDrop(
-        MaterialType::OldWoodBuildingMaterial,
+        materialType,
         materialAmount,
         materialTarget,
         runStats_.elapsedSeconds,
@@ -9048,6 +9400,9 @@ void Game::applyPlacementTerrainOverrides()
     for (const CrateNode& node : crateNodes_) {
         applyExposedPocket(node.tile, 1);
     }
+    for (const RoguelikeFacilityInstance& facility : roguelikeFacilities_) {
+        applyExposedPocket(facility.centerTile, RoguelikeFacilityCavityRadiusTiles);
+    }
     clearKnownWarpPointTerrain();
 
     for (const RewardNode& node : rewardNodes_) {
@@ -9111,6 +9466,11 @@ void Game::applyPlacementTerrainOverrides()
     }
     for (const CrateNode& node : crateNodes_) {
         applyExposedCenter(node.tile);
+    }
+    for (const RoguelikeFacilityInstance& facility : roguelikeFacilities_) {
+        applyExposedCenter(facility.centerTile);
+        applyExposedCenter(facility.npcTile);
+        applyExposedCenter(facility.propTile);
     }
     clearKnownWarpPointTerrain();
 
@@ -10344,6 +10704,8 @@ void Game::appendPickupLogs(const std::vector<WorldDropPickupEvent>& pickupEvent
 void Game::handleRingItemBreakEvents(std::vector<EffectDiscoveryEvent>* discoveryEvents)
 {
     for (const RingItemBreakEvent& event : spellRing_.consumeItemBreakEvents()) {
+        recordCapturedMonsterRingBreak(event.objectId);
+
         const ItemData* object = objectCatalog_.registry.findById(event.objectId);
         const std::vector<ObjectBreakEffectEntry> breakEffects = objectBreakEffectEntriesFor(object);
         const ObjectBreakSpec breakSpec = objectBreakSpecFor(breakEffects);
@@ -10460,6 +10822,39 @@ void Game::handleRingItemBreakEvents(std::vector<EffectDiscoveryEvent>* discover
         }
         pushDungeonLog(message, mergeKey);
     }
+}
+
+void Game::recordCapturedMonsterRingBreak(std::string_view objectId)
+{
+    if (!gameplayRewardsEnabled() || !isCapturedMonsterObjectId(objectId)) {
+        return;
+    }
+
+    const std::optional<int> stageIndex = hiddenEndingStoryStageIndex(currentStageId_);
+    if (!stageIndex || *stageIndex < 0 || *stageIndex >= static_cast<int>(capturedMonsterRingBreaksBeforeStageClear_.size())) {
+        return;
+    }
+
+    const std::string clearFlag = "stage_clear_" + std::to_string(*stageIndex + 1);
+    if (hasStoryFlag(clearFlag)) {
+        return;
+    }
+
+    int& count = capturedMonsterRingBreaksBeforeStageClear_[static_cast<std::size_t>(*stageIndex)];
+    count = std::min(999999, count + 1);
+}
+
+bool Game::hiddenBadEndingReady() const
+{
+    if (hasStoryFlag(StoryHiddenEndingEverythingOrbitsFlag) || hasStoryFlag(HiddenEndingPeopleGoneFlag)) {
+        return false;
+    }
+    return std::all_of(
+        capturedMonsterRingBreaksBeforeStageClear_.begin(),
+        capturedMonsterRingBreaksBeforeStageClear_.end(),
+        [](int count) {
+            return count >= HiddenEndingCapturedBreakThreshold;
+        });
 }
 
 void Game::renderDungeonEntrance(Renderer& renderer) const
@@ -10587,6 +10982,105 @@ void Game::renderRoguelikeBigHole(Renderer& renderer) const
             roguelikeBigHole_.position,
             28.0f,
             inInteractionRange ? options.outlineColor : Color{92, 78, 116, 220});
+    }
+}
+
+void Game::renderRoguelikeFacilities(Renderer& renderer) const
+{
+    if (!currentStageIsRoguelike() || roguelikeFacilities_.empty()) {
+        return;
+    }
+
+    const double totalSeconds = runStats_.elapsedSeconds;
+    for (int i = 0; i < static_cast<int>(roguelikeFacilities_.size()); ++i) {
+        const RoguelikeFacilityInstance& facility = roguelikeFacilities_[static_cast<std::size_t>(i)];
+        const bool inInteractionRange =
+            dungeonInspectableInRange(facility.npcPosition, RoguelikeFacilityNpcInspectSize) ||
+            dungeonInspectableInRange(facility.propPosition, RoguelikeFacilityPropInspectSize);
+        const bool hovered = hoveredRoguelikeFacilityIndex_ == i ||
+            (focusedRoguelikeFacilityIndex_ == i && inInteractionRange);
+        const Color outline = hovered
+            ? DungeonInspectableHoverOutlineColor
+            : (inInteractionRange ? DungeonInspectableOutlineColor : Color{86, 94, 112, 120});
+
+        renderer.fillSoftCircle(
+            facility.centerPosition,
+            RoguelikeFacilityLightRadiusTiles * static_cast<float>(balance::TileSize) * 0.34f,
+            {255, 220, 130, 34});
+
+        const Vec2 propSize = roguelikeFacilityPropImageSize(facility.kind);
+        ImageDrawOptions propOptions;
+        propOptions.outlineEnabled = inInteractionRange;
+        propOptions.outlineColor = outline;
+        propOptions.outlinePx = DungeonInspectableOutlinePx;
+        if (facility.kind == RoguelikeFacilityKind::Merchant) {
+            if (!renderer.drawImage(
+                    std::string(RoguelikeFacilityWagonImagePath),
+                    facility.propPosition + Vec2{0.0f, -10.0f},
+                    propSize,
+                    propOptions,
+                    TextureFilter::Nearest)) {
+                renderer.fillRect(facility.propPosition - propSize * 0.5f, propSize, {110, 74, 48, 245});
+                renderer.drawRect(facility.propPosition - propSize * 0.5f, propSize, outline);
+            }
+        } else if (facility.kind == RoguelikeFacilityKind::Artisan) {
+            if (!renderer.drawImage(
+                    std::string(RoguelikeFacilityWorkbenchImagePath),
+                    facility.propPosition + Vec2{0.0f, -4.0f},
+                    propSize,
+                    propOptions,
+                    TextureFilter::Nearest)) {
+                renderer.fillRect(facility.propPosition - propSize * 0.5f, propSize, {88, 68, 48, 245});
+                renderer.drawRect(facility.propPosition - propSize * 0.5f, propSize, outline);
+            }
+        } else {
+            const float pulse = 0.75f + 0.25f * std::sin(static_cast<float>(totalSeconds) * 2.4f);
+            renderer.drawCircle(facility.propPosition, 34.0f, {118, 198, 236, 210});
+            renderer.drawCircle(facility.propPosition, 22.0f + pulse * 4.0f, {210, 236, 255, 160});
+            renderer.drawLine(facility.propPosition + Vec2{-28.0f, 0.0f}, facility.propPosition + Vec2{28.0f, 0.0f}, {150, 218, 246, 180});
+            renderer.drawLine(facility.propPosition + Vec2{0.0f, -18.0f}, facility.propPosition + Vec2{0.0f, 18.0f}, {150, 218, 246, 180});
+            if (inInteractionRange) {
+                renderer.drawRect(
+                    facility.propPosition - RoguelikeFacilityPropInspectSize * 0.5f,
+                    RoguelikeFacilityPropInspectSize,
+                    outline);
+            }
+        }
+
+        ImageDrawOptions npcOptions;
+        npcOptions.outlineEnabled = inInteractionRange;
+        npcOptions.outlineColor = outline;
+        npcOptions.outlinePx = DungeonInspectableOutlinePx;
+        if (facility.kind == RoguelikeFacilityKind::Trainer) {
+            npcOptions.tint = {210, 226, 238, 235};
+        }
+        if (!renderer.drawImage(
+                std::string(roguelikeFacilityNpcImagePath(facility.kind)),
+                facility.npcPosition + Vec2{0.0f, -18.0f},
+                RoguelikeFacilityNpcImageSize,
+                npcOptions,
+                TextureFilter::Nearest)) {
+            constexpr unsigned char alpha = 245;
+            renderer.fillCircle(facility.npcPosition + Vec2{0.0f, -24.0f}, 7.0f, {246, 218, 206, alpha});
+            renderer.fillRect(facility.npcPosition + Vec2{-8.0f, -18.0f}, {16.0f, 24.0f}, {84, 92, 132, alpha});
+            renderer.drawLine(facility.npcPosition + Vec2{-12.0f, -12.0f}, facility.npcPosition + Vec2{12.0f, -12.0f}, {220, 232, 255, alpha});
+            if (inInteractionRange) {
+                renderer.drawRect(
+                    facility.npcPosition - RoguelikeFacilityNpcInspectSize * 0.5f,
+                    RoguelikeFacilityNpcInspectSize,
+                    outline);
+            }
+        }
+
+        if (inInteractionRange) {
+            renderer.drawOutlinedText(
+                facility.npcPosition + Vec2{-38.0f, -72.0f},
+                roguelikeFacilityName(facility.kind),
+                {255, 255, 255, 255},
+                {0, 0, 0, 170},
+                5,
+                2);
+        }
     }
 }
 

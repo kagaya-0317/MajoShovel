@@ -1136,6 +1136,9 @@ void Game::resetWorldUiState()
     warpReturnConfirm_ = {};
     focusedWarpReturnPointIndex_ = -1;
     hoveredWarpReturnPointIndex_ = -1;
+    focusedRoguelikeFacilityIndex_ = -1;
+    hoveredRoguelikeFacilityIndex_ = -1;
+    closeRoguelikeFacilityUi();
     introTutorialExitHovered_ = false;
     resetDungeonFocus();
     baseStorageActive_ = false;
@@ -1309,6 +1312,7 @@ void Game::resetWorldRunState()
     hasBossSpawnPoint_ = false;
     resetBossEncounter();
     clearRoguelikeBigHoleState();
+    clearRoguelikeFacilities();
     dungeonEvents_.clear();
     stageClearSelection_ = 0;
     stageClearStatus_.clear();
@@ -1335,6 +1339,7 @@ void Game::buildWorldForRun(bool captureRunStartInventory)
     initializeCrateNodesFromLayout();
     initializeEnemyNodesFromLayout();
     initializeDungeonEventInstancesFromLayout();
+    initializeRoguelikeFacilitiesFromLayout();
     initializeRoguelikeBigHoleFromLayout();
     applyPlacementTerrainOverrides();
     initializeDefaultSpellRing();
@@ -1384,6 +1389,9 @@ void Game::beginWorldBuildFromBase(
     hoveredWarpReturnPointIndex_ = -1;
     focusedRoguelikeBigHole_ = 0;
     hoveredRoguelikeBigHole_ = false;
+    focusedRoguelikeFacilityIndex_ = -1;
+    hoveredRoguelikeFacilityIndex_ = -1;
+    closeRoguelikeFacilityUi();
     introTutorialExitHovered_ = false;
     baseStatus_.clear();
     pausePage_ = PauseMenuPage::Main;
@@ -1449,6 +1457,7 @@ void Game::advanceWorldBuildOneStep()
     case WorldBuildStep::InitializeEnemies:
         initializeEnemyNodesFromLayout();
         initializeDungeonEventInstancesFromLayout();
+        initializeRoguelikeFacilitiesFromLayout();
         initializeRoguelikeBigHoleFromLayout();
         applyPlacementTerrainOverrides();
         worldBuildJob_.step = WorldBuildStep::InitializeRing;
@@ -1494,6 +1503,7 @@ void Game::finishWorldBuild()
 
     resetWarpPointRunState();
     initializeMoonFragmentNodesFromWarpPoints();
+    initializeRoguelikeFacilitiesFromLayout();
     initializeRoguelikeBigHoleFromLayout();
     applyPlacementTerrainOverrides();
     if (job.useLatestWarpPoint) {
@@ -1682,7 +1692,7 @@ void Game::loadOpeningKamishibaiData()
 void Game::loadEndingKamishibaiData()
 {
     KamishibaiLoader loader;
-    KamishibaiLoadResult result = loader.load(endingKamishibaiDataPath());
+    KamishibaiLoadResult result = loader.load(endingKamishibaiDataPath(endingKamishibaiKind_));
     endingPages_ = std::move(result.pages);
     logInfo("[ending] kamishibai pages loaded: " + std::to_string(endingPages_.size()));
     for (const std::string& warning : result.warnings) {
@@ -1736,10 +1746,11 @@ void Game::finishOpeningKamishibai(bool completedPlayback)
 void Game::updateOpeningKamishibai(const Input& input, float dt)
 {
     bool skipped = false;
-    if (openingPlayer_.canSkipImmediately() &&
-        (input.mouseLeftPressed() || input.confirmPressed() || input.useItemPressed())) {
+    if (openingPlayer_.canSkipImmediately() && input.useItemPressed()) {
         openingPlayer_.finishImmediately();
         skipped = true;
+    } else if (input.mouseLeftPressed() || input.confirmPressed() || input.useItemPressed()) {
+        openingPlayer_.advance();
     }
 
     openingPlayer_.update(dt);
@@ -1748,35 +1759,82 @@ void Game::updateOpeningKamishibai(const Input& input, float dt)
     }
 }
 
-void Game::startEndingKamishibai()
+void Game::requestEndingKamishibai(EndingKind kind)
 {
-    if (endingPages_.empty()) {
-        loadEndingKamishibaiData();
-    }
-    endingPlayer_.start(endingPages_, hasStoryFlag(EndingSeenFlag));
+    endingKamishibaiKind_ = kind;
+    endingKamishibaiPending_ = true;
+}
+
+void Game::startEndingKamishibai(EndingKind kind)
+{
+    endingKamishibaiKind_ = kind;
+    loadEndingKamishibaiData();
+    const bool canSkipImmediately = [&]() {
+        switch (kind) {
+        case EndingKind::Main:
+            return hasStoryFlag(EndingSeenFlag);
+        case EndingKind::EncyclopediaComplete:
+            return hasStoryFlag(StoryEndingEncyclopediaCompleteFlag);
+        case EndingKind::AstralClear:
+            return hasStoryFlag(StoryEndingAstralClearFlag);
+        case EndingKind::HiddenBad:
+            return hasStoryFlag(StoryHiddenEndingEverythingOrbitsFlag);
+        }
+        return false;
+    }();
+    endingPlayer_.start(endingPages_, canSkipImmediately);
     mode_ = ScreenMode::EndingKamishibai;
     playAudioBgm(AudioBgmTitle, 0.65f);
     pausePage_ = PauseMenuPage::Main;
-    pauseReturnMode_ = ScreenMode::Playing;
+    pauseReturnMode_ = kind == EndingKind::Main ? ScreenMode::Playing : ScreenMode::Base;
     inventoryReturnToPause_ = false;
 }
 
 void Game::finishEndingKamishibai(bool)
 {
+    const EndingKind finishedKind = endingKamishibaiKind_;
     endingKamishibaiPending_ = false;
-    addStoryFlag(std::string(EndingSeenFlag));
-    addStoryFlag("story_ending_main");
-    addStoryFlag("story_stage_03_clear");
-    requestReturnToBaseTransition(true, false);
+    switch (finishedKind) {
+    case EndingKind::Main:
+        addStoryFlag(std::string(EndingSeenFlag));
+        addStoryFlag("story_ending_main");
+        addStoryFlag("story_stage_03_clear");
+        requestReturnToBaseTransition(true, false);
+        return;
+    case EndingKind::EncyclopediaComplete:
+        addStoryFlag(std::string(StoryEndingEncyclopediaCompleteFlag));
+        break;
+    case EndingKind::AstralClear:
+        addStoryFlag(std::string(StoryEndingAstralClearFlag));
+        break;
+    case EndingKind::HiddenBad:
+        addStoryFlag(std::string(StoryHiddenEndingEverythingOrbitsFlag));
+        addStoryFlag(std::string(HiddenEndingPeopleGoneFlag));
+        break;
+    }
+
+    mode_ = ScreenMode::Base;
+    playAudioBgm(AudioBgmBase, 0.45f);
+    pausePage_ = PauseMenuPage::Main;
+    pauseReturnMode_ = ScreenMode::Base;
+    inventoryReturnToPause_ = false;
+    closeBaseFacilityScreens();
+    if (finishedKind == EndingKind::HiddenBad) {
+        std::string message;
+        if (!saveSaveData(message)) {
+            logError("[ending] hidden ending save failed: " + message);
+        }
+    }
 }
 
 void Game::updateEndingKamishibai(const Input& input, float dt)
 {
     bool skipped = false;
-    if (endingPlayer_.canSkipImmediately() &&
-        (input.mouseLeftPressed() || input.confirmPressed() || input.useItemPressed())) {
+    if (endingPlayer_.canSkipImmediately() && input.useItemPressed()) {
         endingPlayer_.finishImmediately();
         skipped = true;
+    } else if (input.mouseLeftPressed() || input.confirmPressed() || input.useItemPressed()) {
+        endingPlayer_.advance();
     }
 
     endingPlayer_.update(dt);
@@ -3272,7 +3330,7 @@ void Game::beginFinalBossEndingSequence()
     pausePage_ = PauseMenuPage::Main;
     pauseReturnMode_ = ScreenMode::Playing;
     inventoryReturnToPause_ = false;
-    endingKamishibaiPending_ = true;
+    requestEndingKamishibai(EndingKind::Main);
 }
 
 void Game::updateScreenMode(
@@ -3377,7 +3435,7 @@ void Game::updateScreenMode(
     }
 
     if (endingKamishibaiPending_ && pendingStoryTriggers_.empty()) {
-        startEndingKamishibai();
+        startEndingKamishibai(endingKamishibaiKind_);
         return;
     }
 
@@ -3445,10 +3503,16 @@ void Game::updateScreenMode(
                 return;
             }
         }
+        if (updateRoguelikeFacilityUi(input, ui, dt)) {
+            return;
+        }
         if (updateWarpReturnUi(input, ui)) {
             return;
         }
         if (updateRoguelikeBigHoleUi(input, ui)) {
+            return;
+        }
+        if (updateRoguelikeFacilityInteraction(input, ui)) {
             return;
         }
         if (updateDungeonEventNpcInteraction(input, ui)) {
@@ -3680,6 +3744,7 @@ bool Game::gameProgressPaused() const
         endingKamishibaiPending_ ||
         warpReturnConfirm_.open ||
         roguelikeBigHoleMenu_.open ||
+        roguelikeFacilityUiActive() ||
         mode_ != ScreenMode::Playing;
 }
 
@@ -4451,7 +4516,7 @@ void Game::update(const Input& input, const Time& time)
                         runStats_.elapsedSeconds,
                         makeWorldLootJumpMotion(event.position, rng));
                 }
-                if (eventRewardsEnabled && rollChance(moonChance, rng)) {
+                if (eventRewardsEnabled && !currentStageIsRoguelike() && rollChance(moonChance, rng)) {
                     const int amount = bossDeath ? scaledLootAmount(std::uniform_int_distribution<int>(1, 3)(rng), 1.0f) : 1;
                     worldDrops_.spawnMaterialDrop(
                         MaterialType::MoonFragment,
@@ -4514,8 +4579,11 @@ void Game::update(const Input& input, const Time& time)
                     continue;
                 }
                 std::mt19937& rng = lootRuntimeRng();
+                const MaterialType materialType = currentStageIsRoguelike()
+                    ? normalizeRoguelikeMaterialDrop(event.materialDropType, rng)
+                    : event.materialDropType;
                 worldDrops_.spawnMaterialDrop(
-                    event.materialDropType,
+                    materialType,
                     event.materialDropCount,
                     safeLootLandingPosition(event.position, rng),
                     runStats_.elapsedSeconds,
@@ -4684,10 +4752,11 @@ void Game::checkHotReload(float dt)
         reloadNoticeTimer_ = 3.0f;
         configureWatcher();
         return;
-    } else if (fileName == "ending_kamishibai.tsv") {
-        loadEndingKamishibaiData();
+    } else if (isEndingKamishibaiDataFileName(fileName)) {
         if (mode_ == ScreenMode::EndingKamishibai) {
-            endingPlayer_.start(endingPages_, hasStoryFlag(EndingSeenFlag));
+            startEndingKamishibai(endingKamishibaiKind_);
+        } else {
+            loadEndingKamishibaiData();
         }
         reloadNotice_ = "Hot reload: " + changedPath;
         reloadNoticeTimer_ = 3.0f;

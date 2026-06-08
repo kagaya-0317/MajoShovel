@@ -16,6 +16,7 @@ constexpr float DefaultPageDuration = 3.0f;
 constexpr float CrossFadeSeconds = 0.8f;
 constexpr float TextFadeSeconds = 0.45f;
 constexpr int KamishibaiTextScale = 3;
+constexpr std::string_view TextStepSeparator = "[[next]]";
 
 std::string trimAscii(std::string_view value)
 {
@@ -78,6 +79,25 @@ std::string textWithDisplayLineBreaks(std::string text)
         }
     }
     return text;
+}
+
+std::vector<std::string> splitTextSteps(std::string_view text)
+{
+    std::vector<std::string> steps;
+    std::size_t begin = 0;
+    while (begin <= text.size()) {
+        const std::size_t separator = text.find(TextStepSeparator, begin);
+        const std::size_t end = separator == std::string_view::npos ? text.size() : separator;
+        steps.push_back(textWithDisplayLineBreaks(std::string(text.substr(begin, end - begin))));
+        if (separator == std::string_view::npos) {
+            break;
+        }
+        begin = separator + TextStepSeparator.size();
+    }
+    if (steps.empty()) {
+        steps.push_back({});
+    }
+    return steps;
 }
 
 std::size_t utf8CodepointLength(unsigned char lead)
@@ -221,6 +241,7 @@ KamishibaiPage fallbackPage()
     page.id = "fallback";
     page.imagePath = "assets/opening/op_8.png";
     page.text = "紙芝居データを読み込めませんでした。";
+    page.textSteps = {page.text};
     page.duration = DefaultPageDuration;
     page.effect = KamishibaiEffect::None;
     page.effectName = "none";
@@ -324,7 +345,8 @@ KamishibaiLoadResult KamishibaiLoader::load(const std::filesystem::path& path) c
         KamishibaiPage page;
         page.id = trimAscii(columns[0]);
         page.imagePath = trimAscii(columns[1]);
-        page.text = textWithDisplayLineBreaks(columns[2]);
+        page.textSteps = splitTextSteps(columns[2]);
+        page.text = page.textSteps.empty() ? std::string{} : page.textSteps.front();
         page.effectName = lowerAscii(trimAscii(columns[4]));
         page.effect = kamishibaiEffectFromString(page.effectName);
         page.note = columns[5];
@@ -370,7 +392,9 @@ void KamishibaiPlayer::start(std::vector<KamishibaiPage> pages, bool canSkipImme
     finished_ = pages_.empty();
     currentIndex_ = finished_ ? -1 : 0;
     previousIndex_ = -1;
+    currentTextStepIndex_ = 0;
     pageElapsed_ = 0.0f;
+    textStepElapsed_ = 0.0f;
     transitionElapsed_ = CrossFadeSeconds;
     transitionActive_ = false;
 }
@@ -383,6 +407,7 @@ void KamishibaiPlayer::update(float dt)
 
     const float safeDt = std::max(0.0f, dt);
     pageElapsed_ += safeDt;
+    textStepElapsed_ += safeDt;
     if (transitionActive_) {
         transitionElapsed_ += safeDt;
         if (transitionElapsed_ >= CrossFadeSeconds) {
@@ -394,8 +419,8 @@ void KamishibaiPlayer::update(float dt)
 
     const KamishibaiPage* page = currentPage();
     const float duration = page != nullptr ? std::max(0.05f, page->duration) : DefaultPageDuration;
-    if (pageElapsed_ >= duration) {
-        advancePage();
+    if (textStepElapsed_ >= duration) {
+        advance();
     }
 }
 
@@ -403,6 +428,7 @@ void KamishibaiPlayer::finishImmediately()
 {
     finished_ = true;
     previousIndex_ = -1;
+    currentTextStepIndex_ = 0;
     transitionActive_ = false;
 }
 
@@ -412,7 +438,8 @@ float KamishibaiPlayer::pageProgress() const
     if (page == nullptr || page->duration <= 0.0f) {
         return 1.0f;
     }
-    return std::clamp(pageElapsed_ / page->duration, 0.0f, 1.0f);
+    const int stepCount = std::max(1, static_cast<int>(page->textSteps.size()));
+    return std::clamp(pageElapsed_ / (page->duration * static_cast<float>(stepCount)), 0.0f, 1.0f);
 }
 
 float KamishibaiPlayer::transitionProgress() const
@@ -439,6 +466,36 @@ const KamishibaiPage* KamishibaiPlayer::previousPage() const
     return &pages_[static_cast<std::size_t>(previousIndex_)];
 }
 
+std::string_view KamishibaiPlayer::currentText() const
+{
+    const KamishibaiPage* page = currentPage();
+    if (page == nullptr) {
+        return {};
+    }
+    if (currentTextStepIndex_ >= 0 && currentTextStepIndex_ < static_cast<int>(page->textSteps.size())) {
+        return page->textSteps[static_cast<std::size_t>(currentTextStepIndex_)];
+    }
+    return page->text;
+}
+
+bool KamishibaiPlayer::advance()
+{
+    if (finished_ || pages_.empty()) {
+        return false;
+    }
+
+    const KamishibaiPage* page = currentPage();
+    const int stepCount = page == nullptr ? 1 : std::max(1, static_cast<int>(page->textSteps.size()));
+    if (currentTextStepIndex_ + 1 < stepCount) {
+        ++currentTextStepIndex_;
+        textStepElapsed_ = 0.0f;
+        return true;
+    }
+
+    advancePage();
+    return true;
+}
+
 void KamishibaiPlayer::advancePage()
 {
     if (currentIndex_ + 1 >= static_cast<int>(pages_.size())) {
@@ -448,7 +505,9 @@ void KamishibaiPlayer::advancePage()
 
     previousIndex_ = currentIndex_;
     ++currentIndex_;
+    currentTextStepIndex_ = 0;
     pageElapsed_ = 0.0f;
+    textStepElapsed_ = 0.0f;
     transitionElapsed_ = 0.0f;
     transitionActive_ = true;
 }
@@ -516,9 +575,10 @@ void KamishibaiRenderer::render(
             {0, 0, 0, alphaByte(black)});
     }
 
-    const float textDelay = player.currentIndex() == 0 ? 0.0f : CrossFadeSeconds;
-    const float textAlpha = smoothStep((player.pageElapsed() - textDelay) / TextFadeSeconds);
-    drawTextBand(renderer, current->text, width, height, textAlpha);
+    const bool pageTransitionTextDelay = player.currentTextStepIndex() == 0 && player.previousPage() != nullptr;
+    const float textDelay = pageTransitionTextDelay ? CrossFadeSeconds : 0.0f;
+    const float textAlpha = smoothStep((player.textStepElapsed() - textDelay) / TextFadeSeconds);
+    drawTextBand(renderer, player.currentText(), width, height, textAlpha);
 }
 
 void KamishibaiRenderer::renderTitleScreen(Renderer& renderer, std::string_view imagePath, int screenWidth, int screenHeight) const
