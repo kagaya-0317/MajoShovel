@@ -9,6 +9,7 @@
 #include <deque>
 #include <cstring>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <thread>
 #include <unordered_map>
@@ -55,6 +56,7 @@ constexpr int ControlClear = 1004;
 constexpr int ControlCopy = 1005;
 constexpr int ControlPause = 1006;
 constexpr int ControlAutoScroll = 1007;
+constexpr int ControlDebugCanvas = 1008;
 constexpr int ControlDebugBase = 2000;
 constexpr int DebugGroupContentTop = 28;
 constexpr int DebugGroupContentBottom = 10;
@@ -66,6 +68,8 @@ constexpr int DebugControlLabelH = 20;
 constexpr int DebugControlDropdownH = 30;
 constexpr int DebugControlGap = 8;
 constexpr int DebugGroupLineScroll = DebugControlButtonH + DebugControlGap;
+constexpr int DebugDropdownMaxVisibleItems = 8;
+const wchar_t* DebugCanvasClassName = L"MajoShovelDebugCanvas";
 
 std::wstring utf8ToWide(std::string_view text)
 {
@@ -97,6 +101,32 @@ std::string wideToUtf8(std::wstring_view text)
     std::string result(static_cast<std::size_t>(size), '\0');
     WideCharToMultiByte(CP_UTF8, 0, text.data(), static_cast<int>(text.size()), result.data(), size, nullptr, nullptr);
     return result;
+}
+
+int rectWidth(const RECT& rect)
+{
+    return static_cast<int>(rect.right - rect.left);
+}
+
+int rectHeight(const RECT& rect)
+{
+    return static_cast<int>(rect.bottom - rect.top);
+}
+
+bool rectContains(const RECT& rect, POINT point)
+{
+    return point.x >= rect.left && point.x < rect.right &&
+        point.y >= rect.top && point.y < rect.bottom;
+}
+
+bool rectIntersects(const RECT& a, const RECT& b)
+{
+    return a.left < b.right && a.right > b.left && a.top < b.bottom && a.bottom > b.top;
+}
+
+RECT makeRect(int x, int y, int width, int height)
+{
+    return RECT{x, y, x + std::max(0, width), y + std::max(0, height)};
 }
 
 const wchar_t* levelName(LogLevel level)
@@ -144,46 +174,39 @@ struct DebugConsole::Impl {
 #ifdef _WIN32
     struct DebugControlUi {
         DebugControlKind kind = DebugControlKind::Button;
-        HWND hwnd = nullptr;
-        HWND labelHwnd = nullptr;
         int controlId = 0;
-        std::string id;
-        std::string command;
-        HWND actionHwnd = nullptr;
         int actionControlId = 0;
-    };
-
-    struct DebugDropdownCommand {
+        std::string id;
+        std::string label;
         std::string command;
+        int minValue = 0;
+        int maxValue = 100;
+        int value = 0;
+        bool checked = false;
+        RECT rect{};
+        RECT labelRect{};
+        RECT actionRect{};
+        bool visible = false;
         std::vector<std::string> optionCommands;
+        std::vector<std::wstring> options;
     };
 
     struct DebugDropdownButtonCommand {
         int dropdownControlId = 0;
-        DebugDropdownCommand dropdown;
-    };
-
-    struct DebugNumberCommand {
-        std::string command;
-        int minValue = 0;
-        int maxValue = 100;
-    };
-
-    struct DebugSliderCommand {
-        std::string command;
-        int minValue = 0;
-        int maxValue = 100;
-        int lastQueuedValue = 0;
-        HWND valueHwnd = nullptr;
     };
 
     struct DebugGroupUi {
-        HWND box = nullptr;
-        HWND scrollbar = nullptr;
+        std::string id;
+        std::wstring label;
         std::vector<DebugControlUi> controls;
+        RECT rect{};
+        RECT viewportRect{};
+        RECT scrollbarTrackRect{};
+        RECT scrollbarThumbRect{};
         int scrollOffset = 0;
         int viewportHeight = 0;
         int contentHeight = 0;
+        bool visible = false;
     };
 
     struct DebugTabUi {
@@ -193,6 +216,27 @@ struct DebugConsole::Impl {
     struct DebugGroupRef {
         std::size_t tabIndex = 0;
         std::size_t groupIndex = 0;
+    };
+
+    enum class DebugHitKind {
+        None,
+        Button,
+        Toggle,
+        NumberInput,
+        Dropdown,
+        DropdownButtonAction,
+        Slider,
+        ScrollbarThumb,
+        ScrollbarTrack,
+        DropdownItem,
+    };
+
+    struct DebugHit {
+        DebugHitKind kind = DebugHitKind::None;
+        std::size_t tabIndex = 0;
+        std::size_t groupIndex = 0;
+        std::size_t controlIndex = 0;
+        int itemIndex = -1;
     };
 #endif
 
@@ -286,22 +330,15 @@ struct DebugConsole::Impl {
             return;
         }
 
-        auto it = debugDropdownControlIdByDebugId.find(std::string(controlId));
-        if (it == debugDropdownControlIdByDebugId.end()) {
+        DebugControlUi* control = findControlByDebugId(controlId);
+        if (!control ||
+            (control->kind != DebugControlKind::Dropdown && control->kind != DebugControlKind::DropdownButton) ||
+            selectedIndex >= static_cast<int>(control->options.size())) {
             return;
         }
 
-        HWND combo = GetDlgItem(hwnd, it->second);
-        if (!combo) {
-            return;
-        }
-
-        const int count = static_cast<int>(SendMessageW(combo, CB_GETCOUNT, 0, 0));
-        if (selectedIndex >= count) {
-            return;
-        }
-
-        SendMessageW(combo, CB_SETCURSEL, selectedIndex, 0);
+        control->value = selectedIndex;
+        invalidateDebugCanvas();
 #else
         (void)controlId;
         (void)selectedIndex;
@@ -311,23 +348,12 @@ struct DebugConsole::Impl {
     void setSliderValue(std::string_view controlId, int value)
     {
 #ifdef _WIN32
-        auto it = debugSliderControlIdByDebugId.find(std::string(controlId));
-        if (it == debugSliderControlIdByDebugId.end()) {
+        DebugControlUi* control = findControlByDebugId(controlId);
+        if (!control || control->kind != DebugControlKind::Slider) {
             return;
         }
-        auto commandIt = debugSliderByControlId.find(it->second);
-        if (commandIt == debugSliderByControlId.end()) {
-            return;
-        }
-
-        DebugSliderCommand& slider = commandIt->second;
-        const int clamped = std::clamp(value, slider.minValue, slider.maxValue);
-        HWND trackbar = GetDlgItem(hwnd, it->second);
-        if (trackbar) {
-            SendMessageW(trackbar, TBM_SETPOS, TRUE, clamped);
-        }
-        updateSliderValueLabel(slider, clamped);
-        slider.lastQueuedValue = clamped;
+        control->value = std::clamp(value, control->minValue, control->maxValue);
+        invalidateDebugCanvas();
 #else
         (void)controlId;
         (void)value;
@@ -364,6 +390,14 @@ struct DebugConsole::Impl {
         wc.hbrBackground = reinterpret_cast<HBRUSH>(COLOR_WINDOW + 1);
         wc.lpszClassName = className;
         RegisterClassW(&wc);
+
+        WNDCLASSW canvasWc{};
+        canvasWc.lpfnWndProc = &DebugConsole::Impl::debugCanvasProc;
+        canvasWc.hInstance = instance;
+        canvasWc.hCursor = LoadCursorW(nullptr, MAKEINTRESOURCEW(32512));
+        canvasWc.hbrBackground = nullptr;
+        canvasWc.lpszClassName = DebugCanvasClassName;
+        RegisterClassW(&canvasWc);
 
         HWND created = CreateWindowExW(
             WS_EX_TOOLWINDOW,
@@ -409,12 +443,14 @@ struct DebugConsole::Impl {
                     continue;
                 }
 
-                const int controlId = GetDlgCtrlID(msg.hwnd);
-                auto numberIt = debugNumberByControlId.find(controlId);
-                if (numberIt != debugNumberByControlId.end()) {
-                    queueNumberCommand(controlId, numberIt->second);
+                if (msg.hwnd == numberEdit) {
+                    commitNumberEdit();
                     continue;
                 }
+            }
+            if (msg.message == WM_KEYDOWN && msg.wParam == VK_ESCAPE && msg.hwnd == numberEdit) {
+                cancelNumberEdit();
+                continue;
             }
 
             if (msg.message == WM_MOUSEWHEEL &&
@@ -492,6 +528,49 @@ struct DebugConsole::Impl {
         case WM_DESTROY:
             PostQuitMessage(0);
             return 0;
+        }
+
+        return DefWindowProcW(hwnd, message, wParam, lParam);
+    }
+
+    static LRESULT CALLBACK debugCanvasProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam)
+    {
+        Impl* impl = reinterpret_cast<Impl*>(GetWindowLongPtrW(hwnd, GWLP_USERDATA));
+        if (!impl) {
+            return DefWindowProcW(hwnd, message, wParam, lParam);
+        }
+
+        switch (message) {
+        case WM_ERASEBKGND:
+            return 1;
+        case WM_PAINT:
+            impl->paintDebugCanvas();
+            return 0;
+        case WM_LBUTTONDOWN:
+            impl->handleDebugCanvasMouseDown({static_cast<short>(LOWORD(lParam)), static_cast<short>(HIWORD(lParam))});
+            return 0;
+        case WM_LBUTTONUP:
+            impl->handleDebugCanvasMouseUp({static_cast<short>(LOWORD(lParam)), static_cast<short>(HIWORD(lParam))});
+            return 0;
+        case WM_MOUSEMOVE:
+            impl->handleDebugCanvasMouseMove({static_cast<short>(LOWORD(lParam)), static_cast<short>(HIWORD(lParam))});
+            return 0;
+        case WM_MOUSEWHEEL:
+            if (impl->handleDebugCanvasWheel(GET_WHEEL_DELTA_WPARAM(wParam), lParam)) {
+                return 0;
+            }
+            break;
+        case WM_CAPTURECHANGED:
+            impl->activeHit = {};
+            impl->draggingSlider = false;
+            impl->draggingScrollbar = false;
+            return 0;
+        case WM_COMMAND:
+            if (reinterpret_cast<HWND>(lParam) == impl->numberEdit && HIWORD(wParam) == EN_KILLFOCUS) {
+                impl->commitNumberEdit();
+                return 0;
+            }
+            break;
         }
 
         return DefWindowProcW(hwnd, message, wParam, lParam);
