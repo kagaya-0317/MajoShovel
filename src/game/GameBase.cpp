@@ -13,9 +13,13 @@ constexpr std::string_view BaseFacilityWindowHelpText = "↑/↓ 選択  F/Enter
 constexpr std::string_view MiningToolCategory = "\xE6\x8E\x98\xE5\x89\x8A";
 constexpr std::string_view RescueShovelObjectId = "item_shovel";
 constexpr std::string_view RescueTorchObjectId = "item_torch";
+constexpr std::string_view CaptureNetObjectId = "item_capture_net";
+constexpr std::string_view SuperCaptureNetObjectId = "item_super_capture_net";
+constexpr std::string_view HyperCaptureNetObjectId = "item_hyper_capture_net";
 constexpr float BaseMiningRescueDropDurationSeconds = 1.05f;
 constexpr float BaseMiningRescueDropEndSeconds = 1.55f;
 constexpr float NewItemJingleFallbackSeconds = 0.92f;
+constexpr float HiddenBaseNpcHitCooldownSeconds = 0.24f;
 constexpr std::array<float, SpellRingCount> RingWorkshopRadiusMaxMetersPerLevel{{0.12f, 0.18f, 0.24f}};
 constexpr std::array<float, SpellRingCount> RingWorkshopRadiusMinMetersPerLevel{{0.08f, 0.12f, 0.16f}};
 constexpr std::array<float, SpellRingCount> RingWorkshopSpeedMetersPerSecondPerLevel{{0.20f, 0.30f, 0.25f}};
@@ -1363,6 +1367,28 @@ int itemCodexObjectCount(const ObjectCatalog& catalog)
         }));
 }
 
+int enemyCodexEnemyCount(const EnemyCatalog& catalog)
+{
+    return static_cast<int>(std::count_if(
+        catalog.enemies.begin(),
+        catalog.enemies.end(),
+        [](const EnemyDefinition& enemy) {
+            return !isCodexHiddenEnemy(enemy);
+        }));
+}
+
+std::vector<const EnemyDefinition*> enemyCodexEnemies(const EnemyCatalog& catalog)
+{
+    std::vector<const EnemyDefinition*> enemies;
+    enemies.reserve(catalog.enemies.size());
+    for (const EnemyDefinition& enemy : catalog.enemies) {
+        if (!isCodexHiddenEnemy(enemy)) {
+            enemies.push_back(&enemy);
+        }
+    }
+    return enemies;
+}
+
 bool baseFacilityIsPerson(std::string_view facilityId)
 {
     return facilityId == "monica" ||
@@ -1371,17 +1397,87 @@ bool baseFacilityIsPerson(std::string_view facilityId)
         facilityId == "elder";
 }
 
-void removeHiddenEndingPeople(std::vector<BaseFacility>& facilities, bool peopleGone)
+std::string hiddenBaseNpcRemovedFlag(std::string_view facilityId)
 {
-    if (!peopleGone) {
-        return;
+    return "hidden_npc_removed:" + std::string(facilityId);
+}
+
+struct HiddenBaseNpcDefinition {
+    std::string_view facilityId;
+    std::string_view enemyId;
+    bool monica = false;
+};
+
+constexpr std::array<HiddenBaseNpcDefinition, 4> HiddenBaseNpcDefinitions{{
+    {"merchant_npc", "base_npc_merchant", false},
+    {"processor_npc", "base_npc_processor", false},
+    {"elder", "base_npc_elder", false},
+    {"monica", "base_npc_monica", true},
+}};
+
+const HiddenBaseNpcDefinition* hiddenBaseNpcDefinitionForFacility(std::string_view facilityId)
+{
+    const auto it = std::find_if(
+        HiddenBaseNpcDefinitions.begin(),
+        HiddenBaseNpcDefinitions.end(),
+        [facilityId](const HiddenBaseNpcDefinition& definition) {
+            return definition.facilityId == facilityId;
+        });
+    return it == HiddenBaseNpcDefinitions.end() ? nullptr : &*it;
+}
+
+bool hiddenBaseNpcTargetFacility(std::string_view facilityId)
+{
+    const HiddenBaseNpcDefinition* definition = hiddenBaseNpcDefinitionForFacility(facilityId);
+    return definition != nullptr && !definition->monica;
+}
+
+bool hiddenBaseCaptureNetObject(std::string_view objectId)
+{
+    return objectId == CaptureNetObjectId ||
+        objectId == SuperCaptureNetObjectId ||
+        objectId == HyperCaptureNetObjectId;
+}
+
+void applyHiddenRouteFacilityAvailability(
+    std::vector<BaseFacility>& facilities,
+    bool peopleGone,
+    bool orbitCorruptionUnlocked,
+    bool merchantRemoved,
+    bool processorRemoved,
+    bool elderRemoved)
+{
+    if (peopleGone || merchantRemoved) {
+        for (BaseFacility& facility : facilities) {
+            if (std::string_view(facility.facilityId) == "merchant_wagon") {
+                facility.enabled = false;
+                facility.showNameLabel = false;
+            }
+        }
+    }
+    if (peopleGone || processorRemoved) {
+        for (BaseFacility& facility : facilities) {
+            if (std::string_view(facility.facilityId) == "processing_table") {
+                facility.enabled = false;
+                facility.showNameLabel = false;
+            }
+        }
     }
     facilities.erase(
         std::remove_if(
             facilities.begin(),
             facilities.end(),
-            [](const BaseFacility& facility) {
-                return baseFacilityIsPerson(facility.facilityId);
+            [peopleGone, orbitCorruptionUnlocked, merchantRemoved, processorRemoved, elderRemoved](const BaseFacility& facility) {
+                const std::string_view facilityId = facility.facilityId;
+                if (peopleGone && baseFacilityIsPerson(facilityId)) {
+                    return true;
+                }
+                if (orbitCorruptionUnlocked && facilityId == "monica") {
+                    return true;
+                }
+                return (merchantRemoved && facilityId == "merchant_npc") ||
+                    (processorRemoved && facilityId == "processor_npc") ||
+                    (elderRemoved && facilityId == "elder");
             }),
         facilities.end());
 }
@@ -6540,8 +6636,12 @@ void Game::openBookshelf()
 {
     syncEncyclopediaFromInventoryAndRing();
     if (encyclopediaComplete() && !hasStoryFlag(StoryEndingEncyclopediaCompleteFlag)) {
-        requestEndingKamishibai(EndingKind::EncyclopediaComplete);
-        return;
+        const EndingKind encyclopediaEndingKind = resolveEndingKamishibaiKind(EndingKind::EncyclopediaComplete);
+        if (encyclopediaEndingKind == EndingKind::EncyclopediaComplete ||
+            !hasStoryFlag(StoryEndingEncyclopediaFailedTrustFlag)) {
+            requestEndingKamishibai(encyclopediaEndingKind);
+            return;
+        }
     }
 
     baseBookshelfActive_ = true;
@@ -6567,6 +6667,9 @@ bool Game::encyclopediaComplete() const
         }
     }
     for (const EnemyDefinition& enemy : enemyCatalog_.enemies) {
+        if (isCodexHiddenEnemy(enemy)) {
+            continue;
+        }
         ++targetCount;
         if (encyclopedia_.enemyStage(enemy.id) != EncyclopediaStage::Undiscovered) {
             ++discoveredCount;
@@ -6842,6 +6945,213 @@ void Game::addStoryFlag(std::string flag)
 bool Game::hasStoryFlag(std::string_view flag) const
 {
     return std::find(storyFlags_.begin(), storyFlags_.end(), std::string(flag)) != storyFlags_.end();
+}
+
+void Game::unlockHiddenBaseOrbitCorruption()
+{
+    if (!hasStoryFlag(StoryHiddenOrbitCorruptionUnlockedFlag)) {
+        addStoryFlag(std::string(StoryHiddenOrbitCorruptionUnlockedFlag));
+        baseStatus_ = "リングが、拠点でも止まらなくなった";
+    }
+    player_.position = basePlayerPosition_;
+    player_.facing = lengthSquared(basePlayerFacing_) > 0.0001f
+        ? normalize(basePlayerFacing_)
+        : Vec2{0.0f, 1.0f};
+    player_.spellRingShift = 0.0f;
+    player_.spellRingShiftDirection = player_.facing;
+    spellRing_.resetRuntimeStateAtPlayer(player_, balance_);
+}
+
+bool Game::hiddenBaseOrbitActive() const
+{
+    return hasStoryFlag(StoryHiddenOrbitCorruptionUnlockedFlag) &&
+        !hasStoryFlag(StoryHiddenEndingEverythingOrbitsFlag) &&
+        !hasStoryFlag(HiddenEndingPeopleGoneFlag);
+}
+
+bool Game::hiddenBaseNpcRemoved(std::string_view facilityId) const
+{
+    return hasStoryFlag(hiddenBaseNpcRemovedFlag(facilityId));
+}
+
+bool Game::hiddenBaseAllNonMonicaNpcsRemoved() const
+{
+    return std::all_of(
+        HiddenBaseNpcDefinitions.begin(),
+        HiddenBaseNpcDefinitions.end(),
+        [this](const HiddenBaseNpcDefinition& definition) {
+            return definition.monica || hiddenBaseNpcRemoved(definition.facilityId);
+        });
+}
+
+void Game::updateHiddenBaseOrbit(const Input& input, UiContext& ui, float dt, bool interactionsEnabled)
+{
+    if (!hiddenBaseOrbitActive()) {
+        return;
+    }
+
+    player_.position = basePlayerPosition_;
+    player_.facing = lengthSquared(basePlayerFacing_) > 0.0001f
+        ? normalize(basePlayerFacing_)
+        : Vec2{0.0f, 1.0f};
+    player_.spellRingShift = 0.0f;
+    player_.spellRingShiftDirection = player_.facing;
+    player_.throwCooldownRemaining = std::max(0.0f, player_.throwCooldownRemaining - std::max(0.0f, dt));
+
+    if (interactionsEnabled) {
+        spellRing_.update(player_, input, dt, baseRingPreviewAnimationTime_, false, ui.pointerConsumed(), balance_);
+    } else {
+        spellRing_.updatePresentation(player_, dt, balance_);
+        return;
+    }
+
+    for (auto& [facilityId, cooldown] : hiddenBaseNpcHitCooldowns_) {
+        cooldown = std::max(0.0f, cooldown - std::max(0.0f, dt));
+    }
+
+    if (baseArea_ != BaseArea::Outdoor) {
+        return;
+    }
+
+    std::vector<BaseFacility> facilities = baseFacilities(baseArea_, ringWorkshopUnlocked_);
+    applyHiddenRouteFacilityAvailability(
+        facilities,
+        hasStoryFlag(HiddenEndingPeopleGoneFlag),
+        hasStoryFlag(StoryHiddenOrbitCorruptionUnlockedFlag),
+        hiddenBaseNpcRemoved("merchant_npc"),
+        hiddenBaseNpcRemoved("processor_npc"),
+        hiddenBaseNpcRemoved("elder"));
+    for (BaseFacility& facility : facilities) {
+        facility.rect = toUiRect(baseFacilityRectFor(baseArea_, facility.facilityId, toBaseEditRect(facility.rect)));
+    }
+
+    auto markTrustBroken = [this]() {
+        if (hasStoryFlag(StoryTrustBrokenFlag)) {
+            return;
+        }
+        addStoryFlag(std::string(StoryTrustBrokenFlag));
+        std::string message;
+        if (!saveSaveData(message)) {
+            logError("[hidden] trust break save failed: " + message);
+        }
+    };
+
+    auto storeCapturedNpc = [this](const EnemyDefinition& enemy) {
+        ObjectDefinition captured = makeCapturedObjectDefinition(enemy);
+        upsertObjectDefinition(objectCatalog_, captured);
+
+        SpellRingAddResult ringAdd{};
+        if (spellRing_.addObjectItem(captured, &ringAdd)) {
+            refreshOrbitEffects();
+            syncEncyclopediaFromInventoryAndRing();
+            return true;
+        }
+
+        InventoryAddResult inventoryAdd{};
+        if (inventory_.addRuntimeObjectItem(captured, &inventoryAdd)) {
+            syncEncyclopediaFromInventoryAndRing();
+            return true;
+        }
+
+        if (warehouseUsedSlots() < warehouseCapacity()) {
+            ItemInstance instance = inventory_.createDetachedObjectInstance(captured);
+            warehouseObjectInstances_.push_back(InventoryObjectInstance{captured, std::move(instance)});
+            syncWarehouseDisplaySlots();
+            syncEncyclopediaFromInventoryAndRing();
+            return true;
+        }
+
+        return false;
+    };
+
+    auto removeNpc = [this, &markTrustBroken, &storeCapturedNpc](std::string_view facilityId, const EnemyDefinition& enemy, bool captured) {
+        markTrustBroken();
+        if (captured) {
+            const bool stored = storeCapturedNpc(enemy);
+            baseStatus_ = stored
+                ? ((enemy.name.empty() ? enemy.id : enemy.name) + "を捕獲した")
+                : ((enemy.name.empty() ? enemy.id : enemy.name) + "はリングに吸い込まれた");
+        } else {
+            baseStatus_ = (enemy.name.empty() ? enemy.id : enemy.name) + "を撃破した";
+        }
+
+        addStoryFlag(hiddenBaseNpcRemovedFlag(facilityId));
+        hiddenBaseNpcHp_.erase(std::string(facilityId));
+        hiddenBaseNpcHitCooldowns_.erase(std::string(facilityId));
+
+        if (hiddenBaseAllNonMonicaNpcsRemoved() && !hasStoryFlag(StoryHiddenMonicaDuelUnlockedFlag)) {
+            addStoryFlag(std::string(StoryHiddenMonicaDuelUnlockedFlag));
+            queueStoryEventForTrigger("hidden_bad:monica_duel_unlocked");
+        }
+
+        std::string message;
+        if (!saveSaveData(message)) {
+            logError("[hidden] npc removal save failed: " + message);
+        }
+    };
+
+    std::vector<SpellRingItem*> runtimeItems = spellRing_.runtimeItemsMutable();
+    for (const BaseFacility& facility : facilities) {
+        const std::string_view facilityId = facility.facilityId;
+        if (!hiddenBaseNpcTargetFacility(facilityId)) {
+            continue;
+        }
+        const HiddenBaseNpcDefinition* npcDefinition = hiddenBaseNpcDefinitionForFacility(facilityId);
+        if (npcDefinition == nullptr) {
+            continue;
+        }
+        const auto enemyIt = enemyCatalog_.enemiesById.find(std::string(npcDefinition->enemyId));
+        if (enemyIt == enemyCatalog_.enemiesById.end()) {
+            continue;
+        }
+
+        const EnemyDefinition& enemy = enemyIt->second;
+        int& hp = hiddenBaseNpcHp_[std::string(facilityId)];
+        if (hp <= 0) {
+            hp = std::max(1, enemy.hp);
+        }
+        float& cooldown = hiddenBaseNpcHitCooldowns_[std::string(facilityId)];
+        if (cooldown > 0.0f) {
+            continue;
+        }
+
+        const UiRect targetRect = baseFacilityPointerRect(facility, baseArea_, ringWorkshopUnlocked_);
+        for (SpellRingItem* itemPtr : runtimeItems) {
+            if (itemPtr == nullptr || itemPtr->broken() || itemPtr->objectId.empty()) {
+                continue;
+            }
+            SpellRingItem& item = *itemPtr;
+            const float hitRadius = std::max(6.0f, item.hitRadius);
+            if (!circleIntersectsRect(item.worldPosition, hitRadius, targetRect)) {
+                continue;
+            }
+
+            cooldown = std::max(HiddenBaseNpcHitCooldownSeconds, item.hitInterval);
+            item.actionFlashTimer = SpellRingItemActionFlashSeconds;
+            (void)spellRing_.consumeItemDurability(item, 1);
+
+            if (hiddenBaseCaptureNetObject(item.objectId)) {
+                removeNpc(facilityId, enemy, true);
+            } else {
+                markTrustBroken();
+                hp -= std::max(1, item.damage);
+                baseStatus_ = (enemy.name.empty() ? enemy.id : enemy.name) + "に攻撃した";
+                if (hp <= 0) {
+                    removeNpc(facilityId, enemy, false);
+                }
+            }
+            (void)spellRing_.consumeItemBreakEvents();
+            break;
+        }
+    }
+}
+
+void Game::renderHiddenBaseOrbit(Renderer& renderer) const
+{
+    if (!hiddenBaseOrbitActive()) {
+        return;
+    }
+    renderSpellRingForeground(renderer, spellRing_.runtimeItems(), {}, baseRingPreviewAnimationTime_);
 }
 
 void Game::recordBaseHintDungeonReturn()
@@ -7426,7 +7736,7 @@ void Game::updateBookshelfScreen(const Input& input, UiContext& ui)
         case BookshelfPage::Items:
             return itemCodexObjectCount(objectCatalog_);
         case BookshelfPage::Enemies:
-            return static_cast<int>(enemyCatalog_.enemies.size());
+            return enemyCodexEnemyCount(enemyCatalog_);
         }
         return 0;
     };
@@ -10043,7 +10353,13 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
     };
 
     std::vector<BaseFacility> facilities = baseFacilities(baseArea_, ringWorkshopUnlocked_);
-    removeHiddenEndingPeople(facilities, hasStoryFlag(HiddenEndingPeopleGoneFlag));
+    applyHiddenRouteFacilityAvailability(
+        facilities,
+        hasStoryFlag(HiddenEndingPeopleGoneFlag),
+        hasStoryFlag(StoryHiddenOrbitCorruptionUnlockedFlag),
+        hiddenBaseNpcRemoved("merchant_npc"),
+        hiddenBaseNpcRemoved("processor_npc"),
+        hiddenBaseNpcRemoved("elder"));
     for (BaseFacility& facility : facilities) {
         facility.rect = toUiRect(baseFacilityRectFor(baseArea_, facility.facilityId, toBaseEditRect(facility.rect)));
     }
@@ -10153,6 +10469,15 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
         }
     }
 
+    const bool hiddenBaseRingInteractionsEnabled =
+        !dialogue_.active() &&
+        !pendingStoryTriggerDelayActive() &&
+        pendingStoryTrigger_.empty() &&
+        pendingStoryTriggers_.empty() &&
+        !firstItemAcquisitionNoticeActive() &&
+        !screenTransition_.active();
+    updateHiddenBaseOrbit(input, ui, dt, hiddenBaseRingInteractionsEnabled);
+
     const BaseFacility* interactionFacility = selectBaseInteractionFacility(basePlayerPosition_, basePlayerFacing_, baseArea_, facilities);
 
     if (input.mouseLeftPressed() && !ui.pointerConsumed()) {
@@ -10195,6 +10520,7 @@ void Game::renderBookshelfScreen(Renderer& renderer) const
             itemCodexObjects.push_back(&object);
         }
     }
+    const std::vector<const EnemyDefinition*> enemyCodexObjects = enemyCodexEnemies(enemyCatalog_);
 
     const auto menuName = [](int index) {
         switch (index) {
@@ -10227,14 +10553,14 @@ void Game::renderBookshelfScreen(Renderer& renderer) const
     const InventoryUiGridStyle gridStyle = bookshelfGridStyle();
     const UiRect gridViewport = bookshelfGridViewport();
     const int totalCount = bookshelfPage_ == BookshelfPage::Enemies
-        ? static_cast<int>(enemyCatalog_.enemies.size())
+        ? static_cast<int>(enemyCodexObjects.size())
         : static_cast<int>(itemCodexObjects.size());
     const UiScrollAreaLayout gridLayout =
         makeInventoryUiGridLayout(gridViewport, totalCount, bookshelfScrollOffset_, gridStyle);
     int discoveredCount = 0;
     if (bookshelfPage_ == BookshelfPage::Enemies) {
-        for (const EnemyDefinition& enemy : enemyCatalog_.enemies) {
-            const EncyclopediaStage stage = encyclopedia_.enemyStage(enemy.id);
+        for (const EnemyDefinition* enemy : enemyCodexObjects) {
+            const EncyclopediaStage stage = encyclopedia_.enemyStage(enemy->id);
             if (stage != EncyclopediaStage::Undiscovered) {
                 ++discoveredCount;
             }
@@ -10295,12 +10621,12 @@ void Game::renderBookshelfScreen(Renderer& renderer) const
         renderer.popClipRect();
     } else {
         renderer.pushClipRect(gridLayout.viewport.pos, gridLayout.viewport.size);
-        for (int i = 0; i < static_cast<int>(enemyCatalog_.enemies.size()); ++i) {
+        for (int i = 0; i < static_cast<int>(enemyCodexObjects.size()); ++i) {
             const UiRect rect = inventoryUiGridSlotRect(gridLayout, i, gridStyle);
             if (!uiScrollAreaRectVisible(gridLayout, rect)) {
                 continue;
             }
-            const EnemyDefinition& enemy = enemyCatalog_.enemies[static_cast<std::size_t>(i)];
+            const EnemyDefinition& enemy = *enemyCodexObjects[static_cast<std::size_t>(i)];
             const EncyclopediaStage stage = encyclopedia_.enemyStage(enemy.id);
             InventoryUiEntryView emptyEntry{};
             drawInventoryUiSlot(renderer, rect, emptyEntry, InventoryUiSlotStyle{i == bookshelfSelection_, stage == EncyclopediaStage::Undiscovered, gridStyle.imageMaxSize});
@@ -10335,8 +10661,8 @@ void Game::renderBookshelfScreen(Renderer& renderer) const
     }
 
     if (bookshelfPage_ == BookshelfPage::Enemies) {
-        if (bookshelfSelection_ >= 0 && bookshelfSelection_ < static_cast<int>(enemyCatalog_.enemies.size())) {
-            const EnemyDefinition& enemy = enemyCatalog_.enemies[static_cast<std::size_t>(bookshelfSelection_)];
+        if (bookshelfSelection_ >= 0 && bookshelfSelection_ < static_cast<int>(enemyCodexObjects.size())) {
+            const EnemyDefinition& enemy = *enemyCodexObjects[static_cast<std::size_t>(bookshelfSelection_)];
             const EncyclopediaStage stage = encyclopedia_.enemyStage(enemy.id);
             drawUiSubPanel(renderer, detailPanel);
             if (stage == EncyclopediaStage::Undiscovered) {
@@ -10585,7 +10911,13 @@ void Game::renderBaseBackdrop(Renderer& renderer) const
     }
 
     std::vector<BaseFacility> facilities = baseFacilities(baseArea_, ringWorkshopUnlocked_);
-    removeHiddenEndingPeople(facilities, hasStoryFlag(HiddenEndingPeopleGoneFlag));
+    applyHiddenRouteFacilityAvailability(
+        facilities,
+        hasStoryFlag(HiddenEndingPeopleGoneFlag),
+        hasStoryFlag(StoryHiddenOrbitCorruptionUnlockedFlag),
+        hiddenBaseNpcRemoved("merchant_npc"),
+        hiddenBaseNpcRemoved("processor_npc"),
+        hiddenBaseNpcRemoved("elder"));
     for (BaseFacility& facility : facilities) {
         facility.rect = toUiRect(baseFacilityRectFor(baseArea_, facility.facilityId, toBaseEditRect(facility.rect)));
     }
@@ -10614,6 +10946,7 @@ void Game::renderBaseBackdrop(Renderer& renderer) const
     }
 
     renderBaseMiningRescueDropEvent(renderer);
+    renderHiddenBaseOrbit(renderer);
     renderTopInfoBar(renderer);
 }
 
@@ -10649,7 +10982,13 @@ void Game::renderBaseScreen(Renderer& renderer) const
     }
 
     std::vector<BaseFacility> facilities = baseFacilities(baseArea_, ringWorkshopUnlocked_);
-    removeHiddenEndingPeople(facilities, hasStoryFlag(HiddenEndingPeopleGoneFlag));
+    applyHiddenRouteFacilityAvailability(
+        facilities,
+        hasStoryFlag(HiddenEndingPeopleGoneFlag),
+        hasStoryFlag(StoryHiddenOrbitCorruptionUnlockedFlag),
+        hiddenBaseNpcRemoved("merchant_npc"),
+        hiddenBaseNpcRemoved("processor_npc"),
+        hiddenBaseNpcRemoved("elder"));
     for (BaseFacility& facility : facilities) {
         facility.rect = toUiRect(baseFacilityRectFor(baseArea_, facility.facilityId, toBaseEditRect(facility.rect)));
     }
@@ -10679,6 +11018,7 @@ void Game::renderBaseScreen(Renderer& renderer) const
     }
 
     renderBaseMiningRescueDropEvent(renderer);
+    renderHiddenBaseOrbit(renderer);
     renderTopInfoBar(renderer);
     }
 

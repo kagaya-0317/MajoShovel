@@ -92,6 +92,10 @@ enum class EndingKind {
     EncyclopediaComplete,
     AstralClear,
     HiddenBad,
+    MainFailedTrust,
+    MainFailedMonicaMissing,
+    EncyclopediaFailedTrust,
+    AstralFailedTrust,
 };
 
 enum class BaseArea {
@@ -990,6 +994,7 @@ private:
     void startOpeningKamishibai();
     void finishOpeningKamishibai(bool completedPlayback);
     void updateOpeningKamishibai(const Input& input, float dt);
+    EndingKind resolveEndingKamishibaiKind(EndingKind kind) const;
     void requestEndingKamishibai(EndingKind kind);
     void startEndingKamishibai(EndingKind kind = EndingKind::Main);
     void finishEndingKamishibai(bool completedPlayback);
@@ -1427,8 +1432,12 @@ private:
     void resetAstralRunState();
     void initializeAstralRunForLayout();
     void updateAstralRunProgress();
+    int roguelikeSectionRankForDepthMeters(int depthMeters) const;
+    int roguelikeDepthMetersForSectionRank(int sectionRank) const;
     int roguelikeAdjustedDepthRank(int localDepthRank) const;
     int roguelikeDepthRankForWorldPosition(Vec2 position) const;
+    void rebuildRoguelikeAreaFromAstralState();
+    bool debugSetRoguelikeAreaForDepthMeters(int depthMeters);
     void initializeRoguelikeBigHoleFromLayout();
     void clearRoguelikeBigHoleState();
     bool updateRoguelikeBigHoleUi(const Input& input, UiContext& ui);
@@ -1750,6 +1759,12 @@ private:
     void handleRingItemBreakEvents(std::vector<EffectDiscoveryEvent>* discoveryEvents = nullptr);
     void recordCapturedMonsterRingBreak(std::string_view objectId);
     bool hiddenBadEndingReady() const;
+    void unlockHiddenBaseOrbitCorruption();
+    bool hiddenBaseOrbitActive() const;
+    bool hiddenBaseNpcRemoved(std::string_view facilityId) const;
+    bool hiddenBaseAllNonMonicaNpcsRemoved() const;
+    void updateHiddenBaseOrbit(const Input& input, UiContext& ui, float dt, bool interactionsEnabled);
+    void renderHiddenBaseOrbit(Renderer& renderer) const;
     void switchActiveRingWithLog(int delta);
     int unlockedRingHudCount() const;
     UiRect ringStatusHudRect(int ringIndex, int unlockedRingCount) const;
@@ -1867,6 +1882,8 @@ private:
     Vec2 basePlayerPosition_{640.0f, 360.0f};
     Vec2 baseOutdoorPlayerPosition_{640.0f, 360.0f};
     Vec2 basePlayerFacing_{0.0f, 1.0f};
+    std::unordered_map<std::string, int> hiddenBaseNpcHp_;
+    std::unordered_map<std::string, float> hiddenBaseNpcHitCooldowns_;
     float basePlayerSpriteAnimationTime_ = 0.0f;
     float baseRingPreviewAnimationTime_ = 0.0f;
     bool basePlayerSpriteWalking_ = false;
@@ -2239,8 +2256,9 @@ private:
     bool roguelikeMerchantStockSuspended_ = false;
     std::vector<MerchantProduct> suspendedMerchantStock_;
     int suspendedMerchantStockVersion_ = 0;
-    int debugAstralDepth_ = 1;
-    std::string debugAstralMoveTarget_ = "depth";
+    int debugAstralDepthMeters_ = 0;
+    int debugAstralDepthRank_ = 1;
+    std::string debugAstralMoveTarget_ = "meters";
     std::string debugAstralDistortionMode_ = "auto";
     std::string debugAstralRoomType_ = "ore";
     int debugAstralRoomIndex_ = 1;

@@ -1452,6 +1452,16 @@ bool parseEnemyCatalog(
     return true;
 }
 
+bool isCodexHiddenEnemy(const EnemyDefinition& enemy)
+{
+    return std::any_of(enemy.enemyTags.begin(), enemy.enemyTags.end(), [](std::string_view tag) {
+        return tag == "codex_hidden" ||
+            tag == "no_codex" ||
+            tag == "codex_excluded" ||
+            tag == "図鑑非表示";
+    });
+}
+
 std::string resolveEnemySpawnWeightColumnName(std::string_view stageId, int depthRank)
 {
     return makeStageWeightColumnName(stageId, depthRank, "E");

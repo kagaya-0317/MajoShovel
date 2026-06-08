@@ -122,6 +122,7 @@ bool loadEnemyCatalogFromGoogleSheet(
     const std::unordered_map<std::string, SpecialTagDefinition>& specialTags,
     EnemyCatalog& outCatalog,
     std::string& outError);
+bool isCodexHiddenEnemy(const EnemyDefinition& enemy);
 std::string resolveEnemySpawnWeightColumnName(std::string_view stageId, int depthRank);
 double enemySpawnWeightFor(const EnemyDefinition& enemy, std::string_view stageId, int depthRank);
 

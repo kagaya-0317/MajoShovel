@@ -417,6 +417,13 @@ struct DebugConsole::Impl {
                 }
             }
 
+            if (msg.message == WM_MOUSEWHEEL &&
+                hwnd &&
+                (msg.hwnd == hwnd || IsChild(hwnd, msg.hwnd)) &&
+                handleMouseWheel(GET_WHEEL_DELTA_WPARAM(msg.wParam), msg.lParam)) {
+                continue;
+            }
+
             TranslateMessage(&msg);
             DispatchMessageW(&msg);
         }
@@ -849,6 +856,32 @@ struct DebugConsole::Impl {
         return combo;
     }
 
+    void layoutDebugChild(HWND child, int x, int y, int width, int height, bool visible, int clipTop, int clipBottom)
+    {
+        if (!child) {
+            return;
+        }
+
+        MoveWindow(child, x, y, width, height, TRUE);
+        const int clippedTop = std::clamp(clipTop - y, 0, height);
+        const int clippedBottom = std::clamp(clipBottom - y, 0, height);
+        if (!visible || width <= 0 || height <= 0 || clippedTop >= clippedBottom) {
+            SetWindowRgn(child, nullptr, TRUE);
+            ShowWindow(child, SW_HIDE);
+            return;
+        }
+
+        if (clippedTop == 0 && clippedBottom == height) {
+            SetWindowRgn(child, nullptr, TRUE);
+        } else {
+            HRGN region = CreateRectRgn(0, clippedTop, width, clippedBottom);
+            if (SetWindowRgn(child, region, TRUE) == 0 && region) {
+                DeleteObject(region);
+            }
+        }
+        ShowWindow(child, SW_SHOW);
+    }
+
     void layoutControls(int width, int height)
     {
         const int margin = 10;
@@ -1078,6 +1111,11 @@ struct DebugConsole::Impl {
             const int viewportTop = y + DebugGroupContentTop;
             const int viewportHeight = std::max(1, height - DebugGroupContentTop - DebugGroupContentBottom);
             const bool scrollable = bodyHeight > viewportHeight;
+            const int buttonW = std::max(
+                80,
+                actualGroupWidth -
+                    DebugGroupPaddingX * 2 -
+                    (scrollable ? DebugGroupScrollbarWidth + DebugGroupScrollbarGap : 0));
             group.contentHeight = bodyHeight;
             group.viewportHeight = viewportHeight;
             group.scrollOffset = std::clamp(group.scrollOffset, 0, maxGroupScrollOffset(group));
@@ -1104,21 +1142,17 @@ struct DebugConsole::Impl {
 
             const int buttonX = groupX + DebugGroupPaddingX;
             int buttonY = viewportTop - group.scrollOffset;
-            const int buttonW = std::max(
-                80,
-                actualGroupWidth -
-                    DebugGroupPaddingX * 2 -
-                    (scrollable ? DebugGroupScrollbarWidth + DebugGroupScrollbarGap : 0));
             const int viewportBottom = viewportTop + viewportHeight;
             for (DebugControlUi& control : group.controls) {
                 const int rowHeight = debugControlVisibleHeight(control.kind);
-                const bool controlVisible = visible && buttonY >= viewportTop && buttonY + rowHeight <= viewportBottom;
+                const bool controlVisible =
+                    visible &&
+                    buttonY < viewportBottom &&
+                    buttonY + rowHeight > viewportTop;
                 if (control.kind == DebugControlKind::Dropdown) {
-                    MoveWindow(control.labelHwnd, buttonX, buttonY, buttonW, DebugControlLabelH, TRUE);
-                    ShowWindow(control.labelHwnd, controlVisible ? SW_SHOW : SW_HIDE);
+                    layoutDebugChild(control.labelHwnd, buttonX, buttonY, buttonW, DebugControlLabelH, controlVisible, viewportTop, viewportBottom);
                     buttonY += DebugControlLabelH;
-                    MoveWindow(control.hwnd, buttonX, buttonY, buttonW, 180, TRUE);
-                    ShowWindow(control.hwnd, controlVisible ? SW_SHOW : SW_HIDE);
+                    layoutDebugChild(control.hwnd, buttonX, buttonY, buttonW, 180, controlVisible, viewportTop, viewportBottom);
                     buttonY += DebugControlDropdownH + DebugControlGap;
                     continue;
                 }
@@ -1127,13 +1161,10 @@ struct DebugConsole::Impl {
                     const int actionW = std::clamp(buttonW / 3, 52, 64);
                     const int comboW = std::max(64, buttonW - actionW - ActionGap);
                     const int actionX = buttonX + comboW + ActionGap;
-                    MoveWindow(control.labelHwnd, buttonX, buttonY, buttonW, DebugControlLabelH, TRUE);
-                    ShowWindow(control.labelHwnd, controlVisible ? SW_SHOW : SW_HIDE);
+                    layoutDebugChild(control.labelHwnd, buttonX, buttonY, buttonW, DebugControlLabelH, controlVisible, viewportTop, viewportBottom);
                     buttonY += DebugControlLabelH;
-                    MoveWindow(control.hwnd, buttonX, buttonY, comboW, 180, TRUE);
-                    ShowWindow(control.hwnd, controlVisible ? SW_SHOW : SW_HIDE);
-                    MoveWindow(control.actionHwnd, actionX, buttonY, actionW, DebugControlButtonH, TRUE);
-                    ShowWindow(control.actionHwnd, controlVisible ? SW_SHOW : SW_HIDE);
+                    layoutDebugChild(control.hwnd, buttonX, buttonY, comboW, 180, controlVisible, viewportTop, viewportBottom);
+                    layoutDebugChild(control.actionHwnd, actionX, buttonY, actionW, DebugControlButtonH, controlVisible, viewportTop, viewportBottom);
                     buttonY += DebugControlDropdownH + DebugControlGap;
                     continue;
                 }
@@ -1141,10 +1172,8 @@ struct DebugConsole::Impl {
                     const int labelW = std::clamp(buttonW / 2, 74, std::max(74, buttonW - 56));
                     const int inputX = buttonX + labelW + 6;
                     const int inputW = std::max(46, buttonW - labelW - 6);
-                    MoveWindow(control.labelHwnd, buttonX, buttonY + 4, labelW, DebugControlLabelH, TRUE);
-                    ShowWindow(control.labelHwnd, controlVisible ? SW_SHOW : SW_HIDE);
-                    MoveWindow(control.hwnd, inputX, buttonY, inputW, DebugControlButtonH, TRUE);
-                    ShowWindow(control.hwnd, controlVisible ? SW_SHOW : SW_HIDE);
+                    layoutDebugChild(control.labelHwnd, buttonX, buttonY + 4, labelW, DebugControlLabelH, controlVisible, viewportTop, viewportBottom);
+                    layoutDebugChild(control.hwnd, inputX, buttonY, inputW, DebugControlButtonH, controlVisible, viewportTop, viewportBottom);
                     buttonY += DebugControlButtonH + DebugControlGap;
                     continue;
                 }
@@ -1154,27 +1183,25 @@ struct DebugConsole::Impl {
                     const int labelW = control.kind == DebugControlKind::Slider
                         ? std::max(64, buttonW - ValueWidth - ValueGap)
                         : buttonW;
-                    MoveWindow(control.labelHwnd, buttonX, buttonY, labelW, DebugControlLabelH, TRUE);
-                    ShowWindow(control.labelHwnd, controlVisible ? SW_SHOW : SW_HIDE);
+                    layoutDebugChild(control.labelHwnd, buttonX, buttonY, labelW, DebugControlLabelH, controlVisible, viewportTop, viewportBottom);
                     if (control.kind == DebugControlKind::Slider && control.actionHwnd) {
-                        MoveWindow(
+                        layoutDebugChild(
                             control.actionHwnd,
                             buttonX + labelW + ValueGap,
                             buttonY,
                             ValueWidth,
                             DebugControlLabelH,
-                            TRUE);
-                        ShowWindow(control.actionHwnd, controlVisible ? SW_SHOW : SW_HIDE);
+                            controlVisible,
+                            viewportTop,
+                            viewportBottom);
                     }
                     buttonY += DebugControlLabelH;
-                    MoveWindow(control.hwnd, buttonX, buttonY, buttonW, DebugControlDropdownH, TRUE);
-                    ShowWindow(control.hwnd, controlVisible ? SW_SHOW : SW_HIDE);
+                    layoutDebugChild(control.hwnd, buttonX, buttonY, buttonW, DebugControlDropdownH, controlVisible, viewportTop, viewportBottom);
                     buttonY += DebugControlDropdownH + DebugControlGap;
                     continue;
                 }
 
-                MoveWindow(control.hwnd, buttonX, buttonY, buttonW, DebugControlButtonH, TRUE);
-                ShowWindow(control.hwnd, controlVisible ? SW_SHOW : SW_HIDE);
+                layoutDebugChild(control.hwnd, buttonX, buttonY, buttonW, DebugControlButtonH, controlVisible, viewportTop, viewportBottom);
                 buttonY += DebugControlButtonH + DebugControlGap;
             }
         }
@@ -1583,6 +1610,16 @@ struct DebugConsole::Impl {
         copyButton = nullptr;
         pauseButton = nullptr;
         autoScrollCheck = nullptr;
+        debugTabs.clear();
+        debugCommandByControlId.clear();
+        debugToggleCommandByControlId.clear();
+        debugNumberByControlId.clear();
+        debugSliderByControlId.clear();
+        debugDropdownByControlId.clear();
+        debugDropdownButtonByControlId.clear();
+        debugDropdownControlIdByDebugId.clear();
+        debugSliderControlIdByDebugId.clear();
+        debugGroupByScrollbar.clear();
     }
 
     std::thread uiThread;

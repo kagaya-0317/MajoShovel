@@ -46,6 +46,13 @@ inline constexpr std::string_view IntroTutorialBaseReturnTrigger = "intro_tutori
 inline constexpr std::string_view IntroTutorialGenerationProfile = "intro_tutorial";
 inline constexpr std::string_view StoryEndingEncyclopediaCompleteFlag = "story_ending_encyclopedia_complete";
 inline constexpr std::string_view StoryEndingAstralClearFlag = "story_ending_astral_clear";
+inline constexpr std::string_view StoryEndingMainFailedTrustFlag = "story_ending_main_failed_trust";
+inline constexpr std::string_view StoryEndingMainFailedMonicaMissingFlag = "story_ending_main_failed_monica_missing";
+inline constexpr std::string_view StoryEndingEncyclopediaFailedTrustFlag = "story_ending_encyclopedia_failed_trust";
+inline constexpr std::string_view StoryEndingAstralFailedTrustFlag = "story_ending_astral_failed_trust";
+inline constexpr std::string_view StoryTrustBrokenFlag = "story_trust_broken";
+inline constexpr std::string_view StoryHiddenOrbitCorruptionUnlockedFlag = "story_hidden_orbit_corruption_unlocked";
+inline constexpr std::string_view StoryHiddenMonicaDuelUnlockedFlag = "story_hidden_monica_duel_unlocked";
 inline constexpr std::string_view StoryHiddenEndingEverythingOrbitsFlag = "story_hidden_ending_everything_orbits";
 inline constexpr std::string_view HiddenEndingPeopleGoneFlag = "hidden_ending_people_gone";
 inline constexpr int HiddenEndingCapturedBreakThreshold = 100;
@@ -919,6 +926,14 @@ std::filesystem::path endingKamishibaiDataPath(EndingKind kind)
         return std::filesystem::path("data") / "ending_astral_kamishibai.tsv";
     case EndingKind::HiddenBad:
         return std::filesystem::path("data") / "ending_hidden_bad_kamishibai.tsv";
+    case EndingKind::MainFailedTrust:
+        return std::filesystem::path("data") / "ending_main_failed_trust_kamishibai.tsv";
+    case EndingKind::MainFailedMonicaMissing:
+        return std::filesystem::path("data") / "ending_main_failed_monica_missing_kamishibai.tsv";
+    case EndingKind::EncyclopediaFailedTrust:
+        return std::filesystem::path("data") / "ending_encyclopedia_failed_trust_kamishibai.tsv";
+    case EndingKind::AstralFailedTrust:
+        return std::filesystem::path("data") / "ending_astral_failed_trust_kamishibai.tsv";
     }
     return endingKamishibaiDataPath();
 }
@@ -928,7 +943,11 @@ bool isEndingKamishibaiDataFileName(std::string_view fileName)
     return fileName == "ending_kamishibai.tsv" ||
         fileName == "ending_encyclopedia_kamishibai.tsv" ||
         fileName == "ending_astral_kamishibai.tsv" ||
-        fileName == "ending_hidden_bad_kamishibai.tsv";
+        fileName == "ending_hidden_bad_kamishibai.tsv" ||
+        fileName == "ending_main_failed_trust_kamishibai.tsv" ||
+        fileName == "ending_main_failed_monica_missing_kamishibai.tsv" ||
+        fileName == "ending_encyclopedia_failed_trust_kamishibai.tsv" ||
+        fileName == "ending_astral_failed_trust_kamishibai.tsv";
 }
 
 std::filesystem::path storyEventDataDirectory()

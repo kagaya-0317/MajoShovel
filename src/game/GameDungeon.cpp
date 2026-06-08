@@ -2311,6 +2311,39 @@ void Game::updateAstralRunProgress()
     pushDungeonLog(std::string("星の歪み: ") + distortionName, "astral_distortion");
 }
 
+int Game::roguelikeSectionRankForDepthMeters(int depthMeters) const
+{
+    const int clampedMeters = std::clamp(depthMeters, 0, RoguelikeCompletionDepthMeters);
+    if (clampedMeters >= RoguelikeCompletionDepthMeters) {
+        return RoguelikeCompletionSectionRank;
+    }
+    const int areaIndex = clampedMeters / RoguelikeMetersPerArea;
+    const int localMeters = clampedMeters - areaIndex * RoguelikeMetersPerArea;
+    const int localSection = std::clamp(
+        (localMeters * RoguelikeSectionsPerArea) / RoguelikeMetersPerArea + 1,
+        1,
+        RoguelikeSectionsPerArea);
+    return std::max(1, areaIndex * RoguelikeSectionsPerArea + localSection);
+}
+
+int Game::roguelikeDepthMetersForSectionRank(int sectionRank) const
+{
+    const int clampedRank = std::clamp(sectionRank, 1, RoguelikeCompletionSectionRank);
+    if (clampedRank >= RoguelikeCompletionSectionRank) {
+        return RoguelikeCompletionDepthMeters;
+    }
+    const int zeroBased = clampedRank - 1;
+    const int areaIndex = zeroBased / RoguelikeSectionsPerArea;
+    const int localSection = zeroBased % RoguelikeSectionsPerArea;
+    const int localMeters = static_cast<int>(std::round(
+        static_cast<double>(localSection * RoguelikeMetersPerArea) /
+        static_cast<double>(RoguelikeSectionsPerArea)));
+    return std::clamp(
+        areaIndex * RoguelikeMetersPerArea + localMeters,
+        0,
+        RoguelikeCompletionDepthMeters);
+}
+
 int Game::roguelikeAdjustedDepthRank(int localDepthRank) const
 {
     if (!astralRunActive()) {
@@ -3576,8 +3609,7 @@ void Game::returnToBaseFromNormalStage(bool stageCleared, bool died)
         ? (refreshMerchant ? "帰還しました。商人ワゴン更新あり" : "帰還しました")
         : std::string{};
     if (hiddenBadEndingReady()) {
-        requestEndingKamishibai(EndingKind::HiddenBad);
-        return;
+        unlockHiddenBaseOrbitCorruption();
     }
     if (autoSaveOnReturn_) {
         std::string message;
@@ -3601,7 +3633,11 @@ void Game::returnToBaseFromNormalStage(bool stageCleared, bool died)
         queueStoryEventForTrigger("stage_clear:" + returnedStageId);
     }
     if (astralCompletedOnReturn && !hasStoryFlag(StoryEndingAstralClearFlag)) {
-        requestEndingKamishibai(EndingKind::AstralClear);
+        const EndingKind astralEndingKind = resolveEndingKamishibaiKind(EndingKind::AstralClear);
+        if (astralEndingKind != EndingKind::AstralFailedTrust ||
+            !hasStoryFlag(StoryEndingAstralFailedTrustFlag)) {
+            requestEndingKamishibai(astralEndingKind);
+        }
     }
     queueBaseHintEventOnReturn(returnedStageId, stageCleared);
 }
@@ -6971,26 +7007,11 @@ void Game::initializeRoguelikeBigHoleFromLayout()
     configureBossSpawnPointFromRoguelikeBigHole();
 }
 
-void Game::advanceRoguelikeAreaFromBigHole()
+void Game::rebuildRoguelikeAreaFromAstralState()
 {
-    if (!astralRunActive() || !roguelikeBigHole_.active || !roguelikeBigHole_.unlocked) {
+    if (!astralRunActive() || !currentStageIsRoguelike()) {
         return;
     }
-
-    astralRun_.deepestDepthMeters = std::max(astralRun_.deepestDepthMeters, roguelikeBigHole_.depthMeters);
-    if (roguelikeBigHole_.depthMeters >= RoguelikeCompletionDepthMeters) {
-        astralRun_.currentDepth = RoguelikeCompletionSectionRank;
-        astralRun_.maxReachedDepth = std::max(astralRun_.maxReachedDepth, RoguelikeCompletionSectionRank);
-        enterAstralResult(AstralRunResult::Completed);
-        return;
-    }
-
-    ++astralRun_.areaIndex;
-    astralRun_.sectionRankOffset = astralRun_.areaIndex * RoguelikeSectionsPerArea;
-    astralRun_.currentDepthMeters = astralRun_.areaIndex * RoguelikeMetersPerArea;
-    astralRun_.nextHoleDepthMeters = std::min(
-        RoguelikeCompletionDepthMeters,
-        astralRun_.currentDepthMeters + RoguelikeMetersPerArea);
 
     inventory_.setOpen(false);
     inventory_.cancelGrab();
@@ -7037,6 +7058,54 @@ void Game::advanceRoguelikeAreaFromBigHole()
     updateDungeonMinimap(0.0);
     camera_.follow(player_.position, 1.0f);
     resetPlayerFootstepDust();
+}
+
+bool Game::debugSetRoguelikeAreaForDepthMeters(int depthMeters)
+{
+    if (!astralRunActive() || !currentStageIsRoguelike()) {
+        return false;
+    }
+
+    const int clampedMeters = std::clamp(depthMeters, 0, RoguelikeCompletionDepthMeters);
+    const int areaDepth = std::min(clampedMeters, std::max(0, RoguelikeCompletionDepthMeters - 1));
+    astralRun_.areaIndex = std::clamp(
+        areaDepth / RoguelikeMetersPerArea,
+        0,
+        std::max(0, (RoguelikeCompletionDepthMeters - 1) / RoguelikeMetersPerArea));
+    astralRun_.sectionRankOffset = astralRun_.areaIndex * RoguelikeSectionsPerArea;
+    astralRun_.currentDepthMeters = astralRun_.areaIndex * RoguelikeMetersPerArea;
+    astralRun_.nextHoleDepthMeters = std::min(
+        RoguelikeCompletionDepthMeters,
+        astralRun_.currentDepthMeters + RoguelikeMetersPerArea);
+    astralRun_.deepestDepthMeters = std::max(astralRun_.deepestDepthMeters, clampedMeters);
+    const int rank = roguelikeSectionRankForDepthMeters(clampedMeters);
+    astralRun_.currentDepth = std::max(1, rank);
+    astralRun_.maxReachedDepth = std::max(astralRun_.maxReachedDepth, rank);
+    rebuildRoguelikeAreaFromAstralState();
+    return true;
+}
+
+void Game::advanceRoguelikeAreaFromBigHole()
+{
+    if (!astralRunActive() || !roguelikeBigHole_.active || !roguelikeBigHole_.unlocked) {
+        return;
+    }
+
+    astralRun_.deepestDepthMeters = std::max(astralRun_.deepestDepthMeters, roguelikeBigHole_.depthMeters);
+    if (roguelikeBigHole_.depthMeters >= RoguelikeCompletionDepthMeters) {
+        astralRun_.currentDepth = RoguelikeCompletionSectionRank;
+        astralRun_.maxReachedDepth = std::max(astralRun_.maxReachedDepth, RoguelikeCompletionSectionRank);
+        enterAstralResult(AstralRunResult::Completed);
+        return;
+    }
+
+    ++astralRun_.areaIndex;
+    astralRun_.sectionRankOffset = astralRun_.areaIndex * RoguelikeSectionsPerArea;
+    astralRun_.currentDepthMeters = astralRun_.areaIndex * RoguelikeMetersPerArea;
+    astralRun_.nextHoleDepthMeters = std::min(
+        RoguelikeCompletionDepthMeters,
+        astralRun_.currentDepthMeters + RoguelikeMetersPerArea);
+    rebuildRoguelikeAreaFromAstralState();
     pushDungeonLog(std::to_string(astralRun_.currentDepthMeters) + "m地点へ進んだ", "roguelike_area_advance");
 }
 
@@ -10846,7 +10915,9 @@ void Game::recordCapturedMonsterRingBreak(std::string_view objectId)
 
 bool Game::hiddenBadEndingReady() const
 {
-    if (hasStoryFlag(StoryHiddenEndingEverythingOrbitsFlag) || hasStoryFlag(HiddenEndingPeopleGoneFlag)) {
+    if (hasStoryFlag(StoryHiddenOrbitCorruptionUnlockedFlag) ||
+        hasStoryFlag(StoryHiddenEndingEverythingOrbitsFlag) ||
+        hasStoryFlag(HiddenEndingPeopleGoneFlag)) {
         return false;
     }
     return std::all_of(

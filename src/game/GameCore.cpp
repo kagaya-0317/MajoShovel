@@ -1759,14 +1759,44 @@ void Game::updateOpeningKamishibai(const Input& input, float dt)
     }
 }
 
+EndingKind Game::resolveEndingKamishibaiKind(EndingKind kind) const
+{
+    switch (kind) {
+    case EndingKind::Main:
+        if (hasStoryFlag(StoryTrustBrokenFlag)) {
+            return EndingKind::MainFailedTrust;
+        }
+        if (hasStoryFlag(StoryHiddenOrbitCorruptionUnlockedFlag) || hasStoryFlag(HiddenEndingPeopleGoneFlag)) {
+            return EndingKind::MainFailedMonicaMissing;
+        }
+        return EndingKind::Main;
+    case EndingKind::EncyclopediaComplete:
+        return hasStoryFlag(StoryTrustBrokenFlag)
+            ? EndingKind::EncyclopediaFailedTrust
+            : EndingKind::EncyclopediaComplete;
+    case EndingKind::AstralClear:
+        return hasStoryFlag(StoryTrustBrokenFlag)
+            ? EndingKind::AstralFailedTrust
+            : EndingKind::AstralClear;
+    case EndingKind::HiddenBad:
+    case EndingKind::MainFailedTrust:
+    case EndingKind::MainFailedMonicaMissing:
+    case EndingKind::EncyclopediaFailedTrust:
+    case EndingKind::AstralFailedTrust:
+        return kind;
+    }
+    return kind;
+}
+
 void Game::requestEndingKamishibai(EndingKind kind)
 {
-    endingKamishibaiKind_ = kind;
+    endingKamishibaiKind_ = resolveEndingKamishibaiKind(kind);
     endingKamishibaiPending_ = true;
 }
 
 void Game::startEndingKamishibai(EndingKind kind)
 {
+    kind = resolveEndingKamishibaiKind(kind);
     endingKamishibaiKind_ = kind;
     loadEndingKamishibaiData();
     const bool canSkipImmediately = [&]() {
@@ -1779,6 +1809,14 @@ void Game::startEndingKamishibai(EndingKind kind)
             return hasStoryFlag(StoryEndingAstralClearFlag);
         case EndingKind::HiddenBad:
             return hasStoryFlag(StoryHiddenEndingEverythingOrbitsFlag);
+        case EndingKind::MainFailedTrust:
+            return hasStoryFlag(StoryEndingMainFailedTrustFlag);
+        case EndingKind::MainFailedMonicaMissing:
+            return hasStoryFlag(StoryEndingMainFailedMonicaMissingFlag);
+        case EndingKind::EncyclopediaFailedTrust:
+            return hasStoryFlag(StoryEndingEncyclopediaFailedTrustFlag);
+        case EndingKind::AstralFailedTrust:
+            return hasStoryFlag(StoryEndingAstralFailedTrustFlag);
         }
         return false;
     }();
@@ -1786,7 +1824,12 @@ void Game::startEndingKamishibai(EndingKind kind)
     mode_ = ScreenMode::EndingKamishibai;
     playAudioBgm(AudioBgmTitle, 0.65f);
     pausePage_ = PauseMenuPage::Main;
-    pauseReturnMode_ = kind == EndingKind::Main ? ScreenMode::Playing : ScreenMode::Base;
+    pauseReturnMode_ =
+        (kind == EndingKind::Main ||
+            kind == EndingKind::MainFailedTrust ||
+            kind == EndingKind::MainFailedMonicaMissing)
+        ? ScreenMode::Playing
+        : ScreenMode::Base;
     inventoryReturnToPause_ = false;
 }
 
@@ -1801,6 +1844,16 @@ void Game::finishEndingKamishibai(bool)
         addStoryFlag("story_stage_03_clear");
         requestReturnToBaseTransition(true, false);
         return;
+    case EndingKind::MainFailedTrust:
+        addStoryFlag(std::string(StoryEndingMainFailedTrustFlag));
+        addStoryFlag("story_stage_03_clear");
+        requestReturnToBaseTransition(true, false);
+        return;
+    case EndingKind::MainFailedMonicaMissing:
+        addStoryFlag(std::string(StoryEndingMainFailedMonicaMissingFlag));
+        addStoryFlag("story_stage_03_clear");
+        requestReturnToBaseTransition(true, false);
+        return;
     case EndingKind::EncyclopediaComplete:
         addStoryFlag(std::string(StoryEndingEncyclopediaCompleteFlag));
         break;
@@ -1810,6 +1863,12 @@ void Game::finishEndingKamishibai(bool)
     case EndingKind::HiddenBad:
         addStoryFlag(std::string(StoryHiddenEndingEverythingOrbitsFlag));
         addStoryFlag(std::string(HiddenEndingPeopleGoneFlag));
+        break;
+    case EndingKind::EncyclopediaFailedTrust:
+        addStoryFlag(std::string(StoryEndingEncyclopediaFailedTrustFlag));
+        break;
+    case EndingKind::AstralFailedTrust:
+        addStoryFlag(std::string(StoryEndingAstralFailedTrustFlag));
         break;
     }
 

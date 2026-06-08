@@ -2446,6 +2446,18 @@ bool debugIsRoguelikeStageDefinition(const StageDefinition& stage)
         stage.generationProfile == "astral_rogue";
 }
 
+enum class DebugAstralRoomTargetKind {
+    None,
+    SpecialRoom,
+    Facility,
+};
+
+struct DebugAstralRoomTarget {
+    DebugAstralRoomTargetKind kind = DebugAstralRoomTargetKind::None;
+    SpecialRoomType specialRoom = SpecialRoomType::None;
+    Game::RoguelikeFacilityKind facilityKind = Game::RoguelikeFacilityKind::Merchant;
+};
+
 SpecialRoomType debugSpecialRoomTypeForToken(std::string_view token)
 {
     if (token == "ore" || token == "ore-room") {
@@ -2481,6 +2493,50 @@ const char* debugSpecialRoomTypeLabel(SpecialRoomType type)
         return "敵";
     case SpecialRoomType::None:
         break;
+    }
+    return "なし";
+}
+
+DebugAstralRoomTarget debugAstralRoomTargetForToken(std::string_view token)
+{
+    if (token == "ore" || token == "ore-room") {
+        return {DebugAstralRoomTargetKind::SpecialRoom, SpecialRoomType::OreRoom};
+    }
+    if (token == "coin" || token == "coin-room") {
+        return {DebugAstralRoomTargetKind::SpecialRoom, SpecialRoomType::CoinRoom};
+    }
+    if (token == "treasure" || token == "treasure-room") {
+        return {DebugAstralRoomTargetKind::SpecialRoom, SpecialRoomType::TreasureRoom};
+    }
+    if (token == "enemy" || token == "enemy-room") {
+        return {DebugAstralRoomTargetKind::SpecialRoom, SpecialRoomType::EnemyRoom};
+    }
+    if (token == "merchant" || token == "facility-merchant") {
+        return {DebugAstralRoomTargetKind::Facility, SpecialRoomType::None, Game::RoguelikeFacilityKind::Merchant};
+    }
+    if (token == "artisan" || token == "processor" || token == "facility-artisan") {
+        return {DebugAstralRoomTargetKind::Facility, SpecialRoomType::None, Game::RoguelikeFacilityKind::Artisan};
+    }
+    if (token == "trainer" || token == "facility-trainer") {
+        return {DebugAstralRoomTargetKind::Facility, SpecialRoomType::None, Game::RoguelikeFacilityKind::Trainer};
+    }
+    return {};
+}
+
+const char* debugAstralRoomTargetLabel(const DebugAstralRoomTarget& target)
+{
+    if (target.kind == DebugAstralRoomTargetKind::SpecialRoom) {
+        return debugSpecialRoomTypeLabel(target.specialRoom);
+    }
+    if (target.kind == DebugAstralRoomTargetKind::Facility) {
+        switch (target.facilityKind) {
+        case Game::RoguelikeFacilityKind::Merchant:
+            return "野良商人";
+        case Game::RoguelikeFacilityKind::Artisan:
+            return "野良加工職人";
+        case Game::RoguelikeFacilityKind::Trainer:
+            return "修練者";
+        }
     }
     return "なし";
 }
@@ -10567,23 +10623,34 @@ bool Game::executeDebugCommand(std::string_view command)
         return true;
     };
 
-    const auto forceAstralDepthAndDistortion = [&](int depth) {
+    const auto forceAstralRankAndDistortion = [&](int rank) {
         if (!astralRunActive()) {
             return;
         }
         const int maxDepth = std::max(1, astralRun_.maxDepth);
-        const int clampedDepth = std::clamp(depth, 1, maxDepth);
-        astralRun_.currentDepth = clampedDepth;
-        astralRun_.maxReachedDepth = std::max(astralRun_.maxReachedDepth, clampedDepth);
-        astralRun_.distortion = chooseAstralDistortionForDepth(clampedDepth, AstralDistortionKind::None);
+        const int clampedRank = std::clamp(rank, 1, maxDepth);
+        astralRun_.currentDepth = clampedRank;
+        astralRun_.maxReachedDepth = std::max(astralRun_.maxReachedDepth, clampedRank);
+        astralRun_.distortion = chooseAstralDistortionForDepth(clampedRank, AstralDistortionKind::None);
         applyAstralDistortionToLayout();
     };
 
-    const auto placePlayerForAstralDebug = [&](Vec2 position, int forcedDepth) {
-        if (forcedDepth > 0) {
-            forceAstralDepthAndDistortion(forcedDepth);
+    const auto clearDebugWarpTile = [&](Vec2 position) {
+        tileMap_.setTileOverride(
+            DungeonTile{
+                tileMap_.worldToTile(position.x),
+                tileMap_.worldToTile(position.y),
+            },
+            TileType::Empty);
+    };
+
+    const auto placePlayerForAstralDebug = [&](Vec2 position, int forcedRank) {
+        if (forcedRank > 0) {
+            forceAstralRankAndDistortion(forcedRank);
         }
+        clearDebugWarpTile(position);
         player_.position = safePlayerStartPosition(position);
+        clearDebugWarpTile(player_.position);
         tileMap_.updateAround(player_.position, 0.0f, runtimeBalanceForDungeon(), dungeonLayout_);
         normalizeOpenBuriedPlacementNodes();
         updateDungeonMinimap(0.0);
@@ -10591,19 +10658,35 @@ bool Game::executeDebugCommand(std::string_view command)
         updateAstralRunProgress();
     };
 
-    const auto mainPathPositionForDepth = [&](int depth) {
+    const auto mainPathPositionForAreaProgress = [&](float progress) {
         if (dungeonLayout_.mainPathPoints.empty()) {
             return tileWorldCenter(dungeonLayout_.startTile);
         }
-        const int maxDepth = std::max(1, astralRun_.maxDepth);
-        const float progress = maxDepth <= 1
-            ? 0.0f
-            : static_cast<float>(std::clamp(depth, 1, maxDepth) - 1) / static_cast<float>(maxDepth - 1);
         const int index = std::clamp(
-            static_cast<int>(std::round(progress * static_cast<float>(dungeonLayout_.mainPathPoints.size() - 1))),
+            static_cast<int>(std::round(std::clamp(progress, 0.0f, 1.0f) * static_cast<float>(dungeonLayout_.mainPathPoints.size() - 1))),
             0,
             static_cast<int>(dungeonLayout_.mainPathPoints.size() - 1));
         return tileWorldCenter(roundDungeonTile(dungeonLayout_.mainPathPoints[static_cast<std::size_t>(index)]));
+    };
+
+    const auto mainPathPositionForDepthMeters = [&](int depthMeters) {
+        const int areaStart = std::max(0, astralRun_.currentDepthMeters);
+        const int areaEnd = std::max(areaStart + 1, astralRun_.nextHoleDepthMeters);
+        const int clampedMeters = std::clamp(depthMeters, areaStart, areaEnd);
+        const float progress = static_cast<float>(clampedMeters - areaStart) / static_cast<float>(areaEnd - areaStart);
+        return mainPathPositionForAreaProgress(progress);
+    };
+
+    const auto ensureAstralAreaForDepthMeters = [&](int depthMeters) {
+        if (!astralRunActive()) {
+            return false;
+        }
+        const int areaStart = std::max(0, astralRun_.currentDepthMeters);
+        const int areaEnd = std::max(areaStart + 1, astralRun_.nextHoleDepthMeters);
+        if (depthMeters < areaStart || depthMeters > areaEnd) {
+            return debugSetRoguelikeAreaForDepthMeters(depthMeters);
+        }
+        return true;
     };
 
     const auto applyDebugAstralDistortion = [&]() {
@@ -10619,18 +10702,40 @@ bool Game::executeDebugCommand(std::string_view command)
 
     constexpr std::string_view AstralDepthPrefix = "game astral depth ";
     if (normalized.rfind(AstralDepthPrefix, 0) == 0) {
-        debugAstralDepth_ = std::clamp(
-            parseDebugInt(std::string_view(normalized).substr(AstralDepthPrefix.size()), debugAstralDepth_),
+        debugAstralDepthMeters_ = std::clamp(
+            parseDebugInt(std::string_view(normalized).substr(AstralDepthPrefix.size()), debugAstralDepthMeters_),
+            0,
+            std::max(1, astralRun_.completionDepthMeters));
+        debugAstralDepthRank_ = roguelikeSectionRankForDepthMeters(debugAstralDepthMeters_);
+        logInfo("Debug: astral depth meters target => " + std::to_string(debugAstralDepthMeters_) +
+            "m / rank " + std::to_string(debugAstralDepthRank_) + ".");
+        return true;
+    }
+
+    constexpr std::string_view AstralRankPrefix = "game astral rank ";
+    if (normalized.rfind(AstralRankPrefix, 0) == 0) {
+        const int maxRank = std::max(
+            std::max(1, astralRun_.maxDepth),
+            roguelikeSectionRankForDepthMeters(std::max(1, astralRun_.completionDepthMeters)));
+        debugAstralDepthRank_ = std::clamp(
+            parseDebugInt(std::string_view(normalized).substr(AstralRankPrefix.size()), debugAstralDepthRank_),
             1,
-            9);
-        logInfo("Debug: astral depth target => " + std::to_string(debugAstralDepth_) + ".");
+            maxRank);
+        debugAstralDepthMeters_ = roguelikeDepthMetersForSectionRank(debugAstralDepthRank_);
+        logInfo("Debug: astral depth rank target => " + std::to_string(debugAstralDepthRank_) +
+            " / " + std::to_string(debugAstralDepthMeters_) + "m.");
         return true;
     }
 
     constexpr std::string_view AstralMoveTargetPrefix = "game astral move-target ";
     if (normalized.rfind(AstralMoveTargetPrefix, 0) == 0) {
-        const std::string token = trimAscii(normalized.substr(AstralMoveTargetPrefix.size()));
-        if (token == "entrance" || token == "depth" || token == "boss" || token == "return") {
+        std::string token = trimAscii(normalized.substr(AstralMoveTargetPrefix.size()));
+        if (token == "depth") {
+            token = "meters";
+        } else if (token == "return") {
+            token = "hole";
+        }
+        if (token == "entrance" || token == "meters" || token == "rank" || token == "boss" || token == "hole") {
             debugAstralMoveTarget_ = token;
             logInfo("Debug: astral move target => " + token + ".");
         } else {
@@ -10655,11 +10760,12 @@ bool Game::executeDebugCommand(std::string_view command)
     constexpr std::string_view AstralRoomPrefix = "game astral room ";
     if (normalized.rfind(AstralRoomPrefix, 0) == 0) {
         const std::string token = trimAscii(normalized.substr(AstralRoomPrefix.size()));
-        if (debugSpecialRoomTypeForToken(token) == SpecialRoomType::None) {
-            logWarning("Debug: unknown astral special room: " + token);
+        const DebugAstralRoomTarget target = debugAstralRoomTargetForToken(token);
+        if (target.kind == DebugAstralRoomTargetKind::None) {
+            logWarning("Debug: unknown astral room target: " + token);
         } else {
             debugAstralRoomType_ = token;
-            logInfo("Debug: astral special room target => " + token + ".");
+            logInfo("Debug: astral room target => " + std::string(debugAstralRoomTargetLabel(target)) + ".");
         }
         return true;
     }
@@ -10719,26 +10825,19 @@ bool Game::executeDebugCommand(std::string_view command)
         return true;
     }
 
-    if (normalized == "game astral start-new") {
+    const auto startOrRegenerateAstralRun = [&]() {
         clearRuntimeDebugPresentation();
         enterDebugBase();
         if (selectDebugStage("stage_04_astral_mine")) {
             startMiningFromBase(false, true);
-            logInfo("Debug: astral new run started.");
+            logInfo("Debug: astral run started/regenerated.");
         }
-        return true;
-    }
+    };
 
-    if (normalized == "game astral regenerate") {
-        clearRuntimeDebugPresentation();
-        if (!currentStageIsRoguelike()) {
-            enterDebugBase();
-            if (!selectDebugStage("stage_04_astral_mine")) {
-                return true;
-            }
-        }
-        startMiningFromBase(false, true);
-        logInfo("Debug: astral run regenerated.");
+    if (normalized == "game astral start" ||
+        normalized == "game astral start-new" ||
+        normalized == "game astral regenerate") {
+        startOrRegenerateAstralRun();
         return true;
     }
 
@@ -10768,15 +10867,51 @@ bool Game::executeDebugCommand(std::string_view command)
             if (lengthSquared(direction) <= 0.0001f) {
                 direction = {1.0f, 0.0f};
             }
-            placePlayerForAstralDebug(bossSpawnPoint_ - direction * (BossSpawnTriggerRadius + 18.0f), astralRun_.maxDepth);
-        } else if (debugAstralMoveTarget_ == "return") {
-            placePlayerForAstralDebug(dungeonEntrancePosition(), 1);
+            const int bossRank = roguelikeSectionRankForDepthMeters(
+                roguelikeBigHole_.active ? roguelikeBigHole_.depthMeters : astralRun_.nextHoleDepthMeters);
+            placePlayerForAstralDebug(bossSpawnPoint_ - direction * (BossSpawnTriggerRadius + 18.0f), bossRank);
+        } else if (debugAstralMoveTarget_ == "hole") {
+            if (!roguelikeBigHole_.active) {
+                logWarning("Debug: astral big hole is not available.");
+                return true;
+            }
+            placePlayerForAstralDebug(
+                roguelikeBigHole_.position,
+                roguelikeSectionRankForDepthMeters(roguelikeBigHole_.depthMeters));
+        } else if (debugAstralMoveTarget_ == "rank") {
+            const int depthMeters = roguelikeDepthMetersForSectionRank(debugAstralDepthRank_);
+            if (!ensureAstralAreaForDepthMeters(depthMeters)) {
+                logWarning("Debug: failed to switch astral area for rank " + std::to_string(debugAstralDepthRank_) + ".");
+                return true;
+            }
+            placePlayerForAstralDebug(mainPathPositionForDepthMeters(depthMeters), debugAstralDepthRank_);
         } else if (debugAstralMoveTarget_ == "entrance") {
-            placePlayerForAstralDebug(tileWorldCenter(dungeonLayout_.startTile), 1);
+            placePlayerForAstralDebug(dungeonEntrancePosition(), 1);
         } else {
-            placePlayerForAstralDebug(mainPathPositionForDepth(debugAstralDepth_), debugAstralDepth_);
+            if (!ensureAstralAreaForDepthMeters(debugAstralDepthMeters_)) {
+                logWarning("Debug: failed to switch astral area for " + std::to_string(debugAstralDepthMeters_) + "m.");
+                return true;
+            }
+            placePlayerForAstralDebug(
+                mainPathPositionForDepthMeters(debugAstralDepthMeters_),
+                roguelikeSectionRankForDepthMeters(debugAstralDepthMeters_));
         }
         logInfo("Debug: astral player warped to " + debugAstralMoveTarget_ + ".");
+        return true;
+    }
+
+    if (normalized == "game astral jump-meters") {
+        if (!astralDungeonReady()) {
+            return true;
+        }
+        if (!debugSetRoguelikeAreaForDepthMeters(debugAstralDepthMeters_)) {
+            logWarning("Debug: failed to jump astral area to " + std::to_string(debugAstralDepthMeters_) + "m.");
+            return true;
+        }
+        placePlayerForAstralDebug(
+            mainPathPositionForDepthMeters(debugAstralDepthMeters_),
+            roguelikeSectionRankForDepthMeters(debugAstralDepthMeters_));
+        logInfo("Debug: astral area jumped to " + std::to_string(debugAstralDepthMeters_) + "m.");
         return true;
     }
 
@@ -10784,27 +10919,49 @@ bool Game::executeDebugCommand(std::string_view command)
         if (!astralDungeonReady()) {
             return true;
         }
-        const SpecialRoomType targetType = debugSpecialRoomTypeForToken(debugAstralRoomType_);
-        const int targetIndex = std::max(1, debugAstralRoomIndex_);
-        int seen = 0;
-        for (const SpecialRoomAnchor& room : dungeonLayout_.specialRoomAnchors) {
-            if (room.type != targetType) {
-                continue;
-            }
-            ++seen;
-            if (seen != targetIndex) {
-                continue;
-            }
-            const DungeonLayoutMetrics metrics = calculateDungeonLayoutMetrics(dungeonLayout_, room.center);
-            const int depth = lootDepthRankForProgress(currentStageId_, metrics.pathProgress);
-            placePlayerForAstralDebug(tileWorldCenter(roundDungeonTile(room.center)), depth);
-            logInfo("Debug: warped to astral special room " +
-                std::string(debugSpecialRoomTypeLabel(targetType)) +
-                " #" + std::to_string(targetIndex) + ".");
+        const DebugAstralRoomTarget target = debugAstralRoomTargetForToken(debugAstralRoomType_);
+        if (target.kind == DebugAstralRoomTargetKind::None) {
+            logWarning("Debug: astral room target is not valid: " + debugAstralRoomType_);
             return true;
         }
-        logWarning("Debug: astral special room not found: " +
-            std::string(debugSpecialRoomTypeLabel(targetType)) +
+        const int targetIndex = std::max(1, debugAstralRoomIndex_);
+        int seen = 0;
+        if (target.kind == DebugAstralRoomTargetKind::SpecialRoom) {
+            for (const SpecialRoomAnchor& room : dungeonLayout_.specialRoomAnchors) {
+                if (room.type != target.specialRoom) {
+                    continue;
+                }
+                ++seen;
+                if (seen != targetIndex) {
+                    continue;
+                }
+                const Vec2 center = tileWorldCenter(roundDungeonTile(room.center));
+                placePlayerForAstralDebug(center, roguelikeDepthRankForWorldPosition(center));
+                logInfo("Debug: warped to astral room " +
+                    std::string(debugAstralRoomTargetLabel(target)) +
+                    " #" + std::to_string(targetIndex) + ".");
+                return true;
+            }
+        } else if (target.kind == DebugAstralRoomTargetKind::Facility) {
+            for (const RoguelikeFacilityInstance& facility : roguelikeFacilities_) {
+                if (facility.kind != target.facilityKind) {
+                    continue;
+                }
+                ++seen;
+                if (seen != targetIndex) {
+                    continue;
+                }
+                placePlayerForAstralDebug(
+                    facility.centerPosition,
+                    roguelikeSectionRankForDepthMeters(facility.depthMeters));
+                logInfo("Debug: warped to astral room " +
+                    std::string(debugAstralRoomTargetLabel(target)) +
+                    " #" + std::to_string(targetIndex) + ".");
+                return true;
+            }
+        }
+        logWarning("Debug: astral room not found: " +
+            std::string(debugAstralRoomTargetLabel(target)) +
             " #" + std::to_string(targetIndex) + ".");
         return true;
     }
@@ -10818,9 +10975,24 @@ bool Game::executeDebugCommand(std::string_view command)
                 ++roomCounts[static_cast<std::size_t>(index)];
             }
         }
+        std::array<int, 3> facilityCounts{};
+        for (const RoguelikeFacilityInstance& facility : roguelikeFacilities_) {
+            switch (facility.kind) {
+            case RoguelikeFacilityKind::Merchant:
+                ++facilityCounts[0];
+                break;
+            case RoguelikeFacilityKind::Artisan:
+                ++facilityCounts[1];
+                break;
+            case RoguelikeFacilityKind::Trainer:
+                ++facilityCounts[2];
+                break;
+            }
+        }
         logInfo("Debug: astral generation stage=" + currentStageId_ +
             " active=" + (astralRunActive() ? std::string("true") : std::string("false")) +
-            " depth=" + std::to_string(astralRun_.currentDepth) + "/" + std::to_string(maxDepth) +
+            " rank=" + std::to_string(astralRun_.currentDepth) + "/" + std::to_string(maxDepth) +
+            " area=" + std::to_string(astralRun_.currentDepthMeters) + "-" + std::to_string(astralRun_.nextHoleDepthMeters) + "m" +
             " distortionMode=" + debugAstralDistortionMode_ +
             " currentDistortion=" + distortionLabel(astralRun_.distortion));
         logInfo("Debug: astral rooms ore=" + std::to_string(roomCounts[static_cast<std::size_t>(SpecialRoomType::OreRoom)]) +
@@ -10829,6 +11001,11 @@ bool Game::executeDebugCommand(std::string_view command)
             " treasure=" + std::to_string(roomCounts[static_cast<std::size_t>(SpecialRoomType::TreasureRoom)]) +
             " enemy=" + std::to_string(roomCounts[static_cast<std::size_t>(SpecialRoomType::EnemyRoom)]) +
             " boss=" + (hasBossSpawnPoint_ ? "true" : "false"));
+        logInfo("Debug: astral facilities merchant=" + std::to_string(facilityCounts[0]) +
+            " artisan=" + std::to_string(facilityCounts[1]) +
+            " trainer=" + std::to_string(facilityCounts[2]) +
+            " bigHole=" + (roguelikeBigHole_.active ? std::to_string(roguelikeBigHole_.depthMeters) + "m" : std::string("none")) +
+            " unlocked=" + (roguelikeBigHole_.unlocked ? "true" : "false"));
         return true;
     }
 
@@ -10855,7 +11032,7 @@ bool Game::executeDebugCommand(std::string_view command)
         if (debugAstralStatOverride_) {
             astralHighScore_ = highScoreBeforeResult;
             AstralRunSummary summary = makeAstralRunSummary(result);
-            summary.reachedDepth = std::clamp(debugAstralDepth_, 1, std::max(1, summary.maxDepth));
+            summary.reachedDepth = std::clamp(debugAstralDepthRank_, 1, std::max(1, summary.maxDepth));
             summary.defeatedEnemies = std::max(0, debugAstralStatKills_);
             summary.dugTiles = std::max(0, debugAstralStatDugTiles_);
             summary.acquiredItems = std::max(0, debugAstralStatItems_);
@@ -11025,7 +11202,7 @@ bool Game::executeDebugCommand(std::string_view command)
 
         int enemyCount = 0;
         for (const EnemyDefinition& enemy : enemyCatalog_.enemies) {
-            if (enemy.id.empty()) {
+            if (enemy.id.empty() || isCodexHiddenEnemy(enemy)) {
                 continue;
             }
             encyclopedia_.loadEntry(EncyclopediaKind::Enemy, enemy.id, EncyclopediaStage::Complete);
