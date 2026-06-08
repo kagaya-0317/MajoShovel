@@ -931,6 +931,7 @@ private:
     enum class BossEncounterPurpose {
         StageClear,
         RoguelikeGate,
+        HiddenMonicaDuel,
     };
     struct BossEncounterState {
         BossEncounterPhase phase = BossEncounterPhase::None;
@@ -1054,6 +1055,7 @@ private:
     void updateWetGroundFromStatus();
     void updateAmbientParticleEffects(float dt);
     bool handleCaptureResult(const CaptureResult& capture);
+    bool storeCapturedEnemyDefinition(const EnemyDefinition& enemy);
     void startCaptureAbsorbAnimation(const CaptureResult& capture);
     void updateCaptureAbsorbAnimations(float dt);
     void finalizeCaptureAbsorbAnimation(const CaptureAbsorbAnimation& animation);
@@ -1765,6 +1767,17 @@ private:
     bool hiddenBaseAllNonMonicaNpcsRemoved() const;
     void updateHiddenBaseOrbit(const Input& input, UiContext& ui, float dt, bool interactionsEnabled);
     void renderHiddenBaseOrbit(Renderer& renderer) const;
+    bool hiddenRouteNpcAttackActive() const;
+    bool currentStageIsHiddenMonicaDuel() const;
+    bool maybeStartHiddenMonicaDuel();
+    void startHiddenMonicaDuel();
+    void beginHiddenBadEndingSequence();
+    void clearHiddenDungeonNpcTargets();
+    void updateHiddenDungeonNpcTargets();
+    bool hiddenDungeonNpcTargetRemoved(std::string_view targetKey) const;
+    bool hiddenDungeonNpcTargetActive(std::string_view targetKey) const;
+    bool handleHiddenDungeonNpcEnemyEvent(const EnemyEvent& enemyEvent);
+    void handleHiddenDungeonNpcCaptureResult(const CaptureResult& capture);
     void switchActiveRingWithLog(int delta);
     int unlockedRingHudCount() const;
     UiRect ringStatusHudRect(int ringIndex, int unlockedRingCount) const;
@@ -1884,6 +1897,9 @@ private:
     Vec2 basePlayerFacing_{0.0f, 1.0f};
     std::unordered_map<std::string, int> hiddenBaseNpcHp_;
     std::unordered_map<std::string, float> hiddenBaseNpcHitCooldowns_;
+    std::unordered_map<std::string, int> hiddenDungeonNpcRuntimeIds_;
+    std::unordered_map<int, std::string> hiddenDungeonNpcTargetByRuntimeId_;
+    std::unordered_set<std::string> hiddenDungeonNpcRemovedIds_;
     float basePlayerSpriteAnimationTime_ = 0.0f;
     float baseRingPreviewAnimationTime_ = 0.0f;
     bool basePlayerSpriteWalking_ = false;

@@ -297,23 +297,6 @@ int chunkCoordForWorld(float world)
     return static_cast<int>(std::floor(world / static_cast<float>(balance::ChunkWorldSize)));
 }
 
-const InventoryObjectInstance* findInventoryObjectInstanceById(
-    const InventorySystem& inventory,
-    std::string_view instanceId)
-{
-    if (instanceId.empty()) {
-        return nullptr;
-    }
-    const auto& instances = inventory.objectInstances();
-    const auto it = std::find_if(
-        instances.begin(),
-        instances.end(),
-        [instanceId](const InventoryObjectInstance& entry) {
-            return entry.instance.instanceId == instanceId;
-        });
-    return it == instances.end() ? nullptr : &*it;
-}
-
 bool spellRingContainsInstanceId(const SpellRingSystem& spellRing, std::string_view instanceId)
 {
     if (instanceId.empty()) {
@@ -1313,6 +1296,7 @@ void Game::resetWorldRunState()
     resetBossEncounter();
     clearRoguelikeBigHoleState();
     clearRoguelikeFacilities();
+    clearHiddenDungeonNpcTargets();
     dungeonEvents_.clear();
     stageClearSelection_ = 0;
     stageClearStatus_.clear();
@@ -2309,7 +2293,7 @@ void Game::refreshEquipmentModifiers()
     EquipmentModifiers nextModifiers;
     const std::string equippedStaffId = inventory_.equippedStaffInstanceId();
     if (!equippedStaffId.empty()) {
-        const InventoryObjectInstance* staffInstance = findInventoryObjectInstanceById(inventory_, equippedStaffId);
+        const InventoryObjectInstance* staffInstance = inventory_.equippedStaffInstance();
         if (staffInstance == nullptr) {
             logError("[warning] Staff equipment: instance_id=\"" + equippedStaffId +
                 "\" is missing from inventory; staff unequipped");
@@ -3498,6 +3482,10 @@ void Game::updateScreenMode(
         return;
     }
 
+    if (mode_ == ScreenMode::Base && maybeStartHiddenMonicaDuel()) {
+        return;
+    }
+
     if (player_.hp > 0 && levels_.isChoosing() && mode_ != ScreenMode::LevelUp && mode_ != ScreenMode::WorldLoading) {
         openLevelUpChoice(basePresentationActive() ? ScreenMode::Base : ScreenMode::Playing);
     }
@@ -4109,6 +4097,9 @@ void Game::update(const Input& input, const Time& time)
         if (gameplayRewardsEnabled()) {
             updateDungeonEvents(time.deltaSeconds(), time.totalSeconds());
         }
+        if (!deathActive && gameplayRewardsEnabled()) {
+            updateHiddenDungeonNpcTargets();
+        }
         if (gameplayRewardsEnabled()) {
             updateChestNodes(time.deltaSeconds(), input);
         }
@@ -4352,9 +4343,10 @@ void Game::update(const Input& input, const Time& time)
             updateOrbitGroundEffects(time.deltaSeconds(), effectDiscoveries);
         }
 
+        const bool hiddenMonicaDuel = currentStageIsHiddenMonicaDuel();
         const bool capturedBossOwned = hasCapturedBossForCurrentStage();
-        const bool allowBossCapture = currentStageCleared() && !capturedBossOwned;
-        const std::string bossCaptureObjectId = currentStageCleared()
+        const bool allowBossCapture = (currentStageCleared() || hiddenMonicaDuel) && !capturedBossOwned;
+        const std::string bossCaptureObjectId = (currentStageCleared() || hiddenMonicaDuel)
             ? currentStageBossCaptureObjectId()
             : std::string{};
         const CollisionRect stealViewBounds = cameraWorldRect(camera_);
@@ -4428,7 +4420,11 @@ void Game::update(const Input& input, const Time& time)
             if (!gameplayRewardsEnabled()) {
                 break;
             }
-            capturedEnemyThisFrame = handleCaptureResult(capture) || capturedEnemyThisFrame;
+            const bool captured = handleCaptureResult(capture);
+            if (captured) {
+                handleHiddenDungeonNpcCaptureResult(capture);
+            }
+            capturedEnemyThisFrame = captured || capturedEnemyThisFrame;
         }
         updateCaptureAbsorbAnimations(time.deltaSeconds());
         updateDungeonMinimap(time.totalSeconds());
@@ -4546,8 +4542,9 @@ void Game::update(const Input& input, const Time& time)
                     playAudioSeAt(AudioSeMonsterDiscovery, event.position);
                 }
             } else if (event.type == EnemyEventType::Death || event.type == EnemyEventType::BossDeath) {
+                const bool hiddenNpcEvent = handleHiddenDungeonNpcEnemyEvent(event);
                 handleDungeonEventEnemyEvent(event);
-                const bool eventRewardsEnabled = gameplayRewardsEnabled() && !event.suppressRewards;
+                const bool eventRewardsEnabled = gameplayRewardsEnabled() && !event.suppressRewards && !hiddenNpcEvent;
                 if (eventRewardsEnabled) {
                     ++runStats_.defeatedEnemies;
                 }

@@ -26,7 +26,6 @@ namespace majo {
 namespace {
 constexpr float DropPickupRadius = 23.0f;
 constexpr float DropVisualRadius = 8.0f;
-constexpr Vec2 DropObjectImageMaxSize = {48.0f, 48.0f};
 constexpr float DropFallbackShadowVisualSize = DropVisualRadius * 2.5f;
 constexpr float DropHoverBaseAltitude = 4.0f;
 constexpr float DropHoverAmplitude = 2.0f;
@@ -191,12 +190,12 @@ void drawWorldDrop(Renderer& renderer, const WorldDropItem& drop, const ObjectCa
     if (object != nullptr) {
         const ObjectImageDrawOptions options = objectGroundImageOptions(*object);
         drewImage = catalogObject != nullptr
-            ? drawObjectImage(renderer, *object, center, DropObjectImageMaxSize, options)
-            : drawItemImage(renderer, *object, center, DropObjectImageMaxSize, options);
+            ? drawObjectImage(renderer, *object, center, WorldItemImageMaxSize, options)
+            : drawItemImage(renderer, *object, center, WorldItemImageMaxSize, options);
     } else if (drop.kind == WorldDropKind::Money) {
-        drewImage = drawWorldIcon(renderer, moneyWorldIconForAmount(drop.quantity), center, DropObjectImageMaxSize);
+        drewImage = drawWorldIcon(renderer, moneyWorldIconForAmount(drop.quantity), center, WorldItemImageMaxSize);
     } else if (material) {
-        drewImage = drawWorldIcon(renderer, materialWorldIcon(materialType), center, DropObjectImageMaxSize);
+        drewImage = drawWorldIcon(renderer, materialWorldIcon(materialType), center, WorldItemImageMaxSize);
     }
 
     if (!drewImage) {
@@ -209,14 +208,14 @@ void drawWorldDrop(Renderer& renderer, const WorldDropItem& drop, const ObjectCa
 float dropShadowVisualSize(const WorldDropItem& drop, const ObjectCatalog& catalog)
 {
     if (drop.kind == WorldDropKind::Object && (catalog.registry.findById(drop.id) != nullptr || drop.runtimeItem)) {
-        return std::max(DropObjectImageMaxSize.x, DropObjectImageMaxSize.y);
+        return std::max(WorldItemImageMaxSize.x, WorldItemImageMaxSize.y);
     }
     if (drop.kind == WorldDropKind::Money) {
-        return std::max(DropObjectImageMaxSize.x, DropObjectImageMaxSize.y);
+        return std::max(WorldItemImageMaxSize.x, WorldItemImageMaxSize.y);
     }
     MaterialType materialType = MaterialType::Count;
     if (drop.kind == WorldDropKind::Material && materialTypeFromSaveName(drop.id, materialType)) {
-        return std::max(DropObjectImageMaxSize.x, DropObjectImageMaxSize.y);
+        return std::max(WorldItemImageMaxSize.x, WorldItemImageMaxSize.y);
     }
     return DropFallbackShadowVisualSize;
 }

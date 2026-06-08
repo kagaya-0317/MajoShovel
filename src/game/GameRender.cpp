@@ -4,6 +4,7 @@
 #include "game/EnemyImageRenderer.hpp"
 #include "game/EntityStatusVisuals.hpp"
 #include "game/ExplosionWarning.hpp"
+#include "game/PlayerEquipmentVisual.hpp"
 
 #include <cctype>
 
@@ -6525,6 +6526,9 @@ std::vector<LightSource> Game::collectDungeonLightSources(double totalSeconds) c
         return 0;
     };
     for (const RoguelikeFacilityInstance& facility : roguelikeFacilities_) {
+        if (hiddenRouteNpcAttackActive()) {
+            continue;
+        }
         const float phase = static_cast<float>(facilityLightPhaseIndex(facility.kind)) * 1.37f +
             static_cast<float>(facility.depthMeters) * 0.001f;
         addLight({
@@ -6745,6 +6749,21 @@ void Game::render(Renderer& renderer, const Time& time)
                     playerStatusTint,
                     {PlayerSpriteAnchorX, PlayerSpriteAnchorY},
                     playerStatusVisual.flipVertical);
+                if (!playerStatusVisual.flipVertical) {
+                    if (const InventoryObjectInstance* staffInstance = inventory_.equippedStaffInstance()) {
+                        const PlayerHeldStaffDrawContext staffContext{
+                            .footAnchor = playerVisualFootAnchor,
+                            .spriteFrame = playerFrame,
+                            .flipHorizontal = playerFlip,
+                            .scale = playerSizeMultiplier,
+                            .handTint = playerStatusTint,
+                            .spriteAnchor = {PlayerSpriteAnchorX, PlayerSpriteAnchorY},
+                        };
+                        if (drawPlayerHeldStaff(renderer, staffInstance->item, staffContext)) {
+                            drawPlayerHeldStaffHandOverlay(renderer, staffContext);
+                        }
+                    }
+                }
                 if (player_.damageFlash > 0.0f) {
                     const float flash = clamp(player_.damageFlash / 0.16f, 0.0f, 1.0f);
                     const unsigned char alpha = static_cast<unsigned char>(std::round(185.0f * flash));

@@ -320,6 +320,11 @@ bool InventorySystem::isStaffEquipped(std::string_view instanceId) const
     return !instanceId.empty() && equippedStaffInstanceId_ == instanceId;
 }
 
+const InventoryObjectInstance* InventorySystem::equippedStaffInstance() const
+{
+    return objectInstanceById(equippedStaffInstanceId_);
+}
+
 void InventorySystem::clearEquippedStaff()
 {
     equippedStaffInstanceId_.clear();

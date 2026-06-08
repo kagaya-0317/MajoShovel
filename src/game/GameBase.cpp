@@ -2,6 +2,7 @@
 
 #include "engine/InputHelpGlyph.hpp"
 #include "game/EnemyImageRenderer.hpp"
+#include "game/PlayerEquipmentVisual.hpp"
 
 namespace majo {
 
@@ -13,11 +14,29 @@ constexpr std::string_view BaseFacilityWindowHelpText = "↑/↓ 選択  F/Enter
 constexpr std::string_view MiningToolCategory = "\xE6\x8E\x98\xE5\x89\x8A";
 constexpr std::string_view RescueShovelObjectId = "item_shovel";
 constexpr std::string_view RescueTorchObjectId = "item_torch";
-constexpr std::string_view CaptureNetObjectId = "item_capture_net";
-constexpr std::string_view SuperCaptureNetObjectId = "item_super_capture_net";
-constexpr std::string_view HyperCaptureNetObjectId = "item_hyper_capture_net";
 constexpr float BaseMiningRescueDropDurationSeconds = 1.05f;
 constexpr float BaseMiningRescueDropEndSeconds = 1.55f;
+
+void drawEquippedStaffOnPlayer(
+    Renderer& renderer,
+    const InventorySystem& inventory,
+    Vec2 footAnchor,
+    int playerFrame,
+    bool flipHorizontal)
+{
+    if (const InventoryObjectInstance* staffInstance = inventory.equippedStaffInstance()) {
+        const PlayerHeldStaffDrawContext context{
+            .footAnchor = footAnchor,
+            .spriteFrame = playerFrame,
+            .flipHorizontal = flipHorizontal,
+            .spriteAnchor = {PlayerSpriteAnchorX, PlayerSpriteAnchorY},
+        };
+        if (drawPlayerHeldStaff(renderer, staffInstance->item, context)) {
+            drawPlayerHeldStaffHandOverlay(renderer, context);
+        }
+    }
+}
+
 constexpr float NewItemJingleFallbackSeconds = 0.92f;
 constexpr float HiddenBaseNpcHitCooldownSeconds = 0.24f;
 constexpr std::array<float, SpellRingCount> RingWorkshopRadiusMaxMetersPerLevel{{0.12f, 0.18f, 0.24f}};
@@ -1430,13 +1449,6 @@ bool hiddenBaseNpcTargetFacility(std::string_view facilityId)
 {
     const HiddenBaseNpcDefinition* definition = hiddenBaseNpcDefinitionForFacility(facilityId);
     return definition != nullptr && !definition->monica;
-}
-
-bool hiddenBaseCaptureNetObject(std::string_view objectId)
-{
-    return objectId == CaptureNetObjectId ||
-        objectId == SuperCaptureNetObjectId ||
-        objectId == HyperCaptureNetObjectId;
 }
 
 void applyHiddenRouteFacilityAvailability(
@@ -6984,6 +6996,35 @@ bool Game::hiddenBaseAllNonMonicaNpcsRemoved() const
         });
 }
 
+bool Game::storeCapturedEnemyDefinition(const EnemyDefinition& enemy)
+{
+    ObjectDefinition captured = makeCapturedObjectDefinition(enemy);
+    upsertObjectDefinition(objectCatalog_, captured);
+
+    SpellRingAddResult ringAdd{};
+    if (spellRing_.addObjectItem(captured, &ringAdd)) {
+        refreshOrbitEffects();
+        syncEncyclopediaFromInventoryAndRing();
+        return true;
+    }
+
+    InventoryAddResult inventoryAdd{};
+    if (inventory_.addRuntimeObjectItem(captured, &inventoryAdd)) {
+        syncEncyclopediaFromInventoryAndRing();
+        return true;
+    }
+
+    if (warehouseUsedSlots() < warehouseCapacity()) {
+        ItemInstance instance = inventory_.createDetachedObjectInstance(captured);
+        warehouseObjectInstances_.push_back(InventoryObjectInstance{captured, std::move(instance)});
+        syncWarehouseDisplaySlots();
+        syncEncyclopediaFromInventoryAndRing();
+        return true;
+    }
+
+    return false;
+}
+
 void Game::updateHiddenBaseOrbit(const Input& input, UiContext& ui, float dt, bool interactionsEnabled)
 {
     if (!hiddenBaseOrbitActive()) {
@@ -7036,38 +7077,10 @@ void Game::updateHiddenBaseOrbit(const Input& input, UiContext& ui, float dt, bo
         }
     };
 
-    auto storeCapturedNpc = [this](const EnemyDefinition& enemy) {
-        ObjectDefinition captured = makeCapturedObjectDefinition(enemy);
-        upsertObjectDefinition(objectCatalog_, captured);
-
-        SpellRingAddResult ringAdd{};
-        if (spellRing_.addObjectItem(captured, &ringAdd)) {
-            refreshOrbitEffects();
-            syncEncyclopediaFromInventoryAndRing();
-            return true;
-        }
-
-        InventoryAddResult inventoryAdd{};
-        if (inventory_.addRuntimeObjectItem(captured, &inventoryAdd)) {
-            syncEncyclopediaFromInventoryAndRing();
-            return true;
-        }
-
-        if (warehouseUsedSlots() < warehouseCapacity()) {
-            ItemInstance instance = inventory_.createDetachedObjectInstance(captured);
-            warehouseObjectInstances_.push_back(InventoryObjectInstance{captured, std::move(instance)});
-            syncWarehouseDisplaySlots();
-            syncEncyclopediaFromInventoryAndRing();
-            return true;
-        }
-
-        return false;
-    };
-
-    auto removeNpc = [this, &markTrustBroken, &storeCapturedNpc](std::string_view facilityId, const EnemyDefinition& enemy, bool captured) {
+    auto removeNpc = [this, &markTrustBroken](std::string_view facilityId, const EnemyDefinition& enemy, bool captured) {
         markTrustBroken();
         if (captured) {
-            const bool stored = storeCapturedNpc(enemy);
+            const bool stored = storeCapturedEnemyDefinition(enemy);
             baseStatus_ = stored
                 ? ((enemy.name.empty() ? enemy.id : enemy.name) + "を捕獲した")
                 : ((enemy.name.empty() ? enemy.id : enemy.name) + "はリングに吸い込まれた");
@@ -7081,7 +7094,7 @@ void Game::updateHiddenBaseOrbit(const Input& input, UiContext& ui, float dt, bo
 
         if (hiddenBaseAllNonMonicaNpcsRemoved() && !hasStoryFlag(StoryHiddenMonicaDuelUnlockedFlag)) {
             addStoryFlag(std::string(StoryHiddenMonicaDuelUnlockedFlag));
-            queueStoryEventForTrigger("hidden_bad:monica_duel_unlocked");
+            queueStoryEventForTrigger(std::string(HiddenMonicaDuelIntroTrigger));
         }
 
         std::string message;
@@ -7130,7 +7143,7 @@ void Game::updateHiddenBaseOrbit(const Input& input, UiContext& ui, float dt, bo
             item.actionFlashTimer = SpellRingItemActionFlashSeconds;
             (void)spellRing_.consumeItemDurability(item, 1);
 
-            if (hiddenBaseCaptureNetObject(item.objectId)) {
+            if (hiddenRouteCaptureNetObject(item.objectId)) {
                 removeNpc(facilityId, enemy, true);
             } else {
                 markTrustBroken();
@@ -10933,13 +10946,15 @@ void Game::renderBaseBackdrop(Renderer& renderer) const
     renderer.drawActorShadow(basePlayerFootAnchor, basePlayerSpriteVisualSize);
     renderPlayerFootstepDust(renderer);
     if (renderer.hasPlayerSheet()) {
+        const int playerFrame = playerSpriteFrameIndex(basePlayerSpriteAnimationTime_, basePlayerSpriteWalking_);
         renderer.drawPlayerSpriteNaturalSize(
-            playerSpriteFrameIndex(basePlayerSpriteAnimationTime_, basePlayerSpriteWalking_),
+            playerFrame,
             basePlayerFootAnchor,
             1.0f,
             basePlayerSpriteFlipHorizontal_,
             {255, 255, 255, 255},
             {PlayerSpriteAnchorX, PlayerSpriteAnchorY});
+        drawEquippedStaffOnPlayer(renderer, inventory_, basePlayerFootAnchor, playerFrame, basePlayerSpriteFlipHorizontal_);
     } else {
         renderer.fillCircle(basePlayerPosition_, balance_.playerRadius, {118, 72, 168, 255});
         renderer.drawLine(basePlayerPosition_, basePlayerPosition_ + basePlayerFacing_ * 22.0f, {235, 210, 255, 255});
@@ -11005,13 +11020,15 @@ void Game::renderBaseScreen(Renderer& renderer) const
     renderer.drawActorShadow(basePlayerFootAnchor, basePlayerSpriteVisualSize);
     renderPlayerFootstepDust(renderer);
     if (renderer.hasPlayerSheet()) {
+        const int playerFrame = playerSpriteFrameIndex(basePlayerSpriteAnimationTime_, basePlayerSpriteWalking_);
         renderer.drawPlayerSpriteNaturalSize(
-            playerSpriteFrameIndex(basePlayerSpriteAnimationTime_, basePlayerSpriteWalking_),
+            playerFrame,
             basePlayerFootAnchor,
             1.0f,
             basePlayerSpriteFlipHorizontal_,
             {255, 255, 255, 255},
             {PlayerSpriteAnchorX, PlayerSpriteAnchorY});
+        drawEquippedStaffOnPlayer(renderer, inventory_, basePlayerFootAnchor, playerFrame, basePlayerSpriteFlipHorizontal_);
     } else {
         renderer.fillCircle(basePlayerPosition_, balance_.playerRadius, {118, 72, 168, 255});
         renderer.drawLine(basePlayerPosition_, basePlayerPosition_ + basePlayerFacing_ * 22.0f, {235, 210, 255, 255});

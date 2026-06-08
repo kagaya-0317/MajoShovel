@@ -141,6 +141,7 @@ public:
     const MaterialInventory& materials() const { return materials_; }
     MaterialInventory& materials() { return materials_; }
     const std::string& equippedStaffInstanceId() const { return equippedStaffInstanceId_; }
+    const InventoryObjectInstance* equippedStaffInstance() const;
     bool isStaffEquipped(std::string_view instanceId) const;
     bool restoreEquippedStaffInstanceId(std::string_view instanceId, std::string* outWarning = nullptr);
     void clearEquippedStaff();

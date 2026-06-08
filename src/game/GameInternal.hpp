@@ -53,9 +53,25 @@ inline constexpr std::string_view StoryEndingAstralFailedTrustFlag = "story_endi
 inline constexpr std::string_view StoryTrustBrokenFlag = "story_trust_broken";
 inline constexpr std::string_view StoryHiddenOrbitCorruptionUnlockedFlag = "story_hidden_orbit_corruption_unlocked";
 inline constexpr std::string_view StoryHiddenMonicaDuelUnlockedFlag = "story_hidden_monica_duel_unlocked";
+inline constexpr std::string_view StoryHiddenMonicaDuelIntroFlag = "story_hidden_monica_duel_intro";
+inline constexpr std::string_view HiddenMonicaDuelIntroTrigger = "hidden_bad:monica_duel_unlocked";
 inline constexpr std::string_view StoryHiddenEndingEverythingOrbitsFlag = "story_hidden_ending_everything_orbits";
 inline constexpr std::string_view HiddenEndingPeopleGoneFlag = "hidden_ending_people_gone";
 inline constexpr int HiddenEndingCapturedBreakThreshold = 100;
+inline constexpr std::string_view HiddenMonicaDuelStageId = "hidden_monica_duel";
+inline constexpr std::string_view HiddenMonicaBossEnemyId = "hidden_boss_monica";
+inline constexpr std::string_view HiddenRouteCaptureNetObjectId = "item_capture_net";
+inline constexpr std::string_view HiddenRouteSuperCaptureNetObjectId = "item_super_capture_net";
+inline constexpr std::string_view HiddenRouteHyperCaptureNetObjectId = "item_hyper_capture_net";
+inline constexpr std::string_view HiddenDungeonEventNpcTargetPrefix = "event:";
+inline constexpr std::string_view HiddenRoguelikeFacilityNpcTargetPrefix = "facility:";
+
+inline bool hiddenRouteCaptureNetObject(std::string_view objectId)
+{
+    return objectId == HiddenRouteCaptureNetObjectId ||
+        objectId == HiddenRouteSuperCaptureNetObjectId ||
+        objectId == HiddenRouteHyperCaptureNetObjectId;
+}
 
 inline std::mt19937& lootRuntimeRng()
 {

@@ -767,6 +767,10 @@ bool App::loadAssets()
         logError(renderer_->lastAssetError());
         ok = false;
     }
+    if (!renderer_->loadPlayerHandSheet("assets/majo_hand.png")) {
+        logError(renderer_->lastAssetError());
+        ok = false;
+    }
     if (!renderer_->loadBaseMapTexture("assets/kyoten/map.png")) {
         logError(renderer_->lastAssetError());
         ok = false;
@@ -914,6 +918,9 @@ bool App::reloadAssetForPath(const std::string& changedPath)
 
     if (fileName == "majo.png") {
         return renderer_->loadPlayerSheet("assets/majo.png");
+    }
+    if (fileName == "majo_hand.png") {
+        return renderer_->loadPlayerHandSheet("assets/majo_hand.png");
     }
     if (fileName == "map.png" && parentPath.find("assets/kyoten") != std::string::npos) {
         return renderer_->loadBaseMapTexture("assets/kyoten/map.png");

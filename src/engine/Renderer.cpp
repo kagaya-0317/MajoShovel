@@ -361,6 +361,7 @@ Renderer::~Renderer()
     invalidateAllImages();
     clearTextCache();
     unloadSpriteSheet(playerSheet_);
+    unloadSpriteSheet(playerHandSheet_);
     unloadBaseMapTexture();
     unloadUiWindowTexture();
     unloadUiMessageWindowTexture();
@@ -1651,9 +1652,19 @@ void Renderer::unloadPlayerSheet()
     unloadSpriteSheet(playerSheet_);
 }
 
+void Renderer::unloadPlayerHandSheet()
+{
+    unloadSpriteSheet(playerHandSheet_);
+}
+
 bool Renderer::loadPlayerSheet(std::string_view path, int frameSize, int columns, int rows)
 {
     return loadSpriteSheet(path, frameSize, columns, rows, "player sheet", playerSheet_);
+}
+
+bool Renderer::loadPlayerHandSheet(std::string_view path, int frameSize, int columns, int rows)
+{
+    return loadSpriteSheet(path, frameSize, columns, rows, "player hand sheet", playerHandSheet_);
 }
 
 Vec2 Renderer::playerSpriteFrameSize() const
@@ -2774,6 +2785,53 @@ void Renderer::drawPlayerSpriteNaturalSize(
     SDL_RenderTextureRotated(
         renderer_,
         playerSheet_.texture,
+        &src,
+        &dst,
+        0.0,
+        nullptr,
+        imageFlipMode(flipHorizontal, flipVertical));
+}
+
+void Renderer::drawPlayerHandSpriteNaturalSize(
+    int index,
+    Vec2 anchorPosition,
+    float scale,
+    bool flipHorizontal,
+    Color tint,
+    Vec2 anchor,
+    bool flipVertical)
+{
+    if (!playerHandSheet_.texture || index < 0 || index >= playerHandSheet_.columns * playerHandSheet_.rows) {
+        return;
+    }
+
+    const float safeScale = std::max(0.0f, scale);
+    if (safeScale <= 0.0f) {
+        return;
+    }
+
+    const int sourceX = (index % playerHandSheet_.columns) * playerHandSheet_.frameWidth;
+    const int sourceY = (index / playerHandSheet_.columns) * playerHandSheet_.frameHeight;
+    const SDL_FRect src{
+        static_cast<float>(sourceX),
+        static_cast<float>(sourceY),
+        static_cast<float>(playerHandSheet_.frameWidth),
+        static_cast<float>(playerHandSheet_.frameHeight)
+    };
+    const Vec2 drawSize{
+        static_cast<float>(playerHandSheet_.frameWidth) * safeScale,
+        static_cast<float>(playerHandSheet_.frameHeight) * safeScale
+    };
+    const Vec2 p = transform(anchorPosition - Vec2{drawSize.x * anchor.x, drawSize.y * anchor.y});
+    const Vec2 s = transformSize(drawSize);
+    const SDL_FRect dst{p.x, p.y, s.x, s.y};
+
+    tint = transformColor(tint);
+    SDL_SetTextureColorMod(playerHandSheet_.texture, tint.r, tint.g, tint.b);
+    SDL_SetTextureAlphaMod(playerHandSheet_.texture, tint.a);
+    SDL_RenderTextureRotated(
+        renderer_,
+        playerHandSheet_.texture,
         &src,
         &dst,
         0.0,

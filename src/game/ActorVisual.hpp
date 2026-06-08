@@ -13,6 +13,7 @@ struct ActorAltitudeShadowTuning {
 
 constexpr float EnemyShadowGroundOffsetY = 22.0f;
 constexpr float ItemShadowGroundOffsetY = 14.0f;
+constexpr Vec2 WorldItemImageMaxSize = {48.0f, 48.0f};
 
 [[nodiscard]] inline Vec2 elevatedDrawPosition(Vec2 groundPosition, float altitude)
 {

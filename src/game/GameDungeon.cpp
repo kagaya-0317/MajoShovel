@@ -226,6 +226,49 @@ Vec2 roguelikeFacilityPropImageSize(Game::RoguelikeFacilityKind kind)
     return RoguelikeFacilityWagonImageSize;
 }
 
+std::string_view hiddenDungeonEventNpcEnemyId(Game::DungeonEventKind kind)
+{
+    switch (kind) {
+    case Game::DungeonEventKind::BuriedWitch:
+        return "hidden_npc_buried_witch";
+    case Game::DungeonEventKind::LostBaggageWitch:
+        return "hidden_npc_lost_baggage_witch";
+    case Game::DungeonEventKind::ItemRequestWitch:
+        return "hidden_npc_item_request_witch";
+    case Game::DungeonEventKind::SurroundedWitch:
+        return "hidden_npc_surrounded_witch";
+    case Game::DungeonEventKind::ColdWitchCampfire:
+        return "hidden_npc_cold_witch";
+    case Game::DungeonEventKind::HeavyRockWitch:
+        return "hidden_npc_heavy_rock_witch";
+    default:
+        return {};
+    }
+}
+
+std::string_view hiddenRoguelikeFacilityNpcEnemyId(Game::RoguelikeFacilityKind kind)
+{
+    switch (kind) {
+    case Game::RoguelikeFacilityKind::Merchant:
+        return "hidden_npc_rogue_merchant";
+    case Game::RoguelikeFacilityKind::Artisan:
+        return "hidden_npc_rogue_processor";
+    case Game::RoguelikeFacilityKind::Trainer:
+        return "hidden_npc_trainer";
+    }
+    return {};
+}
+
+std::string hiddenDungeonEventNpcTargetKey(std::string_view eventId)
+{
+    return std::string(HiddenDungeonEventNpcTargetPrefix) + std::string(eventId);
+}
+
+std::string hiddenRoguelikeFacilityNpcTargetKey(std::string_view facilityId)
+{
+    return std::string(HiddenRoguelikeFacilityNpcTargetPrefix) + std::string(facilityId);
+}
+
 constexpr float WetGroundPlayerRadiusMultiplier = 1.45f;
 constexpr float WetGroundPlayerMinRadius = 16.0f;
 constexpr float WetGroundPlayerMaxRadius = 28.0f;
@@ -540,6 +583,27 @@ StageDefinition makeIntroTutorialStageDefinition()
     stage.terrainHardnessMultiplier = 0.85;
     stage.warpPointCount = 0;
     stage.specialRoomCount = 0;
+    return stage;
+}
+
+StageDefinition makeHiddenMonicaDuelStageDefinition()
+{
+    StageDefinition stage;
+    stage.id = std::string(HiddenMonicaDuelStageId);
+    stage.name = "地下の決戦場";
+    stage.type = "隠し";
+    stage.displayOrder = 900;
+    stage.implementationState = "code_hidden";
+    stage.generationProfile = "star_core";
+    stage.terrainProfile = "hard_star_core";
+    stage.goalDistanceTiles = 120;
+    stage.detourRate = 0.08;
+    stage.branchDensity = 0.0;
+    stage.cavernWidthMultiplier = 1.25;
+    stage.terrainHardnessMultiplier = 1.0;
+    stage.warpPointCount = 0;
+    stage.specialRoomCount = 0;
+    stage.bossEnemyId = std::string(HiddenMonicaBossEnemyId);
     return stage;
 }
 
@@ -5688,6 +5752,9 @@ Game::DungeonEventInstance* Game::nearbyDungeonEventNpc()
         if (!event.discovered || !dungeonEventKindIsWitch(event.kind)) {
             continue;
         }
+        if (hiddenRouteNpcAttackActive() && !hiddenDungeonEventNpcEnemyId(event.kind).empty()) {
+            continue;
+        }
         const float dist = distanceToRect(
             player_.position,
             dungeonInspectableRect(tileWorldCenter(event.focusTile), DungeonEventNpcInspectSize));
@@ -5707,6 +5774,9 @@ const Game::DungeonEventInstance* Game::nearbyDungeonEventNpc() const
         if (!event.discovered || !dungeonEventKindIsWitch(event.kind)) {
             continue;
         }
+        if (hiddenRouteNpcAttackActive() && !hiddenDungeonEventNpcEnemyId(event.kind).empty()) {
+            continue;
+        }
         const float dist = distanceToRect(
             player_.position,
             dungeonInspectableRect(tileWorldCenter(event.focusTile), DungeonEventNpcInspectSize));
@@ -5724,6 +5794,9 @@ Game::DungeonEventInstance* Game::pointedDungeonEventNpc(Vec2 worldPosition)
     float bestPointerDistance = std::numeric_limits<float>::max();
     for (DungeonEventInstance& event : dungeonEvents_.mutableAll()) {
         if (!event.discovered || !dungeonEventKindIsWitch(event.kind)) {
+            continue;
+        }
+        if (hiddenRouteNpcAttackActive() && !hiddenDungeonEventNpcEnemyId(event.kind).empty()) {
             continue;
         }
         const Vec2 center = tileWorldCenter(event.focusTile);
@@ -5747,6 +5820,9 @@ const Game::DungeonEventInstance* Game::pointedDungeonEventNpc(Vec2 worldPositio
     float bestPointerDistance = std::numeric_limits<float>::max();
     for (const DungeonEventInstance& event : dungeonEvents_.all()) {
         if (!event.discovered || !dungeonEventKindIsWitch(event.kind)) {
+            continue;
+        }
+        if (hiddenRouteNpcAttackActive() && !hiddenDungeonEventNpcEnemyId(event.kind).empty()) {
             continue;
         }
         const Vec2 center = tileWorldCenter(event.focusTile);
@@ -6006,7 +6082,13 @@ void Game::appendDungeonEventRenderEntries(
             });
         }
 
-        if (centerVisible && (event.kind == DungeonEventKind::WarpGuideMap || dungeonEventKindIsWitch(event.kind))) {
+        bool hiddenNpcSuppressed = false;
+        if (hiddenRouteNpcAttackActive() && dungeonEventKindIsWitch(event.kind)) {
+            hiddenNpcSuppressed = !hiddenDungeonEventNpcEnemyId(event.kind).empty();
+        }
+
+        if (centerVisible && (event.kind == DungeonEventKind::WarpGuideMap ||
+                (dungeonEventKindIsWitch(event.kind) && !hiddenNpcSuppressed))) {
             entries.push_back(DepthRenderEntry{
                 center.y - 4.0f,
                 [
@@ -7202,6 +7284,9 @@ bool Game::updateRoguelikeFacilityInteraction(const Input& input, UiContext& ui)
         const Vec2 clickWorld = camera_.screenToWorld(ui.mouse());
         for (int i = 0; i < static_cast<int>(roguelikeFacilities_.size()); ++i) {
             const RoguelikeFacilityInstance& facility = roguelikeFacilities_[static_cast<std::size_t>(i)];
+            if (hiddenRouteNpcAttackActive() && !hiddenRoguelikeFacilityNpcEnemyId(facility.kind).empty()) {
+                continue;
+            }
             if (dungeonInspectableHovered(facility.npcPosition, RoguelikeFacilityNpcInspectSize, clickWorld) ||
                 dungeonInspectableHovered(facility.propPosition, RoguelikeFacilityPropInspectSize, clickWorld)) {
                 clickedIndex = i;
@@ -7214,6 +7299,9 @@ bool Game::updateRoguelikeFacilityInteraction(const Input& input, UiContext& ui)
     float nearbyDistance = DungeonInspectableInteractionRange;
     for (int i = 0; i < static_cast<int>(roguelikeFacilities_.size()); ++i) {
         const RoguelikeFacilityInstance& facility = roguelikeFacilities_[static_cast<std::size_t>(i)];
+        if (hiddenRouteNpcAttackActive() && !hiddenRoguelikeFacilityNpcEnemyId(facility.kind).empty()) {
+            continue;
+        }
         const float npcDistance = distanceToRect(
             player_.position,
             dungeonInspectableRect(facility.npcPosition, RoguelikeFacilityNpcInspectSize));
@@ -10164,15 +10252,20 @@ float Game::bossDefeatPresentationProgress() const
 bool Game::beginBossFightForCurrentEncounter()
 {
     const bool roguelikeGate = bossEncounter_.purpose == BossEncounterPurpose::RoguelikeGate;
+    const bool hiddenMonicaDuel = bossEncounter_.purpose == BossEncounterPurpose::HiddenMonicaDuel;
     if (!hasBossSpawnPoint_ || bossSpawned_) {
         resetBossEncounter();
         return false;
     }
-    if (!roguelikeGate && (!warpPointsEnabled_ || hasCapturedBossForCurrentStage())) {
+    if (!roguelikeGate && !hiddenMonicaDuel && (!warpPointsEnabled_ || hasCapturedBossForCurrentStage())) {
         resetBossEncounter();
         return false;
     }
     if (roguelikeGate && (!currentStageIsRoguelike() || !roguelikeBigHole_.active || roguelikeBigHole_.unlocked)) {
+        resetBossEncounter();
+        return false;
+    }
+    if (hiddenMonicaDuel && !currentStageIsHiddenMonicaDuel()) {
         resetBossEncounter();
         return false;
     }
@@ -10237,9 +10330,12 @@ void Game::finishBossEncounterAfterDialogue()
 {
     const bool finalBoss = bossEncounter_.finalBoss;
     const bool roguelikeGate = bossEncounter_.purpose == BossEncounterPurpose::RoguelikeGate;
+    const bool hiddenMonicaDuel = bossEncounter_.purpose == BossEncounterPurpose::HiddenMonicaDuel;
     resetBossEncounter();
     if (finalBoss) {
         beginFinalBossEndingSequence();
+    } else if (hiddenMonicaDuel) {
+        beginHiddenBadEndingSequence();
     } else if (roguelikeGate) {
         roguelikeBigHole_.unlocked = true;
         hasBossSpawnPoint_ = false;
@@ -10275,6 +10371,7 @@ bool Game::updateBossEncounterFlow(float dt)
         bossEncounter_.phase = BossEncounterPhase::WaitingAfterDialogue;
         bossEncounter_.timer = 0.0f;
         if (bossEncounter_.purpose == BossEncounterPurpose::RoguelikeGate ||
+            bossEncounter_.purpose == BossEncounterPurpose::HiddenMonicaDuel ||
             !queueStoryEventForCurrentStage("boss_after")) {
             finishBossEncounterAfterDialogue();
         }
@@ -10928,6 +11025,325 @@ bool Game::hiddenBadEndingReady() const
         });
 }
 
+bool Game::hiddenRouteNpcAttackActive() const
+{
+    return hasStoryFlag(StoryHiddenOrbitCorruptionUnlockedFlag) &&
+        !hasStoryFlag(StoryHiddenEndingEverythingOrbitsFlag) &&
+        !hasStoryFlag(HiddenEndingPeopleGoneFlag);
+}
+
+bool Game::currentStageIsHiddenMonicaDuel() const
+{
+    return currentStageId_ == HiddenMonicaDuelStageId;
+}
+
+bool Game::maybeStartHiddenMonicaDuel()
+{
+    if (!hasStoryFlag(StoryHiddenMonicaDuelUnlockedFlag) ||
+        hasStoryFlag(StoryHiddenEndingEverythingOrbitsFlag) ||
+        hasStoryFlag(HiddenEndingPeopleGoneFlag)) {
+        return false;
+    }
+    if (dialogue_.active() ||
+        pendingStoryTriggerDelayActive() ||
+        !pendingStoryTrigger_.empty() ||
+        !pendingStoryTriggers_.empty() ||
+        screenTransition_.active() ||
+        worldBuildActive() ||
+        endingKamishibaiPending_) {
+        return false;
+    }
+    if (!hasStoryFlag(StoryHiddenMonicaDuelIntroFlag) &&
+        findStoryEventForTrigger(HiddenMonicaDuelIntroTrigger) != nullptr) {
+        queueStoryEventForTrigger(std::string(HiddenMonicaDuelIntroTrigger));
+        return false;
+    }
+
+    startHiddenMonicaDuel();
+    return true;
+}
+
+void Game::startHiddenMonicaDuel()
+{
+    InventoryCarryState retained = captureInventoryCarryState();
+    const int retainedLevel = player_.level;
+    const int retainedXp = player_.xp;
+    const int retainedXpToNext = player_.xpToNext;
+
+    resetWorldSimulationState();
+    resetWorldUiState();
+    resetWorldRunState();
+    clearHiddenDungeonNpcTargets();
+
+    pendingStoryTrigger_.clear();
+    pendingStoryTriggerDelaySeconds_ = 0.0f;
+    pendingStoryTriggers_.clear();
+    requestedWarpPointStartPosition_.reset();
+
+    currentStageDefinition_ = makeHiddenMonicaDuelStageDefinition();
+    currentStageId_ = currentStageDefinition_.id;
+    currentStage_ = 0;
+    roguelikeDungeon_ = false;
+    restoreRunStartInventoryOnDeath_ = false;
+    roguelikeCarryInRestricted_ = false;
+    roguelikeCarryOutRestricted_ = false;
+    warpPointsEnabled_ = false;
+    astralRun_ = AstralRunState{};
+
+    dungeonLayout_ = generateDungeonLayout(DungeonGenerationContext{
+        .stageId = 3,
+        .seed = static_cast<std::uint32_t>(0x4D0A1CAu),
+        .stageHardnessMultiplier = static_cast<float>(currentStageDefinition_.terrainHardnessMultiplier),
+        .goalDistanceTiles = currentStageDefinition_.goalDistanceTiles,
+        .detourRate = static_cast<float>(currentStageDefinition_.detourRate),
+        .branchDensity = static_cast<float>(currentStageDefinition_.branchDensity),
+        .cavernWidthMultiplier = static_cast<float>(currentStageDefinition_.cavernWidthMultiplier),
+        .warpPointCount = 0,
+        .specialRoomCount = 0,
+        .generationProfile = currentStageDefinition_.generationProfile,
+        .terrainProfile = currentStageDefinition_.terrainProfile,
+        .roguelike = false,
+    });
+
+    player_.position = tileWorldCenter(DungeonTile{dungeonLayout_.startTile.x + 2, dungeonLayout_.startTile.y});
+    player_.facing = {1.0f, 0.0f};
+    player_.xpToNext = playerXpToNextForLevel(player_.level, balance_);
+
+    rewardNodes_.clear();
+    moneyNodes_.clear();
+    moonFragmentNodes_.clear();
+    chestNodes_.clear();
+    crateNodes_.clear();
+    enemyNodes_.clear();
+    dungeonEvents_.clear();
+    warpPoints_.clear();
+    spawnedWarpPointCount_ = 0;
+    unlockedWarpPointCount_ = 0;
+    hasLatestWarpPointPosition_ = false;
+    latestWarpPointPosition_ = {};
+
+    restoreInventoryCarryState(retained);
+    player_.level = retainedLevel;
+    player_.xp = retainedXp;
+    player_.xpToNext = retainedXpToNext;
+    refreshEquipmentModifiers();
+    applyPermanentUpgrades();
+    clearTemporaryPlayerState(true);
+    spellRing_.resetRuntimeStateAtPlayer(player_, balance_);
+
+    tileMap_.updateAround(player_.position, 0.0f, runtimeBalanceForDungeon(), dungeonLayout_);
+    normalizeOpenBuriedPlacementNodes();
+    updateDungeonMinimap(0.0);
+    camera_.follow(player_.position, 1.0f);
+    captureRunStartInventoryState();
+
+    bossSpawnPoint_ = tileWorldCenter(dungeonLayout_.goalTile);
+    hasBossSpawnPoint_ = true;
+    bossSpawned_ = false;
+    bossEncounter_ = BossEncounterState{};
+    bossEncounter_.phase = BossEncounterPhase::WaitingBeforeDialogue;
+    bossEncounter_.purpose = BossEncounterPurpose::HiddenMonicaDuel;
+    bossEncounter_.stageId = currentStageId_;
+    bossEncounter_.spawnPoint = bossSpawnPoint_;
+
+    mode_ = ScreenMode::Playing;
+    pauseReturnMode_ = ScreenMode::Playing;
+    baseEditEnabled_ = false;
+    baseEditMode_ = BaseEditMode::None;
+    resetPlayerFootstepDust();
+    playAudioBgm(AudioBgmDungeon, 0.45f);
+
+    std::string message;
+    if (!saveSaveData(message)) {
+        logError("[hidden] monica duel start save failed: " + message);
+    }
+}
+
+void Game::beginHiddenBadEndingSequence()
+{
+    if (endingKamishibaiPending_ || mode_ == ScreenMode::EndingKamishibai) {
+        return;
+    }
+
+    addStoryFlag(std::string(StoryTrustBrokenFlag));
+    clearTemporaryPlayerState(true);
+    inventory_.setOpen(false);
+    inventory_.cancelGrab();
+    cancelRingGrab();
+    closeDebugItemPicker();
+    closeDebugStoryTest();
+    debugStoryTestReturnAfterDialogue_ = false;
+    if (levels_.isChoosing()) {
+        levels_ = LevelSystem{};
+    }
+    levelUpPresentation_ = {};
+    levelUpResultDialog_ = {};
+    pausePage_ = PauseMenuPage::Main;
+    pauseReturnMode_ = ScreenMode::Playing;
+    inventoryReturnToPause_ = false;
+    requestEndingKamishibai(EndingKind::HiddenBad);
+}
+
+void Game::clearHiddenDungeonNpcTargets()
+{
+    hiddenDungeonNpcRuntimeIds_.clear();
+    hiddenDungeonNpcTargetByRuntimeId_.clear();
+    hiddenDungeonNpcRemovedIds_.clear();
+}
+
+bool Game::hiddenDungeonNpcTargetRemoved(std::string_view targetKey) const
+{
+    return hiddenDungeonNpcRemovedIds_.find(std::string(targetKey)) != hiddenDungeonNpcRemovedIds_.end();
+}
+
+bool Game::hiddenDungeonNpcTargetActive(std::string_view targetKey) const
+{
+    const auto runtimeIt = hiddenDungeonNpcRuntimeIds_.find(std::string(targetKey));
+    return runtimeIt != hiddenDungeonNpcRuntimeIds_.end() && enemies_.runtimeEnemyActive(runtimeIt->second);
+}
+
+void Game::updateHiddenDungeonNpcTargets()
+{
+    if (!hiddenRouteNpcAttackActive() ||
+        mode_ != ScreenMode::Playing ||
+        enemyTestActive_ ||
+        currentStageIsHiddenMonicaDuel()) {
+        return;
+    }
+
+    for (auto it = hiddenDungeonNpcRuntimeIds_.begin(); it != hiddenDungeonNpcRuntimeIds_.end();) {
+        if (enemies_.runtimeEnemyActive(it->second)) {
+            ++it;
+            continue;
+        }
+        hiddenDungeonNpcTargetByRuntimeId_.erase(it->second);
+        it = hiddenDungeonNpcRuntimeIds_.erase(it);
+    }
+
+    const RuntimeBalance dungeonBalance = runtimeBalanceForDungeon();
+    const auto spawnTarget = [&](std::string targetKey, std::string_view enemyId, Vec2 position, int depthRank) {
+        if (targetKey.empty() ||
+            enemyId.empty() ||
+            hiddenDungeonNpcTargetRemoved(targetKey) ||
+            hiddenDungeonNpcTargetActive(targetKey)) {
+            return;
+        }
+        if (enemyCatalog_.enemiesById.find(std::string(enemyId)) == enemyCatalog_.enemiesById.end()) {
+            return;
+        }
+
+        int runtimeId = 0;
+        if (!enemies_.spawnSpecificEnemy(
+                tileMap_,
+                enemyId,
+                position,
+                player_.position,
+                dungeonBalance,
+                enemyCatalog_,
+                true,
+                true,
+                0.0f,
+                &runtimeId,
+                currentStageId_,
+                std::max(1, depthRank))) {
+            return;
+        }
+        hiddenDungeonNpcRuntimeIds_[targetKey] = runtimeId;
+        hiddenDungeonNpcTargetByRuntimeId_[runtimeId] = std::move(targetKey);
+    };
+
+    for (const DungeonEventInstance& event : dungeonEvents_.all()) {
+        if (!event.discovered || !dungeonEventKindIsWitch(event.kind)) {
+            continue;
+        }
+        const std::string_view enemyId = hiddenDungeonEventNpcEnemyId(event.kind);
+        if (enemyId.empty()) {
+            continue;
+        }
+        const DungeonLayoutMetrics metrics = calculateDungeonLayoutMetrics(dungeonLayout_, {
+            static_cast<float>(event.centerTile.x),
+            static_cast<float>(event.centerTile.y),
+        });
+        spawnTarget(
+            hiddenDungeonEventNpcTargetKey(event.id),
+            enemyId,
+            tileWorldCenter(event.focusTile),
+            roguelikeAdjustedDepthRank(lootDepthRankForProgress(currentStageId_, metrics.pathProgress)));
+    }
+
+    for (const RoguelikeFacilityInstance& facility : roguelikeFacilities_) {
+        const std::string_view enemyId = hiddenRoguelikeFacilityNpcEnemyId(facility.kind);
+        if (enemyId.empty()) {
+            continue;
+        }
+        spawnTarget(
+            hiddenRoguelikeFacilityNpcTargetKey(facility.id),
+            enemyId,
+            facility.npcPosition,
+            roguelikeDepthRankForWorldPosition(facility.centerPosition));
+    }
+}
+
+bool Game::handleHiddenDungeonNpcEnemyEvent(const EnemyEvent& enemyEvent)
+{
+    const auto targetIt = hiddenDungeonNpcTargetByRuntimeId_.find(enemyEvent.enemyRuntimeId);
+    if (targetIt == hiddenDungeonNpcTargetByRuntimeId_.end()) {
+        return false;
+    }
+
+    const std::string targetKey = targetIt->second;
+    hiddenDungeonNpcRemovedIds_.insert(targetKey);
+    hiddenDungeonNpcTargetByRuntimeId_.erase(targetIt);
+    hiddenDungeonNpcRuntimeIds_.erase(targetKey);
+    addStoryFlag(std::string(StoryTrustBrokenFlag));
+
+    if (targetKey.rfind(std::string(HiddenDungeonEventNpcTargetPrefix), 0) == 0) {
+        const std::string eventId = targetKey.substr(HiddenDungeonEventNpcTargetPrefix.size());
+        if (DungeonEventInstance* event = dungeonEvents_.findById(eventId)) {
+            event->completed = true;
+            event->rewardClaimed = true;
+            event->objectiveResolved = false;
+        }
+    } else if (targetKey.rfind(std::string(HiddenRoguelikeFacilityNpcTargetPrefix), 0) == 0) {
+        const std::string facilityId = targetKey.substr(HiddenRoguelikeFacilityNpcTargetPrefix.size());
+        roguelikeFacilities_.erase(
+            std::remove_if(
+                roguelikeFacilities_.begin(),
+                roguelikeFacilities_.end(),
+                [&facilityId](const RoguelikeFacilityInstance& facility) {
+                    return facility.id == facilityId;
+                }),
+            roguelikeFacilities_.end());
+        focusedRoguelikeFacilityIndex_ = -1;
+        hoveredRoguelikeFacilityIndex_ = -1;
+        closeRoguelikeFacilityUi();
+    }
+
+    std::string message;
+    if (!saveSaveData(message)) {
+        logError("[hidden] dungeon npc removal save failed: " + message);
+    }
+
+    pushDungeonLog(
+        (enemyEvent.enemyName.empty() ? std::string("NPC") : enemyEvent.enemyName) + "が消えた",
+        "hidden_npc_removed:" + targetKey);
+    return true;
+}
+
+void Game::handleHiddenDungeonNpcCaptureResult(const CaptureResult& capture)
+{
+    if (capture.type != CaptureResultType::Success || capture.capturedEnemy.id <= 0) {
+        return;
+    }
+    EnemyEvent captureEvent;
+    captureEvent.type = EnemyEventType::Death;
+    captureEvent.position = capture.position;
+    captureEvent.enemyRuntimeId = capture.capturedEnemy.id;
+    captureEvent.enemyId = capture.capturedEnemy.enemyId;
+    captureEvent.enemyName = capture.capturedEnemy.enemyName;
+    (void)handleHiddenDungeonNpcEnemyEvent(captureEvent);
+}
+
 void Game::renderDungeonEntrance(Renderer& renderer) const
 {
     if (enemyTestActive_) {
@@ -11065,6 +11481,9 @@ void Game::renderRoguelikeFacilities(Renderer& renderer) const
     const double totalSeconds = runStats_.elapsedSeconds;
     for (int i = 0; i < static_cast<int>(roguelikeFacilities_.size()); ++i) {
         const RoguelikeFacilityInstance& facility = roguelikeFacilities_[static_cast<std::size_t>(i)];
+        if (hiddenRouteNpcAttackActive() && !hiddenRoguelikeFacilityNpcEnemyId(facility.kind).empty()) {
+            continue;
+        }
         const bool inInteractionRange =
             dungeonInspectableInRange(facility.npcPosition, RoguelikeFacilityNpcInspectSize) ||
             dungeonInspectableInRange(facility.propPosition, RoguelikeFacilityPropInspectSize);

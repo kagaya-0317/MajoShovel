@@ -98,8 +98,11 @@ public:
     void drawWrappedText(Vec2 pos, std::string_view text, float maxWidth, Color color, int scale = 2, TextStyle style = TextStyle::Regular);
     bool loadTextFont(std::string_view path, TextFontRole fontRole = TextFontRole::Ui);
     bool loadPlayerSheet(std::string_view path, int frameSize = 0, int columns = 3, int rows = 3);
+    bool loadPlayerHandSheet(std::string_view path, int frameSize = 0, int columns = 3, int rows = 3);
     void unloadPlayerSheet();
+    void unloadPlayerHandSheet();
     bool hasPlayerSheet() const { return playerSheet_.texture != nullptr; }
+    bool hasPlayerHandSheet() const { return playerHandSheet_.texture != nullptr; }
     Vec2 playerSpriteFrameSize() const;
     bool loadUiWindowTexture(std::string_view path);
     void unloadUiWindowTexture();
@@ -137,6 +140,14 @@ public:
         Vec2 anchor = {0.5f, 0.82f},
         bool flipVertical = false);
     void drawPlayerSpriteNaturalSize(
+        int index,
+        Vec2 anchorPosition,
+        float scale,
+        bool flipHorizontal,
+        Color tint = {255, 255, 255, 255},
+        Vec2 anchor = {0.5f, 0.82f},
+        bool flipVertical = false);
+    void drawPlayerHandSpriteNaturalSize(
         int index,
         Vec2 anchorPosition,
         float scale,
@@ -293,6 +304,7 @@ private:
     std::vector<ScreenTransform> screenTransforms_;
     std::vector<RectF> clipStack_;
     SpriteSheet playerSheet_;
+    SpriteSheet playerHandSheet_;
     ImageTexture baseMapTexture_;
     GuidedTexture uiWindowTexture_;
     ImageTexture uiMessageWindowTexture_;
