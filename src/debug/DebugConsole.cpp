@@ -490,12 +490,6 @@ struct DebugConsole::Impl {
         case WM_COMMAND:
             impl->handleCommand(LOWORD(wParam), HIWORD(wParam));
             return 0;
-        case WM_VSCROLL:
-            impl->handleVScroll(reinterpret_cast<HWND>(lParam), LOWORD(wParam));
-            return 0;
-        case WM_HSCROLL:
-            impl->handleHScroll(reinterpret_cast<HWND>(lParam));
-            return 0;
         case WM_MOUSEWHEEL:
             if (impl->handleMouseWheel(GET_WHEEL_DELTA_WPARAM(wParam), lParam)) {
                 return 0;
@@ -661,6 +655,31 @@ struct DebugConsole::Impl {
             SendMessageW(tabControl, TCM_INSERTITEMW, static_cast<WPARAM>(index), reinterpret_cast<LPARAM>(&item));
         }
 
+        debugCanvas = CreateWindowExW(
+            0,
+            DebugCanvasClassName,
+            L"",
+            WS_CHILD | WS_VISIBLE,
+            0, 0, 0, 0,
+            parent,
+            reinterpret_cast<HMENU>(static_cast<INT_PTR>(ControlDebugCanvas)),
+            GetModuleHandleW(nullptr),
+            nullptr);
+        SetWindowLongPtrW(debugCanvas, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(this));
+
+        numberEdit = CreateWindowExW(
+            WS_EX_CLIENTEDGE,
+            L"EDIT",
+            L"",
+            WS_CHILD | ES_AUTOHSCROLL | ES_NUMBER,
+            0, 0, 0, 0,
+            debugCanvas,
+            nullptr,
+            GetModuleHandleW(nullptr),
+            nullptr);
+        SendMessageW(numberEdit, WM_SETFONT, reinterpret_cast<WPARAM>(uiFont), TRUE);
+        ShowWindow(numberEdit, SW_HIDE);
+
         int nextControlId = ControlDebugBase;
         for (std::size_t tabIndex = 0; tabIndex < layoutDefinition.tabs.size(); ++tabIndex) {
             const DebugTabDefinition& tab = layoutDefinition.tabs[tabIndex];
@@ -668,127 +687,37 @@ struct DebugConsole::Impl {
             for (std::size_t groupIndex = 0; groupIndex < tab.groups.size(); ++groupIndex) {
                 const DebugGroupDefinition& group = tab.groups[groupIndex];
                 DebugGroupUi groupUi;
-                groupUi.box = CreateWindowExW(
-                    0,
-                    L"BUTTON",
-                    utf8ToWide(group.label).c_str(),
-                    WS_CHILD | BS_GROUPBOX,
-                    0, 0, 0, 0,
-                    parent,
-                    nullptr,
-                    GetModuleHandleW(nullptr),
-                    nullptr);
-                SendMessageW(groupUi.box, WM_SETFONT, reinterpret_cast<WPARAM>(uiFont), TRUE);
-
-                const int scrollId = nextControlId++;
-                groupUi.scrollbar = createScrollbar(parent, scrollId);
-                ShowWindow(groupUi.scrollbar, SW_HIDE);
-                debugGroupByScrollbar[groupUi.scrollbar] = {tabIndex, groupIndex};
+                groupUi.id = group.id;
+                groupUi.label = utf8ToWide(group.label);
 
                 for (const DebugControlDefinition& control : group.controls) {
-                    const int controlId = nextControlId++;
-                    if (control.kind == DebugControlKind::Button) {
-                        HWND button = createButton(parent, utf8ToWide(control.label).c_str(), controlId);
-                        ShowWindow(button, SW_HIDE);
-                        groupUi.controls.push_back({control.kind, button, nullptr, controlId, control.id, control.command});
-                        debugCommandByControlId[controlId] = control.command;
-                    } else if (control.kind == DebugControlKind::Toggle) {
-                        HWND toggle = createToggle(parent, utf8ToWide(control.label).c_str(), controlId, control.minValue != 0);
-                        ShowWindow(toggle, SW_HIDE);
-                        groupUi.controls.push_back({control.kind, toggle, nullptr, controlId, control.id, control.command});
-                        debugToggleCommandByControlId[controlId] = control.command;
-                    } else if (control.kind == DebugControlKind::NumberInput) {
-                        HWND label = createStatic(parent, utf8ToWide(control.label).c_str());
-                        const int minValue = std::min(control.minValue, control.maxValue);
-                        const int maxValue = std::max(control.minValue, control.maxValue);
-                        const int initialValue = control.hasInitialValue
-                            ? std::clamp(control.initialValue, minValue, maxValue)
-                            : std::clamp(control.minValue, minValue, maxValue);
-                        HWND number = createNumberInput(parent, controlId, initialValue);
-                        ShowWindow(label, SW_HIDE);
-                        ShowWindow(number, SW_HIDE);
-                        groupUi.controls.push_back({control.kind, number, label, controlId, control.id, control.command});
-                        debugNumberByControlId[controlId] = {control.command, minValue, maxValue};
-                    } else if (control.kind == DebugControlKind::Slider) {
-                        HWND label = createStatic(parent, utf8ToWide(control.label).c_str());
-                        const int minValue = std::min(control.minValue, control.maxValue);
-                        const int maxValue = std::max(control.minValue, control.maxValue);
-                        const int initialValue = std::clamp(control.minValue, minValue, maxValue);
-                        HWND value = createStatic(parent, L"");
-                        HWND slider = createSlider(parent, controlId, minValue, maxValue, initialValue);
-                        ShowWindow(label, SW_HIDE);
-                        ShowWindow(value, SW_HIDE);
-                        ShowWindow(slider, SW_HIDE);
-                        groupUi.controls.push_back({
-                            control.kind,
-                            slider,
-                            label,
-                            controlId,
-                            control.id,
-                            control.command,
-                            value,
-                            0});
-                        debugSliderByControlId[controlId] = {
-                            control.command,
-                            minValue,
-                            maxValue,
-                            initialValue,
-                            value};
-                        debugSliderControlIdByDebugId[control.id] = controlId;
-                        updateSliderValueLabel(debugSliderByControlId[controlId], initialValue);
-                    } else if (control.kind == DebugControlKind::Gauge) {
-                        HWND label = createStatic(parent, utf8ToWide(control.label).c_str());
-                        const int minValue = std::min(control.minValue, control.maxValue);
-                        const int maxValue = std::max(control.minValue, control.maxValue);
-                        HWND gauge = createGauge(parent, minValue, maxValue, std::clamp(control.minValue, minValue, maxValue));
-                        ShowWindow(label, SW_HIDE);
-                        ShowWindow(gauge, SW_HIDE);
-                        groupUi.controls.push_back({control.kind, gauge, label, controlId, control.id, control.command});
-                    } else if (control.kind == DebugControlKind::Dropdown) {
-                        HWND label = createStatic(parent, utf8ToWide(control.label).c_str());
-                        HWND combo = createDropdown(parent, controlId);
+                    DebugControlUi controlUi;
+                    controlUi.kind = control.kind;
+                    controlUi.controlId = nextControlId++;
+                    controlUi.id = control.id;
+                    controlUi.label = control.label;
+                    controlUi.command = control.command;
+                    controlUi.minValue = std::min(control.minValue, control.maxValue);
+                    controlUi.maxValue = std::max(control.minValue, control.maxValue);
+                    controlUi.checked = control.minValue != 0;
+                    controlUi.value = control.hasInitialValue
+                        ? std::clamp(control.initialValue, controlUi.minValue, controlUi.maxValue)
+                        : std::clamp(control.minValue, controlUi.minValue, controlUi.maxValue);
+                    if (control.kind == DebugControlKind::Dropdown || control.kind == DebugControlKind::DropdownButton) {
+                        controlUi.value = control.options.empty()
+                            ? -1
+                            : std::clamp(control.minValue, 0, static_cast<int>(control.options.size()) - 1);
                         for (const std::string& option : control.options) {
-                            std::wstring wide = utf8ToWide(option);
-                            SendMessageW(combo, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(wide.c_str()));
+                            controlUi.options.push_back(utf8ToWide(option));
                         }
-                        if (!control.options.empty()) {
-                            SendMessageW(combo, CB_SETCURSEL, std::clamp(control.minValue, 0, static_cast<int>(control.options.size()) - 1), 0);
-                        }
-                        ShowWindow(label, SW_HIDE);
-                        ShowWindow(combo, SW_HIDE);
-                        groupUi.controls.push_back({control.kind, combo, label, controlId, control.id, control.command});
-                        debugDropdownByControlId[controlId] = {control.command, control.optionCommands};
-                        debugDropdownControlIdByDebugId[control.id] = controlId;
-                    } else if (control.kind == DebugControlKind::DropdownButton) {
-                        HWND label = createStatic(parent, utf8ToWide(control.label).c_str());
-                        HWND combo = createDropdown(parent, controlId);
-                        for (const std::string& option : control.options) {
-                            std::wstring wide = utf8ToWide(option);
-                            SendMessageW(combo, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(wide.c_str()));
-                        }
-                        if (!control.options.empty()) {
-                            SendMessageW(combo, CB_SETCURSEL, std::clamp(control.minValue, 0, static_cast<int>(control.options.size()) - 1), 0);
-                        }
-                        const int buttonId = nextControlId++;
-                        HWND button = createButton(parent, L"実行", buttonId);
-                        ShowWindow(label, SW_HIDE);
-                        ShowWindow(combo, SW_HIDE);
-                        ShowWindow(button, SW_HIDE);
-                        groupUi.controls.push_back({
-                            control.kind,
-                            combo,
-                            label,
-                            controlId,
-                            control.id,
-                            control.command,
-                            button,
-                            buttonId});
-                        debugDropdownButtonByControlId[buttonId] = {controlId, {control.command, control.optionCommands}};
-                        debugDropdownControlIdByDebugId[control.id] = controlId;
+                        controlUi.optionCommands = control.optionCommands;
                     }
+                    if (control.kind == DebugControlKind::DropdownButton) {
+                        controlUi.actionControlId = nextControlId++;
+                    }
+                    groupUi.controls.push_back(std::move(controlUi));
                 }
 
-                ShowWindow(groupUi.box, SW_HIDE);
                 tabUi.groups.push_back(std::move(groupUi));
             }
             debugTabs.push_back(std::move(tabUi));
@@ -809,156 +738,6 @@ struct DebugConsole::Impl {
             nullptr);
         SendMessageW(button, WM_SETFONT, reinterpret_cast<WPARAM>(uiFont), TRUE);
         return button;
-    }
-
-    HWND createToggle(HWND parent, const wchar_t* text, int controlId, bool checked)
-    {
-        HWND toggle = CreateWindowExW(
-            0,
-            L"BUTTON",
-            text,
-            WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX,
-            0, 0, 0, 0,
-            parent,
-            reinterpret_cast<HMENU>(static_cast<INT_PTR>(controlId)),
-            GetModuleHandleW(nullptr),
-            nullptr);
-        SendMessageW(toggle, WM_SETFONT, reinterpret_cast<WPARAM>(uiFont), TRUE);
-        SendMessageW(toggle, BM_SETCHECK, checked ? BST_CHECKED : BST_UNCHECKED, 0);
-        return toggle;
-    }
-
-    HWND createStatic(HWND parent, const wchar_t* text)
-    {
-        HWND label = CreateWindowExW(
-            0,
-            L"STATIC",
-            text,
-            WS_CHILD | WS_VISIBLE,
-            0, 0, 0, 0,
-            parent,
-            nullptr,
-            GetModuleHandleW(nullptr),
-            nullptr);
-        SendMessageW(label, WM_SETFONT, reinterpret_cast<WPARAM>(uiFont), TRUE);
-        return label;
-    }
-
-    HWND createNumberInput(HWND parent, int controlId, int value)
-    {
-        HWND input = CreateWindowExW(
-            WS_EX_CLIENTEDGE,
-            L"EDIT",
-            std::to_wstring(value).c_str(),
-            WS_CHILD | WS_VISIBLE | ES_AUTOHSCROLL | ES_NUMBER,
-            0, 0, 0, 0,
-            parent,
-            reinterpret_cast<HMENU>(static_cast<INT_PTR>(controlId)),
-            GetModuleHandleW(nullptr),
-            nullptr);
-        SendMessageW(input, WM_SETFONT, reinterpret_cast<WPARAM>(uiFont), TRUE);
-        return input;
-    }
-
-    HWND createSlider(HWND parent, int controlId, int minValue, int maxValue, int value)
-    {
-        HWND slider = CreateWindowExW(
-            0,
-            TRACKBAR_CLASSW,
-            L"",
-            WS_CHILD | WS_VISIBLE | TBS_AUTOTICKS | TBS_TOOLTIPS,
-            0, 0, 0, 0,
-            parent,
-            reinterpret_cast<HMENU>(static_cast<INT_PTR>(controlId)),
-            GetModuleHandleW(nullptr),
-            nullptr);
-        SendMessageW(slider, TBM_SETRANGE, TRUE, MAKELPARAM(minValue, maxValue));
-        SendMessageW(slider, TBM_SETPAGESIZE, 0, 1);
-        SendMessageW(slider, TBM_SETTICFREQ, 1, 0);
-        SendMessageW(slider, TBM_SETPOS, TRUE, std::clamp(value, minValue, maxValue));
-        SendMessageW(slider, WM_SETFONT, reinterpret_cast<WPARAM>(uiFont), TRUE);
-        return slider;
-    }
-
-    HWND createGauge(HWND parent, int minValue, int maxValue, int value)
-    {
-        HWND gauge = CreateWindowExW(
-            0,
-            PROGRESS_CLASSW,
-            L"",
-            WS_CHILD | WS_VISIBLE,
-            0, 0, 0, 0,
-            parent,
-            nullptr,
-            GetModuleHandleW(nullptr),
-            nullptr);
-        SendMessageW(gauge, PBM_SETRANGE32, minValue, maxValue);
-        SendMessageW(gauge, PBM_SETPOS, std::clamp(value, minValue, maxValue), 0);
-        return gauge;
-    }
-
-    void updateSliderValueLabel(const DebugSliderCommand& slider, int value)
-    {
-        if (!slider.valueHwnd) {
-            return;
-        }
-        SetWindowTextW(slider.valueHwnd, std::to_wstring(value).c_str());
-    }
-
-    HWND createScrollbar(HWND parent, int controlId)
-    {
-        return CreateWindowExW(
-            0,
-            L"SCROLLBAR",
-            L"",
-            WS_CHILD | SBS_VERT,
-            0, 0, 0, 0,
-            parent,
-            reinterpret_cast<HMENU>(static_cast<INT_PTR>(controlId)),
-            GetModuleHandleW(nullptr),
-            nullptr);
-    }
-
-    HWND createDropdown(HWND parent, int controlId)
-    {
-        HWND combo = CreateWindowExW(
-            0,
-            L"COMBOBOX",
-            L"",
-            WS_CHILD | WS_VISIBLE | WS_VSCROLL | CBS_DROPDOWNLIST | CBS_HASSTRINGS,
-            0, 0, 0, 0,
-            parent,
-            reinterpret_cast<HMENU>(static_cast<INT_PTR>(controlId)),
-            GetModuleHandleW(nullptr),
-            nullptr);
-        SendMessageW(combo, WM_SETFONT, reinterpret_cast<WPARAM>(uiFont), TRUE);
-        return combo;
-    }
-
-    void layoutDebugChild(HWND child, int x, int y, int width, int height, bool visible, int clipTop, int clipBottom)
-    {
-        if (!child) {
-            return;
-        }
-
-        MoveWindow(child, x, y, width, height, TRUE);
-        const int clippedTop = std::clamp(clipTop - y, 0, height);
-        const int clippedBottom = std::clamp(clipBottom - y, 0, height);
-        if (!visible || width <= 0 || height <= 0 || clippedTop >= clippedBottom) {
-            SetWindowRgn(child, nullptr, TRUE);
-            ShowWindow(child, SW_HIDE);
-            return;
-        }
-
-        if (clippedTop == 0 && clippedBottom == height) {
-            SetWindowRgn(child, nullptr, TRUE);
-        } else {
-            HRGN region = CreateRectRgn(0, clippedTop, width, clippedBottom);
-            if (SetWindowRgn(child, region, TRUE) == 0 && region) {
-                DeleteObject(region);
-            }
-        }
-        ShowWindow(child, SW_SHOW);
     }
 
     void layoutControls(int width, int height)
@@ -994,37 +773,7 @@ struct DebugConsole::Impl {
 
     void handleCommand(int controlId, int notification)
     {
-        if (notification == BN_CLICKED) {
-            auto dropdownButtonIt = debugDropdownButtonByControlId.find(controlId);
-            if (dropdownButtonIt != debugDropdownButtonByControlId.end()) {
-                queueDropdownCommand(dropdownButtonIt->second.dropdownControlId, dropdownButtonIt->second.dropdown);
-                return;
-            }
-
-            auto it = debugCommandByControlId.find(controlId);
-            if (it != debugCommandByControlId.end()) {
-                queueCommand(it->second);
-                return;
-            }
-
-            auto toggleIt = debugToggleCommandByControlId.find(controlId);
-            if (toggleIt != debugToggleCommandByControlId.end()) {
-                queueToggleCommand(controlId, toggleIt->second);
-                return;
-            }
-        } else if (notification == CBN_SELENDOK) {
-            auto it = debugDropdownByControlId.find(controlId);
-            if (it != debugDropdownByControlId.end()) {
-                queueDropdownCommand(controlId, it->second);
-                return;
-            }
-        } else if (notification == EN_KILLFOCUS) {
-            auto it = debugNumberByControlId.find(controlId);
-            if (it != debugNumberByControlId.end()) {
-                queueNumberCommand(controlId, it->second);
-            }
-            return;
-        } else {
+        if (notification != BN_CLICKED) {
             return;
         }
 
@@ -1051,67 +800,6 @@ struct DebugConsole::Impl {
         default:
             break;
         }
-    }
-
-    void handleVScroll(HWND scrollHwnd, int requestCode)
-    {
-        DebugGroupUi* group = debugGroupForScrollbar(scrollHwnd);
-        if (!group) {
-            return;
-        }
-
-        const int maxOffset = maxGroupScrollOffset(*group);
-        int nextOffset = group->scrollOffset;
-        switch (requestCode) {
-        case SB_LINEUP:
-            nextOffset -= DebugGroupLineScroll;
-            break;
-        case SB_LINEDOWN:
-            nextOffset += DebugGroupLineScroll;
-            break;
-        case SB_PAGEUP:
-            nextOffset -= std::max(DebugGroupLineScroll, group->viewportHeight - DebugGroupLineScroll);
-            break;
-        case SB_PAGEDOWN:
-            nextOffset += std::max(DebugGroupLineScroll, group->viewportHeight - DebugGroupLineScroll);
-            break;
-        case SB_TOP:
-            nextOffset = 0;
-            break;
-        case SB_BOTTOM:
-            nextOffset = maxOffset;
-            break;
-        case SB_THUMBPOSITION:
-        case SB_THUMBTRACK: {
-            SCROLLINFO info{};
-            info.cbSize = sizeof(info);
-            info.fMask = SIF_TRACKPOS;
-            if (GetScrollInfo(scrollHwnd, SB_CTL, &info)) {
-                nextOffset = info.nTrackPos;
-            }
-            break;
-        }
-        default:
-            return;
-        }
-
-        group->scrollOffset = std::clamp(nextOffset, 0, maxOffset);
-        RECT rect{};
-        GetClientRect(hwnd, &rect);
-        layoutControls(rect.right - rect.left, rect.bottom - rect.top);
-    }
-
-    void handleHScroll(HWND controlHwnd)
-    {
-        if (!controlHwnd) {
-            return;
-        }
-        const int controlId = GetDlgCtrlID(controlHwnd);
-        auto it = debugSliderByControlId.find(controlId);
-        if (it == debugSliderByControlId.end()) {
-            return;
-        }
-        queueSliderCommand(controlId, it->second);
     }
 
     bool handleMouseWheel(int delta, LPARAM pointParam)
