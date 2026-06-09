@@ -280,10 +280,12 @@ private:
     void unloadGuidedTexture(GuidedTexture& texture);
     CachedImageEntry* findImageEntry(ImageHandle handle);
     const CachedImageEntry* findImageEntry(ImageHandle handle) const;
+    std::size_t imageTextureApproxBytes(const ImageTexture& texture) const;
     bool ensureImageReady(CachedImageEntry& entry);
+    bool ensureCachedImageOutlineReady(CachedImageEntry& entry);
     void touchImage(CachedImageEntry& entry);
     void destroyCachedImageTexture(CachedImageEntry& entry);
-    void evictImageCacheIfNeeded();
+    void evictImageCacheIfNeeded(const CachedImageEntry* protectedEntry = nullptr);
     void eraseImageHandle(ImageHandle handle);
     void drawTextureRegion(SDL_Texture* texture, RectF src, Vec2 pos, Vec2 size, Color tint, bool flipHorizontal = false);
     void drawTextureTiled(SDL_Texture* texture, RectF src, Vec2 pos, Vec2 size, Color tint);

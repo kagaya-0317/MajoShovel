@@ -3641,6 +3641,7 @@ void Game::returnToBaseFromNormalStage(bool stageCleared, bool died)
     merchantRefreshPending_ = merchantRefreshPending_ || refreshMerchant;
     clearTemporaryPlayerState(true);
     captureDungeonState();
+    tileMap_ = TileMap{};
     enemies_ = EnemySystem{};
     effects_ = EffectSystem{};
     captureAbsorbAnimations_.clear();
@@ -4327,7 +4328,7 @@ void Game::captureDungeonState()
     state.valid = true;
     state.currentStage = currentStage_;
     state.currentStageId = currentStageId_;
-    state.tileMap = tileMap_;
+    state.tileMapState = tileMap_.capturePersistentState();
     state.dungeonLayout = dungeonLayout_;
     state.dungeonMinimapCells = dungeonMinimapCells_;
     state.runStats = runStats_;
@@ -4368,7 +4369,8 @@ bool Game::restoreDungeonState(bool useLatestWarpPoint)
     currentStage_ = state.currentStage;
     currentStageId_ = state.currentStageId;
     resolveCurrentStageDefinition();
-    tileMap_ = state.tileMap;
+    tileMap_ = TileMap{};
+    tileMap_.restorePersistentState(state.tileMapState);
     dungeonLayout_ = state.dungeonLayout;
     dungeonMinimapCells_ = state.dungeonMinimapCells;
     runStats_ = state.runStats;
@@ -10428,7 +10430,7 @@ void Game::captureRetrySnapshotAtWarpPoint()
     retrySnapshot_.playerXp = player_.xp;
     retrySnapshot_.playerXpToNext = player_.xpToNext;
     retrySnapshot_.inventory = captureInventoryCarryState();
-    retrySnapshot_.tileMap = tileMap_;
+    retrySnapshot_.tileMapState = tileMap_.capturePersistentState();
     retrySnapshot_.dungeonLayout = dungeonLayout_;
     retrySnapshot_.dungeonMinimapCells = dungeonMinimapCells_;
     retrySnapshot_.runStats = runStats_;
@@ -10475,7 +10477,8 @@ void Game::restoreRetrySnapshot()
     player_.lastDamageCause = {};
     player_.status = EntityStatus{};
 
-    tileMap_ = retrySnapshot_.tileMap;
+    tileMap_ = TileMap{};
+    tileMap_.restorePersistentState(retrySnapshot_.tileMapState);
     dungeonLayout_ = retrySnapshot_.dungeonLayout;
     dungeonMinimapCells_ = retrySnapshot_.dungeonMinimapCells;
     restoreInventoryCarryState(retrySnapshot_.inventory);

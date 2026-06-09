@@ -960,17 +960,32 @@ int TileMap::floorMod(int a, int b)
     return m;
 }
 
-void TileMap::rememberDamagedTileMaxHp(int tx, int ty, const Tile& tile)
-{
-    if (tile.type == TileType::Empty || tile.hp == 0) {
-        return;
-    }
-    damagedTileMaxHp_.try_emplace(key(tx, ty), std::max(1, static_cast<int>(tile.hp)));
-}
-
 void TileMap::clearCrackCacheForTile(int tx, int ty)
 {
-    damagedTileMaxHp_.erase(key(tx, ty));
+    damagedTileStates_.erase(key(tx, ty));
+}
+
+int TileMap::damageStateMaxHpForTile(int tx, int ty, const Tile& tile) const
+{
+    const auto it = damagedTileStates_.find(key(tx, ty));
+    if (it == damagedTileStates_.end()) {
+        return std::max(1, static_cast<int>(tile.hp));
+    }
+    return std::max({1, it->second.maxHp, static_cast<int>(tile.hp)});
+}
+
+void TileMap::recordDamagedTileState(int tx, int ty, TileType type, int hp, int maxHp)
+{
+    if (type == TileType::Empty || hp <= 0 || maxHp <= 0) {
+        clearCrackCacheForTile(tx, ty);
+        return;
+    }
+    damagedTileStates_[key(tx, ty)] = TerrainTileDamageState{
+        .tile = DungeonTile{tx, ty},
+        .type = type,
+        .hp = std::clamp(hp, 0, maxHp),
+        .maxHp = std::max(1, maxHp),
+    };
 }
 
 int TileMap::crackLevelForTile(int tx, int ty, const Tile& tile) const
@@ -979,12 +994,12 @@ int TileMap::crackLevelForTile(int tx, int ty, const Tile& tile) const
         return 0;
     }
 
-    const auto it = damagedTileMaxHp_.find(key(tx, ty));
-    if (it == damagedTileMaxHp_.end()) {
+    const auto it = damagedTileStates_.find(key(tx, ty));
+    if (it == damagedTileStates_.end()) {
         return 0;
     }
 
-    const int maxHp = std::max(1, it->second);
+    const int maxHp = std::max(1, it->second.maxHp);
     const int hp = std::clamp(static_cast<int>(tile.hp), 0, maxHp);
     const float damageRatio = 1.0f - static_cast<float>(hp) / static_cast<float>(maxHp);
     if (damageRatio < 0.10f) {
@@ -1058,6 +1073,31 @@ void TileMap::initializeChunk(Chunk& chunk, const RuntimeBalance& config)
             if (tile.type == TileType::Empty) {
                 tile.hp = 0;
             }
+            const long long tileKey = key(wx, wy);
+            auto damageIt = damagedTileStates_.find(tileKey);
+            if (damageIt == damagedTileStates_.end()) {
+                continue;
+            }
+            const TerrainTileDamageState& damage = damageIt->second;
+            if (tile.type == damage.type && damage.hp > 0 && damage.maxHp > 0) {
+                tile.hp = static_cast<unsigned char>(clampTileHp(std::min(damage.hp, damage.maxHp)));
+            } else {
+                damagedTileStates_.erase(damageIt);
+            }
+        }
+    }
+}
+
+void TileMap::evictDistantChunks()
+{
+    constexpr int RetainedChunkRadius = balance::ActiveChunkRadius + 1;
+    for (auto it = chunks_.begin(); it != chunks_.end();) {
+        const Chunk& chunk = it->second;
+        if (std::abs(chunk.cx - centerChunkX_) > RetainedChunkRadius ||
+            std::abs(chunk.cy - centerChunkY_) > RetainedChunkRadius) {
+            it = chunks_.erase(it);
+        } else {
+            ++it;
         }
     }
 }
@@ -1138,6 +1178,71 @@ std::vector<TerrainTileEdit> TileMap::terrainEditsForSave() const
     return edits;
 }
 
+TileMapPersistentState TileMap::capturePersistentState() const
+{
+    TileMapPersistentState state;
+    state.tileOverrides.reserve(tileOverrides_.size());
+    for (const auto& [packed, type] : tileOverrides_) {
+        state.tileOverrides.push_back(TerrainTileEdit{tileFromKey(packed), type});
+    }
+    state.terrainEdits = terrainEditsForSave();
+    state.damagedTiles.reserve(damagedTileStates_.size());
+    for (const auto& [packed, damage] : damagedTileStates_) {
+        if (damage.type == TileType::Empty || damage.hp <= 0 || damage.maxHp <= 0) {
+            continue;
+        }
+        TerrainTileDamageState copy = damage;
+        copy.tile = tileFromKey(packed);
+        state.damagedTiles.push_back(copy);
+    }
+
+    const auto editLess = [](const TerrainTileEdit& lhs, const TerrainTileEdit& rhs) {
+        if (lhs.tile.x != rhs.tile.x) {
+            return lhs.tile.x < rhs.tile.x;
+        }
+        return lhs.tile.y < rhs.tile.y;
+    };
+    std::sort(state.tileOverrides.begin(), state.tileOverrides.end(), editLess);
+    std::sort(state.damagedTiles.begin(), state.damagedTiles.end(), [](const TerrainTileDamageState& lhs, const TerrainTileDamageState& rhs) {
+        if (lhs.tile.x != rhs.tile.x) {
+            return lhs.tile.x < rhs.tile.x;
+        }
+        return lhs.tile.y < rhs.tile.y;
+    });
+    return state;
+}
+
+void TileMap::restorePersistentState(const TileMapPersistentState& state)
+{
+    chunks_.clear();
+    tileOverrides_.clear();
+    terrainEdits_.clear();
+    damagedTileStates_.clear();
+    damageProtectionAreas_.clear();
+    activeChunkCount_ = 0;
+
+    tileOverrides_.reserve(state.tileOverrides.size());
+    for (const TerrainTileEdit& edit : state.tileOverrides) {
+        tileOverrides_[key(edit.tile.x, edit.tile.y)] = edit.type;
+    }
+    terrainEdits_.reserve(state.terrainEdits.size());
+    for (const TerrainTileEdit& edit : state.terrainEdits) {
+        terrainEdits_[key(edit.tile.x, edit.tile.y)] = edit.type;
+    }
+    damagedTileStates_.reserve(state.damagedTiles.size());
+    for (const TerrainTileDamageState& damage : state.damagedTiles) {
+        if (damage.type == TileType::Empty || damage.hp <= 0 || damage.maxHp <= 0) {
+            continue;
+        }
+        damagedTileStates_[key(damage.tile.x, damage.tile.y)] = TerrainTileDamageState{
+            .tile = damage.tile,
+            .type = damage.type,
+            .hp = std::clamp(damage.hp, 0, damage.maxHp),
+            .maxHp = std::max(1, damage.maxHp),
+        };
+    }
+}
+
 void TileMap::updateAround(Vec2 worldCenter, float, const RuntimeBalance& config, const DungeonLayout& dungeonLayout)
 {
     balanceSnapshot_ = config;
@@ -1153,6 +1258,7 @@ void TileMap::updateAround(Vec2 worldCenter, float, const RuntimeBalance& config
             ++activeChunkCount_;
         }
     }
+    evictDistantChunks();
 }
 
 Tile* TileMap::tileAtWorld(int tx, int ty)
@@ -1200,13 +1306,15 @@ std::vector<DamagedTile> TileMap::damageCircle(Vec2 center, float radius, int da
             }
             const TileType destroyedType = tile->type;
             const Color destroyedColor = tileColor(*tile);
-            rememberDamagedTileMaxHp(tx, ty, *tile);
+            const int maxHp = damageStateMaxHpForTile(tx, ty, *tile);
             tile->hp = static_cast<unsigned char>(std::max(0, static_cast<int>(tile->hp) - damage));
             if (tile->hp == 0) {
                 tile->type = TileType::Empty;
                 terrainEdits_[key(tx, ty)] = TileType::Empty;
                 clearCrackCacheForTile(tx, ty);
                 openedTiles.push_back({tileCenter(tx, ty), destroyedType, destroyedColor});
+            } else {
+                recordDamagedTileState(tx, ty, destroyedType, static_cast<int>(tile->hp), maxHp);
             }
         }
     }
@@ -1229,7 +1337,7 @@ bool TileMap::damageTile(int tx, int ty, int damage, Vec2& openedTileCenter, Til
     }
 
     const TileType destroyedType = tile->type;
-    rememberDamagedTileMaxHp(tx, ty, *tile);
+    const int maxHp = damageStateMaxHpForTile(tx, ty, *tile);
     tile->hp = static_cast<unsigned char>(std::max(0, static_cast<int>(tile->hp) - damage));
     if (tile->hp == 0) {
         tile->type = TileType::Empty;
@@ -1241,6 +1349,7 @@ bool TileMap::damageTile(int tx, int ty, int damage, Vec2& openedTileCenter, Til
         }
         return true;
     }
+    recordDamagedTileState(tx, ty, destroyedType, static_cast<int>(tile->hp), maxHp);
     return false;
 }
 

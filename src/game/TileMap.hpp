@@ -53,6 +53,19 @@ struct TerrainTileEdit {
     TileType type = TileType::Empty;
 };
 
+struct TerrainTileDamageState {
+    DungeonTile tile{};
+    TileType type = TileType::Dirt;
+    int hp = 0;
+    int maxHp = 1;
+};
+
+struct TileMapPersistentState {
+    std::vector<TerrainTileEdit> tileOverrides;
+    std::vector<TerrainTileEdit> terrainEdits;
+    std::vector<TerrainTileDamageState> damagedTiles;
+};
+
 struct TerrainDamageProtectionArea {
     DungeonTile minTile{};
     DungeonTile maxTile{};
@@ -88,19 +101,25 @@ public:
     void setDamageProtectionAreas(std::vector<TerrainDamageProtectionArea> areas);
     void clearDamageProtectionAreas();
     std::vector<TerrainTileEdit> terrainEditsForSave() const;
+    TileMapPersistentState capturePersistentState() const;
+    void restorePersistentState(const TileMapPersistentState& state);
     int activeChunkCount() const { return activeChunkCount_; }
     std::size_t generatedChunkCount() const { return chunks_.size(); }
+    std::size_t terrainEditCount() const { return terrainEdits_.size(); }
+    std::size_t damagedTileStateCount() const { return damagedTileStates_.size(); }
 
 private:
     Chunk& getOrCreateChunk(int cx, int cy, const RuntimeBalance& config);
     void initializeChunk(Chunk& chunk, const RuntimeBalance& config);
+    void evictDistantChunks();
     static long long key(int cx, int cy);
     static DungeonTile tileFromKey(long long key);
     static int floorDiv(int a, int b);
     static int floorMod(int a, int b);
     Tile* tileAtWorld(int tx, int ty);
     const Tile* tileAtWorldIfGenerated(int tx, int ty) const;
-    void rememberDamagedTileMaxHp(int tx, int ty, const Tile& tile);
+    int damageStateMaxHpForTile(int tx, int ty, const Tile& tile) const;
+    void recordDamagedTileState(int tx, int ty, TileType type, int hp, int maxHp);
     bool damageProtectedAt(int tx, int ty) const;
     void clearCrackCacheForTile(int tx, int ty);
     int crackLevelForTile(int tx, int ty, const Tile& tile) const;
@@ -115,7 +134,7 @@ private:
     std::unordered_map<long long, Chunk> chunks_;
     std::unordered_map<long long, TileType> tileOverrides_;
     std::unordered_map<long long, TileType> terrainEdits_;
-    std::unordered_map<long long, int> damagedTileMaxHp_;
+    std::unordered_map<long long, TerrainTileDamageState> damagedTileStates_;
     std::vector<TerrainDamageProtectionArea> damageProtectionAreas_;
     int centerChunkX_ = 0;
     int centerChunkY_ = 0;

@@ -2275,7 +2275,8 @@ bool Game::saveSaveData(const std::filesystem::path& path, std::string& message)
         file << "latest_warp " << latestWarpPointPosition_.x << " " << latestWarpPointPosition_.y << "\n";
     }
     const DungeonLayout* saveDungeonLayout = nullptr;
-    const TileMap* saveDungeonTileMap = nullptr;
+    std::vector<TerrainTileEdit> saveDungeonTerrainEditsStorage;
+    const std::vector<TerrainTileEdit>* saveDungeonTerrainEdits = nullptr;
     const std::vector<WarpPoint>* saveDungeonWarpPoints = nullptr;
     const DungeonMinimapCells* saveDungeonMinimapCells = nullptr;
     const std::vector<RewardNode>* saveRewardNodes = nullptr;
@@ -2295,7 +2296,8 @@ bool Game::saveSaveData(const std::filesystem::path& path, std::string& message)
         hasSaveableDungeonLayout(dungeonLayout_) &&
         !isRoguelikeSaveStage(currentStageDefinition())) {
         saveDungeonLayout = &dungeonLayout_;
-        saveDungeonTileMap = &tileMap_;
+        saveDungeonTerrainEditsStorage = tileMap_.terrainEditsForSave();
+        saveDungeonTerrainEdits = &saveDungeonTerrainEditsStorage;
         saveDungeonWarpPoints = &warpPoints_;
         saveDungeonMinimapCells = &dungeonMinimapCells_;
         saveRewardNodes = &rewardNodes_;
@@ -2313,7 +2315,7 @@ bool Game::saveSaveData(const std::filesystem::path& path, std::string& message)
             hasSaveableDungeonLayout(retainedStage->second.dungeonLayout) &&
             !isRoguelikeSaveStage(currentStageDefinition())) {
             saveDungeonLayout = &retainedStage->second.dungeonLayout;
-            saveDungeonTileMap = &retainedStage->second.tileMap;
+            saveDungeonTerrainEdits = &retainedStage->second.tileMapState.terrainEdits;
             saveDungeonWarpPoints = &retainedStage->second.warpPoints;
             saveDungeonMinimapCells = &retainedStage->second.dungeonMinimapCells;
             saveRewardNodes = &retainedStage->second.rewardNodes;
@@ -2353,8 +2355,8 @@ bool Game::saveSaveData(const std::filesystem::path& path, std::string& message)
                     << static_cast<int>(cell.type) << "\n";
             }
         }
-        if (saveDungeonTileMap != nullptr) {
-            for (const TerrainTileEdit& edit : saveDungeonTileMap->terrainEditsForSave()) {
+        if (saveDungeonTerrainEdits != nullptr) {
+            for (const TerrainTileEdit& edit : *saveDungeonTerrainEdits) {
                 file << "dungeon_tile_edit "
                     << saveDungeonStageId << " "
                     << edit.tile.x << " "

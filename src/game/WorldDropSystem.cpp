@@ -17,7 +17,6 @@
 #include <cctype>
 #include <cmath>
 #include <random>
-#include <sstream>
 #include <string_view>
 #include <utility>
 
@@ -1219,10 +1218,6 @@ void WorldDropSystem::spawnDrop(
     };
     configureDropMotion(drop, motion);
     drops_.push_back(std::move(drop));
-
-    std::ostringstream line;
-    line << "WorldDropSystem: spawned object_id=\"" << object.id << "\" name=\"" << object.name << "\"";
-    logError(line.str());
 }
 
 }

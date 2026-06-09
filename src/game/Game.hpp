@@ -682,7 +682,7 @@ private:
         int playerXp = 0;
         int playerXpToNext = 12;
         InventoryCarryState inventory;
-        TileMap tileMap;
+        TileMapPersistentState tileMapState;
         DungeonLayout dungeonLayout;
         DungeonMinimapCells dungeonMinimapCells;
         RunStats runStats{};
@@ -708,7 +708,7 @@ private:
         bool valid = false;
         int currentStage = 0;
         std::string currentStageId;
-        TileMap tileMap;
+        TileMapPersistentState tileMapState;
         DungeonLayout dungeonLayout;
         DungeonMinimapCells dungeonMinimapCells;
         RunStats runStats{};

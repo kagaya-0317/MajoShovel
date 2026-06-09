@@ -280,6 +280,7 @@ private:
         float throwElapsed = 0.0f;
         float throwPeakTime = 0.0f;
         float throwReturnTime = 0.0f;
+        float throwSettleTime = 0.0f;
         float throwDistance = 0.0f;
         SpellRingState state = SpellRingState::Normal;
     };
@@ -326,8 +327,6 @@ private:
     void advanceOrbitAngles(float dt, const RuntimeBalance& balance);
     void refreshItemWorldPositions(float dt, const RuntimeBalance& balance, bool advanceCapturedBehaviors);
     float throwReachForRing(int ringIndex) const;
-    float throwOutboundPhaseForRing(int ringIndex) const;
-    float throwReturnPhaseForRing(int ringIndex) const;
     bool canAddItemForRing(int ringIndex, const SpellRingItem& item) const;
     bool addItemToRing(int ringIndex, SpellRingItem item, SpellRingAddResult* outResult);
     bool canPlaceItemAtAngle(const SpellRingItem& item, float angle, int ignoreIndex, const RingOrbitTuning& tuning) const;

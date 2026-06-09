@@ -1915,6 +1915,20 @@ void Renderer::touchImage(CachedImageEntry& entry)
     entry.lastUsedFrame = frameCounter_;
 }
 
+std::size_t Renderer::imageTextureApproxBytes(const ImageTexture& texture) const
+{
+    const std::size_t pixelCount = static_cast<std::size_t>(std::max(0, texture.width)) *
+        static_cast<std::size_t>(std::max(0, texture.height));
+    std::size_t bytes = texture.alphaMask.size();
+    if (texture.texture != nullptr) {
+        bytes += pixelCount * 4U;
+    }
+    if (texture.outlineTexture != nullptr) {
+        bytes += pixelCount * 4U;
+    }
+    return bytes;
+}
+
 void Renderer::destroyCachedImageTexture(CachedImageEntry& entry)
 {
     const std::size_t bytes = entry.approxBytes;
@@ -1954,24 +1968,73 @@ bool Renderer::ensureImageReady(CachedImageEntry& entry)
     if (loaded.outlineTexture != nullptr) {
         SDL_SetTextureScaleMode(loaded.outlineTexture, scaleMode);
     }
-    const std::size_t loadedBytes = static_cast<std::size_t>(std::max(0, loaded.width)) *
-        static_cast<std::size_t>(std::max(0, loaded.height)) * 4U;
 
     destroyCachedImageTexture(entry);
-    entry.texture = loaded;
-    entry.approxBytes = loadedBytes;
-    imageCacheBytes_ += loadedBytes;
+    entry.texture = std::move(loaded);
+    entry.approxBytes = imageTextureApproxBytes(entry.texture);
+    imageCacheBytes_ += entry.approxBytes;
     entry.failed = false;
     entry.failureCount = 0;
     entry.nextRetryTicks = 0;
-    evictImageCacheIfNeeded();
+    evictImageCacheIfNeeded(&entry);
     return true;
 }
 
-void Renderer::evictImageCacheIfNeeded()
+bool Renderer::ensureCachedImageOutlineReady(CachedImageEntry& entry)
+{
+    ImageTexture& texture = entry.texture;
+    if (texture.outlineTexture != nullptr) {
+        return true;
+    }
+    if (texture.texture == nullptr || texture.width <= 0 || texture.height <= 0 || texture.alphaMask.empty()) {
+        return false;
+    }
+
+    const int width = texture.width;
+    const int height = texture.height;
+    const int rowBytes = width * 4;
+    std::vector<unsigned char> pixels(static_cast<std::size_t>(rowBytes) * static_cast<std::size_t>(height), 255);
+    for (std::size_t alphaIndex = 0, pixelIndex = 3;
+         alphaIndex < texture.alphaMask.size() && pixelIndex < pixels.size();
+         ++alphaIndex, pixelIndex += 4) {
+        pixels[pixelIndex] = texture.alphaMask[alphaIndex];
+    }
+
+    SDL_Surface* surface = SDL_CreateSurfaceFrom(width, height, SDL_PIXELFORMAT_BGRA32, pixels.data(), rowBytes);
+    if (surface == nullptr) {
+        return false;
+    }
+
+    SDL_Texture* outlineTexture = SDL_CreateTextureFromSurface(renderer_, surface);
+    SDL_DestroySurface(surface);
+    if (outlineTexture == nullptr) {
+        return false;
+    }
+
+    SDL_SetTextureBlendMode(outlineTexture, SDL_BLENDMODE_BLEND);
+    SDL_SetTextureScaleMode(outlineTexture, entry.filter == TextureFilter::Linear ? SDL_SCALEMODE_LINEAR : SDL_SCALEMODE_NEAREST);
+
+    const std::size_t previousBytes = entry.approxBytes;
+    texture.outlineTexture = outlineTexture;
+    entry.approxBytes = imageTextureApproxBytes(texture);
+    if (entry.approxBytes >= previousBytes) {
+        imageCacheBytes_ += entry.approxBytes - previousBytes;
+    } else {
+        imageCacheBytes_ = imageCacheBytes_ >= previousBytes - entry.approxBytes
+            ? imageCacheBytes_ - (previousBytes - entry.approxBytes)
+            : 0;
+    }
+    evictImageCacheIfNeeded(&entry);
+    return true;
+}
+
+void Renderer::evictImageCacheIfNeeded(const CachedImageEntry* protectedEntry)
 {
     if (imageCacheBudgetBytes_ == 0) {
         for (auto& [_, entry] : imageEntries_) {
+            if (protectedEntry != nullptr && &entry == protectedEntry) {
+                continue;
+            }
             destroyCachedImageTexture(entry);
         }
         return;
@@ -1980,6 +2043,9 @@ void Renderer::evictImageCacheIfNeeded()
     while (imageCacheBytes_ > imageCacheBudgetBytes_) {
         auto candidate = imageEntries_.end();
         for (auto it = imageEntries_.begin(); it != imageEntries_.end(); ++it) {
+            if (protectedEntry != nullptr && &it->second == protectedEntry) {
+                continue;
+            }
             if (it->second.texture.texture == nullptr) {
                 continue;
             }
@@ -2084,7 +2150,8 @@ bool Renderer::drawImageRegion(ImageHandle handle, RectF sourceRect, Vec2 center
     if (options.outlineEnabled && options.outlinePx > 0) {
         Color outline = transformColor(options.outlineColor);
         if (outline.a > 0) {
-            SDL_Texture* outlineTexture = entry->texture.outlineTexture != nullptr
+            const bool outlineReady = ensureCachedImageOutlineReady(*entry);
+            SDL_Texture* outlineTexture = outlineReady && entry->texture.outlineTexture != nullptr
                 ? entry->texture.outlineTexture
                 : entry->texture.texture;
             // Keep outline thickness fixed in screen pixels, independent from world scale.
@@ -2128,7 +2195,8 @@ bool Renderer::drawImageRegion(ImageHandle handle, RectF sourceRect, Vec2 center
 
     Color maskOverlay = transformColor(options.maskOverlayColor);
     if (maskOverlay.a > 0) {
-        SDL_Texture* maskTexture = entry->texture.outlineTexture != nullptr
+        const bool maskReady = ensureCachedImageOutlineReady(*entry);
+        SDL_Texture* maskTexture = maskReady && entry->texture.outlineTexture != nullptr
             ? entry->texture.outlineTexture
             : entry->texture.texture;
         SDL_SetTextureColorMod(maskTexture, maskOverlay.r, maskOverlay.g, maskOverlay.b);
@@ -2346,30 +2414,11 @@ bool Renderer::loadImageTexture(std::string_view path, std::string_view label, I
         return false;
     }
 
-    std::vector<unsigned char> outlinePixels = pixels;
-    for (std::size_t i = 0; i + 3 < outlinePixels.size(); i += 4) {
-        // Keep source alpha shape but flatten RGB to white so outline tint stays stable.
-        outlinePixels[i + 0] = 255;
-        outlinePixels[i + 1] = 255;
-        outlinePixels[i + 2] = 255;
-    }
-    SDL_Surface* outlineSurface = SDL_CreateSurfaceFrom(width, height, SDL_PIXELFORMAT_BGRA32, outlinePixels.data(), rowBytes);
-    SDL_Texture* outlineTexture = nullptr;
-    if (outlineSurface != nullptr) {
-        outlineTexture = SDL_CreateTextureFromSurface(renderer_, outlineSurface);
-        SDL_DestroySurface(outlineSurface);
-    }
-
     SDL_SetTextureBlendMode(texture, SDL_BLENDMODE_BLEND);
     SDL_SetTextureScaleMode(texture, SDL_SCALEMODE_NEAREST);
-    if (outlineTexture != nullptr) {
-        SDL_SetTextureBlendMode(outlineTexture, SDL_BLENDMODE_BLEND);
-        SDL_SetTextureScaleMode(outlineTexture, SDL_SCALEMODE_NEAREST);
-    }
 
     ImageTexture loaded;
     loaded.texture = texture;
-    loaded.outlineTexture = outlineTexture;
     loaded.width = width;
     loaded.height = height;
     loaded.alphaMask.resize(static_cast<std::size_t>(width) * static_cast<std::size_t>(height));
@@ -2380,7 +2429,7 @@ bool Renderer::loadImageTexture(std::string_view path, std::string_view label, I
     }
 
     unloadImageTexture(target);
-    target = loaded;
+    target = std::move(loaded);
     return true;
 #else
     lastAssetError_ = "PNG image loading is only implemented on Windows";
