@@ -775,16 +775,15 @@ constexpr std::array<BaseFacilityVisual, 7> OutdoorBaseFacilityVisuals{{
 struct BaseCharacterSpriteVisual {
     const char* facilityId = "";
     const char* imagePath = "";
-    UiRect rect{};
     CharacterSpriteSheetLayout layout{};
     bool flipHorizontal = false;
 };
 
 constexpr std::array<BaseCharacterSpriteVisual, 4> OutdoorBaseCharacterSprites{{
-    {"merchant_npc", "assets/pola.png", {{857.0f, 169.0f}, {96.0f, 96.0f}}, {3, 1}, false},
-    {"processor_npc", "assets/ines.png", {{697.0f, 179.0f}, {96.0f, 96.0f}}, {3, 1}, false},
-    {"monica", "assets/monica.png", {{830.0f, 240.0f}, {96.0f, 96.0f}}, {3, 1}, false},
-    {"elder", "assets/sontyo.png", {{409.0f, 317.0f}, {96.0f, 96.0f}}, {3, 1}, false},
+    {"merchant_npc", "assets/pola.png", {3, 1}, false},
+    {"processor_npc", "assets/ines.png", {3, 1}, false},
+    {"monica", "assets/monica.png", {3, 1}, false},
+    {"elder", "assets/sontyo.png", {3, 1}, true},
 }};
 
 constexpr std::array<BaseFacilityVisual, 3> HomeInteriorBaseFacilityVisuals{{
@@ -854,26 +853,9 @@ UiRect baseFacilityVisualRect(
     };
 }
 
-UiRect baseCharacterSpriteVisualRect(
-    const BaseFacility& facility,
-    BaseArea area,
-    bool ringWorkshopUnlocked,
-    const BaseCharacterSpriteVisual& visual)
+UiRect baseCharacterSpriteVisualRect(const BaseFacility& facility)
 {
-    const UiRect defaultRect = defaultBaseFacilityRect(area, ringWorkshopUnlocked, facility.facilityId);
-    if (defaultRect.size.x <= 0.0f || defaultRect.size.y <= 0.0f) {
-        return visual.rect;
-    }
-
-    const float scaleX = facility.rect.size.x / defaultRect.size.x;
-    const float scaleY = facility.rect.size.y / defaultRect.size.y;
-    const float visualScale = std::isfinite(scaleX) && std::isfinite(scaleY)
-        ? std::max(0.001f, std::min(scaleX, scaleY))
-        : 1.0f;
-    return {
-        visual.rect.pos + (facility.rect.pos - defaultRect.pos),
-        visual.rect.size * visualScale,
-    };
+    return facility.rect;
 }
 
 UiRect baseFacilityPointerRect(const BaseFacility& facility, BaseArea area, bool ringWorkshopUnlocked)
@@ -881,8 +863,8 @@ UiRect baseFacilityPointerRect(const BaseFacility& facility, BaseArea area, bool
     if (const BaseFacilityVisual* visual = baseFacilityVisual(area, facility.facilityId)) {
         return baseFacilityVisualRect(facility, area, ringWorkshopUnlocked, *visual);
     }
-    if (const BaseCharacterSpriteVisual* visual = baseCharacterSpriteVisual(area, facility.facilityId)) {
-        return baseCharacterSpriteVisualRect(facility, area, ringWorkshopUnlocked, *visual);
+    if (baseCharacterSpriteVisual(area, facility.facilityId) != nullptr) {
+        return baseCharacterSpriteVisualRect(facility);
     }
     return facility.rect;
 }
@@ -10269,11 +10251,7 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
             return;
         }
 
-        const UiRect visualRect = baseCharacterSpriteVisualRect(
-            facility,
-            baseArea_,
-            ringWorkshopUnlocked_,
-            *visual);
+        const UiRect visualRect = baseCharacterSpriteVisualRect(facility);
         const Vec2 anchorPosition = visualRect.pos + Vec2{
             visualRect.size.x * PlayerSpriteAnchorX,
             visualRect.size.y * PlayerSpriteAnchorY,
@@ -11047,11 +11025,7 @@ void drawBaseActors(
             continue;
         }
 
-        const UiRect visualRect = baseCharacterSpriteVisualRect(
-            facility,
-            context.area,
-            context.ringWorkshopUnlocked,
-            *visual);
+        const UiRect visualRect = baseCharacterSpriteVisualRect(facility);
         Vec2 frameSize{};
         float drawScale = 1.0f;
         if (characterSpriteSheetFrameSize(renderer, visual->imagePath, visual->layout, frameSize) &&

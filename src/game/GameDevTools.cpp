@@ -2541,6 +2541,42 @@ const char* debugAstralRoomTargetLabel(const DebugAstralRoomTarget& target)
     return "なし";
 }
 
+bool outdoorCharacterFacilityId(std::string_view facilityId)
+{
+    return facilityId == "merchant_npc" ||
+        facilityId == "processor_npc" ||
+        facilityId == "monica" ||
+        facilityId == "elder";
+}
+
+BaseEditRect normalizeBaseFacilityRectForEdit(BaseArea area, std::string_view facilityId, BaseEditRect rect)
+{
+    rect = normalizeBaseEditRect(rect);
+    if (area == BaseArea::Outdoor && outdoorCharacterFacilityId(facilityId)) {
+        rect.w = PlayerSpriteDrawSize;
+        rect.h = PlayerSpriteDrawSize;
+        rect = normalizeBaseEditRect(rect);
+    }
+    return rect;
+}
+
+bool legacyOutdoorCharacterFacilityRect(std::string_view facilityId, BaseEditRect rect)
+{
+    if (facilityId == "merchant_npc") {
+        return sameBaseEditRect(rect, {874.0f, 154.0f, 62.0f, 106.0f});
+    }
+    if (facilityId == "processor_npc") {
+        return sameBaseEditRect(rect, {714.0f, 164.0f, 62.0f, 106.0f});
+    }
+    if (facilityId == "monica") {
+        return sameBaseEditRect(rect, {841.0f, 245.0f, 74.0f, 86.0f});
+    }
+    if (facilityId == "elder") {
+        return sameBaseEditRect(rect, {420.0f, 322.0f, 74.0f, 86.0f});
+    }
+    return false;
+}
+
 } // namespace
 
 BaseEditRect Game::baseFacilityRectFor(BaseArea area, std::string_view facilityId, BaseEditRect fallback) const
@@ -2548,9 +2584,12 @@ BaseEditRect Game::baseFacilityRectFor(BaseArea area, std::string_view facilityI
     const auto& table = area == BaseArea::Outdoor ? baseFacilityRectsOutdoor_ : baseFacilityRectsHome_;
     const auto it = table.find(std::string(facilityId));
     if (it == table.end()) {
-        return normalizeBaseEditRect(fallback);
+        return normalizeBaseFacilityRectForEdit(area, facilityId, fallback);
     }
     const BaseEditRect rect = normalizeBaseEditRect(it->second);
+    if (area == BaseArea::Outdoor && legacyOutdoorCharacterFacilityRect(facilityId, rect)) {
+        return normalizeBaseFacilityRectForEdit(area, facilityId, fallback);
+    }
     if (area == BaseArea::HomeInterior &&
         facilityId == std::string_view("bookshelf") &&
         sameBaseEditRect(rect, {368.0f, 322.0f, 118.0f, 157.0f})) {
@@ -2581,13 +2620,13 @@ BaseEditRect Game::baseFacilityRectFor(BaseArea area, std::string_view facilityI
         (rect.w < 180.0f || rect.h < 180.0f)) {
         return normalizeBaseEditRect(fallback);
     }
-    return rect;
+    return normalizeBaseFacilityRectForEdit(area, facilityId, rect);
 }
 
 void Game::setBaseFacilityRectFor(BaseArea area, std::string_view facilityId, BaseEditRect rect)
 {
     auto& table = area == BaseArea::Outdoor ? baseFacilityRectsOutdoor_ : baseFacilityRectsHome_;
-    table[std::string(facilityId)] = normalizeBaseEditRect(rect);
+    table[std::string(facilityId)] = normalizeBaseFacilityRectForEdit(area, facilityId, rect);
 }
 
 bool Game::isBasePassabilityBlocked(BaseArea area, int tileX, int tileY) const
@@ -2693,7 +2732,11 @@ void Game::loadBaseEditData()
                 BaseEditRect rect{};
                 stream >> id >> rect.x >> rect.y >> rect.w >> rect.h;
                 if (!stream.fail() && !id.empty()) {
-                    facilityRects[id] = normalizeBaseEditRect(rect);
+                    const BaseEditRect normalizedRect = normalizeBaseEditRect(rect);
+                    facilityRects[id] =
+                        area == BaseArea::Outdoor && legacyOutdoorCharacterFacilityRect(id, normalizedRect)
+                        ? normalizedRect
+                        : normalizeBaseFacilityRectForEdit(area, id, normalizedRect);
                 }
             } else if (key == "blocked") {
                 std::string layerOrTileX;
