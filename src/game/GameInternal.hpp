@@ -2177,6 +2177,7 @@ struct MagicOrbitDrawOptions {
     float totalSeconds = 0.0f;
     float alphaScale = 1.0f;
     bool closedPath = true;
+    float energizedBlend = 0.0f;
 };
 
 constexpr std::array<RingShape, 3> MagicRingShapeRenderOrder{{
@@ -2209,6 +2210,28 @@ Color scaledAlpha(Color color, float scale)
 {
     color.a = alphaByte(static_cast<float>(color.a) * std::max(0.0f, scale));
     return color;
+}
+
+Color blendColor(Color from, Color to, float t)
+{
+    const float clampedT = clamp(t, 0.0f, 1.0f);
+    return Color{
+        alphaByte(lerp(static_cast<float>(from.r), static_cast<float>(to.r), clampedT)),
+        alphaByte(lerp(static_cast<float>(from.g), static_cast<float>(to.g), clampedT)),
+        alphaByte(lerp(static_cast<float>(from.b), static_cast<float>(to.b), clampedT)),
+        alphaByte(lerp(static_cast<float>(from.a), static_cast<float>(to.a), clampedT)),
+    };
+}
+
+float magicOrbitEnergyAmount(const MagicOrbitDrawOptions& options)
+{
+    const float instantEnergy = options.energized ? 1.0f : 0.0f;
+    return clamp(std::max(instantEnergy, options.energizedBlend), 0.0f, 1.0f);
+}
+
+Color magicOrbitColor(Color normalColor, Color energizedColor, const MagicOrbitDrawOptions& options)
+{
+    return blendColor(normalColor, energizedColor, magicOrbitEnergyAmount(options));
 }
 
 std::vector<Vec2> makeCirclePath(Vec2 center, float radius, int sampleCount)
@@ -2288,7 +2311,9 @@ void drawMagicOrbitRunes(Renderer& renderer, const std::vector<Vec2>& orbitPath,
         const Vec2 tangent = pathTangentAt(orbitPath, t01, wrap);
         const Vec2 normal{-tangent.y, tangent.x};
         const float halfLength = (options.active ? 2.8f : 1.9f) * lengthScale;
-        const Color runeColor = withAlpha(options.energized ? Color{255, 204, 100, 255} : Color{232, 236, 255, 255}, alpha);
+        const Color runeColor = withAlpha(
+            magicOrbitColor(Color{232, 236, 255, 255}, Color{255, 204, 100, 255}, options),
+            alpha);
         renderer.drawLine(point - normal * halfLength, point + normal * halfLength, runeColor);
     }
 }
@@ -2310,8 +2335,12 @@ void drawMagicOrbitFlow(Renderer& renderer, const std::vector<Vec2>& orbitPath, 
         const float pulse = 0.70f + 0.30f * std::sin(options.totalSeconds * 5.8f + static_cast<float>(i) * 1.7f);
         const Vec2 point = pathPointAt(orbitPath, t01, wrap);
         const float radius = (options.active ? 1.8f : 1.3f) * radiusScale * pulse;
-        const Color outer = withAlpha(options.energized ? Color{255, 198, 92, 255} : Color{120, 226, 255, 255}, (options.active ? 54.0f : 30.0f) * options.alphaScale);
-        const Color inner = withAlpha(options.energized ? Color{255, 244, 176, 255} : Color{255, 250, 202, 255}, (options.active ? 154.0f : 86.0f) * options.alphaScale);
+        const Color outer = withAlpha(
+            magicOrbitColor(Color{120, 226, 255, 255}, Color{255, 198, 92, 255}, options),
+            (options.active ? 54.0f : 30.0f) * options.alphaScale);
+        const Color inner = withAlpha(
+            magicOrbitColor(Color{255, 250, 202, 255}, Color{255, 244, 176, 255}, options),
+            (options.active ? 154.0f : 86.0f) * options.alphaScale);
         renderer.fillCircle(point, radius * 2.1f, outer);
         renderer.fillCircle(point, radius, inner);
     }
@@ -2341,7 +2370,9 @@ void drawMagicOrbitSparkles(Renderer& renderer, const std::vector<Vec2>& orbitPa
         const Vec2 normal{-tangent.y, tangent.x};
         const float offset = std::sin(seed * 1.7f) * (options.screenPresentation ? 5.0f : 3.0f);
         const Vec2 point = pathPointAt(orbitPath, t01, wrap) + normal * offset;
-        const Color sparkle = withAlpha(options.energized ? Color{255, 226, 126, 255} : Color{214, 240, 255, 255}, alpha);
+        const Color sparkle = withAlpha(
+            magicOrbitColor(Color{214, 240, 255, 255}, Color{255, 226, 126, 255}, options),
+            alpha);
         drawMagicStar(renderer, point, (1.6f + twinkle * 2.0f) * radiusScale, sparkle, seed + options.totalSeconds * 0.7f);
     }
 }
@@ -2376,12 +2407,10 @@ void drawMagicOrbitPath(Renderer& renderer, const std::vector<Vec2>& orbitPath, 
     }
 
     const float widthScale = options.screenPresentation ? 1.35f : 1.0f;
-    const Color auraColor = options.energized
-        ? Color{255, 178, 74, 62}
-        : (options.active ? Color{90, 200, 255, 64} : Color{116, 150, 210, 36});
-    const Color coreColor = options.energized
-        ? Color{255, 230, 142, 132}
-        : (options.active ? Color{236, 242, 255, 124} : Color{178, 196, 238, 62});
+    const Color normalAuraColor = options.active ? Color{90, 200, 255, 64} : Color{116, 150, 210, 36};
+    const Color normalCoreColor = options.active ? Color{236, 242, 255, 124} : Color{178, 196, 238, 62};
+    const Color auraColor = magicOrbitColor(normalAuraColor, Color{255, 178, 74, 62}, options);
+    const Color coreColor = magicOrbitColor(normalCoreColor, Color{255, 230, 142, 132}, options);
 
     if (options.shape == RingShape::Comet) {
         drawTaperedMagicPolyline(
@@ -2454,6 +2483,7 @@ void drawSpellRingOrbitLayer(
             const Vec2 center = spellRing.centerForRing(ringIndex);
             std::vector<Vec2> orbitPath = spellRing.runtimePathSamplePointsForRing(ringIndex, balance, 160);
             const bool ringInFlight = spellRing.stateForRing(ringIndex) != SpellRingState::Normal;
+            const float throwVisualEnergy = spellRing.throwVisualEnergyForRing(ringIndex);
             drawMagicOrbitPath(
                 renderer,
                 orbitPath,
@@ -2468,6 +2498,7 @@ void drawSpellRingOrbitLayer(
                     totalSeconds,
                     alphaScale,
                     !ringInFlight,
+                    throwVisualEnergy,
                 });
         }
     }

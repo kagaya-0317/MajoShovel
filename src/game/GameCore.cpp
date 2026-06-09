@@ -3758,6 +3758,7 @@ void Game::updateDialoguePlayerIdleAnimation(float dt)
 {
     if (basePresentationActive()) {
         updateBasePlayerSpriteAnimation(dt, false);
+        updateBaseActorIdleAnimation(dt);
         return;
     }
     if (mode_ == ScreenMode::Playing) {

@@ -1,6 +1,7 @@
 ﻿#include "game/GameInternal.hpp"
 
 #include "engine/InputHelpGlyph.hpp"
+#include "game/CharacterSprite.hpp"
 #include "game/EnemyImageRenderer.hpp"
 #include "game/PlayerEquipmentVisual.hpp"
 
@@ -761,16 +762,29 @@ struct BaseFacilityVisual {
     UiRect rect{};
 };
 
-constexpr std::array<BaseFacilityVisual, 9> OutdoorBaseFacilityVisuals{{
+constexpr std::array<BaseFacilityVisual, 7> OutdoorBaseFacilityVisuals{{
     {"mine_exit", "assets/kyoten/move.png", {{578.0f, 530.0f}, {148.0f, 190.0f}}},
     {"storage_chest", "assets/kyoten/box.png", {{593.0f, 445.0f}, {60.0f, 53.0f}}},
     {"merchant_wagon", "assets/kyoten/wagon.png", {{928.0f, 65.0f}, {206.0f, 185.0f}}},
-    {"merchant_npc", "assets/taties/tatie_5.png", {{874.0f, 154.0f}, {62.0f, 106.0f}}},
     {"processing_table", "assets/kyoten/sagyodai.png", {{512.0f, 154.0f}, {183.0f, 106.0f}}},
-    {"processor_npc", "assets/taties/tatie_6.png", {{714.0f, 164.0f}, {62.0f, 106.0f}}},
     {"upgrade_forge", "assets/kyoten/kyokaro.png", {{968.0f, 355.0f}, {217.0f, 226.0f}}},
     {"ring_workshop", "assets/kyoten/ring-kobo.png", {{842.0f, 470.0f}, {115.0f, 93.0f}}},
     {"home", "assets/kyoten/house.png", {{113.0f, 11.0f}, {301.0f, 308.0f}}},
+}};
+
+struct BaseCharacterSpriteVisual {
+    const char* facilityId = "";
+    const char* imagePath = "";
+    UiRect rect{};
+    CharacterSpriteSheetLayout layout{};
+    bool flipHorizontal = false;
+};
+
+constexpr std::array<BaseCharacterSpriteVisual, 4> OutdoorBaseCharacterSprites{{
+    {"merchant_npc", "assets/pola.png", {{857.0f, 169.0f}, {96.0f, 96.0f}}, {3, 1}, false},
+    {"processor_npc", "assets/ines.png", {{697.0f, 179.0f}, {96.0f, 96.0f}}, {3, 1}, false},
+    {"monica", "assets/monica.png", {{830.0f, 240.0f}, {96.0f, 96.0f}}, {3, 1}, false},
+    {"elder", "assets/sontyo.png", {{409.0f, 317.0f}, {96.0f, 96.0f}}, {3, 1}, false},
 }};
 
 constexpr std::array<BaseFacilityVisual, 3> HomeInteriorBaseFacilityVisuals{{
@@ -803,6 +817,21 @@ const BaseFacilityVisual* baseFacilityVisual(BaseArea area, std::string_view fac
     return nullptr;
 }
 
+const BaseCharacterSpriteVisual* baseCharacterSpriteVisual(BaseArea area, std::string_view facilityId)
+{
+    if (area != BaseArea::Outdoor) {
+        return nullptr;
+    }
+
+    const auto it = std::find_if(
+        OutdoorBaseCharacterSprites.begin(),
+        OutdoorBaseCharacterSprites.end(),
+        [facilityId](const BaseCharacterSpriteVisual& visual) {
+            return std::string_view(visual.facilityId) == facilityId;
+        });
+    return it == OutdoorBaseCharacterSprites.end() ? nullptr : &*it;
+}
+
 UiRect baseFacilityVisualRect(
     const BaseFacility& facility,
     BaseArea area,
@@ -825,10 +854,35 @@ UiRect baseFacilityVisualRect(
     };
 }
 
+UiRect baseCharacterSpriteVisualRect(
+    const BaseFacility& facility,
+    BaseArea area,
+    bool ringWorkshopUnlocked,
+    const BaseCharacterSpriteVisual& visual)
+{
+    const UiRect defaultRect = defaultBaseFacilityRect(area, ringWorkshopUnlocked, facility.facilityId);
+    if (defaultRect.size.x <= 0.0f || defaultRect.size.y <= 0.0f) {
+        return visual.rect;
+    }
+
+    const float scaleX = facility.rect.size.x / defaultRect.size.x;
+    const float scaleY = facility.rect.size.y / defaultRect.size.y;
+    const float visualScale = std::isfinite(scaleX) && std::isfinite(scaleY)
+        ? std::max(0.001f, std::min(scaleX, scaleY))
+        : 1.0f;
+    return {
+        visual.rect.pos + (facility.rect.pos - defaultRect.pos),
+        visual.rect.size * visualScale,
+    };
+}
+
 UiRect baseFacilityPointerRect(const BaseFacility& facility, BaseArea area, bool ringWorkshopUnlocked)
 {
     if (const BaseFacilityVisual* visual = baseFacilityVisual(area, facility.facilityId)) {
         return baseFacilityVisualRect(facility, area, ringWorkshopUnlocked, *visual);
+    }
+    if (const BaseCharacterSpriteVisual* visual = baseCharacterSpriteVisual(area, facility.facilityId)) {
+        return baseCharacterSpriteVisualRect(facility, area, ringWorkshopUnlocked, *visual);
     }
     return facility.rect;
 }
@@ -851,6 +905,14 @@ bool baseFacilityVisualHitTest(
         point,
         options,
         12);
+}
+
+Vec2 currentRenderMousePosition(const Renderer& renderer)
+{
+    float mouseX = 0.0f;
+    float mouseY = 0.0f;
+    SDL_GetMouseState(&mouseX, &mouseY);
+    return renderer.windowToRenderCoordinates({mouseX, mouseY});
 }
 
 Vec2 closestPointOnRect(Vec2 point, UiRect rect)
@@ -1094,6 +1156,9 @@ void drawBaseFacilities(
             const BaseFacilityVisual* visual = baseFacilityVisual(area, facility.facilityId);
 
             if (visual == nullptr) {
+                if (baseCharacterSpriteVisual(area, facility.facilityId) != nullptr) {
+                    continue;
+                }
                 const bool hovered = inInteractionRange && facility.enabled && facility.rect.contains(mouse);
                 drawBaseFacilityFallbackRect(renderer, facility, inInteractionRange, hovered);
                 if (labelVisible) {
@@ -7966,6 +8031,7 @@ void Game::updateBaseDiaryScreen(const Input& input, UiContext& ui)
 void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
 {
     baseRingPreviewAnimationTime_ = std::fmod(baseRingPreviewAnimationTime_ + std::max(0.0f, dt), 3600.0f);
+    updateBaseActorIdleAnimation(dt);
     const float ringPreviewSeconds = baseRingPreviewAnimationTime_;
 
     updatePlayerFootstepDust(dt);
@@ -10197,6 +10263,30 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
         return;
     }
 
+    const auto faceBaseCharacterSpriteTowardPlayer = [this](const BaseFacility& facility) {
+        const BaseCharacterSpriteVisual* visual = baseCharacterSpriteVisual(baseArea_, facility.facilityId);
+        if (visual == nullptr) {
+            return;
+        }
+
+        const UiRect visualRect = baseCharacterSpriteVisualRect(
+            facility,
+            baseArea_,
+            ringWorkshopUnlocked_,
+            *visual);
+        const Vec2 anchorPosition = visualRect.pos + Vec2{
+            visualRect.size.x * PlayerSpriteAnchorX,
+            visualRect.size.y * PlayerSpriteAnchorY,
+        };
+        const std::string facilityId(facility.facilityId);
+        const auto it = baseNpcSpriteFlipHorizontal_.find(facilityId);
+        const bool currentFlip = it != baseNpcSpriteFlipHorizontal_.end()
+            ? it->second
+            : visual->flipHorizontal;
+        baseNpcSpriteFlipHorizontal_[facilityId] =
+            characterSpriteFlipHorizontalFromFacing(basePlayerPosition_ - anchorPosition, currentFlip);
+    };
+
     const auto startFacilityInteractionSequence = [this](const BaseFacility& facility, const std::function<void()>& openAction) {
         if (!openAction) {
             return;
@@ -10215,9 +10305,12 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
         openAction();
     };
 
-    const auto interact = [this, &startFacilityInteractionSequence](const BaseFacility& facility) {
+    const auto interact = [this, &startFacilityInteractionSequence, &faceBaseCharacterSpriteTowardPlayer](const BaseFacility& facility) {
         if (!facility.enabled) {
             return;
+        }
+        if (facility.verb == BaseInteractionVerb::Talk) {
+            faceBaseCharacterSpriteTowardPlayer(facility);
         }
         std::function<void()> openAction;
         switch (facility.onInteract) {
@@ -10427,7 +10520,7 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
         playerSpriteFootAnchor(basePlayerPosition_),
         lengthSquared(moveAxis) > 0.0001f ? moveAxis : basePlayerFacing_,
         basePlayerSpriteWalking_,
-        playerSpriteFrameIndex(basePlayerSpriteAnimationTime_, basePlayerSpriteWalking_),
+        characterSpriteFrameIndex(basePlayerSpriteAnimationTime_, basePlayerSpriteWalking_),
         previousBasePlayerDustFrame_,
         baseFootstepSurface);
     if (lengthSquared(moveAxis) > 0.0001f) {
@@ -10883,23 +10976,177 @@ void Game::renderBaseMiningRescueDropEvent(Renderer& renderer) const
 
 void Game::updateBasePlayerSpriteAnimation(float dt, bool walking)
 {
-    if (walking != basePlayerSpriteWalking_) {
-        basePlayerSpriteWalking_ = walking;
-        basePlayerSpriteAnimationTime_ = 0.0f;
-    } else {
-        basePlayerSpriteAnimationTime_ += std::max(0.0f, dt);
-    }
+    updateCharacterSpriteAnimation(basePlayerSpriteAnimationTime_, basePlayerSpriteWalking_, dt, walking);
+}
+
+void Game::updateBaseActorIdleAnimation(float dt)
+{
+    baseActorIdleAnimationTime_ = std::fmod(
+        baseActorIdleAnimationTime_ + std::max(0.0f, dt),
+        3600.0f);
 }
 
 void Game::updateBasePlayerSpriteFlipFromFacing()
 {
-    constexpr float SpriteHorizontalFacingEpsilon = 0.05f;
-    if (basePlayerFacing_.x > SpriteHorizontalFacingEpsilon) {
-        basePlayerSpriteFlipHorizontal_ = true;
-    } else if (basePlayerFacing_.x < -SpriteHorizontalFacingEpsilon) {
-        basePlayerSpriteFlipHorizontal_ = false;
+    basePlayerSpriteFlipHorizontal_ =
+        characterSpriteFlipHorizontalFromFacing(basePlayerFacing_, basePlayerSpriteFlipHorizontal_);
+}
+
+namespace {
+
+struct BaseActorRenderContext {
+    BaseArea area = BaseArea::Outdoor;
+    bool ringWorkshopUnlocked = false;
+    Vec2 playerPosition{};
+    Vec2 playerFacing{};
+    float playerRadius = 0.0f;
+    float actorIdleAnimationTime = 0.0f;
+    float playerSpriteAnimationTime = 0.0f;
+    bool playerSpriteWalking = false;
+    bool playerSpriteFlipHorizontal = false;
+    const InventorySystem* inventory = nullptr;
+    const std::unordered_map<std::string, bool>* npcSpriteFlipHorizontal = nullptr;
+};
+
+bool baseNpcSpriteFlipHorizontal(
+    std::string_view facilityId,
+    bool fallback,
+    const std::unordered_map<std::string, bool>* npcSpriteFlipHorizontal)
+{
+    if (npcSpriteFlipHorizontal == nullptr) {
+        return fallback;
+    }
+    const auto it = npcSpriteFlipHorizontal->find(std::string(facilityId));
+    return it != npcSpriteFlipHorizontal->end() ? it->second : fallback;
+}
+
+void drawBaseActors(
+    Renderer& renderer,
+    const std::vector<BaseFacility>& facilities,
+    Vec2 mouse,
+    const BaseActorRenderContext& context,
+    const std::function<void()>& drawPlayerFootstepDust)
+{
+    struct ActorDrawEntry {
+        float depthY = 0.0f;
+        std::function<void()> draw;
+    };
+
+    std::vector<ActorDrawEntry> drawEntries;
+    drawEntries.reserve(facilities.size() + 1);
+
+    const int baseNpcFrame = characterSpriteIdleFrameIndex(context.actorIdleAnimationTime);
+    const Vec2 spriteAnchor{PlayerSpriteAnchorX, PlayerSpriteAnchorY};
+    for (const BaseFacility& facility : facilities) {
+        if (!facility.enabled || baseFacilityHiddenInNormalView(context.area, facility)) {
+            continue;
+        }
+
+        const BaseCharacterSpriteVisual* visual = baseCharacterSpriteVisual(context.area, facility.facilityId);
+        if (visual == nullptr) {
+            continue;
+        }
+
+        const UiRect visualRect = baseCharacterSpriteVisualRect(
+            facility,
+            context.area,
+            context.ringWorkshopUnlocked,
+            *visual);
+        Vec2 frameSize{};
+        float drawScale = 1.0f;
+        if (characterSpriteSheetFrameSize(renderer, visual->imagePath, visual->layout, frameSize) &&
+            frameSize.x > 0.0f &&
+            frameSize.y > 0.0f) {
+            drawScale = std::max(0.001f, std::min(visualRect.size.x / frameSize.x, visualRect.size.y / frameSize.y));
+        }
+
+        const Vec2 drawSize = frameSize.x > 0.0f && frameSize.y > 0.0f
+            ? frameSize * drawScale
+            : visualRect.size;
+        const Vec2 anchorPosition = visualRect.pos + Vec2{
+            visualRect.size.x * spriteAnchor.x,
+            visualRect.size.y * spriteAnchor.y,
+        };
+        const bool inInteractionRange = baseInteractionGroupAvailable(context.playerPosition, context.area, facilities, facility);
+        const bool hovered = inInteractionRange && facility.enabled && visualRect.contains(mouse);
+
+        renderer.drawActorShadow(anchorPosition, std::max(drawSize.x, drawSize.y));
+        const bool flipHorizontal = baseNpcSpriteFlipHorizontal(
+            facility.facilityId,
+            visual->flipHorizontal,
+            context.npcSpriteFlipHorizontal);
+        drawEntries.push_back(ActorDrawEntry{
+            anchorPosition.y,
+            [&, visual, facilityPtr = &facility, anchorPosition, drawScale, inInteractionRange, hovered, baseNpcFrame, flipHorizontal]() {
+                CharacterSpriteDrawOptions options;
+                options.frameIndex = baseNpcFrame;
+                options.anchorPosition = anchorPosition;
+                options.scale = drawScale;
+                options.anchor = {PlayerSpriteAnchorX, PlayerSpriteAnchorY};
+                options.flipHorizontal = flipHorizontal;
+                options.outlineEnabled = inInteractionRange && facilityPtr->enabled;
+                options.outlineColor = hovered ? Color{255, 230, 72, 255} : Color{255, 255, 255, 245};
+                options.outlinePx = 1;
+
+                if (!drawCharacterSpriteFrame(renderer, visual->imagePath, visual->layout, options)) {
+                    drawBaseFacilityFallbackRect(renderer, *facilityPtr, inInteractionRange, hovered);
+                }
+            },
+        });
+    }
+
+    const Vec2 basePlayerFootAnchor = playerSpriteFootAnchor(context.playerPosition);
+    const float basePlayerSpriteVisualSize = playerSpriteNaturalVisualSize(renderer);
+    renderer.drawActorShadow(basePlayerFootAnchor, basePlayerSpriteVisualSize);
+    if (drawPlayerFootstepDust) {
+        drawPlayerFootstepDust();
+    }
+    drawEntries.push_back(ActorDrawEntry{
+        basePlayerFootAnchor.y,
+        [&]() {
+            if (renderer.hasPlayerSheet()) {
+                const int playerFrame = characterSpriteFrameIndex(
+                    context.playerSpriteAnimationTime,
+                    context.playerSpriteWalking);
+                renderer.drawPlayerSpriteNaturalSize(
+                    playerFrame,
+                    basePlayerFootAnchor,
+                    1.0f,
+                    context.playerSpriteFlipHorizontal,
+                    {255, 255, 255, 255},
+                    {PlayerSpriteAnchorX, PlayerSpriteAnchorY});
+                if (context.inventory != nullptr) {
+                    drawEquippedStaffOnPlayer(
+                        renderer,
+                        *context.inventory,
+                        basePlayerFootAnchor,
+                        playerFrame,
+                        context.playerSpriteFlipHorizontal);
+                }
+            } else {
+                renderer.fillCircle(context.playerPosition, context.playerRadius, {118, 72, 168, 255});
+                renderer.drawLine(
+                    context.playerPosition,
+                    context.playerPosition + context.playerFacing * 22.0f,
+                    {235, 210, 255, 255});
+            }
+        },
+    });
+
+    std::stable_sort(
+        drawEntries.begin(),
+        drawEntries.end(),
+        [](const ActorDrawEntry& left, const ActorDrawEntry& right) {
+            return left.depthY < right.depthY;
+        });
+    for (const ActorDrawEntry& entry : drawEntries) {
+        if (entry.draw) {
+            entry.draw();
+        }
     }
 }
+
+} // namespace
 
 void Game::renderBaseBackdrop(Renderer& renderer) const
 {
@@ -10934,31 +11181,29 @@ void Game::renderBaseBackdrop(Renderer& renderer) const
     for (BaseFacility& facility : facilities) {
         facility.rect = toUiRect(baseFacilityRectFor(baseArea_, facility.facilityId, toBaseEditRect(facility.rect)));
     }
-    float mouseX = 0.0f;
-    float mouseY = 0.0f;
-    SDL_GetMouseState(&mouseX, &mouseY);
-    const Vec2 mouse{mouseX, mouseY};
+    const Vec2 mouse = currentRenderMousePosition(renderer);
     drawBaseFacilities(renderer, facilities, baseArea_, ringWorkshopUnlocked_, basePlayerPosition_, mouse);
     renderBaseEditOverlay(renderer);
-
-    const Vec2 basePlayerFootAnchor = playerSpriteFootAnchor(basePlayerPosition_);
-    const float basePlayerSpriteVisualSize = playerSpriteNaturalVisualSize(renderer);
-    renderer.drawActorShadow(basePlayerFootAnchor, basePlayerSpriteVisualSize);
-    renderPlayerFootstepDust(renderer);
-    if (renderer.hasPlayerSheet()) {
-        const int playerFrame = playerSpriteFrameIndex(basePlayerSpriteAnimationTime_, basePlayerSpriteWalking_);
-        renderer.drawPlayerSpriteNaturalSize(
-            playerFrame,
-            basePlayerFootAnchor,
-            1.0f,
+    drawBaseActors(
+        renderer,
+        facilities,
+        mouse,
+        BaseActorRenderContext{
+            baseArea_,
+            ringWorkshopUnlocked_,
+            basePlayerPosition_,
+            basePlayerFacing_,
+            balance_.playerRadius,
+            baseActorIdleAnimationTime_,
+            basePlayerSpriteAnimationTime_,
+            basePlayerSpriteWalking_,
             basePlayerSpriteFlipHorizontal_,
-            {255, 255, 255, 255},
-            {PlayerSpriteAnchorX, PlayerSpriteAnchorY});
-        drawEquippedStaffOnPlayer(renderer, inventory_, basePlayerFootAnchor, playerFrame, basePlayerSpriteFlipHorizontal_);
-    } else {
-        renderer.fillCircle(basePlayerPosition_, balance_.playerRadius, {118, 72, 168, 255});
-        renderer.drawLine(basePlayerPosition_, basePlayerPosition_ + basePlayerFacing_ * 22.0f, {235, 210, 255, 255});
-    }
+            &inventory_,
+            &baseNpcSpriteFlipHorizontal_,
+        },
+        [&]() {
+            renderPlayerFootstepDust(renderer);
+        });
 
     renderBaseMiningRescueDropEvent(renderer);
     renderHiddenBaseOrbit(renderer);
@@ -11007,32 +11252,30 @@ void Game::renderBaseScreen(Renderer& renderer) const
     for (BaseFacility& facility : facilities) {
         facility.rect = toUiRect(baseFacilityRectFor(baseArea_, facility.facilityId, toBaseEditRect(facility.rect)));
     }
-    float mouseX = 0.0f;
-    float mouseY = 0.0f;
-    SDL_GetMouseState(&mouseX, &mouseY);
-    const Vec2 mouse{mouseX, mouseY};
+    const Vec2 mouse = currentRenderMousePosition(renderer);
     interactionFacility = selectBaseInteractionFacility(basePlayerPosition_, basePlayerFacing_, baseArea_, facilities);
     drawBaseFacilities(renderer, facilities, baseArea_, ringWorkshopUnlocked_, basePlayerPosition_, mouse);
     renderBaseEditOverlay(renderer);
-
-    const Vec2 basePlayerFootAnchor = playerSpriteFootAnchor(basePlayerPosition_);
-    const float basePlayerSpriteVisualSize = playerSpriteNaturalVisualSize(renderer);
-    renderer.drawActorShadow(basePlayerFootAnchor, basePlayerSpriteVisualSize);
-    renderPlayerFootstepDust(renderer);
-    if (renderer.hasPlayerSheet()) {
-        const int playerFrame = playerSpriteFrameIndex(basePlayerSpriteAnimationTime_, basePlayerSpriteWalking_);
-        renderer.drawPlayerSpriteNaturalSize(
-            playerFrame,
-            basePlayerFootAnchor,
-            1.0f,
+    drawBaseActors(
+        renderer,
+        facilities,
+        mouse,
+        BaseActorRenderContext{
+            baseArea_,
+            ringWorkshopUnlocked_,
+            basePlayerPosition_,
+            basePlayerFacing_,
+            balance_.playerRadius,
+            baseActorIdleAnimationTime_,
+            basePlayerSpriteAnimationTime_,
+            basePlayerSpriteWalking_,
             basePlayerSpriteFlipHorizontal_,
-            {255, 255, 255, 255},
-            {PlayerSpriteAnchorX, PlayerSpriteAnchorY});
-        drawEquippedStaffOnPlayer(renderer, inventory_, basePlayerFootAnchor, playerFrame, basePlayerSpriteFlipHorizontal_);
-    } else {
-        renderer.fillCircle(basePlayerPosition_, balance_.playerRadius, {118, 72, 168, 255});
-        renderer.drawLine(basePlayerPosition_, basePlayerPosition_ + basePlayerFacing_ * 22.0f, {235, 210, 255, 255});
-    }
+            &inventory_,
+            &baseNpcSpriteFlipHorizontal_,
+        },
+        [&]() {
+            renderPlayerFootstepDust(renderer);
+        });
 
     renderBaseMiningRescueDropEvent(renderer);
     renderHiddenBaseOrbit(renderer);

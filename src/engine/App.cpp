@@ -922,6 +922,13 @@ bool App::reloadAssetForPath(const std::string& changedPath)
     if (fileName == "majo_hand.png") {
         return renderer_->loadPlayerHandSheet("assets/majo_hand.png");
     }
+    if (fileName == "monica.png" ||
+        fileName == "sontyo.png" ||
+        fileName == "pola.png" ||
+        fileName == "ines.png") {
+        renderer_->invalidateImage("assets/" + fileName);
+        return true;
+    }
     if (fileName == "map.png" && parentPath.find("assets/kyoten") != std::string::npos) {
         return renderer_->loadBaseMapTexture("assets/kyoten/map.png");
     }

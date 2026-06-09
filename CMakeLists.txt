@@ -85,6 +85,7 @@ add_executable(MajoShovel
     src/game/OpeningMetaSave.cpp
     src/game/DungeonEventDefinition.cpp
     src/game/DungeonLayout.cpp
+    src/game/CharacterSprite.cpp
     src/game/ActorVisualMotion.cpp
     src/game/EntityStatus.cpp
     src/game/EntityStatusVisuals.cpp

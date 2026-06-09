@@ -1,28 +1,16 @@
 ﻿#include "game/Player.hpp"
 
+#include "game/CharacterSprite.hpp"
 #include "game/TileMap.hpp"
 
 #include <algorithm>
-#include <array>
 #include <cmath>
 
 namespace majo {
 
 int playerSpriteFrameIndex(float animationTime, bool walking)
 {
-    constexpr float TargetFps = 60.0f;
-    constexpr std::array<int, 3> IdleFrames{0, 1, 2};
-    constexpr int WalkFrameStart = 3;
-    constexpr int WalkFrameCount = 6;
-    constexpr float IdleFrameDuration = 12.0f / TargetFps;
-    constexpr float WalkFrameDuration = 6.0f / TargetFps;
-
-    const float frameDuration = walking ? WalkFrameDuration : IdleFrameDuration;
-    const int step = static_cast<int>(std::floor(std::max(0.0f, animationTime) / frameDuration));
-    if (walking) {
-        return WalkFrameStart + step % WalkFrameCount;
-    }
-    return IdleFrames[static_cast<std::size_t>(step % static_cast<int>(IdleFrames.size()))];
+    return characterSpriteFrameIndex(animationTime, walking);
 }
 
 namespace {
@@ -31,7 +19,6 @@ constexpr float RingShiftAimDeadzone = 0.15f;
 constexpr float RingShiftPointerDeadzonePx = 2.0f;
 constexpr float RingShiftDirectionResponse = 18.0f;
 constexpr float RingShiftDistanceResponse = 14.0f;
-constexpr float SpriteHorizontalFacingEpsilon = 0.05f;
 
 std::string joinDeathCause(std::string_view actorName, std::string_view objectName, std::string_view fallbackObjectName)
 {
@@ -365,21 +352,12 @@ void Player::update(
 
 void Player::updateSpriteAnimation(float dt, bool walking)
 {
-    if (walking != spriteWalking) {
-        spriteWalking = walking;
-        spriteAnimationTime = 0.0f;
-    } else {
-        spriteAnimationTime += std::max(0.0f, dt);
-    }
+    updateCharacterSpriteAnimation(spriteAnimationTime, spriteWalking, dt, walking);
 }
 
 void Player::updateSpriteFlipFromFacing()
 {
-    if (facing.x > SpriteHorizontalFacingEpsilon) {
-        spriteFlipHorizontal = true;
-    } else if (facing.x < -SpriteHorizontalFacingEpsilon) {
-        spriteFlipHorizontal = false;
-    }
+    spriteFlipHorizontal = characterSpriteFlipHorizontalFromFacing(facing, spriteFlipHorizontal);
 }
 
 int Player::spriteFrameIndex() const

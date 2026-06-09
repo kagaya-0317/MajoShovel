@@ -256,6 +256,7 @@ public:
     double digPowerMultiplierForRing(int ringIndex) const;
     SpellRingState state() const { return stateForRing(activeRingIndex_); }
     SpellRingState stateForRing(int ringIndex) const;
+    float throwVisualEnergyForRing(int ringIndex) const;
     bool anyRingInFlight() const;
     int throwingRingIndex() const { return throwingRingIndex_; }
     int activeRingIndex() const { return activeRingIndex_; }
@@ -282,6 +283,7 @@ private:
         float throwReturnTime = 0.0f;
         float throwSettleTime = 0.0f;
         float throwDistance = 0.0f;
+        float throwVisualEnergyFadeTimer = 0.0f;
         SpellRingState state = SpellRingState::Normal;
     };
 
@@ -324,6 +326,7 @@ private:
     std::vector<SpellRingItem>& activeItems();
     const std::vector<SpellRingItem>& activeItems() const;
     void updateActionFlashTimers(float dt);
+    void updateThrowVisualEnergyTimers(float dt);
     void advanceOrbitAngles(float dt, const RuntimeBalance& balance);
     void refreshItemWorldPositions(float dt, const RuntimeBalance& balance, bool advanceCapturedBehaviors);
     float throwReachForRing(int ringIndex) const;

@@ -1283,6 +1283,7 @@ private:
     void closeBaseDiary();
     void updateBaseDiaryScreen(const Input& input, UiContext& ui);
     void updateBasePlayerSpriteAnimation(float dt, bool walking);
+    void updateBaseActorIdleAnimation(float dt);
     void updateBasePlayerSpriteFlipFromFacing();
     void updatePauseMenu(const Input& input, UiContext& ui);
     void choosePauseMenuItem(int item);
@@ -1901,7 +1902,9 @@ private:
     std::unordered_map<int, std::string> hiddenDungeonNpcTargetByRuntimeId_;
     std::unordered_set<std::string> hiddenDungeonNpcRemovedIds_;
     float basePlayerSpriteAnimationTime_ = 0.0f;
+    float baseActorIdleAnimationTime_ = 0.0f;
     float baseRingPreviewAnimationTime_ = 0.0f;
+    std::unordered_map<std::string, bool> baseNpcSpriteFlipHorizontal_;
     bool basePlayerSpriteWalking_ = false;
     bool basePlayerSpriteFlipHorizontal_ = false;
     int baseMenuSelection_ = 0;
