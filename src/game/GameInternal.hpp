@@ -263,6 +263,7 @@ constexpr float ScreenTransitionFadeOutSeconds = 0.45f;
 constexpr float ScreenTransitionHoldSeconds = 0.08f;
 constexpr float ScreenTransitionFadeInSeconds = 0.45f;
 constexpr float ScreenTransitionCrossFadeSeconds = 0.35f;
+constexpr float BossEncounterIntroTransitionHoldSeconds = 0.45f;
 constexpr float IntroTutorialStartTransitionHoldSeconds = 2.0f;
 constexpr float IntroTutorialStartTransitionFadeInSeconds = ScreenTransitionFadeInSeconds * 2.0f;
 constexpr float IntroTutorialStartEventDelaySeconds = 1.0f;
@@ -2234,6 +2235,18 @@ Color magicOrbitColor(Color normalColor, Color energizedColor, const MagicOrbitD
     return blendColor(normalColor, energizedColor, magicOrbitEnergyAmount(options));
 }
 
+float hash01(float value)
+{
+    const float x = std::sin(value * 12.9898f) * 43758.5453f;
+    return x - std::floor(x);
+}
+
+float triangleFade01(float t)
+{
+    const float clampedT = clamp(t, 0.0f, 1.0f);
+    return std::sin(clampedT * Pi);
+}
+
 std::vector<Vec2> makeCirclePath(Vec2 center, float radius, int sampleCount)
 {
     const int count = std::max(16, sampleCount);
@@ -2377,6 +2390,47 @@ void drawMagicOrbitSparkles(Renderer& renderer, const std::vector<Vec2>& orbitPa
     }
 }
 
+void drawMagicOrbitThrowMotes(Renderer& renderer, const std::vector<Vec2>& orbitPath, const MagicOrbitDrawOptions& options)
+{
+    if (!options.energized || options.screenPresentation || orbitPath.size() < 2) {
+        return;
+    }
+
+    constexpr float ParticleLifetime = 0.92f;
+    constexpr float ParticleSpawnStride = 0.19f;
+    const bool wrap = magicOrbitPathWraps(options);
+    const int moteCount = options.active ? 9 : 7;
+    const float baseTime = options.totalSeconds / ParticleLifetime;
+    const Color outerBase = magicOrbitColor(Color{120, 226, 255, 255}, Color{255, 178, 74, 255}, options);
+    const Color innerBase = magicOrbitColor(Color{236, 242, 255, 255}, Color{255, 232, 146, 255}, options);
+
+    for (int i = 0; i < moteCount; ++i) {
+        const float stream = baseTime + static_cast<float>(i) * ParticleSpawnStride + static_cast<float>(options.ringIndex) * 1.37f;
+        const float cycle = std::floor(stream);
+        const float age = stream - cycle;
+        const float seed = cycle * 17.31f + static_cast<float>(i) * 43.17f + static_cast<float>(options.ringIndex) * 101.9f;
+        const float fade = triangleFade01(age);
+        if (fade <= 0.02f) {
+            continue;
+        }
+
+        const float pathT = hash01(seed + 0.13f);
+        const Vec2 pathPoint = pathPointAt(orbitPath, pathT, wrap);
+        const Vec2 tangent = pathTangentAt(orbitPath, pathT, wrap);
+        const Vec2 normal{-tangent.y, tangent.x};
+        const float side = hash01(seed + 1.7f) < 0.5f ? -1.0f : 1.0f;
+        const float normalDistance = lerp(6.0f, 20.0f, hash01(seed + 2.9f)) * side;
+        const float tangentDrift = lerp(-8.0f, 10.0f, hash01(seed + 4.1f)) * age;
+        const float floatUp = lerp(0.0f, -9.0f, smoothStep01(age));
+        const Vec2 position = pathPoint + normal * normalDistance + tangent * tangentDrift + Vec2{0.0f, floatUp};
+        const float radius = lerp(1.1f, 2.4f, hash01(seed + 5.3f)) * lerp(1.0f, 0.72f, age);
+        const float alpha = fade * options.alphaScale;
+
+        renderer.fillCircle(position, radius * 2.4f, withAlpha(outerBase, 44.0f * alpha));
+        renderer.fillCircle(position, radius, withAlpha(innerBase, 116.0f * alpha));
+    }
+}
+
 void drawMagicOrbitCenter(Renderer& renderer, Vec2 center, const MagicOrbitDrawOptions& options)
 {
     const float alpha = (options.active ? 118.0f : 62.0f) * options.alphaScale;
@@ -2454,6 +2508,7 @@ void drawMagicOrbitPath(Renderer& renderer, const std::vector<Vec2>& orbitPath, 
     drawMagicOrbitRunes(renderer, orbitPath, options);
     drawMagicOrbitFlow(renderer, orbitPath, options);
     drawMagicOrbitSparkles(renderer, orbitPath, options);
+    drawMagicOrbitThrowMotes(renderer, orbitPath, options);
 
     if (options.shape == RingShape::Comet) {
         const Vec2 head = orbitPath.back();

@@ -850,6 +850,8 @@ private:
         ReturnToBase,
         IntroTutorialToBase,
         BaseArea,
+        BossEncounterIntro,
+        BossEncounterAfterDialogue,
     };
     enum class IntroTutorialPhase {
         Inactive,
@@ -923,9 +925,12 @@ private:
     };
     enum class BossEncounterPhase {
         None,
+        IntroTransition,
         WaitingBeforeDialogue,
         Fighting,
         DefeatPresentation,
+        WaitingLevelUpAfterDefeat,
+        AfterDialogueTransition,
         WaitingAfterDialogue,
     };
     enum class BossEncounterPurpose {
@@ -1532,6 +1537,17 @@ private:
     int buriedEnemyNodeCount() const;
     int spawnedEnemyNodeCount() const;
     void configureBossSpawnPointFromWarp(Vec2 warpPosition);
+    void carveBossArenaAroundSpawnPoint();
+    void prepareBossEncounterAreaFromWarp(Vec2 warpPosition);
+    Vec2 bossApproachPosition() const;
+    bool bossArenaContains(Vec2 position) const;
+    Vec2 bossIntroPlayerPosition() const;
+    void requestBossEncounterIntro(BossEncounterPurpose purpose);
+    void applyBossEncounterIntroPlacement();
+    void finishBossEncounterIntroTransition();
+    bool shouldPlayBossAfterStoryEvent() const;
+    void requestBossEncounterAfterDialogueTransition();
+    void finishBossEncounterAfterDialogueTransition();
     void updateBossSpawn();
     void resetBossEncounter();
     bool beginBossFightForCurrentEncounter();
@@ -1546,6 +1562,10 @@ private:
     void renderWarpPoints(Renderer& renderer) const;
     void renderRoguelikeBigHole(Renderer& renderer) const;
     void renderRoguelikeFacilities(Renderer& renderer) const;
+    bool rewardNodeVisibleOnDungeonMap(const RewardNode& node) const;
+    bool moneyNodeVisibleOnDungeonMap(const MoneyNode& node) const;
+    bool moonFragmentNodeVisibleOnDungeonMap(const MoonFragmentNode& node) const;
+    bool chestNodeVisibleOnDungeonMap(const ChestNode& node) const;
     void appendRewardNodeRenderEntries(
         std::vector<DepthRenderEntry>& entries,
         Renderer& renderer,

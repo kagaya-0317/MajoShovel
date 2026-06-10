@@ -164,6 +164,16 @@ bool objectCategoryEquals(const ItemData& item, std::string_view category)
     return item.category == category;
 }
 
+bool isNonStaffWeaponObject(const ItemData& item)
+{
+    return objectCategoryEquals(item, "\xE6\xAD\xA6\xE5\x99\xA8") && !isStaffObject(item);
+}
+
+std::string_view primaryUseCommandLabel(const ItemData& item)
+{
+    return isNonStaffWeaponObject(item) ? "装備する" : "使用する";
+}
+
 bool objectHasTag(const ItemData& item, std::string_view tag)
 {
     return std::any_of(item.tags.begin(), item.tags.end(), [tag](const std::string& candidate) {
@@ -1760,7 +1770,7 @@ InventorySystem::SlotCommandList InventorySystem::buildSlotCommandItems(
     if (staff) {
         addCommand(equippedStaff ? "外す" : "装備する", canEquipStaffScreenItem(slotIndex), SlotCommandAction::ToggleStaffEquipment);
     } else {
-        addCommand("使用する", itemUseEnabled && canUseScreenItem(slotIndex), SlotCommandAction::Use);
+        addCommand(primaryUseCommandLabel(*item), itemUseEnabled && canUseScreenItem(slotIndex), SlotCommandAction::Use);
     }
     if (!equippedStaff) {
         addCommand("リングへ", hasItem, SlotCommandAction::AddToRing);

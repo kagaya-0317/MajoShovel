@@ -100,15 +100,6 @@ float linearMetersPerSecondForAngularSpeed(float angularSpeed, float radius)
     return angularSpeed * worldDistanceToMeters(radius);
 }
 
-float weightPenaltyReliefPercentForStopRatio(float stopRatio)
-{
-    const float range = SpellRingSystem::MaxWeightStopRatio - SpellRingSystem::BaseWeightStopRatio;
-    return clamp(
-        (stopRatio - SpellRingSystem::BaseWeightStopRatio) / range * 100.0f,
-        0.0f,
-        100.0f);
-}
-
 std::string dungeonDepthTopInfoEntry(const DungeonLayout& layout, Vec2 tilePosition)
 {
     char buffer[32];
@@ -171,14 +162,31 @@ std::string weightModifierSuffix(double value)
     return "（" + signedWeightShort(value) + "）";
 }
 
-std::string weightStopRatioModifierSuffix(double multiplier)
+std::string ringWeightStateLabel(float weightRatio, float stopRatio)
 {
-    if (std::fabs(multiplier - 1.0) < 0.005) {
-        return {};
+    if (weightRatio < 0.5f) {
+        return "重量余裕あり";
     }
-    const float stopRatio = SpellRingSystem::weightStopRatioForPenaltyMultiplier(multiplier);
-    char buffer[48];
-    std::snprintf(buffer, sizeof(buffer), "（軽減%.0f%%）", weightPenaltyReliefPercentForStopRatio(stopRatio));
+    if (weightRatio < 0.85f) {
+        return "重量あと少し";
+    }
+    if (weightRatio < 1.0f) {
+        return "重量いっぱい";
+    }
+    if (weightRatio < stopRatio) {
+        return "重量オーバー";
+    }
+    return "超重量オーバー";
+}
+
+std::string ringWeightSpeedStateLine(float speedMultiplier)
+{
+    if (speedMultiplier <= 0.005f) {
+        return "リング停止中";
+    }
+
+    char buffer[64];
+    std::snprintf(buffer, sizeof(buffer), "リング速度 ×%.2f倍", speedMultiplier);
     return buffer;
 }
 
@@ -189,7 +197,8 @@ void drawRingDetailLineWithModifier(
     std::string_view label,
     std::string value,
     std::string_view modifier = {},
-    Color valueColor = ui::Text)
+    Color valueColor = ui::Text,
+    Color labelColor = ui::TextMuted)
 {
     constexpr float LabelWidth = 106.0f;
     constexpr float MinLineHeight = 31.0f;
@@ -205,7 +214,7 @@ void drawRingDetailLineWithModifier(
     const float valueMaxWidth = std::max(0.0f, right - valueX - modifierWidth);
     const std::string fittedValue = fittedSingleLineText(renderer, std::move(value), valueMaxWidth, TextScale);
 
-    renderer.drawText({labelX, y}, label, ui::TextMuted, TextScale);
+    renderer.drawText({labelX, y}, label, labelColor, TextScale);
     renderer.drawText({valueX, y}, fittedValue, valueColor, TextScale);
     if (!modifier.empty()) {
         const float suffixX = valueX + renderer.measureText(fittedValue, TextScale).x + ModifierGap;
@@ -283,28 +292,36 @@ void drawRingDetailPanel(
         buffer,
         weightModifierSuffix(ringModifiers.ringWeightLimitAdd));
 
-    std::snprintf(
-        buffer,
-        sizeof(buffer),
-        "停止%.1f/限界%.1fkg",
-        spellRing.maxEquippedWeightForRing(ringIndex) * spellRing.weightStopRatioForRing(ringIndex),
-        spellRing.overweightEquipLimitForRing(ringIndex));
+    const float totalWeight = spellRing.totalEquippedWeightForRing(ringIndex);
+    const float maxWeight = spellRing.maxEquippedWeightForRing(ringIndex);
+    const float weightRatio = maxWeight > 0.0f
+        ? totalWeight / maxWeight
+        : (totalWeight > 0.0f ? SpellRingSystem::MaxWeightStopRatio : 0.0f);
+    const float stopRatio = spellRing.weightStopRatioForRing(ringIndex);
+    const float weightSpeedMultiplier = spellRing.weightSpeedMultiplierForRing(ringIndex);
+    constexpr Color OverloadedWeightColor{255, 112, 112, 255};
+    const bool overloaded = weightRatio >= 1.0f;
+    const Color stateColor = overloaded ? OverloadedWeightColor : ui::Text;
     drawRingDetailLineWithModifier(
         renderer,
         panel,
         y,
-        "過積載",
-        buffer,
-        weightStopRatioModifierSuffix(ringModifiers.metalWeightPenaltyMul));
-
-    std::snprintf(buffer, sizeof(buffer), "%.2f", spellRing.weightSpeedMultiplierForRing(ringIndex));
-    drawRingDetailLineWithModifier(
-        renderer,
-        panel,
-        y,
-        "重量補正",
-        buffer,
-        {});
+        "状態",
+        ringWeightStateLabel(weightRatio, stopRatio),
+        {},
+        stateColor,
+        overloaded ? OverloadedWeightColor : ui::TextMuted);
+    if (overloaded) {
+        drawRingDetailLineWithModifier(
+            renderer,
+            panel,
+            y,
+            "",
+            ringWeightSpeedStateLine(weightSpeedMultiplier),
+            {},
+            OverloadedWeightColor,
+            OverloadedWeightColor);
+    }
 
 }
 
@@ -523,6 +540,71 @@ void drawWarpGuideMinimapIcon(Renderer& renderer, Vec2 center, Vec2 direction, f
     renderer.drawLine(tail + tangent * 3.2f, shoulder + tangent * 5.3f, {86, 58, 32, 155});
     renderer.drawLine(tail - tangent * 3.2f, shoulder - tangent * 5.3f, {86, 58, 32, 155});
     renderer.fillCircle(center + direction * 4.0f, 2.0f, {255, 255, 226, 235});
+}
+
+constexpr Color DungeonMapExitLadderColor{242, 236, 188, 250};
+constexpr Color DungeonMapDiscoveredWarpColor{86, 238, 218, 235};
+constexpr Color DungeonMapUndiscoveredWarpColor{34, 64, 126, 220};
+constexpr Color DungeonMapEnemyColor{238, 72, 82, 238};
+constexpr Color DungeonMapBossEnemyColor{255, 108, 64, 246};
+constexpr Color DungeonMapChestColor{246, 198, 50, 238};
+constexpr Color DungeonMapCrateColor{144, 86, 42, 238};
+constexpr Color DungeonMapEventColor{246, 98, 206, 238};
+constexpr Color DungeonMapItemColor{248, 214, 64, 238};
+constexpr Color DungeonMapMaterialColor{72, 210, 188, 238};
+
+Vec2 dungeonMapDropPosition(const WorldDropItem& drop)
+{
+    return drop.jumpActive ? drop.jumpTargetPosition : drop.position;
+}
+
+bool dungeonEventVisibleOnMap(const Game::DungeonEventInstance& event)
+{
+    return event.discovered && !event.completed;
+}
+
+void drawDungeonMapCircleMarker(Renderer& renderer, Vec2 center, float radius, Color fill)
+{
+    renderer.fillCircle(center, radius, fill);
+}
+
+void drawDungeonMapSquareMarker(Renderer& renderer, Vec2 center, float size, Color fill)
+{
+    const Vec2 markerSize{size, size};
+    renderer.fillRect(center - markerSize * 0.5f, markerSize, fill);
+}
+
+void drawDungeonMapPlayerArrow(Renderer& renderer, Vec2 center, Vec2 facing, float scale)
+{
+    const Vec2 direction = lengthSquared(facing) > 0.0001f ? normalize(facing) : Vec2{1.0f, 0.0f};
+    const Vec2 tangent{-direction.y, direction.x};
+    const Vec2 tip = center + direction * (8.2f * scale);
+    const Vec2 tail = center - direction * (5.8f * scale);
+    const Vec2 notch = center - direction * (1.4f * scale);
+    const Vec2 leftWing = center - direction * (2.2f * scale) + tangent * (6.2f * scale);
+    const Vec2 rightWing = center - direction * (2.2f * scale) - tangent * (6.2f * scale);
+
+    const Vec2 left[] = {tip, leftWing, notch, tail};
+    const Vec2 right[] = {tip, tail, notch, rightWing};
+    renderer.fillPolygon(left, 4, {248, 244, 212, 255});
+    renderer.fillPolygon(right, 4, {248, 244, 212, 255});
+    renderer.drawLine(tail, tip, {72, 94, 122, 210});
+}
+
+void drawDungeonMapLadderMarker(Renderer& renderer, Vec2 center, float scale)
+{
+    const float railHalfGap = 3.2f * scale;
+    const float halfHeight = 7.0f * scale;
+    const float rungHalfWidth = 4.8f * scale;
+    const Color shadow{8, 18, 36, 185};
+    const Color rail = DungeonMapExitLadderColor;
+    renderer.drawLine(center + Vec2{-railHalfGap + 0.8f * scale, -halfHeight + 0.8f * scale}, center + Vec2{-railHalfGap + 0.8f * scale, halfHeight + 0.8f * scale}, shadow);
+    renderer.drawLine(center + Vec2{railHalfGap + 0.8f * scale, -halfHeight + 0.8f * scale}, center + Vec2{railHalfGap + 0.8f * scale, halfHeight + 0.8f * scale}, shadow);
+    renderer.drawLine(center + Vec2{-railHalfGap, -halfHeight}, center + Vec2{-railHalfGap, halfHeight}, rail);
+    renderer.drawLine(center + Vec2{railHalfGap, -halfHeight}, center + Vec2{railHalfGap, halfHeight}, rail);
+    for (float offset : {-4.0f, 0.0f, 4.0f}) {
+        renderer.drawLine(center + Vec2{-rungHalfWidth, offset * scale}, center + Vec2{rungHalfWidth, offset * scale}, rail);
+    }
 }
 
 float dungeonRingIntroItemLocalProgress(float introProgress, int itemIndex, int ringIndex)
@@ -2724,6 +2806,41 @@ UiSelectableTableResult updateOperationSettingsTableClickSelection(
 }
 
 } // namespace
+
+bool Game::rewardNodeVisibleOnDungeonMap(const RewardNode& node) const
+{
+    if (node.collected) {
+        return false;
+    }
+    return node.visibility == PlacementVisibility::Exposed ||
+        node.revealed ||
+        node.detectorRevealed;
+}
+
+bool Game::moneyNodeVisibleOnDungeonMap(const MoneyNode& node) const
+{
+    if (node.collected) {
+        return false;
+    }
+    return node.visibility == PlacementVisibility::Exposed ||
+        node.detectorRevealed;
+}
+
+bool Game::moonFragmentNodeVisibleOnDungeonMap(const MoonFragmentNode& node) const
+{
+    return !node.collected && node.visibility == PlacementVisibility::Exposed;
+}
+
+bool Game::chestNodeVisibleOnDungeonMap(const ChestNode& node) const
+{
+    if (node.opened || node.mimicTriggered) {
+        return false;
+    }
+    return node.visibility == PlacementVisibility::Exposed ||
+        node.revealed ||
+        node.detectorRevealed;
+}
+
 void Game::updateRingScreen(const Input& input, UiContext& ui, float dt)
 {
     if (!introTutorialActive()) {
@@ -4955,17 +5072,117 @@ void Game::renderDungeonMinimap(Renderer& renderer, const std::vector<LightSourc
         }
     }
 
+    const auto drawMiniCircleOnTile = [&](int tx, int ty, float radius, Color color) {
+        if (!dungeonMinimapTileSeen(tx, ty)) {
+            return;
+        }
+        const Vec2 marker = tileToMini(tx, ty);
+        if (!pointInMinimap(marker, radius + 1.0f)) {
+            return;
+        }
+        drawDungeonMapCircleMarker(renderer, marker, radius, color);
+    };
+    const auto drawMiniSquareOnTile = [&](int tx, int ty, float size, Color color) {
+        if (!dungeonMinimapTileSeen(tx, ty)) {
+            return;
+        }
+        const Vec2 marker = tileToMini(tx, ty);
+        if (!pointInMinimap(marker, size * 0.5f + 1.0f)) {
+            return;
+        }
+        drawDungeonMapSquareMarker(renderer, marker, size, color);
+    };
+
     if (warpPointsEnabled_) {
         for (const WarpPoint& point : warpPoints_) {
-            if (!point.discovered) {
+            if (!dungeonMinimapTileSeen(point.tilePosition.x, point.tilePosition.y)) {
                 continue;
             }
             const Vec2 marker = tileToMini(point.tilePosition.x, point.tilePosition.y);
-            if (!pointInMinimap(marker, 5.0f)) {
+            if (!pointInMinimap(marker, 7.0f)) {
                 continue;
             }
-            renderer.fillCircle(marker, 3.0f, {86, 238, 218, 235});
-            renderer.drawCircle(marker, 5.0f, {170, 255, 238, 170});
+            drawDungeonMapCircleMarker(
+                renderer,
+                marker,
+                point.discovered ? 3.2f : 3.0f,
+                point.discovered ? DungeonMapDiscoveredWarpColor : DungeonMapUndiscoveredWarpColor);
+        }
+    }
+    {
+        const Vec2 entrance = dungeonEntrancePosition();
+        const int entranceTileX = tileMap_.worldToTile(entrance.x);
+        const int entranceTileY = tileMap_.worldToTile(entrance.y);
+        if (dungeonMinimapTileSeen(entranceTileX, entranceTileY)) {
+            const Vec2 marker = tileToMini(entranceTileX, entranceTileY);
+            if (pointInMinimap(marker, 7.0f)) {
+                drawDungeonMapLadderMarker(renderer, marker, 0.68f);
+            }
+        }
+    }
+
+    for (const RewardNode& node : rewardNodes_) {
+        if (rewardNodeVisibleOnDungeonMap(node)) {
+            drawMiniCircleOnTile(node.tile.x, node.tile.y, 3.0f, DungeonMapItemColor);
+        }
+    }
+    for (const MoneyNode& node : moneyNodes_) {
+        if (moneyNodeVisibleOnDungeonMap(node)) {
+            drawMiniCircleOnTile(node.tile.x, node.tile.y, 2.1f, DungeonMapItemColor);
+        }
+    }
+    for (const MoonFragmentNode& node : moonFragmentNodes_) {
+        if (moonFragmentNodeVisibleOnDungeonMap(node)) {
+            drawMiniCircleOnTile(node.tile.x, node.tile.y, 2.2f, DungeonMapMaterialColor);
+        }
+    }
+    for (const CrateNode& node : crateNodes_) {
+        if (!node.destroyed) {
+            drawMiniSquareOnTile(node.tile.x, node.tile.y, 4.8f, DungeonMapCrateColor);
+        }
+    }
+    for (const ChestNode& node : chestNodes_) {
+        if (chestNodeVisibleOnDungeonMap(node)) {
+            drawMiniSquareOnTile(node.tile.x, node.tile.y, 5.0f, DungeonMapChestColor);
+        }
+    }
+    for (const DungeonEventInstance& event : dungeonEvents_.all()) {
+        if (!dungeonEventVisibleOnMap(event)) {
+            continue;
+        }
+        bool drewObject = false;
+        for (const DungeonEventObject& object : event.eventObjects) {
+            if (object.destroyed) {
+                continue;
+            }
+            drawMiniCircleOnTile(object.tile.x, object.tile.y, 3.0f, DungeonMapEventColor);
+            drewObject = true;
+        }
+        for (const DungeonEventNestHole& hole : event.nestHoles) {
+            if (hole.destroyed) {
+                continue;
+            }
+            drawMiniCircleOnTile(hole.tile.x, hole.tile.y, 3.0f, DungeonMapEventColor);
+            drewObject = true;
+        }
+        if (!drewObject) {
+            drawMiniCircleOnTile(event.focusTile.x, event.focusTile.y, 3.0f, DungeonMapEventColor);
+        }
+    }
+    for (const WorldDropItem& drop : worldDrops_.drops()) {
+        const Vec2 dropPosition = dungeonMapDropPosition(drop);
+        const int dropTileX = tileMap_.worldToTile(dropPosition.x);
+        const int dropTileY = tileMap_.worldToTile(dropPosition.y);
+        switch (drop.kind) {
+        case WorldDropKind::Object:
+            drawMiniCircleOnTile(dropTileX, dropTileY, 3.0f, DungeonMapItemColor);
+            break;
+        case WorldDropKind::Money:
+            drawMiniCircleOnTile(dropTileX, dropTileY, 2.1f, DungeonMapItemColor);
+            break;
+        case WorldDropKind::Material:
+            drawMiniCircleOnTile(dropTileX, dropTileY, 2.2f, DungeonMapMaterialColor);
+            break;
         }
     }
 
@@ -5009,16 +5226,12 @@ void Game::renderDungeonMinimap(Renderer& renderer, const std::vector<LightSourc
         if (!pointInMinimap(marker, enemy.boss ? 6.0f : 4.5f)) {
             continue;
         }
-        const Color fill = enemy.boss ? Color{255, 108, 64, 245} : Color{238, 72, 82, 235};
-        const Color ring = enemy.boss ? Color{255, 202, 112, 210} : Color{255, 152, 158, 180};
+        const Color fill = enemy.boss ? DungeonMapBossEnemyColor : DungeonMapEnemyColor;
         renderer.fillCircle(marker, enemy.boss ? 4.0f : 3.0f, fill);
-        renderer.drawCircle(marker, enemy.boss ? 6.0f : 4.5f, ring);
     }
 
-    renderer.fillCircle(minimapCenter, 3.6f, {246, 244, 214, 255});
-    renderer.drawCircle(minimapCenter, 5.8f, {68, 96, 124, 220});
     const Vec2 facing = lengthSquared(player_.facing) > 0.0001f ? normalize(player_.facing) : Vec2{1.0f, 0.0f};
-    renderer.drawLine(minimapCenter, minimapCenter + facing * 8.0f, {246, 244, 214, 230});
+    drawDungeonMapPlayerArrow(renderer, minimapCenter, facing, 0.72f);
     renderer.drawCircle(minimapCenter, contentRadius, {88, 108, 132, 145});
     if (hasWarpGuideMarker) {
         drawWarpGuideMinimapIcon(renderer, minimapCenter + warpGuideDirection * (contentRadius + 0.5f), warpGuideDirection, warpGuidePulse);
@@ -5098,14 +5311,110 @@ void Game::renderDungeonMapOverlay(Renderer& renderer, const std::vector<LightSo
         }
     }
 
+    const auto drawMapCircleOnTile = [&](int tx, int ty, float radius, Color color) {
+        if (!dungeonMinimapTileSeen(tx, ty)) {
+            return;
+        }
+        drawDungeonMapCircleMarker(renderer, tileToMap(tx, ty), radius, color);
+    };
+    const auto drawMapSquareOnTile = [&](int tx, int ty, float size, Color color) {
+        if (!dungeonMinimapTileSeen(tx, ty)) {
+            return;
+        }
+        drawDungeonMapSquareMarker(renderer, tileToMap(tx, ty), size, color);
+    };
+
+    const float itemMarkerRadius = std::max(3.0f, tilePx * 0.88f);
+    const float smallMarkerRadius = std::max(2.2f, tilePx * 0.62f);
+    const float squareMarkerSize = std::max(5.2f, tilePx * 1.18f);
+
     if (warpPointsEnabled_) {
         for (const WarpPoint& point : warpPoints_) {
-            if (!point.discovered || !dungeonMinimapTileSeen(point.tilePosition.x, point.tilePosition.y)) {
+            if (!dungeonMinimapTileSeen(point.tilePosition.x, point.tilePosition.y)) {
                 continue;
             }
             const Vec2 marker = tileToMap(point.tilePosition.x, point.tilePosition.y);
-            renderer.fillCircle(marker, std::max(3.0f, tilePx * 1.1f), {86, 238, 218, 238});
-            renderer.drawCircle(marker, std::max(5.0f, tilePx * 1.8f), {170, 255, 238, 176});
+            drawDungeonMapCircleMarker(
+                renderer,
+                marker,
+                std::max(3.0f, tilePx * 0.92f),
+                point.discovered ? DungeonMapDiscoveredWarpColor : DungeonMapUndiscoveredWarpColor);
+        }
+    }
+    {
+        const Vec2 entrance = dungeonEntrancePosition();
+        const int entranceTileX = tileMap_.worldToTile(entrance.x);
+        const int entranceTileY = tileMap_.worldToTile(entrance.y);
+        if (dungeonMinimapTileSeen(entranceTileX, entranceTileY)) {
+            drawDungeonMapLadderMarker(
+                renderer,
+                tileToMap(entranceTileX, entranceTileY),
+                std::clamp(tilePx / 6.0f, 0.75f, 1.65f));
+        }
+    }
+
+    for (const RewardNode& node : rewardNodes_) {
+        if (rewardNodeVisibleOnDungeonMap(node)) {
+            drawMapCircleOnTile(node.tile.x, node.tile.y, itemMarkerRadius, DungeonMapItemColor);
+        }
+    }
+    for (const MoneyNode& node : moneyNodes_) {
+        if (moneyNodeVisibleOnDungeonMap(node)) {
+            drawMapCircleOnTile(node.tile.x, node.tile.y, smallMarkerRadius, DungeonMapItemColor);
+        }
+    }
+    for (const MoonFragmentNode& node : moonFragmentNodes_) {
+        if (moonFragmentNodeVisibleOnDungeonMap(node)) {
+            drawMapCircleOnTile(node.tile.x, node.tile.y, smallMarkerRadius, DungeonMapMaterialColor);
+        }
+    }
+    for (const CrateNode& node : crateNodes_) {
+        if (!node.destroyed) {
+            drawMapSquareOnTile(node.tile.x, node.tile.y, squareMarkerSize, DungeonMapCrateColor);
+        }
+    }
+    for (const ChestNode& node : chestNodes_) {
+        if (chestNodeVisibleOnDungeonMap(node)) {
+            drawMapSquareOnTile(node.tile.x, node.tile.y, squareMarkerSize, DungeonMapChestColor);
+        }
+    }
+    for (const DungeonEventInstance& event : dungeonEvents_.all()) {
+        if (!dungeonEventVisibleOnMap(event)) {
+            continue;
+        }
+        bool drewObject = false;
+        for (const DungeonEventObject& object : event.eventObjects) {
+            if (object.destroyed) {
+                continue;
+            }
+            drawMapCircleOnTile(object.tile.x, object.tile.y, itemMarkerRadius, DungeonMapEventColor);
+            drewObject = true;
+        }
+        for (const DungeonEventNestHole& hole : event.nestHoles) {
+            if (hole.destroyed) {
+                continue;
+            }
+            drawMapCircleOnTile(hole.tile.x, hole.tile.y, itemMarkerRadius, DungeonMapEventColor);
+            drewObject = true;
+        }
+        if (!drewObject) {
+            drawMapCircleOnTile(event.focusTile.x, event.focusTile.y, itemMarkerRadius, DungeonMapEventColor);
+        }
+    }
+    for (const WorldDropItem& drop : worldDrops_.drops()) {
+        const Vec2 dropPosition = dungeonMapDropPosition(drop);
+        const int dropTileX = tileMap_.worldToTile(dropPosition.x);
+        const int dropTileY = tileMap_.worldToTile(dropPosition.y);
+        switch (drop.kind) {
+        case WorldDropKind::Object:
+            drawMapCircleOnTile(dropTileX, dropTileY, itemMarkerRadius, DungeonMapItemColor);
+            break;
+        case WorldDropKind::Money:
+            drawMapCircleOnTile(dropTileX, dropTileY, smallMarkerRadius, DungeonMapItemColor);
+            break;
+        case WorldDropKind::Material:
+            drawMapCircleOnTile(dropTileX, dropTileY, smallMarkerRadius, DungeonMapMaterialColor);
+            break;
         }
     }
 
@@ -5118,19 +5427,15 @@ void Game::renderDungeonMapOverlay(Renderer& renderer, const std::vector<LightSo
             continue;
         }
         const Vec2 marker = tileToMap(enemyTileX, enemyTileY);
-        const Color fill = enemy.boss ? Color{255, 108, 64, 246} : Color{238, 72, 82, 236};
-        const Color ring = enemy.boss ? Color{255, 202, 112, 212} : Color{255, 152, 158, 182};
+        const Color fill = enemy.boss ? DungeonMapBossEnemyColor : DungeonMapEnemyColor;
         renderer.fillCircle(marker, enemy.boss ? std::max(4.0f, tilePx * 1.25f) : std::max(3.0f, tilePx), fill);
-        renderer.drawCircle(marker, enemy.boss ? std::max(6.0f, tilePx * 1.9f) : std::max(4.5f, tilePx * 1.45f), ring);
     }
 
     const int playerTileX = tileMap_.worldToTile(player_.position.x);
     const int playerTileY = tileMap_.worldToTile(player_.position.y);
     const Vec2 playerMarker = tileToMap(playerTileX, playerTileY);
     const Vec2 facing = lengthSquared(player_.facing) > 0.0001f ? normalize(player_.facing) : Vec2{1.0f, 0.0f};
-    renderer.fillCircle(playerMarker, std::max(4.2f, tilePx * 1.45f), {246, 244, 214, 255});
-    renderer.drawCircle(playerMarker, std::max(7.0f, tilePx * 2.1f), {68, 96, 124, 226});
-    renderer.drawLine(playerMarker, playerMarker + facing * std::max(10.0f, tilePx * 3.0f), {246, 244, 214, 232});
+    drawDungeonMapPlayerArrow(renderer, playerMarker, facing, std::clamp(tilePx / 5.0f, 0.9f, 2.0f));
 
     if (warpPointsEnabled_) {
         for (const DungeonEventInstance& event : dungeonEvents_.all()) {

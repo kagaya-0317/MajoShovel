@@ -10446,11 +10446,12 @@ bool Game::executeDebugCommand(std::string_view command)
         if (!hasBossSpawnPoint_) {
             return;
         }
-        Vec2 direction = normalize(bossSpawnPoint_);
+        const Vec2 approachPosition = bossApproachPosition();
+        Vec2 direction = normalize(bossSpawnPoint_ - approachPosition);
         if (lengthSquared(direction) <= 0.0001f) {
             direction = {1.0f, 0.0f};
         }
-        player_.position = bossSpawnPoint_ - direction * (BossSpawnTriggerRadius + 18.0f);
+        player_.position = approachPosition;
         player_.facing = direction;
         player_.updateSpriteFlipFromFacing();
         tileMap_.updateAround(player_.position, 0.0f, balance_, dungeonLayout_);
@@ -10460,6 +10461,22 @@ bool Game::executeDebugCommand(std::string_view command)
     };
 
     const auto buildDebugDungeonWithAllWarps = [&](bool markCleared, bool suppressBossBeforeStory) {
+        struct RetainedDebugDungeonState {
+            InventoryCarryState inventory;
+            int level = 1;
+            int xp = 0;
+            int xpToNext = 0;
+            int hp = 0;
+        };
+
+        const RetainedDebugDungeonState retained{
+            captureInventoryCarryState(),
+            player_.level,
+            player_.xp,
+            player_.xpToNext,
+            player_.hp,
+        };
+
         if (suppressBossBeforeStory) {
             markStoryTriggerSeenForCurrentStage("boss_before");
         }
@@ -10472,6 +10489,13 @@ bool Game::executeDebugCommand(std::string_view command)
         if (markCleared) {
             markCurrentStageClearedForDebug();
         }
+        restoreInventoryCarryState(retained.inventory);
+        player_.level = retained.level;
+        player_.xp = retained.xp;
+        player_.xpToNext = retained.xpToNext;
+        applyPermanentUpgrades();
+        player_.hp = std::clamp(retained.hp, 0, player_.maxHp);
+        spellRing_.resetRuntimeStateAtPlayer(player_, balance_);
         return true;
     };
 
@@ -10906,13 +10930,9 @@ bool Game::executeDebugCommand(std::string_view command)
                 logWarning("Debug: astral boss point is not available.");
                 return true;
             }
-            Vec2 direction = normalize(bossSpawnPoint_);
-            if (lengthSquared(direction) <= 0.0001f) {
-                direction = {1.0f, 0.0f};
-            }
             const int bossRank = roguelikeSectionRankForDepthMeters(
                 roguelikeBigHole_.active ? roguelikeBigHole_.depthMeters : astralRun_.nextHoleDepthMeters);
-            placePlayerForAstralDebug(bossSpawnPoint_ - direction * (BossSpawnTriggerRadius + 18.0f), bossRank);
+            placePlayerForAstralDebug(bossApproachPosition(), bossRank);
         } else if (debugAstralMoveTarget_ == "hole") {
             if (!roguelikeBigHole_.active) {
                 logWarning("Debug: astral big hole is not available.");

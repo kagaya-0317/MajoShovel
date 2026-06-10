@@ -1912,6 +1912,8 @@ Game::ScreenTransitionFadeColor Game::fadeColorForScreenTransitionTarget(ScreenT
     case ScreenTransitionTarget::TitleToIntroTutorial:
     case ScreenTransitionTarget::MiningStart:
     case ScreenTransitionTarget::BaseArea:
+    case ScreenTransitionTarget::BossEncounterIntro:
+    case ScreenTransitionTarget::BossEncounterAfterDialogue:
         return ScreenTransitionFadeColor::Black;
     }
     return ScreenTransitionFadeColor::Black;
@@ -1924,6 +1926,9 @@ float Game::holdSecondsForScreenTransitionTarget(ScreenTransitionTarget target)
         return IntroTutorialStartTransitionHoldSeconds;
     case ScreenTransitionTarget::IntroTutorialToBase:
         return IntroTutorialReturnTransitionHoldSeconds;
+    case ScreenTransitionTarget::BossEncounterIntro:
+    case ScreenTransitionTarget::BossEncounterAfterDialogue:
+        return BossEncounterIntroTransitionHoldSeconds;
     case ScreenTransitionTarget::None:
     case ScreenTransitionTarget::Base:
     case ScreenTransitionTarget::TitleToBase:
@@ -1948,6 +1953,8 @@ float Game::fadeInSecondsForScreenTransitionTarget(ScreenTransitionTarget target
     case ScreenTransitionTarget::MiningStart:
     case ScreenTransitionTarget::ReturnToBase:
     case ScreenTransitionTarget::BaseArea:
+    case ScreenTransitionTarget::BossEncounterIntro:
+    case ScreenTransitionTarget::BossEncounterAfterDialogue:
         return ScreenTransitionFadeInSeconds;
     }
     return ScreenTransitionFadeInSeconds;
@@ -1966,6 +1973,8 @@ float Game::postTransitionStoryDelaySecondsForScreenTransitionTarget(ScreenTrans
     case ScreenTransitionTarget::MiningStart:
     case ScreenTransitionTarget::ReturnToBase:
     case ScreenTransitionTarget::BaseArea:
+    case ScreenTransitionTarget::BossEncounterIntro:
+    case ScreenTransitionTarget::BossEncounterAfterDialogue:
         return 0.0f;
     }
     return 0.0f;
@@ -2100,6 +2109,7 @@ void Game::updateScreenTransition(float dt)
             ? screenTransition_.fadeInSeconds
             : ScreenTransitionFadeInSeconds;
         if (screenTransition_.elapsed >= fadeInSeconds) {
+            const ScreenTransitionTarget completedTarget = screenTransition_.target;
             const bool startDungeonRingIntro = dungeonRingIntroStartPending_ &&
                 screenTransition_.target == ScreenTransitionTarget::MiningStart;
             const float postTransitionStoryDelaySeconds =
@@ -2108,6 +2118,11 @@ void Game::updateScreenTransition(float dt)
             if (startDungeonRingIntro) {
                 dungeonRingIntroStartPending_ = false;
                 dungeonRingIntroTimer_ = DungeonRingIntroDuration;
+            }
+            if (completedTarget == ScreenTransitionTarget::BossEncounterIntro) {
+                finishBossEncounterIntroTransition();
+            } else if (completedTarget == ScreenTransitionTarget::BossEncounterAfterDialogue) {
+                finishBossEncounterAfterDialogueTransition();
             }
             if (!pendingStoryTrigger_.empty()) {
                 pendingStoryTriggerDelaySeconds_ = std::max(0.0f, postTransitionStoryDelaySeconds);
@@ -2155,6 +2170,10 @@ void Game::applyScreenTransitionTarget(ScreenTransitionTarget target)
         }
         resetPlayerFootstepDust();
         baseStatus_ = std::move(screenTransition_.targetBaseStatus);
+        break;
+    case ScreenTransitionTarget::BossEncounterIntro:
+    case ScreenTransitionTarget::BossEncounterAfterDialogue:
+        applyBossEncounterIntroPlacement();
         break;
     }
 }

@@ -385,6 +385,12 @@ constexpr float PlayerDeathSequenceSeconds = 1.5f;
 constexpr float DeathRingLightItemWeightKg = 2.0f;
 constexpr float DeathRingDropPickupDelaySeconds = 1.2f;
 constexpr float BossDefeatPresentationSeconds = 1.85f;
+constexpr int BossArenaRadiusXTiles = 8;
+constexpr int BossArenaRadiusYTiles = 6;
+constexpr int BossArenaInnerRadiusXTiles = BossArenaRadiusXTiles - 1;
+constexpr int BossArenaInnerRadiusYTiles = BossArenaRadiusYTiles - 1;
+constexpr float BossArenaApproachPaddingTiles = 1.25f;
+constexpr float BossIntroPlayerOffsetTiles = 3.0f;
 constexpr float DungeonFocusMoveSeconds = 0.72f;
 constexpr float DungeonFocusDefaultHoldSeconds = 2.0f;
 constexpr float DungeonRewardFocusMoveSeconds = 0.35f;
@@ -3316,7 +3322,7 @@ void Game::rebuildUnlockedWarpPointsForStart(Vec2 latestPosition)
         latest.snapshotCaptured = true;
     }
     if (!warpPoints_.empty() && unlockedWarpPointCount_ >= static_cast<int>(warpPoints_.size())) {
-        configureBossSpawnPointFromWarp(latestPosition);
+        prepareBossEncounterAreaFromWarp(latestPosition);
     }
     clearKnownWarpPointTerrain();
 }
@@ -4393,6 +4399,11 @@ bool Game::restoreDungeonState(bool useLatestWarpPoint)
     bossSpawnPoint_ = state.bossSpawnPoint;
     hasBossSpawnPoint_ = state.hasBossSpawnPoint;
     bossSpawned_ = state.bossSpawned;
+    if (!hasBossSpawnPoint_ &&
+        !warpPoints_.empty() &&
+        discoveredWarpPointCount() >= static_cast<int>(warpPoints_.size())) {
+        prepareBossEncounterAreaFromWarp(warpPoints_.back().position);
+    }
     resetBossEncounter();
     warpPointsEnabled_ = true;
     retrySnapshot_ = RetrySnapshot{};
@@ -4410,6 +4421,7 @@ bool Game::restoreDungeonState(bool useLatestWarpPoint)
 
     player_ = Player{};
     player_.xpToNext = playerXpToNextForLevel(player_.level, balance_);
+    carveBossArenaAroundSpawnPoint();
     clearKnownWarpPointTerrain();
     const Vec2 preferredStartPosition = useLatestWarpPoint
         ? warpPointStartPositionForCurrentRequest()
@@ -4490,7 +4502,7 @@ void Game::initializeWarpPointsFromLayout()
     if (!warpPoints_.empty() &&
         discoveredWarpPointCount() >= static_cast<int>(warpPoints_.size()) &&
         !hasBossSpawnPoint_) {
-        configureBossSpawnPointFromWarp(warpPoints_.back().position);
+        prepareBossEncounterAreaFromWarp(warpPoints_.back().position);
     }
 }
 
@@ -7510,8 +7522,7 @@ bool Game::unlockAllWarpPointsForCurrentDungeon()
     const int bossWarpPointIndex = std::max(0, static_cast<int>(warpPoints_.size()) - 1);
     for (const WarpPoint& point : warpPoints_) {
         if (point.index == bossWarpPointIndex) {
-            configureBossSpawnPointFromWarp(point.position);
-            queueStoryEventForCurrentStage("boss_before");
+            prepareBossEncounterAreaFromWarp(point.position);
             break;
         }
     }
@@ -7556,8 +7567,7 @@ void Game::updateWarpPoints(float dt)
             point.snapshotCaptured = true;
             const int bossWarpPointIndex = std::max(0, static_cast<int>(warpPoints_.size()) - 1);
             if (point.index == bossWarpPointIndex) {
-                configureBossSpawnPointFromWarp(point.position);
-                queueStoryEventForCurrentStage("boss_before");
+                prepareBossEncounterAreaFromWarp(point.position);
             }
             captureRetrySnapshotAtWarpPoint();
             point.lightRevealTimer = 0.0f;
@@ -7570,7 +7580,7 @@ void Game::updateWarpPoints(float dt)
     if (!warpPoints_.empty() &&
         discoveredWarpPointCount() >= static_cast<int>(warpPoints_.size()) &&
         !hasBossSpawnPoint_) {
-        configureBossSpawnPointFromWarp(warpPoints_.back().position);
+        prepareBossEncounterAreaFromWarp(warpPoints_.back().position);
     }
 }
 
@@ -10231,6 +10241,190 @@ void Game::configureBossSpawnPointFromWarp(Vec2 warpPosition)
     hasBossSpawnPoint_ = true;
 }
 
+void Game::carveBossArenaAroundSpawnPoint()
+{
+    if (!hasBossSpawnPoint_) {
+        return;
+    }
+
+    const DungeonTile center{
+        tileMap_.worldToTile(bossSpawnPoint_.x),
+        tileMap_.worldToTile(bossSpawnPoint_.y),
+    };
+    for (int y = -BossArenaRadiusYTiles; y <= BossArenaRadiusYTiles; ++y) {
+        for (int x = -BossArenaRadiusXTiles; x <= BossArenaRadiusXTiles; ++x) {
+            const float nx = static_cast<float>(x) / static_cast<float>(BossArenaRadiusXTiles);
+            const float ny = static_cast<float>(y) / static_cast<float>(BossArenaRadiusYTiles);
+            if (nx * nx + ny * ny > 1.0f) {
+                continue;
+            }
+            tileMap_.setTerrainEdit(DungeonTile{center.x + x, center.y + y}, TileType::Empty);
+        }
+    }
+
+    const Vec2 approach = bossApproachPosition();
+    const DungeonTile approachTile{
+        tileMap_.worldToTile(approach.x),
+        tileMap_.worldToTile(approach.y),
+    };
+    for (int y = -1; y <= 1; ++y) {
+        for (int x = -1; x <= 1; ++x) {
+            tileMap_.setTerrainEdit(DungeonTile{approachTile.x + x, approachTile.y + y}, TileType::Empty);
+        }
+    }
+}
+
+void Game::prepareBossEncounterAreaFromWarp(Vec2 warpPosition)
+{
+    configureBossSpawnPointFromWarp(warpPosition);
+    carveBossArenaAroundSpawnPoint();
+}
+
+Vec2 Game::bossApproachPosition() const
+{
+    if (!hasBossSpawnPoint_) {
+        return player_.position;
+    }
+
+    Vec2 anchor = tileWorldCenter(dungeonLayout_.startTile);
+    for (auto it = warpPoints_.rbegin(); it != warpPoints_.rend(); ++it) {
+        if (it->discovered || it->unlocked || it->snapshotCaptured) {
+            anchor = it->position;
+            break;
+        }
+    }
+
+    Vec2 direction = normalize(bossSpawnPoint_ - anchor);
+    if (lengthSquared(direction) <= 0.0001f) {
+        direction = normalize(bossSpawnPoint_ - tileWorldCenter(dungeonLayout_.startTile));
+    }
+    if (lengthSquared(direction) <= 0.0001f) {
+        direction = {1.0f, 0.0f};
+    }
+
+    const float ellipseScale = std::sqrt(
+        (direction.x * direction.x) /
+            (static_cast<float>(BossArenaInnerRadiusXTiles) * static_cast<float>(BossArenaInnerRadiusXTiles)) +
+        (direction.y * direction.y) /
+            (static_cast<float>(BossArenaInnerRadiusYTiles) * static_cast<float>(BossArenaInnerRadiusYTiles)));
+    const float boundaryDistanceTiles = ellipseScale > 0.0001f
+        ? 1.0f / ellipseScale
+        : static_cast<float>(BossArenaInnerRadiusYTiles);
+    const float distanceTiles = boundaryDistanceTiles + BossArenaApproachPaddingTiles;
+    return bossSpawnPoint_ - direction * (distanceTiles * static_cast<float>(balance::TileSize));
+}
+
+bool Game::bossArenaContains(Vec2 position) const
+{
+    if (!hasBossSpawnPoint_) {
+        return false;
+    }
+
+    const float tileSize = static_cast<float>(balance::TileSize);
+    if (tileSize <= 0.0f) {
+        return false;
+    }
+
+    const Vec2 delta = (position - bossSpawnPoint_) / tileSize;
+    const float nx = delta.x / static_cast<float>(BossArenaRadiusXTiles);
+    const float ny = delta.y / static_cast<float>(BossArenaRadiusYTiles);
+    return nx * nx + ny * ny <= 1.0f;
+}
+
+Vec2 Game::bossIntroPlayerPosition() const
+{
+    if (!hasBossSpawnPoint_) {
+        return player_.position;
+    }
+    return bossSpawnPoint_ + Vec2{0.0f, BossIntroPlayerOffsetTiles * static_cast<float>(balance::TileSize)};
+}
+
+void Game::requestBossEncounterIntro(BossEncounterPurpose purpose)
+{
+    if (!hasBossSpawnPoint_ || bossSpawned_ || screenTransition_.active()) {
+        return;
+    }
+
+    bossEncounter_ = BossEncounterState{};
+    bossEncounter_.phase = BossEncounterPhase::IntroTransition;
+    bossEncounter_.purpose = purpose;
+    bossEncounter_.stageId = currentStageId_;
+    bossEncounter_.spawnPoint = bossSpawnPoint_;
+    requestScreenTransition(ScreenTransitionTarget::BossEncounterIntro);
+}
+
+void Game::applyBossEncounterIntroPlacement()
+{
+    if (!hasBossSpawnPoint_) {
+        return;
+    }
+
+    player_.position = bossIntroPlayerPosition();
+    player_.velocity = {};
+    player_.knockbackVelocity = {};
+    player_.knockbackTimer = 0.0f;
+    player_.throwCooldownRemaining = 0.0f;
+    player_.facing = {0.0f, -1.0f};
+    player_.updateSpriteFlipFromFacing();
+
+    tileMap_.updateAround(player_.position, 0.0f, runtimeBalanceForDungeon(), dungeonLayout_);
+    normalizeOpenBuriedPlacementNodes();
+    updateDungeonMinimap(0.0);
+    camera_.follow(player_.position, 1.0f);
+    resetPlayerFootstepDust();
+}
+
+void Game::finishBossEncounterIntroTransition()
+{
+    if (bossEncounter_.phase != BossEncounterPhase::IntroTransition) {
+        return;
+    }
+
+    const bool roguelikeGate = bossEncounter_.purpose == BossEncounterPurpose::RoguelikeGate;
+    bossEncounter_.phase = BossEncounterPhase::WaitingBeforeDialogue;
+    bossEncounter_.stageId = currentStageId_;
+    bossEncounter_.spawnPoint = bossSpawnPoint_;
+    if (!roguelikeGate && queueStoryEventForCurrentStage("boss_before")) {
+        return;
+    }
+
+    beginBossFightForCurrentEncounter();
+}
+
+bool Game::shouldPlayBossAfterStoryEvent() const
+{
+    if (bossEncounter_.purpose != BossEncounterPurpose::StageClear ||
+        bossEncounter_.finalBoss ||
+        currentStageIsRoguelike()) {
+        return false;
+    }
+
+    return findStoryEventForTrigger(currentStageStoryTrigger("boss_after")) != nullptr;
+}
+
+void Game::requestBossEncounterAfterDialogueTransition()
+{
+    if (screenTransition_.active() || !shouldPlayBossAfterStoryEvent()) {
+        return;
+    }
+
+    bossEncounter_.phase = BossEncounterPhase::AfterDialogueTransition;
+    requestScreenTransition(ScreenTransitionTarget::BossEncounterAfterDialogue);
+}
+
+void Game::finishBossEncounterAfterDialogueTransition()
+{
+    if (bossEncounter_.phase != BossEncounterPhase::AfterDialogueTransition) {
+        return;
+    }
+
+    bossEncounter_.phase = BossEncounterPhase::WaitingAfterDialogue;
+    bossEncounter_.timer = 0.0f;
+    if (!queueStoryEventForCurrentStage("boss_after")) {
+        finishBossEncounterAfterDialogue();
+    }
+}
+
 void Game::resetBossEncounter()
 {
     bossEncounter_ = BossEncounterState{};
@@ -10238,8 +10432,11 @@ void Game::resetBossEncounter()
 
 bool Game::bossEncounterBlocksProgress() const
 {
-    return bossEncounter_.phase == BossEncounterPhase::WaitingBeforeDialogue ||
+    return bossEncounter_.phase == BossEncounterPhase::IntroTransition ||
+        bossEncounter_.phase == BossEncounterPhase::WaitingBeforeDialogue ||
         bossEncounter_.phase == BossEncounterPhase::DefeatPresentation ||
+        bossEncounter_.phase == BossEncounterPhase::WaitingLevelUpAfterDefeat ||
+        bossEncounter_.phase == BossEncounterPhase::AfterDialogueTransition ||
         bossEncounter_.phase == BossEncounterPhase::WaitingAfterDialogue;
 }
 
@@ -10357,6 +10554,9 @@ bool Game::updateBossEncounterFlow(float dt)
     case BossEncounterPhase::None:
     case BossEncounterPhase::Fighting:
         return false;
+    case BossEncounterPhase::IntroTransition:
+    case BossEncounterPhase::AfterDialogueTransition:
+        return true;
     case BossEncounterPhase::WaitingBeforeDialogue:
         if (dialogue_.active() || !pendingStoryTriggers_.empty()) {
             return true;
@@ -10370,14 +10570,26 @@ bool Game::updateBossEncounterFlow(float dt)
         if (bossEncounter_.timer < BossDefeatPresentationSeconds) {
             return true;
         }
-        bossEncounter_.phase = BossEncounterPhase::WaitingAfterDialogue;
+        bossEncounter_.phase = BossEncounterPhase::WaitingLevelUpAfterDefeat;
         bossEncounter_.timer = 0.0f;
-        if (bossEncounter_.purpose == BossEncounterPurpose::RoguelikeGate ||
-            bossEncounter_.purpose == BossEncounterPurpose::HiddenMonicaDuel ||
-            !queueStoryEventForCurrentStage("boss_after")) {
-            finishBossEncounterAfterDialogue();
-        }
         return true;
+    case BossEncounterPhase::WaitingLevelUpAfterDefeat:
+    {
+        const bool levelUpFlowActive = levels_.isChoosing() || mode_ == ScreenMode::LevelUp;
+        if (levels_.isChoosing() && mode_ != ScreenMode::LevelUp) {
+            openLevelUpChoice(ScreenMode::Playing);
+            return false;
+        }
+        if (levelUpFlowActive) {
+            return false;
+        }
+        if (shouldPlayBossAfterStoryEvent()) {
+            requestBossEncounterAfterDialogueTransition();
+            return true;
+        }
+        finishBossEncounterAfterDialogue();
+        return true;
+    }
     case BossEncounterPhase::WaitingAfterDialogue:
         if (dialogue_.active() || !pendingStoryTriggers_.empty()) {
             return true;
@@ -10404,20 +10616,22 @@ void Game::updateBossSpawn()
     if (bossEncounter_.phase != BossEncounterPhase::None) {
         return;
     }
-    if (distanceSquared(player_.position, bossSpawnPoint_) > BossSpawnTriggerRadius * BossSpawnTriggerRadius) {
+    if (roguelikeGate) {
+        if (distanceSquared(player_.position, bossSpawnPoint_) > BossSpawnTriggerRadius * BossSpawnTriggerRadius) {
+            return;
+        }
+        bossEncounter_ = BossEncounterState{};
+        bossEncounter_.phase = BossEncounterPhase::WaitingBeforeDialogue;
+        bossEncounter_.purpose = BossEncounterPurpose::RoguelikeGate;
+        bossEncounter_.stageId = currentStageId_;
+        bossEncounter_.spawnPoint = bossSpawnPoint_;
+        beginBossFightForCurrentEncounter();
+        return;
+    } else if (!bossArenaContains(player_.position)) {
         return;
     }
 
-    bossEncounter_ = BossEncounterState{};
-    bossEncounter_.phase = BossEncounterPhase::WaitingBeforeDialogue;
-    bossEncounter_.purpose = roguelikeGate ? BossEncounterPurpose::RoguelikeGate : BossEncounterPurpose::StageClear;
-    bossEncounter_.stageId = currentStageId_;
-    bossEncounter_.spawnPoint = bossSpawnPoint_;
-    if (!roguelikeGate && queueStoryEventForCurrentStage("boss_before")) {
-        return;
-    }
-
-    beginBossFightForCurrentEncounter();
+    requestBossEncounterIntro(BossEncounterPurpose::StageClear);
 }
 
 void Game::captureRetrySnapshotAtWarpPoint()
@@ -10501,6 +10715,7 @@ void Game::restoreRetrySnapshot()
     hasBossSpawnPoint_ = retrySnapshot_.hasBossSpawnPoint;
     bossSpawned_ = retrySnapshot_.bossSpawned;
     resetBossEncounter();
+    carveBossArenaAroundSpawnPoint();
     effects_ = EffectSystem{};
     captureAbsorbAnimations_.clear();
     groundLines_ = GroundLineSystem{};
