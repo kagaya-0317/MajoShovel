@@ -8,9 +8,16 @@
 
 namespace majo {
 
+int playerSpriteFrameIndex(float animationTime, CharacterSpriteMotion motion)
+{
+    return characterSpriteFrameIndex(animationTime, motion);
+}
+
 int playerSpriteFrameIndex(float animationTime, bool walking)
 {
-    return characterSpriteFrameIndex(animationTime, walking);
+    return playerSpriteFrameIndex(
+        animationTime,
+        walking ? CharacterSpriteMotion::Walk : CharacterSpriteMotion::Idle);
 }
 
 namespace {
@@ -360,9 +367,14 @@ void Player::updateSpriteFlipFromFacing()
     spriteFlipHorizontal = characterSpriteFlipHorizontalFromFacing(facing, spriteFlipHorizontal);
 }
 
+int Player::spriteFrameIndex(CharacterSpriteMotion motion) const
+{
+    return playerSpriteFrameIndex(spriteAnimationTime, motion);
+}
+
 int Player::spriteFrameIndex() const
 {
-    return playerSpriteFrameIndex(spriteAnimationTime, spriteWalking);
+    return spriteFrameIndex(spriteWalking ? CharacterSpriteMotion::Walk : CharacterSpriteMotion::Idle);
 }
 
 }

@@ -67,6 +67,39 @@ class UiContext;
 class Renderer;
 class AudioEngine;
 
+struct PlayerDeathRingItemPresentation {
+    SpellRingItem item;
+    float dropDelaySeconds = 0.0f;
+    bool dropped = false;
+};
+
+struct PlayerDeathRingPresentation {
+    bool active = false;
+    int ringIndex = 0;
+    RingShape shape = RingShape::Circle;
+    Vec2 center{};
+    float orbitRadius = 0.0f;
+    float pathPhase = 0.0f;
+    float pathAngularSpeed = 0.0f;
+    float initialPathAngularSpeed = 0.0f;
+    float shapeRotation = 0.0f;
+    float shapeRotationSpeed = 0.0f;
+    float initialShapeRotationSpeed = 0.0f;
+    float stopElapsedSeconds = 0.0f;
+    float postStopElapsedSeconds = 0.0f;
+    std::vector<PlayerDeathRingItemPresentation> items;
+};
+
+struct PlayerDeathSequenceState {
+    bool active = false;
+    float elapsedSeconds = 0.0f;
+    float durationSeconds = 1.5f;
+    float completionHoldElapsedSeconds = 0.0f;
+    bool finalizing = false;
+    bool roguelike = false;
+    std::array<PlayerDeathRingPresentation, SpellRingCount> ringPresentations;
+};
+
 enum class ScreenMode {
     OpeningKamishibai,
     EndingKamishibai,
@@ -348,15 +381,6 @@ private:
         float elapsedSeconds = 0.0f;
         float durationSeconds = 1.2f;
         float sparkleTimer = 0.0f;
-    };
-
-    struct PlayerDeathSequenceState {
-        bool active = false;
-        float elapsedSeconds = 0.0f;
-        float durationSeconds = 1.5f;
-        bool finalizing = false;
-        bool roguelike = false;
-        std::array<std::vector<Vec2>, SpellRingCount> ringFadePaths;
     };
 
     enum class AstralDistortionKind {
@@ -1317,11 +1341,13 @@ private:
     bool playerDeathSequenceActive() const;
     bool liveSpellRingHiddenForDeath() const;
     bool gameplayRewardsEnabled() const;
-    float playerDeathRingFadeAlpha() const;
     void beginPlayerDeathSequence();
     void updatePlayerDeathSequence(float dt);
-    void dropSpellRingItemsForDeath();
-    void renderPlayerDeathRingFade(Renderer& renderer) const;
+    void initializePlayerDeathRingPresentation();
+    void updatePlayerDeathRingPresentation(float dt);
+    bool playerDeathRingPresentationComplete() const;
+    void dropPlayerDeathRingItem(int ringIndex, std::size_t itemIndex);
+    void renderPlayerDeathRingPresentation(Renderer& renderer, float totalSeconds) const;
     void enterGameOver();
     void updateGameOverScreen(const Input& input, UiContext& ui);
     void retryAfterGameOver();

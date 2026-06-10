@@ -166,6 +166,10 @@ public:
         const ObjectCatalog& catalog,
         Vec2 playerLight,
         const std::vector<LightSource>& extraLights) const;
+    void appendLightSources(
+        std::vector<LightSource>& lights,
+        const ObjectCatalog& catalog,
+        float totalSeconds) const;
 
     [[nodiscard]] std::size_t size() const { return drops_.size(); }
     [[nodiscard]] const std::vector<WorldDropItem>& drops() const { return drops_; }

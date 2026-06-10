@@ -66,6 +66,7 @@ struct RingOrbitTuning {
 };
 
 RingOrbitTuning makeRingOrbitTuning(const RuntimeBalance& balance);
+float normalizeLocalParam(RingShape shape, float param, const RingOrbitTuning& tuning);
 
 struct RingOrbitContext {
     RingShape shape = RingShape::Circle;
@@ -95,12 +96,24 @@ struct RingItemBreakEvent {
 Vec2 getRingCenterWorldPosition(Vec2 playerPosition, Vec2 shiftDirection, float spellRingShift);
 Vec2 getRingItemLocalPosition(float localAngle, const RingOrbitContext& context);
 Vec2 getRingItemWorldPosition(Vec2 center, float localAngle, const RingOrbitContext& context);
+Vec2 getRingItemWorldPositionWithDistanceOffset(
+    Vec2 center,
+    float localAngle,
+    const RingOrbitContext& context,
+    float distanceOffset);
 Vec2 getRingItemVelocity(
     float localAngle,
     float localAngularSpeed,
     float shapeRotationSpeed,
     Vec2 centerVelocity,
     const RingOrbitContext& context);
+Vec2 getRingItemVelocityWithDistanceOffset(
+    float localAngle,
+    float localAngularSpeed,
+    float shapeRotationSpeed,
+    Vec2 centerVelocity,
+    const RingOrbitContext& context,
+    float distanceOffset);
 std::vector<Vec2> getRingPathSamplePoints(Vec2 center, const RingOrbitContext& context, int sampleCount = 96);
 float findNearestRingPathParam(Vec2 worldPoint, Vec2 center, const RingOrbitContext& context, int sampleCount = 256);
 

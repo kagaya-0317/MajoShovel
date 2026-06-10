@@ -86,8 +86,9 @@ DebugConsoleLayout makeDefaultDebugConsoleLayout()
                     "プレイヤー",
                     {
                         {DebugControlKind::Dropdown, "hp_state", "HP設定", "game hp", 0, 0, {"最大", "1"}, {"full", "set 1"}},
-                        makeNumberControl("hp_value", "HP値", "game debug hp-value", 1, 999, 1),
+                        makeNumberControl("hp_value", "HP値", "game debug hp-value", 0, 999, 1),
                         {DebugControlKind::Button, "hp_set_value", "HP値を適用", "game hp set-debug"},
+                        {DebugControlKind::Button, "hp_game_over", "ゲームオーバー", "game hp game-over"},
                         {DebugControlKind::Button, "level_up", "レベル +1", "game level-up"},
                         makeNumberControl("target_level", "目標Lv", "game debug target-level", 1, 100, 1),
                         {DebugControlKind::Button, "level_set_target", "目標Lvに設定", "game level set-debug"},

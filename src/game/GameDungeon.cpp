@@ -381,7 +381,6 @@ constexpr float DiscardThrowDurationMin = 0.48f;
 constexpr float DiscardThrowDurationMax = 0.62f;
 constexpr float DiscardThrowArcHeightMin = 52.0f;
 constexpr float DiscardThrowArcHeightMax = 72.0f;
-constexpr float PlayerDeathSequenceSeconds = 1.5f;
 constexpr float DeathRingLightItemWeightKg = 2.0f;
 constexpr float DeathRingDropPickupDelaySeconds = 1.2f;
 constexpr float BossDefeatPresentationSeconds = 1.85f;
@@ -1545,7 +1544,6 @@ ItemInstance makeDroppedRingItemInstance(const SpellRingItem& item, const ItemDa
 
 WorldDropSpawnMotion makeDeathRingDropMotion(const SpellRingItem& item, std::mt19937& rng)
 {
-    std::uniform_real_distribution<float> smallOffset(-8.0f, 8.0f);
     WorldDropSpawnMotion motion{
         .jump = true,
         .startPosition = item.worldPosition,
@@ -1553,7 +1551,6 @@ WorldDropSpawnMotion makeDeathRingDropMotion(const SpellRingItem& item, std::mt1
         .jumpArcHeight = 10.0f,
         .pickupDelaySeconds = DeathRingDropPickupDelaySeconds,
     };
-    motion.startPosition += Vec2{smallOffset(rng), smallOffset(rng) * 0.35f};
     if (item.weight <= DeathRingLightItemWeightKg) {
         std::uniform_int_distribution<int> bounceCount(1, 2);
         motion.jumpDurationSeconds = 0.22f;
@@ -1597,6 +1594,83 @@ bool worldDropDigToolIsHalfDurabilityOrBelow(const WorldDropItem& drop, const It
 Vec2 effectiveDropPosition(const WorldDropItem& drop)
 {
     return drop.jumpActive ? drop.jumpTargetPosition : drop.position;
+}
+
+constexpr float PlayerDeathRingStopSeconds = 50.0f / 60.0f;
+constexpr float PlayerDeathRingWaitSeconds = 20.0f / 60.0f;
+constexpr float PlayerDeathRingDropDelayMaxSeconds = 8.0f / 60.0f;
+constexpr float PlayerDeathRingCompletionHoldSeconds = 0.24f;
+
+float playerDeathRingStopSpeedScale(float elapsedSeconds)
+{
+    const float t = std::clamp(elapsedSeconds / std::max(0.001f, PlayerDeathRingStopSeconds), 0.0f, 1.0f);
+    const float inv = 1.0f - t;
+    return inv * inv * (3.0f - 2.0f * inv);
+}
+
+bool playerDeathRingPresentationHasUndroppedItems(const PlayerDeathRingPresentation& presentation)
+{
+    return std::any_of(
+        presentation.items.begin(),
+        presentation.items.end(),
+        [](const PlayerDeathRingItemPresentation& item) {
+            return !item.dropped;
+        });
+}
+
+void updatePlayerDeathRingPresentationItemTransforms(
+    PlayerDeathRingPresentation& presentation,
+    const RuntimeBalance& balance)
+{
+    if (!presentation.active) {
+        return;
+    }
+
+    RingOrbitContext context;
+    context.shape = presentation.shape;
+    context.radius = std::max(1.0f, presentation.orbitRadius);
+    context.shapeRotation = presentation.shape == RingShape::FigureEight
+        ? presentation.shapeRotation
+        : (presentation.shape == RingShape::Comet ? presentation.pathPhase : 0.0f);
+    context.tuning = makeRingOrbitTuning(balance);
+
+    for (PlayerDeathRingItemPresentation& itemPresentation : presentation.items) {
+        if (itemPresentation.dropped) {
+            continue;
+        }
+
+        SpellRingItem& item = itemPresentation.item;
+        const float orbitParam = presentation.shape == RingShape::Comet
+            ? normalizeLocalParam(presentation.shape, item.localAngle, context.tuning)
+            : normalizeAngle(presentation.pathPhase + item.localAngle);
+        const float pathAngularSpeed = presentation.shape == RingShape::Comet ? 0.0f : presentation.pathAngularSpeed;
+        const float shapeRotationSpeed = presentation.shape == RingShape::FigureEight
+            ? presentation.shapeRotationSpeed
+            : (presentation.shape == RingShape::Comet ? presentation.pathAngularSpeed : 0.0f);
+        item.worldPosition = getRingItemWorldPositionWithDistanceOffset(
+            presentation.center,
+            orbitParam,
+            context,
+            item.orbitDistanceOffset);
+        item.worldVelocity = getRingItemVelocityWithDistanceOffset(
+            orbitParam,
+            pathAngularSpeed,
+            shapeRotationSpeed,
+            {},
+            context,
+            item.orbitDistanceOffset);
+
+        const Vec2 radial = item.worldPosition - presentation.center;
+        if (lengthSquared(radial) > 0.0001f) {
+            item.orbitOutward = normalize(radial);
+        }
+        if (lengthSquared(item.worldVelocity) > 0.0001f) {
+            item.orbitTangent = normalize(item.worldVelocity);
+        } else if (lengthSquared(item.orbitOutward) > 0.0001f) {
+            item.orbitTangent = Vec2{-item.orbitOutward.y, item.orbitOutward.x};
+        }
+        item.orbitMotionSpeed = length(item.worldVelocity) / std::max(1.0f, presentation.orbitRadius);
+    }
 }
 
 bool isPlayerRegenTarget(std::string_view target)
@@ -3345,40 +3419,162 @@ bool Game::gameplayRewardsEnabled() const
         mode_ != ScreenMode::AstralResult;
 }
 
-float Game::playerDeathRingFadeAlpha() const
-{
-    if (!playerDeathSequence_.active || playerDeathSequence_.durationSeconds <= 0.0f) {
-        return 0.0f;
-    }
-    return 1.0f - smooth01(playerDeathSequence_.elapsedSeconds / playerDeathSequence_.durationSeconds);
-}
-
-void Game::dropSpellRingItemsForDeath()
+void Game::initializePlayerDeathRingPresentation()
 {
     std::mt19937& rng = lootRuntimeRng();
+    const RingOrbitTuning tuning = makeRingOrbitTuning(balance_);
+    float maxDropDelaySeconds = 0.0f;
+
     for (int ringIndex = 0; ringIndex < SpellRingCount; ++ringIndex) {
-        std::vector<SpellRingItem>& ringItems = spellRing_.itemsForRing(ringIndex);
+        PlayerDeathRingPresentation& presentation =
+            playerDeathSequence_.ringPresentations[static_cast<std::size_t>(ringIndex)];
+        presentation = {};
+
+        const std::vector<SpellRingItem>& ringItems = spellRing_.itemsForRing(ringIndex);
+        if (ringItems.empty()) {
+            continue;
+        }
+
+        presentation.active = true;
+        presentation.ringIndex = ringIndex;
+        presentation.shape = spellRing_.ringShapeForIndex(ringIndex);
+        presentation.center = spellRing_.centerForRing(ringIndex);
+        presentation.orbitRadius = spellRing_.orbitRadiusForRing(ringIndex);
+        presentation.pathPhase = spellRing_.ringBaseAngleForIndex(ringIndex);
+        presentation.shapeRotation = spellRing_.shapeRotationForRing(ringIndex);
+        presentation.initialPathAngularSpeed =
+            spellRing_.effectiveAngularSpeedForRing(ringIndex) *
+            ringShapeOrbitSpeedMultiplier(presentation.shape, balance_) *
+            SpellRingSystem::baseSpeedMultiplierForRing(ringIndex);
+        presentation.pathAngularSpeed = presentation.initialPathAngularSpeed;
+        presentation.initialShapeRotationSpeed = presentation.shape == RingShape::FigureEight
+            ? std::max(0.0f, tuning.figure8ShapeRotationSpeed)
+            : 0.0f;
+        presentation.shapeRotationSpeed = presentation.initialShapeRotationSpeed;
+        presentation.items.reserve(ringItems.size());
+
+        std::uniform_real_distribution<float> delayDistribution(0.0f, PlayerDeathRingDropDelayMaxSeconds);
+        float cumulativeDelaySeconds = 0.0f;
         for (const SpellRingItem& item : ringItems) {
-            if (item.objectId.empty()) {
-                continue;
+            cumulativeDelaySeconds += delayDistribution(rng);
+            presentation.items.push_back({
+                item,
+                cumulativeDelaySeconds,
+                false,
+            });
+        }
+        maxDropDelaySeconds = std::max(maxDropDelaySeconds, cumulativeDelaySeconds);
+        updatePlayerDeathRingPresentationItemTransforms(presentation, balance_);
+    }
+
+    playerDeathSequence_.durationSeconds =
+        PlayerDeathRingStopSeconds +
+        PlayerDeathRingWaitSeconds +
+        maxDropDelaySeconds +
+        PlayerDeathRingCompletionHoldSeconds;
+}
+
+void Game::dropPlayerDeathRingItem(int ringIndex, std::size_t itemIndex)
+{
+    if (ringIndex < 0 || ringIndex >= SpellRingCount) {
+        return;
+    }
+
+    PlayerDeathRingPresentation& presentation =
+        playerDeathSequence_.ringPresentations[static_cast<std::size_t>(ringIndex)];
+    if (itemIndex >= presentation.items.size()) {
+        return;
+    }
+
+    PlayerDeathRingItemPresentation& itemPresentation = presentation.items[itemIndex];
+    if (itemPresentation.dropped) {
+        return;
+    }
+    itemPresentation.dropped = true;
+
+    SpellRingItem& item = itemPresentation.item;
+    if (item.objectId.empty()) {
+        return;
+    }
+
+    const ItemData* object = objectCatalog_.registry.findById(item.objectId);
+    if (object == nullptr) {
+        return;
+    }
+
+    std::mt19937& rng = lootRuntimeRng();
+    ItemInstance instance = makeDroppedRingItemInstance(item, *object, inventory_);
+    worldDrops_.spawnObjectInstanceDrop(
+        objectCatalog_,
+        std::move(instance),
+        item.worldPosition,
+        runStats_.elapsedSeconds,
+        makeDeathRingDropMotion(item, rng),
+        true,
+        object);
+}
+
+void Game::updatePlayerDeathRingPresentation(float dt)
+{
+    const float safeDt = std::max(0.0f, dt);
+    for (int ringIndex = 0; ringIndex < SpellRingCount; ++ringIndex) {
+        PlayerDeathRingPresentation& presentation =
+            playerDeathSequence_.ringPresentations[static_cast<std::size_t>(ringIndex)];
+        if (!presentation.active) {
+            continue;
+        }
+
+        if (presentation.stopElapsedSeconds < PlayerDeathRingStopSeconds) {
+            presentation.stopElapsedSeconds = std::min(PlayerDeathRingStopSeconds, presentation.stopElapsedSeconds + safeDt);
+            const float speedScale = playerDeathRingStopSpeedScale(presentation.stopElapsedSeconds);
+            presentation.pathAngularSpeed = presentation.initialPathAngularSpeed * speedScale;
+            presentation.shapeRotationSpeed = presentation.initialShapeRotationSpeed * speedScale;
+            presentation.pathPhase = normalizeAngle(presentation.pathPhase + presentation.pathAngularSpeed * safeDt);
+            if (presentation.shape == RingShape::FigureEight) {
+                presentation.shapeRotation = normalizeAngle(
+                    presentation.shapeRotation + presentation.shapeRotationSpeed * safeDt);
+            } else if (presentation.shape == RingShape::Comet) {
+                presentation.shapeRotation = presentation.pathPhase;
+            } else {
+                presentation.shapeRotation = 0.0f;
             }
-            const ItemData* object = objectCatalog_.registry.findById(item.objectId);
-            if (object == nullptr) {
-                continue;
+            updatePlayerDeathRingPresentationItemTransforms(presentation, balance_);
+            continue;
+        }
+
+        presentation.pathAngularSpeed = 0.0f;
+        presentation.shapeRotationSpeed = 0.0f;
+        if (presentation.shape == RingShape::Comet) {
+            presentation.shapeRotation = presentation.pathPhase;
+        }
+        updatePlayerDeathRingPresentationItemTransforms(presentation, balance_);
+
+        presentation.postStopElapsedSeconds += safeDt;
+        if (presentation.postStopElapsedSeconds < PlayerDeathRingWaitSeconds) {
+            continue;
+        }
+
+        const float dropElapsedSeconds = presentation.postStopElapsedSeconds - PlayerDeathRingWaitSeconds;
+        for (std::size_t itemIndex = 0; itemIndex < presentation.items.size(); ++itemIndex) {
+            const PlayerDeathRingItemPresentation& itemPresentation = presentation.items[itemIndex];
+            if (!itemPresentation.dropped && dropElapsedSeconds >= itemPresentation.dropDelaySeconds) {
+                dropPlayerDeathRingItem(ringIndex, itemIndex);
             }
-            ItemInstance instance = makeDroppedRingItemInstance(item, *object, inventory_);
-            worldDrops_.spawnObjectInstanceDrop(
-                objectCatalog_,
-                std::move(instance),
-                item.worldPosition,
-                runStats_.elapsedSeconds,
-                makeDeathRingDropMotion(item, rng),
-                true,
-                object);
         }
     }
-    cancelRingGrab();
-    spellRing_.clearActionFlashTimers();
+}
+
+bool Game::playerDeathRingPresentationComplete() const
+{
+    for (const PlayerDeathRingPresentation& presentation : playerDeathSequence_.ringPresentations) {
+        if (!presentation.active) {
+            continue;
+        }
+        if (playerDeathRingPresentationHasUndroppedItems(presentation)) {
+            return false;
+        }
+    }
+    return true;
 }
 
 void Game::beginPlayerDeathSequence()
@@ -3401,14 +3597,10 @@ void Game::beginPlayerDeathSequence()
 
     playerDeathSequence_ = {};
     playerDeathSequence_.active = true;
-    playerDeathSequence_.durationSeconds = PlayerDeathSequenceSeconds;
     playerDeathSequence_.roguelike = currentStageIsRoguelike();
-    for (int ringIndex = 0; ringIndex < SpellRingCount; ++ringIndex) {
-        if (!spellRing_.itemsForRing(ringIndex).empty()) {
-            playerDeathSequence_.ringFadePaths[static_cast<std::size_t>(ringIndex)] =
-                spellRing_.runtimePathSamplePointsForRing(ringIndex, balance_, 96);
-        }
-    }
+    initializePlayerDeathRingPresentation();
+    cancelRingGrab();
+    spellRing_.clearActionFlashTimers();
 
     playAudioJingle(
         "se.game_over.jingle",
@@ -3417,7 +3609,6 @@ void Game::beginPlayerDeathSequence()
         0.36f,
         1.0f,
         1.0f);
-    dropSpellRingItemsForDeath();
 }
 
 void Game::updatePlayerDeathSequence(float dt)
@@ -3429,15 +3620,21 @@ void Game::updatePlayerDeathSequence(float dt)
     player_.velocity = {};
     player_.healEvents.clear();
     playerRegenAccumulator_ = 0.0;
-    playerDeathSequence_.elapsedSeconds += std::max(0.0f, dt);
-    if (playerDeathSequence_.elapsedSeconds < playerDeathSequence_.durationSeconds ||
-        playerDeathSequence_.finalizing) {
+    const float safeDt = std::max(0.0f, dt);
+    playerDeathSequence_.elapsedSeconds += safeDt;
+    updatePlayerDeathRingPresentation(safeDt);
+    if (!playerDeathRingPresentationComplete() || playerDeathSequence_.finalizing) {
+        playerDeathSequence_.completionHoldElapsedSeconds = 0.0f;
+        return;
+    }
+
+    playerDeathSequence_.completionHoldElapsedSeconds += safeDt;
+    if (playerDeathSequence_.completionHoldElapsedSeconds < PlayerDeathRingCompletionHoldSeconds) {
         return;
     }
 
     playerDeathSequence_.finalizing = true;
     enterGameOver();
-    playerDeathSequence_ = {};
 }
 
 void Game::retryAfterGameOver()

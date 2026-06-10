@@ -13,11 +13,13 @@ class Renderer;
 enum class CharacterSpriteMotion {
     Idle,
     Walk,
+    Death,
 };
 
 struct SpriteFrameAnimationClip {
     std::span<const int> frames;
     float frameDurationSeconds = 0.0f;
+    bool loop = true;
 };
 
 struct CharacterSpriteAnimationState {

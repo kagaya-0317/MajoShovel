@@ -14,13 +14,21 @@ constexpr float TargetFps = 60.0f;
 constexpr float MaxAnimationElapsedSeconds = 3600.0f;
 constexpr std::array<int, 3> CharacterIdleFrames{{0, 1, 2}};
 constexpr std::array<int, 6> CharacterWalkFrames{{3, 4, 5, 6, 7, 8}};
+constexpr std::array<int, 3> CharacterDeathFrames{{9, 10, 11}};
 constexpr SpriteFrameAnimationClip CharacterIdleClip{
     std::span<const int>{CharacterIdleFrames},
     12.0f / TargetFps,
+    true,
 };
 constexpr SpriteFrameAnimationClip CharacterWalkClip{
     std::span<const int>{CharacterWalkFrames},
     6.0f / TargetFps,
+    true,
+};
+constexpr SpriteFrameAnimationClip CharacterDeathClip{
+    std::span<const int>{CharacterDeathFrames},
+    25.0f / TargetFps,
+    false,
 };
 
 [[nodiscard]] CharacterSpriteMotion characterSpriteMotionFromWalking(bool walking)
@@ -64,6 +72,8 @@ constexpr SpriteFrameAnimationClip CharacterWalkClip{
 const SpriteFrameAnimationClip& characterSpriteAnimationClip(CharacterSpriteMotion motion)
 {
     switch (motion) {
+    case CharacterSpriteMotion::Death:
+        return CharacterDeathClip;
     case CharacterSpriteMotion::Walk:
         return CharacterWalkClip;
     case CharacterSpriteMotion::Idle:
@@ -79,7 +89,11 @@ int spriteFrameAnimationIndex(const SpriteFrameAnimationClip& clip, float elapse
     }
     const float frameDuration = std::max(0.001f, clip.frameDurationSeconds);
     const int step = static_cast<int>(std::floor(std::max(0.0f, elapsedSeconds) / frameDuration));
-    return clip.frames[static_cast<std::size_t>(step % static_cast<int>(clip.frames.size()))];
+    const int frameCount = static_cast<int>(clip.frames.size());
+    const int frameIndex = clip.loop
+        ? (step % frameCount)
+        : std::clamp(step, 0, frameCount - 1);
+    return clip.frames[static_cast<std::size_t>(frameIndex)];
 }
 
 int characterSpriteFrameIndex(float elapsedSeconds, CharacterSpriteMotion motion)

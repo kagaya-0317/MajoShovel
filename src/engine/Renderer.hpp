@@ -97,8 +97,8 @@ public:
     Vec2 measureWrappedText(std::string_view text, float maxWidth, int scale = 2, TextStyle style = TextStyle::Regular);
     void drawWrappedText(Vec2 pos, std::string_view text, float maxWidth, Color color, int scale = 2, TextStyle style = TextStyle::Regular);
     bool loadTextFont(std::string_view path, TextFontRole fontRole = TextFontRole::Ui);
-    bool loadPlayerSheet(std::string_view path, int frameSize = 0, int columns = 3, int rows = 3);
-    bool loadPlayerHandSheet(std::string_view path, int frameSize = 0, int columns = 3, int rows = 3);
+    bool loadPlayerSheet(std::string_view path, int frameSize = 0, int columns = 3, int rows = 4);
+    bool loadPlayerHandSheet(std::string_view path, int frameSize = 0, int columns = 3, int rows = 4);
     void unloadPlayerSheet();
     void unloadPlayerHandSheet();
     bool hasPlayerSheet() const { return playerSheet_.texture != nullptr; }

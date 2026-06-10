@@ -4,6 +4,7 @@
 #include "engine/Camera.hpp"
 #include "engine/Math.hpp"
 #include "data/RuntimeBalance.hpp"
+#include "game/CharacterSprite.hpp"
 #include "game/Collision.hpp"
 #include "game/EntityStatus.hpp"
 
@@ -36,6 +37,7 @@ struct DamageCause {
 
 std::string deathCauseText(const DamageCause& cause);
 std::string_view fallbackDeathCauseText(DamageSource source);
+int playerSpriteFrameIndex(float animationTime, CharacterSpriteMotion motion);
 int playerSpriteFrameIndex(float animationTime, bool walking);
 inline constexpr float WitchSelfLightRadiusMultiplier = 2.0f;
 inline constexpr float WitchSelfLightCenterYOffset = -26.0f;
@@ -107,6 +109,7 @@ struct Player {
         std::span<const CollisionRect> objectBlockers = {});
     void updateSpriteAnimation(float dt, bool walking);
     void updateSpriteFlipFromFacing();
+    int spriteFrameIndex(CharacterSpriteMotion motion) const;
     int spriteFrameIndex() const;
 };
 

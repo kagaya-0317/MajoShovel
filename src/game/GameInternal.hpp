@@ -9,6 +9,7 @@
 #include "game/ActorVisualMotion.hpp"
 #include "game/InventoryUiCommon.hpp"
 #include "game/ItemImageRenderer.hpp"
+#include "game/LightFlicker.hpp"
 #include "game/ObjectImageRenderer.hpp"
 #include "game/ObjectVisualPose.hpp"
 #include "game/RingItemVisual.hpp"
@@ -298,31 +299,6 @@ constexpr std::array<FootstepDustShape, 10> FootstepDustShapes{{
     {4, {{{-6.0f, 4.0f}, {-2.0f, -1.0f}, {3.0f, 2.0f}, {7.0f, -2.0f}, {0.0f, 0.0f}}}, {{3.4f, 5.2f, 4.8f, 3.8f, 0.0f}}},
     {5, {{{-7.0f, -1.0f}, {-1.0f, 3.0f}, {3.0f, -2.0f}, {7.0f, 2.0f}, {1.0f, -5.0f}}}, {{4.2f, 5.0f, 4.0f, 3.6f, 3.0f}}},
 }};
-
-float flickeredLightRadius(float radius, float totalSeconds, float phase)
-{
-    if (radius <= 0.0f) {
-        return radius;
-    }
-    const float waveA = std::sin(totalSeconds * 13.4f + phase);
-    const float waveB = std::sin(totalSeconds * 34.7f + phase * 2.3f + 0.6f);
-    const float offsetPx = std::clamp(waveA * 1.35f + waveB * 0.95f, -2.0f, 2.0f);
-    return std::max(0.0f, radius + offsetPx);
-}
-
-Vec2 flickeredLightPosition(Vec2 position, float totalSeconds, float phase)
-{
-    const float x =
-        std::sin(totalSeconds * 7.1f + phase * 1.37f) * 1.15f +
-        std::sin(totalSeconds * 17.3f + phase * 2.11f + 1.2f) * 0.55f;
-    const float y =
-        std::sin(totalSeconds * 6.4f + phase * 1.83f + 2.0f) * 1.10f +
-        std::sin(totalSeconds * 19.1f + phase * 2.47f + 0.4f) * 0.60f;
-    return position + Vec2{
-        std::clamp(x, -1.7f, 1.7f),
-        std::clamp(y, -1.7f, 1.7f),
-    };
-}
 
 float smoothStep01(float value)
 {

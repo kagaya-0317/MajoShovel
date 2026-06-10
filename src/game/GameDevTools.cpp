@@ -10587,12 +10587,32 @@ bool Game::executeDebugCommand(std::string_view command)
 
     const auto setPlayerHpForDebug = [&](int value) {
         applyPermanentUpgrades();
-        player_.hp = std::clamp(value, 1, std::max(1, player_.maxHp));
+        player_.hp = std::clamp(value, 0, std::max(1, player_.maxHp));
         player_.status = EntityStatus{};
         player_.poisonDamageAccumulator = 0.0;
         player_.hotDamageAccumulator = 0.0;
         player_.bleedDamageAccumulator = 0.0;
         logInfo("Debug: player HP set to " + std::to_string(player_.hp) + "/" + std::to_string(player_.maxHp) + ".");
+    };
+
+    const auto triggerPlayerGameOverForDebug = [&]() {
+        if (mode_ != ScreenMode::Playing) {
+            logWarning("Debug: game over requires ScreenMode::Playing.");
+            return;
+        }
+        if (playerDeathSequenceActive()) {
+            logInfo("Debug: player death sequence is already active.");
+            return;
+        }
+
+        setPlayerHpForDebug(0);
+        player_.minimumHpAfterDamage = 0;
+        player_.lastDamageCause = DamageCause{
+            .source = DamageSource::Unknown,
+            .objectName = "デバッグ",
+        };
+        beginPlayerDeathSequence();
+        logInfo("Debug: game over triggered.");
     };
 
     const auto setPlayerLevelForDebug = [&](int value) {
@@ -11745,7 +11765,7 @@ bool Game::executeDebugCommand(std::string_view command)
     if (normalized.rfind(DebugHpValuePrefix, 0) == 0) {
         debugHpValue_ = std::clamp(
             parseDebugInt(std::string_view(normalized).substr(DebugHpValuePrefix.size()), debugHpValue_),
-            1,
+            0,
             999);
         logInfo("Debug: HP value => " + std::to_string(debugHpValue_) + ".");
         return true;
@@ -11756,7 +11776,16 @@ bool Game::executeDebugCommand(std::string_view command)
         const int hp = normalized == "game hp set-debug"
             ? debugHpValue_
             : parseDebugInt(std::string_view(normalized).substr(HpSetPrefix.size()), debugHpValue_);
-        setPlayerHpForDebug(hp);
+        if (hp <= 0) {
+            triggerPlayerGameOverForDebug();
+        } else {
+            setPlayerHpForDebug(hp);
+        }
+        return true;
+    }
+
+    if (normalized == "game hp game-over") {
+        triggerPlayerGameOverForDebug();
         return true;
     }
 

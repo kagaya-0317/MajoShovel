@@ -1563,6 +1563,22 @@ std::vector<RingItemRenderRef> sortedRingItemRenderRefs(const std::vector<const 
     return result;
 }
 
+std::vector<const SpellRingItem*> playerDeathRingPresentationItems(const PlayerDeathSequenceState& deathSequence)
+{
+    std::vector<const SpellRingItem*> items;
+    for (const PlayerDeathRingPresentation& presentation : deathSequence.ringPresentations) {
+        if (!presentation.active) {
+            continue;
+        }
+        for (const PlayerDeathRingItemPresentation& itemPresentation : presentation.items) {
+            if (!itemPresentation.dropped) {
+                items.push_back(&itemPresentation.item);
+            }
+        }
+    }
+    return items;
+}
+
 float ringItemCometVisualScale(const SpellRingSystem& spellRing, const SpellRingItem& item)
 {
     const int ringIndex = std::clamp(item.ringIndex, 0, SpellRingCount - 1);
@@ -6588,6 +6604,23 @@ void Game::renderSpellRingForeground(
     const std::vector<LightSource>&,
     float totalSeconds) const
 {
+    if (playerDeathSequenceActive()) {
+        renderPlayerDeathRingPresentation(renderer, totalSeconds);
+        const std::vector<const SpellRingItem*> deathItems = playerDeathRingPresentationItems(playerDeathSequence_);
+        const std::vector<RingItemRenderRef> sortedItems = sortedRingItemRenderRefs(deathItems);
+        for (const RingItemRenderRef& itemRef : sortedItems) {
+            drawSpellRingItemWorldVisual(
+                renderer,
+                spellRing_,
+                objectCatalog_,
+                *itemRef.item,
+                totalSeconds,
+                false,
+                false);
+        }
+        return;
+    }
+
     if (liveSpellRingHiddenForDeath()) {
         return;
     }
@@ -6624,32 +6657,70 @@ void Game::renderSpellRingForeground(
     }
 }
 
-void Game::renderPlayerDeathRingFade(Renderer& renderer) const
+void Game::renderPlayerDeathRingPresentation(Renderer& renderer, float totalSeconds) const
 {
-    const float fadeAlpha = playerDeathRingFadeAlpha();
-    if (fadeAlpha <= 0.001f) {
-        return;
-    }
+    for (RingShape shapePass : MagicRingShapeRenderOrder) {
+        for (const PlayerDeathRingPresentation& presentation : playerDeathSequence_.ringPresentations) {
+            if (!presentation.active || presentation.shape != shapePass) {
+                continue;
+            }
 
-    const unsigned char outerAlpha = alphaByte(92.0f * fadeAlpha);
-    const unsigned char innerAlpha = alphaByte(154.0f * fadeAlpha);
-    for (const std::vector<Vec2>& path : playerDeathSequence_.ringFadePaths) {
-        if (path.size() < 2) {
-            continue;
-        }
-        for (std::size_t i = 0; i < path.size(); ++i) {
-            const Vec2 a = path[i];
-            const Vec2 b = path[(i + 1) % path.size()];
-            renderer.drawLine(a, b, {98, 208, 236, outerAlpha});
-            renderer.drawLine(a, b, {236, 252, 255, innerAlpha});
+            bool hasVisibleItems = false;
+            for (const PlayerDeathRingItemPresentation& itemPresentation : presentation.items) {
+                if (!itemPresentation.dropped) {
+                    hasVisibleItems = true;
+                    break;
+                }
+            }
+            if (!hasVisibleItems) {
+                continue;
+            }
+
+            RingOrbitContext context;
+            context.shape = presentation.shape;
+            context.radius = std::max(1.0f, presentation.orbitRadius);
+            context.shapeRotation = presentation.shape == RingShape::FigureEight
+                ? presentation.shapeRotation
+                : (presentation.shape == RingShape::Comet ? presentation.pathPhase : 0.0f);
+            context.tuning = makeRingOrbitTuning(balance_);
+            const std::vector<Vec2> orbitPath = getRingPathSamplePoints(presentation.center, context, 160);
+            drawMagicOrbitPath(
+                renderer,
+                orbitPath,
+                presentation.center,
+                MagicOrbitDrawOptions{
+                    presentation.shape,
+                    presentation.ringIndex == spellRing_.activeRingIndex(),
+                    false,
+                    false,
+                    false,
+                    presentation.ringIndex,
+                    totalSeconds,
+                    0.46f,
+                });
         }
     }
 }
 
 namespace {
 
+bool playerDeathRingPresentationHasVisibleItems(const PlayerDeathRingPresentation& presentation)
+{
+    for (const PlayerDeathRingItemPresentation& itemPresentation : presentation.items) {
+        if (!itemPresentation.dropped) {
+            return true;
+        }
+    }
+    return false;
+}
+
+} // namespace
+
+namespace {
+
 constexpr int LightweightDungeonExtraLightLimit = 8;
 constexpr int DungeonLightPriorityRing = 20;
+constexpr int DungeonLightPriorityDrop = 18;
 constexpr int DungeonLightPriorityRingAura = 24;
 constexpr int DungeonLightPriorityEntrance = 26;
 constexpr int DungeonLightPriorityMagic = 32;
@@ -6781,6 +6852,37 @@ std::vector<LightSource> Game::collectDungeonLightSources(double totalSeconds) c
             }, DungeonLightPriorityRingAura, true);
         }
         ++runtimeItemIndex;
+    }
+    if (playerDeathSequenceActive()) {
+        for (const PlayerDeathRingPresentation& presentation : playerDeathSequence_.ringPresentations) {
+            if (!presentation.active) {
+                continue;
+            }
+            for (const PlayerDeathRingItemPresentation& itemPresentation : presentation.items) {
+                if (itemPresentation.dropped) {
+                    continue;
+                }
+                const SpellRingItem& item = itemPresentation.item;
+                const float phase = item.localAngle * 1.7f + static_cast<float>(item.ringIndex) * 2.3f;
+                if (item.lightRadius > 0.0f) {
+                    addLight({
+                        flickeredLightPosition(item.worldPosition, static_cast<float>(totalSeconds), phase),
+                        flickeredLightRadius(item.lightRadius, static_cast<float>(totalSeconds), phase),
+                    }, DungeonLightPriorityRing, true);
+                } else if (item.type == SpellRingItemType::Torch) {
+                    const float torchPhase = phase + 0.47f;
+                    addLight({
+                        flickeredLightPosition(item.worldPosition, static_cast<float>(totalSeconds), torchPhase),
+                        flickeredLightRadius(balance_.lightRadius, static_cast<float>(totalSeconds), torchPhase),
+                    }, DungeonLightPriorityRing, true);
+                }
+            }
+        }
+    }
+    std::vector<LightSource> dropLights;
+    worldDrops_.appendLightSources(dropLights, objectCatalog_, static_cast<float>(totalSeconds));
+    for (const LightSource& light : dropLights) {
+        addLight(light, DungeonLightPriorityDrop);
     }
     if (warpPointsEnabled_) {
         for (const WarpPoint& point : warpPoints_) {
@@ -7013,18 +7115,32 @@ void Game::render(Renderer& renderer, const Time& time)
     }
 
     bool ringCenterVisible = false;
-    for (int ringIndex = 0; ringIndex < SpellRingCount; ++ringIndex) {
-        if (!liveRingHiddenForDeath &&
-            !spellRing_.itemsForRing(ringIndex).empty() &&
-            tileMap_.isLit(spellRing_.centerForRing(ringIndex), playerLightCenter, itemLights)) {
-            ringCenterVisible = true;
-            break;
+    if (playerDeathSequenceActive()) {
+        for (const PlayerDeathRingPresentation& presentation : playerDeathSequence_.ringPresentations) {
+            if (presentation.active &&
+                playerDeathRingPresentationHasVisibleItems(presentation) &&
+                tileMap_.isLit(presentation.center, playerLightCenter, itemLights)) {
+                ringCenterVisible = true;
+                break;
+            }
+        }
+    } else {
+        for (int ringIndex = 0; ringIndex < SpellRingCount; ++ringIndex) {
+            if (!liveRingHiddenForDeath &&
+                !spellRing_.itemsForRing(ringIndex).empty() &&
+                tileMap_.isLit(spellRing_.centerForRing(ringIndex), playerLightCenter, itemLights)) {
+                ringCenterVisible = true;
+                break;
+            }
         }
     }
     if (ringCenterVisible && !ringIntroActive) {
-        drawSpellRingOrbitLayer(renderer, spellRing_, balance_, time.totalSeconds(), 0.46f);
+        if (playerDeathSequenceActive()) {
+            renderPlayerDeathRingPresentation(renderer, static_cast<float>(time.totalSeconds()));
+        } else {
+            drawSpellRingOrbitLayer(renderer, spellRing_, balance_, time.totalSeconds(), 0.46f);
+        }
     }
-    renderPlayerDeathRingFade(renderer);
     const Vec2 playerFootAnchor = player_.position;
     const EntityStatusVisualStyle playerStatusVisual = entityStatusVisualStyle(player_.status);
     const Vec2 playerVisualFootAnchor = playerFootAnchor +
@@ -7044,7 +7160,14 @@ void Game::render(Renderer& renderer, const Time& time)
         player_.position.y,
         [&]() {
             if (renderer.hasPlayerSheet()) {
-                const int playerFrame = player_.spriteFrameIndex();
+                const bool deathActive = playerDeathSequenceActive();
+                const CharacterSpriteMotion playerMotion = deathActive
+                    ? CharacterSpriteMotion::Death
+                    : (player_.spriteWalking ? CharacterSpriteMotion::Walk : CharacterSpriteMotion::Idle);
+                const float playerAnimationTime = deathActive
+                    ? playerDeathSequence_.elapsedSeconds
+                    : player_.spriteAnimationTime;
+                const int playerFrame = playerSpriteFrameIndex(playerAnimationTime, playerMotion);
                 const bool playerFlip = player_.spriteFlipHorizontal;
                 renderer.drawPlayerSpriteNaturalSize(
                     playerFrame,
@@ -7054,7 +7177,7 @@ void Game::render(Renderer& renderer, const Time& time)
                     playerStatusTint,
                     {PlayerSpriteAnchorX, PlayerSpriteAnchorY},
                     playerStatusVisual.flipVertical);
-                if (!playerStatusVisual.flipVertical) {
+                if (!deathActive && !playerStatusVisual.flipVertical) {
                     if (const InventoryObjectInstance* staffInstance = inventory_.equippedStaffInstance()) {
                         const PlayerHeldStaffDrawContext staffContext{
                             .footAnchor = playerVisualFootAnchor,
@@ -7090,10 +7213,32 @@ void Game::render(Renderer& renderer, const Time& time)
             }
             renderEntityStatusOverlays(renderer, player_.status, playerVisualFootAnchor, playerSpriteVisualSize, time.totalSeconds());
 
-            if (ringIntroActive || liveRingHiddenForDeath) {
+            if (ringIntroActive) {
                 return;
             }
             const float totalSeconds = static_cast<float>(time.totalSeconds());
+            if (playerDeathSequenceActive()) {
+                const std::vector<const SpellRingItem*> deathItems = playerDeathRingPresentationItems(playerDeathSequence_);
+                const std::vector<RingItemRenderRef> sortedDeathItems = sortedRingItemRenderRefs(deathItems);
+                for (const RingItemRenderRef& itemRef : sortedDeathItems) {
+                    const SpellRingItem& item = *itemRef.item;
+                    if (!tileMap_.isLit(item.worldPosition, playerLightCenter, itemLights)) {
+                        continue;
+                    }
+                    drawSpellRingItemWorldVisual(
+                        renderer,
+                        spellRing_,
+                        objectCatalog_,
+                        item,
+                        totalSeconds,
+                        true,
+                        true);
+                }
+                return;
+            }
+            if (liveRingHiddenForDeath) {
+                return;
+            }
             for (const RingItemRenderRef& itemRef : runtimeItemsByDepth) {
                 const SpellRingItem& item = *itemRef.item;
                 if (!tileMap_.isLit(item.worldPosition, playerLightCenter, itemLights)) {

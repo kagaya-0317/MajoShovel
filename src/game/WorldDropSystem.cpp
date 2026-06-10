@@ -5,8 +5,10 @@
 #include "game/EffectSystem.hpp"
 #include "game/ActorVisual.hpp"
 #include "game/Collision.hpp"
+#include "game/EffectDispatcher.hpp"
 #include "game/InventorySystem.hpp"
 #include "game/ItemImageRenderer.hpp"
+#include "game/LightFlicker.hpp"
 #include "game/ObjectImageRenderer.hpp"
 #include "game/ObjectVisualPose.hpp"
 #include "game/Player.hpp"
@@ -166,13 +168,41 @@ bool isTreasureDrop(const WorldDropItem& drop, const ObjectCatalog& catalog)
     return object->category == "\xE5\xAE\x9D" || hasObjectTag(*object, "treasure");
 }
 
+const ItemData* itemDataForDrop(const WorldDropItem& drop, const ObjectCatalog& catalog)
+{
+    if (drop.kind != WorldDropKind::Object) {
+        return nullptr;
+    }
+    if (const ItemData* catalogObject = catalog.registry.findById(drop.id)) {
+        return catalogObject;
+    }
+    return drop.runtimeItem ? &*drop.runtimeItem : nullptr;
+}
+
+float dropLightRadiusForItem(const ItemData& item)
+{
+    float radius = 0.0f;
+    for (const EffectSpec& spec : item.orbitEffects) {
+        if (spec.target != "area") {
+            continue;
+        }
+        const std::size_t count = std::min(spec.effects.size(), spec.values.size());
+        for (std::size_t i = 0; i < count; ++i) {
+            if (spec.effects[i] == "light") {
+                radius = std::max(radius, areaEffectRadiusFromValue(spec.values[i]));
+            }
+        }
+    }
+    return radius;
+}
+
 Color colorForDrop(const ObjectDefinition& object);
 Color colorForMaterial(MaterialType type);
 
 void drawWorldDrop(Renderer& renderer, const WorldDropItem& drop, const ObjectCatalog& catalog)
 {
     const ItemData* catalogObject = drop.kind == WorldDropKind::Object ? catalog.registry.findById(drop.id) : nullptr;
-    const ItemData* object = catalogObject != nullptr ? catalogObject : (drop.runtimeItem ? &*drop.runtimeItem : nullptr);
+    const ItemData* object = itemDataForDrop(drop, catalog);
     const Vec2 center = elevatedDrawPosition(drop.position, drop.altitude);
     MaterialType materialType = MaterialType::Count;
     const bool material = drop.kind == WorldDropKind::Material && materialTypeFromSaveName(drop.id, materialType);
@@ -1070,6 +1100,30 @@ void WorldDropSystem::appendRenderEntries(
             [&renderer, &catalog, &drop]() {
                 drawWorldDrop(renderer, drop, catalog);
             },
+        });
+    }
+}
+
+void WorldDropSystem::appendLightSources(
+    std::vector<LightSource>& lights,
+    const ObjectCatalog& catalog,
+    float totalSeconds) const
+{
+    for (const WorldDropItem& drop : drops_) {
+        const ItemData* item = itemDataForDrop(drop, catalog);
+        if (item == nullptr) {
+            continue;
+        }
+        const float lightRadius = dropLightRadiusForItem(*item);
+        if (lightRadius <= 0.0f) {
+            continue;
+        }
+
+        const float phase = drop.hoverPhase + static_cast<float>(drop.ageSeconds) * 0.35f;
+        const Vec2 center = elevatedDrawPosition(drop.position, drop.altitude);
+        lights.push_back({
+            flickeredLightPosition(center, totalSeconds, phase),
+            flickeredLightRadius(lightRadius, totalSeconds, phase),
         });
     }
 }
