@@ -146,6 +146,84 @@ int roguelikeTargetBaseLevelForSectionRank(int depthRank)
     return std::min(100, InitialLevels.back() + (rank - static_cast<int>(InitialLevels.size())) * 5);
 }
 
+struct RoguelikeLootCategorySpec {
+    std::string_view category;
+    double commonWeight = 0.0;
+    double rareWeight = 0.0;
+    double superRareWeight = 0.0;
+    int defaultRange = 8;
+};
+
+constexpr int RoguelikeItemTargetLevelCap = 60;
+constexpr int RoguelikeLootRangeFallbackStep = 5;
+constexpr int RoguelikeLootRangeFallbackMaxExtra = 80;
+
+constexpr std::string_view CategoryDig = "\xE6\x8E\x98\xE5\x89\x8A";
+constexpr std::string_view CategoryExplore = "\xE6\x8E\xA2\xE7\xB4\xA2";
+constexpr std::string_view CategoryOrbit = "\xE8\xBB\x8C\xE9\x81\x93";
+constexpr std::string_view CategoryTreasure = "\xE5\xAE\x9D";
+constexpr std::string_view CategoryRecovery = "\xE5\x9B\x9E\xE5\xBE\xA9";
+constexpr std::string_view CategoryEnhance = "\xE5\xBC\xB7\xE5\x8C\x96";
+constexpr std::string_view CategoryDebuff = "\xE5\xBC\xB1\xE4\xBD\x93";
+constexpr std::string_view CategoryMagicBook = "\xE9\xAD\x94\xE5\xB0\x8E\xE6\x9B\xB8";
+constexpr std::string_view CategoryWeapon = "\xE6\xAD\xA6\xE5\x99\xA8";
+constexpr std::string_view CategoryShield = "\xE7\x9B\xBE";
+constexpr std::string_view CategoryStaff = "\xE6\x9D\x96";
+
+constexpr std::array<RoguelikeLootCategorySpec, 11> RoguelikeLootCategorySpecs{{
+    {CategoryTreasure, 28.0, 25.0, 22.0, 10},
+    {CategoryWeapon, 10.0, 13.0, 14.0, 7},
+    {CategoryStaff, 8.0, 11.0, 13.0, 7},
+    {CategoryDig, 10.0, 8.0, 7.0, 7},
+    {CategoryExplore, 10.0, 8.0, 8.0, 8},
+    {CategoryRecovery, 12.0, 8.0, 5.0, 8},
+    {CategoryEnhance, 6.0, 7.0, 8.0, 8},
+    {CategoryDebuff, 4.0, 5.0, 6.0, 8},
+    {CategoryMagicBook, 4.0, 7.0, 9.0, 8},
+    {CategoryShield, 5.0, 6.0, 6.0, 7},
+    {CategoryOrbit, 3.0, 2.0, 2.0, 8},
+}};
+
+double roguelikeLootCategoryBaseWeight(const RoguelikeLootCategorySpec& spec, LootChestKind chestKind)
+{
+    switch (chestKind) {
+    case LootChestKind::Common:
+        return spec.commonWeight;
+    case LootChestKind::Rare:
+        return spec.rareWeight;
+    case LootChestKind::SuperRare:
+        return spec.superRareWeight;
+    }
+    return spec.commonWeight;
+}
+
+int roguelikeTargetItemLevelForSectionRank(int depthRank)
+{
+    return std::clamp(std::max(1, depthRank) + 1, 1, RoguelikeItemTargetLevelCap);
+}
+
+const RoguelikeLootCategorySpec* roguelikeLootCategorySpecFor(std::string_view category)
+{
+    const auto it = std::find_if(
+        RoguelikeLootCategorySpecs.begin(),
+        RoguelikeLootCategorySpecs.end(),
+        [category](const RoguelikeLootCategorySpec& spec) {
+            return spec.category == category;
+        });
+    return it != RoguelikeLootCategorySpecs.end() ? &*it : nullptr;
+}
+
+int roguelikeDropRangeForObject(const ObjectDefinition& object)
+{
+    if (object.roguelikeDropRange > 0) {
+        return object.roguelikeDropRange;
+    }
+    if (const RoguelikeLootCategorySpec* spec = roguelikeLootCategorySpecFor(object.category)) {
+        return spec->defaultRange;
+    }
+    return 8;
+}
+
 constexpr std::array<Game::RoguelikeFacilityKind, RoguelikeFacilityKindCount> RoguelikeFacilityKinds{{
     Game::RoguelikeFacilityKind::Merchant,
     Game::RoguelikeFacilityKind::Artisan,
@@ -383,6 +461,9 @@ constexpr float DiscardThrowArcHeightMin = 52.0f;
 constexpr float DiscardThrowArcHeightMax = 72.0f;
 constexpr float DeathRingLightItemWeightKg = 2.0f;
 constexpr float DeathRingDropPickupDelaySeconds = 1.2f;
+constexpr float DeathRingDropFallSeconds = 0.26f;
+constexpr float DeathRingDropLightBounceSeconds = 0.22f;
+constexpr float DeathRingDropHeavyBounceSeconds = 0.17f;
 constexpr float BossDefeatPresentationSeconds = 1.85f;
 constexpr int BossArenaRadiusXTiles = 8;
 constexpr int BossArenaRadiusYTiles = 6;
@@ -1542,22 +1623,22 @@ ItemInstance makeDroppedRingItemInstance(const SpellRingItem& item, const ItemDa
     return instance;
 }
 
-WorldDropSpawnMotion makeDeathRingDropMotion(const SpellRingItem& item, std::mt19937& rng)
+WorldDropSpawnMotion makeDeathRingDropMotion(const SpellRingItem& item, float totalSeconds)
 {
     WorldDropSpawnMotion motion{
-        .jump = true,
+        .fall = true,
+        .disableHover = true,
         .startPosition = item.worldPosition,
-        .jumpDurationSeconds = 0.16f,
-        .jumpArcHeight = 10.0f,
+        .startAltitude = ringItemAltitude(item, totalSeconds),
+        .fallDurationSeconds = DeathRingDropFallSeconds,
+        .landingBounceCount = item.weight <= DeathRingLightItemWeightKg ? 2 : 1,
+        .landingBounceHeight = item.weight <= DeathRingLightItemWeightKg ? 7.0f : 3.5f,
+        .landingBounceDurationSeconds = item.weight <= DeathRingLightItemWeightKg
+            ? DeathRingDropLightBounceSeconds
+            : DeathRingDropHeavyBounceSeconds,
+        .landingBounceDamping = item.weight <= DeathRingLightItemWeightKg ? 0.52f : 0.42f,
         .pickupDelaySeconds = DeathRingDropPickupDelaySeconds,
     };
-    if (item.weight <= DeathRingLightItemWeightKg) {
-        std::uniform_int_distribution<int> bounceCount(1, 2);
-        motion.jumpDurationSeconds = 0.22f;
-        motion.jumpArcHeight = 24.0f;
-        motion.bounceCount = bounceCount(rng);
-        motion.bounceDamping = 0.52f;
-    }
     return motion;
 }
 
@@ -1597,7 +1678,6 @@ Vec2 effectiveDropPosition(const WorldDropItem& drop)
 }
 
 constexpr float PlayerDeathRingStopSeconds = 50.0f / 60.0f;
-constexpr float PlayerDeathRingWaitSeconds = 20.0f / 60.0f;
 constexpr float PlayerDeathRingDropDelayMaxSeconds = 8.0f / 60.0f;
 constexpr float PlayerDeathRingCompletionHoldSeconds = 0.24f;
 
@@ -3469,7 +3549,6 @@ void Game::initializePlayerDeathRingPresentation()
 
     playerDeathSequence_.durationSeconds =
         PlayerDeathRingStopSeconds +
-        PlayerDeathRingWaitSeconds +
         maxDropDelaySeconds +
         PlayerDeathRingCompletionHoldSeconds;
 }
@@ -3502,14 +3581,13 @@ void Game::dropPlayerDeathRingItem(int ringIndex, std::size_t itemIndex)
         return;
     }
 
-    std::mt19937& rng = lootRuntimeRng();
     ItemInstance instance = makeDroppedRingItemInstance(item, *object, inventory_);
     worldDrops_.spawnObjectInstanceDrop(
         objectCatalog_,
         std::move(instance),
         item.worldPosition,
         runStats_.elapsedSeconds,
-        makeDeathRingDropMotion(item, rng),
+        makeDeathRingDropMotion(item, runStats_.elapsedSeconds),
         true,
         object);
 }
@@ -3549,15 +3627,10 @@ void Game::updatePlayerDeathRingPresentation(float dt)
         }
         updatePlayerDeathRingPresentationItemTransforms(presentation, balance_);
 
-        presentation.postStopElapsedSeconds += safeDt;
-        if (presentation.postStopElapsedSeconds < PlayerDeathRingWaitSeconds) {
-            continue;
-        }
-
-        const float dropElapsedSeconds = presentation.postStopElapsedSeconds - PlayerDeathRingWaitSeconds;
+        presentation.dropElapsedSeconds += safeDt;
         for (std::size_t itemIndex = 0; itemIndex < presentation.items.size(); ++itemIndex) {
             const PlayerDeathRingItemPresentation& itemPresentation = presentation.items[itemIndex];
-            if (!itemPresentation.dropped && dropElapsedSeconds >= itemPresentation.dropDelaySeconds) {
+            if (!itemPresentation.dropped && presentation.dropElapsedSeconds >= itemPresentation.dropDelaySeconds) {
                 dropPlayerDeathRingItem(ringIndex, itemIndex);
             }
         }
@@ -8702,6 +8775,36 @@ void Game::revealChestNodesFromOpenedTiles(const std::vector<Vec2>& openedTiles)
     }
 }
 
+double Game::roguelikeSourceCategoryMultiplier(LootSourceKind sourceKind, std::string_view category)
+{
+    switch (sourceKind) {
+    case LootSourceKind::Chest:
+    case LootSourceKind::CrateBonus:
+        return 1.0;
+    case LootSourceKind::DigItem:
+    case LootSourceKind::CapturedReward:
+        if (category == CategoryRecovery) {
+            return 1.35;
+        }
+        if (category == CategoryTreasure) {
+            return 1.0;
+        }
+        return 0.75;
+    case LootSourceKind::EnemyDrop:
+        if (category == CategoryRecovery) {
+            return 1.35;
+        }
+        if (category == CategoryWeapon || category == CategoryShield || category == CategoryStaff) {
+            return 1.0;
+        }
+        if (category == CategoryTreasure) {
+            return 0.25;
+        }
+        return 0.75;
+    }
+    return 1.0;
+}
+
 bool Game::spawnWeightedObjectLoot(
     LootChestKind chestKind,
     int depthRank,
@@ -8753,11 +8856,123 @@ bool Game::spawnWeightedObjectLoot(
             return tag == requiredTag;
         });
     };
+    const auto spawnObject = [&](const ObjectDefinition* object) {
+        if (object == nullptr) {
+            return false;
+        }
+        const Vec2 target = safeLootLandingPosition(center, rng);
+        return worldDrops_.spawnObjectDrop(
+            objectCatalog_,
+            object->id,
+            target,
+            runStats_.elapsedSeconds,
+            launchFromCenter ? makeWorldLootJumpMotion(center, rng) : WorldDropSpawnMotion{});
+    };
+
+    const bool appleUseTutorialPending =
+        encyclopedia_.objectStage(TutorialAppleObjectId, false) == EncyclopediaStage::Undiscovered;
+    if (currentStageIsRoguelike()) {
+        int effectiveDepthRank = std::max(1, depthRank);
+        if (astralRunActive()) {
+            const int adjustedFirstRank = astralRun_.sectionRankOffset + 1;
+            const int adjustedLastRank = adjustedFirstRank + RoguelikeSectionsPerArea - 1;
+            if (effectiveDepthRank < adjustedFirstRank || effectiveDepthRank > adjustedLastRank) {
+                effectiveDepthRank = roguelikeAdjustedDepthRank(effectiveDepthRank);
+            }
+        }
+        const int targetLevel = roguelikeTargetItemLevelForSectionRank(effectiveDepthRank);
+
+        const auto candidateAllowed = [&](const ObjectDefinition& object, std::string_view category, int extraRange, bool ignoreLevel) {
+            if (object.category != category || object.roguelikeDropWeight <= 0.0 || !hasRequiredTag(object)) {
+                return false;
+            }
+            if (appleUseTutorialPending &&
+                object.id != TutorialAppleObjectId &&
+                objectIsInventoryUsableItem(object)) {
+                return false;
+            }
+            if (ignoreLevel) {
+                return true;
+            }
+            const int range = roguelikeDropRangeForObject(object) + std::max(0, extraRange);
+            return std::abs(std::max(1, object.baseLevel) - targetLevel) <= range;
+        };
+        const auto collectCategories = [&](int extraRange, bool ignoreLevel, std::vector<const RoguelikeLootCategorySpec*>& outSpecs, std::vector<double>& outWeights) {
+            outSpecs.clear();
+            outWeights.clear();
+            for (const RoguelikeLootCategorySpec& spec : RoguelikeLootCategorySpecs) {
+                const double weight =
+                    roguelikeLootCategoryBaseWeight(spec, chestKind) *
+                    roguelikeSourceCategoryMultiplier(sourceKind, spec.category);
+                if (weight <= 0.0) {
+                    continue;
+                }
+                const bool hasCandidate = std::any_of(objectCatalog_.objects.begin(), objectCatalog_.objects.end(), [&](const ObjectDefinition& object) {
+                    return candidateAllowed(object, spec.category, extraRange, ignoreLevel);
+                });
+                if (!hasCandidate) {
+                    continue;
+                }
+                outSpecs.push_back(&spec);
+                outWeights.push_back(weight);
+            }
+        };
+
+        std::vector<const RoguelikeLootCategorySpec*> categorySpecs;
+        std::vector<double> categoryWeights;
+        int extraRange = 0;
+        bool ignoreLevel = false;
+        for (; extraRange <= RoguelikeLootRangeFallbackMaxExtra; extraRange += RoguelikeLootRangeFallbackStep) {
+            collectCategories(extraRange, false, categorySpecs, categoryWeights);
+            if (!categorySpecs.empty()) {
+                break;
+            }
+        }
+        if (categorySpecs.empty()) {
+            extraRange = 0;
+            ignoreLevel = true;
+            collectCategories(extraRange, true, categorySpecs, categoryWeights);
+        }
+
+        if (categorySpecs.empty()) {
+            std::string message = "[warning] " + std::string(sourceLabel) +
+                ": no Roguelike Objects candidates depth=" + std::to_string(effectiveDepthRank) +
+                " target_level=" + std::to_string(targetLevel) +
+                " chest=" + chestKindCode(chestKind);
+            if (!requiredTag.empty()) {
+                message += " tag=\"" + std::string(requiredTag) + "\"";
+            }
+            logError(message);
+            return false;
+        }
+
+        const std::optional<std::size_t> selectedCategory = selectWeightedIndex(categoryWeights, rng);
+        if (!selectedCategory || *selectedCategory >= categorySpecs.size()) {
+            logError("[warning] " + std::string(sourceLabel) + ": failed Roguelike category weighted selection");
+            return false;
+        }
+
+        const std::string_view selectedCategoryName = categorySpecs[*selectedCategory]->category;
+        std::vector<const ObjectDefinition*> candidates;
+        std::vector<double> weights;
+        for (const ObjectDefinition& object : objectCatalog_.objects) {
+            if (!candidateAllowed(object, selectedCategoryName, extraRange, ignoreLevel)) {
+                continue;
+            }
+            candidates.push_back(&object);
+            weights.push_back(object.roguelikeDropWeight);
+        }
+
+        const std::optional<std::size_t> selected = selectWeightedIndex(weights, rng);
+        if (!selected || *selected >= candidates.size()) {
+            logError("[warning] " + std::string(sourceLabel) + ": failed Roguelike Objects weighted selection");
+            return false;
+        }
+        return spawnObject(candidates[*selected]);
+    }
 
     std::vector<const ObjectDefinition*> candidates;
     std::vector<double> weights;
-    const bool appleUseTutorialPending =
-        encyclopedia_.objectStage(TutorialAppleObjectId, false) == EncyclopediaStage::Undiscovered;
     for (const ObjectDefinition& object : objectCatalog_.objects) {
         if (!hasRequiredTag(object)) {
             continue;
@@ -8797,13 +9012,7 @@ bool Game::spawnWeightedObjectLoot(
         return false;
     }
     const ObjectDefinition* object = candidates[*selected];
-    const Vec2 target = safeLootLandingPosition(center, rng);
-    return worldDrops_.spawnObjectDrop(
-        objectCatalog_,
-        object->id,
-        target,
-        runStats_.elapsedSeconds,
-        launchFromCenter ? makeWorldLootJumpMotion(center, rng) : WorldDropSpawnMotion{});
+    return spawnObject(object);
 }
 
 Vec2 Game::safeLootLandingPosition(Vec2 center, std::mt19937& rng)
@@ -10517,11 +10726,8 @@ bool Game::bossArenaContains(Vec2 position) const
         return false;
     }
 
+    static_assert(balance::TileSize > 0, "TileSize must be positive.");
     const float tileSize = static_cast<float>(balance::TileSize);
-    if (tileSize <= 0.0f) {
-        return false;
-    }
-
     const Vec2 delta = (position - bossSpawnPoint_) / tileSize;
     const float nx = delta.x / static_cast<float>(BossArenaRadiusXTiles);
     const float ny = delta.y / static_cast<float>(BossArenaRadiusYTiles);
@@ -10547,6 +10753,7 @@ void Game::requestBossEncounterIntro(BossEncounterPurpose purpose)
     bossEncounter_.purpose = purpose;
     bossEncounter_.stageId = currentStageId_;
     bossEncounter_.spawnPoint = bossSpawnPoint_;
+    bossEncounterRingHidden_ = true;
     requestScreenTransition(ScreenTransitionTarget::BossEncounterIntro);
 }
 
@@ -10625,6 +10832,12 @@ void Game::finishBossEncounterAfterDialogueTransition()
 void Game::resetBossEncounter()
 {
     bossEncounter_ = BossEncounterState{};
+    bossEncounterRingHidden_ = false;
+}
+
+bool Game::liveSpellRingHiddenForBossEncounter() const
+{
+    return bossEncounterRingHidden_;
 }
 
 bool Game::bossEncounterBlocksProgress() const
@@ -10699,6 +10912,10 @@ bool Game::beginBossFightForCurrentEncounter()
     bossEncounter_.phase = BossEncounterPhase::Fighting;
     bossEncounter_.stageId = currentStageId_;
     bossEncounter_.spawnPoint = bossSpawnPoint_;
+    if (bossEncounterRingHidden_) {
+        bossEncounterRingHidden_ = false;
+        beginDungeonRingIntro();
+    }
     playAudioSe("se.boss.spawn");
     playAudioBgm("bgm.boss", 0.45f);
     return true;

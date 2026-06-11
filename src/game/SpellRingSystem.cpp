@@ -187,6 +187,8 @@ ItemOrbitParameters collectItemOrbitParameters(const ItemData& object)
     return parameters;
 }
 
+} // namespace
+
 float normalizeAngle(float angle)
 {
     angle = std::fmod(angle, FullCircleRadians);
@@ -210,6 +212,8 @@ float normalizeLocalParam(RingShape shape, float param, const RingOrbitTuning& t
     }
     return normalizeAngle(param);
 }
+
+namespace {
 
 float quantizeLocalParam(RingShape shape, float param, const RingOrbitTuning& tuning)
 {

@@ -89,10 +89,10 @@ function Get-Number([string]$Text, [double]$Default = 0.0) {
 
 function Get-StageSpecs {
     return @(
-        [pscustomobject]@{ StageId = "stage_01_stardust"; Prefix = "ST"; Name = "星くずの浅坑"; MaxDepth = 3; Levels = @(1, 2, 4) },
+        [pscustomobject]@{ StageId = "stage_01_stardust"; Prefix = "ST"; Name = "星くずのダンジョン"; MaxDepth = 3; Levels = @(1, 2, 4) },
         [pscustomobject]@{ StageId = "stage_02_junk_magic"; Prefix = "JK"; Name = "ジャンク魔窟"; MaxDepth = 3; Levels = @(5, 7, 9) },
         [pscustomobject]@{ StageId = "stage_03_star_core"; Prefix = "SC"; Name = "星核洞"; MaxDepth = 3; Levels = @(10, 13, 16) },
-        [pscustomobject]@{ StageId = "stage_04_astral_mine"; Prefix = "AS"; Name = "星間廃坑"; MaxDepth = 9; Levels = @(3, 5, 7, 9, 11, 13, 15, 17, 20) }
+        [pscustomobject]@{ StageId = "stage_04_astral_mine"; Prefix = "AS"; Name = "不可思議の迷宮"; MaxDepth = 9; Levels = @(3, 5, 7, 9, 11, 13, 15, 17, 20) }
     )
 }
 

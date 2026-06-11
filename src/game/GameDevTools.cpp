@@ -10704,7 +10704,7 @@ bool Game::executeDebugCommand(std::string_view command)
             return false;
         }
         if (!currentStageIsRoguelike() || mode_ != ScreenMode::Playing) {
-            logWarning("Debug: astral command requires an active 星間廃坑 run.");
+            logWarning("Debug: astral command requires an active 不可思議の迷宮 run.");
             return false;
         }
         return true;

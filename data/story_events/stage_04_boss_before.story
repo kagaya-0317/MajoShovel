@@ -1,5 +1,5 @@
 ﻿@event stage_04_boss_before
-@title 星間廃坑 ボス前
+@title 不可思議の迷宮 ボス前
 @trigger boss_before:stage_04_astral_mine
 @once story_stage_04_boss_before
 

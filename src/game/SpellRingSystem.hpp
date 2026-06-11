@@ -66,6 +66,7 @@ struct RingOrbitTuning {
 };
 
 RingOrbitTuning makeRingOrbitTuning(const RuntimeBalance& balance);
+float normalizeAngle(float angle);
 float normalizeLocalParam(RingShape shape, float param, const RingOrbitTuning& tuning);
 
 struct RingOrbitContext {

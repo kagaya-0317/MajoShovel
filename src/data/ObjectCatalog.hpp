@@ -101,6 +101,9 @@ struct ObjectDefinition {
     std::string category;
     std::string description;
     int rarity = 1;
+    int baseLevel = 1;
+    int roguelikeDropRange = 0;
+    double roguelikeDropWeight = 1.0;
     int price = 0;
     std::vector<EffectSpec> normalEffects;
     std::vector<EffectSpec> orbitEffects;

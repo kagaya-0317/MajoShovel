@@ -86,7 +86,7 @@ struct PlayerDeathRingPresentation {
     float shapeRotationSpeed = 0.0f;
     float initialShapeRotationSpeed = 0.0f;
     float stopElapsedSeconds = 0.0f;
-    float postStopElapsedSeconds = 0.0f;
+    float dropElapsedSeconds = 0.0f;
     std::vector<PlayerDeathRingItemPresentation> items;
 };
 
@@ -1340,6 +1340,7 @@ private:
     void cancelRingGrab();
     bool playerDeathSequenceActive() const;
     bool liveSpellRingHiddenForDeath() const;
+    bool liveSpellRingHiddenForBossEncounter() const;
     bool gameplayRewardsEnabled() const;
     void beginPlayerDeathSequence();
     void updatePlayerDeathSequence(float dt);
@@ -1538,6 +1539,7 @@ private:
         bool launchFromCenter = false,
         LootSourceKind sourceKind = LootSourceKind::Chest,
         std::string_view requiredTag = {});
+    static double roguelikeSourceCategoryMultiplier(LootSourceKind sourceKind, std::string_view category);
     Vec2 safeLootLandingPosition(Vec2 center, std::mt19937& rng);
     void spawnInventoryDiscardRequests(std::vector<InventoryDiscardRequest> requests);
     void consumeInventoryUseEvents();
@@ -2258,6 +2260,7 @@ private:
     float digToolFailsafeSpawnCooldown_ = 0.0f;
     float dungeonRingIntroTimer_ = 0.0f;
     bool dungeonRingIntroStartPending_ = false;
+    bool bossEncounterRingHidden_ = false;
     bool stageStartStoryPendingAfterRingIntro_ = false;
     bool endingKamishibaiPending_ = false;
     EndingKind endingKamishibaiKind_ = EndingKind::Main;

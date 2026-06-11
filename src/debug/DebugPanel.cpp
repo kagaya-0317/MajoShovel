@@ -141,7 +141,7 @@ DebugConsoleLayout makeDefaultDebugConsoleLayout()
                     "boss_rematch",
                     "ボス・再戦",
                     {
-                        {DebugControlKind::Dropdown, "rematch_stage", "対象ステージ", "game rematch target", 0, 0, {"ステージ1", "ステージ2", "ステージ3", "星間廃坑"}, {"stage1", "stage2", "stage3", "stage4"}},
+                        {DebugControlKind::Dropdown, "rematch_stage", "対象ステージ", "game rematch target", 0, 0, {"ステージ1", "ステージ2", "ステージ3", "不可思議の迷宮"}, {"stage1", "stage2", "stage3", "stage4"}},
                         {DebugControlKind::Button, "boss_flow_before", "ボス直前へ", "game boss-flow before"},
                         {DebugControlKind::Button, "boss_flow_defeated", "撃破演出へ", "game boss-flow defeated"},
                         {DebugControlKind::Button, "boss_flow_clear", "クリア結果へ", "game boss-flow clear"},

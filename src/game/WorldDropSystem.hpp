@@ -28,9 +28,17 @@ enum class WorldDropKind {
 
 struct WorldDropSpawnMotion {
     bool jump = false;
+    bool fall = false;
+    bool disableHover = false;
     Vec2 startPosition{};
+    float startAltitude = 0.0f;
     float jumpDurationSeconds = 0.0f;
     float jumpArcHeight = 0.0f;
+    float fallDurationSeconds = 0.0f;
+    int landingBounceCount = 0;
+    float landingBounceHeight = 0.0f;
+    float landingBounceDurationSeconds = 0.0f;
+    float landingBounceDamping = 0.55f;
     float pickupDelaySeconds = 0.0f;
     int bounceCount = 0;
     float bounceDamping = 0.55f;
@@ -55,10 +63,21 @@ struct WorldDropItem {
     float jumpElapsedSeconds = 0.0f;
     float jumpDurationSeconds = 0.0f;
     float jumpArcHeight = 0.0f;
+    bool fallActive = false;
+    float fallStartAltitude = 0.0f;
+    float fallElapsedSeconds = 0.0f;
+    float fallDurationSeconds = 0.0f;
+    bool landingBounceActive = false;
+    int landingBounceCount = 0;
+    float landingBounceHeight = 0.0f;
+    float landingBounceElapsedSeconds = 0.0f;
+    float landingBounceDurationSeconds = 0.0f;
+    float landingBounceDamping = 0.55f;
     int bounceCount = 0;
     float bounceDamping = 0.55f;
     float pickupDelaySeconds = 0.0f;
     float materialParticleTimer = 0.0f;
+    float brokenSmokeTimer = 0.0f;
     std::optional<ItemInstance> instance;
     std::optional<ItemData> runtimeItem;
     bool temporary = false;

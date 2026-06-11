@@ -471,10 +471,10 @@ void StageCatalog::loadDefaultStages()
 {
     StageCatalog catalog;
     catalog.stages = {
-        defaultStage("stage_01_stardust", "星くずの浅坑", "ストーリー", 10, "natural_cave", "soft_stardust", 320, 0.30, 0.25, 1.00, 1.00, 3, 1, "stardust_mole"),
+        defaultStage("stage_01_stardust", "星くずのダンジョン", "ストーリー", 10, "natural_cave", "soft_stardust", 320, 0.30, 0.25, 1.00, 1.00, 3, 1, "stardust_mole"),
         defaultStage("stage_02_junk_magic", "魔導具廃棄層", "ストーリー", 20, "junk_layer", "junk_mixed", 420, 0.38, 0.32, 1.12, 1.45, 4, 2, "junk_crab"),
-        defaultStage("stage_03_star_core", "落星核の深層", "ストーリー", 30, "star_core", "hard_star_core", 540, 0.44, 0.28, 0.90, 2.20, 5, 2, "astragna"),
-        defaultStage("stage_04_astral_mine", "星間廃坑", "ローグライク", 40, "astral_rogue", "chaos_astral", 640, 0.55, 0.45, 1.25, 1.80, 0, 5, "star_vein_dragon"),
+        defaultStage("stage_03_star_core", "落星の眠る地底", "ストーリー", 30, "star_core", "hard_star_core", 540, 0.44, 0.28, 0.90, 2.20, 5, 2, "astragna"),
+        defaultStage("stage_04_astral_mine", "不可思議の迷宮", "ローグライク", 40, "astral_rogue", "chaos_astral", 640, 0.55, 0.45, 1.25, 1.80, 0, 5, "star_vein_dragon"),
     };
     rebuildStageIndex(catalog);
     *this = std::move(catalog);

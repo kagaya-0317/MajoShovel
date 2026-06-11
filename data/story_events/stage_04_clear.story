@@ -1,5 +1,5 @@
 ﻿@event stage_04_clear
-@title 星間廃坑 クリア
+@title 不可思議の迷宮 クリア
 @trigger stage_clear:stage_04_astral_mine
 @once story_stage_04_clear
 

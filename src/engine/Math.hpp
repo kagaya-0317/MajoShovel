@@ -23,6 +23,7 @@ inline float lengthSquared(Vec2 v) { return v.x * v.x + v.y * v.y; }
 inline float length(Vec2 v) { return std::sqrt(lengthSquared(v)); }
 inline float distanceSquared(Vec2 a, Vec2 b) { return lengthSquared(a - b); }
 inline float clamp(float v, float lo, float hi) { return std::max(lo, std::min(v, hi)); }
+inline double clamp(double v, double lo, double hi) { return std::max(lo, std::min(v, hi)); }
 
 inline Vec2 normalize(Vec2 v)
 {

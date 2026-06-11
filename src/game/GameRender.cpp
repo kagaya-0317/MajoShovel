@@ -6621,7 +6621,7 @@ void Game::renderSpellRingForeground(
         return;
     }
 
-    if (liveSpellRingHiddenForDeath()) {
+    if (liveSpellRingHiddenForDeath() || liveSpellRingHiddenForBossEncounter()) {
         return;
     }
 
@@ -6795,8 +6795,8 @@ std::vector<LightSource> finalizeDungeonLightSources(
 
 std::vector<LightSource> Game::collectDungeonLightSources(double totalSeconds) const
 {
-    const bool liveRingHiddenForDeath = liveSpellRingHiddenForDeath();
-    const std::vector<const SpellRingItem*> runtimeItems = liveRingHiddenForDeath
+    const bool liveRingHidden = liveSpellRingHiddenForDeath() || liveSpellRingHiddenForBossEncounter();
+    const std::vector<const SpellRingItem*> runtimeItems = liveRingHidden
         ? std::vector<const SpellRingItem*>{}
         : spellRing_.runtimeItems();
     const bool ringIntroActive = dungeonRingIntroActive();
@@ -7087,8 +7087,8 @@ void Game::render(Renderer& renderer, const Time& time)
 
     renderer.setWorldSpace(&camera_, screenShakeOffset(time.totalSeconds()));
 
-    const bool liveRingHiddenForDeath = liveSpellRingHiddenForDeath();
-    const std::vector<const SpellRingItem*> runtimeItems = liveRingHiddenForDeath
+    const bool liveRingHidden = liveSpellRingHiddenForDeath() || liveSpellRingHiddenForBossEncounter();
+    const std::vector<const SpellRingItem*> runtimeItems = liveRingHidden
         ? std::vector<const SpellRingItem*>{}
         : spellRing_.runtimeItems();
     const std::vector<RingItemRenderRef> runtimeItemsByDepth = sortedRingItemRenderRefs(runtimeItems);
@@ -7126,7 +7126,7 @@ void Game::render(Renderer& renderer, const Time& time)
         }
     } else {
         for (int ringIndex = 0; ringIndex < SpellRingCount; ++ringIndex) {
-            if (!liveRingHiddenForDeath &&
+            if (!liveRingHidden &&
                 !spellRing_.itemsForRing(ringIndex).empty() &&
                 tileMap_.isLit(spellRing_.centerForRing(ringIndex), playerLightCenter, itemLights)) {
                 ringCenterVisible = true;
@@ -7156,62 +7156,67 @@ void Game::render(Renderer& renderer, const Time& time)
         effects_.renderShadows(renderer);
     }
     renderPlayerFootstepDust(renderer);
-    worldDepthEntries.push_back(DepthRenderEntry{
-        player_.position.y,
-        [&]() {
-            if (renderer.hasPlayerSheet()) {
-                const bool deathActive = playerDeathSequenceActive();
-                const CharacterSpriteMotion playerMotion = deathActive
-                    ? CharacterSpriteMotion::Death
-                    : (player_.spriteWalking ? CharacterSpriteMotion::Walk : CharacterSpriteMotion::Idle);
-                const float playerAnimationTime = deathActive
-                    ? playerDeathSequence_.elapsedSeconds
-                    : player_.spriteAnimationTime;
-                const int playerFrame = playerSpriteFrameIndex(playerAnimationTime, playerMotion);
-                const bool playerFlip = player_.spriteFlipHorizontal;
+    const bool playerDeathActive = playerDeathSequenceActive();
+    const auto drawPlayerVisual = [&]() {
+        if (renderer.hasPlayerSheet()) {
+            const CharacterSpriteMotion playerMotion = playerDeathActive
+                ? CharacterSpriteMotion::Death
+                : (player_.spriteWalking ? CharacterSpriteMotion::Walk : CharacterSpriteMotion::Idle);
+            const float playerAnimationTime = playerDeathActive
+                ? playerDeathSequence_.elapsedSeconds
+                : player_.spriteAnimationTime;
+            const int playerFrame = playerSpriteFrameIndex(playerAnimationTime, playerMotion);
+            const bool playerFlip = player_.spriteFlipHorizontal;
+            renderer.drawPlayerSpriteNaturalSize(
+                playerFrame,
+                playerVisualFootAnchor,
+                playerSizeMultiplier,
+                playerFlip,
+                playerStatusTint,
+                {PlayerSpriteAnchorX, PlayerSpriteAnchorY},
+                playerStatusVisual.flipVertical);
+            if (!playerDeathActive && !playerStatusVisual.flipVertical) {
+                if (const InventoryObjectInstance* staffInstance = inventory_.equippedStaffInstance()) {
+                    const PlayerHeldStaffDrawContext staffContext{
+                        .footAnchor = playerVisualFootAnchor,
+                        .spriteFrame = playerFrame,
+                        .flipHorizontal = playerFlip,
+                        .scale = playerSizeMultiplier,
+                        .handTint = playerStatusTint,
+                        .spriteAnchor = {PlayerSpriteAnchorX, PlayerSpriteAnchorY},
+                    };
+                    if (drawPlayerHeldStaff(renderer, staffInstance->item, staffContext)) {
+                        drawPlayerHeldStaffHandOverlay(renderer, staffContext);
+                    }
+                }
+            }
+            if (player_.damageFlash > 0.0f) {
+                const float flash = clamp(player_.damageFlash / 0.16f, 0.0f, 1.0f);
+                const unsigned char alpha = static_cast<unsigned char>(std::round(185.0f * flash));
                 renderer.drawPlayerSpriteNaturalSize(
                     playerFrame,
                     playerVisualFootAnchor,
                     playerSizeMultiplier,
                     playerFlip,
-                    playerStatusTint,
+                    {255, 52, 52, alpha},
                     {PlayerSpriteAnchorX, PlayerSpriteAnchorY},
                     playerStatusVisual.flipVertical);
-                if (!deathActive && !playerStatusVisual.flipVertical) {
-                    if (const InventoryObjectInstance* staffInstance = inventory_.equippedStaffInstance()) {
-                        const PlayerHeldStaffDrawContext staffContext{
-                            .footAnchor = playerVisualFootAnchor,
-                            .spriteFrame = playerFrame,
-                            .flipHorizontal = playerFlip,
-                            .scale = playerSizeMultiplier,
-                            .handTint = playerStatusTint,
-                            .spriteAnchor = {PlayerSpriteAnchorX, PlayerSpriteAnchorY},
-                        };
-                        if (drawPlayerHeldStaff(renderer, staffInstance->item, staffContext)) {
-                            drawPlayerHeldStaffHandOverlay(renderer, staffContext);
-                        }
-                    }
-                }
-                if (player_.damageFlash > 0.0f) {
-                    const float flash = clamp(player_.damageFlash / 0.16f, 0.0f, 1.0f);
-                    const unsigned char alpha = static_cast<unsigned char>(std::round(185.0f * flash));
-                    renderer.drawPlayerSpriteNaturalSize(
-                        playerFrame,
-                        playerVisualFootAnchor,
-                        playerSizeMultiplier,
-                        playerFlip,
-                        {255, 52, 52, alpha},
-                        {PlayerSpriteAnchorX, PlayerSpriteAnchorY},
-                        playerStatusVisual.flipVertical);
-                }
-            } else {
-                const Color playerColor = player_.damageFlash > 0.0f
-                    ? Color{255, 72, 72, 255}
-                    : (playerStatusVisual.hasTint ? playerStatusVisual.tint : Color{118, 72, 168, 255});
-                renderer.fillCircle(playerVisualFootAnchor, player_.effectiveRadius(balance_.playerRadius), playerColor);
-                renderer.drawLine(playerVisualFootAnchor, playerVisualFootAnchor + player_.facing * (22.0f * playerSizeMultiplier), {235, 210, 255, 255});
             }
-            renderEntityStatusOverlays(renderer, player_.status, playerVisualFootAnchor, playerSpriteVisualSize, time.totalSeconds());
+        } else {
+            const Color playerColor = player_.damageFlash > 0.0f
+                ? Color{255, 72, 72, 255}
+                : (playerStatusVisual.hasTint ? playerStatusVisual.tint : Color{118, 72, 168, 255});
+            renderer.fillCircle(playerVisualFootAnchor, player_.effectiveRadius(balance_.playerRadius), playerColor);
+            renderer.drawLine(playerVisualFootAnchor, playerVisualFootAnchor + player_.facing * (22.0f * playerSizeMultiplier), {235, 210, 255, 255});
+        }
+        renderEntityStatusOverlays(renderer, player_.status, playerVisualFootAnchor, playerSpriteVisualSize, time.totalSeconds());
+    };
+    worldDepthEntries.push_back(DepthRenderEntry{
+        player_.position.y,
+        [&]() {
+            if (!playerDeathActive) {
+                drawPlayerVisual();
+            }
 
             if (ringIntroActive) {
                 return;
@@ -7236,7 +7241,7 @@ void Game::render(Renderer& renderer, const Time& time)
                 }
                 return;
             }
-            if (liveRingHiddenForDeath) {
+            if (liveRingHidden) {
                 return;
             }
             for (const RingItemRenderRef& itemRef : runtimeItemsByDepth) {
@@ -7285,6 +7290,9 @@ void Game::render(Renderer& renderer, const Time& time)
     renderSpellRingForeground(renderer, runtimeItems, itemLights, time.totalSeconds());
     effects_.renderForeground(renderer);
     effects_.renderDamagePopups(renderer);
+    if (playerDeathActive) {
+        drawPlayerVisual();
+    }
 
     renderer.setScreenSpace();
     const bool suppressDungeonUi = dungeonEventUiSuppressed();

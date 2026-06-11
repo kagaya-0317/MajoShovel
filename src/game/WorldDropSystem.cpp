@@ -7,6 +7,7 @@
 #include "game/Collision.hpp"
 #include "game/EffectDispatcher.hpp"
 #include "game/InventorySystem.hpp"
+#include "game/InventoryUiCommon.hpp"
 #include "game/ItemImageRenderer.hpp"
 #include "game/LightFlicker.hpp"
 #include "game/ObjectImageRenderer.hpp"
@@ -35,6 +36,8 @@ constexpr float MaterialHoverBaseAltitude = 8.0f;
 constexpr float MaterialHoverAmplitude = 3.0f;
 constexpr float MaterialHoverSpeed = 4.8f;
 constexpr float MaterialParticleInterval = 0.16f;
+constexpr float BrokenDropSmokeBaseInterval = 0.11f;
+constexpr float BrokenDropSmokeIntervalJitter = 0.05f;
 constexpr float CapturedMagnetDropRadius = 170.0f;
 constexpr float CapturedMagnetDropAcceleration = 260.0f;
 constexpr float MetalDropMagnetMinFalloff = 0.35f;
@@ -179,6 +182,48 @@ const ItemData* itemDataForDrop(const WorldDropItem& drop, const ObjectCatalog& 
     return drop.runtimeItem ? &*drop.runtimeItem : nullptr;
 }
 
+bool objectDropIsBroken(const WorldDropItem& drop)
+{
+    return drop.kind == WorldDropKind::Object &&
+        drop.instance.has_value() &&
+        drop.instance->isBroken;
+}
+
+float brokenDropVisualScale(const WorldDropItem& drop)
+{
+    const float jumpScale = drop.jumpArcHeight > 0.0f
+        ? std::clamp(drop.jumpArcHeight / 18.0f, 0.0f, 0.35f)
+        : 0.0f;
+    return std::clamp((std::max(WorldItemImageMaxSize.x, WorldItemImageMaxSize.y) / 48.0f) + jumpScale, 0.7f, 1.35f);
+}
+
+Vec2 brokenDropSmokePosition(const WorldDropItem& drop)
+{
+    const float visualRadius = std::max(DropVisualRadius, std::max(WorldItemImageMaxSize.x, WorldItemImageMaxSize.y) * 0.25f);
+    return elevatedDrawPosition(drop.position, drop.altitude) + Vec2{0.0f, -std::max(8.0f, visualRadius * 0.55f)};
+}
+
+float resetBrokenDropSmokeTimer(const WorldDropItem& drop)
+{
+    const float phase = std::sin(drop.position.x * 0.011f + drop.position.y * 0.017f + drop.ageSeconds * 3.1f);
+    return BrokenDropSmokeBaseInterval + (phase * 0.5f + 0.5f) * BrokenDropSmokeIntervalJitter;
+}
+
+void startDropLandingBounce(WorldDropItem& drop)
+{
+    if (drop.landingBounceCount <= 0 || drop.landingBounceHeight <= 0.0f || drop.landingBounceDurationSeconds <= 0.0f) {
+        drop.landingBounceActive = false;
+        drop.landingBounceCount = 0;
+        drop.landingBounceHeight = 0.0f;
+        drop.landingBounceElapsedSeconds = 0.0f;
+        drop.landingBounceDurationSeconds = 0.0f;
+        return;
+    }
+
+    drop.landingBounceActive = true;
+    drop.landingBounceElapsedSeconds = 0.0f;
+}
+
 float dropLightRadiusForItem(const ItemData& item)
 {
     float radius = 0.0f;
@@ -217,7 +262,8 @@ void drawWorldDrop(Renderer& renderer, const WorldDropItem& drop, const ObjectCa
 
     bool drewImage = false;
     if (object != nullptr) {
-        const ObjectImageDrawOptions options = objectGroundImageOptions(*object);
+        const ObjectImageDrawOptions options =
+            itemImageOptionsWithBrokenState(objectGroundImageOptions(*object), objectDropIsBroken(drop));
         drewImage = catalogObject != nullptr
             ? drawObjectImage(renderer, *object, center, WorldItemImageMaxSize, options)
             : drawItemImage(renderer, *object, center, WorldItemImageMaxSize, options);
@@ -228,6 +274,7 @@ void drawWorldDrop(Renderer& renderer, const WorldDropItem& drop, const ObjectCa
     }
 
     if (!drewImage) {
+        color = itemFallbackColorForBrokenState(color, objectDropIsBroken(drop));
         renderer.fillCircle(center, DropVisualRadius, color);
         renderer.drawCircle(center, DropVisualRadius + 3.0f, {255, 246, 190, 210});
     }
@@ -424,13 +471,14 @@ void updateWorldDropPresentationMotion(WorldDropItem& drop, float dt, bool moveS
     dt = std::max(0.0f, dt);
     drop.ageSeconds += dt;
     drop.pickupDelaySeconds = std::max(0.0f, drop.pickupDelaySeconds - dt);
+    const float hoverAltitude = dropHoverAltitude(drop);
     if (drop.jumpActive) {
         drop.jumpElapsedSeconds = std::min(drop.jumpDurationSeconds, drop.jumpElapsedSeconds + dt);
         const float t = drop.jumpDurationSeconds > 0.0f
             ? clamp(drop.jumpElapsedSeconds / drop.jumpDurationSeconds, 0.0f, 1.0f)
             : 1.0f;
         drop.position = lerp(drop.jumpStartPosition, drop.jumpTargetPosition, t);
-        drop.altitude = dropHoverAltitude(drop) + std::sin(t * Pi) * std::max(0.0f, drop.jumpArcHeight);
+        drop.altitude = hoverAltitude + std::sin(t * Pi) * std::max(0.0f, drop.jumpArcHeight);
         if (t >= 1.0f) {
             drop.position = drop.jumpTargetPosition;
             if (drop.bounceCount > 0 && drop.jumpArcHeight > 2.0f) {
@@ -446,7 +494,46 @@ void updateWorldDropPresentationMotion(WorldDropItem& drop, float dt, bool moveS
                 drop.jumpDurationSeconds = 0.0f;
                 drop.jumpArcHeight = 0.0f;
                 drop.bounceCount = 0;
-                drop.altitude = dropHoverAltitude(drop);
+                drop.altitude = hoverAltitude;
+            }
+        }
+    } else if (drop.fallActive) {
+        drop.fallElapsedSeconds = std::min(drop.fallDurationSeconds, drop.fallElapsedSeconds + dt);
+        const float t = drop.fallDurationSeconds > 0.0f
+            ? clamp(drop.fallElapsedSeconds / drop.fallDurationSeconds, 0.0f, 1.0f)
+            : 1.0f;
+        const float eased = t * t;
+        drop.altitude = lerp(drop.fallStartAltitude, hoverAltitude, eased);
+        if (t >= 1.0f) {
+            drop.fallActive = false;
+            drop.fallElapsedSeconds = 0.0f;
+            drop.fallDurationSeconds = 0.0f;
+            drop.fallStartAltitude = 0.0f;
+            drop.altitude = hoverAltitude;
+            startDropLandingBounce(drop);
+        }
+    } else if (drop.landingBounceActive) {
+        drop.landingBounceElapsedSeconds = std::min(
+            drop.landingBounceDurationSeconds,
+            drop.landingBounceElapsedSeconds + dt);
+        const float t = drop.landingBounceDurationSeconds > 0.0f
+            ? clamp(drop.landingBounceElapsedSeconds / drop.landingBounceDurationSeconds, 0.0f, 1.0f)
+            : 1.0f;
+        drop.altitude = hoverAltitude + std::sin(t * Pi) * std::max(0.0f, drop.landingBounceHeight);
+        if (t >= 1.0f) {
+            --drop.landingBounceCount;
+            if (drop.landingBounceCount > 0 && drop.landingBounceHeight > 1.0f) {
+                drop.landingBounceElapsedSeconds = 0.0f;
+                drop.landingBounceDurationSeconds = std::max(0.05f, drop.landingBounceDurationSeconds * 0.72f);
+                drop.landingBounceHeight *= std::clamp(drop.landingBounceDamping, 0.15f, 0.85f);
+                drop.altitude = hoverAltitude;
+            } else {
+                drop.landingBounceActive = false;
+                drop.landingBounceCount = 0;
+                drop.landingBounceHeight = 0.0f;
+                drop.landingBounceElapsedSeconds = 0.0f;
+                drop.landingBounceDurationSeconds = 0.0f;
+                drop.altitude = hoverAltitude;
             }
         }
     } else {
@@ -455,7 +542,7 @@ void updateWorldDropPresentationMotion(WorldDropItem& drop, float dt, bool moveS
             const float damping = std::max(0.0f, 1.0f - dt * 5.5f);
             drop.velocity = drop.velocity * damping;
         }
-        drop.altitude = dropHoverAltitude(drop);
+        drop.altitude = hoverAltitude;
     }
 }
 
@@ -468,12 +555,19 @@ void configureDropMotion(WorldDropItem& drop, const WorldDropSpawnMotion& motion
     drop.hoverSpeed = material ? MaterialHoverSpeed : DropHoverSpeed;
     drop.hoverPhase = randomDropRange(0.0f, Pi * 2.0f);
     drop.materialParticleTimer = material ? randomDropRange(0.02f, MaterialParticleInterval) : 0.0f;
+    if (motion.disableHover) {
+        drop.hoverBaseAltitude = 0.0f;
+        drop.hoverAmplitude = 0.0f;
+        drop.hoverSpeed = 0.0f;
+    }
 
     if (motion.jump && motion.jumpDurationSeconds > 0.0f && std::isfinite(motion.jumpDurationSeconds)) {
         const Vec2 targetPosition = drop.position;
         drop.position = motion.startPosition;
         drop.velocity = {};
         drop.jumpActive = true;
+        drop.fallActive = false;
+        drop.landingBounceActive = false;
         drop.jumpStartPosition = motion.startPosition;
         drop.jumpTargetPosition = targetPosition;
         drop.jumpElapsedSeconds = 0.0f;
@@ -482,9 +576,30 @@ void configureDropMotion(WorldDropItem& drop, const WorldDropSpawnMotion& motion
         drop.bounceCount = std::max(0, motion.bounceCount);
         drop.bounceDamping = std::clamp(motion.bounceDamping, 0.15f, 0.85f);
         drop.pickupDelaySeconds = std::max(0.0f, motion.pickupDelaySeconds);
+    } else if (motion.fall && motion.fallDurationSeconds > 0.0f && std::isfinite(motion.fallDurationSeconds)) {
+        drop.position = motion.startPosition;
+        drop.velocity = {};
+        drop.jumpActive = false;
+        drop.fallActive = true;
+        drop.landingBounceActive = false;
+        drop.fallStartAltitude = std::max(0.0f, motion.startAltitude);
+        drop.fallElapsedSeconds = 0.0f;
+        drop.fallDurationSeconds = std::max(0.05f, motion.fallDurationSeconds);
+        drop.landingBounceCount = std::max(0, motion.landingBounceCount);
+        drop.landingBounceHeight = std::max(0.0f, motion.landingBounceHeight);
+        drop.landingBounceElapsedSeconds = 0.0f;
+        drop.landingBounceDurationSeconds = std::max(0.0f, motion.landingBounceDurationSeconds);
+        drop.landingBounceDamping = std::clamp(motion.landingBounceDamping, 0.15f, 0.85f);
+        drop.bounceCount = 0;
+        drop.jumpDurationSeconds = 0.0f;
+        drop.jumpArcHeight = 0.0f;
+        drop.pickupDelaySeconds = std::max(0.0f, motion.pickupDelaySeconds);
+        drop.altitude = drop.fallStartAltitude;
     }
 
-    drop.altitude = dropHoverAltitude(drop);
+    if (!drop.fallActive) {
+        drop.altitude = dropHoverAltitude(drop);
+    }
 }
 
 void logDropWarning(std::string_view message)
@@ -532,6 +647,15 @@ void WorldDropSystem::restoreDropsForSave(std::vector<WorldDropItem> drops)
         drop.jumpElapsedSeconds = 0.0f;
         drop.jumpDurationSeconds = 0.0f;
         drop.jumpArcHeight = 0.0f;
+        drop.fallActive = false;
+        drop.fallStartAltitude = 0.0f;
+        drop.fallElapsedSeconds = 0.0f;
+        drop.fallDurationSeconds = 0.0f;
+        drop.landingBounceActive = false;
+        drop.landingBounceCount = 0;
+        drop.landingBounceHeight = 0.0f;
+        drop.landingBounceElapsedSeconds = 0.0f;
+        drop.landingBounceDurationSeconds = 0.0f;
         drop.pickupDelaySeconds = 0.0f;
         drop.instance.reset();
         drop.runtimeItem.reset();
@@ -948,6 +1072,18 @@ int WorldDropSystem::update(
                     drop.materialParticleTimer = MaterialParticleInterval + randomDropRange(-0.035f, 0.045f);
                 }
             }
+        }
+
+        if (effects != nullptr && !effects->lightweightMode() && objectDropIsBroken(drop)) {
+            drop.brokenSmokeTimer -= dt;
+            if (drop.brokenSmokeTimer <= 0.0f) {
+                effects->spawnBrokenItemSmoke(
+                    brokenDropSmokePosition(drop),
+                    brokenDropVisualScale(drop));
+                drop.brokenSmokeTimer = resetBrokenDropSmokeTimer(drop);
+            }
+        } else {
+            drop.brokenSmokeTimer = 0.0f;
         }
     }
 

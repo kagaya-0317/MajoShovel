@@ -2155,6 +2155,7 @@ struct MagicOrbitDrawOptions {
     float alphaScale = 1.0f;
     bool closedPath = true;
     float energizedBlend = 0.0f;
+    bool decorations = true;
 };
 
 constexpr std::array<RingShape, 3> MagicRingShapeRenderOrder{{
@@ -2481,18 +2482,20 @@ void drawMagicOrbitPath(Renderer& renderer, const std::vector<Vec2>& orbitPath, 
         renderer.drawLine(orbitPath[i - 1], orbitPath[i], scaledAlpha(coreColor, lineAlphaScale));
     }
 
-    drawMagicOrbitRunes(renderer, orbitPath, options);
-    drawMagicOrbitFlow(renderer, orbitPath, options);
-    drawMagicOrbitSparkles(renderer, orbitPath, options);
-    drawMagicOrbitThrowMotes(renderer, orbitPath, options);
+    if (options.decorations) {
+        drawMagicOrbitRunes(renderer, orbitPath, options);
+        drawMagicOrbitFlow(renderer, orbitPath, options);
+        drawMagicOrbitSparkles(renderer, orbitPath, options);
+        drawMagicOrbitThrowMotes(renderer, orbitPath, options);
+    }
 
-    if (options.shape == RingShape::Comet) {
+    if (options.decorations && options.shape == RingShape::Comet) {
         const Vec2 head = orbitPath.back();
         renderer.fillCircle(head, (options.active ? 4.8f : 3.2f) * widthScale, withAlpha(Color{255, 218, 112, 255}, (options.active ? 98.0f : 54.0f) * options.alphaScale));
         renderer.fillCircle(head, (options.active ? 2.2f : 1.5f) * widthScale, withAlpha(Color{255, 252, 210, 255}, (options.active ? 172.0f : 100.0f) * options.alphaScale));
     }
 
-    if (options.centerSigil || options.shape == RingShape::FigureEight) {
+    if (options.decorations && (options.centerSigil || options.shape == RingShape::FigureEight)) {
         drawMagicOrbitCenter(renderer, center, options);
     }
 }
@@ -2507,10 +2510,11 @@ void drawSpellRingOrbitLayer(
     for (RingShape shapePass : MagicRingShapeRenderOrder) {
         for (int ringIndex = 0; ringIndex < SpellRingCount; ++ringIndex) {
             const auto& ringItems = spellRing.itemsForRing(ringIndex);
-            if (ringItems.empty() || spellRing.ringShapeForIndex(ringIndex) != shapePass) {
+            if (spellRing.ringShapeForIndex(ringIndex) != shapePass) {
                 continue;
             }
 
+            const bool hasRingItems = !ringItems.empty();
             const Vec2 center = spellRing.centerForRing(ringIndex);
             std::vector<Vec2> orbitPath = spellRing.runtimePathSamplePointsForRing(ringIndex, balance, 160);
             const bool ringInFlight = spellRing.stateForRing(ringIndex) != SpellRingState::Normal;
@@ -2530,6 +2534,7 @@ void drawSpellRingOrbitLayer(
                     alphaScale,
                     !ringInFlight,
                     throwVisualEnergy,
+                    hasRingItems,
                 });
         }
     }
@@ -3228,7 +3233,7 @@ StageDefinition makeCodeDefaultStageDefinition()
 {
     StageDefinition stage;
     stage.id = "stage_01_stardust";
-    stage.name = "星くずの浅坑";
+    stage.name = "星くずのダンジョン";
     stage.type = "ストーリー";
     stage.displayOrder = 10;
     stage.implementationState = "code_default";

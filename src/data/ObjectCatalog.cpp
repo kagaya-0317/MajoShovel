@@ -26,6 +26,11 @@ constexpr std::string_view HeaderCategory = "\xE3\x82\xAB\xE3\x83\x86\xE3\x82\xB
 constexpr std::string_view HeaderDescription = "\xE8\xAA\xAC\xE6\x98\x8E\xE6\x96\x87";
 constexpr std::string_view HeaderLegacyDescription = "\xE8\xAA\xAC\xE6\x98\x8E";
 constexpr std::string_view HeaderRarity = "\xE3\x83\xAC\xE3\x82\xA2\xE5\xBA\xA6";
+constexpr std::string_view HeaderBaseLevel = "\xE5\x9F\xBA\xE6\xBA\x96\xE3\x83\xAC\xE3\x83\x99\xE3\x83\xAB";
+constexpr std::string_view HeaderRoguelikeDropRange = "\xE3\x83\xAD\xE3\x83\xBC\xE3\x82\xB0\xE3\x83\xA9\xE3\x82\xA4\xE3\x82\xAF\xE5\x87\xBA\xE7\x8F\xBE\xE5\xB9\x85";
+constexpr std::string_view HeaderRoguelikeDropWeight = "\xE3\x83\xAD\xE3\x83\xBC\xE3\x82\xB0\xE3\x83\xA9\xE3\x82\xA4\xE3\x82\xAF\xE9\x87\x8D\xE3\x81\xBF";
+constexpr std::string_view HeaderRlDropRange = "RL\xE5\x87\xBA\xE7\x8F\xBE\xE5\xB9\x85";
+constexpr std::string_view HeaderRlDropWeight = "RL\xE9\x87\x8D\xE3\x81\xBF";
 constexpr std::string_view HeaderPrice = "\xE4\xBE\xA1\xE6\xA0\xBC";
 constexpr std::string_view HeaderLegacyPrice = "\xE5\x80\xA4\xE6\xAE\xB5";
 constexpr std::string_view HeaderUseEffects = "\xE9\x80\x9A\xE5\xB8\xB8\xE5\x8A\xB9\xE6\x9E\x9C";
@@ -1013,6 +1018,23 @@ int parseIntColumnOrDefault(
     return value;
 }
 
+int parseOptionalIntColumnOrDefault(
+    std::string_view text,
+    int defaultValue,
+    std::string_view columnName,
+    std::size_t rowIndex,
+    std::string_view itemId,
+    ObjectCatalog& catalog,
+    int minValue,
+    int maxValue)
+{
+    const std::string normalized = trim(text);
+    if (normalized.empty()) {
+        return defaultValue;
+    }
+    return parseIntColumnOrDefault(normalized, defaultValue, columnName, rowIndex, itemId, catalog, minValue, maxValue);
+}
+
 double parseDoubleColumnOrDefault(
     std::string_view text,
     double defaultValue,
@@ -1044,6 +1066,22 @@ double parseDoubleColumnOrDefault(
         return defaultValue;
     }
     return value;
+}
+
+double parseOptionalDoubleColumnOrDefault(
+    std::string_view text,
+    double defaultValue,
+    std::string_view columnName,
+    std::size_t rowIndex,
+    std::string_view itemId,
+    ObjectCatalog& catalog,
+    double minValue)
+{
+    const std::string normalized = trim(text);
+    if (normalized.empty()) {
+        return defaultValue;
+    }
+    return parseDoubleColumnOrDefault(normalized, defaultValue, columnName, rowIndex, itemId, catalog, minValue);
 }
 
 float parseOptionalFloatColumnOrDefault(
@@ -1207,6 +1245,9 @@ struct ObjectColumns {
     int category = -1;
     int description = -1;
     int rarity = -1;
+    int baseLevel = -1;
+    int roguelikeDropRange = -1;
+    int roguelikeDropWeight = -1;
     int price = -1;
     int useEffects = -1;
     int orbitEffects = -1;
@@ -1231,6 +1272,29 @@ bool findObjectColumns(const GoogleSheetRow& headers, ObjectColumns& outColumns,
     columns.category = findColumn(headers, {HeaderCategory, "category"});
     columns.description = findColumn(headers, {HeaderDescription, HeaderLegacyDescription, "description", "desc"});
     columns.rarity = findColumn(headers, {HeaderRarity, "rarity"});
+    columns.baseLevel = findColumn(headers, {HeaderBaseLevel, "base_level", "baseLevel"});
+    columns.roguelikeDropRange = findColumn(headers, {
+        HeaderRoguelikeDropRange,
+        HeaderRlDropRange,
+        "RLDropRange",
+        "RLRange",
+        "rl_drop_range",
+        "rl_range",
+        "roguelike_drop_range",
+        "roguelikeDropRange",
+        "roguelike_range",
+    });
+    columns.roguelikeDropWeight = findColumn(headers, {
+        HeaderRoguelikeDropWeight,
+        HeaderRlDropWeight,
+        "RLDropWeight",
+        "RLWeight",
+        "rl_drop_weight",
+        "rl_weight",
+        "roguelike_drop_weight",
+        "roguelikeDropWeight",
+        "roguelike_weight",
+    });
     columns.price = findColumn(headers, {HeaderPrice, HeaderLegacyPrice, "price"});
     columns.useEffects = findColumn(headers, {HeaderUseEffects, "use_effects", "useEffects"});
     columns.orbitEffects = findColumn(headers, {HeaderOrbitEffects, "orbit_effects", "orbitEffects"});
@@ -1926,6 +1990,38 @@ bool parseObjectCatalog(const GoogleSheetTable& table, ObjectCatalog& outCatalog
                 rowError(rowIndex, "category is not allowed: " + item.category));
         }
         item.rarity = parseIntColumnOrDefault(cellAt(row, columns.rarity), 1, "rarity", rowIndex, item.id, catalog, 1, 10);
+        if (columns.baseLevel >= 0) {
+            item.baseLevel = parseOptionalIntColumnOrDefault(
+                cellAt(row, columns.baseLevel),
+                1,
+                "base level",
+                rowIndex,
+                item.id,
+                catalog,
+                1,
+                1000);
+        }
+        if (columns.roguelikeDropRange >= 0) {
+            item.roguelikeDropRange = parseOptionalIntColumnOrDefault(
+                cellAt(row, columns.roguelikeDropRange),
+                0,
+                "roguelike drop range",
+                rowIndex,
+                item.id,
+                catalog,
+                0,
+                1000);
+        }
+        if (columns.roguelikeDropWeight >= 0) {
+            item.roguelikeDropWeight = parseOptionalDoubleColumnOrDefault(
+                cellAt(row, columns.roguelikeDropWeight),
+                1.0,
+                "roguelike drop weight",
+                rowIndex,
+                item.id,
+                catalog,
+                0.0);
+        }
         item.price = parseIntColumnOrDefault(cellAt(row, columns.price), 0, "price", rowIndex, item.id, catalog, 0, 2'147'483'647);
         item.attackPower = parseIntColumnOrDefault(cellAt(row, columns.attackPower), 0, "attack power", rowIndex, item.id, catalog, 0, 2'147'483'647);
         const std::string rawDamageType = item.damageType;
