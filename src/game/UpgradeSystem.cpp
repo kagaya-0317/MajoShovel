@@ -285,7 +285,7 @@ std::optional<RingLevelUpgradeSelection> UpgradeSystem::update(
         std::array<UiRect, SpellRingCount> ringTabRects{};
         std::array<std::string, SpellRingCount> ringTabLabels{};
         for (int i = 0; i < ringCount; ++i) {
-            ringTabLabels[static_cast<std::size_t>(i)] = "リング " + std::to_string(i + 1);
+            ringTabLabels[static_cast<std::size_t>(i)] = ringDisplayName(i, ringCount);
             ringTabs[static_cast<std::size_t>(i)] = {ringTabLabels[static_cast<std::size_t>(i)], true};
             ringTabRects[static_cast<std::size_t>(i)] = ringTabRect(i, ringCount);
         }
@@ -412,7 +412,7 @@ void UpgradeSystem::render(
         std::array<UiRect, SpellRingCount> ringTabRects{};
         std::array<std::string, SpellRingCount> ringTabLabels{};
         for (int i = 0; i < ringCount; ++i) {
-            ringTabLabels[static_cast<std::size_t>(i)] = "リング " + std::to_string(i + 1);
+            ringTabLabels[static_cast<std::size_t>(i)] = ringDisplayName(i, ringCount);
             ringTabs[static_cast<std::size_t>(i)] = {ringTabLabels[static_cast<std::size_t>(i)], true};
             ringTabRects[static_cast<std::size_t>(i)] = ringTabRect(i, ringCount);
         }

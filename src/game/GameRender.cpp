@@ -3422,7 +3422,7 @@ void Game::updateRingScreen(const Input& input, UiContext& ui, float dt)
     std::array<UiRect, SpellRingCount> ringTabRects{};
     std::array<std::string, SpellRingCount> ringTabLabels{};
     for (int i = 0; i < ringCount; ++i) {
-        ringTabLabels[static_cast<std::size_t>(i)] = "リング " + std::to_string(i + 1);
+        ringTabLabels[static_cast<std::size_t>(i)] = ringDisplayName(i, ringCount);
         ringTabs[static_cast<std::size_t>(i)] = {ringTabLabels[static_cast<std::size_t>(i)], true};
         ringTabRects[static_cast<std::size_t>(i)] = ringTabRect(i, ringCount);
     }
@@ -5939,7 +5939,7 @@ void Game::renderRingScreen(Renderer& renderer, float totalTime) const
     std::array<UiRect, SpellRingCount> ringTabRects{};
     std::array<std::string, SpellRingCount> ringTabLabels{};
     for (int i = 0; i < ringCount; ++i) {
-        ringTabLabels[static_cast<std::size_t>(i)] = "リング " + std::to_string(i + 1);
+        ringTabLabels[static_cast<std::size_t>(i)] = ringDisplayName(i, ringCount);
         ringTabs[static_cast<std::size_t>(i)] = {ringTabLabels[static_cast<std::size_t>(i)], true};
         ringTabRects[static_cast<std::size_t>(i)] = ringTabRect(i, ringCount);
     }
@@ -6570,8 +6570,7 @@ void Game::renderPauseMenu(Renderer& renderer) const
         const int unlockedRings = unlockedRingCount();
         for (int ringIndex = 0; ringIndex < unlockedRings; ++ringIndex) {
             const float y = ringContent.pos.y + 34.0f + static_cast<float>(ringIndex) * 34.0f;
-            std::snprintf(buffer, sizeof(buffer), "リング%d", ringIndex + 1);
-            renderer.drawText({ringContent.pos.x, y}, buffer, ui::Text, 2);
+            renderer.drawText({ringContent.pos.x, y}, ringDisplayName(ringIndex, unlockedRings), ui::Text, 2);
 
             const std::vector<SpellRingItem>& items = spellRing_.itemsForRing(ringIndex);
             std::snprintf(
@@ -6621,8 +6620,11 @@ void Game::renderPauseMenu(Renderer& renderer) const
         renderer.drawText(panel.pos + Vec2{58.0f, 206.0f}, "I キーでアイテム画面を開けます。", {198, 198, 206, 255}, 2);
     } else if (pausePage_ == PauseMenuPage::Ring) {
         renderer.drawText(panel.pos + Vec2{48.0f, 102.0f}, "リング", {246, 235, 255, 255}, 3);
-        std::snprintf(buffer, sizeof(buffer), "アクティブリング %d", spellRing_.activeRingIndex() + 1);
-        renderer.drawText(panel.pos + Vec2{58.0f, 164.0f}, buffer, {230, 230, 236, 255}, 2);
+        renderer.drawText(
+            panel.pos + Vec2{58.0f, 164.0f},
+            "アクティブ " + std::string(ringDisplayName(spellRing_.activeRingIndex(), unlockedRingCount())),
+            {230, 230, 236, 255},
+            2);
         std::snprintf(buffer, sizeof(buffer), "装着アイテム %02d/%02d", static_cast<int>(spellRing_.items().size()), spellRing_.maxItemCount());
         renderer.drawText(panel.pos + Vec2{58.0f, 206.0f}, buffer, {230, 230, 236, 255}, 2);
     } else if (pausePage_ == PauseMenuPage::Options) {

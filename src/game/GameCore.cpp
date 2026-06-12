@@ -393,28 +393,32 @@ UiResultDialogLine levelUpResultChangeLine(std::string prefix, std::string after
     return line;
 }
 
-std::vector<UiResultDialogLine> levelUpResultLines(RingLevelUpgradeSelection selection, float beforeValue, float afterValue)
+std::vector<UiResultDialogLine> levelUpResultLines(
+    RingLevelUpgradeSelection selection,
+    float beforeValue,
+    float afterValue,
+    int unlockedRingCount)
 {
     std::vector<UiResultDialogLine> lines;
     char prefix[128];
     char after[64];
-    const int displayRingIndex = std::clamp(selection.ringIndex, 0, SpellRingCount - 1) + 1;
+    const std::string ringName = std::string(ringDisplayName(selection.ringIndex, unlockedRingCount));
     switch (selection.kind) {
     case RingLevelUpgradeKind::Radius:
-        lines.push_back(levelUpResultTextLine("リング" + std::to_string(displayRingIndex) + "のサイズが大きくなった！"));
-        std::snprintf(prefix, sizeof(prefix), "リング%d 半径: %.2fm → ", displayRingIndex, beforeValue);
+        lines.push_back(levelUpResultTextLine(ringName + "のサイズが大きくなった！"));
+        std::snprintf(prefix, sizeof(prefix), "%s 半径: %.2fm → ", ringName.c_str(), beforeValue);
         std::snprintf(after, sizeof(after), "%.2fm", afterValue);
         lines.push_back(levelUpResultChangeLine(prefix, after));
         break;
     case RingLevelUpgradeKind::Speed:
-        lines.push_back(levelUpResultTextLine("リング" + std::to_string(displayRingIndex) + "の速度が速くなった！"));
-        std::snprintf(prefix, sizeof(prefix), "リング%d 速度: %.2fm/s → ", displayRingIndex, beforeValue);
+        lines.push_back(levelUpResultTextLine(ringName + "の速度が速くなった！"));
+        std::snprintf(prefix, sizeof(prefix), "%s 速度: %.2fm/s → ", ringName.c_str(), beforeValue);
         std::snprintf(after, sizeof(after), "%.2fm/s", afterValue);
         lines.push_back(levelUpResultChangeLine(prefix, after));
         break;
     case RingLevelUpgradeKind::WeightLimit:
-        lines.push_back(levelUpResultTextLine("リング" + std::to_string(displayRingIndex) + "の重量上限が拡張された！"));
-        std::snprintf(prefix, sizeof(prefix), "リング%d 重量上限: %.1fkg → ", displayRingIndex, beforeValue);
+        lines.push_back(levelUpResultTextLine(ringName + "の重量上限が拡張された！"));
+        std::snprintf(prefix, sizeof(prefix), "%s 重量上限: %.1fkg → ", ringName.c_str(), beforeValue);
         std::snprintf(after, sizeof(after), "%.1fkg", afterValue);
         lines.push_back(levelUpResultChangeLine(prefix, after));
         break;
@@ -2488,7 +2492,7 @@ bool Game::applyLevelUpSelection(RingLevelUpgradeSelection selection)
     openUiResultDialog(
         levelUpResultDialog_,
         "レベルアップ",
-        levelUpResultLines(RingLevelUpgradeSelection{ringIndex, kind}, beforeValue, afterValue));
+        levelUpResultLines(RingLevelUpgradeSelection{ringIndex, kind}, beforeValue, afterValue, unlockedRingCount()));
     return true;
 }
 

@@ -8240,7 +8240,7 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
             std::array<UiRect, SpellRingCount> ringTabRects{};
             std::array<std::string, SpellRingCount> ringTabLabels{};
             for (int i = 0; i < ringCount; ++i) {
-                ringTabLabels[static_cast<std::size_t>(i)] = "リング " + std::to_string(i + 1);
+                ringTabLabels[static_cast<std::size_t>(i)] = ringDisplayName(i, ringCount);
                 ringTabs[static_cast<std::size_t>(i)] = {ringTabLabels[static_cast<std::size_t>(i)], true};
                 ringTabRects[static_cast<std::size_t>(i)] = ringWorkshopRingTabRect(i, ringCount);
             }
@@ -8345,7 +8345,7 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
             std::array<UiRect, SpellRingCount> ringTabRects{};
             std::array<std::string, SpellRingCount> ringTabLabels{};
             for (int i = 0; i < ringCount; ++i) {
-                ringTabLabels[static_cast<std::size_t>(i)] = "リング " + std::to_string(i + 1);
+                ringTabLabels[static_cast<std::size_t>(i)] = ringDisplayName(i, ringCount);
                 ringTabs[static_cast<std::size_t>(i)] = {ringTabLabels[static_cast<std::size_t>(i)], true};
                 ringTabRects[static_cast<std::size_t>(i)] = ringWorkshopRingTabRect(i, ringCount);
             }
@@ -11564,7 +11564,7 @@ void Game::renderBaseScreen(Renderer& renderer) const
             std::array<UiRect, SpellRingCount> ringTabRects{};
             std::array<std::string, SpellRingCount> ringTabLabels{};
             for (int i = 0; i < ringCount; ++i) {
-                ringTabLabels[static_cast<std::size_t>(i)] = "リング " + std::to_string(i + 1);
+                ringTabLabels[static_cast<std::size_t>(i)] = ringDisplayName(i, ringCount);
                 ringTabs[static_cast<std::size_t>(i)] = {ringTabLabels[static_cast<std::size_t>(i)], true};
                 ringTabRects[static_cast<std::size_t>(i)] = ringWorkshopRingTabRect(i, ringCount);
             }
@@ -11708,7 +11708,7 @@ void Game::renderBaseScreen(Renderer& renderer) const
             std::array<UiRect, SpellRingCount> ringTabRects{};
             std::array<std::string, SpellRingCount> ringTabLabels{};
             for (int i = 0; i < ringCount; ++i) {
-                ringTabLabels[static_cast<std::size_t>(i)] = "リング " + std::to_string(i + 1);
+                ringTabLabels[static_cast<std::size_t>(i)] = ringDisplayName(i, ringCount);
                 ringTabs[static_cast<std::size_t>(i)] = {ringTabLabels[static_cast<std::size_t>(i)], true};
                 ringTabRects[static_cast<std::size_t>(i)] = ringWorkshopRingTabRect(i, ringCount);
             }
