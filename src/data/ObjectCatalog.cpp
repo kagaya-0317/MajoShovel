@@ -27,10 +27,10 @@ constexpr std::string_view HeaderDescription = "\xE8\xAA\xAC\xE6\x98\x8E\xE6\x96
 constexpr std::string_view HeaderLegacyDescription = "\xE8\xAA\xAC\xE6\x98\x8E";
 constexpr std::string_view HeaderRarity = "\xE3\x83\xAC\xE3\x82\xA2\xE5\xBA\xA6";
 constexpr std::string_view HeaderBaseLevel = "\xE5\x9F\xBA\xE6\xBA\x96\xE3\x83\xAC\xE3\x83\x99\xE3\x83\xAB";
-constexpr std::string_view HeaderRoguelikeDropRange = "\xE3\x83\xAD\xE3\x83\xBC\xE3\x82\xB0\xE3\x83\xA9\xE3\x82\xA4\xE3\x82\xAF\xE5\x87\xBA\xE7\x8F\xBE\xE5\xB9\x85";
 constexpr std::string_view HeaderRoguelikeDropWeight = "\xE3\x83\xAD\xE3\x83\xBC\xE3\x82\xB0\xE3\x83\xA9\xE3\x82\xA4\xE3\x82\xAF\xE9\x87\x8D\xE3\x81\xBF";
-constexpr std::string_view HeaderRlDropRange = "RL\xE5\x87\xBA\xE7\x8F\xBE\xE5\xB9\x85";
+constexpr std::string_view HeaderRoguelikeResidualWeight = "\xE3\x83\xAD\xE3\x83\xBC\xE3\x82\xB0\xE3\x83\xA9\xE3\x82\xA4\xE3\x82\xAF\xE6\xAE\x8B\xE5\xAD\x98\xE9\x87\x8D\xE3\x81\xBF";
 constexpr std::string_view HeaderRlDropWeight = "RL\xE9\x87\x8D\xE3\x81\xBF";
+constexpr std::string_view HeaderRlResidualWeight = "RL\xE6\xAE\x8B\xE5\xAD\x98\xE9\x87\x8D\xE3\x81\xBF";
 constexpr std::string_view HeaderPrice = "\xE4\xBE\xA1\xE6\xA0\xBC";
 constexpr std::string_view HeaderLegacyPrice = "\xE5\x80\xA4\xE6\xAE\xB5";
 constexpr std::string_view HeaderUseEffects = "\xE9\x80\x9A\xE5\xB8\xB8\xE5\x8A\xB9\xE6\x9E\x9C";
@@ -1246,8 +1246,8 @@ struct ObjectColumns {
     int description = -1;
     int rarity = -1;
     int baseLevel = -1;
-    int roguelikeDropRange = -1;
     int roguelikeDropWeight = -1;
+    int roguelikeResidualWeight = -1;
     int price = -1;
     int useEffects = -1;
     int orbitEffects = -1;
@@ -1273,17 +1273,6 @@ bool findObjectColumns(const GoogleSheetRow& headers, ObjectColumns& outColumns,
     columns.description = findColumn(headers, {HeaderDescription, HeaderLegacyDescription, "description", "desc"});
     columns.rarity = findColumn(headers, {HeaderRarity, "rarity"});
     columns.baseLevel = findColumn(headers, {HeaderBaseLevel, "base_level", "baseLevel"});
-    columns.roguelikeDropRange = findColumn(headers, {
-        HeaderRoguelikeDropRange,
-        HeaderRlDropRange,
-        "RLDropRange",
-        "RLRange",
-        "rl_drop_range",
-        "rl_range",
-        "roguelike_drop_range",
-        "roguelikeDropRange",
-        "roguelike_range",
-    });
     columns.roguelikeDropWeight = findColumn(headers, {
         HeaderRoguelikeDropWeight,
         HeaderRlDropWeight,
@@ -1294,6 +1283,17 @@ bool findObjectColumns(const GoogleSheetRow& headers, ObjectColumns& outColumns,
         "roguelike_drop_weight",
         "roguelikeDropWeight",
         "roguelike_weight",
+    });
+    columns.roguelikeResidualWeight = findColumn(headers, {
+        HeaderRoguelikeResidualWeight,
+        HeaderRlResidualWeight,
+        "RLResidualWeight",
+        "RLRemainWeight",
+        "rl_residual_weight",
+        "rl_remain_weight",
+        "roguelike_residual_weight",
+        "roguelikeResidualWeight",
+        "roguelike_remain_weight",
     });
     columns.price = findColumn(headers, {HeaderPrice, HeaderLegacyPrice, "price"});
     columns.useEffects = findColumn(headers, {HeaderUseEffects, "use_effects", "useEffects"});
@@ -2001,22 +2001,21 @@ bool parseObjectCatalog(const GoogleSheetTable& table, ObjectCatalog& outCatalog
                 1,
                 1000);
         }
-        if (columns.roguelikeDropRange >= 0) {
-            item.roguelikeDropRange = parseOptionalIntColumnOrDefault(
-                cellAt(row, columns.roguelikeDropRange),
-                0,
-                "roguelike drop range",
-                rowIndex,
-                item.id,
-                catalog,
-                0,
-                1000);
-        }
         if (columns.roguelikeDropWeight >= 0) {
             item.roguelikeDropWeight = parseOptionalDoubleColumnOrDefault(
                 cellAt(row, columns.roguelikeDropWeight),
                 1.0,
                 "roguelike drop weight",
+                rowIndex,
+                item.id,
+                catalog,
+                0.0);
+        }
+        if (columns.roguelikeResidualWeight >= 0) {
+            item.roguelikeResidualWeight = parseOptionalDoubleColumnOrDefault(
+                cellAt(row, columns.roguelikeResidualWeight),
+                0.0,
+                "roguelike residual weight",
                 rowIndex,
                 item.id,
                 catalog,

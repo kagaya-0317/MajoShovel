@@ -1777,14 +1777,6 @@ bool Game::loadSaveData(const std::filesystem::path& path)
         !loadedMerchantStock.empty() ||
         !loadedHighValueBuyCategory.empty() ||
         !loadedHighValueBuyObjectIds.empty();
-    const bool loadedSaveHasRingPresetProgress = [&loadedRingPresets]() {
-        for (int presetIndex = 0; presetIndex < RingPresetSlotCount; ++presetIndex) {
-            if (loadedRingPresets.registered(presetIndex)) {
-                return true;
-            }
-        }
-        return false;
-    }();
     const int migratedRingPresetSlotLevel = loadedRingPresetSlotLevelExplicit
         ? loadedRingPresetSlotLevel
         : [&loadedRingPresets]() {
@@ -1796,15 +1788,27 @@ bool Game::loadSaveData(const std::filesystem::path& path)
             }
             return slotLevel;
         }();
+    const int sanitizedRingPresetSlotLevel = std::clamp(migratedRingPresetSlotLevel, 0, RingPresetSlotCount);
+    for (int presetIndex = sanitizedRingPresetSlotLevel; presetIndex < RingPresetSlotCount; ++presetIndex) {
+        loadedRingPresets.setPreset(presetIndex, {});
+    }
+    const bool loadedSaveHasUnlockedRingPresetProgress = [&loadedRingPresets, sanitizedRingPresetSlotLevel]() {
+        for (int presetIndex = 0; presetIndex < sanitizedRingPresetSlotLevel; ++presetIndex) {
+            if (loadedRingPresets.registered(presetIndex)) {
+                return true;
+            }
+        }
+        return false;
+    }();
     const bool loadedSaveHasBaseProgress =
         loadedWarehouseCapacityLevel > 0 ||
         loadedProcessingUnlockLevel > 0 ||
         loadedRingWorkshopUnlocked ||
-        migratedRingPresetSlotLevel > 0 ||
+        sanitizedRingPresetSlotLevel > 0 ||
         loadedAutoSaveOnReturn ||
         !loadedWarehouseStacks.empty() ||
         !loadedWarehouseInstances.empty() ||
-        loadedSaveHasRingPresetProgress;
+        loadedSaveHasUnlockedRingPresetProgress;
     const bool loadedSaveHasStageProgress =
         loadedCurrentStage > 0 ||
         loadedCurrentStageId != "stage_01_stardust" ||
@@ -2129,7 +2133,7 @@ bool Game::loadSaveData(const std::filesystem::path& path)
     warehouseCapacityLevel_ = std::clamp(loadedWarehouseCapacityLevel, 0, 4);
     processingUnlockLevel_ = std::clamp(loadedProcessingUnlockLevel, 0, 5);
     ringWorkshopUnlocked_ = loadedRingWorkshopUnlocked;
-    ringPresetSlotLevel_ = std::clamp(migratedRingPresetSlotLevel, 0, RingPresetSlotCount);
+    ringPresetSlotLevel_ = sanitizedRingPresetSlotLevel;
     autoSaveOnReturn_ = loadedAutoSaveOnReturn;
     storyFlags_ = std::move(loadedStoryFlags);
     encyclopedia_ = std::move(loadedEncyclopedia);

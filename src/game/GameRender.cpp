@@ -1544,6 +1544,11 @@ struct RingItemRenderRef {
     int sequenceIndex = 0;
 };
 
+struct RingItemDepthRenderSnapshot {
+    float sortY = 0.0f;
+    SpellRingItem item;
+};
+
 std::vector<RingItemRenderRef> sortedRingItemRenderRefs(const std::vector<const SpellRingItem*>& runtimeItems)
 {
     std::vector<RingItemRenderRef> result;
@@ -1561,22 +1566,6 @@ std::vector<RingItemRenderRef> sortedRingItemRenderRefs(const std::vector<const 
         return left.item->worldPosition.y < right.item->worldPosition.y;
     });
     return result;
-}
-
-std::vector<const SpellRingItem*> playerDeathRingPresentationItems(const PlayerDeathSequenceState& deathSequence)
-{
-    std::vector<const SpellRingItem*> items;
-    for (const PlayerDeathRingPresentation& presentation : deathSequence.ringPresentations) {
-        if (!presentation.active) {
-            continue;
-        }
-        for (const PlayerDeathRingItemPresentation& itemPresentation : presentation.items) {
-            if (!itemPresentation.dropped) {
-                items.push_back(&itemPresentation.item);
-            }
-        }
-    }
-    return items;
 }
 
 float ringItemCometVisualScale(const SpellRingSystem& spellRing, const SpellRingItem& item)
@@ -1649,6 +1638,29 @@ void drawSpellRingItemWorldVisual(
             item.magicAuraDamageType,
             totalSeconds);
     }
+}
+
+void appendRingItemDepthRenderEntry(
+    std::vector<DepthRenderEntry>& entries,
+    Renderer& renderer,
+    const SpellRingSystem& spellRing,
+    const ObjectCatalog& objectCatalog,
+    const RingItemDepthRenderSnapshot& snapshot,
+    float totalSeconds)
+{
+    entries.push_back(DepthRenderEntry{
+        snapshot.sortY,
+        [&renderer, &spellRing, &objectCatalog, item = snapshot.item, totalSeconds]() {
+            drawSpellRingItemWorldVisual(
+                renderer,
+                spellRing,
+                objectCatalog,
+                item,
+                totalSeconds,
+                true,
+                true);
+        },
+    });
 }
 
 constexpr float DungeonMinimapX = 18.0f;
@@ -6605,19 +6617,6 @@ void Game::renderSpellRingForeground(
     float totalSeconds) const
 {
     if (playerDeathSequenceActive()) {
-        renderPlayerDeathRingPresentation(renderer, totalSeconds);
-        const std::vector<const SpellRingItem*> deathItems = playerDeathRingPresentationItems(playerDeathSequence_);
-        const std::vector<RingItemRenderRef> sortedItems = sortedRingItemRenderRefs(deathItems);
-        for (const RingItemRenderRef& itemRef : sortedItems) {
-            drawSpellRingItemWorldVisual(
-                renderer,
-                spellRing_,
-                objectCatalog_,
-                *itemRef.item,
-                totalSeconds,
-                false,
-                false);
-        }
         return;
     }
 
@@ -6642,19 +6641,8 @@ void Game::renderSpellRingForeground(
         return;
     }
 
-    drawSpellRingOrbitLayer(renderer, spellRing_, balance_, totalSeconds, 0.78f);
-
-    const std::vector<RingItemRenderRef> sortedItems = sortedRingItemRenderRefs(runtimeItems);
-    for (const RingItemRenderRef& itemRef : sortedItems) {
-        drawSpellRingItemWorldVisual(
-            renderer,
-            spellRing_,
-            objectCatalog_,
-            *itemRef.item,
-            totalSeconds,
-            false,
-            false);
-    }
+    (void)runtimeItems;
+    (void)totalSeconds;
 }
 
 void Game::renderPlayerDeathRingPresentation(Renderer& renderer, float totalSeconds) const
@@ -7091,9 +7079,9 @@ void Game::render(Renderer& renderer, const Time& time)
     const std::vector<const SpellRingItem*> runtimeItems = liveRingHidden
         ? std::vector<const SpellRingItem*>{}
         : spellRing_.runtimeItems();
-    const std::vector<RingItemRenderRef> runtimeItemsByDepth = sortedRingItemRenderRefs(runtimeItems);
     const bool ringIntroActive = dungeonRingIntroActive();
     const bool lightweight = lightweightModeEnabled();
+    const float totalSeconds = static_cast<float>(time.totalSeconds());
     const std::vector<LightSource> itemLights = collectDungeonLightSources(time.totalSeconds());
     const Vec2 playerLightCenter = witchSelfLightCenter(player_.position);
     tileMap_.render(renderer, camera_, playerLightCenter, itemLights);
@@ -7217,49 +7205,58 @@ void Game::render(Renderer& renderer, const Time& time)
             if (!playerDeathActive) {
                 drawPlayerVisual();
             }
-
-            if (ringIntroActive) {
-                return;
-            }
-            const float totalSeconds = static_cast<float>(time.totalSeconds());
-            if (playerDeathSequenceActive()) {
-                const std::vector<const SpellRingItem*> deathItems = playerDeathRingPresentationItems(playerDeathSequence_);
-                const std::vector<RingItemRenderRef> sortedDeathItems = sortedRingItemRenderRefs(deathItems);
-                for (const RingItemRenderRef& itemRef : sortedDeathItems) {
-                    const SpellRingItem& item = *itemRef.item;
+        },
+    });
+    if (!ringIntroActive) {
+        if (playerDeathActive) {
+            for (std::size_t presentationIndex = 0; presentationIndex < playerDeathSequence_.ringPresentations.size(); ++presentationIndex) {
+                const PlayerDeathRingPresentation& presentation = playerDeathSequence_.ringPresentations[presentationIndex];
+                if (!presentation.active) {
+                    continue;
+                }
+                for (std::size_t itemIndex = 0; itemIndex < presentation.items.size(); ++itemIndex) {
+                    const PlayerDeathRingItemPresentation& itemPresentation = presentation.items[itemIndex];
+                    if (itemPresentation.dropped) {
+                        continue;
+                    }
+                    const SpellRingItem& item = itemPresentation.item;
                     if (!tileMap_.isLit(item.worldPosition, playerLightCenter, itemLights)) {
                         continue;
                     }
-                    drawSpellRingItemWorldVisual(
+                    appendRingItemDepthRenderEntry(
+                        worldDepthEntries,
                         renderer,
                         spellRing_,
                         objectCatalog_,
-                        item,
-                        totalSeconds,
-                        true,
-                        true);
+                        RingItemDepthRenderSnapshot{
+                            item.worldPosition.y,
+                            item,
+                        },
+                        totalSeconds);
                 }
-                return;
             }
-            if (liveRingHidden) {
-                return;
-            }
-            for (const RingItemRenderRef& itemRef : runtimeItemsByDepth) {
-                const SpellRingItem& item = *itemRef.item;
-                if (!tileMap_.isLit(item.worldPosition, playerLightCenter, itemLights)) {
-                    continue;
+        } else if (!liveRingHidden) {
+            for (int ringIndex = 0; ringIndex < SpellRingCount; ++ringIndex) {
+                const std::vector<SpellRingItem>& ringItems = spellRing_.itemsForRing(ringIndex);
+                for (std::size_t itemIndex = 0; itemIndex < ringItems.size(); ++itemIndex) {
+                    const SpellRingItem& item = ringItems[itemIndex];
+                    if (!tileMap_.isLit(item.worldPosition, playerLightCenter, itemLights)) {
+                        continue;
+                    }
+                    appendRingItemDepthRenderEntry(
+                        worldDepthEntries,
+                        renderer,
+                        spellRing_,
+                        objectCatalog_,
+                        RingItemDepthRenderSnapshot{
+                            item.worldPosition.y,
+                            item,
+                        },
+                        totalSeconds);
                 }
-                drawSpellRingItemWorldVisual(
-                    renderer,
-                    spellRing_,
-                    objectCatalog_,
-                    item,
-                    totalSeconds,
-                    true,
-                    true);
             }
-        },
-    });
+        }
+    }
     enemies_.appendRenderEntries(worldDepthEntries, renderer, tileMap_, playerLightCenter, itemLights, 0, &encyclopedia_);
     appendCaptureAbsorbRenderEntries(worldDepthEntries, renderer, time.totalSeconds());
     std::stable_sort(worldDepthEntries.begin(), worldDepthEntries.end(), [](const DepthRenderEntry& left, const DepthRenderEntry& right) {

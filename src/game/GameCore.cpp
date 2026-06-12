@@ -1593,6 +1593,11 @@ std::string Game::worldBuildStatusText() const
 void Game::enterBase()
 {
     worldBuildJob_ = WorldBuildJob{};
+    pendingStoryTrigger_.clear();
+    pendingStoryTriggerDelaySeconds_ = 0.0f;
+    pendingStoryTriggers_.clear();
+    pendingDialogueCompletion_ = {};
+    dialogue_.clear();
     inventory_.setOpen(false);
     inventory_.cancelGrab();
     cancelRingGrab();

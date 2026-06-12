@@ -961,6 +961,10 @@ bool App::reloadAssetForPath(const std::string& changedPath)
     if (fileName == "ui_line.png") {
         return renderer_->loadUiLineTexture("assets/UI_line.png");
     }
+    if (fileName == "ui_itemshortcuts.png") {
+        renderer_->invalidateImage("assets/UI_itemShortCuts.png");
+        return true;
+    }
     if (fileName == "ui_cursor.png") {
         return loadGameCursor(GameCursorPath);
     }

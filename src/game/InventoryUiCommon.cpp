@@ -1256,7 +1256,9 @@ void drawInventoryUiSlot(
     const Vec2 slotCenter = uiRectCenter(rect);
     const std::optional<InventoryUiItemStats> stats = inventoryUiEntryStats(entry);
     const float contentAlpha = std::clamp(style.contentAlpha, 0.0f, 1.0f);
-    renderer.fillCircle(slotCenter, slotFrameRadius(rect), fill);
+    if (style.showFrame) {
+        renderer.fillCircle(slotCenter, slotFrameRadius(rect), fill);
+    }
     const auto drawBottomLabel = [&]() {
         drawInventoryUiSlotBottomLabel(renderer, rect, style.bottomLabel, scaleAlpha(style.bottomLabelColor, contentAlpha));
     };

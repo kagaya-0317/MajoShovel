@@ -10320,7 +10320,10 @@ bool Game::executeDebugCommand(std::string_view command)
     };
 
     const auto clearRuntimeDebugPresentation = [&]() {
+        pendingStoryTrigger_.clear();
+        pendingStoryTriggerDelaySeconds_ = 0.0f;
         pendingStoryTriggers_.clear();
+        pendingDialogueCompletion_ = {};
         dialogue_.clear();
         endingKamishibaiPending_ = false;
         resetBossEncounter();
@@ -11198,6 +11201,7 @@ bool Game::executeDebugCommand(std::string_view command)
     }
 
     if (normalized == "game reset-data") {
+        clearRuntimeDebugPresentation();
         money_ = 0;
         maxHpUpgradeLevel_ = 0;
         ringRadiusUpgradeLevel_ = 0;
@@ -11215,6 +11219,7 @@ bool Game::executeDebugCommand(std::string_view command)
         processingUnlockLevel_ = 0;
         ringWorkshopUnlocked_ = false;
         ringPresetSlotLevel_ = 0;
+        ringPresets_.clear();
         autoSaveOnReturn_ = false;
         storyFlags_.clear();
         warehouseObjectStacks_.clear();

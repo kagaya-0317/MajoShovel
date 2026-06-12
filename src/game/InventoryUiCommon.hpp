@@ -52,6 +52,7 @@ struct InventoryUiSlotStyle {
     Color topRightCountColor = ui::Text;
     bool showProtectionLabel = true;
     Color protectionLabelColor = ui::Text;
+    bool showFrame = true;
 };
 
 struct InventoryUiDetailExtraLine {

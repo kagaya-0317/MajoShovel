@@ -11192,7 +11192,7 @@ void Game::renderBaseScreen(Renderer& renderer) const
     }
 
     renderer.setScreenSpace();
-    const BaseFacility* interactionFacility = nullptr;
+    std::optional<BaseFacility> interactionFacility;
     const float ringPreviewSeconds = baseRingPreviewAnimationTime_;
     if (!roguelikeOverlay) {
     renderer.fillRect({0.0f, 0.0f}, {static_cast<float>(camera_.width()), static_cast<float>(camera_.height())}, {24, 28, 32, 255});
@@ -11227,7 +11227,9 @@ void Game::renderBaseScreen(Renderer& renderer) const
         facility.rect = toUiRect(baseFacilityRectFor(baseArea_, facility.facilityId, toBaseEditRect(facility.rect)));
     }
     const Vec2 mouse = currentRenderMousePosition(renderer);
-    interactionFacility = selectBaseInteractionFacility(basePlayerPosition_, basePlayerFacing_, baseArea_, facilities);
+    if (const BaseFacility* selectedFacility = selectBaseInteractionFacility(basePlayerPosition_, basePlayerFacing_, baseArea_, facilities)) {
+        interactionFacility = *selectedFacility;
+    }
     drawBaseFacilities(renderer, facilities, baseArea_, ringWorkshopUnlocked_, basePlayerPosition_, mouse);
     renderBaseEditOverlay(renderer);
     drawBaseActors(
@@ -12889,11 +12891,12 @@ void Game::renderBaseScreen(Renderer& renderer) const
     } else {
         const bool modalOpen = baseBrokenRingDepartureConfirm_.open;
         if (!modalOpen && !bottomControlHelpBlocked && !rescueDropActive) {
+            const std::string controlHelp = baseExplorationControlHelp(interactionFacility.has_value() ? &*interactionFacility : nullptr);
             drawBaseControlHelp(
                 renderer,
                 camera_.width(),
                 camera_.height(),
-                baseExplorationControlHelp(interactionFacility));
+                controlHelp);
         }
         if (!baseStatus_.empty()) {
             UiSystemMessageStyle statusStyle;

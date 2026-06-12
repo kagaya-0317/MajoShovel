@@ -7,6 +7,8 @@
 #include "game/ExplosionWarning.hpp"
 #include "game/ItemImageRenderer.hpp"
 
+#include <cmath>
+
 namespace majo {
 
 namespace {
@@ -151,12 +153,9 @@ struct RoguelikeLootCategorySpec {
     double commonWeight = 0.0;
     double rareWeight = 0.0;
     double superRareWeight = 0.0;
-    int defaultRange = 8;
 };
 
-constexpr int RoguelikeItemTargetLevelCap = 60;
-constexpr int RoguelikeLootRangeFallbackStep = 5;
-constexpr int RoguelikeLootRangeFallbackMaxExtra = 80;
+constexpr double RoguelikeItemLevelFalloffWidth = 10.0;
 
 constexpr std::string_view CategoryDig = "\xE6\x8E\x98\xE5\x89\x8A";
 constexpr std::string_view CategoryExplore = "\xE6\x8E\xA2\xE7\xB4\xA2";
@@ -171,17 +170,17 @@ constexpr std::string_view CategoryShield = "\xE7\x9B\xBE";
 constexpr std::string_view CategoryStaff = "\xE6\x9D\x96";
 
 constexpr std::array<RoguelikeLootCategorySpec, 11> RoguelikeLootCategorySpecs{{
-    {CategoryTreasure, 28.0, 25.0, 22.0, 10},
-    {CategoryWeapon, 10.0, 13.0, 14.0, 7},
-    {CategoryStaff, 8.0, 11.0, 13.0, 7},
-    {CategoryDig, 10.0, 8.0, 7.0, 7},
-    {CategoryExplore, 10.0, 8.0, 8.0, 8},
-    {CategoryRecovery, 12.0, 8.0, 5.0, 8},
-    {CategoryEnhance, 6.0, 7.0, 8.0, 8},
-    {CategoryDebuff, 4.0, 5.0, 6.0, 8},
-    {CategoryMagicBook, 4.0, 7.0, 9.0, 8},
-    {CategoryShield, 5.0, 6.0, 6.0, 7},
-    {CategoryOrbit, 3.0, 2.0, 2.0, 8},
+    {CategoryTreasure, 28.0, 25.0, 22.0},
+    {CategoryWeapon, 10.0, 13.0, 14.0},
+    {CategoryStaff, 8.0, 11.0, 13.0},
+    {CategoryDig, 10.0, 8.0, 7.0},
+    {CategoryExplore, 10.0, 8.0, 8.0},
+    {CategoryRecovery, 12.0, 8.0, 5.0},
+    {CategoryEnhance, 6.0, 7.0, 8.0},
+    {CategoryDebuff, 4.0, 5.0, 6.0},
+    {CategoryMagicBook, 4.0, 7.0, 9.0},
+    {CategoryShield, 5.0, 6.0, 6.0},
+    {CategoryOrbit, 3.0, 2.0, 2.0},
 }};
 
 double roguelikeLootCategoryBaseWeight(const RoguelikeLootCategorySpec& spec, LootChestKind chestKind)
@@ -199,7 +198,7 @@ double roguelikeLootCategoryBaseWeight(const RoguelikeLootCategorySpec& spec, Lo
 
 int roguelikeTargetItemLevelForSectionRank(int depthRank)
 {
-    return std::clamp(std::max(1, depthRank) + 1, 1, RoguelikeItemTargetLevelCap);
+    return roguelikeTargetBaseLevelForSectionRank(depthRank);
 }
 
 const RoguelikeLootCategorySpec* roguelikeLootCategorySpecFor(std::string_view category)
@@ -213,15 +212,27 @@ const RoguelikeLootCategorySpec* roguelikeLootCategorySpecFor(std::string_view c
     return it != RoguelikeLootCategorySpecs.end() ? &*it : nullptr;
 }
 
-int roguelikeDropRangeForObject(const ObjectDefinition& object)
+double roguelikeLevelDistanceMultiplier(int baseLevel, int targetLevel)
 {
-    if (object.roguelikeDropRange > 0) {
-        return object.roguelikeDropRange;
+    // Distance uses a shared width of 10 levels; there is no hard cutoff.
+    const double distance = static_cast<double>(std::abs(std::max(1, baseLevel) - std::max(1, targetLevel)));
+    const double normalized = distance / RoguelikeItemLevelFalloffWidth;
+    return std::exp(-0.5 * normalized * normalized);
+}
+
+double roguelikeLootWeightForObject(const ObjectDefinition& object, int targetLevel)
+{
+    if (object.roguelikeDropWeight <= 0.0) {
+        return 0.0;
     }
-    if (const RoguelikeLootCategorySpec* spec = roguelikeLootCategorySpecFor(object.category)) {
-        return spec->defaultRange;
+
+    const int baseLevel = std::max(1, object.baseLevel);
+    const double decayedWeight = object.roguelikeDropWeight *
+        roguelikeLevelDistanceMultiplier(baseLevel, targetLevel);
+    if (targetLevel >= baseLevel) {
+        return std::max(decayedWeight, object.roguelikeResidualWeight);
     }
-    return 8;
+    return decayedWeight;
 }
 
 constexpr std::array<Game::RoguelikeFacilityKind, RoguelikeFacilityKindCount> RoguelikeFacilityKinds{{
@@ -8882,22 +8893,24 @@ bool Game::spawnWeightedObjectLoot(
         }
         const int targetLevel = roguelikeTargetItemLevelForSectionRank(effectiveDepthRank);
 
-        const auto candidateAllowed = [&](const ObjectDefinition& object, std::string_view category, int extraRange, bool ignoreLevel) {
-            if (object.category != category || object.roguelikeDropWeight <= 0.0 || !hasRequiredTag(object)) {
-                return false;
+        const auto candidateWeight = [&](const ObjectDefinition& object, std::string_view category) {
+            if (object.category != category || !hasRequiredTag(object)) {
+                return 0.0;
             }
             if (appleUseTutorialPending &&
                 object.id != TutorialAppleObjectId &&
                 objectIsInventoryUsableItem(object)) {
+                return 0.0;
+            }
+            return roguelikeLootWeightForObject(object, targetLevel);
+        };
+        const auto candidateAllowed = [&](const ObjectDefinition& object, std::string_view category) {
+            if (candidateWeight(object, category) <= 0.0) {
                 return false;
             }
-            if (ignoreLevel) {
-                return true;
-            }
-            const int range = roguelikeDropRangeForObject(object) + std::max(0, extraRange);
-            return std::abs(std::max(1, object.baseLevel) - targetLevel) <= range;
+            return true;
         };
-        const auto collectCategories = [&](int extraRange, bool ignoreLevel, std::vector<const RoguelikeLootCategorySpec*>& outSpecs, std::vector<double>& outWeights) {
+        const auto collectCategories = [&](std::vector<const RoguelikeLootCategorySpec*>& outSpecs, std::vector<double>& outWeights) {
             outSpecs.clear();
             outWeights.clear();
             for (const RoguelikeLootCategorySpec& spec : RoguelikeLootCategorySpecs) {
@@ -8908,7 +8921,7 @@ bool Game::spawnWeightedObjectLoot(
                     continue;
                 }
                 const bool hasCandidate = std::any_of(objectCatalog_.objects.begin(), objectCatalog_.objects.end(), [&](const ObjectDefinition& object) {
-                    return candidateAllowed(object, spec.category, extraRange, ignoreLevel);
+                    return candidateAllowed(object, spec.category);
                 });
                 if (!hasCandidate) {
                     continue;
@@ -8920,19 +8933,7 @@ bool Game::spawnWeightedObjectLoot(
 
         std::vector<const RoguelikeLootCategorySpec*> categorySpecs;
         std::vector<double> categoryWeights;
-        int extraRange = 0;
-        bool ignoreLevel = false;
-        for (; extraRange <= RoguelikeLootRangeFallbackMaxExtra; extraRange += RoguelikeLootRangeFallbackStep) {
-            collectCategories(extraRange, false, categorySpecs, categoryWeights);
-            if (!categorySpecs.empty()) {
-                break;
-            }
-        }
-        if (categorySpecs.empty()) {
-            extraRange = 0;
-            ignoreLevel = true;
-            collectCategories(extraRange, true, categorySpecs, categoryWeights);
-        }
+        collectCategories(categorySpecs, categoryWeights);
 
         if (categorySpecs.empty()) {
             std::string message = "[warning] " + std::string(sourceLabel) +
@@ -8956,11 +8957,12 @@ bool Game::spawnWeightedObjectLoot(
         std::vector<const ObjectDefinition*> candidates;
         std::vector<double> weights;
         for (const ObjectDefinition& object : objectCatalog_.objects) {
-            if (!candidateAllowed(object, selectedCategoryName, extraRange, ignoreLevel)) {
+            const double weight = candidateWeight(object, selectedCategoryName);
+            if (weight <= 0.0) {
                 continue;
             }
             candidates.push_back(&object);
-            weights.push_back(object.roguelikeDropWeight);
+            weights.push_back(weight);
         }
 
         const std::optional<std::size_t> selected = selectWeightedIndex(weights, rng);
