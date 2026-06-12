@@ -3,6 +3,7 @@
 #include "data/GameBalance.hpp"
 #include "engine/Audio.hpp"
 #include "game/RingImpactSound.hpp"
+#include "game/RingDisplayName.hpp"
 
 #include <cmath>
 #include <fstream>

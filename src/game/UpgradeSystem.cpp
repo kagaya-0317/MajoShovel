@@ -1,6 +1,7 @@
 ﻿#include "game/UpgradeSystem.hpp"
 
 #include "data/GameBalance.hpp"
+#include "game/RingDisplayName.hpp"
 
 #include <algorithm>
 #include <array>

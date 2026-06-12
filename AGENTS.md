@@ -34,10 +34,19 @@ cmake --build --preset windows-release
 ビルド出力は Dropbox リポジトリ直下ではなく `%LOCALAPPDATA%\MajoShovel` 以下に置く。
 Dropbox の同期ロックを避け、リビルドを速く保つため。
 
-Codex が `tools\build.ps1` または `build_game.bat` で検証ビルドを実行する場合、既定の出力先は
-`%LOCALAPPDATA%\MajoShovel\build-codex\<CODEX_THREAD_ID>` になる。
+Codex が `tools\build.ps1` または `build_game.bat` で検証ビルドを実行する場合、既定ではロック付きのスロットプールを使う。
+出力先は `%LOCALAPPDATA%\MajoShovel\build-codex\pools\<SOURCE_HASH>\<BUILD_FLAVOR>\slot-N` になる。
+同時に複数スレッドがビルドしても同じ slot は同時使用されず、スレッドが変わっても温まった slot を再利用できる。
+スロット数は既定で 4。変更する場合は `-CodexBuildSlots <数>` または環境変数 `MAJOSHOVEL_CODEX_BUILD_SLOTS` を使う。
+`-CodexBuildSlots 0` を明示した場合だけ、従来どおり `%LOCALAPPDATA%\MajoShovel\build-codex\<CODEX_THREAD_ID>` を使う。
 `dev_auto_reload.ps1` の `%LOCALAPPDATA%\MajoShovel\build-nopch` と衝突させないため、Codex 検証で
 `-BuildDir` を指定する場合も `build-nopch` は使わない。
+
+Codex 文脈では、`tools\build.ps1` は `sccache` または `clcache` と `ninja.exe` が見つかる場合、
+`-CompilerCache Auto` で Ninja generator とコンパイラキャッシュを使う。見つからない場合は従来の Visual Studio generator に戻る。
+通常開発の `build-nopch` では、既存の Visual Studio generator ビルドツリーと混ざらないよう自動では Ninja に切り替えない。
+キャッシュを使わない確認をしたい場合は `-CompilerCache Off` を指定する。
+明示的に固定する場合は `-Generator VisualStudio` または `-Generator Ninja` を使う。
 
 ### Parallel Builds
 

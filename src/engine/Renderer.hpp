@@ -64,6 +64,13 @@ public:
     void drawCircle(Vec2 center, float radius, Color color);
     void fillPolygon(const Vec2* points, std::size_t count, Color color);
     void fillTriangleList(const Vec2* vertices, std::size_t vertexCount, const int* indices, std::size_t indexCount, Color color);
+    bool drawImageTriangleList(
+        ImageHandle handle,
+        const ImageTriangleVertex* vertices,
+        std::size_t vertexCount,
+        const int* indices,
+        std::size_t indexCount,
+        Color tint = {255, 255, 255, 255});
     void fillSoftCircle(Vec2 center, float radius, Color color);
     void drawSoftRing(Vec2 center, float radius, float width, Color color);
     void fillEllipse(Vec2 center, Vec2 radius, Color color);

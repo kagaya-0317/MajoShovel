@@ -143,6 +143,7 @@ constexpr std::array<DungeonEventDefinition, 14> Definitions{{
         5.0f,
         3.0f,
         BuriedWitchCavity,
+        "mob_2",
     },
     {
         DungeonEventKind::LostBaggageWitch,
@@ -157,6 +158,7 @@ constexpr std::array<DungeonEventDefinition, 14> Definitions{{
         5.0f,
         3.0f,
         WitchCavity,
+        "mob_3",
     },
     {
         DungeonEventKind::ItemRequestWitch,
@@ -171,6 +173,7 @@ constexpr std::array<DungeonEventDefinition, 14> Definitions{{
         5.0f,
         3.0f,
         WitchCavity,
+        "mob_1",
     },
     {
         DungeonEventKind::SurroundedWitch,
@@ -185,6 +188,7 @@ constexpr std::array<DungeonEventDefinition, 14> Definitions{{
         5.0f,
         3.0f,
         SurroundedWitchCavity,
+        "mob_2",
     },
     {
         DungeonEventKind::ColdWitchCampfire,
@@ -199,6 +203,7 @@ constexpr std::array<DungeonEventDefinition, 14> Definitions{{
         5.0f,
         3.0f,
         WitchCavity,
+        "mob_3",
     },
     {
         DungeonEventKind::HeavyRockWitch,
@@ -213,6 +218,7 @@ constexpr std::array<DungeonEventDefinition, 14> Definitions{{
         5.0f,
         3.0f,
         WitchCavity,
+        "mob_4",
     },
 }};
 
@@ -368,6 +374,11 @@ float dungeonEventLightRadiusTiles(DungeonEventKind kind)
 DungeonEventCavityProfile dungeonEventCavityProfile(DungeonEventKind kind)
 {
     return dungeonEventDefinition(kind).cavity;
+}
+
+std::string_view dungeonEventNpcVisualId(DungeonEventKind kind)
+{
+    return dungeonEventDefinition(kind).npcVisualId;
 }
 
 std::optional<DungeonEventKind> dungeonEventKindForSpecialRoom(SpecialRoomType type, int index)

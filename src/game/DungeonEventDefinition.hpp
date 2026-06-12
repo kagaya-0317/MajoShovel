@@ -55,6 +55,7 @@ struct DungeonEventDefinition {
     float discoveryRadiusTiles = 5.0f;
     float selfLightRadiusTiles = 4.0f;
     DungeonEventCavityProfile cavity{};
+    std::string_view npcVisualId;
 };
 
 struct DungeonEventFixedPlacement {
@@ -76,6 +77,7 @@ bool dungeonEventKindHasDiscoveryDialogue(DungeonEventKind kind);
 float dungeonEventDiscoveryRadiusTiles(DungeonEventKind kind);
 float dungeonEventLightRadiusTiles(DungeonEventKind kind);
 DungeonEventCavityProfile dungeonEventCavityProfile(DungeonEventKind kind);
+std::string_view dungeonEventNpcVisualId(DungeonEventKind kind);
 std::optional<DungeonEventKind> dungeonEventKindForSpecialRoom(SpecialRoomType type, int index);
 std::span<const DungeonEventKind> dungeonEventStageCandidateKinds(std::string_view stageId);
 bool dungeonEventKindAllowedForStage(DungeonEventKind kind, std::string_view stageId);

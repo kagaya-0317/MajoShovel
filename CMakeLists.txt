@@ -93,6 +93,7 @@ add_executable(MajoShovel
     src/game/OrbitModifiers.cpp
     src/game/Player.cpp
     src/game/PlayerEquipmentVisual.cpp
+    src/game/NpcCharacterVisual.cpp
     src/game/MagicSystem.cpp
     src/game/MagicFxSystem.cpp
     src/game/ProjectileSystem.cpp

@@ -6,6 +6,7 @@
 #include "game/EntityStatusVisuals.hpp"
 #include "game/ExplosionWarning.hpp"
 #include "game/ItemImageRenderer.hpp"
+#include "game/NpcCharacterVisual.hpp"
 
 #include <cmath>
 
@@ -57,6 +58,9 @@ constexpr float RoguelikeFacilityLightRadiusTiles = 5.8f;
 constexpr Vec2 RoguelikeFacilityNpcInspectSize{42.0f, 66.0f};
 constexpr Vec2 RoguelikeFacilityPropInspectSize{78.0f, 58.0f};
 constexpr Vec2 RoguelikeFacilityNpcImageSize{46.0f, 76.0f};
+constexpr float DungeonEventWitchNpcScale = 1.0f;
+constexpr Vec2 DungeonEventWitchNpcFallbackVisualSize{54.0f, 72.0f};
+constexpr Vec2 DungeonEventWitchNpcAnchorOffset{0.0f, 24.0f};
 constexpr Vec2 RoguelikeFacilityWagonImageSize{92.0f, 82.0f};
 constexpr Vec2 RoguelikeFacilityWorkbenchImageSize{88.0f, 52.0f};
 constexpr Vec2 RoguelikeFacilityMagicCircleSize{74.0f, 42.0f};
@@ -300,6 +304,41 @@ std::string_view roguelikeFacilityNpcImagePath(Game::RoguelikeFacilityKind kind)
         return RoguelikeFacilityTrainerNpcImagePath;
     }
     return RoguelikeFacilityMerchantNpcImagePath;
+}
+
+bool drawDungeonEventWitchNpcSprite(
+    Renderer& renderer,
+    Game::DungeonEventKind kind,
+    Vec2 center,
+    int frameIndex,
+    unsigned char alpha,
+    bool inInteractionRange,
+    bool hovered)
+{
+    const NpcCharacterVisual* visual = findNpcCharacterVisual(dungeonEventNpcVisualId(kind));
+    if (visual == nullptr) {
+        return false;
+    }
+
+    const Vec2 anchorPosition = center + DungeonEventWitchNpcAnchorOffset;
+    const float drawScale = DungeonEventWitchNpcScale;
+    Vec2 drawSize = npcCharacterDrawSize(renderer, *visual, drawScale);
+    if (drawSize.x <= 0.0f || drawSize.y <= 0.0f) {
+        drawSize = DungeonEventWitchNpcFallbackVisualSize;
+    }
+
+    renderer.drawActorShadow(anchorPosition, std::max(drawSize.x, drawSize.y));
+
+    NpcCharacterDrawOptions options;
+    options.frameIndex = frameIndex;
+    options.anchorPosition = anchorPosition;
+    options.scale = drawScale;
+    options.tint = {255, 255, 255, alpha};
+    options.flipHorizontal = visual->defaultFlipHorizontal;
+    options.outlineEnabled = inInteractionRange;
+    options.outlineColor = hovered ? DungeonInspectableHoverOutlineColor : DungeonInspectableOutlineColor;
+    options.outlinePx = DungeonInspectableOutlinePx;
+    return drawNpcCharacterSprite(renderer, *visual, options);
 }
 
 Vec2 roguelikeFacilityPropImageSize(Game::RoguelikeFacilityKind kind)
@@ -6394,6 +6433,7 @@ void Game::appendDungeonEventRenderEntries(
                     discovered = event.discovered,
                     inInteractionRange = dungeonInspectableInRange(center, DungeonEventNpcInspectSize),
                     hovered = hoveredDungeonEventNpcId_ == event.id,
+                    frameIndex = characterSpriteIdleFrameIndex(static_cast<float>(totalSeconds)),
                     totalSeconds
                 ]() {
                     const unsigned char alpha = static_cast<unsigned char>(completed ? 145 : 245);
@@ -6418,7 +6458,23 @@ void Game::appendDungeonEventRenderEntries(
                         return;
                     }
 
-                    if (inInteractionRange) {
+                    const bool spriteDrawn = drawDungeonEventWitchNpcSprite(
+                        renderer,
+                        kind,
+                        center,
+                        frameIndex,
+                        alpha,
+                        inInteractionRange,
+                        hovered);
+                    if (!spriteDrawn) {
+                        renderer.fillCircle(center + Vec2{0.0f, -9.0f}, 6.0f, {246, 218, 206, alpha});
+                        renderer.fillRect(center + Vec2{-7.0f, -3.0f}, {14.0f, 17.0f}, {112, 78, 156, alpha});
+                        renderer.drawLine(center + Vec2{-10.0f, -3.0f}, center + Vec2{10.0f, -3.0f}, {230, 202, 255, alpha});
+                        renderer.drawLine(center + Vec2{-5.0f, 14.0f}, center + Vec2{-10.0f, 21.0f}, {96, 66, 132, alpha});
+                        renderer.drawLine(center + Vec2{5.0f, 14.0f}, center + Vec2{10.0f, 21.0f}, {96, 66, 132, alpha});
+                    }
+
+                    if (inInteractionRange && !spriteDrawn) {
                         const Color outline = hovered
                             ? DungeonInspectableHoverOutlineColor
                             : DungeonInspectableOutlineColor;
@@ -6427,11 +6483,6 @@ void Game::appendDungeonEventRenderEntries(
                             DungeonEventNpcInspectSize,
                             outline);
                     }
-                    renderer.fillCircle(center + Vec2{0.0f, -9.0f}, 6.0f, {246, 218, 206, alpha});
-                    renderer.fillRect(center + Vec2{-7.0f, -3.0f}, {14.0f, 17.0f}, {112, 78, 156, alpha});
-                    renderer.drawLine(center + Vec2{-10.0f, -3.0f}, center + Vec2{10.0f, -3.0f}, {230, 202, 255, alpha});
-                    renderer.drawLine(center + Vec2{-5.0f, 14.0f}, center + Vec2{-10.0f, 21.0f}, {96, 66, 132, alpha});
-                    renderer.drawLine(center + Vec2{5.0f, 14.0f}, center + Vec2{10.0f, 21.0f}, {96, 66, 132, alpha});
                     if (kind == DungeonEventKind::LostBaggageWitch) {
                         renderer.fillRect(center + Vec2{10.0f, 6.0f}, {12.0f, 9.0f}, {174, 116, 68, alpha});
                     } else if (kind == DungeonEventKind::ItemRequestWitch) {

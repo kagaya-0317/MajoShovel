@@ -754,6 +754,46 @@ void Renderer::fillTriangleList(const Vec2* vertices, std::size_t vertexCount, c
         static_cast<int>(sdlIndices.size()));
 }
 
+bool Renderer::drawImageTriangleList(
+    ImageHandle handle,
+    const ImageTriangleVertex* vertices,
+    std::size_t vertexCount,
+    const int* indices,
+    std::size_t indexCount,
+    Color tint)
+{
+    if (vertices == nullptr || indices == nullptr || vertexCount < 3 || indexCount < 3 || tint.a == 0) {
+        return false;
+    }
+
+    CachedImageEntry* entry = findImageEntry(handle);
+    if (entry == nullptr) {
+        return false;
+    }
+    touchImage(*entry);
+    if (!ensureImageReady(*entry) || entry->texture.texture == nullptr) {
+        return false;
+    }
+
+    const Color transformed = transformColor(tint);
+    std::vector<SDL_Vertex> sdlVertices(vertexCount);
+    for (std::size_t i = 0; i < vertexCount; ++i) {
+        const Vec2 p = transform(vertices[i].position);
+        sdlVertices[i] = SDL_Vertex{{p.x, p.y}, vertexColor(transformed), {vertices[i].texCoord.x, vertices[i].texCoord.y}};
+    }
+
+    std::vector<int> sdlIndices(indices, indices + indexCount);
+    SDL_SetTextureColorMod(entry->texture.texture, 255, 255, 255);
+    SDL_SetTextureAlphaMod(entry->texture.texture, 255);
+    return SDL_RenderGeometry(
+        renderer_,
+        entry->texture.texture,
+        sdlVertices.data(),
+        static_cast<int>(sdlVertices.size()),
+        sdlIndices.data(),
+        static_cast<int>(sdlIndices.size()));
+}
+
 void Renderer::fillSoftCircle(Vec2 center, float radius, Color color)
 {
     if (radius <= 0.0f || color.a == 0) {

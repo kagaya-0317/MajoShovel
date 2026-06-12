@@ -5,8 +5,10 @@
 #include "game/EntityStatusVisuals.hpp"
 #include "game/ExplosionWarning.hpp"
 #include "game/PlayerEquipmentVisual.hpp"
+#include "game/RingDisplayName.hpp"
 
 #include <cctype>
+#include <vector>
 
 namespace majo {
 
@@ -38,6 +40,155 @@ constexpr float PlayerDamageVignetteMinAlpha = 1.0f;
 constexpr float PlayerDamageVignetteMaxAlpha = 132.0f;
 constexpr float PlayerDamageVignetteMinEdgeWidth = 86.0f;
 constexpr float PlayerDamageVignetteMaxEdgeWidth = 198.0f;
+constexpr std::string_view DungeonStatusHudImagePath = "assets/UI_status.png";
+constexpr std::string_view DungeonStatusHudGaugeMaskPath = "assets/UI_status_gaugeMask.png";
+constexpr Vec2 DungeonStatusHudImageSize{376.0f, 344.0f};
+constexpr float DungeonStatusHudPinchDanger = 0.75f;
+constexpr Vec2 DungeonStatusHudHpGaugeCenter{230.0f, 108.0f};
+constexpr Vec2 DungeonStatusHudHpGaugeRadius{96.0f, 92.0f};
+constexpr float DungeonStatusHudHpGaugeStartAngle = -2.70f;
+constexpr float DungeonStatusHudHpGaugeSweepAngle = 4.20f;
+constexpr RectF DungeonStatusHudExpGaugeSource{105.0f, 240.0f, 168.0f, 68.0f};
+constexpr RectF DungeonStatusHudHpLabelRect{190.0f, 62.0f, 54.0f, 28.0f};
+constexpr RectF DungeonStatusHudHpValueRect{164.0f, 92.0f, 98.0f, 28.0f};
+constexpr RectF DungeonStatusHudLevelTextRect{24.0f, 118.0f, 116.0f, 82.0f};
+constexpr RectF DungeonStatusHudExpTextRect{122.0f, 196.0f, 136.0f, 88.0f};
+constexpr Vec2 DungeonStatusHudTextOffset{8.0f, 7.0f};
+constexpr Color DungeonStatusHudLabelColor{255, 230, 122, 255};
+constexpr Color DungeonStatusHudTextColor{255, 255, 255, 255};
+constexpr Color DungeonStatusHudPinchTextColor{255, 226, 78, 255};
+constexpr Color DungeonStatusHudHpDangerTint{255, 82, 74, 255};
+
+Vec2 dungeonStatusHudImageToScreen(Vec2 origin, float scale, Vec2 imagePoint)
+{
+    return origin + imagePoint * scale;
+}
+
+Vec2 dungeonStatusHudTexCoord(Vec2 imagePoint)
+{
+    return {
+        imagePoint.x / DungeonStatusHudImageSize.x,
+        imagePoint.y / DungeonStatusHudImageSize.y,
+    };
+}
+
+Vec2 dungeonStatusHudRectCenter(RectF rect)
+{
+    return {rect.x + rect.w * 0.5f, rect.y + rect.h * 0.5f};
+}
+
+void drawCenteredDungeonStatusText(
+    Renderer& renderer,
+    Vec2 origin,
+    float imageScale,
+    RectF imageRect,
+    std::string_view text,
+    Color color,
+    int textScale)
+{
+    const Vec2 screenCenter = dungeonStatusHudImageToScreen(
+        origin,
+        imageScale,
+        dungeonStatusHudRectCenter(imageRect) + DungeonStatusHudTextOffset);
+    const Vec2 textSize = renderer.measureText(text, textScale);
+    renderer.drawText(screenCenter - textSize * 0.5f, text, color, textScale);
+}
+
+void drawTwoLineDungeonStatusText(
+    Renderer& renderer,
+    Vec2 origin,
+    float imageScale,
+    RectF imageRect,
+    std::string_view label,
+    std::string_view value,
+    int labelScale,
+    int valueScale)
+{
+    constexpr float LineGap = 2.0f;
+    const Vec2 labelSize = renderer.measureText(label, labelScale);
+    const Vec2 valueSize = renderer.measureText(value, valueScale);
+    const Vec2 screenCenter = dungeonStatusHudImageToScreen(
+        origin,
+        imageScale,
+        dungeonStatusHudRectCenter(imageRect) + DungeonStatusHudTextOffset);
+    const float totalHeight = labelSize.y + LineGap + valueSize.y;
+    const float labelY = screenCenter.y - totalHeight * 0.5f;
+    const float valueY = labelY + labelSize.y + LineGap;
+    renderer.drawText({screenCenter.x - labelSize.x * 0.5f, labelY}, label, DungeonStatusHudLabelColor, labelScale);
+    renderer.drawText({screenCenter.x - valueSize.x * 0.5f, valueY}, value, DungeonStatusHudTextColor, valueScale);
+}
+
+void drawDungeonStatusHudHpGauge(
+    Renderer& renderer,
+    ImageHandle mask,
+    Vec2 origin,
+    float imageScale,
+    float progress,
+    Color tint)
+{
+    progress = clamp(progress, 0.0f, 1.0f);
+    if (!mask.valid() || progress <= 0.0f) {
+        return;
+    }
+
+    const float missingAngle = (1.0f - progress) * DungeonStatusHudHpGaugeSweepAngle;
+    const float sweepAngle = progress * DungeonStatusHudHpGaugeSweepAngle;
+    const float startAngle = DungeonStatusHudHpGaugeStartAngle + missingAngle;
+    const int segments = std::max(3, static_cast<int>(std::ceil(sweepAngle / (Pi / 36.0f))));
+
+    std::vector<ImageTriangleVertex> vertices;
+    std::vector<int> indices;
+    vertices.reserve(static_cast<std::size_t>(segments) + 2);
+    indices.reserve(static_cast<std::size_t>(segments) * 3);
+
+    vertices.push_back({
+        dungeonStatusHudImageToScreen(origin, imageScale, DungeonStatusHudHpGaugeCenter),
+        dungeonStatusHudTexCoord(DungeonStatusHudHpGaugeCenter),
+    });
+    for (int i = 0; i <= segments; ++i) {
+        const float t = static_cast<float>(i) / static_cast<float>(segments);
+        const float angle = startAngle + sweepAngle * t;
+        const Vec2 imagePoint{
+            DungeonStatusHudHpGaugeCenter.x + std::cos(angle) * DungeonStatusHudHpGaugeRadius.x,
+            DungeonStatusHudHpGaugeCenter.y + std::sin(angle) * DungeonStatusHudHpGaugeRadius.y,
+        };
+        vertices.push_back({
+            dungeonStatusHudImageToScreen(origin, imageScale, imagePoint),
+            dungeonStatusHudTexCoord(imagePoint),
+        });
+    }
+    for (int i = 1; i <= segments; ++i) {
+        indices.push_back(0);
+        indices.push_back(i);
+        indices.push_back(i + 1);
+    }
+
+    renderer.drawImageTriangleList(mask, vertices.data(), vertices.size(), indices.data(), indices.size(), tint);
+}
+
+void drawDungeonStatusHudExpGauge(
+    Renderer& renderer,
+    ImageHandle mask,
+    Vec2 origin,
+    float imageScale,
+    float progress)
+{
+    progress = clamp(progress, 0.0f, 1.0f);
+    if (!mask.valid() || progress <= 0.0f) {
+        return;
+    }
+
+    RectF source = DungeonStatusHudExpGaugeSource;
+    source.w *= progress;
+    const Vec2 drawSize{source.w * imageScale, source.h * imageScale};
+    const Vec2 center = dungeonStatusHudImageToScreen(
+        origin,
+        imageScale,
+        {source.x + source.w * 0.5f, source.y + source.h * 0.5f});
+    ImageDrawOptions options;
+    options.tint = {255, 255, 255, 255};
+    renderer.drawImageRegion(mask, source, center, drawSize, options);
+}
 
 float dotVec2(Vec2 a, Vec2 b)
 {
@@ -1035,7 +1186,10 @@ void drawRingPlaceWindow(
         detailEntry,
         objectCatalog,
         encyclopedia,
-        InventoryUiDetailOptions{.animationSeconds = totalTime});
+        InventoryUiDetailOptions{
+            .animationSeconds = totalTime,
+            .unlockedRingCount = unlockedRingCount(),
+        });
 
     if (!status.empty()) {
         renderer.drawText(panel.pos + Vec2{32.0f, panel.size.y - 66.0f}, status, {255, 230, 150, 255}, 2);
@@ -1399,6 +1553,7 @@ void drawDungeonRingIntroOrbit(
     Renderer& renderer,
     const SpellRingSystem& spellRing,
     const RuntimeBalance& balance,
+    int visibleRingCount,
     float introProgress,
     float totalSeconds)
 {
@@ -1419,8 +1574,9 @@ void drawDungeonRingIntroOrbit(
         8.0f + 10.0f * burstFade,
         withAlpha({214, 240, 255, 255}, 92.0f * burstFade));
 
+    const int ringCount = std::clamp(visibleRingCount, 0, SpellRingCount);
     for (RingShape shapePass : MagicRingShapeRenderOrder) {
-        for (int ringIndex = 0; ringIndex < SpellRingCount; ++ringIndex) {
+        for (int ringIndex = 0; ringIndex < ringCount; ++ringIndex) {
             const auto& ringItems = spellRing.itemsForRing(ringIndex);
             if (ringItems.empty() || spellRing.ringShapeForIndex(ringIndex) != shapePass) {
                 continue;
@@ -1565,6 +1721,25 @@ std::vector<RingItemRenderRef> sortedRingItemRenderRefs(const std::vector<const 
     std::stable_sort(result.begin(), result.end(), [](const RingItemRenderRef& left, const RingItemRenderRef& right) {
         return left.item->worldPosition.y < right.item->worldPosition.y;
     });
+    return result;
+}
+
+std::vector<const SpellRingItem*> visibleRuntimeRingItems(
+    const SpellRingSystem& spellRing,
+    int visibleRingCount)
+{
+    const int ringCount = std::clamp(visibleRingCount, 0, SpellRingCount);
+    std::vector<const SpellRingItem*> result;
+    std::size_t total = 0;
+    for (int ringIndex = 0; ringIndex < ringCount; ++ringIndex) {
+        total += spellRing.itemsForRing(ringIndex).size();
+    }
+    result.reserve(total);
+    for (int ringIndex = 0; ringIndex < ringCount; ++ringIndex) {
+        for (const SpellRingItem& item : spellRing.itemsForRing(ringIndex)) {
+            result.push_back(&item);
+        }
+    }
     return result;
 }
 
@@ -4607,51 +4782,64 @@ void Game::renderDungeonStatusHud(Renderer& renderer) const
         std::max(TopInfoBarY + TopInfoBarHeight + 8.0f, screenHeight - DungeonStatusHudBottomMargin - DungeonStatusHudHeight),
     }, {DungeonStatusHudWidth, DungeonStatusHudHeight}};
 
-    drawUiSubPanel(renderer, panel);
+    const float imageScale = std::min(
+        panel.size.x / DungeonStatusHudImageSize.x,
+        panel.size.y / DungeonStatusHudImageSize.y);
+    const Vec2 imageSize = DungeonStatusHudImageSize * imageScale;
+    const Vec2 imageOrigin = panel.pos + (panel.size - imageSize) * 0.5f;
 
-    const Vec2 content = panel.pos + Vec2{DungeonStatusHudPadding, DungeonStatusHudPadding};
-    constexpr int TextScale = 2;
     char buffer[64];
-
-    renderer.drawText(content, "STATUS", {246, 246, 252, 255}, TextScale);
 
     const int hpMax = std::max(1, player_.maxHp);
     const int hp = std::clamp(player_.hp, 0, hpMax);
-    std::snprintf(buffer, sizeof(buffer), "HP %02d/%02d", hp, hpMax);
-    renderer.drawText(content + Vec2{0.0f, 28.0f}, buffer, {255, 232, 232, 255}, TextScale);
+    const float hpRatio = static_cast<float>(hp) / static_cast<float>(hpMax);
+    const bool pinch = playerDamageVignetteDanger_ >= DungeonStatusHudPinchDanger;
 
-    const float barWidth = panel.size.x - DungeonStatusHudPadding * 2.0f;
-    const Vec2 hpBarPos = content + Vec2{0.0f, 52.0f};
-    UiGaugeStyle hpGaugeStyle;
-    hpGaugeStyle.fill.start = {224, 74, 84, 255};
-    hpGaugeStyle.fill.end = {255, 126, 116, 255};
-    hpGaugeStyle.track = {42, 18, 24, 230};
-    hpGaugeStyle.trackInner = {58, 24, 32, 220};
-    hpGaugeStyle.trackOuter = {255, 220, 224, 82};
-    hpGaugeStyle.shadow = {0, 0, 0, 90};
-    hpGaugeStyle.highlight = {255, 244, 244, 92};
-    hpGaugeStyle.capGlow = {255, 116, 128, 58};
-    hpGaugeStyle.capCore = {255, 244, 244, 210};
-    hpGaugeStyle.trackInnerInset = 4.0f;
-    hpGaugeStyle.shadowOffsetY = 2.0f;
-    hpGaugeStyle.shadowExtra = 5.0f;
-    drawUiGauge(
-        renderer,
-        {hpBarPos, {barWidth, DungeonStatusHudBarHeight}},
-        static_cast<float>(hp) / static_cast<float>(hpMax),
-        hpGaugeStyle);
-
-    std::snprintf(buffer, sizeof(buffer), "Lv %02d", std::max(1, player_.level));
-    renderer.drawText(content + Vec2{0.0f, 70.0f}, buffer, {232, 236, 244, 255}, TextScale);
-
+    float expRatio = 1.0f;
+    std::string expValue = "MAX";
     if (playerAtMaxLevel(player_)) {
-        std::snprintf(buffer, sizeof(buffer), "EXP MAX");
+        expRatio = 1.0f;
     } else {
         const int xpToNext = std::max(1, player_.xpToNext);
         const int xp = std::clamp(player_.xp, 0, xpToNext);
-        std::snprintf(buffer, sizeof(buffer), "EXP %02d/%02d", xp, xpToNext);
+        expRatio = static_cast<float>(xp) / static_cast<float>(xpToNext);
+        std::snprintf(buffer, sizeof(buffer), "%d/%d", xp, xpToNext);
+        expValue = buffer;
     }
-    renderer.drawText(content + Vec2{0.0f, 94.0f}, buffer, {222, 236, 255, 255}, TextScale);
+
+    ImageDrawOptions imageOptions;
+    imageOptions.anchor = {0.0f, 0.0f};
+    renderer.drawImage(
+        DungeonStatusHudImagePath,
+        imageOrigin,
+        imageSize,
+        imageOptions,
+        TextureFilter::Linear);
+
+    const ImageHandle gaugeMask = renderer.acquireImage(DungeonStatusHudGaugeMaskPath, TextureFilter::Linear);
+    drawDungeonStatusHudHpGauge(
+        renderer,
+        gaugeMask,
+        imageOrigin,
+        imageScale,
+        hpRatio,
+        pinch ? DungeonStatusHudHpDangerTint : Color{255, 255, 255, 255});
+    drawDungeonStatusHudExpGauge(renderer, gaugeMask, imageOrigin, imageScale, expRatio);
+
+    drawCenteredDungeonStatusText(renderer, imageOrigin, imageScale, DungeonStatusHudHpLabelRect, "HP", DungeonStatusHudTextColor, 2);
+    std::snprintf(buffer, sizeof(buffer), "%d/%d", hp, hpMax);
+    drawCenteredDungeonStatusText(
+        renderer,
+        imageOrigin,
+        imageScale,
+        DungeonStatusHudHpValueRect,
+        buffer,
+        pinch ? DungeonStatusHudPinchTextColor : DungeonStatusHudTextColor,
+        2);
+
+    std::snprintf(buffer, sizeof(buffer), "%d", std::max(1, player_.level));
+    drawTwoLineDungeonStatusText(renderer, imageOrigin, imageScale, DungeonStatusHudLevelTextRect, "Lv", buffer, 2, 2);
+    drawTwoLineDungeonStatusText(renderer, imageOrigin, imageScale, DungeonStatusHudExpTextRect, "EXP", expValue, 2, 2);
 }
 
 void Game::renderRingStatusHud(Renderer& renderer) const
@@ -5855,7 +6043,10 @@ void Game::renderRingScreen(Renderer& renderer, float totalTime) const
                 detailEntry,
                 objectCatalog_,
                 encyclopedia_,
-                InventoryUiDetailOptions{.animationSeconds = totalTime});
+                InventoryUiDetailOptions{
+                    .animationSeconds = totalTime,
+                    .unlockedRingCount = unlockedRingCount(),
+                });
         } else {
             drawUiSubPanel(renderer, ringDetailPanel);
             float detailLineY = drawUiDetailHeader(renderer, ringDetailPanel, ringItemDisplayName(objectCatalog_, item));
@@ -6626,7 +6817,7 @@ void Game::renderSpellRingForeground(
 
     if (dungeonRingIntroActive()) {
         const float introProgress = dungeonRingIntroProgress();
-        drawDungeonRingIntroOrbit(renderer, spellRing_, balance_, introProgress, totalSeconds);
+        drawDungeonRingIntroOrbit(renderer, spellRing_, balance_, unlockedRingCount(), introProgress, totalSeconds);
         const std::vector<RingItemRenderRef> sortedItems = sortedRingItemRenderRefs(runtimeItems);
         for (const RingItemRenderRef& itemRef : sortedItems) {
             drawDungeonRingIntroItem(
@@ -6786,7 +6977,7 @@ std::vector<LightSource> Game::collectDungeonLightSources(double totalSeconds) c
     const bool liveRingHidden = liveSpellRingHiddenForDeath() || liveSpellRingHiddenForBossEncounter();
     const std::vector<const SpellRingItem*> runtimeItems = liveRingHidden
         ? std::vector<const SpellRingItem*>{}
-        : spellRing_.runtimeItems();
+        : visibleRuntimeRingItems(spellRing_, unlockedRingCount());
     const bool ringIntroActive = dungeonRingIntroActive();
     const bool miningStartTransitionInDungeon =
         mode_ == ScreenMode::Playing &&
@@ -7078,7 +7269,7 @@ void Game::render(Renderer& renderer, const Time& time)
     const bool liveRingHidden = liveSpellRingHiddenForDeath() || liveSpellRingHiddenForBossEncounter();
     const std::vector<const SpellRingItem*> runtimeItems = liveRingHidden
         ? std::vector<const SpellRingItem*>{}
-        : spellRing_.runtimeItems();
+        : visibleRuntimeRingItems(spellRing_, unlockedRingCount());
     const bool ringIntroActive = dungeonRingIntroActive();
     const bool lightweight = lightweightModeEnabled();
     const float totalSeconds = static_cast<float>(time.totalSeconds());
@@ -7113,7 +7304,8 @@ void Game::render(Renderer& renderer, const Time& time)
             }
         }
     } else {
-        for (int ringIndex = 0; ringIndex < SpellRingCount; ++ringIndex) {
+        const int ringCount = unlockedRingCount();
+        for (int ringIndex = 0; ringIndex < ringCount; ++ringIndex) {
             if (!liveRingHidden &&
                 !spellRing_.itemsForRing(ringIndex).empty() &&
                 tileMap_.isLit(spellRing_.centerForRing(ringIndex), playerLightCenter, itemLights)) {
@@ -7126,7 +7318,7 @@ void Game::render(Renderer& renderer, const Time& time)
         if (playerDeathSequenceActive()) {
             renderPlayerDeathRingPresentation(renderer, static_cast<float>(time.totalSeconds()));
         } else {
-            drawSpellRingOrbitLayer(renderer, spellRing_, balance_, time.totalSeconds(), 0.46f);
+            drawSpellRingOrbitLayer(renderer, spellRing_, balance_, unlockedRingCount(), time.totalSeconds(), 0.46f);
         }
     }
     const Vec2 playerFootAnchor = player_.position;
@@ -7236,7 +7428,8 @@ void Game::render(Renderer& renderer, const Time& time)
                 }
             }
         } else if (!liveRingHidden) {
-            for (int ringIndex = 0; ringIndex < SpellRingCount; ++ringIndex) {
+            const int ringCount = unlockedRingCount();
+            for (int ringIndex = 0; ringIndex < ringCount; ++ringIndex) {
                 const std::vector<SpellRingItem>& ringItems = spellRing_.itemsForRing(ringIndex);
                 for (std::size_t itemIndex = 0; itemIndex < ringItems.size(); ++itemIndex) {
                     const SpellRingItem& item = ringItems[itemIndex];

@@ -69,6 +69,11 @@ struct ImageDrawOptions {
     bool flipY = false;
 };
 
+struct ImageTriangleVertex {
+    Vec2 position{};
+    Vec2 texCoord{};
+};
+
 struct ImageCacheStats {
     std::size_t textureCount = 0;
     std::size_t totalBytes = 0;

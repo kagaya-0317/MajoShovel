@@ -5,6 +5,7 @@
 #include "game/EncyclopediaSystem.hpp"
 #include "game/InventoryUiCommon.hpp"
 #include "game/ObjectImageRenderer.hpp"
+#include "game/RingDisplayName.hpp"
 
 #include <algorithm>
 #include <array>
@@ -34,10 +35,15 @@ constexpr std::string_view ShortcutHudFramePath = "assets/UI_itemShortCuts.png";
 constexpr float ShortcutHudFrameDesignW = 1140.0f;
 constexpr float ShortcutHudFrameDesignH = 149.0f;
 constexpr float ShortcutHudFrameAspect = ShortcutHudFrameDesignW / ShortcutHudFrameDesignH;
+constexpr float ShortcutHudFrameScale = 0.8f;
 constexpr float ShortcutHudFrameMinW = 760.0f;
 constexpr float ShortcutHudFrameMaxW = 1140.0f;
 constexpr float ShortcutHudBottomMargin = 10.0f;
-constexpr float ShortcutHudSlotSizeDesign = 70.0f;
+constexpr float ShortcutHudSlotHitSizeDesign = 70.0f;
+constexpr float ShortcutHudSlotHitScale = 1.0f;
+constexpr float ShortcutHudIconMaxSizeDesign = 48.0f;
+constexpr float ShortcutHudSelectionRadiusScale = 0.52f;
+constexpr float ShortcutHudSelectionRingWidth = 5.0f;
 constexpr float ShortcutHudSelectedNameGap = 6.0f;
 constexpr float ScreenX = 44.0f;
 constexpr float ScreenY = 58.0f;
@@ -50,7 +56,6 @@ constexpr float ScreenSlotW = 88.0f;
 constexpr float ScreenSlotH = 76.0f;
 constexpr float ScreenSlotGap = 8.0f;
 constexpr float InventoryObjectImageMaxSize = 48.0f;
-constexpr float ShortcutObjectImageMaxSize = 48.0f;
 constexpr float SlotDragStartDistanceSq = 36.0f;
 constexpr float GrabbedSlotContentAlpha = 0.42f;
 constexpr float GrabbedFloatingIconLift = 38.0f;
@@ -62,11 +67,6 @@ constexpr float DetailW = 330.0f;
 constexpr float DetailH = 520.0f;
 constexpr float ScreenGridW = static_cast<float>(InventoryColumns) * ScreenSlotW + static_cast<float>(InventoryColumns - 1) * ScreenSlotGap;
 constexpr float ScreenGridX = ScreenX + (DetailX - ScreenX - ScreenGridW) * 0.5f;
-constexpr std::array<std::string_view, SpellRingCount> RingTargetCommandLabels{{
-    "リング1",
-    "リング2",
-    "リング3",
-}};
 constexpr std::array<Vec2, ShortcutHudColumns> ShortcutHudSlotCenters{{
     {160.0f / ShortcutHudFrameDesignW, 74.0f / ShortcutHudFrameDesignH},
     {278.0f / ShortcutHudFrameDesignW, 74.0f / ShortcutHudFrameDesignH},
@@ -145,26 +145,38 @@ UiRect inventorySlotRect(int index)
 UiRect makeShortcutHudPanelRect(int screenWidth, int screenHeight)
 {
     const float availableW = std::max(320.0f, static_cast<float>(screenWidth) - HudMargin * 2.0f);
-    const float panelW = availableW < ShortcutHudFrameMinW
+    const float scaledMinW = ShortcutHudFrameMinW * ShortcutHudFrameScale;
+    const float scaledMaxW = ShortcutHudFrameMaxW * ShortcutHudFrameScale;
+    const float panelW = availableW < scaledMinW
         ? availableW
-        : std::min(ShortcutHudFrameMaxW, availableW);
+        : std::min(scaledMaxW, availableW);
     const float panelH = panelW / ShortcutHudFrameAspect;
     const float panelX = (static_cast<float>(screenWidth) - panelW) * 0.5f;
     const float panelY = static_cast<float>(screenHeight) - panelH - ShortcutHudBottomMargin;
     return {{panelX, panelY}, {panelW, panelH}};
 }
 
+float shortcutHudFrameDrawScale(const UiRect& panel)
+{
+    return panel.size.x / ShortcutHudFrameDesignW;
+}
+
 UiRect shortcutHudSlotRect(int column, int screenWidth, int screenHeight)
 {
     column = std::clamp(column, 0, ShortcutHudColumns - 1);
     const UiRect panel = makeShortcutHudPanelRect(screenWidth, screenHeight);
-    const float scale = panel.size.x / ShortcutHudFrameDesignW;
-    const float slotSize = ShortcutHudSlotSizeDesign * scale;
+    const float scale = shortcutHudFrameDrawScale(panel);
+    const float slotSize = ShortcutHudSlotHitSizeDesign * ShortcutHudSlotHitScale * scale;
     const Vec2 center{
         panel.pos.x + ShortcutHudSlotCenters[static_cast<std::size_t>(column)].x * panel.size.x,
         panel.pos.y + ShortcutHudSlotCenters[static_cast<std::size_t>(column)].y * panel.size.y,
     };
     return {center - Vec2{slotSize * 0.5f, slotSize * 0.5f}, {slotSize, slotSize}};
+}
+
+float shortcutHudIconMaxSize(const UiRect& panel)
+{
+    return ShortcutHudIconMaxSizeDesign * shortcutHudFrameDrawScale(panel);
 }
 
 Vec2 shortcutHudSlotCenter(int column, int screenWidth, int screenHeight)
@@ -181,8 +193,8 @@ Vec2 uiRectCenter(const UiRect& rect)
 void drawShortcutHudSelection(Renderer& renderer, UiRect slotRect)
 {
     const Vec2 center = uiRectCenter(slotRect);
-    const float radius = std::min(slotRect.size.x, slotRect.size.y) * 0.52f;
-    renderer.drawSoftRing(center, radius, 5.0f, {255, 238, 178, 90});
+    const float radius = std::min(slotRect.size.x, slotRect.size.y) * ShortcutHudSelectionRadiusScale;
+    renderer.drawSoftRing(center, radius, ShortcutHudSelectionRingWidth, {255, 238, 178, 90});
     renderer.drawCircle(center, radius, {255, 242, 190, 180});
     renderer.drawCircle(center, radius + 2.0f, {255, 242, 190, 90});
 }
@@ -1820,7 +1832,7 @@ std::array<UiCommandMenuItem, SpellRingCount> InventorySystem::buildRingTargetCo
     const int ringCount = clampedUnlockedRingCount(unlockedRingCount);
     for (int ringIndex = 0; ringIndex < SpellRingCount; ++ringIndex) {
         items[static_cast<std::size_t>(ringIndex)] = {
-            RingTargetCommandLabels[static_cast<std::size_t>(ringIndex)],
+            ringDisplayName(ringIndex, ringCount),
             ringIndex < ringCount && screenItemCanAddToRingForRing(slotIndex, spellRing, ringIndex),
         };
     }
@@ -3046,7 +3058,10 @@ void InventorySystem::render(
         detailEntry,
         catalog,
         encyclopedia,
-        InventoryUiDetailOptions{.animationSeconds = animationSeconds});
+        InventoryUiDetailOptions{
+            .animationSeconds = animationSeconds,
+            .unlockedRingCount = unlockedRingCount,
+        });
     drawUiButton(renderer, inventorySortButtonRect(), "並び替え", false, uiActionButtonStyle());
 
     const int commandSlotIndex = slotCommandMenuIndex_ >= 0 ? slotCommandMenuIndex_ : selectedShortcutIndex();
@@ -3144,7 +3159,7 @@ void InventorySystem::renderShortcutHud(Renderer& renderer, const SpellRingSyste
         const bool selected = column == selectedShortcutColumn_;
         const UiRect slotRect = shortcutHudSlotRect(column, screenWidth, screenHeight);
         const InventoryUiEntryView entry = entryViewForSlot(slotIndex);
-        InventoryUiSlotStyle style{selected, false, ShortcutObjectImageMaxSize};
+        InventoryUiSlotStyle style{selected, false, shortcutHudIconMaxSize(hudPanel)};
         style.showFrame = !drewFrame;
         if (entry.item != nullptr && entry.instance == nullptr && entry.stackCount > 1) {
             style.showTopRightCount = true;

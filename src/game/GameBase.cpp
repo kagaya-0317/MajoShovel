@@ -3,7 +3,9 @@
 #include "engine/InputHelpGlyph.hpp"
 #include "game/CharacterSprite.hpp"
 #include "game/EnemyImageRenderer.hpp"
+#include "game/NpcCharacterVisual.hpp"
 #include "game/PlayerEquipmentVisual.hpp"
+#include "game/RingDisplayName.hpp"
 
 namespace majo {
 
@@ -695,14 +697,6 @@ int baseUpgradeDisplayForIndex(bool roguelikeTrainer, int upgradeIndex)
     return 0;
 }
 
-constexpr std::array<std::string_view, BaseItemSourceCount> BaseItemSourceLabels{{
-    "リュック",
-    "収納箱",
-    "リング1",
-    "リング2",
-    "リング3",
-}};
-
 constexpr int StorageDepositSourceCount = 1 + SpellRingCount;
 constexpr float MerchantSellSourceYOffset = 44.0f;
 constexpr float MerchantSellItemYOffset = MerchantSellSourceYOffset + 16.0f;
@@ -774,16 +768,14 @@ constexpr std::array<BaseFacilityVisual, 7> OutdoorBaseFacilityVisuals{{
 
 struct BaseCharacterSpriteVisual {
     const char* facilityId = "";
-    const char* imagePath = "";
-    CharacterSpriteSheetLayout layout{};
-    bool flipHorizontal = false;
+    const char* visualId = "";
 };
 
 constexpr std::array<BaseCharacterSpriteVisual, 4> OutdoorBaseCharacterSprites{{
-    {"merchant_npc", "assets/pola.png", {3, 1}, false},
-    {"processor_npc", "assets/ines.png", {3, 1}, false},
-    {"monica", "assets/monica.png", {3, 1}, false},
-    {"elder", "assets/sontyo.png", {3, 1}, true},
+    {"merchant_npc", "base_merchant"},
+    {"processor_npc", "base_processor"},
+    {"monica", "base_monica"},
+    {"elder", "base_elder"},
 }};
 
 constexpr std::array<BaseFacilityVisual, 3> HomeInteriorBaseFacilityVisuals{{
@@ -1245,6 +1237,20 @@ bool baseItemSourceIsRing(int source)
 int ringIndexFromBaseItemSource(int source)
 {
     return source - BaseRingSourceOffset;
+}
+
+std::string_view baseItemSourceDisplayName(int source, int unlockedRingCount)
+{
+    if (source == BaseBackpackSourceIndex) {
+        return "リュック";
+    }
+    if (source == BaseWarehouseSourceIndex) {
+        return "収納箱";
+    }
+    if (baseItemSourceIsRing(source)) {
+        return ringDisplayName(ringIndexFromBaseItemSource(source), unlockedRingCount);
+    }
+    return "";
 }
 
 int baseItemSourceCountForUnlockedRings(int unlockedRingCount)
@@ -8775,7 +8781,7 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
             std::array<UiRect, StorageDepositSourceCount> sourceTabRects{};
             for (int i = 0; i < sourceCount; ++i) {
                 const int source = storageDepositSourceValue(i);
-                sourceTabs[static_cast<std::size_t>(i)] = {BaseItemSourceLabels[static_cast<std::size_t>(source)], true};
+                sourceTabs[static_cast<std::size_t>(i)] = {baseItemSourceDisplayName(source, unlockedRingCount()), true};
                 sourceTabRects[static_cast<std::size_t>(i)] = storageDepositSourceRect(i);
             }
             UiTabsInput sourceTabsInput{};
@@ -9276,7 +9282,7 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
         for (int i = 0; i < sourceCount; ++i) {
             const bool enabled = !(roguelikeFacilityUiMode_ == RoguelikeFacilityUiMode::Artisan &&
                 baseItemSourceIsWarehouse(i));
-            sourceTabs[static_cast<std::size_t>(i)] = {BaseItemSourceLabels[static_cast<std::size_t>(i)], enabled};
+            sourceTabs[static_cast<std::size_t>(i)] = {baseItemSourceDisplayName(i, unlockedRingCount()), enabled};
             sourceTabRects[static_cast<std::size_t>(i)] = baseProcessingSourceRect(i, sourceCount);
         }
         UiTabsInput sourceTabsInput{};
@@ -9710,7 +9716,7 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
             for (int i = 0; i < sourceCount; ++i) {
                 const bool enabled = !(roguelikeFacilityUiMode_ == RoguelikeFacilityUiMode::Merchant &&
                     baseItemSourceIsWarehouse(i));
-                sourceTabs[static_cast<std::size_t>(i)] = {BaseItemSourceLabels[static_cast<std::size_t>(i)], enabled};
+                sourceTabs[static_cast<std::size_t>(i)] = {baseItemSourceDisplayName(i, unlockedRingCount()), enabled};
                 sourceTabRects[static_cast<std::size_t>(i)] = merchantSellSourceRect(i, sourceCount);
             }
             UiTabsInput sourceTabsInput{};
@@ -10246,21 +10252,25 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
     }
 
     const auto faceBaseCharacterSpriteTowardPlayer = [this](const BaseFacility& facility) {
-        const BaseCharacterSpriteVisual* visual = baseCharacterSpriteVisual(baseArea_, facility.facilityId);
+        const BaseCharacterSpriteVisual* spriteVisual = baseCharacterSpriteVisual(baseArea_, facility.facilityId);
+        if (spriteVisual == nullptr) {
+            return;
+        }
+        const NpcCharacterVisual* visual = findNpcCharacterVisual(spriteVisual->visualId);
         if (visual == nullptr) {
             return;
         }
 
         const UiRect visualRect = baseCharacterSpriteVisualRect(facility);
         const Vec2 anchorPosition = visualRect.pos + Vec2{
-            visualRect.size.x * PlayerSpriteAnchorX,
-            visualRect.size.y * PlayerSpriteAnchorY,
+            visualRect.size.x * visual->anchor.x,
+            visualRect.size.y * visual->anchor.y,
         };
         const std::string facilityId(facility.facilityId);
         const auto it = baseNpcSpriteFlipHorizontal_.find(facilityId);
         const bool currentFlip = it != baseNpcSpriteFlipHorizontal_.end()
             ? it->second
-            : visual->flipHorizontal;
+            : visual->defaultFlipHorizontal;
         baseNpcSpriteFlipHorizontal_[facilityId] =
             characterSpriteFlipHorizontalFromFacing(basePlayerPosition_ - anchorPosition, currentFlip);
     };
@@ -10819,7 +10829,11 @@ void Game::renderBookshelfScreen(Renderer& renderer) const
                 detailEntry,
                 objectCatalog_,
                 encyclopedia_,
-                InventoryUiDetailOptions{.animationSeconds = baseRingPreviewAnimationTime_, .showExtraLineSeparator = false},
+                InventoryUiDetailOptions{
+                    .animationSeconds = baseRingPreviewAnimationTime_,
+                    .showExtraLineSeparator = false,
+                    .unlockedRingCount = unlockedRingCount(),
+                },
                 extraLines);
         } else {
             drawUiSubPanel(renderer, detailPanel);
@@ -11014,55 +11028,57 @@ void drawBaseActors(
     drawEntries.reserve(facilities.size() + 1);
 
     const int baseNpcFrame = characterSpriteIdleFrameIndex(context.actorIdleAnimationTime);
-    const Vec2 spriteAnchor{PlayerSpriteAnchorX, PlayerSpriteAnchorY};
     for (const BaseFacility& facility : facilities) {
         if (!facility.enabled || baseFacilityHiddenInNormalView(context.area, facility)) {
             continue;
         }
 
-        const BaseCharacterSpriteVisual* visual = baseCharacterSpriteVisual(context.area, facility.facilityId);
-        if (visual == nullptr) {
+        const BaseCharacterSpriteVisual* spriteVisual = baseCharacterSpriteVisual(context.area, facility.facilityId);
+        if (spriteVisual == nullptr) {
             continue;
         }
 
         const UiRect visualRect = baseCharacterSpriteVisualRect(facility);
-        Vec2 frameSize{};
-        float drawScale = 1.0f;
-        if (characterSpriteSheetFrameSize(renderer, visual->imagePath, visual->layout, frameSize) &&
-            frameSize.x > 0.0f &&
-            frameSize.y > 0.0f) {
-            drawScale = std::max(0.001f, std::min(visualRect.size.x / frameSize.x, visualRect.size.y / frameSize.y));
-        }
-
-        const Vec2 drawSize = frameSize.x > 0.0f && frameSize.y > 0.0f
-            ? frameSize * drawScale
-            : visualRect.size;
-        const Vec2 anchorPosition = visualRect.pos + Vec2{
-            visualRect.size.x * spriteAnchor.x,
-            visualRect.size.y * spriteAnchor.y,
-        };
         const bool inInteractionRange = baseInteractionGroupAvailable(context.playerPosition, context.area, facilities, facility);
         const bool hovered = inInteractionRange && facility.enabled && visualRect.contains(mouse);
+        const NpcCharacterVisual* visual = findNpcCharacterVisual(spriteVisual->visualId);
+        if (visual == nullptr) {
+            drawEntries.push_back(ActorDrawEntry{
+                facility.rect.pos.y + facility.rect.size.y,
+                [&, facilityPtr = &facility, inInteractionRange, hovered]() {
+                    drawBaseFacilityFallbackRect(renderer, *facilityPtr, inInteractionRange, hovered);
+                },
+            });
+            continue;
+        }
 
+        const float drawScale = npcCharacterScaleToFit(renderer, *visual, visualRect.size);
+        Vec2 drawSize = npcCharacterDrawSize(renderer, *visual, drawScale);
+        if (drawSize.x <= 0.0f || drawSize.y <= 0.0f) {
+            drawSize = visualRect.size;
+        }
+        const Vec2 anchorPosition = visualRect.pos + Vec2{
+            visualRect.size.x * visual->anchor.x,
+            visualRect.size.y * visual->anchor.y,
+        };
         renderer.drawActorShadow(anchorPosition, std::max(drawSize.x, drawSize.y));
         const bool flipHorizontal = baseNpcSpriteFlipHorizontal(
             facility.facilityId,
-            visual->flipHorizontal,
+            visual->defaultFlipHorizontal,
             context.npcSpriteFlipHorizontal);
         drawEntries.push_back(ActorDrawEntry{
             anchorPosition.y,
             [&, visual, facilityPtr = &facility, anchorPosition, drawScale, inInteractionRange, hovered, baseNpcFrame, flipHorizontal]() {
-                CharacterSpriteDrawOptions options;
+                NpcCharacterDrawOptions options;
                 options.frameIndex = baseNpcFrame;
                 options.anchorPosition = anchorPosition;
                 options.scale = drawScale;
-                options.anchor = {PlayerSpriteAnchorX, PlayerSpriteAnchorY};
                 options.flipHorizontal = flipHorizontal;
                 options.outlineEnabled = inInteractionRange && facilityPtr->enabled;
                 options.outlineColor = hovered ? Color{255, 230, 72, 255} : Color{255, 255, 255, 245};
                 options.outlinePx = 1;
 
-                if (!drawCharacterSpriteFrame(renderer, visual->imagePath, visual->layout, options)) {
+                if (!drawNpcCharacterSprite(renderer, *visual, options)) {
                     drawBaseFacilityFallbackRect(renderer, *facilityPtr, inInteractionRange, hovered);
                 }
             },
@@ -11409,7 +11425,7 @@ void Game::renderBaseScreen(Renderer& renderer) const
                 std::array<UiRect, StorageDepositSourceCount> sourceTabRects{};
                 for (int i = 0; i < sourceCount; ++i) {
                     const int source = storageDepositSourceValue(i);
-                    sourceTabs[static_cast<std::size_t>(i)] = {BaseItemSourceLabels[static_cast<std::size_t>(source)], true};
+                    sourceTabs[static_cast<std::size_t>(i)] = {baseItemSourceDisplayName(source, unlockedRingCount()), true};
                     sourceTabRects[static_cast<std::size_t>(i)] = storageDepositSourceRect(i);
                 }
                 const int currentTab = storageDepositSourceTabIndex(baseStorageDepositSource_);
@@ -11515,7 +11531,10 @@ void Game::renderBaseScreen(Renderer& renderer) const
                     detailEntry,
                     objectCatalog_,
                     encyclopedia_,
-                    InventoryUiDetailOptions{.animationSeconds = ringPreviewSeconds});
+                    InventoryUiDetailOptions{
+                        .animationSeconds = ringPreviewSeconds,
+                        .unlockedRingCount = unlockedRingCount(),
+                    });
             }
             const char* commandLabel = baseStorageCommandOperation_ == StorageQuantityOperation::Withdraw
                 ? "取り出す"
@@ -11908,7 +11927,7 @@ void Game::renderBaseScreen(Renderer& renderer) const
         for (int i = 0; i < sourceCount; ++i) {
             const bool enabled = !(roguelikeFacilityUiMode_ == RoguelikeFacilityUiMode::Artisan &&
                 baseItemSourceIsWarehouse(i));
-            sourceTabs[static_cast<std::size_t>(i)] = {BaseItemSourceLabels[static_cast<std::size_t>(i)], enabled};
+            sourceTabs[static_cast<std::size_t>(i)] = {baseItemSourceDisplayName(i, unlockedRingCount()), enabled};
             sourceTabRects[static_cast<std::size_t>(i)] = baseProcessingSourceRect(i, sourceCount);
         }
         drawUiTabs(
@@ -12024,7 +12043,10 @@ void Game::renderBaseScreen(Renderer& renderer) const
                     detailEntry,
                     objectCatalog_,
                     encyclopedia_,
-                    InventoryUiDetailOptions{.animationSeconds = ringPreviewSeconds});
+                    InventoryUiDetailOptions{
+                        .animationSeconds = ringPreviewSeconds,
+                        .unlockedRingCount = unlockedRingCount(),
+                    });
             } else {
                 drawUiSubPanel(renderer, detailPanel);
                 float detailLineY = drawUiDetailHeader(renderer, detailPanel, ringItemDisplayName(objectCatalog_, *selectedRingItem));
@@ -12184,7 +12206,7 @@ void Game::renderBaseScreen(Renderer& renderer) const
                 for (int i = 0; i < sourceCount; ++i) {
                     const bool enabled = !(roguelikeFacilityUiMode_ == RoguelikeFacilityUiMode::Merchant &&
                         baseItemSourceIsWarehouse(i));
-                    sourceTabs[static_cast<std::size_t>(i)] = {BaseItemSourceLabels[static_cast<std::size_t>(i)], enabled};
+                    sourceTabs[static_cast<std::size_t>(i)] = {baseItemSourceDisplayName(i, unlockedRingCount()), enabled};
                     sourceTabRects[static_cast<std::size_t>(i)] = merchantSellSourceRect(i, sourceCount);
                 }
                 drawUiTabs(
@@ -12364,7 +12386,10 @@ void Game::renderBaseScreen(Renderer& renderer) const
                     detailEntry,
                     objectCatalog_,
                     encyclopedia_,
-                    InventoryUiDetailOptions{.animationSeconds = ringPreviewSeconds},
+                    InventoryUiDetailOptions{
+                        .animationSeconds = ringPreviewSeconds,
+                        .unlockedRingCount = unlockedRingCount(),
+                    },
                     extraLines);
             }
             if (buyMode) {

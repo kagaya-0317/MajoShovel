@@ -5,6 +5,7 @@
 #include "game/ItemModel.hpp"
 #include "game/ObjectImageRenderer.hpp"
 #include "game/SpellRingItem.hpp"
+#include "game/SpellRingSystem.hpp"
 
 #include <optional>
 #include <span>
@@ -65,6 +66,7 @@ struct InventoryUiDetailOptions {
     bool showEnhanceCount = true;
     float animationSeconds = 0.0f;
     bool showExtraLineSeparator = true;
+    int unlockedRingCount = SpellRingCount;
 };
 
 struct InventoryUiGridStyle {

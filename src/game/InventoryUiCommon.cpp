@@ -6,6 +6,7 @@
 #include "game/ObjectImageRenderer.hpp"
 #include "game/ObjectVisualPose.hpp"
 #include "game/OrbitModifiers.hpp"
+#include "game/RingDisplayName.hpp"
 #include "game/SpellRingSystem.hpp"
 #include "game/WorldIconRenderer.hpp"
 
@@ -136,16 +137,16 @@ std::string signedAddText(double value, std::string_view unit)
     return buffer;
 }
 
-std::string equipmentTargetDisplayPrefix(std::string_view target)
+std::string equipmentTargetDisplayPrefix(std::string_view target, int unlockedRingCount)
 {
     if (target == "equip_ring1") {
-        return "リング1: ";
+        return ringDisplayNameWithSuffix(0, unlockedRingCount, ": ");
     }
     if (target == "equip_ring2") {
-        return "リング2: ";
+        return ringDisplayNameWithSuffix(1, unlockedRingCount, ": ");
     }
     if (target == "equip_ring3") {
-        return "リング3: ";
+        return ringDisplayNameWithSuffix(2, unlockedRingCount, ": ");
     }
     return {};
 }
@@ -167,10 +168,11 @@ std::string staffEquipmentEffectLine(
     const ObjectCatalog& catalog,
     std::string_view target,
     std::string_view effect,
-    double value)
+    double value,
+    int unlockedRingCount)
 {
     const double multiplier = value == 0.0 ? 1.0 : value;
-    std::string line = equipmentTargetDisplayPrefix(target);
+    std::string line = equipmentTargetDisplayPrefix(target, unlockedRingCount);
     if (effect == "ring_speed_mul") {
         line += "速度";
         line += signedPercentText(multiplier);
@@ -245,7 +247,7 @@ std::string staffEquipmentEffectLine(
     return line;
 }
 
-std::vector<std::string> staffEquipmentEffectLines(const ItemData& item, const ObjectCatalog& catalog)
+std::vector<std::string> staffEquipmentEffectLines(const ItemData& item, const ObjectCatalog& catalog, int unlockedRingCount)
 {
     std::vector<std::string> lines;
     for (const EffectSpec& spec : item.normalEffects) {
@@ -258,7 +260,7 @@ std::vector<std::string> staffEquipmentEffectLines(const ItemData& item, const O
                 continue;
             }
             const double value = index < spec.values.size() ? spec.values[index] : 0.0;
-            lines.push_back(staffEquipmentEffectLine(item, catalog, spec.target, effect, value));
+            lines.push_back(staffEquipmentEffectLine(item, catalog, spec.target, effect, value, unlockedRingCount));
         }
     }
     return lines;
@@ -1015,12 +1017,13 @@ void drawItemEffectDetailSections(
     float& y,
     const ItemData& item,
     const ObjectCatalog& catalog,
-    const EncyclopediaSystem& encyclopedia)
+    const EncyclopediaSystem& encyclopedia,
+    int unlockedRingCount)
 {
     const ObjectEffectDisplaySections sections =
         encyclopedia.getObjectEffectDisplaySections(item.id, catalog, EffectRevealMode::WithUnknown);
     if (isStaffObject(item)) {
-        std::vector<std::string> equipmentLines = staffEquipmentEffectLines(item, catalog);
+        std::vector<std::string> equipmentLines = staffEquipmentEffectLines(item, catalog, unlockedRingCount);
         std::vector<std::string> ringLines = sections.ringLines;
         applyStaffManualEquipmentEffectText(item, equipmentLines, ringLines.size());
         if (!equipmentLines.empty()) {
@@ -1503,7 +1506,7 @@ void drawInventoryUiDetailPanel(
     const bool broken = stats ? stats->broken : entry.item->durability == 0;
     drawInventoryDetailImage(renderer, panel, detailLineY, *entry.item, broken);
     drawUiDetailText(renderer, panel, detailLineY, entry.item->description.empty() ? "-" : entry.item->description);
-    drawItemEffectDetailSections(renderer, panel, detailLineY, *entry.item, catalog, encyclopedia);
+    drawItemEffectDetailSections(renderer, panel, detailLineY, *entry.item, catalog, encyclopedia, options.unlockedRingCount);
 
     if (!entry.item->category.empty()) {
         drawUiDetailLine(renderer, panel, detailLineY, "分類", entry.item->category);

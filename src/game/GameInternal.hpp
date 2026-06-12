@@ -221,8 +221,8 @@ constexpr float TopInfoBarPaddingX = 14.0f;
 constexpr float TopInfoBarGroupGap = 22.0f;
 constexpr float TopInfoBarIconSize = 36.0f;
 constexpr float TopInfoBarIconTextGap = 7.0f;
-constexpr float DungeonStatusHudWidth = 206.0f;
-constexpr float DungeonStatusHudHeight = 134.0f;
+constexpr float DungeonStatusHudWidth = 244.0f;
+constexpr float DungeonStatusHudHeight = 224.0f;
 constexpr float DungeonStatusHudRightMargin = 18.0f;
 constexpr float DungeonStatusHudBottomMargin = 24.0f;
 constexpr float DungeonStatusHudPadding = 14.0f;
@@ -2504,11 +2504,13 @@ void drawSpellRingOrbitLayer(
     Renderer& renderer,
     const SpellRingSystem& spellRing,
     const RuntimeBalance& balance,
+    int visibleRingCount,
     float totalSeconds,
     float alphaScale)
 {
+    const int ringCount = std::clamp(visibleRingCount, 0, SpellRingCount);
     for (RingShape shapePass : MagicRingShapeRenderOrder) {
-        for (int ringIndex = 0; ringIndex < SpellRingCount; ++ringIndex) {
+        for (int ringIndex = 0; ringIndex < ringCount; ++ringIndex) {
             const auto& ringItems = spellRing.itemsForRing(ringIndex);
             if (spellRing.ringShapeForIndex(ringIndex) != shapePass) {
                 continue;
