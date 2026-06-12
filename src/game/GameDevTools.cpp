@@ -4,6 +4,7 @@
 #include "game/EffectPreviewCatalog.hpp"
 #include "game/EnemyImageRenderer.hpp"
 #include "game/EntityStatusVisuals.hpp"
+#include "game/RingDisplayName.hpp"
 #include "game/WorldIconRenderer.hpp"
 
 #include <algorithm>
@@ -11682,7 +11683,7 @@ bool Game::executeDebugCommand(std::string_view command)
         normalized == "game ring2 unlock" ||
         normalized == "game ring 2 unlock") {
         setUnlockedRingCount(std::max(unlockedRingCount(), 2));
-        baseStatus_ = "リング2を解禁しました";
+        baseStatus_ = std::string(ringDisplayName(1, unlockedRingCount())) + "を解禁しました";
         logInfo("Debug: unlocked rings up to Ring 2.");
         return true;
     }
@@ -11692,7 +11693,7 @@ bool Game::executeDebugCommand(std::string_view command)
         normalized == "game ring3 unlock" ||
         normalized == "game ring 3 unlock") {
         setUnlockedRingCount(std::max(unlockedRingCount(), 3));
-        baseStatus_ = "リング3を解禁しました";
+        baseStatus_ = std::string(ringDisplayName(2, unlockedRingCount())) + "を解禁しました";
         logInfo("Debug: unlocked rings up to Ring 3.");
         return true;
     }

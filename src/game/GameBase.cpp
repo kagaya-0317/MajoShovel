@@ -11645,8 +11645,7 @@ void Game::renderBaseScreen(Renderer& renderer) const
                 renderer,
                 detailPanel,
                 baseRingWorkshopSelection_ == RingLevelUpgradeKindCount ? "再調整確定" : ringLevelUpgradeKindName(selectedKind));
-            std::snprintf(buffer, sizeof(buffer), "リング %d", ringIndex + 1);
-            drawUiDetailLine(renderer, detailPanel, detailY, "対象", buffer);
+            drawUiDetailLine(renderer, detailPanel, detailY, "対象", ringDisplayName(ringIndex, ringCount));
             const int selectedCurrentPoints = ringLevelUpgradePoint(currentRingPoints, selectedKind);
             const int selectedDraftPoints = ringLevelUpgradePoint(draftRingPoints, selectedKind);
             std::snprintf(buffer, sizeof(buffer), "%d点 / %s",
@@ -11664,10 +11663,11 @@ void Game::renderBaseScreen(Renderer& renderer) const
                 buffer,
                 selectedCurrentPoints == selectedDraftPoints ? ui::Text : Color{255, 230, 150, 255});
             if (ringWorkshopRespecSource_) {
-                std::snprintf(buffer, sizeof(buffer), "リング%d %s",
-                    ringWorkshopRespecSource_->ringIndex + 1,
+                const std::string sourceName = ringDisplayNameWithSpaceSuffix(
+                    ringWorkshopRespecSource_->ringIndex,
+                    ringCount,
                     ringLevelUpgradeKindName(ringWorkshopRespecSource_->kind));
-                drawUiDetailLine(renderer, detailPanel, detailY, "移動元", buffer, Color{255, 230, 150, 255});
+                drawUiDetailLine(renderer, detailPanel, detailY, "移動元", sourceName, Color{255, 230, 150, 255});
                 drawUiDetailText(renderer, detailPanel, detailY, "次に選んだ項目へ1点移します。");
             } else {
                 drawUiDetailLine(renderer, detailPanel, detailY, "移動元", "未選択", ui::TextMuted);
@@ -11864,8 +11864,7 @@ void Game::renderBaseScreen(Renderer& renderer) const
                     ui::TextMuted,
                     2);
                 detailY += renderer.measureWrappedText(ringWorkshopUpgradeDescription(selected), detailContent.size.x, 2).y + 8.0f;
-                std::snprintf(buffer, sizeof(buffer), "リング %d", ringIndex + 1);
-                drawUiDetailLine(renderer, detailPanel, detailY, "対象", buffer);
+                drawUiDetailLine(renderer, detailPanel, detailY, "対象", ringDisplayName(ringIndex, ringCount));
                 if (maxed) {
                     drawUiDetailLine(renderer, detailPanel, detailY, "効果", "上限到達済み", ui::TextMuted);
                     drawUiDetailLine(renderer, detailPanel, detailY, "必要素材", "なし", ui::TextMuted);
