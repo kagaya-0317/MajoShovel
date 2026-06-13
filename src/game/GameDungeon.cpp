@@ -7,6 +7,7 @@
 #include "game/ExplosionWarning.hpp"
 #include "game/ItemImageRenderer.hpp"
 #include "game/NpcCharacterVisual.hpp"
+#include "game/SpecialObjectRules.hpp"
 
 #include <cmath>
 
@@ -226,6 +227,9 @@ double roguelikeLevelDistanceMultiplier(int baseLevel, int targetLevel)
 
 double roguelikeLootWeightForObject(const ObjectDefinition& object, int targetLevel)
 {
+    if (objectExcludedFromDungeonDrops(object.id)) {
+        return 0.0;
+    }
     if (object.roguelikeDropWeight <= 0.0) {
         return 0.0;
     }
@@ -237,6 +241,16 @@ double roguelikeLootWeightForObject(const ObjectDefinition& object, int targetLe
         return std::max(decayedWeight, object.roguelikeResidualWeight);
     }
     return decayedWeight;
+}
+
+std::optional<std::string> firstAvailableDungeonRewardObjectId(const ObjectCatalog& catalog)
+{
+    for (const ObjectDefinition& object : catalog.objects) {
+        if (!object.id.empty() && !objectExcludedFromDungeonDrops(object.id)) {
+            return object.id;
+        }
+    }
+    return std::nullopt;
 }
 
 constexpr std::array<Game::RoguelikeFacilityKind, RoguelikeFacilityKindCount> RoguelikeFacilityKinds{{
@@ -6657,7 +6671,7 @@ bool Game::spawnDungeonEventReward(DungeonEventInstance& event, const DungeonEve
     }
     case DungeonEventRewardKind::ObjectDrop: {
         const ObjectDefinition* object = objectCatalog_.registry.findById(request.objectId);
-        if (object == nullptr) {
+        if (object == nullptr || objectExcludedFromDungeonDrops(object->id)) {
             break;
         }
         MaterialType materialType = MaterialType::Count;
@@ -8002,7 +8016,7 @@ void Game::initializeRewardNodesFromLayout()
     std::uniform_int_distribution<int> signDist(0, 1);
     std::uniform_int_distribution<int> moneyDist(2, 8);
     std::uniform_int_distribution<int> coinRoomMoneyCountDist(CoinRoomMoneyNodeMinCount, CoinRoomMoneyNodeMaxCount);
-    const std::optional<std::string> fallbackObjectId = firstAvailableObjectId(objectCatalog_);
+    const std::optional<std::string> fallbackObjectId = firstAvailableDungeonRewardObjectId(objectCatalog_);
 
     PlacementReservations reservations;
     reserveLayoutAnchors(reservations, dungeonLayout_);
@@ -8327,7 +8341,7 @@ void Game::updateExposedRewardNodes()
         }
 
         bool spawnedObject = false;
-        if (node.objectId.has_value()) {
+        if (node.objectId.has_value() && !objectExcludedFromDungeonDrops(*node.objectId)) {
             spawnedObject = worldDrops_.spawnObjectDrop(objectCatalog_, *node.objectId, tileWorldCenter(node.tile), runStats_.elapsedSeconds);
         }
         node.spawned = true;
@@ -8369,7 +8383,7 @@ void Game::revealRewardNodesFromOpenedTiles(const std::vector<Vec2>& openedTiles
             node.revealed = true;
             node.spawned = true;
             bool spawnedObject = false;
-            if (node.objectId.has_value()) {
+            if (node.objectId.has_value() && !objectExcludedFromDungeonDrops(*node.objectId)) {
                 spawnedObject = worldDrops_.spawnObjectDrop(objectCatalog_, *node.objectId, tileWorldCenter(node.tile), runStats_.elapsedSeconds);
             }
             node.collected = true;
@@ -8464,7 +8478,7 @@ void Game::normalizeOpenBuriedPlacementNodes()
         node.visibility = PlacementVisibility::Exposed;
         node.revealed = true;
         if (!node.objectId.has_value()) {
-            node.objectId = firstAvailableObjectId(objectCatalog_);
+            node.objectId = firstAvailableDungeonRewardObjectId(objectCatalog_);
         }
     }
 
@@ -8919,7 +8933,7 @@ bool Game::spawnWeightedObjectLoot(
         });
     };
     const auto spawnObject = [&](const ObjectDefinition* object) {
-        if (object == nullptr) {
+        if (object == nullptr || objectExcludedFromDungeonDrops(object->id)) {
             return false;
         }
         const Vec2 target = safeLootLandingPosition(center, rng);
@@ -9027,6 +9041,9 @@ bool Game::spawnWeightedObjectLoot(
     std::vector<const ObjectDefinition*> candidates;
     std::vector<double> weights;
     for (const ObjectDefinition& object : objectCatalog_.objects) {
+        if (objectExcludedFromDungeonDrops(object.id)) {
+            continue;
+        }
         if (!hasRequiredTag(object)) {
             continue;
         }

@@ -216,6 +216,7 @@ struct AudioCueEditEntry {
     std::string type;
     std::string path;
     float volume = 1.0f;
+    int pitch = 0;
     bool loop = false;
     float cooldownMs = 0.0f;
 };
@@ -1697,6 +1698,8 @@ private:
     bool saveAudioCueManifestFromEdit(std::string& message);
     bool handleAudioCueEditCommand(std::string_view normalized);
     void rebuildAudioCueFileList();
+    void syncAudioCueEditPreviewSettingsFromCue();
+    void applyAudioCueEditPreviewSettingsToCue();
     void enterAudioCueEditMode(AudioCueEditMode editMode);
     void exitAudioCueEditMode();
     void previewSelectedAudioCueFile();
@@ -2122,6 +2125,12 @@ private:
     float audioCueEditFileScrollOffset_ = 0.0f;
     UiScrollAreaState audioCueEditCueScrollState_{};
     UiScrollAreaState audioCueEditFileScrollState_{};
+    int audioCueEditPreviewVolume_ = 100;
+    int audioCueEditPreviewPitch_ = 0;
+    int audioCueEditActiveAdjust_ = 0;
+    int audioCueEditLastFileClickIndex_ = -1;
+    std::uint64_t audioCueEditLastFileClickTicks_ = 0;
+    std::uint32_t audioCueEditAlphaKeyHeldMask_ = 0;
     bool audioCueEditDirty_ = false;
     std::string audioCueEditStatus_;
     std::string audioCueEditPreviousBgmCue_;

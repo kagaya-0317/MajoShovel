@@ -5,6 +5,7 @@
 #include "data/RuntimeBalance.hpp"
 #include "game/Chunk.hpp"
 #include "game/DungeonLayout.hpp"
+#include <array>
 #include <cstddef>
 #include <string_view>
 #include <unordered_map>
@@ -76,6 +77,14 @@ public:
     void updateAround(Vec2 worldCenter, float dt, const RuntimeBalance& config, const DungeonLayout& dungeonLayout);
     void render(Renderer& renderer, const Camera& camera, Vec2 lightCenter, const std::vector<LightSource>& extraLights);
     void renderTilePreview(Renderer& renderer, Vec2 pos, int stageId, TileType type) const;
+    bool renderTileQuad(
+        Renderer& renderer,
+        const std::array<Vec2, 4>& corners,
+        int stageId,
+        TileType type,
+        int variantX,
+        int variantY,
+        Color tint = {255, 255, 255, 255}) const;
     void renderDarknessOverlay(
         Renderer& renderer,
         const Camera& camera,

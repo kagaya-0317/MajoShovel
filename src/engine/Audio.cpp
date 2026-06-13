@@ -149,12 +149,29 @@ float clampVolume(float volume)
     return std::clamp(volume, 0.0f, 1.0f);
 }
 
+float clampCueVolume(float volume)
+{
+    if (!std::isfinite(volume)) {
+        return 1.0f;
+    }
+    return std::clamp(volume, 0.0f, 3.0f);
+}
+
 float sanitizePitchScale(float pitchScale)
 {
     if (!std::isfinite(pitchScale)) {
         return 1.0f;
     }
     return std::clamp(pitchScale, 0.25f, 4.0f);
+}
+
+float pitchOffsetToScale(float pitchOffset)
+{
+    if (!std::isfinite(pitchOffset)) {
+        return 1.0f;
+    }
+    const float clamped = std::clamp(pitchOffset, -100.0f, 100.0f);
+    return std::pow(2.0f, clamped / 100.0f);
 }
 
 std::size_t framesFromSampleCount(std::size_t sampleCount, int channels)
@@ -309,10 +326,11 @@ public:
             }
 
             AudioCueOptions options;
-            options.volume = clampVolume(fields.size() >= 4 ? parseFloatOr(fields[3], 1.0f) : 1.0f);
+            options.volume = clampCueVolume(fields.size() >= 4 ? parseFloatOr(fields[3], 1.0f) : 1.0f);
             options.loop = fields.size() >= 5 ? parseBoolOr(fields[4], *type == AudioCueType::Bgm) : (*type == AudioCueType::Bgm);
             const float cooldownMs = fields.size() >= 6 ? std::max(0.0f, parseFloatOr(fields[5], 0.0f)) : 0.0f;
             options.cooldownSeconds = cooldownMs / 1000.0f;
+            options.pitchScale = pitchOffsetToScale(fields.size() >= 7 ? parseFloatOr(fields[6], 0.0f) : 0.0f);
 
             Cue cue;
             if (!loadCueData(id, *type, resolveAudioPath(path, clipPathText), options, cue)) {
@@ -383,7 +401,7 @@ public:
         voice.sound = cue->sound;
         voice.loop = cue->options.loop;
         voice.pitchScale = 1.0f;
-        voice.baseVolume = clampVolume(cue->options.volume);
+        voice.baseVolume = clampCueVolume(cue->options.volume);
         voice.currentVolume = fadeFrames > 0 ? 0.0f : voice.baseVolume;
         voice.targetVolume = voice.baseVolume;
         voice.fadeRemainingFrames = fadeFrames;
@@ -410,13 +428,13 @@ public:
             return;
         }
 
-        const float sanitizedPitchScale = sanitizePitchScale(params.pitchScale);
         const std::string key(id);
         std::scoped_lock lock(mutex_);
         const Cue* cue = findCueLocked(key, AudioCueType::Se);
         if (cue == nullptr) {
             return;
         }
+        const float sanitizedPitchScale = sanitizePitchScale(cue->options.pitchScale * params.pitchScale);
 
         const double cooldownUntil = seCooldownUntil_[key];
         if (playClockSeconds_ < cooldownUntil) {
@@ -434,7 +452,7 @@ public:
         voice.sound = cue->sound;
         voice.loop = false;
         voice.pitchScale = sanitizedPitchScale;
-        voice.baseVolume = clampVolume(cue->options.volume * params.volumeScale);
+        voice.baseVolume = clampCueVolume(cue->options.volume * params.volumeScale);
         voice.currentVolume = voice.baseVolume;
         voice.targetVolume = voice.baseVolume;
         voice.pan = std::clamp(params.pan, -1.0f, 1.0f);
@@ -715,7 +733,8 @@ private:
         outCue.type = type;
         outCue.path = path;
         outCue.options = options;
-        outCue.options.volume = clampVolume(outCue.options.volume);
+        outCue.options.volume = clampCueVolume(outCue.options.volume);
+        outCue.options.pitchScale = sanitizePitchScale(outCue.options.pitchScale);
         outCue.options.cooldownSeconds = std::max(0.0f, outCue.options.cooldownSeconds);
         outCue.sound = std::move(sound);
         return true;

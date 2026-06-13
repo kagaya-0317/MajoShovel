@@ -7,9 +7,12 @@
 #include "game/RingDisplayName.hpp"
 #include "game/WorldIconRenderer.hpp"
 
+#include <SDL3/SDL.h>
+
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <cstdint>
 #include <fstream>
 #include <iomanip>
 #include <limits>
@@ -119,6 +122,11 @@ constexpr float AudioCueEditDetailWidth = 330.0f;
 constexpr float AudioCueEditButtonAreaHeight = 64.0f;
 constexpr float AudioCueEditRowHeight = 44.0f;
 constexpr float AudioCueEditRowGap = 4.0f;
+constexpr int AudioCueEditPreviewVolumeMin = 0;
+constexpr int AudioCueEditPreviewVolumeMax = 300;
+constexpr int AudioCueEditPreviewPitchMin = -100;
+constexpr int AudioCueEditPreviewPitchMax = 100;
+constexpr std::uint64_t AudioCueEditDoubleClickTicks = 420;
 constexpr int EnemyTestMagnetDropCount = 7;
 constexpr float EnemyTestMagnetDropMinRadius = 72.0f;
 constexpr float EnemyTestMagnetDropMaxRadius = 178.0f;
@@ -678,6 +686,130 @@ UiRect audioCueEditListViewport(UiRect listPanel)
         listPanel.size.x,
         std::max(1.0f, listPanel.size.y - HeaderHeight - BottomPadding),
     }};
+}
+
+float audioCueEditPreviewVolumeScale(int volume)
+{
+    return static_cast<float>(std::clamp(
+        volume,
+        AudioCueEditPreviewVolumeMin,
+        AudioCueEditPreviewVolumeMax)) / 100.0f;
+}
+
+float audioCueEditPreviewPitchScale(int pitch)
+{
+    const int clamped = std::clamp(pitch, AudioCueEditPreviewPitchMin, AudioCueEditPreviewPitchMax);
+    return std::pow(2.0f, static_cast<float>(clamped) / 100.0f);
+}
+
+float audioCueEditAdjustProgress(int value, int minValue, int maxValue)
+{
+    if (maxValue <= minValue) {
+        return 0.0f;
+    }
+    return (static_cast<float>(value) - static_cast<float>(minValue)) /
+        static_cast<float>(maxValue - minValue);
+}
+
+int audioCueEditAdjustValueFromMouse(UiRect gauge, Vec2 mouse, int minValue, int maxValue)
+{
+    if (gauge.size.x <= 0.0f || maxValue <= minValue) {
+        return minValue;
+    }
+    const float progress = clamp((mouse.x - gauge.pos.x) / gauge.size.x, 0.0f, 1.0f);
+    return std::clamp(
+        static_cast<int>(std::lround(static_cast<float>(minValue) + progress * static_cast<float>(maxValue - minValue))),
+        minValue,
+        maxValue);
+}
+
+UiRect audioCueEditAdjustRowRect(UiRect panel, int row)
+{
+    const UiRect content = uiSubPanelContentRect(panel);
+    return {{
+        content.pos.x,
+        content.pos.y + 72.0f + static_cast<float>(row) * 104.0f,
+    }, {
+        content.size.x,
+        82.0f,
+    }};
+}
+
+UiRect audioCueEditAdjustGaugeRect(UiRect panel, int row)
+{
+    const UiRect rowRect = audioCueEditAdjustRowRect(panel, row);
+    return {{
+        rowRect.pos.x,
+        rowRect.pos.y + 42.0f,
+    }, {
+        rowRect.size.x,
+        24.0f,
+    }};
+}
+
+std::uint32_t audioCueEditAlphaKeyMask()
+{
+    const bool* keys = SDL_GetKeyboardState(nullptr);
+    if (keys == nullptr) {
+        return 0;
+    }
+
+    std::uint32_t mask = 0;
+    for (int i = 0; i < 26; ++i) {
+        if (keys[SDL_SCANCODE_A + i]) {
+            mask |= 1u << i;
+        }
+    }
+    return mask;
+}
+
+int audioCueEditPressedAlphaIndex(std::uint32_t currentMask, std::uint32_t previousMask)
+{
+    const std::uint32_t pressedMask = currentMask & ~previousMask;
+    for (int i = 0; i < 26; ++i) {
+        if ((pressedMask & (1u << i)) != 0) {
+            return i;
+        }
+    }
+    return -1;
+}
+
+char asciiLowerLetter(char ch)
+{
+    if (ch >= 'A' && ch <= 'Z') {
+        return static_cast<char>(ch - 'A' + 'a');
+    }
+    if (ch >= 'a' && ch <= 'z') {
+        return ch;
+    }
+    return '\0';
+}
+
+int audioCueEditFileIndexForAlpha(const std::vector<AudioCueFileEntry>& files, char alpha)
+{
+    for (int i = 0; i < static_cast<int>(files.size()); ++i) {
+        const std::string& name = files[static_cast<std::size_t>(i)].name;
+        if (!name.empty() && asciiLowerLetter(name.front()) == alpha) {
+            return i;
+        }
+    }
+    return -1;
+}
+
+int audioCueEditVolumeToGaugeValue(float volume)
+{
+    if (!std::isfinite(volume)) {
+        return 100;
+    }
+    return std::clamp(
+        static_cast<int>(std::lround(volume * 100.0f)),
+        AudioCueEditPreviewVolumeMin,
+        AudioCueEditPreviewVolumeMax);
+}
+
+float audioCueEditGaugeValueToVolume(int value)
+{
+    return audioCueEditPreviewVolumeScale(value);
 }
 
 int debugPreviewTestTabColumnCount(int tabCount)
@@ -2045,14 +2177,24 @@ AudioCueEditEntry parseAudioCueManifestEntry(const std::vector<std::string>& fie
     if (fields.size() >= 3) {
         entry.path = normalizeAudioRelativePath(trimAscii(fields[2]));
     }
-    if (fields.size() >= 7) {
-        entry.displayName = trimAscii(fields[6]);
-    }
     parseFloatOrDefault(fieldOrEmpty(fields, 3), entry.volume, 1.0f);
-    entry.volume = clamp(entry.volume, 0.0f, 1.0f);
+    entry.volume = clamp(entry.volume, 0.0f, 3.0f);
     entry.loop = parseBoolOrDefault(fieldOrEmpty(fields, 4), entry.type == "bgm");
     parseFloatOrDefault(fieldOrEmpty(fields, 5), entry.cooldownMs, 0.0f);
     entry.cooldownMs = std::max(0.0f, entry.cooldownMs);
+    float parsedPitch = 0.0f;
+    const bool hasPitchColumn = fields.size() >= 7 && parseFloatOrDefault(fieldOrEmpty(fields, 6), parsedPitch, 0.0f);
+    if (hasPitchColumn) {
+        entry.pitch = std::clamp(
+            static_cast<int>(std::lround(parsedPitch)),
+            AudioCueEditPreviewPitchMin,
+            AudioCueEditPreviewPitchMax);
+    }
+    if (fields.size() >= 8) {
+        entry.displayName = trimAscii(fields[7]);
+    } else if (fields.size() >= 7 && !hasPitchColumn) {
+        entry.displayName = trimAscii(fields[6]);
+    }
     return entry;
 }
 
@@ -2110,7 +2252,7 @@ bool writeAudioCueManifestRows(const std::vector<AudioCueManifestRow>& rows, std
     }
 
     file << "\xEF\xBB\xBF";
-    file << "id\ttype\tpath\tvolume\tloop\tcooldown_ms\tdisplay_name\n";
+    file << "id\ttype\tpath\tvolume\tloop\tcooldown_ms\tpitch\tdisplay_name\n";
     for (const AudioCueManifestRow& row : rows) {
         if (!row.valid || row.entry.id.empty()) {
             continue;
@@ -2122,6 +2264,7 @@ bool writeAudioCueManifestRows(const std::vector<AudioCueManifestRow>& rows, std
             << formatAudioFloat(row.entry.volume) << '\t'
             << (row.entry.loop ? "true" : "false") << '\t'
             << formatAudioFloat(row.entry.cooldownMs) << '\t'
+            << row.entry.pitch << '\t'
             << row.entry.displayName << '\n';
     }
 
@@ -5248,6 +5391,7 @@ bool Game::loadAudioCueManifestForEdit()
             audioCueEditFileIndex_ = fileIndex;
         }
     }
+    syncAudioCueEditPreviewSettingsFromCue();
 
     audioCueEditDirty_ = false;
     audioCueEditStatus_ = audioCueEditEntries_.empty()
@@ -5298,6 +5442,41 @@ bool Game::saveAudioCueManifestFromEdit(std::string& message)
         return false;
     }
     return true;
+}
+
+void Game::syncAudioCueEditPreviewSettingsFromCue()
+{
+    if (audioCueEditMode_ != AudioCueEditMode::Se ||
+        audioCueEditCueIndex_ < 0 ||
+        audioCueEditCueIndex_ >= static_cast<int>(audioCueEditEntries_.size())) {
+        audioCueEditPreviewVolume_ = 100;
+        audioCueEditPreviewPitch_ = 0;
+        return;
+    }
+
+    const AudioCueEditEntry& cue = audioCueEditEntries_[static_cast<std::size_t>(audioCueEditCueIndex_)];
+    audioCueEditPreviewVolume_ = audioCueEditVolumeToGaugeValue(cue.volume);
+    audioCueEditPreviewPitch_ = std::clamp(cue.pitch, AudioCueEditPreviewPitchMin, AudioCueEditPreviewPitchMax);
+}
+
+void Game::applyAudioCueEditPreviewSettingsToCue()
+{
+    if (audioCueEditMode_ != AudioCueEditMode::Se ||
+        audioCueEditCueIndex_ < 0 ||
+        audioCueEditCueIndex_ >= static_cast<int>(audioCueEditEntries_.size())) {
+        return;
+    }
+
+    AudioCueEditEntry& cue = audioCueEditEntries_[static_cast<std::size_t>(audioCueEditCueIndex_)];
+    const float volume = audioCueEditGaugeValueToVolume(audioCueEditPreviewVolume_);
+    const int pitch = std::clamp(audioCueEditPreviewPitch_, AudioCueEditPreviewPitchMin, AudioCueEditPreviewPitchMax);
+    if (std::fabs(cue.volume - volume) <= 0.0001f && cue.pitch == pitch) {
+        return;
+    }
+
+    cue.volume = volume;
+    cue.pitch = pitch;
+    audioCueEditDirty_ = true;
 }
 
 void Game::rebuildAudioCueFileList()
@@ -5406,6 +5585,10 @@ void Game::enterAudioCueEditMode(AudioCueEditMode editMode)
     audioCueEditCueScrollState_ = {};
     audioCueEditFileScrollState_ = {};
     audioCueEditCancelState_ = {};
+    audioCueEditActiveAdjust_ = 0;
+    audioCueEditLastFileClickIndex_ = -1;
+    audioCueEditLastFileClickTicks_ = 0;
+    audioCueEditAlphaKeyHeldMask_ = audioCueEditAlphaKeyMask();
 
     rebuildAudioCueFileList();
     loadAudioCueManifestForEdit();
@@ -5449,6 +5632,7 @@ void Game::previewSelectedAudioCueFile()
     if (audioCueEditCueIndex_ >= 0 && audioCueEditCueIndex_ < static_cast<int>(audioCueEditEntries_.size())) {
         const AudioCueEditEntry& cue = audioCueEditEntries_[static_cast<std::size_t>(audioCueEditCueIndex_)];
         options.volume = cue.volume;
+        options.pitchScale = audioCueEditPreviewPitchScale(cue.pitch);
         options.loop = cue.loop;
         options.cooldownSeconds = cue.cooldownMs / 1000.0f;
     } else {
@@ -5456,6 +5640,10 @@ void Game::previewSelectedAudioCueFile()
     }
     if (audioCueEditMode_ == AudioCueEditMode::Bgm) {
         options.loop = true;
+    } else {
+        options.volume = audioCueEditGaugeValueToVolume(audioCueEditPreviewVolume_);
+        options.pitchScale = audioCueEditPreviewPitchScale(audioCueEditPreviewPitch_);
+        options.loop = false;
     }
 
     const AudioCueFileEntry& file = audioCueEditFiles_[static_cast<std::size_t>(audioCueEditFileIndex_)];
@@ -5488,10 +5676,15 @@ void Game::applySelectedAudioCueFile()
     AudioCueEditEntry& cue = audioCueEditEntries_[static_cast<std::size_t>(audioCueEditCueIndex_)];
     const AudioCueFileEntry& file = audioCueEditFiles_[static_cast<std::size_t>(audioCueEditFileIndex_)];
     cue.path = file.relativePath;
+    if (audioCueEditMode_ == AudioCueEditMode::Se) {
+        cue.volume = audioCueEditGaugeValueToVolume(audioCueEditPreviewVolume_);
+        cue.pitch = std::clamp(audioCueEditPreviewPitch_, AudioCueEditPreviewPitchMin, AudioCueEditPreviewPitchMax);
+    }
     audioCueEditDirty_ = true;
 
     AudioCueOptions options;
     options.volume = cue.volume;
+    options.pitchScale = audioCueEditPreviewPitchScale(cue.pitch);
     options.loop = cue.loop;
     options.cooldownSeconds = cue.cooldownMs / 1000.0f;
     const std::filesystem::path clipPath = std::filesystem::path(std::string(AudioCueEditAudioRoot)) / std::filesystem::path(file.relativePath);
@@ -5542,6 +5735,37 @@ void Game::updateAudioCueEditScreen(const Input& input, UiContext& ui)
     bool keepCueSelectionVisible = false;
     bool keepFileSelectionVisible = false;
 
+    if (audioCueEditMode_ == AudioCueEditMode::Se) {
+        const std::uint32_t currentAlphaMask = audioCueEditAlphaKeyMask();
+        const int alphaIndex = audioCueEditPressedAlphaIndex(currentAlphaMask, audioCueEditAlphaKeyHeldMask_);
+        audioCueEditAlphaKeyHeldMask_ = currentAlphaMask;
+        const SDL_Keymod mods = SDL_GetModState();
+        const bool commandKeyPressed =
+            input.confirmPressed() ||
+            input.useItemPressed() ||
+            input.saveShortcutPressed() ||
+            input.backPressed() ||
+            input.pausePressed();
+        const bool modified = (mods & (SDL_KMOD_CTRL | SDL_KMOD_ALT | SDL_KMOD_GUI)) != 0;
+        if (alphaIndex >= 0 && !commandKeyPressed && !modified && fileCount > 0) {
+            const char alpha = static_cast<char>('a' + alphaIndex);
+            const int fileIndex = audioCueEditFileIndexForAlpha(audioCueEditFiles_, alpha);
+            if (fileIndex >= 0) {
+                audioCueEditFileIndex_ = fileIndex;
+                audioCueEditLastFileClickIndex_ = -1;
+                audioCueEditLastFileClickTicks_ = 0;
+                keepFileSelectionVisible = true;
+                std::string keyLabel(1, static_cast<char>('A' + alphaIndex));
+                audioCueEditStatus_ = keyLabel + ": " + audioCueEditFiles_[static_cast<std::size_t>(fileIndex)].relativePath;
+            } else {
+                std::string keyLabel(1, static_cast<char>('A' + alphaIndex));
+                audioCueEditStatus_ = keyLabel + ": 該当ファイルなし";
+            }
+        }
+    } else {
+        audioCueEditAlphaKeyHeldMask_ = audioCueEditAlphaKeyMask();
+    }
+
     if (uiCancelRequested(audioCueEditCancelState_, input, ui, layout.panel) ||
         ui.pressed(audioCueEditCloseButtonRect(layout.panel))) {
         exitAudioCueEditMode();
@@ -5549,6 +5773,7 @@ void Game::updateAudioCueEditScreen(const Input& input, UiContext& ui)
     }
 
     if (input.saveShortcutPressed() || ui.pressed(audioCueEditSaveButtonRect(layout.panel))) {
+        applyAudioCueEditPreviewSettingsToCue();
         std::string message;
         if (saveAudioCueManifestFromEdit(message)) {
             audioCueEditStatus_ = message;
@@ -5578,6 +5803,41 @@ void Game::updateAudioCueEditScreen(const Input& input, UiContext& ui)
         previewSelectedAudioCueFile();
     }
 
+    if (audioCueEditMode_ == AudioCueEditMode::Se) {
+        const int previousVolume = audioCueEditPreviewVolume_;
+        const int previousPitch = audioCueEditPreviewPitch_;
+        const auto updateAdjustFromMouse = [&](int kind, UiRect gauge, int minValue, int maxValue, int& value) {
+            const UiRect rowRect = audioCueEditAdjustRowRect(layout.detail, kind - 1);
+            const bool pressed = input.mouseLeftPressed() && !ui.pointerConsumed() && rowRect.contains(ui.mouse());
+            if (pressed) {
+                audioCueEditActiveAdjust_ = kind;
+            }
+            if (audioCueEditActiveAdjust_ == kind && input.mouseLeftHeld()) {
+                value = audioCueEditAdjustValueFromMouse(gauge, ui.mouse(), minValue, maxValue);
+                ui.consumePointer();
+            }
+        };
+
+        updateAdjustFromMouse(
+            1,
+            audioCueEditAdjustGaugeRect(layout.detail, 0),
+            AudioCueEditPreviewVolumeMin,
+            AudioCueEditPreviewVolumeMax,
+            audioCueEditPreviewVolume_);
+        updateAdjustFromMouse(
+            2,
+            audioCueEditAdjustGaugeRect(layout.detail, 1),
+            AudioCueEditPreviewPitchMin,
+            AudioCueEditPreviewPitchMax,
+            audioCueEditPreviewPitch_);
+        if (audioCueEditPreviewVolume_ != previousVolume || audioCueEditPreviewPitch_ != previousPitch) {
+            applyAudioCueEditPreviewSettingsToCue();
+        }
+    }
+    if (input.mouseLeftReleased()) {
+        audioCueEditActiveAdjust_ = 0;
+    }
+
     for (int i = 0; i < cueCount; ++i) {
         const UiRect rect = uiScrollableListItemRect(cueList, i, listStyle);
         if (!uiScrollAreaRectVisible(cueList, rect)) {
@@ -5585,6 +5845,7 @@ void Game::updateAudioCueEditScreen(const Input& input, UiContext& ui)
         }
         if (cueViewport.contains(ui.mouse()) && ui.pressed(rect)) {
             audioCueEditCueIndex_ = i;
+            syncAudioCueEditPreviewSettingsFromCue();
             const int fileIndex = audioCueEditFileIndexForPath(audioCueEditFiles_, audioCueEditEntries_[static_cast<std::size_t>(i)].path);
             if (fileIndex >= 0) {
                 audioCueEditFileIndex_ = fileIndex;
@@ -5601,8 +5862,22 @@ void Game::updateAudioCueEditScreen(const Input& input, UiContext& ui)
             continue;
         }
         if (fileViewport.contains(ui.mouse()) && ui.pressed(rect)) {
+            const std::uint64_t nowTicks = SDL_GetTicks();
+            const bool doubleClicked =
+                audioCueEditMode_ == AudioCueEditMode::Se &&
+                audioCueEditLastFileClickIndex_ == i &&
+                audioCueEditLastFileClickTicks_ != 0 &&
+                nowTicks - audioCueEditLastFileClickTicks_ <= AudioCueEditDoubleClickTicks;
             audioCueEditFileIndex_ = i;
-            audioCueEditStatus_ = audioCueEditFiles_[static_cast<std::size_t>(i)].relativePath;
+            if (doubleClicked) {
+                audioCueEditLastFileClickIndex_ = -1;
+                audioCueEditLastFileClickTicks_ = 0;
+                previewSelectedAudioCueFile();
+            } else {
+                audioCueEditLastFileClickIndex_ = i;
+                audioCueEditLastFileClickTicks_ = nowTicks;
+                audioCueEditStatus_ = audioCueEditFiles_[static_cast<std::size_t>(i)].relativePath;
+            }
             break;
         }
     }
@@ -5612,6 +5887,7 @@ void Game::updateAudioCueEditScreen(const Input& input, UiContext& ui)
         (input.pressed(InputAction::MoveLeft) ? 1 : 0);
     if (cueDelta != 0 && cueCount > 0) {
         audioCueEditCueIndex_ = std::clamp(audioCueEditCueIndex_ + cueDelta, 0, cueCount - 1);
+        syncAudioCueEditPreviewSettingsFromCue();
         keepCueSelectionVisible = true;
         const int fileIndex = audioCueEditFileIndexForPath(audioCueEditFiles_, audioCueEditEntries_[static_cast<std::size_t>(audioCueEditCueIndex_)].path);
         if (fileIndex >= 0) {
@@ -5643,12 +5919,15 @@ void Game::renderAudioCueEditScreen(Renderer& renderer) const
 
     const AudioCueEditLayout layout = makeAudioCueEditLayout(camera_.width(), camera_.height());
     const std::string title = audioCueEditTitle(audioCueEditMode_);
+    const char* helpText = audioCueEditMode_ == AudioCueEditMode::Se
+        ? "A-Zジャンプ / ダブルクリック試聴 / Space試聴 / F適用 / Ctrl+S保存 / Esc戻る"
+        : "F適用 / Space試聴 / Ctrl+S保存 / Esc戻る";
     UiWindowScope window(
         renderer,
         audioCueEditMode_ == AudioCueEditMode::Bgm ? "audio.cue_edit.bgm" : "audio.cue_edit.se",
         layout.panel,
         title,
-        "F適用 / Space試聴 / Ctrl+S保存 / Esc戻る",
+        helpText,
         UiWindowOptions{true, true});
 
     drawUiSubPanel(renderer, layout.cueList);
@@ -5722,20 +6001,86 @@ void Game::renderAudioCueEditScreen(Renderer& renderer) const
         file = &audioCueEditFiles_[static_cast<std::size_t>(audioCueEditFileIndex_)];
     }
 
-    float y = drawUiDetailHeader(renderer, layout.detail, "選択内容");
-    drawUiDetailLine(renderer, layout.detail, y, "種類", audioCueEditTypeText(audioCueEditMode_));
-    drawUiDetailLine(renderer, layout.detail, y, "表示名", cue != nullptr ? audioCueDisplayName(*cue) : "未選択");
-    drawUiDetailLine(renderer, layout.detail, y, "内部ID", cue != nullptr ? cue->id : "-");
-    drawUiDetailLine(renderer, layout.detail, y, "現在", cue != nullptr ? cue->path : "-");
-    drawUiDetailLine(renderer, layout.detail, y, "候補", file != nullptr ? file->relativePath : "-");
-    if (cue != nullptr) {
-        drawUiDetailLine(renderer, layout.detail, y, "volume", formatAudioFloat(cue->volume));
-        drawUiDetailLine(renderer, layout.detail, y, "loop", cue->loop ? "true" : "false");
-        drawUiDetailLine(renderer, layout.detail, y, "cooldown", formatAudioFloat(cue->cooldownMs) + " ms");
-    }
-    if (file != nullptr) {
-        const float kib = static_cast<float>(file->fileSize) / 1024.0f;
-        drawUiDetailLine(renderer, layout.detail, y, "size", formatAudioFloat(kib) + " KiB");
+    if (audioCueEditMode_ == AudioCueEditMode::Se) {
+        float y = drawUiDetailHeader(renderer, layout.detail, "音量・ピッチ");
+        const UiRect content = uiSubPanelContentRect(layout.detail);
+        renderer.drawText(
+            {content.pos.x, y},
+            "保存後の再生に反映",
+            ui::TextMuted,
+            2);
+
+        const auto drawAdjust = [&](int row, std::string_view label, int value, int minValue, int maxValue, std::string valueText, UiGaugeStyle style) {
+            const UiRect rowRect = audioCueEditAdjustRowRect(layout.detail, row);
+            const UiRect gauge = audioCueEditAdjustGaugeRect(layout.detail, row);
+            renderer.drawText(rowRect.pos, label, ui::Text, 2);
+            const Vec2 valueSize = renderer.measureText(valueText, 2);
+            renderer.drawText(
+                {rowRect.pos.x + std::max(0.0f, rowRect.size.x - valueSize.x), rowRect.pos.y},
+                valueText,
+                Color{255, 230, 150, 255},
+                2);
+            drawUiGauge(renderer, gauge, audioCueEditAdjustProgress(value, minValue, maxValue), style);
+        };
+
+        UiGaugeStyle volumeStyle;
+        volumeStyle.tickCount = 6;
+        volumeStyle.tick = {255, 255, 255, 34};
+        volumeStyle.fill.start = {132, 230, 250, 230};
+        volumeStyle.fill.end = {170, 244, 194, 230};
+        drawAdjust(
+            0,
+            "音量",
+            audioCueEditPreviewVolume_,
+            AudioCueEditPreviewVolumeMin,
+            AudioCueEditPreviewVolumeMax,
+            std::to_string(audioCueEditPreviewVolume_) + " / " + std::to_string(AudioCueEditPreviewVolumeMax),
+            volumeStyle);
+
+        UiGaugeStyle pitchStyle;
+        pitchStyle.tickCount = 4;
+        pitchStyle.tick = {255, 255, 255, 34};
+        pitchStyle.fill.start = {190, 170, 252, 230};
+        pitchStyle.fill.end = {255, 214, 150, 230};
+        drawAdjust(
+            1,
+            "ピッチ",
+            audioCueEditPreviewPitch_,
+            AudioCueEditPreviewPitchMin,
+            AudioCueEditPreviewPitchMax,
+            (audioCueEditPreviewPitch_ > 0 ? "+" : "") + std::to_string(audioCueEditPreviewPitch_),
+            pitchStyle);
+
+        const UiRect pitchGauge = audioCueEditAdjustGaugeRect(layout.detail, 1);
+        const float centerX = pitchGauge.pos.x + pitchGauge.size.x * 0.5f;
+        renderer.drawLine(
+            {centerX, pitchGauge.pos.y - 4.0f},
+            {centerX, pitchGauge.pos.y + pitchGauge.size.y + 4.0f},
+            Color{255, 255, 255, 150});
+
+        const std::string scaleText =
+            "scale x" + formatAudioFloat(audioCueEditPreviewPitchScale(audioCueEditPreviewPitch_));
+        renderer.drawText(
+            {content.pos.x, audioCueEditAdjustRowRect(layout.detail, 1).pos.y + 72.0f},
+            scaleText,
+            ui::TextMuted,
+            2);
+    } else {
+        float y = drawUiDetailHeader(renderer, layout.detail, "選択内容");
+        drawUiDetailLine(renderer, layout.detail, y, "種類", audioCueEditTypeText(audioCueEditMode_));
+        drawUiDetailLine(renderer, layout.detail, y, "表示名", cue != nullptr ? audioCueDisplayName(*cue) : "未選択");
+        drawUiDetailLine(renderer, layout.detail, y, "内部ID", cue != nullptr ? cue->id : "-");
+        drawUiDetailLine(renderer, layout.detail, y, "現在", cue != nullptr ? cue->path : "-");
+        drawUiDetailLine(renderer, layout.detail, y, "候補", file != nullptr ? file->relativePath : "-");
+        if (cue != nullptr) {
+            drawUiDetailLine(renderer, layout.detail, y, "volume", formatAudioFloat(cue->volume));
+            drawUiDetailLine(renderer, layout.detail, y, "loop", cue->loop ? "true" : "false");
+            drawUiDetailLine(renderer, layout.detail, y, "cooldown", formatAudioFloat(cue->cooldownMs) + " ms");
+        }
+        if (file != nullptr) {
+            const float kib = static_cast<float>(file->fileSize) / 1024.0f;
+            drawUiDetailLine(renderer, layout.detail, y, "size", formatAudioFloat(kib) + " KiB");
+        }
     }
 
     const bool canPreview = file != nullptr;

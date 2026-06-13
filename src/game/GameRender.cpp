@@ -1152,7 +1152,8 @@ void drawRingPlaceWindow(
     int selection,
     float localAngle,
     std::string_view status,
-    float totalTime)
+    float totalTime,
+    int unlockedRingCount)
 {
     const UiRect panel = ringPlaceWindowRect();
     UiWindowScope placeWindow(
@@ -1188,7 +1189,7 @@ void drawRingPlaceWindow(
         encyclopedia,
         InventoryUiDetailOptions{
             .animationSeconds = totalTime,
-            .unlockedRingCount = unlockedRingCount(),
+            .unlockedRingCount = unlockedRingCount,
         });
 
     if (!status.empty()) {
@@ -6096,7 +6097,8 @@ void Game::renderRingScreen(Renderer& renderer, float totalTime) const
             ringPlaceSelection_,
             ringPlaceTargetAngle_,
             ringStatus_,
-            totalTime);
+            totalTime,
+            unlockedRingCount());
     }
 
     if (ringDiscardConfirm_.open) {

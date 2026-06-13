@@ -110,7 +110,6 @@ enum class AstragnaPhase {
 
 inline constexpr int JunkCrabMaxDebris = 6;
 inline constexpr int AstragnaSealPartCount = 5;
-inline constexpr int AstragnaMaxShellBlocks = 36;
 
 struct JunkCrabDebrisRuntime {
     bool active = false;
@@ -141,9 +140,14 @@ struct AstragnaSealPartRuntime {
 struct AstragnaShellBlockRuntime {
     bool active = false;
     bool repairing = false;
+    int layerIndex = 0;
+    int segmentIndex = 0;
     float localAngle = 0.0f;
+    float angularSpan = 0.0f;
     float orbitRadius = 0.0f;
     float radius = 0.0f;
+    float innerRadius = 0.0f;
+    float outerRadius = 0.0f;
     int hp = 0;
     int maxHp = 0;
 };
@@ -157,7 +161,7 @@ struct AstragnaBossRuntime {
     int repairCursor = 0;
     bool initialized = false;
     std::array<AstragnaSealPartRuntime, AstragnaSealPartCount> sealParts{};
-    std::array<AstragnaShellBlockRuntime, AstragnaMaxShellBlocks> shellBlocks{};
+    std::vector<AstragnaShellBlockRuntime> shellBlocks{};
 };
 
 struct BossActionRuntime {

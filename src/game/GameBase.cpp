@@ -6,6 +6,7 @@
 #include "game/NpcCharacterVisual.hpp"
 #include "game/PlayerEquipmentVisual.hpp"
 #include "game/RingDisplayName.hpp"
+#include "game/SpecialObjectRules.hpp"
 
 namespace majo {
 
@@ -3203,7 +3204,8 @@ void Game::refreshMerchantStock(bool force)
         if (isTreasureObject(*item)) {
             continue;
         }
-        if (item->rarity > maxRarity) {
+        const bool specialMerchantStock = objectAllowedAsSpecialMerchantStock(item->id);
+        if (!specialMerchantStock && item->rarity > maxRarity) {
             continue;
         }
         const bool requiredCategory = merchantStockGroupForItem(*item).has_value();
@@ -3211,7 +3213,7 @@ void Game::refreshMerchantStock(bool force)
         const bool basicTag = std::any_of(item->tags.begin(), item->tags.end(), [](const std::string& tag) {
             return tag == "consumable" || tag == "potion" || tag == "food";
         });
-        if (requiredCategory || basicTag || (merchantUpgradeLevel_ >= 4 && advancedEquipmentCategory)) {
+        if (specialMerchantStock || requiredCategory || basicTag || (merchantUpgradeLevel_ >= 4 && advancedEquipmentCategory)) {
             candidates.push_back(item);
         }
     }

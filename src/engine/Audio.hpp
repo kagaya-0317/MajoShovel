@@ -14,6 +14,7 @@ enum class AudioCueType {
 
 struct AudioCueOptions {
     float volume = 1.0f;
+    float pitchScale = 1.0f;
     bool loop = false;
     float cooldownSeconds = 0.0f;
 };

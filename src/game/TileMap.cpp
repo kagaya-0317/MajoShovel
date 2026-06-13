@@ -539,6 +539,28 @@ bool drawTerrainImageRegion(Renderer& renderer, ImageHandle handle, RectF source
     return renderer.drawImageRegion(handle, source, pos, size, options);
 }
 
+bool drawTerrainImageQuad(Renderer& renderer, ImageHandle handle, RectF source, const std::array<Vec2, 4>& corners, Color tint)
+{
+    if (!handle.valid() || tint.a == 0) {
+        return false;
+    }
+
+    constexpr float SheetWidth = static_cast<float>(TerrainTileSheetColumns * TerrainTileSourceSize);
+    constexpr float SheetHeight = static_cast<float>(TerrainTileSheetRows * TerrainTileSourceSize);
+    const float left = source.x / SheetWidth;
+    const float right = (source.x + source.w) / SheetWidth;
+    const float top = source.y / SheetHeight;
+    const float bottom = (source.y + source.h) / SheetHeight;
+    const std::array<ImageTriangleVertex, 4> vertices{{
+        {corners[0], {left, top}},
+        {corners[1], {right, top}},
+        {corners[2], {right, bottom}},
+        {corners[3], {left, bottom}},
+    }};
+    constexpr std::array<int, 6> Indices{{0, 1, 2, 0, 2, 3}};
+    return renderer.drawImageTriangleList(handle, vertices.data(), vertices.size(), Indices.data(), Indices.size(), tint);
+}
+
 bool drawTerrainFloorTile(Renderer& renderer, const TerrainTileSheet& sheet, Vec2 pos, int tx, int ty)
 {
     return drawTerrainImageRegion(
@@ -1673,6 +1695,39 @@ void TileMap::renderTilePreview(Renderer& renderer, Vec2 pos, int stageId, TileT
     if (!drawTerrainTileImage(renderer, terrainSheet, pos, 0, 0, tile, TerrainNeighbors{})) {
         drawTileLitByCircles(renderer, pos, tileColor(tile), pos, {});
     }
+}
+
+bool TileMap::renderTileQuad(
+    Renderer& renderer,
+    const std::array<Vec2, 4>& corners,
+    int stageId,
+    TileType type,
+    int variantX,
+    int variantY,
+    Color tint) const
+{
+    const TerrainTileSheet terrainSheet = acquireTerrainTileSheet(renderer, stageId > 0 ? stageId : dungeonLayoutSnapshot_.stageId);
+    if (!terrainSheet.available || tint.a == 0) {
+        return false;
+    }
+
+    bool ok = drawTerrainImageQuad(
+        renderer,
+        terrainSheet.handle,
+        terrainSheetCellSource(0, terrainFloorColumn(variantX, variantY)),
+        corners,
+        tint);
+    if (type == TileType::Empty) {
+        return ok;
+    }
+
+    ok = drawTerrainImageQuad(
+             renderer,
+             terrainSheet.handle,
+             terrainWallCellSource(type, terrainBasicWallVariant(variantX, variantY, type)),
+             corners,
+             tint) && ok;
+    return ok;
 }
 
 void TileMap::render(Renderer& renderer, const Camera& camera, Vec2 lightCenter, const std::vector<LightSource>& extraLights)

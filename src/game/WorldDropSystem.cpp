@@ -13,6 +13,7 @@
 #include "game/ObjectImageRenderer.hpp"
 #include "game/ObjectVisualPose.hpp"
 #include "game/Player.hpp"
+#include "game/SpecialObjectRules.hpp"
 #include "game/WorldIconRenderer.hpp"
 
 #include <algorithm>
@@ -1274,6 +1275,7 @@ const ObjectDefinition* WorldDropSystem::chooseDigDrop(const ObjectCatalog& cata
     bool hasTaggedDropCandidates = false;
     for (const ObjectDefinition& object : catalog.objects) {
         if (hasAllowedCategory(object) &&
+            !objectExcludedFromDungeonDrops(object.id) &&
             !hasAnyTag(object, ExcludedDropTags) &&
             hasAnyTag(object, DropTags)) {
             hasTaggedDropCandidates = true;
@@ -1284,7 +1286,9 @@ const ObjectDefinition* WorldDropSystem::chooseDigDrop(const ObjectCatalog& cata
     std::vector<const ObjectDefinition*> candidates;
     std::vector<int> weights;
     for (const ObjectDefinition& object : catalog.objects) {
-        if (!hasAllowedCategory(object) || hasAnyTag(object, ExcludedDropTags)) {
+        if (!hasAllowedCategory(object) ||
+            objectExcludedFromDungeonDrops(object.id) ||
+            hasAnyTag(object, ExcludedDropTags)) {
             continue;
         }
         if (hasTaggedDropCandidates && !hasAnyTag(object, DropTags)) {

@@ -4,6 +4,7 @@
 #include "engine/Audio.hpp"
 #include "game/RingImpactSound.hpp"
 #include "game/RingDisplayName.hpp"
+#include "game/SpecialObjectRules.hpp"
 
 #include <cmath>
 #include <fstream>
@@ -92,6 +93,36 @@ float angularSpeedForLinearMetersPerSecond(float speedMetersPerSecond, float rad
         return 0.0f;
     }
     return speedMetersPerSecond * static_cast<float>(balance::TileSize) / radius;
+}
+
+bool ensureInitialStaffEquipped(
+    InventorySystem& inventory,
+    const ObjectCatalog& objectCatalog,
+    const SpellRingSystem& spellRing)
+{
+    if (objectCatalog.registry.findById(ApprenticeWitchStaffObjectId) == nullptr) {
+        return false;
+    }
+
+    if (const InventoryObjectInstance* staff = inventory.equippedStaffInstance()) {
+        if (isApprenticeWitchStaffObjectId(staff->item.id)) {
+            return true;
+        }
+    }
+
+    std::string equipStatus;
+    if (inventory.equipStaffObject(ApprenticeWitchStaffObjectId, "", spellRing, &equipStatus)) {
+        return true;
+    }
+
+    InventoryAddResult addResult;
+    if (!inventory.addObjectItem(objectCatalog, ApprenticeWitchStaffObjectId, &addResult)) {
+        return false;
+    }
+
+    const std::string_view instanceId =
+        addResult.kind == InventoryAddKind::Instance ? std::string_view(addResult.instanceId) : std::string_view{};
+    return inventory.equipStaffObject(ApprenticeWitchStaffObjectId, instanceId, spellRing, &equipStatus);
 }
 
 float linearMetersPerSecondForAngularSpeed(float angularSpeed, float radius)
@@ -2653,6 +2684,8 @@ void Game::initializeDefaultSpellRing()
     if (ringItems.size() >= 2) {
         ringItems[1].localAngle = Pi;
     }
+
+    ensureInitialStaffEquipped(inventory_, objectCatalog_, spellRing_);
 }
 
 void Game::observeRingItemInstanceIds()
@@ -4699,6 +4732,9 @@ void Game::update(const Input& input, const Time& time)
                         }
                     }
                 } else if (!event.objectDropId.empty()) {
+                    if (objectExcludedFromDungeonDrops(event.objectDropId)) {
+                        continue;
+                    }
                     if (event.objectDropInstance) {
                         worldDrops_.spawnObjectInstanceDrop(
                             objectCatalog_,
@@ -4717,6 +4753,9 @@ void Game::update(const Input& input, const Time& time)
                         }
                     }
                 } else if (event.objectDropInstance) {
+                    if (objectExcludedFromDungeonDrops(event.objectDropInstance->objectId)) {
+                        continue;
+                    }
                     worldDrops_.spawnObjectInstanceDrop(
                         objectCatalog_,
                         *event.objectDropInstance,
