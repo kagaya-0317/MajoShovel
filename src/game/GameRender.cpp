@@ -58,6 +58,34 @@ constexpr Color DungeonStatusHudLabelColor{255, 230, 122, 255};
 constexpr Color DungeonStatusHudTextColor{255, 255, 255, 255};
 constexpr Color DungeonStatusHudPinchTextColor{255, 226, 78, 255};
 constexpr Color DungeonStatusHudHpDangerTint{255, 82, 74, 255};
+constexpr std::string_view RingStatusHudImagePath = "assets/UI_rings.png";
+constexpr int RingStatusHudImageColumns = 2;
+constexpr int RingStatusHudImageRows = 3;
+constexpr Vec2 RingStatusHudFrameSize{229.0f, 104.0f};
+constexpr float RingStatusHudSliceLeftWidth = 104.0f;
+constexpr float RingStatusHudSliceRightWidth = 24.0f;
+constexpr Vec2 RingStatusHudCooldownCenter{52.0f, 52.0f};
+constexpr float RingStatusHudCooldownInnerRadius = 38.0f;
+constexpr float RingStatusHudCooldownOuterRadius = 43.0f;
+constexpr Vec2 RingStatusHudTextPos{104.0f, 20.0f};
+constexpr float RingStatusHudLineGap = 22.0f;
+constexpr UiRect RingStatusHudWeightGaugeRect{{104.0f, 80.0f}, {144.0f, 3.0f}};
+constexpr Color RingStatusHudNameColor{255, 239, 172, 255};
+constexpr Color RingStatusHudInactiveNameColor{246, 248, 255, 255};
+constexpr Color RingStatusHudItemColor{232, 236, 244, 255};
+constexpr Color RingStatusHudWeightColor{222, 236, 255, 255};
+constexpr Color RingStatusHudCooldownCoolStartColor{64, 224, 210, 238};
+constexpr Color RingStatusHudCooldownCoolEndColor{232, 255, 252, 248};
+constexpr Color RingStatusHudCooldownReadyStartColor{255, 202, 64, 248};
+constexpr Color RingStatusHudCooldownReadyEndColor{255, 255, 246, 252};
+constexpr Color RingStatusHudWeightGaugeBackColor{6, 15, 35, 168};
+constexpr Color RingStatusHudWeightGaugeFillColor{84, 218, 255, 238};
+constexpr Color RingStatusHudWeightGaugeOverColor{255, 72, 84, 238};
+constexpr Color RingStatusHudWeightGaugeLimitColor{255, 248, 190, 245};
+constexpr std::string_view RingStatusHudChargeReadySe = "se.ring.charge_ready";
+constexpr float RingStatusHudReadyHoldSeconds = 1.0f;
+constexpr float RingStatusHudFadeSeconds = 20.0f / 60.0f;
+constexpr float RingStatusHudPulseSeconds = 0.56f;
 
 Vec2 dungeonStatusHudImageToScreen(Vec2 origin, float scale, Vec2 imagePoint)
 {
@@ -188,6 +216,81 @@ void drawDungeonStatusHudExpGauge(
     ImageDrawOptions options;
     options.tint = {255, 255, 255, 255};
     renderer.drawImageRegion(mask, source, center, drawSize, options);
+}
+
+RectF ringStatusHudSpriteSource(int ringIndex, bool active)
+{
+    const int clampedRingIndex = std::clamp(ringIndex, 0, RingStatusHudImageRows - 1);
+    const int column = active ? 1 : 0;
+    return {
+        RingStatusHudFrameSize.x * static_cast<float>(column),
+        RingStatusHudFrameSize.y * static_cast<float>(clampedRingIndex),
+        RingStatusHudFrameSize.x,
+        RingStatusHudFrameSize.y,
+    };
+}
+
+void drawRingStatusHudCooldownPulse(Renderer& renderer, Vec2 panelPos, float pulseTimer, float alphaScale)
+{
+    if (pulseTimer <= 0.0f || alphaScale <= 0.001f) {
+        return;
+    }
+
+    const float remaining = clamp(pulseTimer / RingStatusHudPulseSeconds, 0.0f, 1.0f);
+    const float t = 1.0f - remaining;
+    const Vec2 center = panelPos + RingStatusHudCooldownCenter;
+    renderer.drawSoftRing(
+        center,
+        RingStatusHudCooldownOuterRadius + 2.0f + 14.0f * t,
+        8.0f,
+        withAlpha(RingStatusHudCooldownReadyStartColor, 154.0f * remaining * alphaScale));
+    renderer.fillSoftCircle(
+        center,
+        RingStatusHudCooldownOuterRadius + 8.0f * t,
+        withAlpha(RingStatusHudCooldownReadyEndColor, 36.0f * remaining * alphaScale));
+}
+
+void drawRingStatusHudCooldown(Renderer& renderer, Vec2 panelPos, float cooldownRatio, float alphaScale)
+{
+    const float readyRatio = 1.0f - clamp(cooldownRatio, 0.0f, 1.0f);
+    if (readyRatio <= 0.001f || alphaScale <= 0.001f) {
+        return;
+    }
+
+    const bool ready = cooldownRatio <= 0.001f;
+    renderer.fillSoftRingArc(
+        panelPos + RingStatusHudCooldownCenter,
+        RingStatusHudCooldownInnerRadius,
+        RingStatusHudCooldownOuterRadius,
+        -Pi * 0.5f,
+        Pi * 2.0f * readyRatio,
+        withAlpha(ready ? RingStatusHudCooldownReadyStartColor : RingStatusHudCooldownCoolStartColor, 255.0f * alphaScale),
+        withAlpha(ready ? RingStatusHudCooldownReadyEndColor : RingStatusHudCooldownCoolEndColor, 255.0f * alphaScale));
+}
+
+void drawRingStatusHudWeightGauge(Renderer& renderer, Vec2 panelPos, float weight, float limit)
+{
+    const UiRect gauge{
+        panelPos + RingStatusHudWeightGaugeRect.pos,
+        RingStatusHudWeightGaugeRect.size,
+    };
+    renderer.fillRect(gauge.pos, gauge.size, RingStatusHudWeightGaugeBackColor);
+
+    const float safeLimit = std::max(0.001f, limit);
+    const float ratio = std::max(0.0f, weight / safeLimit);
+    constexpr float GaugeMaxRatio = SpellRingSystem::OverweightEquipLimitRatio;
+    const float limitX = gauge.pos.x + gauge.size.x / GaugeMaxRatio;
+    const float blueWidth = gauge.size.x * clamp(std::min(ratio, 1.0f) / GaugeMaxRatio, 0.0f, 1.0f);
+    if (blueWidth > 0.0f) {
+        renderer.fillRect(gauge.pos, {blueWidth, gauge.size.y}, RingStatusHudWeightGaugeFillColor);
+    }
+
+    const float overWidth = gauge.size.x * clamp((ratio - 1.0f) / GaugeMaxRatio, 0.0f, 1.0f);
+    if (overWidth > 0.0f) {
+        renderer.fillRect({limitX, gauge.pos.y}, {overWidth, gauge.size.y}, RingStatusHudWeightGaugeOverColor);
+    }
+
+    renderer.fillRect({limitX - 0.5f, gauge.pos.y - 2.0f}, {1.0f, gauge.size.y + 4.0f}, RingStatusHudWeightGaugeLimitColor);
 }
 
 float dotVec2(Vec2 a, Vec2 b)
@@ -2003,7 +2106,7 @@ constexpr OperationSettingsActionRow OperationSettingsActionRows[] = {
 
 UiRect optionsPanelRect()
 {
-    return {{150.0f, 35.0f}, {980.0f, 650.0f}};
+    return optionsMenuPanelRect();
 }
 
 UiRect statusPanelRect()
@@ -3695,9 +3798,8 @@ void Game::updateRingScreen(const Input& input, UiContext& ui, float dt)
     }
 }
 
-void Game::openOptionsMenu()
+void Game::prepareOptionsMenu()
 {
-    pausePage_ = PauseMenuPage::Options;
     operationSettingsCapture_.cancel();
     operationSettingsConflictConfirm_ = {};
     operationSettingsResetAllConfirm_ = {};
@@ -3706,6 +3808,18 @@ void Game::openOptionsMenu()
     optionsStatus_.clear();
     operationSettingsStatus_.clear();
     loadOptionsSettings();
+}
+
+void Game::openOptionsMenu()
+{
+    pausePage_ = PauseMenuPage::Options;
+    prepareOptionsMenu();
+}
+
+bool Game::optionsMenuActive() const
+{
+    return (mode_ == ScreenMode::PauseMenu && pausePage_ == PauseMenuPage::Options) ||
+        (mode_ == ScreenMode::Title && titleMenuPage_ == TitleMenuPage::Options);
 }
 
 void Game::loadOptionsSettings()
@@ -3845,8 +3959,7 @@ void Game::resetOperationSettingsAll()
 
 bool Game::handleOperationSettingsEvent(const SDL_Event& event)
 {
-    if (mode_ != ScreenMode::PauseMenu ||
-        pausePage_ != PauseMenuPage::Options ||
+    if (!optionsMenuActive() ||
         optionsPage_ != OptionsPageOperation ||
         !operationSettingsCapture_.active() ||
         !operationSettingsCapture_.shouldConsumeEvent(event)) {
@@ -4457,19 +4570,20 @@ UiRect Game::ringStatusHudRect(int ringIndex, int unlockedRingCount) const
         static_cast<float>(std::max(0, unlockedRingCount - 1)) * RingStatusHudGap;
     const float startY = std::max(
         TopInfoBarY + TopInfoBarHeight + 8.0f,
-        screenHeight - RingStatusHudBottomMargin - totalHeight);
+        screenHeight - RingStatusHudBottomMargin - totalHeight - RingStatusHudUpOffset);
     return {{
         RingStatusHudLeftMargin,
         startY + static_cast<float>(ringIndex) * (RingStatusHudHeight + RingStatusHudGap),
     }, {RingStatusHudWidth, RingStatusHudHeight}};
 }
 
-void Game::updateRingStatusHud(UiContext& ui)
+void Game::updateRingStatusHud(UiContext& ui, float dt)
 {
     if (introTutorialActive()) {
         return;
     }
 
+    const float safeDt = std::max(0.0f, dt);
     const int unlockedRingCount = unlockedRingHudCount();
     for (int ringIndex = 0; ringIndex < unlockedRingCount; ++ringIndex) {
         if (!ui.pressed(ringStatusHudRect(ringIndex, unlockedRingCount))) {
@@ -4479,7 +4593,44 @@ void Game::updateRingStatusHud(UiContext& ui)
             ui.emitSound(UiSoundEvent::TabSwitch);
         }
         switchActiveRingWithLog(ringIndex - spellRing_.activeRingIndex());
-        return;
+        break;
+    }
+
+    for (int ringIndex = 0; ringIndex < SpellRingCount; ++ringIndex) {
+        RingStatusHudAnimation& animation = ringStatusHudAnimations_[static_cast<std::size_t>(ringIndex)];
+        if (ringIndex >= unlockedRingCount) {
+            animation = {};
+            continue;
+        }
+
+        const float cooldownRatio = spellRing_.cooldownRatioForRing(ringIndex, balance_);
+        if (!animation.initialized) {
+            animation.previousCooldownRatio = cooldownRatio;
+            animation.visibility = ringIndex == spellRing_.activeRingIndex() || cooldownRatio > 0.001f ? 1.0f : 0.0f;
+            animation.initialized = true;
+        } else if (animation.previousCooldownRatio > 0.001f && cooldownRatio <= 0.001f) {
+            animation.readyHoldTimer = RingStatusHudReadyHoldSeconds;
+            animation.pulseTimer = RingStatusHudPulseSeconds;
+            playAudioSe(RingStatusHudChargeReadySe);
+        }
+
+        animation.previousCooldownRatio = cooldownRatio;
+        animation.readyHoldTimer = std::max(0.0f, animation.readyHoldTimer - safeDt);
+        animation.pulseTimer = std::max(0.0f, animation.pulseTimer - safeDt);
+
+        const bool active = ringIndex == spellRing_.activeRingIndex();
+        const bool shouldShow = active || cooldownRatio > 0.001f || animation.readyHoldTimer > 0.0f;
+        const float targetVisibility = shouldShow ? 1.0f : 0.0f;
+        if (RingStatusHudFadeSeconds <= 0.001f) {
+            animation.visibility = targetVisibility;
+        } else {
+            const float step = safeDt / RingStatusHudFadeSeconds;
+            if (animation.visibility < targetVisibility) {
+                animation.visibility = std::min(targetVisibility, animation.visibility + step);
+            } else {
+                animation.visibility = std::max(targetVisibility, animation.visibility - step);
+            }
+        }
     }
 }
 
@@ -4606,6 +4757,66 @@ void Game::renderEndingKamishibai(Renderer& renderer) const
 void Game::renderTitleScreen(Renderer& renderer) const
 {
     openingRenderer_.renderTitleScreen(renderer, openingTitleImagePath(openingPages_), camera_.width(), camera_.height());
+    renderer.setScreenSpace();
+
+    if (titleMenuPage_ == TitleMenuPage::Options) {
+        UiCancelControlScope cancelScope(titleCancelState_);
+        const char* help = optionsPage_ == OptionsPageOperation
+            ? "Z/X 設定切替  Q/E 分類切替  ↑/↓ 行選択  ←/→ 列選択  F/Enter 変更  Esc 戻る"
+            : (optionsPage_ == OptionsPageAudio
+                ? "Z/X 設定切替  ↑/↓ 項目選択  ←/→ 音量変更  Esc 戻る"
+                : "Z/X 設定切替  ↑/↓ 項目選択  ←/→ 変更  F/Enter 切替  Esc 戻る");
+        UiWindowScope window(
+            renderer,
+            "title.options",
+            optionsPanelRect(),
+            "オプション",
+            help,
+            UiWindowOptions{true, true});
+        renderOptionsMenu(renderer);
+        return;
+    }
+
+    if (titleMenuPage_ == TitleMenuPage::Credits) {
+        UiCancelControlScope cancelScope(titleCancelState_);
+        const UiRect panel = titleCreditsPanelRect();
+        UiWindowScope window(
+            renderer,
+            "title.credits",
+            panel,
+            "クレジット",
+            "↑/↓ スクロール  Esc 戻る",
+            UiWindowOptions{true, true});
+
+        UiScrollAreaStyle scrollStyle;
+        const UiRect viewport = titleCreditsViewportRect();
+        const float contentWidth = std::max(1.0f, viewport.size.x - scrollStyle.scrollbarWidth - scrollStyle.scrollbarGap - scrollStyle.scrollbarPaddingX);
+        const float contentHeight = renderer.measureWrappedText(titleCreditsText_, contentWidth, 2).y + 24.0f;
+        const UiScrollAreaLayout layout = makeUiScrollAreaLayout(viewport, contentHeight, titleCreditsScrollOffset_, scrollStyle);
+
+        drawUiSubPanel(renderer, viewport);
+        renderer.pushClipRect(layout.viewport.pos, layout.viewport.size);
+        renderer.drawWrappedText(
+            layout.content.pos + Vec2{0.0f, 12.0f - layout.scrollOffset},
+            titleCreditsText_,
+            std::max(1.0f, layout.content.size.x),
+            ui::Text,
+            2);
+        renderer.popClipRect();
+        drawUiScrollAreaScrollbar(renderer, layout, scrollStyle);
+        return;
+    }
+
+    UiWindowScope window(
+        renderer,
+        "title.main",
+        titleMainPanelRect(),
+        "MajoShovel",
+        "↑/↓ 選択  F/Enter 決定",
+        UiWindowOptions{true, false});
+    for (int i = 0; i < TitleMenuItemCount; ++i) {
+        drawUiButton(renderer, titleMenuItemRect(i), titleMenuItemName(i), i == titleMenuSelection_);
+    }
 }
 
 void Game::renderScreenTransitionOverlay(Renderer& renderer)
@@ -4848,34 +5059,61 @@ void Game::renderRingStatusHud(Renderer& renderer) const
     renderer.setScreenSpace();
 
     const int unlockedRingCount = unlockedRingHudCount();
+    const ImageHandle ringHudImage = renderer.acquireImage(RingStatusHudImagePath, TextureFilter::Linear);
+    Vec2 ringHudImageSize{};
+    const bool canDrawImage =
+        ringHudImage.valid() &&
+        renderer.getImageSize(ringHudImage, ringHudImageSize) &&
+        ringHudImageSize.x >= RingStatusHudFrameSize.x * static_cast<float>(RingStatusHudImageColumns) &&
+        ringHudImageSize.y >= RingStatusHudFrameSize.y * static_cast<float>(RingStatusHudImageRows);
 
     char buffer[96];
     for (int ringIndex = 0; ringIndex < unlockedRingCount; ++ringIndex) {
         const UiRect panel = ringStatusHudRect(ringIndex, unlockedRingCount);
         const bool active = ringIndex == spellRing_.activeRingIndex();
 
-        drawUiSubPanel(renderer, panel);
-        if (active) {
-            renderer.drawRect(panel.pos, panel.size, {255, 236, 158, 255});
-            renderer.drawRect(panel.pos + Vec2{1.0f, 1.0f}, panel.size - Vec2{2.0f, 2.0f}, {255, 236, 158, 190});
+        if (canDrawImage) {
+            renderer.drawImageHorizontalSlices(
+                ringHudImage,
+                ringStatusHudSpriteSource(ringIndex, active),
+                panel.pos,
+                panel.size,
+                RingStatusHudSliceLeftWidth,
+                RingStatusHudSliceRightWidth);
+        } else {
+            drawUiSubPanel(renderer, panel);
         }
 
-        const Vec2 content = panel.pos + Vec2{RingStatusHudPadding, RingStatusHudPadding};
         const auto& items = spellRing_.itemsForRing(ringIndex);
+        const RingStatusHudAnimation& cooldownAnimation = ringStatusHudAnimations_[static_cast<std::size_t>(ringIndex)];
+        const float cooldownAlpha = clamp(cooldownAnimation.visibility, 0.0f, 1.0f);
+        drawRingStatusHudCooldownPulse(renderer, panel.pos, cooldownAnimation.pulseTimer, cooldownAlpha);
+        drawRingStatusHudCooldown(renderer, panel.pos, spellRing_.cooldownRatioForRing(ringIndex, balance_), cooldownAlpha);
 
-        std::snprintf(buffer, sizeof(buffer), "%sRing %d", active ? "> " : "", ringIndex + 1);
-        renderer.drawText(content, buffer, active ? Color{255, 236, 158, 255} : ui::Text, 2);
+        const Vec2 textPos = panel.pos + RingStatusHudTextPos;
+        renderer.drawText(textPos, ringDisplayName(ringIndex, unlockedRingCount), active ? RingStatusHudNameColor : RingStatusHudInactiveNameColor, 2);
 
-        std::snprintf(buffer, sizeof(buffer), "アイテム数 %02d / %02d", static_cast<int>(items.size()), spellRing_.maxItemCount());
-        renderer.drawText(content + Vec2{0.0f, 24.0f}, buffer, {232, 236, 244, 255}, 2);
+        std::snprintf(buffer, sizeof(buffer), "アイテム %d/%d", static_cast<int>(items.size()), spellRing_.maxItemCountForRing(ringIndex));
+        renderer.drawText(
+            textPos + Vec2{0.0f, RingStatusHudLineGap},
+            buffer,
+            RingStatusHudItemColor,
+            2);
 
+        const float weight = spellRing_.totalEquippedWeightForRing(ringIndex);
+        const float weightLimit = spellRing_.maxEquippedWeightForRing(ringIndex);
         std::snprintf(
             buffer,
             sizeof(buffer),
-            "重量 %.1f / %.1f",
-            spellRing_.totalEquippedWeightForRing(ringIndex),
-            spellRing_.maxEquippedWeightForRing(ringIndex));
-        renderer.drawText(content + Vec2{0.0f, 48.0f}, buffer, {222, 236, 255, 255}, 2);
+            "重量 %.1f/%.1fkg",
+            weight,
+            weightLimit);
+        renderer.drawText(
+            textPos + Vec2{0.0f, RingStatusHudLineGap * 2.0f},
+            buffer,
+            RingStatusHudWeightColor,
+            2);
+        drawRingStatusHudWeightGauge(renderer, panel.pos, weight, weightLimit);
     }
 }
 

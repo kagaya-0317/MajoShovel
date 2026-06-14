@@ -73,6 +73,14 @@ public:
         Color tint = {255, 255, 255, 255});
     void fillSoftCircle(Vec2 center, float radius, Color color);
     void drawSoftRing(Vec2 center, float radius, float width, Color color);
+    void fillSoftRingArc(
+        Vec2 center,
+        float innerRadius,
+        float outerRadius,
+        float startAngle,
+        float sweepAngle,
+        Color startColor,
+        Color endColor);
     void fillEllipse(Vec2 center, Vec2 radius, Color color);
     void drawActorShadow(Vec2 actorAnchor, float visualSize, Color color = {0, 0, 0, 82});
     void drawActorShadow(Vec2 actorAnchor, float visualSize, Vec2 scale, Color color = {0, 0, 0, 82});
@@ -181,6 +189,14 @@ public:
     ImageHandle acquireImage(std::string_view path, TextureFilter filter = TextureFilter::Nearest);
     bool drawImage(ImageHandle handle, Vec2 center, Vec2 size, const ImageDrawOptions& options = {});
     bool drawImageRegion(ImageHandle handle, RectF sourceRect, Vec2 center, Vec2 size, const ImageDrawOptions& options = {});
+    bool drawImageHorizontalSlices(
+        ImageHandle handle,
+        RectF sourceRect,
+        Vec2 pos,
+        Vec2 size,
+        float leftWidth,
+        float rightWidth,
+        const ImageDrawOptions& options = {});
     bool drawImage(
         std::string_view path,
         Vec2 center,

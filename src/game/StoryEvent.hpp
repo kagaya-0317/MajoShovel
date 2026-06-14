@@ -14,6 +14,7 @@ struct StoryEvent {
     std::string trigger;
     std::string onceFlag;
     bool repeatable = false;
+    bool debugHidden = false;
     DialogueSequence dialogue;
 };
 

@@ -276,7 +276,8 @@ public:
     int activeRingIndex() const { return activeRingIndex_; }
     float shapeRotation() const { return shapeRotationForRing(activeRingIndex_); }
     int applyDirectionalWind(Vec2 center, Vec2 direction, float dt, float radius, float strength);
-    float cooldownRatio(const Player& player, const RuntimeBalance& balance) const;
+    float cooldownRatio(const RuntimeBalance& balance) const;
+    float cooldownRatioForRing(int ringIndex, const RuntimeBalance& balance) const;
     std::vector<RingMotionEvent> consumeMotionEvents();
 
 private:
@@ -298,6 +299,7 @@ private:
         float throwSettleTime = 0.0f;
         float throwDistance = 0.0f;
         float throwVisualEnergyFadeTimer = 0.0f;
+        float throwCooldownRemaining = 0.0f;
         SpellRingState state = SpellRingState::Normal;
     };
 
@@ -341,8 +343,10 @@ private:
     const std::vector<SpellRingItem>& activeItems() const;
     void updateActionFlashTimers(float dt);
     void updateThrowVisualEnergyTimers(float dt);
+    void updateThrowCooldowns(float dt);
     void advanceOrbitAngles(float dt, const RuntimeBalance& balance);
     void refreshItemWorldPositions(float dt, const RuntimeBalance& balance, bool advanceCapturedBehaviors);
+    float throwCooldownForRing(int ringIndex, const RuntimeBalance& balance) const;
     float throwReachForRing(int ringIndex) const;
     bool canAddItemForRing(int ringIndex, const SpellRingItem& item) const;
     bool addItemToRing(int ringIndex, SpellRingItem item, SpellRingAddResult* outResult);

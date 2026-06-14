@@ -4,6 +4,7 @@
 #include "data/EnemyCatalog.hpp"
 #include "game/EntityStatus.hpp"
 #include "game/ItemModel.hpp"
+#include "game/Chunk.hpp"
 
 #include <array>
 #include <optional>
@@ -110,6 +111,7 @@ enum class AstragnaPhase {
 
 inline constexpr int JunkCrabMaxDebris = 6;
 inline constexpr int AstragnaSealPartCount = 5;
+inline constexpr int AstragnaMaxShellBlocks = 256;
 
 struct JunkCrabDebrisRuntime {
     bool active = false;
@@ -142,6 +144,8 @@ struct AstragnaShellBlockRuntime {
     bool repairing = false;
     int layerIndex = 0;
     int segmentIndex = 0;
+    int segmentCount = 0;
+    TileType tileType = TileType::HardRock;
     float localAngle = 0.0f;
     float angularSpan = 0.0f;
     float orbitRadius = 0.0f;
@@ -159,9 +163,10 @@ struct AstragnaBossRuntime {
     float repairTimer = 0.0f;
     int reviveCount = 0;
     int repairCursor = 0;
+    int shellBlockCount = 0;
     bool initialized = false;
     std::array<AstragnaSealPartRuntime, AstragnaSealPartCount> sealParts{};
-    std::vector<AstragnaShellBlockRuntime> shellBlocks{};
+    std::array<AstragnaShellBlockRuntime, AstragnaMaxShellBlocks> shellBlocks{};
 };
 
 struct BossActionRuntime {

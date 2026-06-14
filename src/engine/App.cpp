@@ -965,6 +965,10 @@ bool App::reloadAssetForPath(const std::string& changedPath)
         renderer_->invalidateImage("assets/UI_itemShortCuts.png");
         return true;
     }
+    if (fileName == "ui_rings.png") {
+        renderer_->invalidateImage("assets/UI_rings.png");
+        return true;
+    }
     if (fileName == "ui_cursor.png") {
         return loadGameCursor(GameCursorPath);
     }

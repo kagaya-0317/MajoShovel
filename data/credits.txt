@@ -1,0 +1,10 @@
+﻿MajoShovel
+
+制作
+Genta Kagaya
+
+使用ライブラリ
+SDL3
+
+Special Thanks
+MajoShovel を遊んでくれるみなさま

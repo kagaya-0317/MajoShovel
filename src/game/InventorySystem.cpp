@@ -42,8 +42,8 @@ constexpr float ShortcutHudBottomMargin = 10.0f;
 constexpr float ShortcutHudSlotHitSizeDesign = 70.0f;
 constexpr float ShortcutHudSlotHitScale = 1.0f;
 constexpr float ShortcutHudIconMaxSizeDesign = 48.0f;
-constexpr float ShortcutHudSelectionRadiusScale = 0.52f;
-constexpr float ShortcutHudSelectionRingWidth = 5.0f;
+constexpr float ShortcutHudSelectedPatchWDesign = 116.0f;
+constexpr float ShortcutHudSelectedPatchHDesign = 126.0f;
 constexpr float ShortcutHudSelectedNameGap = 6.0f;
 constexpr float ScreenX = 44.0f;
 constexpr float ScreenY = 58.0f;
@@ -179,6 +179,46 @@ float shortcutHudIconMaxSize(const UiRect& panel)
     return ShortcutHudIconMaxSizeDesign * shortcutHudFrameDrawScale(panel);
 }
 
+RectF shortcutHudFrameSourceRect(int row)
+{
+    return {
+        0.0f,
+        ShortcutHudFrameDesignH * static_cast<float>(row),
+        ShortcutHudFrameDesignW,
+        ShortcutHudFrameDesignH,
+    };
+}
+
+RectF shortcutHudSelectedPatchSourceRect(int column)
+{
+    column = std::clamp(column, 0, ShortcutHudColumns - 1);
+    const Vec2 center{
+        ShortcutHudSlotCenters[static_cast<std::size_t>(column)].x * ShortcutHudFrameDesignW,
+        ShortcutHudFrameDesignH + ShortcutHudSlotCenters[static_cast<std::size_t>(column)].y * ShortcutHudFrameDesignH,
+    };
+    return {
+        center.x - ShortcutHudSelectedPatchWDesign * 0.5f,
+        center.y - ShortcutHudSelectedPatchHDesign * 0.5f,
+        ShortcutHudSelectedPatchWDesign,
+        ShortcutHudSelectedPatchHDesign,
+    };
+}
+
+void drawShortcutHudSelectedPatch(Renderer& renderer, ImageHandle image, int column, UiRect panel)
+{
+    const RectF source = shortcutHudSelectedPatchSourceRect(column);
+    const float scale = shortcutHudFrameDrawScale(panel);
+    const Vec2 sourceCenter{
+        source.x + source.w * 0.5f,
+        source.y - ShortcutHudFrameDesignH + source.h * 0.5f,
+    };
+    const Vec2 destCenter{
+        panel.pos.x + sourceCenter.x * scale,
+        panel.pos.y + sourceCenter.y * scale,
+    };
+    renderer.drawImageRegion(image, source, destCenter, {source.w * scale, source.h * scale});
+}
+
 Vec2 shortcutHudSlotCenter(int column, int screenWidth, int screenHeight)
 {
     const UiRect rect = shortcutHudSlotRect(column, screenWidth, screenHeight);
@@ -188,15 +228,6 @@ Vec2 shortcutHudSlotCenter(int column, int screenWidth, int screenHeight)
 Vec2 uiRectCenter(const UiRect& rect)
 {
     return rect.pos + rect.size * 0.5f;
-}
-
-void drawShortcutHudSelection(Renderer& renderer, UiRect slotRect)
-{
-    const Vec2 center = uiRectCenter(slotRect);
-    const float radius = std::min(slotRect.size.x, slotRect.size.y) * ShortcutHudSelectionRadiusScale;
-    renderer.drawSoftRing(center, radius, ShortcutHudSelectionRingWidth, {255, 238, 178, 90});
-    renderer.drawCircle(center, radius, {255, 242, 190, 180});
-    renderer.drawCircle(center, radius + 2.0f, {255, 242, 190, 90});
 }
 
 bool objectCategoryEquals(const ItemData& item, std::string_view category)
@@ -2573,22 +2604,15 @@ void InventorySystem::updateShortcuts(
             const UiRect rect = shortcutHudSlotRect(column, screenWidth, screenHeight);
             if (rect.contains(ui.mouse())) {
                 hoveredSlotIndex = shortcutRow_ * ShortcutColumns + column;
-                selectShortcutIndex(hoveredSlotIndex);
                 break;
             }
         }
     }
 
     if (hoveredSlotIndex >= 0 && input.mouseLeftPressed() && !ui.pointerConsumed()) {
-        if (canUseScreenItem(hoveredSlotIndex)) {
-            if (useShortcutSelection(player, spellRing, effectDispatcher, magic, discoveryEvents, encyclopedia)) {
-                ui.emitSound(UiSoundEvent::ItemUse);
-            } else {
-                ui.emitSound(UiSoundEvent::Cancel);
-            }
-        } else {
-            ui.emitSound(UiSoundEvent::Cancel);
-        }
+        const int previousShortcutIndex = selectedShortcutIndex();
+        selectShortcutIndex(hoveredSlotIndex);
+        ui.emitCursorMoveIfChanged(previousShortcutIndex, selectedShortcutIndex());
         ui.consumePointer();
         return;
     }
@@ -3099,12 +3123,12 @@ void InventorySystem::renderShortcutHud(Renderer& renderer, const SpellRingSyste
     renderer.setScreenSpace();
 
     const UiRect hudPanel = shortcutHudPanelRect(screenWidth, screenHeight);
-    const bool drewFrame = renderer.drawImage(
-        ShortcutHudFramePath,
+    const ImageHandle shortcutHudFrame = renderer.acquireImage(ShortcutHudFramePath, TextureFilter::Linear);
+    const bool drewFrame = shortcutHudFrame.valid() && renderer.drawImageRegion(
+        shortcutHudFrame,
+        shortcutHudFrameSourceRect(0),
         hudPanel.pos + hudPanel.size * 0.5f,
-        hudPanel.size,
-        {},
-        TextureFilter::Linear);
+        hudPanel.size);
 
     const auto entryViewForSlot = [this](int slotIndex) {
         InventoryUiEntryView entry{};
@@ -3151,7 +3175,7 @@ void InventorySystem::renderShortcutHud(Renderer& renderer, const SpellRingSyste
     (void)spellRing;
 
     if (drewFrame) {
-        drawShortcutHudSelection(renderer, shortcutHudSlotRect(selectedShortcutColumn_, screenWidth, screenHeight));
+        drawShortcutHudSelectedPatch(renderer, shortcutHudFrame, selectedShortcutColumn_, hudPanel);
     }
 
     for (int column = 0; column < ShortcutColumns; ++column) {
@@ -3159,7 +3183,7 @@ void InventorySystem::renderShortcutHud(Renderer& renderer, const SpellRingSyste
         const bool selected = column == selectedShortcutColumn_;
         const UiRect slotRect = shortcutHudSlotRect(column, screenWidth, screenHeight);
         const InventoryUiEntryView entry = entryViewForSlot(slotIndex);
-        InventoryUiSlotStyle style{selected, false, shortcutHudIconMaxSize(hudPanel)};
+        InventoryUiSlotStyle style{selected && !drewFrame, false, shortcutHudIconMaxSize(hudPanel)};
         style.showFrame = !drewFrame;
         if (entry.item != nullptr && entry.instance == nullptr && entry.stackCount > 1) {
             style.showTopRightCount = true;

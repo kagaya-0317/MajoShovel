@@ -127,7 +127,7 @@ void DebugOverlay::render(
         ringShapeName(spellRing.activeRingShape()),
         static_cast<int>(spellRing.radius()),
         spellRing.angularSpeed(),
-        static_cast<int>(spellRing.cooldownRatio(player, balance) * 100.0f),
+        static_cast<int>(spellRing.cooldownRatio(balance) * 100.0f),
         nearestWarpIndex,
         nearestWarpDiscovered ? "found" : "hidden",
         discoveredWarpCount,

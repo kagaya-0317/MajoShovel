@@ -888,6 +888,66 @@ void Renderer::drawSoftRing(Vec2 center, float radius, float width, Color color)
     SDL_RenderGeometry(renderer_, nullptr, vertices.data(), static_cast<int>(vertices.size()), indices.data(), static_cast<int>(indices.size()));
 }
 
+void Renderer::fillSoftRingArc(
+    Vec2 center,
+    float innerRadius,
+    float outerRadius,
+    float startAngle,
+    float sweepAngle,
+    Color startColor,
+    Color endColor)
+{
+    if (innerRadius < 0.0f || outerRadius <= innerRadius || sweepAngle <= 0.0f ||
+        (startColor.a == 0 && endColor.a == 0)) {
+        return;
+    }
+
+    const float clampedSweep = std::min(sweepAngle, Pi * 2.0f);
+    const float scale = screenScale();
+    const Vec2 c = transform(center);
+    const float innerR = innerRadius * scale;
+    const float outerR = outerRadius * scale;
+    const float thickness = std::max(0.0f, outerR - innerR);
+    const float edge = std::min(std::max(0.75f, scale), thickness * 0.45f);
+    const float coreInnerR = std::min(outerR, innerR + edge);
+    const float coreOuterR = std::max(coreInnerR, outerR - edge);
+    const int segments = std::max(8, static_cast<int>(std::ceil(clampedSweep / (Pi / 48.0f))));
+
+    std::vector<SDL_Vertex> vertices;
+    std::vector<int> indices;
+    vertices.reserve(static_cast<std::size_t>(segments + 1) * 4);
+    indices.reserve(static_cast<std::size_t>(segments) * 18);
+
+    for (int i = 0; i <= segments; ++i) {
+        const float t = static_cast<float>(i) / static_cast<float>(segments);
+        const float angle = startAngle + clampedSweep * t;
+        const Vec2 dir{std::cos(angle), std::sin(angle)};
+        const Color solid = transformColor(lerpColor(startColor, endColor, t));
+        Color transparent = solid;
+        transparent.a = 0;
+
+        vertices.push_back(SDL_Vertex{{c.x + dir.x * innerR, c.y + dir.y * innerR}, vertexColor(transparent), {0.0f, 0.0f}});
+        vertices.push_back(SDL_Vertex{{c.x + dir.x * coreInnerR, c.y + dir.y * coreInnerR}, vertexColor(solid), {0.0f, 0.0f}});
+        vertices.push_back(SDL_Vertex{{c.x + dir.x * coreOuterR, c.y + dir.y * coreOuterR}, vertexColor(solid), {0.0f, 0.0f}});
+        vertices.push_back(SDL_Vertex{{c.x + dir.x * outerR, c.y + dir.y * outerR}, vertexColor(transparent), {0.0f, 0.0f}});
+    }
+
+    for (int i = 0; i < segments; ++i) {
+        const int a = i * 4;
+        const int b = (i + 1) * 4;
+        for (int lane = 0; lane < 3; ++lane) {
+            indices.push_back(a + lane);
+            indices.push_back(b + lane);
+            indices.push_back(b + lane + 1);
+            indices.push_back(a + lane);
+            indices.push_back(b + lane + 1);
+            indices.push_back(a + lane + 1);
+        }
+    }
+
+    SDL_RenderGeometry(renderer_, nullptr, vertices.data(), static_cast<int>(vertices.size()), indices.data(), static_cast<int>(indices.size()));
+}
+
 void Renderer::fillEllipse(Vec2 center, Vec2 radius, Color color)
 {
     if (radius.x <= 0.0f || radius.y <= 0.0f) {
@@ -2251,6 +2311,62 @@ bool Renderer::drawImageRegion(ImageHandle handle, RectF sourceRect, Vec2 center
             flipMode);
     }
     return true;
+}
+
+bool Renderer::drawImageHorizontalSlices(
+    ImageHandle handle,
+    RectF sourceRect,
+    Vec2 pos,
+    Vec2 size,
+    float leftWidth,
+    float rightWidth,
+    const ImageDrawOptions& options)
+{
+    if (sourceRect.w <= 0.0f || sourceRect.h <= 0.0f || size.x <= 0.0f || size.y <= 0.0f) {
+        return false;
+    }
+
+    const float sourceLeftWidth = std::clamp(leftWidth, 0.0f, sourceRect.w);
+    const float sourceRightWidth = std::clamp(rightWidth, 0.0f, std::max(0.0f, sourceRect.w - sourceLeftWidth));
+    const float sourceMiddleWidth = std::max(0.0f, sourceRect.w - sourceLeftWidth - sourceRightWidth);
+    const float fixedDestWidth = sourceLeftWidth + sourceRightWidth;
+    const float fixedScale = fixedDestWidth > 0.0f ? std::min(1.0f, size.x / fixedDestWidth) : 1.0f;
+    const float destLeftWidth = sourceLeftWidth * fixedScale;
+    const float destRightWidth = sourceRightWidth * fixedScale;
+    const float destMiddleWidth = std::max(0.0f, size.x - destLeftWidth - destRightWidth);
+
+    ImageDrawOptions sliceOptions = options;
+    sliceOptions.anchor = {0.5f, 0.5f};
+
+    bool ok = true;
+    if (destLeftWidth > 0.0f) {
+        ok = drawImageRegion(
+                 handle,
+                 {sourceRect.x, sourceRect.y, sourceLeftWidth, sourceRect.h},
+                 pos + Vec2{destLeftWidth * 0.5f, size.y * 0.5f},
+                 {destLeftWidth, size.y},
+                 sliceOptions) &&
+            ok;
+    }
+    if (sourceMiddleWidth > 0.0f && destMiddleWidth > 0.0f) {
+        ok = drawImageRegion(
+                 handle,
+                 {sourceRect.x + sourceLeftWidth, sourceRect.y, sourceMiddleWidth, sourceRect.h},
+                 pos + Vec2{destLeftWidth + destMiddleWidth * 0.5f, size.y * 0.5f},
+                 {destMiddleWidth, size.y},
+                 sliceOptions) &&
+            ok;
+    }
+    if (destRightWidth > 0.0f) {
+        ok = drawImageRegion(
+                 handle,
+                 {sourceRect.x + sourceRect.w - sourceRightWidth, sourceRect.y, sourceRightWidth, sourceRect.h},
+                 pos + Vec2{size.x - destRightWidth * 0.5f, size.y * 0.5f},
+                 {destRightWidth, size.y},
+                 sliceOptions) &&
+            ok;
+    }
+    return ok;
 }
 
 bool Renderer::drawImage(

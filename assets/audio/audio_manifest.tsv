@@ -53,6 +53,7 @@ se.boss.defeat	se	se/zz_tmp_boss_defeat_placeholder.wav	0.88	false	400	0	ボス�
 se.player.damage	se	se/zz_tmp_player_damage_placeholder.wav	0.82	false	150	0	プレイヤー被弾
 se.player.pinch	se	se/alert.wav	0.97	false	900	0	ピンチ警告
 se.ring.throw	se	se/wind10.wav	0.69	false	120	17	リング投げ
+se.ring.charge_ready	se	se/sound14.wav	0.58	false	90	48	リング投げチャージ完了
 se.enemy.defeat	se	se/zz_tmp_enemy_defeat_placeholder.wav	0.76	false	120	0	敵撃破
 se.enemy.spawn	se	se/zz_tmp_enemy_spawn_placeholder.wav	0.7	false	180	0	敵出現
 se.enemy.alert	se	se/zz_tmp_enemy_alert_placeholder.wav	0.72	false	180	0	敵発見

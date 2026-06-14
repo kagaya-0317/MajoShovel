@@ -4,7 +4,14 @@
 @once story_intro_tutorial_midway
 
 @say player ルネ
-出口はもう少しかな…？
+はあ、はあ…
+出口はまだかなあ…？
 
 @say player ルネ
-不安だけど、がんばって進むしかない…！
+不安だけど、がんばって進まなきゃ…
+
+@say chicory チコリ
+ちこり！ちこり！
+
+@say player ルネ
+チコリ、ありがとう

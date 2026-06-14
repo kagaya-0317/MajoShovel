@@ -91,7 +91,7 @@ constexpr float JunkCrabThrowWindupSeconds = 0.48f;
 constexpr float JunkCrabThrowBurstSeconds = 0.38f;
 constexpr int JunkCrabThrowCount = 3;
 constexpr float JunkCrabThrowSpreadDegrees = 24.0f;
-constexpr float AstragnaRotationSpeed = 0.32f;
+constexpr float AstragnaRotationSpeed = 0.08f;
 constexpr float AstragnaCoreDiameterTiles = 10.0f;
 constexpr float AstragnaShellThicknessTiles = 5.0f;
 constexpr float AstragnaShellGapTiles = 0.0f;
@@ -4092,7 +4092,13 @@ struct AstragnaShellConfig {
     int layerCount = 0;
     float shellHitRadius = 0.0f;
     TileType shellTileType = TileType::HardRock;
+    bool mixedShellTileTypes = true;
 };
+
+bool astragnaShellTileTypeParamIsMixed(std::string_view value)
+{
+    return value.empty() || value == "mixed" || value == "random" || value == "auto" || value == "混合";
+}
 
 TileType astragnaShellTileTypeFromParam(std::string_view value)
 {
@@ -4104,6 +4110,35 @@ TileType astragnaShellTileTypeFromParam(std::string_view value)
     }
     if (value == "ore" || value == "Ore" || value == "鉱石") {
         return TileType::Ore;
+    }
+    return TileType::HardRock;
+}
+
+std::uint32_t astragnaShellBlockHash(int layer, int segment)
+{
+    std::uint32_t h = 0x9E3779B9u;
+    h ^= static_cast<std::uint32_t>(layer) + 0x85EBCA6Bu + (h << 6) + (h >> 2);
+    h ^= static_cast<std::uint32_t>(segment) + 0xC2B2AE35u + (h << 6) + (h >> 2);
+    h ^= h >> 16;
+    h *= 0x7FEB352Du;
+    h ^= h >> 15;
+    h *= 0x846CA68Bu;
+    h ^= h >> 16;
+    return h;
+}
+
+TileType astragnaShellTileTypeForBlock(const AstragnaShellConfig& config, int layer, int segment)
+{
+    if (!config.mixedShellTileTypes) {
+        return config.shellTileType;
+    }
+
+    const std::uint32_t roll = astragnaShellBlockHash(layer, segment) % 100U;
+    if (roll < 14U) {
+        return TileType::Dirt;
+    }
+    if (roll < 42U) {
+        return TileType::Rock;
     }
     return TileType::HardRock;
 }
@@ -4123,7 +4158,9 @@ AstragnaShellConfig astragnaShellConfig(const Enemy& enemy)
     config.layerCount = std::max(1, static_cast<int>(std::round((config.outerRadius - config.innerRadius) / tileSize)));
     config.layerThickness = (config.outerRadius - config.innerRadius) / static_cast<float>(config.layerCount);
     config.shellHitRadius = std::max(4.0f, astragnaParamFloat(enemy, "shellHitRadius", AstragnaShellHitRadius));
-    config.shellTileType = astragnaShellTileTypeFromParam(behaviorParamString(enemy, "boss_sequence", "shellTileType", "hard_rock"));
+    const std::string shellTileTypeParam = behaviorParamString(enemy, "boss_sequence", "shellTileType", "mixed");
+    config.mixedShellTileTypes = astragnaShellTileTypeParamIsMixed(shellTileTypeParam);
+    config.shellTileType = astragnaShellTileTypeFromParam(shellTileTypeParam);
     return config;
 }
 
@@ -4196,6 +4233,9 @@ void syncAstragnaHpDisplay(Enemy& enemy)
         }
     }
     for (const AstragnaShellBlockRuntime& block : astragna.shellBlocks) {
+        if (block.maxHp <= 0) {
+            continue;
+        }
         maxHp += std::max(0, block.maxHp);
         if (block.active) {
             hp += std::max(0, block.hp);
@@ -4239,7 +4279,8 @@ void initializeAstragnaBoss(Enemy& enemy)
 
     const int shellMaxHp = std::max(1, astragnaParamInt(enemy, "shellHp", AstragnaShellMaxHp));
     const float tileSize = static_cast<float>(balance::TileSize);
-    astragna.shellBlocks.clear();
+    astragna.shellBlocks = {};
+    astragna.shellBlockCount = 0;
     for (int layer = 0; layer < shellConfig.layerCount; ++layer) {
         const float innerRadius = shellConfig.innerRadius + shellConfig.layerThickness * static_cast<float>(layer);
         const float outerRadius = layer + 1 == shellConfig.layerCount
@@ -4255,6 +4296,8 @@ void initializeAstragnaBoss(Enemy& enemy)
             block.repairing = false;
             block.layerIndex = layer;
             block.segmentIndex = segment;
+            block.segmentCount = segmentCount;
+            block.tileType = astragnaShellTileTypeForBlock(shellConfig, layer, segment);
             block.localAngle = layerOffset + angularSpan * (static_cast<float>(segment) + 0.5f);
             block.angularSpan = angularSpan;
             block.orbitRadius = orbitRadius;
@@ -4263,7 +4306,14 @@ void initializeAstragnaBoss(Enemy& enemy)
             block.outerRadius = outerRadius;
             block.maxHp = shellMaxHp;
             block.hp = shellMaxHp;
-            astragna.shellBlocks.push_back(block);
+            if (astragna.shellBlockCount >= AstragnaMaxShellBlocks) {
+                break;
+            }
+            astragna.shellBlocks[static_cast<std::size_t>(astragna.shellBlockCount)] = block;
+            ++astragna.shellBlockCount;
+        }
+        if (astragna.shellBlockCount >= AstragnaMaxShellBlocks) {
+            break;
         }
     }
 
@@ -4341,7 +4391,7 @@ void updateAstragnaRepairs(Enemy& enemy, const Player& player, float dt)
     astragna.repairTimer = repairSeconds;
 
     int repaired = 0;
-    const int blockCount = static_cast<int>(astragna.shellBlocks.size());
+    const int blockCount = std::clamp(astragna.shellBlockCount, 0, AstragnaMaxShellBlocks);
     if (blockCount <= 0) {
         return;
     }
@@ -4371,7 +4421,7 @@ void resolveAstragnaShellCollision(Enemy& enemy, Player& player, TileMap& map)
 
     const float playerRadius = player.effectiveRadius(balance::PlayerRadius);
     for (const AstragnaShellBlockRuntime& block : enemy.bossAction.astragna.shellBlocks) {
-        if (!block.active) {
+        if (!block.active || block.maxHp <= 0) {
             continue;
         }
         const Vec2 blockPosition = astragnaShellBlockPosition(enemy, block);
@@ -4606,7 +4656,7 @@ bool tryHitAstragnaBossComponent(
     }
 
     for (AstragnaShellBlockRuntime& block : astragna.shellBlocks) {
-        if (!block.active || block.hp <= 0) {
+        if (!block.active || block.hp <= 0 || block.maxHp <= 0) {
             continue;
         }
         const Vec2 blockPosition = astragnaShellBlockPosition(enemy, block);
@@ -4710,6 +4760,41 @@ std::array<Vec2, 4> astragnaShellBlockCorners(const Enemy& enemy, const Astragna
     }};
 }
 
+bool astragnaShellHasActiveBlockAt(const AstragnaBossRuntime& astragna, int layer, float localAngle)
+{
+    if (layer < 0) {
+        return false;
+    }
+    const int blockCount = std::clamp(astragna.shellBlockCount, 0, AstragnaMaxShellBlocks);
+    for (int i = 0; i < blockCount; ++i) {
+        const AstragnaShellBlockRuntime& candidate = astragna.shellBlocks[static_cast<std::size_t>(i)];
+        if (candidate.layerIndex != layer || !candidate.active || candidate.maxHp <= 0) {
+            continue;
+        }
+        const float halfSpan = std::max(candidate.angularSpan * 0.5f, 0.0001f);
+        if (std::abs(wrapAngle(localAngle - candidate.localAngle)) <= halfSpan + 0.0005f) {
+            return true;
+        }
+    }
+    return false;
+}
+
+TerrainTileNeighbors astragnaShellTileNeighbors(const AstragnaBossRuntime& astragna, const AstragnaShellBlockRuntime& block)
+{
+    const float angle = block.localAngle;
+    const float span = block.angularSpan;
+    return TerrainTileNeighbors{
+        .up = !astragnaShellHasActiveBlockAt(astragna, block.layerIndex - 1, angle),
+        .down = !astragnaShellHasActiveBlockAt(astragna, block.layerIndex + 1, angle),
+        .left = !astragnaShellHasActiveBlockAt(astragna, block.layerIndex, angle - span),
+        .right = !astragnaShellHasActiveBlockAt(astragna, block.layerIndex, angle + span),
+        .upLeft = !astragnaShellHasActiveBlockAt(astragna, block.layerIndex - 1, angle - span),
+        .upRight = !astragnaShellHasActiveBlockAt(astragna, block.layerIndex - 1, angle + span),
+        .downLeft = !astragnaShellHasActiveBlockAt(astragna, block.layerIndex + 1, angle - span),
+        .downRight = !astragnaShellHasActiveBlockAt(astragna, block.layerIndex + 1, angle + span),
+    };
+}
+
 void drawAstragnaCore(Renderer& renderer, const Enemy& enemy, bool downed)
 {
     const float coreRadius = std::max(8.0f, astragnaParamFloat(enemy, "guardianRadius", astragnaCoreRadius(enemy)));
@@ -4742,21 +4827,24 @@ void drawAstragnaBoss(Renderer& renderer, const TileMap& map, const Enemy& enemy
 
     const AstragnaBossRuntime& astragna = enemy.bossAction.astragna;
     const bool downed = astragna.phase == AstragnaPhase::Downed;
-    const AstragnaShellConfig shellConfig = astragnaShellConfig(enemy);
     constexpr std::array<int, 6> QuadIndices{{0, 1, 2, 0, 2, 3}};
     const auto drawShellTile = [&](const std::array<Vec2, 4>& corners, const AstragnaShellBlockRuntime& block, Color tint) {
-        if (!map.renderTileQuad(
+        if (!map.renderTileQuadAutotiled(
                 renderer,
                 corners,
                 0,
-                shellConfig.shellTileType,
+                block.tileType,
                 block.segmentIndex,
                 block.layerIndex,
-                tint)) {
+                tint,
+                astragnaShellTileNeighbors(astragna, block))) {
             renderer.fillTriangleList(corners.data(), corners.size(), QuadIndices.data(), QuadIndices.size(), tint);
         }
     };
     for (const AstragnaShellBlockRuntime& block : astragna.shellBlocks) {
+        if (block.maxHp <= 0) {
+            continue;
+        }
         const std::array<Vec2, 4> corners = astragnaShellBlockCorners(enemy, block);
         if (!block.active) {
             drawShellTile(corners, block, {118, 92, 148, 62});

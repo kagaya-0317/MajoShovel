@@ -61,6 +61,17 @@ struct TerrainTileDamageState {
     int maxHp = 1;
 };
 
+struct TerrainTileNeighbors {
+    bool up = false;
+    bool down = false;
+    bool left = false;
+    bool right = false;
+    bool upLeft = false;
+    bool upRight = false;
+    bool downLeft = false;
+    bool downRight = false;
+};
+
 struct TileMapPersistentState {
     std::vector<TerrainTileEdit> tileOverrides;
     std::vector<TerrainTileEdit> terrainEdits;
@@ -85,6 +96,15 @@ public:
         int variantX,
         int variantY,
         Color tint = {255, 255, 255, 255}) const;
+    bool renderTileQuadAutotiled(
+        Renderer& renderer,
+        const std::array<Vec2, 4>& corners,
+        int stageId,
+        TileType type,
+        int variantX,
+        int variantY,
+        Color tint,
+        const TerrainTileNeighbors& neighbors) const;
     void renderDarknessOverlay(
         Renderer& renderer,
         const Camera& camera,

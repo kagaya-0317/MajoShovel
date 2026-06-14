@@ -9,5 +9,8 @@
 @say player ルネ
 …って、そんなこと言ってる場合じゃないか
 
+@say chicory チコリ
+こり？
+
 @say player ルネ
 一応、これも回しながら行こうっと

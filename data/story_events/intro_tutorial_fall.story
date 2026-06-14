@@ -4,6 +4,9 @@
 @once story_intro_tutorial_fall
 
 @say player ルネ
+うう…？
+
+@say player ルネ
 こ、ここは…？
 
 @say player ルネ
@@ -16,4 +19,5 @@
 でも、ガレキが壁になって、囲まれちゃった…
 
 @say player ルネ
-あ、ちょうど近くにスコップがある。これをスペルリングで…
+あ、ちょうど近くにスコップがある。
+これをスペルリングで…

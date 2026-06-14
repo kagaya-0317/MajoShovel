@@ -7,8 +7,10 @@
 #include "game/ExplosionWarning.hpp"
 #include "game/ItemImageRenderer.hpp"
 #include "game/NpcCharacterVisual.hpp"
+#include "game/SpecialObjectRules.hpp"
 
 #include <cmath>
+#include <string_view>
 
 namespace majo {
 
@@ -58,7 +60,8 @@ constexpr float RoguelikeFacilityLightRadiusTiles = 5.8f;
 constexpr Vec2 RoguelikeFacilityNpcInspectSize{42.0f, 66.0f};
 constexpr Vec2 RoguelikeFacilityPropInspectSize{78.0f, 58.0f};
 constexpr Vec2 RoguelikeFacilityNpcImageSize{46.0f, 76.0f};
-constexpr Vec2 DungeonEventWitchNpcVisualSize{54.0f, 72.0f};
+constexpr float DungeonEventWitchNpcScale = 1.0f;
+constexpr Vec2 DungeonEventWitchNpcFallbackVisualSize{54.0f, 72.0f};
 constexpr Vec2 DungeonEventWitchNpcAnchorOffset{0.0f, 24.0f};
 constexpr Vec2 RoguelikeFacilityWagonImageSize{92.0f, 82.0f};
 constexpr Vec2 RoguelikeFacilityWorkbenchImageSize{88.0f, 52.0f};
@@ -225,6 +228,9 @@ double roguelikeLevelDistanceMultiplier(int baseLevel, int targetLevel)
 
 double roguelikeLootWeightForObject(const ObjectDefinition& object, int targetLevel)
 {
+    if (objectExcludedFromDungeonDrops(object.id)) {
+        return 0.0;
+    }
     if (object.roguelikeDropWeight <= 0.0) {
         return 0.0;
     }
@@ -236,6 +242,16 @@ double roguelikeLootWeightForObject(const ObjectDefinition& object, int targetLe
         return std::max(decayedWeight, object.roguelikeResidualWeight);
     }
     return decayedWeight;
+}
+
+std::optional<std::string> firstAvailableDungeonRewardObjectId(const ObjectCatalog& catalog)
+{
+    for (const ObjectDefinition& object : catalog.objects) {
+        if (!object.id.empty() && !objectExcludedFromDungeonDrops(object.id)) {
+            return object.id;
+        }
+    }
+    return std::nullopt;
 }
 
 constexpr std::array<Game::RoguelikeFacilityKind, RoguelikeFacilityKindCount> RoguelikeFacilityKinds{{
@@ -320,10 +336,10 @@ bool drawDungeonEventWitchNpcSprite(
     }
 
     const Vec2 anchorPosition = center + DungeonEventWitchNpcAnchorOffset;
-    const float drawScale = npcCharacterScaleToFit(renderer, *visual, DungeonEventWitchNpcVisualSize);
+    const float drawScale = DungeonEventWitchNpcScale;
     Vec2 drawSize = npcCharacterDrawSize(renderer, *visual, drawScale);
     if (drawSize.x <= 0.0f || drawSize.y <= 0.0f) {
-        drawSize = DungeonEventWitchNpcVisualSize;
+        drawSize = DungeonEventWitchNpcFallbackVisualSize;
     }
 
     renderer.drawActorShadow(anchorPosition, std::max(drawSize.x, drawSize.y));
@@ -477,9 +493,7 @@ constexpr std::string_view IntroTutorialShovelReadyTrigger = "intro_tutorial:sho
 constexpr std::string_view IntroTutorialTorchFoundTrigger = "intro_tutorial:torch_found";
 constexpr std::string_view IntroTutorialTorchReadyTrigger = "intro_tutorial:torch_ready";
 constexpr std::string_view IntroTutorialEnemyEncounterTrigger = "intro_tutorial:enemy_encounter";
-constexpr std::string_view IntroTutorialEnemyEncounterEventId = "intro_tutorial_enemy_encounter";
-constexpr std::string_view IntroTutorialEnemyEncounterSlimeEventId = "intro_tutorial_enemy_encounter_slime";
-constexpr std::string_view IntroTutorialEnemyEncounterRetreatEventId = "intro_tutorial_enemy_encounter_retreat";
+constexpr std::string_view IntroTutorialEnemyEncounterFlag = "story_intro_tutorial_enemy_encounter";
 constexpr std::string_view IntroTutorialEnemyDefeatedTrigger = "intro_tutorial:enemy_defeated";
 constexpr std::string_view IntroTutorialChestFoundTrigger = "intro_tutorial:chest_found";
 constexpr std::string_view IntroTutorialMidwayTrigger = "intro_tutorial:midway";
@@ -522,6 +536,12 @@ constexpr int BossArenaInnerRadiusXTiles = BossArenaRadiusXTiles - 1;
 constexpr int BossArenaInnerRadiusYTiles = BossArenaRadiusYTiles - 1;
 constexpr float BossArenaApproachPaddingTiles = 1.25f;
 constexpr float BossIntroPlayerOffsetTiles = 3.0f;
+constexpr std::string_view AstragnaBossEnemyId = "astragna";
+constexpr int AstragnaBossArenaRadiusTiles = 15;
+constexpr int AstragnaBossArenaInnerRadiusTiles = AstragnaBossArenaRadiusTiles - 1;
+constexpr float AstragnaBossArenaApproachPaddingTiles = 2.25f;
+constexpr float AstragnaBossIntroPlayerOffsetTiles = 14.0f;
+constexpr int AstragnaBossApproachPocketRadiusTiles = 2;
 constexpr float DungeonFocusMoveSeconds = 0.72f;
 constexpr float DungeonFocusDefaultHoldSeconds = 2.0f;
 constexpr float DungeonRewardFocusMoveSeconds = 0.35f;
@@ -545,6 +565,37 @@ struct PlacementReservation {
     DungeonTile tile{};
     int radiusTiles = 0;
 };
+
+struct BossArenaShape {
+    int radiusX = BossArenaRadiusXTiles;
+    int radiusY = BossArenaRadiusYTiles;
+    int innerRadiusX = BossArenaInnerRadiusXTiles;
+    int innerRadiusY = BossArenaInnerRadiusYTiles;
+    float approachPaddingTiles = BossArenaApproachPaddingTiles;
+    float introPlayerOffsetTiles = BossIntroPlayerOffsetTiles;
+    int approachPocketRadiusTiles = 1;
+};
+
+bool isAstragnaBossEnemyId(std::string_view enemyId)
+{
+    return enemyId == AstragnaBossEnemyId;
+}
+
+BossArenaShape bossArenaShapeForEnemyId(std::string_view enemyId)
+{
+    if (isAstragnaBossEnemyId(enemyId)) {
+        return BossArenaShape{
+            .radiusX = AstragnaBossArenaRadiusTiles,
+            .radiusY = AstragnaBossArenaRadiusTiles,
+            .innerRadiusX = AstragnaBossArenaInnerRadiusTiles,
+            .innerRadiusY = AstragnaBossArenaInnerRadiusTiles,
+            .approachPaddingTiles = AstragnaBossArenaApproachPaddingTiles,
+            .introPlayerOffsetTiles = AstragnaBossIntroPlayerOffsetTiles,
+            .approachPocketRadiusTiles = AstragnaBossApproachPocketRadiusTiles,
+        };
+    }
+    return {};
+}
 
 bool validDungeonFocusPosition(Vec2 position)
 {
@@ -3470,7 +3521,6 @@ void Game::clearTemporaryPlayerState(bool fullHeal)
     player_.velocity = {};
     player_.knockbackVelocity = {};
     player_.knockbackTimer = 0.0f;
-    player_.throwCooldownRemaining = 0.0f;
     player_.poisonDamageAccumulator = 0.0;
     player_.hotDamageAccumulator = 0.0;
     player_.bleedDamageAccumulator = 0.0;
@@ -4242,69 +4292,63 @@ void Game::addIntroTutorialTorchToRing()
 
 void Game::startIntroTutorialEnemyEncounterEvent()
 {
-    if (!startIntroTutorialEnemyEncounterPresentation(false, {})) {
-        startIntroTutorialSlimeFocusDialogue(false, {});
+    addStoryFlag(std::string(IntroTutorialEnemyEncounterFlag));
+    DialogueSequence sequence = singleLineDialogueSequence(
+        "intro_tutorial_enemy_encounter_intro",
+        "player",
+        "ルネ",
+        "うわ！モンスターだ！");
+    if (!startDialogueSequenceWithCompletion(std::move(sequence), [this]() {
+            startIntroTutorialSlimeFocusDialogue();
+        })) {
+        startIntroTutorialSlimeFocusDialogue();
     }
 }
 
-bool Game::startIntroTutorialEnemyEncounterPresentation(bool debugReplay, std::function<void()> onComplete)
-{
-    auto playFocus = [this, debugReplay, onComplete = std::move(onComplete)]() mutable {
-        startIntroTutorialSlimeFocusDialogue(debugReplay, std::move(onComplete));
-    };
-    if (debugReplay) {
-        return startStoryEventForDebugWithCompletion(IntroTutorialEnemyEncounterEventId, std::move(playFocus));
-    }
-    return startStoryEventWithCompletion(IntroTutorialEnemyEncounterEventId, std::move(playFocus));
-}
-
-bool Game::startDebugStoryTestPresentation(std::string_view id, std::function<void()> onComplete)
-{
-    if (id == IntroTutorialEnemyEncounterEventId) {
-        return startIntroTutorialEnemyEncounterPresentation(true, std::move(onComplete));
-    }
-    return startStoryEventForDebugWithCompletion(id, std::move(onComplete));
-}
-
-void Game::startIntroTutorialSlimeFocusDialogue(bool debugReplay, std::function<void()> onComplete)
+void Game::startIntroTutorialSlimeFocusDialogue()
 {
     Vec2 focusPosition = tileWorldCenter(introTutorialFirstEnemyTile_);
     enemies_.runtimeEnemyPosition(introTutorialFirstEnemyRuntimeId_, focusPosition);
 
-    std::function<void()> playRetreat = [this, debugReplay, onComplete = std::move(onComplete)]() mutable {
-        startIntroTutorialEnemyRetreatDialogue(debugReplay, std::move(onComplete));
-    };
-
     DungeonFocusRequest request;
     request.eventKind = "intro_tutorial_slime_encounter";
     request.focusWorldPos = focusPosition;
-    request.discoveryStoryEventId = std::string(IntroTutorialEnemyEncounterSlimeEventId);
+    request.discoveryDialogue = singleLineDialogueSequence(
+        "intro_tutorial_enemy_encounter_slime",
+        "slime",
+        "スライム",
+        "グヘヘヘ！襲ってやるぜ～！");
     request.holdSecondsIfNoDialogue = 0.0f;
     request.moveSeconds = 0.55f;
     request.returnSeconds = 0.55f;
-    request.onComplete = playRetreat;
+    request.onComplete = [this]() {
+        startIntroTutorialEnemyRetreatDialogue();
+    };
 
     if (requestDungeonFocus(std::move(request))) {
         return;
     }
 
-    const bool started = debugReplay
-        ? startStoryEventForDebugWithCompletion(IntroTutorialEnemyEncounterSlimeEventId, playRetreat)
-        : startStoryEventWithCompletion(IntroTutorialEnemyEncounterSlimeEventId, playRetreat);
-    if (!started && playRetreat) {
-        playRetreat();
+    DialogueSequence fallback = singleLineDialogueSequence(
+        "intro_tutorial_enemy_encounter_slime",
+        "slime",
+        "スライム",
+        "グヘヘヘ！襲ってやるぜ～！");
+    if (!startDialogueSequenceWithCompletion(std::move(fallback), [this]() {
+            startIntroTutorialEnemyRetreatDialogue();
+        })) {
+        startIntroTutorialEnemyRetreatDialogue();
     }
 }
 
-void Game::startIntroTutorialEnemyRetreatDialogue(bool debugReplay, std::function<void()> onComplete)
+void Game::startIntroTutorialEnemyRetreatDialogue()
 {
-    std::function<void()> completion = std::move(onComplete);
-    const bool started = debugReplay
-        ? startStoryEventForDebugWithCompletion(IntroTutorialEnemyEncounterRetreatEventId, completion)
-        : startStoryEventWithCompletion(IntroTutorialEnemyEncounterRetreatEventId, completion);
-    if (!started && completion) {
-        completion();
-    }
+    DialogueSequence sequence = singleLineDialogueSequence(
+        "intro_tutorial_enemy_encounter_retreat",
+        "player",
+        "ルネ",
+        "こっちに来ないで～！");
+    startDialogueSequenceWithCompletion(std::move(sequence), {});
 }
 
 void Game::spawnIntroTutorialChest()
@@ -6664,7 +6708,7 @@ bool Game::spawnDungeonEventReward(DungeonEventInstance& event, const DungeonEve
     }
     case DungeonEventRewardKind::ObjectDrop: {
         const ObjectDefinition* object = objectCatalog_.registry.findById(request.objectId);
-        if (object == nullptr) {
+        if (object == nullptr || objectExcludedFromDungeonDrops(object->id)) {
             break;
         }
         MaterialType materialType = MaterialType::Count;
@@ -8009,7 +8053,7 @@ void Game::initializeRewardNodesFromLayout()
     std::uniform_int_distribution<int> signDist(0, 1);
     std::uniform_int_distribution<int> moneyDist(2, 8);
     std::uniform_int_distribution<int> coinRoomMoneyCountDist(CoinRoomMoneyNodeMinCount, CoinRoomMoneyNodeMaxCount);
-    const std::optional<std::string> fallbackObjectId = firstAvailableObjectId(objectCatalog_);
+    const std::optional<std::string> fallbackObjectId = firstAvailableDungeonRewardObjectId(objectCatalog_);
 
     PlacementReservations reservations;
     reserveLayoutAnchors(reservations, dungeonLayout_);
@@ -8334,7 +8378,7 @@ void Game::updateExposedRewardNodes()
         }
 
         bool spawnedObject = false;
-        if (node.objectId.has_value()) {
+        if (node.objectId.has_value() && !objectExcludedFromDungeonDrops(*node.objectId)) {
             spawnedObject = worldDrops_.spawnObjectDrop(objectCatalog_, *node.objectId, tileWorldCenter(node.tile), runStats_.elapsedSeconds);
         }
         node.spawned = true;
@@ -8376,7 +8420,7 @@ void Game::revealRewardNodesFromOpenedTiles(const std::vector<Vec2>& openedTiles
             node.revealed = true;
             node.spawned = true;
             bool spawnedObject = false;
-            if (node.objectId.has_value()) {
+            if (node.objectId.has_value() && !objectExcludedFromDungeonDrops(*node.objectId)) {
                 spawnedObject = worldDrops_.spawnObjectDrop(objectCatalog_, *node.objectId, tileWorldCenter(node.tile), runStats_.elapsedSeconds);
             }
             node.collected = true;
@@ -8471,7 +8515,7 @@ void Game::normalizeOpenBuriedPlacementNodes()
         node.visibility = PlacementVisibility::Exposed;
         node.revealed = true;
         if (!node.objectId.has_value()) {
-            node.objectId = firstAvailableObjectId(objectCatalog_);
+            node.objectId = firstAvailableDungeonRewardObjectId(objectCatalog_);
         }
     }
 
@@ -8926,7 +8970,7 @@ bool Game::spawnWeightedObjectLoot(
         });
     };
     const auto spawnObject = [&](const ObjectDefinition* object) {
-        if (object == nullptr) {
+        if (object == nullptr || objectExcludedFromDungeonDrops(object->id)) {
             return false;
         }
         const Vec2 target = safeLootLandingPosition(center, rng);
@@ -9034,6 +9078,9 @@ bool Game::spawnWeightedObjectLoot(
     std::vector<const ObjectDefinition*> candidates;
     std::vector<double> weights;
     for (const ObjectDefinition& object : objectCatalog_.objects) {
+        if (objectExcludedFromDungeonDrops(object.id)) {
+            continue;
+        }
         if (!hasRequiredTag(object)) {
             continue;
         }
@@ -10717,10 +10764,11 @@ void Game::carveBossArenaAroundSpawnPoint()
         tileMap_.worldToTile(bossSpawnPoint_.x),
         tileMap_.worldToTile(bossSpawnPoint_.y),
     };
-    for (int y = -BossArenaRadiusYTiles; y <= BossArenaRadiusYTiles; ++y) {
-        for (int x = -BossArenaRadiusXTiles; x <= BossArenaRadiusXTiles; ++x) {
-            const float nx = static_cast<float>(x) / static_cast<float>(BossArenaRadiusXTiles);
-            const float ny = static_cast<float>(y) / static_cast<float>(BossArenaRadiusYTiles);
+    const BossArenaShape arena = bossArenaShapeForEnemyId(currentStageDefinition().bossEnemyId);
+    for (int y = -arena.radiusY; y <= arena.radiusY; ++y) {
+        for (int x = -arena.radiusX; x <= arena.radiusX; ++x) {
+            const float nx = static_cast<float>(x) / static_cast<float>(arena.radiusX);
+            const float ny = static_cast<float>(y) / static_cast<float>(arena.radiusY);
             if (nx * nx + ny * ny > 1.0f) {
                 continue;
             }
@@ -10733,8 +10781,8 @@ void Game::carveBossArenaAroundSpawnPoint()
         tileMap_.worldToTile(approach.x),
         tileMap_.worldToTile(approach.y),
     };
-    for (int y = -1; y <= 1; ++y) {
-        for (int x = -1; x <= 1; ++x) {
+    for (int y = -arena.approachPocketRadiusTiles; y <= arena.approachPocketRadiusTiles; ++y) {
+        for (int x = -arena.approachPocketRadiusTiles; x <= arena.approachPocketRadiusTiles; ++x) {
             tileMap_.setTerrainEdit(DungeonTile{approachTile.x + x, approachTile.y + y}, TileType::Empty);
         }
     }
@@ -10768,15 +10816,16 @@ Vec2 Game::bossApproachPosition() const
         direction = {1.0f, 0.0f};
     }
 
+    const BossArenaShape arena = bossArenaShapeForEnemyId(currentStageDefinition().bossEnemyId);
     const float ellipseScale = std::sqrt(
         (direction.x * direction.x) /
-            (static_cast<float>(BossArenaInnerRadiusXTiles) * static_cast<float>(BossArenaInnerRadiusXTiles)) +
+            (static_cast<float>(arena.innerRadiusX) * static_cast<float>(arena.innerRadiusX)) +
         (direction.y * direction.y) /
-            (static_cast<float>(BossArenaInnerRadiusYTiles) * static_cast<float>(BossArenaInnerRadiusYTiles)));
+            (static_cast<float>(arena.innerRadiusY) * static_cast<float>(arena.innerRadiusY)));
     const float boundaryDistanceTiles = ellipseScale > 0.0001f
         ? 1.0f / ellipseScale
-        : static_cast<float>(BossArenaInnerRadiusYTiles);
-    const float distanceTiles = boundaryDistanceTiles + BossArenaApproachPaddingTiles;
+        : static_cast<float>(arena.innerRadiusY);
+    const float distanceTiles = boundaryDistanceTiles + arena.approachPaddingTiles;
     return bossSpawnPoint_ - direction * (distanceTiles * static_cast<float>(balance::TileSize));
 }
 
@@ -10787,10 +10836,11 @@ bool Game::bossArenaContains(Vec2 position) const
     }
 
     static_assert(balance::TileSize > 0, "TileSize must be positive.");
+    const BossArenaShape arena = bossArenaShapeForEnemyId(currentStageDefinition().bossEnemyId);
     const float tileSize = static_cast<float>(balance::TileSize);
     const Vec2 delta = (position - bossSpawnPoint_) / tileSize;
-    const float nx = delta.x / static_cast<float>(BossArenaRadiusXTiles);
-    const float ny = delta.y / static_cast<float>(BossArenaRadiusYTiles);
+    const float nx = delta.x / static_cast<float>(arena.radiusX);
+    const float ny = delta.y / static_cast<float>(arena.radiusY);
     return nx * nx + ny * ny <= 1.0f;
 }
 
@@ -10799,7 +10849,8 @@ Vec2 Game::bossIntroPlayerPosition() const
     if (!hasBossSpawnPoint_) {
         return player_.position;
     }
-    return bossSpawnPoint_ + Vec2{0.0f, BossIntroPlayerOffsetTiles * static_cast<float>(balance::TileSize)};
+    const BossArenaShape arena = bossArenaShapeForEnemyId(currentStageDefinition().bossEnemyId);
+    return bossSpawnPoint_ + Vec2{0.0f, arena.introPlayerOffsetTiles * static_cast<float>(balance::TileSize)};
 }
 
 void Game::requestBossEncounterIntro(BossEncounterPurpose purpose)
@@ -10827,7 +10878,6 @@ void Game::applyBossEncounterIntroPlacement()
     player_.velocity = {};
     player_.knockbackVelocity = {};
     player_.knockbackTimer = 0.0f;
-    player_.throwCooldownRemaining = 0.0f;
     player_.facing = {0.0f, -1.0f};
     player_.updateSpriteFlipFromFacing();
 
@@ -11157,7 +11207,6 @@ void Game::restoreRetrySnapshot()
     player_.velocity = {};
     player_.knockbackVelocity = {};
     player_.knockbackTimer = 0.0f;
-    player_.throwCooldownRemaining = 0.0f;
     player_.poisonDamageAccumulator = 0.0;
     player_.hotDamageAccumulator = 0.0;
     player_.bleedDamageAccumulator = 0.0;

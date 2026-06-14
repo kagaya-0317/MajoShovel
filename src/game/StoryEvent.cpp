@@ -183,6 +183,14 @@ void loadStoryEventFile(
         } else if (command == "repeat") {
             event.onceFlag.clear();
             event.repeatable = true;
+        } else if (command == "debug") {
+            if (rest == "hidden") {
+                event.debugHidden = true;
+            } else {
+                warnings.push_back(
+                    "story event " + path.generic_string() + ":" + std::to_string(lineNumber) +
+                    " unknown debug option " + rest);
+            }
         } else if (command == "narration") {
             block.kind = TextBlockKind::Narration;
         } else if (command == "say") {

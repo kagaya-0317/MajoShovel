@@ -151,6 +151,7 @@ constexpr float StoragePageTextYOffset = 7.0f;
 constexpr int StoragePageTextScale = 2;
 constexpr float StorageDetailY = 108.0f;
 constexpr float StorageDragStartDistanceSq = 36.0f;
+constexpr int TitleMenuItemCount = 3;
 constexpr int PauseMenuItemCount = 5;
 constexpr int GameOverItemCount = 2;
 constexpr int StageClearItemCount = 1;
@@ -227,10 +228,11 @@ constexpr float DungeonStatusHudRightMargin = 18.0f;
 constexpr float DungeonStatusHudBottomMargin = 24.0f;
 constexpr float DungeonStatusHudPadding = 14.0f;
 constexpr float DungeonStatusHudBarHeight = 8.0f;
-constexpr float RingStatusHudWidth = 206.0f;
-constexpr float RingStatusHudHeight = 82.0f;
+constexpr float RingStatusHudWidth = 277.0f;
+constexpr float RingStatusHudHeight = 104.0f;
 constexpr float RingStatusHudLeftMargin = 18.0f;
 constexpr float RingStatusHudBottomMargin = 24.0f;
+constexpr float RingStatusHudUpOffset = 100.0f;
 constexpr float RingStatusHudGap = 8.0f;
 constexpr float RingStatusHudPadding = 12.0f;
 constexpr float DungeonLogWidth = 360.0f;
@@ -901,6 +903,11 @@ std::filesystem::path baseEditDataPath(BaseArea area)
 std::filesystem::path openingKamishibaiDataPath()
 {
     return std::filesystem::path("data") / "opening_kamishibai.tsv";
+}
+
+std::filesystem::path titleCreditsDataPath()
+{
+    return std::filesystem::path("data") / "credits.txt";
 }
 
 std::filesystem::path endingKamishibaiDataPath()
@@ -1617,6 +1624,39 @@ UiRect storageSlotRectByGlobal(int slot)
     return warehouse ? storageWarehouseSlotRect(local) : storageBackpackSlotRect(local);
 }
 
+UiRect titleMainPanelRect()
+{
+    return {{420.0f, 348.0f}, {440.0f, 310.0f}};
+}
+
+UiRect titleMenuItemRect(int index)
+{
+    const UiRect panel = titleMainPanelRect();
+    return {{
+        panel.pos.x + 50.0f,
+        panel.pos.y + 84.0f + static_cast<float>(index) * 58.0f,
+    }, {340.0f, ui::ButtonHeight}};
+}
+
+UiRect titleCreditsPanelRect()
+{
+    return {{210.0f, 70.0f}, {860.0f, 580.0f}};
+}
+
+UiRect titleCreditsViewportRect()
+{
+    const UiRect panel = titleCreditsPanelRect();
+    return {{
+        panel.pos.x + 54.0f,
+        panel.pos.y + 104.0f,
+    }, {panel.size.x - 108.0f, panel.size.y - 172.0f}};
+}
+
+UiRect optionsMenuPanelRect()
+{
+    return {{150.0f, 35.0f}, {980.0f, 650.0f}};
+}
+
 UiRect pausePanelRect()
 {
     return {{390.0f, 130.0f}, {500.0f, 460.0f}};
@@ -1884,6 +1924,16 @@ const char* pauseMenuItemName(int index)
     case 2: return "リング";
     case 3: return "オプション";
     case 4: return "ゲーム終了";
+    default: return "";
+    }
+}
+
+const char* titleMenuItemName(int index)
+{
+    switch (index) {
+    case 0: return "はじめる";
+    case 1: return "設定";
+    case 2: return "クレジット";
     default: return "";
     }
 }

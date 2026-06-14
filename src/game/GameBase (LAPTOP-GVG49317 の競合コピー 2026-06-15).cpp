@@ -5,6 +5,8 @@
 #include "game/EnemyImageRenderer.hpp"
 #include "game/NpcCharacterVisual.hpp"
 #include "game/PlayerEquipmentVisual.hpp"
+#include "game/RingDisplayName.hpp"
+#include "game/SpecialObjectRules.hpp"
 
 namespace majo {
 
@@ -696,14 +698,6 @@ int baseUpgradeDisplayForIndex(bool roguelikeTrainer, int upgradeIndex)
     return 0;
 }
 
-constexpr std::array<std::string_view, BaseItemSourceCount> BaseItemSourceLabels{{
-    "リュック",
-    "収納箱",
-    "リング1",
-    "リング2",
-    "リング3",
-}};
-
 constexpr int StorageDepositSourceCount = 1 + SpellRingCount;
 constexpr float MerchantSellSourceYOffset = 44.0f;
 constexpr float MerchantSellItemYOffset = MerchantSellSourceYOffset + 16.0f;
@@ -1244,6 +1238,20 @@ bool baseItemSourceIsRing(int source)
 int ringIndexFromBaseItemSource(int source)
 {
     return source - BaseRingSourceOffset;
+}
+
+std::string_view baseItemSourceDisplayName(int source, int unlockedRingCount)
+{
+    if (source == BaseBackpackSourceIndex) {
+        return "リュック";
+    }
+    if (source == BaseWarehouseSourceIndex) {
+        return "収納箱";
+    }
+    if (baseItemSourceIsRing(source)) {
+        return ringDisplayName(ringIndexFromBaseItemSource(source), unlockedRingCount);
+    }
+    return "";
 }
 
 int baseItemSourceCountForUnlockedRings(int unlockedRingCount)
@@ -3196,7 +3204,8 @@ void Game::refreshMerchantStock(bool force)
         if (isTreasureObject(*item)) {
             continue;
         }
-        if (item->rarity > maxRarity) {
+        const bool specialMerchantStock = objectAllowedAsSpecialMerchantStock(item->id);
+        if (!specialMerchantStock && item->rarity > maxRarity) {
             continue;
         }
         const bool requiredCategory = merchantStockGroupForItem(*item).has_value();
@@ -3204,7 +3213,7 @@ void Game::refreshMerchantStock(bool force)
         const bool basicTag = std::any_of(item->tags.begin(), item->tags.end(), [](const std::string& tag) {
             return tag == "consumable" || tag == "potion" || tag == "food";
         });
-        if (requiredCategory || basicTag || (merchantUpgradeLevel_ >= 4 && advancedEquipmentCategory)) {
+        if (specialMerchantStock || requiredCategory || basicTag || (merchantUpgradeLevel_ >= 4 && advancedEquipmentCategory)) {
             candidates.push_back(item);
         }
     }
@@ -7083,7 +7092,6 @@ void Game::updateHiddenBaseOrbit(const Input& input, UiContext& ui, float dt, bo
         : Vec2{0.0f, 1.0f};
     player_.spellRingShift = 0.0f;
     player_.spellRingShiftDirection = player_.facing;
-    player_.throwCooldownRemaining = std::max(0.0f, player_.throwCooldownRemaining - std::max(0.0f, dt));
 
     if (interactionsEnabled) {
         spellRing_.update(player_, input, dt, baseRingPreviewAnimationTime_, false, ui.pointerConsumed(), balance_);
@@ -7687,20 +7695,18 @@ void Game::updateQueuedStoryEvents()
     }
 }
 
-bool Game::startStoryEventInternal(std::string_view id, StoryEventStartOptions options)
+bool Game::startStoryEvent(std::string_view id)
 {
-    if (!options.ignorePlayerDeath && playerDeathSequenceActive()) {
+    if (playerDeathSequenceActive()) {
         return false;
     }
     const StoryEvent* event = findStoryEvent(id);
     if (event == nullptr) {
-        logWarning(options.logDebugReplay
-            ? "[story] debug event not found: " + std::string(id)
-            : "[story] event not found: " + std::string(id));
+        logWarning("[story] event not found: " + std::string(id));
         return false;
     }
 
-    if (options.respectOnceFlag && !event->onceFlag.empty()) {
+    if (!event->onceFlag.empty()) {
         const bool alreadySeen = std::find(storyFlags_.begin(), storyFlags_.end(), event->onceFlag) != storyFlags_.end();
         if (alreadySeen) {
             return false;
@@ -7708,31 +7714,10 @@ bool Game::startStoryEventInternal(std::string_view id, StoryEventStartOptions o
         addStoryFlag(event->onceFlag);
     }
 
-    if (options.clearPendingStoryQueues) {
-        pendingStoryTrigger_.clear();
-        pendingStoryTriggerDelaySeconds_ = 0.0f;
-        pendingStoryTriggers_.clear();
-    }
     baseStatus_.clear();
     pendingDialogueCompletion_ = {};
     dialogue_.start(event->dialogue);
-    if (options.logDebugReplay) {
-        logInfo("[story] debug replay: " + event->id);
-    }
-    if (options.onComplete) {
-        if (!dialogue_.active()) {
-            std::function<void()> onComplete = std::move(options.onComplete);
-            onComplete();
-        } else {
-            pendingDialogueCompletion_ = std::move(options.onComplete);
-        }
-    }
     return true;
-}
-
-bool Game::startStoryEvent(std::string_view id)
-{
-    return startStoryEventInternal(id, {});
 }
 
 bool Game::startStoryEventWithCompletion(std::string_view id, std::function<void()> onComplete)
@@ -7743,9 +7728,17 @@ bool Game::startStoryEventWithCompletion(std::string_view id, std::function<void
     if (dialogue_.active()) {
         return false;
     }
-    StoryEventStartOptions options;
-    options.onComplete = std::move(onComplete);
-    return startStoryEventInternal(id, std::move(options));
+    if (!startStoryEvent(id)) {
+        return false;
+    }
+    if (!dialogue_.active()) {
+        if (onComplete) {
+            onComplete();
+        }
+        return true;
+    }
+    pendingDialogueCompletion_ = std::move(onComplete);
+    return true;
 }
 
 bool Game::startDialogueSequenceWithCompletion(DialogueSequence sequence, std::function<void()> onComplete)
@@ -7771,18 +7764,20 @@ bool Game::startDialogueSequenceWithCompletion(DialogueSequence sequence, std::f
 
 bool Game::startStoryEventForDebug(std::string_view id)
 {
-    return startStoryEventForDebugWithCompletion(id, {});
-}
+    const StoryEvent* event = findStoryEvent(id);
+    if (event == nullptr) {
+        logWarning("[story] debug event not found: " + std::string(id));
+        return false;
+    }
 
-bool Game::startStoryEventForDebugWithCompletion(std::string_view id, std::function<void()> onComplete)
-{
-    StoryEventStartOptions options;
-    options.respectOnceFlag = false;
-    options.clearPendingStoryQueues = true;
-    options.ignorePlayerDeath = true;
-    options.logDebugReplay = true;
-    options.onComplete = std::move(onComplete);
-    return startStoryEventInternal(id, std::move(options));
+    pendingStoryTrigger_.clear();
+    pendingStoryTriggerDelaySeconds_ = 0.0f;
+    pendingStoryTriggers_.clear();
+    baseStatus_.clear();
+    pendingDialogueCompletion_ = {};
+    dialogue_.start(event->dialogue);
+    logInfo("[story] debug replay: " + event->id);
+    return true;
 }
 
 bool Game::startStoryEventForTrigger(std::string_view trigger)
@@ -8246,7 +8241,7 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
             std::array<UiRect, SpellRingCount> ringTabRects{};
             std::array<std::string, SpellRingCount> ringTabLabels{};
             for (int i = 0; i < ringCount; ++i) {
-                ringTabLabels[static_cast<std::size_t>(i)] = "リング " + std::to_string(i + 1);
+                ringTabLabels[static_cast<std::size_t>(i)] = ringDisplayName(i, ringCount);
                 ringTabs[static_cast<std::size_t>(i)] = {ringTabLabels[static_cast<std::size_t>(i)], true};
                 ringTabRects[static_cast<std::size_t>(i)] = ringWorkshopRingTabRect(i, ringCount);
             }
@@ -8351,7 +8346,7 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
             std::array<UiRect, SpellRingCount> ringTabRects{};
             std::array<std::string, SpellRingCount> ringTabLabels{};
             for (int i = 0; i < ringCount; ++i) {
-                ringTabLabels[static_cast<std::size_t>(i)] = "リング " + std::to_string(i + 1);
+                ringTabLabels[static_cast<std::size_t>(i)] = ringDisplayName(i, ringCount);
                 ringTabs[static_cast<std::size_t>(i)] = {ringTabLabels[static_cast<std::size_t>(i)], true};
                 ringTabRects[static_cast<std::size_t>(i)] = ringWorkshopRingTabRect(i, ringCount);
             }
@@ -8787,7 +8782,7 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
             std::array<UiRect, StorageDepositSourceCount> sourceTabRects{};
             for (int i = 0; i < sourceCount; ++i) {
                 const int source = storageDepositSourceValue(i);
-                sourceTabs[static_cast<std::size_t>(i)] = {BaseItemSourceLabels[static_cast<std::size_t>(source)], true};
+                sourceTabs[static_cast<std::size_t>(i)] = {baseItemSourceDisplayName(source, unlockedRingCount()), true};
                 sourceTabRects[static_cast<std::size_t>(i)] = storageDepositSourceRect(i);
             }
             UiTabsInput sourceTabsInput{};
@@ -9288,7 +9283,7 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
         for (int i = 0; i < sourceCount; ++i) {
             const bool enabled = !(roguelikeFacilityUiMode_ == RoguelikeFacilityUiMode::Artisan &&
                 baseItemSourceIsWarehouse(i));
-            sourceTabs[static_cast<std::size_t>(i)] = {BaseItemSourceLabels[static_cast<std::size_t>(i)], enabled};
+            sourceTabs[static_cast<std::size_t>(i)] = {baseItemSourceDisplayName(i, unlockedRingCount()), enabled};
             sourceTabRects[static_cast<std::size_t>(i)] = baseProcessingSourceRect(i, sourceCount);
         }
         UiTabsInput sourceTabsInput{};
@@ -9722,7 +9717,7 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
             for (int i = 0; i < sourceCount; ++i) {
                 const bool enabled = !(roguelikeFacilityUiMode_ == RoguelikeFacilityUiMode::Merchant &&
                     baseItemSourceIsWarehouse(i));
-                sourceTabs[static_cast<std::size_t>(i)] = {BaseItemSourceLabels[static_cast<std::size_t>(i)], enabled};
+                sourceTabs[static_cast<std::size_t>(i)] = {baseItemSourceDisplayName(i, unlockedRingCount()), enabled};
                 sourceTabRects[static_cast<std::size_t>(i)] = merchantSellSourceRect(i, sourceCount);
             }
             UiTabsInput sourceTabsInput{};
@@ -10835,7 +10830,11 @@ void Game::renderBookshelfScreen(Renderer& renderer) const
                 detailEntry,
                 objectCatalog_,
                 encyclopedia_,
-                InventoryUiDetailOptions{.animationSeconds = baseRingPreviewAnimationTime_, .showExtraLineSeparator = false},
+                InventoryUiDetailOptions{
+                    .animationSeconds = baseRingPreviewAnimationTime_,
+                    .showExtraLineSeparator = false,
+                    .unlockedRingCount = unlockedRingCount(),
+                },
                 extraLines);
         } else {
             drawUiSubPanel(renderer, detailPanel);
@@ -11427,7 +11426,7 @@ void Game::renderBaseScreen(Renderer& renderer) const
                 std::array<UiRect, StorageDepositSourceCount> sourceTabRects{};
                 for (int i = 0; i < sourceCount; ++i) {
                     const int source = storageDepositSourceValue(i);
-                    sourceTabs[static_cast<std::size_t>(i)] = {BaseItemSourceLabels[static_cast<std::size_t>(source)], true};
+                    sourceTabs[static_cast<std::size_t>(i)] = {baseItemSourceDisplayName(source, unlockedRingCount()), true};
                     sourceTabRects[static_cast<std::size_t>(i)] = storageDepositSourceRect(i);
                 }
                 const int currentTab = storageDepositSourceTabIndex(baseStorageDepositSource_);
@@ -11533,7 +11532,10 @@ void Game::renderBaseScreen(Renderer& renderer) const
                     detailEntry,
                     objectCatalog_,
                     encyclopedia_,
-                    InventoryUiDetailOptions{.animationSeconds = ringPreviewSeconds});
+                    InventoryUiDetailOptions{
+                        .animationSeconds = ringPreviewSeconds,
+                        .unlockedRingCount = unlockedRingCount(),
+                    });
             }
             const char* commandLabel = baseStorageCommandOperation_ == StorageQuantityOperation::Withdraw
                 ? "取り出す"
@@ -11563,7 +11565,7 @@ void Game::renderBaseScreen(Renderer& renderer) const
             std::array<UiRect, SpellRingCount> ringTabRects{};
             std::array<std::string, SpellRingCount> ringTabLabels{};
             for (int i = 0; i < ringCount; ++i) {
-                ringTabLabels[static_cast<std::size_t>(i)] = "リング " + std::to_string(i + 1);
+                ringTabLabels[static_cast<std::size_t>(i)] = ringDisplayName(i, ringCount);
                 ringTabs[static_cast<std::size_t>(i)] = {ringTabLabels[static_cast<std::size_t>(i)], true};
                 ringTabRects[static_cast<std::size_t>(i)] = ringWorkshopRingTabRect(i, ringCount);
             }
@@ -11644,8 +11646,7 @@ void Game::renderBaseScreen(Renderer& renderer) const
                 renderer,
                 detailPanel,
                 baseRingWorkshopSelection_ == RingLevelUpgradeKindCount ? "再調整確定" : ringLevelUpgradeKindName(selectedKind));
-            std::snprintf(buffer, sizeof(buffer), "リング %d", ringIndex + 1);
-            drawUiDetailLine(renderer, detailPanel, detailY, "対象", buffer);
+            drawUiDetailLine(renderer, detailPanel, detailY, "対象", ringDisplayName(ringIndex, ringCount));
             const int selectedCurrentPoints = ringLevelUpgradePoint(currentRingPoints, selectedKind);
             const int selectedDraftPoints = ringLevelUpgradePoint(draftRingPoints, selectedKind);
             std::snprintf(buffer, sizeof(buffer), "%d点 / %s",
@@ -11663,10 +11664,11 @@ void Game::renderBaseScreen(Renderer& renderer) const
                 buffer,
                 selectedCurrentPoints == selectedDraftPoints ? ui::Text : Color{255, 230, 150, 255});
             if (ringWorkshopRespecSource_) {
-                std::snprintf(buffer, sizeof(buffer), "リング%d %s",
-                    ringWorkshopRespecSource_->ringIndex + 1,
+                const std::string sourceName = ringDisplayNameWithSpaceSuffix(
+                    ringWorkshopRespecSource_->ringIndex,
+                    ringCount,
                     ringLevelUpgradeKindName(ringWorkshopRespecSource_->kind));
-                drawUiDetailLine(renderer, detailPanel, detailY, "移動元", buffer, Color{255, 230, 150, 255});
+                drawUiDetailLine(renderer, detailPanel, detailY, "移動元", sourceName, Color{255, 230, 150, 255});
                 drawUiDetailText(renderer, detailPanel, detailY, "次に選んだ項目へ1点移します。");
             } else {
                 drawUiDetailLine(renderer, detailPanel, detailY, "移動元", "未選択", ui::TextMuted);
@@ -11707,7 +11709,7 @@ void Game::renderBaseScreen(Renderer& renderer) const
             std::array<UiRect, SpellRingCount> ringTabRects{};
             std::array<std::string, SpellRingCount> ringTabLabels{};
             for (int i = 0; i < ringCount; ++i) {
-                ringTabLabels[static_cast<std::size_t>(i)] = "リング " + std::to_string(i + 1);
+                ringTabLabels[static_cast<std::size_t>(i)] = ringDisplayName(i, ringCount);
                 ringTabs[static_cast<std::size_t>(i)] = {ringTabLabels[static_cast<std::size_t>(i)], true};
                 ringTabRects[static_cast<std::size_t>(i)] = ringWorkshopRingTabRect(i, ringCount);
             }
@@ -11863,8 +11865,7 @@ void Game::renderBaseScreen(Renderer& renderer) const
                     ui::TextMuted,
                     2);
                 detailY += renderer.measureWrappedText(ringWorkshopUpgradeDescription(selected), detailContent.size.x, 2).y + 8.0f;
-                std::snprintf(buffer, sizeof(buffer), "リング %d", ringIndex + 1);
-                drawUiDetailLine(renderer, detailPanel, detailY, "対象", buffer);
+                drawUiDetailLine(renderer, detailPanel, detailY, "対象", ringDisplayName(ringIndex, ringCount));
                 if (maxed) {
                     drawUiDetailLine(renderer, detailPanel, detailY, "効果", "上限到達済み", ui::TextMuted);
                     drawUiDetailLine(renderer, detailPanel, detailY, "必要素材", "なし", ui::TextMuted);
@@ -11926,7 +11927,7 @@ void Game::renderBaseScreen(Renderer& renderer) const
         for (int i = 0; i < sourceCount; ++i) {
             const bool enabled = !(roguelikeFacilityUiMode_ == RoguelikeFacilityUiMode::Artisan &&
                 baseItemSourceIsWarehouse(i));
-            sourceTabs[static_cast<std::size_t>(i)] = {BaseItemSourceLabels[static_cast<std::size_t>(i)], enabled};
+            sourceTabs[static_cast<std::size_t>(i)] = {baseItemSourceDisplayName(i, unlockedRingCount()), enabled};
             sourceTabRects[static_cast<std::size_t>(i)] = baseProcessingSourceRect(i, sourceCount);
         }
         drawUiTabs(
@@ -12042,7 +12043,10 @@ void Game::renderBaseScreen(Renderer& renderer) const
                     detailEntry,
                     objectCatalog_,
                     encyclopedia_,
-                    InventoryUiDetailOptions{.animationSeconds = ringPreviewSeconds});
+                    InventoryUiDetailOptions{
+                        .animationSeconds = ringPreviewSeconds,
+                        .unlockedRingCount = unlockedRingCount(),
+                    });
             } else {
                 drawUiSubPanel(renderer, detailPanel);
                 float detailLineY = drawUiDetailHeader(renderer, detailPanel, ringItemDisplayName(objectCatalog_, *selectedRingItem));
@@ -12202,7 +12206,7 @@ void Game::renderBaseScreen(Renderer& renderer) const
                 for (int i = 0; i < sourceCount; ++i) {
                     const bool enabled = !(roguelikeFacilityUiMode_ == RoguelikeFacilityUiMode::Merchant &&
                         baseItemSourceIsWarehouse(i));
-                    sourceTabs[static_cast<std::size_t>(i)] = {BaseItemSourceLabels[static_cast<std::size_t>(i)], enabled};
+                    sourceTabs[static_cast<std::size_t>(i)] = {baseItemSourceDisplayName(i, unlockedRingCount()), enabled};
                     sourceTabRects[static_cast<std::size_t>(i)] = merchantSellSourceRect(i, sourceCount);
                 }
                 drawUiTabs(
@@ -12382,7 +12386,10 @@ void Game::renderBaseScreen(Renderer& renderer) const
                     detailEntry,
                     objectCatalog_,
                     encyclopedia_,
-                    InventoryUiDetailOptions{.animationSeconds = ringPreviewSeconds},
+                    InventoryUiDetailOptions{
+                        .animationSeconds = ringPreviewSeconds,
+                        .unlockedRingCount = unlockedRingCount(),
+                    },
                     extraLines);
             }
             if (buyMode) {

@@ -96,6 +96,20 @@ struct TerrainWallSelection {
     };
 };
 
+TerrainNeighbors terrainNeighborsFromPublic(const TerrainTileNeighbors& neighbors)
+{
+    return TerrainNeighbors{
+        .up = neighbors.up,
+        .down = neighbors.down,
+        .left = neighbors.left,
+        .right = neighbors.right,
+        .upLeft = neighbors.upLeft,
+        .upRight = neighbors.upRight,
+        .downLeft = neighbors.downLeft,
+        .downRight = neighbors.downRight,
+    };
+}
+
 float lightFalloffInnerRadius(float radius)
 {
     const float falloffWidth = std::clamp(
@@ -561,6 +575,45 @@ bool drawTerrainImageQuad(Renderer& renderer, ImageHandle handle, RectF source, 
     return renderer.drawImageTriangleList(handle, vertices.data(), vertices.size(), Indices.data(), Indices.size(), tint);
 }
 
+Vec2 bilerpQuadPoint(const std::array<Vec2, 4>& corners, float u, float v)
+{
+    const Vec2 top = corners[0] + (corners[1] - corners[0]) * u;
+    const Vec2 bottom = corners[3] + (corners[2] - corners[3]) * u;
+    return top + (bottom - top) * v;
+}
+
+std::array<Vec2, 4> terrainQuadrantCorners(const std::array<Vec2, 4>& corners, TerrainQuadrant quadrant)
+{
+    float u0 = 0.0f;
+    float v0 = 0.0f;
+    float u1 = 0.5f;
+    float v1 = 0.5f;
+    switch (quadrant) {
+    case TerrainQuadrant::TopLeft:
+        break;
+    case TerrainQuadrant::TopRight:
+        u0 = 0.5f;
+        u1 = 1.0f;
+        break;
+    case TerrainQuadrant::BottomLeft:
+        v0 = 0.5f;
+        v1 = 1.0f;
+        break;
+    case TerrainQuadrant::BottomRight:
+        u0 = 0.5f;
+        u1 = 1.0f;
+        v0 = 0.5f;
+        v1 = 1.0f;
+        break;
+    }
+    return {{
+        bilerpQuadPoint(corners, u0, v0),
+        bilerpQuadPoint(corners, u1, v0),
+        bilerpQuadPoint(corners, u1, v1),
+        bilerpQuadPoint(corners, u0, v1),
+    }};
+}
+
 bool drawTerrainFloorTile(Renderer& renderer, const TerrainTileSheet& sheet, Vec2 pos, int tx, int ty)
 {
     return drawTerrainImageRegion(
@@ -631,6 +684,46 @@ bool drawTerrainTileImage(
         return true;
     }
     return drawTerrainWallTile(renderer, sheet, pos, tx, ty, tile.type, neighbors);
+}
+
+bool drawTerrainWallQuad(
+    Renderer& renderer,
+    const TerrainTileSheet& sheet,
+    const std::array<Vec2, 4>& corners,
+    int tx,
+    int ty,
+    TileType type,
+    const TerrainNeighbors& neighbors,
+    Color tint)
+{
+    const TerrainWallSelection selection = chooseTerrainWallSelection(type, tx, ty, neighbors);
+    if (!selection.split) {
+        return drawTerrainImageQuad(
+            renderer,
+            sheet.handle,
+            terrainWallCellSource(type, selection.full),
+            corners,
+            tint);
+    }
+
+    bool ok = true;
+    constexpr std::array<TerrainQuadrant, 4> quadrants{
+        TerrainQuadrant::TopLeft,
+        TerrainQuadrant::TopRight,
+        TerrainQuadrant::BottomLeft,
+        TerrainQuadrant::BottomRight,
+    };
+    for (std::size_t i = 0; i < quadrants.size(); ++i) {
+        const TerrainQuadrant quadrant = quadrants[i];
+        const RectF sourceCell = terrainWallCellSource(type, selection.quadrants[i]);
+        ok = drawTerrainImageQuad(
+                 renderer,
+                 sheet.handle,
+                 terrainSheetQuadrantSource(sourceCell, quadrant),
+                 terrainQuadrantCorners(corners, quadrant),
+                 tint) && ok;
+    }
+    return ok;
 }
 
 float dot(Vec2 a, Vec2 b)
@@ -1726,6 +1819,43 @@ bool TileMap::renderTileQuad(
              terrainSheet.handle,
              terrainWallCellSource(type, terrainBasicWallVariant(variantX, variantY, type)),
              corners,
+             tint) && ok;
+    return ok;
+}
+
+bool TileMap::renderTileQuadAutotiled(
+    Renderer& renderer,
+    const std::array<Vec2, 4>& corners,
+    int stageId,
+    TileType type,
+    int variantX,
+    int variantY,
+    Color tint,
+    const TerrainTileNeighbors& neighbors) const
+{
+    const TerrainTileSheet terrainSheet = acquireTerrainTileSheet(renderer, stageId > 0 ? stageId : dungeonLayoutSnapshot_.stageId);
+    if (!terrainSheet.available || tint.a == 0) {
+        return false;
+    }
+
+    bool ok = drawTerrainImageQuad(
+        renderer,
+        terrainSheet.handle,
+        terrainSheetCellSource(0, terrainFloorColumn(variantX, variantY)),
+        corners,
+        tint);
+    if (type == TileType::Empty) {
+        return ok;
+    }
+
+    ok = drawTerrainWallQuad(
+             renderer,
+             terrainSheet,
+             corners,
+             variantX,
+             variantY,
+             type,
+             terrainNeighborsFromPublic(neighbors),
              tint) && ok;
     return ok;
 }

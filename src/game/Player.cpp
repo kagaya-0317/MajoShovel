@@ -354,7 +354,6 @@ void Player::update(
         smoothDirection(spellRingShiftDirection, targetShiftDirection, RingShiftDirectionResponse, safeDt);
 
     spellRingShift = lerp(spellRingShift, targetShift, 1.0f - std::exp(-RingShiftDistanceResponse * safeDt));
-    throwCooldownRemaining = std::max(0.0f, throwCooldownRemaining - dt);
 }
 
 void Player::updateSpriteAnimation(float dt, bool walking)

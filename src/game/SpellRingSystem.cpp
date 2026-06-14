@@ -1549,6 +1549,28 @@ void SpellRingSystem::updateThrowVisualEnergyTimers(float dt)
     }
 }
 
+void SpellRingSystem::updateThrowCooldowns(float dt)
+{
+    const float safeDt = std::max(0.0f, dt);
+    if (safeDt <= 0.0f) {
+        return;
+    }
+
+    for (RingRuntimeState& runtime : ringRuntime_) {
+        runtime.throwCooldownRemaining = std::max(0.0f, runtime.throwCooldownRemaining - safeDt);
+    }
+}
+
+float SpellRingSystem::throwCooldownForRing(int ringIndex, const RuntimeBalance& balance) const
+{
+    const int clampedRingIndex = std::clamp(ringIndex, 0, SpellRingCount - 1);
+    const RingWorkshopModifiers& workshop = workshopModifiersByRing_[static_cast<std::size_t>(clampedRingIndex)];
+    return scaledAtLeast(
+        balance.spellRingThrowCooldown,
+        equipmentModifiersForRing(clampedRingIndex).ringThrowCooldownMul * workshop.throwCooldownMultiplier,
+        0.02f);
+}
+
 void SpellRingSystem::update(Player& player, const Input& input, float dt, float, bool paused, bool blockPointerThrow, const RuntimeBalance& balance)
 {
     updateActionFlashTimers(dt);
@@ -1559,6 +1581,7 @@ void SpellRingSystem::update(Player& player, const Input& input, float dt, float
     }
 
     const float safeDt = std::max(0.0f, dt);
+    updateThrowCooldowns(safeDt);
     enemyOrbitSpeedDebuffTimer_ = std::max(0.0f, enemyOrbitSpeedDebuffTimer_ - safeDt);
     if (enemyOrbitSpeedDebuffTimer_ <= 0.0f) {
         enemyOrbitSpeedDebuffMultiplier_ = 1.0f;
@@ -1568,10 +1591,7 @@ void SpellRingSystem::update(Player& player, const Input& input, float dt, float
 
     const RingEquipmentModifiers& activeEquipment = equipmentModifiersForRing(activeRingIndex_);
     const RingWorkshopModifiers& activeWorkshop = workshopModifiersByRing_[static_cast<std::size_t>(activeRingIndex_)];
-    const float throwCooldown = scaledAtLeast(
-        balance.spellRingThrowCooldown,
-        activeEquipment.ringThrowCooldownMul * activeWorkshop.throwCooldownMultiplier,
-        0.02f);
+    const float throwCooldown = throwCooldownForRing(activeRingIndex_, balance);
     const float throwSpeed = scaledNonNegative(balance.spellRingThrowSpeed, activeEquipment.ringThrowSpeedMul);
     const float throwDistance = scaledNonNegative(
         balance.spellRingThrowDistance,
@@ -1584,7 +1604,7 @@ void SpellRingSystem::update(Player& player, const Input& input, float dt, float
     const bool throwPressed = input.throwPressed() && !(blockPointerThrow && input.mouseLeftPressed());
     const bool throwCanStart =
         throwPressed &&
-        player.throwCooldownRemaining <= 0.0f &&
+        ringRuntime_[static_cast<std::size_t>(activeRingIndex_)].throwCooldownRemaining <= 0.0f &&
         throwingRingIndex_ < 0 &&
         ringRuntime_[static_cast<std::size_t>(activeRingIndex_)].state == SpellRingState::Normal;
     const bool ringShiftAllowed = !anyRingInFlight() && !throwCanStart;
@@ -1708,7 +1728,9 @@ void SpellRingSystem::update(Player& player, const Input& input, float dt, float
         }
     }
 
-    if (throwPressed && player.throwCooldownRemaining <= 0.0f && throwingRingIndex_ < 0) {
+    if (throwPressed &&
+        ringRuntime_[static_cast<std::size_t>(activeRingIndex_)].throwCooldownRemaining <= 0.0f &&
+        throwingRingIndex_ < 0) {
         RingRuntimeState& runtime = ringRuntime_[static_cast<std::size_t>(activeRingIndex_)];
         if (runtime.state == SpellRingState::Normal) {
             runtime.throwDirection = safeNormalize(player.facing);
@@ -1760,7 +1782,7 @@ void SpellRingSystem::update(Player& player, const Input& input, float dt, float
             runtime.throwDistance = throwDistance;
             runtime.throwVisualEnergyFadeTimer = 0.0f;
             throwingRingIndex_ = activeRingIndex_;
-            player.throwCooldownRemaining = throwCooldown;
+            runtime.throwCooldownRemaining = throwCooldown;
             motionEvents_.push_back({
                 RingMotionEventKind::ThrowStart,
                 activeRingIndex_,
@@ -2582,14 +2604,19 @@ float SpellRingSystem::quantizeLocalAngle(float angle, const RuntimeBalance& bal
     return quantizeLocalParam(runtimeRingShape(), angle, tuning);
 }
 
-float SpellRingSystem::cooldownRatio(const Player& player, const RuntimeBalance& balance) const
+float SpellRingSystem::cooldownRatio(const RuntimeBalance& balance) const
 {
-    const RingWorkshopModifiers& activeWorkshop = workshopModifiersByRing_[static_cast<std::size_t>(activeRingIndex_)];
-    const float cooldown = scaledAtLeast(
-        balance.spellRingThrowCooldown,
-        equipmentModifiersForRing(activeRingIndex_).ringThrowCooldownMul * activeWorkshop.throwCooldownMultiplier,
-        0.02f);
-    return clamp(player.throwCooldownRemaining / cooldown, 0.0f, 1.0f);
+    return cooldownRatioForRing(activeRingIndex_, balance);
+}
+
+float SpellRingSystem::cooldownRatioForRing(int ringIndex, const RuntimeBalance& balance) const
+{
+    if (ringIndex < 0 || ringIndex >= SpellRingCount) {
+        return 0.0f;
+    }
+
+    const float cooldown = throwCooldownForRing(ringIndex, balance);
+    return clamp(ringRuntime_[static_cast<std::size_t>(ringIndex)].throwCooldownRemaining / cooldown, 0.0f, 1.0f);
 }
 
 float SpellRingSystem::effectiveAngularSpeed() const

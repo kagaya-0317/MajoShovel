@@ -3,10 +3,12 @@
 @trigger tutorial:base_storage
 @once story_tutorial_base_storage
 
-@narration
-収納箱です。
-持ち帰った通常アイテムを長期保管できます。
+@say player ルネ
+なんか、でっかい箱がある
 
-@narration
-リング上のアイテムも一括でしまえます。
-次の採掘に持っていくものだけ、リュックやリングへ戻しましょう。
+@say elder 村長
+それは収納箱じゃ
+持ちきれないけど売りたくないアイテムはそこに入れとくといいぞい
+
+@say player ルネ
+わ〜い

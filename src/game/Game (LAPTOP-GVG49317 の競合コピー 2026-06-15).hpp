@@ -120,12 +120,6 @@ enum class ScreenMode {
     AstralResult
 };
 
-enum class TitleMenuPage {
-    Main,
-    Options,
-    Credits,
-};
-
 enum class EndingKind {
     Main,
     EncyclopediaComplete,
@@ -222,6 +216,7 @@ struct AudioCueEditEntry {
     std::string type;
     std::string path;
     float volume = 1.0f;
+    int pitch = 0;
     bool loop = false;
     float cooldownMs = 0.0f;
 };
@@ -563,14 +558,6 @@ private:
         std::string onceFlag;
         bool repeatable = false;
         bool alreadySeen = false;
-    };
-
-    struct StoryEventStartOptions {
-        bool respectOnceFlag = true;
-        bool clearPendingStoryQueues = false;
-        bool ignorePlayerDeath = false;
-        bool logDebugReplay = false;
-        std::function<void()> onComplete;
     };
 
     struct WarpPoint {
@@ -1034,7 +1021,6 @@ private:
     void startMiningFromBase(bool useLatestWarpPoint, bool forceRegenerate = false);
     void loadOpeningKamishibaiData();
     void loadEndingKamishibaiData();
-    void loadTitleCreditsData();
     void loadStoryEvents();
     void startOpeningKamishibai();
     void finishOpeningKamishibai(bool completedPlayback);
@@ -1045,10 +1031,6 @@ private:
     void finishEndingKamishibai(bool completedPlayback);
     void updateEndingKamishibai(const Input& input, float dt);
     void updateTitleScreen(const Input& input, UiContext& ui);
-    void openTitleOptions();
-    void openTitleCredits();
-    void returnToTitleMain();
-    void chooseTitleMenuItem(int item);
     void requestScreenTransition(ScreenTransitionTarget target);
     void requestMiningStartTransition(bool useLatestWarpPoint, bool forceRegenerate);
     void requestReturnToBaseTransition(bool stageCleared, bool died);
@@ -1336,9 +1318,7 @@ private:
     void updatePauseMenu(const Input& input, UiContext& ui);
     void choosePauseMenuItem(int item);
     void leavePausePage();
-    void prepareOptionsMenu();
     void openOptionsMenu();
-    bool optionsMenuActive() const;
     void loadOptionsSettings();
     void applyOptionsSettings(std::string status);
     void updateOptionsMenu(const Input& input, UiContext& ui);
@@ -1379,9 +1359,8 @@ private:
     void equipIntroTutorialStartingTools();
     void addIntroTutorialTorchToRing();
     void startIntroTutorialEnemyEncounterEvent();
-    bool startIntroTutorialEnemyEncounterPresentation(bool debugReplay, std::function<void()> onComplete);
-    void startIntroTutorialSlimeFocusDialogue(bool debugReplay, std::function<void()> onComplete);
-    void startIntroTutorialEnemyRetreatDialogue(bool debugReplay, std::function<void()> onComplete);
+    void startIntroTutorialSlimeFocusDialogue();
+    void startIntroTutorialEnemyRetreatDialogue();
     void spawnIntroTutorialChest();
     void spawnIntroTutorialSecondChest();
     void unlockIntroTutorialFreeRoute();
@@ -1719,6 +1698,8 @@ private:
     bool saveAudioCueManifestFromEdit(std::string& message);
     bool handleAudioCueEditCommand(std::string_view normalized);
     void rebuildAudioCueFileList();
+    void syncAudioCueEditPreviewSettingsFromCue();
+    void applyAudioCueEditPreviewSettingsToCue();
     void enterAudioCueEditMode(AudioCueEditMode editMode);
     void exitAudioCueEditMode();
     void previewSelectedAudioCueFile();
@@ -1817,15 +1798,12 @@ private:
     bool queueStoryEventForCurrentStage(std::string_view triggerName);
     void updateQueuedStoryEvents();
     bool pendingStoryTriggerDelayActive() const;
-    bool startStoryEventInternal(std::string_view id, StoryEventStartOptions options);
     bool startStoryEvent(std::string_view id);
     bool startStoryEventWithCompletion(std::string_view id, std::function<void()> onComplete);
     bool startDialogueSequenceWithCompletion(DialogueSequence sequence, std::function<void()> onComplete);
     void updateDialoguePlayerIdleAnimation(float dt);
     void runDialogueCompletionCallbackIfFinished(bool dialogueWasActive);
     bool startStoryEventForDebug(std::string_view id);
-    bool startStoryEventForDebugWithCompletion(std::string_view id, std::function<void()> onComplete);
-    bool startDebugStoryTestPresentation(std::string_view id, std::function<void()> onComplete);
     bool startStoryEventForTrigger(std::string_view trigger);
     void maybeStartOpeningBaseIntroEvent();
     void pushDungeonLog(std::string message, std::string mergeKey = {});
@@ -1855,7 +1833,7 @@ private:
     void switchActiveRingWithLog(int delta);
     int unlockedRingHudCount() const;
     UiRect ringStatusHudRect(int ringIndex, int unlockedRingCount) const;
-    void updateRingStatusHud(UiContext& ui);
+    void updateRingStatusHud(UiContext& ui, float dt);
     std::string currentMapDisplayName() const;
     void renderTopInfoBar(Renderer& renderer) const;
     void renderOpeningKamishibai(Renderer& renderer) const;
@@ -2147,6 +2125,12 @@ private:
     float audioCueEditFileScrollOffset_ = 0.0f;
     UiScrollAreaState audioCueEditCueScrollState_{};
     UiScrollAreaState audioCueEditFileScrollState_{};
+    int audioCueEditPreviewVolume_ = 100;
+    int audioCueEditPreviewPitch_ = 0;
+    int audioCueEditActiveAdjust_ = 0;
+    int audioCueEditLastFileClickIndex_ = -1;
+    std::uint64_t audioCueEditLastFileClickTicks_ = 0;
+    std::uint32_t audioCueEditAlphaKeyHeldMask_ = 0;
     bool audioCueEditDirty_ = false;
     std::string audioCueEditStatus_;
     std::string audioCueEditPreviousBgmCue_;
@@ -2222,12 +2206,6 @@ private:
     bool autoSimulationDebugOverlayActive_ = false;
     autosim::AutoSimulationDebugSnapshot autoSimulationDebug_;
     std::string baseStatus_;
-    TitleMenuPage titleMenuPage_ = TitleMenuPage::Main;
-    int titleMenuSelection_ = 0;
-    std::string titleCreditsText_;
-    float titleCreditsScrollOffset_ = 0.0f;
-    UiScrollAreaState titleCreditsScrollState_{};
-    mutable UiCancelControlState titleCancelState_{};
     PauseMenuPage pausePage_ = PauseMenuPage::Main;
     ScreenMode pauseReturnMode_ = ScreenMode::Playing;
     int pauseMenuSelection_ = 0;
@@ -2467,6 +2445,14 @@ private:
     AudioEngine* audio_ = nullptr;
     std::string activeAudioBgmCue_;
     AudioJingleState audioJingle_{};
+    struct RingStatusHudAnimation {
+        float previousCooldownRatio = 0.0f;
+        float readyHoldTimer = 0.0f;
+        float visibility = 1.0f;
+        float pulseTimer = 0.0f;
+        bool initialized = false;
+    };
+    std::array<RingStatusHudAnimation, SpellRingCount> ringStatusHudAnimations_{};
     float ringTrailEffectTimer_ = 0.0f;
     float ambientParticleTimer_ = 0.0f;
     float reloadNoticeTimer_ = 0.0f;

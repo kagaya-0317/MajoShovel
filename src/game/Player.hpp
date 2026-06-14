@@ -77,7 +77,6 @@ struct Player {
     float spellRingShift = 0.0f;
     float spellRingShiftDistanceBonus = 0.0f;
     float spellRingShiftDistanceMultiplier = 1.0f;
-    float throwCooldownRemaining = 0.0f;
     float spriteAnimationTime = 0.0f;
     bool spriteWalking = false;
     bool spriteFlipHorizontal = true;

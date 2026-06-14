@@ -6,6 +6,7 @@
 #include "game/RingDisplayName.hpp"
 #include "game/SpecialObjectRules.hpp"
 
+#include <algorithm>
 #include <cmath>
 #include <fstream>
 #include <iterator>
@@ -186,6 +187,40 @@ bool readTextFile(const std::filesystem::path& path, std::string& outText, std::
     stripUtf8Bom(outText);
     outError.clear();
     return true;
+}
+
+std::string normalizeTitleCreditsText(std::string text)
+{
+    text.erase(std::remove(text.begin(), text.end(), '\r'), text.end());
+    while (!text.empty() && (text.back() == '\n' || text.back() == ' ' || text.back() == '\t')) {
+        text.pop_back();
+    }
+    if (!text.empty()) {
+        return text;
+    }
+    return "MajoShovel\n\n制作\nGenta Kagaya\n\n使用ライブラリ\nSDL3";
+}
+
+float estimateTitleCreditsContentHeight(std::string_view text)
+{
+    constexpr float LineHeight = 30.0f;
+    constexpr float PaddingY = 12.0f;
+    constexpr std::size_t ApproxBytesPerLine = 72;
+    int visualLines = 0;
+    std::size_t lineBytes = 0;
+    const auto flushLine = [&]() {
+        visualLines += std::max(1, static_cast<int>((lineBytes + ApproxBytesPerLine - 1) / ApproxBytesPerLine));
+        lineBytes = 0;
+    };
+    for (char ch : text) {
+        if (ch == '\n') {
+            flushLine();
+        } else {
+            ++lineBytes;
+        }
+    }
+    flushLine();
+    return PaddingY * 2.0f + static_cast<float>(std::max(1, visualLines)) * LineHeight;
 }
 
 bool parseTsvTable(std::string_view text, GoogleSheetTable& outTable, std::string& outError)
@@ -946,6 +981,7 @@ bool Game::advanceInitialize()
         break;
     case InitializeStep::LoadOpening:
         loadOpeningKamishibaiData();
+        loadTitleCreditsData();
         initializeJob_.step = InitializeStep::LoadStoryEvents;
         break;
     case InitializeStep::LoadStoryEvents:
@@ -1725,6 +1761,21 @@ void Game::loadEndingKamishibaiData()
     }
 }
 
+void Game::loadTitleCreditsData()
+{
+    std::string text;
+    std::string error;
+    if (!readTextFile(titleCreditsDataPath(), text, error)) {
+        logWarning("[title] credits load failed: " + error);
+        titleCreditsText_ = normalizeTitleCreditsText({});
+        return;
+    }
+    titleCreditsText_ = normalizeTitleCreditsText(std::move(text));
+    titleCreditsScrollOffset_ = 0.0f;
+    titleCreditsScrollState_ = {};
+    logInfo("[title] credits loaded: " + titleCreditsDataPath().generic_string());
+}
+
 void Game::loadStoryEvents()
 {
     StoryEventLoader loader;
@@ -1762,6 +1813,10 @@ void Game::finishOpeningKamishibai(bool completedPlayback)
         }
     }
     mode_ = ScreenMode::Title;
+    titleMenuPage_ = TitleMenuPage::Main;
+    titleMenuSelection_ = 0;
+    titleCreditsScrollOffset_ = 0.0f;
+    titleCreditsScrollState_ = {};
     playAudioBgm(AudioBgmTitle, 0.25f);
     pausePage_ = PauseMenuPage::Main;
     pauseReturnMode_ = ScreenMode::Base;
@@ -1929,15 +1984,144 @@ void Game::updateEndingKamishibai(const Input& input, float dt)
 
 void Game::updateTitleScreen(const Input& input, UiContext& ui)
 {
-    if (input.mouseLeftPressed() || input.confirmPressed() || input.useItemPressed()) {
-        if (input.mouseLeftPressed()) {
-            ui.consumePointer();
+    if (screenTransition_.active()) {
+        ui.block({{0.0f, 0.0f}, {static_cast<float>(camera_.width()), static_cast<float>(camera_.height())}});
+        return;
+    }
+
+    if (titleMenuPage_ == TitleMenuPage::Options) {
+        const bool suppressCancelThisFrame = optionsSuppressCancelThisFrame_;
+        optionsSuppressCancelThisFrame_ = false;
+        const bool operationModalOpen = operationSettingsCapture_.active() ||
+            operationSettingsConflictConfirm_.open ||
+            operationSettingsResetAllConfirm_.open;
+        if (!operationModalOpen &&
+            !suppressCancelThisFrame &&
+            uiCancelRequested(titleCancelState_, input, ui, optionsMenuPanelRect())) {
+            returnToTitleMain();
+            return;
         }
+        updateOptionsMenu(input, ui);
+        return;
+    }
+
+    if (titleMenuPage_ == TitleMenuPage::Credits) {
+        const UiRect panel = titleCreditsPanelRect();
+        if (uiCancelRequested(titleCancelState_, input, ui, panel)) {
+            returnToTitleMain();
+            return;
+        }
+
+        const UiRect viewport = titleCreditsViewportRect();
+        UiScrollAreaStyle scrollStyle;
+        const float contentHeight = estimateTitleCreditsContentHeight(titleCreditsText_);
+        updateUiScrollArea(
+            ui,
+            input,
+            viewport,
+            contentHeight,
+            titleCreditsScrollOffset_,
+            scrollStyle,
+            &titleCreditsScrollState_);
+
+        const float maxScroll = std::max(0.0f, contentHeight - viewport.size.y);
+        if (input.pressed(InputAction::MoveUp)) {
+            titleCreditsScrollOffset_ = std::max(0.0f, titleCreditsScrollOffset_ - 36.0f);
+            ui.emitSound(UiSoundEvent::CursorMove);
+        }
+        if (input.pressed(InputAction::MoveDown)) {
+            titleCreditsScrollOffset_ = std::min(maxScroll, titleCreditsScrollOffset_ + 36.0f);
+            ui.emitSound(UiSoundEvent::CursorMove);
+        }
+        if (input.pressed(InputAction::MoveLeft)) {
+            titleCreditsScrollOffset_ = std::max(0.0f, titleCreditsScrollOffset_ - viewport.size.y * 0.8f);
+            ui.emitSound(UiSoundEvent::CursorMove);
+        }
+        if (input.pressed(InputAction::MoveRight)) {
+            titleCreditsScrollOffset_ = std::min(maxScroll, titleCreditsScrollOffset_ + viewport.size.y * 0.8f);
+            ui.emitSound(UiSoundEvent::CursorMove);
+        }
+        ui.block(panel);
+        return;
+    }
+
+    const int previousSelection = titleMenuSelection_;
+    if (input.pressed(InputAction::MoveUp)) {
+        titleMenuSelection_ = (titleMenuSelection_ + TitleMenuItemCount - 1) % TitleMenuItemCount;
+    }
+    if (input.pressed(InputAction::MoveDown)) {
+        titleMenuSelection_ = (titleMenuSelection_ + 1) % TitleMenuItemCount;
+    }
+
+    for (int i = 0; i < TitleMenuItemCount; ++i) {
+        const UiRect rect = titleMenuItemRect(i);
+        if (rect.contains(ui.mouse())) {
+            titleMenuSelection_ = i;
+        }
+        if (ui.pressed(rect)) {
+            titleMenuSelection_ = i;
+            ui.emitSound(UiSoundEvent::Confirm);
+            chooseTitleMenuItem(i);
+            return;
+        }
+    }
+    ui.emitCursorMoveIfChanged(previousSelection, titleMenuSelection_);
+
+    if (input.confirmPressed() || input.useItemPressed()) {
         ui.emitSound(UiSoundEvent::Confirm);
+        chooseTitleMenuItem(titleMenuSelection_);
+        return;
+    }
+
+    ui.block(titleMainPanelRect());
+}
+
+void Game::openTitleOptions()
+{
+    titleMenuPage_ = TitleMenuPage::Options;
+    titleCancelState_ = {};
+    prepareOptionsMenu();
+}
+
+void Game::openTitleCredits()
+{
+    titleMenuPage_ = TitleMenuPage::Credits;
+    titleCreditsScrollOffset_ = 0.0f;
+    titleCreditsScrollState_ = {};
+    titleCancelState_ = {};
+    if (titleCreditsText_.empty()) {
+        loadTitleCreditsData();
+    }
+}
+
+void Game::returnToTitleMain()
+{
+    titleMenuPage_ = TitleMenuPage::Main;
+    titleCancelState_ = {};
+    operationSettingsCapture_.cancel();
+    operationSettingsConflictConfirm_ = {};
+    operationSettingsResetAllConfirm_ = {};
+}
+
+void Game::chooseTitleMenuItem(int item)
+{
+    switch (std::clamp(item, 0, TitleMenuItemCount - 1)) {
+    case 0:
+    {
         const bool needsIntroTutorial = !hasStoryFlag(IntroTutorialCompletedFlag);
         requestScreenTransition(needsIntroTutorial
             ? ScreenTransitionTarget::TitleToIntroTutorial
             : ScreenTransitionTarget::TitleToBase);
+        break;
+    }
+    case 1:
+        openTitleOptions();
+        break;
+    case 2:
+        openTitleCredits();
+        break;
+    default:
+        break;
     }
 }
 
@@ -3720,7 +3904,7 @@ void Game::updateScreenMode(
             pausePage_ = PauseMenuPage::Main;
             return;
         }
-        updateRingStatusHud(ui);
+        updateRingStatusHud(ui, dt);
         inventory_.update(
             input,
             ui,
@@ -4873,6 +5057,12 @@ void Game::checkHotReload(float dt)
         if (mode_ == ScreenMode::OpeningKamishibai) {
             openingPlayer_.start(openingPages_, openingMeta_.openingEverWatched);
         }
+        reloadNotice_ = "Hot reload: " + changedPath;
+        reloadNoticeTimer_ = 3.0f;
+        configureWatcher();
+        return;
+    } else if (fileName == "credits.txt") {
+        loadTitleCreditsData();
         reloadNotice_ = "Hot reload: " + changedPath;
         reloadNoticeTimer_ = 3.0f;
         configureWatcher();
