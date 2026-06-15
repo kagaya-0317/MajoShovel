@@ -43,5 +43,6 @@ void renderEntityStatusOverlays(
     Vec2 footAnchor,
     float visualSize,
     double totalSeconds);
+void renderConfuseStatusOverlay(Renderer& renderer, Vec2 footAnchor, float visualSize, double totalSeconds);
 
 } // namespace majo

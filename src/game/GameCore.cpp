@@ -4744,13 +4744,19 @@ void Game::update(const Input& input, const Time& time)
                 addScreenShake(event.effectId == "wall_stun" ? 5.0f : 3.0f, 0.16f);
                 const bool wallStunImpact = event.effectId == "wall_stun";
                 const bool burrowImpact = event.effectId == "burrow";
+                const bool emergeImpact = event.effectId == "jump_start";
+                const bool landingImpact = event.effectId == "landing";
+                const bool moleBurrowDebrisImpact = burrowImpact || emergeImpact;
                 SmokeBurstOptions smoke;
-                smoke.count = wallStunImpact ? 14 : (burrowImpact ? 16 : 10);
-                smoke.size = wallStunImpact ? 24.0f : (burrowImpact ? 22.0f : 18.0f);
-                smoke.spreadRadius = wallStunImpact ? 16.0f : (burrowImpact ? 14.0f : 10.0f);
+                smoke.count = wallStunImpact ? 14 : ((moleBurrowDebrisImpact || landingImpact) ? 16 : 10);
+                smoke.size = wallStunImpact ? 24.0f : ((moleBurrowDebrisImpact || landingImpact) ? 22.0f : 18.0f);
+                smoke.spreadRadius = wallStunImpact ? 16.0f : ((moleBurrowDebrisImpact || landingImpact) ? 14.0f : 10.0f);
                 smoke.colorA = {192, 144, 82, 192};
                 smoke.colorB = {110, 82, 58, 150};
                 effects_.spawnAttackImpactBurst(event.position, smoke, wallStunImpact);
+                if (moleBurrowDebrisImpact) {
+                    effects_.spawnTileBreak(event.position, TileType::Dirt, {154, 110, 66, 235}, false, 2.0f, 2);
+                }
             } else if (event.type == EnemyEventType::TerrainHit) {
                 const Vec2 direction = lengthSquared(event.effectDirection) > 0.0001f
                     ? event.effectDirection

@@ -2416,9 +2416,6 @@ void SpellRingSystem::normalizeItemPlacements()
 
 void SpellRingSystem::switchActiveRing(int delta)
 {
-    if (anyRingInFlight()) {
-        return;
-    }
     activeRingIndex_ = (activeRingIndex_ + delta) % SpellRingCount;
     if (activeRingIndex_ < 0) {
         activeRingIndex_ += SpellRingCount;

@@ -50,6 +50,7 @@ struct EnemyHitboxProfiles {
 struct HitboxCatalog {
     HitboxProfile player;
     std::unordered_map<std::string, EnemyHitboxProfiles> enemies;
+    std::unordered_map<std::string, EnemyHitboxProfiles> bossWeakPoints;
     std::unordered_map<std::string, HitboxProfile> objects;
 
     bool operator==(const HitboxCatalog&) const = default;
@@ -80,6 +81,28 @@ struct HitboxCatalog {
     std::string_view enemyId,
     HitboxDirection direction);
 bool eraseEnemyHitboxProfile(
+    HitboxCatalog& catalog,
+    std::string_view enemyId,
+    HitboxDirection direction);
+[[nodiscard]] const HitboxProfile* bossWeakPointProfileFor(
+    const HitboxCatalog* catalog,
+    const Enemy& enemy);
+[[nodiscard]] const HitboxProfile* bossWeakPointProfileFor(
+    const HitboxCatalog* catalog,
+    std::string_view enemyId,
+    HitboxDirection direction);
+[[nodiscard]] bool bossWeakPointHasProfile(
+    const HitboxCatalog& catalog,
+    std::string_view enemyId,
+    HitboxDirection direction);
+[[nodiscard]] bool bossWeakPointHasAnyProfile(
+    const HitboxCatalog& catalog,
+    std::string_view enemyId);
+[[nodiscard]] HitboxProfile& mutableBossWeakPointProfile(
+    HitboxCatalog& catalog,
+    std::string_view enemyId,
+    HitboxDirection direction);
+bool eraseBossWeakPointProfile(
     HitboxCatalog& catalog,
     std::string_view enemyId,
     HitboxDirection direction);

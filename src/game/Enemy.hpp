@@ -82,6 +82,7 @@ enum class EnemyAwarenessIcon {
 
 enum class BossActionPhase {
     None,
+    Approach,
     Submerge,
     Telegraph,
     Jump,

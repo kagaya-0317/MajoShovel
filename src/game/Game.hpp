@@ -198,6 +198,7 @@ struct HitboxEditSnapshot {
     HitboxCatalog catalog;
     HitboxEditTab tab = HitboxEditTab::Enemies;
     HitboxDirection enemyDirection = HitboxDirection::Default;
+    bool enemyWeakPoint = false;
     std::string selectedId;
     int selectedCircleIndex = -1;
 
@@ -1691,6 +1692,8 @@ private:
     const ObjectDefinition* selectedObjectHitboxDefinitionForEdit() const;
     std::vector<HitCircle> selectedHitboxEditCircles() const;
     HitboxProfile* ensureSelectedHitboxEditProfile();
+    bool selectedEnemyHitboxWeakPointEditable() const;
+    int selectedHitboxEditCircleLimit() const;
     bool copyCurrentHitboxEditProfile();
     bool pasteCurrentHitboxEditProfile(bool mirrorX);
     bool copyEnemyHitboxAllDirectionProfiles();
@@ -2106,6 +2109,7 @@ private:
     ImageScaleEditTab imageScaleEditTab_ = ImageScaleEditTab::Objects;
     HitboxEditTab hitboxEditTab_ = HitboxEditTab::Enemies;
     HitboxDirection enemyHitboxDirection_ = HitboxDirection::Default;
+    bool enemyHitboxEditingWeakPoint_ = false;
     int objectImageScaleSelectedIndex_ = -1;
     int otherImageScaleSelectedIndex_ = -1;
     int enemyHitboxSelectedEnemyIndex_ = -1;

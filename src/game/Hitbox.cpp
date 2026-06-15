@@ -13,7 +13,8 @@ namespace majo {
 
 namespace {
 
-constexpr std::string_view HitboxHeader = "MAJO_HITBOX_V2";
+constexpr std::string_view HitboxHeader = "MAJO_HITBOX_V3";
+constexpr std::string_view HitboxV2Header = "MAJO_HITBOX_V2";
 constexpr std::string_view LegacyHitboxHeader = "MAJO_HITBOX_V1";
 constexpr std::string_view LegacyEnemyHitboxHeader = "MAJO_ENEMY_HITBOX_V1";
 constexpr float HitboxRadiusMin = 1.0f;
@@ -171,7 +172,7 @@ void appendProfileEntry(HitboxProfile& profile, HitCircle circle)
 }
 
 void appendEnemyEntry(
-    HitboxCatalog& catalog,
+    std::unordered_map<std::string, EnemyHitboxProfiles>& profileMap,
     const std::string& id,
     HitboxDirection direction,
     HitCircle circle)
@@ -180,7 +181,7 @@ void appendEnemyEntry(
         return;
     }
 
-    HitboxProfile& profile = catalog.enemies[id].directions[static_cast<std::size_t>(hitboxDirectionIndex(direction))];
+    HitboxProfile& profile = profileMap[id].directions[static_cast<std::size_t>(hitboxDirectionIndex(direction))];
     if (static_cast<int>(profile.circles.size()) >= HitboxMaxCircles) {
         return;
     }
@@ -374,6 +375,84 @@ bool eraseEnemyHitboxProfile(
     return hadProfile;
 }
 
+const HitboxProfile* bossWeakPointProfileFor(const HitboxCatalog* catalog, const Enemy& enemy)
+{
+    if (catalog == nullptr) {
+        return nullptr;
+    }
+
+    const HitboxDirection direction = enemyHitboxDirectionForFacing(enemy.facingAngle);
+    if (const HitboxProfile* profile = bossWeakPointProfileFor(catalog, enemy.enemyId, direction)) {
+        return profile;
+    }
+    return bossWeakPointProfileFor(catalog, enemy.enemyId, HitboxDirection::Default);
+}
+
+const HitboxProfile* bossWeakPointProfileFor(
+    const HitboxCatalog* catalog,
+    std::string_view enemyId,
+    HitboxDirection direction)
+{
+    return catalog == nullptr ? nullptr : enemyProfileSlot(catalog->bossWeakPoints, enemyId, direction);
+}
+
+bool bossWeakPointHasProfile(
+    const HitboxCatalog& catalog,
+    std::string_view enemyId,
+    HitboxDirection direction)
+{
+    return bossWeakPointProfileFor(&catalog, enemyId, direction) != nullptr;
+}
+
+bool bossWeakPointHasAnyProfile(const HitboxCatalog& catalog, std::string_view enemyId)
+{
+    if (enemyId.empty()) {
+        return false;
+    }
+
+    const auto it = catalog.bossWeakPoints.find(std::string(enemyId));
+    if (it == catalog.bossWeakPoints.end()) {
+        return false;
+    }
+
+    return std::any_of(it->second.directions.begin(), it->second.directions.end(), [](const HitboxProfile& profile) {
+        return profileHasCircles(profile);
+    });
+}
+
+HitboxProfile& mutableBossWeakPointProfile(
+    HitboxCatalog& catalog,
+    std::string_view enemyId,
+    HitboxDirection direction)
+{
+    return catalog.bossWeakPoints[std::string(enemyId)].directions[static_cast<std::size_t>(hitboxDirectionIndex(direction))];
+}
+
+bool eraseBossWeakPointProfile(
+    HitboxCatalog& catalog,
+    std::string_view enemyId,
+    HitboxDirection direction)
+{
+    if (enemyId.empty()) {
+        return false;
+    }
+
+    const auto it = catalog.bossWeakPoints.find(std::string(enemyId));
+    if (it == catalog.bossWeakPoints.end()) {
+        return false;
+    }
+
+    HitboxProfile& profile = it->second.directions[static_cast<std::size_t>(hitboxDirectionIndex(direction))];
+    const bool hadProfile = profileHasCircles(profile);
+    profile.circles.clear();
+    if (std::none_of(it->second.directions.begin(), it->second.directions.end(), [](const HitboxProfile& candidate) {
+        return profileHasCircles(candidate);
+    })) {
+        catalog.bossWeakPoints.erase(it);
+    }
+    return hadProfile;
+}
+
 const HitboxProfile* objectHitboxProfileFor(const HitboxCatalog* catalog, std::string_view objectId)
 {
     return catalog == nullptr ? nullptr : profileFor(catalog->objects, objectId);
@@ -554,6 +633,7 @@ bool loadHitboxCatalog(
 {
     outCatalog.player.circles.clear();
     outCatalog.enemies.clear();
+    outCatalog.bossWeakPoints.clear();
     outCatalog.objects.clear();
 
     std::ifstream file(path, std::ios::binary);
@@ -572,7 +652,7 @@ bool loadHitboxCatalog(
         if (firstLine) {
             firstLine = false;
             stripUtf8Bom(line);
-            if (line == HitboxHeader || line == LegacyHitboxHeader) {
+            if (line == HitboxHeader || line == HitboxV2Header || line == LegacyHitboxHeader) {
                 continue;
             }
             if (line == LegacyEnemyHitboxHeader) {
@@ -609,7 +689,7 @@ bool loadHitboxCatalog(
 
         HitboxDirection direction = HitboxDirection::Default;
         std::string shape = token;
-        if ((kind == "enemy" || legacyEnemyOnly) && token != "circle") {
+        if ((kind == "enemy" || kind == "boss_weakpoint" || legacyEnemyOnly) && token != "circle") {
             if (!parseHitboxDirection(token, direction)) {
                 continue;
             }
@@ -622,7 +702,9 @@ bool loadHitboxCatalog(
         }
 
         if (kind == "enemy" || legacyEnemyOnly) {
-            appendEnemyEntry(outCatalog, id, legacyEnemyOnly ? HitboxDirection::Default : direction, circle);
+            appendEnemyEntry(outCatalog.enemies, id, legacyEnemyOnly ? HitboxDirection::Default : direction, circle);
+        } else if (kind == "boss_weakpoint") {
+            appendEnemyEntry(outCatalog.bossWeakPoints, id, direction, circle);
         } else if (kind == "object") {
             appendEntry(outCatalog.objects, id, circle);
         }
@@ -653,6 +735,15 @@ bool saveHitboxCatalog(
     std::vector<EnemyHitboxSaveEntry> enemyEntries;
     collectEnemyEntries(catalog.enemies, enemyEntries);
     std::sort(enemyEntries.begin(), enemyEntries.end(), [](const auto& lhs, const auto& rhs) {
+        if (lhs.id != rhs.id) {
+            return lhs.id < rhs.id;
+        }
+        return hitboxDirectionIndex(lhs.direction) < hitboxDirectionIndex(rhs.direction);
+    });
+
+    std::vector<EnemyHitboxSaveEntry> bossWeakPointEntries;
+    collectEnemyEntries(catalog.bossWeakPoints, bossWeakPointEntries);
+    std::sort(bossWeakPointEntries.begin(), bossWeakPointEntries.end(), [](const auto& lhs, const auto& rhs) {
         if (lhs.id != rhs.id) {
             return lhs.id < rhs.id;
         }
@@ -691,6 +782,24 @@ bool saveHitboxCatalog(
             }
             circle = sanitizeCircle(circle);
             file << "enemy " << entry.id << " ";
+            if (entry.direction != HitboxDirection::Default) {
+                file << hitboxDirectionId(entry.direction) << " ";
+            }
+            file << "circle "
+                << formatHitboxFloat(circle.offset.x) << " "
+                << formatHitboxFloat(circle.offset.y) << " "
+                << formatHitboxFloat(circle.radius) << "\n";
+            ++written;
+        }
+    }
+    for (const EnemyHitboxSaveEntry& entry : bossWeakPointEntries) {
+        int written = 0;
+        for (HitCircle circle : entry.profile->circles) {
+            if (written >= 1) {
+                break;
+            }
+            circle = sanitizeCircle(circle);
+            file << "boss_weakpoint " << entry.id << " ";
             if (entry.direction != HitboxDirection::Default) {
                 file << hitboxDirectionId(entry.direction) << " ";
             }

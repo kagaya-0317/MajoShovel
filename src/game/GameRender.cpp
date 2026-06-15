@@ -82,6 +82,7 @@ constexpr Color RingStatusHudWeightGaugeBackColor{6, 15, 35, 168};
 constexpr Color RingStatusHudWeightGaugeFillColor{84, 218, 255, 238};
 constexpr Color RingStatusHudWeightGaugeOverColor{255, 72, 84, 238};
 constexpr Color RingStatusHudWeightGaugeLimitColor{255, 248, 190, 245};
+constexpr float RingWeightOverloadEpsilon = 0.0001f;
 constexpr std::string_view RingStatusHudChargeReadySe = "se.ring.charge_ready";
 constexpr float RingStatusHudReadyHoldSeconds = 1.0f;
 constexpr float RingStatusHudFadeSeconds = 20.0f / 60.0f;
@@ -230,6 +231,16 @@ RectF ringStatusHudSpriteSource(int ringIndex, bool active)
     };
 }
 
+UiRect dungeonStatusHudRect(float screenWidth, float screenHeight)
+{
+    return {{
+        std::max(8.0f, screenWidth - DungeonStatusHudRightMargin - DungeonStatusHudWidth),
+        std::max(
+            TopInfoBarY + TopInfoBarHeight + 8.0f,
+            screenHeight - DungeonStatusHudBottomMargin - DungeonStatusHudHeight - DungeonHudUpShift),
+    }, {DungeonStatusHudWidth, DungeonStatusHudHeight}};
+}
+
 void drawRingStatusHudCooldownPulse(Renderer& renderer, Vec2 panelPos, float pulseTimer, float alphaScale)
 {
     if (pulseTimer <= 0.0f || alphaScale <= 0.001f) {
@@ -285,7 +296,8 @@ void drawRingStatusHudWeightGauge(Renderer& renderer, Vec2 panelPos, float weigh
         renderer.fillRect(gauge.pos, {blueWidth, gauge.size.y}, RingStatusHudWeightGaugeFillColor);
     }
 
-    const float overWidth = gauge.size.x * clamp((ratio - 1.0f) / GaugeMaxRatio, 0.0f, 1.0f);
+    const float overRatio = std::max(0.0f, ratio - (1.0f + RingWeightOverloadEpsilon));
+    const float overWidth = gauge.size.x * clamp(overRatio / GaugeMaxRatio, 0.0f, 1.0f);
     if (overWidth > 0.0f) {
         renderer.fillRect({limitX, gauge.pos.y}, {overWidth, gauge.size.y}, RingStatusHudWeightGaugeOverColor);
     }
@@ -438,7 +450,7 @@ std::string ringWeightStateLabel(float weightRatio, float stopRatio)
     if (weightRatio < 0.85f) {
         return "重量あと少し";
     }
-    if (weightRatio < 1.0f) {
+    if (weightRatio <= 1.0f + RingWeightOverloadEpsilon) {
         return "重量いっぱい";
     }
     if (weightRatio < stopRatio) {
@@ -568,7 +580,7 @@ void drawRingDetailPanel(
     const float stopRatio = spellRing.weightStopRatioForRing(ringIndex);
     const float weightSpeedMultiplier = spellRing.weightSpeedMultiplierForRing(ringIndex);
     constexpr Color OverloadedWeightColor{255, 112, 112, 255};
-    const bool overloaded = weightRatio >= 1.0f;
+    const bool overloaded = weightRatio > 1.0f + RingWeightOverloadEpsilon;
     const Color stateColor = overloaded ? OverloadedWeightColor : ui::Text;
     drawRingDetailLineWithModifier(
         renderer,
@@ -1956,6 +1968,8 @@ void appendRingItemDepthRenderEntry(
     });
 }
 
+constexpr std::string_view DungeonMinimapFramePath = "assets/UI_mapFrame.png";
+constexpr Vec2 DungeonMinimapFrameImageSize{200.0f, 200.0f};
 constexpr float DungeonMinimapX = 18.0f;
 constexpr float DungeonMinimapYGap = 8.0f;
 constexpr float DungeonMinimapDiameter = 178.0f;
@@ -4590,9 +4604,9 @@ UiRect Game::ringStatusHudRect(int ringIndex, int unlockedRingCount) const
         static_cast<float>(std::max(0, unlockedRingCount - 1)) * RingStatusHudGap;
     const float startY = std::max(
         TopInfoBarY + TopInfoBarHeight + 8.0f,
-        screenHeight - RingStatusHudBottomMargin - totalHeight - RingStatusHudUpOffset);
+        screenHeight - RingStatusHudBottomMargin - totalHeight - RingStatusHudUpOffset - DungeonHudUpShift);
     return {{
-        RingStatusHudLeftMargin,
+        RingStatusHudLeftMargin + static_cast<float>(ringIndex) * RingStatusHudIndentStep,
         startY + static_cast<float>(ringIndex) * (RingStatusHudHeight + RingStatusHudGap),
     }, {RingStatusHudWidth, RingStatusHudHeight}};
 }
@@ -5029,10 +5043,7 @@ void Game::renderDungeonStatusHud(Renderer& renderer) const
 
     const float screenWidth = static_cast<float>(camera_.width());
     const float screenHeight = static_cast<float>(camera_.height());
-    const UiRect panel{{
-        std::max(8.0f, screenWidth - DungeonStatusHudRightMargin - DungeonStatusHudWidth),
-        std::max(TopInfoBarY + TopInfoBarHeight + 8.0f, screenHeight - DungeonStatusHudBottomMargin - DungeonStatusHudHeight),
-    }, {DungeonStatusHudWidth, DungeonStatusHudHeight}};
+    const UiRect panel = dungeonStatusHudRect(screenWidth, screenHeight);
 
     const float imageScale = std::min(
         panel.size.x / DungeonStatusHudImageSize.x,
@@ -5727,7 +5738,17 @@ void Game::renderDungeonMinimap(Renderer& renderer, const std::vector<LightSourc
 
     const Vec2 facing = lengthSquared(player_.facing) > 0.0001f ? normalize(player_.facing) : Vec2{1.0f, 0.0f};
     drawDungeonMapPlayerArrow(renderer, minimapCenter, facing, 0.72f);
-    renderer.drawCircle(minimapCenter, contentRadius, {88, 108, 132, 145});
+    const float frameScale = minimapDiameter / DungeonMinimapDiameter;
+    ImageDrawOptions frameOptions;
+    frameOptions.anchor = {0.5f, 0.5f};
+    if (!renderer.drawImage(
+            DungeonMinimapFramePath,
+            minimapCenter,
+            DungeonMinimapFrameImageSize * frameScale,
+            frameOptions,
+            TextureFilter::Linear)) {
+        renderer.drawCircle(minimapCenter, contentRadius, {88, 108, 132, 145});
+    }
     if (hasWarpGuideMarker) {
         drawWarpGuideMinimapIcon(renderer, minimapCenter + warpGuideDirection * (contentRadius + 0.5f), warpGuideDirection, warpGuidePulse);
     }
@@ -5984,7 +6005,7 @@ void Game::renderDungeonLogs(Renderer& renderer) const
     const float screenWidth = static_cast<float>(camera_.width());
     const float screenHeight = static_cast<float>(camera_.height());
     const float topLimit = TopInfoBarY + TopInfoBarHeight + 8.0f;
-    const float statusTopY = screenHeight - DungeonStatusHudBottomMargin - DungeonStatusHudHeight;
+    const float statusTopY = dungeonStatusHudRect(screenWidth, screenHeight).pos.y;
     const float maxBottomY = std::max(topLimit + DungeonLogRowHeight, statusTopY - DungeonLogStatusGap);
 
     int visibleCount = std::min(static_cast<int>(dungeonLogs_.size()), DungeonLogMaxVisible);
@@ -7189,6 +7210,8 @@ constexpr int DungeonLightPriorityWarp = 38;
 constexpr int DungeonLightPriorityEvent = 40;
 constexpr int DungeonLightPriorityTutorial = 42;
 constexpr int DungeonLightPriorityBoss = 44;
+constexpr float StardustMoleBossArenaLightRadius =
+    (static_cast<float>(BossArenaRadiusXTiles) + 0.75f) * static_cast<float>(balance::TileSize);
 
 struct DungeonLightCandidate {
     LightSource light;
@@ -7362,7 +7385,14 @@ std::vector<LightSource> Game::collectDungeonLightSources(double totalSeconds) c
                 flickeredLightRadius(radiusPx, static_cast<float>(totalSeconds), phase),
             }, DungeonLightPriorityWarp);
         }
-        if (hasBossSpawnPoint_ && !bossSpawned_ && !hasCapturedBossForCurrentStage()) {
+        if (hasBossSpawnPoint_ &&
+            currentStageDefinition_.bossEnemyId == "stardust_mole" &&
+            !hasCapturedBossForCurrentStage()) {
+            addLight({
+                bossSpawnPoint_,
+                StardustMoleBossArenaLightRadius,
+            }, DungeonLightPriorityBoss, true);
+        } else if (hasBossSpawnPoint_ && !bossSpawned_ && !hasCapturedBossForCurrentStage()) {
             addLight({
                 flickeredLightPosition(bossSpawnPoint_, static_cast<float>(totalSeconds), 4.8f),
                 flickeredLightRadius(120.0f, static_cast<float>(totalSeconds), 4.8f),
@@ -7848,11 +7878,7 @@ void Game::render(Renderer& renderer, const Time& time)
                 }
             }
 
-            const UiRect statusPanel{{
-                std::max(8.0f, screenWidth - DungeonStatusHudRightMargin - DungeonStatusHudWidth),
-                std::max(TopInfoBarY + TopInfoBarHeight + 8.0f, screenHeight - DungeonStatusHudBottomMargin - DungeonStatusHudHeight),
-            }, {DungeonStatusHudWidth, DungeonStatusHudHeight}};
-            encyclopediaAvoidRects.push_back(statusPanel);
+            encyclopediaAvoidRects.push_back(dungeonStatusHudRect(screenWidth, screenHeight));
 
             int visibleLogCount = std::min(static_cast<int>(dungeonLogs_.size()), DungeonLogMaxVisible);
             const auto logBlockHeight = [](int count) {
@@ -7860,7 +7886,7 @@ void Game::render(Renderer& renderer, const Time& time)
                     static_cast<float>(std::max(0, count - 1)) * DungeonLogGap;
             };
             const float logTopLimit = TopInfoBarY + TopInfoBarHeight + 8.0f;
-            const float statusTopY = screenHeight - DungeonStatusHudBottomMargin - DungeonStatusHudHeight;
+            const float statusTopY = dungeonStatusHudRect(screenWidth, screenHeight).pos.y;
             const float maxLogBottomY = std::max(logTopLimit + DungeonLogRowHeight, statusTopY - DungeonLogStatusGap);
             while (visibleLogCount > 0 && logBlockHeight(visibleLogCount) > maxLogBottomY - logTopLimit) {
                 --visibleLogCount;

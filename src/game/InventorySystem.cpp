@@ -39,12 +39,14 @@ constexpr float ShortcutHudFrameScale = 0.8f;
 constexpr float ShortcutHudFrameMinW = 760.0f;
 constexpr float ShortcutHudFrameMaxW = 1140.0f;
 constexpr float ShortcutHudBottomMargin = 10.0f;
+constexpr float ShortcutHudDungeonUiUpShift = 8.0f;
 constexpr float ShortcutHudSlotHitSizeDesign = 70.0f;
 constexpr float ShortcutHudSlotHitScale = 1.0f;
 constexpr float ShortcutHudIconMaxSizeDesign = 48.0f;
 constexpr float ShortcutHudSelectedPatchWDesign = 116.0f;
 constexpr float ShortcutHudSelectedPatchHDesign = 126.0f;
 constexpr float ShortcutHudSelectedNameGap = 6.0f;
+constexpr float ShortcutHudSelectedNameDownShift = 18.0f;
 constexpr float ScreenX = 44.0f;
 constexpr float ScreenY = 58.0f;
 constexpr float ScreenW = 1192.0f;
@@ -152,7 +154,7 @@ UiRect makeShortcutHudPanelRect(int screenWidth, int screenHeight)
         : std::min(scaledMaxW, availableW);
     const float panelH = panelW / ShortcutHudFrameAspect;
     const float panelX = (static_cast<float>(screenWidth) - panelW) * 0.5f;
-    const float panelY = static_cast<float>(screenHeight) - panelH - ShortcutHudBottomMargin;
+    const float panelY = static_cast<float>(screenHeight) - panelH - ShortcutHudBottomMargin - ShortcutHudDungeonUiUpShift;
     return {{panelX, panelY}, {panelW, panelH}};
 }
 
@@ -3167,7 +3169,7 @@ void InventorySystem::renderShortcutHud(Renderer& renderer, const SpellRingSyste
         const float centeredX = selectedRect.pos.x + (selectedRect.size.x - nameSize.x) * 0.5f;
         const Vec2 namePos{
             std::clamp(centeredX, minX, std::max(minX, maxX)),
-            hudPanel.pos.y - nameSize.y - ShortcutHudSelectedNameGap,
+            hudPanel.pos.y - nameSize.y - ShortcutHudSelectedNameGap + ShortcutHudSelectedNameDownShift,
         };
         renderer.drawOutlinedText(namePos, selectedItemName, ui::Text, {0, 0, 0, 120}, 6, NameScale);
     }

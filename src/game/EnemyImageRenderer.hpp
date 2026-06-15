@@ -14,9 +14,6 @@ struct EnemyImageDrawOptions {
     TextureFilter filter = TextureFilter::Nearest;
     bool allowUpscale = false;
     bool fitToMaxSize = true;
-    bool outlineEnabled = true;
-    Color outlineColor{80, 18, 28, 255};
-    int outlinePx = 1;
     bool selectedOutlineEnabled = false;
     Color selectedOutlineColor{255, 230, 150, 255};
     int selectedOutlinePx = 6;

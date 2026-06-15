@@ -961,6 +961,10 @@ bool App::reloadAssetForPath(const std::string& changedPath)
     if (fileName == "ui_line.png") {
         return renderer_->loadUiLineTexture("assets/UI_line.png");
     }
+    if (fileName == "ui_mapframe.png") {
+        renderer_->invalidateImage("assets/UI_mapFrame.png");
+        return true;
+    }
     if (fileName == "ui_itemshortcuts.png") {
         renderer_->invalidateImage("assets/UI_itemShortCuts.png");
         return true;
@@ -974,6 +978,10 @@ bool App::reloadAssetForPath(const std::string& changedPath)
     }
     if (fileName == "ui_cursor2.png") {
         renderer_->invalidateImage("assets/UI_cursor2.png");
+        return true;
+    }
+    if (extension == ".png" && parentPath.find("assets/enemies") != std::string::npos) {
+        renderer_->invalidateImage(changedPath);
         return true;
     }
     if (extension == ".otf" || extension == ".ttf") {

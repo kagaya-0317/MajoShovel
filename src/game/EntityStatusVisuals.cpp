@@ -175,6 +175,32 @@ void emitEntityStatusAuras(const EntityStatus& status, Vec2 position, EffectSyst
     }
 }
 
+void renderConfuseStatusOverlay(Renderer& renderer, Vec2 footAnchor, float visualSize, double totalSeconds)
+{
+    const float size = std::max(1.0f, visualSize);
+    const float orbitX = std::clamp(size * 0.16f, 7.0f, 18.0f);
+    const float orbitY = std::clamp(size * 0.045f, 2.0f, 7.0f);
+    const float starRadius = std::clamp(size * 0.075f, 4.2f, 9.0f);
+    const Vec2 center = footAnchor + Vec2{0.0f, -size * 0.5f + starRadius * 0.85f};
+    const float baseAngle = static_cast<float>(totalSeconds) * 4.25f;
+    const float pulse = 0.84f + 0.16f * std::sin(static_cast<float>(totalSeconds) * 6.0f);
+
+    for (int i = 0; i < 2; ++i) {
+        const float angle = baseAngle + static_cast<float>(i) * Pi;
+        const Vec2 offset{
+            std::cos(angle) * orbitX,
+            std::sin(angle) * orbitY,
+        };
+        const float depthScale = i == 0 ? 1.0f : 0.86f;
+        drawConfuseStar(
+            renderer,
+            center + offset,
+            starRadius * depthScale,
+            -baseAngle * 1.35f + static_cast<float>(i) * 0.72f,
+            pulse * (i == 0 ? 1.0f : 0.86f));
+    }
+}
+
 std::span<const EffectPreviewEntry> entityStatusPreviewEntries()
 {
     static const std::vector<EffectPreviewEntry> entries = [] {
@@ -218,27 +244,7 @@ void renderEntityStatusOverlays(
         return;
     }
 
-    const float orbitX = std::clamp(size * 0.16f, 7.0f, 18.0f);
-    const float orbitY = std::clamp(size * 0.045f, 2.0f, 7.0f);
-    const float starRadius = std::clamp(size * 0.075f, 4.2f, 9.0f);
-    const Vec2 center = footAnchor + Vec2{0.0f, -size * 0.5f + starRadius * 0.85f};
-    const float baseAngle = static_cast<float>(totalSeconds) * 4.25f;
-    const float pulse = 0.84f + 0.16f * std::sin(static_cast<float>(totalSeconds) * 6.0f);
-
-    for (int i = 0; i < 2; ++i) {
-        const float angle = baseAngle + static_cast<float>(i) * Pi;
-        const Vec2 offset{
-            std::cos(angle) * orbitX,
-            std::sin(angle) * orbitY,
-        };
-        const float depthScale = i == 0 ? 1.0f : 0.86f;
-        drawConfuseStar(
-            renderer,
-            center + offset,
-            starRadius * depthScale,
-            -baseAngle * 1.35f + static_cast<float>(i) * 0.72f,
-            pulse * (i == 0 ? 1.0f : 0.86f));
-    }
+    renderConfuseStatusOverlay(renderer, footAnchor, size, totalSeconds);
 }
 
 } // namespace majo

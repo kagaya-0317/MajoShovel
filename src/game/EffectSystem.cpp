@@ -1400,9 +1400,17 @@ void EffectSystem::spawnBurst(Vec2 position, int count, Color color, float speed
     }
 }
 
-void EffectSystem::spawn(ParticleEffectId id, Vec2 position, Vec2 direction, float scale, EffectLayer layer, Color colorOverride)
+void EffectSystem::spawn(
+    ParticleEffectId id,
+    Vec2 position,
+    Vec2 direction,
+    float scale,
+    EffectLayer layer,
+    Color colorOverride,
+    int countMultiplier)
 {
     const float safeScale = std::max(0.1f, scale);
+    const int safeCountMultiplier = std::clamp(countMultiplier, 1, 4);
     if (id == ParticleEffectId::PoisonAura) {
         for (int i = 0; i < 4; ++i) {
             Color color = mixColor({84, 232, 84, 255}, {168, 255, 112, 255}, randomRange(0.0f, 1.0f));
@@ -1482,7 +1490,8 @@ void EffectSystem::spawn(ParticleEffectId id, Vec2 position, Vec2 direction, flo
         }
     }
 
-    for (int i = 0; i < preset.count; ++i) {
+    const int particleCount = std::clamp(preset.count * safeCountMultiplier, 0, 128);
+    for (int i = 0; i < particleCount; ++i) {
         const float angleBase = preset.directional ? baseAngle : seedAngle(position);
         const float angle = angleBase + randomRange(-preset.spread * 0.5f, preset.spread * 0.5f);
         const float speed = std::max(0.0f, preset.speed + randomRange(-preset.speedJitter, preset.speedJitter)) * scale;
@@ -1535,7 +1544,13 @@ void EffectSystem::spawnDigHit(Vec2 position, Vec2 direction, Color colorOverrid
     }
 }
 
-void EffectSystem::spawnTileBreak(Vec2 position, TileType tileType, Color colorOverride, bool playSound)
+void EffectSystem::spawnTileBreak(
+    Vec2 position,
+    TileType tileType,
+    Color colorOverride,
+    bool playSound,
+    float scale,
+    int debrisCountMultiplier)
 {
     ParticleEffectId id = ParticleEffectId::DirtBreak;
     if (tileType == TileType::Rock || tileType == TileType::HardRock) {
@@ -1543,8 +1558,12 @@ void EffectSystem::spawnTileBreak(Vec2 position, TileType tileType, Color colorO
     } else if (tileType == TileType::Ore) {
         id = ParticleEffectId::OreBreak;
     }
-    spawnSmokeBurst(position);
-    spawn(id, position, {1.0f, 0.0f}, 1.0f, EffectLayer::Foreground, colorOverride);
+    const float safeScale = std::max(0.1f, scale);
+    SmokeBurstOptions smoke;
+    smoke.spreadRadius *= safeScale;
+    smoke.speed *= safeScale;
+    spawnSmokeBurst(position, smoke);
+    spawn(id, position, {1.0f, 0.0f}, safeScale, EffectLayer::Foreground, colorOverride, debrisCountMultiplier);
     if (playSound) {
         queueSound(tileBreakSoundFor(tileType), position);
     }
