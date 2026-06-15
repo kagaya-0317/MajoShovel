@@ -1048,7 +1048,7 @@ private:
     void openTitleOptions();
     void openTitleCredits();
     void returnToTitleMain();
-    void chooseTitleMenuItem(int item);
+    void startTitleGame();
     void requestScreenTransition(ScreenTransitionTarget target);
     void requestMiningStartTransition(bool useLatestWarpPoint, bool forceRegenerate);
     void requestReturnToBaseTransition(bool stageCleared, bool died);
@@ -1855,7 +1855,7 @@ private:
     void switchActiveRingWithLog(int delta);
     int unlockedRingHudCount() const;
     UiRect ringStatusHudRect(int ringIndex, int unlockedRingCount) const;
-    void updateRingStatusHud(UiContext& ui);
+    void updateRingStatusHud(UiContext& ui, float dt);
     std::string currentMapDisplayName() const;
     void renderTopInfoBar(Renderer& renderer) const;
     void renderOpeningKamishibai(Renderer& renderer) const;
@@ -2223,7 +2223,6 @@ private:
     autosim::AutoSimulationDebugSnapshot autoSimulationDebug_;
     std::string baseStatus_;
     TitleMenuPage titleMenuPage_ = TitleMenuPage::Main;
-    int titleMenuSelection_ = 0;
     std::string titleCreditsText_;
     float titleCreditsScrollOffset_ = 0.0f;
     UiScrollAreaState titleCreditsScrollState_{};
@@ -2467,6 +2466,14 @@ private:
     AudioEngine* audio_ = nullptr;
     std::string activeAudioBgmCue_;
     AudioJingleState audioJingle_{};
+    struct RingStatusHudAnimation {
+        float previousCooldownRatio = 0.0f;
+        float readyHoldTimer = 0.0f;
+        float visibility = 1.0f;
+        float pulseTimer = 0.0f;
+        bool initialized = false;
+    };
+    std::array<RingStatusHudAnimation, SpellRingCount> ringStatusHudAnimations_{};
     float ringTrailEffectTimer_ = 0.0f;
     float ambientParticleTimer_ = 0.0f;
     float reloadNoticeTimer_ = 0.0f;

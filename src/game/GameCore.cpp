@@ -1814,7 +1814,6 @@ void Game::finishOpeningKamishibai(bool completedPlayback)
     }
     mode_ = ScreenMode::Title;
     titleMenuPage_ = TitleMenuPage::Main;
-    titleMenuSelection_ = 0;
     titleCreditsScrollOffset_ = 0.0f;
     titleCreditsScrollState_ = {};
     playAudioBgm(AudioBgmTitle, 0.25f);
@@ -2045,35 +2044,27 @@ void Game::updateTitleScreen(const Input& input, UiContext& ui)
         return;
     }
 
-    const int previousSelection = titleMenuSelection_;
-    if (input.pressed(InputAction::MoveUp)) {
-        titleMenuSelection_ = (titleMenuSelection_ + TitleMenuItemCount - 1) % TitleMenuItemCount;
-    }
-    if (input.pressed(InputAction::MoveDown)) {
-        titleMenuSelection_ = (titleMenuSelection_ + 1) % TitleMenuItemCount;
-    }
-
-    for (int i = 0; i < TitleMenuItemCount; ++i) {
-        const UiRect rect = titleMenuItemRect(i);
-        if (rect.contains(ui.mouse())) {
-            titleMenuSelection_ = i;
-        }
-        if (ui.pressed(rect)) {
-            titleMenuSelection_ = i;
-            ui.emitSound(UiSoundEvent::Confirm);
-            chooseTitleMenuItem(i);
-            return;
-        }
-    }
-    ui.emitCursorMoveIfChanged(previousSelection, titleMenuSelection_);
-
-    if (input.confirmPressed() || input.useItemPressed()) {
+    if (input.pressed(InputAction::OpenOptions) || ui.pressed(titleTopButtonRect(0))) {
         ui.emitSound(UiSoundEvent::Confirm);
-        chooseTitleMenuItem(titleMenuSelection_);
+        openTitleOptions();
+        return;
+    }
+    if (input.pressed(InputAction::OpenCredits) || ui.pressed(titleTopButtonRect(1))) {
+        ui.emitSound(UiSoundEvent::Confirm);
+        openTitleCredits();
         return;
     }
 
-    ui.block(titleMainPanelRect());
+    if (input.confirmPressed() || input.useItemPressed() || (input.mouseLeftPressed() && !ui.pointerConsumed())) {
+        if (input.mouseLeftPressed()) {
+            ui.consumePointer();
+        }
+        ui.emitSound(UiSoundEvent::Confirm);
+        startTitleGame();
+        return;
+    }
+
+    ui.block({{0.0f, 0.0f}, {static_cast<float>(camera_.width()), static_cast<float>(camera_.height())}});
 }
 
 void Game::openTitleOptions()
@@ -2103,26 +2094,12 @@ void Game::returnToTitleMain()
     operationSettingsResetAllConfirm_ = {};
 }
 
-void Game::chooseTitleMenuItem(int item)
+void Game::startTitleGame()
 {
-    switch (std::clamp(item, 0, TitleMenuItemCount - 1)) {
-    case 0:
-    {
-        const bool needsIntroTutorial = !hasStoryFlag(IntroTutorialCompletedFlag);
-        requestScreenTransition(needsIntroTutorial
-            ? ScreenTransitionTarget::TitleToIntroTutorial
-            : ScreenTransitionTarget::TitleToBase);
-        break;
-    }
-    case 1:
-        openTitleOptions();
-        break;
-    case 2:
-        openTitleCredits();
-        break;
-    default:
-        break;
-    }
+    const bool needsIntroTutorial = !hasStoryFlag(IntroTutorialCompletedFlag);
+    requestScreenTransition(needsIntroTutorial
+        ? ScreenTransitionTarget::TitleToIntroTutorial
+        : ScreenTransitionTarget::TitleToBase);
 }
 
 Game::ScreenTransitionFadeColor Game::fadeColorForScreenTransitionTarget(ScreenTransitionTarget target)

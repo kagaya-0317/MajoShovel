@@ -7083,7 +7083,6 @@ void Game::updateHiddenBaseOrbit(const Input& input, UiContext& ui, float dt, bo
         : Vec2{0.0f, 1.0f};
     player_.spellRingShift = 0.0f;
     player_.spellRingShiftDirection = player_.facing;
-    player_.throwCooldownRemaining = std::max(0.0f, player_.throwCooldownRemaining - std::max(0.0f, dt));
 
     if (interactionsEnabled) {
         spellRing_.update(player_, input, dt, baseRingPreviewAnimationTime_, false, ui.pointerConsumed(), balance_);

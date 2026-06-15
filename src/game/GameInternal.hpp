@@ -151,7 +151,7 @@ constexpr float StoragePageTextYOffset = 7.0f;
 constexpr int StoragePageTextScale = 2;
 constexpr float StorageDetailY = 108.0f;
 constexpr float StorageDragStartDistanceSq = 36.0f;
-constexpr int TitleMenuItemCount = 3;
+constexpr std::string_view GameVersionText = "v0.1.0";
 constexpr int PauseMenuItemCount = 5;
 constexpr int GameOverItemCount = 2;
 constexpr int StageClearItemCount = 1;
@@ -1624,18 +1624,25 @@ UiRect storageSlotRectByGlobal(int slot)
     return warehouse ? storageWarehouseSlotRect(local) : storageBackpackSlotRect(local);
 }
 
-UiRect titleMainPanelRect()
+UiRect titleTopButtonRect(int index)
 {
-    return {{420.0f, 348.0f}, {440.0f, 310.0f}};
+    constexpr float Width = 150.0f;
+    constexpr float Height = 38.0f;
+    constexpr float Gap = 10.0f;
+    constexpr float Top = 24.0f;
+    constexpr float Right = 26.0f;
+    const float x = 1280.0f - Right - Width * static_cast<float>(2 - index) - Gap * static_cast<float>(1 - index);
+    return {{x, Top}, {Width, Height}};
 }
 
-UiRect titleMenuItemRect(int index)
+UiRect titleStartPromptRect()
 {
-    const UiRect panel = titleMainPanelRect();
-    return {{
-        panel.pos.x + 50.0f,
-        panel.pos.y + 84.0f + static_cast<float>(index) * 58.0f,
-    }, {340.0f, ui::ButtonHeight}};
+    return {{0.0f, 604.0f}, {1280.0f, 52.0f}};
+}
+
+Vec2 titleVersionTextPos()
+{
+    return {26.0f, 30.0f};
 }
 
 UiRect titleCreditsPanelRect()
@@ -1924,16 +1931,6 @@ const char* pauseMenuItemName(int index)
     case 2: return "リング";
     case 3: return "オプション";
     case 4: return "ゲーム終了";
-    default: return "";
-    }
-}
-
-const char* titleMenuItemName(int index)
-{
-    switch (index) {
-    case 0: return "はじめる";
-    case 1: return "設定";
-    case 2: return "クレジット";
     default: return "";
     }
 }

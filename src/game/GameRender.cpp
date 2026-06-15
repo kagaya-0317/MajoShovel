@@ -293,6 +293,20 @@ void drawRingStatusHudWeightGauge(Renderer& renderer, Vec2 panelPos, float weigh
     renderer.fillRect({limitX - 0.5f, gauge.pos.y - 2.0f}, {1.0f, gauge.size.y + 4.0f}, RingStatusHudWeightGaugeLimitColor);
 }
 
+bool titlePromptUsesGamepad()
+{
+    switch (inputHelpDeviceMode()) {
+    case InputHelpDeviceMode::KeyboardMouse:
+        return false;
+    case InputHelpDeviceMode::Gamepad:
+        return true;
+    case InputHelpDeviceMode::Auto:
+        break;
+    }
+    const Input* input = inputHelpContext();
+    return input != nullptr && input->lastActiveDevice() == InputDeviceKind::Gamepad;
+}
+
 float dotVec2(Vec2 a, Vec2 b)
 {
     return a.x * b.x + a.y * b.y;
@@ -2076,6 +2090,8 @@ constexpr OperationSettingsActionRow OperationSettingsActionRows[] = {
     {InputAction::Cancel, "戻る", 0},
     {InputAction::Pause, "ポーズ", 0},
     {InputAction::OpenInventory, "アイテム画面", 0},
+    {InputAction::OpenOptions, "オプション", 0},
+    {InputAction::OpenCredits, "クレジット", 0},
     {InputAction::ThrowActiveRing, "リングを投げる", 1},
     {InputAction::OffsetRingCenter, "リングずらし", 1},
     {InputAction::UseSelectedItem, "選択アイテム使用", 1},
@@ -2662,6 +2678,10 @@ const char* operationSettingsActionHelpText(InputAction action)
         return "通常画面から一時停止メニューを開きます。";
     case InputAction::OpenInventory:
         return "アイテム画面を直接開きます。";
+    case InputAction::OpenOptions:
+        return "タイトル画面からオプションを直接開きます。";
+    case InputAction::OpenCredits:
+        return "タイトル画面からクレジットを直接開きます。";
     case InputAction::ThrowActiveRing:
         return "選択中のアクティブリングを投げます。";
     case InputAction::OffsetRingCenter:
@@ -4758,6 +4778,13 @@ void Game::renderTitleScreen(Renderer& renderer) const
 {
     openingRenderer_.renderTitleScreen(renderer, openingTitleImagePath(openingPages_), camera_.width(), camera_.height());
     renderer.setScreenSpace();
+    renderer.drawOutlinedText(
+        titleVersionTextPos(),
+        GameVersionText,
+        {224, 230, 244, 218},
+        {0, 0, 0, 150},
+        2,
+        2);
 
     if (titleMenuPage_ == TitleMenuPage::Options) {
         UiCancelControlScope cancelScope(titleCancelState_);
@@ -4807,16 +4834,29 @@ void Game::renderTitleScreen(Renderer& renderer) const
         return;
     }
 
-    UiWindowScope window(
+    drawUiButton(renderer, titleTopButtonRect(0), "オプション", false, uiActionButtonStyle());
+    drawUiButton(renderer, titleTopButtonRect(1), "クレジット", false, uiActionButtonStyle());
+
+    const std::string prompt = titlePromptUsesGamepad()
+        ? "Press {act:Confirm} to Start"
+        : "Press {act:Confirm} / Click to Start";
+    InputHelpStyle promptStyle;
+    promptStyle.text = {255, 255, 255, 245};
+    promptStyle.outline = {0, 0, 0, 190};
+    promptStyle.outlineEnabled = true;
+    promptStyle.outlinePx = 4;
+    promptStyle.scale = 3;
+    promptStyle.iconHeight = 36.0f;
+    const UiRect promptRect = titleStartPromptRect();
+    const Vec2 promptSize = measureInputHelpText(renderer, prompt, promptStyle);
+    drawInputHelpText(
         renderer,
-        "title.main",
-        titleMainPanelRect(),
-        "MajoShovel",
-        "↑/↓ 選択  F/Enter 決定",
-        UiWindowOptions{true, false});
-    for (int i = 0; i < TitleMenuItemCount; ++i) {
-        drawUiButton(renderer, titleMenuItemRect(i), titleMenuItemName(i), i == titleMenuSelection_);
-    }
+        {
+            promptRect.pos.x + (promptRect.size.x - promptSize.x) * 0.5f,
+            promptRect.pos.y + (promptRect.size.y - promptSize.y) * 0.5f,
+        },
+        prompt,
+        promptStyle);
 }
 
 void Game::renderScreenTransitionOverlay(Renderer& renderer)

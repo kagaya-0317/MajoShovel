@@ -52,6 +52,8 @@ constexpr ActionNameEntry ActionNames[] = {
     {InputAction::Cancel, "Cancel"},
     {InputAction::Pause, "Pause"},
     {InputAction::OpenInventory, "OpenInventory"},
+    {InputAction::OpenOptions, "OpenOptions"},
+    {InputAction::OpenCredits, "OpenCredits"},
     {InputAction::ToggleDebug, "ToggleDebug"},
     {InputAction::ToggleDebugPause, "ToggleDebugPause"},
     {InputAction::TestRestart, "TestRestart"},
@@ -276,6 +278,8 @@ InputBindingMap defaultInputBindings()
     addKeyboard(bindings, InputAction::Cancel, SDL_SCANCODE_BACKSPACE);
     addKeyboard(bindings, InputAction::Pause, SDL_SCANCODE_ESCAPE);
     addKeyboard(bindings, InputAction::OpenInventory, SDL_SCANCODE_I);
+    addKeyboard(bindings, InputAction::OpenOptions, SDL_SCANCODE_F9);
+    addKeyboard(bindings, InputAction::OpenCredits, SDL_SCANCODE_F10);
     addKeyboard(bindings, InputAction::ToggleDebug, SDL_SCANCODE_F1);
     addKeyboard(bindings, InputAction::TestRestart, SDL_SCANCODE_F5);
     addKeyboard(bindings, InputAction::ToggleDebugPause, SDL_SCANCODE_F6);
@@ -297,6 +301,8 @@ InputBindingMap defaultInputBindings()
     addGamepadButton(bindings, InputAction::GrabOrPlaceItem, SDL_GAMEPAD_BUTTON_RIGHT_STICK);
     addGamepadButton(bindings, InputAction::PreviousActiveRing, SDL_GAMEPAD_BUTTON_LEFT_SHOULDER);
     addGamepadButton(bindings, InputAction::NextActiveRing, SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER);
+    addGamepadButton(bindings, InputAction::OpenOptions, SDL_GAMEPAD_BUTTON_LEFT_SHOULDER);
+    addGamepadButton(bindings, InputAction::OpenCredits, SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER);
     addGamepadButton(bindings, InputAction::ShortcutCursorLeft, SDL_GAMEPAD_BUTTON_DPAD_LEFT);
     addGamepadButton(bindings, InputAction::ShortcutCursorRight, SDL_GAMEPAD_BUTTON_DPAD_RIGHT);
     addGamepadButton(bindings, InputAction::ToggleShortcutRow, SDL_GAMEPAD_BUTTON_DPAD_UP);

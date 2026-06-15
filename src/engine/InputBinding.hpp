@@ -39,6 +39,8 @@ enum class InputAction {
     Cancel,
     Pause,
     OpenInventory,
+    OpenOptions,
+    OpenCredits,
     ToggleDebug,
     ToggleDebugPause,
     TestRestart,

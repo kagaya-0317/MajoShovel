@@ -141,6 +141,7 @@ public:
     void update(Player& player, const Input& input, float dt, float totalTime, bool paused, bool blockPointerThrow, const RuntimeBalance& balance);
     void updatePresentation(const Player& player, float dt, const RuntimeBalance& balance);
     void resetRuntimeStateAtPlayer(const Player& player, const RuntimeBalance& balance);
+    void resetThrowCooldowns();
     void clearActionFlashTimers();
     void setWorkshopModifiers(const RingWorkshopModifiers& modifiers);
     void setWorkshopModifiersForRing(int ringIndex, const RingWorkshopModifiers& modifiers);

@@ -3470,7 +3470,7 @@ void Game::clearTemporaryPlayerState(bool fullHeal)
     player_.velocity = {};
     player_.knockbackVelocity = {};
     player_.knockbackTimer = 0.0f;
-    player_.throwCooldownRemaining = 0.0f;
+    spellRing_.resetThrowCooldowns();
     player_.poisonDamageAccumulator = 0.0;
     player_.hotDamageAccumulator = 0.0;
     player_.bleedDamageAccumulator = 0.0;
@@ -10827,7 +10827,7 @@ void Game::applyBossEncounterIntroPlacement()
     player_.velocity = {};
     player_.knockbackVelocity = {};
     player_.knockbackTimer = 0.0f;
-    player_.throwCooldownRemaining = 0.0f;
+    spellRing_.resetThrowCooldowns();
     player_.facing = {0.0f, -1.0f};
     player_.updateSpriteFlipFromFacing();
 
@@ -11157,7 +11157,7 @@ void Game::restoreRetrySnapshot()
     player_.velocity = {};
     player_.knockbackVelocity = {};
     player_.knockbackTimer = 0.0f;
-    player_.throwCooldownRemaining = 0.0f;
+    spellRing_.resetThrowCooldowns();
     player_.poisonDamageAccumulator = 0.0;
     player_.hotDamageAccumulator = 0.0;
     player_.bleedDamageAccumulator = 0.0;

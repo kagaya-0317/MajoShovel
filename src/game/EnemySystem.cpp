@@ -106,6 +106,30 @@ constexpr float AstragnaDownedSeconds = 7.0f;
 constexpr float AstragnaRepairIntervalSeconds = 1.35f;
 constexpr float AstragnaRepairPlayerSafeRadius = 72.0f;
 constexpr float AstragnaPlayerPushPadding = 1.5f;
+constexpr std::string_view AstragnaLaserProjectileId = "astragna_laser_bolt";
+constexpr float AstragnaEmitterSpawnRangeTiles = 6.5f;
+constexpr float AstragnaEmitterOrbitGapTiles = 1.25f;
+constexpr float AstragnaEmitterAngleOffsetRadians = 22.0f * Pi / 180.0f;
+constexpr float AstragnaEmitterRadius = 13.0f;
+constexpr int AstragnaEmitterMaxHp = 7;
+constexpr int AstragnaMaxActiveEmitters = 2;
+constexpr int AstragnaMaxActiveFlameEmitters = 1;
+constexpr float AstragnaEmitterLaserTelegraphSeconds = 0.45f;
+constexpr float AstragnaEmitterLaserActiveSeconds = 0.34f;
+constexpr float AstragnaEmitterLaserCooldownSeconds = 1.45f;
+constexpr float AstragnaEmitterLaserShotIntervalSeconds = 0.14f;
+constexpr int AstragnaEmitterLaserShotCount = 2;
+constexpr float AstragnaEmitterLaserLeadSeconds = 0.16f;
+constexpr float AstragnaEmitterFlameTelegraphSeconds = 0.55f;
+constexpr float AstragnaEmitterFlameActiveSeconds = 1.60f;
+constexpr float AstragnaEmitterFlameCooldownSeconds = 2.15f;
+constexpr float AstragnaEmitterFlameRangeTiles = 5.5f;
+constexpr float AstragnaEmitterFlameHalfAngleRadians = 17.0f * Pi / 180.0f;
+constexpr float AstragnaEmitterFlameSweepRadians = 28.0f * Pi / 180.0f;
+constexpr float AstragnaEmitterFlameHitIntervalSeconds = 0.35f;
+constexpr int AstragnaEmitterFlameDamage = 1;
+constexpr float AstragnaReflectedShellDamageMultiplier = 0.55f;
+constexpr float AstragnaDownedReflectedShellDamageMultiplier = 1.0f;
 constexpr std::string_view DefaultEnemyId = "default_enemy";
 constexpr float KeepDistanceMin = 130.0f;
 constexpr float KeepDistanceMax = 210.0f;
@@ -4324,6 +4348,7 @@ void reviveAstragnaSealParts(Enemy& enemy)
 {
     AstragnaBossRuntime& astragna = enemy.bossAction.astragna;
     const int maxHp = astragnaSealMaxHpForRevive(enemy);
+    astragna.sealEmitters = {};
     for (AstragnaSealPartRuntime& part : astragna.sealParts) {
         part.active = true;
         part.maxHp = maxHp;
@@ -4452,10 +4477,405 @@ bool astragnaGuardianTouched(const Enemy& enemy, const Player& player)
     return circlesOverlap(enemy.position, starRadius, player.position, playerRadius);
 }
 
+bool astragnaSealPartAliveAt(const AstragnaBossRuntime& astragna, int sealIndex)
+{
+    if (sealIndex < 0 || sealIndex >= AstragnaSealPartCount) {
+        return false;
+    }
+    const AstragnaSealPartRuntime& part = astragna.sealParts[static_cast<std::size_t>(sealIndex)];
+    return part.active && part.hp > 0;
+}
+
+bool astragnaEmitterVulnerable(const AstragnaSealEmitterRuntime& emitter)
+{
+    return emitter.active && !emitter.destroyed && emitter.hp > 0 && emitter.maxHp > 0;
+}
+
+void updateAstragnaEmitterPosition(Enemy& enemy, AstragnaSealEmitterRuntime& emitter)
+{
+    emitter.position = astragnaOrbitPosition(enemy, emitter.localAngle, emitter.orbitRadius);
+}
+
+int astragnaActiveEmitterCount(const AstragnaBossRuntime& astragna)
+{
+    return static_cast<int>(std::count_if(
+        astragna.sealEmitters.begin(),
+        astragna.sealEmitters.end(),
+        [](const AstragnaSealEmitterRuntime& emitter) {
+            return astragnaEmitterVulnerable(emitter);
+        }));
+}
+
+int astragnaActiveFlameEmitterCount(const AstragnaBossRuntime& astragna)
+{
+    return static_cast<int>(std::count_if(
+        astragna.sealEmitters.begin(),
+        astragna.sealEmitters.end(),
+        [](const AstragnaSealEmitterRuntime& emitter) {
+            return astragnaEmitterVulnerable(emitter) && emitter.attack == AstragnaEmitterAttack::FlameSweep;
+        }));
+}
+
+float astragnaEmitterTelegraphSeconds(const Enemy& enemy, AstragnaEmitterAttack attack)
+{
+    if (attack == AstragnaEmitterAttack::FlameSweep) {
+        return std::max(
+            0.05f,
+            astragnaParamFloat(enemy, "emitterFlameTelegraphSeconds", AstragnaEmitterFlameTelegraphSeconds));
+    }
+    return std::max(
+        0.05f,
+        astragnaParamFloat(enemy, "emitterLaserTelegraphSeconds", AstragnaEmitterLaserTelegraphSeconds));
+}
+
+float astragnaEmitterActiveSeconds(const Enemy& enemy, AstragnaEmitterAttack attack)
+{
+    if (attack == AstragnaEmitterAttack::FlameSweep) {
+        return std::max(
+            0.05f,
+            astragnaParamFloat(enemy, "emitterFlameActiveSeconds", AstragnaEmitterFlameActiveSeconds));
+    }
+    return std::max(
+        0.05f,
+        astragnaParamFloat(enemy, "emitterLaserActiveSeconds", AstragnaEmitterLaserActiveSeconds));
+}
+
+float astragnaEmitterCooldownSeconds(const Enemy& enemy, AstragnaEmitterAttack attack)
+{
+    if (attack == AstragnaEmitterAttack::FlameSweep) {
+        return std::max(
+            0.05f,
+            astragnaParamFloat(enemy, "emitterFlameCooldownSeconds", AstragnaEmitterFlameCooldownSeconds));
+    }
+    return std::max(
+        0.05f,
+        astragnaParamFloat(enemy, "emitterLaserCooldownSeconds", AstragnaEmitterLaserCooldownSeconds));
+}
+
+Vec2 astragnaEmitterAimTarget(const Player& player)
+{
+    return player.position + player.velocity * AstragnaEmitterLaserLeadSeconds;
+}
+
+float angleTo(Vec2 from, Vec2 to)
+{
+    const Vec2 delta = to - from;
+    if (lengthSquared(delta) <= 0.0001f) {
+        return 0.0f;
+    }
+    return std::atan2(delta.y, delta.x);
+}
+
+float astragnaEmitterFlameDirectionAngle(const Enemy& enemy, const AstragnaSealEmitterRuntime& emitter)
+{
+    const float duration = astragnaEmitterActiveSeconds(enemy, AstragnaEmitterAttack::FlameSweep);
+    const float elapsed = clamp(duration - emitter.timer, 0.0f, duration);
+    const float t = duration > 0.0001f ? elapsed / duration : 0.0f;
+    const float sweep = astragnaParamFloat(enemy, "emitterFlameSweepRadians", AstragnaEmitterFlameSweepRadians);
+    return emitter.baseDirectionAngle + std::sin(t * Pi * 2.0f) * sweep * emitter.sweepSign;
+}
+
+void beginAstragnaEmitterTelegraph(Enemy& enemy, AstragnaSealEmitterRuntime& emitter, const Player& player)
+{
+    emitter.phase = AstragnaEmitterPhase::Telegraph;
+    emitter.timer = astragnaEmitterTelegraphSeconds(enemy, emitter.attack);
+    emitter.shotTimer = 0.0f;
+    emitter.shotsFired = 0;
+    emitter.hitCooldown = 0.0f;
+    emitter.baseDirectionAngle = angleTo(emitter.position, astragnaEmitterAimTarget(player));
+}
+
+void enterAstragnaEmitterCooldown(Enemy& enemy, AstragnaSealEmitterRuntime& emitter)
+{
+    emitter.phase = AstragnaEmitterPhase::Cooldown;
+    emitter.timer = astragnaEmitterCooldownSeconds(enemy, emitter.attack);
+    emitter.shotTimer = 0.0f;
+    emitter.shotsFired = 0;
+    emitter.hitCooldown = 0.0f;
+}
+
+void destroyAstragnaEmitter(AstragnaSealEmitterRuntime& emitter)
+{
+    emitter.active = false;
+    emitter.destroyed = true;
+    emitter.phase = AstragnaEmitterPhase::Destroyed;
+    emitter.timer = 0.0f;
+    emitter.shotTimer = 0.0f;
+    emitter.hitCooldown = 0.0f;
+    emitter.hp = 0;
+}
+
+void destroyAstragnaEmitterForSeal(AstragnaBossRuntime& astragna, int sealIndex)
+{
+    if (sealIndex < 0 || sealIndex >= AstragnaSealPartCount) {
+        return;
+    }
+    destroyAstragnaEmitter(astragna.sealEmitters[static_cast<std::size_t>(sealIndex)]);
+}
+
+AstragnaEmitterAttack astragnaEmitterAttackForSeal(const AstragnaBossRuntime& astragna, int sealIndex)
+{
+    if ((sealIndex + astragna.reviveCount) % 3 == 1 &&
+        astragnaActiveFlameEmitterCount(astragna) < AstragnaMaxActiveFlameEmitters) {
+        return AstragnaEmitterAttack::FlameSweep;
+    }
+    return AstragnaEmitterAttack::LaserBolt;
+}
+
+float astragnaEmitterLocalAngleForSeal(const Enemy& enemy, const Player& player, float sealLocalAngle, float orbitRadius)
+{
+    const AstragnaBossRuntime& astragna = enemy.bossAction.astragna;
+    const std::array<float, 2> candidates{{
+        sealLocalAngle + AstragnaEmitterAngleOffsetRadians,
+        sealLocalAngle - AstragnaEmitterAngleOffsetRadians,
+    }};
+
+    float bestAngle = candidates.front();
+    float bestScore = -1.0f;
+    for (float candidate : candidates) {
+        const Vec2 position = enemy.position + fromAngle(astragna.rotationAngle + candidate) * orbitRadius;
+        const Vec2 toPlayer = player.position - position;
+        if (lengthSquared(toPlayer) <= 0.0001f) {
+            continue;
+        }
+        const Vec2 radial = normalize(position - enemy.position);
+        const Vec2 tangent{-radial.y, radial.x};
+        const float diagonalScore = std::abs(dot(normalize(toPlayer), tangent));
+        if (diagonalScore > bestScore) {
+            bestScore = diagonalScore;
+            bestAngle = candidate;
+        }
+    }
+    return bestAngle;
+}
+
+void spawnAstragnaEmitterForSeal(Enemy& enemy, const Player& player, int sealIndex)
+{
+    AstragnaBossRuntime& astragna = enemy.bossAction.astragna;
+    if (!astragnaSealPartAliveAt(astragna, sealIndex)) {
+        return;
+    }
+
+    AstragnaSealEmitterRuntime& emitter = astragna.sealEmitters[static_cast<std::size_t>(sealIndex)];
+    if (emitter.active || emitter.destroyed) {
+        return;
+    }
+
+    const AstragnaShellConfig shellConfig = astragnaShellConfig(enemy);
+    const float orbitRadius = std::max(
+        shellConfig.outerRadius,
+        astragnaParamFloat(
+            enemy,
+            "emitterOrbitRadius",
+            shellConfig.outerRadius + AstragnaEmitterOrbitGapTiles * static_cast<float>(balance::TileSize)));
+    const AstragnaSealPartRuntime& seal = astragna.sealParts[static_cast<std::size_t>(sealIndex)];
+
+    emitter = AstragnaSealEmitterRuntime{};
+    emitter.active = true;
+    emitter.destroyed = false;
+    emitter.sealIndex = sealIndex;
+    emitter.attack = astragnaEmitterAttackForSeal(astragna, sealIndex);
+    emitter.localAngle = astragnaEmitterLocalAngleForSeal(enemy, player, seal.localAngle, orbitRadius);
+    emitter.orbitRadius = orbitRadius;
+    emitter.radius = std::max(4.0f, astragnaParamFloat(enemy, "emitterRadius", AstragnaEmitterRadius));
+    emitter.maxHp = std::max(1, astragnaParamInt(enemy, "emitterHp", AstragnaEmitterMaxHp));
+    emitter.hp = emitter.maxHp;
+    emitter.sweepSign = emitter.localAngle >= seal.localAngle ? 1.0f : -1.0f;
+    updateAstragnaEmitterPosition(enemy, emitter);
+    beginAstragnaEmitterTelegraph(enemy, emitter, player);
+}
+
+void updateAstragnaEmitterSpawns(Enemy& enemy, const Player& player)
+{
+    AstragnaBossRuntime& astragna = enemy.bossAction.astragna;
+    if (astragna.phase != AstragnaPhase::Sealed) {
+        return;
+    }
+
+    const float spawnRange = std::max(
+        0.0f,
+        astragnaParamFloat(
+            enemy,
+            "emitterSpawnRange",
+            AstragnaEmitterSpawnRangeTiles * static_cast<float>(balance::TileSize)));
+    const float spawnRangeSq = spawnRange * spawnRange;
+    for (int sealIndex = 0; sealIndex < AstragnaSealPartCount; ++sealIndex) {
+        if (astragnaActiveEmitterCount(astragna) >= AstragnaMaxActiveEmitters) {
+            return;
+        }
+        if (!astragnaSealPartAliveAt(astragna, sealIndex)) {
+            destroyAstragnaEmitterForSeal(astragna, sealIndex);
+            continue;
+        }
+        const AstragnaSealPartRuntime& seal = astragna.sealParts[static_cast<std::size_t>(sealIndex)];
+        if (distanceSquared(astragnaSealPartPosition(enemy, seal), player.position) > spawnRangeSq) {
+            continue;
+        }
+        spawnAstragnaEmitterForSeal(enemy, player, sealIndex);
+    }
+}
+
+void fireAstragnaEmitterLaser(
+    Enemy& enemy,
+    AstragnaSealEmitterRuntime& emitter,
+    Player& player,
+    ProjectileSystem& projectiles,
+    std::vector<EnemyEvent>& events)
+{
+    const Vec2 target = astragnaEmitterAimTarget(player);
+    Vec2 direction = target - emitter.position;
+    if (lengthSquared(direction) <= 0.0001f) {
+        direction = fromAngle(emitter.baseDirectionAngle);
+    }
+    direction = normalize(direction);
+
+    ProjectileSpawnTuning tuning;
+    tuning.speedMultiplier = std::max(0.05f, astragnaParamFloat(enemy, "emitterLaserSpeedMultiplier", 1.0f));
+    tuning.damageMultiplier = std::max(0.0f, astragnaParamFloat(enemy, "emitterLaserDamageMultiplier", 1.0f));
+    tuning.radiusScale = std::max(0.1f, astragnaParamFloat(enemy, "emitterLaserRadiusScale", 1.0f));
+    const ProjectileSpawnMetadata metadata{.sourceActorName = enemyDisplayName(enemy)};
+    static const std::vector<EffectSpec> NoEffects;
+    if (projectiles.spawn(AstragnaLaserProjectileId, emitter.position + direction * (emitter.radius + 3.0f), direction, ProjectileOwnerType::Enemy, NoEffects, tuning, metadata)) {
+        events.push_back(makeEnemyEventAt(EnemyEventType::Shoot, enemy, emitter.position, "astragna_laser"));
+    }
+}
+
+bool astragnaFlameHitsPlayer(const Enemy& enemy, const AstragnaSealEmitterRuntime& emitter, const Player& player)
+{
+    const Vec2 toPlayer = player.position - emitter.position;
+    const float range = std::max(
+        1.0f,
+        astragnaParamFloat(
+            enemy,
+            "emitterFlameRange",
+            AstragnaEmitterFlameRangeTiles * static_cast<float>(balance::TileSize)));
+    const float playerRadius = player.effectiveRadius(balance::PlayerRadius);
+    if (lengthSquared(toPlayer) > (range + playerRadius) * (range + playerRadius)) {
+        return false;
+    }
+    if (lengthSquared(toPlayer) <= 0.0001f) {
+        return true;
+    }
+    const float halfAngle = std::max(
+        0.01f,
+        astragnaParamFloat(enemy, "emitterFlameHalfAngleRadians", AstragnaEmitterFlameHalfAngleRadians));
+    const float directionAngle = astragnaEmitterFlameDirectionAngle(enemy, emitter);
+    return std::abs(wrapAngle(std::atan2(toPlayer.y, toPlayer.x) - directionAngle)) <= halfAngle;
+}
+
+void updateAstragnaEmitterAttack(
+    Enemy& enemy,
+    AstragnaSealEmitterRuntime& emitter,
+    Player& player,
+    ProjectileSystem& projectiles,
+    float dt,
+    std::vector<EnemyEvent>& events)
+{
+    if (!astragnaEmitterVulnerable(emitter)) {
+        return;
+    }
+
+    AstragnaBossRuntime& astragna = enemy.bossAction.astragna;
+    if (astragna.phase != AstragnaPhase::Sealed || !astragnaSealPartAliveAt(astragna, emitter.sealIndex)) {
+        destroyAstragnaEmitter(emitter);
+        return;
+    }
+
+    updateAstragnaEmitterPosition(enemy, emitter);
+    const float safeDt = std::max(0.0f, dt);
+    emitter.timer -= safeDt;
+    emitter.hitCooldown = std::max(0.0f, emitter.hitCooldown - safeDt);
+
+    switch (emitter.phase) {
+    case AstragnaEmitterPhase::Telegraph:
+        emitter.baseDirectionAngle = angleTo(emitter.position, astragnaEmitterAimTarget(player));
+        if (emitter.timer <= 0.0f) {
+            emitter.phase = AstragnaEmitterPhase::Active;
+            emitter.timer = astragnaEmitterActiveSeconds(enemy, emitter.attack);
+            emitter.shotTimer = 0.0f;
+            emitter.shotsFired = 0;
+            emitter.hitCooldown = 0.0f;
+            emitter.baseDirectionAngle = angleTo(emitter.position, player.position);
+            events.push_back(makeEnemyEventAt(
+                EnemyEventType::BossTelegraph,
+                enemy,
+                emitter.position,
+                emitter.attack == AstragnaEmitterAttack::FlameSweep ? "astragna_flame_start" : "astragna_laser_start"));
+        }
+        break;
+    case AstragnaEmitterPhase::Active:
+        if (emitter.attack == AstragnaEmitterAttack::LaserBolt) {
+            const int shotCount = std::max(1, astragnaParamInt(enemy, "emitterLaserShotCount", AstragnaEmitterLaserShotCount));
+            emitter.shotTimer -= safeDt;
+            while (emitter.shotsFired < shotCount && emitter.shotTimer <= 0.0f) {
+                fireAstragnaEmitterLaser(enemy, emitter, player, projectiles, events);
+                ++emitter.shotsFired;
+                emitter.shotTimer += std::max(
+                    0.02f,
+                    astragnaParamFloat(enemy, "emitterLaserShotIntervalSeconds", AstragnaEmitterLaserShotIntervalSeconds));
+            }
+        } else if (emitter.attack == AstragnaEmitterAttack::FlameSweep) {
+            if (emitter.hitCooldown <= 0.0f && astragnaFlameHitsPlayer(enemy, emitter, player)) {
+                const int damage = std::max(0, astragnaParamInt(enemy, "emitterFlameDamage", AstragnaEmitterFlameDamage));
+                if (damage > 0) {
+                    player.applyDamage(
+                        applyDefenseModifier(player.status, damage),
+                        DamageCause{
+                            .source = DamageSource::Projectile,
+                            .actorName = enemyDisplayName(enemy),
+                            .objectName = "封印火炎",
+                        });
+                }
+                emitter.hitCooldown = std::max(
+                    0.05f,
+                    astragnaParamFloat(enemy, "emitterFlameHitIntervalSeconds", AstragnaEmitterFlameHitIntervalSeconds));
+            }
+        }
+        if (emitter.timer <= 0.0f) {
+            enterAstragnaEmitterCooldown(enemy, emitter);
+        }
+        break;
+    case AstragnaEmitterPhase::Cooldown:
+        if (emitter.timer <= 0.0f) {
+            beginAstragnaEmitterTelegraph(enemy, emitter, player);
+        }
+        break;
+    case AstragnaEmitterPhase::Dormant:
+        beginAstragnaEmitterTelegraph(enemy, emitter, player);
+        break;
+    case AstragnaEmitterPhase::Destroyed:
+        break;
+    }
+}
+
+void updateAstragnaEmitters(
+    Enemy& enemy,
+    Player& player,
+    ProjectileSystem& projectiles,
+    float dt,
+    std::vector<EnemyEvent>& events)
+{
+    AstragnaBossRuntime& astragna = enemy.bossAction.astragna;
+    if (astragna.phase != AstragnaPhase::Sealed) {
+        for (AstragnaSealEmitterRuntime& emitter : astragna.sealEmitters) {
+            if (astragnaEmitterVulnerable(emitter)) {
+                destroyAstragnaEmitter(emitter);
+            }
+        }
+        return;
+    }
+
+    updateAstragnaEmitterSpawns(enemy, player);
+    for (AstragnaSealEmitterRuntime& emitter : astragna.sealEmitters) {
+        updateAstragnaEmitterAttack(enemy, emitter, player, projectiles, dt, events);
+    }
+}
+
 bool updateAstragnaBossActionSequence(
     Enemy& enemy,
     Player& player,
     TileMap& map,
+    ProjectileSystem& projectiles,
     float dt,
     std::vector<EnemyEvent>& events)
 {
@@ -4476,6 +4896,7 @@ bool updateAstragnaBossActionSequence(
     enemy.velocity = {};
 
     resolveAstragnaShellCollision(enemy, player, map);
+    updateAstragnaEmitters(enemy, player, projectiles, safeDt, events);
     if (astragna.phase == AstragnaPhase::Downed && astragnaGuardianTouched(enemy, player)) {
         enterAstragnaPhase(enemy, AstragnaPhase::Rescued, events);
         return true;
@@ -4595,6 +5016,126 @@ bool astragnaAllSealPartsDestroyed(const Enemy& enemy)
     return isAstragnaBossAction(enemy) && astragnaAliveSealPartCount(enemy) <= 0;
 }
 
+int astragnaTypedProjectileDamage(const Projectile& projectile, int damage)
+{
+    return std::max(
+        0,
+        static_cast<int>(std::ceil(static_cast<double>(std::max(0, damage)) * damageTypeMultiplier(projectile.damageType))));
+}
+
+int astragnaEmitterDamageForRingHit(
+    const SpellRingItem& item,
+    const SpellRingSystem& spellRing,
+    const Player& player)
+{
+    return astragnaSealDamageForRingHit(item, spellRing, player);
+}
+
+int astragnaShellDamageForProjectile(const Enemy& enemy, const Projectile& projectile, int damage)
+{
+    int baseDamage = astragnaTypedProjectileDamage(projectile, damage);
+    if (projectile.projectileId == AstragnaLaserProjectileId) {
+        baseDamage = std::max(baseDamage, astragnaParamInt(enemy, "reflectedLaserShellDamage", 3));
+    }
+    if (baseDamage <= 0) {
+        return 0;
+    }
+
+    const double multiplier = enemy.bossAction.astragna.phase == AstragnaPhase::Downed
+        ? behaviorParamDouble(enemy, "boss_sequence", "downedReflectedShellDamageMultiplier", AstragnaDownedReflectedShellDamageMultiplier)
+        : behaviorParamDouble(enemy, "boss_sequence", "reflectedShellDamageMultiplier", AstragnaReflectedShellDamageMultiplier);
+    if (multiplier <= 0.0) {
+        return 0;
+    }
+    return std::max(1, static_cast<int>(std::ceil(static_cast<double>(baseDamage) * multiplier)));
+}
+
+bool damageAstragnaEmitter(
+    Enemy& enemy,
+    AstragnaSealEmitterRuntime& emitter,
+    int damage,
+    std::vector<EnemyEvent>& events)
+{
+    if (!astragnaEmitterVulnerable(emitter) || damage <= 0) {
+        return false;
+    }
+
+    emitter.hp = std::max(0, emitter.hp - damage);
+    const bool broken = emitter.hp <= 0;
+    if (broken) {
+        destroyAstragnaEmitter(emitter);
+    }
+
+    enemy.hitFlash = 0.12f;
+    events.push_back(makeEnemyEventAt(
+        EnemyEventType::BossImpact,
+        enemy,
+        emitter.position,
+        broken ? "astragna_emitter_break" : "astragna_emitter_hit"));
+    return true;
+}
+
+bool damageAstragnaSealPart(
+    Enemy& enemy,
+    int sealIndex,
+    int damage,
+    std::vector<EnemyEvent>& events)
+{
+    AstragnaBossRuntime& astragna = enemy.bossAction.astragna;
+    if (!astragnaSealPartAliveAt(astragna, sealIndex) || damage <= 0) {
+        return false;
+    }
+
+    AstragnaSealPartRuntime& part = astragna.sealParts[static_cast<std::size_t>(sealIndex)];
+    part.hp = std::max(0, part.hp - damage);
+    const bool broken = part.hp <= 0;
+    if (broken) {
+        part.active = false;
+        destroyAstragnaEmitterForSeal(astragna, sealIndex);
+    }
+
+    revealEnemyHpBar(enemy, damage);
+    enemy.hitFlash = 0.12f;
+    syncAstragnaHpDisplay(enemy);
+    events.push_back(makeEnemyEventAt(
+        EnemyEventType::AttackHit,
+        enemy,
+        astragnaSealPartPosition(enemy, part),
+        broken ? "astragna_seal_break" : "astragna_seal_hit"));
+    if (astragnaAllSealPartsDestroyed(enemy)) {
+        enterAstragnaPhase(enemy, AstragnaPhase::Downed, events);
+    }
+    return true;
+}
+
+bool damageAstragnaShellBlock(
+    Enemy& enemy,
+    AstragnaShellBlockRuntime& block,
+    int damage,
+    std::vector<EnemyEvent>& events)
+{
+    if (!block.active || block.hp <= 0 || block.maxHp <= 0 || damage <= 0) {
+        return false;
+    }
+
+    block.hp = std::max(0, block.hp - damage);
+    const bool broken = block.hp <= 0;
+    if (broken) {
+        block.active = false;
+    }
+
+    const Vec2 blockPosition = astragnaShellBlockPosition(enemy, block);
+    revealEnemyHpBar(enemy, damage);
+    enemy.hitFlash = 0.12f;
+    syncAstragnaHpDisplay(enemy);
+    events.push_back(makeEnemyEventAt(
+        EnemyEventType::BossImpact,
+        enemy,
+        blockPosition,
+        broken ? "astragna_shell_break" : "astragna_shell_hit"));
+    return true;
+}
+
 bool tryHitAstragnaBossComponent(
     Enemy& enemy,
     SpellRingItem& item,
@@ -4611,7 +5152,40 @@ bool tryHitAstragnaBossComponent(
 
     initializeAstragnaBoss(enemy);
     AstragnaBossRuntime& astragna = enemy.bossAction.astragna;
-    for (AstragnaSealPartRuntime& part : astragna.sealParts) {
+    for (AstragnaSealEmitterRuntime& emitter : astragna.sealEmitters) {
+        if (!astragnaEmitterVulnerable(emitter)) {
+            continue;
+        }
+        if (!ringItemHitboxOverlapsCircle(item, itemHitbox, emitter.position, emitter.radius)) {
+            continue;
+        }
+
+        const int damage = astragnaEmitterDamageForRingHit(item, spellRing, player);
+        if (damage <= 0) {
+            return false;
+        }
+        const Vec2 hitPosition = emitter.position;
+        const bool broken = damage >= emitter.hp;
+        if (!damageAstragnaEmitter(enemy, emitter, damage, events)) {
+            return false;
+        }
+
+        item.actionFlashTimer = SpellRingItemActionFlashSeconds;
+        if (!item.hasCapturedBehavior("heavy_guard")) {
+            spellRing.consumeItemDurability(item);
+        }
+        impactSoundEvents.push_back(makeEnemyRingImpactSoundEvent(
+            item,
+            object,
+            enemy,
+            broken ? RingImpactResult::Break : RingImpactResult::Hit,
+            hitPosition,
+            static_cast<float>(damage)));
+        return true;
+    }
+
+    for (int sealIndex = 0; sealIndex < AstragnaSealPartCount; ++sealIndex) {
+        AstragnaSealPartRuntime& part = astragna.sealParts[static_cast<std::size_t>(sealIndex)];
         if (!part.active || part.hp <= 0) {
             continue;
         }
@@ -4624,11 +5198,7 @@ bool tryHitAstragnaBossComponent(
         if (damage <= 0) {
             return false;
         }
-        part.hp = std::max(0, part.hp - damage);
-        const bool broken = part.hp <= 0;
-        if (broken) {
-            part.active = false;
-        }
+        damageAstragnaSealPart(enemy, sealIndex, damage, events);
 
         item.actionFlashTimer = SpellRingItemActionFlashSeconds;
         if (!item.hasCapturedBehavior("heavy_guard")) {
@@ -4641,17 +5211,6 @@ bool tryHitAstragnaBossComponent(
             RingImpactResult::Hit,
             partPosition,
             static_cast<float>(damage)));
-        revealEnemyHpBar(enemy, damage);
-        enemy.hitFlash = 0.12f;
-        syncAstragnaHpDisplay(enemy);
-        events.push_back(makeEnemyEventAt(
-            EnemyEventType::AttackHit,
-            enemy,
-            partPosition,
-            broken ? "astragna_seal_break" : "astragna_seal_hit"));
-        if (astragnaAllSealPartsDestroyed(enemy)) {
-            enterAstragnaPhase(enemy, AstragnaPhase::Downed, events);
-        }
         return true;
     }
 
@@ -4668,11 +5227,8 @@ bool tryHitAstragnaBossComponent(
         if (damage <= 0) {
             return false;
         }
-        block.hp = std::max(0, block.hp - damage);
-        const bool broken = block.hp <= 0;
-        if (broken) {
-            block.active = false;
-        }
+        const bool broken = damage >= block.hp;
+        damageAstragnaShellBlock(enemy, block, damage, events);
 
         item.actionFlashTimer = SpellRingItemActionFlashSeconds;
         if (!item.hasCapturedBehavior("heavy_guard")) {
@@ -4685,14 +5241,6 @@ bool tryHitAstragnaBossComponent(
             broken ? RingImpactResult::Break : RingImpactResult::Hit,
             blockPosition,
             static_cast<float>(damage)));
-        revealEnemyHpBar(enemy, damage);
-        enemy.hitFlash = 0.12f;
-        syncAstragnaHpDisplay(enemy);
-        events.push_back(makeEnemyEventAt(
-            EnemyEventType::BossImpact,
-            enemy,
-            blockPosition,
-            broken ? "astragna_shell_break" : "astragna_shell_hit"));
         return true;
     }
 
@@ -4711,7 +5259,20 @@ bool tryHitAstragnaWithProjectile(
 
     initializeAstragnaBoss(enemy);
     AstragnaBossRuntime& astragna = enemy.bossAction.astragna;
-    for (AstragnaSealPartRuntime& part : astragna.sealParts) {
+    for (AstragnaSealEmitterRuntime& emitter : astragna.sealEmitters) {
+        if (!astragnaEmitterVulnerable(emitter)) {
+            continue;
+        }
+        if (!circlesOverlap(emitter.position, emitter.radius, projectile.position, projectile.radius)) {
+            continue;
+        }
+
+        const int typedDamage = astragnaTypedProjectileDamage(projectile, damage);
+        return damageAstragnaEmitter(enemy, emitter, typedDamage, events);
+    }
+
+    for (int sealIndex = 0; sealIndex < AstragnaSealPartCount; ++sealIndex) {
+        AstragnaSealPartRuntime& part = astragna.sealParts[static_cast<std::size_t>(sealIndex)];
         if (!part.active || part.hp <= 0) {
             continue;
         }
@@ -4720,30 +5281,24 @@ bool tryHitAstragnaWithProjectile(
             continue;
         }
 
-        const int typedDamage = std::max(
-            0,
-            static_cast<int>(std::ceil(static_cast<double>(std::max(0, damage)) * damageTypeMultiplier(projectile.damageType))));
+        const int typedDamage = astragnaTypedProjectileDamage(projectile, damage);
         if (typedDamage <= 0) {
             return false;
         }
-        part.hp = std::max(0, part.hp - typedDamage);
-        const bool broken = part.hp <= 0;
-        if (broken) {
-            part.active = false;
+        return damageAstragnaSealPart(enemy, sealIndex, typedDamage, events);
+    }
+
+    for (AstragnaShellBlockRuntime& block : astragna.shellBlocks) {
+        if (!block.active || block.hp <= 0 || block.maxHp <= 0) {
+            continue;
+        }
+        const Vec2 blockPosition = astragnaShellBlockPosition(enemy, block);
+        if (!circlesOverlap(blockPosition, block.radius, projectile.position, projectile.radius)) {
+            continue;
         }
 
-        revealEnemyHpBar(enemy, typedDamage);
-        enemy.hitFlash = 0.12f;
-        syncAstragnaHpDisplay(enemy);
-        events.push_back(makeEnemyEventAt(
-            EnemyEventType::AttackHit,
-            enemy,
-            partPosition,
-            broken ? "astragna_seal_break" : "astragna_seal_hit"));
-        if (astragnaAllSealPartsDestroyed(enemy)) {
-            enterAstragnaPhase(enemy, AstragnaPhase::Downed, events);
-        }
-        return true;
+        const int shellDamage = astragnaShellDamageForProjectile(enemy, projectile, damage);
+        return damageAstragnaShellBlock(enemy, block, shellDamage, events);
     }
     return false;
 }
@@ -4793,6 +5348,106 @@ TerrainTileNeighbors astragnaShellTileNeighbors(const AstragnaBossRuntime& astra
         .downLeft = !astragnaShellHasActiveBlockAt(astragna, block.layerIndex + 1, angle - span),
         .downRight = !astragnaShellHasActiveBlockAt(astragna, block.layerIndex + 1, angle + span),
     };
+}
+
+void drawAstragnaEmitterSector(
+    Renderer& renderer,
+    Vec2 origin,
+    float directionAngle,
+    float range,
+    float halfAngle,
+    Color fill,
+    Color edge)
+{
+    constexpr int SegmentCount = 14;
+    std::array<Vec2, SegmentCount + 2> points{};
+    points[0] = origin;
+    for (int i = 0; i <= SegmentCount; ++i) {
+        const float t = static_cast<float>(i) / static_cast<float>(SegmentCount);
+        const float angle = directionAngle - halfAngle + halfAngle * 2.0f * t;
+        points[static_cast<std::size_t>(i + 1)] = origin + fromAngle(angle) * range;
+    }
+    renderer.fillPolygon(points.data(), points.size(), fill);
+    renderer.drawSoftLine(origin, points[1], 3.0f, edge);
+    renderer.drawSoftLine(origin, points[points.size() - 1], 3.0f, edge);
+}
+
+void drawAstragnaEmitterAttack(Renderer& renderer, const Enemy& enemy, const AstragnaSealEmitterRuntime& emitter)
+{
+    if (!astragnaEmitterVulnerable(emitter)) {
+        return;
+    }
+
+    const float telegraphPulse = 0.65f + 0.35f * std::sin(enemy.behaviorTimer * 10.0f);
+    if (emitter.attack == AstragnaEmitterAttack::LaserBolt) {
+        if (emitter.phase == AstragnaEmitterPhase::Telegraph) {
+            const Vec2 direction = fromAngle(emitter.baseDirectionAngle);
+            const float length = std::max(180.0f, emitter.orbitRadius * 1.35f);
+            renderer.drawSoftLine(
+                emitter.position,
+                emitter.position + direction * length,
+                2.0f + telegraphPulse * 2.0f,
+                {126, 234, 255, static_cast<unsigned char>(90 + std::lround(72.0f * telegraphPulse))});
+        }
+        return;
+    }
+
+    if (emitter.attack != AstragnaEmitterAttack::FlameSweep) {
+        return;
+    }
+
+    const float range = std::max(
+        1.0f,
+        astragnaParamFloat(
+            enemy,
+            "emitterFlameRange",
+            AstragnaEmitterFlameRangeTiles * static_cast<float>(balance::TileSize)));
+    const float halfAngle = std::max(
+        0.01f,
+        astragnaParamFloat(enemy, "emitterFlameHalfAngleRadians", AstragnaEmitterFlameHalfAngleRadians));
+    if (emitter.phase == AstragnaEmitterPhase::Telegraph) {
+        drawAstragnaEmitterSector(
+            renderer,
+            emitter.position,
+            emitter.baseDirectionAngle,
+            range,
+            halfAngle,
+            {255, 92, 42, static_cast<unsigned char>(36 + std::lround(34.0f * telegraphPulse))},
+            {255, 168, 74, static_cast<unsigned char>(96 + std::lround(62.0f * telegraphPulse))});
+    } else if (emitter.phase == AstragnaEmitterPhase::Active) {
+        const float directionAngle = astragnaEmitterFlameDirectionAngle(enemy, emitter);
+        drawAstragnaEmitterSector(
+            renderer,
+            emitter.position,
+            directionAngle,
+            range,
+            halfAngle,
+            {255, 104, 32, 116},
+            {255, 226, 96, 190});
+        renderer.drawSoftLine(
+            emitter.position,
+            emitter.position + fromAngle(directionAngle) * range,
+            10.0f,
+            {255, 178, 52, 150});
+    }
+}
+
+void drawAstragnaEmitterBody(Renderer& renderer, const Enemy& enemy, const AstragnaSealEmitterRuntime& emitter)
+{
+    if (!astragnaEmitterVulnerable(emitter)) {
+        return;
+    }
+
+    const float hpRatio = emitter.maxHp > 0 ? clamp(static_cast<float>(emitter.hp) / static_cast<float>(emitter.maxHp), 0.0f, 1.0f) : 1.0f;
+    const bool flame = emitter.attack == AstragnaEmitterAttack::FlameSweep;
+    const Color fill = flame ? Color{255, 116, 48, 230} : Color{114, 228, 255, 230};
+    const Color ring = flame ? Color{255, 224, 98, 205} : Color{234, 252, 255, 205};
+    const float pulse = 1.0f + 0.08f * std::sin(enemy.behaviorTimer * (flame ? 8.0f : 11.0f));
+    renderer.fillCircle(emitter.position, emitter.radius * pulse, fill);
+    renderer.drawCircle(emitter.position, emitter.radius + 3.0f, ring);
+    renderer.drawCircle(emitter.position, std::max(2.0f, emitter.radius * hpRatio), {255, 246, 178, 180});
+    const Vec2 aim = fromAngle(emitter.baseDirectionAngle) * (emitter.radius + 7.0f);
+    renderer.drawLine(emitter.position - aim * 0.35f, emitter.position + aim, {255, 255, 255, 170});
 }
 
 void drawAstragnaCore(Renderer& renderer, const Enemy& enemy, bool downed)
@@ -4865,6 +5520,10 @@ void drawAstragnaBoss(Renderer& renderer, const TileMap& map, const Enemy& enemy
         }
     }
 
+    for (const AstragnaSealEmitterRuntime& emitter : astragna.sealEmitters) {
+        drawAstragnaEmitterAttack(renderer, enemy, emitter);
+    }
+
     drawAstragnaCore(renderer, enemy, downed);
 
     for (const AstragnaSealPartRuntime& part : astragna.sealParts) {
@@ -4879,6 +5538,10 @@ void drawAstragnaBoss(Renderer& renderer, const TileMap& map, const Enemy& enemy
         if (hpRatio < 0.98f) {
             renderer.drawCircle(position, part.radius * hpRatio, {255, 128, 166, 190});
         }
+    }
+
+    for (const AstragnaSealEmitterRuntime& emitter : astragna.sealEmitters) {
+        drawAstragnaEmitterBody(renderer, enemy, emitter);
     }
 }
 
@@ -6612,7 +7275,7 @@ bool EnemySystem::updateBossActionSequence(Enemy& enemy, Player& player, TileMap
         return updateJunkCrabBossActionSequence(enemy, player, map, projectiles, dt, events_);
     }
     if (enemy.bossAction.pattern == AstragnaPatternId) {
-        return updateAstragnaBossActionSequence(enemy, player, map, dt, events_);
+        return updateAstragnaBossActionSequence(enemy, player, map, projectiles, dt, events_);
     }
     if (enemy.bossAction.pattern != StardustMolePatternId) {
         return false;

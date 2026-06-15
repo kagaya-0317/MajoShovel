@@ -109,6 +109,20 @@ enum class AstragnaPhase {
     Rescued,
 };
 
+enum class AstragnaEmitterAttack {
+    None,
+    LaserBolt,
+    FlameSweep,
+};
+
+enum class AstragnaEmitterPhase {
+    Dormant,
+    Telegraph,
+    Active,
+    Cooldown,
+    Destroyed,
+};
+
 inline constexpr int JunkCrabMaxDebris = 6;
 inline constexpr int AstragnaSealPartCount = 5;
 inline constexpr int AstragnaMaxShellBlocks = 256;
@@ -135,6 +149,26 @@ struct AstragnaSealPartRuntime {
     float localAngle = 0.0f;
     float orbitRadius = 0.0f;
     float radius = 0.0f;
+    int hp = 0;
+    int maxHp = 0;
+};
+
+struct AstragnaSealEmitterRuntime {
+    bool active = false;
+    bool destroyed = false;
+    int sealIndex = -1;
+    AstragnaEmitterAttack attack = AstragnaEmitterAttack::None;
+    AstragnaEmitterPhase phase = AstragnaEmitterPhase::Dormant;
+    Vec2 position{};
+    float localAngle = 0.0f;
+    float orbitRadius = 0.0f;
+    float radius = 0.0f;
+    float timer = 0.0f;
+    float shotTimer = 0.0f;
+    float hitCooldown = 0.0f;
+    float baseDirectionAngle = 0.0f;
+    float sweepSign = 1.0f;
+    int shotsFired = 0;
     int hp = 0;
     int maxHp = 0;
 };
@@ -166,6 +200,7 @@ struct AstragnaBossRuntime {
     int shellBlockCount = 0;
     bool initialized = false;
     std::array<AstragnaSealPartRuntime, AstragnaSealPartCount> sealParts{};
+    std::array<AstragnaSealEmitterRuntime, AstragnaSealPartCount> sealEmitters{};
     std::array<AstragnaShellBlockRuntime, AstragnaMaxShellBlocks> shellBlocks{};
 };
 

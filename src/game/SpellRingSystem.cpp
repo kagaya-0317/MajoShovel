@@ -1487,6 +1487,13 @@ void SpellRingSystem::resetRuntimeStateAtPlayer(const Player& player, const Runt
     refreshItemWorldPositions(0.0f, balance, false);
 }
 
+void SpellRingSystem::resetThrowCooldowns()
+{
+    for (RingRuntimeState& runtime : ringRuntime_) {
+        runtime.throwCooldownRemaining = 0.0f;
+    }
+}
+
 void SpellRingSystem::clearActionFlashTimers()
 {
     for (auto& ringItems : itemsByRing_) {

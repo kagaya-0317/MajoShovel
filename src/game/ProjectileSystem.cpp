@@ -37,7 +37,7 @@ struct ProjectilePrototype {
     std::string_view destroySeId;
 };
 
-constexpr std::array<ProjectilePrototype, 14> Prototypes{{
+constexpr std::array<ProjectilePrototype, 15> Prototypes{{
     {"stone_bullet", "石つぶて", 255.0f, 9.0f, 2.05f, 1, "blunt", false, {"small", "stone"}, "se.projectile.pebble.launch", "se.projectile.stone.destroy"},
     {"big_stone_bullet", "大岩弾", 220.0f, 15.0f, 2.20f, 3, "blunt", false, {"stone"}, "se.projectile.heavy.launch", "se.projectile.stone.destroy"},
     {"weapon_throw", "投げ武器", 230.0f, 10.2f, 2.00f, 2, "blunt", false, {"metal", "small"}, "se.projectile.heavy.launch", "se.projectile.metal.destroy"},
@@ -52,6 +52,7 @@ constexpr std::array<ProjectilePrototype, 14> Prototypes{{
     {"wind_wave", "風波", 235.0f, 6.0f, 1.6f, 1, "wind", true, {"wind"}, "se.projectile.wind.launch", "se.projectile.wind.destroy"},
     {"explosion_small", "小爆発", 80.0f, 10.0f, 0.55f, 2, "fire", false, {"explosion"}, "se.projectile.explosion.launch", "se.projectile.explosion.destroy"},
     {"junk_chunk", "ガラクタ弾", 235.0f, 9.5f, 2.5f, 2, "blunt", false, {"metal", "heavy"}, "se.projectile.metal.launch", "se.projectile.metal.destroy"},
+    {"astragna_laser_bolt", "封印レーザー弾", 395.0f, 5.6f, 1.85f, 3, "magic", false, {"magic", "laser", "astragna"}, "se.projectile.magic.launch", "se.projectile.magic.destroy"},
 }};
 
 constexpr std::string_view AudioSeRingGuard = "se.ring.guard";
@@ -563,6 +564,19 @@ ProjectileVisualProfile visualProfileFor(const Projectile& projectile)
             1.7f,
             0.42f,
             4.1f,
+        };
+    }
+    if (id == "astragna_laser_bolt") {
+        return {
+            {172, 238, 255, 250},
+            {72, 78, 168, 230},
+            {96, 214, 255, 118},
+            {246, 255, 255, 238},
+            {160, 130, 255, 218},
+            ProjectileFxVisual::SparkLine,
+            3.6f,
+            0.34f,
+            3.5f,
         };
     }
     if (id == "explosion_small") {
