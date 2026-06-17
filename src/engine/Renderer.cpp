@@ -599,6 +599,100 @@ void Renderer::fillRect(Vec2 pos, Vec2 size, Color color)
     SDL_RenderFillRect(renderer_, &rect);
 }
 
+void Renderer::fillRects(const std::vector<RectF>& rects, Color color)
+{
+    if (rects.empty() || color.a == 0) {
+        return;
+    }
+
+    static thread_local std::vector<SDL_FRect> sdlRects;
+    sdlRects.clear();
+    if (sdlRects.capacity() < rects.size()) {
+        sdlRects.reserve(rects.size());
+    }
+    for (const RectF& rect : rects) {
+        if (rect.w <= 0.0f || rect.h <= 0.0f) {
+            continue;
+        }
+        const Vec2 p = transform({rect.x, rect.y});
+        const Vec2 s = transformSize({rect.w, rect.h});
+        if (s.x <= 0.0f || s.y <= 0.0f) {
+            continue;
+        }
+        sdlRects.push_back(SDL_FRect{p.x, p.y, s.x, s.y});
+    }
+
+    if (sdlRects.empty()) {
+        return;
+    }
+
+    setColor(color);
+    SDL_RenderFillRects(renderer_, sdlRects.data(), static_cast<int>(sdlRects.size()));
+}
+
+void Renderer::fillColorRects(const std::vector<ColorRect>& rects)
+{
+    if (rects.empty()) {
+        return;
+    }
+
+    static thread_local std::vector<SDL_Vertex> vertices;
+    static thread_local std::vector<int> indices;
+    vertices.clear();
+    indices.clear();
+    const std::size_t targetVertexCount = rects.size() * 4;
+    const std::size_t targetIndexCount = rects.size() * 6;
+    if (vertices.capacity() < targetVertexCount) {
+        vertices.reserve(targetVertexCount);
+    }
+    if (indices.capacity() < targetIndexCount) {
+        indices.reserve(targetIndexCount);
+    }
+
+    for (const ColorRect& rect : rects) {
+        if (rect.size.x <= 0.0f || rect.size.y <= 0.0f || rect.color.a == 0) {
+            continue;
+        }
+
+        const Vec2 p = transform(rect.pos);
+        const Vec2 s = transformSize(rect.size);
+        if (s.x <= 0.0f || s.y <= 0.0f) {
+            continue;
+        }
+
+        const Color color = transformColor(rect.color);
+        if (color.a == 0) {
+            continue;
+        }
+
+        const SDL_FColor vertexFill = vertexColor(color);
+        const int baseIndex = static_cast<int>(vertices.size());
+        vertices.push_back(SDL_Vertex{{p.x, p.y}, vertexFill, {0.0f, 0.0f}});
+        vertices.push_back(SDL_Vertex{{p.x + s.x, p.y}, vertexFill, {1.0f, 0.0f}});
+        vertices.push_back(SDL_Vertex{{p.x + s.x, p.y + s.y}, vertexFill, {1.0f, 1.0f}});
+        vertices.push_back(SDL_Vertex{{p.x, p.y + s.y}, vertexFill, {0.0f, 1.0f}});
+
+        indices.push_back(baseIndex);
+        indices.push_back(baseIndex + 1);
+        indices.push_back(baseIndex + 2);
+        indices.push_back(baseIndex);
+        indices.push_back(baseIndex + 2);
+        indices.push_back(baseIndex + 3);
+    }
+
+    if (vertices.empty() || indices.empty()) {
+        return;
+    }
+
+    SDL_RenderGeometry(
+        renderer_,
+        nullptr,
+        vertices.data(),
+        static_cast<int>(vertices.size()),
+        indices.data(),
+        static_cast<int>(indices.size()));
+}
+
 void Renderer::fillGradientRect(Vec2 pos, Vec2 size, Color startColor, Color endColor, GradientDirection direction)
 {
     Color topLeft = startColor;
@@ -661,6 +755,68 @@ void Renderer::fillGradientRect(Vec2 pos, Vec2 size, Color topLeft, Color topRig
     }};
     constexpr std::array<int, 6> indices{{0, 1, 2, 0, 2, 3}};
     SDL_RenderGeometry(renderer_, nullptr, vertices.data(), static_cast<int>(vertices.size()), indices.data(), static_cast<int>(indices.size()));
+}
+
+void Renderer::fillGradientRects(const std::vector<GradientRect>& rects)
+{
+    if (rects.empty()) {
+        return;
+    }
+
+    static thread_local std::vector<SDL_Vertex> vertices;
+    static thread_local std::vector<int> indices;
+    vertices.clear();
+    indices.clear();
+    const std::size_t targetVertexCount = rects.size() * 4;
+    const std::size_t targetIndexCount = rects.size() * 6;
+    if (vertices.capacity() < targetVertexCount) {
+        vertices.reserve(targetVertexCount);
+    }
+    if (indices.capacity() < targetIndexCount) {
+        indices.reserve(targetIndexCount);
+    }
+
+    for (const GradientRect& gradientRect : rects) {
+        if (gradientRect.size.x <= 0.0f || gradientRect.size.y <= 0.0f) {
+            continue;
+        }
+
+        const Vec2 p = transform(gradientRect.pos);
+        const Vec2 s = transformSize(gradientRect.size);
+        if (s.x <= 0.0f || s.y <= 0.0f) {
+            continue;
+        }
+
+        const Color topLeft = transformColor(gradientRect.topLeft);
+        const Color topRight = transformColor(gradientRect.topRight);
+        const Color bottomRight = transformColor(gradientRect.bottomRight);
+        const Color bottomLeft = transformColor(gradientRect.bottomLeft);
+
+        const int baseIndex = static_cast<int>(vertices.size());
+        vertices.push_back(SDL_Vertex{{p.x, p.y}, vertexColor(topLeft), {0.0f, 0.0f}});
+        vertices.push_back(SDL_Vertex{{p.x + s.x, p.y}, vertexColor(topRight), {1.0f, 0.0f}});
+        vertices.push_back(SDL_Vertex{{p.x + s.x, p.y + s.y}, vertexColor(bottomRight), {1.0f, 1.0f}});
+        vertices.push_back(SDL_Vertex{{p.x, p.y + s.y}, vertexColor(bottomLeft), {0.0f, 1.0f}});
+
+        indices.push_back(baseIndex);
+        indices.push_back(baseIndex + 1);
+        indices.push_back(baseIndex + 2);
+        indices.push_back(baseIndex);
+        indices.push_back(baseIndex + 2);
+        indices.push_back(baseIndex + 3);
+    }
+
+    if (vertices.empty() || indices.empty()) {
+        return;
+    }
+
+    SDL_RenderGeometry(
+        renderer_,
+        nullptr,
+        vertices.data(),
+        static_cast<int>(vertices.size()),
+        indices.data(),
+        static_cast<int>(indices.size()));
 }
 
 void Renderer::drawRect(Vec2 pos, Vec2 size, Color color)

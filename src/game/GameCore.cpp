@@ -2,6 +2,7 @@
 
 #include "data/GameBalance.hpp"
 #include "engine/Audio.hpp"
+#include "engine/FrameProfiler.hpp"
 #include "game/RingImpactSound.hpp"
 #include "game/RingDisplayName.hpp"
 #include "game/SpecialObjectRules.hpp"
@@ -4156,6 +4157,7 @@ void Game::switchActiveRingWithLog(int delta)
 
 void Game::update(const Input& input, const Time& time)
 {
+    FrameProfileScope updateProfile("Game.update");
     gamepadUiCursorEnabled_ = input.lastActiveDevice() == InputDeviceKind::Gamepad;
     const GameSettings currentSettings = settingsGetter_ ? settingsGetter_() : optionsSettings_;
     lightweightModeActive_ = currentSettings.performance.lightweight;
@@ -4246,10 +4248,14 @@ void Game::update(const Input& input, const Time& time)
         const RuntimeBalance dungeonBalance = runtimeBalanceForDungeon();
         const int playerChunkBeforeX = chunkCoordForWorld(player_.position.x);
         const int playerChunkBeforeY = chunkCoordForWorld(player_.position.y);
-        tileMap_.updateAround(player_.position, time.deltaSeconds(), dungeonBalance, dungeonLayout_);
+        {
+            FrameProfileScope profile("TileMap.update");
+            tileMap_.updateAround(player_.position, time.deltaSeconds(), dungeonBalance, dungeonLayout_);
+        }
         normalizeOpenBuriedPlacementNodes();
         std::vector<CollisionRect> objectBlockers;
         if (!enemyTestActive_) {
+            FrameProfileScope profile("Collision.objects");
             objectBlockers = solidObjectCollisionRects();
         }
         const RingEquipmentModifiers& activeEquipment =
@@ -4258,14 +4264,17 @@ void Game::update(const Input& input, const Time& time)
             std::max(0.0, spellRing_.orbitShiftMultiplier()) *
             std::max(0.0, activeEquipment.ringShiftDistanceMul));
         if (!deathActive) {
-            player_.update(
-                input,
-                camera_,
-                tileMap_,
-                time.deltaSeconds(),
-                false,
-                balance_,
-                std::span<const CollisionRect>{objectBlockers.data(), objectBlockers.size()});
+            {
+                FrameProfileScope profile("Player.update");
+                player_.update(
+                    input,
+                    camera_,
+                    tileMap_,
+                    time.deltaSeconds(),
+                    false,
+                    balance_,
+                    std::span<const CollisionRect>{objectBlockers.data(), objectBlockers.size()});
+            }
             maybeTriggerPlayerFootstep(
                 player_.position,
                 lengthSquared(player_.velocity) > 0.0001f ? player_.velocity : player_.facing,
@@ -4305,10 +4314,13 @@ void Game::update(const Input& input, const Time& time)
             return;
         }
 
-        if (!deathActive) {
-            spellRing_.update(player_, input, time.deltaSeconds(), time.totalSeconds(), false, ui.pointerConsumed(), balance_);
-        } else {
-            spellRing_.updatePresentation(player_, time.deltaSeconds(), balance_);
+        {
+            FrameProfileScope profile("SpellRing.update");
+            if (!deathActive) {
+                spellRing_.update(player_, input, time.deltaSeconds(), time.totalSeconds(), false, ui.pointerConsumed(), balance_);
+            } else {
+                spellRing_.updatePresentation(player_, time.deltaSeconds(), balance_);
+            }
         }
         for (const RingMotionEvent& event : spellRing_.consumeMotionEvents()) {
             if (event.kind == RingMotionEventKind::ThrowStart) {
@@ -4335,18 +4347,22 @@ void Game::update(const Input& input, const Time& time)
             chunkCoordForWorld(player_.position.x) != playerChunkBeforeX ||
             chunkCoordForWorld(player_.position.y) != playerChunkBeforeY;
         if (playerChunkChanged) {
+            FrameProfileScope profile("TileMap.update");
             tileMap_.updateAround(player_.position, time.deltaSeconds(), dungeonBalance, dungeonLayout_);
         }
-        digging_.update(
-            tileMap_,
-            spellRing_,
-            player_,
-            time.totalSeconds(),
-            objectCatalog_,
-            effectDispatcher_,
-            &magic_,
-            gameplayRewardsEnabled() ? &effectDiscoveries : nullptr,
-            gameplayRewardsEnabled() ? &encyclopedia_ : nullptr);
+        {
+            FrameProfileScope profile("Digging.update");
+            digging_.update(
+                tileMap_,
+                spellRing_,
+                player_,
+                time.totalSeconds(),
+                objectCatalog_,
+                effectDispatcher_,
+                &magic_,
+                gameplayRewardsEnabled() ? &effectDiscoveries : nullptr,
+                gameplayRewardsEnabled() ? &encyclopedia_ : nullptr);
+        }
         const std::vector<RingImpactSoundPlayback> terrainImpactSounds =
             resolveRingImpactSoundEvents(digging_.impactSoundEvents(), lootRuntimeRng(), 3);
         if (!terrainImpactSounds.empty()) {
@@ -4473,6 +4489,7 @@ void Game::update(const Input& input, const Time& time)
         int blockedObjectPickupCount = 0;
         const float collectionPullRadius = effectiveCollectionPullRadius(collectionRangeUpgradeLevel_);
         if (!deathActive && collectionPullRadius > 0.0f) {
+            FrameProfileScope profile("WorldDrops.update");
             worldDrops_.pullNearbyDrops(
                 player_.position,
                 time.deltaSeconds(),
@@ -4483,8 +4500,10 @@ void Game::update(const Input& input, const Time& time)
                 &objectCatalog_);
         }
         if (deathActive) {
+            FrameProfileScope profile("WorldDrops.update");
             worldDrops_.updatePresentation(time.deltaSeconds());
         } else {
+            FrameProfileScope profile("WorldDrops.update");
             runStats_.acquiredItems += worldDrops_.update(
                 time.deltaSeconds(),
                 player_,
@@ -4574,43 +4593,52 @@ void Game::update(const Input& input, const Time& time)
             ? currentStageBossCaptureObjectId()
             : std::string{};
         const CollisionRect stealViewBounds = cameraWorldRect(camera_);
-        enemies_.update(
-            player_,
-            spellRing_,
-            inventory_,
-            tileMap_,
-            time.deltaSeconds(),
-            time.totalSeconds(),
-            false,
-            balance_,
-            objectCatalog_,
-            worldDrops_,
-            witchSelfLightCenter(player_.position),
-            std::vector<LightSource>{},
-            effectDispatcher_,
-            projectiles_,
-            magic_,
-            stealViewBounds,
-            allowBossCapture,
-            bossCaptureObjectId,
-            gameplayRewardsEnabled() ? &effectDiscoveries : nullptr,
-            gameplayRewardsEnabled() ? &encyclopedia_ : nullptr);
+        {
+            FrameProfileScope profile("Enemies.update");
+            enemies_.update(
+                player_,
+                spellRing_,
+                inventory_,
+                tileMap_,
+                time.deltaSeconds(),
+                time.totalSeconds(),
+                false,
+                balance_,
+                objectCatalog_,
+                worldDrops_,
+                witchSelfLightCenter(player_.position),
+                std::vector<LightSource>{},
+                effectDispatcher_,
+                projectiles_,
+                magic_,
+                stealViewBounds,
+                allowBossCapture,
+                bossCaptureObjectId,
+                gameplayRewardsEnabled() ? &effectDiscoveries : nullptr,
+                gameplayRewardsEnabled() ? &encyclopedia_ : nullptr);
+        }
         for (const CapturedExplosionRequest& explosionRequest : digging_.capturedExplosionRequests()) {
             handleCapturedExplosion(explosionRequest);
         }
         updateCapturedUtilityBehaviors(time.deltaSeconds());
         updateCapturedProjectileBehaviors(time.deltaSeconds());
-        projectiles_.update(
-            player_,
-            spellRing_,
-            enemies_,
-            tileMap_,
-            time.deltaSeconds(),
-            effectDispatcher_,
-            objectCatalog_,
-            gameplayRewardsEnabled() ? &effectDiscoveries : nullptr,
-            gameplayRewardsEnabled() ? &encyclopedia_ : nullptr);
-        magic_.update(player_, spellRing_, enemies_, tileMap_, time.deltaSeconds());
+        {
+            FrameProfileScope profile("Projectiles.update");
+            projectiles_.update(
+                player_,
+                spellRing_,
+                enemies_,
+                tileMap_,
+                time.deltaSeconds(),
+                effectDispatcher_,
+                objectCatalog_,
+                gameplayRewardsEnabled() ? &effectDiscoveries : nullptr,
+                gameplayRewardsEnabled() ? &encyclopedia_ : nullptr);
+        }
+        {
+            FrameProfileScope profile("Magic.update");
+            magic_.update(player_, spellRing_, enemies_, tileMap_, time.deltaSeconds());
+        }
         for (const ProjectileSoundEvent& event : projectiles_.consumeSoundEvents()) {
             playAudioSeAt(event.cueId, event.position, event.volumeScale, event.pitchScale);
         }
@@ -4981,12 +5009,15 @@ void Game::update(const Input& input, const Time& time)
             applyEffectDiscoveries(effectDiscoveries);
             syncEncyclopediaFromInventoryAndRing();
         }
-        updateAmbientParticleEffects(time.deltaSeconds());
-        wetGround_.update(time.deltaSeconds());
-        wetGround_.erasePendingGroundLines(groundLines_);
-        groundLines_.update(time.deltaSeconds());
-        magicFx_.update(time.deltaSeconds());
-        effects_.update(time.deltaSeconds());
+        {
+            FrameProfileScope profile("Fx.update");
+            updateAmbientParticleEffects(time.deltaSeconds());
+            wetGround_.update(time.deltaSeconds());
+            wetGround_.erasePendingGroundLines(groundLines_);
+            groundLines_.update(time.deltaSeconds());
+            magicFx_.update(time.deltaSeconds());
+            effects_.update(time.deltaSeconds());
+        }
         const int pendingXp = enemies_.consumePendingXp();
         if (gameplayRewardsEnabled()) {
             gainPlayerXp(pendingXp);

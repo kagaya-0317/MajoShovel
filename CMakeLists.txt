@@ -42,6 +42,7 @@ add_executable(MajoShovel
     src/engine/Input.cpp
     src/engine/InputHelpGlyph.cpp
     src/engine/FileWatcher.cpp
+    src/engine/FrameProfiler.cpp
     src/engine/Log.cpp
     src/debug/DebugConsole.cpp
     src/debug/DebugPanel.cpp

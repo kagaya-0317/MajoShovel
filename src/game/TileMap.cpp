@@ -74,6 +74,11 @@ struct PreparedLight {
     float falloffDenom = 1.0f;
 };
 
+struct PreparedRowLight {
+    const PreparedLight* light = nullptr;
+    float dySq = 0.0f;
+};
+
 struct TerrainNeighbors {
     bool up = false;
     bool down = false;
@@ -2022,28 +2027,32 @@ void TileMap::renderDarknessOverlay(
     std::vector<Vec2> outerSpans;
     std::vector<Vec2> innerSpans;
     std::vector<Vec2> falloffSpans;
-    std::vector<const PreparedLight*> rowLights;
+    std::vector<PreparedRowLight> rowLights;
+    std::vector<RectF> darkRects;
+    std::vector<Renderer::GradientRect> falloffRects;
     outerSpans.reserve(lights.size());
     innerSpans.reserve(lights.size());
     falloffSpans.reserve(lights.size() * 2);
     rowLights.reserve(lights.size());
+    darkRects.reserve(static_cast<std::size_t>(viewRows) * 2);
 
     const auto darknessAlphaAt = [&](float x, float y) {
         float alpha = static_cast<float>(DarknessColor.a);
-        for (const PreparedLight* light : rowLights) {
-            const float dx = x - light->position.x;
-            const float dy = y - light->position.y;
-            const float distanceSq = dx * dx + dy * dy;
-            if (distanceSq >= light->radiusSq) {
+        (void)y;
+        for (const PreparedRowLight& rowLight : rowLights) {
+            const PreparedLight& light = *rowLight.light;
+            const float dx = x - light.position.x;
+            const float distanceSq = dx * dx + rowLight.dySq;
+            if (distanceSq >= light.radiusSq) {
                 continue;
             }
 
-            if (distanceSq <= light->innerRadiusSq) {
+            if (distanceSq <= light.innerRadiusSq) {
                 return 0.0f;
             }
 
             const float distance = std::sqrt(distanceSq);
-            const float t = std::clamp((distance - light->innerRadius) / light->falloffDenom, 0.0f, 1.0f);
+            const float t = std::clamp((distance - light.innerRadius) / light.falloffDenom, 0.0f, 1.0f);
             const float smooth = t * t * (3.0f - 2.0f * t);
             alpha = std::min(alpha, static_cast<float>(DarknessColor.a) * smooth);
         }
@@ -2052,6 +2061,7 @@ void TileMap::renderDarknessOverlay(
 
     const float falloffSegmentWidth = lightweight ? LightFalloffSegmentWidth * 2.0f : LightFalloffSegmentWidth;
     const int rowStep = lightweight ? 2 : 1;
+    falloffRects.reserve(static_cast<std::size_t>(std::max(1, viewRows / rowStep)) * std::max<std::size_t>(4, lights.size() * 2));
 
     const auto drawFalloffSpan = [&](float x0, float x1, float y, float rowHeight) {
         if (x1 <= x0) {
@@ -2066,20 +2076,28 @@ void TileMap::renderDarknessOverlay(
             const float alpha1 = darknessAlphaAt(nextX, y);
             if (std::max(std::max(alpha0, alphaMid), alpha1) > 0.5f) {
                 const auto makeColor = [](float alpha) {
-                    return Color{5, 5, 8, static_cast<unsigned char>(std::clamp(std::lround(alpha), 0L, 255L))};
+                    return Color{5, 5, 8, static_cast<unsigned char>(std::clamp(static_cast<int>(alpha + 0.5f), 0, 255))};
                 };
-                renderer.fillGradientRect(
-                    {x, y - rowHeight * 0.5f},
+                const float top = y - rowHeight * 0.5f;
+                const Color left = makeColor(alpha0);
+                const Color middle = makeColor(alphaMid);
+                const Color right = makeColor(alpha1);
+                falloffRects.push_back(Renderer::GradientRect{
+                    {x, top},
                     {std::max(0.0f, midX - x), rowHeight},
-                    makeColor(alpha0),
-                    makeColor(alphaMid),
-                    GradientDirection::LeftToRight);
-                renderer.fillGradientRect(
-                    {midX, y - rowHeight * 0.5f},
+                    left,
+                    middle,
+                    middle,
+                    left,
+                });
+                falloffRects.push_back(Renderer::GradientRect{
+                    {midX, top},
                     {std::max(0.0f, nextX - midX), rowHeight},
-                    makeColor(alphaMid),
-                    makeColor(alpha1),
-                    GradientDirection::LeftToRight);
+                    middle,
+                    right,
+                    right,
+                    middle,
+                });
             }
             x = nextX;
         }
@@ -2090,10 +2108,12 @@ void TileMap::renderDarknessOverlay(
         if (fullDarkRunStart < 0 || rowEnd <= fullDarkRunStart) {
             return;
         }
-        renderer.fillRect(
-            {viewLeft, viewTop + static_cast<float>(fullDarkRunStart)},
-            {viewWidth, static_cast<float>(rowEnd - fullDarkRunStart)},
-            DarknessColor);
+        darkRects.push_back(RectF{
+            viewLeft,
+            viewTop + static_cast<float>(fullDarkRunStart),
+            viewWidth,
+            static_cast<float>(rowEnd - fullDarkRunStart),
+        });
         fullDarkRunStart = -1;
     };
 
@@ -2106,18 +2126,19 @@ void TileMap::renderDarknessOverlay(
         rowLights.clear();
         for (const PreparedLight& light : lights) {
             const float dy = y - light.position.y;
-            const float remaining = light.radiusSq - dy * dy;
+            const float dySq = dy * dy;
+            const float remaining = light.radiusSq - dySq;
             if (remaining > 0.0f) {
                 const float dx = std::sqrt(remaining);
                 const float x0 = std::max(viewLeft, light.position.x - dx);
                 const float x1 = std::min(viewRight, light.position.x + dx);
                 if (x1 > x0) {
-                    rowLights.push_back(&light);
+                    rowLights.push_back({&light, dySq});
                     outerSpans.push_back({x0, x1});
                 }
             }
 
-            const float innerRemaining = light.innerRadiusSq - dy * dy;
+            const float innerRemaining = light.innerRadiusSq - dySq;
             if (innerRemaining > 0.0f) {
                 const float dx = std::sqrt(innerRemaining);
                 const float x0 = std::max(viewLeft, light.position.x - dx);
@@ -2142,12 +2163,22 @@ void TileMap::renderDarknessOverlay(
             const float litStart = span.x;
             const float litEnd = span.y;
             if (litStart > darkStart) {
-                renderer.fillRect({darkStart, viewTop + static_cast<float>(row)}, {litStart - darkStart, rowHeight}, DarknessColor);
+                darkRects.push_back(RectF{
+                    darkStart,
+                    viewTop + static_cast<float>(row),
+                    litStart - darkStart,
+                    rowHeight,
+                });
             }
             darkStart = litEnd;
         }
         if (darkStart < viewRight) {
-            renderer.fillRect({darkStart, viewTop + static_cast<float>(row)}, {viewRight - darkStart, rowHeight}, DarknessColor);
+            darkRects.push_back(RectF{
+                darkStart,
+                viewTop + static_cast<float>(row),
+                viewRight - darkStart,
+                rowHeight,
+            });
         }
 
         mergeLightSpans(innerSpans);
@@ -2157,6 +2188,8 @@ void TileMap::renderDarknessOverlay(
         }
     }
     flushFullDarkRun(viewRows);
+    renderer.fillRects(darkRects, DarknessColor);
+    renderer.fillGradientRects(falloffRects);
 }
 
 }

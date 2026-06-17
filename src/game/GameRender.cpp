@@ -1,5 +1,6 @@
 ﻿#include "game/GameInternal.hpp"
 
+#include "engine/FrameProfiler.hpp"
 #include "engine/InputHelpGlyph.hpp"
 #include "game/EnemyImageRenderer.hpp"
 #include "game/EntityStatusVisuals.hpp"
@@ -5561,6 +5562,14 @@ void Game::renderDungeonMinimap(Renderer& renderer, const std::vector<LightSourc
     const int maxTileX = playerTileX + viewRadiusTiles;
     const int minTileY = playerTileY - viewRadiusTiles;
     const int maxTileY = playerTileY + viewRadiusTiles;
+    static thread_local std::vector<Renderer::ColorRect> minimapTileRects;
+    minimapTileRects.clear();
+    const std::size_t maxVisibleTileCount =
+        static_cast<std::size_t>(std::max(0, maxTileX - minTileX + 1)) *
+        static_cast<std::size_t>(std::max(0, maxTileY - minTileY + 1));
+    if (minimapTileRects.capacity() < maxVisibleTileCount) {
+        minimapTileRects.reserve(maxVisibleTileCount);
+    }
     for (int ty = minTileY; ty <= maxTileY; ++ty) {
         for (int tx = minTileX; tx <= maxTileX; ++tx) {
             const auto cellIt = dungeonMinimapCells_.find(dungeonMinimapKey(tx, ty));
@@ -5574,9 +5583,13 @@ void Game::renderDungeonMinimap(Renderer& renderer, const std::vector<LightSourc
             const bool lit = tileMap_.isLit(tileMap_.tileCenter(tx, ty), playerLightCenter, itemLights);
             const Color color = dungeonMinimapTileColor(cellIt->second.type, lit);
             const Vec2 drawPos = cellCenter - Vec2{DungeonMinimapTilePx, DungeonMinimapTilePx} * 0.5f;
-            renderer.fillRect(drawPos, {DungeonMinimapTilePx + 0.4f, DungeonMinimapTilePx + 0.4f}, color);
+            minimapTileRects.push_back(Renderer::ColorRect{
+                drawPos,
+                {DungeonMinimapTilePx + 0.4f, DungeonMinimapTilePx + 0.4f},
+                color});
         }
     }
+    renderer.fillColorRects(minimapTileRects);
 
     const auto drawMiniCircleOnTile = [&](int tx, int ty, float radius, Color color) {
         if (!dungeonMinimapTileSeen(tx, ty)) {
@@ -5808,14 +5821,21 @@ void Game::renderDungeonMapOverlay(Renderer& renderer, const std::vector<LightSo
 
     renderer.pushClipRect(mapRect.pos, mapRect.size);
     const Vec2 playerLightCenter = witchSelfLightCenter(player_.position);
+    static thread_local std::vector<Renderer::ColorRect> mapTileRects;
+    mapTileRects.clear();
+    const float safeTilePx = std::max(0.001f, tilePx);
+    const std::size_t visibleTileEstimate =
+        static_cast<std::size_t>(std::max(1, static_cast<int>(std::ceil(mapRect.size.x / safeTilePx)) + 2)) *
+        static_cast<std::size_t>(std::max(1, static_cast<int>(std::ceil(mapRect.size.y / safeTilePx)) + 2));
+    if (mapTileRects.capacity() < visibleTileEstimate) {
+        mapTileRects.reserve(visibleTileEstimate);
+    }
     for (int ty = bounds.minY; ty <= bounds.maxY; ++ty) {
         for (int tx = bounds.minX; tx <= bounds.maxX; ++tx) {
             const auto cellIt = dungeonMinimapCells_.find(dungeonMinimapKey(tx, ty));
             if (cellIt == dungeonMinimapCells_.end()) {
                 continue;
             }
-            const bool lit = tileMap_.isLit(tileMap_.tileCenter(tx, ty), playerLightCenter, itemLights);
-            const Color color = dungeonMinimapTileColor(cellIt->second.type, lit);
             const Vec2 drawPos = tileToMap(tx, ty) - Vec2{tilePx, tilePx} * 0.5f;
             if (drawPos.x + tilePx < mapRect.pos.x ||
                 drawPos.y + tilePx < mapRect.pos.y ||
@@ -5823,9 +5843,15 @@ void Game::renderDungeonMapOverlay(Renderer& renderer, const std::vector<LightSo
                 drawPos.y > mapRect.pos.y + mapRect.size.y) {
                 continue;
             }
-            renderer.fillRect(drawPos, {tilePx + 0.35f, tilePx + 0.35f}, color);
+            const bool lit = tileMap_.isLit(tileMap_.tileCenter(tx, ty), playerLightCenter, itemLights);
+            const Color color = dungeonMinimapTileColor(cellIt->second.type, lit);
+            mapTileRects.push_back(Renderer::ColorRect{
+                drawPos,
+                {tilePx + 0.35f, tilePx + 0.35f},
+                color});
         }
     }
+    renderer.fillColorRects(mapTileRects);
 
     const auto drawMapCircleOnTile = [&](int tx, int ty, float radius, Color color) {
         if (!dungeonMinimapTileSeen(tx, ty)) {
@@ -7470,6 +7496,7 @@ void Game::renderLevelUpOverlay(Renderer& renderer)
 
 void Game::render(Renderer& renderer, const Time& time)
 {
+    FrameProfileScope renderProfile("Game.render");
     renderer.clear({5, 5, 8, 255});
     beginUiFrame(time.deltaSeconds(), gamepadUiCursorEnabled_);
     if (mode_ == ScreenMode::OpeningKamishibai) {
@@ -7585,9 +7612,16 @@ void Game::render(Renderer& renderer, const Time& time)
     const bool ringIntroActive = dungeonRingIntroActive();
     const bool lightweight = lightweightModeEnabled();
     const float totalSeconds = static_cast<float>(time.totalSeconds());
-    const std::vector<LightSource> itemLights = collectDungeonLightSources(time.totalSeconds());
+    std::vector<LightSource> itemLights;
+    {
+        FrameProfileScope profile("Lights.collect");
+        itemLights = collectDungeonLightSources(time.totalSeconds());
+    }
     const Vec2 playerLightCenter = witchSelfLightCenter(player_.position);
-    tileMap_.render(renderer, camera_, playerLightCenter, itemLights);
+    {
+        FrameProfileScope profile("TileMap.render");
+        tileMap_.render(renderer, camera_, playerLightCenter, itemLights);
+    }
     std::vector<DepthRenderEntry> worldDepthEntries;
     appendRewardNodeRenderEntries(worldDepthEntries, renderer, itemLights);
     if (!enemyTestActive_) {
@@ -7764,151 +7798,209 @@ void Game::render(Renderer& renderer, const Time& time)
     }
     enemies_.appendRenderEntries(worldDepthEntries, renderer, tileMap_, playerLightCenter, itemLights, 0, &encyclopedia_);
     appendCaptureAbsorbRenderEntries(worldDepthEntries, renderer, time.totalSeconds());
-    std::stable_sort(worldDepthEntries.begin(), worldDepthEntries.end(), [](const DepthRenderEntry& left, const DepthRenderEntry& right) {
-        return left.sortY < right.sortY;
-    });
-    for (const DepthRenderEntry& entry : worldDepthEntries) {
-        entry.draw();
+    {
+        FrameProfileScope profile("WorldDepth.draw");
+        std::stable_sort(worldDepthEntries.begin(), worldDepthEntries.end(), [](const DepthRenderEntry& left, const DepthRenderEntry& right) {
+            return left.sortY < right.sortY;
+        });
+        for (const DepthRenderEntry& entry : worldDepthEntries) {
+            entry.draw();
+        }
     }
 
     std::vector<DepthRenderEntry> projectileDepthEntries;
-    projectiles_.appendRenderEntries(projectileDepthEntries, renderer, tileMap_, playerLightCenter, itemLights);
-    std::stable_sort(projectileDepthEntries.begin(), projectileDepthEntries.end(), [](const DepthRenderEntry& left, const DepthRenderEntry& right) {
-        return left.sortY < right.sortY;
-    });
-    for (const DepthRenderEntry& entry : projectileDepthEntries) {
-        entry.draw();
+    {
+        FrameProfileScope profile("Projectiles.render");
+        projectiles_.appendRenderEntries(projectileDepthEntries, renderer, tileMap_, playerLightCenter, itemLights);
+        std::stable_sort(projectileDepthEntries.begin(), projectileDepthEntries.end(), [](const DepthRenderEntry& left, const DepthRenderEntry& right) {
+            return left.sortY < right.sortY;
+        });
+        for (const DepthRenderEntry& entry : projectileDepthEntries) {
+            entry.draw();
+        }
     }
-    effects_.render(renderer);
-    tileMap_.renderDarknessOverlay(renderer, camera_, playerLightCenter, itemLights, lightweight);
-    std::vector<DepthRenderEntry> magicForegroundEntries;
-    magicFx_.appendForegroundRenderEntries(magicForegroundEntries, renderer);
-    std::stable_sort(magicForegroundEntries.begin(), magicForegroundEntries.end(), [](const DepthRenderEntry& left, const DepthRenderEntry& right) {
-        return left.sortY < right.sortY;
-    });
-    for (const DepthRenderEntry& entry : magicForegroundEntries) {
-        entry.draw();
+    {
+        FrameProfileScope profile("Effects.render");
+        effects_.render(renderer);
     }
-    renderSpellRingForeground(renderer, runtimeItems, itemLights, time.totalSeconds());
-    effects_.renderForeground(renderer);
-    effects_.renderDamagePopups(renderer);
-    if (playerDeathActive) {
-        drawPlayerVisual();
+    {
+        FrameProfileScope profile("Darkness.render");
+        tileMap_.renderDarknessOverlay(renderer, camera_, playerLightCenter, itemLights, lightweight);
+    }
+    {
+        FrameProfileScope profile("Foreground.render");
+        std::vector<DepthRenderEntry> magicForegroundEntries;
+        magicFx_.appendForegroundRenderEntries(magicForegroundEntries, renderer);
+        std::stable_sort(magicForegroundEntries.begin(), magicForegroundEntries.end(), [](const DepthRenderEntry& left, const DepthRenderEntry& right) {
+            return left.sortY < right.sortY;
+        });
+        for (const DepthRenderEntry& entry : magicForegroundEntries) {
+            entry.draw();
+        }
+        renderSpellRingForeground(renderer, runtimeItems, itemLights, time.totalSeconds());
+        effects_.renderForeground(renderer);
+        effects_.renderDamagePopups(renderer);
+        if (playerDeathActive) {
+            drawPlayerVisual();
+        }
     }
 
-    renderer.setScreenSpace();
-    const bool suppressDungeonUi = dungeonEventUiSuppressed();
-    if (!suppressDungeonUi) {
-        renderPlayerDamageVignette(renderer, time.totalSeconds());
-    }
-    renderTopInfoBar(renderer);
-    if (mode_ == ScreenMode::Playing && !suppressDungeonUi && dungeonMapOverlayOpen_) {
-        renderDungeonMapOverlay(renderer, itemLights);
-    } else if (mode_ == ScreenMode::Playing && !suppressDungeonUi) {
-        renderDungeonMinimap(renderer, itemLights);
-        if (!introTutorialActive()) {
-            renderRingStatusHud(renderer);
-        }
-        renderDungeonLogs(renderer);
-        renderDungeonStatusHud(renderer);
-    }
-    if (debugPaused_) {
-        renderer.fillRect({18.0f, 202.0f}, {190.0f, 28.0f}, {0, 0, 0, 190});
-        renderer.drawText({28.0f, 208.0f}, "DEBUG PAUSED", {255, 230, 150, 255}, 2);
-    }
-    if (!suppressDungeonUi && !dungeonMapOverlayOpen_) {
-        inventory_.render(
-            renderer,
-            player_,
-            spellRing_,
-            objectCatalog_,
-            encyclopedia_,
-            true,
-            true,
-            time.totalSeconds(),
-            unlockedRingCount());
-        renderLevelUpOverlay(renderer);
-        if (mode_ == ScreenMode::Playing) {
-            inventory_.renderShortcutHud(renderer, spellRing_, camera_.width(), camera_.height());
-            renderRingEquipFx(renderer);
-            renderDungeonControlHelp(renderer);
-        } else if (mode_ == ScreenMode::Inventory && pauseReturnMode_ != ScreenMode::Base) {
-            renderDungeonLogs(renderer);
-        }
-        renderWarpReturnUi(renderer);
-        renderRoguelikeBigHoleUi(renderer);
-        if (roguelikeFacilityUiActive()) {
-            renderBaseScreen(renderer);
-        }
-        renderPauseMenu(renderer);
-        renderRingScreen(renderer, time.totalSeconds());
-        renderBossDefeatPresentation(renderer);
-        renderGameOverScreen(renderer);
-        renderStageClearScreen(renderer);
-        renderAstralResultScreen(renderer);
-        renderEnemyTestUi(renderer);
-    }
-    if (!suppressDungeonUi && !dungeonMapOverlayOpen_ && reloadNoticeTimer_ > 0.0f) {
-        renderer.fillRect({18.0f, 170.0f}, {430.0f, 26.0f}, {0, 0, 0, 180});
-        InlineItemTextStyle noticeStyle;
-        noticeStyle.text = {255, 235, 150, 255};
-        noticeStyle.scale = 2;
-        noticeStyle.iconTextGap = 4.0f;
-        noticeStyle.iconScale = 1.15f;
-        drawInlineItemText(renderer, objectCatalog_, {26.0f, 176.0f}, reloadNotice_, noticeStyle);
-    }
-    if (!suppressDungeonUi && !dungeonMapOverlayOpen_ &&
-        (mode_ == ScreenMode::Playing || mode_ == ScreenMode::Inventory || mode_ == ScreenMode::PauseMenu || mode_ == ScreenMode::Ring)) {
-        std::vector<UiRect> encyclopediaAvoidRects;
-        const float screenWidth = static_cast<float>(camera_.width());
-        const float screenHeight = static_cast<float>(camera_.height());
-        encyclopediaAvoidRects.push_back({{TopInfoBarX, TopInfoBarY}, {screenWidth - TopInfoBarX * 2.0f, TopInfoBarHeight + 8.0f}});
-        if (reloadNoticeTimer_ > 0.0f) {
-            encyclopediaAvoidRects.push_back({{18.0f, 170.0f}, {430.0f, 26.0f}});
-        }
-        if (mode_ == ScreenMode::Playing) {
-            if (!enemyTestActive_ && !dungeonMinimapCells_.empty()) {
-                encyclopediaAvoidRects.push_back(dungeonMinimapRect());
-            }
-
-            if (!introTutorialActive()) {
-                const int unlockedRingCount = unlockedRingHudCount();
-                for (int ringIndex = 0; ringIndex < unlockedRingCount; ++ringIndex) {
-                    encyclopediaAvoidRects.push_back(ringStatusHudRect(ringIndex, unlockedRingCount));
+    {
+        FrameProfileScope profile("DungeonUI.render");
+        renderer.setScreenSpace();
+        const bool suppressDungeonUi = dungeonEventUiSuppressed();
+        {
+            FrameProfileScope profile("UI.hud");
+            {
+                FrameProfileScope profile("UI.vignette");
+                if (!suppressDungeonUi) {
+                    renderPlayerDamageVignette(renderer, time.totalSeconds());
                 }
             }
-
-            encyclopediaAvoidRects.push_back(dungeonStatusHudRect(screenWidth, screenHeight));
-
-            int visibleLogCount = std::min(static_cast<int>(dungeonLogs_.size()), DungeonLogMaxVisible);
-            const auto logBlockHeight = [](int count) {
-                return static_cast<float>(count) * DungeonLogRowHeight +
-                    static_cast<float>(std::max(0, count - 1)) * DungeonLogGap;
-            };
-            const float logTopLimit = TopInfoBarY + TopInfoBarHeight + 8.0f;
-            const float statusTopY = dungeonStatusHudRect(screenWidth, screenHeight).pos.y;
-            const float maxLogBottomY = std::max(logTopLimit + DungeonLogRowHeight, statusTopY - DungeonLogStatusGap);
-            while (visibleLogCount > 0 && logBlockHeight(visibleLogCount) > maxLogBottomY - logTopLimit) {
-                --visibleLogCount;
+            {
+                FrameProfileScope profile("UI.topbar");
+                renderTopInfoBar(renderer);
             }
-            if (visibleLogCount > 0) {
-                const float totalLogHeight = logBlockHeight(visibleLogCount);
-                const float logX = std::max(8.0f, screenWidth - DungeonLogRightMargin - DungeonLogWidth);
-                const float logY = std::clamp(screenHeight * DungeonLogTargetYRatio, logTopLimit, maxLogBottomY - totalLogHeight);
-                encyclopediaAvoidRects.push_back({{logX, logY}, {DungeonLogWidth, totalLogHeight}});
+            if (mode_ == ScreenMode::Playing && !suppressDungeonUi && dungeonMapOverlayOpen_) {
+                FrameProfileScope profile("UI.map_overlay");
+                renderDungeonMapOverlay(renderer, itemLights);
+            } else if (mode_ == ScreenMode::Playing && !suppressDungeonUi) {
+                {
+                    FrameProfileScope profile("UI.minimap");
+                    renderDungeonMinimap(renderer, itemLights);
+                }
+                if (!introTutorialActive()) {
+                    FrameProfileScope profile("UI.ring_status");
+                    renderRingStatusHud(renderer);
+                }
+                {
+                    FrameProfileScope profile("UI.logs");
+                    renderDungeonLogs(renderer);
+                }
+                {
+                    FrameProfileScope profile("UI.player_status");
+                    renderDungeonStatusHud(renderer);
+                }
+            }
+            {
+                FrameProfileScope profile("UI.debug_pause");
+                if (debugPaused_) {
+                    renderer.fillRect({18.0f, 202.0f}, {190.0f, 28.0f}, {0, 0, 0, 190});
+                    renderer.drawText({28.0f, 208.0f}, "DEBUG PAUSED", {255, 230, 150, 255}, 2);
+                }
             }
         }
+        {
+            FrameProfileScope profile("UI.inventory");
+            if (!suppressDungeonUi && !dungeonMapOverlayOpen_) {
+                inventory_.render(
+                    renderer,
+                    player_,
+                    spellRing_,
+                    objectCatalog_,
+                    encyclopedia_,
+                    true,
+                    true,
+                    time.totalSeconds(),
+                    unlockedRingCount());
+                renderLevelUpOverlay(renderer);
+                if (mode_ == ScreenMode::Playing) {
+                    inventory_.renderShortcutHud(renderer, spellRing_, camera_.width(), camera_.height());
+                    renderRingEquipFx(renderer);
+                    renderDungeonControlHelp(renderer);
+                } else if (mode_ == ScreenMode::Inventory && pauseReturnMode_ != ScreenMode::Base) {
+                    renderDungeonLogs(renderer);
+                }
+            }
+        }
+        {
+            FrameProfileScope profile("UI.menus");
+            if (!suppressDungeonUi && !dungeonMapOverlayOpen_) {
+                renderWarpReturnUi(renderer);
+                renderRoguelikeBigHoleUi(renderer);
+                if (roguelikeFacilityUiActive()) {
+                    renderBaseScreen(renderer);
+                }
+                renderPauseMenu(renderer);
+                renderRingScreen(renderer, time.totalSeconds());
+                renderBossDefeatPresentation(renderer);
+                renderGameOverScreen(renderer);
+                renderStageClearScreen(renderer);
+                renderAstralResultScreen(renderer);
+                renderEnemyTestUi(renderer);
+            }
+        }
+        {
+            FrameProfileScope profile("UI.notice");
+            if (!suppressDungeonUi && !dungeonMapOverlayOpen_ && reloadNoticeTimer_ > 0.0f) {
+                renderer.fillRect({18.0f, 170.0f}, {430.0f, 26.0f}, {0, 0, 0, 180});
+                InlineItemTextStyle noticeStyle;
+                noticeStyle.text = {255, 235, 150, 255};
+                noticeStyle.scale = 2;
+                noticeStyle.iconTextGap = 4.0f;
+                noticeStyle.iconScale = 1.15f;
+                drawInlineItemText(renderer, objectCatalog_, {26.0f, 176.0f}, reloadNotice_, noticeStyle);
+            }
+        }
+        {
+            FrameProfileScope profile("UI.popups");
+            if (!suppressDungeonUi && !dungeonMapOverlayOpen_ &&
+                (mode_ == ScreenMode::Playing || mode_ == ScreenMode::Inventory || mode_ == ScreenMode::PauseMenu || mode_ == ScreenMode::Ring)) {
+                std::vector<UiRect> encyclopediaAvoidRects;
+                const float screenWidth = static_cast<float>(camera_.width());
+                const float screenHeight = static_cast<float>(camera_.height());
+                encyclopediaAvoidRects.push_back({{TopInfoBarX, TopInfoBarY}, {screenWidth - TopInfoBarX * 2.0f, TopInfoBarHeight + 8.0f}});
+                if (reloadNoticeTimer_ > 0.0f) {
+                    encyclopediaAvoidRects.push_back({{18.0f, 170.0f}, {430.0f, 26.0f}});
+                }
+                if (mode_ == ScreenMode::Playing) {
+                    if (!enemyTestActive_ && !dungeonMinimapCells_.empty()) {
+                        encyclopediaAvoidRects.push_back(dungeonMinimapRect());
+                    }
 
-        encyclopedia_.renderPopups(renderer, camera_, objectCatalog_, encyclopediaAvoidRects);
+                    if (!introTutorialActive()) {
+                        const int unlockedRingCount = unlockedRingHudCount();
+                        for (int ringIndex = 0; ringIndex < unlockedRingCount; ++ringIndex) {
+                            encyclopediaAvoidRects.push_back(ringStatusHudRect(ringIndex, unlockedRingCount));
+                        }
+                    }
+
+                    encyclopediaAvoidRects.push_back(dungeonStatusHudRect(screenWidth, screenHeight));
+
+                    int visibleLogCount = std::min(static_cast<int>(dungeonLogs_.size()), DungeonLogMaxVisible);
+                    const auto logBlockHeight = [](int count) {
+                        return static_cast<float>(count) * DungeonLogRowHeight +
+                            static_cast<float>(std::max(0, count - 1)) * DungeonLogGap;
+                    };
+                    const float logTopLimit = TopInfoBarY + TopInfoBarHeight + 8.0f;
+                    const float statusTopY = dungeonStatusHudRect(screenWidth, screenHeight).pos.y;
+                    const float maxLogBottomY = std::max(logTopLimit + DungeonLogRowHeight, statusTopY - DungeonLogStatusGap);
+                    while (visibleLogCount > 0 && logBlockHeight(visibleLogCount) > maxLogBottomY - logTopLimit) {
+                        --visibleLogCount;
+                    }
+                    if (visibleLogCount > 0) {
+                        const float totalLogHeight = logBlockHeight(visibleLogCount);
+                        const float logX = std::max(8.0f, screenWidth - DungeonLogRightMargin - DungeonLogWidth);
+                        const float logY = std::clamp(screenHeight * DungeonLogTargetYRatio, logTopLimit, maxLogBottomY - totalLogHeight);
+                        encyclopediaAvoidRects.push_back({{logX, logY}, {DungeonLogWidth, totalLogHeight}});
+                    }
+                }
+
+                encyclopedia_.renderPopups(renderer, camera_, objectCatalog_, encyclopediaAvoidRects);
+            }
+        }
+        {
+            FrameProfileScope profile("UI.overlays");
+            dialogue_.render(renderer, camera_.width(), camera_.height());
+            if (!suppressDungeonUi) {
+                renderDebugNamedSaveUi(renderer);
+                renderDebugItemPicker(renderer);
+                renderDebugStoryTest(renderer);
+            }
+            renderFirstItemAcquisitionNotice(renderer);
+            renderAutoSimulationIntentOverlay(renderer);
+        }
     }
-    dialogue_.render(renderer, camera_.width(), camera_.height());
-    if (!suppressDungeonUi) {
-        renderDebugNamedSaveUi(renderer);
-        renderDebugItemPicker(renderer);
-        renderDebugStoryTest(renderer);
-    }
-    renderFirstItemAcquisitionNotice(renderer);
-    renderAutoSimulationIntentOverlay(renderer);
     finishUiFrame(renderer);
     renderDebugOverlay(renderer, time);
     renderScreenTransitionOverlay(renderer);

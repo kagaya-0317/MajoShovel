@@ -23,6 +23,21 @@ enum class TextFontRole {
 
 class Renderer {
 public:
+    struct GradientRect {
+        Vec2 pos{};
+        Vec2 size{};
+        Color topLeft{};
+        Color topRight{};
+        Color bottomRight{};
+        Color bottomLeft{};
+    };
+
+    struct ColorRect {
+        Vec2 pos{};
+        Vec2 size{};
+        Color color{};
+    };
+
     struct ScreenshotResult {
         bool success = false;
         std::filesystem::path path;
@@ -52,6 +67,8 @@ public:
     void popClipRect();
 
     void fillRect(Vec2 pos, Vec2 size, Color color);
+    void fillRects(const std::vector<RectF>& rects, Color color);
+    void fillColorRects(const std::vector<ColorRect>& rects);
     void fillGradientRect(
         Vec2 pos,
         Vec2 size,
@@ -59,6 +76,7 @@ public:
         Color endColor,
         GradientDirection direction = GradientDirection::LeftToRight);
     void fillGradientRect(Vec2 pos, Vec2 size, Color topLeft, Color topRight, Color bottomRight, Color bottomLeft);
+    void fillGradientRects(const std::vector<GradientRect>& rects);
     void drawRect(Vec2 pos, Vec2 size, Color color);
     void fillCircle(Vec2 center, float radius, Color color);
     void drawCircle(Vec2 center, float radius, Color color);

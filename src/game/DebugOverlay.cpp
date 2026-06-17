@@ -1,6 +1,9 @@
 ﻿#include "game/DebugOverlay.hpp"
 
+#include "engine/FrameProfiler.hpp"
+
 #include <cstdio>
+#include <cstring>
 #include <string>
 
 namespace majo {
@@ -27,6 +30,17 @@ const char* tileTypeName(TileType type)
         return "硬い岩";
     }
     return "不明";
+}
+
+double profileMilliseconds(const FrameProfileSnapshot& snapshot, const char* name)
+{
+    for (std::size_t i = 0; i < snapshot.count; ++i) {
+        const FrameProfileSample& sample = snapshot.samples[i];
+        if (std::strcmp(sample.name, name) == 0) {
+            return sample.milliseconds;
+        }
+    }
+    return 0.0;
 }
 
 }
@@ -88,7 +102,8 @@ void DebugOverlay::render(
         requestedWarpPointStartPosition.x,
         requestedWarpPointStartPosition.y);
 
-    char buffer[4096];
+    const FrameProfileSnapshot& profile = frameProfiler().snapshot();
+    char buffer[6144];
     std::snprintf(buffer, sizeof(buffer),
         "FPS: %03d   Auto reload block: %s\n"
         "Stage: %d %s / %s   Seed: %u\n"
@@ -170,6 +185,28 @@ void DebugOverlay::render(
         currentStage.goalDistanceTiles,
         currentStage.terrainHardnessMultiplier,
         currentStage.specialRoomCount);
+    std::snprintf(
+        buffer + std::char_traits<char>::length(buffer),
+        sizeof(buffer) - std::char_traits<char>::length(buffer),
+        "\nPerf: frame %.2fms app %.2f events %.2f input %.2f audio %.2f update %.2f render %.2f"
+        "\nHot: gameU %.2f tileU %.2f dig %.2f enemy %.2f projU %.2f fxU %.2f gameR %.2f tileR %.2f depth %.2f ui %.2f",
+        profile.frameMilliseconds,
+        profileMilliseconds(profile, "App.frame"),
+        profileMilliseconds(profile, "App.events"),
+        profileMilliseconds(profile, "App.input"),
+        profileMilliseconds(profile, "App.audio"),
+        profileMilliseconds(profile, "App.update"),
+        profileMilliseconds(profile, "App.render"),
+        profileMilliseconds(profile, "Game.update"),
+        profileMilliseconds(profile, "TileMap.update"),
+        profileMilliseconds(profile, "Digging.update"),
+        profileMilliseconds(profile, "Enemies.update"),
+        profileMilliseconds(profile, "Projectiles.update"),
+        profileMilliseconds(profile, "Fx.update"),
+        profileMilliseconds(profile, "Game.render"),
+        profileMilliseconds(profile, "TileMap.render"),
+        profileMilliseconds(profile, "WorldDepth.draw"),
+        profileMilliseconds(profile, "DungeonUI.render"));
     if (autoSimulationDebugActive && autoSimulationDebug.active) {
         std::snprintf(
             buffer + std::char_traits<char>::length(buffer),

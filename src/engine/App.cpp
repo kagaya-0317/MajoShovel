@@ -1,6 +1,7 @@
 ﻿#include "engine/App.hpp"
 
 #include "data/GameBalance.hpp"
+#include "engine/FrameProfiler.hpp"
 #include "engine/InputHelpGlyph.hpp"
 #include "engine/Log.hpp"
 #include "engine/Ui.hpp"
@@ -1707,52 +1708,60 @@ void App::advanceStartupLoad()
 void App::run()
 {
     while (running_) {
+        FrameProfileFrame profileFrame;
+        FrameProfileScope frameProfile("App.frame");
         input_.beginFrame();
         SDL_Event event;
-        while (SDL_PollEvent(&event)) {
-            if (event.type == SDL_EVENT_MOUSE_BUTTON_DOWN && event.button.button == SDL_BUTTON_LEFT) {
-                updateGameCursorPressed(true);
-            } else if (event.type == SDL_EVENT_MOUSE_BUTTON_UP && event.button.button == SDL_BUTTON_LEFT) {
-                updateGameCursorPressed(false);
-            }
-            SDL_Event renderEvent = event;
-            if (renderer_ != nullptr) {
-                renderer_->convertEventToRenderCoordinates(renderEvent);
-            }
-            const bool gameConsumedEvent = !startupLoadActive_ && game_.handleEvent(renderEvent);
-            if (!gameConsumedEvent) {
-                input_.handleEvent(renderEvent);
-            }
-            if (!gameConsumedEvent && testPlayMode_ && !startupLoadActive_ &&
-                event.type == SDL_EVENT_KEY_DOWN && !event.key.repeat &&
-                event.key.scancode == SDL_SCANCODE_PRINTSCREEN) {
-                requestScreenshot();
-            }
-            if (!gameConsumedEvent && testPlayMode_ && event.type == SDL_EVENT_KEY_DOWN && !event.key.repeat && event.key.scancode == SDL_SCANCODE_F3) {
-                const bool autosimRunning =
-                    autoSimulation_.state() == autosim::AutoSimulationState::Running ||
-                    autoSimulation_.state() == autosim::AutoSimulationState::Paused;
-                autoSimulation_.executeCommand(
-                    autosimRunning ? "autosim stop" : "autosim start",
-                    game_.makeTestSnapshot());
-            }
-            if (!gameConsumedEvent && event.type == SDL_EVENT_KEY_DOWN && !event.key.repeat && event.key.scancode == SDL_SCANCODE_F4) {
-                toggleFullscreen();
-            }
-            if (event.type == SDL_EVENT_WINDOW_RESIZED) {
-                width_ = event.window.data1;
-                height_ = event.window.data2;
-                if (settings_.video.windowMode == WindowMode::Windowed) {
-                    settings_.video.windowWidth = width_;
-                    settings_.video.windowHeight = height_;
-                    queueSettingsSave();
+        {
+            FrameProfileScope profile("App.events");
+            while (SDL_PollEvent(&event)) {
+                if (event.type == SDL_EVENT_MOUSE_BUTTON_DOWN && event.button.button == SDL_BUTTON_LEFT) {
+                    updateGameCursorPressed(true);
+                } else if (event.type == SDL_EVENT_MOUSE_BUTTON_UP && event.button.button == SDL_BUTTON_LEFT) {
+                    updateGameCursorPressed(false);
                 }
-                if (!startupLoadActive_) {
-                    game_.resize(LogicalScreenWidth, LogicalScreenHeight);
+                SDL_Event renderEvent = event;
+                if (renderer_ != nullptr) {
+                    renderer_->convertEventToRenderCoordinates(renderEvent);
+                }
+                const bool gameConsumedEvent = !startupLoadActive_ && game_.handleEvent(renderEvent);
+                if (!gameConsumedEvent) {
+                    input_.handleEvent(renderEvent);
+                }
+                if (!gameConsumedEvent && testPlayMode_ && !startupLoadActive_ &&
+                    event.type == SDL_EVENT_KEY_DOWN && !event.key.repeat &&
+                    event.key.scancode == SDL_SCANCODE_PRINTSCREEN) {
+                    requestScreenshot();
+                }
+                if (!gameConsumedEvent && testPlayMode_ && event.type == SDL_EVENT_KEY_DOWN && !event.key.repeat && event.key.scancode == SDL_SCANCODE_F3) {
+                    const bool autosimRunning =
+                        autoSimulation_.state() == autosim::AutoSimulationState::Running ||
+                        autoSimulation_.state() == autosim::AutoSimulationState::Paused;
+                    autoSimulation_.executeCommand(
+                        autosimRunning ? "autosim stop" : "autosim start",
+                        game_.makeTestSnapshot());
+                }
+                if (!gameConsumedEvent && event.type == SDL_EVENT_KEY_DOWN && !event.key.repeat && event.key.scancode == SDL_SCANCODE_F4) {
+                    toggleFullscreen();
+                }
+                if (event.type == SDL_EVENT_WINDOW_RESIZED) {
+                    width_ = event.window.data1;
+                    height_ = event.window.data2;
+                    if (settings_.video.windowMode == WindowMode::Windowed) {
+                        settings_.video.windowWidth = width_;
+                        settings_.video.windowHeight = height_;
+                        queueSettingsSave();
+                    }
+                    if (!startupLoadActive_) {
+                        game_.resize(LogicalScreenWidth, LogicalScreenHeight);
+                    }
                 }
             }
         }
-        input_.update(renderer_);
+        {
+            FrameProfileScope profile("App.input");
+            input_.update(renderer_);
+        }
         if (input_.quitRequested()) {
             running_ = false;
         }
@@ -1768,12 +1777,15 @@ void App::run()
             if (!running_) {
                 continue;
             }
-            time_.tick();
-            updateSettingsSave(time_.deltaSeconds());
-            audio_.update(time_.deltaSeconds());
-            advanceStartupLoad();
-            if (running_ && startupLoadActive_) {
-                renderStartupFrame();
+            {
+                FrameProfileScope profile("App.startup");
+                time_.tick();
+                updateSettingsSave(time_.deltaSeconds());
+                audio_.update(time_.deltaSeconds());
+                advanceStartupLoad();
+                if (running_ && startupLoadActive_) {
+                    renderStartupFrame();
+                }
             }
             continue;
         }
@@ -1804,12 +1816,19 @@ void App::run()
             }
         }
 
-        checkAssetHotReload();
+        {
+            FrameProfileScope profile("App.hotReload");
+            checkAssetHotReload();
+        }
         time_.tick();
         updateSettingsSave(time_.deltaSeconds());
         if (!testFreezePaused_) {
-            audio_.update(time_.deltaSeconds());
+            {
+                FrameProfileScope profile("App.audio");
+                audio_.update(time_.deltaSeconds());
+            }
             if (testPlayMode_ && autoSimulation_.state() != autosim::AutoSimulationState::Idle) {
+                FrameProfileScope profile("App.update");
                 if (!autoSimulationTimeActive_) {
                     autoSimulationTime_ = time_;
                     autoSimulationStepDebtSeconds_ = 0.0f;
@@ -1847,6 +1866,7 @@ void App::run()
                 autoSimulationTimeActive_ = false;
                 autoSimulationStepDebtSeconds_ = 0.0f;
                 Input effectiveInput = input_;
+                FrameProfileScope profile("App.update");
                 game_.update(effectiveInput, time_);
             }
             const bool autoSimulationOverlayActive =
@@ -1880,8 +1900,11 @@ void App::run()
         }
         setInputHelpContext(&input_);
         setInputHelpDeviceMode(inputHelpDeviceModeForSetting(settings_.presentation.inputIcons));
-        game_.render(*renderer_, renderTime);
-        logPendingScreenshotResult();
+        {
+            FrameProfileScope profile("App.render");
+            game_.render(*renderer_, renderTime);
+            logPendingScreenshotResult();
+        }
     }
 }
 
