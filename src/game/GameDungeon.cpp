@@ -320,13 +320,22 @@ bool drawDungeonEventWitchNpcSprite(
     }
 
     const Vec2 anchorPosition = center + DungeonEventWitchNpcAnchorOffset;
-    const float drawScale = npcCharacterScaleToFit(renderer, *visual, DungeonEventWitchNpcVisualSize);
-    Vec2 drawSize = npcCharacterDrawSize(renderer, *visual, drawScale);
-    if (drawSize.x <= 0.0f || drawSize.y <= 0.0f) {
-        drawSize = DungeonEventWitchNpcVisualSize;
+    const ImageHandle sheetHandle = renderer.acquireImage(visual->imagePath, TextureFilter::Nearest);
+    Vec2 frameSize{};
+    const bool hasFrameSize = characterSpriteSheetFrameSize(renderer, sheetHandle, visual->layout, frameSize);
+    float drawScale = 1.0f;
+    Vec2 drawSize = DungeonEventWitchNpcVisualSize;
+    if (hasFrameSize && frameSize.x > 0.0f && frameSize.y > 0.0f) {
+        drawScale = std::max(0.001f, std::min(
+            DungeonEventWitchNpcVisualSize.x / frameSize.x,
+            DungeonEventWitchNpcVisualSize.y / frameSize.y));
+        drawSize = frameSize * drawScale;
     }
 
     renderer.drawActorShadow(anchorPosition, std::max(drawSize.x, drawSize.y));
+    if (!hasFrameSize) {
+        return false;
+    }
 
     NpcCharacterDrawOptions options;
     options.frameIndex = frameIndex;
@@ -337,7 +346,7 @@ bool drawDungeonEventWitchNpcSprite(
     options.outlineEnabled = inInteractionRange;
     options.outlineColor = hovered ? DungeonInspectableHoverOutlineColor : DungeonInspectableOutlineColor;
     options.outlinePx = DungeonInspectableOutlinePx;
-    return drawNpcCharacterSprite(renderer, *visual, options);
+    return drawNpcCharacterSprite(renderer, *visual, sheetHandle, frameSize, options);
 }
 
 Vec2 roguelikeFacilityPropImageSize(Game::RoguelikeFacilityKind kind)

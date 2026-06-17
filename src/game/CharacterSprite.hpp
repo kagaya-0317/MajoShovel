@@ -74,6 +74,11 @@ void updateCharacterSpriteAnimation(
     CharacterSpriteSheetLayout layout,
     Vec2& outFrameSize,
     TextureFilter filter = TextureFilter::Nearest);
+[[nodiscard]] bool characterSpriteSheetFrameSize(
+    Renderer& renderer,
+    ImageHandle sheetHandle,
+    CharacterSpriteSheetLayout layout,
+    Vec2& outFrameSize);
 [[nodiscard]] float characterSpriteSheetVisualSize(
     Renderer& renderer,
     std::string_view sheetPath,
@@ -83,6 +88,12 @@ void updateCharacterSpriteAnimation(
 bool drawCharacterSpriteFrame(
     Renderer& renderer,
     std::string_view sheetPath,
+    CharacterSpriteSheetLayout layout,
+    const CharacterSpriteDrawOptions& options);
+bool drawCharacterSpriteFrame(
+    Renderer& renderer,
+    ImageHandle sheetHandle,
+    Vec2 frameSize,
     CharacterSpriteSheetLayout layout,
     const CharacterSpriteDrawOptions& options);
 

@@ -1,6 +1,7 @@
 ﻿#include "game/TileMap.hpp"
 
 #include "data/GameBalance.hpp"
+#include "engine/FrameProfiler.hpp"
 #include "engine/Log.hpp"
 #include "game/Collision.hpp"
 #include <algorithm>
@@ -2000,9 +2001,14 @@ void TileMap::renderDarknessOverlay(
     const float viewRight = viewTopLeft.x + viewWidth;
     const float viewTop = viewTopLeft.y;
     const float viewBottom = viewTop + viewHeight;
+    const float falloffSegmentWidth = lightweight ? LightFalloffSegmentWidth * 2.0f : LightFalloffSegmentWidth;
+    const int rowStep = lightweight ? 2 : 1;
 
-    std::vector<PreparedLight> lights;
-    lights.reserve(extraLights.size() + 1);
+    static thread_local std::vector<PreparedLight> lights;
+    lights.clear();
+    if (lights.capacity() < extraLights.size() + 1) {
+        lights.reserve(extraLights.size() + 1);
+    }
     const auto addLight = [&](Vec2 position, float rawRadius) {
         const float radius = rawRadius > 0.0f ? rawRadius : balanceSnapshot_.lightRadius;
         if (radius <= 0.0f) {
@@ -2024,17 +2030,34 @@ void TileMap::renderDarknessOverlay(
         return;
     }
 
-    std::vector<Vec2> outerSpans;
-    std::vector<Vec2> innerSpans;
-    std::vector<Vec2> falloffSpans;
-    std::vector<PreparedRowLight> rowLights;
-    std::vector<RectF> darkRects;
-    std::vector<Renderer::GradientRect> falloffRects;
-    outerSpans.reserve(lights.size());
-    innerSpans.reserve(lights.size());
-    falloffSpans.reserve(lights.size() * 2);
-    rowLights.reserve(lights.size());
-    darkRects.reserve(static_cast<std::size_t>(viewRows) * 2);
+    static thread_local std::vector<Vec2> outerSpans;
+    static thread_local std::vector<Vec2> innerSpans;
+    static thread_local std::vector<Vec2> falloffSpans;
+    static thread_local std::vector<PreparedRowLight> rowLights;
+    static thread_local std::vector<RectF> darkRects;
+    static thread_local std::vector<Renderer::GradientRect> falloffRects;
+    outerSpans.clear();
+    innerSpans.clear();
+    falloffSpans.clear();
+    rowLights.clear();
+    darkRects.clear();
+    falloffRects.clear();
+    if (outerSpans.capacity() < lights.size()) {
+        outerSpans.reserve(lights.size());
+    }
+    if (innerSpans.capacity() < lights.size()) {
+        innerSpans.reserve(lights.size());
+    }
+    if (falloffSpans.capacity() < lights.size() * 2) {
+        falloffSpans.reserve(lights.size() * 2);
+    }
+    if (rowLights.capacity() < lights.size()) {
+        rowLights.reserve(lights.size());
+    }
+    const std::size_t darkRectEstimate = static_cast<std::size_t>(viewRows) * 2;
+    if (darkRects.capacity() < darkRectEstimate) {
+        darkRects.reserve(darkRectEstimate);
+    }
 
     const auto darknessAlphaAt = [&](float x, float y) {
         float alpha = static_cast<float>(DarknessColor.a);
@@ -2059,11 +2082,14 @@ void TileMap::renderDarknessOverlay(
         return alpha;
     };
 
-    const float falloffSegmentWidth = lightweight ? LightFalloffSegmentWidth * 2.0f : LightFalloffSegmentWidth;
-    const int rowStep = lightweight ? 2 : 1;
-    falloffRects.reserve(static_cast<std::size_t>(std::max(1, viewRows / rowStep)) * std::max<std::size_t>(4, lights.size() * 2));
+    const std::size_t falloffRectEstimate =
+        static_cast<std::size_t>(std::max(1, viewRows / rowStep)) *
+        std::max<std::size_t>(4, lights.size() * 2);
+    if (falloffRects.capacity() < falloffRectEstimate) {
+        falloffRects.reserve(falloffRectEstimate);
+    }
 
-    const auto drawFalloffSpan = [&](float x0, float x1, float y, float rowHeight) {
+    const auto appendFalloffSpanRects = [&](float x0, float x1, float y, float rowHeight) {
         if (x1 <= x0) {
             return;
         }
@@ -2082,22 +2108,34 @@ void TileMap::renderDarknessOverlay(
                 const Color left = makeColor(alpha0);
                 const Color middle = makeColor(alphaMid);
                 const Color right = makeColor(alpha1);
-                falloffRects.push_back(Renderer::GradientRect{
-                    {x, top},
-                    {std::max(0.0f, midX - x), rowHeight},
-                    left,
-                    middle,
-                    middle,
-                    left,
-                });
-                falloffRects.push_back(Renderer::GradientRect{
-                    {midX, top},
-                    {std::max(0.0f, nextX - midX), rowHeight},
-                    middle,
-                    right,
-                    right,
-                    middle,
-                });
+                const float linearMidAlpha = (alpha0 + alpha1) * 0.5f;
+                if (std::fabs(alphaMid - linearMidAlpha) <= 4.0f) {
+                    falloffRects.push_back(Renderer::GradientRect{
+                        {x, top},
+                        {std::max(0.0f, nextX - x), rowHeight},
+                        left,
+                        right,
+                        right,
+                        left,
+                    });
+                } else {
+                    falloffRects.push_back(Renderer::GradientRect{
+                        {x, top},
+                        {std::max(0.0f, midX - x), rowHeight},
+                        left,
+                        middle,
+                        middle,
+                        left,
+                    });
+                    falloffRects.push_back(Renderer::GradientRect{
+                        {midX, top},
+                        {std::max(0.0f, nextX - midX), rowHeight},
+                        middle,
+                        right,
+                        right,
+                        middle,
+                    });
+                }
             }
             x = nextX;
         }
@@ -2117,79 +2155,88 @@ void TileMap::renderDarknessOverlay(
         fullDarkRunStart = -1;
     };
 
-    for (int row = 0; row < viewRows; row += rowStep) {
-        const int rowsThisStep = std::min(rowStep, viewRows - row);
-        const float rowHeight = static_cast<float>(rowsThisStep);
-        const float y = viewTop + static_cast<float>(row) + rowHeight * 0.5f;
-        outerSpans.clear();
-        innerSpans.clear();
-        rowLights.clear();
-        for (const PreparedLight& light : lights) {
-            const float dy = y - light.position.y;
-            const float dySq = dy * dy;
-            const float remaining = light.radiusSq - dySq;
-            if (remaining > 0.0f) {
-                const float dx = std::sqrt(remaining);
-                const float x0 = std::max(viewLeft, light.position.x - dx);
-                const float x1 = std::min(viewRight, light.position.x + dx);
-                if (x1 > x0) {
-                    rowLights.push_back({&light, dySq});
-                    outerSpans.push_back({x0, x1});
+    {
+        FrameProfileScope profile("Darkness.build");
+        for (int row = 0; row < viewRows; row += rowStep) {
+            const int rowsThisStep = std::min(rowStep, viewRows - row);
+            const float rowHeight = static_cast<float>(rowsThisStep);
+            const float y = viewTop + static_cast<float>(row) + rowHeight * 0.5f;
+            outerSpans.clear();
+            innerSpans.clear();
+            rowLights.clear();
+            for (const PreparedLight& light : lights) {
+                const float dy = y - light.position.y;
+                const float dySq = dy * dy;
+                const float remaining = light.radiusSq - dySq;
+                if (remaining > 0.0f) {
+                    const float dx = std::sqrt(remaining);
+                    const float x0 = std::max(viewLeft, light.position.x - dx);
+                    const float x1 = std::min(viewRight, light.position.x + dx);
+                    if (x1 > x0) {
+                        rowLights.push_back({&light, dySq});
+                        outerSpans.push_back({x0, x1});
+                    }
+                }
+
+                const float innerRemaining = light.innerRadiusSq - dySq;
+                if (innerRemaining > 0.0f) {
+                    const float dx = std::sqrt(innerRemaining);
+                    const float x0 = std::max(viewLeft, light.position.x - dx);
+                    const float x1 = std::min(viewRight, light.position.x + dx);
+                    if (x1 > x0) {
+                        innerSpans.push_back({x0, x1});
+                    }
                 }
             }
 
-            const float innerRemaining = light.innerRadiusSq - dySq;
-            if (innerRemaining > 0.0f) {
-                const float dx = std::sqrt(innerRemaining);
-                const float x0 = std::max(viewLeft, light.position.x - dx);
-                const float x1 = std::min(viewRight, light.position.x + dx);
-                if (x1 > x0) {
-                    innerSpans.push_back({x0, x1});
+            mergeLightSpans(outerSpans);
+            if (outerSpans.empty()) {
+                if (fullDarkRunStart < 0) {
+                    fullDarkRunStart = row;
                 }
+                continue;
             }
-        }
+            flushFullDarkRun(row);
 
-        mergeLightSpans(outerSpans);
-        if (outerSpans.empty()) {
-            if (fullDarkRunStart < 0) {
-                fullDarkRunStart = row;
+            float darkStart = viewLeft;
+            for (Vec2 span : outerSpans) {
+                const float litStart = span.x;
+                const float litEnd = span.y;
+                if (litStart > darkStart) {
+                    darkRects.push_back(RectF{
+                        darkStart,
+                        viewTop + static_cast<float>(row),
+                        litStart - darkStart,
+                        rowHeight,
+                    });
+                }
+                darkStart = litEnd;
             }
-            continue;
-        }
-        flushFullDarkRun(row);
-
-        float darkStart = viewLeft;
-        for (Vec2 span : outerSpans) {
-            const float litStart = span.x;
-            const float litEnd = span.y;
-            if (litStart > darkStart) {
+            if (darkStart < viewRight) {
                 darkRects.push_back(RectF{
                     darkStart,
                     viewTop + static_cast<float>(row),
-                    litStart - darkStart,
+                    viewRight - darkStart,
                     rowHeight,
                 });
             }
-            darkStart = litEnd;
-        }
-        if (darkStart < viewRight) {
-            darkRects.push_back(RectF{
-                darkStart,
-                viewTop + static_cast<float>(row),
-                viewRight - darkStart,
-                rowHeight,
-            });
-        }
 
-        mergeLightSpans(innerSpans);
-        appendFalloffSpans(outerSpans, innerSpans, falloffSpans);
-        for (Vec2 span : falloffSpans) {
-            drawFalloffSpan(span.x, span.y, y, rowHeight);
+            mergeLightSpans(innerSpans);
+            appendFalloffSpans(outerSpans, innerSpans, falloffSpans);
+            for (Vec2 span : falloffSpans) {
+                appendFalloffSpanRects(span.x, span.y, y, rowHeight);
+            }
         }
+        flushFullDarkRun(viewRows);
     }
-    flushFullDarkRun(viewRows);
-    renderer.fillRects(darkRects, DarknessColor);
-    renderer.fillGradientRects(falloffRects);
+    {
+        FrameProfileScope profile("Darkness.fill_dark");
+        renderer.fillRects(darkRects, DarknessColor);
+    }
+    {
+        FrameProfileScope profile("Darkness.fill_falloff");
+        renderer.fillGradientRects(falloffRects);
+    }
 }
 
 }

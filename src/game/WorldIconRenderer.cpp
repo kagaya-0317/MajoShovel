@@ -2,6 +2,8 @@
 
 #include <array>
 #include <algorithm>
+#include <cstdint>
+#include <string>
 
 namespace majo {
 
@@ -40,6 +42,100 @@ constexpr std::array<WorldIconDefinition, 24> WorldIconDefinitions{{
 }};
 
 const std::unordered_map<std::string, float>* gWorldIconScaleOverrides = nullptr;
+constexpr std::size_t WorldIconFilterCount = 2;
+
+struct CachedWorldIconImage {
+    const Renderer* renderer = nullptr;
+    std::uint64_t generation = 0;
+    std::array<ImageHandle, WorldIconFilterCount> handles{};
+    std::array<Vec2, WorldIconFilterCount> sourceSizes{};
+    std::array<bool, WorldIconFilterCount> sourceSizeReady{};
+};
+
+std::array<CachedWorldIconImage, WorldIconDefinitions.size()> gWorldIconImageCache{};
+
+std::size_t textureFilterIndex(TextureFilter filter)
+{
+    return filter == TextureFilter::Linear ? 1U : 0U;
+}
+
+std::string makeWorldIconPathFromNumber(int imageNumber)
+{
+    if (imageNumber <= 0) {
+        return {};
+    }
+
+    return std::string(WorldIconDir) +
+        std::string(WorldIconPrefix) +
+        std::to_string(imageNumber) +
+        std::string(WorldIconExtension);
+}
+
+std::array<std::string, WorldIconDefinitions.size()> makeWorldIconPaths()
+{
+    std::array<std::string, WorldIconDefinitions.size()> paths{};
+    for (std::size_t i = 0; i < WorldIconDefinitions.size(); ++i) {
+        paths[i] = makeWorldIconPathFromNumber(WorldIconDefinitions[i].imageNumber);
+    }
+    return paths;
+}
+
+const std::array<std::string, WorldIconDefinitions.size()>& worldIconPaths()
+{
+    static const std::array<std::string, WorldIconDefinitions.size()> paths = makeWorldIconPaths();
+    return paths;
+}
+
+const WorldIconDefinition* worldIconDefinitionFast(WorldIconId iconId)
+{
+    const std::size_t index = static_cast<std::size_t>(iconId);
+    if (index < WorldIconDefinitions.size() && WorldIconDefinitions[index].iconId == iconId) {
+        return &WorldIconDefinitions[index];
+    }
+
+    const auto it = std::find_if(WorldIconDefinitions.begin(), WorldIconDefinitions.end(), [iconId](const WorldIconDefinition& definition) {
+        return definition.iconId == iconId;
+    });
+    return it == WorldIconDefinitions.end() ? nullptr : &*it;
+}
+
+bool cachedWorldIconImage(
+    Renderer& renderer,
+    std::size_t iconIndex,
+    TextureFilter filter,
+    ImageHandle& outHandle,
+    Vec2& outSourceSize)
+{
+    if (iconIndex >= WorldIconDefinitions.size()) {
+        return false;
+    }
+
+    CachedWorldIconImage& cache = gWorldIconImageCache[iconIndex];
+    const std::uint64_t generation = renderer.imageCacheGeneration();
+    if (cache.renderer != &renderer || cache.generation != generation) {
+        cache = {};
+        cache.renderer = &renderer;
+        cache.generation = generation;
+    }
+
+    const std::size_t filterIndex = textureFilterIndex(filter);
+    if (!cache.handles[filterIndex].valid() || !cache.sourceSizeReady[filterIndex]) {
+        const ImageHandle handle = renderer.acquireImage(worldIconPaths()[iconIndex], filter);
+        Vec2 sourceSize{};
+        if (!handle.valid() || !renderer.getImageSize(handle, sourceSize) || sourceSize.x <= 0.0f || sourceSize.y <= 0.0f) {
+            cache.handles[filterIndex] = handle;
+            cache.sourceSizeReady[filterIndex] = false;
+            return false;
+        }
+        cache.handles[filterIndex] = handle;
+        cache.sourceSizes[filterIndex] = sourceSize;
+        cache.sourceSizeReady[filterIndex] = true;
+    }
+
+    outHandle = cache.handles[filterIndex];
+    outSourceSize = cache.sourceSizes[filterIndex];
+    return outHandle.valid();
+}
 }
 
 void setWorldIconScaleOverrides(const std::unordered_map<std::string, float>* scaleByIconKey)
@@ -54,10 +150,7 @@ std::span<const WorldIconDefinition> worldIconDefinitions()
 
 const WorldIconDefinition* worldIconDefinition(WorldIconId iconId)
 {
-    const auto it = std::find_if(WorldIconDefinitions.begin(), WorldIconDefinitions.end(), [iconId](const WorldIconDefinition& definition) {
-        return definition.iconId == iconId;
-    });
-    return it == WorldIconDefinitions.end() ? nullptr : &*it;
+    return worldIconDefinitionFast(iconId);
 }
 
 const WorldIconDefinition* worldIconDefinitionByKey(std::string_view key)
@@ -82,20 +175,21 @@ std::string_view worldIconDisplayName(WorldIconId iconId)
 
 std::string worldIconPathFromNumber(int imageNumber)
 {
-    if (imageNumber <= 0) {
-        return {};
-    }
-
-    return std::string(WorldIconDir) +
-        std::string(WorldIconPrefix) +
-        std::to_string(imageNumber) +
-        std::string(WorldIconExtension);
+    return makeWorldIconPathFromNumber(imageNumber);
 }
 
 std::string worldIconPath(WorldIconId iconId)
 {
     const WorldIconDefinition* definition = worldIconDefinition(iconId);
-    return definition == nullptr ? std::string{} : worldIconPathFromNumber(definition->imageNumber);
+    if (definition == nullptr) {
+        return {};
+    }
+
+    const std::size_t index = static_cast<std::size_t>(iconId);
+    if (index < worldIconPaths().size() && &WorldIconDefinitions[index] == definition) {
+        return worldIconPaths()[index];
+    }
+    return worldIconPathFromNumber(definition->imageNumber);
 }
 
 WorldIconId moneyWorldIconForAmount(int amount)
@@ -152,13 +246,34 @@ bool drawWorldIcon(
     }
 
     WorldIconDrawOptions scaledOptions = options;
-    if (scaledOptions.applyScaleOverride && gWorldIconScaleOverrides != nullptr && !definition->key.empty()) {
+    if (scaledOptions.applyScaleOverride &&
+        gWorldIconScaleOverrides != nullptr &&
+        !gWorldIconScaleOverrides->empty() &&
+        !definition->key.empty()) {
         const auto it = gWorldIconScaleOverrides->find(std::string(definition->key));
         if (it != gWorldIconScaleOverrides->end()) {
             scaledOptions.scaleMultiplier *= it->second;
         }
     }
-    return drawScaledImage(renderer, worldIconPathFromNumber(definition->imageNumber), center, maxSize, scaledOptions);
+
+    std::string fallbackPath;
+    std::string_view path;
+    const std::size_t index = static_cast<std::size_t>(iconId);
+    if (index < worldIconPaths().size() && &WorldIconDefinitions[index] == definition) {
+        path = worldIconPaths()[index];
+    } else {
+        fallbackPath = worldIconPathFromNumber(definition->imageNumber);
+        path = fallbackPath;
+    }
+
+    ImageHandle handle{};
+    Vec2 sourceSize{};
+    if (index < worldIconPaths().size() &&
+        &WorldIconDefinitions[index] == definition &&
+        cachedWorldIconImage(renderer, index, scaledOptions.filter, handle, sourceSize)) {
+        return drawScaledImage(renderer, handle, sourceSize, center, maxSize, scaledOptions);
+    }
+    return drawScaledImage(renderer, path, center, maxSize, scaledOptions);
 }
 
 }

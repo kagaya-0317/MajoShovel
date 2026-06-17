@@ -384,9 +384,20 @@ std::filesystem::path devLaunchModePath()
     return devSettingsRootPath() / "dev_launch_mode.txt";
 }
 
+std::string_view stripUtf8Bom(std::string_view value)
+{
+    if (value.size() >= 3 &&
+        static_cast<unsigned char>(value[0]) == 0xEF &&
+        static_cast<unsigned char>(value[1]) == 0xBB &&
+        static_cast<unsigned char>(value[2]) == 0xBF) {
+        value.remove_prefix(3);
+    }
+    return value;
+}
+
 std::optional<DevLaunchMode> parseDevLaunchMode(std::string_view value)
 {
-    const std::string normalized = lowerAscii(trimAscii(std::string(value)));
+    const std::string normalized = lowerAscii(trimAscii(std::string(stripUtf8Bom(value))));
     if (normalized == "pre-title" || normalized == "before-title" || normalized == "opening") {
         return DevLaunchMode::PreTitle;
     }

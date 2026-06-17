@@ -78,6 +78,7 @@ struct EnemyEvent {
     Color terrainColor{0, 0, 0, 0};
     int healAmount = 0;
     bool critical = false;
+    bool weakPointHit = false;
     bool ringItemImpact = false;
     bool suppressRewards = false;
     int moneyDrop = 0;

@@ -20,10 +20,8 @@ EnemyImageDrawOptions applyEnemyVariantVisual(
 {
     if (visual.enemyVariantLevelBonus >= EnemyAbyssVariantLevelBonus) {
         options.tint = multiplyRgb(options.tint, {118, 118, 142, 255});
-        options.outlineColor = {24, 20, 34, options.outlineColor.a};
     } else if (visual.enemyVariantLevelBonus >= EnemyDeepVariantLevelBonus) {
         options.tint = multiplyRgb(options.tint, {170, 170, 192, 255});
-        options.outlineColor = {42, 34, 58, options.outlineColor.a};
     }
     return options;
 }
@@ -38,12 +36,6 @@ ItemImageDrawOptions itemImageOptionsFromObjectOptions(const ObjectImageDrawOpti
     itemOptions.enemy.tint = options.tint;
     itemOptions.enemy.filter = options.filter;
     itemOptions.enemy.allowUpscale = options.allowUpscale;
-    itemOptions.enemy.outlineEnabled = options.outlineEnabled;
-    itemOptions.enemy.outlineColor = options.outlineColor;
-    itemOptions.enemy.outlinePx = options.outlinePx;
-    itemOptions.enemy.selectedOutlineEnabled = options.selectedOutlineEnabled;
-    itemOptions.enemy.selectedOutlineColor = options.selectedOutlineColor;
-    itemOptions.enemy.selectedOutlinePx = options.selectedOutlinePx;
     itemOptions.enemy.maskOverlayColor = options.maskOverlayColor;
     itemOptions.enemy.scaleMultiplier = options.scaleMultiplier;
     itemOptions.enemy.rotationDegrees = options.rotationDegrees;

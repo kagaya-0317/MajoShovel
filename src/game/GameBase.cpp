@@ -10743,10 +10743,8 @@ void Game::renderBookshelfScreen(Renderer& renderer) const
             }
             EnemyImageDrawOptions iconOptions;
             iconOptions.allowUpscale = true;
-            iconOptions.outlineColor = {42, 22, 34, 255};
             iconOptions.directionOverrideEnabled = true;
             iconOptions.directionOverride = {0.0f, 1.0f};
-            iconOptions.selectedOutlineEnabled = i == bookshelfSelection_;
             (void)drawEnemyImageIcon(
                 renderer,
                 enemy.imageNumber,
@@ -10772,7 +10770,6 @@ void Game::renderBookshelfScreen(Renderer& renderer) const
                 float detailY = drawUiDetailHeader(renderer, detailPanel, name);
                 EnemyImageDrawOptions imageOptions;
                 imageOptions.allowUpscale = true;
-                imageOptions.outlineColor = {42, 22, 34, 255};
                 imageOptions.directionOverrideEnabled = true;
                 imageOptions.directionOverride = {0.0f, 1.0f};
                 const Vec2 imageMax{112.0f, 112.0f};

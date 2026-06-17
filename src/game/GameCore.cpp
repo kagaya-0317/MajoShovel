@@ -4966,7 +4966,9 @@ void Game::update(const Input& input, const Time& time)
                     effects_.spawnDamagePopup(
                         event.position,
                         event.damageAmount,
-                        event.critical ? DamagePopupStyle::Critical : DamagePopupStyle::Enemy);
+                        event.weakPointHit
+                            ? DamagePopupStyle::WeakPoint
+                            : (event.critical ? DamagePopupStyle::Critical : DamagePopupStyle::Enemy));
                 }
             } else if (event.damageAmount >= 0) {
                 effects_.spawnDamagePopup(event.position, event.damageAmount, DamagePopupStyle::Enemy);

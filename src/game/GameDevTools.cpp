@@ -4828,9 +4828,6 @@ void Game::renderEnemyHitboxEditScreen(Renderer& renderer, double totalSeconds) 
             EnemyImageDrawOptions imageOptions;
             imageOptions.allowUpscale = true;
             imageOptions.scaleMultiplier = 4.0f;
-            imageOptions.selectedOutlineEnabled = true;
-            imageOptions.selectedOutlineColor = {255, 255, 255, 70};
-            imageOptions.selectedOutlinePx = 2;
             imageOptions.directionOverrideEnabled = true;
             imageOptions.directionOverride = hitboxDirectionVector(enemyHitboxDirection_);
             Vec2 imageSize{};
@@ -5454,9 +5451,6 @@ void Game::renderEnemyShadowEditScreen(Renderer& renderer, double totalSeconds) 
         EnemyImageDrawOptions imageOptions;
         imageOptions.allowUpscale = true;
         imageOptions.scaleMultiplier = EnemyShadowPreviewScale;
-        imageOptions.selectedOutlineEnabled = true;
-        imageOptions.selectedOutlineColor = {255, 255, 255, 70};
-        imageOptions.selectedOutlinePx = 2;
         Vec2 imageSize{};
         const bool sizeResolved = enemyImageDrawSize(renderer, previewEnemy, imageOptions, imageSize);
         if (!sizeResolved) {

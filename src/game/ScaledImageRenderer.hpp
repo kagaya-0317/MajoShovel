@@ -32,5 +32,12 @@ struct ScaledImageDrawOptions {
     Vec2 center,
     Vec2 maxSize,
     const ScaledImageDrawOptions& options = {});
+[[nodiscard]] bool drawScaledImage(
+    Renderer& renderer,
+    ImageHandle handle,
+    Vec2 sourceSize,
+    Vec2 center,
+    Vec2 maxSize,
+    const ScaledImageDrawOptions& options = {});
 
 }

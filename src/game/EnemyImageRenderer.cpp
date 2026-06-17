@@ -376,17 +376,6 @@ bool drawEnemyImage(
     }
 
     ImageDrawOptions drawOptions = enemyImageDrawOptions(options);
-    if (options.selectedOutlineEnabled && options.selectedOutlinePx > 0 && options.selectedOutlineColor.a > 0) {
-        ImageDrawOptions selectedOutlineOptions = drawOptions;
-        selectedOutlineOptions.tint.a = 0;
-        selectedOutlineOptions.maskOverlayColor.a = 0;
-        selectedOutlineOptions.outlineEnabled = true;
-        selectedOutlineOptions.outlineColor = options.selectedOutlineColor;
-        selectedOutlineOptions.outlinePx = options.selectedOutlinePx;
-        if (!renderer.drawImageRegion(handle, sourceRect, center, drawSize, selectedOutlineOptions)) {
-            return false;
-        }
-    }
     return renderer.drawImageRegion(handle, sourceRect, center, drawSize, drawOptions);
 }
 
@@ -444,20 +433,7 @@ bool drawEnemyImageIcon(
         *outDrawSize = drawSize;
     }
 
-    const ImageDrawOptions drawOptions = enemyImageDrawOptions(options);
-    if (options.selectedOutlineEnabled && options.selectedOutlinePx > 0 && options.selectedOutlineColor.a > 0) {
-        ImageDrawOptions selectedOutlineOptions = drawOptions;
-        selectedOutlineOptions.tint.a = 0;
-        selectedOutlineOptions.maskOverlayColor.a = 0;
-        selectedOutlineOptions.outlineEnabled = true;
-        selectedOutlineOptions.outlineColor = options.selectedOutlineColor;
-        selectedOutlineOptions.outlinePx = options.selectedOutlinePx;
-        if (!renderer.drawImageRegion(handle, sourceRect, center, drawSize, selectedOutlineOptions)) {
-            return false;
-        }
-    }
-
-    return renderer.drawImageRegion(handle, sourceRect, center, drawSize, drawOptions);
+    return renderer.drawImageRegion(handle, sourceRect, center, drawSize, enemyImageDrawOptions(options));
 }
 
 }

@@ -234,6 +234,7 @@ public:
     void invalidateAllImages();
     void setImageCacheBudgetBytes(std::size_t bytes);
     [[nodiscard]] ImageCacheStats imageCacheStats() const;
+    [[nodiscard]] std::uint64_t imageCacheGeneration() const { return imageCacheGeneration_; }
 
 private:
     struct SpriteSheet {
@@ -364,6 +365,7 @@ private:
     std::unordered_map<std::string, ImageHandle> imageHandleByKey_;
     std::unordered_map<std::uint32_t, CachedImageEntry> imageEntries_;
     std::uint32_t nextImageHandleValue_ = 1;
+    std::uint64_t imageCacheGeneration_ = 1;
     std::size_t imageCacheBudgetBytes_ = 64ULL * 1024ULL * 1024ULL;
     std::size_t imageCacheBytes_ = 0;
     std::uint64_t frameCounter_ = 0;

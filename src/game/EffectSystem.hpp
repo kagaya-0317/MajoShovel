@@ -38,7 +38,8 @@ enum class DamagePopupStyle {
     Enemy,
     Player,
     Heal,
-    Critical
+    Critical,
+    WeakPoint
 };
 
 enum class ParticleEffectId {

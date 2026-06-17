@@ -31,6 +31,21 @@ bool drawScaledImage(
         return false;
     }
 
+    return drawScaledImage(renderer, handle, sourceSize, center, maxSize, options);
+}
+
+bool drawScaledImage(
+    Renderer& renderer,
+    ImageHandle handle,
+    Vec2 sourceSize,
+    Vec2 center,
+    Vec2 maxSize,
+    const ScaledImageDrawOptions& options)
+{
+    if (!handle.valid() || sourceSize.x <= 0.0f || sourceSize.y <= 0.0f || maxSize.x <= 0.0f || maxSize.y <= 0.0f) {
+        return false;
+    }
+
     float scale = std::min(maxSize.x / sourceSize.x, maxSize.y / sourceSize.y);
     if (!options.allowUpscale) {
         scale = std::min(scale, 1.0f);

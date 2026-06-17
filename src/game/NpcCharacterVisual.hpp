@@ -35,5 +35,11 @@ struct NpcCharacterDrawOptions {
 [[nodiscard]] float npcCharacterScaleToFit(Renderer& renderer, const NpcCharacterVisual& visual, Vec2 fitSize);
 [[nodiscard]] Vec2 npcCharacterDrawSize(Renderer& renderer, const NpcCharacterVisual& visual, float scale);
 bool drawNpcCharacterSprite(Renderer& renderer, const NpcCharacterVisual& visual, const NpcCharacterDrawOptions& options);
+bool drawNpcCharacterSprite(
+    Renderer& renderer,
+    const NpcCharacterVisual& visual,
+    ImageHandle sheetHandle,
+    Vec2 frameSize,
+    const NpcCharacterDrawOptions& options);
 
 }

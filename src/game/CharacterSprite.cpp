@@ -177,6 +177,15 @@ bool characterSpriteSheetFrameSize(
     return sheetFrameSize(renderer, handle, layout, outFrameSize);
 }
 
+bool characterSpriteSheetFrameSize(
+    Renderer& renderer,
+    ImageHandle sheetHandle,
+    CharacterSpriteSheetLayout layout,
+    Vec2& outFrameSize)
+{
+    return sheetFrameSize(renderer, sheetHandle, layout, outFrameSize);
+}
+
 float characterSpriteSheetVisualSize(
     Renderer& renderer,
     std::string_view sheetPath,
@@ -197,6 +206,21 @@ bool drawCharacterSpriteFrame(
     CharacterSpriteSheetLayout layout,
     const CharacterSpriteDrawOptions& options)
 {
+    const ImageHandle handle = renderer.acquireImage(sheetPath, options.filter);
+    Vec2 frameSize{};
+    if (!sheetFrameSize(renderer, handle, layout, frameSize)) {
+        return false;
+    }
+    return drawCharacterSpriteFrame(renderer, handle, frameSize, layout, options);
+}
+
+bool drawCharacterSpriteFrame(
+    Renderer& renderer,
+    ImageHandle sheetHandle,
+    Vec2 frameSize,
+    CharacterSpriteSheetLayout layout,
+    const CharacterSpriteDrawOptions& options)
+{
     if (layout.columns <= 0 || layout.rows <= 0 || options.scale <= 0.0f) {
         return false;
     }
@@ -205,9 +229,7 @@ bool drawCharacterSpriteFrame(
         return false;
     }
 
-    const ImageHandle handle = renderer.acquireImage(sheetPath, options.filter);
-    Vec2 frameSize{};
-    if (!sheetFrameSize(renderer, handle, layout, frameSize)) {
+    if (!sheetHandle.valid() || frameSize.x <= 0.0f || frameSize.y <= 0.0f) {
         return false;
     }
 
@@ -230,7 +252,7 @@ bool drawCharacterSpriteFrame(
     imageOptions.flipY = options.flipVertical;
 
     return renderer.drawImageRegion(
-        handle,
+        sheetHandle,
         source,
         options.anchorPosition,
         frameSize * std::max(0.0f, options.scale),

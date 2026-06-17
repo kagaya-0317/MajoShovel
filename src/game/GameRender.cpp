@@ -1969,6 +1969,13 @@ void appendRingItemDepthRenderEntry(
     });
 }
 
+void tagDepthRenderEntries(std::vector<DepthRenderEntry>& entries, std::size_t firstIndex, const char* profileName)
+{
+    for (std::size_t index = firstIndex; index < entries.size(); ++index) {
+        entries[index].profileName = profileName;
+    }
+}
+
 constexpr std::string_view DungeonMinimapFramePath = "assets/UI_mapFrame.png";
 constexpr Vec2 DungeonMinimapFrameImageSize{200.0f, 200.0f};
 constexpr float DungeonMinimapX = 18.0f;
@@ -5378,12 +5385,6 @@ void Game::appendCaptureAbsorbRenderEntries(
                 EnemyImageDrawOptions imageOptions;
                 imageOptions.tint = withAlpha({255, 255, 255, 255}, 255.0f * alphaScale);
                 imageOptions.scaleMultiplier = visualScale;
-                imageOptions.outlineEnabled = true;
-                imageOptions.outlineColor = withAlpha({144, 224, 255, 255}, 210.0f * alphaScale);
-                imageOptions.outlinePx = 2;
-                imageOptions.selectedOutlineEnabled = true;
-                imageOptions.selectedOutlineColor = withAlpha({255, 255, 255, 255}, 170.0f * alphaScale);
-                imageOptions.selectedOutlinePx = 5;
                 imageOptions.maskOverlayColor = withAlpha({255, 255, 255, 255}, 255.0f * whiteProgress * alphaScale);
                 Vec2 drawSize{};
                 if (!drawEnemyImage(
@@ -5556,214 +5557,224 @@ void Game::renderDungeonMinimap(Renderer& renderer, const std::vector<LightSourc
         };
     };
 
-    renderer.fillCircle(minimapCenter, contentRadius, {0, 0, 0, 255});
+    {
+        FrameProfileScope profile("UI.minimap.tiles");
+        renderer.fillCircle(minimapCenter, contentRadius, {0, 0, 0, 255});
 
-    const int minTileX = playerTileX - viewRadiusTiles;
-    const int maxTileX = playerTileX + viewRadiusTiles;
-    const int minTileY = playerTileY - viewRadiusTiles;
-    const int maxTileY = playerTileY + viewRadiusTiles;
-    static thread_local std::vector<Renderer::ColorRect> minimapTileRects;
-    minimapTileRects.clear();
-    const std::size_t maxVisibleTileCount =
-        static_cast<std::size_t>(std::max(0, maxTileX - minTileX + 1)) *
-        static_cast<std::size_t>(std::max(0, maxTileY - minTileY + 1));
-    if (minimapTileRects.capacity() < maxVisibleTileCount) {
-        minimapTileRects.reserve(maxVisibleTileCount);
-    }
-    for (int ty = minTileY; ty <= maxTileY; ++ty) {
-        for (int tx = minTileX; tx <= maxTileX; ++tx) {
-            const auto cellIt = dungeonMinimapCells_.find(dungeonMinimapKey(tx, ty));
-            if (cellIt == dungeonMinimapCells_.end()) {
+        const int minTileX = playerTileX - viewRadiusTiles;
+        const int maxTileX = playerTileX + viewRadiusTiles;
+        const int minTileY = playerTileY - viewRadiusTiles;
+        const int maxTileY = playerTileY + viewRadiusTiles;
+        static thread_local std::vector<Renderer::ColorRect> minimapTileRects;
+        minimapTileRects.clear();
+        const std::size_t maxVisibleTileCount =
+            static_cast<std::size_t>(std::max(0, maxTileX - minTileX + 1)) *
+            static_cast<std::size_t>(std::max(0, maxTileY - minTileY + 1));
+        const std::size_t reserveTileCount = std::min(maxVisibleTileCount, dungeonMinimapCells_.size());
+        if (minimapTileRects.capacity() < reserveTileCount) {
+            minimapTileRects.reserve(reserveTileCount);
+        }
+        for (const auto& [key, cell] : dungeonMinimapCells_) {
+            const DungeonTile tile = dungeonMinimapTileFromKey(key);
+            if (tile.x < minTileX || tile.x > maxTileX || tile.y < minTileY || tile.y > maxTileY) {
                 continue;
             }
-            const Vec2 cellCenter = tileToMini(tx, ty);
+            const Vec2 cellCenter = tileToMini(tile.x, tile.y);
             if (!pointInMinimap(cellCenter, DungeonMinimapTilePx)) {
                 continue;
             }
-            const bool lit = tileMap_.isLit(tileMap_.tileCenter(tx, ty), playerLightCenter, itemLights);
-            const Color color = dungeonMinimapTileColor(cellIt->second.type, lit);
+            const bool lit = tileMap_.isLit(tileMap_.tileCenter(tile.x, tile.y), playerLightCenter, itemLights);
+            const Color color = dungeonMinimapTileColor(cell.type, lit);
             const Vec2 drawPos = cellCenter - Vec2{DungeonMinimapTilePx, DungeonMinimapTilePx} * 0.5f;
             minimapTileRects.push_back(Renderer::ColorRect{
                 drawPos,
                 {DungeonMinimapTilePx + 0.4f, DungeonMinimapTilePx + 0.4f},
                 color});
         }
-    }
-    renderer.fillColorRects(minimapTileRects);
-
-    const auto drawMiniCircleOnTile = [&](int tx, int ty, float radius, Color color) {
-        if (!dungeonMinimapTileSeen(tx, ty)) {
-            return;
-        }
-        const Vec2 marker = tileToMini(tx, ty);
-        if (!pointInMinimap(marker, radius + 1.0f)) {
-            return;
-        }
-        drawDungeonMapCircleMarker(renderer, marker, radius, color);
-    };
-    const auto drawMiniSquareOnTile = [&](int tx, int ty, float size, Color color) {
-        if (!dungeonMinimapTileSeen(tx, ty)) {
-            return;
-        }
-        const Vec2 marker = tileToMini(tx, ty);
-        if (!pointInMinimap(marker, size * 0.5f + 1.0f)) {
-            return;
-        }
-        drawDungeonMapSquareMarker(renderer, marker, size, color);
-    };
-
-    if (warpPointsEnabled_) {
-        for (const WarpPoint& point : warpPoints_) {
-            if (!dungeonMinimapTileSeen(point.tilePosition.x, point.tilePosition.y)) {
-                continue;
-            }
-            const Vec2 marker = tileToMini(point.tilePosition.x, point.tilePosition.y);
-            if (!pointInMinimap(marker, 7.0f)) {
-                continue;
-            }
-            drawDungeonMapCircleMarker(
-                renderer,
-                marker,
-                point.discovered ? 3.2f : 3.0f,
-                point.discovered ? DungeonMapDiscoveredWarpColor : DungeonMapUndiscoveredWarpColor);
-        }
-    }
-    {
-        const Vec2 entrance = dungeonEntrancePosition();
-        const int entranceTileX = tileMap_.worldToTile(entrance.x);
-        const int entranceTileY = tileMap_.worldToTile(entrance.y);
-        if (dungeonMinimapTileSeen(entranceTileX, entranceTileY)) {
-            const Vec2 marker = tileToMini(entranceTileX, entranceTileY);
-            if (pointInMinimap(marker, 7.0f)) {
-                drawDungeonMapLadderMarker(renderer, marker, 0.68f);
-            }
-        }
-    }
-
-    for (const RewardNode& node : rewardNodes_) {
-        if (rewardNodeVisibleOnDungeonMap(node)) {
-            drawMiniCircleOnTile(node.tile.x, node.tile.y, 3.0f, DungeonMapItemColor);
-        }
-    }
-    for (const MoneyNode& node : moneyNodes_) {
-        if (moneyNodeVisibleOnDungeonMap(node)) {
-            drawMiniCircleOnTile(node.tile.x, node.tile.y, 2.1f, DungeonMapItemColor);
-        }
-    }
-    for (const MoonFragmentNode& node : moonFragmentNodes_) {
-        if (moonFragmentNodeVisibleOnDungeonMap(node)) {
-            drawMiniCircleOnTile(node.tile.x, node.tile.y, 2.2f, DungeonMapMaterialColor);
-        }
-    }
-    for (const CrateNode& node : crateNodes_) {
-        if (!node.destroyed) {
-            drawMiniSquareOnTile(node.tile.x, node.tile.y, 4.8f, DungeonMapCrateColor);
-        }
-    }
-    for (const ChestNode& node : chestNodes_) {
-        if (chestNodeVisibleOnDungeonMap(node)) {
-            drawMiniSquareOnTile(node.tile.x, node.tile.y, 5.0f, DungeonMapChestColor);
-        }
-    }
-    for (const DungeonEventInstance& event : dungeonEvents_.all()) {
-        if (!dungeonEventVisibleOnMap(event)) {
-            continue;
-        }
-        bool drewObject = false;
-        for (const DungeonEventObject& object : event.eventObjects) {
-            if (object.destroyed) {
-                continue;
-            }
-            drawMiniCircleOnTile(object.tile.x, object.tile.y, 3.0f, DungeonMapEventColor);
-            drewObject = true;
-        }
-        for (const DungeonEventNestHole& hole : event.nestHoles) {
-            if (hole.destroyed) {
-                continue;
-            }
-            drawMiniCircleOnTile(hole.tile.x, hole.tile.y, 3.0f, DungeonMapEventColor);
-            drewObject = true;
-        }
-        if (!drewObject) {
-            drawMiniCircleOnTile(event.focusTile.x, event.focusTile.y, 3.0f, DungeonMapEventColor);
-        }
-    }
-    for (const WorldDropItem& drop : worldDrops_.drops()) {
-        const Vec2 dropPosition = dungeonMapDropPosition(drop);
-        const int dropTileX = tileMap_.worldToTile(dropPosition.x);
-        const int dropTileY = tileMap_.worldToTile(dropPosition.y);
-        switch (drop.kind) {
-        case WorldDropKind::Object:
-            drawMiniCircleOnTile(dropTileX, dropTileY, 3.0f, DungeonMapItemColor);
-            break;
-        case WorldDropKind::Money:
-            drawMiniCircleOnTile(dropTileX, dropTileY, 2.1f, DungeonMapItemColor);
-            break;
-        case WorldDropKind::Material:
-            drawMiniCircleOnTile(dropTileX, dropTileY, 2.2f, DungeonMapMaterialColor);
-            break;
-        }
+        renderer.fillColorRects(minimapTileRects);
     }
 
     bool hasWarpGuideMarker = false;
     Vec2 warpGuideDirection{};
     float warpGuidePulse = 0.0f;
-    if (warpPointsEnabled_) {
+    {
+        FrameProfileScope profile("UI.minimap.markers");
+        const auto drawMiniCircleOnTile = [&](int tx, int ty, float radius, Color color) {
+            const Vec2 marker = tileToMini(tx, ty);
+            if (!pointInMinimap(marker, radius + 1.0f)) {
+                return;
+            }
+            if (!dungeonMinimapTileSeen(tx, ty)) {
+                return;
+            }
+            drawDungeonMapCircleMarker(renderer, marker, radius, color);
+        };
+        const auto drawMiniSquareOnTile = [&](int tx, int ty, float size, Color color) {
+            const Vec2 marker = tileToMini(tx, ty);
+            if (!pointInMinimap(marker, size * 0.5f + 1.0f)) {
+                return;
+            }
+            if (!dungeonMinimapTileSeen(tx, ty)) {
+                return;
+            }
+            drawDungeonMapSquareMarker(renderer, marker, size, color);
+        };
+
+        if (warpPointsEnabled_) {
+            for (const WarpPoint& point : warpPoints_) {
+                const Vec2 marker = tileToMini(point.tilePosition.x, point.tilePosition.y);
+                if (!pointInMinimap(marker, 7.0f)) {
+                    continue;
+                }
+                if (!dungeonMinimapTileSeen(point.tilePosition.x, point.tilePosition.y)) {
+                    continue;
+                }
+                drawDungeonMapCircleMarker(
+                    renderer,
+                    marker,
+                    point.discovered ? 3.2f : 3.0f,
+                    point.discovered ? DungeonMapDiscoveredWarpColor : DungeonMapUndiscoveredWarpColor);
+            }
+        }
+        {
+            const Vec2 entrance = dungeonEntrancePosition();
+            const int entranceTileX = tileMap_.worldToTile(entrance.x);
+            const int entranceTileY = tileMap_.worldToTile(entrance.y);
+            const Vec2 marker = tileToMini(entranceTileX, entranceTileY);
+            if (pointInMinimap(marker, 7.0f) && dungeonMinimapTileSeen(entranceTileX, entranceTileY)) {
+                drawDungeonMapLadderMarker(renderer, marker, 0.68f);
+            }
+        }
+
+        for (const RewardNode& node : rewardNodes_) {
+            if (rewardNodeVisibleOnDungeonMap(node)) {
+                drawMiniCircleOnTile(node.tile.x, node.tile.y, 3.0f, DungeonMapItemColor);
+            }
+        }
+        for (const MoneyNode& node : moneyNodes_) {
+            if (moneyNodeVisibleOnDungeonMap(node)) {
+                drawMiniCircleOnTile(node.tile.x, node.tile.y, 2.1f, DungeonMapItemColor);
+            }
+        }
+        for (const MoonFragmentNode& node : moonFragmentNodes_) {
+            if (moonFragmentNodeVisibleOnDungeonMap(node)) {
+                drawMiniCircleOnTile(node.tile.x, node.tile.y, 2.2f, DungeonMapMaterialColor);
+            }
+        }
+        for (const CrateNode& node : crateNodes_) {
+            if (!node.destroyed) {
+                drawMiniSquareOnTile(node.tile.x, node.tile.y, 4.8f, DungeonMapCrateColor);
+            }
+        }
+        for (const ChestNode& node : chestNodes_) {
+            if (chestNodeVisibleOnDungeonMap(node)) {
+                drawMiniSquareOnTile(node.tile.x, node.tile.y, 5.0f, DungeonMapChestColor);
+            }
+        }
         for (const DungeonEventInstance& event : dungeonEvents_.all()) {
-            if (event.kind != DungeonEventKind::WarpGuideMap ||
-                !event.activated ||
-                event.completed ||
-                event.guideRemainingSeconds <= 0.0f ||
-                event.guideTargetWarpPointIndex < 0 ||
-                event.guideTargetWarpPointIndex >= static_cast<int>(warpPoints_.size())) {
+            if (!dungeonEventVisibleOnMap(event)) {
                 continue;
             }
-            const WarpPoint& target = warpPoints_[static_cast<std::size_t>(event.guideTargetWarpPointIndex)];
-            if (target.discovered) {
-                continue;
+            bool drewObject = false;
+            for (const DungeonEventObject& object : event.eventObjects) {
+                if (object.destroyed) {
+                    continue;
+                }
+                drawMiniCircleOnTile(object.tile.x, object.tile.y, 3.0f, DungeonMapEventColor);
+                drewObject = true;
             }
-            const Vec2 toTarget = target.position - player_.position;
-            if (lengthSquared(toTarget) <= 0.0001f) {
-                continue;
+            for (const DungeonEventNestHole& hole : event.nestHoles) {
+                if (hole.destroyed) {
+                    continue;
+                }
+                drawMiniCircleOnTile(hole.tile.x, hole.tile.y, 3.0f, DungeonMapEventColor);
+                drewObject = true;
             }
-            warpGuideDirection = normalize(toTarget);
-            warpGuidePulse = 0.5f + 0.5f * std::sin(std::max(0.0f, event.guideRemainingSeconds) * 7.4f);
-            hasWarpGuideMarker = true;
-            break;
+            if (!drewObject) {
+                drawMiniCircleOnTile(event.focusTile.x, event.focusTile.y, 3.0f, DungeonMapEventColor);
+            }
+        }
+        for (const WorldDropItem& drop : worldDrops_.drops()) {
+            const Vec2 dropPosition = dungeonMapDropPosition(drop);
+            const int dropTileX = tileMap_.worldToTile(dropPosition.x);
+            const int dropTileY = tileMap_.worldToTile(dropPosition.y);
+            switch (drop.kind) {
+            case WorldDropKind::Object:
+                drawMiniCircleOnTile(dropTileX, dropTileY, 3.0f, DungeonMapItemColor);
+                break;
+            case WorldDropKind::Money:
+                drawMiniCircleOnTile(dropTileX, dropTileY, 2.1f, DungeonMapItemColor);
+                break;
+            case WorldDropKind::Material:
+                drawMiniCircleOnTile(dropTileX, dropTileY, 2.2f, DungeonMapMaterialColor);
+                break;
+            }
+        }
+
+        if (warpPointsEnabled_) {
+            for (const DungeonEventInstance& event : dungeonEvents_.all()) {
+                if (event.kind != DungeonEventKind::WarpGuideMap ||
+                    !event.activated ||
+                    event.completed ||
+                    event.guideRemainingSeconds <= 0.0f ||
+                    event.guideTargetWarpPointIndex < 0 ||
+                    event.guideTargetWarpPointIndex >= static_cast<int>(warpPoints_.size())) {
+                    continue;
+                }
+                const WarpPoint& target = warpPoints_[static_cast<std::size_t>(event.guideTargetWarpPointIndex)];
+                if (target.discovered) {
+                    continue;
+                }
+                const Vec2 toTarget = target.position - player_.position;
+                if (lengthSquared(toTarget) <= 0.0001f) {
+                    continue;
+                }
+                warpGuideDirection = normalize(toTarget);
+                warpGuidePulse = 0.5f + 0.5f * std::sin(std::max(0.0f, event.guideRemainingSeconds) * 7.4f);
+                hasWarpGuideMarker = true;
+                break;
+            }
         }
     }
 
-    std::vector<EnemyMinimapMarker> enemyMarkers;
-    enemies_.appendMinimapMarkers(enemyMarkers);
-    for (const EnemyMinimapMarker& enemy : enemyMarkers) {
-        const int enemyTileX = tileMap_.worldToTile(enemy.position.x);
-        const int enemyTileY = tileMap_.worldToTile(enemy.position.y);
-        if (!dungeonMinimapTileSeen(enemyTileX, enemyTileY)) {
-            continue;
+    {
+        FrameProfileScope profile("UI.minimap.enemies");
+        static thread_local std::vector<EnemyMinimapMarker> enemyMarkers;
+        enemyMarkers.clear();
+        enemies_.appendMinimapMarkers(enemyMarkers);
+        for (const EnemyMinimapMarker& enemy : enemyMarkers) {
+            const int enemyTileX = tileMap_.worldToTile(enemy.position.x);
+            const int enemyTileY = tileMap_.worldToTile(enemy.position.y);
+            const Vec2 marker = tileToMini(enemyTileX, enemyTileY);
+            if (!pointInMinimap(marker, enemy.boss ? 6.0f : 4.5f)) {
+                continue;
+            }
+            if (!dungeonMinimapTileSeen(enemyTileX, enemyTileY)) {
+                continue;
+            }
+            const Color fill = enemy.boss ? DungeonMapBossEnemyColor : DungeonMapEnemyColor;
+            renderer.fillCircle(marker, enemy.boss ? 4.0f : 3.0f, fill);
         }
-        const Vec2 marker = tileToMini(enemyTileX, enemyTileY);
-        if (!pointInMinimap(marker, enemy.boss ? 6.0f : 4.5f)) {
-            continue;
-        }
-        const Color fill = enemy.boss ? DungeonMapBossEnemyColor : DungeonMapEnemyColor;
-        renderer.fillCircle(marker, enemy.boss ? 4.0f : 3.0f, fill);
     }
 
-    const Vec2 facing = lengthSquared(player_.facing) > 0.0001f ? normalize(player_.facing) : Vec2{1.0f, 0.0f};
-    drawDungeonMapPlayerArrow(renderer, minimapCenter, facing, 0.72f);
-    const float frameScale = minimapDiameter / DungeonMinimapDiameter;
-    ImageDrawOptions frameOptions;
-    frameOptions.anchor = {0.5f, 0.5f};
-    if (!renderer.drawImage(
-            DungeonMinimapFramePath,
-            minimapCenter,
-            DungeonMinimapFrameImageSize * frameScale,
-            frameOptions,
-            TextureFilter::Linear)) {
-        renderer.drawCircle(minimapCenter, contentRadius, {88, 108, 132, 145});
-    }
-    if (hasWarpGuideMarker) {
-        drawWarpGuideMinimapIcon(renderer, minimapCenter + warpGuideDirection * (contentRadius + 0.5f), warpGuideDirection, warpGuidePulse);
+    {
+        FrameProfileScope profile("UI.minimap.frame");
+        const Vec2 facing = lengthSquared(player_.facing) > 0.0001f ? normalize(player_.facing) : Vec2{1.0f, 0.0f};
+        drawDungeonMapPlayerArrow(renderer, minimapCenter, facing, 0.72f);
+        const float frameScale = minimapDiameter / DungeonMinimapDiameter;
+        ImageDrawOptions frameOptions;
+        frameOptions.anchor = {0.5f, 0.5f};
+        if (!renderer.drawImage(
+                DungeonMinimapFramePath,
+                minimapCenter,
+                DungeonMinimapFrameImageSize * frameScale,
+                frameOptions,
+                TextureFilter::Linear)) {
+            renderer.drawCircle(minimapCenter, contentRadius, {88, 108, 132, 145});
+        }
+        if (hasWarpGuideMarker) {
+            drawWarpGuideMinimapIcon(renderer, minimapCenter + warpGuideDirection * (contentRadius + 0.5f), warpGuideDirection, warpGuidePulse);
+        }
     }
 }
 
@@ -7623,15 +7634,32 @@ void Game::render(Renderer& renderer, const Time& time)
         tileMap_.render(renderer, camera_, playerLightCenter, itemLights);
     }
     std::vector<DepthRenderEntry> worldDepthEntries;
-    appendRewardNodeRenderEntries(worldDepthEntries, renderer, itemLights);
-    if (!enemyTestActive_) {
-        appendDungeonEventRenderEntries(worldDepthEntries, renderer, itemLights, time.totalSeconds());
+    {
+        FrameProfileScope profile("WorldDepth.prepare_nodes");
+        std::size_t firstEntry = worldDepthEntries.size();
+        appendRewardNodeRenderEntries(worldDepthEntries, renderer, itemLights);
+        tagDepthRenderEntries(worldDepthEntries, firstEntry, "WorldDepth.draw.reward");
+        if (!enemyTestActive_) {
+            firstEntry = worldDepthEntries.size();
+            appendDungeonEventRenderEntries(worldDepthEntries, renderer, itemLights, time.totalSeconds());
+            tagDepthRenderEntries(worldDepthEntries, firstEntry, "WorldDepth.draw.event");
+        }
+        firstEntry = worldDepthEntries.size();
+        wetGround_.appendRenderEntries(worldDepthEntries, renderer);
+        tagDepthRenderEntries(worldDepthEntries, firstEntry, "WorldDepth.draw.wet");
+        firstEntry = worldDepthEntries.size();
+        groundLines_.appendRenderEntries(worldDepthEntries, renderer);
+        tagDepthRenderEntries(worldDepthEntries, firstEntry, "WorldDepth.draw.ground_line");
+        firstEntry = worldDepthEntries.size();
+        worldDrops_.appendRenderEntries(worldDepthEntries, renderer, tileMap_, objectCatalog_, playerLightCenter, itemLights);
+        tagDepthRenderEntries(worldDepthEntries, firstEntry, "WorldDepth.draw.drop");
+        firstEntry = worldDepthEntries.size();
+        effects_.appendRenderEntries(worldDepthEntries, renderer);
+        tagDepthRenderEntries(worldDepthEntries, firstEntry, "WorldDepth.draw.fx_depth");
+        firstEntry = worldDepthEntries.size();
+        magicFx_.appendRenderEntries(worldDepthEntries, renderer);
+        tagDepthRenderEntries(worldDepthEntries, firstEntry, "WorldDepth.draw.magic_depth");
     }
-    wetGround_.appendRenderEntries(worldDepthEntries, renderer);
-    groundLines_.appendRenderEntries(worldDepthEntries, renderer);
-    worldDrops_.appendRenderEntries(worldDepthEntries, renderer, tileMap_, objectCatalog_, playerLightCenter, itemLights);
-    effects_.appendRenderEntries(worldDepthEntries, renderer);
-    magicFx_.appendRenderEntries(worldDepthEntries, renderer);
     if (!enemyTestActive_) {
         renderDungeonEntrance(renderer);
         renderWarpPoints(renderer);
@@ -7737,74 +7765,91 @@ void Game::render(Renderer& renderer, const Time& time)
         }
         renderEntityStatusOverlays(renderer, player_.status, playerVisualFootAnchor, playerSpriteVisualSize, time.totalSeconds());
     };
-    worldDepthEntries.push_back(DepthRenderEntry{
-        player_.position.y,
-        [&]() {
-            if (!playerDeathActive) {
-                drawPlayerVisual();
-            }
-        },
-    });
-    if (!ringIntroActive) {
-        if (playerDeathActive) {
-            for (std::size_t presentationIndex = 0; presentationIndex < playerDeathSequence_.ringPresentations.size(); ++presentationIndex) {
-                const PlayerDeathRingPresentation& presentation = playerDeathSequence_.ringPresentations[presentationIndex];
-                if (!presentation.active) {
-                    continue;
+    {
+        FrameProfileScope profile("WorldDepth.prepare_actors");
+        worldDepthEntries.push_back(DepthRenderEntry{
+            player_.position.y,
+            [&]() {
+                if (!playerDeathActive) {
+                    drawPlayerVisual();
                 }
-                for (std::size_t itemIndex = 0; itemIndex < presentation.items.size(); ++itemIndex) {
-                    const PlayerDeathRingItemPresentation& itemPresentation = presentation.items[itemIndex];
-                    if (itemPresentation.dropped) {
+            },
+            "WorldDepth.draw.player",
+        });
+        if (!ringIntroActive) {
+            if (playerDeathActive) {
+                for (std::size_t presentationIndex = 0; presentationIndex < playerDeathSequence_.ringPresentations.size(); ++presentationIndex) {
+                    const PlayerDeathRingPresentation& presentation = playerDeathSequence_.ringPresentations[presentationIndex];
+                    if (!presentation.active) {
                         continue;
                     }
-                    const SpellRingItem& item = itemPresentation.item;
-                    if (!tileMap_.isLit(item.worldPosition, playerLightCenter, itemLights)) {
-                        continue;
+                    for (std::size_t itemIndex = 0; itemIndex < presentation.items.size(); ++itemIndex) {
+                        const PlayerDeathRingItemPresentation& itemPresentation = presentation.items[itemIndex];
+                        if (itemPresentation.dropped) {
+                            continue;
+                        }
+                        const SpellRingItem& item = itemPresentation.item;
+                        if (!tileMap_.isLit(item.worldPosition, playerLightCenter, itemLights)) {
+                            continue;
+                        }
+                        appendRingItemDepthRenderEntry(
+                            worldDepthEntries,
+                            renderer,
+                            spellRing_,
+                            objectCatalog_,
+                            RingItemDepthRenderSnapshot{
+                                item.worldPosition.y,
+                                item,
+                            },
+                            totalSeconds);
+                        worldDepthEntries.back().profileName = "WorldDepth.draw.ring_item";
                     }
-                    appendRingItemDepthRenderEntry(
-                        worldDepthEntries,
-                        renderer,
-                        spellRing_,
-                        objectCatalog_,
-                        RingItemDepthRenderSnapshot{
-                            item.worldPosition.y,
-                            item,
-                        },
-                        totalSeconds);
                 }
-            }
-        } else if (!liveRingHidden) {
-            const int ringCount = unlockedRingCount();
-            for (int ringIndex = 0; ringIndex < ringCount; ++ringIndex) {
-                const std::vector<SpellRingItem>& ringItems = spellRing_.itemsForRing(ringIndex);
-                for (std::size_t itemIndex = 0; itemIndex < ringItems.size(); ++itemIndex) {
-                    const SpellRingItem& item = ringItems[itemIndex];
-                    if (!tileMap_.isLit(item.worldPosition, playerLightCenter, itemLights)) {
-                        continue;
+            } else if (!liveRingHidden) {
+                const int ringCount = unlockedRingCount();
+                for (int ringIndex = 0; ringIndex < ringCount; ++ringIndex) {
+                    const std::vector<SpellRingItem>& ringItems = spellRing_.itemsForRing(ringIndex);
+                    for (std::size_t itemIndex = 0; itemIndex < ringItems.size(); ++itemIndex) {
+                        const SpellRingItem& item = ringItems[itemIndex];
+                        if (!tileMap_.isLit(item.worldPosition, playerLightCenter, itemLights)) {
+                            continue;
+                        }
+                        appendRingItemDepthRenderEntry(
+                            worldDepthEntries,
+                            renderer,
+                            spellRing_,
+                            objectCatalog_,
+                            RingItemDepthRenderSnapshot{
+                                item.worldPosition.y,
+                                item,
+                            },
+                            totalSeconds);
+                        worldDepthEntries.back().profileName = "WorldDepth.draw.ring_item";
                     }
-                    appendRingItemDepthRenderEntry(
-                        worldDepthEntries,
-                        renderer,
-                        spellRing_,
-                        objectCatalog_,
-                        RingItemDepthRenderSnapshot{
-                            item.worldPosition.y,
-                            item,
-                        },
-                        totalSeconds);
                 }
             }
         }
+        std::size_t firstEntry = worldDepthEntries.size();
+        enemies_.appendRenderEntries(worldDepthEntries, renderer, tileMap_, playerLightCenter, itemLights, 0, &encyclopedia_);
+        tagDepthRenderEntries(worldDepthEntries, firstEntry, "WorldDepth.draw.enemy");
+        firstEntry = worldDepthEntries.size();
+        appendCaptureAbsorbRenderEntries(worldDepthEntries, renderer, time.totalSeconds());
+        tagDepthRenderEntries(worldDepthEntries, firstEntry, "WorldDepth.draw.capture");
     }
-    enemies_.appendRenderEntries(worldDepthEntries, renderer, tileMap_, playerLightCenter, itemLights, 0, &encyclopedia_);
-    appendCaptureAbsorbRenderEntries(worldDepthEntries, renderer, time.totalSeconds());
     {
         FrameProfileScope profile("WorldDepth.draw");
-        std::stable_sort(worldDepthEntries.begin(), worldDepthEntries.end(), [](const DepthRenderEntry& left, const DepthRenderEntry& right) {
-            return left.sortY < right.sortY;
-        });
-        for (const DepthRenderEntry& entry : worldDepthEntries) {
-            entry.draw();
+        {
+            FrameProfileScope profile("WorldDepth.sort");
+            std::stable_sort(worldDepthEntries.begin(), worldDepthEntries.end(), [](const DepthRenderEntry& left, const DepthRenderEntry& right) {
+                return left.sortY < right.sortY;
+            });
+        }
+        {
+            FrameProfileScope profile("WorldDepth.entries_draw");
+            for (const DepthRenderEntry& entry : worldDepthEntries) {
+                FrameProfileScope entryProfile(entry.profileName);
+                entry.draw();
+            }
         }
     }
 

@@ -13,7 +13,7 @@ struct FrameProfileSample {
 };
 
 struct FrameProfileSnapshot {
-    static constexpr std::size_t MaxSamples = 48;
+    static constexpr std::size_t MaxSamples = 96;
 
     std::array<FrameProfileSample, MaxSamples> samples{};
     std::size_t count = 0;

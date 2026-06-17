@@ -58,6 +58,21 @@ Vec2 npcCharacterDrawSize(Renderer& renderer, const NpcCharacterVisual& visual, 
 
 bool drawNpcCharacterSprite(Renderer& renderer, const NpcCharacterVisual& visual, const NpcCharacterDrawOptions& options)
 {
+    const ImageHandle handle = renderer.acquireImage(visual.imagePath, options.filter);
+    Vec2 frameSize{};
+    if (!characterSpriteSheetFrameSize(renderer, handle, visual.layout, frameSize)) {
+        return false;
+    }
+    return drawNpcCharacterSprite(renderer, visual, handle, frameSize, options);
+}
+
+bool drawNpcCharacterSprite(
+    Renderer& renderer,
+    const NpcCharacterVisual& visual,
+    ImageHandle sheetHandle,
+    Vec2 frameSize,
+    const NpcCharacterDrawOptions& options)
+{
     CharacterSpriteDrawOptions spriteOptions;
     spriteOptions.frameIndex = options.frameIndex;
     spriteOptions.anchorPosition = options.anchorPosition;
@@ -69,7 +84,7 @@ bool drawNpcCharacterSprite(Renderer& renderer, const NpcCharacterVisual& visual
     spriteOptions.outlineColor = options.outlineColor;
     spriteOptions.outlinePx = options.outlinePx;
     spriteOptions.filter = options.filter;
-    return drawCharacterSpriteFrame(renderer, visual.imagePath, visual.layout, spriteOptions);
+    return drawCharacterSpriteFrame(renderer, sheetHandle, frameSize, visual.layout, spriteOptions);
 }
 
 }

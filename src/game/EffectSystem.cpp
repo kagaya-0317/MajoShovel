@@ -1033,18 +1033,16 @@ void EffectSystem::renderDamagePopups(Renderer& renderer)
             continue;
         }
 
-        if (popup.style == DamagePopupStyle::Critical) {
-            std::snprintf(buffer, sizeof(buffer), "%d!", popup.amount);
-        } else {
-            std::snprintf(buffer, sizeof(buffer), "%d", popup.amount);
-        }
-        const int textScale = popup.style == DamagePopupStyle::Critical
+        std::snprintf(buffer, sizeof(buffer), "%d", popup.amount);
+        const bool emphasized = popup.style == DamagePopupStyle::Critical ||
+            popup.style == DamagePopupStyle::WeakPoint;
+        const int textScale = emphasized
             ? (t < 0.14f ? 5 : 4)
             : (t < 0.10f ? 4 : 3);
         const Vec2 size = renderer.measureText(buffer, textScale, TextStyle::Italic);
         float hopHeight = 0.0f;
-        const float primaryHopHeight = popup.style == DamagePopupStyle::Critical ? 42.0f : 34.0f;
-        const float secondaryHopHeight = popup.style == DamagePopupStyle::Critical ? 17.0f : 13.0f;
+        const float primaryHopHeight = emphasized ? 42.0f : 34.0f;
+        const float secondaryHopHeight = emphasized ? 17.0f : 13.0f;
         if (t < 0.58f) {
             const float u = t / 0.58f;
             hopHeight = std::sin(u * Pi) * primaryHopHeight;
@@ -1061,6 +1059,8 @@ void EffectSystem::renderDamagePopups(Renderer& renderer)
             textColor = {72, 238, 132, alpha};
         } else if (popup.style == DamagePopupStyle::Critical) {
             textColor = mixColor({255, 42, 36, alpha}, {255, 255, 255, alpha}, clamp(t / 0.26f, 0.0f, 1.0f));
+        } else if (popup.style == DamagePopupStyle::WeakPoint) {
+            textColor = mixColor({72, 210, 255, alpha}, {255, 255, 255, alpha}, clamp(t / 0.26f, 0.0f, 1.0f));
         }
         const Color shadowColor{0, 0, 0, static_cast<unsigned char>(std::clamp(std::lround(190.0f * fade), 0L, 255L))};
 
@@ -1219,7 +1219,7 @@ void EffectSystem::spawnDamagePopup(Vec2 position, int amount, DamagePopupStyle 
         return;
     }
 
-    if (style == DamagePopupStyle::Critical) {
+    if (style == DamagePopupStyle::Critical || style == DamagePopupStyle::WeakPoint) {
         popup->position = position + Vec2{randomRange(-14.0f, 14.0f), randomRange(-42.0f, -32.0f)};
         popup->velocity = {randomRange(-12.0f, 12.0f), 0.0f};
         popup->duration = 1.05f + randomRange(-0.04f, 0.04f);

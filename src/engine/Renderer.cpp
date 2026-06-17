@@ -1,5 +1,7 @@
 ﻿#include "engine/Renderer.hpp"
 
+#include "engine/FrameProfiler.hpp"
+
 #include <SDL3/SDL.h>
 #include <algorithm>
 #include <array>
@@ -49,6 +51,26 @@ SDL_FColor vertexColor(Color color)
         static_cast<float>(color.b) / 255.0f,
         static_cast<float>(color.a) / 255.0f,
     };
+}
+
+void ensureQuadIndices(std::vector<int>& indices, std::size_t quadCount)
+{
+    const std::size_t oldQuadCount = indices.size() / 6;
+    if (oldQuadCount >= quadCount) {
+        return;
+    }
+
+    indices.resize(quadCount * 6);
+    for (std::size_t quadIndex = oldQuadCount; quadIndex < quadCount; ++quadIndex) {
+        const int baseIndex = static_cast<int>(quadIndex * 4);
+        const std::size_t indexOffset = quadIndex * 6;
+        indices[indexOffset] = baseIndex;
+        indices[indexOffset + 1] = baseIndex + 1;
+        indices[indexOffset + 2] = baseIndex + 2;
+        indices[indexOffset + 3] = baseIndex;
+        indices[indexOffset + 4] = baseIndex + 2;
+        indices[indexOffset + 5] = baseIndex + 3;
+    }
 }
 
 SDL_FRect toSdlRect(RectF rect)
@@ -381,6 +403,9 @@ void Renderer::setColor(Color color)
 Vec2 Renderer::transform(Vec2 p) const
 {
     p = camera_ ? camera_->worldToScreen(p) + worldScreenOffset_ : p;
+    if (screenTransforms_.empty()) {
+        return p;
+    }
     for (const ScreenTransform& transform : screenTransforms_) {
         p = transform.origin + (p - transform.origin) * transform.scale;
     }
@@ -395,6 +420,9 @@ Vec2 Renderer::transformSize(Vec2 size) const
 
 Color Renderer::transformColor(Color color) const
 {
+    if (screenTransforms_.empty()) {
+        return color;
+    }
     float alpha = static_cast<float>(color.a);
     for (const ScreenTransform& transform : screenTransforms_) {
         alpha *= std::clamp(transform.alpha, 0.0f, 1.0f);
@@ -405,6 +433,9 @@ Color Renderer::transformColor(Color color) const
 
 float Renderer::screenScale() const
 {
+    if (screenTransforms_.empty()) {
+        return 1.0f;
+    }
     float scale = 1.0f;
     for (const ScreenTransform& transform : screenTransforms_) {
         scale *= transform.scale;
@@ -766,57 +797,62 @@ void Renderer::fillGradientRects(const std::vector<GradientRect>& rects)
     static thread_local std::vector<SDL_Vertex> vertices;
     static thread_local std::vector<int> indices;
     vertices.clear();
-    indices.clear();
     const std::size_t targetVertexCount = rects.size() * 4;
-    const std::size_t targetIndexCount = rects.size() * 6;
     if (vertices.capacity() < targetVertexCount) {
         vertices.reserve(targetVertexCount);
     }
-    if (indices.capacity() < targetIndexCount) {
-        indices.reserve(targetIndexCount);
+
+    const bool directTransform = screenTransforms_.empty();
+    Vec2 directOffset = worldScreenOffset_;
+    if (directTransform && camera_ != nullptr) {
+        const Vec2 cameraPosition = camera_->position();
+        directOffset += {
+            -cameraPosition.x + static_cast<float>(camera_->width()) * 0.5f,
+            -cameraPosition.y + static_cast<float>(camera_->height()) * 0.5f,
+        };
     }
 
-    for (const GradientRect& gradientRect : rects) {
-        if (gradientRect.size.x <= 0.0f || gradientRect.size.y <= 0.0f) {
-            continue;
+    {
+        FrameProfileScope profile("Renderer.gradient_build");
+        for (const GradientRect& gradientRect : rects) {
+            if (gradientRect.size.x <= 0.0f || gradientRect.size.y <= 0.0f) {
+                continue;
+            }
+
+            const Vec2 p = directTransform ? gradientRect.pos + directOffset : transform(gradientRect.pos);
+            const Vec2 s = directTransform ? gradientRect.size : transformSize(gradientRect.size);
+            if (s.x <= 0.0f || s.y <= 0.0f) {
+                continue;
+            }
+
+            const Color topLeft = directTransform ? gradientRect.topLeft : transformColor(gradientRect.topLeft);
+            const Color topRight = directTransform ? gradientRect.topRight : transformColor(gradientRect.topRight);
+            const Color bottomRight = directTransform ? gradientRect.bottomRight : transformColor(gradientRect.bottomRight);
+            const Color bottomLeft = directTransform ? gradientRect.bottomLeft : transformColor(gradientRect.bottomLeft);
+
+            vertices.push_back(SDL_Vertex{{p.x, p.y}, vertexColor(topLeft), {0.0f, 0.0f}});
+            vertices.push_back(SDL_Vertex{{p.x + s.x, p.y}, vertexColor(topRight), {1.0f, 0.0f}});
+            vertices.push_back(SDL_Vertex{{p.x + s.x, p.y + s.y}, vertexColor(bottomRight), {1.0f, 1.0f}});
+            vertices.push_back(SDL_Vertex{{p.x, p.y + s.y}, vertexColor(bottomLeft), {0.0f, 1.0f}});
         }
-
-        const Vec2 p = transform(gradientRect.pos);
-        const Vec2 s = transformSize(gradientRect.size);
-        if (s.x <= 0.0f || s.y <= 0.0f) {
-            continue;
-        }
-
-        const Color topLeft = transformColor(gradientRect.topLeft);
-        const Color topRight = transformColor(gradientRect.topRight);
-        const Color bottomRight = transformColor(gradientRect.bottomRight);
-        const Color bottomLeft = transformColor(gradientRect.bottomLeft);
-
-        const int baseIndex = static_cast<int>(vertices.size());
-        vertices.push_back(SDL_Vertex{{p.x, p.y}, vertexColor(topLeft), {0.0f, 0.0f}});
-        vertices.push_back(SDL_Vertex{{p.x + s.x, p.y}, vertexColor(topRight), {1.0f, 0.0f}});
-        vertices.push_back(SDL_Vertex{{p.x + s.x, p.y + s.y}, vertexColor(bottomRight), {1.0f, 1.0f}});
-        vertices.push_back(SDL_Vertex{{p.x, p.y + s.y}, vertexColor(bottomLeft), {0.0f, 1.0f}});
-
-        indices.push_back(baseIndex);
-        indices.push_back(baseIndex + 1);
-        indices.push_back(baseIndex + 2);
-        indices.push_back(baseIndex);
-        indices.push_back(baseIndex + 2);
-        indices.push_back(baseIndex + 3);
     }
 
-    if (vertices.empty() || indices.empty()) {
+    if (vertices.empty()) {
         return;
     }
 
-    SDL_RenderGeometry(
-        renderer_,
-        nullptr,
-        vertices.data(),
-        static_cast<int>(vertices.size()),
-        indices.data(),
-        static_cast<int>(indices.size()));
+    const std::size_t quadCount = vertices.size() / 4;
+    ensureQuadIndices(indices, quadCount);
+    {
+        FrameProfileScope profile("Renderer.gradient_submit");
+        SDL_RenderGeometry(
+            renderer_,
+            nullptr,
+            vertices.data(),
+            static_cast<int>(vertices.size()),
+            indices.data(),
+            static_cast<int>(quadCount * 6));
+    }
 }
 
 void Renderer::drawRect(Vec2 pos, Vec2 size, Color color)
@@ -2620,6 +2656,7 @@ void Renderer::invalidateImage(std::string_view path)
         return;
     }
 
+    ++imageCacheGeneration_;
     for (TextureFilter filter : {TextureFilter::Nearest, TextureFilter::Linear}) {
         const std::string key = imageCacheKey(normalizedPath, filter);
         const auto it = imageHandleByKey_.find(key);
@@ -2631,6 +2668,7 @@ void Renderer::invalidateImage(std::string_view path)
 
 void Renderer::invalidateAllImages()
 {
+    ++imageCacheGeneration_;
     for (auto& [_, entry] : imageEntries_) {
         destroyCachedImageTexture(entry);
     }

@@ -43,8 +43,8 @@ constexpr float PlayerPushShare = 0.35f;
 constexpr float EnemyPushShare = 0.65f;
 constexpr float BossRadiusMultiplier = 1.0f;
 constexpr float BossVisualRadiusMultiplier = 1.35f;
-constexpr int BossHpMultiplier = 8;
-constexpr int BossXpMultiplier = 6;
+constexpr double BossNormalIncomingDamageMultiplier = 0.75;
+constexpr double BossWeakPointIncomingDamageMultiplier = 1.5;
 constexpr float BossMinSpawnDistance = 96.0f;
 constexpr std::string_view StardustMoleEnemyId = "stardust_mole";
 constexpr std::string_view StardustMolePatternId = "stardust_mole";
@@ -53,6 +53,7 @@ constexpr std::string_view JunkCrabPatternId = "junk_crab";
 constexpr std::string_view JunkCrabProjectileId = "junk_chunk";
 constexpr std::string_view AstragnaEnemyId = "astragna";
 constexpr std::string_view AstragnaPatternId = "astragna";
+constexpr std::string_view StarVeinDragonEnemyId = "star_vein_dragon";
 constexpr std::string_view BombTsuchinokoEnemyId = "bomb_tsuchinoko";
 constexpr float CountdownExplodeDefaultDelaySeconds = 4.0f;
 constexpr float CountdownExplodeFallbackArmDistance = 120.0f;
@@ -84,8 +85,6 @@ constexpr float JunkCrabOrbitRadiusMultiplier = 1.85f;
 constexpr float JunkCrabDebrisRadius = 8.5f;
 constexpr int JunkCrabDebrisHp = 2;
 constexpr int JunkCrabToppleThreshold = 100;
-constexpr float JunkCrabShellDamageMultiplier = 0.45f;
-constexpr float JunkCrabToppledDamageMultiplier = 1.75f;
 constexpr float JunkCrabToppledSeconds = 2.70f;
 constexpr float JunkCrabRecoverSeconds = 0.55f;
 constexpr float JunkCrabGuardMoveSpeed = 54.0f;
@@ -1123,6 +1122,11 @@ bool isJunkCrabId(std::string_view enemyId)
 bool isAstragnaId(std::string_view enemyId)
 {
     return enemyId == AstragnaEnemyId;
+}
+
+bool isStarVeinDragonId(std::string_view enemyId)
+{
+    return enemyId == StarVeinDragonEnemyId;
 }
 
 bool isStardustMoleEnemy(const Enemy& enemy)
@@ -2849,7 +2853,6 @@ struct BossWeakPointSpec {
     bool exposed = false;
     Vec2 center{};
     float radius = 0.0f;
-    double damageMultiplier = 1.0;
     std::string_view effectId;
 };
 
@@ -2897,7 +2900,6 @@ BossWeakPointSpec bossWeakPointFor(const Enemy& enemy, const HitboxCatalog* hitb
             .exposed = true,
             .center = enemy.position - facingVector(enemy.facingAngle) * (radius * 0.52f),
             .radius = std::max(7.0f, radius * 0.42f),
-            .damageMultiplier = behaviorParamDouble(enemy, "boss_sequence", "crystalDamageMultiplier", 1.75),
             .effectId = "stardust_crystal",
         };
         applyCustomBossWeakPoint(spec, enemy, hitboxCatalog);
@@ -2911,7 +2913,6 @@ BossWeakPointSpec bossWeakPointFor(const Enemy& enemy, const HitboxCatalog* hitb
             .exposed = true,
             .center = enemy.position,
             .radius = std::max(10.0f, radius * 0.64f),
-            .damageMultiplier = behaviorParamDouble(enemy, "boss_sequence", "toppledDamageMultiplier", JunkCrabToppledDamageMultiplier),
             .effectId = "junk_belly",
         };
         applyCustomBossWeakPoint(spec, enemy, hitboxCatalog);
@@ -2935,6 +2936,18 @@ bool bossWeakPointHit(const BossWeakPointSpec& weakPoint, const SpellRingItem& i
         ringItemHitboxOverlapsCircle(item, itemHitbox, weakPoint.center, weakPoint.radius);
 }
 
+int scaledPositiveDamage(int damage, double multiplier)
+{
+    if (damage <= 0) {
+        return damage;
+    }
+    const double safeMultiplier = std::max(0.0, multiplier);
+    if (safeMultiplier <= 0.0) {
+        return 0;
+    }
+    return std::max(1, static_cast<int>(std::ceil(static_cast<double>(damage) * safeMultiplier)));
+}
+
 BossDamageAdjustment adjustBossIncomingDamageWithWeakPoint(
     const Enemy& enemy,
     int damage,
@@ -2947,25 +2960,14 @@ BossDamageAdjustment adjustBossIncomingDamageWithWeakPoint(
     }
 
     if (weakPointHit) {
-        result.damage = std::max(
-            1,
-            static_cast<int>(std::ceil(static_cast<double>(damage) * std::max(0.0, weakPoint.damageMultiplier))));
+        result.damage = scaledPositiveDamage(damage, BossWeakPointIncomingDamageMultiplier);
         result.weakPointHit = true;
         result.effectId = weakPoint.effectId;
         return result;
     }
 
-    if (enemy.bossAction.enabled &&
-        enemy.bossAction.pattern == JunkCrabPatternId &&
-        enemy.bossAction.junkCrab.phase != JunkCrabPhase::Toppled) {
-        const double multiplier = behaviorParamDouble(
-            enemy,
-            "boss_sequence",
-            "shellDamageMultiplier",
-            JunkCrabShellDamageMultiplier);
-        result.damage = std::max(
-            1,
-            static_cast<int>(std::ceil(static_cast<double>(damage) * std::max(0.0, multiplier))));
+    if (enemy.isBoss) {
+        result.damage = scaledPositiveDamage(damage, BossNormalIncomingDamageMultiplier);
     }
     return result;
 }
@@ -3066,23 +3068,23 @@ void drawBossWeakPointHintParticles(Renderer& renderer, const Enemy& enemy, cons
         const std::uint32_t salt = static_cast<std::uint32_t>(i + 1) * 0x45d9f3bU;
         const float baseAngle = bossWeakPointHintRandom(seed, salt + 1U) * Pi * 2.0f;
         const float baseDistance = radius * lerp(0.12f, 1.08f, bossWeakPointHintRandom(seed, salt + 2U));
-        const float speed = lerp(0.34f, 0.72f, bossWeakPointHintRandom(seed, salt + 3U));
+        const float speed = lerp(0.18f, 0.38f, bossWeakPointHintRandom(seed, salt + 3U));
         const float phase = bossWeakPointHintRandom(seed, salt + 4U) * Pi * 2.0f;
         const float directionSign = (i % 2 == 0) ? 1.0f : -1.0f;
-        const float angle = baseAngle + directionSign * time * speed * 0.72f +
-            std::sin(time * (speed * 1.7f) + phase) * 0.18f;
+        const float angle = baseAngle + directionSign * time * speed * 0.42f +
+            std::sin(time * (speed * 1.15f) + phase) * 0.12f;
         const Vec2 radial = fromAngle(angle);
         const Vec2 tangent{-radial.y, radial.x};
-        const float drift = std::sin(time * lerp(1.6f, 2.9f, bossWeakPointHintRandom(seed, salt + 5U)) + phase) * radius * 0.12f;
-        const float sideDrift = std::cos(time * lerp(1.1f, 2.1f, bossWeakPointHintRandom(seed, salt + 6U)) + phase) * radius * 0.10f;
+        const float drift = std::sin(time * lerp(0.74f, 1.32f, bossWeakPointHintRandom(seed, salt + 5U)) + phase) * radius * 0.10f;
+        const float sideDrift = std::cos(time * lerp(0.58f, 1.05f, bossWeakPointHintRandom(seed, salt + 6U)) + phase) * radius * 0.08f;
         const Vec2 particlePosition = drawCenter + radial * (baseDistance + drift) + tangent * sideDrift;
-        const float twinkle = 0.5f + 0.5f * std::sin(time * lerp(2.4f, 4.2f, bossWeakPointHintRandom(seed, salt + 7U)) + phase);
-        const float particleRadius = std::max(1.2f, radius * lerp(0.055f, 0.115f, bossWeakPointHintRandom(seed, salt + 8U)));
-        const float alphaScale = 0.35f + twinkle * 0.65f;
+        const float twinkle = 0.5f + 0.5f * std::sin(time * lerp(0.92f, 1.58f, bossWeakPointHintRandom(seed, salt + 7U)) + phase);
+        const float particleRadius = std::max(0.75f, radius * lerp(0.028f, 0.062f, bossWeakPointHintRandom(seed, salt + 8U)));
+        const float alphaScale = 0.55f + twinkle * 0.45f;
 
         renderer.fillSoftCircle(
             particlePosition,
-            particleRadius * lerp(2.2f, 3.3f, twinkle),
+            particleRadius * lerp(1.8f, 2.6f, twinkle),
             scaleColorAlpha({100, 196, 255, 82}, alphaScale));
         renderer.fillSoftCircle(
             particlePosition,
@@ -3090,11 +3092,11 @@ void drawBossWeakPointHintParticles(Renderer& renderer, const Enemy& enemy, cons
             scaleColorAlpha({230, 250, 255, 220}, alphaScale));
 
         if (i % 3 == 0) {
-            const Vec2 tail = tangent * particleRadius * lerp(2.8f, 4.4f, bossWeakPointHintRandom(seed, salt + 9U));
+            const Vec2 tail = tangent * particleRadius * lerp(2.0f, 3.2f, bossWeakPointHintRandom(seed, salt + 9U));
             renderer.drawSoftLine(
                 particlePosition - tail * 0.55f,
                 particlePosition + tail * 0.25f,
-                std::max(1.0f, particleRadius * 0.48f),
+                std::max(0.65f, particleRadius * 0.36f),
                 scaleColorAlpha({188, 238, 255, 96}, alphaScale));
         }
     }
@@ -3283,9 +3285,7 @@ void drawEnemyVisual(
     const bool astragnaVisual = isAstragnaBossAction(enemy);
     EnemyImageDrawOptions imageOptions = enemyImageOptionsFor(enemy);
     if (captureHighlighted && !enemy.death.active) {
-        imageOptions.selectedOutlineEnabled = true;
-        imageOptions.selectedOutlineColor = {255, 255, 255, 245};
-        imageOptions.selectedOutlinePx = 4;
+        imageOptions.maskOverlayColor = {255, 255, 255, 62};
     }
     Vec2 enemyImageDrawSize{};
     const bool drewImage = !astragnaVisual && drawEnemyImage(renderer, enemy, drawPosition, enemy.behaviorTimer, imageOptions, &enemyImageDrawSize);
@@ -3371,51 +3371,73 @@ float bossSpawnRadiusFor(const EnemyCatalog& enemyCatalog, std::string_view boss
 
 void applyFallbackBossDefinition(Enemy& enemy, std::string_view bossEnemyId, const RuntimeBalance& balance)
 {
-    if (!isStardustMoleId(bossEnemyId) && !isJunkCrabId(bossEnemyId) && !isAstragnaId(bossEnemyId)) {
+    if (!isStardustMoleId(bossEnemyId) &&
+        !isJunkCrabId(bossEnemyId) &&
+        !isAstragnaId(bossEnemyId) &&
+        !isStarVeinDragonId(bossEnemyId)) {
         return;
     }
 
     if (isStardustMoleId(bossEnemyId)) {
         enemy.enemyId = std::string(StardustMoleEnemyId);
         enemy.enemyName = "星くずモグラ";
-        enemy.enemyTags = {"boss", "boss_only", "no_normal_spawn"};
+        enemy.enemyTags = {"boss", "boss_only", "no_normal_spawn", "unique"};
         enemy.aiId = "stationary";
         enemy.unawareAiId = "idle";
         enemy.radius = std::max(balance.enemyRadius * 1.35f, 15.0f);
-        enemy.maxHp = std::max(18, balance.enemyHp * 2);
+        enemy.maxHp = 1440;
         enemy.hp = enemy.maxHp;
-        enemy.xp = std::max(enemy.xp, balance.enemyXp * 2);
-        enemy.contactAttackPower = std::max(2, enemy.contactAttackPower);
+        enemy.xp = std::max(enemy.xp, 60);
+        enemy.contactAttackPower = 2;
         enemy.contactDamageType = "blunt";
+        configureEnemyAltitudeFromAi(enemy);
         return;
     }
 
     if (isAstragnaId(bossEnemyId)) {
         enemy.enemyId = std::string(AstragnaEnemyId);
         enemy.enemyName = "星封殻アストラグナ";
-        enemy.enemyTags = {"boss", "boss_only", "no_normal_spawn", "large", "terrain_boss"};
+        enemy.enemyTags = {"boss", "boss_only", "no_normal_spawn", "unique", "large", "terrain_boss"};
         enemy.aiId = "stationary";
         enemy.unawareAiId = "idle";
         enemy.radius = std::max(balance.enemyRadius * 1.9f, 24.0f);
-        enemy.maxHp = std::max(12, balance.enemyHp * 2);
+        enemy.maxHp = 2880;
         enemy.hp = enemy.maxHp;
-        enemy.xp = std::max(enemy.xp, balance.enemyXp * 4);
+        enemy.xp = std::max(enemy.xp, 120);
         enemy.contactAttackPower = 0;
         enemy.contactDamageType = "none";
+        configureEnemyAltitudeFromAi(enemy);
+        return;
+    }
+
+    if (isStarVeinDragonId(bossEnemyId)) {
+        enemy.enemyId = std::string(StarVeinDragonEnemyId);
+        enemy.enemyName = "星脈竜";
+        enemy.enemyTags = {"boss", "boss_only", "no_normal_spawn", "unique", "large", "heavy", "magic"};
+        enemy.aiId = "hover_chase";
+        enemy.unawareAiId = "idle";
+        enemy.radius = std::max(balance.enemyRadius * 2.1f, 30.0f);
+        enemy.maxHp = 4000;
+        enemy.hp = enemy.maxHp;
+        enemy.xp = std::max(enemy.xp, 180);
+        enemy.contactAttackPower = 18;
+        enemy.contactDamageType = "magic";
+        configureEnemyAltitudeFromAi(enemy);
         return;
     }
 
     enemy.enemyId = std::string(JunkCrabEnemyId);
     enemy.enemyName = "廃品殻獣ジャンクラブ";
-    enemy.enemyTags = {"boss", "boss_only", "no_normal_spawn", "large", "heavy"};
+    enemy.enemyTags = {"boss", "boss_only", "no_normal_spawn", "unique", "large", "heavy"};
     enemy.aiId = "stationary";
     enemy.unawareAiId = "idle";
     enemy.radius = std::max(balance.enemyRadius * 1.65f, 18.0f);
-    enemy.maxHp = std::max(26, balance.enemyHp * 3);
+    enemy.maxHp = 1680;
     enemy.hp = enemy.maxHp;
-    enemy.xp = std::max(enemy.xp, balance.enemyXp * 3);
-    enemy.contactAttackPower = std::max(3, enemy.contactAttackPower);
+    enemy.xp = std::max(enemy.xp, 90);
+    enemy.contactAttackPower = 4;
     enemy.contactDamageType = "blunt";
+    configureEnemyAltitudeFromAi(enemy);
 }
 
 void enableDefaultBossActionIfNeeded(Enemy& enemy, std::string_view bossEnemyId)
@@ -6886,9 +6908,9 @@ bool EnemySystem::spawnBossAt(
     applyEnemyVariant(*enemy, enemyCatalog, variantTier, effectiveBaseLevel);
     enableDefaultBossActionIfNeeded(*enemy, bossEnemyId);
     enemy->radius *= BossRadiusMultiplier;
-    enemy->maxHp = std::max(12, enemy->maxHp * BossHpMultiplier);
+    enemy->maxHp = std::max(1, enemy->maxHp);
     enemy->hp = enemy->maxHp;
-    enemy->xp = std::max(enemy->xp, enemy->xp * BossXpMultiplier);
+    enemy->xp = std::max(0, enemy->xp);
     enemy->spawnTimer = balance.enemySpawnWarmup * 1.6f;
     enemy->spawnDuration = enemy->spawnTimer;
     if (detectedOnSpawn) {
@@ -8417,7 +8439,10 @@ void EnemySystem::update(
                 updateEnemyAltitude(enemy);
                 events_.push_back(makeEnemyEvent(EnemyEventType::Hit, enemy));
                 if (queuedFallDamage > 0 && enemy.hp > 0) {
-                    const int damageDealt = applyDefenseModifier(enemy.status, queuedFallDamage);
+                    const int adjustedFallDamage = enemy.isBoss
+                        ? scaledPositiveDamage(queuedFallDamage, BossNormalIncomingDamageMultiplier)
+                        : queuedFallDamage;
+                    const int damageDealt = applyDefenseModifier(enemy.status, adjustedFallDamage);
                     applyEnemyDamageTyped(enemy, damageDealt, "blunt");
                     revealEnemyHpBar(enemy, damageDealt);
                     if (damageDealt > 0) {
@@ -9521,6 +9546,7 @@ void EnemySystem::update(
             enemy.hitFlash = 0.12f;
             EnemyEvent attackHitEvent = makeEnemyEvent(EnemyEventType::AttackHit, enemy, hitEffectId, damageDealt, criticalHit);
             attackHitEvent.ringItemImpact = true;
+            attackHitEvent.weakPointHit = bossDamage.weakPointHit;
             events_.push_back(std::move(attackHitEvent));
             if (enemy.hp <= 0) {
                 processEnemyDeath(enemy, item.worldPosition);
@@ -9840,7 +9866,9 @@ bool EnemySystem::hitByPlayerProjectile(
         if (!bossDamage.effectId.empty()) {
             hitEffectId = std::string(bossDamage.effectId);
         }
-        events_.push_back(makeEnemyEvent(EnemyEventType::AttackHit, enemy, hitEffectId, adjustedDamage));
+        EnemyEvent hitEvent = makeEnemyEvent(EnemyEventType::AttackHit, enemy, hitEffectId, adjustedDamage);
+        hitEvent.weakPointHit = bossDamage.weakPointHit;
+        events_.push_back(std::move(hitEvent));
         if (enemy.hp <= 0) {
             beginEnemyDeath(enemy, spellRing, projectile.position);
         }
@@ -10010,15 +10038,23 @@ int EnemySystem::applyHotAir(
                 const int typedDamage = std::max(
                     0,
                     static_cast<int>(std::ceil(static_cast<double>(bonusBaseDamage) * damageTypeMultiplier("fire"))));
-                const int damageDealt = applyDefenseModifier(enemy.status, typedDamage);
+                const BossDamageAdjustment bossDamage = adjustBossIncomingDamage(
+                    enemy,
+                    typedDamage,
+                    position,
+                    radius,
+                    hitboxCatalog_);
+                const int damageDealt = applyDefenseModifier(enemy.status, bossDamage.damage);
                 applyEnemyDamageTyped(enemy, damageDealt, "fire");
                 revealEnemyHpBar(enemy, damageDealt);
                 enemy.hitFlash = 0.12f;
-                events_.push_back(makeEnemyEvent(
+                EnemyEvent hitEvent = makeEnemyEvent(
                     EnemyEventType::AttackHit,
                     enemy,
-                    "dry_wet_bonus_damage",
-                    damageDealt));
+                    bossDamage.effectId.empty() ? "dry_wet_bonus_damage" : std::string(bossDamage.effectId),
+                    damageDealt);
+                hitEvent.weakPointHit = bossDamage.weakPointHit;
+                events_.push_back(std::move(hitEvent));
                 if (enemy.hp <= 0) {
                     beginEnemyDeath(enemy, spellRing, position);
                     continue;
@@ -10200,15 +10236,25 @@ int EnemySystem::applyMagicArea(const EnemyMagicHitSpec& spec, SpellRingSystem& 
             const int typedDamage = std::max(
                 0,
                 static_cast<int>(std::ceil(static_cast<double>(spec.damage) * damageTypeMultiplier(spec.damageType))));
-            const int damageDealt = applyDefenseModifier(enemy.status, typedDamage);
+            const BossDamageAdjustment bossDamage = adjustBossIncomingDamage(
+                enemy,
+                typedDamage,
+                spec.position,
+                radius,
+                hitboxCatalog_);
+            const int damageDealt = applyDefenseModifier(enemy.status, bossDamage.damage);
             applyEnemyDamageTyped(enemy, damageDealt, spec.damageType.empty() ? spec.effectId : spec.damageType);
             revealEnemyHpBar(enemy, damageDealt);
             enemy.hitFlash = 0.12f;
-            events_.push_back(makeEnemyEvent(
+            EnemyEvent hitEvent = makeEnemyEvent(
                 EnemyEventType::AttackHit,
                 enemy,
-                spec.effectId.empty() ? spec.damageType : spec.effectId,
-                damageDealt));
+                bossDamage.effectId.empty()
+                    ? (spec.effectId.empty() ? spec.damageType : spec.effectId)
+                    : std::string(bossDamage.effectId),
+                damageDealt);
+            hitEvent.weakPointHit = bossDamage.weakPointHit;
+            events_.push_back(std::move(hitEvent));
         }
 
         if (!spec.consumeStateForBonus.empty() && enemy.hp > 0 && enemy.status.removeState(spec.consumeStateForBonus)) {
@@ -10227,15 +10273,23 @@ int EnemySystem::applyMagicArea(const EnemyMagicHitSpec& spec, SpellRingSystem& 
                     static_cast<int>(std::ceil(
                         static_cast<double>(spec.consumeStateBonusDamage) *
                         damageTypeMultiplier(bonusDamageType))));
-                const int damageDealt = applyDefenseModifier(enemy.status, typedDamage);
+                const BossDamageAdjustment bossDamage = adjustBossIncomingDamage(
+                    enemy,
+                    typedDamage,
+                    spec.position,
+                    radius,
+                    hitboxCatalog_);
+                const int damageDealt = applyDefenseModifier(enemy.status, bossDamage.damage);
                 applyEnemyDamageTyped(enemy, damageDealt, bonusDamageType);
                 revealEnemyHpBar(enemy, damageDealt);
                 enemy.hitFlash = 0.12f;
-                events_.push_back(makeEnemyEvent(
+                EnemyEvent hitEvent = makeEnemyEvent(
                     EnemyEventType::AttackHit,
                     enemy,
-                    bonusEffectId,
-                    damageDealt));
+                    bossDamage.effectId.empty() ? bonusEffectId : std::string(bossDamage.effectId),
+                    damageDealt);
+                hitEvent.weakPointHit = bossDamage.weakPointHit;
+                events_.push_back(std::move(hitEvent));
             }
         }
 
@@ -10332,14 +10386,25 @@ void EnemySystem::applyExplosionDamage(Vec2 position, float radius, SpellRingSys
             continue;
         }
 
-        const int damageDealt = applyDefenseModifier(enemy.status, std::max(0, damage));
+        const BossDamageAdjustment bossDamage = adjustBossIncomingDamage(
+            enemy,
+            std::max(0, damage),
+            position,
+            safeRadius,
+            hitboxCatalog_);
+        const int damageDealt = applyDefenseModifier(enemy.status, bossDamage.damage);
         applyEnemyDamageTyped(enemy, damageDealt, "fire");
         revealEnemyHpBar(enemy, damageDealt);
         enemy.hitFlash = 0.18f;
         enemy.knockbackVelocity = normalize(enemy.position - position) * 110.0f;
         enemy.knockbackTimer = std::max(enemy.knockbackTimer, 0.14f);
-        EnemyEvent hitEvent = makeEnemyEvent(EnemyEventType::AttackHit, enemy, "fire", damageDealt);
+        EnemyEvent hitEvent = makeEnemyEvent(
+            EnemyEventType::AttackHit,
+            enemy,
+            bossDamage.effectId.empty() ? "fire" : std::string(bossDamage.effectId),
+            damageDealt);
         hitEvent.ringItemImpact = true;
+        hitEvent.weakPointHit = bossDamage.weakPointHit;
         events_.push_back(std::move(hitEvent));
         if (enemy.hp <= 0) {
             beginEnemyDeath(enemy, spellRing, position);
