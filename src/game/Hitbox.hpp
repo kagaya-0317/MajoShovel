@@ -119,6 +119,10 @@ bool erasePlayerHitboxProfile(HitboxCatalog& catalog);
     float scale = 1.0f,
     float radiusPadding = 0.0f);
 [[nodiscard]] float enemyHitboxBoundsRadius(const Enemy& enemy, const HitboxCatalog* catalog);
+[[nodiscard]] float enemyHitboxBoundsRadius(
+    const Enemy& enemy,
+    const HitboxCatalog* catalog,
+    Vec2 centerOffset);
 [[nodiscard]] bool hitboxProfileOverlapsCircle(
     const HitboxProfile& profile,
     Vec2 center,
@@ -142,7 +146,8 @@ bool erasePlayerHitboxProfile(HitboxCatalog& catalog);
     const Enemy& enemy,
     const HitboxCatalog* catalog,
     Vec2 circleCenter,
-    float circleRadius);
+    float circleRadius,
+    Vec2 centerOffset = {});
 [[nodiscard]] bool enemyHitboxOverlapsProfile(
     const Enemy& enemy,
     const HitboxCatalog* catalog,
@@ -150,7 +155,8 @@ bool erasePlayerHitboxProfile(HitboxCatalog& catalog);
     Vec2 profileCenter,
     float profileRotationRadians,
     float profileScale,
-    float profileRadiusPadding = 0.0f);
+    float profileRadiusPadding = 0.0f,
+    Vec2 centerOffset = {});
 [[nodiscard]] bool loadHitboxCatalog(
     const std::filesystem::path& path,
     HitboxCatalog& outCatalog,

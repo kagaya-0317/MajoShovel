@@ -33,7 +33,7 @@ bool backInputConsumedUntilRelease = false;
 std::unordered_map<std::string, UiWindowState> windowStates;
 
 constexpr std::string_view ConfirmDialogHelpText = "F/Enter 決定  Esc 戻る";
-constexpr std::string_view UiSelectionCursorPath = "assets/UI_cursor2.png";
+constexpr std::string_view UiSelectionCursorPath = "assets/system/UI_cursor2.png";
 constexpr Vec2 UiSelectionCursorSize{58.0f, 58.0f};
 constexpr Vec2 UiSelectionCursorTargetOffset{8.0f, -5.0f};
 constexpr float UiSelectionCursorMoveResponsiveness = 14.0f;
@@ -210,7 +210,7 @@ void drawUiSelectionCursor(Renderer& renderer)
 
 bool drawUiFlexibleButtonImage(Renderer& renderer, UiRect rect, bool selected, Color tint)
 {
-    constexpr std::string_view FlexibleButtonPath = "assets/UI_buttons2.png";
+    constexpr std::string_view FlexibleButtonPath = "assets/system/UI_buttons2.png";
     Vec2 imageSize{};
     if (!renderer.getImageSize(FlexibleButtonPath, imageSize, TextureFilter::Nearest) ||
         imageSize.x <= 0.0f || imageSize.y <= 0.0f) {
@@ -1014,7 +1014,7 @@ void drawUiCancelButton(Renderer& renderer, UiRect panel)
     if (active) {
         options.tint = {210, 210, 210, 235};
     }
-    if (renderer.drawImage("assets/UI_cancelButton.png", rect.pos + rect.size * 0.5f, drawSize, options)) {
+    if (renderer.drawImage("assets/system/UI_cancelButton.png", rect.pos + rect.size * 0.5f, drawSize, options)) {
         return;
     }
 

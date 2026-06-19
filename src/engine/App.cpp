@@ -43,7 +43,9 @@ constexpr float AutoSimulationMaxDebtSeconds = 0.75f;
 constexpr int AutoSimulationMaxStepsPerFrame = 16;
 constexpr int LogicalScreenWidth = balance::ScreenWidth;
 constexpr int LogicalScreenHeight = balance::ScreenHeight;
-constexpr std::string_view GameCursorPath = "assets/UI_cursor.png";
+constexpr std::string_view GameCursorPath = "assets/system/UI_cursor.png";
+constexpr std::string_view PlayerSpritePath = "assets/characters/majo.png";
+constexpr std::string_view PlayerHandSpritePath = "assets/characters/majo_hand.png";
 constexpr int GameCursorHotspotX = 3;
 constexpr int GameCursorHotspotY = 3;
 
@@ -775,11 +777,11 @@ bool App::loadAssets()
     if (!loadGameCursor(GameCursorPath)) {
         ok = false;
     }
-    if (!renderer_->loadPlayerSheet("assets/majo.png")) {
+    if (!renderer_->loadPlayerSheet(PlayerSpritePath)) {
         logError(renderer_->lastAssetError());
         ok = false;
     }
-    if (!renderer_->loadPlayerHandSheet("assets/majo_hand.png")) {
+    if (!renderer_->loadPlayerHandSheet(PlayerHandSpritePath)) {
         logError(renderer_->lastAssetError());
         ok = false;
     }
@@ -787,31 +789,31 @@ bool App::loadAssets()
         logError(renderer_->lastAssetError());
         ok = false;
     }
-    if (!renderer_->loadUiWindowTexture("assets/UI_window1.png")) {
+    if (!renderer_->loadUiWindowTexture("assets/system/UI_window1.png")) {
         logError(renderer_->lastAssetError());
         ok = false;
     }
-    if (!renderer_->loadUiMessageWindowTexture("assets/UI_messageWindow.png")) {
+    if (!renderer_->loadUiMessageWindowTexture("assets/system/UI_messageWindow.png")) {
         logError(renderer_->lastAssetError());
         ok = false;
     }
-    if (!renderer_->loadUiSubWindowTexture("assets/UI_window2.png")) {
+    if (!renderer_->loadUiSubWindowTexture("assets/system/UI_window2.png")) {
         logError(renderer_->lastAssetError());
         ok = false;
     }
-    if (!renderer_->loadUiButtonTexture("assets/UI_buttons.png")) {
+    if (!renderer_->loadUiButtonTexture("assets/system/UI_buttons.png")) {
         logError(renderer_->lastAssetError());
         ok = false;
     }
-    if (!renderer_->loadUiTabTexture("assets/UI_tubs.png")) {
+    if (!renderer_->loadUiTabTexture("assets/system/UI_tubs.png")) {
         logError(renderer_->lastAssetError());
         ok = false;
     }
-    if (!renderer_->loadUiHorizontalTabTexture("assets/UI_tubs2.png")) {
+    if (!renderer_->loadUiHorizontalTabTexture("assets/system/UI_tubs2.png")) {
         logError(renderer_->lastAssetError());
         ok = false;
     }
-    if (!renderer_->loadUiLineTexture("assets/UI_line.png")) {
+    if (!renderer_->loadUiLineTexture("assets/system/UI_line.png")) {
         logError(renderer_->lastAssetError());
         ok = false;
     }
@@ -929,16 +931,13 @@ bool App::reloadAssetForPath(const std::string& changedPath)
     const std::string parentPath = lowerAscii(std::filesystem::path(changedPath).parent_path().generic_string());
 
     if (fileName == "majo.png") {
-        return renderer_->loadPlayerSheet("assets/majo.png");
+        return renderer_->loadPlayerSheet(PlayerSpritePath);
     }
     if (fileName == "majo_hand.png") {
-        return renderer_->loadPlayerHandSheet("assets/majo_hand.png");
+        return renderer_->loadPlayerHandSheet(PlayerHandSpritePath);
     }
-    if (fileName == "monica.png" ||
-        fileName == "sontyo.png" ||
-        fileName == "pola.png" ||
-        fileName == "ines.png") {
-        renderer_->invalidateImage("assets/" + fileName);
+    if (extension == ".png" && parentPath.find("assets/characters") != std::string::npos) {
+        renderer_->invalidateImage("assets/characters/" + fileName);
         return true;
     }
     if (fileName == "map.png" && parentPath.find("assets/kyoten") != std::string::npos) {
@@ -949,47 +948,47 @@ bool App::reloadAssetForPath(const std::string& changedPath)
         return true;
     }
     if (fileName == "ui_window1.png") {
-        return renderer_->loadUiWindowTexture("assets/UI_window1.png");
+        return renderer_->loadUiWindowTexture("assets/system/UI_window1.png");
     }
     if (fileName == "ui_messagewindow.png") {
-        return renderer_->loadUiMessageWindowTexture("assets/UI_messageWindow.png");
+        return renderer_->loadUiMessageWindowTexture("assets/system/UI_messageWindow.png");
     }
     if (fileName == "ui_window2.png") {
-        return renderer_->loadUiSubWindowTexture("assets/UI_window2.png");
+        return renderer_->loadUiSubWindowTexture("assets/system/UI_window2.png");
     }
     if (fileName == "ui_buttons.png") {
-        return renderer_->loadUiButtonTexture("assets/UI_buttons.png");
+        return renderer_->loadUiButtonTexture("assets/system/UI_buttons.png");
     }
     if (fileName == "ui_buttons2.png") {
-        renderer_->invalidateImage("assets/UI_buttons2.png");
+        renderer_->invalidateImage("assets/system/UI_buttons2.png");
         return true;
     }
     if (fileName == "ui_tubs.png") {
-        return renderer_->loadUiTabTexture("assets/UI_tubs.png");
+        return renderer_->loadUiTabTexture("assets/system/UI_tubs.png");
     }
     if (fileName == "ui_tubs2.png") {
-        return renderer_->loadUiHorizontalTabTexture("assets/UI_tubs2.png");
+        return renderer_->loadUiHorizontalTabTexture("assets/system/UI_tubs2.png");
     }
     if (fileName == "ui_line.png") {
-        return renderer_->loadUiLineTexture("assets/UI_line.png");
+        return renderer_->loadUiLineTexture("assets/system/UI_line.png");
     }
     if (fileName == "ui_mapframe.png") {
-        renderer_->invalidateImage("assets/UI_mapFrame.png");
+        renderer_->invalidateImage("assets/system/UI_mapFrame.png");
         return true;
     }
     if (fileName == "ui_itemshortcuts.png") {
-        renderer_->invalidateImage("assets/UI_itemShortCuts.png");
+        renderer_->invalidateImage("assets/system/UI_itemShortCuts.png");
         return true;
     }
     if (fileName == "ui_rings.png") {
-        renderer_->invalidateImage("assets/UI_rings.png");
+        renderer_->invalidateImage("assets/system/UI_rings.png");
         return true;
     }
     if (fileName == "ui_cursor.png") {
         return loadGameCursor(GameCursorPath);
     }
     if (fileName == "ui_cursor2.png") {
-        renderer_->invalidateImage("assets/UI_cursor2.png");
+        renderer_->invalidateImage("assets/system/UI_cursor2.png");
         return true;
     }
     if (extension == ".png" && parentPath.find("assets/enemies") != std::string::npos) {

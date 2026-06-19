@@ -41,8 +41,8 @@ constexpr float PlayerDamageVignetteMinAlpha = 1.0f;
 constexpr float PlayerDamageVignetteMaxAlpha = 132.0f;
 constexpr float PlayerDamageVignetteMinEdgeWidth = 86.0f;
 constexpr float PlayerDamageVignetteMaxEdgeWidth = 198.0f;
-constexpr std::string_view DungeonStatusHudImagePath = "assets/UI_status.png";
-constexpr std::string_view DungeonStatusHudGaugeMaskPath = "assets/UI_status_gaugeMask.png";
+constexpr std::string_view DungeonStatusHudImagePath = "assets/system/UI_status.png";
+constexpr std::string_view DungeonStatusHudGaugeMaskPath = "assets/system/UI_status_gaugeMask.png";
 constexpr Vec2 DungeonStatusHudImageSize{376.0f, 344.0f};
 constexpr float DungeonStatusHudPinchDanger = 0.75f;
 constexpr Vec2 DungeonStatusHudHpGaugeCenter{230.0f, 108.0f};
@@ -59,7 +59,7 @@ constexpr Color DungeonStatusHudLabelColor{255, 230, 122, 255};
 constexpr Color DungeonStatusHudTextColor{255, 255, 255, 255};
 constexpr Color DungeonStatusHudPinchTextColor{255, 226, 78, 255};
 constexpr Color DungeonStatusHudHpDangerTint{255, 82, 74, 255};
-constexpr std::string_view RingStatusHudImagePath = "assets/UI_rings.png";
+constexpr std::string_view RingStatusHudImagePath = "assets/system/UI_rings.png";
 constexpr int RingStatusHudImageColumns = 2;
 constexpr int RingStatusHudImageRows = 3;
 constexpr Vec2 RingStatusHudFrameSize{229.0f, 104.0f};
@@ -1976,7 +1976,7 @@ void tagDepthRenderEntries(std::vector<DepthRenderEntry>& entries, std::size_t f
     }
 }
 
-constexpr std::string_view DungeonMinimapFramePath = "assets/UI_mapFrame.png";
+constexpr std::string_view DungeonMinimapFramePath = "assets/system/UI_mapFrame.png";
 constexpr Vec2 DungeonMinimapFrameImageSize{200.0f, 200.0f};
 constexpr float DungeonMinimapX = 18.0f;
 constexpr float DungeonMinimapYGap = 8.0f;
@@ -7544,6 +7544,14 @@ void Game::render(Renderer& renderer, const Time& time)
     }
     if (mode_ == ScreenMode::EnemyHitboxEdit) {
         renderEnemyHitboxEditScreen(renderer, time.totalSeconds());
+        finishUiFrame(renderer);
+        renderDebugOverlay(renderer, time);
+        renderScreenTransitionOverlay(renderer);
+        renderer.present();
+        return;
+    }
+    if (mode_ == ScreenMode::EnemyPlacementEdit) {
+        renderEnemyPlacementEditScreen(renderer, time.totalSeconds());
         finishUiFrame(renderer);
         renderDebugOverlay(renderer, time);
         renderScreenTransitionOverlay(renderer);

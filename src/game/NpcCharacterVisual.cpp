@@ -10,14 +10,14 @@ namespace majo {
 namespace {
 
 constexpr std::array<NpcCharacterVisual, 8> NpcCharacterVisuals{{
-    {"base_merchant", "assets/pola.png", {3, 1}, false},
-    {"base_processor", "assets/ines.png", {3, 1}, false},
-    {"base_monica", "assets/monica.png", {3, 1}, false},
-    {"base_elder", "assets/sontyo.png", {3, 1}, true},
-    {"mob_1", "assets/mob_1.png", {3, 1}, false},
-    {"mob_2", "assets/mob_2.png", {3, 1}, false},
-    {"mob_3", "assets/mob_3.png", {3, 1}, false},
-    {"mob_4", "assets/mob_4.png", {3, 1}, false},
+    {"base_merchant", "assets/characters/pola.png", {3, 1}, false},
+    {"base_processor", "assets/characters/ines.png", {3, 1}, false},
+    {"base_monica", "assets/characters/monica.png", {3, 1}, false},
+    {"base_elder", "assets/characters/sontyo.png", {3, 1}, true},
+    {"mob_1", "assets/characters/mob_1.png", {3, 1}, false},
+    {"mob_2", "assets/characters/mob_2.png", {3, 1}, false},
+    {"mob_3", "assets/characters/mob_3.png", {3, 1}, false},
+    {"mob_4", "assets/characters/mob_4.png", {3, 1}, false},
 }};
 
 } // namespace

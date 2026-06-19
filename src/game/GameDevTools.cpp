@@ -69,6 +69,9 @@ constexpr float EnemyShadowOffsetStep = 1.0f;
 constexpr float EnemyShadowScaleStep = 0.05f;
 constexpr float EnemyShadowPreviewScale = 4.0f;
 constexpr float EnemyShadowPreviewDirectionSeconds = 0.5f;
+constexpr float EnemyPlacementOffsetStep = 1.0f;
+constexpr float EnemyPlacementRadiusStep = 1.0f;
+constexpr float EnemyPlacementPreviewScale = 4.0f;
 constexpr int HitboxEditUndoLimit = 100;
 constexpr std::array<std::string_view, 4> EnemyEditorFallbackBossIds{{
     "stardust_mole",
@@ -1599,6 +1602,11 @@ std::filesystem::path enemyShadowDataPath()
     return std::filesystem::path("data") / "enemy_shadows.cfg";
 }
 
+std::filesystem::path enemyPlacementDataPath()
+{
+    return std::filesystem::path("data") / "enemy_placements.cfg";
+}
+
 EnemyHitboxEditLayout makeEnemyHitboxEditLayout(int screenWidth, int screenHeight)
 {
     const float width = static_cast<float>(screenWidth);
@@ -2511,6 +2519,31 @@ EnemyShadowSpec mirroredEnemyShadowSpec(EnemyShadowSpec spec)
     return sanitizeEnemyShadowSpec(spec);
 }
 
+EnemyPlacementEntry mirroredEnemyPlacementEntry(const EnemyPlacementEntry& entry)
+{
+    EnemyPlacementEntry mirrored;
+    mirrored.passageRadius = entry.passageRadius;
+    for (int i = 0; i < HitboxDirectionCount; ++i) {
+        const HitboxDirection sourceDirection = hitboxDirectionForEditorIndex(i);
+        const HitboxDirection targetDirection = mirroredHitboxDirection(sourceDirection);
+        const int targetIndex = hitboxDirectionIndex(targetDirection);
+        if (targetIndex < 0 || targetIndex >= HitboxDirectionCount) {
+            continue;
+        }
+        if (entry.visualOffsets[static_cast<std::size_t>(i)]) {
+            Vec2 offset = *entry.visualOffsets[static_cast<std::size_t>(i)];
+            offset.x = -offset.x;
+            mirrored.visualOffsets[static_cast<std::size_t>(targetIndex)] = sanitizeEnemyPlacementOffset(offset);
+        }
+    }
+    return sanitizeEnemyPlacementEntry(std::move(mirrored));
+}
+
+std::optional<Vec2>& enemyPlacementOffsetSlot(EnemyPlacementEntry& entry, HitboxDirection direction)
+{
+    return entry.visualOffsets[static_cast<std::size_t>(hitboxDirectionIndex(direction))];
+}
+
 float enemyShadowPreviewFacingAngle(double totalSeconds)
 {
     const int step = static_cast<int>(std::floor(std::max(0.0, totalSeconds) / EnemyShadowPreviewDirectionSeconds)) % 4;
@@ -3260,6 +3293,9 @@ void Game::enterObjectImageScaleEditMode()
     }
     if (mode_ == ScreenMode::EnemyHitboxEdit) {
         exitEnemyHitboxEditMode();
+    }
+    if (mode_ == ScreenMode::EnemyPlacementEdit) {
+        exitEnemyPlacementEditMode();
     }
     if (mode_ == ScreenMode::EnemyShadowEdit) {
         exitEnemyShadowEditMode();
@@ -4263,6 +4299,9 @@ void Game::enterEnemyHitboxEditMode()
     if (mode_ == ScreenMode::AudioCueEdit) {
         exitAudioCueEditMode();
     }
+    if (mode_ == ScreenMode::EnemyPlacementEdit) {
+        exitEnemyPlacementEditMode();
+    }
 
     closeDebugItemPicker();
     closeDebugStoryTest();
@@ -4932,6 +4971,680 @@ void Game::renderEnemyHitboxEditScreen(Renderer& renderer, double totalSeconds) 
     }
 }
 
+bool Game::loadEnemyPlacementData()
+{
+    std::string message;
+    const bool loaded = loadEnemyPlacementCatalog(enemyPlacementDataPath(), enemyPlacements_, message);
+    enemies_.setPlacementCatalog(&enemyPlacements_);
+    enemyPlacementDirty_ = false;
+    enemyPlacementEditUndoStack_.clear();
+    enemyPlacementEditRedoStack_.clear();
+    enemyPlacementStatus_ = loaded ? message : "Enemy placement fallback active";
+    rebuildEnemyPlacementEditList();
+    return loaded;
+}
+
+bool Game::saveEnemyPlacementData(std::string& message)
+{
+    const bool saved = saveEnemyPlacementCatalog(enemyPlacementDataPath(), enemyPlacements_, message);
+    if (saved) {
+        enemyPlacementDirty_ = false;
+    }
+    enemyPlacementStatus_ = message;
+    enemies_.setPlacementCatalog(&enemyPlacements_);
+    return saved;
+}
+
+void Game::rebuildEnemyPlacementEditList()
+{
+    std::string previousSelection;
+    if (enemyPlacementSelectedEnemyIndex_ >= 0 &&
+        enemyPlacementSelectedEnemyIndex_ < static_cast<int>(enemyPlacementEnemyIds_.size())) {
+        previousSelection = enemyPlacementEnemyIds_[static_cast<std::size_t>(enemyPlacementSelectedEnemyIndex_)];
+    }
+
+    appendEnemyEditorDefinitionIds(enemyCatalog_, enemyPlacementAllEnemyIds_);
+    std::sort(enemyPlacementAllEnemyIds_.begin(), enemyPlacementAllEnemyIds_.end(), [this](const std::string& left, const std::string& right) {
+        const EnemyDefinition* lhs = enemyEditorDefinitionById(enemyCatalog_, left);
+        const EnemyDefinition* rhs = enemyEditorDefinitionById(enemyCatalog_, right);
+        if (lhs == nullptr || rhs == nullptr) {
+            return left < right;
+        }
+        if (lhs->imageNumber != rhs->imageNumber) {
+            return lhs->imageNumber < rhs->imageNumber;
+        }
+        return left < right;
+    });
+
+    applyEnemyPlacementEditFilter(previousSelection);
+}
+
+void Game::applyEnemyPlacementEditFilter(std::string_view preferredSelection)
+{
+    std::string previousSelection(preferredSelection);
+    if (previousSelection.empty() &&
+        enemyPlacementSelectedEnemyIndex_ >= 0 &&
+        enemyPlacementSelectedEnemyIndex_ < static_cast<int>(enemyPlacementEnemyIds_.size())) {
+        previousSelection = enemyPlacementEnemyIds_[static_cast<std::size_t>(enemyPlacementSelectedEnemyIndex_)];
+    }
+
+    enemyPlacementEnemyIds_.clear();
+    const std::string normalizedQuery = normalizedUiSearchText(enemyPlacementSearchInput_.text);
+    for (const std::string& enemyId : enemyPlacementAllEnemyIds_) {
+        const EnemyDefinition* definition = enemyEditorDefinitionById(enemyCatalog_, enemyId);
+        if (definition != nullptr && enemyHitboxEnemyMatchesSearch(*definition, normalizedQuery)) {
+            enemyPlacementEnemyIds_.push_back(enemyId);
+        }
+    }
+
+    enemyPlacementSelectedEnemyIndex_ = -1;
+    if (!previousSelection.empty()) {
+        const auto it = std::find(enemyPlacementEnemyIds_.begin(), enemyPlacementEnemyIds_.end(), previousSelection);
+        if (it != enemyPlacementEnemyIds_.end()) {
+            enemyPlacementSelectedEnemyIndex_ = static_cast<int>(std::distance(enemyPlacementEnemyIds_.begin(), it));
+        }
+    }
+    if (enemyPlacementSelectedEnemyIndex_ < 0 && !enemyPlacementEnemyIds_.empty()) {
+        enemyPlacementSelectedEnemyIndex_ = 0;
+    }
+}
+
+EnemyPlacementEditSnapshot Game::makeEnemyPlacementEditSnapshot() const
+{
+    EnemyPlacementEditSnapshot snapshot;
+    snapshot.catalog = enemyPlacements_;
+    snapshot.direction = enemyPlacementDirection_;
+    if (enemyPlacementSelectedEnemyIndex_ >= 0 &&
+        enemyPlacementSelectedEnemyIndex_ < static_cast<int>(enemyPlacementEnemyIds_.size())) {
+        snapshot.selectedId = enemyPlacementEnemyIds_[static_cast<std::size_t>(enemyPlacementSelectedEnemyIndex_)];
+    }
+    return snapshot;
+}
+
+void Game::restoreEnemyPlacementEditSnapshot(const EnemyPlacementEditSnapshot& snapshot)
+{
+    enemyPlacements_ = snapshot.catalog;
+    enemyPlacementDirection_ = snapshot.direction;
+    enemyPlacementDragging_ = false;
+    enemyPlacementDragUndoSnapshotPushed_ = false;
+    applyEnemyPlacementEditFilter(snapshot.selectedId);
+    enemyPlacementDirty_ = true;
+    enemies_.setPlacementCatalog(&enemyPlacements_);
+}
+
+void Game::pushEnemyPlacementEditUndoSnapshot()
+{
+    EnemyPlacementEditSnapshot snapshot = makeEnemyPlacementEditSnapshot();
+    if (!enemyPlacementEditUndoStack_.empty() && enemyPlacementEditUndoStack_.back() == snapshot) {
+        return;
+    }
+    enemyPlacementEditUndoStack_.push_back(std::move(snapshot));
+    if (static_cast<int>(enemyPlacementEditUndoStack_.size()) > HitboxEditUndoLimit) {
+        enemyPlacementEditUndoStack_.erase(enemyPlacementEditUndoStack_.begin());
+    }
+    enemyPlacementEditRedoStack_.clear();
+}
+
+bool Game::undoEnemyPlacementEdit()
+{
+    if (enemyPlacementEditUndoStack_.empty()) {
+        return false;
+    }
+    enemyPlacementEditRedoStack_.push_back(makeEnemyPlacementEditSnapshot());
+    const EnemyPlacementEditSnapshot snapshot = std::move(enemyPlacementEditUndoStack_.back());
+    enemyPlacementEditUndoStack_.pop_back();
+    restoreEnemyPlacementEditSnapshot(snapshot);
+    return true;
+}
+
+bool Game::redoEnemyPlacementEdit()
+{
+    if (enemyPlacementEditRedoStack_.empty()) {
+        return false;
+    }
+    enemyPlacementEditUndoStack_.push_back(makeEnemyPlacementEditSnapshot());
+    if (static_cast<int>(enemyPlacementEditUndoStack_.size()) > HitboxEditUndoLimit) {
+        enemyPlacementEditUndoStack_.erase(enemyPlacementEditUndoStack_.begin());
+    }
+    const EnemyPlacementEditSnapshot snapshot = std::move(enemyPlacementEditRedoStack_.back());
+    enemyPlacementEditRedoStack_.pop_back();
+    restoreEnemyPlacementEditSnapshot(snapshot);
+    return true;
+}
+
+const EnemyDefinition* Game::selectedEnemyPlacementDefinitionForEdit() const
+{
+    if (enemyPlacementSelectedEnemyIndex_ < 0 ||
+        enemyPlacementSelectedEnemyIndex_ >= static_cast<int>(enemyPlacementEnemyIds_.size())) {
+        return nullptr;
+    }
+    const std::string& enemyId = enemyPlacementEnemyIds_[static_cast<std::size_t>(enemyPlacementSelectedEnemyIndex_)];
+    return enemyEditorDefinitionById(enemyCatalog_, enemyId);
+}
+
+EnemyPlacementEntry Game::selectedEnemyPlacementEntryForEdit() const
+{
+    if (const EnemyDefinition* definition = selectedEnemyPlacementDefinitionForEdit()) {
+        if (const EnemyPlacementEntry* entry = enemyPlacementEntryFor(&enemyPlacements_, definition->id)) {
+            return sanitizeEnemyPlacementEntry(*entry);
+        }
+    }
+    return {};
+}
+
+EnemyPlacementEntry& Game::mutableSelectedEnemyPlacementEntryForEdit()
+{
+    static EnemyPlacementEntry fallback;
+    const EnemyDefinition* definition = selectedEnemyPlacementDefinitionForEdit();
+    if (definition == nullptr || definition->id.empty()) {
+        fallback = {};
+        return fallback;
+    }
+    EnemyPlacementEntry& entry = mutableEnemyPlacementEntry(enemyPlacements_, definition->id);
+    entry = sanitizeEnemyPlacementEntry(entry);
+    return entry;
+}
+
+bool Game::copyCurrentEnemyPlacementOffset()
+{
+    const EnemyDefinition* definition = selectedEnemyPlacementDefinitionForEdit();
+    if (definition == nullptr) {
+        enemyPlacementStatus_ = "No target";
+        return false;
+    }
+
+    enemyPlacementOffsetClipboard_ = resolvedEnemyVisualOffset(&enemyPlacements_, definition->id, enemyPlacementDirection_);
+    enemyPlacementOffsetClipboardValid_ = true;
+    enemyPlacementStatus_ = "Offset copied";
+    return true;
+}
+
+bool Game::pasteCurrentEnemyPlacementOffset(bool mirrorX)
+{
+    if (!enemyPlacementOffsetClipboardValid_) {
+        enemyPlacementStatus_ = "Offset clipboard empty";
+        return false;
+    }
+    const EnemyDefinition* definition = selectedEnemyPlacementDefinitionForEdit();
+    if (definition == nullptr) {
+        enemyPlacementStatus_ = "No target";
+        return false;
+    }
+
+    Vec2 offset = enemyPlacementOffsetClipboard_;
+    if (mirrorX) {
+        offset.x = -offset.x;
+    }
+    pushEnemyPlacementEditUndoSnapshot();
+    EnemyPlacementEntry& entry = mutableSelectedEnemyPlacementEntryForEdit();
+    enemyPlacementOffsetSlot(entry, enemyPlacementDirection_) = sanitizeEnemyPlacementOffset(offset);
+    entry = sanitizeEnemyPlacementEntry(entry);
+    if (!enemyPlacementEntryHasAny(entry)) {
+        eraseEnemyPlacementEntry(enemyPlacements_, definition->id);
+    }
+    enemyPlacementDirty_ = true;
+    enemies_.setPlacementCatalog(&enemyPlacements_);
+    enemyPlacementStatus_ = mirrorX ? "Offset mirrored" : "Offset pasted";
+    return true;
+}
+
+bool Game::copyEnemyPlacementAllDirections()
+{
+    if (selectedEnemyPlacementDefinitionForEdit() == nullptr) {
+        enemyPlacementStatus_ = "No target";
+        return false;
+    }
+
+    enemyPlacementEntryClipboard_ = selectedEnemyPlacementEntryForEdit();
+    enemyPlacementEntryClipboardValid_ = true;
+    enemyPlacementStatus_ = "Placement copied";
+    return true;
+}
+
+bool Game::pasteEnemyPlacementAllDirections(bool mirrorX)
+{
+    if (!enemyPlacementEntryClipboardValid_) {
+        enemyPlacementStatus_ = "Placement clipboard empty";
+        return false;
+    }
+    const EnemyDefinition* definition = selectedEnemyPlacementDefinitionForEdit();
+    if (definition == nullptr) {
+        enemyPlacementStatus_ = "No target";
+        return false;
+    }
+
+    pushEnemyPlacementEditUndoSnapshot();
+    EnemyPlacementEntry entry = mirrorX
+        ? mirroredEnemyPlacementEntry(enemyPlacementEntryClipboard_)
+        : sanitizeEnemyPlacementEntry(enemyPlacementEntryClipboard_);
+    if (enemyPlacementEntryHasAny(entry)) {
+        enemyPlacements_.enemies[definition->id] = std::move(entry);
+    } else {
+        eraseEnemyPlacementEntry(enemyPlacements_, definition->id);
+    }
+    enemyPlacementDirty_ = true;
+    enemies_.setPlacementCatalog(&enemyPlacements_);
+    enemyPlacementStatus_ = mirrorX ? "Placement mirrored" : "Placement pasted";
+    return true;
+}
+
+bool Game::handleEnemyPlacementEditEvent(const SDL_Event& event)
+{
+    if (mode_ != ScreenMode::EnemyPlacementEdit) {
+        return false;
+    }
+
+    if (event.type == SDL_EVENT_KEY_DOWN && !event.key.repeat) {
+        const SDL_Keymod mods = SDL_GetModState();
+        const bool ctrlDown = (mods & SDL_KMOD_CTRL) != 0;
+        const bool altDown = (mods & SDL_KMOD_ALT) != 0;
+        const bool shiftDown = (mods & SDL_KMOD_SHIFT) != 0;
+        if (ctrlDown && event.key.scancode == SDL_SCANCODE_Z) {
+            enemyPlacementStatus_ = undoEnemyPlacementEdit() ? "Undo" : "Nothing to undo";
+            return true;
+        }
+        if (ctrlDown && event.key.scancode == SDL_SCANCODE_Y) {
+            enemyPlacementStatus_ = redoEnemyPlacementEdit() ? "Redo" : "Nothing to redo";
+            return true;
+        }
+        if (ctrlDown && event.key.scancode == SDL_SCANCODE_C) {
+            if (shiftDown) {
+                (void)copyEnemyPlacementAllDirections();
+            } else {
+                (void)copyCurrentEnemyPlacementOffset();
+            }
+            return true;
+        }
+        if (ctrlDown && event.key.scancode == SDL_SCANCODE_V) {
+            if (shiftDown) {
+                (void)pasteEnemyPlacementAllDirections(altDown);
+            } else {
+                (void)pasteCurrentEnemyPlacementOffset(altDown);
+            }
+            return true;
+        }
+    }
+
+    std::string previousSelection;
+    if (enemyPlacementSelectedEnemyIndex_ >= 0 &&
+        enemyPlacementSelectedEnemyIndex_ < static_cast<int>(enemyPlacementEnemyIds_.size())) {
+        previousSelection = enemyPlacementEnemyIds_[static_cast<std::size_t>(enemyPlacementSelectedEnemyIndex_)];
+    }
+    const std::string previousText = enemyPlacementSearchInput_.text;
+    const bool consumed = handleUiTextInputEvent(enemyPlacementSearchInput_, event, 48);
+    if (enemyPlacementSearchInput_.text != previousText) {
+        applyEnemyPlacementEditFilter(previousSelection);
+        enemyPlacementScrollOffset_ = 0.0f;
+        const EnemyHitboxEditLayout layout = makeEnemyHitboxEditLayout(camera_.width(), camera_.height());
+        keepEnemyHitboxSelectionVisible(layout, enemyPlacementSelectedEnemyIndex_, static_cast<int>(enemyPlacementEnemyIds_.size()), enemyPlacementScrollOffset_);
+    }
+    return consumed;
+}
+
+void Game::enterEnemyPlacementEditMode()
+{
+    if (mode_ == ScreenMode::EnemyPlacementEdit) {
+        return;
+    }
+    if (mode_ == ScreenMode::ObjectImageScaleEdit) {
+        exitObjectImageScaleEditMode();
+    }
+    if (mode_ == ScreenMode::EnemyHitboxEdit) {
+        exitEnemyHitboxEditMode();
+    }
+    if (mode_ == ScreenMode::EnemyShadowEdit) {
+        exitEnemyShadowEditMode();
+    }
+    if (mode_ == ScreenMode::AudioCueEdit) {
+        exitAudioCueEditMode();
+    }
+
+    closeDebugItemPicker();
+    closeDebugStoryTest();
+    if (baseEditEnabled_) {
+        exitBaseEditMode();
+    }
+    inventory_.setOpen(false);
+    inventory_.cancelGrab();
+    cancelRingGrab();
+    enemyPlacementSearchInput_.text.clear();
+    rebuildEnemyPlacementEditList();
+    enemyPlacementEditReturnMode_ = mode_;
+    if (enemyPlacementEditReturnMode_ == ScreenMode::EnemyPlacementEdit) {
+        enemyPlacementEditReturnMode_ = ScreenMode::Playing;
+    }
+    enemyPlacementScrollOffset_ = std::max(0.0f, enemyPlacementScrollOffset_);
+    enemyPlacementStatus_ = "Enemy placement edit";
+    mode_ = ScreenMode::EnemyPlacementEdit;
+    focusUiTextInput(enemyPlacementSearchInput_);
+}
+
+void Game::exitEnemyPlacementEditMode()
+{
+    if (mode_ != ScreenMode::EnemyPlacementEdit) {
+        return;
+    }
+    blurUiTextInput(enemyPlacementSearchInput_);
+    enemyPlacementDragging_ = false;
+    enemyPlacementDragUndoSnapshotPushed_ = false;
+    mode_ = enemyPlacementEditReturnMode_;
+    if (mode_ == ScreenMode::EnemyPlacementEdit) {
+        mode_ = ScreenMode::Playing;
+    }
+}
+
+void Game::updateEnemyPlacementEditScreen(const Input& input, UiContext& ui)
+{
+    if (mode_ != ScreenMode::EnemyPlacementEdit) {
+        return;
+    }
+    if (input.backPressed() || input.pausePressed()) {
+        exitEnemyPlacementEditMode();
+        return;
+    }
+
+    const EnemyHitboxEditLayout layout = makeEnemyHitboxEditLayout(camera_.width(), camera_.height());
+    const int itemCount = static_cast<int>(enemyPlacementEnemyIds_.size());
+    const float maxScroll = enemyHitboxMaxScroll(layout, itemCount);
+    enemyPlacementScrollOffset_ = clamp(enemyPlacementScrollOffset_, 0.0f, maxScroll);
+
+    auto markDirty = [this](std::string status) {
+        enemyPlacementDirty_ = true;
+        enemyPlacementStatus_ = std::move(status);
+        enemies_.setPlacementCatalog(&enemyPlacements_);
+    };
+
+    for (int i = 0; i < HitboxDirectionCount; ++i) {
+        const HitboxDirection direction = hitboxDirectionForEditorIndex(i);
+        if (ui.pressed(enemyHitboxDirectionButtonRect(layout, i, false)) &&
+            enemyPlacementDirection_ != direction) {
+            enemyPlacementDirection_ = direction;
+            enemyPlacementDragging_ = false;
+            enemyPlacementDragUndoSnapshotPushed_ = false;
+            enemyPlacementStatus_ = std::string("Direction: ") + std::string(hitboxDirectionId(direction));
+        }
+    }
+
+    updateUiTextInput(enemyPlacementSearchInput_, ui, enemyHitboxSearchInputRect(layout));
+    if (ui.pressed(enemyHitboxSearchClearButtonRect(layout))) {
+        if (!enemyPlacementSearchInput_.text.empty()) {
+            std::string previousSelection;
+            if (enemyPlacementSelectedEnemyIndex_ >= 0 &&
+                enemyPlacementSelectedEnemyIndex_ < static_cast<int>(enemyPlacementEnemyIds_.size())) {
+                previousSelection = enemyPlacementEnemyIds_[static_cast<std::size_t>(enemyPlacementSelectedEnemyIndex_)];
+            }
+            enemyPlacementSearchInput_.text.clear();
+            applyEnemyPlacementEditFilter(previousSelection);
+            enemyPlacementScrollOffset_ = 0.0f;
+        }
+        focusUiTextInput(enemyPlacementSearchInput_);
+    }
+
+    const EnemyDefinition* definition = selectedEnemyPlacementDefinitionForEdit();
+    const bool hasSubject = definition != nullptr;
+    const float defaultRadius = definition != nullptr
+        ? enemyHitboxDefaultRadiusFor(*definition, balance_)
+        : balance_.enemyRadius;
+    const float currentRadius = definition != nullptr
+        ? enemyPlacementPassageRadiusFor(&enemyPlacements_, definition->id).value_or(defaultRadius)
+        : defaultRadius;
+
+    if (input.saveShortcutPressed() || ui.pressed(enemyHitboxDetailButtonRect(layout, 0))) {
+        std::string message;
+        if (saveEnemyPlacementData(message)) {
+            logInfo("Debug: " + message);
+        } else {
+            logWarning("Debug: " + message);
+        }
+    }
+    if (hasSubject) {
+        auto adjustRadius = [&](float delta, std::string status) {
+            pushEnemyPlacementEditUndoSnapshot();
+            EnemyPlacementEntry& entry = mutableSelectedEnemyPlacementEntryForEdit();
+            entry.passageRadius = sanitizeEnemyPlacementRadius(currentRadius + delta);
+            markDirty(std::move(status));
+        };
+        if (ui.pressed(enemyHitboxDetailButtonRect(layout, 1))) {
+            adjustRadius(-EnemyPlacementRadiusStep, "Radius resized");
+        }
+        if (ui.pressed(enemyHitboxDetailButtonRect(layout, 2))) {
+            adjustRadius(EnemyPlacementRadiusStep, "Radius resized");
+        }
+        if (ui.pressed(enemyHitboxDetailButtonRect(layout, 3))) {
+            (void)copyCurrentEnemyPlacementOffset();
+        }
+        if (ui.pressed(enemyHitboxDetailButtonRect(layout, 4))) {
+            (void)pasteCurrentEnemyPlacementOffset(false);
+        }
+        if (ui.pressed(enemyHitboxDetailButtonRect(layout, 5))) {
+            (void)pasteCurrentEnemyPlacementOffset(true);
+        }
+        if (ui.pressed(enemyHitboxDetailButtonRect(layout, 6))) {
+            (void)copyEnemyPlacementAllDirections();
+        }
+        if (ui.pressed(enemyHitboxDetailButtonRect(layout, 7))) {
+            (void)pasteEnemyPlacementAllDirections(false);
+        }
+        if (ui.pressed(enemyHitboxDetailButtonRect(layout, 8))) {
+            (void)pasteEnemyPlacementAllDirections(true);
+        }
+        if (ui.pressed(enemyHitboxDetailButtonRect(layout, 9)) &&
+            enemyPlacementHasAny(enemyPlacements_, definition->id)) {
+            pushEnemyPlacementEditUndoSnapshot();
+            eraseEnemyPlacementEntry(enemyPlacements_, definition->id);
+            markDirty("Fallback restored");
+        }
+    }
+
+    for (int i = 0; i < itemCount; ++i) {
+        const UiRect rect = enemyHitboxListRowRect(layout, i, enemyPlacementScrollOffset_);
+        if (layout.list.contains(ui.mouse()) && ui.pressed(rect)) {
+            enemyPlacementSelectedEnemyIndex_ = i;
+            enemyPlacementDragging_ = false;
+            break;
+        }
+    }
+
+    const int wheel = input.mouseWheelDelta();
+    if (wheel != 0 && layout.list.contains(ui.mouse())) {
+        enemyPlacementScrollOffset_ = clamp(enemyPlacementScrollOffset_ + static_cast<float>(wheel) * 38.0f, 0.0f, maxScroll);
+    }
+
+    const Vec2 previewCenter = layout.preview.pos + layout.preview.size * 0.5f;
+    const Vec2 currentOffset = definition != nullptr
+        ? resolvedEnemyVisualOffset(&enemyPlacements_, definition->id, enemyPlacementDirection_)
+        : Vec2{};
+    const Vec2 visualCenter = previewCenter + currentOffset * EnemyPlacementPreviewScale;
+    constexpr float PickRadius = 58.0f;
+    if (input.mouseLeftPressed() && !ui.pointerConsumed() && layout.preview.contains(ui.mouse()) && hasSubject) {
+        if (distanceSquared(ui.mouse(), visualCenter) <= PickRadius * PickRadius) {
+            enemyPlacementDragging_ = true;
+            enemyPlacementDragUndoSnapshotPushed_ = false;
+            enemyPlacementDragStartMouse_ = ui.mouse();
+            enemyPlacementDragStartOffset_ = currentOffset;
+            ui.consumePointer();
+        }
+    }
+    if (enemyPlacementDragging_ && input.mouseLeftHeld()) {
+        const Vec2 dragOffset = (ui.mouse() - enemyPlacementDragStartMouse_) / EnemyPlacementPreviewScale;
+        if (lengthSquared(dragOffset) > 0.000001f) {
+            if (!enemyPlacementDragUndoSnapshotPushed_) {
+                pushEnemyPlacementEditUndoSnapshot();
+                enemyPlacementDragUndoSnapshotPushed_ = true;
+            }
+            EnemyPlacementEntry& entry = mutableSelectedEnemyPlacementEntryForEdit();
+            Vec2 offset = enemyPlacementDragStartOffset_ + dragOffset;
+            offset.x = std::round(offset.x * 2.0f) * 0.5f;
+            offset.y = std::round(offset.y * 2.0f) * 0.5f;
+            enemyPlacementOffsetSlot(entry, enemyPlacementDirection_) = sanitizeEnemyPlacementOffset(offset);
+            entry = sanitizeEnemyPlacementEntry(entry);
+            markDirty("Offset moved");
+        }
+    }
+    if (input.mouseLeftReleased()) {
+        enemyPlacementDragging_ = false;
+        enemyPlacementDragUndoSnapshotPushed_ = false;
+    }
+
+    if (hasSubject && layout.preview.contains(ui.mouse()) && input.mouseWheelDelta() != 0 && !layout.list.contains(ui.mouse())) {
+        pushEnemyPlacementEditUndoSnapshot();
+        EnemyPlacementEntry& entry = mutableSelectedEnemyPlacementEntryForEdit();
+        entry.passageRadius = sanitizeEnemyPlacementRadius(currentRadius - static_cast<float>(input.mouseWheelDelta()) * EnemyPlacementRadiusStep);
+        markDirty("Radius resized");
+    }
+
+    const int moveX = (input.pressed(InputAction::MoveRight) ? 1 : 0) - (input.pressed(InputAction::MoveLeft) ? 1 : 0);
+    const int moveY = (input.pressed(InputAction::MoveDown) ? 1 : 0) - (input.pressed(InputAction::MoveUp) ? 1 : 0);
+    if ((moveX != 0 || moveY != 0) && hasSubject) {
+        pushEnemyPlacementEditUndoSnapshot();
+        EnemyPlacementEntry& entry = mutableSelectedEnemyPlacementEntryForEdit();
+        Vec2 offset = currentOffset;
+        offset.x += static_cast<float>(moveX) * EnemyPlacementOffsetStep;
+        offset.y += static_cast<float>(moveY) * EnemyPlacementOffsetStep;
+        enemyPlacementOffsetSlot(entry, enemyPlacementDirection_) = sanitizeEnemyPlacementOffset(offset);
+        entry = sanitizeEnemyPlacementEntry(entry);
+        markDirty("Offset moved");
+    }
+}
+
+void Game::renderEnemyPlacementEditScreen(Renderer& renderer, double totalSeconds) const
+{
+    renderer.setScreenSpace();
+
+    const EnemyHitboxEditLayout layout = makeEnemyHitboxEditLayout(camera_.width(), camera_.height());
+    const int selectedIndex = enemyPlacementSelectedEnemyIndex_;
+    const float scrollOffset = clamp(enemyPlacementScrollOffset_, 0.0f, enemyHitboxMaxScroll(layout, static_cast<int>(enemyPlacementEnemyIds_.size())));
+
+    renderer.fillRect(layout.bounds.pos, layout.bounds.size, {10, 12, 18, 255});
+    renderer.fillRect({0.0f, 0.0f}, {layout.bounds.size.x, EnemyHitboxHeaderHeight}, {18, 24, 38, 255});
+    renderer.fillRect(layout.footer.pos, layout.footer.size, {18, 24, 38, 255});
+    renderer.drawText({22.0f, 18.0f}, "敵位置編集", {245, 245, 252, 255}, 3);
+    renderer.drawText({220.0f, 42.0f}, "Ctrl+S save / Ctrl+Z,Y undo redo / Ctrl+C,V offset", {198, 206, 222, 255}, 2);
+    renderer.drawText({220.0f, 62.0f}, "Drag image / Wheel radius / Arrow move / Shift all / Alt mirror", {198, 206, 222, 255}, 1);
+
+    renderer.fillRect(layout.listPanel.pos, layout.listPanel.size, {18, 24, 36, 255});
+    renderer.drawRect(layout.listPanel.pos, layout.listPanel.size, {72, 86, 112, 255});
+    drawUiTextInput(renderer, enemyHitboxSearchInputRect(layout), enemyPlacementSearchInput_, "敵名で検索", {});
+    drawUiRectButton(renderer, enemyHitboxSearchClearButtonRect(layout), "消去", false);
+    const std::string countText = std::to_string(static_cast<int>(enemyPlacementEnemyIds_.size())) + "/" + std::to_string(static_cast<int>(enemyPlacementAllEnemyIds_.size()));
+    renderer.drawText(enemyHitboxSearchCountRect(layout).pos + Vec2{2.0f, 11.0f}, countText, {198, 206, 222, 255}, 2);
+
+    renderer.drawRect(layout.list.pos, layout.list.size, {78, 92, 116, 255});
+    renderer.pushClipRect(layout.list.pos, layout.list.size);
+    for (int i = 0; i < static_cast<int>(enemyPlacementEnemyIds_.size()); ++i) {
+        const UiRect rect = enemyHitboxListRowRect(layout, i, scrollOffset);
+        if (rect.pos.y + rect.size.y < layout.list.pos.y || rect.pos.y > layout.list.pos.y + layout.list.size.y) {
+            continue;
+        }
+        const bool selected = i == selectedIndex;
+        const std::string& id = enemyPlacementEnemyIds_[static_cast<std::size_t>(i)];
+        const bool customized = enemyPlacementHasAny(enemyPlacements_, id);
+        std::string name = id;
+        int imageNumber = 0;
+        if (const EnemyDefinition* enemy = enemyEditorDefinitionById(enemyCatalog_, id)) {
+            name = enemyHitboxDisplayName(*enemy);
+            imageNumber = enemy->imageNumber;
+        }
+        renderer.fillRect(rect.pos, rect.size, selected ? Color{44, 58, 92, 255} : Color{24, 30, 44, 255});
+        renderer.drawRect(rect.pos, rect.size, selected ? Color{255, 228, 138, 255} : Color{74, 86, 108, 255});
+        EnemyImageDrawOptions iconOptions;
+        iconOptions.allowUpscale = true;
+        if (imageNumber <= 0 || !drawEnemyImageIcon(renderer, imageNumber, rect.pos + Vec2{22.0f, 22.0f}, {34.0f, 34.0f}, 0.0f, iconOptions)) {
+            renderer.fillCircle(rect.pos + Vec2{22.0f, 22.0f}, 12.0f, {82, 92, 110, 255});
+        }
+        renderer.drawText(rect.pos + Vec2{44.0f, 6.0f}, fittedSingleLineText(renderer, name, rect.size.x - 62.0f, 2), {232, 236, 245, 255}, 2);
+        renderer.drawText(rect.pos + Vec2{44.0f, 28.0f}, fittedSingleLineText(renderer, id + (customized ? " *" : ""), rect.size.x - 62.0f, 1), customized ? Color{255, 226, 138, 255} : Color{146, 158, 178, 255}, 1);
+    }
+    renderer.popClipRect();
+
+    renderer.fillRect(layout.previewPanel.pos, layout.previewPanel.size, {16, 21, 32, 255});
+    renderer.drawRect(layout.previewPanel.pos, layout.previewPanel.size, {72, 86, 112, 255});
+    renderer.fillRect(layout.preview.pos, layout.preview.size, {12, 14, 20, 255});
+    renderer.drawRect(layout.preview.pos, layout.preview.size, {58, 70, 92, 255});
+    renderer.fillRect(layout.detail.pos, layout.detail.size, {20, 26, 38, 255});
+    renderer.drawRect(layout.detail.pos, layout.detail.size, {78, 92, 116, 255});
+
+    const EnemyDefinition* definition = selectedEnemyPlacementDefinitionForEdit();
+    if (definition == nullptr) {
+        renderer.drawText(layout.preview.pos + Vec2{18.0f, 18.0f}, "敵が選択されていません", {198, 206, 222, 255}, 2);
+    } else {
+        const Vec2 previewCenter = layout.preview.pos + layout.preview.size * 0.5f;
+        const float fallbackRadius = enemyHitboxDefaultRadiusFor(*definition, balance_);
+        const float passageRadius = enemyPlacementPassageRadiusFor(&enemyPlacements_, definition->id).value_or(fallbackRadius);
+        const Vec2 offset = resolvedEnemyVisualOffset(&enemyPlacements_, definition->id, enemyPlacementDirection_);
+        const Vec2 visualCenter = previewCenter + offset * EnemyPlacementPreviewScale;
+        Enemy previewEnemy = makeEnemyHitboxPreviewEnemy(*definition, balance_);
+        previewEnemy.facingAngle = std::atan2(hitboxDirectionVector(enemyPlacementDirection_).y, hitboxDirectionVector(enemyPlacementDirection_).x);
+
+        renderer.drawLine({layout.preview.pos.x, previewCenter.y}, {layout.preview.pos.x + layout.preview.size.x, previewCenter.y}, {255, 255, 255, 24});
+        renderer.drawLine({previewCenter.x, layout.preview.pos.y}, {previewCenter.x, layout.preview.pos.y + layout.preview.size.y}, {255, 255, 255, 24});
+        renderer.fillCircle(previewCenter, passageRadius * EnemyPlacementPreviewScale, {88, 220, 138, 34});
+        renderer.drawCircle(previewCenter, passageRadius * EnemyPlacementPreviewScale, {116, 244, 166, 230});
+        renderer.fillCircle(previewCenter, 4.0f, {132, 255, 186, 255});
+        renderer.drawLine(previewCenter, visualCenter, {255, 228, 138, 170});
+
+        EnemyImageDrawOptions imageOptions;
+        imageOptions.allowUpscale = true;
+        imageOptions.scaleMultiplier = EnemyPlacementPreviewScale;
+        imageOptions.directionOverrideEnabled = true;
+        imageOptions.directionOverride = hitboxDirectionVector(enemyPlacementDirection_);
+        Vec2 imageSize{};
+        if (!drawEnemyImage(renderer, previewEnemy, visualCenter, static_cast<float>(totalSeconds), imageOptions, &imageSize)) {
+            renderer.fillCircle(visualCenter, fallbackRadius * EnemyPlacementPreviewScale, {92, 102, 120, 255});
+        }
+
+        const std::vector<HitCircle> circles = enemyHitboxEditCirclesFor(hitboxes_, *definition, balance_, enemyPlacementDirection_);
+        for (const HitCircle& rawCircle : circles) {
+            const HitCircle circle = clampEnemyHitboxEditorCircle(rawCircle);
+            const Vec2 center = visualCenter + circle.offset * EnemyPlacementPreviewScale;
+            const float radius = circle.radius * EnemyPlacementPreviewScale;
+            renderer.fillCircle(center, radius, {92, 196, 255, 34});
+            renderer.drawCircle(center, radius, {92, 196, 255, 196});
+        }
+
+        const bool customRadius = enemyPlacementHasPassageRadius(enemyPlacements_, definition->id);
+        const bool customOffset = enemyPlacementHasVisualOffset(enemyPlacements_, definition->id, enemyPlacementDirection_);
+        const bool inheritedOffset = !customOffset &&
+            enemyPlacementDirection_ != HitboxDirection::Default &&
+            enemyPlacementHasVisualOffset(enemyPlacements_, definition->id, HitboxDirection::Default);
+        const bool customized = enemyPlacementHasAny(enemyPlacements_, definition->id);
+        renderer.drawText(layout.detail.pos + Vec2{10.0f, 10.0f}, fittedSingleLineText(renderer, enemyHitboxDisplayName(*definition), layout.detail.size.x - 18.0f, 2), {232, 236, 245, 255}, 2);
+        renderer.drawText(layout.detail.pos + Vec2{10.0f, 36.0f}, definition->id, {146, 158, 178, 255}, 1);
+        renderer.drawText(layout.detail.pos + Vec2{10.0f, 56.0f}, customized ? "custom" : "fallback", customized ? Color{255, 226, 138, 255} : Color{146, 158, 178, 255}, 2);
+        char buffer[160];
+        std::snprintf(buffer, sizeof(buffer), "offset x %.1f  y %.1f", offset.x, offset.y);
+        renderer.drawText(layout.detail.pos + Vec2{10.0f, 82.0f}, buffer, customOffset ? Color{255, 226, 138, 255} : Color{198, 206, 222, 255}, 2);
+        std::snprintf(buffer, sizeof(buffer), "passage r %.1f", passageRadius);
+        renderer.drawText(layout.detail.pos + Vec2{10.0f, 108.0f}, buffer, customRadius ? Color{255, 226, 138, 255} : Color{198, 206, 222, 255}, 2);
+        renderer.drawText(
+            layout.detail.pos + Vec2{10.0f, 134.0f},
+            inheritedOffset ? "offset from default" : (customOffset ? "offset custom" : "offset fallback"),
+            inheritedOffset ? Color{190, 214, 255, 255} : Color{146, 158, 178, 255},
+            1);
+
+        for (int i = 0; i < HitboxDirectionCount; ++i) {
+            const HitboxDirection direction = hitboxDirectionForEditorIndex(i);
+            drawUiRectButton(
+                renderer,
+                enemyHitboxDirectionButtonRect(layout, i, false),
+                hitboxDirectionDisplayName(direction),
+                enemyPlacementDirection_ == direction);
+        }
+    }
+
+    const char* labels[] = {"保存", "半径-", "半径+", "位置コピー", "位置貼付", "反転貼付", "全方向コピー", "全方向貼付", "全方向反転", "戻す"};
+    static_assert(EnemyHitboxDetailButtonCount == static_cast<int>(sizeof(labels) / sizeof(labels[0])));
+    for (int i = 0; i < EnemyHitboxDetailButtonCount; ++i) {
+        drawUiRectButton(renderer, enemyHitboxDetailButtonRect(layout, i), labels[i], false);
+    }
+
+    const char* dirty = enemyPlacementDirty_ ? "Unsaved (*)" : "Saved";
+    renderer.drawText(layout.footer.pos + Vec2{22.0f, 18.0f}, dirty, enemyPlacementDirty_ ? Color{255, 230, 150, 255} : Color{170, 220, 170, 255}, 2);
+    if (!enemyPlacementStatus_.empty()) {
+        renderer.drawText(layout.footer.pos + Vec2{190.0f, 18.0f}, enemyPlacementStatus_, {198, 206, 222, 255}, 2);
+    }
+}
+
 bool Game::loadEnemyShadowData()
 {
     std::string message;
@@ -5191,6 +5904,9 @@ void Game::enterEnemyShadowEditMode()
     }
     if (mode_ == ScreenMode::EnemyHitboxEdit) {
         exitEnemyHitboxEditMode();
+    }
+    if (mode_ == ScreenMode::EnemyPlacementEdit) {
+        exitEnemyPlacementEditMode();
     }
     if (mode_ == ScreenMode::AudioCueEdit) {
         exitAudioCueEditMode();
@@ -5665,6 +6381,9 @@ void Game::enterAudioCueEditMode(AudioCueEditMode editMode)
     if (mode_ == ScreenMode::EnemyHitboxEdit) {
         exitEnemyHitboxEditMode();
     }
+    if (mode_ == ScreenMode::EnemyPlacementEdit) {
+        exitEnemyPlacementEditMode();
+    }
     if (mode_ == ScreenMode::EnemyShadowEdit) {
         exitEnemyShadowEditMode();
     }
@@ -5680,6 +6399,7 @@ void Game::enterAudioCueEditMode(AudioCueEditMode editMode)
     if (audioCueEditReturnMode_ == ScreenMode::AudioCueEdit ||
         audioCueEditReturnMode_ == ScreenMode::ObjectImageScaleEdit ||
         audioCueEditReturnMode_ == ScreenMode::EnemyHitboxEdit ||
+        audioCueEditReturnMode_ == ScreenMode::EnemyPlacementEdit ||
         audioCueEditReturnMode_ == ScreenMode::EnemyShadowEdit) {
         audioCueEditReturnMode_ = ScreenMode::Playing;
     }
@@ -8876,6 +9596,81 @@ bool Game::handleEnemyShadowEditCommand(std::string_view normalized)
 
     return false;
 }
+
+bool Game::handleEnemyPlacementEditCommand(std::string_view normalized)
+{
+    const bool toggle = normalized == "game enemy-placement toggle" ||
+        normalized == "game enemy placement toggle" ||
+        normalized == "game enemy-position toggle" ||
+        normalized == "game enemy position toggle" ||
+        normalized == "game placement toggle";
+    const bool enable = normalized == "game enemy-placement on" ||
+        normalized == "game enemy placement on" ||
+        normalized == "game enemy-position on" ||
+        normalized == "game enemy position on" ||
+        normalized == "game placement on";
+    const bool disable = normalized == "game enemy-placement off" ||
+        normalized == "game enemy placement off" ||
+        normalized == "game enemy-position off" ||
+        normalized == "game enemy position off" ||
+        normalized == "game placement off";
+    const bool save = normalized == "game enemy-placement save" ||
+        normalized == "game enemy placement save" ||
+        normalized == "game enemy-position save" ||
+        normalized == "game enemy position save" ||
+        normalized == "game placement save";
+    const bool reload = normalized == "game enemy-placement reload" ||
+        normalized == "game enemy placement reload" ||
+        normalized == "game enemy-position reload" ||
+        normalized == "game enemy position reload" ||
+        normalized == "game placement reload";
+
+    if (toggle) {
+        if (mode_ == ScreenMode::EnemyPlacementEdit) {
+            exitEnemyPlacementEditMode();
+            logInfo("Debug: enemy placement edit disabled.");
+        } else {
+            enterEnemyPlacementEditMode();
+            logInfo("Debug: enemy placement edit enabled.");
+        }
+        return true;
+    }
+    if (enable) {
+        enterEnemyPlacementEditMode();
+        logInfo("Debug: enemy placement edit enabled.");
+        return true;
+    }
+    if (disable) {
+        exitEnemyPlacementEditMode();
+        logInfo("Debug: enemy placement edit disabled.");
+        return true;
+    }
+    if (save) {
+        std::string message;
+        if (saveEnemyPlacementData(message)) {
+            enemyPlacementStatus_ = message;
+            logInfo("Debug: " + message);
+        } else {
+            enemyPlacementStatus_ = message;
+            logWarning("Debug: " + message);
+        }
+        return true;
+    }
+    if (reload) {
+        if (loadEnemyPlacementData()) {
+            enemyPlacementStatus_ = "Enemy placements reloaded";
+            logInfo("Debug: enemy placements reloaded.");
+        } else {
+            enemyPlacementStatus_ = "Enemy placement reload failed";
+            logWarning("Debug: enemy placement reload failed.");
+        }
+        enemies_.setPlacementCatalog(&enemyPlacements_);
+        return true;
+    }
+
+    return false;
+}
+
 bool Game::handleAudioCueEditCommand(std::string_view normalized)
 {
     const bool bgm = normalized == "game audio-edit bgm" ||
@@ -9014,6 +9809,7 @@ GameTestSnapshot Game::makeTestSnapshot(GameTestSnapshotOptions options) const
         case ScreenMode::Ring: return GameTestScreenMode::Ring;
         case ScreenMode::ObjectImageScaleEdit: return GameTestScreenMode::ObjectImageScaleEdit;
         case ScreenMode::EnemyHitboxEdit: return GameTestScreenMode::EnemyHitboxEdit;
+        case ScreenMode::EnemyPlacementEdit: return GameTestScreenMode::EnemyHitboxEdit;
         case ScreenMode::EnemyShadowEdit: return GameTestScreenMode::EnemyHitboxEdit;
         case ScreenMode::AudioCueEdit: return GameTestScreenMode::AudioCueEdit;
         case ScreenMode::LevelUp: return GameTestScreenMode::LevelUp;
@@ -10529,6 +11325,9 @@ bool Game::executeDebugCommand(std::string_view command)
         return true;
     }
     if (handleEnemyHitboxEditCommand(normalized)) {
+        return true;
+    }
+    if (handleEnemyPlacementEditCommand(normalized)) {
         return true;
     }
     if (handleEnemyShadowEditCommand(normalized)) {

@@ -647,6 +647,31 @@ float effectiveEnemyRadius(const Enemy& enemy)
     return std::max(0.0f, enemy.radius * static_cast<float>(enemy.status.sizeMultiplierFromStates()));
 }
 
+float enemyPlacementRuntimeRadiusScale(const Enemy& enemy)
+{
+    float baseRadius = enemy.definition != nullptr &&
+            enemy.definition->radius > 0.0 &&
+            std::isfinite(enemy.definition->radius)
+        ? static_cast<float>(enemy.definition->radius)
+        : enemy.radius;
+    baseRadius = std::max(0.001f, baseRadius);
+    return std::max(0.1f, enemy.radius / baseRadius);
+}
+
+float enemyPassageRadius(const Enemy& enemy, const EnemyPlacementCatalog* placementCatalog)
+{
+    float radius = enemy.radius;
+    if (const std::optional<float> placementRadius = enemyPlacementPassageRadiusFor(placementCatalog, enemy.enemyId)) {
+        radius = *placementRadius * enemyPlacementRuntimeRadiusScale(enemy);
+    }
+    return std::max(0.0f, radius * static_cast<float>(enemy.status.sizeMultiplierFromStates()));
+}
+
+Vec2 enemyVisualOffset(const Enemy& enemy, const EnemyPlacementCatalog* placementCatalog)
+{
+    return resolvedEnemyVisualOffset(placementCatalog, enemy);
+}
+
 float enemyVisualRadius(const Enemy& enemy)
 {
     const float radius = effectiveEnemyRadius(enemy);
@@ -667,7 +692,8 @@ bool enemyHitboxOverlapsPlayer(
     const Enemy& enemy,
     const HitboxCatalog* catalog,
     const Player& player,
-    const RuntimeBalance& balance)
+    const RuntimeBalance& balance,
+    Vec2 centerOffset)
 {
     if (const HitboxProfile* profile = playerHitboxProfileFor(catalog)) {
         return enemyHitboxOverlapsProfile(
@@ -676,9 +702,11 @@ bool enemyHitboxOverlapsPlayer(
             *profile,
             player.position,
             0.0f,
-            playerHitboxScale(player));
+            playerHitboxScale(player),
+            0.0f,
+            centerOffset);
     }
-    return enemyHitboxOverlapsCircle(enemy, catalog, player.position, effectivePlayerRadius(player, balance));
+    return enemyHitboxOverlapsCircle(enemy, catalog, player.position, effectivePlayerRadius(player, balance), centerOffset);
 }
 
 double damageTypeMultiplier(std::string_view damageType)
@@ -939,9 +967,12 @@ WorldDropSpawnMotion makeStealDropMotion(Vec2 startPosition)
     };
 }
 
-bool enemyCanStealInView(const Enemy& enemy, const CollisionRect& stealViewBounds)
+bool enemyCanStealInView(
+    const Enemy& enemy,
+    const CollisionRect& stealViewBounds,
+    const EnemyPlacementCatalog* placementCatalog)
 {
-    return circleIntersectsRect(enemy.position, effectiveEnemyRadius(enemy), stealViewBounds);
+    return circleIntersectsRect(enemy.position, enemyPassageRadius(enemy, placementCatalog), stealViewBounds);
 }
 
 EnemyEvent makeEnemyStealEvent(const Enemy& enemy, const WorldDropItem& stolenDrop)
@@ -1550,14 +1581,20 @@ void updateEnemyAltitude(Enemy& enemy)
     enemy.altitude = std::max(0.0f, enemyHoverAltitude(enemy) + enemyJumpAltitude(enemy));
 }
 
-bool findJumpLandingPosition(TileMap& map, const Enemy& enemy, Vec2 direction, float distance, Vec2& outPosition)
+bool findJumpLandingPosition(
+    TileMap& map,
+    const Enemy& enemy,
+    Vec2 direction,
+    float distance,
+    const EnemyPlacementCatalog* placementCatalog,
+    Vec2& outPosition)
 {
     if (lengthSquared(direction) <= 0.0001f || distance < JumpTargetMinDistance) {
         return false;
     }
 
     const Vec2 normalizedDirection = normalize(direction);
-    const float radius = effectiveEnemyRadius(enemy);
+    const float radius = enemyPassageRadius(enemy, placementCatalog);
     constexpr std::array<float, 8> DistanceFactors{{1.0f, 0.88f, 0.76f, 0.64f, 0.52f, 0.40f, 0.28f, 0.16f}};
     for (float factor : DistanceFactors) {
         const Vec2 candidate = enemy.position + normalizedDirection * (distance * factor);
@@ -1580,10 +1617,17 @@ void startEnemyJumpToTarget(Enemy& enemy, Vec2 target, float durationSeconds, fl
     enemy.velocity = {};
 }
 
-bool beginEnemyJump(Enemy& enemy, TileMap& map, Vec2 direction, float distance, float durationSeconds, float arcHeight)
+bool beginEnemyJump(
+    Enemy& enemy,
+    TileMap& map,
+    Vec2 direction,
+    float distance,
+    float durationSeconds,
+    float arcHeight,
+    const EnemyPlacementCatalog* placementCatalog)
 {
     Vec2 target{};
-    if (!findJumpLandingPosition(map, enemy, direction, distance, target)) {
+    if (!findJumpLandingPosition(map, enemy, direction, distance, placementCatalog, target)) {
         return false;
     }
 
@@ -2047,7 +2091,8 @@ bool ringItemHitboxOverlapsEnemy(
     const Enemy& enemy,
     const HitboxCatalog* catalog,
     const SpellRingItem& item,
-    const RingItemHitboxSpec& itemHitbox)
+    const RingItemHitboxSpec& itemHitbox,
+    Vec2 centerOffset)
 {
     (void)item;
     if (itemHitbox.profile != nullptr) {
@@ -2058,14 +2103,16 @@ bool ringItemHitboxOverlapsEnemy(
             itemHitbox.center,
             itemHitbox.profileRotationRadians,
             itemHitbox.profileScale,
-            itemHitbox.profileRadiusPadding);
+            itemHitbox.profileRadiusPadding,
+            centerOffset);
     }
 
     return enemyHitboxOverlapsCircle(
         enemy,
         catalog,
         itemHitbox.center,
-        itemHitbox.fallbackCircleRadius);
+        itemHitbox.fallbackCircleRadius,
+        centerOffset);
 }
 
 bool ringItemHitboxOverlapsCircle(
@@ -2399,7 +2446,12 @@ int externalBounceFallDamage(double strength, float arcHeight)
     return std::clamp(static_cast<int>(std::ceil(rawDamage)), 3, 16);
 }
 
-bool beginExternalGroundBounce(Enemy& enemy, TileMap& map, Vec2 hitOrigin, const BounceGroundedHitSpec& spec)
+bool beginExternalGroundBounce(
+    Enemy& enemy,
+    TileMap& map,
+    Vec2 hitOrigin,
+    const BounceGroundedHitSpec& spec,
+    const EnemyPlacementCatalog* placementCatalog)
 {
     if (!spec.active || !canExternalBounceGroundedEnemy(enemy)) {
         return false;
@@ -2414,7 +2466,7 @@ bool beginExternalGroundBounce(Enemy& enemy, TileMap& map, Vec2 hitOrigin, const
         direction = Vec2{0.0f, -1.0f};
     }
 
-    const float radiusLift = effectiveEnemyRadius(enemy) * 0.35f;
+    const float radiusLift = enemyPassageRadius(enemy, placementCatalog) * 0.35f;
     const float arcHeight = std::clamp(
         static_cast<float>(34.0 + strength * 18.0) + radiusLift,
         ExternalBounceMinArcHeight,
@@ -2429,7 +2481,7 @@ bool beginExternalGroundBounce(Enemy& enemy, TileMap& map, Vec2 hitOrigin, const
         ExternalBounceMaxDistance);
 
     Vec2 target = enemy.position;
-    (void)findJumpLandingPosition(map, enemy, direction, distance, target);
+    (void)findJumpLandingPosition(map, enemy, direction, distance, placementCatalog, target);
     startEnemyJumpToTarget(enemy, target, duration, arcHeight);
     enemy.knockbackVelocity = {};
     enemy.knockbackTimer = 0.0f;
@@ -2721,7 +2773,7 @@ float enemyVisualAltitude(const Enemy& enemy)
     return std::max(0.0f, enemy.altitude + pose.visualAltitude);
 }
 
-Vec2 enemyDrawPosition(const Enemy& enemy)
+Vec2 enemyBaseDrawPosition(const Enemy& enemy)
 {
     const ActorVisualPose pose = enemyActionVisualPose(enemy);
     const Vec2 facingOffset = facingVector(enemy.facingAngle) * pose.forwardOffset;
@@ -2731,6 +2783,11 @@ Vec2 enemyDrawPosition(const Enemy& enemy)
         entityStatusJitterOffset(enemy.status, enemy.behaviorTimer) +
         enemyDeathShakeOffset(enemy) +
         Vec2{0.0f, -stunWakeHopOffset(enemy.stunWakeTimer)};
+}
+
+Vec2 enemyDrawPosition(const Enemy& enemy, const EnemyPlacementCatalog* placementCatalog)
+{
+    return enemyBaseDrawPosition(enemy) + enemyVisualOffset(enemy, placementCatalog);
 }
 
 EnemyImageDrawOptions enemyImageOptionsFor(const Enemy& enemy)
@@ -2889,20 +2946,26 @@ bool junkCrabWeakPointExposed(const Enemy& enemy)
 bool applyCustomBossWeakPoint(
     BossWeakPointSpec& spec,
     const Enemy& enemy,
-    const HitboxCatalog* hitboxCatalog);
+    const HitboxCatalog* hitboxCatalog,
+    Vec2 centerOffset);
 
-BossWeakPointSpec bossWeakPointFor(const Enemy& enemy, const HitboxCatalog* hitboxCatalog)
+BossWeakPointSpec bossWeakPointFor(
+    const Enemy& enemy,
+    const HitboxCatalog* hitboxCatalog,
+    const EnemyPlacementCatalog* placementCatalog)
 {
+    const Vec2 centerOffset = enemyVisualOffset(enemy, placementCatalog);
+    const Vec2 hitboxCenter = enemy.position + centerOffset;
     if (stardustMoleWeakPointExposed(enemy)) {
         const float radius = effectiveEnemyRadius(enemy);
         BossWeakPointSpec spec{
             .kind = BossWeakPointKind::StardustMoleCrystal,
             .exposed = true,
-            .center = enemy.position - facingVector(enemy.facingAngle) * (radius * 0.52f),
+            .center = hitboxCenter - facingVector(enemy.facingAngle) * (radius * 0.52f),
             .radius = std::max(7.0f, radius * 0.42f),
             .effectId = "stardust_crystal",
         };
-        applyCustomBossWeakPoint(spec, enemy, hitboxCatalog);
+        applyCustomBossWeakPoint(spec, enemy, hitboxCatalog, centerOffset);
         return spec;
     }
 
@@ -2911,11 +2974,11 @@ BossWeakPointSpec bossWeakPointFor(const Enemy& enemy, const HitboxCatalog* hitb
         BossWeakPointSpec spec{
             .kind = BossWeakPointKind::JunkCrabBelly,
             .exposed = true,
-            .center = enemy.position,
+            .center = hitboxCenter,
             .radius = std::max(10.0f, radius * 0.64f),
             .effectId = "junk_belly",
         };
-        applyCustomBossWeakPoint(spec, enemy, hitboxCatalog);
+        applyCustomBossWeakPoint(spec, enemy, hitboxCatalog, centerOffset);
         return spec;
     }
 
@@ -2975,7 +3038,8 @@ BossDamageAdjustment adjustBossIncomingDamageWithWeakPoint(
 bool applyCustomBossWeakPoint(
     BossWeakPointSpec& spec,
     const Enemy& enemy,
-    const HitboxCatalog* hitboxCatalog)
+    const HitboxCatalog* hitboxCatalog,
+    Vec2 centerOffset)
 {
     const HitboxProfile* profile = bossWeakPointProfileFor(hitboxCatalog, enemy);
     if (profile == nullptr || profile->circles.empty()) {
@@ -2984,7 +3048,7 @@ bool applyCustomBossWeakPoint(
 
     const HitCircle circle = profile->circles.front();
     const float scale = std::max(0.0f, static_cast<float>(enemy.status.sizeMultiplierFromStates()));
-    spec.center = enemy.position + circle.offset * scale;
+    spec.center = enemy.position + centerOffset + circle.offset * scale;
     spec.radius = std::max(1.0f, circle.radius * scale);
     return true;
 }
@@ -2994,9 +3058,10 @@ BossDamageAdjustment adjustBossIncomingDamage(
     int damage,
     Vec2 hitPosition,
     float hitRadius,
-    const HitboxCatalog* hitboxCatalog)
+    const HitboxCatalog* hitboxCatalog,
+    const EnemyPlacementCatalog* placementCatalog)
 {
-    const BossWeakPointSpec weakPoint = bossWeakPointFor(enemy, hitboxCatalog);
+    const BossWeakPointSpec weakPoint = bossWeakPointFor(enemy, hitboxCatalog, placementCatalog);
     return adjustBossIncomingDamageWithWeakPoint(
         enemy,
         damage,
@@ -3009,9 +3074,10 @@ BossDamageAdjustment adjustBossIncomingDamage(
     int damage,
     const SpellRingItem& item,
     const RingItemHitboxSpec& itemHitbox,
-    const HitboxCatalog* hitboxCatalog)
+    const HitboxCatalog* hitboxCatalog,
+    const EnemyPlacementCatalog* placementCatalog)
 {
-    const BossWeakPointSpec weakPoint = bossWeakPointFor(enemy, hitboxCatalog);
+    const BossWeakPointSpec weakPoint = bossWeakPointFor(enemy, hitboxCatalog, placementCatalog);
     return adjustBossIncomingDamageWithWeakPoint(
         enemy,
         damage,
@@ -3048,14 +3114,19 @@ std::uint32_t bossWeakPointHintSeed(const Enemy& enemy, const BossWeakPointSpec&
     return mixBossWeakPointHintSeed(seed);
 }
 
-void drawBossWeakPointHintParticles(Renderer& renderer, const Enemy& enemy, const HitboxCatalog* hitboxCatalog)
+void drawBossWeakPointHintParticles(
+    Renderer& renderer,
+    const Enemy& enemy,
+    const HitboxCatalog* hitboxCatalog,
+    const EnemyPlacementCatalog* placementCatalog)
 {
-    const BossWeakPointSpec weakPoint = bossWeakPointFor(enemy, hitboxCatalog);
+    const Vec2 centerOffset = enemyVisualOffset(enemy, placementCatalog);
+    const BossWeakPointSpec weakPoint = bossWeakPointFor(enemy, hitboxCatalog, placementCatalog);
     if (!weakPoint.exposed) {
         return;
     }
 
-    const Vec2 drawCenter = enemyDrawPosition(enemy) + (weakPoint.center - enemy.position);
+    const Vec2 drawCenter = enemyDrawPosition(enemy, placementCatalog) + (weakPoint.center - (enemy.position + centerOffset));
     const float radius = std::max(4.0f, weakPoint.radius);
     const int particleCount = std::clamp(
         static_cast<int>(std::round(radius * 0.42f)),
@@ -3235,10 +3306,11 @@ void drawEnemyVisual(
     const TileMap& map,
     const Enemy& enemy,
     const HitboxCatalog* hitboxCatalog,
+    const EnemyPlacementCatalog* placementCatalog,
     bool captureHighlighted,
     bool detailsKnown)
 {
-    const Vec2 drawPosition = enemyDrawPosition(enemy);
+    const Vec2 drawPosition = enemyDrawPosition(enemy, placementCatalog);
     const auto drawAwarenessIcon = [&](float visualRadius) {
         if (enemy.awarenessIcon == EnemyAwarenessIcon::None || enemy.awarenessIconTimer <= 0.0f) {
             return;
@@ -3308,7 +3380,7 @@ void drawEnemyVisual(
     if (enemy.death.active) {
         return;
     }
-    drawBossWeakPointHintParticles(renderer, enemy, hitboxCatalog);
+    drawBossWeakPointHintParticles(renderer, enemy, hitboxCatalog, placementCatalog);
     renderEntityStatusOverlays(renderer, enemy.status, drawPosition, uiVisualRadius * 2.0f, enemy.behaviorTimer);
     if (enemy.bossAction.pattern == StardustMolePatternId &&
         enemy.bossAction.phase == BossActionPhase::Stun &&
@@ -3353,12 +3425,32 @@ const EnemyDefinition* findEnemyDefinitionById(const EnemyCatalog& enemyCatalog,
     return vecIt != enemyCatalog.enemies.end() ? &*vecIt : nullptr;
 }
 
-float bossSpawnRadiusFor(const EnemyCatalog& enemyCatalog, std::string_view bossEnemyId, const RuntimeBalance& balance)
+float enemyDefinitionSpawnRadius(
+    const EnemyDefinition* definition,
+    const RuntimeBalance& balance,
+    const EnemyPlacementCatalog* placementCatalog,
+    float radiusMultiplier = 1.0f)
+{
+    float radius = balance.enemyRadius;
+    if (definition != nullptr && definition->radius > 0.0 && std::isfinite(definition->radius)) {
+        radius = static_cast<float>(definition->radius);
+    }
+    if (definition != nullptr) {
+        if (const std::optional<float> placementRadius = enemyPlacementPassageRadiusFor(placementCatalog, definition->id)) {
+            radius = *placementRadius;
+        }
+    }
+    return radius * std::max(0.1f, radiusMultiplier);
+}
+
+float bossSpawnRadiusFor(
+    const EnemyCatalog& enemyCatalog,
+    std::string_view bossEnemyId,
+    const RuntimeBalance& balance,
+    const EnemyPlacementCatalog* placementCatalog)
 {
     if (const EnemyDefinition* definition = findEnemyDefinitionById(enemyCatalog, bossEnemyId)) {
-        if (definition->radius > 0.0 && std::isfinite(definition->radius)) {
-            return static_cast<float>(definition->radius) * BossRadiusMultiplier;
-        }
+        return enemyDefinitionSpawnRadius(definition, balance, placementCatalog, BossRadiusMultiplier);
     }
     if (isStardustMoleId(bossEnemyId)) {
         return std::max(balance.enemyRadius * 1.35f, 15.0f) * BossRadiusMultiplier;
@@ -3579,9 +3671,13 @@ EnemyWindPulse makeEnemyWindPulse(const Enemy& enemy, Vec2 playerPosition)
     };
 }
 
-Vec2 chooseStardustMoleEmergePosition(const Enemy& enemy, const Player& player, TileMap& map)
+Vec2 chooseStardustMoleEmergePosition(
+    const Enemy& enemy,
+    const Player& player,
+    TileMap& map,
+    const EnemyPlacementCatalog* placementCatalog)
 {
-    const float radius = effectiveEnemyRadius(enemy);
+    const float radius = enemyPassageRadius(enemy, placementCatalog);
     const Vec2 fromPlayer = safeDirection(enemy.position - player.position);
     const Vec2 perpendicular{-fromPlayer.y, fromPlayer.x};
     const std::array<Vec2, 10> candidates{{
@@ -3633,7 +3729,8 @@ void enterBossActionPhase(
     Player& player,
     TileMap& map,
     std::vector<EnemyEvent>& events,
-    std::mt19937& rng)
+    std::mt19937& rng,
+    const EnemyPlacementCatalog* placementCatalog)
 {
     enemy.bossAction.phase = phase;
     enemy.bossAction.timer = 0.0f;
@@ -3658,7 +3755,7 @@ void enterBossActionPhase(
         enemy.velocity = {};
         enemy.jumpActive = false;
         enemy.altitude = 0.0f;
-        enemy.bossAction.targetPosition = chooseStardustMoleEmergePosition(enemy, player, map);
+        enemy.bossAction.targetPosition = chooseStardustMoleEmergePosition(enemy, player, map, placementCatalog);
         events.push_back(makeEnemyEventAt(EnemyEventType::BossTelegraph, enemy, enemy.bossAction.targetPosition, "dust"));
         break;
     case BossActionPhase::Jump:
@@ -3709,10 +3806,16 @@ std::array<Vec2, 5> bossChargeSamplePoints(Vec2 center, Vec2 direction, float ra
     }};
 }
 
-bool breakSoftTilesForBossCharge(Enemy& enemy, TileMap& map, Vec2 center, Vec2 direction, std::vector<EnemyEvent>& events)
+bool breakSoftTilesForBossCharge(
+    Enemy& enemy,
+    TileMap& map,
+    Vec2 center,
+    Vec2 direction,
+    std::vector<EnemyEvent>& events,
+    const EnemyPlacementCatalog* placementCatalog)
 {
     bool hitHardWall = false;
-    const float radius = effectiveEnemyRadius(enemy);
+    const float radius = enemyPassageRadius(enemy, placementCatalog);
     for (Vec2 sample : bossChargeSamplePoints(center, direction, radius)) {
         const int tx = map.worldToTile(sample.x);
         const int ty = map.worldToTile(sample.y);
@@ -3737,7 +3840,12 @@ bool breakSoftTilesForBossCharge(Enemy& enemy, TileMap& map, Vec2 center, Vec2 d
     return hitHardWall;
 }
 
-bool moveBossCharge(Enemy& enemy, TileMap& map, float dt, std::vector<EnemyEvent>& events)
+bool moveBossCharge(
+    Enemy& enemy,
+    TileMap& map,
+    float dt,
+    std::vector<EnemyEvent>& events,
+    const EnemyPlacementCatalog* placementCatalog)
 {
     const Vec2 direction = safeDirection(enemy.bossAction.chargeDirection);
     const float distance = std::max(0.0f, StardustMoleChargeSpeed * dt);
@@ -3746,10 +3854,10 @@ bool moveBossCharge(Enemy& enemy, TileMap& map, float dt, std::vector<EnemyEvent
 
     for (int i = 0; i < steps; ++i) {
         const Vec2 next = enemy.position + step;
-        if (breakSoftTilesForBossCharge(enemy, map, next, direction, events)) {
+        if (breakSoftTilesForBossCharge(enemy, map, next, direction, events, placementCatalog)) {
             return false;
         }
-        if (map.isCircleBlocked(next, effectiveEnemyRadius(enemy))) {
+        if (map.isCircleBlocked(next, enemyPassageRadius(enemy, placementCatalog))) {
             return false;
         }
         enemy.position = next;
@@ -3786,7 +3894,12 @@ bool tryMoveCircle(TileMap& map, Vec2& position, float radius, Vec2 delta)
     return false;
 }
 
-void moveStardustMoleApproach(Enemy& enemy, const Player& player, TileMap& map, float dt)
+void moveStardustMoleApproach(
+    Enemy& enemy,
+    const Player& player,
+    TileMap& map,
+    float dt,
+    const EnemyPlacementCatalog* placementCatalog)
 {
     const Vec2 toPlayer = player.position - enemy.position;
     const float distanceToPlayer = length(toPlayer);
@@ -3804,7 +3917,7 @@ void moveStardustMoleApproach(Enemy& enemy, const Player& player, TileMap& map, 
     const int steps = std::max(1, static_cast<int>(std::ceil(moveDistance / (static_cast<float>(balance::TileSize) * 0.35f))));
     const Vec2 step = direction * (moveDistance / static_cast<float>(steps));
     for (int i = 0; i < steps; ++i) {
-        if (!tryMoveCircle(map, enemy.position, effectiveEnemyRadius(enemy), step)) {
+        if (!tryMoveCircle(map, enemy.position, enemyPassageRadius(enemy, placementCatalog), step)) {
             break;
         }
     }
@@ -3861,11 +3974,12 @@ float junkCrabPhaseSeconds(const Enemy& enemy, std::string_view key, float fallb
         behaviorParamDouble(enemy, "boss_sequence", key, fallbackSeconds)));
 }
 
-float junkCrabOrbitRadius(const Enemy& enemy)
+float junkCrabOrbitRadius(const Enemy& enemy, const EnemyPlacementCatalog* placementCatalog)
 {
+    const float radius = enemyPassageRadius(enemy, placementCatalog);
     return std::max(
-        effectiveEnemyRadius(enemy) + JunkCrabDebrisRadius + 8.0f,
-        effectiveEnemyRadius(enemy) * JunkCrabOrbitRadiusMultiplier);
+        radius + JunkCrabDebrisRadius + 8.0f,
+        radius * JunkCrabOrbitRadiusMultiplier);
 }
 
 void clearJunkCrabDebris(Enemy& enemy)
@@ -3875,11 +3989,11 @@ void clearJunkCrabDebris(Enemy& enemy)
     }
 }
 
-void initializeJunkCrabDebris(Enemy& enemy)
+void initializeJunkCrabDebris(Enemy& enemy, const EnemyPlacementCatalog* placementCatalog)
 {
     JunkCrabBossRuntime& crab = enemy.bossAction.junkCrab;
     const int count = junkCrabDebrisCount(enemy);
-    const float orbitRadius = junkCrabOrbitRadius(enemy);
+    const float orbitRadius = junkCrabOrbitRadius(enemy, placementCatalog);
     for (int i = 0; i < JunkCrabMaxDebris; ++i) {
         JunkCrabDebrisRuntime& debris = crab.debris[static_cast<std::size_t>(i)];
         if (i >= count) {
@@ -3893,7 +4007,11 @@ void initializeJunkCrabDebris(Enemy& enemy)
     }
 }
 
-void enterJunkCrabPhase(Enemy& enemy, JunkCrabPhase phase, std::vector<EnemyEvent>& events)
+void enterJunkCrabPhase(
+    Enemy& enemy,
+    JunkCrabPhase phase,
+    std::vector<EnemyEvent>& events,
+    const EnemyPlacementCatalog* placementCatalog)
 {
     JunkCrabBossRuntime& crab = enemy.bossAction.junkCrab;
     crab.phase = phase;
@@ -3907,7 +4025,7 @@ void enterJunkCrabPhase(Enemy& enemy, JunkCrabPhase phase, std::vector<EnemyEven
     switch (phase) {
     case JunkCrabPhase::RingGuard:
         if (!junkCrabHasActiveDebris(enemy)) {
-            initializeJunkCrabDebris(enemy);
+            initializeJunkCrabDebris(enemy, placementCatalog);
         }
         events.push_back(makeEnemyEventAt(EnemyEventType::BossImpact, enemy, enemy.position, "junk_ring"));
         break;
@@ -3936,7 +4054,11 @@ void enterJunkCrabPhase(Enemy& enemy, JunkCrabPhase phase, std::vector<EnemyEven
     }
 }
 
-bool addJunkCrabToppleMeter(Enemy& enemy, int amount, std::vector<EnemyEvent>& events)
+bool addJunkCrabToppleMeter(
+    Enemy& enemy,
+    int amount,
+    std::vector<EnemyEvent>& events,
+    const EnemyPlacementCatalog* placementCatalog)
 {
     if (!isJunkCrabBossAction(enemy) || amount <= 0) {
         return false;
@@ -3952,7 +4074,7 @@ bool addJunkCrabToppleMeter(Enemy& enemy, int amount, std::vector<EnemyEvent>& e
         return false;
     }
 
-    enterJunkCrabPhase(enemy, JunkCrabPhase::Toppled, events);
+    enterJunkCrabPhase(enemy, JunkCrabPhase::Toppled, events, placementCatalog);
     return true;
 }
 
@@ -4021,7 +4143,8 @@ bool tryHitJunkCrabDebris(
     const RingItemHitboxSpec& itemHitbox,
     SpellRingSystem& spellRing,
     std::vector<EnemyEvent>& events,
-    std::vector<RingImpactSoundEvent>& impactSoundEvents)
+    std::vector<RingImpactSoundEvent>& impactSoundEvents,
+    const EnemyPlacementCatalog* placementCatalog)
 {
     if (!isJunkCrabBossAction(enemy) ||
         enemy.bossAction.junkCrab.phase == JunkCrabPhase::Toppled ||
@@ -4070,7 +4193,7 @@ bool tryHitJunkCrabDebris(
         if (!junkCrabHasActiveDebris(enemy)) {
             gain += junkCrabToppleThreshold(enemy);
         }
-        addJunkCrabToppleMeter(enemy, gain, events);
+        addJunkCrabToppleMeter(enemy, gain, events, placementCatalog);
         return true;
     }
     return false;
@@ -4156,7 +4279,12 @@ void fireJunkCrabThrowBurst(Enemy& enemy, Player& player, ProjectileSystem& proj
     }
 }
 
-void moveJunkCrabGuard(Enemy& enemy, const Player& player, TileMap& map, float dt)
+void moveJunkCrabGuard(
+    Enemy& enemy,
+    const Player& player,
+    TileMap& map,
+    float dt,
+    const EnemyPlacementCatalog* placementCatalog)
 {
     const Vec2 toPlayer = player.position - enemy.position;
     const float distanceToPlayer = length(toPlayer);
@@ -4167,7 +4295,7 @@ void moveJunkCrabGuard(Enemy& enemy, const Player& player, TileMap& map, float d
     const float speed = static_cast<float>(std::max(
         0.0,
         behaviorParamDouble(enemy, "boss_sequence", "guardMoveSpeed", JunkCrabGuardMoveSpeed)));
-    if (tryMoveCircle(map, enemy.position, effectiveEnemyRadius(enemy), direction * (speed * std::max(0.0f, dt)))) {
+    if (tryMoveCircle(map, enemy.position, enemyPassageRadius(enemy, placementCatalog), direction * (speed * std::max(0.0f, dt)))) {
         enemy.velocity = direction * speed;
     } else {
         enemy.velocity = {};
@@ -4181,7 +4309,8 @@ bool updateJunkCrabBossActionSequence(
     TileMap& map,
     ProjectileSystem& projectiles,
     float dt,
-    std::vector<EnemyEvent>& events)
+    std::vector<EnemyEvent>& events,
+    const EnemyPlacementCatalog* placementCatalog)
 {
     if (!isJunkCrabBossAction(enemy)) {
         return false;
@@ -4189,7 +4318,7 @@ bool updateJunkCrabBossActionSequence(
 
     JunkCrabBossRuntime& crab = enemy.bossAction.junkCrab;
     if (crab.phase == JunkCrabPhase::None) {
-        enterJunkCrabPhase(enemy, JunkCrabPhase::RingGuard, events);
+        enterJunkCrabPhase(enemy, JunkCrabPhase::RingGuard, events, placementCatalog);
         return true;
     }
 
@@ -4206,10 +4335,10 @@ bool updateJunkCrabBossActionSequence(
 
     switch (crab.phase) {
     case JunkCrabPhase::RingGuard: {
-        moveJunkCrabGuard(enemy, player, map, safeDt);
+        moveJunkCrabGuard(enemy, player, map, safeDt, placementCatalog);
         const float distanceToPlayer = length(player.position - enemy.position);
         if (distanceToPlayer <= effectiveEnemyRadius(enemy) + JunkCrabClawRange) {
-            enterJunkCrabPhase(enemy, JunkCrabPhase::ClawWindup, events);
+            enterJunkCrabPhase(enemy, JunkCrabPhase::ClawWindup, events, placementCatalog);
             return true;
         }
         const float guardSeconds = static_cast<float>(std::clamp(
@@ -4217,14 +4346,14 @@ bool updateJunkCrabBossActionSequence(
             static_cast<double>(JunkCrabRingGuardMinSeconds),
             static_cast<double>(JunkCrabRingGuardMaxSeconds)));
         if (crab.timer >= guardSeconds) {
-            enterJunkCrabPhase(enemy, JunkCrabPhase::ThrowWindup, events);
+            enterJunkCrabPhase(enemy, JunkCrabPhase::ThrowWindup, events, placementCatalog);
         }
         return true;
     }
     case JunkCrabPhase::ClawWindup:
         enemy.velocity = {};
         if (crab.timer >= junkCrabPhaseSeconds(enemy, "clawWindup", JunkCrabClawWindupSeconds)) {
-            enterJunkCrabPhase(enemy, JunkCrabPhase::ClawStrike, events);
+            enterJunkCrabPhase(enemy, JunkCrabPhase::ClawStrike, events, placementCatalog);
         }
         return true;
     case JunkCrabPhase::ClawStrike:
@@ -4234,13 +4363,13 @@ bool updateJunkCrabBossActionSequence(
             resolveJunkCrabClawStrike(enemy, player, map, events);
         }
         if (crab.timer >= junkCrabPhaseSeconds(enemy, "clawStrike", JunkCrabClawStrikeSeconds)) {
-            enterJunkCrabPhase(enemy, JunkCrabPhase::RingGuard, events);
+            enterJunkCrabPhase(enemy, JunkCrabPhase::RingGuard, events, placementCatalog);
         }
         return true;
     case JunkCrabPhase::ThrowWindup:
         enemy.velocity = {};
         if (crab.timer >= junkCrabPhaseSeconds(enemy, "throwWindup", JunkCrabThrowWindupSeconds)) {
-            enterJunkCrabPhase(enemy, JunkCrabPhase::ThrowBurst, events);
+            enterJunkCrabPhase(enemy, JunkCrabPhase::ThrowBurst, events, placementCatalog);
         }
         return true;
     case JunkCrabPhase::ThrowBurst:
@@ -4250,19 +4379,19 @@ bool updateJunkCrabBossActionSequence(
             fireJunkCrabThrowBurst(enemy, player, projectiles, events);
         }
         if (crab.timer >= junkCrabPhaseSeconds(enemy, "throwBurst", JunkCrabThrowBurstSeconds)) {
-            enterJunkCrabPhase(enemy, JunkCrabPhase::RingGuard, events);
+            enterJunkCrabPhase(enemy, JunkCrabPhase::RingGuard, events, placementCatalog);
         }
         return true;
     case JunkCrabPhase::Toppled:
         enemy.velocity = {};
         if (crab.timer >= junkCrabPhaseSeconds(enemy, "toppledSeconds", JunkCrabToppledSeconds)) {
-            enterJunkCrabPhase(enemy, JunkCrabPhase::Recover, events);
+            enterJunkCrabPhase(enemy, JunkCrabPhase::Recover, events, placementCatalog);
         }
         return true;
     case JunkCrabPhase::Recover:
         enemy.velocity = {};
         if (crab.timer >= junkCrabPhaseSeconds(enemy, "recoverSeconds", JunkCrabRecoverSeconds)) {
-            enterJunkCrabPhase(enemy, JunkCrabPhase::RingGuard, events);
+            enterJunkCrabPhase(enemy, JunkCrabPhase::RingGuard, events, placementCatalog);
         }
         return true;
     case JunkCrabPhase::None:
@@ -6959,7 +7088,7 @@ bool EnemySystem::findSpawnPosition(
             if (!enemy.active) {
                 continue;
             }
-            const float minDistance = effectiveEnemyRadius(enemy) + radius + SpawnAvoidancePadding;
+            const float minDistance = enemyPassageRadius(enemy, placementCatalog_) + radius + SpawnAvoidancePadding;
             if (distanceSquared(candidate, enemy.position) < minDistance * minDistance) {
                 overlapsEnemy = true;
                 break;
@@ -7004,7 +7133,7 @@ bool EnemySystem::findBossSpawnPosition(TileMap& map, Vec2 playerPosition, const
                     if (!enemy.active) {
                         continue;
                     }
-                    const float minDistance = effectiveEnemyRadius(enemy) + radius + SpawnAvoidancePadding;
+                    const float minDistance = enemyPassageRadius(enemy, placementCatalog_) + radius + SpawnAvoidancePadding;
                     if (distanceSquared(candidate, enemy.position) < minDistance * minDistance) {
                         overlapsEnemy = true;
                         break;
@@ -7094,7 +7223,8 @@ bool EnemySystem::spawnNodeEnemy(
 
     Vec2 spawnPosition{};
     const float minPlayerDistance = allowNearPlayer ? 0.0f : balance.enemyMinSpawnDistance;
-    if (!findSpawnPosition(map, desiredPosition, playerPosition, balance.enemyRadius, minPlayerDistance, spawnPosition)) {
+    const float radius = enemyDefinitionSpawnRadius(&it->second, balance, placementCatalog_);
+    if (!findSpawnPosition(map, desiredPosition, playerPosition, radius, minPlayerDistance, spawnPosition)) {
         return false;
     }
 
@@ -7128,10 +7258,7 @@ bool EnemySystem::spawnFixedNodeEnemy(
 {
     const EnemySpawnSelection selection = chooseDugSpawnEnemy(enemyCatalog, lootStageId, lootDepthRank);
     const EnemyDefinition* definition = selection.definition;
-    float radius = balance.enemyRadius;
-    if (definition != nullptr && definition->radius > 0.0 && std::isfinite(definition->radius)) {
-        radius = static_cast<float>(definition->radius);
-    }
+    const float radius = enemyDefinitionSpawnRadius(definition, balance, placementCatalog_);
 
     if (map.isCircleBlocked(desiredPosition, radius)) {
         return false;
@@ -7141,7 +7268,7 @@ bool EnemySystem::spawnFixedNodeEnemy(
         if (!enemyVisible(enemy)) {
             continue;
         }
-        const float minDistance = effectiveEnemyRadius(enemy) + radius + SpawnAvoidancePadding;
+        const float minDistance = enemyPassageRadius(enemy, placementCatalog_) + radius + SpawnAvoidancePadding;
         if (distanceSquared(desiredPosition, enemy.position) < minDistance * minDistance) {
             return false;
         }
@@ -7227,10 +7354,7 @@ bool EnemySystem::spawnSpecificEnemyAtPosition(
     }
 
     const EnemyDefinition& definition = it->second;
-    float radius = balance.enemyRadius;
-    if (definition.radius > 0.0 && std::isfinite(definition.radius)) {
-        radius = static_cast<float>(definition.radius);
-    }
+    const float radius = enemyDefinitionSpawnRadius(&definition, balance, placementCatalog_);
 
     if (map.isCircleBlocked(position, radius)) {
         return false;
@@ -7240,7 +7364,7 @@ bool EnemySystem::spawnSpecificEnemyAtPosition(
         if (!enemyVisible(enemy)) {
             continue;
         }
-        const float minDistance = effectiveEnemyRadius(enemy) + radius + SpawnAvoidancePadding;
+        const float minDistance = enemyPassageRadius(enemy, placementCatalog_) + radius + SpawnAvoidancePadding;
         if (distanceSquared(position, enemy.position) < minDistance * minDistance) {
             return false;
         }
@@ -7290,11 +7414,7 @@ bool EnemySystem::spawnEventEnemy(
     }
     const EnemyDefinition* definition = selection.definition;
 
-    float radius = balance.enemyRadius;
-    if (definition != nullptr && definition->radius > 0.0 && std::isfinite(definition->radius)) {
-        radius = static_cast<float>(definition->radius);
-    }
-    radius *= std::max(0.1f, options.radiusMultiplier);
+    const float radius = enemyDefinitionSpawnRadius(definition, balance, placementCatalog_, options.radiusMultiplier);
 
     Vec2 spawnPosition = desiredPosition;
     if (options.fixedPosition) {
@@ -7305,7 +7425,7 @@ bool EnemySystem::spawnEventEnemy(
             if (!enemy.active) {
                 continue;
             }
-            const float minDistance = effectiveEnemyRadius(enemy) + radius + SpawnAvoidancePadding;
+            const float minDistance = enemyPassageRadius(enemy, placementCatalog_) + radius + SpawnAvoidancePadding;
             if (distanceSquared(spawnPosition, enemy.position) < minDistance * minDistance) {
                 return false;
             }
@@ -7404,7 +7524,7 @@ bool EnemySystem::spawnBossNear(
             map,
             desiredPosition,
             playerPosition,
-            bossSpawnRadiusFor(enemyCatalog, bossEnemyId, balance),
+            bossSpawnRadiusFor(enemyCatalog, bossEnemyId, balance, placementCatalog_),
             0.0f,
             spawnPosition)) {
         return false;
@@ -7431,7 +7551,7 @@ void EnemySystem::appendMinimapMarkers(std::vector<EnemyMinimapMarker>& markers)
         }
         markers.push_back(EnemyMinimapMarker{
             .position = enemy.position,
-            .radius = effectiveEnemyRadius(enemy),
+            .radius = enemyPassageRadius(enemy, placementCatalog_),
             .jumpLandingRadius = enemy.jumpLandingRadius,
             .countdownExplodeRadius = enemy.countdownExplodeRadius,
             .contactAttackPower = enemy.contactAttackPower,
@@ -7448,7 +7568,7 @@ bool EnemySystem::updateBossActionSequence(Enemy& enemy, Player& player, TileMap
         return false;
     }
     if (enemy.bossAction.pattern == JunkCrabPatternId) {
-        return updateJunkCrabBossActionSequence(enemy, player, map, projectiles, dt, events_);
+        return updateJunkCrabBossActionSequence(enemy, player, map, projectiles, dt, events_, placementCatalog_);
     }
     if (enemy.bossAction.pattern == AstragnaPatternId) {
         return updateAstragnaBossActionSequence(enemy, player, map, projectiles, dt, events_);
@@ -7458,16 +7578,16 @@ bool EnemySystem::updateBossActionSequence(Enemy& enemy, Player& player, TileMap
     }
 
     if (enemy.bossAction.phase == BossActionPhase::None) {
-        enterBossActionPhase(enemy, BossActionPhase::Approach, player, map, events_, rng_);
+        enterBossActionPhase(enemy, BossActionPhase::Approach, player, map, events_, rng_, placementCatalog_);
         return true;
     }
 
     enemy.bossAction.timer += std::max(0.0f, dt);
     switch (enemy.bossAction.phase) {
     case BossActionPhase::Approach:
-        moveStardustMoleApproach(enemy, player, map, dt);
+        moveStardustMoleApproach(enemy, player, map, dt, placementCatalog_);
         if (enemy.bossAction.timer >= enemy.bossAction.phaseDuration) {
-            enterBossActionPhase(enemy, BossActionPhase::Submerge, player, map, events_, rng_);
+            enterBossActionPhase(enemy, BossActionPhase::Submerge, player, map, events_, rng_, placementCatalog_);
         }
         return true;
     case BossActionPhase::Submerge:
@@ -7488,42 +7608,42 @@ bool EnemySystem::updateBossActionSequence(Enemy& enemy, Player& player, TileMap
             }
         }
         if (enemy.bossAction.timer >= enemy.bossAction.phaseDuration) {
-            enterBossActionPhase(enemy, BossActionPhase::Telegraph, player, map, events_, rng_);
+            enterBossActionPhase(enemy, BossActionPhase::Telegraph, player, map, events_, rng_, placementCatalog_);
         }
         return true;
     case BossActionPhase::Telegraph:
         if (enemy.bossAction.timer >= enemy.bossAction.phaseDuration) {
-            enterBossActionPhase(enemy, BossActionPhase::Jump, player, map, events_, rng_);
+            enterBossActionPhase(enemy, BossActionPhase::Jump, player, map, events_, rng_, placementCatalog_);
         }
         return true;
     case BossActionPhase::Jump: {
         if (updateBossActionJumpMotion(enemy, dt)) {
-            enterBossActionPhase(enemy, BossActionPhase::LandingDelay, player, map, events_, rng_);
+            enterBossActionPhase(enemy, BossActionPhase::LandingDelay, player, map, events_, rng_, placementCatalog_);
         }
         return true;
     }
     case BossActionPhase::LandingDelay:
         if (enemy.bossAction.timer >= enemy.bossAction.phaseDuration) {
-            enterBossActionPhase(enemy, BossActionPhase::Charge, player, map, events_, rng_);
+            enterBossActionPhase(enemy, BossActionPhase::Charge, player, map, events_, rng_, placementCatalog_);
         }
         return true;
     case BossActionPhase::Charge:
-        if (!moveBossCharge(enemy, map, dt, events_)) {
-            enterBossActionPhase(enemy, BossActionPhase::Stun, player, map, events_, rng_);
+        if (!moveBossCharge(enemy, map, dt, events_, placementCatalog_)) {
+            enterBossActionPhase(enemy, BossActionPhase::Stun, player, map, events_, rng_, placementCatalog_);
             return true;
         }
         if (enemy.bossAction.timer >= enemy.bossAction.phaseDuration) {
-            enterBossActionPhase(enemy, BossActionPhase::Recover, player, map, events_, rng_);
+            enterBossActionPhase(enemy, BossActionPhase::Recover, player, map, events_, rng_, placementCatalog_);
         }
         return true;
     case BossActionPhase::Stun:
         if (enemy.bossAction.timer >= enemy.bossAction.phaseDuration) {
-            enterBossActionPhase(enemy, BossActionPhase::Recover, player, map, events_, rng_);
+            enterBossActionPhase(enemy, BossActionPhase::Recover, player, map, events_, rng_, placementCatalog_);
         }
         return true;
     case BossActionPhase::Recover:
         if (enemy.bossAction.timer >= enemy.bossAction.phaseDuration) {
-            enterBossActionPhase(enemy, BossActionPhase::Approach, player, map, events_, rng_);
+            enterBossActionPhase(enemy, BossActionPhase::Approach, player, map, events_, rng_, placementCatalog_);
         }
         return true;
     case BossActionPhase::None:
@@ -7657,7 +7777,7 @@ Vec2 EnemySystem::fleeDirectionFor(TileMap& map, const Enemy& enemy, Vec2 player
     const Vec2 jitter = lengthSquared(jitterDirection) > 0.0001f ? normalize(jitterDirection) : Vec2{};
     const int enemyTileX = map.worldToTile(enemy.position.x);
     const int enemyTileY = map.worldToTile(enemy.position.y);
-    const float radius = effectiveEnemyRadius(enemy);
+    const float radius = enemyPassageRadius(enemy, placementCatalog_);
     auto inBounds = [&](int tx, int ty) {
         return tx >= flowMinX_ && ty >= flowMinY_ && tx < flowMinX_ + flowWidth_ && ty < flowMinY_ + flowHeight_;
     };
@@ -7757,7 +7877,7 @@ Vec2 EnemySystem::fleeDirectionFor(TileMap& map, const Enemy& enemy, Vec2 player
 Vec2 EnemySystem::separationFor(const Enemy& enemy) const
 {
     Vec2 separation{};
-    const float enemyRadius = effectiveEnemyRadius(enemy);
+    const float enemyRadius = enemyPassageRadius(enemy, placementCatalog_);
     for (std::size_t i = 0; i < enemies_.items().size(); ++i) {
         const Enemy& other = enemies_.items()[i];
         if (!other.active || &other == &enemy || other.spawnTimer > 0.0f) {
@@ -7765,7 +7885,7 @@ Vec2 EnemySystem::separationFor(const Enemy& enemy) const
         }
 
         Vec2 away = enemy.position - other.position;
-        const float minDistance = enemyRadius + effectiveEnemyRadius(other) + SpawnAvoidancePadding;
+        const float minDistance = enemyRadius + enemyPassageRadius(other, placementCatalog_) + SpawnAvoidancePadding;
         const float minDistanceSq = minDistance * minDistance;
         const float distSq = lengthSquared(away);
         if (distSq >= minDistanceSq) {
@@ -7788,7 +7908,7 @@ void EnemySystem::moveWithCollision(Enemy& enemy, TileMap& map, Vec2 desiredVelo
         return;
     }
 
-    const float radius = effectiveEnemyRadius(enemy);
+    const float radius = enemyPassageRadius(enemy, placementCatalog_);
     Vec2 next = enemy.position + delta;
     if (!map.isCircleBlocked(next, radius)) {
         enemy.position = next;
@@ -8063,7 +8183,8 @@ EnemyActionUpdateResult updateEnemyChestBiteAction(
     float distanceToPlayer,
     float dt,
     bool attackBlocked,
-    std::vector<EnemyEvent>& events)
+    std::vector<EnemyEvent>& events,
+    const EnemyPlacementCatalog* placementCatalog)
 {
     EnemyActionUpdateResult result = updateEnemyTimedAction(enemy, dt, attackBlocked, ChestBiteBehaviorId);
     if (!result.fired) {
@@ -8085,7 +8206,8 @@ EnemyActionUpdateResult updateEnemyChestBiteAction(
             normalize(toPlayer),
             lungeDistance,
             enemy.chestBiteJumpDurationSeconds,
-            enemy.chestBiteJumpArcHeight)) {
+            enemy.chestBiteJumpArcHeight,
+            placementCatalog)) {
         events.push_back(makeEnemyEvent(EnemyEventType::Attack, enemy, "chest_bite_lunge"));
         return result;
     }
@@ -8097,7 +8219,7 @@ EnemyActionUpdateResult updateEnemyChestBiteAction(
 bool EnemySystem::resolvePlayerOverlap(Player& player, Enemy& enemy, TileMap& map, const RuntimeBalance& balance)
 {
     Vec2 fromPlayer = enemy.position - player.position;
-    const float enemyRadius = effectiveEnemyRadius(enemy);
+    const float enemyRadius = enemyPassageRadius(enemy, placementCatalog_);
     const float playerRadius = effectivePlayerRadius(player, balance);
     const float minimumDistance = enemyRadius + playerRadius;
     float distSq = lengthSquared(fromPlayer);
@@ -8226,7 +8348,7 @@ void EnemySystem::update(
         }
     };
     const auto sleepingEnemyWakeTriggered = [&](const Enemy& enemy) {
-        if (enemyHitboxOverlapsPlayer(enemy, hitboxCatalog_, player, balance)) {
+        if (enemyHitboxOverlapsPlayer(enemy, hitboxCatalog_, player, balance, enemyVisualOffset(enemy, placementCatalog_))) {
             return true;
         }
         for (SpellRingItem* itemPtr : spellRing.runtimeItemsMutable()) {
@@ -8250,7 +8372,7 @@ void EnemySystem::update(
                 hitboxCatalog_,
                 totalTime,
                 ringItemExtraHitboxPadding(item));
-            if (ringItemHitboxOverlapsEnemy(enemy, hitboxCatalog_, item, itemHitbox)) {
+            if (ringItemHitboxOverlapsEnemy(enemy, hitboxCatalog_, item, itemHitbox, enemyVisualOffset(enemy, placementCatalog_))) {
                 return true;
             }
         }
@@ -8466,7 +8588,7 @@ void EnemySystem::update(
         const Vec2 toPlayer = player.position - enemy.position;
         const float distanceToPlayer = length(toPlayer);
         const Vec2 directToPlayer = distanceToPlayer > 0.0001f ? toPlayer / distanceToPlayer : Vec2{};
-        const float enemyRadius = effectiveEnemyRadius(enemy);
+        const float enemyRadius = enemyPassageRadius(enemy, placementCatalog_);
         const float playerRadius = effectivePlayerRadius(player, balance);
         const bool confused = enemy.status.hasState("status_confuse");
         const bool actionBlocked =
@@ -8612,7 +8734,8 @@ void EnemySystem::update(
             distanceToPlayer,
             dt,
             attackBlocked,
-            events_);
+            events_,
+            placementCatalog_);
         if (!enemy.action.active &&
             !enemy.jumpActive &&
             !attackBlocked &&
@@ -8629,7 +8752,7 @@ void EnemySystem::update(
         const bool actionLocksMovement = enemy.action.active && enemy.action.lockMovement;
         if (enemy.stealItemEnabled &&
             carriedCount() < std::max(1, enemy.stealMaxCarry) &&
-            enemyCanStealInView(enemy, stealViewBounds)) {
+            enemyCanStealInView(enemy, stealViewBounds, placementCatalog_)) {
             WorldDropItem stolenDrop;
             if (worldDrops.stealNearestDrop(
                     objectCatalog,
@@ -8859,7 +8982,8 @@ void EnemySystem::update(
                     directToPlayer,
                     std::max(JumpTargetMinDistance, enemy.jumpAttackDistance),
                     enemy.jumpAttackDurationSeconds,
-                    enemy.jumpAttackArcHeight);
+                    enemy.jumpAttackArcHeight,
+                    placementCatalog_);
                 enemy.jumpAttackTimer = std::max(0.2f, enemy.jumpAttackIntervalSeconds);
             }
         }
@@ -9073,13 +9197,14 @@ void EnemySystem::update(
             enemy.bossAction.phase != BossActionPhase::Stun &&
             !isJunkCrabToppled(enemy) &&
             !isAstragnaBossAction(enemy);
+        const Vec2 enemyHitboxOffset = enemyVisualOffset(enemy, placementCatalog_);
         const bool touchedPlayerBeforeResolve = contactEnabled &&
-            enemyHitboxOverlapsPlayer(enemy, hitboxCatalog_, player, balance);
+            enemyHitboxOverlapsPlayer(enemy, hitboxCatalog_, player, balance, enemyHitboxOffset);
         if (contactEnabled) {
             resolvePlayerOverlap(player, enemy, map, balance);
         }
         bool touchedPlayer = contactEnabled &&
-            (touchedPlayerBeforeResolve || enemyHitboxOverlapsPlayer(enemy, hitboxCatalog_, player, balance));
+            (touchedPlayerBeforeResolve || enemyHitboxOverlapsPlayer(enemy, hitboxCatalog_, player, balance, enemyHitboxOffset));
         if (!touchedPlayer &&
             enemy.jumpLandingBuffTimer > 0.0f &&
             enemy.jumpLandingRadius > 0.0f &&
@@ -9216,14 +9341,15 @@ void EnemySystem::update(
                     itemHitbox,
                     spellRing,
                     events_,
-                    impactSoundEvents_)) {
+                    impactSoundEvents_,
+                    placementCatalog_)) {
                 item.lastEnemyHitTime = totalTime;
                 continue;
             }
             if (isAstragnaBossAction(enemy)) {
                 continue;
             }
-            const bool overlappingItem = ringItemHitboxOverlapsEnemy(enemy, hitboxCatalog_, item, itemHitbox);
+            const bool overlappingItem = ringItemHitboxOverlapsEnemy(enemy, hitboxCatalog_, item, itemHitbox, enemyVisualOffset(enemy, placementCatalog_));
             if (item.type == SpellRingItemType::Shovel && !overlappingItem) {
                 item.unlatchEnemy(enemy.id);
                 continue;
@@ -9346,7 +9472,8 @@ void EnemySystem::update(
                 adjustedDamage,
                 item,
                 itemHitbox,
-                hitboxCatalog_);
+                hitboxCatalog_,
+                placementCatalog_);
             adjustedDamage = bossDamage.damage;
             const bool nonlethalHit = nonlethalHitApplies(hitObject);
             int damageDealt = applyDefenseModifier(enemy.status, adjustedDamage);
@@ -9365,7 +9492,8 @@ void EnemySystem::update(
             addJunkCrabToppleMeter(
                 enemy,
                 junkCrabToppleGainForRingHit(item, hitObject, contactDamageType, damageDealt),
-                events_);
+                events_,
+                placementCatalog_);
             if (damageDealt > 0) {
                 item.actionFlashTimer = SpellRingItemActionFlashSeconds;
             }
@@ -9472,7 +9600,7 @@ void EnemySystem::update(
                         recordObjectEffectDiscovery(discoveryEvents, *hitObject, "nonlethal_hit", "", enemy.position);
                     }
                 }
-                if (enemy.hp > 0 && beginExternalGroundBounce(enemy, map, item.worldPosition, bounceGroundedSpec)) {
+                if (enemy.hp > 0 && beginExternalGroundBounce(enemy, map, item.worldPosition, bounceGroundedSpec, placementCatalog_)) {
                     if (hitEffectId.empty()) {
                         hitEffectId = "bounce_grounded";
                     }
@@ -9587,7 +9715,7 @@ void EnemySystem::update(
                     continue;
                 }
                 const Vec2 delta = windDirection * (WindBlowEnemyPushSpeed * pulse.strength * enemyFalloff * massMultiplier * pulseDt);
-                if (tryMoveCircle(map, windEnemy.position, effectiveEnemyRadius(windEnemy), delta)) {
+                if (tryMoveCircle(map, windEnemy.position, enemyPassageRadius(windEnemy, placementCatalog_), delta)) {
                     windEnemy.aiDecisionTimer = std::min(windEnemy.aiDecisionTimer, 0.08f);
                 }
             }
@@ -9746,7 +9874,7 @@ void EnemySystem::appendRenderEntries(
         if (!enemyVisible(enemy)) {
             continue;
         }
-        const Vec2 drawPosition = enemyDrawPosition(enemy);
+        const Vec2 drawPosition = enemyDrawPosition(enemy, placementCatalog_);
         const Vec2 visualSize = enemyVisualBoundsSize(renderer, enemy);
         if (!map.isRectLit(drawPosition, visualSize, playerLight, extraLights)) {
             continue;
@@ -9757,8 +9885,8 @@ void EnemySystem::appendRenderEntries(
             encyclopedia->enemyStage(enemy.enemyId) == EncyclopediaStage::Complete;
         entries.push_back(DepthRenderEntry{
             enemy.position.y,
-            [&renderer, &map, &enemy, hitboxCatalog = hitboxCatalog_, captureHighlighted, detailsKnown]() {
-                drawEnemyVisual(renderer, map, enemy, hitboxCatalog, captureHighlighted, detailsKnown);
+            [&renderer, &map, &enemy, hitboxCatalog = hitboxCatalog_, placementCatalog = placementCatalog_, captureHighlighted, detailsKnown]() {
+                drawEnemyVisual(renderer, map, enemy, hitboxCatalog, placementCatalog, captureHighlighted, detailsKnown);
             },
         });
     }
@@ -9785,7 +9913,7 @@ void EnemySystem::appendWetGroundEmitters(std::vector<WetGroundEmitter>& emitter
         emitters.push_back(WetGroundEmitter{
             .sourceKey = "enemy:" + std::to_string(enemy.id),
             .position = enemy.position,
-            .radius = std::clamp(effectiveEnemyRadius(enemy) * 1.35f, 12.0f, 38.0f),
+            .radius = std::clamp(enemyPassageRadius(enemy, placementCatalog_) * 1.35f, 12.0f, 38.0f),
             .strength = 1.0f,
         });
     }
@@ -9828,7 +9956,8 @@ bool EnemySystem::hitByPlayerProjectile(
             }
             continue;
         }
-        if (!enemyHitboxOverlapsCircle(enemy, hitboxCatalog_, projectile.position, projectile.radius)) {
+        const Vec2 enemyHitboxOffset = enemyVisualOffset(enemy, placementCatalog_);
+        if (!enemyHitboxOverlapsCircle(enemy, hitboxCatalog_, projectile.position, projectile.radius, enemyHitboxOffset)) {
             continue;
         }
 
@@ -9837,7 +9966,8 @@ bool EnemySystem::hitByPlayerProjectile(
             std::max(0, damage),
             projectile.position,
             projectile.radius,
-            hitboxCatalog_);
+            hitboxCatalog_,
+            placementCatalog_);
         const int adjustedDamage = applyDefenseModifier(enemy.status, bossDamage.damage);
         applyEnemyDamageTyped(enemy, adjustedDamage, projectile.damageType);
         revealEnemyHpBar(enemy, adjustedDamage);
@@ -9845,7 +9975,8 @@ bool EnemySystem::hitByPlayerProjectile(
         addJunkCrabToppleMeter(
             enemy,
             junkCrabToppleGainForProjectile(projectile, adjustedDamage),
-            events_);
+            events_,
+            placementCatalog_);
 
         if (!projectile.effects.empty()) {
             EffectContext context;
@@ -9921,7 +10052,7 @@ int EnemySystem::applyColdAirAura(
         if (!enemyCanBeHit(enemy) || enemy.spawnTimer > 0.0f) {
             continue;
         }
-        if (!enemyHitboxOverlapsCircle(enemy, hitboxCatalog_, position, radius)) {
+        if (!enemyHitboxOverlapsCircle(enemy, hitboxCatalog_, position, radius, enemyVisualOffset(enemy, placementCatalog_))) {
             continue;
         }
 
@@ -9977,7 +10108,7 @@ int EnemySystem::applyConductiveShock(Vec2 position, float radius, double value,
             continue;
         }
 
-        if (!enemyHitboxOverlapsCircle(enemy, hitboxCatalog_, position, radius)) {
+        if (!enemyHitboxOverlapsCircle(enemy, hitboxCatalog_, position, radius, enemyVisualOffset(enemy, placementCatalog_))) {
             continue;
         }
         EntityStateApplyResult shockResult;
@@ -10027,7 +10158,8 @@ int EnemySystem::applyHotAir(
         if (!enemyCanBeHit(enemy) || enemy.spawnTimer > 0.0f) {
             continue;
         }
-        if (!enemyHitboxOverlapsCircle(enemy, hitboxCatalog_, position, radius)) {
+        const Vec2 enemyHitboxOffset = enemyVisualOffset(enemy, placementCatalog_);
+        if (!enemyHitboxOverlapsCircle(enemy, hitboxCatalog_, position, radius, enemyHitboxOffset)) {
             continue;
         }
 
@@ -10043,7 +10175,8 @@ int EnemySystem::applyHotAir(
                     typedDamage,
                     position,
                     radius,
-                    hitboxCatalog_);
+                    hitboxCatalog_,
+                    placementCatalog_);
                 const int damageDealt = applyDefenseModifier(enemy.status, bossDamage.damage);
                 applyEnemyDamageTyped(enemy, damageDealt, "fire");
                 revealEnemyHpBar(enemy, damageDealt);
@@ -10228,7 +10361,8 @@ int EnemySystem::applyMagicArea(const EnemyMagicHitSpec& spec, SpellRingSystem& 
         if (spec.excludedRuntimeId != 0 && enemy.id == spec.excludedRuntimeId) {
             continue;
         }
-        if (!enemyHitboxOverlapsCircle(enemy, hitboxCatalog_, spec.position, radius)) {
+        const Vec2 enemyHitboxOffset = enemyVisualOffset(enemy, placementCatalog_);
+        if (!enemyHitboxOverlapsCircle(enemy, hitboxCatalog_, spec.position, radius, enemyHitboxOffset)) {
             continue;
         }
 
@@ -10241,7 +10375,8 @@ int EnemySystem::applyMagicArea(const EnemyMagicHitSpec& spec, SpellRingSystem& 
                 typedDamage,
                 spec.position,
                 radius,
-                hitboxCatalog_);
+                hitboxCatalog_,
+                placementCatalog_);
             const int damageDealt = applyDefenseModifier(enemy.status, bossDamage.damage);
             applyEnemyDamageTyped(enemy, damageDealt, spec.damageType.empty() ? spec.effectId : spec.damageType);
             revealEnemyHpBar(enemy, damageDealt);
@@ -10278,7 +10413,8 @@ int EnemySystem::applyMagicArea(const EnemyMagicHitSpec& spec, SpellRingSystem& 
                     typedDamage,
                     spec.position,
                     radius,
-                    hitboxCatalog_);
+                    hitboxCatalog_,
+                    placementCatalog_);
                 const int damageDealt = applyDefenseModifier(enemy.status, bossDamage.damage);
                 applyEnemyDamageTyped(enemy, damageDealt, bonusDamageType);
                 revealEnemyHpBar(enemy, damageDealt);
@@ -10374,7 +10510,6 @@ void EnemySystem::applyExplosionDamage(Vec2 position, float radius, SpellRingSys
 
     spellRing.applyExplosionDamageToItems(position, safeRadius, damage);
 
-    const float radiusSq = safeRadius * safeRadius;
     for (Enemy& enemy : enemies_.items()) {
         if (!enemyCanBeHit(enemy) || enemy.spawnTimer > 0.0f || enemy.id == excludedEnemyRuntimeId) {
             continue;
@@ -10382,7 +10517,7 @@ void EnemySystem::applyExplosionDamage(Vec2 position, float radius, SpellRingSys
         if (isAstragnaBossAction(enemy)) {
             continue;
         }
-        if (distanceSquared(enemy.position, position) > radiusSq) {
+        if (!enemyHitboxOverlapsCircle(enemy, hitboxCatalog_, position, safeRadius, enemyVisualOffset(enemy, placementCatalog_))) {
             continue;
         }
 
@@ -10391,7 +10526,8 @@ void EnemySystem::applyExplosionDamage(Vec2 position, float radius, SpellRingSys
             std::max(0, damage),
             position,
             safeRadius,
-            hitboxCatalog_);
+            hitboxCatalog_,
+            placementCatalog_);
         const int damageDealt = applyDefenseModifier(enemy.status, bossDamage.damage);
         applyEnemyDamageTyped(enemy, damageDealt, "fire");
         revealEnemyHpBar(enemy, damageDealt);
@@ -10494,7 +10630,7 @@ int EnemySystem::pullMetalEnemies(Vec2 center, TileMap& map, float dt, float rad
         const float distance = std::sqrt(distanceSq);
         const float falloff = 1.0f - clamp(distance / effectiveRadius, 0.0f, 1.0f);
         const Vec2 delta = normalize(toCenter) * (CapturedMagnetEnemyPullSpeed * falloff * dt);
-        if (tryMoveCircle(map, enemy.position, effectiveEnemyRadius(enemy), delta)) {
+        if (tryMoveCircle(map, enemy.position, enemyPassageRadius(enemy, placementCatalog_), delta)) {
             ++pulled;
             if (pulled >= CapturedMagnetEnemyLimit) {
                 break;
@@ -10527,7 +10663,7 @@ int EnemySystem::pullLightEnemies(Vec2 center, TileMap& map, float dt, float rad
         const float distance = std::sqrt(distanceSq);
         const float falloff = 0.35f + (1.0f - clamp(distance / effectiveRadius, 0.0f, 1.0f)) * 0.65f;
         const Vec2 delta = normalize(toCenter) * (pullSpeed * falloff * dt);
-        if (tryMoveCircle(map, enemy.position, effectiveEnemyRadius(enemy), delta)) {
+        if (tryMoveCircle(map, enemy.position, enemyPassageRadius(enemy, placementCatalog_), delta)) {
             ++pulled;
             if (pulled >= VacuumLightEnemyLimit) {
                 break;
@@ -10560,7 +10696,7 @@ int EnemySystem::pushLightEnemies(Vec2 center, TileMap& map, float dt, float rad
         const float distance = std::sqrt(distanceSq);
         const float falloff = 0.35f + (1.0f - clamp(distance / effectiveRadius, 0.0f, 1.0f)) * 0.65f;
         const Vec2 delta = normalize(away) * (pushSpeed * falloff * dt);
-        if (tryMoveCircle(map, enemy.position, effectiveEnemyRadius(enemy), delta)) {
+        if (tryMoveCircle(map, enemy.position, enemyPassageRadius(enemy, placementCatalog_), delta)) {
             ++pushed;
             if (pushed >= WindLightEnemyLimit) {
                 break;
@@ -10815,8 +10951,9 @@ Enemy* EnemySystem::findCaptureTarget(Vec2 targetWorld)
         if (!enemyCanBeHit(enemy)) {
             continue;
         }
+        const Vec2 targetCenter = enemy.position + enemyVisualOffset(enemy, placementCatalog_);
         const float targetRadius = std::max(CaptureTargetMinRadius, enemyHitboxBoundsRadius(enemy, hitboxCatalog_) + CaptureTargetPadding);
-        const float targetDistanceSq = distanceSquared(enemy.position, targetWorld);
+        const float targetDistanceSq = distanceSquared(targetCenter, targetWorld);
         if (targetDistanceSq <= targetRadius * targetRadius && targetDistanceSq <= bestDistanceSq) {
             bestDistanceSq = targetDistanceSq;
             best = &enemy;
@@ -10859,8 +10996,9 @@ const Enemy* EnemySystem::findCaptureTarget(Vec2 targetWorld) const
         if (!enemyCanBeHit(enemy)) {
             continue;
         }
+        const Vec2 targetCenter = enemy.position + enemyVisualOffset(enemy, placementCatalog_);
         const float targetRadius = std::max(CaptureTargetMinRadius, enemyHitboxBoundsRadius(enemy, hitboxCatalog_) + CaptureTargetPadding);
-        const float targetDistanceSq = distanceSquared(enemy.position, targetWorld);
+        const float targetDistanceSq = distanceSquared(targetCenter, targetWorld);
         if (targetDistanceSq <= targetRadius * targetRadius && targetDistanceSq <= bestDistanceSq) {
             bestDistanceSq = targetDistanceSq;
             best = &enemy;
@@ -10887,7 +11025,8 @@ const Enemy* EnemySystem::findCaptureTargetInDirection(Vec2 origin, Vec2 directi
         if (!enemyCanBeHit(enemy)) {
             continue;
         }
-        const Vec2 toEnemy = enemy.position - origin;
+        const Vec2 targetCenter = enemy.position + enemyVisualOffset(enemy, placementCatalog_);
+        const Vec2 toEnemy = targetCenter - origin;
         const float along = dot(toEnemy, aim);
         if (along < 0.0f || along > CaptureReach) {
             continue;

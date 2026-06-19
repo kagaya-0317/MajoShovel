@@ -502,12 +502,17 @@ float hitboxProfileBoundsRadius(const HitboxProfile& profile, float scale, float
 
 float enemyHitboxBoundsRadius(const Enemy& enemy, const HitboxCatalog* catalog)
 {
+    return enemyHitboxBoundsRadius(enemy, catalog, {});
+}
+
+float enemyHitboxBoundsRadius(const Enemy& enemy, const HitboxCatalog* catalog, Vec2 centerOffset)
+{
     const float scale = enemyHitboxScale(enemy);
     if (const HitboxProfile* profile = enemyHitboxProfileFor(catalog, enemy)) {
-        return hitboxProfileBoundsRadius(*profile, scale);
+        return length(centerOffset) + hitboxProfileBoundsRadius(*profile, scale);
     }
 
-    return std::max(1.0f, fallbackEnemyHitCircle(enemy).radius * scale);
+    return std::max(1.0f, length(centerOffset) + fallbackEnemyHitCircle(enemy).radius * scale);
 }
 
 bool hitboxProfileOverlapsCircle(
@@ -581,15 +586,17 @@ bool enemyHitboxOverlapsCircle(
     const Enemy& enemy,
     const HitboxCatalog* catalog,
     Vec2 circleCenter,
-    float circleRadius)
+    float circleRadius,
+    Vec2 centerOffset)
 {
     const float scale = enemyHitboxScale(enemy);
+    const Vec2 center = enemy.position + centerOffset;
     if (const HitboxProfile* profile = enemyHitboxProfileFor(catalog, enemy)) {
-        return hitboxProfileOverlapsCircle(*profile, enemy.position, 0.0f, scale, 0.0f, circleCenter, circleRadius);
+        return hitboxProfileOverlapsCircle(*profile, center, 0.0f, scale, 0.0f, circleCenter, circleRadius);
     }
 
     const float radius = fallbackEnemyHitCircle(enemy).radius * scale + std::max(0.0f, circleRadius);
-    return distanceSquared(enemy.position, circleCenter) <= radius * radius;
+    return distanceSquared(center, circleCenter) <= radius * radius;
 }
 
 bool enemyHitboxOverlapsProfile(
@@ -599,13 +606,15 @@ bool enemyHitboxOverlapsProfile(
     Vec2 profileCenter,
     float profileRotationRadians,
     float profileScale,
-    float profileRadiusPadding)
+    float profileRadiusPadding,
+    Vec2 centerOffset)
 {
     const float enemyScale = enemyHitboxScale(enemy);
+    const Vec2 center = enemy.position + centerOffset;
     if (const HitboxProfile* enemyProfile = enemyHitboxProfileFor(catalog, enemy)) {
         return hitboxProfilesOverlap(
             *enemyProfile,
-            enemy.position,
+            center,
             0.0f,
             enemyScale,
             0.0f,
@@ -622,7 +631,7 @@ bool enemyHitboxOverlapsProfile(
         profileRotationRadians,
         profileScale,
         profileRadiusPadding,
-        enemy.position,
+        center,
         fallbackEnemyHitCircle(enemy).radius * enemyScale);
 }
 

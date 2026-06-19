@@ -106,6 +106,7 @@ add_executable(MajoShovel
     src/game/TileMap.cpp
     src/game/Enemy.cpp
     src/game/Hitbox.cpp
+    src/game/EnemyPlacement.cpp
     src/game/EnemyShadow.cpp
     src/game/EnemyImageRenderer.cpp
     src/game/EnemySystem.cpp

@@ -512,6 +512,7 @@ bool playTimeCountsForMode(ScreenMode mode)
     case ScreenMode::Title:
     case ScreenMode::ObjectImageScaleEdit:
     case ScreenMode::EnemyHitboxEdit:
+    case ScreenMode::EnemyPlacementEdit:
     case ScreenMode::EnemyShadowEdit:
     case ScreenMode::AudioCueEdit:
         return false;
@@ -681,6 +682,9 @@ bool Game::handleEvent(const SDL_Event& event)
         return true;
     }
     if (handleEnemyHitboxEditEvent(event)) {
+        return true;
+    }
+    if (handleEnemyPlacementEditEvent(event)) {
         return true;
     }
     if (handleEnemyShadowEditEvent(event)) {
@@ -975,8 +979,10 @@ bool Game::advanceInitialize()
         break;
     case InitializeStep::LoadHitboxes:
         loadHitboxData();
+        loadEnemyPlacementData();
         loadEnemyShadowData();
         enemies_.setHitboxCatalog(&hitboxes_);
+        enemies_.setPlacementCatalog(&enemyPlacements_);
         enemies_.setShadowCatalog(&enemyShadows_);
         initializeJob_.step = InitializeStep::LoadOpening;
         break;
@@ -1151,6 +1157,7 @@ void Game::resetWorldEnemyState()
 {
     resetInPlace(enemies_);
     enemies_.setHitboxCatalog(&hitboxes_);
+    enemies_.setPlacementCatalog(&enemyPlacements_);
     enemies_.setShadowCatalog(&enemyShadows_);
 }
 
@@ -3664,6 +3671,11 @@ void Game::updateScreenMode(
         return;
     }
 
+    if (mode_ == ScreenMode::EnemyPlacementEdit) {
+        updateEnemyPlacementEditScreen(input, ui);
+        return;
+    }
+
     if (mode_ == ScreenMode::EnemyShadowEdit) {
         updateEnemyShadowEditScreen(input, ui);
         return;
@@ -3959,6 +3971,9 @@ void Game::updateScreenMode(
         break;
     case ScreenMode::EnemyHitboxEdit:
         updateEnemyHitboxEditScreen(input, ui);
+        break;
+    case ScreenMode::EnemyPlacementEdit:
+        updateEnemyPlacementEditScreen(input, ui);
         break;
     case ScreenMode::EnemyShadowEdit:
         updateEnemyShadowEditScreen(input, ui);
@@ -5097,6 +5112,14 @@ void Game::checkHotReload(float dt)
         loadHitboxData();
         enemies_.setHitboxCatalog(&hitboxes_);
         rebuildEnemyHitboxEditList();
+        reloadNotice_ = "Hot reload: " + changedPath;
+        reloadNoticeTimer_ = 3.0f;
+        configureWatcher();
+        return;
+    } else if (fileName == "enemy_placements.cfg") {
+        loadEnemyPlacementData();
+        enemies_.setPlacementCatalog(&enemyPlacements_);
+        rebuildEnemyPlacementEditList();
         reloadNotice_ = "Hot reload: " + changedPath;
         reloadNoticeTimer_ = 3.0f;
         configureWatcher();

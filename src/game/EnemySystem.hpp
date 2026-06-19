@@ -9,6 +9,7 @@
 #include "game/DepthRender.hpp"
 #include "game/EffectDispatcher.hpp"
 #include "game/Enemy.hpp"
+#include "game/EnemyPlacement.hpp"
 #include "game/EnemyShadow.hpp"
 #include "game/Hitbox.hpp"
 #include "game/InventorySystem.hpp"
@@ -185,6 +186,7 @@ struct EnemyWindPulse {
 class EnemySystem {
 public:
     void setHitboxCatalog(const HitboxCatalog* catalog) { hitboxCatalog_ = catalog; }
+    void setPlacementCatalog(const EnemyPlacementCatalog* catalog) { placementCatalog_ = catalog; }
     void setShadowCatalog(const EnemyShadowCatalog* catalog) { shadowCatalog_ = catalog; }
     void spawnFromDugTiles(
         const std::vector<DugEnemySpawnPoint>& dugTiles,
@@ -475,6 +477,7 @@ private:
 
     ObjectPool<Enemy, balance::MaxEnemies> enemies_;
     const HitboxCatalog* hitboxCatalog_ = nullptr;
+    const EnemyPlacementCatalog* placementCatalog_ = nullptr;
     const EnemyShadowCatalog* shadowCatalog_ = nullptr;
     std::vector<EnemyEvent> events_;
     std::vector<RingImpactSoundEvent> impactSoundEvents_;

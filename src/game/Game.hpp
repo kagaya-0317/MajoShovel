@@ -112,6 +112,7 @@ enum class ScreenMode {
     Ring,
     ObjectImageScaleEdit,
     EnemyHitboxEdit,
+    EnemyPlacementEdit,
     EnemyShadowEdit,
     AudioCueEdit,
     LevelUp,
@@ -215,6 +216,14 @@ struct EnemyShadowEditSnapshot {
     std::string selectedId;
 
     bool operator==(const EnemyShadowEditSnapshot&) const = default;
+};
+
+struct EnemyPlacementEditSnapshot {
+    EnemyPlacementCatalog catalog;
+    HitboxDirection direction = HitboxDirection::Default;
+    std::string selectedId;
+
+    bool operator==(const EnemyPlacementEditSnapshot&) const = default;
 };
 
 struct AudioCueEditEntry {
@@ -1698,6 +1707,28 @@ private:
     bool pasteCurrentHitboxEditProfile(bool mirrorX);
     bool copyEnemyHitboxAllDirectionProfiles();
     bool pasteEnemyHitboxAllDirectionProfiles(bool mirrorX);
+    bool loadEnemyPlacementData();
+    bool saveEnemyPlacementData(std::string& message);
+    bool handleEnemyPlacementEditCommand(std::string_view normalized);
+    void rebuildEnemyPlacementEditList();
+    void applyEnemyPlacementEditFilter(std::string_view preferredSelection = {});
+    bool handleEnemyPlacementEditEvent(const SDL_Event& event);
+    void enterEnemyPlacementEditMode();
+    void exitEnemyPlacementEditMode();
+    void updateEnemyPlacementEditScreen(const Input& input, UiContext& ui);
+    void renderEnemyPlacementEditScreen(Renderer& renderer, double totalSeconds) const;
+    EnemyPlacementEditSnapshot makeEnemyPlacementEditSnapshot() const;
+    void restoreEnemyPlacementEditSnapshot(const EnemyPlacementEditSnapshot& snapshot);
+    void pushEnemyPlacementEditUndoSnapshot();
+    bool undoEnemyPlacementEdit();
+    bool redoEnemyPlacementEdit();
+    const EnemyDefinition* selectedEnemyPlacementDefinitionForEdit() const;
+    EnemyPlacementEntry selectedEnemyPlacementEntryForEdit() const;
+    EnemyPlacementEntry& mutableSelectedEnemyPlacementEntryForEdit();
+    bool copyCurrentEnemyPlacementOffset();
+    bool pasteCurrentEnemyPlacementOffset(bool mirrorX);
+    bool copyEnemyPlacementAllDirections();
+    bool pasteEnemyPlacementAllDirections(bool mirrorX);
     bool loadEnemyShadowData();
     bool saveEnemyShadowData(std::string& message);
     bool handleEnemyShadowEditCommand(std::string_view normalized);
@@ -2084,6 +2115,7 @@ private:
     std::unordered_map<std::string, float> objectImageScaleById_;
     std::unordered_map<std::string, float> otherImageScaleByKey_;
     HitboxCatalog hitboxes_;
+    EnemyPlacementCatalog enemyPlacements_;
     EnemyShadowCatalog enemyShadows_;
     std::vector<std::string> objectImageScaleAllObjectIds_;
     std::vector<std::string> objectImageScaleObjectIds_;
@@ -2094,27 +2126,35 @@ private:
     std::vector<std::string> objectHitboxObjectIds_;
     std::vector<std::string> playerHitboxAllIds_;
     std::vector<std::string> playerHitboxIds_;
+    std::vector<std::string> enemyPlacementAllEnemyIds_;
+    std::vector<std::string> enemyPlacementEnemyIds_;
     std::vector<std::string> enemyShadowAllEnemyIds_;
     std::vector<std::string> enemyShadowEnemyIds_;
     std::vector<HitboxEditSnapshot> hitboxEditUndoStack_;
     std::vector<HitboxEditSnapshot> hitboxEditRedoStack_;
+    std::vector<EnemyPlacementEditSnapshot> enemyPlacementEditUndoStack_;
+    std::vector<EnemyPlacementEditSnapshot> enemyPlacementEditRedoStack_;
     std::vector<EnemyShadowEditSnapshot> enemyShadowEditUndoStack_;
     std::vector<EnemyShadowEditSnapshot> enemyShadowEditRedoStack_;
     UiTextInputState objectImageScaleSearchInput_;
     UiTextInputState enemyHitboxSearchInput_;
+    UiTextInputState enemyPlacementSearchInput_;
     UiTextInputState enemyShadowSearchInput_;
     ScreenMode objectImageScaleReturnMode_ = ScreenMode::Playing;
     ScreenMode enemyHitboxEditReturnMode_ = ScreenMode::Playing;
+    ScreenMode enemyPlacementEditReturnMode_ = ScreenMode::Playing;
     ScreenMode enemyShadowEditReturnMode_ = ScreenMode::Playing;
     ImageScaleEditTab imageScaleEditTab_ = ImageScaleEditTab::Objects;
     HitboxEditTab hitboxEditTab_ = HitboxEditTab::Enemies;
     HitboxDirection enemyHitboxDirection_ = HitboxDirection::Default;
+    HitboxDirection enemyPlacementDirection_ = HitboxDirection::Default;
     bool enemyHitboxEditingWeakPoint_ = false;
     int objectImageScaleSelectedIndex_ = -1;
     int otherImageScaleSelectedIndex_ = -1;
     int enemyHitboxSelectedEnemyIndex_ = -1;
     int objectHitboxSelectedObjectIndex_ = -1;
     int playerHitboxSelectedIndex_ = 0;
+    int enemyPlacementSelectedEnemyIndex_ = -1;
     int enemyShadowSelectedEnemyIndex_ = -1;
     int enemyHitboxSelectedCircleIndex_ = -1;
     float objectImageScaleScrollOffset_ = 0.0f;
@@ -2122,24 +2162,35 @@ private:
     float enemyHitboxScrollOffset_ = 0.0f;
     float objectHitboxScrollOffset_ = 0.0f;
     float playerHitboxScrollOffset_ = 0.0f;
+    float enemyPlacementScrollOffset_ = 0.0f;
     float enemyShadowScrollOffset_ = 0.0f;
     bool objectImageScaleDirty_ = false;
     bool enemyHitboxDirty_ = false;
+    bool enemyPlacementDirty_ = false;
     bool enemyShadowDirty_ = false;
     bool enemyHitboxDraggingCircle_ = false;
     bool enemyHitboxDragUndoSnapshotPushed_ = false;
+    bool enemyPlacementDragging_ = false;
+    bool enemyPlacementDragUndoSnapshotPushed_ = false;
     bool enemyShadowDragging_ = false;
     bool enemyShadowDragUndoSnapshotPushed_ = false;
     Vec2 enemyHitboxDragStartMouse_{};
     Vec2 enemyHitboxDragStartOffset_{};
+    Vec2 enemyPlacementDragStartMouse_{};
+    Vec2 enemyPlacementDragStartOffset_{};
     Vec2 enemyShadowDragStartMouse_{};
     Vec2 enemyShadowDragStartOffset_{};
     std::vector<HitCircle> enemyHitboxClipboard_;
     EnemyHitboxDirectionClipboard enemyHitboxAllDirectionClipboard_;
+    Vec2 enemyPlacementOffsetClipboard_{};
+    bool enemyPlacementOffsetClipboardValid_ = false;
+    EnemyPlacementEntry enemyPlacementEntryClipboard_;
+    bool enemyPlacementEntryClipboardValid_ = false;
     EnemyShadowSpec enemyShadowClipboard_;
     bool enemyShadowClipboardValid_ = false;
     std::string objectImageScaleStatus_;
     std::string enemyHitboxStatus_;
+    std::string enemyPlacementStatus_;
     std::string enemyShadowStatus_;
     ScreenMode audioCueEditReturnMode_ = ScreenMode::Playing;
     AudioCueEditMode audioCueEditMode_ = AudioCueEditMode::Bgm;
