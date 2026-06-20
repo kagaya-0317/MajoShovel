@@ -183,6 +183,13 @@ struct StageColumns {
     int warpPointCount = -1;
     int specialRoomCount = -1;
     int bossEnemyId = -1;
+    int detailImagePath = -1;
+    int detailDescription = -1;
+    int detailDifficulty = -1;
+    int detailSize = -1;
+    int detailWallHardness = -1;
+    int detailTerrainComplexity = -1;
+    int detailEnemyIds = -1;
 };
 
 void warnMissingColumn(StageCatalog& catalog, int column, std::string_view columnName)
@@ -210,6 +217,13 @@ StageColumns findStageColumns(const GoogleSheetRow& headers, StageCatalog& catal
     columns.warpPointCount = findColumn(headers, {"ワープポイント数", "warp_point_count", "warpPointCount"});
     columns.specialRoomCount = findColumn(headers, {"特殊部屋数", "special_room_count", "specialRoomCount"});
     columns.bossEnemyId = findColumn(headers, {"ボス敵ID", "boss_enemy_id", "bossEnemyId"});
+    columns.detailImagePath = findColumn(headers, {"詳細画像", "詳細イメージ", "detail_image_path", "detailImagePath", "image_path", "imagePath"});
+    columns.detailDescription = findColumn(headers, {"詳細説明", "説明文", "detail_description", "detailDescription", "description"});
+    columns.detailDifficulty = findColumn(headers, {"難易度", "detail_difficulty", "detailDifficulty", "difficulty"});
+    columns.detailSize = findColumn(headers, {"広さ", "detail_size", "detailSize", "size_label", "sizeLabel"});
+    columns.detailWallHardness = findColumn(headers, {"壁の固さ", "壁硬度", "detail_wall_hardness", "detailWallHardness", "wall_hardness", "wallHardness"});
+    columns.detailTerrainComplexity = findColumn(headers, {"地形の複雑さ", "地形複雑度", "detail_terrain_complexity", "detailTerrainComplexity", "terrain_complexity", "terrainComplexity"});
+    columns.detailEnemyIds = findColumn(headers, {"出現する敵", "出現敵", "detail_enemy_ids", "detailEnemyIds", "enemy_ids", "enemyIds"});
 
     warnMissingColumn(catalog, columns.id, "ステージID");
     warnMissingColumn(catalog, columns.name, "ステージ名");
@@ -278,6 +292,33 @@ double parseDoubleColumnOrDefault(
     return value;
 }
 
+std::vector<std::string> parseListColumn(const GoogleSheetRow& row, int column)
+{
+    std::vector<std::string> values;
+    if (column < 0) {
+        return values;
+    }
+
+    const std::string text = cellAt(row, column);
+    std::string token;
+    const auto flushToken = [&]() {
+        token = trim(token);
+        if (!token.empty()) {
+            values.push_back(token);
+        }
+        token.clear();
+    };
+    for (char ch : text) {
+        if (ch == ',' || ch == ';' || ch == '/' || static_cast<unsigned char>(ch) <= ' ') {
+            flushToken();
+        } else {
+            token.push_back(ch);
+        }
+    }
+    flushToken();
+    return values;
+}
+
 void validateStage(StageDefinition& stage, std::size_t rowIndex, StageCatalog& catalog)
 {
     if (stage.name.empty()) {
@@ -337,7 +378,8 @@ StageDefinition defaultStage(
     double terrainHardnessMultiplier,
     int warpPointCount,
     int specialRoomCount,
-    std::string bossEnemyId)
+    std::string bossEnemyId,
+    StageDefinition::DisplayDetail detail)
 {
     StageDefinition stage;
     stage.id = std::move(id);
@@ -355,6 +397,7 @@ StageDefinition defaultStage(
     stage.warpPointCount = warpPointCount;
     stage.specialRoomCount = specialRoomCount;
     stage.bossEnemyId = std::move(bossEnemyId);
+    stage.detail = std::move(detail);
     return stage;
 }
 
@@ -446,6 +489,13 @@ bool StageCatalog::loadFromTable(const GoogleSheetTable& table, std::string& out
         if (stage.bossEnemyId.empty()) {
             stage.bossEnemyId = defaultBossEnemyIdForStage(stage.id);
         }
+        stage.detail.imagePath = cellAt(row, columns.detailImagePath);
+        stage.detail.description = cellAt(row, columns.detailDescription);
+        stage.detail.difficulty = cellAt(row, columns.detailDifficulty);
+        stage.detail.size = cellAt(row, columns.detailSize);
+        stage.detail.wallHardness = cellAt(row, columns.detailWallHardness);
+        stage.detail.terrainComplexity = cellAt(row, columns.detailTerrainComplexity);
+        stage.detail.enemyIds = parseListColumn(row, columns.detailEnemyIds);
 
         if (!seenIds.insert(stage.id).second) {
             addWarning(catalog, rowPrefix(rowIndex, stage.id) + "duplicate stage ID; first map entry is kept");
@@ -471,10 +521,98 @@ void StageCatalog::loadDefaultStages()
 {
     StageCatalog catalog;
     catalog.stages = {
-        defaultStage("stage_01_stardust", "星くずのダンジョン", "ストーリー", 10, "natural_cave", "soft_stardust", 320, 0.30, 0.25, 1.00, 1.00, 3, 1, "stardust_mole"),
-        defaultStage("stage_02_junk_magic", "魔導具廃棄層", "ストーリー", 20, "junk_layer", "junk_mixed", 420, 0.38, 0.32, 1.12, 1.45, 4, 2, "junk_crab"),
-        defaultStage("stage_03_star_core", "落星の眠る地底", "ストーリー", 30, "star_core", "hard_star_core", 540, 0.44, 0.28, 0.90, 2.20, 5, 2, "astragna"),
-        defaultStage("stage_04_astral_mine", "不可思議の迷宮", "ローグライク", 40, "astral_rogue", "chaos_astral", 640, 0.55, 0.45, 1.25, 1.80, 0, 5, "star_vein_dragon"),
+        defaultStage(
+            "stage_01_stardust",
+            "星くずのダンジョン",
+            "ストーリー",
+            10,
+            "natural_cave",
+            "soft_stardust",
+            320,
+            0.30,
+            0.25,
+            1.00,
+            1.00,
+            3,
+            1,
+            "stardust_mole",
+            StageDefinition::DisplayDetail{
+                .description = "星くずが積もる、最初の坑道。\n小さな空洞が多く、基本の採掘と戦闘を覚えやすい。",
+                .difficulty = "やさしい",
+                .size = "広くない",
+                .wallHardness = "やわらかめ",
+                .terrainComplexity = "そこまで",
+                .enemyIds = {"slime", "bake_kinoko", "uji_uji", "shield_beetle", "web_spider", "ore_crab", "bomb_tsuchinoko", "stardust_mole"},
+            }),
+        defaultStage(
+            "stage_02_junk_magic",
+            "魔導具廃棄層",
+            "ストーリー",
+            20,
+            "junk_layer",
+            "junk_mixed",
+            420,
+            0.38,
+            0.32,
+            1.12,
+            1.45,
+            4,
+            2,
+            "junk_crab",
+            StageDefinition::DisplayDetail{
+                .description = "古い魔導具が埋まる廃棄層。\n硬い壁と寄り道が増え、敵の攻撃も少し厄介になる。",
+                .difficulty = "ふつう",
+                .size = "広い",
+                .wallHardness = "ふつう",
+                .terrainComplexity = "少し",
+                .enemyIds = {"shield_beetle", "web_spider", "ore_crab", "bomb_tsuchinoko", "junk_crab"},
+            }),
+        defaultStage(
+            "stage_03_star_core",
+            "落星の眠る地底",
+            "ストーリー",
+            30,
+            "star_core",
+            "hard_star_core",
+            540,
+            0.44,
+            0.28,
+            0.90,
+            2.20,
+            5,
+            2,
+            "astragna",
+            StageDefinition::DisplayDetail{
+                .description = "落ちた星の核へ続く深い地底。\n壁はかなり硬く、少ない通路で強敵と向き合うことになる。",
+                .difficulty = "むずかしい",
+                .size = "かなり広い",
+                .wallHardness = "かため",
+                .terrainComplexity = "複雑",
+                .enemyIds = {"ore_crab", "bomb_tsuchinoko", "astragna"},
+            }),
+        defaultStage(
+            "stage_04_astral_mine",
+            "不可思議の迷宮",
+            "ローグライク",
+            40,
+            "astral_rogue",
+            "chaos_astral",
+            640,
+            0.55,
+            0.45,
+            1.25,
+            1.80,
+            0,
+            5,
+            "star_vein_dragon",
+            StageDefinition::DisplayDetail{
+                .description = "入るたび姿を変える底なしの迷宮。\n持ち込み不可で、初期ステータスから深層を目指す。",
+                .difficulty = "不明",
+                .size = "底なし",
+                .wallHardness = "不明",
+                .terrainComplexity = "不明",
+                .enemyIds = {"slime", "bake_kinoko", "uji_uji", "shield_beetle", "web_spider", "ore_crab", "bomb_tsuchinoko", "junk_crab", "astragna", "star_vein_dragon"},
+            }),
     };
     rebuildStageIndex(catalog);
     *this = std::move(catalog);

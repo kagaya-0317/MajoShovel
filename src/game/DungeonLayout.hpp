@@ -36,6 +36,7 @@ struct DungeonGenerationContext {
     int stageId = 1;
     std::uint32_t seed = 0;
     float stageHardnessMultiplier = 1.0f;
+    int depthRankOffset = 0;
     int goalDistanceTiles = 320;
     float detourRate = 0.30f;
     float branchDensity = 0.25f;
@@ -51,9 +52,11 @@ struct DungeonLayout {
     int stageId = 1;
     std::uint32_t seed = 0;
     float stageHardnessMultiplier = 1.0f;
+    int depthRankOffset = 0;
     float cavernWidthMultiplier = 1.0f;
     std::string generationProfile = "natural_cave";
     std::string terrainProfile = "soft_stardust";
+    bool roguelike = false;
     DungeonTile startTile{};
     DungeonTile goalTile{};
     std::vector<Vec2> mainPathPoints;

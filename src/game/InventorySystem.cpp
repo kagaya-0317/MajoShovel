@@ -2613,8 +2613,25 @@ void InventorySystem::updateShortcuts(
 
     if (hoveredSlotIndex >= 0 && input.mouseLeftPressed() && !ui.pointerConsumed()) {
         const int previousShortcutIndex = selectedShortcutIndex();
+        const bool activateSelectedSlot = hoveredSlotIndex == previousShortcutIndex;
         selectShortcutIndex(hoveredSlotIndex);
         ui.emitCursorMoveIfChanged(previousShortcutIndex, selectedShortcutIndex());
+        if (activateSelectedSlot) {
+            const InventoryObjectStack* objectStack = objectStackAtScreenIndex(hoveredSlotIndex);
+            const InventoryObjectInstance* objectInstance = objectInstanceAtScreenIndex(hoveredSlotIndex);
+            const ItemData* item = objectStack != nullptr
+                ? &objectStack->item
+                : (objectInstance != nullptr ? &objectInstance->item : nullptr);
+            if (item != nullptr && isStaffObject(*item)) {
+                const bool wasEquipped = objectInstance != nullptr && isStaffEquipped(objectInstance->instance.instanceId);
+                const bool changed = toggleStaffEquipmentScreenItem(hoveredSlotIndex, spellRing);
+                ui.emitSound(changed ? (wasEquipped ? UiSoundEvent::Confirm : UiSoundEvent::Equip) : UiSoundEvent::Cancel);
+            } else {
+                ui.emitSound(useShortcutSelection(player, spellRing, effectDispatcher, magic, discoveryEvents, encyclopedia)
+                    ? UiSoundEvent::ItemUse
+                    : UiSoundEvent::Cancel);
+            }
+        }
         ui.consumePointer();
         return;
     }

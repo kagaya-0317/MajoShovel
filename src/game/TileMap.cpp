@@ -769,6 +769,41 @@ int scaledHp(int baseHp, float stageHardnessMultiplier, float localHardnessMulti
         std::max(0.25f, localHardnessMultiplier))));
 }
 
+bool isRoguelikeLayout(const DungeonLayout& layout)
+{
+    return layout.roguelike || layout.generationProfile == "astral_rogue";
+}
+
+int roguelikeDepthRankForProgress(const DungeonLayout& layout, float pathProgress)
+{
+    constexpr int LocalDepthRanksPerArea = 9;
+    constexpr int SectionsPerArea = 3;
+    const float progress = clamp(pathProgress, 0.0f, 0.9999f);
+    const int localDepthRank = std::clamp(
+        static_cast<int>(progress * static_cast<float>(LocalDepthRanksPerArea)) + 1,
+        1,
+        LocalDepthRanksPerArea);
+    const int localSection = std::clamp((localDepthRank - 1) / 3 + 1, 1, SectionsPerArea);
+    return std::max(1, layout.depthRankOffset + localSection);
+}
+
+float roguelikeWallDepthHardnessMultiplier(int depthRank)
+{
+    constexpr float RankSevenMultiplier = 2.0f;
+    constexpr float RankFifteenMultiplier = 2.8f;
+    constexpr float CapMultiplier = 3.0f;
+    const int rank = std::max(1, depthRank);
+    if (rank <= 7) {
+        return 1.0f + static_cast<float>(rank - 1) / 6.0f;
+    }
+    if (rank <= 15) {
+        return RankSevenMultiplier + static_cast<float>(rank - 7) * 0.1f;
+    }
+    const float multiplier = CapMultiplier - (CapMultiplier - RankFifteenMultiplier) *
+        std::exp(-static_cast<float>(rank - 15) / 4.0f);
+    return std::min(multiplier, std::nextafter(CapMultiplier, 0.0f));
+}
+
 int clampTileHp(int hp)
 {
     return std::clamp(hp, 0, 255);
@@ -1727,6 +1762,12 @@ TerrainDebugInfo TileMap::terrainInfoForTile(int tx, int ty, const Tile* tile) c
         info.localHardnessMultiplier *= 0.8f;
     }
     info.localHardnessMultiplier = std::max(0.35f, info.localHardnessMultiplier);
+    info.depthRank = isRoguelikeLayout(dungeonLayoutSnapshot_)
+        ? roguelikeDepthRankForProgress(dungeonLayoutSnapshot_, metrics.pathProgress)
+        : 1;
+    info.depthHardnessMultiplier = isRoguelikeLayout(dungeonLayoutSnapshot_)
+        ? roguelikeWallDepthHardnessMultiplier(info.depthRank)
+        : 1.0f;
 
     info.type = tile != nullptr ? tile->type : generatedType;
     info.attribute = terrainAttributeForTileType(info.type);
@@ -1736,7 +1777,7 @@ TerrainDebugInfo TileMap::terrainInfoForTile(int tx, int ty, const Tile* tile) c
         ? 0
         : scaledHp(
             baseHpFor(hpType, balanceSnapshot_),
-            dungeonLayoutSnapshot_.stageHardnessMultiplier,
+            dungeonLayoutSnapshot_.stageHardnessMultiplier * info.depthHardnessMultiplier,
             info.localHardnessMultiplier);
     return info;
 }

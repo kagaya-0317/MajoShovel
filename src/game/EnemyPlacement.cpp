@@ -125,7 +125,36 @@ bool offsetIsDefault(Vec2 offset)
     return std::abs(offset.x) <= 0.0001f && std::abs(offset.y) <= 0.0001f;
 }
 
+bool optionalFloatEquals(const std::optional<float>& left, const std::optional<float>& right)
+{
+    if (left.has_value() != right.has_value()) {
+        return false;
+    }
+    return !left || *left == *right;
+}
+
+bool optionalVec2Equals(const std::optional<Vec2>& left, const std::optional<Vec2>& right)
+{
+    if (left.has_value() != right.has_value()) {
+        return false;
+    }
+    return !left || (left->x == right->x && left->y == right->y);
+}
+
 } // namespace
+
+bool EnemyPlacementEntry::operator==(const EnemyPlacementEntry& other) const
+{
+    if (!optionalFloatEquals(passageRadius, other.passageRadius)) {
+        return false;
+    }
+    for (std::size_t i = 0; i < visualOffsets.size(); ++i) {
+        if (!optionalVec2Equals(visualOffsets[i], other.visualOffsets[i])) {
+            return false;
+        }
+    }
+    return true;
+}
 
 float sanitizeEnemyPlacementRadius(float radius)
 {

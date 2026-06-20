@@ -9,6 +9,8 @@
 #include "game/NpcCharacterVisual.hpp"
 
 #include <cmath>
+#include <unordered_map>
+#include <unordered_set>
 
 namespace majo {
 
@@ -2362,6 +2364,9 @@ DungeonGenerationContext Game::makeDungeonGenerationContext() const
         .stageId = stageId,
         .seed = seed,
         .stageHardnessMultiplier = static_cast<float>(std::max(0.25, stage.terrainHardnessMultiplier)),
+        .depthRankOffset = stageIsRoguelike || roguelikeDungeon_
+            ? std::max(0, astralRun_.areaIndex * RoguelikeSectionsPerArea)
+            : 0,
         .goalDistanceTiles = stage.goalDistanceTiles,
         .detourRate = static_cast<float>(stage.detourRate),
         .branchDensity = static_cast<float>(stage.branchDensity),
@@ -3462,6 +3467,182 @@ void Game::restoreInventoryCarryState(const InventoryCarryState& state)
     refreshOrbitEffects();
 }
 
+Game::RoguelikeCarryOutDelta Game::collectRoguelikeCarryOutDelta() const
+{
+    RoguelikeCarryOutDelta delta;
+    if (!runStartInventoryState_.valid) {
+        return delta;
+    }
+
+    delta.valid = true;
+    delta.money = astralRunMoneyDeltaFromStart();
+    for (int index = 0; index < static_cast<int>(MaterialType::Count); ++index) {
+        const MaterialType type = static_cast<MaterialType>(index);
+        const int amount = std::max(
+            0,
+            inventory_.materialCount(type) - runStartInventoryState_.inventory.materialCount(type));
+        delta.materials.setCount(type, amount);
+    }
+
+    std::unordered_map<std::string, int> startStackCounts;
+    for (const InventoryObjectStack& stack : runStartInventoryState_.inventory.objectStacks()) {
+        if (!stack.objectId.empty() && stack.count > 0) {
+            startStackCounts[stack.objectId] += stack.count;
+        }
+    }
+    for (const InventoryObjectStack& stack : inventory_.objectStacks()) {
+        if (stack.objectId.empty() || stack.count <= 0) {
+            continue;
+        }
+        const int carryCount = stack.count - startStackCounts[stack.objectId];
+        if (carryCount > 0) {
+            InventoryObjectStack carried = stack;
+            carried.count = carryCount;
+            delta.objectStacks.push_back(std::move(carried));
+        }
+    }
+
+    std::unordered_set<std::string> startInstanceIds;
+    const auto rememberStartInstance = [&startInstanceIds](std::string_view instanceId) {
+        if (!instanceId.empty()) {
+            startInstanceIds.insert(std::string(instanceId));
+        }
+    };
+    for (const InventoryObjectInstance& instance : runStartInventoryState_.inventory.objectInstances()) {
+        rememberStartInstance(instance.instance.instanceId);
+    }
+    for (const std::vector<SpellRingItem>& ringItems : runStartInventoryState_.ringItemsByRing) {
+        for (const SpellRingItem& item : ringItems) {
+            rememberStartInstance(item.instanceId);
+        }
+    }
+
+    std::unordered_set<std::string> carriedInstanceIds;
+    const auto shouldCarryInstance = [&](std::string_view instanceId) {
+        const std::string id(instanceId);
+        if (id.empty() || startInstanceIds.find(id) != startInstanceIds.end()) {
+            return false;
+        }
+        return carriedInstanceIds.insert(id).second;
+    };
+
+    for (const InventoryObjectInstance& instance : inventory_.objectInstances()) {
+        if (shouldCarryInstance(instance.instance.instanceId)) {
+            delta.objectInstances.push_back(instance);
+        }
+    }
+    for (const std::vector<SpellRingItem>& ringItems : spellRing_.ringItems()) {
+        for (const SpellRingItem& item : ringItems) {
+            if (item.objectId.empty() || !shouldCarryInstance(item.instanceId)) {
+                continue;
+            }
+            const ItemData* object = objectForRingItem(objectCatalog_, item);
+            const ItemData missingObject = object == nullptr ? makeMissingItemData(item.objectId) : ItemData{};
+            ItemInstance instance;
+            instance.instanceId = item.instanceId;
+            instance.objectId = item.objectId;
+            instance.currentDurability = item.durability;
+            instance.maxDurability = item.maxDurability;
+            instance.enhanceLevel = item.enhanceLevel;
+            instance.attackEnhanceLevel = item.attackEnhanceLevel;
+            instance.digEnhanceLevel = item.digEnhanceLevel;
+            instance.durabilityEnhanceLevel = item.durabilityEnhanceLevel;
+            instance.attackBonus = item.attackBonus;
+            instance.digBonus = item.digBonus;
+            instance.durabilityBonus = item.durabilityBonus;
+            instance.weightModifier = item.weightModifier;
+            instance.sizeModifier = item.sizeModifier;
+            instance.protectionEnabled = item.protectionEnabled;
+            instance.isBroken = item.broken();
+            instance.addedEffects = item.addedEffects;
+            instance.addedTags = item.addedTags;
+            delta.objectInstances.push_back(InventoryObjectInstance{
+                object != nullptr ? *object : missingObject,
+                std::move(instance),
+            });
+        }
+    }
+
+    return delta;
+}
+
+Game::RoguelikeCarryOutMergeResult Game::mergeRoguelikeCarryOutDelta(const RoguelikeCarryOutDelta& delta)
+{
+    RoguelikeCarryOutMergeResult result;
+    if (!delta.valid) {
+        return result;
+    }
+
+    money_ = std::max(0, money_ + delta.money);
+    result.money = delta.money;
+    for (int index = 0; index < static_cast<int>(MaterialType::Count); ++index) {
+        const MaterialType type = static_cast<MaterialType>(index);
+        const int amount = delta.materials.count(type);
+        if (amount <= 0) {
+            continue;
+        }
+        inventory_.addMaterial(type, amount);
+        result.materials += amount;
+    }
+
+    bool warehouseChanged = false;
+    const auto addStackToWarehouse = [&](const InventoryObjectStack& source, int count) {
+        if (source.objectId.empty() || count <= 0) {
+            return false;
+        }
+        auto it = std::find_if(warehouseObjectStacks_.begin(), warehouseObjectStacks_.end(), [&](const InventoryObjectStack& stack) {
+            return stack.objectId == source.objectId;
+        });
+        if (it == warehouseObjectStacks_.end()) {
+            if (warehouseUsedSlots() >= warehouseCapacity()) {
+                return false;
+            }
+            warehouseObjectStacks_.push_back(InventoryObjectStack{source.item, 0});
+            it = warehouseObjectStacks_.end() - 1;
+        }
+        it->count += count;
+        warehouseChanged = true;
+        return true;
+    };
+    const auto addInstanceToWarehouse = [&](const InventoryObjectInstance& source) {
+        if (source.instance.instanceId.empty() || source.instance.objectId.empty() ||
+            warehouseUsedSlots() >= warehouseCapacity()) {
+            return false;
+        }
+        warehouseObjectInstances_.push_back(source);
+        inventory_.observeObjectInstanceId(source.instance.instanceId);
+        warehouseChanged = true;
+        return true;
+    };
+
+    for (const InventoryObjectStack& stack : delta.objectStacks) {
+        for (int i = 0; i < stack.count; ++i) {
+            if (inventory_.addRuntimeObjectItem(stack.item)) {
+                ++result.objectItems;
+            } else if (addStackToWarehouse(stack, 1)) {
+                ++result.objectItems;
+                ++result.warehouseItems;
+            } else {
+                ++result.skippedItems;
+            }
+        }
+    }
+    for (const InventoryObjectInstance& instance : delta.objectInstances) {
+        if (inventory_.addObjectInstance(objectCatalog_, instance.instance)) {
+            ++result.objectItems;
+        } else if (addInstanceToWarehouse(instance)) {
+            ++result.objectItems;
+            ++result.warehouseItems;
+        } else {
+            ++result.skippedItems;
+        }
+    }
+    if (warehouseChanged) {
+        syncWarehouseDisplaySlots();
+    }
+    return result;
+}
+
 void Game::captureRunStartInventoryState()
 {
     runStartInventoryState_ = captureInventoryCarryState();
@@ -3915,11 +4096,17 @@ void Game::enterAstralResult(Game::AstralRunResult result)
     inventory_.setOpen(false);
     inventory_.cancelGrab();
     cancelRingGrab();
+    closeUiCommandMenu(roguelikeBigHoleMenu_);
+    focusedRoguelikeBigHole_ = 0;
+    hoveredRoguelikeBigHole_ = false;
+    focusedRoguelikeFacilityIndex_ = -1;
+    hoveredRoguelikeFacilityIndex_ = -1;
+    closeRoguelikeFacilityUi();
     closeDebugItemPicker();
     closeDebugStoryTest();
     debugStoryTestReturnAfterDialogue_ = false;
     if (levels_.isChoosing()) {
-        levels_ = LevelSystem{};
+        resetInPlace(levels_);
     }
     levelUpPresentation_ = {};
     levelUpResultDialog_ = {};
@@ -3968,27 +4155,48 @@ void Game::returnToBaseFromNormalStage(bool stageCleared, bool died)
     const bool astralCompletedOnReturn =
         returnedStageId == "stage_04_astral_mine" &&
         astralResult_.result == AstralRunResult::Completed;
-    if (currentStageIsRoguelike() && died && restoreRunStartInventoryOnDeath_ && runStartInventoryState_.valid) {
-        restoreInventoryCarryState(runStartInventoryState_);
+    const bool roguelikeReturn = currentStageIsRoguelike();
+    const bool carryOutRoguelikeLoot =
+        roguelikeReturn &&
+        !died &&
+        roguelikeCarryOutRestricted_ &&
+        roguelikeReturnInventoryState_.valid;
+    const RoguelikeCarryOutDelta roguelikeCarryOutDelta =
+        carryOutRoguelikeLoot ? collectRoguelikeCarryOutDelta() : RoguelikeCarryOutDelta{};
+    RoguelikeCarryOutMergeResult roguelikeCarryOutMerge;
+    if (roguelikeReturn) {
+        closeUiCommandMenu(roguelikeBigHoleMenu_);
+        focusedRoguelikeBigHole_ = 0;
+        hoveredRoguelikeBigHole_ = false;
+        focusedRoguelikeFacilityIndex_ = -1;
+        hoveredRoguelikeFacilityIndex_ = -1;
+        closeRoguelikeFacilityUi();
+        if (roguelikeCarryOutRestricted_ && roguelikeReturnInventoryState_.valid) {
+            restoreInventoryCarryState(roguelikeReturnInventoryState_);
+            roguelikeCarryOutMerge = mergeRoguelikeCarryOutDelta(roguelikeCarryOutDelta);
+        } else if (died && restoreRunStartInventoryOnDeath_ && runStartInventoryState_.valid) {
+            restoreInventoryCarryState(runStartInventoryState_);
+        }
+        resetInPlace(roguelikeReturnInventoryState_);
     }
     const bool refreshMerchant = shouldRefreshMerchantOnReturn(stageCleared, died);
     merchantRefreshPending_ = merchantRefreshPending_ || refreshMerchant;
     clearTemporaryPlayerState(true);
     captureDungeonState();
-    tileMap_ = TileMap{};
-    enemies_ = EnemySystem{};
-    effects_ = EffectSystem{};
+    resetInPlace(tileMap_);
+    resetInPlace(enemies_);
+    resetInPlace(effects_);
     captureAbsorbAnimations_.clear();
-    groundLines_ = GroundLineSystem{};
-    wetGround_ = WetGroundSystem{};
+    resetInPlace(groundLines_);
+    resetInPlace(wetGround_);
     ringTrailEffectTimer_ = 0.0f;
     ambientParticleTimer_ = 0.0f;
-    projectiles_ = ProjectileSystem{};
-    magic_ = MagicSystem{};
-    magicFx_ = MagicFxSystem{};
-    worldDrops_ = WorldDropSystem{};
+    resetInPlace(projectiles_);
+    resetInPlace(magic_);
+    resetInPlace(magicFx_);
+    resetInPlace(worldDrops_);
     worldDrops_.setDropLimit(balance_.worldDropLimitPerStage);
-    levels_ = LevelSystem{};
+    resetInPlace(levels_);
     levelUpPresentation_ = {};
     inventory_.setOpen(false);
     inventory_.cancelGrab();
@@ -3998,7 +4206,7 @@ void Game::returnToBaseFromNormalStage(bool stageCleared, bool died)
     bossSpawned_ = false;
     hasBossSpawnPoint_ = false;
     resetBossEncounter();
-    retrySnapshot_ = RetrySnapshot{};
+    resetInPlace(retrySnapshot_);
     warpPoints_.clear();
     spawnedWarpPointCount_ = 0;
     placeBasePlayerAtMineExitReturnPoint();
@@ -4007,6 +4215,38 @@ void Game::returnToBaseFromNormalStage(bool stageCleared, bool died)
     baseStatus_ = testPlayMode_
         ? (refreshMerchant ? "帰還しました。商人ワゴン更新あり" : "帰還しました")
         : std::string{};
+    if (roguelikeCarryOutMerge.objectItems > 0 ||
+        roguelikeCarryOutMerge.materials > 0 ||
+        roguelikeCarryOutMerge.money > 0 ||
+        roguelikeCarryOutMerge.skippedItems > 0) {
+        std::string carryOutStatus = "探索成果";
+        bool hasDetail = false;
+        const auto appendDetail = [&](std::string detail) {
+            carryOutStatus += hasDetail ? "、" : ": ";
+            carryOutStatus += std::move(detail);
+            hasDetail = true;
+        };
+        if (roguelikeCarryOutMerge.objectItems > 0) {
+            std::string detail = "アイテム" + std::to_string(roguelikeCarryOutMerge.objectItems) + "個";
+            if (roguelikeCarryOutMerge.warehouseItems > 0) {
+                detail += "（収納箱" + std::to_string(roguelikeCarryOutMerge.warehouseItems) + "個）";
+            }
+            appendDetail(std::move(detail));
+        }
+        if (roguelikeCarryOutMerge.materials > 0) {
+            appendDetail("素材" + std::to_string(roguelikeCarryOutMerge.materials) + "個");
+        }
+        if (roguelikeCarryOutMerge.money > 0) {
+            appendDetail(std::to_string(roguelikeCarryOutMerge.money) + "G");
+        }
+        if (roguelikeCarryOutMerge.skippedItems > 0) {
+            appendDetail("満杯で未収納" + std::to_string(roguelikeCarryOutMerge.skippedItems) + "個");
+        }
+        if (!baseStatus_.empty()) {
+            baseStatus_ += " / ";
+        }
+        baseStatus_ += carryOutStatus;
+    }
     if (hiddenBadEndingReady()) {
         unlockHiddenBaseOrbitCorruption();
     }
@@ -4615,7 +4855,7 @@ void Game::completeIntroTutorialAndReturnToBase()
     cancelRingGrab();
     warpReturnConfirm_ = {};
     focusedWarpReturnPointIndex_ = -1;
-    retrySnapshot_ = RetrySnapshot{};
+    resetInPlace(retrySnapshot_);
     warpPoints_.clear();
     spawnedWarpPointCount_ = 0;
     warpPointsEnabled_ = true;
@@ -4648,7 +4888,7 @@ void Game::resetWarpPointRunState()
 {
     hasBossSpawnPoint_ = false;
     resetBossEncounter();
-    retrySnapshot_ = RetrySnapshot{};
+    resetInPlace(retrySnapshot_);
     const bool stageIsRoguelike = currentStageDefinition_.type == "ローグライク" ||
         currentStageDefinition_.generationProfile == "astral_rogue";
     warpPointsEnabled_ = !(roguelikeDungeon_ || stageIsRoguelike);
@@ -4740,7 +4980,7 @@ bool Game::restoreDungeonState(bool useLatestWarpPoint)
     }
     resetBossEncounter();
     warpPointsEnabled_ = true;
-    retrySnapshot_ = RetrySnapshot{};
+    resetInPlace(retrySnapshot_);
     effects_ = EffectSystem{};
     captureAbsorbAnimations_.clear();
     groundLines_ = GroundLineSystem{};
@@ -7822,10 +8062,13 @@ bool Game::updateWarpReturnUi(const Input& input, UiContext& ui)
     if (returnPromptFocused &&
         (input.confirmPressed() || input.useItemPressed() || clickedReturnFocusIndex != -1)) {
         ui.emitSound(UiSoundEvent::MenuOpen);
+        const bool roguelikeReturn = currentStageIsRoguelike();
         openUiConfirmDialog(
             warpReturnConfirm_,
             "帰還確認",
-            "拠点へ帰還しますか？\n現在のダンジョン状態を保持したまま、ダンジョン入口へ戻ります。",
+            roguelikeReturn
+                ? "拠点へ帰還しますか？\nこのランを終了して、結果画面へ進みます。"
+                : "拠点へ帰還しますか？\n現在のダンジョン状態を保持したまま、ダンジョン入口へ戻ります。",
             "帰還する",
             "戻る",
             0);

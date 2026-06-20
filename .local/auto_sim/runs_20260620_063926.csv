@@ -1,0 +1,9 @@
+﻿run_index,stage_id,stage_name,seed,result,elapsed_seconds,player_level,hp,max_hp,dug_tiles,defeated_enemies,acquired_items,acquired_object_items,money,total_materials,warp_discovered,warp_total,boss_defeated,timeout,stuck_count
+1,stage_01_stardust,星くずのダンジョン,1128836712,stopped,27.63,1,10,10,14,1,1,0,9,0,0,4,false,false,0
+2,stage_01_stardust,星くずのダンジョン,2862431609,stopped,0.80,1,10,10,0,0,0,0,0,0,0,4,false,false,0
+3,stage_01_stardust,星くずのダンジョン,2862431609,stopped,1.07,1,10,10,0,0,0,0,0,0,0,4,false,false,0
+4,stage_01_stardust,星くずのダンジョン,2862431609,stopped,0.27,1,10,10,0,0,0,0,0,0,0,4,false,false,0
+5,stage_01_stardust,星くずのダンジョン,2862431609,stopped,9.07,1,10,10,17,1,2,1,5,0,0,4,false,false,0
+6,stage_01_stardust,星くずのダンジョン,2862431609,stopped,41.87,1,10,10,59,3,10,2,30,4,0,4,false,false,1
+7,stage_01_stardust,星くずのダンジョン,2862431609,stopped,1.87,2,11,13,64,4,13,4,39,4,0,4,false,false,0
+8,stage_01_stardust,星くずのダンジョン,2862431609,stopped,16.27,3,14,16,111,8,20,5,81,4,0,4,false,false,0

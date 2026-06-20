@@ -17,7 +17,7 @@ struct EnemyPlacementEntry {
     std::optional<float> passageRadius;
     std::array<std::optional<Vec2>, HitboxDirectionCount> visualOffsets{};
 
-    bool operator==(const EnemyPlacementEntry&) const = default;
+    bool operator==(const EnemyPlacementEntry& other) const;
 };
 
 struct EnemyPlacementCatalog {

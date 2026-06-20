@@ -267,9 +267,11 @@ DungeonLayout makeIntroTutorialLayout(const DungeonGenerationContext& context)
     layout.stageId = 1;
     layout.seed = context.seed;
     layout.stageHardnessMultiplier = std::max(0.25f, context.stageHardnessMultiplier);
+    layout.depthRankOffset = std::max(0, context.depthRankOffset);
     layout.cavernWidthMultiplier = 0.82f;
     layout.generationProfile = context.generationProfile.empty() ? "intro_tutorial" : context.generationProfile;
     layout.terrainProfile = context.terrainProfile.empty() ? "soft_stardust" : context.terrainProfile;
+    layout.roguelike = context.roguelike;
     layout.startTile = {0, 0};
     layout.goalTile = {77, 2};
     layout.mainPathPoints = {
@@ -310,9 +312,11 @@ DungeonLayout generateDungeonLayout(const DungeonGenerationContext& context)
     layout.stageId = std::max(1, context.stageId);
     layout.seed = context.seed;
     layout.stageHardnessMultiplier = std::max(0.25f, context.stageHardnessMultiplier);
+    layout.depthRankOffset = std::max(0, context.depthRankOffset);
     layout.cavernWidthMultiplier = std::max(0.35f, context.cavernWidthMultiplier);
     layout.generationProfile = context.generationProfile.empty() ? "natural_cave" : context.generationProfile;
     layout.terrainProfile = context.terrainProfile.empty() ? "soft_stardust" : context.terrainProfile;
+    layout.roguelike = context.roguelike || isProfile(layout.generationProfile, "astral_rogue");
     layout.startTile = {0, 0};
 
     const float goalDistance = static_cast<float>(std::clamp(context.goalDistanceTiles, 48, 1200)) *

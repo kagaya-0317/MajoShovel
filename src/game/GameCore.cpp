@@ -1426,6 +1426,7 @@ void Game::buildWorldForRun(bool captureRunStartInventory)
 void Game::beginWorldBuildFromBase(
     bool useLatestWarpPoint,
     InventoryCarryState retainedInventory,
+    bool restoreRetainedInventory,
     int retainedLevel,
     int retainedXp,
     int retainedXpToNext)
@@ -1433,6 +1434,7 @@ void Game::beginWorldBuildFromBase(
     worldBuildJob_ = WorldBuildJob{};
     worldBuildJob_.active = true;
     worldBuildJob_.useLatestWarpPoint = useLatestWarpPoint;
+    worldBuildJob_.restoreRetainedInventory = restoreRetainedInventory;
     worldBuildJob_.retainedInventory = std::move(retainedInventory);
     worldBuildJob_.retainedLevel = retainedLevel;
     worldBuildJob_.retainedXp = retainedXp;
@@ -1556,7 +1558,18 @@ void Game::finishWorldBuild()
     WorldBuildJob job = std::move(worldBuildJob_);
     worldBuildJob_ = WorldBuildJob{};
 
-    restoreInventoryCarryState(job.retainedInventory);
+    if (job.restoreRetainedInventory) {
+        restoreInventoryCarryState(job.retainedInventory);
+    } else {
+        roguelikeReturnInventoryState_ = job.retainedInventory;
+        money_ = 0;
+        inventory_.setOpen(false);
+        inventory_.cancelGrab();
+        spellRing_.applyObjectParameters(objectCatalog_);
+        spellRing_.normalizeItemPlacements();
+        observeRingItemInstanceIds();
+        refreshOrbitEffects();
+    }
     player_.level = job.retainedLevel;
     player_.xp = job.retainedXp;
     player_.xpToNext = job.retainedXpToNext;
@@ -2427,6 +2440,7 @@ void Game::startMiningFromBase(bool useLatestWarpPoint, bool forceRegenerate)
     if (!useLatestWarpPoint || forceRegenerate) {
         requestedWarpPointStartPosition_.reset();
     }
+    const bool restoreRetainedInventory = !roguelikeStage;
     InventoryCarryState retained = captureInventoryCarryState();
     int retainedLevel = player_.level;
     int retainedXp = player_.xp;
@@ -2447,6 +2461,7 @@ void Game::startMiningFromBase(bool useLatestWarpPoint, bool forceRegenerate)
         beginWorldBuildFromBase(
             useLatestWarpPoint,
             std::move(retained),
+            restoreRetainedInventory,
             retainedLevel,
             retainedXp,
             retainedXpToNext);
@@ -3881,7 +3896,7 @@ void Game::updateScreenMode(
             !dungeonMinimapCells_.empty() &&
             ui.pressed(dungeonMinimapRect())) {
             dungeonMapOverlayOpen_ = true;
-            dungeonMapOverlayScroll_ = {};
+            dungeonMapOverlayScroll_ = dungeonMapOverlayPlayerCenteredScroll();
             dungeonMapOverlayScrollbarDragAxis_ = 0;
             dungeonMapOverlayScrollbarDragOffset_ = 0.0f;
             ui.emitSound(UiSoundEvent::BookOpen);

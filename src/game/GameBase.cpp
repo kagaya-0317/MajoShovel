@@ -6,6 +6,8 @@
 #include "game/NpcCharacterVisual.hpp"
 #include "game/PlayerEquipmentVisual.hpp"
 
+#include <unordered_set>
+
 namespace majo {
 
 namespace {
@@ -48,6 +50,9 @@ constexpr float RingWorkshopWeightLimitKgPerLevel = 1.0f;
 constexpr float RingWorkshopShiftDistanceMetersPerLevel = 0.50f;
 constexpr float RingWorkshopThrowDistanceMetersPerLevel = 0.40f;
 constexpr float RingWorkshopThrowCooldownSecondsPerLevel = 0.18f;
+constexpr float DungeonDetailImageHeight = 96.0f;
+constexpr float DungeonDetailEnemyIconSize = 42.0f;
+constexpr float DungeonDetailEnemyIconGap = 8.0f;
 
 float metersToWorldDistance(float meters)
 {
@@ -77,6 +82,356 @@ bool isTutorialStoryTrigger(std::string_view trigger)
 bool isMiningToolObject(const ItemData& item)
 {
     return item.category == MiningToolCategory;
+}
+
+bool stageLooksRoguelike(const StageDefinition& stage)
+{
+    return stage.id == "stage_04_astral_mine" ||
+        stage.type == "ローグライク" ||
+        stage.generationProfile == "astral_rogue";
+}
+
+std::string stageDetailDescription(const StageDefinition& stage)
+{
+    if (!stage.detail.description.empty()) {
+        return stage.detail.description;
+    }
+    if (stageLooksRoguelike(stage)) {
+        return "入るたび姿を変える底なしの迷宮。\n持ち込み不可で、初期ステータスから深層を目指す。";
+    }
+    return "採掘しながら奥へ進むダンジョン。\nワープポイントを見つけると次回以降の出発地点にできる。";
+}
+
+std::string stageDetailDifficulty(const StageDefinition& stage)
+{
+    if (!stage.detail.difficulty.empty()) {
+        return stage.detail.difficulty;
+    }
+    if (stageLooksRoguelike(stage)) {
+        return "不明";
+    }
+    if (stage.terrainHardnessMultiplier >= 2.0 || stage.goalDistanceTiles >= 520) {
+        return "むずかしい";
+    }
+    if (stage.goalDistanceTiles >= 400 || stage.terrainHardnessMultiplier >= 1.3) {
+        return "ふつう";
+    }
+    return "やさしい";
+}
+
+std::string stageDetailSize(const StageDefinition& stage)
+{
+    if (!stage.detail.size.empty()) {
+        return stage.detail.size;
+    }
+    if (stageLooksRoguelike(stage)) {
+        return "底なし";
+    }
+    if (stage.goalDistanceTiles >= 520) {
+        return "かなり広い";
+    }
+    if (stage.goalDistanceTiles >= 400) {
+        return "広い";
+    }
+    return "広くない";
+}
+
+std::string stageDetailWallHardness(const StageDefinition& stage)
+{
+    if (!stage.detail.wallHardness.empty()) {
+        return stage.detail.wallHardness;
+    }
+    if (stageLooksRoguelike(stage)) {
+        return "不明";
+    }
+    if (stage.terrainHardnessMultiplier >= 1.8) {
+        return "かため";
+    }
+    if (stage.terrainHardnessMultiplier >= 1.2) {
+        return "ふつう";
+    }
+    return "やわらかめ";
+}
+
+std::string stageDetailTerrainComplexity(const StageDefinition& stage)
+{
+    if (!stage.detail.terrainComplexity.empty()) {
+        return stage.detail.terrainComplexity;
+    }
+    if (stageLooksRoguelike(stage)) {
+        return "不明";
+    }
+    if (stage.detourRate >= 0.42 || stage.branchDensity >= 0.38) {
+        return "複雑";
+    }
+    if (stage.detourRate >= 0.34 || stage.branchDensity >= 0.30) {
+        return "少し";
+    }
+    return "そこまで";
+}
+
+std::vector<const EnemyDefinition*> stageDetailEnemies(const StageDefinition& stage, const EnemyCatalog& catalog)
+{
+    std::vector<const EnemyDefinition*> enemies;
+    std::unordered_set<std::string> seen;
+    const auto addEnemy = [&](std::string_view id) {
+        if (id.empty()) {
+            return;
+        }
+        auto it = catalog.enemiesById.find(std::string(id));
+        if (it == catalog.enemiesById.end() || isCodexHiddenEnemy(it->second)) {
+            return;
+        }
+        if (seen.insert(it->second.id).second) {
+            enemies.push_back(&it->second);
+        }
+    };
+
+    for (const std::string& enemyId : stage.detail.enemyIds) {
+        addEnemy(enemyId);
+    }
+    if (!enemies.empty()) {
+        return enemies;
+    }
+
+    struct WeightedEnemy {
+        const EnemyDefinition* enemy = nullptr;
+        int firstDepth = 99;
+        double totalWeight = 0.0;
+    };
+    std::vector<WeightedEnemy> weighted;
+    for (const EnemyDefinition& enemy : catalog.enemies) {
+        if (enemy.id.empty() || isCodexHiddenEnemy(enemy)) {
+            continue;
+        }
+        WeightedEnemy candidate{.enemy = &enemy};
+        for (int depth = 1; depth <= 9; ++depth) {
+            const double weight = enemySpawnWeightFor(enemy, stage.id, depth);
+            if (weight <= 0.0) {
+                continue;
+            }
+            candidate.firstDepth = std::min(candidate.firstDepth, depth);
+            candidate.totalWeight += weight;
+        }
+        if (candidate.totalWeight > 0.0) {
+            weighted.push_back(candidate);
+        }
+    }
+    std::stable_sort(weighted.begin(), weighted.end(), [](const WeightedEnemy& left, const WeightedEnemy& right) {
+        if (left.firstDepth != right.firstDepth) {
+            return left.firstDepth < right.firstDepth;
+        }
+        if (left.enemy->baseLevel != right.enemy->baseLevel) {
+            return left.enemy->baseLevel < right.enemy->baseLevel;
+        }
+        return left.enemy->id < right.enemy->id;
+    });
+    enemies.reserve(weighted.size());
+    for (const WeightedEnemy& entry : weighted) {
+        enemies.push_back(entry.enemy);
+    }
+    return enemies;
+}
+
+void drawDungeonDetailFallbackImage(Renderer& renderer, UiRect rect, const StageDefinition& stage)
+{
+    const Color frame{102, 92, 120, 210};
+    const Color path{218, 194, 128, 190};
+    const Color star{255, 236, 170, 230};
+    Color top{20, 28, 44, 235};
+    Color bottom{42, 34, 54, 235};
+    Color wall{78, 76, 94, 230};
+    if (stage.terrainProfile == "soft_stardust") {
+        top = {28, 34, 58, 235};
+        bottom = {54, 48, 82, 235};
+        wall = {92, 86, 118, 230};
+    } else if (stage.terrainProfile == "junk_mixed") {
+        top = {34, 34, 42, 235};
+        bottom = {66, 56, 50, 235};
+        wall = {104, 88, 74, 230};
+    } else if (stage.terrainProfile == "hard_star_core") {
+        top = {24, 32, 56, 235};
+        bottom = {62, 42, 76, 235};
+        wall = {90, 76, 112, 230};
+    } else if (stage.terrainProfile == "chaos_astral") {
+        top = {20, 24, 46, 235};
+        bottom = {54, 30, 74, 235};
+        wall = {68, 52, 110, 230};
+    }
+
+    renderer.fillGradientRect(rect.pos, rect.size, top, bottom, GradientDirection::TopToBottom);
+    renderer.drawRect(rect.pos, rect.size, frame);
+
+    const float cell = 16.0f;
+    for (int y = 0; y < 6; ++y) {
+        for (int x = 0; x < 18; ++x) {
+            const int noise = (x * 37 + y * 53 + static_cast<int>(stage.displayOrder)) % 11;
+            if (noise <= 3) {
+                renderer.fillRect(
+                    rect.pos + Vec2{8.0f + static_cast<float>(x) * cell, 7.0f + static_cast<float>(y) * cell},
+                    {cell - 3.0f, cell - 3.0f},
+                    wall);
+            }
+        }
+    }
+
+    Vec2 previous{rect.pos.x + 22.0f, rect.pos.y + rect.size.y - 22.0f};
+    for (int i = 1; i <= 7; ++i) {
+        const float t = static_cast<float>(i) / 7.0f;
+        const float wobble = std::sin(t * 8.4f + static_cast<float>(stage.displayOrder)) * 18.0f;
+        const Vec2 next{
+            rect.pos.x + 22.0f + t * (rect.size.x - 44.0f),
+            rect.pos.y + rect.size.y - 22.0f - t * (rect.size.y - 38.0f) + wobble,
+        };
+        renderer.drawLine(previous + Vec2{0.0f, 1.0f}, next + Vec2{0.0f, 1.0f}, {0, 0, 0, 120});
+        renderer.drawLine(previous, next, path);
+        previous = next;
+    }
+
+    for (int i = 0; i < 8; ++i) {
+        const float x = rect.pos.x + 18.0f + static_cast<float>((i * 41 + stage.displayOrder) % 260);
+        const float y = rect.pos.y + 12.0f + static_cast<float>((i * 23 + stage.displayOrder) % 70);
+        renderer.fillCircle({x, y}, i % 3 == 0 ? 2.5f : 1.7f, star);
+    }
+}
+
+void drawDungeonDetailImage(Renderer& renderer, UiRect panel, float& y, const StageDefinition& stage)
+{
+    constexpr float ImageBottomGap = 10.0f;
+    const UiRect content = uiSubPanelContentRect(panel);
+    const UiRect imageRect{{content.pos.x, y}, {content.size.x, DungeonDetailImageHeight}};
+    bool drewImage = false;
+    if (!stage.detail.imagePath.empty()) {
+        Vec2 imageSize{};
+        if (renderer.getImageSize(stage.detail.imagePath, imageSize, TextureFilter::Linear) &&
+            imageSize.x > 0.0f &&
+            imageSize.y > 0.0f) {
+            const float scale = std::min(imageRect.size.x / imageSize.x, imageRect.size.y / imageSize.y);
+            const Vec2 drawSize{imageSize.x * scale, imageSize.y * scale};
+            ImageDrawOptions options;
+            drewImage = renderer.drawImage(
+                stage.detail.imagePath,
+                imageRect.pos + imageRect.size * 0.5f,
+                drawSize,
+                options,
+                TextureFilter::Linear);
+        }
+    }
+    if (!drewImage) {
+        drawDungeonDetailFallbackImage(renderer, imageRect, stage);
+    }
+    y += DungeonDetailImageHeight + ImageBottomGap;
+}
+
+void drawDungeonWarpProgressLine(
+    Renderer& renderer,
+    const ObjectCatalog& objectCatalog,
+    UiRect panel,
+    float& y,
+    int discoveredWarpPoints,
+    int totalWarpPoints)
+{
+    constexpr float LabelWidth = 106.0f;
+    constexpr float MinLineHeight = 31.0f;
+    const float labelX = panel.pos.x + ui::SubPanelPadding.x;
+    const float valueX = labelX + LabelWidth;
+    renderer.drawText({labelX, y}, "ワープ", ui::TextMuted, 2);
+
+    char buffer[64];
+    std::snprintf(buffer, sizeof(buffer), "%d/%d", discoveredWarpPoints, totalWarpPoints);
+    InlineItemTextStyle style;
+    style.text = ui::Text;
+    style.scale = 2;
+    style.iconTextGap = 6.0f;
+    style.iconScale = 23.0f / std::max(1.0f, renderer.measureText("0", style.scale).y);
+    drawInlineItemText(
+        renderer,
+        objectCatalog,
+        {valueX, y - 2.0f},
+        inlineWorldIconTag(worldIconKey(WorldIconId::WarpPoint)) + std::string(buffer),
+        style);
+    y += MinLineHeight;
+}
+
+void drawDungeonDetailEnemyIcons(
+    Renderer& renderer,
+    UiRect panel,
+    float& y,
+    const StageDefinition& stage,
+    const EnemyCatalog& enemyCatalog,
+    const EncyclopediaSystem& encyclopedia,
+    float animationSeconds)
+{
+    const UiRect content = uiSubPanelContentRect(panel);
+    renderer.drawText({content.pos.x, y}, "出現する敵", ui::TextMuted, 2);
+    y += 25.0f;
+
+    const std::vector<const EnemyDefinition*> enemies = stageDetailEnemies(stage, enemyCatalog);
+    if (enemies.empty()) {
+        renderer.drawText({content.pos.x, y}, "不明", ui::TextMuted, 2);
+        y += 30.0f;
+        return;
+    }
+
+    const int columns = std::max(1, static_cast<int>((content.size.x + DungeonDetailEnemyIconGap) / (DungeonDetailEnemyIconSize + DungeonDetailEnemyIconGap)));
+    for (int i = 0; i < static_cast<int>(enemies.size()); ++i) {
+        const int column = i % columns;
+        const int row = i / columns;
+        const Vec2 slotPos{
+            content.pos.x + static_cast<float>(column) * (DungeonDetailEnemyIconSize + DungeonDetailEnemyIconGap),
+            y + static_cast<float>(row) * (DungeonDetailEnemyIconSize + DungeonDetailEnemyIconGap),
+        };
+        const UiRect slot{slotPos, {DungeonDetailEnemyIconSize, DungeonDetailEnemyIconSize}};
+        renderer.fillRect(slot.pos, slot.size, {12, 16, 26, 156});
+        renderer.drawRect(slot.pos, slot.size, {102, 92, 120, 150});
+
+        const EnemyDefinition& enemy = *enemies[static_cast<std::size_t>(i)];
+        EnemyImageDrawOptions options;
+        options.allowUpscale = true;
+        options.directionOverrideEnabled = true;
+        options.directionOverride = {0.0f, 1.0f};
+        if (encyclopedia.enemyStage(enemy.id) == EncyclopediaStage::Undiscovered) {
+            options.tint = {36, 38, 48, 255};
+            options.maskOverlayColor = {0, 0, 0, 150};
+        }
+        if (enemy.imageNumber <= 0 ||
+            !drawEnemyImageIcon(
+                renderer,
+                enemy.imageNumber,
+                slot.pos + slot.size * 0.5f,
+                slot.size - Vec2{6.0f, 6.0f},
+                animationSeconds,
+                options)) {
+            renderer.fillCircle(slot.pos + slot.size * 0.5f, 13.0f, {68, 64, 82, 220});
+        }
+    }
+
+    const int rows = (static_cast<int>(enemies.size()) + columns - 1) / columns;
+    y += static_cast<float>(rows) * DungeonDetailEnemyIconSize + static_cast<float>(std::max(0, rows - 1)) * DungeonDetailEnemyIconGap + 4.0f;
+}
+
+void drawDungeonStartDetailPanel(
+    Renderer& renderer,
+    const ObjectCatalog& objectCatalog,
+    const EnemyCatalog& enemyCatalog,
+    const EncyclopediaSystem& encyclopedia,
+    UiRect panel,
+    const StageDefinition& stage,
+    int discoveredWarpPoints,
+    int totalWarpPoints,
+    float animationSeconds)
+{
+    drawUiSubPanel(renderer, panel);
+    float y = uiSubPanelContentRect(panel).pos.y;
+    drawDungeonDetailImage(renderer, panel, y, stage);
+    drawUiDetailText(renderer, panel, y, stageDetailDescription(stage));
+    drawDungeonWarpProgressLine(renderer, objectCatalog, panel, y, discoveredWarpPoints, totalWarpPoints);
+    drawUiDetailLine(renderer, panel, y, "難易度", stageDetailDifficulty(stage));
+    drawUiDetailLine(renderer, panel, y, "広さ", stageDetailSize(stage));
+    drawUiDetailLine(renderer, panel, y, "壁の固さ", stageDetailWallHardness(stage));
+    drawUiDetailLine(renderer, panel, y, "地形", stageDetailTerrainComplexity(stage));
+    y += 2.0f;
+    drawDungeonDetailEnemyIcons(renderer, panel, y, stage, enemyCatalog, encyclopedia, animationSeconds);
 }
 
 bool isMerchantMiningCandidate(const ItemData& item, int merchantUpgradeLevel)
@@ -9994,6 +10349,7 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
     }
 
     if (baseMiningStartChoiceActive_) {
+        const UiRect miningStartPanel = baseMiningStartPanelRect();
         const auto openRegenerateConfirm = [this]() {
             openUiConfirmDialog(
                 baseRegenerateConfirm_,
@@ -10022,7 +10378,7 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
             return;
         }
 
-        if (uiCancelRequested(baseCancelState_, input, ui, basePanelRect())) {
+        if (uiCancelRequested(baseCancelState_, input, ui, miningStartPanel)) {
             if (baseWarpPointSelectActive_) {
                 baseWarpPointSelectActive_ = false;
             } else {
@@ -10134,25 +10490,25 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
         const int pageDelta = input.activeRingDelta();
         if (pageDelta < 0 && changeSelectedStage(pageDelta)) {
             ui.emitSound(UiSoundEvent::TabSwitch);
-            ui.block(basePanelRect());
+            ui.block(miningStartPanel);
             return;
         }
         if (pageDelta > 0 && changeSelectedStage(pageDelta)) {
             ui.emitSound(UiSoundEvent::TabSwitch);
-            ui.block(basePanelRect());
+            ui.block(miningStartPanel);
             return;
         }
         if (input.pressed(InputAction::MoveLeft) || ui.pressed(stageSelectorHitRect(stageSelector.prev))) {
             if (changeSelectedStage(-1)) {
                 ui.emitSound(UiSoundEvent::TabSwitch);
-                ui.block(basePanelRect());
+                ui.block(miningStartPanel);
                 return;
             }
         }
         if (input.pressed(InputAction::MoveRight) || ui.pressed(stageSelectorHitRect(stageSelector.next))) {
             if (changeSelectedStage(1)) {
                 ui.emitSound(UiSoundEvent::TabSwitch);
-                ui.block(basePanelRect());
+                ui.block(miningStartPanel);
                 return;
             }
         }
@@ -10231,7 +10587,7 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
             requestMiningStartTransition(false, false);
             return;
         }
-        ui.block(basePanelRect());
+        ui.block(miningStartPanel);
         return;
     }
 
@@ -11298,6 +11654,8 @@ void Game::renderBaseScreen(Renderer& renderer) const
     const bool ringWorkshopWideActive = baseRingWorkshopActive_ && baseRingWorkshopMode_ != RingWorkshopMode::ChooseAction;
     const UiRect panel = baseDiaryActive_
         ? basePanelRect()
+        : (baseMiningStartChoiceActive_
+        ? baseMiningStartPanelRect()
         : (storageActionDialogActive
         ? (baseStorageMode_ == StorageUiMode::Bulk ? storageBulkDialogRect() : storageActionDialogRect())
         : (merchantActionDialogActive
@@ -11315,7 +11673,7 @@ void Game::renderBaseScreen(Renderer& renderer) const
         (baseStorageActive_ && !storageActionDialogActive) ||
         (baseSellActive_ && baseMerchantMode_ != MerchantUiMode::ChooseAction))
         ? merchantPanelRect()
-        : (baseUpgradeActive_ ? baseUpgradePanelRect() : basePanelRect()))))))));
+        : (baseUpgradeActive_ ? baseUpgradePanelRect() : basePanelRect())))))))));
     std::optional<UiWindowScope> panelWindow;
     std::optional<UiCancelControlScope> panelCancelScope;
     if (panelUiActive) {
@@ -12725,13 +13083,13 @@ void Game::renderBaseScreen(Renderer& renderer) const
             : currentStageDefinition().name;
         const auto retainedStage = dungeonStates_.find(currentStageId_);
         const bool hasRetainedDungeon = retainedStage != dungeonStates_.end() && retainedStage->second.valid;
-        int totalWarpPoints = MaxWarpPointsPerRun;
+        int totalWarpPoints = std::max(0, currentStageDefinition().warpPointCount);
         if (hasRetainedDungeon && !retainedStage->second.warpPoints.empty()) {
             totalWarpPoints = static_cast<int>(retainedStage->second.warpPoints.size());
         } else if (!warpPoints_.empty()) {
             totalWarpPoints = static_cast<int>(warpPoints_.size());
         }
-        totalWarpPoints = std::max(1, totalWarpPoints);
+        totalWarpPoints = std::max(0, totalWarpPoints);
         const int discoveredWarpPoints = std::clamp(unlockedWarpPointCount_, 0, totalWarpPoints);
 
         const auto drawCenteredTextInRect = [&](UiRect rect, std::string_view text, Color color, int scale) {
@@ -12761,24 +13119,6 @@ void Game::renderBaseScreen(Renderer& renderer) const
         }
         const int stageNameScale = renderer.measureText(stageName, 3).x <= stageSelector.text.size.x ? 3 : 2;
         drawCenteredTextInRect(stageSelector.text, stageName, {246, 235, 255, 255}, stageNameScale);
-
-        std::snprintf(buffer, sizeof(buffer), "発見済みワープポイント  %d/%d", discoveredWarpPoints, totalWarpPoints);
-        InlineItemTextStyle warpProgressStyle;
-        warpProgressStyle.text = {198, 198, 206, 255};
-        warpProgressStyle.scale = 2;
-        warpProgressStyle.iconTextGap = 8.0f;
-        warpProgressStyle.iconScale = 28.0f / std::max(1.0f, renderer.measureText("0", warpProgressStyle.scale).y);
-        const std::string warpProgressText = inlineWorldIconTag(worldIconKey(WorldIconId::WarpPoint)) + std::string(buffer);
-        const Vec2 warpProgressSize = measureInlineItemText(renderer, warpProgressText, warpProgressStyle);
-        drawInlineItemText(
-            renderer,
-            objectCatalog_,
-            {
-                panel.pos.x + std::max(0.0f, (panel.size.x - warpProgressSize.x) * 0.5f),
-                body.pos.y + 44.0f,
-            },
-            warpProgressText,
-            warpProgressStyle);
 
         renderer.drawText({contentLeft, body.pos.y + 78.0f}, "出発地点を選んでください", {198, 198, 206, 255}, 2);
         for (int i = 0; i < BaseMiningStartChoiceCount; ++i) {
@@ -12841,6 +13181,17 @@ void Game::renderBaseScreen(Renderer& renderer) const
                 disabled ? Color{150, 150, 160, 255} : Color{198, 198, 206, 255},
                 2);
         }
+
+        drawDungeonStartDetailPanel(
+            renderer,
+            objectCatalog_,
+            enemyCatalog_,
+            encyclopedia_,
+            baseMiningStartDetailPanelRect(),
+            currentStageDefinition(),
+            discoveredWarpPoints,
+            totalWarpPoints,
+            baseRingPreviewAnimationTime_);
 
         if (baseWarpPointSelectActive_) {
             panelCancelScope.reset();

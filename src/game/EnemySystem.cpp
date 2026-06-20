@@ -438,16 +438,35 @@ bool enemyDefinitionMatchesSpawnBiasGroup(const EnemyDefinition& definition, std
 
 bool isExcludedFromNormalDugSpawn(const EnemyDefinition& definition)
 {
-    if (hasTagAscii(definition, {"boss", "boss_only", "no_normal_spawn", "event_only", "fixed_only"})) {
+    if (hasTagAscii(definition, {
+            "boss",
+            "boss_only",
+            "no_normal_spawn",
+            "event_only",
+            "fixed_only",
+            "base_npc",
+            "hidden_npc",
+            "npc",
+            "unique",
+        })) {
         return true;
     }
     for (const std::string& tag : definition.enemyTags) {
-        if (tag == "ボス" || tag == "通常スポーン除外" || tag == "固定配置専用" || tag == "イベント専用") {
+        if (tag == "ボス" ||
+            tag == "通常スポーン除外" ||
+            tag == "固定配置専用" ||
+            tag == "イベント専用" ||
+            tag == "NPC" ||
+            tag == "拠点NPC" ||
+            tag == "隠しNPC" ||
+            tag == "固有") {
             return true;
         }
     }
     if (containsAnyAscii(definition.id, {
             "boss",
+            "base_npc_",
+            "hidden_npc_",
             "stardust_mole",
             "junk_crab",
             "junkrab",
@@ -7223,12 +7242,12 @@ bool EnemySystem::spawnNodeEnemy(
 
     Vec2 spawnPosition{};
     const float minPlayerDistance = allowNearPlayer ? 0.0f : balance.enemyMinSpawnDistance;
-    const float radius = enemyDefinitionSpawnRadius(&it->second, balance, placementCatalog_);
+    const EnemySpawnSelection selection = chooseDugSpawnEnemy(enemyCatalog, lootStageId, lootDepthRank);
+    const float radius = enemyDefinitionSpawnRadius(selection.definition, balance, placementCatalog_);
     if (!findSpawnPosition(map, desiredPosition, playerPosition, radius, minPlayerDistance, spawnPosition)) {
         return false;
     }
 
-    const EnemySpawnSelection selection = chooseDugSpawnEnemy(enemyCatalog, lootStageId, lootDepthRank);
     spawnDefinitionAt(
         spawnPosition,
         selection.definition,

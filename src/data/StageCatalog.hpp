@@ -26,6 +26,17 @@ struct StageDefinition {
     int warpPointCount = 0;
     int specialRoomCount = 0;
     std::string bossEnemyId;
+    struct DisplayDetail {
+        std::string imagePath;
+        std::string description;
+        std::string difficulty;
+        std::string size;
+        std::string wallHardness;
+        std::string terrainComplexity;
+        std::vector<std::string> enemyIds;
+
+        bool operator==(const DisplayDetail&) const = default;
+    } detail;
 
     bool operator==(const StageDefinition&) const = default;
 };

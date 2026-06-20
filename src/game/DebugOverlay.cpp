@@ -109,7 +109,7 @@ void DebugOverlay::render(
         "Stage: %d %s / %s   Seed: %u\n"
         "Progress: %.1f%%   Dist: %.1f   Start(%d,%d) Goal(%d,%d)\n"
         "Player: HP %d/%d   Lv %02d XP %02d/%02d   Tile(%d,%d)\n"
-        "Terrain: %s HP %d/%d Hard %.2f   MainPathDist %.1f\n"
+        "Terrain: %s HP %d/%d Hard %.2f Depth %d x%.2f   MainPathDist %.1f\n"
         "Ring: %d/%d %s   R %03d Speed %.2f Throw %02d%%\n"
         "Warp: nearest %d %s   found %d/%d unlocked %d latest %s startReq %s\n"
         "Chunks: active %02d generated %02zu   Enemies: active %03d",
@@ -136,6 +136,8 @@ void DebugOverlay::render(
         terrain.hp,
         terrain.effectiveHp,
         terrain.localHardnessMultiplier,
+        terrain.depthRank,
+        terrain.depthHardnessMultiplier,
         terrain.distanceFromMainPath,
         spellRing.activeRingIndex() + 1,
         spellRing.runtimeRingCount(),

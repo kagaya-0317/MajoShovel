@@ -859,17 +859,16 @@ void drawDungeonMapPlayerArrow(Renderer& renderer, Vec2 center, Vec2 facing, flo
 {
     const Vec2 direction = lengthSquared(facing) > 0.0001f ? normalize(facing) : Vec2{1.0f, 0.0f};
     const Vec2 tangent{-direction.y, direction.x};
-    const Vec2 tip = center + direction * (8.2f * scale);
-    const Vec2 tail = center - direction * (5.8f * scale);
-    const Vec2 notch = center - direction * (1.4f * scale);
-    const Vec2 leftWing = center - direction * (2.2f * scale) + tangent * (6.2f * scale);
-    const Vec2 rightWing = center - direction * (2.2f * scale) - tangent * (6.2f * scale);
+    const float tipLength = 8.8f * scale;
+    const float backLength = 4.4f * scale;
+    const float halfWidth = 5.8f * scale;
 
-    const Vec2 left[] = {tip, leftWing, notch, tail};
-    const Vec2 right[] = {tip, tail, notch, rightWing};
-    renderer.fillPolygon(left, 4, {248, 244, 212, 255});
-    renderer.fillPolygon(right, 4, {248, 244, 212, 255});
-    renderer.drawLine(tail, tip, {72, 94, 122, 210});
+    const Vec2 points[] = {
+        center + direction * tipLength,
+        center - direction * backLength + tangent * halfWidth,
+        center - direction * backLength - tangent * halfWidth,
+    };
+    renderer.fillPolygon(points, 3, {248, 244, 212, 255});
 }
 
 void drawDungeonMapLadderMarker(Renderer& renderer, Vec2 center, float scale)
@@ -1989,7 +1988,7 @@ constexpr float DungeonMapOverlayFooterHeight = 52.0f;
 constexpr float DungeonMapOverlayPadding = 28.0f;
 constexpr float DungeonMapOverlayScrollbarThickness = 6.0f;
 constexpr float DungeonMapOverlayScrollbarInset = 6.0f;
-constexpr float DungeonMapOverlayMinTilePx = 4.0f;
+constexpr float DungeonMapOverlayMinTilePx = 8.0f;
 constexpr float DungeonMapOverlayMaxTilePx = 12.0f;
 
 struct DungeonMinimapBounds {
@@ -5465,6 +5464,37 @@ Vec2 Game::dungeonMapOverlayMaxScroll() const
     };
 }
 
+Vec2 Game::dungeonMapOverlayPlayerCenteredScroll() const
+{
+    const UiRect viewport = dungeonMapOverlayViewportRect();
+    const DungeonMinimapBounds bounds = dungeonMinimapBounds(dungeonMinimapCells_);
+    if (!bounds.valid) {
+        return {};
+    }
+
+    const Vec2 mapSize = dungeonMapOverlayMapSize(viewport);
+    const Vec2 maxScroll = dungeonMapOverlayMaxScroll();
+    if (maxScroll.x <= 0.0f && maxScroll.y <= 0.0f) {
+        return {};
+    }
+
+    const int tileCountX = std::max(1, bounds.maxX - bounds.minX + 1);
+    const int tileCountY = std::max(1, bounds.maxY - bounds.minY + 1);
+    const float tilePx = std::min(
+        mapSize.x / static_cast<float>(tileCountX),
+        mapSize.y / static_cast<float>(tileCountY));
+    const int playerTileX = tileMap_.worldToTile(player_.position.x);
+    const int playerTileY = tileMap_.worldToTile(player_.position.y);
+    const Vec2 playerOnMap{
+        (static_cast<float>(playerTileX - bounds.minX) + 0.5f) * tilePx,
+        (static_cast<float>(playerTileY - bounds.minY) + 0.5f) * tilePx,
+    };
+    return {
+        std::clamp(playerOnMap.x - viewport.size.x * 0.5f, 0.0f, maxScroll.x),
+        std::clamp(playerOnMap.y - viewport.size.y * 0.5f, 0.0f, maxScroll.y),
+    };
+}
+
 UiRect Game::dungeonMapOverlayVerticalScrollTrackRect() const
 {
     const UiRect viewport = dungeonMapOverlayViewportRect();
@@ -6129,11 +6159,11 @@ void Game::renderDungeonControlHelp(Renderer& renderer) const
             help = "出口   F/Enter 拠点へ帰還";
             promptFocused = true;
         }
+    } else if (focusedWarpReturnPointIndex_ == DungeonEntranceReturnFocusIndex) {
+        help = "ダンジョン入口   F/Enter 拠点へ帰還";
+        promptFocused = true;
     } else if (warpPointsEnabled_) {
-        if (focusedWarpReturnPointIndex_ == DungeonEntranceReturnFocusIndex) {
-            help = "ダンジョン入口   F/Enter 拠点へ帰還";
-            promptFocused = true;
-        } else if (focusedWarpReturnPointIndex_ >= 0 &&
+        if (focusedWarpReturnPointIndex_ >= 0 &&
             focusedWarpReturnPointIndex_ < static_cast<int>(warpPoints_.size())) {
             const WarpPoint& point = warpPoints_[static_cast<std::size_t>(focusedWarpReturnPointIndex_)];
             if (point.discovered) {
@@ -6192,7 +6222,7 @@ void Game::renderDungeonControlHelp(Renderer& renderer) const
 
 void Game::renderWarpReturnUi(Renderer& renderer) const
 {
-    if (mode_ != ScreenMode::Playing || enemyTestActive_ || !warpPointsEnabled_) {
+    if (mode_ != ScreenMode::Playing || enemyTestActive_ || (!warpPointsEnabled_ && !warpReturnConfirm_.open)) {
         return;
     }
 

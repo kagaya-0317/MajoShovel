@@ -1300,6 +1300,16 @@ UiRect basePanelRect()
     return {{360.0f, 92.0f}, {560.0f, 536.0f}};
 }
 
+UiRect baseMiningStartPanelRect()
+{
+    return {{44.0f, 58.0f}, {1192.0f, 610.0f}};
+}
+
+UiRect baseMiningStartDetailPanelRect()
+{
+    return {{864.0f, 108.0f}, {330.0f, 520.0f}};
+}
+
 UiRect baseUpgradePanelRect()
 {
     return {{220.0f, 42.0f}, {880.0f, 628.0f}};
@@ -1346,7 +1356,12 @@ UiRect baseMenuItemRect(int index)
 
 float baseMiningContentLeft()
 {
-    return basePanelRect().pos.x + ui::ImageWindowHeaderTitlePadding.x;
+    return baseMiningStartPanelRect().pos.x + ui::ImageWindowHeaderTitlePadding.x;
+}
+
+float baseMiningContentRight()
+{
+    return baseMiningStartDetailPanelRect().pos.x - 28.0f;
 }
 
 struct UiPageSelectorRects {
@@ -1385,18 +1400,18 @@ UiPageSelectorRects uiPageSelectorRectsCentered(Vec2 groupCenter, float textWidt
 UiPageSelectorRects baseMiningStageSelectorRects()
 {
     constexpr float StageSelectorTextWidth = 252.0f;
-    const UiRect body = uiBodyRect(basePanelRect());
-    const UiRect panel = basePanelRect();
+    const UiRect body = uiBodyRect(baseMiningStartPanelRect());
+    const float left = baseMiningContentLeft();
+    const float right = baseMiningContentRight();
     return uiPageSelectorRectsCentered(
-        {panel.pos.x + panel.size.x * 0.5f, body.pos.y + StoragePageButtonSize * 0.5f - 4.0f},
+        {(left + right) * 0.5f, body.pos.y + StoragePageButtonSize * 0.5f - 4.0f},
         StageSelectorTextWidth);
 }
 
 UiRect baseMiningStartChoiceRect(int index)
 {
     const float left = baseMiningContentLeft();
-    const float panelCenterX = basePanelRect().pos.x + basePanelRect().size.x * 0.5f;
-    const float width = (panelCenterX - left) * 2.0f;
+    const float width = baseMiningContentRight() - left;
     return {{left, 322.0f + static_cast<float>(index) * 80.0f}, {width, ui::ButtonHeight}};
 }
 
@@ -3301,6 +3316,12 @@ StageDefinition makeCodeDefaultStageDefinition()
     stage.warpPointCount = 3;
     stage.specialRoomCount = 1;
     stage.bossEnemyId = "stardust_mole";
+    stage.detail.description = "星くずが積もる、最初の坑道。\n小さな空洞が多く、基本の採掘と戦闘を覚えやすい。";
+    stage.detail.difficulty = "やさしい";
+    stage.detail.size = "広くない";
+    stage.detail.wallHardness = "やわらかめ";
+    stage.detail.terrainComplexity = "そこまで";
+    stage.detail.enemyIds = {"slime", "bake_kinoko", "uji_uji", "shield_beetle", "web_spider", "ore_crab", "bomb_tsuchinoko", "stardust_mole"};
     return stage;
 }
 

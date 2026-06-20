@@ -39,7 +39,9 @@ struct TerrainDebugInfo {
     TerrainAttribute attribute = TerrainAttribute::None;
     int hp = 0;
     int effectiveHp = 0;
+    int depthRank = 1;
     float localHardnessMultiplier = 1.0f;
+    float depthHardnessMultiplier = 1.0f;
     float distanceFromMainPath = 0.0f;
 };
 

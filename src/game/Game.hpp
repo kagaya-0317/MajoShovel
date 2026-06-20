@@ -501,6 +501,22 @@ private:
         bool valid = false;
     };
 
+    struct RoguelikeCarryOutDelta {
+        MaterialInventory materials;
+        std::vector<InventoryObjectStack> objectStacks;
+        std::vector<InventoryObjectInstance> objectInstances;
+        int money = 0;
+        bool valid = false;
+    };
+
+    struct RoguelikeCarryOutMergeResult {
+        int objectItems = 0;
+        int warehouseItems = 0;
+        int skippedItems = 0;
+        int materials = 0;
+        int money = 0;
+    };
+
     enum class WorldBuildStep {
         None,
         ResetSimulation,
@@ -544,6 +560,7 @@ private:
     struct WorldBuildJob {
         bool active = false;
         bool useLatestWarpPoint = false;
+        bool restoreRetainedInventory = true;
         InventoryCarryState retainedInventory;
         int retainedLevel = 1;
         int retainedXp = 0;
@@ -1013,6 +1030,7 @@ private:
     void beginWorldBuildFromBase(
         bool useLatestWarpPoint,
         InventoryCarryState retainedInventory,
+        bool restoreRetainedInventory,
         int retainedLevel,
         int retainedXp,
         int retainedXpToNext);
@@ -1413,6 +1431,8 @@ private:
     void returnToBaseFromNormalStage(bool stageCleared, bool died);
     InventoryCarryState captureInventoryCarryState() const;
     void restoreInventoryCarryState(const InventoryCarryState& state);
+    RoguelikeCarryOutDelta collectRoguelikeCarryOutDelta() const;
+    RoguelikeCarryOutMergeResult mergeRoguelikeCarryOutDelta(const RoguelikeCarryOutDelta& delta);
     void captureRunStartInventoryState();
     void clearTemporaryPlayerState(bool fullHeal);
     Vec2 latestWarpPointStartPosition() const;
@@ -1910,6 +1930,7 @@ private:
     UiRect dungeonMapOverlayViewportRect() const;
     Vec2 dungeonMapOverlayMapSize(UiRect viewport) const;
     Vec2 dungeonMapOverlayMaxScroll() const;
+    Vec2 dungeonMapOverlayPlayerCenteredScroll() const;
     UiRect dungeonMapOverlayVerticalScrollTrackRect() const;
     UiRect dungeonMapOverlayVerticalScrollThumbRect() const;
     UiRect dungeonMapOverlayHorizontalScrollTrackRect() const;
@@ -2428,6 +2449,7 @@ private:
     int debugHpValue_ = 1;
     int debugTargetLevel_ = 1;
     InventoryCarryState runStartInventoryState_{};
+    InventoryCarryState roguelikeReturnInventoryState_{};
     RetrySnapshot retrySnapshot_{};
     std::unordered_map<std::string, DungeonState> dungeonStates_;
     DungeonMinimapCells dungeonMinimapCells_;
