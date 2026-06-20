@@ -112,7 +112,7 @@ void DebugOverlay::render(
         "Terrain: %s HP %d/%d Hard %.2f Depth %d x%.2f   MainPathDist %.1f\n"
         "Ring: %d/%d %s   R %03d Speed %.2f Throw %02d%%\n"
         "Warp: nearest %d %s   found %d/%d unlocked %d latest %s startReq %s\n"
-        "Chunks: active %02d generated %02zu   Enemies: active %03d",
+        "Chunks: active %02d generated %02zu   Enemies: ambient %02d/%02d event %02d boss %02d total %03d",
         static_cast<int>(time.fps()),
         autoReloadBlocked ? "ON" : "OFF",
         dungeonLayout.stageId,
@@ -154,6 +154,10 @@ void DebugOverlay::render(
         requestedWarpStartText,
         map.activeChunkCount(),
         map.generatedChunkCount(),
+        enemies.ambientActiveCount(),
+        balance.enemySoftCap,
+        enemies.eventActiveCount(),
+        enemies.bossSourceActiveCount(),
         enemies.activeCount());
     std::snprintf(
         buffer + std::char_traits<char>::length(buffer),

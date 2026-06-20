@@ -1,5 +1,6 @@
 ﻿#pragma once
 
+#include "game/MenuIconImage.hpp"
 #include "game/SpellRingSystem.hpp"
 
 #include <algorithm>
@@ -31,6 +32,11 @@ inline std::string_view ringDisplayName(int ringIndex, int unlockedRingCount)
         return "リング";
     }
     return namedRingDisplayName(ringIndex);
+}
+
+inline int ringDisplayIconImageNumber(int ringIndex)
+{
+    return ringMenuIconImageNumber(ringIndex);
 }
 
 inline std::string ringDisplayNameWithSuffix(int ringIndex, int unlockedRingCount, std::string_view suffix)

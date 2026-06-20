@@ -3,8 +3,10 @@
 #include "engine/InputHelpGlyph.hpp"
 #include "game/CharacterSprite.hpp"
 #include "game/EnemyImageRenderer.hpp"
+#include "game/MenuIconImage.hpp"
 #include "game/NpcCharacterVisual.hpp"
 #include "game/PlayerEquipmentVisual.hpp"
+#include "game/RingDisplayName.hpp"
 
 #include <unordered_set>
 
@@ -51,8 +53,8 @@ constexpr float RingWorkshopShiftDistanceMetersPerLevel = 0.50f;
 constexpr float RingWorkshopThrowDistanceMetersPerLevel = 0.40f;
 constexpr float RingWorkshopThrowCooldownSecondsPerLevel = 0.18f;
 constexpr float DungeonDetailImageHeight = 96.0f;
-constexpr float DungeonDetailEnemyIconSize = 42.0f;
-constexpr float DungeonDetailEnemyIconGap = 8.0f;
+constexpr float DungeonDetailEnemyIconSize = 42.5f;
+constexpr float DungeonDetailEnemyIconGap = 3.0f;
 
 float metersToWorldDistance(float meters)
 {
@@ -364,7 +366,7 @@ void drawDungeonDetailEnemyIcons(
 {
     const UiRect content = uiSubPanelContentRect(panel);
     renderer.drawText({content.pos.x, y}, "出現する敵", ui::TextMuted, 2);
-    y += 25.0f;
+    y += 22.0f;
 
     const std::vector<const EnemyDefinition*> enemies = stageDetailEnemies(stage, enemyCatalog);
     if (enemies.empty()) {
@@ -381,9 +383,7 @@ void drawDungeonDetailEnemyIcons(
             content.pos.x + static_cast<float>(column) * (DungeonDetailEnemyIconSize + DungeonDetailEnemyIconGap),
             y + static_cast<float>(row) * (DungeonDetailEnemyIconSize + DungeonDetailEnemyIconGap),
         };
-        const UiRect slot{slotPos, {DungeonDetailEnemyIconSize, DungeonDetailEnemyIconSize}};
-        renderer.fillRect(slot.pos, slot.size, {12, 16, 26, 156});
-        renderer.drawRect(slot.pos, slot.size, {102, 92, 120, 150});
+        const Vec2 iconCenter = slotPos + Vec2{DungeonDetailEnemyIconSize * 0.5f, DungeonDetailEnemyIconSize * 0.5f};
 
         const EnemyDefinition& enemy = *enemies[static_cast<std::size_t>(i)];
         EnemyImageDrawOptions options;
@@ -398,11 +398,11 @@ void drawDungeonDetailEnemyIcons(
             !drawEnemyImageIcon(
                 renderer,
                 enemy.imageNumber,
-                slot.pos + slot.size * 0.5f,
-                slot.size - Vec2{6.0f, 6.0f},
+                iconCenter,
+                {DungeonDetailEnemyIconSize, DungeonDetailEnemyIconSize},
                 animationSeconds,
                 options)) {
-            renderer.fillCircle(slot.pos + slot.size * 0.5f, 13.0f, {68, 64, 82, 220});
+            renderer.fillCircle(iconCenter, DungeonDetailEnemyIconSize * 0.32f, {34, 34, 44, 230});
         }
     }
 
@@ -1058,6 +1058,30 @@ constexpr std::array<std::string_view, BaseItemSourceCount> BaseItemSourceLabels
     "リング2",
     "リング3",
 }};
+
+int baseItemSourceIconImageNumber(int source)
+{
+    if (source == BaseBackpackSourceIndex) {
+        return menuIconImageNumber(MenuIconImage::Backpack);
+    }
+    if (source == BaseWarehouseSourceIndex) {
+        return menuIconImageNumber(MenuIconImage::StorageChest);
+    }
+    if (source >= BaseRingSourceOffset && source < BaseItemSourceCount) {
+        return ringDisplayIconImageNumber(source - BaseRingSourceOffset);
+    }
+    return 0;
+}
+
+UiTabItem baseItemSourceTabItem(int source, bool enabled)
+{
+    const int clampedSource = std::clamp(source, 0, BaseItemSourceCount - 1);
+    return {
+        BaseItemSourceLabels[static_cast<std::size_t>(clampedSource)],
+        enabled,
+        baseItemSourceIconImageNumber(clampedSource),
+    };
+}
 
 constexpr int StorageDepositSourceCount = 1 + SpellRingCount;
 constexpr float MerchantSellSourceYOffset = 44.0f;
@@ -8601,7 +8625,11 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
             std::array<std::string, SpellRingCount> ringTabLabels{};
             for (int i = 0; i < ringCount; ++i) {
                 ringTabLabels[static_cast<std::size_t>(i)] = "リング " + std::to_string(i + 1);
-                ringTabs[static_cast<std::size_t>(i)] = {ringTabLabels[static_cast<std::size_t>(i)], true};
+                ringTabs[static_cast<std::size_t>(i)] = {
+                    ringTabLabels[static_cast<std::size_t>(i)],
+                    true,
+                    ringDisplayIconImageNumber(i),
+                };
                 ringTabRects[static_cast<std::size_t>(i)] = ringWorkshopRingTabRect(i, ringCount);
             }
             UiTabsInput ringTabsInput{};
@@ -8706,7 +8734,11 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
             std::array<std::string, SpellRingCount> ringTabLabels{};
             for (int i = 0; i < ringCount; ++i) {
                 ringTabLabels[static_cast<std::size_t>(i)] = "リング " + std::to_string(i + 1);
-                ringTabs[static_cast<std::size_t>(i)] = {ringTabLabels[static_cast<std::size_t>(i)], true};
+                ringTabs[static_cast<std::size_t>(i)] = {
+                    ringTabLabels[static_cast<std::size_t>(i)],
+                    true,
+                    ringDisplayIconImageNumber(i),
+                };
                 ringTabRects[static_cast<std::size_t>(i)] = ringWorkshopRingTabRect(i, ringCount);
             }
             UiTabsInput ringTabsInput{};
@@ -9141,7 +9173,7 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
             std::array<UiRect, StorageDepositSourceCount> sourceTabRects{};
             for (int i = 0; i < sourceCount; ++i) {
                 const int source = storageDepositSourceValue(i);
-                sourceTabs[static_cast<std::size_t>(i)] = {BaseItemSourceLabels[static_cast<std::size_t>(source)], true};
+                sourceTabs[static_cast<std::size_t>(i)] = baseItemSourceTabItem(source, true);
                 sourceTabRects[static_cast<std::size_t>(i)] = storageDepositSourceRect(i);
             }
             UiTabsInput sourceTabsInput{};
@@ -9642,7 +9674,7 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
         for (int i = 0; i < sourceCount; ++i) {
             const bool enabled = !(roguelikeFacilityUiMode_ == RoguelikeFacilityUiMode::Artisan &&
                 baseItemSourceIsWarehouse(i));
-            sourceTabs[static_cast<std::size_t>(i)] = {BaseItemSourceLabels[static_cast<std::size_t>(i)], enabled};
+            sourceTabs[static_cast<std::size_t>(i)] = baseItemSourceTabItem(i, enabled);
             sourceTabRects[static_cast<std::size_t>(i)] = baseProcessingSourceRect(i, sourceCount);
         }
         UiTabsInput sourceTabsInput{};
@@ -10076,7 +10108,7 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
             for (int i = 0; i < sourceCount; ++i) {
                 const bool enabled = !(roguelikeFacilityUiMode_ == RoguelikeFacilityUiMode::Merchant &&
                     baseItemSourceIsWarehouse(i));
-                sourceTabs[static_cast<std::size_t>(i)] = {BaseItemSourceLabels[static_cast<std::size_t>(i)], enabled};
+                sourceTabs[static_cast<std::size_t>(i)] = baseItemSourceTabItem(i, enabled);
                 sourceTabRects[static_cast<std::size_t>(i)] = merchantSellSourceRect(i, sourceCount);
             }
             UiTabsInput sourceTabsInput{};
@@ -11781,7 +11813,7 @@ void Game::renderBaseScreen(Renderer& renderer) const
                 std::array<UiRect, StorageDepositSourceCount> sourceTabRects{};
                 for (int i = 0; i < sourceCount; ++i) {
                     const int source = storageDepositSourceValue(i);
-                    sourceTabs[static_cast<std::size_t>(i)] = {BaseItemSourceLabels[static_cast<std::size_t>(source)], true};
+                    sourceTabs[static_cast<std::size_t>(i)] = baseItemSourceTabItem(source, true);
                     sourceTabRects[static_cast<std::size_t>(i)] = storageDepositSourceRect(i);
                 }
                 const int currentTab = storageDepositSourceTabIndex(baseStorageDepositSource_);
@@ -11918,7 +11950,11 @@ void Game::renderBaseScreen(Renderer& renderer) const
             std::array<std::string, SpellRingCount> ringTabLabels{};
             for (int i = 0; i < ringCount; ++i) {
                 ringTabLabels[static_cast<std::size_t>(i)] = "リング " + std::to_string(i + 1);
-                ringTabs[static_cast<std::size_t>(i)] = {ringTabLabels[static_cast<std::size_t>(i)], true};
+                ringTabs[static_cast<std::size_t>(i)] = {
+                    ringTabLabels[static_cast<std::size_t>(i)],
+                    true,
+                    ringDisplayIconImageNumber(i),
+                };
                 ringTabRects[static_cast<std::size_t>(i)] = ringWorkshopRingTabRect(i, ringCount);
             }
             drawUiTabs(
@@ -12062,7 +12098,11 @@ void Game::renderBaseScreen(Renderer& renderer) const
             std::array<std::string, SpellRingCount> ringTabLabels{};
             for (int i = 0; i < ringCount; ++i) {
                 ringTabLabels[static_cast<std::size_t>(i)] = "リング " + std::to_string(i + 1);
-                ringTabs[static_cast<std::size_t>(i)] = {ringTabLabels[static_cast<std::size_t>(i)], true};
+                ringTabs[static_cast<std::size_t>(i)] = {
+                    ringTabLabels[static_cast<std::size_t>(i)],
+                    true,
+                    ringDisplayIconImageNumber(i),
+                };
                 ringTabRects[static_cast<std::size_t>(i)] = ringWorkshopRingTabRect(i, ringCount);
             }
             drawUiTabs(
@@ -12280,7 +12320,7 @@ void Game::renderBaseScreen(Renderer& renderer) const
         for (int i = 0; i < sourceCount; ++i) {
             const bool enabled = !(roguelikeFacilityUiMode_ == RoguelikeFacilityUiMode::Artisan &&
                 baseItemSourceIsWarehouse(i));
-            sourceTabs[static_cast<std::size_t>(i)] = {BaseItemSourceLabels[static_cast<std::size_t>(i)], enabled};
+            sourceTabs[static_cast<std::size_t>(i)] = baseItemSourceTabItem(i, enabled);
             sourceTabRects[static_cast<std::size_t>(i)] = baseProcessingSourceRect(i, sourceCount);
         }
         drawUiTabs(
@@ -12556,7 +12596,7 @@ void Game::renderBaseScreen(Renderer& renderer) const
                 for (int i = 0; i < sourceCount; ++i) {
                     const bool enabled = !(roguelikeFacilityUiMode_ == RoguelikeFacilityUiMode::Merchant &&
                         baseItemSourceIsWarehouse(i));
-                    sourceTabs[static_cast<std::size_t>(i)] = {BaseItemSourceLabels[static_cast<std::size_t>(i)], enabled};
+                    sourceTabs[static_cast<std::size_t>(i)] = baseItemSourceTabItem(i, enabled);
                     sourceTabRects[static_cast<std::size_t>(i)] = merchantSellSourceRect(i, sourceCount);
                 }
                 drawUiTabs(

@@ -38,6 +38,17 @@ enum class WorldIconId {
     LostBaggage,
     Campfire,
     HeavyRock,
+    UiScreenSettings,
+    UiVolume,
+    UiGamepad,
+    UiStatus,
+    UiBackpack,
+    UiOptions,
+    UiQuitGame,
+    UiStorageChest,
+    UiRing0,
+    UiRing8,
+    UiRingC,
 };
 
 struct WorldIconDefinition {

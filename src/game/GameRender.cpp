@@ -5,9 +5,11 @@
 #include "game/EnemyImageRenderer.hpp"
 #include "game/EntityStatusVisuals.hpp"
 #include "game/ExplosionWarning.hpp"
+#include "game/MenuIconImage.hpp"
 #include "game/PlayerEquipmentVisual.hpp"
 #include "game/RingDisplayName.hpp"
 
+#include <array>
 #include <cctype>
 #include <vector>
 
@@ -2087,6 +2089,12 @@ constexpr const char* OptionsPageLabels[OptionsPageCount] = {
     "画面",
 };
 
+constexpr std::array<MenuIconImage, OptionsPageCount> OptionsPageIcons{{
+    MenuIconImage::Gamepad,
+    MenuIconImage::Volume,
+    MenuIconImage::ScreenSettings,
+}};
+
 constexpr const char* OperationSettingsCategoryLabels[OperationSettingsCategoryCount] = {
     "基本",
     "リング/アイテム",
@@ -2276,7 +2284,12 @@ UiRect optionsHelpWindowRect()
 
 UiTabItem optionsPageTabItem(int index)
 {
-    return {OptionsPageLabels[std::clamp(index, 0, OptionsPageCount - 1)], true};
+    const int clampedIndex = std::clamp(index, 0, OptionsPageCount - 1);
+    return {
+        OptionsPageLabels[clampedIndex],
+        true,
+        menuIconImageNumber(OptionsPageIcons[static_cast<std::size_t>(clampedIndex)]),
+    };
 }
 
 std::array<UiTabItem, OptionsPageCount> optionsPageTabItems()
@@ -2295,6 +2308,18 @@ std::array<UiRect, OptionsPageCount> optionsPageTabRects()
         rects[static_cast<std::size_t>(i)] = optionsPageTabRect(i);
     }
     return rects;
+}
+
+int pauseMenuItemIconImageNumber(int index)
+{
+    switch (index) {
+    case 0: return menuIconImageNumber(MenuIconImage::Status);
+    case 1: return menuIconImageNumber(MenuIconImage::Backpack);
+    case 2: return menuIconImageNumber(MenuIconImage::Ring0);
+    case 3: return menuIconImageNumber(MenuIconImage::Options);
+    case 4: return menuIconImageNumber(MenuIconImage::QuitGame);
+    default: return 0;
+    }
 }
 
 UiSelectableTableStyle operationSettingsTableStyle()
@@ -3568,7 +3593,11 @@ void Game::updateRingScreen(const Input& input, UiContext& ui, float dt)
     std::array<std::string, SpellRingCount> ringTabLabels{};
     for (int i = 0; i < ringCount; ++i) {
         ringTabLabels[static_cast<std::size_t>(i)] = ringDisplayName(i, ringCount);
-        ringTabs[static_cast<std::size_t>(i)] = {ringTabLabels[static_cast<std::size_t>(i)], true};
+        ringTabs[static_cast<std::size_t>(i)] = {
+            ringTabLabels[static_cast<std::size_t>(i)],
+            true,
+            ringDisplayIconImageNumber(i),
+        };
         ringTabRects[static_cast<std::size_t>(i)] = ringTabRect(i, ringCount);
     }
     UiTabsInput ringTabsInput{};
@@ -6307,7 +6336,11 @@ void Game::renderRingScreen(Renderer& renderer, float totalTime) const
     std::array<std::string, SpellRingCount> ringTabLabels{};
     for (int i = 0; i < ringCount; ++i) {
         ringTabLabels[static_cast<std::size_t>(i)] = ringDisplayName(i, ringCount);
-        ringTabs[static_cast<std::size_t>(i)] = {ringTabLabels[static_cast<std::size_t>(i)], true};
+        ringTabs[static_cast<std::size_t>(i)] = {
+            ringTabLabels[static_cast<std::size_t>(i)],
+            true,
+            ringDisplayIconImageNumber(i),
+        };
         ringTabRects[static_cast<std::size_t>(i)] = ringTabRect(i, ringCount);
     }
     drawUiTabs(
@@ -6811,7 +6844,7 @@ void Game::renderPauseMenu(Renderer& renderer) const
     if (pausePage_ == PauseMenuPage::Main) {
         for (int i = 0; i < PauseMenuItemCount; ++i) {
             const bool selected = i == pauseMenuSelection_;
-            drawUiButton(renderer, pauseMenuItemRect(i), pauseMenuItemName(i), selected);
+            drawUiButton(renderer, pauseMenuItemRect(i), pauseMenuItemName(i), pauseMenuItemIconImageNumber(i), selected);
         }
         return;
     }

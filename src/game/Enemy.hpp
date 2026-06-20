@@ -20,6 +20,12 @@ enum class EnemyVariantTier {
     Abyss,
 };
 
+enum class EnemySpawnSource {
+    Ambient,
+    Event,
+    Boss,
+};
+
 inline constexpr int EnemyDeepVariantLevelBonus = 35;
 inline constexpr int EnemyAbyssVariantLevelBonus = 70;
 
@@ -265,6 +271,7 @@ struct EnemyDeathRuntime {
 struct Enemy {
     bool active = false;
     bool isBoss = false;
+    EnemySpawnSource spawnSource = EnemySpawnSource::Ambient;
     bool dungeonEventBoss = false;
     bool dungeonEventSleeping = false;
     int id = 0;

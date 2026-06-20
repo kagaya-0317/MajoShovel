@@ -257,6 +257,9 @@ public:
     void emitStatusParticles(EffectSystem& effects) const;
     void appendWetGroundEmitters(std::vector<WetGroundEmitter>& emitters) const;
     int activeCount() const { return enemies_.activeCount(); }
+    int ambientActiveCount() const;
+    int eventActiveCount() const;
+    int bossSourceActiveCount() const;
     bool bossActive() const;
     void appendMinimapMarkers(std::vector<EnemyMinimapMarker>& markers) const;
     const std::vector<EnemyEvent>& events() const { return events_; }
@@ -445,7 +448,8 @@ private:
         std::string_view lootStageId = {},
         int lootDepthRank = 1,
         EnemyVariantTier variantTier = EnemyVariantTier::Normal,
-        int effectiveBaseLevel = 0);
+        int effectiveBaseLevel = 0,
+        EnemySpawnSource spawnSource = EnemySpawnSource::Ambient);
     void spawnAt(Vec2 position, const RuntimeBalance& balance, const EnemyCatalog& enemyCatalog, bool detectedOnSpawn = false, Vec2 detectedTarget = {});
     bool spawnBossAt(
         Vec2 position,

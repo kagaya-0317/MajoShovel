@@ -343,6 +343,7 @@ struct UiSelectableTableResult {
 struct UiTabItem {
     std::string_view label;
     bool enabled = true;
+    int iconImageNumber = 0;
 };
 
 struct UiVerticalTabItem {
@@ -495,6 +496,7 @@ void drawUiCancelButton(Renderer& renderer, UiRect panel);
 void drawUiSeparator(Renderer& renderer, UiRect rect, Color tint = {255, 255, 255, 255});
 void drawUiGauge(Renderer& renderer, UiRect rect, float progress, const UiGaugeStyle& style = {});
 void drawUiButton(Renderer& renderer, UiRect rect, std::string_view label, bool hot, const UiButtonStyle& style = {});
+void drawUiButton(Renderer& renderer, UiRect rect, std::string_view label, int iconImageNumber, bool hot, const UiButtonStyle& style = {});
 void drawUiFlexibleButtonFrame(Renderer& renderer, UiRect rect, bool selected, const UiButtonStyle& style = {});
 void drawUiFlexibleButton(Renderer& renderer, UiRect rect, std::string_view label, bool selected, const UiButtonStyle& style = {});
 void drawUiRectButton(Renderer& renderer, UiRect rect, std::string_view label, bool hot, const UiButtonStyle& style = {});

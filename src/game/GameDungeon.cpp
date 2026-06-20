@@ -679,6 +679,20 @@ bool dungeonEventEnemiesWakeOnDiscovery(Game::DungeonEventKind kind)
     }
 }
 
+bool dungeonEventEncounterSpawnsEnemies(Game::DungeonEventKind kind)
+{
+    switch (kind) {
+    case Game::DungeonEventKind::SleepingEnemyTreasure:
+    case Game::DungeonEventKind::MonsterSwarmRoom:
+    case Game::DungeonEventKind::NestRoom:
+    case Game::DungeonEventKind::BossMonsterRoom:
+    case Game::DungeonEventKind::SurroundedWitch:
+        return true;
+    default:
+        return false;
+    }
+}
+
 DungeonTile coinRoomMoneyNodeTile(const SpecialRoomAnchor& room, int index, int count, float angleOffset)
 {
     const float angle = angleOffset + Pi * 2.0f * (static_cast<float>(index) / static_cast<float>(std::max(1, count)));
@@ -5807,6 +5821,9 @@ void Game::updateDungeonEvents(float dt, double totalSeconds)
         }
 
         if (!event.encounterSpawned) {
+            if (dungeonEventEncounterSpawnsEnemies(event.kind) && !event.discovered) {
+                continue;
+            }
             const DungeonTile centerTile = event.centerTile;
             event.encounterSpawnCount = 0;
             event.spawnedEnemyRuntimeIds.clear();

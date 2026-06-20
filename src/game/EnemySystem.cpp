@@ -6446,7 +6446,7 @@ void EnemySystem::applyDefinition(Enemy& enemy, const EnemyDefinition* definitio
     enemy.action = {};
     enemy.enemyTags.clear();
     enemy.radius = balance.enemyRadius;
-    enemy.maxHp = balance.enemyHp + std::max(0, activeCount() / 12);
+    enemy.maxHp = balance.enemyHp + std::max(0, ambientActiveCount() / 12);
     enemy.hp = enemy.maxHp;
     enemy.xp = balance.enemyXp;
     enemy.moneyDrop = 0;
@@ -6992,7 +6992,8 @@ bool EnemySystem::spawnDefinitionAt(
     std::string_view lootStageId,
     int lootDepthRank,
     EnemyVariantTier variantTier,
-    int effectiveBaseLevel)
+    int effectiveBaseLevel,
+    EnemySpawnSource spawnSource)
 {
     Enemy* enemy = enemies_.acquire();
     if (!enemy) {
@@ -7002,8 +7003,10 @@ bool EnemySystem::spawnDefinitionAt(
     enemy->active = true;
     enemy->id = nextEnemyId_++;
     enemy->isBoss = false;
+    enemy->spawnSource = spawnSource;
     enemy->position = position;
     applyDefinition(*enemy, definition, balance, enemyCatalog);
+    enemy->spawnSource = spawnSource;
     applyEnemyVariant(*enemy, enemyCatalog, variantTier, effectiveBaseLevel);
     enemy->lootStageId = std::string(lootStageId);
     enemy->lootDepthRank = std::max(1, lootDepthRank);
@@ -7044,12 +7047,14 @@ bool EnemySystem::spawnBossAt(
     enemy->active = true;
     enemy->id = nextEnemyId_++;
     enemy->isBoss = true;
+    enemy->spawnSource = EnemySpawnSource::Boss;
     enemy->position = position;
     const EnemyDefinition* definition = findEnemyDefinitionById(enemyCatalog, bossEnemyId);
     if (definition == nullptr && bossEnemyId.empty()) {
         definition = chooseEnemyDefinition(enemyCatalog);
     }
     applyDefinition(*enemy, definition, balance, enemyCatalog);
+    enemy->spawnSource = EnemySpawnSource::Boss;
     if (definition == nullptr || (!bossEnemyId.empty() && enemy->enemyId != bossEnemyId)) {
         applyFallbackBossDefinition(*enemy, bossEnemyId, balance);
     }
@@ -7183,7 +7188,7 @@ void EnemySystem::spawnFromDugTiles(
     const EnemyCatalog& enemyCatalog,
     std::string_view stageId)
 {
-    if (activeCount() >= balance.enemySoftCap) {
+    if (ambientActiveCount() >= balance.enemySoftCap) {
         return;
     }
     const int minDugTiles = std::max(1, balance.enemyMinDugTiles);
@@ -7219,7 +7224,7 @@ void EnemySystem::spawnFromDugTiles(
             selection.variantTier,
             selection.effectiveBaseLevel);
         dugSpawnCounter_ = 0;
-        if (activeCount() >= balance.enemySoftCap) {
+        if (ambientActiveCount() >= balance.enemySoftCap) {
             return;
         }
     }
@@ -7236,7 +7241,7 @@ bool EnemySystem::spawnNodeEnemy(
     std::string_view lootStageId,
     int lootDepthRank)
 {
-    if (activeCount() >= balance.enemySoftCap) {
+    if (ambientActiveCount() >= balance.enemySoftCap) {
         return false;
     }
 
@@ -7275,6 +7280,10 @@ bool EnemySystem::spawnFixedNodeEnemy(
     std::string_view lootStageId,
     int lootDepthRank)
 {
+    if (ambientActiveCount() >= balance.enemySoftCap) {
+        return false;
+    }
+
     const EnemySpawnSelection selection = chooseDugSpawnEnemy(enemyCatalog, lootStageId, lootDepthRank);
     const EnemyDefinition* definition = selection.definition;
     const float radius = enemyDefinitionSpawnRadius(definition, balance, placementCatalog_);
@@ -7322,7 +7331,7 @@ bool EnemySystem::spawnSpecificEnemy(
     std::string_view lootStageId,
     int lootDepthRank)
 {
-    if (activeCount() >= balance.enemySoftCap) {
+    if (ambientActiveCount() >= balance.enemySoftCap) {
         return false;
     }
 
@@ -7363,7 +7372,7 @@ bool EnemySystem::spawnSpecificEnemyAtPosition(
     std::string_view lootStageId,
     int lootDepthRank)
 {
-    if (activeCount() >= balance.enemySoftCap) {
+    if (ambientActiveCount() >= balance.enemySoftCap) {
         return false;
     }
 
@@ -7411,10 +7420,6 @@ bool EnemySystem::spawnEventEnemy(
     const EventEnemySpawnOptions& options,
     int* outRuntimeId)
 {
-    if (activeCount() >= balance.enemySoftCap) {
-        return false;
-    }
-
     EnemySpawnSelection selection;
     if (!options.enemyId.empty()) {
         const auto it = enemyCatalog.enemiesById.find(options.enemyId);
@@ -7469,7 +7474,8 @@ bool EnemySystem::spawnEventEnemy(
             options.stageId,
             options.depthRank,
             selection.variantTier,
-            selection.effectiveBaseLevel)) {
+            selection.effectiveBaseLevel,
+            EnemySpawnSource::Event)) {
         return false;
     }
     Enemy* enemy = findRuntimeEnemy(runtimeId);
@@ -7560,6 +7566,39 @@ bool EnemySystem::bossActive() const
         }
     }
     return false;
+}
+
+int EnemySystem::ambientActiveCount() const
+{
+    int count = 0;
+    for (const Enemy& enemy : enemies_.items()) {
+        if (enemy.active && enemy.spawnSource == EnemySpawnSource::Ambient) {
+            ++count;
+        }
+    }
+    return count;
+}
+
+int EnemySystem::eventActiveCount() const
+{
+    int count = 0;
+    for (const Enemy& enemy : enemies_.items()) {
+        if (enemy.active && enemy.spawnSource == EnemySpawnSource::Event) {
+            ++count;
+        }
+    }
+    return count;
+}
+
+int EnemySystem::bossSourceActiveCount() const
+{
+    int count = 0;
+    for (const Enemy& enemy : enemies_.items()) {
+        if (enemy.active && enemy.spawnSource == EnemySpawnSource::Boss) {
+            ++count;
+        }
+    }
+    return count;
 }
 
 void EnemySystem::appendMinimapMarkers(std::vector<EnemyMinimapMarker>& markers) const
@@ -8518,8 +8557,10 @@ void EnemySystem::update(
                     *child = Enemy{};
                     child->active = true;
                     child->id = nextEnemyId_++;
+                    child->spawnSource = enemy.spawnSource;
                     child->position = spawnPos;
                     applyDefinition(*child, enemy.definition, balance, EnemyCatalog{});
+                    child->spawnSource = enemy.spawnSource;
                     child->spawnTimer = 0.4f;
                     child->spawnDuration = 0.4f;
                     child->swarmSpawnEnabled = false;

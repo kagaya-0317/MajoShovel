@@ -34,11 +34,17 @@ std::unordered_map<std::string, UiWindowState> windowStates;
 
 constexpr std::string_view ConfirmDialogHelpText = "F/Enter 決定  Esc 戻る";
 constexpr std::string_view UiSelectionCursorPath = "assets/system/UI_cursor2.png";
+constexpr std::string_view UiMenuIconDir = "assets/others/";
+constexpr std::string_view UiMenuIconPrefix = "img_";
+constexpr std::string_view UiMenuIconExtension = ".png";
 constexpr Vec2 UiSelectionCursorSize{58.0f, 58.0f};
 constexpr Vec2 UiSelectionCursorTargetOffset{8.0f, -5.0f};
 constexpr float UiSelectionCursorMoveResponsiveness = 14.0f;
 constexpr float UiSelectionCursorBobAmplitude = 3.0f;
 constexpr float UiSelectionCursorBobSpeed = 3.2f;
+constexpr float UiTextIconGap = 8.0f;
+constexpr float UiButtonIconSize = 34.0f;
+constexpr float UiTabIconSize = 30.0f;
 float windowAnimationStep = 1.0f / ui::WindowAnimationFrames;
 
 struct UiSelectionCursorState {
@@ -573,6 +579,60 @@ std::string fittedUiText(Renderer& renderer, std::string_view text, float maxWid
         removeUtf8LastCodepoint(result);
     }
     return result.empty() ? std::string(Ellipsis) : result + std::string(Ellipsis);
+}
+
+std::string uiMenuIconPath(int imageNumber)
+{
+    if (imageNumber <= 0) {
+        return {};
+    }
+
+    return std::string(UiMenuIconDir) +
+        std::string(UiMenuIconPrefix) +
+        std::to_string(imageNumber) +
+        std::string(UiMenuIconExtension);
+}
+
+void drawUiIconImage(Renderer& renderer, int imageNumber, Vec2 center, float size, Color tint)
+{
+    if (imageNumber <= 0 || size <= 0.0f) {
+        return;
+    }
+
+    ImageDrawOptions options;
+    options.tint = tint;
+    renderer.drawImage(uiMenuIconPath(imageNumber), center, {size, size}, options, TextureFilter::Linear);
+}
+
+void drawUiLabelWithOptionalIcon(
+    Renderer& renderer,
+    UiRect rect,
+    std::string_view label,
+    int iconImageNumber,
+    Color textColor,
+    int textScale,
+    float iconSize,
+    float textOffsetY = 0.0f,
+    Color iconTint = {255, 255, 255, 255})
+{
+    const bool hasIcon = iconImageNumber > 0;
+    const float sidePadding = hasIcon ? std::max(10.0f, iconSize * 0.32f) : 0.0f;
+    const float iconGap = hasIcon ? UiTextIconGap : 0.0f;
+    const float maxTextWidth = std::max(1.0f, rect.size.x - sidePadding * 2.0f - (hasIcon ? iconSize + iconGap : 0.0f));
+    const std::string fitted = fittedUiText(renderer, label, maxTextWidth, textScale);
+    const Vec2 textSize = renderer.measureText(fitted, textScale);
+    const float groupWidth = textSize.x + (hasIcon ? iconSize + iconGap : 0.0f);
+    const float groupX = rect.pos.x + std::max(sidePadding, (rect.size.x - groupWidth) * 0.5f);
+    const float centerY = rect.pos.y + rect.size.y * 0.5f;
+    const float textX = groupX + (hasIcon ? iconSize + iconGap : 0.0f);
+    const Vec2 textPos{
+        textX,
+        rect.pos.y + std::max(0.0f, (rect.size.y - textSize.y) * 0.5f) + textOffsetY,
+    };
+    if (hasIcon) {
+        drawUiIconImage(renderer, iconImageNumber, {groupX + iconSize * 0.5f, centerY}, iconSize, iconTint);
+    }
+    renderer.drawText(textPos, fitted, textColor, textScale);
 }
 
 void fillRoundedRect(Renderer& renderer, UiRect rect, float radius, Color color)
@@ -1169,6 +1229,11 @@ void drawUiGauge(Renderer& renderer, UiRect rect, float progress, const UiGaugeS
 
 void drawUiButton(Renderer& renderer, UiRect rect, std::string_view label, bool hot, const UiButtonStyle& style)
 {
+    drawUiButton(renderer, rect, label, 0, hot, style);
+}
+
+void drawUiButton(Renderer& renderer, UiRect rect, std::string_view label, int iconImageNumber, bool hot, const UiButtonStyle& style)
+{
     rect.size.y = ui::ButtonHeight;
     const bool selected = hot;
     const float scale = selected ? 1.035f : 1.0f;
@@ -1185,12 +1250,7 @@ void drawUiButton(Renderer& renderer, UiRect rect, std::string_view label, bool 
         renderer.drawRect(rect.pos, rect.size, outline);
     }
 
-    const Vec2 textSize = renderer.measureText(label, 2);
-    const Vec2 textPos{
-        rect.pos.x + std::max(0.0f, (rect.size.x - textSize.x) * 0.5f),
-        rect.pos.y + std::max(0.0f, (rect.size.y - textSize.y) * 0.5f),
-    };
-    renderer.drawText(textPos, label, style.text, 2);
+    drawUiLabelWithOptionalIcon(renderer, rect, label, iconImageNumber, style.text, 2, UiButtonIconSize);
     renderer.popScreenTransform();
     if (selected) {
         requestUiSelectionCursor(rect);
@@ -2960,12 +3020,20 @@ void drawUiTabs(
 
             UiRect rect = rects[i];
             rect.size.y = ui::ButtonHeight;
-            const Vec2 textSize = renderer.measureText(items[i].label, 2);
-            const Vec2 textPos{
-                rect.pos.x + std::max(0.0f, (rect.size.x - textSize.x) * 0.5f),
-                rect.pos.y + std::max(0.0f, (rect.size.y - textSize.y) * 0.5f) + TabTextOffsetY,
-            };
-            renderer.drawText(textPos, items[i].label, buttonStyle.text, 2);
+            Color iconTint = selected ? style.selectedImageTint : Color{255, 255, 255, 255};
+            if (!enabled) {
+                iconTint = alphaScaledColor(iconTint, 0.45f);
+            }
+            drawUiLabelWithOptionalIcon(
+                renderer,
+                rect,
+                items[i].label,
+                items[i].iconImageNumber,
+                buttonStyle.text,
+                2,
+                UiTabIconSize,
+                TabTextOffsetY,
+                iconTint);
             if (i == state.focusedIndex && enabled) {
                 requestUiSelectionCursor(rect);
             }
@@ -3006,24 +3074,40 @@ void drawUiTabs(
             const Color tint = selected ? buttonStyle.imageTintHot : buttonStyle.imageTint;
             renderer.drawUiTabFrame(imageRect.pos, imageRect.size, selected, tint);
 
-            const Vec2 textSize = renderer.measureText(items[i].label, 2);
-            const Vec2 textPos{
-                rect.pos.x + std::max(0.0f, (rect.size.x - textSize.x) * 0.5f),
-                rect.pos.y + std::max(0.0f, (rect.size.y - textSize.y) * 0.5f) + TabTextOffsetY,
-            };
-            renderer.drawText(textPos, items[i].label, buttonStyle.text, 2);
+            Color iconTint = selected ? style.selectedImageTint : Color{255, 255, 255, 255};
+            if (!tabItemEnabled(items, i)) {
+                iconTint = alphaScaledColor(iconTint, 0.45f);
+            }
+            drawUiLabelWithOptionalIcon(
+                renderer,
+                rect,
+                items[i].label,
+                items[i].iconImageNumber,
+                buttonStyle.text,
+                2,
+                UiTabIconSize,
+                TabTextOffsetY,
+                iconTint);
         } else {
             const Color fill = selected ? buttonStyle.fillHot : buttonStyle.fill;
             const Color outline = selected ? scaledColor(buttonStyle.outlineHot, 1.04f) : buttonStyle.outline;
             renderer.fillRect(imageRect.pos, imageRect.size, fill);
             renderer.drawRect(imageRect.pos, imageRect.size, outline);
 
-            const Vec2 textSize = renderer.measureText(items[i].label, 2);
-            const Vec2 textPos{
-                rect.pos.x + std::max(0.0f, (rect.size.x - textSize.x) * 0.5f),
-                rect.pos.y + std::max(0.0f, (rect.size.y - textSize.y) * 0.5f) + TabTextOffsetY,
-            };
-            renderer.drawText(textPos, items[i].label, buttonStyle.text, 2);
+            Color iconTint = selected ? style.selectedImageTint : Color{255, 255, 255, 255};
+            if (!tabItemEnabled(items, i)) {
+                iconTint = alphaScaledColor(iconTint, 0.45f);
+            }
+            drawUiLabelWithOptionalIcon(
+                renderer,
+                rect,
+                items[i].label,
+                items[i].iconImageNumber,
+                buttonStyle.text,
+                2,
+                UiTabIconSize,
+                TabTextOffsetY,
+                iconTint);
         }
         renderer.popScreenTransform();
         if (active) {
@@ -3146,17 +3230,20 @@ void drawUiSubTabs(
         const Color textColor = enabled
             ? (selected ? style.selectedText : style.text)
             : style.disabledText;
-        const std::string label = fittedUiText(
+        Color iconTint = selected ? style.selectedText : Color{255, 255, 255, 255};
+        if (!enabled) {
+            iconTint = alphaScaledColor(iconTint, 0.45f);
+        }
+        drawUiLabelWithOptionalIcon(
             renderer,
+            rect,
             items[i].label,
-            std::max(0.0f, rect.size.x - 16.0f),
-            textScale);
-        const Vec2 textSize = renderer.measureText(label, textScale);
-        const Vec2 textPos{
-            rect.pos.x + std::max(0.0f, (rect.size.x - textSize.x) * 0.5f),
-            rect.pos.y + std::max(0.0f, (rect.size.y - textSize.y) * 0.5f) + style.textOffsetY,
-        };
-        renderer.drawText(textPos, label, textColor, textScale);
+            items[i].iconImageNumber,
+            textColor,
+            textScale,
+            UiTabIconSize,
+            style.textOffsetY,
+            iconTint);
         if (enabled && (i == state.focusedIndex || selected)) {
             requestUiSelectionCursor(rect);
         }

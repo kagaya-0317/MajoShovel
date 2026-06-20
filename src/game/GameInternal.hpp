@@ -1302,12 +1302,12 @@ UiRect basePanelRect()
 
 UiRect baseMiningStartPanelRect()
 {
-    return {{44.0f, 58.0f}, {1192.0f, 610.0f}};
+    return {{140.0f, 58.0f}, {1000.0f, 610.0f}};
 }
 
 UiRect baseMiningStartDetailPanelRect()
 {
-    return {{864.0f, 108.0f}, {330.0f, 520.0f}};
+    return {{720.0f, 108.0f}, {378.0f, 520.0f}};
 }
 
 UiRect baseUpgradePanelRect()

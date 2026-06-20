@@ -4,6 +4,7 @@
 #include "game/EffectPreviewCatalog.hpp"
 #include "game/EnemyImageRenderer.hpp"
 #include "game/EntityStatusVisuals.hpp"
+#include "game/MenuIconImage.hpp"
 #include "game/WorldIconRenderer.hpp"
 
 #include <algorithm>
@@ -3487,13 +3488,23 @@ void Game::renderObjectImageScaleEditScreen(Renderer& renderer) const
     renderer.fillRect({0.0f, static_cast<float>(camera_.height()) - ObjectImageScaleFooterHeight}, {static_cast<float>(camera_.width()), ObjectImageScaleFooterHeight}, {18, 24, 38, 255});
     renderer.drawText({22.0f, 18.0f}, "画像サイズ編集 (48px baseline)", {245, 245, 252, 255}, 3);
 
-    for (int tab = 0; tab < 2; ++tab) {
-        const bool active = (tab == 0 && !editingOthers) || (tab == 1 && editingOthers);
-        const UiRect rect = objectImageScaleTabRect(tab);
-        renderer.fillRect(rect.pos, rect.size, active ? Color{58, 76, 118, 255} : Color{26, 34, 50, 255});
-        renderer.drawRect(rect.pos, rect.size, active ? Color{255, 228, 138, 255} : Color{92, 104, 126, 255});
-        renderer.drawText(rect.pos + Vec2{14.0f, 8.0f}, tab == 0 ? "Objects" : "Others", active ? Color{255, 236, 166, 255} : Color{198, 206, 222, 255}, 2);
-    }
+    const std::array<UiTabItem, 2> tabItems{{
+        {"Objects", true, menuIconImageNumber(MenuIconImage::Backpack)},
+        {"Others", true, menuIconImageNumber(MenuIconImage::Options)},
+    }};
+    const std::array<UiRect, 2> tabRects{{
+        objectImageScaleTabRect(0),
+        objectImageScaleTabRect(1),
+    }};
+    UiTabsState tabState{};
+    tabState.focusedIndex = editingOthers ? 1 : 0;
+    drawUiTabs(
+        renderer,
+        tabState,
+        editingOthers ? 1 : 0,
+        tabItems.data(),
+        static_cast<int>(tabItems.size()),
+        tabRects.data());
 
     renderer.drawText(
         {22.0f, 58.0f},

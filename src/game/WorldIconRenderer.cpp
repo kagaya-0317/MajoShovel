@@ -14,7 +14,7 @@ constexpr std::string_view WorldIconExtension = ".png";
 constexpr int MoneyMediumThreshold = 50;
 constexpr int MoneyLargeThreshold = 150;
 
-constexpr std::array<WorldIconDefinition, 24> WorldIconDefinitions{{
+constexpr std::array<WorldIconDefinition, 35> WorldIconDefinitions{{
     {WorldIconId::MoneySmall, "money_small", "お金 小額", 1},
     {WorldIconId::MoneyMedium, "money_medium", "お金 中額", 2},
     {WorldIconId::MoneyLarge, "money_large", "お金 高額", 3},
@@ -39,6 +39,17 @@ constexpr std::array<WorldIconDefinition, 24> WorldIconDefinitions{{
     {WorldIconId::LostBaggage, "lost_baggage", "荷物", 21},
     {WorldIconId::Campfire, "campfire", "焚き火", 22},
     {WorldIconId::HeavyRock, "heavy_rock", "重い岩", 23},
+    {WorldIconId::UiScreenSettings, "ui_screen_settings", "画面設定", 25},
+    {WorldIconId::UiVolume, "ui_volume", "音量", 26},
+    {WorldIconId::UiGamepad, "ui_gamepad", "操作", 27},
+    {WorldIconId::UiStatus, "ui_status", "ステータス", 28},
+    {WorldIconId::UiBackpack, "ui_backpack", "リュック", 29},
+    {WorldIconId::UiOptions, "ui_options", "オプション", 30},
+    {WorldIconId::UiQuitGame, "ui_quit_game", "ゲーム終了", 31},
+    {WorldIconId::UiStorageChest, "ui_storage_chest", "収納箱", 32},
+    {WorldIconId::UiRing0, "ui_ring_0", "リング0", 33},
+    {WorldIconId::UiRing8, "ui_ring_8", "リング8", 34},
+    {WorldIconId::UiRingC, "ui_ring_c", "リングC", 35},
 }};
 
 const std::unordered_map<std::string, float>* gWorldIconScaleOverrides = nullptr;

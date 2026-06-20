@@ -153,6 +153,23 @@ std::string defaultBossEnemyIdForStage(std::string_view stageId)
     return {};
 }
 
+std::string defaultDetailImagePathForStage(std::string_view stageId)
+{
+    if (stageId == "stage_01_stardust") {
+        return "assets/stages/detail/stage_01_stardust.png";
+    }
+    if (stageId == "stage_02_junk_magic") {
+        return "assets/stages/detail/stage_02_junk_magic.png";
+    }
+    if (stageId == "stage_03_star_core") {
+        return "assets/stages/detail/stage_03_star_core.png";
+    }
+    if (stageId == "stage_04_astral_mine") {
+        return "assets/stages/detail/stage_04_astral_mine.png";
+    }
+    return {};
+}
+
 void addWarning(StageCatalog& catalog, std::string message)
 {
     catalog.validationWarnings.push_back(std::move(message));
@@ -362,6 +379,9 @@ void validateStage(StageDefinition& stage, std::size_t rowIndex, StageCatalog& c
         addWarning(catalog, rowPrefix(rowIndex, stage.id) + "special room count is negative; using " + std::to_string(DefaultSpecialRoomCount));
         stage.specialRoomCount = DefaultSpecialRoomCount;
     }
+    if (stage.detail.imagePath.empty()) {
+        stage.detail.imagePath = defaultDetailImagePathForStage(stage.id);
+    }
 }
 
 StageDefinition defaultStage(
@@ -398,6 +418,9 @@ StageDefinition defaultStage(
     stage.specialRoomCount = specialRoomCount;
     stage.bossEnemyId = std::move(bossEnemyId);
     stage.detail = std::move(detail);
+    if (stage.detail.imagePath.empty()) {
+        stage.detail.imagePath = defaultDetailImagePathForStage(stage.id);
+    }
     return stage;
 }
 
