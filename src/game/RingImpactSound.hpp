@@ -4,7 +4,6 @@
 #include "game/Chunk.hpp"
 
 #include <cstddef>
-#include <random>
 #include <span>
 #include <string>
 #include <vector>
@@ -70,7 +69,6 @@ RingImpactSoundEvent makeEnemyRingImpactSoundEvent(
 
 std::vector<RingImpactSoundPlayback> resolveRingImpactSoundEvents(
     std::span<const RingImpactSoundEvent> events,
-    std::mt19937& rng,
     std::size_t maxCount = 4);
 
 }

@@ -1013,7 +1013,7 @@ steal_item	盗み	報酬妨害	敵側	always	target,radius,escapeDistance,maxCar
 dig_move	掘削移動	移動補助	敵側	always	digPower,interval	digPower=1,interval=0.4	none	dig_wander/dig_chase中、壁に塞がれた場合に地形を掘って進む	dig_tool	なし	地形破壊	同一個体で通常更新	既存仕様維持	削岩ヤドカリ系。上位種でも掘削能力自体は同じ
 ring_slow_bite	リング鈍化噛みつき	妨害	敵側	contact	multiplier,duration	multiplier=0.65,duration=4.0	none	接触時にリング実効速度を短時間低下させる	なし	なし	リング速度補正	再付与時は残り時間更新	既存仕様維持	魔力ヒル系。上位種でも効果自体は同じ
 swarm_alert	群れ起動	群れ	敵側	detect	radius,sameEnemyOnly	radius=120,sameEnemyOnly=1	none	発見時、近くの同一enemyIdの未発見個体を発見状態へ移行する	なし	なし	なし	発見時1回	既存仕様維持	うじウジ系
-swarm_spawn	群れ追加生成	群れ	敵側	spawn	groupMin,groupMax,radius	groupMin=2,groupMax=4,radius=48	none	生成時に周囲へ同系統の追加個体を出す。死体分裂ではない	なし	なし	なし	生成時1回	新規実装	うじうじウジ用
+swarm_spawn	群れ追加生成	群れ	敵側	spawn	groupMin,groupMax,count,radius	groupMin=2,groupMax=4,radius=48	none	生成時に周囲へ同系統の追加個体を出す。groupMin/groupMaxは追加個体数、countは旧互換の固定数。死体分裂ではない	なし	なし	なし	生成時1回。追加個体は再帰生成しない	新規実装	うじウジ系
 outward_guard	外向きガード	捕獲後防御	捕獲後	hit	guardArc,projectileOnly	guardArc=90,projectileOnly=1	none	リング上で外側から来た小型Projectileを消す	shield,guard_projectile	外向き	なし	同一弾1回	既存仕様維持	捕獲後盾系
 heavy_guard	重ガード	捕獲後防御	捕獲後	hit	guardLarge,projectileOnly	guardLarge=1,projectileOnly=1	none	大型弾または重い接触を防ぐ	shield,guard_large_projectile	外向き	なし	同一弾1回	既存仕様維持	捕獲後重盾系
 magic_guard	魔法ガード	捕獲後防御	捕獲後	hit	projectileOnly,magicOnly	projectileOnly=1,magicOnly=1	none	魔法Projectileを防ぐ	shield,magic	外向き	なし	同一弾1回	既存仕様維持	捕獲後魔法盾系
@@ -1076,8 +1076,11 @@ dig_contact	接触掘削補助	捕獲後掘削	捕獲後	hit	digPower	digPower=1
 錆ナメクジ系：
   contact:rust_touch:defenseMultiplier=0.85,duration=3.0,targetTag=metal:1.0
 
+うじウジ：
+  spawn:swarm_spawn:groupMin=3,groupMax=5,radius=48:0;detect:swarm_alert:radius=120,sameEnemyOnly=1:0
+
 うじうじウジ：
-  detect:swarm_alert:none:0;spawn:swarm_spawn:groupMin=4,groupMax=7,radius=56:0
+  spawn:swarm_spawn:groupMin=4,groupMax=7,radius=56:0;detect:swarm_alert:radius=150,sameEnemyOnly=1:0
 
 ------------------------------------------------------------
 13-12. 実装時の注意
@@ -1114,7 +1117,7 @@ dig_contact	接触掘削補助	捕獲後掘削	捕獲後	hit	digPower	digPower=1
 10. 撃破時アイテムドロップは drop_item で発動する。
     treasure タグや box タグから直接ドロップ処理を発動しない。
 
-11. うじうじウジの強化は死体分裂ではなく、spawn 時の群れ追加生成で表現する。
+11. うじウジ系の大量発生は死体分裂ではなく、spawn 時の群れ追加生成で表現する。
 
 12. 旧「敵挙動ID」「捕獲後挙動ID」列と旧 #挙動ID タブは、移行期間中は読み取り互換を保つ。
 

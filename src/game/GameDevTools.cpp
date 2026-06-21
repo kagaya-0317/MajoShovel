@@ -109,6 +109,45 @@ float debugPathLengthTiles(const std::vector<Vec2>& points)
     }
     return total;
 }
+
+const char* debugTileTypeName(TileType type)
+{
+    switch (type) {
+    case TileType::Empty:
+        return "empty";
+    case TileType::Dirt:
+        return "dirt";
+    case TileType::Rock:
+        return "rock";
+    case TileType::Ore:
+        return "ore";
+    case TileType::HardRock:
+        return "hardrock";
+    }
+    return "unknown";
+}
+
+const char* debugTerrainAttributeName(TerrainAttribute attribute)
+{
+    switch (attribute) {
+    case TerrainAttribute::None:
+        return "none";
+    case TerrainAttribute::Soft:
+        return "soft";
+    case TerrainAttribute::Hard:
+        return "hard";
+    case TerrainAttribute::Ore:
+        return "ore";
+    }
+    return "unknown";
+}
+
+std::string debugFormatFloat(float value, int precision = 2)
+{
+    std::ostringstream out;
+    out << std::fixed << std::setprecision(precision) << value;
+    return out.str();
+}
 constexpr int DebugProjectilePreviewReplayGapFrames = 40;
 constexpr float DebugPreviewAssumedFrameRate = 60.0f;
 constexpr float DebugEffectPreviewTestLoopSeconds =
@@ -5589,10 +5628,6 @@ void Game::renderEnemyPlacementEditScreen(Renderer& renderer, double totalSecond
 
         renderer.drawLine({layout.preview.pos.x, previewCenter.y}, {layout.preview.pos.x + layout.preview.size.x, previewCenter.y}, {255, 255, 255, 24});
         renderer.drawLine({previewCenter.x, layout.preview.pos.y}, {previewCenter.x, layout.preview.pos.y + layout.preview.size.y}, {255, 255, 255, 24});
-        renderer.fillCircle(previewCenter, passageRadius * EnemyPlacementPreviewScale, {88, 220, 138, 34});
-        renderer.drawCircle(previewCenter, passageRadius * EnemyPlacementPreviewScale, {116, 244, 166, 230});
-        renderer.fillCircle(previewCenter, 4.0f, {132, 255, 186, 255});
-        renderer.drawLine(previewCenter, visualCenter, {255, 228, 138, 170});
 
         EnemyImageDrawOptions imageOptions;
         imageOptions.allowUpscale = true;
@@ -5612,6 +5647,11 @@ void Game::renderEnemyPlacementEditScreen(Renderer& renderer, double totalSecond
             renderer.fillCircle(center, radius, {92, 196, 255, 34});
             renderer.drawCircle(center, radius, {92, 196, 255, 196});
         }
+        renderer.drawLine(previewCenter, visualCenter, {255, 228, 138, 190});
+        renderer.fillCircle(previewCenter, passageRadius * EnemyPlacementPreviewScale, {88, 220, 138, 26});
+        renderer.drawCircle(previewCenter, passageRadius * EnemyPlacementPreviewScale, {116, 244, 166, 240});
+        renderer.fillCircle(previewCenter, 5.0f, {132, 255, 186, 255});
+        renderer.drawCircle(previewCenter, 8.0f, {16, 34, 24, 210});
 
         const bool customRadius = enemyPlacementHasPassageRadius(enemyPlacements_, definition->id);
         const bool customOffset = enemyPlacementHasVisualOffset(enemyPlacements_, definition->id, enemyPlacementDirection_);
@@ -8718,7 +8758,9 @@ void Game::spawnSelectedEnemyTestEnemy()
                 enemyTestStatus_ += " / スライム召喚なし";
             }
         }
-        if (enemyDefinitionHasBehavior(enemy, "swarm_alert")) {
+        if (enemyDefinitionHasBehavior(enemy, "swarm_spawn")) {
+            enemyTestStatus_ += " / 群れ生成あり";
+        } else if (enemyDefinitionHasBehavior(enemy, "swarm_alert")) {
             const int swarmCount = spawnEnemyTestSwarmMembers(enemy, spawnedPosition);
             if (swarmCount > 0) {
                 enemyTestStatus_ += " / 群れ " + std::to_string(swarmCount + 1) + "体";
@@ -12030,6 +12072,20 @@ bool Game::executeDebugCommand(std::string_view command)
         return true;
     }
 
+    if (normalized == "game astral run-save" ||
+        normalized == "game astral save-run" ||
+        normalized == "game roguelike run-save") {
+        captureDebugRoguelikeRunSnapshot();
+        return true;
+    }
+
+    if (normalized == "game astral run-load" ||
+        normalized == "game astral run-restore" ||
+        normalized == "game roguelike run-load") {
+        restoreDebugRoguelikeRunSnapshot();
+        return true;
+    }
+
     if (normalized == "game astral return-base") {
         if (mode_ == ScreenMode::AstralResult) {
             returnToBaseAfterAstralResult();
@@ -12204,6 +12260,263 @@ bool Game::executeDebugCommand(std::string_view command)
         return true;
     }
 
+    if (normalized == "game astral diagnose" ||
+        normalized == "game rogue-diagnose" ||
+        normalized == "game roguelike diagnose") {
+        if (!astralDungeonReady()) {
+            return true;
+        }
+
+        const DungeonTile playerTile{
+            tileMap_.worldToTile(player_.position.x),
+            tileMap_.worldToTile(player_.position.y),
+        };
+        const Vec2 playerTilePosition{
+            static_cast<float>(playerTile.x),
+            static_cast<float>(playerTile.y),
+        };
+        const DungeonLayoutMetrics metrics = calculateDungeonLayoutMetrics(dungeonLayout_, playerTilePosition);
+        const TerrainDebugInfo terrain = tileMap_.terrainDebugAtWorld(player_.position);
+        const SpecialRoomMetrics roomMetrics = calculateSpecialRoomMetrics(dungeonLayout_, playerTilePosition);
+        const float pathLength = debugPathLengthTiles(dungeonLayout_.mainPathPoints);
+        const float routeTiles = projectedDungeonRouteDistanceTiles(dungeonLayout_, playerTilePosition);
+        const int localDepthRank = lootDepthRankForProgress(currentStageId_, metrics.pathProgress);
+        const int adjustedDepthRank = roguelikeAdjustedDepthRank(localDepthRank);
+        const int areaStartMeters = std::max(0, astralRun_.currentDepthMeters);
+        const int areaEndMeters = std::max(areaStartMeters + 1, astralRun_.nextHoleDepthMeters);
+        const int depthMeters = std::clamp(
+            areaStartMeters + static_cast<int>(std::lround(
+                metrics.pathProgress * static_cast<float>(areaEndMeters - areaStartMeters))),
+            0,
+            std::max(1, astralRun_.completionDepthMeters));
+        const int maxLocalDepth = std::max(1, lootMaxDepthForStage(currentStageId_));
+        constexpr int DebugRoguelikeSectionsPerArea = 3;
+        const int localSection = std::clamp(
+            (std::max(1, localDepthRank) - 1) / 3 + 1,
+            1,
+            DebugRoguelikeSectionsPerArea);
+        const float nextSectionProgress = localSection < DebugRoguelikeSectionsPerArea
+            ? std::min(1.0f, static_cast<float>(localSection * 3) / static_cast<float>(maxLocalDepth))
+            : 1.0f;
+        const float nextSectionRouteTiles = pathLength * nextSectionProgress;
+        const float nextSectionRemainingTiles = std::max(0.0f, nextSectionRouteTiles - routeTiles);
+        const Vec2 pathPoint = pointAtPathProgress(dungeonLayout_.mainPathPoints, metrics.pathProgress);
+        const Vec2 pathTangent = tangentAtPathProgress(dungeonLayout_.mainPathPoints, metrics.pathProgress);
+
+        logInfo("Debug: rogue diag player tile=(" + std::to_string(playerTile.x) + "," + std::to_string(playerTile.y) +
+            ") progress=" + debugFormatFloat(metrics.pathProgress * 100.0f, 1) + "%" +
+            " depthMeters=" + std::to_string(depthMeters) +
+            " route=" + debugFormatFloat(routeTiles, 1) + "/" + debugFormatFloat(pathLength, 1) +
+            " localRank=" + std::to_string(localDepthRank) +
+            " adjustedRank=" + std::to_string(adjustedDepthRank) +
+            " currentRank=" + std::to_string(astralRun_.currentDepth) +
+            " maxReachedRank=" + std::to_string(astralRun_.maxReachedDepth));
+        logInfo("Debug: rogue diag terrain=" + std::string(debugTileTypeName(terrain.type)) +
+            "/" + debugTerrainAttributeName(terrain.attribute) +
+            " hp=" + std::to_string(terrain.hp) + "/" + std::to_string(terrain.effectiveHp) +
+            " hard=" + debugFormatFloat(terrain.localHardnessMultiplier, 2) +
+            " depthMul=" + debugFormatFloat(terrain.depthHardnessMultiplier, 2) +
+            " mainPathDist=" + debugFormatFloat(metrics.distanceFromMainPath, 1) +
+            " room=" + specialRoomTypeName(roomMetrics.currentRoomType) +
+            " terrainProfile=" + currentStageDefinition_.terrainProfile);
+        logInfo("Debug: rogue diag path nearest=(" + debugFormatFloat(pathPoint.x, 1) + "," +
+            debugFormatFloat(pathPoint.y, 1) + ") tangent=(" +
+            debugFormatFloat(pathTangent.x, 2) + "," + debugFormatFloat(pathTangent.y, 2) +
+            ") nextInternalSectionAtProgress=" + debugFormatFloat(nextSectionProgress * 100.0f, 1) + "%" +
+            " nextInternalSectionRemainingTiles=" + debugFormatFloat(nextSectionRemainingTiles, 1) +
+            " area=" + std::to_string(astralRun_.currentDepthMeters) + "-" +
+            std::to_string(astralRun_.nextHoleDepthMeters) + "m");
+
+        struct TileCounts {
+            int total = 0;
+            int empty = 0;
+            int dirt = 0;
+            int rock = 0;
+            int ore = 0;
+            int hardRock = 0;
+        };
+        const auto addTileCount = [](TileCounts& counts, TileType type) {
+            ++counts.total;
+            switch (type) {
+            case TileType::Empty:
+                ++counts.empty;
+                break;
+            case TileType::Dirt:
+                ++counts.dirt;
+                break;
+            case TileType::Rock:
+                ++counts.rock;
+                break;
+            case TileType::Ore:
+                ++counts.ore;
+                break;
+            case TileType::HardRock:
+                ++counts.hardRock;
+                break;
+            }
+        };
+
+        constexpr int ScanRadiusTiles = 18;
+        TileCounts nearbyCounts;
+        DungeonTile nearestSoftTile{};
+        float nearestSoftDistanceSq = std::numeric_limits<float>::max();
+        bool foundNearestSoft = false;
+        for (int dy = -ScanRadiusTiles; dy <= ScanRadiusTiles; ++dy) {
+            for (int dx = -ScanRadiusTiles; dx <= ScanRadiusTiles; ++dx) {
+                if (dx * dx + dy * dy > ScanRadiusTiles * ScanRadiusTiles) {
+                    continue;
+                }
+                const DungeonTile tile{playerTile.x + dx, playerTile.y + dy};
+                const TerrainDebugInfo info = tileMap_.terrainDebugAtWorld(tileWorldCenter(tile));
+                addTileCount(nearbyCounts, info.type);
+                if (info.attribute != TerrainAttribute::Soft) {
+                    continue;
+                }
+                const float distSq = static_cast<float>(dx * dx + dy * dy);
+                if (distSq < nearestSoftDistanceSq) {
+                    nearestSoftDistanceSq = distSq;
+                    nearestSoftTile = tile;
+                    foundNearestSoft = true;
+                }
+            }
+        }
+        logInfo("Debug: rogue diag radius18 tiles total=" + std::to_string(nearbyCounts.total) +
+            " empty=" + std::to_string(nearbyCounts.empty) +
+            " dirt/soft=" + std::to_string(nearbyCounts.dirt) +
+            " rock=" + std::to_string(nearbyCounts.rock) +
+            " ore=" + std::to_string(nearbyCounts.ore) +
+            " hardrock=" + std::to_string(nearbyCounts.hardRock) +
+            (foundNearestSoft
+                    ? std::string(" nearestSoft=(") + std::to_string(nearestSoftTile.x) + "," +
+                        std::to_string(nearestSoftTile.y) + ") dist=" +
+                        debugFormatFloat(std::sqrt(nearestSoftDistanceSq), 1)
+                    : std::string(" nearestSoft=none")));
+
+        struct DirectionSeed {
+            const char* name = "";
+            Vec2 direction{};
+        };
+        struct DirectionProbe {
+            std::string name;
+            Vec2 direction{};
+            float pathDot = 0.0f;
+            float maxProgress = 0.0f;
+            float maxRouteTiles = 0.0f;
+            int firstProgressStep = -1;
+            int firstSoftStep = -1;
+            int empty = 0;
+            int soft = 0;
+            int hard = 0;
+            int ore = 0;
+            int firstSolidStep = -1;
+            TileType firstSolidType = TileType::Empty;
+        };
+        const std::array<DirectionSeed, 8> directions{{
+            {"E", {1.0f, 0.0f}},
+            {"NE", normalize(Vec2{1.0f, -1.0f})},
+            {"N", {0.0f, -1.0f}},
+            {"NW", normalize(Vec2{-1.0f, -1.0f})},
+            {"W", {-1.0f, 0.0f}},
+            {"SW", normalize(Vec2{-1.0f, 1.0f})},
+            {"S", {0.0f, 1.0f}},
+            {"SE", normalize(Vec2{1.0f, 1.0f})},
+        }};
+
+        std::vector<DirectionProbe> probes;
+        probes.reserve(directions.size());
+        constexpr int ProbeLengthTiles = 40;
+        for (const DirectionSeed& seed : directions) {
+            DirectionProbe probe;
+            probe.name = seed.name;
+            probe.direction = seed.direction;
+            probe.pathDot = seed.direction.x * pathTangent.x + seed.direction.y * pathTangent.y;
+            probe.maxProgress = metrics.pathProgress;
+            probe.maxRouteTiles = routeTiles;
+            DungeonTile previousTile{std::numeric_limits<int>::min(), std::numeric_limits<int>::min()};
+            for (int step = 1; step <= ProbeLengthTiles; ++step) {
+                const DungeonTile tile{
+                    playerTile.x + static_cast<int>(std::round(seed.direction.x * static_cast<float>(step))),
+                    playerTile.y + static_cast<int>(std::round(seed.direction.y * static_cast<float>(step))),
+                };
+                if (tile.x == previousTile.x && tile.y == previousTile.y) {
+                    continue;
+                }
+                previousTile = tile;
+
+                const Vec2 sampleTilePosition{static_cast<float>(tile.x), static_cast<float>(tile.y)};
+                const DungeonLayoutMetrics sampleMetrics = calculateDungeonLayoutMetrics(dungeonLayout_, sampleTilePosition);
+                const float sampleRouteTiles = projectedDungeonRouteDistanceTiles(dungeonLayout_, sampleTilePosition);
+                probe.maxProgress = std::max(probe.maxProgress, sampleMetrics.pathProgress);
+                probe.maxRouteTiles = std::max(probe.maxRouteTiles, sampleRouteTiles);
+                if (probe.firstProgressStep < 0 && sampleMetrics.pathProgress > metrics.pathProgress + 0.005f) {
+                    probe.firstProgressStep = step;
+                }
+
+                const TerrainDebugInfo info = tileMap_.terrainDebugAtWorld(tileWorldCenter(tile));
+                switch (info.attribute) {
+                case TerrainAttribute::None:
+                    ++probe.empty;
+                    break;
+                case TerrainAttribute::Soft:
+                    ++probe.soft;
+                    if (probe.firstSoftStep < 0) {
+                        probe.firstSoftStep = step;
+                    }
+                    break;
+                case TerrainAttribute::Hard:
+                    ++probe.hard;
+                    break;
+                case TerrainAttribute::Ore:
+                    ++probe.ore;
+                    break;
+                }
+                if (probe.firstSolidStep < 0 && info.type != TileType::Empty) {
+                    probe.firstSolidStep = step;
+                    probe.firstSolidType = info.type;
+                }
+            }
+            probes.push_back(std::move(probe));
+        }
+
+        std::vector<DirectionProbe> sortedProbes = probes;
+        std::sort(sortedProbes.begin(), sortedProbes.end(), [&](const DirectionProbe& lhs, const DirectionProbe& rhs) {
+            const float lhsGain = lhs.maxProgress - metrics.pathProgress;
+            const float rhsGain = rhs.maxProgress - metrics.pathProgress;
+            if (std::abs(lhsGain - rhsGain) > 0.0001f) {
+                return lhsGain > rhsGain;
+            }
+            return lhs.pathDot > rhs.pathDot;
+        });
+        for (std::size_t i = 0; i < std::min<std::size_t>(3, sortedProbes.size()); ++i) {
+            const DirectionProbe& probe = sortedProbes[i];
+            logInfo("Debug: rogue diag dir#" + std::to_string(i + 1) +
+                " " + probe.name +
+                " gainProgress=" + debugFormatFloat((probe.maxProgress - metrics.pathProgress) * 100.0f, 1) + "%" +
+                " gainRoute=" + debugFormatFloat(probe.maxRouteTiles - routeTiles, 1) +
+                " firstProgressStep=" + (probe.firstProgressStep >= 0 ? std::to_string(probe.firstProgressStep) : std::string("none")) +
+                " soft=" + std::to_string(probe.soft) +
+                " hard=" + std::to_string(probe.hard) +
+                " ore=" + std::to_string(probe.ore) +
+                " empty=" + std::to_string(probe.empty) +
+                " firstSolid=" + (probe.firstSolidStep >= 0
+                    ? std::string(debugTileTypeName(probe.firstSolidType)) + "@" + std::to_string(probe.firstSolidStep)
+                    : std::string("none")) +
+                " pathDot=" + debugFormatFloat(probe.pathDot, 2));
+        }
+
+        if (!sortedProbes.empty() && sortedProbes.front().maxProgress <= metrics.pathProgress + 0.005f) {
+            logWarning("Debug: rogue diag conclusion: no sampled direction increases main-path progress in 40 tiles.");
+        } else if (!sortedProbes.empty()) {
+            logInfo("Debug: rogue diag conclusion: best progress direction is " + sortedProbes.front().name +
+                "; next internal section starts after about " +
+                debugFormatFloat(nextSectionRemainingTiles, 1) + " more route tiles.");
+        }
+        if (nearbyCounts.dirt == 0) {
+            logWarning("Debug: rogue diag conclusion: no soft dirt walls in radius 18; terrain/profile or room placement made this area hard/ore-heavy.");
+        }
+        return true;
+    }
+
     if (normalized == "game astral high-score reset") {
         astralHighScore_ = 0;
         logInfo("Debug: astral high score reset.");
@@ -12218,6 +12531,7 @@ bool Game::executeDebugCommand(std::string_view command)
             astralHighScore_ = highScoreBeforeResult;
             AstralRunSummary summary = makeAstralRunSummary(result);
             summary.reachedDepth = std::clamp(debugAstralDepthRank_, 1, std::max(1, summary.maxDepth));
+            summary.reachedDepthMeters = std::clamp(debugAstralDepthMeters_, 0, std::max(1, summary.maxDepthMeters));
             summary.defeatedEnemies = std::max(0, debugAstralStatKills_);
             summary.dugTiles = std::max(0, debugAstralStatDugTiles_);
             summary.acquiredItems = std::max(0, debugAstralStatItems_);

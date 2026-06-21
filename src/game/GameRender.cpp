@@ -77,10 +77,10 @@ constexpr Color RingStatusHudNameColor{255, 239, 172, 255};
 constexpr Color RingStatusHudInactiveNameColor{246, 248, 255, 255};
 constexpr Color RingStatusHudItemColor{232, 236, 244, 255};
 constexpr Color RingStatusHudWeightColor{222, 236, 255, 255};
-constexpr Color RingStatusHudCooldownCoolStartColor{64, 224, 210, 238};
-constexpr Color RingStatusHudCooldownCoolEndColor{232, 255, 252, 248};
-constexpr Color RingStatusHudCooldownReadyStartColor{255, 202, 64, 248};
-constexpr Color RingStatusHudCooldownReadyEndColor{255, 255, 246, 252};
+constexpr Color RingStatusHudCooldownCoolStartColor{255, 202, 64, 248};
+constexpr Color RingStatusHudCooldownCoolEndColor{255, 255, 246, 252};
+constexpr Color RingStatusHudCooldownReadyStartColor{142, 232, 255, 248};
+constexpr Color RingStatusHudCooldownReadyEndColor{255, 255, 255, 252};
 constexpr Color RingStatusHudWeightGaugeBackColor{6, 15, 35, 168};
 constexpr Color RingStatusHudWeightGaugeFillColor{84, 218, 255, 238};
 constexpr Color RingStatusHudWeightGaugeOverColor{255, 72, 84, 238};
@@ -308,6 +308,21 @@ void drawRingStatusHudWeightGauge(Renderer& renderer, Vec2 panelPos, float weigh
     renderer.fillRect({limitX - 0.5f, gauge.pos.y - 2.0f}, {1.0f, gauge.size.y + 4.0f}, RingStatusHudWeightGaugeLimitColor);
 }
 
+bool ringStatusHudLeftCircleContains(UiRect panel, Vec2 point)
+{
+    constexpr float Radius = RingStatusHudFrameSize.y * 0.5f;
+    return distanceSquared(point, panel.pos + RingStatusHudCooldownCenter) <= Radius * Radius;
+}
+
+bool ringStatusHudRightWindowContains(UiRect panel, Vec2 point)
+{
+    const UiRect rightWindow{
+        panel.pos + Vec2{RingStatusHudSliceLeftWidth, 0.0f},
+        {std::max(0.0f, panel.size.x - RingStatusHudSliceLeftWidth), panel.size.y},
+    };
+    return rightWindow.contains(point);
+}
+
 bool titlePromptUsesGamepad()
 {
     switch (inputHelpDeviceMode()) {
@@ -387,6 +402,20 @@ std::string dungeonDepthTopInfoEntry(const DungeonLayout& layout, Vec2 tilePosit
 {
     char buffer[32];
     const int meters = std::max(0, static_cast<int>(std::lround(projectedDungeonRouteDistanceTiles(layout, tilePosition))));
+    std::snprintf(buffer, sizeof(buffer), "深度 %dm", meters);
+    return buffer;
+}
+
+std::string roguelikeDepthTopInfoEntry(const DungeonLayout& layout, Vec2 tilePosition, int areaStartMeters, int areaEndMeters, int completionMeters)
+{
+    const DungeonLayoutMetrics metrics = calculateDungeonLayoutMetrics(layout, tilePosition);
+    const int start = std::max(0, areaStartMeters);
+    const int end = std::max(start + 1, areaEndMeters);
+    const int meters = std::clamp(
+        start + static_cast<int>(std::lround(metrics.pathProgress * static_cast<float>(end - start))),
+        0,
+        std::max(1, completionMeters));
+    char buffer[32];
     std::snprintf(buffer, sizeof(buffer), "深度 %dm", meters);
     return buffer;
 }
@@ -3767,7 +3796,8 @@ void Game::updateRingScreen(const Input& input, UiContext& ui, float dt)
     }
 
     if (uiCancelRequested(ringCancelState_, input, ui, ringPanelRect())) {
-        mode_ = ScreenMode::PauseMenu;
+        mode_ = ringReturnToPause_ ? ScreenMode::PauseMenu : pauseReturnMode_;
+        ringReturnToPause_ = false;
         pausePage_ = PauseMenuPage::Main;
         return;
     }
@@ -4586,6 +4616,18 @@ void Game::updateFirstItemAcquisitionNotice(const Input& input, UiContext& ui)
         notice.protectable &&
         inventory_.objectInstanceProtectionEnabled(notice.instanceId).has_value();
 
+    const int unlockedRingCount = unlockedRingHudCount();
+    for (int ringIndex = 0; ringIndex < unlockedRingCount; ++ringIndex) {
+        if (!ui.pressed(ringStatusHudRect(ringIndex, unlockedRingCount))) {
+            continue;
+        }
+        if (ringIndex != spellRing_.activeRingIndex()) {
+            ui.emitSound(UiSoundEvent::TabSwitch);
+            switchActiveRingWithLog(ringIndex - spellRing_.activeRingIndex());
+        }
+        return;
+    }
+
     if (objectNotice && input.pressed(InputAction::ToggleProtection)) {
         if (instanceProtectable) {
             const bool protectedNow = inventory_.objectInstanceProtectionEnabled(notice.instanceId).value_or(false);
@@ -4647,22 +4689,46 @@ UiRect Game::ringStatusHudRect(int ringIndex, int unlockedRingCount) const
     }, {RingStatusHudWidth, RingStatusHudHeight}};
 }
 
-void Game::updateRingStatusHud(UiContext& ui, float dt)
+bool Game::updateRingStatusHud(UiContext& ui, float dt)
 {
     if (introTutorialActive()) {
-        return;
+        return false;
     }
 
     const float safeDt = std::max(0.0f, dt);
     const int unlockedRingCount = unlockedRingHudCount();
+    bool handledPointer = false;
     for (int ringIndex = 0; ringIndex < unlockedRingCount; ++ringIndex) {
-        if (!ui.pressed(ringStatusHudRect(ringIndex, unlockedRingCount))) {
+        const UiRect panel = ringStatusHudRect(ringIndex, unlockedRingCount);
+        const Vec2 pointer = ui.mouse();
+        if (!ui.pressed(panel)) {
             continue;
         }
-        if (ringIndex != spellRing_.activeRingIndex()) {
-            ui.emitSound(UiSoundEvent::TabSwitch);
+
+        handledPointer = true;
+        const bool active = ringIndex == spellRing_.activeRingIndex();
+        if (ringStatusHudRightWindowContains(panel, pointer)) {
+            if (!active) {
+                ui.emitSound(UiSoundEvent::TabSwitch);
+                switchActiveRingWithLog(ringIndex - spellRing_.activeRingIndex());
+                break;
+            }
+            pauseReturnMode_ = ScreenMode::Playing;
+            inventoryReturnToPause_ = false;
+            ringReturnToPause_ = false;
+            ui.emitSound(UiSoundEvent::MenuOpen);
+            openRingScreen();
+            break;
         }
-        switchActiveRingWithLog(ringIndex - spellRing_.activeRingIndex());
+
+        if (!active) {
+            ui.emitSound(UiSoundEvent::TabSwitch);
+            switchActiveRingWithLog(ringIndex - spellRing_.activeRingIndex());
+        } else if (ringStatusHudLeftCircleContains(panel, pointer)) {
+            if (!spellRing_.tryThrowActiveRing(player_, balance_)) {
+                ui.emitSound(UiSoundEvent::Cancel);
+            }
+        }
         break;
     }
 
@@ -4691,7 +4757,7 @@ void Game::updateRingStatusHud(UiContext& ui, float dt)
         const bool active = ringIndex == spellRing_.activeRingIndex();
         const bool shouldShow = active || cooldownRatio > 0.001f || animation.readyHoldTimer > 0.0f;
         const float targetVisibility = shouldShow ? 1.0f : 0.0f;
-        if (RingStatusHudFadeSeconds <= 0.001f) {
+        if constexpr (RingStatusHudFadeSeconds <= 0.001f) {
             animation.visibility = targetVisibility;
         } else {
             const float step = safeDt / RingStatusHudFadeSeconds;
@@ -4702,6 +4768,8 @@ void Game::updateRingStatusHud(UiContext& ui, float dt)
             }
         }
     }
+
+    return handledPointer;
 }
 
 std::string Game::currentMapDisplayName() const
@@ -4775,7 +4843,14 @@ void Game::renderTopInfoBar(Renderer& renderer) const
             static_cast<float>(tileMap_.worldToTile(player_.position.x)),
             static_cast<float>(tileMap_.worldToTile(player_.position.y)),
         };
-        dungeonInfoEntry = dungeonDepthTopInfoEntry(dungeonLayout_, playerTilePosition);
+        dungeonInfoEntry = astralRunActive()
+            ? roguelikeDepthTopInfoEntry(
+                dungeonLayout_,
+                playerTilePosition,
+                astralRun_.currentDepthMeters,
+                astralRun_.nextHoleDepthMeters,
+                astralRun_.completionDepthMeters)
+            : dungeonDepthTopInfoEntry(dungeonLayout_, playerTilePosition);
 
         const int totalWarpPoints = std::max(0, static_cast<int>(warpPoints_.size()));
         if (warpPointsEnabled_ && totalWarpPoints > 0) {
@@ -7140,10 +7215,9 @@ void Game::renderAstralResultScreen(Renderer& renderer) const
     std::snprintf(buffer, sizeof(buffer), "結果      %s", resultText.c_str());
     renderer.drawText(panel.pos + Vec2{136.0f, y}, buffer, {255, 230, 150, 255}, 2);
     y += lineStep;
-    std::snprintf(buffer, sizeof(buffer), "到達深度  深度 %d/%d   到達距離 %d",
-        astralResult_.reachedDepth,
-        astralResult_.maxDepth,
-        astralResult_.reachedDistanceTiles);
+    std::snprintf(buffer, sizeof(buffer), "到達深度  %dm/%dm",
+        astralResult_.reachedDepthMeters,
+        astralResult_.maxDepthMeters);
     renderer.drawText(panel.pos + Vec2{136.0f, y}, buffer, {230, 238, 232, 255}, 2);
     y += lineStep;
     std::snprintf(buffer, sizeof(buffer), "撃破数    %d", astralResult_.defeatedEnemies);
@@ -7710,6 +7784,9 @@ void Game::render(Renderer& renderer, const Time& time)
         std::size_t firstEntry = worldDepthEntries.size();
         appendRewardNodeRenderEntries(worldDepthEntries, renderer, itemLights);
         tagDepthRenderEntries(worldDepthEntries, firstEntry, "WorldDepth.draw.reward");
+        firstEntry = worldDepthEntries.size();
+        appendPendingBuriedEnemySpawnRenderEntries(worldDepthEntries, renderer);
+        tagDepthRenderEntries(worldDepthEntries, firstEntry, "WorldDepth.draw.buried_enemy_warning");
         if (!enemyTestActive_) {
             firstEntry = worldDepthEntries.size();
             appendDungeonEventRenderEntries(worldDepthEntries, renderer, itemLights, time.totalSeconds());
@@ -7908,15 +7985,15 @@ void Game::render(Renderer& renderer, const Time& time)
         tagDepthRenderEntries(worldDepthEntries, firstEntry, "WorldDepth.draw.capture");
     }
     {
-        FrameProfileScope profile("WorldDepth.draw");
+        FrameProfileScope worldDepthDrawProfile("WorldDepth.draw");
         {
-            FrameProfileScope profile("WorldDepth.sort");
+            FrameProfileScope worldDepthSortProfile("WorldDepth.sort");
             std::stable_sort(worldDepthEntries.begin(), worldDepthEntries.end(), [](const DepthRenderEntry& left, const DepthRenderEntry& right) {
                 return left.sortY < right.sortY;
             });
         }
         {
-            FrameProfileScope profile("WorldDepth.entries_draw");
+            FrameProfileScope worldDepthEntriesDrawProfile("WorldDepth.entries_draw");
             for (const DepthRenderEntry& entry : worldDepthEntries) {
                 FrameProfileScope entryProfile(entry.profileName);
                 entry.draw();

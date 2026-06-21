@@ -51,6 +51,7 @@ constexpr std::array<WorldIconDefinition, 35> WorldIconDefinitions{{
     {WorldIconId::UiRing8, "ui_ring_8", "リング8", 34},
     {WorldIconId::UiRingC, "ui_ring_c", "リングC", 35},
 }};
+static_assert(WorldIconDefinitions.size() == static_cast<std::size_t>(WorldIconId::UiRingC) + 1);
 
 const std::unordered_map<std::string, float>* gWorldIconScaleOverrides = nullptr;
 constexpr std::size_t WorldIconFilterCount = 2;

@@ -183,6 +183,13 @@ struct EnemyWindPulse {
     int sourceRuntimeId = 0;
 };
 
+struct EnemySoundEvent {
+    std::string cueId;
+    Vec2 position{};
+    float volumeScale = 1.0f;
+    float pitchScale = 1.0f;
+};
+
 class EnemySystem {
 public:
     void setHitboxCatalog(const HitboxCatalog* catalog) { hitboxCatalog_ = catalog; }
@@ -226,6 +233,7 @@ public:
         float totalTime,
         bool paused,
         const RuntimeBalance& balance,
+        const EnemyCatalog& enemyCatalog,
         const ObjectCatalog& objectCatalog,
         WorldDropSystem& worldDrops,
         Vec2 playerLight,
@@ -264,6 +272,7 @@ public:
     void appendMinimapMarkers(std::vector<EnemyMinimapMarker>& markers) const;
     const std::vector<EnemyEvent>& events() const { return events_; }
     const std::vector<RingImpactSoundEvent>& impactSoundEvents() const { return impactSoundEvents_; }
+    std::vector<EnemySoundEvent> consumeSoundEvents();
     std::vector<CaptureResult> consumeCaptureResults();
     std::vector<StatusPopupEvent> consumeStatusPopupEvents();
     std::string debugEnemySummary() const;
@@ -400,6 +409,19 @@ private:
         EnemyVariantTier variantTier = EnemyVariantTier::Normal;
         int effectiveBaseLevel = 1;
     };
+    struct SwarmSpawnRequest {
+        const EnemyDefinition* definition = nullptr;
+        Vec2 origin{};
+        EnemySpawnSource spawnSource = EnemySpawnSource::Ambient;
+        std::string lootStageId;
+        int lootDepthRank = 1;
+        int parentRuntimeId = 0;
+        int count = 0;
+        float radius = 0.0f;
+        float childPassageRadius = 0.0f;
+        bool detectedOnSpawn = false;
+        Vec2 detectedTarget{};
+    };
 
     void queueEnemyObjectDrops(Enemy& enemy);
     void queueEnemyHeldDrops(Enemy& enemy);
@@ -436,6 +458,15 @@ private:
     double spawnBiasMultiplierFor(const EnemyDefinition& definition) const;
     void logSpawnWeightFallbackOnce(std::string key, std::string message);
     void applyDefinition(Enemy& enemy, const EnemyDefinition* definition, const RuntimeBalance& balance, const EnemyCatalog& enemyCatalog);
+    bool queueSwarmSpawn(
+        Enemy& enemy,
+        Vec2 detectedTarget,
+        std::vector<SwarmSpawnRequest>& outRequests);
+    int processSwarmSpawnRequest(
+        const SwarmSpawnRequest& request,
+        TileMap& map,
+        const RuntimeBalance& balance,
+        const EnemyCatalog& enemyCatalog);
     bool spawnDefinitionAt(
         Vec2 position,
         const EnemyDefinition* definition,
@@ -485,6 +516,7 @@ private:
     const EnemyShadowCatalog* shadowCatalog_ = nullptr;
     std::vector<EnemyEvent> events_;
     std::vector<RingImpactSoundEvent> impactSoundEvents_;
+    std::vector<EnemySoundEvent> soundEvents_;
     std::vector<CaptureResult> captureResults_;
     std::vector<StatusPopupEvent> statusPopupEvents_;
     int pendingXp_ = 0;

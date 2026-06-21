@@ -6,6 +6,7 @@
 
 #include <string>
 #include <string_view>
+#include <unordered_map>
 #include <vector>
 
 namespace majo {
@@ -485,6 +486,8 @@ UiRect uiBottomCenterButtonRect(UiRect panel, Vec2 size);
 UiRect uiBottomRightButtonRect(UiRect panel, Vec2 size);
 UiRect uiCancelButtonRect(UiRect panel);
 bool uiCancelRequested(UiCancelControlState& state, const Input& input, UiContext& ui, UiRect panel);
+
+void setUiMenuIconScaleOverrides(const std::unordered_map<std::string, float>* scaleByIconKey);
 
 void drawUiPanel(Renderer& renderer, UiRect panel, UiWindowFrame frame = UiWindowFrame::Default);
 void drawUiSubPanel(Renderer& renderer, UiRect panel);

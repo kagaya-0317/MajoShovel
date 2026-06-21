@@ -14,14 +14,11 @@ namespace majo {
 
 namespace {
 
-constexpr float DefaultRandomPitch = 0.025f;
-
 struct CueRule {
     std::string_view cueId;
     int priority = 0;
     float volume = 1.0f;
     float basePitch = 1.0f;
-    float randomPitch = DefaultRandomPitch;
 };
 
 void appendUnique(std::vector<std::string>& tags, std::string_view tag)
@@ -108,28 +105,28 @@ bool targetIsHard(const RingImpactSoundEvent& event)
 CueRule sourceTextureRule(const RingImpactSoundEvent& event)
 {
     if (sourceHas(event, "crisp")) {
-        return {"se.impact.crisp", 90, 0.92f, 1.06f, 0.030f};
+        return {"se.impact.crisp", 90, 0.92f, 1.06f};
     }
     if (sourceHas(event, "book")) {
-        return {"se.impact.paper.book", 88, 0.82f, 1.0f, 0.035f};
+        return {"se.impact.paper.book", 88, 0.82f, 1.0f};
     }
     if (sourceHasAny(event, {"mesh", "bristle"})) {
-        return {"se.impact.fiber.rustle", 86, 0.76f, 1.04f, 0.040f};
+        return {"se.impact.fiber.rustle", 86, 0.76f, 1.04f};
     }
     if (sourceHasAny(event, {"cloth", "fluffy"})) {
-        return {"se.impact.cloth.fluffy", 84, 0.80f, 0.98f, 0.035f};
+        return {"se.impact.cloth.fluffy", 84, 0.80f, 0.98f};
     }
     if (sourceHas(event, "hollow") && sourceHas(event, "resonant")) {
         if (sourceHasAny(event, {"heavy", "large"}) || event.sourceWeightKg >= 0.75f) {
-            return {"se.impact.resonant.gong", 92, 0.98f, 0.92f, 0.012f};
+            return {"se.impact.resonant.gong", 92, 0.98f, 0.92f};
         }
-        return {"se.impact.resonant.chime", 92, 0.88f, 1.08f, 0.018f};
+        return {"se.impact.resonant.chime", 92, 0.88f, 1.08f};
     }
     if (sourceHas(event, "trinket") && sourceHas(event, "metal")) {
-        return {"se.impact.metal.trinket", 86, 0.86f, 1.08f, 0.020f};
+        return {"se.impact.metal.trinket", 86, 0.86f, 1.08f};
     }
     if (sourceHas(event, "glass")) {
-        return {"se.impact.glass", 82, 0.86f, 1.04f, 0.025f};
+        return {"se.impact.glass", 82, 0.86f, 1.04f};
     }
     return {};
 }
@@ -141,25 +138,25 @@ CueRule terrainRule(const RingImpactSoundEvent& event)
     }
     if (targetHas(event, "dirt")) {
         if (sourceHas(event, "scoop")) {
-            return {"se.impact.dirt.scoop", 110, 1.0f, 0.98f, 0.028f};
+            return {"se.impact.dirt.scoop", 110, 1.0f, 0.98f};
         }
         if (sourceHas(event, "blade")) {
-            return {"se.impact.dirt.blade", 108, 0.94f, 0.96f, 0.026f};
+            return {"se.impact.dirt.blade", 108, 0.94f, 0.96f};
         }
         if (sourceHasAny(event, {"pointed", "pierce", "spike"})) {
-            return {"se.impact.dirt.pointed", 106, 0.92f, 1.0f, 0.028f};
+            return {"se.impact.dirt.pointed", 106, 0.92f, 1.0f};
         }
         return {};
     }
     if (targetHasAny(event, {"rock", "ore", "stone"})) {
         if (sourceHasAny(event, {"pointed", "hard_dig_tool", "pierce", "spike"})) {
-            return {"se.impact.rock.pointed", 112, 1.0f, 0.94f, 0.020f};
+            return {"se.impact.rock.pointed", 112, 1.0f, 0.94f};
         }
         if (sourceHas(event, "metal")) {
-            return {"se.impact.rock.metal", 110, 0.98f, 0.98f, 0.018f};
+            return {"se.impact.rock.metal", 110, 0.98f, 0.98f};
         }
         if (sourceHasAny(event, {"stone", "rugged"})) {
-            return {"se.impact.rock.stone", 106, 0.96f, 0.92f, 0.022f};
+            return {"se.impact.rock.stone", 106, 0.96f, 0.92f};
         }
         return {};
     }
@@ -172,29 +169,29 @@ CueRule enemyMaterialRule(const RingImpactSoundEvent& event)
         return {};
     }
     if (sourceHas(event, "slime") && targetHas(event, "slime")) {
-        return {"se.impact.slime.slime", 120, 0.88f, 1.04f, 0.040f};
+        return {"se.impact.slime.slime", 120, 0.88f, 1.04f};
     }
     if (sourceHasAny(event, {"stone", "rugged"}) && targetHas(event, "metal")) {
-        return {"se.impact.stone.metal", 112, 0.96f, 0.94f, 0.018f};
+        return {"se.impact.stone.metal", 112, 0.96f, 0.94f};
     }
     if (sourceHas(event, "metal") && targetHas(event, "metal")) {
-        return {"se.impact.metal.metal", 112, 0.96f, 1.02f, 0.014f};
+        return {"se.impact.metal.metal", 112, 0.96f, 1.02f};
     }
     if ((sourceIsHard(event) && targetHas(event, "soft")) ||
         (sourceHas(event, "soft") && targetIsHard(event))) {
-        return {"se.impact.hard.soft", 108, 0.92f, 0.96f, 0.035f};
+        return {"se.impact.hard.soft", 108, 0.92f, 0.96f};
     }
     if (sourceHas(event, "soft") && targetHas(event, "soft")) {
-        return {"se.impact.soft.soft", 106, 0.84f, 1.02f, 0.040f};
+        return {"se.impact.soft.soft", 106, 0.84f, 1.02f};
     }
     if (sourceHas(event, "metal") && targetHasAny(event, {"stone", "rugged", "hard"})) {
-        return {"se.impact.rock.metal", 104, 0.94f, 1.0f, 0.018f};
+        return {"se.impact.rock.metal", 104, 0.94f, 1.0f};
     }
     if (sourceHasAny(event, {"stone", "rugged"}) && targetHasAny(event, {"stone", "rugged", "hard"})) {
-        return {"se.impact.rock.stone", 102, 0.92f, 0.92f, 0.022f};
+        return {"se.impact.rock.stone", 102, 0.92f, 0.92f};
     }
     if (sourceHas(event, "wood")) {
-        return {"se.impact.wood", 72, 0.82f, 1.0f, 0.030f};
+        return {"se.impact.wood", 72, 0.82f, 1.0f};
     }
     return {};
 }
@@ -203,28 +200,28 @@ CueRule fallbackRule(const RingImpactSoundEvent& event)
 {
     if (isTerrain(event)) {
         if (targetHas(event, "dirt")) {
-            return {"se.impact.dirt.generic", 40, 0.82f, 1.0f, 0.030f};
+            return {"se.impact.dirt.generic", 40, 0.82f, 1.0f};
         }
         if (targetHasAny(event, {"rock", "ore", "stone"})) {
-            return {"se.impact.rock.stone", 40, 0.86f, 0.94f, 0.022f};
+            return {"se.impact.rock.stone", 40, 0.86f, 0.94f};
         }
     }
     if (sourceHas(event, "metal")) {
-        return {"se.impact.metal.metal", 35, 0.78f, 1.0f, 0.018f};
+        return {"se.impact.metal.metal", 35, 0.78f, 1.0f};
     }
     if (sourceHasAny(event, {"stone", "rugged"})) {
-        return {"se.impact.rock.stone", 34, 0.80f, 0.94f, 0.022f};
+        return {"se.impact.rock.stone", 34, 0.80f, 0.94f};
     }
     if (sourceHas(event, "soft")) {
-        return {"se.impact.soft.soft", 33, 0.74f, 1.02f, 0.040f};
+        return {"se.impact.soft.soft", 33, 0.74f, 1.02f};
     }
-    return {"se.impact.generic", 10, 0.74f, 1.0f, 0.030f};
+    return {"se.impact.generic", 10, 0.74f, 1.0f};
 }
 
 CueRule chooseCueRule(const RingImpactSoundEvent& event)
 {
     if (event.result == RingImpactResult::Guard) {
-        return {"se.enemy.guard", 130, 1.0f, 1.0f, 0.018f};
+        return {"se.enemy.guard", 130, 1.0f, 1.0f};
     }
     if (const CueRule rule = terrainRule(event); !rule.cueId.empty()) {
         return rule;
@@ -264,15 +261,14 @@ float sizePitchOffset(const RingImpactSoundEvent& event)
     return 0.0f;
 }
 
-RingImpactSoundPlayback makePlayback(const RingImpactSoundEvent& event, const CueRule& rule, std::mt19937& rng)
+RingImpactSoundPlayback makePlayback(const RingImpactSoundEvent& event, const CueRule& rule)
 {
-    std::uniform_real_distribution<float> pitchDist(-rule.randomPitch, rule.randomPitch);
     const float intensity = eventIntensity(event);
     return RingImpactSoundPlayback{
         .cueId = std::string(rule.cueId),
         .position = event.position,
         .volumeScale = clampFloat(rule.volume * (0.82f + intensity * 0.30f), 0.45f, 1.18f),
-        .pitchScale = clampFloat(rule.basePitch + sizePitchOffset(event) + pitchDist(rng), 0.72f, 1.28f),
+        .pitchScale = clampFloat(rule.basePitch + sizePitchOffset(event), 0.72f, 1.28f),
         .priority = rule.priority,
         .intensity = intensity,
     };
@@ -387,7 +383,6 @@ RingImpactSoundEvent makeEnemyRingImpactSoundEvent(
 
 std::vector<RingImpactSoundPlayback> resolveRingImpactSoundEvents(
     std::span<const RingImpactSoundEvent> events,
-    std::mt19937& rng,
     std::size_t maxCount)
 {
     std::vector<RingImpactSoundPlayback> candidates;
@@ -395,7 +390,7 @@ std::vector<RingImpactSoundPlayback> resolveRingImpactSoundEvents(
     for (const RingImpactSoundEvent& event : events) {
         const CueRule rule = chooseCueRule(event);
         if (!rule.cueId.empty()) {
-            candidates.push_back(makePlayback(event, rule, rng));
+            candidates.push_back(makePlayback(event, rule));
         }
     }
 

@@ -29,6 +29,7 @@ struct UiWindowState {
 
 UiCancelControlState* activeCancelState = nullptr;
 bool backInputConsumedUntilRelease = false;
+const std::unordered_map<std::string, float>* menuIconScaleOverrides = nullptr;
 
 std::unordered_map<std::string, UiWindowState> windowStates;
 
@@ -593,6 +594,42 @@ std::string uiMenuIconPath(int imageNumber)
         std::string(UiMenuIconExtension);
 }
 
+std::string_view uiMenuIconScaleKey(int imageNumber)
+{
+    switch (imageNumber) {
+    case 25: return "ui_screen_settings";
+    case 26: return "ui_volume";
+    case 27: return "ui_gamepad";
+    case 28: return "ui_status";
+    case 29: return "ui_backpack";
+    case 30: return "ui_options";
+    case 31: return "ui_quit_game";
+    case 32: return "ui_storage_chest";
+    case 33: return "ui_ring_0";
+    case 34: return "ui_ring_8";
+    case 35: return "ui_ring_c";
+    default: return {};
+    }
+}
+
+float uiMenuIconScale(int imageNumber)
+{
+    if (menuIconScaleOverrides == nullptr || menuIconScaleOverrides->empty()) {
+        return 1.0f;
+    }
+
+    const std::string_view key = uiMenuIconScaleKey(imageNumber);
+    if (key.empty()) {
+        return 1.0f;
+    }
+
+    const auto it = menuIconScaleOverrides->find(std::string(key));
+    if (it == menuIconScaleOverrides->end()) {
+        return 1.0f;
+    }
+    return std::max(0.05f, it->second);
+}
+
 void drawUiIconImage(Renderer& renderer, int imageNumber, Vec2 center, float size, Color tint)
 {
     if (imageNumber <= 0 || size <= 0.0f) {
@@ -616,21 +653,30 @@ void drawUiLabelWithOptionalIcon(
     Color iconTint = {255, 255, 255, 255})
 {
     const bool hasIcon = iconImageNumber > 0;
-    const float sidePadding = hasIcon ? std::max(10.0f, iconSize * 0.32f) : 0.0f;
+    const float scaledIconSize = hasIcon ? iconSize * uiMenuIconScale(iconImageNumber) : 0.0f;
+    const float iconSlotSize = hasIcon ? std::max(iconSize, scaledIconSize) : 0.0f;
+    const float sidePadding = hasIcon ? std::max(10.0f, iconSlotSize * 0.32f) : 0.0f;
     const float iconGap = hasIcon ? UiTextIconGap : 0.0f;
-    const float maxTextWidth = std::max(1.0f, rect.size.x - sidePadding * 2.0f - (hasIcon ? iconSize + iconGap : 0.0f));
+    const float maxTextWidth = std::max(1.0f, rect.size.x - sidePadding * 2.0f - (hasIcon ? iconSlotSize + iconGap : 0.0f));
     const std::string fitted = fittedUiText(renderer, label, maxTextWidth, textScale);
     const Vec2 textSize = renderer.measureText(fitted, textScale);
-    const float groupWidth = textSize.x + (hasIcon ? iconSize + iconGap : 0.0f);
-    const float groupX = rect.pos.x + std::max(sidePadding, (rect.size.x - groupWidth) * 0.5f);
+    const float groupWidth = textSize.x + (hasIcon ? iconSlotSize + iconGap : 0.0f);
+    const float centeredGroupX = rect.pos.x + std::max(sidePadding, (rect.size.x - groupWidth) * 0.5f);
+    float groupX = centeredGroupX;
+    if (hasIcon && rect.size.x >= 160.0f) {
+        const float alignedTextX = rect.pos.x + rect.size.x * 0.5f - std::min(26.0f, rect.size.x * 0.08f);
+        const float alignedGroupX = alignedTextX - iconSlotSize - iconGap;
+        const float maxGroupX = rect.pos.x + rect.size.x - sidePadding - groupWidth;
+        groupX = std::clamp(alignedGroupX, rect.pos.x + sidePadding, std::max(rect.pos.x + sidePadding, maxGroupX));
+    }
     const float centerY = rect.pos.y + rect.size.y * 0.5f;
-    const float textX = groupX + (hasIcon ? iconSize + iconGap : 0.0f);
+    const float textX = groupX + (hasIcon ? iconSlotSize + iconGap : 0.0f);
     const Vec2 textPos{
         textX,
         rect.pos.y + std::max(0.0f, (rect.size.y - textSize.y) * 0.5f) + textOffsetY,
     };
     if (hasIcon) {
-        drawUiIconImage(renderer, iconImageNumber, {groupX + iconSize * 0.5f, centerY}, iconSize, iconTint);
+        drawUiIconImage(renderer, iconImageNumber, {groupX + iconSlotSize * 0.5f, centerY}, scaledIconSize, iconTint);
     }
     renderer.drawText(textPos, fitted, textColor, textScale);
 }
@@ -655,6 +701,11 @@ void fillRoundedRect(Renderer& renderer, UiRect rect, float radius, Color color)
     renderer.fillCircle({rect.pos.x + rect.size.x - r, rect.pos.y + rect.size.y - r}, r, color);
 }
 
+}
+
+void setUiMenuIconScaleOverrides(const std::unordered_map<std::string, float>* scaleByIconKey)
+{
+    menuIconScaleOverrides = scaleByIconKey;
 }
 
 bool UiRect::contains(Vec2 point) const

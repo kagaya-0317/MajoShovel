@@ -426,7 +426,7 @@ private:
         int currentDepth = 1;
         int maxReachedDepth = 1;
         int maxDepth = 9;
-        int maxReachedDistanceTiles = 0;
+        int maxReachedDepthMeters = 0;
         int distortionChanges = 0;
         float baseStageHardnessMultiplier = 1.0f;
     };
@@ -471,7 +471,8 @@ private:
         AstralRunResult result = AstralRunResult::None;
         int reachedDepth = 1;
         int maxDepth = 9;
-        int reachedDistanceTiles = 0;
+        int reachedDepthMeters = 0;
+        int maxDepthMeters = 10000;
         int defeatedEnemies = 0;
         int dugTiles = 0;
         int acquiredItems = 0;
@@ -695,6 +696,14 @@ private:
         bool spawned = false;
     };
 
+    struct PendingBuriedEnemySpawn {
+        DungeonTile tile{};
+        Vec2 position{};
+        float timer = 0.0f;
+        float duration = 0.0f;
+        int depthRank = 1;
+    };
+
     struct DungeonEventSystem {
         void clear();
         void setInstances(std::vector<DungeonEventInstance> instances);
@@ -767,6 +776,26 @@ private:
         bool hasBossSpawnPoint = false;
         bool bossSpawned = false;
         bool valid = false;
+    };
+
+    struct DebugRoguelikeRunSnapshot {
+        bool valid = false;
+        int currentStage = 0;
+        std::string currentStageId;
+        RetrySnapshot dungeon;
+        AstralRunState astralRun{};
+        RoguelikeBigHoleState roguelikeBigHole{};
+        std::vector<RoguelikeFacilityInstance> roguelikeFacilities;
+        std::array<int, 3> roguelikeFacilityLastDepthMeters{};
+        InventoryCarryState runStartInventoryState;
+        InventoryCarryState roguelikeReturnInventoryState;
+        Vec2 latestWarpPointPosition{};
+        bool hasLatestWarpPointPosition = false;
+        bool roguelikeDungeon = false;
+        bool restoreRunStartInventoryOnDeath = false;
+        bool roguelikeCarryInRestricted = false;
+        bool roguelikeCarryOutRestricted = false;
+        bool warpPointsEnabled = false;
     };
 
     struct DungeonState {
@@ -1442,6 +1471,8 @@ private:
     void resetWarpPointRunState();
     void captureDungeonState();
     bool restoreDungeonState(bool useLatestWarpPoint);
+    bool captureDebugRoguelikeRunSnapshot();
+    bool restoreDebugRoguelikeRunSnapshot();
     bool canRegenerateCurrentStage() const;
     bool currentStageIsRoguelike() const;
     bool currentStageCleared() const;
@@ -1609,9 +1640,11 @@ private:
     void clearKnownWarpPointTerrain();
     void applyPlacementTerrainOverrides();
     void updateExposedEnemyNodes();
+    void updatePendingBuriedEnemySpawns(float dt);
     void updateRingEffectDiscoveries(std::vector<EffectDiscoveryEvent>& discoveryEvents);
     void updateOrbitAreaEffects(float dt, std::vector<EffectDiscoveryEvent>& discoveryEvents);
     void updateOrbitGroundEffects(float dt, std::vector<EffectDiscoveryEvent>& discoveryEvents);
+    void schedulePendingBuriedEnemySpawn(const EnemyNode& node);
     std::vector<Vec2> spawnHiddenEnemyNodesFromOpenedTiles(const std::vector<Vec2>& openedTiles);
     int exposedEnemyNodeCount() const;
     int buriedEnemyNodeCount() const;
@@ -1650,6 +1683,9 @@ private:
         std::vector<DepthRenderEntry>& entries,
         Renderer& renderer,
         const std::vector<LightSource>& extraLights) const;
+    void appendPendingBuriedEnemySpawnRenderEntries(
+        std::vector<DepthRenderEntry>& entries,
+        Renderer& renderer) const;
     void renderRewardNodes(Renderer& renderer, const std::vector<LightSource>& extraLights) const;
     int unlockedRingCount() const;
     void setUnlockedRingCount(int count);
@@ -1909,7 +1945,7 @@ private:
     void switchActiveRingWithLog(int delta);
     int unlockedRingHudCount() const;
     UiRect ringStatusHudRect(int ringIndex, int unlockedRingCount) const;
-    void updateRingStatusHud(UiContext& ui, float dt);
+    bool updateRingStatusHud(UiContext& ui, float dt);
     std::string currentMapDisplayName() const;
     void renderTopInfoBar(Renderer& renderer) const;
     void renderOpeningKamishibai(Renderer& renderer) const;
@@ -2244,6 +2280,7 @@ private:
     UiScrollAreaState debugNamedLoadScrollState_{};
     std::string debugNamedSaveStatus_;
     mutable UiCancelControlState debugNamedSaveCancelState_{};
+    std::optional<DebugRoguelikeRunSnapshot> debugRoguelikeRunSnapshot_;
     bool debugStoryTestActive_ = false;
     DebugStoryTestMode debugStoryTestMode_ = DebugStoryTestMode::Events;
     std::vector<DebugStoryTestEntry> debugStoryTestEntries_;
@@ -2467,6 +2504,7 @@ private:
     std::vector<ChestNode> chestNodes_;
     std::vector<CrateNode> crateNodes_;
     std::vector<EnemyNode> enemyNodes_;
+    std::vector<PendingBuriedEnemySpawn> pendingBuriedEnemySpawns_;
     DungeonEventSystem dungeonEvents_;
     float dungeonEventDiscoveryCooldown_ = 0.0f;
     std::optional<DungeonEventKind> pendingDebugDungeonEventPlacement_;
@@ -2532,6 +2570,7 @@ private:
     bool roguelikeCarryInRestricted_ = false;
     bool roguelikeCarryOutRestricted_ = false;
     bool inventoryReturnToPause_ = false;
+    bool ringReturnToPause_ = false;
     bool quitRequested_ = false;
     bool saveDataLoaded_ = false;
     bool testPlayMode_ = false;

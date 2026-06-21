@@ -48,6 +48,36 @@ Codex 文脈では、`tools\build.ps1` は `sccache` または `clcache` と `ni
 キャッシュを使わない確認をしたい場合は `-CompilerCache Off` を指定する。
 明示的に固定する場合は `-Generator VisualStudio` または `-Generator Ninja` を使う。
 
+### Codex Verification Builds
+
+Codex が検証ビルドを実行する場合、ビルドは 10 分以上かかることがある前提で扱う。
+短い timeout で様子見してから再実行する運用は禁止。最初から完了まで待てる timeout を設定する。
+目安として 30 分以上、重い変更や初回ビルドでは 45〜60 分以上を使う。
+
+検証ビルドはログを残して実行する。標準出力だけに頼らず、タイムアウトや中断後でも結果を確認できるようにする。
+ログ保存先は `%LOCALAPPDATA%\MajoShovel\build-logs` を使う。
+
+```powershell
+$logDir = Join-Path $env:LOCALAPPDATA "MajoShovel\build-logs"
+New-Item -ItemType Directory -Force -Path $logDir | Out-Null
+$log = Join-Path $logDir ("codex-build-{0}.log" -f (Get-Date -Format "yyyyMMdd-HHmmss"))
+
+Start-Transcript -Path $log
+try {
+    powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\tools\build.ps1 -Jobs 12
+    $code = $LASTEXITCODE
+} finally {
+    Stop-Transcript
+}
+exit $code
+```
+
+ビルドが timeout した場合は、同じビルドをすぐ再実行しない。
+まず自分が起動した `cmake.exe` / `MSBuild.exe` / `cl.exe` / `link.exe` が残っているか確認し、残っていれば完了を待つか、
+自分が起動したプロセスだけを止めてからログを確認する。
+他スレッドや `dev_auto_reload.ps1` のビルドを巻き込む可能性があるため、起源不明の `cl.exe` / `MSBuild.exe` をまとめて kill しない。
+同じ出力先に検証ビルドを重ねて起動しない。
+
 ### Parallel Builds
 
 MSVC ビルドでは並列化を一層だけにする。このプロジェクトでは CMake/MSBuild の job 数で並列化する。

@@ -1578,6 +1578,92 @@ float SpellRingSystem::throwCooldownForRing(int ringIndex, const RuntimeBalance&
         0.02f);
 }
 
+bool SpellRingSystem::activeRingThrowReady() const
+{
+    if (activeRingIndex_ < 0 || activeRingIndex_ >= SpellRingCount) {
+        return false;
+    }
+
+    const RingRuntimeState& runtime = ringRuntime_[static_cast<std::size_t>(activeRingIndex_)];
+    return runtime.throwCooldownRemaining <= 0.0f &&
+        throwingRingIndex_ < 0 &&
+        runtime.state == SpellRingState::Normal;
+}
+
+bool SpellRingSystem::tryThrowActiveRing(Player& player, const RuntimeBalance& balance)
+{
+    if (!activeRingThrowReady()) {
+        return false;
+    }
+
+    const RingEquipmentModifiers& activeEquipment = equipmentModifiersForRing(activeRingIndex_);
+    const RingWorkshopModifiers& activeWorkshop = workshopModifiersByRing_[static_cast<std::size_t>(activeRingIndex_)];
+    const float throwCooldown = throwCooldownForRing(activeRingIndex_, balance);
+    const float throwSpeed = scaledNonNegative(balance.spellRingThrowSpeed, activeEquipment.ringThrowSpeedMul);
+    const float throwDistance = scaledNonNegative(
+        balance.spellRingThrowDistance,
+        activeEquipment.ringThrowDistanceMul * activeWorkshop.throwDistanceMultiplier);
+    const float returnSpeed = scaledNonNegative(balance.spellRingReturnSpeed, activeEquipment.ringReturnSpeedMul);
+
+    RingRuntimeState& runtime = ringRuntime_[static_cast<std::size_t>(activeRingIndex_)];
+    runtime.throwDirection = safeNormalize(player.facing);
+    RingOrbitContext throwContext = makeOrbitContextForRing(activeRingIndex_, 0, 1, 1.0f, balance);
+    const ThrowAnchorPathTs anchors = throwAnchorPathTs(
+        runtime.homeCenter,
+        runtime.throwDirection,
+        throwContext);
+    const float launchPathT = anchors.launchPathT;
+    const float returnPathT = anchors.returnPathT;
+    const float launchParam = pathParamForT(throwContext.shape, launchPathT, throwContext.tuning);
+    const float returnParam = pathParamForT(throwContext.shape, returnPathT, throwContext.tuning);
+    runtime.throwLaunchOffset = getRingItemWorldPosition(runtime.homeCenter, launchParam, throwContext) - runtime.homeCenter;
+    runtime.throwReturnOffset = throwContext.shape == RingShape::Comet
+        ? reflectedCometReturnOffset(runtime.throwLaunchOffset, runtime.throwDirection)
+        : getRingItemWorldPosition(runtime.homeCenter, returnParam, throwContext) - runtime.homeCenter;
+    const ThrowMasterPath throwPath = makeThrowMasterPath(
+        runtime.homeCenter,
+        throwContext,
+        runtime.throwDirection,
+        runtime.throwLaunchOffset,
+        runtime.throwReturnOffset,
+        launchPathT,
+        returnPathT,
+        throwDistance);
+    const float peakTime = throwFlightTimeForPath(
+        throwPath,
+        throwSpeed,
+        balance.spellRingThrowMaxTime);
+    const float returnTime = throwContext.shape == RingShape::Comet
+        ? throwCometChaseTimeForPath(
+            throwPath,
+            peakTime,
+            ringAngularSpeedForIndex(activeRingIndex_, balance),
+            length(runtime.throwReturnOffset),
+            peakTime)
+        : throwChaseTimeForPath(
+            throwPath,
+            returnSpeed,
+            peakTime);
+    runtime.state = SpellRingState::Thrown;
+    runtime.throwCutPathT = launchPathT;
+    runtime.throwReturnPathT = returnPathT;
+    runtime.throwShapeRotation = throwContext.shapeRotation;
+    runtime.throwElapsed = 0.0f;
+    runtime.throwPeakTime = peakTime;
+    runtime.throwReturnTime = returnTime;
+    runtime.throwSettleTime = throwContext.shape == RingShape::Comet ? 0.0f : ThrowReturnSettleDuration;
+    runtime.throwDistance = throwDistance;
+    runtime.throwVisualEnergyFadeTimer = 0.0f;
+    throwingRingIndex_ = activeRingIndex_;
+    runtime.throwCooldownRemaining = throwCooldown;
+    motionEvents_.push_back({
+        RingMotionEventKind::ThrowStart,
+        activeRingIndex_,
+        runtime.homeCenter + runtime.throwLaunchOffset,
+        runtime.throwDirection});
+    return true;
+}
+
 void SpellRingSystem::update(Player& player, const Input& input, float dt, float, bool paused, bool blockPointerThrow, const RuntimeBalance& balance)
 {
     updateActionFlashTimers(dt);
@@ -1597,23 +1683,12 @@ void SpellRingSystem::update(Player& player, const Input& input, float dt, float
     advanceOrbitAngles(safeDt, balance);
 
     const RingEquipmentModifiers& activeEquipment = equipmentModifiersForRing(activeRingIndex_);
-    const RingWorkshopModifiers& activeWorkshop = workshopModifiersByRing_[static_cast<std::size_t>(activeRingIndex_)];
-    const float throwCooldown = throwCooldownForRing(activeRingIndex_, balance);
-    const float throwSpeed = scaledNonNegative(balance.spellRingThrowSpeed, activeEquipment.ringThrowSpeedMul);
-    const float throwDistance = scaledNonNegative(
-        balance.spellRingThrowDistance,
-        activeEquipment.ringThrowDistanceMul * activeWorkshop.throwDistanceMultiplier);
-    const float returnSpeed = scaledNonNegative(balance.spellRingReturnSpeed, activeEquipment.ringReturnSpeedMul);
 
     const double anchorStrength = std::max(
         0.0,
         orbitModifiers_.anchorStrength * finiteEquipmentMultiplier(activeEquipment.ringAnchorMul));
     const bool throwPressed = input.throwPressed() && !(blockPointerThrow && input.mouseLeftPressed());
-    const bool throwCanStart =
-        throwPressed &&
-        ringRuntime_[static_cast<std::size_t>(activeRingIndex_)].throwCooldownRemaining <= 0.0f &&
-        throwingRingIndex_ < 0 &&
-        ringRuntime_[static_cast<std::size_t>(activeRingIndex_)].state == SpellRingState::Normal;
+    const bool throwCanStart = throwPressed && activeRingThrowReady();
     const bool ringShiftAllowed = !anyRingInFlight() && !throwCanStart;
     if (!ringShiftAllowed) {
         player.spellRingShift = 0.0f;
@@ -1735,67 +1810,8 @@ void SpellRingSystem::update(Player& player, const Input& input, float dt, float
         }
     }
 
-    if (throwPressed &&
-        ringRuntime_[static_cast<std::size_t>(activeRingIndex_)].throwCooldownRemaining <= 0.0f &&
-        throwingRingIndex_ < 0) {
-        RingRuntimeState& runtime = ringRuntime_[static_cast<std::size_t>(activeRingIndex_)];
-        if (runtime.state == SpellRingState::Normal) {
-            runtime.throwDirection = safeNormalize(player.facing);
-            RingOrbitContext throwContext = makeOrbitContextForRing(activeRingIndex_, 0, 1, 1.0f, balance);
-            const ThrowAnchorPathTs anchors = throwAnchorPathTs(
-                runtime.homeCenter,
-                runtime.throwDirection,
-                throwContext);
-            const float launchPathT = anchors.launchPathT;
-            const float returnPathT = anchors.returnPathT;
-            const float launchParam = pathParamForT(throwContext.shape, launchPathT, throwContext.tuning);
-            const float returnParam = pathParamForT(throwContext.shape, returnPathT, throwContext.tuning);
-            runtime.throwLaunchOffset = getRingItemWorldPosition(runtime.homeCenter, launchParam, throwContext) - runtime.homeCenter;
-            runtime.throwReturnOffset = throwContext.shape == RingShape::Comet
-                ? reflectedCometReturnOffset(runtime.throwLaunchOffset, runtime.throwDirection)
-                : getRingItemWorldPosition(runtime.homeCenter, returnParam, throwContext) - runtime.homeCenter;
-            const ThrowMasterPath throwPath = makeThrowMasterPath(
-                runtime.homeCenter,
-                throwContext,
-                runtime.throwDirection,
-                runtime.throwLaunchOffset,
-                runtime.throwReturnOffset,
-                launchPathT,
-                returnPathT,
-                throwDistance);
-            const float peakTime = throwFlightTimeForPath(
-                throwPath,
-                throwSpeed,
-                balance.spellRingThrowMaxTime);
-            const float returnTime = throwContext.shape == RingShape::Comet
-                ? throwCometChaseTimeForPath(
-                    throwPath,
-                    peakTime,
-                    ringAngularSpeedForIndex(activeRingIndex_, balance),
-                    length(runtime.throwReturnOffset),
-                    peakTime)
-                : throwChaseTimeForPath(
-                    throwPath,
-                    returnSpeed,
-                    peakTime);
-            runtime.state = SpellRingState::Thrown;
-            runtime.throwCutPathT = launchPathT;
-            runtime.throwReturnPathT = returnPathT;
-            runtime.throwShapeRotation = throwContext.shapeRotation;
-            runtime.throwElapsed = 0.0f;
-            runtime.throwPeakTime = peakTime;
-            runtime.throwReturnTime = returnTime;
-            runtime.throwSettleTime = throwContext.shape == RingShape::Comet ? 0.0f : ThrowReturnSettleDuration;
-            runtime.throwDistance = throwDistance;
-            runtime.throwVisualEnergyFadeTimer = 0.0f;
-            throwingRingIndex_ = activeRingIndex_;
-            runtime.throwCooldownRemaining = throwCooldown;
-            motionEvents_.push_back({
-                RingMotionEventKind::ThrowStart,
-                activeRingIndex_,
-                runtime.homeCenter + runtime.throwLaunchOffset,
-                runtime.throwDirection});
-        }
+    if (throwPressed) {
+        tryThrowActiveRing(player, balance);
     }
 
     std::vector<SpellRingItem*> allItems = runtimeItemsMutable();

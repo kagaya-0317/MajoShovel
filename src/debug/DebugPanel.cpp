@@ -172,6 +172,7 @@ DebugConsoleLayout makeDefaultDebugConsoleLayout()
                     {
                         {DebugControlKind::Button, "base_edit_toggle", "拠点編集", "game base-edit toggle"},
                         {DebugControlKind::Button, "hitbox_toggle", "当たり判定編集", "game hitbox toggle"},
+                        {DebugControlKind::Button, "enemy_placement_toggle", "敵位置編集", "game enemy-placement toggle"},
                         {DebugControlKind::Button, "enemy_shadow_toggle", "影編集", "game enemy-shadow toggle"},
                     },
                 },
@@ -211,6 +212,14 @@ DebugConsoleLayout makeDefaultDebugConsoleLayout()
                     },
                 },
                 DebugGroupDefinition{
+                    "astral_debug_save",
+                    "保存/復帰",
+                    {
+                        {DebugControlKind::Button, "astral_run_save", "RUN保存", "game astral run-save"},
+                        {DebugControlKind::Button, "astral_run_load", "RUN復帰", "game astral run-load"},
+                    },
+                },
+                DebugGroupDefinition{
                     "astral_generation",
                     "生成",
                     {
@@ -219,6 +228,7 @@ DebugConsoleLayout makeDefaultDebugConsoleLayout()
                         {DebugControlKind::NumberInput, "astral_room_index", "部屋番号", "game astral room-index", 1, 20},
                         {DebugControlKind::Button, "astral_warp_room", "部屋へ移動", "game astral room-warp"},
                         {DebugControlKind::Button, "astral_report_generation", "生成レポート", "game astral report-generation"},
+                        {DebugControlKind::Button, "astral_diagnose", "進行診断", "game rogue-diagnose"},
                     },
                 },
                 DebugGroupDefinition{

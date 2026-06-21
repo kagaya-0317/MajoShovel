@@ -56,6 +56,7 @@ se.ring.throw	se	se/wind10.wav	0.69	false	120	17	リング投げ
 se.ring.charge_ready	se	se/sound14.wav	0.58	false	90	48	リング投げチャージ完了
 se.enemy.defeat	se	se/zz_tmp_enemy_defeat_placeholder.wav	0.76	false	120	0	敵撃破
 se.enemy.spawn	se	se/zz_tmp_enemy_spawn_placeholder.wav	0.7	false	180	0	敵出現
+se.enemy.buried_warning	se	se/zz_tmp_enemy_buried_warning_placeholder.wav	0.74	false	80	0	埋没敵予兆
 se.enemy.alert	se	se/zz_tmp_enemy_alert_placeholder.wav	0.72	false	180	0	敵発見
 se.enemy.attack	se	se/zz_tmp_enemy_attack_placeholder.wav	0.76	false	140	0	敵攻撃
 se.enemy.mimic_bite	se	se/bite3.wav	0.78	false	130	0	ミミック噛みつき

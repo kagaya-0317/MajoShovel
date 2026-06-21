@@ -11,6 +11,7 @@
 #include <cmath>
 #include <fstream>
 #include <iterator>
+#include <random>
 
 namespace majo {
 
@@ -31,7 +32,6 @@ constexpr std::string_view AudioSeTransition = "se.transition";
 constexpr std::string_view AudioSePlayerDamage = "se.player.damage";
 constexpr std::string_view AudioSePlayerPinch = "se.player.pinch";
 constexpr std::string_view AudioSeRingThrow = "se.ring.throw";
-constexpr std::string_view AudioSeEnemySpawn = "se.enemy.spawn";
 constexpr std::string_view AudioSeEnemyAlert = "se.enemy.alert";
 constexpr std::string_view AudioSeEnemyAttack = "se.enemy.attack";
 constexpr std::string_view AudioSeEnemyShoot = "se.enemy.shoot";
@@ -57,6 +57,7 @@ constexpr std::string_view AudioSeUiRingPlace = "se.ui.ring_place";
 constexpr std::string_view AudioSeUiUpgradeSelect = "se.ui.upgrade_select";
 constexpr std::string_view AudioSeLevelUpJingle = "se.level_up.jingle";
 constexpr std::string_view AudioSeGameOverJingle = "se.game_over.jingle";
+constexpr float ImpactSePitchJitterRatio = 0.10f;
 constexpr float ExplosionRadiusScale = 1.5f;
 constexpr std::string_view IntroTutorialChestLootInventoryTrigger = "intro_tutorial:chest_loot_inventory";
 constexpr std::string_view IntroTutorialChestLootRingTrigger = "intro_tutorial:chest_loot_ring";
@@ -87,6 +88,56 @@ float metersToWorldDistance(float meters)
 float worldDistanceToMeters(float distance)
 {
     return distance / static_cast<float>(balance::TileSize);
+}
+
+bool startsWith(std::string_view text, std::string_view prefix)
+{
+    return text.size() >= prefix.size() && text.compare(0, prefix.size(), prefix) == 0;
+}
+
+bool endsWith(std::string_view text, std::string_view suffix)
+{
+    return text.size() >= suffix.size() && text.compare(text.size() - suffix.size(), suffix.size(), suffix) == 0;
+}
+
+bool impactSePitchJitterTarget(std::string_view id)
+{
+    if (startsWith(id, "se.impact.")) {
+        return true;
+    }
+    if (id == "se.dig.hit" ||
+        id == "se.dig.break" ||
+        id == "se.dig.ore_break" ||
+        id == "se.attack.hit" ||
+        id == "se.player.damage" ||
+        id == "se.enemy.mimic_bite" ||
+        id == "se.enemy.guard" ||
+        id == "se.ring.guard" ||
+        id == "se.ring.reflect" ||
+        id == "se.ring.slow_bite" ||
+        id == "se.magic.impact" ||
+        id == "se.projectile.impact" ||
+        id == "se.projectile.bubble.pop" ||
+        id == "se.crate.break" ||
+        id == "se.item.break" ||
+        id == "se.item.break.ceramic" ||
+        id == "se.item.break.glass") {
+        return true;
+    }
+    return startsWith(id, "se.projectile.") && endsWith(id, ".destroy");
+}
+
+float applyImpactSePitchJitter(std::string_view id, float pitchScale)
+{
+    if (!impactSePitchJitterTarget(id)) {
+        return pitchScale;
+    }
+
+    static std::mt19937 rng{std::random_device{}()};
+    std::uniform_real_distribution<float> distribution(
+        1.0f - ImpactSePitchJitterRatio,
+        1.0f + ImpactSePitchJitterRatio);
+    return std::clamp(pitchScale * distribution(rng), 0.25f, 4.0f);
 }
 
 float angularSpeedForLinearMetersPerSecond(float speedMetersPerSecond, float radius)
@@ -763,7 +814,7 @@ void Game::playAudioSe(std::string_view id, float volumeScale, float pitchScale)
     if (audio_ == nullptr || id.empty()) {
         return;
     }
-    audio_->playSe(id, volumeScale, pitchScale);
+    audio_->playSe(id, volumeScale, applyImpactSePitchJitter(id, pitchScale));
 }
 
 void Game::playAudioSeAt(std::string_view id, Vec2 worldPosition, float volumeScale, float pitchScale)
@@ -775,7 +826,7 @@ void Game::playAudioSeAt(std::string_view id, Vec2 worldPosition, float volumeSc
         id,
         AudioSeParams{
             .volumeScale = volumeScale,
-            .pitchScale = pitchScale,
+            .pitchScale = applyImpactSePitchJitter(id, pitchScale),
             .pan = audioPanForWorldPosition(worldPosition),
         });
 }
@@ -975,6 +1026,7 @@ bool Game::advanceInitialize()
         loadObjectImageScaleData();
         setObjectImageScaleOverrides(&objectImageScaleById_);
         setWorldIconScaleOverrides(&otherImageScaleByKey_);
+        setUiMenuIconScaleOverrides(&otherImageScaleByKey_);
         initializeJob_.step = InitializeStep::LoadHitboxes;
         break;
     case InitializeStep::LoadHitboxes:
@@ -1159,6 +1211,7 @@ void Game::resetWorldEnemyState()
     enemies_.setHitboxCatalog(&hitboxes_);
     enemies_.setPlacementCatalog(&enemyPlacements_);
     enemies_.setShadowCatalog(&enemyShadows_);
+    pendingBuriedEnemySpawns_.clear();
 }
 
 void Game::resetWorldProjectileState()
@@ -3909,7 +3962,9 @@ void Game::updateScreenMode(
             pausePage_ = PauseMenuPage::Main;
             return;
         }
-        updateRingStatusHud(ui, dt);
+        if (updateRingStatusHud(ui, dt)) {
+            return;
+        }
         inventory_.update(
             input,
             ui,
@@ -4329,11 +4384,7 @@ void Game::update(const Input& input, const Time& time)
                 updateExposedRewardNodes();
                 updateExposedMoonFragmentNodes();
             }
-            const int enemyCountBeforeExposedSpawn = enemies_.activeCount();
             updateExposedEnemyNodes();
-            if (enemies_.activeCount() > enemyCountBeforeExposedSpawn) {
-                playAudioSe(AudioSeEnemySpawn);
-            }
         }
         if (gameplayRewardsEnabled()) {
             updateRingEffectDiscoveries(effectDiscoveries);
@@ -4394,7 +4445,7 @@ void Game::update(const Input& input, const Time& time)
                 gameplayRewardsEnabled() ? &encyclopedia_ : nullptr);
         }
         const std::vector<RingImpactSoundPlayback> terrainImpactSounds =
-            resolveRingImpactSoundEvents(digging_.impactSoundEvents(), lootRuntimeRng(), 3);
+            resolveRingImpactSoundEvents(digging_.impactSoundEvents(), 3);
         if (!terrainImpactSounds.empty()) {
             for (const RingImpactSoundPlayback& sound : terrainImpactSounds) {
                 playAudioSeAt(sound.cueId, sound.position, sound.volumeScale, sound.pitchScale);
@@ -4594,6 +4645,7 @@ void Game::update(const Input& input, const Time& time)
             updateDigToolFailsafe(time.deltaSeconds());
         }
         if (!enemyTestActive_) {
+            updatePendingBuriedEnemySpawns(time.deltaSeconds());
             const std::vector<Vec2> randomEnemySpawnTiles = spawnHiddenEnemyNodesFromOpenedTiles(digging_.openedTiles());
             std::vector<DugEnemySpawnPoint> randomEnemySpawnPoints;
             randomEnemySpawnPoints.reserve(randomEnemySpawnTiles.size());
@@ -4603,11 +4655,7 @@ void Game::update(const Input& input, const Time& time)
                     .depthRank = roguelikeDepthRankForWorldPosition(spawnTile),
                 });
             }
-            const int enemyCountBeforeDugSpawn = enemies_.activeCount();
             enemies_.spawnFromDugTiles(randomEnemySpawnPoints, tileMap_, player_.position, dungeonBalance, enemyCatalog_, currentStageId_);
-            if (enemies_.activeCount() > enemyCountBeforeDugSpawn) {
-                playAudioSe(AudioSeEnemySpawn);
-            }
             updateBossSpawn();
         }
 
@@ -4634,6 +4682,7 @@ void Game::update(const Input& input, const Time& time)
                 time.totalSeconds(),
                 false,
                 balance_,
+                enemyCatalog_,
                 objectCatalog_,
                 worldDrops_,
                 witchSelfLightCenter(player_.position),
@@ -4754,14 +4803,15 @@ void Game::update(const Input& input, const Time& time)
         bool bossDefeated = false;
         Vec2 bossDefeatPosition{};
         const std::vector<RingImpactSoundPlayback> enemyImpactSounds =
-            resolveRingImpactSoundEvents(enemies_.impactSoundEvents(), lootRuntimeRng(), 4);
+            resolveRingImpactSoundEvents(enemies_.impactSoundEvents(), 4);
         for (const RingImpactSoundPlayback& sound : enemyImpactSounds) {
             playAudioSeAt(sound.cueId, sound.position, sound.volumeScale, sound.pitchScale);
         }
+        for (const EnemySoundEvent& sound : enemies_.consumeSoundEvents()) {
+            playAudioSeAt(sound.cueId, sound.position, sound.volumeScale, sound.pitchScale);
+        }
         for (const EnemyEvent& event : enemies_.events()) {
-            if (event.type == EnemyEventType::Spawn) {
-                playAudioSeAt(AudioSeEnemySpawn, event.position);
-            } else if (event.type == EnemyEventType::Alert) {
+            if (event.type == EnemyEventType::Alert) {
                 playAudioSeAt(AudioSeEnemyAlert, event.position);
             } else if (event.type == EnemyEventType::Attack) {
                 if (event.effectId == "ring_slow_bite") {

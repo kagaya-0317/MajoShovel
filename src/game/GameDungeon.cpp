@@ -104,7 +104,7 @@ constexpr std::string_view PostEndingIntroFlag = "story_post_ending_intro";
 constexpr std::string_view AudioBgmDungeon = "bgm.dungeon";
 constexpr std::string_view AudioSeChestOpen = "se.chest.open";
 constexpr std::string_view AudioSeCaptureFail = "se.capture.fail";
-constexpr std::string_view AudioSeEnemySpawn = "se.enemy.spawn";
+constexpr std::string_view AudioSeBuriedEnemyWarning = "se.enemy.buried_warning";
 constexpr std::string_view AudioSeDiscovery = "se.discovery";
 constexpr std::string_view AudioSeWarpDiscovery = "se.discovery.warp";
 constexpr std::string_view AudioSeExplosionTick = "se.explosion.tick";
@@ -120,6 +120,7 @@ constexpr float CaptureAbsorbFlyDelaySeconds = 0.24f;
 constexpr float CaptureAbsorbSparkIntervalSeconds = 0.045f;
 constexpr float DigToolFailsafeSpawnCooldownSeconds = 12.0f;
 constexpr float DigToolFailsafeNearbyDropRadius = 220.0f;
+constexpr float BuriedEnemyWarningDelaySeconds = 0.70f;
 constexpr Vec2 DungeonEventNpcInspectSize{42.0f, 58.0f};
 constexpr Vec2 DungeonChestInspectSize{42.0f, 42.0f};
 constexpr float FootstepPitchSideOffset = 0.025f;
@@ -620,6 +621,48 @@ void drawBuriedRewardSparkle(Renderer& renderer, Vec2 center, double totalSecond
 void drawBuriedRewardSparkle(Renderer& renderer, Vec2 center, double totalSeconds)
 {
     drawBuriedRewardSparkle(renderer, center, totalSeconds, false);
+}
+
+void drawBuriedEnemyWarningBubble(Renderer& renderer, Vec2 groundCenter, float age, float duration)
+{
+    const float t = duration > 0.0f ? clamp(age / duration, 0.0f, 1.0f) : 1.0f;
+    const float pop = dungeonFocusEase(std::min(1.0f, t / 0.18f));
+    const float fade = t > 0.82f ? 1.0f - dungeonFocusEase((t - 0.82f) / 0.18f) : 1.0f;
+    const float pulse = 1.0f + 0.10f * std::sin(age * 32.0f);
+    const float radius = 15.0f * pop * pulse;
+    const float bob = std::sin(age * 18.0f) * 2.0f;
+    const Vec2 center = groundCenter + Vec2{0.0f, -42.0f + bob};
+    const auto alpha = [fade](int value) {
+        return static_cast<unsigned char>(std::clamp(
+            static_cast<int>(std::lround(static_cast<float>(value) * fade)),
+            0,
+            255));
+    };
+
+    const Color shadow{22, 8, 12, alpha(118)};
+    const Color fill{224, 42, 54, alpha(236)};
+    const Color rim{255, 226, 176, alpha(244)};
+    const Color hot{255, 255, 255, alpha(255)};
+    const std::array<Vec2, 3> tail{{
+        center + Vec2{-5.5f * pop, radius * 0.58f},
+        center + Vec2{5.5f * pop, radius * 0.58f},
+        groundCenter + Vec2{0.0f, -13.0f},
+    }};
+
+    renderer.fillCircle(center + Vec2{0.0f, 2.0f}, radius + 2.0f, shadow);
+    renderer.fillPolygon(tail.data(), tail.size(), fill);
+    renderer.fillCircle(center, radius, fill);
+    renderer.drawCircle(center, radius + 1.0f, rim);
+    renderer.drawCircle(center, radius + 4.0f, Color{255, 68, 78, alpha(76)});
+
+    const Vec2 textSize = renderer.measureText("!", 3);
+    renderer.drawOutlinedText(
+        center - textSize * 0.5f + Vec2{0.0f, -1.0f},
+        "!",
+        hot,
+        {78, 8, 18, alpha(210)},
+        2,
+        3);
 }
 
 float dungeonFocusDurationSeconds(float seconds, float fallbackSeconds)
@@ -2381,7 +2424,9 @@ DungeonGenerationContext Game::makeDungeonGenerationContext() const
         .depthRankOffset = stageIsRoguelike || roguelikeDungeon_
             ? std::max(0, astralRun_.areaIndex * RoguelikeSectionsPerArea)
             : 0,
-        .goalDistanceTiles = stage.goalDistanceTiles,
+        .goalDistanceTiles = stageIsRoguelike || roguelikeDungeon_
+            ? RoguelikeMetersPerArea
+            : stage.goalDistanceTiles,
         .detourRate = static_cast<float>(stage.detourRate),
         .branchDensity = static_cast<float>(stage.branchDensity),
         .cavernWidthMultiplier = static_cast<float>(stage.cavernWidthMultiplier),
@@ -2543,7 +2588,7 @@ void Game::initializeAstralRunForLayout()
     if (astralRun_.areaIndex == 0) {
         astralRun_.currentDepth = startingDepth;
         astralRun_.maxReachedDepth = startingDepth;
-        astralRun_.maxReachedDistanceTiles = 0;
+        astralRun_.maxReachedDepthMeters = 0;
         astralRun_.distortionChanges = 1;
     } else {
         astralRun_.currentDepth = std::max(astralRun_.currentDepth, startingDepth);
@@ -2581,11 +2626,19 @@ void Game::updateAstralRunProgress()
     });
     const int depth = roguelikeAdjustedDepthRank(lootDepthRankForProgress(currentStageId_, metrics.pathProgress));
     astralRun_.maxReachedDepth = std::max(astralRun_.maxReachedDepth, depth);
-    const int areaDistanceOffset =
-        astralRun_.areaIndex * std::max(1, currentStageDefinition().goalDistanceTiles);
-    astralRun_.maxReachedDistanceTiles = std::max(
-        astralRun_.maxReachedDistanceTiles,
-        areaDistanceOffset + static_cast<int>(std::round(metrics.distanceFromStart)));
+    const int areaStartMeters = std::max(0, astralRun_.currentDepthMeters);
+    const int areaEndMeters = std::max(areaStartMeters + 1, astralRun_.nextHoleDepthMeters);
+    const int currentDepthMeters = std::clamp(
+        areaStartMeters + static_cast<int>(std::lround(
+            projectedDungeonRouteDistanceTiles(dungeonLayout_, {
+                static_cast<float>(tileMap_.worldToTile(player_.position.x)),
+                static_cast<float>(tileMap_.worldToTile(player_.position.y)),
+            }))),
+        0,
+        std::min(areaEndMeters, std::max(1, astralRun_.completionDepthMeters)));
+    astralRun_.maxReachedDepthMeters = std::max(
+        astralRun_.maxReachedDepthMeters,
+        currentDepthMeters);
 
     if (depth <= astralRun_.currentDepth) {
         return;
@@ -3363,6 +3416,7 @@ void Game::choosePauseMenuItem(int item)
         mode_ = ScreenMode::Inventory;
         break;
     case 2:
+        ringReturnToPause_ = true;
         openRingScreen();
         break;
     case 3:
@@ -4065,7 +4119,7 @@ int Game::calculateAstralRunScore(const Game::AstralRunSummary& summary) const
         : (summary.result == AstralRunResult::DragonDefeated ? 10000 : 3000);
     return std::max(0,
         summary.reachedDepth * 1000 +
-        summary.reachedDistanceTiles * 2 +
+        summary.reachedDepthMeters * 2 +
         summary.defeatedEnemies * 120 +
         summary.dugTiles * 3 +
         summary.acquiredItems * 250 +
@@ -4080,7 +4134,8 @@ Game::AstralRunSummary Game::makeAstralRunSummary(Game::AstralRunResult result) 
     summary.result = result;
     summary.reachedDepth = std::clamp(astralRun_.maxReachedDepth, 1, std::max(1, astralRun_.maxDepth));
     summary.maxDepth = std::max(1, astralRun_.maxDepth);
-    summary.reachedDistanceTiles = std::max(0, astralRun_.maxReachedDistanceTiles);
+    summary.reachedDepthMeters = std::max(0, astralRun_.maxReachedDepthMeters);
+    summary.maxDepthMeters = std::max(1, astralRun_.completionDepthMeters);
     summary.defeatedEnemies = std::max(0, runStats_.defeatedEnemies);
     summary.dugTiles = std::max(0, runStats_.dugTiles);
     summary.acquiredItems = std::max(0, runStats_.acquiredObjectItems);
@@ -4367,6 +4422,7 @@ void Game::startIntroTutorialDungeon()
     chestNodes_.clear();
     crateNodes_.clear();
     enemyNodes_.clear();
+    pendingBuriedEnemySpawns_.clear();
     enemyNodes_.push_back(EnemyNode{
         .tile = introTutorialFirstEnemyTile_,
         .placementType = EnemyPlacementType::Exposed,
@@ -4864,6 +4920,7 @@ void Game::completeIntroTutorialAndReturnToBase()
     chestNodes_.clear();
     crateNodes_.clear();
     enemyNodes_.clear();
+    pendingBuriedEnemySpawns_.clear();
     inventory_.setOpen(false);
     inventory_.cancelGrab();
     cancelRingGrab();
@@ -4975,6 +5032,7 @@ bool Game::restoreDungeonState(bool useLatestWarpPoint)
     chestNodes_ = state.chestNodes;
     crateNodes_ = state.crateNodes;
     enemyNodes_ = state.enemyNodes;
+    pendingBuriedEnemySpawns_.clear();
     dungeonEvents_.setInstances(state.dungeonEventInstances);
     enemies_ = state.enemies;
     enemies_.clearTemporaryState();
@@ -6126,7 +6184,6 @@ void Game::updateDungeonEvents(float dt, double totalSeconds)
                     int runtimeId = 0;
                     if (spawnEnemy(event, tileWorldCenter(hole.tile), false, false, &runtimeId)) {
                         hole.spawnedEnemyRuntimeIds.push_back(runtimeId);
-                        playAudioSe("se.enemy.spawn");
                     }
                     hole.spawnCooldown = 4.0f;
                 }
@@ -7731,6 +7788,7 @@ void Game::rebuildRoguelikeAreaFromAstralState()
     chestNodes_.clear();
     crateNodes_.clear();
     enemyNodes_.clear();
+    pendingBuriedEnemySpawns_.clear();
     roguelikeFacilities_.clear();
     dungeonEvents_.clear();
     resetInPlace(tileMap_);
@@ -9694,7 +9752,6 @@ bool Game::tryTriggerChestMimic(ChestNode& node)
     node.spawnJumpActive = false;
 
     playAudioSe(AudioSeChestOpen);
-    playAudioSe(AudioSeEnemySpawn);
     effects_.spawnEnemyTransform(center);
     pushDungeonLog("宝箱はミミックだった", "chest_mimic:" + std::to_string(spawnedRuntimeId));
     return true;
@@ -10054,6 +10111,7 @@ int Game::buriedHiddenNodeCount() const
 void Game::initializeEnemyNodesFromLayout()
 {
     enemyNodes_.clear();
+    pendingBuriedEnemySpawns_.clear();
     if (dungeonLayout_.mainPathPoints.size() < 2) {
         return;
     }
@@ -10482,6 +10540,69 @@ void Game::updateExposedEnemyNodes()
     }
 }
 
+void Game::schedulePendingBuriedEnemySpawn(const EnemyNode& node)
+{
+    const Vec2 center = tileWorldCenter(node.tile);
+    const auto sameTile = [tile = node.tile](const PendingBuriedEnemySpawn& pending) {
+        return pending.tile.x == tile.x && pending.tile.y == tile.y;
+    };
+    if (std::any_of(pendingBuriedEnemySpawns_.begin(), pendingBuriedEnemySpawns_.end(), sameTile)) {
+        return;
+    }
+
+    pendingBuriedEnemySpawns_.push_back(PendingBuriedEnemySpawn{
+        .tile = node.tile,
+        .position = center,
+        .timer = BuriedEnemyWarningDelaySeconds,
+        .duration = BuriedEnemyWarningDelaySeconds,
+        .depthRank = roguelikeDepthRankForWorldPosition(center),
+    });
+    playAudioSeAt(AudioSeBuriedEnemyWarning, center);
+}
+
+void Game::updatePendingBuriedEnemySpawns(float dt)
+{
+    const float safeDt = std::max(0.0f, dt);
+    for (std::size_t i = 0; i < pendingBuriedEnemySpawns_.size();) {
+        PendingBuriedEnemySpawn& pending = pendingBuriedEnemySpawns_[i];
+        pending.timer -= safeDt;
+        if (pending.timer > 0.0f) {
+            ++i;
+            continue;
+        }
+
+        const RuntimeBalance dungeonBalance = runtimeBalanceForDungeon();
+        const bool spawned = enemies_.spawnNodeEnemy(
+            tileMap_,
+            pending.position,
+            player_.position,
+            dungeonBalance,
+            enemyCatalog_,
+            true,
+            true,
+            currentStageId_,
+            pending.depthRank);
+        if (spawned) {
+            SmokeBurstOptions smoke;
+            smoke.count = effects_.lightweightMode() ? 8 : 16;
+            smoke.size = 18.0f;
+            smoke.sizeJitter = 0.48f;
+            smoke.spreadRadius = 15.0f;
+            smoke.speed = 42.0f;
+            smoke.riseSpeed = 24.0f;
+            smoke.duration = 0.62f;
+            smoke.durationJitter = 0.14f;
+            smoke.colorA = {126, 98, 74, 190};
+            smoke.colorB = {222, 180, 128, 154};
+            smoke.layer = EffectLayer::Foreground;
+            effects_.spawnSmokeBurst(pending.position, smoke);
+        }
+
+        pendingBuriedEnemySpawns_[i] = pendingBuriedEnemySpawns_.back();
+        pendingBuriedEnemySpawns_.pop_back();
+    }
+}
+
 void Game::updateRingEffectDiscoveries(std::vector<EffectDiscoveryEvent>& discoveryEvents)
 {
     const std::vector<const SpellRingItem*> runtimeItems = spellRing_.runtimeItems();
@@ -10895,11 +11016,8 @@ std::vector<Vec2> Game::spawnHiddenEnemyNodesFromOpenedTiles(const std::vector<V
             }
 
             consumedByHiddenNode = true;
-            const Vec2 center = tileWorldCenter(node.tile);
-            const int lootDepthRank = roguelikeDepthRankForWorldPosition(center);
-            if (enemies_.spawnNodeEnemy(tileMap_, center, player_.position, balance_, enemyCatalog_, true, true, currentStageId_, lootDepthRank)) {
-                node.spawned = true;
-            }
+            schedulePendingBuriedEnemySpawn(node);
+            node.spawned = true;
             break;
         }
 
@@ -11445,6 +11563,7 @@ void Game::restoreRetrySnapshot()
     chestNodes_ = retrySnapshot_.chestNodes;
     crateNodes_ = retrySnapshot_.crateNodes;
     enemyNodes_ = retrySnapshot_.enemyNodes;
+    pendingBuriedEnemySpawns_.clear();
     dungeonEvents_.setInstances(retrySnapshot_.dungeonEventInstances);
     enemies_ = retrySnapshot_.enemies;
     enemies_.clearTemporaryState();
@@ -11474,6 +11593,187 @@ void Game::restoreRetrySnapshot()
     updateDungeonMinimap(0.0);
     camera_.follow(player_.position, 1.0f);
     resetPlayerFootstepDust();
+}
+
+bool Game::captureDebugRoguelikeRunSnapshot()
+{
+    if (mode_ != ScreenMode::Playing || !currentStageIsRoguelike()) {
+        logWarning("Debug: roguelike RUN save is only available while playing a roguelike dungeon.");
+        return false;
+    }
+
+    enemies_.clearTemporaryState();
+
+    DebugRoguelikeRunSnapshot snapshot;
+    snapshot.valid = true;
+    snapshot.currentStage = currentStage_;
+    snapshot.currentStageId = currentStageId_;
+    snapshot.astralRun = astralRun_;
+    snapshot.roguelikeBigHole = roguelikeBigHole_;
+    snapshot.roguelikeFacilities = roguelikeFacilities_;
+    snapshot.roguelikeFacilityLastDepthMeters = roguelikeFacilityLastDepthMeters_;
+    snapshot.runStartInventoryState = runStartInventoryState_;
+    snapshot.roguelikeReturnInventoryState = roguelikeReturnInventoryState_;
+    snapshot.latestWarpPointPosition = latestWarpPointPosition_;
+    snapshot.hasLatestWarpPointPosition = hasLatestWarpPointPosition_;
+    snapshot.roguelikeDungeon = roguelikeDungeon_;
+    snapshot.restoreRunStartInventoryOnDeath = restoreRunStartInventoryOnDeath_;
+    snapshot.roguelikeCarryInRestricted = roguelikeCarryInRestricted_;
+    snapshot.roguelikeCarryOutRestricted = roguelikeCarryOutRestricted_;
+    snapshot.warpPointsEnabled = warpPointsEnabled_;
+
+    RetrySnapshot& dungeon = snapshot.dungeon;
+    dungeon.playerPosition = player_.position;
+    dungeon.playerFacing = player_.facing;
+    dungeon.playerHp = player_.hp;
+    dungeon.playerMaxHp = player_.maxHp;
+    dungeon.playerLevel = player_.level;
+    dungeon.playerXp = player_.xp;
+    dungeon.playerXpToNext = player_.xpToNext;
+    dungeon.inventory = captureInventoryCarryState();
+    dungeon.tileMapState = tileMap_.capturePersistentState();
+    dungeon.dungeonLayout = dungeonLayout_;
+    dungeon.dungeonMinimapCells = dungeonMinimapCells_;
+    dungeon.runStats = runStats_;
+    dungeon.warpPoints = warpPoints_;
+    dungeon.rewardNodes = rewardNodes_;
+    dungeon.moneyNodes = moneyNodes_;
+    dungeon.moonFragmentNodes = moonFragmentNodes_;
+    dungeon.chestNodes = chestNodes_;
+    dungeon.crateNodes = crateNodes_;
+    dungeon.enemyNodes = enemyNodes_;
+    dungeon.dungeonEventInstances = dungeonEvents_.all();
+    dungeon.enemies = enemies_;
+    dungeon.worldDrops = worldDrops_;
+    dungeon.worldDrops.removeTemporaryDrops();
+    dungeon.spawnedWarpPointCount = spawnedWarpPointCount_;
+    dungeon.unlockedWarpPointCount = unlockedWarpPointCount_;
+    dungeon.bossSpawnPoint = bossSpawnPoint_;
+    dungeon.hasBossSpawnPoint = hasBossSpawnPoint_;
+    dungeon.bossSpawned = bossSpawned_;
+    dungeon.valid = true;
+
+    debugRoguelikeRunSnapshot_.emplace(std::move(snapshot));
+    reloadNotice_ = "ローグライクRUNを保存しました";
+    reloadNoticeTimer_ = 1.8f;
+    logInfo("Debug: roguelike RUN snapshot saved.");
+    return true;
+}
+
+bool Game::restoreDebugRoguelikeRunSnapshot()
+{
+    if (!debugRoguelikeRunSnapshot_.has_value() ||
+        !debugRoguelikeRunSnapshot_->valid ||
+        !debugRoguelikeRunSnapshot_->dungeon.valid ||
+        debugRoguelikeRunSnapshot_->currentStageId.empty()) {
+        logWarning("Debug: roguelike RUN snapshot is not available.");
+        return false;
+    }
+    const DebugRoguelikeRunSnapshot& snapshot = *debugRoguelikeRunSnapshot_;
+
+    closeRoguelikeFacilityUi();
+    closeDebugNamedSaveDialog();
+    closeDebugNamedLoadDialog();
+    closeDebugItemPicker();
+    closeDebugStoryTest();
+    closeProjectileTestMode();
+    closeEffectTestMode();
+
+    currentStage_ = snapshot.currentStage;
+    currentStageId_ = snapshot.currentStageId;
+    resolveCurrentStageDefinition();
+    if (!currentStageIsRoguelike()) {
+        logWarning("Debug: roguelike RUN snapshot target is not a roguelike stage: " + currentStageId_);
+        return false;
+    }
+
+    const RetrySnapshot& dungeon = snapshot.dungeon;
+    tileMap_ = TileMap{};
+    tileMap_.restorePersistentState(dungeon.tileMapState);
+    dungeonLayout_ = dungeon.dungeonLayout;
+    dungeonMinimapCells_ = dungeon.dungeonMinimapCells;
+    restoreInventoryCarryState(dungeon.inventory);
+    runStats_ = dungeon.runStats;
+    warpPoints_ = dungeon.warpPoints;
+    rewardNodes_ = dungeon.rewardNodes;
+    moneyNodes_ = dungeon.moneyNodes;
+    moonFragmentNodes_ = dungeon.moonFragmentNodes;
+    chestNodes_ = dungeon.chestNodes;
+    crateNodes_ = dungeon.crateNodes;
+    enemyNodes_ = dungeon.enemyNodes;
+    pendingBuriedEnemySpawns_.clear();
+    dungeonEvents_.setInstances(dungeon.dungeonEventInstances);
+    enemies_ = dungeon.enemies;
+    enemies_.clearTemporaryState();
+    worldDrops_ = dungeon.worldDrops;
+    worldDrops_.setDropLimit(balance_.worldDropLimitPerStage);
+    spawnedWarpPointCount_ = dungeon.spawnedWarpPointCount;
+    unlockedWarpPointCount_ = dungeon.unlockedWarpPointCount;
+    bossSpawnPoint_ = dungeon.bossSpawnPoint;
+    hasBossSpawnPoint_ = dungeon.hasBossSpawnPoint;
+    bossSpawned_ = dungeon.bossSpawned;
+
+    astralRun_ = snapshot.astralRun;
+    roguelikeBigHole_ = snapshot.roguelikeBigHole;
+    closeUiCommandMenu(roguelikeBigHoleMenu_);
+    focusedRoguelikeBigHole_ = 0;
+    hoveredRoguelikeBigHole_ = false;
+    roguelikeFacilities_ = snapshot.roguelikeFacilities;
+    roguelikeFacilityLastDepthMeters_ = snapshot.roguelikeFacilityLastDepthMeters;
+    roguelikeFacilityUiMode_ = RoguelikeFacilityUiMode::None;
+    activeRoguelikeFacilityId_.clear();
+    focusedRoguelikeFacilityIndex_ = -1;
+    hoveredRoguelikeFacilityIndex_ = -1;
+    roguelikeMerchantStockSuspended_ = false;
+    runStartInventoryState_ = snapshot.runStartInventoryState;
+    roguelikeReturnInventoryState_ = snapshot.roguelikeReturnInventoryState;
+    latestWarpPointPosition_ = snapshot.latestWarpPointPosition;
+    hasLatestWarpPointPosition_ = snapshot.hasLatestWarpPointPosition;
+    roguelikeDungeon_ = snapshot.roguelikeDungeon;
+    restoreRunStartInventoryOnDeath_ = snapshot.restoreRunStartInventoryOnDeath;
+    roguelikeCarryInRestricted_ = snapshot.roguelikeCarryInRestricted;
+    roguelikeCarryOutRestricted_ = snapshot.roguelikeCarryOutRestricted;
+    warpPointsEnabled_ = snapshot.warpPointsEnabled;
+
+    player_.position = dungeon.playerPosition;
+    player_.facing = dungeon.playerFacing;
+    player_.maxHp = std::max(1, dungeon.playerMaxHp);
+    player_.hp = std::clamp(dungeon.playerHp, 1, player_.maxHp);
+    player_.level = std::max(1, dungeon.playerLevel);
+    player_.xp = std::max(0, dungeon.playerXp);
+    player_.xpToNext = std::max(1, dungeon.playerXpToNext);
+    player_.updateSpriteFlipFromFacing();
+    clearTemporaryPlayerState(false);
+
+    resetBossEncounter();
+    carveBossArenaAroundSpawnPoint();
+    effects_ = EffectSystem{};
+    captureAbsorbAnimations_.clear();
+    groundLines_ = GroundLineSystem{};
+    wetGround_ = WetGroundSystem{};
+    projectiles_ = ProjectileSystem{};
+    magic_ = MagicSystem{};
+    magicFx_ = MagicFxSystem{};
+    levels_ = LevelSystem{};
+    levelUpPresentation_ = {};
+    levelUpResultDialog_ = {};
+    inventoryReturnToPause_ = false;
+    gameOverStatus_.clear();
+    screenTransition_ = ScreenTransitionState{};
+    worldBuildJob_ = WorldBuildJob{};
+    tileMap_.updateAround(player_.position, 0.0f, runtimeBalanceForDungeon(), dungeonLayout_);
+    normalizeOpenBuriedPlacementNodes();
+    updateDungeonMinimap(0.0);
+    camera_.follow(player_.position, 1.0f);
+    resetPlayerFootstepDust();
+
+    mode_ = ScreenMode::Playing;
+    pauseReturnMode_ = ScreenMode::Playing;
+    playAudioBgm(AudioBgmDungeon, 0.45f);
+    reloadNotice_ = "ローグライクRUNを復帰しました";
+    reloadNoticeTimer_ = 1.8f;
+    logInfo("Debug: roguelike RUN snapshot restored.");
+    return true;
 }
 
 void Game::resetPlayerFootstepDust()
@@ -12074,6 +12374,7 @@ void Game::startHiddenMonicaDuel()
     chestNodes_.clear();
     crateNodes_.clear();
     enemyNodes_.clear();
+    pendingBuriedEnemySpawns_.clear();
     dungeonEvents_.clear();
     warpPoints_.clear();
     spawnedWarpPointCount_ = 0;
@@ -12723,10 +13024,26 @@ void Game::appendRewardNodeRenderEntries(
     }
 }
 
+void Game::appendPendingBuriedEnemySpawnRenderEntries(
+    std::vector<DepthRenderEntry>& entries,
+    Renderer& renderer) const
+{
+    for (const PendingBuriedEnemySpawn& pending : pendingBuriedEnemySpawns_) {
+        const float age = std::max(0.0f, pending.duration - pending.timer);
+        entries.push_back(DepthRenderEntry{
+            pending.position.y,
+            [&renderer, position = pending.position, age, duration = pending.duration]() {
+                drawBuriedEnemyWarningBubble(renderer, position, age, duration);
+            },
+        });
+    }
+}
+
 void Game::renderRewardNodes(Renderer& renderer, const std::vector<LightSource>& extraLights) const
 {
     std::vector<DepthRenderEntry> entries;
     appendRewardNodeRenderEntries(entries, renderer, extraLights);
+    appendPendingBuriedEnemySpawnRenderEntries(entries, renderer);
     std::stable_sort(entries.begin(), entries.end(), [](const DepthRenderEntry& left, const DepthRenderEntry& right) {
         return left.sortY < right.sortY;
     });

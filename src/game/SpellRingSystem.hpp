@@ -140,6 +140,7 @@ public:
     void initialize(const RuntimeBalance& balance);
     void update(Player& player, const Input& input, float dt, float totalTime, bool paused, bool blockPointerThrow, const RuntimeBalance& balance);
     void updatePresentation(const Player& player, float dt, const RuntimeBalance& balance);
+    bool tryThrowActiveRing(Player& player, const RuntimeBalance& balance);
     void resetRuntimeStateAtPlayer(const Player& player, const RuntimeBalance& balance);
     void resetThrowCooldowns();
     void clearActionFlashTimers();
@@ -347,6 +348,7 @@ private:
     void updateThrowCooldowns(float dt);
     void advanceOrbitAngles(float dt, const RuntimeBalance& balance);
     void refreshItemWorldPositions(float dt, const RuntimeBalance& balance, bool advanceCapturedBehaviors);
+    bool activeRingThrowReady() const;
     float throwCooldownForRing(int ringIndex, const RuntimeBalance& balance) const;
     float throwReachForRing(int ringIndex) const;
     bool canAddItemForRing(int ringIndex, const SpellRingItem& item) const;

@@ -39,6 +39,7 @@ namespace {
 
 constexpr int FlowRadiusTiles = 80;
 constexpr float SpawnAvoidancePadding = 5.0f;
+constexpr std::string_view AudioSeEnemySpawn = "se.enemy.spawn";
 constexpr float PlayerPushShare = 0.35f;
 constexpr float EnemyPushShare = 0.65f;
 constexpr float BossRadiusMultiplier = 1.0f;
@@ -265,7 +266,7 @@ constexpr float ColdExposureRatePerSecond = 0.55f;
 constexpr float ColdExposureDecayPerSecond = 0.45f;
 constexpr double FrozenDefaultDurationSeconds = 8.0;
 constexpr float BlindProjectileMaxSpreadDegrees = 70.0f;
-constexpr int SwarmSpawnCountMax = 6;
+constexpr int SwarmSpawnCountMax = 8;
 constexpr int BossWeakPointHintMinParticles = 7;
 constexpr int BossWeakPointHintMaxParticles = 13;
 constexpr int FlowOrthogonalCost = 10;
@@ -6727,7 +6728,27 @@ void EnemySystem::applyDefinition(Enemy& enemy, const EnemyDefinition* definitio
     if (hasBehavior(enemy, "swarm_spawn")) {
         enemy.swarmSpawnEnabled = true;
         enemy.swarmSpawnExecuted = false;
-        enemy.swarmSpawnCount = std::clamp(behaviorParamInt(enemy, "swarm_spawn", "count", 2), 1, SwarmSpawnCountMax);
+        constexpr int MissingCount = -99999;
+        const int explicitCount = behaviorParamInt(enemy, "swarm_spawn", "count", MissingCount);
+        if (explicitCount != MissingCount) {
+            enemy.swarmSpawnCount = std::clamp(explicitCount, 1, SwarmSpawnCountMax);
+        } else {
+            const int configuredMin = behaviorParamInt(
+                enemy,
+                "swarm_spawn",
+                "groupMin",
+                behaviorParamInt(enemy, "swarm_spawn", "min", 2));
+            const int configuredMax = behaviorParamInt(
+                enemy,
+                "swarm_spawn",
+                "groupMax",
+                behaviorParamInt(enemy, "swarm_spawn", "max", 4));
+            const int groupMin = std::clamp(std::min(configuredMin, configuredMax), 1, SwarmSpawnCountMax);
+            const int groupMax = std::clamp(std::max(configuredMin, configuredMax), groupMin, SwarmSpawnCountMax);
+            enemy.swarmSpawnCount = groupMin == groupMax
+                ? groupMin
+                : std::uniform_int_distribution<int>(groupMin, groupMax)(rng_);
+        }
         enemy.swarmSpawnRadius = std::max(
             enemy.radius + 6.0f,
             static_cast<float>(behaviorParamDouble(enemy, "swarm_spawn", "radius", 36.0)));
@@ -7021,7 +7042,110 @@ bool EnemySystem::spawnDefinitionAt(
     if (outRuntimeId != nullptr) {
         *outRuntimeId = enemy->id;
     }
+    soundEvents_.push_back(EnemySoundEvent{
+        .cueId = std::string(AudioSeEnemySpawn),
+        .position = position,
+    });
     return true;
+}
+
+bool EnemySystem::queueSwarmSpawn(
+    Enemy& enemy,
+    Vec2 detectedTarget,
+    std::vector<SwarmSpawnRequest>& outRequests)
+{
+    if (!enemy.swarmSpawnEnabled || enemy.swarmSpawnExecuted || enemy.definition == nullptr) {
+        return false;
+    }
+
+    enemy.swarmSpawnExecuted = true;
+    outRequests.push_back(SwarmSpawnRequest{
+        .definition = enemy.definition,
+        .origin = enemy.position,
+        .spawnSource = enemy.spawnSource,
+        .lootStageId = enemy.lootStageId,
+        .lootDepthRank = enemy.lootDepthRank,
+        .parentRuntimeId = enemy.id,
+        .count = std::clamp(enemy.swarmSpawnCount, 1, SwarmSpawnCountMax),
+        .radius = enemy.swarmSpawnRadius,
+        .childPassageRadius = enemyPassageRadius(enemy, placementCatalog_),
+        .detectedOnSpawn = enemy.awareness == EnemyAwarenessState::Detected,
+        .detectedTarget = detectedTarget,
+    });
+    return true;
+}
+
+int EnemySystem::processSwarmSpawnRequest(
+    const SwarmSpawnRequest& request,
+    TileMap& map,
+    const RuntimeBalance& balance,
+    const EnemyCatalog& enemyCatalog)
+{
+    if (request.definition == nullptr || request.count <= 0 || request.radius <= 0.0f) {
+        return 0;
+    }
+
+    const int count = std::clamp(request.count, 1, SwarmSpawnCountMax);
+    const float childRadius = request.childPassageRadius > 0.0f
+        ? request.childPassageRadius
+        : enemyDefinitionSpawnRadius(request.definition, balance, placementCatalog_);
+    int spawnedChildren = 0;
+    for (int i = 0; i < count; ++i) {
+        const float angle = (Pi * 2.0f) * (static_cast<float>(i) / static_cast<float>(count));
+        const Vec2 spawnPos = request.origin + fromAngle(angle) * request.radius;
+        if (map.isCircleBlocked(spawnPos, childRadius)) {
+            continue;
+        }
+
+        bool overlapsEnemy = false;
+        for (const Enemy& other : enemies_.items()) {
+            if (!other.active || other.id == request.parentRuntimeId) {
+                continue;
+            }
+            const float minDistance = enemyPassageRadius(other, placementCatalog_) + childRadius + SpawnAvoidancePadding;
+            if (distanceSquared(spawnPos, other.position) < minDistance * minDistance) {
+                overlapsEnemy = true;
+                break;
+            }
+        }
+        if (overlapsEnemy) {
+            continue;
+        }
+
+        Enemy* child = enemies_.acquire();
+        if (child == nullptr) {
+            break;
+        }
+
+        *child = Enemy{};
+        child->active = true;
+        child->id = nextEnemyId_++;
+        child->spawnSource = request.spawnSource;
+        child->position = spawnPos;
+        applyDefinition(*child, request.definition, balance, enemyCatalog);
+        child->spawnSource = request.spawnSource;
+        child->lootStageId = request.lootStageId;
+        child->lootDepthRank = request.lootDepthRank;
+        child->spawnTimer = 0.4f;
+        child->spawnDuration = child->spawnTimer;
+        child->swarmSpawnEnabled = false;
+        child->swarmSpawnExecuted = true;
+        if (request.detectedOnSpawn) {
+            forceDetectInSight(*child, request.detectedTarget, true);
+        }
+        ++spawnedChildren;
+    }
+
+    if (spawnedChildren > 0) {
+        if (const Enemy* parent = findRuntimeEnemy(request.parentRuntimeId)) {
+            events_.push_back(makeEnemyEvent(EnemyEventType::Spawn, *parent));
+            soundEvents_.push_back(EnemySoundEvent{
+                .cueId = std::string(AudioSeEnemySpawn),
+                .position = parent->position,
+            });
+        }
+    }
+    return spawnedChildren;
 }
 
 void EnemySystem::spawnAt(Vec2 position, const RuntimeBalance& balance, const EnemyCatalog& enemyCatalog, bool detectedOnSpawn, Vec2 detectedTarget)
@@ -8319,6 +8443,7 @@ void EnemySystem::update(
     float totalTime,
     bool paused,
     const RuntimeBalance& balance,
+    const EnemyCatalog& enemyCatalog,
     const ObjectCatalog& objectCatalog,
     WorldDropSystem& worldDrops,
     Vec2 playerLight,
@@ -8338,6 +8463,8 @@ void EnemySystem::update(
     if (paused) {
         return;
     }
+
+    std::vector<SwarmSpawnRequest> pendingSwarmSpawns;
 
     flowTimer_ -= dt;
     if (flowTimer_ <= 0.0f || flowDistance_.empty()) {
@@ -8539,40 +8666,12 @@ void EnemySystem::update(
         if (enemy.spawnTimer > 0.0f) {
             clearEnemyAction(enemy);
             enemy.spawnTimer = std::max(0.0f, enemy.spawnTimer - dt);
-            if (enemy.spawnTimer <= 0.0f && enemy.swarmSpawnEnabled && !enemy.swarmSpawnExecuted) {
-                enemy.swarmSpawnExecuted = true;
-                const int count = std::clamp(enemy.swarmSpawnCount, 1, SwarmSpawnCountMax);
-                int spawnedChildren = 0;
-                for (int i = 0; i < count; ++i) {
-                    Enemy* child = enemies_.acquire();
-                    if (child == nullptr) {
-                        break;
-                    }
-                    const float angle = (Pi * 2.0f) * (static_cast<float>(i) / static_cast<float>(count));
-                    const Vec2 spawnPos = enemy.position + fromAngle(angle) * enemy.swarmSpawnRadius;
-                    if (map.isCircleBlocked(spawnPos, enemy.radius)) {
-                        child->active = false;
-                        continue;
-                    }
-                    *child = Enemy{};
-                    child->active = true;
-                    child->id = nextEnemyId_++;
-                    child->spawnSource = enemy.spawnSource;
-                    child->position = spawnPos;
-                    applyDefinition(*child, enemy.definition, balance, EnemyCatalog{});
-                    child->spawnSource = enemy.spawnSource;
-                    child->spawnTimer = 0.4f;
-                    child->spawnDuration = 0.4f;
-                    child->swarmSpawnEnabled = false;
-                    child->swarmSpawnExecuted = true;
-                    ++spawnedChildren;
-                }
-                if (spawnedChildren > 0) {
-                    events_.push_back(makeEnemyEvent(EnemyEventType::Spawn, enemy));
-                }
+            if (enemy.spawnTimer <= 0.0f) {
+                queueSwarmSpawn(enemy, player.position, pendingSwarmSpawns);
             }
             continue;
         }
+        queueSwarmSpawn(enemy, player.position, pendingSwarmSpawns);
         if (enemy.knockbackTimer > 0.0f) {
             clearEnemyAction(enemy);
             enemy.jumpActive = false;
@@ -9743,6 +9842,10 @@ void EnemySystem::update(
         }
     }
 
+    for (const SwarmSpawnRequest& request : pendingSwarmSpawns) {
+        processSwarmSpawnRequest(request, map, balance, enemyCatalog);
+    }
+
     if (!windPulses_.empty()) {
         const float safeDt = std::max(0.0f, dt);
         for (EnemyWindPulse& pulse : windPulses_) {
@@ -9983,6 +10086,13 @@ std::vector<StatusPopupEvent> EnemySystem::consumeStatusPopupEvents()
 {
     std::vector<StatusPopupEvent> consumed;
     consumed.swap(statusPopupEvents_);
+    return consumed;
+}
+
+std::vector<EnemySoundEvent> EnemySystem::consumeSoundEvents()
+{
+    std::vector<EnemySoundEvent> consumed;
+    consumed.swap(soundEvents_);
     return consumed;
 }
 
@@ -10948,6 +11058,7 @@ void EnemySystem::clearTemporaryState()
 {
     events_.clear();
     impactSoundEvents_.clear();
+    soundEvents_.clear();
     statusPopupEvents_.clear();
     pendingXp_ = 0;
     mudZones_.clear();

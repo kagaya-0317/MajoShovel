@@ -1,0 +1,3 @@
+﻿run_index,stage_id,stage_name,seed,result,elapsed_seconds,player_level,hp,max_hp,dug_tiles,defeated_enemies,acquired_items,acquired_object_items,money,total_materials,warp_discovered,warp_total,boss_defeated,timeout,stuck_count
+1,stage_01_stardust,星くずのダンジョン,1390901917,stopped,5.26,1,10,10,0,0,0,0,43,0,0,0,false,false,0
+2,stage_03_star_core,落星の眠る地底,801452913,stopped,13.20,1,10,10,8,0,0,0,43,0,0,6,false,false,0
