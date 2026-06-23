@@ -156,8 +156,6 @@ constexpr float DebugProjectilePreviewReplayGapSeconds =
     static_cast<float>(DebugProjectilePreviewReplayGapFrames) / DebugPreviewAssumedFrameRate;
 constexpr std::string_view DebugPreviewTestSlimeEnemyId = "slime";
 constexpr std::string_view DebugFinalStoryStageId = "stage_03_star_core";
-constexpr std::string_view DebugEndingSeenFlag = "ending_seen";
-constexpr std::string_view DebugEndingMainFlag = "story_ending_main";
 constexpr std::string_view DebugStage03ClearFlag = "story_stage_03_clear";
 constexpr std::string_view DebugPostEndingIntroFlag = "story_post_ending_intro";
 constexpr std::string_view AudioCueEditManifestPath = "assets/audio/audio_manifest.tsv";
@@ -8968,6 +8966,7 @@ void Game::enterBaseEditMode()
     baseBookshelfActive_ = false;
     bookshelfScrollOffset_ = 0.0f;
     bookshelfScrollState_ = {};
+    closeUiCommandMenu(bookshelfEndingCommandMenu_);
 
     baseEditEnabled_ = true;
     baseEditMode_ = BaseEditMode::Facility;
@@ -11712,8 +11711,8 @@ bool Game::executeDebugCommand(std::string_view command)
         eraseStoryTriggerSeenForCurrentStage("stage_clear");
         eraseStoryFlag(stageClearFlagForStage(currentStageId_));
         if (currentStageId_ == DebugFinalStoryStageId) {
-            eraseStoryFlag(DebugEndingSeenFlag);
-            eraseStoryFlag(DebugEndingMainFlag);
+            eraseStoryFlag(StoryEndingSeenFlag);
+            eraseStoryFlag(StoryEndingMainFlag);
             eraseStoryFlag(DebugStage03ClearFlag);
             eraseStoryFlag(DebugPostEndingIntroFlag);
         }
@@ -12996,8 +12995,8 @@ bool Game::executeDebugCommand(std::string_view command)
         if (!selectDebugStage(DebugFinalStoryStageId)) {
             return true;
         }
-        eraseStoryFlag(DebugEndingSeenFlag);
-        eraseStoryFlag(DebugEndingMainFlag);
+        eraseStoryFlag(StoryEndingSeenFlag);
+        eraseStoryFlag(StoryEndingMainFlag);
         eraseStoryFlag(DebugStage03ClearFlag);
         eraseStoryFlag(DebugPostEndingIntroFlag);
         eraseStoryFlag("story_stage_03_boss_before");
@@ -13018,8 +13017,8 @@ bool Game::executeDebugCommand(std::string_view command)
         if (!selectDebugStage(DebugFinalStoryStageId)) {
             return true;
         }
-        eraseStoryFlag(DebugEndingSeenFlag);
-        eraseStoryFlag(DebugEndingMainFlag);
+        eraseStoryFlag(StoryEndingSeenFlag);
+        eraseStoryFlag(StoryEndingMainFlag);
         eraseStoryFlag(DebugStage03ClearFlag);
         eraseStoryFlag(DebugPostEndingIntroFlag);
         eraseStoryFlag("story_stage_03_boss_after");
@@ -13038,8 +13037,8 @@ bool Game::executeDebugCommand(std::string_view command)
         if (!selectDebugStage(DebugFinalStoryStageId)) {
             return true;
         }
-        eraseStoryFlag(DebugEndingSeenFlag);
-        eraseStoryFlag(DebugEndingMainFlag);
+        eraseStoryFlag(StoryEndingSeenFlag);
+        eraseStoryFlag(StoryEndingMainFlag);
         eraseStoryFlag(DebugStage03ClearFlag);
         eraseStoryFlag(DebugPostEndingIntroFlag);
         startEndingKamishibai();
@@ -13054,8 +13053,8 @@ bool Game::executeDebugCommand(std::string_view command)
         if (!selectDebugStage(DebugFinalStoryStageId)) {
             return true;
         }
-        addStoryFlag(std::string(DebugEndingSeenFlag));
-        addStoryFlag(std::string(DebugEndingMainFlag));
+        addStoryFlag(std::string(StoryEndingSeenFlag));
+        addStoryFlag(std::string(StoryEndingMainFlag));
         addStoryFlag(std::string(DebugStage03ClearFlag));
         addStoryFlag(stageClearFlagForStage(currentStageId_));
         eraseStoryFlag(DebugPostEndingIntroFlag);

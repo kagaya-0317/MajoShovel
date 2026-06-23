@@ -7222,14 +7222,14 @@ void Game::renderAstralEchoStarfield(Renderer& renderer, UiRect area, bool showC
     for (int i = 0; i < starCount; ++i) {
         const bool recent = astralEchoRecentStarVisible_ && i == astralEchoRecentStarIndex_;
         const float brightness = astralEchoUnit(i, 73);
-        const float radius = 0.9f + astralEchoUnit(i, 101) * 1.6f + (recent ? 1.6f : 0.0f);
+        const float radius = 0.9f + astralEchoUnit(i, 101) * 1.6f;
         const Vec2 pos = astralEchoStarPosition(area, i);
         const Color core = astralEchoStarColor(recent, brightness);
         const unsigned char glowAlpha = recent
             ? alphaByte(178.0f * alpha)
             : alphaByte(std::clamp(36.0f + brightness * 72.0f, 0.0f, 255.0f) * alpha);
         const Color fadedCore{core.r, core.g, core.b, alphaByte(static_cast<float>(core.a) * alpha)};
-        renderer.fillSoftCircle(pos, radius * (recent ? 5.2f : 3.8f), {core.r, core.g, core.b, glowAlpha});
+        renderer.fillSoftCircle(pos, radius * 3.8f, {core.r, core.g, core.b, glowAlpha});
         renderer.fillCircle(pos, radius, fadedCore);
     }
 

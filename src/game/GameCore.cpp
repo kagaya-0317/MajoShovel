@@ -29,7 +29,6 @@ constexpr std::string_view DefaultTorchObjectId = "item_torch";
 constexpr std::string_view MagnifyingGlassObjectId = "item_magnifying_glass";
 constexpr std::string_view TutorialAppleObjectId = "item_apple";
 constexpr std::string_view MagicBookCategory = "魔導書";
-constexpr std::string_view EndingSeenFlag = "ending_seen";
 constexpr std::string_view AudioBgmTitle = "bgm.title";
 constexpr std::string_view AudioBgmBase = "bgm.base";
 constexpr std::string_view AudioBgmDungeon = "bgm.dungeon";
@@ -1352,6 +1351,7 @@ void Game::resetWorldUiState()
     bookshelfSelection_ = 0;
     bookshelfScrollOffset_ = 0.0f;
     bookshelfScrollState_ = {};
+    closeUiCommandMenu(bookshelfEndingCommandMenu_);
     baseEditEnabled_ = false;
     baseEditMode_ = BaseEditMode::None;
     baseEditDirty_ = false;
@@ -1491,8 +1491,8 @@ void Game::buildWorldForRun(bool captureRunStartInventory)
     initializeCrateNodesFromLayout();
     initializeEnemyNodesFromLayout();
     initializeDungeonEventInstancesFromLayout();
-    initializeRoguelikeFacilitiesFromLayout();
     initializeRoguelikeBigHoleFromLayout();
+    initializeRoguelikeFacilitiesFromLayout();
     applyPlacementTerrainOverrides();
     initializeDefaultSpellRing();
     refreshEquipmentModifiers();
@@ -1611,8 +1611,8 @@ void Game::advanceWorldBuildOneStep()
     case WorldBuildStep::InitializeEnemies:
         initializeEnemyNodesFromLayout();
         initializeDungeonEventInstancesFromLayout();
-        initializeRoguelikeFacilitiesFromLayout();
         initializeRoguelikeBigHoleFromLayout();
+        initializeRoguelikeFacilitiesFromLayout();
         applyPlacementTerrainOverrides();
         worldBuildJob_.step = WorldBuildStep::InitializeRing;
         break;
@@ -1668,8 +1668,8 @@ void Game::finishWorldBuild()
 
     resetWarpPointRunState();
     initializeMoonFragmentNodesFromWarpPoints();
-    initializeRoguelikeFacilitiesFromLayout();
     initializeRoguelikeBigHoleFromLayout();
+    initializeRoguelikeFacilitiesFromLayout();
     applyPlacementTerrainOverrides();
     if (job.useLatestWarpPoint) {
         const Vec2 warpStartPosition = warpPointStartPositionForCurrentRequest();
@@ -1840,6 +1840,7 @@ void Game::enterBase()
     baseBookshelfActive_ = false;
     bookshelfScrollOffset_ = 0.0f;
     bookshelfScrollState_ = {};
+    closeUiCommandMenu(bookshelfEndingCommandMenu_);
     baseMenuSelection_ = std::clamp(baseMenuSelection_, 0, BaseMenuItemCount - 1);
     clearTemporaryPlayerState(true);
     resetPlayerFootstepDust();
@@ -1980,17 +1981,31 @@ void Game::requestEndingKamishibai(EndingKind kind)
 {
     endingKamishibaiKind_ = resolveEndingKamishibaiKind(kind);
     endingKamishibaiPending_ = true;
+    endingKamishibaiReplay_ = false;
 }
 
 void Game::startEndingKamishibai(EndingKind kind)
 {
-    kind = resolveEndingKamishibaiKind(kind);
+    startEndingKamishibaiPlayback(resolveEndingKamishibaiKind(kind), false);
+}
+
+void Game::startEndingReplayKamishibai(EndingKind kind)
+{
+    startEndingKamishibaiPlayback(kind, true);
+}
+
+void Game::startEndingKamishibaiPlayback(EndingKind kind, bool replay)
+{
     endingKamishibaiKind_ = kind;
+    endingKamishibaiReplay_ = replay;
     loadEndingKamishibaiData();
     const bool canSkipImmediately = [&]() {
+        if (replay) {
+            return true;
+        }
         switch (kind) {
         case EndingKind::Main:
-            return hasStoryFlag(EndingSeenFlag);
+            return hasStoryFlag(StoryEndingSeenFlag);
         case EndingKind::EncyclopediaComplete:
             return hasStoryFlag(StoryEndingEncyclopediaCompleteFlag);
         case EndingKind::AstralClear:
@@ -2012,23 +2027,35 @@ void Game::startEndingKamishibai(EndingKind kind)
     mode_ = ScreenMode::EndingKamishibai;
     playAudioBgm(AudioBgmTitle, 0.65f);
     pausePage_ = PauseMenuPage::Main;
-    pauseReturnMode_ =
-        (kind == EndingKind::Main ||
-            kind == EndingKind::MainFailedTrust ||
-            kind == EndingKind::MainFailedMonicaMissing)
-        ? ScreenMode::Playing
-        : ScreenMode::Base;
+    pauseReturnMode_ = replay
+        ? ScreenMode::Base
+        : ((kind == EndingKind::Main ||
+                kind == EndingKind::MainFailedTrust ||
+                kind == EndingKind::MainFailedMonicaMissing)
+            ? ScreenMode::Playing
+            : ScreenMode::Base);
     inventoryReturnToPause_ = false;
 }
 
 void Game::finishEndingKamishibai(bool)
 {
     const EndingKind finishedKind = endingKamishibaiKind_;
+    const bool replay = endingKamishibaiReplay_;
     endingKamishibaiPending_ = false;
+    endingKamishibaiReplay_ = false;
+    if (replay) {
+        mode_ = ScreenMode::Base;
+        playAudioBgm(AudioBgmBase, 0.45f);
+        pausePage_ = PauseMenuPage::Main;
+        pauseReturnMode_ = ScreenMode::Base;
+        inventoryReturnToPause_ = false;
+        closeBaseFacilityScreens();
+        return;
+    }
     switch (finishedKind) {
     case EndingKind::Main:
-        addStoryFlag(std::string(EndingSeenFlag));
-        addStoryFlag("story_ending_main");
+        addStoryFlag(std::string(StoryEndingSeenFlag));
+        addStoryFlag(std::string(StoryEndingMainFlag));
         addStoryFlag("story_stage_03_clear");
         requestReturnToBaseTransition(true, false);
         return;
@@ -3700,6 +3727,7 @@ void Game::enterGameOver()
     levelUpPresentation_ = {};
     levelUpResultDialog_ = {};
     mode_ = ScreenMode::GameOver;
+    freezePlayerDeathPoseForResult();
     beginDeathResultPrelude();
     pausePage_ = PauseMenuPage::Main;
     pauseReturnMode_ = ScreenMode::Playing;
@@ -5343,7 +5371,11 @@ void Game::checkHotReload(float dt)
         return;
     } else if (isEndingKamishibaiDataFileName(fileName)) {
         if (mode_ == ScreenMode::EndingKamishibai) {
-            startEndingKamishibai(endingKamishibaiKind_);
+            if (endingKamishibaiReplay_) {
+                startEndingReplayKamishibai(endingKamishibaiKind_);
+            } else {
+                startEndingKamishibai(endingKamishibaiKind_);
+            }
         } else {
             loadEndingKamishibaiData();
         }

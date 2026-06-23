@@ -46,7 +46,7 @@ constexpr int RoguelikeSectionsPerArea = 3;
 constexpr int RoguelikeCompletionDepthMeters = 10000;
 constexpr int RoguelikeCompletionSectionRank =
     (RoguelikeCompletionDepthMeters / RoguelikeMetersPerArea) * RoguelikeSectionsPerArea;
-constexpr float RoguelikeBigHoleProgress = 0.965f;
+constexpr int RoguelikeBigHoleTerrainRadiusTiles = 2;
 constexpr float RoguelikeGateBossProgress = 0.895f;
 constexpr float RoguelikeBigHoleImageSize = 58.0f;
 constexpr int RoguelikeFacilityKindCount = 3;
@@ -61,7 +61,7 @@ constexpr float RoguelikeFacilityLightRadiusTiles = 5.8f;
 constexpr Vec2 RoguelikeFacilityNpcInspectSize{42.0f, 66.0f};
 constexpr Vec2 RoguelikeFacilityPropInspectSize{78.0f, 58.0f};
 constexpr Vec2 RoguelikeFacilityNpcImageSize{46.0f, 76.0f};
-constexpr Vec2 DungeonEventWitchNpcVisualSize{54.0f, 72.0f};
+constexpr float DungeonEventWitchNpcScale = 1.0f;
 constexpr Vec2 DungeonEventWitchNpcAnchorOffset{0.0f, 24.0f};
 constexpr Vec2 RoguelikeFacilityWagonImageSize{92.0f, 82.0f};
 constexpr Vec2 RoguelikeFacilityWorkbenchImageSize{88.0f, 52.0f};
@@ -100,7 +100,6 @@ constexpr float MagnifyingGlassGuaranteedMaxDepthTiles = 100.0f;
 constexpr float MagnifyingGlassGuaranteedProgressFallback = 0.24f;
 constexpr float TutorialAppleGuaranteedProgress = 0.12f;
 constexpr std::string_view FinalStoryStageId = "stage_03_star_core";
-constexpr std::string_view EndingSeenFlag = "ending_seen";
 constexpr std::string_view PostEndingIntroFlag = "story_post_ending_intro";
 constexpr std::string_view AudioBgmDungeon = "bgm.dungeon";
 constexpr std::string_view AudioSeChestOpen = "se.chest.open";
@@ -344,13 +343,9 @@ bool drawDungeonEventWitchNpcSprite(
     const ImageHandle sheetHandle = renderer.acquireImage(visual->imagePath, TextureFilter::Nearest);
     Vec2 frameSize{};
     const bool hasFrameSize = characterSpriteSheetFrameSize(renderer, sheetHandle, visual->layout, frameSize);
-    float drawScale = 1.0f;
-    Vec2 drawSize = DungeonEventWitchNpcVisualSize;
+    Vec2 drawSize = DungeonEventNpcInspectSize;
     if (hasFrameSize && frameSize.x > 0.0f && frameSize.y > 0.0f) {
-        drawScale = std::max(0.001f, std::min(
-            DungeonEventWitchNpcVisualSize.x / frameSize.x,
-            DungeonEventWitchNpcVisualSize.y / frameSize.y));
-        drawSize = frameSize * drawScale;
+        drawSize = frameSize * DungeonEventWitchNpcScale;
     }
 
     renderer.drawActorShadow(anchorPosition, std::max(drawSize.x, drawSize.y));
@@ -361,7 +356,7 @@ bool drawDungeonEventWitchNpcSprite(
     NpcCharacterDrawOptions options;
     options.frameIndex = frameIndex;
     options.anchorPosition = anchorPosition;
-    options.scale = drawScale;
+    options.scale = DungeonEventWitchNpcScale;
     options.tint = {255, 255, 255, alpha};
     options.flipHorizontal = visual->defaultFlipHorizontal;
     options.outlineEnabled = inInteractionRange;
@@ -1815,6 +1810,15 @@ Vec2 effectiveDropPosition(const WorldDropItem& drop)
 constexpr float PlayerDeathRingStopSeconds = 50.0f / 60.0f;
 constexpr float PlayerDeathRingDropDelayMaxSeconds = 8.0f / 60.0f;
 constexpr float PlayerDeathRingCompletionHoldSeconds = 0.24f;
+
+float playerDeathPoseElapsedSeconds()
+{
+    const SpriteFrameAnimationClip& clip = characterSpriteAnimationClip(CharacterSpriteMotion::Death);
+    if (clip.frames.empty()) {
+        return 0.0f;
+    }
+    return clip.frameDurationSeconds * static_cast<float>(clip.frames.size() - 1) + 0.001f;
+}
 
 float playerDeathRingStopSpeedScale(float elapsedSeconds)
 {
@@ -4047,6 +4051,23 @@ void Game::updatePlayerDeathSequence(float dt)
     enterGameOver();
 }
 
+void Game::freezePlayerDeathPoseForResult()
+{
+    const bool wasActive = playerDeathSequence_.active;
+    if (!wasActive) {
+        playerDeathSequence_ = {};
+        playerDeathSequence_.active = true;
+        playerDeathSequence_.roguelike = currentStageIsRoguelike();
+    }
+    playerDeathSequence_.elapsedSeconds =
+        std::max(playerDeathSequence_.elapsedSeconds, playerDeathPoseElapsedSeconds());
+    playerDeathSequence_.completionHoldElapsedSeconds = PlayerDeathRingCompletionHoldSeconds;
+    playerDeathSequence_.finalizing = true;
+    player_.hp = 0;
+    player_.velocity = {};
+    player_.spriteWalking = false;
+}
+
 void Game::retryAfterGameOver()
 {
     clearAstralEchoRecentStar();
@@ -4227,6 +4248,7 @@ void Game::enterAstralResult(Game::AstralRunResult result)
 
     mode_ = ScreenMode::AstralResult;
     if (result == AstralRunResult::Died) {
+        freezePlayerDeathPoseForResult();
         beginDeathResultPrelude();
     } else {
         deathResultPrelude_ = {};
@@ -4375,9 +4397,9 @@ void Game::returnToBaseFromNormalStage(bool stageCleared, bool died)
     }
     if (stageCleared && !returnedStageId.empty()) {
         if (returnedStageId == FinalStoryStageId) {
-            if (hasStoryFlag(EndingSeenFlag) && !hasStoryFlag(PostEndingIntroFlag)) {
+            if (hasStoryFlag(StoryEndingSeenFlag) && !hasStoryFlag(PostEndingIntroFlag)) {
                 queueStoryEventForTrigger("post_ending:intro");
-            } else if (!hasStoryFlag(EndingSeenFlag)) {
+            } else if (!hasStoryFlag(StoryEndingSeenFlag)) {
                 queueStoryEventForTrigger("ending:main");
             }
             return;
@@ -7815,12 +7837,9 @@ void Game::initializeRoguelikeBigHoleFromLayout()
     focusedRoguelikeBigHole_ = 0;
     hoveredRoguelikeBigHole_ = false;
 
-    const Vec2 tilePoint = dungeonLayout_.mainPathPoints.empty()
-        ? Vec2{static_cast<float>(dungeonLayout_.goalTile.x), static_cast<float>(dungeonLayout_.goalTile.y)}
-        : pointAtPathProgress(dungeonLayout_.mainPathPoints, RoguelikeBigHoleProgress);
     roguelikeBigHole_.active = true;
     roguelikeBigHole_.unlocked = false;
-    roguelikeBigHole_.tile = roundDungeonTile(tilePoint);
+    roguelikeBigHole_.tile = dungeonLayout_.goalTile;
     roguelikeBigHole_.position = tileWorldCenter(roguelikeBigHole_.tile);
     roguelikeBigHole_.depthMeters = std::min(RoguelikeCompletionDepthMeters, std::max(
         RoguelikeMetersPerArea,
@@ -7867,8 +7886,8 @@ void Game::rebuildRoguelikeAreaFromAstralState()
     initializeCrateNodesFromLayout();
     initializeEnemyNodesFromLayout();
     initializeDungeonEventInstancesFromLayout();
-    initializeRoguelikeFacilitiesFromLayout();
     initializeRoguelikeBigHoleFromLayout();
+    initializeRoguelikeFacilitiesFromLayout();
     applyPlacementTerrainOverrides();
     refreshEquipmentModifiers();
     applyPermanentUpgrades();
@@ -7948,9 +7967,9 @@ bool Game::updateRoguelikeBigHoleUi(const Input& input, UiContext& ui)
         {"さらに進む", roguelikeBigHole_.unlocked},
         {"地上に戻る", true},
     }};
-    if (roguelikeBigHoleMenu_.open) {
+    if (roguelikeBigHoleMenu_.visible) {
         hoveredRoguelikeBigHole_ = false;
-        const bool wasOpen = roguelikeBigHoleMenu_.open;
+        const bool wasVisible = roguelikeBigHoleMenu_.visible;
         const int selected = updateUiCommandMenu(
             roguelikeBigHoleMenu_,
             ui,
@@ -7967,7 +7986,7 @@ bool Game::updateRoguelikeBigHoleUi(const Input& input, UiContext& ui)
             ui.emitSound(UiSoundEvent::Confirm);
             return true;
         }
-        return wasOpen;
+        return wasVisible;
     }
 
     int clicked = 0;
@@ -7997,6 +8016,9 @@ bool Game::updateRoguelikeBigHoleUi(const Input& input, UiContext& ui)
             static_cast<int>(items.size()),
             items.data(),
             180.0f);
+        if (!roguelikeBigHole_.unlocked) {
+            pushDungeonLog("星脈竜を倒すとさらに進める", "roguelike_big_hole_locked");
+        }
         ui.emitSound(UiSoundEvent::MenuOpen);
         if (clicked != 0) {
             ui.consumePointer();
@@ -10494,6 +10516,9 @@ void Game::applyPlacementTerrainOverrides()
     for (const RoguelikeFacilityInstance& facility : roguelikeFacilities_) {
         applyExposedPocket(facility.centerTile, RoguelikeFacilityCavityRadiusTiles);
     }
+    if (roguelikeBigHole_.active) {
+        applyExposedPocket(roguelikeBigHole_.tile, RoguelikeBigHoleTerrainRadiusTiles);
+    }
     clearKnownWarpPointTerrain();
 
     for (const RewardNode& node : rewardNodes_) {
@@ -10562,6 +10587,9 @@ void Game::applyPlacementTerrainOverrides()
         applyExposedCenter(facility.centerTile);
         applyExposedCenter(facility.npcTile);
         applyExposedCenter(facility.propTile);
+    }
+    if (roguelikeBigHole_.active) {
+        applyExposedCenter(roguelikeBigHole_.tile);
     }
     clearKnownWarpPointTerrain();
 
@@ -11516,7 +11544,7 @@ void Game::beginBossDefeatSequence(Vec2 position)
     bossEncounter_.finalBoss =
         purpose == BossEncounterPurpose::StageClear &&
         currentStageId_ == FinalStoryStageId &&
-        !hasStoryFlag(EndingSeenFlag);
+        !hasStoryFlag(StoryEndingSeenFlag);
     playAudioSe("se.boss.defeat");
     playAudioBgm("bgm.dungeon", 0.70f);
     effects_.spawnAreaPulse(position, 92.0f, {255, 214, 110, 210});

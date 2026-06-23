@@ -1,0 +1,2408 @@
+MAJO_SHOVEL_SAVE_V1
+money 266
+play_time_seconds 21300
+astral_high_score 0
+astral_echo_star_count 0
+captured_monster_ring_breaks_before_stage_clear 1 0
+captured_monster_ring_breaks_before_stage_clear 2 0
+captured_monster_ring_breaks_before_stage_clear 3 0
+player_level 5
+player_xp 41
+player_xp_to_next 79
+pending_level_bonus_choices 0
+upgrade_max_hp 0
+upgrade_ring_radius 0
+upgrade_ring_speed 0
+upgrade_collection_range 0
+level_ring_points 1 1 1 2
+level_ring_points 2 0 0 0
+level_ring_points 3 0 0 0
+workshop_ring_upgrade 1 0 0 0 0 0 0 0 0 0 1.3728
+workshop_ring_upgrade 2 0 0 0 0 0 0 0 0 0 1.872
+workshop_ring_upgrade 3 0 0 0 0 0 0 0 0 0 2.496
+merchant_refresh_pending 0
+merchant_upgrade_level 1
+merchant_stock_version 1
+merchant_stock item_small_drill 370 4
+merchant_stock item_magnifying_glass 130 5
+merchant_stock item_good_apple 90 4
+merchant_stock item_mineuchi_sword 280 1
+merchant_stock item_hard_cookie 120 1
+merchant_stock item_speed_candy 120 3
+warehouse_capacity_level 0
+processing_unlock_level 0
+ring_workshop_unlocked 0
+ring_preset_slot_level 0
+auto_save_on_return 0
+equipped_staff iteminst_3
+ring_shape_1 Circle
+ring_shape_2 FigureEight
+ring_shape_3 Comet
+story_flag intro_tutorial_completed
+story_flag story_stage_01_start
+story_flag story_monica_radio_stage_01
+story_flag story_tutorial_ring_shift
+story_flag story_stage_01_boss_before
+story_flag story_tutorial_item_use
+story_flag base_return_count_1
+story_flag story_tutorial_base_processing
+story_flag story_tutorial_base_merchant
+story_flag story_tutorial_base_bookshelf
+main_knowledge_v1 1
+main_obtained_object item_apple
+main_obtained_object item_chipped_pickaxe
+main_obtained_object item_shovel
+main_obtained_object item_torch
+main_obtained_object treasure_asakou_02
+main_obtained_object treasure_asakou_03
+main_obtained_object treasure_candle
+main_obtained_object treasure_junk_barrel
+codex_entry item item_torch 4
+codex_entry item item_shovel 4
+codex_entry item item_chipped_pickaxe 4
+codex_entry item item_apple 3
+codex_entry treasure treasure_candle 4
+codex_entry treasure treasure_junk_barrel 4
+codex_entry treasure treasure_asakou_03 4
+codex_entry treasure treasure_asakou_02 4
+codex_entry enemy bake_kinoko 1
+codex_entry enemy slime 1
+codex_effect item_torch light
+codex_effect item_torch basic_attack
+codex_effect item_shovel basic_attack
+codex_effect item_shovel dig
+codex_effect treasure_asakou_02 dig
+codex_effect treasure_asakou_02 basic_attack
+codex_effect item_chipped_pickaxe basic_attack
+codex_effect item_chipped_pickaxe dig_hard
+codex_effect treasure_candle light
+codex_effect treasure_candle basic_attack
+codex_effect treasure_junk_barrel dig
+codex_effect treasure_junk_barrel forced_critical_hit
+codex_effect treasure_junk_barrel basic_attack
+codex_effect treasure_asakou_03 dig
+codex_effect treasure_asakou_03 basic_attack
+codex_sync_suppress_owned item_staff_apprentice_witch 1
+codex_sync_suppress_ring item_shovel 1
+codex_sync_suppress_ring item_torch 1
+current_stage 0
+current_stage_id stage_01_stardust
+unlocked_stages 1
+unlocked_ring_count 1
+unlocked_warp_points 4
+latest_warp -11160 3720
+dungeon_seed stage_01_stardust 0 555269435
+dungeon_warp_point stage_01_stardust 0 -2808 1272 1 1 1
+dungeon_warp_point stage_01_stardust 1 -5832 456 1 1 1
+dungeon_warp_point stage_01_stardust 2 -8424 2376 1 1 1
+dungeon_warp_point stage_01_stardust 3 -11160 3720 1 1 1
+dungeon_minimap_cell stage_01_stardust -2 -3 0
+dungeon_minimap_cell stage_01_stardust -16 8 0
+dungeon_minimap_cell stage_01_stardust -56 33 1
+dungeon_minimap_cell stage_01_stardust 2 -5 1
+dungeon_minimap_cell stage_01_stardust -1 -3 0
+dungeon_minimap_cell stage_01_stardust -15 8 1
+dungeon_minimap_cell stage_01_stardust -23 20 2
+dungeon_minimap_cell stage_01_stardust -30 15 0
+dungeon_minimap_cell stage_01_stardust -5 6 0
+dungeon_minimap_cell stage_01_stardust -33 34 1
+dungeon_minimap_cell stage_01_stardust 0 -3 0
+dungeon_minimap_cell stage_01_stardust 1 -3 3
+dungeon_minimap_cell stage_01_stardust -2 -2 0
+dungeon_minimap_cell stage_01_stardust -19 6 1
+dungeon_minimap_cell stage_01_stardust -12 15 2
+dungeon_minimap_cell stage_01_stardust -55 34 2
+dungeon_minimap_cell stage_01_stardust -1 -2 0
+dungeon_minimap_cell stage_01_stardust -20 6 3
+dungeon_minimap_cell stage_01_stardust -11 15 2
+dungeon_minimap_cell stage_01_stardust -56 34 1
+dungeon_minimap_cell stage_01_stardust -46 28 3
+dungeon_minimap_cell stage_01_stardust -1 1 0
+dungeon_minimap_cell stage_01_stardust -55 23 0
+dungeon_minimap_cell stage_01_stardust 0 -2 0
+dungeon_minimap_cell stage_01_stardust -56 23 0
+dungeon_minimap_cell stage_01_stardust -2 1 0
+dungeon_minimap_cell stage_01_stardust -45 28 3
+dungeon_minimap_cell stage_01_stardust 1 -2 0
+dungeon_minimap_cell stage_01_stardust -44 11 4
+dungeon_minimap_cell stage_01_stardust -33 16 0
+dungeon_minimap_cell stage_01_stardust -6 5 0
+dungeon_minimap_cell stage_01_stardust -3 -1 2
+dungeon_minimap_cell stage_01_stardust -2 -1 0
+dungeon_minimap_cell stage_01_stardust -1 -1 0
+dungeon_minimap_cell stage_01_stardust -23 22 4
+dungeon_minimap_cell stage_01_stardust -26 9 1
+dungeon_minimap_cell stage_01_stardust -1 0 0
+dungeon_minimap_cell stage_01_stardust -48 31 0
+dungeon_minimap_cell stage_01_stardust -57 24 0
+dungeon_minimap_cell stage_01_stardust -43 10 1
+dungeon_minimap_cell stage_01_stardust -36 19 0
+dungeon_minimap_cell stage_01_stardust -30 13 1
+dungeon_minimap_cell stage_01_stardust -5 4 0
+dungeon_minimap_cell stage_01_stardust 0 -1 0
+dungeon_minimap_cell stage_01_stardust -24 22 2
+dungeon_minimap_cell stage_01_stardust -25 9 1
+dungeon_minimap_cell stage_01_stardust -2 0 0
+dungeon_minimap_cell stage_01_stardust -47 31 0
+dungeon_minimap_cell stage_01_stardust -58 24 0
+dungeon_minimap_cell stage_01_stardust -44 10 2
+dungeon_minimap_cell stage_01_stardust -35 19 0
+dungeon_minimap_cell stage_01_stardust -29 13 1
+dungeon_minimap_cell stage_01_stardust -6 4 0
+dungeon_minimap_cell stage_01_stardust 1 -1 0
+dungeon_minimap_cell stage_01_stardust 2 -1 0
+dungeon_minimap_cell stage_01_stardust -59 24 0
+dungeon_minimap_cell stage_01_stardust -41 10 2
+dungeon_minimap_cell stage_01_stardust -34 19 0
+dungeon_minimap_cell stage_01_stardust -32 13 1
+dungeon_minimap_cell stage_01_stardust -7 4 0
+dungeon_minimap_cell stage_01_stardust -46 17 3
+dungeon_minimap_cell stage_01_stardust -37 8 2
+dungeon_minimap_cell stage_01_stardust 0 0 0
+dungeon_minimap_cell stage_01_stardust -51 30 0
+dungeon_minimap_cell stage_01_stardust -27 7 1
+dungeon_minimap_cell stage_01_stardust 1 0 0
+dungeon_minimap_cell stage_01_stardust 0 1 0
+dungeon_minimap_cell stage_01_stardust -37 9 2
+dungeon_minimap_cell stage_01_stardust 1 1 0
+dungeon_minimap_cell stage_01_stardust -38 9 2
+dungeon_minimap_cell stage_01_stardust -3 -5 1
+dungeon_minimap_cell stage_01_stardust -2 -5 1
+dungeon_minimap_cell stage_01_stardust -1 -5 1
+dungeon_minimap_cell stage_01_stardust -44 31 0
+dungeon_minimap_cell stage_01_stardust -5 0 1
+dungeon_minimap_cell stage_01_stardust -30 9 0
+dungeon_minimap_cell stage_01_stardust -3 -3 2
+dungeon_minimap_cell stage_01_stardust -13 8 0
+dungeon_minimap_cell stage_01_stardust -54 33 1
+dungeon_minimap_cell stage_01_stardust 0 -5 1
+dungeon_minimap_cell stage_01_stardust -4 -3 2
+dungeon_minimap_cell stage_01_stardust -14 8 0
+dungeon_minimap_cell stage_01_stardust 1 -5 1
+dungeon_minimap_cell stage_01_stardust -4 -4 1
+dungeon_minimap_cell stage_01_stardust -51 23 2
+dungeon_minimap_cell stage_01_stardust -42 28 3
+dungeon_minimap_cell stage_01_stardust -5 1 1
+dungeon_minimap_cell stage_01_stardust -3 -4 2
+dungeon_minimap_cell stage_01_stardust -2 -4 1
+dungeon_minimap_cell stage_01_stardust -1 -4 2
+dungeon_minimap_cell stage_01_stardust -46 30 0
+dungeon_minimap_cell stage_01_stardust 0 -4 0
+dungeon_minimap_cell stage_01_stardust -45 30 0
+dungeon_minimap_cell stage_01_stardust 1 -4 1
+dungeon_minimap_cell stage_01_stardust -31 31 2
+dungeon_minimap_cell stage_01_stardust -40 22 3
+dungeon_minimap_cell stage_01_stardust -41 9 1
+dungeon_minimap_cell stage_01_stardust 4 1 0
+dungeon_minimap_cell stage_01_stardust -52 34 1
+dungeon_minimap_cell stage_01_stardust -15 15 1
+dungeon_minimap_cell stage_01_stardust -24 6 1
+dungeon_minimap_cell stage_01_stardust -5 -2 1
+dungeon_minimap_cell stage_01_stardust 2 -4 1
+dungeon_minimap_cell stage_01_stardust -36 35 3
+dungeon_minimap_cell stage_01_stardust 3 -4 1
+dungeon_minimap_cell stage_01_stardust -8 7 0
+dungeon_minimap_cell stage_01_stardust 2 1 0
+dungeon_minimap_cell stage_01_stardust -45 35 2
+dungeon_minimap_cell stage_01_stardust -9 7 0
+dungeon_minimap_cell stage_01_stardust 4 -4 2
+dungeon_minimap_cell stage_01_stardust -52 33 3
+dungeon_minimap_cell stage_01_stardust 4 2 0
+dungeon_minimap_cell stage_01_stardust -46 31 0
+dungeon_minimap_cell stage_01_stardust -3 0 0
+dungeon_minimap_cell stage_01_stardust -28 9 1
+dungeon_minimap_cell stage_01_stardust -21 22 2
+dungeon_minimap_cell stage_01_stardust -29 30 2
+dungeon_minimap_cell stage_01_stardust -5 -3 2
+dungeon_minimap_cell stage_01_stardust -11 8 0
+dungeon_minimap_cell stage_01_stardust -52 35 1
+dungeon_minimap_cell stage_01_stardust -24 7 1
+dungeon_minimap_cell stage_01_stardust 4 0 0
+dungeon_minimap_cell stage_01_stardust -5 -1 1
+dungeon_minimap_cell stage_01_stardust 2 -3 1
+dungeon_minimap_cell stage_01_stardust -51 35 2
+dungeon_minimap_cell stage_01_stardust -23 7 1
+dungeon_minimap_cell stage_01_stardust 5 0 0
+dungeon_minimap_cell stage_01_stardust 3 -3 1
+dungeon_minimap_cell stage_01_stardust -49 30 0
+dungeon_minimap_cell stage_01_stardust 2 0 0
+dungeon_minimap_cell stage_01_stardust -39 8 2
+dungeon_minimap_cell stage_01_stardust -45 34 1
+dungeon_minimap_cell stage_01_stardust -9 6 0
+dungeon_minimap_cell stage_01_stardust -18 15 1
+dungeon_minimap_cell stage_01_stardust -27 20 1
+dungeon_minimap_cell stage_01_stardust 4 -3 1
+dungeon_minimap_cell stage_01_stardust -53 34 1
+dungeon_minimap_cell stage_01_stardust -10 15 1
+dungeon_minimap_cell stage_01_stardust -17 6 1
+dungeon_minimap_cell stage_01_stardust -4 -2 1
+dungeon_minimap_cell stage_01_stardust -54 34 0
+dungeon_minimap_cell stage_01_stardust -9 15 2
+dungeon_minimap_cell stage_01_stardust -18 6 1
+dungeon_minimap_cell stage_01_stardust -3 -2 1
+dungeon_minimap_cell stage_01_stardust -7 5 0
+dungeon_minimap_cell stage_01_stardust -36 16 0
+dungeon_minimap_cell stage_01_stardust -41 11 2
+dungeon_minimap_cell stage_01_stardust 2 -2 0
+dungeon_minimap_cell stage_01_stardust -40 37 2
+dungeon_minimap_cell stage_01_stardust 3 -2 1
+dungeon_minimap_cell stage_01_stardust 4 -2 1
+dungeon_minimap_cell stage_01_stardust -9 5 1
+dungeon_minimap_cell stage_01_stardust -39 11 1
+dungeon_minimap_cell stage_01_stardust -46 16 3
+dungeon_minimap_cell stage_01_stardust -4 -1 1
+dungeon_minimap_cell stage_01_stardust -8 4 1
+dungeon_minimap_cell stage_01_stardust -31 13 1
+dungeon_minimap_cell stage_01_stardust -33 19 0
+dungeon_minimap_cell stage_01_stardust -42 10 2
+dungeon_minimap_cell stage_01_stardust -60 24 0
+dungeon_minimap_cell stage_01_stardust 3 -1 0
+dungeon_minimap_cell stage_01_stardust -9 4 1
+dungeon_minimap_cell stage_01_stardust -18 13 1
+dungeon_minimap_cell stage_01_stardust -39 10 2
+dungeon_minimap_cell stage_01_stardust -53 24 3
+dungeon_minimap_cell stage_01_stardust 4 -1 0
+dungeon_minimap_cell stage_01_stardust -10 4 2
+dungeon_minimap_cell stage_01_stardust -17 13 1
+dungeon_minimap_cell stage_01_stardust -40 10 1
+dungeon_minimap_cell stage_01_stardust -54 24 0
+dungeon_minimap_cell stage_01_stardust 5 -1 1
+dungeon_minimap_cell stage_01_stardust -45 31 0
+dungeon_minimap_cell stage_01_stardust -4 0 1
+dungeon_minimap_cell stage_01_stardust -27 9 1
+dungeon_minimap_cell stage_01_stardust -22 22 2
+dungeon_minimap_cell stage_01_stardust -50 30 0
+dungeon_minimap_cell stage_01_stardust -47 17 3
+dungeon_minimap_cell stage_01_stardust 3 0 0
+dungeon_minimap_cell stage_01_stardust -40 8 2
+dungeon_minimap_cell stage_01_stardust -47 28 3
+dungeon_minimap_cell stage_01_stardust -4 1 1
+dungeon_minimap_cell stage_01_stardust -54 23 3
+dungeon_minimap_cell stage_01_stardust -48 28 3
+dungeon_minimap_cell stage_01_stardust -53 23 3
+dungeon_minimap_cell stage_01_stardust -3 1 1
+dungeon_minimap_cell stage_01_stardust -41 22 3
+dungeon_minimap_cell stage_01_stardust -40 9 3
+dungeon_minimap_cell stage_01_stardust 3 1 0
+dungeon_minimap_cell stage_01_stardust -5 2 1
+dungeon_minimap_cell stage_01_stardust -23 16 0
+dungeon_minimap_cell stage_01_stardust -30 11 2
+dungeon_minimap_cell stage_01_stardust 1 4 0
+dungeon_minimap_cell stage_01_stardust -4 2 1
+dungeon_minimap_cell stage_01_stardust -18 16 2
+dungeon_minimap_cell stage_01_stardust -27 11 0
+dungeon_minimap_cell stage_01_stardust 0 4 0
+dungeon_minimap_cell stage_01_stardust -3 2 1
+dungeon_minimap_cell stage_01_stardust -17 16 1
+dungeon_minimap_cell stage_01_stardust -28 11 1
+dungeon_minimap_cell stage_01_stardust -2 2 0
+dungeon_minimap_cell stage_01_stardust -20 16 1
+dungeon_minimap_cell stage_01_stardust -25 11 1
+dungeon_minimap_cell stage_01_stardust -47 12 1
+dungeon_minimap_cell stage_01_stardust 2 4 0
+dungeon_minimap_cell stage_01_stardust -40 21 3
+dungeon_minimap_cell stage_01_stardust -1 2 0
+dungeon_minimap_cell stage_01_stardust -19 16 1
+dungeon_minimap_cell stage_01_stardust -26 11 1
+dungeon_minimap_cell stage_01_stardust -51 28 0
+dungeon_minimap_cell stage_01_stardust -42 23 3
+dungeon_minimap_cell stage_01_stardust 0 2 0
+dungeon_minimap_cell stage_01_stardust -33 14 0
+dungeon_minimap_cell stage_01_stardust 1 2 0
+dungeon_minimap_cell stage_01_stardust -62 33 2
+dungeon_minimap_cell stage_01_stardust 2 2 0
+dungeon_minimap_cell stage_01_stardust -61 33 2
+dungeon_minimap_cell stage_01_stardust 3 2 0
+dungeon_minimap_cell stage_01_stardust -4 3 0
+dungeon_minimap_cell stage_01_stardust -3 3 0
+dungeon_minimap_cell stage_01_stardust -2 3 1
+dungeon_minimap_cell stage_01_stardust -1 3 0
+dungeon_minimap_cell stage_01_stardust 0 3 0
+dungeon_minimap_cell stage_01_stardust 1 3 0
+dungeon_minimap_cell stage_01_stardust -34 15 0
+dungeon_minimap_cell stage_01_stardust -43 20 0
+dungeon_minimap_cell stage_01_stardust -72 26 1
+dungeon_minimap_cell stage_01_stardust -32 34 2
+dungeon_minimap_cell stage_01_stardust 2 3 0
+dungeon_minimap_cell stage_01_stardust -35 15 0
+dungeon_minimap_cell stage_01_stardust -42 20 3
+dungeon_minimap_cell stage_01_stardust 3 3 0
+dungeon_minimap_cell stage_01_stardust -45 10 2
+dungeon_minimap_cell stage_01_stardust -3 4 0
+dungeon_minimap_cell stage_01_stardust -28 13 1
+dungeon_minimap_cell stage_01_stardust -38 19 3
+dungeon_minimap_cell stage_01_stardust -63 24 1
+dungeon_minimap_cell stage_01_stardust -2 4 0
+dungeon_minimap_cell stage_01_stardust -25 13 0
+dungeon_minimap_cell stage_01_stardust -39 19 3
+dungeon_minimap_cell stage_01_stardust -62 24 0
+dungeon_minimap_cell stage_01_stardust -1 4 0
+dungeon_minimap_cell stage_01_stardust -26 13 0
+dungeon_minimap_cell stage_01_stardust -40 19 3
+dungeon_minimap_cell stage_01_stardust -61 24 0
+dungeon_minimap_cell stage_01_stardust -3 -7 0
+dungeon_minimap_cell stage_01_stardust -2 -7 1
+dungeon_minimap_cell stage_01_stardust -1 -7 1
+dungeon_minimap_cell stage_01_stardust 0 -7 0
+dungeon_minimap_cell stage_01_stardust -43 29 1
+dungeon_minimap_cell stage_01_stardust -62 26 0
+dungeon_minimap_cell stage_01_stardust 1 -7 1
+dungeon_minimap_cell stage_01_stardust -5 -6 1
+dungeon_minimap_cell stage_01_stardust -6 8 0
+dungeon_minimap_cell stage_01_stardust -4 -6 1
+dungeon_minimap_cell stage_01_stardust -3 8 1
+dungeon_minimap_cell stage_01_stardust -3 -6 1
+dungeon_minimap_cell stage_01_stardust -4 8 1
+dungeon_minimap_cell stage_01_stardust -2 -6 1
+dungeon_minimap_cell stage_01_stardust -1 8 2
+dungeon_minimap_cell stage_01_stardust -1 -6 2
+dungeon_minimap_cell stage_01_stardust -2 8 0
+dungeon_minimap_cell stage_01_stardust 0 -6 1
+dungeon_minimap_cell stage_01_stardust 1 8 2
+dungeon_minimap_cell stage_01_stardust -34 20 0
+dungeon_minimap_cell stage_01_stardust -43 15 1
+dungeon_minimap_cell stage_01_stardust 1 -6 1
+dungeon_minimap_cell stage_01_stardust 0 8 0
+dungeon_minimap_cell stage_01_stardust -33 20 0
+dungeon_minimap_cell stage_01_stardust -44 15 3
+dungeon_minimap_cell stage_01_stardust -31 25 2
+dungeon_minimap_cell stage_01_stardust 2 -6 1
+dungeon_minimap_cell stage_01_stardust 3 8 1
+dungeon_minimap_cell stage_01_stardust -35 20 0
+dungeon_minimap_cell stage_01_stardust -42 15 0
+dungeon_minimap_cell stage_01_stardust 3 -6 1
+dungeon_minimap_cell stage_01_stardust 2 8 2
+dungeon_minimap_cell stage_01_stardust -5 -5 1
+dungeon_minimap_cell stage_01_stardust -4 -5 2
+dungeon_minimap_cell stage_01_stardust -55 33 2
+dungeon_minimap_cell stage_01_stardust 3 -5 2
+dungeon_minimap_cell stage_01_stardust -6 -4 1
+dungeon_minimap_cell stage_01_stardust -5 -4 3
+dungeon_minimap_cell stage_01_stardust -30 30 2
+dungeon_minimap_cell stage_01_stardust -6 -3 1
+dungeon_minimap_cell stage_01_stardust -12 8 0
+dungeon_minimap_cell stage_01_stardust -51 34 2
+dungeon_minimap_cell stage_01_stardust -16 15 2
+dungeon_minimap_cell stage_01_stardust -23 6 1
+dungeon_minimap_cell stage_01_stardust -6 -2 1
+dungeon_minimap_cell stage_01_stardust -6 -1 2
+dungeon_minimap_cell stage_01_stardust -43 31 0
+dungeon_minimap_cell stage_01_stardust -6 0 1
+dungeon_minimap_cell stage_01_stardust -29 9 2
+dungeon_minimap_cell stage_01_stardust -20 22 2
+dungeon_minimap_cell stage_01_stardust -42 29 0
+dungeon_minimap_cell stage_01_stardust 2 -7 0
+dungeon_minimap_cell stage_01_stardust -63 26 1
+dungeon_minimap_cell stage_01_stardust 4 -5 1
+dungeon_minimap_cell stage_01_stardust -44 34 1
+dungeon_minimap_cell stage_01_stardust -16 6 2
+dungeon_minimap_cell stage_01_stardust -23 15 0
+dungeon_minimap_cell stage_01_stardust -30 20 1
+dungeon_minimap_cell stage_01_stardust 4 -6 0
+dungeon_minimap_cell stage_01_stardust 5 8 2
+dungeon_minimap_cell stage_01_stardust -46 35 3
+dungeon_minimap_cell stage_01_stardust -10 7 0
+dungeon_minimap_cell stage_01_stardust 5 -4 1
+dungeon_minimap_cell stage_01_stardust -39 25 3
+dungeon_minimap_cell stage_01_stardust 5 -3 1
+dungeon_minimap_cell stage_01_stardust -42 37 2
+dungeon_minimap_cell stage_01_stardust 5 -2 1
+dungeon_minimap_cell stage_01_stardust -38 28 0
+dungeon_minimap_cell stage_01_stardust 5 -5 1
+dungeon_minimap_cell stage_01_stardust -9 1 0
+dungeon_minimap_cell stage_01_stardust -63 23 1
+dungeon_minimap_cell stage_01_stardust -32 31 0
+dungeon_minimap_cell stage_01_stardust -39 22 3
+dungeon_minimap_cell stage_01_stardust -42 9 1
+dungeon_minimap_cell stage_01_stardust 5 1 0
+dungeon_minimap_cell stage_01_stardust -47 34 1
+dungeon_minimap_cell stage_01_stardust 6 -3 1
+dungeon_minimap_cell stage_01_stardust -11 6 2
+dungeon_minimap_cell stage_01_stardust -20 15 1
+dungeon_minimap_cell stage_01_stardust -25 20 2
+dungeon_minimap_cell stage_01_stardust -43 37 0
+dungeon_minimap_cell stage_01_stardust 6 -2 0
+dungeon_minimap_cell stage_01_stardust -43 36 1
+dungeon_minimap_cell stage_01_stardust 6 -1 1
+dungeon_minimap_cell stage_01_stardust -43 8 1
+dungeon_minimap_cell stage_01_stardust -61 30 0
+dungeon_minimap_cell stage_01_stardust -36 17 1
+dungeon_minimap_cell stage_01_stardust 6 0 0
+dungeon_minimap_cell stage_01_stardust 5 2 0
+dungeon_minimap_cell stage_01_stardust 4 3 0
+dungeon_minimap_cell stage_01_stardust -29 31 1
+dungeon_minimap_cell stage_01_stardust -43 9 2
+dungeon_minimap_cell stage_01_stardust -38 22 3
+dungeon_minimap_cell stage_01_stardust 6 1 0
+dungeon_minimap_cell stage_01_stardust 3 4 0
+dungeon_minimap_cell stage_01_stardust -39 21 1
+dungeon_minimap_cell stage_01_stardust 5 3 0
+dungeon_minimap_cell stage_01_stardust 4 4 0
+dungeon_minimap_cell stage_01_stardust 0 5 0
+dungeon_minimap_cell stage_01_stardust -28 10 1
+dungeon_minimap_cell stage_01_stardust -19 19 2
+dungeon_minimap_cell stage_01_stardust -45 13 3
+dungeon_minimap_cell stage_01_stardust 1 5 0
+dungeon_minimap_cell stage_01_stardust -27 10 3
+dungeon_minimap_cell stage_01_stardust -20 19 1
+dungeon_minimap_cell stage_01_stardust -46 13 3
+dungeon_minimap_cell stage_01_stardust -2 5 0
+dungeon_minimap_cell stage_01_stardust -37 16 0
+dungeon_minimap_cell stage_01_stardust -47 11 2
+dungeon_minimap_cell stage_01_stardust -1 5 0
+dungeon_minimap_cell stage_01_stardust -38 16 2
+dungeon_minimap_cell stage_01_stardust 2 5 0
+dungeon_minimap_cell stage_01_stardust -46 10 2
+dungeon_minimap_cell stage_01_stardust -4 4 0
+dungeon_minimap_cell stage_01_stardust -27 13 2
+dungeon_minimap_cell stage_01_stardust -37 19 0
+dungeon_minimap_cell stage_01_stardust -64 24 1
+dungeon_minimap_cell stage_01_stardust -5 3 0
+dungeon_minimap_cell stage_01_stardust -3 5 0
+dungeon_minimap_cell stage_01_stardust -40 16 0
+dungeon_minimap_cell stage_01_stardust -45 11 1
+dungeon_minimap_cell stage_01_stardust -52 23 3
+dungeon_minimap_cell stage_01_stardust -41 28 1
+dungeon_minimap_cell stage_01_stardust -6 1 1
+dungeon_minimap_cell stage_01_stardust -6 2 2
+dungeon_minimap_cell stage_01_stardust -24 16 0
+dungeon_minimap_cell stage_01_stardust -29 11 1
+dungeon_minimap_cell stage_01_stardust -7 -1 2
+dungeon_minimap_cell stage_01_stardust -42 31 0
+dungeon_minimap_cell stage_01_stardust -7 0 3
+dungeon_minimap_cell stage_01_stardust -32 9 1
+dungeon_minimap_cell stage_01_stardust -49 38 1
+dungeon_minimap_cell stage_01_stardust -6 3 0
+dungeon_minimap_cell stage_01_stardust -50 34 2
+dungeon_minimap_cell stage_01_stardust -13 15 2
+dungeon_minimap_cell stage_01_stardust -22 6 1
+dungeon_minimap_cell stage_01_stardust -7 -2 1
+dungeon_minimap_cell stage_01_stardust -49 23 3
+dungeon_minimap_cell stage_01_stardust -44 28 3
+dungeon_minimap_cell stage_01_stardust -7 1 1
+dungeon_minimap_cell stage_01_stardust -31 30 2
+dungeon_minimap_cell stage_01_stardust -7 -3 1
+dungeon_minimap_cell stage_01_stardust -9 8 1
+dungeon_minimap_cell stage_01_stardust -6 -5 2
+dungeon_minimap_cell stage_01_stardust -4 -7 2
+dungeon_minimap_cell stage_01_stardust -41 29 0
+dungeon_minimap_cell stage_01_stardust 3 -7 0
+dungeon_minimap_cell stage_01_stardust -64 26 1
+dungeon_minimap_cell stage_01_stardust -36 30 0
+dungeon_minimap_cell stage_01_stardust 6 -4 1
+dungeon_minimap_cell stage_01_stardust 6 2 0
+dungeon_minimap_cell stage_01_stardust -48 34 2
+dungeon_minimap_cell stage_01_stardust 7 -3 2
+dungeon_minimap_cell stage_01_stardust -12 6 0
+dungeon_minimap_cell stage_01_stardust -19 15 1
+dungeon_minimap_cell stage_01_stardust -26 20 1
+dungeon_minimap_cell stage_01_stardust 7 -2 2
+dungeon_minimap_cell stage_01_stardust -44 36 2
+dungeon_minimap_cell stage_01_stardust 7 -1 1
+dungeon_minimap_cell stage_01_stardust -44 8 1
+dungeon_minimap_cell stage_01_stardust -62 30 1
+dungeon_minimap_cell stage_01_stardust -35 17 0
+dungeon_minimap_cell stage_01_stardust 7 0 1
+dungeon_minimap_cell stage_01_stardust -75 24 1
+dungeon_minimap_cell stage_01_stardust 7 1 2
+dungeon_minimap_cell stage_01_stardust 3 5 0
+dungeon_minimap_cell stage_01_stardust -25 10 2
+dungeon_minimap_cell stage_01_stardust -18 19 2
+dungeon_minimap_cell stage_01_stardust 5 -6 1
+dungeon_minimap_cell stage_01_stardust 4 8 3
+dungeon_minimap_cell stage_01_stardust 6 -5 1
+dungeon_minimap_cell stage_01_stardust 7 -5 2
+dungeon_minimap_cell stage_01_stardust -48 35 3
+dungeon_minimap_cell stage_01_stardust -12 7 1
+dungeon_minimap_cell stage_01_stardust 7 -4 2
+dungeon_minimap_cell stage_01_stardust -41 35 1
+dungeon_minimap_cell stage_01_stardust 8 -4 2
+dungeon_minimap_cell stage_01_stardust -13 7 1
+dungeon_minimap_cell stage_01_stardust 8 -3 2
+dungeon_minimap_cell stage_01_stardust 6 8 1
+dungeon_minimap_cell stage_01_stardust 9 -3 2
+dungeon_minimap_cell stage_01_stardust 8 -2 2
+dungeon_minimap_cell stage_01_stardust 9 -2 2
+dungeon_minimap_cell stage_01_stardust 8 -1 1
+dungeon_minimap_cell stage_01_stardust -50 24 3
+dungeon_minimap_cell stage_01_stardust 9 -1 2
+dungeon_minimap_cell stage_01_stardust -14 4 1
+dungeon_minimap_cell stage_01_stardust -21 13 2
+dungeon_minimap_cell stage_01_stardust -36 10 2
+dungeon_minimap_cell stage_01_stardust -43 19 3
+dungeon_minimap_cell stage_01_stardust 8 0 1
+dungeon_minimap_cell stage_01_stardust -22 17 2
+dungeon_minimap_cell stage_01_stardust -29 8 1
+dungeon_minimap_cell stage_01_stardust -72 18 0
+dungeon_minimap_cell stage_01_stardust 9 0 2
+dungeon_minimap_cell stage_01_stardust -35 7 1
+dungeon_minimap_cell stage_01_stardust -71 19 0
+dungeon_minimap_cell stage_01_stardust 8 1 2
+dungeon_minimap_cell stage_01_stardust 9 1 2
+dungeon_minimap_cell stage_01_stardust 7 2 2
+dungeon_minimap_cell stage_01_stardust 8 2 1
+dungeon_minimap_cell stage_01_stardust -30 10 3
+dungeon_minimap_cell stage_01_stardust -21 19 2
+dungeon_minimap_cell stage_01_stardust -43 13 3
+dungeon_minimap_cell stage_01_stardust 9 2 1
+dungeon_minimap_cell stage_01_stardust -47 15 3
+dungeon_minimap_cell stage_01_stardust -38 20 3
+dungeon_minimap_cell stage_01_stardust 6 3 0
+dungeon_minimap_cell stage_01_stardust -37 20 0
+dungeon_minimap_cell stage_01_stardust 7 3 2
+dungeon_minimap_cell stage_01_stardust 8 3 2
+dungeon_minimap_cell stage_01_stardust 5 4 0
+dungeon_minimap_cell stage_01_stardust -34 12 1
+dungeon_minimap_cell stage_01_stardust -41 21 3
+dungeon_minimap_cell stage_01_stardust -35 12 1
+dungeon_minimap_cell stage_01_stardust 6 4 2
+dungeon_minimap_cell stage_01_stardust -36 12 0
+dungeon_minimap_cell stage_01_stardust 7 4 1
+dungeon_minimap_cell stage_01_stardust 10 -1 1
+dungeon_minimap_cell stage_01_stardust 10 0 2
+dungeon_minimap_cell stage_01_stardust -24 17 0
+dungeon_minimap_cell stage_01_stardust -50 22 3
+dungeon_minimap_cell stage_01_stardust 10 1 2
+dungeon_minimap_cell stage_01_stardust -24 19 1
+dungeon_minimap_cell stage_01_stardust -31 10 1
+dungeon_minimap_cell stage_01_stardust -42 13 3
+dungeon_minimap_cell stage_01_stardust 10 2 2
+dungeon_minimap_cell stage_01_stardust 9 3 1
+dungeon_minimap_cell stage_01_stardust 10 3 2
+dungeon_minimap_cell stage_01_stardust -36 6 2
+dungeon_minimap_cell stage_01_stardust 8 4 2
+dungeon_minimap_cell stage_01_stardust 9 4 2
+dungeon_minimap_cell stage_01_stardust 4 5 0
+dungeon_minimap_cell stage_01_stardust -23 10 0
+dungeon_minimap_cell stage_01_stardust -32 19 1
+dungeon_minimap_cell stage_01_stardust -34 13 0
+dungeon_minimap_cell stage_01_stardust 5 5 1
+dungeon_minimap_cell stage_01_stardust -22 10 0
+dungeon_minimap_cell stage_01_stardust -29 19 2
+dungeon_minimap_cell stage_01_stardust -35 13 0
+dungeon_minimap_cell stage_01_stardust 6 5 1
+dungeon_minimap_cell stage_01_stardust 7 5 2
+dungeon_minimap_cell stage_01_stardust 8 5 2
+dungeon_minimap_cell stage_01_stardust -20 10 0
+dungeon_minimap_cell stage_01_stardust -27 19 2
+dungeon_minimap_cell stage_01_stardust -37 13 0
+dungeon_minimap_cell stage_01_stardust 3 6 1
+dungeon_minimap_cell stage_01_stardust 4 6 2
+dungeon_minimap_cell stage_01_stardust 5 6 2
+dungeon_minimap_cell stage_01_stardust 6 6 1
+dungeon_minimap_cell stage_01_stardust 7 6 1
+dungeon_minimap_cell stage_01_stardust 0 6 0
+dungeon_minimap_cell stage_01_stardust -24 5 1
+dungeon_minimap_cell stage_01_stardust 1 6 0
+dungeon_minimap_cell stage_01_stardust 2 6 0
+dungeon_minimap_cell stage_01_stardust -22 5 2
+dungeon_minimap_cell stage_01_stardust -38 34 2
+dungeon_minimap_cell stage_01_stardust -2 6 0
+dungeon_minimap_cell stage_01_stardust -25 15 0
+dungeon_minimap_cell stage_01_stardust -20 20 2
+dungeon_minimap_cell stage_01_stardust -37 34 2
+dungeon_minimap_cell stage_01_stardust -1 6 0
+dungeon_minimap_cell stage_01_stardust -26 15 0
+dungeon_minimap_cell stage_01_stardust -19 20 2
+dungeon_minimap_cell stage_01_stardust -46 11 2
+dungeon_minimap_cell stage_01_stardust -4 5 0
+dungeon_minimap_cell stage_01_stardust -39 16 0
+dungeon_minimap_cell stage_01_stardust 1 7 2
+dungeon_minimap_cell stage_01_stardust -32 29 1
+dungeon_minimap_cell stage_01_stardust 2 7 1
+dungeon_minimap_cell stage_01_stardust 3 7 2
+dungeon_minimap_cell stage_01_stardust 4 7 0
+dungeon_minimap_cell stage_01_stardust -1 7 0
+dungeon_minimap_cell stage_01_stardust -37 35 1
+dungeon_minimap_cell stage_01_stardust 0 7 0
+dungeon_minimap_cell stage_01_stardust 5 7 1
+dungeon_minimap_cell stage_01_stardust -28 15 0
+dungeon_minimap_cell stage_01_stardust -3 6 0
+dungeon_minimap_cell stage_01_stardust -39 34 2
+dungeon_minimap_cell stage_01_stardust -2 7 0
+dungeon_minimap_cell stage_01_stardust -38 35 2
+dungeon_minimap_cell stage_01_stardust -3 7 0
+dungeon_minimap_cell stage_01_stardust -39 35 1
+dungeon_minimap_cell stage_01_stardust 6 7 2
+dungeon_minimap_cell stage_01_stardust -1 9 1
+dungeon_minimap_cell stage_01_stardust -55 31 2
+dungeon_minimap_cell stage_01_stardust -19 7 1
+dungeon_minimap_cell stage_01_stardust 0 9 2
+dungeon_minimap_cell stage_01_stardust -55 35 2
+dungeon_minimap_cell stage_01_stardust -20 7 1
+dungeon_minimap_cell stage_01_stardust 1 9 1
+dungeon_minimap_cell stage_01_stardust -56 35 1
+dungeon_minimap_cell stage_01_stardust -39 17 3
+dungeon_minimap_cell stage_01_stardust 2 9 2
+dungeon_minimap_cell stage_01_stardust -58 30 0
+dungeon_minimap_cell stage_01_stardust 3 9 2
+dungeon_minimap_cell stage_01_stardust -18 7 1
+dungeon_minimap_cell stage_01_stardust -54 35 0
+dungeon_minimap_cell stage_01_stardust 4 9 1
+dungeon_minimap_cell stage_01_stardust -18 20 2
+dungeon_minimap_cell stage_01_stardust -27 15 0
+dungeon_minimap_cell stage_01_stardust -4 6 0
+dungeon_minimap_cell stage_01_stardust -40 34 2
+dungeon_minimap_cell stage_01_stardust -4 7 0
+dungeon_minimap_cell stage_01_stardust -40 35 2
+dungeon_minimap_cell stage_01_stardust -2 9 2
+dungeon_minimap_cell stage_01_stardust -56 31 1
+dungeon_minimap_cell stage_01_stardust 5 9 2
+dungeon_minimap_cell stage_01_stardust -1 10 2
+dungeon_minimap_cell stage_01_stardust 0 10 1
+dungeon_minimap_cell stage_01_stardust 1 10 2
+dungeon_minimap_cell stage_01_stardust -38 18 0
+dungeon_minimap_cell stage_01_stardust -29 27 2
+dungeon_minimap_cell stage_01_stardust -51 21 3
+dungeon_minimap_cell stage_01_stardust 2 10 2
+dungeon_minimap_cell stage_01_stardust -39 18 3
+dungeon_minimap_cell stage_01_stardust -32 27 0
+dungeon_minimap_cell stage_01_stardust -50 21 3
+dungeon_minimap_cell stage_01_stardust 3 10 1
+dungeon_minimap_cell stage_01_stardust -3 9 1
+dungeon_minimap_cell stage_01_stardust -53 31 0
+dungeon_minimap_cell stage_01_stardust -2 10 1
+dungeon_minimap_cell stage_01_stardust 4 10 1
+dungeon_minimap_cell stage_01_stardust -43 32 0
+dungeon_minimap_cell stage_01_stardust -43 11 0
+dungeon_minimap_cell stage_01_stardust -34 16 0
+dungeon_minimap_cell stage_01_stardust -5 5 0
+dungeon_minimap_cell stage_01_stardust -5 7 0
+dungeon_minimap_cell stage_01_stardust -33 35 0
+dungeon_minimap_cell stage_01_stardust -4 9 1
+dungeon_minimap_cell stage_01_stardust -54 31 0
+dungeon_minimap_cell stage_01_stardust -3 10 0
+dungeon_minimap_cell stage_01_stardust -14 17 1
+dungeon_minimap_cell stage_01_stardust -5 8 0
+dungeon_minimap_cell stage_01_stardust -24 20 1
+dungeon_minimap_cell stage_01_stardust -29 15 0
+dungeon_minimap_cell stage_01_stardust -6 6 0
+dungeon_minimap_cell stage_01_stardust -34 34 2
+dungeon_minimap_cell stage_01_stardust 5 10 2
+dungeon_minimap_cell stage_01_stardust -30 22 1
+dungeon_minimap_cell stage_01_stardust -19 9 0
+dungeon_minimap_cell stage_01_stardust -37 31 0
+dungeon_minimap_cell stage_01_stardust -12 16 1
+dungeon_minimap_cell stage_01_stardust -1 11 2
+dungeon_minimap_cell stage_01_stardust -42 14 0
+dungeon_minimap_cell stage_01_stardust 0 11 3
+dungeon_minimap_cell stage_01_stardust -60 28 0
+dungeon_minimap_cell stage_01_stardust -33 23 0
+dungeon_minimap_cell stage_01_stardust -41 14 0
+dungeon_minimap_cell stage_01_stardust -34 23 0
+dungeon_minimap_cell stage_01_stardust 1 11 2
+dungeon_minimap_cell stage_01_stardust -59 28 0
+dungeon_minimap_cell stage_01_stardust 2 11 2
+dungeon_minimap_cell stage_01_stardust -44 14 3
+dungeon_minimap_cell stage_01_stardust -35 23 0
+dungeon_minimap_cell stage_01_stardust -58 28 0
+dungeon_minimap_cell stage_01_stardust -43 14 2
+dungeon_minimap_cell stage_01_stardust -36 23 0
+dungeon_minimap_cell stage_01_stardust 3 11 2
+dungeon_minimap_cell stage_01_stardust -57 28 0
+dungeon_minimap_cell stage_01_stardust -5 9 1
+dungeon_minimap_cell stage_01_stardust -51 31 0
+dungeon_minimap_cell stage_01_stardust -5 10 1
+dungeon_minimap_cell stage_01_stardust -4 10 0
+dungeon_minimap_cell stage_01_stardust -16 16 1
+dungeon_minimap_cell stage_01_stardust -5 11 4
+dungeon_minimap_cell stage_01_stardust -4 11 2
+dungeon_minimap_cell stage_01_stardust -10 16 2
+dungeon_minimap_cell stage_01_stardust -3 11 1
+dungeon_minimap_cell stage_01_stardust -11 16 2
+dungeon_minimap_cell stage_01_stardust -2 11 2
+dungeon_minimap_cell stage_01_stardust 4 11 2
+dungeon_minimap_cell stage_01_stardust -61 23 0
+dungeon_minimap_cell stage_01_stardust -11 1 1
+dungeon_minimap_cell stage_01_stardust -40 28 1
+dungeon_minimap_cell stage_01_stardust 5 11 1
+dungeon_minimap_cell stage_01_stardust -62 23 2
+dungeon_minimap_cell stage_01_stardust -39 28 0
+dungeon_minimap_cell stage_01_stardust -30 18 2
+dungeon_minimap_cell stage_01_stardust -4 12 2
+dungeon_minimap_cell stage_01_stardust -37 27 1
+dungeon_minimap_cell stage_01_stardust -29 18 1
+dungeon_minimap_cell stage_01_stardust -3 12 2
+dungeon_minimap_cell stage_01_stardust -38 27 2
+dungeon_minimap_cell stage_01_stardust -32 18 1
+dungeon_minimap_cell stage_01_stardust -2 12 0
+dungeon_minimap_cell stage_01_stardust -39 27 1
+dungeon_minimap_cell stage_01_stardust -31 18 1
+dungeon_minimap_cell stage_01_stardust -1 12 2
+dungeon_minimap_cell stage_01_stardust -40 27 1
+dungeon_minimap_cell stage_01_stardust 0 12 2
+dungeon_minimap_cell stage_01_stardust -47 38 1
+dungeon_minimap_cell stage_01_stardust 1 12 2
+dungeon_minimap_cell stage_01_stardust -48 38 1
+dungeon_minimap_cell stage_01_stardust 2 12 2
+dungeon_minimap_cell stage_01_stardust 3 12 2
+dungeon_minimap_cell stage_01_stardust -39 29 0
+dungeon_minimap_cell stage_01_stardust -50 26 3
+dungeon_minimap_cell stage_01_stardust 4 12 1
+dungeon_minimap_cell stage_01_stardust -3 13 3
+dungeon_minimap_cell stage_01_stardust -40 24 3
+dungeon_minimap_cell stage_01_stardust -61 19 3
+dungeon_minimap_cell stage_01_stardust -25 4 0
+dungeon_minimap_cell stage_01_stardust -2 13 2
+dungeon_minimap_cell stage_01_stardust -37 24 1
+dungeon_minimap_cell stage_01_stardust -1 13 1
+dungeon_minimap_cell stage_01_stardust -38 24 1
+dungeon_minimap_cell stage_01_stardust 0 13 2
+dungeon_minimap_cell stage_01_stardust -61 21 3
+dungeon_minimap_cell stage_01_stardust -44 18 0
+dungeon_minimap_cell stage_01_stardust -62 21 3
+dungeon_minimap_cell stage_01_stardust -43 18 3
+dungeon_minimap_cell stage_01_stardust 1 13 2
+dungeon_minimap_cell stage_01_stardust -63 21 3
+dungeon_minimap_cell stage_01_stardust -42 18 3
+dungeon_minimap_cell stage_01_stardust 2 13 0
+dungeon_minimap_cell stage_01_stardust -41 18 3
+dungeon_minimap_cell stage_01_stardust 3 13 2
+dungeon_minimap_cell stage_01_stardust 6 9 3
+dungeon_minimap_cell stage_01_stardust -6 7 0
+dungeon_minimap_cell stage_01_stardust -34 35 2
+dungeon_minimap_cell stage_01_stardust -6 9 0
+dungeon_minimap_cell stage_01_stardust -52 31 2
+dungeon_minimap_cell stage_01_stardust -6 10 1
+dungeon_minimap_cell stage_01_stardust -21 20 2
+dungeon_minimap_cell stage_01_stardust -32 15 0
+dungeon_minimap_cell stage_01_stardust -7 6 0
+dungeon_minimap_cell stage_01_stardust -35 34 1
+dungeon_minimap_cell stage_01_stardust -7 7 0
+dungeon_minimap_cell stage_01_stardust -35 35 2
+dungeon_minimap_cell stage_01_stardust -7 8 0
+dungeon_minimap_cell stage_01_stardust -7 9 0
+dungeon_minimap_cell stage_01_stardust -49 31 0
+dungeon_minimap_cell stage_01_stardust -7 10 1
+dungeon_minimap_cell stage_01_stardust -15 16 2
+dungeon_minimap_cell stage_01_stardust -6 11 2
+dungeon_minimap_cell stage_01_stardust -27 18 1
+dungeon_minimap_cell stage_01_stardust -5 12 1
+dungeon_minimap_cell stage_01_stardust -36 27 0
+dungeon_minimap_cell stage_01_stardust -14 16 1
+dungeon_minimap_cell stage_01_stardust -7 11 1
+dungeon_minimap_cell stage_01_stardust -28 18 2
+dungeon_minimap_cell stage_01_stardust -6 12 2
+dungeon_minimap_cell stage_01_stardust -35 27 0
+dungeon_minimap_cell stage_01_stardust -4 13 2
+dungeon_minimap_cell stage_01_stardust -39 24 3
+dungeon_minimap_cell stage_01_stardust -22 20 2
+dungeon_minimap_cell stage_01_stardust -31 15 2
+dungeon_minimap_cell stage_01_stardust -8 6 0
+dungeon_minimap_cell stage_01_stardust -36 34 1
+dungeon_minimap_cell stage_01_stardust -8 8 0
+dungeon_minimap_cell stage_01_stardust -8 9 0
+dungeon_minimap_cell stage_01_stardust -50 31 0
+dungeon_minimap_cell stage_01_stardust -8 10 0
+dungeon_minimap_cell stage_01_stardust -5 13 2
+dungeon_minimap_cell stage_01_stardust -34 24 0
+dungeon_minimap_cell stage_01_stardust -59 19 3
+dungeon_minimap_cell stage_01_stardust -42 11 2
+dungeon_minimap_cell stage_01_stardust -35 16 0
+dungeon_minimap_cell stage_01_stardust -8 5 0
+dungeon_minimap_cell stage_01_stardust -25 18 2
+dungeon_minimap_cell stage_01_stardust -7 12 2
+dungeon_minimap_cell stage_01_stardust -34 27 0
+dungeon_minimap_cell stage_01_stardust -7 3 1
+dungeon_minimap_cell stage_01_stardust -32 11 3
+dungeon_minimap_cell stage_01_stardust -21 16 1
+dungeon_minimap_cell stage_01_stardust -7 2 1
+dungeon_minimap_cell stage_01_stardust -8 3 1
+dungeon_minimap_cell stage_01_stardust -31 11 1
+dungeon_minimap_cell stage_01_stardust -22 16 0
+dungeon_minimap_cell stage_01_stardust -8 2 1
+dungeon_minimap_cell stage_01_stardust -9 3 1
+dungeon_minimap_cell stage_01_stardust -9 9 0
+dungeon_minimap_cell stage_01_stardust -63 31 1
+dungeon_minimap_cell stage_01_stardust -8 1 0
+dungeon_minimap_cell stage_01_stardust -43 28 3
+dungeon_minimap_cell stage_01_stardust -50 23 3
+dungeon_minimap_cell stage_01_stardust -27 16 0
+dungeon_minimap_cell stage_01_stardust -18 11 0
+dungeon_minimap_cell stage_01_stardust -9 2 1
+dungeon_minimap_cell stage_01_stardust -10 3 1
+dungeon_minimap_cell stage_01_stardust -45 16 3
+dungeon_minimap_cell stage_01_stardust -40 11 1
+dungeon_minimap_cell stage_01_stardust -10 5 1
+dungeon_minimap_cell stage_01_stardust -28 20 1
+dungeon_minimap_cell stage_01_stardust -17 15 2
+dungeon_minimap_cell stage_01_stardust -10 6 0
+dungeon_minimap_cell stage_01_stardust -46 34 1
+dungeon_minimap_cell stage_01_stardust -31 9 1
+dungeon_minimap_cell stage_01_stardust -8 0 1
+dungeon_minimap_cell stage_01_stardust -41 31 0
+dungeon_minimap_cell stage_01_stardust -10 8 0
+dungeon_minimap_cell stage_01_stardust -32 30 2
+dungeon_minimap_cell stage_01_stardust -9 10 0
+dungeon_minimap_cell stage_01_stardust -27 24 0
+dungeon_minimap_cell stage_01_stardust -10 9 0
+dungeon_minimap_cell stage_01_stardust -13 16 1
+dungeon_minimap_cell stage_01_stardust -8 11 0
+dungeon_minimap_cell stage_01_stardust -37 11 2
+dungeon_minimap_cell stage_01_stardust -11 5 1
+dungeon_minimap_cell stage_01_stardust -28 16 0
+dungeon_minimap_cell stage_01_stardust -17 11 0
+dungeon_minimap_cell stage_01_stardust -10 2 1
+dungeon_minimap_cell stage_01_stardust -55 24 0
+dungeon_minimap_cell stage_01_stardust -37 10 1
+dungeon_minimap_cell stage_01_stardust -20 13 2
+dungeon_minimap_cell stage_01_stardust -11 4 2
+dungeon_minimap_cell stage_01_stardust -11 7 0
+dungeon_minimap_cell stage_01_stardust -47 35 1
+dungeon_minimap_cell stage_01_stardust -64 23 1
+dungeon_minimap_cell stage_01_stardust -10 1 2
+dungeon_minimap_cell stage_01_stardust -37 28 0
+dungeon_minimap_cell stage_01_stardust -11 3 1
+dungeon_minimap_cell stage_01_stardust -31 22 1
+dungeon_minimap_cell stage_01_stardust -18 9 0
+dungeon_minimap_cell stage_01_stardust -9 0 1
+dungeon_minimap_cell stage_01_stardust -40 31 0
+dungeon_minimap_cell stage_01_stardust -8 -1 1
+dungeon_minimap_cell stage_01_stardust -11 9 0
+dungeon_minimap_cell stage_01_stardust -61 31 1
+dungeon_minimap_cell stage_01_stardust -11 10 0
+dungeon_minimap_cell stage_01_stardust -10 10 0
+dungeon_minimap_cell stage_01_stardust -28 24 0
+dungeon_minimap_cell stage_01_stardust -10 11 0
+dungeon_minimap_cell stage_01_stardust -9 11 0
+dungeon_minimap_cell stage_01_stardust -23 18 1
+dungeon_minimap_cell stage_01_stardust -9 12 1
+dungeon_minimap_cell stage_01_stardust -48 27 3
+dungeon_minimap_cell stage_01_stardust -26 18 0
+dungeon_minimap_cell stage_01_stardust -8 12 4
+dungeon_minimap_cell stage_01_stardust -33 27 0
+dungeon_minimap_cell stage_01_stardust -8 13 1
+dungeon_minimap_cell stage_01_stardust -35 24 0
+dungeon_minimap_cell stage_01_stardust -58 19 3
+dungeon_minimap_cell stage_01_stardust -7 13 2
+dungeon_minimap_cell stage_01_stardust -36 24 1
+dungeon_minimap_cell stage_01_stardust -57 19 1
+dungeon_minimap_cell stage_01_stardust -6 13 2
+dungeon_minimap_cell stage_01_stardust -33 24 0
+dungeon_minimap_cell stage_01_stardust -60 19 3
+dungeon_minimap_cell stage_01_stardust -56 24 0
+dungeon_minimap_cell stage_01_stardust -45 19 0
+dungeon_minimap_cell stage_01_stardust -38 10 2
+dungeon_minimap_cell stage_01_stardust -19 13 1
+dungeon_minimap_cell stage_01_stardust -12 4 1
+dungeon_minimap_cell stage_01_stardust -42 16 0
+dungeon_minimap_cell stage_01_stardust -35 11 1
+dungeon_minimap_cell stage_01_stardust -13 5 1
+dungeon_minimap_cell stage_01_stardust -38 11 1
+dungeon_minimap_cell stage_01_stardust -12 5 2
+dungeon_minimap_cell stage_01_stardust -47 16 3
+dungeon_minimap_cell stage_01_stardust -31 20 1
+dungeon_minimap_cell stage_01_stardust -22 15 0
+dungeon_minimap_cell stage_01_stardust -13 6 1
+dungeon_minimap_cell stage_01_stardust -41 34 0
+dungeon_minimap_cell stage_01_stardust -13 9 0
+dungeon_minimap_cell stage_01_stardust -59 31 2
+dungeon_minimap_cell stage_01_stardust -12 9 0
+dungeon_minimap_cell stage_01_stardust -62 31 1
+dungeon_minimap_cell stage_01_stardust -13 10 0
+dungeon_minimap_cell stage_01_stardust -31 24 1
+dungeon_minimap_cell stage_01_stardust -12 10 0
+dungeon_minimap_cell stage_01_stardust -13 11 0
+dungeon_minimap_cell stage_01_stardust -12 11 0
+dungeon_minimap_cell stage_01_stardust -11 11 0
+dungeon_minimap_cell stage_01_stardust -22 18 2
+dungeon_minimap_cell stage_01_stardust -12 12 0
+dungeon_minimap_cell stage_01_stardust -45 27 3
+dungeon_minimap_cell stage_01_stardust -21 18 2
+dungeon_minimap_cell stage_01_stardust -11 12 1
+dungeon_minimap_cell stage_01_stardust -46 27 3
+dungeon_minimap_cell stage_01_stardust -24 18 0
+dungeon_minimap_cell stage_01_stardust -10 12 1
+dungeon_minimap_cell stage_01_stardust -47 27 3
+dungeon_minimap_cell stage_01_stardust -20 4 2
+dungeon_minimap_cell stage_01_stardust -11 13 1
+dungeon_minimap_cell stage_01_stardust -48 24 0
+dungeon_minimap_cell stage_01_stardust -53 19 2
+dungeon_minimap_cell stage_01_stardust -17 4 1
+dungeon_minimap_cell stage_01_stardust -10 13 3
+dungeon_minimap_cell stage_01_stardust -45 24 3
+dungeon_minimap_cell stage_01_stardust -56 19 1
+dungeon_minimap_cell stage_01_stardust -18 4 1
+dungeon_minimap_cell stage_01_stardust -9 13 2
+dungeon_minimap_cell stage_01_stardust -46 24 0
+dungeon_minimap_cell stage_01_stardust -55 19 1
+dungeon_minimap_cell stage_01_stardust -25 16 0
+dungeon_minimap_cell stage_01_stardust -20 11 0
+dungeon_minimap_cell stage_01_stardust -11 2 1
+dungeon_minimap_cell stage_01_stardust -26 16 0
+dungeon_minimap_cell stage_01_stardust -19 11 0
+dungeon_minimap_cell stage_01_stardust -12 2 1
+dungeon_minimap_cell stage_01_stardust -12 3 1
+dungeon_minimap_cell stage_01_stardust -44 19 0
+dungeon_minimap_cell stage_01_stardust -35 10 1
+dungeon_minimap_cell stage_01_stardust -22 13 0
+dungeon_minimap_cell stage_01_stardust -13 4 2
+dungeon_minimap_cell stage_01_stardust -49 24 3
+dungeon_minimap_cell stage_01_stardust -32 22 0
+dungeon_minimap_cell stage_01_stardust -17 9 0
+dungeon_minimap_cell stage_01_stardust -10 0 2
+dungeon_minimap_cell stage_01_stardust -39 31 0
+dungeon_minimap_cell stage_01_stardust -9 -1 1
+dungeon_minimap_cell stage_01_stardust -19 4 1
+dungeon_minimap_cell stage_01_stardust -12 13 1
+dungeon_minimap_cell stage_01_stardust -47 24 0
+dungeon_minimap_cell stage_01_stardust -54 19 3
+dungeon_minimap_cell stage_01_stardust -11 14 1
+dungeon_minimap_cell stage_01_stardust -10 14 2
+dungeon_minimap_cell stage_01_stardust -28 28 2
+dungeon_minimap_cell stage_01_stardust -9 14 1
+dungeon_minimap_cell stage_01_stardust -8 14 2
+dungeon_minimap_cell stage_01_stardust -7 14 1
+dungeon_minimap_cell stage_01_stardust -6 14 2
+dungeon_minimap_cell stage_01_stardust -5 14 2
+dungeon_minimap_cell stage_01_stardust -32 20 0
+dungeon_minimap_cell stage_01_stardust -21 15 1
+dungeon_minimap_cell stage_01_stardust -14 6 2
+dungeon_minimap_cell stage_01_stardust -42 34 4
+dungeon_minimap_cell stage_01_stardust -15 7 1
+dungeon_minimap_cell stage_01_stardust -43 35 1
+dungeon_minimap_cell stage_01_stardust -14 7 1
+dungeon_minimap_cell stage_01_stardust -42 35 1
+dungeon_minimap_cell stage_01_stardust -16 9 0
+dungeon_minimap_cell stage_01_stardust -58 31 1
+dungeon_minimap_cell stage_01_stardust -15 9 0
+dungeon_minimap_cell stage_01_stardust -57 31 1
+dungeon_minimap_cell stage_01_stardust -14 9 0
+dungeon_minimap_cell stage_01_stardust -60 31 1
+dungeon_minimap_cell stage_01_stardust -16 10 0
+dungeon_minimap_cell stage_01_stardust -30 24 2
+dungeon_minimap_cell stage_01_stardust -15 10 0
+dungeon_minimap_cell stage_01_stardust -29 24 1
+dungeon_minimap_cell stage_01_stardust -14 10 0
+dungeon_minimap_cell stage_01_stardust -32 24 0
+dungeon_minimap_cell stage_01_stardust -16 11 0
+dungeon_minimap_cell stage_01_stardust -15 11 0
+dungeon_minimap_cell stage_01_stardust -14 11 0
+dungeon_minimap_cell stage_01_stardust -15 12 2
+dungeon_minimap_cell stage_01_stardust -42 27 3
+dungeon_minimap_cell stage_01_stardust -20 18 0
+dungeon_minimap_cell stage_01_stardust -14 12 2
+dungeon_minimap_cell stage_01_stardust -43 27 3
+dungeon_minimap_cell stage_01_stardust -19 18 2
+dungeon_minimap_cell stage_01_stardust -13 12 1
+dungeon_minimap_cell stage_01_stardust -44 27 3
+dungeon_minimap_cell stage_01_stardust -24 4 1
+dungeon_minimap_cell stage_01_stardust -15 13 1
+dungeon_minimap_cell stage_01_stardust -44 24 3
+dungeon_minimap_cell stage_01_stardust -21 4 1
+dungeon_minimap_cell stage_01_stardust -14 13 1
+dungeon_minimap_cell stage_01_stardust -41 24 3
+dungeon_minimap_cell stage_01_stardust -52 19 1
+dungeon_minimap_cell stage_01_stardust -22 4 1
+dungeon_minimap_cell stage_01_stardust -13 13 2
+dungeon_minimap_cell stage_01_stardust -42 24 3
+dungeon_minimap_cell stage_01_stardust -14 14 1
+dungeon_minimap_cell stage_01_stardust -32 28 0
+dungeon_minimap_cell stage_01_stardust -13 14 1
+dungeon_minimap_cell stage_01_stardust -31 28 2
+dungeon_minimap_cell stage_01_stardust -12 14 1
+dungeon_minimap_cell stage_01_stardust -8 15 1
+dungeon_minimap_cell stage_01_stardust -59 34 2
+dungeon_minimap_cell stage_01_stardust -41 16 0
+dungeon_minimap_cell stage_01_stardust -36 11 2
+dungeon_minimap_cell stage_01_stardust -14 5 1
+dungeon_minimap_cell stage_01_stardust -29 20 2
+dungeon_minimap_cell stage_01_stardust -24 15 0
+dungeon_minimap_cell stage_01_stardust -15 6 2
+dungeon_minimap_cell stage_01_stardust -43 34 1
+dungeon_minimap_cell stage_01_stardust -16 7 1
+dungeon_minimap_cell stage_01_stardust -44 35 1
+dungeon_minimap_cell stage_01_stardust -40 13 2
+dungeon_minimap_cell stage_01_stardust -26 19 1
+dungeon_minimap_cell stage_01_stardust -17 10 0
+dungeon_minimap_cell stage_01_stardust -18 18 2
+dungeon_minimap_cell stage_01_stardust -16 12 1
+dungeon_minimap_cell stage_01_stardust -41 27 3
+dungeon_minimap_cell stage_01_stardust -23 4 1
+dungeon_minimap_cell stage_01_stardust -16 13 0
+dungeon_minimap_cell stage_01_stardust -43 24 3
+dungeon_minimap_cell stage_01_stardust -15 14 1
+dungeon_minimap_cell stage_01_stardust -29 28 2
+dungeon_minimap_cell stage_01_stardust -21 6 1
+dungeon_minimap_cell stage_01_stardust -14 15 1
+dungeon_minimap_cell stage_01_stardust -49 34 1
+dungeon_minimap_cell stage_01_stardust -42 19 3
+dungeon_minimap_cell stage_01_stardust -33 10 1
+dungeon_minimap_cell stage_01_stardust -24 13 0
+dungeon_minimap_cell stage_01_stardust -15 4 1
+dungeon_minimap_cell stage_01_stardust -51 24 3
+dungeon_minimap_cell stage_01_stardust -43 16 3
+dungeon_minimap_cell stage_01_stardust -34 11 1
+dungeon_minimap_cell stage_01_stardust -16 5 2
+dungeon_minimap_cell stage_01_stardust -44 16 3
+dungeon_minimap_cell stage_01_stardust -33 11 1
+dungeon_minimap_cell stage_01_stardust -15 5 1
+dungeon_minimap_cell stage_01_stardust -17 7 1
+dungeon_minimap_cell stage_01_stardust -53 35 1
+dungeon_minimap_cell stage_01_stardust -26 17 0
+dungeon_minimap_cell stage_01_stardust -17 8 0
+dungeon_minimap_cell stage_01_stardust -14 3 1
+dungeon_minimap_cell stage_01_stardust -13 3 1
+dungeon_minimap_cell stage_01_stardust -7 15 2
+dungeon_minimap_cell stage_01_stardust -60 34 2
+dungeon_minimap_cell stage_01_stardust -26 21 2
+dungeon_minimap_cell stage_01_stardust -17 12 0
+dungeon_minimap_cell stage_01_stardust -56 27 0
+dungeon_minimap_cell stage_01_stardust -16 14 1
+dungeon_minimap_cell stage_01_stardust -30 28 1
+dungeon_minimap_cell stage_01_stardust -28 17 0
+dungeon_minimap_cell stage_01_stardust -19 8 0
+dungeon_minimap_cell stage_01_stardust -25 17 0
+dungeon_minimap_cell stage_01_stardust -18 8 0
+dungeon_minimap_cell stage_01_stardust -38 13 1
+dungeon_minimap_cell stage_01_stardust -28 19 1
+dungeon_minimap_cell stage_01_stardust -19 10 0
+dungeon_minimap_cell stage_01_stardust -39 13 2
+dungeon_minimap_cell stage_01_stardust -25 19 1
+dungeon_minimap_cell stage_01_stardust -18 10 0
+dungeon_minimap_cell stage_01_stardust -28 21 1
+dungeon_minimap_cell stage_01_stardust -19 12 1
+dungeon_minimap_cell stage_01_stardust -54 27 0
+dungeon_minimap_cell stage_01_stardust -25 21 3
+dungeon_minimap_cell stage_01_stardust -18 12 2
+dungeon_minimap_cell stage_01_stardust -55 27 0
+dungeon_minimap_cell stage_01_stardust -25 23 2
+dungeon_minimap_cell stage_01_stardust -18 14 1
+dungeon_minimap_cell stage_01_stardust -26 23 1
+dungeon_minimap_cell stage_01_stardust -17 14 1
+dungeon_minimap_cell stage_01_stardust -19 5 2
+dungeon_minimap_cell stage_01_stardust -18 5 1
+dungeon_minimap_cell stage_01_stardust -17 5 1
+dungeon_minimap_cell stage_01_stardust -21 7 1
+dungeon_minimap_cell stage_01_stardust -49 35 2
+dungeon_minimap_cell stage_01_stardust -30 17 0
+dungeon_minimap_cell stage_01_stardust -21 8 1
+dungeon_minimap_cell stage_01_stardust -27 17 0
+dungeon_minimap_cell stage_01_stardust -20 8 1
+dungeon_minimap_cell stage_01_stardust -28 22 2
+dungeon_minimap_cell stage_01_stardust -21 9 0
+dungeon_minimap_cell stage_01_stardust -35 31 2
+dungeon_minimap_cell stage_01_stardust -29 22 0
+dungeon_minimap_cell stage_01_stardust -20 9 0
+dungeon_minimap_cell stage_01_stardust -38 31 0
+dungeon_minimap_cell stage_01_stardust -36 13 0
+dungeon_minimap_cell stage_01_stardust -30 19 2
+dungeon_minimap_cell stage_01_stardust -21 10 1
+dungeon_minimap_cell stage_01_stardust -32 16 0
+dungeon_minimap_cell stage_01_stardust -21 11 0
+dungeon_minimap_cell stage_01_stardust -30 21 1
+dungeon_minimap_cell stage_01_stardust -21 12 0
+dungeon_minimap_cell stage_01_stardust -52 27 0
+dungeon_minimap_cell stage_01_stardust -27 21 1
+dungeon_minimap_cell stage_01_stardust -20 12 1
+dungeon_minimap_cell stage_01_stardust -53 27 0
+dungeon_minimap_cell stage_01_stardust -28 23 1
+dungeon_minimap_cell stage_01_stardust -19 14 0
+dungeon_minimap_cell stage_01_stardust -41 19 3
+dungeon_minimap_cell stage_01_stardust -34 10 1
+dungeon_minimap_cell stage_01_stardust -23 13 0
+dungeon_minimap_cell stage_01_stardust -16 4 2
+dungeon_minimap_cell stage_01_stardust -52 24 3
+dungeon_minimap_cell stage_01_stardust -15 3 1
+dungeon_minimap_cell stage_01_stardust -27 23 2
+dungeon_minimap_cell stage_01_stardust -20 14 1
+dungeon_minimap_cell stage_01_stardust -27 22 1
+dungeon_minimap_cell stage_01_stardust -22 9 0
+dungeon_minimap_cell stage_01_stardust -36 31 1
+dungeon_minimap_cell stage_01_stardust -31 16 0
+dungeon_minimap_cell stage_01_stardust -22 11 0
+dungeon_minimap_cell stage_01_stardust -29 21 1
+dungeon_minimap_cell stage_01_stardust -22 12 0
+dungeon_minimap_cell stage_01_stardust -51 27 3
+dungeon_minimap_cell stage_01_stardust -20 5 1
+dungeon_minimap_cell stage_01_stardust -22 7 2
+dungeon_minimap_cell stage_01_stardust -50 35 4
+dungeon_minimap_cell stage_01_stardust -29 17 0
+dungeon_minimap_cell stage_01_stardust -22 8 1
+dungeon_minimap_cell stage_01_stardust -21 14 2
+dungeon_minimap_cell stage_01_stardust -30 23 1
+dungeon_minimap_cell stage_01_stardust -21 5 1
+dungeon_minimap_cell stage_01_stardust -37 38 1
+dungeon_minimap_cell stage_01_stardust -18 3 1
+dungeon_minimap_cell stage_01_stardust -38 38 2
+dungeon_minimap_cell stage_01_stardust -17 3 1
+dungeon_minimap_cell stage_01_stardust -16 3 1
+dungeon_minimap_cell stage_01_stardust -23 11 0
+dungeon_minimap_cell stage_01_stardust -30 16 0
+dungeon_minimap_cell stage_01_stardust -50 27 3
+dungeon_minimap_cell stage_01_stardust -23 12 0
+dungeon_minimap_cell stage_01_stardust -32 21 0
+dungeon_minimap_cell stage_01_stardust -22 14 0
+dungeon_minimap_cell stage_01_stardust -29 23 1
+dungeon_minimap_cell stage_01_stardust -33 31 2
+dungeon_minimap_cell stage_01_stardust -23 9 1
+dungeon_minimap_cell stage_01_stardust -26 22 1
+dungeon_minimap_cell stage_01_stardust -23 8 1
+dungeon_minimap_cell stage_01_stardust -32 17 0
+dungeon_minimap_cell stage_01_stardust -34 31 2
+dungeon_minimap_cell stage_01_stardust -24 9 1
+dungeon_minimap_cell stage_01_stardust -25 22 2
+dungeon_minimap_cell stage_01_stardust -24 10 1
+dungeon_minimap_cell stage_01_stardust -33 13 0
+dungeon_minimap_cell stage_01_stardust -31 19 0
+dungeon_minimap_cell stage_01_stardust -24 11 0
+dungeon_minimap_cell stage_01_stardust -29 16 0
+dungeon_minimap_cell stage_01_stardust -49 27 3
+dungeon_minimap_cell stage_01_stardust -24 12 0
+dungeon_minimap_cell stage_01_stardust -31 21 1
+dungeon_minimap_cell stage_01_stardust -32 23 0
+dungeon_minimap_cell stage_01_stardust -23 14 0
+dungeon_minimap_cell stage_01_stardust -24 8 2
+dungeon_minimap_cell stage_01_stardust -31 17 0
+dungeon_minimap_cell stage_01_stardust -25 7 1
+dungeon_minimap_cell stage_01_stardust -26 8 1
+dungeon_minimap_cell stage_01_stardust -17 17 2
+dungeon_minimap_cell stage_01_stardust -25 8 1
+dungeon_minimap_cell stage_01_stardust -18 17 2
+dungeon_minimap_cell stage_01_stardust -47 13 3
+dungeon_minimap_cell stage_01_stardust -26 10 1
+dungeon_minimap_cell stage_01_stardust -62 27 0
+dungeon_minimap_cell stage_01_stardust -27 12 2
+dungeon_minimap_cell stage_01_stardust -20 21 4
+dungeon_minimap_cell stage_01_stardust -63 27 1
+dungeon_minimap_cell stage_01_stardust -26 12 2
+dungeon_minimap_cell stage_01_stardust -64 27 2
+dungeon_minimap_cell stage_01_stardust -25 12 2
+dungeon_minimap_cell stage_01_stardust -26 14 2
+dungeon_minimap_cell stage_01_stardust -25 14 0
+dungeon_minimap_cell stage_01_stardust -31 23 1
+dungeon_minimap_cell stage_01_stardust -24 14 0
+dungeon_minimap_cell stage_01_stardust -25 5 1
+dungeon_minimap_cell stage_01_stardust -23 5 1
+dungeon_minimap_cell stage_01_stardust -27 6 1
+dungeon_minimap_cell stage_01_stardust -26 6 1
+dungeon_minimap_cell stage_01_stardust -61 34 2
+dungeon_minimap_cell stage_01_stardust -25 6 3
+dungeon_minimap_cell stage_01_stardust -26 7 1
+dungeon_minimap_cell stage_01_stardust -28 8 1
+dungeon_minimap_cell stage_01_stardust -19 17 1
+dungeon_minimap_cell stage_01_stardust -27 8 2
+dungeon_minimap_cell stage_01_stardust -20 17 1
+dungeon_minimap_cell stage_01_stardust -61 27 0
+dungeon_minimap_cell stage_01_stardust -28 12 1
+dungeon_minimap_cell stage_01_stardust -19 21 4
+dungeon_minimap_cell stage_01_stardust -27 14 0
+dungeon_minimap_cell stage_01_stardust -28 14 2
+dungeon_minimap_cell stage_01_stardust -39 38 2
+dungeon_minimap_cell stage_01_stardust -20 3 0
+dungeon_minimap_cell stage_01_stardust -40 38 1
+dungeon_minimap_cell stage_01_stardust -19 3 1
+dungeon_minimap_cell stage_01_stardust -26 5 0
+dungeon_minimap_cell stage_01_stardust -28 7 1
+dungeon_minimap_cell stage_01_stardust -23 17 0
+dungeon_minimap_cell stage_01_stardust -32 8 0
+dungeon_minimap_cell stage_01_stardust -21 17 1
+dungeon_minimap_cell stage_01_stardust -59 27 0
+dungeon_minimap_cell stage_01_stardust -30 12 2
+dungeon_minimap_cell stage_01_stardust -21 21 2
+dungeon_minimap_cell stage_01_stardust -60 27 0
+dungeon_minimap_cell stage_01_stardust -29 12 1
+dungeon_minimap_cell stage_01_stardust -22 21 2
+dungeon_minimap_cell stage_01_stardust -30 14 0
+dungeon_minimap_cell stage_01_stardust -29 14 0
+dungeon_minimap_cell stage_01_stardust -22 23 3
+dungeon_minimap_cell stage_01_stardust -23 19 1
+dungeon_minimap_cell stage_01_stardust -32 10 0
+dungeon_minimap_cell stage_01_stardust -41 13 0
+dungeon_minimap_cell stage_01_stardust -29 10 2
+dungeon_minimap_cell stage_01_stardust -22 19 2
+dungeon_minimap_cell stage_01_stardust -44 13 3
+dungeon_minimap_cell stage_01_stardust -57 27 0
+dungeon_minimap_cell stage_01_stardust -32 12 2
+dungeon_minimap_cell stage_01_stardust -23 21 4
+dungeon_minimap_cell stage_01_stardust -58 27 0
+dungeon_minimap_cell stage_01_stardust -31 12 1
+dungeon_minimap_cell stage_01_stardust -24 21 1
+dungeon_minimap_cell stage_01_stardust -32 14 0
+dungeon_minimap_cell stage_01_stardust -23 23 2
+dungeon_minimap_cell stage_01_stardust -31 14 0
+dungeon_minimap_cell stage_01_stardust -24 23 0
+dungeon_minimap_cell stage_01_stardust -33 15 0
+dungeon_minimap_cell stage_01_stardust -44 20 0
+dungeon_minimap_cell stage_01_stardust -64 30 1
+dungeon_minimap_cell stage_01_stardust -33 17 0
+dungeon_minimap_cell stage_01_stardust -42 8 1
+dungeon_minimap_cell stage_01_stardust -33 18 1
+dungeon_minimap_cell stage_01_stardust -56 21 0
+dungeon_minimap_cell stage_01_stardust -33 12 1
+dungeon_minimap_cell stage_01_stardust -42 21 3
+dungeon_minimap_cell stage_01_stardust -49 28 3
+dungeon_minimap_cell stage_01_stardust -35 14 0
+dungeon_minimap_cell stage_01_stardust -52 28 0
+dungeon_minimap_cell stage_01_stardust -34 14 0
+dungeon_minimap_cell stage_01_stardust -41 23 3
+dungeon_minimap_cell stage_01_stardust -63 30 1
+dungeon_minimap_cell stage_01_stardust -34 17 0
+dungeon_minimap_cell stage_01_stardust -41 8 0
+dungeon_minimap_cell stage_01_stardust -54 21 3
+dungeon_minimap_cell stage_01_stardust -28 27 2
+dungeon_minimap_cell stage_01_stardust -35 18 0
+dungeon_minimap_cell stage_01_stardust -34 18 0
+dungeon_minimap_cell stage_01_stardust -55 21 2
+dungeon_minimap_cell stage_01_stardust -56 18 2
+dungeon_minimap_cell stage_01_stardust -33 21 0
+dungeon_minimap_cell stage_01_stardust -42 12 2
+dungeon_minimap_cell stage_01_stardust -31 34 2
+dungeon_minimap_cell stage_01_stardust -36 15 0
+dungeon_minimap_cell stage_01_stardust -41 20 3
+dungeon_minimap_cell stage_01_stardust -53 21 3
+dungeon_minimap_cell stage_01_stardust -36 18 0
+dungeon_minimap_cell stage_01_stardust -55 18 3
+dungeon_minimap_cell stage_01_stardust -34 21 0
+dungeon_minimap_cell stage_01_stardust -41 12 2
+dungeon_minimap_cell stage_01_stardust -33 22 0
+dungeon_minimap_cell stage_01_stardust -50 28 3
+dungeon_minimap_cell stage_01_stardust -36 14 0
+dungeon_minimap_cell stage_01_stardust -35 21 0
+dungeon_minimap_cell stage_01_stardust -44 12 2
+dungeon_minimap_cell stage_01_stardust -60 30 0
+dungeon_minimap_cell stage_01_stardust -37 17 0
+dungeon_minimap_cell stage_01_stardust -52 21 3
+dungeon_minimap_cell stage_01_stardust -30 27 0
+dungeon_minimap_cell stage_01_stardust -37 18 0
+dungeon_minimap_cell stage_01_stardust -36 20 0
+dungeon_minimap_cell stage_01_stardust -41 15 0
+dungeon_minimap_cell stage_01_stardust -55 28 0
+dungeon_minimap_cell stage_01_stardust -37 14 0
+dungeon_minimap_cell stage_01_stardust -66 26 1
+dungeon_minimap_cell stage_01_stardust -37 15 0
+dungeon_minimap_cell stage_01_stardust -48 22 0
+dungeon_minimap_cell stage_01_stardust -33 9 1
+dungeon_minimap_cell stage_01_stardust -34 9 2
+dungeon_minimap_cell stage_01_stardust -59 18 3
+dungeon_minimap_cell stage_01_stardust -37 12 0
+dungeon_minimap_cell stage_01_stardust -53 30 0
+dungeon_minimap_cell stage_01_stardust -35 8 4
+dungeon_minimap_cell stage_01_stardust -44 17 3
+dungeon_minimap_cell stage_01_stardust -56 30 0
+dungeon_minimap_cell stage_01_stardust -34 8 2
+dungeon_minimap_cell stage_01_stardust -41 17 3
+dungeon_minimap_cell stage_01_stardust -55 30 0
+dungeon_minimap_cell stage_01_stardust -33 8 0
+dungeon_minimap_cell stage_01_stardust -42 17 3
+dungeon_minimap_cell stage_01_stardust -36 9 1
+dungeon_minimap_cell stage_01_stardust -35 9 4
+dungeon_minimap_cell stage_01_stardust -57 18 3
+dungeon_minimap_cell stage_01_stardust -39 12 0
+dungeon_minimap_cell stage_01_stardust -38 12 2
+dungeon_minimap_cell stage_01_stardust -48 23 0
+dungeon_minimap_cell stage_01_stardust -53 28 0
+dungeon_minimap_cell stage_01_stardust -39 14 0
+dungeon_minimap_cell stage_01_stardust -56 28 0
+dungeon_minimap_cell stage_01_stardust -38 14 0
+dungeon_minimap_cell stage_01_stardust -39 15 0
+dungeon_minimap_cell stage_01_stardust -38 15 0
+dungeon_minimap_cell stage_01_stardust -65 26 1
+dungeon_minimap_cell stage_01_stardust -59 30 0
+dungeon_minimap_cell stage_01_stardust -38 17 0
+dungeon_minimap_cell stage_01_stardust -36 21 0
+dungeon_minimap_cell stage_01_stardust -43 12 2
+dungeon_minimap_cell stage_01_stardust -54 30 0
+dungeon_minimap_cell stage_01_stardust -36 8 2
+dungeon_minimap_cell stage_01_stardust -43 17 3
+dungeon_minimap_cell stage_01_stardust -38 21 3
+dungeon_minimap_cell stage_01_stardust -45 12 2
+dungeon_minimap_cell stage_01_stardust -37 21 0
+dungeon_minimap_cell stage_01_stardust -46 12 2
+dungeon_minimap_cell stage_01_stardust -73 26 0
+dungeon_minimap_cell stage_01_stardust -39 20 3
+dungeon_minimap_cell stage_01_stardust -46 15 3
+dungeon_minimap_cell stage_01_stardust -30 31 1
+dungeon_minimap_cell stage_01_stardust -44 9 2
+dungeon_minimap_cell stage_01_stardust -37 22 1
+dungeon_minimap_cell stage_01_stardust -45 9 2
+dungeon_minimap_cell stage_01_stardust -36 22 0
+dungeon_minimap_cell stage_01_stardust -35 22 0
+dungeon_minimap_cell stage_01_stardust -34 22 0
+dungeon_minimap_cell stage_01_stardust -57 30 0
+dungeon_minimap_cell stage_01_stardust -40 17 3
+dungeon_minimap_cell stage_01_stardust -31 27 1
+dungeon_minimap_cell stage_01_stardust -40 18 3
+dungeon_minimap_cell stage_01_stardust -74 26 0
+dungeon_minimap_cell stage_01_stardust -40 20 3
+dungeon_minimap_cell stage_01_stardust -45 15 3
+dungeon_minimap_cell stage_01_stardust -47 23 0
+dungeon_minimap_cell stage_01_stardust -54 28 0
+dungeon_minimap_cell stage_01_stardust -40 14 0
+dungeon_minimap_cell stage_01_stardust -40 15 0
+dungeon_minimap_cell stage_01_stardust -42 22 3
+dungeon_minimap_cell stage_01_stardust -39 9 0
+dungeon_minimap_cell stage_01_stardust -47 14 3
+dungeon_minimap_cell stage_01_stardust -61 28 0
+dungeon_minimap_cell stage_01_stardust -40 23 3
+dungeon_minimap_cell stage_01_stardust -62 28 0
+dungeon_minimap_cell stage_01_stardust -39 23 3
+dungeon_minimap_cell stage_01_stardust -63 28 1
+dungeon_minimap_cell stage_01_stardust -38 23 1
+dungeon_minimap_cell stage_01_stardust -45 14 3
+dungeon_minimap_cell stage_01_stardust -64 28 1
+dungeon_minimap_cell stage_01_stardust -37 23 1
+dungeon_minimap_cell stage_01_stardust -46 14 3
+dungeon_minimap_cell stage_01_stardust -58 18 3
+dungeon_minimap_cell stage_01_stardust -40 12 2
+dungeon_minimap_cell stage_01_stardust -52 30 0
+dungeon_minimap_cell stage_01_stardust -38 8 1
+dungeon_minimap_cell stage_01_stardust -45 17 3
+dungeon_minimap_cell stage_01_stardust -40 7 2
+dungeon_minimap_cell stage_01_stardust -39 7 3
+dungeon_minimap_cell stage_01_stardust -38 7 0
+dungeon_minimap_cell stage_01_stardust -37 7 1
+dungeon_minimap_cell stage_01_stardust -71 18 0
+dungeon_minimap_cell stage_01_stardust -36 7 2
+dungeon_minimap_cell stage_01_stardust -53 20 3
+dungeon_minimap_cell stage_01_stardust -39 6 2
+dungeon_minimap_cell stage_01_stardust -56 20 1
+dungeon_minimap_cell stage_01_stardust -38 6 1
+dungeon_minimap_cell stage_01_stardust -55 20 1
+dungeon_minimap_cell stage_01_stardust -37 6 2
+dungeon_minimap_cell stage_01_stardust -41 7 2
+dungeon_minimap_cell stage_01_stardust -69 18 2
+dungeon_minimap_cell stage_01_stardust -34 7 2
+dungeon_minimap_cell stage_01_stardust -54 20 3
+dungeon_minimap_cell stage_01_stardust -40 6 2
+dungeon_minimap_cell stage_01_stardust -35 6 1
+dungeon_minimap_cell stage_01_stardust -70 18 0
+dungeon_minimap_cell stage_01_stardust -33 7 0
+dungeon_minimap_cell stage_01_stardust -45 18 0
+dungeon_minimap_cell stage_01_stardust -60 21 3
+dungeon_minimap_cell stage_01_stardust -61 20 3
+dungeon_minimap_cell stage_01_stardust -60 20 3
+dungeon_minimap_cell stage_01_stardust -59 20 3
+dungeon_minimap_cell stage_01_stardust -65 29 1
+dungeon_minimap_cell stage_01_stardust -58 20 1
+dungeon_minimap_cell stage_01_stardust -57 20 1
+dungeon_minimap_cell stage_01_stardust -46 18 0
+dungeon_minimap_cell stage_01_stardust -59 21 1
+dungeon_minimap_cell stage_01_stardust -58 21 1
+dungeon_minimap_cell stage_01_stardust -57 21 1
+dungeon_minimap_cell stage_01_stardust -64 22 3
+dungeon_minimap_cell stage_01_stardust -63 22 3
+dungeon_minimap_cell stage_01_stardust -62 22 3
+dungeon_minimap_cell stage_01_stardust -61 22 0
+dungeon_minimap_cell stage_01_stardust -60 22 1
+dungeon_minimap_cell stage_01_stardust -59 22 0
+dungeon_minimap_cell stage_01_stardust -58 22 0
+dungeon_minimap_cell stage_01_stardust -57 22 0
+dungeon_minimap_cell stage_01_stardust -56 22 1
+dungeon_minimap_cell stage_01_stardust -55 22 1
+dungeon_minimap_cell stage_01_stardust -54 22 3
+dungeon_minimap_cell stage_01_stardust -33 28 0
+dungeon_minimap_cell stage_01_stardust -60 23 0
+dungeon_minimap_cell stage_01_stardust -34 28 0
+dungeon_minimap_cell stage_01_stardust -59 23 0
+dungeon_minimap_cell stage_01_stardust -35 28 0
+dungeon_minimap_cell stage_01_stardust -58 23 0
+dungeon_minimap_cell stage_01_stardust -36 28 2
+dungeon_minimap_cell stage_01_stardust -57 23 0
+dungeon_minimap_cell stage_01_stardust -65 24 3
+dungeon_minimap_cell stage_01_stardust -65 25 0
+dungeon_minimap_cell stage_01_stardust -64 25 0
+dungeon_minimap_cell stage_01_stardust -63 25 1
+dungeon_minimap_cell stage_01_stardust -62 25 0
+dungeon_minimap_cell stage_01_stardust -61 25 0
+dungeon_minimap_cell stage_01_stardust -60 25 0
+dungeon_minimap_cell stage_01_stardust -59 25 0
+dungeon_minimap_cell stage_01_stardust -58 25 0
+dungeon_minimap_cell stage_01_stardust -57 25 0
+dungeon_minimap_cell stage_01_stardust -56 25 0
+dungeon_minimap_cell stage_01_stardust -55 25 0
+dungeon_minimap_cell stage_01_stardust -54 25 0
+dungeon_minimap_cell stage_01_stardust -53 25 3
+dungeon_minimap_cell stage_01_stardust -44 29 1
+dungeon_minimap_cell stage_01_stardust -61 26 0
+dungeon_minimap_cell stage_01_stardust -45 29 3
+dungeon_minimap_cell stage_01_stardust -60 26 0
+dungeon_minimap_cell stage_01_stardust -46 29 3
+dungeon_minimap_cell stage_01_stardust -59 26 0
+dungeon_minimap_cell stage_01_stardust -47 29 3
+dungeon_minimap_cell stage_01_stardust -58 26 0
+dungeon_minimap_cell stage_01_stardust -48 29 0
+dungeon_minimap_cell stage_01_stardust -57 26 0
+dungeon_minimap_cell stage_01_stardust -33 29 0
+dungeon_minimap_cell stage_01_stardust -56 26 0
+dungeon_minimap_cell stage_01_stardust -34 29 2
+dungeon_minimap_cell stage_01_stardust -55 26 0
+dungeon_minimap_cell stage_01_stardust -35 29 0
+dungeon_minimap_cell stage_01_stardust -54 26 0
+dungeon_minimap_cell stage_01_stardust -36 29 0
+dungeon_minimap_cell stage_01_stardust -53 26 0
+dungeon_minimap_cell stage_01_stardust -57 35 1
+dungeon_minimap_cell stage_01_stardust -65 27 2
+dungeon_minimap_cell stage_01_stardust -65 28 0
+dungeon_minimap_cell stage_01_stardust -71 20 0
+dungeon_minimap_cell stage_01_stardust -41 26 3
+dungeon_minimap_cell stage_01_stardust -64 29 0
+dungeon_minimap_cell stage_01_stardust -72 20 0
+dungeon_minimap_cell stage_01_stardust -42 26 3
+dungeon_minimap_cell stage_01_stardust -63 29 1
+dungeon_minimap_cell stage_01_stardust -69 20 0
+dungeon_minimap_cell stage_01_stardust -43 26 3
+dungeon_minimap_cell stage_01_stardust -62 29 2
+dungeon_minimap_cell stage_01_stardust -70 20 0
+dungeon_minimap_cell stage_01_stardust -44 26 3
+dungeon_minimap_cell stage_01_stardust -61 29 0
+dungeon_minimap_cell stage_01_stardust -67 20 3
+dungeon_minimap_cell stage_01_stardust -45 26 3
+dungeon_minimap_cell stage_01_stardust -60 29 0
+dungeon_minimap_cell stage_01_stardust -68 20 0
+dungeon_minimap_cell stage_01_stardust -46 26 2
+dungeon_minimap_cell stage_01_stardust -59 29 0
+dungeon_minimap_cell stage_01_stardust -47 26 3
+dungeon_minimap_cell stage_01_stardust -58 29 0
+dungeon_minimap_cell stage_01_stardust -48 26 3
+dungeon_minimap_cell stage_01_stardust -57 29 0
+dungeon_minimap_cell stage_01_stardust -33 26 0
+dungeon_minimap_cell stage_01_stardust -56 29 0
+dungeon_minimap_cell stage_01_stardust -34 26 0
+dungeon_minimap_cell stage_01_stardust -55 29 0
+dungeon_minimap_cell stage_01_stardust -35 26 0
+dungeon_minimap_cell stage_01_stardust -54 29 0
+dungeon_minimap_cell stage_01_stardust -61 32 1
+dungeon_minimap_cell stage_01_stardust -60 32 1
+dungeon_minimap_cell stage_01_stardust -59 32 1
+dungeon_minimap_cell stage_01_stardust -58 32 1
+dungeon_minimap_cell stage_01_stardust -57 32 1
+dungeon_minimap_cell stage_01_stardust -36 26 0
+dungeon_minimap_cell stage_01_stardust -53 29 0
+dungeon_minimap_cell stage_01_stardust -56 32 2
+dungeon_minimap_cell stage_01_stardust -38 25 1
+dungeon_minimap_cell stage_01_stardust -37 25 1
+dungeon_minimap_cell stage_01_stardust -36 25 0
+dungeon_minimap_cell stage_01_stardust -35 25 0
+dungeon_minimap_cell stage_01_stardust -34 25 3
+dungeon_minimap_cell stage_01_stardust -33 25 0
+dungeon_minimap_cell stage_01_stardust -32 25 0
+dungeon_minimap_cell stage_01_stardust -76 20 1
+dungeon_minimap_cell stage_01_stardust -51 29 0
+dungeon_minimap_cell stage_01_stardust -38 26 3
+dungeon_minimap_cell stage_01_stardust -75 20 1
+dungeon_minimap_cell stage_01_stardust -52 29 0
+dungeon_minimap_cell stage_01_stardust -37 26 1
+dungeon_minimap_cell stage_01_stardust -30 25 3
+dungeon_minimap_cell stage_01_stardust -32 26 0
+dungeon_minimap_cell stage_01_stardust -31 26 2
+dungeon_minimap_cell stage_01_stardust -73 20 0
+dungeon_minimap_cell stage_01_stardust -50 29 0
+dungeon_minimap_cell stage_01_stardust -39 26 2
+dungeon_minimap_cell stage_01_stardust -40 25 3
+dungeon_minimap_cell stage_01_stardust -74 20 0
+dungeon_minimap_cell stage_01_stardust -49 29 3
+dungeon_minimap_cell stage_01_stardust -40 26 3
+dungeon_minimap_cell stage_01_stardust -29 25 2
+dungeon_minimap_cell stage_01_stardust -30 26 1
+dungeon_minimap_cell stage_01_stardust -41 25 3
+dungeon_minimap_cell stage_01_stardust -28 25 2
+dungeon_minimap_cell stage_01_stardust -29 26 2
+dungeon_minimap_cell stage_01_stardust -27 25 1
+dungeon_minimap_cell stage_01_stardust -28 26 0
+dungeon_minimap_cell stage_01_stardust -27 26 2
+dungeon_minimap_cell stage_01_stardust -52 26 3
+dungeon_minimap_cell stage_01_stardust -37 29 0
+dungeon_minimap_cell stage_01_stardust -31 29 1
+dungeon_minimap_cell stage_01_stardust -30 29 1
+dungeon_minimap_cell stage_01_stardust -35 30 0
+dungeon_minimap_cell stage_01_stardust -34 30 1
+dungeon_minimap_cell stage_01_stardust -33 30 2
+dungeon_minimap_cell stage_01_stardust -49 26 3
+dungeon_minimap_cell stage_01_stardust -40 29 0
+dungeon_minimap_cell stage_01_stardust -51 26 3
+dungeon_minimap_cell stage_01_stardust -38 29 0
+dungeon_minimap_cell stage_01_stardust -40 30 0
+dungeon_minimap_cell stage_01_stardust -39 30 2
+dungeon_minimap_cell stage_01_stardust -38 30 0
+dungeon_minimap_cell stage_01_stardust -37 30 0
+dungeon_minimap_cell stage_01_stardust -38 32 2
+dungeon_minimap_cell stage_01_stardust -37 32 3
+dungeon_minimap_cell stage_01_stardust -36 32 2
+dungeon_minimap_cell stage_01_stardust -35 32 1
+dungeon_minimap_cell stage_01_stardust -34 32 2
+dungeon_minimap_cell stage_01_stardust -33 32 2
+dungeon_minimap_cell stage_01_stardust -72 24 0
+dungeon_minimap_cell stage_01_stardust -32 32 1
+dungeon_minimap_cell stage_01_stardust -41 30 0
+dungeon_minimap_cell stage_01_stardust -40 32 0
+dungeon_minimap_cell stage_01_stardust -39 32 2
+dungeon_minimap_cell stage_01_stardust -38 33 1
+dungeon_minimap_cell stage_01_stardust -37 33 2
+dungeon_minimap_cell stage_01_stardust -36 33 2
+dungeon_minimap_cell stage_01_stardust -35 33 2
+dungeon_minimap_cell stage_01_stardust -29 29 2
+dungeon_minimap_cell stage_01_stardust -28 29 1
+dungeon_minimap_cell stage_01_stardust -71 24 0
+dungeon_minimap_cell stage_01_stardust -31 32 0
+dungeon_minimap_cell stage_01_stardust -34 33 2
+dungeon_minimap_cell stage_01_stardust -33 33 1
+dungeon_minimap_cell stage_01_stardust -32 33 2
+dungeon_minimap_cell stage_01_stardust -70 24 0
+dungeon_minimap_cell stage_01_stardust -30 32 1
+dungeon_minimap_cell stage_01_stardust -31 33 2
+dungeon_minimap_cell stage_01_stardust -30 33 2
+dungeon_minimap_cell stage_01_stardust -39 33 2
+dungeon_minimap_cell stage_01_stardust -74 21 0
+dungeon_minimap_cell stage_01_stardust -32 35 2
+dungeon_minimap_cell stage_01_stardust -40 33 0
+dungeon_minimap_cell stage_01_stardust -41 32 0
+dungeon_minimap_cell stage_01_stardust -41 33 0
+dungeon_minimap_cell stage_01_stardust -37 36 2
+dungeon_minimap_cell stage_01_stardust -36 36 2
+dungeon_minimap_cell stage_01_stardust -35 36 2
+dungeon_minimap_cell stage_01_stardust -42 30 0
+dungeon_minimap_cell stage_01_stardust -42 32 0
+dungeon_minimap_cell stage_01_stardust -39 36 1
+dungeon_minimap_cell stage_01_stardust -38 36 2
+dungeon_minimap_cell stage_01_stardust -42 33 0
+dungeon_minimap_cell stage_01_stardust -43 30 0
+dungeon_minimap_cell stage_01_stardust -43 33 0
+dungeon_minimap_cell stage_01_stardust -44 30 0
+dungeon_minimap_cell stage_01_stardust -44 32 0
+dungeon_minimap_cell stage_01_stardust -42 25 3
+dungeon_minimap_cell stage_01_stardust -43 25 3
+dungeon_minimap_cell stage_01_stardust -42 36 1
+dungeon_minimap_cell stage_01_stardust -41 36 2
+dungeon_minimap_cell stage_01_stardust -40 36 2
+dungeon_minimap_cell stage_01_stardust -41 37 3
+dungeon_minimap_cell stage_01_stardust -39 37 1
+dungeon_minimap_cell stage_01_stardust -38 37 2
+dungeon_minimap_cell stage_01_stardust -37 37 2
+dungeon_minimap_cell stage_01_stardust -36 37 2
+dungeon_minimap_cell stage_01_stardust -45 32 0
+dungeon_minimap_cell stage_01_stardust -45 33 0
+dungeon_minimap_cell stage_01_stardust -44 33 0
+dungeon_minimap_cell stage_01_stardust -45 36 3
+dungeon_minimap_cell stage_01_stardust -45 37 1
+dungeon_minimap_cell stage_01_stardust -44 37 2
+dungeon_minimap_cell stage_01_stardust -44 38 1
+dungeon_minimap_cell stage_01_stardust -43 38 2
+dungeon_minimap_cell stage_01_stardust -42 38 2
+dungeon_minimap_cell stage_01_stardust -41 38 2
+dungeon_minimap_cell stage_01_stardust -43 39 1
+dungeon_minimap_cell stage_01_stardust -42 39 2
+dungeon_minimap_cell stage_01_stardust -41 39 2
+dungeon_minimap_cell stage_01_stardust -40 39 2
+dungeon_minimap_cell stage_01_stardust -39 39 2
+dungeon_minimap_cell stage_01_stardust -38 39 2
+dungeon_minimap_cell stage_01_stardust -46 32 3
+dungeon_minimap_cell stage_01_stardust -46 33 0
+dungeon_minimap_cell stage_01_stardust -44 25 3
+dungeon_minimap_cell stage_01_stardust -62 20 1
+dungeon_minimap_cell stage_01_stardust -65 23 0
+dungeon_minimap_cell stage_01_stardust -47 32 0
+dungeon_minimap_cell stage_01_stardust -47 33 0
+dungeon_minimap_cell stage_01_stardust -47 30 0
+dungeon_minimap_cell stage_01_stardust -46 36 3
+dungeon_minimap_cell stage_01_stardust -48 30 0
+dungeon_minimap_cell stage_01_stardust -48 32 0
+dungeon_minimap_cell stage_01_stardust -48 33 2
+dungeon_minimap_cell stage_01_stardust -62 32 2
+dungeon_minimap_cell stage_01_stardust -49 32 0
+dungeon_minimap_cell stage_01_stardust -49 33 1
+dungeon_minimap_cell stage_01_stardust -47 36 1
+dungeon_minimap_cell stage_01_stardust -46 37 3
+dungeon_minimap_cell stage_01_stardust -47 37 2
+dungeon_minimap_cell stage_01_stardust -45 38 1
+dungeon_minimap_cell stage_01_stardust -48 36 2
+dungeon_minimap_cell stage_01_stardust -46 38 2
+dungeon_minimap_cell stage_01_stardust -49 36 3
+dungeon_minimap_cell stage_01_stardust -48 37 1
+dungeon_minimap_cell stage_01_stardust -50 32 2
+dungeon_minimap_cell stage_01_stardust -50 33 1
+dungeon_minimap_cell stage_01_stardust -49 37 1
+dungeon_minimap_cell stage_01_stardust -52 32 2
+dungeon_minimap_cell stage_01_stardust -51 32 2
+dungeon_minimap_cell stage_01_stardust -51 33 2
+dungeon_minimap_cell stage_01_stardust -51 36 1
+dungeon_minimap_cell stage_01_stardust -50 36 2
+dungeon_minimap_cell stage_01_stardust -50 37 1
+dungeon_minimap_cell stage_01_stardust -52 36 1
+dungeon_minimap_cell stage_01_stardust -51 37 1
+dungeon_minimap_cell stage_01_stardust -54 32 1
+dungeon_minimap_cell stage_01_stardust -53 32 2
+dungeon_minimap_cell stage_01_stardust -53 33 1
+dungeon_minimap_cell stage_01_stardust -55 32 2
+dungeon_minimap_cell stage_01_stardust -54 36 1
+dungeon_minimap_cell stage_01_stardust -53 36 1
+dungeon_minimap_cell stage_01_stardust -52 37 1
+dungeon_minimap_cell stage_01_stardust -46 25 3
+dungeon_minimap_cell stage_01_stardust -45 25 1
+dungeon_minimap_cell stage_01_stardust -48 25 3
+dungeon_minimap_cell stage_01_stardust -47 25 3
+dungeon_minimap_cell stage_01_stardust -49 25 3
+dungeon_minimap_cell stage_01_stardust -50 25 3
+dungeon_minimap_cell stage_01_stardust -51 25 3
+dungeon_minimap_cell stage_01_stardust -52 25 1
+dungeon_minimap_cell stage_01_stardust -57 33 1
+dungeon_minimap_cell stage_01_stardust -58 33 1
+dungeon_minimap_cell stage_01_stardust -57 34 1
+dungeon_minimap_cell stage_01_stardust -58 34 1
+dungeon_minimap_cell stage_01_stardust -53 22 3
+dungeon_minimap_cell stage_01_stardust -59 33 1
+dungeon_minimap_cell stage_01_stardust -72 19 0
+dungeon_minimap_cell stage_01_stardust -70 19 0
+dungeon_minimap_cell stage_01_stardust -69 19 3
+dungeon_minimap_cell stage_01_stardust -68 19 3
+dungeon_minimap_cell stage_01_stardust -73 21 0
+dungeon_minimap_cell stage_01_stardust -72 21 0
+dungeon_minimap_cell stage_01_stardust -71 21 0
+dungeon_minimap_cell stage_01_stardust -70 21 0
+dungeon_minimap_cell stage_01_stardust -69 21 0
+dungeon_minimap_cell stage_01_stardust -68 21 3
+dungeon_minimap_cell stage_01_stardust -67 21 3
+dungeon_minimap_cell stage_01_stardust -73 22 0
+dungeon_minimap_cell stage_01_stardust -72 22 0
+dungeon_minimap_cell stage_01_stardust -71 22 0
+dungeon_minimap_cell stage_01_stardust -70 22 0
+dungeon_minimap_cell stage_01_stardust -69 22 0
+dungeon_minimap_cell stage_01_stardust -68 22 1
+dungeon_minimap_cell stage_01_stardust -67 22 2
+dungeon_minimap_cell stage_01_stardust -72 23 0
+dungeon_minimap_cell stage_01_stardust -71 23 0
+dungeon_minimap_cell stage_01_stardust -70 23 0
+dungeon_minimap_cell stage_01_stardust -69 23 0
+dungeon_minimap_cell stage_01_stardust -68 23 0
+dungeon_minimap_cell stage_01_stardust -69 24 3
+dungeon_minimap_cell stage_01_stardust -60 33 2
+dungeon_minimap_cell stage_01_stardust -74 17 2
+dungeon_minimap_cell stage_01_stardust -73 17 1
+dungeon_minimap_cell stage_01_stardust -72 17 0
+dungeon_minimap_cell stage_01_stardust -71 17 0
+dungeon_minimap_cell stage_01_stardust -70 17 3
+dungeon_minimap_cell stage_01_stardust -75 18 1
+dungeon_minimap_cell stage_01_stardust -74 18 1
+dungeon_minimap_cell stage_01_stardust -73 18 0
+dungeon_minimap_cell stage_01_stardust -76 19 1
+dungeon_minimap_cell stage_01_stardust -75 19 1
+dungeon_minimap_cell stage_01_stardust -74 19 0
+dungeon_minimap_cell stage_01_stardust -73 19 0
+dungeon_minimap_cell stage_01_stardust -76 21 1
+dungeon_minimap_cell stage_01_stardust -75 21 0
+dungeon_minimap_cell stage_01_stardust -76 22 1
+dungeon_minimap_cell stage_01_stardust -75 22 0
+dungeon_minimap_cell stage_01_stardust -74 22 0
+dungeon_minimap_cell stage_01_stardust -76 23 1
+dungeon_minimap_cell stage_01_stardust -75 23 1
+dungeon_minimap_cell stage_01_stardust -74 23 0
+dungeon_minimap_cell stage_01_stardust -73 23 0
+dungeon_minimap_cell stage_01_stardust -74 24 2
+dungeon_minimap_cell stage_01_stardust -73 24 0
+dungeon_minimap_cell stage_01_stardust -74 25 0
+dungeon_minimap_cell stage_01_stardust -73 25 1
+dungeon_minimap_cell stage_01_stardust -72 25 0
+dungeon_minimap_cell stage_01_stardust -71 25 0
+dungeon_minimap_cell stage_01_stardust -70 25 0
+dungeon_minimap_cell stage_01_stardust -76 24 1
+dungeon_minimap_cell stage_01_stardust -75 25 0
+dungeon_minimap_cell stage_01_stardust -74 16 1
+dungeon_minimap_cell stage_01_stardust -73 16 0
+dungeon_minimap_cell stage_01_stardust -72 16 1
+dungeon_minimap_cell stage_01_stardust -75 17 1
+dungeon_minimap_cell stage_01_stardust -76 18 1
+dungeon_minimap_cell stage_01_stardust -63 20 3
+dungeon_minimap_cell stage_01_stardust -66 25 2
+dungeon_minimap_cell stage_01_stardust -58 35 2
+dungeon_minimap_cell stage_01_stardust -66 27 1
+dungeon_minimap_cell stage_01_stardust -52 22 3
+dungeon_minimap_cell stage_01_stardust -52 20 3
+dungeon_minimap_cell stage_01_stardust -51 22 3
+dungeon_minimap_cell stage_01_stardust -51 20 3
+dungeon_minimap_cell stage_01_stardust -63 32 1
+dungeon_minimap_cell stage_01_stardust -49 22 0
+dungeon_tile_edit stage_01_stardust -262 72 0
+dungeon_tile_edit stage_01_stardust -261 70 0
+dungeon_tile_edit stage_01_stardust -261 71 0
+dungeon_tile_edit stage_01_stardust -261 72 0
+dungeon_tile_edit stage_01_stardust -261 73 0
+dungeon_tile_edit stage_01_stardust -261 74 0
+dungeon_tile_edit stage_01_stardust -260 69 0
+dungeon_tile_edit stage_01_stardust -260 70 0
+dungeon_tile_edit stage_01_stardust -260 71 0
+dungeon_tile_edit stage_01_stardust -260 72 0
+dungeon_tile_edit stage_01_stardust -260 73 0
+dungeon_tile_edit stage_01_stardust -260 74 0
+dungeon_tile_edit stage_01_stardust -260 75 0
+dungeon_tile_edit stage_01_stardust -259 68 0
+dungeon_tile_edit stage_01_stardust -259 69 0
+dungeon_tile_edit stage_01_stardust -259 70 0
+dungeon_tile_edit stage_01_stardust -259 71 0
+dungeon_tile_edit stage_01_stardust -259 72 0
+dungeon_tile_edit stage_01_stardust -259 73 0
+dungeon_tile_edit stage_01_stardust -259 74 0
+dungeon_tile_edit stage_01_stardust -259 75 0
+dungeon_tile_edit stage_01_stardust -259 76 0
+dungeon_tile_edit stage_01_stardust -258 67 0
+dungeon_tile_edit stage_01_stardust -258 68 0
+dungeon_tile_edit stage_01_stardust -258 69 0
+dungeon_tile_edit stage_01_stardust -258 70 0
+dungeon_tile_edit stage_01_stardust -258 71 0
+dungeon_tile_edit stage_01_stardust -258 72 0
+dungeon_tile_edit stage_01_stardust -258 73 0
+dungeon_tile_edit stage_01_stardust -258 74 0
+dungeon_tile_edit stage_01_stardust -258 75 0
+dungeon_tile_edit stage_01_stardust -258 76 0
+dungeon_tile_edit stage_01_stardust -258 77 0
+dungeon_tile_edit stage_01_stardust -257 67 0
+dungeon_tile_edit stage_01_stardust -257 68 0
+dungeon_tile_edit stage_01_stardust -257 69 0
+dungeon_tile_edit stage_01_stardust -257 70 0
+dungeon_tile_edit stage_01_stardust -257 71 0
+dungeon_tile_edit stage_01_stardust -257 72 0
+dungeon_tile_edit stage_01_stardust -257 73 0
+dungeon_tile_edit stage_01_stardust -257 74 0
+dungeon_tile_edit stage_01_stardust -257 75 0
+dungeon_tile_edit stage_01_stardust -257 76 0
+dungeon_tile_edit stage_01_stardust -257 77 0
+dungeon_tile_edit stage_01_stardust -256 67 0
+dungeon_tile_edit stage_01_stardust -256 68 0
+dungeon_tile_edit stage_01_stardust -256 69 0
+dungeon_tile_edit stage_01_stardust -256 70 0
+dungeon_tile_edit stage_01_stardust -256 71 0
+dungeon_tile_edit stage_01_stardust -256 72 0
+dungeon_tile_edit stage_01_stardust -256 73 0
+dungeon_tile_edit stage_01_stardust -256 74 0
+dungeon_tile_edit stage_01_stardust -256 75 0
+dungeon_tile_edit stage_01_stardust -256 76 0
+dungeon_tile_edit stage_01_stardust -256 77 0
+dungeon_tile_edit stage_01_stardust -255 67 0
+dungeon_tile_edit stage_01_stardust -255 68 0
+dungeon_tile_edit stage_01_stardust -255 69 0
+dungeon_tile_edit stage_01_stardust -255 70 0
+dungeon_tile_edit stage_01_stardust -255 71 0
+dungeon_tile_edit stage_01_stardust -255 72 0
+dungeon_tile_edit stage_01_stardust -255 73 0
+dungeon_tile_edit stage_01_stardust -255 74 0
+dungeon_tile_edit stage_01_stardust -255 75 0
+dungeon_tile_edit stage_01_stardust -255 76 0
+dungeon_tile_edit stage_01_stardust -255 77 0
+dungeon_tile_edit stage_01_stardust -254 66 0
+dungeon_tile_edit stage_01_stardust -254 67 0
+dungeon_tile_edit stage_01_stardust -254 68 0
+dungeon_tile_edit stage_01_stardust -254 69 0
+dungeon_tile_edit stage_01_stardust -254 70 0
+dungeon_tile_edit stage_01_stardust -254 71 0
+dungeon_tile_edit stage_01_stardust -254 72 0
+dungeon_tile_edit stage_01_stardust -254 73 0
+dungeon_tile_edit stage_01_stardust -254 74 0
+dungeon_tile_edit stage_01_stardust -254 75 0
+dungeon_tile_edit stage_01_stardust -254 76 0
+dungeon_tile_edit stage_01_stardust -254 77 0
+dungeon_tile_edit stage_01_stardust -254 78 0
+dungeon_tile_edit stage_01_stardust -253 67 0
+dungeon_tile_edit stage_01_stardust -253 68 0
+dungeon_tile_edit stage_01_stardust -253 69 0
+dungeon_tile_edit stage_01_stardust -253 70 0
+dungeon_tile_edit stage_01_stardust -253 71 0
+dungeon_tile_edit stage_01_stardust -253 72 0
+dungeon_tile_edit stage_01_stardust -253 73 0
+dungeon_tile_edit stage_01_stardust -253 74 0
+dungeon_tile_edit stage_01_stardust -253 75 0
+dungeon_tile_edit stage_01_stardust -253 76 0
+dungeon_tile_edit stage_01_stardust -253 77 0
+dungeon_tile_edit stage_01_stardust -252 67 0
+dungeon_tile_edit stage_01_stardust -252 68 0
+dungeon_tile_edit stage_01_stardust -252 69 0
+dungeon_tile_edit stage_01_stardust -252 70 0
+dungeon_tile_edit stage_01_stardust -252 71 0
+dungeon_tile_edit stage_01_stardust -252 72 0
+dungeon_tile_edit stage_01_stardust -252 73 0
+dungeon_tile_edit stage_01_stardust -252 74 0
+dungeon_tile_edit stage_01_stardust -252 75 0
+dungeon_tile_edit stage_01_stardust -252 76 0
+dungeon_tile_edit stage_01_stardust -252 77 0
+dungeon_tile_edit stage_01_stardust -251 67 0
+dungeon_tile_edit stage_01_stardust -251 68 0
+dungeon_tile_edit stage_01_stardust -251 69 0
+dungeon_tile_edit stage_01_stardust -251 70 0
+dungeon_tile_edit stage_01_stardust -251 71 0
+dungeon_tile_edit stage_01_stardust -251 72 0
+dungeon_tile_edit stage_01_stardust -251 73 0
+dungeon_tile_edit stage_01_stardust -251 74 0
+dungeon_tile_edit stage_01_stardust -251 75 0
+dungeon_tile_edit stage_01_stardust -251 76 0
+dungeon_tile_edit stage_01_stardust -251 77 0
+dungeon_tile_edit stage_01_stardust -250 67 0
+dungeon_tile_edit stage_01_stardust -250 68 0
+dungeon_tile_edit stage_01_stardust -250 69 0
+dungeon_tile_edit stage_01_stardust -250 70 0
+dungeon_tile_edit stage_01_stardust -250 71 0
+dungeon_tile_edit stage_01_stardust -250 72 0
+dungeon_tile_edit stage_01_stardust -250 73 0
+dungeon_tile_edit stage_01_stardust -250 74 0
+dungeon_tile_edit stage_01_stardust -250 75 0
+dungeon_tile_edit stage_01_stardust -250 76 0
+dungeon_tile_edit stage_01_stardust -250 77 0
+dungeon_tile_edit stage_01_stardust -249 68 0
+dungeon_tile_edit stage_01_stardust -249 69 0
+dungeon_tile_edit stage_01_stardust -249 70 0
+dungeon_tile_edit stage_01_stardust -249 71 0
+dungeon_tile_edit stage_01_stardust -249 72 0
+dungeon_tile_edit stage_01_stardust -249 73 0
+dungeon_tile_edit stage_01_stardust -249 74 0
+dungeon_tile_edit stage_01_stardust -249 75 0
+dungeon_tile_edit stage_01_stardust -249 76 0
+dungeon_tile_edit stage_01_stardust -248 69 0
+dungeon_tile_edit stage_01_stardust -248 70 0
+dungeon_tile_edit stage_01_stardust -248 71 0
+dungeon_tile_edit stage_01_stardust -248 72 0
+dungeon_tile_edit stage_01_stardust -248 73 0
+dungeon_tile_edit stage_01_stardust -248 74 0
+dungeon_tile_edit stage_01_stardust -248 75 0
+dungeon_tile_edit stage_01_stardust -247 70 0
+dungeon_tile_edit stage_01_stardust -247 71 0
+dungeon_tile_edit stage_01_stardust -247 72 0
+dungeon_tile_edit stage_01_stardust -247 73 0
+dungeon_tile_edit stage_01_stardust -247 74 0
+dungeon_tile_edit stage_01_stardust -247 75 0
+dungeon_tile_edit stage_01_stardust -246 72 0
+dungeon_tile_edit stage_01_stardust -246 73 0
+dungeon_tile_edit stage_01_stardust -246 74 0
+dungeon_tile_edit stage_01_stardust -246 75 0
+dungeon_tile_edit stage_01_stardust -245 73 0
+dungeon_tile_edit stage_01_stardust -245 74 0
+dungeon_tile_edit stage_01_stardust -245 75 0
+dungeon_tile_edit stage_01_stardust -56 26 0
+dungeon_tile_edit stage_01_stardust -55 28 0
+dungeon_tile_edit stage_01_stardust -55 29 0
+dungeon_tile_edit stage_01_stardust -55 30 0
+dungeon_tile_edit stage_01_stardust -54 27 0
+dungeon_tile_edit stage_01_stardust -54 28 0
+dungeon_tile_edit stage_01_stardust -54 29 0
+dungeon_tile_edit stage_01_stardust -54 30 0
+dungeon_tile_edit stage_01_stardust -54 31 0
+dungeon_tile_edit stage_01_stardust -53 26 0
+dungeon_tile_edit stage_01_stardust -53 27 0
+dungeon_tile_edit stage_01_stardust -53 28 0
+dungeon_tile_edit stage_01_stardust -53 29 0
+dungeon_tile_edit stage_01_stardust -53 30 0
+dungeon_tile_edit stage_01_stardust -53 31 0
+dungeon_tile_edit stage_01_stardust -52 27 0
+dungeon_tile_edit stage_01_stardust -52 28 0
+dungeon_tile_edit stage_01_stardust -52 29 0
+dungeon_tile_edit stage_01_stardust -52 30 0
+dungeon_tile_edit stage_01_stardust -51 28 0
+dungeon_tile_edit stage_01_stardust -51 29 0
+dungeon_tile_edit stage_01_stardust -51 30 0
+dungeon_tile_edit stage_01_stardust -51 31 0
+dungeon_tile_edit stage_01_stardust -50 29 0
+dungeon_tile_edit stage_01_stardust -50 30 0
+dungeon_tile_edit stage_01_stardust -50 31 0
+dungeon_tile_edit stage_01_stardust -49 30 0
+dungeon_tile_edit stage_01_stardust -49 31 0
+dungeon_tile_edit stage_01_stardust -49 32 0
+dungeon_tile_edit stage_01_stardust -48 29 0
+dungeon_tile_edit stage_01_stardust -48 30 0
+dungeon_tile_edit stage_01_stardust -48 31 0
+dungeon_tile_edit stage_01_stardust -48 32 0
+dungeon_tile_edit stage_01_stardust -47 30 0
+dungeon_tile_edit stage_01_stardust -47 31 0
+dungeon_tile_edit stage_01_stardust -47 32 0
+dungeon_tile_edit stage_01_stardust -47 33 0
+dungeon_tile_edit stage_01_stardust -46 31 0
+dungeon_tile_edit stage_01_stardust -46 33 0
+dungeon_tile_edit stage_01_stardust -45 30 0
+dungeon_tile_edit stage_01_stardust -45 31 0
+dungeon_tile_edit stage_01_stardust -45 32 0
+dungeon_tile_edit stage_01_stardust -45 33 0
+dungeon_tile_edit stage_01_stardust -44 31 0
+dungeon_tile_edit stage_01_stardust -44 33 0
+dungeon_tile_edit stage_01_stardust -43 30 0
+dungeon_tile_edit stage_01_stardust -43 31 0
+dungeon_tile_edit stage_01_stardust -43 32 0
+dungeon_tile_edit stage_01_stardust -43 33 0
+dungeon_tile_edit stage_01_stardust -42 29 0
+dungeon_tile_edit stage_01_stardust -42 31 0
+dungeon_tile_edit stage_01_stardust -42 32 0
+dungeon_tile_edit stage_01_stardust -42 33 0
+dungeon_tile_edit stage_01_stardust -41 13 0
+dungeon_tile_edit stage_01_stardust -41 29 0
+dungeon_tile_edit stage_01_stardust -41 30 0
+dungeon_tile_edit stage_01_stardust -41 31 0
+dungeon_tile_edit stage_01_stardust -41 32 0
+dungeon_tile_edit stage_01_stardust -41 34 0
+dungeon_tile_edit stage_01_stardust -40 29 0
+dungeon_tile_edit stage_01_stardust -40 30 0
+dungeon_tile_edit stage_01_stardust -40 31 0
+dungeon_tile_edit stage_01_stardust -40 32 0
+dungeon_tile_edit stage_01_stardust -40 33 0
+dungeon_tile_edit stage_01_stardust -39 28 0
+dungeon_tile_edit stage_01_stardust -39 29 0
+dungeon_tile_edit stage_01_stardust -39 31 0
+dungeon_tile_edit stage_01_stardust -38 14 0
+dungeon_tile_edit stage_01_stardust -38 15 0
+dungeon_tile_edit stage_01_stardust -38 17 0
+dungeon_tile_edit stage_01_stardust -38 18 0
+dungeon_tile_edit stage_01_stardust -38 29 0
+dungeon_tile_edit stage_01_stardust -38 31 0
+dungeon_tile_edit stage_01_stardust -37 14 0
+dungeon_tile_edit stage_01_stardust -37 15 0
+dungeon_tile_edit stage_01_stardust -37 16 0
+dungeon_tile_edit stage_01_stardust -37 17 0
+dungeon_tile_edit stage_01_stardust -37 18 0
+dungeon_tile_edit stage_01_stardust -37 19 0
+dungeon_tile_edit stage_01_stardust -37 21 0
+dungeon_tile_edit stage_01_stardust -37 28 0
+dungeon_tile_edit stage_01_stardust -37 29 0
+dungeon_tile_edit stage_01_stardust -37 30 0
+dungeon_tile_edit stage_01_stardust -37 31 0
+dungeon_tile_edit stage_01_stardust -36 12 0
+dungeon_tile_edit stage_01_stardust -36 13 0
+dungeon_tile_edit stage_01_stardust -36 14 0
+dungeon_tile_edit stage_01_stardust -36 15 0
+dungeon_tile_edit stage_01_stardust -36 16 0
+dungeon_tile_edit stage_01_stardust -36 18 0
+dungeon_tile_edit stage_01_stardust -36 19 0
+dungeon_tile_edit stage_01_stardust -36 20 0
+dungeon_tile_edit stage_01_stardust -36 21 0
+dungeon_tile_edit stage_01_stardust -36 22 0
+dungeon_tile_edit stage_01_stardust -36 23 0
+dungeon_tile_edit stage_01_stardust -36 25 0
+dungeon_tile_edit stage_01_stardust -36 26 0
+dungeon_tile_edit stage_01_stardust -36 27 0
+dungeon_tile_edit stage_01_stardust -36 30 0
+dungeon_tile_edit stage_01_stardust -35 13 0
+dungeon_tile_edit stage_01_stardust -35 14 0
+dungeon_tile_edit stage_01_stardust -35 15 0
+dungeon_tile_edit stage_01_stardust -35 16 0
+dungeon_tile_edit stage_01_stardust -35 17 0
+dungeon_tile_edit stage_01_stardust -35 18 0
+dungeon_tile_edit stage_01_stardust -35 19 0
+dungeon_tile_edit stage_01_stardust -35 20 0
+dungeon_tile_edit stage_01_stardust -35 21 0
+dungeon_tile_edit stage_01_stardust -35 22 0
+dungeon_tile_edit stage_01_stardust -35 23 0
+dungeon_tile_edit stage_01_stardust -35 24 0
+dungeon_tile_edit stage_01_stardust -35 25 0
+dungeon_tile_edit stage_01_stardust -35 26 0
+dungeon_tile_edit stage_01_stardust -35 27 0
+dungeon_tile_edit stage_01_stardust -35 30 0
+dungeon_tile_edit stage_01_stardust -34 13 0
+dungeon_tile_edit stage_01_stardust -34 14 0
+dungeon_tile_edit stage_01_stardust -34 15 0
+dungeon_tile_edit stage_01_stardust -34 16 0
+dungeon_tile_edit stage_01_stardust -34 17 0
+dungeon_tile_edit stage_01_stardust -34 18 0
+dungeon_tile_edit stage_01_stardust -34 19 0
+dungeon_tile_edit stage_01_stardust -34 20 0
+dungeon_tile_edit stage_01_stardust -34 21 0
+dungeon_tile_edit stage_01_stardust -34 22 0
+dungeon_tile_edit stage_01_stardust -34 23 0
+dungeon_tile_edit stage_01_stardust -34 24 0
+dungeon_tile_edit stage_01_stardust -33 13 0
+dungeon_tile_edit stage_01_stardust -33 14 0
+dungeon_tile_edit stage_01_stardust -33 15 0
+dungeon_tile_edit stage_01_stardust -33 16 0
+dungeon_tile_edit stage_01_stardust -33 20 0
+dungeon_tile_edit stage_01_stardust -33 21 0
+dungeon_tile_edit stage_01_stardust -33 22 0
+dungeon_tile_edit stage_01_stardust -33 23 0
+dungeon_tile_edit stage_01_stardust -33 24 0
+dungeon_tile_edit stage_01_stardust -33 25 0
+dungeon_tile_edit stage_01_stardust -32 14 0
+dungeon_tile_edit stage_01_stardust -32 15 0
+dungeon_tile_edit stage_01_stardust -32 16 0
+dungeon_tile_edit stage_01_stardust -32 20 0
+dungeon_tile_edit stage_01_stardust -32 21 0
+dungeon_tile_edit stage_01_stardust -32 22 0
+dungeon_tile_edit stage_01_stardust -32 23 0
+dungeon_tile_edit stage_01_stardust -32 24 0
+dungeon_tile_edit stage_01_stardust -32 25 0
+dungeon_tile_edit stage_01_stardust -31 14 0
+dungeon_tile_edit stage_01_stardust -31 16 0
+dungeon_tile_edit stage_01_stardust -31 17 0
+dungeon_tile_edit stage_01_stardust -30 14 0
+dungeon_tile_edit stage_01_stardust -30 15 0
+dungeon_tile_edit stage_01_stardust -30 16 0
+dungeon_tile_edit stage_01_stardust -30 17 0
+dungeon_tile_edit stage_01_stardust -29 14 0
+dungeon_tile_edit stage_01_stardust -29 15 0
+dungeon_tile_edit stage_01_stardust -29 16 0
+dungeon_tile_edit stage_01_stardust -29 17 0
+dungeon_tile_edit stage_01_stardust -28 15 0
+dungeon_tile_edit stage_01_stardust -28 16 0
+dungeon_tile_edit stage_01_stardust -28 17 0
+dungeon_tile_edit stage_01_stardust -27 14 0
+dungeon_tile_edit stage_01_stardust -27 15 0
+dungeon_tile_edit stage_01_stardust -27 16 0
+dungeon_tile_edit stage_01_stardust -27 17 0
+dungeon_tile_edit stage_01_stardust -26 15 0
+dungeon_tile_edit stage_01_stardust -26 16 0
+dungeon_tile_edit stage_01_stardust -26 17 0
+dungeon_tile_edit stage_01_stardust -26 18 0
+dungeon_tile_edit stage_01_stardust -25 13 0
+dungeon_tile_edit stage_01_stardust -25 14 0
+dungeon_tile_edit stage_01_stardust -25 15 0
+dungeon_tile_edit stage_01_stardust -25 16 0
+dungeon_tile_edit stage_01_stardust -25 17 0
+dungeon_tile_edit stage_01_stardust -24 11 0
+dungeon_tile_edit stage_01_stardust -24 13 0
+dungeon_tile_edit stage_01_stardust -24 14 0
+dungeon_tile_edit stage_01_stardust -24 15 0
+dungeon_tile_edit stage_01_stardust -24 16 0
+dungeon_tile_edit stage_01_stardust -24 17 0
+dungeon_tile_edit stage_01_stardust -24 18 0
+dungeon_tile_edit stage_01_stardust -23 10 0
+dungeon_tile_edit stage_01_stardust -23 11 0
+dungeon_tile_edit stage_01_stardust -23 12 0
+dungeon_tile_edit stage_01_stardust -23 13 0
+dungeon_tile_edit stage_01_stardust -23 14 0
+dungeon_tile_edit stage_01_stardust -23 15 0
+dungeon_tile_edit stage_01_stardust -23 16 0
+dungeon_tile_edit stage_01_stardust -22 9 0
+dungeon_tile_edit stage_01_stardust -22 10 0
+dungeon_tile_edit stage_01_stardust -22 11 0
+dungeon_tile_edit stage_01_stardust -22 12 0
+dungeon_tile_edit stage_01_stardust -22 13 0
+dungeon_tile_edit stage_01_stardust -22 14 0
+dungeon_tile_edit stage_01_stardust -22 15 0
+dungeon_tile_edit stage_01_stardust -22 16 0
+dungeon_tile_edit stage_01_stardust -21 9 0
+dungeon_tile_edit stage_01_stardust -21 11 0
+dungeon_tile_edit stage_01_stardust -21 12 0
+dungeon_tile_edit stage_01_stardust -20 9 0
+dungeon_tile_edit stage_01_stardust -20 10 0
+dungeon_tile_edit stage_01_stardust -20 11 0
+dungeon_tile_edit stage_01_stardust -19 8 0
+dungeon_tile_edit stage_01_stardust -19 9 0
+dungeon_tile_edit stage_01_stardust -19 10 0
+dungeon_tile_edit stage_01_stardust -19 11 0
+dungeon_tile_edit stage_01_stardust -18 8 0
+dungeon_tile_edit stage_01_stardust -18 9 0
+dungeon_tile_edit stage_01_stardust -18 10 0
+dungeon_tile_edit stage_01_stardust -18 11 0
+dungeon_tile_edit stage_01_stardust -17 8 0
+dungeon_tile_edit stage_01_stardust -17 9 0
+dungeon_tile_edit stage_01_stardust -17 10 0
+dungeon_tile_edit stage_01_stardust -17 11 0
+dungeon_tile_edit stage_01_stardust -16 8 0
+dungeon_tile_edit stage_01_stardust -16 9 0
+dungeon_tile_edit stage_01_stardust -16 10 0
+dungeon_tile_edit stage_01_stardust -16 11 0
+dungeon_tile_edit stage_01_stardust -15 9 0
+dungeon_tile_edit stage_01_stardust -15 10 0
+dungeon_tile_edit stage_01_stardust -15 11 0
+dungeon_tile_edit stage_01_stardust -14 8 0
+dungeon_tile_edit stage_01_stardust -14 9 0
+dungeon_tile_edit stage_01_stardust -14 10 0
+dungeon_tile_edit stage_01_stardust -14 11 0
+dungeon_tile_edit stage_01_stardust -13 8 0
+dungeon_tile_edit stage_01_stardust -13 9 0
+dungeon_tile_edit stage_01_stardust -13 10 0
+dungeon_tile_edit stage_01_stardust -13 11 0
+dungeon_tile_edit stage_01_stardust -12 8 0
+dungeon_tile_edit stage_01_stardust -12 9 0
+dungeon_tile_edit stage_01_stardust -12 10 0
+dungeon_tile_edit stage_01_stardust -12 11 0
+dungeon_tile_edit stage_01_stardust -11 7 0
+dungeon_tile_edit stage_01_stardust -11 9 0
+dungeon_tile_edit stage_01_stardust -11 10 0
+dungeon_tile_edit stage_01_stardust -11 11 0
+dungeon_tile_edit stage_01_stardust -10 6 0
+dungeon_tile_edit stage_01_stardust -10 7 0
+dungeon_tile_edit stage_01_stardust -10 8 0
+dungeon_tile_edit stage_01_stardust -10 9 0
+dungeon_tile_edit stage_01_stardust -10 10 0
+dungeon_tile_edit stage_01_stardust -10 11 0
+dungeon_tile_edit stage_01_stardust -9 6 0
+dungeon_tile_edit stage_01_stardust -9 7 0
+dungeon_tile_edit stage_01_stardust -9 9 0
+dungeon_tile_edit stage_01_stardust -9 10 0
+dungeon_tile_edit stage_01_stardust -9 11 0
+dungeon_tile_edit stage_01_stardust -8 5 0
+dungeon_tile_edit stage_01_stardust -8 6 0
+dungeon_tile_edit stage_01_stardust -8 7 0
+dungeon_tile_edit stage_01_stardust -8 8 0
+dungeon_tile_edit stage_01_stardust -8 9 0
+dungeon_tile_edit stage_01_stardust -8 10 0
+dungeon_tile_edit stage_01_stardust -8 11 0
+dungeon_tile_edit stage_01_stardust -7 4 0
+dungeon_tile_edit stage_01_stardust -7 5 0
+dungeon_tile_edit stage_01_stardust -7 6 0
+dungeon_tile_edit stage_01_stardust -7 7 0
+dungeon_tile_edit stage_01_stardust -7 8 0
+dungeon_tile_edit stage_01_stardust -7 9 0
+dungeon_tile_edit stage_01_stardust -6 3 0
+dungeon_tile_edit stage_01_stardust -6 4 0
+dungeon_tile_edit stage_01_stardust -6 5 0
+dungeon_tile_edit stage_01_stardust -6 6 0
+dungeon_tile_edit stage_01_stardust -6 7 0
+dungeon_tile_edit stage_01_stardust -6 8 0
+dungeon_tile_edit stage_01_stardust -6 9 0
+dungeon_tile_edit stage_01_stardust -5 3 0
+dungeon_tile_edit stage_01_stardust -5 4 0
+dungeon_tile_edit stage_01_stardust -5 5 0
+dungeon_tile_edit stage_01_stardust -5 6 0
+dungeon_tile_edit stage_01_stardust -5 7 0
+dungeon_tile_edit stage_01_stardust -5 8 0
+dungeon_tile_edit stage_01_stardust -4 3 0
+dungeon_tile_edit stage_01_stardust -4 4 0
+dungeon_tile_edit stage_01_stardust -4 5 0
+dungeon_tile_edit stage_01_stardust -4 6 0
+dungeon_tile_edit stage_01_stardust -4 7 0
+dungeon_tile_edit stage_01_stardust -3 3 0
+dungeon_tile_edit stage_01_stardust -3 4 0
+dungeon_tile_edit stage_01_stardust -3 6 0
+dungeon_tile_edit stage_01_stardust -3 7 0
+dungeon_tile_edit stage_01_stardust -2 -3 0
+dungeon_tile_edit stage_01_stardust -2 4 0
+dungeon_tile_edit stage_01_stardust -2 5 0
+dungeon_tile_edit stage_01_stardust -2 6 0
+dungeon_tile_edit stage_01_stardust -2 8 0
+dungeon_tile_edit stage_01_stardust -1 -3 0
+dungeon_tile_edit stage_01_stardust -1 3 0
+dungeon_tile_edit stage_01_stardust -1 4 0
+dungeon_tile_edit stage_01_stardust -1 5 0
+dungeon_tile_edit stage_01_stardust -1 6 0
+dungeon_tile_edit stage_01_stardust -1 7 0
+dungeon_tile_edit stage_01_stardust 0 4 0
+dungeon_tile_edit stage_01_stardust 0 5 0
+dungeon_tile_edit stage_01_stardust 0 6 0
+dungeon_tile_edit stage_01_stardust 0 7 0
+dungeon_tile_edit stage_01_stardust 0 8 0
+dungeon_tile_edit stage_01_stardust 1 3 0
+dungeon_tile_edit stage_01_stardust 1 4 0
+dungeon_tile_edit stage_01_stardust 1 6 0
+dungeon_tile_edit stage_01_stardust 2 3 0
+dungeon_tile_edit stage_01_stardust 2 4 0
+dungeon_tile_edit stage_01_stardust 2 5 0
+dungeon_tile_edit stage_01_stardust 3 -1 0
+dungeon_tile_edit stage_01_stardust 3 1 0
+dungeon_tile_edit stage_01_stardust 3 2 0
+dungeon_tile_edit stage_01_stardust 3 3 0
+dungeon_tile_edit stage_01_stardust 4 -1 0
+dungeon_tile_edit stage_01_stardust 4 0 0
+dungeon_tile_edit stage_01_stardust 4 1 0
+dungeon_tile_edit stage_01_stardust 5 0 0
+dungeon_tile_edit stage_01_stardust 5 1 0
+dungeon_tile_edit stage_01_stardust 5 2 0
+dungeon_reward_node stage_01_stardust -42 34 1 0 0 0 0
+dungeon_reward_node stage_01_stardust -69 15 1 0 0 0 0
+dungeon_reward_node stage_01_stardust -85 22 2 0 0 0 0
+dungeon_reward_node stage_01_stardust -108 2 1 0 0 0 0
+dungeon_reward_node stage_01_stardust -129 7 1 0 0 0 0
+dungeon_reward_node stage_01_stardust -148 14 2 0 0 0 0
+dungeon_reward_node stage_01_stardust -149 37 1 0 0 0 0
+dungeon_reward_node stage_01_stardust -178 58 1 0 0 0 0
+dungeon_reward_node stage_01_stardust -194 47 2 0 0 0 0
+dungeon_reward_node stage_01_stardust -208 71 1 0 0 0 0
+dungeon_reward_node stage_01_stardust -224 66 0 1 0 0 0
+dungeon_reward_node stage_01_stardust -240 79 2 0 0 0 0
+dungeon_reward_node stage_01_stardust -79 29 0 1 0 0 0
+dungeon_reward_node stage_01_stardust -99 6 0 1 0 0 0
+dungeon_reward_node stage_01_stardust -147 13 0 1 0 0 0
+dungeon_reward_node stage_01_stardust -175 32 0 1 0 0 0
+dungeon_reward_node stage_01_stardust -184 64 0 1 0 0 0
+dungeon_reward_node stage_01_stardust -232 84 0 1 0 0 0
+dungeon_reward_node stage_01_stardust -33 27 0 1 1 1 0
+dungeon_reward_node stage_01_stardust -75 26 0 1 0 0 0
+dungeon_reward_node stage_01_stardust -68 16 0 1 0 0 0
+dungeon_reward_node stage_01_stardust -58 14 1 0 0 0 0
+dungeon_reward_node stage_01_stardust -171 20 0 1 0 0 0
+dungeon_reward_node stage_01_stardust -166 20 1 0 0 0 0
+dungeon_reward_node stage_01_stardust -177 20 2 0 0 0 0
+dungeon_reward_node stage_01_stardust -275 84 2 0 0 0 0
+dungeon_reward_node stage_01_stardust -39 21 1 0 0 0 0
+dungeon_money_node stage_01_stardust -52 15 1 0 0
+dungeon_money_node stage_01_stardust -45 37 1 0 0
+dungeon_money_node stage_01_stardust -53 19 2 0 0
+dungeon_money_node stage_01_stardust -83 20 1 0 0
+dungeon_money_node stage_01_stardust -89 14 1 0 0
+dungeon_money_node stage_01_stardust -116 19 2 0 0
+dungeon_money_node stage_01_stardust -117 2 1 0 0
+dungeon_money_node stage_01_stardust -129 24 1 0 0
+dungeon_money_node stage_01_stardust -134 25 2 0 0
+dungeon_money_node stage_01_stardust -155 36 1 0 0
+dungeon_money_node stage_01_stardust -185 28 1 0 0
+dungeon_money_node stage_01_stardust -172 40 2 0 0
+dungeon_money_node stage_01_stardust -193 49 1 0 0
+dungeon_money_node stage_01_stardust -205 66 1 0 0
+dungeon_money_node stage_01_stardust -210 75 2 0 0
+dungeon_money_node stage_01_stardust -271 85 1 0 0
+dungeon_money_node stage_01_stardust -243 79 1 0 0
+dungeon_money_node stage_01_stardust -246 75 0 0 0
+dungeon_money_node stage_01_stardust -61 36 0 1 0
+dungeon_money_node stage_01_stardust -98 2 0 1 0
+dungeon_money_node stage_01_stardust -100 -1 0 1 0
+dungeon_money_node stage_01_stardust -146 11 0 1 0
+dungeon_money_node stage_01_stardust -150 38 0 1 0
+dungeon_money_node stage_01_stardust -181 65 0 1 0
+dungeon_money_node stage_01_stardust -208 55 0 1 0
+dungeon_money_node stage_01_stardust -233 67 0 1 0
+dungeon_money_node stage_01_stardust -31 7 0 1 0
+dungeon_money_node stage_01_stardust -40 15 0 1 0
+dungeon_money_node stage_01_stardust -89 18 0 1 0
+dungeon_money_node stage_01_stardust -135 24 0 1 0
+dungeon_money_node stage_01_stardust -152 18 0 1 0
+dungeon_money_node stage_01_stardust -226 66 0 1 0
+dungeon_money_node stage_01_stardust -249 79 0 1 0
+dungeon_money_node stage_01_stardust -118 37 0 1 0
+dungeon_money_node stage_01_stardust -118 40 0 1 0
+dungeon_money_node stage_01_stardust -121 40 0 1 0
+dungeon_money_node stage_01_stardust -124 40 0 1 0
+dungeon_money_node stage_01_stardust -124 37 0 1 0
+dungeon_money_node stage_01_stardust -122 34 0 1 0
+dungeon_money_node stage_01_stardust -119 35 0 1 0
+dungeon_moon_fragment_node stage_01_stardust -58 23 0 1
+dungeon_moon_fragment_node stage_01_stardust -56 26 1 1
+dungeon_moon_fragment_node stage_01_stardust -58 29 0 1
+dungeon_moon_fragment_node stage_01_stardust -121 12 0 1
+dungeon_moon_fragment_node stage_01_stardust -118 8 1 0
+dungeon_moon_fragment_node stage_01_stardust -119 11 0 1
+dungeon_moon_fragment_node stage_01_stardust -177 52 0 1
+dungeon_moon_fragment_node stage_01_stardust -232 80 0 1
+dungeon_moon_fragment_node stage_01_stardust -231 79 0 0
+dungeon_moon_fragment_node stage_01_stardust -231 74 0 1
+dungeon_moon_fragment_node stage_01_stardust -168 32 0 1
+dungeon_chest_node stage_01_stardust -190 61 0 1 0 0 0 - 0 0
+dungeon_chest_node stage_01_stardust -247 70 0 1 0 0 0 - 0 0
+dungeon_chest_node stage_01_stardust -30 24 1 1 0 0 0 - 0 0
+dungeon_chest_node stage_01_stardust -51 23 1 1 0 0 0 - 0 0
+dungeon_chest_node stage_01_stardust -71 30 2 0 0 0 0 - 0 0
+dungeon_chest_node stage_01_stardust -74 8 2 0 0 0 0 - 0 0
+dungeon_chest_node stage_01_stardust -90 18 0 1 0 0 0 - 0 0
+dungeon_chest_node stage_01_stardust -106 16 1 1 0 0 0 - 0 0
+dungeon_chest_node stage_01_stardust -116 -1 2 0 0 0 0 - 0 0
+dungeon_chest_node stage_01_stardust -129 26 2 0 0 0 0 - 0 0
+dungeon_chest_node stage_01_stardust -147 32 1 1 0 0 0 - 0 0
+dungeon_chest_node stage_01_stardust -151 37 1 1 0 0 0 - 0 0
+dungeon_chest_node stage_01_stardust -157 40 2 0 0 0 0 mimic 0 0
+dungeon_chest_node stage_01_stardust -186 50 2 0 0 0 0 - 0 0
+dungeon_chest_node stage_01_stardust -189 53 1 1 0 0 0 - 0 0
+dungeon_chest_node stage_01_stardust -206 54 1 1 0 0 0 - 0 0
+dungeon_chest_node stage_01_stardust -214 79 2 0 0 0 0 - 0 0
+dungeon_chest_node stage_01_stardust -227 83 2 0 0 0 0 - 0 0
+dungeon_chest_node stage_01_stardust -244 79 1 1 0 0 0 - 0 0
+dungeon_chest_node stage_01_stardust -260 72 0 1 0 0 0 - 0 0
+dungeon_chest_node stage_01_stardust -72 8 0 1 0 0 0 - 0 0
+dungeon_chest_node stage_01_stardust -126 3 0 1 0 0 0 - 0 0
+dungeon_chest_node stage_01_stardust -170 49 0 1 0 0 0 - 0 0
+dungeon_chest_node stage_01_stardust -207 75 0 1 0 0 0 - 0 0
+dungeon_crate_node stage_01_stardust -90 18 0
+dungeon_crate_node stage_01_stardust -135 23 0
+dungeon_crate_node stage_01_stardust -153 18 0
+dungeon_crate_node stage_01_stardust -191 61 0
+dungeon_crate_node stage_01_stardust -225 66 0
+dungeon_crate_node stage_01_stardust -249 80 0
+dungeon_crate_node stage_01_stardust -247 69 0
+dungeon_crate_node stage_01_stardust -56 24 1
+dungeon_crate_node stage_01_stardust -125 8 0
+dungeon_crate_node stage_01_stardust -173 48 0
+dungeon_crate_node stage_01_stardust -232 74 0
+dungeon_crate_node stage_01_stardust -64 16 0
+dungeon_crate_node stage_01_stardust -123 36 0
+dungeon_crate_node stage_01_stardust -173 19 0
+dungeon_crate_node stage_01_stardust -273 79 0
+dungeon_crate_node stage_01_stardust -46 19 0
+dungeon_crate_node stage_01_stardust -258 29 0
+dungeon_crate_node stage_01_stardust -60 29 0
+dungeon_crate_node stage_01_stardust -119 10 0
+dungeon_crate_node stage_01_stardust -177 46 0
+dungeon_crate_node stage_01_stardust -230 76 0
+dungeon_crate_node stage_01_stardust -65 13 0
+dungeon_crate_node stage_01_stardust -120 34 0
+dungeon_crate_node stage_01_stardust -169 19 0
+dungeon_crate_node stage_01_stardust -272 76 0
+dungeon_crate_node stage_01_stardust -47 23 0
+dungeon_crate_node stage_01_stardust -250 25 0
+dungeon_crate_node stage_01_stardust -57 29 1
+dungeon_crate_node stage_01_stardust -121 6 0
+dungeon_crate_node stage_01_stardust -174 46 0
+dungeon_crate_node stage_01_stardust -236 76 0
+dungeon_crate_node stage_01_stardust -64 11 0
+dungeon_crate_node stage_01_stardust -120 39 0
+dungeon_crate_node stage_01_stardust -170 22 0
+dungeon_crate_node stage_01_stardust -271 78 0
+dungeon_crate_node stage_01_stardust -48 20 0
+dungeon_crate_node stage_01_stardust -253 24 0
+dungeon_enemy_node stage_01_stardust -71 31 1 0
+dungeon_enemy_node stage_01_stardust -87 10 1 0
+dungeon_enemy_node stage_01_stardust -127 14 1 0
+dungeon_enemy_node stage_01_stardust -157 23 1 0
+dungeon_enemy_node stage_01_stardust -177 51 1 0
+dungeon_enemy_node stage_01_stardust -201 58 1 0
+dungeon_enemy_node stage_01_stardust -221 79 1 0
+dungeon_enemy_node stage_01_stardust -32 7 0 0
+dungeon_enemy_node stage_01_stardust -41 15 0 1
+dungeon_enemy_node stage_01_stardust -55 25 0 1
+dungeon_enemy_node stage_01_stardust -75 11 0 0
+dungeon_enemy_node stage_01_stardust -114 17 0 0
+dungeon_enemy_node stage_01_stardust -168 33 0 0
+dungeon_enemy_node stage_01_stardust -175 50 0 0
+dungeon_enemy_node stage_01_stardust -196 64 0 0
+dungeon_enemy_node stage_01_stardust -271 77 0 0
+dungeon_enemy_node stage_01_stardust -275 80 0 0
+dungeon_enemy_node stage_01_stardust -278 77 1 0
+dungeon_enemy_node stage_01_stardust -275 74 1 0
+dungeon_event_instance stage_01_stardust room_1_coin_room coin_room -121 38 -121 38 4 0 0 3.6 CoinRoom 0 - source=CoinRoom;reward=-121:38;encounter=0;activated=0;bossDefeated=0;npcRequestKnown=0;objectiveResolved=0;rewardClaimed=0;bossId=0;spawnCount=0;guideTarget=-1;guideRemaining=0.000000
+dungeon_event_instance stage_01_stardust fixed_1_0_glowing_rock_room glowing_rock_room -72 21 -72 21 5 0 0 4 fixed_section_1 0 - source=fixed_section_1;reward=-72:18;encounter=1;activated=0;bossDefeated=0;npcRequestKnown=0;objectiveResolved=0;rewardClaimed=0;bossId=0;spawnCount=0;guideTarget=-1;guideRemaining=0.000000;objects=rock:-70:21:10:10:0:0|rock:-73:23:10:10:0:0|rock:-73:19:10:10:0:0
+dungeon_event_instance stage_01_stardust fixed_1_1_buried_witch buried_witch -87 9 -87 9 5 0 0 3 fixed_section_1 0 - source=fixed_section_1;reward=-87:9;encounter=1;activated=0;bossDefeated=0;npcRequestKnown=0;objectiveResolved=0;rewardClaimed=0;bossId=0;spawnCount=0;guideTarget=-1;guideRemaining=0.000000
+dungeon_event_instance stage_01_stardust fixed_2_2_lost_baggage_witch lost_baggage_witch -137 20 -137 20 5 0 0 3 fixed_section_2 0 - source=fixed_section_2;reward=-137:20;encounter=1;activated=0;bossDefeated=0;npcRequestKnown=0;objectiveResolved=0;rewardClaimed=0;bossId=0;spawnCount=0;guideTarget=-1;guideRemaining=0.000000;objects=baggage:-143:17:1:1:0:0
+dungeon_event_instance stage_01_stardust fixed_2_3_monster_swarm_room monster_swarm_room -163 35 -163 35 5 0 0 4 fixed_section_2 0 - source=fixed_section_2;reward=-163:32;encounter=1;activated=1;bossDefeated=0;npcRequestKnown=0;objectiveResolved=0;rewardClaimed=0;bossId=0;spawnCount=6;guideTarget=-1;guideRemaining=0.000000
+dungeon_event_instance stage_01_stardust fixed_3_4_item_request_witch item_request_witch -205 61 -205 61 5 0 0 3 fixed_section_3 0 - source=fixed_section_3;reward=-205:61;encounter=1;activated=0;bossDefeated=0;npcRequestKnown=0;objectiveResolved=0;rewardClaimed=0;bossId=0;spawnCount=0;request=tool;guideTarget=-1;guideRemaining=0.000000
+dungeon_event_instance stage_01_stardust fixed_3_5_nest_room nest_room -220 71 -220 71 5 0 0 4 fixed_section_3 0 - source=fixed_section_3;reward=-220:71;encounter=1;activated=1;bossDefeated=0;npcRequestKnown=0;objectiveResolved=0;rewardClaimed=0;bossId=0;spawnCount=2;guideTarget=-1;guideRemaining=0.000000;holes=-218:71:18:18:0:0
+dungeon_world_drop stage_01_stardust money money 8 -2901.2 1747.1 0 141.127
+dungeon_world_drop stage_01_stardust money money 11 -4679.35 113.793 0 141.127
+dungeon_world_drop stage_01_stardust money money 7 -4779.7 -20.4954 0 141.127
+dungeon_world_drop stage_01_stardust money money 9 -6983.15 558.38 0 141.127
+dungeon_world_drop stage_01_stardust money money 6 -7174.05 1845.15 0 141.127
+dungeon_world_drop stage_01_stardust money money 11 -8668.53 3145.66 0 141.127
+dungeon_world_drop stage_01_stardust money money 9 -9955.55 2666.12 0 141.127
+dungeon_world_drop stage_01_stardust money money 8 -11158.6 3235.99 0 141.127
+dungeon_world_drop stage_01_stardust money money 6 -1462.47 354.677 0 141.127
+dungeon_world_drop stage_01_stardust money money 8 -4252.79 893.795 0 141.127
+dungeon_world_drop stage_01_stardust money money 8 -6456.97 1172.43 0 141.127
+dungeon_world_drop stage_01_stardust money money 4 -7266.23 885.068 0 141.127
+dungeon_world_drop stage_01_stardust money money 9 -10825.7 3188.72 0 141.127
+dungeon_world_drop stage_01_stardust money money 4 -11925.1 3818.11 0 141.127
+dungeon_world_drop stage_01_stardust money money 10 -5644.23 1805.31 0 141.127
+dungeon_world_drop stage_01_stardust money money 11 -5644.41 1945 0 141.127
+dungeon_world_drop stage_01_stardust money money 8 -5783.15 1941.19 0 141.127
+dungeon_world_drop stage_01_stardust money money 6 -5928.59 1950.22 0 141.127
+dungeon_world_drop stage_01_stardust money money 6 -5931.15 1794.17 0 141.127
+dungeon_world_drop stage_01_stardust money money 10 -5833.82 1650.85 0 141.127
+dungeon_world_drop stage_01_stardust money money 10 -5693.37 1698.9 0 141.127
+dungeon_world_drop stage_01_stardust material moon_fragment 1 -2757.8 1130.53 0 141.127
+dungeon_world_drop stage_01_stardust material moon_fragment 1 -5782.87 604.41 0 141.127
+dungeon_world_drop stage_01_stardust material moon_fragment 1 -5682.33 550.554 0 141.127
+dungeon_world_drop stage_01_stardust material moon_fragment 1 -8469.16 2524.36 0 141.127
+dungeon_world_drop stage_01_stardust material moon_fragment 1 -11108.8 3861.34 0 141.127
+dungeon_world_drop stage_01_stardust material moon_fragment 1 -11062.7 3578.82 0 141.127
+dungeon_world_drop stage_01_stardust material moon_fragment 1 -8045.31 1558.69 0 141.127
+dungeon_world_drop stage_01_stardust money money 6 184.284 79.67 4.86256 136.275
+dungeon_world_drop stage_01_stardust money money 5 -208.048 151.852 27.315 109.502
+dungeon_world_drop stage_01_stardust money money 8 -220.586 239.123 29.549 107.259
+dungeon_world_drop stage_01_stardust money money 4 -467.494 421.853 31.0501 105.773
+dungeon_world_drop stage_01_stardust money money 3 -495.755 344 31.7006 105.12
+dungeon_world_drop stage_01_stardust money money 2 -368.793 567.706 33.7046 103.124
+dungeon_world_drop stage_01_stardust money money 3 -1018.55 659.958 51.2906 85.528
+dungeon_world_drop stage_01_stardust money money 9 -1106.45 684.48 53.3469 83.4615
+dungeon_world_drop stage_01_stardust money money 9 -1222.38 876.175 63.9623 72.8461
+dungeon_world_drop stage_01_stardust money money 4 -1464.55 822.008 69.7418 67.0762
+dungeon_world_drop stage_01_stardust money money 8 -1613.28 716.665 73.094 63.7143
+dungeon_world_drop stage_01_stardust money money 8 -1750.75 847.717 81.9245 54.8838
+dungeon_world_drop stage_01_stardust money money 9 -1532.69 1058.85 92.9883 43.8202
+dungeon_world_drop stage_01_stardust material enhancement_ore 1 -1509.91 1158.12 93.616 43.2029
+dungeon_world_drop stage_01_stardust material enhancement_ore 3 -1769.46 1411.61 100.722 36.0978
+dungeon_world_drop stage_01_stardust money money 2 -1859.68 1525.69 101.928 34.8915
+dungeon_world_drop stage_01_stardust money money 4 -2406.78 1517.25 111.279 25.5478
+dungeon_world_drop stage_01_stardust money money 8 -2459.18 1422.55 113.551 23.2573
+dungeon_world_drop stage_01_stardust money money 3 -2479.92 1303.84 126 10.8224
+object item_apple 2
+object_instance iteminst_3 item_staff_apprentice_witch 120 120 0 0 0 0 1 1 0 0 0 0 0
+material old_wood_building_material 3
+material enhancement_ore 0
+material moon_fragment 2
+material mana_drop 2
+ring 4 item_torch 4 fire 0 30 45 0.7 11 0.26 3.14159 iteminst_2 0 0 0 0 1 1 0 0 0 0 0 0
+ring 4 treasure_candle 2 fire 0 14 20 0.12 11 0.26 4.71239 iteminst_5 0 0 0 0 1 1 0 0 0 0 0 0
+ring 4 treasure_candle 2 fire 0 11 20 0.12 11 0.26 2.35619 iteminst_6 0 0 0 0 1 1 0 0 0 0 0 0
+ring 4 treasure_junk_barrel 4 blunt 3 33 50 1.2 11 0.26 1.5708 iteminst_8 0 0 0 0 1 1 0 0 0 0 0 0
+ring 4 item_shovel 6 blunt 12 41 105 1.2 11 0.26 3.92699 iteminst_9 0 0 0 0 1 1 0 0 0 0 0 0
+ring 4 item_shovel 6 blunt 12 22 105 1.2 11 0.26 5.49779 iteminst_10 0 0 0 0 1 1 0 0 0 0 0 0
+ring 4 item_apple 0 none 0 1 1 0.2 11 0.26 0.349066 iteminst_13 0 0 0 0 1 1 0 0 0 0 0 0
+ring 4 treasure_junk_barrel 4 blunt 3 39 50 1.2 11 0.26 0.959931 iteminst_12 0 0 0 0 1 1 0 0 0 0 0 0
+ring 4 item_torch 4 fire 0 45 45 0.7 11 0.26 6.02139 iteminst_11 0 0 0 0 1 1 0 0 0 0 0 0
+ring 4 treasure_asakou_03 2 blunt 4 18 20 0.18 11 0.26 1.91986 iteminst_14 0 0 0 0 1 1 0 0 0 0 0 0
+ring 4 treasure_asakou_02 2 blunt 2 19 20 0.12 11 0.26 2.70526 iteminst_15 0 0 0 0 1 1 0 0 0 0 0 0

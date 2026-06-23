@@ -23,6 +23,9 @@ constexpr std::string_view RescueTorchObjectId = "item_torch";
 constexpr float BaseMiningRescueDropDurationSeconds = 1.05f;
 constexpr float BaseMiningRescueDropEndSeconds = 1.55f;
 constexpr std::string_view BaseRandomTalkTriggerPrefix = "base_random_talk:";
+constexpr int BookshelfEndingReplayMenuIndex = BookshelfMenuItemCount;
+constexpr float BookshelfMenuChoiceGap = 16.0f;
+constexpr float BookshelfEndingCommandMinWidth = 240.0f;
 
 bool isBaseRandomTalkSpeaker(std::string_view speakerId)
 {
@@ -1941,6 +1944,49 @@ void applyHiddenRouteFacilityAvailability(
         facilities.end());
 }
 
+const char* bookshelfMenuLabel(int index)
+{
+    switch (index) {
+    case 0:
+        return "アイテム図鑑";
+    case 1:
+        return "モンスター図鑑";
+    case BookshelfEndingReplayMenuIndex:
+        return "エンディングを見る";
+    default:
+        return "";
+    }
+}
+
+const char* bookshelfEndingReplayLabel(EndingKind kind)
+{
+    switch (kind) {
+    case EndingKind::Main:
+        return "エンド1";
+    case EndingKind::EncyclopediaComplete:
+        return "図鑑コンプリートエンド";
+    case EndingKind::AstralClear:
+        return "不可思議の迷宮踏破エンド";
+    case EndingKind::HiddenBad:
+    case EndingKind::MainFailedTrust:
+    case EndingKind::MainFailedMonicaMissing:
+    case EndingKind::EncyclopediaFailedTrust:
+    case EndingKind::AstralFailedTrust:
+        break;
+    }
+    return "エンディング";
+}
+
+std::vector<UiCommandMenuItem> bookshelfEndingReplayCommandItems(const std::vector<EndingKind>& choices)
+{
+    std::vector<UiCommandMenuItem> items;
+    items.reserve(choices.size());
+    for (EndingKind kind : choices) {
+        items.push_back({bookshelfEndingReplayLabel(kind), true});
+    }
+    return items;
+}
+
 UiRect merchantActionDialogRect()
 {
     return smallActionDialogRect();
@@ -1951,14 +1997,27 @@ UiRect merchantActionChoiceRect(int index)
     return smallActionChoiceRect(index);
 }
 
+UiRect bookshelfMenuPanelRect(int itemCount)
+{
+    UiRect rect = merchantActionDialogRect();
+    const int extraItems = std::max(0, itemCount - BookshelfMenuItemCount);
+    rect.size.y += static_cast<float>(extraItems) * (ui::ButtonHeight + BookshelfMenuChoiceGap);
+    return rect;
+}
+
 UiRect bookshelfMenuPanelRect()
 {
-    return merchantActionDialogRect();
+    return bookshelfMenuPanelRect(BookshelfMenuItemCount);
+}
+
+UiRect bookshelfMenuChoiceRect(UiRect panel, int index)
+{
+    return smallActionChoiceRectForDialog(panel, index);
 }
 
 UiRect bookshelfMenuChoiceRect(int index)
 {
-    return merchantActionChoiceRect(index);
+    return bookshelfMenuChoiceRect(bookshelfMenuPanelRect(), index);
 }
 
 InventoryUiGridStyle bookshelfGridStyle()
@@ -6312,6 +6371,7 @@ void Game::closeBaseFacilityScreens()
     baseRingWorkshopActive_ = false;
     baseRingWorkshopMode_ = RingWorkshopMode::ChooseAction;
     baseBookshelfActive_ = false;
+    closeUiCommandMenu(bookshelfEndingCommandMenu_);
     baseDiaryActive_ = false;
 }
 
@@ -7108,7 +7168,31 @@ void Game::openBookshelf()
     bookshelfSelection_ = 0;
     bookshelfScrollOffset_ = 0.0f;
     bookshelfScrollState_ = {};
+    closeUiCommandMenu(bookshelfEndingCommandMenu_);
     baseStatus_.clear();
+}
+
+std::vector<EndingKind> Game::bookshelfEndingReplayChoices() const
+{
+    std::vector<EndingKind> choices;
+    if (hasStoryFlag(StoryTrustBrokenFlag) || hasStoryFlag(HiddenEndingPeopleGoneFlag)) {
+        return choices;
+    }
+    if (hasStoryFlag(StoryEndingMainFlag) || hasStoryFlag(StoryEndingSeenFlag)) {
+        choices.push_back(EndingKind::Main);
+    }
+    if (hasStoryFlag(StoryEndingEncyclopediaCompleteFlag)) {
+        choices.push_back(EndingKind::EncyclopediaComplete);
+    }
+    if (hasStoryFlag(StoryEndingAstralClearFlag)) {
+        choices.push_back(EndingKind::AstralClear);
+    }
+    return choices;
+}
+
+int Game::bookshelfMenuItemCount() const
+{
+    return BookshelfMenuItemCount + (bookshelfEndingReplayChoices().empty() ? 0 : 1);
 }
 
 bool Game::encyclopediaComplete() const
@@ -8271,10 +8355,12 @@ void Game::maybeStartOpeningBaseIntroEvent()
 
 void Game::updateBookshelfScreen(const Input& input, UiContext& ui)
 {
-    const auto itemCountForPage = [this](BookshelfPage page) {
+    const std::vector<EndingKind> replayChoices = bookshelfEndingReplayChoices();
+    const int menuItemCount = BookshelfMenuItemCount + (replayChoices.empty() ? 0 : 1);
+    const auto itemCountForPage = [menuItemCount, this](BookshelfPage page) {
         switch (page) {
         case BookshelfPage::Menu:
-            return BookshelfMenuItemCount;
+            return menuItemCount;
         case BookshelfPage::Items:
             return itemCodexObjectCount(objectCatalog_);
         case BookshelfPage::Enemies:
@@ -8286,6 +8372,7 @@ void Game::updateBookshelfScreen(const Input& input, UiContext& ui)
         return selection == 1 ? BookshelfPage::Enemies : BookshelfPage::Items;
     };
     const auto openSelectedPage = [&]() {
+        closeUiCommandMenu(bookshelfEndingCommandMenu_);
         bookshelfPage_ = pageForMenuSelection(bookshelfSelection_);
         bookshelfSelection_ = 0;
         bookshelfScrollOffset_ = 0.0f;
@@ -8293,17 +8380,79 @@ void Game::updateBookshelfScreen(const Input& input, UiContext& ui)
     };
 
     const UiRect panel = bookshelfPage_ == BookshelfPage::Menu
-        ? bookshelfMenuPanelRect()
+        ? bookshelfMenuPanelRect(menuItemCount)
         : merchantPanelRect();
+    const auto startReplay = [&](EndingKind kind) {
+        closeUiCommandMenu(bookshelfEndingCommandMenu_);
+        baseBookshelfActive_ = false;
+        bookshelfPage_ = BookshelfPage::Menu;
+        bookshelfSelection_ = 0;
+        bookshelfScrollOffset_ = 0.0f;
+        bookshelfScrollState_ = {};
+        baseStatus_.clear();
+        startEndingReplayKamishibai(kind);
+    };
+    const auto openEndingReplay = [&]() {
+        if (replayChoices.empty()) {
+            closeUiCommandMenu(bookshelfEndingCommandMenu_);
+            return;
+        }
+        if (replayChoices.size() == 1) {
+            ui.emitSound(UiSoundEvent::BookOpen);
+            startReplay(replayChoices.front());
+            return;
+        }
+        const std::vector<UiCommandMenuItem> commandItems = bookshelfEndingReplayCommandItems(replayChoices);
+        openUiCommandMenu(
+            bookshelfEndingCommandMenu_,
+            uiCommandMenuAnchorForSlot(bookshelfMenuChoiceRect(panel, BookshelfEndingReplayMenuIndex)),
+            panel,
+            static_cast<int>(commandItems.size()),
+            commandItems.data(),
+            BookshelfEndingCommandMinWidth,
+            2);
+        baseStatus_.clear();
+    };
+    const auto activateMenuSelection = [&]() {
+        if (bookshelfSelection_ == BookshelfEndingReplayMenuIndex) {
+            openEndingReplay();
+            return;
+        }
+        ui.emitSound(UiSoundEvent::BookOpen);
+        openSelectedPage();
+    };
+
+    if (bookshelfPage_ == BookshelfPage::Menu && bookshelfEndingCommandMenu_.visible) {
+        const std::vector<UiCommandMenuItem> commandItems = bookshelfEndingReplayCommandItems(replayChoices);
+        if (replayChoices.size() < 2) {
+            closeUiCommandMenu(bookshelfEndingCommandMenu_);
+        }
+        const int commandSelection = updateUiCommandMenu(
+            bookshelfEndingCommandMenu_,
+            ui,
+            input,
+            commandItems.data(),
+            static_cast<int>(commandItems.size()));
+        if (commandSelection >= 0 && commandSelection < static_cast<int>(replayChoices.size())) {
+            startReplay(replayChoices[static_cast<std::size_t>(commandSelection)]);
+            ui.block(panel);
+            return;
+        }
+        ui.block(panel);
+        return;
+    }
+
     if (uiCancelRequested(baseCancelState_, input, ui, panel)) {
         if (bookshelfPage_ == BookshelfPage::Menu) {
             baseBookshelfActive_ = false;
+            closeUiCommandMenu(bookshelfEndingCommandMenu_);
             baseStatus_.clear();
         } else {
             bookshelfPage_ = BookshelfPage::Menu;
             bookshelfSelection_ = 0;
             bookshelfScrollOffset_ = 0.0f;
             bookshelfScrollState_ = {};
+            closeUiCommandMenu(bookshelfEndingCommandMenu_);
         }
         return;
     }
@@ -8351,14 +8500,13 @@ void Game::updateBookshelfScreen(const Input& input, UiContext& ui)
     if (bookshelfPage_ == BookshelfPage::Menu) {
         const int visibleCount = std::min(BookshelfVisibleRows, itemCount);
         for (int i = 0; i < visibleCount; ++i) {
-            const UiRect rect = bookshelfMenuChoiceRect(i);
+            const UiRect rect = bookshelfMenuChoiceRect(panel, i);
             if (rect.contains(ui.mouse())) {
                 bookshelfSelection_ = i;
             }
             if (ui.pressed(rect)) {
                 bookshelfSelection_ = i;
-                ui.emitSound(UiSoundEvent::BookOpen);
-                openSelectedPage();
+                activateMenuSelection();
                 return;
             }
         }
@@ -8390,8 +8538,7 @@ void Game::updateBookshelfScreen(const Input& input, UiContext& ui)
     }
 
     if ((input.confirmPressed() || input.useItemPressed()) && bookshelfPage_ == BookshelfPage::Menu) {
-        ui.emitSound(UiSoundEvent::BookOpen);
-        openSelectedPage();
+        activateMenuSelection();
         return;
     }
 
@@ -11100,17 +11247,9 @@ void Game::renderBookshelfScreen(Renderer& renderer) const
         }
     }
     const std::vector<const EnemyDefinition*> enemyCodexObjects = enemyCodexEnemies(enemyCatalog_);
+    const std::vector<EndingKind> replayChoices = bookshelfEndingReplayChoices();
+    const int menuItemCount = BookshelfMenuItemCount + (replayChoices.empty() ? 0 : 1);
 
-    const auto menuName = [](int index) {
-        switch (index) {
-        case 0:
-            return "アイテム図鑑";
-        case 1:
-            return "モンスター図鑑";
-        default:
-            return "";
-        }
-    };
     const auto objectAt = [&itemCodexObjects](int targetIndex) -> const ObjectDefinition* {
         if (targetIndex < 0 || targetIndex >= static_cast<int>(itemCodexObjects.size())) {
             return nullptr;
@@ -11119,10 +11258,18 @@ void Game::renderBookshelfScreen(Renderer& renderer) const
     };
 
     if (bookshelfPage_ == BookshelfPage::Menu) {
-        const UiRect panel = bookshelfMenuPanelRect();
-        renderer.drawText(smallActionInfoTextPos(panel), "どの図鑑を開きますか？", {198, 198, 206, 255}, 2);
-        for (int i = 0; i < BookshelfMenuItemCount; ++i) {
-            drawUiButton(renderer, bookshelfMenuChoiceRect(i), menuName(i), i == bookshelfSelection_, uiActionButtonStyle());
+        const UiRect panel = bookshelfMenuPanelRect(menuItemCount);
+        renderer.drawText(smallActionInfoTextPos(panel), "何を見ますか？", {198, 198, 206, 255}, 2);
+        for (int i = 0; i < menuItemCount; ++i) {
+            drawUiButton(renderer, bookshelfMenuChoiceRect(panel, i), bookshelfMenuLabel(i), i == bookshelfSelection_, uiActionButtonStyle());
+        }
+        if (replayChoices.size() >= 2) {
+            const std::vector<UiCommandMenuItem> commandItems = bookshelfEndingReplayCommandItems(replayChoices);
+            drawUiCommandMenu(
+                renderer,
+                bookshelfEndingCommandMenu_,
+                commandItems.data(),
+                static_cast<int>(commandItems.size()));
         }
         return;
     }
@@ -11787,7 +11934,7 @@ void Game::renderBaseScreen(Renderer& renderer) const
         : (processingActionDialogActive
         ? merchantActionDialogRect()
         : (bookshelfMenuDialogActive
-        ? bookshelfMenuPanelRect()
+        ? bookshelfMenuPanelRect(bookshelfMenuItemCount())
         : (ringWorkshopActionDialogActive
         ? ringWorkshopActionDialogRect()
         : (ringWorkshopWideActive

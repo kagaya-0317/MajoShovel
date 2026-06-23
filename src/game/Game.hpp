@@ -1110,6 +1110,8 @@ private:
     EndingKind resolveEndingKamishibaiKind(EndingKind kind) const;
     void requestEndingKamishibai(EndingKind kind);
     void startEndingKamishibai(EndingKind kind = EndingKind::Main);
+    void startEndingReplayKamishibai(EndingKind kind);
+    void startEndingKamishibaiPlayback(EndingKind kind, bool replay);
     void finishEndingKamishibai(bool completedPlayback);
     void updateEndingKamishibai(const Input& input, float dt);
     void updateTitleScreen(const Input& input, UiContext& ui);
@@ -1360,6 +1362,8 @@ private:
     bool setRingWorkshopRadiusSettingForRing(int ringIndex, float meters);
     void buyRingWorkshopUpgrade(RingWorkshopUpgrade upgrade);
     void openBookshelf();
+    std::vector<EndingKind> bookshelfEndingReplayChoices() const;
+    int bookshelfMenuItemCount() const;
     bool encyclopediaComplete() const;
     void syncEncyclopediaFromInventoryAndRing();
     void captureEncyclopediaSyncSuppressState();
@@ -1439,6 +1443,7 @@ private:
     bool gameplayRewardsEnabled() const;
     void beginPlayerDeathSequence();
     void updatePlayerDeathSequence(float dt);
+    void freezePlayerDeathPoseForResult();
     void initializePlayerDeathRingPresentation();
     void updatePlayerDeathRingPresentation(float dt);
     bool playerDeathRingPresentationComplete() const;
@@ -2176,6 +2181,7 @@ private:
     int bookshelfSelection_ = 0;
     float bookshelfScrollOffset_ = 0.0f;
     UiScrollAreaState bookshelfScrollState_{};
+    UiCommandMenuState bookshelfEndingCommandMenu_{};
     bool baseDiaryActive_ = false;
     BaseDiaryMode baseDiaryMode_ = BaseDiaryMode::Confirm;
     int baseDiarySelection_ = 0;
@@ -2443,6 +2449,7 @@ private:
     bool stageStartStoryPendingAfterRingIntro_ = false;
     bool endingKamishibaiPending_ = false;
     EndingKind endingKamishibaiKind_ = EndingKind::Main;
+    bool endingKamishibaiReplay_ = false;
     IntroTutorialPhase introTutorialPhase_ = IntroTutorialPhase::Inactive;
     bool introTutorialLightTutorialQueued_ = false;
     bool introTutorialFirstEnemySpawned_ = false;
