@@ -22,6 +22,28 @@ constexpr std::string_view RescueShovelObjectId = "item_shovel";
 constexpr std::string_view RescueTorchObjectId = "item_torch";
 constexpr float BaseMiningRescueDropDurationSeconds = 1.05f;
 constexpr float BaseMiningRescueDropEndSeconds = 1.55f;
+constexpr std::string_view BaseRandomTalkTriggerPrefix = "base_random_talk:";
+
+bool isBaseRandomTalkSpeaker(std::string_view speakerId)
+{
+    return speakerId == "merchant" || speakerId == "processor";
+}
+
+std::string baseRandomTalkTrigger(std::string_view speakerId)
+{
+    if (!isBaseRandomTalkSpeaker(speakerId)) {
+        return {};
+    }
+    std::string trigger{BaseRandomTalkTriggerPrefix};
+    trigger += speakerId;
+    return trigger;
+}
+
+std::mt19937& baseTalkSessionRng()
+{
+    static std::mt19937 rng{std::random_device{}()};
+    return rng;
+}
 
 void drawEquippedStaffOnPlayer(
     Renderer& renderer,
@@ -7230,13 +7252,37 @@ void Game::captureEncyclopediaSyncSuppressState()
 
 void Game::applyEffectDiscoveries(const std::vector<EffectDiscoveryEvent>& discoveries)
 {
-    if (!gameplayRewardsEnabled()) {
+    if (!shouldRecordEffectDiscoveries()) {
         return;
     }
 
     if (encyclopedia_.noteEffectEvents(discoveries, objectCatalog_) > 0) {
         playAudioSe(AudioSeEffectDiscovery);
     }
+}
+
+void Game::recordMainObjectObtained(std::string_view objectId)
+{
+    if (!shouldRecordMainProgressKnowledge() || objectId.empty()) {
+        return;
+    }
+    const ObjectDefinition* object = objectCatalog_.registry.findById(objectId);
+    if (object == nullptr || isCodexHiddenObject(*object)) {
+        return;
+    }
+    mainObtainedObjectIds_.insert(std::string(objectId));
+}
+
+void Game::recordMainCapturedEnemy(std::string_view enemyId)
+{
+    if (!shouldRecordMainProgressKnowledge() || enemyId.empty()) {
+        return;
+    }
+    const auto enemyIt = enemyCatalog_.enemiesById.find(std::string(enemyId));
+    if (enemyIt == enemyCatalog_.enemiesById.end() || isCodexHiddenEnemy(enemyIt->second)) {
+        return;
+    }
+    mainCapturedEnemyIds_.insert(std::string(enemyId));
 }
 
 void Game::recordObjectObtainedForFirstNotice(
@@ -7252,6 +7298,7 @@ void Game::recordObjectObtainedForFirstNotice(
     if (object == nullptr) {
         return;
     }
+    recordMainObjectObtained(objectId);
     const bool codexHidden = isCodexHiddenObject(*object);
     if (!codexHidden && !encyclopedia_.noteItemObtained(*object, position)) {
         return;
@@ -7289,6 +7336,7 @@ void Game::recordRewardObjectAcquisitionNotice(
     if (object == nullptr) {
         return;
     }
+    recordMainObjectObtained(objectId);
     (void)encyclopedia_.noteItemObtained(*object, position);
 
     const bool playJingle = firstItemAcquisitionNotices_.empty();
@@ -7678,6 +7726,43 @@ void Game::startBaseElderDialogue()
     dialogue_.start(baseElderDialogue());
 }
 
+void Game::clearBaseTalkSessionSelections()
+{
+    baseTalkSessionSelections_.clear();
+}
+
+std::string Game::selectBaseRandomTalkEventId(std::string_view speakerId)
+{
+    const std::string trigger = baseRandomTalkTrigger(speakerId);
+    if (trigger.empty()) {
+        return {};
+    }
+
+    const std::string speakerKey{speakerId};
+    auto cached = baseTalkSessionSelections_.find(speakerKey);
+    if (cached != baseTalkSessionSelections_.end()) {
+        if (findStoryEvent(cached->second) != nullptr) {
+            return cached->second;
+        }
+        baseTalkSessionSelections_.erase(cached);
+    }
+
+    std::vector<std::string> eventIds;
+    for (const StoryEvent& event : storyEvents_) {
+        if (event.trigger == trigger) {
+            eventIds.push_back(event.id);
+        }
+    }
+    if (eventIds.empty()) {
+        return {};
+    }
+
+    std::uniform_int_distribution<std::size_t> distribution(0, eventIds.size() - 1);
+    std::string selected = eventIds[distribution(baseTalkSessionRng())];
+    baseTalkSessionSelections_[speakerKey] = selected;
+    return selected;
+}
+
 std::string Game::baseTalkStoryTrigger(std::string_view speakerId) const
 {
     if (speakerId.empty()) {
@@ -7698,6 +7783,13 @@ std::string Game::baseTalkStoryTrigger(std::string_view speakerId) const
 
 bool Game::startBaseTalkStoryEvent(std::string_view speakerId, std::function<void()> onComplete)
 {
+    if (isBaseRandomTalkSpeaker(speakerId)) {
+        const std::string randomEventId = selectBaseRandomTalkEventId(speakerId);
+        if (!randomEventId.empty()) {
+            return startStoryEventWithCompletion(randomEventId, std::move(onComplete));
+        }
+    }
+
     const std::string trigger = baseTalkStoryTrigger(speakerId);
     if (trigger.empty()) {
         return false;

@@ -99,6 +99,7 @@ enum class CaptureResultType {
     InventoryFull,
     BossLocked,
     BossAlreadyOwned,
+    KnowledgeLocked,
 };
 
 struct EventEnemySpawnOptions {
@@ -244,6 +245,7 @@ public:
         const CollisionRect& stealViewBounds,
         bool allowBossCapture = true,
         std::string_view bossCaptureObjectId = {},
+        const std::unordered_set<std::string>* allowedCaptureEnemyIds = nullptr,
         std::vector<EffectDiscoveryEvent>* discoveryEvents = nullptr,
         const EncyclopediaSystem* encyclopedia = nullptr);
     void render(
@@ -398,6 +400,7 @@ private:
     struct CaptureAttemptOptions {
         bool requirePlayerReach = true;
         float chanceMultiplier = 1.0f;
+        const std::unordered_set<std::string>* allowedEnemyIds = nullptr;
     };
     struct EnemySpawnSelection {
         const EnemyDefinition* definition = nullptr;

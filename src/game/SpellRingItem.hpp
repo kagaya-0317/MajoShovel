@@ -5,6 +5,7 @@
 #include "game/ItemModel.hpp"
 #include <array>
 #include <cstdint>
+#include <utility>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -47,6 +48,7 @@ struct SpellRingItem {
     float actionFlashTimer = 0.0f;
     int lastDigTileX = 2147483647;
     int lastDigTileY = 2147483647;
+    std::vector<std::pair<int, int>> lastDigTiles;
     std::string objectId;
     std::string instanceId;
     ItemVisualRef objectVisual;

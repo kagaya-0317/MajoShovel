@@ -12,12 +12,17 @@
 #include <fstream>
 #include <iterator>
 #include <random>
+#include <sstream>
 
 namespace majo {
 
 namespace {
 
 constexpr float DungeonRingIntroDuration = 1.18f;
+constexpr float DeathResultPreludeFadeOutSeconds = 0.45f;
+constexpr float DeathResultPreludeBlackHoldSeconds = 1.0f;
+constexpr float DeathResultPreludeStarFadeInSeconds = 0.85f;
+constexpr float DeathResultExitTransitionHoldSeconds = 1.5f;
 constexpr float HotReloadPollIntervalSeconds = 0.50f;
 constexpr std::string_view DefaultShovelObjectId = "item_shovel";
 constexpr std::string_view DefaultTorchObjectId = "item_torch";
@@ -928,6 +933,33 @@ void Game::playUiSoundEvents(const UiContext& ui)
     }
 }
 
+std::string Game::crashContextSummary() const
+{
+    std::ostringstream out;
+    out << "game_initialize_active=" << (initializeJob_.active ? "true" : "false") << "\n";
+    out << "game_initialize_step=" << initializeStepIndex() << "/" << initializeStepCount() << "\n";
+    out << "game_initialize_status=" << initializeStatusText() << "\n";
+    out << "screen_mode=" << screenModeName(mode_) << "\n";
+    out << "pause_return_mode=" << screenModeName(pauseReturnMode_) << "\n";
+    out << "current_stage_id=" << currentStageId_ << "\n";
+    out << "current_stage_index=" << currentStage_ << "\n";
+    out << "player_position=" << player_.position.x << "," << player_.position.y << "\n";
+    out << "player_hp=" << player_.hp << "/" << player_.maxHp << "\n";
+    out << "player_level=" << player_.level << "\n";
+    out << "roguelike_dungeon=" << (roguelikeDungeon_ ? "true" : "false") << "\n";
+    out << "roguelike_depth_meters=" << astralRun_.currentDepthMeters << "-" << astralRun_.nextHoleDepthMeters << "\n";
+    out << "roguelike_max_reached_meters=" << astralRun_.maxReachedDepthMeters << "\n";
+    out << "roguelike_depth_rank=" << astralRun_.currentDepth << "\n";
+    out << "world_build_active=" << (worldBuildJob_.active ? "true" : "false") << "\n";
+    out << "world_build_step=" << worldBuildStepIndex() << "/" << worldBuildStepCount() << "\n";
+    out << "world_build_status=" << worldBuildStatusText() << "\n";
+    out << "run_elapsed_seconds=" << runStats_.elapsedSeconds << "\n";
+    out << "run_defeated_enemies=" << runStats_.defeatedEnemies << "\n";
+    out << "run_dug_tiles=" << runStats_.dugTiles << "\n";
+    out << "quit_requested=" << (quitRequested_ ? "true" : "false") << "\n";
+    return out.str();
+}
+
 void Game::initialize(int width, int height, bool testPlayMode)
 {
     beginInitialize(width, height, testPlayMode);
@@ -1443,6 +1475,9 @@ void Game::resetWorldRunState()
     restoreRunStartInventoryOnDeath_ = roguelikeDungeon_;
     roguelikeCarryInRestricted_ = roguelikeDungeon_;
     roguelikeCarryOutRestricted_ = roguelikeDungeon_;
+    if (roguelikeDungeon_) {
+        resetLevelRingUpgradePointsForRun();
+    }
     resetAstralRunState();
 }
 
@@ -1742,6 +1777,7 @@ void Game::enterBase()
     pendingStoryTrigger_.clear();
     pendingStoryTriggerDelaySeconds_ = 0.0f;
     pendingStoryTriggers_.clear();
+    clearBaseTalkSessionSelections();
     pendingDialogueCompletion_ = {};
     dialogue_.clear();
     inventory_.setOpen(false);
@@ -1855,6 +1891,7 @@ void Game::loadStoryEvents()
     StoryEventLoader loader;
     StoryEventLoadResult result = loader.loadDirectory(storyEventDataDirectory());
     storyEvents_ = std::move(result.events);
+    clearBaseTalkSessionSelections();
     ++storyEventsRevision_;
     logInfo("[story] events loaded: " + std::to_string(storyEvents_.size()));
     for (const std::string& warning : result.warnings) {
@@ -1928,9 +1965,7 @@ EndingKind Game::resolveEndingKamishibaiKind(EndingKind kind) const
             ? EndingKind::EncyclopediaFailedTrust
             : EndingKind::EncyclopediaComplete;
     case EndingKind::AstralClear:
-        return hasStoryFlag(StoryTrustBrokenFlag)
-            ? EndingKind::AstralFailedTrust
-            : EndingKind::AstralClear;
+        return EndingKind::AstralClear;
     case EndingKind::HiddenBad:
     case EndingKind::MainFailedTrust:
     case EndingKind::MainFailedMonicaMissing:
@@ -2190,6 +2225,9 @@ Game::ScreenTransitionFadeColor Game::fadeColorForScreenTransitionTarget(ScreenT
     case ScreenTransitionTarget::BaseArea:
     case ScreenTransitionTarget::BossEncounterIntro:
     case ScreenTransitionTarget::BossEncounterAfterDialogue:
+    case ScreenTransitionTarget::GameOverRetry:
+    case ScreenTransitionTarget::GameOverReturnToBase:
+    case ScreenTransitionTarget::AstralDeathReturnToBase:
         return ScreenTransitionFadeColor::Black;
     }
     return ScreenTransitionFadeColor::Black;
@@ -2205,6 +2243,10 @@ float Game::holdSecondsForScreenTransitionTarget(ScreenTransitionTarget target)
     case ScreenTransitionTarget::BossEncounterIntro:
     case ScreenTransitionTarget::BossEncounterAfterDialogue:
         return BossEncounterIntroTransitionHoldSeconds;
+    case ScreenTransitionTarget::GameOverRetry:
+    case ScreenTransitionTarget::GameOverReturnToBase:
+    case ScreenTransitionTarget::AstralDeathReturnToBase:
+        return DeathResultExitTransitionHoldSeconds;
     case ScreenTransitionTarget::None:
     case ScreenTransitionTarget::Base:
     case ScreenTransitionTarget::TitleToBase:
@@ -2231,6 +2273,9 @@ float Game::fadeInSecondsForScreenTransitionTarget(ScreenTransitionTarget target
     case ScreenTransitionTarget::BaseArea:
     case ScreenTransitionTarget::BossEncounterIntro:
     case ScreenTransitionTarget::BossEncounterAfterDialogue:
+    case ScreenTransitionTarget::GameOverRetry:
+    case ScreenTransitionTarget::GameOverReturnToBase:
+    case ScreenTransitionTarget::AstralDeathReturnToBase:
         return ScreenTransitionFadeInSeconds;
     }
     return ScreenTransitionFadeInSeconds;
@@ -2251,6 +2296,9 @@ float Game::postTransitionStoryDelaySecondsForScreenTransitionTarget(ScreenTrans
     case ScreenTransitionTarget::BaseArea:
     case ScreenTransitionTarget::BossEncounterIntro:
     case ScreenTransitionTarget::BossEncounterAfterDialogue:
+    case ScreenTransitionTarget::GameOverRetry:
+    case ScreenTransitionTarget::GameOverReturnToBase:
+    case ScreenTransitionTarget::AstralDeathReturnToBase:
         return 0.0f;
     }
     return 0.0f;
@@ -2276,6 +2324,24 @@ void Game::requestScreenTransition(ScreenTransitionTarget target)
 
     startScreenTransition(target, ScreenTransitionPhase::FadingOut);
     playAudioSe(AudioSeTransition);
+}
+
+void Game::requestDeathResultExitTransition(ScreenTransitionTarget target)
+{
+    if (target != ScreenTransitionTarget::GameOverRetry &&
+        target != ScreenTransitionTarget::GameOverReturnToBase &&
+        target != ScreenTransitionTarget::AstralDeathReturnToBase) {
+        return;
+    }
+    requestScreenTransition(target);
+}
+
+bool Game::deathResultExitTransitionActive() const
+{
+    return screenTransition_.active() &&
+        (screenTransition_.target == ScreenTransitionTarget::GameOverRetry ||
+        screenTransition_.target == ScreenTransitionTarget::GameOverReturnToBase ||
+        screenTransition_.target == ScreenTransitionTarget::AstralDeathReturnToBase);
 }
 
 void Game::requestMiningStartTransition(bool useLatestWarpPoint, bool forceRegenerate)
@@ -2450,6 +2516,17 @@ void Game::applyScreenTransitionTarget(ScreenTransitionTarget target)
     case ScreenTransitionTarget::BossEncounterIntro:
     case ScreenTransitionTarget::BossEncounterAfterDialogue:
         applyBossEncounterIntroPlacement();
+        break;
+    case ScreenTransitionTarget::GameOverRetry:
+        retryAfterGameOver();
+        break;
+    case ScreenTransitionTarget::GameOverReturnToBase:
+        returnToBaseAfterGameOver();
+        break;
+    case ScreenTransitionTarget::AstralDeathReturnToBase:
+        clearAstralEchoRecentStar();
+        deathResultPrelude_ = {};
+        returnToBaseFromNormalStage(false, true);
         break;
     }
 }
@@ -2764,6 +2841,13 @@ bool Game::applyLevelUpSelection(RingLevelUpgradeSelection selection)
     return true;
 }
 
+void Game::resetLevelRingUpgradePointsForRun()
+{
+    levelRingUpgradePoints_ = {};
+    ringWorkshopDraftUpgradePoints_ = levelRingUpgradePoints_;
+    ringWorkshopRespecSource_.reset();
+}
+
 void Game::updateLevelUpScreen(const Input& input, UiContext& ui, float dt)
 {
     const auto returnFromLevelUp = [this]() {
@@ -2922,6 +3006,8 @@ void Game::initializeDefaultSpellRing()
         ringItems[1].localAngle = Pi;
     }
 
+    recordMainObjectObtained(DefaultShovelObjectId);
+    recordMainObjectObtained(DefaultTorchObjectId);
     ensureInitialStaffEquipped(inventory_, objectCatalog_, spellRing_);
 }
 
@@ -3323,6 +3409,11 @@ bool Game::currentStageIsRoguelike() const
     return isRoguelikeStageDefinition(currentStageDefinition_);
 }
 
+bool Game::shouldRecordMainProgressKnowledge() const
+{
+    return !(currentStageIsRoguelike() && mode_ == ScreenMode::Playing);
+}
+
 int Game::unlockedRingCount() const
 {
     return std::clamp(unlockedRingCount_, 1, SpellRingCount);
@@ -3594,6 +3685,7 @@ void Game::enterGameOver()
         return;
     }
 
+    recordAstralEchoStar(true);
     resetBossEncounter();
     player_.hp = 0;
     inventory_.setOpen(false);
@@ -3608,11 +3700,91 @@ void Game::enterGameOver()
     levelUpPresentation_ = {};
     levelUpResultDialog_ = {};
     mode_ = ScreenMode::GameOver;
+    beginDeathResultPrelude();
     pausePage_ = PauseMenuPage::Main;
     pauseReturnMode_ = ScreenMode::Playing;
     inventoryReturnToPause_ = false;
     gameOverSelection_ = 0;
     gameOverStatus_.clear();
+}
+
+void Game::beginDeathResultPrelude()
+{
+    deathResultPrelude_ = {};
+    deathResultPrelude_.active = true;
+}
+
+bool Game::updateDeathResultPrelude(float dt, UiContext& ui)
+{
+    if (!deathResultPrelude_.active) {
+        return false;
+    }
+
+    constexpr float TotalSeconds =
+        DeathResultPreludeFadeOutSeconds +
+        DeathResultPreludeBlackHoldSeconds +
+        DeathResultPreludeStarFadeInSeconds;
+    deathResultPrelude_.elapsedSeconds += std::max(0.0f, dt);
+    ui.block({{0.0f, 0.0f}, {static_cast<float>(camera_.width()), static_cast<float>(camera_.height())}});
+    if (deathResultPrelude_.elapsedSeconds >= TotalSeconds) {
+        deathResultPrelude_.active = false;
+    }
+    return true;
+}
+
+float Game::deathResultPreludeBlackAlpha() const
+{
+    return smoothStep01(std::clamp(deathResultPrelude_.elapsedSeconds / DeathResultPreludeFadeOutSeconds, 0.0f, 1.0f));
+}
+
+float Game::deathResultPreludeStarAlpha() const
+{
+    const float starElapsed =
+        deathResultPrelude_.elapsedSeconds -
+        DeathResultPreludeFadeOutSeconds -
+        DeathResultPreludeBlackHoldSeconds;
+    return smoothStep01(std::clamp(starElapsed / DeathResultPreludeStarFadeInSeconds, 0.0f, 1.0f));
+}
+
+void Game::handleApplicationQuitRequested()
+{
+    if (astralEchoQuitRecordable()) {
+        recordAstralEchoStar(false);
+    }
+}
+
+void Game::recordAstralEchoStar(bool markRecent)
+{
+    astralEchoStarCount_ = std::clamp(astralEchoStarCount_ + 1, 0, 9999999);
+    if (markRecent) {
+        astralEchoRecentStarIndex_ = astralEchoStarCount_ - 1;
+        astralEchoRecentStarVisible_ = true;
+    } else {
+        clearAstralEchoRecentStar();
+    }
+    saveAstralEchoMeta();
+}
+
+void Game::clearAstralEchoRecentStar()
+{
+    astralEchoRecentStarIndex_ = -1;
+    astralEchoRecentStarVisible_ = false;
+}
+
+bool Game::astralEchoQuitRecordable() const
+{
+    switch (mode_) {
+    case ScreenMode::Playing:
+        return !introTutorialActive();
+    case ScreenMode::PauseMenu:
+    case ScreenMode::Inventory:
+    case ScreenMode::Ring:
+        return !introTutorialActive() && pauseReturnMode_ == ScreenMode::Playing;
+    case ScreenMode::LevelUp:
+        return !introTutorialActive() && levelUpReturnMode_ == ScreenMode::Playing;
+    default:
+        return false;
+    }
 }
 
 void Game::markCurrentStageCleared()
@@ -3808,7 +3980,7 @@ void Game::updateScreenMode(
         return;
     }
     if (mode_ == ScreenMode::GameOver) {
-        updateGameOverScreen(input, ui);
+        updateGameOverScreen(input, ui, dt);
         return;
     }
     if (mode_ == ScreenMode::StageClear) {
@@ -3816,7 +3988,7 @@ void Game::updateScreenMode(
         return;
     }
     if (mode_ == ScreenMode::AstralResult) {
-        updateAstralResultScreen(input, ui);
+        updateAstralResultScreen(input, ui, dt);
         return;
     }
 
@@ -4294,6 +4466,8 @@ void Game::update(const Input& input, const Time& time)
     magic_.setFxSystem(&magicFx_);
 
     std::vector<EffectDiscoveryEvent> effectDiscoveries;
+    std::vector<EffectDiscoveryEvent>* effectDiscoveryEvents =
+        shouldRecordEffectDiscoveries() ? &effectDiscoveries : nullptr;
     UiContext ui(input);
     struct UiSoundFlush {
         Game& game;
@@ -4301,7 +4475,7 @@ void Game::update(const Input& input, const Time& time)
         ~UiSoundFlush() { game.playUiSoundEvents(ui); }
     } uiSoundFlush{*this, ui};
     const bool wasPaused = gameProgressPaused();
-    updateScreenMode(input, ui, time.deltaSeconds(), &effectDiscoveries);
+    updateScreenMode(input, ui, time.deltaSeconds(), effectDiscoveryEvents);
     effects_.setLightweightMode(lightweight);
     magicFx_.setLightweightMode(lightweight);
     wetGround_.setLightweightMode(lightweight);
@@ -4439,9 +4613,10 @@ void Game::update(const Input& input, const Time& time)
                 player_,
                 time.totalSeconds(),
                 objectCatalog_,
+                &hitboxes_,
                 effectDispatcher_,
                 &magic_,
-                gameplayRewardsEnabled() ? &effectDiscoveries : nullptr,
+                effectDiscoveryEvents,
                 gameplayRewardsEnabled() ? &encyclopedia_ : nullptr);
         }
         const std::vector<RingImpactSoundPlayback> terrainImpactSounds =
@@ -4693,7 +4868,8 @@ void Game::update(const Input& input, const Time& time)
                 stealViewBounds,
                 allowBossCapture,
                 bossCaptureObjectId,
-                gameplayRewardsEnabled() ? &effectDiscoveries : nullptr,
+                currentStageIsRoguelike() ? &mainCapturedEnemyIds_ : nullptr,
+                effectDiscoveryEvents,
                 gameplayRewardsEnabled() ? &encyclopedia_ : nullptr);
         }
         for (const CapturedExplosionRequest& explosionRequest : digging_.capturedExplosionRequests()) {
@@ -4711,7 +4887,7 @@ void Game::update(const Input& input, const Time& time)
                 time.deltaSeconds(),
                 effectDispatcher_,
                 objectCatalog_,
-                gameplayRewardsEnabled() ? &effectDiscoveries : nullptr,
+                effectDiscoveryEvents,
                 gameplayRewardsEnabled() ? &encyclopedia_ : nullptr);
         }
         {
@@ -4760,7 +4936,7 @@ void Game::update(const Input& input, const Time& time)
         updateCaptureAbsorbAnimations(time.deltaSeconds());
         updateDungeonMinimap(time.totalSeconds());
         if (gameplayRewardsEnabled()) {
-            handleRingItemBreakEvents(&effectDiscoveries);
+            handleRingItemBreakEvents(effectDiscoveryEvents);
         }
 
         std::vector<CapturedExplosionRequest> capturedExplosionRequests;
@@ -4797,7 +4973,7 @@ void Game::update(const Input& input, const Time& time)
             handleCapturedExplosion(explosionRequest);
         }
         if (gameplayRewardsEnabled()) {
-            handleRingItemBreakEvents(&effectDiscoveries);
+            handleRingItemBreakEvents(effectDiscoveryEvents);
         }
 
         bool bossDefeated = false;
@@ -5007,7 +5183,8 @@ void Game::update(const Input& input, const Time& time)
                         }
                     }
                 } else if (!event.objectDropId.empty()) {
-                    if (objectExcludedFromDungeonDrops(event.objectDropId)) {
+                    if (objectExcludedFromDungeonDrops(event.objectDropId) ||
+                        (currentStageIsRoguelike() && !roguelikeObjectAllowed(event.objectDropId))) {
                         continue;
                     }
                     if (event.objectDropInstance) {
@@ -5028,7 +5205,8 @@ void Game::update(const Input& input, const Time& time)
                         }
                     }
                 } else if (event.objectDropInstance) {
-                    if (objectExcludedFromDungeonDrops(event.objectDropInstance->objectId)) {
+                    if (objectExcludedFromDungeonDrops(event.objectDropInstance->objectId) ||
+                        (currentStageIsRoguelike() && !roguelikeObjectAllowed(event.objectDropInstance->objectId))) {
                         continue;
                     }
                     worldDrops_.spawnObjectInstanceDrop(

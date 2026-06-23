@@ -47,6 +47,8 @@ private:
     void advanceStartupLoad();
     void renderStartupFrame();
     float startupLoadProgress() const;
+    const char* startupLoadStepName() const;
+    std::string crashContextSummary() const;
     void requestScreenshot();
     void logPendingScreenshotResult();
     std::filesystem::path screenshotDirectory() const;

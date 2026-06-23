@@ -1,6 +1,12 @@
 ﻿#include "game/DiggingSystem.hpp"
 
+#include "game/Collision.hpp"
+#include "game/Hitbox.hpp"
+#include "game/ObjectVisualPose.hpp"
+#include "game/RingItemVisual.hpp"
+
 #include <algorithm>
+#include <cmath>
 #include <random>
 
 namespace majo {
@@ -12,6 +18,150 @@ constexpr float CapturedRewardCooldown = 0.80f;
 constexpr float CapturedRewardWindowSeconds = 10.0f;
 constexpr int CapturedRewardWindowLimit = 3;
 constexpr int CapturedExplosionChargeLimit = 4;
+constexpr int NoLastDigTile = 2147483647;
+
+float ringTerrainHitboxScale(const SpellRingItem& item)
+{
+    const float scale = static_cast<float>(item.sizeModifier);
+    return std::isfinite(scale) ? std::clamp(scale, 0.05f, 8.0f) : 1.0f;
+}
+
+Vec2 rotateTerrainHitboxOffset(Vec2 value, float radians)
+{
+    const float c = std::cos(radians);
+    const float s = std::sin(radians);
+    return {
+        value.x * c - value.y * s,
+        value.x * s + value.y * c,
+    };
+}
+
+CollisionRect terrainTileRect(int tileX, int tileY)
+{
+    const float tileSize = static_cast<float>(balance::TileSize);
+    return {
+        {static_cast<float>(tileX) * tileSize, static_cast<float>(tileY) * tileSize},
+        {tileSize, tileSize},
+    };
+}
+
+bool containsTerrainTile(const std::vector<DungeonTile>& tiles, int tileX, int tileY)
+{
+    return std::any_of(
+        tiles.begin(),
+        tiles.end(),
+        [tileX, tileY](const DungeonTile& tile) {
+            return tile.x == tileX && tile.y == tileY;
+        });
+}
+
+bool wasLastDigTile(const SpellRingItem& item, const DungeonTile& tile)
+{
+    return std::any_of(
+        item.lastDigTiles.begin(),
+        item.lastDigTiles.end(),
+        [&tile](const std::pair<int, int>& previous) {
+            return previous.first == tile.x && previous.second == tile.y;
+        });
+}
+
+void addTerrainHitTile(std::vector<DungeonTile>& tiles, int tileX, int tileY)
+{
+    if (!containsTerrainTile(tiles, tileX, tileY)) {
+        tiles.push_back({tileX, tileY});
+    }
+}
+
+void rememberDigTiles(SpellRingItem& item, const std::vector<DungeonTile>& tiles)
+{
+    item.lastDigTiles.clear();
+    item.lastDigTiles.reserve(tiles.size());
+    for (const DungeonTile& tile : tiles) {
+        item.lastDigTiles.push_back({tile.x, tile.y});
+    }
+
+    if (tiles.empty()) {
+        item.lastDigTileX = NoLastDigTile;
+        item.lastDigTileY = NoLastDigTile;
+        return;
+    }
+
+    item.lastDigTileX = tiles.front().x;
+    item.lastDigTileY = tiles.front().y;
+}
+
+void collectCircleTerrainHitTiles(
+    TileMap& map,
+    Vec2 center,
+    float radius,
+    std::vector<DungeonTile>& outTiles)
+{
+    const float safeRadius = std::max(0.0f, radius);
+    const int minTileX = map.worldToTile(center.x - safeRadius);
+    const int maxTileX = map.worldToTile(center.x + safeRadius);
+    const int minTileY = map.worldToTile(center.y - safeRadius);
+    const int maxTileY = map.worldToTile(center.y + safeRadius);
+    for (int tileY = minTileY; tileY <= maxTileY; ++tileY) {
+        for (int tileX = minTileX; tileX <= maxTileX; ++tileX) {
+            if (!map.isTileSolid(tileX, tileY)) {
+                continue;
+            }
+            if (!circleIntersectsRect(center, safeRadius, terrainTileRect(tileX, tileY))) {
+                continue;
+            }
+            addTerrainHitTile(outTiles, tileX, tileY);
+        }
+    }
+}
+
+void addDigContactProbeTile(TileMap& map, const SpellRingItem& item, std::vector<DungeonTile>& outTiles)
+{
+    if (!item.hasCapturedBehavior("dig_contact")) {
+        return;
+    }
+
+    const float probeDistance =
+        static_cast<float>(std::max(4.0, item.capturedBehaviorParamDouble("dig_contact", "probeDistance", 4.0)));
+    const Vec2 probe = item.worldPosition + item.orbitOutward * (item.hitRadius + probeDistance);
+    const int tileX = map.worldToTile(probe.x);
+    const int tileY = map.worldToTile(probe.y);
+    if (map.isTileSolid(tileX, tileY)) {
+        addTerrainHitTile(outTiles, tileX, tileY);
+    }
+}
+
+std::vector<DungeonTile> collectTerrainHitTiles(
+    TileMap& map,
+    const SpellRingItem& item,
+    const ObjectDefinition* object,
+    const HitboxCatalog* hitboxCatalog,
+    float totalTime)
+{
+    std::vector<DungeonTile> tiles;
+    const HitboxProfile* profile = objectHitboxProfileFor(hitboxCatalog, item.objectId);
+    if (profile != nullptr && object != nullptr) {
+        const float scale = ringTerrainHitboxScale(item);
+        ObjectImageDrawOptions baseImageOptions;
+        baseImageOptions.rotationDegrees = ringItemRotationWobbleDegrees(item, totalTime);
+        const ObjectImageDrawOptions imageOptions = objectRingImageOptions(
+            *object,
+            item.orbitOutward,
+            item.worldVelocity,
+            totalTime,
+            baseImageOptions);
+        const float rotationRadians = imageOptions.rotationDegrees * (Pi / 180.0f);
+        const Vec2 center = ringItemDrawPosition(item, totalTime);
+        for (const HitCircle& circle : profile->circles) {
+            const Vec2 circleCenter = center + rotateTerrainHitboxOffset(circle.offset * scale, rotationRadians);
+            collectCircleTerrainHitTiles(map, circleCenter, circle.radius * scale, tiles);
+        }
+    } else {
+        collectCircleTerrainHitTiles(map, item.worldPosition, item.hitRadius, tiles);
+    }
+
+    addDigContactProbeTile(map, item, tiles);
+    return tiles;
+}
 
 CapturedExplosionRequest makeCapturedExplosionRequest(const SpellRingItem& item, Vec2 position)
 {
@@ -90,6 +240,7 @@ void DiggingSystem::update(
     Player& player,
     float totalTime,
     const ObjectCatalog& objectCatalog,
+    const HitboxCatalog* hitboxCatalog,
     const EffectDispatcher& effectDispatcher,
     MagicSystem* magic,
     std::vector<EffectDiscoveryEvent>* discoveryEvents,
@@ -113,28 +264,6 @@ void DiggingSystem::update(
         if (item.objectId.empty()) {
             continue;
         }
-        Vec2 digPosition = item.worldPosition;
-        if (item.hasCapturedBehavior("dig_contact")) {
-            const Vec2 outward = item.orbitOutward;
-            const float probeDistance = static_cast<float>(std::max(4.0, item.capturedBehaviorParamDouble("dig_contact", "probeDistance", 4.0)));
-            const Vec2 probe = item.worldPosition + outward * (item.hitRadius + probeDistance);
-            if (map.isTileSolid(map.worldToTile(probe.x), map.worldToTile(probe.y))) {
-                digPosition = probe;
-            }
-        }
-        const int tileX = map.worldToTile(digPosition.x);
-        const int tileY = map.worldToTile(digPosition.y);
-        if (tileX == item.lastDigTileX && tileY == item.lastDigTileY) {
-            continue;
-        }
-        item.lastDigTileX = tileX;
-        item.lastDigTileY = tileY;
-
-        if (!map.isTileSolid(tileX, tileY)) {
-            continue;
-        }
-
-        const TileType impactTileType = map.terrainDebugAtWorld(digPosition).type;
         const ObjectDefinition* sourceObject = nullptr;
         if (!item.objectId.empty()) {
             const auto objectIt = objectCatalog.objectsById.find(item.objectId);
@@ -143,57 +272,93 @@ void DiggingSystem::update(
             }
         }
 
-        const std::size_t hitCountBefore = hitTiles_.size();
-        const std::size_t openedCountBefore = openedTiles_.size();
-        if (sourceObject != nullptr) {
-            EffectContext context;
-            context.sourceObject = sourceObject;
-            context.owner = &player;
-            context.orbit = &spellRing;
-            context.orbitItem = &item;
-            context.tileMap = &map;
-            context.magic = magic;
-            context.terrainHitTiles = &hitTiles_;
-            context.terrainOpenedTiles = &openedTiles_;
-            context.terrainDugTiles = &dugTiles_;
-            context.discoveryEvents = discoveryEvents;
-            context.encyclopedia = encyclopedia;
-            context.position = digPosition;
-            context.triggerType = EffectTriggerType::Hit;
-            context.logUnimplementedEffects = false;
-            effectDispatcher.dispatchOrbitEffects(*sourceObject, context);
+        const std::vector<DungeonTile> currentTargets =
+            collectTerrainHitTiles(map, item, sourceObject, hitboxCatalog, totalTime);
+        if (currentTargets.empty()) {
+            rememberDigTiles(item, currentTargets);
+            continue;
         }
 
-        const bool terrainHit = hitTiles_.size() != hitCountBefore;
-        const bool terrainOpened = openedTiles_.size() != openedCountBefore;
-        if (terrainHit) {
-            item.actionFlashTimer = SpellRingItemActionFlashSeconds;
-            impactSoundEvents_.push_back(makeTerrainRingImpactSoundEvent(
-                item,
-                sourceObject,
-                impactTileType,
-                terrainOpened ? RingImpactResult::Break : RingImpactResult::Hit,
-                digPosition,
-                static_cast<float>(std::max(0, item.digPower))));
-        }
-        if (terrainHit && discoveryEvents != nullptr && sourceObject != nullptr) {
-            std::string effectKey = "dig";
-            if (std::any_of(
-                    sourceObject->discoveryEffectLines.begin(),
-                    sourceObject->discoveryEffectLines.end(),
-                    [](const DiscoveryEffectLine& line) {
-                        return line.effectKey == "dig_hard";
-                    })) {
-                effectKey = "dig_hard";
+        std::vector<DungeonTile> newTargets;
+        newTargets.reserve(currentTargets.size());
+        for (const DungeonTile& target : currentTargets) {
+            if (!wasLastDigTile(item, target)) {
+                newTargets.push_back(target);
             }
-            discoveryEvents->push_back(EffectDiscoveryEvent{
-                .objectId = sourceObject->id,
-                .objectName = sourceObject->name,
-                .effectKey = effectKey,
-                .description = "",
-                .note = {},
-                .position = digPosition,
-            });
+        }
+        rememberDigTiles(item, currentTargets);
+        if (newTargets.empty()) {
+            continue;
+        }
+
+        bool anyTerrainHit = false;
+        bool anyTerrainOpened = false;
+        bool discoveryRecorded = false;
+        const Vec2 firstHitPosition = map.tileCenter(newTargets.front().x, newTargets.front().y);
+        if (sourceObject != nullptr) {
+            for (const DungeonTile& target : newTargets) {
+                const Vec2 hitPosition = map.tileCenter(target.x, target.y);
+                const TileType impactTileType = map.terrainDebugAtWorld(hitPosition).type;
+                const std::size_t hitCountBefore = hitTiles_.size();
+                const std::size_t openedCountBefore = openedTiles_.size();
+
+                EffectContext context;
+                context.sourceObject = sourceObject;
+                context.owner = &player;
+                context.orbit = &spellRing;
+                context.orbitItem = &item;
+                context.tileMap = &map;
+                context.magic = magic;
+                context.terrainHitTiles = &hitTiles_;
+                context.terrainOpenedTiles = &openedTiles_;
+                context.terrainDugTiles = &dugTiles_;
+                context.discoveryEvents = discoveryEvents;
+                context.encyclopedia = encyclopedia;
+                context.position = hitPosition;
+                context.terrainHitTile = target;
+                context.triggerType = EffectTriggerType::Hit;
+                context.logUnimplementedEffects = false;
+                effectDispatcher.dispatchTargetEffects(sourceObject->orbitEffects, "terrain", context);
+                effectDispatcher.dispatchTargetEffects(sourceObject->orbitEffects, "ground", context);
+
+                const bool terrainHit = hitTiles_.size() != hitCountBefore;
+                const bool terrainOpened = openedTiles_.size() != openedCountBefore;
+                anyTerrainHit = anyTerrainHit || terrainHit;
+                anyTerrainOpened = anyTerrainOpened || terrainOpened;
+                if (terrainHit) {
+                    item.actionFlashTimer = SpellRingItemActionFlashSeconds;
+                    impactSoundEvents_.push_back(makeTerrainRingImpactSoundEvent(
+                        item,
+                        sourceObject,
+                        impactTileType,
+                        terrainOpened ? RingImpactResult::Break : RingImpactResult::Hit,
+                        hitPosition,
+                        static_cast<float>(std::max(0, item.digPower))));
+                }
+                if (terrainHit && !discoveryRecorded && discoveryEvents != nullptr) {
+                    std::string effectKey = "dig";
+                    if (std::any_of(
+                            sourceObject->discoveryEffectLines.begin(),
+                            sourceObject->discoveryEffectLines.end(),
+                            [](const DiscoveryEffectLine& line) {
+                                return line.effectKey == "dig_hard";
+                            })) {
+                        effectKey = "dig_hard";
+                    }
+                    discoveryEvents->push_back(EffectDiscoveryEvent{
+                        .objectId = sourceObject->id,
+                        .objectName = sourceObject->name,
+                        .effectKey = effectKey,
+                        .description = "",
+                        .note = {},
+                        .position = hitPosition,
+                    });
+                    discoveryRecorded = true;
+                }
+            }
+        }
+        if (!anyTerrainHit) {
+            continue;
         }
         if ((item.hasCapturedBehavior("reward_drop") || item.hasCapturedBehavior("steal_or_dig")) &&
             capturedRewardAllowed(item, totalTime)) {
@@ -204,7 +369,7 @@ void DiggingSystem::update(
                       item.capturedBehaviorParamDouble("steal_or_dig", "chance", CapturedRewardChanceWall))
                 : item.capturedBehaviorParamDouble("reward_drop", "chance", CapturedRewardChanceWall);
             if (rollCapturedReward(static_cast<float>(std::clamp(rewardChance, 0.0, 1.0)))) {
-                recordCapturedReward(item, totalTime, digPosition, rewardDropRequests_);
+                recordCapturedReward(item, totalTime, firstHitPosition, rewardDropRequests_);
             }
         }
         if (item.hasCapturedBehavior("charge_explode") && item.capturedExplodeSleepTimer <= 0.0f) {
@@ -219,10 +384,10 @@ void DiggingSystem::update(
             if (item.capturedExplodeCharge >= requiredHits) {
                 item.capturedExplodeCharge = 0;
                 item.capturedExplodeSleepTimer = restSeconds;
-                capturedExplosionRequests_.push_back(makeCapturedExplosionRequest(item, digPosition));
+                capturedExplosionRequests_.push_back(makeCapturedExplosionRequest(item, firstHitPosition));
             }
         }
-        if (terrainOpened) {
+        if (anyTerrainOpened) {
             spellRing.consumeItemDurability(item);
         }
         item.lastTerrainHitTime = totalTime;

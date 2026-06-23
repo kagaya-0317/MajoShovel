@@ -918,6 +918,15 @@ bool objectHasTag(const ObjectDefinition& object, std::string_view tag)
     });
 }
 
+bool objectExcludedFromHeldDrops(const ObjectDefinition& object)
+{
+    return isCodexHiddenObject(object) ||
+        objectHasTag(object, "no_drop") ||
+        objectHasTag(object, "nodrop") ||
+        objectHasTag(object, "shop_only") ||
+        objectHasTag(object, "\xE3\x82\xB7\xE3\x83\xA7\xE3\x83\x83\xE3\x83\x97\xE5\xB0\x82\xE7\x94\xA8");
+}
+
 bool chestKindForHeldDropProfile(std::string_view profile, LootChestKind& outKind)
 {
     if (profile.empty() || profile == "common" || profile == "box_common" || profile == "ore") {
@@ -959,6 +968,9 @@ std::string chooseHeldObjectIdForProfile(
     std::vector<const ObjectDefinition*> candidates;
     std::vector<double> weights;
     for (const ObjectDefinition& object : catalog.objects) {
+        if (objectExcludedFromHeldDrops(object)) {
+            continue;
+        }
         if (!requiredTag.empty() && !objectHasTag(object, requiredTag)) {
             continue;
         }
@@ -1719,10 +1731,13 @@ ItemData makeCapturedItemData(const Enemy& enemy)
     item.name = enemy.enemyName;
     item.category = "\xE8\xBB\x8C\xE9\x81\x93";
     item.rarity = 1;
+    item.roguelikeDropWeight = 0.0;
+    item.roguelikeResidualWeight = 0.0;
     item.price = 0;
 
     if (enemy.definition == nullptr) {
         item.damageType = "none";
+        item.tags.push_back("no_drop");
         return item;
     }
 
@@ -1755,11 +1770,13 @@ ItemData makeCapturedItemData(const Enemy& enemy)
     item.durability = definition.capturedDurability;
     item.weightKg = definition.capturedWeight;
     item.tags = definition.capturedTags;
+    if (std::find(item.tags.begin(), item.tags.end(), "no_drop") == item.tags.end()) {
+        item.tags.push_back("no_drop");
+    }
     if (enemy.variantTier != EnemyVariantTier::Normal) {
         item.tags.push_back("captured_variant");
         item.tags.push_back(enemy.variantTier == EnemyVariantTier::Abyss ? "captured_abyss" : "captured_deep");
         item.tags.push_back("codex_hidden");
-        item.tags.push_back("no_drop");
     }
     item.effectText = definition.capturedEffectText;
     item.capturedBehaviorIds = definition.capturedBehaviorIds;
@@ -8454,6 +8471,7 @@ void EnemySystem::update(
     const CollisionRect& stealViewBounds,
     bool allowBossCapture,
     std::string_view bossCaptureObjectId,
+    const std::unordered_set<std::string>* allowedCaptureEnemyIds,
     std::vector<EffectDiscoveryEvent>* discoveryEvents,
     const EncyclopediaSystem* encyclopedia)
 {
@@ -9543,10 +9561,13 @@ void EnemySystem::update(
                     CaptureAttemptOptions{
                         .requirePlayerReach = false,
                         .chanceMultiplier = captureNetSpec.chanceMultiplier,
+                        .allowedEnemyIds = allowedCaptureEnemyIds,
                     });
                 if (capture.type != CaptureResultType::NoTarget) {
                     item.actionFlashTimer = SpellRingItemActionFlashSeconds;
-                    spellRing.consumeItemDurability(item);
+                    if (capture.type != CaptureResultType::KnowledgeLocked) {
+                        spellRing.consumeItemDurability(item);
+                    }
                     captureResults_.push_back(std::move(capture));
                 }
                 if (!enemy.active || enemy.hp <= 0) {
@@ -11316,6 +11337,13 @@ CaptureResult EnemySystem::tryCaptureTarget(
             ? CaptureResultType::BossLocked
             : CaptureResultType::BossAlreadyOwned;
         return result;
+    }
+    if (options.allowedEnemyIds != nullptr) {
+        const std::string& enemyId = best->enemyId;
+        if (enemyId.empty() || options.allowedEnemyIds->find(enemyId) == options.allowedEnemyIds->end()) {
+            result.type = CaptureResultType::KnowledgeLocked;
+            return result;
+        }
     }
 
     std::uniform_real_distribution<float> dist(0.0f, 1.0f);

@@ -3017,6 +3017,8 @@ ObjectDefinition makeCapturedObjectDefinition(const EnemyDefinition& enemy, Enem
     item.category = "\xE8\xBB\x8C\xE9\x81\x93";
     item.description = enemy.capturedDescription;
     item.rarity = 1;
+    item.roguelikeDropWeight = 0.0;
+    item.roguelikeResidualWeight = 0.0;
     item.price = 0;
     item.visual.source = ItemVisualSource::Enemy;
     item.visual.imageNumber = enemy.imageNumber;
@@ -3042,11 +3044,13 @@ ObjectDefinition makeCapturedObjectDefinition(const EnemyDefinition& enemy, Enem
     item.durability = enemy.capturedDurability;
     item.weightKg = enemy.capturedWeight;
     item.tags = enemy.capturedTags;
+    if (std::find(item.tags.begin(), item.tags.end(), "no_drop") == item.tags.end()) {
+        item.tags.push_back("no_drop");
+    }
     if (variantTier != EnemyVariantTier::Normal) {
         item.tags.push_back("captured_variant");
         item.tags.push_back(variantTier == EnemyVariantTier::Abyss ? "captured_abyss" : "captured_deep");
         item.tags.push_back("codex_hidden");
-        item.tags.push_back("no_drop");
     }
     item.effectText = enemy.capturedEffectText;
     item.capturedBehaviorIds = enemy.capturedBehaviorIds;

@@ -74,10 +74,14 @@ constexpr std::array<std::string_view, 11> DropTags = {
     "\xE5\xAE\x9D",
 };
 
-constexpr std::array<std::string_view, 4> ExcludedDropTags = {
+constexpr std::array<std::string_view, 8> ExcludedDropTags = {
     "no_drop",
     "nodrop",
     "shop_only",
+    "codex_hidden",
+    "no_codex",
+    "codex_excluded",
+    "\xE5\x9B\xB3\xE9\x91\x91\xE9\x9D\x9E\xE8\xA1\xA8\xE7\xA4\xBA",
     "\xE3\x82\xB7\xE3\x83\xA7\xE3\x83\x83\xE3\x83\x97\xE5\xB0\x82\xE7\x94\xA8",
 };
 

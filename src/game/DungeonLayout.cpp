@@ -15,6 +15,7 @@ constexpr float MainPathTerminalUpMinTiles = 28.0f;
 constexpr float MainPathTerminalUpMaxTiles = 64.0f;
 constexpr float MainPathTerminalUpFraction = 0.16f;
 constexpr float MainPathTerminalUpReserveTiles = 24.0f;
+constexpr int RoguelikeSpecialRoomMinCount = 7;
 
 float dot(Vec2 a, Vec2 b)
 {
@@ -402,7 +403,7 @@ DungeonLayout generateDungeonLayout(const DungeonGenerationContext& context)
     };
     int specialRoomCount = std::clamp(context.specialRoomCount, 0, 24);
     if (context.roguelike || isProfile(layout.generationProfile, "astral_rogue")) {
-        specialRoomCount = std::max(5, specialRoomCount);
+        specialRoomCount = std::max(RoguelikeSpecialRoomMinCount, specialRoomCount);
     }
     const float roomRadiusBonus = roomRadiusBonusForProfile(layout.generationProfile);
     for (int roomIndex = 0; roomIndex < specialRoomCount && !typedCandidates.empty(); ++roomIndex) {

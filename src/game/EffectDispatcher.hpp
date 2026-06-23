@@ -4,8 +4,10 @@
 #include "engine/Math.hpp"
 #include "game/EntityStatusVisuals.hpp"
 #include "game/EncyclopediaSystem.hpp"
+#include "game/DungeonLayout.hpp"
 
 #include <functional>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <unordered_map>
@@ -74,6 +76,7 @@ struct EffectContext {
     std::vector<EffectDiscoveryEvent>* discoveryEvents = nullptr;
     const EncyclopediaSystem* encyclopedia = nullptr;
     Vec2 position{};
+    std::optional<DungeonTile> terrainHitTile;
     float dropSpawnedAtSeconds = 0.0f;
     EffectTriggerType triggerType = EffectTriggerType::Unknown;
     bool logUnimplementedEffects = true;

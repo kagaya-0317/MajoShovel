@@ -37,6 +37,7 @@ struct CapturedExplosionRequest {
 };
 
 class EncyclopediaSystem;
+struct HitboxCatalog;
 class MagicSystem;
 
 class DiggingSystem {
@@ -47,6 +48,7 @@ public:
         Player& player,
         float totalTime,
         const ObjectCatalog& objectCatalog,
+        const HitboxCatalog* hitboxCatalog,
         const EffectDispatcher& effectDispatcher,
         MagicSystem* magic = nullptr,
         std::vector<EffectDiscoveryEvent>* discoveryEvents = nullptr,

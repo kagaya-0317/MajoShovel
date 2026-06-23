@@ -41,6 +41,7 @@ add_executable(MajoShovel
     src/engine/InputRemapCapture.cpp
     src/engine/Input.cpp
     src/engine/InputHelpGlyph.cpp
+    src/engine/CrashReporter.cpp
     src/engine/FileWatcher.cpp
     src/engine/FrameProfiler.cpp
     src/engine/Log.cpp
@@ -133,7 +134,7 @@ target_include_directories(MajoShovel PRIVATE src)
 target_link_libraries(MajoShovel PRIVATE SDL3::SDL3)
 
 if(WIN32)
-    target_link_libraries(MajoShovel PRIVATE gdiplus winhttp user32 gdi32 comctl32)
+    target_link_libraries(MajoShovel PRIVATE gdiplus winhttp user32 gdi32 comctl32 dbghelp)
 
     add_custom_command(TARGET MajoShovel POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
@@ -155,9 +156,10 @@ add_custom_command(TARGET MajoShovel POST_BUILD
 )
 
 if(MSVC)
-    target_compile_options(MajoShovel PRIVATE /W4 /permissive- /utf-8)
+    target_compile_options(MajoShovel PRIVATE /W4 /permissive- /utf-8 $<$<CONFIG:Release>:/Zi>)
     target_link_options(MajoShovel PRIVATE
         /STACK:8388608
+        $<$<CONFIG:Release>:/DEBUG>
         $<$<CONFIG:Debug>:/DEBUG:FASTLINK>
     )
 else()

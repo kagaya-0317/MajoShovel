@@ -7,6 +7,7 @@
 #include "game/ExplosionWarning.hpp"
 #include "game/ItemImageRenderer.hpp"
 #include "game/NpcCharacterVisual.hpp"
+#include "game/SpecialObjectRules.hpp"
 
 #include <cmath>
 #include <unordered_map>
@@ -49,9 +50,9 @@ constexpr float RoguelikeBigHoleProgress = 0.965f;
 constexpr float RoguelikeGateBossProgress = 0.895f;
 constexpr float RoguelikeBigHoleImageSize = 58.0f;
 constexpr int RoguelikeFacilityKindCount = 3;
-constexpr int RoguelikeFacilityMinRoomsPerArea = 1;
+constexpr int RoguelikeFacilityMinRoomsPerArea = 2;
 constexpr int RoguelikeFacilityMaxRoomsPerArea = 3;
-constexpr int RoguelikeFacilityGuaranteeMeters = 800;
+constexpr int RoguelikeFacilityGuaranteeMeters = RoguelikeMetersPerArea;
 constexpr int RoguelikeFacilityCavityRadiusTiles = 4;
 constexpr float RoguelikeFacilityProgressStart = 0.18f;
 constexpr float RoguelikeFacilityProgressSpan = 0.60f;
@@ -189,6 +190,23 @@ constexpr std::array<RoguelikeLootCategorySpec, 11> RoguelikeLootCategorySpecs{{
     {CategoryOrbit, 3.0, 2.0, 2.0},
 }};
 
+bool objectHasTag(const ObjectDefinition& object, std::string_view tag)
+{
+    return std::any_of(object.tags.begin(), object.tags.end(), [tag](const std::string& objectTag) {
+        return objectTag == tag;
+    });
+}
+
+bool objectExcludedFromRandomLoot(const ObjectDefinition& object)
+{
+    return isCodexHiddenObject(object) ||
+        objectExcludedFromDungeonDrops(object.id) ||
+        objectHasTag(object, "no_drop") ||
+        objectHasTag(object, "nodrop") ||
+        objectHasTag(object, "shop_only") ||
+        objectHasTag(object, "\xE3\x82\xB7\xE3\x83\xA7\xE3\x83\x83\xE3\x83\x97\xE5\xB0\x82\xE7\x94\xA8");
+}
+
 double roguelikeLootCategoryBaseWeight(const RoguelikeLootCategorySpec& spec, LootChestKind chestKind)
 {
     switch (chestKind) {
@@ -228,7 +246,7 @@ double roguelikeLevelDistanceMultiplier(int baseLevel, int targetLevel)
 
 double roguelikeLootWeightForObject(const ObjectDefinition& object, int targetLevel)
 {
-    if (object.roguelikeDropWeight <= 0.0) {
+    if (objectExcludedFromRandomLoot(object) || object.roguelikeDropWeight <= 0.0) {
         return 0.0;
     }
 
@@ -2843,6 +2861,10 @@ void Game::updatePlayerRegen(float dt, std::vector<EffectDiscoveryEvent>& discov
     }
     playerRegenAccumulator_ = std::max(0.0, playerRegenAccumulator_ - static_cast<double>(healed));
 
+    if (!shouldRecordEffectDiscoveries()) {
+        return;
+    }
+
     for (const PlayerRegenSource& source : playerRegenSources_) {
         if (source.objectId.empty() || source.ratePerSecond <= 0.0) {
             continue;
@@ -3215,6 +3237,7 @@ bool Game::handleCaptureResult(const CaptureResult& capture)
                 capture.capturedEnemy.enemyId,
                 codexEnemyName,
                 capture.position);
+            recordMainCapturedEnemy(capture.capturedEnemy.enemyId);
         }
         startCaptureAbsorbAnimation(capture);
         return true;
@@ -3229,6 +3252,8 @@ bool Game::handleCaptureResult(const CaptureResult& capture)
         pushDungeonLog("虫とりアミ: 初回ボスは捕獲できない", "capture_boss_locked");
     } else if (capture.type == CaptureResultType::BossAlreadyOwned) {
         pushDungeonLog("虫とりアミ: 捕獲中のボスは再捕獲できない", "capture_boss_owned");
+    } else if (capture.type == CaptureResultType::KnowledgeLocked) {
+        pushDungeonLog("虫とりアミ: 本編で捕まえたことのない敵", "capture_knowledge_locked:" + capture.enemyName);
     } else if (capture.type == CaptureResultType::Failed) {
         pushDungeonLog("虫とりアミ: 逃げられた", "capture_failed:" + capture.enemyName);
     }
@@ -3806,6 +3831,11 @@ bool Game::gameplayRewardsEnabled() const
         mode_ != ScreenMode::AstralResult;
 }
 
+bool Game::shouldRecordEffectDiscoveries() const
+{
+    return gameplayRewardsEnabled() && !currentStageIsRoguelike();
+}
+
 void Game::initializePlayerDeathRingPresentation()
 {
     std::mt19937& rng = lootRuntimeRng();
@@ -4019,6 +4049,8 @@ void Game::updatePlayerDeathSequence(float dt)
 
 void Game::retryAfterGameOver()
 {
+    clearAstralEchoRecentStar();
+    deathResultPrelude_ = {};
     playerDeathSequence_ = {};
     worldDrops_.removeTemporaryDrops();
     if (introTutorialActive()) {
@@ -4074,6 +4106,8 @@ void Game::retryAfterGameOver()
 
 void Game::returnToBaseAfterGameOver()
 {
+    clearAstralEchoRecentStar();
+    deathResultPrelude_ = {};
     playerDeathSequence_ = {};
     worldDrops_.removeTemporaryDrops();
     if (introTutorialActive()) {
@@ -4156,6 +4190,9 @@ void Game::enterAstralResult(Game::AstralRunResult result)
         return;
     }
 
+    if (result == AstralRunResult::Died) {
+        recordAstralEchoStar(true);
+    }
     resetBossEncounter();
     if (result == AstralRunResult::Died) {
         player_.hp = 0;
@@ -4189,6 +4226,11 @@ void Game::enterAstralResult(Game::AstralRunResult result)
     }
 
     mode_ = ScreenMode::AstralResult;
+    if (result == AstralRunResult::Died) {
+        beginDeathResultPrelude();
+    } else {
+        deathResultPrelude_ = {};
+    }
     pausePage_ = PauseMenuPage::Main;
     pauseReturnMode_ = ScreenMode::Playing;
     inventoryReturnToPause_ = false;
@@ -4201,6 +4243,8 @@ void Game::returnToBaseAfterAstralResult()
         astralResult_.result == AstralRunResult::DragonDefeated ||
         astralResult_.result == AstralRunResult::Completed;
     const bool died = astralResult_.result == AstralRunResult::Died;
+    clearAstralEchoRecentStar();
+    deathResultPrelude_ = {};
     requestReturnToBaseTransition(dragonDefeated, died);
 }
 
@@ -4341,11 +4385,7 @@ void Game::returnToBaseFromNormalStage(bool stageCleared, bool died)
         queueStoryEventForTrigger("stage_clear:" + returnedStageId);
     }
     if (astralCompletedOnReturn && !hasStoryFlag(StoryEndingAstralClearFlag)) {
-        const EndingKind astralEndingKind = resolveEndingKamishibaiKind(EndingKind::AstralClear);
-        if (astralEndingKind != EndingKind::AstralFailedTrust ||
-            !hasStoryFlag(StoryEndingAstralFailedTrustFlag)) {
-            requestEndingKamishibai(astralEndingKind);
-        }
+        requestEndingKamishibai(EndingKind::AstralClear);
     }
     queueBaseHintEventOnReturn(returnedStageId, stageCleared);
 }
@@ -4524,6 +4564,7 @@ void Game::equipIntroTutorialStartingTools()
                 ringItem.localAngle = 0.0f;
                 ringItem.durabilityLocked = true;
             }
+            recordMainObjectObtained(IntroTutorialShovelObjectId);
         }
     }
     refreshEquipmentModifiers();
@@ -4546,6 +4587,7 @@ void Game::addIntroTutorialTorchToRing()
             if (result.itemIndex >= 0 && result.itemIndex < static_cast<int>(ringItems.size())) {
                 ringItems[static_cast<std::size_t>(result.itemIndex)].localAngle = Pi;
             }
+            recordMainObjectObtained(IntroTutorialTorchObjectId);
         }
     }
     refreshEquipmentModifiers();
@@ -6997,6 +7039,11 @@ bool Game::spawnDungeonEventReward(DungeonEventInstance& event, const DungeonEve
             spawned = true;
             break;
         }
+        if (objectExcludedFromDungeonDrops(object->id) ||
+            (currentStageIsRoguelike() && !roguelikeObjectAllowed(*object))) {
+            logError("[warning] DungeonEventReward: object_id=\"" + request.objectId + "\" is not allowed for this dungeon; reward skipped");
+            break;
+        }
 
         const Vec2 target = safeLootLandingPosition(center, rng);
         if (inventory_.canAddObjectItem(objectCatalog_, request.objectId)) {
@@ -7655,6 +7702,7 @@ void Game::initializeRoguelikeFacilitiesFromLayout()
         reservations.reserve(roguelikeBigHole_.tile, RoguelikeFacilityCavityRadiusTiles + 2);
     }
 
+    int skippedReservationCount = 0;
     for (int i = 0; i < static_cast<int>(facilityPlans.size()); ++i) {
         const FacilityKindPlan& plan = facilityPlans[static_cast<std::size_t>(i)];
         const float t = static_cast<float>(i + 1) / static_cast<float>(facilityPlans.size() + 1);
@@ -7687,6 +7735,7 @@ void Game::initializeRoguelikeFacilitiesFromLayout()
                 RoguelikeFacilityCavityRadiusTiles,
                 PlacementSearchRadiusTiles,
                 centerTile)) {
+            ++skippedReservationCount;
             continue;
         }
 
@@ -7716,6 +7765,22 @@ void Game::initializeRoguelikeFacilitiesFromLayout()
             roguelikeFacilityLastDepthMeters_[static_cast<std::size_t>(kindIndex)] = roguelikeFacilities_.back().depthMeters;
         }
     }
+
+    std::array<int, RoguelikeFacilityKindCount> placedCounts{};
+    for (const RoguelikeFacilityInstance& facility : roguelikeFacilities_) {
+        const int kindIndex = roguelikeFacilityKindIndex(facility.kind);
+        if (kindIndex >= 0 && kindIndex < static_cast<int>(placedCounts.size())) {
+            ++placedCounts[static_cast<std::size_t>(kindIndex)];
+        }
+    }
+    logInfo(
+        "[rogue_facility] generated area=" + std::to_string(areaStartMeters) + "-" +
+            std::to_string(areaEndMeters) + "m planned=" + std::to_string(facilityPlans.size()) +
+            " placed=" + std::to_string(roguelikeFacilities_.size()) +
+            " skipped_reservation=" + std::to_string(skippedReservationCount) +
+            " merchant=" + std::to_string(placedCounts[roguelikeFacilityKindIndex(RoguelikeFacilityKind::Merchant)]) +
+            " artisan=" + std::to_string(placedCounts[roguelikeFacilityKindIndex(RoguelikeFacilityKind::Artisan)]) +
+            " trainer=" + std::to_string(placedCounts[roguelikeFacilityKindIndex(RoguelikeFacilityKind::Trainer)]));
 }
 
 void Game::configureBossSpawnPointFromRoguelikeBigHole()
@@ -8334,7 +8399,9 @@ void Game::initializeRewardNodesFromLayout()
     std::uniform_int_distribution<int> signDist(0, 1);
     std::uniform_int_distribution<int> moneyDist(2, 8);
     std::uniform_int_distribution<int> coinRoomMoneyCountDist(CoinRoomMoneyNodeMinCount, CoinRoomMoneyNodeMaxCount);
-    const std::optional<std::string> fallbackObjectId = firstAvailableObjectId(objectCatalog_);
+    const std::optional<std::string> fallbackObjectId = currentStageIsRoguelike()
+        ? firstRoguelikeAllowedObjectId()
+        : firstAvailableObjectId(objectCatalog_);
 
     PlacementReservations reservations;
     reserveLayoutAnchors(reservations, dungeonLayout_);
@@ -8658,13 +8725,26 @@ void Game::updateExposedRewardNodes()
             continue;
         }
 
+        const Vec2 center = tileWorldCenter(node.tile);
         bool spawnedObject = false;
-        if (node.objectId.has_value()) {
-            spawnedObject = worldDrops_.spawnObjectDrop(objectCatalog_, *node.objectId, tileWorldCenter(node.tile), runStats_.elapsedSeconds);
+        if (node.objectId.has_value() &&
+            !objectExcludedFromDungeonDrops(*node.objectId) &&
+            (!currentStageIsRoguelike() || roguelikeObjectAllowed(*node.objectId))) {
+            spawnedObject = worldDrops_.spawnObjectDrop(objectCatalog_, *node.objectId, center, runStats_.elapsedSeconds);
+        }
+        if (!spawnedObject && currentStageIsRoguelike()) {
+            std::mt19937& rng = lootRuntimeRng();
+            spawnedObject = spawnWeightedObjectLoot(
+                LootChestKind::Common,
+                roguelikeDepthRankForWorldPosition(center),
+                center,
+                rng,
+                "RewardNodeLoot",
+                false);
         }
         node.spawned = true;
         node.collected = true;
-        if (!spawnedObject) {
+        if (!spawnedObject && !currentStageIsRoguelike()) {
             ++runStats_.acquiredItems;
         }
     }
@@ -8700,12 +8780,25 @@ void Game::revealRewardNodesFromOpenedTiles(const std::vector<Vec2>& openedTiles
             }
             node.revealed = true;
             node.spawned = true;
+            const Vec2 center = tileWorldCenter(node.tile);
             bool spawnedObject = false;
-            if (node.objectId.has_value()) {
-                spawnedObject = worldDrops_.spawnObjectDrop(objectCatalog_, *node.objectId, tileWorldCenter(node.tile), runStats_.elapsedSeconds);
+            if (node.objectId.has_value() &&
+                !objectExcludedFromDungeonDrops(*node.objectId) &&
+                (!currentStageIsRoguelike() || roguelikeObjectAllowed(*node.objectId))) {
+                spawnedObject = worldDrops_.spawnObjectDrop(objectCatalog_, *node.objectId, center, runStats_.elapsedSeconds);
+            }
+            if (!spawnedObject && currentStageIsRoguelike()) {
+                std::mt19937& rng = lootRuntimeRng();
+                spawnedObject = spawnWeightedObjectLoot(
+                    LootChestKind::Common,
+                    roguelikeDepthRankForWorldPosition(center),
+                    center,
+                    rng,
+                    "BuriedRewardLoot",
+                    false);
             }
             node.collected = true;
-            if (!spawnedObject) {
+            if (!spawnedObject && !currentStageIsRoguelike()) {
                 ++runStats_.acquiredItems;
             }
             discoveredReward = true;
@@ -8796,7 +8889,9 @@ void Game::normalizeOpenBuriedPlacementNodes()
         node.visibility = PlacementVisibility::Exposed;
         node.revealed = true;
         if (!node.objectId.has_value()) {
-            node.objectId = firstAvailableObjectId(objectCatalog_);
+            node.objectId = currentStageIsRoguelike()
+                ? firstRoguelikeAllowedObjectId()
+                : firstAvailableObjectId(objectCatalog_);
         }
     }
 
@@ -9199,6 +9294,36 @@ double Game::roguelikeSourceCategoryMultiplier(LootSourceKind sourceKind, std::s
     return 1.0;
 }
 
+bool Game::roguelikeObjectAllowed(std::string_view objectId) const
+{
+    if (objectId.empty()) {
+        return false;
+    }
+    const ObjectDefinition* object = objectCatalog_.registry.findById(objectId);
+    return object != nullptr && roguelikeObjectAllowed(*object);
+}
+
+bool Game::roguelikeObjectAllowed(const ObjectDefinition& object) const
+{
+    if (object.id.empty() || object.id == MagnifyingGlassObjectId) {
+        return false;
+    }
+    if (objectExcludedFromRandomLoot(object)) {
+        return false;
+    }
+    return mainObtainedObjectIds_.find(object.id) != mainObtainedObjectIds_.end();
+}
+
+std::optional<std::string> Game::firstRoguelikeAllowedObjectId() const
+{
+    for (const ObjectDefinition& object : objectCatalog_.objects) {
+        if (roguelikeObjectAllowed(object)) {
+            return object.id;
+        }
+    }
+    return std::nullopt;
+}
+
 bool Game::spawnWeightedObjectLoot(
     LootChestKind chestKind,
     int depthRank,
@@ -9280,6 +9405,9 @@ bool Game::spawnWeightedObjectLoot(
             if (object.category != category || !hasRequiredTag(object)) {
                 return 0.0;
             }
+            if (!roguelikeObjectAllowed(object)) {
+                return 0.0;
+            }
             if (appleUseTutorialPending &&
                 object.id != TutorialAppleObjectId &&
                 objectIsInventoryUsableItem(object)) {
@@ -9359,6 +9487,9 @@ bool Game::spawnWeightedObjectLoot(
     std::vector<const ObjectDefinition*> candidates;
     std::vector<double> weights;
     for (const ObjectDefinition& object : objectCatalog_.objects) {
+        if (objectExcludedFromRandomLoot(object)) {
+            continue;
+        }
         if (!hasRequiredTag(object)) {
             continue;
         }
@@ -10605,6 +10736,7 @@ void Game::updatePendingBuriedEnemySpawns(float dt)
 
 void Game::updateRingEffectDiscoveries(std::vector<EffectDiscoveryEvent>& discoveryEvents)
 {
+    const bool recordDiscoveries = shouldRecordEffectDiscoveries();
     const std::vector<const SpellRingItem*> runtimeItems = spellRing_.runtimeItems();
     for (const SpellRingItem* itemPtr : runtimeItems) {
         if (itemPtr == nullptr || itemPtr->objectId.empty() || itemPtr->broken()) {
@@ -10626,7 +10758,7 @@ void Game::updateRingEffectDiscoveries(std::vector<EffectDiscoveryEvent>& discov
         };
 
         for (std::string_view orbitEffectKey : {"orbit_gravity", "orbit_power", "orbit_antigravity", "orbit_speed", "orbit_anchor", "orbit_shift", "damage_speed", "item_orbit_offset"}) {
-            if (hasOrbitEffect(orbitEffectKey) && !encyclopedia_.hasObjectEffect(object->id, orbitEffectKey)) {
+            if (recordDiscoveries && hasOrbitEffect(orbitEffectKey) && !encyclopedia_.hasObjectEffect(object->id, orbitEffectKey)) {
                 discoveryEvents.push_back(EffectDiscoveryEvent{
                     .objectId = object->id,
                     .objectName = object->name,
@@ -10638,7 +10770,7 @@ void Game::updateRingEffectDiscoveries(std::vector<EffectDiscoveryEvent>& discov
             }
         }
 
-        if (itemPtr->lightRadius > 0.0f && !encyclopedia_.hasObjectEffect(object->id, "light")) {
+        if (recordDiscoveries && itemPtr->lightRadius > 0.0f && !encyclopedia_.hasObjectEffect(object->id, "light")) {
             discoveryEvents.push_back(EffectDiscoveryEvent{
                 .objectId = object->id,
                 .objectName = object->name,
@@ -10697,7 +10829,9 @@ void Game::updateRingEffectDiscoveries(std::vector<EffectDiscoveryEvent>& discov
                 }
                 sensedHiddenEnemy = true;
             }
-            if ((newlyDetectedHidden || sensedHiddenEnemy) && !encyclopedia_.hasObjectEffect(object->id, "detect_hidden")) {
+            if (recordDiscoveries &&
+                (newlyDetectedHidden || sensedHiddenEnemy) &&
+                !encyclopedia_.hasObjectEffect(object->id, "detect_hidden")) {
                 playAudioSe(AudioSeDiscovery);
                 discoveryEvents.push_back(EffectDiscoveryEvent{
                     .objectId = object->id,
@@ -10747,7 +10881,9 @@ void Game::updateRingEffectDiscoveries(std::vector<EffectDiscoveryEvent>& discov
                 node.detectorRevealed = true;
                 newlyDetectedTreasure = true;
             }
-            if (newlyDetectedTreasure && !encyclopedia_.hasObjectEffect(object->id, "detect_treasure")) {
+            if (recordDiscoveries &&
+                newlyDetectedTreasure &&
+                !encyclopedia_.hasObjectEffect(object->id, "detect_treasure")) {
                 playAudioSe(AudioSeDiscovery);
                 discoveryEvents.push_back(EffectDiscoveryEvent{
                     .objectId = object->id,
@@ -10768,6 +10904,8 @@ void Game::updateOrbitAreaEffects(float dt, std::vector<EffectDiscoveryEvent>& d
         return;
     }
 
+    std::vector<EffectDiscoveryEvent>* discoverySink =
+        shouldRecordEffectDiscoveries() ? &discoveryEvents : nullptr;
     std::vector<SpellRingItem*> runtimeItems = spellRing_.runtimeItemsMutable();
     for (SpellRingItem* itemPtr : runtimeItems) {
         if (itemPtr == nullptr) {
@@ -10824,7 +10962,7 @@ void Game::updateOrbitAreaEffects(float dt, std::vector<EffectDiscoveryEvent>& d
                         item.waterShotTimer = item.waterShotInterval;
                         if (object != nullptr) {
                             appendObjectEffectDiscovery(
-                                &discoveryEvents,
+                                discoverySink,
                                 encyclopedia_,
                                 *object,
                                 "water_shot_emitter",
@@ -10859,7 +10997,7 @@ void Game::updateOrbitAreaEffects(float dt, std::vector<EffectDiscoveryEvent>& d
                     item.vacuumPullFxTimer = 0.30f;
                 }
                 if (object != nullptr) {
-                    appendObjectEffectDiscovery(&discoveryEvents, encyclopedia_, *object, "vacuum_pull_light", item.worldPosition);
+                    appendObjectEffectDiscovery(discoverySink, encyclopedia_, *object, "vacuum_pull_light", item.worldPosition);
                 }
             }
         }
@@ -10883,7 +11021,7 @@ void Game::updateOrbitAreaEffects(float dt, std::vector<EffectDiscoveryEvent>& d
                     item.windPushFxTimer = 0.28f;
                 }
                 if (object != nullptr) {
-                    appendObjectEffectDiscovery(&discoveryEvents, encyclopedia_, *object, "wind_push_light", item.worldPosition);
+                    appendObjectEffectDiscovery(discoverySink, encyclopedia_, *object, "wind_push_light", item.worldPosition);
                 }
             }
         }
@@ -10906,9 +11044,9 @@ void Game::updateOrbitAreaEffects(float dt, std::vector<EffectDiscoveryEvent>& d
                     item.coldAirFxTimer = 0.34f;
                 }
                 if (object != nullptr) {
-                    appendObjectEffectDiscovery(&discoveryEvents, encyclopedia_, *object, "cold_air_aura", item.worldPosition);
+                    appendObjectEffectDiscovery(discoverySink, encyclopedia_, *object, "cold_air_aura", item.worldPosition);
                     if (frozenCount > 0) {
-                        appendObjectEffectDiscovery(&discoveryEvents, encyclopedia_, *object, "status_frozen", item.worldPosition);
+                        appendObjectEffectDiscovery(discoverySink, encyclopedia_, *object, "status_frozen", item.worldPosition);
                     }
                 }
             }
@@ -10936,12 +11074,12 @@ void Game::updateOrbitAreaEffects(float dt, std::vector<EffectDiscoveryEvent>& d
                     item.hotAirFxTimer = 0.32f;
                 }
                 if (object != nullptr) {
-                    appendObjectEffectDiscovery(&discoveryEvents, encyclopedia_, *object, "hot_air", item.worldPosition);
+                    appendObjectEffectDiscovery(discoverySink, encyclopedia_, *object, "hot_air", item.worldPosition);
                     if (hotCount > 0) {
-                        appendObjectEffectDiscovery(&discoveryEvents, encyclopedia_, *object, "status_hot", item.worldPosition);
+                        appendObjectEffectDiscovery(discoverySink, encyclopedia_, *object, "status_hot", item.worldPosition);
                     }
                     if (driedWetCount > 0 && item.dryWetBonusDamage > 0) {
-                        appendObjectEffectDiscovery(&discoveryEvents, encyclopedia_, *object, "dry_wet_bonus_damage", item.worldPosition);
+                        appendObjectEffectDiscovery(discoverySink, encyclopedia_, *object, "dry_wet_bonus_damage", item.worldPosition);
                     }
                 }
             }
@@ -10989,7 +11127,7 @@ void Game::updateOrbitGroundEffects(float dt, std::vector<EffectDiscoveryEvent>&
         context.groundLines = &groundLines_;
         context.magic = &magic_;
         context.encyclopedia = &encyclopedia_;
-        context.discoveryEvents = &discoveryEvents;
+        context.discoveryEvents = shouldRecordEffectDiscoveries() ? &discoveryEvents : nullptr;
         context.position = item.worldPosition;
         context.triggerType = EffectTriggerType::Orbit;
         context.logUnimplementedEffects = false;
@@ -11502,6 +11640,7 @@ void Game::captureRetrySnapshotAtWarpPoint()
     retrySnapshot_.playerLevel = player_.level;
     retrySnapshot_.playerXp = player_.xp;
     retrySnapshot_.playerXpToNext = player_.xpToNext;
+    retrySnapshot_.levelRingUpgradePoints = levelRingUpgradePoints_;
     retrySnapshot_.inventory = captureInventoryCarryState();
     retrySnapshot_.tileMapState = tileMap_.capturePersistentState();
     retrySnapshot_.dungeonLayout = dungeonLayout_;
@@ -11539,6 +11678,9 @@ void Game::restoreRetrySnapshot()
     player_.level = retrySnapshot_.playerLevel;
     player_.xp = retrySnapshot_.playerXp;
     player_.xpToNext = retrySnapshot_.playerXpToNext;
+    levelRingUpgradePoints_ = retrySnapshot_.levelRingUpgradePoints;
+    ringWorkshopDraftUpgradePoints_ = levelRingUpgradePoints_;
+    ringWorkshopRespecSource_.reset();
     player_.velocity = {};
     player_.knockbackVelocity = {};
     player_.knockbackTimer = 0.0f;
@@ -11555,6 +11697,10 @@ void Game::restoreRetrySnapshot()
     dungeonLayout_ = retrySnapshot_.dungeonLayout;
     dungeonMinimapCells_ = retrySnapshot_.dungeonMinimapCells;
     restoreInventoryCarryState(retrySnapshot_.inventory);
+    refreshEquipmentModifiers();
+    applyPermanentUpgrades();
+    spellRing_.applyObjectParameters(objectCatalog_);
+    refreshOrbitEffects();
     runStats_ = retrySnapshot_.runStats;
     warpPoints_ = retrySnapshot_.warpPoints;
     rewardNodes_ = retrySnapshot_.rewardNodes;
@@ -11630,6 +11776,7 @@ bool Game::captureDebugRoguelikeRunSnapshot()
     dungeon.playerLevel = player_.level;
     dungeon.playerXp = player_.xp;
     dungeon.playerXpToNext = player_.xpToNext;
+    dungeon.levelRingUpgradePoints = levelRingUpgradePoints_;
     dungeon.inventory = captureInventoryCarryState();
     dungeon.tileMapState = tileMap_.capturePersistentState();
     dungeon.dungeonLayout = dungeonLayout_;
@@ -11742,8 +11889,15 @@ bool Game::restoreDebugRoguelikeRunSnapshot()
     player_.level = std::max(1, dungeon.playerLevel);
     player_.xp = std::max(0, dungeon.playerXp);
     player_.xpToNext = std::max(1, dungeon.playerXpToNext);
+    levelRingUpgradePoints_ = dungeon.levelRingUpgradePoints;
+    ringWorkshopDraftUpgradePoints_ = levelRingUpgradePoints_;
+    ringWorkshopRespecSource_.reset();
     player_.updateSpriteFlipFromFacing();
     clearTemporaryPlayerState(false);
+    refreshEquipmentModifiers();
+    applyPermanentUpgrades();
+    spellRing_.applyObjectParameters(objectCatalog_);
+    refreshOrbitEffects();
 
     resetBossEncounter();
     carveBossArenaAroundSpawnPoint();

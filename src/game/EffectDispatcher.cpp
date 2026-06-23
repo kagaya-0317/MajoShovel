@@ -590,8 +590,12 @@ void applyDigInvocation(const EffectInvocation& invocation)
 
     const int damage = positiveIntPower(invocation.value);
 
-    const int tileX = invocation.context->tileMap->worldToTile(invocation.context->position.x);
-    const int tileY = invocation.context->tileMap->worldToTile(invocation.context->position.y);
+    const int tileX = invocation.context->terrainHitTile
+        ? invocation.context->terrainHitTile->x
+        : invocation.context->tileMap->worldToTile(invocation.context->position.x);
+    const int tileY = invocation.context->terrainHitTile
+        ? invocation.context->terrainHitTile->y
+        : invocation.context->tileMap->worldToTile(invocation.context->position.y);
     if (invocation.effect == "dig_multi") {
         constexpr std::array<std::pair<int, int>, 5> Offsets{{
             {0, 0},

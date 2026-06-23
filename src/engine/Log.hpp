@@ -1,6 +1,7 @@
-#pragma once
+﻿#pragma once
 
 #include <functional>
+#include <filesystem>
 #include <string>
 #include <string_view>
 
@@ -16,6 +17,8 @@ enum class LogLevel {
 using LogSink = std::function<void(LogLevel, std::string_view)>;
 
 void setLogSink(LogSink sink);
+void setFileLoggingEnabled(bool enabled);
+std::filesystem::path currentLogFilePath();
 void logMessage(LogLevel level, std::string_view message);
 void logInfo(std::string_view message);
 void logWarning(std::string_view message);

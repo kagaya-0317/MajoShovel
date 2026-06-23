@@ -242,6 +242,7 @@ bool objectIsEnemyTestMetalDropCandidate(const ObjectDefinition& object)
 {
     return !object.id.empty() &&
         objectDefinitionHasTag(object, "metal") &&
+        !isCodexHiddenObject(object) &&
         !objectDefinitionHasAnyTag(object, {"no_drop", "nodrop", "shop_only", "ショップ専用"});
 }
 
@@ -249,6 +250,7 @@ bool objectIsEnemyTestTreasureDropCandidate(const ObjectDefinition& object)
 {
     return !object.id.empty() &&
         (object.category == "\xE5\xAE\x9D" || objectDefinitionHasTag(object, "treasure")) &&
+        !isCodexHiddenObject(object) &&
         !objectDefinitionHasAnyTag(object, {"no_drop", "nodrop", "shop_only", "ショップ専用"});
 }
 
@@ -12216,6 +12218,30 @@ bool Game::executeDebugCommand(std::string_view command)
                 ++roomCounts[static_cast<std::size_t>(index)];
             }
         }
+        std::string eventCounts;
+        int discoveredEvents = 0;
+        int completedEvents = 0;
+        for (const DungeonEventDefinition& definition : dungeonEventDefinitions()) {
+            const int count = static_cast<int>(std::count_if(
+                dungeonEvents_.all().begin(),
+                dungeonEvents_.all().end(),
+                [kind = definition.kind](const DungeonEventInstance& event) {
+                    return event.kind == kind;
+                }));
+            if (count > 0) {
+                eventCounts += " ";
+                eventCounts += std::string(definition.id);
+                eventCounts += "=" + std::to_string(count);
+            }
+        }
+        for (const DungeonEventInstance& event : dungeonEvents_.all()) {
+            if (event.discovered) {
+                ++discoveredEvents;
+            }
+            if (event.completed) {
+                ++completedEvents;
+            }
+        }
         std::array<int, 3> facilityCounts{};
         for (const RoguelikeFacilityInstance& facility : roguelikeFacilities_) {
             switch (facility.kind) {
@@ -12242,11 +12268,17 @@ bool Game::executeDebugCommand(std::string_view command)
             " treasure=" + std::to_string(roomCounts[static_cast<std::size_t>(SpecialRoomType::TreasureRoom)]) +
             " enemy=" + std::to_string(roomCounts[static_cast<std::size_t>(SpecialRoomType::EnemyRoom)]) +
             " boss=" + (hasBossSpawnPoint_ ? "true" : "false"));
+        logInfo("Debug: astral events total=" + std::to_string(dungeonEvents_.size()) +
+            " discovered=" + std::to_string(discoveredEvents) +
+            " completed=" + std::to_string(completedEvents) +
+            eventCounts);
         logInfo("Debug: astral facilities merchant=" + std::to_string(facilityCounts[0]) +
             " artisan=" + std::to_string(facilityCounts[1]) +
             " trainer=" + std::to_string(facilityCounts[2]) +
             " bigHole=" + (roguelikeBigHole_.active ? std::to_string(roguelikeBigHole_.depthMeters) + "m" : std::string("none")) +
-            " unlocked=" + (roguelikeBigHole_.unlocked ? "true" : "false"));
+            " unlocked=" + (roguelikeBigHole_.unlocked ? "true" : "false") +
+            " hiddenNpcSuppressed=" + (hiddenRouteNpcAttackActive() ? "true" : "false") +
+            " suppressedFacilities=" + std::to_string(hiddenRouteNpcAttackActive() ? roguelikeFacilities_.size() : 0));
         return true;
     }
 
@@ -12285,10 +12317,9 @@ bool Game::executeDebugCommand(std::string_view command)
         const int areaStartMeters = std::max(0, astralRun_.currentDepthMeters);
         const int areaEndMeters = std::max(areaStartMeters + 1, astralRun_.nextHoleDepthMeters);
         const int depthMeters = std::clamp(
-            areaStartMeters + static_cast<int>(std::lround(
-                metrics.pathProgress * static_cast<float>(areaEndMeters - areaStartMeters))),
+            areaStartMeters + static_cast<int>(std::lround(routeTiles)),
             0,
-            std::max(1, astralRun_.completionDepthMeters));
+            std::min(areaEndMeters, std::max(1, astralRun_.completionDepthMeters)));
         const int maxLocalDepth = std::max(1, lootMaxDepthForStage(currentStageId_));
         constexpr int DebugRoguelikeSectionsPerArea = 3;
         const int localSection = std::clamp(
@@ -12302,6 +12333,37 @@ bool Game::executeDebugCommand(std::string_view command)
         const float nextSectionRemainingTiles = std::max(0.0f, nextSectionRouteTiles - routeTiles);
         const Vec2 pathPoint = pointAtPathProgress(dungeonLayout_.mainPathPoints, metrics.pathProgress);
         const Vec2 pathTangent = tangentAtPathProgress(dungeonLayout_.mainPathPoints, metrics.pathProgress);
+        std::array<int, 6> roomCounts{};
+        for (const SpecialRoomAnchor& room : dungeonLayout_.specialRoomAnchors) {
+            const int index = static_cast<int>(room.type);
+            if (index >= 0 && index < static_cast<int>(roomCounts.size())) {
+                ++roomCounts[static_cast<std::size_t>(index)];
+            }
+        }
+        std::array<int, 3> facilityCounts{};
+        for (const RoguelikeFacilityInstance& facility : roguelikeFacilities_) {
+            switch (facility.kind) {
+            case RoguelikeFacilityKind::Merchant:
+                ++facilityCounts[0];
+                break;
+            case RoguelikeFacilityKind::Artisan:
+                ++facilityCounts[1];
+                break;
+            case RoguelikeFacilityKind::Trainer:
+                ++facilityCounts[2];
+                break;
+            }
+        }
+        int discoveredEvents = 0;
+        int completedEvents = 0;
+        for (const DungeonEventInstance& event : dungeonEvents_.all()) {
+            if (event.discovered) {
+                ++discoveredEvents;
+            }
+            if (event.completed) {
+                ++completedEvents;
+            }
+        }
 
         logInfo("Debug: rogue diag player tile=(" + std::to_string(playerTile.x) + "," + std::to_string(playerTile.y) +
             ") progress=" + debugFormatFloat(metrics.pathProgress * 100.0f, 1) + "%" +
@@ -12326,6 +12388,19 @@ bool Game::executeDebugCommand(std::string_view command)
             " nextInternalSectionRemainingTiles=" + debugFormatFloat(nextSectionRemainingTiles, 1) +
             " area=" + std::to_string(astralRun_.currentDepthMeters) + "-" +
             std::to_string(astralRun_.nextHoleDepthMeters) + "m");
+        logInfo("Debug: rogue diag generation rooms=" + std::to_string(dungeonLayout_.specialRoomAnchors.size()) +
+            " ore=" + std::to_string(roomCounts[static_cast<std::size_t>(SpecialRoomType::OreRoom)]) +
+            " coin=" + std::to_string(roomCounts[static_cast<std::size_t>(SpecialRoomType::CoinRoom)]) +
+            " treasure=" + std::to_string(roomCounts[static_cast<std::size_t>(SpecialRoomType::TreasureRoom)]) +
+            " enemy=" + std::to_string(roomCounts[static_cast<std::size_t>(SpecialRoomType::EnemyRoom)]) +
+            " events=" + std::to_string(dungeonEvents_.size()) +
+            " discovered=" + std::to_string(discoveredEvents) +
+            " completed=" + std::to_string(completedEvents) +
+            " facilities=" + std::to_string(roguelikeFacilities_.size()) +
+            " merchant=" + std::to_string(facilityCounts[0]) +
+            " artisan=" + std::to_string(facilityCounts[1]) +
+            " trainer=" + std::to_string(facilityCounts[2]) +
+            " hiddenNpcSuppressed=" + (hiddenRouteNpcAttackActive() ? "true" : "false"));
 
         struct TileCounts {
             int total = 0;

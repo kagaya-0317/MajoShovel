@@ -100,6 +100,11 @@ struct PlayerDeathSequenceState {
     std::array<PlayerDeathRingPresentation, SpellRingCount> ringPresentations;
 };
 
+struct DeathResultPreludeState {
+    bool active = false;
+    float elapsedSeconds = 0.0f;
+};
+
 enum class ScreenMode {
     OpeningKamishibai,
     EndingKamishibai,
@@ -266,10 +271,12 @@ public:
     void render(Renderer& renderer, const Time& time);
     bool executeDebugCommand(std::string_view command);
     GameTestSnapshot makeTestSnapshot(GameTestSnapshotOptions options = {}) const;
+    std::string crashContextSummary() const;
     GameTestActionResult applyTestAction(const GameTestAction& action);
     void setAutoSimulationIntentOverlay(bool active, std::vector<autosim::AutoSimulationIntent> history);
     void setAutoSimulationDebugOverlay(bool active, autosim::AutoSimulationDebugSnapshot debug);
     bool quitRequested() const { return quitRequested_; }
+    void handleApplicationQuitRequested();
     void setAutoReloadBlocked(bool blocked);
     void setHotReloadEnabled(bool enabled);
 
@@ -755,6 +762,7 @@ private:
         int playerLevel = 1;
         int playerXp = 0;
         int playerXpToNext = 12;
+        RingLevelUpgradePointTable levelRingUpgradePoints{};
         InventoryCarryState inventory;
         TileMapPersistentState tileMapState;
         DungeonLayout dungeonLayout;
@@ -946,6 +954,9 @@ private:
         BaseArea,
         BossEncounterIntro,
         BossEncounterAfterDialogue,
+        GameOverRetry,
+        GameOverReturnToBase,
+        AstralDeathReturnToBase,
     };
     enum class IntroTutorialPhase {
         Inactive,
@@ -1107,6 +1118,8 @@ private:
     void returnToTitleMain();
     void startTitleGame();
     void requestScreenTransition(ScreenTransitionTarget target);
+    void requestDeathResultExitTransition(ScreenTransitionTarget target);
+    bool deathResultExitTransitionActive() const;
     void requestMiningStartTransition(bool useLatestWarpPoint, bool forceRegenerate);
     void requestReturnToBaseTransition(bool stageCleared, bool died);
     void requestBaseAreaCrossfade(BaseArea targetArea, Vec2 playerPosition, Vec2 playerFacing, std::string status);
@@ -1128,6 +1141,7 @@ private:
     Vec2 levelUpPresentationAnchor() const;
     void updateLevelUpScreen(const Input& input, UiContext& ui, float dt);
     bool applyLevelUpSelection(RingLevelUpgradeSelection selection);
+    void resetLevelRingUpgradePointsForRun();
     void refreshEquipmentModifiers();
     float effectiveInitialRingRadiusForRing(int ringIndex, int levelRadiusPoints) const;
     float effectiveInitialRingSpeedForRing(int ringIndex, int levelSpeedPoints) const;
@@ -1350,6 +1364,9 @@ private:
     void syncEncyclopediaFromInventoryAndRing();
     void captureEncyclopediaSyncSuppressState();
     void applyEffectDiscoveries(const std::vector<EffectDiscoveryEvent>& discoveries);
+    bool shouldRecordEffectDiscoveries() const;
+    void recordMainObjectObtained(std::string_view objectId);
+    void recordMainCapturedEnemy(std::string_view enemyId);
     void recordObjectObtainedForFirstNotice(
         std::string_view objectId,
         std::string_view instanceId,
@@ -1428,7 +1445,7 @@ private:
     void dropPlayerDeathRingItem(int ringIndex, std::size_t itemIndex);
     void renderPlayerDeathRingPresentation(Renderer& renderer, float totalSeconds) const;
     void enterGameOver();
-    void updateGameOverScreen(const Input& input, UiContext& ui);
+    void updateGameOverScreen(const Input& input, UiContext& ui, float dt);
     void retryAfterGameOver();
     void returnToBaseAfterGameOver();
     void startIntroTutorialDungeon();
@@ -1448,8 +1465,16 @@ private:
     Vec2 introTutorialExitPosition() const;
     std::vector<LightSource> introTutorialLightSources(double totalSeconds) const;
     void enterAstralResult(AstralRunResult result);
-    void updateAstralResultScreen(const Input& input, UiContext& ui);
+    void updateAstralResultScreen(const Input& input, UiContext& ui, float dt);
     void returnToBaseAfterAstralResult();
+    void beginDeathResultPrelude();
+    bool updateDeathResultPrelude(float dt, UiContext& ui);
+    float deathResultPreludeBlackAlpha() const;
+    float deathResultPreludeStarAlpha() const;
+    void recordAstralEchoStar(bool markRecent);
+    void clearAstralEchoRecentStar();
+    bool astralEchoQuitRecordable() const;
+    bool saveAstralEchoMeta() const;
     AstralRunSummary makeAstralRunSummary(AstralRunResult result) const;
     int calculateAstralRunScore(const AstralRunSummary& summary) const;
     int astralRunMaterialDeltaFromStart() const;
@@ -1478,6 +1503,7 @@ private:
     bool currentStageCleared() const;
     bool stageCleared(std::string_view stageId) const;
     std::string stageClearFlagForStage(std::string_view stageId) const;
+    bool shouldRecordMainProgressKnowledge() const;
     std::string currentStageBossCaptureObjectId() const;
     bool hasCapturedBossForCurrentStage() const;
     std::size_t retainedWorldDropCountForCurrentStage() const;
@@ -1622,6 +1648,9 @@ private:
         bool launchFromCenter = false,
         LootSourceKind sourceKind = LootSourceKind::Chest,
         std::string_view requiredTag = {});
+    bool roguelikeObjectAllowed(std::string_view objectId) const;
+    bool roguelikeObjectAllowed(const ObjectDefinition& object) const;
+    std::optional<std::string> firstRoguelikeAllowedObjectId() const;
     static double roguelikeSourceCategoryMultiplier(LootSourceKind sourceKind, std::string_view category);
     Vec2 safeLootLandingPosition(Vec2 center, std::mt19937& rng);
     void spawnInventoryDiscardRequests(std::vector<InventoryDiscardRequest> requests);
@@ -1892,6 +1921,8 @@ private:
     bool dungeonEventUiSuppressed() const;
     void updatePausedDungeonPresentation(float dt);
     bool basePresentationActive() const;
+    void clearBaseTalkSessionSelections();
+    std::string selectBaseRandomTalkEventId(std::string_view speakerId);
     std::string baseTalkStoryTrigger(std::string_view speakerId) const;
     bool startBaseTalkStoryEvent(std::string_view speakerId, std::function<void()> onComplete);
     void startBaseMonicaDialogue();
@@ -1979,6 +2010,8 @@ private:
     void renderWarpReturnUi(Renderer& renderer) const;
     void renderRoguelikeBigHoleUi(Renderer& renderer) const;
     void renderWorldLoadingScreen(Renderer& renderer, float totalSeconds) const;
+    bool renderDeathResultPrelude(Renderer& renderer) const;
+    void renderAstralEchoStarfield(Renderer& renderer, UiRect area, bool showConstellation, float alpha = 1.0f) const;
     void renderGameOverScreen(Renderer& renderer) const;
     void renderStageClearScreen(Renderer& renderer) const;
     void renderAstralResultScreen(Renderer& renderer) const;
@@ -2029,6 +2062,8 @@ private:
     InitializeJob initializeJob_;
     std::deque<AcquisitionNotice> firstItemAcquisitionNotices_;
     std::vector<CaptureAbsorbAnimation> captureAbsorbAnimations_;
+    std::unordered_set<std::string> mainObtainedObjectIds_;
+    std::unordered_set<std::string> mainCapturedEnemyIds_;
     std::unordered_map<std::string, int> encyclopediaOwnedSyncSuppressCounts_;
     std::unordered_map<std::string, int> encyclopediaRingSyncSuppressCounts_;
     LevelSystem levels_;
@@ -2060,6 +2095,7 @@ private:
     Vec2 basePlayerPosition_{640.0f, 360.0f};
     Vec2 baseOutdoorPlayerPosition_{640.0f, 360.0f};
     Vec2 basePlayerFacing_{0.0f, 1.0f};
+    std::unordered_map<std::string, std::string> baseTalkSessionSelections_;
     std::unordered_map<std::string, int> hiddenBaseNpcHp_;
     std::unordered_map<std::string, float> hiddenBaseNpcHitCooldowns_;
     std::unordered_map<std::string, int> hiddenDungeonNpcRuntimeIds_;
@@ -2443,6 +2479,7 @@ private:
     double playerRegenAccumulator_ = 0.0;
     std::vector<PlayerRegenSource> playerRegenSources_;
     PlayerDeathSequenceState playerDeathSequence_{};
+    DeathResultPreludeState deathResultPrelude_{};
     int gameOverSelection_ = 0;
     std::string gameOverStatus_;
     bool bossSpawned_ = false;
@@ -2572,6 +2609,9 @@ private:
     bool inventoryReturnToPause_ = false;
     bool ringReturnToPause_ = false;
     bool quitRequested_ = false;
+    int astralEchoStarCount_ = 0;
+    int astralEchoRecentStarIndex_ = -1;
+    bool astralEchoRecentStarVisible_ = false;
     bool saveDataLoaded_ = false;
     bool testPlayMode_ = false;
     bool debugPaused_ = false;

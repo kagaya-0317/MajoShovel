@@ -1,6 +1,7 @@
 ﻿#include "engine/App.hpp"
 
 #include "data/GameBalance.hpp"
+#include "engine/CrashReporter.hpp"
 #include "engine/FrameProfiler.hpp"
 #include "engine/InputHelpGlyph.hpp"
 #include "engine/Log.hpp"
@@ -594,9 +595,11 @@ bool saveDevAutoReloadBlocked(bool blocked, std::string& outError)
 
 App::~App()
 {
+    setCrashPhase("App.shutdown");
     if (settingsSavePending_) {
         saveSettingsNow();
     }
+    setCrashContextProvider({});
     setLogSink({});
     audio_.shutdown();
     debugConsole_.shutdown();
@@ -711,6 +714,10 @@ bool App::saveSettingsNow()
 
 bool App::initialize(const char* title, int width, int height, bool testPlayMode)
 {
+    setCrashPhase("App.initialize");
+    setCrashContextProvider([this]() {
+        return crashContextSummary();
+    });
     width_ = width;
     height_ = height;
     testPlayMode_ = testPlayMode;
@@ -1522,6 +1529,41 @@ float App::startupLoadProgress() const
     return 0.0f;
 }
 
+const char* App::startupLoadStepName() const
+{
+    switch (startupLoadStep_) {
+    case StartupLoadStep::FirstFrame: return "FirstFrame";
+    case StartupLoadStep::InitializeAudio: return "InitializeAudio";
+    case StartupLoadStep::LoadAudioManifest: return "LoadAudioManifest";
+    case StartupLoadStep::WireGameServices: return "WireGameServices";
+    case StartupLoadStep::LoadAssets: return "LoadAssets";
+    case StartupLoadStep::BeginGameInitialize: return "BeginGameInitialize";
+    case StartupLoadStep::AdvanceGameInitialize: return "AdvanceGameInitialize";
+    case StartupLoadStep::EnableHotReload: return "EnableHotReload";
+    case StartupLoadStep::ExecuteLaunchMode: return "ExecuteLaunchMode";
+    case StartupLoadStep::Finish: return "Finish";
+    case StartupLoadStep::Done: return "Done";
+    }
+    return "Unknown";
+}
+
+std::string App::crashContextSummary() const
+{
+    std::ostringstream out;
+    out << "test_play=" << (testPlayMode_ ? "true" : "false") << "\n";
+    out << "running=" << (running_ ? "true" : "false") << "\n";
+    out << "window_size=" << width_ << "x" << height_ << "\n";
+    out << "startup_load_active=" << (startupLoadActive_ ? "true" : "false") << "\n";
+    out << "startup_step=" << startupLoadStepName() << "\n";
+    out << "startup_status=" << startupStatus_ << "\n";
+    out << "auto_reload_blocked=" << (autoReloadBlocked_ ? "true" : "false") << "\n";
+    out << "runtime_hot_reload=" << (runtimeHotReloadEnabled_ ? "true" : "false") << "\n";
+    out << "test_freeze_paused=" << (testFreezePaused_ ? "true" : "false") << "\n";
+    out << "auto_simulation_active=" << (autoSimulationTimeActive_ ? "true" : "false") << "\n";
+    out << game_.crashContextSummary();
+    return out.str();
+}
+
 void App::renderStartupFrame()
 {
     if (renderer_ == nullptr) {
@@ -1717,9 +1759,11 @@ void App::advanceStartupLoad()
 
 void App::run()
 {
+    setCrashPhase("App.run");
     while (running_) {
         FrameProfileFrame profileFrame;
         FrameProfileScope frameProfile("App.frame");
+        setCrashPhase("App.events");
         input_.beginFrame();
         SDL_Event event;
         {
@@ -1769,10 +1813,12 @@ void App::run()
             }
         }
         {
+            setCrashPhase("App.input");
             FrameProfileScope profile("App.input");
             input_.update(renderer_);
         }
         if (input_.quitRequested()) {
+            game_.handleApplicationQuitRequested();
             running_ = false;
         }
         if (testPlayMode_ && input_.testRestartPressed()) {
@@ -1788,6 +1834,7 @@ void App::run()
                 continue;
             }
             {
+                setCrashPhase(std::string("App.startup.") + startupLoadStepName());
                 FrameProfileScope profile("App.startup");
                 time_.tick();
                 updateSettingsSave(time_.deltaSeconds());
@@ -1827,6 +1874,7 @@ void App::run()
         }
 
         {
+            setCrashPhase("App.hotReload");
             FrameProfileScope profile("App.hotReload");
             checkAssetHotReload();
         }
@@ -1838,6 +1886,7 @@ void App::run()
                 audio_.update(time_.deltaSeconds());
             }
             if (testPlayMode_ && autoSimulation_.state() != autosim::AutoSimulationState::Idle) {
+                setCrashPhase("App.update.autoSimulation");
                 FrameProfileScope profile("App.update");
                 if (!autoSimulationTimeActive_) {
                     autoSimulationTime_ = time_;
@@ -1876,6 +1925,7 @@ void App::run()
                 autoSimulationTimeActive_ = false;
                 autoSimulationStepDebtSeconds_ = 0.0f;
                 Input effectiveInput = input_;
+                setCrashPhase("App.update");
                 FrameProfileScope profile("App.update");
                 game_.update(effectiveInput, time_);
             }
@@ -1911,6 +1961,7 @@ void App::run()
         setInputHelpContext(&input_);
         setInputHelpDeviceMode(inputHelpDeviceModeForSetting(settings_.presentation.inputIcons));
         {
+            setCrashPhase("App.render");
             FrameProfileScope profile("App.render");
             game_.render(*renderer_, renderTime);
             logPendingScreenshotResult();

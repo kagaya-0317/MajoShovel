@@ -1,10 +1,15 @@
 ﻿#include "engine/App.hpp"
 
+#include "engine/CrashReporter.hpp"
+
 #include <cstring>
 #include <memory>
 
 int main(int argc, char** argv)
 {
+    majo::installCrashReporter();
+    majo::setCrashPhase("main.startup");
+
     constexpr int DevAutoReloadRebuildRestartExitCode = 85;
     bool testPlayMode = false;
     bool devAutoReloadMode = false;

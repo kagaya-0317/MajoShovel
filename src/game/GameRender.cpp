@@ -10,7 +10,11 @@
 #include "game/RingDisplayName.hpp"
 
 #include <array>
+#include <algorithm>
 #include <cctype>
+#include <cstdint>
+#include <cmath>
+#include <utility>
 #include <vector>
 
 namespace majo {
@@ -37,6 +41,48 @@ float smootherStep(float t)
 {
     t = clamp(t, 0.0f, 1.0f);
     return t * t * t * (t * (t * 6.0f - 15.0f) + 10.0f);
+}
+
+std::uint32_t astralEchoHash(std::uint32_t value)
+{
+    value ^= value >> 16;
+    value *= 0x7feb352du;
+    value ^= value >> 15;
+    value *= 0x846ca68bu;
+    value ^= value >> 16;
+    return value;
+}
+
+float astralEchoUnit(int index, int salt)
+{
+    const std::uint32_t hashed = astralEchoHash(static_cast<std::uint32_t>(index) * 0x9e3779b9u + static_cast<std::uint32_t>(salt));
+    return static_cast<float>(hashed & 0x00ffffffu) / static_cast<float>(0x01000000u);
+}
+
+Vec2 astralEchoStarPosition(UiRect area, int index)
+{
+    return {
+        area.pos.x + astralEchoUnit(index, 11) * area.size.x,
+        area.pos.y + astralEchoUnit(index, 37) * area.size.y,
+    };
+}
+
+Color astralEchoStarColor(bool recent, float brightness)
+{
+    if (recent) {
+        return {
+            255,
+            static_cast<unsigned char>(std::clamp(74.0f + brightness * 74.0f, 0.0f, 255.0f)),
+            static_cast<unsigned char>(std::clamp(58.0f + brightness * 42.0f, 0.0f, 255.0f)),
+            255,
+        };
+    }
+    return {
+        static_cast<unsigned char>(std::clamp(188.0f + brightness * 67.0f, 0.0f, 255.0f)),
+        static_cast<unsigned char>(std::clamp(206.0f + brightness * 49.0f, 0.0f, 255.0f)),
+        255,
+        255,
+    };
 }
 
 constexpr float PlayerDamageVignetteMinAlpha = 1.0f;
@@ -408,13 +454,12 @@ std::string dungeonDepthTopInfoEntry(const DungeonLayout& layout, Vec2 tilePosit
 
 std::string roguelikeDepthTopInfoEntry(const DungeonLayout& layout, Vec2 tilePosition, int areaStartMeters, int areaEndMeters, int completionMeters)
 {
-    const DungeonLayoutMetrics metrics = calculateDungeonLayoutMetrics(layout, tilePosition);
     const int start = std::max(0, areaStartMeters);
     const int end = std::max(start + 1, areaEndMeters);
     const int meters = std::clamp(
-        start + static_cast<int>(std::lround(metrics.pathProgress * static_cast<float>(end - start))),
+        start + static_cast<int>(std::lround(projectedDungeonRouteDistanceTiles(layout, tilePosition))),
         0,
-        std::max(1, completionMeters));
+        std::min(end, std::max(1, completionMeters)));
     char buffer[32];
     std::snprintf(buffer, sizeof(buffer), "深度 %dm", meters);
     return buffer;
@@ -4462,6 +4507,7 @@ void Game::updatePauseMenu(const Input& input, UiContext& ui)
     if (pausePage_ == PauseMenuPage::QuitConfirm) {
         const UiConfirmDialogResult result = updateUiConfirmDialog(pauseQuitConfirm_, ui, input, cancelPanel);
         if (result == UiConfirmDialogResult::Confirmed) {
+            handleApplicationQuitRequested();
             quitRequested_ = true;
             return;
         }
@@ -4512,8 +4558,12 @@ void Game::updatePauseMenu(const Input& input, UiContext& ui)
     ui.block(pausePanelRect());
 }
 
-void Game::updateGameOverScreen(const Input& input, UiContext& ui)
+void Game::updateGameOverScreen(const Input& input, UiContext& ui, float dt)
 {
+    if (updateDeathResultPrelude(dt, ui)) {
+        return;
+    }
+
     const int previousSelection = gameOverSelection_;
     if (input.pressed(InputAction::MoveUp)) {
         gameOverSelection_ = (gameOverSelection_ + GameOverItemCount - 1) % GameOverItemCount;
@@ -4531,9 +4581,9 @@ void Game::updateGameOverScreen(const Input& input, UiContext& ui)
             gameOverSelection_ = i;
             ui.emitSound(UiSoundEvent::Confirm);
             if (i == 0) {
-                retryAfterGameOver();
+                requestDeathResultExitTransition(ScreenTransitionTarget::GameOverRetry);
             } else {
-                returnToBaseAfterGameOver();
+                requestDeathResultExitTransition(ScreenTransitionTarget::GameOverReturnToBase);
             }
             return;
         }
@@ -4543,9 +4593,9 @@ void Game::updateGameOverScreen(const Input& input, UiContext& ui)
     if (input.confirmPressed() || input.useItemPressed()) {
         ui.emitSound(UiSoundEvent::Confirm);
         if (gameOverSelection_ == 0) {
-            retryAfterGameOver();
+            requestDeathResultExitTransition(ScreenTransitionTarget::GameOverRetry);
         } else {
-            returnToBaseAfterGameOver();
+            requestDeathResultExitTransition(ScreenTransitionTarget::GameOverReturnToBase);
         }
         return;
     }
@@ -4586,14 +4636,22 @@ void Game::updateStageClearScreen(const Input& input, UiContext& ui)
     ui.block(stageClearPanelRect());
 }
 
-void Game::updateAstralResultScreen(const Input& input, UiContext& ui)
+void Game::updateAstralResultScreen(const Input& input, UiContext& ui, float dt)
 {
+    if (updateDeathResultPrelude(dt, ui)) {
+        return;
+    }
+
     const UiRect button = stageClearItemRect(0);
     if (button.contains(ui.mouse())) {
         astralResultSelection_ = 0;
     }
     if (ui.pressed(button) || input.confirmPressed() || input.useItemPressed()) {
         ui.emitSound(UiSoundEvent::Confirm);
+        if (astralResult_.result == AstralRunResult::Died) {
+            requestDeathResultExitTransition(ScreenTransitionTarget::AstralDeathReturnToBase);
+            return;
+        }
         returnToBaseAfterAstralResult();
         return;
     }
@@ -4897,6 +4955,19 @@ void Game::renderOpeningKamishibai(Renderer& renderer) const
 void Game::renderEndingKamishibai(Renderer& renderer) const
 {
     openingRenderer_.render(renderer, endingPlayer_, camera_.width(), camera_.height(), screenShakeScale());
+    const KamishibaiPage* page = endingPlayer_.currentPage();
+    if (endingKamishibaiKind_ != EndingKind::AstralClear || page == nullptr || page->effectName != "astral_constellation") {
+        return;
+    }
+
+    renderer.setScreenSpace();
+    const float width = static_cast<float>(camera_.width());
+    const float height = static_cast<float>(camera_.height());
+    const float bandHeight = std::clamp(height * 0.28f, 150.0f, 230.0f);
+    const UiRect starArea{{0.0f, 0.0f}, {width, std::max(1.0f, height - bandHeight)}};
+    renderer.pushClipRect(starArea.pos, starArea.size);
+    renderAstralEchoStarfield(renderer, starArea, true);
+    renderer.popClipRect();
 }
 
 void Game::renderTitleScreen(Renderer& renderer) const
@@ -7115,6 +7186,88 @@ void Game::renderPauseMenu(Renderer& renderer) const
     }
 }
 
+bool Game::renderDeathResultPrelude(Renderer& renderer) const
+{
+    if (!deathResultPrelude_.active) {
+        return false;
+    }
+
+    renderer.setScreenSpace();
+    const UiRect screen{{0.0f, 0.0f}, {static_cast<float>(camera_.width()), static_cast<float>(camera_.height())}};
+    renderer.fillRect(screen.pos, screen.size, {0, 0, 0, alphaByte(255.0f * deathResultPreludeBlackAlpha())});
+    const float starAlpha = deathResultPreludeStarAlpha();
+    if (starAlpha > 0.0f) {
+        renderAstralEchoStarfield(renderer, screen, false, starAlpha);
+    }
+    return true;
+}
+
+void Game::renderAstralEchoStarfield(Renderer& renderer, UiRect area, bool showConstellation, float alpha) const
+{
+    alpha = std::clamp(alpha, 0.0f, 1.0f);
+    if (alpha <= 0.0f) {
+        return;
+    }
+
+    renderer.setScreenSpace();
+    renderer.fillRect(area.pos, area.size, {2, 3, 10, alphaByte(255.0f * alpha)});
+    renderer.fillGradientRect(
+        area.pos,
+        area.size,
+        {6, 8, 20, alphaByte(255.0f * alpha)},
+        {2, 3, 10, alphaByte(255.0f * alpha)},
+        GradientDirection::TopToBottom);
+
+    const int starCount = std::max(0, astralEchoStarCount_);
+    for (int i = 0; i < starCount; ++i) {
+        const bool recent = astralEchoRecentStarVisible_ && i == astralEchoRecentStarIndex_;
+        const float brightness = astralEchoUnit(i, 73);
+        const float radius = 0.9f + astralEchoUnit(i, 101) * 1.6f + (recent ? 1.6f : 0.0f);
+        const Vec2 pos = astralEchoStarPosition(area, i);
+        const Color core = astralEchoStarColor(recent, brightness);
+        const unsigned char glowAlpha = recent
+            ? alphaByte(178.0f * alpha)
+            : alphaByte(std::clamp(36.0f + brightness * 72.0f, 0.0f, 255.0f) * alpha);
+        const Color fadedCore{core.r, core.g, core.b, alphaByte(static_cast<float>(core.a) * alpha)};
+        renderer.fillSoftCircle(pos, radius * (recent ? 5.2f : 3.8f), {core.r, core.g, core.b, glowAlpha});
+        renderer.fillCircle(pos, radius, fadedCore);
+    }
+
+    if (!showConstellation) {
+        return;
+    }
+
+    const Vec2 center = area.pos + area.size * 0.5f;
+    const float constellationScale = std::min(area.size.x, area.size.y) * 0.32f;
+    const std::array<Vec2, 10> points = {
+        center + Vec2{-0.46f, -0.20f} * constellationScale,
+        center + Vec2{-0.24f, -0.38f} * constellationScale,
+        center + Vec2{0.02f, -0.28f} * constellationScale,
+        center + Vec2{0.26f, -0.46f} * constellationScale,
+        center + Vec2{0.42f, -0.16f} * constellationScale,
+        center + Vec2{0.18f, 0.04f} * constellationScale,
+        center + Vec2{0.34f, 0.34f} * constellationScale,
+        center + Vec2{-0.02f, 0.26f} * constellationScale,
+        center + Vec2{-0.30f, 0.42f} * constellationScale,
+        center + Vec2{-0.18f, 0.02f} * constellationScale,
+    };
+    constexpr std::array<std::pair<int, int>, 11> lines = {{
+        {0, 1}, {1, 2}, {2, 3}, {2, 5}, {3, 4}, {4, 5},
+        {5, 6}, {5, 7}, {7, 8}, {7, 9}, {9, 0},
+    }};
+    for (const auto& line : lines) {
+        renderer.drawSoftLine(points[static_cast<std::size_t>(line.first)], points[static_cast<std::size_t>(line.second)], 8.0f, {106, 212, 255, alphaByte(58.0f * alpha)});
+        renderer.drawSoftLine(points[static_cast<std::size_t>(line.first)], points[static_cast<std::size_t>(line.second)], 2.4f, {214, 242, 255, alphaByte(156.0f * alpha)});
+        renderer.drawLine(points[static_cast<std::size_t>(line.first)], points[static_cast<std::size_t>(line.second)], {255, 252, 218, alphaByte(210.0f * alpha)});
+    }
+    for (std::size_t i = 0; i < points.size(); ++i) {
+        const float radius = i == 5 ? 7.0f : 4.6f;
+        renderer.fillSoftCircle(points[i], radius * 5.0f, {116, 224, 255, alphaByte(124.0f * alpha)});
+        renderer.fillCircle(points[i], radius, {255, 249, 202, alphaByte(255.0f * alpha)});
+        renderer.fillCircle(points[i] + Vec2{-radius * 0.28f, -radius * 0.30f}, radius * 0.38f, {255, 255, 255, alphaByte(255.0f * alpha)});
+    }
+}
+
 void Game::renderGameOverScreen(Renderer& renderer) const
 {
     if (mode_ != ScreenMode::GameOver) {
@@ -7122,6 +7275,16 @@ void Game::renderGameOverScreen(Renderer& renderer) const
     }
 
     renderer.setScreenSpace();
+    if (renderDeathResultPrelude(renderer)) {
+        return;
+    }
+    renderAstralEchoStarfield(
+        renderer,
+        {{0.0f, 0.0f}, {static_cast<float>(camera_.width()), static_cast<float>(camera_.height())}},
+        false);
+    if (deathResultExitTransitionActive()) {
+        return;
+    }
     const UiRect panel = gameOverPanelRect();
     UiWindowScope gameOverWindow(renderer, "game_over", panel, "GAME OVER", "F/Enter 決定");
     renderer.drawText(panel.pos + Vec2{118.0f, 92.0f}, "リザルト", ui::Text, 3);
@@ -7205,6 +7368,18 @@ void Game::renderAstralResultScreen(Renderer& renderer) const
     }
 
     renderer.setScreenSpace();
+    if (astralResult_.result == AstralRunResult::Died) {
+        if (renderDeathResultPrelude(renderer)) {
+            return;
+        }
+        renderAstralEchoStarfield(
+            renderer,
+            {{0.0f, 0.0f}, {static_cast<float>(camera_.width()), static_cast<float>(camera_.height())}},
+            false);
+        if (deathResultExitTransitionActive()) {
+            return;
+        }
+    }
     const UiRect panel = stageClearPanelRect();
     UiWindowScope astralWindow(renderer, "astral_result", panel, "ASTRAL RECORD", "F/Enter 決定");
     renderer.drawText(panel.pos + Vec2{118.0f, 82.0f}, "星間記録", ui::Text, 3);

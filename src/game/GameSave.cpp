@@ -651,6 +651,43 @@ std::filesystem::path debugNamedSaveDataDirectory()
 #endif
 }
 
+std::filesystem::path astralEchoMetaPath()
+{
+    std::filesystem::path path = saveDataPath();
+    path.replace_filename("astral_echo.dat");
+    return path;
+}
+
+int loadAstralEchoMetaStarCount()
+{
+    std::ifstream file(astralEchoMetaPath(), std::ios::binary);
+    if (!file) {
+        return 0;
+    }
+
+    std::string line;
+    if (!std::getline(file, line)) {
+        return 0;
+    }
+    if (!line.empty() && line.back() == '\r') {
+        line.pop_back();
+    }
+    if (line != "MAJO_SHOVEL_ASTRAL_ECHO_V1") {
+        return 0;
+    }
+
+    int starCount = 0;
+    while (std::getline(file, line)) {
+        std::istringstream stream(line);
+        std::string key;
+        stream >> key;
+        if (key == "star_count") {
+            stream >> starCount;
+        }
+    }
+    return std::clamp(starCount, 0, 9999999);
+}
+
 struct DiaryWarpCounts {
     int discovered = 0;
     int total = 0;
@@ -777,6 +814,77 @@ bool enemyCatalogContains(const EnemyCatalog& catalog, std::string_view enemyId)
     return std::any_of(catalog.enemies.begin(), catalog.enemies.end(), [enemyId](const EnemyDefinition& enemy) {
         return enemy.id == enemyId && !isCodexHiddenEnemy(enemy);
     });
+}
+
+bool mainObjectKnowledgeIdAllowed(const ObjectCatalog& catalog, std::string_view objectId)
+{
+    const ObjectDefinition* object = catalog.registry.findById(objectId);
+    return object != nullptr && !isCodexHiddenObject(*object);
+}
+
+std::optional<std::string> capturedEnemyIdFromObjectId(std::string_view objectId)
+{
+    constexpr std::array<std::string_view, 3> Prefixes{{
+        "captured_abyss_",
+        "captured_deep_",
+        "captured_",
+    }};
+    for (std::string_view prefix : Prefixes) {
+        if (objectId.rfind(prefix, 0) == 0 && objectId.size() > prefix.size()) {
+            return std::string(objectId.substr(prefix.size()));
+        }
+    }
+    return std::nullopt;
+}
+
+void addCapturedEnemyKnowledgeFromObjectId(
+    std::unordered_set<std::string>& outEnemyIds,
+    const EnemyCatalog& catalog,
+    std::string_view objectId)
+{
+    const std::optional<std::string> enemyId = capturedEnemyIdFromObjectId(objectId);
+    if (enemyId && enemyCatalogContains(catalog, *enemyId)) {
+        outEnemyIds.insert(*enemyId);
+    }
+}
+
+void addCapturedEnemyKnowledgeFromInventory(
+    std::unordered_set<std::string>& outEnemyIds,
+    const EnemyCatalog& catalog,
+    const InventorySystem& inventory)
+{
+    for (const InventoryObjectStack& stack : inventory.objectStacks()) {
+        addCapturedEnemyKnowledgeFromObjectId(outEnemyIds, catalog, stack.objectId);
+    }
+    for (const InventoryObjectInstance& instance : inventory.objectInstances()) {
+        addCapturedEnemyKnowledgeFromObjectId(outEnemyIds, catalog, instance.instance.objectId);
+    }
+}
+
+void addCapturedEnemyKnowledgeFromStorage(
+    std::unordered_set<std::string>& outEnemyIds,
+    const EnemyCatalog& catalog,
+    const std::vector<InventoryObjectStack>& stacks,
+    const std::vector<InventoryObjectInstance>& instances)
+{
+    for (const InventoryObjectStack& stack : stacks) {
+        addCapturedEnemyKnowledgeFromObjectId(outEnemyIds, catalog, stack.objectId);
+    }
+    for (const InventoryObjectInstance& instance : instances) {
+        addCapturedEnemyKnowledgeFromObjectId(outEnemyIds, catalog, instance.instance.objectId);
+    }
+}
+
+void addCapturedEnemyKnowledgeFromRings(
+    std::unordered_set<std::string>& outEnemyIds,
+    const EnemyCatalog& catalog,
+    const std::array<std::vector<SpellRingItem>, SpellRingCount>& ringItemsByRing)
+{
+    for (const std::vector<SpellRingItem>& ringItems : ringItemsByRing) {
+        for (const SpellRingItem& item : ringItems) {
+            addCapturedEnemyKnowledgeFromObjectId(outEnemyIds, catalog, item.objectId);
+        }
+    }
 }
 
 bool ringItemsContainInstanceId(
@@ -1049,6 +1157,12 @@ bool Game::loadSaveData(const std::filesystem::path& path)
     EncyclopediaSystem loadedEncyclopedia;
     std::unordered_map<std::string, int> loadedEncyclopediaOwnedSyncSuppressCounts;
     std::unordered_map<std::string, int> loadedEncyclopediaRingSyncSuppressCounts;
+    std::unordered_set<std::string> loadedMainObtainedObjectIds;
+    std::unordered_set<std::string> migratedMainObtainedObjectIds;
+    bool loadedMainObtainedObjectIdsExplicit = false;
+    std::unordered_set<std::string> loadedMainCapturedEnemyIds;
+    std::unordered_set<std::string> migratedMainCapturedEnemyIds;
+    bool loadedMainCapturedEnemyIdsExplicit = false;
     std::array<std::vector<SpellRingItem>, SpellRingCount> loadedRingItemsByRing{};
     RingPresetSystem loadedRingPresets;
     std::vector<InventoryObjectStack> loadedWarehouseStacks;
@@ -1056,6 +1170,7 @@ bool Game::loadSaveData(const std::filesystem::path& path)
     int loadedMoney = 0;
     double loadedPlayTimeSeconds = 0.0;
     int loadedAstralHighScore = 0;
+    int loadedAstralEchoStarCount = 0;
     std::array<int, 3> loadedCapturedMonsterRingBreaksBeforeStageClear{};
     int loadedCurrentStage = 0;
     std::string loadedCurrentStageId = currentStageId_;
@@ -1121,6 +1236,8 @@ bool Game::loadSaveData(const std::filesystem::path& path)
             stream >> loadedPlayTimeSeconds;
         } else if (key == "astral_high_score") {
             stream >> loadedAstralHighScore;
+        } else if (key == "astral_echo_star_count") {
+            stream >> loadedAstralEchoStarCount;
         } else if (key == "captured_monster_ring_breaks_before_stage_clear") {
             int stageNumber = 0;
             int count = 0;
@@ -1253,6 +1370,23 @@ bool Game::loadSaveData(const std::filesystem::path& path)
             if (!stream.fail() && !flag.empty()) {
                 loadedStoryFlags.push_back(std::move(flag));
             }
+        } else if (key == "main_knowledge_v1") {
+            loadedMainObtainedObjectIdsExplicit = true;
+            loadedMainCapturedEnemyIdsExplicit = true;
+        } else if (key == "main_obtained_object") {
+            std::string objectId;
+            stream >> objectId;
+            loadedMainObtainedObjectIdsExplicit = true;
+            if (!stream.fail() && mainObjectKnowledgeIdAllowed(objectCatalog_, objectId)) {
+                loadedMainObtainedObjectIds.insert(std::move(objectId));
+            }
+        } else if (key == "main_captured_enemy") {
+            std::string enemyId;
+            stream >> enemyId;
+            loadedMainCapturedEnemyIdsExplicit = true;
+            if (!stream.fail() && enemyCatalogContains(enemyCatalog_, enemyId)) {
+                loadedMainCapturedEnemyIds.insert(std::move(enemyId));
+            }
         } else if (key == "codex_entry") {
             std::string kindName;
             std::string id;
@@ -1264,6 +1398,10 @@ bool Game::loadSaveData(const std::filesystem::path& path)
                 encyclopediaKindFromSaveName(kindName, kind) &&
                 ((kind == EncyclopediaKind::Enemy && enemyCatalogContains(enemyCatalog_, id)) ||
                     (kind != EncyclopediaKind::Enemy && !hiddenObjectCodexId(objectCatalog_, id)))) {
+                if (kind != EncyclopediaKind::Enemy && mainObjectKnowledgeIdAllowed(objectCatalog_, id)) {
+                    migratedMainObtainedObjectIds.insert(id);
+                    addCapturedEnemyKnowledgeFromObjectId(migratedMainCapturedEnemyIds, enemyCatalog_, id);
+                }
                 loadedEncyclopedia.loadEntry(kind, std::move(id), encyclopediaStageFromInt(stage));
             }
         } else if (key == "codex_effect") {
@@ -1757,6 +1895,20 @@ bool Game::loadSaveData(const std::filesystem::path& path)
         }
     }
 
+    addCapturedEnemyKnowledgeFromInventory(migratedMainCapturedEnemyIds, enemyCatalog_, loadedInventory);
+    addCapturedEnemyKnowledgeFromStorage(
+        migratedMainCapturedEnemyIds,
+        enemyCatalog_,
+        loadedWarehouseStacks,
+        loadedWarehouseInstances);
+    addCapturedEnemyKnowledgeFromRings(migratedMainCapturedEnemyIds, enemyCatalog_, loadedRingItemsByRing);
+    if (!loadedMainObtainedObjectIdsExplicit) {
+        loadedMainObtainedObjectIds = std::move(migratedMainObtainedObjectIds);
+    }
+    if (!loadedMainCapturedEnemyIdsExplicit) {
+        loadedMainCapturedEnemyIds = std::move(migratedMainCapturedEnemyIds);
+    }
+
     const bool loadedSaveHasIntroCompletion = hasSaveStoryFlag(loadedStoryFlags, IntroTutorialCompletedFlag);
     const bool loadedSaveHasUpgradeProgress =
         loadedMaxHpUpgradeLevel > 0 ||
@@ -1836,6 +1988,8 @@ bool Game::loadSaveData(const std::filesystem::path& path)
         inventoryHasSavedProgress(loadedInventory) ||
         !loadedEncyclopedia.saveEntries().empty() ||
         !loadedEncyclopedia.saveEffects().empty() ||
+        !loadedMainObtainedObjectIds.empty() ||
+        !loadedMainCapturedEnemyIds.empty() ||
         !loadedEncyclopediaOwnedSyncSuppressCounts.empty() ||
         !loadedEncyclopediaRingSyncSuppressCounts.empty() ||
         dungeonStateHasSavedProgress(loadedDungeonState);
@@ -1880,6 +2034,8 @@ bool Game::loadSaveData(const std::filesystem::path& path)
     money_ = std::max(0, loadedMoney);
     playTimeSeconds_ = std::max(0.0, loadedPlayTimeSeconds);
     astralHighScore_ = std::max(0, loadedAstralHighScore);
+    astralEchoStarCount_ = std::max(std::clamp(loadedAstralEchoStarCount, 0, 9999999), loadAstralEchoMetaStarCount());
+    clearAstralEchoRecentStar();
     capturedMonsterRingBreaksBeforeStageClear_ = loadedCapturedMonsterRingBreaksBeforeStageClear;
     unlockedStages_ = std::max(1, loadedUnlockedStages);
     const int migratedUnlockedRingCount = loadedUnlockedRingCountExplicit
@@ -2137,6 +2293,8 @@ bool Game::loadSaveData(const std::filesystem::path& path)
     autoSaveOnReturn_ = loadedAutoSaveOnReturn;
     storyFlags_ = std::move(loadedStoryFlags);
     encyclopedia_ = std::move(loadedEncyclopedia);
+    mainObtainedObjectIds_ = std::move(loadedMainObtainedObjectIds);
+    mainCapturedEnemyIds_ = std::move(loadedMainCapturedEnemyIds);
     encyclopediaOwnedSyncSuppressCounts_ = std::move(loadedEncyclopediaOwnedSyncSuppressCounts);
     encyclopediaRingSyncSuppressCounts_ = std::move(loadedEncyclopediaRingSyncSuppressCounts);
     warehouseObjectStacks_ = std::move(loadedWarehouseStacks);
@@ -2179,6 +2337,7 @@ bool Game::saveSaveData(const std::filesystem::path& path, std::string& message)
     file << "money " << money_ << "\n";
     file << "play_time_seconds " << static_cast<std::int64_t>(std::max(0.0, playTimeSeconds_)) << "\n";
     file << "astral_high_score " << astralHighScore_ << "\n";
+    file << "astral_echo_star_count " << std::max(0, astralEchoStarCount_) << "\n";
     for (int stageIndex = 0; stageIndex < static_cast<int>(capturedMonsterRingBreaksBeforeStageClear_.size()); ++stageIndex) {
         file << "captured_monster_ring_breaks_before_stage_clear "
             << (stageIndex + 1) << " "
@@ -2241,6 +2400,21 @@ bool Game::saveSaveData(const std::filesystem::path& path, std::string& message)
     for (const std::string& flag : storyFlags_) {
         if (!flag.empty()) {
             file << "story_flag " << flag << "\n";
+        }
+    }
+    file << "main_knowledge_v1 1\n";
+    std::vector<std::string> mainObtainedObjectIds(mainObtainedObjectIds_.begin(), mainObtainedObjectIds_.end());
+    std::sort(mainObtainedObjectIds.begin(), mainObtainedObjectIds.end());
+    for (const std::string& objectId : mainObtainedObjectIds) {
+        if (mainObjectKnowledgeIdAllowed(objectCatalog_, objectId)) {
+            file << "main_obtained_object " << objectId << "\n";
+        }
+    }
+    std::vector<std::string> mainCapturedEnemyIds(mainCapturedEnemyIds_.begin(), mainCapturedEnemyIds_.end());
+    std::sort(mainCapturedEnemyIds.begin(), mainCapturedEnemyIds.end());
+    for (const std::string& enemyId : mainCapturedEnemyIds) {
+        if (enemyCatalogContains(enemyCatalog_, enemyId)) {
+            file << "main_captured_enemy " << enemyId << "\n";
         }
     }
     for (const EncyclopediaEntrySave& entry : encyclopedia_.saveEntries()) {
@@ -2602,6 +2776,27 @@ bool Game::saveSaveData(const std::filesystem::path& path, std::string& message)
     }
 
     message = "セーブしました";
+    return true;
+}
+
+bool Game::saveAstralEchoMeta() const
+{
+    const std::filesystem::path path = astralEchoMetaPath();
+    std::error_code error;
+    if (path.has_parent_path()) {
+        std::filesystem::create_directories(path.parent_path(), error);
+        if (error) {
+            return false;
+        }
+    }
+
+    std::ofstream file(path, std::ios::binary | std::ios::trunc);
+    if (!file) {
+        return false;
+    }
+
+    file << "MAJO_SHOVEL_ASTRAL_ECHO_V1\n";
+    file << "star_count " << std::max(0, astralEchoStarCount_) << "\n";
     return true;
 }
 
