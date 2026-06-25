@@ -68,6 +68,35 @@ inline constexpr std::string_view HiddenRouteSuperCaptureNetObjectId = "item_sup
 inline constexpr std::string_view HiddenRouteHyperCaptureNetObjectId = "item_hyper_capture_net";
 inline constexpr std::string_view HiddenDungeonEventNpcTargetPrefix = "event:";
 inline constexpr std::string_view HiddenRoguelikeFacilityNpcTargetPrefix = "facility:";
+inline constexpr float ScreenDormantMarginTiles = 16.0f;
+
+inline float screenDormantMarginWorld()
+{
+    return ScreenDormantMarginTiles * static_cast<float>(balance::TileSize);
+}
+
+inline CollisionRect cameraWorldRect(const Camera& camera)
+{
+    const Vec2 topLeft = camera.screenToWorld({0.0f, 0.0f});
+    const Vec2 bottomRight = camera.screenToWorld({
+        static_cast<float>(camera.width()),
+        static_cast<float>(camera.height()),
+    });
+    const float left = std::min(topLeft.x, bottomRight.x);
+    const float right = std::max(topLeft.x, bottomRight.x);
+    const float top = std::min(topLeft.y, bottomRight.y);
+    const float bottom = std::max(topLeft.y, bottomRight.y);
+    return {{left, top}, {right - left, bottom - top}};
+}
+
+inline CollisionRect expandedCollisionRect(CollisionRect rect, float margin)
+{
+    const float safeMargin = std::max(0.0f, margin);
+    return {
+        rect.pos - Vec2{safeMargin, safeMargin},
+        rect.size + Vec2{safeMargin * 2.0f, safeMargin * 2.0f},
+    };
+}
 
 inline bool hiddenRouteCaptureNetObject(std::string_view objectId)
 {
@@ -471,25 +500,12 @@ Vec2 pointAtPathProgress(const std::vector<Vec2>& points, float progress)
         return points.front();
     }
 
-    float totalLength = 0.0f;
-    for (std::size_t i = 1; i < points.size(); ++i) {
-        totalLength += length(points[i] - points[i - 1]);
-    }
+    const float totalLength = dungeonPathRouteLengthTiles(points);
     if (totalLength <= 0.0001f) {
         return points.front();
     }
 
-    const float target = totalLength * clamp(progress, 0.0f, 1.0f);
-    float traveled = 0.0f;
-    for (std::size_t i = 1; i < points.size(); ++i) {
-        const float segmentLength = length(points[i] - points[i - 1]);
-        if (traveled + segmentLength >= target) {
-            const float t = segmentLength > 0.0001f ? (target - traveled) / segmentLength : 0.0f;
-            return lerp(points[i - 1], points[i], t);
-        }
-        traveled += segmentLength;
-    }
-    return points.back();
+    return pointAtDungeonPathDistanceTiles(points, totalLength * clamp(progress, 0.0f, 1.0f));
 }
 
 Vec2 tangentAtPathProgress(const std::vector<Vec2>& points, float progress)
@@ -1412,14 +1428,16 @@ UiPageSelectorRects baseMiningStageSelectorRects()
 
 UiRect baseMiningStartChoiceRect(int index)
 {
+    constexpr float ChoiceTop = 290.0f;
+    constexpr float ChoiceStep = 80.0f;
     const float left = baseMiningContentLeft();
     const float width = baseMiningContentRight() - left;
-    return {{left, 322.0f + static_cast<float>(index) * 80.0f}, {width, ui::ButtonHeight}};
+    return {{left, ChoiceTop + static_cast<float>(index) * ChoiceStep}, {width, ui::ButtonHeight}};
 }
 
 UiRect baseMiningWarpPointSelectRect()
 {
-    return {{360.0f, 174.0f}, {560.0f, 400.0f}};
+    return {{330.0f, 174.0f}, {620.0f, 400.0f}};
 }
 
 UiRect baseMiningWarpPointSelectChoiceRect(int index)
@@ -3251,7 +3269,7 @@ void logDungeonGenerationAudit()
     logError("[audit] terrain: TileMap::initializeChunk remains chunk-local but samples Game-owned DungeonLayout distance fields for initial terrain.");
     logError("[audit] tile_hp: TileType={Empty,Dirt,Rock,Ore,HardRock}; HP is scaled by stage and local hardness.");
     logError("[audit] digging: DiggingSystem returns hit/opened/dug tiles, rewardDropRequests, and capturedExplosionRequests; opened tiles are the hook for buried rewards or hidden enemies.");
-    logError("[audit] enemies: EnemySystem::spawnFromDugTiles uses dug-event min/guarantee counters; generated hidden enemies should be consumed through a separate per-tile marker before this random spawn path.");
+    logError("[audit] enemies: EnemySystem::collectDugSpawnRequests uses dug-event min/guarantee counters; generated hidden enemies should be consumed through a separate per-tile marker before this random spawn path.");
     logError("[audit] lights: Game::render already composes extra LightSource entries for ring items, warp points, and boss spawn markers before TileMap/Drop/Projectile/Enemy rendering.");
     logError("[audit] drops: Game consumes DugTile event counters for dig money/item drops; WorldDropSystem pickup is player contact via InventorySystem.");
     logError("[audit] object_tags: special tags are metadata/filter labels; runtime effects go through EffectSpec and EffectDispatcher, not direct tag execution.");

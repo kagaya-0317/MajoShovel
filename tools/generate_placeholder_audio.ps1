@@ -143,6 +143,13 @@ function Placeholder-Sample([string]$Kind, [double]$Time, [double]$Duration, [Sy
                 0.20 * [Math]::Sin($TwoPi * 990.0 * $Time) +
                 0.15 * [Math]::Sin($TwoPi * 1320.0 * $Time))
         }
+        "se.dialogue.advance" {
+            $env = Decay $Time $Duration 1.85
+            $freq = 520.0 + 180.0 * ($Time / $Duration)
+            return $env * (
+                0.30 * [Math]::Sin($TwoPi * $freq * $Time) +
+                0.14 * [Math]::Sin($TwoPi * 1040.0 * $Time))
+        }
         "se.level_up.jingle" {
             $notes = @(523.25, 659.25, 783.99, 1046.50)
             $stepLength = 0.18
@@ -771,6 +778,8 @@ public static class MajoPlaceholderAudioHQ
                 return Ring(t, d, 520.0, 0.20, 1.55) + Ring(t, d, 780.0, 0.16, 1.7) + Sparkle(t, d, 1040.0, 0.08);
             case "se.ui.upgrade_select":
                 return Sparkle(t, d, 660.0, 0.18) + Sparkle(t, d, 990.0, 0.14) + Ring(t, d, 1320.0, 0.10, 1.2);
+            case "se.dialogue.advance":
+                return Env(t, d, 0.003, 1.8) * (0.26 * Sweep(t, d, 540.0, 760.0) + 0.16 * Ring(t, d, 1180.0, 0.10, 2.0));
             case "se.level_up.jingle":
                 return Sparkle(t, d, 523.25, 0.14) +
                     Sparkle(t - 0.16, d * 0.86, 659.25, 0.16) +
@@ -1014,6 +1023,7 @@ $clips = @(
     @{ Path = Join-Path $SeRoot "ui_item_use_placeholder.wav"; Kind = "se.ui.item_use"; Duration = 0.20; Seed = 2007 },
     @{ Path = Join-Path $SeRoot "ui_ring_place_placeholder.wav"; Kind = "se.ui.ring_place"; Duration = 0.22; Seed = 2008 },
     @{ Path = Join-Path $SeRoot "ui_upgrade_select_placeholder.wav"; Kind = "se.ui.upgrade_select"; Duration = 0.30; Seed = 2009 },
+    @{ Path = Join-Path $SeRoot "zz_tmp_dialogue_advance_placeholder.wav"; Kind = "se.dialogue.advance"; Duration = 0.12; Seed = 2010 },
     @{ Path = Join-Path $SeRoot "level_up_jingle_placeholder.wav"; Kind = "se.level_up.jingle"; Duration = 1.16; Seed = 2072 },
     @{ Path = Join-Path $SeRoot "game_over_jingle_placeholder.wav"; Kind = "se.game_over.jingle"; Duration = 1.34; Seed = 2110 },
     @{ Path = Join-Path $SeRoot "item_new_jingle_placeholder.wav"; Kind = "se.item.new.jingle"; Duration = 0.88; Seed = 2111 },

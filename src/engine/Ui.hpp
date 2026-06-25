@@ -407,6 +407,7 @@ struct UiVerticalTabsStyle {
 enum class UiWindowFrame {
     Default,
     Message,
+    SystemMessage,
 };
 
 struct UiWindowOptions {

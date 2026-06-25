@@ -1975,6 +1975,7 @@ void Renderer::unloadUiWindowTexture()
 void Renderer::unloadUiMessageWindowTexture()
 {
     unloadImageTexture(uiMessageWindowTexture_);
+    unloadImageTexture(uiSystemMessageWindowTexture_);
 }
 
 void Renderer::unloadUiSubWindowTexture()
@@ -2145,15 +2146,41 @@ bool Renderer::loadUiWindowTexture(std::string_view path)
     return loadGuidedTexture(path, 5, 3, false, "UI window texture", uiWindowTexture_);
 }
 
-bool Renderer::loadUiMessageWindowTexture(std::string_view path)
+Renderer::ImageTexture& Renderer::uiMessageWindowTexture(UiMessageWindowKind kind)
 {
-    const bool loaded = loadImageTexture(path, "UI message window texture", uiMessageWindowTexture_);
+    switch (kind) {
+    case UiMessageWindowKind::Speaker:
+        return uiMessageWindowTexture_;
+    case UiMessageWindowKind::System:
+        return uiSystemMessageWindowTexture_;
+    }
+    return uiMessageWindowTexture_;
+}
+
+const Renderer::ImageTexture& Renderer::uiMessageWindowTexture(UiMessageWindowKind kind) const
+{
+    switch (kind) {
+    case UiMessageWindowKind::Speaker:
+        return uiMessageWindowTexture_;
+    case UiMessageWindowKind::System:
+        return uiSystemMessageWindowTexture_;
+    }
+    return uiMessageWindowTexture_;
+}
+
+bool Renderer::loadUiMessageWindowTexture(std::string_view path, UiMessageWindowKind kind)
+{
+    ImageTexture& texture = uiMessageWindowTexture(kind);
+    const std::string_view label = kind == UiMessageWindowKind::System
+        ? std::string_view{"UI system message window texture"}
+        : std::string_view{"UI message window texture"};
+    const bool loaded = loadImageTexture(path, label, texture);
     if (loaded) {
-        if (uiMessageWindowTexture_.texture != nullptr) {
-            SDL_SetTextureScaleMode(uiMessageWindowTexture_.texture, SDL_SCALEMODE_LINEAR);
+        if (texture.texture != nullptr) {
+            SDL_SetTextureScaleMode(texture.texture, SDL_SCALEMODE_LINEAR);
         }
-        if (uiMessageWindowTexture_.outlineTexture != nullptr) {
-            SDL_SetTextureScaleMode(uiMessageWindowTexture_.outlineTexture, SDL_SCALEMODE_LINEAR);
+        if (texture.outlineTexture != nullptr) {
+            SDL_SetTextureScaleMode(texture.outlineTexture, SDL_SCALEMODE_LINEAR);
         }
     }
     return loaded;
@@ -3014,14 +3041,20 @@ Vec2 Renderer::uiWindowMinSize() const
     return {width, height};
 }
 
-Vec2 Renderer::uiMessageWindowSize() const
+bool Renderer::hasUiMessageWindowTexture(UiMessageWindowKind kind) const
 {
-    if (!hasUiMessageWindowTexture()) {
+    return uiMessageWindowTexture(kind).texture != nullptr;
+}
+
+Vec2 Renderer::uiMessageWindowSize(UiMessageWindowKind kind) const
+{
+    const ImageTexture& texture = uiMessageWindowTexture(kind);
+    if (texture.texture == nullptr) {
         return {};
     }
     return {
-        static_cast<float>(uiMessageWindowTexture_.width),
-        static_cast<float>(uiMessageWindowTexture_.height),
+        static_cast<float>(texture.width),
+        static_cast<float>(texture.height),
     };
 }
 
@@ -3506,16 +3539,22 @@ void Renderer::drawUiWindowFrame(Vec2 pos, Vec2 size, Color tint)
 
 void Renderer::drawUiMessageWindowFrame(Vec2 pos, Vec2 size, Color tint)
 {
-    if (!hasUiMessageWindowTexture()) {
+    drawUiMessageWindowFrame(pos, size, UiMessageWindowKind::Speaker, tint);
+}
+
+void Renderer::drawUiMessageWindowFrame(Vec2 pos, Vec2 size, UiMessageWindowKind kind, Color tint)
+{
+    const ImageTexture& texture = uiMessageWindowTexture(kind);
+    if (texture.texture == nullptr) {
         return;
     }
     drawTextureRegion(
-        uiMessageWindowTexture_.texture,
+        texture.texture,
         {
             0.0f,
             0.0f,
-            static_cast<float>(uiMessageWindowTexture_.width),
-            static_cast<float>(uiMessageWindowTexture_.height),
+            static_cast<float>(texture.width),
+            static_cast<float>(texture.height),
         },
         pos,
         size,

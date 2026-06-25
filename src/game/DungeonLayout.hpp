@@ -78,6 +78,8 @@ struct SpecialRoomMetrics {
 };
 
 DungeonLayout generateDungeonLayout(const DungeonGenerationContext& context);
+float dungeonPathRouteLengthTiles(const std::vector<Vec2>& points);
+Vec2 pointAtDungeonPathDistanceTiles(const std::vector<Vec2>& points, float routeDistanceTiles);
 DungeonLayoutMetrics calculateDungeonLayoutMetrics(const DungeonLayout& layout, Vec2 tilePosition);
 float projectedDungeonRouteDistanceTiles(const DungeonLayout& layout, Vec2 tilePosition);
 SpecialRoomMetrics calculateSpecialRoomMetrics(const DungeonLayout& layout, Vec2 tilePosition);

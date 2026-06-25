@@ -21,6 +21,11 @@ enum class TextFontRole {
     InputGlyph,
 };
 
+enum class UiMessageWindowKind {
+    Speaker,
+    System,
+};
+
 class Renderer {
 public:
     struct GradientRect {
@@ -141,10 +146,12 @@ public:
     void unloadUiWindowTexture();
     bool hasUiWindowTexture() const { return uiWindowTexture_.texture != nullptr && uiWindowTexture_.valid; }
     Vec2 uiWindowMinSize() const;
-    bool loadUiMessageWindowTexture(std::string_view path);
+    bool loadUiMessageWindowTexture(
+        std::string_view path,
+        UiMessageWindowKind kind = UiMessageWindowKind::Speaker);
     void unloadUiMessageWindowTexture();
-    bool hasUiMessageWindowTexture() const { return uiMessageWindowTexture_.texture != nullptr; }
-    Vec2 uiMessageWindowSize() const;
+    bool hasUiMessageWindowTexture(UiMessageWindowKind kind = UiMessageWindowKind::Speaker) const;
+    Vec2 uiMessageWindowSize(UiMessageWindowKind kind = UiMessageWindowKind::Speaker) const;
     bool loadUiSubWindowTexture(std::string_view path);
     void unloadUiSubWindowTexture();
     bool hasUiSubWindowTexture() const { return uiSubWindowTexture_.texture != nullptr && uiSubWindowTexture_.valid; }
@@ -194,6 +201,11 @@ public:
     bool drawFrameSnapshot(const FrameSnapshot& snapshot, Vec2 pos, Vec2 size, Color tint = {255, 255, 255, 255});
     void drawUiWindowFrame(Vec2 pos, Vec2 size, Color tint = {255, 255, 255, 255});
     void drawUiMessageWindowFrame(Vec2 pos, Vec2 size, Color tint = {255, 255, 255, 255});
+    void drawUiMessageWindowFrame(
+        Vec2 pos,
+        Vec2 size,
+        UiMessageWindowKind kind,
+        Color tint = {255, 255, 255, 255});
     void drawUiSubWindowFrame(Vec2 pos, Vec2 size, Color tint = {255, 255, 255, 255});
     void drawUiButtonFrame(Vec2 pos, float width, int variant, Color tint = {255, 255, 255, 255});
     void drawUiTabFrame(Vec2 pos, Vec2 size, bool selected, Color tint = {255, 255, 255, 255});
@@ -309,6 +321,8 @@ private:
     std::string wrappedText(std::string_view text, float maxWidth, int scale, TextStyle style);
     bool loadSpriteSheet(std::string_view path, int frameSize, int columns, int rows, std::string_view label, SpriteSheet& sheet);
     void unloadSpriteSheet(SpriteSheet& sheet);
+    ImageTexture& uiMessageWindowTexture(UiMessageWindowKind kind);
+    const ImageTexture& uiMessageWindowTexture(UiMessageWindowKind kind) const;
     bool loadImageTexture(std::string_view path, std::string_view label, ImageTexture& target);
     void unloadImageTexture(ImageTexture& texture);
     bool loadGuidedTexture(
@@ -352,6 +366,7 @@ private:
     ImageTexture baseMapTexture_;
     GuidedTexture uiWindowTexture_;
     ImageTexture uiMessageWindowTexture_;
+    ImageTexture uiSystemMessageWindowTexture_;
     GuidedTexture uiSubWindowTexture_;
     GuidedTexture uiButtonTexture_;
     GuidedTexture uiTabTexture_;

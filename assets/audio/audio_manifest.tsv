@@ -14,6 +14,7 @@ se.ui.item_use	se	se/zz_tmp_ui_item_use_placeholder.wav	0.68	false	80	0	アイ�
 se.ui.equip	se	se/sound4.wav	0.74	false	90	29	装備
 se.ui.ring_place	se	se/zz_tmp_ui_ring_place_placeholder.wav	0.72	false	90	0	リング配置
 se.ui.upgrade_select	se	se/zz_tmp_ui_upgrade_select_placeholder.wav	0.78	false	120	0	レベルアップ選択
+se.dialogue.advance	se	se/zz_tmp_dialogue_advance_placeholder.wav	0.62	false	45	0	メッセージ送り
 se.level_up.jingle	se	se/zz_tmp_level_up_jingle_placeholder.wav	0.86	false	0	0	レベルアップジングル
 se.game_over.jingle	se	se/zz_tmp_game_over_jingle_placeholder.wav	0.88	false	0	0	ゲームオーバージングル
 se.item.new.jingle	se	se/dead.wav	0.84	false	0	0	新規アイテム入手ジングル

@@ -804,6 +804,10 @@ bool App::loadAssets()
         logError(renderer_->lastAssetError());
         ok = false;
     }
+    if (!renderer_->loadUiMessageWindowTexture("assets/system/UI_messageWindow2.png", UiMessageWindowKind::System)) {
+        logError(renderer_->lastAssetError());
+        ok = false;
+    }
     if (!renderer_->loadUiSubWindowTexture("assets/system/UI_window2.png")) {
         logError(renderer_->lastAssetError());
         ok = false;
@@ -959,6 +963,9 @@ bool App::reloadAssetForPath(const std::string& changedPath)
     }
     if (fileName == "ui_messagewindow.png") {
         return renderer_->loadUiMessageWindowTexture("assets/system/UI_messageWindow.png");
+    }
+    if (fileName == "ui_messagewindow2.png") {
+        return renderer_->loadUiMessageWindowTexture("assets/system/UI_messageWindow2.png", UiMessageWindowKind::System);
     }
     if (fileName == "ui_window2.png") {
         return renderer_->loadUiSubWindowTexture("assets/system/UI_window2.png");

@@ -22,6 +22,7 @@ constexpr float DungeonRingIntroDuration = 1.18f;
 constexpr float DeathResultPreludeFadeOutSeconds = 0.45f;
 constexpr float DeathResultPreludeBlackHoldSeconds = 1.0f;
 constexpr float DeathResultPreludeStarFadeInSeconds = 0.85f;
+constexpr float DeathResultWindowLeadSeconds = 20.0f / 60.0f;
 constexpr float DeathResultExitTransitionHoldSeconds = 1.5f;
 constexpr float HotReloadPollIntervalSeconds = 0.50f;
 constexpr std::string_view DefaultShovelObjectId = "item_shovel";
@@ -59,6 +60,7 @@ constexpr std::string_view AudioSeUiItemUse = "se.ui.item_use";
 constexpr std::string_view AudioSeUiEquip = "se.ui.equip";
 constexpr std::string_view AudioSeUiRingPlace = "se.ui.ring_place";
 constexpr std::string_view AudioSeUiUpgradeSelect = "se.ui.upgrade_select";
+constexpr std::string_view AudioSeDialogueAdvance = "se.dialogue.advance";
 constexpr std::string_view AudioSeLevelUpJingle = "se.level_up.jingle";
 constexpr std::string_view AudioSeGameOverJingle = "se.game_over.jingle";
 constexpr float ImpactSePitchJitterRatio = 0.10f;
@@ -195,20 +197,6 @@ void stripUtf8Bom(std::string& text)
         static_cast<unsigned char>(text[2]) == 0xBF) {
         text.erase(0, 3);
     }
-}
-
-CollisionRect cameraWorldRect(const Camera& camera)
-{
-    const Vec2 topLeft = camera.screenToWorld({0.0f, 0.0f});
-    const Vec2 bottomRight = camera.screenToWorld({
-        static_cast<float>(camera.width()),
-        static_cast<float>(camera.height()),
-    });
-    const float left = std::min(topLeft.x, bottomRight.x);
-    const float right = std::max(topLeft.x, bottomRight.x);
-    const float top = std::min(topLeft.y, bottomRight.y);
-    const float bottom = std::max(topLeft.y, bottomRight.y);
-    return {{left, top}, {right - left, bottom - top}};
 }
 
 std::string enemyStealLogLabel(const EnemyEvent& event, const ObjectCatalog& objectCatalog)
@@ -1276,6 +1264,7 @@ void Game::resetWorldUiState()
     baseMiningStartChoiceActive_ = false;
     baseMiningStartSelection_ = 0;
     baseRegenerateConfirm_ = {};
+    baseRoguelikeDepartureConfirm_ = {};
     baseBrokenRingDepartureConfirm_ = {};
     baseMiningRescueDrop_ = {};
     baseWarpPointSelectActive_ = false;
@@ -1535,6 +1524,7 @@ void Game::beginWorldBuildFromBase(
     baseMiningStartChoiceActive_ = false;
     baseWarpPointSelectActive_ = false;
     baseRegenerateConfirm_ = {};
+    baseRoguelikeDepartureConfirm_ = {};
     baseBrokenRingDepartureConfirm_ = {};
     baseMiningRescueDrop_ = {};
     warpReturnConfirm_ = {};
@@ -1797,6 +1787,7 @@ void Game::enterBase()
     baseMiningStartChoiceActive_ = false;
     baseWarpPointSelectActive_ = false;
     baseRegenerateConfirm_ = {};
+    baseRoguelikeDepartureConfirm_ = {};
     baseBrokenRingDepartureConfirm_ = {};
     warpReturnConfirm_ = {};
     focusedWarpReturnPointIndex_ = -1;
@@ -3588,10 +3579,11 @@ void Game::applyDebugStageUnlockState(int unlockedStoryStages)
 
     clampCurrentStageToSelectableStages();
     syncWarpStateForCurrentStage();
-    baseMiningStartSelection_ = unlockedWarpPointCount_ > 0 ? 1 : 0;
+    baseMiningStartSelection_ = currentStageIsRoguelike() ? 0 : (unlockedWarpPointCount_ > 0 ? 1 : 0);
     baseWarpPointSelectActive_ = false;
     baseWarpPointSelection_ = 0;
     baseRegenerateConfirm_ = {};
+    baseRoguelikeDepartureConfirm_ = {};
     baseBrokenRingDepartureConfirm_ = {};
     baseStatus_.clear();
 }
@@ -3753,11 +3745,28 @@ bool Game::updateDeathResultPrelude(float dt, UiContext& ui)
         DeathResultPreludeBlackHoldSeconds +
         DeathResultPreludeStarFadeInSeconds;
     deathResultPrelude_.elapsedSeconds += std::max(0.0f, dt);
-    ui.block({{0.0f, 0.0f}, {static_cast<float>(camera_.width()), static_cast<float>(camera_.height())}});
     if (deathResultPrelude_.elapsedSeconds >= TotalSeconds) {
         deathResultPrelude_.active = false;
     }
-    return true;
+
+    const bool blocksWindow = deathResultPreludeBlocksWindow();
+    if (blocksWindow) {
+        ui.block({{0.0f, 0.0f}, {static_cast<float>(camera_.width()), static_cast<float>(camera_.height())}});
+    }
+    return blocksWindow;
+}
+
+bool Game::deathResultPreludeBlocksWindow() const
+{
+    if (!deathResultPrelude_.active) {
+        return false;
+    }
+    constexpr float TotalSeconds =
+        DeathResultPreludeFadeOutSeconds +
+        DeathResultPreludeBlackHoldSeconds +
+        DeathResultPreludeStarFadeInSeconds;
+    return deathResultPrelude_.elapsedSeconds <
+        std::max(0.0f, TotalSeconds - DeathResultWindowLeadSeconds);
 }
 
 float Game::deathResultPreludeBlackAlpha() const
@@ -3967,6 +3976,9 @@ void Game::updateScreenMode(
         updateDialoguePlayerIdleAnimation(dt);
         const bool dialogueWasActive = dialogue_.active();
         dialogue_.update(input, dt);
+        if (dialogue_.consumeAdvanceSoundRequests() > 0) {
+            playAudioSe(AudioSeDialogueAdvance);
+        }
         runDialogueCompletionCallbackIfFinished(dialogueWasActive);
         ui.consumePointer();
         return;
@@ -4679,11 +4691,9 @@ void Game::update(const Input& input, const Time& time)
                     balance_.digMoneyMinDugTiles,
                     balance_.digMoneyGuaranteeDugTiles,
                     rng)) {
-                const DungeonLayoutMetrics metrics = calculateDungeonLayoutMetrics(dungeonLayout_, {
-                    static_cast<float>(tileMap_.worldToTile(tile.center.x)),
-                    static_cast<float>(tileMap_.worldToTile(tile.center.y)),
-                });
-                const int depthRank = lootDepthRankForProgress(currentStageId_, metrics.pathProgress);
+                const int depthRank = currentStageIsRoguelike()
+                    ? roguelikeDepthRankForWorldPosition(tile.center)
+                    : lootDepthRankForWorldPosition(tileMap_, dungeonLayout_, currentStageId_, tile.center);
                 const float multiplier =
                     lootStageMultiplier(balance_, currentStageId_) *
                     lootDepthMultiplier(balance_, currentStageId_, depthRank);
@@ -4703,7 +4713,9 @@ void Game::update(const Input& input, const Time& time)
                     balance_.digItemMinDugTiles,
                     balance_.digItemGuaranteeDugTiles,
                     rng)) {
-                const int depthRank = lootDepthRankForWorldPosition(tileMap_, dungeonLayout_, currentStageId_, tile.center);
+                const int depthRank = currentStageIsRoguelike()
+                    ? roguelikeDepthRankForWorldPosition(tile.center)
+                    : lootDepthRankForWorldPosition(tileMap_, dungeonLayout_, currentStageId_, tile.center);
                 if (spawnWeightedObjectLoot(
                         LootChestKind::Common,
                         depthRank,
@@ -4726,7 +4738,9 @@ void Game::update(const Input& input, const Time& time)
                 logError("[warning] CapturedRewardLoot: unknown reward profile \"" + rewardRequest.profile + "\"; no item drop");
                 continue;
             }
-            const int depthRank = lootDepthRankForWorldPosition(tileMap_, dungeonLayout_, currentStageId_, rewardRequest.position);
+            const int depthRank = currentStageIsRoguelike()
+                ? roguelikeDepthRankForWorldPosition(rewardRequest.position)
+                : lootDepthRankForWorldPosition(tileMap_, dungeonLayout_, currentStageId_, rewardRequest.position);
             spawnWeightedObjectLoot(
                 lootProfile.chestKind,
                 depthRank,
@@ -4744,11 +4758,9 @@ void Game::update(const Input& input, const Time& time)
             if (tile.type != TileType::Ore) {
                 continue;
             }
-            const DungeonLayoutMetrics metrics = calculateDungeonLayoutMetrics(dungeonLayout_, {
-                static_cast<float>(tileMap_.worldToTile(tile.center.x)),
-                static_cast<float>(tileMap_.worldToTile(tile.center.y)),
-            });
-            const int depthRank = lootDepthRankForProgress(currentStageId_, metrics.pathProgress);
+            const int depthRank = currentStageIsRoguelike()
+                ? roguelikeDepthRankForWorldPosition(tile.center)
+                : lootDepthRankForWorldPosition(tileMap_, dungeonLayout_, currentStageId_, tile.center);
             const float multiplier =
                 lootStageMultiplier(balance_, currentStageId_) *
                 lootDepthMultiplier(balance_, currentStageId_, depthRank);
@@ -4788,6 +4800,7 @@ void Game::update(const Input& input, const Time& time)
             worldDrops_.updatePresentation(time.deltaSeconds());
         } else {
             FrameProfileScope profile("WorldDrops.update");
+            const CollisionRect dropEffectBounds = expandedCollisionRect(cameraWorldRect(camera_), screenDormantMarginWorld());
             runStats_.acquiredItems += worldDrops_.update(
                 time.deltaSeconds(),
                 player_,
@@ -4796,7 +4809,8 @@ void Game::update(const Input& input, const Time& time)
                 objectCatalog_,
                 &effects_,
                 &pickupEvents,
-                &blockedObjectPickupCount);
+                &blockedObjectPickupCount,
+                &dropEffectBounds);
         }
         for (const WorldDropPickupEvent& event : pickupEvents) {
             if (!gameplayRewardsEnabled()) {
@@ -4849,6 +4863,9 @@ void Game::update(const Input& input, const Time& time)
         }
         if (!enemyTestActive_) {
             updatePendingBuriedEnemySpawns(time.deltaSeconds());
+            enemies_.syncScreenDormantEnemies(
+                expandedCollisionRect(cameraWorldRect(camera_), screenDormantMarginWorld()),
+                spellRing_);
             const std::vector<Vec2> randomEnemySpawnTiles = spawnHiddenEnemyNodesFromOpenedTiles(digging_.openedTiles());
             std::vector<DugEnemySpawnPoint> randomEnemySpawnPoints;
             randomEnemySpawnPoints.reserve(randomEnemySpawnTiles.size());
@@ -4858,7 +4875,22 @@ void Game::update(const Input& input, const Time& time)
                     .depthRank = roguelikeDepthRankForWorldPosition(spawnTile),
                 });
             }
-            enemies_.spawnFromDugTiles(randomEnemySpawnPoints, tileMap_, player_.position, dungeonBalance, enemyCatalog_, currentStageId_);
+            const std::vector<DugEnemySpawnRequest> dugEnemySpawnRequests =
+                enemies_.collectDugSpawnRequests(
+                    randomEnemySpawnPoints,
+                    tileMap_,
+                    player_.position,
+                    dungeonBalance,
+                    static_cast<int>(pendingBuriedEnemySpawns_.size()));
+            for (const DugEnemySpawnRequest& request : dugEnemySpawnRequests) {
+                schedulePendingBuriedEnemySpawn(
+                    DungeonTile{
+                        tileMap_.worldToTile(request.position.x),
+                        tileMap_.worldToTile(request.position.y),
+                    },
+                    request.position,
+                    request.depthRank);
+            }
             updateBossSpawn();
         }
 
@@ -5148,7 +5180,9 @@ void Game::update(const Input& input, const Time& time)
                     logError("[warning] CapturedRewardLoot: unknown reward profile \"" + event.objectDropProfile + "\"; no item drop");
                     continue;
                 }
-                const int depthRank = lootDepthRankForWorldPosition(tileMap_, dungeonLayout_, currentStageId_, event.position);
+                const int depthRank = currentStageIsRoguelike()
+                    ? roguelikeDepthRankForWorldPosition(event.position)
+                    : lootDepthRankForWorldPosition(tileMap_, dungeonLayout_, currentStageId_, event.position);
                 spawnWeightedObjectLoot(
                     lootProfile.chestKind,
                     depthRank,
@@ -5197,7 +5231,9 @@ void Game::update(const Input& input, const Time& time)
                     if (!weightedObjectLootProfileForDropProfile(event.objectDropProfile, lootProfile)) {
                         logError("[warning] EnemyDropLoot: unknown drop profile \"" + event.objectDropProfile + "\"; no item drop");
                     } else {
-                        const int depthRank = lootDepthRankForWorldPosition(tileMap_, dungeonLayout_, currentStageId_, event.position);
+                        const int depthRank = currentStageIsRoguelike()
+                            ? roguelikeDepthRankForWorldPosition(event.position)
+                            : lootDepthRankForWorldPosition(tileMap_, dungeonLayout_, currentStageId_, event.position);
                         for (int i = 0; i < dropCount; ++i) {
                             spawnWeightedObjectLoot(
                                 lootProfile.chestKind,

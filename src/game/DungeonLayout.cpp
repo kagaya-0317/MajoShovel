@@ -16,6 +16,7 @@ constexpr float MainPathTerminalUpMaxTiles = 64.0f;
 constexpr float MainPathTerminalUpFraction = 0.16f;
 constexpr float MainPathTerminalUpReserveTiles = 24.0f;
 constexpr int RoguelikeSpecialRoomMinCount = 7;
+constexpr float RoguelikeEndgameSpecialRoomMaxProgress = 0.80f;
 
 float dot(Vec2 a, Vec2 b)
 {
@@ -109,25 +110,12 @@ Vec2 pointAtProgress(const std::vector<Vec2>& points, float progress)
         return points.front();
     }
 
-    float totalLength = 0.0f;
-    for (std::size_t i = 1; i < points.size(); ++i) {
-        totalLength += length(points[i] - points[i - 1]);
-    }
+    const float totalLength = dungeonPathRouteLengthTiles(points);
     if (totalLength <= 0.0001f) {
         return points.front();
     }
 
-    const float target = totalLength * clamp(progress, 0.0f, 1.0f);
-    float traveled = 0.0f;
-    for (std::size_t i = 1; i < points.size(); ++i) {
-        const float segmentLength = length(points[i] - points[i - 1]);
-        if (traveled + segmentLength >= target) {
-            const float t = segmentLength > 0.0001f ? (target - traveled) / segmentLength : 0.0f;
-            return lerp(points[i - 1], points[i], t);
-        }
-        traveled += segmentLength;
-    }
-    return points.back();
+    return pointAtDungeonPathDistanceTiles(points, totalLength * clamp(progress, 0.0f, 1.0f));
 }
 
 Vec2 tangentAtProgress(const std::vector<Vec2>& points, float progress)
@@ -262,6 +250,31 @@ float roomRadiusBonusForProfile(std::string_view generationProfile)
     return 0.0f;
 }
 
+DungeonTile roundTilePoint(Vec2 point)
+{
+    return {
+        static_cast<int>(std::round(point.x)),
+        static_cast<int>(std::round(point.y)),
+    };
+}
+
+void normalizePathRouteLength(std::vector<Vec2>& points, float targetLength)
+{
+    if (points.size() < 2) {
+        return;
+    }
+    const float currentLength = dungeonPathRouteLengthTiles(points);
+    if (currentLength <= 0.0001f || targetLength <= 0.0001f) {
+        return;
+    }
+
+    const Vec2 origin = points.front();
+    const float scale = targetLength / currentLength;
+    for (Vec2& point : points) {
+        point = origin + (point - origin) * scale;
+    }
+}
+
 DungeonLayout makeIntroTutorialLayout(const DungeonGenerationContext& context)
 {
     DungeonLayout layout;
@@ -296,6 +309,37 @@ DungeonLayout makeIntroTutorialLayout(const DungeonGenerationContext& context)
     return layout;
 }
 
+}
+
+float dungeonPathRouteLengthTiles(const std::vector<Vec2>& points)
+{
+    float total = 0.0f;
+    for (std::size_t i = 1; i < points.size(); ++i) {
+        total += length(points[i] - points[i - 1]);
+    }
+    return total;
+}
+
+Vec2 pointAtDungeonPathDistanceTiles(const std::vector<Vec2>& points, float routeDistanceTiles)
+{
+    if (points.empty()) {
+        return {};
+    }
+    if (points.size() == 1) {
+        return points.front();
+    }
+
+    const float target = std::max(0.0f, routeDistanceTiles);
+    float traveled = 0.0f;
+    for (std::size_t i = 1; i < points.size(); ++i) {
+        const float segmentLength = length(points[i] - points[i - 1]);
+        if (traveled + segmentLength >= target) {
+            const float t = segmentLength > 0.0001f ? (target - traveled) / segmentLength : 0.0f;
+            return lerp(points[i - 1], points[i], t);
+        }
+        traveled += segmentLength;
+    }
+    return points.back();
 }
 
 DungeonLayout generateDungeonLayout(const DungeonGenerationContext& context)
@@ -334,10 +378,7 @@ DungeonLayout generateDungeonLayout(const DungeonGenerationContext& context)
         maxTerminalLength);
     const Vec2 terminalStart = coarseDirection * std::max(8.0f, goalDistance - terminalLength);
     const Vec2 goal = terminalStart + Vec2{0.0f, -terminalLength};
-    layout.goalTile = {
-        static_cast<int>(std::round(goal.x)),
-        static_cast<int>(std::round(goal.y)),
-    };
+    layout.goalTile = roundTilePoint(goal);
 
     const int sampleCount = std::clamp(static_cast<int>(std::round(goalDistance / 9.0f)), 32, 96);
     layout.mainPathPoints = makeWanderingPath(
@@ -348,6 +389,12 @@ DungeonLayout generateDungeonLayout(const DungeonGenerationContext& context)
         0.06f + clamp(context.detourRate, 0.0f, 1.0f) * 0.20f,
         0.02f + clamp(context.detourRate, 0.0f, 1.0f) * 0.06f);
     appendUpwardTerminalPath(layout.mainPathPoints, terminalStart, tileToVec(layout.goalTile), terminalLength);
+    if (layout.roguelike) {
+        normalizePathRouteLength(
+            layout.mainPathPoints,
+            static_cast<float>(std::clamp(context.goalDistanceTiles, 48, 1200)));
+        layout.goalTile = roundTilePoint(layout.mainPathPoints.back());
+    }
 
     std::vector<Vec2> roomCandidates;
     const int targetBranchCount = branchCountForContext(context);
@@ -383,11 +430,20 @@ DungeonLayout generateDungeonLayout(const DungeonGenerationContext& context)
 
     std::vector<std::pair<Vec2, float>> typedCandidates;
     typedCandidates.reserve(roomCandidates.size() + 8);
+    const bool protectRoguelikeEndgame = layout.roguelike || isProfile(layout.generationProfile, "astral_rogue");
+    const auto canUseRoomProgress = [&](float progress) {
+        return !protectRoguelikeEndgame || progress <= RoguelikeEndgameSpecialRoomMaxProgress;
+    };
     for (std::size_t i = 0; i < roomCandidates.size(); ++i) {
         const DungeonLayoutMetrics metrics = calculateDungeonLayoutMetrics(layout, roomCandidates[i]);
-        typedCandidates.push_back({roomCandidates[i], metrics.pathProgress});
+        if (canUseRoomProgress(metrics.pathProgress)) {
+            typedCandidates.push_back({roomCandidates[i], metrics.pathProgress});
+        }
     }
     for (float progress : {0.18f, 0.33f, 0.48f, 0.63f, 0.78f, 0.88f}) {
+        if (!canUseRoomProgress(progress)) {
+            continue;
+        }
         const Vec2 anchor = pointAtProgress(layout.mainPathPoints, progress);
         const Vec2 tangent = tangentAtProgress(layout.mainPathPoints, progress);
         const Vec2 side = perpendicular(tangent) * (unitDist(rng) < 0.5f ? -1.0f : 1.0f);
@@ -427,7 +483,7 @@ DungeonLayout generateDungeonLayout(const DungeonGenerationContext& context)
         const float progress = clamp(
             static_cast<float>(layout.specialRoomAnchors.size() + 1) / static_cast<float>(specialRoomCount + 1),
             0.12f,
-            0.90f);
+            protectRoguelikeEndgame ? RoguelikeEndgameSpecialRoomMaxProgress : 0.90f);
         const Vec2 anchor = pointAtProgress(layout.mainPathPoints, progress);
         const Vec2 tangent = tangentAtProgress(layout.mainPathPoints, progress);
         const Vec2 side = perpendicular(tangent) * (unitDist(rng) < 0.5f ? -1.0f : 1.0f);
@@ -458,10 +514,7 @@ DungeonLayoutMetrics calculateDungeonLayoutMetrics(const DungeonLayout& layout, 
         return metrics;
     }
 
-    float totalLength = 0.0f;
-    for (std::size_t i = 1; i < layout.mainPathPoints.size(); ++i) {
-        totalLength += length(layout.mainPathPoints[i] - layout.mainPathPoints[i - 1]);
-    }
+    const float totalLength = dungeonPathRouteLengthTiles(layout.mainPathPoints);
 
     float bestDistance = 1.0e30f;
     float bestPathDistance = 0.0f;

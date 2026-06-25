@@ -101,15 +101,6 @@ std::filesystem::path dungeonDebugDumpPath()
     return std::filesystem::path(".local") / "dungeon_dump_latest.txt";
 }
 
-float debugPathLengthTiles(const std::vector<Vec2>& points)
-{
-    float total = 0.0f;
-    for (std::size_t i = 1; i < points.size(); ++i) {
-        total += length(points[i] - points[i - 1]);
-    }
-    return total;
-}
-
 const char* debugTileTypeName(TileType type)
 {
     switch (type) {
@@ -11310,7 +11301,7 @@ bool Game::dumpDungeonDebugState()
     file << "\n";
 
     file << "mainPath count=" << dungeonLayout_.mainPathPoints.size()
-        << " lengthTiles=" << debugPathLengthTiles(dungeonLayout_.mainPathPoints) << "\n";
+        << " lengthTiles=" << dungeonPathRouteLengthTiles(dungeonLayout_.mainPathPoints) << "\n";
     for (std::size_t i = 0; i < dungeonLayout_.mainPathPoints.size(); ++i) {
         const Vec2 point = dungeonLayout_.mainPathPoints[i];
         file << "mainPath[" << i << "] tile=(" << point.x << "," << point.y << ")"
@@ -11890,23 +11881,17 @@ bool Game::executeDebugCommand(std::string_view command)
         updateAstralRunProgress();
     };
 
-    const auto mainPathPositionForAreaProgress = [&](float progress) {
-        if (dungeonLayout_.mainPathPoints.empty()) {
-            return tileWorldCenter(dungeonLayout_.startTile);
-        }
-        const int index = std::clamp(
-            static_cast<int>(std::round(std::clamp(progress, 0.0f, 1.0f) * static_cast<float>(dungeonLayout_.mainPathPoints.size() - 1))),
-            0,
-            static_cast<int>(dungeonLayout_.mainPathPoints.size() - 1));
-        return tileWorldCenter(roundDungeonTile(dungeonLayout_.mainPathPoints[static_cast<std::size_t>(index)]));
-    };
-
     const auto mainPathPositionForDepthMeters = [&](int depthMeters) {
         const int areaStart = std::max(0, astralRun_.currentDepthMeters);
         const int areaEnd = std::max(areaStart + 1, astralRun_.nextHoleDepthMeters);
         const int clampedMeters = std::clamp(depthMeters, areaStart, areaEnd);
-        const float progress = static_cast<float>(clampedMeters - areaStart) / static_cast<float>(areaEnd - areaStart);
-        return mainPathPositionForAreaProgress(progress);
+        if (dungeonLayout_.mainPathPoints.empty()) {
+            return tileWorldCenter(dungeonLayout_.startTile);
+        }
+        const Vec2 pathPoint = pointAtDungeonPathDistanceTiles(
+            dungeonLayout_.mainPathPoints,
+            static_cast<float>(clampedMeters - areaStart));
+        return tileWorldCenter(roundDungeonTile(pathPoint));
     };
 
     const auto ensureAstralAreaForDepthMeters = [&](int depthMeters) {
@@ -12309,28 +12294,29 @@ bool Game::executeDebugCommand(std::string_view command)
         const DungeonLayoutMetrics metrics = calculateDungeonLayoutMetrics(dungeonLayout_, playerTilePosition);
         const TerrainDebugInfo terrain = tileMap_.terrainDebugAtWorld(player_.position);
         const SpecialRoomMetrics roomMetrics = calculateSpecialRoomMetrics(dungeonLayout_, playerTilePosition);
-        const float pathLength = debugPathLengthTiles(dungeonLayout_.mainPathPoints);
+        const float pathLength = dungeonPathRouteLengthTiles(dungeonLayout_.mainPathPoints);
         const float routeTiles = projectedDungeonRouteDistanceTiles(dungeonLayout_, playerTilePosition);
-        const int localDepthRank = lootDepthRankForProgress(currentStageId_, metrics.pathProgress);
-        const int adjustedDepthRank = roguelikeAdjustedDepthRank(localDepthRank);
         const int areaStartMeters = std::max(0, astralRun_.currentDepthMeters);
         const int areaEndMeters = std::max(areaStartMeters + 1, astralRun_.nextHoleDepthMeters);
+        const int areaLengthMeters = std::max(1, areaEndMeters - areaStartMeters);
         const int depthMeters = std::clamp(
             areaStartMeters + static_cast<int>(std::lround(routeTiles)),
             0,
             std::min(areaEndMeters, std::max(1, astralRun_.completionDepthMeters)));
-        const int maxLocalDepth = std::max(1, lootMaxDepthForStage(currentStageId_));
+        const int sectionRank = roguelikeSectionRankForDepthMeters(depthMeters);
         constexpr int DebugRoguelikeSectionsPerArea = 3;
         const int localSection = std::clamp(
-            (std::max(1, localDepthRank) - 1) / 3 + 1,
+            sectionRank - astralRun_.sectionRankOffset,
             1,
             DebugRoguelikeSectionsPerArea);
-        const float nextSectionProgress = localSection < DebugRoguelikeSectionsPerArea
-            ? std::min(1.0f, static_cast<float>(localSection * 3) / static_cast<float>(maxLocalDepth))
+        const float nextSectionRouteTiles = localSection < DebugRoguelikeSectionsPerArea
+            ? static_cast<float>(localSection * areaLengthMeters) / static_cast<float>(DebugRoguelikeSectionsPerArea)
+            : static_cast<float>(areaLengthMeters);
+        const float nextSectionProgress = pathLength > 0.0001f
+            ? clamp(nextSectionRouteTiles / pathLength, 0.0f, 1.0f)
             : 1.0f;
-        const float nextSectionRouteTiles = pathLength * nextSectionProgress;
         const float nextSectionRemainingTiles = std::max(0.0f, nextSectionRouteTiles - routeTiles);
-        const Vec2 pathPoint = pointAtPathProgress(dungeonLayout_.mainPathPoints, metrics.pathProgress);
+        const Vec2 pathPoint = pointAtDungeonPathDistanceTiles(dungeonLayout_.mainPathPoints, routeTiles);
         const Vec2 pathTangent = tangentAtPathProgress(dungeonLayout_.mainPathPoints, metrics.pathProgress);
         std::array<int, 6> roomCounts{};
         for (const SpecialRoomAnchor& room : dungeonLayout_.specialRoomAnchors) {
@@ -12368,8 +12354,8 @@ bool Game::executeDebugCommand(std::string_view command)
             ") progress=" + debugFormatFloat(metrics.pathProgress * 100.0f, 1) + "%" +
             " depthMeters=" + std::to_string(depthMeters) +
             " route=" + debugFormatFloat(routeTiles, 1) + "/" + debugFormatFloat(pathLength, 1) +
-            " localRank=" + std::to_string(localDepthRank) +
-            " adjustedRank=" + std::to_string(adjustedDepthRank) +
+            " localSection=" + std::to_string(localSection) +
+            " sectionRank=" + std::to_string(sectionRank) +
             " currentRank=" + std::to_string(astralRun_.currentDepth) +
             " maxReachedRank=" + std::to_string(astralRun_.maxReachedDepth));
         logInfo("Debug: rogue diag terrain=" + std::string(debugTileTypeName(terrain.type)) +

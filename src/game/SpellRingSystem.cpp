@@ -1332,6 +1332,7 @@ void SpellRingSystem::refreshItemWorldPositions(float dt, const RuntimeBalance& 
                 ? normalizeLocalParam(ringShape, item.localAngle, context.tuning)
                 : normalizeAngle(baseAngles_[static_cast<std::size_t>(ringIndex)] + item.localAngle);
             const Vec2 previousWorldPosition = item.worldPosition;
+            Vec2 damageVelocity{};
             if (runtime.state == SpellRingState::Normal) {
                 const Vec2 localPosition = getRingItemLocalPosition(param, context);
                 item.orbitOutward = safeNormalize(localPosition, fromAngle(param));
@@ -1346,6 +1347,13 @@ void SpellRingSystem::refreshItemWorldPositions(float dt, const RuntimeBalance& 
                 item.worldPosition = getRingItemWorldPositionWithDistanceOffset(
                     runtime.center,
                     param,
+                    context,
+                    item.orbitDistanceOffset);
+                damageVelocity = getRingItemVelocityWithDistanceOffset(
+                    param,
+                    ringShape == RingShape::Comet ? 0.0f : ringAngularSpeed,
+                    shapeRotationSpeed,
+                    {},
                     context,
                     item.orbitDistanceOffset);
                 item.worldVelocity = getRingItemVelocityWithDistanceOffset(
@@ -1410,8 +1418,10 @@ void SpellRingSystem::refreshItemWorldPositions(float dt, const RuntimeBalance& 
                 item.orbitTangent = safeNormalize(after - before, runtime.throwDirection);
                 item.orbitOutward = safeNormalize(item.worldPosition - throwOrigin, runtime.throwDirection);
                 item.worldVelocity = safeDt > 0.0f ? (item.worldPosition - previousWorldPosition) / safeDt : centerVelocity;
+                damageVelocity = item.worldVelocity;
             }
             item.orbitMotionSpeed = length(item.worldVelocity) / std::max(1.0f, radiusForRing(ringIndex));
+            item.damageMotionSpeed = length(damageVelocity) / std::max(1.0f, radiusForRing(ringIndex));
         }
     }
 }

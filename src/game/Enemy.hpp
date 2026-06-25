@@ -272,6 +272,7 @@ struct Enemy {
     bool active = false;
     bool isBoss = false;
     EnemySpawnSource spawnSource = EnemySpawnSource::Ambient;
+    bool screenSleepAllowed = false;
     bool dungeonEventBoss = false;
     bool dungeonEventSleeping = false;
     int id = 0;
@@ -314,6 +315,7 @@ struct Enemy {
     int contactAttackPower = 1;
     std::string contactDamageType = "blunt";
     float contactTimer = 0.0f;
+    float ringHitCooldown = 0.0f;
     float contactDamageMultiplier = 1.0f;
     EnemyActionRuntime action;
     float chestBiteIntervalSeconds = 0.0f;

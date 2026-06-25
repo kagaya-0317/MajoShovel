@@ -39,7 +39,7 @@ constexpr float DialogueMessageTextOffsetY = 8.0f;
 constexpr float DialogueMessageNamePlateCenterX = 144.0f;
 constexpr float DialogueMessageNameShiftX = 0.0f;
 constexpr float DialogueMessageNameCenterY = 31.0f;
-constexpr float DialogueInactivePortraitBrightness = 0.68f;
+constexpr float DialogueInactivePortraitBrightness = 0.55f;
 constexpr int DialogueTextScale = 3;
 constexpr std::string_view DialogueWindowId = "dialogue.message";
 constexpr std::string_view DialogueHelpText = "F/Enter/Esc 文字送り";
@@ -641,7 +641,6 @@ void DialoguePlayer::start(DialogueSequence sequence)
     lineElapsed_ = 0.0f;
     contentFade_ = 0.0f;
     resetAdvanceHoldRepeat();
-    advanceSoundRequests_ = 0;
     rightSpeakerId_.clear();
     pendingRightSpeakerId_.clear();
     rightPortraitFade_ = 0.0f;
@@ -659,7 +658,6 @@ void DialoguePlayer::clear()
     lineElapsed_ = 0.0f;
     contentFade_ = 0.0f;
     resetAdvanceHoldRepeat();
-    advanceSoundRequests_ = 0;
     rightSpeakerId_.clear();
     pendingRightSpeakerId_.clear();
     rightPortraitFade_ = 0.0f;
@@ -706,7 +704,6 @@ void DialoguePlayer::update(const Input& input, float dt)
     }
 
     if (advanceRequested(input, safeDt)) {
-        ++advanceSoundRequests_;
         if (lineComplete()) {
             advanceLine();
         } else {
@@ -902,13 +899,6 @@ bool DialoguePlayer::lineComplete() const
         return lineElapsed_ >= std::max(0.0f, step->waitSeconds);
     }
     return lineElapsed_ >= currentLineCompletionTime();
-}
-
-int DialoguePlayer::consumeAdvanceSoundRequests()
-{
-    const int requests = advanceSoundRequests_;
-    advanceSoundRequests_ = 0;
-    return requests;
 }
 
 const DialogueStep* DialoguePlayer::currentStep() const

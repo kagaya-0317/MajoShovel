@@ -19,6 +19,7 @@ namespace {
 
 constexpr float StartCavernRadius = 3.2f;
 constexpr float GoalCavernRadius = 9.0f;
+constexpr float RoguelikeGoalCavernRadius = 3.4f;
 constexpr float WarpCavernRadius = 4.1f;
 constexpr float SoftPathMargin = 3.4f;
 constexpr float SpecialRoomPathConnectorHalfWidthTiles = 1.45f;
@@ -1689,6 +1690,9 @@ TerrainDebugInfo TileMap::terrainInfoForTile(int tx, int ty, const Tile* tile) c
         }
     }
 
+    const bool roguelikeLayout = isRoguelikeLayout(dungeonLayoutSnapshot_);
+    const float goalCavernRadius = roguelikeLayout ? RoguelikeGoalCavernRadius : GoalCavernRadius;
+    const float goalCavernJitter = (widthNoise - 0.5f) * (roguelikeLayout ? 0.6f : 2.0f);
     TileType generatedType = TileType::Rock;
     const bool specialRoomPathConnector = carvedDistance <= SpecialRoomPathConnectorHalfWidthTiles;
     if (currentRoomType == SpecialRoomType::SafeCavern && distanceFromSpecialRoomCenter <= specialRoomRadius) {
@@ -1717,7 +1721,7 @@ TerrainDebugInfo TileMap::terrainInfoForTile(int tx, int ty, const Tile* tile) c
         generatedType = TileType::Empty;
     } else if (distanceFromWarp <= WarpCavernRadius) {
         generatedType = TileType::Empty;
-    } else if (distanceFromGoal <= GoalCavernRadius + (widthNoise - 0.5f) * 2.0f) {
+    } else if (distanceFromGoal <= goalCavernRadius + goalCavernJitter) {
         generatedType = TileType::Empty;
     } else if (shapedDistance <= caveWidth + SoftPathMargin) {
         generatedType = mixedSoftPathTile(fineNoise, broadNoise);

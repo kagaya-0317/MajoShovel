@@ -46,8 +46,8 @@ constexpr int RoguelikeSectionsPerArea = 3;
 constexpr int RoguelikeCompletionDepthMeters = 10000;
 constexpr int RoguelikeCompletionSectionRank =
     (RoguelikeCompletionDepthMeters / RoguelikeMetersPerArea) * RoguelikeSectionsPerArea;
-constexpr int RoguelikeBigHoleTerrainRadiusTiles = 2;
-constexpr float RoguelikeGateBossProgress = 0.895f;
+constexpr int RoguelikeBigHoleTerrainRadiusTiles = 1;
+constexpr int RoguelikeGateBossDistanceBeforeHoleMeters = 50;
 constexpr float RoguelikeBigHoleImageSize = 58.0f;
 constexpr int RoguelikeFacilityKindCount = 3;
 constexpr int RoguelikeFacilityMinRoomsPerArea = 2;
@@ -83,6 +83,8 @@ constexpr float RareChestMimicChance = 0.08f;
 constexpr float SuperRareChestMimicChance = 0.12f;
 constexpr float AppearingChestOpenLockSeconds = 40.0f / 60.0f;
 constexpr std::string_view DungeonEntranceImagePath = "assets/kyoten/move.png";
+constexpr Vec2 DungeonEntranceVisualOffset{24.0f, -60.0f};
+constexpr Vec2 DungeonEntranceShadowOffset{-12.0f, 56.0f};
 constexpr float ChestMimicSpawnWarmupSeconds = 0.18f;
 constexpr float MicroFeatureProgressStart = 0.08f;
 constexpr float MicroFeatureProgressSpan = 0.84f;
@@ -142,6 +144,11 @@ std::optional<int> hiddenEndingStoryStageIndex(std::string_view stageId)
 bool isCapturedMonsterObjectId(std::string_view objectId)
 {
     return objectId.rfind("captured_", 0) == 0;
+}
+
+Vec2 dungeonEntranceVisualCenter(Vec2 entranceCenter)
+{
+    return entranceCenter + DungeonEntranceVisualOffset;
 }
 
 int roguelikeTargetBaseLevelForSectionRank(int depthRank)
@@ -554,6 +561,8 @@ constexpr float DungeonEventObjectHitPaddingPx = 16.0f;
 constexpr float DungeonEventMinSpacingTiles = 8.0f;
 constexpr float DungeonEventMinWarpPointSpacingTiles = 12.0f;
 constexpr float DungeonEventBossRouteProgressPadding = 0.01f;
+constexpr float DungeonEventRoguelikeBossGuardTiles = static_cast<float>(BossArenaRadiusXTiles) + 18.0f;
+constexpr float DungeonEventRoguelikeBigHoleGuardTiles = 18.0f;
 constexpr float DungeonEventDiscoveryCooldownSeconds = 2.4f;
 constexpr float DungeonEventDamageInterruptDelaySeconds = 1.1f;
 constexpr float DungeonEventLostBaggageDistanceTiles = 7.0f;
@@ -641,10 +650,15 @@ void drawBuriedEnemyWarningBubble(Renderer& renderer, Vec2 groundCenter, float a
     const float t = duration > 0.0f ? clamp(age / duration, 0.0f, 1.0f) : 1.0f;
     const float pop = dungeonFocusEase(std::min(1.0f, t / 0.18f));
     const float fade = t > 0.82f ? 1.0f - dungeonFocusEase((t - 0.82f) / 0.18f) : 1.0f;
-    const float pulse = 1.0f + 0.10f * std::sin(age * 32.0f);
-    const float radius = 15.0f * pop * pulse;
-    const float bob = std::sin(age * 18.0f) * 2.0f;
-    const Vec2 center = groundCenter + Vec2{0.0f, -42.0f + bob};
+    const float bounceT = clamp((t - 0.18f) / 0.42f, 0.0f, 1.0f);
+    const float bounceFade = 1.0f - dungeonFocusEase(bounceT);
+    const float bounce = t > 0.18f ? std::sin(bounceT * Pi * 4.0f) * bounceFade : 0.0f;
+    const float radius = 15.0f * pop;
+    const Vec2 bubbleRadius{
+        radius * (1.0f + 0.22f * bounce),
+        radius * (1.0f - 0.16f * bounce),
+    };
+    const Vec2 center = groundCenter + Vec2{0.0f, -42.0f};
     const auto alpha = [fade](int value) {
         return static_cast<unsigned char>(std::clamp(
             static_cast<int>(std::lround(static_cast<float>(value) * fade)),
@@ -652,30 +666,31 @@ void drawBuriedEnemyWarningBubble(Renderer& renderer, Vec2 groundCenter, float a
             255));
     };
 
+    const Vec2 shadowOffset{2.0f, 2.0f};
     const Color shadow{22, 8, 12, alpha(118)};
     const Color fill{224, 42, 54, alpha(236)};
-    const Color rim{255, 226, 176, alpha(244)};
     const Color hot{255, 255, 255, alpha(255)};
+    const Color textShadow{0, 0, 0, alpha(150)};
     const std::array<Vec2, 3> tail{{
-        center + Vec2{-5.5f * pop, radius * 0.58f},
-        center + Vec2{5.5f * pop, radius * 0.58f},
+        center + Vec2{-5.5f * pop * (1.0f + 0.22f * bounce), bubbleRadius.y * 0.58f},
+        center + Vec2{5.5f * pop * (1.0f + 0.22f * bounce), bubbleRadius.y * 0.58f},
         groundCenter + Vec2{0.0f, -13.0f},
     }};
+    const std::array<Vec2, 3> shadowTail{{
+        tail[0] + shadowOffset,
+        tail[1] + shadowOffset,
+        tail[2] + shadowOffset,
+    }};
 
-    renderer.fillCircle(center + Vec2{0.0f, 2.0f}, radius + 2.0f, shadow);
+    renderer.fillPolygon(shadowTail.data(), shadowTail.size(), shadow);
+    renderer.fillEllipse(center + shadowOffset, bubbleRadius + Vec2{2.0f, 2.0f}, shadow);
     renderer.fillPolygon(tail.data(), tail.size(), fill);
-    renderer.fillCircle(center, radius, fill);
-    renderer.drawCircle(center, radius + 1.0f, rim);
-    renderer.drawCircle(center, radius + 4.0f, Color{255, 68, 78, alpha(76)});
+    renderer.fillEllipse(center, bubbleRadius, fill);
 
-    const Vec2 textSize = renderer.measureText("!", 3);
-    renderer.drawOutlinedText(
-        center - textSize * 0.5f + Vec2{0.0f, -1.0f},
-        "!",
-        hot,
-        {78, 8, 18, alpha(210)},
-        2,
-        3);
+    const Vec2 textSize = renderer.measureText("!", 3, TextStyle::Italic);
+    const Vec2 textPos = center - textSize * 0.5f + Vec2{0.0f, 2.0f};
+    renderer.drawText(textPos + shadowOffset, "!", textShadow, 3, TextStyle::Italic);
+    renderer.drawText(textPos, "!", hot, 3, TextStyle::Italic);
 }
 
 float dungeonFocusDurationSeconds(float seconds, float fallbackSeconds)
@@ -1889,6 +1904,7 @@ void updatePlayerDeathRingPresentationItemTransforms(
             item.orbitTangent = Vec2{-item.orbitOutward.y, item.orbitOutward.x};
         }
         item.orbitMotionSpeed = length(item.worldVelocity) / std::max(1.0f, presentation.orbitRadius);
+        item.damageMotionSpeed = item.orbitMotionSpeed;
     }
 }
 
@@ -2269,11 +2285,7 @@ struct MicroFeature {
 
 float pathLengthTiles(const std::vector<Vec2>& points)
 {
-    float total = 0.0f;
-    for (std::size_t i = 1; i < points.size(); ++i) {
-        total += length(points[i] - points[i - 1]);
-    }
-    return total;
+    return dungeonPathRouteLengthTiles(points);
 }
 
 int signStep(float value)
@@ -2642,22 +2654,9 @@ void Game::updateAstralRunProgress()
         return;
     }
 
-    const DungeonLayoutMetrics metrics = calculateDungeonLayoutMetrics(dungeonLayout_, {
-        static_cast<float>(tileMap_.worldToTile(player_.position.x)),
-        static_cast<float>(tileMap_.worldToTile(player_.position.y)),
-    });
-    const int depth = roguelikeAdjustedDepthRank(lootDepthRankForProgress(currentStageId_, metrics.pathProgress));
+    const int currentDepthMeters = roguelikeDepthMetersForWorldPosition(player_.position);
+    const int depth = roguelikeSectionRankForDepthMeters(currentDepthMeters);
     astralRun_.maxReachedDepth = std::max(astralRun_.maxReachedDepth, depth);
-    const int areaStartMeters = std::max(0, astralRun_.currentDepthMeters);
-    const int areaEndMeters = std::max(areaStartMeters + 1, astralRun_.nextHoleDepthMeters);
-    const int currentDepthMeters = std::clamp(
-        areaStartMeters + static_cast<int>(std::lround(
-            projectedDungeonRouteDistanceTiles(dungeonLayout_, {
-                static_cast<float>(tileMap_.worldToTile(player_.position.x)),
-                static_cast<float>(tileMap_.worldToTile(player_.position.y)),
-            }))),
-        0,
-        std::min(areaEndMeters, std::max(1, astralRun_.completionDepthMeters)));
     astralRun_.maxReachedDepthMeters = std::max(
         astralRun_.maxReachedDepthMeters,
         currentDepthMeters);
@@ -2729,10 +2728,33 @@ int Game::roguelikeAdjustedDepthRank(int localDepthRank) const
     return std::max(1, astralRun_.sectionRankOffset + localSection);
 }
 
+int Game::roguelikeDepthMetersForWorldPosition(Vec2 position) const
+{
+    const Vec2 tilePosition{
+        static_cast<float>(tileMap_.worldToTile(position.x)),
+        static_cast<float>(tileMap_.worldToTile(position.y)),
+    };
+    const int routeMeters = std::max(
+        0,
+        static_cast<int>(std::lround(projectedDungeonRouteDistanceTiles(dungeonLayout_, tilePosition))));
+    if (!astralRunActive()) {
+        return routeMeters;
+    }
+
+    const int areaStartMeters = std::max(0, astralRun_.currentDepthMeters);
+    const int areaEndMeters = std::max(areaStartMeters + 1, astralRun_.nextHoleDepthMeters);
+    return std::clamp(
+        areaStartMeters + routeMeters,
+        0,
+        std::min(areaEndMeters, std::max(1, astralRun_.completionDepthMeters)));
+}
+
 int Game::roguelikeDepthRankForWorldPosition(Vec2 position) const
 {
-    const int localDepthRank = lootDepthRankForWorldPosition(tileMap_, dungeonLayout_, currentStageId_, position);
-    return roguelikeAdjustedDepthRank(localDepthRank);
+    if (!astralRunActive() || !currentStageIsRoguelike()) {
+        return lootDepthRankForWorldPosition(tileMap_, dungeonLayout_, currentStageId_, position);
+    }
+    return roguelikeSectionRankForDepthMeters(roguelikeDepthMetersForWorldPosition(position));
 }
 
 void Game::updateDungeonDepthTutorials()
@@ -5432,6 +5454,17 @@ void Game::DungeonEventSystem::generateFromLayout(
         std::any_of(warpPoints.begin(), warpPoints.end(), [](const WarpPoint& point) {
             return !point.discovered;
         });
+    const bool roguelikeLayout = layout.roguelike || layout.generationProfile == "astral_rogue";
+    const float mainPathLength = pathLengthTiles(layout.mainPathPoints);
+    const Vec2 roguelikeBossTilePoint = mainPathLength > 0.0001f
+        ? pointAtDungeonPathDistanceTiles(
+            layout.mainPathPoints,
+            std::max(0.0f, mainPathLength - static_cast<float>(RoguelikeGateBossDistanceBeforeHoleMeters)))
+        : Vec2{static_cast<float>(layout.goalTile.x), static_cast<float>(layout.goalTile.y)};
+    const Vec2 roguelikeBigHoleTilePoint{
+        static_cast<float>(layout.goalTile.x),
+        static_cast<float>(layout.goalTile.y),
+    };
     const auto bossRouteProtectedProgressRange = [&]() -> std::optional<std::pair<float, float>> {
         if (!warpPointsEnabled || warpPoints.empty() || layout.mainPathPoints.size() < 2) {
             return std::nullopt;
@@ -5487,6 +5520,25 @@ void Game::DungeonEventSystem::generateFromLayout(
             return distanceSquared(candidate, warpTile) < minDistSq;
         });
     };
+    const auto tooCloseToRoguelikeEndgame = [&](DungeonTile tile, float pathProgress) {
+        if (!roguelikeLayout || mainPathLength <= 0.0001f) {
+            return false;
+        }
+        const Vec2 candidate{static_cast<float>(tile.x), static_cast<float>(tile.y)};
+        const float bossGuardSq = DungeonEventRoguelikeBossGuardTiles * DungeonEventRoguelikeBossGuardTiles;
+        if (distanceSquared(candidate, roguelikeBossTilePoint) < bossGuardSq) {
+            return true;
+        }
+        const float holeGuardSq = DungeonEventRoguelikeBigHoleGuardTiles * DungeonEventRoguelikeBigHoleGuardTiles;
+        if (distanceSquared(candidate, roguelikeBigHoleTilePoint) < holeGuardSq) {
+            return true;
+        }
+        const float routeDistance = clamp(pathProgress, 0.0f, 1.0f) * mainPathLength;
+        const float bossRouteDistance = std::max(
+            0.0f,
+            mainPathLength - static_cast<float>(RoguelikeGateBossDistanceBeforeHoleMeters));
+        return routeDistance >= bossRouteDistance - DungeonEventRoguelikeBossGuardTiles;
+    };
     const auto canAdd = [&](
         DungeonEventKind kind,
         DungeonTile tile,
@@ -5518,6 +5570,9 @@ void Game::DungeonEventSystem::generateFromLayout(
             return false;
         }
         if (onBossRoute(pathProgress)) {
+            return false;
+        }
+        if (tooCloseToRoguelikeEndgame(tile, pathProgress)) {
             return false;
         }
         if (tooCloseToWarpPoint(tile)) {
@@ -5831,11 +5886,11 @@ void Game::updateDungeonEvents(float dt, double totalSeconds)
     const float tileSize = static_cast<float>(balance::TileSize);
     const RuntimeBalance dungeonBalance = runtimeBalanceForDungeon();
     const auto eventDepthRank = [this](const DungeonEventInstance& event) {
-        const DungeonLayoutMetrics metrics = calculateDungeonLayoutMetrics(dungeonLayout_, {
-            static_cast<float>(event.centerTile.x),
-            static_cast<float>(event.centerTile.y),
-        });
-        return roguelikeAdjustedDepthRank(lootDepthRankForProgress(currentStageId_, metrics.pathProgress));
+        const Vec2 center = tileWorldCenter(event.centerTile);
+        if (currentStageIsRoguelike()) {
+            return roguelikeDepthRankForWorldPosition(center);
+        }
+        return lootDepthRankForWorldPosition(tileMap_, dungeonLayout_, currentStageId_, center);
     };
     const auto spawnEnemy = [&](DungeonEventInstance& event, Vec2 position, bool sleeping, bool bossVariant, int* outRuntimeId = nullptr) {
         const bool spawnSleeping = sleeping || !event.discovered;
@@ -7813,9 +7868,17 @@ void Game::configureBossSpawnPointFromRoguelikeBigHole()
         return;
     }
     if (dungeonLayout_.mainPathPoints.size() >= 2) {
-        bossSpawnPoint_ = tileWorldCenter(roundDungeonTile(pointAtPathProgress(
+        const int areaStartMeters = std::max(0, astralRun_.currentDepthMeters);
+        const int areaEndMeters = std::max(areaStartMeters + 1, astralRun_.nextHoleDepthMeters);
+        const int areaLengthMeters = std::max(
+            1,
+            areaEndMeters - areaStartMeters);
+        const float bossRouteDistance = static_cast<float>(std::max(
+            0,
+            areaLengthMeters - RoguelikeGateBossDistanceBeforeHoleMeters));
+        bossSpawnPoint_ = tileWorldCenter(roundDungeonTile(pointAtDungeonPathDistanceTiles(
             dungeonLayout_.mainPathPoints,
-            RoguelikeGateBossProgress)));
+            bossRouteDistance)));
     } else {
         Vec2 direction = normalize(roguelikeBigHole_.position - tileWorldCenter(dungeonLayout_.startTile));
         if (lengthSquared(direction) <= 0.0001f) {
@@ -7839,12 +7902,20 @@ void Game::initializeRoguelikeBigHoleFromLayout()
 
     roguelikeBigHole_.active = true;
     roguelikeBigHole_.unlocked = false;
-    roguelikeBigHole_.tile = dungeonLayout_.goalTile;
+    const int areaStartMeters = std::max(0, astralRun_.currentDepthMeters);
+    const int areaEndMeters = std::max(areaStartMeters + 1, astralRun_.nextHoleDepthMeters);
+    const int areaLengthMeters = std::max(1, areaEndMeters - areaStartMeters);
+    roguelikeBigHole_.tile = dungeonLayout_.mainPathPoints.size() >= 2
+        ? roundDungeonTile(pointAtDungeonPathDistanceTiles(
+            dungeonLayout_.mainPathPoints,
+            static_cast<float>(areaLengthMeters)))
+        : dungeonLayout_.goalTile;
     roguelikeBigHole_.position = tileWorldCenter(roguelikeBigHole_.tile);
     roguelikeBigHole_.depthMeters = std::min(RoguelikeCompletionDepthMeters, std::max(
         RoguelikeMetersPerArea,
         astralRun_.nextHoleDepthMeters));
     configureBossSpawnPointFromRoguelikeBigHole();
+    carveBossArenaAroundSpawnPoint();
 }
 
 void Game::rebuildRoguelikeAreaFromAstralState()
@@ -8147,6 +8218,8 @@ bool Game::updateWarpReturnUi(const Input& input, UiContext& ui)
         return false;
     }
 
+    const Vec2 entranceVisualCenter = dungeonEntranceVisualCenter(dungeonEntrancePosition());
+
     if (warpReturnConfirm_.open) {
         hoveredWarpReturnPointIndex_ = -1;
         const UiRect confirmPanel = warpReturnConfirmRect();
@@ -8162,7 +8235,7 @@ bool Game::updateWarpReturnUi(const Input& input, UiContext& ui)
         }
         if (result == UiConfirmDialogResult::Cancelled) {
             const bool entranceNearby = dungeonInspectableInRange(
-                dungeonEntrancePosition(),
+                entranceVisualCenter,
                 {DungeonEntranceImageMaxWidth, DungeonEntranceImageMaxHeight});
             focusedWarpReturnPointIndex_ = entranceNearby
                 ? DungeonEntranceReturnFocusIndex
@@ -8181,7 +8254,7 @@ bool Game::updateWarpReturnUi(const Input& input, UiContext& ui)
 
         const Vec2 clickWorld = camera_.screenToWorld(ui.mouse());
         if (dungeonInspectableHovered(
-                dungeonEntrancePosition(),
+                entranceVisualCenter,
                 {DungeonEntranceImageMaxWidth, DungeonEntranceImageMaxHeight},
                 clickWorld)) {
             return DungeonEntranceReturnFocusIndex;
@@ -8213,7 +8286,7 @@ bool Game::updateWarpReturnUi(const Input& input, UiContext& ui)
     const int clickedReturnFocusIndex = input.mouseLeftPressed() ? pointedReturnFocusIndex : -1;
 
     const bool entranceNearby = dungeonInspectableInRange(
-        dungeonEntrancePosition(),
+        entranceVisualCenter,
         {DungeonEntranceImageMaxWidth, DungeonEntranceImageMaxHeight});
     focusedWarpReturnPointIndex_ = clickedReturnFocusIndex != -1
         ? clickedReturnFocusIndex
@@ -8982,6 +9055,12 @@ void Game::initializeChestNodesFromLayout()
             reservations.reserve(node.tile, SolidPlacementReservationRadiusTiles);
         }
     }
+    const auto depthRankForChestTile = [this](DungeonTile tile, float fallbackProgress) {
+        if (currentStageIsRoguelike()) {
+            return roguelikeDepthRankForWorldPosition(tileWorldCenter(tile));
+        }
+        return lootDepthRankForProgress(currentStageId_, fallbackProgress);
+    };
 
     for (const MicroFeature& feature : microFeaturesForLayout(dungeonLayout_)) {
         if (feature.kind != MicroFeatureKind::DoublePocketTreasure) {
@@ -8995,7 +9074,7 @@ void Game::initializeChestNodesFromLayout()
         node.visibility = PlacementVisibility::Exposed;
         node.tile = feature.center;
         node.chestKind = rollChestKind(rng, feature.progress);
-        node.depthRank = lootDepthRankForProgress(currentStageId_, feature.progress);
+        node.depthRank = depthRankForChestTile(node.tile, feature.progress);
         node.revealed = true;
         node.opened = false;
         node.lootSpawned = false;
@@ -9027,7 +9106,7 @@ void Game::initializeChestNodesFromLayout()
             (node.visibility == PlacementVisibility::BuriedVisible ? 6.5f : 8.5f) + sideJitter(rng);
         node.tile = roundDungeonTile(anchor + side * offsetTiles);
         node.chestKind = rollChestKind(rng, progress);
-        node.depthRank = lootDepthRankForProgress(currentStageId_, progress);
+        node.depthRank = depthRankForChestTile(node.tile, progress);
         node.revealed = node.visibility != PlacementVisibility::BuriedHidden;
         node.opened = false;
         node.lootSpawned = false;
@@ -9037,6 +9116,7 @@ void Game::initializeChestNodesFromLayout()
                 nodeRadius(node.visibility),
                 SolidPlacementSearchRadiusTiles,
                 node.tile)) {
+            node.depthRank = depthRankForChestTile(node.tile, progress);
             assignChestMimic(node);
             chestNodes_.push_back(node);
         }
@@ -9048,7 +9128,7 @@ void Game::initializeChestNodesFromLayout()
         node.visibility = PlacementVisibility::Exposed;
         node.tile = wallPocketTileAtProgress(dungeonLayout_, progress, pocketOffsetDist(rng), signDist(rng) == 1);
         node.chestKind = rollChestKind(rng, progress);
-        node.depthRank = lootDepthRankForProgress(currentStageId_, progress);
+        node.depthRank = depthRankForChestTile(node.tile, progress);
         node.revealed = true;
         node.opened = false;
         node.lootSpawned = false;
@@ -9058,6 +9138,7 @@ void Game::initializeChestNodesFromLayout()
                 nodeRadius(node.visibility),
                 SolidPlacementSearchRadiusTiles,
                 node.tile)) {
+            node.depthRank = depthRankForChestTile(node.tile, progress);
             assignChestMimic(node);
             chestNodes_.push_back(node);
         }
@@ -10044,19 +10125,25 @@ void Game::initializeCrateNodesFromLayout()
             reservations.reserve(node.tile, nodeRadius(node.visibility));
         }
     }
+    const auto depthRankForCrateTile = [this](DungeonTile tile, float fallbackProgress) {
+        if (currentStageIsRoguelike()) {
+            return roguelikeDepthRankForWorldPosition(tileWorldCenter(tile));
+        }
+        return lootDepthRankForProgress(currentStageId_, fallbackProgress);
+    };
 
     for (const MicroFeature& feature : microFeaturesForLayout(dungeonLayout_)) {
         if (feature.kind == MicroFeatureKind::CrateAlcove) {
             CrateNode node;
             node.tile = feature.center;
-            node.depthRank = lootDepthRankForProgress(currentStageId_, feature.progress);
+            node.depthRank = depthRankForCrateTile(node.tile, feature.progress);
             node.destroyed = false;
             crateNodes_.push_back(node);
         } else if (feature.kind == MicroFeatureKind::DoublePocketTreasure &&
             doublePocketUsesCrate(feature, dungeonLayout_.seed)) {
             CrateNode node;
             node.tile = feature.second;
-            node.depthRank = lootDepthRankForProgress(currentStageId_, feature.progress);
+            node.depthRank = depthRankForCrateTile(node.tile, feature.progress);
             node.destroyed = false;
             crateNodes_.push_back(node);
         }
@@ -10071,13 +10158,14 @@ void Game::initializeCrateNodesFromLayout()
 
             CrateNode node;
             node.tile = roundDungeonTile(floor.center + offset);
-            node.depthRank = lootDepthRankForProgress(currentStageId_, metrics.pathProgress);
+            node.depthRank = depthRankForCrateTile(node.tile, metrics.pathProgress);
             node.destroyed = false;
             if (reservations.reserveNearest(
                     node.tile,
                     SolidPlacementReservationRadiusTiles,
                     SolidPlacementSearchRadiusTiles,
                     node.tile)) {
+                node.depthRank = depthRankForCrateTile(node.tile, metrics.pathProgress);
                 crateNodes_.push_back(node);
             }
             continue;
@@ -10105,13 +10193,14 @@ void Game::initializeCrateNodesFromLayout()
         CrateNode node;
         const float offsetTiles = 1.2f + sideJitter(rng);
         node.tile = roundDungeonTile(anchor + side * offsetTiles);
-        node.depthRank = lootDepthRankForProgress(currentStageId_, progress);
+        node.depthRank = depthRankForCrateTile(node.tile, progress);
         node.destroyed = false;
         if (reservations.reserveNearest(
                 node.tile,
                 SolidPlacementReservationRadiusTiles,
                 SolidPlacementSearchRadiusTiles,
                 node.tile)) {
+            node.depthRank = depthRankForCrateTile(node.tile, progress);
             crateNodes_.push_back(node);
         }
     }
@@ -10596,6 +10685,7 @@ void Game::applyPlacementTerrainOverrides()
     for (const DungeonEventInstance& event : dungeonEvents_.all()) {
         applyDungeonEventCavity(event);
     }
+    carveBossArenaAroundSpawnPoint();
 }
 
 void Game::updateExposedEnemyNodes()
@@ -10699,10 +10789,9 @@ void Game::updateExposedEnemyNodes()
     }
 }
 
-void Game::schedulePendingBuriedEnemySpawn(const EnemyNode& node)
+void Game::schedulePendingBuriedEnemySpawn(DungeonTile tile, Vec2 position, int depthRank)
 {
-    const Vec2 center = tileWorldCenter(node.tile);
-    const auto sameTile = [tile = node.tile](const PendingBuriedEnemySpawn& pending) {
+    const auto sameTile = [tile](const PendingBuriedEnemySpawn& pending) {
         return pending.tile.x == tile.x && pending.tile.y == tile.y;
     };
     if (std::any_of(pendingBuriedEnemySpawns_.begin(), pendingBuriedEnemySpawns_.end(), sameTile)) {
@@ -10710,13 +10799,22 @@ void Game::schedulePendingBuriedEnemySpawn(const EnemyNode& node)
     }
 
     pendingBuriedEnemySpawns_.push_back(PendingBuriedEnemySpawn{
-        .tile = node.tile,
-        .position = center,
+        .tile = tile,
+        .position = position,
         .timer = BuriedEnemyWarningDelaySeconds,
         .duration = BuriedEnemyWarningDelaySeconds,
-        .depthRank = roguelikeDepthRankForWorldPosition(center),
+        .depthRank = std::max(1, depthRank),
     });
-    playAudioSeAt(AudioSeBuriedEnemyWarning, center);
+    playAudioSeAt(AudioSeBuriedEnemyWarning, position);
+}
+
+void Game::schedulePendingBuriedEnemySpawn(const EnemyNode& node)
+{
+    const Vec2 center = tileWorldCenter(node.tile);
+    schedulePendingBuriedEnemySpawn(
+        node.tile,
+        center,
+        roguelikeDepthRankForWorldPosition(center));
 }
 
 void Game::updatePendingBuriedEnemySpawns(float dt)
@@ -10740,7 +10838,8 @@ void Game::updatePendingBuriedEnemySpawns(float dt)
             true,
             true,
             currentStageId_,
-            pending.depthRank);
+            pending.depthRank,
+            0.0f);
         if (spawned) {
             SmokeBurstOptions smoke;
             smoke.count = effects_.lightweightMode() ? 8 : 16;
@@ -12702,15 +12801,14 @@ void Game::updateHiddenDungeonNpcTargets()
         if (enemyId.empty()) {
             continue;
         }
-        const DungeonLayoutMetrics metrics = calculateDungeonLayoutMetrics(dungeonLayout_, {
-            static_cast<float>(event.centerTile.x),
-            static_cast<float>(event.centerTile.y),
-        });
+        const Vec2 center = tileWorldCenter(event.centerTile);
         spawnTarget(
             hiddenDungeonEventNpcTargetKey(event.id),
             enemyId,
             tileWorldCenter(event.focusTile),
-            roguelikeAdjustedDepthRank(lootDepthRankForProgress(currentStageId_, metrics.pathProgress)));
+            currentStageIsRoguelike()
+                ? roguelikeDepthRankForWorldPosition(center)
+                : lootDepthRankForWorldPosition(tileMap_, dungeonLayout_, currentStageId_, center));
     }
 
     for (const RoguelikeFacilityInstance& facility : roguelikeFacilities_) {
@@ -12792,15 +12890,16 @@ void Game::renderDungeonEntrance(Renderer& renderer) const
         return;
     }
 
+    const bool introActive = introTutorialActive();
     const Vec2 center = dungeonEntrancePosition();
+    const Vec2 visualCenter = introActive ? center : dungeonEntranceVisualCenter(center);
     const bool inInteractionRange = dungeonInspectableInRange(
-        center,
+        visualCenter,
         {DungeonEntranceImageMaxWidth, DungeonEntranceImageMaxHeight});
     const bool hovered =
         hoveredWarpReturnPointIndex_ == DungeonEntranceReturnFocusIndex ||
-        (introTutorialActive() && introTutorialExitHovered_);
-    renderer.fillEllipse(center + Vec2{0.0f, 56.0f}, {42.0f, 12.0f}, {0, 0, 0, 112});
-    renderer.fillSoftCircle(center + Vec2{0.0f, 12.0f}, 64.0f, {96, 190, 220, 36});
+        (introActive && introTutorialExitHovered_);
+    renderer.fillEllipse(visualCenter + DungeonEntranceShadowOffset, {42.0f, 12.0f}, {0, 0, 0, 112});
 
     ScaledImageDrawOptions entranceOptions;
     entranceOptions.outlineColor = inInteractionRange
@@ -12810,12 +12909,12 @@ void Game::renderDungeonEntrance(Renderer& renderer) const
     if (!drawScaledImage(
             renderer,
             DungeonEntranceImagePath,
-            center,
+            visualCenter,
             {DungeonEntranceImageMaxWidth, DungeonEntranceImageMaxHeight},
             entranceOptions)) {
-        renderer.fillRect(center + Vec2{-42.0f, -50.0f}, {84.0f, 110.0f}, {58, 62, 78, 245});
+        renderer.fillRect(visualCenter + Vec2{-42.0f, -50.0f}, {84.0f, 110.0f}, {58, 62, 78, 245});
         renderer.drawRect(
-            center + Vec2{-42.0f, -50.0f},
+            visualCenter + Vec2{-42.0f, -50.0f},
             {84.0f, 110.0f},
             inInteractionRange
                 ? (hovered ? DungeonInspectableHoverOutlineColor : DungeonInspectableOutlineColor)
@@ -13206,18 +13305,11 @@ void Game::appendRewardNodeRenderEntries(
     }
 }
 
-void Game::appendPendingBuriedEnemySpawnRenderEntries(
-    std::vector<DepthRenderEntry>& entries,
-    Renderer& renderer) const
+void Game::renderPendingBuriedEnemySpawnWarnings(Renderer& renderer) const
 {
     for (const PendingBuriedEnemySpawn& pending : pendingBuriedEnemySpawns_) {
         const float age = std::max(0.0f, pending.duration - pending.timer);
-        entries.push_back(DepthRenderEntry{
-            pending.position.y,
-            [&renderer, position = pending.position, age, duration = pending.duration]() {
-                drawBuriedEnemyWarningBubble(renderer, position, age, duration);
-            },
-        });
+        drawBuriedEnemyWarningBubble(renderer, pending.position, age, pending.duration);
     }
 }
 
@@ -13225,13 +13317,13 @@ void Game::renderRewardNodes(Renderer& renderer, const std::vector<LightSource>&
 {
     std::vector<DepthRenderEntry> entries;
     appendRewardNodeRenderEntries(entries, renderer, extraLights);
-    appendPendingBuriedEnemySpawnRenderEntries(entries, renderer);
     std::stable_sort(entries.begin(), entries.end(), [](const DepthRenderEntry& left, const DepthRenderEntry& right) {
         return left.sortY < right.sortY;
     });
     for (const DepthRenderEntry& entry : entries) {
         entry.draw();
     }
+    renderPendingBuriedEnemySpawnWarnings(renderer);
 }
 
 } // namespace majo

@@ -42,6 +42,7 @@ constexpr float SpawnAvoidancePadding = 5.0f;
 constexpr std::string_view AudioSeEnemySpawn = "se.enemy.spawn";
 constexpr float PlayerPushShare = 0.35f;
 constexpr float EnemyPushShare = 0.65f;
+constexpr float RingEnemyHitCooldownSeconds = 0.12f;
 constexpr float BossRadiusMultiplier = 1.0f;
 constexpr float BossVisualRadiusMultiplier = 1.35f;
 constexpr double BossNormalIncomingDamageMultiplier = 0.75;
@@ -1224,6 +1225,28 @@ std::string defaultBossActionPatternFor(const Enemy& enemy)
 bool enemyVisible(const Enemy& enemy)
 {
     return enemy.active && !enemy.bossAction.hidden;
+}
+
+bool enemyScreenSleepEligible(const Enemy& enemy)
+{
+    return enemy.active &&
+        enemy.screenSleepAllowed &&
+        enemy.spawnSource == EnemySpawnSource::Ambient &&
+        !enemy.isBoss &&
+        !enemy.death.active &&
+        !enemy.dungeonEventBoss &&
+        enemy.dungeonEventId.empty();
+}
+
+void unlatchEnemyFromSpellRing(SpellRingSystem& spellRing, int enemyRuntimeId)
+{
+    std::vector<SpellRingItem*> runtimeItems = spellRing.runtimeItemsMutable();
+    for (SpellRingItem* itemPtr : runtimeItems) {
+        if (itemPtr == nullptr) {
+            continue;
+        }
+        itemPtr->unlatchEnemy(enemyRuntimeId);
+    }
 }
 
 bool enemyCanBeHit(const Enemy& enemy)
@@ -2888,17 +2911,18 @@ float enemyShadowVisualSize(Renderer& renderer, const Enemy& enemy)
 }
 
 
-Vec2 enemyShadowBoundsSize(Renderer& renderer, const Enemy& enemy, const EnemyShadowCatalog* shadowCatalog)
+Vec2 enemyShadowBoundsSize(Renderer& renderer, const Enemy& enemy, const EnemyShadowSpec& shadow)
 {
     const float visualSize = enemyShadowVisualSize(renderer, enemy);
-    const EnemyShadowSpec shadow = resolvedEnemyShadowSpec(shadowCatalog, enemy.enemyId);
     return {visualSize * 0.55f * shadow.scale.x, visualSize * 0.25f * shadow.scale.y};
 }
 
-void drawEnemyShadow(Renderer& renderer, const Enemy& enemy, const EnemyShadowCatalog* shadowCatalog)
+Vec2 enemyShadowAnchor(
+    const Enemy& enemy,
+    const EnemyPlacementCatalog* placementCatalog,
+    const EnemyShadowSpec& shadow)
 {
-    const EnemyShadowSpec shadow = resolvedEnemyShadowSpec(shadowCatalog, enemy.enemyId);
-    renderer.drawActorShadow(enemy.position + shadow.offset, enemyShadowVisualSize(renderer, enemy), shadow.scale);
+    return enemy.position + enemyVisualOffset(enemy, placementCatalog) + shadow.offset;
 }
 
 void drawEnemyHpBar(Renderer& renderer, const Enemy& enemy, Vec2 drawPosition, float uiVisualRadius, bool detailsKnown)
@@ -5338,7 +5362,7 @@ int astragnaSealDamageForRingHit(
         damageType = item.magicAuraDamageType;
     }
     const int speedBonus = static_cast<int>(
-        item.orbitMotionSpeed *
+        item.damageMotionSpeed *
         0.25f *
         static_cast<float>(
             spellRing.speedDamageMultiplier() *
@@ -7031,7 +7055,8 @@ bool EnemySystem::spawnDefinitionAt(
     int lootDepthRank,
     EnemyVariantTier variantTier,
     int effectiveBaseLevel,
-    EnemySpawnSource spawnSource)
+    EnemySpawnSource spawnSource,
+    bool screenSleepAllowed)
 {
     Enemy* enemy = enemies_.acquire();
     if (!enemy) {
@@ -7042,9 +7067,11 @@ bool EnemySystem::spawnDefinitionAt(
     enemy->id = nextEnemyId_++;
     enemy->isBoss = false;
     enemy->spawnSource = spawnSource;
+    enemy->screenSleepAllowed = spawnSource == EnemySpawnSource::Ambient && screenSleepAllowed;
     enemy->position = position;
     applyDefinition(*enemy, definition, balance, enemyCatalog);
     enemy->spawnSource = spawnSource;
+    enemy->screenSleepAllowed = spawnSource == EnemySpawnSource::Ambient && screenSleepAllowed;
     applyEnemyVariant(*enemy, enemyCatalog, variantTier, effectiveBaseLevel);
     enemy->lootStageId = std::string(lootStageId);
     enemy->lootDepthRank = std::max(1, lootDepthRank);
@@ -7088,6 +7115,7 @@ bool EnemySystem::queueSwarmSpawn(
         .childPassageRadius = enemyPassageRadius(enemy, placementCatalog_),
         .detectedOnSpawn = enemy.awareness == EnemyAwarenessState::Detected,
         .detectedTarget = detectedTarget,
+        .screenSleepAllowed = enemy.screenSleepAllowed,
     });
     return true;
 }
@@ -7138,9 +7166,11 @@ int EnemySystem::processSwarmSpawnRequest(
         child->active = true;
         child->id = nextEnemyId_++;
         child->spawnSource = request.spawnSource;
+        child->screenSleepAllowed = request.spawnSource == EnemySpawnSource::Ambient && request.screenSleepAllowed;
         child->position = spawnPos;
         applyDefinition(*child, request.definition, balance, enemyCatalog);
         child->spawnSource = request.spawnSource;
+        child->screenSleepAllowed = request.spawnSource == EnemySpawnSource::Ambient && request.screenSleepAllowed;
         child->lootStageId = request.lootStageId;
         child->lootDepthRank = request.lootDepthRank;
         child->spawnTimer = 0.4f;
@@ -7321,16 +7351,18 @@ bool EnemySystem::findBossSpawnPosition(TileMap& map, Vec2 playerPosition, const
         outPosition);
 }
 
-void EnemySystem::spawnFromDugTiles(
+std::vector<DugEnemySpawnRequest> EnemySystem::collectDugSpawnRequests(
     const std::vector<DugEnemySpawnPoint>& dugTiles,
     TileMap& map,
     Vec2 playerPosition,
     const RuntimeBalance& balance,
-    const EnemyCatalog& enemyCatalog,
-    std::string_view stageId)
+    int reservedAmbientSpawns)
 {
-    if (ambientActiveCount() >= balance.enemySoftCap) {
-        return;
+    std::vector<DugEnemySpawnRequest> requests;
+    const int reservedCount = std::max(0, reservedAmbientSpawns);
+    const int softCap = std::max(0, balance.enemySoftCap);
+    if (ambientActiveCount() + reservedCount >= softCap) {
+        return requests;
     }
     const int minDugTiles = std::max(1, balance.enemyMinDugTiles);
     const int guaranteeDugTiles = std::max(minDugTiles, balance.enemyGuaranteeDugTiles);
@@ -7350,25 +7382,16 @@ void EnemySystem::spawnFromDugTiles(
         if (!findSpawnPosition(map, spawnPoint.tileCenter, playerPosition, balance, spawnPosition)) {
             continue;
         }
-        const EnemySpawnSelection selection = chooseDugSpawnEnemy(enemyCatalog, stageId, spawnPoint.depthRank);
-        spawnDefinitionAt(
-            spawnPosition,
-            selection.definition,
-            balance,
-            enemyCatalog,
-            true,
-            playerPosition,
-            -1.0f,
-            nullptr,
-            stageId,
-            spawnPoint.depthRank,
-            selection.variantTier,
-            selection.effectiveBaseLevel);
+        requests.push_back(DugEnemySpawnRequest{
+            .position = spawnPosition,
+            .depthRank = spawnPoint.depthRank,
+        });
         dugSpawnCounter_ = 0;
-        if (ambientActiveCount() >= balance.enemySoftCap) {
-            return;
+        if (ambientActiveCount() + reservedCount + static_cast<int>(requests.size()) >= softCap) {
+            return requests;
         }
     }
+    return requests;
 }
 
 bool EnemySystem::spawnNodeEnemy(
@@ -7380,7 +7403,8 @@ bool EnemySystem::spawnNodeEnemy(
     bool allowNearPlayer,
     bool detectedOnSpawn,
     std::string_view lootStageId,
-    int lootDepthRank)
+    int lootDepthRank,
+    float spawnWarmupOverride)
 {
     if (ambientActiveCount() >= balance.enemySoftCap) {
         return false;
@@ -7401,12 +7425,14 @@ bool EnemySystem::spawnNodeEnemy(
         enemyCatalog,
         detectedOnSpawn,
         playerPosition,
-        -1.0f,
+        spawnWarmupOverride,
         nullptr,
         lootStageId,
         lootDepthRank,
         selection.variantTier,
-        selection.effectiveBaseLevel);
+        selection.effectiveBaseLevel,
+        EnemySpawnSource::Ambient,
+        true);
     return true;
 }
 
@@ -7455,7 +7481,9 @@ bool EnemySystem::spawnFixedNodeEnemy(
         lootStageId,
         lootDepthRank,
         selection.variantTier,
-        selection.effectiveBaseLevel);
+        selection.effectiveBaseLevel,
+        EnemySpawnSource::Ambient,
+        outRuntimeId == nullptr);
 }
 
 bool EnemySystem::spawnSpecificEnemy(
@@ -7497,7 +7525,11 @@ bool EnemySystem::spawnSpecificEnemy(
         spawnWarmupOverride,
         outRuntimeId,
         lootStageId,
-        lootDepthRank);
+        lootDepthRank,
+        EnemyVariantTier::Normal,
+        0,
+        EnemySpawnSource::Ambient,
+        outRuntimeId == nullptr);
 }
 
 bool EnemySystem::spawnSpecificEnemyAtPosition(
@@ -7549,7 +7581,11 @@ bool EnemySystem::spawnSpecificEnemyAtPosition(
         spawnWarmupOverride,
         outRuntimeId,
         lootStageId,
-        lootDepthRank);
+        lootDepthRank,
+        EnemyVariantTier::Normal,
+        0,
+        EnemySpawnSource::Ambient,
+        outRuntimeId == nullptr);
 }
 
 bool EnemySystem::spawnEventEnemy(
@@ -7720,6 +7756,48 @@ int EnemySystem::ambientActiveCount() const
     return count;
 }
 
+int EnemySystem::syncScreenDormantEnemies(const CollisionRect& activeBounds, SpellRingSystem& spellRing)
+{
+    int changed = 0;
+    for (Enemy& enemy : enemies_.items()) {
+        if (!enemyScreenSleepEligible(enemy)) {
+            continue;
+        }
+        const float radius = std::max(enemyPassageRadius(enemy, placementCatalog_), enemyVisualRadius(enemy));
+        if (circleIntersectsRect(enemy.position, radius, activeBounds)) {
+            continue;
+        }
+
+        unlatchEnemyFromSpellRing(spellRing, enemy.id);
+        dormantEnemies_.push_back(enemy);
+        enemy = Enemy{};
+        ++changed;
+    }
+
+    for (std::size_t i = 0; i < dormantEnemies_.size();) {
+        Enemy& dormant = dormantEnemies_[i];
+        const float radius = std::max(enemyPassageRadius(dormant, placementCatalog_), enemyVisualRadius(dormant));
+        if (!circleIntersectsRect(dormant.position, radius, activeBounds)) {
+            ++i;
+            continue;
+        }
+
+        Enemy* slot = enemies_.acquire();
+        if (slot == nullptr) {
+            ++i;
+            continue;
+        }
+        *slot = std::move(dormant);
+        slot->active = true;
+        if (i + 1 < dormantEnemies_.size()) {
+            dormantEnemies_[i] = std::move(dormantEnemies_.back());
+        }
+        dormantEnemies_.pop_back();
+        ++changed;
+    }
+    return changed;
+}
+
 int EnemySystem::eventActiveCount() const
 {
     int count = 0;
@@ -7744,9 +7822,9 @@ int EnemySystem::bossSourceActiveCount() const
 
 void EnemySystem::appendMinimapMarkers(std::vector<EnemyMinimapMarker>& markers) const
 {
-    for (const Enemy& enemy : enemies_.items()) {
+    const auto appendMarker = [this, &markers](const Enemy& enemy) {
         if (!enemyVisible(enemy) || enemy.death.active || enemy.spawnTimer > 0.0f) {
-            continue;
+            return;
         }
         markers.push_back(EnemyMinimapMarker{
             .position = enemy.position,
@@ -7758,6 +7836,12 @@ void EnemySystem::appendMinimapMarkers(std::vector<EnemyMinimapMarker>& markers)
             .ranged = isRangedBehavior(enemy.rangedBehaviorId),
             .boss = enemy.isBoss,
         });
+    };
+    for (const Enemy& enemy : enemies_.items()) {
+        appendMarker(enemy);
+    }
+    for (const Enemy& enemy : dormantEnemies_) {
+        appendMarker(enemy);
     }
 }
 
@@ -8542,13 +8626,7 @@ void EnemySystem::update(
         beginEnemyDeath(enemy, spellRing, hitOrigin, suppressRewards);
     };
     const auto unlatchEnemyFromRing = [&](int enemyId) {
-        std::vector<SpellRingItem*> runtimeItems = spellRing.runtimeItemsMutable();
-        for (SpellRingItem* itemPtr : runtimeItems) {
-            if (itemPtr == nullptr) {
-                continue;
-            }
-            itemPtr->unlatchEnemy(enemyId);
-        }
+        unlatchEnemyFromSpellRing(spellRing, enemyId);
     };
     const auto sleepingEnemyWakeTriggered = [&](const Enemy& enemy) {
         if (enemyHitboxOverlapsPlayer(enemy, hitboxCatalog_, player, balance, enemyVisualOffset(enemy, placementCatalog_))) {
@@ -8680,6 +8758,7 @@ void EnemySystem::update(
             enemy.bleedDamageAccumulator = 0.0;
         }
         enemy.hitFlash = std::max(0.0f, enemy.hitFlash - dt);
+        enemy.ringHitCooldown = std::max(0.0f, enemy.ringHitCooldown - dt);
         enemy.hpBarTimer = std::max(0.0f, enemy.hpBarTimer - dt);
         if (enemy.spawnTimer > 0.0f) {
             clearEnemyAction(enemy);
@@ -9534,6 +9613,9 @@ void EnemySystem::update(
             if (!overlappingItem) {
                 continue;
             }
+            if (!specialContactEffect && enemy.ringHitCooldown > 0.0f) {
+                continue;
+            }
             if (item.type == SpellRingItemType::Shovel) {
                 if (item.isEnemyLatched(enemy.id)) {
                     continue;
@@ -9602,7 +9684,7 @@ void EnemySystem::update(
             }
             const double ringOutputMultiplier = spellRing.ringOutputMultiplierForRing(item.ringIndex);
             const int speedBonus = static_cast<int>(
-                item.orbitMotionSpeed *
+                item.damageMotionSpeed *
                 0.25f *
                 static_cast<float>(
                     spellRing.speedDamageMultiplier() *
@@ -9668,6 +9750,7 @@ void EnemySystem::update(
                 enemy.position,
                 static_cast<float>(std::max(0, damageDealt))));
             applyEnemyDamageTyped(enemy, damageDealt, contactDamageType);
+            enemy.ringHitCooldown = RingEnemyHitCooldownSeconds;
             revealEnemyHpBar(enemy, damageDealt);
             addJunkCrabToppleMeter(
                 enemy,
@@ -9944,11 +10027,13 @@ void EnemySystem::renderShadows(Renderer& renderer, const TileMap& map, Vec2 pla
         if (!enemyVisible(enemy)) {
             continue;
         }
-        const Vec2 shadowBounds = enemyShadowBoundsSize(renderer, enemy, shadowCatalog_);
-        if (!map.isRectLit(enemy.position, shadowBounds, playerLight, extraLights)) {
+        const EnemyShadowSpec shadow = resolvedEnemyShadowSpec(shadowCatalog_, enemy.enemyId);
+        const Vec2 shadowAnchor = enemyShadowAnchor(enemy, placementCatalog_, shadow);
+        const Vec2 shadowBounds = enemyShadowBoundsSize(renderer, enemy, shadow);
+        if (!map.isRectLit(shadowAnchor, shadowBounds, playerLight, extraLights)) {
             continue;
         }
-        drawEnemyShadow(renderer, enemy, shadowCatalog_);
+        renderer.drawActorShadow(shadowAnchor, enemyShadowVisualSize(renderer, enemy), shadow.scale);
     }
 }
 
@@ -10516,13 +10601,7 @@ void EnemySystem::finishEnemyDeath(Enemy& enemy, SpellRingSystem& spellRing)
         deathEvent.moneyDrop = 0;
     }
     events_.push_back(std::move(deathEvent));
-    std::vector<SpellRingItem*> runtimeItems = spellRing.runtimeItemsMutable();
-    for (SpellRingItem* itemPtr : runtimeItems) {
-        if (itemPtr == nullptr) {
-            continue;
-        }
-        itemPtr->unlatchEnemy(enemy.id);
-    }
+    unlatchEnemyFromSpellRing(spellRing, enemy.id);
     enemy.death = {};
     enemy.active = false;
 }
@@ -11085,9 +11164,9 @@ void EnemySystem::clearTemporaryState()
     mudZones_.clear();
     windPulses_.clear();
     mudDamageAccumulator_ = 0.0;
-    for (Enemy& enemy : enemies_.items()) {
+    const auto clearEnemyTemporaryState = [&](Enemy& enemy) {
         if (!enemy.active) {
-            continue;
+            return;
         }
         enemy.status = EntityStatus{};
         enemy.poisonDamageAccumulator = 0.0;
@@ -11101,6 +11180,12 @@ void EnemySystem::clearTemporaryState()
         enemy.death = {};
         clearExternalBounceState(enemy);
         enemy.contactTimer = 0.0f;
+    };
+    for (Enemy& enemy : enemies_.items()) {
+        clearEnemyTemporaryState(enemy);
+    }
+    for (Enemy& enemy : dormantEnemies_) {
+        clearEnemyTemporaryState(enemy);
     }
 }
 
@@ -11128,6 +11213,13 @@ std::string EnemySystem::debugEnemySummary() const
         if (shown >= 4) {
             break;
         }
+    }
+    if (!dormantEnemies_.empty()) {
+        if (shown > 0) {
+            out << "\n";
+        }
+        out << "休眠敵 count=" << dormantEnemies_.size();
+        ++shown;
     }
     if (shown == 0) {
         return "no active enemies";
@@ -11364,13 +11456,7 @@ CaptureResult EnemySystem::tryCaptureTarget(
     if (best->isBoss) {
         finishEnemyDeath(*best, spellRing);
     } else {
-        std::vector<SpellRingItem*> runtimeItems = spellRing.runtimeItemsMutable();
-        for (SpellRingItem* itemPtr : runtimeItems) {
-            if (itemPtr == nullptr) {
-                continue;
-            }
-            itemPtr->unlatchEnemy(best->id);
-        }
+        unlatchEnemyFromSpellRing(spellRing, best->id);
         best->active = false;
     }
     result.type = CaptureResultType::Success;

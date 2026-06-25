@@ -308,6 +308,16 @@ void drawWorldDropShadow(Renderer& renderer, const WorldDropItem& drop, const Ob
         actorShadowVisualSizeForAltitude(dropShadowVisualSize(drop, catalog), drop.altitude));
 }
 
+bool worldDropIntersectsCullBounds(const WorldDropItem& drop, const ObjectCatalog& catalog, const CollisionRect* cullBounds)
+{
+    if (cullBounds == nullptr) {
+        return true;
+    }
+    const float visualRadius = std::max(DropVisualRadius, dropShadowVisualSize(drop, catalog) * 0.5f);
+    const Vec2 visualCenter = elevatedDrawPosition(drop.position, drop.altitude);
+    return circleIntersectsRect(visualCenter, visualRadius, *cullBounds);
+}
+
 bool isDropStealTarget(const WorldDropItem& drop, const ObjectCatalog& catalog, std::string_view targetFilter)
 {
     if (drop.kind == WorldDropKind::Material) {
@@ -1059,14 +1069,19 @@ int WorldDropSystem::update(
     const ObjectCatalog& catalog,
     EffectSystem* effects,
     std::vector<WorldDropPickupEvent>* pickupEvents,
-    int* blockedObjectPickupCount)
+    int* blockedObjectPickupCount,
+    const CollisionRect* effectBounds)
 {
     const float pickupRadiusSq = DropPickupRadius * DropPickupRadius;
     int pickedUpCount = 0;
     for (WorldDropItem& drop : drops_) {
         updateWorldDropPresentationMotion(drop, dt, true);
 
-        if (effects != nullptr && !effects->lightweightMode() && drop.kind == WorldDropKind::Material) {
+        const bool visualEffectsAllowed =
+            effects != nullptr &&
+            !effects->lightweightMode() &&
+            worldDropIntersectsCullBounds(drop, catalog, effectBounds);
+        if (visualEffectsAllowed && drop.kind == WorldDropKind::Material) {
             MaterialType materialType = MaterialType::Count;
             if (materialTypeFromSaveName(drop.id, materialType)) {
                 drop.materialParticleTimer -= dt;
@@ -1079,7 +1094,7 @@ int WorldDropSystem::update(
             }
         }
 
-        if (effects != nullptr && !effects->lightweightMode() && objectDropIsBroken(drop)) {
+        if (visualEffectsAllowed && objectDropIsBroken(drop)) {
             drop.brokenSmokeTimer -= dt;
             if (drop.brokenSmokeTimer <= 0.0f) {
                 effects->spawnBrokenItemSmoke(
@@ -1087,7 +1102,7 @@ int WorldDropSystem::update(
                     brokenDropVisualScale(drop));
                 drop.brokenSmokeTimer = resetBrokenDropSmokeTimer(drop);
             }
-        } else {
+        } else if (!objectDropIsBroken(drop)) {
             drop.brokenSmokeTimer = 0.0f;
         }
     }
@@ -1213,9 +1228,13 @@ void WorldDropSystem::renderShadows(
     const TileMap& tileMap,
     const ObjectCatalog& catalog,
     Vec2 playerLight,
-    const std::vector<LightSource>& extraLights) const
+    const std::vector<LightSource>& extraLights,
+    const CollisionRect* cullBounds) const
 {
     for (const WorldDropItem& drop : drops_) {
+        if (!worldDropIntersectsCullBounds(drop, catalog, cullBounds)) {
+            continue;
+        }
         if (!tileMap.isLit(drop.position, playerLight, extraLights)) {
             continue;
         }
@@ -1229,9 +1248,13 @@ void WorldDropSystem::appendRenderEntries(
     const TileMap& tileMap,
     const ObjectCatalog& catalog,
     Vec2 playerLight,
-    const std::vector<LightSource>& extraLights) const
+    const std::vector<LightSource>& extraLights,
+    const CollisionRect* cullBounds) const
 {
     for (const WorldDropItem& drop : drops_) {
+        if (!worldDropIntersectsCullBounds(drop, catalog, cullBounds)) {
+            continue;
+        }
         if (!tileMap.isLit(drop.position, playerLight, extraLights)) {
             continue;
         }

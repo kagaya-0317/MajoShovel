@@ -19,6 +19,7 @@ constexpr float CapturedRewardWindowSeconds = 10.0f;
 constexpr int CapturedRewardWindowLimit = 3;
 constexpr int CapturedExplosionChargeLimit = 4;
 constexpr int NoLastDigTile = 2147483647;
+constexpr float TerrainContactInsetPx = 8.0f;
 
 float ringTerrainHitboxScale(const SpellRingItem& item)
 {
@@ -39,10 +40,20 @@ Vec2 rotateTerrainHitboxOffset(Vec2 value, float radians)
 CollisionRect terrainTileRect(int tileX, int tileY)
 {
     const float tileSize = static_cast<float>(balance::TileSize);
+    const float inset = std::min(TerrainContactInsetPx, tileSize * 0.5f - 1.0f);
     return {
-        {static_cast<float>(tileX) * tileSize, static_cast<float>(tileY) * tileSize},
-        {tileSize, tileSize},
+        {static_cast<float>(tileX) * tileSize + inset, static_cast<float>(tileY) * tileSize + inset},
+        {tileSize - inset * 2.0f, tileSize - inset * 2.0f},
     };
+}
+
+bool terrainTileRectContainsPoint(int tileX, int tileY, Vec2 point)
+{
+    const CollisionRect rect = terrainTileRect(tileX, tileY);
+    return point.x >= rect.pos.x &&
+        point.y >= rect.pos.y &&
+        point.x <= rect.pos.x + rect.size.x &&
+        point.y <= rect.pos.y + rect.size.y;
 }
 
 bool containsTerrainTile(const std::vector<DungeonTile>& tiles, int tileX, int tileY)
@@ -125,7 +136,7 @@ void addDigContactProbeTile(TileMap& map, const SpellRingItem& item, std::vector
     const Vec2 probe = item.worldPosition + item.orbitOutward * (item.hitRadius + probeDistance);
     const int tileX = map.worldToTile(probe.x);
     const int tileY = map.worldToTile(probe.y);
-    if (map.isTileSolid(tileX, tileY)) {
+    if (map.isTileSolid(tileX, tileY) && terrainTileRectContainsPoint(tileX, tileY, probe)) {
         addTerrainHitTile(outTiles, tileX, tileY);
     }
 }
@@ -292,7 +303,7 @@ void DiggingSystem::update(
         }
 
         bool anyTerrainHit = false;
-        bool anyTerrainOpened = false;
+        int terrainHitCount = 0;
         bool discoveryRecorded = false;
         const Vec2 firstHitPosition = map.tileCenter(newTargets.front().x, newTargets.front().y);
         if (sourceObject != nullptr) {
@@ -323,8 +334,8 @@ void DiggingSystem::update(
 
                 const bool terrainHit = hitTiles_.size() != hitCountBefore;
                 const bool terrainOpened = openedTiles_.size() != openedCountBefore;
+                terrainHitCount += static_cast<int>(hitTiles_.size() - hitCountBefore);
                 anyTerrainHit = anyTerrainHit || terrainHit;
-                anyTerrainOpened = anyTerrainOpened || terrainOpened;
                 if (terrainHit) {
                     item.actionFlashTimer = SpellRingItemActionFlashSeconds;
                     impactSoundEvents_.push_back(makeTerrainRingImpactSoundEvent(
@@ -387,8 +398,8 @@ void DiggingSystem::update(
                 capturedExplosionRequests_.push_back(makeCapturedExplosionRequest(item, firstHitPosition));
             }
         }
-        if (anyTerrainOpened) {
-            spellRing.consumeItemDurability(item);
+        if (terrainHitCount > 0) {
+            spellRing.consumeItemDurability(item, terrainHitCount);
         }
         item.lastTerrainHitTime = totalTime;
     }

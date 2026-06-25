@@ -164,7 +164,8 @@ public:
         const ObjectCatalog& catalog,
         EffectSystem* effects = nullptr,
         std::vector<WorldDropPickupEvent>* pickupEvents = nullptr,
-        int* blockedObjectPickupCount = nullptr);
+        int* blockedObjectPickupCount = nullptr,
+        const CollisionRect* effectBounds = nullptr);
     void updatePresentation(float dt);
     void render(
         Renderer& renderer,
@@ -177,14 +178,16 @@ public:
         const TileMap& tileMap,
         const ObjectCatalog& catalog,
         Vec2 playerLight,
-        const std::vector<LightSource>& extraLights) const;
+        const std::vector<LightSource>& extraLights,
+        const CollisionRect* cullBounds = nullptr) const;
     void appendRenderEntries(
         std::vector<DepthRenderEntry>& entries,
         Renderer& renderer,
         const TileMap& tileMap,
         const ObjectCatalog& catalog,
         Vec2 playerLight,
-        const std::vector<LightSource>& extraLights) const;
+        const std::vector<LightSource>& extraLights,
+        const CollisionRect* cullBounds = nullptr) const;
     void appendLightSources(
         std::vector<LightSource>& lights,
         const ObjectCatalog& catalog,

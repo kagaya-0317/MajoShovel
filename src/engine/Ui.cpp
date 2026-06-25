@@ -92,10 +92,25 @@ void applyWindowTransform(Renderer& renderer, UiRect panel, float scale, float a
 
 bool uiWindowFrameHasImageTexture(Renderer& renderer, UiWindowFrame frame)
 {
-    if (frame == UiWindowFrame::Message && renderer.hasUiMessageWindowTexture()) {
-        return true;
+    if (frame == UiWindowFrame::Message || frame == UiWindowFrame::SystemMessage) {
+        const UiMessageWindowKind kind = frame == UiWindowFrame::SystemMessage
+            ? UiMessageWindowKind::System
+            : UiMessageWindowKind::Speaker;
+        return renderer.hasUiMessageWindowTexture(kind);
     }
     return renderer.hasUiWindowTexture();
+}
+
+bool uiWindowFrameIsMessage(UiWindowFrame frame)
+{
+    return frame == UiWindowFrame::Message || frame == UiWindowFrame::SystemMessage;
+}
+
+UiMessageWindowKind uiMessageWindowKindForFrame(UiWindowFrame frame)
+{
+    return frame == UiWindowFrame::SystemMessage
+        ? UiMessageWindowKind::System
+        : UiMessageWindowKind::Speaker;
 }
 
 void drawUiWindowChrome(
@@ -1038,9 +1053,12 @@ bool uiCancelRequested(UiCancelControlState& state, const Input& input, UiContex
 
 void drawUiPanel(Renderer& renderer, UiRect panel, UiWindowFrame frame)
 {
-    if (frame == UiWindowFrame::Message && renderer.hasUiMessageWindowTexture()) {
-        renderer.drawUiMessageWindowFrame(panel.pos, panel.size);
-        return;
+    if (uiWindowFrameIsMessage(frame)) {
+        const UiMessageWindowKind kind = uiMessageWindowKindForFrame(frame);
+        if (renderer.hasUiMessageWindowTexture(kind)) {
+            renderer.drawUiMessageWindowFrame(panel.pos, panel.size, kind);
+            return;
+        }
     }
     if (renderer.hasUiWindowTexture()) {
         renderer.drawUiWindowFrame(panel.pos, panel.size);
@@ -1084,7 +1102,8 @@ void drawUiFooter(Renderer& renderer, UiRect panel, std::string_view helpText, U
         renderer.fillRect(footer.pos, footer.size, ui::FooterFill);
     } else {
         textPadding = ui::ImageWindowFooterTextPadding;
-        if (frame == UiWindowFrame::Message && renderer.hasUiMessageWindowTexture()) {
+        if (uiWindowFrameIsMessage(frame) &&
+            renderer.hasUiMessageWindowTexture(uiMessageWindowKindForFrame(frame))) {
             textPadding.x = std::max(0.0f, textPadding.x + 50.0f);
         }
     }

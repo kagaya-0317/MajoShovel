@@ -142,6 +142,11 @@ struct DugEnemySpawnPoint {
     int depthRank = 1;
 };
 
+struct DugEnemySpawnRequest {
+    Vec2 position{};
+    int depthRank = 1;
+};
+
 struct EnemyMagicHitSpec {
     Vec2 position{};
     float radius = 0.0f;
@@ -196,14 +201,13 @@ public:
     void setHitboxCatalog(const HitboxCatalog* catalog) { hitboxCatalog_ = catalog; }
     void setPlacementCatalog(const EnemyPlacementCatalog* catalog) { placementCatalog_ = catalog; }
     void setShadowCatalog(const EnemyShadowCatalog* catalog) { shadowCatalog_ = catalog; }
-    void spawnFromDugTiles(
+    std::vector<DugEnemySpawnRequest> collectDugSpawnRequests(
         const std::vector<DugEnemySpawnPoint>& dugTiles,
         TileMap& map,
         Vec2 playerPosition,
         const RuntimeBalance& balance,
-        const EnemyCatalog& enemyCatalog,
-        std::string_view stageId);
-    bool spawnNodeEnemy(TileMap& map, Vec2 desiredPosition, Vec2 playerPosition, const RuntimeBalance& balance, const EnemyCatalog& enemyCatalog, bool allowNearPlayer, bool detectedOnSpawn = false, std::string_view lootStageId = {}, int lootDepthRank = 1);
+        int reservedAmbientSpawns = 0);
+    bool spawnNodeEnemy(TileMap& map, Vec2 desiredPosition, Vec2 playerPosition, const RuntimeBalance& balance, const EnemyCatalog& enemyCatalog, bool allowNearPlayer, bool detectedOnSpawn = false, std::string_view lootStageId = {}, int lootDepthRank = 1, float spawnWarmupOverride = -1.0f);
     bool spawnFixedNodeEnemy(TileMap& map, Vec2 desiredPosition, Vec2 playerPosition, const RuntimeBalance& balance, const EnemyCatalog& enemyCatalog, bool detectedOnSpawn = false, int* outRuntimeId = nullptr, std::string_view lootStageId = {}, int lootDepthRank = 1);
     bool spawnSpecificEnemy(TileMap& map, std::string_view enemyId, Vec2 desiredPosition, Vec2 playerPosition, const RuntimeBalance& balance, const EnemyCatalog& enemyCatalog, bool allowNearPlayer, bool detectedOnSpawn = false, float spawnWarmupOverride = -1.0f, int* outRuntimeId = nullptr, std::string_view lootStageId = {}, int lootDepthRank = 1);
     bool spawnSpecificEnemyAtPosition(TileMap& map, std::string_view enemyId, Vec2 position, Vec2 playerPosition, const RuntimeBalance& balance, const EnemyCatalog& enemyCatalog, bool detectedOnSpawn = false, float spawnWarmupOverride = -1.0f, int* outRuntimeId = nullptr, std::string_view lootStageId = {}, int lootDepthRank = 1);
@@ -268,6 +272,7 @@ public:
     void appendWetGroundEmitters(std::vector<WetGroundEmitter>& emitters) const;
     int activeCount() const { return enemies_.activeCount(); }
     int ambientActiveCount() const;
+    int syncScreenDormantEnemies(const CollisionRect& activeBounds, SpellRingSystem& spellRing);
     int eventActiveCount() const;
     int bossSourceActiveCount() const;
     bool bossActive() const;
@@ -424,6 +429,7 @@ private:
         float childPassageRadius = 0.0f;
         bool detectedOnSpawn = false;
         Vec2 detectedTarget{};
+        bool screenSleepAllowed = false;
     };
 
     void queueEnemyObjectDrops(Enemy& enemy);
@@ -483,7 +489,8 @@ private:
         int lootDepthRank = 1,
         EnemyVariantTier variantTier = EnemyVariantTier::Normal,
         int effectiveBaseLevel = 0,
-        EnemySpawnSource spawnSource = EnemySpawnSource::Ambient);
+        EnemySpawnSource spawnSource = EnemySpawnSource::Ambient,
+        bool screenSleepAllowed = true);
     void spawnAt(Vec2 position, const RuntimeBalance& balance, const EnemyCatalog& enemyCatalog, bool detectedOnSpawn = false, Vec2 detectedTarget = {});
     bool spawnBossAt(
         Vec2 position,
@@ -532,6 +539,7 @@ private:
     std::unordered_set<std::string> loggedSpawnWeightFallbacks_;
     std::unordered_map<std::string, double> spawnBiasMultipliers_;
     std::unordered_map<std::string, std::vector<RoguelikeEnemyPoolEntry>> roguelikeEnemyPools_;
+    std::vector<Enemy> dormantEnemies_;
     int flowMinX_ = 0;
     int flowMinY_ = 0;
     int flowWidth_ = 0;

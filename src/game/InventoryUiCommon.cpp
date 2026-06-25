@@ -1128,9 +1128,9 @@ void drawInlineItemText(
     const InlineItemTextStyle& style)
 {
     const float iconSize = inlineItemIconSize(renderer, style);
-    const Vec2 lineMeasure = renderer.measureText("0", style.scale);
+    const float lineHeight = measureInlineItemText(renderer, text, style).y;
     constexpr float InlineIconVisualYOffset = -2.0f;
-    const float iconTopOffset = (lineMeasure.y - iconSize) * 0.5f + InlineIconVisualYOffset;
+    const float iconTopOffset = std::max(0.0f, (lineHeight - iconSize) * 0.5f) + InlineIconVisualYOffset;
     Vec2 cursor = pos;
 
     std::size_t offset = 0;
@@ -1171,12 +1171,17 @@ void drawInlineItemText(
         const std::size_t nextTag = findNextInlineIconTag(text, offset + 1);
         const std::size_t end = nextTag == std::string_view::npos ? text.size() : nextTag;
         const std::string_view chunk = text.substr(offset, end - offset);
+        const Vec2 chunkSize = renderer.measureText(chunk, style.scale);
+        const Vec2 textPos{
+            cursor.x,
+            cursor.y + std::max(0.0f, (lineHeight - chunkSize.y) * 0.5f),
+        };
         if (style.outlineEnabled) {
-            renderer.drawOutlinedText(cursor, chunk, style.text, style.outline, style.outlinePx, style.scale);
+            renderer.drawOutlinedText(textPos, chunk, style.text, style.outline, style.outlinePx, style.scale);
         } else {
-            renderer.drawText(cursor, chunk, style.text, style.scale);
+            renderer.drawText(textPos, chunk, style.text, style.scale);
         }
-        cursor.x += renderer.measureText(chunk, style.scale).x;
+        cursor.x += chunkSize.x;
         offset = end;
     }
 }

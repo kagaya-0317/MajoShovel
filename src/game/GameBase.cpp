@@ -80,6 +80,20 @@ constexpr float RingWorkshopThrowCooldownSecondsPerLevel = 0.18f;
 constexpr float DungeonDetailImageHeight = 96.0f;
 constexpr float DungeonDetailEnemyIconSize = 42.5f;
 constexpr float DungeonDetailEnemyIconGap = 3.0f;
+struct RoguelikeDepartureRuleText {
+    std::string_view text;
+    std::string_view emphasis;
+};
+
+constexpr std::array<RoguelikeDepartureRuleText, 7> RoguelikeDepartureRules{{
+    {"アイテムや装備の持ち込み不可", "持ち込み不可"},
+    {"ルネのレベルは1からスタート", "レベルは1から"},
+    {"ダンジョン内には様々なアイテムが出現するが、今まで入手したことのないアイテムは出現しない", "今まで入手したことのないアイテムは出現しない"},
+    {"本ダンジョン内では、アイテムにおいて未発見の「リングに乗せた時の効果」が発動しても、発見したことにならない", "発見したことにならない"},
+    {"アイテム「虫眼鏡」は登場しない", "登場しない"},
+    {"今までアイテム「虫取りアミ」で捕獲したことがない敵は、本ダンジョン内で捕獲することができない", "捕獲することができない"},
+    {"本ダンジョン内で得たものは、帰還に成功しない限りすべて失う", "帰還に成功しない限りすべて失う"},
+}};
 
 float metersToWorldDistance(float meters)
 {
@@ -2433,9 +2447,228 @@ std::string formatRingWorkshopValue(RingLevelUpgradeKind kind, float value)
     return buffer;
 }
 
+struct ColoredTextSourceRun {
+    std::string_view text;
+    Color color;
+};
+
+struct WrappedColoredTextRun {
+    std::string text;
+    Color color;
+};
+
+struct WrappedColoredTextLine {
+    std::string text;
+    std::vector<WrappedColoredTextRun> runs;
+};
+
+bool sameColor(Color lhs, Color rhs)
+{
+    return lhs.r == rhs.r
+        && lhs.g == rhs.g
+        && lhs.b == rhs.b
+        && lhs.a == rhs.a;
+}
+
+std::size_t utf8CodepointByteLength(unsigned char lead)
+{
+    if ((lead & 0x80U) == 0U) {
+        return 1;
+    }
+    if ((lead & 0xE0U) == 0xC0U) {
+        return 2;
+    }
+    if ((lead & 0xF0U) == 0xE0U) {
+        return 3;
+    }
+    if ((lead & 0xF8U) == 0xF0U) {
+        return 4;
+    }
+    return 1;
+}
+
+void appendColoredTextRun(std::vector<WrappedColoredTextRun>& runs, std::string_view text, Color color)
+{
+    if (text.empty()) {
+        return;
+    }
+    if (!runs.empty() && sameColor(runs.back().color, color)) {
+        runs.back().text.append(text.data(), text.size());
+        return;
+    }
+    runs.push_back({std::string{text.data(), text.size()}, color});
+}
+
+void appendWrappedColoredTextToken(WrappedColoredTextLine& line, std::string_view token, Color color)
+{
+    if (token.empty()) {
+        return;
+    }
+    line.text.append(token.data(), token.size());
+    appendColoredTextRun(line.runs, token, color);
+}
+
+float coloredTextAdvance(Renderer& renderer, std::string_view text, int scale)
+{
+    if (text.empty()) {
+        return 0.0f;
+    }
+#ifdef _WIN32
+    constexpr float NativeTextTexturePaddingX = 4.0f;
+#else
+    constexpr float NativeTextTexturePaddingX = 0.0f;
+#endif
+    return std::max(0.0f, renderer.measureText(text, scale).x - NativeTextTexturePaddingX);
+}
+
+float wrappedColoredTextLineAdvance(Renderer& renderer, int scale)
+{
+    const float singleLineHeight = renderer.measureText("あ", scale).y;
+    const float twoLineHeight = renderer.measureText("あ\nあ", scale).y;
+    return std::max(1.0f, twoLineHeight - singleLineHeight);
+}
+
+float drawWrappedColoredText(
+    Renderer& renderer,
+    Vec2 pos,
+    const std::vector<ColoredTextSourceRun>& sourceRuns,
+    float maxWidth,
+    int scale)
+{
+    std::vector<WrappedColoredTextLine> lines;
+    WrappedColoredTextLine line;
+    const float wrapWidth = std::max(1.0f, maxWidth);
+
+    for (const ColoredTextSourceRun& run : sourceRuns) {
+        for (std::size_t i = 0; i < run.text.size();) {
+            const char c = run.text[i];
+            if (c == '\n') {
+                lines.push_back(std::move(line));
+                line = {};
+                ++i;
+                continue;
+            }
+
+            const std::size_t charLength = std::min(
+                utf8CodepointByteLength(static_cast<unsigned char>(c)),
+                run.text.size() - i);
+            const std::string_view token{run.text.data() + i, charLength};
+            std::string candidate = line.text;
+            candidate.append(token.data(), token.size());
+            if (!line.text.empty() && renderer.measureText(candidate, scale).x > wrapWidth) {
+                lines.push_back(std::move(line));
+                line = {};
+            }
+            appendWrappedColoredTextToken(line, token, run.color);
+            i += charLength;
+        }
+    }
+
+    if (!line.text.empty()) {
+        lines.push_back(std::move(line));
+    }
+    if (lines.empty()) {
+        return 0.0f;
+    }
+
+    const float singleLineHeight = renderer.measureText("あ", scale).y;
+    const float lineAdvance = wrappedColoredTextLineAdvance(renderer, scale);
+    float y = pos.y;
+    for (const WrappedColoredTextLine& wrappedLine : lines) {
+        float x = pos.x;
+        for (const WrappedColoredTextRun& run : wrappedLine.runs) {
+            renderer.drawText({x, y}, run.text, run.color, scale);
+            x += coloredTextAdvance(renderer, run.text, scale);
+        }
+        y += lineAdvance;
+    }
+    return singleLineHeight + lineAdvance * static_cast<float>(lines.size() - 1);
+}
+
 UiRect baseBrokenRingDepartureConfirmRect()
 {
     return {{410.0f, 230.0f}, {460.0f, 250.0f}};
+}
+
+UiRect baseRoguelikeDepartureConfirmRect()
+{
+    return {{260.0f, 54.0f}, {760.0f, 610.0f}};
+}
+
+void drawRoguelikeDepartureConfirmDialog(Renderer& renderer, const UiConfirmDialogState& state)
+{
+    if (!state.open) {
+        return;
+    }
+
+    const UiRect panel = baseRoguelikeDepartureConfirmRect();
+    UiWindowScope window(
+        renderer,
+        "base.roguelike_departure.confirm",
+        panel,
+        state.title,
+        uiConfirmDialogHelpText(),
+        UiWindowOptions{true, true});
+
+    constexpr int TextScale = 2;
+    constexpr float ContentInset = 54.0f;
+    constexpr float BodyTopOffset = 8.0f;
+    constexpr float ParagraphGap = 9.0f;
+    constexpr float BulletGap = 6.0f;
+    constexpr float BulletIndent = 30.0f;
+    constexpr Color BulletColor{255, 230, 150, 255};
+    constexpr Color EmphasisColor{255, 230, 150, 255};
+    const float bodyTop = panel.pos.y + ui::HeaderHeight + BodyTopOffset;
+    const UiRect body{{
+        panel.pos.x + ContentInset,
+        bodyTop,
+    }, {
+        panel.size.x - ContentInset * 2.0f,
+        std::max(0.0f, uiConfirmDialogButtonRect(panel, 0).pos.y - bodyTop - 18.0f),
+    }};
+
+    float y = body.pos.y;
+    const auto drawParagraph = [&](std::string_view text, Color color, float gap) {
+        renderer.drawWrappedText({body.pos.x, y}, text, body.size.x, color, TextScale);
+        y += renderer.measureWrappedText(text, body.size.x, TextScale).y + gap;
+    };
+    const auto drawBullet = [&](const RoguelikeDepartureRuleText& rule) {
+        const float textX = body.pos.x + BulletIndent;
+        const float textWidth = std::max(1.0f, body.size.x - BulletIndent);
+        std::vector<ColoredTextSourceRun> textRuns;
+        textRuns.reserve(3);
+        const auto appendTextRun = [&](std::string_view text, Color color) {
+            if (!text.empty()) {
+                textRuns.push_back({text, color});
+            }
+        };
+        const std::size_t emphasisPos = rule.emphasis.empty() ? std::string_view::npos : rule.text.find(rule.emphasis);
+        if (emphasisPos == std::string_view::npos) {
+            appendTextRun(rule.text, ui::Text);
+        } else {
+            appendTextRun(rule.text.substr(0, emphasisPos), ui::Text);
+            appendTextRun(rule.text.substr(emphasisPos, rule.emphasis.size()), EmphasisColor);
+            appendTextRun(rule.text.substr(emphasisPos + rule.emphasis.size()), ui::Text);
+        }
+
+        renderer.drawText({body.pos.x, y}, "・", BulletColor, TextScale);
+        const float textHeight = drawWrappedColoredText(renderer, {textX, y}, textRuns, textWidth, TextScale);
+        const float lineHeight = std::max(
+            renderer.measureText("・", TextScale).y,
+            textHeight);
+        y += lineHeight + BulletGap;
+    };
+
+    drawParagraph("このダンジョンはローグライクダンジョンです", ui::Text, ParagraphGap);
+    drawParagraph("以下の特殊ルールが設定されています", ui::Text, ParagraphGap);
+    y += 3.0f;
+    for (const RoguelikeDepartureRuleText& rule : RoguelikeDepartureRules) {
+        drawBullet(rule);
+    }
+    y += 8.0f;
+    drawParagraph("出発しますか？", ui::Text, 0.0f);
+
+    drawUiConfirmDialogButtons(renderer, state, panel);
 }
 
 Vec2 baseSystemMessagePos(
@@ -6353,6 +6586,7 @@ void Game::closeBaseFacilityScreens()
     baseMiningStartChoiceActive_ = false;
     baseWarpPointSelectActive_ = false;
     baseRegenerateConfirm_ = {};
+    baseRoguelikeDepartureConfirm_ = {};
     baseBrokenRingDepartureConfirm_ = {};
     baseStorageActive_ = false;
     baseStorageMode_ = StorageUiMode::Closed;
@@ -7904,10 +8138,11 @@ void Game::openBaseMiningStartChoice()
     clampCurrentStageToSelectableStages();
     syncWarpStateForCurrentStage();
     baseMiningStartChoiceActive_ = true;
-    baseMiningStartSelection_ = unlockedWarpPointCount_ > 0 ? 1 : 0;
+    baseMiningStartSelection_ = stageLooksRoguelike(currentStageDefinition()) ? 0 : (unlockedWarpPointCount_ > 0 ? 1 : 0);
     baseWarpPointSelectActive_ = false;
     baseWarpPointSelection_ = 0;
     baseRegenerateConfirm_ = {};
+    baseRoguelikeDepartureConfirm_ = {};
     baseBrokenRingDepartureConfirm_ = {};
     baseStatus_.clear();
 }
@@ -10631,7 +10866,37 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
                 1);
             baseStatus_.clear();
         };
+        const auto openRoguelikeDepartureConfirm = [this]() {
+            openUiConfirmDialog(
+                baseRoguelikeDepartureConfirm_,
+                "出発確認",
+                "",
+                "はい",
+                "いいえ",
+                1);
+            baseStatus_.clear();
+        };
 
+        if (baseRoguelikeDepartureConfirm_.open) {
+            const UiRect confirmPanel = baseRoguelikeDepartureConfirmRect();
+            const UiConfirmDialogResult result = updateUiConfirmDialog(
+                baseRoguelikeDepartureConfirm_,
+                ui,
+                input,
+                confirmPanel);
+            if (result == UiConfirmDialogResult::Confirmed) {
+                requestMiningStartTransition(false, false);
+                ui.block(confirmPanel);
+                return;
+            }
+            if (result == UiConfirmDialogResult::Cancelled) {
+                baseStatus_.clear();
+                ui.block(confirmPanel);
+                return;
+            }
+            ui.block(confirmPanel);
+            return;
+        }
         if (baseRegenerateConfirm_.open) {
             const UiRect confirmPanel = baseMiningRegenerateConfirmRect();
             const UiConfirmDialogResult result = updateUiConfirmDialog(baseRegenerateConfirm_, ui, input, confirmPanel);
@@ -10656,6 +10921,7 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
                 baseMiningStartChoiceActive_ = false;
             }
             baseRegenerateConfirm_ = {};
+            baseRoguelikeDepartureConfirm_ = {};
             baseStatus_.clear();
             return;
         }
@@ -10691,15 +10957,23 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
             currentStage_ = stageCatalogIndexForId(currentStageId_);
             resolveCurrentStageDefinition();
             syncWarpStateForCurrentStage();
-            baseMiningStartSelection_ = unlockedWarpPointCount_ > 0 ? 1 : 0;
+            baseMiningStartSelection_ = stageLooksRoguelike(stage) ? 0 : (unlockedWarpPointCount_ > 0 ? 1 : 0);
             baseWarpPointSelectActive_ = false;
             baseWarpPointSelection_ = 0;
             baseRegenerateConfirm_ = {};
+            baseRoguelikeDepartureConfirm_ = {};
             baseStatus_.clear();
             return true;
         };
 
         const std::vector<WarpPoint> selectableWarpPoints = selectableWarpPointsForCurrentStageStart();
+        const bool selectedStageRoguelike = stageLooksRoguelike(currentStageDefinition());
+        if (selectedStageRoguelike) {
+            baseMiningStartSelection_ = 0;
+            baseWarpPointSelectActive_ = false;
+            baseWarpPointSelection_ = 0;
+            baseRegenerateConfirm_ = {};
+        }
         const auto startFromSelectedWarpPoint = [&]() {
             if (selectableWarpPoints.empty()) {
                 baseStatus_ = "解放済みワープポイントがありません";
@@ -10712,6 +10986,7 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
             requestedWarpPointStartPosition_ = selectableWarpPoints[static_cast<std::size_t>(baseWarpPointSelection_)].position;
             baseWarpPointSelectActive_ = false;
             baseRegenerateConfirm_ = {};
+            baseRoguelikeDepartureConfirm_ = {};
             baseStatus_.clear();
             requestMiningStartTransition(true, false);
             return true;
@@ -10783,6 +11058,20 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
                 return;
             }
         }
+        if (selectedStageRoguelike) {
+            const UiRect startRect = baseMiningStartChoiceRect(0);
+            if (startRect.contains(ui.mouse())) {
+                baseMiningStartSelection_ = 0;
+            }
+            if (ui.pressed(startRect) || input.confirmPressed() || input.useItemPressed()) {
+                ui.emitSound(UiSoundEvent::MenuOpen);
+                openRoguelikeDepartureConfirm();
+                ui.block(miningStartPanel);
+                return;
+            }
+            ui.block(miningStartPanel);
+            return;
+        }
         if (input.pressed(InputAction::MoveUp)) {
             baseMiningStartSelection_ = (baseMiningStartSelection_ + BaseMiningStartChoiceCount - 1) % BaseMiningStartChoiceCount;
         }
@@ -10823,6 +11112,7 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
                 }
                 ui.emitSound(UiSoundEvent::Confirm);
                 baseRegenerateConfirm_ = {};
+                baseRoguelikeDepartureConfirm_ = {};
                 requestMiningStartTransition(false, false);
                 return;
             }
@@ -10855,6 +11145,7 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
             }
             ui.emitSound(UiSoundEvent::Confirm);
             baseRegenerateConfirm_ = {};
+            baseRoguelikeDepartureConfirm_ = {};
             requestMiningStartTransition(false, false);
             return;
         }
@@ -13357,6 +13648,7 @@ void Game::renderBaseScreen(Renderer& renderer) const
     } else if (baseMiningStartChoiceActive_) {
         const UiRect body = uiBodyRect(panel);
         const float contentLeft = baseMiningContentLeft();
+        const float contentRight = baseMiningContentRight();
         const std::string stageName = currentStageDefinition().name.empty()
             ? currentStageId_
             : currentStageDefinition().name;
@@ -13388,6 +13680,7 @@ void Game::renderBaseScreen(Renderer& renderer) const
         const bool canSelectDestination = selectableStageCount > 1;
         const UiPageSelectorRects stageSelector = baseMiningStageSelectorRects();
         const std::vector<WarpPoint> selectableWarpPoints = selectableWarpPointsForCurrentStageStart();
+        const bool selectedStageRoguelike = stageLooksRoguelike(currentStageDefinition());
 
         renderer.drawText({contentLeft, body.pos.y}, "行き先", {198, 198, 206, 255}, 2);
         drawUiRectButton(renderer, stageSelector.prev, "<", false);
@@ -13398,67 +13691,86 @@ void Game::renderBaseScreen(Renderer& renderer) const
         }
         const int stageNameScale = renderer.measureText(stageName, 3).x <= stageSelector.text.size.x ? 3 : 2;
         drawCenteredTextInRect(stageSelector.text, stageName, {246, 235, 255, 255}, stageNameScale);
+        constexpr float DestinationSeparatorBleedX = 16.0f;
+        drawUiSeparator(
+            renderer,
+            {{
+                contentLeft - DestinationSeparatorBleedX,
+                body.pos.y + 42.0f,
+            }, {
+                contentRight - contentLeft + DestinationSeparatorBleedX * 2.0f,
+                ui::SeparatorHeight,
+            }});
 
-        renderer.drawText({contentLeft, body.pos.y + 78.0f}, "出発地点を選んでください", {198, 198, 206, 255}, 2);
-        for (int i = 0; i < BaseMiningStartChoiceCount; ++i) {
-            const bool disabled = (i == 1 && selectableWarpPoints.empty()) || (i == 2 && !canRegenerateCurrentStage());
-            const char* description = "";
-            switch (i) {
-            case 0:
-                description = "入口から出発";
-                break;
-            case 1:
-                description = disabled ? "ワープポイントを解放すると可能" : "解放済み地点から選んで出発";
-                break;
-            case 2:
-                description = disabled ? "全ワープ解放とクリア後に可能" : "地形・敵・宝箱・ワープ配置を作り直す";
-                break;
-            default:
-                break;
-            }
+        if (selectedStageRoguelike) {
+            drawUiButton(
+                renderer,
+                baseMiningStartChoiceRect(0),
+                "出発",
+                baseMiningStartSelection_ == 0,
+                uiActionButtonStyle());
+        } else {
+            renderer.drawText({contentLeft, body.pos.y + 78.0f}, "どこから採掘を開始する？", {198, 198, 206, 255}, 2);
+            for (int i = 0; i < BaseMiningStartChoiceCount; ++i) {
+                const bool disabled = (i == 1 && selectableWarpPoints.empty()) || (i == 2 && !canRegenerateCurrentStage());
+                const char* description = "";
+                switch (i) {
+                case 0:
+                    description = "入口から出発";
+                    break;
+                case 1:
+                    description = disabled ? "ワープポイントを解放すると可能" : "解放済み地点から選んで出発";
+                    break;
+                case 2:
+                    description = disabled ? "全ワープ解放とクリア後に可能" : "地形・敵・宝箱・ワープ配置を作り直す";
+                    break;
+                default:
+                    break;
+                }
 
-            const UiRect rect = baseMiningStartChoiceRect(i);
-            UiButtonStyle buttonStyle = uiActionButtonStyle();
-            if (disabled) {
-                buttonStyle.text = ui::TextDisabled;
-                buttonStyle.imageTint = {128, 128, 140, 210};
-                buttonStyle.imageTintHot = buttonStyle.imageTint;
-                buttonStyle.fill = {18, 22, 34, 190};
-                buttonStyle.fillHot = buttonStyle.fill;
-                buttonStyle.outline = {98, 88, 112, 190};
-                buttonStyle.outlineHot = buttonStyle.outline;
-            }
-            const bool hot = i == baseMiningStartSelection_ && !disabled && !baseWarpPointSelectActive_;
-            if (i == 1) {
-                drawUiButton(renderer, rect, "", hot, buttonStyle);
-                InlineItemTextStyle buttonTextStyle;
-                buttonTextStyle.text = buttonStyle.text;
-                buttonTextStyle.scale = 2;
-                buttonTextStyle.iconTextGap = 6.0f;
-                buttonTextStyle.iconScale = 26.0f / std::max(1.0f, renderer.measureText("0", buttonTextStyle.scale).y);
-                const std::string buttonText = inlineWorldIconTag(worldIconKey(WorldIconId::WarpPoint)) + std::string(baseMiningStartChoiceName(i));
-                const Vec2 buttonTextSize = measureInlineItemText(renderer, buttonText, buttonTextStyle);
-                drawInlineItemText(
-                    renderer,
-                    objectCatalog_,
+                const UiRect rect = baseMiningStartChoiceRect(i);
+                UiButtonStyle buttonStyle = uiActionButtonStyle();
+                if (disabled) {
+                    buttonStyle.text = ui::TextDisabled;
+                    buttonStyle.imageTint = {128, 128, 140, 210};
+                    buttonStyle.imageTintHot = buttonStyle.imageTint;
+                    buttonStyle.fill = {18, 22, 34, 190};
+                    buttonStyle.fillHot = buttonStyle.fill;
+                    buttonStyle.outline = {98, 88, 112, 190};
+                    buttonStyle.outlineHot = buttonStyle.outline;
+                }
+                const bool hot = i == baseMiningStartSelection_ && !disabled && !baseWarpPointSelectActive_;
+                if (i == 1) {
+                    drawUiButton(renderer, rect, "", hot, buttonStyle);
+                    InlineItemTextStyle buttonTextStyle;
+                    buttonTextStyle.text = buttonStyle.text;
+                    buttonTextStyle.scale = 2;
+                    buttonTextStyle.iconTextGap = 6.0f;
+                    buttonTextStyle.iconScale = 26.0f / std::max(1.0f, renderer.measureText("0", buttonTextStyle.scale).y);
+                    const std::string buttonText = inlineWorldIconTag(worldIconKey(WorldIconId::WarpPoint)) + std::string(baseMiningStartChoiceName(i));
+                    const Vec2 buttonTextSize = measureInlineItemText(renderer, buttonText, buttonTextStyle);
+                    drawInlineItemText(
+                        renderer,
+                        objectCatalog_,
+                        rect.pos + Vec2{
+                            std::max(0.0f, (rect.size.x - buttonTextSize.x) * 0.5f),
+                            std::max(0.0f, (rect.size.y - buttonTextSize.y) * 0.5f),
+                        },
+                        buttonText,
+                        buttonTextStyle);
+                } else {
+                    drawUiButton(renderer, rect, baseMiningStartChoiceName(i), hot, buttonStyle);
+                }
+                const Vec2 descriptionSize = renderer.measureText(description, 2);
+                renderer.drawText(
                     rect.pos + Vec2{
-                        std::max(0.0f, (rect.size.x - buttonTextSize.x) * 0.5f),
-                        std::max(0.0f, (rect.size.y - buttonTextSize.y) * 0.5f),
+                        std::max(0.0f, (rect.size.x - descriptionSize.x) * 0.5f),
+                        ui::ButtonHeight + 4.0f,
                     },
-                    buttonText,
-                    buttonTextStyle);
-            } else {
-                drawUiButton(renderer, rect, baseMiningStartChoiceName(i), hot, buttonStyle);
+                    description,
+                    disabled ? Color{150, 150, 160, 255} : Color{198, 198, 206, 255},
+                    2);
             }
-            const Vec2 descriptionSize = renderer.measureText(description, 2);
-            renderer.drawText(
-                rect.pos + Vec2{
-                    std::max(0.0f, (rect.size.x - descriptionSize.x) * 0.5f),
-                    ui::ButtonHeight + 4.0f,
-                },
-                description,
-                disabled ? Color{150, 150, 160, 255} : Color{198, 198, 206, 255},
-                2);
         }
 
         drawDungeonStartDetailPanel(
@@ -13472,7 +13784,7 @@ void Game::renderBaseScreen(Renderer& renderer) const
             totalWarpPoints,
             baseRingPreviewAnimationTime_);
 
-        if (baseWarpPointSelectActive_) {
+        if (!selectedStageRoguelike && baseWarpPointSelectActive_) {
             panelCancelScope.reset();
             panelWindow.reset();
 
@@ -13488,12 +13800,42 @@ void Game::renderBaseScreen(Renderer& renderer) const
                 warpPanel,
                 "ワープポイント選択",
                 "F/Enter 出発  Z/X・方向キー 選択  Esc 戻る",
-                UiWindowOptions{true, false});
+                UiWindowOptions{true, true});
 
-            renderer.drawText(warpPanel.pos + Vec2{48.0f, 74.0f}, "出発地点を選んでください", {198, 198, 206, 255}, 2);
+            renderer.drawText(warpPanel.pos + Vec2{48.0f, 82.0f}, "どのワープポイントにする？", {198, 198, 206, 255}, 2);
             if (selectableWarpPoints.empty()) {
                 renderer.drawText(warpPanel.pos + Vec2{48.0f, 142.0f}, "解放済みワープポイントがありません", ui::TextDisabled, 2);
             }
+            const DungeonLayout* warpPointDepthLayout = &dungeonLayout_;
+            if (retainedStage != dungeonStates_.end() && retainedStage->second.valid) {
+                warpPointDepthLayout = &retainedStage->second.dungeonLayout;
+            }
+            const auto warpPointDepthTilePosition = [](const WarpPoint& point) {
+                if (lengthSquared(point.position) > 0.0001f) {
+                    return point.position / static_cast<float>(balance::TileSize);
+                }
+                return Vec2{
+                    static_cast<float>(point.tilePosition.x),
+                    static_cast<float>(point.tilePosition.y),
+                };
+            };
+            const auto warpPointDepthMeters = [&](const WarpPoint& point) {
+                return std::max(
+                    0,
+                    static_cast<int>(std::lround(projectedDungeonRouteDistanceTiles(
+                        *warpPointDepthLayout,
+                        warpPointDepthTilePosition(point)))));
+            };
+            const auto formatWarpPointStartLabel = [&](const WarpPoint& point) {
+                char labelBuffer[64];
+                std::snprintf(
+                    labelBuffer,
+                    sizeof(labelBuffer),
+                    "ワープ%d（%dm）",
+                    std::max(0, point.index) + 1,
+                    warpPointDepthMeters(point));
+                return std::string(labelBuffer);
+            };
             for (int i = 0; i < static_cast<int>(selectableWarpPoints.size()); ++i) {
                 const WarpPoint& point = selectableWarpPoints[static_cast<std::size_t>(i)];
                 const UiRect rect = baseMiningWarpPointSelectChoiceRect(i);
@@ -13506,30 +13848,24 @@ void Game::renderBaseScreen(Renderer& renderer) const
                 pointTextStyle.scale = 2;
                 pointTextStyle.iconTextGap = 6.0f;
                 pointTextStyle.iconScale = 24.0f / std::max(1.0f, renderer.measureText("0", pointTextStyle.scale).y);
-                const std::string pointText =
+                const std::string rawPointText =
                     inlineWorldIconTag(worldIconKey(WorldIconId::WarpPoint)) +
-                    "ワープ " + std::to_string(point.index + 1);
+                    formatWarpPointStartLabel(point);
+                const std::string pointText = fittedInlineItemText(
+                    renderer,
+                    rawPointText,
+                    rect.size.x - 28.0f,
+                    pointTextStyle);
                 const Vec2 pointTextSize = measureInlineItemText(renderer, pointText, pointTextStyle);
                 drawInlineItemText(
                     renderer,
                     objectCatalog_,
                     {
-                        rect.pos.x + 14.0f,
+                        rect.pos.x + std::max(0.0f, (rect.size.x - pointTextSize.x) * 0.5f),
                         rect.pos.y + std::max(0.0f, (rect.size.y - pointTextSize.y) * 0.5f),
                     },
                     pointText,
                     pointTextStyle);
-
-                std::snprintf(buffer, sizeof(buffer), "%d/%d", point.index + 1, totalWarpPoints);
-                const Vec2 progressSize = renderer.measureText(buffer, 2);
-                renderer.drawText(
-                    {
-                        rect.pos.x + rect.size.x - progressSize.x - 14.0f,
-                        rect.pos.y + std::max(0.0f, (rect.size.y - progressSize.y) * 0.5f),
-                    },
-                    buffer,
-                    hot ? Color{255, 230, 150, 255} : Color{198, 198, 206, 255},
-                    2);
             }
         }
     } else {
@@ -13579,6 +13915,17 @@ void Game::renderBaseScreen(Renderer& renderer) const
             baseBrokenRingDepartureConfirm_,
             baseBrokenRingDepartureConfirmRect(),
             "base.broken_ring_departure.confirm");
+    }
+    if (baseRoguelikeDepartureConfirm_.open) {
+        panelCancelScope.reset();
+        panelWindow.reset();
+
+        drawUiModalBackdrop(
+            renderer,
+            {{0.0f, 0.0f}, {static_cast<float>(camera_.width()), static_cast<float>(camera_.height())}},
+            {0, 0, 0, 96});
+
+        drawRoguelikeDepartureConfirmDialog(renderer, baseRoguelikeDepartureConfirm_);
     }
     if (baseRegenerateConfirm_.open) {
         panelCancelScope.reset();

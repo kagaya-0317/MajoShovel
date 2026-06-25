@@ -1474,6 +1474,7 @@ private:
     void returnToBaseAfterAstralResult();
     void beginDeathResultPrelude();
     bool updateDeathResultPrelude(float dt, UiContext& ui);
+    bool deathResultPreludeBlocksWindow() const;
     float deathResultPreludeBlackAlpha() const;
     float deathResultPreludeStarAlpha() const;
     void recordAstralEchoStar(bool markRecent);
@@ -1584,6 +1585,7 @@ private:
     int roguelikeSectionRankForDepthMeters(int depthMeters) const;
     int roguelikeDepthMetersForSectionRank(int sectionRank) const;
     int roguelikeAdjustedDepthRank(int localDepthRank) const;
+    int roguelikeDepthMetersForWorldPosition(Vec2 position) const;
     int roguelikeDepthRankForWorldPosition(Vec2 position) const;
     void rebuildRoguelikeAreaFromAstralState();
     bool debugSetRoguelikeAreaForDepthMeters(int depthMeters);
@@ -1678,6 +1680,7 @@ private:
     void updateRingEffectDiscoveries(std::vector<EffectDiscoveryEvent>& discoveryEvents);
     void updateOrbitAreaEffects(float dt, std::vector<EffectDiscoveryEvent>& discoveryEvents);
     void updateOrbitGroundEffects(float dt, std::vector<EffectDiscoveryEvent>& discoveryEvents);
+    void schedulePendingBuriedEnemySpawn(DungeonTile tile, Vec2 position, int depthRank);
     void schedulePendingBuriedEnemySpawn(const EnemyNode& node);
     std::vector<Vec2> spawnHiddenEnemyNodesFromOpenedTiles(const std::vector<Vec2>& openedTiles);
     int exposedEnemyNodeCount() const;
@@ -1717,9 +1720,7 @@ private:
         std::vector<DepthRenderEntry>& entries,
         Renderer& renderer,
         const std::vector<LightSource>& extraLights) const;
-    void appendPendingBuriedEnemySpawnRenderEntries(
-        std::vector<DepthRenderEntry>& entries,
-        Renderer& renderer) const;
+    void renderPendingBuriedEnemySpawnWarnings(Renderer& renderer) const;
     void renderRewardNodes(Renderer& renderer, const std::vector<LightSource>& extraLights) const;
     int unlockedRingCount() const;
     void setUnlockedRingCount(int count);
@@ -2154,6 +2155,7 @@ private:
     UiTabsState baseUpgradeTabs_{};
     UiResultDialogState baseResultDialog_{};
     UiConfirmDialogState baseRegenerateConfirm_{};
+    UiConfirmDialogState baseRoguelikeDepartureConfirm_{};
     ProcessingUiMode baseProcessingUiMode_ = ProcessingUiMode::Closed;
     int baseProcessingActionSelection_ = 0;
     int baseProcessingMode_ = 0;

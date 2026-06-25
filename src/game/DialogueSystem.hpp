@@ -42,6 +42,7 @@ public:
 
     [[nodiscard]] bool active() const { return active_; }
     [[nodiscard]] bool lineComplete() const;
+    int consumeAdvanceSoundRequests();
 
 private:
     enum class RightPortraitTransition {
@@ -71,6 +72,7 @@ private:
     float lineElapsed_ = 0.0f;
     float contentFade_ = 0.0f;
     float advanceRepeatTimer_ = 0.0f;
+    int advanceSoundRequests_ = 0;
     std::string rightSpeakerId_;
     std::string pendingRightSpeakerId_;
     float rightPortraitFade_ = 0.0f;

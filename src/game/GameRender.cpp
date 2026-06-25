@@ -72,8 +72,8 @@ Color astralEchoStarColor(bool recent, float brightness)
     if (recent) {
         return {
             255,
-            static_cast<unsigned char>(std::clamp(74.0f + brightness * 74.0f, 0.0f, 255.0f)),
-            static_cast<unsigned char>(std::clamp(58.0f + brightness * 42.0f, 0.0f, 255.0f)),
+            static_cast<unsigned char>(std::clamp(218.0f + brightness * 37.0f, 0.0f, 255.0f)),
+            static_cast<unsigned char>(std::clamp(96.0f + brightness * 68.0f, 0.0f, 255.0f)),
             255,
         };
     }
@@ -2066,6 +2066,21 @@ constexpr float DungeonMapOverlayScrollbarThickness = 6.0f;
 constexpr float DungeonMapOverlayScrollbarInset = 6.0f;
 constexpr float DungeonMapOverlayMinTilePx = 8.0f;
 constexpr float DungeonMapOverlayMaxTilePx = 12.0f;
+
+Renderer::ColorRect dungeonMapOverlayTileRect(Vec2 origin, int offsetX, int offsetY, float tilePx, Color color)
+{
+    const float left = std::floor(origin.x + static_cast<float>(offsetX) * tilePx);
+    const float top = std::floor(origin.y + static_cast<float>(offsetY) * tilePx);
+    const float right = std::ceil(origin.x + static_cast<float>(offsetX + 1) * tilePx);
+    const float bottom = std::ceil(origin.y + static_cast<float>(offsetY + 1) * tilePx);
+    return Renderer::ColorRect{
+        {left, top},
+        {
+            std::max(1.0f, right - left),
+            std::max(1.0f, bottom - top),
+        },
+        color};
+}
 
 struct DungeonMinimapBounds {
     int minX = 0;
@@ -5763,7 +5778,7 @@ void Game::renderDungeonMinimap(Renderer& renderer, const std::vector<LightSourc
     };
 
     {
-        FrameProfileScope profile("UI.minimap.tiles");
+        FrameProfileScope minimapTilesProfile("UI.minimap.tiles");
         renderer.fillCircle(minimapCenter, contentRadius, {0, 0, 0, 255});
 
         const int minTileX = playerTileX - viewRadiusTiles;
@@ -5803,7 +5818,7 @@ void Game::renderDungeonMinimap(Renderer& renderer, const std::vector<LightSourc
     Vec2 warpGuideDirection{};
     float warpGuidePulse = 0.0f;
     {
-        FrameProfileScope profile("UI.minimap.markers");
+        FrameProfileScope minimapMarkersProfile("UI.minimap.markers");
         const auto drawMiniCircleOnTile = [&](int tx, int ty, float radius, Color color) {
             const Vec2 marker = tileToMini(tx, ty);
             if (!pointInMinimap(marker, radius + 1.0f)) {
@@ -5943,7 +5958,7 @@ void Game::renderDungeonMinimap(Renderer& renderer, const std::vector<LightSourc
     }
 
     {
-        FrameProfileScope profile("UI.minimap.enemies");
+        FrameProfileScope minimapEnemiesProfile("UI.minimap.enemies");
         static thread_local std::vector<EnemyMinimapMarker> enemyMarkers;
         enemyMarkers.clear();
         enemies_.appendMinimapMarkers(enemyMarkers);
@@ -5963,7 +5978,7 @@ void Game::renderDungeonMinimap(Renderer& renderer, const std::vector<LightSourc
     }
 
     {
-        FrameProfileScope profile("UI.minimap.frame");
+        FrameProfileScope minimapFrameProfile("UI.minimap.frame");
         const Vec2 facing = lengthSquared(player_.facing) > 0.0001f ? normalize(player_.facing) : Vec2{1.0f, 0.0f};
         drawDungeonMapPlayerArrow(renderer, minimapCenter, facing, 0.72f);
         const float frameScale = minimapDiameter / DungeonMinimapDiameter;
@@ -6005,7 +6020,7 @@ void Game::renderDungeonMapOverlay(Renderer& renderer, const std::vector<LightSo
         UiWindowOptions{true, true});
 
     const UiRect mapRect = dungeonMapOverlayViewportRect();
-    renderer.fillRect(mapRect.pos, mapRect.size, {4, 7, 12, 212});
+    renderer.fillRect(mapRect.pos, mapRect.size, {4, 7, 12, 255});
 
     const DungeonMinimapBounds bounds = dungeonMinimapBounds(dungeonMinimapCells_);
     if (!bounds.valid) {
@@ -6052,19 +6067,20 @@ void Game::renderDungeonMapOverlay(Renderer& renderer, const std::vector<LightSo
             if (cellIt == dungeonMinimapCells_.end()) {
                 continue;
             }
-            const Vec2 drawPos = tileToMap(tx, ty) - Vec2{tilePx, tilePx} * 0.5f;
-            if (drawPos.x + tilePx < mapRect.pos.x ||
-                drawPos.y + tilePx < mapRect.pos.y ||
-                drawPos.x > mapRect.pos.x + mapRect.size.x ||
-                drawPos.y > mapRect.pos.y + mapRect.size.y) {
+            const bool lit = tileMap_.isLit(tileMap_.tileCenter(tx, ty), playerLightCenter, itemLights);
+            const Renderer::ColorRect tileRect = dungeonMapOverlayTileRect(
+                origin,
+                tx - bounds.minX,
+                ty - bounds.minY,
+                tilePx,
+                dungeonMinimapTileColor(cellIt->second.type, lit));
+            if (tileRect.pos.x + tileRect.size.x < mapRect.pos.x ||
+                tileRect.pos.y + tileRect.size.y < mapRect.pos.y ||
+                tileRect.pos.x > mapRect.pos.x + mapRect.size.x ||
+                tileRect.pos.y > mapRect.pos.y + mapRect.size.y) {
                 continue;
             }
-            const bool lit = tileMap_.isLit(tileMap_.tileCenter(tx, ty), playerLightCenter, itemLights);
-            const Color color = dungeonMinimapTileColor(cellIt->second.type, lit);
-            mapTileRects.push_back(Renderer::ColorRect{
-                drawPos,
-                {tilePx + 0.35f, tilePx + 0.35f},
-                color});
+            mapTileRects.push_back(tileRect);
         }
     }
     renderer.fillColorRects(mapTileRects);
@@ -7199,7 +7215,7 @@ bool Game::renderDeathResultPrelude(Renderer& renderer) const
     if (starAlpha > 0.0f) {
         renderAstralEchoStarfield(renderer, screen, false, starAlpha);
     }
-    return true;
+    return deathResultPreludeBlocksWindow();
 }
 
 void Game::renderAstralEchoStarfield(Renderer& renderer, UiRect area, bool showConstellation, float alpha) const
@@ -7222,11 +7238,11 @@ void Game::renderAstralEchoStarfield(Renderer& renderer, UiRect area, bool showC
     for (int i = 0; i < starCount; ++i) {
         const bool recent = astralEchoRecentStarVisible_ && i == astralEchoRecentStarIndex_;
         const float brightness = astralEchoUnit(i, 73);
-        const float radius = 0.9f + astralEchoUnit(i, 101) * 1.6f;
+        const float radius = 0.8f + astralEchoUnit(i, 101) * 1.0f;
         const Vec2 pos = astralEchoStarPosition(area, i);
         const Color core = astralEchoStarColor(recent, brightness);
         const unsigned char glowAlpha = recent
-            ? alphaByte(178.0f * alpha)
+            ? alphaByte(64.0f * alpha)
             : alphaByte(std::clamp(36.0f + brightness * 72.0f, 0.0f, 255.0f) * alpha);
         const Color fadedCore{core.r, core.g, core.b, alphaByte(static_cast<float>(core.a) * alpha)};
         renderer.fillSoftCircle(pos, radius * 3.8f, {core.r, core.g, core.b, glowAlpha});
@@ -7275,13 +7291,16 @@ void Game::renderGameOverScreen(Renderer& renderer) const
     }
 
     renderer.setScreenSpace();
+    const bool preludeActive = deathResultPrelude_.active;
     if (renderDeathResultPrelude(renderer)) {
         return;
     }
-    renderAstralEchoStarfield(
-        renderer,
-        {{0.0f, 0.0f}, {static_cast<float>(camera_.width()), static_cast<float>(camera_.height())}},
-        false);
+    if (!preludeActive) {
+        renderAstralEchoStarfield(
+            renderer,
+            {{0.0f, 0.0f}, {static_cast<float>(camera_.width()), static_cast<float>(camera_.height())}},
+            false);
+    }
     if (deathResultExitTransitionActive()) {
         return;
     }
@@ -7369,13 +7388,16 @@ void Game::renderAstralResultScreen(Renderer& renderer) const
 
     renderer.setScreenSpace();
     if (astralResult_.result == AstralRunResult::Died) {
+        const bool preludeActive = deathResultPrelude_.active;
         if (renderDeathResultPrelude(renderer)) {
             return;
         }
-        renderAstralEchoStarfield(
-            renderer,
-            {{0.0f, 0.0f}, {static_cast<float>(camera_.width()), static_cast<float>(camera_.height())}},
-            false);
+        if (!preludeActive) {
+            renderAstralEchoStarfield(
+                renderer,
+                {{0.0f, 0.0f}, {static_cast<float>(camera_.width()), static_cast<float>(camera_.height())}},
+                false);
+        }
         if (deathResultExitTransitionActive()) {
             return;
         }
@@ -7943,25 +7965,23 @@ void Game::render(Renderer& renderer, const Time& time)
     const bool ringIntroActive = dungeonRingIntroActive();
     const bool lightweight = lightweightModeEnabled();
     const float totalSeconds = static_cast<float>(time.totalSeconds());
+    const CollisionRect worldSpriteCullBounds = expandedCollisionRect(cameraWorldRect(camera_), screenDormantMarginWorld());
     std::vector<LightSource> itemLights;
     {
-        FrameProfileScope profile("Lights.collect");
+        FrameProfileScope lightsCollectProfile("Lights.collect");
         itemLights = collectDungeonLightSources(time.totalSeconds());
     }
     const Vec2 playerLightCenter = witchSelfLightCenter(player_.position);
     {
-        FrameProfileScope profile("TileMap.render");
+        FrameProfileScope tileMapRenderProfile("TileMap.render");
         tileMap_.render(renderer, camera_, playerLightCenter, itemLights);
     }
     std::vector<DepthRenderEntry> worldDepthEntries;
     {
-        FrameProfileScope profile("WorldDepth.prepare_nodes");
+        FrameProfileScope worldDepthPrepareNodesProfile("WorldDepth.prepare_nodes");
         std::size_t firstEntry = worldDepthEntries.size();
         appendRewardNodeRenderEntries(worldDepthEntries, renderer, itemLights);
         tagDepthRenderEntries(worldDepthEntries, firstEntry, "WorldDepth.draw.reward");
-        firstEntry = worldDepthEntries.size();
-        appendPendingBuriedEnemySpawnRenderEntries(worldDepthEntries, renderer);
-        tagDepthRenderEntries(worldDepthEntries, firstEntry, "WorldDepth.draw.buried_enemy_warning");
         if (!enemyTestActive_) {
             firstEntry = worldDepthEntries.size();
             appendDungeonEventRenderEntries(worldDepthEntries, renderer, itemLights, time.totalSeconds());
@@ -7974,7 +7994,7 @@ void Game::render(Renderer& renderer, const Time& time)
         groundLines_.appendRenderEntries(worldDepthEntries, renderer);
         tagDepthRenderEntries(worldDepthEntries, firstEntry, "WorldDepth.draw.ground_line");
         firstEntry = worldDepthEntries.size();
-        worldDrops_.appendRenderEntries(worldDepthEntries, renderer, tileMap_, objectCatalog_, playerLightCenter, itemLights);
+        worldDrops_.appendRenderEntries(worldDepthEntries, renderer, tileMap_, objectCatalog_, playerLightCenter, itemLights, &worldSpriteCullBounds);
         tagDepthRenderEntries(worldDepthEntries, firstEntry, "WorldDepth.draw.drop");
         firstEntry = worldDepthEntries.size();
         effects_.appendRenderEntries(worldDepthEntries, renderer);
@@ -8028,7 +8048,7 @@ void Game::render(Renderer& renderer, const Time& time)
     const Color playerStatusTint = playerStatusVisual.hasTint ? playerStatusVisual.tint : Color{255, 255, 255, 255};
     renderer.drawActorShadow(playerFootAnchor, playerSpriteVisualSize);
     if (!lightweight) {
-        worldDrops_.renderShadows(renderer, tileMap_, objectCatalog_, playerLightCenter, itemLights);
+        worldDrops_.renderShadows(renderer, tileMap_, objectCatalog_, playerLightCenter, itemLights, &worldSpriteCullBounds);
         enemies_.renderShadows(renderer, tileMap_, playerLightCenter, itemLights);
         effects_.renderShadows(renderer);
     }
@@ -8089,7 +8109,7 @@ void Game::render(Renderer& renderer, const Time& time)
         renderEntityStatusOverlays(renderer, player_.status, playerVisualFootAnchor, playerSpriteVisualSize, time.totalSeconds());
     };
     {
-        FrameProfileScope profile("WorldDepth.prepare_actors");
+        FrameProfileScope worldDepthPrepareActorsProfile("WorldDepth.prepare_actors");
         worldDepthEntries.push_back(DepthRenderEntry{
             player_.position.y,
             [&]() {
@@ -8178,7 +8198,7 @@ void Game::render(Renderer& renderer, const Time& time)
 
     std::vector<DepthRenderEntry> projectileDepthEntries;
     {
-        FrameProfileScope profile("Projectiles.render");
+        FrameProfileScope projectilesRenderProfile("Projectiles.render");
         projectiles_.appendRenderEntries(projectileDepthEntries, renderer, tileMap_, playerLightCenter, itemLights);
         std::stable_sort(projectileDepthEntries.begin(), projectileDepthEntries.end(), [](const DepthRenderEntry& left, const DepthRenderEntry& right) {
             return left.sortY < right.sortY;
@@ -8188,15 +8208,15 @@ void Game::render(Renderer& renderer, const Time& time)
         }
     }
     {
-        FrameProfileScope profile("Effects.render");
+        FrameProfileScope effectsRenderProfile("Effects.render");
         effects_.render(renderer);
     }
     {
-        FrameProfileScope profile("Darkness.render");
+        FrameProfileScope darknessRenderProfile("Darkness.render");
         tileMap_.renderDarknessOverlay(renderer, camera_, playerLightCenter, itemLights, lightweight);
     }
     {
-        FrameProfileScope profile("Foreground.render");
+        FrameProfileScope foregroundRenderProfile("Foreground.render");
         std::vector<DepthRenderEntry> magicForegroundEntries;
         magicFx_.appendForegroundRenderEntries(magicForegroundEntries, renderer);
         std::stable_sort(magicForegroundEntries.begin(), magicForegroundEntries.end(), [](const DepthRenderEntry& left, const DepthRenderEntry& right) {
@@ -8211,47 +8231,48 @@ void Game::render(Renderer& renderer, const Time& time)
         if (playerDeathActive) {
             drawPlayerVisual();
         }
+        renderPendingBuriedEnemySpawnWarnings(renderer);
     }
 
     {
-        FrameProfileScope profile("DungeonUI.render");
+        FrameProfileScope dungeonUiProfile("DungeonUI.render");
         renderer.setScreenSpace();
         const bool suppressDungeonUi = dungeonEventUiSuppressed();
         {
-            FrameProfileScope profile("UI.hud");
+            FrameProfileScope hudProfile("UI.hud");
             {
-                FrameProfileScope profile("UI.vignette");
+                FrameProfileScope vignetteProfile("UI.vignette");
                 if (!suppressDungeonUi) {
                     renderPlayerDamageVignette(renderer, time.totalSeconds());
                 }
             }
             {
-                FrameProfileScope profile("UI.topbar");
+                FrameProfileScope topbarProfile("UI.topbar");
                 renderTopInfoBar(renderer);
             }
             if (mode_ == ScreenMode::Playing && !suppressDungeonUi && dungeonMapOverlayOpen_) {
-                FrameProfileScope profile("UI.map_overlay");
+                FrameProfileScope mapOverlayProfile("UI.map_overlay");
                 renderDungeonMapOverlay(renderer, itemLights);
             } else if (mode_ == ScreenMode::Playing && !suppressDungeonUi) {
                 {
-                    FrameProfileScope profile("UI.minimap");
+                    FrameProfileScope minimapProfile("UI.minimap");
                     renderDungeonMinimap(renderer, itemLights);
                 }
                 if (!introTutorialActive()) {
-                    FrameProfileScope profile("UI.ring_status");
+                    FrameProfileScope ringStatusProfile("UI.ring_status");
                     renderRingStatusHud(renderer);
                 }
                 {
-                    FrameProfileScope profile("UI.logs");
+                    FrameProfileScope logsProfile("UI.logs");
                     renderDungeonLogs(renderer);
                 }
                 {
-                    FrameProfileScope profile("UI.player_status");
+                    FrameProfileScope playerStatusProfile("UI.player_status");
                     renderDungeonStatusHud(renderer);
                 }
             }
             {
-                FrameProfileScope profile("UI.debug_pause");
+                FrameProfileScope debugPauseProfile("UI.debug_pause");
                 if (debugPaused_) {
                     renderer.fillRect({18.0f, 202.0f}, {190.0f, 28.0f}, {0, 0, 0, 190});
                     renderer.drawText({28.0f, 208.0f}, "DEBUG PAUSED", {255, 230, 150, 255}, 2);
@@ -8259,7 +8280,7 @@ void Game::render(Renderer& renderer, const Time& time)
             }
         }
         {
-            FrameProfileScope profile("UI.inventory");
+            FrameProfileScope inventoryProfile("UI.inventory");
             if (!suppressDungeonUi && !dungeonMapOverlayOpen_) {
                 inventory_.render(
                     renderer,
@@ -8282,7 +8303,7 @@ void Game::render(Renderer& renderer, const Time& time)
             }
         }
         {
-            FrameProfileScope profile("UI.menus");
+            FrameProfileScope menusProfile("UI.menus");
             if (!suppressDungeonUi && !dungeonMapOverlayOpen_) {
                 renderWarpReturnUi(renderer);
                 renderRoguelikeBigHoleUi(renderer);
@@ -8299,7 +8320,7 @@ void Game::render(Renderer& renderer, const Time& time)
             }
         }
         {
-            FrameProfileScope profile("UI.notice");
+            FrameProfileScope noticeProfile("UI.notice");
             if (!suppressDungeonUi && !dungeonMapOverlayOpen_ && reloadNoticeTimer_ > 0.0f) {
                 renderer.fillRect({18.0f, 170.0f}, {430.0f, 26.0f}, {0, 0, 0, 180});
                 InlineItemTextStyle noticeStyle;
@@ -8311,7 +8332,7 @@ void Game::render(Renderer& renderer, const Time& time)
             }
         }
         {
-            FrameProfileScope profile("UI.popups");
+            FrameProfileScope popupsProfile("UI.popups");
             if (!suppressDungeonUi && !dungeonMapOverlayOpen_ &&
                 (mode_ == ScreenMode::Playing || mode_ == ScreenMode::Inventory || mode_ == ScreenMode::PauseMenu || mode_ == ScreenMode::Ring)) {
                 std::vector<UiRect> encyclopediaAvoidRects;
@@ -8358,7 +8379,7 @@ void Game::render(Renderer& renderer, const Time& time)
             }
         }
         {
-            FrameProfileScope profile("UI.overlays");
+            FrameProfileScope overlaysProfile("UI.overlays");
             dialogue_.render(renderer, camera_.width(), camera_.height());
             if (!suppressDungeonUi) {
                 renderDebugNamedSaveUi(renderer);
