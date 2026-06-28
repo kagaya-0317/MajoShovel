@@ -46,7 +46,7 @@
 | --- | --- | ---: | ---: | --- | ---: | ---: | ---: | --- | --- |
 | `stardust_mole` | 星くずモグラ | 1440 | 2 | `blunt` | 21 | 15 | 60 | `stationary` | `boss,boss_only,no_normal_spawn,unique` |
 | `junk_crab` | 廃品殻獣ジャンクラブ | 1680 | 4 | `blunt` | 54 | 18 | 90 | `stationary` | `boss,boss_only,no_normal_spawn,unique,large,heavy` |
-| `astragna` | 星封殻アストラグナ | 2880 | 0 | `none` | 0 | 24 | 120 | `stationary` | `boss,boss_only,no_normal_spawn,unique,large,terrain_boss` |
+| `astragna` | 星封殻アストラグナ | 1 | 0 | `none` | 0 | 24 | 120 | `stationary` | `boss,boss_only,no_normal_spawn,unique,large,terrain_boss` |
 | `star_vein_dragon` | 星脈竜 | 4000 | 18 | `magic` | 58 | 30 | 180 | `hover_chase` | `boss,boss_only,no_normal_spawn,unique,large,heavy,magic` |
 
 ## コード側の責務
@@ -59,5 +59,5 @@
 
 ## 備考
 
-- `astragna` の実戦HPバーは外殻・封印部位のHPから同期される。`HP` 列はボス定義としての基準総耐久を表す。
+- `astragna` 本体の `HP` は生存フラグ用の最小値として扱う。本体HPバーは表示せず、実戦でHPを持つのは外殻ブロック、封印パーツ、封印発射点だけにする。
 - `star_vein_dragon` は現時点では基礎ボス定義と汎用挙動のみを持つ。専用ボスシーケンス実装後は `boss_sequence` に移行する。

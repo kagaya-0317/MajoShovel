@@ -1405,6 +1405,9 @@ private:
     bool grantBaseMiningRescueTool(std::string_view objectId);
     void renderBaseMiningRescueDropEvent(Renderer& renderer) const;
     void updateBaseScreen(const Input& input, UiContext& ui, float dt);
+    void updateBaseStoryPresentationCommand(float dt);
+    void clearBaseStoryPresentation();
+    bool storyEventUsesBasePresentation(std::string_view id) const;
     void openBaseDiary();
     void closeBaseDiary();
     void updateBaseDiaryScreen(const Input& input, UiContext& ui);
@@ -1991,6 +1994,7 @@ private:
     void renderScreenTransitionOverlay(Renderer& renderer);
     void renderBaseBackdrop(Renderer& renderer) const;
     void renderBaseScreen(Renderer& renderer) const;
+    void renderBaseStoryFadeOverlay(Renderer& renderer) const;
     void renderBaseDiaryScreen(Renderer& renderer, UiRect panel) const;
     void renderBookshelfScreen(Renderer& renderer) const;
     void renderLevelUpOverlay(Renderer& renderer);
@@ -2111,6 +2115,18 @@ private:
     float baseActorIdleAnimationTime_ = 0.0f;
     float baseRingPreviewAnimationTime_ = 0.0f;
     std::unordered_map<std::string, bool> baseNpcSpriteFlipHorizontal_;
+    std::unordered_map<std::string, Vec2> baseStoryFacilityOffsets_;
+    struct BaseStoryCommandRuntime {
+        int stepIndex = -1;
+        std::string name;
+        float elapsedSeconds = 0.0f;
+        Vec2 startPosition{};
+        Vec2 targetPosition{};
+        Vec2 startFacing{0.0f, 1.0f};
+        Vec2 targetFacing{0.0f, 1.0f};
+    };
+    BaseStoryCommandRuntime baseStoryCommand_;
+    float baseStoryFadeAlpha_ = 0.0f;
     bool basePlayerSpriteWalking_ = false;
     bool basePlayerSpriteFlipHorizontal_ = false;
     int baseMenuSelection_ = 0;

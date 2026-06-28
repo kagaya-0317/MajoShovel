@@ -11,6 +11,7 @@
 #include "game/DiggingSystem.hpp"
 #include "game/EffectSystem.hpp"
 #include "game/MagicSystem.hpp"
+#include "game/TerrainDigRules.hpp"
 #include "game/TileMap.hpp"
 #include "game/WorldDropSystem.hpp"
 
@@ -138,11 +139,6 @@ bool isMagicBookSource(const EffectContext& context)
     return context.sourceObject != nullptr && context.sourceObject->category == "魔導書";
 }
 
-bool isTerrainTarget(std::string_view target)
-{
-    return target == "terrain" || target == "ground";
-}
-
 EntityStatus* statusForInvocation(const EffectInvocation& invocation)
 {
     const EffectContext& context = *invocation.context;
@@ -155,7 +151,7 @@ EntityStatus* statusForInvocation(const EffectInvocation& invocation)
         }
         return context.targetEntity != nullptr ? &context.targetEntity->status : nullptr;
     }
-    if (isTerrainTarget(invocation.target) || invocation.target == "area" || invocation.target == "orbit" || invocation.target == "projectile") {
+    if (isTerrainDigTarget(invocation.target) || invocation.target == "area" || invocation.target == "orbit" || invocation.target == "projectile") {
         return nullptr;
     }
     if (context.hitTarget != nullptr) {
@@ -273,11 +269,6 @@ WorldDropSpawnMotion makeEffectDropJumpMotion(Vec2 center, std::mt19937& rng)
     };
 }
 
-TerrainDigModifier terrainDigModifierForEffect(std::string_view effect)
-{
-    return effect == "dig_hard" ? TerrainDigModifier::HardSpecialist : TerrainDigModifier::Normal;
-}
-
 void recordTerrainHit(const EffectInvocation& invocation, int tileX, int tileY, int baseDamage)
 {
     if (invocation.context->tileMap == nullptr || baseDamage <= 0) {
@@ -303,7 +294,7 @@ void recordTerrainHit(const EffectInvocation& invocation, int tileX, int tileY, 
     const int damage = adjustedTerrainDigDamage(
         effectiveBaseDamage,
         map.terrainAttributeAtTile(tileX, tileY),
-        terrainDigModifierForEffect(invocation.effect));
+        terrainDigModifierForMode(terrainDigModeForEffect(invocation.effect).value_or(TerrainDigMode::Normal)));
     if (damage <= 0) {
         return;
     }
@@ -584,11 +575,22 @@ void applyItemParameterInvocation(const EffectInvocation& invocation)
 
 void applyDigInvocation(const EffectInvocation& invocation)
 {
-    if (!isTerrainTarget(invocation.target) || invocation.context->tileMap == nullptr) {
+    if (!isTerrainDigTarget(invocation.target) || invocation.context->tileMap == nullptr) {
         return;
     }
 
-    const int damage = positiveIntPower(invocation.value);
+    const std::optional<TerrainDigMode> mode = terrainDigModeForEffect(invocation.effect);
+    if (!mode.has_value()) {
+        return;
+    }
+
+    const int digPower = invocation.context->orbitItem != nullptr
+        ? std::max(0, invocation.context->orbitItem->digPower)
+        : positiveIntPower(invocation.value);
+    const int damage = terrainDigBasePowerForMode(digPower, *mode);
+    if (damage <= 0) {
+        return;
+    }
 
     const int tileX = invocation.context->terrainHitTile
         ? invocation.context->terrainHitTile->x
@@ -596,15 +598,8 @@ void applyDigInvocation(const EffectInvocation& invocation)
     const int tileY = invocation.context->terrainHitTile
         ? invocation.context->terrainHitTile->y
         : invocation.context->tileMap->worldToTile(invocation.context->position.y);
-    if (invocation.effect == "dig_multi") {
-        constexpr std::array<std::pair<int, int>, 5> Offsets{{
-            {0, 0},
-            {1, 0},
-            {-1, 0},
-            {0, 1},
-            {0, -1},
-        }};
-        for (const auto [dx, dy] : Offsets) {
+    if (*mode == TerrainDigMode::Multi) {
+        for (const auto [dx, dy] : TerrainDigMultiOffsets) {
             recordTerrainHit(invocation, tileX + dx, tileY + dy, damage);
         }
         return;

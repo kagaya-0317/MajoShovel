@@ -1028,7 +1028,10 @@ DialogueSequence singleLineDialogueSequence(
     DialogueSequence sequence;
     sequence.id = std::move(id);
     sequence.lines.push_back(line);
-    sequence.steps.push_back(DialogueStep{DialogueStepKind::Line, std::move(line), 0.0f});
+    DialogueStep step;
+    step.kind = DialogueStepKind::Line;
+    step.line = std::move(line);
+    sequence.steps.push_back(std::move(step));
     return sequence;
 }
 
@@ -4666,6 +4669,9 @@ bool Game::startDebugStoryTestPresentation(std::string_view id, std::function<vo
     if (id == IntroTutorialEnemyEncounterEventId) {
         return startIntroTutorialEnemyEncounterPresentation(true, std::move(onComplete));
     }
+    if (storyEventUsesBasePresentation(id)) {
+        enterBase();
+    }
     return startStoryEventForDebugWithCompletion(id, std::move(onComplete));
 }
 
@@ -6508,7 +6514,9 @@ void Game::updateDungeonEvents(float dt, double totalSeconds)
 
 void Game::handleDungeonEventEnemyEvent(const EnemyEvent& enemyEvent)
 {
-    if ((enemyEvent.type != EnemyEventType::Death && enemyEvent.type != EnemyEventType::BossDeath) ||
+    if ((enemyEvent.type != EnemyEventType::Death &&
+            enemyEvent.type != EnemyEventType::BossDeath &&
+            enemyEvent.type != EnemyEventType::BossResolved) ||
         enemyEvent.dungeonEventId.empty()) {
         return;
     }
@@ -11508,7 +11516,6 @@ void Game::finishBossEncounterIntroTransition()
 bool Game::shouldPlayBossAfterStoryEvent() const
 {
     if (bossEncounter_.purpose != BossEncounterPurpose::StageClear ||
-        bossEncounter_.finalBoss ||
         currentStageIsRoguelike()) {
         return false;
     }

@@ -4,10 +4,12 @@
 #include "game/Hitbox.hpp"
 #include "game/ObjectVisualPose.hpp"
 #include "game/RingItemVisual.hpp"
+#include "game/TerrainDigRules.hpp"
 
 #include <algorithm>
 #include <cmath>
 #include <random>
+#include <utility>
 
 namespace majo {
 
@@ -81,6 +83,47 @@ void addTerrainHitTile(std::vector<DungeonTile>& tiles, int tileX, int tileY)
     if (!containsTerrainTile(tiles, tileX, tileY)) {
         tiles.push_back({tileX, tileY});
     }
+}
+
+EffectSpec makeImplicitTerrainDigSpec(const TerrainDigProfile& profile)
+{
+    EffectSpec spec;
+    spec.target = "terrain";
+    spec.effects.push_back(std::string(terrainDigEffectForMode(profile.mode)));
+    spec.values.push_back(static_cast<double>(profile.power));
+    spec.duration = 0.0;
+    return spec;
+}
+
+std::vector<EffectSpec> terrainContactEffectsExcludingDig(const std::vector<EffectSpec>& specs)
+{
+    std::vector<EffectSpec> filtered;
+    for (const EffectSpec& spec : specs) {
+        if (!isTerrainDigTarget(spec.target)) {
+            continue;
+        }
+
+        EffectSpec copy;
+        copy.target = spec.target;
+        copy.duration = spec.duration;
+        for (std::size_t index = 0; index < spec.effects.size(); ++index) {
+            const std::string& effect = spec.effects[index];
+            if (isTerrainDigEffect(effect)) {
+                continue;
+            }
+            copy.effects.push_back(effect);
+            copy.values.push_back(index < spec.values.size() ? spec.values[index] : 0.0);
+        }
+        if (!copy.effects.empty()) {
+            filtered.push_back(std::move(copy));
+        }
+    }
+    return filtered;
+}
+
+std::string terrainDiscoveryEffectKey(TerrainDigMode mode)
+{
+    return mode == TerrainDigMode::HardSpecialist ? "dig_hard" : "dig";
 }
 
 void rememberDigTiles(SpellRingItem& item, const std::vector<DungeonTile>& tiles)
@@ -307,6 +350,12 @@ void DiggingSystem::update(
         bool discoveryRecorded = false;
         const Vec2 firstHitPosition = map.tileCenter(newTargets.front().x, newTargets.front().y);
         if (sourceObject != nullptr) {
+            const TerrainDigProfile digProfile = terrainDigProfileFor(sourceObject, &item);
+            const std::vector<EffectSpec> implicitDigEffects = digProfile.enabled
+                ? std::vector<EffectSpec>{makeImplicitTerrainDigSpec(digProfile)}
+                : std::vector<EffectSpec>{};
+            const std::vector<EffectSpec> nonDigTerrainContactEffects =
+                terrainContactEffectsExcludingDig(sourceObject->orbitEffects);
             for (const DungeonTile& target : newTargets) {
                 const Vec2 hitPosition = map.tileCenter(target.x, target.y);
                 const TileType impactTileType = map.terrainDebugAtWorld(hitPosition).type;
@@ -329,8 +378,12 @@ void DiggingSystem::update(
                 context.terrainHitTile = target;
                 context.triggerType = EffectTriggerType::Hit;
                 context.logUnimplementedEffects = false;
-                effectDispatcher.dispatchTargetEffects(sourceObject->orbitEffects, "terrain", context);
-                effectDispatcher.dispatchTargetEffects(sourceObject->orbitEffects, "ground", context);
+                if (!implicitDigEffects.empty()) {
+                    effectDispatcher.dispatch(implicitDigEffects, context);
+                }
+                if (!nonDigTerrainContactEffects.empty()) {
+                    effectDispatcher.dispatch(nonDigTerrainContactEffects, context);
+                }
 
                 const bool terrainHit = hitTiles_.size() != hitCountBefore;
                 const bool terrainOpened = openedTiles_.size() != openedCountBefore;
@@ -347,15 +400,7 @@ void DiggingSystem::update(
                         static_cast<float>(std::max(0, item.digPower))));
                 }
                 if (terrainHit && !discoveryRecorded && discoveryEvents != nullptr) {
-                    std::string effectKey = "dig";
-                    if (std::any_of(
-                            sourceObject->discoveryEffectLines.begin(),
-                            sourceObject->discoveryEffectLines.end(),
-                            [](const DiscoveryEffectLine& line) {
-                                return line.effectKey == "dig_hard";
-                            })) {
-                        effectKey = "dig_hard";
-                    }
+                    const std::string effectKey = terrainDiscoveryEffectKey(digProfile.mode);
                     discoveryEvents->push_back(EffectDiscoveryEvent{
                         .objectId = sourceObject->id,
                         .objectName = sourceObject->name,

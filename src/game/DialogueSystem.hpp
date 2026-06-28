@@ -14,16 +14,26 @@ struct DialogueLine {
     std::string speakerName;
     std::string portraitPath;
     std::string text;
+    bool forcePortraitsBright = false;
+    std::vector<std::string> brightPortraitSpeakerIds;
 };
 
 enum class DialogueStepKind {
     Line,
     Wait,
+    PortraitHide,
+    Command,
+};
+
+struct DialogueCommand {
+    std::string name;
+    std::vector<std::string> args;
 };
 
 struct DialogueStep {
     DialogueStepKind kind = DialogueStepKind::Line;
     DialogueLine line;
+    DialogueCommand command;
     float waitSeconds = 0.0f;
 };
 
@@ -39,9 +49,12 @@ public:
     void clear();
     void update(const Input& input, float dt);
     void render(Renderer& renderer, int screenWidth, int screenHeight) const;
+    void completeCurrentCommandStep();
 
     [[nodiscard]] bool active() const { return active_; }
     [[nodiscard]] bool lineComplete() const;
+    [[nodiscard]] int currentStepIndex() const { return stepIndex_; }
+    [[nodiscard]] const DialogueCommand* currentCommand() const;
     int consumeAdvanceSoundRequests();
 
 private:
@@ -79,6 +92,7 @@ private:
     RightPortraitTransition rightPortraitTransition_ = RightPortraitTransition::Stable;
     bool active_ = false;
     bool closing_ = false;
+    bool portraitsHidden_ = false;
     bool advanceHoldActive_ = false;
 };
 

@@ -8,6 +8,10 @@
 #include "game/PlayerEquipmentVisual.hpp"
 #include "game/RingDisplayName.hpp"
 
+#include <algorithm>
+#include <cerrno>
+#include <cmath>
+#include <cstdlib>
 #include <unordered_set>
 
 namespace majo {
@@ -26,10 +30,60 @@ constexpr std::string_view BaseRandomTalkTriggerPrefix = "base_random_talk:";
 constexpr int BookshelfEndingReplayMenuIndex = BookshelfMenuItemCount;
 constexpr float BookshelfMenuChoiceGap = 16.0f;
 constexpr float BookshelfEndingCommandMinWidth = 240.0f;
+constexpr float BaseStoryLookaroundSeconds = 0.9f;
+constexpr float BaseStoryMinWalkSeconds = 0.18f;
 
 bool isBaseRandomTalkSpeaker(std::string_view speakerId)
 {
     return speakerId == "merchant" || speakerId == "processor";
+}
+
+bool isBasePresentationCommand(std::string_view name)
+{
+    return name == "base_actor_offset" ||
+        name == "base_actor_reset" ||
+        name == "base_wait" ||
+        name == "base_fade" ||
+        name == "base_player_place" ||
+        name == "base_player_walk" ||
+        name == "base_player_lookaround";
+}
+
+float parseStoryCommandFloat(const DialogueCommand& command, std::size_t index, float fallback)
+{
+    if (index >= command.args.size()) {
+        return fallback;
+    }
+
+    errno = 0;
+    char* end = nullptr;
+    const float value = std::strtof(command.args[index].c_str(), &end);
+    if (end != command.args[index].c_str() && end != nullptr && *end == '\0' && errno == 0 && std::isfinite(value)) {
+        return value;
+    }
+    return fallback;
+}
+
+Vec2 storyTileOffset(float tileX, float tileY)
+{
+    const float tileSize = static_cast<float>(balance::TileSize);
+    return {tileX * tileSize, tileY * tileSize};
+}
+
+void applyBaseStoryFacilityOffsets(
+    std::vector<BaseFacility>& facilities,
+    const std::unordered_map<std::string, Vec2>& offsets)
+{
+    if (offsets.empty()) {
+        return;
+    }
+
+    for (BaseFacility& facility : facilities) {
+        const auto it = offsets.find(std::string(facility.facilityId));
+        if (it != offsets.end()) {
+            facility.rect.pos += it->second;
+        }
+    }
 }
 
 std::string baseRandomTalkTrigger(std::string_view speakerId)
@@ -1502,20 +1556,21 @@ void drawBaseFacilityFallbackRect(
     Renderer& renderer,
     const BaseFacility& facility,
     bool inInteractionRange,
-    bool hovered)
+    bool hovered,
+    bool showInteractionHints)
 {
     Color fill = facility.enabled ? Color{96, 82, 82, 255} : Color{84, 62, 56, 255};
     if (!facility.unlocked) {
         fill = {58, 58, 64, 255};
     }
     Color outline = facility.enabled ? Color{220, 200, 150, 255} : Color{120, 108, 98, 255};
-    if (inInteractionRange && facility.enabled) {
+    if (showInteractionHints && inInteractionRange && facility.enabled) {
         outline = hovered ? Color{255, 230, 72, 255} : Color{255, 255, 255, 245};
         fill.a = std::max<unsigned char>(fill.a, 170);
     }
     renderer.fillRect(facility.rect.pos, facility.rect.size, fill);
     renderer.drawRect(facility.rect.pos, facility.rect.size, outline);
-    if (!inInteractionRange || !facility.enabled) {
+    if (showInteractionHints && (!inInteractionRange || !facility.enabled)) {
         if (facility.showNameLabel) {
             renderer.drawText(
                 facility.rect.pos + Vec2{8.0f, 8.0f},
@@ -1532,7 +1587,8 @@ void drawBaseFacilities(
     BaseArea area,
     bool ringWorkshopUnlocked,
     Vec2 playerPosition,
-    Vec2 mouse)
+    Vec2 mouse,
+    bool showInteractionHints)
 {
     struct FacilityNameLabel {
         const BaseFacility* facility = nullptr;
@@ -1550,16 +1606,17 @@ void drawBaseFacilities(
                 continue;
             }
 
-            const bool inInteractionRange = baseInteractionGroupAvailable(playerPosition, area, facilities, facility);
-            const bool labelVisible = inInteractionRange && facility.enabled && facility.showNameLabel;
+            const bool inInteractionRange = showInteractionHints &&
+                baseInteractionGroupAvailable(playerPosition, area, facilities, facility);
+            const bool labelVisible = showInteractionHints && inInteractionRange && facility.enabled && facility.showNameLabel;
             const BaseFacilityVisual* visual = baseFacilityVisual(area, facility.facilityId);
 
             if (visual == nullptr) {
                 if (baseCharacterSpriteVisual(area, facility.facilityId) != nullptr) {
                     continue;
                 }
-                const bool hovered = inInteractionRange && facility.enabled && facility.rect.contains(mouse);
-                drawBaseFacilityFallbackRect(renderer, facility, inInteractionRange, hovered);
+                const bool hovered = showInteractionHints && inInteractionRange && facility.enabled && facility.rect.contains(mouse);
+                drawBaseFacilityFallbackRect(renderer, facility, inInteractionRange, hovered, showInteractionHints);
                 if (labelVisible) {
                     labels.push_back({&facility, facility.rect});
                 }
@@ -1567,12 +1624,13 @@ void drawBaseFacilities(
             }
 
             const UiRect visualRect = baseFacilityVisualRect(facility, area, ringWorkshopUnlocked, *visual);
-            const bool hovered = inInteractionRange &&
+            const bool hovered = showInteractionHints &&
+                inInteractionRange &&
                 facility.enabled &&
                 baseFacilityVisualHitTest(renderer, *visual, visualRect, mouse);
 
             ImageDrawOptions options;
-            options.outlineEnabled = inInteractionRange && facility.enabled;
+            options.outlineEnabled = showInteractionHints && inInteractionRange && facility.enabled;
             options.outlineColor = hovered ? Color{255, 230, 72, 255} : Color{255, 255, 255, 245};
             options.outlinePx = 1;
             if (!facility.unlocked) {
@@ -1584,7 +1642,7 @@ void drawBaseFacilities(
                     visualRect.size,
                     options,
                     TextureFilter::Nearest)) {
-                drawBaseFacilityFallbackRect(renderer, facility, inInteractionRange, hovered);
+                drawBaseFacilityFallbackRect(renderer, facility, inInteractionRange, hovered, showInteractionHints);
             }
             if (labelVisible) {
                 labels.push_back({&facility, visualRect});
@@ -6609,6 +6667,214 @@ void Game::closeBaseFacilityScreens()
     baseDiaryActive_ = false;
 }
 
+void Game::clearBaseStoryPresentation()
+{
+    baseStoryFacilityOffsets_.clear();
+    baseStoryCommand_ = {};
+    baseStoryFadeAlpha_ = 0.0f;
+    basePlayerSpriteWalking_ = false;
+    updateBasePlayerSpriteFlipFromFacing();
+}
+
+void Game::renderBaseStoryFadeOverlay(Renderer& renderer) const
+{
+    if (baseStoryFadeAlpha_ <= 0.0f) {
+        return;
+    }
+
+    renderer.setScreenSpace();
+    renderer.fillRect(
+        {0.0f, 0.0f},
+        {static_cast<float>(camera_.width()), static_cast<float>(camera_.height())},
+        {0, 0, 0, alphaByte(255.0f * baseStoryFadeAlpha_)});
+}
+
+bool Game::storyEventUsesBasePresentation(std::string_view id) const
+{
+    const StoryEvent* event = findStoryEvent(id);
+    if (event == nullptr) {
+        return false;
+    }
+
+    return std::any_of(
+        event->dialogue.steps.begin(),
+        event->dialogue.steps.end(),
+        [](const DialogueStep& step) {
+            return step.kind == DialogueStepKind::Command && isBasePresentationCommand(step.command.name);
+        });
+}
+
+void Game::updateBaseStoryPresentationCommand(float dt)
+{
+    const DialogueCommand* command = dialogue_.currentCommand();
+    if (command == nullptr) {
+        baseStoryCommand_ = {};
+        return;
+    }
+
+    if (!isBasePresentationCommand(command->name) || !basePresentationActive()) {
+        dialogue_.completeCurrentCommandStep();
+        baseStoryCommand_ = {};
+        return;
+    }
+
+    const int stepIndex = dialogue_.currentStepIndex();
+    const bool newCommand = baseStoryCommand_.stepIndex != stepIndex || baseStoryCommand_.name != command->name;
+    if (newCommand) {
+        baseStoryCommand_ = {};
+        baseStoryCommand_.stepIndex = stepIndex;
+        baseStoryCommand_.name = command->name;
+        baseStoryCommand_.startPosition = basePlayerPosition_;
+        baseStoryCommand_.startFacing = lengthSquared(basePlayerFacing_) > 0.0001f
+            ? normalize(basePlayerFacing_)
+            : Vec2{0.0f, 1.0f};
+
+        if (command->name == "base_actor_offset") {
+            if (!command->args.empty()) {
+                const float dx = parseStoryCommandFloat(*command, 1, 0.0f);
+                const float dy = parseStoryCommandFloat(*command, 2, 0.0f);
+                baseStoryFacilityOffsets_[command->args[0]] = storyTileOffset(dx, dy);
+            }
+            dialogue_.completeCurrentCommandStep();
+            baseStoryCommand_ = {};
+            return;
+        }
+
+        if (command->name == "base_actor_reset") {
+            if (!command->args.empty()) {
+                baseStoryFacilityOffsets_.erase(command->args[0]);
+            }
+            dialogue_.completeCurrentCommandStep();
+            baseStoryCommand_ = {};
+            return;
+        }
+
+        if (command->name == "base_player_place") {
+            if (!command->args.empty()) {
+                const std::string& placement = command->args[0];
+                if (placement == "mine_exit_return") {
+                    placeBasePlayerAtMineExitReturnPoint();
+                } else if (placement == "home_door_resume") {
+                    placeBasePlayerAtHomeDoorResumePoint();
+                } else if (placement == "outdoor") {
+                    baseArea_ = BaseArea::Outdoor;
+                    basePlayerPosition_ = {
+                        parseStoryCommandFloat(*command, 1, basePlayerPosition_.x),
+                        parseStoryCommandFloat(*command, 2, basePlayerPosition_.y),
+                    };
+                    baseOutdoorPlayerPosition_ = basePlayerPosition_;
+                    basePlayerFacing_ = {
+                        parseStoryCommandFloat(*command, 3, basePlayerFacing_.x),
+                        parseStoryCommandFloat(*command, 4, basePlayerFacing_.y),
+                    };
+                    if (lengthSquared(basePlayerFacing_) <= 0.0001f) {
+                        basePlayerFacing_ = {0.0f, 1.0f};
+                    }
+                    updateBasePlayerSpriteFlipFromFacing();
+                }
+            }
+            dialogue_.completeCurrentCommandStep();
+            baseStoryCommand_ = {};
+            return;
+        }
+
+        if (command->name == "base_fade") {
+            baseStoryCommand_.targetPosition = baseStoryCommand_.startPosition;
+            baseStoryCommand_.targetFacing = baseStoryCommand_.startFacing;
+        } else if (command->name == "base_wait") {
+            baseStoryCommand_.targetPosition = baseStoryCommand_.startPosition;
+            baseStoryCommand_.targetFacing = baseStoryCommand_.startFacing;
+        } else if (command->name == "base_player_walk") {
+            const float dx = parseStoryCommandFloat(*command, 0, 0.0f);
+            const float dy = parseStoryCommandFloat(*command, 1, 0.0f);
+            baseStoryCommand_.targetPosition = baseStoryCommand_.startPosition + storyTileOffset(dx, dy);
+            const Vec2 delta = baseStoryCommand_.targetPosition - baseStoryCommand_.startPosition;
+            baseStoryCommand_.targetFacing = lengthSquared(delta) > 0.0001f
+                ? normalize(delta)
+                : baseStoryCommand_.startFacing;
+        } else if (command->name == "base_player_lookaround") {
+            baseStoryCommand_.targetPosition = baseStoryCommand_.startPosition;
+            baseStoryCommand_.targetFacing = baseStoryCommand_.startFacing;
+        }
+    }
+
+    const float safeDt = std::max(0.0f, dt);
+    baseStoryCommand_.elapsedSeconds += safeDt;
+
+    if (command->name == "base_fade") {
+        const std::string direction = !command->args.empty() ? command->args[0] : "out";
+        const float duration = std::max(0.001f, parseStoryCommandFloat(*command, 1, ScreenTransitionFadeOutSeconds));
+        const float t = smoothStep01(baseStoryCommand_.elapsedSeconds / duration);
+        if (direction == "in") {
+            baseStoryFadeAlpha_ = 1.0f - t;
+        } else {
+            baseStoryFadeAlpha_ = t;
+        }
+        updateBasePlayerSpriteAnimation(safeDt, false);
+        updateBasePlayerSpriteFlipFromFacing();
+        if (baseStoryCommand_.elapsedSeconds >= duration) {
+            baseStoryFadeAlpha_ = direction == "in" ? 0.0f : 1.0f;
+            dialogue_.completeCurrentCommandStep();
+            baseStoryCommand_ = {};
+        }
+        return;
+    }
+
+    if (command->name == "base_wait") {
+        const float duration = std::max(0.0f, parseStoryCommandFloat(*command, 0, 0.0f));
+        updateBasePlayerSpriteAnimation(safeDt, false);
+        updateBasePlayerSpriteFlipFromFacing();
+        if (baseStoryCommand_.elapsedSeconds >= duration) {
+            dialogue_.completeCurrentCommandStep();
+            baseStoryCommand_ = {};
+        }
+        return;
+    }
+
+    if (command->name == "base_player_walk") {
+        const float explicitDuration = parseStoryCommandFloat(*command, 2, -1.0f);
+        const float distance = length(baseStoryCommand_.targetPosition - baseStoryCommand_.startPosition);
+        const float duration = explicitDuration > 0.0f
+            ? explicitDuration
+            : std::max(BaseStoryMinWalkSeconds, distance / std::max(1.0f, balance_.playerSpeed));
+        const float t = duration > 0.0f ? clamp(baseStoryCommand_.elapsedSeconds / duration, 0.0f, 1.0f) : 1.0f;
+        basePlayerPosition_ = baseStoryCommand_.startPosition +
+            (baseStoryCommand_.targetPosition - baseStoryCommand_.startPosition) * t;
+        basePlayerFacing_ = baseStoryCommand_.targetFacing;
+        updateBasePlayerSpriteAnimation(safeDt, distance > 0.001f && t < 1.0f);
+        updateBasePlayerSpriteFlipFromFacing();
+        if (t >= 1.0f) {
+            basePlayerPosition_ = baseStoryCommand_.targetPosition;
+            basePlayerSpriteWalking_ = false;
+            dialogue_.completeCurrentCommandStep();
+            baseStoryCommand_ = {};
+        }
+        return;
+    }
+
+    if (command->name == "base_player_lookaround") {
+        const float duration = std::max(0.1f, parseStoryCommandFloat(*command, 0, BaseStoryLookaroundSeconds));
+        const float t = clamp(baseStoryCommand_.elapsedSeconds / duration, 0.0f, 1.0f);
+        if (t < 0.25f) {
+            basePlayerFacing_ = {-1.0f, 0.0f};
+        } else if (t < 0.5f) {
+            basePlayerFacing_ = {1.0f, 0.0f};
+        } else if (t < 0.75f) {
+            basePlayerFacing_ = {-1.0f, 0.0f};
+        } else {
+            basePlayerFacing_ = baseStoryCommand_.startFacing;
+        }
+        updateBasePlayerSpriteAnimation(safeDt, false);
+        updateBasePlayerSpriteFlipFromFacing();
+        if (t >= 1.0f) {
+            basePlayerFacing_ = baseStoryCommand_.startFacing;
+            updateBasePlayerSpriteFlipFromFacing();
+            dialogue_.completeCurrentCommandStep();
+            baseStoryCommand_ = {};
+        }
+    }
+}
+
 bool Game::roguelikeFacilityUiActive() const
 {
     return roguelikeFacilityUiMode_ != RoguelikeFacilityUiMode::None;
@@ -7855,6 +8121,7 @@ void Game::updateHiddenBaseOrbit(const Input& input, UiContext& ui, float dt, bo
     for (BaseFacility& facility : facilities) {
         facility.rect = toUiRect(baseFacilityRectFor(baseArea_, facility.facilityId, toBaseEditRect(facility.rect)));
     }
+    applyBaseStoryFacilityOffsets(facilities, baseStoryFacilityOffsets_);
 
     auto markTrustBroken = [this]() {
         if (hasStoryFlag(StoryTrustBrokenFlag)) {
@@ -8504,6 +8771,7 @@ bool Game::startStoryEventInternal(std::string_view id, StoryEventStartOptions o
     }
     baseStatus_.clear();
     pendingDialogueCompletion_ = {};
+    clearBaseStoryPresentation();
     dialogue_.start(event->dialogue);
     if (options.logDebugReplay) {
         logInfo("[story] debug replay: " + event->id);
@@ -11380,6 +11648,7 @@ void Game::updateBaseScreen(const Input& input, UiContext& ui, float dt)
     for (BaseFacility& facility : facilities) {
         facility.rect = toUiRect(baseFacilityRectFor(baseArea_, facility.facilityId, toBaseEditRect(facility.rect)));
     }
+    applyBaseStoryFacilityOffsets(facilities, baseStoryFacilityOffsets_);
     const float playerRadius = balance_.playerRadius;
     const auto baseCollision = [&](Vec2 position) {
         const UiRect bounds = baseMapBounds();
@@ -11912,6 +12181,7 @@ struct BaseActorRenderContext {
     float playerSpriteAnimationTime = 0.0f;
     bool playerSpriteWalking = false;
     bool playerSpriteFlipHorizontal = false;
+    bool showInteractionHints = true;
     const InventorySystem* inventory = nullptr;
     const std::unordered_map<std::string, bool>* npcSpriteFlipHorizontal = nullptr;
 };
@@ -11955,14 +12225,15 @@ void drawBaseActors(
         }
 
         const UiRect visualRect = baseCharacterSpriteVisualRect(facility);
-        const bool inInteractionRange = baseInteractionGroupAvailable(context.playerPosition, context.area, facilities, facility);
-        const bool hovered = inInteractionRange && facility.enabled && visualRect.contains(mouse);
+        const bool inInteractionRange = context.showInteractionHints &&
+            baseInteractionGroupAvailable(context.playerPosition, context.area, facilities, facility);
+        const bool hovered = context.showInteractionHints && inInteractionRange && facility.enabled && visualRect.contains(mouse);
         const NpcCharacterVisual* visual = findNpcCharacterVisual(spriteVisual->visualId);
         if (visual == nullptr) {
             drawEntries.push_back(ActorDrawEntry{
                 facility.rect.pos.y + facility.rect.size.y,
-                [&, facilityPtr = &facility, inInteractionRange, hovered]() {
-                    drawBaseFacilityFallbackRect(renderer, *facilityPtr, inInteractionRange, hovered);
+                [&, facilityPtr = &facility, inInteractionRange, hovered, showInteractionHints = context.showInteractionHints]() {
+                    drawBaseFacilityFallbackRect(renderer, *facilityPtr, inInteractionRange, hovered, showInteractionHints);
                 },
             });
             continue;
@@ -11990,12 +12261,17 @@ void drawBaseActors(
                 options.anchorPosition = anchorPosition;
                 options.scale = drawScale;
                 options.flipHorizontal = flipHorizontal;
-                options.outlineEnabled = inInteractionRange && facilityPtr->enabled;
+                options.outlineEnabled = context.showInteractionHints && inInteractionRange && facilityPtr->enabled;
                 options.outlineColor = hovered ? Color{255, 230, 72, 255} : Color{255, 255, 255, 245};
                 options.outlinePx = 1;
 
                 if (!drawNpcCharacterSprite(renderer, *visual, options)) {
-                    drawBaseFacilityFallbackRect(renderer, *facilityPtr, inInteractionRange, hovered);
+                    drawBaseFacilityFallbackRect(
+                        renderer,
+                        *facilityPtr,
+                        inInteractionRange,
+                        hovered,
+                        context.showInteractionHints);
                 }
             },
         });
@@ -12087,8 +12363,10 @@ void Game::renderBaseBackdrop(Renderer& renderer) const
     for (BaseFacility& facility : facilities) {
         facility.rect = toUiRect(baseFacilityRectFor(baseArea_, facility.facilityId, toBaseEditRect(facility.rect)));
     }
+    applyBaseStoryFacilityOffsets(facilities, baseStoryFacilityOffsets_);
     const Vec2 mouse = currentRenderMousePosition(renderer);
-    drawBaseFacilities(renderer, facilities, baseArea_, ringWorkshopUnlocked_, basePlayerPosition_, mouse);
+    const bool showInteractionHints = !dialogue_.active();
+    drawBaseFacilities(renderer, facilities, baseArea_, ringWorkshopUnlocked_, basePlayerPosition_, mouse, showInteractionHints);
     renderBaseEditOverlay(renderer);
     drawBaseActors(
         renderer,
@@ -12104,6 +12382,7 @@ void Game::renderBaseBackdrop(Renderer& renderer) const
             basePlayerSpriteAnimationTime_,
             basePlayerSpriteWalking_,
             basePlayerSpriteFlipHorizontal_,
+            showInteractionHints,
             &inventory_,
             &baseNpcSpriteFlipHorizontal_,
         },
@@ -12158,11 +12437,15 @@ void Game::renderBaseScreen(Renderer& renderer) const
     for (BaseFacility& facility : facilities) {
         facility.rect = toUiRect(baseFacilityRectFor(baseArea_, facility.facilityId, toBaseEditRect(facility.rect)));
     }
+    applyBaseStoryFacilityOffsets(facilities, baseStoryFacilityOffsets_);
     const Vec2 mouse = currentRenderMousePosition(renderer);
+    const bool showInteractionHints = !dialogue_.active();
+    if (showInteractionHints) {
     if (const BaseFacility* selectedFacility = selectBaseInteractionFacility(basePlayerPosition_, basePlayerFacing_, baseArea_, facilities)) {
         interactionFacility = *selectedFacility;
     }
-    drawBaseFacilities(renderer, facilities, baseArea_, ringWorkshopUnlocked_, basePlayerPosition_, mouse);
+    }
+    drawBaseFacilities(renderer, facilities, baseArea_, ringWorkshopUnlocked_, basePlayerPosition_, mouse, showInteractionHints);
     renderBaseEditOverlay(renderer);
     drawBaseActors(
         renderer,
@@ -12178,6 +12461,7 @@ void Game::renderBaseScreen(Renderer& renderer) const
             basePlayerSpriteAnimationTime_,
             basePlayerSpriteWalking_,
             basePlayerSpriteFlipHorizontal_,
+            showInteractionHints,
             &inventory_,
             &baseNpcSpriteFlipHorizontal_,
         },

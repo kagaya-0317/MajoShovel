@@ -3,6 +3,13 @@
 @trigger intro_tutorial:base_return
 @once story_opening_base_intro
 
+@base_player_place mine_exit_return
+@base_actor_offset elder 4 1
+@base_actor_offset monica -2 2
+@base_wait 1
+@base_player_walk 2 -1 1.43
+@base_player_walk 0 -0.5 0.32
+
 @say player ルネ
 はあ、はあ…やっと帰ってきたよ
 
@@ -23,8 +30,7 @@
 @say player ルネ
 それにしても…
 
-@narration
-ルネは周りを見渡しました。
+@base_player_lookaround
 
 @say player ルネ
 ……ここ、私の家の庭だよね？
@@ -37,6 +43,7 @@
 
 @wait small
 
+@portrait_focus player
 @narration
 紹介が遅れましたが、この子は、ルネ。
 魔法は下手だけど、物を浮かせて周囲に回転させる「スペルリング」だけ異常に上手な見習い魔女です
@@ -56,6 +63,7 @@
 
 @wait small
 
+@portrait_focus monica
 @narration
 こっちの子は、幼馴染のモニカ。
 ルネとは正反対で、魔法がとっても上手。村の期待を背負う優秀な若手魔女だ！
@@ -161,7 +169,14 @@
 @say player ルネ
 では、ひ、ひひひ拾ってきます！
 
+@portraits_hide
+
 @wait small
+
+@base_fade out
+@base_actor_reset elder
+@base_actor_reset monica
+@base_fade in
 
 @narration
 ルネの家の日記を調べることで

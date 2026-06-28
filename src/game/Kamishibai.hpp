@@ -13,8 +13,11 @@ namespace majo {
 enum class KamishibaiEffect {
     None,
     Flash,
+    FlashWhiteout,
     ShakeDark,
+    OverlayFade,
     TitleFade,
+    TitleFromBlack,
 };
 
 struct KamishibaiPage {
@@ -23,6 +26,7 @@ struct KamishibaiPage {
     std::string text;
     std::vector<std::string> textSteps;
     float duration = 3.0f;
+    float textDelay = 0.0f;
     KamishibaiEffect effect = KamishibaiEffect::None;
     std::string effectName = "none";
     std::string note;
@@ -54,8 +58,12 @@ public:
     [[nodiscard]] int currentTextStepIndex() const { return currentTextStepIndex_; }
     [[nodiscard]] float pageProgress() const;
     [[nodiscard]] float transitionProgress() const;
+    [[nodiscard]] float transitionDuration() const;
+    [[nodiscard]] float pageContentElapsed() const;
     [[nodiscard]] const KamishibaiPage* currentPage() const;
     [[nodiscard]] const KamishibaiPage* previousPage() const;
+    [[nodiscard]] const KamishibaiPage* pageAt(int index) const;
+    [[nodiscard]] int underlayIndex(int index) const;
     [[nodiscard]] std::string_view currentText() const;
     bool advance();
 
@@ -63,6 +71,7 @@ private:
     void advancePage();
 
     std::vector<KamishibaiPage> pages_;
+    std::vector<int> underlayIndices_;
     int currentIndex_ = -1;
     int previousIndex_ = -1;
     int currentTextStepIndex_ = 0;
@@ -88,6 +97,15 @@ private:
     void drawCoverImage(
         Renderer& renderer,
         const KamishibaiPage& page,
+        int screenWidth,
+        int screenHeight,
+        float alpha,
+        Vec2 offset,
+        float overscan) const;
+    void drawPageComposite(
+        Renderer& renderer,
+        const KamishibaiPlayer& player,
+        int pageIndex,
         int screenWidth,
         int screenHeight,
         float alpha,

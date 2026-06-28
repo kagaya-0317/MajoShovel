@@ -3,6 +3,7 @@
 #include "engine/Log.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstdlib>
 #include <fstream>
@@ -14,9 +15,26 @@ namespace {
 
 constexpr float DefaultPageDuration = 3.0f;
 constexpr float CrossFadeSeconds = 0.8f;
+constexpr float OverlayFadeSeconds = 0.28f;
+constexpr float TitleFromBlackFadeInSeconds = 1.45f;
+constexpr float FlashWhiteoutFlashSeconds = 0.55f;
+constexpr float FlashWhiteoutHoldSeconds = 0.25f;
+constexpr float TextAppearDelaySeconds = 0.5f;
 constexpr float TextFadeSeconds = 0.45f;
 constexpr int KamishibaiTextScale = 3;
 constexpr std::string_view TextStepSeparator = "[[next]]";
+
+struct KamishibaiTextLineLayout {
+    std::string text;
+    Vec2 offset;
+};
+
+struct KamishibaiTextShadowLayer {
+    Vec2 offset;
+    Color color;
+};
+
+Color multipliedAlpha(Color color, float alpha);
 
 std::string trimAscii(std::string_view value)
 {
@@ -166,12 +184,10 @@ std::vector<std::string_view> splitDisplayLines(std::string_view text)
     return lines;
 }
 
-void drawCenteredWrappedText(
+std::vector<KamishibaiTextLineLayout> layoutCenteredWrappedText(
     Renderer& renderer,
-    Vec2 pos,
     std::string_view text,
     float maxWidth,
-    Color color,
     int scale)
 {
     const std::string wrapped = wrapTextForKamishibai(renderer, text, maxWidth, scale);
@@ -180,15 +196,65 @@ void drawCenteredWrappedText(
         1.0f,
         renderer.measureText("M\nM", scale).y - renderer.measureText("M", scale).y);
 
-    float y = pos.y;
+    std::vector<KamishibaiTextLineLayout> layout;
+    layout.reserve(lines.size());
+    float y = 0.0f;
     for (const std::string_view line : lines) {
         if (!line.empty()) {
             const Vec2 lineSize = renderer.measureText(line, scale);
-            const float x = pos.x + (maxWidth - lineSize.x) * 0.5f;
-            renderer.drawText({x, y}, line, color, scale);
+            const float x = (maxWidth - lineSize.x) * 0.5f;
+            layout.push_back({std::string(line), {x, y}});
         }
         y += lineHeight;
     }
+    return layout;
+}
+
+void drawTextLayout(
+    Renderer& renderer,
+    Vec2 pos,
+    const std::vector<KamishibaiTextLineLayout>& layout,
+    Color color,
+    int scale)
+{
+    for (const KamishibaiTextLineLayout& line : layout) {
+        renderer.drawText(pos + line.offset, line.text, color, scale);
+    }
+}
+
+void drawCenteredWrappedTextWithSoftShadow(
+    Renderer& renderer,
+    Vec2 pos,
+    std::string_view text,
+    float maxWidth,
+    Color textColor,
+    float alpha,
+    int scale)
+{
+    const std::vector<KamishibaiTextLineLayout> layout = layoutCenteredWrappedText(renderer, text, maxWidth, scale);
+    constexpr std::array<Vec2, 8> softOffsets{{
+        {-2.0f, -1.0f},
+        {0.0f, -2.0f},
+        {2.0f, -1.0f},
+        {-2.0f, 1.0f},
+        {2.0f, 1.0f},
+        {-1.0f, 2.0f},
+        {1.0f, 2.0f},
+        {0.0f, 3.0f},
+    }};
+    constexpr std::array<KamishibaiTextShadowLayer, 3> dropLayers{{
+        {{3.0f, 3.0f}, {0, 0, 0, 42}},
+        {{6.0f, 6.0f}, {0, 0, 0, 28}},
+        {{9.0f, 9.0f}, {0, 0, 0, 16}},
+    }};
+
+    for (const Vec2 offset : softOffsets) {
+        drawTextLayout(renderer, pos + offset, layout, multipliedAlpha({0, 0, 0, 32}, alpha), scale);
+    }
+    for (const KamishibaiTextShadowLayer& layer : dropLayers) {
+        drawTextLayout(renderer, pos + layer.offset, layout, multipliedAlpha(layer.color, alpha), scale);
+    }
+    drawTextLayout(renderer, pos, layout, multipliedAlpha(textColor, alpha), scale);
 }
 
 bool parseDuration(std::string_view value, float& out)
@@ -200,6 +266,21 @@ bool parseDuration(std::string_view value, float& out)
     char* end = nullptr;
     const float parsed = std::strtof(trimmed.c_str(), &end);
     if (end == trimmed.c_str() || (end != nullptr && *end != '\0') || !std::isfinite(parsed) || parsed <= 0.0f) {
+        return false;
+    }
+    out = parsed;
+    return true;
+}
+
+bool parseNonNegativeFloat(std::string_view value, float& out)
+{
+    const std::string trimmed = trimAscii(value);
+    if (trimmed.empty()) {
+        return false;
+    }
+    char* end = nullptr;
+    const float parsed = std::strtof(trimmed.c_str(), &end);
+    if (end == trimmed.c_str() || (end != nullptr && *end != '\0') || !std::isfinite(parsed) || parsed < 0.0f) {
         return false;
     }
     out = parsed;
@@ -228,6 +309,43 @@ Color multipliedAlpha(Color color, float alpha)
     const float baseAlpha = static_cast<float>(color.a) / 255.0f;
     color.a = alphaByte(baseAlpha * alpha);
     return color;
+}
+
+float transitionDurationForEffect(KamishibaiEffect effect)
+{
+    switch (effect) {
+    case KamishibaiEffect::OverlayFade:
+        return OverlayFadeSeconds;
+    case KamishibaiEffect::None:
+    case KamishibaiEffect::Flash:
+    case KamishibaiEffect::FlashWhiteout:
+    case KamishibaiEffect::ShakeDark:
+    case KamishibaiEffect::TitleFade:
+    case KamishibaiEffect::TitleFromBlack:
+        return CrossFadeSeconds;
+    }
+    return CrossFadeSeconds;
+}
+
+bool usesPreviousPageAsUnderlay(KamishibaiEffect effect)
+{
+    return effect == KamishibaiEffect::OverlayFade;
+}
+
+bool fadesOutToWhite(KamishibaiEffect effect)
+{
+    return effect == KamishibaiEffect::FlashWhiteout;
+}
+
+float flashWhiteoutProgress(const KamishibaiPlayer& player, const KamishibaiPage& page)
+{
+    const float visibleSeconds = std::max(
+        FlashWhiteoutFlashSeconds + 0.1f,
+        page.duration - (player.currentIndex() > 0 ? player.transitionDuration() : 0.0f));
+    const float riseSeconds = std::max(
+        0.1f,
+        visibleSeconds - FlashWhiteoutFlashSeconds - FlashWhiteoutHoldSeconds);
+    return smoothStep((player.pageContentElapsed() - FlashWhiteoutFlashSeconds) / riseSeconds);
 }
 
 std::string pageLabel(const KamishibaiPage& page)
@@ -259,7 +377,8 @@ bool validHeader(const std::vector<std::string>& columns)
         trimAscii(columns[2]) == "text" &&
         trimAscii(columns[3]) == "duration" &&
         trimAscii(columns[4]) == "effect" &&
-        trimAscii(columns[5]) == "note";
+        trimAscii(columns[5]) == "note" &&
+        (columns.size() < 7 || trimAscii(columns[6]) == "text_delay");
 }
 
 }
@@ -270,11 +389,20 @@ KamishibaiEffect kamishibaiEffectFromString(std::string_view value)
     if (normalized == "flash") {
         return KamishibaiEffect::Flash;
     }
+    if (normalized == "flash_whiteout") {
+        return KamishibaiEffect::FlashWhiteout;
+    }
     if (normalized == "shake_dark") {
         return KamishibaiEffect::ShakeDark;
     }
+    if (normalized == "overlay_fade") {
+        return KamishibaiEffect::OverlayFade;
+    }
     if (normalized == "title_fade") {
         return KamishibaiEffect::TitleFade;
+    }
+    if (normalized == "title_from_black") {
+        return KamishibaiEffect::TitleFromBlack;
     }
     return KamishibaiEffect::None;
 }
@@ -286,10 +414,16 @@ std::string_view kamishibaiEffectName(KamishibaiEffect effect)
         return "none";
     case KamishibaiEffect::Flash:
         return "flash";
+    case KamishibaiEffect::FlashWhiteout:
+        return "flash_whiteout";
     case KamishibaiEffect::ShakeDark:
         return "shake_dark";
+    case KamishibaiEffect::OverlayFade:
+        return "overlay_fade";
     case KamishibaiEffect::TitleFade:
         return "title_fade";
+    case KamishibaiEffect::TitleFromBlack:
+        return "title_from_black";
     }
     return "none";
 }
@@ -316,7 +450,7 @@ KamishibaiLoadResult KamishibaiLoader::load(const std::filesystem::path& path) c
     stripUtf8Bom(line);
     const std::vector<std::string> header = splitTsvLine(line);
     if (!validHeader(header)) {
-        result.warnings.push_back("opening kamishibai TSV header mismatch; expected id/image/text/duration/effect/note");
+        result.warnings.push_back("opening kamishibai TSV header mismatch; expected id/image/text/duration/effect/note[/text_delay]");
     }
 
     int lineNumber = 1;
@@ -336,7 +470,7 @@ KamishibaiLoadResult KamishibaiLoader::load(const std::filesystem::path& path) c
                 " has too few columns; missing columns were treated as empty");
             columns.resize(6);
         }
-        if (columns.size() > 6) {
+        if (columns.size() > 7) {
             result.warnings.push_back(
                 "opening kamishibai TSV line " + std::to_string(lineNumber) +
                 " has extra columns; extras were ignored");
@@ -350,6 +484,11 @@ KamishibaiLoadResult KamishibaiLoader::load(const std::filesystem::path& path) c
         page.effectName = lowerAscii(trimAscii(columns[4]));
         page.effect = kamishibaiEffectFromString(page.effectName);
         page.note = columns[5];
+        if (columns.size() >= 7 && !trimAscii(columns[6]).empty() && !parseNonNegativeFloat(columns[6], page.textDelay)) {
+            result.warnings.push_back(
+                "opening kamishibai page " + pageLabel(page) +
+                " has invalid text_delay; using 0");
+        }
 
         if (page.id.empty()) {
             page.id = "line_" + std::to_string(lineNumber);
@@ -388,6 +527,7 @@ KamishibaiLoadResult KamishibaiLoader::load(const std::filesystem::path& path) c
 void KamishibaiPlayer::start(std::vector<KamishibaiPage> pages, bool canSkipImmediately)
 {
     pages_ = std::move(pages);
+    underlayIndices_.assign(pages_.size(), -1);
     canSkipImmediately_ = canSkipImmediately;
     finished_ = pages_.empty();
     currentIndex_ = finished_ ? -1 : 0;
@@ -395,7 +535,7 @@ void KamishibaiPlayer::start(std::vector<KamishibaiPage> pages, bool canSkipImme
     currentTextStepIndex_ = 0;
     pageElapsed_ = 0.0f;
     textStepElapsed_ = 0.0f;
-    transitionElapsed_ = CrossFadeSeconds;
+    transitionElapsed_ = transitionDurationForEffect(KamishibaiEffect::None);
     transitionActive_ = false;
 }
 
@@ -410,10 +550,11 @@ void KamishibaiPlayer::update(float dt)
     textStepElapsed_ += safeDt;
     if (transitionActive_) {
         transitionElapsed_ += safeDt;
-        if (transitionElapsed_ >= CrossFadeSeconds) {
+        const float transitionSeconds = transitionDuration();
+        if (transitionElapsed_ >= transitionSeconds) {
             transitionActive_ = false;
             previousIndex_ = -1;
-            transitionElapsed_ = CrossFadeSeconds;
+            transitionElapsed_ = transitionSeconds;
         }
     }
 
@@ -447,7 +588,19 @@ float KamishibaiPlayer::transitionProgress() const
     if (!transitionActive_) {
         return 1.0f;
     }
-    return std::clamp(transitionElapsed_ / CrossFadeSeconds, 0.0f, 1.0f);
+    return std::clamp(transitionElapsed_ / transitionDuration(), 0.0f, 1.0f);
+}
+
+float KamishibaiPlayer::transitionDuration() const
+{
+    const KamishibaiPage* page = currentPage();
+    return transitionDurationForEffect(page != nullptr ? page->effect : KamishibaiEffect::None);
+}
+
+float KamishibaiPlayer::pageContentElapsed() const
+{
+    const float transitionDelay = currentIndex_ > 0 ? transitionDuration() : 0.0f;
+    return std::max(0.0f, pageElapsed_ - transitionDelay);
 }
 
 const KamishibaiPage* KamishibaiPlayer::currentPage() const
@@ -460,10 +613,23 @@ const KamishibaiPage* KamishibaiPlayer::currentPage() const
 
 const KamishibaiPage* KamishibaiPlayer::previousPage() const
 {
-    if (previousIndex_ < 0 || previousIndex_ >= static_cast<int>(pages_.size())) {
+    return pageAt(previousIndex_);
+}
+
+const KamishibaiPage* KamishibaiPlayer::pageAt(int index) const
+{
+    if (index < 0 || index >= static_cast<int>(pages_.size())) {
         return nullptr;
     }
-    return &pages_[static_cast<std::size_t>(previousIndex_)];
+    return &pages_[static_cast<std::size_t>(index)];
+}
+
+int KamishibaiPlayer::underlayIndex(int index) const
+{
+    if (index < 0 || index >= static_cast<int>(underlayIndices_.size())) {
+        return -1;
+    }
+    return underlayIndices_[static_cast<std::size_t>(index)];
 }
 
 std::string_view KamishibaiPlayer::currentText() const
@@ -505,6 +671,9 @@ void KamishibaiPlayer::advancePage()
 
     previousIndex_ = currentIndex_;
     ++currentIndex_;
+    if (const KamishibaiPage* page = currentPage(); page != nullptr && usesPreviousPageAsUnderlay(page->effect)) {
+        underlayIndices_[static_cast<std::size_t>(currentIndex_)] = previousIndex_;
+    }
     currentTextStepIndex_ = 0;
     pageElapsed_ = 0.0f;
     textStepElapsed_ = 0.0f;
@@ -539,18 +708,60 @@ void KamishibaiRenderer::render(
             std::sin(player.pageElapsed() * 47.0f + 1.1f) * strength * 0.7f,
         };
         overscan = 12.0f;
+    } else if (current->effect == KamishibaiEffect::FlashWhiteout) {
+        const float progress = flashWhiteoutProgress(player, *current);
+        const float strength = 7.0f * progress * shakeScale;
+        shakeOffset = {
+            std::sin(player.pageElapsed() * 40.0f) * strength,
+            std::sin(player.pageElapsed() * 53.0f + 0.8f) * strength * 0.72f,
+        };
+        overscan = 14.0f;
     }
 
     const float fade = smoothStep(player.transitionProgress());
+    const bool overlayFade = current->effect == KamishibaiEffect::OverlayFade;
+    if (current->effect == KamishibaiEffect::TitleFromBlack) {
+        if (player.previousPage() != nullptr) {
+            drawPageComposite(renderer, player, player.previousIndex(), width, height, 1.0f, {}, 0.0f);
+            renderer.fillRect(
+                {0.0f, 0.0f},
+                {static_cast<float>(width), static_cast<float>(height)},
+                {0, 0, 0, alphaByte(fade)});
+        } else {
+            const float titleAlpha = smoothStep(player.pageContentElapsed() / TitleFromBlackFadeInSeconds);
+            drawCoverImage(renderer, *current, width, height, titleAlpha, {}, 0.0f);
+        }
+        return;
+    }
+
     if (const KamishibaiPage* previous = player.previousPage()) {
-        drawCoverImage(renderer, *previous, width, height, 1.0f - fade, {}, 0.0f);
+        if (fadesOutToWhite(previous->effect)) {
+            renderer.fillRect(
+                {0.0f, 0.0f},
+                {static_cast<float>(width), static_cast<float>(height)},
+                {255, 255, 255, 255});
+        } else {
+            drawPageComposite(
+                renderer,
+                player,
+                player.previousIndex(),
+                width,
+                height,
+                overlayFade ? 1.0f : 1.0f - fade,
+                {},
+                0.0f);
+        }
     }
 
     float currentAlpha = fade;
     if (current->effect == KamishibaiEffect::TitleFade) {
         currentAlpha *= smoothStep(player.pageElapsed() / 1.45f);
     }
-    drawCoverImage(renderer, *current, width, height, currentAlpha, shakeOffset, overscan);
+    if (overlayFade && player.previousPage() != nullptr) {
+        drawCoverImage(renderer, *current, width, height, currentAlpha, shakeOffset, overscan);
+    } else {
+        drawPageComposite(renderer, player, player.currentIndex(), width, height, currentAlpha, shakeOffset, overscan);
+    }
 
     if (current->effect == KamishibaiEffect::ShakeDark) {
         const float darkAlpha = 0.38f * smoothStep((player.pageProgress() - 0.42f) / 0.58f);
@@ -560,12 +771,32 @@ void KamishibaiRenderer::render(
             {0, 0, 0, alphaByte(darkAlpha)});
     }
     if (current->effect == KamishibaiEffect::Flash) {
-        const float flash = std::max(0.0f, 1.0f - player.pageElapsed() / 0.55f);
-        const float alpha = flash * flash * 0.92f;
-        renderer.fillRect(
-            {0.0f, 0.0f},
-            {static_cast<float>(width), static_cast<float>(height)},
-            {255, 255, 255, alphaByte(alpha)});
+        const float flashElapsed = player.pageContentElapsed();
+        if (player.currentIndex() == 0 || flashElapsed > 0.0f) {
+            const float flash = std::max(0.0f, 1.0f - flashElapsed / 0.55f);
+            const float alpha = flash * flash * 0.92f;
+            renderer.fillRect(
+                {0.0f, 0.0f},
+                {static_cast<float>(width), static_cast<float>(height)},
+                {255, 255, 255, alphaByte(alpha)});
+        }
+    }
+    if (current->effect == KamishibaiEffect::FlashWhiteout) {
+        const float elapsed = player.pageContentElapsed();
+        const float whiteout = flashWhiteoutProgress(player, *current);
+        if (whiteout > 0.0f) {
+            renderer.fillRect(
+                {0.0f, 0.0f},
+                {static_cast<float>(width), static_cast<float>(height)},
+                {255, 255, 255, alphaByte(whiteout)});
+        } else if (player.currentIndex() == 0 || elapsed > 0.0f) {
+            const float flash = std::max(0.0f, 1.0f - elapsed / FlashWhiteoutFlashSeconds);
+            const float alpha = flash * flash * 0.92f;
+            renderer.fillRect(
+                {0.0f, 0.0f},
+                {static_cast<float>(width), static_cast<float>(height)},
+                {255, 255, 255, alphaByte(alpha)});
+        }
     }
     if (current->effect == KamishibaiEffect::TitleFade) {
         const float black = 0.42f * (1.0f - smoothStep(player.pageElapsed() / 1.8f));
@@ -575,9 +806,13 @@ void KamishibaiRenderer::render(
             {0, 0, 0, alphaByte(black)});
     }
 
-    const bool pageTransitionTextDelay = player.currentTextStepIndex() == 0 && player.previousPage() != nullptr;
-    const float textDelay = pageTransitionTextDelay ? CrossFadeSeconds : 0.0f;
-    const float textAlpha = smoothStep((player.textStepElapsed() - textDelay) / TextFadeSeconds);
+    const bool pageTransitionTextDelay = player.currentTextStepIndex() == 0 && player.currentIndex() > 0;
+    const float textDelay = (pageTransitionTextDelay ? player.transitionDuration() : 0.0f) +
+        TextAppearDelaySeconds +
+        current->textDelay;
+    const float textFadeIn = smoothStep((player.textStepElapsed() - textDelay) / TextFadeSeconds);
+    const float textFadeOut = smoothStep((std::max(0.05f, current->duration) - player.textStepElapsed()) / TextFadeSeconds);
+    const float textAlpha = std::min(textFadeIn, textFadeOut);
     drawTextBand(renderer, player.currentText(), width, height, textAlpha);
 }
 
@@ -592,13 +827,6 @@ void KamishibaiRenderer::renderTitleScreen(Renderer& renderer, std::string_view 
     renderer.setScreenSpace();
     renderer.fillRect({0.0f, 0.0f}, {static_cast<float>(width), static_cast<float>(height)}, {5, 5, 8, 255});
     drawCoverImage(renderer, page, width, height, 1.0f, {}, 0.0f);
-    renderer.fillGradientRect(
-        {0.0f, 0.0f},
-        {static_cast<float>(width), static_cast<float>(height)},
-        {0, 0, 0, 120},
-        {0, 0, 0, 38},
-        {0, 0, 0, 150},
-        {0, 0, 0, 92});
 
     const std::string title = "ダンジョンを掘る魔女";
     const int titleScale = width >= 1000 ? 7 : 5;
@@ -690,6 +918,27 @@ void KamishibaiRenderer::drawCoverImage(
     }
 }
 
+void KamishibaiRenderer::drawPageComposite(
+    Renderer& renderer,
+    const KamishibaiPlayer& player,
+    int pageIndex,
+    int screenWidth,
+    int screenHeight,
+    float alpha,
+    Vec2 offset,
+    float overscan) const
+{
+    const KamishibaiPage* page = player.pageAt(pageIndex);
+    if (page == nullptr) {
+        return;
+    }
+    const int underlay = player.underlayIndex(pageIndex);
+    if (underlay >= 0 && underlay != pageIndex) {
+        drawPageComposite(renderer, player, underlay, screenWidth, screenHeight, alpha, {}, 0.0f);
+    }
+    drawCoverImage(renderer, *page, screenWidth, screenHeight, alpha, offset, overscan);
+}
+
 void KamishibaiRenderer::drawTextBand(
     Renderer& renderer,
     std::string_view text,
@@ -716,19 +965,13 @@ void KamishibaiRenderer::drawTextBand(
         paddingX,
         bandY + std::max(paddingY, (bandHeight - textSize.y) * 0.5f),
     };
-    drawCenteredWrappedText(
-        renderer,
-        pos + Vec2{2.0f, 2.0f},
-        text,
-        textWidth,
-        multipliedAlpha({0, 0, 0, 210}, alpha),
-        scale);
-    drawCenteredWrappedText(
+    drawCenteredWrappedTextWithSoftShadow(
         renderer,
         pos,
         text,
         textWidth,
-        multipliedAlpha({255, 255, 255, 245}, alpha),
+        {255, 255, 255, 245},
+        alpha,
         scale);
 }
 

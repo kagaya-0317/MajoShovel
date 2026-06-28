@@ -53,6 +53,7 @@ enum class EnemyEventType {
     TerrainBreak,
     Death,
     BossDeath,
+    BossResolved,
     Steal,
     RewardDrop,
     ObjectDrop,

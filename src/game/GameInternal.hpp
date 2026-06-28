@@ -980,7 +980,8 @@ std::filesystem::path storyEventDataDirectory()
 std::string openingTitleImagePath(const std::vector<KamishibaiPage>& pages)
 {
     for (auto it = pages.rbegin(); it != pages.rend(); ++it) {
-        if (it->effect == KamishibaiEffect::TitleFade && !it->imagePath.empty()) {
+        if ((it->effect == KamishibaiEffect::TitleFade || it->effect == KamishibaiEffect::TitleFromBlack) &&
+            !it->imagePath.empty()) {
             return it->imagePath;
         }
     }

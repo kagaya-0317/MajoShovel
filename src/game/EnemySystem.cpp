@@ -13,6 +13,7 @@
 #include "game/EffectSystem.hpp"
 #include "game/ObjectVisualPose.hpp"
 #include "game/RingItemVisual.hpp"
+#include "game/TerrainDigRules.hpp"
 #include "game/WorldDropSystem.hpp"
 #include "game/WetGroundSystem.hpp"
 #include "data/StageWeight.hpp"
@@ -3449,7 +3450,7 @@ void drawEnemyVisual(
         renderConfuseStatusOverlay(renderer, drawPosition, uiVisualRadius * 2.0f, enemy.behaviorTimer);
     }
     drawEnemyHpBar(renderer, enemy, drawPosition, uiVisualRadius, detailsKnown);
-    if (enemy.isBoss) {
+    if (enemy.isBoss && !isAstragnaBossAction(enemy)) {
         const float hpRatio = enemy.maxHp > 0 ? clamp(static_cast<float>(enemy.hp) / static_cast<float>(enemy.maxHp), 0.0f, 1.0f) : 0.0f;
         const Vec2 barPos = drawPosition + Vec2{-28.0f, -uiVisualRadius - 14.0f};
         UiGaugeStyle bossHpGaugeStyle;
@@ -3554,7 +3555,7 @@ void applyFallbackBossDefinition(Enemy& enemy, std::string_view bossEnemyId, con
         enemy.aiId = "stationary";
         enemy.unawareAiId = "idle";
         enemy.radius = std::max(balance.enemyRadius * 1.9f, 24.0f);
-        enemy.maxHp = 2880;
+        enemy.maxHp = 1;
         enemy.hp = enemy.maxHp;
         enemy.xp = std::max(enemy.xp, 120);
         enemy.contactAttackPower = 0;
@@ -4609,33 +4610,15 @@ int astragnaAliveSealPartCount(const Enemy& enemy)
         }));
 }
 
-void syncAstragnaHpDisplay(Enemy& enemy)
+void syncAstragnaBodyState(Enemy& enemy)
 {
     if (!isAstragnaBossAction(enemy)) {
         return;
     }
 
-    const AstragnaBossRuntime& astragna = enemy.bossAction.astragna;
-    int maxHp = 0;
-    int hp = 0;
-    for (const AstragnaSealPartRuntime& part : astragna.sealParts) {
-        maxHp += std::max(0, part.maxHp);
-        if (part.active) {
-            hp += std::max(0, part.hp);
-        }
-    }
-    for (const AstragnaShellBlockRuntime& block : astragna.shellBlocks) {
-        if (block.maxHp <= 0) {
-            continue;
-        }
-        maxHp += std::max(0, block.maxHp);
-        if (block.active) {
-            hp += std::max(0, block.hp);
-        }
-    }
-
-    enemy.maxHp = std::max(1, maxHp);
-    enemy.hp = astragna.phase == AstragnaPhase::Rescued ? 0 : std::max(1, hp);
+    enemy.maxHp = 1;
+    enemy.hp = 1;
+    enemy.hpBarTimer = 0.0f;
 }
 
 void initializeAstragnaBoss(Enemy& enemy)
@@ -4709,7 +4692,7 @@ void initializeAstragnaBoss(Enemy& enemy)
         }
     }
 
-    syncAstragnaHpDisplay(enemy);
+    syncAstragnaBodyState(enemy);
 }
 
 void reviveAstragnaSealParts(Enemy& enemy)
@@ -4722,7 +4705,7 @@ void reviveAstragnaSealParts(Enemy& enemy)
         part.maxHp = maxHp;
         part.hp = maxHp;
     }
-    syncAstragnaHpDisplay(enemy);
+    syncAstragnaBodyState(enemy);
 }
 
 void enterAstragnaPhase(Enemy& enemy, AstragnaPhase phase, std::vector<EnemyEvent>& events)
@@ -4751,11 +4734,15 @@ void enterAstragnaPhase(Enemy& enemy, AstragnaPhase phase, std::vector<EnemyEven
         break;
     case AstragnaPhase::Rescued:
         events.push_back(makeEnemyEventAt(EnemyEventType::BossImpact, enemy, enemy.position, "astragna_rescue"));
+        if (!astragna.rescueEventEmitted) {
+            events.push_back(makeEnemyEventAt(EnemyEventType::BossResolved, enemy, enemy.position, "astragna_rescue"));
+            astragna.rescueEventEmitted = true;
+        }
         break;
     case AstragnaPhase::None:
         break;
     }
-    syncAstragnaHpDisplay(enemy);
+    syncAstragnaBodyState(enemy);
 }
 
 bool astragnaPlayerTooCloseForRepair(const Enemy& enemy, const Player& player, const AstragnaShellBlockRuntime& block)
@@ -4802,7 +4789,7 @@ void updateAstragnaRepairs(Enemy& enemy, const Player& player, float dt)
     }
     astragna.repairCursor = (astragna.repairCursor + std::max(1, attempts / 3)) % blockCount;
     if (repaired > 0) {
-        syncAstragnaHpDisplay(enemy);
+        syncAstragnaBodyState(enemy);
     }
 }
 
@@ -5265,7 +5252,7 @@ bool updateAstragnaBossActionSequence(
 
     resolveAstragnaShellCollision(enemy, player, map);
     updateAstragnaEmitters(enemy, player, projectiles, safeDt, events);
-    if (astragna.phase == AstragnaPhase::Downed && astragnaGuardianTouched(enemy, player)) {
+    if (astragna.phase != AstragnaPhase::Rescued && astragnaGuardianTouched(enemy, player)) {
         enterAstragnaPhase(enemy, AstragnaPhase::Rescued, events);
         return true;
     }
@@ -5283,30 +5270,12 @@ bool updateAstragnaBossActionSequence(
         }
         return true;
     case AstragnaPhase::Rescued:
-        enemy.hp = 0;
+        syncAstragnaBodyState(enemy);
         return true;
     case AstragnaPhase::None:
         break;
     }
     return true;
-}
-
-bool astragnaTerrainEffectTargetMatches(std::string_view target)
-{
-    return target == "terrain" || target == "ground";
-}
-
-bool astragnaDigEffect(std::string_view effect)
-{
-    return effect == "dig" || effect == "dig_hard" || effect == "dig_multi";
-}
-
-int positiveAstragnaEffectPower(double value, int fallback = 1)
-{
-    if (value <= 0.0 || !std::isfinite(value)) {
-        return fallback;
-    }
-    return std::max(1, static_cast<int>(std::round(value)));
 }
 
 int astragnaShellDigDamageForRingHit(
@@ -5315,41 +5284,20 @@ int astragnaShellDigDamageForRingHit(
     const ObjectDefinition* object,
     const SpellRingSystem& spellRing)
 {
-    if (object == nullptr) {
+    const TerrainDigProfile profile = terrainDigProfileFor(object, &item);
+    if (!profile.enabled) {
         return 0;
     }
 
-    int bestDamage = 0;
-    for (const EffectSpec& spec : object->orbitEffects) {
-        if (!astragnaTerrainEffectTargetMatches(spec.target)) {
-            continue;
-        }
-        for (std::size_t i = 0; i < spec.effects.size(); ++i) {
-            const std::string& effect = spec.effects[i];
-            if (!astragnaDigEffect(effect)) {
-                continue;
-            }
-            const double value = i < spec.values.size() ? spec.values[i] : 0.0;
-            int baseDamage = positiveAstragnaEffectPower(value);
-            double powerMultiplier = std::max(0.0, spellRing.effectivePowerMultiplier());
-            powerMultiplier *= spellRing.digPowerMultiplierForRing(item.ringIndex);
-            powerMultiplier *= spellRing.ringOutputMultiplierForRing(item.ringIndex);
-            baseDamage = std::max(1, static_cast<int>(std::round(static_cast<double>(baseDamage) * powerMultiplier)));
-            const int damage = adjustedTerrainDigDamage(
-                baseDamage,
-                TerrainAttribute::Hard,
-                effect == "dig_hard" ? TerrainDigModifier::HardSpecialist : TerrainDigModifier::Normal);
-            bestDamage = std::max(bestDamage, damage);
-        }
-    }
-    if (bestDamage <= 0) {
+    const int baseDamage = terrainDigDamageForRingHit(profile, item, spellRing, TerrainAttribute::Hard);
+    if (baseDamage <= 0) {
         return 0;
     }
 
     const double multiplier = enemy.bossAction.astragna.phase == AstragnaPhase::Downed
         ? behaviorParamDouble(enemy, "boss_sequence", "downedShellDamageMultiplier", AstragnaDownedShellDamageMultiplier)
         : behaviorParamDouble(enemy, "boss_sequence", "sealedShellDamageMultiplier", AstragnaSealedShellDamageMultiplier);
-    return std::max(1, static_cast<int>(std::ceil(static_cast<double>(bestDamage) * std::max(0.0, multiplier))));
+    return std::max(1, static_cast<int>(std::ceil(static_cast<double>(baseDamage) * std::max(0.0, multiplier))));
 }
 
 int astragnaSealDamageForRingHit(
@@ -5464,7 +5412,7 @@ bool damageAstragnaSealPart(
 
     revealEnemyHpBar(enemy, damage);
     enemy.hitFlash = 0.12f;
-    syncAstragnaHpDisplay(enemy);
+    syncAstragnaBodyState(enemy);
     events.push_back(makeEnemyEventAt(
         EnemyEventType::AttackHit,
         enemy,
@@ -5495,7 +5443,7 @@ bool damageAstragnaShellBlock(
     const Vec2 blockPosition = astragnaShellBlockPosition(enemy, block);
     revealEnemyHpBar(enemy, damage);
     enemy.hitFlash = 0.12f;
-    syncAstragnaHpDisplay(enemy);
+    syncAstragnaBodyState(enemy);
     events.push_back(makeEnemyEventAt(
         EnemyEventType::BossImpact,
         enemy,
@@ -7234,6 +7182,11 @@ bool EnemySystem::spawnBossAt(
     enemy->radius *= BossRadiusMultiplier;
     enemy->maxHp = std::max(1, enemy->maxHp);
     enemy->hp = enemy->maxHp;
+    if (isAstragnaBossAction(*enemy)) {
+        enemy->maxHp = 1;
+        enemy->hp = 1;
+        enemy->hpBarTimer = 0.0f;
+    }
     enemy->xp = std::max(0, enemy->xp);
     enemy->spawnTimer = balance.enemySpawnWarmup * 1.6f;
     enemy->spawnDuration = enemy->spawnTimer;

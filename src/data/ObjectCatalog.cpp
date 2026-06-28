@@ -859,6 +859,60 @@ bool parseNumberListToken(
     return !outValues.empty();
 }
 
+bool defaultEffectValueForOmittedField(std::string_view effect, double& outValue)
+{
+    if (effect == "dig" || effect == "dig_hard" || effect == "dig_multi") {
+        outValue = 0.0;
+        return true;
+    }
+
+    if (effect == "guard" ||
+        effect == "guard_projectile" ||
+        effect == "guard_large" ||
+        effect == "reflect_physical" ||
+        effect == "reflect_magic" ||
+        effect == "reflect_water" ||
+        effect == "break_glass_shards" ||
+        effect == "break_wood_fragments" ||
+        effect == "break_ceramic_shards" ||
+        effect == "draw_white_line" ||
+        effect == "complete_magic_circle" ||
+        effect == "flame_burst" ||
+        effect == "bounce_grounded" ||
+        effect == "fall_damage_synergy" ||
+        effect == "nonlethal_hit" ||
+        effect == "knockback" ||
+        effect == "damage_speed" ||
+        effect == "cast_fire" ||
+        effect == "cast_ice" ||
+        effect == "cast_thunder" ||
+        effect == "cast_wind" ||
+        effect == "cast_earth") {
+        outValue = 1.0;
+        return true;
+    }
+
+    return false;
+}
+
+bool appendDefaultEffectValues(
+    const std::vector<std::string>& effects,
+    std::vector<double>& outValues,
+    std::string& outError)
+{
+    outValues.clear();
+    outValues.reserve(effects.size());
+    for (const std::string& effect : effects) {
+        double value = 0.0;
+        if (!defaultEffectValueForOmittedField(effect, value)) {
+            outError = "effect value is required for \"" + effect + "\"";
+            return false;
+        }
+        outValues.push_back(value);
+    }
+    return true;
+}
+
 bool parseEffectPacket(
     std::string_view packet,
     EffectSpec& outSpec,
@@ -866,8 +920,8 @@ bool parseEffectPacket(
     std::vector<std::string>* outWarnings)
 {
     std::vector<std::string> fields;
-    if (!splitTopLevel(packet, ':', fields) || fields.size() != 4) {
-        outError = "effect packet must have 4 fields";
+    if (!splitTopLevel(packet, ':', fields) || fields.size() < 2 || fields.size() > 4) {
+        outError = "effect packet must have 2 to 4 fields";
         return false;
     }
 
@@ -881,15 +935,19 @@ bool parseEffectPacket(
         outError = "effect list is invalid";
         return false;
     }
-    if (!parseNumberListToken(fields[2], spec.values, outWarnings, packet)) {
-        outError = "effect value list is invalid";
+    if (fields.size() >= 3) {
+        if (!parseNumberListToken(fields[2], spec.values, outWarnings, packet)) {
+            outError = "effect value list is invalid";
+            return false;
+        }
+    } else if (!appendDefaultEffectValues(spec.effects, spec.values, outError)) {
         return false;
     }
     if (spec.effects.size() != spec.values.size()) {
         outError = "effect and value counts do not match";
         return false;
     }
-    if (!parseDoubleStrict(fields[3], spec.duration)) {
+    if (fields.size() >= 4 && !parseDoubleStrict(fields[3], spec.duration)) {
         if (outWarnings != nullptr) {
             outWarnings->push_back("effect duration is not a number: \"" + fields[3] +
                 "\" in packet \"" + std::string(packet) + "\"; using 0");
@@ -1566,17 +1624,8 @@ std::vector<DiscoveryEffectLine> buildDiscoveryEffectLines(const ObjectDefinitio
     }
 
     const bool staffObject = isStaffObject(object);
-    const bool hasNormalDig = !staffObject && (
-        hasEffectCode(object.normalEffects, "dig") ||
-        hasEffectCode(object.normalEffects, "dig_multi") ||
-        hasEffectCode(object.normalEffects, "dig_hard"));
-    const bool hasDig = hasNormalDig ||
-        hasEffectCode(object.orbitEffects, "dig") ||
-        hasEffectCode(object.orbitEffects, "dig_multi") ||
-        hasEffectCode(object.orbitEffects, "dig_hard");
-    const bool hasDigHard = (!staffObject && hasEffectCode(object.normalEffects, "dig_hard")) ||
-        hasEffectCode(object.orbitEffects, "dig_hard");
-    if (hasDig && object.digPower > 0) {
+    const bool hasDigHard = hasEffectCode(object.orbitEffects, "dig_hard");
+    if (object.digPower > 0) {
         const std::string key = hasDigHard ? "dig_hard" : "dig";
         const std::string text = hasDigHard
             ? "\xE7\xA1\xAC\xE3\x81\x84\xE5\x9C\x9F\xE3\x82\x92\xE6\x8E\x98\xE3\x82\x8C\xE3\x82\x8B\xEF\xBC\x88\xE6\x8E\x98\xE5\x89\x8A\xE5\x8A\x9B" + std::to_string(object.digPower) + "\xEF\xBC\x89"

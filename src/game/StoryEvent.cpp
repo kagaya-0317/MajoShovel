@@ -23,6 +23,8 @@ struct TextBlock {
     std::string speakerId;
     std::string speakerName;
     std::vector<std::string> lines;
+    bool forcePortraitsBright = false;
+    std::vector<std::string> brightPortraitSpeakerIds;
 };
 
 std::string trimAscii(std::string_view value)
@@ -82,6 +84,30 @@ float waitSecondsFor(std::string_view value)
     return 0.45f;
 }
 
+float portraitHideSecondsFor(std::string_view value)
+{
+    if (trimAscii(value).empty()) {
+        return 0.18f;
+    }
+    return waitSecondsFor(value);
+}
+
+std::vector<std::string> splitAsciiTokens(std::string_view value)
+{
+    std::vector<std::string> tokens;
+    std::string remaining = trimAscii(value);
+    while (!remaining.empty()) {
+        const std::size_t space = remaining.find_first_of(" \t");
+        if (space == std::string::npos) {
+            tokens.push_back(remaining);
+            break;
+        }
+        tokens.push_back(remaining.substr(0, space));
+        remaining = trimAscii(std::string_view(remaining).substr(space + 1));
+    }
+    return tokens;
+}
+
 void appendBlockToEvent(StoryEvent& event, TextBlock& block)
 {
     if (block.kind == TextBlockKind::None) {
@@ -94,9 +120,14 @@ void appendBlockToEvent(StoryEvent& event, TextBlock& block)
         line.speakerId = std::move(block.speakerId);
         line.speakerName = std::move(block.speakerName);
     }
+    line.forcePortraitsBright = block.forcePortraitsBright;
+    line.brightPortraitSpeakerIds = block.brightPortraitSpeakerIds;
 
     event.dialogue.lines.push_back(line);
-    event.dialogue.steps.push_back(DialogueStep{DialogueStepKind::Line, std::move(line), 0.0f});
+    DialogueStep step;
+    step.kind = DialogueStepKind::Line;
+    step.line = std::move(line);
+    event.dialogue.steps.push_back(std::move(step));
     block = TextBlock{};
 }
 
@@ -105,6 +136,24 @@ void appendWaitToEvent(StoryEvent& event, float seconds)
     DialogueStep step;
     step.kind = DialogueStepKind::Wait;
     step.waitSeconds = seconds;
+    event.dialogue.steps.push_back(std::move(step));
+}
+
+void appendPortraitHideToEvent(StoryEvent& event, float seconds)
+{
+    DialogueStep step;
+    step.kind = DialogueStepKind::PortraitHide;
+    step.waitSeconds = seconds;
+    event.dialogue.steps.push_back(std::move(step));
+}
+
+void appendCommandToEvent(StoryEvent& event, std::string command, std::string_view rest)
+{
+    DialogueStep step;
+    step.kind = DialogueStepKind::Command;
+    step.command.name = std::move(command);
+    step.command.args = splitAsciiTokens(rest);
+
     event.dialogue.steps.push_back(std::move(step));
 }
 
@@ -135,6 +184,8 @@ void loadStoryEventFile(
     StoryEvent event;
     event.id = path.stem().generic_string();
     TextBlock block;
+    bool forceNextPortraitsBright = false;
+    std::vector<std::string> nextBrightPortraitSpeakerIds;
 
     std::string line;
     bool firstLine = true;
@@ -193,13 +244,31 @@ void loadStoryEventFile(
             }
         } else if (command == "narration") {
             block.kind = TextBlockKind::Narration;
+            block.forcePortraitsBright = forceNextPortraitsBright;
+            block.brightPortraitSpeakerIds = std::move(nextBrightPortraitSpeakerIds);
+            forceNextPortraitsBright = false;
+            nextBrightPortraitSpeakerIds.clear();
         } else if (command == "say") {
             const auto [speakerId, speakerName] = splitFirstToken(rest);
             block.kind = TextBlockKind::Say;
             block.speakerId = speakerId;
             block.speakerName = speakerName;
+            block.forcePortraitsBright = forceNextPortraitsBright;
+            block.brightPortraitSpeakerIds = std::move(nextBrightPortraitSpeakerIds);
+            forceNextPortraitsBright = false;
+            nextBrightPortraitSpeakerIds.clear();
         } else if (command == "wait") {
             appendWaitToEvent(event, waitSecondsFor(rest));
+        } else if (command == "portraits_hide") {
+            appendPortraitHideToEvent(event, portraitHideSecondsFor(rest));
+        } else if (command == "portraits_bright") {
+            forceNextPortraitsBright = true;
+            nextBrightPortraitSpeakerIds.clear();
+        } else if (command == "portrait_focus") {
+            forceNextPortraitsBright = false;
+            nextBrightPortraitSpeakerIds = splitAsciiTokens(rest);
+        } else if (command.rfind("base_", 0) == 0) {
+            appendCommandToEvent(event, command, rest);
         } else {
             warnings.push_back(
                 "story event " + path.generic_string() + ":" + std::to_string(lineNumber) +

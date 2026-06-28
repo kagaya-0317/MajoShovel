@@ -103,6 +103,7 @@ add_executable(MajoShovel
     src/game/SpellRingSystem.cpp
     src/game/SpellRingItem.cpp
     src/game/RingImpactSound.cpp
+    src/game/TerrainDigRules.cpp
     src/game/DiggingSystem.cpp
     src/game/TileMap.cpp
     src/game/Enemy.cpp

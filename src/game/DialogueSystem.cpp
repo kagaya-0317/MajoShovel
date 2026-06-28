@@ -2,6 +2,7 @@
 
 #include "engine/Math.hpp"
 #include "engine/Ui.hpp"
+#include "game/WorldIconRenderer.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -51,9 +52,21 @@ enum class DialoguePortraitSide {
 };
 
 struct DialogueGlyph {
+    enum class Kind {
+        Text,
+        WorldIcon,
+    };
+
+    Kind kind = Kind::Text;
     std::string text;
     Vec2 pos{};
+    Vec2 size{};
     int revealIndex = 0;
+};
+
+struct DialogueTextUnit {
+    DialogueGlyph::Kind kind = DialogueGlyph::Kind::Text;
+    std::string text;
 };
 
 struct DialoguePortraitSlot {
@@ -127,10 +140,45 @@ const DialogueLine* previousLineBeforeStep(const DialogueSequence& sequence, int
     return nullptr;
 }
 
-std::vector<std::string> splitUtf8Codepoints(std::string_view text)
+bool isLineBreak(std::string_view codepoint)
 {
-    std::vector<std::string> result;
+    return codepoint == "\n" || codepoint == "\r";
+}
+
+bool dialogueWorldIconTagAt(std::string_view text, std::size_t offset, std::size_t& outEnd, std::string& outKey)
+{
+    constexpr std::string_view Prefix = "{world:";
+    if (offset + Prefix.size() >= text.size() || text.substr(offset, Prefix.size()) != Prefix) {
+        return false;
+    }
+
+    const std::size_t close = text.find('}', offset + Prefix.size());
+    if (close == std::string_view::npos) {
+        return false;
+    }
+
+    const std::string_view key = text.substr(offset + Prefix.size(), close - offset - Prefix.size());
+    if (key.empty() || worldIconDefinitionByKey(key) == nullptr) {
+        return false;
+    }
+
+    outKey = std::string(key);
+    outEnd = close + 1;
+    return true;
+}
+
+std::vector<DialogueTextUnit> splitDialogueTextUnits(std::string_view text)
+{
+    std::vector<DialogueTextUnit> result;
     for (std::size_t i = 0; i < text.size();) {
+        std::size_t tagEnd = 0;
+        std::string iconKey;
+        if (dialogueWorldIconTagAt(text, i, tagEnd, iconKey)) {
+            result.push_back(DialogueTextUnit{DialogueGlyph::Kind::WorldIcon, std::move(iconKey)});
+            i = tagEnd;
+            continue;
+        }
+
         const unsigned char c = static_cast<unsigned char>(text[i]);
         std::size_t count = 1;
         if ((c & 0x80u) == 0x00u) {
@@ -143,22 +191,17 @@ std::vector<std::string> splitUtf8Codepoints(std::string_view text)
             count = 4;
         }
         count = std::min(count, text.size() - i);
-        result.emplace_back(text.substr(i, count));
+        result.push_back(DialogueTextUnit{DialogueGlyph::Kind::Text, std::string(text.substr(i, count))});
         i += count;
     }
     return result;
 }
 
-bool isLineBreak(std::string_view codepoint)
-{
-    return codepoint == "\n" || codepoint == "\r";
-}
-
 int visibleGlyphCount(std::string_view text)
 {
     int count = 0;
-    for (const std::string& codepoint : splitUtf8Codepoints(text)) {
-        if (!isLineBreak(codepoint)) {
+    for (const DialogueTextUnit& unit : splitDialogueTextUnits(text)) {
+        if (unit.kind == DialogueGlyph::Kind::WorldIcon || !isLineBreak(unit.text)) {
             ++count;
         }
     }
@@ -326,19 +369,65 @@ float dialogueLineWidth(Renderer& renderer, std::string_view text)
     return std::max(0.0f, renderer.measureText(text, DialogueTextScale).x - dialogueNativeMeasurePadding(renderer));
 }
 
+float dialogueInlineIconSize(Renderer& renderer)
+{
+    const Vec2 textSize = renderer.measureText("あ", DialogueTextScale);
+    return std::max(1.0f, textSize.y * 0.95f);
+}
+
+float dialogueTextUnitWidth(Renderer& renderer, const DialogueTextUnit& unit)
+{
+    if (unit.kind == DialogueGlyph::Kind::WorldIcon) {
+        return dialogueInlineIconSize(renderer) + 4.0f;
+    }
+    return dialogueLineWidth(renderer, unit.text);
+}
+
+float dialogueLineUnitsWidth(Renderer& renderer, const std::vector<DialogueTextUnit>& line)
+{
+    float width = 0.0f;
+    std::string textRun;
+    const auto flushTextRun = [&]() {
+        if (!textRun.empty()) {
+            width += dialogueLineWidth(renderer, textRun);
+            textRun.clear();
+        }
+    };
+
+    for (const DialogueTextUnit& unit : line) {
+        if (unit.kind == DialogueGlyph::Kind::Text) {
+            textRun += unit.text;
+            continue;
+        }
+        flushTextRun();
+        width += dialogueTextUnitWidth(renderer, unit);
+    }
+    flushTextRun();
+    return width;
+}
+
 void appendDialogueGlyphLine(
     Renderer& renderer,
-    const std::vector<std::string>& line,
+    const std::vector<DialogueTextUnit>& line,
     UiRect textRect,
     float y,
     int& revealIndex,
     std::vector<DialogueGlyph>& glyphs)
 {
-    std::string prefix;
-    for (const std::string& codepoint : line) {
-        const float x = prefix.empty() ? 0.0f : dialogueLineWidth(renderer, prefix);
-        glyphs.push_back(DialogueGlyph{codepoint, textRect.pos + Vec2{x, y}, revealIndex});
-        prefix += codepoint;
+    std::vector<DialogueTextUnit> prefix;
+    for (const DialogueTextUnit& unit : line) {
+        const float x = prefix.empty() ? 0.0f : dialogueLineUnitsWidth(renderer, prefix);
+        DialogueGlyph glyph;
+        glyph.kind = unit.kind;
+        glyph.text = unit.text;
+        glyph.pos = textRect.pos + Vec2{x, y};
+        glyph.revealIndex = revealIndex;
+        if (unit.kind == DialogueGlyph::Kind::WorldIcon) {
+            const float size = dialogueInlineIconSize(renderer);
+            glyph.size = {size, size};
+        }
+        glyphs.push_back(std::move(glyph));
+        prefix.push_back(unit);
         ++revealIndex;
     }
 }
@@ -349,32 +438,29 @@ std::vector<DialogueGlyph> layoutDialogueGlyphs(Renderer& renderer, std::string_
     const Vec2 lineMeasure = renderer.measureText("あ", DialogueTextScale);
     const float lineHeight = std::max(24.0f, lineMeasure.y + 6.0f);
 
-    std::vector<std::string> line;
-    std::string lineText;
+    std::vector<DialogueTextUnit> line;
     float y = 0.0f;
     int revealIndex = 0;
-    for (const std::string& codepoint : splitUtf8Codepoints(text)) {
-        if (codepoint == "\r") {
+    for (const DialogueTextUnit& unit : splitDialogueTextUnits(text)) {
+        if (unit.kind == DialogueGlyph::Kind::Text && unit.text == "\r") {
             continue;
         }
-        if (codepoint == "\n") {
+        if (unit.kind == DialogueGlyph::Kind::Text && unit.text == "\n") {
             appendDialogueGlyphLine(renderer, line, textRect, y, revealIndex, glyphs);
             line.clear();
-            lineText.clear();
             y += lineHeight;
             continue;
         }
 
-        const std::string candidate = lineText + codepoint;
-        if (!line.empty() && dialogueLineWidth(renderer, candidate) > textRect.size.x) {
+        std::vector<DialogueTextUnit> candidate = line;
+        candidate.push_back(unit);
+        if (!line.empty() && dialogueLineUnitsWidth(renderer, candidate) > textRect.size.x) {
             appendDialogueGlyphLine(renderer, line, textRect, y, revealIndex, glyphs);
             line.clear();
-            lineText.clear();
             y += lineHeight;
         }
 
-        line.push_back(codepoint);
-        lineText += codepoint;
+        line.push_back(unit);
     }
 
     appendDialogueGlyphLine(renderer, line, textRect, y, revealIndex, glyphs);
@@ -391,6 +477,25 @@ Color fadeColor(Color color, float alphaScale)
 {
     color.a = static_cast<unsigned char>(std::clamp(std::round(static_cast<float>(color.a) * alphaScale), 0.0f, 255.0f));
     return color;
+}
+
+void drawDialogueWorldIconGlyph(Renderer& renderer, const DialogueGlyph& glyph, unsigned char alpha)
+{
+    const WorldIconDefinition* definition = worldIconDefinitionByKey(glyph.text);
+    if (definition == nullptr) {
+        return;
+    }
+
+    WorldIconDrawOptions options;
+    options.tint.a = alpha;
+    options.outlineColor.a = static_cast<unsigned char>(alpha * 3 / 4);
+    options.applyScaleOverride = false;
+    drawWorldIcon(
+        renderer,
+        definition->iconId,
+        glyph.pos + glyph.size * 0.5f + Vec2{0.0f, 2.0f},
+        glyph.size,
+        options);
 }
 
 Color portraitToneColor(Color color, float alphaScale, float brightness)
@@ -623,7 +728,10 @@ void DialoguePlayer::start(DialogueSequence sequence)
     if (sequence.steps.empty()) {
         sequence.steps.reserve(sequence.lines.size());
         for (const DialogueLine& line : sequence.lines) {
-            sequence.steps.push_back(DialogueStep{DialogueStepKind::Line, line, 0.0f});
+            DialogueStep step;
+            step.kind = DialogueStepKind::Line;
+            step.line = line;
+            sequence.steps.push_back(std::move(step));
         }
     }
     if (sequence.lines.empty()) {
@@ -646,6 +754,7 @@ void DialoguePlayer::start(DialogueSequence sequence)
     pendingRightSpeakerId_.clear();
     rightPortraitFade_ = 0.0f;
     rightPortraitTransition_ = RightPortraitTransition::Stable;
+    portraitsHidden_ = false;
     active_ = !sequence_.steps.empty();
     closing_ = false;
     syncRightPortraitForCurrentLine(false);
@@ -666,6 +775,7 @@ void DialoguePlayer::clear()
     rightPortraitTransition_ = RightPortraitTransition::Stable;
     active_ = false;
     closing_ = false;
+    portraitsHidden_ = false;
 }
 
 void DialoguePlayer::update(const Input& input, float dt)
@@ -692,11 +802,44 @@ void DialoguePlayer::update(const Input& input, float dt)
         return;
     }
 
+    const DialogueStep* step = currentStep();
+    if (step != nullptr && step->kind == DialogueStepKind::PortraitHide) {
+        resetAdvanceHoldRepeat();
+        const float duration = std::max(0.0f, step->waitSeconds);
+        const float hideStep = duration > 0.0f
+            ? safeDt / duration
+            : 1.0f;
+        contentFade_ = std::max(0.0f, contentFade_ - hideStep);
+        updateRightPortrait(safeDt);
+        lineElapsed_ += safeDt;
+        if (lineComplete()) {
+            contentFade_ = 0.0f;
+            portraitsHidden_ = true;
+            clearRightPortraitTarget(true);
+            advanceLine();
+        }
+        return;
+    }
+
+    if (portraitsHidden_ && step != nullptr && step->kind != DialogueStepKind::Line) {
+        resetAdvanceHoldRepeat();
+        contentFade_ = 0.0f;
+        updateRightPortrait(safeDt);
+        lineElapsed_ += safeDt;
+        if (step->kind == DialogueStepKind::Wait && lineComplete()) {
+            advanceLine();
+        }
+        return;
+    }
+
     contentFade_ = std::min(1.0f, contentFade_ + fadeStep);
     updateRightPortrait(safeDt);
     lineElapsed_ += safeDt;
 
-    const DialogueStep* step = currentStep();
+    if (step != nullptr && step->kind == DialogueStepKind::Command) {
+        resetAdvanceHoldRepeat();
+        return;
+    }
     if (step != nullptr && step->kind == DialogueStepKind::Wait) {
         resetAdvanceHoldRepeat();
         if (lineComplete()) {
@@ -743,21 +886,36 @@ void DialoguePlayer::render(Renderer& renderer, int screenWidth, int screenHeigh
     const std::string_view currentSpeaker = portraitFocusHasSpeaker
         ? std::string_view(portraitFocusLine->speakerId)
         : std::string_view{};
-    const auto portraitBrightness = [portraitFocusHasSpeaker, currentSpeaker](std::string_view speakerId) {
+    const bool forcePortraitsBright = line != nullptr && line->forcePortraitsBright;
+    const bool hasExplicitPortraitFocus = line != nullptr && !line->brightPortraitSpeakerIds.empty();
+    const auto portraitBrightness = [line, portraitFocusHasSpeaker, currentSpeaker, forcePortraitsBright, hasExplicitPortraitFocus](std::string_view speakerId) {
+        if (forcePortraitsBright) {
+            return 1.0f;
+        }
+        if (hasExplicitPortraitFocus) {
+            const auto& speakerIds = line->brightPortraitSpeakerIds;
+            const bool focused = std::any_of(
+                speakerIds.begin(),
+                speakerIds.end(),
+                [speakerId](const std::string& focusedSpeakerId) {
+                    return focusedSpeakerId == speakerId;
+                });
+            return focused ? 1.0f : DialogueInactivePortraitBrightness;
+        }
         if (portraitFocusHasSpeaker && !currentSpeaker.empty() && speakerId == currentSpeaker) {
             return 1.0f;
         }
         return DialogueInactivePortraitBrightness;
     };
 
-    if (spokenLineSeen()) {
+    if (!portraitsHidden_ && spokenLineSeen()) {
         const DialoguePortraitSlot leftSlot = portraitSlotFor(sequence_, "player", DialoguePortraitSide::Left);
         UiRect leftPortrait = portraitRectFor(panel, DialoguePortraitSide::Left, screenWidth, screenHeight);
         leftPortrait.pos += portraitSlideOffset(DialoguePortraitSide::Left, contentFade_);
         drawPortrait(renderer, leftPortrait, leftSlot, contentFade_, portraitBrightness("player"));
     }
 
-    if (!rightSpeakerId_.empty() && rightPortraitFade_ > 0.0f) {
+    if (!portraitsHidden_ && !rightSpeakerId_.empty() && rightPortraitFade_ > 0.0f) {
         const float rightAlpha = std::min(contentFade_, rightPortraitFade_);
         if (rightAlpha > 0.0f) {
             const DialoguePortraitSlot rightSlot = portraitSlotFor(sequence_, rightSpeakerId_, DialoguePortraitSide::Right);
@@ -789,6 +947,10 @@ void DialoguePlayer::render(Renderer& renderer, int screenWidth, int screenHeigh
     for (const DialogueGlyph& glyph : glyphs) {
         const unsigned char alpha = fadedAlpha(lineElapsed_, glyph.revealIndex);
         if (alpha == 0) {
+            continue;
+        }
+        if (glyph.kind == DialogueGlyph::Kind::WorldIcon) {
+            drawDialogueWorldIconGlyph(renderer, glyph, alpha);
             continue;
         }
         renderer.drawText(glyph.pos + Vec2{2.0f, 2.0f}, glyph.text, {0, 0, 0, static_cast<unsigned char>(alpha * 3 / 4)}, DialogueTextScale);
@@ -881,6 +1043,10 @@ void DialoguePlayer::renderMonicaCall(Renderer& renderer, int screenWidth, int s
             std::lround(static_cast<float>(glyphAlpha) * alpha),
             0L,
             255L));
+        if (glyph.kind == DialogueGlyph::Kind::WorldIcon) {
+            drawDialogueWorldIconGlyph(renderer, glyph, scaled);
+            continue;
+        }
         renderer.drawText(glyph.pos + Vec2{1.0f, 1.0f}, glyph.text, {255, 255, 255, static_cast<unsigned char>(scaled / 2)}, DialogueTextScale);
         renderer.drawText(glyph.pos, glyph.text, {24, 30, 46, scaled}, DialogueTextScale);
     }
@@ -901,7 +1067,22 @@ bool DialoguePlayer::lineComplete() const
     if (step != nullptr && step->kind == DialogueStepKind::Wait) {
         return lineElapsed_ >= std::max(0.0f, step->waitSeconds);
     }
+    if (step != nullptr && step->kind == DialogueStepKind::PortraitHide) {
+        return contentFade_ <= 0.0f || lineElapsed_ >= std::max(0.0f, step->waitSeconds);
+    }
+    if (step != nullptr && step->kind == DialogueStepKind::Command) {
+        return false;
+    }
     return lineElapsed_ >= currentLineCompletionTime();
+}
+
+void DialoguePlayer::completeCurrentCommandStep()
+{
+    const DialogueStep* step = currentStep();
+    if (step == nullptr || step->kind != DialogueStepKind::Command) {
+        return;
+    }
+    advanceLine();
 }
 
 int DialoguePlayer::consumeAdvanceSoundRequests()
@@ -926,6 +1107,15 @@ const DialogueLine* DialoguePlayer::currentLine() const
         return nullptr;
     }
     return &step->line;
+}
+
+const DialogueCommand* DialoguePlayer::currentCommand() const
+{
+    const DialogueStep* step = currentStep();
+    if (step == nullptr || step->kind != DialogueStepKind::Command) {
+        return nullptr;
+    }
+    return &step->command;
 }
 
 int DialoguePlayer::currentLineGlyphCount() const
@@ -1009,6 +1199,13 @@ void DialoguePlayer::advanceLine()
 
     ++stepIndex_;
     lineElapsed_ = 0.0f;
+    const DialogueLine* line = currentLine();
+    if (line != nullptr && dialogueLineHasSpeaker(*line)) {
+        if (portraitsHidden_) {
+            contentFade_ = 0.0f;
+        }
+        portraitsHidden_ = false;
+    }
     syncRightPortraitForCurrentLine(false);
 }
 

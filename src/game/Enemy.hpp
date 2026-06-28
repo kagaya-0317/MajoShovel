@@ -206,6 +206,7 @@ struct AstragnaBossRuntime {
     int repairCursor = 0;
     int shellBlockCount = 0;
     bool initialized = false;
+    bool rescueEventEmitted = false;
     std::array<AstragnaSealPartRuntime, AstragnaSealPartCount> sealParts{};
     std::array<AstragnaSealEmitterRuntime, AstragnaSealPartCount> sealEmitters{};
     std::array<AstragnaShellBlockRuntime, AstragnaMaxShellBlocks> shellBlocks{};

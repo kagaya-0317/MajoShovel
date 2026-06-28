@@ -100,21 +100,28 @@
 
 単一効果：
   target:effect:value:duration
+  target:effect:value
+  target:effect
 
 例：
   player:heal:30:0
+  area:light:5
+  projectile:guard
 
 複数効果：
   target:[effect1,effect2]:[value1,value2]:duration
+  target:[effect1,effect2]:[value1,value2]
+  target:[effect1,effect2]
 
 例：
-  orbit:[orbit_gravity,orbit_power]:[0.85,1.15]:0
+  orbit:[orbit_gravity,orbit_power]:[0.85,1.15]
+  projectile:[reflect_magic,reflect_water]
 
 複数パケット：
   ; 区切り
 
 例：
-  projectile:guard:1:0;projectile:reflect_physical_chance:40:0
+  projectile:guard;projectile:reflect_physical_chance:40
 
 内部構造：
   EffectSpec {
@@ -128,6 +135,9 @@
   target は対象・適用先・起点を表す。
   effect 名に player/enemy/orbit/projectile などの対象名を混ぜない。
   複数効果では effects[] と values[] の個数を必ず一致させる。
+  duration 省略時は0として扱う。
+  value 省略は、値省略を許可された効果だけ既定値で補完する。
+  値が意味を持つ効果では value を省略しない。
   同一パケット内の duration は、そのパケット内の全 effects に共有される。
   効果ごとに duration を変えたい場合は、; 区切りで別パケットに分ける。
 
@@ -243,9 +253,15 @@ none の扱い：
   dig_multi
 
 意味：
-  dig       通常採掘処理
-  dig_hard  硬い地形・硬い鉱石などへの採掘処理
-  dig_multi 複数箇所・複数回の採掘処理
+  dig       掘削力>0のリング装着アイテムで暗黙発動する通常採掘処理
+  dig_hard  硬い地形・硬い鉱石などへの採掘モード指定
+  dig_multi 複数箇所・複数回の採掘モード指定
+
+記載ルール：
+  採掘力の数値は掘削力列を唯一の基準にする。
+  通常採掘は掘削力>0なら暗黙発動するため、効果コードには terrain:dig:n:0 を書かない。
+  硬い地形向けや複数掘削だけ、軌道効果に terrain:dig_hard / terrain:dig_multi と書く。
+  旧形式の効果コード側に数値が残っていても、実装上は効果コード側の値ではなく掘削力列を使う。
 
 対応するタグ：
   dig_tool
@@ -416,6 +432,9 @@ none の扱い：
   dig
   dig_hard
   dig_multi
+
+  通常採掘は掘削力列から暗黙発動する。
+  効果コードに書くのは、モード指定が必要な terrain:dig_hard / terrain:dig_multi を基本とする。
 
 照明・探知：
   light
@@ -698,7 +717,7 @@ TSVヘッダー：
 
 盾：
   特殊タグ：shield, guard_contact, guard_projectile
-  軌道効果：projectile:guard:1:0;projectile:reflect_physical_chance:40:0
+  軌道効果：projectile:guard;projectile:reflect_physical_chance:40
   備考：guard_projectile タグは弾対策系アイテムの分類。実際の防御・反射は guard / reflect_physical_chance が行う。
 
 重い鉄球：

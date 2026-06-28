@@ -1770,6 +1770,7 @@ void Game::enterBase()
     clearBaseTalkSessionSelections();
     pendingDialogueCompletion_ = {};
     dialogue_.clear();
+    clearBaseStoryPresentation();
     inventory_.setOpen(false);
     inventory_.cancelGrab();
     cancelRingGrab();
@@ -3973,7 +3974,11 @@ void Game::updateScreenMode(
 
     updateQueuedStoryEvents();
     if (dialogue_.active()) {
-        updateDialoguePlayerIdleAnimation(dt);
+        if (dialogue_.currentCommand() != nullptr) {
+            updateBaseStoryPresentationCommand(dt);
+        } else {
+            updateDialoguePlayerIdleAnimation(dt);
+        }
         const bool dialogueWasActive = dialogue_.active();
         dialogue_.update(input, dt);
         if (dialogue_.consumeAdvanceSoundRequests() > 0) {
@@ -4295,6 +4300,7 @@ void Game::runDialogueCompletionCallbackIfFinished(bool dialogueWasActive)
 
     std::function<void()> onComplete = std::move(pendingDialogueCompletion_);
     pendingDialogueCompletion_ = {};
+    clearBaseStoryPresentation();
     onComplete();
 }
 
@@ -5115,6 +5121,12 @@ void Game::update(const Input& input, const Time& time)
                     encyclopedia_.noteEnemyInspected(enemyIt->second, event.position)) {
                     playAudioSeAt(AudioSeMonsterDiscovery, event.position);
                 }
+            } else if (event.type == EnemyEventType::BossResolved) {
+                handleDungeonEventEnemyEvent(event);
+                effects_.spawnAreaPulse(event.position, 92.0f, {255, 214, 110, 210});
+                addScreenShake(6.0f, 0.24f);
+                bossDefeated = true;
+                bossDefeatPosition = event.position;
             } else if (event.type == EnemyEventType::Death || event.type == EnemyEventType::BossDeath) {
                 const bool hiddenNpcEvent = handleHiddenDungeonNpcEnemyEvent(event);
                 handleDungeonEventEnemyEvent(event);
