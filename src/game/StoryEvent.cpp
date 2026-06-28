@@ -12,6 +12,8 @@
 namespace majo {
 namespace {
 
+constexpr float BaseHintAutoPortraitHideSeconds = 0.22f;
+
 enum class TextBlockKind {
     None,
     Narration,
@@ -147,6 +149,15 @@ void appendPortraitHideToEvent(StoryEvent& event, float seconds)
     event.dialogue.steps.push_back(std::move(step));
 }
 
+void appendPortraitHideSpeakerToEvent(StoryEvent& event, std::string speakerId, float seconds)
+{
+    DialogueStep step;
+    step.kind = DialogueStepKind::PortraitHideSpeaker;
+    step.portraitSpeakerId = std::move(speakerId);
+    step.waitSeconds = seconds;
+    event.dialogue.steps.push_back(std::move(step));
+}
+
 void appendCommandToEvent(StoryEvent& event, std::string command, std::string_view rest)
 {
     DialogueStep step;
@@ -155,6 +166,54 @@ void appendCommandToEvent(StoryEvent& event, std::string command, std::string_vi
     step.command.args = splitAsciiTokens(rest);
 
     event.dialogue.steps.push_back(std::move(step));
+}
+
+bool storyCommandArgIsOff(std::string_view value)
+{
+    return value == "hide" || value == "off" || value == "clear";
+}
+
+bool isBaseHintNotification(const StoryEvent& event)
+{
+    return event.id.rfind("base_hint_", 0) == 0 || event.trigger.rfind("base_hint:", 0) == 0;
+}
+
+bool isBaseFacilityMarkerShowStep(const DialogueStep& step)
+{
+    if (step.kind != DialogueStepKind::Command || step.command.name != "base_facility_marker") {
+        return false;
+    }
+    if (step.command.args.empty() || step.command.args[0] == "clear") {
+        return false;
+    }
+    return step.command.args.size() < 2 || !storyCommandArgIsOff(step.command.args[1]);
+}
+
+void applyBaseHintNotificationConventions(StoryEvent& event)
+{
+    if (!isBaseHintNotification(event)) {
+        return;
+    }
+
+    std::vector<DialogueStep> steps;
+    steps.reserve(event.dialogue.steps.size() + 1);
+    bool portraitHideInserted = false;
+    for (DialogueStep& step : event.dialogue.steps) {
+        if (!portraitHideInserted && isBaseFacilityMarkerShowStep(step)) {
+            if (steps.empty() || steps.back().kind != DialogueStepKind::PortraitHide) {
+                DialogueStep hideStep;
+                hideStep.kind = DialogueStepKind::PortraitHide;
+                hideStep.waitSeconds = BaseHintAutoPortraitHideSeconds;
+                hideStep.persistPortraitHide = true;
+                steps.push_back(std::move(hideStep));
+            } else {
+                steps.back().persistPortraitHide = true;
+            }
+            portraitHideInserted = true;
+        }
+        steps.push_back(std::move(step));
+    }
+    event.dialogue.steps = std::move(steps);
 }
 
 std::pair<std::string, std::string> splitFirstToken(std::string_view value)
@@ -261,13 +320,29 @@ void loadStoryEventFile(
             appendWaitToEvent(event, waitSecondsFor(rest));
         } else if (command == "portraits_hide") {
             appendPortraitHideToEvent(event, portraitHideSecondsFor(rest));
+        } else if (command == "portrait_hide") {
+            std::vector<std::string> args = splitAsciiTokens(rest);
+            if (args.empty()) {
+                warnings.push_back(
+                    "story event " + path.generic_string() + ":" + std::to_string(lineNumber) +
+                    " missing speaker id for @portrait_hide");
+            } else {
+                const float seconds = args.size() >= 2
+                    ? portraitHideSecondsFor(args[1])
+                    : portraitHideSecondsFor({});
+                appendPortraitHideSpeakerToEvent(event, std::move(args[0]), seconds);
+            }
         } else if (command == "portraits_bright") {
             forceNextPortraitsBright = true;
             nextBrightPortraitSpeakerIds.clear();
         } else if (command == "portrait_focus") {
             forceNextPortraitsBright = false;
             nextBrightPortraitSpeakerIds = splitAsciiTokens(rest);
-        } else if (command.rfind("base_", 0) == 0) {
+        } else if (
+            command.rfind("base_", 0) == 0 ||
+            command.rfind("dungeon_", 0) == 0 ||
+            command == "story_shake" ||
+            command == "story_phone") {
             appendCommandToEvent(event, command, rest);
         } else {
             warnings.push_back(
@@ -288,6 +363,7 @@ void loadStoryEventFile(
         warnings.push_back("story event " + path.generic_string() + " has no steps");
         return;
     }
+    applyBaseHintNotificationConventions(event);
     events.push_back(std::move(event));
 }
 

@@ -15,6 +15,10 @@ se.ui.equip	se	se/sound4.wav	0.74	false	90	29	装備
 se.ui.ring_place	se	se/zz_tmp_ui_ring_place_placeholder.wav	0.72	false	90	0	リング配置
 se.ui.upgrade_select	se	se/zz_tmp_ui_upgrade_select_placeholder.wav	0.78	false	120	0	レベルアップ選択
 se.dialogue.advance	se	se/zz_tmp_dialogue_advance_placeholder.wav	0.62	false	45	0	メッセージ送り
+se.story.phone.incoming	se	se/zz_tmp_story_phone_incoming_placeholder.wav	0.72	false	250	0	電話 着信
+se.story.phone.outgoing	se	se/zz_tmp_story_phone_outgoing_placeholder.wav	0.66	false	180	0	電話 発信
+se.story.phone.hangup	se	se/zz_tmp_story_phone_hangup_placeholder.wav	0.64	false	120	0	電話 切断
+se.story.rumble	se	se/zz_tmp_story_rumble_placeholder.wav	0.8	false	320	0	地面揺れ
 se.level_up.jingle	se	se/zz_tmp_level_up_jingle_placeholder.wav	0.86	false	0	0	レベルアップジングル
 se.game_over.jingle	se	se/zz_tmp_game_over_jingle_placeholder.wav	0.88	false	0	0	ゲームオーバージングル
 se.item.new.jingle	se	se/dead.wav	0.84	false	0	0	新規アイテム入手ジングル

@@ -22,6 +22,7 @@ enum class DialogueStepKind {
     Line,
     Wait,
     PortraitHide,
+    PortraitHideSpeaker,
     Command,
 };
 
@@ -34,7 +35,9 @@ struct DialogueStep {
     DialogueStepKind kind = DialogueStepKind::Line;
     DialogueLine line;
     DialogueCommand command;
+    std::string portraitSpeakerId;
     float waitSeconds = 0.0f;
+    bool persistPortraitHide = false;
 };
 
 struct DialogueSequence {
@@ -93,6 +96,7 @@ private:
     bool active_ = false;
     bool closing_ = false;
     bool portraitsHidden_ = false;
+    bool portraitsHidePersistent_ = false;
     bool advanceHoldActive_ = false;
 };
 

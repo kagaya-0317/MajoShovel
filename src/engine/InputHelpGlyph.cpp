@@ -986,6 +986,18 @@ InputHelpDeviceMode inputHelpDeviceMode()
     return currentDeviceMode;
 }
 
+std::string inlineInputActionTag(InputAction action)
+{
+    return "{act:" + std::string(inputActionName(action)) + "}";
+}
+
+bool inputHelpExplicitTagAt(std::string_view text, std::size_t offset, std::size_t& outEnd, const Input* input)
+{
+    const Input* resolvedInput = input != nullptr ? input : currentInput;
+    std::vector<Glyph> glyphs;
+    return matchExplicitTag(text, offset, resolvedInput, outEnd, glyphs);
+}
+
 Vec2 measureInputHelpText(Renderer& renderer, std::string_view text, const InputHelpStyle& style, const Input* input)
 {
     const Input* resolvedInput = input != nullptr ? input : currentInput;

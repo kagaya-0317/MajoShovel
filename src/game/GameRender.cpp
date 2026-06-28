@@ -7943,6 +7943,7 @@ void Game::render(Renderer& renderer, const Time& time)
         renderPauseMenu(renderer);
         renderRingScreen(renderer, time.totalSeconds());
         dialogue_.render(renderer, camera_.width(), camera_.height());
+        renderBaseStoryFacilityMarkers(renderer);
         renderBaseStoryFadeOverlay(renderer);
         renderDebugNamedSaveUi(renderer);
         renderDebugItemPicker(renderer);

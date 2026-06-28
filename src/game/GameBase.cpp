@@ -32,6 +32,17 @@ constexpr float BookshelfMenuChoiceGap = 16.0f;
 constexpr float BookshelfEndingCommandMinWidth = 240.0f;
 constexpr float BaseStoryLookaroundSeconds = 0.9f;
 constexpr float BaseStoryMinWalkSeconds = 0.18f;
+constexpr float BaseFacilityMarkerBobSpeed = 5.2f;
+constexpr float BaseFacilityMarkerBobPixels = 4.0f;
+constexpr float BaseFacilityMarkerMinTipY = 76.0f;
+constexpr float BaseFacilityMarkerStemWidth = 14.0f;
+constexpr float BaseFacilityMarkerStemHeight = 34.0f;
+constexpr float BaseFacilityMarkerHeadHalfWidth = 26.0f;
+constexpr float BaseFacilityMarkerHeadHeight = 32.0f;
+constexpr float BaseFacilityMarkerPulseSeconds = 0.75f;
+constexpr float BaseFacilityMarkerPulseScale = 0.24f;
+constexpr float BaseFacilityMarkerOuterOutlinePixels = 4.0f;
+constexpr float BaseFacilityMarkerInnerOutlinePixels = 2.0f;
 
 bool isBaseRandomTalkSpeaker(std::string_view speakerId)
 {
@@ -46,7 +57,8 @@ bool isBasePresentationCommand(std::string_view name)
         name == "base_fade" ||
         name == "base_player_place" ||
         name == "base_player_walk" ||
-        name == "base_player_lookaround";
+        name == "base_player_lookaround" ||
+        name == "base_facility_marker";
 }
 
 float parseStoryCommandFloat(const DialogueCommand& command, std::size_t index, float fallback)
@@ -1340,6 +1352,11 @@ UiRect baseFacilityPointerRect(const BaseFacility& facility, BaseArea area, bool
     return facility.rect;
 }
 
+bool storyCommandArgIsOff(std::string_view value)
+{
+    return value == "hide" || value == "off" || value == "clear";
+}
+
 bool baseFacilityVisualHitTest(
     Renderer& renderer,
     const BaseFacilityVisual& visual,
@@ -1578,6 +1595,150 @@ void drawBaseFacilityFallbackRect(
                 facility.enabled ? Color{248, 238, 214, 255} : Color{154, 146, 138, 255},
                 2);
         }
+    }
+}
+
+float baseFacilityMarkerPulseScale(float markerAge)
+{
+    if (markerAge < 0.0f || markerAge >= BaseFacilityMarkerPulseSeconds) {
+        return 1.0f;
+    }
+    const float t = markerAge / BaseFacilityMarkerPulseSeconds;
+    const float wave = std::sin(t * Pi * 2.0f);
+    return 1.0f + wave * wave * (1.0f - t) * BaseFacilityMarkerPulseScale;
+}
+
+void fillBaseFacilityMarkerStem(
+    Renderer& renderer,
+    float centerX,
+    float topY,
+    float width,
+    float height,
+    float expand,
+    Color color)
+{
+    renderer.fillRect(
+        {centerX - width * 0.5f - expand, topY - expand},
+        {width + expand * 2.0f, height + expand * 2.0f},
+        color);
+}
+
+void fillBaseFacilityMarkerHead(
+    Renderer& renderer,
+    float centerX,
+    float tipY,
+    float halfWidth,
+    float height,
+    float expand,
+    Color color)
+{
+    const Vec2 points[] = {
+        {centerX, tipY + expand},
+        {centerX - halfWidth - expand, tipY - height - expand},
+        {centerX + halfWidth + expand, tipY - height - expand},
+    };
+    renderer.fillPolygon(points, 3, color);
+}
+
+void drawBaseFacilityMarkerArrow(Renderer& renderer, UiRect targetRect, float animationTime, float markerAge)
+{
+    const float centerX = targetRect.pos.x + targetRect.size.x * 0.5f;
+    const float bob = std::sin(animationTime * BaseFacilityMarkerBobSpeed) * BaseFacilityMarkerBobPixels;
+    const float tipY = std::max(BaseFacilityMarkerMinTipY, targetRect.pos.y - 10.0f + bob);
+    const float pulseScale = baseFacilityMarkerPulseScale(markerAge);
+    const float stemWidth = BaseFacilityMarkerStemWidth * pulseScale;
+    const float stemHeight = BaseFacilityMarkerStemHeight * pulseScale;
+    const float headHalfWidth = BaseFacilityMarkerHeadHalfWidth * pulseScale;
+    const float headHeight = BaseFacilityMarkerHeadHeight * pulseScale;
+    const float stemTopY = tipY - stemHeight - headHeight * 0.55f;
+    const Vec2 shadowOffset{0.0f, 3.0f};
+
+    const Vec2 head[] = {
+        {centerX, tipY},
+        {centerX - headHalfWidth, tipY - headHeight},
+        {centerX + headHalfWidth, tipY - headHeight},
+    };
+    const Vec2 shadowHead[] = {
+        head[0] + shadowOffset,
+        head[1] + shadowOffset,
+        head[2] + shadowOffset,
+    };
+
+    renderer.fillRect(
+        {centerX - stemWidth * 0.5f - 2.0f, stemTopY + 3.0f},
+        {stemWidth + 4.0f, stemHeight},
+        {46, 34, 26, 115});
+    renderer.fillPolygon(shadowHead, 3, {46, 34, 26, 115});
+
+    fillBaseFacilityMarkerStem(
+        renderer,
+        centerX,
+        stemTopY,
+        stemWidth,
+        stemHeight,
+        BaseFacilityMarkerOuterOutlinePixels,
+        {255, 255, 255, 255});
+    fillBaseFacilityMarkerHead(
+        renderer,
+        centerX,
+        tipY,
+        headHalfWidth,
+        headHeight,
+        BaseFacilityMarkerOuterOutlinePixels,
+        {255, 255, 255, 255});
+    fillBaseFacilityMarkerStem(
+        renderer,
+        centerX,
+        stemTopY,
+        stemWidth,
+        stemHeight,
+        BaseFacilityMarkerInnerOutlinePixels,
+        {0, 0, 0, 255});
+    fillBaseFacilityMarkerHead(
+        renderer,
+        centerX,
+        tipY,
+        headHalfWidth,
+        headHeight,
+        BaseFacilityMarkerInnerOutlinePixels,
+        {0, 0, 0, 255});
+
+    fillBaseFacilityMarkerStem(renderer, centerX, stemTopY, stemWidth, stemHeight, 0.0f, {255, 232, 98, 245});
+    renderer.fillPolygon(head, 3, {255, 216, 68, 248});
+    renderer.drawLine(head[1], head[0], {128, 84, 36, 180});
+    renderer.drawLine(head[2], head[0], {128, 84, 36, 180});
+    renderer.drawLine(
+        {centerX - stemWidth * 0.35f, stemTopY + 2.0f},
+        {centerX + stemWidth * 0.35f, stemTopY + 2.0f},
+        {255, 252, 194, 222});
+}
+
+void drawBaseFacilityMarkers(
+    Renderer& renderer,
+    const std::vector<BaseFacility>& facilities,
+    BaseArea area,
+    bool ringWorkshopUnlocked,
+    const std::unordered_map<std::string, float>& markedFacilityIds,
+    float animationTime)
+{
+    if (markedFacilityIds.empty()) {
+        return;
+    }
+
+    for (const BaseFacility& facility : facilities) {
+        const auto marker = markedFacilityIds.find(std::string(facility.facilityId));
+        if (marker == markedFacilityIds.end()) {
+            continue;
+        }
+        if (facility.rect.size.x <= 0.0f || facility.rect.size.y <= 0.0f) {
+            continue;
+        }
+
+        drawBaseFacilityMarkerArrow(
+            renderer,
+            baseFacilityPointerRect(facility, area, ringWorkshopUnlocked),
+            animationTime,
+            animationTime - marker->second);
     }
 }
 
@@ -6670,6 +6831,7 @@ void Game::closeBaseFacilityScreens()
 void Game::clearBaseStoryPresentation()
 {
     baseStoryFacilityOffsets_.clear();
+    baseStoryMarkedFacilities_.clear();
     baseStoryCommand_ = {};
     baseStoryFadeAlpha_ = 0.0f;
     basePlayerSpriteWalking_ = false;
@@ -6687,6 +6849,34 @@ void Game::renderBaseStoryFadeOverlay(Renderer& renderer) const
         {0.0f, 0.0f},
         {static_cast<float>(camera_.width()), static_cast<float>(camera_.height())},
         {0, 0, 0, alphaByte(255.0f * baseStoryFadeAlpha_)});
+}
+
+void Game::renderBaseStoryFacilityMarkers(Renderer& renderer) const
+{
+    if (baseStoryMarkedFacilities_.empty() || !basePresentationActive()) {
+        return;
+    }
+
+    renderer.setScreenSpace();
+    std::vector<BaseFacility> facilities = baseFacilities(baseArea_, ringWorkshopUnlocked_);
+    applyHiddenRouteFacilityAvailability(
+        facilities,
+        hasStoryFlag(HiddenEndingPeopleGoneFlag),
+        hasStoryFlag(StoryHiddenOrbitCorruptionUnlockedFlag),
+        hiddenBaseNpcRemoved("merchant_npc"),
+        hiddenBaseNpcRemoved("processor_npc"),
+        hiddenBaseNpcRemoved("elder"));
+    for (BaseFacility& facility : facilities) {
+        facility.rect = toUiRect(baseFacilityRectFor(baseArea_, facility.facilityId, toBaseEditRect(facility.rect)));
+    }
+    applyBaseStoryFacilityOffsets(facilities, baseStoryFacilityOffsets_);
+    drawBaseFacilityMarkers(
+        renderer,
+        facilities,
+        baseArea_,
+        ringWorkshopUnlocked_,
+        baseStoryMarkedFacilities_,
+        baseActorIdleAnimationTime_);
 }
 
 bool Game::storyEventUsesBasePresentation(std::string_view id) const
@@ -6743,6 +6933,19 @@ void Game::updateBaseStoryPresentationCommand(float dt)
         if (command->name == "base_actor_reset") {
             if (!command->args.empty()) {
                 baseStoryFacilityOffsets_.erase(command->args[0]);
+            }
+            dialogue_.completeCurrentCommandStep();
+            baseStoryCommand_ = {};
+            return;
+        }
+
+        if (command->name == "base_facility_marker") {
+            if (command->args.empty() || command->args[0] == "clear") {
+                baseStoryMarkedFacilities_.clear();
+            } else if (command->args.size() >= 2 && storyCommandArgIsOff(command->args[1])) {
+                baseStoryMarkedFacilities_.erase(command->args[0]);
+            } else {
+                baseStoryMarkedFacilities_[command->args[0]] = baseActorIdleAnimationTime_;
             }
             dialogue_.completeCurrentCommandStep();
             baseStoryCommand_ = {};

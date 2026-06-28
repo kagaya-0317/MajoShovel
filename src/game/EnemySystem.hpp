@@ -220,7 +220,8 @@ public:
         const EnemyCatalog& enemyCatalog,
         std::string_view bossEnemyId = {},
         EnemyVariantTier variantTier = EnemyVariantTier::Normal,
-        int effectiveBaseLevel = 0);
+        int effectiveBaseLevel = 0,
+        EnemySpawnVisualKind spawnVisualKind = EnemySpawnVisualKind::Default);
     bool spawnBossNear(
         TileMap& map,
         Vec2 desiredPosition,
@@ -229,7 +230,9 @@ public:
         const EnemyCatalog& enemyCatalog,
         std::string_view bossEnemyId = {},
         EnemyVariantTier variantTier = EnemyVariantTier::Normal,
-        int effectiveBaseLevel = 0);
+        int effectiveBaseLevel = 0,
+        EnemySpawnVisualKind spawnVisualKind = EnemySpawnVisualKind::Default);
+    bool advanceBossSpawnPresentation(float dt);
     void update(
         Player& player,
         SpellRingSystem& spellRing,
@@ -501,7 +504,8 @@ private:
         bool detectedOnSpawn = false,
         Vec2 detectedTarget = {},
         EnemyVariantTier variantTier = EnemyVariantTier::Normal,
-        int effectiveBaseLevel = 0);
+        int effectiveBaseLevel = 0,
+        EnemySpawnVisualKind spawnVisualKind = EnemySpawnVisualKind::Default);
     bool findSpawnPosition(TileMap& map, Vec2 desiredPosition, Vec2 playerPosition, const RuntimeBalance& balance, Vec2& outPosition) const;
     bool findSpawnPosition(TileMap& map, Vec2 desiredPosition, Vec2 playerPosition, float radius, float minPlayerDistance, Vec2& outPosition) const;
     bool findBossSpawnPosition(TileMap& map, Vec2 playerPosition, const RuntimeBalance& balance, Vec2& outPosition) const;

@@ -1,5 +1,6 @@
 ﻿#include "game/DialogueSystem.hpp"
 
+#include "engine/InputHelpGlyph.hpp"
 #include "engine/Math.hpp"
 #include "engine/Ui.hpp"
 #include "game/WorldIconRenderer.hpp"
@@ -55,6 +56,7 @@ struct DialogueGlyph {
     enum class Kind {
         Text,
         WorldIcon,
+        InputIcon,
     };
 
     Kind kind = Kind::Text;
@@ -167,6 +169,16 @@ bool dialogueWorldIconTagAt(std::string_view text, std::size_t offset, std::size
     return true;
 }
 
+bool dialogueInputIconTagAt(std::string_view text, std::size_t offset, std::size_t& outEnd, std::string& outTag)
+{
+    if (!inputHelpExplicitTagAt(text, offset, outEnd)) {
+        return false;
+    }
+
+    outTag = std::string(text.substr(offset, outEnd - offset));
+    return true;
+}
+
 std::vector<DialogueTextUnit> splitDialogueTextUnits(std::string_view text)
 {
     std::vector<DialogueTextUnit> result;
@@ -175,6 +187,12 @@ std::vector<DialogueTextUnit> splitDialogueTextUnits(std::string_view text)
         std::string iconKey;
         if (dialogueWorldIconTagAt(text, i, tagEnd, iconKey)) {
             result.push_back(DialogueTextUnit{DialogueGlyph::Kind::WorldIcon, std::move(iconKey)});
+            i = tagEnd;
+            continue;
+        }
+        std::string inputTag;
+        if (dialogueInputIconTagAt(text, i, tagEnd, inputTag)) {
+            result.push_back(DialogueTextUnit{DialogueGlyph::Kind::InputIcon, std::move(inputTag)});
             i = tagEnd;
             continue;
         }
@@ -201,7 +219,9 @@ int visibleGlyphCount(std::string_view text)
 {
     int count = 0;
     for (const DialogueTextUnit& unit : splitDialogueTextUnits(text)) {
-        if (unit.kind == DialogueGlyph::Kind::WorldIcon || !isLineBreak(unit.text)) {
+        if (unit.kind == DialogueGlyph::Kind::WorldIcon ||
+            unit.kind == DialogueGlyph::Kind::InputIcon ||
+            !isLineBreak(unit.text)) {
             ++count;
         }
     }
@@ -375,10 +395,24 @@ float dialogueInlineIconSize(Renderer& renderer)
     return std::max(1.0f, textSize.y * 0.95f);
 }
 
+InputHelpStyle dialogueInputIconStyle(Renderer& renderer, unsigned char alpha = 255)
+{
+    InputHelpStyle style;
+    style.text = {255, 255, 255, alpha};
+    style.outline = {0, 0, 0, static_cast<unsigned char>(alpha * 3 / 4)};
+    style.scale = DialogueTextScale;
+    style.iconHeight = dialogueInlineIconSize(renderer);
+    style.outlineEnabled = false;
+    return style;
+}
+
 float dialogueTextUnitWidth(Renderer& renderer, const DialogueTextUnit& unit)
 {
     if (unit.kind == DialogueGlyph::Kind::WorldIcon) {
         return dialogueInlineIconSize(renderer) + 4.0f;
+    }
+    if (unit.kind == DialogueGlyph::Kind::InputIcon) {
+        return measureInputHelpText(renderer, unit.text, dialogueInputIconStyle(renderer)).x + 4.0f;
     }
     return dialogueLineWidth(renderer, unit.text);
 }
@@ -425,6 +459,8 @@ void appendDialogueGlyphLine(
         if (unit.kind == DialogueGlyph::Kind::WorldIcon) {
             const float size = dialogueInlineIconSize(renderer);
             glyph.size = {size, size};
+        } else if (unit.kind == DialogueGlyph::Kind::InputIcon) {
+            glyph.size = measureInputHelpText(renderer, unit.text, dialogueInputIconStyle(renderer));
         }
         glyphs.push_back(std::move(glyph));
         prefix.push_back(unit);
@@ -496,6 +532,11 @@ void drawDialogueWorldIconGlyph(Renderer& renderer, const DialogueGlyph& glyph, 
         glyph.pos + glyph.size * 0.5f + Vec2{0.0f, 2.0f},
         glyph.size,
         options);
+}
+
+void drawDialogueInputIconGlyph(Renderer& renderer, const DialogueGlyph& glyph, unsigned char alpha)
+{
+    drawInputHelpText(renderer, glyph.pos + Vec2{0.0f, -2.0f}, glyph.text, dialogueInputIconStyle(renderer, alpha));
 }
 
 Color portraitToneColor(Color color, float alphaScale, float brightness)
@@ -755,6 +796,7 @@ void DialoguePlayer::start(DialogueSequence sequence)
     rightPortraitFade_ = 0.0f;
     rightPortraitTransition_ = RightPortraitTransition::Stable;
     portraitsHidden_ = false;
+    portraitsHidePersistent_ = false;
     active_ = !sequence_.steps.empty();
     closing_ = false;
     syncRightPortraitForCurrentLine(false);
@@ -776,6 +818,7 @@ void DialoguePlayer::clear()
     active_ = false;
     closing_ = false;
     portraitsHidden_ = false;
+    portraitsHidePersistent_ = false;
 }
 
 void DialoguePlayer::update(const Input& input, float dt)
@@ -815,7 +858,22 @@ void DialoguePlayer::update(const Input& input, float dt)
         if (lineComplete()) {
             contentFade_ = 0.0f;
             portraitsHidden_ = true;
+            portraitsHidePersistent_ = step->persistPortraitHide;
             clearRightPortraitTarget(true);
+            advanceLine();
+        }
+        return;
+    }
+
+    if (step != nullptr && step->kind == DialogueStepKind::PortraitHideSpeaker) {
+        resetAdvanceHoldRepeat();
+        const bool targetVisible = !step->portraitSpeakerId.empty() && step->portraitSpeakerId == rightSpeakerId_;
+        if (targetVisible) {
+            clearRightPortraitTarget(false);
+        }
+        updateRightPortrait(safeDt);
+        lineElapsed_ += safeDt;
+        if (!targetVisible || lineComplete()) {
             advanceLine();
         }
         return;
@@ -953,6 +1011,10 @@ void DialoguePlayer::render(Renderer& renderer, int screenWidth, int screenHeigh
             drawDialogueWorldIconGlyph(renderer, glyph, alpha);
             continue;
         }
+        if (glyph.kind == DialogueGlyph::Kind::InputIcon) {
+            drawDialogueInputIconGlyph(renderer, glyph, alpha);
+            continue;
+        }
         renderer.drawText(glyph.pos + Vec2{2.0f, 2.0f}, glyph.text, {0, 0, 0, static_cast<unsigned char>(alpha * 3 / 4)}, DialogueTextScale);
         renderer.drawText(glyph.pos, glyph.text, {255, 255, 255, alpha}, DialogueTextScale);
     }
@@ -1047,6 +1109,10 @@ void DialoguePlayer::renderMonicaCall(Renderer& renderer, int screenWidth, int s
             drawDialogueWorldIconGlyph(renderer, glyph, scaled);
             continue;
         }
+        if (glyph.kind == DialogueGlyph::Kind::InputIcon) {
+            drawDialogueInputIconGlyph(renderer, glyph, scaled);
+            continue;
+        }
         renderer.drawText(glyph.pos + Vec2{1.0f, 1.0f}, glyph.text, {255, 255, 255, static_cast<unsigned char>(scaled / 2)}, DialogueTextScale);
         renderer.drawText(glyph.pos, glyph.text, {24, 30, 46, scaled}, DialogueTextScale);
     }
@@ -1069,6 +1135,12 @@ bool DialoguePlayer::lineComplete() const
     }
     if (step != nullptr && step->kind == DialogueStepKind::PortraitHide) {
         return contentFade_ <= 0.0f || lineElapsed_ >= std::max(0.0f, step->waitSeconds);
+    }
+    if (step != nullptr && step->kind == DialogueStepKind::PortraitHideSpeaker) {
+        return step->portraitSpeakerId.empty() ||
+            step->portraitSpeakerId != rightSpeakerId_ ||
+            rightPortraitFade_ <= 0.0f ||
+            lineElapsed_ >= std::max(0.0f, step->waitSeconds);
     }
     if (step != nullptr && step->kind == DialogueStepKind::Command) {
         return false;
@@ -1200,7 +1272,7 @@ void DialoguePlayer::advanceLine()
     ++stepIndex_;
     lineElapsed_ = 0.0f;
     const DialogueLine* line = currentLine();
-    if (line != nullptr && dialogueLineHasSpeaker(*line)) {
+    if (!portraitsHidePersistent_ && line != nullptr && dialogueLineHasSpeaker(*line)) {
         if (portraitsHidden_) {
             contentFade_ = 0.0f;
         }

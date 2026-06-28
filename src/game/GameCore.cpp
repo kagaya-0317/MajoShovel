@@ -61,8 +61,15 @@ constexpr std::string_view AudioSeUiEquip = "se.ui.equip";
 constexpr std::string_view AudioSeUiRingPlace = "se.ui.ring_place";
 constexpr std::string_view AudioSeUiUpgradeSelect = "se.ui.upgrade_select";
 constexpr std::string_view AudioSeDialogueAdvance = "se.dialogue.advance";
+constexpr std::string_view AudioSeStoryPhoneIncoming = "se.story.phone.incoming";
+constexpr std::string_view AudioSeStoryPhoneOutgoing = "se.story.phone.outgoing";
+constexpr std::string_view AudioSeStoryPhoneHangup = "se.story.phone.hangup";
+constexpr std::string_view AudioSeStoryRumble = "se.story.rumble";
 constexpr std::string_view AudioSeLevelUpJingle = "se.level_up.jingle";
 constexpr std::string_view AudioSeGameOverJingle = "se.game_over.jingle";
+constexpr float StoryPhoneIncomingSeconds = 0.92f;
+constexpr float StoryPhoneOutgoingSeconds = 0.68f;
+constexpr float StoryPhoneHangupSeconds = 0.20f;
 constexpr float ImpactSePitchJitterRatio = 0.10f;
 constexpr float ExplosionRadiusScale = 1.5f;
 constexpr std::string_view IntroTutorialChestLootInventoryTrigger = "intro_tutorial:chest_loot_inventory";
@@ -131,6 +138,46 @@ bool impactSePitchJitterTarget(std::string_view id)
         return true;
     }
     return startsWith(id, "se.projectile.") && endsWith(id, ".destroy");
+}
+
+float storyCommandFloatArg(const DialogueCommand& command, std::size_t index, float fallback)
+{
+    if (index >= command.args.size()) {
+        return fallback;
+    }
+    try {
+        std::size_t consumed = 0;
+        const float value = std::stof(command.args[index], &consumed);
+        return consumed == command.args[index].size() ? value : fallback;
+    } catch (...) {
+        return fallback;
+    }
+}
+
+bool applyStoryShakeProfile(const DialogueCommand& command, float& amplitude, float& duration, std::string_view& soundId)
+{
+    if (command.args.empty()) {
+        return false;
+    }
+
+    const std::string& profile = command.args[0];
+    if (profile == "small") {
+        amplitude = 3.0f;
+        duration = 0.14f;
+        soundId = {};
+        return true;
+    } else if (profile == "strong") {
+        amplitude = 7.0f;
+        duration = 0.72f;
+        soundId = AudioSeStoryRumble;
+        return true;
+    } else if (profile == "boss") {
+        amplitude = 8.0f;
+        duration = 0.90f;
+        soundId = AudioSeStoryRumble;
+        return true;
+    }
+    return false;
 }
 
 float applyImpactSePitchJitter(std::string_view id, float pitchScale)
@@ -677,6 +724,72 @@ Vec2 Game::screenShakeOffset(double totalSeconds) const
         std::sin(t * 83.0f + seed * 1.37f) * amplitude,
         std::cos(t * 97.0f + seed * 1.91f) * amplitude,
     };
+}
+
+void Game::beginStoryPhoneSound(StoryPhoneSoundKind kind)
+{
+    storyPhoneSound_ = {};
+    storyPhoneSound_.kind = kind;
+    switch (kind) {
+    case StoryPhoneSoundKind::Incoming:
+        storyPhoneSound_.durationSeconds = StoryPhoneIncomingSeconds;
+        playAudioSe(AudioSeStoryPhoneIncoming);
+        break;
+    case StoryPhoneSoundKind::Outgoing:
+        storyPhoneSound_.durationSeconds = StoryPhoneOutgoingSeconds;
+        playAudioSe(AudioSeStoryPhoneOutgoing);
+        break;
+    case StoryPhoneSoundKind::Hangup:
+        storyPhoneSound_.durationSeconds = StoryPhoneHangupSeconds;
+        playAudioSe(AudioSeStoryPhoneHangup);
+        break;
+    case StoryPhoneSoundKind::None:
+        storyPhoneSound_ = {};
+        break;
+    }
+}
+
+void Game::updateStoryPhoneSound(float dt)
+{
+    if (!storyPhoneSoundActive()) {
+        return;
+    }
+    storyPhoneSound_.elapsedSeconds += std::max(0.0f, dt);
+    if (storyPhoneSound_.elapsedSeconds >= storyPhoneSound_.durationSeconds) {
+        storyPhoneSound_ = {};
+    }
+}
+
+bool Game::storyPhoneSoundActive() const
+{
+    return storyPhoneSound_.kind != StoryPhoneSoundKind::None;
+}
+
+void Game::beginStoryShakeCommand(float amplitude, float duration, std::string_view soundId)
+{
+    storyShakeCommand_ = {};
+    storyShakeCommand_.active = duration > 0.0f;
+    storyShakeCommand_.durationSeconds = std::max(0.0f, duration);
+    addScreenShake(amplitude, duration);
+    if (!soundId.empty()) {
+        playAudioSe(soundId);
+    }
+}
+
+void Game::updateStoryShakeCommand(float dt)
+{
+    if (!storyShakeCommandActive()) {
+        return;
+    }
+    storyShakeCommand_.elapsedSeconds += std::max(0.0f, dt);
+    if (storyShakeCommand_.elapsedSeconds >= storyShakeCommand_.durationSeconds) {
+        storyShakeCommand_ = {};
+    }
+}
+
+bool Game::storyShakeCommandActive() const
+{
+    return storyShakeCommand_.active;
 }
 
 void Game::addPlayerDamageVignetteFlash(int damageAmount)
@@ -1277,6 +1390,8 @@ void Game::resetWorldUiState()
     closeRoguelikeFacilityUi();
     introTutorialExitHovered_ = false;
     resetDungeonFocus();
+    storyPhoneSound_ = {};
+    storyShakeCommand_ = {};
     baseStorageActive_ = false;
     baseStorageMode_ = StorageUiMode::Closed;
     baseStorageActionSelection_ = 0;
@@ -1771,6 +1886,8 @@ void Game::enterBase()
     pendingDialogueCompletion_ = {};
     dialogue_.clear();
     clearBaseStoryPresentation();
+    storyPhoneSound_ = {};
+    storyShakeCommand_ = {};
     inventory_.setOpen(false);
     inventory_.cancelGrab();
     cancelRingGrab();
@@ -3975,7 +4092,7 @@ void Game::updateScreenMode(
     updateQueuedStoryEvents();
     if (dialogue_.active()) {
         if (dialogue_.currentCommand() != nullptr) {
-            updateBaseStoryPresentationCommand(dt);
+            updateStoryEventCommand(dt);
         } else {
             updateDialoguePlayerIdleAnimation(dt);
         }
@@ -4290,6 +4407,65 @@ void Game::updateDialoguePlayerIdleAnimation(float dt)
     if (mode_ == ScreenMode::Playing) {
         player_.updateSpriteAnimation(dt, false);
     }
+}
+
+void Game::updateStoryEventCommand(float dt)
+{
+    const DialogueCommand* command = dialogue_.currentCommand();
+    if (command == nullptr) {
+        return;
+    }
+
+    if (command->name == "story_shake") {
+        float amplitude = 5.0f;
+        float duration = 0.22f;
+        std::string_view soundId;
+        const bool hasProfile = applyStoryShakeProfile(*command, amplitude, duration, soundId);
+        amplitude = storyCommandFloatArg(*command, hasProfile ? 1 : 0, amplitude);
+        duration = storyCommandFloatArg(*command, hasProfile ? 2 : 1, duration);
+        if (!storyShakeCommandActive()) {
+            beginStoryShakeCommand(amplitude, duration, soundId);
+        }
+        updateStoryShakeCommand(dt);
+        if (!storyShakeCommandActive()) {
+            dialogue_.completeCurrentCommandStep();
+        }
+        return;
+    }
+
+    if (command->name == "story_phone") {
+        StoryPhoneSoundKind kind = StoryPhoneSoundKind::None;
+        const std::string mode = command->args.empty() ? std::string{} : command->args[0];
+        if (mode == "incoming" || mode == "ring" || mode == "ring_incoming") {
+            kind = StoryPhoneSoundKind::Incoming;
+        } else if (mode == "outgoing" || mode == "call" || mode == "call_outgoing") {
+            kind = StoryPhoneSoundKind::Outgoing;
+        } else if (mode == "hangup" || mode == "end" || mode == "cut") {
+            kind = StoryPhoneSoundKind::Hangup;
+        }
+
+        if (kind == StoryPhoneSoundKind::None) {
+            logWarning("[story] unknown story_phone mode: " + mode);
+            dialogue_.completeCurrentCommandStep();
+            return;
+        }
+
+        if (!storyPhoneSoundActive()) {
+            beginStoryPhoneSound(kind);
+        }
+        updateStoryPhoneSound(dt);
+        if (!storyPhoneSoundActive()) {
+            dialogue_.completeCurrentCommandStep();
+        }
+        return;
+    }
+
+    if (command->name.rfind("dungeon_", 0) == 0) {
+        updateDungeonStoryCommand(*command, dt);
+        return;
+    }
+
+    updateBaseStoryPresentationCommand(dt);
 }
 
 void Game::runDialogueCompletionCallbackIfFinished(bool dialogueWasActive)

@@ -109,6 +109,7 @@ constexpr std::string_view AudioSeCaptureFail = "se.capture.fail";
 constexpr std::string_view AudioSeBuriedEnemyWarning = "se.enemy.buried_warning";
 constexpr std::string_view AudioSeDiscovery = "se.discovery";
 constexpr std::string_view AudioSeWarpDiscovery = "se.discovery.warp";
+constexpr std::string_view AudioSeBossSpawn = "se.boss.spawn";
 constexpr std::string_view AudioSeExplosionTick = "se.explosion.tick";
 constexpr std::string_view AudioSeFootstepBaseOutdoor = "se.footstep.base_outdoor";
 constexpr std::string_view AudioSeFootstepHomeInterior = "se.footstep.home";
@@ -123,6 +124,10 @@ constexpr float CaptureAbsorbSparkIntervalSeconds = 0.045f;
 constexpr float DigToolFailsafeSpawnCooldownSeconds = 12.0f;
 constexpr float DigToolFailsafeNearbyDropRadius = 220.0f;
 constexpr float BuriedEnemyWarningDelaySeconds = 0.70f;
+constexpr float BossBeforeFocusMoveSeconds = 0.70f;
+constexpr float BossBeforeFocusReturnSeconds = 0.62f;
+constexpr float BossBeforeEmergeShakeAmplitude = 8.5f;
+constexpr float BossBeforeEmergeShakeSeconds = 0.72f;
 constexpr Vec2 DungeonEventNpcInspectSize{42.0f, 58.0f};
 constexpr Vec2 DungeonChestInspectSize{42.0f, 42.0f};
 constexpr float FootstepPitchSideOffset = 0.025f;
@@ -4669,6 +4674,18 @@ bool Game::startDebugStoryTestPresentation(std::string_view id, std::function<vo
     if (id == IntroTutorialEnemyEncounterEventId) {
         return startIntroTutorialEnemyEncounterPresentation(true, std::move(onComplete));
     }
+    if (mode_ == ScreenMode::Playing && hasBossSpawnPoint_ && !bossSpawned_) {
+        const StoryEvent* bossBeforeEvent = findStoryEventForTrigger(currentStageStoryTrigger("boss_before"));
+        if (bossBeforeEvent != nullptr && bossBeforeEvent->id == id) {
+            if (bossEncounter_.phase == BossEncounterPhase::None) {
+                bossEncounter_.phase = BossEncounterPhase::WaitingBeforeDialogue;
+                bossEncounter_.purpose = BossEncounterPurpose::StageClear;
+                bossEncounter_.stageId = currentStageId_;
+                bossEncounter_.spawnPoint = bossSpawnPoint_;
+            }
+            return startBossBeforeStoryPresentation(id, true, std::move(onComplete));
+        }
+    }
     if (storyEventUsesBasePresentation(id)) {
         enterBase();
     }
@@ -7464,7 +7481,7 @@ bool Game::requestDungeonFocus(DungeonFocusRequest request)
     if (dialogue_.active() ||
         firstItemAcquisitionNoticeActive() ||
         warpReturnConfirm_.open ||
-        bossEncounterBlocksProgress() ||
+        (bossEncounterBlocksProgress() && !request.allowDuringBossEncounter) ||
         dungeonRingIntroActive() ||
         endingKamishibaiPending_ ||
         levels_.isChoosing()) {
@@ -7512,6 +7529,8 @@ bool Game::requestDungeonFocus(DungeonFocusRequest request)
     dungeonFocus_.discoveryStoryEventId = std::move(storyEventId);
     dungeonFocus_.discoveryDialogue = std::move(focusDialogue);
     dungeonFocus_.onComplete = std::move(request.onComplete);
+    dungeonFocus_.allowDuringBossEncounter = request.allowDuringBossEncounter;
+    dungeonFocus_.debugStoryReplay = request.debugStoryReplay;
 
     logInfo(
         "[dungeon_focus] state=MoveToTarget kind=" +
@@ -7572,7 +7591,10 @@ bool Game::updateDungeonFocus(float dt)
         camera_.setPosition(dungeonFocus_.focusWorldPos);
         if (!dungeonFocus_.discoveryStoryEventId.empty()) {
             const std::string storyEventId = dungeonFocus_.discoveryStoryEventId;
-            if (startStoryEvent(storyEventId)) {
+            const bool started = dungeonFocus_.debugStoryReplay
+                ? startStoryEventForDebug(storyEventId)
+                : startStoryEvent(storyEventId);
+            if (started) {
                 dungeonFocus_.phase = DungeonFocusPhase::PlayDiscoveryDialogue;
                 dungeonFocus_.elapsed = 0.0f;
                 dungeonFocus_.duration = 0.0f;
@@ -8406,7 +8428,19 @@ void Game::updateWarpPoints(float dt)
             point.lightRevealAnimating = true;
             pushDungeonLog("ワープポイント発見", "warp_point");
             playAudioSe(AudioSeWarpDiscovery);
-            queueStoryEventForTrigger("tutorial:warp");
+            DungeonFocusRequest request;
+            request.eventKind = "tutorial_warp";
+            request.focusWorldPos = point.position;
+            request.discoveryStoryEventId = "tutorial_warp";
+            request.holdSecondsIfNoDialogue = 0.0f;
+            request.moveSeconds = 0.55f;
+            request.returnSeconds = 0.55f;
+            if (!requestDungeonFocus(std::move(request))) {
+                queueStoryEventForTrigger("tutorial:warp");
+            }
+            if (discoveredWarpPointCount() >= static_cast<int>(warpPoints_.size())) {
+                queueStoryEventForCurrentStage("warp_all_found");
+            }
         }
     }
     if (!warpPoints_.empty() &&
@@ -11506,11 +11540,160 @@ void Game::finishBossEncounterIntroTransition()
     bossEncounter_.phase = BossEncounterPhase::WaitingBeforeDialogue;
     bossEncounter_.stageId = currentStageId_;
     bossEncounter_.spawnPoint = bossSpawnPoint_;
-    if (!roguelikeGate && queueStoryEventForCurrentStage("boss_before")) {
-        return;
+    if (!roguelikeGate) {
+        const StoryEvent* event = findStoryEventForTrigger(currentStageStoryTrigger("boss_before"));
+        if (event != nullptr && startBossBeforeStoryPresentation(event->id, false, {})) {
+            return;
+        }
     }
 
     beginBossFightForCurrentEncounter();
+}
+
+bool Game::startBossBeforeStoryPresentation(std::string_view id, bool debugReplay, std::function<void()> onComplete)
+{
+    if (id.empty()) {
+        return false;
+    }
+
+    std::function<void()> completion = std::move(onComplete);
+    if (mode_ == ScreenMode::Playing && hasBossSpawnPoint_) {
+        DungeonFocusRequest request;
+        request.eventKind = "boss_before";
+        request.focusWorldPos = bossSpawnPoint_;
+        request.discoveryStoryEventId = std::string(id);
+        request.holdSecondsIfNoDialogue = 0.0f;
+        request.moveSeconds = BossBeforeFocusMoveSeconds;
+        request.returnSeconds = BossBeforeFocusReturnSeconds;
+        request.onComplete = completion;
+        request.allowDuringBossEncounter = true;
+        request.debugStoryReplay = debugReplay;
+        if (requestDungeonFocus(std::move(request))) {
+            return true;
+        }
+    }
+
+    std::function<void()> fallbackCompletion = completion;
+    const bool started = debugReplay
+        ? startStoryEventForDebugWithCompletion(id, std::move(completion))
+        : startStoryEventWithCompletion(id, std::move(completion));
+    if (!started && fallbackCompletion) {
+        fallbackCompletion();
+    }
+    return started;
+}
+
+bool Game::spawnBossForCurrentEncounter(EnemySpawnVisualKind spawnVisualKind)
+{
+    if (bossSpawned_) {
+        return true;
+    }
+
+    const bool roguelikeGate = bossEncounter_.purpose == BossEncounterPurpose::RoguelikeGate;
+    const bool hiddenMonicaDuel = bossEncounter_.purpose == BossEncounterPurpose::HiddenMonicaDuel;
+    if (!hasBossSpawnPoint_) {
+        resetBossEncounter();
+        return false;
+    }
+    if (!roguelikeGate && !hiddenMonicaDuel && (!warpPointsEnabled_ || hasCapturedBossForCurrentStage())) {
+        resetBossEncounter();
+        return false;
+    }
+    if (roguelikeGate && (!currentStageIsRoguelike() || !roguelikeBigHole_.active || roguelikeBigHole_.unlocked)) {
+        resetBossEncounter();
+        return false;
+    }
+    if (hiddenMonicaDuel && !currentStageIsHiddenMonicaDuel()) {
+        resetBossEncounter();
+        return false;
+    }
+
+    EnemyVariantTier bossVariantTier = EnemyVariantTier::Normal;
+    int effectiveBaseLevel = 0;
+    if (roguelikeGate) {
+        if (roguelikeBigHole_.depthMeters >= RoguelikeMetersPerArea * 3) {
+            bossVariantTier = EnemyVariantTier::Abyss;
+        } else if (roguelikeBigHole_.depthMeters >= RoguelikeMetersPerArea * 2) {
+            bossVariantTier = EnemyVariantTier::Deep;
+        }
+        const int gateSectionRank =
+            astralRun_.sectionRankOffset + RoguelikeSectionsPerArea;
+        effectiveBaseLevel =
+            roguelikeTargetBaseLevelForSectionRank(gateSectionRank) +
+            enemyVariantLevelBonus(bossVariantTier) +
+            std::max(0, astralRun_.areaIndex - 2) * 4;
+    }
+
+    bossSpawned_ = enemies_.spawnBossNear(
+        tileMap_,
+        bossSpawnPoint_,
+        player_.position,
+        balance_,
+        enemyCatalog_,
+        currentStageDefinition().bossEnemyId,
+        bossVariantTier,
+        effectiveBaseLevel,
+        spawnVisualKind);
+    if (!bossSpawned_) {
+        resetBossEncounter();
+        return false;
+    }
+
+    bossEncounter_.stageId = currentStageId_;
+    bossEncounter_.spawnPoint = bossSpawnPoint_;
+    return true;
+}
+
+void Game::updateDungeonStoryCommand(const DialogueCommand& command, float dt)
+{
+    if (command.name != "dungeon_boss_spawn") {
+        logWarning("[story] unknown dungeon command: " + command.name);
+        dialogue_.completeCurrentCommandStep();
+        return;
+    }
+
+    const std::string mode = command.args.empty() ? std::string("default") : command.args[0];
+    if (mode != "emerge" && mode != "ground_emerge" && mode != "default") {
+        logWarning("[story] unknown dungeon_boss_spawn mode: " + mode);
+        dialogue_.completeCurrentCommandStep();
+        return;
+    }
+
+    if (!bossSpawned_) {
+        const EnemySpawnVisualKind visualKind = mode == "default"
+            ? EnemySpawnVisualKind::Default
+            : EnemySpawnVisualKind::GroundEmerge;
+        if (!spawnBossForCurrentEncounter(visualKind)) {
+            logWarning("[story] dungeon_boss_spawn skipped: boss encounter is not ready");
+            dialogue_.completeCurrentCommandStep();
+            return;
+        }
+        bossEncounter_.bossSpawnPresentationPlayed = true;
+        playAudioSeAt(AudioSeBossSpawn, bossSpawnPoint_);
+        addScreenShake(BossBeforeEmergeShakeAmplitude, BossBeforeEmergeShakeSeconds);
+
+        SmokeBurstOptions smoke;
+        smoke.count = 24;
+        smoke.size = 30.0f;
+        smoke.spreadRadius = 22.0f;
+        smoke.speed = 42.0f;
+        smoke.riseSpeed = 24.0f;
+        smoke.duration = 0.86f;
+        smoke.colorA = {194, 144, 82, 210};
+        smoke.colorB = {92, 66, 48, 176};
+        effects_.spawnAttackImpactBurst(bossSpawnPoint_, smoke, true);
+        effects_.spawnTileBreak(bossSpawnPoint_, TileType::Dirt, {154, 110, 66, 235}, false, 2.4f, 3);
+        effects_.spawnAreaPulse(bossSpawnPoint_, 108.0f, {255, 214, 110, 155});
+    }
+
+    const float safeDt = std::max(0.0f, dt);
+    effects_.update(safeDt);
+    magicFx_.update(safeDt);
+    const bool spawnPresentationActive = enemies_.advanceBossSpawnPresentation(safeDt);
+    if (!spawnPresentationActive) {
+        dialogue_.completeCurrentCommandStep();
+        return;
+    }
 }
 
 bool Game::shouldPlayBossAfterStoryEvent() const
@@ -11577,52 +11760,7 @@ float Game::bossDefeatPresentationProgress() const
 
 bool Game::beginBossFightForCurrentEncounter()
 {
-    const bool roguelikeGate = bossEncounter_.purpose == BossEncounterPurpose::RoguelikeGate;
-    const bool hiddenMonicaDuel = bossEncounter_.purpose == BossEncounterPurpose::HiddenMonicaDuel;
-    if (!hasBossSpawnPoint_ || bossSpawned_) {
-        resetBossEncounter();
-        return false;
-    }
-    if (!roguelikeGate && !hiddenMonicaDuel && (!warpPointsEnabled_ || hasCapturedBossForCurrentStage())) {
-        resetBossEncounter();
-        return false;
-    }
-    if (roguelikeGate && (!currentStageIsRoguelike() || !roguelikeBigHole_.active || roguelikeBigHole_.unlocked)) {
-        resetBossEncounter();
-        return false;
-    }
-    if (hiddenMonicaDuel && !currentStageIsHiddenMonicaDuel()) {
-        resetBossEncounter();
-        return false;
-    }
-
-    EnemyVariantTier bossVariantTier = EnemyVariantTier::Normal;
-    int effectiveBaseLevel = 0;
-    if (roguelikeGate) {
-        if (roguelikeBigHole_.depthMeters >= RoguelikeMetersPerArea * 3) {
-            bossVariantTier = EnemyVariantTier::Abyss;
-        } else if (roguelikeBigHole_.depthMeters >= RoguelikeMetersPerArea * 2) {
-            bossVariantTier = EnemyVariantTier::Deep;
-        }
-        const int gateSectionRank =
-            astralRun_.sectionRankOffset + RoguelikeSectionsPerArea;
-        effectiveBaseLevel =
-            roguelikeTargetBaseLevelForSectionRank(gateSectionRank) +
-            enemyVariantLevelBonus(bossVariantTier) +
-            std::max(0, astralRun_.areaIndex - 2) * 4;
-    }
-
-    bossSpawned_ = enemies_.spawnBossNear(
-        tileMap_,
-        bossSpawnPoint_,
-        player_.position,
-        balance_,
-        enemyCatalog_,
-        currentStageDefinition().bossEnemyId,
-        bossVariantTier,
-        effectiveBaseLevel);
-    if (!bossSpawned_) {
-        resetBossEncounter();
+    if (!bossSpawned_ && !spawnBossForCurrentEncounter(EnemySpawnVisualKind::Default)) {
         return false;
     }
 
@@ -11633,7 +11771,9 @@ bool Game::beginBossFightForCurrentEncounter()
         bossEncounterRingHidden_ = false;
         beginDungeonRingIntro();
     }
-    playAudioSe("se.boss.spawn");
+    if (!bossEncounter_.bossSpawnPresentationPlayed) {
+        playAudioSe(AudioSeBossSpawn);
+    }
     playAudioBgm("bgm.boss", 0.45f);
     return true;
 }

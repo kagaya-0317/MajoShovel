@@ -108,6 +108,12 @@ constexpr float AstragnaSealRadius = 15.0f;
 constexpr int AstragnaSealMaxHp = 18;
 constexpr float AstragnaShellHitRadius = static_cast<float>(balance::TileSize) * 0.56f;
 constexpr int AstragnaShellMaxHp = 7;
+
+float smoothStep01(float value)
+{
+    const float t = clamp(value, 0.0f, 1.0f);
+    return t * t * (3.0f - 2.0f * t);
+}
 constexpr float AstragnaSealedShellDamageMultiplier = 0.08f;
 constexpr float AstragnaDownedShellDamageMultiplier = 1.0f;
 constexpr float AstragnaDownedSeconds = 7.0f;
@@ -2882,6 +2888,18 @@ EnemyImageDrawOptions enemyImageOptionsFor(const Enemy& enemy)
 Vec2 enemyVisualBoundsSize(Renderer& renderer, const Enemy& enemy)
 {
     if (enemy.spawnTimer > 0.0f) {
+        if (enemy.spawnVisualKind == EnemySpawnVisualKind::GroundEmerge) {
+            Vec2 imageSize{};
+            const float visualRadius = enemyVisualRadius(enemy);
+            if (enemyImageDrawSize(renderer, enemy, enemyImageOptionsFor(enemy), imageSize)) {
+                return {
+                    std::max(imageSize.x, visualRadius * 2.8f),
+                    std::max(imageSize.y + visualRadius * 1.2f, visualRadius * 3.4f),
+                };
+            }
+            const float diameter = visualRadius * 3.4f;
+            return {diameter, diameter};
+        }
         const float ratio = enemy.spawnDuration > 0.0f ? enemy.spawnTimer / enemy.spawnDuration : 0.0f;
         const float pulse = 1.0f + (1.0f - ratio) * 0.9f;
         const float visualRadius = enemyVisualRadius(enemy);
@@ -3385,6 +3403,39 @@ void drawEnemyVisual(
     };
     if (enemy.spawnTimer > 0.0f) {
         const float ratio = enemy.spawnDuration > 0.0f ? enemy.spawnTimer / enemy.spawnDuration : 0.0f;
+        if (enemy.spawnVisualKind == EnemySpawnVisualKind::GroundEmerge) {
+            const float progress = 1.0f - clamp(ratio, 0.0f, 1.0f);
+            const float eased = smoothStep01(progress);
+            const float visualRadius = enemyVisualRadius(enemy);
+            const float rise = visualRadius * (1.20f - eased) + std::sin(progress * Pi) * visualRadius * 0.16f;
+            const Vec2 emergePosition = drawPosition + Vec2{0.0f, rise};
+            const Color dirt = enemy.isBoss ? Color{136, 88, 54, 222} : Color{118, 84, 58, 210};
+            const Color darkDirt = {58, 42, 34, 190};
+            const Color dust = {198, 154, 96, 126};
+            renderer.fillEllipse(
+                drawPosition + Vec2{0.0f, visualRadius * 0.42f},
+                {visualRadius * (1.28f + eased * 0.36f), visualRadius * 0.34f},
+                darkDirt);
+            renderer.drawCircle(drawPosition + Vec2{0.0f, visualRadius * 0.25f}, visualRadius * (0.72f + eased * 0.28f), dirt);
+            renderer.drawCircle(drawPosition + Vec2{0.0f, visualRadius * 0.24f}, visualRadius * (1.06f + eased * 0.22f), scaleColorAlpha(dust, 0.55f + eased * 0.32f));
+            for (int i = 0; i < 7; ++i) {
+                const float angle = static_cast<float>(i) * Pi * 2.0f / 7.0f + progress * 0.9f;
+                const float radius = visualRadius * (0.38f + 0.08f * static_cast<float>(i % 3));
+                const Vec2 chip = drawPosition + Vec2{std::cos(angle) * visualRadius * (0.62f + eased * 0.32f), visualRadius * 0.36f + std::sin(angle) * visualRadius * 0.16f};
+                renderer.fillCircle(chip, radius * (0.22f + eased * 0.12f), dirt);
+            }
+
+            Vec2 imageSize{};
+            const bool drewImage = drawEnemyImage(renderer, enemy, emergePosition, enemy.behaviorTimer, enemyImageOptionsFor(enemy), &imageSize);
+            if (!drewImage) {
+                const Color color = enemy.isBoss ? Color{142, 46, 160, 255} : colorForEnemy(enemy);
+                renderer.fillCircle(emergePosition, visualRadius, color);
+                renderer.drawCircle(emergePosition, visualRadius + 3.0f, enemy.isBoss ? Color{255, 210, 96, 255} : Color{80, 18, 28, 255});
+            }
+            renderer.drawCircle(drawPosition, visualRadius * (1.10f + progress * 0.18f), {255, 208, 112, 140});
+            drawAwarenessIcon(visualRadius);
+            return;
+        }
         const float pulse = 1.0f + (1.0f - ratio) * 0.9f;
         const float visualRadius = enemyVisualRadius(enemy);
         Color spawnColor = enemy.isBoss ? Color{255, 180, 80, 230} : colorForEnemy(enemy);
@@ -7156,7 +7207,8 @@ bool EnemySystem::spawnBossAt(
     bool detectedOnSpawn,
     Vec2 detectedTarget,
     EnemyVariantTier variantTier,
-    int effectiveBaseLevel)
+    int effectiveBaseLevel,
+    EnemySpawnVisualKind spawnVisualKind)
 {
     Enemy* enemy = enemies_.acquire();
     if (!enemy) {
@@ -7190,6 +7242,7 @@ bool EnemySystem::spawnBossAt(
     enemy->xp = std::max(0, enemy->xp);
     enemy->spawnTimer = balance.enemySpawnWarmup * 1.6f;
     enemy->spawnDuration = enemy->spawnTimer;
+    enemy->spawnVisualKind = spawnVisualKind;
     if (detectedOnSpawn) {
         forceDetectInSight(*enemy, detectedTarget, true);
     }
@@ -7646,7 +7699,8 @@ bool EnemySystem::spawnBoss(
     const EnemyCatalog& enemyCatalog,
     std::string_view bossEnemyId,
     EnemyVariantTier variantTier,
-    int effectiveBaseLevel)
+    int effectiveBaseLevel,
+    EnemySpawnVisualKind spawnVisualKind)
 {
     if (bossActive()) {
         return false;
@@ -7657,7 +7711,7 @@ bool EnemySystem::spawnBoss(
         return false;
     }
 
-    return spawnBossAt(spawnPosition, balance, enemyCatalog, bossEnemyId, false, {}, variantTier, effectiveBaseLevel);
+    return spawnBossAt(spawnPosition, balance, enemyCatalog, bossEnemyId, false, {}, variantTier, effectiveBaseLevel, spawnVisualKind);
 }
 
 bool EnemySystem::spawnBossNear(
@@ -7668,7 +7722,8 @@ bool EnemySystem::spawnBossNear(
     const EnemyCatalog& enemyCatalog,
     std::string_view bossEnemyId,
     EnemyVariantTier variantTier,
-    int effectiveBaseLevel)
+    int effectiveBaseLevel,
+    EnemySpawnVisualKind spawnVisualKind)
 {
     if (bossActive()) {
         return false;
@@ -7685,7 +7740,22 @@ bool EnemySystem::spawnBossNear(
         return false;
     }
 
-    return spawnBossAt(spawnPosition, balance, enemyCatalog, bossEnemyId, false, {}, variantTier, effectiveBaseLevel);
+    return spawnBossAt(spawnPosition, balance, enemyCatalog, bossEnemyId, false, {}, variantTier, effectiveBaseLevel, spawnVisualKind);
+}
+
+bool EnemySystem::advanceBossSpawnPresentation(float dt)
+{
+    const float safeDt = std::max(0.0f, dt);
+    bool activeAfterAdvance = false;
+    for (Enemy& enemy : enemies_.items()) {
+        if (!enemy.active || !enemy.isBoss || enemy.spawnTimer <= 0.0f) {
+            continue;
+        }
+        enemy.action = {};
+        enemy.spawnTimer = std::max(0.0f, enemy.spawnTimer - safeDt);
+        activeAfterAdvance = activeAfterAdvance || enemy.spawnTimer > 0.0f;
+    }
+    return activeAfterAdvance;
 }
 
 bool EnemySystem::bossActive() const

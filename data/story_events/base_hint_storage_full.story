@@ -4,5 +4,18 @@
 @once story_base_hint_storage_full
 
 @say monica モニカ
-ルネ、リュックがいっぱいみたい。
-採掘で使わないものは、収納箱にしまっておくといいよ。
+ルネ、おかえり！
+いっぱい、色々持ち帰ってきたね
+リュックがぱんぱん！
+
+@say player ルネ
+でへへ〜
+
+@base_facility_marker storage_chest show
+@wait 0.2
+
+@say monica モニカ
+そこの収納箱に、アイテムをしまっておけるよ
+有効活用してね
+
+@base_facility_marker storage_chest hide

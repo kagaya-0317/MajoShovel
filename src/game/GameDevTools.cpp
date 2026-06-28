@@ -2666,6 +2666,117 @@ std::string debugStoryTestDisplayOnceFlag(const StoryEvent& event)
     return event.onceFlag.empty() ? std::string("onceなし") : event.onceFlag;
 }
 
+std::size_t debugStoryTestDocsOrderIndex(std::string_view eventId)
+{
+    static constexpr std::string_view DocsOrder[] = {
+        "intro_tutorial_fall",
+        "intro_tutorial_shovel_ready",
+        "intro_tutorial_torch_found",
+        "intro_tutorial_torch_ready",
+        "intro_tutorial_enemy_encounter",
+        "intro_tutorial_enemy_encounter_slime",
+        "intro_tutorial_enemy_encounter_retreat",
+        "intro_tutorial_enemy_defeated",
+        "intro_tutorial_chest_found",
+        "intro_tutorial_chest_loot_inventory",
+        "intro_tutorial_chest_loot_ring",
+        "intro_tutorial_midway",
+        "intro_tutorial_exit_found",
+        "opening_base_intro",
+        "tutorial_ring_equip",
+        "tutorial_base_storage",
+        "tutorial_base_merchant",
+        "tutorial_base_processing",
+        "tutorial_base_forge",
+        "tutorial_base_ring_workshop",
+        "tutorial_base_bookshelf",
+        "tutorial_base_diary",
+        "base_hint_storage_full",
+        "base_hint_merchant_full",
+        "base_hint_ring_workshop_buildable",
+        "base_hint_ring_preset_ready",
+        "base_hint_processing_ready",
+        "base_hint_forge_ready",
+        "base_hint_diary_save",
+        "base_hint_bookshelf_stage1",
+        "stage_01_start",
+        "tutorial_item_use",
+        "tutorial_staff_equip",
+        "tutorial_magic_book",
+        "tutorial_magnifying_glass",
+        "tutorial_capture_net",
+        "tutorial_ring_shift",
+        "tutorial_warp",
+        "stage_01_warp_all_found",
+        "stage_01_boss_before",
+        "stage_01_boss_after",
+        "stage_01_clear",
+        "stage_02_start",
+        "stage_02_boss_before",
+        "stage_02_boss_after",
+        "stage_02_clear",
+        "stage_03_start",
+        "stage_03_boss_before",
+        "stage_03_boss_after",
+        "stage_03_clear",
+        "ending_main",
+        "post_ending_intro",
+        "stage_04_start",
+        "stage_04_boss_before",
+        "stage_04_boss_after",
+        "stage_04_clear",
+        "dungeon_discovery:buried_witch",
+        "dungeon_discovery:surrounded_witch",
+        "dungeon_discovery:cold_witch_campfire",
+        "dungeon_discovery:heavy_rock_witch",
+        "dungeon_discovery:item_request_witch",
+        "dungeon_discovery:lost_baggage_witch",
+        "dungeon_discovery:sleeping_enemy_treasure",
+        "dungeon_discovery:glowing_rock_room",
+        "dungeon_discovery:electric_circuit_room",
+        "dungeon_discovery:nest_room",
+        "dungeon_discovery:monster_swarm_room",
+        "dungeon_discovery:boss_monster_room",
+        "dungeon_discovery:warp_guide_map",
+        "monica_base_progress_01",
+        "monica_base_progress_02",
+        "monica_base_progress_03",
+        "monica_base_progress_04",
+        "monica_base_post_ending",
+        "base_talk_merchant_progress_01",
+        "base_talk_merchant_progress_02",
+        "base_talk_merchant_progress_03",
+        "base_talk_merchant_progress_04",
+        "base_random_talk_merchant_01",
+        "base_random_talk_merchant_02",
+        "base_random_talk_merchant_03",
+        "base_random_talk_merchant_04",
+        "base_talk_processor_progress_01",
+        "base_talk_processor_progress_02",
+        "base_talk_processor_progress_03",
+        "base_talk_processor_progress_04",
+        "base_random_talk_processor_01",
+        "base_random_talk_processor_02",
+        "base_random_talk_processor_03",
+        "base_random_talk_processor_04",
+        "base_talk_elder_progress_01",
+        "base_talk_elder_progress_02",
+        "base_talk_elder_progress_03",
+        "base_talk_elder_progress_04",
+        "base_talk_elder_post_ending",
+        "hidden_bad_monica_duel_unlocked",
+    };
+
+    std::size_t index = 0;
+    for (std::string_view orderedEventId : DocsOrder) {
+        if (orderedEventId == eventId) {
+            return index;
+        }
+        ++index;
+    }
+    return std::numeric_limits<std::size_t>::max();
+}
+
 std::string debugStageIdForToken(std::string_view token)
 {
     if (token == "stage1" || token == "stage-1" || token == "1" || token == "stage_01_stardust") {
@@ -7543,6 +7654,17 @@ void Game::rebuildDebugStoryTestList()
             std::find(storyFlags_.begin(), storyFlags_.end(), event.onceFlag) != storyFlags_.end();
         debugStoryTestEntries_.push_back(std::move(entry));
     }
+    std::stable_sort(
+        debugStoryTestEntries_.begin(),
+        debugStoryTestEntries_.end(),
+        [](const DebugStoryTestEntry& lhs, const DebugStoryTestEntry& rhs) {
+            const std::size_t lhsOrder = debugStoryTestDocsOrderIndex(lhs.eventId);
+            const std::size_t rhsOrder = debugStoryTestDocsOrderIndex(rhs.eventId);
+            if (lhsOrder != rhsOrder) {
+                return lhsOrder < rhsOrder;
+            }
+            return lhs.eventId < rhs.eventId;
+        });
 
     debugStoryTestSelectedIndex_ = -1;
     if (!previousSelection.empty()) {

@@ -352,6 +352,8 @@ public:
         float moveSeconds = 0.0f;
         float returnSeconds = 0.0f;
         std::function<void()> onComplete;
+        bool allowDuringBossEncounter = false;
+        bool debugStoryReplay = false;
     };
     bool requestDungeonFocus(DungeonFocusRequest request);
 
@@ -1005,6 +1007,22 @@ private:
 
         [[nodiscard]] bool active() const { return phase != ScreenTransitionPhase::Idle; }
     };
+    enum class StoryPhoneSoundKind {
+        None,
+        Incoming,
+        Outgoing,
+        Hangup,
+    };
+    struct StoryPhoneSoundState {
+        StoryPhoneSoundKind kind = StoryPhoneSoundKind::None;
+        float elapsedSeconds = 0.0f;
+        float durationSeconds = 0.0f;
+    };
+    struct StoryShakeCommandState {
+        float elapsedSeconds = 0.0f;
+        float durationSeconds = 0.0f;
+        bool active = false;
+    };
     enum class DungeonFocusPhase {
         Idle,
         MoveToTarget,
@@ -1027,6 +1045,8 @@ private:
         std::string discoveryStoryEventId;
         DialogueSequence discoveryDialogue;
         std::function<void()> onComplete;
+        bool allowDuringBossEncounter = false;
+        bool debugStoryReplay = false;
     };
     enum class BossEncounterPhase {
         None,
@@ -1052,6 +1072,7 @@ private:
         Vec2 defeatPosition{};
         float timer = 0.0f;
         bool finalBoss = false;
+        bool bossSpawnPresentationPlayed = false;
     };
     void initializeWorld(bool captureRunStartInventory = true);
     void resetWorldSimulationState();
@@ -1405,8 +1426,16 @@ private:
     bool grantBaseMiningRescueTool(std::string_view objectId);
     void renderBaseMiningRescueDropEvent(Renderer& renderer) const;
     void updateBaseScreen(const Input& input, UiContext& ui, float dt);
+    void updateStoryEventCommand(float dt);
+    void beginStoryPhoneSound(StoryPhoneSoundKind kind);
+    void updateStoryPhoneSound(float dt);
+    bool storyPhoneSoundActive() const;
+    void beginStoryShakeCommand(float amplitude, float duration, std::string_view soundId);
+    void updateStoryShakeCommand(float dt);
+    bool storyShakeCommandActive() const;
     void updateBaseStoryPresentationCommand(float dt);
     void clearBaseStoryPresentation();
+    void renderBaseStoryFacilityMarkers(Renderer& renderer) const;
     bool storyEventUsesBasePresentation(std::string_view id) const;
     void openBaseDiary();
     void closeBaseDiary();
@@ -1698,12 +1727,15 @@ private:
     void requestBossEncounterIntro(BossEncounterPurpose purpose);
     void applyBossEncounterIntroPlacement();
     void finishBossEncounterIntroTransition();
+    bool startBossBeforeStoryPresentation(std::string_view id, bool debugReplay, std::function<void()> onComplete);
     bool shouldPlayBossAfterStoryEvent() const;
     void requestBossEncounterAfterDialogueTransition();
     void finishBossEncounterAfterDialogueTransition();
     void updateBossSpawn();
     void resetBossEncounter();
+    bool spawnBossForCurrentEncounter(EnemySpawnVisualKind spawnVisualKind);
     bool beginBossFightForCurrentEncounter();
+    void updateDungeonStoryCommand(const DialogueCommand& command, float dt);
     void beginBossDefeatSequence(Vec2 position);
     bool updateBossEncounterFlow(float dt);
     void finishBossEncounterAfterDialogue();
@@ -2116,6 +2148,7 @@ private:
     float baseRingPreviewAnimationTime_ = 0.0f;
     std::unordered_map<std::string, bool> baseNpcSpriteFlipHorizontal_;
     std::unordered_map<std::string, Vec2> baseStoryFacilityOffsets_;
+    std::unordered_map<std::string, float> baseStoryMarkedFacilities_;
     struct BaseStoryCommandRuntime {
         int stepIndex = -1;
         std::string name;
@@ -2127,6 +2160,8 @@ private:
     };
     BaseStoryCommandRuntime baseStoryCommand_;
     float baseStoryFadeAlpha_ = 0.0f;
+    StoryPhoneSoundState storyPhoneSound_;
+    StoryShakeCommandState storyShakeCommand_;
     bool basePlayerSpriteWalking_ = false;
     bool basePlayerSpriteFlipHorizontal_ = false;
     int baseMenuSelection_ = 0;

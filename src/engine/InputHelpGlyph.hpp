@@ -3,6 +3,7 @@
 #include "engine/Input.hpp"
 #include "engine/Renderer.hpp"
 
+#include <cstddef>
 #include <string>
 #include <string_view>
 
@@ -27,6 +28,12 @@ void setInputHelpContext(const Input* input);
 [[nodiscard]] const Input* inputHelpContext();
 void setInputHelpDeviceMode(InputHelpDeviceMode mode);
 [[nodiscard]] InputHelpDeviceMode inputHelpDeviceMode();
+[[nodiscard]] std::string inlineInputActionTag(InputAction action);
+[[nodiscard]] bool inputHelpExplicitTagAt(
+    std::string_view text,
+    std::size_t offset,
+    std::size_t& outEnd,
+    const Input* input = nullptr);
 
 [[nodiscard]] Vec2 measureInputHelpText(
     Renderer& renderer,

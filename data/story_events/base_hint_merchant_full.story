@@ -4,5 +4,22 @@
 @once story_base_hint_merchant_full
 
 @say monica モニカ
-リュックがいっぱいなら、商人ワゴンも見てみて。
-宝や不要な道具を売れば、次の準備資金にもなるよ。
+ルネ、おかえり！
+わーっ、お宝いっぱい！
+ルネが見つけてきたの！？
+
+@say player ルネ
+えへへ、そうだよ〜
+
+@base_facility_marker merchant_wagon show
+@wait 0.2
+
+@say monica モニカ
+お宝は商人のお姉さんに
+買い取ってもらうといいよ！
+
+@say monica モニカ
+あと、便利な道具も売ってるから
+時々覗いてみるといいかも
+
+@base_facility_marker merchant_wagon hide
