@@ -25,3 +25,48 @@
 - `boss`: 強めの揺れ。SE は `se.story.rumble`。
 
 地面が揺れてゴゴゴ…という演出を入れる場合は、演出行 `※地面が揺れる` の直後に `@story_shake strong` を置く。`@story_shake` 自体が待機するため、直後に揺れ待ち用の `@wait small` は置かない。
+
+### `@dungeon_boss_spawn <mode> [seconds]`
+
+ダンジョン中のボス前ストーリーで、現在ステージのボスを生成し、登場演出が終わるまでストーリー進行を待機する。
+
+`mode` は以下を指定する。
+
+- `emerge` / `ground_emerge`: 地面から出現する。土煙、地面破壊、画面揺れを伴う。
+- `walk_in`: 画面奥の外側から、ボスの既存歩行グラフィックでゆっくり歩いてくる。`seconds` 省略時は `3.2` 秒。
+
+`walk_in` は演出中だけボスを無敵・AI停止の spawn presentation 状態に置き、演出終了後は同じボス実体がそのまま戦闘に入る。
+
+### `@base_chicory_figure8 [seconds]`
+
+拠点ストーリー中、ルネの帽子付近からチコリの小さな光を出し、ルネの周囲を八の字に飛ばす。
+
+- `seconds`: 演出時間。省略時は `2.2` 秒。
+
+演出中はストーリー進行を待機する。チコリは小さな発光体として描画し、地面に影を落とす。
+
+### `@base_ring_demo open <ring_count> <item_object_id> [item_ring=<ring_number>] [seconds]`
+
+拠点ストーリー中、ルネを中心にスペルリングのデモ表示を開く。
+
+- `ring_count`: 表示するリング数。`1` から `3`。
+- `item_object_id`: 見せ用アイテム。`item_apple` など。
+- `item_ring`: 見せ用アイテムを乗せるリング番号。`1` から `3`。省略時は既存互換のため `2`。
+- `seconds`: 開く演出時間。省略時は `1.15` 秒。
+
+見せ用アイテムは保存データ、インベントリ、実際のスペルリングには追加しない。`open` 完了後も表示は維持され、`close` で閉じる。
+
+### `@base_ring_demo close [seconds]`
+
+拠点ストーリー中のスペルリングデモ表示を閉じる。
+
+- `seconds`: 閉じる演出時間。省略時は `0.55` 秒。
+
+### `@dungeon_boss_explode_escape <sprite_key> [seconds]`
+
+ダンジョン内のボス後ストーリー中、撃破済みボスを演出用に再表示し、爆発後に別 sprite へ変化させて逃走させる。
+
+- `sprite_key`: 逃走時に表示する sprite 種別。`crab_dish` は `assets/enemies/story_crab_dish.png` を表示する。
+- `seconds`: 演出全体の時間。省略時は `1.8` 秒。
+
+再表示するボスは実際の敵として再スポーンせず、保存データ、敵リスト、ドロップ、撃破フローには影響しない。逃走 sprite は向き差分を持たない場合、移動方向に関係なく同じ画像を使う。

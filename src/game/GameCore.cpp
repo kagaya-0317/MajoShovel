@@ -1390,6 +1390,7 @@ void Game::resetWorldUiState()
     closeRoguelikeFacilityUi();
     introTutorialExitHovered_ = false;
     resetDungeonFocus();
+    clearDungeonStoryPresentation();
     storyPhoneSound_ = {};
     storyShakeCommand_ = {};
     baseStorageActive_ = false;

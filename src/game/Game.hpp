@@ -1071,8 +1071,28 @@ private:
         Vec2 spawnPoint{};
         Vec2 defeatPosition{};
         float timer = 0.0f;
+        float returnToBaseAfterDialogueDelay = 0.0f;
         bool finalBoss = false;
         bool bossSpawnPresentationPlayed = false;
+        bool returnToBaseAfterDialogue = false;
+    };
+    enum class DungeonStoryPresentationKind {
+        None,
+        BossAfterDefeat,
+        SmallMoleEscape,
+        BossExplodeEscape,
+    };
+    struct DungeonStoryPresentationState {
+        DungeonStoryPresentationKind kind = DungeonStoryPresentationKind::None;
+        Vec2 position{};
+        Vec2 startPosition{};
+        Vec2 targetPosition{};
+        std::string bossEnemyId;
+        std::string spriteKey;
+        float elapsedSeconds = 0.0f;
+        float durationSeconds = 0.0f;
+        bool started = false;
+        bool effectTriggered = false;
     };
     void initializeWorld(bool captureRunStartInventory = true);
     void resetWorldSimulationState();
@@ -1436,6 +1456,8 @@ private:
     void updateBaseStoryPresentationCommand(float dt);
     void clearBaseStoryPresentation();
     void renderBaseStoryFacilityMarkers(Renderer& renderer) const;
+    void renderBaseStoryChicoryFlight(Renderer& renderer) const;
+    void renderBaseStoryRingDemo(Renderer& renderer) const;
     bool storyEventUsesBasePresentation(std::string_view id) const;
     void openBaseDiary();
     void closeBaseDiary();
@@ -1736,6 +1758,12 @@ private:
     bool spawnBossForCurrentEncounter(EnemySpawnVisualKind spawnVisualKind);
     bool beginBossFightForCurrentEncounter();
     void updateDungeonStoryCommand(const DialogueCommand& command, float dt);
+    void updateDungeonBossSpawnStoryCommand(const DialogueCommand& command, float dt);
+    void updateDungeonBossAfterDefeatStoryCommand(const DialogueCommand& command, float dt);
+    void updateDungeonSmallMoleEscapeStoryCommand(const DialogueCommand& command, float dt);
+    void updateDungeonBossExplodeEscapeStoryCommand(const DialogueCommand& command, float dt);
+    void updateDungeonReturnToBaseAfterStoryCommand(const DialogueCommand& command);
+    void clearDungeonStoryPresentation();
     void beginBossDefeatSequence(Vec2 position);
     bool updateBossEncounterFlow(float dt);
     void finishBossEncounterAfterDialogue();
@@ -1755,6 +1783,9 @@ private:
         std::vector<DepthRenderEntry>& entries,
         Renderer& renderer,
         const std::vector<LightSource>& extraLights) const;
+    void appendDungeonStoryPresentationRenderEntries(
+        std::vector<DepthRenderEntry>& entries,
+        Renderer& renderer) const;
     void renderPendingBuriedEnemySpawnWarnings(Renderer& renderer) const;
     void renderRewardNodes(Renderer& renderer, const std::vector<LightSource>& extraLights) const;
     int unlockedRingCount() const;
@@ -2158,7 +2189,25 @@ private:
         Vec2 startFacing{0.0f, 1.0f};
         Vec2 targetFacing{0.0f, 1.0f};
     };
+    struct BaseStoryChicoryFlightState {
+        bool active = false;
+        float elapsedSeconds = 0.0f;
+        float durationSeconds = 0.0f;
+        Vec2 startPosition{};
+        Vec2 centerPosition{};
+    };
+    struct BaseStoryRingDemoState {
+        bool active = false;
+        bool closing = false;
+        float elapsedSeconds = 0.0f;
+        float durationSeconds = 0.0f;
+        int visibleRingCount = 0;
+        int itemRingIndex = 1;
+        std::string itemObjectId;
+    };
     BaseStoryCommandRuntime baseStoryCommand_;
+    BaseStoryChicoryFlightState baseStoryChicoryFlight_;
+    BaseStoryRingDemoState baseStoryRingDemo_;
     float baseStoryFadeAlpha_ = 0.0f;
     StoryPhoneSoundState storyPhoneSound_;
     StoryShakeCommandState storyShakeCommand_;
@@ -2544,6 +2593,7 @@ private:
     std::string gameOverStatus_;
     bool bossSpawned_ = false;
     BossEncounterState bossEncounter_{};
+    DungeonStoryPresentationState dungeonStoryPresentation_{};
     int stageClearSelection_ = 0;
     std::string stageClearStatus_;
     AstralRunState astralRun_{};

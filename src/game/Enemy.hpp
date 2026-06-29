@@ -29,6 +29,7 @@ enum class EnemySpawnSource {
 enum class EnemySpawnVisualKind {
     Default,
     GroundEmerge,
+    WalkIn,
 };
 
 inline constexpr int EnemyDeepVariantLevelBonus = 35;
@@ -429,6 +430,8 @@ struct Enemy {
     float spawnTimer = 0.0f;
     float spawnDuration = 0.0f;
     EnemySpawnVisualKind spawnVisualKind = EnemySpawnVisualKind::Default;
+    Vec2 spawnPresentationStartPosition{};
+    Vec2 spawnPresentationEndPosition{};
     Vec2 knockbackVelocity{};
     float knockbackTimer = 0.0f;
     float stunWakeTimer = 0.0f;

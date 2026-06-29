@@ -233,6 +233,7 @@ public:
         int effectiveBaseLevel = 0,
         EnemySpawnVisualKind spawnVisualKind = EnemySpawnVisualKind::Default);
     bool advanceBossSpawnPresentation(float dt);
+    bool configureActiveBossWalkInPresentation(Vec2 startPosition, float durationSeconds);
     void update(
         Player& player,
         SpellRingSystem& spellRing,

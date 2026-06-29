@@ -14,12 +14,26 @@
 #include <cctype>
 #include <cstdint>
 #include <cmath>
+#include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
 namespace majo {
 
 namespace {
+
+constexpr std::string_view StoryBossSpritePath = "assets/enemies/boss_1.png";
+constexpr int StoryBossSpriteColumns = 6;
+constexpr int StoryBossSpriteRows = 8;
+constexpr float StoryBossSpriteScale = 0.84f;
+constexpr std::string_view StorySmallMoleSpritePath = "assets/enemies/story_small_mole_walk.png";
+constexpr int StorySmallMoleSpriteColumns = 2;
+constexpr int StorySmallMoleSpriteRows = 4;
+constexpr float StorySmallMoleFrameSeconds = 0.12f;
+constexpr std::string_view StoryCrabDishSpritePath = "assets/enemies/story_crab_dish.png";
+constexpr Vec2 StoryCrabDishDrawSize{58.0f, 38.0f};
+constexpr float StoryBossExplodeEscapeWarmupSeconds = 0.48f;
 
 float easeOutCubic(float t)
 {
@@ -7475,6 +7489,207 @@ void Game::renderBossDefeatPresentation(Renderer& renderer) const
     renderer.drawText(center + Vec2{-110.0f, 42.0f}, "深部の主を退けた", {238, 242, 236, alphaByte(230.0f * alpha)}, 2);
 }
 
+bool drawStoryBossEnemyImage(
+    Renderer& renderer,
+    const EnemyCatalog& enemyCatalog,
+    std::string_view bossEnemyId,
+    Vec2 position,
+    float animationTimeSeconds,
+    float alpha,
+    Vec2 stretchScale = {1.0f, 1.0f})
+{
+    const auto it = enemyCatalog.enemiesById.find(std::string(bossEnemyId));
+    const EnemyDefinition* definition = it != enemyCatalog.enemiesById.end() ? &it->second : nullptr;
+    if (definition == nullptr) {
+        renderer.drawActorShadow(position, 112.0f, {1.0f, 0.42f}, {0, 0, 0, alphaByte(76.0f * alpha)});
+        renderer.fillCircle(position + Vec2{0.0f, -32.0f}, 42.0f, {190, 96, 76, alphaByte(220.0f * alpha)});
+        renderer.drawCircle(position + Vec2{0.0f, -32.0f}, 46.0f, {255, 210, 130, alphaByte(180.0f * alpha)});
+        return false;
+    }
+
+    Enemy enemy;
+    enemy.active = true;
+    enemy.isBoss = true;
+    enemy.enemyId = definition->id;
+    enemy.enemyName = definition->name;
+    enemy.definition = definition;
+    enemy.enemyTags = definition->enemyTags;
+    enemy.aiId = definition->enemyAi;
+    enemy.unawareAiId = definition->unawareAiId;
+    enemy.position = position;
+    enemy.radius = definition->radius > 0.0 ? static_cast<float>(definition->radius) : 32.0f;
+    enemy.hp = std::max(1, definition->hp);
+    enemy.maxHp = enemy.hp;
+    enemy.facingAngle = Pi * 0.5f;
+
+    renderer.drawActorShadow(
+        position,
+        std::max(72.0f, enemy.radius * 2.25f),
+        {1.0f, 0.42f},
+        {0, 0, 0, alphaByte(82.0f * alpha)});
+
+    EnemyImageDrawOptions options;
+    options.tint = {255, 255, 255, alphaByte(255.0f * alpha)};
+    options.stretchScale = stretchScale;
+    options.directionOverrideEnabled = true;
+    options.directionOverride = {0.0f, 1.0f};
+    Vec2 drawSize{};
+    if (!drawEnemyImage(renderer, enemy, position, animationTimeSeconds, options, &drawSize)) {
+        renderer.fillCircle(position + Vec2{0.0f, -32.0f}, enemy.radius, {190, 96, 76, alphaByte(220.0f * alpha)});
+        renderer.drawCircle(position + Vec2{0.0f, -32.0f}, enemy.radius + 4.0f, {255, 210, 130, alphaByte(180.0f * alpha)});
+        return false;
+    }
+    return true;
+}
+
+void Game::appendDungeonStoryPresentationRenderEntries(
+    std::vector<DepthRenderEntry>& entries,
+    Renderer& renderer) const
+{
+    if (!dungeonStoryPresentation_.started ||
+        dungeonStoryPresentation_.kind == DungeonStoryPresentationKind::None) {
+        return;
+    }
+
+    const DungeonStoryPresentationState state = dungeonStoryPresentation_;
+    entries.push_back(DepthRenderEntry{
+        state.position.y,
+        [this, state, &renderer]() {
+            if (state.kind == DungeonStoryPresentationKind::BossAfterDefeat) {
+                const ImageHandle handle = renderer.acquireImage(StoryBossSpritePath, TextureFilter::Nearest);
+                Vec2 imageSize{};
+                if (!handle.valid() || !renderer.getImageSize(handle, imageSize)) {
+                    return;
+                }
+
+                const float frameWidth = imageSize.x / static_cast<float>(StoryBossSpriteColumns);
+                const float frameHeight = imageSize.y / static_cast<float>(StoryBossSpriteRows);
+                const float progress = clamp(
+                    state.elapsedSeconds / std::max(0.001f, state.durationSeconds),
+                    0.0f,
+                    1.0f);
+                const int frame = std::clamp(
+                    static_cast<int>(progress * static_cast<float>(StoryBossSpriteColumns)),
+                    0,
+                    StoryBossSpriteColumns - 1);
+                const float collapse = smoothStep01(progress);
+                const float fade = progress > 0.62f ? 1.0f - smoothStep01((progress - 0.62f) / 0.38f) : 1.0f;
+                const float shake = std::sin(progress * Pi * 8.0f) * 6.0f * (1.0f - progress);
+                const RectF source{
+                    frameWidth * static_cast<float>(frame),
+                    0.0f,
+                    frameWidth,
+                    frameHeight,
+                };
+                const Vec2 drawSize{
+                    frameWidth * StoryBossSpriteScale * (1.0f + 0.05f * (1.0f - collapse)),
+                    frameHeight * StoryBossSpriteScale * (1.0f - 0.36f * collapse),
+                };
+                const Vec2 center = state.position + Vec2{shake, -34.0f + 22.0f * collapse};
+                const unsigned char alpha = alphaByte(255.0f * fade);
+                const unsigned char shade = alphaByte(255.0f - 92.0f * collapse);
+                renderer.drawActorShadow(
+                    state.position,
+                    132.0f * (1.0f - 0.45f * collapse),
+                    {1.0f, 0.42f},
+                    {0, 0, 0, alphaByte(86.0f * fade)});
+                ImageDrawOptions options;
+                options.tint = {shade, shade, shade, alpha};
+                renderer.drawImageRegion(handle, source, center, drawSize, options);
+                return;
+            }
+
+            if (state.kind == DungeonStoryPresentationKind::SmallMoleEscape) {
+                const ImageHandle handle = renderer.acquireImage(StorySmallMoleSpritePath, TextureFilter::Nearest);
+                Vec2 imageSize{};
+                if (!handle.valid() || !renderer.getImageSize(handle, imageSize)) {
+                    return;
+                }
+
+                const Vec2 travel = state.targetPosition - state.startPosition;
+                const int row = std::abs(travel.x) >= std::abs(travel.y)
+                    ? (travel.x < 0.0f ? 1 : 2)
+                    : (travel.y < 0.0f ? 3 : 0);
+                const int frame = static_cast<int>(
+                    std::floor(state.elapsedSeconds / StorySmallMoleFrameSeconds)) %
+                    StorySmallMoleSpriteColumns;
+                const float frameWidth = imageSize.x / static_cast<float>(StorySmallMoleSpriteColumns);
+                const float frameHeight = imageSize.y / static_cast<float>(StorySmallMoleSpriteRows);
+                const float progress = clamp(
+                    state.elapsedSeconds / std::max(0.001f, state.durationSeconds),
+                    0.0f,
+                    1.0f);
+                const float fade = progress > 0.82f ? 1.0f - smoothStep01((progress - 0.82f) / 0.18f) : 1.0f;
+                const RectF source{
+                    frameWidth * static_cast<float>(frame),
+                    frameHeight * static_cast<float>(row),
+                    frameWidth,
+                    frameHeight,
+                };
+                renderer.drawActorShadow(
+                    state.position + Vec2{0.0f, 8.0f},
+                    42.0f,
+                    {1.0f, 0.34f},
+                    {0, 0, 0, alphaByte(64.0f * fade)});
+                ImageDrawOptions options;
+                options.tint = {255, 255, 255, alphaByte(255.0f * fade)};
+                renderer.drawImageRegion(handle, source, state.position + Vec2{0.0f, -14.0f}, {64.0f, 42.0f}, options);
+                return;
+            }
+
+            if (state.kind == DungeonStoryPresentationKind::BossExplodeEscape) {
+                const bool beforeExplosion = state.elapsedSeconds < StoryBossExplodeEscapeWarmupSeconds;
+                if (beforeExplosion) {
+                    const float warmup = clamp(state.elapsedSeconds / StoryBossExplodeEscapeWarmupSeconds, 0.0f, 1.0f);
+                    const float shakeAmp = 2.0f + 7.0f * warmup;
+                    const Vec2 shake{
+                        std::sin(state.elapsedSeconds * 38.0f) * shakeAmp,
+                        std::cos(state.elapsedSeconds * 31.0f) * shakeAmp * 0.34f,
+                    };
+                    renderer.fillSoftCircle(
+                        state.startPosition + Vec2{0.0f, -28.0f},
+                        46.0f + 42.0f * warmup,
+                        {255, 126, 64, alphaByte(72.0f * warmup)});
+                    drawStoryBossEnemyImage(
+                        renderer,
+                        enemyCatalog_,
+                        state.bossEnemyId,
+                        state.startPosition + shake,
+                        state.elapsedSeconds,
+                        1.0f,
+                        {1.0f + warmup * 0.06f, 1.0f - warmup * 0.05f});
+                    return;
+                }
+
+                const ImageHandle handle = renderer.acquireImage(StoryCrabDishSpritePath, TextureFilter::Nearest);
+                Vec2 imageSize{};
+                const float escapeSeconds = std::max(0.001f, state.durationSeconds - StoryBossExplodeEscapeWarmupSeconds);
+                const float escapeT = clamp((state.elapsedSeconds - StoryBossExplodeEscapeWarmupSeconds) / escapeSeconds, 0.0f, 1.0f);
+                const float fadeIn = smoothStep01(escapeT / 0.16f);
+                const float fadeOut = escapeT > 0.82f ? 1.0f - smoothStep01((escapeT - 0.82f) / 0.18f) : 1.0f;
+                const float alpha = fadeIn * fadeOut;
+                if (!handle.valid() || !renderer.getImageSize(handle, imageSize) || imageSize.x <= 0.0f || imageSize.y <= 0.0f) {
+                    renderer.fillCircle(state.position + Vec2{0.0f, -13.0f}, 16.0f, {240, 86, 56, alphaByte(240.0f * alpha)});
+                    renderer.drawCircle(state.position + Vec2{0.0f, -13.0f}, 19.0f, {255, 236, 196, alphaByte(210.0f * alpha)});
+                    return;
+                }
+
+                const float wobble = std::sin(state.elapsedSeconds * 28.0f) * 2.0f * (1.0f - escapeT);
+                renderer.drawActorShadow(
+                    state.position + Vec2{0.0f, 8.0f},
+                    42.0f * (1.0f - 0.18f * escapeT),
+                    {1.0f, 0.34f},
+                    {0, 0, 0, alphaByte(62.0f * alpha)});
+                ImageDrawOptions options;
+                options.tint = {255, 255, 255, alphaByte(255.0f * alpha)};
+                options.rotationDegrees = wobble;
+                renderer.drawImage(handle, state.position + Vec2{0.0f, -13.0f}, StoryCrabDishDrawSize, options);
+            }
+        },
+        "WorldDepth.draw.story",
+    });
+}
+
 void Game::renderSpellRingForeground(
     Renderer& renderer,
     const std::vector<const SpellRingItem*>& runtimeItems,
@@ -8177,6 +8392,9 @@ void Game::render(Renderer& renderer, const Time& time)
         std::size_t firstEntry = worldDepthEntries.size();
         enemies_.appendRenderEntries(worldDepthEntries, renderer, tileMap_, playerLightCenter, itemLights, 0, &encyclopedia_);
         tagDepthRenderEntries(worldDepthEntries, firstEntry, "WorldDepth.draw.enemy");
+        firstEntry = worldDepthEntries.size();
+        appendDungeonStoryPresentationRenderEntries(worldDepthEntries, renderer);
+        tagDepthRenderEntries(worldDepthEntries, firstEntry, "WorldDepth.draw.story");
         firstEntry = worldDepthEntries.size();
         appendCaptureAbsorbRenderEntries(worldDepthEntries, renderer, time.totalSeconds());
         tagDepthRenderEntries(worldDepthEntries, firstEntry, "WorldDepth.draw.capture");

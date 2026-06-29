@@ -2888,6 +2888,15 @@ EnemyImageDrawOptions enemyImageOptionsFor(const Enemy& enemy)
 Vec2 enemyVisualBoundsSize(Renderer& renderer, const Enemy& enemy)
 {
     if (enemy.spawnTimer > 0.0f) {
+        if (enemy.spawnVisualKind == EnemySpawnVisualKind::WalkIn) {
+            Vec2 imageSize{};
+            if (enemyImageDrawSize(renderer, enemy, enemyImageOptionsFor(enemy), imageSize)) {
+                return imageSize;
+            }
+            const float visualRadius = enemyVisualRadius(enemy);
+            const float diameter = (visualRadius + 3.0f) * 2.0f;
+            return {diameter, diameter};
+        }
         if (enemy.spawnVisualKind == EnemySpawnVisualKind::GroundEmerge) {
             Vec2 imageSize{};
             const float visualRadius = enemyVisualRadius(enemy);
@@ -3403,6 +3412,18 @@ void drawEnemyVisual(
     };
     if (enemy.spawnTimer > 0.0f) {
         const float ratio = enemy.spawnDuration > 0.0f ? enemy.spawnTimer / enemy.spawnDuration : 0.0f;
+        if (enemy.spawnVisualKind == EnemySpawnVisualKind::WalkIn) {
+            const float visualRadius = enemyVisualRadius(enemy);
+            Vec2 imageSize{};
+            const bool drewImage = drawEnemyImage(renderer, enemy, drawPosition, enemy.behaviorTimer, enemyImageOptionsFor(enemy), &imageSize);
+            if (!drewImage) {
+                const Color color = enemy.isBoss ? Color{142, 46, 160, 255} : colorForEnemy(enemy);
+                renderer.fillCircle(drawPosition, visualRadius, color);
+                renderer.drawCircle(drawPosition, visualRadius + 3.0f, enemy.isBoss ? Color{255, 210, 96, 255} : Color{80, 18, 28, 255});
+            }
+            drawAwarenessIcon(drewImage ? std::max(visualRadius, imageSize.y * 0.5f) : visualRadius);
+            return;
+        }
         if (enemy.spawnVisualKind == EnemySpawnVisualKind::GroundEmerge) {
             const float progress = 1.0f - clamp(ratio, 0.0f, 1.0f);
             const float eased = smoothStep01(progress);
@@ -7243,6 +7264,10 @@ bool EnemySystem::spawnBossAt(
     enemy->spawnTimer = balance.enemySpawnWarmup * 1.6f;
     enemy->spawnDuration = enemy->spawnTimer;
     enemy->spawnVisualKind = spawnVisualKind;
+    const Vec2 toFacingTarget = detectedTarget - enemy->position;
+    if (lengthSquared(toFacingTarget) > 0.0001f) {
+        enemy->facingAngle = std::atan2(toFacingTarget.y, toFacingTarget.x);
+    }
     if (detectedOnSpawn) {
         forceDetectInSight(*enemy, detectedTarget, true);
     }
@@ -7711,7 +7736,7 @@ bool EnemySystem::spawnBoss(
         return false;
     }
 
-    return spawnBossAt(spawnPosition, balance, enemyCatalog, bossEnemyId, false, {}, variantTier, effectiveBaseLevel, spawnVisualKind);
+    return spawnBossAt(spawnPosition, balance, enemyCatalog, bossEnemyId, false, playerPosition, variantTier, effectiveBaseLevel, spawnVisualKind);
 }
 
 bool EnemySystem::spawnBossNear(
@@ -7740,7 +7765,7 @@ bool EnemySystem::spawnBossNear(
         return false;
     }
 
-    return spawnBossAt(spawnPosition, balance, enemyCatalog, bossEnemyId, false, {}, variantTier, effectiveBaseLevel, spawnVisualKind);
+    return spawnBossAt(spawnPosition, balance, enemyCatalog, bossEnemyId, false, playerPosition, variantTier, effectiveBaseLevel, spawnVisualKind);
 }
 
 bool EnemySystem::advanceBossSpawnPresentation(float dt)
@@ -7753,9 +7778,51 @@ bool EnemySystem::advanceBossSpawnPresentation(float dt)
         }
         enemy.action = {};
         enemy.spawnTimer = std::max(0.0f, enemy.spawnTimer - safeDt);
+        if (enemy.spawnVisualKind == EnemySpawnVisualKind::WalkIn) {
+            const float duration = std::max(0.001f, enemy.spawnDuration);
+            const float progress = 1.0f - clamp(enemy.spawnTimer / duration, 0.0f, 1.0f);
+            const float eased = smoothStep01(progress);
+            const Vec2 start = enemy.spawnPresentationStartPosition;
+            const Vec2 end = enemy.spawnPresentationEndPosition;
+            const Vec2 travel = end - start;
+            const Vec2 direction = safeDirection(travel, facingVector(enemy.facingAngle));
+            enemy.position = enemy.spawnTimer > 0.0f
+                ? lerp(start, end, eased)
+                : end;
+            enemy.velocity = enemy.spawnTimer > 0.0f
+                ? direction * (length(travel) / duration)
+                : Vec2{};
+            enemy.aiMoveDirection = direction;
+            enemy.facingAngle = std::atan2(direction.y, direction.x);
+            enemy.behaviorTimer += safeDt;
+        }
         activeAfterAdvance = activeAfterAdvance || enemy.spawnTimer > 0.0f;
     }
     return activeAfterAdvance;
+}
+
+bool EnemySystem::configureActiveBossWalkInPresentation(Vec2 startPosition, float durationSeconds)
+{
+    for (Enemy& enemy : enemies_.items()) {
+        if (!enemy.active || !enemy.isBoss) {
+            continue;
+        }
+        const float duration = std::max(0.1f, durationSeconds);
+        const Vec2 endPosition = enemy.position;
+        enemy.spawnVisualKind = EnemySpawnVisualKind::WalkIn;
+        enemy.spawnPresentationStartPosition = startPosition;
+        enemy.spawnPresentationEndPosition = endPosition;
+        enemy.position = startPosition;
+        enemy.spawnTimer = duration;
+        enemy.spawnDuration = duration;
+        const Vec2 direction = safeDirection(endPosition - startPosition, facingVector(enemy.facingAngle));
+        enemy.velocity = direction * (length(endPosition - startPosition) / duration);
+        enemy.aiMoveDirection = direction;
+        enemy.facingAngle = std::atan2(direction.y, direction.x);
+        enemy.behaviorTimer = 0.0f;
+        return true;
+    }
+    return false;
 }
 
 bool EnemySystem::bossActive() const
@@ -10053,7 +10120,10 @@ void EnemySystem::renderShadows(Renderer& renderer, const TileMap& map, Vec2 pla
         const EnemyShadowSpec shadow = resolvedEnemyShadowSpec(shadowCatalog_, enemy.enemyId);
         const Vec2 shadowAnchor = enemyShadowAnchor(enemy, placementCatalog_, shadow);
         const Vec2 shadowBounds = enemyShadowBoundsSize(renderer, enemy, shadow);
-        if (!map.isRectLit(shadowAnchor, shadowBounds, playerLight, extraLights)) {
+        const bool walkInPresentation =
+            enemy.spawnTimer > 0.0f &&
+            enemy.spawnVisualKind == EnemySpawnVisualKind::WalkIn;
+        if (!walkInPresentation && !map.isRectLit(shadowAnchor, shadowBounds, playerLight, extraLights)) {
             continue;
         }
         renderer.drawActorShadow(shadowAnchor, enemyShadowVisualSize(renderer, enemy), shadow.scale);
@@ -10168,7 +10238,10 @@ void EnemySystem::appendRenderEntries(
         }
         const Vec2 drawPosition = enemyDrawPosition(enemy, placementCatalog_);
         const Vec2 visualSize = enemyVisualBoundsSize(renderer, enemy);
-        if (!map.isRectLit(drawPosition, visualSize, playerLight, extraLights)) {
+        const bool walkInPresentation =
+            enemy.spawnTimer > 0.0f &&
+            enemy.spawnVisualKind == EnemySpawnVisualKind::WalkIn;
+        if (!walkInPresentation && !map.isRectLit(drawPosition, visualSize, playerLight, extraLights)) {
             continue;
         }
         const bool captureHighlighted = highlightedEnemyId != 0 && enemy.id == highlightedEnemyId;

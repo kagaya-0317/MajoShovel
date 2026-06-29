@@ -7,11 +7,13 @@
 #include "game/NpcCharacterVisual.hpp"
 #include "game/PlayerEquipmentVisual.hpp"
 #include "game/RingDisplayName.hpp"
+#include "game/SpellRingItem.hpp"
 
 #include <algorithm>
 #include <cerrno>
 #include <cmath>
 #include <cstdlib>
+#include <string>
 #include <unordered_set>
 
 namespace majo {
@@ -32,6 +34,10 @@ constexpr float BookshelfMenuChoiceGap = 16.0f;
 constexpr float BookshelfEndingCommandMinWidth = 240.0f;
 constexpr float BaseStoryLookaroundSeconds = 0.9f;
 constexpr float BaseStoryMinWalkSeconds = 0.18f;
+constexpr float BaseStoryChicoryFlightSeconds = 2.2f;
+constexpr float BaseStoryRingDemoOpenSeconds = 1.15f;
+constexpr float BaseStoryRingDemoCloseSeconds = 0.55f;
+constexpr std::string_view BaseStoryRingDemoDefaultItemObjectId = "item_apple";
 constexpr float BaseFacilityMarkerBobSpeed = 5.2f;
 constexpr float BaseFacilityMarkerBobPixels = 4.0f;
 constexpr float BaseFacilityMarkerMinTipY = 76.0f;
@@ -58,6 +64,8 @@ bool isBasePresentationCommand(std::string_view name)
         name == "base_player_place" ||
         name == "base_player_walk" ||
         name == "base_player_lookaround" ||
+        name == "base_chicory_figure8" ||
+        name == "base_ring_demo" ||
         name == "base_facility_marker";
 }
 
@@ -72,6 +80,38 @@ float parseStoryCommandFloat(const DialogueCommand& command, std::size_t index, 
     const float value = std::strtof(command.args[index].c_str(), &end);
     if (end != command.args[index].c_str() && end != nullptr && *end == '\0' && errno == 0 && std::isfinite(value)) {
         return value;
+    }
+    return fallback;
+}
+
+float parseStoryCommandFirstFloatFrom(const DialogueCommand& command, std::size_t firstIndex, float fallback)
+{
+    for (std::size_t index = firstIndex; index < command.args.size(); ++index) {
+        if (command.args[index].find('=') != std::string::npos) {
+            continue;
+        }
+        const float value = parseStoryCommandFloat(command, index, fallback);
+        if (value != fallback) {
+            return value;
+        }
+    }
+    return fallback;
+}
+
+int parseStoryCommandNamedInt(const DialogueCommand& command, std::string_view key, int fallback)
+{
+    const std::string prefix = std::string(key) + "=";
+    for (const std::string& arg : command.args) {
+        if (arg.rfind(prefix, 0) != 0) {
+            continue;
+        }
+        errno = 0;
+        char* end = nullptr;
+        const char* valueStart = arg.c_str() + prefix.size();
+        const long value = std::strtol(valueStart, &end, 10);
+        if (end != valueStart && end != nullptr && *end == '\0' && errno == 0) {
+            return static_cast<int>(value);
+        }
     }
     return fallback;
 }
@@ -6833,6 +6873,8 @@ void Game::clearBaseStoryPresentation()
     baseStoryFacilityOffsets_.clear();
     baseStoryMarkedFacilities_.clear();
     baseStoryCommand_ = {};
+    baseStoryChicoryFlight_ = {};
+    baseStoryRingDemo_ = {};
     baseStoryFadeAlpha_ = 0.0f;
     basePlayerSpriteWalking_ = false;
     updateBasePlayerSpriteFlipFromFacing();
@@ -6877,6 +6919,141 @@ void Game::renderBaseStoryFacilityMarkers(Renderer& renderer) const
         ringWorkshopUnlocked_,
         baseStoryMarkedFacilities_,
         baseActorIdleAnimationTime_);
+}
+
+void Game::renderBaseStoryChicoryFlight(Renderer& renderer) const
+{
+    if (!baseStoryChicoryFlight_.active || !basePresentationActive()) {
+        return;
+    }
+
+    const float duration = std::max(0.001f, baseStoryChicoryFlight_.durationSeconds);
+    const float progress = clamp(baseStoryChicoryFlight_.elapsedSeconds / duration, 0.0f, 1.0f);
+    const float fade = std::min(
+        smoothStep01(progress / 0.16f),
+        smoothStep01((1.0f - progress) / 0.18f));
+    if (fade <= 0.01f) {
+        return;
+    }
+
+    renderer.setScreenSpace();
+    const Vec2 playerFoot = playerSpriteFootAnchor(basePlayerPosition_);
+    const float theta = progress * Pi * 4.0f;
+    const Vec2 figureEight{
+        std::sin(theta) * 58.0f,
+        std::sin(theta * 2.0f) * 24.0f,
+    };
+    const float launch = smoothStep01(progress / 0.22f);
+    const Vec2 orbitPosition = baseStoryChicoryFlight_.centerPosition + figureEight + Vec2{0.0f, std::sin(baseActorIdleAnimationTime_ * 8.0f) * 4.0f};
+    const Vec2 position = lerp(baseStoryChicoryFlight_.startPosition, orbitPosition, launch);
+    const Vec2 shadowAnchor{position.x, playerFoot.y + 5.0f};
+    const float shadowScale = 0.46f + 0.22f * (1.0f - clamp((playerFoot.y - position.y) / 112.0f, 0.0f, 1.0f));
+
+    renderer.drawActorShadow(
+        shadowAnchor,
+        36.0f * shadowScale,
+        {0, 0, 0, alphaByte(82.0f * fade)});
+    renderer.fillSoftCircle(position, 24.0f, withAlpha({132, 244, 255, 255}, 82.0f * fade));
+    renderer.fillSoftCircle(position, 13.0f, withAlpha({255, 246, 168, 255}, 132.0f * fade));
+    renderer.fillCircle(position, 5.6f, withAlpha({255, 255, 236, 255}, 255.0f * fade));
+    drawMagicStar(
+        renderer,
+        position + Vec2{0.0f, -1.0f},
+        9.0f + std::sin(baseActorIdleAnimationTime_ * 10.0f) * 1.6f,
+        withAlpha({255, 252, 204, 255}, 220.0f * fade),
+        baseActorIdleAnimationTime_ * 1.8f);
+}
+
+void Game::renderBaseStoryRingDemo(Renderer& renderer) const
+{
+    if (!baseStoryRingDemo_.active || !basePresentationActive()) {
+        return;
+    }
+
+    const float duration = std::max(0.001f, baseStoryRingDemo_.durationSeconds);
+    const float t = smoothStep01(clamp(baseStoryRingDemo_.elapsedSeconds / duration, 0.0f, 1.0f));
+    const float alpha = baseStoryRingDemo_.closing ? 1.0f - t : t;
+    if (alpha <= 0.01f) {
+        return;
+    }
+
+    renderer.setScreenSpace();
+    const Vec2 center = basePlayerPosition_ + Vec2{0.0f, -2.0f};
+    const float radiusScale = baseStoryRingDemo_.closing
+        ? lerp(1.0f, 0.18f, t)
+        : lerp(0.18f, 1.0f, t);
+    const int visibleRingCount = std::clamp(baseStoryRingDemo_.visibleRingCount, 1, SpellRingCount);
+
+    renderer.fillSoftCircle(center, 24.0f + 48.0f * radiusScale, withAlpha({118, 224, 255, 255}, 40.0f * alpha));
+    for (RingShape shapePass : MagicRingShapeRenderOrder) {
+        for (int ringIndex = 0; ringIndex < visibleRingCount; ++ringIndex) {
+            const RingShape shape = spellRing_.ringShapeForIndex(ringIndex);
+            if (shape != shapePass) {
+                continue;
+            }
+            std::vector<Vec2> orbitPath = spellRing_.pathSamplePointsForRing(ringIndex, center, radiusScale, balance_, 176);
+            drawMagicOrbitPath(
+                renderer,
+                orbitPath,
+                center,
+                MagicOrbitDrawOptions{
+                    shape,
+                    true,
+                    false,
+                    true,
+                    true,
+                    ringIndex,
+                    baseActorIdleAnimationTime_,
+                    alpha * (ringIndex == 0 ? 0.86f : 1.0f),
+                });
+        }
+    }
+
+    const int itemRingIndex = std::clamp(baseStoryRingDemo_.itemRingIndex, 0, SpellRingCount - 1);
+    if (visibleRingCount <= itemRingIndex || baseStoryRingDemo_.itemObjectId.empty()) {
+        return;
+    }
+
+    const ItemData* object = objectCatalog_.registry.findById(baseStoryRingDemo_.itemObjectId);
+    if (object == nullptr) {
+        return;
+    }
+
+    SpellRingItem item = makeObjectRingItem(baseStoryRingDemo_.itemObjectId);
+    item.ringIndex = itemRingIndex;
+    item.localAngle = normalizeAngle(baseActorIdleAnimationTime_ * 1.35f);
+    RingOrbitContext context = spellRing_.makeOrbitContextForRing(itemRingIndex, 0, 1, radiusScale, balance_);
+    item.worldPosition = getRingItemWorldPosition(center, item.localAngle, context);
+    Vec2 outward = item.worldPosition - center;
+    if (lengthSquared(outward) > 0.0001f) {
+        outward = normalize(outward);
+    } else {
+        outward = {0.0f, -1.0f};
+    }
+    Vec2 forward{-outward.y, outward.x};
+    if (lengthSquared(forward) <= 0.0001f) {
+        forward = {1.0f, 0.0f};
+    }
+
+    renderer.drawActorShadow(
+        item.worldPosition + Vec2{0.0f, 18.0f},
+        30.0f * radiusScale,
+        {0, 0, 0, alphaByte(68.0f * alpha)});
+    ObjectImageDrawOptions options;
+    options.tint = withAlpha({255, 255, 255, 255}, 255.0f * alpha);
+    options.outlineColor.a = alphaByte(210.0f * alpha);
+    options.outlineEnabled = true;
+    options.outlinePx = 1;
+    drawRingItemObjectImage(
+        renderer,
+        item,
+        object,
+        item.worldPosition,
+        {42.0f, 42.0f},
+        outward,
+        forward,
+        baseActorIdleAnimationTime_,
+        options);
 }
 
 bool Game::storyEventUsesBasePresentation(std::string_view id) const
@@ -6987,6 +7164,49 @@ void Game::updateBaseStoryPresentationCommand(float dt)
         } else if (command->name == "base_wait") {
             baseStoryCommand_.targetPosition = baseStoryCommand_.startPosition;
             baseStoryCommand_.targetFacing = baseStoryCommand_.startFacing;
+        } else if (command->name == "base_chicory_figure8") {
+            const Vec2 playerFoot = playerSpriteFootAnchor(basePlayerPosition_);
+            baseStoryCommand_.targetPosition = baseStoryCommand_.startPosition;
+            baseStoryCommand_.targetFacing = baseStoryCommand_.startFacing;
+            baseStoryChicoryFlight_ = {};
+            baseStoryChicoryFlight_.active = true;
+            baseStoryChicoryFlight_.durationSeconds = std::max(
+                0.1f,
+                parseStoryCommandFloat(*command, 0, BaseStoryChicoryFlightSeconds));
+            baseStoryChicoryFlight_.startPosition = playerFoot + Vec2{0.0f, -96.0f};
+            baseStoryChicoryFlight_.centerPosition = basePlayerPosition_ + Vec2{0.0f, -22.0f};
+        } else if (command->name == "base_ring_demo") {
+            baseStoryCommand_.targetPosition = baseStoryCommand_.startPosition;
+            baseStoryCommand_.targetFacing = baseStoryCommand_.startFacing;
+            const std::string mode = command->args.empty() ? std::string("open") : command->args[0];
+            if (mode == "close") {
+                if (!baseStoryRingDemo_.active) {
+                    baseStoryRingDemo_.active = true;
+                    baseStoryRingDemo_.visibleRingCount = 2;
+                    baseStoryRingDemo_.itemObjectId = std::string(BaseStoryRingDemoDefaultItemObjectId);
+                }
+                baseStoryRingDemo_.closing = true;
+                baseStoryRingDemo_.elapsedSeconds = 0.0f;
+                baseStoryRingDemo_.durationSeconds = std::max(
+                    0.05f,
+                    parseStoryCommandFloat(*command, 1, BaseStoryRingDemoCloseSeconds));
+            } else {
+                baseStoryRingDemo_ = {};
+                baseStoryRingDemo_.active = true;
+                baseStoryRingDemo_.closing = false;
+                baseStoryRingDemo_.durationSeconds = std::max(
+                    0.05f,
+                    parseStoryCommandFirstFloatFrom(*command, 3, BaseStoryRingDemoOpenSeconds));
+                baseStoryRingDemo_.visibleRingCount = std::clamp(
+                    static_cast<int>(std::lround(parseStoryCommandFloat(*command, 1, 2.0f))),
+                    1,
+                    SpellRingCount);
+                const int itemRingNumber = parseStoryCommandNamedInt(*command, "item_ring", 2);
+                baseStoryRingDemo_.itemRingIndex = std::clamp(itemRingNumber - 1, 0, SpellRingCount - 1);
+                baseStoryRingDemo_.itemObjectId = command->args.size() >= 3 && !command->args[2].empty()
+                    ? command->args[2]
+                    : std::string(BaseStoryRingDemoDefaultItemObjectId);
+            }
         } else if (command->name == "base_player_walk") {
             const float dx = parseStoryCommandFloat(*command, 0, 0.0f);
             const float dy = parseStoryCommandFloat(*command, 1, 0.0f);
@@ -7049,6 +7269,34 @@ void Game::updateBaseStoryPresentationCommand(float dt)
         if (t >= 1.0f) {
             basePlayerPosition_ = baseStoryCommand_.targetPosition;
             basePlayerSpriteWalking_ = false;
+            dialogue_.completeCurrentCommandStep();
+            baseStoryCommand_ = {};
+        }
+        return;
+    }
+
+    if (command->name == "base_chicory_figure8") {
+        updateBasePlayerSpriteAnimation(safeDt, false);
+        updateBasePlayerSpriteFlipFromFacing();
+        baseStoryChicoryFlight_.elapsedSeconds = baseStoryCommand_.elapsedSeconds;
+        if (baseStoryCommand_.elapsedSeconds >= baseStoryChicoryFlight_.durationSeconds) {
+            baseStoryChicoryFlight_ = {};
+            dialogue_.completeCurrentCommandStep();
+            baseStoryCommand_ = {};
+        }
+        return;
+    }
+
+    if (command->name == "base_ring_demo") {
+        updateBasePlayerSpriteAnimation(safeDt, false);
+        updateBasePlayerSpriteFlipFromFacing();
+        baseStoryRingDemo_.elapsedSeconds = baseStoryCommand_.elapsedSeconds;
+        if (baseStoryCommand_.elapsedSeconds >= baseStoryRingDemo_.durationSeconds) {
+            if (baseStoryRingDemo_.closing) {
+                baseStoryRingDemo_ = {};
+            } else {
+                baseStoryRingDemo_.elapsedSeconds = baseStoryRingDemo_.durationSeconds;
+            }
             dialogue_.completeCurrentCommandStep();
             baseStoryCommand_ = {};
         }
@@ -12593,6 +12841,8 @@ void Game::renderBaseBackdrop(Renderer& renderer) const
             renderPlayerFootstepDust(renderer);
         });
 
+    renderBaseStoryRingDemo(renderer);
+    renderBaseStoryChicoryFlight(renderer);
     renderBaseMiningRescueDropEvent(renderer);
     renderHiddenBaseOrbit(renderer);
     renderTopInfoBar(renderer);
@@ -12672,6 +12922,8 @@ void Game::renderBaseScreen(Renderer& renderer) const
             renderPlayerFootstepDust(renderer);
         });
 
+    renderBaseStoryRingDemo(renderer);
+    renderBaseStoryChicoryFlight(renderer);
     renderBaseMiningRescueDropEvent(renderer);
     renderHiddenBaseOrbit(renderer);
     renderTopInfoBar(renderer);

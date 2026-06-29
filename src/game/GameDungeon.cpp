@@ -10,6 +10,7 @@
 #include "game/SpecialObjectRules.hpp"
 
 #include <cmath>
+#include <string>
 #include <unordered_map>
 #include <unordered_set>
 
@@ -128,6 +129,9 @@ constexpr float BossBeforeFocusMoveSeconds = 0.70f;
 constexpr float BossBeforeFocusReturnSeconds = 0.62f;
 constexpr float BossBeforeEmergeShakeAmplitude = 8.5f;
 constexpr float BossBeforeEmergeShakeSeconds = 0.72f;
+constexpr float BossBeforeWalkInSeconds = 3.2f;
+constexpr float BossBeforeWalkInScreenMarginMin = 180.0f;
+constexpr float BossBeforeWalkInScreenMarginRatio = 0.30f;
 constexpr Vec2 DungeonEventNpcInspectSize{42.0f, 58.0f};
 constexpr Vec2 DungeonChestInspectSize{42.0f, 42.0f};
 constexpr float FootstepPitchSideOffset = 0.025f;
@@ -553,6 +557,16 @@ constexpr float DeathRingDropFallSeconds = 0.26f;
 constexpr float DeathRingDropLightBounceSeconds = 0.22f;
 constexpr float DeathRingDropHeavyBounceSeconds = 0.17f;
 constexpr float BossDefeatPresentationSeconds = 1.85f;
+constexpr float BossAfterDefeatReplaySeconds = 1.35f;
+constexpr float BossAfterDefeatShakeAmplitude = 6.0f;
+constexpr float BossAfterDefeatShakeSeconds = 0.32f;
+constexpr float SmallMoleEscapeSeconds = 1.45f;
+constexpr float SmallMoleEscapeDistance = 240.0f;
+constexpr float BossExplodeEscapeSeconds = 1.8f;
+constexpr float BossExplodeEscapeWarmupSeconds = 0.48f;
+constexpr float BossExplodeEscapeDistance = 280.0f;
+constexpr std::string_view BossExplodeEscapeDefaultSpriteKey = "crab_dish";
+constexpr float BossAfterDefaultReturnDelaySeconds = 0.8f;
 constexpr int BossArenaInnerRadiusXTiles = BossArenaRadiusXTiles - 1;
 constexpr int BossArenaInnerRadiusYTiles = BossArenaRadiusYTiles - 1;
 constexpr float BossArenaApproachPaddingTiles = 1.25f;
@@ -600,6 +614,23 @@ float dungeonFocusHoldSeconds(float seconds)
         return DungeonFocusDefaultHoldSeconds;
     }
     return seconds;
+}
+
+float storyCommandFloatArg(const DialogueCommand& command, std::size_t index, float fallback)
+{
+    if (index >= command.args.size()) {
+        return fallback;
+    }
+    try {
+        std::size_t parsed = 0;
+        const float value = std::stof(command.args[index], &parsed);
+        if (parsed != command.args[index].size() || !std::isfinite(value)) {
+            return fallback;
+        }
+        return value;
+    } catch (...) {
+        return fallback;
+    }
 }
 
 unsigned char sparkleAlpha(float alpha)
@@ -11646,23 +11677,45 @@ bool Game::spawnBossForCurrentEncounter(EnemySpawnVisualKind spawnVisualKind)
 
 void Game::updateDungeonStoryCommand(const DialogueCommand& command, float dt)
 {
-    if (command.name != "dungeon_boss_spawn") {
-        logWarning("[story] unknown dungeon command: " + command.name);
-        dialogue_.completeCurrentCommandStep();
+    if (command.name == "dungeon_boss_spawn") {
+        updateDungeonBossSpawnStoryCommand(command, dt);
+        return;
+    }
+    if (command.name == "dungeon_boss_after_defeat") {
+        updateDungeonBossAfterDefeatStoryCommand(command, dt);
+        return;
+    }
+    if (command.name == "dungeon_small_mole_escape") {
+        updateDungeonSmallMoleEscapeStoryCommand(command, dt);
+        return;
+    }
+    if (command.name == "dungeon_boss_explode_escape") {
+        updateDungeonBossExplodeEscapeStoryCommand(command, dt);
+        return;
+    }
+    if (command.name == "dungeon_return_to_base_after_story") {
+        updateDungeonReturnToBaseAfterStoryCommand(command);
         return;
     }
 
+    logWarning("[story] unknown dungeon command: " + command.name);
+    dialogue_.completeCurrentCommandStep();
+}
+
+void Game::updateDungeonBossSpawnStoryCommand(const DialogueCommand& command, float dt)
+{
     const std::string mode = command.args.empty() ? std::string("default") : command.args[0];
-    if (mode != "emerge" && mode != "ground_emerge" && mode != "default") {
+    if (mode != "emerge" && mode != "ground_emerge" && mode != "walk_in" && mode != "default") {
         logWarning("[story] unknown dungeon_boss_spawn mode: " + mode);
         dialogue_.completeCurrentCommandStep();
         return;
     }
 
     if (!bossSpawned_) {
-        const EnemySpawnVisualKind visualKind = mode == "default"
-            ? EnemySpawnVisualKind::Default
-            : EnemySpawnVisualKind::GroundEmerge;
+        const bool walkIn = mode == "walk_in";
+        const EnemySpawnVisualKind visualKind = walkIn
+            ? EnemySpawnVisualKind::WalkIn
+            : (mode == "default" ? EnemySpawnVisualKind::Default : EnemySpawnVisualKind::GroundEmerge);
         if (!spawnBossForCurrentEncounter(visualKind)) {
             logWarning("[story] dungeon_boss_spawn skipped: boss encounter is not ready");
             dialogue_.completeCurrentCommandStep();
@@ -11670,20 +11723,38 @@ void Game::updateDungeonStoryCommand(const DialogueCommand& command, float dt)
         }
         bossEncounter_.bossSpawnPresentationPlayed = true;
         playAudioSeAt(AudioSeBossSpawn, bossSpawnPoint_);
-        addScreenShake(BossBeforeEmergeShakeAmplitude, BossBeforeEmergeShakeSeconds);
+        if (walkIn) {
+            const CollisionRect view = cameraWorldRect(camera_);
+            const float margin = std::max(
+                BossBeforeWalkInScreenMarginMin,
+                view.size.y * BossBeforeWalkInScreenMarginRatio);
+            Vec2 startPosition{
+                std::clamp(bossSpawnPoint_.x, view.pos.x + view.size.x * 0.20f, view.pos.x + view.size.x * 0.80f),
+                view.pos.y - margin,
+            };
+            const float duration = std::max(
+                0.2f,
+                storyCommandFloatArg(command, 1, BossBeforeWalkInSeconds));
+            if (!enemies_.configureActiveBossWalkInPresentation(startPosition, duration)) {
+                logWarning("[story] dungeon_boss_spawn walk_in skipped: active boss not found");
+            }
+            effects_.spawnAreaPulse(bossSpawnPoint_, 62.0f, {255, 210, 118, 118});
+        } else {
+            addScreenShake(BossBeforeEmergeShakeAmplitude, BossBeforeEmergeShakeSeconds);
 
-        SmokeBurstOptions smoke;
-        smoke.count = 24;
-        smoke.size = 30.0f;
-        smoke.spreadRadius = 22.0f;
-        smoke.speed = 42.0f;
-        smoke.riseSpeed = 24.0f;
-        smoke.duration = 0.86f;
-        smoke.colorA = {194, 144, 82, 210};
-        smoke.colorB = {92, 66, 48, 176};
-        effects_.spawnAttackImpactBurst(bossSpawnPoint_, smoke, true);
-        effects_.spawnTileBreak(bossSpawnPoint_, TileType::Dirt, {154, 110, 66, 235}, false, 2.4f, 3);
-        effects_.spawnAreaPulse(bossSpawnPoint_, 108.0f, {255, 214, 110, 155});
+            SmokeBurstOptions smoke;
+            smoke.count = 24;
+            smoke.size = 30.0f;
+            smoke.spreadRadius = 22.0f;
+            smoke.speed = 42.0f;
+            smoke.riseSpeed = 24.0f;
+            smoke.duration = 0.86f;
+            smoke.colorA = {194, 144, 82, 210};
+            smoke.colorB = {92, 66, 48, 176};
+            effects_.spawnAttackImpactBurst(bossSpawnPoint_, smoke, true);
+            effects_.spawnTileBreak(bossSpawnPoint_, TileType::Dirt, {154, 110, 66, 235}, false, 2.4f, 3);
+            effects_.spawnAreaPulse(bossSpawnPoint_, 108.0f, {255, 214, 110, 155});
+        }
     }
 
     const float safeDt = std::max(0.0f, dt);
@@ -11694,6 +11765,200 @@ void Game::updateDungeonStoryCommand(const DialogueCommand& command, float dt)
         dialogue_.completeCurrentCommandStep();
         return;
     }
+}
+
+void Game::updateDungeonBossAfterDefeatStoryCommand(const DialogueCommand& command, float dt)
+{
+    if (dungeonStoryPresentation_.kind != DungeonStoryPresentationKind::BossAfterDefeat ||
+        !dungeonStoryPresentation_.started) {
+        Vec2 position = bossEncounter_.defeatPosition;
+        if (!validDungeonFocusPosition(position) || lengthSquared(position) <= 1.0f) {
+            position = bossSpawnPoint_;
+        }
+        if (!validDungeonFocusPosition(position) || lengthSquared(position) <= 1.0f) {
+            position = player_.position + Vec2{96.0f, 0.0f};
+        }
+
+        dungeonStoryPresentation_ = DungeonStoryPresentationState{};
+        dungeonStoryPresentation_.kind = DungeonStoryPresentationKind::BossAfterDefeat;
+        dungeonStoryPresentation_.position = position;
+        dungeonStoryPresentation_.startPosition = position;
+        dungeonStoryPresentation_.durationSeconds = std::max(
+            0.2f,
+            storyCommandFloatArg(command, 0, BossAfterDefeatReplaySeconds));
+        dungeonStoryPresentation_.started = true;
+
+        playAudioSeAt("se.boss.defeat", position);
+        addScreenShake(BossAfterDefeatShakeAmplitude, BossAfterDefeatShakeSeconds);
+        effects_.spawnAreaPulse(position, 92.0f, {255, 214, 110, 210});
+
+        SmokeBurstOptions smoke;
+        smoke.count = 18;
+        smoke.size = 24.0f;
+        smoke.spreadRadius = 24.0f;
+        smoke.speed = 34.0f;
+        smoke.riseSpeed = 20.0f;
+        smoke.duration = 0.78f;
+        smoke.colorA = {198, 152, 90, 210};
+        smoke.colorB = {96, 70, 54, 176};
+        effects_.spawnAttackImpactBurst(position, smoke, true);
+    }
+
+    const float safeDt = std::max(0.0f, dt);
+    effects_.update(safeDt);
+    magicFx_.update(safeDt);
+    dungeonStoryPresentation_.elapsedSeconds += safeDt;
+    if (dungeonStoryPresentation_.elapsedSeconds >= dungeonStoryPresentation_.durationSeconds) {
+        clearDungeonStoryPresentation();
+        dialogue_.completeCurrentCommandStep();
+    }
+}
+
+void Game::updateDungeonSmallMoleEscapeStoryCommand(const DialogueCommand& command, float dt)
+{
+    if (dungeonStoryPresentation_.kind != DungeonStoryPresentationKind::SmallMoleEscape ||
+        !dungeonStoryPresentation_.started) {
+        Vec2 start = bossEncounter_.defeatPosition;
+        if (!validDungeonFocusPosition(start) || lengthSquared(start) <= 1.0f) {
+            start = bossSpawnPoint_;
+        }
+        if (!validDungeonFocusPosition(start) || lengthSquared(start) <= 1.0f) {
+            start = player_.position + Vec2{72.0f, 0.0f};
+        }
+
+        Vec2 escapeDirection = start - player_.position;
+        if (lengthSquared(escapeDirection) <= 1.0f) {
+            escapeDirection = {1.0f, 0.0f};
+        } else {
+            escapeDirection = normalize(escapeDirection);
+        }
+
+        dungeonStoryPresentation_ = DungeonStoryPresentationState{};
+        dungeonStoryPresentation_.kind = DungeonStoryPresentationKind::SmallMoleEscape;
+        dungeonStoryPresentation_.position = start;
+        dungeonStoryPresentation_.startPosition = start;
+        dungeonStoryPresentation_.targetPosition = start + escapeDirection * SmallMoleEscapeDistance;
+        dungeonStoryPresentation_.durationSeconds = std::max(
+            0.2f,
+            storyCommandFloatArg(command, 0, SmallMoleEscapeSeconds));
+        dungeonStoryPresentation_.started = true;
+
+        playAudioSeAt("se.enemy.alert", start);
+        effects_.spawnAreaPulse(start, 48.0f, {255, 232, 156, 128});
+    }
+
+    const float safeDt = std::max(0.0f, dt);
+    effects_.update(safeDt);
+    magicFx_.update(safeDt);
+    dungeonStoryPresentation_.elapsedSeconds += safeDt;
+    const float t = clamp(
+        dungeonStoryPresentation_.elapsedSeconds / std::max(0.001f, dungeonStoryPresentation_.durationSeconds),
+        0.0f,
+        1.0f);
+    const float eased = t * t * (3.0f - 2.0f * t);
+    const float hop = std::sin(t * 3.14159265f * 4.0f) * 8.0f * (1.0f - t);
+    dungeonStoryPresentation_.position =
+        lerp(dungeonStoryPresentation_.startPosition, dungeonStoryPresentation_.targetPosition, eased) +
+        Vec2{0.0f, -std::max(0.0f, hop)};
+
+    if (dungeonStoryPresentation_.elapsedSeconds >= dungeonStoryPresentation_.durationSeconds) {
+        clearDungeonStoryPresentation();
+        dialogue_.completeCurrentCommandStep();
+    }
+}
+
+void Game::updateDungeonBossExplodeEscapeStoryCommand(const DialogueCommand& command, float dt)
+{
+    if (dungeonStoryPresentation_.kind != DungeonStoryPresentationKind::BossExplodeEscape ||
+        !dungeonStoryPresentation_.started) {
+        Vec2 start = bossEncounter_.defeatPosition;
+        if (!validDungeonFocusPosition(start) || lengthSquared(start) <= 1.0f) {
+            start = bossSpawnPoint_;
+        }
+        if (!validDungeonFocusPosition(start) || lengthSquared(start) <= 1.0f) {
+            start = player_.position + Vec2{84.0f, 0.0f};
+        }
+
+        Vec2 escapeDirection = start - player_.position;
+        if (lengthSquared(escapeDirection) <= 1.0f) {
+            escapeDirection = {1.0f, 0.0f};
+        } else {
+            escapeDirection = normalize(escapeDirection);
+        }
+
+        dungeonStoryPresentation_ = DungeonStoryPresentationState{};
+        dungeonStoryPresentation_.kind = DungeonStoryPresentationKind::BossExplodeEscape;
+        dungeonStoryPresentation_.position = start;
+        dungeonStoryPresentation_.startPosition = start;
+        dungeonStoryPresentation_.targetPosition = start + escapeDirection * BossExplodeEscapeDistance;
+        dungeonStoryPresentation_.bossEnemyId = bossEncounter_.bossEnemyId.empty()
+            ? currentStageDefinition().bossEnemyId
+            : bossEncounter_.bossEnemyId;
+        dungeonStoryPresentation_.spriteKey = !command.args.empty() && !command.args[0].empty()
+            ? command.args[0]
+            : std::string(BossExplodeEscapeDefaultSpriteKey);
+        dungeonStoryPresentation_.durationSeconds = std::max(
+            BossExplodeEscapeWarmupSeconds + 0.2f,
+            storyCommandFloatArg(command, 1, BossExplodeEscapeSeconds));
+        dungeonStoryPresentation_.started = true;
+
+        playAudioSeAt("se.enemy.alert", start);
+    }
+
+    const float safeDt = std::max(0.0f, dt);
+    effects_.update(safeDt);
+    magicFx_.update(safeDt);
+
+    dungeonStoryPresentation_.elapsedSeconds += safeDt;
+    if (!dungeonStoryPresentation_.effectTriggered &&
+        dungeonStoryPresentation_.elapsedSeconds >= BossExplodeEscapeWarmupSeconds) {
+        dungeonStoryPresentation_.effectTriggered = true;
+        addScreenShake(7.5f, 0.38f);
+        effects_.spawnAreaPulse(dungeonStoryPresentation_.startPosition, 118.0f, {255, 154, 72, 190});
+
+        SmokeBurstOptions smoke;
+        smoke.count = 28;
+        smoke.size = 30.0f;
+        smoke.spreadRadius = 30.0f;
+        smoke.speed = 54.0f;
+        smoke.riseSpeed = 28.0f;
+        smoke.duration = 0.86f;
+        smoke.colorA = {236, 152, 72, 222};
+        smoke.colorB = {86, 66, 58, 184};
+        effects_.spawnAttackImpactBurst(dungeonStoryPresentation_.startPosition, smoke, true);
+    }
+
+    const float escapeSeconds = std::max(
+        0.001f,
+        dungeonStoryPresentation_.durationSeconds - BossExplodeEscapeWarmupSeconds);
+    const float escapeT = clamp(
+        (dungeonStoryPresentation_.elapsedSeconds - BossExplodeEscapeWarmupSeconds) / escapeSeconds,
+        0.0f,
+        1.0f);
+    const float eased = escapeT * escapeT * (3.0f - 2.0f * escapeT);
+    const float hop = std::sin(escapeT * Pi * 5.0f) * 7.0f * (1.0f - escapeT);
+    dungeonStoryPresentation_.position =
+        lerp(dungeonStoryPresentation_.startPosition, dungeonStoryPresentation_.targetPosition, eased) +
+        Vec2{0.0f, -std::max(0.0f, hop)};
+
+    if (dungeonStoryPresentation_.elapsedSeconds >= dungeonStoryPresentation_.durationSeconds) {
+        clearDungeonStoryPresentation();
+        dialogue_.completeCurrentCommandStep();
+    }
+}
+
+void Game::updateDungeonReturnToBaseAfterStoryCommand(const DialogueCommand& command)
+{
+    bossEncounter_.returnToBaseAfterDialogue = true;
+    bossEncounter_.returnToBaseAfterDialogueDelay = std::max(
+        0.0f,
+        storyCommandFloatArg(command, 0, BossAfterDefaultReturnDelaySeconds));
+    dialogue_.completeCurrentCommandStep();
+}
+
+void Game::clearDungeonStoryPresentation()
+{
+    dungeonStoryPresentation_ = DungeonStoryPresentationState{};
 }
 
 bool Game::shouldPlayBossAfterStoryEvent() const
@@ -11801,6 +12066,7 @@ void Game::finishBossEncounterAfterDialogue()
     const bool finalBoss = bossEncounter_.finalBoss;
     const bool roguelikeGate = bossEncounter_.purpose == BossEncounterPurpose::RoguelikeGate;
     const bool hiddenMonicaDuel = bossEncounter_.purpose == BossEncounterPurpose::HiddenMonicaDuel;
+    const bool returnToBaseAfterDialogue = bossEncounter_.returnToBaseAfterDialogue;
     resetBossEncounter();
     if (finalBoss) {
         beginFinalBossEndingSequence();
@@ -11814,6 +12080,9 @@ void Game::finishBossEncounterAfterDialogue()
         pushDungeonLog("大穴への道が開いた", "roguelike_big_hole_unlocked");
     } else if (currentStageIsRoguelike()) {
         enterAstralResult(AstralRunResult::DragonDefeated);
+    } else if (returnToBaseAfterDialogue) {
+        markCurrentStageCleared();
+        requestReturnToBaseTransition(true, false);
     } else {
         enterStageClear();
     }
@@ -11863,6 +12132,14 @@ bool Game::updateBossEncounterFlow(float dt)
     }
     case BossEncounterPhase::WaitingAfterDialogue:
         if (dialogue_.active() || !pendingStoryTriggers_.empty()) {
+            return true;
+        }
+        if (bossEncounter_.returnToBaseAfterDialogue &&
+            bossEncounter_.timer < bossEncounter_.returnToBaseAfterDialogueDelay) {
+            const float safeDt = std::max(0.0f, dt);
+            bossEncounter_.timer += safeDt;
+            effects_.update(safeDt);
+            magicFx_.update(safeDt);
             return true;
         }
         finishBossEncounterAfterDialogue();
