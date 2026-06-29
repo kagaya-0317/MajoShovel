@@ -14,6 +14,8 @@ struct DialogueLine {
     std::string speakerName;
     std::string portraitPath;
     std::string text;
+    std::string sourcePath;
+    int sourceCommandLineNumber = 0;
     bool forcePortraitsBright = false;
     std::vector<std::string> brightPortraitSpeakerIds;
 };
@@ -23,6 +25,7 @@ enum class DialogueStepKind {
     Wait,
     PortraitHide,
     PortraitHideSpeaker,
+    PortraitExpression,
     Command,
 };
 
@@ -36,6 +39,8 @@ struct DialogueStep {
     DialogueLine line;
     DialogueCommand command;
     std::string portraitSpeakerId;
+    std::string portraitExpressionSpeakerId;
+    int portraitExpressionVariant = 0;
     float waitSeconds = 0.0f;
     bool persistPortraitHide = false;
 };
@@ -44,6 +49,12 @@ struct DialogueSequence {
     std::string id;
     std::vector<DialogueLine> lines;
     std::vector<DialogueStep> steps;
+};
+
+struct DialogueVisiblePortrait {
+    bool visible = false;
+    std::string speakerId;
+    int expressionVariant = 0;
 };
 
 class DialoguePlayer {
@@ -59,6 +70,11 @@ public:
     [[nodiscard]] int currentStepIndex() const { return stepIndex_; }
     [[nodiscard]] std::string_view currentSpeakerId() const;
     [[nodiscard]] const DialogueCommand* currentCommand() const;
+    [[nodiscard]] const DialogueLine* currentEditableLine() const;
+    [[nodiscard]] DialogueVisiblePortrait leftPortrait() const;
+    [[nodiscard]] DialogueVisiblePortrait rightPortrait() const;
+    [[nodiscard]] int portraitExpressionVariant(std::string_view speakerId) const;
+    void setPortraitExpressionVariant(std::string speakerId, int variant);
     int consumeAdvanceSoundRequests();
 
 private:
@@ -81,6 +97,7 @@ private:
     void setRightPortraitTarget(std::string speakerId, bool immediate);
     void clearRightPortraitTarget(bool immediate);
     void updateRightPortrait(float dt);
+    void applyPortraitExpressionStep(const DialogueStep& step);
     void renderMonicaCall(Renderer& renderer, int screenWidth, int screenHeight, const DialogueLine* line) const;
 
     DialogueSequence sequence_;
@@ -92,6 +109,7 @@ private:
     int advanceSoundRequests_ = 0;
     std::string rightSpeakerId_;
     std::string pendingRightSpeakerId_;
+    std::vector<std::pair<std::string, int>> portraitExpressionVariants_;
     float rightPortraitFade_ = 0.0f;
     RightPortraitTransition rightPortraitTransition_ = RightPortraitTransition::Stable;
     bool active_ = false;

@@ -9,21 +9,25 @@
 @say chicory ？？？
 ちこり！
 
+@portrait_expr player 8
 @say player ルネ
 ところで、キミは名前はなんていうの？
 
 @say chicory ？？？
 こり？
 
+@portrait_expr player 8
 @say player ルネ
 え？そっか、生まれたばっかりだから、名前はないんだね
 
+@portrait_expr player 3
 @say player ルネ
 じゃあ、ちこりって鳴くから、チコリね
 
 @say chicory チコリ
 ちこり！
 
+@portrait_expr player 4
 @say player ルネ
 よろしくね、チコリ
 

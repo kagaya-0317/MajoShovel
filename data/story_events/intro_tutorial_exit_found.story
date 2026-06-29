@@ -3,6 +3,7 @@
 @trigger intro_tutorial:exit_found
 @once story_intro_tutorial_exit_found
 
+@portrait_expr player 2
 @say player ルネ
 あっ！外の光が見える！
 

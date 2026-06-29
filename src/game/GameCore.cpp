@@ -870,6 +870,9 @@ bool Game::handleEvent(const SDL_Event& event)
     if (handleObjectImageScaleEditEvent(event)) {
         return true;
     }
+    if (handlePortraitExpressionEditEvent(event)) {
+        return true;
+    }
     if (handleEnemyHitboxEditEvent(event)) {
         return true;
     }
@@ -4109,6 +4112,11 @@ void Game::updateScreenMode(
 
     if (debugStoryTestActive_) {
         updateDebugStoryTest(input, ui);
+        return;
+    }
+
+    if (portraitExpressionPicker_.active) {
+        updatePortraitExpressionPicker(input, ui);
         return;
     }
 

@@ -82,6 +82,7 @@ add_executable(MajoShovel
     src/game/GameRender.cpp
     src/game/GameDevTools.cpp
     src/game/Kamishibai.cpp
+    src/game/PortraitCatalog.cpp
     src/game/DialogueSystem.cpp
     src/game/StoryEvent.cpp
     src/game/OpeningMetaSave.cpp

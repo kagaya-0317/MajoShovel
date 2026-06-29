@@ -7170,22 +7170,24 @@ void Game::renderPauseMenu(Renderer& renderer) const
             renderer.drawText({ringContent.pos.x + 284.0f, y}, buffer, ui::TextMuted, 2);
         }
 
+        const std::string statusPortraitPath = portraitPathForSpeaker("player", defaultPortraitVariant("player"));
         Vec2 portraitSourceSize;
         const bool portraitSizeLoaded =
-            renderer.getImageSize("assets/taties/tatie_1.png", portraitSourceSize, TextureFilter::Linear) &&
+            renderer.getImageSize(statusPortraitPath, portraitSourceSize, TextureFilter::Nearest) &&
             portraitSourceSize.x > 0.0f &&
             portraitSourceSize.y > 0.0f;
         constexpr float PortraitScale = 0.65f;
-        const Vec2 portraitDrawSize = (portraitSizeLoaded ? portraitSourceSize : portraitRect.size) * PortraitScale;
+        const float sourceScale = portraitPathUsesScaledSource(statusPortraitPath) ? 3.0f : 1.0f;
+        const Vec2 portraitDrawSize = (portraitSizeLoaded ? portraitSourceSize * sourceScale : portraitRect.size) * PortraitScale;
         ImageDrawOptions portraitOptions;
         portraitOptions.anchor = {0.5f, 0.06f};
         portraitOptions.flipX = true;
         if (!renderer.drawImage(
-                "assets/taties/tatie_1.png",
+                statusPortraitPath,
                 {panel.pos.x + panel.size.x - 190.0f, panel.pos.y - 36.0f},
                 portraitDrawSize,
                 portraitOptions,
-                TextureFilter::Linear)) {
+                TextureFilter::Nearest)) {
             renderer.drawPlayerSprite(
                 0,
                 {portraitRect.pos.x + portraitRect.size.x * 0.5f, panel.pos.y + panel.size.y - 94.0f},
@@ -8216,6 +8218,7 @@ void Game::render(Renderer& renderer, const Time& time)
         renderDebugNamedSaveUi(renderer);
         renderDebugItemPicker(renderer);
         renderDebugStoryTest(renderer);
+        renderPortraitExpressionPicker(renderer);
         renderFirstItemAcquisitionNotice(renderer);
         renderLevelUpOverlay(renderer);
         finishUiFrame(renderer);
@@ -8659,6 +8662,7 @@ void Game::render(Renderer& renderer, const Time& time)
                 renderDebugItemPicker(renderer);
                 renderDebugStoryTest(renderer);
             }
+            renderPortraitExpressionPicker(renderer);
             renderFirstItemAcquisitionNotice(renderer);
             renderAutoSimulationIntentOverlay(renderer);
         }

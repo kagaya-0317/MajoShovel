@@ -2,6 +2,23 @@
 
 ## 共通コマンド
 
+### `@portrait_expr <speaker_id> <variant_index>`
+
+会話中の立ち絵表情を変更する。指定後は同じ話者の表情として以後持続し、次に同じ話者へ別の `@portrait_expr` が指定されるまで維持する。
+
+- `speaker_id`: `player`, `monica`, `elder` など、`@say` と同じ話者ID。
+- `variant_index`: `assets/taties/tatie_N_<variant_index>.png` の番号。番号付き差分が存在しないキャラは従来の `assets/taties/tatie_N.png` にフォールバックする。
+
+`@portrait_expr` は待機しない。対象テキストの直前に置く。
+
+```text
+@portrait_expr player 7
+@say player ルネ
+はあ、はあ…やっと帰ってきたよ
+```
+
+デバッグの「立ち絵編集」では、会話中に表示されている立ち絵へこのコマンドを自動挿入・更新する。`1` はルネ、`2` は右側または通話UI内の非ルネ立ち絵を対象にする。選択画面ではクリックでプレビューし、同じ表情をもう一度クリックすると `.story` へBOM付きUTF-8で自動保存する。
+
 ### `@story_phone <kind>`
 
 電話SEを再生し、SEの想定尺が終わるまでストーリー進行を待機する。画面上のポップアップなど、追加の表示演出は行わない。

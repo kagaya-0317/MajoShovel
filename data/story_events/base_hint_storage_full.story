@@ -8,6 +8,7 @@
 いっぱい、色々持ち帰ってきたね
 リュックがぱんぱん！
 
+@portrait_expr player 6
 @say player ルネ
 でへへ〜
 

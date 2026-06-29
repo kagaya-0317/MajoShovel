@@ -5,6 +5,7 @@
 
 @base_return_scene begin
 
+@portrait_expr player 17
 @say player ルネ
 はあ、はあ…やっと帰ってきたよ
 
@@ -13,20 +14,24 @@
 @say monica モニカ
 ルネ！大丈夫！？
 
+@portrait_expr player 2
 @say player ルネ
 モニカちゃん！
 
 @say monica モニカ
 もう、心配したんだから！
 
+@portrait_expr player 7
 @say player ルネ
 ふ、ふふん、ルネを舐めないでよね
 
+@portrait_expr player 1
 @say player ルネ
 それにしても…
 
 @base_player_lookaround
 
+@portrait_expr player 14
 @say player ルネ
 ……ここ、私の家の庭だよね？
 
@@ -49,6 +54,7 @@
 村を守る守護星が、落ちてしまったのじゃ。
 どうやら大地に穴を開けて、地底まで行っちゃった
 
+@portrait_expr player 11
 @say player ルネ
 うう…やっぱり
 私のせいで…
@@ -68,6 +74,7 @@
 @say monica モニカ
 もともと守護星はそろそろ危なそうだと言われてた。そうでしょ？
 
+@portrait_expr player 13
 @say player ルネ
 モニカちゃん…
 
@@ -90,18 +97,21 @@
 
 @wait small
 
+@portrait_expr player 10
 @say player ルネ
 モニカちゃんでもダメなら、どうすれば…
 
 @say elder 村長
 だから、ルネ、おぬしが行くのじゃ
 
+@portrait_expr player 9
 @say player ルネ
 …え？
 
 @say elder 村長
 ルネの魔力なら弱すぎるから、守護星に安全に接近できるじゃろう
 
+@portrait_expr player 9
 @say player ルネ
 弱す…
 
@@ -113,6 +123,7 @@
 
 @wait small
 
+@portrait_expr player 11
 @say player ルネ
 ……私で大丈夫かな
 
@@ -122,6 +133,7 @@
 @say monica モニカ
 私も手伝えることがあったら言ってね、ルネ！
 
+@portrait_expr player 1
 @say player ルネ
 ありがとう
 
@@ -130,6 +142,7 @@
 @say chicory チコリ
 こり？
 
+@portrait_expr player 2
 @say player ルネ
 わあ、チコリ
 でてきたの？
@@ -137,6 +150,7 @@
 @say monica モニカ
 あら、小さいモフモフ！
 
+@portrait_expr player 3
 @say player ルネ
 チコリだよ。私の帽子から出てきたの。
 ちこりって鳴くからチコリ
@@ -155,12 +169,14 @@
 @say elder 村長
 まずは、星くずの浅坑へ向かい、守護星の行方を探すのじゃ
 
+@portrait_expr player 17
 @say player ルネ
 ……とりあえず、回せば、なんとかなるかな
 
 @say monica モニカ
 無理はしないで。すぐ戻ってきてね
 
+@portrait_expr player 16
 @say player ルネ
 では、ひ、ひひひ拾ってきます！
 

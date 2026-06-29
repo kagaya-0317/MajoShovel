@@ -24,6 +24,7 @@ struct TextBlock {
     TextBlockKind kind = TextBlockKind::None;
     std::string speakerId;
     std::string speakerName;
+    int sourceCommandLineNumber = 0;
     std::vector<std::string> lines;
     bool forcePortraitsBright = false;
     std::vector<std::string> brightPortraitSpeakerIds;
@@ -110,6 +111,18 @@ std::vector<std::string> splitAsciiTokens(std::string_view value)
     return tokens;
 }
 
+int portraitExpressionVariantFor(std::string_view value)
+{
+    const std::string normalized = trimAscii(value);
+    errno = 0;
+    char* end = nullptr;
+    const long parsed = std::strtol(normalized.c_str(), &end, 10);
+    if (end != normalized.c_str() && end != nullptr && *end == '\0' && errno == 0) {
+        return static_cast<int>(std::max(0L, parsed));
+    }
+    return 0;
+}
+
 void appendBlockToEvent(StoryEvent& event, TextBlock& block)
 {
     if (block.kind == TextBlockKind::None) {
@@ -122,6 +135,8 @@ void appendBlockToEvent(StoryEvent& event, TextBlock& block)
         line.speakerId = std::move(block.speakerId);
         line.speakerName = std::move(block.speakerName);
     }
+    line.sourcePath = event.sourcePath.generic_string();
+    line.sourceCommandLineNumber = block.sourceCommandLineNumber;
     line.forcePortraitsBright = block.forcePortraitsBright;
     line.brightPortraitSpeakerIds = block.brightPortraitSpeakerIds;
 
@@ -155,6 +170,15 @@ void appendPortraitHideSpeakerToEvent(StoryEvent& event, std::string speakerId, 
     step.kind = DialogueStepKind::PortraitHideSpeaker;
     step.portraitSpeakerId = std::move(speakerId);
     step.waitSeconds = seconds;
+    event.dialogue.steps.push_back(std::move(step));
+}
+
+void appendPortraitExpressionToEvent(StoryEvent& event, std::string speakerId, int variant)
+{
+    DialogueStep step;
+    step.kind = DialogueStepKind::PortraitExpression;
+    step.portraitExpressionSpeakerId = std::move(speakerId);
+    step.portraitExpressionVariant = std::max(0, variant);
     event.dialogue.steps.push_back(std::move(step));
 }
 
@@ -242,6 +266,7 @@ void loadStoryEventFile(
 
     StoryEvent event;
     event.id = path.stem().generic_string();
+    event.sourcePath = path;
     TextBlock block;
     bool forceNextPortraitsBright = false;
     std::vector<std::string> nextBrightPortraitSpeakerIds;
@@ -305,6 +330,7 @@ void loadStoryEventFile(
             }
         } else if (command == "narration") {
             block.kind = TextBlockKind::Narration;
+            block.sourceCommandLineNumber = lineNumber;
             block.forcePortraitsBright = forceNextPortraitsBright;
             block.brightPortraitSpeakerIds = std::move(nextBrightPortraitSpeakerIds);
             forceNextPortraitsBright = false;
@@ -314,6 +340,7 @@ void loadStoryEventFile(
             block.kind = TextBlockKind::Say;
             block.speakerId = speakerId;
             block.speakerName = speakerName;
+            block.sourceCommandLineNumber = lineNumber;
             block.forcePortraitsBright = forceNextPortraitsBright;
             block.brightPortraitSpeakerIds = std::move(nextBrightPortraitSpeakerIds);
             forceNextPortraitsBright = false;
@@ -340,6 +367,15 @@ void loadStoryEventFile(
         } else if (command == "portrait_focus") {
             forceNextPortraitsBright = false;
             nextBrightPortraitSpeakerIds = splitAsciiTokens(rest);
+        } else if (command == "portrait_expr") {
+            std::vector<std::string> args = splitAsciiTokens(rest);
+            if (args.size() < 2) {
+                warnings.push_back(
+                    "story event " + path.generic_string() + ":" + std::to_string(lineNumber) +
+                    " missing speaker id or variant for @portrait_expr");
+            } else {
+                appendPortraitExpressionToEvent(event, std::move(args[0]), portraitExpressionVariantFor(args[1]));
+            }
         } else if (
             command.rfind("base_", 0) == 0 ||
             command.rfind("dungeon_", 0) == 0 ||

@@ -3,6 +3,7 @@
 #include "engine/InputHelpGlyph.hpp"
 #include "engine/Math.hpp"
 #include "engine/Ui.hpp"
+#include "game/PortraitCatalog.hpp"
 #include "game/WorldIconRenderer.hpp"
 
 #include <algorithm>
@@ -75,6 +76,7 @@ struct DialoguePortraitSlot {
     std::string speakerId;
     std::string speakerName;
     std::string portraitPath;
+    int expressionVariant = 0;
     DialoguePortraitSide side = DialoguePortraitSide::Left;
 };
 
@@ -526,7 +528,7 @@ void drawDialogueWorldIconGlyph(Renderer& renderer, const DialogueGlyph& glyph, 
     options.tint.a = alpha;
     options.outlineColor.a = static_cast<unsigned char>(alpha * 3 / 4);
     options.applyScaleOverride = false;
-    drawWorldIcon(
+    (void)drawWorldIcon(
         renderer,
         definition->iconId,
         glyph.pos + glyph.size * 0.5f + Vec2{0.0f, 2.0f},
@@ -560,86 +562,22 @@ unsigned char fadedAlpha(float lineElapsed, int revealIndex)
     return static_cast<unsigned char>(std::clamp(quantized, 0, 255));
 }
 
-Color portraitColorFor(std::string_view speakerId)
-{
-    if (speakerId == "monica") {
-        return {88, 128, 214, 255};
-    }
-    if (speakerId == "chicory") {
-        return {230, 212, 112, 255};
-    }
-    if (speakerId == "elder") {
-        return {126, 154, 116, 255};
-    }
-    if (speakerId == "player") {
-        return {132, 86, 178, 255};
-    }
-    if (speakerId == "merchant") {
-        return {196, 134, 86, 255};
-    }
-    if (speakerId == "processor") {
-        return {108, 148, 166, 255};
-    }
-    return {156, 168, 184, 255};
-}
-
-std::string speakerNameForId(std::string_view speakerId)
-{
-    if (speakerId == "monica") {
-        return "モニカ";
-    }
-    if (speakerId == "player") {
-        return "ルネ";
-    }
-    if (speakerId == "chicory") {
-        return "チコリ";
-    }
-    if (speakerId == "elder") {
-        return "村長";
-    }
-    if (speakerId == "merchant") {
-        return "商人";
-    }
-    if (speakerId == "processor") {
-        return "加工職人";
-    }
-    return std::string(speakerId);
-}
-
-std::string portraitPathForId(std::string_view speakerId)
-{
-    if (speakerId == "player") {
-        return "assets/taties/tatie_1.png";
-    }
-    if (speakerId == "chicory") {
-        return "assets/taties/tatie_2.png";
-    }
-    if (speakerId == "monica") {
-        return "assets/taties/tatie_3.png";
-    }
-    if (speakerId == "elder") {
-        return "assets/taties/tatie_4.png";
-    }
-    if (speakerId == "merchant") {
-        return "assets/taties/tatie_5.png";
-    }
-    if (speakerId == "processor") {
-        return "assets/taties/tatie_6.png";
-    }
-    return {};
-}
-
 bool speakerUsesRightPortrait(std::string_view speakerId)
 {
-    return !portraitPathForId(speakerId).empty();
+    return portraitSpeakerHasPortrait(speakerId);
 }
 
-DialoguePortraitSlot portraitSlotFor(const DialogueSequence& sequence, std::string_view speakerId, DialoguePortraitSide side)
+DialoguePortraitSlot portraitSlotFor(
+    const DialogueSequence& sequence,
+    std::string_view speakerId,
+    int expressionVariant,
+    DialoguePortraitSide side)
 {
     DialoguePortraitSlot slot{
         std::string(speakerId),
-        speakerNameForId(speakerId),
-        portraitPathForId(speakerId),
+        portraitSpeakerDisplayName(speakerId),
+        portraitPathForSpeaker(speakerId, expressionVariant),
+        expressionVariant,
         side,
     };
 
@@ -650,9 +588,6 @@ DialoguePortraitSlot portraitSlotFor(const DialogueSequence& sequence, std::stri
         if (!line.speakerName.empty()) {
             slot.speakerName = line.speakerName;
         }
-        if (!line.portraitPath.empty()) {
-            slot.portraitPath = line.portraitPath;
-        }
         break;
     }
     return slot;
@@ -661,7 +596,7 @@ DialoguePortraitSlot portraitSlotFor(const DialogueSequence& sequence, std::stri
 Vec2 portraitDrawSizeFor(Renderer& renderer, std::string_view path, UiRect rect)
 {
     Vec2 imageSize;
-    if (renderer.getImageSize(path, imageSize, TextureFilter::Linear) &&
+    if (renderer.getImageSize(path, imageSize, TextureFilter::Nearest) &&
         imageSize.x > 0.0f &&
         imageSize.y > 0.0f) {
         const float aspect = imageSize.x / imageSize.y;
@@ -672,7 +607,7 @@ Vec2 portraitDrawSizeFor(Renderer& renderer, std::string_view path, UiRect rect)
 
 void drawPortraitPlaceholder(Renderer& renderer, UiRect rect, const DialoguePortraitSlot& slot, float alpha, float brightness)
 {
-    const Color base = portraitColorFor(slot.speakerId);
+    const Color base = portraitSpeakerFallbackColor(slot.speakerId);
     const Vec2 center = rect.pos + rect.size * 0.5f;
     renderer.fillEllipse(center + Vec2{0.0f, 58.0f}, {50.0f, 82.0f}, portraitToneColor(withAlpha(base, 218), alpha, brightness));
     renderer.fillCircle(center + Vec2{0.0f, -12.0f}, 36.0f, portraitToneColor({240, 218, 188, 255}, alpha, brightness));
@@ -703,7 +638,7 @@ void drawPortrait(Renderer& renderer, UiRect rect, const DialoguePortraitSlot& s
             {rect.pos.x + rect.size.x * 0.5f, rect.pos.y + rect.size.y},
             drawSize,
             options,
-            TextureFilter::Linear);
+            TextureFilter::Nearest);
         if (drew) {
             return;
         }
@@ -793,6 +728,7 @@ void DialoguePlayer::start(DialogueSequence sequence)
     advanceSoundRequests_ = 0;
     rightSpeakerId_.clear();
     pendingRightSpeakerId_.clear();
+    portraitExpressionVariants_.clear();
     rightPortraitFade_ = 0.0f;
     rightPortraitTransition_ = RightPortraitTransition::Stable;
     portraitsHidden_ = false;
@@ -813,6 +749,7 @@ void DialoguePlayer::clear()
     advanceSoundRequests_ = 0;
     rightSpeakerId_.clear();
     pendingRightSpeakerId_.clear();
+    portraitExpressionVariants_.clear();
     rightPortraitFade_ = 0.0f;
     rightPortraitTransition_ = RightPortraitTransition::Stable;
     active_ = false;
@@ -876,6 +813,13 @@ void DialoguePlayer::update(const Input& input, float dt)
         if (!targetVisible || lineComplete()) {
             advanceLine();
         }
+        return;
+    }
+
+    if (step != nullptr && step->kind == DialogueStepKind::PortraitExpression) {
+        resetAdvanceHoldRepeat();
+        applyPortraitExpressionStep(*step);
+        advanceLine();
         return;
     }
 
@@ -967,7 +911,11 @@ void DialoguePlayer::render(Renderer& renderer, int screenWidth, int screenHeigh
     };
 
     if (!portraitsHidden_ && spokenLineSeen()) {
-        const DialoguePortraitSlot leftSlot = portraitSlotFor(sequence_, "player", DialoguePortraitSide::Left);
+        const DialoguePortraitSlot leftSlot = portraitSlotFor(
+            sequence_,
+            "player",
+            portraitExpressionVariant("player"),
+            DialoguePortraitSide::Left);
         UiRect leftPortrait = portraitRectFor(panel, DialoguePortraitSide::Left, screenWidth, screenHeight);
         leftPortrait.pos += portraitSlideOffset(DialoguePortraitSide::Left, contentFade_);
         drawPortrait(renderer, leftPortrait, leftSlot, contentFade_, portraitBrightness("player"));
@@ -976,7 +924,11 @@ void DialoguePlayer::render(Renderer& renderer, int screenWidth, int screenHeigh
     if (!portraitsHidden_ && !rightSpeakerId_.empty() && rightPortraitFade_ > 0.0f) {
         const float rightAlpha = std::min(contentFade_, rightPortraitFade_);
         if (rightAlpha > 0.0f) {
-            const DialoguePortraitSlot rightSlot = portraitSlotFor(sequence_, rightSpeakerId_, DialoguePortraitSide::Right);
+            const DialoguePortraitSlot rightSlot = portraitSlotFor(
+                sequence_,
+                rightSpeakerId_,
+                portraitExpressionVariant(rightSpeakerId_),
+                DialoguePortraitSide::Right);
             UiRect rightPortrait = portraitRectFor(panel, DialoguePortraitSide::Right, screenWidth, screenHeight);
             if (rightPortraitTransition_ == RightPortraitTransition::FadingIn || closing_) {
                 rightPortrait.pos += portraitSlideOffset(DialoguePortraitSide::Right, rightAlpha);
@@ -1051,7 +1003,11 @@ void DialoguePlayer::renderMonicaCall(Renderer& renderer, int screenWidth, int s
     renderer.fillCircle({phone.pos.x + phone.size.x * 0.5f, phone.pos.y + 10.0f}, 3.0f, a({104, 118, 144, 230}));
     renderer.drawCircle({phone.pos.x + phone.size.x * 0.5f, phone.pos.y + phone.size.y - 14.0f}, 7.0f, a({110, 126, 154, 210}));
 
-    const DialoguePortraitSlot monicaSlot = portraitSlotFor(sequence_, "monica", DialoguePortraitSide::Right);
+    const DialoguePortraitSlot monicaSlot = portraitSlotFor(
+        sequence_,
+        "monica",
+        portraitExpressionVariant("monica"),
+        DialoguePortraitSide::Right);
     drawPortrait(
         renderer,
         {{screen.pos.x + screen.size.x * 0.18f, screen.pos.y + 16.0f}, {screen.size.x * 0.64f, screen.size.y - 20.0f}},
@@ -1142,6 +1098,9 @@ bool DialoguePlayer::lineComplete() const
             rightPortraitFade_ <= 0.0f ||
             lineElapsed_ >= std::max(0.0f, step->waitSeconds);
     }
+    if (step != nullptr && step->kind == DialogueStepKind::PortraitExpression) {
+        return true;
+    }
     if (step != nullptr && step->kind == DialogueStepKind::Command) {
         return false;
     }
@@ -1194,6 +1153,73 @@ const DialogueCommand* DialoguePlayer::currentCommand() const
         return nullptr;
     }
     return &step->command;
+}
+
+const DialogueLine* DialoguePlayer::currentEditableLine() const
+{
+    const DialogueLine* line = currentLine();
+    if (line != nullptr) {
+        return line;
+    }
+    return previousLineBeforeStep(sequence_, stepIndex_);
+}
+
+DialogueVisiblePortrait DialoguePlayer::leftPortrait() const
+{
+    if (!active_ ||
+        closing_ ||
+        sequenceUsesMonicaCallUi(sequence_) ||
+        portraitsHidden_ ||
+        !spokenLineSeen() ||
+        openElapsed_ < dialogueContentStartDelaySeconds()) {
+        return {};
+    }
+    return {true, "player", portraitExpressionVariant("player")};
+}
+
+DialogueVisiblePortrait DialoguePlayer::rightPortrait() const
+{
+    if (!active_ || closing_ || portraitsHidden_ || openElapsed_ < dialogueContentStartDelaySeconds()) {
+        return {};
+    }
+    if (sequenceUsesMonicaCallUi(sequence_)) {
+        return {true, "monica", portraitExpressionVariant("monica")};
+    }
+    if (rightSpeakerId_.empty() || rightPortraitFade_ <= 0.0f) {
+        return {};
+    }
+    return {true, rightSpeakerId_, portraitExpressionVariant(rightSpeakerId_)};
+}
+
+int DialoguePlayer::portraitExpressionVariant(std::string_view speakerId) const
+{
+    const auto it = std::find_if(
+        portraitExpressionVariants_.begin(),
+        portraitExpressionVariants_.end(),
+        [speakerId](const std::pair<std::string, int>& entry) {
+            return entry.first == speakerId;
+        });
+    return it != portraitExpressionVariants_.end()
+        ? it->second
+        : defaultPortraitVariant(speakerId);
+}
+
+void DialoguePlayer::setPortraitExpressionVariant(std::string speakerId, int variant)
+{
+    if (speakerId.empty()) {
+        return;
+    }
+    const auto it = std::find_if(
+        portraitExpressionVariants_.begin(),
+        portraitExpressionVariants_.end(),
+        [&speakerId](const std::pair<std::string, int>& entry) {
+            return entry.first == speakerId;
+        });
+    if (it != portraitExpressionVariants_.end()) {
+        it->second = variant;
+        return;
+    }
+    portraitExpressionVariants_.push_back({std::move(speakerId), variant});
 }
 
 int DialoguePlayer::currentLineGlyphCount() const
@@ -1371,6 +1397,11 @@ void DialoguePlayer::updateRightPortrait(float dt)
         }
         return;
     }
+}
+
+void DialoguePlayer::applyPortraitExpressionStep(const DialogueStep& step)
+{
+    setPortraitExpressionVariant(step.portraitExpressionSpeakerId, step.portraitExpressionVariant);
 }
 
 }

@@ -3,14 +3,17 @@
 @trigger intro_tutorial:chest_loot_inventory
 @once story_intro_tutorial_chest_loot_inventory
 
+@portrait_expr player 4
 @say player ルネ
 やったあ！ルネはお宝を手に入れた！
 
+@portrait_expr player 7
 @say player ルネ
 …って、そんなこと言ってる場合じゃないか
 
 @say chicory チコリ
 こり？
 
+@portrait_expr player 8
 @say player ルネ
 …これって、スペルリングに乗せたらどうなるんだろう？

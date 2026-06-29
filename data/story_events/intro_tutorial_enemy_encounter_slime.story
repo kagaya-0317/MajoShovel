@@ -4,5 +4,6 @@
 @repeat
 @debug hidden
 
+@portrait_expr player 15
 @say slime スライム
 グヘヘヘ！襲ってやるぜ～！

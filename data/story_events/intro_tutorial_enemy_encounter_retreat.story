@@ -4,6 +4,7 @@
 @repeat
 @debug hidden
 
+@portrait_expr player 16
 @say player ルネ
 こっちに来ないで～！
 

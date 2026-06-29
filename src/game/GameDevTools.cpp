@@ -12,6 +12,7 @@
 #include <cmath>
 #include <fstream>
 #include <iomanip>
+#include <iterator>
 #include <limits>
 #include <sstream>
 #include <unordered_set>
@@ -34,6 +35,14 @@ constexpr float DebugItemPickerCardWidth = 118.0f;
 constexpr float DebugItemPickerCardHeight = 106.0f;
 constexpr float DebugItemPickerCardGap = 10.0f;
 constexpr float DebugItemPickerIconSize = 58.0f;
+constexpr float PortraitExpressionPickerPanelMaxWidth = 1040.0f;
+constexpr float PortraitExpressionPickerPanelMaxHeight = 680.0f;
+constexpr float PortraitExpressionPickerPanelMargin = 28.0f;
+constexpr float PortraitExpressionPickerFooterHeight = 32.0f;
+constexpr float PortraitExpressionPickerCardWidth = 144.0f;
+constexpr float PortraitExpressionPickerCardHeight = 174.0f;
+constexpr float PortraitExpressionPickerCardGap = 4.0f;
+constexpr float PortraitExpressionPickerIconSize = 144.0f;
 constexpr float DebugNamedSavePanelWidth = 620.0f;
 constexpr float DebugNamedSaveInputPanelHeight = 260.0f;
 constexpr float DebugNamedSaveLoadPanelHeight = 520.0f;
@@ -585,6 +594,14 @@ struct DebugItemPickerLayout {
     UiRect detail{};
     int columns = 1;
     float rowHeight = DebugItemPickerCardHeight + DebugItemPickerCardGap;
+};
+
+struct PortraitExpressionPickerLayout {
+    UiRect panel{};
+    UiRect grid{};
+    UiRect footer{};
+    int columns = 1;
+    float rowHeight = PortraitExpressionPickerCardHeight + PortraitExpressionPickerCardGap;
 };
 
 struct DebugStoryTestLayout {
@@ -1447,6 +1464,43 @@ DebugItemPickerLayout makeDebugItemPickerLayout(int screenWidth, int screenHeigh
     return layout;
 }
 
+PortraitExpressionPickerLayout makePortraitExpressionPickerLayout(int screenWidth, int screenHeight)
+{
+    const float width = std::min(
+        PortraitExpressionPickerPanelMaxWidth,
+        std::max(620.0f, static_cast<float>(screenWidth) - PortraitExpressionPickerPanelMargin * 2.0f));
+    const float height = std::min(
+        PortraitExpressionPickerPanelMaxHeight,
+        std::max(420.0f, static_cast<float>(screenHeight) - PortraitExpressionPickerPanelMargin * 0.5f));
+
+    PortraitExpressionPickerLayout layout;
+    layout.panel = {{
+        (static_cast<float>(screenWidth) - width) * 0.5f,
+        (static_cast<float>(screenHeight) - height) * 0.5f,
+    }, {width, height}};
+
+    const float contentX = layout.panel.pos.x + 18.0f;
+    const float contentWidth = std::max(1.0f, layout.panel.size.x - 36.0f);
+    const float contentTop = layout.panel.pos.y + 78.0f;
+    layout.footer = {{
+        contentX,
+        layout.panel.pos.y + layout.panel.size.y - 54.0f,
+    }, {
+        contentWidth,
+        PortraitExpressionPickerFooterHeight,
+    }};
+    layout.grid = {{
+        contentX,
+        contentTop,
+    }, {
+        contentWidth,
+        std::max(1.0f, layout.footer.pos.y - contentTop - 4.0f),
+    }};
+    const float pitch = PortraitExpressionPickerCardWidth + PortraitExpressionPickerCardGap;
+    layout.columns = std::max(1, static_cast<int>((layout.grid.size.x + PortraitExpressionPickerCardGap) / pitch));
+    return layout;
+}
+
 DebugStoryTestLayout makeDebugStoryTestLayout(int screenWidth, int screenHeight)
 {
     const float width = std::min(
@@ -1508,6 +1562,27 @@ DebugNamedSaveLayout makeDebugNamedSaveLoadLayout(int screenWidth, int screenHei
     layout.primaryButton = {{layout.panel.pos.x + layout.panel.size.x - 200.0f, layout.panel.pos.y + layout.panel.size.y - 58.0f}, {156.0f, ui::ButtonHeight}};
     layout.secondaryButton = {{layout.panel.pos.x + 44.0f, layout.panel.pos.y + layout.panel.size.y - 58.0f}, {156.0f, ui::ButtonHeight}};
     return layout;
+}
+
+UiRect portraitExpressionPickerCardRect(const PortraitExpressionPickerLayout& layout, int index, float scrollOffset)
+{
+    const int columns = std::max(1, layout.columns);
+    const int row = index / columns;
+    const int column = index % columns;
+    return {{
+        layout.grid.pos.x + static_cast<float>(column) * (PortraitExpressionPickerCardWidth + PortraitExpressionPickerCardGap),
+        layout.grid.pos.y + static_cast<float>(row) * layout.rowHeight - scrollOffset,
+    }, {PortraitExpressionPickerCardWidth, PortraitExpressionPickerCardHeight}};
+}
+
+float portraitExpressionPickerContentHeight(const PortraitExpressionPickerLayout& layout, int itemCount)
+{
+    const int columns = std::max(1, layout.columns);
+    const int rows = itemCount <= 0 ? 0 : (itemCount + columns - 1) / columns;
+    return rows <= 0
+        ? 0.0f
+        : static_cast<float>(rows) * PortraitExpressionPickerCardHeight +
+            static_cast<float>(rows - 1) * PortraitExpressionPickerCardGap;
 }
 
 UiRect debugNamedSaveLoadRowRect(const DebugNamedSaveLayout& layout, int index, float scrollOffset)
@@ -3177,6 +3252,496 @@ bool Game::saveBaseEditData(std::string& message)
     baseEditDirty_ = false;
     message = "Base edit saved";
     return true;
+}
+
+bool Game::handlePortraitExpressionEditCommand(std::string_view normalized)
+{
+    const bool toggle = normalized == "game portrait-edit toggle" ||
+        normalized == "game portrait edit toggle" ||
+        normalized == "game tatie-edit toggle" ||
+        normalized == "game tatie edit toggle";
+    const bool enable = normalized == "game portrait-edit on" ||
+        normalized == "game portrait edit on" ||
+        normalized == "game tatie-edit on" ||
+        normalized == "game tatie edit on";
+    const bool disable = normalized == "game portrait-edit off" ||
+        normalized == "game portrait edit off" ||
+        normalized == "game tatie-edit off" ||
+        normalized == "game tatie edit off";
+
+    if (!toggle && !enable && !disable) {
+        return false;
+    }
+
+    const bool nextEnabled = toggle ? !portraitExpressionEditEnabled_ : enable;
+    portraitExpressionEditEnabled_ = nextEnabled;
+    if (!portraitExpressionEditEnabled_) {
+        closePortraitExpressionPicker(true);
+    }
+    logInfo(std::string("Debug: portrait expression edit ") + (portraitExpressionEditEnabled_ ? "enabled." : "disabled."));
+    return true;
+}
+
+bool Game::handlePortraitExpressionEditEvent(const SDL_Event& event)
+{
+    if (!portraitExpressionEditEnabled_ ||
+        portraitExpressionPicker_.active ||
+        !dialogue_.active() ||
+        event.type != SDL_EVENT_KEY_DOWN ||
+        event.key.repeat) {
+        return false;
+    }
+
+    if (event.key.scancode == SDL_SCANCODE_1) {
+        if (!openPortraitExpressionPickerForSlot(1)) {
+            reloadNotice_ = "ルネの立ち絵は表示されていません";
+            reloadNoticeTimer_ = 1.4f;
+        }
+        return true;
+    }
+    if (event.key.scancode == SDL_SCANCODE_2) {
+        if (!openPortraitExpressionPickerForSlot(2)) {
+            reloadNotice_ = "右側の立ち絵は表示されていません";
+            reloadNoticeTimer_ = 1.4f;
+        }
+        return true;
+    }
+    return false;
+}
+
+bool Game::openPortraitExpressionPickerForSlot(int slotIndex)
+{
+    const DialogueVisiblePortrait visible = slotIndex == 1
+        ? dialogue_.leftPortrait()
+        : dialogue_.rightPortrait();
+    if (!visible.visible || visible.speakerId.empty()) {
+        return false;
+    }
+
+    PortraitExpressionPickerState state;
+    state.active = true;
+    state.speakerId = visible.speakerId;
+    state.speakerName = portraitSpeakerDisplayName(visible.speakerId);
+    state.originalVariant = visible.expressionVariant;
+    state.selectedVariant = visible.expressionVariant;
+    state.selectedVariantArmed = false;
+    state.variants = portraitVariantsForSpeaker(visible.speakerId);
+    if (state.variants.empty()) {
+        reloadNotice_ = "立ち絵差分がありません: " + visible.speakerId;
+        reloadNoticeTimer_ = 1.4f;
+        return false;
+    }
+
+    const DialogueLine* line = dialogue_.currentEditableLine();
+    if (line != nullptr) {
+        state.targetLineValid = true;
+        state.targetLine = *line;
+        state.sourcePath = line->sourcePath;
+        state.sourceCommandLineNumber = line->sourceCommandLineNumber;
+    }
+    if (state.sourcePath.empty() || state.sourceCommandLineNumber <= 0) {
+        state.status = "この会話は .story に紐付いていないため保存できません";
+    } else {
+        state.status.clear();
+    }
+
+    const bool selectedExists = std::any_of(
+        state.variants.begin(),
+        state.variants.end(),
+        [&state](const PortraitVariant& variant) {
+            return variant.index == state.selectedVariant;
+        });
+    if (!selectedExists) {
+        state.selectedVariant = state.variants.front().index;
+    }
+
+    portraitExpressionPicker_ = std::move(state);
+    return true;
+}
+
+void Game::closePortraitExpressionPicker(bool restorePreview)
+{
+    if (!portraitExpressionPicker_.active) {
+        return;
+    }
+    if (restorePreview) {
+        dialogue_.setPortraitExpressionVariant(
+            portraitExpressionPicker_.speakerId,
+            portraitExpressionPicker_.originalVariant);
+    }
+    portraitExpressionPicker_ = {};
+}
+
+bool Game::savePortraitExpressionSelection(std::string& message)
+{
+    if (!portraitExpressionPicker_.active) {
+        message = "立ち絵が選択されていません";
+        return false;
+    }
+
+    if (!portraitExpressionPicker_.targetLineValid) {
+        message = "保存対象のテキスト行が見つかりません";
+        return false;
+    }
+    if (portraitExpressionPicker_.sourcePath.empty() ||
+        portraitExpressionPicker_.sourceCommandLineNumber <= 0) {
+        message = "この会話は .story に紐付いていないため保存できません";
+        return false;
+    }
+
+    DialogueLine targetLine = portraitExpressionPicker_.targetLine;
+    if (targetLine.sourcePath.empty()) {
+        targetLine.sourcePath = portraitExpressionPicker_.sourcePath;
+    }
+    if (targetLine.sourceCommandLineNumber <= 0) {
+        targetLine.sourceCommandLineNumber = portraitExpressionPicker_.sourceCommandLineNumber;
+    }
+
+    const bool saved = writePortraitExpressionToStoryFile(
+        std::filesystem::path(portraitExpressionPicker_.sourcePath),
+        targetLine,
+        portraitExpressionPicker_.speakerId,
+        portraitExpressionPicker_.selectedVariant,
+        message);
+    if (saved) {
+        loadStoryEvents();
+    }
+    return saved;
+}
+
+bool Game::writePortraitExpressionToStoryFile(
+    const std::filesystem::path& path,
+    const DialogueLine& line,
+    std::string_view speakerId,
+    int variant,
+    std::string& message)
+{
+    if (path.empty() || line.sourceCommandLineNumber <= 0 || speakerId.empty()) {
+        message = "立ち絵表情の保存先が不明です";
+        return false;
+    }
+
+    std::ifstream input(path, std::ios::binary);
+    if (!input) {
+        message = "story open failed: " + path.generic_string();
+        return false;
+    }
+
+    std::string text((std::istreambuf_iterator<char>(input)), std::istreambuf_iterator<char>());
+    const std::string eol = text.find("\r\n") != std::string::npos ? "\r\n" : "\n";
+    if (text.size() >= 3 &&
+        static_cast<unsigned char>(text[0]) == 0xefU &&
+        static_cast<unsigned char>(text[1]) == 0xbbU &&
+        static_cast<unsigned char>(text[2]) == 0xbfU) {
+        text.erase(0, 3);
+    }
+
+    std::vector<std::string> lines;
+    for (std::size_t begin = 0; begin <= text.size();) {
+        const std::size_t end = text.find('\n', begin);
+        std::string value = end == std::string::npos
+            ? text.substr(begin)
+            : text.substr(begin, end - begin);
+        if (!value.empty() && value.back() == '\r') {
+            value.pop_back();
+        }
+        if (end == std::string::npos) {
+            if (!value.empty() || begin < text.size()) {
+                lines.push_back(std::move(value));
+            }
+            break;
+        }
+        lines.push_back(std::move(value));
+        begin = end + 1;
+    }
+
+    const auto commandFor = [](std::string_view targetSpeakerId, int targetVariant) {
+        return "@portrait_expr " + std::string(targetSpeakerId) + " " + std::to_string(std::max(0, targetVariant));
+    };
+    const auto isTargetBlockCommand = [&line](std::string_view raw) {
+        const std::string trimmed = trimAscii(std::string(raw));
+        if (line.speakerId.empty()) {
+            return trimmed == "@narration";
+        }
+        if (trimmed.rfind("@say", 0) != 0) {
+            return false;
+        }
+        std::istringstream stream(trimAscii(trimmed.substr(4)));
+        std::string parsedSpeaker;
+        stream >> parsedSpeaker;
+        return parsedSpeaker == line.speakerId;
+    };
+    const auto blockTextAt = [&lines](int commandIndex) {
+        std::vector<std::string> blockLines;
+        for (int i = commandIndex + 1; i < static_cast<int>(lines.size()); ++i) {
+            const std::string trimmed = trimAscii(lines[static_cast<std::size_t>(i)]);
+            if (trimmed.empty() || trimmed[0] == '#') {
+                continue;
+            }
+            if (trimmed[0] == '@') {
+                break;
+            }
+            blockLines.push_back(lines[static_cast<std::size_t>(i)]);
+        }
+
+        std::string result;
+        for (const std::string& blockLine : blockLines) {
+            if (!result.empty()) {
+                result.push_back('\n');
+            }
+            result += blockLine;
+        }
+        return result;
+    };
+    const auto isTargetBlock = [&line, &lines, &isTargetBlockCommand, &blockTextAt](int commandIndex, bool requireTextMatch) {
+        if (commandIndex < 0 ||
+            commandIndex >= static_cast<int>(lines.size()) ||
+            !isTargetBlockCommand(lines[static_cast<std::size_t>(commandIndex)])) {
+            return false;
+        }
+        return !requireTextMatch || line.text.empty() || blockTextAt(commandIndex) == line.text;
+    };
+    const auto portraitExpressionSpeaker = [](std::string_view raw) -> std::string {
+        const std::string trimmed = trimAscii(std::string(raw));
+        if (trimmed.rfind("@portrait_expr", 0) != 0) {
+            return {};
+        }
+        std::istringstream stream(trimAscii(trimmed.substr(14)));
+        std::string parsedSpeaker;
+        stream >> parsedSpeaker;
+        return parsedSpeaker;
+    };
+
+    if (lines.empty()) {
+        message = "story file is empty: " + path.generic_string();
+        return false;
+    }
+    const int sourceIndex = std::clamp(line.sourceCommandLineNumber - 1, 0, static_cast<int>(lines.size()) - 1);
+    int targetIndex = -1;
+    int bestDistance = std::numeric_limits<int>::max();
+    for (int i = 0; i < static_cast<int>(lines.size()); ++i) {
+        if (!isTargetBlock(i, true)) {
+            continue;
+        }
+        const int distance = std::abs(i - sourceIndex);
+        if (distance < bestDistance) {
+            bestDistance = distance;
+            targetIndex = i;
+        }
+    }
+    if (targetIndex < 0) {
+        const int start = std::max(0, sourceIndex - 8);
+        const int end = std::min(static_cast<int>(lines.size()) - 1, sourceIndex + 32);
+        for (int i = start; i <= end; ++i) {
+            if (!isTargetBlock(i, false)) {
+                continue;
+            }
+            const int distance = std::abs(i - sourceIndex);
+            if (distance < bestDistance) {
+                bestDistance = distance;
+                targetIndex = i;
+            }
+        }
+        if (targetIndex < 0) {
+            message = "story target line not found: " + path.generic_string() + ":" + std::to_string(line.sourceCommandLineNumber);
+            return false;
+        }
+    }
+
+    const std::string command = commandFor(speakerId, variant);
+    for (int i = targetIndex - 1; i >= 0; --i) {
+        const std::string trimmed = trimAscii(lines[static_cast<std::size_t>(i)]);
+        if (trimmed.empty() || trimmed[0] == '#') {
+            continue;
+        }
+        const std::string parsedSpeaker = portraitExpressionSpeaker(trimmed);
+        if (!parsedSpeaker.empty()) {
+            if (parsedSpeaker == speakerId) {
+                lines[static_cast<std::size_t>(i)] = command;
+                targetIndex = -1;
+            }
+            continue;
+        }
+        break;
+    }
+    if (targetIndex >= 0) {
+        lines.insert(lines.begin() + targetIndex, command);
+    }
+
+    std::error_code error;
+    if (!path.parent_path().empty()) {
+        std::filesystem::create_directories(path.parent_path(), error);
+        if (error) {
+            message = "story save failed: could not create " + path.parent_path().generic_string();
+            return false;
+        }
+    }
+
+    std::ofstream output(path, std::ios::binary | std::ios::trunc);
+    if (!output) {
+        message = "story save failed: " + path.generic_string();
+        return false;
+    }
+    output << "\xEF\xBB\xBF";
+    for (const std::string& outLine : lines) {
+        output << outLine << eol;
+    }
+    output.flush();
+    if (!output) {
+        message = "story save failed while writing: " + path.generic_string();
+        return false;
+    }
+
+    message = "立ち絵表情を保存: " + path.filename().generic_string();
+    return true;
+}
+
+void Game::updatePortraitExpressionPicker(const Input& input, UiContext& ui)
+{
+    if (!portraitExpressionPicker_.active) {
+        return;
+    }
+
+    const PortraitExpressionPickerLayout layout = makePortraitExpressionPickerLayout(camera_.width(), camera_.height());
+    const int itemCount = static_cast<int>(portraitExpressionPicker_.variants.size());
+    UiScrollAreaStyle scrollStyle = debugListScrollStyle(PortraitExpressionPickerCardHeight + PortraitExpressionPickerCardGap);
+    const float contentHeight = portraitExpressionPickerContentHeight(layout, itemCount);
+    const UiScrollAreaLayout scrollLayout = updateUiScrollArea(
+        ui,
+        input,
+        layout.grid,
+        contentHeight,
+        portraitExpressionPicker_.scrollOffset,
+        scrollStyle,
+        &portraitExpressionPicker_.scrollState);
+
+    if (input.backPressed()) {
+        closePortraitExpressionPicker(true);
+        ui.consumeBackInput();
+        return;
+    }
+
+    for (int i = 0; i < itemCount; ++i) {
+        const UiRect rect = portraitExpressionPickerCardRect(layout, i, scrollLayout.scrollOffset);
+        if (!uiScrollAreaRectVisible(scrollLayout, rect) || !ui.pressed(rect)) {
+            continue;
+        }
+
+        const PortraitVariant& variant = portraitExpressionPicker_.variants[static_cast<std::size_t>(i)];
+        if (portraitExpressionPicker_.selectedVariantArmed &&
+            portraitExpressionPicker_.selectedVariant == variant.index) {
+            std::string message;
+            if (savePortraitExpressionSelection(message)) {
+                dialogue_.setPortraitExpressionVariant(portraitExpressionPicker_.speakerId, variant.index);
+                reloadNotice_ = message;
+                reloadNoticeTimer_ = 1.6f;
+                logInfo("Debug: " + message);
+                closePortraitExpressionPicker(false);
+            } else {
+                portraitExpressionPicker_.status = message;
+                logWarning("Debug: " + message);
+            }
+            return;
+        }
+
+        portraitExpressionPicker_.selectedVariant = variant.index;
+        portraitExpressionPicker_.selectedVariantArmed = true;
+        dialogue_.setPortraitExpressionVariant(portraitExpressionPicker_.speakerId, variant.index);
+        portraitExpressionPicker_.status = "プレビュー: " + portraitExpressionPicker_.speakerName + " " + variant.label;
+        return;
+    }
+}
+
+void Game::renderPortraitExpressionPicker(Renderer& renderer) const
+{
+    if (!portraitExpressionPicker_.active) {
+        return;
+    }
+
+    renderer.setScreenSpace();
+    renderer.fillRect(
+        {0.0f, 0.0f},
+        {static_cast<float>(camera_.width()), static_cast<float>(camera_.height())},
+        {0, 0, 0, 92});
+
+    const PortraitExpressionPickerLayout layout = makePortraitExpressionPickerLayout(camera_.width(), camera_.height());
+    const std::string title = "立ち絵編集: " + portraitExpressionPicker_.speakerName;
+    UiWindowScope window(
+        renderer,
+        "debug.portrait_expression_picker",
+        layout.panel,
+        title,
+        "",
+        UiWindowOptions{true, false});
+
+    const int itemCount = static_cast<int>(portraitExpressionPicker_.variants.size());
+    UiScrollAreaStyle scrollStyle = debugListScrollStyle(PortraitExpressionPickerCardHeight + PortraitExpressionPickerCardGap);
+    const UiScrollAreaLayout scrollLayout = makeUiScrollAreaLayout(
+        layout.grid,
+        portraitExpressionPickerContentHeight(layout, itemCount),
+        portraitExpressionPicker_.scrollOffset,
+        scrollStyle);
+
+    renderer.pushClipRect(layout.grid.pos, layout.grid.size);
+    for (int i = 0; i < itemCount; ++i) {
+        const UiRect rect = portraitExpressionPickerCardRect(layout, i, scrollLayout.scrollOffset);
+        if (!uiScrollAreaRectVisible(scrollLayout, rect)) {
+            continue;
+        }
+
+        const PortraitVariant& variant = portraitExpressionPicker_.variants[static_cast<std::size_t>(i)];
+        const bool selected = portraitExpressionPicker_.selectedVariantArmed &&
+            portraitExpressionPicker_.selectedVariant == variant.index;
+        const bool current = portraitExpressionPicker_.originalVariant == variant.index;
+        const UiRect iconRect{{
+            rect.pos.x + (rect.size.x - PortraitExpressionPickerIconSize) * 0.5f,
+            rect.pos.y,
+        }, {
+            PortraitExpressionPickerIconSize,
+            PortraitExpressionPickerIconSize,
+        }};
+        const ImageHandle handle = renderer.acquireImage(variant.path, TextureFilter::Nearest);
+        Vec2 sourceSize{};
+        if (handle.valid() && renderer.getImageSize(handle, sourceSize) && sourceSize.x > 0.0f && sourceSize.y > 0.0f) {
+            ImageDrawOptions options;
+            options.anchor = {0.5f, 0.5f};
+            renderer.drawImageRegion(
+                handle,
+                portraitFaceSourceRect(sourceSize),
+                iconRect.pos + iconRect.size * 0.5f,
+                iconRect.size,
+                options);
+        } else {
+            renderer.drawText(iconRect.pos + Vec2{14.0f, 36.0f}, "NO IMAGE", ui::TextMuted, 1);
+        }
+
+        const std::string label = fittedSingleLineText(renderer, variant.label, rect.size.x, 2);
+        const Color labelColor = selected
+            ? Color{255, 240, 174, 255}
+            : (current ? Color{164, 220, 255, 255} : ui::Text);
+        renderer.drawText(
+            {rect.pos.x + (rect.size.x - renderer.measureText(label, 2).x) * 0.5f, iconRect.pos.y + iconRect.size.y + 4.0f},
+            label,
+            labelColor,
+            2);
+        if (selected) {
+            renderer.fillRect(
+                {iconRect.pos.x + 16.0f, iconRect.pos.y + iconRect.size.y + 25.0f},
+                {iconRect.size.x - 32.0f, 3.0f},
+                {255, 230, 150, 255});
+        }
+    }
+    renderer.popClipRect();
+    drawUiScrollAreaScrollbar(renderer, scrollLayout, scrollStyle);
+
+    const std::string footerText = portraitExpressionPicker_.status.empty()
+        ? "クリックでプレビュー、同じ表情をもう一度クリックで保存 / Esc キャンセル"
+        : portraitExpressionPicker_.status;
+    renderer.drawText(
+        layout.footer.pos + Vec2{0.0f, 8.0f},
+        fittedSingleLineText(renderer, footerText, layout.footer.size.x, 2),
+        {255, 230, 150, 255},
+        2);
 }
 
 bool Game::loadObjectImageScaleData()
@@ -11489,6 +12054,9 @@ bool Game::executeDebugCommand(std::string_view command)
         return true;
     }
     if (handleObjectImageScaleCommand(normalized)) {
+        return true;
+    }
+    if (handlePortraitExpressionEditCommand(normalized)) {
         return true;
     }
     if (handleEnemyHitboxEditCommand(normalized)) {

@@ -38,6 +38,7 @@
 #include "game/OpeningMetaSave.hpp"
 #include "game/RingPresetSystem.hpp"
 #include "game/RingLevelUpgrade.hpp"
+#include "game/PortraitCatalog.hpp"
 #include "game/SpellRingSystem.hpp"
 #include "game/StoryEvent.hpp"
 #include "game/Player.hpp"
@@ -245,6 +246,23 @@ struct AudioCueFileEntry {
     std::string name;
     std::string relativePath;
     std::uintmax_t fileSize = 0;
+};
+
+struct PortraitExpressionPickerState {
+    bool active = false;
+    std::string speakerId;
+    std::string speakerName;
+    std::string sourcePath;
+    int sourceCommandLineNumber = 0;
+    bool targetLineValid = false;
+    DialogueLine targetLine;
+    int originalVariant = 0;
+    int selectedVariant = 0;
+    bool selectedVariantArmed = false;
+    std::vector<PortraitVariant> variants;
+    float scrollOffset = 0.0f;
+    UiScrollAreaState scrollState{};
+    std::string status;
 };
 
 class Game {
@@ -1854,6 +1872,19 @@ private:
     bool loadObjectImageScaleData();
     bool saveObjectImageScaleData(std::string& message);
     bool handleObjectImageScaleCommand(std::string_view normalized);
+    bool handlePortraitExpressionEditCommand(std::string_view normalized);
+    bool handlePortraitExpressionEditEvent(const SDL_Event& event);
+    bool openPortraitExpressionPickerForSlot(int slotIndex);
+    void closePortraitExpressionPicker(bool restorePreview);
+    bool savePortraitExpressionSelection(std::string& message);
+    bool writePortraitExpressionToStoryFile(
+        const std::filesystem::path& path,
+        const DialogueLine& line,
+        std::string_view speakerId,
+        int variant,
+        std::string& message);
+    void updatePortraitExpressionPicker(const Input& input, UiContext& ui);
+    void renderPortraitExpressionPicker(Renderer& renderer) const;
     void rebuildObjectImageScaleList();
     void applyObjectImageScaleFilter(std::string_view preferredSelection = {});
     bool handleObjectImageScaleEditEvent(const SDL_Event& event);
@@ -2335,6 +2366,8 @@ private:
     int baseEditPassPaintLastTileX_ = std::numeric_limits<int>::min();
     int baseEditPassPaintLastTileY_ = std::numeric_limits<int>::min();
     bool baseEditDirty_ = false;
+    bool portraitExpressionEditEnabled_ = false;
+    PortraitExpressionPickerState portraitExpressionPicker_{};
     std::unordered_map<std::string, float> objectImageScaleById_;
     std::unordered_map<std::string, float> otherImageScaleByKey_;
     HitboxCatalog hitboxes_;

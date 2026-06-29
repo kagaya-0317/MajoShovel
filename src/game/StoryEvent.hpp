@@ -14,6 +14,7 @@ struct StoryEvent {
     std::string presentation;
     std::string trigger;
     std::string onceFlag;
+    std::filesystem::path sourcePath;
     bool repeatable = false;
     bool debugHidden = false;
     DialogueSequence dialogue;

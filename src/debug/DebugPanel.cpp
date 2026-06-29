@@ -181,6 +181,7 @@ DebugConsoleLayout makeDefaultDebugConsoleLayout()
                     "アセット",
                     {
                         {DebugControlKind::Button, "obj_image_scale_toggle", "画像サイズ編集", "game obj-image-scale toggle"},
+                        {DebugControlKind::Button, "portrait_edit_toggle", "立ち絵編集", "game portrait-edit toggle"},
                         {DebugControlKind::Button, "audio_bgm_edit", "BGM編集", "game audio-edit bgm"},
                         {DebugControlKind::Button, "audio_se_edit", "効果音編集", "game audio-edit se"},
                     },
