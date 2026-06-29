@@ -228,6 +228,7 @@ struct BossActionRuntime {
     Vec2 chargeDirection{1.0f, 0.0f};
     bool hidden = false;
     bool invulnerable = false;
+    bool previewOnly = false;
     JunkCrabBossRuntime junkCrab;
     AstragnaBossRuntime astragna;
 };

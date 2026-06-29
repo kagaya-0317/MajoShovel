@@ -60,6 +60,8 @@ constexpr std::string_view AudioSeUiItemUse = "se.ui.item_use";
 constexpr std::string_view AudioSeUiEquip = "se.ui.equip";
 constexpr std::string_view AudioSeUiRingPlace = "se.ui.ring_place";
 constexpr std::string_view AudioSeUiUpgradeSelect = "se.ui.upgrade_select";
+constexpr std::string_view AudioSeRingAppear = "se.ring.appear";
+constexpr std::string_view AudioSeRingUnlockJingle = "se.ring.unlock.jingle";
 constexpr std::string_view AudioSeDialogueAdvance = "se.dialogue.advance";
 constexpr std::string_view AudioSeStoryPhoneIncoming = "se.story.phone.incoming";
 constexpr std::string_view AudioSeStoryPhoneOutgoing = "se.story.phone.outgoing";
@@ -85,6 +87,7 @@ constexpr float LevelUpPresentationMinSeconds = 1.22f;
 constexpr float LevelUpPresentationSparkleIntervalSeconds = 0.22f;
 constexpr float LevelUpJingleFallbackSeconds = 1.18f;
 constexpr float GameOverJingleFallbackSeconds = 1.35f;
+constexpr float StoryRingUnlockJingleFallbackSeconds = 1.28f;
 constexpr std::array<float, SpellRingCount> RingWorkshopRadiusMaxMetersPerLevel{{0.12f, 0.18f, 0.24f}};
 constexpr std::array<float, SpellRingCount> RingWorkshopRadiusMinMetersPerLevel{{0.08f, 0.12f, 0.16f}};
 constexpr std::array<float, SpellRingCount> RingWorkshopSpeedMetersPerSecondPerLevel{{0.20f, 0.30f, 0.25f}};
@@ -175,6 +178,36 @@ bool applyStoryShakeProfile(const DialogueCommand& command, float& amplitude, fl
         amplitude = 8.0f;
         duration = 0.90f;
         soundId = AudioSeStoryRumble;
+        return true;
+    }
+    return false;
+}
+
+bool storyJingleCueForCommand(const DialogueCommand& command, std::string_view& cueId, float& fallbackSeconds)
+{
+    if (command.args.empty()) {
+        return false;
+    }
+
+    const std::string& profile = command.args[0];
+    if (profile == "ring_unlock") {
+        cueId = AudioSeRingUnlockJingle;
+        fallbackSeconds = StoryRingUnlockJingleFallbackSeconds;
+        return true;
+    }
+    if (profile == "level_up") {
+        cueId = AudioSeLevelUpJingle;
+        fallbackSeconds = LevelUpJingleFallbackSeconds;
+        return true;
+    }
+    if (profile == "game_over") {
+        cueId = AudioSeGameOverJingle;
+        fallbackSeconds = GameOverJingleFallbackSeconds;
+        return true;
+    }
+    if (profile.rfind("se.", 0) == 0) {
+        cueId = profile;
+        fallbackSeconds = storyCommandFloatArg(command, 1, StoryRingUnlockJingleFallbackSeconds);
         return true;
     }
     return false;
@@ -1562,6 +1595,7 @@ void Game::resetWorldRunState()
     gameOverSelection_ = 0;
     gameOverStatus_.clear();
     bossSpawned_ = false;
+    bossPreviewSpawned_ = false;
     hasBossSpawnPoint_ = false;
     resetBossEncounter();
     clearRoguelikeBigHoleState();
@@ -2354,6 +2388,7 @@ Game::ScreenTransitionFadeColor Game::fadeColorForScreenTransitionTarget(ScreenT
     case ScreenTransitionTarget::Base:
     case ScreenTransitionTarget::ReturnToBase:
     case ScreenTransitionTarget::IntroTutorialToBase:
+    case ScreenTransitionTarget::FinalBossEndingKamishibai:
         return ScreenTransitionFadeColor::White;
     case ScreenTransitionTarget::None:
     case ScreenTransitionTarget::TitleToBase:
@@ -2390,6 +2425,7 @@ float Game::holdSecondsForScreenTransitionTarget(ScreenTransitionTarget target)
     case ScreenTransitionTarget::MiningStart:
     case ScreenTransitionTarget::ReturnToBase:
     case ScreenTransitionTarget::BaseArea:
+    case ScreenTransitionTarget::FinalBossEndingKamishibai:
         return ScreenTransitionHoldSeconds;
     }
     return ScreenTransitionHoldSeconds;
@@ -2407,6 +2443,7 @@ float Game::fadeInSecondsForScreenTransitionTarget(ScreenTransitionTarget target
     case ScreenTransitionTarget::TitleToBase:
     case ScreenTransitionTarget::MiningStart:
     case ScreenTransitionTarget::ReturnToBase:
+    case ScreenTransitionTarget::FinalBossEndingKamishibai:
     case ScreenTransitionTarget::BaseArea:
     case ScreenTransitionTarget::BossEncounterIntro:
     case ScreenTransitionTarget::BossEncounterAfterDialogue:
@@ -2430,6 +2467,7 @@ float Game::postTransitionStoryDelaySecondsForScreenTransitionTarget(ScreenTrans
     case ScreenTransitionTarget::TitleToBase:
     case ScreenTransitionTarget::MiningStart:
     case ScreenTransitionTarget::ReturnToBase:
+    case ScreenTransitionTarget::FinalBossEndingKamishibai:
     case ScreenTransitionTarget::BaseArea:
     case ScreenTransitionTarget::BossEncounterIntro:
     case ScreenTransitionTarget::BossEncounterAfterDialogue:
@@ -2597,6 +2635,7 @@ void Game::updateScreenTransition(float dt)
             if (startDungeonRingIntro) {
                 dungeonRingIntroStartPending_ = false;
                 dungeonRingIntroTimer_ = DungeonRingIntroDuration;
+                playAudioSe(AudioSeRingAppear);
             }
             if (completedTarget == ScreenTransitionTarget::BossEncounterIntro) {
                 finishBossEncounterIntroTransition();
@@ -2636,6 +2675,9 @@ void Game::applyScreenTransitionTarget(ScreenTransitionTarget target)
     case ScreenTransitionTarget::IntroTutorialToBase:
         completeIntroTutorialAndReturnToBase();
         break;
+    case ScreenTransitionTarget::FinalBossEndingKamishibai:
+        startFinalBossEndingKamishibaiAfterTransition();
+        break;
     case ScreenTransitionTarget::BaseArea:
         baseArea_ = screenTransition_.targetBaseArea;
         basePlayerPosition_ = screenTransition_.targetBasePlayerPosition;
@@ -2651,8 +2693,12 @@ void Game::applyScreenTransitionTarget(ScreenTransitionTarget target)
         baseStatus_ = std::move(screenTransition_.targetBaseStatus);
         break;
     case ScreenTransitionTarget::BossEncounterIntro:
+        applyBossStoryPlayerPlacement();
+        break;
     case ScreenTransitionTarget::BossEncounterAfterDialogue:
-        applyBossEncounterIntroPlacement();
+        applyBossStoryPlayerPlacement();
+        beginBossAfterStoryPresentation();
+        camera_.setPosition(bossAfterStoryPresentationPosition());
         break;
     case ScreenTransitionTarget::GameOverRetry:
         retryAfterGameOver();
@@ -3980,11 +4026,20 @@ void Game::enterStageClear()
 
 void Game::beginFinalBossEndingSequence()
 {
-    if (endingKamishibaiPending_ || mode_ == ScreenMode::EndingKamishibai) {
+    if (endingKamishibaiPending_ ||
+        mode_ == ScreenMode::EndingKamishibai ||
+        screenTransition_.active()) {
         return;
     }
 
     markCurrentStageCleared();
+    requestScreenTransition(ScreenTransitionTarget::FinalBossEndingKamishibai);
+}
+
+void Game::startFinalBossEndingKamishibaiAfterTransition()
+{
+    bossEncounterRingHidden_ = false;
+    clearDungeonStoryPresentation();
     clearTemporaryPlayerState(true);
     inventory_.setOpen(false);
     inventory_.cancelGrab();
@@ -4000,7 +4055,7 @@ void Game::beginFinalBossEndingSequence()
     pausePage_ = PauseMenuPage::Main;
     pauseReturnMode_ = ScreenMode::Playing;
     inventoryReturnToPause_ = false;
-    requestEndingKamishibai(EndingKind::Main);
+    startEndingKamishibai(EndingKind::Main);
 }
 
 void Game::updateScreenMode(
@@ -4401,12 +4456,14 @@ void Game::updateScreenMode(
 void Game::updateDialoguePlayerIdleAnimation(float dt)
 {
     if (basePresentationActive()) {
+        updateBaseStorySpeakerFacing();
         updateBasePlayerSpriteAnimation(dt, false);
         updateBaseActorIdleAnimation(dt);
         return;
     }
     if (mode_ == ScreenMode::Playing) {
         player_.updateSpriteAnimation(dt, false);
+        enemies_.updateBossStoryVisuals(dt);
     }
 }
 
@@ -4458,6 +4515,19 @@ void Game::updateStoryEventCommand(float dt)
         if (!storyPhoneSoundActive()) {
             dialogue_.completeCurrentCommandStep();
         }
+        return;
+    }
+
+    if (command->name == "story_jingle") {
+        std::string_view cueId;
+        float fallbackSeconds = StoryRingUnlockJingleFallbackSeconds;
+        if (storyJingleCueForCommand(*command, cueId, fallbackSeconds)) {
+            playAudioJingle(cueId, fallbackSeconds, 0.08f, 0.24f, 1.0f, 1.0f);
+        } else {
+            const std::string profile = command->args.empty() ? std::string{} : command->args[0];
+            logWarning("[story] unknown story_jingle profile: " + profile);
+        }
+        dialogue_.completeCurrentCommandStep();
         return;
     }
 
@@ -4557,6 +4627,7 @@ void Game::beginDungeonRingIntro()
 
     dungeonRingIntroStartPending_ = false;
     dungeonRingIntroTimer_ = DungeonRingIntroDuration;
+    playAudioSe(AudioSeRingAppear);
 }
 
 void Game::updateDungeonRingIntro(float dt)
@@ -5300,8 +5371,10 @@ void Game::update(const Input& input, const Time& time)
                 }
             } else if (event.type == EnemyEventType::BossResolved) {
                 handleDungeonEventEnemyEvent(event);
-                effects_.spawnAreaPulse(event.position, 92.0f, {255, 214, 110, 210});
-                addScreenShake(6.0f, 0.24f);
+                if (!isFinalBossFirstClearEncounter(bossEncounter_.purpose)) {
+                    effects_.spawnAreaPulse(event.position, 92.0f, {255, 214, 110, 210});
+                    addScreenShake(6.0f, 0.24f);
+                }
                 bossDefeated = true;
                 bossDefeatPosition = event.position;
             } else if (event.type == EnemyEventType::Death || event.type == EnemyEventType::BossDeath) {

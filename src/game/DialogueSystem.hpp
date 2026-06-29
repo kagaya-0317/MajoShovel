@@ -57,6 +57,7 @@ public:
     [[nodiscard]] bool active() const { return active_; }
     [[nodiscard]] bool lineComplete() const;
     [[nodiscard]] int currentStepIndex() const { return stepIndex_; }
+    [[nodiscard]] std::string_view currentSpeakerId() const;
     [[nodiscard]] const DialogueCommand* currentCommand() const;
     int consumeAdvanceSoundRequests();
 

@@ -9,6 +9,9 @@
 # ※爆発し、カニ料理になる。カニ料理は逃げていく
 @dungeon_boss_explode_escape crab_dish 1.8
 
+# ※カメラがルネの位置にもどる
+@dungeon_camera_focus player 0.7
+
 @wait small
 
 @say player ルネ

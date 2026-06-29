@@ -11757,6 +11757,43 @@ bool Game::executeDebugCommand(std::string_view command)
         return true;
     };
 
+    const auto warpPlayerToFinalBossGuardianForDebug = [&]() {
+        if (currentStageId_ != DebugFinalStoryStageId) {
+            return false;
+        }
+        if (!hasBossSpawnPoint_) {
+            logWarning("Debug: final boss guardian warp requires a boss spawn point.");
+            return false;
+        }
+
+        bossEncounter_ = BossEncounterState{};
+        bossEncounter_.phase = BossEncounterPhase::WaitingBeforeDialogue;
+        bossEncounter_.purpose = BossEncounterPurpose::StageClear;
+        bossEncounter_.stageId = currentStageId_;
+        bossEncounter_.spawnPoint = bossSpawnPoint_;
+        bossEncounter_.bossEnemyId = currentStageDefinition().bossEnemyId;
+        bossEncounterRingHidden_ = false;
+
+        if (!beginBossFightForCurrentEncounter()) {
+            logWarning("Debug: failed to spawn final boss before guardian warp.");
+            return false;
+        }
+
+        player_.position = bossSpawnPoint_;
+        player_.velocity = {};
+        player_.knockbackVelocity = {};
+        player_.knockbackTimer = 0.0f;
+        player_.facing = {0.0f, -1.0f};
+        player_.updateSpriteFlipFromFacing();
+        spellRing_.resetThrowCooldowns();
+        tileMap_.updateAround(player_.position, 0.0f, balance_, dungeonLayout_);
+        normalizeOpenBuriedPlacementNodes();
+        updateDungeonMinimap(0.0);
+        camera_.follow(player_.position, 1.0f);
+        resetPlayerFootstepDust();
+        return true;
+    };
+
     const auto removeCapturedBossForCurrentStage = [&]() {
         const std::string objectId = currentStageBossCaptureObjectId();
         if (objectId.empty()) {
@@ -12775,11 +12812,17 @@ bool Game::executeDebugCommand(std::string_view command)
         markStoryTriggerSeenForCurrentStage("boss_before");
         removeCapturedBossForCurrentStage();
         if (buildDebugDungeonWithAllWarps(false, true)) {
-            const Vec2 defeatPosition = hasBossSpawnPoint_ ? bossSpawnPoint_ : player_.position;
-            player_.position = defeatPosition;
-            camera_.follow(player_.position, 1.0f);
-            beginBossDefeatSequence(defeatPosition);
-            logInfo("Debug: boss flow set to defeated presentation for " + currentStageId_ + ".");
+            if (currentStageId_ == DebugFinalStoryStageId) {
+                if (warpPlayerToFinalBossGuardianForDebug()) {
+                    logInfo("Debug: boss flow warped to final boss guardian for " + currentStageId_ + ".");
+                }
+            } else {
+                const Vec2 defeatPosition = hasBossSpawnPoint_ ? bossSpawnPoint_ : player_.position;
+                player_.position = defeatPosition;
+                camera_.follow(player_.position, 1.0f);
+                beginBossDefeatSequence(defeatPosition);
+                logInfo("Debug: boss flow set to defeated presentation for " + currentStageId_ + ".");
+            }
         }
         return true;
     }

@@ -285,6 +285,8 @@ void loadStoryEventFile(
             event.dialogue.id = event.id;
         } else if (command == "title") {
             event.title = rest;
+        } else if (command == "presentation") {
+            event.presentation = rest;
         } else if (command == "trigger") {
             event.trigger = rest;
         } else if (command == "once") {
@@ -342,7 +344,8 @@ void loadStoryEventFile(
             command.rfind("base_", 0) == 0 ||
             command.rfind("dungeon_", 0) == 0 ||
             command == "story_shake" ||
-            command == "story_phone") {
+            command == "story_phone" ||
+            command == "story_jingle") {
             appendCommandToEvent(event, command, rest);
         } else {
             warnings.push_back(

@@ -32,8 +32,11 @@ constexpr int StorySmallMoleSpriteColumns = 2;
 constexpr int StorySmallMoleSpriteRows = 4;
 constexpr float StorySmallMoleFrameSeconds = 0.12f;
 constexpr std::string_view StoryCrabDishSpritePath = "assets/enemies/story_crab_dish.png";
-constexpr Vec2 StoryCrabDishDrawSize{58.0f, 38.0f};
+constexpr Vec2 StoryCrabDishDrawSize{76.0f, 50.0f};
 constexpr float StoryBossExplodeEscapeWarmupSeconds = 0.48f;
+constexpr float StoryBossExplodeEscapePostExplosionHoldSeconds = 60.0f / 60.0f;
+constexpr float StoryBossExplodeEscapeFadeInSeconds = 80.0f / 60.0f;
+constexpr float StoryBossExplodeEscapePostFadeHoldSeconds = 20.0f / 60.0f;
 
 float easeOutCubic(float t)
 {
@@ -7544,7 +7547,8 @@ bool drawStoryBossEnemyImage(
 
 void Game::appendDungeonStoryPresentationRenderEntries(
     std::vector<DepthRenderEntry>& entries,
-    Renderer& renderer) const
+    Renderer& renderer,
+    float totalSeconds) const
 {
     if (!dungeonStoryPresentation_.started ||
         dungeonStoryPresentation_.kind == DungeonStoryPresentationKind::None) {
@@ -7554,7 +7558,18 @@ void Game::appendDungeonStoryPresentationRenderEntries(
     const DungeonStoryPresentationState state = dungeonStoryPresentation_;
     entries.push_back(DepthRenderEntry{
         state.position.y,
-        [this, state, &renderer]() {
+        [this, state, &renderer, totalSeconds]() {
+            if (state.kind == DungeonStoryPresentationKind::BossAfterIdle) {
+                drawStoryBossEnemyImage(
+                    renderer,
+                    enemyCatalog_,
+                    state.bossEnemyId,
+                    state.position,
+                    totalSeconds,
+                    1.0f);
+                return;
+            }
+
             if (state.kind == DungeonStoryPresentationKind::BossAfterDefeat) {
                 const ImageHandle handle = renderer.acquireImage(StoryBossSpritePath, TextureFilter::Nearest);
                 Vec2 imageSize{};
@@ -7626,6 +7641,7 @@ void Game::appendDungeonStoryPresentationRenderEntries(
                     frameWidth,
                     frameHeight,
                 };
+                const Vec2 drawSize{frameWidth, frameHeight};
                 renderer.drawActorShadow(
                     state.position + Vec2{0.0f, 8.0f},
                     42.0f,
@@ -7633,7 +7649,7 @@ void Game::appendDungeonStoryPresentationRenderEntries(
                     {0, 0, 0, alphaByte(64.0f * fade)});
                 ImageDrawOptions options;
                 options.tint = {255, 255, 255, alphaByte(255.0f * fade)};
-                renderer.drawImageRegion(handle, source, state.position + Vec2{0.0f, -14.0f}, {64.0f, 42.0f}, options);
+                renderer.drawImageRegion(handle, source, state.position + Vec2{0.0f, -14.0f}, drawSize, options);
                 return;
             }
 
@@ -7663,9 +7679,21 @@ void Game::appendDungeonStoryPresentationRenderEntries(
 
                 const ImageHandle handle = renderer.acquireImage(StoryCrabDishSpritePath, TextureFilter::Nearest);
                 Vec2 imageSize{};
-                const float escapeSeconds = std::max(0.001f, state.durationSeconds - StoryBossExplodeEscapeWarmupSeconds);
-                const float escapeT = clamp((state.elapsedSeconds - StoryBossExplodeEscapeWarmupSeconds) / escapeSeconds, 0.0f, 1.0f);
-                const float fadeIn = smoothStep01(escapeT / 0.16f);
+                const float dishAppearStart =
+                    StoryBossExplodeEscapeWarmupSeconds +
+                    StoryBossExplodeEscapePostExplosionHoldSeconds;
+                if (state.elapsedSeconds < dishAppearStart) {
+                    return;
+                }
+
+                const float escapeStart =
+                    dishAppearStart +
+                    StoryBossExplodeEscapeFadeInSeconds +
+                    StoryBossExplodeEscapePostFadeHoldSeconds;
+                const float fadeIn = smoothStep01(
+                    (state.elapsedSeconds - dishAppearStart) / StoryBossExplodeEscapeFadeInSeconds);
+                const float escapeSeconds = std::max(0.001f, state.durationSeconds - escapeStart);
+                const float escapeT = clamp((state.elapsedSeconds - escapeStart) / escapeSeconds, 0.0f, 1.0f);
                 const float fadeOut = escapeT > 0.82f ? 1.0f - smoothStep01((escapeT - 0.82f) / 0.18f) : 1.0f;
                 const float alpha = fadeIn * fadeOut;
                 if (!handle.valid() || !renderer.getImageSize(handle, imageSize) || imageSize.x <= 0.0f || imageSize.y <= 0.0f) {
@@ -7796,8 +7824,12 @@ constexpr int DungeonLightPriorityWarp = 38;
 constexpr int DungeonLightPriorityEvent = 40;
 constexpr int DungeonLightPriorityTutorial = 42;
 constexpr int DungeonLightPriorityBoss = 44;
-constexpr float StardustMoleBossArenaLightRadius =
+constexpr std::string_view StardustMoleBossEnemyId = "stardust_mole";
+constexpr std::string_view JunkCrabBossEnemyId = "junk_crab";
+constexpr std::string_view AstragnaBossEnemyId = "astragna";
+constexpr float PersistentBossArenaLightRadius =
     (static_cast<float>(BossArenaRadiusXTiles) + 0.75f) * static_cast<float>(balance::TileSize);
+constexpr float AstragnaBossArenaLightRadius = (15.0f + 0.75f) * static_cast<float>(balance::TileSize);
 
 struct DungeonLightCandidate {
     LightSource light;
@@ -7859,6 +7891,21 @@ std::vector<LightSource> finalizeDungeonLightSources(
         lights.push_back(candidate.light);
     }
     return lights;
+}
+
+bool bossUsesPersistentArenaLight(std::string_view bossEnemyId)
+{
+    return bossEnemyId == StardustMoleBossEnemyId ||
+        bossEnemyId == JunkCrabBossEnemyId ||
+        bossEnemyId == AstragnaBossEnemyId;
+}
+
+float persistentBossArenaLightRadius(std::string_view bossEnemyId)
+{
+    if (bossEnemyId == AstragnaBossEnemyId) {
+        return AstragnaBossArenaLightRadius;
+    }
+    return PersistentBossArenaLightRadius;
 }
 
 } // namespace
@@ -7971,18 +8018,24 @@ std::vector<LightSource> Game::collectDungeonLightSources(double totalSeconds) c
                 flickeredLightRadius(radiusPx, static_cast<float>(totalSeconds), phase),
             }, DungeonLightPriorityWarp);
         }
-        if (hasBossSpawnPoint_ &&
-            currentStageDefinition_.bossEnemyId == "stardust_mole" &&
-            !hasCapturedBossForCurrentStage()) {
+        const bool bossLightAvailable = hasBossSpawnPoint_ && !hasCapturedBossForCurrentStage();
+        if (bossLightAvailable && bossUsesPersistentArenaLight(currentStageDefinition_.bossEnemyId)) {
             addLight({
                 bossSpawnPoint_,
-                StardustMoleBossArenaLightRadius,
+                persistentBossArenaLightRadius(currentStageDefinition_.bossEnemyId),
             }, DungeonLightPriorityBoss, true);
-        } else if (hasBossSpawnPoint_ && !bossSpawned_ && !hasCapturedBossForCurrentStage()) {
+        } else if (bossLightAvailable && !bossSpawned_) {
             addLight({
                 flickeredLightPosition(bossSpawnPoint_, static_cast<float>(totalSeconds), 4.8f),
                 flickeredLightRadius(120.0f, static_cast<float>(totalSeconds), 4.8f),
             }, DungeonLightPriorityBoss);
+        }
+        if (dungeonStoryPresentation_.started &&
+            dungeonStoryPresentation_.kind != DungeonStoryPresentationKind::None) {
+            addLight({
+                flickeredLightPosition(dungeonStoryPresentation_.position, static_cast<float>(totalSeconds), 5.6f),
+                flickeredLightRadius(168.0f, static_cast<float>(totalSeconds), 5.6f),
+            }, DungeonLightPriorityBoss, true);
         }
     }
     if (mode_ == ScreenMode::Playing && !enemyTestActive_) {
@@ -8393,7 +8446,7 @@ void Game::render(Renderer& renderer, const Time& time)
         enemies_.appendRenderEntries(worldDepthEntries, renderer, tileMap_, playerLightCenter, itemLights, 0, &encyclopedia_);
         tagDepthRenderEntries(worldDepthEntries, firstEntry, "WorldDepth.draw.enemy");
         firstEntry = worldDepthEntries.size();
-        appendDungeonStoryPresentationRenderEntries(worldDepthEntries, renderer);
+        appendDungeonStoryPresentationRenderEntries(worldDepthEntries, renderer, totalSeconds);
         tagDepthRenderEntries(worldDepthEntries, firstEntry, "WorldDepth.draw.story");
         firstEntry = worldDepthEntries.size();
         appendCaptureAbsorbRenderEntries(worldDepthEntries, renderer, time.totalSeconds());

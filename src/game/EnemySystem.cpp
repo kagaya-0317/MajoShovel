@@ -5312,15 +5312,20 @@ bool updateAstragnaBossActionSequence(
 
     initializeAstragnaBoss(enemy);
     AstragnaBossRuntime& astragna = enemy.bossAction.astragna;
-    if (astragna.phase == AstragnaPhase::None) {
-        enterAstragnaPhase(enemy, AstragnaPhase::Sealed, events);
-        return true;
-    }
-
     const float safeDt = std::max(0.0f, dt);
     astragna.timer += safeDt;
     astragna.rotationAngle += safeDt * std::max(0.0f, astragnaParamFloat(enemy, "rotationSpeed", AstragnaRotationSpeed));
     enemy.velocity = {};
+
+    if (enemy.bossAction.previewOnly) {
+        enemy.bossAction.invulnerable = true;
+        return true;
+    }
+
+    if (astragna.phase == AstragnaPhase::None) {
+        enterAstragnaPhase(enemy, AstragnaPhase::Sealed, events);
+        return true;
+    }
 
     resolveAstragnaShellCollision(enemy, player, map);
     updateAstragnaEmitters(enemy, player, projectiles, safeDt, events);
@@ -5534,7 +5539,9 @@ bool tryHitAstragnaBossComponent(
     std::vector<EnemyEvent>& events,
     std::vector<RingImpactSoundEvent>& impactSoundEvents)
 {
-    if (!isAstragnaBossAction(enemy) || enemy.bossAction.astragna.phase == AstragnaPhase::Rescued) {
+    if (!isAstragnaBossAction(enemy) ||
+        enemy.bossAction.previewOnly ||
+        enemy.bossAction.astragna.phase == AstragnaPhase::Rescued) {
         return false;
     }
 
@@ -5641,7 +5648,9 @@ bool tryHitAstragnaWithProjectile(
     int damage,
     std::vector<EnemyEvent>& events)
 {
-    if (!isAstragnaBossAction(enemy) || enemy.bossAction.astragna.phase == AstragnaPhase::Rescued) {
+    if (!isAstragnaBossAction(enemy) ||
+        enemy.bossAction.previewOnly ||
+        enemy.bossAction.astragna.phase == AstragnaPhase::Rescued) {
         return false;
     }
 
@@ -7768,6 +7777,69 @@ bool EnemySystem::spawnBossNear(
     return spawnBossAt(spawnPosition, balance, enemyCatalog, bossEnemyId, false, playerPosition, variantTier, effectiveBaseLevel, spawnVisualKind);
 }
 
+bool EnemySystem::spawnBossPreviewAt(
+    Vec2 position,
+    Vec2 playerPosition,
+    const RuntimeBalance& balance,
+    const EnemyCatalog& enemyCatalog,
+    std::string_view bossEnemyId)
+{
+    if (bossActive()) {
+        return false;
+    }
+
+    if (!spawnBossAt(
+            position,
+            balance,
+            enemyCatalog,
+            bossEnemyId,
+            false,
+            playerPosition,
+            EnemyVariantTier::Normal,
+            0,
+            EnemySpawnVisualKind::Default)) {
+        return false;
+    }
+
+    for (Enemy& enemy : enemies_.items()) {
+        if (!enemy.active || !enemy.isBoss) {
+            continue;
+        }
+        if (!bossEnemyId.empty() && enemy.enemyId != bossEnemyId) {
+            continue;
+        }
+        enemy.bossAction.previewOnly = true;
+        enemy.bossAction.invulnerable = true;
+        enemy.spawnTimer = 0.0f;
+        enemy.spawnDuration = 0.0f;
+        enemy.velocity = {};
+        if (isAstragnaBossAction(enemy)) {
+            initializeAstragnaBoss(enemy);
+        }
+        return true;
+    }
+    return false;
+}
+
+bool EnemySystem::activateBossPreview(std::string_view bossEnemyId)
+{
+    for (Enemy& enemy : enemies_.items()) {
+        if (!enemy.active || !enemy.isBoss || !enemy.bossAction.previewOnly) {
+            continue;
+        }
+        if (!bossEnemyId.empty() && enemy.enemyId != bossEnemyId) {
+            continue;
+        }
+        enemy.bossAction.previewOnly = false;
+        enemy.bossAction.invulnerable = false;
+        enemy.spawnTimer = 0.0f;
+        enemy.spawnDuration = 0.0f;
+        enemy.velocity = {};
+        return true;
+    }
+    return false;
+}
+
 bool EnemySystem::advanceBossSpawnPresentation(float dt)
 {
     const float safeDt = std::max(0.0f, dt);
@@ -7778,6 +7850,7 @@ bool EnemySystem::advanceBossSpawnPresentation(float dt)
         }
         enemy.action = {};
         enemy.spawnTimer = std::max(0.0f, enemy.spawnTimer - safeDt);
+        enemy.behaviorTimer += safeDt;
         if (enemy.spawnVisualKind == EnemySpawnVisualKind::WalkIn) {
             const float duration = std::max(0.001f, enemy.spawnDuration);
             const float progress = 1.0f - clamp(enemy.spawnTimer / duration, 0.0f, 1.0f);
@@ -7794,7 +7867,6 @@ bool EnemySystem::advanceBossSpawnPresentation(float dt)
                 : Vec2{};
             enemy.aiMoveDirection = direction;
             enemy.facingAngle = std::atan2(direction.y, direction.x);
-            enemy.behaviorTimer += safeDt;
         }
         activeAfterAdvance = activeAfterAdvance || enemy.spawnTimer > 0.0f;
     }
@@ -7823,6 +7895,21 @@ bool EnemySystem::configureActiveBossWalkInPresentation(Vec2 startPosition, floa
         return true;
     }
     return false;
+}
+
+void EnemySystem::updateBossStoryVisuals(float dt)
+{
+    const float safeDt = std::max(0.0f, dt);
+    if (safeDt <= 0.0f) {
+        return;
+    }
+
+    for (Enemy& enemy : enemies_.items()) {
+        if (!enemy.active || !enemy.isBoss || enemy.death.active || enemy.spawnTimer > 0.0f) {
+            continue;
+        }
+        enemy.behaviorTimer += safeDt;
+    }
 }
 
 bool EnemySystem::bossActive() const

@@ -7,14 +7,20 @@
 # ※地面から巨大なボスが登場
 @dungeon_boss_spawn emerge
 
+@wait small
+
 @say player ルネ
 う、うわ～～～！
+
+@wait small
 
 @say stardust_mole 星くずモグラ
 なんだテメェらは？
 
 @say stardust_mole 星くずモグラ
 ここが誰のシマかわかってんだろうな？
+
+@wait small
 
 @say chicory チコリ
 ちこり！（知らねぇなあ。テメェみたいな小物のシマなんざよ）
@@ -37,6 +43,8 @@
 @say player ルネ
 チコリ？
 
+@wait small
+
 @say stardust_mole 星くずモグラ
 おい、毛玉……誰に向かって口きいてんのかわかってんのか？
 
@@ -51,6 +59,8 @@
 
 @say chicory チコリ
 ちかちか！（違うな。強ぇかどうかってのは、食ったモンじゃなく、背負ったモンで決まんだよ）
+
+@wait small
 
 @say stardust_mole 星くずモグラ
 フン…面白ぇじゃねぇか

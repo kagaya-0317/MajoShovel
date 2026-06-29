@@ -232,8 +232,16 @@ public:
         EnemyVariantTier variantTier = EnemyVariantTier::Normal,
         int effectiveBaseLevel = 0,
         EnemySpawnVisualKind spawnVisualKind = EnemySpawnVisualKind::Default);
+    bool spawnBossPreviewAt(
+        Vec2 position,
+        Vec2 playerPosition,
+        const RuntimeBalance& balance,
+        const EnemyCatalog& enemyCatalog,
+        std::string_view bossEnemyId = {});
+    bool activateBossPreview(std::string_view bossEnemyId = {});
     bool advanceBossSpawnPresentation(float dt);
     bool configureActiveBossWalkInPresentation(Vec2 startPosition, float durationSeconds);
+    void updateBossStoryVisuals(float dt);
     void update(
         Player& player,
         SpellRingSystem& spellRing,

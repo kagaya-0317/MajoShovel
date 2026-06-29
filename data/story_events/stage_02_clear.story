@@ -3,6 +3,8 @@
 @trigger stage_clear:stage_02_junk_magic
 @once story_stage_02_clear
 
+@base_return_scene begin
+
 @say monica モニカ
 おかえりなさい、ルネ！
 
@@ -146,6 +148,7 @@
 
 # ※ルネがスペルリングを広げる。リング1・2に加え、リング3も生成される
 @base_ring_demo open 3 item_apple item_ring=3 1.15
+@wait 2
 
 @say monica モニカ
 ルネ！？
@@ -170,9 +173,13 @@
 @say player ルネ
 まかせてよ！ふんすか
 
-@portrait_hide player
+@portraits_hide 0.35
 
 @wait small
+
+@base_return_scene end
+
+@story_jingle ring_unlock
 
 @narration
 スペルリングの3つ目が解禁された！

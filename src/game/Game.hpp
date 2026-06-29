@@ -785,6 +785,7 @@ private:
         Vec2 bossSpawnPoint{};
         bool hasBossSpawnPoint = false;
         bool bossSpawned = false;
+        bool bossPreviewSpawned = false;
         bool valid = false;
     };
 
@@ -833,6 +834,7 @@ private:
         Vec2 bossSpawnPoint{};
         bool hasBossSpawnPoint = false;
         bool bossSpawned = false;
+        bool bossPreviewSpawned = false;
     };
 
     enum class StorageEntryKind {
@@ -953,6 +955,7 @@ private:
         MiningStart,
         ReturnToBase,
         IntroTutorialToBase,
+        FinalBossEndingKamishibai,
         BaseArea,
         BossEncounterIntro,
         BossEncounterAfterDialogue,
@@ -1078,9 +1081,11 @@ private:
     };
     enum class DungeonStoryPresentationKind {
         None,
+        BossAfterIdle,
         BossAfterDefeat,
         SmallMoleEscape,
         BossExplodeEscape,
+        CameraFocus,
     };
     struct DungeonStoryPresentationState {
         DungeonStoryPresentationKind kind = DungeonStoryPresentationKind::None;
@@ -1153,6 +1158,7 @@ private:
     void startEndingKamishibai(EndingKind kind = EndingKind::Main);
     void startEndingReplayKamishibai(EndingKind kind);
     void startEndingKamishibaiPlayback(EndingKind kind, bool replay);
+    void startFinalBossEndingKamishibaiAfterTransition();
     void finishEndingKamishibai(bool completedPlayback);
     void updateEndingKamishibai(const Input& input, float dt);
     void updateTitleScreen(const Input& input, UiContext& ui);
@@ -1455,6 +1461,8 @@ private:
     bool storyShakeCommandActive() const;
     void updateBaseStoryPresentationCommand(float dt);
     void clearBaseStoryPresentation();
+    void applyBaseReturnSceneBeginPlacement();
+    bool applyBaseReturnSceneBeginPlacementForTrigger(std::string_view trigger);
     void renderBaseStoryFacilityMarkers(Renderer& renderer) const;
     void renderBaseStoryChicoryFlight(Renderer& renderer) const;
     void renderBaseStoryRingDemo(Renderer& renderer) const;
@@ -1462,6 +1470,7 @@ private:
     void openBaseDiary();
     void closeBaseDiary();
     void updateBaseDiaryScreen(const Input& input, UiContext& ui);
+    void updateBaseStorySpeakerFacing();
     void updateBasePlayerSpriteAnimation(float dt, bool walking);
     void updateBaseActorIdleAnimation(float dt);
     void updateBasePlayerSpriteFlipFromFacing();
@@ -1743,21 +1752,33 @@ private:
     void configureBossSpawnPointFromWarp(Vec2 warpPosition);
     void carveBossArenaAroundSpawnPoint();
     void prepareBossEncounterAreaFromWarp(Vec2 warpPosition);
+    bool currentBossUsesDungeonPreview() const;
+    void ensureBossPreviewSpawned();
     Vec2 bossApproachPosition() const;
     bool bossArenaContains(Vec2 position) const;
+    bool usesNormalBossStoryPlayerPosition() const;
     Vec2 bossIntroPlayerPosition() const;
+    Vec2 normalBossStoryPlayerPosition() const;
+    Vec2 bossStoryPlayerPosition() const;
     void requestBossEncounterIntro(BossEncounterPurpose purpose);
-    void applyBossEncounterIntroPlacement();
+    void applyBossStoryPlayerPlacement();
     void finishBossEncounterIntroTransition();
     bool startBossBeforeStoryPresentation(std::string_view id, bool debugReplay, std::function<void()> onComplete);
     bool shouldPlayBossAfterStoryEvent() const;
     void requestBossEncounterAfterDialogueTransition();
     void finishBossEncounterAfterDialogueTransition();
+    Vec2 bossAfterStoryPresentationPosition() const;
+    std::string bossAfterStoryBossEnemyId() const;
+    void beginBossAfterStoryPresentation();
+    bool startBossAfterStoryPresentation(std::string_view id, bool debugReplay, std::function<void()> onComplete);
+    bool isFinalBossFirstClearEncounter(BossEncounterPurpose purpose) const;
+    bool startFinalBossAfterStoryInPlace();
     void updateBossSpawn();
     void resetBossEncounter();
     bool spawnBossForCurrentEncounter(EnemySpawnVisualKind spawnVisualKind);
     bool beginBossFightForCurrentEncounter();
     void updateDungeonStoryCommand(const DialogueCommand& command, float dt);
+    void updateDungeonCameraFocusStoryCommand(const DialogueCommand& command, float dt);
     void updateDungeonBossSpawnStoryCommand(const DialogueCommand& command, float dt);
     void updateDungeonBossAfterDefeatStoryCommand(const DialogueCommand& command, float dt);
     void updateDungeonSmallMoleEscapeStoryCommand(const DialogueCommand& command, float dt);
@@ -1785,7 +1806,8 @@ private:
         const std::vector<LightSource>& extraLights) const;
     void appendDungeonStoryPresentationRenderEntries(
         std::vector<DepthRenderEntry>& entries,
-        Renderer& renderer) const;
+        Renderer& renderer,
+        float totalSeconds) const;
     void renderPendingBuriedEnemySpawnWarnings(Renderer& renderer) const;
     void renderRewardNodes(Renderer& renderer, const std::vector<LightSource>& extraLights) const;
     int unlockedRingCount() const;
@@ -2592,6 +2614,7 @@ private:
     int gameOverSelection_ = 0;
     std::string gameOverStatus_;
     bool bossSpawned_ = false;
+    bool bossPreviewSpawned_ = false;
     BossEncounterState bossEncounter_{};
     DungeonStoryPresentationState dungeonStoryPresentation_{};
     int stageClearSelection_ = 0;

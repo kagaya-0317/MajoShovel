@@ -34,10 +34,22 @@ constexpr float BookshelfMenuChoiceGap = 16.0f;
 constexpr float BookshelfEndingCommandMinWidth = 240.0f;
 constexpr float BaseStoryLookaroundSeconds = 0.9f;
 constexpr float BaseStoryMinWalkSeconds = 0.18f;
+constexpr float BaseReturnSceneWaitSeconds = 1.0f;
+constexpr float BaseReturnSceneFirstWalkTilesX = 2.0f;
+constexpr float BaseReturnSceneFirstWalkTilesY = -1.0f;
+constexpr float BaseReturnSceneFirstWalkSeconds = 1.43f;
+constexpr float BaseReturnSceneSecondWalkTilesX = 0.0f;
+constexpr float BaseReturnSceneSecondWalkTilesY = -0.5f;
+constexpr float BaseReturnSceneSecondWalkSeconds = 0.32f;
+constexpr float BaseReturnSceneElderOffsetTilesX = 4.0f;
+constexpr float BaseReturnSceneElderOffsetTilesY = 1.0f;
+constexpr float BaseReturnSceneMonicaOffsetTilesX = -2.0f;
+constexpr float BaseReturnSceneMonicaOffsetTilesY = 2.0f;
 constexpr float BaseStoryChicoryFlightSeconds = 2.2f;
 constexpr float BaseStoryRingDemoOpenSeconds = 1.15f;
 constexpr float BaseStoryRingDemoCloseSeconds = 0.55f;
 constexpr std::string_view BaseStoryRingDemoDefaultItemObjectId = "item_apple";
+constexpr std::string_view AudioSeRingAppear = "se.ring.appear";
 constexpr float BaseFacilityMarkerBobSpeed = 5.2f;
 constexpr float BaseFacilityMarkerBobPixels = 4.0f;
 constexpr float BaseFacilityMarkerMinTipY = 76.0f;
@@ -64,6 +76,7 @@ bool isBasePresentationCommand(std::string_view name)
         name == "base_player_place" ||
         name == "base_player_walk" ||
         name == "base_player_lookaround" ||
+        name == "base_return_scene" ||
         name == "base_chicory_figure8" ||
         name == "base_ring_demo" ||
         name == "base_facility_marker";
@@ -120,6 +133,33 @@ Vec2 storyTileOffset(float tileX, float tileY)
 {
     const float tileSize = static_cast<float>(balance::TileSize);
     return {tileX * tileSize, tileY * tileSize};
+}
+
+std::string_view baseReturnSceneMode(const DialogueCommand& command)
+{
+    return command.args.empty() ? std::string_view("begin") : std::string_view(command.args[0]);
+}
+
+bool baseReturnSceneModeIsBegin(std::string_view mode)
+{
+    return mode == "begin" || mode == "start";
+}
+
+bool baseReturnSceneModeIsEnd(std::string_view mode)
+{
+    return mode == "end" || mode == "finish";
+}
+
+bool baseStorySpeakerTurnsPlayer(std::string_view speakerId)
+{
+    return speakerId == "monica" || speakerId == "elder";
+}
+
+bool isBaseReturnSceneBeginStep(const DialogueStep& step)
+{
+    return step.kind == DialogueStepKind::Command &&
+        step.command.name == "base_return_scene" &&
+        baseReturnSceneModeIsBegin(baseReturnSceneMode(step.command));
 }
 
 void applyBaseStoryFacilityOffsets(
@@ -6880,6 +6920,36 @@ void Game::clearBaseStoryPresentation()
     updateBasePlayerSpriteFlipFromFacing();
 }
 
+void Game::applyBaseReturnSceneBeginPlacement()
+{
+    placeBasePlayerAtMineExitReturnPoint();
+    baseStoryFacilityOffsets_["elder"] = storyTileOffset(
+        BaseReturnSceneElderOffsetTilesX,
+        BaseReturnSceneElderOffsetTilesY);
+    baseStoryFacilityOffsets_["monica"] = storyTileOffset(
+        BaseReturnSceneMonicaOffsetTilesX,
+        BaseReturnSceneMonicaOffsetTilesY);
+    basePlayerSpriteWalking_ = false;
+    updateBasePlayerSpriteFlipFromFacing();
+}
+
+bool Game::applyBaseReturnSceneBeginPlacementForTrigger(std::string_view trigger)
+{
+    if (!basePresentationActive()) {
+        return false;
+    }
+
+    const StoryEvent* event = findStoryEventForTrigger(trigger);
+    if (event == nullptr ||
+        event->dialogue.steps.empty() ||
+        !isBaseReturnSceneBeginStep(event->dialogue.steps.front())) {
+        return false;
+    }
+
+    applyBaseReturnSceneBeginPlacement();
+    return true;
+}
+
 void Game::renderBaseStoryFadeOverlay(Renderer& renderer) const
 {
     if (baseStoryFadeAlpha_ <= 0.0f) {
@@ -6938,7 +7008,7 @@ void Game::renderBaseStoryChicoryFlight(Renderer& renderer) const
 
     renderer.setScreenSpace();
     const Vec2 playerFoot = playerSpriteFootAnchor(basePlayerPosition_);
-    const float theta = progress * Pi * 4.0f;
+    const float theta = progress * Pi * 2.4f;
     const Vec2 figureEight{
         std::sin(theta) * 58.0f,
         std::sin(theta * 2.0f) * 24.0f,
@@ -6991,7 +7061,18 @@ void Game::renderBaseStoryRingDemo(Renderer& renderer) const
             if (shape != shapePass) {
                 continue;
             }
-            std::vector<Vec2> orbitPath = spellRing_.pathSamplePointsForRing(ringIndex, center, radiusScale, balance_, 176);
+            RingOrbitContext context = spellRing_.makeOrbitContextForRing(ringIndex, 0, 1, radiusScale, balance_);
+            const float demoBaseAngle = normalizeAngle(
+                spellRing_.ringBaseAngleForIndex(ringIndex) +
+                spellRing_.ringAngularSpeedForIndex(ringIndex, balance_) * baseActorIdleAnimationTime_);
+            if (shape == RingShape::FigureEight) {
+                context.shapeRotation = normalizeAngle(
+                    spellRing_.shapeRotationForRing(ringIndex) +
+                    std::max(0.0f, context.tuning.figure8ShapeRotationSpeed) * baseActorIdleAnimationTime_);
+            } else if (shape == RingShape::Comet) {
+                context.shapeRotation = demoBaseAngle;
+            }
+            std::vector<Vec2> orbitPath = getRingPathSamplePoints(center, context, 176);
             drawMagicOrbitPath(
                 renderer,
                 orbitPath,
@@ -7009,51 +7090,133 @@ void Game::renderBaseStoryRingDemo(Renderer& renderer) const
         }
     }
 
+    struct DemoRingItem {
+        SpellRingItem item;
+        int ringItemCount = 1;
+    };
+
+    const auto preparedDemoRingItem = [&](SpellRingItem item, int ringIndex, int itemIndex, int itemCount) {
+        item.ringIndex = std::clamp(ringIndex, 0, SpellRingCount - 1);
+        const RingOrbitContext context = spellRing_.makeOrbitContextForRing(
+            item.ringIndex,
+            itemIndex,
+            std::max(1, itemCount),
+            radiusScale,
+            balance_);
+        RingOrbitContext demoContext = context;
+        const RingShape shape = demoContext.shape;
+        const float demoBaseAngle = normalizeAngle(
+            spellRing_.ringBaseAngleForIndex(item.ringIndex) +
+            spellRing_.ringAngularSpeedForIndex(item.ringIndex, balance_) * baseActorIdleAnimationTime_);
+        float shapeRotationSpeed = 0.0f;
+        if (shape == RingShape::FigureEight) {
+            shapeRotationSpeed = std::max(0.0f, demoContext.tuning.figure8ShapeRotationSpeed);
+            demoContext.shapeRotation = normalizeAngle(
+                spellRing_.shapeRotationForRing(item.ringIndex) +
+                shapeRotationSpeed * baseActorIdleAnimationTime_);
+        } else if (shape == RingShape::Comet) {
+            shapeRotationSpeed = spellRing_.ringAngularSpeedForIndex(item.ringIndex, balance_);
+            demoContext.shapeRotation = demoBaseAngle;
+        }
+        const float orbitParam = shape == RingShape::Comet
+            ? normalizeLocalParam(shape, item.localAngle, demoContext.tuning)
+            : normalizeAngle(demoBaseAngle + item.localAngle);
+        const float localAngularSpeed = shape == RingShape::Comet
+            ? 0.0f
+            : spellRing_.ringAngularSpeedForIndex(item.ringIndex, balance_);
+        const Vec2 localPosition = getRingItemLocalPosition(orbitParam, demoContext);
+        item.worldPosition = getRingItemWorldPosition(center, orbitParam, demoContext);
+        item.orbitOutward = ringItemOutwardDirection(item, localPosition);
+        item.orbitTangent = getRingItemVelocity(orbitParam, localAngularSpeed, shapeRotationSpeed, {}, demoContext);
+        if (lengthSquared(item.orbitTangent) > 0.0001f) {
+            item.orbitTangent = normalize(item.orbitTangent);
+        } else {
+            item.orbitTangent = {-item.orbitOutward.y, item.orbitOutward.x};
+        }
+        if (lengthSquared(item.orbitTangent) <= 0.0001f) {
+            item.orbitTangent = {1.0f, 0.0f};
+        }
+        item.worldVelocity = item.orbitTangent;
+        return item;
+    };
+
+    std::vector<DemoRingItem> demoItems;
+    if (visibleRingCount >= 1) {
+        const auto& equippedRingItems = spellRing_.itemsForRing(0);
+        const int equippedItemCount = static_cast<int>(equippedRingItems.size());
+        demoItems.reserve(equippedRingItems.size() + 1);
+        for (int index = 0; index < equippedItemCount; ++index) {
+            demoItems.push_back({
+                preparedDemoRingItem(equippedRingItems[static_cast<std::size_t>(index)], 0, index, equippedItemCount),
+                equippedItemCount,
+            });
+        }
+    }
+
     const int itemRingIndex = std::clamp(baseStoryRingDemo_.itemRingIndex, 0, SpellRingCount - 1);
-    if (visibleRingCount <= itemRingIndex || baseStoryRingDemo_.itemObjectId.empty()) {
-        return;
+    if (visibleRingCount > itemRingIndex && !baseStoryRingDemo_.itemObjectId.empty()) {
+        if (objectCatalog_.registry.findById(baseStoryRingDemo_.itemObjectId) != nullptr) {
+            SpellRingItem item = makeObjectRingItem(baseStoryRingDemo_.itemObjectId);
+            const RingShape itemRingShape = spellRing_.ringShapeForIndex(itemRingIndex);
+            item.localAngle = itemRingShape == RingShape::Comet
+                ? normalizeLocalParam(itemRingShape, Pi, makeRingOrbitTuning(balance_))
+                : normalizeAngle(baseActorIdleAnimationTime_ * 1.35f);
+            demoItems.push_back({
+                preparedDemoRingItem(item, itemRingIndex, 0, 1),
+                1,
+            });
+        }
     }
 
-    const ItemData* object = objectCatalog_.registry.findById(baseStoryRingDemo_.itemObjectId);
-    if (object == nullptr) {
-        return;
-    }
+    std::stable_sort(
+        demoItems.begin(),
+        demoItems.end(),
+        [](const DemoRingItem& left, const DemoRingItem& right) {
+            return left.item.worldPosition.y < right.item.worldPosition.y;
+        });
 
-    SpellRingItem item = makeObjectRingItem(baseStoryRingDemo_.itemObjectId);
-    item.ringIndex = itemRingIndex;
-    item.localAngle = normalizeAngle(baseActorIdleAnimationTime_ * 1.35f);
-    RingOrbitContext context = spellRing_.makeOrbitContextForRing(itemRingIndex, 0, 1, radiusScale, balance_);
-    item.worldPosition = getRingItemWorldPosition(center, item.localAngle, context);
-    Vec2 outward = item.worldPosition - center;
-    if (lengthSquared(outward) > 0.0001f) {
-        outward = normalize(outward);
-    } else {
-        outward = {0.0f, -1.0f};
-    }
-    Vec2 forward{-outward.y, outward.x};
-    if (lengthSquared(forward) <= 0.0001f) {
-        forward = {1.0f, 0.0f};
-    }
+    for (const DemoRingItem& demoItem : demoItems) {
+        const SpellRingItem& item = demoItem.item;
+        const float itemScale = spellRing_.ringShapeForIndex(item.ringIndex) == RingShape::Comet
+            ? std::clamp(1.0f - std::max(0, demoItem.ringItemCount - 10) * 0.014f, 0.76f, 1.0f)
+            : 1.0f;
+        const Vec2 drawPosition = ringItemDrawPosition(item, baseActorIdleAnimationTime_);
+        renderer.drawActorShadow(
+            item.worldPosition + Vec2{0.0f, 18.0f},
+            ringItemShadowVisualSize(item, baseActorIdleAnimationTime_) * itemScale * radiusScale,
+            {0, 0, 0, alphaByte(68.0f * alpha)});
 
-    renderer.drawActorShadow(
-        item.worldPosition + Vec2{0.0f, 18.0f},
-        30.0f * radiusScale,
-        {0, 0, 0, alphaByte(68.0f * alpha)});
-    ObjectImageDrawOptions options;
-    options.tint = withAlpha({255, 255, 255, 255}, 255.0f * alpha);
-    options.outlineColor.a = alphaByte(210.0f * alpha);
-    options.outlineEnabled = true;
-    options.outlinePx = 1;
-    drawRingItemObjectImage(
-        renderer,
-        item,
-        object,
-        item.worldPosition,
-        {42.0f, 42.0f},
-        outward,
-        forward,
-        baseActorIdleAnimationTime_,
-        options);
+        ObjectImageDrawOptions options;
+        options.tint = withAlpha({255, 255, 255, 255}, 255.0f * alpha);
+        options.outlineColor.a = alphaByte(210.0f * alpha);
+        options.outlineEnabled = true;
+        options.outlinePx = 1;
+        const bool drewImage = drawRingItemObjectImage(
+            renderer,
+            item,
+            objectForRingItem(objectCatalog_, item),
+            drawPosition,
+            {RingObjectImageMaxSize * itemScale, RingObjectImageMaxSize * itemScale},
+            item.orbitOutward,
+            item.orbitTangent,
+            baseActorIdleAnimationTime_,
+            options);
+        if (drewImage) {
+            continue;
+        }
+
+        const float fallbackRadius = item.hitRadius * itemScale;
+        if (item.type == SpellRingItemType::Shovel) {
+            renderer.fillCircle(drawPosition, fallbackRadius, withAlpha({178, 184, 190, 255}, 255.0f * alpha));
+            renderer.drawLine(drawPosition, drawPosition + item.orbitOutward * (15.0f * itemScale), withAlpha({90, 96, 102, 255}, 255.0f * alpha));
+        } else if (item.type == SpellRingItemType::Torch) {
+            renderer.fillCircle(drawPosition, fallbackRadius, withAlpha({242, 122, 25, 255}, 255.0f * alpha));
+            renderer.fillCircle(drawPosition + Vec2{2.0f, -2.0f} * itemScale, 4.0f * itemScale, withAlpha({255, 238, 98, 255}, 255.0f * alpha));
+        } else {
+            renderer.fillCircle(drawPosition, fallbackRadius, withAlpha({96, 122, 210, 255}, 255.0f * alpha));
+            renderer.drawCircle(drawPosition, fallbackRadius + 3.0f, withAlpha({160, 202, 255, 255}, 255.0f * alpha));
+        }
+    }
 }
 
 bool Game::storyEventUsesBasePresentation(std::string_view id) const
@@ -7069,6 +7232,54 @@ bool Game::storyEventUsesBasePresentation(std::string_view id) const
         [](const DialogueStep& step) {
             return step.kind == DialogueStepKind::Command && isBasePresentationCommand(step.command.name);
         });
+}
+
+void Game::updateBaseStorySpeakerFacing()
+{
+    const std::string_view speakerId = dialogue_.currentSpeakerId();
+    if (!baseStorySpeakerTurnsPlayer(speakerId) || !basePresentationActive()) {
+        return;
+    }
+
+    std::vector<BaseFacility> facilities = baseFacilities(baseArea_, ringWorkshopUnlocked_);
+    applyHiddenRouteFacilityAvailability(
+        facilities,
+        hasStoryFlag(HiddenEndingPeopleGoneFlag),
+        hasStoryFlag(StoryHiddenOrbitCorruptionUnlockedFlag),
+        hiddenBaseNpcRemoved("merchant_npc"),
+        hiddenBaseNpcRemoved("processor_npc"),
+        hiddenBaseNpcRemoved("elder"));
+    for (BaseFacility& facility : facilities) {
+        facility.rect = toUiRect(baseFacilityRectFor(baseArea_, facility.facilityId, toBaseEditRect(facility.rect)));
+    }
+    applyBaseStoryFacilityOffsets(facilities, baseStoryFacilityOffsets_);
+
+    const BaseFacility* speaker = findBaseFacilityById(facilities, speakerId);
+    if (speaker == nullptr || !speaker->enabled || baseFacilityHiddenInNormalView(baseArea_, *speaker)) {
+        return;
+    }
+
+    const BaseCharacterSpriteVisual* spriteVisual = baseCharacterSpriteVisual(baseArea_, speaker->facilityId);
+    if (spriteVisual == nullptr) {
+        return;
+    }
+
+    const UiRect visualRect = baseCharacterSpriteVisualRect(*speaker);
+    Vec2 speakerPosition = visualRect.pos + visualRect.size * 0.5f;
+    if (const NpcCharacterVisual* visual = findNpcCharacterVisual(spriteVisual->visualId)) {
+        speakerPosition = visualRect.pos + Vec2{
+            visualRect.size.x * visual->anchor.x,
+            visualRect.size.y * visual->anchor.y,
+        };
+    }
+
+    const float dx = speakerPosition.x - basePlayerPosition_.x;
+    if (std::abs(dx) <= CharacterSpriteHorizontalFacingEpsilon) {
+        return;
+    }
+
+    basePlayerFacing_ = {dx < 0.0f ? -1.0f : 1.0f, 0.0f};
+    updateBasePlayerSpriteFlipFromFacing();
 }
 
 void Game::updateBaseStoryPresentationCommand(float dt)
@@ -7095,6 +7306,29 @@ void Game::updateBaseStoryPresentationCommand(float dt)
         baseStoryCommand_.startFacing = lengthSquared(basePlayerFacing_) > 0.0001f
             ? normalize(basePlayerFacing_)
             : Vec2{0.0f, 1.0f};
+
+        if (command->name == "base_return_scene") {
+            const std::string_view mode = baseReturnSceneMode(*command);
+            if (baseReturnSceneModeIsBegin(mode)) {
+                applyBaseReturnSceneBeginPlacement();
+                baseStoryCommand_.startPosition = basePlayerPosition_;
+                baseStoryCommand_.startFacing = lengthSquared(basePlayerFacing_) > 0.0001f
+                    ? normalize(basePlayerFacing_)
+                    : Vec2{0.0f, 1.0f};
+                baseStoryCommand_.targetPosition = baseStoryCommand_.startPosition +
+                    storyTileOffset(BaseReturnSceneFirstWalkTilesX, BaseReturnSceneFirstWalkTilesY) +
+                    storyTileOffset(BaseReturnSceneSecondWalkTilesX, BaseReturnSceneSecondWalkTilesY);
+                baseStoryCommand_.targetFacing = {0.0f, -1.0f};
+            } else if (baseReturnSceneModeIsEnd(mode)) {
+                baseStoryCommand_.targetPosition = baseStoryCommand_.startPosition;
+                baseStoryCommand_.targetFacing = baseStoryCommand_.startFacing;
+            } else {
+                logWarning("[story] unknown base_return_scene mode: " + std::string(mode));
+                dialogue_.completeCurrentCommandStep();
+                baseStoryCommand_ = {};
+                return;
+            }
+        }
 
         if (command->name == "base_actor_offset") {
             if (!command->args.empty()) {
@@ -7206,6 +7440,7 @@ void Game::updateBaseStoryPresentationCommand(float dt)
                 baseStoryRingDemo_.itemObjectId = command->args.size() >= 3 && !command->args[2].empty()
                     ? command->args[2]
                     : std::string(BaseStoryRingDemoDefaultItemObjectId);
+                playAudioSe(AudioSeRingAppear);
             }
         } else if (command->name == "base_player_walk") {
             const float dx = parseStoryCommandFloat(*command, 0, 0.0f);
@@ -7223,6 +7458,70 @@ void Game::updateBaseStoryPresentationCommand(float dt)
 
     const float safeDt = std::max(0.0f, dt);
     baseStoryCommand_.elapsedSeconds += safeDt;
+
+    if (command->name == "base_return_scene") {
+        const std::string_view mode = baseReturnSceneMode(*command);
+        if (baseReturnSceneModeIsBegin(mode)) {
+            const float waitSeconds = BaseReturnSceneWaitSeconds;
+            const float firstWalkSeconds = BaseReturnSceneFirstWalkSeconds;
+            const float secondWalkSeconds = BaseReturnSceneSecondWalkSeconds;
+            const float totalSeconds = waitSeconds + firstWalkSeconds + secondWalkSeconds;
+            const Vec2 start = baseStoryCommand_.startPosition;
+            const Vec2 firstEnd = start + storyTileOffset(BaseReturnSceneFirstWalkTilesX, BaseReturnSceneFirstWalkTilesY);
+            const Vec2 finalEnd = firstEnd + storyTileOffset(BaseReturnSceneSecondWalkTilesX, BaseReturnSceneSecondWalkTilesY);
+
+            bool walking = false;
+            if (baseStoryCommand_.elapsedSeconds < waitSeconds) {
+                basePlayerPosition_ = start;
+                basePlayerFacing_ = baseStoryCommand_.startFacing;
+            } else if (baseStoryCommand_.elapsedSeconds < waitSeconds + firstWalkSeconds) {
+                const float t = clamp((baseStoryCommand_.elapsedSeconds - waitSeconds) / firstWalkSeconds, 0.0f, 1.0f);
+                basePlayerPosition_ = lerp(start, firstEnd, t);
+                basePlayerFacing_ = normalize(firstEnd - start);
+                walking = true;
+            } else {
+                const float t = clamp(
+                    (baseStoryCommand_.elapsedSeconds - waitSeconds - firstWalkSeconds) / secondWalkSeconds,
+                    0.0f,
+                    1.0f);
+                basePlayerPosition_ = lerp(firstEnd, finalEnd, t);
+                basePlayerFacing_ = normalize(finalEnd - firstEnd);
+                walking = t < 1.0f;
+            }
+
+            updateBasePlayerSpriteAnimation(safeDt, walking);
+            updateBasePlayerSpriteFlipFromFacing();
+            if (baseStoryCommand_.elapsedSeconds >= totalSeconds) {
+                basePlayerPosition_ = finalEnd;
+                basePlayerFacing_ = normalize(finalEnd - firstEnd);
+                basePlayerSpriteWalking_ = false;
+                dialogue_.completeCurrentCommandStep();
+                baseStoryCommand_ = {};
+            }
+            return;
+        }
+
+        if (baseReturnSceneModeIsEnd(mode)) {
+            const float duration = std::max(0.001f, parseStoryCommandFloat(*command, 1, ScreenTransitionFadeOutSeconds));
+            const float totalSeconds = duration * 2.0f;
+            if (baseStoryCommand_.elapsedSeconds < duration) {
+                baseStoryFadeAlpha_ = smoothStep01(baseStoryCommand_.elapsedSeconds / duration);
+            } else {
+                baseStoryFacilityOffsets_.erase("elder");
+                baseStoryFacilityOffsets_.erase("monica");
+                baseStoryFadeAlpha_ = 1.0f - smoothStep01((baseStoryCommand_.elapsedSeconds - duration) / duration);
+            }
+
+            updateBasePlayerSpriteAnimation(safeDt, false);
+            updateBasePlayerSpriteFlipFromFacing();
+            if (baseStoryCommand_.elapsedSeconds >= totalSeconds) {
+                baseStoryFadeAlpha_ = 0.0f;
+                dialogue_.completeCurrentCommandStep();
+                baseStoryCommand_ = {};
+            }
+            return;
+        }
+    }
 
     if (command->name == "base_fade") {
         const std::string direction = !command->args.empty() ? command->args[0] : "out";
@@ -9223,6 +9522,11 @@ bool Game::startStoryEventInternal(std::string_view id, StoryEventStartOptions o
     baseStatus_.clear();
     pendingDialogueCompletion_ = {};
     clearBaseStoryPresentation();
+    if (basePresentationActive() &&
+        !event->dialogue.steps.empty() &&
+        isBaseReturnSceneBeginStep(event->dialogue.steps.front())) {
+        applyBaseReturnSceneBeginPlacement();
+    }
     dialogue_.start(event->dialogue);
     if (options.logDebugReplay) {
         logInfo("[story] debug replay: " + event->id);

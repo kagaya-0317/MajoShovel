@@ -1181,6 +1181,12 @@ const DialogueLine* DialoguePlayer::currentLine() const
     return &step->line;
 }
 
+std::string_view DialoguePlayer::currentSpeakerId() const
+{
+    const DialogueLine* line = currentLine();
+    return line != nullptr ? std::string_view(line->speakerId) : std::string_view{};
+}
+
 const DialogueCommand* DialoguePlayer::currentCommand() const
 {
     const DialogueStep* step = currentStep();

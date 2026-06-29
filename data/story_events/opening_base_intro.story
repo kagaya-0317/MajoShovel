@@ -3,12 +3,7 @@
 @trigger intro_tutorial:base_return
 @once story_opening_base_intro
 
-@base_player_place mine_exit_return
-@base_actor_offset elder 4 1
-@base_actor_offset monica -2 2
-@base_wait 1
-@base_player_walk 2 -1 1.43
-@base_player_walk 0 -0.5 0.32
+@base_return_scene begin
 
 @say player ルネ
 はあ、はあ…やっと帰ってきたよ
@@ -173,10 +168,7 @@
 
 @wait small
 
-@base_fade out
-@base_actor_reset elder
-@base_actor_reset monica
-@base_fade in
+@base_return_scene end
 
 @narration
 ルネの家の日記を調べることで

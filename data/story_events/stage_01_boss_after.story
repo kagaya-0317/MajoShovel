@@ -12,6 +12,9 @@
 # ※その後、小さいただのモグラになり、走って逃げる
 @dungeon_small_mole_escape
 
+# ※カメラがルネの位置にもどる
+@dungeon_camera_focus player 0.7
+
 @wait small
 
 @say player ルネ

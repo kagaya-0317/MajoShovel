@@ -3,6 +3,8 @@
 @trigger stage_clear:stage_01_stardust
 @once story_stage_01_clear
 
+@base_return_scene begin
+
 @say monica モニカ
 おかえりなさい、ルネ！
 すごいじゃない！！
@@ -82,6 +84,7 @@
 
 # ※ルネがスペルリングを広げる。リング1に加え、リング2も生成される
 @base_ring_demo open 2 item_apple 1.15
+@wait 2
 
 @say monica モニカ
 す、すごい……スペルリングが増えた！
@@ -104,7 +107,7 @@
 @say player ルネ
 は～い
 
-@portrait_hide player
+@portraits_hide 0.35
 
 @wait small
 
@@ -112,6 +115,10 @@
 @base_ring_demo close 0.55
 
 @wait small
+
+@base_return_scene end
+
+@story_jingle ring_unlock
 
 @narration
 スペルリングの2つ目が解禁された！

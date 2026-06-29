@@ -11,6 +11,7 @@ namespace majo {
 struct StoryEvent {
     std::string id;
     std::string title;
+    std::string presentation;
     std::string trigger;
     std::string onceFlag;
     bool repeatable = false;
