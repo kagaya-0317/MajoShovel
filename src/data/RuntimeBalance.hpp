@@ -31,6 +31,18 @@ struct RuntimeBalance {
     float cometTrailLength = 0.20f;
     float cometLaneSpacing = 10.0f;
     float cometMaxArcDegrees = 130.0f;
+    float ringFluidSpring = 24.0f;
+    float ringFluidDamping = 6.0f;
+    float ringFluidWave = 78.0f;
+    float ringFluidMotionRadialImpulse = 260.0f;
+    float ringFluidMotionTangentImpulse = 152.0f;
+    float ringFluidShiftImpulse = 330.0f;
+    float ringFluidFlowForce = 500.0f;
+    float ringFluidMaxOffset = 30.0f;
+    float ringFluidIdleRipple = 0.78f;
+    float ringFluidRandomJitter = 0.60f;
+    float ringFluidMotionDriveExponent = 0.85f;
+    float ringFluidShiftDriveExponent = 0.80f;
 
     int dirtHp = balance::DirtHp;
     int rockHp = balance::RockHp;

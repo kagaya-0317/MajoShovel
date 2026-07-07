@@ -77,7 +77,7 @@ void DebugOverlay::render(
     if (!visible_) {
         return;
     }
-    const std::string enemySummary = enemies.debugEnemySummary();
+    const std::string enemySummary = enemies.debugEnemySummary(player.position);
     const DungeonLayoutMetrics dungeonMetrics = calculateDungeonLayoutMetrics(
         dungeonLayout,
         {static_cast<float>(map.worldToTile(player.position.x)), static_cast<float>(map.worldToTile(player.position.y))});

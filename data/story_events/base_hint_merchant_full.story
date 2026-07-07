@@ -3,11 +3,13 @@
 @trigger base_hint:merchant_full
 @once story_base_hint_merchant_full
 
+@portrait_expr monica 3
 @say monica モニカ
 ルネ、おかえり！
 わーっ、お宝いっぱい！
 ルネが見つけてきたの！？
 
+@portrait_expr player 4
 @say player ルネ
 えへへ、そうだよ〜
 

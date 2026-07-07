@@ -5481,7 +5481,6 @@ void Game::renderEnemyHitboxEditScreen(Renderer& renderer, double totalSeconds) 
                 name = objectImageScaleDisplayName(objectIt->second);
                 ObjectImageDrawOptions iconOptions;
                 iconOptions.allowUpscale = true;
-                iconOptions.outlineEnabled = false;
                 (void)drawItemImage(renderer, objectIt->second, rect.pos + Vec2{22.0f, 22.0f}, {34.0f, 34.0f}, iconOptions);
             } else {
                 renderer.fillCircle(rect.pos + Vec2{22.0f, 22.0f}, 12.0f, {82, 92, 110, 255});
@@ -5552,7 +5551,9 @@ void Game::renderEnemyHitboxEditScreen(Renderer& renderer, double totalSeconds) 
                     playerDrawSize,
                     false,
                     {255, 255, 255, 255},
-                    {PlayerSpriteAnchorX, PlayerSpriteAnchorY});
+                    {PlayerSpriteAnchorX, PlayerSpriteAnchorY},
+                    false,
+                    artworkImageDrawOptions());
             } else {
                 renderer.fillCircle(previewCenter, balance_.playerRadius * 4.0f, {118, 72, 168, 255});
                 renderer.drawLine(previewCenter, previewCenter + Vec2{22.0f, 0.0f}, {235, 210, 255, 255});
@@ -8849,7 +8850,8 @@ void Game::renderEffectTestScreen(Renderer& renderer, double totalSeconds)
                 false,
                 statusVisual.hasTint ? statusVisual.tint : Color{255, 255, 255, 255},
                 {PlayerSpriteAnchorX, PlayerSpriteAnchorY},
-                statusVisual.flipVertical);
+                statusVisual.flipVertical,
+                artworkImageDrawOptions());
         } else {
             renderer.fillCircle(drawPosition, player_.effectiveRadius(balance_.playerRadius), statusVisual.hasTint ? statusVisual.tint : Color{118, 72, 168, 255});
             renderer.drawLine(drawPosition, drawPosition + Vec2{22.0f, 0.0f}, {235, 210, 255, 255});
@@ -10748,8 +10750,8 @@ GameTestSnapshot Game::makeTestSnapshot(GameTestSnapshotOptions options) const
         entry.lightRadius = expectedLoadoutLightRadius(objectInstance.item);
         entry.durability = objectInstance.item.durability;
         entry.weightKg = objectInstance.item.weightKg;
-        entry.currentDurability = objectInstance.instance.currentDurability;
-        entry.maxDurability = objectInstance.instance.maxDurability;
+        entry.currentDurability = durabilityUnitsToDisplayPoints(objectInstance.instance.currentDurability);
+        entry.maxDurability = durabilityUnitsToDisplayPoints(objectInstance.instance.maxDurability);
         entry.enhanceLevel = objectInstance.instance.enhanceLevel;
         entry.attackBonus = objectInstance.instance.attackBonus;
         entry.digBonus = objectInstance.instance.digBonus;
@@ -10878,8 +10880,8 @@ GameTestSnapshot Game::makeTestSnapshot(GameTestSnapshotOptions options) const
                 .digPower = item.digPower,
                 .hitRadius = item.hitRadius,
                 .lightRadius = itemLightRadius,
-                .durability = item.durability,
-                .maxDurability = item.maxDurability,
+                .durability = durabilityUnitsToDisplayPoints(item.durability),
+                .maxDurability = durabilityUnitsToDisplayPoints(item.maxDurability),
                 .rarity = object != nullptr ? object->rarity : 0,
                 .price = object != nullptr ? object->price : 0,
                 .weightKg = item.weight,
@@ -11416,7 +11418,7 @@ GameTestActionResult Game::applyTestAction(const GameTestAction& action)
         if (itemIndex < 0 || itemIndex >= static_cast<int>(ringItems.size())) {
             return -1;
         }
-        return ringItems[static_cast<std::size_t>(itemIndex)].durability;
+        return durabilityUnitsToDisplayPoints(ringItems[static_cast<std::size_t>(itemIndex)].durability);
     };
     const auto ringItemBroken = [this, &resolveUnlockedRingIndex](int ringIndex, int itemIndex) {
         const std::optional<int> resolvedRing = resolveUnlockedRingIndex(ringIndex);

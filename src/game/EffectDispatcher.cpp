@@ -855,7 +855,7 @@ void applyCastMagicInvocation(const EffectInvocation& invocation)
         return;
     }
     if (context.orbit != nullptr && context.orbitItem != nullptr && isMagicBookSource(context)) {
-        context.orbit->consumeItemDurability(*context.orbitItem, 1);
+        context.orbit->consumeItemDurability(*context.orbitItem, FullPointDurabilityCostUnits);
     }
     recordEffectDiscovery(invocation, "属性魔法を発動する");
 }

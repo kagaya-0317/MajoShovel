@@ -1,5 +1,7 @@
 ﻿#include "game/GameInternal.hpp"
 
+#include <limits>
+
 namespace majo {
 
 namespace {
@@ -175,6 +177,47 @@ void readOptionalEnhanceLevels(std::istream& stream, RingPresetItem& item)
     }
     stream.clear();
     migrateLegacyEnhanceLevels(item);
+}
+
+int normalizedSaveDurabilityUnitScale(int scale)
+{
+    return scale > 0 ? scale : 1;
+}
+
+int savedDurabilityToCurrentUnits(int value, int savedUnitScale)
+{
+    if (value < 0) {
+        return value;
+    }
+    const int safeSavedUnitScale = normalizedSaveDurabilityUnitScale(savedUnitScale);
+    if (safeSavedUnitScale == DurabilityUnitsPerPoint) {
+        return value;
+    }
+    const long long scaled = static_cast<long long>(value) * DurabilityUnitsPerPoint;
+    return static_cast<int>(std::min<long long>(
+        std::numeric_limits<int>::max(),
+        (scaled + safeSavedUnitScale - 1) / safeSavedUnitScale));
+}
+
+void migrateSavedDurabilityUnits(ItemInstance& instance, int savedUnitScale)
+{
+    instance.currentDurability = savedDurabilityToCurrentUnits(instance.currentDurability, savedUnitScale);
+    instance.maxDurability = savedDurabilityToCurrentUnits(instance.maxDurability, savedUnitScale);
+    instance.isBroken = instance.isBroken || instance.currentDurability == 0;
+}
+
+void migrateSavedDurabilityUnits(SpellRingItem& item, int savedUnitScale)
+{
+    item.durability = savedDurabilityToCurrentUnits(item.durability, savedUnitScale);
+    item.maxDurability = savedDurabilityToCurrentUnits(item.maxDurability, savedUnitScale);
+    item.isBroken = item.isBroken || item.durability == 0;
+}
+
+void migrateSavedDurabilityUnits(RingPresetItem& item, int savedUnitScale)
+{
+    item.currentDurability = savedDurabilityToCurrentUnits(item.currentDurability, savedUnitScale);
+    item.maxDurability = savedDurabilityToCurrentUnits(item.maxDurability, savedUnitScale);
+    item.isBroken = item.isBroken || item.currentDurability == 0;
 }
 
 struct LoadedDungeonEventInstanceSave {
@@ -1222,6 +1265,7 @@ bool Game::loadSaveData(const std::filesystem::path& path)
     for (int i = 0; i < SpellRingCount; ++i) {
         loadedRingShapes[static_cast<std::size_t>(i)] = defaultRingShapeForIndex(i);
     }
+    int loadedDurabilityUnitScale = 1;
 
     while (std::getline(file, line)) {
         std::istringstream stream(line);
@@ -1230,7 +1274,13 @@ bool Game::loadSaveData(const std::filesystem::path& path)
         if (key.empty()) {
             continue;
         }
-        if (key == "money") {
+        if (key == "durability_unit_scale") {
+            int scale = 1;
+            stream >> scale;
+            if (!stream.fail()) {
+                loadedDurabilityUnitScale = normalizedSaveDurabilityUnitScale(scale);
+            }
+        } else if (key == "money") {
             stream >> loadedMoney;
         } else if (key == "play_time_seconds") {
             stream >> loadedPlayTimeSeconds;
@@ -1711,6 +1761,7 @@ bool Game::loadSaveData(const std::filesystem::path& path)
                 readOptionalEnhanceLevels(stream, instance);
             }
             if (!stream.fail()) {
+                migrateSavedDurabilityUnits(instance, loadedDurabilityUnitScale);
                 if (objectCatalog_.registry.findById(instance.objectId) == nullptr) {
                     ++warningCount;
                 }
@@ -1749,6 +1800,7 @@ bool Game::loadSaveData(const std::filesystem::path& path)
             }
             const ItemData* item = objectCatalog_.registry.findById(instance.objectId);
             if (!stream.fail()) {
+                migrateSavedDurabilityUnits(instance, loadedDurabilityUnitScale);
                 if (item == nullptr) {
                     ++warningCount;
                     logError("[warning] SaveData: warehouse_object_instance object_id=\"" + instance.objectId + "\" is missing from Objects DB; restored as missing ItemInstance");
@@ -1839,6 +1891,7 @@ bool Game::loadSaveData(const std::filesystem::path& path)
                 loadedRingIndex = std::clamp(loadedRingIndex, 0, SpellRingCount - 1);
                 item.ringIndex = loadedRingIndex;
                 readOptionalEnhanceLevels(stream, item);
+                migrateSavedDurabilityUnits(item, loadedDurabilityUnitScale);
                 loadedRingItemsByRing[static_cast<std::size_t>(loadedRingIndex)].push_back(item);
             }
         } else if (key == "ring_preset") {
@@ -1883,6 +1936,7 @@ bool Game::loadSaveData(const std::filesystem::path& path)
                 loadedRingPresets.validPresetIndex(presetIndex) &&
                 ringIndex >= 0 &&
                 ringIndex < SpellRingCount) {
+                migrateSavedDurabilityUnits(item, loadedDurabilityUnitScale);
                 item.type = ringTypeFromInt(type);
                 item.ringIndex = ringIndex;
                 item.objectId = loadRingObjectId(objectId);
@@ -2334,6 +2388,7 @@ bool Game::saveSaveData(const std::filesystem::path& path, std::string& message)
     }
 
     file << "MAJO_SHOVEL_SAVE_V1\n";
+    file << "durability_unit_scale " << DurabilityUnitsPerPoint << "\n";
     file << "money " << money_ << "\n";
     file << "play_time_seconds " << static_cast<std::int64_t>(std::max(0.0, playTimeSeconds_)) << "\n";
     file << "astral_high_score " << astralHighScore_ << "\n";

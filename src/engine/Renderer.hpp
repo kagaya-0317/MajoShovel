@@ -136,7 +136,7 @@ public:
     void drawWrappedText(Vec2 pos, std::string_view text, float maxWidth, Color color, int scale = 2, TextStyle style = TextStyle::Regular);
     bool loadTextFont(std::string_view path, TextFontRole fontRole = TextFontRole::Ui);
     bool loadPlayerSheet(std::string_view path, int frameSize = 0, int columns = 3, int rows = 4);
-    bool loadPlayerHandSheet(std::string_view path, int frameSize = 0, int columns = 3, int rows = 4);
+    bool loadPlayerHandSheet(std::string_view path, int frameSize = 0, int columns = 3, int rows = 3);
     void unloadPlayerSheet();
     void unloadPlayerHandSheet();
     bool hasPlayerSheet() const { return playerSheet_.texture != nullptr; }
@@ -178,7 +178,8 @@ public:
         bool flipHorizontal,
         Color tint = {255, 255, 255, 255},
         Vec2 anchor = {0.5f, 0.82f},
-        bool flipVertical = false);
+        bool flipVertical = false,
+        const ImageDrawOptions& options = {});
     void drawPlayerSpriteNaturalSize(
         int index,
         Vec2 anchorPosition,
@@ -186,7 +187,8 @@ public:
         bool flipHorizontal,
         Color tint = {255, 255, 255, 255},
         Vec2 anchor = {0.5f, 0.82f},
-        bool flipVertical = false);
+        bool flipVertical = false,
+        const ImageDrawOptions& options = {});
     void drawPlayerHandSpriteNaturalSize(
         int index,
         Vec2 anchorPosition,
@@ -194,7 +196,8 @@ public:
         bool flipHorizontal,
         Color tint = {255, 255, 255, 255},
         Vec2 anchor = {0.5f, 0.82f},
-        bool flipVertical = false);
+        bool flipVertical = false,
+        const ImageDrawOptions& options = {});
     void drawBaseMapTexture(Vec2 pos, Vec2 size, Color tint = {255, 255, 255, 255});
     FrameSnapshot captureFrameSnapshot();
     void destroyFrameSnapshot(FrameSnapshot& snapshot);
@@ -251,6 +254,7 @@ public:
 private:
     struct SpriteSheet {
         SDL_Texture* texture = nullptr;
+        SDL_Texture* outlineTexture = nullptr;
         int frameWidth = 32;
         int frameHeight = 32;
         int columns = 0;
@@ -321,6 +325,16 @@ private:
     std::string wrappedText(std::string_view text, float maxWidth, int scale, TextStyle style);
     bool loadSpriteSheet(std::string_view path, int frameSize, int columns, int rows, std::string_view label, SpriteSheet& sheet);
     void unloadSpriteSheet(SpriteSheet& sheet);
+    void drawSpriteSheetFrame(
+        const SpriteSheet& sheet,
+        int index,
+        Vec2 anchorPosition,
+        Vec2 drawSize,
+        bool flipHorizontal,
+        bool flipVertical,
+        Color tint,
+        Vec2 anchor,
+        const ImageDrawOptions& options);
     ImageTexture& uiMessageWindowTexture(UiMessageWindowKind kind);
     const ImageTexture& uiMessageWindowTexture(UiMessageWindowKind kind) const;
     bool loadImageTexture(std::string_view path, std::string_view label, ImageTexture& target);

@@ -843,7 +843,7 @@ void drawProjectile(Renderer& renderer, const Projectile& projectile)
         imageOptions.allowUpscale = true;
         imageOptions.outlineEnabled = true;
         imageOptions.outlineColor = scaleAlpha(profile.edge, fade);
-        imageOptions.outlinePx = 1;
+        imageOptions.outlinePx = ArtworkOutlinePx;
         imageOptions.tint = scaleAlpha({255, 255, 255, 255}, fade);
         imageOptions.rotationDegrees = spin * 180.0f / Pi + 90.0f;
         imageOptions.scaleMultiplier = 1.0f;

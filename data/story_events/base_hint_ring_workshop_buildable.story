@@ -11,12 +11,15 @@
 「リング工房」っていうらしいよ！
 村長が、ルネのために用意してくれるみたい
 
+@portrait_expr player 4
 @say player ルネ
 わ〜い
 
+@portrait_expr monica 8
 @say monica モニカ
 でも、費用はルネ持ちだけどね…
 
+@portrait_expr player 17
 @say player ルネ
 世知辛〜い
 

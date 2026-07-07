@@ -9,6 +9,7 @@
 
 @wait small
 
+@portrait_expr player 16
 @say player ルネ
 う、うわ～～～！
 
@@ -22,6 +23,7 @@
 
 @wait small
 
+@portrait_expr chicory 10
 @say chicory チコリ
 ちこり！（知らねぇなあ。テメェみたいな小物のシマなんざよ）
 
@@ -40,6 +42,7 @@
 @say chicory チコリ
 ちかちか！（どきな、俺らはこの先に用がある。テメェの顔色うかがいに来たんじゃねぇんだよ）
 
+@portrait_expr player 9
 @say player ルネ
 チコリ？
 
@@ -68,6 +71,7 @@
 @say stardust_mole 星くずモグラ
 だったら、その背負ったもんごとぶっ潰してやるよ！！
 
+@portrait_expr chicory 11
 @say chicory チコリ
 ちかちか！（上等だコラァ！！）
 

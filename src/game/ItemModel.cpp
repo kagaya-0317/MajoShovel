@@ -11,8 +11,8 @@ ItemInstance makeItemInstanceFromDefinition(std::string instanceId, const Object
     ItemInstance instance;
     instance.instanceId = std::move(instanceId);
     instance.objectId = object.id;
-    instance.currentDurability = object.durability;
-    instance.maxDurability = object.durability;
+    instance.currentDurability = durabilityPointsToUnits(object.durability);
+    instance.maxDurability = durabilityPointsToUnits(object.durability);
     instance.isBroken = object.durability == 0;
     return instance;
 }

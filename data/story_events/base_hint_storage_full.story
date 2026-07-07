@@ -3,12 +3,13 @@
 @trigger base_hint:storage_full
 @once story_base_hint_storage_full
 
+@portrait_expr monica 1
 @say monica モニカ
 ルネ、おかえり！
 いっぱい、色々持ち帰ってきたね
 リュックがぱんぱん！
 
-@portrait_expr player 6
+@portrait_expr player 4
 @say player ルネ
 でへへ〜
 

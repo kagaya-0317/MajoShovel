@@ -112,46 +112,54 @@ std::string SpellRingItem::capturedBehaviorParamString(std::string_view behavior
     return it->second;
 }
 
-bool SpellRingItem::isEnemyLatched(int enemyId) const
+bool SpellRingItem::enemyHitReady(int enemyId, float totalTime, float hitInterval) const
 {
-    for (int latchedId : latchedEnemyIds) {
-        if (latchedId == enemyId) {
-            return true;
+    if (enemyId <= 0) {
+        return true;
+    }
+    const float safeHitInterval = std::max(0.0f, hitInterval);
+    for (const RingItemEnemyHitTime& hitTime : enemyHitTimes) {
+        if (hitTime.enemyId == enemyId) {
+            return totalTime - hitTime.hitTime >= safeHitInterval;
         }
     }
-    return false;
+    return true;
 }
 
-void SpellRingItem::latchEnemy(int enemyId)
+void SpellRingItem::recordEnemyHit(int enemyId, float totalTime)
 {
-    for (int& latchedId : latchedEnemyIds) {
-        if (latchedId == enemyId) {
-            return;
-        }
-        if (latchedId == 0) {
-            latchedId = enemyId;
-            return;
-        }
+    if (enemyId <= 0) {
+        return;
     }
-}
-
-void SpellRingItem::unlatchEnemy(int enemyId)
-{
-    for (int& latchedId : latchedEnemyIds) {
-        if (latchedId == enemyId) {
-            latchedId = 0;
+    for (RingItemEnemyHitTime& hitTime : enemyHitTimes) {
+        if (hitTime.enemyId == enemyId) {
+            hitTime.hitTime = totalTime;
             return;
         }
     }
+    for (RingItemEnemyHitTime& hitTime : enemyHitTimes) {
+        if (hitTime.enemyId == 0) {
+            hitTime.enemyId = enemyId;
+            hitTime.hitTime = totalTime;
+            return;
+        }
+    }
+    auto oldest = std::min_element(enemyHitTimes.begin(), enemyHitTimes.end(), [](const auto& left, const auto& right) {
+        return left.hitTime < right.hitTime;
+    });
+    if (oldest != enemyHitTimes.end()) {
+        oldest->enemyId = enemyId;
+        oldest->hitTime = totalTime;
+    }
 }
 
-bool SpellRingItem::consumeDurability(int amount)
+bool SpellRingItem::consumeDurability(int durabilityUnits)
 {
-    if (amount <= 0 || durabilityLocked || durability < 0) {
+    if (durabilityUnits <= 0 || durabilityLocked || durability < 0) {
         return false;
     }
 
-    durability = std::max(0, durability - amount);
+    durability = std::max(0, durability - durabilityUnits);
     isBroken = durability == 0;
     return isBroken;
 }

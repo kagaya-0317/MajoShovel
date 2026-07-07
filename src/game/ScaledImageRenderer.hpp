@@ -2,6 +2,7 @@
 
 #include "engine/Math.hpp"
 #include "engine/Renderer.hpp"
+#include "game/ArtworkOutline.hpp"
 
 #include <string_view>
 
@@ -14,9 +15,9 @@ struct ScaledImageDrawOptions {
     bool allowUpscale = false;
     float scaleMultiplier = 1.0f;
     Vec2 sizeMultiplier{1.0f, 1.0f};
-    bool outlineEnabled = true;
-    Color outlineColor{0, 0, 0, 255};
-    int outlinePx = 1;
+    bool outlineEnabled = ArtworkOutlineEnabled;
+    Color outlineColor{ArtworkOutlineColor};
+    int outlinePx = ArtworkOutlinePx;
     bool selectedOutlineEnabled = false;
     Color selectedOutlineColor{255, 230, 150, 255};
     int selectedOutlinePx = 6;

@@ -4,6 +4,7 @@
 @trigger boss_before:stage_03_star_core
 @once story_stage_03_boss_before
 
+@portrait_expr player 15
 @say player ルネ
 な、なにこれ……
 
@@ -15,9 +16,11 @@
 
 @wait small
 
+@portrait_expr player 14
 @say player ルネ
 守護星ちゃん……大丈夫！？
 
+@portrait_expr chicory 6
 @say chicory チコリ
 ちぃ～！ちぃ～！
 
@@ -34,6 +37,7 @@
 # ※モニカに電話をかける
 @story_phone outgoing
 
+@portrait_expr monica 7
 @say monica モニカ
 ルネ、聞こえる？
 
@@ -53,6 +57,7 @@
 @story_phone hangup
 @portrait_hide monica
 
+@portrait_expr player 16
 @say player ルネ
 モ、モニカちゃん！？モニカちゃ～ん！
 
@@ -61,6 +66,7 @@
 @say astragna アストラグナ
 …深部干渉ヲ検知
 
+@portrait_expr player 15
 @say player ルネ
 しゃべった……！？
 
@@ -75,9 +81,11 @@
 
 @wait small
 
+@portrait_expr chicory 1
 @say chicory チコリ
 ちこり！
 
+@portrait_expr player 8
 @say player ルネ
 え？守護星ちゃんは無事だって……？
 
@@ -88,12 +96,15 @@
 @say chicory チコリ
 ちこり
 
+@portrait_expr player 1
 @say player ルネ
 そっか……守ってくれてるんだ
 
+@portrait_expr player 18
 @say player ルネ
 でも、このままだと守護星ちゃんは帰れない
 
+@portrait_expr player 19
 @say player ルネ
 大きいマシーン！聞いて！
 守護星ちゃんを離してほしいの！
@@ -114,18 +125,22 @@
 @say astragna アストラグナ
 接近者ハ皆、排除スル
 
+@portrait_expr player 14
 @say player ルネ
 そんな…言うことを聞いてくれないなんて…
 
+@portrait_expr player 18
 @say player ルネ
 どうやら…ルネたちが掘るしかなさそうだね！
 
+@portrait_expr chicory 1
 @say chicory チコリ
 ちこり！
 
 # ※外殻のほうへスクロール
 @dungeon_camera_focus boss 0.9
 
+@portrait_expr chicory 1
 @say chicory チコリ
 ちかちか！
 
@@ -153,6 +168,7 @@
 @say astragna アストラグナ
 接近者ヲ全力デ排除スル！！
 
+@portrait_expr player 19
 @say player ルネ
 排除されるわけにはいかないよ！
 ルネとチコリは、守護星ちゃんを迎えに来たんだから！
@@ -160,6 +176,7 @@
 @say player ルネ
 チコリ、行こう！
 
+@portrait_expr chicory 2
 @say chicory チコリ
 ちこりっ！！
 

@@ -17,12 +17,15 @@
 
 @wait small
 
+@portrait_expr player 4
 @say player ルネ
 や…やった～～～！！倒せたよ！！
 
+@portrait_expr chicory 2
 @say chicory チコリ
 ちこり！
 
+@portrait_expr player 8
 @say player ルネ
 あんなに大きなモンスター…
 
@@ -34,6 +37,7 @@
 
 @wait small
 
+@portrait_expr player 3
 @say player ルネ
 えへへ
 少しだけ、自信ついたかも
@@ -41,6 +45,7 @@
 @say player ルネ
 チコリと一緒だったおかげだよ。ありがとう、チコリ！
 
+@portrait_expr chicory 1
 @say chicory チコリ
 ちこり！
 
@@ -55,6 +60,7 @@
 @say player ルネ
 さっきの話し方、なに？
 
+@portrait_expr chicory 4
 @say chicory チコリ
 こり？？
 
@@ -63,9 +69,11 @@
 
 @wait small
 
+@portrait_expr player 2
 @say player ルネ
 とにかく、先へ進めるようになったね
 
+@portrait_expr player 17
 @say player ルネ
 でも、疲れた～。いったん拠点に戻ろっと
 

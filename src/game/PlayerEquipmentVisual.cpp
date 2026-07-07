@@ -60,7 +60,7 @@ bool drawPlayerHeldStaff(
     options.tint = context.staffTint;
     options.rotationDegrees = HeldStaffRotationDegrees * side;
     options.outlineEnabled = true;
-    options.outlinePx = 1;
+    options.outlinePx = ArtworkOutlinePx;
 
     return drawItemImage(renderer, staffItem, center, maxSize, options);
 }
@@ -80,7 +80,9 @@ void drawPlayerHeldStaffHandOverlay(
         scale,
         context.flipHorizontal,
         context.handTint,
-        context.spriteAnchor);
+        context.spriteAnchor,
+        false,
+        artworkImageDrawOptions());
 }
 
 }

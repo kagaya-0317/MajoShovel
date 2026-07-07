@@ -5,6 +5,7 @@
 
 @base_return_scene begin
 
+@portrait_expr monica 3
 @say monica モニカ
 おかえりなさい、ルネ！
 
@@ -13,17 +14,21 @@
 
 @wait small
 
+@portrait_expr player 4
 @say player ルネ
 モニカちゃん、ただいま〜
 
+@portrait_expr chicory 7
 @say chicory チコリ
 ちぃ…
 
 @wait small
 
+@portrait_expr monica 8
 @say monica モニカ
 チコリ、まだ少し苦しそうだね
 
+@portrait_expr player 10
 @say player ルネ
 うん…
 
@@ -44,6 +49,7 @@
 @say elder 村長
 ……ルネ、おぬしは大事なものを見たようじゃな
 
+@portrait_expr player 8
 @say player ルネ
 大事なもの？
 
@@ -59,6 +65,7 @@
 @say elder 村長
 そして…そこへ『燃えろ』『動け』『従え』と指令を込めると、魔法は強く、速くなる。これが「指令魔法」じゃな
 
+@portrait_expr monica 1
 @say monica モニカ
 私たちが普段、戦闘訓練で使っている魔法ですね
 
@@ -76,6 +83,7 @@
 @say elder 村長
 役目を失った道具が、それでも命令に従い続けようとし、暴れているのじゃ
 
+@portrait_expr player 10
 @say player ルネ
 だから、あの場所はまだざわざわしてたんだ……
 
@@ -86,9 +94,11 @@
 その汚染から我々を守り続けてきたのが、守護星なのじゃ
 指令の乱れをほどき、地上へ漏れぬようにしてきた、調律の星
 
+@portrait_expr player 11
 @say player ルネ
 守護星ちゃんが、ずっと……
 
+@portrait_expr monica 8
 @say monica モニカ
 守護星の役目は、指令の力を処理することだったのね
 だから、私のような指令魔法は近づけるべきではない…
@@ -102,14 +112,17 @@
 @say elder 村長
 これが、守護星の持つ性質と一致しているのじゃ
 
+@portrait_expr player 8
 @say player ルネ
 私のスペルリングが……
 
 @wait small
 
+@portrait_expr player 18
 @say player ルネ
 村長さん、モニカちゃん
 
+@portrait_expr player 18
 @say player ルネ
 …私、守護星ちゃんを助けたい！
 
@@ -119,9 +132,11 @@
 
 @wait small
 
+@portrait_expr monica 1
 @say monica モニカ
 ルネ…
 
+@portrait_expr chicory 1
 @say chicory チコリ
 ちこり！
 
@@ -129,14 +144,17 @@
 チコリも感じてる…
 次のエリアに、守護星の反応があるみたい。守護星はもうすぐだよ
 
+@portrait_expr chicory 2
 @say chicory チコリ
 ちかちか
 
 @wait small
 
+@portrait_expr player 11
 @say player ルネ
 ……最初は、自分の失敗を取り返さなきゃって思ってた
 
+@portrait_expr player 18
 @say player ルネ
 でも今は、それだけじゃない
 これは、私にしかできないことなんだ
@@ -150,6 +168,7 @@
 @base_ring_demo open 3 item_apple item_ring=3 1.15
 @wait 2
 
+@portrait_expr monica 5
 @say monica モニカ
 ルネ！？
 すごい……さらにスペルリングが増えてる！
@@ -164,12 +183,14 @@
 # ※リングを閉じる
 @base_ring_demo close 0.55
 
+@portrait_expr monica 1
 @say monica モニカ
 ルネ…本当に、頼もしくなったね
 
 @say elder 村長
 …くれぐれも、気をつけるのじゃぞ
 
+@portrait_expr player 6
 @say player ルネ
 まかせてよ！ふんすか
 

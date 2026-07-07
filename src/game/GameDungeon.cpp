@@ -382,9 +382,11 @@ bool drawDungeonEventWitchNpcSprite(
     options.scale = DungeonEventWitchNpcScale;
     options.tint = {255, 255, 255, alpha};
     options.flipHorizontal = visual->defaultFlipHorizontal;
-    options.outlineEnabled = inInteractionRange;
-    options.outlineColor = hovered ? DungeonInspectableHoverOutlineColor : DungeonInspectableOutlineColor;
-    options.outlinePx = DungeonInspectableOutlinePx;
+    options.outlineEnabled = ArtworkOutlineEnabled;
+    options.outlineColor = inInteractionRange
+        ? (hovered ? DungeonInspectableHoverOutlineColor : DungeonInspectableOutlineColor)
+        : ArtworkOutlineColor;
+    options.outlinePx = inInteractionRange ? DungeonInspectableOutlinePx : ArtworkOutlinePx;
     return drawNpcCharacterSprite(renderer, *visual, sheetHandle, frameSize, options);
 }
 
@@ -1832,7 +1834,7 @@ ItemInstance makeDroppedRingItemInstance(const SpellRingItem& item, const ItemDa
     instance.currentDurability = item.durability;
     instance.maxDurability = item.maxDurability < 0
         ? item.maxDurability
-        : std::max(0, item.maxDurability - item.durabilityBonus);
+        : std::max(0, item.maxDurability - durabilityPointsToUnits(item.durabilityBonus));
     instance.enhanceLevel = item.enhanceLevel;
     instance.attackEnhanceLevel = item.attackEnhanceLevel;
     instance.digEnhanceLevel = item.digEnhanceLevel;
@@ -8939,7 +8941,37 @@ void Game::initializeRewardNodesFromLayout()
         }
     }
 
-    materializeExposedPlacementDrops();
+    materializeExposedPlacementDrops(false);
+}
+
+bool Game::spawnRewardNodeWorldDrop(
+    const RewardNode& node,
+    Vec2 center,
+    std::string_view sourceLabel,
+    bool allowGeneratedRewardLoot)
+{
+    bool spawnedObject = false;
+    if (node.objectId.has_value() &&
+        !objectExcludedFromDungeonDrops(*node.objectId) &&
+        (!currentStageIsRoguelike() || roguelikeObjectAllowed(*node.objectId))) {
+        spawnedObject = worldDrops_.spawnObjectDrop(objectCatalog_, *node.objectId, center, runStats_.elapsedSeconds);
+    }
+    if (spawnedObject) {
+        return true;
+    }
+
+    if (!allowGeneratedRewardLoot || !currentStageIsRoguelike()) {
+        return false;
+    }
+
+    std::mt19937& rng = lootRuntimeRng();
+    return spawnWeightedObjectLoot(
+        LootChestKind::Common,
+        roguelikeDepthRankForWorldPosition(center),
+        center,
+        rng,
+        sourceLabel,
+        false);
 }
 
 void Game::updateExposedRewardNodes()
@@ -8954,22 +8986,7 @@ void Game::updateExposedRewardNodes()
         }
 
         const Vec2 center = tileWorldCenter(node.tile);
-        bool spawnedObject = false;
-        if (node.objectId.has_value() &&
-            !objectExcludedFromDungeonDrops(*node.objectId) &&
-            (!currentStageIsRoguelike() || roguelikeObjectAllowed(*node.objectId))) {
-            spawnedObject = worldDrops_.spawnObjectDrop(objectCatalog_, *node.objectId, center, runStats_.elapsedSeconds);
-        }
-        if (!spawnedObject && currentStageIsRoguelike()) {
-            std::mt19937& rng = lootRuntimeRng();
-            spawnedObject = spawnWeightedObjectLoot(
-                LootChestKind::Common,
-                roguelikeDepthRankForWorldPosition(center),
-                center,
-                rng,
-                "RewardNodeLoot",
-                false);
-        }
+        const bool spawnedObject = spawnRewardNodeWorldDrop(node, center, "RewardNodeLoot", true);
         node.spawned = true;
         node.collected = true;
         if (!spawnedObject && !currentStageIsRoguelike()) {
@@ -9009,22 +9026,7 @@ void Game::revealRewardNodesFromOpenedTiles(const std::vector<Vec2>& openedTiles
             node.revealed = true;
             node.spawned = true;
             const Vec2 center = tileWorldCenter(node.tile);
-            bool spawnedObject = false;
-            if (node.objectId.has_value() &&
-                !objectExcludedFromDungeonDrops(*node.objectId) &&
-                (!currentStageIsRoguelike() || roguelikeObjectAllowed(*node.objectId))) {
-                spawnedObject = worldDrops_.spawnObjectDrop(objectCatalog_, *node.objectId, center, runStats_.elapsedSeconds);
-            }
-            if (!spawnedObject && currentStageIsRoguelike()) {
-                std::mt19937& rng = lootRuntimeRng();
-                spawnedObject = spawnWeightedObjectLoot(
-                    LootChestKind::Common,
-                    roguelikeDepthRankForWorldPosition(center),
-                    center,
-                    rng,
-                    "BuriedRewardLoot",
-                    false);
-            }
+            const bool spawnedObject = spawnRewardNodeWorldDrop(node, center, "BuriedRewardLoot", true);
             node.collected = true;
             if (!spawnedObject && !currentStageIsRoguelike()) {
                 ++runStats_.acquiredItems;
@@ -9083,8 +9085,19 @@ void Game::revealMoonFragmentNodesFromOpenedTiles(const std::vector<Vec2>& opene
     }
 }
 
-void Game::materializeExposedPlacementDrops()
+void Game::materializeExposedPlacementDrops(bool allowGeneratedRewardLoot)
 {
+    for (RewardNode& node : rewardNodes_) {
+        if (node.collected || node.visibility != PlacementVisibility::Exposed) {
+            continue;
+        }
+        const Vec2 center = tileWorldCenter(node.tile);
+        if (spawnRewardNodeWorldDrop(node, center, "ExposedRewardPlacement", allowGeneratedRewardLoot)) {
+            node.spawned = true;
+            node.collected = true;
+        }
+    }
+
     for (MoneyNode& node : moneyNodes_) {
         if (node.collected || node.visibility != PlacementVisibility::Exposed) {
             continue;
@@ -9106,6 +9119,7 @@ void Game::materializeExposedPlacementDrops()
 
 void Game::normalizeOpenBuriedPlacementNodes()
 {
+    bool materializeNeeded = false;
     const auto tileIsOpen = [this](DungeonTile tile) {
         return tileMap_.terrainDebugAtWorld(tileWorldCenter(tile)).type == TileType::Empty;
     };
@@ -9116,6 +9130,7 @@ void Game::normalizeOpenBuriedPlacementNodes()
         }
         node.visibility = PlacementVisibility::Exposed;
         node.revealed = true;
+        materializeNeeded = true;
         if (!node.objectId.has_value()) {
             node.objectId = currentStageIsRoguelike()
                 ? firstRoguelikeAllowedObjectId()
@@ -9128,6 +9143,7 @@ void Game::normalizeOpenBuriedPlacementNodes()
             continue;
         }
         node.visibility = PlacementVisibility::Exposed;
+        materializeNeeded = true;
     }
 
     for (MoonFragmentNode& node : moonFragmentNodes_) {
@@ -9135,6 +9151,7 @@ void Game::normalizeOpenBuriedPlacementNodes()
             continue;
         }
         node.visibility = PlacementVisibility::Exposed;
+        materializeNeeded = true;
     }
 
     for (ChestNode& node : chestNodes_) {
@@ -9143,6 +9160,10 @@ void Game::normalizeOpenBuriedPlacementNodes()
         }
         node.visibility = PlacementVisibility::Exposed;
         node.revealed = true;
+    }
+
+    if (materializeNeeded) {
+        materializeExposedPlacementDrops(true);
     }
 }
 
@@ -9277,7 +9298,7 @@ void Game::initializeChestNodesFromLayout()
         }
     }
 
-    materializeExposedPlacementDrops();
+    materializeExposedPlacementDrops(false);
 }
 
 void Game::assignChestMimic(ChestNode& node)
@@ -13769,9 +13790,10 @@ void Game::renderRoguelikeFacilities(Renderer& renderer) const
             dungeonInspectableInRange(facility.propPosition, RoguelikeFacilityPropInspectSize);
         const bool hovered = hoveredRoguelikeFacilityIndex_ == i ||
             (focusedRoguelikeFacilityIndex_ == i && inInteractionRange);
-        const Color outline = hovered
+        const Color interactionOutline = hovered
             ? DungeonInspectableHoverOutlineColor
-            : (inInteractionRange ? DungeonInspectableOutlineColor : Color{86, 94, 112, 120});
+            : DungeonInspectableOutlineColor;
+        const Color outline = inInteractionRange ? interactionOutline : Color{86, 94, 112, 120};
 
         renderer.fillSoftCircle(
             facility.centerPosition,
@@ -13780,9 +13802,9 @@ void Game::renderRoguelikeFacilities(Renderer& renderer) const
 
         const Vec2 propSize = roguelikeFacilityPropImageSize(facility.kind);
         ImageDrawOptions propOptions;
-        propOptions.outlineEnabled = inInteractionRange;
-        propOptions.outlineColor = outline;
-        propOptions.outlinePx = DungeonInspectableOutlinePx;
+        propOptions.outlineEnabled = ArtworkOutlineEnabled;
+        propOptions.outlineColor = inInteractionRange ? interactionOutline : ArtworkOutlineColor;
+        propOptions.outlinePx = inInteractionRange ? DungeonInspectableOutlinePx : ArtworkOutlinePx;
         if (facility.kind == RoguelikeFacilityKind::Merchant) {
             if (!renderer.drawImage(
                     std::string(RoguelikeFacilityWagonImagePath),
@@ -13818,9 +13840,9 @@ void Game::renderRoguelikeFacilities(Renderer& renderer) const
         }
 
         ImageDrawOptions npcOptions;
-        npcOptions.outlineEnabled = inInteractionRange;
-        npcOptions.outlineColor = outline;
-        npcOptions.outlinePx = DungeonInspectableOutlinePx;
+        npcOptions.outlineEnabled = ArtworkOutlineEnabled;
+        npcOptions.outlineColor = inInteractionRange ? interactionOutline : ArtworkOutlineColor;
+        npcOptions.outlinePx = inInteractionRange ? DungeonInspectableOutlinePx : ArtworkOutlinePx;
         if (facility.kind == RoguelikeFacilityKind::Trainer) {
             npcOptions.tint = {210, 226, 238, 235};
         }
@@ -13884,7 +13906,7 @@ void Game::appendRewardNodeRenderEntries(
                     ObjectImageDrawOptions options;
                     options.outlineEnabled = true;
                     options.outlineColor = {0, 0, 0, 210};
-                    options.outlinePx = 1;
+                    options.outlinePx = ArtworkOutlinePx;
                     if (object == nullptr || !drawItemImage(renderer, *object, center, {34.0f, 34.0f}, options)) {
                         const bool drewFallback = drawWorldIcon(renderer, WorldIconId::Crate, center, {32.0f, 32.0f});
                         (void)drewFallback;

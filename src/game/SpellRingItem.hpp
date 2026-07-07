@@ -20,6 +20,11 @@ enum class SpellRingItemType {
 
 constexpr float SpellRingItemActionFlashSeconds = 0.10f;
 
+struct RingItemEnemyHitTime {
+    int enemyId = 0;
+    float hitTime = -100.0f;
+};
+
 struct RingItemBreakExplosionState {
     bool active = false;
     float delay = 0.0f;
@@ -44,7 +49,6 @@ struct SpellRingItem {
     float weight = 1.0f;
     float hitInterval = 0.22f;
     float lastTerrainHitTime = -100.0f;
-    float lastEnemyHitTime = -100.0f;
     float actionFlashTimer = 0.0f;
     int lastDigTileX = 2147483647;
     int lastDigTileY = 2147483647;
@@ -97,7 +101,7 @@ struct SpellRingItem {
     float orbitMotionSpeed = 0.0f;
     float damageMotionSpeed = 0.0f;
     float brokenSmokeTimer = 0.0f;
-    std::array<int, balance::MaxEnemies> latchedEnemyIds{};
+    std::array<RingItemEnemyHitTime, balance::MaxEnemies> enemyHitTimes{};
     std::string capturedBehaviorId;
     std::vector<std::string> capturedBehaviorIds;
     std::vector<CapturedBehaviorSpec> capturedBehaviorSpecs;
@@ -132,10 +136,9 @@ struct SpellRingItem {
     double capturedBehaviorParamDouble(std::string_view behaviorId, std::string_view key, double fallbackValue) const;
     int capturedBehaviorParamInt(std::string_view behaviorId, std::string_view key, int fallbackValue) const;
     std::string capturedBehaviorParamString(std::string_view behaviorId, std::string_view key, std::string_view fallbackValue = {}) const;
-    bool isEnemyLatched(int enemyId) const;
-    void latchEnemy(int enemyId);
-    void unlatchEnemy(int enemyId);
-    bool consumeDurability(int amount = 1);
+    bool enemyHitReady(int enemyId, float totalTime, float hitInterval) const;
+    void recordEnemyHit(int enemyId, float totalTime);
+    bool consumeDurability(int durabilityUnits = FullPointDurabilityCostUnits);
     bool broken() const;
 };
 

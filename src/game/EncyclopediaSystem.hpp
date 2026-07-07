@@ -107,6 +107,12 @@ public:
     const std::vector<std::string>& updateLog() const { return updateLog_; }
 
 private:
+    struct PopupLayoutLine {
+        std::string text;
+        int startUnit = 0;
+        int unitCount = 0;
+    };
+
     struct Popup {
         std::string text;
         Vec2 position{};
@@ -116,6 +122,9 @@ private:
         float revealSeconds = 0.0f;
         int revealUnitCount = 0;
         bool screenPositionLocked = false;
+        bool layoutReady = false;
+        Vec2 baseSize{};
+        std::vector<PopupLayoutLine> layoutLines;
     };
 
     struct EffectPopupLine {

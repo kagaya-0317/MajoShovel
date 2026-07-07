@@ -7,6 +7,7 @@
 ルネ！お帰り！
 いっぱい探索してきたみたいだね！
 
+@portrait_expr player 6
 @say player ルネ
 えへへ、がっぽりだよ
 

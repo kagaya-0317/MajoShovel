@@ -3,6 +3,7 @@
 @trigger boss_after:stage_03_star_core
 @once story_stage_03_boss_after
 
+@portrait_expr player 16
 @say player ルネ
 はぁ、はぁ…
 道がつながった！

@@ -337,6 +337,41 @@ SDL_FRect pixelSnappedRect(SDL_FRect rect)
     return {left, top, width, height};
 }
 
+SDL_Texture* createAlphaMaskTexture(
+    SDL_Renderer* renderer,
+    int width,
+    int height,
+    const std::vector<unsigned char>& alphaMask,
+    SDL_ScaleMode scaleMode)
+{
+    if (renderer == nullptr || width <= 0 || height <= 0 || alphaMask.empty()) {
+        return nullptr;
+    }
+
+    const int rowBytes = width * 4;
+    std::vector<unsigned char> pixels(static_cast<std::size_t>(rowBytes) * static_cast<std::size_t>(height), 255);
+    for (std::size_t alphaIndex = 0, pixelIndex = 3;
+         alphaIndex < alphaMask.size() && pixelIndex < pixels.size();
+         ++alphaIndex, pixelIndex += 4) {
+        pixels[pixelIndex] = alphaMask[alphaIndex];
+    }
+
+    SDL_Surface* surface = SDL_CreateSurfaceFrom(width, height, SDL_PIXELFORMAT_BGRA32, pixels.data(), rowBytes);
+    if (surface == nullptr) {
+        return nullptr;
+    }
+
+    SDL_Texture* texture = SDL_CreateTextureFromSurface(renderer, surface);
+    SDL_DestroySurface(surface);
+    if (texture == nullptr) {
+        return nullptr;
+    }
+
+    SDL_SetTextureBlendMode(texture, SDL_BLENDMODE_BLEND);
+    SDL_SetTextureScaleMode(texture, scaleMode);
+    return texture;
+}
+
 SDL_RendererLogicalPresentation toSdlLogicalPresentation(LogicalPresentationMode mode)
 {
     switch (mode) {
@@ -1330,14 +1365,15 @@ void Renderer::drawText(Vec2 pos, std::string_view text, Color color, int scale,
     const Camera* old = camera_;
     camera_ = nullptr;
     Vec2 cursor = pos;
+    const int fallbackScale = std::max(1, scale);
     for (char c : text) {
         if (c == '\n') {
             cursor.x = pos.x;
-            cursor.y += 9.0f * scale;
+            cursor.y += 9.0f * static_cast<float>(fallbackScale);
             continue;
         }
-        drawGlyph(c, cursor, color, scale);
-        cursor.x += 6.0f * scale;
+        drawGlyph(c, cursor, color, fallbackScale);
+        cursor.x += 6.0f * static_cast<float>(fallbackScale);
     }
     camera_ = old;
 }
@@ -1377,14 +1413,15 @@ Vec2 Renderer::measureText(std::string_view text, int scale, TextStyle style)
 
 Vec2 Renderer::measureText(std::string_view text, int scale, TextStyle style, TextFontRole fontRole)
 {
-    const std::string key = textMeasureCacheKey(text, std::max(1, scale), style, fontRole);
+    const int safeScale = std::max(1, scale);
+    const std::string key = textMeasureCacheKey(text, safeScale, style, fontRole);
     if (const auto it = textMeasureCache_.find(key); it != textMeasureCache_.end()) {
         return it->second;
     }
 
     Vec2 measured{};
 #ifdef _WIN32
-    if (measureNativeText(text, scale, style, fontRole, measured)) {
+    if (measureNativeText(text, safeScale, style, fontRole, measured)) {
         if (textMeasureCache_.size() > 2048) {
             textMeasureCache_.clear();
         }
@@ -1393,17 +1430,18 @@ Vec2 Renderer::measureText(std::string_view text, int scale, TextStyle style, Te
     }
 #endif
 
+    const int fallbackScale = safeScale;
     float width = 0.0f;
     float lineWidth = 0.0f;
-    float height = 9.0f * static_cast<float>(std::max(1, scale));
+    float height = 9.0f * static_cast<float>(fallbackScale);
     for (unsigned char c : text) {
         if (c == '\n') {
             width = std::max(width, lineWidth);
             lineWidth = 0.0f;
-            height += 9.0f * static_cast<float>(std::max(1, scale));
+            height += 9.0f * static_cast<float>(fallbackScale);
             continue;
         }
-        lineWidth += 6.0f * static_cast<float>(std::max(1, scale));
+        lineWidth += 6.0f * static_cast<float>(fallbackScale);
     }
     measured = {std::max(width, lineWidth), height};
     if (textMeasureCache_.size() > 2048) {
@@ -1493,14 +1531,15 @@ bool Renderer::drawNativeText(Vec2 pos, std::string_view text, Color color, int 
     const Color drawColor = transformColor(color);
     Color cacheColor = color;
     cacheColor.a = 255;
-    const std::string key = textCacheKey(text, cacheColor, std::max(1, scale), style, fontRole);
+    const int safeScale = std::max(1, scale);
+    const std::string key = textCacheKey(text, cacheColor, safeScale, style, fontRole);
     auto it = textCache_.find(key);
     if (it == textCache_.end()) {
         if (textCache_.size() > 2048) {
             clearTextCache();
         }
         TextTexture texture{};
-        if (!renderNativeTextToTexture(text, cacheColor, scale, style, fontRole, texture)) {
+        if (!renderNativeTextToTexture(text, cacheColor, safeScale, style, fontRole, texture)) {
             return false;
         }
         it = textCache_.emplace(key, texture).first;
@@ -1533,16 +1572,16 @@ bool Renderer::drawNativeOutlinedText(Vec2 pos, std::string_view text, Color col
         return false;
     }
 
-    const int normalizedScale = std::max(1, scale);
+    const int safeScale = std::max(1, scale);
     const int normalizedOutlinePx = std::max(0, outlinePx);
-    const std::string key = outlinedTextCacheKey(text, color, outline, normalizedOutlinePx, normalizedScale, style);
+    const std::string key = outlinedTextCacheKey(text, color, outline, normalizedOutlinePx, safeScale, style);
     auto it = textCache_.find(key);
     if (it == textCache_.end()) {
         if (textCache_.size() > 2048) {
             clearTextCache();
         }
         TextTexture texture{};
-        if (!renderNativeOutlinedTextToTexture(text, color, outline, normalizedScale, normalizedOutlinePx, style, texture)) {
+        if (!renderNativeOutlinedTextToTexture(text, color, outline, safeScale, normalizedOutlinePx, style, texture)) {
             return false;
         }
         it = textCache_.emplace(key, texture).first;
@@ -2009,6 +2048,10 @@ void Renderer::unloadSpriteSheet(SpriteSheet& sheet)
         SDL_DestroyTexture(sheet.texture);
         sheet.texture = nullptr;
     }
+    if (sheet.outlineTexture) {
+        SDL_DestroyTexture(sheet.outlineTexture);
+        sheet.outlineTexture = nullptr;
+    }
     sheet.columns = 0;
     sheet.rows = 0;
     sheet.frameWidth = 0;
@@ -2099,8 +2142,22 @@ bool Renderer::loadSpriteSheet(std::string_view path, int frameSize, int columns
     SDL_SetTextureBlendMode(texture, SDL_BLENDMODE_BLEND);
     SDL_SetTextureScaleMode(texture, SDL_SCALEMODE_NEAREST);
 
+    std::vector<unsigned char> alphaMask(static_cast<std::size_t>(width) * static_cast<std::size_t>(height));
+    for (std::size_t sourceIndex = 3, alphaIndex = 0;
+         sourceIndex < pixels.size() && alphaIndex < alphaMask.size();
+         sourceIndex += 4, ++alphaIndex) {
+        alphaMask[alphaIndex] = pixels[sourceIndex];
+    }
+    SDL_Texture* outlineTexture = createAlphaMaskTexture(
+        renderer_,
+        width,
+        height,
+        alphaMask,
+        SDL_SCALEMODE_NEAREST);
+
     unloadSpriteSheet(sheet);
     sheet.texture = texture;
+    sheet.outlineTexture = outlineTexture;
     sheet.frameWidth = frameWidth;
     sheet.frameHeight = frameHeight;
     sheet.columns = columns;
@@ -2309,29 +2366,15 @@ bool Renderer::ensureCachedImageOutlineReady(CachedImageEntry& entry)
         return false;
     }
 
-    const int width = texture.width;
-    const int height = texture.height;
-    const int rowBytes = width * 4;
-    std::vector<unsigned char> pixels(static_cast<std::size_t>(rowBytes) * static_cast<std::size_t>(height), 255);
-    for (std::size_t alphaIndex = 0, pixelIndex = 3;
-         alphaIndex < texture.alphaMask.size() && pixelIndex < pixels.size();
-         ++alphaIndex, pixelIndex += 4) {
-        pixels[pixelIndex] = texture.alphaMask[alphaIndex];
-    }
-
-    SDL_Surface* surface = SDL_CreateSurfaceFrom(width, height, SDL_PIXELFORMAT_BGRA32, pixels.data(), rowBytes);
-    if (surface == nullptr) {
-        return false;
-    }
-
-    SDL_Texture* outlineTexture = SDL_CreateTextureFromSurface(renderer_, surface);
-    SDL_DestroySurface(surface);
+    SDL_Texture* outlineTexture = createAlphaMaskTexture(
+        renderer_,
+        texture.width,
+        texture.height,
+        texture.alphaMask,
+        entry.filter == TextureFilter::Linear ? SDL_SCALEMODE_LINEAR : SDL_SCALEMODE_NEAREST);
     if (outlineTexture == nullptr) {
         return false;
     }
-
-    SDL_SetTextureBlendMode(outlineTexture, SDL_BLENDMODE_BLEND);
-    SDL_SetTextureScaleMode(outlineTexture, entry.filter == TextureFilter::Linear ? SDL_SCALEMODE_LINEAR : SDL_SCALEMODE_NEAREST);
 
     const std::size_t previousBytes = entry.approxBytes;
     texture.outlineTexture = outlineTexture;
@@ -3143,38 +3186,85 @@ void Renderer::drawHorizontalSliceRow(const GuidedTexture& texture, int row, Vec
     drawTextureRegion(texture.texture, cell(2), {pos.x + size.x - dstRightWidth, pos.y}, {dstRightWidth, size.y}, tint);
 }
 
-void Renderer::drawPlayerSprite(int index, Vec2 anchorPosition, float size, bool flipHorizontal, Color tint, Vec2 anchor, bool flipVertical)
+void Renderer::drawSpriteSheetFrame(
+    const SpriteSheet& sheet,
+    int index,
+    Vec2 anchorPosition,
+    Vec2 drawSize,
+    bool flipHorizontal,
+    bool flipVertical,
+    Color tint,
+    Vec2 anchor,
+    const ImageDrawOptions& options)
 {
-    if (!playerSheet_.texture || index < 0 || index >= playerSheet_.columns * playerSheet_.rows) {
+    if (!sheet.texture || index < 0 || index >= sheet.columns * sheet.rows) {
         return;
     }
-    if (size <= 0.0f) {
+    if (drawSize.x <= 0.0f || drawSize.y <= 0.0f) {
         return;
     }
 
-    const int sourceX = (index % playerSheet_.columns) * playerSheet_.frameWidth;
-    const int sourceY = (index / playerSheet_.columns) * playerSheet_.frameHeight;
+    const int sourceX = (index % sheet.columns) * sheet.frameWidth;
+    const int sourceY = (index / sheet.columns) * sheet.frameHeight;
     const SDL_FRect src{
         static_cast<float>(sourceX),
         static_cast<float>(sourceY),
-        static_cast<float>(playerSheet_.frameWidth),
-        static_cast<float>(playerSheet_.frameHeight)
+        static_cast<float>(sheet.frameWidth),
+        static_cast<float>(sheet.frameHeight)
     };
-    const Vec2 p = transform(anchorPosition - Vec2{size * anchor.x, size * anchor.y});
-    const Vec2 s = transformSize({size, size});
+    const Vec2 p = transform(anchorPosition - Vec2{drawSize.x * anchor.x, drawSize.y * anchor.y});
+    const Vec2 s = transformSize(drawSize);
     const SDL_FRect dst{p.x, p.y, s.x, s.y};
+    const SDL_FlipMode flipMode = imageFlipMode(flipHorizontal, flipVertical);
+
+    if (options.outlineEnabled && options.outlinePx > 0 && options.outlineColor.a > 0) {
+        SDL_Texture* outlineTexture = sheet.outlineTexture != nullptr ? sheet.outlineTexture : sheet.texture;
+        const Color outline = transformColor(options.outlineColor);
+        const int radiusPx = std::max(1, options.outlinePx);
+        SDL_SetTextureColorMod(outlineTexture, outline.r, outline.g, outline.b);
+        SDL_SetTextureAlphaMod(outlineTexture, outline.a);
+        for (int dy = -radiusPx; dy <= radiusPx; ++dy) {
+            for (int dx = -radiusPx; dx <= radiusPx; ++dx) {
+                if (dx == 0 && dy == 0) {
+                    continue;
+                }
+                if (dx * dx + dy * dy > radiusPx * radiusPx) {
+                    continue;
+                }
+                SDL_FRect outlineDst = dst;
+                outlineDst.x += static_cast<float>(dx);
+                outlineDst.y += static_cast<float>(dy);
+                SDL_RenderTextureRotated(renderer_, outlineTexture, &src, &outlineDst, 0.0, nullptr, flipMode);
+            }
+        }
+    }
 
     tint = transformColor(tint);
-    SDL_SetTextureColorMod(playerSheet_.texture, tint.r, tint.g, tint.b);
-    SDL_SetTextureAlphaMod(playerSheet_.texture, tint.a);
-    SDL_RenderTextureRotated(
-        renderer_,
-        playerSheet_.texture,
-        &src,
-        &dst,
-        0.0,
-        nullptr,
-        imageFlipMode(flipHorizontal, flipVertical));
+    SDL_SetTextureColorMod(sheet.texture, tint.r, tint.g, tint.b);
+    SDL_SetTextureAlphaMod(sheet.texture, tint.a);
+    SDL_RenderTextureRotated(renderer_, sheet.texture, &src, &dst, 0.0, nullptr, flipMode);
+}
+
+void Renderer::drawPlayerSprite(
+    int index,
+    Vec2 anchorPosition,
+    float size,
+    bool flipHorizontal,
+    Color tint,
+    Vec2 anchor,
+    bool flipVertical,
+    const ImageDrawOptions& options)
+{
+    drawSpriteSheetFrame(
+        playerSheet_,
+        index,
+        anchorPosition,
+        {size, size},
+        flipHorizontal,
+        flipVertical,
+        tint,
+        anchor,
+        options);
 }
 
 void Renderer::drawPlayerSpriteNaturalSize(
@@ -3184,7 +3274,8 @@ void Renderer::drawPlayerSpriteNaturalSize(
     bool flipHorizontal,
     Color tint,
     Vec2 anchor,
-    bool flipVertical)
+    bool flipVertical,
+    const ImageDrawOptions& options)
 {
     if (!playerSheet_.texture || index < 0 || index >= playerSheet_.columns * playerSheet_.rows) {
         return;
@@ -3195,33 +3286,20 @@ void Renderer::drawPlayerSpriteNaturalSize(
         return;
     }
 
-    const int sourceX = (index % playerSheet_.columns) * playerSheet_.frameWidth;
-    const int sourceY = (index / playerSheet_.columns) * playerSheet_.frameHeight;
-    const SDL_FRect src{
-        static_cast<float>(sourceX),
-        static_cast<float>(sourceY),
-        static_cast<float>(playerSheet_.frameWidth),
-        static_cast<float>(playerSheet_.frameHeight)
-    };
     const Vec2 drawSize{
         static_cast<float>(playerSheet_.frameWidth) * safeScale,
         static_cast<float>(playerSheet_.frameHeight) * safeScale
     };
-    const Vec2 p = transform(anchorPosition - Vec2{drawSize.x * anchor.x, drawSize.y * anchor.y});
-    const Vec2 s = transformSize(drawSize);
-    const SDL_FRect dst{p.x, p.y, s.x, s.y};
-
-    tint = transformColor(tint);
-    SDL_SetTextureColorMod(playerSheet_.texture, tint.r, tint.g, tint.b);
-    SDL_SetTextureAlphaMod(playerSheet_.texture, tint.a);
-    SDL_RenderTextureRotated(
-        renderer_,
-        playerSheet_.texture,
-        &src,
-        &dst,
-        0.0,
-        nullptr,
-        imageFlipMode(flipHorizontal, flipVertical));
+    drawSpriteSheetFrame(
+        playerSheet_,
+        index,
+        anchorPosition,
+        drawSize,
+        flipHorizontal,
+        flipVertical,
+        tint,
+        anchor,
+        options);
 }
 
 void Renderer::drawPlayerHandSpriteNaturalSize(
@@ -3231,7 +3309,8 @@ void Renderer::drawPlayerHandSpriteNaturalSize(
     bool flipHorizontal,
     Color tint,
     Vec2 anchor,
-    bool flipVertical)
+    bool flipVertical,
+    const ImageDrawOptions& options)
 {
     if (!playerHandSheet_.texture || index < 0 || index >= playerHandSheet_.columns * playerHandSheet_.rows) {
         return;
@@ -3242,33 +3321,20 @@ void Renderer::drawPlayerHandSpriteNaturalSize(
         return;
     }
 
-    const int sourceX = (index % playerHandSheet_.columns) * playerHandSheet_.frameWidth;
-    const int sourceY = (index / playerHandSheet_.columns) * playerHandSheet_.frameHeight;
-    const SDL_FRect src{
-        static_cast<float>(sourceX),
-        static_cast<float>(sourceY),
-        static_cast<float>(playerHandSheet_.frameWidth),
-        static_cast<float>(playerHandSheet_.frameHeight)
-    };
     const Vec2 drawSize{
         static_cast<float>(playerHandSheet_.frameWidth) * safeScale,
         static_cast<float>(playerHandSheet_.frameHeight) * safeScale
     };
-    const Vec2 p = transform(anchorPosition - Vec2{drawSize.x * anchor.x, drawSize.y * anchor.y});
-    const Vec2 s = transformSize(drawSize);
-    const SDL_FRect dst{p.x, p.y, s.x, s.y};
-
-    tint = transformColor(tint);
-    SDL_SetTextureColorMod(playerHandSheet_.texture, tint.r, tint.g, tint.b);
-    SDL_SetTextureAlphaMod(playerHandSheet_.texture, tint.a);
-    SDL_RenderTextureRotated(
-        renderer_,
-        playerHandSheet_.texture,
-        &src,
-        &dst,
-        0.0,
-        nullptr,
-        imageFlipMode(flipHorizontal, flipVertical));
+    drawSpriteSheetFrame(
+        playerHandSheet_,
+        index,
+        anchorPosition,
+        drawSize,
+        flipHorizontal,
+        flipVertical,
+        tint,
+        anchor,
+        options);
 }
 
 void Renderer::drawBaseMapTexture(Vec2 pos, Vec2 size, Color tint)

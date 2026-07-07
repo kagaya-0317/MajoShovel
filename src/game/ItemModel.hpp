@@ -4,11 +4,34 @@
 
 #include <array>
 #include <cstddef>
+#include <limits>
 #include <string>
 #include <string_view>
 #include <vector>
 
 namespace majo {
+
+constexpr int DurabilityUnitsPerPoint = 3;
+constexpr int TerrainHitDurabilityCostUnits = 1;
+constexpr int FullPointDurabilityCostUnits = DurabilityUnitsPerPoint;
+
+[[nodiscard]] constexpr int durabilityPointsToUnits(int durability)
+{
+    if (durability < 0) {
+        return durability;
+    }
+    return durability > std::numeric_limits<int>::max() / DurabilityUnitsPerPoint
+        ? std::numeric_limits<int>::max()
+        : durability * DurabilityUnitsPerPoint;
+}
+
+[[nodiscard]] constexpr int durabilityUnitsToDisplayPoints(int durabilityUnits)
+{
+    if (durabilityUnits < 0) {
+        return durabilityUnits;
+    }
+    return (durabilityUnits + DurabilityUnitsPerPoint - 1) / DurabilityUnitsPerPoint;
+}
 
 struct StackItem {
     std::string objectId;

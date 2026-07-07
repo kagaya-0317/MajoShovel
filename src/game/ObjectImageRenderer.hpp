@@ -3,6 +3,7 @@
 #include "data/ObjectCatalog.hpp"
 #include "engine/Math.hpp"
 #include "engine/Renderer.hpp"
+#include "game/ArtworkOutline.hpp"
 
 #include <string>
 #include <string_view>
@@ -17,9 +18,9 @@ struct ObjectImageDrawOptions {
     bool allowUpscale = false;
     float scaleMultiplier = 1.0f;
     bool applyScaleOverride = true;
-    bool outlineEnabled = true;
-    Color outlineColor{0, 0, 0, 255};
-    int outlinePx = 1;
+    bool outlineEnabled = ArtworkOutlineEnabled;
+    Color outlineColor{ArtworkOutlineColor};
+    int outlinePx = ArtworkOutlinePx;
     bool selectedOutlineEnabled = false;
     Color selectedOutlineColor{255, 230, 150, 255};
     int selectedOutlinePx = 6;

@@ -2,6 +2,7 @@
 
 #include "engine/Math.hpp"
 #include "engine/RendererTypes.hpp"
+#include "game/ArtworkOutline.hpp"
 
 #include <span>
 #include <string_view>
@@ -40,9 +41,9 @@ struct CharacterSpriteDrawOptions {
     Color tint{255, 255, 255, 255};
     bool flipHorizontal = false;
     bool flipVertical = false;
-    bool outlineEnabled = false;
-    Color outlineColor{255, 255, 255, 245};
-    int outlinePx = 1;
+    bool outlineEnabled = ArtworkOutlineEnabled;
+    Color outlineColor{ArtworkOutlineColor};
+    int outlinePx = ArtworkOutlinePx;
     TextureFilter filter = TextureFilter::Nearest;
 };
 

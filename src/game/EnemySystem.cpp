@@ -43,7 +43,6 @@ constexpr float SpawnAvoidancePadding = 5.0f;
 constexpr std::string_view AudioSeEnemySpawn = "se.enemy.spawn";
 constexpr float PlayerPushShare = 0.35f;
 constexpr float EnemyPushShare = 0.65f;
-constexpr float RingEnemyHitCooldownSeconds = 0.12f;
 constexpr float BossRadiusMultiplier = 1.0f;
 constexpr float BossVisualRadiusMultiplier = 1.35f;
 constexpr double BossNormalIncomingDamageMultiplier = 0.75;
@@ -186,6 +185,67 @@ constexpr float CapturedExplosionRadius = 44.0f;
 std::string enemyDisplayName(const Enemy& enemy)
 {
     return enemy.enemyName.empty() ? std::string(DefaultEnemyName) : enemy.enemyName;
+}
+
+const char* debugYesNo(bool value)
+{
+    return value ? "Y" : "N";
+}
+
+const char* debugAwarenessName(EnemyAwarenessState state)
+{
+    switch (state) {
+    case EnemyAwarenessState::Unaware:
+        return "unaware";
+    case EnemyAwarenessState::Detected:
+        return "detected";
+    }
+    return "?";
+}
+
+std::string_view nonEmptyOr(const std::string& value, std::string_view fallback)
+{
+    return value.empty() ? fallback : std::string_view(value.data(), value.size());
+}
+
+std::string_view currentEnemyAiIdForDebug(const Enemy& enemy)
+{
+    return enemy.awareness == EnemyAwarenessState::Detected
+        ? nonEmptyOr(enemy.aiId, "chase")
+        : nonEmptyOr(enemy.unawareAiId, "idle");
+}
+
+std::string_view activeEnemyActionNameForDebug(const Enemy& enemy)
+{
+    if (!enemy.action.active) {
+        return "-";
+    }
+    if (!enemy.action.behaviorId.empty()) {
+        return std::string_view(enemy.action.behaviorId.data(), enemy.action.behaviorId.size());
+    }
+    if (!enemy.action.animationId.empty()) {
+        return std::string_view(enemy.action.animationId.data(), enemy.action.animationId.size());
+    }
+    return "active";
+}
+
+float wrapDebugDegrees(float degrees)
+{
+    if (!std::isfinite(degrees)) {
+        return 0.0f;
+    }
+    degrees = std::fmod(degrees, 360.0f);
+    if (degrees > 180.0f) {
+        degrees -= 360.0f;
+    } else if (degrees <= -180.0f) {
+        degrees += 360.0f;
+    }
+    return degrees;
+}
+
+int roundedDebugFloat(float value)
+{
+    return static_cast<int>(std::round(std::isfinite(value) ? value : 0.0f));
 }
 constexpr int CapturedExplosionDamage = 3;
 constexpr float CapturedExplosionTerrainRadius = 28.0f;
@@ -1243,17 +1303,6 @@ bool enemyScreenSleepEligible(const Enemy& enemy)
         !enemy.death.active &&
         !enemy.dungeonEventBoss &&
         enemy.dungeonEventId.empty();
-}
-
-void unlatchEnemyFromSpellRing(SpellRingSystem& spellRing, int enemyRuntimeId)
-{
-    std::vector<SpellRingItem*> runtimeItems = spellRing.runtimeItemsMutable();
-    for (SpellRingItem* itemPtr : runtimeItems) {
-        if (itemPtr == nullptr) {
-            continue;
-        }
-        itemPtr->unlatchEnemy(enemyRuntimeId);
-    }
 }
 
 bool enemyCanBeHit(const Enemy& enemy)
@@ -7945,7 +7994,6 @@ int EnemySystem::syncScreenDormantEnemies(const CollisionRect& activeBounds, Spe
             continue;
         }
 
-        unlatchEnemyFromSpellRing(spellRing, enemy.id);
         dormantEnemies_.push_back(enemy);
         enemy = Enemy{};
         ++changed;
@@ -8802,9 +8850,6 @@ void EnemySystem::update(
     const auto processEnemyDeath = [&](Enemy& enemy, std::optional<Vec2> hitOrigin = std::nullopt, bool suppressRewards = false) {
         beginEnemyDeath(enemy, spellRing, hitOrigin, suppressRewards);
     };
-    const auto unlatchEnemyFromRing = [&](int enemyId) {
-        unlatchEnemyFromSpellRing(spellRing, enemyId);
-    };
     const auto sleepingEnemyWakeTriggered = [&](const Enemy& enemy) {
         if (enemyHitboxOverlapsPlayer(enemy, hitboxCatalog_, player, balance, enemyVisualOffset(enemy, placementCatalog_))) {
             return true;
@@ -8935,7 +8980,6 @@ void EnemySystem::update(
             enemy.bleedDamageAccumulator = 0.0;
         }
         enemy.hitFlash = std::max(0.0f, enemy.hitFlash - dt);
-        enemy.ringHitCooldown = std::max(0.0f, enemy.ringHitCooldown - dt);
         enemy.hpBarTimer = std::max(0.0f, enemy.hpBarTimer - dt);
         if (enemy.spawnTimer > 0.0f) {
             clearEnemyAction(enemy);
@@ -9037,7 +9081,6 @@ void EnemySystem::update(
             continue;
         }
         if (enemy.bossAction.hidden) {
-            unlatchEnemyFromRing(enemy.id);
             continue;
         }
         if (enemy.bossAction.phase == BossActionPhase::Submerge ||
@@ -9717,7 +9760,6 @@ void EnemySystem::update(
         }
 
         if (!enemyCanBeHit(enemy)) {
-            unlatchEnemyFromRing(enemy.id);
             continue;
         }
         std::vector<SpellRingItem*> runtimeItems = spellRing.runtimeItemsMutable();
@@ -9752,7 +9794,7 @@ void EnemySystem::update(
                 enemyHitInterval = std::max(0.05f, inspectEnemySpec.retryInterval);
             }
             if (!specialContactEffect &&
-                totalTime - item.lastEnemyHitTime >= enemyHitInterval &&
+                item.enemyHitReady(enemy.id, totalTime, enemyHitInterval) &&
                 tryHitAstragnaBossComponent(
                     enemy,
                     item,
@@ -9762,11 +9804,11 @@ void EnemySystem::update(
                     spellRing,
                     events_,
                     impactSoundEvents_)) {
-                item.lastEnemyHitTime = totalTime;
+                item.recordEnemyHit(enemy.id, totalTime);
                 continue;
             }
             if (!specialContactEffect &&
-                totalTime - item.lastEnemyHitTime >= enemyHitInterval &&
+                item.enemyHitReady(enemy.id, totalTime, enemyHitInterval) &&
                 tryHitJunkCrabDebris(
                     enemy,
                     item,
@@ -9776,32 +9818,20 @@ void EnemySystem::update(
                     events_,
                     impactSoundEvents_,
                     placementCatalog_)) {
-                item.lastEnemyHitTime = totalTime;
+                item.recordEnemyHit(enemy.id, totalTime);
                 continue;
             }
             if (isAstragnaBossAction(enemy)) {
                 continue;
             }
             const bool overlappingItem = ringItemHitboxOverlapsEnemy(enemy, hitboxCatalog_, item, itemHitbox, enemyVisualOffset(enemy, placementCatalog_));
-            if (item.type == SpellRingItemType::Shovel && !overlappingItem) {
-                item.unlatchEnemy(enemy.id);
-                continue;
-            }
             if (!overlappingItem) {
                 continue;
             }
-            if (!specialContactEffect && enemy.ringHitCooldown > 0.0f) {
+            if (!item.enemyHitReady(enemy.id, totalTime, enemyHitInterval)) {
                 continue;
             }
-            if (item.type == SpellRingItemType::Shovel) {
-                if (item.isEnemyLatched(enemy.id)) {
-                    continue;
-                }
-                item.latchEnemy(enemy.id);
-            } else if (totalTime - item.lastEnemyHitTime < enemyHitInterval) {
-                continue;
-            }
-            item.lastEnemyHitTime = totalTime;
+            item.recordEnemyHit(enemy.id, totalTime);
             if (captureNetSpec.active) {
                 impactSoundEvents_.push_back(makeEnemyRingImpactSoundEvent(
                     item,
@@ -9927,7 +9957,6 @@ void EnemySystem::update(
                 enemy.position,
                 static_cast<float>(std::max(0, damageDealt))));
             applyEnemyDamageTyped(enemy, damageDealt, contactDamageType);
-            enemy.ringHitCooldown = RingEnemyHitCooldownSeconds;
             revealEnemyHpBar(enemy, damageDealt);
             addJunkCrabToppleMeter(
                 enemy,
@@ -10723,13 +10752,6 @@ void EnemySystem::beginEnemyDeath(
         enemy.death.knockbackTimer = EnemyDeathKnockbackSeconds;
     }
 
-    std::vector<SpellRingItem*> runtimeItems = spellRing.runtimeItemsMutable();
-    for (SpellRingItem* itemPtr : runtimeItems) {
-        if (itemPtr == nullptr) {
-            continue;
-        }
-        itemPtr->unlatchEnemy(enemy.id);
-    }
 }
 
 void EnemySystem::updateEnemyDeath(Enemy& enemy, TileMap& map, SpellRingSystem& spellRing, float dt)
@@ -10784,7 +10806,6 @@ void EnemySystem::finishEnemyDeath(Enemy& enemy, SpellRingSystem& spellRing)
         deathEvent.moneyDrop = 0;
     }
     events_.push_back(std::move(deathEvent));
-    unlatchEnemyFromSpellRing(spellRing, enemy.id);
     enemy.death = {};
     enemy.active = false;
 }
@@ -11372,7 +11393,7 @@ void EnemySystem::clearTemporaryState()
     }
 }
 
-std::string EnemySystem::debugEnemySummary() const
+std::string EnemySystem::debugEnemySummary(Vec2 playerPosition) const
 {
     std::ostringstream out;
     int shown = 0;
@@ -11383,15 +11404,69 @@ std::string EnemySystem::debugEnemySummary() const
         if (shown > 0) {
             out << "\n";
         }
+        const EnemyImageDrawOptions drawOptions = enemyImageOptionsFor(enemy);
+        const EnemyImageDebugInfo drawDebug = enemyImageDebugInfo(enemy, enemy.behaviorTimer, drawOptions);
+        const Vec2 toPlayer = playerPosition - enemy.position;
+        const float distanceToPlayer = length(toPlayer);
+        EnemyImageDebugInfo toPlayerDebug;
+        if (distanceToPlayer > 0.001f) {
+            EnemyImageDrawOptions toPlayerOptions = drawOptions;
+            toPlayerOptions.directionOverrideEnabled = true;
+            toPlayerOptions.directionOverride = toPlayer;
+            toPlayerDebug = enemyImageDebugInfo(enemy, enemy.behaviorTimer, toPlayerOptions);
+        }
+        const float speed = length(enemy.velocity);
+        EnemyImageDebugInfo velocityDebug;
+        if (speed > 0.001f) {
+            EnemyImageDrawOptions velocityOptions = drawOptions;
+            velocityOptions.directionOverrideEnabled = true;
+            velocityOptions.directionOverride = enemy.velocity;
+            velocityDebug = enemyImageDebugInfo(enemy, enemy.behaviorTimer, velocityOptions);
+        }
+        const bool actionLocksFacing = enemy.action.active && enemy.action.lockFacing;
+        const char* runtimeState = "normal";
+        if (enemy.death.active) {
+            runtimeState = "death";
+        } else if (enemy.spawnTimer > 0.0f) {
+            runtimeState = "spawn";
+        } else if (enemy.knockbackTimer > 0.0f) {
+            runtimeState = "knock";
+        } else if (enemy.jumpActive) {
+            runtimeState = "jump";
+        }
+        const Vec2 debugFacingVector = drawDebug.valid ? drawDebug.facingVector : facingVector(enemy.facingAngle);
+        const float debugFacingDegrees = drawDebug.valid
+            ? drawDebug.facingAngleDegrees
+            : enemy.facingAngle * (180.0f / Pi);
+        const float faceToPlayerDiff = distanceToPlayer > 0.001f
+            ? angleBetweenDegrees(debugFacingVector, toPlayer)
+            : 0.0f;
+
         out << (enemy.enemyName.empty() ? enemy.enemyId : enemy.enemyName)
             << " id=" << enemy.enemyId
             << " hp=" << enemy.hp << "/" << enemy.maxHp
-            << " r=" << enemy.radius
-            << " ai=" << enemy.aiId
-            << " unaware_ai=" << enemy.unawareAiId
-            << " enemy_code=" << (enemy.definition != nullptr ? enemy.definition->enemyBehaviorCode : std::string{})
-            << " captured_code=" << (enemy.definition != nullptr ? enemy.definition->capturedBehaviorCode : std::string{})
-            << " behavior=" << enemy.behaviorId;
+            << " aware=" << debugAwarenessName(enemy.awareness)
+            << " ai=" << currentEnemyAiIdForDebug(enemy)
+            << " state=" << runtimeState
+            << " act=" << activeEnemyActionNameForDebug(enemy)
+            << " lockF=" << debugYesNo(actionLocksFacing);
+        if (drawDebug.valid) {
+            out << "\n  draw=" << drawDebug.directionName
+                << " row=" << drawDebug.frameRow << "/" << drawDebug.sheetRows
+                << " col=" << drawDebug.frameColumn << "/" << drawDebug.sheetColumns
+                << " src=" << drawDebug.directionSource
+                << " motion=" << drawDebug.motionName
+                << " ov=" << debugYesNo(drawDebug.directionOverrideEnabled);
+        } else {
+            out << "\n  draw=invalid";
+        }
+        out << " face=" << roundedDebugFloat(wrapDebugDegrees(debugFacingDegrees))
+            << "(" << (drawDebug.valid ? drawDebug.facingDirectionName : "?") << ")"
+            << " toP=" << (toPlayerDebug.valid ? toPlayerDebug.directionName : "-")
+            << " d=" << roundedDebugFloat(distanceToPlayer)
+            << " diff=" << roundedDebugFloat(faceToPlayerDiff)
+            << " vel=" << (velocityDebug.valid ? velocityDebug.directionName : "-")
+            << " spd=" << roundedDebugFloat(speed);
         ++shown;
         if (shown >= 4) {
             break;
@@ -11639,7 +11714,6 @@ CaptureResult EnemySystem::tryCaptureTarget(
     if (best->isBoss) {
         finishEnemyDeath(*best, spellRing);
     } else {
-        unlatchEnemyFromSpellRing(spellRing, best->id);
         best->active = false;
     }
     result.type = CaptureResultType::Success;

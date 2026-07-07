@@ -1699,12 +1699,17 @@ private:
     float astralHardnessMultiplier() const;
     RuntimeBalance runtimeBalanceForDungeon() const;
     bool astralRunActive() const;
+    bool spawnRewardNodeWorldDrop(
+        const RewardNode& node,
+        Vec2 center,
+        std::string_view sourceLabel,
+        bool allowGeneratedRewardLoot);
     void initializeRewardNodesFromLayout();
     void updateExposedRewardNodes();
     void revealRewardNodesFromOpenedTiles(const std::vector<Vec2>& openedTiles);
     void updateExposedMoonFragmentNodes();
     void revealMoonFragmentNodesFromOpenedTiles(const std::vector<Vec2>& openedTiles);
-    void materializeExposedPlacementDrops();
+    void materializeExposedPlacementDrops(bool allowGeneratedRewardLoot);
     void normalizeOpenBuriedPlacementNodes();
     void initializeChestNodesFromLayout();
     void updateChestNodes(float dt, const Input& input);

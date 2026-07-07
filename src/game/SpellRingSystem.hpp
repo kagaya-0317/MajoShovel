@@ -33,6 +33,7 @@ enum class RingMotionEventKind {
 };
 
 constexpr int SpellRingCount = 3;
+constexpr int SpellRingFluidNodeCount = 64;
 
 struct RingWorkshopModifiers {
     float throwDistanceMultiplier = 1.0f;
@@ -46,6 +47,16 @@ struct RingMotionEvent {
     int ringIndex = 0;
     Vec2 position{};
     Vec2 direction{1.0f, 0.0f};
+};
+
+struct SpellRingFluidVisual {
+    Vec2 direction{1.0f, 0.0f};
+    float shiftAmount = 0.0f;
+    float motionAmount = 0.0f;
+    float idleAmount = 0.0f;
+    float releaseAmount = 0.0f;
+    std::array<float, SpellRingFluidNodeCount> radialOffsets{};
+    std::array<float, SpellRingFluidNodeCount> tangentOffsets{};
 };
 
 RingShape defaultRingShapeForIndex(int ringIndex);
@@ -192,7 +203,7 @@ public:
         int maxEnhanceLevel,
         const ObjectCatalog& catalog);
     bool canAddItem() const;
-    bool consumeItemDurability(SpellRingItem& item, int amount = 1);
+    bool consumeItemDurability(SpellRingItem& item, int durabilityUnits = FullPointDurabilityCostUnits);
     std::vector<RingItemBreakEvent> consumeItemBreakEvents();
     bool canAddItem(const SpellRingItem& item) const;
     bool canAddItemForRing(int ringIndex) const;
@@ -280,6 +291,8 @@ public:
     int applyDirectionalWind(Vec2 center, Vec2 direction, float dt, float radius, float strength);
     float cooldownRatio(const RuntimeBalance& balance) const;
     float cooldownRatioForRing(int ringIndex, const RuntimeBalance& balance) const;
+    SpellRingFluidVisual fluidVisualForRing(int ringIndex) const;
+    std::vector<Vec2> visualPathSamplePointsForRing(int ringIndex, const RuntimeBalance& balance, int sampleCount = 96) const;
     std::vector<RingMotionEvent> consumeMotionEvents();
 
 private:
@@ -305,6 +318,29 @@ private:
         SpellRingState state = SpellRingState::Normal;
     };
 
+    struct RingFluidPresentationState {
+        Vec2 direction{1.0f, 0.0f};
+        Vec2 motionDirection{1.0f, 0.0f};
+        Vec2 shiftDirection{1.0f, 0.0f};
+        Vec2 releaseDirection{1.0f, 0.0f};
+        Vec2 previousMotionDriver{};
+        Vec2 previousShiftDriver{};
+        float shiftAmount = 0.0f;
+        float motionAmount = 0.0f;
+        float idleAmount = 0.0f;
+        float releaseAmount = 0.0f;
+        float flowPhase = 0.0f;
+        float previousTargetShiftAmount = 0.0f;
+        float previousTargetMotionAmount = 0.0f;
+        bool orbitPointsInitialized = false;
+        std::array<Vec2, SpellRingFluidNodeCount> orbitPoints{};
+        std::array<Vec2, SpellRingFluidNodeCount> orbitVelocities{};
+        std::array<float, SpellRingFluidNodeCount> radialOffsets{};
+        std::array<float, SpellRingFluidNodeCount> radialVelocities{};
+        std::array<float, SpellRingFluidNodeCount> tangentOffsets{};
+        std::array<float, SpellRingFluidNodeCount> tangentVelocities{};
+    };
+
     std::array<std::vector<SpellRingItem>, SpellRingCount> itemsByRing_{};
     std::array<RingShape, SpellRingCount> ringShapes_{
         RingShape::Circle,
@@ -312,6 +348,7 @@ private:
         RingShape::Comet,
     };
     std::array<RingRuntimeState, SpellRingCount> ringRuntime_{};
+    std::array<RingFluidPresentationState, SpellRingCount> ringFluidPresentation_{};
     std::array<float, SpellRingCount> radii_{{
         54.0f,
         54.0f,
@@ -346,6 +383,8 @@ private:
     void updateActionFlashTimers(float dt);
     void updateThrowVisualEnergyTimers(float dt);
     void updateThrowCooldowns(float dt);
+    void updateFluidPresentation(const Player& player, float dt, const RuntimeBalance& balance, bool ringShiftAllowed);
+    void updateFluidOrbitPoints(float dt, const RuntimeBalance& balance);
     void advanceOrbitAngles(float dt, const RuntimeBalance& balance);
     void refreshItemWorldPositions(float dt, const RuntimeBalance& balance, bool advanceCapturedBehaviors);
     bool activeRingThrowReady() const;

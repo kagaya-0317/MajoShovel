@@ -55,6 +55,38 @@ constexpr float RingWindVelocityDamping = 8.5f;
 constexpr float RingWindReturnRate = 7.0f;
 constexpr float RingWindMaxOffset = 92.0f;
 constexpr float RingWindMaxVelocity = 260.0f;
+constexpr float RingFluidItemPositionInfluence = 0.5f;
+
+struct SpellRingFluidNodeBasis {
+    Vec2 outward{};
+    Vec2 tangent{};
+    std::size_t prev = 0;
+    std::size_t next = 0;
+    float closedT01 = 0.0f;
+    float openT01 = 0.0f;
+};
+
+const std::array<SpellRingFluidNodeBasis, SpellRingFluidNodeCount>& spellRingFluidNodeBasisTable()
+{
+    static const std::array<SpellRingFluidNodeBasis, SpellRingFluidNodeCount> table = [] {
+        std::array<SpellRingFluidNodeBasis, SpellRingFluidNodeCount> result{};
+        for (int nodeIndex = 0; nodeIndex < SpellRingFluidNodeCount; ++nodeIndex) {
+            const std::size_t index = static_cast<std::size_t>(nodeIndex);
+            const float closedT01 = static_cast<float>(nodeIndex) / static_cast<float>(SpellRingFluidNodeCount);
+            const Vec2 outward = fromAngle(closedT01 * FullCircleRadians);
+            result[index] = SpellRingFluidNodeBasis{
+                outward,
+                Vec2{-outward.y, outward.x},
+                static_cast<std::size_t>((nodeIndex + SpellRingFluidNodeCount - 1) % SpellRingFluidNodeCount),
+                static_cast<std::size_t>((nodeIndex + 1) % SpellRingFluidNodeCount),
+                closedT01,
+                static_cast<float>(nodeIndex) / static_cast<float>(SpellRingFluidNodeCount - 1),
+            };
+        }
+        return result;
+    }();
+    return table;
+}
 
 float smoothStep01(float t)
 {
@@ -123,6 +155,152 @@ Vec2 safeNormalize(Vec2 value, Vec2 fallback = {1.0f, 0.0f})
         return fallback;
     }
     return normalize(value);
+}
+
+float approachExp(float current, float target, float riseResponse, float fallResponse, float dt)
+{
+    const float response = target >= current ? riseResponse : fallResponse;
+    return lerp(current, target, 1.0f - std::exp(-std::max(0.0f, response) * std::max(0.0f, dt)));
+}
+
+Vec2 approachDirectionExp(Vec2 current, Vec2 target, float response, float dt)
+{
+    const Vec2 fallback = safeNormalize(target, {1.0f, 0.0f});
+    const Vec2 from = safeNormalize(current, fallback);
+    const Vec2 to = safeNormalize(target, fallback);
+    return safeNormalize(lerp(from, to, 1.0f - std::exp(-std::max(0.0f, response) * std::max(0.0f, dt))), to);
+}
+
+float fluidIdleTarget(bool activeRing, bool hasRingItems)
+{
+    if (hasRingItems) {
+        return activeRing ? 0.22f : 0.12f;
+    }
+    return activeRing ? 0.10f : 0.06f;
+}
+
+float playerRingShiftVisualLimit(const Player& player, const RuntimeBalance& balance)
+{
+    const float rawLimit =
+        (balance.spellRingShiftDistance + player.spellRingShiftDistanceBonus) *
+        clamp(player.spellRingShiftDistanceMultiplier, 0.25f, 3.0f);
+    return std::max(1.0f, rawLimit);
+}
+
+float playerMotionFluidTarget(const Player& player, const RuntimeBalance& balance)
+{
+    const float speed = length(player.velocity);
+    return clamp(
+        (speed - balance.playerSpeed * 0.08f) / std::max(1.0f, balance.playerSpeed * 0.92f),
+        0.0f,
+        1.0f);
+}
+
+float hemisphereFluidDriveWeightForUnitDirection(Vec2 nodeOutward, Vec2 unitDriveDirection, float driveExponent)
+{
+    const float forwardAmount = dotVec2(nodeOutward, unitDriveDirection);
+    if (forwardAmount <= 0.0f) {
+        return 0.0f;
+    }
+
+    return std::pow(forwardAmount, driveExponent);
+}
+
+Vec2 fluidDriverDirection(Vec2 currentDriver, Vec2 previousDriver, Vec2 fallback)
+{
+    if (lengthSquared(currentDriver) > 0.0001f) {
+        return safeNormalize(currentDriver, fallback);
+    }
+    if (lengthSquared(previousDriver) > 0.0001f) {
+        return safeNormalize(previousDriver, fallback);
+    }
+    return safeNormalize(fallback);
+}
+
+float sampleParamForShape(RingShape shape, float t01, const RingOrbitTuning& tuning);
+
+std::array<Vec2, SpellRingFluidNodeCount> sampleFluidOrbitTargets(
+    Vec2 center,
+    const RingOrbitContext& context)
+{
+    std::array<Vec2, SpellRingFluidNodeCount> points{};
+    const bool closed = context.shape != RingShape::Comet;
+    const auto& basis = spellRingFluidNodeBasisTable();
+    if (context.shape == RingShape::Circle) {
+        for (int nodeIndex = 0; nodeIndex < SpellRingFluidNodeCount; ++nodeIndex) {
+            const std::size_t index = static_cast<std::size_t>(nodeIndex);
+            points[index] = center + basis[index].outward * context.radius;
+        }
+        return points;
+    }
+
+    for (int nodeIndex = 0; nodeIndex < SpellRingFluidNodeCount; ++nodeIndex) {
+        const std::size_t index = static_cast<std::size_t>(nodeIndex);
+        const float t01 = closed ? basis[index].closedT01 : basis[index].openT01;
+        const float param = sampleParamForShape(context.shape, t01, context.tuning);
+        points[index] = getRingItemWorldPosition(center, param, context);
+    }
+    return points;
+}
+
+Vec2 catmullRomVec2(Vec2 p0, Vec2 p1, Vec2 p2, Vec2 p3, float t)
+{
+    const float t2 = t * t;
+    const float t3 = t2 * t;
+    return (p1 * 2.0f +
+        (p2 - p0) * t +
+        (p0 * 2.0f - p1 * 5.0f + p2 * 4.0f - p3) * t2 +
+        (p0 * -1.0f + p1 * 3.0f - p2 * 3.0f + p3) * t3) * 0.5f;
+}
+
+Vec2 catmullRomVec2Derivative(Vec2 p0, Vec2 p1, Vec2 p2, Vec2 p3, float t)
+{
+    const float t2 = t * t;
+    return ((p2 - p0) +
+        (p0 * 2.0f - p1 * 5.0f + p2 * 4.0f - p3) * (2.0f * t) +
+        (p0 * -1.0f + p1 * 3.0f - p2 * 3.0f + p3) * (3.0f * t2)) * 0.5f;
+}
+
+std::size_t fluidOrbitNodeIndex(int index, bool wrap)
+{
+    if (wrap) {
+        index %= SpellRingFluidNodeCount;
+        if (index < 0) {
+            index += SpellRingFluidNodeCount;
+        }
+        return static_cast<std::size_t>(index);
+    }
+    return static_cast<std::size_t>(std::clamp(index, 0, SpellRingFluidNodeCount - 1));
+}
+
+Vec2 fluidOrbitPointAt(const std::array<Vec2, SpellRingFluidNodeCount>& points, float t01, bool wrap)
+{
+    const float scaled = wrap
+        ? wrap01(t01) * static_cast<float>(SpellRingFluidNodeCount)
+        : clamp(t01, 0.0f, 1.0f) * static_cast<float>(SpellRingFluidNodeCount - 1);
+    const int baseIndex = static_cast<int>(std::floor(scaled));
+    const float localT = scaled - static_cast<float>(baseIndex);
+    return catmullRomVec2(
+        points[fluidOrbitNodeIndex(baseIndex - 1, wrap)],
+        points[fluidOrbitNodeIndex(baseIndex, wrap)],
+        points[fluidOrbitNodeIndex(baseIndex + 1, wrap)],
+        points[fluidOrbitNodeIndex(baseIndex + 2, wrap)],
+        localT);
+}
+
+Vec2 fluidOrbitTangentAt(const std::array<Vec2, SpellRingFluidNodeCount>& points, float t01, bool wrap)
+{
+    const float scaled = wrap
+        ? wrap01(t01) * static_cast<float>(SpellRingFluidNodeCount)
+        : clamp(t01, 0.0f, 1.0f) * static_cast<float>(SpellRingFluidNodeCount - 1);
+    const int baseIndex = static_cast<int>(std::floor(scaled));
+    const float localT = scaled - static_cast<float>(baseIndex);
+    return safeNormalize(catmullRomVec2Derivative(
+        points[fluidOrbitNodeIndex(baseIndex - 1, wrap)],
+        points[fluidOrbitNodeIndex(baseIndex, wrap)],
+        points[fluidOrbitNodeIndex(baseIndex + 1, wrap)],
+        points[fluidOrbitNodeIndex(baseIndex + 2, wrap)],
+        localT));
 }
 
 double finiteEquipmentMultiplier(double value)
@@ -281,7 +459,9 @@ void applyObjectDefinition(SpellRingItem& item, const ItemData& object)
     item.damage = object.attackPower + item.attackBonus;
     item.damageType = object.damageType.empty() ? "none" : object.damageType;
     item.digPower = object.digPower + item.digBonus;
-    item.maxDurability = object.durability < 0 ? object.durability : object.durability + item.durabilityBonus;
+    item.maxDurability = object.durability < 0
+        ? object.durability
+        : durabilityPointsToUnits(std::max(0, object.durability + item.durabilityBonus));
     item.durability = previousDurability >= 0 ? std::min(previousDurability, std::max(0, item.maxDurability)) : item.maxDurability;
     item.weight = static_cast<float>(std::max(0.0, object.weightKg * item.weightModifier));
     const SpellRingItem baseItem = makeSpellRingItem(item.type);
@@ -311,7 +491,7 @@ void applyItemInstance(SpellRingItem& item, const ItemInstance& instance)
     item.protectionEnabled = instance.protectionEnabled;
     item.addedEffects = instance.addedEffects;
     item.addedTags = instance.addedTags;
-    item.maxDurability = instance.maxDurability < 0 ? instance.maxDurability : instance.maxDurability + instance.durabilityBonus;
+    item.maxDurability = instance.maxDurability;
     item.durability = instance.currentDurability;
     item.isBroken = instance.isBroken || item.durability == 0;
 }
@@ -1176,6 +1356,7 @@ void SpellRingSystem::initialize(const RuntimeBalance& balance)
     baseAngles_.fill(0.0f);
     shapeRotations_.fill(0.0f);
     ringRuntime_ = {};
+    ringFluidPresentation_ = {};
     orbitModifiers_ = OrbitModifiers{};
     equipmentModifiers_ = EquipmentModifiers{};
     workshopModifiersByRing_.fill(RingWorkshopModifiers{});
@@ -1298,11 +1479,19 @@ void SpellRingSystem::refreshItemWorldPositions(float dt, const RuntimeBalance& 
         const Vec2 centerVelocity = safeDt > 0.0f ? (runtime.center - runtime.previousCenter) / safeDt : Vec2{};
         std::vector<SpellRingItem>& ringItems = itemsByRing_[static_cast<std::size_t>(ringIndex)];
         const RingShape ringShape = ringShapeForIndex(ringIndex);
+        const RingFluidPresentationState& visual = ringFluidPresentation_[static_cast<std::size_t>(ringIndex)];
+        const bool useFluidItemPosition =
+            runtime.state == SpellRingState::Normal && visual.orbitPointsInitialized;
+        const bool fluidItemWrap = ringShape != RingShape::Comet;
+        const RingOrbitContext fluidLineContext = useFluidItemPosition
+            ? makeOrbitContextForRing(ringIndex, 0, 1, 1.0f, balance)
+            : RingOrbitContext{};
         const float ringAngularSpeed = ringAngularSpeedForIndex(ringIndex, balance);
         const float shapeRotationSpeed = ringShape == RingShape::FigureEight
             ? std::max(0.0f, tuning.figure8ShapeRotationSpeed)
             : (ringShape == RingShape::Comet ? ringAngularSpeed : 0.0f);
         const int ringItemCount = static_cast<int>(ringItems.size());
+        const float ringRadiusForSpeed = std::max(1.0f, radiusForRing(ringIndex));
         for (int itemIndex = 0; itemIndex < ringItemCount; ++itemIndex) {
             SpellRingItem& item = ringItems[static_cast<std::size_t>(itemIndex)];
             item.ringIndex = ringIndex;
@@ -1335,34 +1524,59 @@ void SpellRingSystem::refreshItemWorldPositions(float dt, const RuntimeBalance& 
             Vec2 damageVelocity{};
             if (runtime.state == SpellRingState::Normal) {
                 const Vec2 localPosition = getRingItemLocalPosition(param, context);
-                item.orbitOutward = safeNormalize(localPosition, fromAngle(param));
-                item.orbitTangent = safeNormalize(
+                const Vec2 idealOutward = safeNormalize(localPosition, fromAngle(param));
+                const Vec2 idealTangent = safeNormalize(
                     getRingItemVelocity(
                         param,
                         ringShape == RingShape::Comet ? 0.0f : ringAngularSpeed,
                         shapeRotationSpeed,
                         {},
                         context),
-                    {-item.orbitOutward.y, item.orbitOutward.x});
-                item.worldPosition = getRingItemWorldPositionWithDistanceOffset(
+                    {-idealOutward.y, idealOutward.x});
+                const Vec2 idealWorldPosition = getRingItemWorldPositionWithDistanceOffset(
                     runtime.center,
                     param,
                     context,
                     item.orbitDistanceOffset);
-                damageVelocity = getRingItemVelocityWithDistanceOffset(
+                const Vec2 idealDamageVelocity = getRingItemVelocityWithDistanceOffset(
                     param,
                     ringShape == RingShape::Comet ? 0.0f : ringAngularSpeed,
                     shapeRotationSpeed,
                     {},
                     context,
                     item.orbitDistanceOffset);
-                item.worldVelocity = getRingItemVelocityWithDistanceOffset(
+                const Vec2 idealWorldVelocity = getRingItemVelocityWithDistanceOffset(
                     param,
                     ringShape == RingShape::Comet ? 0.0f : ringAngularSpeed,
                     shapeRotationSpeed,
                     centerVelocity,
                     context,
                     item.orbitDistanceOffset);
+                item.orbitOutward = idealOutward;
+                item.orbitTangent = idealTangent;
+                item.worldPosition = idealWorldPosition;
+                item.worldVelocity = idealWorldVelocity;
+                damageVelocity = idealDamageVelocity;
+
+                if (useFluidItemPosition) {
+                    const float pathT = pathTForParam(ringShape, param, context.tuning);
+                    const Vec2 idealLinePosition = getRingItemWorldPosition(runtime.center, param, fluidLineContext);
+                    const Vec2 fluidLinePosition = fluidOrbitPointAt(visual.orbitPoints, pathT, fluidItemWrap);
+                    const Vec2 fluidOffset = (fluidLinePosition - idealLinePosition) * RingFluidItemPositionInfluence;
+                    item.worldPosition = idealWorldPosition + fluidOffset;
+
+                    const Vec2 fluidTangent = fluidOrbitTangentAt(visual.orbitPoints, pathT, fluidItemWrap);
+                    item.orbitTangent = safeNormalize(
+                        lerp(idealTangent, fluidTangent, RingFluidItemPositionInfluence),
+                        idealTangent);
+                    const Vec2 fluidOutward = safeNormalize(item.worldPosition - runtime.center, idealOutward);
+                    item.orbitOutward = safeNormalize(
+                        lerp(idealOutward, fluidOutward, RingFluidItemPositionInfluence),
+                        idealOutward);
+                    item.worldVelocity = safeDt > 0.0f
+                        ? (item.worldPosition - previousWorldPosition) / safeDt
+                        : idealWorldVelocity;
+                }
             } else {
                 RingOrbitContext throwContext = context;
                 throwContext.shapeRotation = runtime.throwShapeRotation;
@@ -1420,8 +1634,313 @@ void SpellRingSystem::refreshItemWorldPositions(float dt, const RuntimeBalance& 
                 item.worldVelocity = safeDt > 0.0f ? (item.worldPosition - previousWorldPosition) / safeDt : centerVelocity;
                 damageVelocity = item.worldVelocity;
             }
-            item.orbitMotionSpeed = length(item.worldVelocity) / std::max(1.0f, radiusForRing(ringIndex));
-            item.damageMotionSpeed = length(damageVelocity) / std::max(1.0f, radiusForRing(ringIndex));
+            item.orbitMotionSpeed = length(item.worldVelocity) / ringRadiusForSpeed;
+            item.damageMotionSpeed = length(damageVelocity) / ringRadiusForSpeed;
+        }
+    }
+}
+
+void SpellRingSystem::updateFluidPresentation(
+    const Player& player,
+    float dt,
+    const RuntimeBalance& balance,
+    bool ringShiftAllowed)
+{
+    const float safeDt = std::max(0.0f, dt);
+    const Vec2 facingDirection = safeNormalize(player.facing);
+    const Vec2 inputShiftDirection = safeNormalize(player.spellRingShiftDirection, facingDirection);
+    const float shiftLimit = playerRingShiftVisualLimit(player, balance);
+    const float motionTarget = playerMotionFluidTarget(player, balance);
+    const bool movingForFluid = lengthSquared(player.velocity) > 1.0f;
+    const Vec2 inputMotionDirection = movingForFluid
+        ? safeNormalize(player.velocity, facingDirection)
+        : facingDirection;
+    const float waveSimulationDt = std::min(safeDt, 0.12f);
+    const float waveStepLimit = 1.0f / 90.0f;
+    const float spring = std::max(0.0f, balance.ringFluidSpring);
+    const float damping = std::max(0.0f, balance.ringFluidDamping);
+    const float wave = std::max(0.0f, balance.ringFluidWave);
+    const float motionRadialImpulse = std::max(0.0f, balance.ringFluidMotionRadialImpulse);
+    const float motionTangentImpulse = std::max(0.0f, balance.ringFluidMotionTangentImpulse);
+    const float shiftImpulse = std::max(0.0f, balance.ringFluidShiftImpulse);
+    const float flowForce = std::max(0.0f, balance.ringFluidFlowForce);
+    const float maxOffset = std::max(0.0f, balance.ringFluidMaxOffset);
+    const float motionDriveExponent = std::clamp(balance.ringFluidMotionDriveExponent, 0.25f, 4.0f);
+    const float shiftDriveExponent = std::clamp(balance.ringFluidShiftDriveExponent, 0.25f, 4.0f);
+    const auto& fluidNodeBasis = spellRingFluidNodeBasisTable();
+
+    for (int ringIndex = 0; ringIndex < SpellRingCount; ++ringIndex) {
+        RingFluidPresentationState& visual = ringFluidPresentation_[static_cast<std::size_t>(ringIndex)];
+        const bool activeRing = ringIndex == activeRingIndex_;
+        const bool hasRingItems = !itemsByRing_[static_cast<std::size_t>(ringIndex)].empty();
+        const bool ringInFlight = stateForRing(ringIndex) != SpellRingState::Normal;
+        const float targetShift = activeRing && ringShiftAllowed && !ringInFlight
+            ? clamp(player.spellRingShift / shiftLimit, 0.0f, 1.0f)
+            : 0.0f;
+        const float targetMotion = ringInFlight ? 0.0f : motionTarget;
+        const float targetIdle = ringInFlight ? 0.0f : fluidIdleTarget(activeRing, hasRingItems);
+        if (movingForFluid) {
+            visual.motionDirection = inputMotionDirection;
+        }
+        if (targetShift > 0.001f) {
+            visual.shiftDirection = inputShiftDirection;
+        }
+        const Vec2 motionDirection = safeNormalize(visual.motionDirection, inputMotionDirection);
+        const Vec2 shiftDirection = safeNormalize(visual.shiftDirection, inputShiftDirection);
+
+        const float shiftDrop = std::max(0.0f, visual.previousTargetShiftAmount - targetShift);
+        const float motionDrop = std::max(0.0f, visual.previousTargetMotionAmount - targetMotion);
+        if (shiftDrop > 0.035f || motionDrop > 0.18f) {
+            visual.releaseAmount = std::max(
+                visual.releaseAmount,
+                clamp(shiftDrop * 0.44f + motionDrop * 0.12f, 0.0f, 0.42f));
+            visual.releaseDirection = safeNormalize(visual.direction, shiftDirection);
+        }
+
+        visual.previousTargetShiftAmount = targetShift;
+        visual.previousTargetMotionAmount = targetMotion;
+        visual.shiftAmount = approachExp(visual.shiftAmount, targetShift, 13.5f, 3.2f, safeDt);
+        visual.motionAmount = approachExp(visual.motionAmount, targetMotion, 8.2f, 2.8f, safeDt);
+        visual.idleAmount = approachExp(visual.idleAmount, targetIdle, 3.8f, 2.2f, safeDt);
+        visual.releaseAmount *= std::exp(-3.35f * safeDt);
+        if (visual.releaseAmount < 0.003f) {
+            visual.releaseAmount = 0.0f;
+        }
+
+        const Vec2 blendedDirection =
+            shiftDirection * (visual.shiftAmount * 1.55f) +
+            motionDirection * (visual.motionAmount * (1.0f - visual.shiftAmount * 0.42f)) +
+            visual.releaseDirection * (visual.releaseAmount * 0.48f);
+        const float directionResponse = 7.2f + visual.shiftAmount * 5.8f + visual.motionAmount * 2.5f;
+        visual.direction = approachDirectionExp(
+            visual.direction,
+            lengthSquared(blendedDirection) > 0.0001f ? blendedDirection : facingDirection,
+            directionResponse,
+            safeDt);
+
+        const Vec2 previousMotionDriver = visual.previousMotionDriver;
+        const Vec2 previousShiftDriver = visual.previousShiftDriver;
+        const Vec2 motionDriver = motionDirection * visual.motionAmount;
+        const Vec2 shiftDriver = shiftDirection * visual.shiftAmount;
+        const Vec2 motionDelta = motionDriver - previousMotionDriver;
+        const Vec2 shiftDelta = shiftDriver - previousShiftDriver;
+        const Vec2 motionImpulseDirection = fluidDriverDirection(motionDriver, previousMotionDriver, motionDirection);
+        const Vec2 shiftImpulseDirection = fluidDriverDirection(shiftDriver, previousShiftDriver, shiftDirection);
+        visual.previousMotionDriver = motionDriver;
+        visual.previousShiftDriver = shiftDriver;
+        const float impulseScale = activeRing ? 1.0f : 0.56f;
+
+        for (int nodeIndex = 0; nodeIndex < SpellRingFluidNodeCount; ++nodeIndex) {
+            const SpellRingFluidNodeBasis& node = fluidNodeBasis[static_cast<std::size_t>(nodeIndex)];
+            const float motionWeight = hemisphereFluidDriveWeightForUnitDirection(
+                node.outward,
+                motionImpulseDirection,
+                motionDriveExponent);
+            const float shiftWeight = hemisphereFluidDriveWeightForUnitDirection(
+                node.outward,
+                shiftImpulseDirection,
+                shiftDriveExponent);
+            visual.radialVelocities[static_cast<std::size_t>(nodeIndex)] +=
+                impulseScale *
+                (motionWeight * dotVec2(motionDelta, node.outward) * motionRadialImpulse +
+                    shiftWeight * dotVec2(shiftDelta, node.outward) * shiftImpulse);
+            visual.tangentVelocities[static_cast<std::size_t>(nodeIndex)] +=
+                impulseScale *
+                (motionWeight * dotVec2(motionDelta, node.tangent) * motionTangentImpulse +
+                    shiftWeight * dotVec2(shiftDelta, node.tangent) * shiftImpulse * 0.64f);
+        }
+
+        float remaining = waveSimulationDt;
+        while (remaining > 0.00001f) {
+            const float stepDt = std::min(remaining, waveStepLimit);
+            remaining -= stepDt;
+
+            const float flowSpeed =
+                2.25f + visual.motionAmount * 3.70f + visual.shiftAmount * 2.45f + visual.releaseAmount * 4.20f;
+            visual.flowPhase = std::fmod(visual.flowPhase + flowSpeed * stepDt, FullCircleRadians);
+            if (visual.flowPhase < 0.0f) {
+                visual.flowPhase += FullCircleRadians;
+            }
+
+            const std::array<float, SpellRingFluidNodeCount> radialOffsets = visual.radialOffsets;
+            const std::array<float, SpellRingFluidNodeCount> tangentOffsets = visual.tangentOffsets;
+            const float ringPhase = static_cast<float>(ringIndex) * 0.71f;
+
+            for (int nodeIndex = 0; nodeIndex < SpellRingFluidNodeCount; ++nodeIndex) {
+                const std::size_t index = static_cast<std::size_t>(nodeIndex);
+                const SpellRingFluidNodeBasis& node = fluidNodeBasis[index];
+                const float motionWeight = hemisphereFluidDriveWeightForUnitDirection(
+                    node.outward,
+                    motionDirection,
+                    motionDriveExponent);
+                const float shiftWeight = hemisphereFluidDriveWeightForUnitDirection(
+                    node.outward,
+                    shiftDirection,
+                    shiftDriveExponent);
+                const float releaseWeight = hemisphereFluidDriveWeightForUnitDirection(
+                    node.outward,
+                    visual.releaseDirection,
+                    shiftDriveExponent);
+                const float motionPulse = 0.88f + 0.12f * std::sin(visual.flowPhase + ringPhase);
+                const float shiftPulse = 0.86f + 0.14f * std::sin(visual.flowPhase * 0.83f + ringPhase * 1.71f);
+                const float radialFlow =
+                    impulseScale * flowForce *
+                    (motionWeight * visual.motionAmount * motionPulse * dotVec2(motionDirection, node.outward) +
+                        shiftWeight * visual.shiftAmount * 1.16f * shiftPulse * dotVec2(shiftDirection, node.outward) -
+                        releaseWeight * visual.releaseAmount * 0.62f * dotVec2(visual.releaseDirection, node.outward));
+                const float tangentFlow =
+                    impulseScale * flowForce *
+                    (motionWeight * visual.motionAmount * 0.30f * dotVec2(motionDirection, node.tangent) +
+                        shiftWeight * visual.shiftAmount * 0.24f * dotVec2(shiftDirection, node.tangent) -
+                        releaseWeight * visual.releaseAmount * 0.16f * dotVec2(visual.releaseDirection, node.tangent));
+
+                const float radialLaplacian =
+                    radialOffsets[node.prev] + radialOffsets[node.next] - radialOffsets[index] * 2.0f;
+                const float tangentLaplacian =
+                    tangentOffsets[node.prev] + tangentOffsets[node.next] - tangentOffsets[index] * 2.0f;
+                const float radialAcceleration =
+                    radialLaplacian * wave - radialOffsets[index] * spring -
+                    visual.radialVelocities[index] * damping + radialFlow;
+                const float tangentAcceleration =
+                    tangentLaplacian * (wave * 0.84f) - tangentOffsets[index] * (spring * 0.78f) -
+                    visual.tangentVelocities[index] * damping + tangentFlow;
+
+                visual.radialVelocities[index] += radialAcceleration * stepDt;
+                visual.tangentVelocities[index] += tangentAcceleration * stepDt;
+            }
+
+            for (int nodeIndex = 0; nodeIndex < SpellRingFluidNodeCount; ++nodeIndex) {
+                const std::size_t index = static_cast<std::size_t>(nodeIndex);
+                visual.radialOffsets[index] += visual.radialVelocities[index] * stepDt;
+                visual.tangentOffsets[index] += visual.tangentVelocities[index] * stepDt;
+
+                if (visual.radialOffsets[index] > maxOffset) {
+                    visual.radialOffsets[index] = maxOffset;
+                    visual.radialVelocities[index] = std::min(0.0f, visual.radialVelocities[index]) * 0.45f;
+                } else if (visual.radialOffsets[index] < -maxOffset) {
+                    visual.radialOffsets[index] = -maxOffset;
+                    visual.radialVelocities[index] = std::max(0.0f, visual.radialVelocities[index]) * 0.45f;
+                }
+
+                if (visual.tangentOffsets[index] > maxOffset) {
+                    visual.tangentOffsets[index] = maxOffset;
+                    visual.tangentVelocities[index] = std::min(0.0f, visual.tangentVelocities[index]) * 0.45f;
+                } else if (visual.tangentOffsets[index] < -maxOffset) {
+                    visual.tangentOffsets[index] = -maxOffset;
+                    visual.tangentVelocities[index] = std::max(0.0f, visual.tangentVelocities[index]) * 0.45f;
+                }
+
+                if (std::abs(visual.radialOffsets[index]) < 0.001f &&
+                    std::abs(visual.radialVelocities[index]) < 0.001f) {
+                    visual.radialOffsets[index] = 0.0f;
+                    visual.radialVelocities[index] = 0.0f;
+                }
+                if (std::abs(visual.tangentOffsets[index]) < 0.001f &&
+                    std::abs(visual.tangentVelocities[index]) < 0.001f) {
+                    visual.tangentOffsets[index] = 0.0f;
+                    visual.tangentVelocities[index] = 0.0f;
+                }
+            }
+        }
+    }
+}
+
+void SpellRingSystem::updateFluidOrbitPoints(float dt, const RuntimeBalance& balance)
+{
+    const float safeDt = std::max(0.0f, dt);
+    const float simulationDt = std::min(safeDt, 0.12f);
+    const float stepLimit = 1.0f / 90.0f;
+    const float targetSpring = std::max(0.0f, balance.ringFluidSpring);
+    const float neighborSpring = std::max(0.0f, balance.ringFluidWave);
+    const float damping = std::max(0.0f, balance.ringFluidDamping);
+    const float maxLag = std::max(0.0f, balance.ringFluidMaxOffset);
+    const float driveExponent = std::clamp(balance.ringFluidMotionDriveExponent, 0.25f, 4.0f);
+    const float driveSpeedForFullBias = std::max(1.0f, balance.playerSpeed * 0.72f);
+    const auto& fluidNodeBasis = spellRingFluidNodeBasisTable();
+
+    for (int ringIndex = 0; ringIndex < SpellRingCount; ++ringIndex) {
+        RingFluidPresentationState& visual = ringFluidPresentation_[static_cast<std::size_t>(ringIndex)];
+        const RingRuntimeState& runtime = ringRuntime_[static_cast<std::size_t>(ringIndex)];
+        if (runtime.state != SpellRingState::Normal) {
+            visual.orbitPointsInitialized = false;
+            for (Vec2& velocity : visual.orbitVelocities) {
+                velocity = {};
+            }
+            continue;
+        }
+
+        RingOrbitContext context = makeOrbitContextForRing(ringIndex, 0, 1, 1.0f, balance);
+        const std::array<Vec2, SpellRingFluidNodeCount> targets =
+            sampleFluidOrbitTargets(runtime.center, context);
+        if (!visual.orbitPointsInitialized || simulationDt <= 0.0f) {
+            visual.orbitPoints = targets;
+            for (Vec2& velocity : visual.orbitVelocities) {
+                velocity = {};
+            }
+            visual.orbitPointsInitialized = true;
+            continue;
+        }
+
+        const bool closed = context.shape != RingShape::Comet;
+        const Vec2 centerDelta = runtime.center - runtime.previousCenter;
+        const float centerSpeed = safeDt > 0.0f ? length(centerDelta) / safeDt : 0.0f;
+        const float centerDriveAmount = clamp(centerSpeed / driveSpeedForFullBias, 0.0f, 1.0f);
+        const Vec2 centerDriveDirection = safeNormalize(centerDelta, visual.direction);
+        float remaining = simulationDt;
+        while (remaining > 0.00001f) {
+            const float stepDt = std::min(remaining, stepLimit);
+            remaining -= stepDt;
+
+            const std::array<Vec2, SpellRingFluidNodeCount> points = visual.orbitPoints;
+            for (int nodeIndex = 0; nodeIndex < SpellRingFluidNodeCount; ++nodeIndex) {
+                const std::size_t index = static_cast<std::size_t>(nodeIndex);
+                const Vec2 nodeOutward = safeNormalize(targets[index] - runtime.center, centerDriveDirection);
+                const float driveWeight = hemisphereFluidDriveWeightForUnitDirection(
+                    nodeOutward,
+                    centerDriveDirection,
+                    driveExponent);
+                const float biasedSpring = targetSpring *
+                    lerp(1.0f, 0.42f + driveWeight * 1.42f, centerDriveAmount);
+                Vec2 acceleration = (targets[index] - points[index]) * biasedSpring;
+
+                Vec2 neighborAcceleration{};
+                int neighborCount = 0;
+                if (closed || nodeIndex > 0) {
+                    const std::size_t neighbor = closed
+                        ? fluidNodeBasis[index].prev
+                        : static_cast<std::size_t>(nodeIndex - 1);
+                    const Vec2 desiredFromNeighbor = points[neighbor] + (targets[index] - targets[neighbor]);
+                    neighborAcceleration += desiredFromNeighbor - points[index];
+                    ++neighborCount;
+                }
+                if (closed || nodeIndex + 1 < SpellRingFluidNodeCount) {
+                    const std::size_t neighbor = closed
+                        ? fluidNodeBasis[index].next
+                        : static_cast<std::size_t>(nodeIndex + 1);
+                    const Vec2 desiredFromNeighbor = points[neighbor] + (targets[index] - targets[neighbor]);
+                    neighborAcceleration += desiredFromNeighbor - points[index];
+                    ++neighborCount;
+                }
+                if (neighborCount > 0) {
+                    acceleration += neighborAcceleration * (neighborSpring / static_cast<float>(neighborCount));
+                }
+
+                visual.orbitVelocities[index] += acceleration * stepDt;
+            }
+
+            const float velocityDamping = std::exp(-damping * stepDt);
+            for (int nodeIndex = 0; nodeIndex < SpellRingFluidNodeCount; ++nodeIndex) {
+                const std::size_t index = static_cast<std::size_t>(nodeIndex);
+                visual.orbitVelocities[index] = visual.orbitVelocities[index] * velocityDamping;
+                visual.orbitPoints[index] += visual.orbitVelocities[index] * stepDt;
+
+                const Vec2 toTarget = targets[index] - visual.orbitPoints[index];
+                const float lag = length(toTarget);
+                if (maxLag > 0.0f && lag > maxLag) {
+                    visual.orbitPoints[index] = targets[index] - toTarget / lag * maxLag;
+                    visual.orbitVelocities[index] = visual.orbitVelocities[index] * 0.55f;
+                }
+            }
         }
     }
 }
@@ -1433,6 +1952,7 @@ void SpellRingSystem::updatePresentation(const Player& player, float dt, const R
     const float safeDt = std::max(0.0f, dt);
     advanceOrbitAngles(safeDt, balance);
     const bool ringShiftAllowed = !anyRingInFlight();
+    updateFluidPresentation(player, safeDt, balance, ringShiftAllowed);
     for (int ringIndex = 0; ringIndex < SpellRingCount; ++ringIndex) {
         RingRuntimeState& runtime = ringRuntime_[static_cast<std::size_t>(ringIndex)];
         runtime.previousCenter = runtime.center;
@@ -1469,11 +1989,13 @@ void SpellRingSystem::updatePresentation(const Player& player, float dt, const R
                     runtime.throwSettleTime);
         }
     }
+    updateFluidOrbitPoints(safeDt, balance);
     refreshItemWorldPositions(safeDt, balance, false);
 }
 
 void SpellRingSystem::resetRuntimeStateAtPlayer(const Player& player, const RuntimeBalance& balance)
 {
+    const Vec2 visualDirection = safeNormalize(player.spellRingShiftDirection, safeNormalize(player.facing));
     for (int ringIndex = 0; ringIndex < SpellRingCount; ++ringIndex) {
         RingRuntimeState& runtime = ringRuntime_[static_cast<std::size_t>(ringIndex)];
         const Vec2 normalCenter = getRingCenterWorldPositionForFocus(
@@ -1488,6 +2010,14 @@ void SpellRingSystem::resetRuntimeStateAtPlayer(const Player& player, const Runt
         runtime.center = normalCenter;
         runtime.previousCenter = normalCenter;
         runtime.throwDirection = player.facing;
+
+        RingFluidPresentationState& fluid = ringFluidPresentation_[static_cast<std::size_t>(ringIndex)];
+        fluid = {};
+        fluid.direction = visualDirection;
+        fluid.motionDirection = visualDirection;
+        fluid.shiftDirection = visualDirection;
+        fluid.releaseDirection = visualDirection;
+        fluid.idleAmount = fluidIdleTarget(ringIndex == activeRingIndex_, !itemsByRing_[static_cast<std::size_t>(ringIndex)].empty());
     }
     throwingRingIndex_ = -1;
     enemyOrbitSpeedDebuffMultiplier_ = 1.0f;
@@ -1704,6 +2234,7 @@ void SpellRingSystem::update(Player& player, const Input& input, float dt, float
         player.spellRingShift = 0.0f;
         player.spellRingShiftDragActive = false;
     }
+    updateFluidPresentation(player, safeDt, balance, ringShiftAllowed);
     for (int ringIndex = 0; ringIndex < SpellRingCount; ++ringIndex) {
         RingRuntimeState& runtime = ringRuntime_[static_cast<std::size_t>(ringIndex)];
         runtime.previousCenter = runtime.center;
@@ -1819,6 +2350,7 @@ void SpellRingSystem::update(Player& player, const Input& input, float dt, float
                     runtime.throwSettleTime);
         }
     }
+    updateFluidOrbitPoints(safeDt, balance);
 
     if (throwPressed) {
         tryThrowActiveRing(player, balance);
@@ -2228,10 +2760,10 @@ bool SpellRingSystem::addObjectItemAtAngle(
     return true;
 }
 
-bool SpellRingSystem::consumeItemDurability(SpellRingItem& item, int amount)
+bool SpellRingSystem::consumeItemDurability(SpellRingItem& item, int durabilityUnits)
 {
     const bool wasBroken = item.broken();
-    const bool becameBroken = item.consumeDurability(amount);
+    const bool becameBroken = item.consumeDurability(durabilityUnits);
     if (!wasBroken && becameBroken) {
         if (item.hasCapturedBehavior(BreakCountdownExplodeBehaviorId)) {
             startBreakCountdownExplosion(item);
@@ -2251,7 +2783,7 @@ bool SpellRingSystem::consumeItemDurability(SpellRingItem& item, int amount)
 int SpellRingSystem::applyExplosionDamageToItems(Vec2 position, float radius, int damage)
 {
     const float safeRadius = std::max(0.0f, radius);
-    const int durabilityDamage = std::max(0, damage);
+    const int durabilityDamage = durabilityPointsToUnits(std::max(0, damage));
     if (safeRadius <= 0.0f || durabilityDamage <= 0) {
         return 0;
     }
@@ -2341,7 +2873,8 @@ bool SpellRingSystem::enhanceItem(
     item.digBonus += digBonus;
     item.durabilityBonus += durabilityBonus;
     if (durabilityBonus > 0 && item.maxDurability >= 0) {
-        item.durability = std::min(item.maxDurability + durabilityBonus, std::max(0, item.durability + durabilityBonus));
+        const int durabilityBonusUnits = durabilityPointsToUnits(durabilityBonus);
+        item.durability = std::min(item.maxDurability + durabilityBonusUnits, std::max(0, item.durability + durabilityBonusUnits));
     }
 
     if (const ItemData* object = catalog.registry.findById(item.objectId)) {
@@ -2351,7 +2884,7 @@ bool SpellRingSystem::enhanceItem(
         item.damage += attackBonus;
         item.digPower += digBonus;
         if (durabilityBonus > 0 && item.maxDurability >= 0) {
-            item.maxDurability += durabilityBonus;
+            item.maxDurability += durabilityPointsToUnits(durabilityBonus);
         }
     }
     item.isBroken = item.durability == 0;
@@ -2454,6 +2987,11 @@ void SpellRingSystem::setRingShapeForIndex(int ringIndex, RingShape shape)
         return;
     }
     ringShapes_[static_cast<std::size_t>(ringIndex)] = shape;
+    RingFluidPresentationState& visual = ringFluidPresentation_[static_cast<std::size_t>(ringIndex)];
+    visual.orbitPointsInitialized = false;
+    for (Vec2& velocity : visual.orbitVelocities) {
+        velocity = {};
+    }
 }
 
 RingShape SpellRingSystem::ringShapeForIndex(int ringIndex) const
@@ -2622,6 +3160,32 @@ std::vector<Vec2> SpellRingSystem::runtimePathSamplePointsForRing(
         sampleCount);
 }
 
+std::vector<Vec2> SpellRingSystem::visualPathSamplePointsForRing(
+    int ringIndex,
+    const RuntimeBalance& balance,
+    int sampleCount) const
+{
+    if (ringIndex < 0 || ringIndex >= SpellRingCount) {
+        return runtimePathSamplePointsForRing(ringIndex, balance, sampleCount);
+    }
+
+    const RingRuntimeState& runtime = ringRuntime_[static_cast<std::size_t>(ringIndex)];
+    const RingFluidPresentationState& visual = ringFluidPresentation_[static_cast<std::size_t>(ringIndex)];
+    if (runtime.state != SpellRingState::Normal || !visual.orbitPointsInitialized) {
+        return runtimePathSamplePointsForRing(ringIndex, balance, sampleCount);
+    }
+
+    const bool wrap = ringShapeForIndex(ringIndex) != RingShape::Comet;
+    const int count = std::max(8, sampleCount);
+    std::vector<Vec2> path;
+    path.reserve(static_cast<std::size_t>(count));
+    for (int i = 0; i < count; ++i) {
+        const float t01 = static_cast<float>(i) / static_cast<float>(count - 1);
+        path.push_back(fluidOrbitPointAt(visual.orbitPoints, t01, wrap));
+    }
+    return path;
+}
+
 float SpellRingSystem::normalizeLocalAngle(float angle, const RuntimeBalance& balance) const
 {
     const RingOrbitTuning tuning = makeRingOrbitTuning(balance);
@@ -2760,6 +3324,24 @@ float SpellRingSystem::throwVisualEnergyForRing(int ringIndex) const
         return 0.0f;
     }
     return clamp(runtime.throwVisualEnergyFadeTimer / ThrowVisualEnergyFadeDuration, 0.0f, 1.0f);
+}
+
+SpellRingFluidVisual SpellRingSystem::fluidVisualForRing(int ringIndex) const
+{
+    if (ringIndex < 0 || ringIndex >= SpellRingCount) {
+        return {};
+    }
+
+    const RingFluidPresentationState& visual = ringFluidPresentation_[static_cast<std::size_t>(ringIndex)];
+    SpellRingFluidVisual result;
+    result.direction = visual.direction;
+    result.shiftAmount = clamp(visual.shiftAmount, 0.0f, 1.0f);
+    result.motionAmount = clamp(visual.motionAmount, 0.0f, 1.0f);
+    result.idleAmount = clamp(visual.idleAmount, 0.0f, 1.0f);
+    result.releaseAmount = clamp(visual.releaseAmount, 0.0f, 1.0f);
+    result.radialOffsets = visual.radialOffsets;
+    result.tangentOffsets = visual.tangentOffsets;
+    return result;
 }
 
 bool SpellRingSystem::anyRingInFlight() const

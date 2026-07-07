@@ -1870,10 +1870,12 @@ void drawBaseFacilities(
                 facility.enabled &&
                 baseFacilityVisualHitTest(renderer, *visual, visualRect, mouse);
 
-            ImageDrawOptions options;
-            options.outlineEnabled = showInteractionHints && inInteractionRange && facility.enabled;
-            options.outlineColor = hovered ? Color{255, 230, 72, 255} : Color{255, 255, 255, 245};
-            options.outlinePx = 1;
+            ImageDrawOptions options = artworkImageDrawOptions();
+            const bool highlightOutline = showInteractionHints && inInteractionRange && facility.enabled;
+            if (highlightOutline) {
+                options.outlineColor = hovered ? Color{255, 230, 72, 255} : Color{255, 255, 255, 245};
+                options.outlinePx = DungeonInspectableOutlinePx;
+            }
             if (!facility.unlocked) {
                 options.tint = {190, 190, 198, 230};
             }
@@ -3583,8 +3585,8 @@ ProcessingResultSnapshot processingSnapshotFromInstance(const InventoryObjectIns
     ProcessingResultSnapshot snapshot{};
     snapshot.objectId = entry.instance.objectId.empty() ? entry.item.id : entry.instance.objectId;
     snapshot.stackCount = 1;
-    snapshot.currentDurability = entry.instance.currentDurability;
-    snapshot.maxDurability = entry.instance.maxDurability;
+    snapshot.currentDurability = durabilityUnitsToDisplayPoints(entry.instance.currentDurability);
+    snapshot.maxDurability = durabilityUnitsToDisplayPoints(entry.instance.maxDurability);
     snapshot.baseDurability = entry.item.durability;
     snapshot.rarity = std::clamp(entry.item.rarity, 1, 10);
     snapshot.isBroken = entry.instance.isBroken;
@@ -3607,8 +3609,8 @@ ProcessingResultSnapshot processingSnapshotFromRingItem(const ObjectCatalog& cat
     snapshot.objectId = item.objectId;
     snapshot.name = nonEmptyItemName(ringItemDisplayName(catalog, item));
     snapshot.stackCount = 1;
-    snapshot.currentDurability = item.durability;
-    snapshot.maxDurability = item.maxDurability;
+    snapshot.currentDurability = durabilityUnitsToDisplayPoints(item.durability);
+    snapshot.maxDurability = durabilityUnitsToDisplayPoints(item.maxDurability);
     if (const ItemData* object = catalog.registry.findById(item.objectId)) {
         snapshot.baseDurability = object->durability;
         snapshot.rarity = std::clamp(object->rarity, 1, 10);
@@ -5543,8 +5545,9 @@ void Game::applyProcessingEntry(StorageEntry entry, ProcessingMode mode, bool wa
         instance.digBonus += enhanceBonuses.dig;
         instance.durabilityBonus += enhanceBonuses.durability;
         if (enhanceBonuses.durability > 0 && instance.maxDurability >= 0) {
-            instance.maxDurability += enhanceBonuses.durability;
-            instance.currentDurability = std::min(instance.maxDurability, std::max(0, instance.currentDurability + enhanceBonuses.durability));
+            const int durabilityBonusUnits = durabilityPointsToUnits(enhanceBonuses.durability);
+            instance.maxDurability += durabilityBonusUnits;
+            instance.currentDurability = std::min(instance.maxDurability, std::max(0, instance.currentDurability + durabilityBonusUnits));
         }
         return true;
     };
@@ -5559,7 +5562,9 @@ void Game::applyProcessingEntry(StorageEntry entry, ProcessingMode mode, bool wa
             return false;
         }
         const ItemData* item = objectCatalog_.registry.findById(instance.objectId);
-        const int baseDurability = item != nullptr ? item->durability : std::max(-1, instance.maxDurability - instance.durabilityBonus);
+        const int baseDurability = item != nullptr
+            ? durabilityPointsToUnits(item->durability)
+            : std::max(-1, instance.maxDurability - durabilityPointsToUnits(instance.durabilityBonus));
         instance.enhanceLevel = 0;
         instance.attackEnhanceLevel = 0;
         instance.digEnhanceLevel = 0;
@@ -5818,7 +5823,9 @@ void Game::applyProcessingTarget(ProcessingTarget target, ProcessingMode mode)
             SpellRingItem& item = ringItems[static_cast<std::size_t>(target.ringItemIndex)];
             if (mode == ProcessingMode::ResetEnhancement) {
                 const ItemData* object = objectCatalog_.registry.findById(item.objectId);
-                const int baseDurability = object != nullptr ? object->durability : std::max(-1, item.maxDurability - item.durabilityBonus);
+                const int baseDurability = object != nullptr
+                    ? durabilityPointsToUnits(object->durability)
+                    : std::max(-1, item.maxDurability - durabilityPointsToUnits(item.durabilityBonus));
                 item.enhanceLevel = 0;
                 item.attackEnhanceLevel = 0;
                 item.digEnhanceLevel = 0;
@@ -7190,7 +7197,7 @@ void Game::renderBaseStoryRingDemo(Renderer& renderer) const
         options.tint = withAlpha({255, 255, 255, 255}, 255.0f * alpha);
         options.outlineColor.a = alphaByte(210.0f * alpha);
         options.outlineEnabled = true;
-        options.outlinePx = 1;
+        options.outlinePx = ArtworkOutlinePx;
         const bool drewImage = drawRingItemObjectImage(
             renderer,
             item,
@@ -8948,7 +8955,7 @@ void Game::updateHiddenBaseOrbit(const Input& input, UiContext& ui, float dt, bo
 
             cooldown = std::max(HiddenBaseNpcHitCooldownSeconds, item.hitInterval);
             item.actionFlashTimer = SpellRingItemActionFlashSeconds;
-            (void)spellRing_.consumeItemDurability(item, 1);
+            (void)spellRing_.consumeItemDurability(item, FullPointDurabilityCostUnits);
 
             if (hiddenRouteCaptureNetObject(item.objectId)) {
                 removeNpc(facilityId, enemy, true);
@@ -13016,9 +13023,12 @@ void drawBaseActors(
                 options.anchorPosition = anchorPosition;
                 options.scale = drawScale;
                 options.flipHorizontal = flipHorizontal;
-                options.outlineEnabled = context.showInteractionHints && inInteractionRange && facilityPtr->enabled;
-                options.outlineColor = hovered ? Color{255, 230, 72, 255} : Color{255, 255, 255, 245};
-                options.outlinePx = 1;
+                const bool highlightOutline = context.showInteractionHints && inInteractionRange && facilityPtr->enabled;
+                options.outlineEnabled = ArtworkOutlineEnabled;
+                options.outlineColor = highlightOutline
+                    ? (hovered ? Color{255, 230, 72, 255} : Color{255, 255, 255, 245})
+                    : ArtworkOutlineColor;
+                options.outlinePx = highlightOutline ? DungeonInspectableOutlinePx : ArtworkOutlinePx;
 
                 if (!drawNpcCharacterSprite(renderer, *visual, options)) {
                     drawBaseFacilityFallbackRect(
@@ -13051,7 +13061,9 @@ void drawBaseActors(
                     1.0f,
                     context.playerSpriteFlipHorizontal,
                     {255, 255, 255, 255},
-                    {PlayerSpriteAnchorX, PlayerSpriteAnchorY});
+                    {PlayerSpriteAnchorX, PlayerSpriteAnchorY},
+                    false,
+                    artworkImageDrawOptions());
                 if (context.inventory != nullptr) {
                     drawEquippedStaffOnPlayer(
                         renderer,

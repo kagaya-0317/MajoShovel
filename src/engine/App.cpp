@@ -47,6 +47,11 @@ constexpr int LogicalScreenHeight = balance::ScreenHeight;
 constexpr std::string_view GameCursorPath = "assets/system/UI_cursor.png";
 constexpr std::string_view PlayerSpritePath = "assets/characters/majo.png";
 constexpr std::string_view PlayerHandSpritePath = "assets/characters/majo_hand.png";
+constexpr int SpriteSheetAutoFrameSize = 0;
+constexpr int PlayerSpriteSheetColumns = 3;
+constexpr int PlayerSpriteSheetRows = 4;
+constexpr int PlayerHandSpriteSheetColumns = 3;
+constexpr int PlayerHandSpriteSheetRows = 3;
 constexpr int GameCursorHotspotX = 3;
 constexpr int GameCursorHotspotY = 3;
 
@@ -784,11 +789,19 @@ bool App::loadAssets()
     if (!loadGameCursor(GameCursorPath)) {
         ok = false;
     }
-    if (!renderer_->loadPlayerSheet(PlayerSpritePath)) {
+    if (!renderer_->loadPlayerSheet(
+            PlayerSpritePath,
+            SpriteSheetAutoFrameSize,
+            PlayerSpriteSheetColumns,
+            PlayerSpriteSheetRows)) {
         logError(renderer_->lastAssetError());
         ok = false;
     }
-    if (!renderer_->loadPlayerHandSheet(PlayerHandSpritePath)) {
+    if (!renderer_->loadPlayerHandSheet(
+            PlayerHandSpritePath,
+            SpriteSheetAutoFrameSize,
+            PlayerHandSpriteSheetColumns,
+            PlayerHandSpriteSheetRows)) {
         logError(renderer_->lastAssetError());
         ok = false;
     }
@@ -942,10 +955,18 @@ bool App::reloadAssetForPath(const std::string& changedPath)
     const std::string parentPath = lowerAscii(std::filesystem::path(changedPath).parent_path().generic_string());
 
     if (fileName == "majo.png") {
-        return renderer_->loadPlayerSheet(PlayerSpritePath);
+        return renderer_->loadPlayerSheet(
+            PlayerSpritePath,
+            SpriteSheetAutoFrameSize,
+            PlayerSpriteSheetColumns,
+            PlayerSpriteSheetRows);
     }
     if (fileName == "majo_hand.png") {
-        return renderer_->loadPlayerHandSheet(PlayerHandSpritePath);
+        return renderer_->loadPlayerHandSheet(
+            PlayerHandSpritePath,
+            SpriteSheetAutoFrameSize,
+            PlayerHandSpriteSheetColumns,
+            PlayerHandSpriteSheetRows);
     }
     if (extension == ".png" && parentPath.find("assets/characters") != std::string::npos) {
         renderer_->invalidateImage("assets/characters/" + fileName);

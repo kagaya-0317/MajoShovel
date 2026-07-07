@@ -3,11 +3,13 @@
 @trigger base_hint:processing_ready
 @once story_base_hint_processing_ready
 
+@portrait_expr monica 3
 @say monica モニカ
 ルネ、おかえり！
 わぁ！{world:enhancement_ore}強化鉱石がいっぱいだね！
 ルネが見つけてきたの！？
 
+@portrait_expr player 4
 @say player ルネ
 えへへ、そうだよ〜
 

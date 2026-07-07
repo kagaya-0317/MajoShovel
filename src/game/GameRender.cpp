@@ -7194,7 +7194,9 @@ void Game::renderPauseMenu(Renderer& renderer) const
                 180.0f,
                 false,
                 {255, 255, 255, 255},
-                {PlayerSpriteAnchorX, PlayerSpriteAnchorY});
+                {PlayerSpriteAnchorX, PlayerSpriteAnchorY},
+                false,
+                artworkImageDrawOptions());
         }
     } else if (pausePage_ == PauseMenuPage::Items) {
         renderer.drawText(panel.pos + Vec2{48.0f, 102.0f}, "アイテム", {246, 235, 255, 255}, 3);
@@ -7610,8 +7612,9 @@ void Game::appendDungeonStoryPresentationRenderEntries(
                     132.0f * (1.0f - 0.45f * collapse),
                     {1.0f, 0.42f},
                     {0, 0, 0, alphaByte(86.0f * fade)});
-                ImageDrawOptions options;
+                ImageDrawOptions options = artworkImageDrawOptions();
                 options.tint = {shade, shade, shade, alpha};
+                options.outlineColor.a = alpha;
                 renderer.drawImageRegion(handle, source, center, drawSize, options);
                 return;
             }
@@ -7649,8 +7652,10 @@ void Game::appendDungeonStoryPresentationRenderEntries(
                     42.0f,
                     {1.0f, 0.34f},
                     {0, 0, 0, alphaByte(64.0f * fade)});
-                ImageDrawOptions options;
-                options.tint = {255, 255, 255, alphaByte(255.0f * fade)};
+                ImageDrawOptions options = artworkImageDrawOptions();
+                const unsigned char alpha = alphaByte(255.0f * fade);
+                options.tint = {255, 255, 255, alpha};
+                options.outlineColor.a = alpha;
                 renderer.drawImageRegion(handle, source, state.position + Vec2{0.0f, -14.0f}, drawSize, options);
                 return;
             }
@@ -7710,8 +7715,10 @@ void Game::appendDungeonStoryPresentationRenderEntries(
                     42.0f * (1.0f - 0.18f * escapeT),
                     {1.0f, 0.34f},
                     {0, 0, 0, alphaByte(62.0f * alpha)});
-                ImageDrawOptions options;
-                options.tint = {255, 255, 255, alphaByte(255.0f * alpha)};
+                ImageDrawOptions options = artworkImageDrawOptions();
+                const unsigned char imageAlpha = alphaByte(255.0f * alpha);
+                options.tint = {255, 255, 255, imageAlpha};
+                options.outlineColor.a = imageAlpha;
                 options.rotationDegrees = wobble;
                 renderer.drawImage(handle, state.position + Vec2{0.0f, -13.0f}, StoryCrabDishDrawSize, options);
             }
@@ -8344,7 +8351,8 @@ void Game::render(Renderer& renderer, const Time& time)
                 playerFlip,
                 playerStatusTint,
                 {PlayerSpriteAnchorX, PlayerSpriteAnchorY},
-                playerStatusVisual.flipVertical);
+                playerStatusVisual.flipVertical,
+                artworkImageDrawOptions());
             if (!playerDeathActive && !playerStatusVisual.flipVertical) {
                 if (const InventoryObjectInstance* staffInstance = inventory_.equippedStaffInstance()) {
                     const PlayerHeldStaffDrawContext staffContext{

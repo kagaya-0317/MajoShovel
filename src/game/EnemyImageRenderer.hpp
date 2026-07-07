@@ -2,6 +2,7 @@
 
 #include "engine/Math.hpp"
 #include "engine/Renderer.hpp"
+#include "game/ArtworkOutline.hpp"
 #include "game/Enemy.hpp"
 
 #include <string>
@@ -15,6 +16,9 @@ struct EnemyImageDrawOptions {
     bool allowUpscale = false;
     bool fitToMaxSize = true;
     Color maskOverlayColor{255, 255, 255, 0};
+    bool outlineEnabled = ArtworkOutlineEnabled;
+    Color outlineColor{ArtworkOutlineColor};
+    int outlinePx = ArtworkOutlinePx;
     float scaleMultiplier = 1.0f;
     Vec2 stretchScale{1.0f, 1.0f};
     float rotationDegrees = 0.0f;
@@ -24,8 +28,30 @@ struct EnemyImageDrawOptions {
     Vec2 directionOverride{0.0f, 1.0f};
 };
 
+struct EnemyImageDebugInfo {
+    bool valid = false;
+    const char* directionSource = "none";
+    const char* directionName = "none";
+    const char* facingDirectionName = "none";
+    const char* motionName = "none";
+    bool directionOverrideEnabled = false;
+    int directionIndex = 0;
+    int frameRow = 0;
+    int frameColumn = 0;
+    int sheetRows = 0;
+    int sheetColumns = 0;
+    int framesPerAnimation = 0;
+    float facingAngleDegrees = 0.0f;
+    Vec2 facingVector{};
+    Vec2 directionOverride{};
+};
+
 [[nodiscard]] std::string enemyImagePathFromNumber(int imageNumber);
 [[nodiscard]] std::string enemyImagePath(const EnemyDefinition& enemy);
+[[nodiscard]] EnemyImageDebugInfo enemyImageDebugInfo(
+    const Enemy& enemy,
+    float animationTimeSeconds,
+    const EnemyImageDrawOptions& options = {});
 [[nodiscard]] bool enemyImageDrawSize(
     Renderer& renderer,
     const Enemy& enemy,

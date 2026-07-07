@@ -917,7 +917,9 @@ bool InventorySystem::resetObjectInstanceEnhancement(std::string_view instanceId
     }
 
     const ItemData* item = catalog.registry.findById(instance.objectId);
-    const int baseDurability = item != nullptr ? item->durability : std::max(-1, instance.maxDurability - instance.durabilityBonus);
+    const int baseDurability = item != nullptr
+        ? durabilityPointsToUnits(item->durability)
+        : std::max(-1, instance.maxDurability - durabilityPointsToUnits(instance.durabilityBonus));
     instance.enhanceLevel = 0;
     instance.attackEnhanceLevel = 0;
     instance.digEnhanceLevel = 0;
@@ -973,8 +975,9 @@ bool InventorySystem::enhanceObjectInstance(
     instance.digBonus += digBonus;
     instance.durabilityBonus += durabilityBonus;
     if (durabilityBonus > 0 && instance.maxDurability >= 0) {
-        instance.maxDurability += durabilityBonus;
-        instance.currentDurability = std::min(instance.maxDurability, std::max(0, instance.currentDurability + durabilityBonus));
+        const int durabilityBonusUnits = durabilityPointsToUnits(durabilityBonus);
+        instance.maxDurability += durabilityBonusUnits;
+        instance.currentDurability = std::min(instance.maxDurability, std::max(0, instance.currentDurability + durabilityBonusUnits));
     }
     status_ = "個体強化しました";
     return true;
@@ -1022,8 +1025,9 @@ bool InventorySystem::enhanceObjectStackItem(
     itemInstance.digBonus += digBonus;
     itemInstance.durabilityBonus += durabilityBonus;
     if (durabilityBonus > 0 && itemInstance.maxDurability >= 0) {
-        itemInstance.maxDurability += durabilityBonus;
-        itemInstance.currentDurability = std::min(itemInstance.maxDurability, std::max(0, itemInstance.currentDurability + durabilityBonus));
+        const int durabilityBonusUnits = durabilityPointsToUnits(durabilityBonus);
+        itemInstance.maxDurability += durabilityBonusUnits;
+        itemInstance.currentDurability = std::min(itemInstance.maxDurability, std::max(0, itemInstance.currentDurability + durabilityBonusUnits));
     }
 
     --it->count;
@@ -1125,8 +1129,9 @@ bool InventorySystem::enhanceSelectedObjectInstance(int attackBonus, int digBonu
     instance.digBonus += digBonus;
     instance.durabilityBonus += durabilityBonus;
     if (instance.maxDurability >= 0) {
-        instance.maxDurability += durabilityBonus;
-        instance.currentDurability = std::min(instance.maxDurability, std::max(0, instance.currentDurability + durabilityBonus));
+        const int durabilityBonusUnits = durabilityPointsToUnits(durabilityBonus);
+        instance.maxDurability += durabilityBonusUnits;
+        instance.currentDurability = std::min(instance.maxDurability, std::max(0, instance.currentDurability + durabilityBonusUnits));
     }
     status_ = "個体強化しました";
     return true;

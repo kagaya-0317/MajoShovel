@@ -918,8 +918,8 @@ InventoryUiItemStats inventoryUiStatsFromInstance(const ItemInstance& instance)
 {
     return {
         instance.instanceId,
-        instance.currentDurability,
-        instance.maxDurability,
+        durabilityUnitsToDisplayPoints(instance.currentDurability),
+        durabilityUnitsToDisplayPoints(instance.maxDurability),
         instance.enhanceLevel,
         instance.attackEnhanceLevel,
         instance.digEnhanceLevel,
@@ -938,8 +938,8 @@ InventoryUiItemStats inventoryUiStatsFromRingItem(const SpellRingItem& item)
 {
     return {
         item.instanceId,
-        item.durability,
-        item.maxDurability,
+        durabilityUnitsToDisplayPoints(item.durability),
+        durabilityUnitsToDisplayPoints(item.maxDurability),
         item.enhanceLevel,
         item.attackEnhanceLevel,
         item.digEnhanceLevel,

@@ -444,7 +444,7 @@ void DiggingSystem::update(
             }
         }
         if (terrainHitCount > 0) {
-            spellRing.consumeItemDurability(item, terrainHitCount);
+            spellRing.consumeItemDurability(item, terrainHitCount * TerrainHitDurabilityCostUnits);
         }
         item.lastTerrainHitTime = totalTime;
     }

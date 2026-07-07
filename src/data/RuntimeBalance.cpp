@@ -109,6 +109,18 @@ bool applyRuntimeBalanceValues(const std::unordered_map<std::string, std::string
     if (!setFloat("comet_trail_length", loaded.cometTrailLength)) return false;
     if (!setFloat("comet_lane_spacing", loaded.cometLaneSpacing)) return false;
     if (!setFloat("comet_max_arc_degrees", loaded.cometMaxArcDegrees)) return false;
+    if (!setFloat("ring_fluid_spring", loaded.ringFluidSpring)) return false;
+    if (!setFloat("ring_fluid_damping", loaded.ringFluidDamping)) return false;
+    if (!setFloat("ring_fluid_wave", loaded.ringFluidWave)) return false;
+    if (!setFloat("ring_fluid_motion_radial_impulse", loaded.ringFluidMotionRadialImpulse)) return false;
+    if (!setFloat("ring_fluid_motion_tangent_impulse", loaded.ringFluidMotionTangentImpulse)) return false;
+    if (!setFloat("ring_fluid_shift_impulse", loaded.ringFluidShiftImpulse)) return false;
+    if (!setFloat("ring_fluid_flow_force", loaded.ringFluidFlowForce)) return false;
+    if (!setFloat("ring_fluid_max_offset", loaded.ringFluidMaxOffset)) return false;
+    if (!setFloat("ring_fluid_idle_ripple", loaded.ringFluidIdleRipple)) return false;
+    if (!setFloat("ring_fluid_random_jitter", loaded.ringFluidRandomJitter)) return false;
+    if (!setFloat("ring_fluid_motion_drive_exponent", loaded.ringFluidMotionDriveExponent)) return false;
+    if (!setFloat("ring_fluid_shift_drive_exponent", loaded.ringFluidShiftDriveExponent)) return false;
     if (!setInt("dirt_hp", loaded.dirtHp)) return false;
     if (!setInt("rock_hp", loaded.rockHp)) return false;
     if (!setInt("ore_hp", loaded.oreHp)) return false;
@@ -185,6 +197,18 @@ bool applyRuntimeBalanceValues(const std::unordered_map<std::string, std::string
     if (loaded.cometArcDegrees > loaded.cometMaxArcDegrees) {
         loaded.cometArcDegrees = loaded.cometMaxArcDegrees;
     }
+    loaded.ringFluidSpring = std::clamp(loaded.ringFluidSpring, 0.0f, 240.0f);
+    loaded.ringFluidDamping = std::clamp(loaded.ringFluidDamping, 0.0f, 80.0f);
+    loaded.ringFluidWave = std::clamp(loaded.ringFluidWave, 0.0f, 240.0f);
+    loaded.ringFluidMotionRadialImpulse = std::clamp(loaded.ringFluidMotionRadialImpulse, 0.0f, 500.0f);
+    loaded.ringFluidMotionTangentImpulse = std::clamp(loaded.ringFluidMotionTangentImpulse, 0.0f, 500.0f);
+    loaded.ringFluidShiftImpulse = std::clamp(loaded.ringFluidShiftImpulse, 0.0f, 500.0f);
+    loaded.ringFluidFlowForce = std::clamp(loaded.ringFluidFlowForce, 0.0f, 500.0f);
+    loaded.ringFluidMaxOffset = std::clamp(loaded.ringFluidMaxOffset, 0.0f, 48.0f);
+    loaded.ringFluidIdleRipple = std::clamp(loaded.ringFluidIdleRipple, 0.0f, 3.0f);
+    loaded.ringFluidRandomJitter = std::clamp(loaded.ringFluidRandomJitter, 0.0f, 3.0f);
+    loaded.ringFluidMotionDriveExponent = std::clamp(loaded.ringFluidMotionDriveExponent, 0.25f, 4.0f);
+    loaded.ringFluidShiftDriveExponent = std::clamp(loaded.ringFluidShiftDriveExponent, 0.25f, 4.0f);
     loaded.dirtHp = std::max(1, loaded.dirtHp);
     loaded.rockHp = std::max(1, loaded.rockHp);
     loaded.oreHp = std::max(1, loaded.oreHp);

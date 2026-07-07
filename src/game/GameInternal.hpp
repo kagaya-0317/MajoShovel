@@ -204,7 +204,7 @@ constexpr float WarpPointTouchRadius = 28.0f;
 constexpr float DungeonInspectableInteractionRange = 72.0f;
 constexpr Color DungeonInspectableOutlineColor{255, 255, 255, 245};
 constexpr Color DungeonInspectableHoverOutlineColor{255, 230, 72, 255};
-constexpr int DungeonInspectableOutlinePx = 1;
+constexpr int DungeonInspectableOutlinePx = ArtworkOutlinePx;
 constexpr float WarpPointReturnRadius = DungeonInspectableInteractionRange;
 constexpr float DungeonEntranceYOffset = -36.0f;
 constexpr float DungeonEntranceImageMaxWidth = 96.0f;
@@ -2244,6 +2244,15 @@ struct MagicOrbitDrawOptions {
     bool closedPath = true;
     float energizedBlend = 0.0f;
     bool decorations = true;
+    Vec2 fluidDirection{1.0f, 0.0f};
+    float fluidShiftAmount = 0.0f;
+    float fluidMotionAmount = 0.0f;
+    float fluidIdleAmount = 0.0f;
+    float fluidReleaseAmount = 0.0f;
+    float fluidIdleRipple = 0.65f;
+    float fluidRandomJitter = 0.0f;
+    std::array<float, SpellRingFluidNodeCount> fluidRadialOffsets{};
+    std::array<float, SpellRingFluidNodeCount> fluidTangentOffsets{};
 };
 
 constexpr std::array<RingShape, 3> MagicRingShapeRenderOrder{{
@@ -2297,7 +2306,8 @@ float magicOrbitEnergyAmount(const MagicOrbitDrawOptions& options)
 
 Color magicOrbitColor(Color normalColor, Color energizedColor, const MagicOrbitDrawOptions& options)
 {
-    return blendColor(normalColor, energizedColor, magicOrbitEnergyAmount(options));
+    const float colorEnergy = options.active ? 1.0f : magicOrbitEnergyAmount(options);
+    return blendColor(normalColor, energizedColor, colorEnergy);
 }
 
 float hash01(float value)
@@ -2350,9 +2360,227 @@ Vec2 pathTangentAt(const std::vector<Vec2>& points, float t01, bool wrap)
     return normalize(after - before);
 }
 
+Vec2 pathTangentAtSampleIndex(const std::vector<Vec2>& points, std::size_t index, bool wrap)
+{
+    if (points.size() < 2) {
+        return {1.0f, 0.0f};
+    }
+
+    if (wrap && points.size() > 3) {
+        const bool duplicateEndpoint = distanceSquared(points.front(), points.back()) <= 0.001f;
+        const std::size_t uniqueCount = duplicateEndpoint ? points.size() - 1 : points.size();
+        if (uniqueCount >= 2) {
+            const std::size_t current = index % uniqueCount;
+            const std::size_t prev = current == 0 ? uniqueCount - 1 : current - 1;
+            const std::size_t next = (current + 1) % uniqueCount;
+            return normalize(points[next] - points[prev]);
+        }
+    }
+
+    const std::size_t current = std::min(index, points.size() - 1);
+    const std::size_t prev = current > 0 ? current - 1 : current;
+    const std::size_t next = std::min(points.size() - 1, current + 1);
+    return normalize(points[next] - points[prev]);
+}
+
 bool magicOrbitPathWraps(const MagicOrbitDrawOptions& options)
 {
     return options.closedPath && options.shape != RingShape::Comet;
+}
+
+bool magicOrbitFluidNodesActive(const MagicOrbitDrawOptions& options)
+{
+    for (int nodeIndex = 0; nodeIndex < SpellRingFluidNodeCount; ++nodeIndex) {
+        const std::size_t index = static_cast<std::size_t>(nodeIndex);
+        if (std::abs(options.fluidRadialOffsets[index]) > 0.01f ||
+            std::abs(options.fluidTangentOffsets[index]) > 0.01f) {
+            return true;
+        }
+    }
+    return false;
+}
+
+bool magicOrbitFluidPathEnabled(const MagicOrbitDrawOptions& options)
+{
+    if (options.energized) {
+        return false;
+    }
+
+    if (options.fluidRandomJitter > 0.001f) {
+        return true;
+    }
+
+    return options.shape == RingShape::Circle &&
+        magicOrbitPathWraps(options) &&
+        (options.fluidIdleAmount > 0.001f ||
+            options.fluidShiftAmount > 0.001f ||
+            options.fluidMotionAmount > 0.001f ||
+            options.fluidReleaseAmount > 0.001f ||
+            magicOrbitFluidNodesActive(options));
+}
+
+float averagePathRadius(const std::vector<Vec2>& points, Vec2 center)
+{
+    if (points.empty()) {
+        return 0.0f;
+    }
+
+    float radiusSum = 0.0f;
+    int radiusCount = 0;
+    for (Vec2 point : points) {
+        const float radius = length(point - center);
+        if (radius > 0.001f) {
+            radiusSum += radius;
+            ++radiusCount;
+        }
+    }
+    return radiusCount > 0 ? radiusSum / static_cast<float>(radiusCount) : 0.0f;
+}
+
+float magicOrbitCatmullRom(float p0, float p1, float p2, float p3, float t)
+{
+    const float t2 = t * t;
+    const float t3 = t2 * t;
+    return 0.5f *
+        (2.0f * p1 +
+            (-p0 + p2) * t +
+            (2.0f * p0 - 5.0f * p1 + 4.0f * p2 - p3) * t2 +
+            (-p0 + 3.0f * p1 - 3.0f * p2 + p3) * t3);
+}
+
+float magicOrbitFluidNodeOffsetAt(const std::array<float, SpellRingFluidNodeCount>& values, float t01)
+{
+    const float scaled = wrap01(t01) * static_cast<float>(SpellRingFluidNodeCount);
+    const int baseIndex = static_cast<int>(std::floor(scaled));
+    const float localT = scaled - static_cast<float>(baseIndex);
+    const auto wrappedIndex = [](int index) {
+        index %= SpellRingFluidNodeCount;
+        if (index < 0) {
+            index += SpellRingFluidNodeCount;
+        }
+        return static_cast<std::size_t>(index);
+    };
+    return magicOrbitCatmullRom(
+        values[wrappedIndex(baseIndex - 1)],
+        values[wrappedIndex(baseIndex)],
+        values[wrappedIndex(baseIndex + 1)],
+        values[wrappedIndex(baseIndex + 2)],
+        localT);
+}
+
+float magicOrbitLoopNoise(float t01, int cellCount, float phase, float seed)
+{
+    const int cells = std::max(4, cellCount);
+    const float scaled = wrap01(t01 + phase) * static_cast<float>(cells);
+    const int baseIndex = static_cast<int>(std::floor(scaled));
+    const float localT = smoothStep01(scaled - static_cast<float>(baseIndex));
+    const auto wrappedIndex = [cells](int index) {
+        index %= cells;
+        if (index < 0) {
+            index += cells;
+        }
+        return index;
+    };
+    const float a = hash01(seed + static_cast<float>(wrappedIndex(baseIndex)) * 19.173f) * 2.0f - 1.0f;
+    const float b = hash01(seed + static_cast<float>(wrappedIndex(baseIndex + 1)) * 19.173f) * 2.0f - 1.0f;
+    return lerp(a, b, localT);
+}
+
+std::vector<Vec2> makeFluidMagicOrbitPath(
+    const std::vector<Vec2>& orbitPath,
+    Vec2 center,
+    const MagicOrbitDrawOptions& options)
+{
+    const float radius = averagePathRadius(orbitPath, center);
+    const float idleAmount = clamp(options.fluidIdleAmount, 0.0f, 1.0f);
+    const float shiftAmount = clamp(options.fluidShiftAmount, 0.0f, 1.0f);
+    const float motionAmount = clamp(options.fluidMotionAmount, 0.0f, 1.0f);
+    const float releaseAmount = clamp(options.fluidReleaseAmount, 0.0f, 1.0f);
+    const float energyAmount = magicOrbitEnergyAmount(options);
+    const float fluidAmount = clamp(
+        idleAmount * 0.16f + shiftAmount * 0.42f + motionAmount * 0.34f + releaseAmount * 0.30f + energyAmount * 0.18f,
+        0.0f,
+        1.0f);
+
+    if (orbitPath.size() < 2 ||
+        radius <= 0.001f ||
+        (fluidAmount <= 0.001f &&
+            options.fluidRandomJitter <= 0.001f &&
+            !magicOrbitFluidNodesActive(options))) {
+        return orbitPath;
+    }
+
+    const float ringPhase = static_cast<float>(std::max(0, options.ringIndex)) * 0.83f;
+    const float flowPhase = options.totalSeconds * (1.16f + 0.05f * ringPhase) + ringPhase;
+    const float slowPhase = options.totalSeconds * 0.54f + ringPhase * 1.37f;
+    const float idleRippleScale = std::max(0.0f, options.fluidIdleRipple);
+    const float randomJitterScale = std::max(0.0f, options.fluidRandomJitter);
+    const bool wrap = magicOrbitPathWraps(options);
+
+    std::vector<Vec2> result;
+    result.reserve(orbitPath.size());
+    for (Vec2 point : orbitPath) {
+        const std::size_t sampleIndex = result.size();
+        const Vec2 local = point - center;
+        const float localRadius = length(local);
+        if (localRadius <= 0.001f) {
+            result.push_back(point);
+            continue;
+        }
+
+        const float pathT = orbitPath.size() <= 1
+            ? 0.0f
+            : static_cast<float>(sampleIndex) / static_cast<float>(orbitPath.size() - 1);
+        const Vec2 pathTangent = pathTangentAtSampleIndex(orbitPath, sampleIndex, wrap);
+        const Vec2 pathNormal{-pathTangent.y, pathTangent.x};
+        const Vec2 outward = local / localRadius;
+        const bool circleShape = options.shape == RingShape::Circle;
+        const Vec2 tangent = circleShape ? Vec2{-outward.y, outward.x} : pathTangent;
+        const float theta = std::atan2(outward.y, outward.x);
+        const float t01 = theta / (Pi * 2.0f);
+        const float nodeRadialOffset = circleShape
+            ? magicOrbitFluidNodeOffsetAt(options.fluidRadialOffsets, t01)
+            : 0.0f;
+        const float nodeTangentOffset = circleShape
+            ? magicOrbitFluidNodeOffsetAt(options.fluidTangentOffsets, t01)
+            : 0.0f;
+        const float idleRadialRipple = circleShape
+            ? radius * idleRippleScale * idleAmount *
+                (0.0068f * std::sin(theta * 3.0f - flowPhase) +
+                    0.0035f * std::sin(theta * 5.0f + slowPhase * 1.24f + ringPhase))
+            : 0.0f;
+        const float releaseRadialRipple = circleShape
+            ? radius * releaseAmount * 0.010f *
+                std::sin(theta * 2.0f + flowPhase * 2.40f) *
+                (0.70f + 0.30f * std::cos(theta * 3.0f - slowPhase))
+            : 0.0f;
+        const float energyRadialRipple = circleShape
+            ? radius * energyAmount * 0.0048f *
+                std::sin(theta * 4.0f + flowPhase * 1.62f + ringPhase)
+            : 0.0f;
+        const float idleTangentRipple = circleShape
+            ? radius * idleRippleScale * idleAmount * 0.0035f *
+                std::sin(theta * 4.0f + slowPhase * 0.88f - ringPhase)
+            : 0.0f;
+        const float pathSampleT = circleShape ? t01 : pathT;
+        const Vec2 jitterNormal = circleShape ? outward : pathNormal;
+        const float randomRadialJitter =
+            radius * randomJitterScale *
+                (0.0085f * magicOrbitLoopNoise(pathSampleT, 72, options.totalSeconds * 0.018f, 31.7f + ringPhase) +
+                    0.0040f * magicOrbitLoopNoise(pathSampleT, 113, -options.totalSeconds * 0.013f, 79.1f + ringPhase));
+        const float randomTangentJitter =
+            radius * randomJitterScale * 0.0048f *
+            magicOrbitLoopNoise(pathSampleT, 89, options.totalSeconds * 0.016f, 143.3f + ringPhase);
+
+        result.push_back(
+            point +
+            outward * (nodeRadialOffset + idleRadialRipple + releaseRadialRipple + energyRadialRipple) +
+            tangent * (nodeTangentOffset + idleTangentRipple) +
+            jitterNormal * randomRadialJitter +
+            pathTangent * randomTangentJitter);
+    }
+
+    return result;
 }
 
 void drawMagicStar(Renderer& renderer, Vec2 center, float radius, Color color, float rotation)
@@ -2378,17 +2606,13 @@ void drawMagicOrbitRunes(Renderer& renderer, const std::vector<Vec2>& orbitPath,
     const bool wrap = magicOrbitPathWraps(options);
     const float lengthScale = options.screenPresentation ? 1.25f : 1.0f;
     for (int i = 0; i < runeCount; ++i) {
-        if (!options.active && ((i + options.ringIndex) % 3) != 0) {
-            continue;
-        }
-
         const float t01 = (static_cast<float>(i) + 0.5f) / static_cast<float>(runeCount);
         const float pulse = 0.62f + 0.38f * std::sin(options.totalSeconds * 2.2f + static_cast<float>(i) * 0.83f + static_cast<float>(options.ringIndex));
-        const float alpha = (options.active ? 64.0f : 28.0f) * options.alphaScale * pulse;
+        const float alpha = 64.0f * options.alphaScale * pulse;
         const Vec2 point = pathPointAt(orbitPath, t01, wrap);
         const Vec2 tangent = pathTangentAt(orbitPath, t01, wrap);
         const Vec2 normal{-tangent.y, tangent.x};
-        const float halfLength = (options.active ? 2.8f : 1.9f) * lengthScale;
+        const float halfLength = 2.8f * lengthScale;
         const Color runeColor = withAlpha(
             magicOrbitColor(Color{232, 236, 255, 255}, Color{255, 204, 100, 255}, options),
             alpha);
@@ -2403,22 +2627,20 @@ void drawMagicOrbitFlow(Renderer& renderer, const std::vector<Vec2>& orbitPath, 
     }
 
     const bool wrap = magicOrbitPathWraps(options);
-    const int beadCount = options.screenPresentation
-        ? (options.active ? 6 : 4)
-        : (options.active ? 3 : 2);
+    const int beadCount = options.screenPresentation ? 6 : 3;
     const float speed = options.shape == RingShape::Comet ? 0.18f : 0.085f;
     const float radiusScale = options.screenPresentation ? 1.25f : 1.0f;
     for (int i = 0; i < beadCount; ++i) {
         const float t01 = wrap01(options.totalSeconds * speed + static_cast<float>(i) / static_cast<float>(beadCount) + static_cast<float>(options.ringIndex) * 0.173f);
         const float pulse = 0.70f + 0.30f * std::sin(options.totalSeconds * 5.8f + static_cast<float>(i) * 1.7f);
         const Vec2 point = pathPointAt(orbitPath, t01, wrap);
-        const float radius = (options.active ? 1.8f : 1.3f) * radiusScale * pulse;
+        const float radius = 1.8f * radiusScale * pulse;
         const Color outer = withAlpha(
             magicOrbitColor(Color{120, 226, 255, 255}, Color{255, 198, 92, 255}, options),
-            (options.active ? 54.0f : 30.0f) * options.alphaScale);
+            54.0f * options.alphaScale);
         const Color inner = withAlpha(
             magicOrbitColor(Color{255, 250, 202, 255}, Color{255, 244, 176, 255}, options),
-            (options.active ? 154.0f : 86.0f) * options.alphaScale);
+            154.0f * options.alphaScale);
         renderer.fillCircle(point, radius * 2.1f, outer);
         renderer.fillCircle(point, radius, inner);
     }
@@ -2431,14 +2653,12 @@ void drawMagicOrbitSparkles(Renderer& renderer, const std::vector<Vec2>& orbitPa
     }
 
     const bool wrap = magicOrbitPathWraps(options);
-    const int sparkleCount = options.screenPresentation
-        ? (options.active ? 7 : 4)
-        : (options.active ? 3 : 1);
+    const int sparkleCount = options.screenPresentation ? 7 : 3;
     const float radiusScale = options.screenPresentation ? 1.28f : 1.0f;
     for (int i = 0; i < sparkleCount; ++i) {
         const float seed = static_cast<float>(options.ringIndex) * 1.91f + static_cast<float>(i) * 2.37f;
         const float twinkle = 0.5f + 0.5f * std::sin(options.totalSeconds * (2.6f + static_cast<float>(i) * 0.11f) + seed);
-        const float alpha = (options.active ? 112.0f : 52.0f) * options.alphaScale * twinkle;
+        const float alpha = 112.0f * options.alphaScale * twinkle;
         if (alpha < 18.0f) {
             continue;
         }
@@ -2464,7 +2684,7 @@ void drawMagicOrbitThrowMotes(Renderer& renderer, const std::vector<Vec2>& orbit
     constexpr float ParticleLifetime = 0.92f;
     constexpr float ParticleSpawnStride = 0.19f;
     const bool wrap = magicOrbitPathWraps(options);
-    const int moteCount = options.active ? 9 : 7;
+    const int moteCount = 9;
     const float baseTime = options.totalSeconds / ParticleLifetime;
     const Color outerBase = magicOrbitColor(Color{120, 226, 255, 255}, Color{255, 178, 74, 255}, options);
     const Color innerBase = magicOrbitColor(Color{236, 242, 255, 255}, Color{255, 232, 146, 255}, options);
@@ -2498,7 +2718,7 @@ void drawMagicOrbitThrowMotes(Renderer& renderer, const std::vector<Vec2>& orbit
 
 void drawMagicOrbitCenter(Renderer& renderer, Vec2 center, const MagicOrbitDrawOptions& options)
 {
-    const float alpha = (options.active ? 118.0f : 62.0f) * options.alphaScale;
+    const float alpha = 118.0f * options.alphaScale;
     const Color core = withAlpha(Color{255, 248, 196, 255}, alpha);
     drawMagicStar(renderer, center, options.screenPresentation ? 7.2f : 4.2f, withAlpha(core, alpha), options.totalSeconds * 0.8f);
 }
@@ -2525,62 +2745,70 @@ void drawMagicOrbitPath(Renderer& renderer, const std::vector<Vec2>& orbitPath, 
         return;
     }
 
+    std::vector<Vec2> fluidOrbitPath;
+    const std::vector<Vec2>* drawPath = &orbitPath;
+    if (magicOrbitFluidPathEnabled(options)) {
+        fluidOrbitPath = makeFluidMagicOrbitPath(orbitPath, center, options);
+        drawPath = &fluidOrbitPath;
+    }
+    const std::vector<Vec2>& path = *drawPath;
+
     const float widthScale = options.screenPresentation ? 1.35f : 1.0f;
-    const Color normalAuraColor = options.active ? Color{90, 200, 255, 64} : Color{116, 150, 210, 36};
-    const Color normalCoreColor = options.active ? Color{236, 242, 255, 124} : Color{178, 196, 238, 62};
+    const Color normalAuraColor{90, 200, 255, 64};
+    const Color normalCoreColor{236, 242, 255, 124};
     const Color auraColor = magicOrbitColor(normalAuraColor, Color{255, 178, 74, 62}, options);
     const Color coreColor = magicOrbitColor(normalCoreColor, Color{255, 230, 142, 132}, options);
 
     if (options.shape == RingShape::Comet) {
         drawTaperedMagicPolyline(
             renderer,
-            orbitPath,
-            (options.active ? 1.6f : 1.1f) * widthScale,
-            (options.active ? 5.4f : 3.5f) * widthScale,
+            path,
+            1.6f * widthScale,
+            5.4f * widthScale,
             scaledAlpha(auraColor, options.alphaScale));
-        const std::size_t tailCount = std::min<std::size_t>(orbitPath.size(), options.screenPresentation ? 74 : 44);
-        std::vector<Vec2> tailPath(orbitPath.end() - static_cast<std::ptrdiff_t>(tailCount), orbitPath.end());
+        const std::size_t tailCount = std::min<std::size_t>(path.size(), options.screenPresentation ? 74 : 44);
+        std::vector<Vec2> tailPath(path.end() - static_cast<std::ptrdiff_t>(tailCount), path.end());
         drawTaperedMagicPolyline(
             renderer,
             tailPath,
-            (options.active ? 1.2f : 0.9f) * widthScale,
-            (options.active ? 6.8f : 4.4f) * widthScale,
+            1.2f * widthScale,
+            6.8f * widthScale,
             scaledAlpha(Color{255, 216, 112, 64}, options.alphaScale));
     } else {
-        renderer.drawSoftPolyline(orbitPath, (options.active ? 5.4f : 3.5f) * widthScale, scaledAlpha(auraColor, options.alphaScale));
+        renderer.drawSoftPolyline(path, 5.4f * widthScale, scaledAlpha(auraColor, options.alphaScale));
     }
 
     if (options.shape == RingShape::Comet) {
         drawTaperedMagicPolyline(
             renderer,
-            orbitPath,
-            (options.active ? 0.7f : 0.5f) * widthScale,
-            (options.active ? 1.8f : 1.2f) * widthScale,
+            path,
+            0.7f * widthScale,
+            1.8f * widthScale,
             scaledAlpha(coreColor, options.alphaScale));
     } else {
-        renderer.drawSoftPolyline(orbitPath, (options.active ? 1.8f : 1.2f) * widthScale, scaledAlpha(coreColor, options.alphaScale));
+        renderer.drawSoftPolyline(path, 1.8f * widthScale, scaledAlpha(coreColor, options.alphaScale));
     }
-    for (std::size_t i = 1; i < orbitPath.size(); ++i) {
+    for (std::size_t i = 1; i < path.size(); ++i) {
         if (options.shape == RingShape::FigureEight && !options.screenPresentation && (i % 4) == 0) {
             continue;
         }
         const float lineAlphaScale = options.shape == RingShape::Comet
-            ? options.alphaScale * 0.54f * lerp(0.22f, 1.0f, std::pow(static_cast<float>(i) / static_cast<float>(orbitPath.size() - 1), 2.0f))
+            ? options.alphaScale * 0.54f * lerp(0.22f, 1.0f, std::pow(static_cast<float>(i) / static_cast<float>(path.size() - 1), 2.0f))
             : options.alphaScale * 0.54f;
-        renderer.drawLine(orbitPath[i - 1], orbitPath[i], scaledAlpha(coreColor, lineAlphaScale));
+        renderer.drawLine(path[i - 1], path[i], scaledAlpha(coreColor, lineAlphaScale));
     }
 
     if (options.decorations) {
-        drawMagicOrbitRunes(renderer, orbitPath, options);
-        drawMagicOrbitFlow(renderer, orbitPath, options);
-        drawMagicOrbitSparkles(renderer, orbitPath, options);
-        drawMagicOrbitThrowMotes(renderer, orbitPath, options);
+        drawMagicOrbitRunes(renderer, path, options);
+        drawMagicOrbitFlow(renderer, path, options);
+        drawMagicOrbitSparkles(renderer, path, options);
+        drawMagicOrbitThrowMotes(renderer, path, options);
     }
 
     if (options.decorations && options.shape == RingShape::Comet) {
-        const Vec2 head = orbitPath.back();
-        renderer.fillCircle(head, (options.active ? 4.8f : 3.2f) * widthScale, withAlpha(Color{255, 218, 112, 255}, (options.active ? 98.0f : 54.0f) * options.alphaScale));
-        renderer.fillCircle(head, (options.active ? 2.2f : 1.5f) * widthScale, withAlpha(Color{255, 252, 210, 255}, (options.active ? 172.0f : 100.0f) * options.alphaScale));
+        const Vec2 head = path.back();
+        renderer.fillCircle(head, 4.8f * widthScale, withAlpha(Color{255, 218, 112, 255}, 98.0f * options.alphaScale));
+        renderer.fillCircle(head, 2.2f * widthScale, withAlpha(Color{255, 252, 210, 255}, 172.0f * options.alphaScale));
     }
 
     if (options.decorations && (options.centerSigil || options.shape == RingShape::FigureEight)) {
@@ -2606,26 +2834,35 @@ void drawSpellRingOrbitLayer(
 
             const bool hasRingItems = !ringItems.empty();
             const Vec2 center = spellRing.centerForRing(ringIndex);
-            std::vector<Vec2> orbitPath = spellRing.runtimePathSamplePointsForRing(ringIndex, balance, 160);
             const bool ringInFlight = spellRing.stateForRing(ringIndex) != SpellRingState::Normal;
+            const bool fluidRing = !ringInFlight;
+            std::vector<Vec2> orbitPath = fluidRing
+                ? spellRing.visualPathSamplePointsForRing(ringIndex, balance, shapePass == RingShape::Circle ? 256 : 160)
+                : spellRing.runtimePathSamplePointsForRing(ringIndex, balance, 160);
             const float throwVisualEnergy = spellRing.throwVisualEnergyForRing(ringIndex);
-            drawMagicOrbitPath(
-                renderer,
-                orbitPath,
-                center,
-                MagicOrbitDrawOptions{
-                    shapePass,
-                    ringIndex == spellRing.activeRingIndex(),
-                    ringInFlight,
-                    false,
-                    false,
-                    ringIndex,
-                    totalSeconds,
-                    alphaScale,
-                    !ringInFlight,
-                    throwVisualEnergy,
-                    hasRingItems,
-                });
+            const SpellRingFluidVisual fluidVisual =
+                fluidRing ? spellRing.fluidVisualForRing(ringIndex) : SpellRingFluidVisual{};
+
+            MagicOrbitDrawOptions options;
+            options.shape = shapePass;
+            options.active = ringIndex == spellRing.activeRingIndex();
+            options.energized = ringInFlight;
+            options.ringIndex = ringIndex;
+            options.totalSeconds = totalSeconds;
+            options.alphaScale = alphaScale;
+            options.closedPath = !ringInFlight;
+            options.energizedBlend = throwVisualEnergy;
+            options.decorations = hasRingItems;
+            options.fluidDirection = fluidVisual.direction;
+            options.fluidShiftAmount = fluidVisual.shiftAmount;
+            options.fluidMotionAmount = fluidVisual.motionAmount;
+            options.fluidIdleAmount = fluidVisual.idleAmount;
+            options.fluidReleaseAmount = fluidVisual.releaseAmount;
+            options.fluidIdleRipple = balance.ringFluidIdleRipple;
+            options.fluidRandomJitter = balance.ringFluidRandomJitter;
+            options.fluidRadialOffsets = fluidVisual.radialOffsets;
+            options.fluidTangentOffsets = fluidVisual.tangentOffsets;
+            drawMagicOrbitPath(renderer, orbitPath, center, options);
         }
     }
 }

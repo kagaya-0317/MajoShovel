@@ -25,7 +25,10 @@ constexpr float PopupAvoidPadding = 8.0f;
 constexpr float PopupFadeInSeconds = 0.2f;
 constexpr float PopupFadeOutSeconds = 0.2f;
 constexpr float PopupHoldAfterRevealSeconds = 4.5f;
-constexpr float PopupRevealUnitsPerSecond = 34.0f;
+constexpr float PopupRevealUnitsPerSecond = 102.0f;
+constexpr float PopupAppearScale = 1.25f;
+constexpr float PopupScaleHoldSeconds = 1.0f;
+constexpr float PopupScaleEaseSeconds = 0.45f;
 constexpr int PopupTextScale = 2;
 constexpr int MaxActiveDiscoveryPopups = 3;
 constexpr std::string_view TreasureCategory = "\xE5\xAE\x9D";
@@ -45,6 +48,12 @@ struct PopupTextLine {
 int stageValue(EncyclopediaStage stage)
 {
     return static_cast<int>(stage);
+}
+
+float smootherStep01(float value)
+{
+    value = std::clamp(value, 0.0f, 1.0f);
+    return value * value * value * (value * (value * 6.0f - 15.0f) + 10.0f);
 }
 
 bool isNoEffectKey(std::string_view key)
@@ -226,6 +235,25 @@ float popupTextBlockHeight(Renderer& renderer, std::size_t lineCount)
         return 0.0f;
     }
     return popupLineHeight(renderer) * static_cast<float>(lineCount) - PopupLineGap;
+}
+
+float popupVisualScale(float elapsed)
+{
+    if (elapsed <= PopupScaleHoldSeconds || PopupScaleEaseSeconds <= 0.0f) {
+        return PopupAppearScale;
+    }
+    const float t = smootherStep01((elapsed - PopupScaleHoldSeconds) / PopupScaleEaseSeconds);
+    return lerp(PopupAppearScale, 1.0f, t);
+}
+
+UiRect scaledCenteredPopupRect(Vec2 basePos, Vec2 baseSize, float scale)
+{
+    const float safeScale = std::max(0.001f, scale);
+    const Vec2 size = baseSize * safeScale;
+    return {
+        basePos - (size - baseSize) * 0.5f,
+        size,
+    };
 }
 
 UiRect expandedRect(UiRect rect, float padding)
@@ -451,24 +479,39 @@ void EncyclopediaSystem::renderPopups(
             continue;
         }
 
-        const std::vector<PopupTextLine> lines = layoutPopupText(renderer, popup.text, contentWidth, textStyle);
-        const Vec2 size{
-            PopupWidth,
-            std::max(PopupMinHeight, popupTextBlockHeight(renderer, lines.size()) + PopupPaddingY * 2.0f),
-        };
+        if (!popup.layoutReady) {
+            const std::vector<PopupTextLine> lines = layoutPopupText(renderer, popup.text, contentWidth, textStyle);
+            popup.layoutLines.clear();
+            popup.layoutLines.reserve(lines.size());
+            for (const PopupTextLine& line : lines) {
+                popup.layoutLines.push_back({line.text, line.startUnit, line.unitCount});
+            }
+            popup.baseSize = {
+                PopupWidth,
+                std::max(PopupMinHeight, popupTextBlockHeight(renderer, popup.layoutLines.size()) + PopupPaddingY * 2.0f),
+            };
+            popup.layoutReady = true;
+        }
+
+        const Vec2 baseSize = popup.baseSize;
+        const Vec2 maxSize = baseSize * PopupAppearScale;
         const Vec2 anchor = camera.worldToScreen(popup.position);
         const Vec2 desired = anchor + Vec2{14.0f, -34.0f};
-        UiRect panel{clampPopupPosition(popup.screenPosition, size, camera), size};
-        if (!popup.screenPositionLocked || totalAvoidOverlap(panel, popupAvoidRects) > 0.0f) {
-            popup.screenPosition = choosePopupPosition(anchor, desired, size, camera, popupAvoidRects);
+        UiRect maxPanel = scaledCenteredPopupRect(popup.screenPosition, baseSize, PopupAppearScale);
+        const Vec2 clampedMaxPos = clampPopupPosition(maxPanel.pos, maxPanel.size, camera);
+        const bool offscreen = lengthSquared(clampedMaxPos - maxPanel.pos) > 0.25f;
+        if (!popup.screenPositionLocked || offscreen || totalAvoidOverlap(maxPanel, popupAvoidRects) > 0.0f) {
+            const Vec2 maxDesired = desired - (maxSize - baseSize) * 0.5f;
+            const Vec2 maxPos = choosePopupPosition(anchor, maxDesired, maxSize, camera, popupAvoidRects);
+            popup.screenPosition = maxPos + (maxSize - baseSize) * 0.5f;
             popup.screenPositionLocked = true;
-            panel = {popup.screenPosition, size};
-        } else {
-            popup.screenPosition = panel.pos;
+            maxPanel = {maxPos, maxSize};
         }
 
         const float alpha = popupFadeAlpha(popup.elapsed, popup.revealSeconds);
-        renderer.pushScreenTransform({0.0f, 0.0f}, 1.0f, alpha);
+        const float visualScale = popupVisualScale(popup.elapsed);
+        const UiRect panel{popup.screenPosition, baseSize};
+        renderer.pushScreenTransform(panel.pos + panel.size * 0.5f, visualScale, alpha);
 
         drawDiscoveryPopupBackdrop(renderer, panel);
 
@@ -478,7 +521,7 @@ void EncyclopediaSystem::renderPopups(
             : std::clamp(static_cast<int>(std::floor(revealElapsed * PopupRevealUnitsPerSecond)), 0, popup.revealUnitCount);
         const float lineHeight = popupLineHeight(renderer);
         Vec2 linePos = panel.pos + Vec2{PopupPaddingX, PopupPaddingY};
-        for (const PopupTextLine& line : lines) {
+        for (const PopupLayoutLine& line : popup.layoutLines) {
             const int lineVisibleUnits = std::clamp(visibleUnits - line.startUnit, 0, line.unitCount);
             const std::string visibleLine = visiblePopupLineText(line.text, lineVisibleUnits);
             if (!visibleLine.empty()) {
@@ -488,7 +531,7 @@ void EncyclopediaSystem::renderPopups(
         }
         renderer.popScreenTransform();
 
-        popupAvoidRects.push_back(panel);
+        popupAvoidRects.push_back(maxPanel);
     }
 }
 

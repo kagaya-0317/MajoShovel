@@ -101,6 +101,32 @@ int directionIndex(EnemySpriteDirection direction)
     return 0;
 }
 
+const char* directionDebugName(EnemySpriteDirection direction)
+{
+    switch (direction) {
+    case EnemySpriteDirection::Down:
+        return "D";
+    case EnemySpriteDirection::Left:
+        return "L";
+    case EnemySpriteDirection::Right:
+        return "R";
+    case EnemySpriteDirection::Up:
+        return "U";
+    }
+    return "?";
+}
+
+const char* motionDebugName(EnemySpriteMotion motion)
+{
+    switch (motion) {
+    case EnemySpriteMotion::Idle:
+        return "idle";
+    case EnemySpriteMotion::Walk:
+        return "walk";
+    }
+    return "?";
+}
+
 std::string numberedEnemyImagePath(int imageNumber)
 {
     if (imageNumber <= 0) {
@@ -317,6 +343,9 @@ ImageDrawOptions enemyImageDrawOptions(const EnemyImageDrawOptions& options)
     ImageDrawOptions drawOptions;
     drawOptions.anchor = options.anchor;
     drawOptions.tint = options.tint;
+    drawOptions.outlineEnabled = options.outlineEnabled;
+    drawOptions.outlineColor = options.outlineColor;
+    drawOptions.outlinePx = options.outlinePx;
     drawOptions.maskOverlayColor = options.maskOverlayColor;
     drawOptions.rotationDegrees = options.rotationDegrees;
     drawOptions.flipX = options.flipX;
@@ -333,6 +362,38 @@ std::string enemyImagePathFromNumber(int imageNumber)
 std::string enemyImagePath(const EnemyDefinition& enemy)
 {
     return enemySpriteSheetSpec(enemy).path;
+}
+
+EnemyImageDebugInfo enemyImageDebugInfo(
+    const Enemy& enemy,
+    float animationTimeSeconds,
+    const EnemyImageDrawOptions& options)
+{
+    EnemyImageDebugInfo info;
+    const EnemySpriteSheetSpec spec = enemySpriteSheetSpec(enemy);
+    if (!validEnemySpriteSheetSpec(spec)) {
+        return info;
+    }
+
+    const EnemySpriteMotion motion = motionForEnemy(enemy);
+    const EnemySpriteDirection direction = directionForEnemy(enemy, options);
+    const EnemySpriteDirection facingDirection = directionFromFacing(enemy.facingAngle);
+    info.valid = true;
+    info.directionSource = options.directionOverrideEnabled ? "override" : "facing";
+    info.directionName = directionDebugName(direction);
+    info.facingDirectionName = directionDebugName(facingDirection);
+    info.motionName = motionDebugName(motion);
+    info.directionOverrideEnabled = options.directionOverrideEnabled;
+    info.directionIndex = directionIndex(direction);
+    info.frameRow = rowForAnimation(spec, direction, motion);
+    info.frameColumn = animationFrameColumn(spec, animationTimeSeconds, frameDurationForEnemy(spec, enemy, motion));
+    info.sheetRows = spec.rows;
+    info.sheetColumns = spec.columns;
+    info.framesPerAnimation = spec.framesPerAnimation;
+    info.facingAngleDegrees = enemy.facingAngle * (180.0f / Pi);
+    info.facingVector = {std::cos(enemy.facingAngle), std::sin(enemy.facingAngle)};
+    info.directionOverride = options.directionOverride;
+    return info;
 }
 
 bool enemyImageDrawSize(Renderer& renderer, const Enemy& enemy, const EnemyImageDrawOptions& options, Vec2& outDrawSize)

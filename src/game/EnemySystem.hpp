@@ -295,7 +295,7 @@ public:
     std::vector<EnemySoundEvent> consumeSoundEvents();
     std::vector<CaptureResult> consumeCaptureResults();
     std::vector<StatusPopupEvent> consumeStatusPopupEvents();
-    std::string debugEnemySummary() const;
+    std::string debugEnemySummary(Vec2 playerPosition) const;
     CaptureTargetPreview previewCaptureAt(
         Vec2 targetWorld,
         const Player& player,

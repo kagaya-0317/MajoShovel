@@ -7,6 +7,7 @@
 ルネ、おかえり！
 採掘は進んでる？
 
+@portrait_expr player 3
 @say player ルネ
 でへへ、まあまあかな
 
@@ -14,6 +15,7 @@
 きちんと進捗は日記に書かなきゃだめだよ
 ルネのおうちに日記帳があったよね
 
+@portrait_expr player 4
 @say player ルネ
 そうだ、忘れてたあ
 

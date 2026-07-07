@@ -5,6 +5,7 @@
 
 @base_return_scene begin
 
+@portrait_expr monica 4
 @say monica モニカ
 おかえりなさい、ルネ！
 すごいじゃない！！
@@ -12,20 +13,25 @@
 @say monica モニカ
 ルネなら、やってくれると信じてたよ
 
+@portrait_expr player 4
 @say player ルネ
 モニカちゃん！ありがとう～！
 
+@portrait_expr player 17
 @say player ルネ
 でも疲れたよ～。なんか、巨大なモグラで、明らかにカタギではなくてさぁ
 
+@portrait_expr monica 1
 @say monica モニカ
 カタギ…？とりあえず、あとでゆっくり聞かせてね
 
 @wait small
 
+@portrait_expr monica 7
 @say monica モニカ
 ……穴の奥から、なんだか今までと違う反応がするの
 
+@portrait_expr player 8
 @say player ルネ
 今までと違う反応？
 
@@ -38,6 +44,7 @@
 失敗した道具、壊れた道具、使われなくなった道具…
 そういうものを、長いあいだ地底へ捨ててきたのじゃ
 
+@portrait_expr monica 1
 @say monica モニカ
 それが堆積した層……魔導具廃棄層と呼ばれているわ
 
@@ -46,6 +53,7 @@
 
 @wait small
 
+@portrait_expr player 12
 @say player ルネ
 ま、まどーぐ…はいきそー？
 なんか危険そう…
@@ -54,12 +62,15 @@
 でも、ルネの力でここまで来れたんだもの。
 次もきっと大丈夫だよ
 
+@portrait_expr player 1
 @say player ルネ
 うん…そうだね。がんばるぞ！
 
+@portrait_expr player 4
 @say player ルネ
 えいえいおー！
 
+@portrait_expr chicory 2
 @say chicory チコリ
 ちこりー！
 
@@ -71,12 +82,15 @@
 @say player ルネ
 あはは、チコリ、面白い動きしてるね！
 
+@portrait_expr player 9
 @say player ルネ
 あ、ひらめいた
 
+@portrait_expr monica 2
 @say monica モニカ
 どうしたの？
 
+@portrait_expr player 1
 @say player ルネ
 今の私なら、できるかも…
 
@@ -86,9 +100,11 @@
 @base_ring_demo open 2 item_apple 1.15
 @wait 2
 
+@portrait_expr monica 5
 @say monica モニカ
 す、すごい……スペルリングが増えた！
 
+@portrait_expr player 4
 @say player ルネ
 へへへ、できたよー！
 
